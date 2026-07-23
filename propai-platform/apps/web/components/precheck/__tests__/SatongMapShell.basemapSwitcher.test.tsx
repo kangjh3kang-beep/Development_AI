@@ -117,7 +117,8 @@ describe("SatongMapShell 베이스맵 스위처(레일 통합)", () => {
 
   it("★좌상단 활성레이어 칩 경로에서도 닫힌다(근원 봉합=handleLayerClick)", () => {
     render(<SatongMapShell locale="ko" />);
-    // 레일에서 지적도를 켜면 좌상단에 활성 레이어 칩이 생긴다.
+    // ★지적도는 초기 활성(cadastre 기본 ON)이라 좌상단 칩이 이미 존재한다.
+    //   (레일 클릭은 더 이상 레이어를 켜지 않는다 — 탐색/확정 분리)
     fireEvent.click(screen.getByRole("button", { name: "지적도" }));
     openBasemapPopover();
     expect(screen.getByRole("button", { name: "베이스맵: 일반" })).toBeTruthy();
@@ -160,8 +161,8 @@ describe("SatongMapShell 레일 — 탐색/확정 분리", () => {
 
   it("★레일 클릭은 팝오버만 열고 레이어를 켜지 않는다(보기=적용 결합 해제)", () => {
     render(<SatongMapShell locale="ko" />);
-    // 지형도·항공뷰는 기본 OFF인 렌더 가능 레이어.
-    fireEvent.click(screen.getByRole("button", { name: "지형도·항공뷰" }));
+    // 용도지역는 기본 OFF인 렌더 가능 레이어.
+    fireEvent.click(screen.getByRole("button", { name: "용도지역" }));
     // 팝오버는 열렸고
     expect(screen.getByRole("button", { name: /지도에 표시/ })).toBeTruthy();
     // 확정 전이므로 '지도 표시 중'이 아니다(=아직 안 켜짐).
@@ -170,27 +171,67 @@ describe("SatongMapShell 레일 — 탐색/확정 분리", () => {
 
   it("★롤오버로 팝오버가 열리고, 다른 항목으로 이동하면 전환된다", () => {
     render(<SatongMapShell locale="ko" />);
-    fireEvent.mouseEnter(screen.getByRole("button", { name: "지형도·항공뷰" }));
-    expect(screen.getByRole("heading", { level: 3, name: "지형도·항공뷰" })).toBeTruthy();
+    fireEvent.mouseEnter(screen.getByRole("button", { name: "용도지역" }));
+    expect(screen.getByRole("heading", { level: 3, name: "용도지역" })).toBeTruthy();
 
     fireEvent.mouseEnter(screen.getByRole("button", { name: "지적도" }));
     expect(screen.getByRole("heading", { level: 3, name: "지적도" })).toBeTruthy();
-    expect(screen.queryByRole("heading", { level: 3, name: "지형도·항공뷰" })).toBeNull();
+    expect(screen.queryByRole("heading", { level: 3, name: "용도지역" })).toBeNull();
   });
 
   it("★확정은 팝오버 안에서 — 누른 뒤에도 팝오버가 닫히지 않는다", () => {
     render(<SatongMapShell locale="ko" />);
-    fireEvent.click(screen.getByRole("button", { name: "지형도·항공뷰" }));
+    fireEvent.click(screen.getByRole("button", { name: "용도지역" }));
 
     fireEvent.click(screen.getByRole("button", { name: "지도에 표시" }));
     // 켜졌고(라벨 전환) 팝오버는 그대로 열려 있다(결과 확인 가능).
     expect(screen.getByRole("button", { name: "지도 표시 중" })).toBeTruthy();
-    expect(screen.getByRole("heading", { level: 3, name: "지형도·항공뷰" })).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 3, name: "용도지역" })).toBeTruthy();
   });
 
   it("베이스맵 롤오버도 팝오버를 연다(레일 형제 동일 계약)", () => {
     render(<SatongMapShell locale="ko" />);
     fireEvent.mouseEnter(screen.getByRole("button", { name: "베이스맵 선택" }));
     expect(screen.getByRole("button", { name: "베이스맵: 일반" })).toBeTruthy();
+  });
+});
+
+/**
+ * R1 MEDIUM-6 — 변이 생존 구간 봉합: hover 경로의 3패널 배타·닫힘 경로·재진입 무깜빡임.
+ */
+describe("SatongMapShell 레일 — 팝오버 배타·닫힘 계약", () => {
+  beforeEach(() => { window.sessionStorage.clear(); resetStores(); });
+  afterEach(() => { window.sessionStorage.clear(); resetStores(); });
+
+  it("★같은 항목에 재진입해도 닫히지 않는다(롤오버 깜빡임 방지 계약)", () => {
+    render(<SatongMapShell locale="ko" />);
+    const btn = screen.getByRole("button", { name: /용도지역/ });
+    fireEvent.mouseEnter(btn);
+    expect(screen.getByRole("heading", { level: 3, name: "용도지역" })).toBeTruthy();
+    fireEvent.mouseEnter(btn); // 재진입
+    expect(screen.getByRole("heading", { level: 3, name: "용도지역" })).toBeTruthy();
+  });
+
+  it("★레일 클릭으로 팝오버를 닫을 수 있다(R1 LOW-1 닫기 경로 복원)", () => {
+    render(<SatongMapShell locale="ko" />);
+    const btn = screen.getByRole("button", { name: /용도지역/ });
+    fireEvent.click(btn);
+    expect(screen.getByRole("heading", { level: 3, name: "용도지역" })).toBeTruthy();
+    fireEvent.click(btn); // 같은 항목 재클릭 = 닫기
+    expect(screen.queryByRole("heading", { level: 3, name: "용도지역" })).toBeNull();
+  });
+
+  it("★X 버튼으로 닫힌다(닫힘 경로 회귀 보호)", () => {
+    render(<SatongMapShell locale="ko" />);
+    fireEvent.click(screen.getByRole("button", { name: /용도지역/ }));
+    fireEvent.click(screen.getByRole("button", { name: "레이어 설정 닫기" }));
+    expect(screen.queryByRole("heading", { level: 3, name: "용도지역" })).toBeNull();
+  });
+
+  it("★terrain(지형도·항공뷰)은 on/off를 노출하지 않는다 — 끄면 베이스맵이 조용히 롤백되고 라벨이 거짓이 된다", () => {
+    render(<SatongMapShell locale="ko" />);
+    fireEvent.click(screen.getByRole("button", { name: /지형도·항공뷰/ }));
+    expect(screen.getByRole("heading", { level: 3, name: "지형도·항공뷰" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /지도에 표시|지도 표시 중/ })).toBeNull();
   });
 });

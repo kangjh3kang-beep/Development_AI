@@ -1470,15 +1470,23 @@ export function SatongMapShell({ locale }: { locale: string }) {
   //   팝오버 안의 컨트롤·헤더 on/off에서 한다. 지도 상태는 전혀 건드리지 않는다.
   //   ★토글이 아니라 '지정'이다 — 롤오버로 항목을 옮길 때 같은 항목 재진입이 닫힘으로
   //   해석되면 깜빡인다(전환은 열림 유지가 계약).
+  // hover로 연 팝오버인지 기록 — 마우스가 레일을 벗어나면 hover 오픈분만 닫는다.
+  // (클릭으로 연 것까지 닫으면 팝오버 컨트롤을 조작하러 가는 중에 닫혀 확정이 불가능.)
+  const openedByHoverRef = useRef(false);
+
   const openLayerPanel = useCallback((layerId: SatongMapLayerId) => {
-    setDetailFeature(null); // 단일 팝오버 계약(같은 좌표 3패널 배타)
+    // ★R1 HIGH-2: 여기서 setDetailFeature(null)을 하면 레일 위를 '스치기만' 해도 열려 있던
+    //   필지 상세가 파괴되고 Esc로도 복구되지 않는다(접힌 레일이 지도 우상단이라 상시 발생).
+    //   시각 배타는 렌더 가드(detailFeature && !activeLayer && !basemapOpen)가 이미 보장하므로
+    //   상세는 '가려질' 뿐이고, 팝오버를 닫으면 복원된다. 파괴적 초기화는 의도 경로
+    //   (handleLayerClick·openFeatureDetail)에만 남긴다.
     setBasemapOpen(false);
     setActiveLayerId(layerId);
   }, []);
 
   // 베이스맵 패널 열기(지정) — 레일 형제와 동일한 롤오버 계약.
   const openBasemapPanel = useCallback(() => {
-    setDetailFeature(null);
+    // ★R1 HIGH-2 동일 — hover 경로는 필지 상세를 파괴하지 않는다(가림→복원).
     setActiveLayerId(null);
     setBasemapOpen(true);
   }, []);
@@ -1507,17 +1515,9 @@ export function SatongMapShell({ locale }: { locale: string }) {
       setActiveLayerId((current) => (current === layerId ? null : layerId));
       return;
     }
-    setEnabledLayers((prev) => {
-      const next = new Set(prev);
-      if (next.has(layerId)) {
-        if (layerId !== "cadastre") next.delete(layerId);
-      } else {
-        next.add(layerId);
-      }
-      return next;
-    });
+    toggleLayerEnabled(layerId); // ★공용 근원 위임(중복 제거 — cadastre 예외도 한 곳)
     setActiveLayerId((current) => (current === layerId ? null : layerId));
-  }, []);
+  }, [toggleLayerEnabled]);
 
   const handleLayerControlClick = useCallback((layerId: SatongMapLayerId, control: SatongLayerControl) => {
     if (!control.mapEffect) return;
@@ -2402,6 +2402,15 @@ export function SatongMapShell({ locale }: { locale: string }) {
 
             <div
               ref={railRef}
+              // ★사용자 요청('롤아웃하면 창이 닫히고') + R1 MEDIUM-1: hover로 연 팝오버는
+              //   레일을 벗어날 때 닫는다. 클릭으로 연 것은 유지해야 팝오버 안 컨트롤로
+              //   마우스를 옮겨 확정할 수 있다(그래서 출처를 openedByHoverRef로 기록).
+              onMouseLeave={() => {
+                if (!openedByHoverRef.current) return;
+                openedByHoverRef.current = false;
+                setActiveLayerId(null);
+                setBasemapOpen(false);
+              }}
               // ★P1(감사): 고정고는 전 버튼 필요고보다 작아 하단(로드뷰 등)이 클리핑돼 도달
               //   불가였음 — 가용고 내 auto + 세로 스크롤로 전 버튼 접근 보장.
               // ★WP-M4: hover 전개에 더해 앵커 클릭 고정(railPinned)으로도 전개 — 터치 기기 대응.
@@ -2444,9 +2453,9 @@ export function SatongMapShell({ locale }: { locale: string }) {
                 type="button"
                 // ★레일 형제와 동일 계약 — 롤오버·포커스는 '열기'(지정), 클릭은 토글.
                 //   전환 중 같은 항목 재진입이 닫힘이 되면 깜빡이므로 hover는 열기만 한다.
-                onMouseEnter={openBasemapPanel}
-                onFocus={openBasemapPanel}
+                onMouseEnter={() => { openedByHoverRef.current = true; openBasemapPanel(); }}
                 onClick={() => {
+                  openedByHoverRef.current = false; // 클릭 확정(레일 이탈로 닫히지 않게)
                   setActiveLayerId(null); // 상호배타 — 같은 좌표에 두 팝오버가 겹치지 않게
                   setDetailFeature(null);
                   setBasemapOpen((v) => !v);
@@ -2473,17 +2482,31 @@ export function SatongMapShell({ locale }: { locale: string }) {
                   <button
                     key={layer.id}
                     type="button"
-                    // ★열기만(확정 아님) — 롤오버·포커스·클릭 모두 미리보기 팝오버를 연다.
+                    // ★열기만(확정 아님) — 롤오버·클릭 모두 미리보기 팝오버를 연다.
                     //   터치엔 hover가 없으므로 탭(click)도 같은 동작이어야 한다.
-                    onMouseEnter={() => openLayerPanel(layer.id)}
-                    onFocus={() => openLayerPanel(layer.id)}
-                    onClick={() => openLayerPanel(layer.id)}
-                    title={layer.label}
+                    // ★R1 HIGH-1: onFocus는 제거한다 — Tab 이동만으로 팝오버가 연쇄 전환돼
+                    //   키보드 사용자가 팝오버 안의 확정 버튼에 영영 도달할 수 없었다(마지막
+                    //   레일 항목은 렌더불가라 on/off 자체가 없음). Enter/Space는 onClick을
+                    //   발화하므로 키보드 열기 경로는 그대로다.
+                    onMouseEnter={() => { openedByHoverRef.current = true; openLayerPanel(layer.id); }}
+                    // ★R1 LOW-1: 클릭은 토글 — 레일에서 팝오버를 닫을 수단이 사라졌던 회귀
+                    //   복원. 깜빡임 논거는 hover에만 유효하고 click에는 적용되지 않는다.
+                    onClick={() => {
+                      openedByHoverRef.current = false; // 클릭 확정 — 레일 이탈로 닫히지 않게
+                      if (activeLayerId === layer.id) setActiveLayerId(null);
+                      else openLayerPanel(layer.id);
+                    }}
+                    aria-haspopup="dialog"
+                    aria-expanded={activeLayerId === layer.id}
+                    title={`${layer.label} — 미리보기 열기 (지도 적용은 팝오버에서)`}
                     className={`grid size-12 shrink-0 place-items-center rounded-2xl border text-[var(--text-secondary)] transition ${
-                      isActive
-                        ? "border-[var(--accent-strong)] bg-[var(--accent-strong)] text-[var(--on-primary)] shadow-[var(--shadow-glow)]"
-                        : enabled
-                          ? "border-[var(--accent-strong)]/40 bg-[var(--accent-strong)]/15 text-[var(--primary-dim)]"
+                      // ★R1 MEDIUM-5: 채움=적용됨(enabled), 링=선택 중(isActive). 종전엔
+                      //   미적용 미리보기에 가장 강한 채움이 배정돼 "보기=적용" 오해를
+                      //   시각 층에서 되살리고 있었다.
+                      enabled
+                        ? `border-[var(--accent-strong)] bg-[var(--accent-strong)] text-[var(--on-primary)] ${isActive ? "ring-2 ring-[var(--accent-strong)] ring-offset-2 ring-offset-[var(--surface)]" : ""}`
+                        : isActive
+                          ? "border-[var(--accent-strong)] bg-[var(--surface-panel)] text-[var(--accent-strong)] ring-2 ring-[var(--accent-strong)]"
                           : "border-[var(--border-muted)] bg-[var(--surface-panel)] hover:border-[var(--line-strong)] hover:bg-[var(--surface-strong)]"
                     }`}
                     aria-label={layer.label}
@@ -2543,7 +2566,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
                     {/* ★확정(commit) 지점 — 레일에서 강제 토글을 걷어낸 대신, 레이어 자체
                         on/off를 여기에 둔다(끄기 수단 보존). 렌더 불가 레이어는 노출하지
                         않는다(지도에 반영되지 않으므로 켜기 약속이 거짓이 된다). */}
-                    {isRenderableSatongMapLayer(activeLayer.id) && (
+                    {isRenderableSatongMapLayer(activeLayer.id) && activeLayer.id !== "terrain" && (
                       <button
                         type="button"
                         onClick={() => toggleLayerEnabled(activeLayer.id)}
