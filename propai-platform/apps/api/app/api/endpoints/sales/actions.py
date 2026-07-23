@@ -429,10 +429,26 @@ async def pricing_generate(body: dict, db: AsyncSession = Depends(get_db),
 
 
 @actions_router.get("/pricing/suggest")
-async def pricing_suggest(bcode: str | None = None, db: AsyncSession = Depends(get_db),
+async def pricing_suggest(bcode: str | None = None, precision: bool = False,
+                          db: AsyncSession = Depends(get_db),
                           ctx: SalesCtx = Depends(require_role("DEVELOPER", "AGENCY"))):
-    """P1-1 기준층 적정분양가 3안(공/기/보) — 주변시세(거래사례비교) 기반. bcode 선택(미전달 시 PNU 유도)."""
-    res = await suggest_base_price(db, ctx.site_id, bcode=bcode)
+    """P1-1 기준층 적정분양가 3안(공/기/보) — 주변시세(거래사례비교) 기반. bcode 선택(미전달 시 PNU 유도).
+
+    precision=True(opt-in, 기본 False — 기본 경로 무회귀): 시장·분양 정밀화 계약(W3-8)을
+    ``market_precision`` 부가 키로 덧붙인다 — 개별 비교사례(ComparableSet)·시점보정
+    (TimeAdjustment)·흡수율(AbsorptionEstimate, 데이터 부재 시 UNKNOWN 정직)·범위 기반
+    분양가 제안(PriceSuggestion). ★R1 M-1 봉합: suggest_base_price()는 1회만 호출하되
+    precision=True일 때 collect_cases=True를 함께 넘겨 그 안에서 MOLIT 사례를 같이
+    수집한다(별도 재수집 없음 — 종전엔 market_precision 조립이 별도로 재수집해 MOLIT
+    8개월 조회가 중복 발생했다).
+    """
+    res = await suggest_base_price(db, ctx.site_id, bcode=bcode, collect_cases=precision)
+    if precision and isinstance(res, dict):
+        from app.services.market_precision.price_suggestion import assemble_market_precision
+
+        market_precision = await assemble_market_precision(res)
+        res = {k: v for k, v in res.items() if k != "trade_cases"}
+        res["market_precision"] = market_precision
     # ★성장루프 조인키: 제안 결과 요약을 원장에 best-effort 적재(멱등 — 같은 내용 재조회는
     #   버전 증가 없음) 후 최상위 `ledger_hash` 노출. 데이터 미가용(unavailable)은 적재 생략(정직).
     if isinstance(res, dict) and res.get("data_source") == "live":
