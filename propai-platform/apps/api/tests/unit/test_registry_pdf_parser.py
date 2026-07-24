@@ -1,6 +1,7 @@
 """등기부 PDF 파서 및 registry_service 폴백 라우터 단위 테스트."""
 
 import pytest
+
 from app.services.registry.registry_pdf_parser import parse_registry_pdf
 from app.services.registry.registry_service import RegistryService
 

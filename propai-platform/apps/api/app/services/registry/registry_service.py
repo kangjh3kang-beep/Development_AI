@@ -101,7 +101,8 @@ class RegistryService:
             return {**item, **res}
 
         from app.services.registry.hyphen_client import fetch_realty_registry, fetch_registry_by_address, hyphen_ready
-        from app.services.registry.tilko_client import fetch_realty_registry as fetch_tilko_registry, tilko_ready
+        from app.services.registry.tilko_client import fetch_realty_registry as fetch_tilko_registry
+        from app.services.registry.tilko_client import tilko_ready
 
         cfg = _config()
         p = cfg["provider"]
