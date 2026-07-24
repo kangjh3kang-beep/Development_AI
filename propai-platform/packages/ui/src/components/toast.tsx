@@ -151,14 +151,13 @@ export function ToastProvider({ children }: PropsWithChildren) {
   return (
     <ToastContext.Provider value={value}>
       {children}
-      {/* aria-live="polite" — 개별 Toast의 role="alert"(assertive)와 별개로, 뷰포트
-          자체도 살아있는 영역임을 보조기술에 알린다(AccessibilityProvider 안내자와
-          동일한 role="status" 컨벤션). 화면 우하단 고정 — 다른 패널과 겹치지 않게
-          z-index를 넉넉히 높인다. */}
+      {/* ★R1 후속(LOW) — 종전엔 이 뷰포트에도 role="status"+aria-live="polite"를 얹어,
+          개별 Toast(role="alert" — 그 자체로 이미 assertive 라이브 리전)를 또 다른 라이브
+          리전이 감싸는 이중 구조였다. 일부 스크린리더는 중첩된 라이브 리전에서 삽입을
+          두 번 안내할 수 있어(부모 polite 변이 감지 + 자식 alert 감지), 뷰포트 자체의
+          역할/라이브 속성은 제거한다 — 안내 책임은 각 Toast의 role="alert" 하나로
+          단일화(중복 방지). 위치 고정용 순수 레이아웃 컨테이너로만 남긴다. */}
       <div
-        role="status"
-        aria-live="polite"
-        aria-atomic="false"
         className="pointer-events-none fixed inset-x-0 bottom-4 z-[1000] flex flex-col items-center gap-2 px-4 sm:inset-x-auto sm:right-4 sm:items-end"
       >
         {toasts.map((toast) => (
