@@ -92,8 +92,9 @@ export interface SatongMultiMapProps {
   focusTarget?: { lat: number; lon: number; label?: string } | null;
   /** 검색된 필지를 지도에 자동으로 선택 표시 */
   autoPreviewFocus?: boolean;
-  /** 지도 높이(px), 기본 360 */
-  height?: number;
+  /** 지도 높이(px 숫자 또는 CSS 길이 문자열 — 예: clamp()), 기본 360.
+   *  ★UX 트랙 D3: 숫자 하위호환 유지 + 반응형 clamp() 문자열 허용(SatongMapShell이 전달). */
+  height?: number | string;
   /** 통합 지도 화면에서 외곽 설명/배경을 줄이는 표시 모드 */
   chrome?: "default" | "immersive";
   /** 통합 필지 입력 패널에서 확정된 실제 선택 필지. geometry가 없으면 boundary API로 보강한다. */
@@ -2531,7 +2532,7 @@ export function SatongMultiMap({
           type="button"
           onClick={toggleMapFullscreen}
           title={isMapFullscreen ? "전체화면 종료" : "전체화면"}
-          className="absolute right-2 top-2 rounded-lg border border-[var(--line-strong)] bg-[var(--surface)]/90 p-1.5 text-[var(--text-secondary)] shadow hover:bg-[var(--surface-muted)] transition-colors"
+          className="absolute right-2 top-2 grid size-11 place-items-center rounded-lg border border-[var(--line-strong)] bg-[var(--surface)]/90 text-[var(--text-secondary)] shadow hover:bg-[var(--surface-muted)] transition-colors"
           style={{ zIndex: SATONG_UI_Z.fullscreenButton }}
           aria-label="전체화면"
         >
@@ -2558,6 +2559,12 @@ export function SatongMultiMap({
             //   의존**이다 — 지도 높이 H<약 282px면 rail 하단이 줌 '+'와 재중첩한다(rail은
             //   래퍼 중앙 비례·줌은 지도 바닥 고정 오프셋이라). 현행 비-readOnly 콜러 최소
             //   높이 500 → 안전 마진 ≥69px. 새 콜러는 500px 미만 높이 배치 금지.
+            //   ★UX 트랙 D1 추가고지(정직): 아래 두 버튼이 터치 44px 하한 준수를 위해
+            //   size-9(36px)→size-11(44px)로 커져 rail 총높이가 늘었다(버튼당 +8px×2).
+            //   위 282px·69px 수치는 그 이전 측정값 그대로다 — 방향(margin 감소)만
+            //   정직 기재하고 재측정 전까지 과대확신하지 않는다. 500px 하한 자체(D3의
+            //   clamp 하한과 동일 계약)는 이 변경으로 낮아지지 않았으므로 충돌 회피
+            //   여유는 여전히 양수로 유지된다.
             //   left-4=16px — DESIGN.md B3.1:218
             //   "플로팅 컨트롤 가장자리 16~24px 이격" 충족(종전 left-3=12px는 미달).
             className="pointer-events-auto absolute left-4 top-1/2 flex -translate-y-1/2 flex-col gap-1 rounded-xl border border-[var(--border-muted)] bg-[var(--glass-bg)] p-1 shadow-lg backdrop-blur"
@@ -2574,7 +2581,7 @@ export function SatongMultiMap({
                 setMeasurePoints([]);
                 setMeasureOn(true);
               }}
-              className={`grid size-9 place-items-center rounded-lg border transition ${
+              className={`grid size-11 place-items-center rounded-lg border transition ${
                 measureOn && measureMode === "distance"
                   ? "border-[var(--accent-strong)] bg-[var(--accent-strong)]/15 text-[var(--accent-strong)]"
                   : "border-transparent text-[var(--text-secondary)] hover:border-[var(--line-strong)]"
@@ -2593,7 +2600,7 @@ export function SatongMultiMap({
                 setMeasurePoints([]);
                 setMeasureOn(true);
               }}
-              className={`grid size-9 place-items-center rounded-lg border transition ${
+              className={`grid size-11 place-items-center rounded-lg border transition ${
                 measureOn && measureMode === "area"
                   ? "border-[var(--accent-strong)] bg-[var(--accent-strong)]/15 text-[var(--accent-strong)]"
                   : "border-transparent text-[var(--text-secondary)] hover:border-[var(--line-strong)]"
@@ -3123,7 +3130,7 @@ export function SatongMultiMap({
           <button
             type="button"
             onClick={handleClearAll}
-            className="rounded-lg border border-[var(--line-strong)] px-2.5 py-1.5 text-[10px] font-bold text-[var(--text-secondary)] hover:border-red-400/50 hover:text-red-500 hover:bg-red-500/10 transition-colors"
+            className="inline-flex min-h-11 items-center justify-center rounded-lg border border-[var(--line-strong)] px-2.5 py-1.5 text-[10px] font-bold text-[var(--text-secondary)] hover:border-red-400/50 hover:text-red-500 hover:bg-red-500/10 transition-colors"
           >
             전체취소
           </button>
@@ -3134,7 +3141,7 @@ export function SatongMultiMap({
           type="button"
           disabled={newCount === 0}
           onClick={handleComplete}
-          className="rounded-lg bg-[var(--accent-strong)] px-3 py-1.5 text-[11px] font-bold text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 transition-opacity"
+          className="inline-flex min-h-11 items-center justify-center rounded-lg bg-[var(--accent-strong)] px-3 py-1.5 text-[11px] font-bold text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 transition-opacity"
         >
           {totalCount > 0 ? `완료(신규 ${newCount} · 총 ${totalCount}필지)` : "지도에서 필지 선택"}
         </button>
