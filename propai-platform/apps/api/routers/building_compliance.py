@@ -205,7 +205,20 @@ async def _pre_design_review(req: "CheckRequest") -> dict[str, Any]:
     checks: list[dict[str, Any]] = []
 
     if matched:
-        # 가능 규모 산정
+        # ★구조상한(건폐율×층수) 흡수(레인H R2, 2026-07-24 R1 리뷰 — 세 번째 형제): /rule-check·
+        #   /legal-check가 이미 흡수한 것과 동일한 결함이 /check의 무-기하 경로(이 함수)에도
+        #   있었다 — 같은 자연녹지 bcr20%/far100% 입력에 이 함수만 '적합'(법정100%)을 반환해
+        #   세 엔드포인트가 모순 판정을 냈다(R1 리뷰어 라이브 실증). 동일 공용헬퍼
+        #   (far_cap_with_structural_overlay — legal-check와 동일 배선, 로직 복제 없음)로
+        #   far_lim을 오버레이하고, 용적률 체크·가능규모(max_gfa) 둘 다 캡값을 사용한다.
+        from app.services.zoning.legal_zone_limits import far_cap_with_structural_overlay
+
+        applied_bcr_for_cap = req.planned_bcr if (req.planned_bcr and req.planned_bcr > 0) else None
+        far_lim, cap_floor, cap_basis, cap_unresolved_note = far_cap_with_structural_overlay(
+            resolution.zone_type, far_lim, applied_bcr_for_cap,
+        )
+
+        # 가능 규모 산정(구조상한 반영된 far_lim 사용 — 위 오버레이 이후).
         max_build_area = area * bcr_lim / 100 if area else 0
         max_gfa = area * far_lim / 100 if area else 0
 
@@ -226,17 +239,26 @@ async def _pre_design_review(req: "CheckRequest") -> dict[str, Any]:
             }
 
         checks.append(_limit_check("건폐율 상한", req.planned_bcr, bcr_lim, "%"))
-        checks.append(_limit_check("용적률 상한", req.planned_far, far_lim, "%"))
+        far_check = _limit_check("용적률 상한", req.planned_far, far_lim, "%")
+        if cap_basis:
+            # ★R1 리뷰 LOW#2: 건폐율 수치(계획 건폐율)를 병기해 법정 건폐율로 오독되지 않게 한다.
+            far_check["detail"] += f" — 구조상한(건폐율{applied_bcr_for_cap:g}%×{cap_floor}층) 적용: {cap_basis}"
+        elif cap_unresolved_note:
+            far_check["detail"] += f" ({cap_unresolved_note})"
+        checks.append(far_check)
         if h_lim > 0:
             checks.append(_limit_check("최고 높이", req.planned_height_m, h_lim, "m"))
         if area:
+            scale_detail = (
+                f"대지 {area:,.0f}㎡ → 최대 건축면적 약 {max_build_area:,.0f}㎡, "
+                f"최대 연면적 약 {max_gfa:,.0f}㎡ (법정 상한 기준, 조례 별도)"
+            )
+            if cap_basis:
+                scale_detail += f" — 구조상한(건폐율{applied_bcr_for_cap:g}%×{cap_floor}층) 반영"
             checks.append({
                 "rule_code": "buildable_scale", "rule_name": "가능 규모(추정)",
                 "status": "info",
-                "detail": (
-                    f"대지 {area:,.0f}㎡ → 최대 건축면적 약 {max_build_area:,.0f}㎡, "
-                    f"최대 연면적 약 {max_gfa:,.0f}㎡ (법정 상한 기준, 조례 별도)"
-                ),
+                "detail": scale_detail,
                 "regulation_ref": "국토계획법 시행령",
             })
         zone_name: str | None = resolution.zone_type
@@ -809,7 +831,8 @@ async def legal_check(req: LegalCheckRequest) -> LegalCheckResponse:
     )
     cap_note: str | None = None
     if cap_basis:
-        cap_note = f"구조상한(건폐율×{cap_floor}층) 적용 — {cap_basis}"
+        # ★R1 리뷰 LOW#2: 건폐율 수치(계획 건폐율)를 병기해 법정 건폐율로 오독되지 않게 한다.
+        cap_note = f"구조상한(건폐율{applied_bcr_for_cap:g}%×{cap_floor}층) 적용 — {cap_basis}"
     elif cap_unresolved_note:
         cap_note = cap_unresolved_note
 

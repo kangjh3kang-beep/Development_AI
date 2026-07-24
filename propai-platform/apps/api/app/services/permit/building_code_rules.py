@@ -168,8 +168,10 @@ class BuildingCodeRuleEngine:
         required_value = f"{max_far:g}% 이하"
         cap_suffix = ""
         if cap_basis:
-            required_value += f" (구조상한: 건폐율×{cap_floor}층)"
-            cap_suffix = f" — 구조상한(건폐율×{cap_floor}층) 적용({cap_basis})"
+            # ★R1 리뷰 LOW#2(2026-07-24): "건폐율×N층"만 표기하면 규제상한(법정 건폐율)으로
+            #   오독될 수 있다 — 이 값은 '이 설계의 실제 건폐율'이므로 수치를 병기해 명확화.
+            required_value += f" (구조상한: 건폐율{applied_bcr_pct:g}%×{cap_floor}층)"
+            cap_suffix = f" — 구조상한(건폐율{applied_bcr_pct:g}%×{cap_floor}층) 적용({cap_basis})"
         elif cap_unresolved_note:
             required_value += f" ({cap_unresolved_note})"
             cap_suffix = f" ({cap_unresolved_note})"
