@@ -83,6 +83,12 @@ import {
   selectionMismatchesProject,
 } from "./satong-project-connect";
 
+// ★UX 트랙 D3(지도 높이 반응형 — 진단G 실측): 종전 고정 720px는 모바일에서 지도가
+//   화면 대부분을 점유했다. clamp(하한, 선호값, 상한) — 60dvh를 선호하되 satong-map-z.ts
+//   계약(측정 rail↔줌 충돌 방지 — 지도 높이 500px 미만 배치 금지)의 하한 500px을 보장하고,
+//   기존 720px을 상한으로 유지해 데스크톱은 무회귀(넉넉한 뷰포트에서 60dvh가 이미 ≥720px).
+const SATONG_MAP_HEIGHT = "clamp(500px, 60dvh, 720px)";
+
 const SatongMultiMap = dynamic<SatongMultiMapProps>(
   () =>
     import("@/components/map/SatongMultiMap").then(
@@ -91,7 +97,10 @@ const SatongMultiMap = dynamic<SatongMultiMapProps>(
   {
     ssr: false,
     loading: () => (
-      <div className="grid h-[720px] place-items-center rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-strong)] text-sm font-bold text-[var(--text-secondary)]">
+      <div
+        className="grid place-items-center rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-strong)] text-sm font-bold text-[var(--text-secondary)]"
+        style={{ height: SATONG_MAP_HEIGHT }}
+      >
         <span className="inline-flex items-center gap-2">
           <Loader2 className="size-4 animate-spin" aria-hidden />
           통합지도를 불러오는 중
@@ -2032,7 +2041,7 @@ export function SatongMapShell({
             onClick={() =>
               handleLayerControlClick("terrain", { id: opt.id, label: opt.label, mapEffect: true })
             }
-            className={`rounded-xl border p-1 text-center transition ${
+            className={`min-h-11 min-w-11 rounded-xl border p-1 text-center transition ${
               active
                 ? "border-[var(--accent-strong)] bg-[var(--accent-strong)]/15"
                 : "border-transparent hover:border-[var(--line-strong)]"
@@ -2145,7 +2154,11 @@ export function SatongMapShell({
       </div>
 
       <div className="grid min-w-0 gap-4 xl:grid-cols-[380px_minmax(0,1fr)]">
-        <aside className="min-w-0 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-panel)] p-4 shadow-[var(--shadow-sm)]">
+        {/* ★UX 트랙 D2(모바일 지도우선 — 진단G I8): <xl 에서는 그리드가 단일 컬럼으로
+            무너져 DOM 순서(좌패널→지도)대로 쌓이는데, 좌패널(검색·필지목록)이 길어
+            지도까지 스크롤해야 했다. order 로만 시각 순서를 뒤집는다(DOM·그린필드
+            재설계 없음) — xl 이상에선 order-none 으로 원래(좌패널=1열) 배치 그대로. */}
+        <aside className="order-2 min-w-0 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-panel)] p-4 shadow-[var(--shadow-sm)] xl:order-none">
           <div className="rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-secondary)] p-4 text-[var(--text-primary)] shadow-[var(--shadow-md)]">
             <p className="font-[family-name:var(--font-display)] label-caps text-[var(--accent-strong)]">
               Parcel Intake
@@ -2482,7 +2495,7 @@ export function SatongMapShell({
                     type="button"
                     onClick={() => exportSelection("geojson")}
                     title="선택 필지를 GeoJSON(FeatureCollection)으로 내려받기"
-                    className="rounded-full border border-[var(--border-muted)] bg-[var(--surface-panel)] px-3 py-1.5 text-xs font-black text-[var(--text-secondary)] hover:text-[var(--accent-strong)]"
+                    className="inline-flex min-h-11 items-center justify-center rounded-full border border-[var(--border-muted)] bg-[var(--surface-panel)] px-3 py-1.5 text-xs font-black text-[var(--text-secondary)] hover:text-[var(--accent-strong)]"
                   >
                     GeoJSON
                   </button>
@@ -2490,14 +2503,14 @@ export function SatongMapShell({
                     type="button"
                     onClick={() => exportSelection("kml")}
                     title="선택 필지를 KML(구글어스·측량 호환)로 내려받기 — V3"
-                    className="rounded-full border border-[var(--border-muted)] bg-[var(--surface-panel)] px-3 py-1.5 text-xs font-black text-[var(--text-secondary)] hover:text-[var(--accent-strong)]"
+                    className="inline-flex min-h-11 items-center justify-center rounded-full border border-[var(--border-muted)] bg-[var(--surface-panel)] px-3 py-1.5 text-xs font-black text-[var(--text-secondary)] hover:text-[var(--accent-strong)]"
                   >
                     KML
                   </button>
                   <button
                     type="button"
                     onClick={clearParcels}
-                    className="rounded-full border border-[var(--border-muted)] bg-[var(--surface-panel)] px-3 py-1.5 text-xs font-black text-[var(--text-secondary)] hover:text-[var(--status-error)]"
+                    className="inline-flex min-h-11 items-center justify-center rounded-full border border-[var(--border-muted)] bg-[var(--surface-panel)] px-3 py-1.5 text-xs font-black text-[var(--text-secondary)] hover:text-[var(--status-error)]"
                   >
                     초기화
                   </button>
@@ -2572,7 +2585,7 @@ export function SatongMapShell({
                           e.stopPropagation(); // 삭제가 카드 클릭(상세 열기)으로 번지지 않게
                           removeParcel(parcel.id);
                         }}
-                        className="shrink-0 rounded-full p-1.5 text-[var(--text-hint)] transition hover:bg-[var(--status-error)]/10 hover:text-[var(--status-error)]"
+                        className="grid size-11 shrink-0 place-items-center rounded-full text-[var(--text-hint)] transition hover:bg-[var(--status-error)]/10 hover:text-[var(--status-error)]"
                         aria-label="필지 제거"
                       >
                         <Trash2 className="size-4" aria-hidden />
@@ -2600,8 +2613,11 @@ export function SatongMapShell({
           </div>
         </aside>
 
-        <section className="min-w-0 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-panel)] p-3 shadow-[var(--shadow-sm)] md:p-4">
-          <div className="relative min-h-[720px] overflow-hidden rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--background-deep)]">
+        <section className="order-1 min-w-0 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-panel)] p-3 shadow-[var(--shadow-sm)] xl:order-none md:p-4">
+          <div
+            className="relative overflow-hidden rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--background-deep)]"
+            style={{ minHeight: SATONG_MAP_HEIGHT }}
+          >
             <div className="pointer-events-auto absolute left-4 top-4 z-[380] flex flex-wrap items-center gap-2">
               {/* ★UX A3: 비인터랙티브 배지(허위 어포던스 제거) — 이전엔 <button>이었으나 onClick이
                   event.stopPropagation() 뿐이라 클릭 가능해 보이는데 아무 동작도 없었다. */}
@@ -2635,7 +2651,7 @@ export function SatongMapShell({
                 onFeatureClick={openFeatureDetail}
                 focusTarget={focusTarget}
                 autoPreviewFocus
-                height={720}
+                height={SATONG_MAP_HEIGHT}
                 chrome="immersive"
                 selectedParcels={selectedMapFeatures}
                 layerState={mapLayerState}
