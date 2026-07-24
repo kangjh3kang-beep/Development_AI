@@ -2811,11 +2811,11 @@ export function SatongMultiMap({
                 램프만 띄우면 '색=여력' 오인 조장·노후도 범례와 동일 원칙). */}
             {hasSatongLayer(layerState, "capacity") && hasSatongLayerControl(layerState, "capacity", "far-headroom") &&
               overlayFeatures.some((f) => capacityColor(f.effectiveFarPct, f.currentFarPct) != null) && (
-              <div className="pointer-events-auto w-fit rounded-xl border border-slate-200 bg-white/95 p-2 shadow-lg backdrop-blur">
-                <p className="mb-1 text-[10px] font-extrabold text-slate-700">개발여력 = (실효−현황)/실효 용적률</p>
+              <div className="pointer-events-auto w-fit rounded-xl border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] p-2 shadow-lg backdrop-blur">
+                <p className="mb-1 text-[10px] font-extrabold text-[var(--text-primary)]">개발여력 = (실효−현황)/실효 용적률</p>
                 <div className="flex flex-col gap-0.5">
                   {CAPACITY_LEGEND_ITEMS.map((item) => (
-                    <span key={item.label} className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-slate-600">
+                    <span key={item.label} className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-[var(--text-secondary)]">
                       <span className="inline-block size-2.5 rounded-sm" style={{ backgroundColor: item.color }} />
                       {item.label}
                     </span>
@@ -2831,31 +2831,31 @@ export function SatongMultiMap({
                 무자료(avgAge=null)면 카드 대신 정직 칩 1줄만 — 하단 도크 과점을 구조적으로 제거. */}
             {hasSatongLayer(layerState, "age") && (
               avgAge === null ? (
-                <span className="pointer-events-auto inline-flex w-fit items-center gap-1 rounded-full bg-white/92 px-3 py-1.5 text-[11px] font-bold text-slate-500 shadow">
+                <span className="pointer-events-auto inline-flex w-fit items-center gap-1 rounded-full bg-[var(--glass-bg-strong)] px-3 py-1.5 text-[11px] font-bold text-[var(--text-secondary)] shadow">
                   <Building2 className="size-3" aria-hidden />
                   노후도 — 건물 정보 없음
                   {buildAgeGapDetail(ageStatusCounts) ? ` · ${buildAgeGapDetail(ageStatusCounts)}` : ""}
                 </span>
               ) : legendOpen ? (
-                <div className="pointer-events-auto w-fit min-w-[155px] max-w-[240px] rounded-xl border border-slate-200 bg-white/95 p-2.5 shadow-lg backdrop-blur">
+                <div className="pointer-events-auto w-fit min-w-[155px] max-w-[240px] rounded-xl border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] p-2.5 shadow-lg backdrop-blur">
                   <button
                     type="button"
                     onClick={() => setLegendOpen(false)}
-                    className="mb-1.5 flex w-full items-center justify-between gap-2 text-[11px] font-extrabold text-slate-800"
+                    className="mb-1.5 flex w-full items-center justify-between gap-2 text-[11px] font-extrabold text-[var(--text-primary)]"
                     aria-expanded
                   >
                     <span className="inline-flex items-center gap-1"><Building2 className="size-3" aria-hidden />건물 노후도 구분</span>
                     <span aria-hidden>▾</span>
                   </button>
-                  <div className="flex flex-col gap-1 text-[10.5px] border-b border-slate-100 pb-2 mb-2">
+                  <div className="flex flex-col gap-1 text-[10.5px] border-b border-[var(--border-muted)] pb-2 mb-2">
                     {AGE_LEGEND_ITEMS.map((item) => (
-                      <div key={item.label} className="flex items-center gap-1.5 font-semibold text-slate-700">
+                      <div key={item.label} className="flex items-center gap-1.5 font-semibold text-[var(--text-primary)]">
                         <span className="h-3 w-3 rounded-sm border border-black/10 shadow-xs" style={{ backgroundColor: item.color }} />
                         <span>{item.label}</span>
                       </div>
                     ))}
                   </div>
-                  <div className="text-[10px] font-bold text-slate-500 flex flex-col gap-0.5">
+                  <div className="text-[10px] font-bold text-[var(--text-secondary)] flex flex-col gap-0.5">
                     <span>선택 필지 평균 노후도</span>
                     <span className="text-xs font-black text-rose-600">{avgAge}년</span>
                   </div>
@@ -2865,7 +2865,7 @@ export function SatongMultiMap({
                   type="button"
                   onClick={() => setLegendOpen(true)}
                   aria-expanded={false}
-                  className="pointer-events-auto inline-flex w-fit items-center gap-1 rounded-full bg-white/95 px-3 py-1.5 text-[11px] font-black text-slate-700 shadow"
+                  className="pointer-events-auto inline-flex w-fit items-center gap-1 rounded-full bg-[var(--glass-bg-strong)] px-3 py-1.5 text-[11px] font-black text-[var(--text-primary)] shadow"
                 >
                   <Building2 className="size-3" aria-hidden />노후도 범례 · 평균 <span className="text-rose-600">{avgAge}년</span>
                   <span aria-hidden>▸</span>
@@ -2877,11 +2877,11 @@ export function SatongMultiMap({
                 (MARKET_TYPE_COLORS/MARKET_TYPE_LABELS)로 유형별 표시 건수를 범례화한다. */}
             {marketPayload && !marketPayload.fetch_failed && marketTypes.length > 0 && (
               marketLegendOpen ? (
-                <div className="pointer-events-auto w-fit min-w-[155px] max-w-[240px] rounded-xl border border-slate-200 bg-white/95 p-2.5 shadow-lg backdrop-blur">
+                <div className="pointer-events-auto w-fit min-w-[155px] max-w-[240px] rounded-xl border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] p-2.5 shadow-lg backdrop-blur">
                   <button
                     type="button"
                     onClick={() => setMarketLegendOpen(false)}
-                    className="mb-1.5 flex w-full items-center justify-between gap-2 text-[11px] font-extrabold text-slate-800"
+                    className="mb-1.5 flex w-full items-center justify-between gap-2 text-[11px] font-extrabold text-[var(--text-primary)]"
                     aria-expanded
                   >
                     <span className="inline-flex items-center gap-1"><Home className="size-3" aria-hidden />실거래 유형</span>
@@ -2889,11 +2889,11 @@ export function SatongMultiMap({
                   </button>
                   <div className="flex flex-col gap-1 text-[10.5px]">
                     {marketTypes.map((type) => (
-                      <div key={type} className="flex items-center gap-1.5 font-semibold text-slate-700">
+                      <div key={type} className="flex items-center gap-1.5 font-semibold text-[var(--text-primary)]">
                         <span className="h-3 w-3 rounded-full border border-black/10 shadow-xs" style={{ backgroundColor: MARKET_TYPE_COLORS[type] || "#2563eb" }} />
                         <span>{MARKET_TYPE_LABELS[type] || type}</span>
                         {/* ★정직 표기: 켜졌지만 0건인 유형도 숨기지 않고 0건으로 명시(무음 금지) */}
-                        <span className="ml-auto text-slate-500">{marketTypeCounts[type] ?? 0}건</span>
+                        <span className="ml-auto text-[var(--text-secondary)]">{marketTypeCounts[type] ?? 0}건</span>
                       </div>
                     ))}
                   </div>
@@ -2903,7 +2903,7 @@ export function SatongMultiMap({
                   type="button"
                   onClick={() => setMarketLegendOpen(true)}
                   aria-expanded={false}
-                  className="pointer-events-auto inline-flex w-fit items-center gap-1 rounded-full bg-white/95 px-3 py-1.5 text-[11px] font-black text-slate-700 shadow"
+                  className="pointer-events-auto inline-flex w-fit items-center gap-1 rounded-full bg-[var(--glass-bg-strong)] px-3 py-1.5 text-[11px] font-black text-[var(--text-primary)] shadow"
                 >
                   <Home className="size-3" aria-hidden />실거래 범례 · {marketTypes.length}유형
                   <span aria-hidden>▸</span>

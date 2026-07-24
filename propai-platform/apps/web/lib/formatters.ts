@@ -95,16 +95,20 @@ export function formatCurrencyCompact(value: number): string {
 }
 
 /**
- * Converts Square Meters (m²) to Pyeong (평) and formats cleanly.
- * 1 Pyeong = 3.305785 m²
+ * 면적 표시 SSOT(UX 트랙 A2) — ㎡+평 병기, ko-KR 로케일, "약" 접두 없음(값 자체가 이미
+ * 반올림 근사이므로 접두가 군더더기). SatongMapShell 로컬 formatArea·satong-measure의
+ * satong-measure 이외 자리(ComprehensiveAnalysisPanel·SiteAnalysisDetail) 로컬 중복분을
+ * 이 함수로 흡수한다(㎡ vs m²·"약" 유무·en-US/ko-KR 5중 분기 통일).
+ * 무효(null/NaN)·비양수(≤0)는 "-" — 가짜 "0㎡" 날조 금지(formatCurrencyKRW 등과 동일 원칙).
+ * fractionDigits: 주 수치(㎡) 소수 자릿수 상한. 미지정 시 toLocaleString 기본(최대 3자리)으로
+ * 기존 호출부 표기를 그대로 보존 — 정수 반올림이 필요한 호출부(예: SatongMapShell)는 0을 넘긴다.
+ * 평 환산은 모든 기존 호출부와 동일하게 항상 소수 1자리(toFixed(1), 천단위 콤마 없음).
  */
-export function formatArea(m2: number): string {
-  // 무효 입력은 "0 m²"로 날조하지 않는다 — 값 부재를 정직하게 표기.
-  if (isNaN(m2)) return "-";
-  if (m2 === 0) return "0 m²";
-
-  const pyeong = m2 / PYEONG_SQM;
-  return `${m2.toLocaleString("en-US", { maximumFractionDigits: 1 })} m² (약 ${pyeong.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}평)`;
+export function formatArea(value?: number | null, fractionDigits?: number): string {
+  if (value == null || !Number.isFinite(value) || value <= 0) return "-";
+  const pyeong = value / PYEONG_SQM;
+  const mainOpts = fractionDigits == null ? undefined : { maximumFractionDigits: fractionDigits };
+  return `${value.toLocaleString("ko-KR", mainOpts)}㎡ (${pyeong.toFixed(1)}평)`;
 }
 
 /**

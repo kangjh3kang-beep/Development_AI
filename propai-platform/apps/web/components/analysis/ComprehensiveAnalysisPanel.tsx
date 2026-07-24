@@ -22,14 +22,9 @@ import type { ParcelRow } from "@/lib/parcel-rows";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient } from "@/lib/api-client";
-import { PYEONG_SQM } from "@/lib/formatters";
+import { formatArea } from "@/lib/formatters"; // 면적 표기 SSOT(UX A2) — 로컬 중복 formatArea 대체
 
 /* ── Helpers ── */
-
-function formatArea(sqm: number): string {
-  if (!sqm || sqm <= 0) return "-";
-  return `${sqm.toLocaleString("ko-KR")} m² (${(sqm / PYEONG_SQM).toFixed(1)}평)`;
-}
 
 function formatWon(value: number): string {
   if (!value || value <= 0) return "-";

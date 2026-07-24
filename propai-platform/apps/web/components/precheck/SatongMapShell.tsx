@@ -39,6 +39,7 @@ import {
 } from "react";
 
 import { ApiClientError, apiClient, apiV1BaseUrl, hasAccessToken } from "@/lib/api-client";
+import { formatArea } from "@/lib/formatters"; // 면적 표기 SSOT(UX A2) — 로컬 중복 formatArea 대체
 import { UseLlmToggle } from "@/components/common/UseLlmToggle";
 import { DataSourceNotice } from "@/components/ui/DataSourceNotice";
 import type {
@@ -476,13 +477,6 @@ export function healParcelPnu(
   boundaryPnu: string | null | undefined,
 ): string | null {
   return existingPnu || boundaryPnu || null;
-}
-
-function formatArea(value?: number | null): string {
-  if (value == null || Number.isNaN(value)) return "-";
-  // ㎡·평 병행 표기(1평 = 3.305785㎡).
-  const pyeong = (value / 3.305785).toFixed(1);
-  return `${Math.round(value).toLocaleString()}㎡ (${pyeong}평)`;
 }
 
 function statusText(status: LayerStatus): string {
@@ -1981,7 +1975,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
             필지 선택 {selectedParcels.length}건
           </span>
           <span className="rounded-[var(--r-pill)] border border-[var(--border-muted)] bg-[var(--surface-strong)] px-3 py-2 text-xs font-black text-[var(--text-secondary)]">
-            합산 면적 <span className="font-mono">{formatArea(selectedTotalArea || null)}</span>
+            합산 면적 <span className="font-mono">{formatArea(selectedTotalArea || null, 0)}</span>
           </span>
         </div>
       </div>
@@ -2329,7 +2323,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
                         {parcel.address?.split(/\s+/).slice(-2).join(" ") || parcel.address}
                       </p>
                       <span className="shrink-0 font-mono text-[11px] font-bold text-[var(--text-secondary)]">
-                        {formatArea(parcel.areaSqm)}
+                        {formatArea(parcel.areaSqm, 0)}
                       </span>
                       <button
                         type="button"
@@ -2368,14 +2362,11 @@ export function SatongMapShell({ locale }: { locale: string }) {
         <section className="min-w-0 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-panel)] p-3 shadow-[var(--shadow-sm)] md:p-4">
           <div className="relative min-h-[720px] overflow-hidden rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--background-deep)]">
             <div className="pointer-events-auto absolute left-4 top-4 z-[380] flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={(event) => event.stopPropagation()}
-                className="rounded-full border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] px-3 py-2 text-xs font-black text-[var(--text-primary)] shadow-[var(--shadow-lg)] backdrop-blur-[var(--glass-blur)]"
-                aria-label="사통팔땅 멀티지도"
-              >
+              {/* ★UX A3: 비인터랙티브 배지(허위 어포던스 제거) — 이전엔 <button>이었으나 onClick이
+                  event.stopPropagation() 뿐이라 클릭 가능해 보이는데 아무 동작도 없었다. */}
+              <span className="rounded-full border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] px-3 py-2 text-xs font-black text-[var(--text-primary)] shadow-[var(--shadow-lg)] backdrop-blur-[var(--glass-blur)]">
                 사통팔땅 멀티지도
-              </button>
+              </span>
               {activeLayers.slice(0, 4).map((layer) => (
                 <button
                   key={layer.id}
@@ -2764,7 +2755,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
                 <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-strong)] p-3 text-xs">
                   <div>
                     <dt className="font-black text-[var(--text-hint)]">면적</dt>
-                    <dd className="mt-0.5 font-mono font-bold text-[var(--text-primary)]">{formatArea(detailFeature.areaSqm)}</dd>
+                    <dd className="mt-0.5 font-mono font-bold text-[var(--text-primary)]">{formatArea(detailFeature.areaSqm, 0)}</dd>
                   </div>
                   <div>
                     <dt className="font-black text-[var(--text-hint)]">용도지역</dt>
@@ -2869,17 +2860,30 @@ export function SatongMapShell({ locale }: { locale: string }) {
                   이 선택으로 바로 실행
                 </p>
                 <div className="mt-2 grid grid-cols-2 gap-2">
-                  {outputActions.map((action) => (
-                    <button
-                      key={action.id}
-                      type="button"
-                      disabled={selectedParcels.length === 0}
-                      onClick={() => void handleOutputClick(action)}
-                      className="rounded-2xl border border-[var(--border-muted)] bg-[var(--surface-panel)] px-3 py-2 text-left text-xs font-black text-[var(--text-primary)] transition hover:border-[var(--accent-strong)]/40 hover:bg-[var(--accent-strong)]/10 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {action.label}
-                    </button>
-                  ))}
+                  {outputActions.map((action) => {
+                    // ★UX A4(동일 패턴 전파): 이 미니 퍼널은 Output Dock과 달리 사유 문구가
+                    //   아예 없었다(opacity만) — aria-disabled+title+캡션을 동일하게 인접 배치.
+                    const miniDisabled = selectedParcels.length === 0;
+                    return (
+                      <button
+                        key={action.id}
+                        type="button"
+                        disabled={miniDisabled}
+                        aria-disabled={miniDisabled}
+                        title={miniDisabled ? "필지를 하나 이상 선택하면 산출물 생성 경로가 활성화됩니다." : undefined}
+                        onClick={() => void handleOutputClick(action)}
+                        className="rounded-2xl border border-[var(--border-muted)] bg-[var(--surface-panel)] px-3 py-2 text-left text-xs font-black text-[var(--text-primary)] transition hover:border-[var(--accent-strong)]/40 hover:bg-[var(--accent-strong)]/10 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {action.label}
+                        {miniDisabled && (
+                          <span className="mt-0.5 flex items-center gap-1 text-[9px] font-bold underline decoration-dotted underline-offset-2">
+                            <AlertTriangle className="size-2.5 shrink-0" aria-hidden />
+                            필지 선택 필요
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
                   {/* I3: 카카오 로드뷰(현장 확인) — URL 계약 라이브 검증(302→파노라마). 좌표 없으면 미표시(정직). */}
                   {(() => {
                     const roadview = kakaoRoadviewUrl(detailFeature.lat, detailFeature.lon);
@@ -2925,12 +2929,17 @@ export function SatongMapShell({ locale }: { locale: string }) {
                 {outputActions.map((action) => {
                   const Icon = action.icon;
                   const disabled = selectedParcels.length === 0;
+                  // ★UX A4: 비활성 사유를 opacity만이 아니라 버튼 안에 인접 배치(제목/aria-disabled/캡션)
+                  //   — 이전엔 사유 문구가 그리드 아래 별도 문단으로 분리돼 시각적으로 끊겨 있었다.
+                  const disabledReason = "필지를 하나 이상 선택하면 산출물 생성 경로가 활성화됩니다.";
                   return (
                     <button
                       key={action.id}
                       type="button"
                       onClick={() => void handleOutputClick(action)}
                       disabled={disabled}
+                      aria-disabled={disabled}
+                      title={disabled ? disabledReason : undefined}
                       className={`min-h-[112px] rounded-[var(--r-panel)] border p-3 text-left transition ${action.tone} ${
                         disabled ? "cursor-not-allowed opacity-50" : "hover:-translate-y-0.5 hover:shadow-xl"
                       }`}
@@ -2938,6 +2947,15 @@ export function SatongMapShell({ locale }: { locale: string }) {
                       <Icon className="size-5" aria-hidden />
                       <span className="mt-4 block text-sm font-black">{action.label}</span>
                       <span className="mt-1 block text-xs font-bold opacity-70">{action.description}</span>
+                      {disabled && (
+                        // 색은 버튼 자체 tone의 text-* 상속(각 tone이 이미 자기 배경 대비 검증된
+                        // 색을 지정)에 맡기고, 밑줄+굵기로만 사유 캡션임을 구분한다 — 새 색을
+                        // 얹으면 tone별 배경(accent-strong 등)과의 대비가 깨질 수 있어서다.
+                        <span className="mt-1.5 flex items-center gap-1 text-[10px] font-bold underline decoration-dotted underline-offset-2">
+                          <AlertTriangle className="size-2.5 shrink-0" aria-hidden />
+                          필지 선택 필요
+                        </span>
+                      )}
                     </button>
                   );
                 })}

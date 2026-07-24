@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { apiClient } from "@/lib/api-client"; // 다필지 지번별 용도지역·법규한도 조회(/zoning/parcels-info)
-import { PYEONG_SQM } from "@/lib/formatters";
+import { formatArea } from "@/lib/formatters"; // 면적 표기 SSOT(UX A2) — 로컬 중복 formatArea/sqmToPyeong 대체
 import { dynamicMap } from "@/components/common/MapShell";
 import type { NearbyTransactionsMap as NearbyTransactionsMapType } from "@/components/map/NearbyTransactionsMap";
 import type { ParcelBoundaryMap as ParcelBoundaryMapType } from "@/components/map/ParcelBoundaryMap";
@@ -46,15 +46,6 @@ interface SiteAnalysisDetailProps {
 }
 
 /* ── Helpers ── */
-
-function sqmToPyeong(sqm: number): string {
-  return (sqm / PYEONG_SQM).toFixed(1);
-}
-
-function formatArea(sqm: unknown): string {
-  if (typeof sqm !== "number" || sqm <= 0) return "-";
-  return `${sqm.toLocaleString("ko-KR")} m² (${sqmToPyeong(sqm)}평)`;
-}
 
 function formatWon(value: unknown): string {
   if (typeof value !== "number" || value <= 0) return "-";
@@ -737,7 +728,7 @@ function ParcelLandOverviewSummary({
                 )}
                 {parcels.length - 1}필지 ·{" "}
                 {sumArea > 0
-                  ? <>통합 {parcels.length}필지 합계 <span style={{ color: "var(--accent-strong)", fontWeight: 700 }}>{sumArea.toLocaleString("ko-KR")}㎡ ({sqmToPyeong(sumArea)}평)</span></>
+                  ? <>통합 {parcels.length}필지 합계 <span style={{ color: "var(--accent-strong)", fontWeight: 700 }}>{formatArea(sumArea)}</span></>
                   : "통합 면적은 면적이 확보된 필지가 없어 산출 불가"}
               </p>
 
