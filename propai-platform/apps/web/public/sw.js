@@ -123,7 +123,10 @@
 //        6종 동시 렌더로. SatongMultiMap 마켓 이펙트·SatongMapShell transactions 컨트롤·
 //        satong-map-layers 색상 SSOT·범례·절단 고지). 사용자 버그리포트("종류별 실거래를
 //        지도에 표기 안 함") 대응이라 stale 캐시에 가려지면 여전히 아파트만 보이므로 삭제.
-const CACHE_NAME = "propai-v463-satong-rail-hover";
+// v464: IA 재배치 UX 트랙B(#477 — 지도 상단화·집계 SSOT sticky·착지 지도셸 접기·
+//        h1 중복 제거). 정보구조 재배치가 stale app-shell 캐시에 가려지면 기존 사용자에게
+//        옛 레이아웃이 계속 노출되므로 구캐시 일괄 삭제.
+const CACHE_NAME = "propai-v464-ia-relayout";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
