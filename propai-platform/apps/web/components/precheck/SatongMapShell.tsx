@@ -196,6 +196,11 @@ type OutputAction = {
  * '연동 필요'가 아니라 실제 연동된 원천을 기술해야 한다.
  * (테스트 검증용으로 export — components/precheck/__tests__/SatongMapShell.layers.test.ts)
  */
+// ★팝오버 헤더 on/off 미노출 레이어(R1 M-3/M-4/M-D — 단발 예외 대신 패턴 상수화).
+//   terrain : on/off 소유자가 베이스맵 스위처(끄면 배경지도가 조용히 롤백·라벨도 거짓)
+//   cadastre: 기반 레이어라 끌 수 없음(토글 무동작 = 죽은 버튼)
+const LAYERS_WITHOUT_POPOVER_TOGGLE = new Set<SatongMapLayerId>(["terrain", "cadastre"]);
+
 const LAYERS: SatongLayer[] = [
   {
     id: "cadastre",
@@ -504,6 +509,9 @@ function defaultControlsByLayer(): SatongMapLayerState["controlsByLayer"] {
     poi: ["station", "school", "commerce", "park", "hospital"],
     development: ["facilities"],
     terrain: ["base"],
+    // ★R1 MEDIUM-E: capacity 키 부재로 켜도 showCapacity=false였다 — "지도 표시 중"이
+    //   거짓이 되는 terrain과 같은 결함 클래스. mapEffect 컨트롤이 하나뿐이라 논쟁 없음.
+    capacity: ["far-headroom"],
   };
 }
 
@@ -1464,13 +1472,76 @@ export function SatongMapShell({ locale }: { locale: string }) {
     window.location.href = `${apiV1BaseUrl()}/zoning/land-schedule-template`;
   }, []);
 
-  const handleLayerClick = useCallback((layerId: SatongMapLayerId) => {
-    setDetailFeature(null); // 단일 팝오버 — 레이어 패널을 열면 필지 상세는 닫는다
-    setBasemapOpen(false);  // 〃 베이스맵도(레일 버튼·좌상단 칩 행 두 호출부가 함께 따라온다)
-    if (!isRenderableSatongMapLayer(layerId)) {
-      setActiveLayerId((current) => (current === layerId ? null : layerId));
-      return;
+  // ★탐색(browse)과 확정(commit) 분리(2026-07-23 사용자 UX 요청2) — 레일 항목은 '열기만'
+  //   한다. 종전엔 레일 클릭이 지도 레이어를 즉시 토글해, 무슨 레이어인지 보려면 반드시
+  //   켜야 했다(보기=적용). 이제 롤오버/포커스/클릭은 미리보기 팝오버만 열고, 실제 적용은
+  //   팝오버 안의 컨트롤·헤더 on/off에서 한다. 지도 상태는 전혀 건드리지 않는다.
+  //   ★토글이 아니라 '지정'이다 — 롤오버로 항목을 옮길 때 같은 항목 재진입이 닫힘으로
+  //   해석되면 깜빡인다(전환은 열림 유지가 계약).
+  // ★고정(pin)된 패널 id — 클릭으로 연 것만 기록한다. boolean이면 레일 안에서 다른 항목을
+  //   '스치기만' 해도 true로 덮여 클릭 확정분이 강등된다(R1 MEDIUM-B 실증).
+  const pinnedPanelRef = useRef<SatongMapLayerId | "basemap" | null>(null);
+  // 레일 이탈 후 닫힘 유예 — 팝오버는 레일의 '형제'라 경계를 넘는 순간 mouseleave가 발화한다.
+  // 유예가 없으면 팝오버에 물리적으로 도달할 수 없다(R1 HIGH-B 실증).
+  const hoverCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (hoverCloseTimerRef.current) clearTimeout(hoverCloseTimerRef.current);
+  }, []);
+  const cancelHoverClose = useCallback(() => {
+    if (hoverCloseTimerRef.current) {
+      clearTimeout(hoverCloseTimerRef.current);
+      hoverCloseTimerRef.current = null;
     }
+  }, []);
+
+  // ★R1 3차 HIGH-1 봉합 — 닫힘은 상태와 '핀'을 함께 정리해야 한다(원자화). 종전엔 핀을
+  //   클릭 토글-닫기 2곳에서만 지워, Esc·X·외부클릭으로 닫으면 핀이 stale로 남고 그 뒤
+  //   hover 미리보기들이 "핀이 있으니 닫지 마라"에 걸려 지도 위에 눌러붙었다(2차 롤아웃
+  //   계약을 가장 흔한 흐름에서 재파괴). 닫힘 근원이 6곳 흩어져 있어 공용 헬퍼로 추출한다.
+  const closeLayerPanel = useCallback(() => {
+    pinnedPanelRef.current = null;
+    setActiveLayerId(null);
+  }, []);
+  const closeBasemapPanel = useCallback(() => {
+    pinnedPanelRef.current = null;
+    setBasemapOpen(false);
+  }, []);
+
+  // ★R1 4·5차 HIGH-2/3 종결 봉합 — 닫힘 근원이 6곳(Esc·외부클릭·X·클릭토글·유예타이머·팝오버
+  //   onMouseLeave)이라 헬퍼 위임만으론 매번 한둘이 샌다(타이머 콜백·팝오버 mouseleave는
+  //   raw setState). 핀 정리를 '경로'가 아니라 '상태 불변식'으로 세운다.
+  //   ★조건은 '완전히 닫힘'이지 '전환'이 아니다 — 배타 상태라 아무 팝오버도 안 보이는
+  //   순간(basemapOpen=false AND activeLayerId=null)에만 지운다. 종전 activeLayerId===pin은
+  //   A→B 전환 즉시 false가 돼 클릭 확정분을 조기 강등했다(R1 5차 HIGH-3=Q2-c 회귀). basemap↔
+  //   layer 스침은 한쪽만 false라 이 조건에 안 걸려 전환으로 올바르게 처리된다(양쪽 필수).
+  useEffect(() => {
+    const pin = pinnedPanelRef.current;
+    if (!pin) return;
+    if (!basemapOpen && activeLayerId === null) pinnedPanelRef.current = null;
+  }, [activeLayerId, basemapOpen]);
+
+  const openLayerPanel = useCallback((layerId: SatongMapLayerId) => {
+    // ★R1 HIGH-2: 여기서 setDetailFeature(null)을 하면 레일 위를 '스치기만' 해도 열려 있던
+    //   필지 상세가 파괴되고 Esc로도 복구되지 않는다(접힌 레일이 지도 우상단이라 상시 발생).
+    //   시각 배타는 렌더 가드(detailFeature && !activeLayer && !basemapOpen)가 이미 보장하므로
+    //   상세는 '가려질' 뿐이고, 팝오버를 닫으면 복원된다. 파괴적 초기화는 의도 경로
+    //   (handleLayerClick·openFeatureDetail)에만 남긴다.
+    setBasemapOpen(false);
+    setActiveLayerId(layerId);
+  }, []);
+
+  // 베이스맵 패널 열기(지정) — 레일 형제와 동일한 롤오버 계약.
+  const openBasemapPanel = useCallback(() => {
+    // ★R1 HIGH-2 동일 — hover 경로는 필지 상세를 파괴하지 않는다(가림→복원).
+    setActiveLayerId(null);
+    setBasemapOpen(true);
+  }, []);
+
+  // 레이어 on/off '만' — 팝오버 헤더 확정 버튼용. handleLayerClick은 패널 토글까지 하므로
+  // 팝오버 안에서 쓰면 누르는 순간 팝오버가 닫혀 결과를 볼 수 없다(확정 후 잔류가 계약).
+  // 지적도는 기반 레이어라 끄지 않는다(기존 handleLayerClick 규칙과 동일).
+  const toggleLayerEnabled = useCallback((layerId: SatongMapLayerId) => {
+    if (!isRenderableSatongMapLayer(layerId)) return;
     setEnabledLayers((prev) => {
       const next = new Set(prev);
       if (next.has(layerId)) {
@@ -1480,8 +1551,19 @@ export function SatongMapShell({ locale }: { locale: string }) {
       }
       return next;
     });
-    setActiveLayerId((current) => (current === layerId ? null : layerId));
   }, []);
+
+  // 레이어 자체 on/off — 좌상단 활성 칩(끄기 지름길)과 팝오버 헤더 토글의 공용 근원.
+  const handleLayerClick = useCallback((layerId: SatongMapLayerId) => {
+    setDetailFeature(null); // 단일 팝오버 — 레이어 패널을 열면 필지 상세는 닫는다
+    setBasemapOpen(false);  // 〃 베이스맵도(좌상단 칩 행·팝오버 헤더 두 호출부가 함께 따라온다)
+    if (!isRenderableSatongMapLayer(layerId)) {
+      setActiveLayerId((current) => (current === layerId ? null : layerId));
+      return;
+    }
+    toggleLayerEnabled(layerId); // ★공용 근원 위임(중복 제거 — cadastre 예외도 한 곳)
+    setActiveLayerId((current) => (current === layerId ? null : layerId));
+  }, [toggleLayerEnabled]);
 
   const handleLayerControlClick = useCallback((layerId: SatongMapLayerId, control: SatongLayerControl) => {
     if (!control.mapEffect) return;
@@ -1804,12 +1886,12 @@ export function SatongMapShell({ locale }: { locale: string }) {
   useEffect(() => {
     if (!activeLayerId) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setActiveLayerId(null);
+      if (event.key === "Escape") closeLayerPanel();
     };
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as Node;
       if (popoverRef.current?.contains(target) || railRef.current?.contains(target)) return;
-      setActiveLayerId(null);
+      closeLayerPanel();
     };
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("pointerdown", onPointerDown);
@@ -1817,19 +1899,19 @@ export function SatongMapShell({ locale }: { locale: string }) {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("pointerdown", onPointerDown);
     };
-  }, [activeLayerId]);
+  }, [activeLayerId, closeLayerPanel]);
 
   // 베이스맵 팝오버도 레이어 팝오버와 동일한 닫힘 계약(Esc·외부 포인터다운) — 같은 좌표에
   // 뜨는 형제 UI라 닫힘 규칙이 다르면 사용자가 두 규칙을 학습해야 한다(일관성).
   useEffect(() => {
     if (!basemapOpen) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setBasemapOpen(false);
+      if (event.key === "Escape") closeBasemapPanel();
     };
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as Node;
       if (basemapPopoverRef.current?.contains(target) || railRef.current?.contains(target)) return;
-      setBasemapOpen(false);
+      closeBasemapPanel();
     };
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("pointerdown", onPointerDown);
@@ -1837,7 +1919,7 @@ export function SatongMapShell({ locale }: { locale: string }) {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("pointerdown", onPointerDown);
     };
-  }, [basemapOpen]);
+  }, [basemapOpen, closeBasemapPanel]);
 
   // 베이스맵 스위처 — 우상단 레이어 레일의 '베이스맵' 항목이 여는 팝오버 본문(2026-07-23
   // 사용자 UX 요청: 지도 제어 일원화). 이력: 독립 absolute 섬(bottom-20 right-4) → 하단
@@ -2366,6 +2448,31 @@ export function SatongMapShell({ locale }: { locale: string }) {
 
             <div
               ref={railRef}
+              // ★사용자 요청('롤아웃하면 창이 닫히고') + R1 MEDIUM-1: hover로 연 팝오버는
+              //   레일을 벗어날 때 닫는다. 클릭으로 연 것은 유지해야 팝오버 안 컨트롤로
+              //   마우스를 옮겨 확정할 수 있다(고정분은 pinnedPanelRef로 식별·유예 200ms는 팝오버가 취소).
+              onMouseLeave={() => {
+                // ★R1 3차 HIGH-1: '핀 존재'가 아니라 '지금 보이는 팝오버가 고정분인가'로
+                //   판정한다. stale 핀(Esc/X로 닫힌 뒤 잔존)이 무관한 hover 팝오버를
+                //   눌러붙게 하던 누수 봉합. (closeLayerPanel/Basemap이 핀을 지우므로
+                //   이제 stale은 안 생기지만, 매칭 가드는 그와 무관히도 안전하다.)
+                const shownIsPinned =
+                  pinnedPanelRef.current === "basemap"
+                    ? basemapOpen
+                    : pinnedPanelRef.current != null && activeLayerId === pinnedPanelRef.current;
+                if (shownIsPinned) return;
+                cancelHoverClose();
+                hoverCloseTimerRef.current = setTimeout(() => {
+                  hoverCloseTimerRef.current = null;
+                  const stillPinned =
+                    pinnedPanelRef.current === "basemap"
+                      ? basemapOpen
+                      : pinnedPanelRef.current != null && activeLayerId === pinnedPanelRef.current;
+                  if (stillPinned) return;
+                  setActiveLayerId(null);
+                  setBasemapOpen(false);
+                }, 200); // ★HIGH-B 유예 — 팝오버 onMouseEnter가 취소한다
+              }}
               // ★P1(감사): 고정고는 전 버튼 필요고보다 작아 하단(로드뷰 등)이 클리핑돼 도달
               //   불가였음 — 가용고 내 auto + 세로 스크롤로 전 버튼 접근 보장.
               // ★WP-M4: hover 전개에 더해 앵커 클릭 고정(railPinned)으로도 전개 — 터치 기기 대응.
@@ -2406,10 +2513,19 @@ export function SatongMapShell({ locale }: { locale: string }) {
                   UX 요청). 종전엔 레일=우상단·베이스맵=우하단으로 제어가 분산돼 있었다. */}
               <button
                 type="button"
+                // ★레일 형제와 동일 계약 — 롤오버·포커스는 '열기'(지정), 클릭은 토글.
+                //   전환 중 같은 항목 재진입이 닫힘이 되면 깜빡이므로 hover는 열기만 한다.
+                onMouseEnter={() => { cancelHoverClose(); openBasemapPanel(); }}
+                // ★형제와 동일 계약(HIGH-A) + R1 MEDIUM-C: setDetailFeature(null) 삭제
+                //   (레이어 경로는 '가림→복원'인데 베이스맵만 파괴적이라 비대칭이었다).
                 onClick={() => {
-                  setActiveLayerId(null); // 상호배타 — 같은 좌표에 두 팝오버가 겹치지 않게
-                  setBasemapOpen((v) => !v);
+                  cancelHoverClose();
+                  const wasPinned = basemapOpen && pinnedPanelRef.current === "basemap";
+                  if (wasPinned) { closeBasemapPanel(); return; }
+                  pinnedPanelRef.current = "basemap";
+                  openBasemapPanel();
                 }}
+                aria-haspopup="dialog"
                 aria-expanded={basemapOpen}
                 aria-controls="satong-basemap-popover"
                 aria-label="베이스맵 선택"
@@ -2432,13 +2548,37 @@ export function SatongMapShell({ locale }: { locale: string }) {
                   <button
                     key={layer.id}
                     type="button"
-                    onClick={() => handleLayerClick(layer.id)}
-                    title={layer.label}
+                    // ★열기만(확정 아님) — 롤오버·클릭 모두 미리보기 팝오버를 연다.
+                    //   터치엔 hover가 없으므로 탭(click)도 같은 동작이어야 한다.
+                    // ★R1 HIGH-1: onFocus는 제거한다 — Tab 이동만으로 팝오버가 연쇄 전환돼
+                    //   키보드 사용자가 팝오버 안의 확정 버튼에 영영 도달할 수 없었다(마지막
+                    //   레일 항목은 렌더불가라 on/off 자체가 없음). Enter/Space는 onClick을
+                    //   발화하므로 키보드 열기 경로는 그대로다.
+                    onMouseEnter={() => { cancelHoverClose(); openLayerPanel(layer.id); }}
+                    // ★R1 LOW-1: 클릭은 토글 — 레일에서 팝오버를 닫을 수단이 사라졌던 회귀
+                    //   복원. 깜빡임 논거는 hover에만 유효하고 click에는 적용되지 않는다.
+                    // ★R1 HIGH-A: 실브라우저는 click 앞에 mouseenter를 반드시 보낸다. 종전
+                    //   'activeLayerId===id면 닫기'는 hover로 열린 것을 '클릭으로 연 것'으로
+                    //   오인해 첫 클릭이 항상 닫기가 됐다(더블클릭해야 사용 가능). 클릭은
+                    //   hover분을 닫지 말고 '고정(pin)'으로 승격하고, 이미 고정된 것만 닫는다.
+                    onClick={() => {
+                      cancelHoverClose();
+                      const wasPinned = activeLayerId === layer.id && pinnedPanelRef.current === layer.id;
+                      if (wasPinned) { closeLayerPanel(); return; }
+                      pinnedPanelRef.current = layer.id;
+                      openLayerPanel(layer.id);
+                    }}
+                    aria-haspopup="dialog"
+                    aria-expanded={activeLayerId === layer.id}
+                    title={`${layer.label} — 미리보기 열기 (지도 적용은 팝오버에서)`}
                     className={`grid size-12 shrink-0 place-items-center rounded-2xl border text-[var(--text-secondary)] transition ${
-                      isActive
-                        ? "border-[var(--accent-strong)] bg-[var(--accent-strong)] text-[var(--on-primary)] shadow-[var(--shadow-glow)]"
-                        : enabled
-                          ? "border-[var(--accent-strong)]/40 bg-[var(--accent-strong)]/15 text-[var(--primary-dim)]"
+                      // ★R1 MEDIUM-5: 채움=적용됨(enabled), 링=선택 중(isActive). 종전엔
+                      //   미적용 미리보기에 가장 강한 채움이 배정돼 "보기=적용" 오해를
+                      //   시각 층에서 되살리고 있었다.
+                      enabled
+                        ? `border-[var(--accent-strong)] bg-[var(--accent-strong)] text-[var(--on-primary)] ${isActive ? "ring-2 ring-[var(--accent-strong)] ring-offset-2 ring-offset-[var(--surface)]" : ""}`
+                        : isActive
+                          ? "border-[var(--accent-strong)] bg-[var(--surface-panel)] text-[var(--accent-strong)] ring-2 ring-[var(--accent-strong)]"
                           : "border-[var(--border-muted)] bg-[var(--surface-panel)] hover:border-[var(--line-strong)] hover:bg-[var(--surface-strong)]"
                     }`}
                     aria-label={layer.label}
@@ -2457,13 +2597,17 @@ export function SatongMapShell({ locale }: { locale: string }) {
               <div
                 ref={basemapPopoverRef}
                 id="satong-basemap-popover"
+                role="dialog"
+                aria-label="베이스맵"
+                onMouseEnter={cancelHoverClose}
+                onMouseLeave={() => { if (pinnedPanelRef.current !== "basemap") setBasemapOpen(false); }}
                 className="absolute right-20 top-20 z-[430] w-[min(360px,calc(100%-112px))] rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] p-4 shadow-[var(--shadow-xl)] backdrop-blur-xl"
               >
                 <div className="mb-3 flex items-center justify-between">
                   <h3 className="text-lg font-black text-[var(--text-primary)]">베이스맵</h3>
                   <button
                     type="button"
-                    onClick={() => setBasemapOpen(false)}
+                    onClick={closeBasemapPanel}
                     aria-label="베이스맵 닫기"
                     className="grid size-8 place-items-center rounded-xl border border-[var(--border-muted)] bg-[var(--surface-panel)] text-[var(--text-secondary)] transition hover:bg-[var(--surface-strong)]"
                   >
@@ -2480,6 +2624,10 @@ export function SatongMapShell({ locale }: { locale: string }) {
             {activeLayer && (
               <div
                 ref={popoverRef}
+                role="dialog"
+                aria-label={activeLayer.label}
+                onMouseEnter={cancelHoverClose}
+                onMouseLeave={() => { if (pinnedPanelRef.current !== activeLayer.id) setActiveLayerId(null); }}
                 className="absolute right-20 top-20 z-[430] w-[min(360px,calc(100%-112px))] rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] p-4 shadow-[var(--shadow-xl)] backdrop-blur-xl"
               >
                 <div className="flex items-start justify-between gap-3">
@@ -2494,14 +2642,34 @@ export function SatongMapShell({ locale }: { locale: string }) {
                     </div>
                     <h3 className="mt-2 text-lg font-black text-[var(--text-primary)]">{activeLayer.label}</h3>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setActiveLayerId(null)}
-                    className="rounded-full p-2 text-[var(--text-hint)] transition hover:bg-[var(--surface-muted)] hover:text-[var(--text-primary)]"
-                    aria-label="레이어 설정 닫기"
-                  >
-                    <X className="size-4" aria-hidden />
-                  </button>
+                  <div className="flex items-center gap-1">
+                    {/* ★확정(commit) 지점 — 레일에서 강제 토글을 걷어낸 대신, 레이어 자체
+                        on/off를 여기에 둔다(끄기 수단 보존). 렌더 불가 레이어는 노출하지
+                        않는다(지도에 반영되지 않으므로 켜기 약속이 거짓이 된다). */}
+                    {isRenderableSatongMapLayer(activeLayer.id) && !LAYERS_WITHOUT_POPOVER_TOGGLE.has(activeLayer.id) && (
+                      <button
+                        type="button"
+                        onClick={() => toggleLayerEnabled(activeLayer.id)}
+                        aria-pressed={enabledLayers.has(activeLayer.id)}
+                        className={`rounded-xl border px-3 py-1.5 text-xs font-black transition ${
+                          enabledLayers.has(activeLayer.id)
+                            ? "border-[var(--accent-strong)] bg-[var(--accent-strong)] text-[var(--on-primary)]"
+                            : "border-[var(--border-muted)] bg-[var(--surface-panel)] text-[var(--text-secondary)] hover:border-[var(--accent-strong)]/40 hover:text-[var(--accent-strong)]"
+                        }`}
+                        title={enabledLayers.has(activeLayer.id) ? "지도에서 이 레이어 끄기" : "지도에 이 레이어 켜기"}
+                      >
+                        {enabledLayers.has(activeLayer.id) ? "지도 표시 중" : "지도에 표시"}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={closeLayerPanel}
+                      className="rounded-full p-2 text-[var(--text-hint)] transition hover:bg-[var(--surface-muted)] hover:text-[var(--text-primary)]"
+                      aria-label="레이어 설정 닫기"
+                    >
+                      <X className="size-4" aria-hidden />
+                    </button>
+                  </div>
                 </div>
                 <p className="mt-2 text-sm font-semibold leading-6 text-[var(--text-secondary)]">
                   {activeLayer.description}
