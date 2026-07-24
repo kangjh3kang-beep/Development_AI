@@ -23,6 +23,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from app.services.common.sunlight_setback import required_north_setback_m
+from app.services.zoning.legal_zone_limits import far_cap_with_structural_overlay
 
 
 class ComplianceStatus(StrEnum):
@@ -114,6 +115,10 @@ class BuildingCodeRuleEngine:
         return results
 
     # ── BL-001: 건폐율 ──
+    # ★레인H 스윕 판단(2026-07-24): 구조상한(건폐율×층수)은 '건폐율'이 아니라 층수제한 zone의
+    #   실효 '용적률' 상한을 만드는 산식(층수는 연면적/용적률에만 영향, 건축면적/건폐율에는
+    #   영향 없음)이라 이 함수는 무관하다 — max_bcr 자체가 이미 법정 실효 건폐율 상한(예:
+    #   자연녹지 20%)이다. 따라서 _check_bcr은 미변경(BL-002만 구조상한 흡수 대상).
 
     def _check_bcr(self, design: dict, site: dict) -> RuleCheckResult:
         max_bcr = site.get("max_bcr", 60)
@@ -145,19 +150,43 @@ class BuildingCodeRuleEngine:
         total_gfa = design.get("total_gfa_sqm", 0)
         actual_far = (total_gfa / land_area) * 100
 
+        # ★구조상한(건폐율×층수) 흡수(레인H, 2026-07-24 라이브 재현·근원수정): 자연/생산/보전
+        #   녹지 등 층수제한 zone은 법정 용적률 '범위'(예: 자연녹지 50~100%)만 비교하면 물리적
+        #   상한(건폐 20%×법정4층=80%)을 놓쳐 far=100% 설계를 과대낙관 '적합' 처리한다. 공용
+        #   헬퍼(far_cap_with_structural_overlay — structural_cap_for를 감싸 legal_zone_limits.py
+        #   에 공용화, /legal-check 라우터도 동일 헬퍼 재사용)로 min(법정, 구조상한)을 적용한다.
+        #   applied_bcr_pct는 '이 설계의 실제 건폐율'(건폐율 자체는 _check_bcr이 검증) —
+        #   건축면적 미입력(0)이면 산정 근거가 없어 None(무음 — 원래 max_far 유지, 경고 아님).
+        building_area = design.get("building_area_sqm", 0)
+        applied_bcr_pct = (building_area / land_area * 100) if building_area > 0 else None
+        zone_type = site.get("zone_type")
+        max_far, cap_floor, cap_basis, cap_unresolved_note = far_cap_with_structural_overlay(
+            zone_type, max_far, applied_bcr_pct,
+        )
+
         status = ComplianceStatus.PASS if actual_far <= max_far else ComplianceStatus.FAIL
+        required_value = f"{max_far:g}% 이하"
+        cap_suffix = ""
+        if cap_basis:
+            # ★R1 리뷰 LOW#2(2026-07-24): "건폐율×N층"만 표기하면 규제상한(법정 건폐율)으로
+            #   오독될 수 있다 — 이 값은 '이 설계의 실제 건폐율'이므로 수치를 병기해 명확화.
+            required_value += f" (구조상한: 건폐율{applied_bcr_pct:g}%×{cap_floor}층)"
+            cap_suffix = f" — 구조상한(건폐율{applied_bcr_pct:g}%×{cap_floor}층) 적용({cap_basis})"
+        elif cap_unresolved_note:
+            required_value += f" ({cap_unresolved_note})"
+            cap_suffix = f" ({cap_unresolved_note})"
         return RuleCheckResult(
             rule_id="BL-002",
             rule_name="용적률 검증",
             # 용적률 §85는 국토계획법 시행령(건축법 §56이 위임) — 종전 '건축법 시행령' 오표기 교정.
             legal_basis="국토의 계획 및 이용에 관한 법률 시행령 제85조(건축법 제56조 위임)",
             status=status,
-            required_value=f"{max_far}% 이하",
+            required_value=required_value,
             actual_value=f"{actual_far:.1f}%",
             message=(
-                f"용적률 적합 ({actual_far:.1f}% ≤ {max_far}%)"
+                f"용적률 적합 ({actual_far:.1f}% ≤ {max_far:g}%{cap_suffix})"
                 if status == ComplianceStatus.PASS
-                else f"용적률 초과 ({actual_far:.1f}% > {max_far}%) — {actual_far - max_far:.1f}%p 초과"
+                else f"용적률 초과 ({actual_far:.1f}% > {max_far:g}%{cap_suffix}) — {actual_far - max_far:.1f}%p 초과"
             ),
         )
 
