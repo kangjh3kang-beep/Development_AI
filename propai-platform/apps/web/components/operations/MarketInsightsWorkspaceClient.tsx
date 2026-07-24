@@ -734,8 +734,11 @@ export function MarketInsightsWorkspaceClient() {
         pipeline={deriveMarketPipelineSteps({ genState, report, useLlm })}
       />
 
-      {/* 사통팔땅 전역 싱글 통합지도 워크스페이스 (대시보드와 100% 동일한 필지 입력 + 멀티지도 엔진) */}
-      <SatongMapShellDynamic locale="ko" />
+      {/* 사통팔땅 전역 싱글 통합지도 워크스페이스 (대시보드와 100% 동일한 필지 입력 + 멀티지도 엔진).
+          ★UX 트랙 B4: 착지 페이지라 기본 접힘(defaultCollapsed). ★UX 트랙 B2: showContextHeader는
+          켜지 않는다 — 위에서 이미 이 산출물 전용 실제 파이프라인(deriveMarketPipelineSteps)을
+          실은 더 정밀한 ContextHeader를 렌더 중이라, 셸 내부 것까지 켜면 중복이 된다. */}
+      <SatongMapShellDynamic locale="ko" defaultCollapsed />
 
       {/* 분석 대상 요약 카드 */}
       <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)]/50 p-4 flex flex-wrap items-center justify-between gap-4">

@@ -2447,8 +2447,8 @@ export function SatongMultiMap({
   );
   const newCount = newStaged.length;
   const totalCount = selectedMembershipKeys.size + newCount;
-  // 합산 면적은 신규 staged 기준(총 면적은 프로젝트 목록/분석에서 별도 집계).
-  const totalAreaSqm = newStaged.reduce((acc, p) => acc + (p.area_sqm ?? 0), 0);
+  // ★UX 트랙 B2: 신규 staged 합산 면적 표기는 하단 바에서 제거됐다(대지면적 SSOT는
+  //   ContextHeader로 흡수) — 여기서도 더 이상 계산하지 않는다(죽은 계산 금지).
 
   // pending이 이미 staged에 있는지 / 프로젝트에 이미 등록됐는지(확인 카드 표시용)
   const pendingAlreadyStaged = pending?.pnu
@@ -3105,16 +3105,13 @@ export function SatongMultiMap({
         style={isMapFullscreen ? { zIndex: SATONG_UI_Z.bottomBar } : undefined}
       >
         {/* 선택 현황 — ★WP-M2 이중표기: 신규(이번에 담은 것)와 총(프로젝트 포함) 분리 표기.
-            프로젝트 연결 직후엔 신규 0·총 12로 보여 "지적 12 vs 완료 1" 혼란을 없앤다. */}
+            프로젝트 연결 직후엔 신규 0·총 12로 보여 "지적 12 vs 완료 1" 혼란을 없앤다.
+            ★UX 트랙 B2: 면적 문구는 여기서 제거 — 대지면적 SSOT는 ContextHeader(지도셸 상단
+            sticky)로 흡수됐다. 필지 수 카운트는 지도 조작 직후 즉시 피드백이라 그대로 유지. */}
         <div className="flex-1 text-[11px]">
           {totalCount > 0 ? (
             <span className="font-bold text-[var(--text-primary)]">
               신규 <span className="text-[var(--accent-strong)]">{newCount}</span> · 총 <span className="text-[var(--accent-strong)]">{totalCount}필지</span>
-              {totalAreaSqm > 0 && (
-                <span className="ml-1.5 font-normal text-[var(--text-secondary)]">
-                  · 신규 {Math.round(totalAreaSqm).toLocaleString()}㎡ ({toP(totalAreaSqm)}평)
-                </span>
-              )}
             </span>
           ) : (
             <span className="text-[var(--text-hint)]">아직 선택된 필지 없음</span>
