@@ -123,7 +123,7 @@
 //        6종 동시 렌더로. SatongMultiMap 마켓 이펙트·SatongMapShell transactions 컨트롤·
 //        satong-map-layers 색상 SSOT·범례·절단 고지). 사용자 버그리포트("종류별 실거래를
 //        지도에 표기 안 함") 대응이라 stale 캐시에 가려지면 여전히 아파트만 보이므로 삭제.
-const CACHE_NAME = "propai-v462-realtx-multi-type";
+const CACHE_NAME = "propai-v463-satong-rail-hover";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
