@@ -123,7 +123,11 @@
 //        6종 동시 렌더로. SatongMultiMap 마켓 이펙트·SatongMapShell transactions 컨트롤·
 //        satong-map-layers 색상 SSOT·범례·절단 고지). 사용자 버그리포트("종류별 실거래를
 //        지도에 표기 안 함") 대응이라 stale 캐시에 가려지면 여전히 아파트만 보이므로 삭제.
-const CACHE_NAME = "propai-v462-realtx-multi-type";
+// v463: Hyphen 등기 API 연동 + 긴급 PDF OCR 파서 폴백(#588ea8ed). 프론트 3파일
+//        (RegistryBulkButton 대량조회·RegistryUploadModal 업로드·ApiKeyManagementPanel
+//        Hyphen 키 설정)이 stale app-shell 캐시에 가려지면 신규 등기 조회 UI가 기존
+//        사용자에게 노출되지 않으므로 구캐시 일괄 삭제.
+const CACHE_NAME = "propai-v463-hyphen-registry";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
