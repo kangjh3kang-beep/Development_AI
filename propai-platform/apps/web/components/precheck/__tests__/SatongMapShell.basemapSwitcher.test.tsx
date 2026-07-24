@@ -407,3 +407,44 @@ describe("SatongMapShell 레일 — 핀 잔여 누수(HIGH-2)", () => {
     } finally { vi.useRealTimers(); }
   });
 });
+
+/**
+ * R1 5차 HIGH-3 자물쇠 — 핀 정리 이펙트가 '전환'이 아니라 '완전 닫힘'에만 발화해야 한다.
+ *   A 클릭확정 후 레일 안에서 B를 스쳤다 A로 돌아오면, 클릭 확정분(A)은 유지되어야 한다
+ *   (round2 MEDIUM-B가 봉합했던 계약 — 4차 조건식 오류로 회귀했던 것).
+ */
+describe("SatongMapShell 레일 — 전환 vs 완전닫힘(HIGH-3·Q2-c)", () => {
+  beforeEach(() => { window.sessionStorage.clear(); resetStores(); });
+  afterEach(() => { window.sessionStorage.clear(); resetStores(); });
+
+  it("★Q2-c(레이어): 클릭확정→다른 항목 스침→원항목 복귀→레일 이탈이면 유지된다", () => {
+    vi.useFakeTimers();
+    try {
+      render(<SatongMapShell locale="ko" />);
+      const aBtn = screen.getByRole("button", { name: /용도지역/ });
+      const rail = aBtn.closest("div")!;
+      hoverClick(aBtn); // pin=용도지역(클릭 확정)
+      fireEvent.mouseEnter(screen.getByRole("button", { name: "공시지가" })); // B 스침(전환)
+      fireEvent.mouseEnter(aBtn); // A 복귀(전환)
+      fireEvent.mouseLeave(rail);
+      act(() => { vi.advanceTimersByTime(400); });
+      // 스침이 있었어도 클릭 확정분은 살아야 한다(전환은 강등이 아니다).
+      expect(screen.getByRole("heading", { level: 3, name: "용도지역" })).toBeTruthy();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("★Q2-c(베이스맵): 베이스맵 클릭확정→레이어 스침→베이스맵 복귀→이탈이면 유지된다", () => {
+    vi.useFakeTimers();
+    try {
+      render(<SatongMapShell locale="ko" />);
+      const bmBtn = screen.getByRole("button", { name: "베이스맵 선택" });
+      const rail = bmBtn.closest("div")!;
+      hoverClick(bmBtn); // pin=basemap(클릭 확정)
+      fireEvent.mouseEnter(screen.getByRole("button", { name: /용도지역/ })); // 레이어 스침(basemapOpen=false)
+      fireEvent.mouseEnter(bmBtn); // 베이스맵 복귀
+      fireEvent.mouseLeave(rail);
+      act(() => { vi.advanceTimersByTime(400); });
+      expect(screen.getByRole("button", { name: "베이스맵: 일반" })).toBeTruthy();
+    } finally { vi.useRealTimers(); }
+  });
+});

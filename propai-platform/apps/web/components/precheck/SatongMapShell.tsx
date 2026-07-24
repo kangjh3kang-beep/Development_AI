@@ -1507,16 +1507,17 @@ export function SatongMapShell({ locale }: { locale: string }) {
     setBasemapOpen(false);
   }, []);
 
-  // ★R1 4차 HIGH-2 종결 봉합 — 닫힘 근원이 6곳(Esc·외부클릭·X·클릭토글·유예타이머·팝오버
+  // ★R1 4·5차 HIGH-2/3 종결 봉합 — 닫힘 근원이 6곳(Esc·외부클릭·X·클릭토글·유예타이머·팝오버
   //   onMouseLeave)이라 헬퍼 위임만으론 매번 한둘이 샌다(타이머 콜백·팝오버 mouseleave는
-  //   raw setState). 핀 정리를 '경로'가 아니라 '상태 불변식'으로 세운다: 고정 팝오버가
-  //   '완전히 닫힌'(전환 아님·null/false) 순간 어느 경로로 닫혔든 핀을 지운다. 전환(A→B)엔
-  //   지우지 않아 Q2-c(클릭 확정 유지)를 보존한다. 이 단일 이펙트가 6경로+미래 경로를 덮는다.
+  //   raw setState). 핀 정리를 '경로'가 아니라 '상태 불변식'으로 세운다.
+  //   ★조건은 '완전히 닫힘'이지 '전환'이 아니다 — 배타 상태라 아무 팝오버도 안 보이는
+  //   순간(basemapOpen=false AND activeLayerId=null)에만 지운다. 종전 activeLayerId===pin은
+  //   A→B 전환 즉시 false가 돼 클릭 확정분을 조기 강등했다(R1 5차 HIGH-3=Q2-c 회귀). basemap↔
+  //   layer 스침은 한쪽만 false라 이 조건에 안 걸려 전환으로 올바르게 처리된다(양쪽 필수).
   useEffect(() => {
     const pin = pinnedPanelRef.current;
     if (!pin) return;
-    const stillShown = pin === "basemap" ? basemapOpen : activeLayerId === pin;
-    if (!stillShown) pinnedPanelRef.current = null;
+    if (!basemapOpen && activeLayerId === null) pinnedPanelRef.current = null;
   }, [activeLayerId, basemapOpen]);
 
   const openLayerPanel = useCallback((layerId: SatongMapLayerId) => {
