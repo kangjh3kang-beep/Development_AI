@@ -123,22 +123,34 @@ describe("SatongMapShell 베이스맵 스위처(레일 통합)", () => {
     expect(screen.getByRole("button", { name: "베이스맵: 일반" })).toBeTruthy();
   });
 
-  it("★좌상단 활성레이어 칩 경로에서도 닫힌다(근원 봉합=handleLayerClick)", () => {
+  // ★UX 트랙 C2(2026-07-24, 사용자 지적 — '편의성 부조화'): 이 테스트는 종전에 좌상단
+  //   활성 레이어 칩이 <button>이라 클릭하면 handleLayerClick을 거쳐 베이스맵 팝오버를
+  //   닫던 "근원 봉합" 경로를 고정했었다. 그런데 그 button 자체가 버그였다 — 클릭하면
+  //   레이어를 끄면서 동시에(방금 끈) 레이어의 설정 팝오버를 여는 이중 조작이 됐다.
+  //   레이어 조작은 우상단 레일 하나로 일원화하고 칩은 표시 전용 배지로 강등했으므로,
+  //   "칩 클릭이 팝오버를 닫는다"는 이 계약은 의도적으로 폐기한다(대체 경로=레일, 바로
+  //   위 "★레이어 팝오버와 상호배타" 테스트가 이미 그 경로로 동일 불변식을 고정한다).
+  //   대신 "칩이 더 이상 클릭 가능한 button이 아니다"라는 새 계약을 고정해 회귀를 막는다.
+  it("★UX C2: 좌상단 활성 레이어 칩은 비인터랙티브 배지다 — button이 아니고 클릭해도 무동작", () => {
     render(<SatongMapShell locale="ko" />);
-    // ★지적도는 초기 활성(cadastre 기본 ON)이라 좌상단 칩이 이미 존재한다.
-    //   (레일 클릭은 더 이상 레이어를 켜지 않는다 — 탐색/확정 분리)
-    hoverClick(screen.getByRole("button", { name: "지적도" }));
+    // 지적도는 초기 활성(cadastre 기본 ON)이라 좌상단 칩이 이미 존재한다.
+    const railButton = screen.getByRole("button", { name: "지적도" });
+
+    // 칩의 접근성 명칭은 레일 버튼과 동일(aria-label="지적도")이지만, 칩은 button 역할이
+    // 아니므로 getByRole("button", ...)은 레일 버튼 단 하나만 찾는다(칩=button 2개였다면
+    // 실패 — 조건부 단언 없이 명시적으로 개수를 고정).
+    expect(screen.getAllByRole("button", { name: "지적도" })).toEqual([railButton]);
+
+    // 배지 자체(표시 기능)는 그대로 화면에 남는다 — 텍스트 노드로 존재(aria-label이 아닌
+    // 실제 렌더 텍스트라 getByText로 잡힌다. 레일 버튼은 아이콘뿐이라 겹치지 않는다).
+    const chip = screen.getByText("지적도");
+    expect(chip.tagName).toBe("SPAN");
+
+    // 클릭해도 베이스맵 팝오버 상태에 아무 영향이 없다(무동작 확인).
     openBasemapPopover();
     expect(screen.getByRole("button", { name: "베이스맵: 일반" })).toBeTruthy();
-
-    // ★조건부 단언 금지 — 칩을 못 찾으면 조용히 통과하는 약한 테스트가 된다(명시 실패).
-    const railButton = screen.getByRole("button", { name: "지적도" });
-    const chip = screen
-      .getAllByRole("button", { name: /지적/ })
-      .find((el) => el !== railButton);
-    expect(chip, "좌상단 활성 레이어 칩을 찾지 못함").toBeTruthy();
-    fireEvent.click(chip!);
-    expect(screen.queryByRole("button", { name: "베이스맵: 일반" })).toBeNull();
+    fireEvent.click(chip);
+    expect(screen.getByRole("button", { name: "베이스맵: 일반" })).toBeTruthy();
   });
 
   it("Esc로 닫힌다(레이어 팝오버와 동일 닫힘 계약)", () => {
