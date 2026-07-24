@@ -591,7 +591,10 @@ export function ComprehensiveAnalysisPanel() {
       {loading && (
         <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-strong)] p-8 text-center">
           <div className="inline-block h-8 w-8 animate-spin rounded-full border-3 border-[var(--accent-strong)] border-t-transparent mb-3" />
-          <p className="text-sm text-[var(--text-secondary)]">7개 카테고리 분석 중... (약 5~10초)</p>
+          {/* ★UX 트랙 C5(무날조 원칙): "약 5~10초"는 실측 근거가 없는 거짓 문구였다 — 이 요청은
+              apiClient 기본 타임아웃(120초, lib/api-client.ts DEFAULT_TIMEOUT_MS)을 그대로 쓰므로
+              실제로 최대 2분까지 걸릴 수 있다. 별도 timeoutMs override가 없어 그 상한을 그대로 반영. */}
+          <p className="text-sm text-[var(--text-secondary)]">7개 카테고리 분석 중... (최대 2분 소요될 수 있습니다)</p>
           <div className="mt-3 flex items-center justify-center gap-2">
             <span className="inline-block h-2 w-2 rounded-full bg-blue-400 animate-pulse" />
             <p className="text-[11px] text-blue-400">AI 해석 생성 중...</p>

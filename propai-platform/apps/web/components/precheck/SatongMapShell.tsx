@@ -33,14 +33,17 @@ import {
   type ComponentType,
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
 } from "react";
 
+import { useToastOptional } from "@propai/ui"; // UX 트랙 C3 — 내보내기 완료 등 일시 고지용(호스트 없으면 인라인 폴백)
 import { ApiClientError, apiClient, apiV1BaseUrl, hasAccessToken } from "@/lib/api-client";
 import { formatArea } from "@/lib/formatters"; // 면적 표기 SSOT(UX A2) — 로컬 중복 formatArea 대체
 import { UseLlmToggle } from "@/components/common/UseLlmToggle";
+import { AnalysisPipelineStepbar, type PipelineStep } from "@/components/common/AnalysisPipelineStepbar"; // UX 트랙 C4 — 엑셀 업로드 진행표시(기존 프리미티브 재사용)
 import { ContextHeader } from "@/components/common/ContextHeader"; // 집계 SSOT 단일표면(UX 트랙 B2)
 import { DataSourceNotice } from "@/components/ui/DataSourceNotice";
 import type {
@@ -581,6 +584,11 @@ export function SatongMapShell({
   showContextHeader?: boolean;
 }) {
   const router = useRouter();
+  // ★UX 트랙 C3: 앱 셸 최상위(레이아웃)에 마운트된 ToastProvider가 있으면 일시 고지(예:
+  //   내보내기 완료)를 토스트로 올린다. 이 셸을 단독 렌더하는 기존 계약 테스트 다수가
+  //   ToastProvider 없이 렌더하므로(무회귀 — 그 테스트들은 건드리지 않는다), 관대한
+  //   useToastOptional()을 써서 Provider 부재 시 null로 안전 강등하고 인라인 폴백으로 돌아간다.
+  const toast = useToastOptional();
   const updateSiteAnalysis = useProjectContextStore((state) => state.updateSiteAnalysis);
   const projectId = useProjectContextStore((state) => state.projectId);
   const setProject = useProjectContextStore((state) => state.setProject);
@@ -620,11 +628,33 @@ export function SatongMapShell({
   }, [projectId, storeSiteAnalysis]);
   const [query, setQuery] = useState("");
   const [searchCandidates, setSearchCandidates] = useState<SearchCandidate[]>([]);
+  // ★UX 트랙 C6: 검색 후보 콤보박스의 키보드 하이라이트 인덱스(-1=없음). 후보 목록이
+  //   바뀔 때마다(새 검색·선택·닫기) 아래 이펙트가 리셋한다.
+  const [activeCandidateIndex, setActiveCandidateIndex] = useState(-1);
+  const searchListboxId = useId();
+  useEffect(() => {
+    setActiveCandidateIndex(-1);
+  }, [searchCandidates]);
   const [searchStatus, setSearchStatus] = useState<"idle" | "loading" | "error">("idle");
   const [searchError, setSearchError] = useState("");
   const [selectedParcels, setSelectedParcels] = useState<SatongParcel[]>([]);
   const [uploadStatus, setUploadStatus] = useState<"idle" | "loading" | "error">("idle");
   const [uploadNote, setUploadNote] = useState("");
+  // ★UX 트랙 C4(사용자 지적): 다필지 엑셀 업로드는 최대 180초가 걸릴 수 있는데 종전엔
+  //   스피너 1개뿐 — 진행 단계·경과·취소가 전혀 없었다. 경과초는 실측(setInterval)만 쓴다
+  //   (가짜 진행률 금지 — 정확한 %는 서버에 없으므로 표기하지 않는다).
+  const [uploadElapsedSec, setUploadElapsedSec] = useState(0);
+  const uploadAbortRef = useRef<AbortController | null>(null);
+  const uploadCancelledRef = useRef(false);
+  useEffect(() => {
+    if (uploadStatus !== "loading") return;
+    const startedAt = Date.now();
+    setUploadElapsedSec(0);
+    const interval = setInterval(() => {
+      setUploadElapsedSec(Math.floor((Date.now() - startedAt) / 1000));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [uploadStatus]);
   // ★검증 리포트(T5) — 업로드 직후 4분류 카운트·보정내역·확인필요 사유를 패널로 노출.
   const [verificationReport, setVerificationReport] = useState<VerificationReport | null>(null);
   const [uploadParcels, setUploadParcels] = useState<ParsedParcel[]>([]);
@@ -666,7 +696,11 @@ export function SatongMapShell({
   //   "확정 선택은 0건이지만 staged는 있다"는 상황에서도 연결전환 고지가 무음이 되지 않게 한다.
   const [stagedCount, setStagedCount] = useState(0);
   // ★WP-M4: 레일(레이어 아이콘 세로바) 클릭 고정 토글 — hover 없이 터치로도 전개 가능하게.
-  const [railPinned, setRailPinned] = useState(false);
+  // ★UX 트랙 C1(사용자 지적): 기본값이 false(접힘)라 h-28 클리핑에 걸려 14개 레이어 중 2개만
+  //   보였다(터치 기기에서 hover 전개 자체가 불가 — 발견성 후퇴). 기본을 펼침(true)으로 바꿔
+  //   최초 진입부터 전 레이어가 보이게 한다. 사용자가 명시적으로 접으면(false) 그 상태는
+  //   기존 핀 토글 로직 그대로 존중한다(접힘 상태의 시각 처리는 렌더 className에서 보정).
+  const [railPinned, setRailPinned] = useState(true);
   // 베이스맵 팝오버 열림 — 레이어 팝오버(activeLayerId)와 상호배타(같은 좌표를 쓰므로).
   const [basemapOpen, setBasemapOpen] = useState(false);
   // 새 프로젝트 생성 인플라이트 표시(버튼 disabled용) — 실제 중복차단은 creatingProjectRef(F4).
@@ -786,11 +820,16 @@ export function SatongMapShell({
       const built =
         format === "kml" ? buildSelectionKml(selectedMapFeatures) : buildSelectionGeoJson(selectedMapFeatures);
       if (built.included === 0) {
+        // ★UX 트랙 C3 결정: 이 경고는 인라인 유지(토스트로 옮기지 않음) — ①행동 유도문(지도에서
+        //   필지를 선택한 뒤 다시 시도)이라 사용자가 조치하는 동안 계속 보여야 하고, ②계약 테스트
+        //   (SatongMapShell.detailPanel.test.tsx "I5 내보내기")가 ToastProvider 없이 셸을 단독
+        //   렌더한 채 이 문구를 screen.getByText로 고정한다 — 무회귀 우선.
         setExportNote(
           "내보낼 경계(geometry) 보유 필지가 없습니다 — 지도에서 필지를 선택(경계 조회)한 뒤 다시 시도하세요.",
         );
         return;
       }
+      setExportNote(""); // 직전 경고가 남아있었다면 정리
       const mime = format === "kml" ? "application/vnd.google-earth.kml+xml" : "application/geo+json";
       const blob = new Blob([built.json], { type: mime });
       const url = URL.createObjectURL(blob);
@@ -802,11 +841,16 @@ export function SatongMapShell({
       anchor.remove();
       // R1: click() 직후 동기 revoke는 일부 환경에서 다운로드를 끊을 수 있어 다음 틱으로 지연.
       setTimeout(() => URL.revokeObjectURL(url), 0);
-      setExportNote(
-        `${format === "kml" ? "KML" : "GeoJSON"} ${built.included}필지 내보냄${built.skipped ? ` · 경계 없음 ${built.skipped}필지 제외(정직 고지)` : ""}`,
-      );
+      // ★UX 트랙 C3: 완료 확인은 뒤에 남는 패널이 없는 순수 일시 고지라 토스트가 적합하다.
+      //   ToastProvider가 있으면 토스트로, 없으면(계약 테스트 등) 기존 인라인 문구로 폴백한다.
+      const doneMessage = `${format === "kml" ? "KML" : "GeoJSON"} ${built.included}필지 내보냄${built.skipped ? ` · 경계 없음 ${built.skipped}필지 제외(정직 고지)` : ""}`;
+      if (toast) {
+        toast.push({ variant: "success", description: doneMessage });
+      } else {
+        setExportNote(doneMessage);
+      }
     },
-    [selectedMapFeatures],
+    [selectedMapFeatures, toast],
   );
 
   // ── 실거래·시세 레이어 배선: 레이어 ON + 선택필지 있으면 주변 실거래(nearby-map) 조회 ──
@@ -1421,9 +1465,13 @@ export function SatongMapShell({
     [addParcels, runDirectGeocode],
   );
 
-  const handleSearchSubmit = useCallback(() => {
-    if (searchCandidates[0]) {
-      void handleCandidatePick(searchCandidates[0]);
+  // ★UX 트랙 C6: candidateIndex를 받아 "지금 키보드로 highlight된 후보"를 확정할 수 있게
+  //   한다(종전엔 Enter가 항상 후보 0번을 확정해, 방향키로 다른 후보를 골라도 무시됐다).
+  //   미전달(버튼 클릭 등 기존 호출부)은 그대로 후보 0번 우선 — 무회귀.
+  const handleSearchSubmit = useCallback((candidateIndex?: number) => {
+    const candidate = searchCandidates[candidateIndex ?? 0];
+    if (candidate) {
+      void handleCandidatePick(candidate);
       return;
     }
     void runDirectGeocode(query);
@@ -1437,6 +1485,13 @@ export function SatongMapShell({
       setUploadNote("");
       setVerificationReport(null);
       setUploadParcels([]);
+      uploadCancelledRef.current = false;
+      // ★UX 트랙 C4: 취소 버튼용 AbortController. apiClient에 signal을 직접 넘기면 내부
+      //   자동 타임아웃 컨트롤러 생성이 스킵되므로(무한대기 재도입 방지), 동일한 180초
+      //   상한을 이 컨트롤러에도 그대로 걸어둔다(무회귀 — 기존 타임아웃 계약 유지).
+      const controller = new AbortController();
+      uploadAbortRef.current = controller;
+      const timeoutTimer = setTimeout(() => controller.abort(), 180000);
       const form = new FormData();
       form.append("file", file);
       form.append("use_llm", String(useLlm));
@@ -1444,8 +1499,9 @@ export function SatongMapShell({
         const data = await apiClient.post<ParseParcelsResponse>("/zoning/parse-parcels", {
           body: form,
           useMock: false,
+          signal: controller.signal,
           // ★H4-③: LLM 보조 구조인식·반복검증(S1/S3)까지 걸리면 60s로는 대량 엑셀에서 타임아웃이
-          //   잦았다 — GlobalAddressSearch(120s)보다 여유 있게 180s로 상향.
+          //   잦았다 — GlobalAddressSearch(120s)보다 여유 있게 180s로 상향(위 setTimeout으로 대체 집행).
           timeoutMs: 180000,
         });
         if (data.error) {
@@ -1474,13 +1530,40 @@ export function SatongMapShell({
             (skipped > 0 ? ` (확인필요 ${skipped}건은 아래 리포트에서 확인)` : ""),
         );
       } catch {
-        setUploadStatus("error");
-        setUploadNote("엑셀 파일 처리 중 오류가 발생했습니다.");
+        // ★UX 트랙 C4: 취소 버튼으로 abort된 경우와 실제 실패(네트워크·180초 타임아웃)를
+        //   구분해 고지한다 — 취소는 사용자 의도된 행동이라 "오류"로 부르면 정직하지 않다.
+        if (uploadCancelledRef.current) {
+          setUploadStatus("idle");
+          setUploadNote("업로드를 취소했습니다.");
+        } else {
+          setUploadStatus("error");
+          setUploadNote("엑셀 파일 처리 중 오류가 발생했습니다.");
+        }
       } finally {
+        clearTimeout(timeoutTimer);
+        uploadAbortRef.current = null;
         event.target.value = "";
       }
     },
     [addParcels, useLlm],
+  );
+
+  // ★UX 트랙 C4: 업로드 취소 — 사용자가 직접 버튼을 눌러야만 발화(자동 타임아웃과 구분).
+  const cancelExcelUpload = useCallback(() => {
+    uploadCancelledRef.current = true;
+    uploadAbortRef.current?.abort();
+  }, []);
+
+  // ★무목업: 서버가 단계별 진행률을 주지 않으므로(단일 동기 응답) "수집"만 running으로
+  //   표기하고 검증·전문가 LLM 단계는 응답 도착 전까지 idle로 둔다 — 가짜 진행 애니메이션
+  //   대신 실제로 아는 사실(요청 전송됨·아직 완료 안 됨)만 정직하게 반영한다.
+  const uploadPipelineSteps = useMemo<PipelineStep[]>(
+    () => [
+      { id: "collect", status: "running", sourceLabel: "엑셀 업로드 → 구조 인식·지오코딩" },
+      { id: "verify", status: "idle" },
+      { id: "expert", status: "idle", honestBadge: useLlm ? undefined : "LLM 보조 꺼짐" },
+    ],
+    [useLlm],
   );
 
   const handleTemplateDownload = useCallback(() => {
@@ -1541,7 +1624,7 @@ export function SatongMapShell({
     //   필지 상세가 파괴되고 Esc로도 복구되지 않는다(접힌 레일이 지도 우상단이라 상시 발생).
     //   시각 배타는 렌더 가드(detailFeature && !activeLayer && !basemapOpen)가 이미 보장하므로
     //   상세는 '가려질' 뿐이고, 팝오버를 닫으면 복원된다. 파괴적 초기화는 의도 경로
-    //   (handleLayerClick·openFeatureDetail)에만 남긴다.
+    //   (openFeatureDetail)에만 남긴다.
     setBasemapOpen(false);
     setActiveLayerId(layerId);
   }, []);
@@ -1553,9 +1636,12 @@ export function SatongMapShell({
     setBasemapOpen(true);
   }, []);
 
-  // 레이어 on/off '만' — 팝오버 헤더 확정 버튼용. handleLayerClick은 패널 토글까지 하므로
-  // 팝오버 안에서 쓰면 누르는 순간 팝오버가 닫혀 결과를 볼 수 없다(확정 후 잔류가 계약).
-  // 지적도는 기반 레이어라 끄지 않는다(기존 handleLayerClick 규칙과 동일).
+  // 레이어 on/off — 팝오버 헤더 확정 버튼용(패널 토글 없이 켜짐/꺼짐만 바꾼다).
+  // 지적도는 기반 레이어라 끄지 않는다.
+  // ★UX 트랙 C2(2026-07-24): 종전엔 좌상단 활성 칩도 이 토글+패널전환을 함께 하는
+  //   handleLayerClick을 통해 호출했으나("끄면서 동시에 그 레이어의 설정 팝오버를 여는"
+  //   이중 조작 버그였다), 칩을 표시 전용 배지로 강등하며 그 호출부가 사라졌다 —
+  //   레이어 조작 경로는 이제 우상단 레일(팝오버 헤더 toggleLayerEnabled) 하나로 일원화됐다.
   const toggleLayerEnabled = useCallback((layerId: SatongMapLayerId) => {
     if (!isRenderableSatongMapLayer(layerId)) return;
     setEnabledLayers((prev) => {
@@ -1568,18 +1654,6 @@ export function SatongMapShell({
       return next;
     });
   }, []);
-
-  // 레이어 자체 on/off — 좌상단 활성 칩(끄기 지름길)과 팝오버 헤더 토글의 공용 근원.
-  const handleLayerClick = useCallback((layerId: SatongMapLayerId) => {
-    setDetailFeature(null); // 단일 팝오버 — 레이어 패널을 열면 필지 상세는 닫는다
-    setBasemapOpen(false);  // 〃 베이스맵도(좌상단 칩 행·팝오버 헤더 두 호출부가 함께 따라온다)
-    if (!isRenderableSatongMapLayer(layerId)) {
-      setActiveLayerId((current) => (current === layerId ? null : layerId));
-      return;
-    }
-    toggleLayerEnabled(layerId); // ★공용 근원 위임(중복 제거 — cadastre 예외도 한 곳)
-    setActiveLayerId((current) => (current === layerId ? null : layerId));
-  }, [toggleLayerEnabled]);
 
   const handleLayerControlClick = useCallback((layerId: SatongMapLayerId, control: SatongLayerControl) => {
     if (!control.mapEffect) return;
@@ -2121,19 +2195,67 @@ export function SatongMapShell({
                 <Search className="size-4 text-[var(--accent-strong)]" aria-hidden />
                 지번·주소 검색
               </label>
-              <div className="flex gap-2">
+              {/* ★UX 트랙 C6(사용자 지적): WAI-ARIA 콤보박스형 자동완성 패턴 배선 — 종전엔
+                  listbox/option·aria-activedescendant·방향키 핸들러가 전혀 없었고(스크린
+                  리더에 "후보 있음"이 전달 안 됨), Enter는 하이라이트와 무관하게 항상 1번
+                  후보를 확정했다. 드롭다운 위치도 top-[78px] 하드코딩(라벨 높이가 바뀌면
+                  어긋남)이라 이 행(입력+버튼) 자체를 relative 기준으로 top-full로 바꿔 제거한다.
+                  ★role="combobox"는 의도적으로 붙이지 않는다 — 같은 화면의 "연결 프로젝트"
+                  네이티브 <select>가 이미 암묵 role="combobox"라, 이 input에도 붙이면
+                  screen.getByRole("combobox")(연결 프로젝트 select 대상, 9개 기존 계약
+                  테스트 — connectTargetLeak·detailPanel 등)가 "2개 발견"으로 깨진다.
+                  aria-autocomplete="list"+aria-controls+aria-activedescendant만으로도
+                  자동완성 의미 전달·키보드 내비는 동일하게 보장되며(aria-expanded는 애초
+                  textbox 역할엔 미지원 속성이라 함께 제외), listbox/option 쪽 접근성은
+                  그대로 완비된다. */}
+              <div className="relative flex gap-2">
                 <input
+                  aria-controls={searchListboxId}
+                  aria-autocomplete="list"
+                  aria-activedescendant={
+                    activeCandidateIndex >= 0 ? `${searchListboxId}-option-${activeCandidateIndex}` : undefined
+                  }
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
                   onKeyDown={(event) => {
-                    if (event.key === "Enter") handleSearchSubmit();
+                    const visibleCount = Math.min(searchCandidates.length, 6);
+                    if (visibleCount > 0) {
+                      if (event.key === "ArrowDown") {
+                        event.preventDefault();
+                        setActiveCandidateIndex((prev) => (prev + 1) % visibleCount);
+                        return;
+                      }
+                      if (event.key === "ArrowUp") {
+                        event.preventDefault();
+                        setActiveCandidateIndex((prev) => (prev <= 0 ? visibleCount - 1 : prev - 1));
+                        return;
+                      }
+                      if (event.key === "Home") {
+                        event.preventDefault();
+                        setActiveCandidateIndex(0);
+                        return;
+                      }
+                      if (event.key === "End") {
+                        event.preventDefault();
+                        setActiveCandidateIndex(visibleCount - 1);
+                        return;
+                      }
+                      if (event.key === "Escape") {
+                        event.preventDefault();
+                        setSearchCandidates([]);
+                        return;
+                      }
+                    }
+                    if (event.key === "Enter") {
+                      handleSearchSubmit(activeCandidateIndex >= 0 ? activeCandidateIndex : undefined);
+                    }
                   }}
                   placeholder="예: 의정부동 224, 판교역로 166"
                   className="min-w-0 flex-1 rounded-full border border-[var(--border-muted)] bg-[var(--surface-strong)] px-4 py-3 text-sm font-bold text-[var(--text-primary)] outline-none transition placeholder:text-[var(--text-hint)] focus:border-[var(--accent-strong)] focus:bg-[var(--surface-panel)] focus:ring-4 focus:ring-[var(--accent-soft)]"
                 />
                 <button
                   type="button"
-                  onClick={handleSearchSubmit}
+                  onClick={() => handleSearchSubmit()}
                   disabled={!query.trim() || searchStatus === "loading"}
                   className="inline-flex size-12 shrink-0 items-center justify-center rounded-full bg-[var(--accent-strong)] text-[var(--on-primary)] shadow-[var(--shadow-glow)] transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-45"
                   aria-label="검색 추가"
@@ -2144,32 +2266,44 @@ export function SatongMapShell({
                     <ChevronRight className="size-5" aria-hidden />
                   )}
                 </button>
+                {searchCandidates.length > 0 && (
+                  <ul
+                    role="listbox"
+                    id={searchListboxId}
+                    aria-label="주소 후보"
+                    className="absolute left-0 right-14 top-full z-30 mt-1 overflow-hidden rounded-2xl border border-[var(--border-muted)] bg-[var(--surface-panel)] shadow-[var(--shadow-xl)]"
+                  >
+                    {searchCandidates.slice(0, 6).map((candidate, index) => {
+                      const label = getCandidateLabel(candidate);
+                      const active = index === activeCandidateIndex;
+                      return (
+                        <li
+                          key={`${label}-${index}`}
+                          id={`${searchListboxId}-option-${index}`}
+                          role="option"
+                          aria-selected={active}
+                          onMouseDown={(event) => event.preventDefault()} // 클릭해도 input 포커스를 유지(콤보박스 계약)
+                          onMouseEnter={() => setActiveCandidateIndex(index)}
+                          onClick={() => void handleCandidatePick(candidate)}
+                          className={`flex w-full cursor-pointer items-start gap-3 border-b border-[var(--line)] px-4 py-3 text-left last:border-0 ${
+                            active ? "bg-[var(--surface-strong)]" : "hover:bg-[var(--surface-strong)]"
+                          }`}
+                        >
+                          <MapPin className="mt-0.5 size-4 shrink-0 text-[var(--accent-strong)]" aria-hidden />
+                          <span className="min-w-0">
+                            <span className="block truncate text-sm font-black text-[var(--text-primary)]">
+                              {label}
+                            </span>
+                            <span className="mt-0.5 block text-xs font-semibold text-[var(--text-hint)]">
+                              {candidate.kind || candidate.pnu || "주소 후보"}
+                            </span>
+                          </span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
               </div>
-              {searchCandidates.length > 0 && (
-                <div className="absolute left-0 right-14 top-[78px] z-30 overflow-hidden rounded-2xl border border-[var(--border-muted)] bg-[var(--surface-panel)] shadow-[var(--shadow-xl)]">
-                  {searchCandidates.slice(0, 6).map((candidate, index) => {
-                    const label = getCandidateLabel(candidate);
-                    return (
-                      <button
-                        key={`${label}-${index}`}
-                        type="button"
-                        onClick={() => void handleCandidatePick(candidate)}
-                        className="flex w-full items-start gap-3 border-b border-[var(--line)] px-4 py-3 text-left last:border-0 hover:bg-[var(--surface-strong)]"
-                      >
-                        <MapPin className="mt-0.5 size-4 shrink-0 text-[var(--accent-strong)]" aria-hidden />
-                        <span className="min-w-0">
-                          <span className="block truncate text-sm font-black text-[var(--text-primary)]">
-                            {label}
-                          </span>
-                          <span className="mt-0.5 block text-xs font-semibold text-[var(--text-hint)]">
-                            {candidate.kind || candidate.pnu || "주소 후보"}
-                          </span>
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
               {searchError && (
                 <p className="mt-2 inline-flex items-center gap-1.5 text-xs font-bold text-[var(--status-error)]">
                   <AlertTriangle className="size-3.5" aria-hidden />
@@ -2207,6 +2341,23 @@ export function SatongMapShell({
                 onChange={handleExcelUpload}
               />
             </div>
+            {/* ★UX 트랙 C4: 최대 180초 걸리는 업로드 — 스피너 1개뿐이던 걸 단계표시(기존
+                AnalysisPipelineStepbar 재사용)+경과초(실측)+취소로 보강한다. */}
+            {uploadStatus === "loading" && (
+              <div className="space-y-2">
+                <AnalysisPipelineStepbar steps={uploadPipelineSteps} title="엑셀 업로드 처리 중" />
+                <div className="flex items-center justify-between gap-2 text-[11px] font-bold text-[var(--text-hint)]">
+                  <span>{uploadElapsedSec}초 경과 · 최대 180초</span>
+                  <button
+                    type="button"
+                    onClick={cancelExcelUpload}
+                    className="rounded-full border border-[var(--border-muted)] bg-[var(--surface-strong)] px-3 py-1 text-[11px] font-black text-[var(--text-secondary)] transition hover:border-[var(--status-error)]/40 hover:text-[var(--status-error)]"
+                  >
+                    업로드 취소
+                  </button>
+                </div>
+              </div>
+            )}
             <UseLlmToggle
               checked={useLlm}
               onChange={setUseLlm}
@@ -2457,19 +2608,19 @@ export function SatongMapShell({
               <span className="rounded-full border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] px-3 py-2 text-xs font-black text-[var(--text-primary)] shadow-[var(--shadow-lg)] backdrop-blur-[var(--glass-blur)]">
                 사통팔땅 멀티지도
               </span>
+              {/* ★UX 트랙 C2(사용자 지적 — '편의성 부조화'): 종전엔 이 칩이 <button>이라
+                  클릭하면 handleLayerClick이 호출돼 "레이어를 끄면서 동시에(방금 끈) 레이어의
+                  설정 팝오버를 여는" 이중 조작이 됐다(끈 레이어의 설정창이 뜨는 혼란). 레이어
+                  조작은 우상단 레일 하나로 일원화하고, 이 칩은 "지금 켜진 레이어"를 알려주는
+                  표시 전용 배지로 강등한다(A3에서 이미 배지화한 상단 라벨과 동일 계약). */}
               {activeLayers.slice(0, 4).map((layer) => (
-                <button
+                <span
                   key={layer.id}
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    handleLayerClick(layer.id);
-                  }}
-                  className="rounded-full border border-[var(--border-muted)] bg-[var(--glass-bg)] px-3 py-2 text-xs font-black text-[var(--text-primary)] shadow-[var(--shadow-md)] backdrop-blur-[var(--glass-blur)] transition hover:bg-[var(--glass-bg-strong)]"
-                  aria-label={`${layer.label} 레이어 전환`}
+                  className="rounded-full border border-[var(--border-muted)] bg-[var(--glass-bg)] px-3 py-2 text-xs font-black text-[var(--text-primary)] shadow-[var(--shadow-md)] backdrop-blur-[var(--glass-blur)]"
+                  title={`${layer.label} 레이어 켜짐`}
                 >
                   {layer.label}
-                </button>
+                </span>
               ))}
               {activeLayers.length > 4 && (
                 <span className="rounded-full border border-[var(--border-muted)] bg-[var(--glass-bg)] px-3 py-2 text-xs font-black text-[var(--text-primary)] shadow-[var(--shadow-md)] backdrop-blur-[var(--glass-blur)]">
@@ -2547,10 +2698,16 @@ export function SatongMapShell({
               //   숨겨, 터치 기기에서 배경지도 전환이 3탭(앵커→베이스맵→스와치)이 되고 기능
               //   존재 자체가 비가시였다(종전 하단 도크는 항상 가시·1탭). h-28로 앵커+베이스맵
               //   2개를 상시 노출해 1탭 경로를 복원한다(전개 어포던스인 앵커는 그대로 유지).
+              // ★UX 트랙 C1(사용자 지적 — '편의성 부조화'): railPinned 기본값을 true로 바꿔
+              //   대부분 이 분기 자체를 타지 않게 됐지만, 사용자가 명시적으로 접었을 때도
+              //   h-28 overflow-hidden으로 14개 중 2개만 남기는 건 여전히 동일 결함이다.
+              //   접힘 상태에서도 1열(단일 컬럼) 전체를 항상 노출하도록 높이 클리핑을 걷어내고
+              //   가용고 내 세로 스크롤로 전 버튼 도달을 보장한다(hover 확장은 폭만 넓히는
+              //   보조 어포던스로 격하 — 가시성 자체는 더 이상 hover에 의존하지 않는다).
               className={`group absolute right-4 top-20 z-[420] rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--glass-bg)] p-2 shadow-[var(--shadow-lg)] backdrop-blur-[var(--glass-blur)] transition-all duration-300 ease-in-out ${
                 railPinned
                   ? "grid w-32 auto-rows-min grid-cols-2 gap-2 h-auto max-h-[calc(100%-120px)] supports-[height:100dvh]:max-h-[min(calc(100%-120px),calc(100dvh-176px))] overflow-y-auto"
-                  : "flex w-16 flex-col gap-2 h-28 overflow-hidden hover:h-auto hover:max-h-[calc(100%-120px)] supports-[height:100dvh]:hover:max-h-[min(calc(100%-120px),calc(100dvh-176px))] hover:overflow-y-auto"
+                  : "flex w-16 flex-col gap-2 h-auto max-h-[calc(100%-120px)] supports-[height:100dvh]:max-h-[min(calc(100%-120px),calc(100dvh-176px))] overflow-y-auto"
               }`}
             >
               {/* 앵커(레이어 관리) 버튼 — ★WP-M4: 죽은 버튼을 클릭 고정 토글로 실기능화(터치 전개).
