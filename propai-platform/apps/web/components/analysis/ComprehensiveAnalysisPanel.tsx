@@ -488,8 +488,11 @@ export function ComprehensiveAnalysisPanel() {
 
   return (
     <div className="space-y-4">
-      {/* 사통팔땅 전역 싱글 통합지도 워크스페이스 (대시보드와 100% 동일한 필지 입력 + 멀티지도 엔진) */}
-      <SatongMapShellDynamic locale="ko" />
+      {/* 사통팔땅 전역 싱글 통합지도 워크스페이스 (대시보드와 100% 동일한 필지 입력 + 멀티지도 엔진).
+          ★UX 트랙 B4: 착지 페이지라 기본 접힘(defaultCollapsed) — 요약 1줄+"지도 열기" 토글.
+          ★UX 트랙 B2: 내부 ContextHeader 활성화(showContextHeader) — 프로젝트·주소·PNU·
+          용도지역·대지면적 집계를 여기 한 곳으로 흡수. */}
+      <SatongMapShellDynamic locale="ko" defaultCollapsed showContextHeader />
       {/* Header */}
       <div className="rounded-2xl border border-[var(--accent-strong)]/30 bg-[var(--surface-strong)] p-6">
         <h2 className="text-xl font-black text-[var(--text-primary)] mb-1">종합 부지분석 보고서</h2>

@@ -540,8 +540,10 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
 
   return (
     <div className="grid min-w-0 grid-cols-1 gap-6">
-      {/* 사통팔땅 전역 싱글 통합지도 워크스페이스 (대시보드와 100% 동일한 필지 입력 + 멀티지도 엔진) */}
-      <SatongMapShellDynamic locale={locale} />
+      {/* 사통팔땅 전역 싱글 통합지도 워크스페이스 (대시보드와 100% 동일한 필지 입력 + 멀티지도 엔진).
+          ★UX 트랙 B4: 착지 페이지라 기본 접힘(defaultCollapsed) — 요약 1줄+"지도 열기" 토글.
+          ★UX 트랙 B2: 내부 ContextHeader 활성화(showContextHeader) — 집계를 한 곳으로 흡수. */}
+      <SatongMapShellDynamic locale={locale} defaultCollapsed showContextHeader />
       <Card className="cc-bracketed overflow-hidden rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
         <i className="cc-bracket cc-bracket--tl" />
         <i className="cc-bracket cc-bracket--tr" />

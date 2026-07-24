@@ -110,6 +110,9 @@ export function DashboardHome({ locale }: { locale: string }) {
     <div className="flex flex-col gap-6 pb-12">
       <OnboardingWizard />
 
+      {/* ★UX 트랙 B1 — 매일 쓰는 지도가 히어로 바로 아래로 승격됐다(종전엔 생성허브 6카드+
+          프로젝트 로더를 지나 ≈1,350px 스크롤해야 도달). 순서만 바꾼 JSX 재배치 — 핸들러·
+          로직 무변경. */}
       <section>
         <div className="relative min-w-0 overflow-hidden rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--saas-ink)] p-5 text-white sm:p-6">
           {/* 도시건축 hero 배경 애니메이션(hero-newtown.mp4 배경영상 + 스카이라인 캔버스 폴백) */}
@@ -183,6 +186,8 @@ export function DashboardHome({ locale }: { locale: string }) {
 
       </section>
 
+      <SatongMapShell locale={locale} showContextHeader />
+
       <section className="space-y-4">
         <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
           <div>
@@ -244,21 +249,17 @@ export function DashboardHome({ locale }: { locale: string }) {
         </div>
       </section>
 
-      <section className="flex flex-col gap-8">
-        <div className="min-w-0 space-y-3 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-strong)] p-4">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <span className="font-[family-name:var(--font-display)] label-caps text-[var(--text-tertiary)]">진행 프로젝트</span>
-              <h2 className="mt-1 text-lg font-black text-[var(--text-primary)]">현재 남은 의사결정</h2>
-            </div>
-            <Link href={hrefFor(locale, "projects")} className="text-sm font-bold text-[var(--accent-strong)] hover:opacity-80">
-              전체 보기
-            </Link>
+      <section className="min-w-0 space-y-3 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-strong)] p-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <span className="font-[family-name:var(--font-display)] label-caps text-[var(--text-tertiary)]">진행 프로젝트</span>
+            <h2 className="mt-1 text-lg font-black text-[var(--text-primary)]">현재 남은 의사결정</h2>
           </div>
-          <DashboardProjectLoader locale={locale} />
+          <Link href={hrefFor(locale, "projects")} className="text-sm font-bold text-[var(--accent-strong)] hover:opacity-80">
+            전체 보기
+          </Link>
         </div>
-
-        <SatongMapShell locale={locale} />
+        <DashboardProjectLoader locale={locale} />
       </section>
     </div>
   );

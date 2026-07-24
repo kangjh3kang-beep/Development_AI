@@ -41,6 +41,7 @@ import {
 import { ApiClientError, apiClient, apiV1BaseUrl, hasAccessToken } from "@/lib/api-client";
 import { formatArea } from "@/lib/formatters"; // 면적 표기 SSOT(UX A2) — 로컬 중복 formatArea 대체
 import { UseLlmToggle } from "@/components/common/UseLlmToggle";
+import { ContextHeader } from "@/components/common/ContextHeader"; // 집계 SSOT 단일표면(UX 트랙 B2)
 import { DataSourceNotice } from "@/components/ui/DataSourceNotice";
 import type {
   ParcelAtPointResult,
@@ -562,7 +563,23 @@ function mapParcelToSelection(parcel: ParcelAtPointResult): SatongParcel {
   };
 }
 
-export function SatongMapShell({ locale }: { locale: string }) {
+export function SatongMapShell({
+  locale,
+  defaultCollapsed = false,
+  showContextHeader = false,
+}: {
+  locale: string;
+  /** true면 접힌 요약(1줄)+"지도 열기" 토글로 시작한다(UX 트랙 B4 — 착지 페이지 반복
+   *  렌더 완화). 기본 false(펼침 — 입력 주화면인 /ko·/precheck는 호출측에서 생략해 무회귀). */
+  defaultCollapsed?: boolean;
+  /** true면 셸 내부에 ContextHeader(프로젝트·주소·PNU·용도지역·대지면적 SSOT)를 sticky로
+   *  얹는다(UX 트랙 B2 — 집계 단일표면). 기본 false — 이 셸을 직접 렌더하는 기존 단위테스트가
+   *  선택 필지 카드의 주소 title과 ContextHeader 주소 칩의 title이 겹쳐 getByTitle 단일매치
+   *  계약을 깨는 회귀가 실측 확인됐다(무회귀 우선). 호출측 페이지가 명시적으로 켠 경우에만
+   *  렌더한다 — market-insights처럼 이미 더 정밀한 자체 ContextHeader를 셸 위에 별도로 둔
+   *  호출측은 켜지 않는다(중복 렌더 방지). */
+  showContextHeader?: boolean;
+}) {
   const router = useRouter();
   const updateSiteAnalysis = useProjectContextStore((state) => state.updateSiteAnalysis);
   const projectId = useProjectContextStore((state) => state.projectId);
@@ -618,6 +635,11 @@ export function SatongMapShell({ locale }: { locale: string }) {
   const [layerControls, setLayerControls] = useState<SatongMapLayerState["controlsByLayer"]>(() => defaultControlsByLayer());
   const [activeLayerId, setActiveLayerId] = useState<SatongMapLayerId | null>(null);
   const [isOutputDockOpen, setIsOutputDockOpen] = useState(true);
+  // ★UX 트랙 B4 — 착지 페이지(분석/시장/토지조서)는 같은 지도셸이 반복 렌더돼 매번 첫 화면을
+  //   방금 떠난 지도가 차지했다. defaultCollapsed=true인 호출측만 접힌 요약으로 시작하고,
+  //   사용자가 "지도 열기"를 누르면 이 컴포넌트 인스턴스는 그대로 유지한 채(재마운트 없음 —
+  //   선택·레이어 상태 보존) 펼침으로 전환한다.
+  const [isShellExpanded, setIsShellExpanded] = useState(!defaultCollapsed);
   // ── WS-C 필지 상세 패널 — 지도 폴리곤/카드 클릭 → 통합 정보(개요·공시지가·노후도)와
   //    산출물 원클릭 퍼널. 단일 팝오버 원칙: 레이어 설정 패널과 동시 표출 금지(상호 배타).
   const [detailFeature, setDetailFeature] = useState<SatongMapFeature | null>(null);
@@ -1956,16 +1978,87 @@ export function SatongMapShell({ locale }: { locale: string }) {
     </div>
   );
 
+  // ★무목업: 종전 가상 분양단지/경매물건(Math.random) 목업을 실데이터 state로 대체.
+  // 분양=/presale/nearby(청약홈)·경매=/auction/search+geocode(온비드) — 위 이펙트에서 조회.
+  // ★R1 후속(레인G R2 — MEDIUM 필수): 백엔드 전월세는 4종만 지원(_RENT_TYPES —
+  //   토지·상업업무용 전월세 API 자체가 없다). kind로 유형 후보를 좁히지 않으면
+  //   기본값(type-land/type-commercial 켜짐) 상태에서 "전월세"를 누르는 즉시
+  //   land_rent/commercial_rent(백엔드 부재)를 요청해 범례에 "0건"으로 뜬다 —
+  //   미수집을 "거래 없음"으로 오인시키는 결함(무음/오도 클래스). 정답 기준선은
+  //   형제 NearbyTransactionsMap(RENT_TYPES=MARKET_RENT_TYPES)과 동일 SSOT 적용.
+  // ★UX 트랙 B4 훅 규칙 보정: 이 값은 종전 JSX 안(marketLayer prop)에서 인라인 useMemo로
+  //   계산됐다. 아래 접힘 조기 반환을 추가하면서 모든 훅은 그 반환 이전에 실행돼야 하므로
+  //   여기로 끌어올린다(계산 로직 무변경 — 위치만 이동).
+  const marketLayerValue = useMemo(() => {
+    const controls = layerControls.transactions ?? [];
+    const kind: "trade" | "rent" = controls.includes("kind-rent") ? "rent" : "trade";
+    const supportedTypes = kind === "rent" ? MARKET_RENT_TYPES : MARKET_TRADE_TYPES;
+    return {
+      kind,
+      // ★하드코딩 제거(분석품질 레인G P0-3): 종전 type:"apt" 상수 고정 →
+      //   layerState(layerControls) SSOT 참조. 켜진 유형 전부를 SatongMultiMap이
+      //   동시 렌더한다(다중 표시).
+      types: supportedTypes.map((t) => t.key).filter((key) => controls.includes(`type-${key}`)),
+      showPresale: presaleEnabled,
+      presaleItems: presaleEnabled ? presaleItems : null,
+      showAuction: auctionEnabled,
+      auctionItems: auctionEnabled ? auctionItems : null,
+    };
+  }, [layerControls.transactions, presaleEnabled, presaleItems, auctionEnabled, auctionItems]);
+
+  // ★UX 트랙 B4(착지 페이지 접기) — 접힌 상태는 요약 1줄 + "지도 열기" 토글만 렌더한다.
+  //   무거운 지도(SatongMultiMap)·레이어 패널은 마운트하지 않아 착지 페이지 초기 렌더 비용도
+  //   함께 준다. 위 모든 훅은 접힘 여부와 무관하게 항상 동일한 순서로 실행되므로(early return은
+  //   이 지점 — 모든 훅 호출 이후 — 에서만 이뤄짐) React 훅 규칙을 위반하지 않는다.
+  if (!isShellExpanded) {
+    return (
+      <section className="min-w-0 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface)] p-4 shadow-[var(--shadow-lg)] md:p-5">
+        {showContextHeader && (
+          <ContextHeader sitePipeline className="sticky top-[var(--app-header-offset)] z-30 mb-3" />
+        )}
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-panel)] px-4 py-3">
+          <div className="min-w-0">
+            <p className="font-[family-name:var(--font-display)] label-caps text-[var(--text-tertiary)]">
+              Satong Map OS
+            </p>
+            <p className="mt-0.5 truncate text-sm font-black text-[var(--text-primary)]">
+              {selectedParcels.length > 0
+                ? `필지 선택 ${selectedParcels.length}건 · 합산 면적 ${formatArea(selectedTotalArea || null, 0)}`
+                : "지도에서 필지를 선택하면 여기에 요약이 표시됩니다."}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setIsShellExpanded(true)}
+            className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-[var(--r-card)] border border-[var(--border-muted)] bg-[var(--surface-strong)] px-3 text-xs font-black text-[var(--text-primary)] transition-colors hover:border-[var(--accent-strong)]"
+          >
+            <MapIcon className="size-4" aria-hidden />
+            지도 열기
+          </button>
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="min-w-0 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface)] p-4 shadow-[var(--shadow-lg)] md:p-5">
+      {/* ★UX 트랙 B2 — 집계 SSOT 단일표면. sticky로 앱 헤더(top-2·z-1000) 바로 아래 고정해
+          지도셸을 아래로 스크롤해도 프로젝트·주소·PNU·용도지역·대지면적이 계속 보이게 한다.
+          아래 로컬 "합산 면적" 배지는 여기로 흡수되어 제거됨(격리 표면 4→1). "필지 선택 N건"은
+          지도 조작 직후 즉시 피드백(선택 반응성 계약 — connectTargetLeak.test.tsx)이라 유지. */}
+      {showContextHeader && (
+        <ContextHeader sitePipeline className="sticky top-[var(--app-header-offset)] z-30 mb-4" />
+      )}
       <div className="mb-4 flex flex-col gap-3 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-panel)] p-4 shadow-[var(--shadow-sm)] lg:flex-row lg:items-center lg:justify-between">
         <div>
           <p className="font-[family-name:var(--font-display)] label-caps text-[var(--text-tertiary)]">
             Satong Map OS
           </p>
-          <h1 className="mt-2 text-2xl font-black tracking-normal text-[var(--text-primary)] md:text-3xl">
+          {/* ★UX 트랙 B1 — 이 페이지(들)의 문서 개요 h1은 히어로/온보딩 h1이 담당한다.
+              지도셸은 상위 h1에 종속된 섹션 제목이므로 h2로 강등(스크린리더·문서 개요 위계 정합). */}
+          <h2 className="mt-2 text-2xl font-black tracking-normal text-[var(--text-primary)] md:text-3xl">
             지도 위에서 입력부터 산출물 생성까지 이어갑니다.
-          </h1>
+          </h2>
           <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-[var(--text-secondary)]">
             지번·주소 검색, 엑셀 다필지 등록, 지도 선택, 레이어 검토를 한 화면에 통합했습니다.
           </p>
@@ -1973,9 +2066,6 @@ export function SatongMapShell({ locale }: { locale: string }) {
         <div className="flex flex-wrap items-center gap-2">
           <span className="rounded-[var(--r-pill)] bg-[var(--accent-soft)] px-3 py-2 text-xs font-black text-[var(--accent-strong)]">
             필지 선택 {selectedParcels.length}건
-          </span>
-          <span className="rounded-[var(--r-pill)] border border-[var(--border-muted)] bg-[var(--surface-strong)] px-3 py-2 text-xs font-black text-[var(--text-secondary)]">
-            합산 면적 <span className="font-mono">{formatArea(selectedTotalArea || null, 0)}</span>
           </span>
         </div>
       </div>
@@ -2401,28 +2491,8 @@ export function SatongMapShell({ locale }: { locale: string }) {
                 marketPayload={marketEnabled ? marketPayload : null}
                 // ★무목업: 종전 가상 분양단지/경매물건(Math.random) 목업을 실데이터 state로 대체.
                 // 분양=/presale/nearby(청약홈)·경매=/auction/search+geocode(온비드) — 위 이펙트에서 조회.
-                marketLayer={useMemo(() => {
-                  const controls = layerControls.transactions ?? [];
-                  const kind: "trade" | "rent" = controls.includes("kind-rent") ? "rent" : "trade";
-                  // ★R1 후속(레인G R2 — MEDIUM 필수): 백엔드 전월세는 4종만 지원(_RENT_TYPES —
-                  //   토지·상업업무용 전월세 API 자체가 없다). kind로 유형 후보를 좁히지 않으면
-                  //   기본값(type-land/type-commercial 켜짐) 상태에서 "전월세"를 누르는 즉시
-                  //   land_rent/commercial_rent(백엔드 부재)를 요청해 범례에 "0건"으로 뜬다 —
-                  //   미수집을 "거래 없음"으로 오인시키는 결함(무음/오도 클래스). 정답 기준선은
-                  //   형제 NearbyTransactionsMap(RENT_TYPES=MARKET_RENT_TYPES)과 동일 SSOT 적용.
-                  const supportedTypes = kind === "rent" ? MARKET_RENT_TYPES : MARKET_TRADE_TYPES;
-                  return {
-                    kind,
-                    // ★하드코딩 제거(분석품질 레인G P0-3): 종전 type:"apt" 상수 고정 →
-                    //   layerState(layerControls) SSOT 참조. 켜진 유형 전부를 SatongMultiMap이
-                    //   동시 렌더한다(다중 표시).
-                    types: supportedTypes.map((t) => t.key).filter((key) => controls.includes(`type-${key}`)),
-                    showPresale: presaleEnabled,
-                    presaleItems: presaleEnabled ? presaleItems : null,
-                    showAuction: auctionEnabled,
-                    auctionItems: auctionEnabled ? auctionItems : null,
-                  };
-                }, [layerControls.transactions, presaleEnabled, presaleItems, auctionEnabled, auctionItems])}
+                // (계산은 marketLayerValue로 컴포넌트 상단에서 훅 규칙에 맞게 끌어올려짐 — UX 트랙 B4.)
+                marketLayer={marketLayerValue}
                 // 상태 노트는 marketLayer 밖 별도 prop — 노트만 바뀔 때 마커 이펙트가 재실행되지
                 // 않게 한다(리뷰 LOW). 건수 라벨보다 우선 표기(정직원칙).
                 presaleNote={presaleEnabled ? presaleNote || null : null}
