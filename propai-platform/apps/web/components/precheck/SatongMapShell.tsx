@@ -1507,6 +1507,18 @@ export function SatongMapShell({ locale }: { locale: string }) {
     setBasemapOpen(false);
   }, []);
 
+  // ★R1 4차 HIGH-2 종결 봉합 — 닫힘 근원이 6곳(Esc·외부클릭·X·클릭토글·유예타이머·팝오버
+  //   onMouseLeave)이라 헬퍼 위임만으론 매번 한둘이 샌다(타이머 콜백·팝오버 mouseleave는
+  //   raw setState). 핀 정리를 '경로'가 아니라 '상태 불변식'으로 세운다: 고정 팝오버가
+  //   '완전히 닫힌'(전환 아님·null/false) 순간 어느 경로로 닫혔든 핀을 지운다. 전환(A→B)엔
+  //   지우지 않아 Q2-c(클릭 확정 유지)를 보존한다. 이 단일 이펙트가 6경로+미래 경로를 덮는다.
+  useEffect(() => {
+    const pin = pinnedPanelRef.current;
+    if (!pin) return;
+    const stillShown = pin === "basemap" ? basemapOpen : activeLayerId === pin;
+    if (!stillShown) pinnedPanelRef.current = null;
+  }, [activeLayerId, basemapOpen]);
+
   const openLayerPanel = useCallback((layerId: SatongMapLayerId) => {
     // ★R1 HIGH-2: 여기서 setDetailFeature(null)을 하면 레일 위를 '스치기만' 해도 열려 있던
     //   필지 상세가 파괴되고 Esc로도 복구되지 않는다(접힌 레일이 지도 우상단이라 상시 발생).

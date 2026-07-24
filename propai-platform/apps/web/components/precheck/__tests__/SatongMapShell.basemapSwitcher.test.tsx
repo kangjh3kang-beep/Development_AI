@@ -357,3 +357,53 @@ describe("SatongMapShell 레일 — 핀 stale 누수(HIGH-1)", () => {
     } finally { vi.useRealTimers(); }
   });
 });
+
+/**
+ * R1 4차 HIGH-2 자물쇠 — 유예 타이머 콜백·팝오버 onMouseLeave가 raw setState라 남긴 stale 핀이
+ *   '같은 정체성' 재hover를 고정분으로 오판해 눌러붙던 잔여 누수. 상태 동기 이펙트로 종결.
+ */
+describe("SatongMapShell 레일 — 핀 잔여 누수(HIGH-2)", () => {
+  beforeEach(() => { window.sessionStorage.clear(); resetStores(); });
+  afterEach(() => { window.sessionStorage.clear(); resetStores(); });
+
+  it("★RESIDUAL-A: 베이스맵 클릭확정→레이어로 전환(hover)→이탈→베이스맵 재hover→이탈이면 닫힌다", () => {
+    vi.useFakeTimers();
+    try {
+      render(<SatongMapShell locale="ko" />);
+      const bmBtn = screen.getByRole("button", { name: "베이스맵 선택" });
+      const rail = bmBtn.closest("div")!;
+      hoverClick(bmBtn); // pin="basemap"
+      fireEvent.mouseEnter(screen.getByRole("button", { name: /용도지역/ })); // 전환(basemapOpen=false)
+      fireEvent.mouseLeave(rail);
+      act(() => { vi.advanceTimersByTime(400); }); // 타이머가 닫음 → 이펙트가 핀 정리
+      expect(screen.queryByRole("heading", { level: 3, name: "용도지역" })).toBeNull();
+
+      fireEvent.mouseEnter(bmBtn); // 베이스맵 순수 재hover(stale이면 오판)
+      expect(screen.getByRole("button", { name: "베이스맵: 일반" })).toBeTruthy();
+      fireEvent.mouseLeave(rail);
+      act(() => { vi.advanceTimersByTime(400); });
+      expect(screen.queryByRole("button", { name: "베이스맵: 일반" })).toBeNull();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("★RESIDUAL-C: 팝오버 onMouseLeave로 닫힌 뒤 같은 항목 재hover→이탈이면 닫힌다", () => {
+    vi.useFakeTimers();
+    try {
+      render(<SatongMapShell locale="ko" />);
+      const btn = screen.getByRole("button", { name: /용도지역/ });
+      const rail = btn.closest("div")!;
+      hoverClick(btn); // pin=용도지역
+      expect(screen.getByRole("dialog", { name: "용도지역" })).toBeTruthy();
+      fireEvent.mouseEnter(screen.getByRole("button", { name: "공시지가" })); // 전환 → pin 정리(이펙트)
+      // 위 전환으로 활성이 공시지가; 팝오버 mouseleave로 닫아본다
+      fireEvent.mouseLeave(screen.getByRole("dialog", { name: "공시지가" }));
+      act(() => { vi.advanceTimersByTime(400); });
+      expect(screen.queryByRole("heading", { level: 3, name: "공시지가" })).toBeNull();
+
+      fireEvent.mouseEnter(screen.getByRole("button", { name: /용도지역/ })); // 재hover
+      fireEvent.mouseLeave(rail);
+      act(() => { vi.advanceTimersByTime(400); });
+      expect(screen.queryByRole("heading", { level: 3, name: "용도지역" })).toBeNull();
+    } finally { vi.useRealTimers(); }
+  });
+});
