@@ -60,7 +60,13 @@ export function polygonAreaSqm(points: MeasurePoint[]): number {
   return Math.abs(sum) / 2;
 }
 
-/** 면적 표시 포맷 — "1,234㎡ (373.3평)". 3점 미만/비정상은 "0㎡". */
+/**
+ * 면적 표시 포맷 — "1,234㎡ (373.3평)". 3점 미만/비정상은 "0㎡".
+ * ★UX A2 범위 밖(의도적 미흡수): lib/formatters.ts 의 SSOT formatArea 는 무효값을 "-"로
+ * 표기하지만, 이 함수는 사용자가 지도를 드래그하며 실시간으로 그리는 도중(점 3개 미만 등
+ * 과도기 상태) 매 프레임 호출되므로 "0㎡"가 오히려 정직하다("아직 다각형이 안 닫혔다"는
+ * 뜻) — 측정 도구라는 별개 컨텍스트라 통일 대상에서 제외했다(satong-measure.test.ts 계약 유지).
+ */
 export function formatAreaSqm(sqm: number): string {
   if (!Number.isFinite(sqm) || sqm <= 0) return "0㎡";
   const pyeong = sqm / 3.305785;
