@@ -520,12 +520,10 @@ export function ComprehensiveAnalysisPanel() {
             </h3>
           </div>
           <div className="flex items-center gap-3">
-            {effectiveLandAreaSqm(siteAnalysis) ? (
-              <div className="text-right text-xs font-bold text-[var(--text-secondary)] mr-2">
-                <p>총 대지면적: <span className="text-[var(--text-primary)]">{(effectiveLandAreaSqm(siteAnalysis) as number).toLocaleString()}㎡</span></p>
-                <p className="text-[10px] text-[var(--text-hint)] mt-0.5">용도: {siteAnalysis?.dominantZoneCode || siteAnalysis?.zoneCode || "미확인"}</p>
-              </div>
-            ) : null}
+            {/* ★UX 트랙 B R2(리뷰어 MEDIUM): 대지면적·용도 수치는 제거됐다 — 위 셸 내부
+                sticky ContextHeader(showContextHeader)가 같은 effectiveLandAreaSqm SSOT를
+                이미 상시 표시 중이라, 여기서 또 보이면 "어느 게 정본?" 혼란만 남긴다.
+                "분석 대상 정보" 카드는 주소 + 분석 CTA만 남긴다(중복 수치만 제거, 카피는 보존). */}
             <button
               onClick={handleAnalyze}
               disabled={loading || !address.trim()}

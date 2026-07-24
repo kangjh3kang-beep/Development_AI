@@ -3,7 +3,7 @@
  * 내부 지도(SatongMultiMap)는 next/dynamic 로드라 스텁으로 대체하고,
  * 마운트 시 프로젝트 동기화(syncFromBackend → /projects)는 pending으로 고정한다.
  */
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SatongMapShell } from "@/components/precheck/SatongMapShell";
@@ -73,6 +73,43 @@ describe("SatongMapShell 스모크", () => {
       screen.getByRole("heading", { name: "통합 필지 입력" }),
     ).toBeInTheDocument();
     expect(screen.getByTestId("dynamic-map-stub")).toBeInTheDocument();
+  });
+});
+
+// ── UX 트랙 B R2(리뷰어 LOW): B4 접힘·B1 h2 강등 무회귀망 ──
+//   collapsed 경로를 실제로 렌더/클릭하는 테스트가 없어, early-return 무력화나 h2→h1
+//   되돌림 같은 변이가 통과해도 아무 테스트도 잡지 못했다. 이 스위트가 그 공백을 메운다.
+describe("SatongMapShell 접힘(B4)·문서 위계(B1) 회귀망", () => {
+  it("★B4: defaultCollapsed면 지도 스텁 없이 요약+\"지도 열기\" 토글만 뜨고, 클릭하면 펼쳐져 지도가 마운트된다", () => {
+    render(<SatongMapShell locale="ko" defaultCollapsed />);
+
+    // 접힌 상태 — 무거운 지도(스텁이라도)는 아직 마운트되지 않는다.
+    expect(screen.queryByTestId("dynamic-map-stub")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "통합 필지 입력" }),
+    ).not.toBeInTheDocument();
+    const openButton = screen.getByRole("button", { name: /지도 열기/ });
+    expect(openButton).toBeInTheDocument();
+
+    // 펼치기 — 같은 컴포넌트 인스턴스에서 지도가 비로소 마운트된다.
+    fireEvent.click(openButton);
+
+    expect(screen.getByTestId("dynamic-map-stub")).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "통합 필지 입력" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /지도 열기/ })).not.toBeInTheDocument();
+  });
+
+  it("★B1: 지도셸 제목은 h1이 아니라 h2다(문서 개요 h1은 히어로/온보딩이 담당)", () => {
+    render(<SatongMapShell locale="ko" />);
+
+    expect(
+      screen.getByRole("heading", { level: 2, name: /지도 위에서 입력부터 산출물 생성까지/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { level: 1, name: /지도 위에서 입력부터 산출물 생성까지/ }),
+    ).not.toBeInTheDocument();
   });
 });
 
