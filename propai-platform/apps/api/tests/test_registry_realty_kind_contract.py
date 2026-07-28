@@ -72,6 +72,8 @@ class TestRealtyKindMatching:
             # 등기 실무에서 집합건물을 '구분건물'로 표기 — '건물'(3)로 새면 안 된다
             ("구분건물", "1", True),
             ("구분건물", "3", False),
+            ("구분소유건물", "1", True),
+            ("구분소유건물", "3", False),
             ("집합건물(구분건물)", "1", True),
             ("집합 건물", "1", True),      # 공백 표기 정규화
             ("일반건물", "3", True),
@@ -148,6 +150,14 @@ class TestSelectRegistryItem:
         picked, note = select_registry_item([self.LAND], realty_type="9")
         assert picked["unique_no"] == "L1"
         assert note and "알 수 없는" in note
+
+    def test_multiple_kind_candidates_must_warn(self):
+        """구분만 지정했는데 같은 구분 물건이 여러 건이면 침묵하면 안 된다."""
+        a = {"unique_no": "A", "gubun": "건물", "jibun": "○○동 1-1"}
+        b = {"unique_no": "B", "gubun": "건물", "jibun": "○○동 1-2"}
+        picked, note = select_registry_item([a, b], realty_type="3")
+        assert picked["unique_no"] == "A"
+        assert note and "2건" in note, "동일 구분 복수 후보가 고지되지 않음"
 
     def test_unit_suffix_tolerated(self):
         """사용자가 '101동'처럼 접미사를 붙여 입력해도 동일하게 대조돼야 한다."""

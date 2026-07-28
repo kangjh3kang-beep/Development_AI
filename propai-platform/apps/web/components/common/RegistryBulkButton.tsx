@@ -6,7 +6,7 @@
  */
 
 import { useCallback, useState } from "react";
-import { FileUp, Files, Settings } from "lucide-react";
+import { AlertTriangle, FileUp, Files, Settings } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import { RegistryUploadModal } from "./RegistryUploadModal";
 
@@ -14,6 +14,9 @@ type RegItem = {
   pnu?: string | null; address?: string | null; status: string;
   owner?: string; registry_office?: string; doc_title?: string; issued?: string;
   pdf_base64?: string; has_pdf?: boolean; summary?: string; pdf_url?: string; message?: string;
+  // 어느 구분의 물건을 열람했는지 + 요청한 구분·동/호로 특정하지 못한 경우의 고지.
+  // 필지당 1,200원이 과금되는 경로라 "다른 물건을 받았을 수 있다"는 사실이 반드시 보여야 한다.
+  realty_gubun?: string | null; select_note?: string | null;
 };
 type RegResult = { configured: boolean; provider?: string; count: number; results: RegItem[]; message?: string };
 
@@ -114,6 +117,18 @@ export function RegistryBulkButton({ addresses, className = "" }: { addresses: s
               )}
               {it.status !== "ok" && it.message && (
                 <p className="mt-1 text-[11px] text-[var(--text-tertiary)]">{it.message}</p>
+              )}
+              {/* 요청과 다른 물건을 조회했을 수 있다는 고지 — 과금 경로이므로 행마다 노출한다. */}
+              {it.select_note && (
+                <p role="status" className="mt-1.5 flex items-start gap-1.5 rounded-md border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 px-2 py-1 text-[11px] font-bold leading-relaxed text-[var(--text-primary)] break-keep">
+                  <AlertTriangle className="mt-0.5 size-3 shrink-0 text-[var(--status-warning)]" aria-hidden />
+                  <span>
+                    {it.select_note}
+                    {it.realty_gubun && (
+                      <span className="ml-1 font-normal text-[var(--text-secondary)]">(열람 구분: {it.realty_gubun})</span>
+                    )}
+                  </span>
+                </p>
               )}
             </div>
           ))}

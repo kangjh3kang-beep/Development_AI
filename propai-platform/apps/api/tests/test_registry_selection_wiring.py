@@ -183,6 +183,117 @@ class TestHonestyReachesUserSurface:
         assert fetched.get("realty_gubun") == "토지"
 
 
+@pytest.mark.asyncio
+class TestGroundingWiring:
+    """★H4의 교훈 재적용: 순수함수만 고정하면 '호출부'는 지워도 초록이다.
+    그라운딩 판정·출처 표기·정직성 게이트가 analyze() 실경로에서 동작하는지 관통 검증."""
+
+    @staticmethod
+    def _reg(pdf_text_ok: bool) -> dict[str, Any]:
+        import base64
+        return {
+            "status": "ok", "origin": "hyphen", "owner": "홍길동",
+            "out_list": {"get소유자": "홍길동"},          # 머리말만 — 등기사항 없음
+            "pdf_base64": base64.b64encode(b"%PDF-1.4").decode(),
+            "has_pdf": True, "_pdf_ok": pdf_text_ok,
+        }
+
+    async def _run(self, monkeypatch, *, pdf_text: str):
+        from app.services.registry import registry_analysis_service as ras
+
+        async def fake_get_one(self, **kwargs):  # noqa: ANN001, ARG001
+            return TestGroundingWiring._reg(bool(pdf_text))
+
+        async def fake_llm(self, address, registry):  # noqa: ANN001, ARG001
+            return {"summary": "분석함", "safety_grade": "안전", "_source_seen": registry}
+
+        monkeypatch.setattr(RegistryService, "get_one", fake_get_one)
+        monkeypatch.setattr(ras.RegistryAnalysisService, "_llm", fake_llm)
+        monkeypatch.setattr(ras, "_pdf_to_text", lambda b: pdf_text)
+
+        async def no_upload(*a, **k):  # noqa: ANN002, ANN003, ARG001
+            return {}
+
+        monkeypatch.setattr("apps.api.services.storage_service.upload_registry_pdf",
+                            no_upload, raising=False)
+        return await ras.RegistryAnalysisService().analyze(address="○○동 1-1", realty_type="2")
+
+    async def test_pdf_grounding_replaces_thin_summary(self, monkeypatch):
+        """머리말뿐이면 PDF 전문으로 갈아끼워 LLM에 넘겨야 한다."""
+        out = await self._run(monkeypatch, pdf_text="【갑구】소유권이전\n【을구】근저당권설정 3억")
+        assert out["status"] == "ok"
+        assert "근저당권설정" in (out["ai"]["_source_seen"] or ""), "PDF 전문이 분석 소스로 안 쓰임"
+        assert out["origin"].startswith("hyphen"), f"출처 오표기: {out['origin']}"
+
+    async def test_image_pdf_must_not_produce_fake_safe_grade(self, monkeypatch):
+        """★N1: 이미지 PDF로 추출 실패 시 머리말만으로 '안전' 등급을 내면 안 된다."""
+        out = await self._run(monkeypatch, pdf_text="")
+        assert out["status"] == "empty", "껍데기 소스로 권리분석이 진행됨(거짓 안전등급 위험)"
+        assert out.get("ai") is None
+        assert "본문" in (out.get("message") or "")
+
+    async def test_origin_reflects_actual_provider(self, monkeypatch):
+        """★H3-b: 하이픈 결과를 'codef'로 오표기하면 안 된다.
+        등기사항이 이미 있어 PDF 그라운딩이 일어나지 않는 경로에서 검증한다
+        (그라운딩이 origin을 덮어쓰면 오표기가 가려지기 때문)."""
+        from app.services.registry import registry_analysis_service as ras
+
+        async def fake_get_one(self, **kwargs):  # noqa: ANN001, ARG001
+            return {
+                "status": "ok", "origin": "hyphen", "owner": "홍길동",
+                "entries": [{"resRegistrationSumList": [{
+                    "resType": "을구",
+                    "resContentsList": [{"resDetailList": [
+                        {"resContents": "근저당권설정 채권최고액 금 300,000,000원"}]}],
+                }]}],
+            }
+
+        async def fake_llm(self, address, registry):  # noqa: ANN001, ARG001
+            return {"summary": "분석함"}
+
+        monkeypatch.setattr(RegistryService, "get_one", fake_get_one)
+        monkeypatch.setattr(ras.RegistryAnalysisService, "_llm", fake_llm)
+        out = await ras.RegistryAnalysisService().analyze(address="○○동 1-1", realty_type="2")
+        assert out["status"] == "ok"
+        assert out["origin"] == "hyphen", f"실제 프로바이더가 아닌 '{out['origin']}'로 표기됨"
+
+
+@pytest.mark.asyncio
+class TestRouterSelectionWiring:
+    """/registry/tilko/realty 라우터도 선택기를 거쳐야 한다 — 1,200원 과금 경로."""
+
+    async def test_router_picks_kind_and_surfaces_note(self, monkeypatch):
+        import routers.registry as rr
+        from app.services.registry import tilko_client as tk
+
+        seen: dict[str, Any] = {}
+
+        async def fake_search(address, page="1"):  # noqa: ANN001, ARG001
+            return {"ok": True, "status": "ok", "items": [
+                {"unique_no": "3333333", "gubun": "집합건물", "jibun": "○○동 1-1 제101동 제502호"},
+                {"unique_no": "1111111", "gubun": "토지", "jibun": "○○동 1-1"},
+            ]}
+
+        async def fake_fetch(**kwargs):  # noqa: ANN003
+            seen["uno"] = kwargs.get("unique_no")
+            return {"ok": True, "status": "ok"}
+
+        async def no_charge(*a, **k):  # noqa: ANN002, ANN003, ARG001
+            return None
+
+        monkeypatch.setattr(tk, "search_unique_no", fake_search)
+        monkeypatch.setattr(tk, "fetch_realty_registry", fake_fetch)
+        monkeypatch.setattr(rr, "_charge_registry_issue", no_charge)
+
+        user = type("U", (), {"user_id": "u1"})()
+        out = await rr.tilko_realty({"address": "○○동 1-1", "realty_type": "2"}, user)
+        assert seen["uno"] == "1111111", "라우터가 구분을 무시하고 첫 건을 발급함(과금 경로)"
+
+        out2 = await rr.tilko_realty({"address": "○○동 1-1", "realty_type": "9"}, user)
+        assert out2.get("select_note"), "라우터에서 정직성 고지가 유실됨"
+        assert out is not None
+
+
 class TestRegistryTextGrounding:
     """머리말만 있는 구조화 텍스트는 '분석 가능'으로 취급되면 안 된다(껍데기 권리분석 방지)."""
 
