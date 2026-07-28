@@ -126,7 +126,10 @@
 // v464: IA 재배치 UX 트랙B(#477 — 지도 상단화·집계 SSOT sticky·착지 지도셸 접기·
 //        h1 중복 제거). 정보구조 재배치가 stale app-shell 캐시에 가려지면 기존 사용자에게
 //        옛 레이아웃이 계속 노출되므로 구캐시 일괄 삭제.
-const CACHE_NAME = "propai-v464-ia-relayout";
+// v465: 컨트롤·피드백 통합 UX 트랙C(#479 — 레일 확장·칩 비인터랙티브·useToast 호스트·
+//        진행표시·소요문구·검색 combobox + 공유 UI toast). 인터랙션/피드백 배선이 stale
+//        캐시에 가려지면 기존 사용자에게 옛 컨트롤이 계속 노출되므로 구캐시 일괄 삭제.
+const CACHE_NAME = "propai-v465-controls-feedback";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
