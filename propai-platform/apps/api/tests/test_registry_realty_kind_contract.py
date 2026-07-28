@@ -66,6 +66,25 @@ class TestRealtyKindMatching:
         assert matches_realty_kind(None, "2") is False
         assert matches_realty_kind("", "2") is False
 
+    @pytest.mark.parametrize(
+        ("gubun", "realty_type", "expected"),
+        [
+            # 등기 실무에서 집합건물을 '구분건물'로 표기 — '건물'(3)로 새면 안 된다
+            ("구분건물", "1", True),
+            ("구분건물", "3", False),
+            ("집합건물(구분건물)", "1", True),
+            ("집합 건물", "1", True),      # 공백 표기 정규화
+            ("일반건물", "3", True),
+            ("토지및건물", "3", True),     # 복합 표기는 해당 구분으로 인정
+            # 프로바이더가 표기 대신 코드를 주는 경우
+            ("1", "1", True),
+            ("1", "3", False),
+            ("2", "2", True),
+        ],
+    )
+    def test_provider_vocabulary_variants(self, gubun, realty_type, expected):
+        assert matches_realty_kind(gubun, realty_type) is expected
+
     def test_label_lookup(self):
         assert realty_kind_label("1") == "집합건물"
         assert realty_kind_label("2") == "토지"
@@ -104,6 +123,37 @@ class TestSelectRegistryItem:
         )
         assert picked["unique_no"] == "C1"
         assert note and "999동" in note
+
+    def test_substring_must_not_match_other_unit(self):
+        """★실결함 재발방지: 프론트는 접미사 없는 숫자를 보낸다("101"·"502").
+        "101"이 "제1101동"에 부분일치해 남의 세대를 고르면 안 되고,
+        목록 순서가 바뀌어도 결과가 흔들리면 안 된다."""
+        wrong = {"unique_no": "W", "gubun": "집합건물", "jibun": "○○동 1-1 제1101동 제1502호"}
+        right = {"unique_no": "R", "gubun": "집합건물", "jibun": "○○동 1-1 제101동 제502호"}
+        for order in ([wrong, right], [right, wrong]):
+            picked, note = select_registry_item(order, realty_type="1", dong="101", ho="502")
+            assert picked["unique_no"] == "R", "부분문자열 오매칭으로 다른 세대 선택"
+            assert note is None
+
+    def test_ambiguous_unit_match_must_warn(self):
+        """동·호가 똑같이 일치하는 물건이 2건이면 '정확히 골랐다'고 침묵하면 안 된다."""
+        a = {"unique_no": "A", "gubun": "집합건물", "jibun": "○○동 1-1 제101동 제502호"}
+        b = {"unique_no": "B", "gubun": "집합건물", "jibun": "○○동 1-1 제101동 제502호"}
+        picked, note = select_registry_item([a, b], realty_type="1", dong="101", ho="502")
+        assert picked["unique_no"] == "A"
+        assert note and "2건" in note, "모호성이 고지되지 않음"
+
+    def test_unknown_code_warns_that_filter_not_applied(self):
+        """모르는 구분코드는 필터가 조용히 무력화되므로 그 사실 자체를 고지해야 한다."""
+        picked, note = select_registry_item([self.LAND], realty_type="9")
+        assert picked["unique_no"] == "L1"
+        assert note and "알 수 없는" in note
+
+    def test_unit_suffix_tolerated(self):
+        """사용자가 '101동'처럼 접미사를 붙여 입력해도 동일하게 대조돼야 한다."""
+        right = {"unique_no": "R", "gubun": "집합건물", "jibun": "○○동 1-1 제101동 제502호"}
+        picked, note = select_registry_item([right], realty_type="1", dong="101동", ho="502호")
+        assert picked["unique_no"] == "R" and note is None
 
     def test_empty_list(self):
         picked, note = select_registry_item([], realty_type="2")

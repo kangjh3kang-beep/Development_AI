@@ -300,6 +300,14 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
                         <span className="text-[var(--text-hint)]">{b.result?.status === "ok" ? "분석" : b.result?.message ? "미확보" : "실패"}</span>
                       )}
                       {b.result?.ai?.summary && <span className="hidden max-w-[40%] truncate text-[var(--text-secondary)] sm:inline">{b.result.ai.summary}</span>}
+                      {/* 요청과 다른 물건을 조회했을 수 있다는 고지는 목록 행에서도 보여야 한다 —
+                          '상세'를 눌러야만 보이면 일괄 분석에서 조용히 묻힌다. */}
+                      {b.result?.fetched?.select_note && (
+                        <span title={b.result.fetched.select_note}
+                          className="inline-flex items-center gap-1 rounded-full border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 px-2 py-0.5 font-bold text-[var(--status-warning)]">
+                          <AlertTriangle className="size-3" aria-hidden />물건 확인 필요
+                        </span>
+                      )}
                       {b.result && (
                         <button onClick={() => setResult(b.result)}
                           className="rounded-lg bg-[var(--surface-strong)] px-2 py-0.5 font-bold text-[var(--accent-strong)]">상세</button>

@@ -164,8 +164,22 @@ def _derive_ownership(ai: dict[str, Any] | None) -> dict[str, Any]:
     return {"ownership_form": form, "owner_count": len(owners), "owners": owners}
 
 
+def _has_registry_entries(text: str) -> bool:
+    """등기사항(갑구·을구 등) 본문이 실제로 담겼는지 — 머리말만 있는 텍스트와 구별.
+
+    왜 필요한가: 구조화 텍스트가 "소유자(요약): 홍길동" 한 줄이어도 '비어있지 않다'는
+    이유로 PDF 전문 그라운딩이 스킵되면, 근저당·압류가 통째로 빠진 껍데기 권리분석이
+    나온다(하이픈 이관 후 실제로 그렇게 동작했다). 등기사항 줄("[갑구] …")의 존재로 판정한다.
+    """
+    return any(ln.startswith("[") for ln in (text or "").splitlines())
+
+
 def _registry_text_from_codef(reg: dict[str, Any]) -> str:
-    """CODEF 등기부 응답(구조화)에서 분석용 텍스트 구성."""
+    """CODEF 등기부 응답(구조화)에서 분석용 텍스트 구성.
+
+    하이픈 응답에는 resRegisterEntriesList가 없어 머리말(소유자·관할등기소)만 남는다 —
+    그 경우 _has_registry_entries가 False가 되어 호출부가 PDF 전문으로 그라운딩한다.
+    """
     parts: list[str] = []
     if reg.get("doc_title"):
         parts.append(f"문서: {reg['doc_title']}")
@@ -325,7 +339,8 @@ class RegistryAnalysisService:
                     origin = reg.get("origin") or "apick"
                 else:
                     source = _registry_text_from_codef(reg)
-                    origin = "codef"
+                    # 출처는 실제 프로바이더를 그대로 — 하이픈 결과를 codef로 오표기하지 않는다.
+                    origin = reg.get("origin") or "codef"
                 # 발급 PDF는 서버(비공개 버킷)에 저장하고 만료 URL로 전달(TTL 자동삭제)
                 # + ★PDF 그라운딩: 구조화 텍스트(xlsx)가 비어 PDF만 확보된 경우, PDF 본문에서 직접
                 #   텍스트를 추출해 분석 소스로 사용(권리분석이 'PDF 미분석'으로 통째 누락되던 갭 해소).
@@ -337,7 +352,10 @@ class RegistryAnalysisService:
                         import base64 as _b64
 
                         pdf_bytes = _b64.b64decode(b64)
-                        if not (source and source.strip()):
+                        # ★'비어있지 않음'이 아니라 '등기사항이 실제로 담겼는가'로 판정한다.
+                        #   머리말 한 줄(소유자 요약)만 있는 경우도 PDF 전문으로 그라운딩해야
+                        #   갑구·을구(근저당·압류)가 분석에 들어간다.
+                        if not _has_registry_entries(source):
                             pdf_text = _pdf_to_text(pdf_bytes)
                             if pdf_text:
                                 source = pdf_text

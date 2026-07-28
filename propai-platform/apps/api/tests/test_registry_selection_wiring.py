@@ -1,0 +1,222 @@
+"""등기 조회 — 물건 선택 '배선' 통합 회귀망.
+
+순수함수 테스트(test_registry_realty_kind_contract)만으로는 부족하다는 것이 적대적
+리뷰에서 드러났다: 하이픈/틸코 경로의 select_registry_item 호출을 통째로 지우고
+items[0] 맹목 선택으로 되돌려도 순수함수 테스트는 전부 통과했다.
+
+이 파일은 프로바이더 응답을 위조해 **실제 배선**을 관통 검증한다.
+    · get_one이 구분/동·호를 프로바이더 경로까지 전달하는가
+    · 요청한 구분의 물건을 고르는가(첫 건 맹목 선택이 아닌가)
+    · 정직성 필드(select_note·realty_gubun)가 결과까지 실려 나오는가
+"""
+
+from __future__ import annotations
+
+import json
+from typing import Any
+
+import pytest
+
+from app.services.registry.registry_service import RegistryService
+
+
+class _FakeResponse:
+    def __init__(self, payload: dict[str, Any]):
+        self._payload = payload
+        self.status_code = 200
+        self.text = json.dumps(payload)
+
+    def json(self) -> dict[str, Any]:
+        return self._payload
+
+    def raise_for_status(self) -> None:
+        return None
+
+
+# 한 주소에 토지·건물·집합건물 2세대가 함께 잡히는 실제 상황.
+# ★어느 구분도 목록 첫 자리에 두지 않는다 — 첫 건을 집어도 우연히 정답이 되면
+#   "구분을 전달하지 않는" 회귀를 테스트가 못 잡는다(동어반복 방지).
+_SEARCH_ITEMS = [
+    {"get부동산고유번호": "3333-333", "get구분": "집합건물",
+     "get부동산소재지번": "○○동 1-1 제1101동 제1502호"},
+    {"get부동산고유번호": "1111-111", "get구분": "토지", "get부동산소재지번": "○○동 1-1"},
+    {"get부동산고유번호": "2222-222", "get구분": "건물", "get부동산소재지번": "○○동 1-1"},
+    {"get부동산고유번호": "4444-444", "get구분": "집합건물",
+     "get부동산소재지번": "○○동 1-1 제101동 제502호"},
+]
+
+
+@pytest.fixture
+def hyphen_env(monkeypatch):
+    monkeypatch.setenv("REGISTRY_PROVIDER", "hyphen")
+    monkeypatch.setenv("HYPHEN_HKEY", "test-key")
+    monkeypatch.setenv("HYPHEN_USER_ID", "test-user")
+    monkeypatch.delenv("REGISTRY_API_URL", raising=False)
+    monkeypatch.delenv("REGISTRY_API_KEY", raising=False)
+
+
+@pytest.fixture
+def captured(monkeypatch, hyphen_env):
+    """하이픈 HTTP를 위조하고, 실제로 열람 요청된 고유번호를 포착."""
+    seen: dict[str, Any] = {"fetched_uno": None}
+
+    async def fake_post(self, url, *args, **kwargs):  # noqa: ANN001, ARG001
+        body = kwargs.get("json") or {}
+        if url.endswith("/in0004000168"):  # 간편주소 검색
+            return _FakeResponse({"common": {"errYn": "N"},
+                                  "data": {"list": _SEARCH_ITEMS, "totCnt": len(_SEARCH_ITEMS)}})
+        if url.endswith("/in0004000948"):  # 등기부 열람
+            seen["fetched_uno"] = body.get("uniqNo") or body.get("uniqueNo")
+            return _FakeResponse({"common": {"errYn": "N"},
+                                  "data": {"outList": {"get소유자": "홍길동"}}})
+        raise AssertionError(f"예상 밖 하이픈 호출: {url}")
+
+    import httpx
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    return seen
+
+
+@pytest.mark.asyncio
+class TestSelectionWiring:
+    async def test_picks_requested_kind_not_first_item(self, captured):
+        """★핵심: '건물'을 고르면 첫 결과(토지)가 아니라 건물이 열람돼야 한다."""
+        res = await RegistryService().get_one(address="○○동 1-1", realty_type="3")
+        assert captured["fetched_uno"] == "2222222", "요청한 구분이 프로바이더까지 전달되지 않음"
+        assert res.get("realty_gubun") == "건물"
+        assert not res.get("select_note")
+
+    async def test_picks_exact_unit_not_substring(self, captured):
+        """★실결함: '101'이 '제1101동'에 부분일치해 남의 세대를 열람하면 안 된다."""
+        res = await RegistryService().get_one(
+            address="○○동 1-1", realty_type="1", dong="101", ho="502"
+        )
+        assert captured["fetched_uno"] == "4444444"
+        assert not res.get("select_note")
+
+    async def test_kind_miss_falls_back_with_note(self, captured):
+        """요청 구분이 결과에 없으면 조회는 하되 반드시 고지가 실려야 한다."""
+        res = await RegistryService().get_one(address="○○동 1-1", realty_type="9")
+        assert res.get("select_note"), "구분 미적용 사실이 결과에 실리지 않음"
+
+    async def test_no_kind_keeps_first(self, captured):
+        await RegistryService().get_one(address="○○동 1-1")
+        assert captured["fetched_uno"] == "3333333"  # 필터 없음 = 목록 첫 건
+
+    async def test_bulk_passes_kind(self, captured):
+        """다필지 일괄도 구분을 넘겨야 한다(토지조서 기본=토지)."""
+        out = await RegistryService().bulk([{"address": "○○동 1-1"}])
+        assert out["count"] == 1
+        assert captured["fetched_uno"] == "1111111", "bulk가 구분을 넘기지 않아 첫 물건이 선택됨"
+
+
+@pytest.mark.asyncio
+class TestTilkoSelectionWiring:
+    """틸코 폴백 경로도 하이픈과 대칭으로 선택기를 거쳐야 한다(형제 경로 스윕)."""
+
+    @pytest.fixture
+    def tilko_captured(self, monkeypatch):
+        monkeypatch.setenv("REGISTRY_PROVIDER", "tilko")
+        monkeypatch.delenv("HYPHEN_HKEY", raising=False)
+        monkeypatch.delenv("HYPHEN_API_KEY", raising=False)
+        monkeypatch.delenv("HYPHEN_USER_ID", raising=False)
+        monkeypatch.delenv("REGISTRY_API_URL", raising=False)
+        monkeypatch.delenv("REGISTRY_API_KEY", raising=False)
+
+        seen: dict[str, Any] = {"fetched_uno": None}
+        items = [
+            {"unique_no": "3333333", "gubun": "집합건물", "jibun": "○○동 1-1 제1101동 제1502호"},
+            {"unique_no": "1111111", "gubun": "토지", "jibun": "○○동 1-1"},
+            {"unique_no": "2222222", "gubun": "건물", "jibun": "○○동 1-1"},
+        ]
+
+        async def fake_search(address, page="1"):  # noqa: ANN001, ARG001
+            return {"ok": True, "status": "ok", "items": items}
+
+        async def fake_fetch(*, unique_no, **kwargs):  # noqa: ANN001, ARG001
+            seen["fetched_uno"] = unique_no
+            return {"ok": True, "pdf_data": "ZmFrZQ=="}
+
+        from app.services.registry import tilko_client as tk
+
+        monkeypatch.setattr(tk, "tilko_ready", lambda: True)
+        monkeypatch.setattr(tk, "search_unique_no", fake_search)
+        monkeypatch.setattr(tk, "fetch_realty_registry", fake_fetch)
+        return seen
+
+    async def test_tilko_picks_requested_kind(self, tilko_captured):
+        res = await RegistryService().get_one(address="○○동 1-1", realty_type="2")
+        assert tilko_captured["fetched_uno"] == "1111111", "틸코 경로가 구분을 무시하고 첫 건 선택"
+        assert res.get("realty_gubun") == "토지"
+
+    async def test_tilko_surfaces_note(self, tilko_captured):
+        res = await RegistryService().get_one(address="○○동 1-1", realty_type="9")
+        assert res.get("select_note"), "틸코 경로에서 정직성 고지가 유실됨"
+
+
+@pytest.mark.asyncio
+class TestHonestyReachesUserSurface:
+    """고지가 최종 응답(fetched)까지 실려야 한다 — 중간에서 유실되면 사용자는 모른다."""
+
+    async def test_select_note_in_analyze_output(self, monkeypatch):
+        from app.services.registry import registry_analysis_service as ras
+
+        async def fake_get_one(self, **kwargs):  # noqa: ANN001, ARG001
+            return {
+                "status": "ok", "origin": "hyphen", "owner": "홍길동",
+                "registry_text": "소유자 홍길동 / 근저당 없음",
+                "realty_gubun": "토지",
+                "select_note": "요청 구분을 적용하지 못했습니다.",
+            }
+
+        async def fake_llm(self, address, registry):  # noqa: ANN001, ARG001
+            return {"summary": "테스트"}
+
+        monkeypatch.setattr(RegistryService, "get_one", fake_get_one)
+        monkeypatch.setattr(ras.RegistryAnalysisService, "_llm", fake_llm)
+
+        out = await ras.RegistryAnalysisService().analyze(
+            address="○○동 1-1", realty_type="9", land_hint={"jimok": "대"}
+        )
+        fetched = out.get("fetched") or {}
+        assert fetched.get("select_note"), "고지가 최종 응답까지 도달하지 않음"
+        assert fetched.get("realty_gubun") == "토지"
+
+
+class TestRegistryTextGrounding:
+    """머리말만 있는 구조화 텍스트는 '분석 가능'으로 취급되면 안 된다(껍데기 권리분석 방지)."""
+
+    def test_header_only_text_is_not_substantive(self):
+        from app.services.registry.registry_analysis_service import (
+            _has_registry_entries,
+            _registry_text_from_codef,
+        )
+
+        # 하이픈 응답 shape — entries 없음
+        hyphen = {"status": "ok", "origin": "hyphen", "owner": "홍길동",
+                  "out_list": {"get소유자": "홍길동"}}
+        text = _registry_text_from_codef(hyphen)
+        assert text.strip(), "머리말은 생성된다"
+        assert _has_registry_entries(text) is False, (
+            "머리말뿐인데 '등기사항 있음'으로 판정되면 PDF 그라운딩이 스킵돼 "
+            "근저당·압류가 빠진 분석이 나간다"
+        )
+
+    def test_codef_entries_are_substantive(self):
+        from app.services.registry.registry_analysis_service import (
+            _has_registry_entries,
+            _registry_text_from_codef,
+        )
+
+        codef = {
+            "status": "ok", "origin": "codef", "owner": "홍길동",
+            "entries": [{"resRegistrationSumList": [{
+                "resType": "을구",
+                "resContentsList": [{"resDetailList": [
+                    {"resContents": "근저당권설정 채권최고액 금 300,000,000원"}
+                ]}],
+            }]}],
+        }
+        text = _registry_text_from_codef(codef)
+        assert _has_registry_entries(text) is True
+        assert "근저당권설정" in text

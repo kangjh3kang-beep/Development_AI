@@ -208,7 +208,16 @@ class RegistryService:
 
         async def one(it: dict) -> dict:
             async with sem:
-                return await self.get_one(pnu=it.get("pnu"), address=it.get("address"), unique_no=it.get("unique_no"))
+                # 다필지 일괄(토지조서)도 구분을 넘긴다 — 안 넘기면 주소검색 결과에서
+                # 첫 물건이 맹목 선택되고, realty_type이 없어 고지조차 생성되지 않는다.
+                return await self.get_one(
+                    pnu=it.get("pnu"),
+                    address=it.get("address"),
+                    unique_no=it.get("unique_no"),
+                    realty_type=it.get("realty_type") or "2",  # 토지조서 기본=토지
+                    dong=it.get("dong"),
+                    ho=it.get("ho"),
+                )
 
         results = await asyncio.gather(*[one(it) for it in items])
         return {"configured": is_configured(), "count": len(results), "results": list(results)}
