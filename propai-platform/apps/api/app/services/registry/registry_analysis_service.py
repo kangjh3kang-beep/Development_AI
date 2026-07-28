@@ -353,6 +353,10 @@ class RegistryAnalysisService:
                     "owner": reg.get("owner"), "registry_office": reg.get("registry_office"),
                     "doc_title": reg.get("doc_title"), "has_pdf": reg.get("has_pdf"),
                     "pdf_url": pdf_url,
+                    # 어느 구분의 물건을 열람했는지 + 요청한 구분/동·호로 좁히지 못한 경우의 고지.
+                    # 최종 표면까지 전달해야 "다른 물건을 조회했는데 조용히 성공"이 되지 않는다.
+                    "realty_gubun": reg.get("realty_gubun"),
+                    "select_note": reg.get("select_note"),
                 }
             else:
                 # 등기부 데이터 미확보 — 토지정보는 제공 + 직접 입력 유도

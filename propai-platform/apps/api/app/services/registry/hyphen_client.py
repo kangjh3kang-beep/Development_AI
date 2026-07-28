@@ -277,18 +277,33 @@ async def fetch_realty_registry(
         return {"ok": False, "status": "error", "message": str(e)[:200]}
 
 
-async def fetch_registry_by_address(address: str) -> dict[str, Any]:
-    """주소입력 → 1차 주소검색 → 2차 등기부 열람 2단계 통합 호출."""
+async def fetch_registry_by_address(
+    address: str,
+    realty_type: str | None = None,
+    dong: str | None = None,
+    ho: str | None = None,
+) -> dict[str, Any]:
+    """주소입력 → 1차 주소검색 → 2차 등기부 열람 2단계 통합 호출.
+
+    한 주소에 여러 물건(토지·건물·집합건물 각 호)이 나오므로, 사용자가 고른
+    부동산 구분·동·호에 맞는 물건을 공용 선택기로 고른다(무조건 첫 번째 금지).
+    좁히지 못하면 조회는 계속하되 그 사실을 select_note로 정직하게 전달한다.
+    """
+    from app.services.registry.realty_kind import select_registry_item
+
     search_res = await search_by_simple_address(address)
     if not search_res.get("ok") or not search_res.get("items"):
         msg = search_res.get("message") or "주소 검색 결과가 없습니다."
         return {"address": address, "status": "no_match", "message": msg}
 
-    first_item = search_res["items"][0]
-    uno = first_item.get("unique_no")
+    picked, note = select_registry_item(search_res["items"], realty_type, dong, ho)
+    uno = (picked or {}).get("unique_no")
     if not uno:
         return {"address": address, "status": "no_match", "message": "부동산 고유번호를 찾을 수 없습니다."}
 
     fetch_res = await fetch_realty_registry(unique_no=uno)
     fetch_res["address"] = address
+    fetch_res["realty_gubun"] = (picked or {}).get("gubun")
+    if note:
+        fetch_res["select_note"] = note
     return fetch_res
