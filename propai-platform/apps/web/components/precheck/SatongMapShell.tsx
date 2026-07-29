@@ -27,6 +27,7 @@ import {
   TrainFront,
   X,
   TrendingUp,
+  Eye,
 } from "lucide-react";
 import {
   type ChangeEvent,
@@ -88,6 +89,21 @@ import {
 //   계약(측정 rail↔줌 충돌 방지 — 지도 높이 500px 미만 배치 금지)의 하한 500px을 보장하고,
 //   기존 720px을 상한으로 유지해 데스크톱은 무회귀(넉넉한 뷰포트에서 60dvh가 이미 ≥720px).
 const SATONG_MAP_HEIGHT = "clamp(500px, 60dvh, 720px)";
+
+// 레일 폭과 팝오버 앵커의 단일 출처.
+//   레일은 접힘 w-16(64px)·펼침 w-32(128px)이고 right-4(16px)에 붙는다. 팝오버는 레일을
+//   가리지 않도록 그 왼쪽에 서야 하므로 앵커도 레일 상태를 따라가야 한다.
+//   ★실결함: 팝오버가 접힘 폭 기준 right-20으로 고정돼 있어, 레일 기본값이 펼침으로 바뀐 뒤
+//     팝오버가 레일 왼쪽 열 버튼 7개를 통째로 덮고 z(430>420)까지 높아 클릭도 막았다.
+//     두 값을 한 곳에서 파생시켜 한쪽만 바뀌는 재발을 구조적으로 차단한다.
+const RAIL_POPOVER_ANCHOR = {
+  pinned: "right-36 w-[min(360px,calc(100%-176px))]",   // 레일 144px + 여백
+  collapsed: "right-20 w-[min(360px,calc(100%-112px))]", // 레일 80px + 여백
+} as const;
+
+function railPopoverAnchor(pinned: boolean): string {
+  return pinned ? RAIL_POPOVER_ANCHOR.pinned : RAIL_POPOVER_ANCHOR.collapsed;
+}
 
 const SatongMultiMap = dynamic<SatongMultiMapProps>(
   () =>
@@ -407,7 +423,7 @@ const LAYERS: SatongLayer[] = [
     label: "로드뷰",
     shortLabel: "로드",
     description: "접도, 가로환경, 출입구 후보를 현장감 있게 확인합니다.",
-    icon: Route,
+    icon: Eye,   // ★아이콘-기능 1:1 — 개발계획과 Route 글리프가 중복이었다
     status: "needs-source",
     tone: "bg-slate-100 text-slate-950 border-slate-200",
     source: "카카오 로드뷰 SDK 연동 필요",
@@ -2805,7 +2821,7 @@ export function SatongMapShell({
                     aria-haspopup="dialog"
                     aria-expanded={activeLayerId === layer.id}
                     title={`${layer.label} — 미리보기 열기 (지도 적용은 팝오버에서)`}
-                    className={`grid size-12 shrink-0 place-items-center rounded-2xl border text-[var(--text-secondary)] transition ${
+                    className={`flex min-h-12 w-full shrink-0 flex-col items-center justify-center gap-0 rounded-2xl border px-1 py-1.5 text-[var(--text-secondary)] transition ${
                       // ★R1 MEDIUM-5: 채움=적용됨(enabled), 링=선택 중(isActive). 종전엔
                       //   미적용 미리보기에 가장 강한 채움이 배정돼 "보기=적용" 오해를
                       //   시각 층에서 되살리고 있었다.
@@ -2817,7 +2833,16 @@ export function SatongMapShell({
                     }`}
                     aria-label={layer.label}
                   >
+                    {/* 펼침(w-32)에서는 아이콘 밑에 2글자 캡션을 노출한다.
+                        ★무라벨 아이콘 12개는 hover가 없는 터치 기기에서 기능을 알 방법이
+                          '하나씩 탭'뿐이었다. shortLabel은 이미 12개 전부 정의돼 있는데
+                          소비처가 0이라 방치돼 있던 자산 — 새 카피 없이 발견성을 회복한다. */}
                     <Icon className="size-5" aria-hidden />
+                    {railPinned && (
+                      <span className="mt-0.5 text-[10px] font-bold leading-none">
+                        {layer.shortLabel}
+                      </span>
+                    )}
                   </button>
                 );
               })}
@@ -2835,7 +2860,7 @@ export function SatongMapShell({
                 aria-label="베이스맵"
                 onMouseEnter={cancelHoverClose}
                 onMouseLeave={() => { if (pinnedPanelRef.current !== "basemap") setBasemapOpen(false); }}
-                className="absolute right-20 top-20 z-[430] w-[min(360px,calc(100%-112px))] rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] p-4 shadow-[var(--shadow-xl)] backdrop-blur-xl"
+                className={`absolute ${railPopoverAnchor(railPinned)} top-20 z-[430] rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] p-4 shadow-[var(--shadow-xl)] backdrop-blur-xl max-h-[calc(100%-120px)] supports-[height:100dvh]:max-h-[min(calc(100%-120px),calc(100dvh-176px))] overflow-y-auto`}
               >
                 <div className="mb-3 flex items-center justify-between">
                   <h3 className="text-lg font-black text-[var(--text-primary)]">베이스맵</h3>
@@ -2862,7 +2887,7 @@ export function SatongMapShell({
                 aria-label={activeLayer.label}
                 onMouseEnter={cancelHoverClose}
                 onMouseLeave={() => { if (pinnedPanelRef.current !== activeLayer.id) setActiveLayerId(null); }}
-                className="absolute right-20 top-20 z-[430] w-[min(360px,calc(100%-112px))] rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] p-4 shadow-[var(--shadow-xl)] backdrop-blur-xl"
+                className={`absolute ${railPopoverAnchor(railPinned)} top-20 z-[430] rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] p-4 shadow-[var(--shadow-xl)] backdrop-blur-xl max-h-[calc(100%-120px)] supports-[height:100dvh]:max-h-[min(calc(100%-120px),calc(100dvh-176px))] overflow-y-auto`}
               >
                 <div className="flex items-start justify-between gap-3">
                   <div>
@@ -2973,7 +2998,7 @@ export function SatongMapShell({
             {detailFeature && !activeLayer && !basemapOpen && (
               <div
                 data-testid="parcel-detail-panel"
-                className="absolute right-20 top-20 z-[430] w-[min(360px,calc(100%-112px))] rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] p-4 shadow-[var(--shadow-xl)] backdrop-blur-xl"
+                className={`absolute ${railPopoverAnchor(railPinned)} top-20 z-[430] rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] p-4 shadow-[var(--shadow-xl)] backdrop-blur-xl max-h-[calc(100%-120px)] supports-[height:100dvh]:max-h-[min(calc(100%-120px),calc(100dvh-176px))] overflow-y-auto`}
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
