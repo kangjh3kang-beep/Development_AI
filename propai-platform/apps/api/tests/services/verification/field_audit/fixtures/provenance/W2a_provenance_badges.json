@@ -1,0 +1,77 @@
+{
+  "_meta": {
+    "seed_id": "W2a",
+    "title": "provenance 계층B 배지 불변식 — 미등록 출처·신선도 만료(P2 비차단)",
+    "dimension": "provenance",
+    "tier": "B",
+    "phase": "0/W2-a",
+    "defect": "이미 계산된 result의 provenance(출처 메타)에 미등록 출처(권위소스 목록 미등재)·신선도 만료가 있어도 사용자에게 배지로 표면화되지 않음 → 값 신뢰도/신선도 경고가 묻힌다. ★stale=버그가 아니라 신선도 경고이므로 correctness(P0/P1) 아닌 P2 배지로 한정(is_valid 불변).",
+    "w2_target": "provenance.py PROV_UNKNOWN_SOURCE(registered is False 엔트리→P2)·PROV_STALE_DATA(freshness 존재+is_fresh=false 엔트리→P2). freshness 부재(last_updated None)면 stale 신호 자체가 없어 무발동. 범위: 판정만(mark_updated 상류 배선은 별도 티켓).",
+    "synthetic": true,
+    "honesty": "W0/W1 합성 fixture — 라이브 analyze() 미수집(하네스 환경 DB/API 부재). provenance 엔트리는 evidence_contract.build_provenance의 실제 산출 shape에 충실한 구조 시드다: 미등록={source_type:'unknown', registered:false}(evidence_contract.py:88), 등록=DataSourceStatus.to_dict()(public_data_registry.py:34-43)+freshness{is_fresh,age_days,max_age_days,data_type,warning}(validator.py:158-170, last_updated 존재 시에만·evidence_contract.py:92). last_updated/age_days는 합성값(라이브 mark_updated 미호출). ordinance_dict_shape 케이스는 다른 경로(ordinance_service.py:216)의 공존 dict shape로 오탐 0 검증용."
+  },
+  "cases": {
+    "unknown_source": {
+      "desc": "미등록 출처 2건 + 등록·신선 1건 → PROV_UNKNOWN_SOURCE 2건, PROV_STALE_DATA 0건",
+      "input": {
+        "zone_type": "제2종일반주거지역",
+        "provenance": [
+          {"name": "molit_transactions", "source_type": "api", "update_frequency": "daily", "last_updated": "2026-07-28T10:00:00", "last_error": null, "record_count": 120, "is_healthy": true, "freshness": {"is_fresh": true, "age_days": 1, "max_age_days": 30, "data_type": "transaction", "warning": null}},
+          {"name": "custom_scraper", "source_type": "unknown", "registered": false},
+          {"name": "manual_xls_upload", "source_type": "unknown", "registered": false}
+        ]
+      },
+      "expect": {"PROV_UNKNOWN_SOURCE": 2, "PROV_STALE_DATA": 0}
+    },
+    "stale": {
+      "desc": "등록·신선도 만료 1건(is_fresh=false·last_updated 존재) + 등록·신선 1건 → PROV_STALE_DATA 1건, PROV_UNKNOWN_SOURCE 0건",
+      "input": {
+        "zone_type": "자연녹지지역",
+        "provenance": [
+          {"name": "vworld_zoning", "source_type": "api", "update_frequency": "monthly", "last_updated": "2026-01-01T00:00:00", "last_error": null, "record_count": 1, "is_healthy": true, "freshness": {"is_fresh": false, "age_days": 210, "max_age_days": 90, "data_type": "zoning", "warning": "zoning 데이터가 210일 전 것입니다 (기준: 90일)"}},
+          {"name": "molit_official_price", "source_type": "api", "update_frequency": "yearly", "last_updated": "2026-07-01T00:00:00", "last_error": null, "record_count": 3, "is_healthy": true, "freshness": {"is_fresh": true, "age_days": 28, "max_age_days": 365, "data_type": "official_price", "warning": null}}
+        ]
+      },
+      "expect": {"PROV_UNKNOWN_SOURCE": 0, "PROV_STALE_DATA": 1}
+    },
+    "mixed": {
+      "desc": "미등록 1건 + 신선도 만료 1건 동시 → 두 규칙 각 1건(독립 발동 실증)",
+      "input": {
+        "provenance": [
+          {"name": "custom_api", "source_type": "unknown", "registered": false},
+          {"name": "vworld_zoning", "source_type": "api", "update_frequency": "monthly", "last_updated": "2026-01-01T00:00:00", "last_error": null, "record_count": 1, "is_healthy": true, "freshness": {"is_fresh": false, "age_days": 210, "max_age_days": 90, "data_type": "zoning", "warning": "zoning 데이터가 210일 전 것입니다 (기준: 90일)"}}
+        ]
+      },
+      "expect": {"PROV_UNKNOWN_SOURCE": 1, "PROV_STALE_DATA": 1}
+    },
+    "healthy": {
+      "desc": "전부 등록+신선(+ 신선도 미부착 등록 1건: last_updated null → freshness 없음) → 두 규칙 0건(오탐 없음)",
+      "input": {
+        "zone_type": "일반상업지역",
+        "provenance": [
+          {"name": "molit_transactions", "source_type": "api", "update_frequency": "daily", "last_updated": "2026-07-28T10:00:00", "last_error": null, "record_count": 120, "is_healthy": true, "freshness": {"is_fresh": true, "age_days": 1, "max_age_days": 30, "data_type": "transaction", "warning": null}},
+          {"name": "tax_acquisition_rates", "source_type": "hardcoded", "update_frequency": "yearly", "last_updated": null, "last_error": null, "record_count": 0, "is_healthy": true}
+        ]
+      },
+      "expect": {"PROV_UNKNOWN_SOURCE": 0, "PROV_STALE_DATA": 0}
+    },
+    "absent": {
+      "desc": "provenance 키 부재 → 두 규칙 0건(오탐 없음)",
+      "input": {"zone_type": "제3종일반주거지역", "risk": {"risk_level": "낮음"}},
+      "expect": {"PROV_UNKNOWN_SOURCE": 0, "PROV_STALE_DATA": 0}
+    },
+    "empty": {
+      "desc": "provenance 빈 배열 → 두 규칙 0건(오탐 없음)",
+      "input": {"zone_type": "준주거지역", "provenance": []},
+      "expect": {"PROV_UNKNOWN_SOURCE": 0, "PROV_STALE_DATA": 0}
+    },
+    "ordinance_dict_shape": {
+      "desc": "공존하는 dict 형태(ordinance parse-provenance) → 출처-상태 목록 아님 → 두 규칙 0건(오탐 방지)",
+      "input": {
+        "zone_type": "계획관리지역",
+        "provenance": {"source": "cache", "confidence": 0.72, "recheck_recommended": true, "disclaimer": "캐시 폴백 — 조례 개정 가능", "reused": false}
+      },
+      "expect": {"PROV_UNKNOWN_SOURCE": 0, "PROV_STALE_DATA": 0}
+    }
+  }
+}

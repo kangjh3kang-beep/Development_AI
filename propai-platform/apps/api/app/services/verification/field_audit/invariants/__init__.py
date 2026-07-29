@@ -4,12 +4,15 @@ W1부터 계층 A 하드 불변식이 여기 등록된다:
   - W1-1: cross_field.G1 protection_zone_severity(보호구역 리스크 하한)
   - W1-2: cross_field.G2 school_poi_dedup(학교 과카운트)
   - W1-3: coverage.G3 zone_coverage_gap(관리지역 BCR/FAR 커버리지 갭)
+W2부터 계층 B 비차단 배지가 여기 등록된다:
+  - W2-a: provenance.PROV_UNKNOWN_SOURCE·PROV_STALE_DATA(미등록 출처·신선도 만료 P2 배지)
 이 패키지를 임포트하면 하위 모듈의 register_rules()가 실행돼 프로덕션 규칙이 활성화된다.
 """
 
 from app.services.verification.field_audit.invariants import (  # noqa: F401  임포트 부작용=규칙 등록
     coverage,
     cross_field,
+    provenance,
 )
 
 
@@ -21,6 +24,7 @@ def register_all_rules() -> None:
     """
     cross_field.register_rules()
     coverage.register_rules()
+    provenance.register_rules()
 
 
-__all__ = ["coverage", "cross_field", "register_all_rules"]
+__all__ = ["coverage", "cross_field", "provenance", "register_all_rules"]
