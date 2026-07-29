@@ -94,7 +94,10 @@ def run(result: dict[str, Any], ctx: dict[str, Any]) -> AuditReport:
     best-effort: 규칙 개별 예외는 격리(해당 규칙만 스킵), 전체 실패는 빈 리포트로 degrade.
     """
     if not _enabled():
-        # 즉시 kill switch — result 무변형(zero footprint). 빈 리포트만 반환.
+        # 즉시 kill switch — DISABLED 경로에 한해 zero footprint(result 무변형·emit 0건).
+        # ★ENABLED 경로는 zero footprint가 아니다: analyze()마다 (1)result에 'field_audit' 키
+        #   additive 추가 (2)bounded deque에 관측이벤트 1건(F4a-1 승인된 observation-only emit).
+        #   둘 다 계약된 additive이지 behavior/additive-계약 위반이 아니다.
         return AuditReport(metadata={"enabled": False})
 
     findings: list[AuditFinding] = []
