@@ -224,10 +224,43 @@ def test_g3_harness_flip_from_blind():
 
 
 def test_g5_regression_lock_robust_stats():
-    """G5 잠금: log-IQR robust trim이 이상치(2만원)를 배제한 정상값 — W1 이후에도 유지."""
+    """★G5 회귀 잠금(정직화·Phase0 W2-c): 실함수 robust_price_stats를 실호출해 log-IQR trim이
+    2만원 이상치를 실제로 배제함을 잠근다.
+
+    과거 이 골든은 실함수를 호출하지 않고 fixture가 손으로 적은 필드(robust_price_per_sqm·
+    excluded_outliers)만 assert하는 동어반복이라, robust_price_stats가 깨져도 절대 FAIL하지 않는
+    거짓 안전이었다. 게다가 과거 fixture의 n=6 표본은 _MIN_SAMPLE_FOR_TRIM=8 미만이라 트림이 아예
+    스킵돼(원시 유지) 수치(excluded=[20000]·500000)가 실함수 반환과 모순인 픽션이었다.
+
+    이제 트림 발동 표본(n>=8)으로 실함수를 직접 호출하고, 실제 반환에 대해 잠근다. (변이-kill:
+    trim을 무력화하면 2만원이 배제되지 않아 excluded/min/avg 잠금이 FAIL한다.)
+    """
+    from app.services.data_validation.price_stats import (
+        _MIN_SAMPLE_FOR_TRIM,
+        robust_price_stats,
+    )
+
     fx = _load("dae__natural_green__na/G5_realtx_iqr_lock.json")
     assert fx["_meta"]["regression_lock"] is True
     rtx = fx["input"]["realtx"]
-    assert rtx["robust_stats_applied"] is True
-    assert 20000 in rtx["excluded_outliers"]                  # 이상치 배제(정상)
-    assert rtx["robust_price_per_sqm"] == 500000              # 잠금 대상값
+    samples = rtx["raw_samples_won_per_sqm"]
+    expected = rtx["expected_robust_stats"]
+
+    # 트림 발동 표본(n>=8)이어야 log-IQR 잠금이 유효하다 — 실함수 실호출.
+    assert len(samples) >= _MIN_SAMPLE_FOR_TRIM, "잠금 표본은 트림 발동(n>=8) 표본이어야 함"
+    result = robust_price_stats(samples)
+
+    # ★핵심 잠금: log-IQR trim이 2만원 이상치를 실제로 배제한다(fixture 자기필드가 아니라 실호출 반환).
+    assert result["excluded"] == expected["excluded"] == 1     # 이상치 정확히 1건 배제
+    assert 20000 not in (result["min"], result["max"])         # 2만원이 대표 양단에서 제거됨
+    assert result["min"] == expected["min"]                    # 배제 후 최저(정상값)
+    assert result["avg"] == expected["avg"]                    # 배제 후 평균(정상값·실호출 반환)
+    assert result["max"] == expected["max"]
+    assert result["count"] == expected["count"] == len(samples)  # 원시 유효건수 정직표기
+
+    # 경계 잠금: 같은 함수에 n<8 표본 → 트림 미발동(원시 유지·excluded=0·2만원 잔존).
+    below = samples[:6]
+    assert len(below) < _MIN_SAMPLE_FOR_TRIM
+    r_below = robust_price_stats(below)
+    assert r_below["excluded"] == 0                            # 표본 과소 → 트림 스킵(원시 유지)
+    assert r_below["min"] == 20000                             # 미발동이라 2만원 유지(임계 경계 반증)
