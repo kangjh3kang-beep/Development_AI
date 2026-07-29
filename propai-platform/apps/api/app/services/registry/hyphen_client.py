@@ -44,6 +44,81 @@ def _headers() -> dict[str, str]:
     }
 
 
+# ── API 권한 실도달성 점검 ────────────────────────────────────────────────
+# 키가 있다고 "연결됨"이라 말하면 안 된다 — 하이픈은 키가 유효해도 계약에 없는
+# API는 errYn=Y "권한이 없는 API 입니다"로 거절한다(라이브에서 실제 발생).
+# 틸코가 공개키를 실제로 받아와 검증(public_key_ok)하는 것과 대칭을 맞춘다.
+_ACCESS_CACHE: dict[str, Any] = {}
+_ACCESS_TTL_SEC = 300.0
+# 권한 거절을 알리는 벤더 문구(부분일치). 문구가 바뀌어도 오탐이 나지 않도록
+# '권한' + 'API' 동시 포함을 기본 신호로 쓰고, 알려진 원문도 함께 본다.
+_FORBIDDEN_HINTS = ("권한이 없는 API", "권한이 없습니다", "권한 없음")
+
+
+def _is_forbidden_message(msg: str) -> bool:
+    m = (msg or "").strip()
+    if not m:
+        return False
+    if any(h in m for h in _FORBIDDEN_HINTS):
+        return True
+    return ("권한" in m) and ("API" in m.upper())
+
+
+async def probe_api_access(force: bool = False) -> dict[str, Any]:
+    """하이픈 계정이 등기 조회 API를 실제로 호출할 수 있는지 점검.
+
+    반환: {"access": "ok"|"forbidden"|"unreachable"|"not_configured",
+           "checked": bool, "message": str}
+
+    - 과금되지 않는 검색 API(고유번호검색)로 확인한다(열람 API는 1,200원 차감이라 금지).
+    - 데이터가 없어서 나는 오류(존재하지 않는 고유번호)는 '권한 있음'으로 본다 —
+      요청이 계약 관문을 통과했다는 뜻이기 때문이다.
+    - 결과는 짧게 캐시한다(상태 조회마다 벤더를 두드리지 않도록).
+    """
+    import time
+
+    if not hyphen_ready():
+        return {"access": "not_configured", "checked": False,
+                "message": "HYPHEN_HKEY / HYPHEN_USER_ID 미설정"}
+
+    now = time.monotonic()
+    hit = _ACCESS_CACHE.get("v")
+    if hit and not force and (now - hit[0]) < _ACCESS_TTL_SEC:
+        return dict(hit[1])
+
+    import httpx
+
+    out: dict[str, Any]
+    try:
+        async with httpx.AsyncClient(timeout=12.0) as client:
+            # 고유번호검색(/in0004000169) — 조회 전용·무과금. 더미 번호로 관문만 통과 확인.
+            resp = await client.post(f"{_host()}/in0004000169", headers=_headers(),
+                                     json={"uniqNo": "00000000000000"})
+            if resp.status_code != 200:
+                out = {"access": "unreachable", "checked": True,
+                       "message": f"하이픈 응답 오류(HTTP {resp.status_code})"}
+            else:
+                data = resp.json()
+                common = data.get("common") or {}
+                err_msg = str(common.get("errMsg") or "")
+                if _is_forbidden_message(err_msg):
+                    out = {"access": "forbidden", "checked": True,
+                           "message": ("하이픈 키는 정상이나 등기 조회 API 사용 권한이 없습니다 — "
+                                       "하이픈에 부동산등기 API(주소검색·고유번호검색·등기열람) "
+                                       "이용 권한 활성화를 요청하세요.")}
+                else:
+                    # errYn=Y여도 '권한' 사유가 아니면 관문은 통과한 것(데이터 없음 등)
+                    out = {"access": "ok", "checked": True,
+                           "message": "하이픈 등기 API 호출 권한 확인됨"}
+    except Exception as e:  # noqa: BLE001
+        logger.warning("하이픈 권한 점검 예외", err=str(e)[:120])
+        out = {"access": "unreachable", "checked": True,
+               "message": f"하이픈 연결 실패: {str(e)[:80]}"}
+
+    _ACCESS_CACHE["v"] = (now, dict(out))
+    return out
+
+
 async def search_by_simple_address(
     address: str,
     kindcls: str = "0",

@@ -310,8 +310,13 @@ async def test_secret(
     try:
         if name in {"HYPHEN_HKEY", "HYPHEN_USER_ID", "REGISTRY_PROVIDER", "TILKO_API_KEY"}:
             from app.services.registry.registry_service import RegistryService
-            st = RegistryService().status()
-            return {"ok": bool(st.get("register_ready") or st.get("configured")),
+            # ★'테스트'는 실제 호출 가능 여부를 물어야 한다 — 키가 저장돼 있다는 이유로
+            #   초록을 띄우면, 벤더가 권한 없다고 거절하는 상태를 사용자가 알 수 없다.
+            st = await RegistryService().live_status()
+            ok = bool(st.get("register_ready") or st.get("configured"))
+            if st.get("hyphen_access") and st.get("hyphen_access") != "ok":
+                ok = bool(st.get("tilko_ready"))
+            return {"ok": ok,
                     "message": st.get("message") or f"등기 공급자: {st.get('provider')}",
                     "detail": st}
         return {"ok": True, "message": "값이 설정되어 있습니다(전용 테스트 미지원 키)."}
