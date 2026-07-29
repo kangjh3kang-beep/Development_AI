@@ -7,12 +7,10 @@
  *   (458×88px 가시 확인). 지도는 35개가 정상 렌더되고 있었는데도 사용자에겐 장애로 보였다.
  *   개별 타일 실패는 흔하다(빈 영역·일시 타임아웃) — 판정은 비율이어야 한다.
  */
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-
 import { describe, expect, it, vi } from "vitest";
 
 import { makeTileStateAggregator } from "@/components/map/SatongMultiMap";
+import { assertWiredThrough } from "@/lib/source-invariant";
 
 function run(sequence: boolean[], opts?: { minSamples?: number; failureRatio?: number }) {
   const states: string[] = [];
@@ -73,19 +71,14 @@ describe("배선 — 타일 이벤트가 집계기를 반드시 거친다", () =
   it("★onTileState를 이벤트에서 직접 호출하는 곳이 없다", () => {
     // 순수함수만 고정하면 '집계기를 우회해 이벤트마다 직접 세팅'하는 회귀를 못 잡는다
     // (변이 실증: 배선을 되돌려도 위 9건이 전부 초록이었다). 원 결함이 바로 그 형태였다.
-    const src = readFileSync(
-      resolve(process.cwd(), "components/map/SatongMultiMap.tsx"),
-      "utf-8",
-    );
-    // 베이스맵 타일만 대상 — WMS 오버레이(지적편집도·규제·지적)는 각자의 노트 콜백을
-    // 쓰는 게 정상이므로 제외한다(과도한 불변식은 정상 코드를 깨뜨린다).
-    const baseHandlers = src
-      .split("\n")
-      .filter((l) => /^\s*(base|vworld)\.on\("tile(load|error)"/.test(l));
-    expect(baseHandlers.length, "베이스맵 타일 핸들러를 찾지 못함").toBeGreaterThanOrEqual(4);
-    for (const line of baseHandlers) {
-      expect(line, `집계기 우회: ${line.trim().slice(0, 70)}`).toContain("track(");
-      expect(line).not.toMatch(/onTileState\(/);
-    }
+    // ★공용 헬퍼 사용 — 손으로 쓰면 경로해석·공허진리·과도스코프 세 함정을 매번 다시 밟는다.
+    //   베이스맵 타일만 대상: WMS 오버레이(지적편집도·규제·지적)는 각자 노트 콜백을 쓰는 게 정상.
+    assertWiredThrough({
+      file: "components/map/SatongMultiMap.tsx",
+      scope: /^\s*(base|vworld)\.on\("tile(load|error)"/,
+      mustContain: "track(",
+      mustNotContain: /onTileState\(/,
+      minMatches: 4,
+    });
   });
 });
