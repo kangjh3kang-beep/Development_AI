@@ -13,6 +13,7 @@ from typing import Any
 import structlog
 
 from app.services.data_validation.price_stats import robust_price_stats
+from app.services.external_api.poi_dedup import dedup_school_cluster
 from app.services.feasibility.permit_validator import (
     DEVELOPMENT_TYPE_NAMES,
     PERMIT_COMPLEXITY,
@@ -1489,7 +1490,9 @@ class ComprehensiveAnalysisService:
         base.get("address", "")
 
         subway = infra.get("nearest_subway")
-        schools = infra.get("schools", [])
+        # ★모학교 병합(G2 근원봉합): 부속시설·분교 개별집계로 인한 입지점수 과대를 차단.
+        #   len(schools)·school_count가 모두 고유 모학교 수를 쓴다(dedup는 멱등 — 원천 dedup과 무해).
+        schools = dedup_school_cluster(infra.get("schools", []))
 
         # 입지 점수 산정 (100점 만점)
         # 기본점수 50점 + 교통접근성 최대 25점 + 교육환경 최대 15점 + 지역보정 최대 10점

@@ -20,6 +20,7 @@ from ..data_validation.price_stats import robust_price_stats
 from ..external_api.building_registry_service import BuildingRegistryService
 from ..external_api.commercial_area_service import CommercialAreaService
 from ..external_api.molit_service import MOLITService
+from ..external_api.poi_dedup import dedup_school_cluster
 from ..external_api.vworld_service import VWorldService
 from ..zoning.auto_zoning_service import ZONE_INFERENCE_WARNING, AutoZoningService
 from ..zoning.legal_zone_limits import _is_confirmed_ordinance_source
@@ -1194,6 +1195,11 @@ class LandInfoService:
                         })
             except Exception as e:
                 logger.debug("학교 검색 실패 (시도 %d): %s", attempt + 1, str(e))
+
+        # ★모학교 병합(G2 근원봉합): 본교·운동장·병설유치원·체육관·분교 등 부속을 1개 모학교로
+        #   dedup해 과카운트를 원천 차단(공용 SSOT). 이후 이 목록을 소비하는 입지점수·학군서술·
+        #   market_report가 모두 고유 모학교 수를 쓴다.
+        infra["schools"] = dedup_school_cluster(infra["schools"])
 
         # ── 생활 인프라 POI 확장 (병원/마트/편의점/공원/버스/IC) ──
         # 각 카테고리를 반경 내에서 검색해 최근접순 상위 N개를 수집한다.
