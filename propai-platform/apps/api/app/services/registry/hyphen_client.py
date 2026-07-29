@@ -183,6 +183,21 @@ def kindcls_value(realty_type: str | None) -> str:
     return KINDCLS_BY_CODE.get((realty_type or "").strip(), "전체")
 
 
+def outlist_value(row: dict[str, Any], name: str) -> Any:
+    """열람 응답(outList)에서 항목 하나를 꺼낸다.
+
+    ★벤더 명세는 'get소유자'처럼 접두사를 붙여 표기하지만 **실제 응답에는 없다**(라이브 실측).
+      검색 응답과 동일한 함정이라, 양쪽 표기를 모두 받아 한 곳에서 흡수한다.
+    """
+    if not isinstance(row, dict):
+        return None
+    for key in (name, f"get{name}"):
+        v = row.get(key)
+        if v not in (None, "", [], {}):
+            return v
+    return None
+
+
 def _search_item(item: dict[str, Any]) -> dict[str, Any]:
     """검색결과 1건 → 내부 공통 형태.
 
@@ -426,11 +441,20 @@ async def fetch_realty_registry(
                 logger.warning("하이픈 pdfHex 변환 실패", err=str(pe)[:80])
 
         out_list = res_data.get("outList") or {}
-        owner = None
-        if isinstance(out_list, dict):
-            owner = out_list.get("get소유자")
-        elif isinstance(out_list, list) and out_list:
-            owner = out_list[0].get("get소유자")
+        row = out_list if isinstance(out_list, dict) else (
+            out_list[0] if isinstance(out_list, list) and out_list else {})
+        # ★검색 응답과 동일하게 열람 응답도 'get' 접두사가 없다(라이브 실측: 소유지분현황_갑구 등).
+        #   과거 구현은 get* 키만 읽어 소유자가 항상 None이었다 — 양쪽 표기를 모두 받는다.
+        owner = outlist_value(row, "소유자")
+        # 갑구 소유지분현황이 있으면 등기명의인을 소유자 표기로 승격(요약 필드보다 정확).
+        if not owner:
+            holders = outlist_value(row, "소유지분현황_갑구")
+            if isinstance(holders, list) and holders:
+                names = [str(h.get("등기명의인") or h.get("get등기명의인") or "").strip()
+                         for h in holders if isinstance(h, dict)]
+                names = [n for n in names if n]
+                if names:
+                    owner = names[0] if len(names) == 1 else f"{names[0]} 외 {len(names) - 1}명"
 
         return {
             "ok": True,
