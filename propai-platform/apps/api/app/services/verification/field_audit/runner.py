@@ -51,6 +51,32 @@ def _enabled() -> bool:
     return raw not in ("0", "false", "off", "no")
 
 
+def audit_status() -> dict[str, Any]:
+    """field_audit 등록/활성 상태를 introspect만(read-only·부작용 0·run과 독립).
+
+    배포 회귀 가드용 진단: 배포된 백엔드에서 이 상태를 즉시 조회해 자가검증 레이어가
+    프로덕션에서 **비활성/미등록으로 무성(silent) 회귀**했는지 스모크로 assert한다.
+
+    ★라이브 레지스트리를 있는 그대로 보고한다 — 절대 재등록/변이하지 않는다. healthy 배포는
+    field_audit 패키지 임포트 부작용으로 규칙이 이미 등록돼 있으므로(각 invariants 모듈이
+    임포트 시 register_rules() 자동 호출) 참 카운트를 보고한다. 등록이 무성 파손되면
+    rules_registered=0을 **정직 보고**해 스모크가 실패하고 회귀가 적발된다. 여기서 register_
+    all_rules를 호출해 자가치유하면 run()(analyze 경로)이 규칙 0으로 퇴화 실행 중인데도
+    프로브만 8로 green을 내는 false-healthy 오보고가 되므로 절대 하지 않는다(R1 HIGH 봉합).
+
+    반환:
+      - enabled: FIELD_AUDIT_ENABLED 반영(기본 on).
+      - rules_registered: 라이브 등록된 불변식 수(healthy=현재 6모듈·8규칙, 파손=0).
+      - rule_ids: 라이브 등록된 rule_id 정렬 목록.
+    """
+    rules = iter_rules()
+    return {
+        "enabled": _enabled(),
+        "rules_registered": len(rules),
+        "rule_ids": sorted(r.rule_id for r in rules),
+    }
+
+
 def _disabled_rule_ids() -> set[str]:
     """FIELD_AUDIT_DISABLED_RULES — 콤마구분 rule_id 집합(규칙별 즉시 롤백). 기본 빈 집합."""
     raw = os.getenv("FIELD_AUDIT_DISABLED_RULES", "").strip()
