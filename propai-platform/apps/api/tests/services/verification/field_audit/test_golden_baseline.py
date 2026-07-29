@@ -21,7 +21,7 @@ import pytest
 
 import app.services.growth.capture_service as cap
 from app.services.verification.field_audit import runner
-from app.services.verification.field_audit.invariants.cross_field import register_rules
+from app.services.verification.field_audit.invariants import register_all_rules
 from app.services.verification.field_audit.rules_registry import clear_registry
 
 _FIX = Path(__file__).parent / "fixtures" / "landattr"
@@ -45,12 +45,12 @@ def _load(rel: str) -> dict:
 def _isolate_and_silence(monkeypatch):
     """규칙 레지스트리 격리 + W1 프로덕션 규칙 재등록 + growth emit 무음화(테스트 부작용 차단).
 
-    clear_registry()로 상태 누수를 막은 뒤 register_rules()로 프로덕션 불변식(W1-1 G1·W1-2 G2)을
-    재등록한다 — golden이 '프로덕션에 등록된 규칙 집합'으로 판정하게 하여 flip을 실증한다.
-    G1(P0)·G2(P1)가 fires, 아직 규칙 없는 G3~G6는 blind 유지.
+    clear_registry()로 상태 누수를 막은 뒤 register_all_rules()로 프로덕션 불변식(W1-1 G1·
+    W1-2 G2·W1-3 G3)을 재등록한다 — golden이 '프로덕션에 등록된 규칙 집합'으로 판정하게 하여
+    flip을 실증한다. G1(P0)·G2(P1)·G3(P1)가 fires, 아직 규칙 없는 G4~G6는 blind 유지.
     """
     clear_registry()
-    register_rules()
+    register_all_rules()
     monkeypatch.setattr(cap, "record_event", lambda *a, **k: None)
     yield
     clear_registry()
@@ -71,11 +71,11 @@ def test_golden_fixture_is_wellformed(seed_id, rel):
 
 @pytest.mark.parametrize("seed_id,rel", _GOLDEN, ids=[g[0] for g in _GOLDEN])
 def test_golden_current_baseline_platform_blind(seed_id, rel):
-    """★W1 flip 기준선: G1(P0)·G2(P1)는 이제 규칙이 잡고, 아직 규칙 없는 결함(G3~G6)은 blind 유지.
+    """★W1 flip 기준선: G1(P0)·G2(P1)·G3(P1)는 이제 규칙이 잡고, 아직 규칙 없는 결함(G4~G6)은 blind 유지.
 
     W0에선 전부 blind(규칙 0건)였다. W1-1이 G1(차단후보 P0·is_valid flip), W1-2가 G2(제자리교정
-    P1·비차단·is_valid 유지) 불변식을 붙여 동일 fixture가 findings를 낸다 → 가드 실재를 증명한다.
-    나머지 결함은 각자의 Wave에서 규칙이 붙을 때 flip한다.
+    P1·비차단·is_valid 유지), W1-3이 G3(BCR/FAR 커버리지 갭 P1·비차단) 불변식을 붙여 동일 fixture가
+    findings를 낸다 → 가드 실재를 증명한다. 나머지 결함은 각자의 Wave에서 규칙이 붙을 때 flip한다.
     """
     fx = _load(rel)
     result = copy.deepcopy(fx["input"])
@@ -95,8 +95,18 @@ def test_golden_current_baseline_platform_blind(seed_id, rel):
         assert g2.severity == "P1"
         assert report.is_valid is True, "G2는 P1(비차단) — is_valid 미변경"
         assert result["field_audit"]["findings"], "result에 G2 finding 부착"
+    elif seed_id == "G3":
+        # 보전관리 BCR/FAR 판정불가(null·별표 20/80 존재) → P1 커버리지 갭 finding(W0 blind→W1-3 catch).
+        # P1은 비차단이라 is_valid True 유지(제자리 표면화+배지 — §2.4). ★허용용도 판정불가는
+        # 조례의존이라 무플래그(갭 아님) — coverage.py가 BCR/FAR만 대조(M3 구분).
+        codes = [f.code for f in report.findings]
+        assert "G3_ZONE_COVERAGE_GAP" in codes, "G3: W1-3 coverage 규칙이 조용한 판정불가를 잡아 갭 finding 산출"
+        g3 = next(f for f in report.findings if f.code == "G3_ZONE_COVERAGE_GAP")
+        assert g3.severity == "P1"
+        assert report.is_valid is True, "G3는 P1(비차단) — is_valid 미변경"
+        assert result["field_audit"]["findings"], "result에 G3 finding 부착"
     else:
-        # 아직 규칙 없는 결함 → blind(빈 리포트) 유지 — additive 부착만(behavior 불변)
+        # 아직 규칙 없는 결함(G4~G6) → blind(빈 리포트) 유지 — additive 부착만(behavior 불변)
         assert report.findings == [], f"{seed_id}: 아직 규칙 미등록 → finding 0(blind 유지)"
         assert report.is_valid is True
         assert result["field_audit"]["findings"] == []
@@ -178,6 +188,39 @@ def test_g2_harness_flip_from_blind():
     assert f.expected == 1 and f.observed == 5                 # dedup 고유 vs 원카운트
     assert f.rule_id == "G2_SCHOOL_POI_DEDUP" and f.field == "school_count" and f.panel == "입지"
     assert report.is_valid is True                             # P1 — 비차단(배지)
+
+
+def test_g3_baseline_bcr_far_undetermined():
+    """G3 앵커: 별표 한도 명확한 보전관리(20/80)인데 BCR/FAR가 판정불가(null). 허용용도는 조례의존 판정불가."""
+    fx = _load("imya__conservation_mgmt__conservation_forest/G3_conservation_mgmt_permit_gap.json")
+    eff = fx["input"]["effective_far"]
+    assert eff["national_far_pct"] is None and eff["national_bcr_pct"] is None  # 현행(조용한 판정불가)
+    assert eff["far_basis"] == "zone_unmatched"
+    assert fx["current_baseline"]["observed"] is None                          # W1-3: → 표면화 flip
+    # ★M3 (b): 허용용도 판정불가는 조례의존(갭 아님) — 이 필드는 W1-3 후에도 유지(무플래그).
+    assert fx["input"]["permit"]["verdict"] == "판정불가"
+    assert fx["input"]["permit"]["ordinance_dependent"] is True
+
+
+def test_g3_harness_flip_from_blind():
+    """★W1-3 핵심 flip: G3 buggy 시드(보전관리 BCR/FAR 판정불가)에서 harness가 P1 갭 finding을 낸다.
+
+    W0(규칙 0건)에선 blind였던 것이 W1-3 coverage.G3 등록으로 잡힌다. expected=별표 한도존재 마커·
+    observed=판정불가·rule_id·tier·panel·field까지 계약을 고정한다. P1은 비차단이라 is_valid True
+    유지(제자리 표면화+배지). ★허용용도(조례의존 판정불가)는 갭 미플래그 — coverage.py가 BCR/FAR만
+    대조(M3 구분). (변이-kill·zone 단위검증은 test_coverage_gap.)
+    """
+    from app.services.verification.field_audit.invariants.coverage import _EXPECTED_MARK
+
+    fx = _load("imya__conservation_mgmt__conservation_forest/G3_conservation_mgmt_permit_gap.json")
+    report = runner.run(copy.deepcopy(fx["input"]), fx["ctx"])
+    f = next(f for f in report.findings if f.code == "G3_ZONE_COVERAGE_GAP")
+    assert f.severity == "P1" and f.tier == "A"
+    assert f.expected == _EXPECTED_MARK and f.observed == "판정불가"
+    assert f.rule_id == "G3_ZONE_COVERAGE_GAP" and f.field == "legal_bcr_far_pct" and f.panel == "법규/공급"
+    assert report.is_valid is True                             # P1 — 비차단(배지)
+    # 갭 finding은 정확히 1건(허용용도 조례의존 판정불가를 갭으로 오플래그하지 않음 — M3 (b))
+    assert sum(1 for x in report.findings if x.code == "G3_ZONE_COVERAGE_GAP") == 1
 
 
 def test_g5_regression_lock_robust_stats():
