@@ -72,22 +72,50 @@ _NOTE = (
     "값 신뢰도 확인 권장)"
 )
 
-# ★분산 표식 탐지 — 긴 명확 토큰(부분일치 안전 — 비분산 키와 충돌 가능성 낮음). 향후 pricing_band
-#   배선 시 항목에 실릴 법한 키(band_10k·recommended_cap_10k·price_range·scenarios·confidence_interval
-#   등)를 부분일치로 흡수해 '구간이 반영되면 배지 자동 억제'(경로 비의존·미래 견고성).
-_DISPERSION_SUBSTR: tuple[str, ...] = (
-    "band", "range", "scenario", "confidence", "interval",
-    "dispersion", "variance", "stddev", "std_dev",
-    "quantile", "percentile", "recommended_cap",
-)
-
-# 짧은 모호 토큰은 정확 키 매칭(부분일치 시 'allowed'의 'low' 등 오탐 → 분산 오억제 방지).
+# ★분산 표식 탐지 — 정확 키(exact-key) + 워드바운더리(접두/접미) 매칭. **bare substring `in` 금지**
+#   (R1 적발 LOW·R2 봉합): 짧은 토큰의 substring 매칭은 무관 키(arrangement⊃"range"·subband_note⊃
+#   "band"·misconfidence_flag⊃"confidence"·storage_range_id⊃"range")를 오매칭해 배지를 **오억제**한다.
+#   자가검증 조언 배지의 false-negative(조언 침묵)는 false-positive(조언 과다)보다 위험하므로 —
+#   미상의 미래 분산키를 놓쳐 배지가 뜨는 건 P2 조언에서 안전, 무관키가 배지를 끄는 건 위험 —
+#   exact/boundary로 좁혀 안전측 방향(억제는 진짜 분산 신호일 때만)을 지킨다.
+#
+# 정확 키 집합 — 실제/예상 분산 필드명. dict 키가 이 집합에 **정확히** 속하면 분산 동반으로 판정.
 _DISPERSION_EXACT: frozenset[str] = frozenset({
-    "low", "high", "min", "max", "std", "ci",
-    "low_man", "high_man", "low_10k", "high_10k",
-    "sale_price_low_man", "sale_price_high_man",
-    "sale_price_range_man", "p10", "p90", "p25", "p75",
+    # 밴드/구간
+    "band", "band_10k", "band_man", "band_low", "band_high", "price_band",
+    "range", "range_10k", "range_man", "range_per_sqm", "range_per_pyeong",
+    "price_range", "sale_price_range_man",
+    # 저/고 양단·min/max
+    "low", "high", "low_man", "high_man", "low_10k", "high_10k",
+    "sale_price_low_man", "sale_price_high_man", "min", "max", "min_price", "max_price",
+    # 분위수
+    "p10", "p25", "p50", "p75", "p90", "q1", "q3",
+    "quantile", "quantiles", "percentile", "percentiles",
+    # 시나리오
+    "scenario", "scenarios",
+    # 신뢰도/구간
+    "confidence", "confidence_level", "confidence_interval", "ci", "interval",
+    # 분산 통계
+    "std", "stdev", "stddev", "std_dev", "variance", "cv", "margin",
+    "dispersion", "distribution",
+    # 권고 상한(pricing_band)
+    "recommended_cap", "recommended_cap_10k",
 })
+
+# 워드바운더리 접미/접두 — 합성 분산 키(예: sale_price_band·..._range·band_..._·..._confidence)를
+#   경계로만 흡수(미래 견고성). ★underscore 경계라 substring 오매칭(arrangement·subband_note 등) 불가.
+#   str.endswith/startswith는 튜플을 받아 O(1) 다중경계 판정.
+_DISPERSION_SUFFIX: tuple[str, ...] = (
+    "_band", "_range", "_low", "_high",
+    "_scenario", "_scenarios", "_confidence", "_confidence_interval",
+    "_interval", "_stddev", "_std_dev", "_variance",
+    "_percentile", "_quantile", "_dispersion", "_distribution",
+)
+_DISPERSION_PREFIX: tuple[str, ...] = (
+    "band_", "range_", "scenario_", "scenarios_", "confidence_",
+    "interval_", "dispersion_", "distribution_", "percentile_", "quantile_",
+    "recommended_cap_",
+)
 
 
 def _is_meaningful(v: Any) -> bool:
@@ -108,8 +136,11 @@ def _is_meaningful(v: Any) -> bool:
 def _has_dispersion(item: dict[str, Any]) -> bool:
     """항목에 분산 표식(band/range/low-high/scenario/confidence 등)이 실질적으로 동반됐는가.
 
-    실 bare 항목(dev_type/type_name/sale_price_*/source)엔 어느 토큰도 매칭되지 않아 False다
-    (→ 배지 발동). 향후 구간이 배선되면 해당 키가 True를 만들어 배지가 자동 억제된다(오탐 방지).
+    매칭은 **정확 키 + 워드바운더리(접두/접미)만** — bare substring `in` 금지(R1 LOW·R2 봉합).
+    실 bare 항목(dev_type/type_name/sale_price_per_pyeong_man/sale_price_per_sqm_man/source)의
+    키는 exact·boundary 어디에도 걸리지 않아 False다(→ 배지 발동). 무관 키(arrangement·subband_note·
+    misconfidence_flag·storage_range_id 등 substring만 포함)도 경계 불일치라 억제하지 않는다(오억제 차단).
+    향후 진짜 구간 키(band_10k·range_per_sqm·scenarios·confidence 등)가 배선되면 True→배지 자동 억제.
     """
     for k, v in item.items():
         if not isinstance(k, str) or not _is_meaningful(v):
@@ -117,7 +148,7 @@ def _has_dispersion(item: dict[str, Any]) -> bool:
         kl = k.lower()
         if kl in _DISPERSION_EXACT:
             return True
-        if any(tok in kl for tok in _DISPERSION_SUBSTR):
+        if kl.endswith(_DISPERSION_SUFFIX) or kl.startswith(_DISPERSION_PREFIX):
             return True
     return False
 

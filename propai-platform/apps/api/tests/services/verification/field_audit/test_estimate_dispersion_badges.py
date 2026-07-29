@@ -225,6 +225,57 @@ def test_dispersion_accompanied_items_suppress_badge():
         assert len(_sale_price_point_estimate({"sale_prices": [item]}, {})) == 1, f"{empty_field}={empty_val}(빈값) → 억제 안 함(배지 유지)"
 
 
+def test_unrelated_substring_keys_do_not_over_suppress():
+    """★R1 LOW 반증(R2 봉합): 무관 키가 분산 토큰을 substring으로 포함해도 배지 오억제 안 됨(배지 1 유지).
+
+    이전 bare substring `in` 매칭은 arrangement(⊃'range')·subband_note(⊃'band')·misconfidence_flag
+    (⊃'confidence')·storage_range_id(⊃'range')를 오매칭해 배지를 조용히 껐다(false-negative — 자가검증
+    조언 침묵). exact/워드바운더리 매칭으로 좁힌 뒤엔 경계 불일치라 억제하지 않는다. R1 repro를 고정한다.
+    """
+    unrelated_keys = {
+        "arrangement": "정렬됨",          # ⊃ "range" (경계 아님)
+        "subband_note": "메모",           # ⊃ "band" (경계 아님)
+        "misconfidence_flag": True,       # ⊃ "confidence" (경계 아님)
+        "storage_range_id": "S-1",        # ⊃ "range" (경계 아님·_range_id 접미도 아님)
+        "highlight": "강조",              # ⊃ "high" (경계 아님)
+        "allowance": 100,                 # ⊃ "low" (경계 아님)
+        "maximal_note": "x",              # ⊃ "max" (경계 아님)
+    }
+    item = {"dev_type": "M01", "type_name": "아파트", "sale_price_per_pyeong_man": 2500,
+            "sale_price_per_sqm_man": 756, "source": "지역 통계 기반 추정", **unrelated_keys}
+    assert len(_sale_price_point_estimate({"sale_prices": [item]}, {})) == 1, (
+        "무관 substring 키가 배지를 오억제하면 안 된다(false-negative 차단)"
+    )
+    # 개별 반증(각 무관 키 단독으로도 오억제 없음)
+    for bad_key, bad_val in unrelated_keys.items():
+        one = {"dev_type": "M01", "type_name": "아파트", "sale_price_per_pyeong_man": 2500,
+               "sale_price_per_sqm_man": 756, "source": "지역 통계 기반 추정", bad_key: bad_val}
+        assert len(_sale_price_point_estimate({"sale_prices": [one]}, {})) == 1, f"{bad_key} 단독 오억제 없음"
+
+
+def test_real_dispersion_keys_still_suppress():
+    """★정상 억제 유지(R2 무회귀): 진짜 분산키(band_10k·range_per_sqm·scenarios·confidence·low/high)는
+    정확/경계 매칭으로 여전히 배지를 억제한다(방향성: 진짜 분산 신호일 때만 억제)."""
+    # 정확 키
+    for real_key, real_val in [
+        ("band_10k", [3600, 4400]), ("range_per_sqm", [1000, 1400]), ("scenarios", [{"v": 1}]),
+        ("confidence", 0.85), ("confidence_interval", [0.8, 0.95]), ("low", 3600), ("high", 4400),
+        ("recommended_cap_10k", 3600), ("stddev", 120.0), ("percentile", 90),
+    ]:
+        item = {"dev_type": "M01", "type_name": "아파트", "sale_price_per_pyeong_man": 4000,
+                "sale_price_per_sqm_man": 1210, "source": "거래사례비교", real_key: real_val}
+        assert _sale_price_point_estimate({"sale_prices": [item]}, {}) == [], f"{real_key} 동반 → 정상 억제"
+    # 워드바운더리(합성 분산키 — 접미/접두 경계)
+    for boundary_key, boundary_val in [
+        ("sale_price_band", [3600, 4400]), ("price_range", {"low": 1, "high": 2}),
+        ("pyeong_low", 3600), ("pyeong_high", 4400), ("band_note", "밴드"),
+        ("confidence_level", 0.9), ("recommended_cap_man", 3600),
+    ]:
+        item = {"dev_type": "M01", "type_name": "아파트", "sale_price_per_pyeong_man": 4000,
+                "sale_price_per_sqm_man": 1210, "source": "거래사례비교", boundary_key: boundary_val}
+        assert _sale_price_point_estimate({"sale_prices": [item]}, {}) == [], f"{boundary_key}(경계) 동반 → 정상 억제"
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # 7) 실제 shape 대조 + finding 계약
 # ────────────────────────────────────────────────────────────────────────────
