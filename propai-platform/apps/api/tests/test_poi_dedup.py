@@ -47,9 +47,55 @@ _DAEBO5 = [
     ("호미곶중학교", "호미곶중학교"),
     ("중앙고등학교", "중앙고등학교"),
     ("포항제철중학교", "포항제철중학교"),      # '초'가 stem 앞에 없음 — 코어 우선
+    # ★R2(R1 REVISE): 부설학교=모학교와 별개교 → 최종(최우측)코어 절단으로 분리(과병합 봉합)
+    ("서울교육대학교부설초등학교", "서울교육대학교부설초등학교"),  # 최종코어 '초등학교' → 그대로
+    ("서울교육대학교", "서울교육대학교"),                         # 최종코어 '대학교' → 모대학
+    # 부정표본(지명) — 축약폴백 가드가 학교로 오인식하지 않아야(뒤가 non-attach)
+    ("고촌", "고촌"),          # '고' 뒤 '촌'=non-attach → 미인식
+    ("중구청", "중구청"),      # '중' 뒤 '구청'=non-attach → 미인식
+    ("중앙동", "중앙동"),      # '중' 뒤 '앙동'=non-attach → 미인식
 ])
 def test_mother_school_name_normalization(name, expected):
     assert mother_school_name(name) == expected
+
+
+def _first_core_truncate(name: str) -> str:
+    """변이(결함) 재현 — **최초**-코어 절단(R1이 지적한 과병합 버그). 회귀 테스트 대조용.
+
+    '서울교육대학교부설초등학교' → 최초코어 '대학교'에서 잘라 '서울교육대학교'로 붕괴(모대학과 과병합).
+    실제 프로덕션 mother_school_name은 **최종**코어라 이 붕괴가 일어나지 않아야 한다.
+    """
+    from app.services.external_api.poi_dedup import _SCHOOL_CORE
+    n = name.replace(" ", "")
+    best_i, best_core = -1, ""
+    for core in _SCHOOL_CORE:
+        i = n.find(core)
+        if i >= 0 and (best_i < 0 or i < best_i):
+            best_i, best_core = i, core
+    return n[:best_i] + best_core if best_i >= 0 else n
+
+
+def test_affiliated_school_not_over_merged_and_mutation_kill():
+    """★R2 CONFIRMED 봉합: 대학교 부설초등학교는 모대학과 별개교(과병합 금지) + 변이-kill.
+
+    최종-코어 절단으로 '서울교육대학교부설초등학교'는 그대로 보존돼 모대학과 분리된다.
+    변이(최초-코어=find 절단)면 '서울교육대학교'로 붕괴해 병합(1)되므로, 아래 값 assert가 즉시
+    FAIL한다 = 봉합이 최종-코어 절단에 실제 의존함을 증명.
+    """
+    name = "서울교육대학교부설초등학교"
+    # 변이(최초-코어)였다면 모대학으로 붕괴했을 값을 명시
+    assert _first_core_truncate(name) == "서울교육대학교"          # 결함 재현(과병합 원인)
+    # 실제(최종-코어)는 그대로 유지 → 모대학과 별개 키(rfind→find 회귀 시 이 줄이 FAIL)
+    assert mother_school_name(name) == name
+    assert mother_school_name(name) != mother_school_name("서울교육대학교")
+    # dedup: 좌표<250m·좌표없음 모두 미병합(2) — 봉합 전 오답 1, 봉합 후 정답 2
+    near = [
+        {"name": "서울교육대학교", "x": 127.0, "y": 37.5},
+        {"name": "서울교육대학교부설초등학교", "x": 127.0009, "y": 37.5},  # <250m
+    ]
+    assert len(dedup_school_cluster(near)) == 2
+    assert len(dedup_school_cluster(
+        [{"name": "서울교육대학교"}, {"name": "서울교육대학교부설초등학교"}])) == 2
 
 
 def test_mother_school_name_empty():
