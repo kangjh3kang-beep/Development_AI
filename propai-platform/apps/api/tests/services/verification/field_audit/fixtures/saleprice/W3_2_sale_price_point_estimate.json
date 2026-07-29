@@ -1,0 +1,116 @@
+{
+  "_meta": {
+    "seed_id": "W3-2",
+    "title": "estimate_dispersion 계층C 배지 불변식 — 분양가 단일 점추정(분산 미동반) 상시 형태 고지(P2 비차단)",
+    "dimension": "estimate_dispersion",
+    "tier": "C",
+    "phase": "0/W3-2",
+    "defect": "이미 계산된 result의 분양가(sale_prices[].sale_price_per_pyeong_man)가 신뢰구간·시나리오·분산 없이 단일 점추정으로만 표시되는데(구간 산출 가능함에도) 사용자에게 그 불확실성이 배지로 표면화되지 않음 → 저정밀 점추정이 정밀값처럼 과신된다. ★점추정 한계=버그가 아니라 신뢰도 경고이므로 correctness(P0/P1) 아닌 P2 배지로 한정(is_valid 불변).",
+    "w3_target": "estimate_dispersion.py SALE_PRICE_POINT_ESTIMATE: sale_prices에 '유효 점추정(sale_price_per_pyeong_man>0·판정불가 아님)이면서 분산 표식(band/range/low-high/scenario/confidence) 미동반' 항목이 하나라도 있으면 섹션 배지 1건(상시 형태 고지). 값 재계산·임계값 없음(형태만 판정 → 오탐 0·오라클 독립). ★배지 단위=섹션 1건(per-item 아님·W2-b 동형·노이즈 최소화) — 순회는 각 항목을 검사하되 분산 동반·판정불가 항목은 트리거 기여 없음.",
+    "band_computable_but_unwired": "pricing_band_service.compute_fair_price(app/services/market/pricing_band_service.py:75-158)가 band_10k[low,high]·recommended_cap_10k(:68-69)를 산출할 수 있으나 _calc_sale_prices(comprehensive_analysis_service.py:1447-1473)에 미배선 → '구간 산출 가능한데 점추정만 표시'가 구조적으로 성립. sale_prices→pricing_band 재배선은 별도 기능 티켓(계층 판정 범위 밖).",
+    "fallback_not_detectable": "_get_base_price(:1475-1482)의 전국 기본값 1500 폴백은 result에서 감지 불가능(정직 정정): (1) source가 폴백 여부와 무관하게 항상 '지역 통계 기반 추정'으로 동일, (2) 값 1500이 정당한 지역 기준가와 충돌(SIGUNGU 안산시=1500·광주시=1500 :84,86, REGION 광주광역시=1500·제주=1500 :97,98)하고 여러 개발유형 배수가 1.0(M01~M03·M06·M15 :65-69)이라 폴백 1500과 정상 1500이 값으로 구분 불가. 값 역산 판정은 SALE_PRICE_MULTIPLIER 임포트=오라클 의존(값-재구현 위험). → 폴백-특정 note 미병기(과제 지정: 감지 불가면 생략·억지 금지). fallback_still_bare 케이스는 폴백이어도 배지/ note가 정상 케이스와 동일함을 고정(폴백 별도 note 없음).",
+    "synthetic": true,
+    "honesty": "W3 합성 fixture — 라이브 analyze() 미수집(하네스 환경 DB/API 부재). sale_prices 항목은 comprehensive_analysis_service._calc_sale_prices의 실제 산출 shape에 충실한 구조 시드다: 정상 항목={dev_type, type_name, sale_price_per_pyeong_man, sale_price_per_sqm_man, source:'지역 통계 기반 추정'}(:1466-1472, band/range/low/high/scenario/confidence 필드 전무), 판정불가 항목={development_type:null, type_name:'판정불가', note}(:1451-1453). 분산 동반 케이스(all_items_have_dispersion·mixed)는 향후 pricing_band 배선 시 실릴 법한 형태(band_10k·recommended_cap_10k·scenarios·confidence)를 규칙 억제 검증용으로 additive 부여한 것이며 라이브 정본은 아직 bare point만 낸다. 분양가 수치는 합성값(라이브 미조회).",
+    "reconfirmed_shape": {
+      "result_key": "result['sale_prices'] = sec5 (comprehensive_analysis_service.py:699)",
+      "bare_item_keys": ["dev_type", "type_name", "sale_price_per_pyeong_man", "sale_price_per_sqm_man", "source"],
+      "undetermined_item_keys": ["development_type(=null)", "type_name(='판정불가')", "note"],
+      "no_dispersion_fields": "정본 _calc_sale_prices 반환에 band/range/low/high/scenario/confidence 계열 필드 없음(:1466-1472 확인 2026-07-29)"
+    }
+  },
+  "cases": {
+    "bare_point_estimates": {
+      "desc": "정본 shape 그대로 bare 점추정 다항목(분산 필드 전무) → 섹션 배지 1건(상시 형태 고지)",
+      "input": {
+        "zone_type": "제2종일반주거지역",
+        "sale_prices": [
+          {"dev_type": "M03", "type_name": "도시형 생활주택", "sale_price_per_pyeong_man": 2500, "sale_price_per_sqm_man": 756, "source": "지역 통계 기반 추정"},
+          {"dev_type": "M07", "type_name": "오피스텔", "sale_price_per_pyeong_man": 2750, "sale_price_per_sqm_man": 832, "source": "지역 통계 기반 추정"},
+          {"dev_type": "M01", "type_name": "아파트", "sale_price_per_pyeong_man": 2500, "sale_price_per_sqm_man": 756, "source": "지역 통계 기반 추정"}
+        ]
+      },
+      "expect": {"SALE_PRICE_POINT_ESTIMATE": 1}
+    },
+    "single_bare_point_estimate": {
+      "desc": "허용유형 1개(bare 점추정 단일 항목) → 섹션 배지 1건",
+      "input": {
+        "zone_type": "일반상업지역",
+        "sale_prices": [
+          {"dev_type": "M12", "type_name": "근린생활시설", "sale_price_per_pyeong_man": 3150, "sale_price_per_sqm_man": 953, "source": "지역 통계 기반 추정"}
+        ]
+      },
+      "expect": {"SALE_PRICE_POINT_ESTIMATE": 1}
+    },
+    "fallback_still_bare": {
+      "desc": "폴백(지역 기준가 미매칭 → base 1500) 값이어도 bare 점추정이라 배지 1건. 폴백은 result 감지 불가라 정상 케이스와 동일 배지/note(폴백 별도 note 없음).",
+      "input": {
+        "zone_type": "계획관리지역",
+        "sale_prices": [
+          {"dev_type": "M01", "type_name": "아파트", "sale_price_per_pyeong_man": 1500, "sale_price_per_sqm_man": 453, "source": "지역 통계 기반 추정"},
+          {"dev_type": "M08", "type_name": "타운하우스", "sale_price_per_pyeong_man": 1200, "sale_price_per_sqm_man": 363, "source": "지역 통계 기반 추정"}
+        ]
+      },
+      "expect": {"SALE_PRICE_POINT_ESTIMATE": 1}
+    },
+    "undetermined_only": {
+      "desc": "미등재 용도지역 판정불가 항목만(:1451 shape) → 유효 점추정 없음 → 배지 0건(오탐 없음)",
+      "input": {
+        "zone_type": "자연환경보전지역",
+        "sale_prices": [
+          {"development_type": null, "type_name": "판정불가", "note": "'자연환경보전지역' 인허가 매트릭스 미등재 — 허용유형 판정불가(국토계획법 시행령 별표 확인 필요)"}
+        ]
+      },
+      "expect": {"SALE_PRICE_POINT_ESTIMATE": 0}
+    },
+    "sale_prices_absent": {
+      "desc": "sale_prices 키 부재 → 배지 0건(오탐 없음)",
+      "input": {
+        "zone_type": "제1종일반주거지역",
+        "land_prices": {"estimated_market_per_sqm": 3000000, "source": "VWORLD 개별공시지가 + 지역별 시세보정"}
+      },
+      "expect": {"SALE_PRICE_POINT_ESTIMATE": 0}
+    },
+    "sale_prices_empty": {
+      "desc": "sale_prices 빈 리스트 → 배지 0건(오탐 없음)",
+      "input": {"zone_type": "준주거지역", "sale_prices": []},
+      "expect": {"SALE_PRICE_POINT_ESTIMATE": 0}
+    },
+    "all_items_have_dispersion": {
+      "desc": "★분산 동반 항목만(band_10k·recommended_cap_10k·scenarios·confidence) → 배지 0건(오탐 방지·구간 반영 시 자동 억제)",
+      "input": {
+        "zone_type": "제3종일반주거지역",
+        "sale_prices": [
+          {"dev_type": "M01", "type_name": "아파트", "sale_price_per_pyeong_man": 5000, "sale_price_per_sqm_man": 1512, "source": "거래사례비교 + 지불여력", "band_10k": [4500, 5500], "recommended_cap_10k": 4500},
+          {"dev_type": "M07", "type_name": "오피스텔", "sale_price_per_pyeong_man": 3200, "sale_price_per_sqm_man": 968, "source": "거래사례비교 + 지불여력", "scenarios": [{"name": "보수", "value": 2900}, {"name": "낙관", "value": 3500}], "confidence": 0.8}
+        ]
+      },
+      "expect": {"SALE_PRICE_POINT_ESTIMATE": 0}
+    },
+    "mixed_bare_and_dispersion": {
+      "desc": "★혼합(일부 분산 동반·일부 bare) → bare 항목이 있으므로 섹션 배지 1건(분산 항목은 트리거 기여 없음)",
+      "input": {
+        "zone_type": "제2종일반주거지역",
+        "sale_prices": [
+          {"dev_type": "M01", "type_name": "아파트", "sale_price_per_pyeong_man": 4000, "sale_price_per_sqm_man": 1210, "source": "거래사례비교 + 지불여력", "band_10k": [3600, 4400], "recommended_cap_10k": 3600},
+          {"dev_type": "M03", "type_name": "도시형 생활주택", "sale_price_per_pyeong_man": 2500, "sale_price_per_sqm_man": 756, "source": "지역 통계 기반 추정"}
+        ]
+      },
+      "expect": {"SALE_PRICE_POINT_ESTIMATE": 1}
+    },
+    "zero_price_item": {
+      "desc": "sale_price_per_pyeong_man=0(유효 점추정 아님) → 배지 0건(오탐 없음)",
+      "input": {
+        "zone_type": "보전관리지역",
+        "sale_prices": [
+          {"dev_type": "M05", "type_name": "임대협동조합", "sale_price_per_pyeong_man": 0, "sale_price_per_sqm_man": 0, "source": "지역 통계 기반 추정"}
+        ]
+      },
+      "expect": {"SALE_PRICE_POINT_ESTIMATE": 0}
+    },
+    "non_dict_items": {
+      "desc": "sale_prices에 비dict 항목(null·문자열·숫자)만 → 배지 0건(경로 비의존·예외 없음)",
+      "input": {"zone_type": "생산관리지역", "sale_prices": [null, "bad", 123]},
+      "expect": {"SALE_PRICE_POINT_ESTIMATE": 0}
+    }
+  }
+}
