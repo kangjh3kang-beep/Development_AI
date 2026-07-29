@@ -1333,7 +1333,16 @@ class LandInfoService:
                     break
             else:
                 if name:
-                    regulations.append({"name": name, "restriction": "해당 지구/구역 관련 법규 확인 필요"})
+                    # ★SSOT 보강(근원봉합) — 로컬 regulation_map 미등재 보호구역을 인지(land_use 경로와 동형).
+                    from app.services.regulation.protection_zone_severity import severity_for
+                    sev = severity_for(name)
+                    if sev is not None:
+                        regulations.append({
+                            "name": name,
+                            "restriction": f"보호·규제구역 행위제한(개발 리스크 {sev}) — 관계기관 협의 필요",
+                        })
+                    else:
+                        regulations.append({"name": name, "restriction": "해당 지구/구역 관련 법규 확인 필요"})
         return regulations
 
     def _extract_regulations_from_land_use(self, land_use_items: list[dict[str, Any]]) -> list[dict[str, str]]:
@@ -1366,8 +1375,18 @@ class LandInfoService:
                     regulations.append({"name": name, "restriction": restriction})
                     matched = True
                     break
-            if not matched and "지역" not in name and "도시" not in name:
-                # 용도지역/도시지역은 규제가 아니므로 제외
-                regulations.append({"name": name, "restriction": "관련 법규 확인 필요"})
+            if not matched:
+                # ★SSOT 보강(근원봉합) — 로컬 regulation_map에 없던 보호구역(통제보호·제한보호·방공기지·
+                #   방공유도탄·상수원보호 등)을 protection_zone_severity로 인지해 리스크 수준을 표기한다
+                #   (종전엔 '관련 법규 확인 필요' 일반문구로 누락). 용도지역/도시지역은 규제가 아니라 제외.
+                from app.services.regulation.protection_zone_severity import severity_for
+                sev = severity_for(name)
+                if sev is not None:
+                    regulations.append({
+                        "name": name,
+                        "restriction": f"보호·규제구역 행위제한(개발 리스크 {sev}) — 관계기관 협의 필요",
+                    })
+                elif "지역" not in name and "도시" not in name:
+                    regulations.append({"name": name, "restriction": "관련 법규 확인 필요"})
         return regulations
 

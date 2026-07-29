@@ -57,7 +57,8 @@ async def test_analyze_wires_field_audit_seam(monkeypatch):
     # AuditReport 계약 필드 존재(is_valid·findings·metadata·coverage) — W1 findings가 실릴 통로.
     for key in ("is_valid", "findings", "metadata", "coverage"):
         assert key in fa, f"AuditReport 계약 필드 누락: {key}"
-    # W0(등록 규칙 0건): is_valid=True·findings=[] — behavior 불변.
+    # W1: 규칙은 등록되나 이 fake base엔 보호구역 규제가 없어 G1 무발동 → is_valid=True·findings=[]
+    #   (behavior 불변). 보호구역이 있는 경로의 flip은 test_golden_baseline·test_protection_zone_severity.
     assert fa["is_valid"] is True
     assert fa["findings"] == []
     # runner 배선 메타(경로 비의존 계약 — enabled 플래그가 실제 실행경로였음을 확인).

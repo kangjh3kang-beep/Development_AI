@@ -13,12 +13,28 @@ from typing import Any
 
 import structlog
 
+from app.services.regulation.protection_zone_severity import severity_for, severity_rank
+
 logger = structlog.get_logger(__name__)
 
 # 적용규제 영향도 분류(district name 키워드)
 _HIGH = ["토지거래", "개발제한", "군사시설", "비행안전", "문화재", "정화구역", "상수원", "수변구역"]
 _MID = ["과밀억제", "지구단위", "재정비촉진", "정비구역", "고도지구", "방화지구", "경관지구",
         "최고높이", "리모델링", "역세권", "성장관리", "지구단위계획구역"]
+
+
+def _severity_to_impact(severity: str) -> str:
+    """protection_zone_severity(낮음~극히 높음) → 규제 영향도(상/중/하).
+
+    높음·극히 높음 → 상, 중간·보통 → 중, 낮음 → 하. 제한보호(중간)는 '상'이 아니라 '중'으로
+    분류돼 협의개발 가능한 정상사업을 죽이지 않는다(M4 과잉교정 회피).
+    """
+    r = severity_rank(severity)
+    if r >= 3:      # 높음 이상
+        return "상"
+    if r >= 1:      # 보통·중간
+        return "중"
+    return "하"
 
 
 def _impact(name: str) -> str:
@@ -28,6 +44,11 @@ def _impact(name: str) -> str:
     for k in _MID:
         if k in name:
             return "중"
+    # ★SSOT 보강(근원봉합) — _HIGH/_MID에 없던 보호구역(통제보호·제한보호·방공기지·방공유도탄)을
+    #   protection_zone_severity로 분류한다. 기존 _HIGH/_MID 우선이라 다른 규제는 무회귀.
+    sev = severity_for(name)
+    if sev is not None:
+        return _severity_to_impact(sev)
     return "하"
 
 
