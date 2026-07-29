@@ -6,6 +6,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { SatongMapLayerState } from "@/lib/satong-map-layers";
 import { AlertTriangle, BarChart3, Building2, FileText, Folder, FolderTree, Home, Info, LandPlot, Search, TrendingUp } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { Card, CardContent } from "@propai/ui";
@@ -114,6 +115,35 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
   }, [projectId, updateRow]);
   const [busy, setBusy] = useState<string | null>(null);
   const [highlight, setHighlight] = useState("");
+
+  // ★identity churn 봉합: 아래 3개를 JSX에 인라인으로 두면 렌더마다 새 참조가 생겨
+  //   SatongMultiMap의 오버레이·경계 effect가 전량 재실행된다. 특히 selectedParcels는
+  //   경계 POST(타임아웃 45초)의 deps라, 필지를 클릭할 때마다(=setHighlight로 리렌더)
+  //   요청이 새로 발화하고 취소도 되지 않아 누적됐다.
+  const mapSelectedParcels = useMemo(
+    () => rows.filter((r) => r.jibun).map((r, i) => ({
+      id: r.id || `land-${i}`,
+      address: r.jibun,
+      pnu: r.pnu ?? null,
+      areaSqm: r.area_sqm ?? null,
+      zoneType: r.zone_code ?? null,
+      source: "search" as const,
+    })),
+    [rows],
+  );
+  const mapLayerState: SatongMapLayerState = useMemo(
+    () => ({
+      // ★as const 필수 — useMemo로 빼면 리터럴 타입이 string[]으로 넓어져
+      //   SatongMapLayerId[] 계약을 만족하지 못한다(JSX 인라인일 땐 문맥 추론으로 통과했다).
+      enabledLayerIds: ["cadastre", "zoning", "official-price", "age", "transactions"] as const,
+      controlsByLayer: {},
+    }),
+    [],
+  );
+  const handleMapFeatureClick = useCallback(
+    (feat: { address?: string | null }) => setHighlight(feat.address ?? ""),
+    [],
+  );
   // 안내 메시지: kind=info(설명·결과, 비경고)·warn(주의·실패). 충실한 설명을 비경고 톤으로.
   const [notice, setNotice] = useState<{ kind: "info" | "warn"; text: string } | null>(null);
   // 적정 매입가 추정 산출 근거(EvidencePanel) — 백엔드 build_evidence_block 출력(가산 필드).
@@ -808,22 +838,12 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
             </div>
             <SatongMultiMapDynamic
               height={500}
-              selectedParcels={rows.filter((r) => r.jibun).map((r, i) => ({
-                id: r.id || `land-${i}`,
-                address: r.jibun,
-                pnu: r.pnu ?? null,
-                areaSqm: r.area_sqm ?? null,
-                zoneType: r.zone_code ?? null,
-                source: "search" as const,
-              }))}
+              selectedParcels={mapSelectedParcels}
               featureStatusColors={statusColors}
               featureStatusLabels={statusLabels}
               highlightFeatureAddress={highlight}
-              onFeatureClick={(feat) => setHighlight(feat.address)}
-              layerState={{
-                enabledLayerIds: ["cadastre", "zoning", "official-price", "age", "transactions"],
-                controlsByLayer: {},
-              }}
+              onFeatureClick={handleMapFeatureClick}
+              layerState={mapLayerState}
             />
           </div>
         </>

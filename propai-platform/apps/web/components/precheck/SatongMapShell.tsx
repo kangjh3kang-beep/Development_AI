@@ -1667,6 +1667,10 @@ export function SatongMapShell({
   const handleLayerControlClick = useCallback((layerId: SatongMapLayerId, control: SatongLayerControl) => {
     if (!control.mapEffect) return;
     setEnabledLayers((prev) => {
+      // ★이미 켜져 있으면 같은 참조를 그대로 돌려준다 — 무조건 new Set을 만들면
+      //   mapLayerState memo가 재계산돼 layerState identity가 바뀌고, 그걸 deps로 쓰는
+      //   필지 오버레이·POI effect가 전량 파괴·재생성된다(레이어 토글 시 깜빡임의 근원).
+      if (prev.has(layerId)) return prev;
       const next = new Set(prev);
       next.add(layerId);
       return next;

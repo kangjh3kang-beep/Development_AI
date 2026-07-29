@@ -1732,7 +1732,7 @@ export function SatongMultiMap({
           ...(isHighlighted ? { color: "#135bec", weight: 4, fillOpacity: 0.5 } : {}),
         };
 	      const polygon = L.polygon(rings, resolvedStyle).bindPopup(popup, { maxWidth: 280 }).addTo(group);
-        polygon.on("click", () => onFeatureClick?.(feature));
+        polygon.on("click", () => onFeatureClickRef.current?.(feature));
 	      try { bounds.extend(polygon.getBounds()); } catch { /* noop */ }
 	    };
 
@@ -1797,7 +1797,7 @@ export function SatongMultiMap({
           fillColor: "#bfdbfe",
           fillOpacity: 0.95,
           bubblingMouseEvents: false, // 점 클릭 = 정보 팝업만(지도 클릭 팝오버로 미전파 — U6)
-        }).bindPopup(popup, { maxWidth: 280 }).on("click", () => onFeatureClick?.(feature)).addTo(group);
+        }).bindPopup(popup, { maxWidth: 280 }).on("click", () => onFeatureClickRef.current?.(feature)).addTo(group);
         bounds.extend([feature.lat, feature.lon]);
       }
     });
@@ -1843,7 +1843,11 @@ export function SatongMultiMap({
     highlightFeatureAddress,
     layerState,
     mapReady,
-    onFeatureClick,
+    // ★onFeatureClick은 deps에서 제외한다 — 이벤트 시점에만 호출되므로 stale closure가
+    //   불가능하고(onFeatureClickRef 경유), 넣어두면 소비처가 인라인 함수를 넘기는 순간
+    //   렌더마다 identity가 바뀌어 필지 폴리곤·마커·팝업이 전량 파괴·재생성됐다.
+    //   실제로 LandScheduleClient는 필지 클릭 → setHighlight → 리렌더 → 전량 재생성이었다.
+    //   한 곳(여기)을 고치면 소비처 5곳이 함께 낫는다.
     overlayFeatures,
     priceRange.max,
     priceRange.min,
