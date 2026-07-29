@@ -13,6 +13,7 @@
  * window.L 목업 없이 SatongMultiMap에 실제로 전달되는 props만 단언) kind 전환 시
  * marketLayer.types가 지원 4종으로만 좁혀지는지 검증한다.
  */
+import type { ReactNode } from "react";
 import { fireEvent, render, screen, act } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -30,9 +31,11 @@ vi.mock("next/navigation", () => ({
 const capturedMapProps: Record<string, unknown>[] = [];
 vi.mock("next/dynamic", () => ({
   default: () => {
+    // ★H2 봉합 이후 필수: 레일·팝오버는 topRightSlot으로 지도 래퍼 '안'에 렌더된다.
+    //   스텁이 슬롯을 삼키면 레일 조작 자체가 불가능해진다(실화면과 DOM 불일치).
     const DynamicStub = (props: Record<string, unknown>) => {
       capturedMapProps.push(props);
-      return <div data-testid="dynamic-map-stub" />;
+      return <div data-testid="dynamic-map-stub">{props.topRightSlot as ReactNode}</div>;
     };
     return DynamicStub;
   },

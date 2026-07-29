@@ -7,6 +7,7 @@
  *   ③ 닫기(X) → 패널 제거.
  *   ④ 카드의 삭제 버튼 클릭은 상세 패널을 열지 않는다(stopPropagation).
  */
+import type { ReactNode } from "react";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -26,9 +27,14 @@ vi.mock("next/navigation", () => ({
   }),
 }));
 
+// ★H2 봉합 이후 필수: 상세 패널을 포함한 셸 오버레이는 SatongMultiMap의 topRightSlot으로
+//   전달돼 지도 래퍼 '안'에서 렌더된다(풀스크린 소실 방지). 스텁도 실컴포넌트와 동일하게
+//   슬롯을 렌더해야 화면과 테스트의 DOM이 어긋나지 않는다.
 vi.mock("next/dynamic", () => ({
   default: () => {
-    const DynamicStub = () => <div data-testid="dynamic-map-stub" />;
+    const DynamicStub = ({ topRightSlot }: { topRightSlot?: ReactNode }) => (
+      <div data-testid="dynamic-map-stub">{topRightSlot}</div>
+    );
     return DynamicStub;
   },
 }));
