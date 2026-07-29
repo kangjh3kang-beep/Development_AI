@@ -57,10 +57,20 @@ async def test_analyze_wires_field_audit_seam(monkeypatch):
     # AuditReport 계약 필드 존재(is_valid·findings·metadata·coverage) — W1 findings가 실릴 통로.
     for key in ("is_valid", "findings", "metadata", "coverage"):
         assert key in fa, f"AuditReport 계약 필드 누락: {key}"
-    # W1: 규칙은 등록되나 이 fake base엔 보호구역 규제가 없어 G1 무발동 → is_valid=True·findings=[]
-    #   (behavior 불변). 보호구역이 있는 경로의 flip은 test_golden_baseline·test_protection_zone_severity.
+    # 보호구역 규제 없음 → G1(P0) 무발동 → is_valid=True(gating behavior 불변). 보호구역 경로의
+    #   flip은 test_golden_baseline·test_protection_zone_severity가 고정한다.
     assert fa["is_valid"] is True
-    assert fa["findings"] == []
+    # ★W3-2 라이브 seam 확증: analyze()가 제2종주거(지역기준가 미매칭 폴백)에서 bare 분양가
+    #   (sale_prices — 신뢰구간·시나리오 미동반)를 산출하므로 estimate_dispersion.SALE_PRICE_POINT_ESTIMATE
+    #   (계층C·P2 비차단) 배지가 이 주경로에 상시 실린다. 이는 재확증한 _calc_sale_prices bare-point
+    #   shape가 라이브 analyze() 산출과 일치함을 실경로로 증명한다(합성 fixture 넘어선 그라운드 트루스).
+    codes = [f["code"] for f in fa["findings"]]
+    assert "SALE_PRICE_POINT_ESTIMATE" in codes, (
+        "analyze()가 산출한 bare 분양가에 W3-2 배지가 실린다(seam 통과·라이브 shape 확증)"
+    )
+    # ★핵심 seam 계약 = P0 부재(모든 finding 비차단) → analyze() gating behavior 불변. 이후 Wave가
+    #   비차단 배지를 더 실어도 이 계약은 유지된다(P0 배지가 여기서 발동하면 그건 검토 대상 회귀).
+    assert all(f["severity"] != "P0" for f in fa["findings"])
     # runner 배선 메타(경로 비의존 계약 — enabled 플래그가 실제 실행경로였음을 확인).
     assert fa["metadata"].get("enabled") is True
     # 참고: analyze()-레벨 additive-only(키 1개만 추가) behavior 불변은 runner-레벨
