@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.services.external_api.poi_dedup import dedup_school_cluster
 from app.services.verification.calc_ledger import _deep_find, _num
 
 # 연구기반 사전가중(합=1.0). 접근성·상권 비중↑(15분도시·MCDA 근거).
@@ -73,8 +74,9 @@ def compute_site_score(context: Any, region_baseline: dict[str, float] | None = 
     nsub = infra.get("nearest_subway") if isinstance(infra.get("nearest_subway"), dict) else None
     subway_m = _num((nsub or {}).get("distance_m")) if nsub else _deep_find(context, ("subway_distance_m",))
 
-    # 학교: 최근접 거리 + 개수
-    schools = infra.get("schools") if isinstance(infra.get("schools"), list) else None
+    # 학교: 최근접 거리 + 개수 (★모학교 병합 G2 — 부속·분교 개별집계로 인한 학군 보너스 과대 차단)
+    schools_raw = infra.get("schools") if isinstance(infra.get("schools"), list) else None
+    schools = dedup_school_cluster(schools_raw) if schools_raw else None
     school_m = None
     school_n = 0
     if schools:

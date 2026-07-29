@@ -45,9 +45,9 @@ def _load(rel: str) -> dict:
 def _isolate_and_silence(monkeypatch):
     """규칙 레지스트리 격리 + W1 프로덕션 규칙 재등록 + growth emit 무음화(테스트 부작용 차단).
 
-    clear_registry()로 상태 누수를 막은 뒤 register_rules()로 프로덕션 불변식(W1-1 G1)을
+    clear_registry()로 상태 누수를 막은 뒤 register_rules()로 프로덕션 불변식(W1-1 G1·W1-2 G2)을
     재등록한다 — golden이 '프로덕션에 등록된 규칙 집합'으로 판정하게 하여 flip을 실증한다.
-    G2~G6는 아직 규칙이 없어 blind 유지, G1만 fires.
+    G1(P0)·G2(P1)가 fires, 아직 규칙 없는 G3~G6는 blind 유지.
     """
     clear_registry()
     register_rules()
@@ -71,11 +71,11 @@ def test_golden_fixture_is_wellformed(seed_id, rel):
 
 @pytest.mark.parametrize("seed_id,rel", _GOLDEN, ids=[g[0] for g in _GOLDEN])
 def test_golden_current_baseline_platform_blind(seed_id, rel):
-    """★W1 flip 기준선: G1은 이제 규칙이 잡고(finding·is_valid=False), 아직 규칙 없는 결함(G2~G6)은
-    blind 유지.
+    """★W1 flip 기준선: G1(P0)·G2(P1)는 이제 규칙이 잡고, 아직 규칙 없는 결함(G3~G6)은 blind 유지.
 
-    W0에선 전부 blind(규칙 0건)였다. W1-1이 G1 불변식을 붙여 동일 fixture가 findings를 내고
-    is_valid가 flip → 가드 실재를 증명한다. 나머지 결함은 각자의 Wave에서 규칙이 붙을 때 flip한다.
+    W0에선 전부 blind(규칙 0건)였다. W1-1이 G1(차단후보 P0·is_valid flip), W1-2가 G2(제자리교정
+    P1·비차단·is_valid 유지) 불변식을 붙여 동일 fixture가 findings를 낸다 → 가드 실재를 증명한다.
+    나머지 결함은 각자의 Wave에서 규칙이 붙을 때 flip한다.
     """
     fx = _load(rel)
     result = copy.deepcopy(fx["input"])
@@ -86,6 +86,15 @@ def test_golden_current_baseline_platform_blind(seed_id, rel):
         assert report.is_valid is False, "G1: W1 규칙이 buggy 시드를 잡아 is_valid=False로 flip"
         assert "G1_PROTECTION_ZONE_RISK_FLOOR" in [f.code for f in report.findings]
         assert result["field_audit"]["is_valid"] is False
+    elif seed_id == "G2":
+        # 대보초 5개교 과카운트(dedup 1) → P1 finding(W0 blind→W1-2 catch flip). P1은 비차단이라
+        # is_valid는 True 유지(제자리 교정+배지 — §2.4).
+        codes = [f.code for f in report.findings]
+        assert "G2_SCHOOL_POI_DEDUP" in codes, "G2: W1-2 dedup 규칙이 과카운트를 잡아 finding 산출"
+        g2 = next(f for f in report.findings if f.code == "G2_SCHOOL_POI_DEDUP")
+        assert g2.severity == "P1"
+        assert report.is_valid is True, "G2는 P1(비차단) — is_valid 미변경"
+        assert result["field_audit"]["findings"], "result에 G2 finding 부착"
     else:
         # 아직 규칙 없는 결함 → blind(빈 리포트) 유지 — additive 부착만(behavior 불변)
         assert report.findings == [], f"{seed_id}: 아직 규칙 미등록 → finding 0(blind 유지)"
@@ -141,12 +150,34 @@ def test_g1_baseline_risk_underrated():
 
 
 def test_g2_baseline_school_overcounted():
-    """G2 앵커: 대보초 부속시설·분교가 개별카운트 → 5개교(실제 1)."""
+    """G2 앵커: 대보초 부속시설·분교가 개별카운트 → 5개교(실제 1). W1-2 dedup으로 1 flip."""
+    from app.services.external_api.poi_dedup import dedup_school_cluster
+
     fx = _load("imya__natural_green__survey_needed/G2_daebo_school_dedup.json")
-    assert fx["input"]["poi"]["school_count"] == 5             # 현행(오류)
+    assert fx["input"]["poi"]["school_count"] == 5             # 현행(오류 입력)
     names = [s["name"] for s in fx["input"]["poi"]["schools"]]
     assert all("대보초" in n for n in names)                   # 전부 동일 모학교
     assert fx["current_baseline"]["observed"] == 5            # W1: → 1(대보초) flip
+    # ★도메인 flip: dedup 후 고유 모학교 1(대보초) — 입지점수 학교 보너스 재계산 대상값.
+    deduped = dedup_school_cluster(fx["input"]["poi"]["schools"])
+    assert len(deduped) == 1
+    assert "대보초등학교" in deduped[0]["name"]                 # 대표=모학교(본교)
+
+
+def test_g2_harness_flip_from_blind():
+    """★W1-2 핵심 flip: G2 buggy 시드(대보초 5개교 과카운트)에서 harness가 P1 finding을 낸다.
+
+    W0(규칙 0건)에선 blind였던 것이 W1-2 cross_field.G2 등록으로 잡힌다. expected=dedup 고유수(1)·
+    observed=원카운트(5)·rule_id·tier·panel·field까지 계약을 고정한다. P1은 비차단이라 is_valid
+    True 유지(제자리교정+배지). (변이-kill은 test_poi_dedup.)
+    """
+    fx = _load("imya__natural_green__survey_needed/G2_daebo_school_dedup.json")
+    report = runner.run(copy.deepcopy(fx["input"]), fx["ctx"])
+    f = next(f for f in report.findings if f.code == "G2_SCHOOL_POI_DEDUP")
+    assert f.severity == "P1" and f.tier == "A"
+    assert f.expected == 1 and f.observed == 5                 # dedup 고유 vs 원카운트
+    assert f.rule_id == "G2_SCHOOL_POI_DEDUP" and f.field == "school_count" and f.panel == "입지"
+    assert report.is_valid is True                             # P1 — 비차단(배지)
 
 
 def test_g5_regression_lock_robust_stats():

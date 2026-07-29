@@ -5,18 +5,25 @@ W1-1 [P0 G1]: "규제목록에 보호구역이 있으면 종합 개발리스크�
 리스크 '낮음' → 하한 '높음' 미달 → finding). 값을 생산하지 않고 이미 계산된 result를
 protection_zone_severity 권위표(독립 오라클)와 대조만 한다(neuro proposes / symbolic disposes).
 
-★거버넌스(계획 §2.4 1단계 — 비차단): 이 규칙은 finding(P0)을 **표면화**만 한다. 소비처
-하드차단(risk를 강제로 올리거나 return을 막는 것)은 골든 안정 후 2단계다. runner의 F4a
-관측전용 emit도 verdict/자동토글을 구동하지 않는다(성장루프 격리 유지).
+W1-2 [P1 G2]: "입지 school_count는 dedup_school_cluster로 병합한 고유 모학교 수와 같아야
+한다." 불일치(부속시설·분교 개별집계로 과카운트)면 P1 AuditFinding을 낸다(예: 대보초 1곳을
+운동장·병설유치원·분교로 5개교 집계 → 고유 모학교 1 ≠ school_count 5 → finding). G1과 동형으로
+값을 생산하지 않고 이미 계산된 result의 학교목록/카운트를 dedup SSOT와 대조만 한다.
 
-경로 비의존: 실 analyze() 결과(development_plans.*)와 골든 fixture(regulations/risk.*) 두 shape
-모두에서 규제·리스크를 추출한다(runner가 다중 삽입점에 재사용되므로).
+★거버넌스(계획 §2.4): G1(P0)은 차단후보로 finding을 표면화, G2(P1)는 **제자리 교정+배지**
+(비차단 — dedup가 올바른 값을 산출하므로 is_valid를 뒤집지 않는다). 소비처 하드차단은 골든
+안정 후 단계다. runner의 F4a 관측전용 emit도 verdict/자동토글을 구동하지 않는다(성장루프 격리).
+
+경로 비의존: 실 analyze() 결과(development_plans.*·education.*·infrastructure.*)와 골든
+fixture(regulations/risk.*·poi.*) 두 shape 모두에서 규제·리스크·학교를 추출한다(runner가 다중
+삽입점에 재사용되므로).
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+from app.services.external_api.poi_dedup import dedup_school_cluster
 from app.services.regulation.protection_zone_severity import (
     meets_floor,
     risk_floor_for_regulations,
@@ -27,6 +34,8 @@ from app.services.verification.field_audit.rules_registry import register_audit_
 # 안정 식별자 — rule_id는 rules_registry 등록·per-rule 롤백 키, code는 finding 안정 식별자.
 _G1_RULE_ID = "G1_PROTECTION_ZONE_RISK"
 _G1_FINDING_CODE = "G1_PROTECTION_ZONE_RISK_FLOOR"
+_G2_RULE_ID = "G2_SCHOOL_POI_DEDUP"
+_G2_FINDING_CODE = "G2_SCHOOL_POI_DEDUP"
 
 
 def _extract_regulations(payload: dict[str, Any]) -> list[str]:
@@ -97,6 +106,67 @@ def _g1_protection_zone_risk_floor(
     ]
 
 
+def _extract_schools(payload: dict[str, Any]) -> list[Any]:
+    """result/payload에서 학교 POI 목록을 추출(경로 비의존)."""
+    if not isinstance(payload, dict):
+        return []
+    # 실 analyze()/site_score 결과: education.schools·infrastructure.schools / 골든 fixture: poi.schools.
+    for container in ("poi", "education", "infrastructure"):
+        c = payload.get(container)
+        if isinstance(c, dict) and isinstance(c.get("schools"), list):
+            return c["schools"]
+    # 평면 shape: payload["schools"].
+    if isinstance(payload.get("schools"), list):
+        return payload["schools"]
+    return []
+
+
+def _extract_school_count(payload: dict[str, Any]) -> int | None:
+    """result/payload에서 산출된 학교 카운트를 추출(경로 비의존). 미산출이면 None."""
+    if not isinstance(payload, dict):
+        return None
+    for container in ("poi", "education", "infrastructure"):
+        c = payload.get(container)
+        if isinstance(c, dict) and isinstance(c.get("school_count"), int):
+            return c["school_count"]
+    v = payload.get("school_count")
+    return v if isinstance(v, int) else None
+
+
+def _g2_school_poi_dedup(
+    payload: dict[str, Any], ctx: dict[str, Any]
+) -> list[AuditFinding]:
+    """G2 불변식: 산출 school_count == dedup 고유 모학교 수. 불일치(과카운트) 시 P1 finding.
+
+    학교목록/카운트가 없으면 무발동. dedup(고유 모학교) 수와 산출 카운트가 일치하면 finding 0
+    (근본수정 후 경로 — 소비처가 dedup_school_cluster를 소비해 고유 수를 쓰면 통과).
+    P1 = 제자리 교정(dedup가 올바른값 산출)+배지(비차단 — is_valid 미변경).
+    """
+    schools = _extract_schools(payload)
+    observed = _extract_school_count(payload)
+    if observed is None:
+        return []  # 카운트 미산출 → 무발동(정상 필지 배지 인플레 방지)
+    expected = len(dedup_school_cluster(schools))
+    if observed == expected:
+        return []  # dedup된 고유 수와 일치 → 정상(근본수정 후 경로)
+    return [
+        AuditFinding(
+            code=_G2_FINDING_CODE,
+            severity="P1",
+            panel="입지",
+            field="school_count",
+            expected=expected,
+            observed=observed,
+            rule_id=_G2_RULE_ID,
+            tier="A",
+            note=(
+                f"학교 POI 과카운트 — 고유 모학교 {expected}개인데 school_count {observed}"
+                f"(부속시설·분교 개별집계). dedup_school_cluster SSOT 대조 위반."
+            ),
+        )
+    ]
+
+
 def register_rules() -> None:
     """cross_field 불변식을 rules_registry에 등록(멱등 — _SEEN_IDS가 중복 무시).
 
@@ -104,6 +174,7 @@ def register_rules() -> None:
     비우는 격리 테스트는 이 함수를 다시 호출해 프로덕션 규칙을 재등록한다.
     """
     register_audit_rule(rule_id=_G1_RULE_ID, tier="A")(_g1_protection_zone_risk_floor)
+    register_audit_rule(rule_id=_G2_RULE_ID, tier="A")(_g2_school_poi_dedup)
 
 
 # 프로덕션 임포트 시 자동 등록(field_audit 패키지 __init__가 이 모듈을 임포트한다).
