@@ -9,9 +9,10 @@
 ★비대칭 계약(neuro proposes / symbolic disposes): 이 패키지는 symbolic(dispose) 쪽.
   이미 계산된 result(결정론 파생값)를 '규칙에 맞는가'로만 판정하며 값을 생산하지 않는다.
 
-W0(Phase0) 범위 = 계약·골격·골든 기준선·주경로 배선만. **규칙은 0건(no-op)** — 실제
-불변식은 W1부터 등록된다. behavior 불변·additive가 절대 원칙(analyze() 출력에 'field_audit'
-키 하나만 추가).
+W1(Phase0)부터 계층 A 하드 불변식이 등록된다 — W1-1: cross_field.G1(protection_zone_severity
+보호구역→리스크 하한). 패키지 임포트가 invariants를 임포트해 규칙을 자동 등록한다(runner는
+analyze() 주경로에서 이 패키지를 임포트하므로 프로덕션에서 규칙이 활성화된다). behavior 불변·
+additive는 유지 원칙(analyze() 출력에 'field_audit' 키 하나만 추가·규칙은 판정만·값 미생산).
 
 공개 계약:
   - contracts.AuditFinding / AuditReport
@@ -19,9 +20,10 @@ W0(Phase0) 범위 = 계약·골격·골든 기준선·주경로 배선만. **규
   - runner.run(result, ctx) -> AuditReport  (result["field_audit"] 부착)
 """
 
+from app.services.verification.field_audit import invariants  # noqa: F401  임포트 부작용=W1 규칙 등록
 from app.services.verification.field_audit.contracts import (
     AuditFinding,
     AuditReport,
 )
 
-__all__ = ["AuditFinding", "AuditReport"]
+__all__ = ["AuditFinding", "AuditReport", "invariants"]

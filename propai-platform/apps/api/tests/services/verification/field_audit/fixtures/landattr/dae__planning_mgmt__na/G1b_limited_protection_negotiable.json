@@ -1,0 +1,26 @@
+{
+  "_meta": {
+    "seed_id": "G1b",
+    "title": "제한보호구역 협의개발 — 과잉교정 방지(비블랭킷 반증 시드)",
+    "land_attrs": {"jimok": "대", "zone": "계획관리지역", "sanji_gubun": null},
+    "tier": "A",
+    "phase": "0/W1-1",
+    "defect": "없음(반증 시드). 제한보호구역은 협의개발 가능(군 협의 결과에 따름)하므로 리스크 '중간'이 정답이다. 통제보호와 동급으로 일괄 '높음' flip하면 협의가능한 정상사업을 죽이는 과잉교정(계획 §12.3 M4 자기교정).",
+    "w1_target": "protection_zone_severity SSOT가 제한보호구역→'중간'을 산출하고, cross_field.G1 불변식 하한이 '중간'이라 산출 리스크가 '중간'이면 무발동(finding 0). 즉 골든이 '높음 아님'을 핀(과잉교정 안 함).",
+    "synthetic": true,
+    "honesty": "W0/W1 합성 fixture — 라이브 analyze() 미수집(하네스 환경 DB/API 부재). M4 과잉교정 회피의 비블랭킷 증명용 반증 시드(통제보호=높음 flip과 대칭).",
+    "w1_expected": {"harness_fires": false, "root_fix_risk_level": "중간", "floor": "중간", "not_overcorrected_to": "높음"}
+  },
+  "ctx": {"address": "(합성) 제한보호구역 협의개발 부지", "zone_type": "계획관리지역", "pnu": null},
+  "input": {
+    "zone_type": "계획관리지역",
+    "regulations": ["제한보호구역"],
+    "risk": {"risk_level": "중간", "risk_factors": ["제한보호구역 (중간)"]},
+    "special_parcel": {"jimok": "대", "note": null}
+  },
+  "current_baseline": {
+    "field": "risk.risk_level",
+    "observed": "중간",
+    "note": "제한보호구역 = 협의개발 가능 → 리스크 '중간'(높음 아님). 근본수정 후 소비처 산출값이자 불변식 하한('중간')과 정합 → harness 무발동(과잉교정 안 함)."
+  }
+}

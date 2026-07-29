@@ -1657,30 +1657,20 @@ class ComprehensiveAnalysisService:
                 "interpretation": interpretation or "",
             })
 
-        # 종합 개발 리스크 평가
-        risk_keywords = {
-            "개발제한구역": "극히 높음",
-            "상수원보호구역": "극히 높음",
-            "군사시설보호": "높음",
-            "대공방어협조구역": "보통",
-            "비행안전구역": "보통",
-            "폐기물매립시설": "보통",
-            "고도지구": "보통",
-            "경관지구": "낮음",
-            "방화지구": "낮음",
-        }
+        # 종합 개발 리스크 평가 — protection_zone_severity SSOT 단일소비(구역별 granular·M4).
+        #   ★근원봉합: 통제보호/제한보호/방공기지/방공유도탄이 SSOT에 등재되어 리스크에 반영된다
+        #   (종전 하드코딩 risk_keywords 사전엔 이들이 부재해 통제보호구역도 '낮음'으로 저평가됐다).
+        #   기존 등재분(개발제한/상수원=극히 높음·군사시설보호=높음·대공방어/비행안전/폐기물/고도=보통·
+        #   경관/방화=낮음)은 SSOT가 동일값으로 보존한다(다른 용도지역 무회귀). 비행안전은 SSOT에서
+        #   구역번호 granular(제1구역→높음·외곽→보통)로 정밀화된다.
+        from app.services.regulation.protection_zone_severity import max_severity, severity_for
         risk_level = "낮음"
         risk_factors: list[str] = []
         for reg_name in clean_regulations:
-            for keyword, level in risk_keywords.items():
-                if keyword in reg_name:
-                    risk_factors.append(f"{reg_name} ({level})")
-                    if level == "극히 높음":
-                        risk_level = "극히 높음"
-                    elif level == "높음" and risk_level not in ("극히 높음",):
-                        risk_level = "높음"
-                    elif level == "보통" and risk_level == "낮음":
-                        risk_level = "보통"
+            sev = severity_for(reg_name)
+            if sev is not None:
+                risk_factors.append(f"{reg_name} ({sev})")
+                risk_level = max_severity(risk_level, sev) or risk_level
 
         # ★D-2(정직화) additive: 규제명 → verified 법령 링크. 기존 법령 레지스트리 자산
         # (legal_refs_for_districts — 토지이음 지역지구별 규제법령집 매핑, services/legal 계열)을

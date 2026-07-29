@@ -15,6 +15,7 @@ from app.services.verification.field_audit.contracts import AuditFinding
 from app.services.verification.field_audit.rules_registry import (
     clear_registry,
     register_audit_rule,
+    registered_rule_ids,
     rule_count,
 )
 
@@ -26,13 +27,17 @@ def _capture_events(monkeypatch):
     return events
 
 
-def test_w0_registry_is_empty():
-    """W0 절대원칙: 등록 규칙 0건(기전만)."""
-    # 이 테스트파일이 규칙을 등록하지 않았을 때의 프로덕션 기본 상태를 본다.
-    # (다른 테스트가 clear/register로 오염했을 수 있으니 격리하지 않고 '프로덕션 임포트' 기준만 확인)
-    from app.services.verification import field_audit  # noqa: F401  패키지 임포트만으로 규칙 자동등록 없음
-    # 프로덕션 코드경로에서 등록되는 규칙은 없어야 한다(W0). 테스트 로컬 등록은 별도 테스트가 clear로 관리.
+def test_production_registers_g1_invariant():
+    """W1-1 flip: 프로덕션 임포트가 cross_field.G1 불변식을 자동 등록한다(W0의 0건에서 전환).
+
+    field_audit 패키지 임포트가 invariants를 임포트해 규칙을 등록한다. 다른 테스트가
+    clear_registry로 격리했을 수 있어 register_rules로 프로덕션 등록을 재현한 뒤 확인한다(멱등).
+    """
+    from app.services.verification import field_audit  # noqa: F401  패키지 임포트=W1 규칙 자동등록
+    from app.services.verification.field_audit.invariants.cross_field import register_rules
+    register_rules()  # 멱등 — 격리 테스트가 비운 뒤라도 프로덕션 등록 재현
     assert isinstance(rule_count(), int)
+    assert "G1_PROTECTION_ZONE_RISK" in registered_rule_ids()
 
 
 def test_runner_noop_empty_report_and_additive(monkeypatch):
