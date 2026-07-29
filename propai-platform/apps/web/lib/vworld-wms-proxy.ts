@@ -206,7 +206,17 @@ export async function proxyVWorldWms(incoming: URLSearchParams): Promise<Respons
 
   const targetUrl = `${VWORLD_WMS_BASE}?${params.toString()}`;
   // ★상류가 연속 실패 중이면 아예 호출하지 않는다 — 실패 요청 폭주가 IP 차단을 부른 실장애.
+  //   다만 투명 타일로 끝내지 않고 **api(168) 타일 프록시로 릴레이**를 먼저 시도한다:
+  //   이 서버(web)에서만 VWorld 경로가 막히고 api 서버는 정상인 상황이 실제로 발생했다
+  //   (같은 클라우드인데 web만 502/연결실패, api는 200). 릴레이가 되면 지도가 살아난다.
   if (!shouldAttempt(BREAKER_KEY)) {
+    const origin = vworldApiFallbackOrigin();
+    if (origin) {
+      return relayViaApi(
+        `${origin}/api/v1/tiles/vworld/wms?${incoming.toString()}`,
+        "vworld-wms-proxy(breaker-open)",
+      );
+    }
     return breakerOpenTile(cooldownRemainingSec(BREAKER_KEY));
   }
   try {
@@ -216,6 +226,14 @@ export async function proxyVWorldWms(incoming: URLSearchParams): Promise<Respons
     });
     if (!resp.ok) {
       recordFailure(BREAKER_KEY);
+      // 키 오류뿐 아니라 '상류 자체가 응답을 못 주는' 경우도 api 릴레이로 구제한다.
+      const origin = vworldApiFallbackOrigin();
+      if (origin) {
+        return relayViaApi(
+          `${origin}/api/v1/tiles/vworld/wms?${incoming.toString()}`,
+          "vworld-wms-proxy(upstream-error)",
+        );
+      }
       return upstreamError("VWorld WMS upstream error", resp.status, { layers: canonicalLayers });
     }
     recordSuccess(BREAKER_KEY);
@@ -275,8 +293,16 @@ export async function proxyVWorldWms(incoming: URLSearchParams): Promise<Respons
       },
     });
   } catch (error) {
-    // ★네트워크 예외(상류 차단·DNS·타임아웃)도 실패로 집계 — 이번 IP 차단이 이 경로였다.
+    // ★네트워크 예외(상류 도달 불가·DNS·타임아웃)도 실패로 집계 — 이번 실장애가 이 경로였다.
     recordFailure(BREAKER_KEY);
+    const origin = vworldApiFallbackOrigin();
+    if (origin) {
+      console.warn(`[vworld-wms-proxy] upstream unreachable → api relay`, { error: String(error).slice(0, 120) });
+      return relayViaApi(
+        `${origin}/api/v1/tiles/vworld/wms?${incoming.toString()}`,
+        "vworld-wms-proxy(unreachable)",
+      );
+    }
     return jsonError(`VWorld WMS proxy failed: ${String(error)}`, 502);
   }
 }

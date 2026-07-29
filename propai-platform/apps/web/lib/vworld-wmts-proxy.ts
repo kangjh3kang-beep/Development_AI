@@ -127,6 +127,15 @@ export async function proxyVWorldWmts(params: VWorldWmtsParams): Promise<Respons
   const targetUrl = `${VWORLD_WMTS_BASE}/${encodeURIComponent(key)}/${cleanLayer}/${params.z}/${params.y}/${cleanX}.${ext}`;
 
   if (!shouldAttempt(BREAKER_KEY)) {
+    // ★투명 타일로 끝내지 않고 api(168) 릴레이를 먼저 시도한다 — web에서만 VWorld 경로가
+    //   막히고 api는 정상인 상황이 실제로 발생했다(같은 클라우드, web만 502/연결실패).
+    const origin = vworldApiFallbackOrigin();
+    if (origin) {
+      return relayViaApi(
+        `${origin}/api/v1/tiles/vworld/wmts/${cleanLayer}/${params.z}/${params.y}/${cleanX}.${ext}`,
+        "vworld-wmts-proxy(breaker-open)",
+      );
+    }
     return breakerOpenTile(cooldownRemainingSec(BREAKER_KEY));
   }
   try {
@@ -136,6 +145,14 @@ export async function proxyVWorldWmts(params: VWorldWmtsParams): Promise<Respons
     });
     if (!resp.ok) {
       recordFailure(BREAKER_KEY);
+      // 키 오류뿐 아니라 '상류 자체가 응답을 못 주는' 경우도 api 릴레이로 구제한다.
+      const origin = vworldApiFallbackOrigin();
+      if (origin) {
+        return relayViaApi(
+          `${origin}/api/v1/tiles/vworld/wmts/${cleanLayer}/${params.z}/${params.y}/${cleanX}.${ext}`,
+          "vworld-wmts-proxy(upstream-error)",
+        );
+      }
       // 상태 코드 무음 전파 금지 — 4xx/5xx는 명시적 프록시 오류로 변환.
       return upstreamError("VWorld WMTS upstream error", resp.status, {
         layer: cleanLayer, z: params.z, y: params.y, x: cleanX,
@@ -204,8 +221,16 @@ export async function proxyVWorldWmts(params: VWorldWmtsParams): Promise<Respons
       },
     });
   } catch (error) {
-    // ★네트워크 예외(상류 차단·DNS·타임아웃)도 실패로 집계 — 이번 IP 차단이 이 경로였다.
+    // ★네트워크 예외(상류 도달 불가·DNS·타임아웃)도 실패로 집계 — 이번 실장애가 이 경로였다.
     recordFailure(BREAKER_KEY);
+    const origin = vworldApiFallbackOrigin();
+    if (origin) {
+      return relayViaApi(
+        `${origin}/api/v1/tiles/vworld/wmts/${cleanLayer}/${params.z}/${params.y}/${cleanX}.${ext}`,
+        "vworld-wmts-proxy(unreachable)",
+      );
+    }
+
     // [MAP-006] 네트워크 예외도 JSON 오류 본문으로 반환(평문 금지).
     return new Response(
       JSON.stringify({ error: `VWorld WMTS proxy failed: ${String(error)}`, status: 502 }),
