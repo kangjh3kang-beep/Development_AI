@@ -15,6 +15,9 @@
 #   PROPAI_SMOKE_TIMEOUT  요청 최대 대기초 (기본 15 — introspect라 빠름).
 #
 # assert: enabled==true AND rules_registered>0. 실패 시 non-zero exit(배포 회귀).
+#   ★rules_registered>0(하드 >=8 아님): 0 = 핵심 회귀 신호(등록 전무 = analyze 규칙 0으로
+#   퇴화). 규칙 수는 W3-1/W4로 증가하므로 하드 >=8 게이트는 향후 오검출을 낸다. 부분손실
+#   (8→1 등)은 all-or-nothing 임포트 등록이라 비현실적이나, 필요 시 named-count 게이트로 강화 가능.
 # 파싱: jq 있으면 jq, 없으면 python3 (서버 호환).
 # ============================================================================
 

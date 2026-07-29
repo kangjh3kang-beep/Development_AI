@@ -52,32 +52,24 @@ def _enabled() -> bool:
 
 
 def audit_status() -> dict[str, Any]:
-    """field_audit 등록/활성 상태만 introspect(분석 실행 없음·부작용 0·빠름).
+    """field_audit 등록/활성 상태를 introspect만(read-only·부작용 0·run과 독립).
 
     배포 회귀 가드용 진단: 배포된 백엔드에서 이 상태를 즉시 조회해 자가검증 레이어가
     프로덕션에서 **비활성/미등록으로 무성(silent) 회귀**했는지 스모크로 assert한다.
 
-    프로덕션은 field_audit 패키지 임포트 시 모든 규칙을 등록한다(각 invariants 모듈이 임포트
-    부작용으로 register_rules() 자동 호출). 그럼에도 레지스트리가 **비어 있으면**(임포트 누락·
-    부분초기화 — 바로 이 진단이 잡으려는 무성 회귀 클래스) register_all_rules()로 등록을
-    보장한다. 이미 등록돼 있으면 재등록을 생략해 중복 경고 로그를 만들지 않는다(멱등·저잡음).
-    어느 경우든 규칙 fn은 실행하지 않으므로 result 부착·growth emit·I/O가 전혀 없다.
+    ★라이브 레지스트리를 있는 그대로 보고한다 — 절대 재등록/변이하지 않는다. healthy 배포는
+    field_audit 패키지 임포트 부작용으로 규칙이 이미 등록돼 있으므로(각 invariants 모듈이
+    임포트 시 register_rules() 자동 호출) 참 카운트를 보고한다. 등록이 무성 파손되면
+    rules_registered=0을 **정직 보고**해 스모크가 실패하고 회귀가 적발된다. 여기서 register_
+    all_rules를 호출해 자가치유하면 run()(analyze 경로)이 규칙 0으로 퇴화 실행 중인데도
+    프로브만 8로 green을 내는 false-healthy 오보고가 되므로 절대 하지 않는다(R1 HIGH 봉합).
 
     반환:
       - enabled: FIELD_AUDIT_ENABLED 반영(기본 on).
-      - rules_registered: 등록된 불변식 수(현재 6모듈·8규칙).
-      - rule_ids: 등록된 rule_id 정렬 목록.
+      - rules_registered: 라이브 등록된 불변식 수(healthy=현재 6모듈·8규칙, 파손=0).
+      - rule_ids: 라이브 등록된 rule_id 정렬 목록.
     """
     rules = iter_rules()
-    if not rules:
-        # 레지스트리 공백 = 임포트 부작용 미발생(무성 회귀 후보) → 등록 보장.
-        try:
-            from app.services.verification.field_audit.invariants import register_all_rules
-
-            register_all_rules()
-        except Exception as e:  # noqa: BLE001 — 등록 보장 실패도 introspect는 진행(정직 degrade).
-            logger.debug("field_audit audit_status 등록 보장 스킵: %s", str(e)[:120])
-        rules = iter_rules()
     return {
         "enabled": _enabled(),
         "rules_registered": len(rules),
