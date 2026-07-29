@@ -46,8 +46,8 @@ def _isolate_and_silence(monkeypatch):
     """규칙 레지스트리 격리 + W1 프로덕션 규칙 재등록 + growth emit 무음화(테스트 부작용 차단).
 
     clear_registry()로 상태 누수를 막은 뒤 register_all_rules()로 프로덕션 불변식(W1-1 G1·
-    W1-2 G2·W1-3 G3)을 재등록한다 — golden이 '프로덕션에 등록된 규칙 집합'으로 판정하게 하여
-    flip을 실증한다. G1(P0)·G2(P1)·G3(P1)가 fires, 아직 규칙 없는 G4~G6는 blind 유지.
+    W1-2 G2·W1-3 G3·W3-3 G6)을 재등록한다 — golden이 '프로덕션에 등록된 규칙 집합'으로 판정하게 하여
+    flip을 실증한다. G1(P0)·G2(P1)·G3(P1)·G6(P1)가 fires, 아직 규칙 없는 G4~G5는 blind 유지.
     """
     clear_registry()
     register_all_rules()
@@ -71,11 +71,12 @@ def test_golden_fixture_is_wellformed(seed_id, rel):
 
 @pytest.mark.parametrize("seed_id,rel", _GOLDEN, ids=[g[0] for g in _GOLDEN])
 def test_golden_current_baseline_platform_blind(seed_id, rel):
-    """★W1 flip 기준선: G1(P0)·G2(P1)·G3(P1)는 이제 규칙이 잡고, 아직 규칙 없는 결함(G4~G6)은 blind 유지.
+    """★flip 기준선: G1(P0)·G2(P1)·G3(P1)·G6(P1)는 이제 규칙이 잡고, 아직 규칙 없는 결함(G4~G5)은 blind 유지.
 
     W0에선 전부 blind(규칙 0건)였다. W1-1이 G1(차단후보 P0·is_valid flip), W1-2가 G2(제자리교정
-    P1·비차단·is_valid 유지), W1-3이 G3(BCR/FAR 커버리지 갭 P1·비차단) 불변식을 붙여 동일 fixture가
-    findings를 낸다 → 가드 실재를 증명한다. 나머지 결함은 각자의 Wave에서 규칙이 붙을 때 flip한다.
+    P1·비차단·is_valid 유지), W1-3이 G3(BCR/FAR 커버리지 갭 P1·비차단), W3-3이 G6(수집가능 경사도
+    미획득 갭 P1·비차단) 불변식을 붙여 동일 fixture가 findings를 낸다 → 가드 실재를 증명한다.
+    나머지 결함(G4·G5)은 각자의 Wave에서 규칙이 붙을 때 flip한다.
     """
     fx = _load(rel)
     result = copy.deepcopy(fx["input"])
@@ -105,8 +106,17 @@ def test_golden_current_baseline_platform_blind(seed_id, rel):
         assert g3.severity == "P1"
         assert report.is_valid is True, "G3는 P1(비차단) — is_valid 미변경"
         assert result["field_audit"]["findings"], "result에 G3 finding 부착"
+    elif seed_id == "G6":
+        # 임야(준보전산지) 수집가능 경사도(DEM) 미획득 → P1 갭 finding(W0 blind→W3-3 catch flip). P1은
+        # 비차단이라 is_valid True 유지(제자리 표면화+배지 — §2.4). ★실측필요(임목축적) None은 무플래그.
+        codes = [f.code for f in report.findings]
+        assert "TERRAIN_SLOPE_COLLECTION_GAP" in codes, "G6: W3-3 terrain_coverage 규칙이 수집가능 경사도 미획득을 잡아 갭 finding 산출"
+        g6 = next(f for f in report.findings if f.code == "TERRAIN_SLOPE_COLLECTION_GAP")
+        assert g6.severity == "P1"
+        assert report.is_valid is True, "G6는 P1(비차단) — is_valid 미변경"
+        assert result["field_audit"]["findings"], "result에 G6 finding 부착"
     else:
-        # 아직 규칙 없는 결함(G4~G6) → blind(빈 리포트) 유지 — additive 부착만(behavior 불변)
+        # 아직 규칙 없는 결함(G4~G5) → blind(빈 리포트) 유지 — additive 부착만(behavior 불변)
         assert report.findings == [], f"{seed_id}: 아직 규칙 미등록 → finding 0(blind 유지)"
         assert report.is_valid is True
         assert result["field_audit"]["findings"] == []
@@ -221,6 +231,52 @@ def test_g3_harness_flip_from_blind():
     assert report.is_valid is True                             # P1 — 비차단(배지)
     # 갭 finding은 정확히 1건(허용용도 조례의존 판정불가를 갭으로 오플래그하지 않음 — M3 (b))
     assert sum(1 for x in report.findings if x.code == "G3_ZONE_COVERAGE_GAP") == 1
+
+
+def test_g6_harness_flip_from_blind():
+    """★W3-3 핵심 flip: G6 시드(임야·수집가능 경사도 미획득)에서 harness가 P1 갭 finding을 낸다.
+
+    W0(규칙 0건)·W1~W2에선 blind였던 것이 W3-3 terrain_coverage.TERRAIN_SLOPE_COLLECTION_GAP 등록으로
+    잡힌다. expected=수집가능 경사도 획득 마커·observed=미획득(None)·rule_id·tier·panel·field까지 계약을
+    고정한다. P1은 비차단이라 is_valid True 유지(제자리 표면화+배지). ★실측필요(임목축적) None은 무플래그
+    — 규칙이 경사도 키만 읽는다(수집가능/실측필요 구분). (변이-kill·단위검증은 test_terrain_coverage.)
+    """
+    from app.services.verification.field_audit.invariants.terrain_coverage import (
+        _EXPECTED_MARK,
+        _PANEL,
+    )
+
+    fx = _load("imya__planning_mgmt__quasi_forest/G6_imya_slope_orphan.json")
+    # ★실 shape 대조: 수집가능 경사도(평균경사도_pct)=None인데 실측필요(입목축적_per_ha)는 present
+    ff = fx["input"]["special_parcel"]["factors"][0]["forest_facts"]
+    assert ff["평균경사도_pct"] is None                    # 수집가능 미획득(현행 — W3-3 표면화 대상)
+    assert ff["입목축적_per_ha"] == 110.0                  # 실측필요는 present(갭 아님 — 구분)
+
+    report = runner.run(copy.deepcopy(fx["input"]), fx["ctx"])
+    f = next(f for f in report.findings if f.code == "TERRAIN_SLOPE_COLLECTION_GAP")
+    assert f.severity == "P1" and f.tier == "A"
+    assert f.expected == _EXPECTED_MARK and f.observed == "미획득(None)"
+    assert f.rule_id == "TERRAIN_SLOPE_COLLECTION_GAP"
+    assert f.field == "special_parcel.forest_facts.평균경사도_pct" and f.panel == _PANEL
+    assert report.is_valid is True                          # P1 — 비차단(배지)
+    # 갭 finding은 정확히 1건(실측필요 임목축적 None을 갭으로 오플래그하지 않음)
+    assert sum(1 for x in report.findings if x.code == "TERRAIN_SLOPE_COLLECTION_GAP") == 1
+
+
+def test_g6_baseline_slope_collectible_missing():
+    """G6 앵커: 임야(준보전산지) 수집가능 경사도(DEM 평균경사도_pct)=None(미획득)을 명시 박제.
+
+    실측필요(임목축적_per_ha)는 present(110.0)라 갭 아님 — current_baseline이 W3-3 근본수집(_fetch_terrain_facts
+    DEM 실수집)으로 flip될 대상값을 앵커링한다(수집가능만 갭·실측필요 None 무관).
+    """
+    fx = _load("imya__planning_mgmt__quasi_forest/G6_imya_slope_orphan.json")
+    assert fx["_meta"]["land_attrs"] == {"jimok": "임야", "zone": "계획관리지역", "sanji_gubun": "준보전산지"}
+    ff = fx["input"]["special_parcel"]["factors"][0]["forest_facts"]
+    assert ff["평균경사도_pct"] is None                    # 현행(수집가능 미획득)
+    pa = fx["input"]["special_parcel"]["factors"][0]["preliminary_assessment"]
+    assert pa["slope"] is None and "slope_skip_reason" in pa   # 경사도 예비판정 생략(수집가능 미획득)
+    assert pa["stocking"] is not None                          # 임목축적 예비판정은 산출(실측필요 present)
+    assert fx["current_baseline"]["observed"] is None          # W3-3: → DEM 실수집 flip 대상
 
 
 def test_g5_regression_lock_robust_stats():

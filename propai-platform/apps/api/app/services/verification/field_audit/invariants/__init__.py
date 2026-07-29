@@ -7,6 +7,8 @@ W1부터 계층 A 하드 불변식이 여기 등록된다:
 W2부터 계층 B 비차단 배지가 여기 등록된다:
   - W2-a: provenance.PROV_UNKNOWN_SOURCE·PROV_STALE_DATA(미등록 출처·신선도 만료 P2 배지)
   - W2-b: market_methodology.MARKET_PRICE_METHODOLOGY(실거래 비교 없는 공시지가 폴백 시세 P2 배지)
+W3부터 계층 A 수집갭 불변식이 여기 등록된다:
+  - W3-3: terrain_coverage.TERRAIN_SLOPE_COLLECTION_GAP(임야/산지 후보의 수집가능 경사도 미획득 P1 갭)
 이 패키지를 임포트하면 하위 모듈의 register_rules()가 실행돼 프로덕션 규칙이 활성화된다.
 """
 
@@ -15,6 +17,7 @@ from app.services.verification.field_audit.invariants import (  # noqa: F401  �
     cross_field,
     market_methodology,
     provenance,
+    terrain_coverage,
 )
 
 
@@ -28,6 +31,7 @@ def register_all_rules() -> None:
     coverage.register_rules()
     provenance.register_rules()
     market_methodology.register_rules()
+    terrain_coverage.register_rules()
 
 
 __all__ = [
@@ -36,4 +40,5 @@ __all__ = [
     "market_methodology",
     "provenance",
     "register_all_rules",
+    "terrain_coverage",
 ]
