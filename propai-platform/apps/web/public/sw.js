@@ -132,7 +132,7 @@
 // v466: 등기 권리분석 전면 실패 복구(#482 — get_one 계약 파열 봉합·물건 선택 SSOT).
 //        RegistryBulkButton·RegistryAnalysisWorkspaceClient 의 선택/호출 배선이 stale
 //        캐시에 가려지면 기존 사용자에게 '분석 전면 실패'가 계속 재현되므로 구캐시 일괄 삭제.
-const CACHE_NAME = "propai-v466-registry-getone";
+const CACHE_NAME = "propai-v467-satong-map-ux";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
