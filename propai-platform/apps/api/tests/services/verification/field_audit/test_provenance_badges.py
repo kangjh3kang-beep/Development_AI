@@ -225,7 +225,12 @@ def test_stale_finding_contract():
 
 
 def test_stale_requires_freshness_present():
-    """★freshness 부재(last_updated None)면 stale 무발동(신선도 신호 자체 없음). is_fresh=false면 발동."""
+    """★freshness 부재(last_updated None)면 stale 무발동(신선도 신호 자체 없음). is_fresh=false면 발동.
+
+    ★is_fresh=None(판정불명)·키 누락은 무발동이어야 한다 — 오직 is_fresh **is False**만 만료.
+    이 경계가 엄격판정(`is not False`)과 falsy판정을 가르는 유일한 지점이라 반드시 고정한다
+    (falsy로 회귀하면 None/누락/0을 stale로 오판 → 라이브 도달 전 CI가 잡도록 변이-kill).
+    """
     base = {
         "name": "tax_acquisition_rates", "source_type": "hardcoded",
         "update_frequency": "yearly", "last_updated": None, "is_healthy": True,
@@ -238,6 +243,12 @@ def test_stale_requires_freshness_present():
     # freshness.is_fresh=true → 무발동
     freshish = {**base, "freshness": {"is_fresh": True, "age_days": 5, "max_age_days": 180}}
     assert _prov_stale_data({"provenance": [freshish]}, {}) == []
+    # ★freshness 존재 + is_fresh=None(판정불명) → 무발동(엄격 is False만 만료·falsy회귀 방지)
+    indeterminate = {**base, "freshness": {"is_fresh": None, "age_days": 100, "max_age_days": 90}}
+    assert _prov_stale_data({"provenance": [indeterminate]}, {}) == []
+    # ★freshness 존재 + is_fresh 키 누락 → 무발동(.get None을 stale로 오판 안 함)
+    missing_isfresh = {**base, "freshness": {"age_days": 100, "max_age_days": 90}}
+    assert _prov_stale_data({"provenance": [missing_isfresh]}, {}) == []
 
 
 def test_registered_source_not_flagged_unknown():
