@@ -1,19 +1,19 @@
 {
   "_meta": {
     "seed_id": "W2b",
-    "title": "market_methodology 계층B 배지 불변식 — 실거래 비교 없는 공시지가 폴백 시세(P2 비차단)",
+    "title": "market_methodology 계층B 배지 불변식 — 공시지가 기반 추정 토지시세 상시 방법론 고지(P2 비차단)",
     "dimension": "market_methodology",
     "tier": "B",
     "phase": "0/W2-b",
-    "defect": "이미 계산된 result의 표시 시세(land_prices.estimated_market_per_sqm)가 실거래 comparable(transaction_prices) 없이 공시지가×보정계수 추정으로만 산출됐어도 사용자에게 방법론 한계가 배지로 표면화되지 않음 → 저신뢰 추정이 실측 시세처럼 읽힌다. ★방법론 한계=버그가 아니라 신뢰도 경고이므로 correctness(P0/P1) 아닌 P2 배지로 한정(is_valid 불변).",
-    "w2_target": "market_methodology.py MARKET_PRICE_METHODOLOGY: (A)estimated_market_per_sqm>0 (B)source에 '공시지가' (C)transaction_prices 실거래 count 합계 0 → P2 배지. 실거래 표본이 하나라도 있으면 무발동. 값 재계산·임계값 없음(방법론/출처 태그만 판정 → 오탐 0·오라클 독립).",
-    "rule_2_not_implemented": "MARKET_PRICE_DIVERGENCE(괴리 배지)는 미구현. 재확증 결과 result가 실거래 원/㎡와 추정 원/㎡를 신뢰성 있게 함께 노출하지 않음: Section 4 avg_price_10k는 만원·per-unit 총액·주거 건물(아파트/오피스텔/연립·molit_service.py:15·price_stats.py:21), Section 3 estimated_market_per_sqm는 원·per-㎡·토지. 단위·분모·대상 3중 비호환이라 괴리비가 무의미(수백 배는 정상) → 억지 배지 회피. transactions_present_large_apparent_gap 케이스가 이 비교불가를 실증(외견상 큰 차이에도 배지 0). 지역/지목별 per-㎡ 기준선 학습은 W4 platform_insights 별도 티켓.",
+    "defect": "이미 계산된 result의 표시 토지 시세(land_prices.estimated_market_per_sqm)가 공시지가×보정계수 추정(실거래 미검증)인데도 사용자에게 방법론 한계가 배지로 표면화되지 않음 → 저신뢰 추정이 실측 시세처럼 읽힌다. ★방법론 한계=버그가 아니라 신뢰도 경고이므로 correctness(P0/P1) 아닌 P2 배지로 한정(is_valid 불변).",
+    "w2_target": "market_methodology.py MARKET_PRICE_METHODOLOGY: (A)estimated_market_per_sqm>0 (B)source에 '공시지가' → P2 배지. ★R2 게이트 (C)(실거래 유무) 제거: _calc_land_prices에 실거래 경로가 전무해 토지 시세는 Section 4와 무관하게 항상 공시지가 파생 → 무관한 건물 실거래 유무로 배지를 억제하면 거짓음성(disclosure를 실거래 보일 때 정확히 끔). 배지는 Section 4 shape/유무와 무관한 상시 방법론 고지. 값 재계산·임계값 없음(방법론/출처 태그만 판정 → 오탐 0·오라클 독립).",
+    "rule_2_not_implemented": "MARKET_PRICE_DIVERGENCE(괴리 배지)는 미구현(연기·부재 아님). 정본 seam 기본 Section 4 요약통계(transaction_prices avg/max/min_price_10k)는 만원·per-unit 총액이라 per-㎡ 비교값이 아니다. 다만 per-㎡ 토지시세가 원천적으로 없는 것은 아님: molit_service.get_land_transactions(molit_service.py:38) 실재+land_info_service._fetch_nearby_transactions 'land' 버킷(land_info_service.py:934-1001) raw items가 price_10k(만원)+area_sqm(㎡)를 담아 per-㎡ 토지시세 도출 가능(공시지가와 독립). 데이터는 있으나 정본 seam 요약이 per-㎡ 비교값으로 노출하지 않을 뿐 → per-㎡ 정규화·지역/지목별 기준선 학습(W4 platform_insights)으로 2차 연기(억지 배지 금지).",
     "synthetic": true,
-    "honesty": "W0/W1 합성 fixture — 라이브 analyze() 미수집(하네스 환경 DB/API 부재). land_prices는 comprehensive_analysis_service._calc_land_prices의 실제 산출 shape에 충실한 구조 시드다(official_price_per_sqm×market_multiplier=estimated_market_per_sqm·source='VWORLD 개별공시지가 + 지역별 시세보정'·:1375-1385). transaction_prices는 _research_transactions 반환 shape 충실(유형별 {count,avg_price_10k,...}·:1418-1439, 부재 시 {message}/{error}/{}·:1399/:1442/:660). 공시지가·배수·거래금액은 합성값(라이브 미조회)."
+    "honesty": "W0/W1 합성 fixture — 라이브 analyze() 미수집(하네스 환경 DB/API 부재). land_prices는 comprehensive_analysis_service._calc_land_prices의 실제 산출 shape에 충실한 구조 시드다(official_price_per_sqm×market_multiplier=estimated_market_per_sqm·source='VWORLD 개별공시지가 + 지역별 시세보정'·:1375-1385). transaction_prices는 정본 seam의 두 라이브 shape에 충실: Shape Y={아파트/오피스텔/연립다세대}(_research_transactions 계산·:1418-1439), Shape X={apt,land}(base['nearby_transactions'] early-return·:1391-1393 → land_info_service._fetch_nearby_transactions:934-1001, land 버킷 items=price_10k/area_sqm). 규칙은 transaction_prices를 읽지 않으므로(게이트 (C) 제거) 두 shape 모두에서 배지 1로 동일 동작함을 골든으로 고정. 공시지가·배수·거래금액은 합성값(라이브 미조회)."
   },
   "cases": {
     "official_price_no_tx_message": {
-      "desc": "공시지가 추정시세 + 실거래 부재(PNU 부재 message) → 1차 배지 1건",
+      "desc": "공시지가 추정시세 + 실거래 부재(PNU 부재 message) → 배지 1건",
       "input": {
         "zone_type": "계획관리지역",
         "land_prices": {
@@ -36,7 +36,7 @@
       "expect": {"MARKET_PRICE_METHODOLOGY": 1}
     },
     "official_price_empty_tx": {
-      "desc": "공시지가 추정시세 + 실거래 빈 dict({}) → 1차 배지 1건",
+      "desc": "공시지가 추정시세 + 실거래 빈 dict({}) → 배지 1건",
       "input": {
         "zone_type": "자연녹지지역",
         "land_prices": {
@@ -51,7 +51,7 @@
       "expect": {"MARKET_PRICE_METHODOLOGY": 1}
     },
     "official_price_zero_count_tx": {
-      "desc": "공시지가 추정시세 + 실거래 유형 있으나 전부 count 0 → 1차 배지 1건(count 0=comparable 없음)",
+      "desc": "공시지가 추정시세 + 실거래 유형 있으나 전부 count 0 → 배지 1건(토지 시세는 공시지가 파생)",
       "input": {
         "zone_type": "제2종일반주거지역",
         "land_prices": {
@@ -69,7 +69,7 @@
       "expect": {"MARKET_PRICE_METHODOLOGY": 1}
     },
     "official_price_error_tx": {
-      "desc": "공시지가 추정시세 + 실거래 조회 오류({error}) → 1차 배지 1건",
+      "desc": "공시지가 추정시세 + 실거래 조회 오류({error}) → 배지 1건",
       "input": {
         "zone_type": "생산관리지역",
         "land_prices": {
@@ -84,7 +84,7 @@
       "expect": {"MARKET_PRICE_METHODOLOGY": 1}
     },
     "section4_absent": {
-      "desc": "공시지가 추정시세 + transaction_prices 키 부재 → 1차 배지 1건(부재=comparable 없음)",
+      "desc": "공시지가 추정시세 + transaction_prices 키 부재 → 배지 1건",
       "input": {
         "zone_type": "계획관리지역",
         "land_prices": {
@@ -97,8 +97,8 @@
       },
       "expect": {"MARKET_PRICE_METHODOLOGY": 1}
     },
-    "transactions_present": {
-      "desc": "공시지가 추정시세 + 실거래 표본 존재(count>0) → 배지 0건(실거래 맥락 있음 → 오탐 없음)",
+    "transactions_present_shape_y": {
+      "desc": "★R2 flip: 공시지가 추정시세 + 실거래 표본 존재(Shape Y·count>0) → 배지 1건(토지 시세는 여전히 공시지가 파생 — 건물 실거래로 disclosure 억제 안 함)",
       "input": {
         "zone_type": "제3종일반주거지역",
         "land_prices": {
@@ -112,10 +112,10 @@
           "아파트": {"count": 7, "avg_price_10k": 62000, "max_price_10k": 90000, "min_price_10k": 40000, "excluded_outliers": 0, "items": []}
         }
       },
-      "expect": {"MARKET_PRICE_METHODOLOGY": 0}
+      "expect": {"MARKET_PRICE_METHODOLOGY": 1}
     },
-    "transactions_present_large_apparent_gap": {
-      "desc": "★Rule 2 미구현 실증: 실거래(만원·per-unit 건물 총액)와 추정(원·per-㎡ 토지)이 외견상 크게 달라도(비교불가 단위) 실거래 존재 → 배지 0건(억지 괴리 배지 없음)",
+    "transactions_present_multi_shape_y": {
+      "desc": "★R2 flip: 공시지가 추정시세 + 다유형 실거래 존재(아파트·오피스텔·count>0) → 배지 1건(상시 방법론 고지)",
       "input": {
         "zone_type": "일반상업지역",
         "land_prices": {
@@ -130,7 +130,28 @@
           "오피스텔": {"count": 4, "avg_price_10k": 21000, "max_price_10k": 28000, "min_price_10k": 15000, "excluded_outliers": 0, "items": []}
         }
       },
-      "expect": {"MARKET_PRICE_METHODOLOGY": 0}
+      "expect": {"MARKET_PRICE_METHODOLOGY": 1}
+    },
+    "transactions_present_shape_x_land_bucket": {
+      "desc": "★새 라이브 shape(Shape X·base['nearby_transactions'] early-return): 공시지가 추정시세 + {apt,land} 버킷(land items=price_10k/area_sqm) → 배지 1건. 규칙이 Shape X/Y 무관하게 동작함을 고정.",
+      "input": {
+        "zone_type": "계획관리지역",
+        "land_prices": {
+          "official_price_per_sqm": 1200000,
+          "estimated_market_per_sqm": 1440000,
+          "market_multiplier": 1.2,
+          "source": "VWORLD 개별공시지가 + 지역별 시세보정",
+          "annotations": []
+        },
+        "transaction_prices": {
+          "apt": {"avg_price_10k": 62000, "max_price_10k": 90000, "min_price_10k": 45000, "count": 8, "excluded_outliers": 0, "data_source": "molit_apt_live", "items": []},
+          "land": {"avg_price_10k": 12000, "max_price_10k": 30000, "min_price_10k": 5000, "count": 5, "excluded_outliers": 1, "data_source": "molit_land_live", "items": [
+            {"price_10k": "12000", "area_sqm": "330.5", "deal_date": "2026.06.15", "name": "대"},
+            {"price_10k": "8000", "area_sqm": "210.0", "deal_date": "2026.05.20", "name": "전"}
+          ]}
+        }
+      },
+      "expect": {"MARKET_PRICE_METHODOLOGY": 1}
     },
     "no_market_estimate": {
       "desc": "공시지가 조회 실패로 표시 추정시세 0 → 경고할 표시값 없음 → 배지 0건(오탐 없음)",
@@ -148,7 +169,7 @@
       "expect": {"MARKET_PRICE_METHODOLOGY": 0}
     },
     "non_official_source": {
-      "desc": "미래 실거래 기반 시세(source에 '공시지가' 없음) + 실거래 부재 → 배지 0건(방법론-특정 가드·오탐 없음)",
+      "desc": "미래 실거래 기반 시세(source에 '공시지가' 없음) → 배지 0건(방법론-특정 가드·오탐 없음)",
       "input": {
         "zone_type": "준주거지역",
         "land_prices": {
@@ -157,7 +178,9 @@
           "source": "실거래 사례비교 기반 시세",
           "annotations": []
         },
-        "transaction_prices": {}
+        "transaction_prices": {
+          "아파트": {"count": 9, "avg_price_10k": 70000, "max_price_10k": 95000, "min_price_10k": 50000, "excluded_outliers": 0, "items": []}
+        }
       },
       "expect": {"MARKET_PRICE_METHODOLOGY": 0}
     },
