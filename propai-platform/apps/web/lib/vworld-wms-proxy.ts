@@ -1,3 +1,9 @@
+import {
+  cooldownRemainingSec,
+  recordFailure,
+  recordSuccess,
+  shouldAttempt,
+} from "@/lib/vworld-circuit-breaker";
 import { classifyVWorldXmlException, extractVWorldXmlExceptionDetail, isVWorldKeyFault } from "@/lib/vworld-xml-exception";
 
 /**
@@ -99,6 +105,24 @@ function upstreamError(message: string, upstreamStatus: number, detail: Record<s
   return jsonError(message, 503);
 }
 
+// ★음성 캐시: 오류를 no-store로 돌려주면 팬할 때마다 전 타일이 상류로 재요청된다.
+//   상류가 죽었을 때 더 세게 두드리는 구조가 실제로 IP 차단을 유발했다.
+//   짧은 TTL로 실패를 흡수해 폭주를 끊되, 회복은 지연되지 않을 만큼만 잡는다.
+const NEGATIVE_CACHE_SEC = 30;
+const BREAKER_KEY = "vworld-wms";
+
+function breakerOpenTile(remainingSec: number): Response {
+  // 차단 중에는 상류를 호출하지 않고 투명 타일로 즉시 응답한다(지도는 필지·오버레이 유지).
+  return new Response(TRANSPARENT_PNG, {
+    status: 200,
+    headers: {
+      "Content-Type": "image/png",
+      "Cache-Control": `public, max-age=${Math.max(5, Math.min(remainingSec, NEGATIVE_CACHE_SEC))}`,
+      "X-VWorld-Breaker": "open",
+    },
+  });
+}
+
 // 투명 1x1 PNG — 200+XML(분류상 coverage=정상 무제공영역)을 타일 자리에 흡수해 지도
 // 전체가 회색이 되지 않게. ★Buffer는 Node 런타임 전제 — 이 프록시를 Edge 런타임으로
 // 전환하면 Buffer가 없어 깨진다(전환 시 base64→Uint8Array로 교체 필요, 지금은 금지).
@@ -181,14 +205,38 @@ export async function proxyVWorldWms(incoming: URLSearchParams): Promise<Respons
   if (![...params.keys()].some((k) => k.toLowerCase() === "service")) params.set("SERVICE", "WMS");
 
   const targetUrl = `${VWORLD_WMS_BASE}?${params.toString()}`;
+  // ★상류가 연속 실패 중이면 아예 호출하지 않는다 — 실패 요청 폭주가 IP 차단을 부른 실장애.
+  //   다만 투명 타일로 끝내지 않고 **api(168) 타일 프록시로 릴레이**를 먼저 시도한다:
+  //   이 서버(web)에서만 VWorld 경로가 막히고 api 서버는 정상인 상황이 실제로 발생했다
+  //   (같은 클라우드인데 web만 502/연결실패, api는 200). 릴레이가 되면 지도가 살아난다.
+  if (!shouldAttempt(BREAKER_KEY)) {
+    const origin = vworldApiFallbackOrigin();
+    if (origin) {
+      return relayViaApi(
+        `${origin}/api/v1/tiles/vworld/wms?${incoming.toString()}`,
+        "vworld-wms-proxy(breaker-open)",
+      );
+    }
+    return breakerOpenTile(cooldownRemainingSec(BREAKER_KEY));
+  }
   try {
     const resp = await fetch(targetUrl, {
       headers: { Referer: "https://www.4t8t.net" },
       next: { revalidate: 60 * 60 * 24 },
     });
     if (!resp.ok) {
+      recordFailure(BREAKER_KEY);
+      // 키 오류뿐 아니라 '상류 자체가 응답을 못 주는' 경우도 api 릴레이로 구제한다.
+      const origin = vworldApiFallbackOrigin();
+      if (origin) {
+        return relayViaApi(
+          `${origin}/api/v1/tiles/vworld/wms?${incoming.toString()}`,
+          "vworld-wms-proxy(upstream-error)",
+        );
+      }
       return upstreamError("VWorld WMS upstream error", resp.status, { layers: canonicalLayers });
     }
+    recordSuccess(BREAKER_KEY);
     const contentType = (resp.headers.get("content-type") ?? "").trim();
     if (contentType && !contentType.toLowerCase().startsWith("image/")) {
       if (contentType.toLowerCase().includes("xml")) {
@@ -218,6 +266,7 @@ export async function proxyVWorldWms(incoming: URLSearchParams): Promise<Respons
             return relayViaApi(`${origin}/api/v1/tiles/vworld/wms?${incoming.toString()}`, "vworld-wms-proxy(key-fault)");
           }
         }
+        recordFailure(BREAKER_KEY);
         return upstreamError(
           `VWorld WMS returned an XML exception (${detail.code ?? "auth/unknown"})`,
           resp.status,
@@ -244,6 +293,16 @@ export async function proxyVWorldWms(incoming: URLSearchParams): Promise<Respons
       },
     });
   } catch (error) {
+    // ★네트워크 예외(상류 도달 불가·DNS·타임아웃)도 실패로 집계 — 이번 실장애가 이 경로였다.
+    recordFailure(BREAKER_KEY);
+    const origin = vworldApiFallbackOrigin();
+    if (origin) {
+      console.warn(`[vworld-wms-proxy] upstream unreachable → api relay`, { error: String(error).slice(0, 120) });
+      return relayViaApi(
+        `${origin}/api/v1/tiles/vworld/wms?${incoming.toString()}`,
+        "vworld-wms-proxy(unreachable)",
+      );
+    }
     return jsonError(`VWorld WMS proxy failed: ${String(error)}`, 502);
   }
 }

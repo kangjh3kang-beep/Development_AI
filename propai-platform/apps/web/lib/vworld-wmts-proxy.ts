@@ -1,3 +1,9 @@
+import {
+  cooldownRemainingSec,
+  recordFailure,
+  recordSuccess,
+  shouldAttempt,
+} from "@/lib/vworld-circuit-breaker";
 import { classifyVWorldXmlException, extractVWorldXmlExceptionDetail, isVWorldKeyFault } from "@/lib/vworld-xml-exception";
 import { relayViaApi, vworldApiFallbackOrigin } from "@/lib/vworld-wms-proxy";
 
@@ -63,6 +69,21 @@ const TRANSPARENT_PNG = Buffer.from(
   "base64",
 );
 
+const BREAKER_KEY = "vworld-wmts";
+const NEGATIVE_CACHE_SEC = 30;
+
+// 상류 연속 실패 중에는 호출하지 않고 투명 타일로 즉시 응답한다(실패 폭주 → IP 차단 방지).
+function breakerOpenTile(remainingSec: number): Response {
+  return new Response(TRANSPARENT_PNG, {
+    status: 200,
+    headers: {
+      "Content-Type": "image/png",
+      "Cache-Control": `public, max-age=${Math.max(5, Math.min(remainingSec, NEGATIVE_CACHE_SEC))}`,
+      "X-VWorld-Breaker": "open",
+    },
+  });
+}
+
 function transparentTile(): Response {
   return new Response(TRANSPARENT_PNG, {
     status: 200,
@@ -105,17 +126,39 @@ export async function proxyVWorldWmts(params: VWorldWmtsParams): Promise<Respons
 
   const targetUrl = `${VWORLD_WMTS_BASE}/${encodeURIComponent(key)}/${cleanLayer}/${params.z}/${params.y}/${cleanX}.${ext}`;
 
+  if (!shouldAttempt(BREAKER_KEY)) {
+    // ★투명 타일로 끝내지 않고 api(168) 릴레이를 먼저 시도한다 — web에서만 VWorld 경로가
+    //   막히고 api는 정상인 상황이 실제로 발생했다(같은 클라우드, web만 502/연결실패).
+    const origin = vworldApiFallbackOrigin();
+    if (origin) {
+      return relayViaApi(
+        `${origin}/api/v1/tiles/vworld/wmts/${cleanLayer}/${params.z}/${params.y}/${cleanX}.${ext}`,
+        "vworld-wmts-proxy(breaker-open)",
+      );
+    }
+    return breakerOpenTile(cooldownRemainingSec(BREAKER_KEY));
+  }
   try {
     const resp = await fetch(targetUrl, {
       headers: { Referer: "https://www.4t8t.net" },
       next: { revalidate: 60 * 60 * 24 },
     });
     if (!resp.ok) {
+      recordFailure(BREAKER_KEY);
+      // 키 오류뿐 아니라 '상류 자체가 응답을 못 주는' 경우도 api 릴레이로 구제한다.
+      const origin = vworldApiFallbackOrigin();
+      if (origin) {
+        return relayViaApi(
+          `${origin}/api/v1/tiles/vworld/wmts/${cleanLayer}/${params.z}/${params.y}/${cleanX}.${ext}`,
+          "vworld-wmts-proxy(upstream-error)",
+        );
+      }
       // 상태 코드 무음 전파 금지 — 4xx/5xx는 명시적 프록시 오류로 변환.
       return upstreamError("VWorld WMTS upstream error", resp.status, {
         layer: cleanLayer, z: params.z, y: params.y, x: cleanX,
       });
     }
+    recordSuccess(BREAKER_KEY);
     const contentType = (resp.headers.get("content-type") ?? "").trim();
     if (contentType && !contentType.toLowerCase().startsWith("image/")) {
       // 200 + 비이미지 본문은 두 현실이 섞여 있다 — content-type으로 1차 분기하고,
@@ -178,6 +221,16 @@ export async function proxyVWorldWmts(params: VWorldWmtsParams): Promise<Respons
       },
     });
   } catch (error) {
+    // ★네트워크 예외(상류 도달 불가·DNS·타임아웃)도 실패로 집계 — 이번 실장애가 이 경로였다.
+    recordFailure(BREAKER_KEY);
+    const origin = vworldApiFallbackOrigin();
+    if (origin) {
+      return relayViaApi(
+        `${origin}/api/v1/tiles/vworld/wmts/${cleanLayer}/${params.z}/${params.y}/${cleanX}.${ext}`,
+        "vworld-wmts-proxy(unreachable)",
+      );
+    }
+
     // [MAP-006] 네트워크 예외도 JSON 오류 본문으로 반환(평문 금지).
     return new Response(
       JSON.stringify({ error: `VWorld WMTS proxy failed: ${String(error)}`, status: 502 }),
