@@ -493,6 +493,35 @@ export function buildTileFailureNotice(
   };
 }
 
+/**
+ * 타일 성공/실패를 누적해 '배경지도가 실제로 안 보이는가'를 판정한다.
+ *
+ * ★실결함(라이브 실측): 종전엔 타일 이벤트마다 상태를 그대로 덮어써(마지막 이벤트가 승리)
+ *   뷰포트 36개 중 1개만 실패해도 "기본지도 타일 로드 실패" 배너가 떴다. 지도는 멀쩡히
+ *   보이는데 실패 문구가 상시 노출돼, 사용자가 정상 화면을 장애로 오인했다.
+ *   개별 실패는 흔하다(빈 영역·일시 타임아웃) — 판정은 **비율**로 해야 한다.
+ */
+export function makeTileStateAggregator(
+  onState: (state: "ready" | "error") => void,
+  opts: { minSamples?: number; failureRatio?: number } = {},
+): (ok: boolean) => void {
+  const minSamples = opts.minSamples ?? 6;      // 표본이 적을 때 단발 실패로 단정하지 않는다
+  const failureRatio = opts.failureRatio ?? 0.5; // 절반 이상 실패해야 '배경지도 미표시'
+  let ok = 0;
+  let fail = 0;
+  return (success: boolean) => {
+    if (success) ok += 1;
+    else fail += 1;
+    const total = ok + fail;
+    // 성공이 하나라도 있으면 지도는 그려지고 있다 — 표본이 쌓이기 전엔 ready 우선.
+    if (total < minSamples) {
+      onState(ok > 0 ? "ready" : "error");
+      return;
+    }
+    onState(fail / total >= failureRatio ? "error" : "ready");
+  };
+}
+
 function createOfficialBaseMapLayer(
   L: any,
   baseLayer: VWorldBaseLayer,
@@ -518,14 +547,16 @@ function createOfficialBaseMapLayer(
   if (baseLayer === "Hybrid" || baseLayer === "Base" || baseLayer === "white") {
     const base = makeTile(baseLayer === "Hybrid" ? "Satellite" : baseLayer);
     const overlay = makeTile("Hybrid", "labelPane");
-    base.on("tileload", () => onTileState("ready"));
-    base.on("tileerror", () => onTileState("error"));
+    const track = makeTileStateAggregator(onTileState);
+    base.on("tileload", () => track(true));
+    base.on("tileerror", () => track(false));
     return L.layerGroup([base, overlay]);
   }
 
   const vworld = makeTile(baseLayer);
-  vworld.on("tileload", () => onTileState("ready"));
-  vworld.on("tileerror", () => onTileState("error"));
+  const track = makeTileStateAggregator(onTileState);
+  vworld.on("tileload", () => track(true));
+  vworld.on("tileerror", () => track(false));
   return vworld;
 }
 
