@@ -28,6 +28,9 @@ async def test_search_by_simple_address_not_configured(monkeypatch):
 async def test_fetch_realty_registry_mock(monkeypatch):
     monkeypatch.setenv("HYPHEN_HKEY", "test_hkey")
     monkeypatch.setenv("HYPHEN_USER_ID", "test_user")
+    # 열람(163)은 인터넷등기소 자격이 필수(벤더 명세) — 없으면 호출 전에 정직하게 중단된다.
+    monkeypatch.setenv("HYPHEN_IROS_USER_ID", "iros_id")
+    monkeypatch.setenv("HYPHEN_IROS_USER_PW", "iros_pw")
 
     async def mock_post(*args, **kwargs):
         class MockResp:

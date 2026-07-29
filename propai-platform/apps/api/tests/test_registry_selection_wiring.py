@@ -36,13 +36,15 @@ class _FakeResponse:
 # 한 주소에 토지·건물·집합건물 2세대가 함께 잡히는 실제 상황.
 # ★어느 구분도 목록 첫 자리에 두지 않는다 — 첫 건을 집어도 우연히 정답이 되면
 #   "구분을 전달하지 않는" 회귀를 테스트가 못 잡는다(동어반복 방지).
+# ★응답 키에 'get' 접두사가 없다 — 벤더 명세 표기와 실제 응답이 다르다(라이브 실측).
+#   과거 구현이 get* 키를 읽어 모든 값이 None이 되던 결함을 이 픽스처가 고정한다.
 _SEARCH_ITEMS = [
-    {"get부동산고유번호": "3333-333", "get구분": "집합건물",
-     "get부동산소재지번": "○○동 1-1 제1101동 제1502호"},
-    {"get부동산고유번호": "1111-111", "get구분": "토지", "get부동산소재지번": "○○동 1-1"},
-    {"get부동산고유번호": "2222-222", "get구분": "건물", "get부동산소재지번": "○○동 1-1"},
-    {"get부동산고유번호": "4444-444", "get구분": "집합건물",
-     "get부동산소재지번": "○○동 1-1 제101동 제502호"},
+    {"부동산고유번호": "3333-333", "구분": "집합건물",
+     "부동산소재지번": "○○동 1-1 제1101동 제1502호"},
+    {"부동산고유번호": "1111-111", "구분": "토지", "부동산소재지번": "○○동 1-1"},
+    {"부동산고유번호": "2222-222", "구분": "건물", "부동산소재지번": "○○동 1-1"},
+    {"부동산고유번호": "4444-444", "구분": "집합건물",
+     "부동산소재지번": "○○동 1-1 제101동 제502호"},
 ]
 
 
@@ -51,6 +53,9 @@ def hyphen_env(monkeypatch):
     monkeypatch.setenv("REGISTRY_PROVIDER", "hyphen")
     monkeypatch.setenv("HYPHEN_HKEY", "test-key")
     monkeypatch.setenv("HYPHEN_USER_ID", "test-user")
+    # 열람(163)은 인터넷등기소 자격이 필수 — 없으면 호출 전에 not_configured로 끝난다.
+    monkeypatch.setenv("HYPHEN_IROS_USER_ID", "iros-id")
+    monkeypatch.setenv("HYPHEN_IROS_USER_PW", "iros-pw")
     monkeypatch.delenv("REGISTRY_API_URL", raising=False)
     monkeypatch.delenv("REGISTRY_API_KEY", raising=False)
 
@@ -65,8 +70,9 @@ def captured(monkeypatch, hyphen_env):
         if url.endswith("/in0004000168"):  # 간편주소 검색
             return _FakeResponse({"common": {"errYn": "N"},
                                   "data": {"list": _SEARCH_ITEMS, "totCnt": len(_SEARCH_ITEMS)}})
-        if url.endswith("/in0004000948"):  # 등기부 열람
+        if url.endswith("/in0004000163"):  # 등기부 열람(회원) — 명세상 정본 엔드포인트
             seen["fetched_uno"] = body.get("uniqNo") or body.get("uniqueNo")
+            seen["body"] = dict(body)
             return _FakeResponse({"common": {"errYn": "N"},
                                   "data": {"outList": {"get소유자": "홍길동"}}})
         raise AssertionError(f"예상 밖 하이픈 호출: {url}")

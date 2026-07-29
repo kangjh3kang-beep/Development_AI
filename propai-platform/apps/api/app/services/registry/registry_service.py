@@ -77,7 +77,7 @@ class RegistryService:
             ),
         }
 
-    async def live_status(self) -> dict[str, Any]:
+    async def live_status(self, force: bool = False) -> dict[str, Any]:
         """status()에 '실제 호출 가능한가'를 더한 정직한 상태.
 
         왜 필요한가: status()는 키 존재만 보므로, 키가 유효해도 계약에 없는 API라
@@ -93,13 +93,22 @@ class RegistryService:
         if not out.get("hyphen_ready"):
             return out
 
-        probe = await probe_api_access()
+        probe = await probe_api_access(force=force)
         out["hyphen_access"] = probe.get("access")
         out["hyphen_access_message"] = probe.get("message")
         if probe.get("access") != "ok":
             # 실제로 못 쓰는 상태를 '연결됨'이라 말하지 않는다.
-            out["register_ready"] = bool(out.get("tilko_ready"))
-            out["message"] = probe.get("message") or out.get("message")
+            # ★configured까지 함께 강등 — 소비처가 register_ready 대신 configured를 읽어도
+            #   속지 않아야 한다(호출부에서 특례 if로 덮는 방식은 새 소비처를 못 지킨다).
+            tilko_ok = bool(out.get("tilko_ready"))
+            out["register_ready"] = tilko_ok
+            out["configured"] = tilko_ok
+            if tilko_ok:
+                # 틸코가 대체 동작하면 공급자 표기도 실제와 맞춘다(초록불+오류문구 모순 방지).
+                out["provider"] = "tilko"
+                out["message"] = f"{probe.get('message')} 현재는 Tilko 보조 API로 조회합니다."
+            else:
+                out["message"] = probe.get("message") or out.get("message")
         return out
 
     async def get_one(

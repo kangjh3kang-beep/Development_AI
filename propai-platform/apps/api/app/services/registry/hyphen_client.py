@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import os
 from typing import Any
@@ -49,10 +50,30 @@ def _headers() -> dict[str, str]:
 # API는 errYn=Y "권한이 없는 API 입니다"로 거절한다(라이브에서 실제 발생).
 # 틸코가 공개키를 실제로 받아와 검증(public_key_ok)하는 것과 대칭을 맞춘다.
 _ACCESS_CACHE: dict[str, Any] = {}
-_ACCESS_TTL_SEC = 300.0
-# 권한 거절을 알리는 벤더 문구(부분일치). 문구가 바뀌어도 오탐이 나지 않도록
-# '권한' + 'API' 동시 포함을 기본 신호로 쓰고, 알려진 원문도 함께 본다.
-_FORBIDDEN_HINTS = ("권한이 없는 API", "권한이 없습니다", "권한 없음")
+_ACCESS_LOCKS: dict[str, asyncio.Lock] = {}   # 자격증명별 single-flight
+_ACCESS_TTL_SEC = 300.0          # 성공 판정만 길게 캐시
+_ACCESS_FAIL_TTL_SEC = 30.0      # 실패는 짧게 — 벤더 복구·권한 활성화가 즉시 반영돼야 한다
+
+# 데이터가 없어서 나는 오류코드(= 관문은 통과했다는 증거). 라이브 실측:
+#   C0000-002 검색조건에 대한 결과가 없습니다 / C0000-088 고유번호에 해당하는 소재지번 없음
+_DATA_LEVEL_ERR_CODES = {"C0000-002", "C0000-088"}
+_DATA_LEVEL_HINTS = ("결과가 없습니다", "확인할 수 없습니다", "조회 결과가 없")
+# 권한 거절 문구(라이브 실측: "권한이 없는 API 입니다")
+_FORBIDDEN_HINTS = ("권한이 없는 API", "미승인", "승인되지 않은")
+
+
+def _err_code_of(payload: dict[str, Any]) -> str:
+    common = payload.get("common") or {}
+    raw = str(common.get("errCd") or "").strip()
+    if raw:
+        return raw
+    # errCd가 비어도 메시지 앞머리에 [C0000-002] 형태로 오는 경우가 있다(라이브 실측).
+    msg = str(common.get("errMsg") or "")
+    if msg.startswith("["):
+        end = msg.find("]")
+        if end > 1:
+            return msg[1:end].strip()
+    return ""
 
 
 def _is_forbidden_message(msg: str) -> bool:
@@ -62,6 +83,32 @@ def _is_forbidden_message(msg: str) -> bool:
     if any(h in m for h in _FORBIDDEN_HINTS):
         return True
     return ("권한" in m) and ("API" in m.upper())
+
+
+def classify_probe_response(payload: dict[str, Any]) -> tuple[str, str]:
+    """벤더 응답 → (access, message).
+
+    ★기본값을 낙관에서 비관으로 뒤집는다: 이전 구현은 '권한' 문구가 없으면 무조건 ok라
+    인증키 무효·IP 미허용·계약 만료 같은 거절을 전부 '연결됨'으로 통과시켰다.
+    이제 errYn을 1차 신호로 쓰고, errYn=Y는 **데이터 레벨 오류만** ok로 인정한다.
+    """
+    common = payload.get("common") or {}
+    err_yn = str(common.get("errYn") or "").strip().upper()
+    err_msg = str(common.get("errMsg") or "").strip()
+    code = _err_code_of(payload)
+
+    if err_yn == "N":
+        return "ok", "하이픈 등기 API 호출 권한 확인됨"
+    if _is_forbidden_message(err_msg):
+        return "forbidden", ("하이픈 키는 정상이나 등기 조회 API 사용 권한이 없습니다 — "
+                             "하이픈에 부동산등기 API(주소검색·등기열람) 이용 권한 활성화를 요청하세요.")
+    if code in _DATA_LEVEL_ERR_CODES or any(h in err_msg for h in _DATA_LEVEL_HINTS):
+        # 데이터가 없을 뿐 관문은 통과 — 권한 있음.
+        return "ok", "하이픈 등기 API 호출 권한 확인됨"
+    if err_yn == "Y":
+        return "degraded", (f"하이픈이 요청을 거절했습니다: {err_msg or code or '사유 미상'} — "
+                            "키·계약·허용 IP 설정을 확인하세요.")
+    return "unknown", "하이픈 응답을 해석할 수 없습니다(형식 상이) — 관리자 확인 필요."
 
 
 async def probe_api_access(force: bool = False) -> dict[str, Any]:
@@ -75,58 +122,108 @@ async def probe_api_access(force: bool = False) -> dict[str, Any]:
       요청이 계약 관문을 통과했다는 뜻이기 때문이다.
     - 결과는 짧게 캐시한다(상태 조회마다 벤더를 두드리지 않도록).
     """
+    import hashlib
     import time
 
     if not hyphen_ready():
         return {"access": "not_configured", "checked": False,
                 "message": "HYPHEN_HKEY / HYPHEN_USER_ID 미설정"}
 
+    # 캐시 키에 자격증명을 포함한다 — 키를 바꾸거나 권한을 켠 직후에도 옛 판정이
+    # 남아 관리자 '테스트'가 계속 거짓말하던 문제를 막는다.
+    cred = hashlib.sha256(f"{hyphen_hkey()}|{hyphen_user_id()}|{_host()}".encode()).hexdigest()[:16]
     now = time.monotonic()
-    hit = _ACCESS_CACHE.get("v")
-    if hit and not force and (now - hit[0]) < _ACCESS_TTL_SEC:
-        return dict(hit[1])
+    hit = _ACCESS_CACHE.get(cred)
+    if hit and not force:
+        ttl = _ACCESS_TTL_SEC if hit[1].get("access") == "ok" else _ACCESS_FAIL_TTL_SEC
+        if (now - hit[0]) < ttl:
+            return dict(hit[1])
 
-    import httpx
+    # 동시 요청이 벤더를 동시에 두드리지 않도록 자격증명별 단일 실행(single-flight).
+    lock = _ACCESS_LOCKS.setdefault(cred, asyncio.Lock())
+    async with lock:
+        hit = _ACCESS_CACHE.get(cred)
+        if hit and not force:
+            ttl = _ACCESS_TTL_SEC if hit[1].get("access") == "ok" else _ACCESS_FAIL_TTL_SEC
+            if (time.monotonic() - hit[0]) < ttl:
+                return dict(hit[1])
 
-    out: dict[str, Any]
-    try:
-        async with httpx.AsyncClient(timeout=12.0) as client:
-            # 고유번호검색(/in0004000169) — 조회 전용·무과금. 더미 번호로 관문만 통과 확인.
-            resp = await client.post(f"{_host()}/in0004000169", headers=_headers(),
-                                     json={"uniqNo": "00000000000000"})
-            if resp.status_code != 200:
-                out = {"access": "unreachable", "checked": True,
-                       "message": f"하이픈 응답 오류(HTTP {resp.status_code})"}
-            else:
-                data = resp.json()
-                common = data.get("common") or {}
-                err_msg = str(common.get("errMsg") or "")
-                if _is_forbidden_message(err_msg):
-                    out = {"access": "forbidden", "checked": True,
-                           "message": ("하이픈 키는 정상이나 등기 조회 API 사용 권한이 없습니다 — "
-                                       "하이픈에 부동산등기 API(주소검색·고유번호검색·등기열람) "
-                                       "이용 권한 활성화를 요청하세요.")}
+        import httpx
+
+        out: dict[str, Any]
+        try:
+            async with httpx.AsyncClient(timeout=12.0) as client:
+                # 고유번호검색(/in0004000169) — 조회 전용. 더미 번호로 관문 통과만 확인한다.
+                # 발급·열람(163/165/1437/1438)은 민원캐시가 차감되므로 점검에 쓰지 않는다.
+                resp = await client.post(f"{_host()}/in0004000169", headers=_headers(),
+                                         json={"uniqNo": "00000000000000"})
+                if resp.status_code != 200:
+                    out = {"access": "unreachable", "checked": True,
+                           "message": "하이픈 응답 오류 — 잠시 후 다시 시도하세요."}
                 else:
-                    # errYn=Y여도 '권한' 사유가 아니면 관문은 통과한 것(데이터 없음 등)
-                    out = {"access": "ok", "checked": True,
-                           "message": "하이픈 등기 API 호출 권한 확인됨"}
-    except Exception as e:  # noqa: BLE001
-        logger.warning("하이픈 권한 점검 예외", err=str(e)[:120])
-        out = {"access": "unreachable", "checked": True,
-               "message": f"하이픈 연결 실패: {str(e)[:80]}"}
+                    access, message = classify_probe_response(resp.json())
+                    out = {"access": access, "checked": True, "message": message}
+        except Exception as e:  # noqa: BLE001
+            logger.warning("하이픈 권한 점검 예외", err=str(e)[:120])
+            out = {"access": "unreachable", "checked": True,
+                   "message": "하이픈 연결에 실패했습니다 — 잠시 후 다시 시도하세요."}
 
-    _ACCESS_CACHE["v"] = (now, dict(out))
-    return out
+        # 점검 호출은 관측 가능해야 한다(호출량·비용 사후 검증용).
+        logger.info("하이픈 권한 점검", access=out.get("access"))
+        _ACCESS_CACHE[cred] = (time.monotonic(), dict(out))
+        return out
+
+
+# 하이픈 검색 파라미터는 코드가 아니라 **한글 값**을 받는다(명세·라이브 확증).
+KINDCLS_BY_CODE: dict[str, str] = {"0": "전체", "1": "집합건물", "2": "토지", "3": "건물"}
+
+
+def kindcls_value(realty_type: str | None) -> str:
+    """구분코드(0/1/2/3) → 하이픈이 받는 한글 값. 미지·미지정은 '전체'(필터 없음)."""
+    return KINDCLS_BY_CODE.get((realty_type or "").strip(), "전체")
+
+
+def _search_item(item: dict[str, Any]) -> dict[str, Any]:
+    """검색결과 1건 → 내부 공통 형태.
+
+    ★응답 키에는 'get' 접두사가 없다(명세 표기와 실제 응답이 다름 — 라이브 확증).
+      과거 구현이 get* 키를 읽어 모든 값이 None이었다. 옛 표기도 함께 받아 안전하게 둔다.
+    """
+    def pick(*names: str) -> Any:
+        for n in names:
+            v = item.get(n)
+            if v not in (None, ""):
+                return v
+        return None
+
+    uno = pick("부동산고유번호", "get부동산고유번호") or ""
+    return {
+        "unique_no": str(uno).replace("-", "").strip(),
+        "gubun": pick("구분", "get구분"),
+        "owner": pick("소유자", "get소유자"),
+        "jibun": pick("부동산소재지번", "get부동산소재지번"),
+        "sangtae": pick("상태", "get상태"),
+    }
 
 
 async def search_by_simple_address(
     address: str,
-    kindcls: str = "0",
-    cls_flag: str = "1",
+    kindcls: str = "전체",
+    cls_flag: str = "현행",
     limit_page: str = "1",
     page_no: str = "1",
+    admin_regn1: str = "전체",
+    detail_yn: str = "Y",
 ) -> dict[str, Any]:
-    """간편주소로 부동산 고유번호 검색 (POST /in0004000168)."""
+    """간편주소로 부동산 고유번호 검색 (POST /in0004000168).
+
+    ★벤더 명세·라이브 확증 사항(이전 구현이 전부 0건이던 원인):
+      · admin_regn1(시/도)은 **필수** — 빠지면 항상 "결과 없음"이 돌아온다.
+      · kindcls·cls_flag는 코드("0"/"1")가 아니라 **한글 값**을 받는다.
+      · limitPage는 '입력한 페이지까지 조회'로 1페이지 = 10건(1건 아님).
+        전체 건수는 grdTotCnt, 페이지 수는 totPage로 온다.
+      · 응답 항목 키에는 'get' 접두사가 없다(명세 표기와 실제 응답이 다름).
+    """
     if not hyphen_ready():
         return {
             "ok": False,
@@ -144,8 +241,10 @@ async def search_by_simple_address(
     url = f"{_host()}/in0004000168"
     body = {
         "kindcls": kindcls,
-        "simple_address": addr,
+        "admin_regn1": admin_regn1,   # ★필수 — 누락 시 항상 결과 0건
         "cls_flag": cls_flag,
+        "simple_address": addr,
+        "detailYn": detail_yn,        # Y여야 소유자가 함께 온다
         "limitPage": limit_page,
         "pageNo": page_no,
     }
@@ -174,23 +273,16 @@ async def search_by_simple_address(
             }
 
         res_data = data.get("data") or {}
-        raw_list = res_data.get("list") or []
-        items = []
-        for item in raw_list:
-            if isinstance(item, dict):
-                items.append({
-                    "unique_no": (item.get("get부동산고유번호") or "").replace("-", "").strip(),
-                    "gubun": item.get("get구분"),
-                    "owner": item.get("get소유자"),
-                    "jibun": item.get("get부동산소재지번"),
-                    "sangtae": item.get("get상태"),
-                })
+        items = [_search_item(it) for it in (res_data.get("list") or []) if isinstance(it, dict)]
 
         return {
             "ok": True,
             "status": "ok",
             "items": items,
             "total": res_data.get("totCnt") or len(items),
+            # 전체 건수·페이지 수 — 수집분이 일부임을 소비처가 알 수 있어야 한다.
+            "total_all": res_data.get("grdTotCnt"),
+            "total_pages": res_data.get("totPage"),
             "raw": data,
         }
     except Exception as e:  # noqa: BLE001
@@ -219,19 +311,10 @@ async def search_by_unique_no(unique_no: str) -> dict[str, Any]:
             data = resp.json()
 
         res_data = data.get("data") or {}
-        raw_list = res_data.get("list") or []
-        items = [
-            {
-                "unique_no": (it.get("get부동산고유번호") or "").replace("-", "").strip(),
-                "gubun": it.get("get구분"),
-                "owner": it.get("get소유자"),
-                "jibun": it.get("get부동산소재지번"),
-                "sangtae": it.get("get상태"),
-            }
-            for it in raw_list
-            if isinstance(it, dict)
-        ]
-        return {"ok": True, "status": "ok", "items": items, "raw": data}
+        # 검색 응답 형태는 간편주소와 동일 — 같은 매퍼를 쓴다(키 결함이 한 곳만 고쳐지지 않도록).
+        items = [_search_item(it) for it in (res_data.get("list") or []) if isinstance(it, dict)]
+        return {"ok": True, "status": "ok", "items": items,
+                "total": res_data.get("totCnt") or len(items), "raw": data}
     except Exception as e:  # noqa: BLE001
         logger.warning("하이픈 고유번호검색 예외", err=str(e)[:120])
         return {"ok": False, "status": "error", "items": [], "message": str(e)[:200]}
@@ -250,7 +333,12 @@ async def fetch_realty_registry(
     trade_check: str = "N",
     display: str = "2",
 ) -> dict[str, Any]:
-    """등기부등본 민원캐시 차감 열람 (POST /in0004000948)."""
+    """등기부등본 열람 (POST /in0004000163 — 회원 열람, 민원캐시 차감).
+
+    ★엔드포인트 교정: 기존 /in0004000948은 벤더 명세의 제공 엔드포인트 목록에 없다
+      (목록: 163 열람 · 165 비회원열람 · 1438 발급 · 1437 비회원발급 · 166~169 주소검색).
+      필수 본문은 userId/userPw(인터넷등기소 자격) · searchDiv='uniqNo' · uniqNo.
+    """
     if not hyphen_ready():
         return {
             "ok": False,
@@ -271,7 +359,16 @@ async def fetch_realty_registry(
 
     import httpx
 
-    url = f"{_host()}/in0004000948"
+    if not (uid and (upw or upw_enc)):
+        # 열람은 인터넷등기소 자격이 필수 — 없으면 호출해도 실패하므로 미리 정직하게 알린다.
+        return {
+            "ok": False,
+            "status": "not_configured",
+            "message": ("인터넷등기소 자격(HYPHEN_IROS_USER_ID / HYPHEN_IROS_USER_PW)이 필요합니다 — "
+                        "관리자 키 화면에서 입력하세요."),
+        }
+
+    url = f"{_host()}/in0004000163"
     body: dict[str, Any] = {
         "userId": uid,
         "searchDiv": "uniqNo",
@@ -281,18 +378,18 @@ async def fetch_realty_registry(
         "pdfHex": "Y",
         "xmlYn": "N",
         "display": display,
-        "payDiv": "0",
-        "payNo": pno,
         "dupChk": "Y",
     }
     if upw_enc:
         body["userPwEnc"] = upw_enc
     else:
         body["userPw"] = upw
-
+    # 선불전자지급수단은 명세상 열람(163) 본문에 없다 — 값이 있을 때만 덧붙인다(하위호환).
+    if pno:
+        body["payNo"] = pno
     if ppw_enc:
         body["payPwEnc"] = ppw_enc
-    else:
+    elif ppw:
         body["payPw"] = ppw
 
     try:
@@ -366,7 +463,9 @@ async def fetch_registry_by_address(
     """
     from app.services.registry.realty_kind import select_registry_item
 
-    search_res = await search_by_simple_address(address)
+    # 구분을 검색 단계에서도 좁힌다 — 한 주소에 수십 건이 잡히므로(호미곶 78건 실측)
+    # 전부 받아 뒤에서 고르면 원하는 물건이 1페이지 밖으로 밀려날 수 있다.
+    search_res = await search_by_simple_address(address, kindcls=kindcls_value(realty_type))
     if not search_res.get("ok") or not search_res.get("items"):
         msg = search_res.get("message") or "주소 검색 결과가 없습니다."
         return {"address": address, "status": "no_match", "message": msg}
@@ -381,4 +480,15 @@ async def fetch_registry_by_address(
     fetch_res["realty_gubun"] = (picked or {}).get("gubun")
     if note:
         fetch_res["select_note"] = note
+    # 수집분이 전체의 일부일 때는 그 사실을 알린다(선택이 부분집합 위에서 이뤄졌음).
+    total_all = search_res.get("total_all")
+    try:
+        if total_all and int(total_all) > len(search_res["items"]):
+            fetch_res.setdefault(
+                "select_note",
+                f"주소 검색 결과 {total_all}건 중 {len(search_res['items'])}건만 조회해 그중에서 골랐습니다. "
+                "원하는 물건이 아니면 지번을 더 구체적으로 입력하세요.",
+            )
+    except (TypeError, ValueError):
+        pass
     return fetch_res

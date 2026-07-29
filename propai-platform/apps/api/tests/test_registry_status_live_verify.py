@@ -52,16 +52,60 @@ def _patch_hyphen(monkeypatch, payload: dict[str, Any], status: int = 200):
 
 class TestForbiddenMessage:
     @pytest.mark.parametrize("msg", [
-        "권한이 없는 API 입니다.",
-        "권한이 없습니다",
+        "권한이 없는 API 입니다.",          # 라이브 실측 원문
         "해당 API 에 대한 권한 없음",
+        "미승인 API 입니다",
     ])
     def test_detects_permission_denial(self, msg):
         assert hc._is_forbidden_message(msg) is True
 
-    @pytest.mark.parametrize("msg", ["", "조회 결과가 없습니다.", "고유번호를 확인하세요"])
+    @pytest.mark.parametrize("msg", [
+        "", "조회 결과가 없습니다.", "고유번호를 확인하세요",
+        # ★'API 권한'이 아니라 '그 물건에 대한' 권한 — 전역 강등을 유발하면 안 된다.
+        "열람 권한 없음 - 비공개 등기",
+        "해당 부동산에 대한 조회 권한이 없습니다.",
+    ])
     def test_data_errors_are_not_permission_denial(self, msg):
         assert hc._is_forbidden_message(msg) is False
+
+
+class TestClassifyProbeResponse:
+    """★기본값이 낙관이면 안 된다: '권한' 문구가 없는 거절도 전부 통과시키던 결함 방지."""
+
+    @pytest.mark.parametrize("msg", [
+        "인증키가 유효하지 않습니다.",
+        "허용되지 않은 IP 입니다.",
+        "등록되지 않은 사용자입니다.",
+        "계약이 만료되었습니다.",
+        "일일 호출 한도를 초과했습니다.",
+        "Unauthorized",
+    ])
+    def test_other_rejections_must_not_be_ok(self, msg):
+        access, _ = hc.classify_probe_response({"common": {"errYn": "Y", "errMsg": msg}})
+        assert access != "ok", f"거절인데 통과로 판정됨: {msg}"
+
+    def test_success_is_ok(self):
+        access, _ = hc.classify_probe_response({"common": {"errYn": "N"}})
+        assert access == "ok"
+
+    @pytest.mark.parametrize("payload", [
+        {"common": {"errYn": "Y", "errMsg": "[C0000-002] 입력하신 검색조건에 대한 결과가 없습니다."}},
+        {"common": {"errYn": "Y", "errMsg": "[C0000-088] 고유번호에 해당하는 소재지번을 확인할 수 없습니다."}},
+    ])
+    def test_live_data_level_errors_are_ok(self, payload):
+        """라이브 실측 응답 — 데이터가 없을 뿐 관문은 통과했다."""
+        access, _ = hc.classify_probe_response(payload)
+        assert access == "ok"
+
+    def test_permission_denial_is_forbidden(self):
+        access, msg = hc.classify_probe_response(
+            {"common": {"errYn": "Y", "errMsg": "권한이 없는 API 입니다."}})
+        assert access == "forbidden" and "권한" in msg
+
+    @pytest.mark.parametrize("payload", [{}, {"common": {}}, {"common": {"errCd": "E403"}}])
+    def test_unparseable_is_not_ok(self, payload):
+        access, _ = hc.classify_probe_response(payload)
+        assert access != "ok"
 
 
 @pytest.mark.asyncio
