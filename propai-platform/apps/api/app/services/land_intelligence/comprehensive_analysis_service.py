@@ -1099,6 +1099,21 @@ class ComprehensiveAnalysisService:
         except Exception as e:  # noqa: BLE001 — 성장 뇌 트리거 실패는 분석을 막지 않음(정직 degrade)
             logger.warning("종합분석 specialist(market) 적재 스킵(graceful)", err=str(e)[:160])
 
+        # ── field_audit(도메인 correctness 자가검증 하네스) — additive·behavior 불변 ──
+        # W0(Phase0): 등록 규칙 0건 → 빈 리포트 → result에 'field_audit' 키만 추가(그 외 무변경).
+        #   실제 불변식(G1 protection_zone_severity 등)은 W1부터 등록되며, 이 삽입점은 그때
+        #   자동으로 findings를 실어 나른다(경로 비의존 runner). 위 결정론 specialist 교차검증
+        #   (:1077, allow_llm=False)과 독립. best-effort — 어떤 예외도 반환을 막지 않는다.
+        try:
+            from app.services.verification.field_audit import runner as _field_audit_runner
+            _field_audit_runner.run(result, {
+                "address": address,
+                "zone_type": zone_type,
+                "pnu": _pnu,
+            })
+        except Exception as e:  # noqa: BLE001 — 자가검증 하네스 실패는 분석 무손상(정직 degrade)
+            logger.debug("field_audit 하네스 스킵(graceful): %s", str(e)[:120])
+
         return result
 
     async def _integrated_context(self, parcels: list[dict[str, Any]] | None) -> dict[str, Any] | None:
