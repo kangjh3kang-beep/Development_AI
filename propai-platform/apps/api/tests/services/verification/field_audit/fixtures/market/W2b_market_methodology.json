@@ -1,0 +1,178 @@
+{
+  "_meta": {
+    "seed_id": "W2b",
+    "title": "market_methodology 계층B 배지 불변식 — 실거래 비교 없는 공시지가 폴백 시세(P2 비차단)",
+    "dimension": "market_methodology",
+    "tier": "B",
+    "phase": "0/W2-b",
+    "defect": "이미 계산된 result의 표시 시세(land_prices.estimated_market_per_sqm)가 실거래 comparable(transaction_prices) 없이 공시지가×보정계수 추정으로만 산출됐어도 사용자에게 방법론 한계가 배지로 표면화되지 않음 → 저신뢰 추정이 실측 시세처럼 읽힌다. ★방법론 한계=버그가 아니라 신뢰도 경고이므로 correctness(P0/P1) 아닌 P2 배지로 한정(is_valid 불변).",
+    "w2_target": "market_methodology.py MARKET_PRICE_METHODOLOGY: (A)estimated_market_per_sqm>0 (B)source에 '공시지가' (C)transaction_prices 실거래 count 합계 0 → P2 배지. 실거래 표본이 하나라도 있으면 무발동. 값 재계산·임계값 없음(방법론/출처 태그만 판정 → 오탐 0·오라클 독립).",
+    "rule_2_not_implemented": "MARKET_PRICE_DIVERGENCE(괴리 배지)는 미구현. 재확증 결과 result가 실거래 원/㎡와 추정 원/㎡를 신뢰성 있게 함께 노출하지 않음: Section 4 avg_price_10k는 만원·per-unit 총액·주거 건물(아파트/오피스텔/연립·molit_service.py:15·price_stats.py:21), Section 3 estimated_market_per_sqm는 원·per-㎡·토지. 단위·분모·대상 3중 비호환이라 괴리비가 무의미(수백 배는 정상) → 억지 배지 회피. transactions_present_large_apparent_gap 케이스가 이 비교불가를 실증(외견상 큰 차이에도 배지 0). 지역/지목별 per-㎡ 기준선 학습은 W4 platform_insights 별도 티켓.",
+    "synthetic": true,
+    "honesty": "W0/W1 합성 fixture — 라이브 analyze() 미수집(하네스 환경 DB/API 부재). land_prices는 comprehensive_analysis_service._calc_land_prices의 실제 산출 shape에 충실한 구조 시드다(official_price_per_sqm×market_multiplier=estimated_market_per_sqm·source='VWORLD 개별공시지가 + 지역별 시세보정'·:1375-1385). transaction_prices는 _research_transactions 반환 shape 충실(유형별 {count,avg_price_10k,...}·:1418-1439, 부재 시 {message}/{error}/{}·:1399/:1442/:660). 공시지가·배수·거래금액은 합성값(라이브 미조회)."
+  },
+  "cases": {
+    "official_price_no_tx_message": {
+      "desc": "공시지가 추정시세 + 실거래 부재(PNU 부재 message) → 1차 배지 1건",
+      "input": {
+        "zone_type": "계획관리지역",
+        "land_prices": {
+          "official_price_per_sqm": 2500000,
+          "official_price_per_pyeong": 8264462,
+          "total_official_value_won": 750000000,
+          "estimated_market_per_sqm": 3000000,
+          "estimated_market_per_pyeong": 9917355,
+          "total_estimated_value_won": 900000000,
+          "market_multiplier": 1.2,
+          "source": "VWORLD 개별공시지가 + 지역별 시세보정",
+          "annotations": [
+            "개별공시지가 ㎡당 2,500,000원 (평당 8,264,462원)이 확인되었습니다.",
+            "지역별 세부 보정계수가 미등록되어 전국 평균 보정계수 1.2배를 적용하였습니다.",
+            "추정 시세는 ㎡당 3,000,000원 (평당 9,917,355원)이며, 실제 거래 시 입지·접도·형상 등에 따라 차이가 발생할 수 있습니다."
+          ]
+        },
+        "transaction_prices": {"message": "PNU 부재로 실거래가 조회 불가"}
+      },
+      "expect": {"MARKET_PRICE_METHODOLOGY": 1}
+    },
+    "official_price_empty_tx": {
+      "desc": "공시지가 추정시세 + 실거래 빈 dict({}) → 1차 배지 1건",
+      "input": {
+        "zone_type": "자연녹지지역",
+        "land_prices": {
+          "official_price_per_sqm": 1800000,
+          "estimated_market_per_sqm": 2160000,
+          "market_multiplier": 1.2,
+          "source": "VWORLD 개별공시지가 + 지역별 시세보정",
+          "annotations": ["추정 시세는 ㎡당 2,160,000원이며..."]
+        },
+        "transaction_prices": {}
+      },
+      "expect": {"MARKET_PRICE_METHODOLOGY": 1}
+    },
+    "official_price_zero_count_tx": {
+      "desc": "공시지가 추정시세 + 실거래 유형 있으나 전부 count 0 → 1차 배지 1건(count 0=comparable 없음)",
+      "input": {
+        "zone_type": "제2종일반주거지역",
+        "land_prices": {
+          "official_price_per_sqm": 4200000,
+          "estimated_market_per_sqm": 5880000,
+          "market_multiplier": 1.4,
+          "source": "VWORLD 개별공시지가 + 지역별 시세보정",
+          "annotations": []
+        },
+        "transaction_prices": {
+          "아파트": {"count": 0, "avg_price_10k": 0, "max_price_10k": 0, "min_price_10k": 0, "excluded_outliers": 0, "items": []},
+          "오피스텔": {"count": 0, "avg_price_10k": 0, "max_price_10k": 0, "min_price_10k": 0, "excluded_outliers": 0, "items": []}
+        }
+      },
+      "expect": {"MARKET_PRICE_METHODOLOGY": 1}
+    },
+    "official_price_error_tx": {
+      "desc": "공시지가 추정시세 + 실거래 조회 오류({error}) → 1차 배지 1건",
+      "input": {
+        "zone_type": "생산관리지역",
+        "land_prices": {
+          "official_price_per_sqm": 900000,
+          "estimated_market_per_sqm": 1080000,
+          "market_multiplier": 1.2,
+          "source": "VWORLD 개별공시지가 + 지역별 시세보정",
+          "annotations": []
+        },
+        "transaction_prices": {"error": "실거래가 조회 실패"}
+      },
+      "expect": {"MARKET_PRICE_METHODOLOGY": 1}
+    },
+    "section4_absent": {
+      "desc": "공시지가 추정시세 + transaction_prices 키 부재 → 1차 배지 1건(부재=comparable 없음)",
+      "input": {
+        "zone_type": "계획관리지역",
+        "land_prices": {
+          "official_price_per_sqm": 2500000,
+          "estimated_market_per_sqm": 3000000,
+          "market_multiplier": 1.2,
+          "source": "VWORLD 개별공시지가 + 지역별 시세보정",
+          "annotations": []
+        }
+      },
+      "expect": {"MARKET_PRICE_METHODOLOGY": 1}
+    },
+    "transactions_present": {
+      "desc": "공시지가 추정시세 + 실거래 표본 존재(count>0) → 배지 0건(실거래 맥락 있음 → 오탐 없음)",
+      "input": {
+        "zone_type": "제3종일반주거지역",
+        "land_prices": {
+          "official_price_per_sqm": 5000000,
+          "estimated_market_per_sqm": 7000000,
+          "market_multiplier": 1.4,
+          "source": "VWORLD 개별공시지가 + 지역별 시세보정",
+          "annotations": []
+        },
+        "transaction_prices": {
+          "아파트": {"count": 7, "avg_price_10k": 62000, "max_price_10k": 90000, "min_price_10k": 40000, "excluded_outliers": 0, "items": []}
+        }
+      },
+      "expect": {"MARKET_PRICE_METHODOLOGY": 0}
+    },
+    "transactions_present_large_apparent_gap": {
+      "desc": "★Rule 2 미구현 실증: 실거래(만원·per-unit 건물 총액)와 추정(원·per-㎡ 토지)이 외견상 크게 달라도(비교불가 단위) 실거래 존재 → 배지 0건(억지 괴리 배지 없음)",
+      "input": {
+        "zone_type": "일반상업지역",
+        "land_prices": {
+          "official_price_per_sqm": 3000000,
+          "estimated_market_per_sqm": 3000000,
+          "market_multiplier": 1.0,
+          "source": "VWORLD 개별공시지가 + 지역별 시세보정",
+          "annotations": []
+        },
+        "transaction_prices": {
+          "아파트": {"count": 12, "avg_price_10k": 85000, "max_price_10k": 130000, "min_price_10k": 55000, "excluded_outliers": 1, "items": []},
+          "오피스텔": {"count": 4, "avg_price_10k": 21000, "max_price_10k": 28000, "min_price_10k": 15000, "excluded_outliers": 0, "items": []}
+        }
+      },
+      "expect": {"MARKET_PRICE_METHODOLOGY": 0}
+    },
+    "no_market_estimate": {
+      "desc": "공시지가 조회 실패로 표시 추정시세 0 → 경고할 표시값 없음 → 배지 0건(오탐 없음)",
+      "input": {
+        "zone_type": "보전관리지역",
+        "land_prices": {
+          "official_price_per_sqm": 0,
+          "estimated_market_per_sqm": 0,
+          "market_multiplier": 1.2,
+          "source": "VWORLD 개별공시지가 + 지역별 시세보정",
+          "annotations": ["개별공시지가가 조회되지 않았습니다. 토지대장 미등록 또는 비과세 필지일 수 있습니다."]
+        },
+        "transaction_prices": {"message": "PNU 부재로 실거래가 조회 불가"}
+      },
+      "expect": {"MARKET_PRICE_METHODOLOGY": 0}
+    },
+    "non_official_source": {
+      "desc": "미래 실거래 기반 시세(source에 '공시지가' 없음) + 실거래 부재 → 배지 0건(방법론-특정 가드·오탐 없음)",
+      "input": {
+        "zone_type": "준주거지역",
+        "land_prices": {
+          "estimated_market_per_sqm": 4500000,
+          "market_multiplier": 1.0,
+          "source": "실거래 사례비교 기반 시세",
+          "annotations": []
+        },
+        "transaction_prices": {}
+      },
+      "expect": {"MARKET_PRICE_METHODOLOGY": 0}
+    },
+    "section3_absent": {
+      "desc": "land_prices 키 부재(판정할 표시 시세 없음) → 배지 0건(오탐 없음)",
+      "input": {
+        "zone_type": "제1종일반주거지역",
+        "transaction_prices": {"아파트": {"count": 0, "avg_price_10k": 0, "items": []}}
+      },
+      "expect": {"MARKET_PRICE_METHODOLOGY": 0}
+    },
+    "both_absent": {
+      "desc": "Section 3·4 모두 부재 → 배지 0건(오탐 없음)",
+      "input": {"zone_type": "자연환경보전지역", "risk": {"risk_level": "낮음"}},
+      "expect": {"MARKET_PRICE_METHODOLOGY": 0}
+    }
+  }
+}
