@@ -46,7 +46,10 @@ type AI = {
   summary?: string;
 };
 type Result = { status: string; origin?: string; land?: Land | null; message?: string; ai?: AI | null;
-  fetched?: { owner?: string; registry_office?: string; doc_title?: string; has_pdf?: boolean; pdf_url?: string | null } | null };
+  fetched?: { owner?: string; registry_office?: string; doc_title?: string; has_pdf?: boolean; pdf_url?: string | null;
+    // 실제로 어느 구분(토지/집합건물/건물)의 물건을 열람했는지 + 요청한 구분·동·호로
+    // 좁히지 못했을 때의 고지. 다른 물건을 조회하고도 조용히 성공처럼 보이면 안 된다.
+    realty_gubun?: string | null; select_note?: string | null } | null };
 
 const GRADE: Record<string, string> = {
   안전: "border-[var(--status-success)]/30 bg-[var(--status-success)]/10 text-[var(--status-success)]",
@@ -297,6 +300,14 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
                         <span className="text-[var(--text-hint)]">{b.result?.status === "ok" ? "분석" : b.result?.message ? "미확보" : "실패"}</span>
                       )}
                       {b.result?.ai?.summary && <span className="hidden max-w-[40%] truncate text-[var(--text-secondary)] sm:inline">{b.result.ai.summary}</span>}
+                      {/* 요청과 다른 물건을 조회했을 수 있다는 고지는 목록 행에서도 보여야 한다 —
+                          '상세'를 눌러야만 보이면 일괄 분석에서 조용히 묻힌다. */}
+                      {b.result?.fetched?.select_note && (
+                        <span title={b.result.fetched.select_note}
+                          className="inline-flex items-center gap-1 rounded-full border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 px-2 py-0.5 font-bold text-[var(--status-warning)]">
+                          <AlertTriangle className="size-3" aria-hidden />물건 확인 필요
+                        </span>
+                      )}
                       {b.result && (
                         <button onClick={() => setResult(b.result)}
                           className="rounded-lg bg-[var(--surface-strong)] px-2 py-0.5 font-bold text-[var(--accent-strong)]">상세</button>
@@ -319,6 +330,22 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
 
       {result && (
         <>
+          {/* 요청한 부동산 구분·동/호로 물건을 특정하지 못한 경우의 고지 —
+              다른 물건의 등기를 열람하고도 조용히 성공처럼 보이지 않도록 결과 최상단에 표시. */}
+          {result.fetched?.select_note && (
+            <div role="status"
+              className="flex items-start gap-2 rounded-xl border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 px-3.5 py-2.5">
+              <AlertTriangle className="mt-0.5 size-4 shrink-0 text-[var(--status-warning)]" aria-hidden />
+              <p className="text-xs font-bold leading-relaxed text-[var(--text-primary)] break-keep">
+                {result.fetched.select_note}
+                {result.fetched.realty_gubun && (
+                  <span className="ml-1 font-normal text-[var(--text-secondary)]">
+                    (열람한 물건 구분: {result.fetched.realty_gubun})
+                  </span>
+                )}
+              </p>
+            </div>
+          )}
           {/* 발급 등기부 PDF (서버 저장, 만료 후 자동삭제) — 종이 문서 뷰(테마 불변 --paper 서피스) */}
           {result.fetched?.pdf_url && (
             <PaperDocumentView

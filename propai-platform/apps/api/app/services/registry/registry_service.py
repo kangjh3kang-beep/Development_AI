@@ -83,6 +83,9 @@ class RegistryService:
         address: str | None = None,
         unique_no: str | None = None,
         pdf_input: bytes | str | None = None,
+        realty_type: str | None = None,
+        dong: str | None = None,
+        ho: str | None = None,
     ) -> dict[str, Any]:
         """단건 등기부 조회/발급/파싱.
 
@@ -90,6 +93,10 @@ class RegistryService:
         - 1순위: 하이픈 (Hyphen)
         - 2순위: 틸코 (Tilko)
         - 3순위: PDF 파싱 안내
+
+        realty_type/dong/ho: 사용자가 고른 부동산 구분(1집합건물·2토지·3건물)과
+        집합건물의 동·호. 주소검색 결과가 여러 건일 때 맞는 물건을 고르는 데 쓴다.
+        (구분 코드체계·선택규칙은 realty_kind 모듈이 단일 출처.)
         """
         item = {"pnu": pnu, "address": address, "unique_no": unique_no}
 
@@ -112,7 +119,9 @@ class RegistryService:
             if unique_no:
                 h_res = await fetch_realty_registry(unique_no=unique_no)
             elif address:
-                h_res = await fetch_registry_by_address(address=address)
+                h_res = await fetch_registry_by_address(
+                    address=address, realty_type=realty_type, dong=dong, ho=ho
+                )
             else:
                 return {**item, "status": "bad_request", "message": "주소 또는 고유번호가 필요합니다."}
 
@@ -135,18 +144,23 @@ class RegistryService:
                         "message": "Tilko 등기부 조회 성공",
                     }
             elif address:
+                from app.services.registry.realty_kind import select_registry_item
                 from app.services.registry.tilko_client import search_unique_no
 
                 s_res = await search_unique_no(address)
                 if s_res.get("ok") and s_res.get("items"):
-                    uno = s_res["items"][0]["unique_no"]
-                    t_res = await fetch_tilko_registry(unique_no=uno)
+                    # 하이픈과 동일 규칙으로 구분·동·호에 맞는 물건 선택(첫 건 맹목 선택 금지)
+                    picked, note = select_registry_item(s_res["items"], realty_type, dong, ho)
+                    uno = (picked or {}).get("unique_no")
+                    t_res = await fetch_tilko_registry(unique_no=uno) if uno else {}
                     if t_res.get("ok"):
                         return {
                             **item,
                             "status": "ok",
                             "origin": "tilko",
                             "unique_no": uno,
+                            "realty_gubun": (picked or {}).get("gubun"),
+                            **({"select_note": note} if note else {}),
                             "pdf_base64": t_res.get("pdf_data"),
                             "has_pdf": bool(t_res.get("pdf_data")),
                             "message": "Tilko 등기부 조회 성공",
@@ -194,7 +208,16 @@ class RegistryService:
 
         async def one(it: dict) -> dict:
             async with sem:
-                return await self.get_one(pnu=it.get("pnu"), address=it.get("address"), unique_no=it.get("unique_no"))
+                # 다필지 일괄(토지조서)도 구분을 넘긴다 — 안 넘기면 주소검색 결과에서
+                # 첫 물건이 맹목 선택되고, realty_type이 없어 고지조차 생성되지 않는다.
+                return await self.get_one(
+                    pnu=it.get("pnu"),
+                    address=it.get("address"),
+                    unique_no=it.get("unique_no"),
+                    realty_type=it.get("realty_type") or "2",  # 토지조서 기본=토지
+                    dong=it.get("dong"),
+                    ho=it.get("ho"),
+                )
 
         results = await asyncio.gather(*[one(it) for it in items])
         return {"configured": is_configured(), "count": len(results), "results": list(results)}

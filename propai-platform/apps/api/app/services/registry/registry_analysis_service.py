@@ -164,8 +164,24 @@ def _derive_ownership(ai: dict[str, Any] | None) -> dict[str, Any]:
     return {"ownership_form": form, "owner_count": len(owners), "owners": owners}
 
 
+def _has_registry_entries(text: str) -> bool:
+    """등기사항(갑구·을구 등) 본문이 실제로 담겼는지 — 머리말만 있는 텍스트와 구별.
+
+    왜 필요한가: 구조화 텍스트가 "소유자(요약): 홍길동" 한 줄이어도 '비어있지 않다'는
+    이유로 PDF 전문 그라운딩이 스킵되면, 근저당·압류가 통째로 빠진 껍데기 권리분석이
+    나온다(하이픈 이관 후 실제로 그렇게 동작했다). 등기사항 줄("[갑구] …")의 존재로 판정한다.
+    """
+    # 실제 등기부 전문은 전각 괄호(【갑구】)를 쓰고, 우리가 구성한 요약은 반각([갑구])을 쓴다.
+    # 둘 다 '등기사항 있음'으로 본다 — 프로바이더 제공 전문을 빈 것으로 오판하면 안 된다.
+    return any(ln.startswith(("[", "【")) for ln in (text or "").splitlines())
+
+
 def _registry_text_from_codef(reg: dict[str, Any]) -> str:
-    """CODEF 등기부 응답(구조화)에서 분석용 텍스트 구성."""
+    """CODEF 등기부 응답(구조화)에서 분석용 텍스트 구성.
+
+    하이픈 응답에는 resRegisterEntriesList가 없어 머리말(소유자·관할등기소)만 남는다 —
+    그 경우 _has_registry_entries가 False가 되어 호출부가 PDF 전문으로 그라운딩한다.
+    """
     parts: list[str] = []
     if reg.get("doc_title"):
         parts.append(f"문서: {reg['doc_title']}")
@@ -289,6 +305,9 @@ class RegistryAnalysisService:
         origin = None
         source = None
         fetched_meta = None
+        # 우리가 '머리말 요약'만 합성해 둔 상태인가(= 등기사항 없음). 문자열에서 되짚지 않고
+        # 만든 시점에 표시한다 — 수동 입력·프로바이더 제공 전문을 빈 것으로 오판하지 않기 위해.
+        thin_summary = False
 
         async def _resolve_land() -> dict[str, Any] | None:
             # 공부(지목/용도지역/공시지가/소유구분/면적)는 항상 조회하고,
@@ -325,11 +344,15 @@ class RegistryAnalysisService:
                     origin = reg.get("origin") or "apick"
                 else:
                     source = _registry_text_from_codef(reg)
-                    origin = "codef"
+                    # 출처는 실제 프로바이더를 그대로 — 하이픈 결과를 codef로 오표기하지 않는다.
+                    origin = reg.get("origin") or "codef"
+                    # 등기사항 없이 머리말만 나온 경우 표시(아래 PDF 그라운딩이 성공하면 해제)
+                    thin_summary = not _has_registry_entries(source)
                 # 발급 PDF는 서버(비공개 버킷)에 저장하고 만료 URL로 전달(TTL 자동삭제)
                 # + ★PDF 그라운딩: 구조화 텍스트(xlsx)가 비어 PDF만 확보된 경우, PDF 본문에서 직접
                 #   텍스트를 추출해 분석 소스로 사용(권리분석이 'PDF 미분석'으로 통째 누락되던 갭 해소).
-                #   추출 실패(이미지 PDF 등) 시 source는 그대로 비어 아래 'empty' 정직 처리.
+                #   추출 실패(이미지 PDF 등) 시 source에는 머리말 요약만 남는데, 그 상태는
+                #   thin_summary로 표시해 아래에서 'empty'로 정직 처리한다(껍데기 분석 금지).
                 pdf_url = None
                 b64 = reg.get("pdf_base64")
                 if b64:
@@ -337,11 +360,15 @@ class RegistryAnalysisService:
                         import base64 as _b64
 
                         pdf_bytes = _b64.b64decode(b64)
-                        if not (source and source.strip()):
+                        # ★'비어있지 않음'이 아니라 '등기사항이 실제로 담겼는가'로 판정한다.
+                        #   머리말 한 줄(소유자 요약)만 있는 경우도 PDF 전문으로 그라운딩해야
+                        #   갑구·을구(근저당·압류)가 분석에 들어간다.
+                        if not _has_registry_entries(source):
                             pdf_text = _pdf_to_text(pdf_bytes)
                             if pdf_text:
                                 source = pdf_text
                                 origin = f"{reg.get('origin') or 'apick'}+pdf"
+                                thin_summary = False  # 전문 확보 — 껍데기 아님
 
                         from apps.api.services.storage_service import upload_registry_pdf
 
@@ -353,6 +380,10 @@ class RegistryAnalysisService:
                     "owner": reg.get("owner"), "registry_office": reg.get("registry_office"),
                     "doc_title": reg.get("doc_title"), "has_pdf": reg.get("has_pdf"),
                     "pdf_url": pdf_url,
+                    # 어느 구분의 물건을 열람했는지 + 요청한 구분/동·호로 좁히지 못한 경우의 고지.
+                    # 최종 표면까지 전달해야 "다른 물건을 조회했는데 조용히 성공"이 되지 않는다.
+                    "realty_gubun": reg.get("realty_gubun"),
+                    "select_note": reg.get("select_note"),
                 }
             else:
                 # 등기부 데이터 미확보 — 토지정보는 제공 + 직접 입력 유도
@@ -366,9 +397,16 @@ class RegistryAnalysisService:
                     "ai": None,
                 }
 
-        if not source:
+        if not source or thin_summary:
+            # ★머리말(소유자 요약)만 확보된 상태로 권리분석을 돌리면 근저당·압류가 '기재 없음'이
+            #   되어 거짓 '안전' 등급이 나오고 캐시에 박힌다. 분석하지 않고 정직하게 반환한다.
             return {"status": "empty", "origin": origin, "land": land,
-                    "message": "분석할 등기부 내용이 없습니다.", "ai": None}
+                    "fetched": fetched_meta,
+                    "message": ("등기부 본문(갑구·을구)을 확보하지 못했습니다. "
+                                "발급 PDF가 이미지 형식이면 텍스트 추출이 되지 않습니다 — "
+                                "등기부등본 내용을 직접 입력하시면 분석해 드립니다."
+                                if thin_summary else "분석할 등기부 내용이 없습니다."),
+                    "ai": None}
 
         ai = await self._llm(address, source)
         # 등기 기반 소유형태(공동/단독)·소유자목록을 공부 카드(land)에 보강

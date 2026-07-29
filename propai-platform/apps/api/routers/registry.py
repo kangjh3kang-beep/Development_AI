@@ -126,12 +126,23 @@ async def tilko_realty(
     uno = str(req.get("unique_no") or req.get("pin")
               or (req.get("property_params") or {}).get("Pin")
               or (req.get("property_params") or {}).get("UniqueNo") or "").replace("-", "").strip()
-    # 고유번호 미지정 + 주소 제공 시 → 주소검색으로 자동 해석(첫 결과 사용)
+    # 고유번호 미지정 + 주소 제공 시 → 주소검색으로 자동 해석.
+    # 한 주소에 여러 물건(토지·건물·집합건물 각 호)이 나오므로 공용 선택기로 고른다 —
+    # 첫 건을 맹목적으로 집으면 요청과 다른 물건을 1,200원 과금하며 발급하게 된다.
+    select_note: str | None = None
     if not uno and req.get("address"):
+        from app.services.registry.realty_kind import select_registry_item
+
         s = await tk.search_unique_no(str(req["address"]))
         items = s.get("items") or []
-        if items and items[0].get("unique_no"):
-            uno = items[0]["unique_no"]
+        picked, select_note = select_registry_item(
+            items,
+            realty_type=req.get("realty_type"),
+            dong=req.get("dong"),
+            ho=req.get("ho"),
+        )
+        if picked and picked.get("unique_no"):
+            uno = picked["unique_no"]
         else:
             return {"ok": False, "status": s.get("status", "need_unique_no"),
                     "message": s.get("message") or "주소로 부동산 고유번호를 찾지 못했습니다.",
@@ -145,6 +156,9 @@ async def tilko_realty(
     )
     # 등기부등본 발급·열람 1건 1,200원(발급 성공 시, best-effort).
     await _charge_registry_issue(current_user.user_id, result, times=1)
+    if select_note and isinstance(result, dict):
+        # 요청과 다른 물건을 골랐을 수 있다는 사실을 과금 결과와 함께 반드시 전달한다.
+        result["select_note"] = select_note
     return result
 
 
