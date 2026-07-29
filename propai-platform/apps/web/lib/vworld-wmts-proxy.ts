@@ -1,3 +1,9 @@
+import {
+  cooldownRemainingSec,
+  recordFailure,
+  recordSuccess,
+  shouldAttempt,
+} from "@/lib/vworld-circuit-breaker";
 import { classifyVWorldXmlException, extractVWorldXmlExceptionDetail, isVWorldKeyFault } from "@/lib/vworld-xml-exception";
 import { relayViaApi, vworldApiFallbackOrigin } from "@/lib/vworld-wms-proxy";
 
@@ -63,6 +69,21 @@ const TRANSPARENT_PNG = Buffer.from(
   "base64",
 );
 
+const BREAKER_KEY = "vworld-wmts";
+const NEGATIVE_CACHE_SEC = 30;
+
+// 상류 연속 실패 중에는 호출하지 않고 투명 타일로 즉시 응답한다(실패 폭주 → IP 차단 방지).
+function breakerOpenTile(remainingSec: number): Response {
+  return new Response(TRANSPARENT_PNG, {
+    status: 200,
+    headers: {
+      "Content-Type": "image/png",
+      "Cache-Control": `public, max-age=${Math.max(5, Math.min(remainingSec, NEGATIVE_CACHE_SEC))}`,
+      "X-VWorld-Breaker": "open",
+    },
+  });
+}
+
 function transparentTile(): Response {
   return new Response(TRANSPARENT_PNG, {
     status: 200,
@@ -105,17 +126,22 @@ export async function proxyVWorldWmts(params: VWorldWmtsParams): Promise<Respons
 
   const targetUrl = `${VWORLD_WMTS_BASE}/${encodeURIComponent(key)}/${cleanLayer}/${params.z}/${params.y}/${cleanX}.${ext}`;
 
+  if (!shouldAttempt(BREAKER_KEY)) {
+    return breakerOpenTile(cooldownRemainingSec(BREAKER_KEY));
+  }
   try {
     const resp = await fetch(targetUrl, {
       headers: { Referer: "https://www.4t8t.net" },
       next: { revalidate: 60 * 60 * 24 },
     });
     if (!resp.ok) {
+      recordFailure(BREAKER_KEY);
       // 상태 코드 무음 전파 금지 — 4xx/5xx는 명시적 프록시 오류로 변환.
       return upstreamError("VWorld WMTS upstream error", resp.status, {
         layer: cleanLayer, z: params.z, y: params.y, x: cleanX,
       });
     }
+    recordSuccess(BREAKER_KEY);
     const contentType = (resp.headers.get("content-type") ?? "").trim();
     if (contentType && !contentType.toLowerCase().startsWith("image/")) {
       // 200 + 비이미지 본문은 두 현실이 섞여 있다 — content-type으로 1차 분기하고,
@@ -178,6 +204,8 @@ export async function proxyVWorldWmts(params: VWorldWmtsParams): Promise<Respons
       },
     });
   } catch (error) {
+    // ★네트워크 예외(상류 차단·DNS·타임아웃)도 실패로 집계 — 이번 IP 차단이 이 경로였다.
+    recordFailure(BREAKER_KEY);
     // [MAP-006] 네트워크 예외도 JSON 오류 본문으로 반환(평문 금지).
     return new Response(
       JSON.stringify({ error: `VWorld WMTS proxy failed: ${String(error)}`, status: 502 }),
