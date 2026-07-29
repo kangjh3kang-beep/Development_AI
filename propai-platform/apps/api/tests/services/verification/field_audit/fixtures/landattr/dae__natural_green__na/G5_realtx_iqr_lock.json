@@ -1,0 +1,33 @@
+{
+  "_meta": {
+    "seed_id": "G5",
+    "title": "실거래 분포 log-IQR robust trim(이미 수정 → 회귀 잠금)",
+    "land_attrs": {"jimok": "대", "zone": "자연녹지지역", "sanji_gubun": null},
+    "landattr_axis_note": "G5는 분포품질(실거래 트리밍) 시드로 토지속성 축이 1차 관심이 아니다 — 명목 셀 배치(정직표기).",
+    "tier": "B",
+    "phase": "0/W2-2",
+    "status": "이미 수정됨(price_stats:21 robust_price_stats log-IQR) → 회귀 골든으로 잠금(재발 시 FAIL이 되도록 W2-2가 규칙화).",
+    "defect_historical": "과거 실거래 최저 2만원·apt 혼입이 원/㎡ 통계 오염 → 시세 왜곡.",
+    "w1_target": "robust_price_stats를 회귀 골든으로 박제 + distribution.py 동적 IQR 소속 배선(샘플<5·지역/시기 층화 보강). ★W1 이후에도 이 시드는 finding 0 유지(잠금).",
+    "regression_lock": true,
+    "synthetic": true,
+    "honesty": "W0 합성 fixture — 라이브 실거래 미수집. 계획 §2.2 G5(robust_price_stats log-IQR trim) 서술에 충실한 구조 시드. robust 통계가 이상치를 배제한 정상 산출을 표현."
+  },
+  "ctx": {"address": "경상북도 포항시 남구 호미곶면 대보리 100", "zone_type": "자연녹지지역", "pnu": "4711025032yyyyyyy"},
+  "input": {
+    "zone_type": "자연녹지지역",
+    "realtx": {
+      "raw_samples_won_per_sqm": [20000, 480000, 510000, 495000, 505000, 500000],
+      "robust_price_per_sqm": 500000,
+      "robust_stats_applied": true,
+      "trim_method": "log-IQR",
+      "excluded_outliers": [20000],
+      "sample_n": 6
+    }
+  },
+  "current_baseline": {
+    "field": "realtx.robust_price_per_sqm",
+    "observed": 500000,
+    "note": "log-IQR trim이 2만원 이상치를 배제하고 500,000원/㎡ 산출(정상). 이 값이 회귀 잠금 대상."
+  }
+}

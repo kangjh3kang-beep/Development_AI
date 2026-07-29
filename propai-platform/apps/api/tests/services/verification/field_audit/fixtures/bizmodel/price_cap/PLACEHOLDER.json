@@ -1,0 +1,11 @@
+{
+  "_meta": {
+    "seed_id": "K2_PLACEHOLDER",
+    "biz_model": "분양가상한제",
+    "status": "PLACEHOLDER — 미채움(정직표기).",
+    "planned_defect": "K2 분양가상한제 매출상한 부재 → 규제지역 분양수입 과대. '상한제 대상 → 분양수입 ≤ 상한가×세대' 불변식 부재.",
+    "planned_phase": "Phase G/1+ (시장·시기·금융 축). W0 범위 밖.",
+    "honesty": "2차 층화축 scaffold. 실입력·현행assert 미채움 — 착수 시 규제지역 실주소로 채운다.",
+    "filled": false
+  }
+}

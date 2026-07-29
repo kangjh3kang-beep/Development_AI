@@ -1,0 +1,30 @@
+{
+  "_meta": {
+    "seed_id": "G3",
+    "title": "보전관리 임야 인허가 판정불가(커버리지 갭 미표면화)",
+    "land_attrs": {"jimok": "임야", "zone": "보전관리지역", "sanji_gubun": "보전산지_공익용"},
+    "tier": "A",
+    "phase": "0/W1-3",
+    "defect": "permit_validator가 정직하게 '판정불가'를 반환하나(수정됨), 그 사유가 '매트릭스/룩업 미등재(커버리지 갭)'인지 '본질적 조례의존'인지 구분·표면화되지 않음 → 조용한 판정불가.",
+    "w1_target": "coverage.py: 등장 zone이 매트릭스 미등재 시 '커버리지 갭' finding 표면화. 관리지역 등재(국토계획법 별표). ★M3: 진짜 판정불가(조례의존)와 갭(매트릭스 누락) 구분.",
+    "regression_note": "G3의 '판정불가' 자체는 정직한 기존 동작(회귀 유지). W1은 그 위에 갭 표면화를 additive.",
+    "synthetic": true,
+    "honesty": "W0 합성 fixture — 라이브 permit 미수집. 계획 §2.2 G3(permit_validator permitted_types_known+판정불가 사유) 서술에 충실한 구조 시드."
+  },
+  "ctx": {"address": "경상북도 포항시 남구 호미곶면 강사리 산 20", "zone_type": "보전관리지역", "pnu": "4711025031xxxxxxx"},
+  "input": {
+    "zone_type": "보전관리지역",
+    "permit": {
+      "verdict": "판정불가",
+      "permitted_types_known": false,
+      "reason": "허용용도 미상",
+      "coverage_gap_surfaced": false
+    },
+    "special_parcel": {"jimok": "임야", "보전산지_여부": true, "산지구분": "보전산지_공익용"}
+  },
+  "current_baseline": {
+    "field": "permit.coverage_gap_surfaced",
+    "observed": false,
+    "note": "판정불가는 정직하나 커버리지 갭(보전관리 매트릭스 미등재)이 finding으로 표면화되지 않음."
+  }
+}

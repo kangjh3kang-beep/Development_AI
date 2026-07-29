@@ -1,0 +1,27 @@
+{
+  "_meta": {
+    "seed_id": "G6",
+    "title": "임야 경사도 고아 데이터(주입됨·UI 렌더 미확인)",
+    "land_attrs": {"jimok": "임야", "zone": "계획관리지역", "sanji_gubun": "준보전산지"},
+    "tier": "B/A",
+    "phase": "0/W3-3",
+    "defect": "terrain 경사도가 detect_special_parcel(forest_preliminary_assessment)에 주입되나(comprehensive:794 배선됨), UI 소비처 렌더가 미확인 → 화면 표면화 여부 불명(고아 위험).",
+    "w1_target": "terrain_service 경사도 소비처 렌더 추적·검증(UI 표면화 확인). 수집가능(경사도)/실측필요(입목축적) 분리 — 수집가능이 None이면 finding.",
+    "synthetic": true,
+    "honesty": "W0 합성 fixture — 라이브 terrain 미수집. 계획 §2.2 G6(terrain→detect_special_parcel 주입됨:794·UI 렌더 미확인) 서술에 충실한 구조 시드."
+  },
+  "ctx": {"address": "경상북도 포항시 남구 호미곶면 구만리 산 30", "zone_type": "계획관리지역", "pnu": "4711025033xxxxxxx"},
+  "input": {
+    "zone_type": "계획관리지역",
+    "special_parcel": {
+      "jimok": "임야",
+      "산지구분": "준보전산지",
+      "forest_preliminary_assessment": {"slope_degree": 23.5, "slope_source": "SRTM30", "rendered_in_ui": null}
+    }
+  },
+  "current_baseline": {
+    "field": "special_parcel.forest_preliminary_assessment.rendered_in_ui",
+    "observed": null,
+    "note": "경사도 23.5°가 주입(주입 계약 성립)됐으나 UI 렌더 여부 null(미확인) — 고아 데이터 위험."
+  }
+}
