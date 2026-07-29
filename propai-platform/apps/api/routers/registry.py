@@ -80,7 +80,8 @@ class RegistryBulkRequest(BaseModel):
 
 @router.get("/status", summary="등기부 API 연동 상태")
 async def registry_status() -> dict[str, Any]:
-    return RegistryService().status()
+    # 키 존재만이 아니라 실제 호출 권한까지 확인한 상태를 돌려준다(공용 판정).
+    return await RegistryService().live_status()
 
 
 @router.get("/tilko/status", summary="틸코(Tilko) 등기 연동 상태 점검")

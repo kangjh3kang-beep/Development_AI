@@ -77,6 +77,31 @@ class RegistryService:
             ),
         }
 
+    async def live_status(self) -> dict[str, Any]:
+        """status()에 '실제 호출 가능한가'를 더한 정직한 상태.
+
+        왜 필요한가: status()는 키 존재만 보므로, 키가 유효해도 계약에 없는 API라
+        벤더가 거절하는 상태(하이픈 "권한이 없는 API 입니다")를 '연결됨'으로 표시했다.
+        키 입력 후 "테스트"를 눌러 초록을 본 사용자가 정작 조회에 실패하는 원인이다.
+        틸코가 공개키를 실제로 받아 검증하는 것과 대칭을 맞춘다.
+
+        기존 status()의 키·형태는 그대로 두고 additive로만 덧붙인다(소비처 무영향).
+        """
+        from app.services.registry.hyphen_client import probe_api_access
+
+        out = dict(self.status())
+        if not out.get("hyphen_ready"):
+            return out
+
+        probe = await probe_api_access()
+        out["hyphen_access"] = probe.get("access")
+        out["hyphen_access_message"] = probe.get("message")
+        if probe.get("access") != "ok":
+            # 실제로 못 쓰는 상태를 '연결됨'이라 말하지 않는다.
+            out["register_ready"] = bool(out.get("tilko_ready"))
+            out["message"] = probe.get("message") or out.get("message")
+        return out
+
     async def get_one(
         self,
         pnu: str | None = None,
