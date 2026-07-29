@@ -143,6 +143,14 @@ export interface SatongMultiMapProps {
    *  암묵 예약값(max-w calc 152px)이 겹침의 근원 — 같은 flex 행에 흘리면 겹침이 문법적으로
    *  불가능하고 예약값 자체가 사라진다. 슬롯이 있으면 도크는 칩이 없어도 항상 렌더된다. */
   bottomDockSlot?: ReactNode;
+  /** 우상단 슬롯 — 레이어 레일·팝오버 등 부모 소유 오버레이를 지도 래퍼 '안'에 배치한다.
+   *  ★풀스크린 소실 결함(2026-07-29 감사): 풀스크린은 이 컴포넌트 내부 래퍼에
+   *  `fixed inset-0 z-[9990]`을 입히는데, 셸이 소유한 레일(z-420)·팝오버(z-430)·활성
+   *  레이어 배지(z-380)는 그 래퍼의 '형제'라 전부 뒤로 깔려 사라졌다 — 큰 화면에서
+   *  레이어를 보려고 누르는 버튼이 정작 레이어 제어를 없애는 모순이었다.
+   *  같은 결함을 하단 선택바에서 이미 고친 선례(래퍼 안으로 이동)를 셸 오버레이에 전파한다.
+   *  계약은 bottomDockSlot과 동일 — 부모가 JSX를 넘기면 자식이 자기 래퍼 안에 렌더한다. */
+  topRightSlot?: ReactNode;
 }
 
 type BoundaryFeature = {
@@ -793,6 +801,7 @@ export function SatongMultiMap({
   layerState,
   readOnly = false,
   bottomDockSlot,
+  topRightSlot,
   marketPayload = null,
   marketLayer,
   poiPayload = null,
@@ -2526,6 +2535,9 @@ export function SatongMultiMap({
             minHeight: isMapFullscreen ? 0 : undefined,
           }}
         />
+
+        {/* 부모 소유 우상단 오버레이(레이어 레일·팝오버) — 래퍼 '안'이라 풀스크린에서도 남는다. */}
+        {topRightSlot}
 
         {/* 풀스크린 버튼 */}
         <button

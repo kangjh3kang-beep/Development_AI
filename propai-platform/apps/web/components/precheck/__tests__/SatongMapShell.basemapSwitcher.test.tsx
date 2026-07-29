@@ -4,6 +4,7 @@
  *   ② 기본은 '일반' 활성. ③ '위성' 클릭 → 위성만 활성(상호배타). ④ '일반' 복귀 가능.
  *   ⑤ 레이어 팝오버와 상호배타(같은 좌표를 쓰므로 동시 표시 금지). ⑥ Esc 닫힘.
  */
+import type { ReactNode } from "react";
 import { fireEvent, render, screen, act } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -23,9 +24,11 @@ vi.mock("next/navigation", () => ({
 const capturedMapProps: Record<string, unknown>[] = [];
 vi.mock("next/dynamic", () => ({
   default: () => {
+    // ★H2 봉합 이후 필수: 레일·팝오버·배지행은 topRightSlot으로 지도 래퍼 '안'에 렌더된다
+    //   (풀스크린에서 살아남게 하는 봉합). 스텁도 실컴포넌트와 동일하게 슬롯을 렌더한다.
     const DynamicStub = (props: Record<string, unknown>) => {
       capturedMapProps.push(props);
-      return <div data-testid="dynamic-map-stub" />;
+      return <div data-testid="dynamic-map-stub">{props.topRightSlot as ReactNode}</div>;
     };
     return DynamicStub;
   },

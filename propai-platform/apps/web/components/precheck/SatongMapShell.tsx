@@ -27,6 +27,7 @@ import {
   TrainFront,
   X,
   TrendingUp,
+  Eye,
 } from "lucide-react";
 import {
   type ChangeEvent,
@@ -88,6 +89,28 @@ import {
 //   계약(측정 rail↔줌 충돌 방지 — 지도 높이 500px 미만 배치 금지)의 하한 500px을 보장하고,
 //   기존 720px을 상한으로 유지해 데스크톱은 무회귀(넉넉한 뷰포트에서 60dvh가 이미 ≥720px).
 const SATONG_MAP_HEIGHT = "clamp(500px, 60dvh, 720px)";
+
+// 레일 폭과 팝오버 앵커의 단일 출처.
+//   레일은 접힘 w-16(64px)·펼침 w-32(128px)이고 right-4(16px)에 붙는다. 팝오버는 레일을
+//   가리지 않도록 그 왼쪽에 서야 하므로 앵커도 레일 상태를 따라가야 한다.
+//   ★실결함: 팝오버가 접힘 폭 기준 right-20으로 고정돼 있어, 레일 기본값이 펼침으로 바뀐 뒤
+//     팝오버가 레일 왼쪽 열 버튼 7개를 통째로 덮고 z(430>420)까지 높아 클릭도 막았다.
+//     두 값을 한 곳에서 파생시켜 한쪽만 바뀌는 재발을 구조적으로 차단한다.
+//   ★좁은 화면(<sm)은 옆에 세우지 않고 전폭으로 편다. 레일을 피해 옆으로 밀면 남는 폭이
+//     100px 남짓이 되어(375px 폰 기준 컨테이너 281px − 176px) 2열 컨트롤과 '지도에 표시'
+//     확정 버튼이 들어가지 못한다 — 레일을 안 가리려다 확정 경로를 막는 역효과.
+//     모바일에선 전폭 오버레이가 레일을 덮지만, 팝오버는 '확정 단계'라 그동안 레일 탐색이
+//     필요 없다(닫으면 레일이 다시 온전히 보인다).
+const RAIL_POPOVER_ANCHOR = {
+  // right-36(144px) = right-4(16) + w-32(128) — 레일과 정확히 맞닿는다(여백 0).
+  pinned: "inset-x-4 sm:inset-x-auto sm:right-36 sm:w-[min(360px,calc(100%-176px))]",
+  // right-20(80px) = right-4(16) + w-16(64)
+  collapsed: "inset-x-4 sm:inset-x-auto sm:right-20 sm:w-[min(360px,calc(100%-112px))]",
+} as const;
+
+function railPopoverAnchor(pinned: boolean): string {
+  return pinned ? RAIL_POPOVER_ANCHOR.pinned : RAIL_POPOVER_ANCHOR.collapsed;
+}
 
 const SatongMultiMap = dynamic<SatongMultiMapProps>(
   () =>
@@ -407,7 +430,7 @@ const LAYERS: SatongLayer[] = [
     label: "로드뷰",
     shortLabel: "로드",
     description: "접도, 가로환경, 출입구 후보를 현장감 있게 확인합니다.",
-    icon: Route,
+    icon: Eye,   // ★아이콘-기능 1:1 — 개발계획과 Route 글리프가 중복이었다
     status: "needs-source",
     tone: "bg-slate-100 text-slate-950 border-slate-200",
     source: "카카오 로드뷰 SDK 연동 필요",
@@ -2123,6 +2146,535 @@ export function SatongMapShell({
     );
   }
 
+  // ★H2 결함 봉합(2026-07-29): 지도 오버레이(활성 레이어 배지행·레이어 레일·팝오버 3종)를
+  //   SatongMultiMap의 '형제'가 아니라 topRightSlot으로 넘겨 풀스크린 래퍼 '안'에 렌더한다.
+  //   ★근본원인: 풀스크린은 SatongMultiMap 내부 래퍼에 fixed inset-0 z-[9990](CSS 폴백)을
+  //   입히거나 네이티브 Fullscreen API로 그 래퍼만 top layer에 올린다. 셸이 소유한 이
+  //   오버레이들은 그 래퍼의 형제라, z를 380/420/430으로 아무리 키워도 폴백에선 9990 밑에
+  //   깔리고 네이티브에선 아예 화면 밖으로 밀렸다 — "크게 보려고" 누른 버튼이 정확히
+  //   레이어 제어를 없애는 모순이었다. 같은 결함을 하단 선택바에서 '래퍼 안으로 이동'으로
+  //   고친 선례(bottomDockSlot)를 셸 오버레이에 그대로 전파한다.
+  //   ★앵커 계약: 래퍼는 비풀스크린 relative · CSS 폴백 fixed · 네이티브도 UA가 fixed로
+  //   만들므로 absolute 자식의 기준(containing block)은 세 모드 모두에서 유지된다. 비풀스크린
+  //   기준면만 '패널 컨테이너'→'지도 래퍼'로 바뀌어 p-2(8px)만큼 안쪽으로 들어오고, 지도 상단
+  //   상태줄(로딩·미발견)이 뜨면 지도와 함께 내려간다 — 지도 위 컨트롤이 지도에 붙는 것이
+  //   오히려 정상이라 좌표 계약(left-4/right-4/top-4/top-20)은 그대로 둔다.
+  const mapOverlays = (
+    <>
+      <div className="pointer-events-auto absolute left-4 top-4 z-[380] flex flex-wrap items-center gap-2">
+        {/* ★UX A3: 비인터랙티브 배지(허위 어포던스 제거) — 이전엔 <button>이었으나 onClick이
+            event.stopPropagation() 뿐이라 클릭 가능해 보이는데 아무 동작도 없었다. */}
+        <span className="rounded-full border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] px-3 py-2 text-xs font-black text-[var(--text-primary)] shadow-[var(--shadow-lg)] backdrop-blur-[var(--glass-blur)]">
+          사통팔땅 멀티지도
+        </span>
+        {/* ★UX 트랙 C2(사용자 지적 — '편의성 부조화'): 종전엔 이 칩이 <button>이라
+            클릭하면 handleLayerClick이 호출돼 "레이어를 끄면서 동시에(방금 끈) 레이어의
+            설정 팝오버를 여는" 이중 조작이 됐다(끈 레이어의 설정창이 뜨는 혼란). 레이어
+            조작은 우상단 레일 하나로 일원화하고, 이 칩은 "지금 켜진 레이어"를 알려주는
+            표시 전용 배지로 강등한다(A3에서 이미 배지화한 상단 라벨과 동일 계약). */}
+        {activeLayers.slice(0, 4).map((layer) => (
+          <span
+            key={layer.id}
+            className="rounded-full border border-[var(--border-muted)] bg-[var(--glass-bg)] px-3 py-2 text-xs font-black text-[var(--text-primary)] shadow-[var(--shadow-md)] backdrop-blur-[var(--glass-blur)]"
+            title={`${layer.label} 레이어 켜짐`}
+          >
+            {layer.label}
+          </span>
+        ))}
+        {activeLayers.length > 4 && (
+          <span className="rounded-full border border-[var(--border-muted)] bg-[var(--glass-bg)] px-3 py-2 text-xs font-black text-[var(--text-primary)] shadow-[var(--shadow-md)] backdrop-blur-[var(--glass-blur)]">
+            +{activeLayers.length - 4}
+          </span>
+        )}
+      </div>
+
+      <div
+        ref={railRef}
+        // ★사용자 요청('롤아웃하면 창이 닫히고') + R1 MEDIUM-1: hover로 연 팝오버는
+        //   레일을 벗어날 때 닫는다. 클릭으로 연 것은 유지해야 팝오버 안 컨트롤로
+        //   마우스를 옮겨 확정할 수 있다(고정분은 pinnedPanelRef로 식별·유예 200ms는 팝오버가 취소).
+        onMouseLeave={() => {
+          // ★R1 3차 HIGH-1: '핀 존재'가 아니라 '지금 보이는 팝오버가 고정분인가'로
+          //   판정한다. stale 핀(Esc/X로 닫힌 뒤 잔존)이 무관한 hover 팝오버를
+          //   눌러붙게 하던 누수 봉합. (closeLayerPanel/Basemap이 핀을 지우므로
+          //   이제 stale은 안 생기지만, 매칭 가드는 그와 무관히도 안전하다.)
+          const shownIsPinned =
+            pinnedPanelRef.current === "basemap"
+              ? basemapOpen
+              : pinnedPanelRef.current != null && activeLayerId === pinnedPanelRef.current;
+          if (shownIsPinned) return;
+          cancelHoverClose();
+          hoverCloseTimerRef.current = setTimeout(() => {
+            hoverCloseTimerRef.current = null;
+            const stillPinned =
+              pinnedPanelRef.current === "basemap"
+                ? basemapOpen
+                : pinnedPanelRef.current != null && activeLayerId === pinnedPanelRef.current;
+            if (stillPinned) return;
+            setActiveLayerId(null);
+            setBasemapOpen(false);
+          }, 200); // ★HIGH-B 유예 — 팝오버 onMouseEnter가 취소한다
+        }}
+        // ★P1(감사): 고정고는 전 버튼 필요고보다 작아 하단(로드뷰 등)이 클리핑돼 도달
+        //   불가였음 — 가용고 내 auto + 세로 스크롤로 전 버튼 접근 보장.
+        // ★WP-M4: hover 전개에 더해 앵커 클릭 고정(railPinned)으로도 전개 — 터치 기기 대응.
+        // ★U3(비반응형 레일): 상한을 컨테이너뿐 아니라 브라우저 뷰포트(dvh)로도 걸어,
+        //   지도가 화면보다 클 때 레일이 폴드 밑으로 늘어나 하단 버튼 도달 불가·페이지
+        //   스크롤 시 hover 전개가 풀리던 문제를 해소. 고정(핀) 시 2열 그리드로 접어
+        //   버튼 높이를 절반으로 — 어떤 뷰포트에서도 전 버튼 가시(현 14개=7행·400px).
+        //   dvh 상한은 supports- 가드로 부가(R1 L5: min() 인자에 미지원 단위가 섞이면
+        //   선언 전체가 drop돼 상한이 사라짐) · 핀 폭 128px(48px 버튼×2+gap+p — R1 L4).
+        // ★2026-07-23(R1 M): 접힌 높이 h-16(=버튼 1개)은 두 번째 자식인 베이스맵 버튼을
+        //   숨겨, 터치 기기에서 배경지도 전환이 3탭(앵커→베이스맵→스와치)이 되고 기능
+        //   존재 자체가 비가시였다(종전 하단 도크는 항상 가시·1탭). h-28로 앵커+베이스맵
+        //   2개를 상시 노출해 1탭 경로를 복원한다(전개 어포던스인 앵커는 그대로 유지).
+        // ★UX 트랙 C1(사용자 지적 — '편의성 부조화'): railPinned 기본값을 true로 바꿔
+        //   대부분 이 분기 자체를 타지 않게 됐지만, 사용자가 명시적으로 접었을 때도
+        //   h-28 overflow-hidden으로 14개 중 2개만 남기는 건 여전히 동일 결함이다.
+        //   접힘 상태에서도 1열(단일 컬럼) 전체를 항상 노출하도록 높이 클리핑을 걷어내고
+        //   가용고 내 세로 스크롤로 전 버튼 도달을 보장한다(hover 확장은 폭만 넓히는
+        //   보조 어포던스로 격하 — 가시성 자체는 더 이상 hover에 의존하지 않는다).
+        className={`group absolute right-4 top-20 z-[420] rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--glass-bg)] p-2 shadow-[var(--shadow-lg)] backdrop-blur-[var(--glass-blur)] transition-all duration-300 ease-in-out ${
+          railPinned
+            ? "grid w-32 auto-rows-min grid-cols-2 gap-2 h-auto max-h-[calc(100%-120px)] supports-[height:100dvh]:max-h-[min(calc(100%-120px),calc(100dvh-176px))] overflow-y-auto"
+            : "flex w-16 flex-col gap-2 h-auto max-h-[calc(100%-120px)] supports-[height:100dvh]:max-h-[min(calc(100%-120px),calc(100dvh-176px))] overflow-y-auto"
+        }`}
+      >
+        {/* 앵커(레이어 관리) 버튼 — ★WP-M4: 죽은 버튼을 클릭 고정 토글로 실기능화(터치 전개).
+            아이콘은 MapIcon(지도), 지적도 레이어는 Layers로 분리해 아이콘-기능 1:1. */}
+        <button
+          type="button"
+          onClick={() => setRailPinned((v) => !v)}
+          aria-pressed={railPinned}
+          aria-label={railPinned ? "레이어 목록 접기" : "레이어 목록 펼치기(고정)"}
+          className={`grid size-12 shrink-0 place-items-center rounded-2xl border transition ${
+            railPinned
+              ? "border-[var(--accent-strong)] bg-[var(--accent-strong)]/15 text-[var(--accent-strong)]"
+              : "border-[var(--border-muted)] bg-[var(--surface-panel)] text-[var(--accent-strong)] hover:bg-[var(--surface-strong)] group-hover:border-[var(--line-strong)] group-hover:bg-[var(--surface-muted)] group-hover:text-[var(--text-secondary)]"
+          }`}
+          title={railPinned ? "레이어 목록 고정 해제" : "지도 레이어 관리 (클릭 고정 · hover 전개)"}
+        >
+          <MapIcon className={`size-5 ${railPinned ? "" : "animate-pulse group-hover:animate-none"}`} aria-hidden />
+        </button>
+
+        {/* 베이스맵 — 지도 표시 제어를 우상단 한 코너로 모으는 항목(2026-07-23 사용자
+            UX 요청). 종전엔 레일=우상단·베이스맵=우하단으로 제어가 분산돼 있었다. */}
+        <button
+          type="button"
+          // ★레일 형제와 동일 계약 — 롤오버·포커스는 '열기'(지정), 클릭은 토글.
+          //   전환 중 같은 항목 재진입이 닫힘이 되면 깜빡이므로 hover는 열기만 한다.
+          onMouseEnter={() => { cancelHoverClose(); openBasemapPanel(); }}
+          // ★형제와 동일 계약(HIGH-A) + R1 MEDIUM-C: setDetailFeature(null) 삭제
+          //   (레이어 경로는 '가림→복원'인데 베이스맵만 파괴적이라 비대칭이었다).
+          onClick={() => {
+            cancelHoverClose();
+            const wasPinned = basemapOpen && pinnedPanelRef.current === "basemap";
+            if (wasPinned) { closeBasemapPanel(); return; }
+            pinnedPanelRef.current = "basemap";
+            openBasemapPanel();
+          }}
+          aria-haspopup="dialog"
+          aria-expanded={basemapOpen}
+          aria-controls="satong-basemap-popover"
+          aria-label="베이스맵 선택"
+          title="베이스맵 (일반·위성·하이브리드·회색)"
+          className={`grid size-12 shrink-0 place-items-center rounded-2xl border transition ${
+            basemapOpen
+              ? "border-[var(--accent-strong)] bg-[var(--accent-strong)] text-[var(--on-primary)] shadow-[var(--shadow-glow)]"
+              : "border-[var(--border-muted)] bg-[var(--surface-panel)] text-[var(--text-secondary)] hover:border-[var(--line-strong)] hover:bg-[var(--surface-strong)]"
+          }`}
+        >
+          <ImageIcon className="size-5" aria-hidden />
+        </button>
+
+        {/* 내부 레이어 버튼 리스트 (세로 전개) */}
+        {LAYERS.map((layer) => {
+          const Icon = layer.icon;
+          const enabled = enabledLayers.has(layer.id);
+          const isActive = activeLayerId === layer.id;
+          return (
+            <button
+              key={layer.id}
+              type="button"
+              // ★열기만(확정 아님) — 롤오버·클릭 모두 미리보기 팝오버를 연다.
+              //   터치엔 hover가 없으므로 탭(click)도 같은 동작이어야 한다.
+              // ★R1 HIGH-1: onFocus는 제거한다 — Tab 이동만으로 팝오버가 연쇄 전환돼
+              //   키보드 사용자가 팝오버 안의 확정 버튼에 영영 도달할 수 없었다(마지막
+              //   레일 항목은 렌더불가라 on/off 자체가 없음). Enter/Space는 onClick을
+              //   발화하므로 키보드 열기 경로는 그대로다.
+              onMouseEnter={() => { cancelHoverClose(); openLayerPanel(layer.id); }}
+              // ★R1 LOW-1: 클릭은 토글 — 레일에서 팝오버를 닫을 수단이 사라졌던 회귀
+              //   복원. 깜빡임 논거는 hover에만 유효하고 click에는 적용되지 않는다.
+              // ★R1 HIGH-A: 실브라우저는 click 앞에 mouseenter를 반드시 보낸다. 종전
+              //   'activeLayerId===id면 닫기'는 hover로 열린 것을 '클릭으로 연 것'으로
+              //   오인해 첫 클릭이 항상 닫기가 됐다(더블클릭해야 사용 가능). 클릭은
+              //   hover분을 닫지 말고 '고정(pin)'으로 승격하고, 이미 고정된 것만 닫는다.
+              onClick={() => {
+                cancelHoverClose();
+                const wasPinned = activeLayerId === layer.id && pinnedPanelRef.current === layer.id;
+                if (wasPinned) { closeLayerPanel(); return; }
+                pinnedPanelRef.current = layer.id;
+                openLayerPanel(layer.id);
+              }}
+              aria-haspopup="dialog"
+              aria-expanded={activeLayerId === layer.id}
+              title={`${layer.label} — 미리보기 열기 (지도 적용은 팝오버에서)`}
+              className={`flex min-h-12 w-full shrink-0 flex-col items-center justify-center gap-0 rounded-2xl border px-1 py-1.5 text-[var(--text-secondary)] transition ${
+                // ★R1 MEDIUM-5: 채움=적용됨(enabled), 링=선택 중(isActive). 종전엔
+                //   미적용 미리보기에 가장 강한 채움이 배정돼 "보기=적용" 오해를
+                //   시각 층에서 되살리고 있었다.
+                enabled
+                  ? `border-[var(--accent-strong)] bg-[var(--accent-strong)] text-[var(--on-primary)] ${isActive ? "ring-2 ring-[var(--accent-strong)] ring-offset-2 ring-offset-[var(--surface)]" : ""}`
+                  : isActive
+                    ? "border-[var(--accent-strong)] bg-[var(--surface-panel)] text-[var(--accent-strong)] ring-2 ring-[var(--accent-strong)]"
+                    : "border-[var(--border-muted)] bg-[var(--surface-panel)] hover:border-[var(--line-strong)] hover:bg-[var(--surface-strong)]"
+              }`}
+              aria-label={layer.label}
+            >
+              {/* 펼침(w-32)에서는 아이콘 밑에 2글자 캡션을 노출한다.
+                  ★무라벨 아이콘 12개는 hover가 없는 터치 기기에서 기능을 알 방법이
+                    '하나씩 탭'뿐이었다. shortLabel은 이미 12개 전부 정의돼 있는데
+                    소비처가 0이라 방치돼 있던 자산 — 새 카피 없이 발견성을 회복한다. */}
+              <Icon className="size-5" aria-hidden />
+              {railPinned && (
+                <span className="mt-0.5 text-[10px] font-bold leading-none">
+                  {layer.shortLabel}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* 베이스맵 팝오버 — 레일 '베이스맵' 버튼이 여는 패널. 레이어 팝오버와 같은
+          좌표 계약(right-20 top-20)이라 상호배타로 열린다.
+          이력: 독립 absolute 섬(~07-16) → 하단 도크(07-17 겹침 단일화) → 레일 팝오버(07-23).
+          칩 행의 암묵 예약값(152px)은 07-17에 제거됐고 되살리지 않는다(겹침 수정 유지). */}
+      {basemapOpen && (
+        <div
+          ref={basemapPopoverRef}
+          id="satong-basemap-popover"
+          role="dialog"
+          aria-label="베이스맵"
+          onMouseEnter={cancelHoverClose}
+          onMouseLeave={() => { if (pinnedPanelRef.current !== "basemap") setBasemapOpen(false); }}
+          className={`absolute ${railPopoverAnchor(railPinned)} top-20 z-[430] rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] p-4 shadow-[var(--shadow-xl)] backdrop-blur-xl max-h-[calc(100%-120px)] supports-[height:100dvh]:max-h-[min(calc(100%-120px),calc(100dvh-176px))] overflow-y-auto`}
+        >
+          <div className="mb-3 flex items-center justify-between">
+            <h3 className="text-lg font-black text-[var(--text-primary)]">베이스맵</h3>
+            <button
+              type="button"
+              onClick={closeBasemapPanel}
+              aria-label="베이스맵 닫기"
+              className="grid size-8 place-items-center rounded-xl border border-[var(--border-muted)] bg-[var(--surface-panel)] text-[var(--text-secondary)] transition hover:bg-[var(--surface-strong)]"
+            >
+              <X className="size-4" aria-hidden />
+            </button>
+          </div>
+          {basemapSwitcherPanel}
+          <p className="mt-3 text-xs font-bold text-[var(--text-tertiary)]">
+            배경 지도를 바꿔도 선택 필지·레이어는 유지됩니다.
+          </p>
+        </div>
+      )}
+
+      {activeLayer && (
+        <div
+          ref={popoverRef}
+          role="dialog"
+          aria-label={activeLayer.label}
+          onMouseEnter={cancelHoverClose}
+          onMouseLeave={() => { if (pinnedPanelRef.current !== activeLayer.id) setActiveLayerId(null); }}
+          className={`absolute ${railPopoverAnchor(railPinned)} top-20 z-[430] rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] p-4 shadow-[var(--shadow-xl)] backdrop-blur-xl max-h-[calc(100%-120px)] supports-[height:100dvh]:max-h-[min(calc(100%-120px),calc(100dvh-176px))] overflow-y-auto`}
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className={`rounded-full px-2.5 py-1 text-[11px] font-black ${statusClass(activeLayer.status)}`}>
+                  {statusText(activeLayer.status)}
+                </span>
+                <span className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--on-surface-muted)]">
+                  Layer
+                </span>
+              </div>
+              <h3 className="mt-2 text-lg font-black text-[var(--text-primary)]">{activeLayer.label}</h3>
+            </div>
+            <div className="flex items-center gap-1">
+              {/* ★확정(commit) 지점 — 레일에서 강제 토글을 걷어낸 대신, 레이어 자체
+                  on/off를 여기에 둔다(끄기 수단 보존). 렌더 불가 레이어는 노출하지
+                  않는다(지도에 반영되지 않으므로 켜기 약속이 거짓이 된다). */}
+              {isRenderableSatongMapLayer(activeLayer.id) && !LAYERS_WITHOUT_POPOVER_TOGGLE.has(activeLayer.id) && (
+                <button
+                  type="button"
+                  onClick={() => toggleLayerEnabled(activeLayer.id)}
+                  aria-pressed={enabledLayers.has(activeLayer.id)}
+                  className={`rounded-xl border px-3 py-1.5 text-xs font-black transition ${
+                    enabledLayers.has(activeLayer.id)
+                      ? "border-[var(--accent-strong)] bg-[var(--accent-strong)] text-[var(--on-primary)]"
+                      : "border-[var(--border-muted)] bg-[var(--surface-panel)] text-[var(--text-secondary)] hover:border-[var(--accent-strong)]/40 hover:text-[var(--accent-strong)]"
+                  }`}
+                  title={enabledLayers.has(activeLayer.id) ? "지도에서 이 레이어 끄기" : "지도에 이 레이어 켜기"}
+                >
+                  {enabledLayers.has(activeLayer.id) ? "지도 표시 중" : "지도에 표시"}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={closeLayerPanel}
+                className="rounded-full p-2 text-[var(--text-hint)] transition hover:bg-[var(--surface-muted)] hover:text-[var(--text-primary)]"
+                aria-label="레이어 설정 닫기"
+              >
+                <X className="size-4" aria-hidden />
+              </button>
+            </div>
+          </div>
+          <p className="mt-2 text-sm font-semibold leading-6 text-[var(--text-secondary)]">
+            {activeLayer.description}
+          </p>
+          <div className="mt-4 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-strong)] p-3">
+            <p className="text-[11px] font-black uppercase tracking-[0.18em] text-[var(--on-surface-muted)]">
+              Source
+            </p>
+            <p className="mt-1 text-sm font-bold text-[var(--text-secondary)]">{activeLayer.source}</p>
+          </div>
+          <div className="mt-4 grid grid-cols-2 gap-2">
+            {activeLayer.controls.map((control) => {
+              // ★R1 후속(레인G R2): 전월세(kind-rent) 모드에서는 토지·상업업무용 전월세
+              //   API 자체가 없다(MARKET_RENT_TYPES=4종) — 켜봐야 무의미한 유형 토글을
+              //   비활성화해 "눌러도 0건"이라는 오도적 UX를 원천 차단한다(marketLayer의
+              //   kind 필터와 이중 방어).
+              const rentModeActive =
+                activeLayer.id === "transactions" &&
+                (layerControls.transactions ?? []).includes("kind-rent");
+              const rentUnsupported =
+                rentModeActive &&
+                control.id.startsWith("type-") &&
+                !MARKET_RENT_TYPES.some((t) => `type-${t.key}` === control.id);
+              const effectiveMapEffect = control.mapEffect && !rentUnsupported;
+              return (
+                <button
+                  key={control.id}
+                  type="button"
+                  disabled={!effectiveMapEffect}
+                  onClick={() => handleLayerControlClick(activeLayer.id, control)}
+                  title={
+                    rentUnsupported
+                      ? "전월세는 아파트·연립다세대·단독다가구·오피스텔만 지원합니다(토지·상업업무용 전월세 API 없음)"
+                      : control.mapEffect
+                        ? `${control.label} 지도 반영`
+                        : control.description || "공식 데이터 소스 연결 후 활성화"
+                  }
+                  className={`rounded-2xl border px-3 py-2 text-xs font-black transition ${
+                    layerControls[activeLayer.id]?.includes(control.id) && !rentUnsupported
+                      ? "border-[var(--accent-strong)] bg-[var(--accent-strong)] text-[var(--on-primary)]"
+                      : effectiveMapEffect
+                        ? "border-[var(--border-muted)] bg-[var(--surface-panel)] text-[var(--text-secondary)] hover:border-[var(--accent-strong)]/40 hover:bg-[var(--accent-strong)]/10 hover:text-[var(--accent-strong)]"
+                        : "cursor-not-allowed border-[var(--border-muted)] bg-[var(--surface-muted)] text-[var(--text-hint)]"
+                  }`}
+                >
+                  {control.label}
+                </button>
+              );
+            })}
+          </div>
+          {!isRenderableSatongMapLayer(activeLayer.id) ? (
+            <div className="mt-4 rounded-2xl bg-[var(--status-warning)]/10 px-3 py-2 text-xs font-bold leading-5 text-[var(--status-warning)]">
+              이 레이어는 아직 공식 데이터 소스와 지도 렌더러가 연결되지 않아 지도에 표시하지 않습니다.
+            </div>
+          ) : activeLayer.status !== "active" && (
+            <div className="mt-4 rounded-2xl bg-[var(--status-warning)]/10 px-3 py-2 text-xs font-bold leading-5 text-[var(--status-warning)]">
+              선택 필지의 실제 속성 데이터가 확보된 범위에서만 지도에 반영됩니다. 무자료 필지는 추정 표시하지 않습니다.
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── WS-C 필지 상세 패널 — 개요·보유 속성(무자료 '-' 정직표기)·산출물 원클릭 퍼널.
+           레이어 패널과 같은 슬롯(상호 배타 — 단일 팝오버 원칙). ── */}
+      {/* ★렌더 가드도 3패널 전부를 배타 — 상태 봉합(근원 함수)과 이중 방어. 좌표가
+          같은 형제가 늘 때 가드가 따라오지 않으면 겹침이 다시 샌다(07-17 교훈). */}
+      {detailFeature && !activeLayer && !basemapOpen && (
+        <div
+          data-testid="parcel-detail-panel"
+          className={`absolute ${railPopoverAnchor(railPinned)} top-20 z-[430] rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] p-4 shadow-[var(--shadow-xl)] backdrop-blur-xl max-h-[calc(100%-120px)] supports-[height:100dvh]:max-h-[min(calc(100%-120px),calc(100dvh-176px))] overflow-y-auto`}
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <span className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--on-surface-muted)]">
+                Parcel
+              </span>
+              <h3 className="mt-1 truncate text-lg font-black text-[var(--text-primary)]">
+                {detailFeature.address?.split(/\s+/).slice(-2).join(" ") || detailFeature.address || "필지"}
+              </h3>
+              <p className="truncate text-xs font-semibold text-[var(--text-hint)]">{detailFeature.address}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setDetailFeature(null)}
+              className="rounded-full p-2 text-[var(--text-hint)] transition hover:bg-[var(--surface-muted)] hover:text-[var(--text-primary)]"
+              aria-label="필지 상세 닫기"
+            >
+              <X className="size-4" aria-hidden />
+            </button>
+          </div>
+
+          <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-strong)] p-3 text-xs">
+            <div>
+              <dt className="font-black text-[var(--text-hint)]">면적</dt>
+              <dd className="mt-0.5 font-mono font-bold text-[var(--text-primary)]">{formatArea(detailFeature.areaSqm, 0)}</dd>
+            </div>
+            <div>
+              <dt className="font-black text-[var(--text-hint)]">용도지역</dt>
+              <dd className="mt-0.5 font-bold text-[var(--text-primary)]">
+                {detailFeature.zoneType || "-"}
+                {detailFeature.zoneType2 ? ` · ${detailFeature.zoneType2}` : ""}
+              </dd>
+            </div>
+            <div>
+              <dt className="font-black text-[var(--text-hint)]">지목</dt>
+              <dd className="mt-0.5 font-bold text-[var(--text-primary)]">{detailFeature.jimok || "-"}</dd>
+            </div>
+            <div>
+              <dt className="font-black text-[var(--text-hint)]">개별공시지가</dt>
+              <dd className="mt-0.5 font-mono font-bold text-[var(--text-primary)]">
+                {detailFeature.officialPricePerSqm
+                  ? `${Math.round(detailFeature.officialPricePerSqm).toLocaleString()}원/㎡`
+                  : "-"}
+              </dd>
+            </div>
+            <div>
+              <dt className="font-black text-[var(--text-hint)]">건물 노후도</dt>
+              <dd className="mt-0.5 font-bold text-[var(--text-primary)]">
+                {detailFeature.buildingAgeYears != null
+                  ? `${detailFeature.buildingAgeYears}년${detailFeature.builtYear ? ` (준공 ${detailFeature.builtYear})` : ""}`
+                  : detailFeature.ageStatus === "no_building"
+                    ? "나대지·건물 없음"
+                    : detailFeature.ageStatus === "no_approval_date"
+                      ? "사용승인일 미기재(연식 미상)" // ★R1: 백엔드 4번째 상태 — 나대지와 구분(정직)
+                      : detailFeature.ageStatus === "lookup_failed"
+                        ? "조회 실패"
+                        : detailFeature.ageStatus === "skipped_bulk"
+                          ? "대량 선택 생략"
+                          : "-"}
+              </dd>
+            </div>
+            <div>
+              <dt className="font-black text-[var(--text-hint)]">PNU</dt>
+              <dd className="mt-0.5 truncate font-mono font-bold text-[var(--text-secondary)]" title={detailFeature.pnu || undefined}>
+                {detailFeature.pnu || "-"}
+              </dd>
+            </div>
+            {/* ── I7 규제 요약 — 실효 한도·현황·개발여력 인라인(경계 응답 서버 산정치 —
+                 분석캐시 불요·#387). 미산정 '-' 정직 표기, 전항 미상이면 안내 1줄.
+                 상세 산출·근거는 아래 퍼널의 '종합 부지분석'이 담당(중복 CTA 배제). ── */}
+            <div className="col-span-2 border-t border-[var(--border-muted)] pt-2">
+              <dt className="font-black text-[var(--text-hint)]">규제 요약(실효 한도 — 7계층 min)</dt>
+              <dd className="mt-1 grid grid-cols-3 gap-x-2 text-center">
+                <div>
+                  <p className="text-[10px] font-bold text-[var(--text-hint)]">실효 용적률</p>
+                  <p className="font-mono font-bold text-[var(--text-primary)]">
+                    {detailFeature.effectiveFarPct != null ? `${Math.round(detailFeature.effectiveFarPct)}%` : "-"}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold text-[var(--text-hint)]">실효 건폐율</p>
+                  <p className="font-mono font-bold text-[var(--text-primary)]">
+                    {detailFeature.effectiveBcrPct != null ? `${Math.round(detailFeature.effectiveBcrPct)}%` : "-"}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold text-[var(--text-hint)]">현황 용적률</p>
+                  <p className="font-mono font-bold text-[var(--text-primary)]">
+                    {detailFeature.currentFarPct != null ? `${Math.round(detailFeature.currentFarPct)}%` : "-"}
+                  </p>
+                </div>
+              </dd>
+              {(() => {
+                const ratio = capacityRatio(detailFeature.effectiveFarPct, detailFeature.currentFarPct);
+                if (ratio == null) {
+                  return detailFeature.effectiveFarPct == null && detailFeature.effectiveBcrPct == null && detailFeature.currentFarPct == null ? (
+                    <p className="mt-1 text-[10px] font-semibold text-[var(--text-hint)]">
+                      산정 자료 미확보 — 용도지역·건축물대장 확보 시 자동 표시(상세는 아래 종합 부지분석)
+                    </p>
+                  ) : null;
+                }
+                return (
+                  <p className={`mt-1 font-mono text-[11px] font-black ${ratio < 0 ? "text-[#a855f7]" : "text-[var(--status-success)]"}`}>
+                    {ratio < 0
+                      // ★R1 MAJOR: -ratio*100은 '실효 대비 상대%'라 %p 라벨이 오독(초과 절반
+                      //   과소 표기 — 200/260에서 "30%p"로 읽힘). 용적률 초과는 점차이가 관행:
+                      //   현황−실효 = 진짜 %p(260−200=60%p). ratio<0이면 두 값 모두 non-null.
+                      ? `한도 초과 — 현황이 실효 한도를 ${Math.round((detailFeature.currentFarPct as number) - (detailFeature.effectiveFarPct as number))}%p 상회`
+                      : `개발여력 ${Math.round(ratio * 100)}% (실효 대비 잔여)`}
+                  </p>
+                );
+              })()}
+            </div>
+
+            {detailFeature.officialPricePerSqm && detailFeature.areaSqm ? (
+              <div className="col-span-2 border-t border-[var(--border-muted)] pt-2">
+                <dt className="font-black text-[var(--text-hint)]">공시지가 총액(참고 — 공시지가×면적)</dt>
+                <dd className="mt-0.5 font-mono font-bold text-[var(--accent-strong)]">
+                  {Math.round((detailFeature.officialPricePerSqm * detailFeature.areaSqm) / 10_000).toLocaleString()}만원
+                </dd>
+              </div>
+            ) : null}
+          </dl>
+
+          {/* 원클릭 산출물 퍼널 — Output Dock과 동일 공용통로(handleOutputClick: 프로젝트 연결 규약 유지) */}
+          <p className="mt-3 text-[11px] font-black uppercase tracking-[0.18em] text-[var(--on-surface-muted)]">
+            이 선택으로 바로 실행
+          </p>
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            {outputActions.map((action) => {
+              // ★UX A4(동일 패턴 전파): 이 미니 퍼널은 Output Dock과 달리 사유 문구가
+              //   아예 없었다(opacity만) — aria-disabled+title+캡션을 동일하게 인접 배치.
+              const miniDisabled = selectedParcels.length === 0;
+              return (
+                <button
+                  key={action.id}
+                  type="button"
+                  disabled={miniDisabled}
+                  aria-disabled={miniDisabled}
+                  title={miniDisabled ? "필지를 하나 이상 선택하면 산출물 생성 경로가 활성화됩니다." : undefined}
+                  onClick={() => void handleOutputClick(action)}
+                  className="rounded-2xl border border-[var(--border-muted)] bg-[var(--surface-panel)] px-3 py-2 text-left text-xs font-black text-[var(--text-primary)] transition hover:border-[var(--accent-strong)]/40 hover:bg-[var(--accent-strong)]/10 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {action.label}
+                  {miniDisabled && (
+                    <span className="mt-0.5 flex items-center gap-1 text-[9px] font-bold underline decoration-dotted underline-offset-2">
+                      <AlertTriangle className="size-2.5 shrink-0" aria-hidden />
+                      필지 선택 필요
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+            {/* I3: 카카오 로드뷰(현장 확인) — URL 계약 라이브 검증(302→파노라마). 좌표 없으면 미표시(정직). */}
+            {(() => {
+              const roadview = kakaoRoadviewUrl(detailFeature.lat, detailFeature.lon);
+              return roadview ? (
+                <a
+                  href={roadview}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="col-span-2 rounded-2xl border border-[var(--border-muted)] bg-[var(--surface-panel)] px-3 py-2 text-left text-xs font-black text-[var(--text-primary)] transition hover:border-[var(--accent-strong)]/40 hover:bg-[var(--accent-strong)]/10"
+                >
+                  <span className="inline-flex items-center gap-1">
+                    <Route className="size-3.5" aria-hidden />카카오 로드뷰로 현장 보기 ↗
+                  </span>
+                </a>
+              ) : null;
+            })()}
+          </div>
+          <p className="mt-3 font-mono text-[9px] text-[var(--text-hint)]">
+            출처 VWorld·국토교통부 공간정보 — 무자료 항목은 &quot;-&quot;로 표기(추정 금지)
+          </p>
+        </div>
+      )}
+    </>
+  );
+
   return (
     <section className="min-w-0 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface)] p-4 shadow-[var(--shadow-lg)] md:p-5">
       {/* ★UX 트랙 B2 — 집계 SSOT 단일표면. sticky로 앱 헤더(top-2·z-1000) 바로 아래 고정해
@@ -2618,33 +3170,6 @@ export function SatongMapShell({
             className="relative overflow-hidden rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--background-deep)]"
             style={{ minHeight: SATONG_MAP_HEIGHT }}
           >
-            <div className="pointer-events-auto absolute left-4 top-4 z-[380] flex flex-wrap items-center gap-2">
-              {/* ★UX A3: 비인터랙티브 배지(허위 어포던스 제거) — 이전엔 <button>이었으나 onClick이
-                  event.stopPropagation() 뿐이라 클릭 가능해 보이는데 아무 동작도 없었다. */}
-              <span className="rounded-full border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] px-3 py-2 text-xs font-black text-[var(--text-primary)] shadow-[var(--shadow-lg)] backdrop-blur-[var(--glass-blur)]">
-                사통팔땅 멀티지도
-              </span>
-              {/* ★UX 트랙 C2(사용자 지적 — '편의성 부조화'): 종전엔 이 칩이 <button>이라
-                  클릭하면 handleLayerClick이 호출돼 "레이어를 끄면서 동시에(방금 끈) 레이어의
-                  설정 팝오버를 여는" 이중 조작이 됐다(끈 레이어의 설정창이 뜨는 혼란). 레이어
-                  조작은 우상단 레일 하나로 일원화하고, 이 칩은 "지금 켜진 레이어"를 알려주는
-                  표시 전용 배지로 강등한다(A3에서 이미 배지화한 상단 라벨과 동일 계약). */}
-              {activeLayers.slice(0, 4).map((layer) => (
-                <span
-                  key={layer.id}
-                  className="rounded-full border border-[var(--border-muted)] bg-[var(--glass-bg)] px-3 py-2 text-xs font-black text-[var(--text-primary)] shadow-[var(--shadow-md)] backdrop-blur-[var(--glass-blur)]"
-                  title={`${layer.label} 레이어 켜짐`}
-                >
-                  {layer.label}
-                </span>
-              ))}
-              {activeLayers.length > 4 && (
-                <span className="rounded-full border border-[var(--border-muted)] bg-[var(--glass-bg)] px-3 py-2 text-xs font-black text-[var(--text-primary)] shadow-[var(--shadow-md)] backdrop-blur-[var(--glass-blur)]">
-                  +{activeLayers.length - 4}
-                </span>
-              )}
-            </div>
-
             <div className="p-2">
               <SatongMultiMap
                 onPickMany={handleMapPickMany}
@@ -2671,484 +3196,13 @@ export function SatongMapShell({
                 onBoundaryStatusChange={handleBoundaryStatusChange}
                 clearSignal={clearNonce}
                 onStagedCountChange={setStagedCount}
+                // ★H2: 오버레이(배지행·레일·팝오버 3종)를 지도 래퍼 '안'에서 렌더시켜
+                //   풀스크린(z-9990)에서도 레이어 제어가 남게 한다. 종전엔 래퍼의 형제라
+                //   z(380~430)가 낮아 전부 사라졌고, 큰 화면에서 레이어를 보려는 버튼이
+                //   정작 레이어 제어를 없애는 모순이었다.
+                topRightSlot={mapOverlays}
               />
             </div>
-
-            <div
-              ref={railRef}
-              // ★사용자 요청('롤아웃하면 창이 닫히고') + R1 MEDIUM-1: hover로 연 팝오버는
-              //   레일을 벗어날 때 닫는다. 클릭으로 연 것은 유지해야 팝오버 안 컨트롤로
-              //   마우스를 옮겨 확정할 수 있다(고정분은 pinnedPanelRef로 식별·유예 200ms는 팝오버가 취소).
-              onMouseLeave={() => {
-                // ★R1 3차 HIGH-1: '핀 존재'가 아니라 '지금 보이는 팝오버가 고정분인가'로
-                //   판정한다. stale 핀(Esc/X로 닫힌 뒤 잔존)이 무관한 hover 팝오버를
-                //   눌러붙게 하던 누수 봉합. (closeLayerPanel/Basemap이 핀을 지우므로
-                //   이제 stale은 안 생기지만, 매칭 가드는 그와 무관히도 안전하다.)
-                const shownIsPinned =
-                  pinnedPanelRef.current === "basemap"
-                    ? basemapOpen
-                    : pinnedPanelRef.current != null && activeLayerId === pinnedPanelRef.current;
-                if (shownIsPinned) return;
-                cancelHoverClose();
-                hoverCloseTimerRef.current = setTimeout(() => {
-                  hoverCloseTimerRef.current = null;
-                  const stillPinned =
-                    pinnedPanelRef.current === "basemap"
-                      ? basemapOpen
-                      : pinnedPanelRef.current != null && activeLayerId === pinnedPanelRef.current;
-                  if (stillPinned) return;
-                  setActiveLayerId(null);
-                  setBasemapOpen(false);
-                }, 200); // ★HIGH-B 유예 — 팝오버 onMouseEnter가 취소한다
-              }}
-              // ★P1(감사): 고정고는 전 버튼 필요고보다 작아 하단(로드뷰 등)이 클리핑돼 도달
-              //   불가였음 — 가용고 내 auto + 세로 스크롤로 전 버튼 접근 보장.
-              // ★WP-M4: hover 전개에 더해 앵커 클릭 고정(railPinned)으로도 전개 — 터치 기기 대응.
-              // ★U3(비반응형 레일): 상한을 컨테이너뿐 아니라 브라우저 뷰포트(dvh)로도 걸어,
-              //   지도가 화면보다 클 때 레일이 폴드 밑으로 늘어나 하단 버튼 도달 불가·페이지
-              //   스크롤 시 hover 전개가 풀리던 문제를 해소. 고정(핀) 시 2열 그리드로 접어
-              //   버튼 높이를 절반으로 — 어떤 뷰포트에서도 전 버튼 가시(현 14개=7행·400px).
-              //   dvh 상한은 supports- 가드로 부가(R1 L5: min() 인자에 미지원 단위가 섞이면
-              //   선언 전체가 drop돼 상한이 사라짐) · 핀 폭 128px(48px 버튼×2+gap+p — R1 L4).
-              // ★2026-07-23(R1 M): 접힌 높이 h-16(=버튼 1개)은 두 번째 자식인 베이스맵 버튼을
-              //   숨겨, 터치 기기에서 배경지도 전환이 3탭(앵커→베이스맵→스와치)이 되고 기능
-              //   존재 자체가 비가시였다(종전 하단 도크는 항상 가시·1탭). h-28로 앵커+베이스맵
-              //   2개를 상시 노출해 1탭 경로를 복원한다(전개 어포던스인 앵커는 그대로 유지).
-              // ★UX 트랙 C1(사용자 지적 — '편의성 부조화'): railPinned 기본값을 true로 바꿔
-              //   대부분 이 분기 자체를 타지 않게 됐지만, 사용자가 명시적으로 접었을 때도
-              //   h-28 overflow-hidden으로 14개 중 2개만 남기는 건 여전히 동일 결함이다.
-              //   접힘 상태에서도 1열(단일 컬럼) 전체를 항상 노출하도록 높이 클리핑을 걷어내고
-              //   가용고 내 세로 스크롤로 전 버튼 도달을 보장한다(hover 확장은 폭만 넓히는
-              //   보조 어포던스로 격하 — 가시성 자체는 더 이상 hover에 의존하지 않는다).
-              className={`group absolute right-4 top-20 z-[420] rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--glass-bg)] p-2 shadow-[var(--shadow-lg)] backdrop-blur-[var(--glass-blur)] transition-all duration-300 ease-in-out ${
-                railPinned
-                  ? "grid w-32 auto-rows-min grid-cols-2 gap-2 h-auto max-h-[calc(100%-120px)] supports-[height:100dvh]:max-h-[min(calc(100%-120px),calc(100dvh-176px))] overflow-y-auto"
-                  : "flex w-16 flex-col gap-2 h-auto max-h-[calc(100%-120px)] supports-[height:100dvh]:max-h-[min(calc(100%-120px),calc(100dvh-176px))] overflow-y-auto"
-              }`}
-            >
-              {/* 앵커(레이어 관리) 버튼 — ★WP-M4: 죽은 버튼을 클릭 고정 토글로 실기능화(터치 전개).
-                  아이콘은 MapIcon(지도), 지적도 레이어는 Layers로 분리해 아이콘-기능 1:1. */}
-              <button
-                type="button"
-                onClick={() => setRailPinned((v) => !v)}
-                aria-pressed={railPinned}
-                aria-label={railPinned ? "레이어 목록 접기" : "레이어 목록 펼치기(고정)"}
-                className={`grid size-12 shrink-0 place-items-center rounded-2xl border transition ${
-                  railPinned
-                    ? "border-[var(--accent-strong)] bg-[var(--accent-strong)]/15 text-[var(--accent-strong)]"
-                    : "border-[var(--border-muted)] bg-[var(--surface-panel)] text-[var(--accent-strong)] hover:bg-[var(--surface-strong)] group-hover:border-[var(--line-strong)] group-hover:bg-[var(--surface-muted)] group-hover:text-[var(--text-secondary)]"
-                }`}
-                title={railPinned ? "레이어 목록 고정 해제" : "지도 레이어 관리 (클릭 고정 · hover 전개)"}
-              >
-                <MapIcon className={`size-5 ${railPinned ? "" : "animate-pulse group-hover:animate-none"}`} aria-hidden />
-              </button>
-
-              {/* 베이스맵 — 지도 표시 제어를 우상단 한 코너로 모으는 항목(2026-07-23 사용자
-                  UX 요청). 종전엔 레일=우상단·베이스맵=우하단으로 제어가 분산돼 있었다. */}
-              <button
-                type="button"
-                // ★레일 형제와 동일 계약 — 롤오버·포커스는 '열기'(지정), 클릭은 토글.
-                //   전환 중 같은 항목 재진입이 닫힘이 되면 깜빡이므로 hover는 열기만 한다.
-                onMouseEnter={() => { cancelHoverClose(); openBasemapPanel(); }}
-                // ★형제와 동일 계약(HIGH-A) + R1 MEDIUM-C: setDetailFeature(null) 삭제
-                //   (레이어 경로는 '가림→복원'인데 베이스맵만 파괴적이라 비대칭이었다).
-                onClick={() => {
-                  cancelHoverClose();
-                  const wasPinned = basemapOpen && pinnedPanelRef.current === "basemap";
-                  if (wasPinned) { closeBasemapPanel(); return; }
-                  pinnedPanelRef.current = "basemap";
-                  openBasemapPanel();
-                }}
-                aria-haspopup="dialog"
-                aria-expanded={basemapOpen}
-                aria-controls="satong-basemap-popover"
-                aria-label="베이스맵 선택"
-                title="베이스맵 (일반·위성·하이브리드·회색)"
-                className={`grid size-12 shrink-0 place-items-center rounded-2xl border transition ${
-                  basemapOpen
-                    ? "border-[var(--accent-strong)] bg-[var(--accent-strong)] text-[var(--on-primary)] shadow-[var(--shadow-glow)]"
-                    : "border-[var(--border-muted)] bg-[var(--surface-panel)] text-[var(--text-secondary)] hover:border-[var(--line-strong)] hover:bg-[var(--surface-strong)]"
-                }`}
-              >
-                <ImageIcon className="size-5" aria-hidden />
-              </button>
-
-              {/* 내부 레이어 버튼 리스트 (세로 전개) */}
-              {LAYERS.map((layer) => {
-                const Icon = layer.icon;
-                const enabled = enabledLayers.has(layer.id);
-                const isActive = activeLayerId === layer.id;
-                return (
-                  <button
-                    key={layer.id}
-                    type="button"
-                    // ★열기만(확정 아님) — 롤오버·클릭 모두 미리보기 팝오버를 연다.
-                    //   터치엔 hover가 없으므로 탭(click)도 같은 동작이어야 한다.
-                    // ★R1 HIGH-1: onFocus는 제거한다 — Tab 이동만으로 팝오버가 연쇄 전환돼
-                    //   키보드 사용자가 팝오버 안의 확정 버튼에 영영 도달할 수 없었다(마지막
-                    //   레일 항목은 렌더불가라 on/off 자체가 없음). Enter/Space는 onClick을
-                    //   발화하므로 키보드 열기 경로는 그대로다.
-                    onMouseEnter={() => { cancelHoverClose(); openLayerPanel(layer.id); }}
-                    // ★R1 LOW-1: 클릭은 토글 — 레일에서 팝오버를 닫을 수단이 사라졌던 회귀
-                    //   복원. 깜빡임 논거는 hover에만 유효하고 click에는 적용되지 않는다.
-                    // ★R1 HIGH-A: 실브라우저는 click 앞에 mouseenter를 반드시 보낸다. 종전
-                    //   'activeLayerId===id면 닫기'는 hover로 열린 것을 '클릭으로 연 것'으로
-                    //   오인해 첫 클릭이 항상 닫기가 됐다(더블클릭해야 사용 가능). 클릭은
-                    //   hover분을 닫지 말고 '고정(pin)'으로 승격하고, 이미 고정된 것만 닫는다.
-                    onClick={() => {
-                      cancelHoverClose();
-                      const wasPinned = activeLayerId === layer.id && pinnedPanelRef.current === layer.id;
-                      if (wasPinned) { closeLayerPanel(); return; }
-                      pinnedPanelRef.current = layer.id;
-                      openLayerPanel(layer.id);
-                    }}
-                    aria-haspopup="dialog"
-                    aria-expanded={activeLayerId === layer.id}
-                    title={`${layer.label} — 미리보기 열기 (지도 적용은 팝오버에서)`}
-                    className={`grid size-12 shrink-0 place-items-center rounded-2xl border text-[var(--text-secondary)] transition ${
-                      // ★R1 MEDIUM-5: 채움=적용됨(enabled), 링=선택 중(isActive). 종전엔
-                      //   미적용 미리보기에 가장 강한 채움이 배정돼 "보기=적용" 오해를
-                      //   시각 층에서 되살리고 있었다.
-                      enabled
-                        ? `border-[var(--accent-strong)] bg-[var(--accent-strong)] text-[var(--on-primary)] ${isActive ? "ring-2 ring-[var(--accent-strong)] ring-offset-2 ring-offset-[var(--surface)]" : ""}`
-                        : isActive
-                          ? "border-[var(--accent-strong)] bg-[var(--surface-panel)] text-[var(--accent-strong)] ring-2 ring-[var(--accent-strong)]"
-                          : "border-[var(--border-muted)] bg-[var(--surface-panel)] hover:border-[var(--line-strong)] hover:bg-[var(--surface-strong)]"
-                    }`}
-                    aria-label={layer.label}
-                  >
-                    <Icon className="size-5" aria-hidden />
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* 베이스맵 팝오버 — 레일 '베이스맵' 버튼이 여는 패널. 레이어 팝오버와 같은
-                좌표 계약(right-20 top-20)이라 상호배타로 열린다.
-                이력: 독립 absolute 섬(~07-16) → 하단 도크(07-17 겹침 단일화) → 레일 팝오버(07-23).
-                칩 행의 암묵 예약값(152px)은 07-17에 제거됐고 되살리지 않는다(겹침 수정 유지). */}
-            {basemapOpen && (
-              <div
-                ref={basemapPopoverRef}
-                id="satong-basemap-popover"
-                role="dialog"
-                aria-label="베이스맵"
-                onMouseEnter={cancelHoverClose}
-                onMouseLeave={() => { if (pinnedPanelRef.current !== "basemap") setBasemapOpen(false); }}
-                className="absolute right-20 top-20 z-[430] w-[min(360px,calc(100%-112px))] rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] p-4 shadow-[var(--shadow-xl)] backdrop-blur-xl"
-              >
-                <div className="mb-3 flex items-center justify-between">
-                  <h3 className="text-lg font-black text-[var(--text-primary)]">베이스맵</h3>
-                  <button
-                    type="button"
-                    onClick={closeBasemapPanel}
-                    aria-label="베이스맵 닫기"
-                    className="grid size-8 place-items-center rounded-xl border border-[var(--border-muted)] bg-[var(--surface-panel)] text-[var(--text-secondary)] transition hover:bg-[var(--surface-strong)]"
-                  >
-                    <X className="size-4" aria-hidden />
-                  </button>
-                </div>
-                {basemapSwitcherPanel}
-                <p className="mt-3 text-xs font-bold text-[var(--text-tertiary)]">
-                  배경 지도를 바꿔도 선택 필지·레이어는 유지됩니다.
-                </p>
-              </div>
-            )}
-
-            {activeLayer && (
-              <div
-                ref={popoverRef}
-                role="dialog"
-                aria-label={activeLayer.label}
-                onMouseEnter={cancelHoverClose}
-                onMouseLeave={() => { if (pinnedPanelRef.current !== activeLayer.id) setActiveLayerId(null); }}
-                className="absolute right-20 top-20 z-[430] w-[min(360px,calc(100%-112px))] rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] p-4 shadow-[var(--shadow-xl)] backdrop-blur-xl"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className={`rounded-full px-2.5 py-1 text-[11px] font-black ${statusClass(activeLayer.status)}`}>
-                        {statusText(activeLayer.status)}
-                      </span>
-                      <span className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--on-surface-muted)]">
-                        Layer
-                      </span>
-                    </div>
-                    <h3 className="mt-2 text-lg font-black text-[var(--text-primary)]">{activeLayer.label}</h3>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    {/* ★확정(commit) 지점 — 레일에서 강제 토글을 걷어낸 대신, 레이어 자체
-                        on/off를 여기에 둔다(끄기 수단 보존). 렌더 불가 레이어는 노출하지
-                        않는다(지도에 반영되지 않으므로 켜기 약속이 거짓이 된다). */}
-                    {isRenderableSatongMapLayer(activeLayer.id) && !LAYERS_WITHOUT_POPOVER_TOGGLE.has(activeLayer.id) && (
-                      <button
-                        type="button"
-                        onClick={() => toggleLayerEnabled(activeLayer.id)}
-                        aria-pressed={enabledLayers.has(activeLayer.id)}
-                        className={`rounded-xl border px-3 py-1.5 text-xs font-black transition ${
-                          enabledLayers.has(activeLayer.id)
-                            ? "border-[var(--accent-strong)] bg-[var(--accent-strong)] text-[var(--on-primary)]"
-                            : "border-[var(--border-muted)] bg-[var(--surface-panel)] text-[var(--text-secondary)] hover:border-[var(--accent-strong)]/40 hover:text-[var(--accent-strong)]"
-                        }`}
-                        title={enabledLayers.has(activeLayer.id) ? "지도에서 이 레이어 끄기" : "지도에 이 레이어 켜기"}
-                      >
-                        {enabledLayers.has(activeLayer.id) ? "지도 표시 중" : "지도에 표시"}
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={closeLayerPanel}
-                      className="rounded-full p-2 text-[var(--text-hint)] transition hover:bg-[var(--surface-muted)] hover:text-[var(--text-primary)]"
-                      aria-label="레이어 설정 닫기"
-                    >
-                      <X className="size-4" aria-hidden />
-                    </button>
-                  </div>
-                </div>
-                <p className="mt-2 text-sm font-semibold leading-6 text-[var(--text-secondary)]">
-                  {activeLayer.description}
-                </p>
-                <div className="mt-4 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-strong)] p-3">
-                  <p className="text-[11px] font-black uppercase tracking-[0.18em] text-[var(--on-surface-muted)]">
-                    Source
-                  </p>
-                  <p className="mt-1 text-sm font-bold text-[var(--text-secondary)]">{activeLayer.source}</p>
-                </div>
-                <div className="mt-4 grid grid-cols-2 gap-2">
-                  {activeLayer.controls.map((control) => {
-                    // ★R1 후속(레인G R2): 전월세(kind-rent) 모드에서는 토지·상업업무용 전월세
-                    //   API 자체가 없다(MARKET_RENT_TYPES=4종) — 켜봐야 무의미한 유형 토글을
-                    //   비활성화해 "눌러도 0건"이라는 오도적 UX를 원천 차단한다(marketLayer의
-                    //   kind 필터와 이중 방어).
-                    const rentModeActive =
-                      activeLayer.id === "transactions" &&
-                      (layerControls.transactions ?? []).includes("kind-rent");
-                    const rentUnsupported =
-                      rentModeActive &&
-                      control.id.startsWith("type-") &&
-                      !MARKET_RENT_TYPES.some((t) => `type-${t.key}` === control.id);
-                    const effectiveMapEffect = control.mapEffect && !rentUnsupported;
-                    return (
-                      <button
-                        key={control.id}
-                        type="button"
-                        disabled={!effectiveMapEffect}
-                        onClick={() => handleLayerControlClick(activeLayer.id, control)}
-                        title={
-                          rentUnsupported
-                            ? "전월세는 아파트·연립다세대·단독다가구·오피스텔만 지원합니다(토지·상업업무용 전월세 API 없음)"
-                            : control.mapEffect
-                              ? `${control.label} 지도 반영`
-                              : control.description || "공식 데이터 소스 연결 후 활성화"
-                        }
-                        className={`rounded-2xl border px-3 py-2 text-xs font-black transition ${
-                          layerControls[activeLayer.id]?.includes(control.id) && !rentUnsupported
-                            ? "border-[var(--accent-strong)] bg-[var(--accent-strong)] text-[var(--on-primary)]"
-                            : effectiveMapEffect
-                              ? "border-[var(--border-muted)] bg-[var(--surface-panel)] text-[var(--text-secondary)] hover:border-[var(--accent-strong)]/40 hover:bg-[var(--accent-strong)]/10 hover:text-[var(--accent-strong)]"
-                              : "cursor-not-allowed border-[var(--border-muted)] bg-[var(--surface-muted)] text-[var(--text-hint)]"
-                        }`}
-                      >
-                        {control.label}
-                      </button>
-                    );
-                  })}
-                </div>
-                {!isRenderableSatongMapLayer(activeLayer.id) ? (
-                  <div className="mt-4 rounded-2xl bg-[var(--status-warning)]/10 px-3 py-2 text-xs font-bold leading-5 text-[var(--status-warning)]">
-                    이 레이어는 아직 공식 데이터 소스와 지도 렌더러가 연결되지 않아 지도에 표시하지 않습니다.
-                  </div>
-                ) : activeLayer.status !== "active" && (
-                  <div className="mt-4 rounded-2xl bg-[var(--status-warning)]/10 px-3 py-2 text-xs font-bold leading-5 text-[var(--status-warning)]">
-                    선택 필지의 실제 속성 데이터가 확보된 범위에서만 지도에 반영됩니다. 무자료 필지는 추정 표시하지 않습니다.
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* ── WS-C 필지 상세 패널 — 개요·보유 속성(무자료 '-' 정직표기)·산출물 원클릭 퍼널.
-                 레이어 패널과 같은 슬롯(상호 배타 — 단일 팝오버 원칙). ── */}
-            {/* ★렌더 가드도 3패널 전부를 배타 — 상태 봉합(근원 함수)과 이중 방어. 좌표가
-                같은 형제가 늘 때 가드가 따라오지 않으면 겹침이 다시 샌다(07-17 교훈). */}
-            {detailFeature && !activeLayer && !basemapOpen && (
-              <div
-                data-testid="parcel-detail-panel"
-                className="absolute right-20 top-20 z-[430] w-[min(360px,calc(100%-112px))] rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] p-4 shadow-[var(--shadow-xl)] backdrop-blur-xl"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <span className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--on-surface-muted)]">
-                      Parcel
-                    </span>
-                    <h3 className="mt-1 truncate text-lg font-black text-[var(--text-primary)]">
-                      {detailFeature.address?.split(/\s+/).slice(-2).join(" ") || detailFeature.address || "필지"}
-                    </h3>
-                    <p className="truncate text-xs font-semibold text-[var(--text-hint)]">{detailFeature.address}</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setDetailFeature(null)}
-                    className="rounded-full p-2 text-[var(--text-hint)] transition hover:bg-[var(--surface-muted)] hover:text-[var(--text-primary)]"
-                    aria-label="필지 상세 닫기"
-                  >
-                    <X className="size-4" aria-hidden />
-                  </button>
-                </div>
-
-                <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-strong)] p-3 text-xs">
-                  <div>
-                    <dt className="font-black text-[var(--text-hint)]">면적</dt>
-                    <dd className="mt-0.5 font-mono font-bold text-[var(--text-primary)]">{formatArea(detailFeature.areaSqm, 0)}</dd>
-                  </div>
-                  <div>
-                    <dt className="font-black text-[var(--text-hint)]">용도지역</dt>
-                    <dd className="mt-0.5 font-bold text-[var(--text-primary)]">
-                      {detailFeature.zoneType || "-"}
-                      {detailFeature.zoneType2 ? ` · ${detailFeature.zoneType2}` : ""}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="font-black text-[var(--text-hint)]">지목</dt>
-                    <dd className="mt-0.5 font-bold text-[var(--text-primary)]">{detailFeature.jimok || "-"}</dd>
-                  </div>
-                  <div>
-                    <dt className="font-black text-[var(--text-hint)]">개별공시지가</dt>
-                    <dd className="mt-0.5 font-mono font-bold text-[var(--text-primary)]">
-                      {detailFeature.officialPricePerSqm
-                        ? `${Math.round(detailFeature.officialPricePerSqm).toLocaleString()}원/㎡`
-                        : "-"}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="font-black text-[var(--text-hint)]">건물 노후도</dt>
-                    <dd className="mt-0.5 font-bold text-[var(--text-primary)]">
-                      {detailFeature.buildingAgeYears != null
-                        ? `${detailFeature.buildingAgeYears}년${detailFeature.builtYear ? ` (준공 ${detailFeature.builtYear})` : ""}`
-                        : detailFeature.ageStatus === "no_building"
-                          ? "나대지·건물 없음"
-                          : detailFeature.ageStatus === "no_approval_date"
-                            ? "사용승인일 미기재(연식 미상)" // ★R1: 백엔드 4번째 상태 — 나대지와 구분(정직)
-                            : detailFeature.ageStatus === "lookup_failed"
-                              ? "조회 실패"
-                              : detailFeature.ageStatus === "skipped_bulk"
-                                ? "대량 선택 생략"
-                                : "-"}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="font-black text-[var(--text-hint)]">PNU</dt>
-                    <dd className="mt-0.5 truncate font-mono font-bold text-[var(--text-secondary)]" title={detailFeature.pnu || undefined}>
-                      {detailFeature.pnu || "-"}
-                    </dd>
-                  </div>
-                  {/* ── I7 규제 요약 — 실효 한도·현황·개발여력 인라인(경계 응답 서버 산정치 —
-                       분석캐시 불요·#387). 미산정 '-' 정직 표기, 전항 미상이면 안내 1줄.
-                       상세 산출·근거는 아래 퍼널의 '종합 부지분석'이 담당(중복 CTA 배제). ── */}
-                  <div className="col-span-2 border-t border-[var(--border-muted)] pt-2">
-                    <dt className="font-black text-[var(--text-hint)]">규제 요약(실효 한도 — 7계층 min)</dt>
-                    <dd className="mt-1 grid grid-cols-3 gap-x-2 text-center">
-                      <div>
-                        <p className="text-[10px] font-bold text-[var(--text-hint)]">실효 용적률</p>
-                        <p className="font-mono font-bold text-[var(--text-primary)]">
-                          {detailFeature.effectiveFarPct != null ? `${Math.round(detailFeature.effectiveFarPct)}%` : "-"}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-[10px] font-bold text-[var(--text-hint)]">실효 건폐율</p>
-                        <p className="font-mono font-bold text-[var(--text-primary)]">
-                          {detailFeature.effectiveBcrPct != null ? `${Math.round(detailFeature.effectiveBcrPct)}%` : "-"}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-[10px] font-bold text-[var(--text-hint)]">현황 용적률</p>
-                        <p className="font-mono font-bold text-[var(--text-primary)]">
-                          {detailFeature.currentFarPct != null ? `${Math.round(detailFeature.currentFarPct)}%` : "-"}
-                        </p>
-                      </div>
-                    </dd>
-                    {(() => {
-                      const ratio = capacityRatio(detailFeature.effectiveFarPct, detailFeature.currentFarPct);
-                      if (ratio == null) {
-                        return detailFeature.effectiveFarPct == null && detailFeature.effectiveBcrPct == null && detailFeature.currentFarPct == null ? (
-                          <p className="mt-1 text-[10px] font-semibold text-[var(--text-hint)]">
-                            산정 자료 미확보 — 용도지역·건축물대장 확보 시 자동 표시(상세는 아래 종합 부지분석)
-                          </p>
-                        ) : null;
-                      }
-                      return (
-                        <p className={`mt-1 font-mono text-[11px] font-black ${ratio < 0 ? "text-[#a855f7]" : "text-[var(--status-success)]"}`}>
-                          {ratio < 0
-                            // ★R1 MAJOR: -ratio*100은 '실효 대비 상대%'라 %p 라벨이 오독(초과 절반
-                            //   과소 표기 — 200/260에서 "30%p"로 읽힘). 용적률 초과는 점차이가 관행:
-                            //   현황−실효 = 진짜 %p(260−200=60%p). ratio<0이면 두 값 모두 non-null.
-                            ? `한도 초과 — 현황이 실효 한도를 ${Math.round((detailFeature.currentFarPct as number) - (detailFeature.effectiveFarPct as number))}%p 상회`
-                            : `개발여력 ${Math.round(ratio * 100)}% (실효 대비 잔여)`}
-                        </p>
-                      );
-                    })()}
-                  </div>
-
-                  {detailFeature.officialPricePerSqm && detailFeature.areaSqm ? (
-                    <div className="col-span-2 border-t border-[var(--border-muted)] pt-2">
-                      <dt className="font-black text-[var(--text-hint)]">공시지가 총액(참고 — 공시지가×면적)</dt>
-                      <dd className="mt-0.5 font-mono font-bold text-[var(--accent-strong)]">
-                        {Math.round((detailFeature.officialPricePerSqm * detailFeature.areaSqm) / 10_000).toLocaleString()}만원
-                      </dd>
-                    </div>
-                  ) : null}
-                </dl>
-
-                {/* 원클릭 산출물 퍼널 — Output Dock과 동일 공용통로(handleOutputClick: 프로젝트 연결 규약 유지) */}
-                <p className="mt-3 text-[11px] font-black uppercase tracking-[0.18em] text-[var(--on-surface-muted)]">
-                  이 선택으로 바로 실행
-                </p>
-                <div className="mt-2 grid grid-cols-2 gap-2">
-                  {outputActions.map((action) => {
-                    // ★UX A4(동일 패턴 전파): 이 미니 퍼널은 Output Dock과 달리 사유 문구가
-                    //   아예 없었다(opacity만) — aria-disabled+title+캡션을 동일하게 인접 배치.
-                    const miniDisabled = selectedParcels.length === 0;
-                    return (
-                      <button
-                        key={action.id}
-                        type="button"
-                        disabled={miniDisabled}
-                        aria-disabled={miniDisabled}
-                        title={miniDisabled ? "필지를 하나 이상 선택하면 산출물 생성 경로가 활성화됩니다." : undefined}
-                        onClick={() => void handleOutputClick(action)}
-                        className="rounded-2xl border border-[var(--border-muted)] bg-[var(--surface-panel)] px-3 py-2 text-left text-xs font-black text-[var(--text-primary)] transition hover:border-[var(--accent-strong)]/40 hover:bg-[var(--accent-strong)]/10 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {action.label}
-                        {miniDisabled && (
-                          <span className="mt-0.5 flex items-center gap-1 text-[9px] font-bold underline decoration-dotted underline-offset-2">
-                            <AlertTriangle className="size-2.5 shrink-0" aria-hidden />
-                            필지 선택 필요
-                          </span>
-                        )}
-                      </button>
-                    );
-                  })}
-                  {/* I3: 카카오 로드뷰(현장 확인) — URL 계약 라이브 검증(302→파노라마). 좌표 없으면 미표시(정직). */}
-                  {(() => {
-                    const roadview = kakaoRoadviewUrl(detailFeature.lat, detailFeature.lon);
-                    return roadview ? (
-                      <a
-                        href={roadview}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="col-span-2 rounded-2xl border border-[var(--border-muted)] bg-[var(--surface-panel)] px-3 py-2 text-left text-xs font-black text-[var(--text-primary)] transition hover:border-[var(--accent-strong)]/40 hover:bg-[var(--accent-strong)]/10"
-                      >
-                        <span className="inline-flex items-center gap-1">
-                          <Route className="size-3.5" aria-hidden />카카오 로드뷰로 현장 보기 ↗
-                        </span>
-                      </a>
-                    ) : null;
-                  })()}
-                </div>
-                <p className="mt-3 font-mono text-[9px] text-[var(--text-hint)]">
-                  출처 VWorld·국토교통부 공간정보 — 무자료 항목은 &quot;-&quot;로 표기(추정 금지)
-                </p>
-              </div>
-            )}
           </div>
 
           <div className="mt-3 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-elevated)] p-3 text-[var(--text-primary)]">
