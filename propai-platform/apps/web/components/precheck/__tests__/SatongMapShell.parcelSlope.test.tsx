@@ -328,6 +328,38 @@ describe("SatongMapShell 경사도 온디맨드 배선(W2)", () => {
     expect(cached?.earthwork).toBeUndefined();
   });
 
+  it("★⑩ R2 갭: 인플라이트 잠금은 **전역 1건**이다 — 다른 필지 조회도 막힌다", async () => {
+    // ★이 테스트가 없으면 누군가 "필지별로 병렬 허용해도 되지 않나"라며 잠금을 per-key Set으로
+    //   바꿔도 아무도 못 잡는다(R2가 변이로 실증: 그 완화가 기존 11건을 전부 통과했다).
+    //   1req/s 공개 제한이 이 설계의 존재 이유라 전역성 자체를 회귀락으로 고정한다.
+    seedTwoParcels();
+    render(<SatongMapShell locale="ko" />);
+
+    // A 조회 시작(응답 보류)
+    fireEvent.click(screen.getByText("대보리 산1-1"));
+    fireEvent.click(screen.getByTestId("parcel-slope-request"));
+    expect(terrain.calls).toHaveLength(1);
+
+    // B로 전환 — B는 미조회라 버튼이 뜬다. 그 버튼을 실제로 누른다.
+    fireEvent.click(screen.getByText("대보리 산2-2"));
+    const bButton = screen.getByTestId("parcel-slope-request");
+    // 다른 필지 조회 중임을 고지한다(눌러도 무시되는데 피드백이 없으면 죽은 버튼으로 보인다).
+    expect(screen.getByTestId("parcel-slope-busy-other")).toBeInTheDocument();
+
+    fireEvent.click(bButton);
+    // ★전역 잠금이므로 **다른 필지여도** 요청이 나가지 않는다(per-key 완화면 2가 된다).
+    expect(terrain.calls).toHaveLength(1);
+
+    // A의 응답이 도착하면 잠금이 풀리고, 그 후엔 B 조회가 정상 발사된다.
+    await act(async () => {
+      terrain.resolve?.(RESULT_A);
+    });
+    expect(screen.queryByTestId("parcel-slope-busy-other")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("parcel-slope-request"));
+    expect(terrain.calls).toHaveLength(2);
+    expect(terrain.calls[1]).toEqual({ pnu: PNU_B, address: ADDR_B });
+  });
+
   it("★⑥ 계정 격리 — 로그아웃 와이프가 경사도 뷰 캐시를 지운다", () => {
     writeSatongViewCache<TerrainResult>(
       SATONG_PARCEL_SLOPE_KEY,

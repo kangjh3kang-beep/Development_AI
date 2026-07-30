@@ -45,11 +45,14 @@ export function ParcelSlopeSection({
   status,
   result,
   errorMessage,
+  otherRequestInFlight,
   onRequest,
 }: {
   status: ParcelSlopeStatus;
   result?: TerrainResult | null;
   errorMessage?: string | null;
+  /** 다른 필지의 조회가 진행 중 — 전역 1건 잠금이라 지금 누르면 무시된다는 사실을 고지한다. */
+  otherRequestInFlight?: boolean;
   onRequest: () => void;
 }) {
   const slope = result?.slope;
@@ -80,6 +83,16 @@ export function ParcelSlopeSection({
         // ★조회 전에는 숫자를 만들지 않는다 — 비용(1req/s)과 이유를 함께 밝힌다.
         <p className="mt-1 text-[10px] font-semibold text-[var(--text-hint)]">
           미조회 — 표고(SRTM 30m) 조회에 약 1초가 걸려 필요할 때만 실행합니다.
+        </p>
+      ) : null}
+
+      {otherRequestInFlight ? (
+        // ★전역 1건 잠금이라 지금 누르면 조용히 무시된다 — 그 사실을 밝힌다(죽은 버튼 방지).
+        <p
+          data-testid="parcel-slope-busy-other"
+          className="mt-1 text-[10px] font-semibold text-[var(--status-warning)]"
+        >
+          다른 필지 경사도를 조회하는 중입니다 — 끝난 뒤 다시 시도해 주세요.
         </p>
       ) : null}
 

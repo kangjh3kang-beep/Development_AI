@@ -762,6 +762,9 @@ export function SatongMapShell({
   //   A로 복귀할 때 캐시에 값이 없어 idle로 재설정되고, 다시 뜬 버튼을 눌러도 잠금이 걸려
   //   **아무 반응 없는 죽은 버튼**이 된다(R1 MEDIUM). 키를 알면 로딩 상태를 복원할 수 있다.
   const slopeInFlightKeyRef = useRef<string | null>(null);
+  // 표시용 busy — 동기 가드는 위 ref가 담당하고(렌더 무관), 이 state는 "다른 필지 조회 중"
+  //   고지에만 쓴다. 버튼은 계속 눌 수 있게 남긴다(가드 자체를 테스트가 관통해야 하므로).
+  const [slopeBusy, setSlopeBusy] = useState(false);
 
   /** 상세 대상이 바뀔 때 경사도 표시를 그 필지 기준으로 재설정(캐시 적중이면 즉시 표시). */
   const syncSlopeForFeature = useCallback((feature: SatongMapFeature | null) => {
@@ -807,6 +810,7 @@ export function SatongMapShell({
       return;
     }
     slopeInFlightKeyRef.current = key;
+    setSlopeBusy(true);
     setSlopeStatus("loading");
     setSlopeError(null);
     try {
@@ -850,6 +854,7 @@ export function SatongMapShell({
       }
     } finally {
       slopeInFlightKeyRef.current = null;
+      setSlopeBusy(false);
     }
   }, []);
 
@@ -2815,6 +2820,9 @@ export function SatongMapShell({
               status={slopeStatus}
               result={slopeResult}
               errorMessage={slopeError}
+              // ★다른 필지 조회가 진행 중임을 고지 — 전역 1건 잠금이라 눌러도 무시되는데
+              //   아무 피드백이 없으면 "죽은 버튼"으로 보인다(R2 권고 2).
+              otherRequestInFlight={slopeBusy && slopeStatus !== "loading"}
               onRequest={requestParcelSlope}
             />
 
