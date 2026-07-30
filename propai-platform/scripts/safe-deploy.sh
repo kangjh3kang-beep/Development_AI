@@ -96,7 +96,24 @@ cd "$COMPOSE_DIR" || { status "FAIL cd-compose"; exit 1; }
 build_one() {
   local svc=$1
   status "BUILD $svc @ $HEAD"
+  # ★롤백 경로 확보 — 새 빌드가 :oracle 을 덮기 전 세대를 :prev 로 승계한다.
+  #   rollback_one() 은 배포 '실패' 시에만 동작하는 내부 함수(지역변수 rb)라, 배포가 성공한 뒤
+  #   결함을 발견했을 때 되돌릴 이미지가 없었다. :prev 는 태그가 있으므로 dangling prune 에도 생존한다.
+  #   ★빌드 '후' ID 비교가 핵심 — 빌드 '전' 무조건 태깅하면 같은 커밋 재배포 시 레이어 캐시로
+  #   동일 ID 가 나와 prev==oracle 이 되고 롤백 자산이 조용히 무효화된다(168 에서 실측·2026-07-30).
+  local old_img_id new_img_id
+  old_img_id=$(docker image inspect "propai-${svc}:oracle" --format '{{.Id}}' 2>/dev/null || echo "")
   DOCKER_BUILDKIT=0 compose build "$svc" >>"$LOG" 2>&1 || { status "FAIL build-$svc"; return 1; }
+  new_img_id=$(docker image inspect "propai-${svc}:oracle" --format '{{.Id}}' 2>/dev/null || echo "")
+  if [ -n "$old_img_id" ] && [ "$old_img_id" != "$new_img_id" ]; then
+    if docker image tag "$old_img_id" "propai-${svc}:prev" >>"$LOG" 2>&1; then
+      log "[$svc] prev 승계: ${old_img_id:0:20} (rollback 가능)"
+    else
+      log "[$svc] prev 태깅 실패 — 배포는 계속(롤백 자산만 미갱신)"
+    fi
+  else
+    log "[$svc] prev 유지(이미지 내용 동일 또는 최초 빌드)"
+  fi
 }
 case "$TARGET" in
   web)  build_one web  || exit 1 ;;
