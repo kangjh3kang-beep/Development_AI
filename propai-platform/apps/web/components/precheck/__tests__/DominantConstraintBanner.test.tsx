@@ -102,6 +102,36 @@ describe("DominantConstraintBanner 표시 계약", () => {
     expect(screen.getByTestId("dominant-constraint-height-incomplete")).toBeInTheDocument();
   });
 
+  it("★③-b R1 M-5: 반영/미반영 범위를 **상시** 고지한다(incomplete=false에도)", () => {
+    // 정북일조 단독(incomplete=false)이 가장 위험하다 — "높이 상한 30m"이 확정처럼 읽힌다.
+    render(
+      <DominantConstraintBanner
+        constraint={{
+          headline: null,
+          ranked: [],
+          height: {
+            governing_m: 30,
+            governing_source: "정북일조",
+            incomplete: false,
+            coverage_note:
+              "반영: 정북일조(적용 용도지역) + 지정 확인된 높이제약 항목. 미반영: 가로구역별 최고높이(건축법 §60)·지구단위계획 지정높이·공동주택 채광방향 이격(시행령 §86②)·조례 최고높이 — 별도 확인 필요.",
+            items: [{ source: "정북일조", limit_m: 30, basis: "건축법 제61조" }],
+          },
+        }}
+      />,
+    );
+
+    // 라벨이 완전성을 주장하지 않는다.
+    expect(screen.getByText("높이 상한(반영분)")).toBeInTheDocument();
+    const coverage = screen.getByTestId("dominant-constraint-height-coverage");
+    expect(coverage.textContent).toContain("미반영");
+    expect(coverage.textContent).toContain("가로구역");
+    // "일부 미반영" 배지는 여전히 없다(탐지된 미보유 항목이 없으므로) — 두 고지는 역할이 다르다.
+    expect(
+      screen.queryByTestId("dominant-constraint-height-incomplete"),
+    ).not.toBeInTheDocument();
+  });
+
   it("④ 제약 0건(null·빈 값) → 아무것도 렌더하지 않는다(빈 배너 금지)", () => {
     const { container: c1 } = render(<DominantConstraintBanner constraint={null} />);
     expect(c1).toBeEmptyDOMElement();

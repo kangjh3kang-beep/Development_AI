@@ -36,8 +36,25 @@ _DISTRICTS = ["군사시설보호구역(통제보호구역)", "비행안전구�
 # ══════════════════════════════════════════════════════════════════════════
 # ① 지도 경로 — /zoning/parcel-boundaries features[].dominant_constraint
 # ══════════════════════════════════════════════════════════════════════════
-def _stub_boundary_io(monkeypatch, *, districts: list[str], zone_type: str, jimok: str = "임야"):
-    """VWorld·건축물대장·조례를 hermetic 대역. 지배 제약 판정은 실물이 돈다."""
+def _stub_boundary_io(
+    monkeypatch,
+    *,
+    districts: list[str],
+    zone_type: str,
+    jimok: str = "임야",
+    ned_districts: list[str] | None = None,
+):
+    """VWorld·건축물대장·조례를 hermetic 대역. 지배 제약 판정은 실물이 돈다.
+
+    ★R1 HIGH-2: 두 designation 출처를 **API별로 분리**해 대역한다.
+      districts     → VWorld UD802/UD803 = 국토계획법 **용도지구·용도구역**
+                      (고도지구·경관지구·방화지구·개발제한구역 등)
+      ned_districts → NED getLandUseAttr = **개별법 지역지구**
+                      (군사시설보호구역·통제보호구역·비행안전구역·상수원보호구역 등)
+    종전 스텁은 UD802/803 자리에 군사 명칭을 넣어 **그 API가 반환할 수 없는 값**으로 초록을
+    만들었다 — 배선(파이프)은 증명되지만 라이브에서는 대표 화면(호미곶 배너)이 비어 있게 된다.
+    이제 각 출처가 실제로 낼 수 있는 값만 넣고, 군사 배너는 NED 스텁이 있을 때만 뜨게 고정한다.
+    """
     import apps.api.routers.auto_zoning as az
     from apps.api.app.services.external_api.building_registry_service import (
         BuildingRegistryService,
@@ -59,11 +76,17 @@ def _stub_boundary_io(monkeypatch, *, districts: list[str], zone_type: str, jimo
         return None, "no_data"
 
     async def _fake_districts(self, pnu):  # noqa: ANN001
+        """UD802/UD803 — 용도지구·용도구역만(개별법 지역지구는 이 레이어에 없다)."""
         return [{"name": n} for n in districts]
+
+    async def _fake_land_use_plan(self, pnu):  # noqa: ANN001
+        """NED getLandUseAttr — 개별법 지역지구(군사·비행안전·상수원 등)."""
+        return [{"district_name": n} for n in (ned_districts or [])]
 
     async def _fake_ordinance(self, address, zone_type_, force_refresh=False):  # noqa: ANN001
         return {}
 
+    monkeypatch.setattr(VWorldService, "get_land_use_plan", _fake_land_use_plan, raising=True)
     monkeypatch.setattr(VWorldService, "get_land_info", _fake_land_info, raising=True)
     monkeypatch.setattr(
         VWorldService, "get_land_characteristics", _fake_land_characteristics, raising=True,
@@ -77,8 +100,13 @@ def _stub_boundary_io(monkeypatch, *, districts: list[str], zone_type: str, jimo
 
 
 async def test_parcel_boundaries_exposes_dominant_constraint(monkeypatch):
-    """★배선①: 지도 경계 응답의 각 feature가 dominant_constraint를 싣고 나온다."""
-    az = _stub_boundary_io(monkeypatch, districts=_DISTRICTS, zone_type="보전관리지역")
+    """★배선①: 지도 경계 응답의 각 feature가 dominant_constraint를 싣고 나온다.
+
+    호미곶 라이브 케이스 — 군사·비행안전은 **NED**(개별법 지역지구)에서 온다.
+    """
+    az = _stub_boundary_io(
+        monkeypatch, districts=[], zone_type="보전관리지역", ned_districts=_DISTRICTS,
+    )
 
     result = await az.parcel_boundaries(az.ParcelBoundariesRequest(parcels=[{"pnu": _PNU}]))
 
@@ -120,9 +148,54 @@ async def test_parcel_boundaries_residential_gets_numeric_sunlight_height(monkey
     assert h["incomplete"] is True
 
 
+async def test_parcel_boundaries_needs_ned_source_for_military(monkeypatch):
+    """★R1 HIGH-2 회귀락: **UD802/803만으로는 군사 배너가 뜨지 않는다**는 사실을 명시 고정.
+
+    지배 제약 입력을 다시 용도지구·용도구역만으로 좁히면(=NED 수집 배선을 되돌리면) 이 테스트가
+    실패한다. 종전 스텁은 UD802/803 자리에 군사 명칭을 넣어 이 구조적 갭을 가리고 있었다.
+    """
+    az = _stub_boundary_io(
+        monkeypatch, districts=_DISTRICTS, zone_type="보전관리지역", ned_districts=[],
+    )
+    only_ud = await az.parcel_boundaries(az.ParcelBoundariesRequest(parcels=[{"pnu": _PNU}]))
+    # UD802/803에 군사 명칭이 들어오는 상황 자체는 실재하지 않지만, 만약 들어오면 판정은
+    # 정상 동작해야 한다(입력원 확장이 판정 로직을 우회하지 않는다는 확인).
+    assert only_ud["features"][0]["dominant_constraint"] is not None
+
+    # 실제 분포: 군사는 NED에만 있고 UD802/803은 비어 있다 → NED 수집이 없으면 배너 0건.
+    az2 = _stub_boundary_io(
+        monkeypatch, districts=[], zone_type="보전관리지역", ned_districts=_DISTRICTS,
+    )
+    with_ned = await az2.parcel_boundaries(az2.ParcelBoundariesRequest(parcels=[{"pnu": _PNU}]))
+    dc = with_ned["features"][0]["dominant_constraint"]
+    assert dc is not None and "통제보호구역" in dc["headline"], (
+        "NED(개별법 지역지구) 수집이 지배 제약 입력에 도달하지 않는다 — 라이브 배너 무음 소실"
+    )
+
+
+async def test_parcel_boundaries_merges_both_designation_sources(monkeypatch):
+    """두 출처(NED 개별법 + UD802/803 용도지구)가 **합집합**으로 랭킹된다."""
+    az = _stub_boundary_io(
+        monkeypatch,
+        districts=["고도지구"],                      # 용도지구
+        zone_type="보전관리지역",
+        ned_districts=["군사시설보호구역(통제보호구역)"],  # 개별법
+    )
+
+    dc = (await az.parcel_boundaries(
+        az.ParcelBoundariesRequest(parcels=[{"pnu": _PNU}])
+    ))["features"][0]["dominant_constraint"]
+
+    names = [r["name"] for r in dc["ranked"]]
+    assert "군사시설보호구역(통제보호구역)" in names, f"NED 출처 누락: {names}"
+    assert "고도지구" in names, f"UD802 출처 누락: {names}"
+
+
 async def test_parcel_boundaries_unconstrained_parcel_has_no_banner(monkeypatch):
     """★배선①-c: 제약 0건 필지는 dominant_constraint=None(빈 배너 금지)."""
-    az = _stub_boundary_io(monkeypatch, districts=[], zone_type="보전관리지역")
+    az = _stub_boundary_io(
+        monkeypatch, districts=[], zone_type="보전관리지역", ned_districts=[],
+    )
 
     result = await az.parcel_boundaries(az.ParcelBoundariesRequest(parcels=[{"pnu": _PNU}]))
 

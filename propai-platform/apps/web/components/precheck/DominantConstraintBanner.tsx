@@ -28,6 +28,9 @@ function severityColor(severity: string | null | undefined): string {
       return "var(--status-warning)";
     case "보통":
       return "var(--status-warning)";
+    case "낮음":
+      // ★R1 LOW: "낮음"은 실재하는 제약(경관 심의 등)이므로 '미상'과 같은 회색이면 안 된다.
+      return "var(--status-info)";
     default:
       return "var(--text-hint)";
   }
@@ -97,7 +100,9 @@ export function DominantConstraintBanner({
           <div className="flex items-center gap-1.5">
             <Ruler className="size-3.5 shrink-0 text-[var(--text-hint)]" aria-hidden />
             <span className="text-[11px] font-black uppercase tracking-[0.14em] text-[var(--text-hint)]">
-              높이 상한
+              {/* ★R1 M-5: "높이 상한"은 완전성을 주장한다 — 실제로는 반영 범위가 좁다.
+                   라벨을 "반영분"으로 좁히고 아래 coverage_note로 미반영 목록을 상시 고지한다. */}
+              높이 상한(반영분)
             </span>
             {height?.governing_m != null ? (
               <>
@@ -149,6 +154,17 @@ export function DominantConstraintBanner({
               </li>
             ))}
           </ul>
+          {/* ★상시 고지(R1 M-5) — incomplete=False라도 "이게 전부"가 아니다. 조건부로 달면
+               정북일조 단독 케이스에서 "높이 상한 30m"이 확정처럼 읽힌다. 문구는 서버(SSOT)가
+               소유하고 화면은 옮기기만 한다. */}
+          {height?.coverage_note ? (
+            <p
+              data-testid="dominant-constraint-height-coverage"
+              className="mt-1.5 break-keep border-t border-[var(--border-muted)] pt-1.5 text-[10px] font-semibold leading-relaxed text-[var(--text-hint)]"
+            >
+              {height.coverage_note}
+            </p>
+          ) : null}
         </div>
       ) : null}
     </div>

@@ -49,6 +49,28 @@ _SUNLIGHT_ZONE_KEYWORDS = ("전용주거지역", "일반주거지역")
 _SUNLIGHT_BASIS = "건축법 제61조·시행령 제86조 제1항(정북 인접대지경계선 일조 확보)"
 _NO_NUMBER_NOTE = "지정됨 — 수치는 조례 확인 필요(플랫폼 미보유)"
 
+# ★R1 MEDIUM-5: `incomplete`는 "탐지된 지정 중 수치 미보유"만 뜻한다. 애초에 items에 들어오지
+#   않는 높이 규정군이 있으므로, incomplete=False라도 "이게 전부"가 아니다. 그 사실을 **상시**
+#   고지한다(정직 배지가 아니라 상시 문구여야 한다 — 조건부면 거짓 완전성이 새 나간다.
+#   W2-b 시세 방법론 배지의 '상시고지' 선례와 동일 패턴).
+HEIGHT_COVERAGE_NOTE = (
+    "반영: 정북일조(적용 용도지역) + 지정 확인된 높이제약 항목. "
+    "미반영: 가로구역별 최고높이(건축법 §60)·지구단위계획 지정높이·"
+    "공동주택 채광방향 이격(시행령 §86②)·조례 최고높이 — 별도 확인 필요."
+)
+
+# ★R1 MEDIUM-6: bbox 남북깊이 근사의 오차는 **양방향**이다.
+#   과대 — bbox는 폴리곤 전체 남북 최대폭이라 부정형(L형·사선) 필지에서 실제 배치 열의 정북
+#          거리보다 크게 잡힌다(2d 상한이 실현 불가하게 커짐).
+#   과소 — 북측이 도로·공원·하천 등 공지면 시행령 §86 ⑥로 인접대지경계선이 반대편으로 밀려
+#          실제 허용 높이가 더 높다.
+#   한쪽만 고지하면(종전 "낮아질 수 있음") 반대 방향 오차를 숨긴다.
+_SUNLIGHT_APPROX_NOTE = (
+    "직사각 근사 — 부정형·실제 배치로 낮아질 수 있고, 북측이 도로·공지면 완화되어 높아질 수 있음"
+)
+# 이 값을 넘으면 폴리곤이 직사각에서 크게 벗어남(1 - 실면적/bbox면적). dims_from_polygon 산출.
+IRREGULARITY_WARN = 0.25
+
 
 def slope_severity(slope_pct: float | None) -> str | None:
     """평균 경사도(%) → severity 라벨. 미상(None)·비수치는 None(무날조 — 없는 값 만들지 않음)."""
@@ -65,6 +87,8 @@ def slope_severity(slope_pct: float | None) -> str | None:
 def _build_height(
     north_distance_m: float | None,
     candidates: list[dict[str, Any]],
+    *,
+    irregularity: float | None = None,
 ) -> dict[str, Any] | None:
     """높이 상한 블록 — **수치 보유 항목만** min()에 참여시키고, 미보유는 정직 표기로 남긴다.
 
@@ -74,24 +98,37 @@ def _build_height(
 
     # ① 정북일조 — 수치 산출 가능(공용 산식). 남북깊이는 호출측이 용도지역 게이트를 통과한
     #    경우에만 넘겨준다(north_distance_for_sunlight).
-    if north_distance_m is not None and float(north_distance_m) > 0:
+    if north_distance_m is not None and north_distance_m > 0:
         d = float(north_distance_m)
+        _note = f"필지 남북깊이 {round(d, 1)}m 기준 상한({_SUNLIGHT_APPROX_NOTE})"
+        # 부정형 필지는 bbox 남북깊이가 실제 배치 가능 열의 정북거리를 크게 과대평가한다 —
+        #   dims_from_polygon이 이미 산출하는 irregularity를 버리지 않고 경고로 옮긴다(R1 M-6).
+        if irregularity is not None and irregularity >= IRREGULARITY_WARN:
+            _note += (
+                f" · 부정형 필지(형상 불규칙도 {round(irregularity * 100)}%) — "
+                "bbox 남북깊이가 실제 배치 정북거리를 과대평가할 수 있음"
+            )
         items.append({
             "source": "정북일조",
             "limit_m": round(max_height_for_north_distance_m(d), 1),
             "basis": _SUNLIGHT_BASIS,
-            # 근사임을 문구로 명시 — 실제 배치·인접지 관계(북측이 도로·공지면 완화)로 달라진다.
-            "note": f"필지 남북깊이 {round(d, 1)}m 기준 상한(직사각 근사 — 실제 배치로 낮아질 수 있음)",
+            "note": _note,
         })
 
     # ② 높이를 제한하지만 플랫폼이 수치를 못 가진 지정 — 숫자 대신 "확인 필요"를 남긴다.
+    #    ★R1 HIGH-1: 어느 키워드 때문에 높이제약인지(height_keywords)를 함께 남긴다 — 결합
+    #      designation("군사기지 및 군사시설 보호구역(비행안전제6구역)")에서 대표 severity 키워드와
+    #      높이제약 키워드가 다르므로, 이름만으론 왜 걸렸는지 읽히지 않는다.
     for cand in candidates:
         if cand.get("height_constraining"):
+            _why = [k for k in (cand.get("height_keywords") or ()) if k]
             items.append({
                 "source": cand["name"],
                 "limit_m": None,
                 "basis": None,
-                "note": _NO_NUMBER_NOTE,
+                "note": (
+                    f"{'·'.join(_why)} 해당 — {_NO_NUMBER_NOTE}" if _why else _NO_NUMBER_NOTE
+                ),
             })
 
     if not items:
@@ -105,6 +142,9 @@ def _build_height(
         # ★수치 미보유 항목이 하나라도 있으면 governing_m은 최종값이 아니다 — 화면이 "일부
         #   미반영" 배지를 띄우는 근거. 이 플래그를 빼면 18m가 확정처럼 읽힌다.
         "incomplete": any(i["limit_m"] is None for i in items),
+        # ★상시 고지(R1 M-5) — incomplete=False라도 "이게 전부"가 아니다. 조건부로 달면
+        #   정북일조 단독 케이스에서 거짓 완전성("높이 상한 30m")이 그대로 새 나간다.
+        "coverage_note": HEIGHT_COVERAGE_NOTE,
         "items": items,
     }
 
@@ -114,6 +154,7 @@ def resolve_dominant_constraint(
     *,
     north_distance_m: float | None = None,
     slope_pct: float | None = None,
+    irregularity: float | None = None,
 ) -> dict[str, Any]:
     """이 필지에서 '무엇이 가장 발목인가'를 한 줄로 답한다(순수함수 — 외부 I/O 0).
 
@@ -122,6 +163,7 @@ def resolve_dominant_constraint(
         north_distance_m: 정북 인접지까지의 거리(m). **정북일조가 적용되는 용도지역일 때만**
             넘긴다 — 판정은 north_distance_for_sunlight가 소유(여기서 용도지역을 다시 보지 않음).
         slope_pct: terrain 평균 경사도(%). 미상은 None.
+        irregularity: 필지 형상 불규칙도(1 - 실면적/bbox면적). 정북일조 근사 경고용 — 미상은 None.
 
     Returns:
         {"headline", "severity", "ranked": [...], "height": {...}|None}
@@ -132,9 +174,15 @@ def resolve_dominant_constraint(
     seen: set[str] = set()
     for raw in regulations or []:
         name = str(raw or "").strip()
-        if not name or name in seen:
+        if not name:
             continue
-        seen.add(name)
+        # ★R1 LOW-10: dedup 키를 classify와 **같은 정규화**(공백 제거)로 맞춘다. 원문 기준이면
+        #   "고도지구"와 "고도 지구"가 서로 다른 항목으로 남아 랭킹·높이 목록에 중복 표기된다
+        #   (VWorld가 공백 변형으로 같은 designation을 주는 경우가 실재).
+        key = name.replace(" ", "")
+        if key in seen:
+            continue
+        seen.add(key)
         hit = classify(name)  # SSOT — severity·조치·높이제약 여부를 한 번에
         if hit is None:
             continue
@@ -144,6 +192,7 @@ def resolve_dominant_constraint(
             "action": hit["action"],
             "reason": hit["reason"],
             "height_constraining": hit["height_constraining"],
+            "height_keywords": hit.get("height_keywords") or (),
         })
 
     # 경사도는 규제 designation이 아니지만 실무에서 같은 질문("발목")의 답이라 함께 랭킹한다.
@@ -171,34 +220,48 @@ def resolve_dominant_constraint(
                      (top["name"] if top else None)),
         "severity": top["severity"] if top else None,
         "ranked": ranked,
-        "height": _build_height(north_distance_m, candidates),
+        "height": _build_height(north_distance_m, candidates, irregularity=irregularity),
     }
+
+
+def sunlight_geometry_facts(
+    zone_type: str | None,
+    geometry: dict[str, Any] | None,
+) -> tuple[float | None, float | None]:
+    """정북일조 산출용 (남북깊이 m, 형상 불규칙도) — **적용 용도지역 + 실측 geometry 둘 다 있을 때만**.
+
+    ★이 게이트가 단일 소유자다: 소비처(지도 경계·종합분석)가 각자 용도지역을 판정하면 한쪽만
+    고쳐지는 발산이 생긴다. 적용 대상이 아니거나 geometry 미보유면 (None, None) → 항목 미생성.
+
+    불규칙도를 함께 돌려주는 이유(R1 M-6): bbox 남북깊이는 부정형 필지에서 실제 배치 열의
+    정북거리를 과대평가한다. dims_from_polygon이 이미 그 지표(irregularity)를 산출하는데 종전엔
+    버렸다 — 근사의 신뢰구간을 사용자에게 전달하려면 함께 실어야 한다.
+    """
+    if not zone_type or not geometry:
+        return None, None
+    z = str(zone_type).replace(" ", "")
+    if not any(kw in z for kw in _SUNLIGHT_ZONE_KEYWORDS):
+        return None, None
+    try:
+        from app.services.site_score.solar_envelope_service import dims_from_polygon
+
+        dims = dims_from_polygon(geometry)
+    except Exception:  # noqa: BLE001 — 기하 파싱 실패는 미상(None) 정직 반환
+        return None, None
+    depth = (dims or {}).get("depth_m")
+    if isinstance(depth, bool) or not isinstance(depth, (int, float)) or depth <= 0:
+        return None, None
+    irr = (dims or {}).get("irregularity")
+    irr_val = float(irr) if isinstance(irr, (int, float)) and not isinstance(irr, bool) else None
+    return float(depth), irr_val
 
 
 def north_distance_for_sunlight(
     zone_type: str | None,
     geometry: dict[str, Any] | None,
 ) -> float | None:
-    """정북일조 산출에 쓸 남북깊이(m) — **적용 용도지역 + 실측 geometry가 둘 다 있을 때만**.
-
-    ★이 게이트가 단일 소유자다: 소비처(지도 경계·종합분석)가 각자 용도지역을 판정하면 한쪽만
-    고쳐지는 발산이 생긴다. 적용 대상이 아니거나 geometry 미보유면 None → 높이 항목 미생성.
-    """
-    if not zone_type or not geometry:
-        return None
-    z = str(zone_type).replace(" ", "")
-    if not any(kw in z for kw in _SUNLIGHT_ZONE_KEYWORDS):
-        return None
-    try:
-        from app.services.site_score.solar_envelope_service import dims_from_polygon
-
-        dims = dims_from_polygon(geometry)
-    except Exception:  # noqa: BLE001 — 기하 파싱 실패는 미상(None) 정직 반환
-        return None
-    depth = (dims or {}).get("depth_m")
-    if isinstance(depth, bool) or not isinstance(depth, (int, float)) or float(depth) <= 0:
-        return None
-    return float(depth)
+    """정북일조 남북깊이(m)만 필요할 때의 얇은 래퍼 — 게이트는 sunlight_geometry_facts 단일 소유."""
+    return sunlight_geometry_facts(zone_type, geometry)[0]
 
 
 def build_for_parcel(
@@ -215,10 +278,12 @@ def build_for_parcel(
     전역이 따라온다). None을 돌려주면 화면은 배너를 렌더하지 않는다(빈 배너 금지 원칙을
     표면이 아니라 계약 수준에서 보장).
     """
+    _depth, _irr = sunlight_geometry_facts(zone_type, geometry)
     dc = resolve_dominant_constraint(
         regulations,
-        north_distance_m=north_distance_for_sunlight(zone_type, geometry),
+        north_distance_m=_depth,
         slope_pct=slope_pct,
+        irregularity=_irr,
     )
     if not dc.get("headline") and not dc.get("height"):
         return None

@@ -158,12 +158,15 @@ def classify(regulation_name: str | None) -> dict[str, Any] | None:
     n = str(regulation_name).replace(" ", "")
     best_sev: str | None = None
     best_kw: str | None = None
+    matched: list[str] = []
     # 비행안전구역 — 구역번호 granular(표보다 먼저 특수처리)
     if _FLIGHT_SAFETY_KW in n:
         best_sev, best_kw = _flight_safety_severity(n), _FLIGHT_SAFETY_KW
+        matched.append(_FLIGHT_SAFETY_KW)
     # 손큐레이션 권위표 스캔(최댓값 누적 — 동순위는 기존 best 유지)
     for keyword, sev in _ZONE_SEVERITY:
         if keyword in n:
+            matched.append(keyword)
             higher = max_severity(best_sev, sev)
             if higher != best_sev:
                 best_sev, best_kw = higher, keyword
@@ -172,10 +175,24 @@ def classify(regulation_name: str | None) -> dict[str, Any] | None:
     meta = _ZONE_META.get(best_kw) or {}
     return {
         "keyword": best_kw,
+        # ★R1 HIGH-1: 매치된 키워드 **전체**를 보존한다. 실제 designation은 개별법 명칭이
+        #   합쳐진 한 문자열로 온다("군사기지 및 군사시설 보호구역(비행안전제6구역)"). 최댓값
+        #   키워드 하나만 남기면 낮은 쪽이 갖고 있던 정보가 조용히 사라진다 — 실측: 위 문자열은
+        #   '군사시설보호'(높음)가 이겨 '비행안전'(height=True)이 버려지고 **높이 상한 블록 자체가
+        #   소실**됐다(이 모듈의 핵심 산출물인 "수치 미보유 정직 고지"가 무음 누락).
+        "matched": tuple(matched),
         "severity": best_sev,
         "action": meta.get("action"),
         "reason": meta.get("reason"),
-        "height_constraining": bool(meta.get("height")),
+        # 높이제약은 **합집합** — 하나라도 높이를 제한하면 높이 제약이다(severity와 달리
+        #   "대표 하나"로 접을 수 없는 성질). action/reason은 최댓값 키워드 유지(대표 조치).
+        "height_constraining": any(
+            bool((_ZONE_META.get(kw) or {}).get("height")) for kw in matched
+        ),
+        # 높이를 제한한 키워드들 — 소비처가 "무엇 때문에 높이가 걸렸는지" 표기할 수 있게.
+        "height_keywords": tuple(
+            kw for kw in matched if bool((_ZONE_META.get(kw) or {}).get("height"))
+        ),
     }
 
 

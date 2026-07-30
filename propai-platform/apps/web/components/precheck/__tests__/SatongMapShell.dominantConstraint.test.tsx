@@ -185,6 +185,72 @@ describe("SatongMapShell 지배 제약 배너 배선(W1)", () => {
     );
   });
 
+  it("★④ R1 M-4: 패널이 열린 채로 경계 응답이 도착하면 배너가 즉시 합류한다", () => {
+    // 실제 흐름: 필지를 담고 곧바로 카드를 누른다 → 경계 왕복(최대 45s)이 그 뒤에 끝난다.
+    //   ref 갱신은 렌더를 유발하지 않으므로, 합류가 없으면 닫고 다시 열 때까지 배너를 못 본다.
+    seedSelection();
+    render(<SatongMapShell locale="ko" />);
+
+    fireEvent.click(screen.getByText("대보리 산1-1"));
+    expect(screen.getByTestId("parcel-detail-panel")).toBeInTheDocument();
+    expect(screen.queryByTestId("dominant-constraint-banner")).not.toBeInTheDocument();
+
+    act(() => {
+      mapProps.onBoundaryEnriched?.([
+        { id: "B-1", address: ADDRESS, pnu: PNU, areaSqm: 147078, dominantConstraint: HOMIGOT },
+      ]);
+    });
+
+    // ★닫고 다시 열지 않는다 — 열린 패널이 그대로 갱신되어야 한다.
+    const panel = screen.getByTestId("parcel-detail-panel");
+    expect(within(panel).getByTestId("dominant-constraint-headline").textContent).toContain(
+      "통제보호구역",
+    );
+  });
+
+  it("★⑤ R1 M-3: 셸 재마운트(소프트 내비 왕복) 후에도 배너가 살아남는다", () => {
+    seedSelection();
+    const first = render(<SatongMapShell locale="ko" />);
+
+    act(() => {
+      mapProps.onBoundaryEnriched?.([
+        { id: "B-1", address: ADDRESS, pnu: PNU, areaSqm: 147078, dominantConstraint: HOMIGOT },
+      ]);
+    });
+    first.unmount();
+
+    // 산출물 페이지 왕복 후 복귀 = 새 인스턴스. geometry·연식 보유 선택이면 경계 재조회도
+    //   스킵되므로, 뷰 캐시가 세션에 남아 있지 않으면 배너가 영구 소실된다.
+    render(<SatongMapShell locale="ko" />);
+    fireEvent.click(screen.getByText("대보리 산1-1"));
+
+    const panel = screen.getByTestId("parcel-detail-panel");
+    expect(within(panel).getByTestId("dominant-constraint-headline").textContent).toContain(
+      "통제보호구역",
+    );
+  });
+
+  it("★⑥ R1 LOW-9: pnu 미확보 필지(주소 키)도 캐시가 적중한다", () => {
+    // 엑셀·지오코딩 시드는 pnu 없이 들어오고 id는 클라이언트 합성값("P-…")이다.
+    //   저장/조회 키가 비대칭이면(조회가 id로 잡히면) 캐시 미스로 배너가 안 뜬다.
+    writeSatongMapSelection([
+      { id: "P-noPnu", address: ADDRESS, source: "excel", areaSqm: 147078 },
+    ]);
+    render(<SatongMapShell locale="ko" />);
+
+    act(() => {
+      mapProps.onBoundaryEnriched?.([
+        { id: "B-noPnu", address: ADDRESS, pnu: null, dominantConstraint: HOMIGOT },
+      ]);
+    });
+    fireEvent.click(screen.getByText("대보리 산1-1"));
+
+    const panel = screen.getByTestId("parcel-detail-panel");
+    expect(within(panel).getByTestId("dominant-constraint-headline").textContent).toContain(
+      "통제보호구역",
+    );
+  });
+
   it("③ 제약 없는 필지는 배너를 렌더하지 않는다(빈 배너 금지)", () => {
     writeSatongMapSelection([
       { id: "P-clean", address: "경기도 성남시 분당구 판교동 100", pnu: "PNU-CLEAN", source: "map", areaSqm: 800 },

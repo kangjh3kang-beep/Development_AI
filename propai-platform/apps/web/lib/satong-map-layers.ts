@@ -50,6 +50,8 @@ export type DominantConstraint = {
     governing_source?: string | null;
     /** ★수치 미보유 항목이 있으면 true — governing_m이 최종값이 아님("일부 미반영" 배지). */
     incomplete?: boolean;
+    /** 반영/미반영 범위 상시 고지(서버 SSOT 문구). incomplete=False라도 전부가 아니다. */
+    coverage_note?: string | null;
     items?: DominantConstraintHeightItem[];
   } | null;
 };

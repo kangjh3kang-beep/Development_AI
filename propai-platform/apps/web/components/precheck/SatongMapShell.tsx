@@ -62,7 +62,6 @@ import {
   MARKET_TRADE_TYPES,
   isRenderableSatongMapLayer,
   resolveSelectionAnchor,
-  satongMapFeatureKey,
   type DominantConstraint,
   type SatongMapFeature,
   type SatongMapLayerId,
@@ -518,6 +517,59 @@ export function healParcelPnu(
   return existingPnu || boundaryPnu || null;
 }
 
+// ── W1 지배 제약 뷰 캐시 ─────────────────────────────────────────────────────
+//  경계 응답(/zoning/parcel-boundaries)만 지배 제약을 준다. 선택 SSOT(필지 객체)에 넣지 않고
+//  뷰 캐시로 분리하는 이유: ① stale 규제가 프로젝트 스냅샷·산출물 페이로드에 박히지 않게,
+//  ② 매 응답의 새 객체 identity가 변경감지를 참으로 만들어 commit/save 루프를 돌지 않게.
+//  sessionStorage에 함께 두는 이유(R1 M-3): 소프트 내비로 셸이 재마운트되면 ref가 비는데
+//  selectionBoundaryReady가 true라 경계 재조회도 스킵돼 배너가 무음 소실됐다.
+const DOMINANT_CONSTRAINT_CACHE_KEY = "satong.dominantConstraint.v1";
+/** 캐시 상한 — 뷰 캐시라 무한 성장시킬 이유가 없다(초과분은 오래된 것부터 버린다). */
+const DOMINANT_CONSTRAINT_CACHE_MAX = 200;
+
+/**
+ * ★R1 LOW-9: 저장 키와 조회 키를 **같은 규칙**으로 고정한다.
+ *
+ * satongMapFeatureKey는 `pnu || id || address`인데, 저장 시엔 id가 없는 shape를 넘겨 사실상
+ * `pnu || address`였다. 그래서 pnu 미확보 필지(엑셀·지오코딩 시드, id="P-xxx")는 조회 키가
+ * id로 잡혀 **캐시 미스 → 배너 미표시**가 됐다(저장/조회 비대칭). 여기서 id를 배제한 단일
+ * 규칙만 쓴다 — id는 클라이언트 생성 합성값이라 서버 응답과 절대 맞을 수 없다.
+ */
+export function dominantConstraintKey(
+  feature: Pick<SatongMapFeature, "pnu" | "address">,
+): string {
+  return feature.pnu || (feature.address || "").trim().replace(/\s+/g, " ");
+}
+
+function readDominantConstraintCache(): Map<string, DominantConstraint | null> {
+  const map = new Map<string, DominantConstraint | null>();
+  if (typeof window === "undefined") return map;
+  try {
+    const raw = window.sessionStorage.getItem(DOMINANT_CONSTRAINT_CACHE_KEY);
+    if (!raw) return map;
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return map;
+    for (const entry of parsed) {
+      if (Array.isArray(entry) && typeof entry[0] === "string") {
+        map.set(entry[0], (entry[1] ?? null) as DominantConstraint | null);
+      }
+    }
+  } catch {
+    // 손상된 캐시는 조용히 버린다(표시 캐시라 복구 대상이 아니다 — 다음 경계 응답이 채운다).
+  }
+  return map;
+}
+
+function writeDominantConstraintCache(map: Map<string, DominantConstraint | null>): void {
+  if (typeof window === "undefined") return;
+  try {
+    const entries = Array.from(map.entries()).slice(-DOMINANT_CONSTRAINT_CACHE_MAX);
+    window.sessionStorage.setItem(DOMINANT_CONSTRAINT_CACHE_KEY, JSON.stringify(entries));
+  } catch {
+    // 용량 초과 등은 무시 — ref 캐시만으로도 현재 세션 표시는 동작한다(정직 degrade).
+  }
+}
+
 function statusText(status: LayerStatus): string {
   if (status === "active") return "활성";
   if (status === "ready") return "준비";
@@ -708,12 +760,32 @@ export function SatongMapShell({
   // ── WS-C 필지 상세 패널 — 지도 폴리곤/카드 클릭 → 통합 정보(개요·공시지가·노후도)와
   //    산출물 원클릭 퍼널. 단일 팝오버 원칙: 레이어 설정 패널과 동시 표출 금지(상호 배타).
   const [detailFeature, setDetailFeature] = useState<SatongMapFeature | null>(null);
-  // ★W1 지배 제약 캐시(state 아님 — ref). 경계 응답에서만 오는 값이라 좌측 카드 클릭 경로가
-  //   쓰는 selectedMapFeatures(선택 SSOT 유래)엔 없다. state로 두면 매 경계 응답마다 새 객체
-  //   identity가 selectedMapFeatures → SatongMultiMap props로 번져 경계 재조회 루프를 만든다
-  //   (identity churn — 이 저장소에서 이미 겪은 결함). ref는 렌더를 유발하지 않으므로 안전하고,
-  //   합류는 아래 openFeatureDetail(생산 근원) 한 곳에서만 한다.
-  const dominantConstraintByKeyRef = useRef<Map<string, DominantConstraint | null>>(new Map());
+  // ★W1 지배 제약 캐시(state 아님 — ref + sessionStorage). 경계 응답에서만 오는 값이라 좌측
+  //   카드 클릭 경로가 쓰는 selectedMapFeatures(선택 SSOT 유래)엔 없다. state로 두면 매 경계
+  //   응답마다 새 객체 identity가 selectedMapFeatures → SatongMultiMap props로 번져 경계 재조회
+  //   루프를 만든다(identity churn — 이 저장소에서 이미 겪은 결함). ref는 렌더를 유발하지 않는다.
+  //   ★R1 MEDIUM-3: ref만 쓰면 소프트 내비(산출물 페이지 왕복)로 셸이 재마운트될 때 캐시가
+  //     비고, selectionBoundaryReady(geometry+연식 보유)가 true라 경계 재조회도 스킵돼 배너가
+  //     **무음 소실**됐다. 그래서 표시 캐시를 sessionStorage에 함께 둔다 — 선택 SSOT(필지 데이터)가
+  //     아니라 **뷰 캐시**라서 프로젝트 스냅샷·산출물 페이로드를 오염시키지 않는다.
+  const dominantConstraintByKeyRef = useRef<Map<string, DominantConstraint | null>>(
+    readDominantConstraintCache(),
+  );
+  const rememberDominantConstraints = useCallback(
+    (entries: Array<[string, DominantConstraint | null]>) => {
+      if (!entries.length) return;
+      for (const [key, value] of entries) dominantConstraintByKeyRef.current.set(key, value);
+      writeDominantConstraintCache(dominantConstraintByKeyRef.current);
+    },
+    [],
+  );
+  const resolveDominantConstraint = useCallback(
+    (feature: SatongMapFeature): DominantConstraint | null =>
+      feature.dominantConstraint ??
+      dominantConstraintByKeyRef.current.get(dominantConstraintKey(feature)) ??
+      null,
+    [],
+  );
   const openFeatureDetail = useCallback((feature: SatongMapFeature) => {
     // ★단일 팝오버 불변식 — right-20 top-20 z-430 좌표를 공유하는 3패널(필지상세·레이어·
     //   베이스맵)은 동시에 뜰 수 없다. 봉합은 '생산 근원'인 이 함수에서 한다 — 호출부
@@ -722,11 +794,10 @@ export function SatongMapShell({
     // ★같은 이유로 지배 제약 합류도 여기서 한다 — 두 호출부(카드/지도)가 각자 채우면
     //   한쪽만 고쳐지는 발산이 생긴다. 피처가 이미 값을 갖고 있으면(지도 경계 유래) 그것이
     //   우선, 없으면 경계 응답 캐시에서 같은 필지 키로 찾는다.
-    const cached = dominantConstraintByKeyRef.current.get(satongMapFeatureKey(feature));
-    const dominantConstraint = feature.dominantConstraint ?? cached ?? null;
+    const dominantConstraint = resolveDominantConstraint(feature);
     setDetailFeature(dominantConstraint ? { ...feature, dominantConstraint } : feature);
     setActiveLayerId(null);
-  }, []);
+  }, [resolveDominantConstraint]);
   // I5: 선택 필지 GeoJSON 내보내기 결과 고지(제외 건수 정직 표기).
   const [exportNote, setExportNote] = useState("");
   // ★R1(stale 고지): 선택이 바뀌면(추가·삭제·초기화·프로젝트 전환) 지난 내보내기 고지를
@@ -1754,16 +1825,30 @@ export function SatongMapShell({
       currentFarPct?: number | null; geometry?: unknown;
       dominantConstraint?: DominantConstraint | null }>,
     ) => {
-      // ★W1: 지배 제약은 ref 캐시에만 담는다(선택 SSOT·sessionStorage 미오염 — 중첩객체를
-      //   영속시키면 stale 규제가 프로젝트에 박히고, 새 객체 identity가 매 응답마다 변경감지를
-      //   참으로 만들어 commit/save 루프를 돈다). 표시 합류는 openFeatureDetail이 담당.
-      for (const f of features) {
-        if (!f.pnu && !f.address) continue;
-        dominantConstraintByKeyRef.current.set(
-          satongMapFeatureKey({ id: "", pnu: f.pnu ?? null, address: f.address ?? "" }),
-          f.dominantConstraint ?? null,
+      // ★W1: 지배 제약은 뷰 캐시(ref+sessionStorage)에만 담는다 — 선택 SSOT(필지 객체)에 넣으면
+      //   stale 규제가 프로젝트 스냅샷에 박히고, 새 객체 identity가 매 응답마다 변경감지를 참으로
+      //   만들어 commit/save 루프를 돈다. 표시 합류는 openFeatureDetail이 담당.
+      rememberDominantConstraints(
+        features
+          .filter((f) => f.pnu || f.address)
+          .map((f) => [
+            dominantConstraintKey({ pnu: f.pnu ?? null, address: f.address ?? "" }),
+            f.dominantConstraint ?? null,
+          ]),
+      );
+      // ★R1 MEDIUM-4: 상세 패널이 **열린 채로** 경계 응답이 도착하는 것이 실제 흐름이다
+      //   (필지 담고 바로 카드 클릭 → 경계 왕복 최대 45s). ref 갱신은 렌더를 유발하지 않으므로
+      //   종전엔 사용자가 패널을 닫고 다시 열 때까지 영구히 배너를 못 봤다. 열린 필지와 키가
+      //   같으면 즉시 합류한다(값이 이미 있으면 스킵 — 불필요한 재렌더·churn 방지).
+      setDetailFeature((current) => {
+        if (!current || current.dominantConstraint) return current;
+        const hit = features.find(
+          (f) =>
+            dominantConstraintKey({ pnu: f.pnu ?? null, address: f.address ?? "" }) ===
+            dominantConstraintKey(current),
         );
-      }
+        return hit?.dominantConstraint ? { ...current, dominantConstraint: hit.dominantConstraint } : current;
+      });
       setSelectedParcels((prev) => {
         if (!prev.length || !features.length) return prev;
         let changed = false;
@@ -1821,7 +1906,7 @@ export function SatongMapShell({
         return next;
       });
     },
-    [commitParcelsToContext, saveSelectionForOutputs],
+    [commitParcelsToContext, saveSelectionForOutputs, rememberDominantConstraints],
   );
 
   // 선택 필지로 새 프로젝트 생성·연결(공용) — 셀렉터 아래 버튼과 산출물 실행(연결모드 "new")이 공유.

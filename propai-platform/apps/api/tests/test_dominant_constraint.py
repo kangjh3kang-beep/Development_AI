@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+import ast
 import inspect
 
 import pytest
@@ -247,27 +248,121 @@ def test_module_imports_ssot_and_does_not_redefine_ladder():
     """
     src = inspect.getsource(dc)
     assert "from app.services.regulation.protection_zone_severity import" in src
-    assert "SEVERITY_ORDER" not in src.replace(
-        "protection_zone_severity.SEVERITY_ORDER", ""
-    ).replace("SEVERITY_ORDER를 그대로", "").replace("SEVERITY_ORDER 안에", ""), (
-        "자체 severity 사다리를 정의하면 SSOT 이중화"
-    )
     # severity 비교는 SSOT의 severity_rank를 경유해야 한다(자체 index 비교 금지).
     assert "severity_rank(" in src
+    # ★R1 LOW-8: 종전 단언은 문자열 치환 기반이라 (a) 이름만 다른 자체 사다리(_LADDER = ...)를
+    #   통과시키고 (b) 정당한 SEVERITY_ORDER import에 오탐 실패했다. 코드 문자열 대신 **구조**로
+    #   본다 — 등급 리터럴 2개 이상을 담은 시퀀스가 있으면 자체 사다리 의심(이름 무관).
+    ladders = [
+        node for node in ast.walk(ast.parse(src))
+        if isinstance(node, (ast.Tuple, ast.List))
+        and sum(
+            1 for e in node.elts
+            if isinstance(e, ast.Constant) and e.value in pzs.SEVERITY_ORDER
+        ) >= 2
+    ]
+    assert not ladders, (
+        "severity 등급 문자열 2개 이상을 담은 리터럴 시퀀스가 있다 — 자체 사다리(SSOT 이중화) 의심"
+    )
 
 
-def test_severity_for_delegates_to_classify_identically():
-    """classify() 도입이 severity_for 동작을 바꾸지 않았는지(무회귀 — 3소비처가 이 값을 쓴다)."""
+def _reference_severity_oracle(name: str | None) -> str | None:
+    """★독립 오라클 — classify() 리팩토링 **이전**의 누적 max 알고리즘을 여기서 재구현한다.
+
+    R1 LOW-7: 종전 테스트는 `severity_for(x) == classify(x)["severity"]`였는데 severity_for가
+    바로 그 값을 돌려주므로 동어반복이었다(classify의 severity를 상수로 파괴해도 통과 — 변이
+    생존 실증). 여기서는 소비처가 의존하는 계약(부분일치·최댓값·비행안전 granular)을 **독립적으로**
+    계산해 대조한다 — 구현을 고쳐도 이 오라클은 따라오지 않으므로 변이를 잡는다.
+    """
+    if not name:
+        return None
+    n = str(name).replace(" ", "")
+    best: str | None = None
+    if pzs._FLIGHT_SAFETY_KW in n:  # noqa: SLF001 — 오라클 전용 접근
+        best = "높음" if ("제1구역" in n or "활주로" in n) else "보통"
+    order = pzs.SEVERITY_ORDER
+    for keyword, sev in pzs._ZONE_SEVERITY:  # noqa: SLF001 — 오라클 전용 접근
+        if keyword in n and (best is None or order.index(sev) > order.index(best)):
+            best = sev
+    return best
+
+
+def test_severity_for_matches_independent_oracle():
+    """classify() 도입이 severity_for 값을 바꾸지 않았는지 — **독립 오라클** 대조(무회귀).
+
+    3소비처(regulation_analysis·comprehensive risk_keywords·land_info)가 이 값을 소비한다.
+    """
     samples = [
         "군사시설보호구역(통제보호구역)", "제한보호구역", "방공기지", "방공유도탄기지",
         "대공방어협조구역", "군사시설보호구역", "개발제한구역", "그린벨트",
         "상수원보호구역", "폐기물매립시설", "고도지구", "경관지구", "방화지구",
         "비행안전구역", "비행안전 제1구역", "비행안전제6구역", "활주로 비행안전구역",
+        # 결합 명칭(실제 API 형태) — 최댓값 규칙이 오라클과 같아야 한다.
+        "군사기지 및 군사시설 보호구역(비행안전제6구역)",
+        "군사기지 및 군사시설 보호구역(대공방어협조구역)",
+        "개발제한구역 및 상수원보호구역",
         "존재하지않는구역", "", None,
     ]
-    for s in samples:
-        hit = pzs.classify(s)
-        assert pzs.severity_for(s) == (hit["severity"] if hit else None), f"불일치: {s}"
+    for sample in samples:
+        assert pzs.severity_for(sample) == _reference_severity_oracle(sample), (
+            f"독립 오라클과 불일치: {sample!r}"
+        )
+
+
+# ── ⑧ ★R1 HIGH-1: 결합 designation(한 문자열에 복수 키워드) ─────────────────
+#   실제 VWorld/NED는 개별법 명칭을 합쳐 한 문자열로 준다:
+#     "군사기지 및 군사시설 보호구역(비행안전제6구역)"
+#   최댓값 severity 키워드('군사시설보호'=높음) 하나만 남기면 낮은 쪽('비행안전'=보통)이 갖고
+#   있던 height_constraining이 버려져 **높이 상한 블록 자체가 소실**된다(R1이 실측으로 적발).
+@pytest.mark.parametrize(
+    "designation",
+    [
+        "군사기지 및 군사시설 보호구역(비행안전제6구역)",
+        "군사기지 및 군사시설 보호구역(대공방어협조구역)",
+        "군사시설보호구역 비행안전 제1구역",
+    ],
+)
+def test_combined_designation_preserves_height_constraint(designation):
+    """결합 명칭에서 높이제약이 소실되지 않는다(합집합) — 정직 고지 무음 누락 방지."""
+    hit = pzs.classify(designation)
+    assert hit is not None
+    assert hit["height_constraining"] is True, (
+        f"결합 명칭에서 높이제약 소실: {designation} → matched={hit['matched']}"
+    )
+    out = resolve_dominant_constraint([designation], north_distance_m=None, slope_pct=None)
+    assert out["height"] is not None, "높이 상한 블록이 통째로 사라졌다(핵심 산출물 무음 누락)"
+    assert out["height"]["incomplete"] is True
+    assert out["height"]["governing_m"] is None
+    # 어떤 지정 때문에 걸렸는지 항목 문구에 남아야 한다(이름만으론 읽히지 않음).
+    assert any(
+        ("비행안전" in (i["note"] or "")) or ("대공방어협조구역" in (i["note"] or ""))
+        for i in out["height"]["items"]
+    ), f"높이제약 사유 미표기: {out['height']['items']}"
+
+
+def test_combined_designation_keeps_max_severity_representative():
+    """합집합은 height만 — severity·action/reason은 최댓값 키워드가 대표한다(과잉교정 회피)."""
+    hit = pzs.classify("군사기지 및 군사시설 보호구역(비행안전제6구역)")
+    assert hit["severity"] == "높음", "군사시설보호(높음)가 대표 severity"
+    assert hit["keyword"] == "군사시설보호"
+    assert set(hit["matched"]) == {"비행안전", "군사시설보호"}
+
+
+def test_tie_break_prefers_first_matched_keyword():
+    """★동순위(같은 severity) 복수 매치 → 표 순서상 먼저 오는 키워드가 대표(계약 고정).
+
+    R1: 이 계약이 어떤 테스트로도 고정되지 않아, `if higher != best_sev` 가드를 제거하는
+    변이(동순위 last-match-wins)가 85건 전부 생존했다.
+    """
+    # 개발제한구역·상수원보호구역 모두 "극히 높음"(동순위). 표에서 개발제한구역이 먼저 온다.
+    hit = pzs.classify("개발제한구역 및 상수원보호구역")
+    assert hit["severity"] == "극히 높음"
+    assert hit["keyword"] == "개발제한구역", (
+        f"동순위 tie-break가 첫 매치 우선이 아니다: {hit['keyword']}"
+    )
+    # 방공유도탄기지·방공기지도 동순위("높음") — 표 순서상 방공유도탄기지가 먼저.
+    hit2 = pzs.classify("방공유도탄기지 방공기지")
+    assert hit2["keyword"] == "방공유도탄기지", f"tie-break 위반: {hit2['keyword']}"
 
 
 def test_zone_meta_covers_every_ssot_keyword():
@@ -295,10 +390,71 @@ def test_ranked_items_do_not_leak_internal_keys():
 
 
 def test_duplicate_regulations_are_deduped():
-    """VWorld가 같은 designation을 중복 반환해도 랭킹·높이 항목이 중복되지 않는다."""
+    """VWorld가 같은 designation을 중복/공백변형으로 반환해도 랭킹·높이 항목이 1건이다.
+
+    ★R1 LOW-10: 종전 dedup 키는 원문(strip만)이라 "고도지구"와 "고도 지구"가 서로 다른 항목으로
+    남아 중복 표기됐다(classify는 공백을 제거하고 매칭하므로 같은 규제인데). 단언도 `<= 2`라
+    그 중복을 통과시켰다 — dedup 키를 classify와 같은 정규화로 맞추고 `== 1`로 잠근다.
+    """
     out = resolve_dominant_constraint(
-        ["고도지구", "고도지구", " 고도지구 "], north_distance_m=None, slope_pct=None,
+        ["고도지구", "고도지구", " 고도지구 ", "고도 지구"], north_distance_m=None, slope_pct=None,
     )
-    # 공백 변형은 별개 문자열이지만 SSOT가 같은 키워드로 분류 → 이름 중복만 제거되면 충분.
-    assert len(out["height"]["items"]) <= 2
-    assert len([r for r in out["ranked"] if r["name"] == "고도지구"]) == 1
+    assert len(out["height"]["items"]) == 1, f"높이 항목 중복: {out['height']['items']}"
+    assert len(out["ranked"]) == 1, f"랭킹 중복: {out['ranked']}"
+
+
+# ── ⑨ ★R1 MEDIUM-5/6: 정직 고지(상시 커버리지·양방향 근사 오차) ──────────────
+def test_height_block_always_discloses_coverage():
+    """★incomplete=False라도 "이게 전부"가 아님을 **상시** 고지한다(거짓 완전성 차단).
+
+    미반영 규정군(가로구역별 최고높이 §60·지구단위계획 지정높이·채광방향 이격 §86②·조례
+    최고높이)은 애초에 items에 들어오지 않으므로 incomplete가 잡지 못한다.
+    """
+    # 정북일조 단독(incomplete=False) — 가장 위험한 케이스: "높이 상한 30m"이 확정처럼 읽힌다.
+    solo = resolve_dominant_constraint([], north_distance_m=15.0, slope_pct=None)
+    assert solo["height"]["incomplete"] is False
+    note = solo["height"]["coverage_note"]
+    assert note, "정북일조 단독일 때 커버리지 고지가 비면 거짓 완전성"
+    for missing in ("가로구역", "지구단위계획", "채광방향", "조례"):
+        assert missing in note, f"미반영 항목 누락: {missing}"
+    # 미보유 항목이 있는 케이스에도 동일하게 붙는다(조건부 아님).
+    mixed = resolve_dominant_constraint(["고도지구"], north_distance_m=15.0, slope_pct=None)
+    assert mixed["height"]["coverage_note"] == note
+
+
+def test_sunlight_note_discloses_error_in_both_directions():
+    """근사 오차는 양방향 — 한쪽만 고지하면 반대 방향 오차를 숨긴다(R1 M-6)."""
+    out = resolve_dominant_constraint([], north_distance_m=15.0, slope_pct=None)
+    note = out["height"]["items"][0]["note"]
+    assert "낮아질" in note, "부정형·실제 배치로 낮아질 수 있음(과대 방향) 고지 누락"
+    assert "높아질" in note, "북측 도로·공지 완화로 높아질 수 있음(과소 방향) 고지 누락"
+
+
+_IRREGULAR_L_SHAPE = {
+    # L자형 — bbox는 30m×35m인데 실면적은 그 절반 남짓(불규칙도 약 0.5).
+    "type": "Polygon",
+    "coordinates": [[[127.1, 37.3], [127.1004, 37.3], [127.1004, 37.30013],
+                     [127.1002, 37.30013], [127.1002, 37.30027],
+                     [127.1, 37.30027], [127.1, 37.3]]],
+}
+
+
+def test_irregular_parcel_gets_overestimation_warning():
+    """부정형 필지는 bbox 남북깊이가 실제 배치 정북거리를 과대평가 — 경고를 붙인다."""
+    from app.services.site_score.solar_envelope_service import dims_from_polygon
+
+    irr = dims_from_polygon(_IRREGULAR_L_SHAPE)["irregularity"]
+    assert irr >= dc.IRREGULARITY_WARN, f"픽스처가 부정형이 아니다(불규칙도 {irr})"
+
+    out = build_for_parcel(
+        regulations=[], zone_type="제2종일반주거지역", geometry=_IRREGULAR_L_SHAPE,
+    )
+    note = out["height"]["items"][0]["note"]
+    # 판별어는 "과대평가"/"불규칙도" — 기본 근사문구에 이미 "부정형"이 들어 있어 그 단어로는
+    # 경고 유무를 구분할 수 없다(가드가 늘 통과하는 공허진리가 된다).
+    assert "불규칙도" in note and "과대평가" in note, f"부정형 경고 누락: {note}"
+
+    # 직사각 필지엔 그 경고가 붙지 않는다(과잉 고지도 정직이 아니다).
+    rect = build_for_parcel(regulations=[], zone_type="제2종일반주거지역", geometry=_SQUARE_30M)
+    rect_note = rect["height"]["items"][0]["note"]
+    assert "불규칙도" not in rect_note and "과대평가" not in rect_note, rect_note
