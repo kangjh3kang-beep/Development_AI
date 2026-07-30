@@ -135,7 +135,11 @@
 // v468: 타일 상태 래치 오판 봉합(#499 — 타일 1개 실패로 '전체 실패' 배너가 뜨던 것을 비율
 //        판정으로 교정·source-invariant). 배너 오판 로직이 stale 캐시에 가려지면 기존
 //        사용자에게 거짓 전체실패 경고가 계속 표시되므로 구캐시 일괄 삭제.
-const CACHE_NAME = "propai-v468-tile-status-ratio";
+// v469: 지배 제약 한 줄 + 높이 상한(#502 W1 — "무엇이 발목인가"를 한 줄로).
+//        DominantConstraintBanner 신규 컴포넌트·SatongMapShell/satong-map-selection/
+//        satong-map-layers/projectSync 배선이 stale app-shell 캐시에 가려지면 신규 배너가
+//        기존 사용자에게 아예 노출되지 않으므로 구캐시 일괄 삭제.
+const CACHE_NAME = "propai-v469-dominant-constraint";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
