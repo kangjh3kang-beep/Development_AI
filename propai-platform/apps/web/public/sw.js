@@ -139,7 +139,10 @@
 //        DominantConstraintBanner 신규 컴포넌트·SatongMapShell/satong-map-selection/
 //        satong-map-layers/projectSync 배선이 stale app-shell 캐시에 가려지면 신규 배너가
 //        기존 사용자에게 아예 노출되지 않으므로 구캐시 일괄 삭제.
-const CACHE_NAME = "propai-v469-dominant-constraint";
+// v470: 필지 경사도 온디맨드 표시(#503 W2 — 시공사·디벨로퍼 토공 판단). ParcelSlopeSection
+//        신규 컴포넌트·SatongMapShell/satong-map-selection/projectSync 배선이 stale
+//        app-shell 캐시에 가려지면 신규 섹션이 기존 사용자에게 노출되지 않으므로 구캐시 일괄 삭제.
+const CACHE_NAME = "propai-v470-parcel-slope";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
