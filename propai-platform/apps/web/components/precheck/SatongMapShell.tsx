@@ -48,6 +48,11 @@ import { AnalysisPipelineStepbar, type PipelineStep } from "@/components/common/
 import { ContextHeader } from "@/components/common/ContextHeader"; // 집계 SSOT 단일표면(UX 트랙 B2)
 import { DataSourceNotice } from "@/components/ui/DataSourceNotice";
 import { DominantConstraintBanner } from "@/components/precheck/DominantConstraintBanner"; // W1 지배 제약 — 필지 상세 최상단
+import {
+  ParcelSlopeSection,
+  type ParcelSlopeStatus,
+} from "@/components/precheck/ParcelSlopeSection"; // W2 경사도 — 필지 상세 온디맨드
+import type { TerrainResult } from "@/components/terrain/types";
 import type {
   ParcelAtPointResult,
   SatongAuctionItem,
@@ -75,8 +80,11 @@ import { useProjectStore } from "@/store/useProjectStore";
 import { restoreSnapshot } from "@/lib/projectSync";
 import { createProjectFromParcels } from "@/lib/satong-project-create";
 import {
+  SATONG_PARCEL_SLOPE_KEY,
   dominantConstraintKey,
   readDominantConstraintCache,
+  readSatongViewCache,
+  writeSatongViewCache,
   readSatongMapSelection,
   selectionToSiteAnalysisPatch,
   siteAnalysisToSelection,
@@ -738,6 +746,118 @@ export function SatongMapShell({
       null,
     [],
   );
+  // ── W2 필지 경사도(온디맨드) ────────────────────────────────────────────────
+  //  표고 원천(OpenTopoData)이 **1 req/s 공개 제한 + 서버 캐시 없음**이라 필지를 열 때마다
+  //  자동 조회하면 사용자가 빠르게 훑는 순간 그 제한을 넘긴다(전역 리미터 없음). 그래서
+  //  ①명시적 요청(버튼) ②세션 뷰 캐시로 재조회 제거 ③인플라이트 1건 제한으로 묶는다.
+  // 상세 대상의 최신 스냅샷 — 비동기 응답의 스테일 판정에 쓴다(렌더 중 쓰기 금지 → effect에서 갱신).
+  const detailFeatureRef = useRef<SatongMapFeature | null>(null);
+  const parcelSlopeByKeyRef = useRef<Map<string, TerrainResult | null>>(
+    readSatongViewCache<TerrainResult>(SATONG_PARCEL_SLOPE_KEY),
+  );
+  const [slopeStatus, setSlopeStatus] = useState<ParcelSlopeStatus>("idle");
+  const [slopeResult, setSlopeResult] = useState<TerrainResult | null>(null);
+  const [slopeError, setSlopeError] = useState<string | null>(null);
+  // ★진행 중인 **필지 키**를 담는다(단순 boolean 금지) — boolean이면 A 조회 중 B로 갔다가
+  //   A로 복귀할 때 캐시에 값이 없어 idle로 재설정되고, 다시 뜬 버튼을 눌러도 잠금이 걸려
+  //   **아무 반응 없는 죽은 버튼**이 된다(R1 MEDIUM). 키를 알면 로딩 상태를 복원할 수 있다.
+  const slopeInFlightKeyRef = useRef<string | null>(null);
+  // 표시용 busy — 동기 가드는 위 ref가 담당하고(렌더 무관), 이 state는 "다른 필지 조회 중"
+  //   고지에만 쓴다. 버튼은 계속 눌 수 있게 남긴다(가드 자체를 테스트가 관통해야 하므로).
+  const [slopeBusy, setSlopeBusy] = useState(false);
+
+  /** 상세 대상이 바뀔 때 경사도 표시를 그 필지 기준으로 재설정(캐시 적중이면 즉시 표시). */
+  const syncSlopeForFeature = useCallback((feature: SatongMapFeature | null) => {
+    if (!feature) {
+      setSlopeStatus("idle");
+      setSlopeResult(null);
+      setSlopeError(null);
+      return;
+    }
+    const key = dominantConstraintKey(feature);
+    const cached = parcelSlopeByKeyRef.current.get(key);
+    if (cached) {
+      setSlopeStatus("done");
+      setSlopeResult(cached);
+      setSlopeError(null);
+    } else if (slopeInFlightKeyRef.current === key) {
+      // ★그 필지의 조회가 아직 진행 중이면 로딩을 복원한다 — idle로 두면 "조회" 버튼이 다시
+      //   뜨는데 잠금 때문에 눌러도 무반응이라 사용자에겐 고장으로 보인다(R1 MEDIUM).
+      setSlopeStatus("loading");
+      setSlopeResult(null);
+      setSlopeError(null);
+    } else {
+      setSlopeStatus("idle");
+      setSlopeResult(null);
+      setSlopeError(null);
+    }
+  }, []);
+
+  const requestParcelSlope = useCallback(async () => {
+    const feature = detailFeatureRef.current;
+    if (!feature) return;
+    if (slopeInFlightKeyRef.current !== null) return; // 인플라이트 1건 — 연타·전역 폭주 차단(1req/s)
+    const key = dominantConstraintKey(feature);
+    const cached = parcelSlopeByKeyRef.current.get(key);
+    if (cached) {
+      setSlopeStatus("done");
+      setSlopeResult(cached);
+      return;
+    }
+    if (!feature.pnu && !feature.address) {
+      setSlopeStatus("error");
+      setSlopeError("PNU·주소가 없어 표고를 조회할 수 없습니다.");
+      return;
+    }
+    slopeInFlightKeyRef.current = key;
+    setSlopeBusy(true);
+    setSlopeStatus("loading");
+    setSlopeError(null);
+    try {
+      const res = await apiClient.post<TerrainResult>("/terrain/analyze", {
+        body: { pnu: feature.pnu || null, address: feature.address || null },
+      });
+      const failed = !res || res.ok === false;
+      // ★실패(ok:false)는 **캐시하지 않는다**(R1 HIGH). 캐시하면 ①"다시 조회"가 캐시 히트로
+      //   끝나 재요청이 아예 안 나가고 ②slope 없는 객체가 status="done"으로 들어가 실제 사유
+      //   (주소/PNU 미확인 등) 대신 "표고 표본 부족"이라는 **엉뚱한 문구**가 표시된다.
+      //   OpenTopoData 일시 장애·주소 미해석은 백엔드가 정상적으로 내는 실패 모드다.
+      if (!failed) {
+        // ★스테일 가드: 조회 중 사용자가 다른 필지를 열었어도 결과는 캐시에 넣어 다시 열 때
+        //   즉시 표시되게 한다(표시만 그 필지 기준으로 건너뛴다).
+        //   ★화면이 쓰는 필드만 담는다 — cross_section.points(31점)·earthwork는 렌더에 쓰이지
+        //   않는데 sessionStorage 용량만 먹는다(R1 LOW).
+        const slim: TerrainResult = {
+          ok: true,
+          slope: res.slope,
+          confidence: res.confidence,
+          note: res.note,
+          resolution_m: res.resolution_m,
+        };
+        parcelSlopeByKeyRef.current.set(key, slim);
+        writeSatongViewCache<TerrainResult>(SATONG_PARCEL_SLOPE_KEY, parcelSlopeByKeyRef.current);
+      }
+      const current = detailFeatureRef.current;
+      if (!current || dominantConstraintKey(current) !== key) return;
+      if (failed) {
+        setSlopeStatus("error");
+        setSlopeError(res?.message || "표고 데이터를 확인하지 못했습니다.");
+        return;
+      }
+      setSlopeStatus("done");
+      setSlopeResult(res);
+    } catch (e) {
+      const current = detailFeatureRef.current;
+      if (current && dominantConstraintKey(current) === key) {
+        setSlopeStatus("error");
+        setSlopeError(e instanceof ApiClientError ? e.message : "네트워크 오류");
+      }
+    } finally {
+      slopeInFlightKeyRef.current = null;
+      setSlopeBusy(false);
+    }
+  }, []);
+
   const openFeatureDetail = useCallback((feature: SatongMapFeature) => {
     // ★단일 팝오버 불변식 — right-20 top-20 z-430 좌표를 공유하는 3패널(필지상세·레이어·
     //   베이스맵)은 동시에 뜰 수 없다. 봉합은 '생산 근원'인 이 함수에서 한다 — 호출부
@@ -750,6 +870,19 @@ export function SatongMapShell({
     setDetailFeature(dominantConstraint ? { ...feature, dominantConstraint } : feature);
     setActiveLayerId(null);
   }, [resolveDominantConstraint]);
+  // ★경사도 표시를 상세 대상에 맞추는 배선은 **여기 한 곳**이다 — setDetailFeature 호출부가
+  //   5곳(열기·유령패널 닫기·초기화·경계합류·삭제)이라 각자 동기화하면 새 호출부가 생길 때 또
+  //   샌다(W1 openFeatureDetail 교훈과 동일). detailFeature를 관찰해 일괄 처리한다.
+  useEffect(() => {
+    detailFeatureRef.current = detailFeature;
+  }, [detailFeature]);
+  // ★키(필지 동일성) 기준으로만 재설정한다 — 경계 합류로 detailFeature **객체 identity**가
+  //   바뀔 때(같은 필지) 로딩 중이던 경사도 상태가 초기화되지 않게.
+  const detailParcelKey = detailFeature ? dominantConstraintKey(detailFeature) : null;
+  useEffect(() => {
+    // detailFeatureRef는 ref라 deps가 아니다 — 트리거는 detailParcelKey(필지 동일성) 뿐.
+    syncSlopeForFeature(detailFeatureRef.current);
+  }, [detailParcelKey, syncSlopeForFeature]);
   // I5: 선택 필지 GeoJSON 내보내기 결과 고지(제외 건수 정직 표기).
   const [exportNote, setExportNote] = useState("");
   // ★R1(stale 고지): 선택이 바뀌면(추가·삭제·초기화·프로젝트 전환) 지난 내보내기 고지를
@@ -2680,6 +2813,18 @@ export function SatongMapShell({
                 );
               })()}
             </div>
+
+            {/* ★W2 경사도 — 온디맨드(표고 원천 1req/s·서버 무캐시라 명시적 요청).
+                 값·한계 문구는 전부 서버 산정(terrain/analyze)이고 여기선 표시만 한다. */}
+            <ParcelSlopeSection
+              status={slopeStatus}
+              result={slopeResult}
+              errorMessage={slopeError}
+              // ★다른 필지 조회가 진행 중임을 고지 — 전역 1건 잠금이라 눌러도 무시되는데
+              //   아무 피드백이 없으면 "죽은 버튼"으로 보인다(R2 권고 2).
+              otherRequestInFlight={slopeBusy && slopeStatus !== "loading"}
+              onRequest={requestParcelSlope}
+            />
 
             {detailFeature.officialPricePerSqm && detailFeature.areaSqm ? (
               <div className="col-span-2 border-t border-[var(--border-muted)] pt-2">
