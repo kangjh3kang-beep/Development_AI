@@ -48,6 +48,11 @@ import { AnalysisPipelineStepbar, type PipelineStep } from "@/components/common/
 import { ContextHeader } from "@/components/common/ContextHeader"; // 집계 SSOT 단일표면(UX 트랙 B2)
 import { DataSourceNotice } from "@/components/ui/DataSourceNotice";
 import { DominantConstraintBanner } from "@/components/precheck/DominantConstraintBanner"; // W1 지배 제약 — 필지 상세 최상단
+import {
+  ParcelSlopeSection,
+  type ParcelSlopeStatus,
+} from "@/components/precheck/ParcelSlopeSection"; // W2 경사도 — 필지 상세 온디맨드
+import type { TerrainResult } from "@/components/terrain/types";
 import type {
   ParcelAtPointResult,
   SatongAuctionItem,
@@ -75,8 +80,11 @@ import { useProjectStore } from "@/store/useProjectStore";
 import { restoreSnapshot } from "@/lib/projectSync";
 import { createProjectFromParcels } from "@/lib/satong-project-create";
 import {
+  SATONG_PARCEL_SLOPE_KEY,
   dominantConstraintKey,
   readDominantConstraintCache,
+  readSatongViewCache,
+  writeSatongViewCache,
   readSatongMapSelection,
   selectionToSiteAnalysisPatch,
   siteAnalysisToSelection,
@@ -738,6 +746,87 @@ export function SatongMapShell({
       null,
     [],
   );
+  // ── W2 필지 경사도(온디맨드) ────────────────────────────────────────────────
+  //  표고 원천(OpenTopoData)이 **1 req/s 공개 제한 + 서버 캐시 없음**이라 필지를 열 때마다
+  //  자동 조회하면 사용자가 빠르게 훑는 순간 그 제한을 넘긴다(전역 리미터 없음). 그래서
+  //  ①명시적 요청(버튼) ②세션 뷰 캐시로 재조회 제거 ③인플라이트 1건 제한으로 묶는다.
+  // 상세 대상의 최신 스냅샷 — 비동기 응답의 스테일 판정에 쓴다(렌더 중 쓰기 금지 → effect에서 갱신).
+  const detailFeatureRef = useRef<SatongMapFeature | null>(null);
+  const parcelSlopeByKeyRef = useRef<Map<string, TerrainResult | null>>(
+    readSatongViewCache<TerrainResult>(SATONG_PARCEL_SLOPE_KEY),
+  );
+  const [slopeStatus, setSlopeStatus] = useState<ParcelSlopeStatus>("idle");
+  const [slopeResult, setSlopeResult] = useState<TerrainResult | null>(null);
+  const [slopeError, setSlopeError] = useState<string | null>(null);
+  const slopeInFlightRef = useRef(false);
+
+  /** 상세 대상이 바뀔 때 경사도 표시를 그 필지 기준으로 재설정(캐시 적중이면 즉시 표시). */
+  const syncSlopeForFeature = useCallback((feature: SatongMapFeature | null) => {
+    if (!feature) {
+      setSlopeStatus("idle");
+      setSlopeResult(null);
+      setSlopeError(null);
+      return;
+    }
+    const cached = parcelSlopeByKeyRef.current.get(dominantConstraintKey(feature));
+    if (cached) {
+      setSlopeStatus("done");
+      setSlopeResult(cached);
+      setSlopeError(null);
+    } else {
+      setSlopeStatus("idle");
+      setSlopeResult(null);
+      setSlopeError(null);
+    }
+  }, []);
+
+  const requestParcelSlope = useCallback(async () => {
+    const feature = detailFeatureRef.current;
+    if (!feature) return;
+    if (slopeInFlightRef.current) return; // 인플라이트 1건 — 연타가 1req/s 제한을 넘기지 않게
+    const key = dominantConstraintKey(feature);
+    const cached = parcelSlopeByKeyRef.current.get(key);
+    if (cached) {
+      setSlopeStatus("done");
+      setSlopeResult(cached);
+      return;
+    }
+    if (!feature.pnu && !feature.address) {
+      setSlopeStatus("error");
+      setSlopeError("PNU·주소가 없어 표고를 조회할 수 없습니다.");
+      return;
+    }
+    slopeInFlightRef.current = true;
+    setSlopeStatus("loading");
+    setSlopeError(null);
+    try {
+      const res = await apiClient.post<TerrainResult>("/terrain/analyze", {
+        body: { pnu: feature.pnu || null, address: feature.address || null },
+      });
+      // ★스테일 가드: 조회 중 사용자가 다른 필지를 열었으면 그 필지에 남의 경사도를 붙이지
+      //   않는다(캐시에는 넣어 다시 열 때 즉시 표시되게 한다).
+      parcelSlopeByKeyRef.current.set(key, res);
+      writeSatongViewCache<TerrainResult>(SATONG_PARCEL_SLOPE_KEY, parcelSlopeByKeyRef.current);
+      const current = detailFeatureRef.current;
+      if (!current || dominantConstraintKey(current) !== key) return;
+      if (res && res.ok === false) {
+        setSlopeStatus("error");
+        setSlopeError(res.message || "표고 데이터를 확인하지 못했습니다.");
+        return;
+      }
+      setSlopeStatus("done");
+      setSlopeResult(res);
+    } catch (e) {
+      const current = detailFeatureRef.current;
+      if (current && dominantConstraintKey(current) === key) {
+        setSlopeStatus("error");
+        setSlopeError(e instanceof ApiClientError ? e.message : "네트워크 오류");
+      }
+    } finally {
+      slopeInFlightRef.current = false;
+    }
+  }, []);
+
   const openFeatureDetail = useCallback((feature: SatongMapFeature) => {
     // ★단일 팝오버 불변식 — right-20 top-20 z-430 좌표를 공유하는 3패널(필지상세·레이어·
     //   베이스맵)은 동시에 뜰 수 없다. 봉합은 '생산 근원'인 이 함수에서 한다 — 호출부
@@ -750,6 +839,19 @@ export function SatongMapShell({
     setDetailFeature(dominantConstraint ? { ...feature, dominantConstraint } : feature);
     setActiveLayerId(null);
   }, [resolveDominantConstraint]);
+  // ★경사도 표시를 상세 대상에 맞추는 배선은 **여기 한 곳**이다 — setDetailFeature 호출부가
+  //   5곳(열기·유령패널 닫기·초기화·경계합류·삭제)이라 각자 동기화하면 새 호출부가 생길 때 또
+  //   샌다(W1 openFeatureDetail 교훈과 동일). detailFeature를 관찰해 일괄 처리한다.
+  useEffect(() => {
+    detailFeatureRef.current = detailFeature;
+  }, [detailFeature]);
+  // ★키(필지 동일성) 기준으로만 재설정한다 — 경계 합류로 detailFeature **객체 identity**가
+  //   바뀔 때(같은 필지) 로딩 중이던 경사도 상태가 초기화되지 않게.
+  const detailParcelKey = detailFeature ? dominantConstraintKey(detailFeature) : null;
+  useEffect(() => {
+    // detailFeatureRef는 ref라 deps가 아니다 — 트리거는 detailParcelKey(필지 동일성) 뿐.
+    syncSlopeForFeature(detailFeatureRef.current);
+  }, [detailParcelKey, syncSlopeForFeature]);
   // I5: 선택 필지 GeoJSON 내보내기 결과 고지(제외 건수 정직 표기).
   const [exportNote, setExportNote] = useState("");
   // ★R1(stale 고지): 선택이 바뀌면(추가·삭제·초기화·프로젝트 전환) 지난 내보내기 고지를
@@ -2680,6 +2782,15 @@ export function SatongMapShell({
                 );
               })()}
             </div>
+
+            {/* ★W2 경사도 — 온디맨드(표고 원천 1req/s·서버 무캐시라 명시적 요청).
+                 값·한계 문구는 전부 서버 산정(terrain/analyze)이고 여기선 표시만 한다. */}
+            <ParcelSlopeSection
+              status={slopeStatus}
+              result={slopeResult}
+              errorMessage={slopeError}
+              onRequest={requestParcelSlope}
+            />
 
             {detailFeature.officialPricePerSqm && detailFeature.areaSqm ? (
               <div className="col-span-2 border-t border-[var(--border-muted)] pt-2">
