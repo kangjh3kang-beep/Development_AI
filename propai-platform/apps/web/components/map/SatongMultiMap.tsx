@@ -43,6 +43,7 @@ import {
   zoneColor,
 } from "@/lib/satong-map-layers";
 import { bindSatongLabel, planSatongLabels, satongLabelLOD } from "@/lib/satong-map-labels";
+import type { SiteLayoutOverlay } from "@/lib/site-layout";
 import { SATONG_PANE_Z, SATONG_UI_Z } from "@/lib/satong-map-z";
 import { clampClickMenuPosition, findFeatureAtPoint, shortJibunLabel } from "@/lib/satong-click-menu";
 import {
@@ -118,6 +119,9 @@ export interface SatongMultiMapProps {
   onBoundaryEnriched?: (features: SatongMapFeature[]) => void;
   /** 경계보강 진행상태 통지 — 부모(Shell)가 "좌표 확인 중" 노트를 실패 시 정직 강등하는 데 쓴다. */
   onBoundaryStatusChange?: (status: "idle" | "loading" | "ready" | "error") => void;
+  /** W3 배치 미리보기 오버레이 — 서버 산정 GeoJSON(건축가능 영역 + 선택 대안의 동 풋프린트).
+   *  ★기하를 여기서 만들지 않는다: null이면 아무것도 그리지 않는다(가짜 배치 금지). */
+  layoutOverlay?: SiteLayoutOverlay | null;
   /** 분양 상태 노트(좌표 대기·조회 실패 등) — 설정 시 건수 라벨 대신 표기(정직원칙).
    *  ★marketLayer 객체에 넣지 않고 별도 prop으로 받는다 — 노트만 바뀔 때 마커 이펙트가
    *  전체 재생성되던 낭비(리뷰 LOW)를 차단. */
@@ -844,6 +848,7 @@ export function SatongMultiMap({
   poiPayload = null,
   developmentPayload = null,
   onCenterChange,
+  layoutOverlay,
   onBoundaryEnriched,
   onBoundaryStatusChange,
   presaleNote = null,
@@ -1899,6 +1904,67 @@ export function SatongMultiMap({
     priceRange.min,
   ]);
   /* eslint-enable react-hooks/set-state-in-effect */
+
+  // ── W3 배치 미리보기 오버레이(건축가능 영역 + 선택 대안의 동 풋프린트) ──────────────
+  //  ★기하는 전부 서버 산정(cad/site_layout_service)이다. 여기서 동을 배치하거나 세트백을
+  //    계산하지 않는다 — layoutOverlay가 null이면 아무것도 그리지 않는다(가짜 배치 금지).
+  //  전용 layerGroup 1개를 만들고 payload가 바뀔 때마다 통째로 갈아끼운다(부분 갱신 시
+  //  이전 대안의 동이 남아 두 대안이 겹쳐 보이는 오도가 생긴다).
+  const layoutLayerRef = useRef<any>(null);
+  useEffect(() => {
+    const map = mapRef.current;
+    const L = window.L;
+    if (!map || !L || !mapReady) return;
+
+    // 이전 오버레이 제거 — 대안 전환 시 잔존 금지.
+    if (layoutLayerRef.current) {
+      try { map.removeLayer(layoutLayerRef.current); } catch { /* noop */ }
+      layoutLayerRef.current = null;
+    }
+    if (!layoutOverlay) return;
+
+    const group = L.layerGroup().addTo(map);
+    layoutLayerRef.current = group;
+
+    // ① 건축가능 영역(세트백 오프셋 후) — 점선 외곽·저채도. 대지와의 차이가 곧 세트백 밴드다.
+    if (layoutOverlay.buildable) {
+      const rings = geoJsonToLeafletRings(layoutOverlay.buildable);
+      if (rings.length > 0) {
+        L.polygon(rings, {
+          color: "#7C98F2", weight: 1.5, dashArray: "5,4",
+          fillColor: "#7C98F2", fillOpacity: 0.1,
+          interactive: false, bubblingMouseEvents: false,
+        }).addTo(group);
+      }
+    }
+
+    // ② 선택 대안의 동 풋프린트 — 실선·불투명도 높임. 층수를 툴팁으로(도면 아님을 문구로 명시).
+    const feats = layoutOverlay.buildings?.features ?? [];
+    feats.forEach((f) => {
+      const rings = geoJsonToLeafletRings(f.geometry);
+      if (rings.length === 0) return;
+      const dong = f.properties?.dong;
+      const floors = f.properties?.floors;
+      const poly = L.polygon(rings, {
+        color: "#135bec", weight: 2, fillColor: "#135bec", fillOpacity: 0.42,
+        interactive: true, bubblingMouseEvents: false,
+      }).addTo(group);
+      try {
+        poly.bindTooltip(
+          `${dong != null ? `${dong}동` : "동"}${floors != null ? ` · ${floors}층` : ""}` +
+            " (볼륨 감 · 축정렬 근사)",
+          { direction: "top", opacity: 0.92 },
+        );
+      } catch { /* noop */ }
+    });
+
+    return () => {
+      if (layoutLayerRef.current) {
+        try { map.removeLayer(layoutLayerRef.current); } catch { /* noop */ }
+        layoutLayerRef.current = null;
+      }
+    };
+  }, [mapReady, layoutOverlay]);
 
   // ── 선택 필지(연결 프로젝트·staged·pending) 식별 라벨 — 전역 라벨 버짓·줌 LOD 무관 항상 표시 ──
   //   ★PR#329 R1 리뷰(LOW1) 반영: 홈 초기 진입(줌 12)은 hover-only LOD라 시장/POI/개발계획

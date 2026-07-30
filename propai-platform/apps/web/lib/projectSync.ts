@@ -18,6 +18,7 @@ import {
   SATONG_DOMINANT_CONSTRAINT_KEY,
   SATONG_MAP_SELECTION_KEY,
   SATONG_PARCEL_SLOPE_KEY,
+  SATONG_SITE_LAYOUT_KEY,
 } from "@/components/precheck/satong-map-selection";
 
 const CTX_KEYS = [
@@ -114,7 +115,9 @@ export function clearAllProjectData(): void {
         k === SATONG_DOMINANT_CONSTRAINT_KEY ||
         // ★W2 경사도 뷰 캐시 — 지형 정보라도 "이전 계정이 보던 필지"를 노출하면 계정 격리
         //   위반이다. 새 뷰 캐시 키는 만드는 즉시 이 목록에 등재한다(W1 교훈).
-        k === SATONG_PARCEL_SLOPE_KEY
+        k === SATONG_PARCEL_SLOPE_KEY ||
+        // ★W3 배치도 뷰 캐시 — 새 뷰 캐시 키는 만드는 즉시 이 목록에 등재한다(W1·W2 교훈).
+        k === SATONG_SITE_LAYOUT_KEY
       ) {
         try { window.sessionStorage.removeItem(k); } catch { /* noop */ }
       }
