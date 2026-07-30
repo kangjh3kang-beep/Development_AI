@@ -173,6 +173,43 @@ async def test_parcel_boundaries_needs_ned_source_for_military(monkeypatch):
     )
 
 
+async def test_parcel_boundaries_marks_lookup_failure_as_unverified(monkeypatch):
+    """★무음 낙관 차단(배선): 두 출처 모두 하드 실패면 배너가 사라지지 않고 unverified로 뜬다.
+
+    NED는 None(하드 실패)과 [](규제 0건)을 계약으로 구분한다. 그 구분을 여기서 흘리면
+    "조회 실패"가 "제약 없는 필지"로 표시돼 사용자가 규제를 확인했다고 착각한다.
+    """
+    az = _stub_boundary_io(monkeypatch, districts=[], zone_type="보전관리지역", ned_districts=[])
+    from apps.api.app.services.external_api.vworld_service import VWorldService
+
+    async def _hard_fail_ned(self, pnu):  # noqa: ANN001
+        return None  # 키 미설정·HTTP 실패 — 목록을 확정할 수 없음
+
+    async def _hard_fail_ud(self, pnu):  # noqa: ANN001
+        raise RuntimeError("UD802 조회 실패")  # _districts가 None으로 격리
+
+    monkeypatch.setattr(VWorldService, "get_land_use_plan", _hard_fail_ned, raising=True)
+    monkeypatch.setattr(VWorldService, "get_land_use_districts", _hard_fail_ud, raising=True)
+
+    dc = (await az.parcel_boundaries(
+        az.ParcelBoundariesRequest(parcels=[{"pnu": _PNU}])
+    ))["features"][0]["dominant_constraint"]
+
+    assert dc is not None, "조회 실패가 '제약 없음'으로 뭉개졌다(무음 낙관)"
+    assert dc["unverified"] is True
+    assert dc["headline"] is None, "확정 못 한 상태에서 제약을 만들어내면 날조"
+
+
+async def test_parcel_boundaries_zero_regulation_is_verified_and_hidden(monkeypatch):
+    """조회 성공 + 규제 0건은 unverified가 아니라 정말 '제약 없음'(배너 미표시)."""
+    az = _stub_boundary_io(monkeypatch, districts=[], zone_type="보전관리지역", ned_districts=[])
+
+    feat = (await az.parcel_boundaries(
+        az.ParcelBoundariesRequest(parcels=[{"pnu": _PNU}])
+    ))["features"][0]
+    assert feat["dominant_constraint"] is None
+
+
 async def test_parcel_boundaries_merges_both_designation_sources(monkeypatch):
     """두 출처(NED 개별법 + UD802/803 용도지구)가 **합집합**으로 랭킹된다."""
     az = _stub_boundary_io(

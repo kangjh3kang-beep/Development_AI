@@ -44,6 +44,9 @@ export type DominantConstraint = {
   headline?: string | null;
   /** protection_zone_severity SSOT 등급(낮음/보통/중간/높음/극히 높음). */
   severity?: string | null;
+  /** ★규제 designation 조회가 실패해 제약 유무를 **확정할 수 없음**. true면 "제약 없음"이
+   *  아니라 "모름" — 화면은 배너를 숨기지 말고 확인 실패를 표기해야 한다(무음 낙관 차단). */
+  unverified?: boolean;
   ranked?: Array<{ name: string; severity?: string | null; action?: string | null }>;
   height?: {
     governing_m?: number | null;

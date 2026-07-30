@@ -44,8 +44,11 @@ export function DominantConstraintBanner({
   const headline = constraint?.headline || null;
   const height = constraint?.height ?? null;
   const heightItems = height?.items ?? [];
+  const unverified = constraint?.unverified === true;
   // 말할 것이 없으면 렌더하지 않는다(빈 배너 금지 — 서버도 None을 주지만 이중 방어).
-  if (!headline && heightItems.length === 0) return null;
+  //   ★단 unverified(규제 조회 실패)는 "제약 없음"이 아니라 "모름"이다 — 숨기면 사용자가
+  //     규제를 확인했다고 착각한다(무음 낙관). 이 경우엔 확인 실패를 표기한다.
+  if (!headline && heightItems.length === 0 && !unverified) return null;
 
   const ranked = constraint?.ranked ?? [];
   const nextUp = ranked.slice(1, 3);
@@ -55,6 +58,15 @@ export function DominantConstraintBanner({
       data-testid="dominant-constraint-banner"
       className="mt-3 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-strong)] p-3"
     >
+      {unverified ? (
+        <p
+          data-testid="dominant-constraint-unverified"
+          className="break-keep text-[11px] font-bold leading-snug text-[var(--status-warning)]"
+        >
+          ⚠ 규제 조회 실패 — 제약 유무를 확인하지 못했습니다(재조회 필요).
+          {headline || heightItems.length > 0 ? " 아래는 확보된 일부입니다." : ""}
+        </p>
+      ) : null}
       {headline ? (
         <>
           <div className="flex items-center gap-1.5">

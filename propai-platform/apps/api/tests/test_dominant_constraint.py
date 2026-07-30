@@ -87,6 +87,31 @@ def test_build_for_parcel_returns_none_when_nothing_to_say():
     assert build_for_parcel(regulations=["존재하지않는구역명"], zone_type="보전관리지역") is None
 
 
+# ── ★무음 낙관 차단: "조회 실패"와 "제약 없음"은 다른 것이다 ──────────────────
+def test_lookup_failure_is_not_reported_as_no_constraint():
+    """규제 조회 실패(designations_verified=False) + 제약 0건 → None이 아니라 unverified 블록.
+
+    ★둘 다 배너 0건으로 뭉개면 사용자는 "규제를 확인했고 없다"고 착각한다. 이 저장소가
+    반복해서 데인 결함 클래스(무음 낙관)라 계약 수준에서 구분한다.
+    """
+    failed = build_for_parcel(
+        regulations=[], zone_type="보전관리지역", designations_verified=False,
+    )
+    assert failed is not None, "조회 실패를 '제약 없음'과 같이 숨기면 무음 낙관"
+    assert failed["unverified"] is True
+    assert failed["headline"] is None  # 없는 제약을 만들지도 않는다
+
+    # 조회 성공 + 제약 0건은 그대로 None(빈 배너 금지) — 두 케이스가 갈린다.
+    ok = build_for_parcel(regulations=[], zone_type="보전관리지역", designations_verified=True)
+    assert ok is None
+
+
+def test_verified_lookup_marks_unverified_false():
+    """조회 성공 시 unverified=False가 명시된다(키 부재로 화면이 판단을 못 하는 상황 방지)."""
+    out = build_for_parcel(regulations=["개발제한구역"], zone_type="보전관리지역")
+    assert out["unverified"] is False
+
+
 # ── ③ 정북일조: 수치가 있는 항목만 min()에 참여 ──────────────────────────────
 def test_north_distance_yields_numeric_governing_height():
     """정북거리 有 → governing_m 숫자 · governing_source='정북일조' · 산식은 공용 SSOT."""

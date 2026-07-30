@@ -1538,11 +1538,15 @@ async def _enrich_effective_and_special(
                 #   판정한다(무음 0건 금지: 둘 다 미확인이면 아래에서 None → 배너 미표시).
                 _ned = ned_districts_by_pnu.get(str(p.get("pnu") or ""))
                 _dc_regs = list(dict.fromkeys([*(_ned or []), *(_sd or [])]))
+                # ★무음 낙관 차단: NED None(하드 실패)과 [](규제 0건)을 구분해 전달한다.
+                #   둘 다 배너 0건으로 뭉개면 "규제 확인했고 없음"으로 오독된다. UD802/803(_sd)도
+                #   None=미확인이므로 **둘 중 하나라도 확정**됐으면 verified로 본다(합집합 논리와 정합).
                 p["_dominant_constraint"] = build_for_parcel(
                     regulations=_dc_regs,
                     zone_type=zone,
                     geometry=p.get("geometry"),
                     slope_pct=None,
+                    designations_verified=(_ned is not None or _sd is not None),
                 )
             except Exception:  # noqa: BLE001 — 지배 제약 산출 실패는 필지 보강 무손상(미표기)
                 p["_dominant_constraint"] = None

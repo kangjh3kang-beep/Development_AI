@@ -75,9 +75,12 @@ import { useProjectStore } from "@/store/useProjectStore";
 import { restoreSnapshot } from "@/lib/projectSync";
 import { createProjectFromParcels } from "@/lib/satong-project-create";
 import {
+  dominantConstraintKey,
+  readDominantConstraintCache,
   readSatongMapSelection,
   selectionToSiteAnalysisPatch,
   siteAnalysisToSelection,
+  writeDominantConstraintCache,
   writeSatongMapSelection,
   type SatongSelectionParcel,
 } from "./satong-map-selection";
@@ -517,58 +520,7 @@ export function healParcelPnu(
   return existingPnu || boundaryPnu || null;
 }
 
-// ── W1 지배 제약 뷰 캐시 ─────────────────────────────────────────────────────
-//  경계 응답(/zoning/parcel-boundaries)만 지배 제약을 준다. 선택 SSOT(필지 객체)에 넣지 않고
-//  뷰 캐시로 분리하는 이유: ① stale 규제가 프로젝트 스냅샷·산출물 페이로드에 박히지 않게,
-//  ② 매 응답의 새 객체 identity가 변경감지를 참으로 만들어 commit/save 루프를 돌지 않게.
-//  sessionStorage에 함께 두는 이유(R1 M-3): 소프트 내비로 셸이 재마운트되면 ref가 비는데
-//  selectionBoundaryReady가 true라 경계 재조회도 스킵돼 배너가 무음 소실됐다.
-const DOMINANT_CONSTRAINT_CACHE_KEY = "satong.dominantConstraint.v1";
-/** 캐시 상한 — 뷰 캐시라 무한 성장시킬 이유가 없다(초과분은 오래된 것부터 버린다). */
-const DOMINANT_CONSTRAINT_CACHE_MAX = 200;
 
-/**
- * ★R1 LOW-9: 저장 키와 조회 키를 **같은 규칙**으로 고정한다.
- *
- * satongMapFeatureKey는 `pnu || id || address`인데, 저장 시엔 id가 없는 shape를 넘겨 사실상
- * `pnu || address`였다. 그래서 pnu 미확보 필지(엑셀·지오코딩 시드, id="P-xxx")는 조회 키가
- * id로 잡혀 **캐시 미스 → 배너 미표시**가 됐다(저장/조회 비대칭). 여기서 id를 배제한 단일
- * 규칙만 쓴다 — id는 클라이언트 생성 합성값이라 서버 응답과 절대 맞을 수 없다.
- */
-export function dominantConstraintKey(
-  feature: Pick<SatongMapFeature, "pnu" | "address">,
-): string {
-  return feature.pnu || (feature.address || "").trim().replace(/\s+/g, " ");
-}
-
-function readDominantConstraintCache(): Map<string, DominantConstraint | null> {
-  const map = new Map<string, DominantConstraint | null>();
-  if (typeof window === "undefined") return map;
-  try {
-    const raw = window.sessionStorage.getItem(DOMINANT_CONSTRAINT_CACHE_KEY);
-    if (!raw) return map;
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return map;
-    for (const entry of parsed) {
-      if (Array.isArray(entry) && typeof entry[0] === "string") {
-        map.set(entry[0], (entry[1] ?? null) as DominantConstraint | null);
-      }
-    }
-  } catch {
-    // 손상된 캐시는 조용히 버린다(표시 캐시라 복구 대상이 아니다 — 다음 경계 응답이 채운다).
-  }
-  return map;
-}
-
-function writeDominantConstraintCache(map: Map<string, DominantConstraint | null>): void {
-  if (typeof window === "undefined") return;
-  try {
-    const entries = Array.from(map.entries()).slice(-DOMINANT_CONSTRAINT_CACHE_MAX);
-    window.sessionStorage.setItem(DOMINANT_CONSTRAINT_CACHE_KEY, JSON.stringify(entries));
-  } catch {
-    // 용량 초과 등은 무시 — ref 캐시만으로도 현재 세션 표시는 동작한다(정직 degrade).
-  }
-}
 
 function statusText(status: LayerStatus): string {
   if (status === "active") return "활성";
@@ -769,13 +721,13 @@ export function SatongMapShell({
   //     **무음 소실**됐다. 그래서 표시 캐시를 sessionStorage에 함께 둔다 — 선택 SSOT(필지 데이터)가
   //     아니라 **뷰 캐시**라서 프로젝트 스냅샷·산출물 페이로드를 오염시키지 않는다.
   const dominantConstraintByKeyRef = useRef<Map<string, DominantConstraint | null>>(
-    readDominantConstraintCache(),
+    readDominantConstraintCache<DominantConstraint>(),
   );
   const rememberDominantConstraints = useCallback(
     (entries: Array<[string, DominantConstraint | null]>) => {
       if (!entries.length) return;
       for (const [key, value] of entries) dominantConstraintByKeyRef.current.set(key, value);
-      writeDominantConstraintCache(dominantConstraintByKeyRef.current);
+      writeDominantConstraintCache<DominantConstraint>(dominantConstraintByKeyRef.current);
     },
     [],
   );

@@ -14,7 +14,10 @@ import {
   purifyPollutedSnapshot,
 } from "@/store/useProjectContextStore";
 import { useLandScheduleStore } from "@/store/useLandScheduleStore";
-import { SATONG_MAP_SELECTION_KEY } from "@/components/precheck/satong-map-selection";
+import {
+  SATONG_DOMINANT_CONSTRAINT_KEY,
+  SATONG_MAP_SELECTION_KEY,
+} from "@/components/precheck/satong-map-selection";
 
 const CTX_KEYS = [
   "projectId", "projectName", "projectStatus",
@@ -104,7 +107,10 @@ export function clearAllProjectData(): void {
       if (
         k.startsWith("propai_site_token:") ||
         k === "propai_precheck_handoff" ||
-        k === SATONG_MAP_SELECTION_KEY
+        k === SATONG_MAP_SELECTION_KEY ||
+        // ★W1 지배 제약 뷰 캐시 — 규제 정보라도 "이전 계정이 보던 필지"를 노출하면 계정 격리
+        //   위반이다. 정본 상수를 재사용(하드코딩 금지 — 위 SATONG_MAP_SELECTION_KEY 선례).
+        k === SATONG_DOMINANT_CONSTRAINT_KEY
       ) {
         try { window.sessionStorage.removeItem(k); } catch { /* noop */ }
       }

@@ -15,6 +15,12 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { DominantConstraintBanner } from "@/components/precheck/DominantConstraintBanner";
+import {
+  SATONG_DOMINANT_CONSTRAINT_KEY,
+  readDominantConstraintCache,
+  writeDominantConstraintCache,
+} from "@/components/precheck/satong-map-selection";
+import { clearOnLogout } from "@/lib/projectSync";
 import { assertWiredThrough } from "@/lib/source-invariant";
 import { mergeSatongMapFeatures, type DominantConstraint } from "@/lib/satong-map-layers";
 
@@ -146,6 +152,22 @@ describe("DominantConstraintBanner 표시 계약", () => {
     expect(c3).toBeEmptyDOMElement();
   });
 
+  it("★④-c 무음 낙관 차단: 규제 조회 실패(unverified)는 숨기지 않고 '확인 실패'를 표기한다", () => {
+    // 서버는 "조회 실패 + 제약 0건"을 None이 아니라 unverified 블록으로 준다.
+    //   숨기면 사용자가 "규제를 확인했고 없다"고 착각한다.
+    render(
+      <DominantConstraintBanner
+        constraint={{ headline: null, ranked: [], height: null, unverified: true }}
+      />,
+    );
+
+    const notice = screen.getByTestId("dominant-constraint-unverified");
+    expect(notice.textContent).toContain("규제 조회 실패");
+    expect(notice.textContent).toContain("확인하지 못했습니다");
+    // 없는 제약을 만들어내지 않는다.
+    expect(screen.queryByTestId("dominant-constraint-headline")).not.toBeInTheDocument();
+  });
+
   it("④-b headline 없이 높이만 있어도(주거지 정북일조 단독) 배너는 뜬다", () => {
     render(
       <DominantConstraintBanner
@@ -211,6 +233,34 @@ describe("배선 — 지배 제약이 병합/변환에서 소실되지 않는다
       mustContain: "dominant_constraint",
       minMatches: 1,
     });
+  });
+
+  it("★⑦ 계정 격리: 로그아웃·계정전환 와이프가 지배 제약 뷰 캐시를 지운다", () => {
+    // 이 저장소는 사통맵 선택(SATONG_MAP_SELECTION_KEY)이 와이프 목록에서 빠져 다음 계정에
+    //   이전 계정 필지가 복원되는 결함을 겪었다(레인F P0-3). 같은 함정을 반복하지 않는다 —
+    //   규제 정보라도 "이전 계정이 보던 필지"를 노출하면 계정 격리 위반이다.
+    window.sessionStorage.setItem(
+      SATONG_DOMINANT_CONSTRAINT_KEY,
+      JSON.stringify([["PNU-PREV-ACCOUNT", HOMIGOT]]),
+    );
+    expect(window.sessionStorage.getItem(SATONG_DOMINANT_CONSTRAINT_KEY)).not.toBeNull();
+
+    clearOnLogout();
+
+    expect(window.sessionStorage.getItem(SATONG_DOMINANT_CONSTRAINT_KEY)).toBeNull();
+    expect(readDominantConstraintCache<DominantConstraint>().size).toBe(0);
+  });
+
+  it("⑦-b 캐시 왕복: 저장→읽기가 값을 보존하고, 손상 캐시는 조용히 버린다", () => {
+    const map = new Map<string, DominantConstraint | null>([["PNU-1", HOMIGOT], ["PNU-2", null]]);
+    writeDominantConstraintCache<DominantConstraint>(map);
+    const back = readDominantConstraintCache<DominantConstraint>();
+    expect(back.get("PNU-1")?.headline).toContain("통제보호구역");
+    expect(back.get("PNU-2")).toBeNull();
+
+    // 손상 JSON은 예외를 던지지 않고 빈 캐시로 강등된다(표시 캐시 — 복구 대상 아님).
+    window.sessionStorage.setItem(SATONG_DOMINANT_CONSTRAINT_KEY, "{not json");
+    expect(readDominantConstraintCache<DominantConstraint>().size).toBe(0);
   });
 
   it("⑥-b 소스 불변식: 배너는 detailFeature(상세 팝오버 SSOT)로만 급여된다", () => {

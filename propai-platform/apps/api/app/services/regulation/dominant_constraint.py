@@ -270,6 +270,7 @@ def build_for_parcel(
     zone_type: str | None = None,
     geometry: dict[str, Any] | None = None,
     slope_pct: float | None = None,
+    designations_verified: bool = True,
 ) -> dict[str, Any] | None:
     """필지 1건의 지배 제약 블록 — **모든 소비처의 단일 진입점**.
 
@@ -277,6 +278,12 @@ def build_for_parcel(
     정하고, 지도 경계 응답·종합분석이 같은 함수를 부른다(로직 복제 금지 — 한 곳을 고치면
     전역이 따라온다). None을 돌려주면 화면은 배너를 렌더하지 않는다(빈 배너 금지 원칙을
     표면이 아니라 계약 수준에서 보장).
+
+    designations_verified: 규제 designation **조회가 성공했는가**. False = 하드 실패(키 미설정·
+      HTTP/파싱 오류)로 목록을 확정할 수 없음. ★이 구분이 없으면 "조회 실패"와 "제약 없는 필지"가
+      똑같이 배너 0건으로 뭉개져 사용자가 규제를 확인했다고 착각한다(무음 낙관 — 이 저장소가
+      반복해서 데인 결함 클래스). 실패인데 아무 제약도 못 찾았으면 None이 아니라 unverified
+      블록을 돌려줘 화면이 "확인 실패"를 표기하게 한다.
     """
     _depth, _irr = sunlight_geometry_facts(zone_type, geometry)
     dc = resolve_dominant_constraint(
@@ -285,6 +292,11 @@ def build_for_parcel(
         slope_pct=slope_pct,
         irregularity=_irr,
     )
+    dc["unverified"] = not designations_verified
     if not dc.get("headline") and not dc.get("height"):
-        return None
+        # 조회 성공 + 아무것도 없음 = "제약 없음" → 배너를 숨긴다(빈 배너 금지).
+        if designations_verified:
+            return None
+        # 조회 실패 + 아무것도 못 찾음 = **모른다**. 숨기면 "제약 없음"으로 오독된다.
+        return dc
     return dc
