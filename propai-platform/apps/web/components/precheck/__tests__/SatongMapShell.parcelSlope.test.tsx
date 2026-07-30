@@ -238,6 +238,96 @@ describe("SatongMapShell 경사도 온디맨드 배선(W2)", () => {
     expect(terrain.calls).toHaveLength(2);
   });
 
+  it("★⑦ R1 HIGH: ok:false는 캐시하지 않는다 — '다시 조회'가 실제로 재요청을 보낸다", async () => {
+    // 캐시하면 ①재조회가 캐시 히트로 끝나 요청이 안 나가고 ②slope 없는 객체가 done으로 들어가
+    //   실제 사유 대신 "표고 표본 부족"이라는 엉뚱한 문구가 뜬다(무날조 위반).
+    seedTwoParcels();
+    render(<SatongMapShell locale="ko" />);
+    fireEvent.click(screen.getByText("대보리 산1-1"));
+    fireEvent.click(screen.getByTestId("parcel-slope-request"));
+
+    await act(async () => {
+      terrain.resolve?.({ ok: false, message: "주소/PNU로 좌표 또는 필지를 확인하지 못했습니다." });
+    });
+    expect(screen.getByTestId("parcel-slope-error").textContent).toContain(
+      "좌표 또는 필지를 확인하지 못했습니다",
+    );
+
+    // ★재조회가 **실제로 나간다**(캐시에 실패가 박혀 있으면 1건에 머문다).
+    fireEvent.click(screen.getByRole("button", { name: "다시 조회" }));
+    expect(terrain.calls).toHaveLength(2);
+
+    // 두 번째 시도가 성공하면 정상 표시된다(실패가 영구 잔존하지 않는다).
+    await act(async () => {
+      terrain.resolve?.(RESULT_A);
+    });
+    expect(screen.getByTestId("parcel-slope-mean").textContent).toBe("18.4%");
+  });
+
+  it("★⑦-b ok:false 후 다른 필지 갔다 돌아와도 '산출 불가'로 둔갑하지 않는다", async () => {
+    seedTwoParcels();
+    render(<SatongMapShell locale="ko" />);
+    fireEvent.click(screen.getByText("대보리 산1-1"));
+    fireEvent.click(screen.getByTestId("parcel-slope-request"));
+    await act(async () => {
+      terrain.resolve?.({ ok: false, message: "OpenTopoData 일시 장애" });
+    });
+
+    fireEvent.click(screen.getByText("대보리 산2-2"));
+    fireEvent.click(screen.getByText("대보리 산1-1"));
+
+    // 실패는 캐시되지 않으므로 '미조회(idle)'로 돌아가야 한다 — 잘못된 "산출 불가" 문구 금지.
+    expect(screen.getByTestId("parcel-slope-request")).toBeInTheDocument();
+    expect(screen.queryByText(/경사도 산출 불가/)).not.toBeInTheDocument();
+  });
+
+  it("★⑧ R1 MEDIUM: 조회 중 필지를 떠났다 돌아오면 로딩이 복원된다(죽은 버튼 금지)", async () => {
+    seedTwoParcels();
+    render(<SatongMapShell locale="ko" />);
+    fireEvent.click(screen.getByText("대보리 산1-1"));
+    fireEvent.click(screen.getByTestId("parcel-slope-request"));
+    expect(terrain.calls).toHaveLength(1);
+
+    // 응답 전에 B로 이동 → 다시 A로 복귀
+    fireEvent.click(screen.getByText("대보리 산2-2"));
+    fireEvent.click(screen.getByText("대보리 산1-1"));
+
+    // ★A는 아직 조회 중이므로 로딩이어야 한다. idle이면 "조회" 버튼이 뜨는데 잠금 때문에
+    //   눌러도 무반응이라 사용자에겐 고장으로 보인다.
+    expect(screen.getByTestId("parcel-slope-loading")).toBeInTheDocument();
+    expect(screen.queryByTestId("parcel-slope-request")).not.toBeInTheDocument();
+
+    await act(async () => {
+      terrain.resolve?.(RESULT_A);
+    });
+    expect(screen.getByTestId("parcel-slope-mean").textContent).toBe("18.4%");
+  });
+
+  it("★⑨ 캐시는 화면이 쓰는 필드만 담는다(cross_section·earthwork 미저장)", async () => {
+    seedTwoParcels();
+    render(<SatongMapShell locale="ko" />);
+    fireEvent.click(screen.getByText("대보리 산1-1"));
+    fireEvent.click(screen.getByTestId("parcel-slope-request"));
+
+    await act(async () => {
+      terrain.resolve?.({
+        ...RESULT_A,
+        earthwork: { base_level_m: 10, cut_volume_m3: 1, fill_volume_m3: 2, net_m3: -1, balance: "성토우세", detail: "x" },
+        cross_section: {
+          bearing_deg: 0, length_m: 100, min_elev_m: 1, max_elev_m: 9, relief_m: 8,
+          points: Array.from({ length: 31 }, (_, i) => ({ dist_m: i, elev_m: i })),
+        },
+      });
+    });
+
+    const cached = readSatongViewCache<TerrainResult>(SATONG_PARCEL_SLOPE_KEY).get(PNU_A);
+    expect(cached?.slope?.mean_pct).toBe(18.4);
+    expect(cached?.note).toBe(RESULT_A.note);
+    // 렌더에 쓰이지 않는 무거운 필드는 세션 저장소에 넣지 않는다(용량 낭비·quota 위험).
+    expect(cached?.cross_section).toBeUndefined();
+    expect(cached?.earthwork).toBeUndefined();
+  });
+
   it("★⑥ 계정 격리 — 로그아웃 와이프가 경사도 뷰 캐시를 지운다", () => {
     writeSatongViewCache<TerrainResult>(
       SATONG_PARCEL_SLOPE_KEY,

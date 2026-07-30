@@ -758,7 +758,10 @@ export function SatongMapShell({
   const [slopeStatus, setSlopeStatus] = useState<ParcelSlopeStatus>("idle");
   const [slopeResult, setSlopeResult] = useState<TerrainResult | null>(null);
   const [slopeError, setSlopeError] = useState<string | null>(null);
-  const slopeInFlightRef = useRef(false);
+  // ★진행 중인 **필지 키**를 담는다(단순 boolean 금지) — boolean이면 A 조회 중 B로 갔다가
+  //   A로 복귀할 때 캐시에 값이 없어 idle로 재설정되고, 다시 뜬 버튼을 눌러도 잠금이 걸려
+  //   **아무 반응 없는 죽은 버튼**이 된다(R1 MEDIUM). 키를 알면 로딩 상태를 복원할 수 있다.
+  const slopeInFlightKeyRef = useRef<string | null>(null);
 
   /** 상세 대상이 바뀔 때 경사도 표시를 그 필지 기준으로 재설정(캐시 적중이면 즉시 표시). */
   const syncSlopeForFeature = useCallback((feature: SatongMapFeature | null) => {
@@ -768,10 +771,17 @@ export function SatongMapShell({
       setSlopeError(null);
       return;
     }
-    const cached = parcelSlopeByKeyRef.current.get(dominantConstraintKey(feature));
+    const key = dominantConstraintKey(feature);
+    const cached = parcelSlopeByKeyRef.current.get(key);
     if (cached) {
       setSlopeStatus("done");
       setSlopeResult(cached);
+      setSlopeError(null);
+    } else if (slopeInFlightKeyRef.current === key) {
+      // ★그 필지의 조회가 아직 진행 중이면 로딩을 복원한다 — idle로 두면 "조회" 버튼이 다시
+      //   뜨는데 잠금 때문에 눌러도 무반응이라 사용자에겐 고장으로 보인다(R1 MEDIUM).
+      setSlopeStatus("loading");
+      setSlopeResult(null);
       setSlopeError(null);
     } else {
       setSlopeStatus("idle");
@@ -783,7 +793,7 @@ export function SatongMapShell({
   const requestParcelSlope = useCallback(async () => {
     const feature = detailFeatureRef.current;
     if (!feature) return;
-    if (slopeInFlightRef.current) return; // 인플라이트 1건 — 연타가 1req/s 제한을 넘기지 않게
+    if (slopeInFlightKeyRef.current !== null) return; // 인플라이트 1건 — 연타·전역 폭주 차단(1req/s)
     const key = dominantConstraintKey(feature);
     const cached = parcelSlopeByKeyRef.current.get(key);
     if (cached) {
@@ -796,22 +806,38 @@ export function SatongMapShell({
       setSlopeError("PNU·주소가 없어 표고를 조회할 수 없습니다.");
       return;
     }
-    slopeInFlightRef.current = true;
+    slopeInFlightKeyRef.current = key;
     setSlopeStatus("loading");
     setSlopeError(null);
     try {
       const res = await apiClient.post<TerrainResult>("/terrain/analyze", {
         body: { pnu: feature.pnu || null, address: feature.address || null },
       });
-      // ★스테일 가드: 조회 중 사용자가 다른 필지를 열었으면 그 필지에 남의 경사도를 붙이지
-      //   않는다(캐시에는 넣어 다시 열 때 즉시 표시되게 한다).
-      parcelSlopeByKeyRef.current.set(key, res);
-      writeSatongViewCache<TerrainResult>(SATONG_PARCEL_SLOPE_KEY, parcelSlopeByKeyRef.current);
+      const failed = !res || res.ok === false;
+      // ★실패(ok:false)는 **캐시하지 않는다**(R1 HIGH). 캐시하면 ①"다시 조회"가 캐시 히트로
+      //   끝나 재요청이 아예 안 나가고 ②slope 없는 객체가 status="done"으로 들어가 실제 사유
+      //   (주소/PNU 미확인 등) 대신 "표고 표본 부족"이라는 **엉뚱한 문구**가 표시된다.
+      //   OpenTopoData 일시 장애·주소 미해석은 백엔드가 정상적으로 내는 실패 모드다.
+      if (!failed) {
+        // ★스테일 가드: 조회 중 사용자가 다른 필지를 열었어도 결과는 캐시에 넣어 다시 열 때
+        //   즉시 표시되게 한다(표시만 그 필지 기준으로 건너뛴다).
+        //   ★화면이 쓰는 필드만 담는다 — cross_section.points(31점)·earthwork는 렌더에 쓰이지
+        //   않는데 sessionStorage 용량만 먹는다(R1 LOW).
+        const slim: TerrainResult = {
+          ok: true,
+          slope: res.slope,
+          confidence: res.confidence,
+          note: res.note,
+          resolution_m: res.resolution_m,
+        };
+        parcelSlopeByKeyRef.current.set(key, slim);
+        writeSatongViewCache<TerrainResult>(SATONG_PARCEL_SLOPE_KEY, parcelSlopeByKeyRef.current);
+      }
       const current = detailFeatureRef.current;
       if (!current || dominantConstraintKey(current) !== key) return;
-      if (res && res.ok === false) {
+      if (failed) {
         setSlopeStatus("error");
-        setSlopeError(res.message || "표고 데이터를 확인하지 못했습니다.");
+        setSlopeError(res?.message || "표고 데이터를 확인하지 못했습니다.");
         return;
       }
       setSlopeStatus("done");
@@ -823,7 +849,7 @@ export function SatongMapShell({
         setSlopeError(e instanceof ApiClientError ? e.message : "네트워크 오류");
       }
     } finally {
-      slopeInFlightRef.current = false;
+      slopeInFlightKeyRef.current = null;
     }
   }, []);
 
