@@ -771,6 +771,9 @@ class ComprehensiveAnalysisService:
         #   감사 적발(orphan handoff): 종합분석이 special_parcel을 결과에 넣지 않아
         #   site_analysis_interpreter가 특이제약을 인지 못하고 '최대 연면적 가능'류를 독자
         #   서술하는 할루시네이션 위험. 여기서 감지해 result에 부착하면 인터프리터가 그라운딩한다.
+        # ★사전 초기화 — 아래 try 안에서 gather가 던지면 _terrain_facts가 미바인딩으로 남아,
+        #   블록 밖(지배 제약 배선)에서 NameError가 난다. 미확보=None(무날조)로 시작한다.
+        _terrain_facts: dict[str, Any] | None = None
         try:
             _lr = base.get("land_register") if isinstance(base.get("land_register"), dict) else {}
             _sp_input = {
@@ -1099,6 +1102,28 @@ class ComprehensiveAnalysisService:
                 })
         except Exception as e:  # noqa: BLE001 — 성장 뇌 트리거 실패는 분석을 막지 않음(정직 degrade)
             logger.warning("종합분석 specialist(market) 적재 스킵(graceful)", err=str(e)[:160])
+
+        # ── 지배 제약 한 줄 + 높이 상한(사통맵 v2 W1) — additive ──
+        #   설계사·디벨로퍼가 공통으로 묻는 "무엇이 발목인가"에 한 문장으로 답한다. 재료는
+        #   전부 기존 산출물(신규 외부콜 0): 규제목록은 sec7의 clean_regulations(=risk_level을
+        #   만든 그 목록 — 리스크 등급과 지배 제약이 다른 규제를 가리키는 불일치 차단),
+        #   경사도는 위에서 이미 조회한 _terrain_facts(임야/산지 후보만 보유·그 외 None).
+        #   ★geometry: base(collect_comprehensive)는 필지 폴리곤을 담지 않으므로 정북일조
+        #   높이 항목은 여기서 생성되지 않는다(지도 경계 응답은 geometry 보유 → 생성됨).
+        #   판정 로직은 build_for_parcel 단일 소유 — 표면별 재구현 없음(발산 차단).
+        try:
+            from app.services.regulation.dominant_constraint import build_for_parcel
+
+            result["dominant_constraint"] = build_for_parcel(
+                regulations=(
+                    (sec7.get("land_use_regulations") or []) if isinstance(sec7, dict) else []
+                ),
+                zone_type=zone_type,
+                geometry=None,
+                slope_pct=(_terrain_facts or {}).get("평균경사도_pct"),
+            )
+        except Exception as e:  # noqa: BLE001 — 지배 제약 산출 실패는 분석 무손상(정직 degrade)
+            logger.warning("지배 제약 산출 스킵(graceful)", err=str(e)[:160])
 
         # ── field_audit(도메인 correctness 자가검증 하네스) — additive·behavior 불변 ──
         # W0(Phase0): 등록 규칙 0건 → 빈 리포트 → result에 'field_audit' 키만 추가(그 외 무변경).

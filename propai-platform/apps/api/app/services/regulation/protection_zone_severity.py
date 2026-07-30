@@ -33,6 +33,7 @@ land_info_service.regulation_map에 **흩어져 서로 다른 값으로 하드�
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import Any
 
 # ── severity 정규 사다리(낮음→높음). 소비처의 리스크 등급·불변식 하한비교가 공유하는 단일 순서.
 #   '중간'은 '보통'(비행안전 외곽·대공방어)과 '높음'(통제보호·방공) 사이 — 제한보호(협의개발
@@ -63,6 +64,40 @@ _ZONE_SEVERITY: tuple[tuple[str, str], ...] = (
 
 # 비행안전구역 트리거(형태: '비행안전구역', '비행안전 제N구역', '비행안전제5구역' 등 공백변형 포함).
 _FLIGHT_SAFETY_KW = "비행안전"
+
+# ── 규제 designation → 실무 메타(조치 한 줄·발목 이유·높이제약 여부). ★키워드를 여기서 다시
+#   적지 않는다 — 위 _ZONE_SEVERITY(+_FLIGHT_SAFETY_KW)의 키워드를 **키로 재사용**하고 값만
+#   붙인다. 키워드 목록을 두 벌 두는 것(SSOT 이중화)이 이 저장소의 반복 결함이라, 두 표의
+#   키 집합 일치는 테스트(test_protection_zone_severity)가 구조적으로 고정한다.
+#     action  — 칩/배지용 짧은 실무 조치(예: "군부대 협의")
+#     reason  — "무엇이 발목인가" 한 줄(지배 제약 headline 후반부에 그대로 붙는다)
+#     height  — 이 지정이 **건축물 높이를 제한**하는가. True인데 플랫폼이 수치를 못 가진 항목은
+#               소비처(dominant_constraint)가 "지정됨 — 수치 미보유"로 정직 표기한다.
+#               ★수치를 추정해 채우지 않는다(고도지구 조례 수치 룩업 부재 — 별건 티켓).
+_ZONE_META: dict[str, dict[str, Any]] = {
+    # ── 군사 ──
+    "통제보호구역": {"action": "군부대 협의", "reason": "군부대 협의 없이는 건축 불가", "height": False},
+    "제한보호구역": {"action": "군부대 협의", "reason": "군부대 협의 후 개발 가능(인허가 기간 증가)", "height": False},
+    "방공유도탄기지": {"action": "군부대 협의", "reason": "방공유도탄기지 인접 — 군 협의 없이는 건축 불가", "height": True},
+    "방공기지": {"action": "군부대 협의", "reason": "방공기지 인접 — 군 협의 없이는 건축 불가", "height": True},
+    "대공방어협조구역": {"action": "고도 협의", "reason": "대공방어 협조 대상 — 건축물 높이 협의 필요", "height": True},
+    "군사시설보호": {"action": "군부대 협의", "reason": "군사시설보호구역 — 군부대 협의 없이는 건축 불가", "height": False},
+    _FLIGHT_SAFETY_KW: {"action": "고도 협의", "reason": "비행안전구역 — 건축물 높이가 제한됨", "height": True},
+    # ── 개발제한·상수원 ──
+    "개발제한구역": {"action": "해제·예외 검토", "reason": "개발제한구역(그린벨트) — 신축이 원칙적으로 불가", "height": False},
+    "그린벨트": {"action": "해제·예외 검토", "reason": "개발제한구역(그린벨트) — 신축이 원칙적으로 불가", "height": False},
+    "상수원보호구역": {"action": "행위제한 확인", "reason": "상수원보호구역 — 개발행위가 원칙적으로 금지됨", "height": False},
+    # ── 기타 규제지구·시설 ──
+    "폐기물매립시설": {"action": "이격·영향 검토", "reason": "폐기물매립시설 영향권 — 용도·분양성 제약", "height": False},
+    "고도지구": {"action": "조례 높이 확인", "reason": "고도지구 — 건축물 높이가 제한되어 용적률 소진이 어려움", "height": True},
+    "경관지구": {"action": "경관 심의", "reason": "경관지구 — 높이·형태·색채 심의 대상", "height": False},
+    "방화지구": {"action": "내화구조 반영", "reason": "방화지구 — 내화구조 의무로 공사비 상승", "height": False},
+}
+
+
+def zone_keywords() -> tuple[str, ...]:
+    """SSOT가 인지하는 규제 키워드 전체(비행안전 특수키 포함) — 표 정합 테스트가 소비."""
+    return (*(kw for kw, _sev in _ZONE_SEVERITY), _FLIGHT_SAFETY_KW)
 
 
 def severity_rank(severity: str | None) -> int:
@@ -105,24 +140,52 @@ def _flight_safety_severity(name_nospace: str) -> str:
     return "보통"
 
 
-def severity_for(regulation_name: str | None) -> str | None:
-    """규제 designation 이름 → 개발 리스크 severity. 보호구역/규제지구가 아니면 None.
+def classify(regulation_name: str | None) -> dict[str, Any] | None:
+    """규제 designation 이름 → severity + 실무메타 1건. 보호구역/규제지구가 아니면 None.
 
-    부분일치(키워드 in 이름)로 스캔하고, 복수 키워드가 걸리면 **최댓값** severity를 돌려준다
-    (보수적). 비행안전구역은 구역번호 granular로 특수처리(_flight_safety_severity).
+    반환: {"keyword", "severity", "action", "reason", "height_constraining"}
+
+    부분일치(키워드 in 이름)로 스캔하고, 복수 키워드가 걸리면 **최댓값** severity를 취한다
+    (보수적). 동순위면 먼저 매치된 키워드가 이긴다(severity_for의 종전 누적 규칙과 동일 —
+    max_severity가 동순위에서 좌항(기존 best)을 보존하므로 첫 매치 우선). 비행안전구역은
+    구역번호 granular로 특수처리(_flight_safety_severity)하고 표보다 먼저 스캔한다.
+
+    ★severity_for는 이 함수의 severity만 꺼내 쓴다(스캔 로직 이중화 금지 — 값이 갈리면
+    리스크 등급과 조치문구가 서로 다른 규제를 가리키는 거짓 조합이 된다).
     """
     if not regulation_name:
         return None
     n = str(regulation_name).replace(" ", "")
-    best: str | None = None
+    best_sev: str | None = None
+    best_kw: str | None = None
     # 비행안전구역 — 구역번호 granular(표보다 먼저 특수처리)
     if _FLIGHT_SAFETY_KW in n:
-        best = max_severity(best, _flight_safety_severity(n))
-    # 손큐레이션 권위표 스캔(최댓값 누적)
+        best_sev, best_kw = _flight_safety_severity(n), _FLIGHT_SAFETY_KW
+    # 손큐레이션 권위표 스캔(최댓값 누적 — 동순위는 기존 best 유지)
     for keyword, sev in _ZONE_SEVERITY:
         if keyword in n:
-            best = max_severity(best, sev)
-    return best
+            higher = max_severity(best_sev, sev)
+            if higher != best_sev:
+                best_sev, best_kw = higher, keyword
+    if best_sev is None or best_kw is None:
+        return None
+    meta = _ZONE_META.get(best_kw) or {}
+    return {
+        "keyword": best_kw,
+        "severity": best_sev,
+        "action": meta.get("action"),
+        "reason": meta.get("reason"),
+        "height_constraining": bool(meta.get("height")),
+    }
+
+
+def severity_for(regulation_name: str | None) -> str | None:
+    """규제 designation 이름 → 개발 리스크 severity. 보호구역/규제지구가 아니면 None.
+
+    스캔은 classify()가 단일 소유(부분일치·최댓값·비행안전 granular) — 여기선 severity만 꺼낸다.
+    """
+    hit = classify(regulation_name)
+    return hit["severity"] if hit else None
 
 
 def is_protection_zone(regulation_name: str | None) -> bool:

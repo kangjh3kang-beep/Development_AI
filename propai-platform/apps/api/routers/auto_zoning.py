@@ -1100,6 +1100,10 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
         # I7 패널 규제요약 — 실효 건폐율도 동일 규약으로 공개(미산정 None 무날조).
         if _f.get("_bcr_eff") is not None:
             _f["effective_bcr_pct"] = _f["_bcr_eff"]
+        # ★W1 지배 제약 — 필지 상세 배너용 공개 필드로 승격. 제약이 없으면 헬퍼가 None을
+        #   돌려주므로 키는 항상 실리되 값이 None이다(프론트는 None이면 배너 미렌더 —
+        #   빈 배너 금지). 아래 "_" 스트립보다 먼저 승격해야 값이 살아남는다.
+        _f["dominant_constraint"] = _f.get("_dominant_constraint")
         # ★R1 HIGH(W2-2 R2 봉합): 종전 고정 튜플 denylist는 _enrich_effective_and_special가
         #   새 내부키(_far_basis_detail·_ordinance — W2-2)를 부착할 때마다 이 목록을 사람이
         #   같이 갱신해야 하는 구조라, 실제로 신규 키가 이 응답(features[])으로 새는 회귀가
@@ -1473,6 +1477,24 @@ async def _enrich_effective_and_special(enriched: list[dict]) -> None:
         p["_far_basis_detail"] = far_basis_detail
         p["_ordinance"] = ordinance
         p["_special"] = special
+        # ★사통맵 v2 W1 — 지배 제약 한 줄 + 높이 상한. 위에서 이미 확보한 구역 실값(_sd)과
+        #   필지 geometry만 쓰므로 **추가 외부콜 0**. 이 공용 헬퍼에 두면 4개 소비처
+        #   (parcel-boundaries·parcels-info·integrated-analysis·land-report)가 같은 판정을
+        #   공유한다(표면별 재구현 금지 — 전역 전파방지). 공개 노출은 소비처가 선택하며
+        #   W1은 지도 경계 응답만 승격한다(아래 features 승격부).
+        #   경사도(slope_pct)는 이 경로에 terrain 조회가 없어 미전달 → 경사도 항목 미생성.
+        #   W2(경사도 필지별 표시)에서 terrain_facts가 붙으면 여기 한 인자만 채우면 된다.
+        try:
+            from app.services.regulation.dominant_constraint import build_for_parcel
+
+            p["_dominant_constraint"] = build_for_parcel(
+                regulations=_sd or [],
+                zone_type=zone,
+                geometry=p.get("geometry"),
+                slope_pct=None,
+            )
+        except Exception:  # noqa: BLE001 — 지배 제약 산출 실패는 필지 보강 무손상(미표기)
+            p["_dominant_constraint"] = None
 
 
 class ParcelsInfoRequest(BaseModel):
