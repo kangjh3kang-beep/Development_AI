@@ -44,6 +44,10 @@ import {
 } from "@/lib/satong-map-layers";
 import { bindSatongLabel, planSatongLabels, satongLabelLOD } from "@/lib/satong-map-labels";
 import type { SiteLayoutOverlay } from "@/lib/site-layout";
+import {
+  clearLayoutOverlay,
+  renderLayoutOverlay,
+} from "@/lib/satong-layout-overlay";
 import { SATONG_PANE_Z, SATONG_UI_Z } from "@/lib/satong-map-z";
 import { clampClickMenuPosition, findFeatureAtPoint, shortJibunLabel } from "@/lib/satong-click-menu";
 import {
@@ -1914,55 +1918,17 @@ export function SatongMultiMap({
   useEffect(() => {
     const map = mapRef.current;
     const L = window.L;
-    if (!map || !L || !mapReady) return;
-
-    // 이전 오버레이 제거 — 대안 전환 시 잔존 금지.
-    if (layoutLayerRef.current) {
-      try { map.removeLayer(layoutLayerRef.current); } catch { /* noop */ }
-      layoutLayerRef.current = null;
-    }
-    if (!layoutOverlay) return;
-
-    const group = L.layerGroup().addTo(map);
-    layoutLayerRef.current = group;
-
-    // ① 건축가능 영역(세트백 오프셋 후) — 점선 외곽·저채도. 대지와의 차이가 곧 세트백 밴드다.
-    if (layoutOverlay.buildable) {
-      const rings = geoJsonToLeafletRings(layoutOverlay.buildable);
-      if (rings.length > 0) {
-        L.polygon(rings, {
-          color: "#7C98F2", weight: 1.5, dashArray: "5,4",
-          fillColor: "#7C98F2", fillOpacity: 0.1,
-          interactive: false, bubblingMouseEvents: false,
-        }).addTo(group);
-      }
-    }
-
-    // ② 선택 대안의 동 풋프린트 — 실선·불투명도 높임. 층수를 툴팁으로(도면 아님을 문구로 명시).
-    const feats = layoutOverlay.buildings?.features ?? [];
-    feats.forEach((f) => {
-      const rings = geoJsonToLeafletRings(f.geometry);
-      if (rings.length === 0) return;
-      const dong = f.properties?.dong;
-      const floors = f.properties?.floors;
-      const poly = L.polygon(rings, {
-        color: "#135bec", weight: 2, fillColor: "#135bec", fillOpacity: 0.42,
-        interactive: true, bubblingMouseEvents: false,
-      }).addTo(group);
-      try {
-        poly.bindTooltip(
-          `${dong != null ? `${dong}동` : "동"}${floors != null ? ` · ${floors}층` : ""}` +
-            " (볼륨 감 · 축정렬 근사)",
-          { direction: "top", opacity: 0.92 },
-        );
-      } catch { /* noop */ }
+    if (!mapReady) return;
+    // ★그리기·정리 로직은 lib/satong-layout-overlay(순수·L 주입)에 있다 — jsdom이 Leaflet을
+    //   초기화하지 못해 effect 내부 로직에 테스트가 닿지 못했고, "이전 레이어 제거+cleanup"을
+    //   지우는 변이가 1550건을 전부 통과했다(R1 실증). 추출로 가짜 L 검증이 가능해졌다.
+    layoutLayerRef.current = renderLayoutOverlay({
+      L, map, previousLayer: layoutLayerRef.current, overlay: layoutOverlay,
+      toRings: geoJsonToLeafletRings,
     });
-
     return () => {
-      if (layoutLayerRef.current) {
-        try { map.removeLayer(layoutLayerRef.current); } catch { /* noop */ }
-        layoutLayerRef.current = null;
-      }
+      clearLayoutOverlay(mapRef.current, layoutLayerRef.current);
+      layoutLayerRef.current = null;
     };
   }, [mapReady, layoutOverlay]);
 

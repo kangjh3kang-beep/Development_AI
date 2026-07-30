@@ -253,6 +253,52 @@ describe("SatongMapShell 배치 미리보기 배선(W3)", () => {
     expect(screen.getByTestId("parcel-layout-buildings").textContent).toBe("3동");
   });
 
+  it("★⑥-b 캐시 슬림 — 안 쓰는 필드는 빼고, **모든 대안의 기하는 유지**한다(토글 보존)", async () => {
+    seed();
+    render(<SatongMapShell locale="ko" />);
+    fireEvent.click(screen.getByText("대보리 산1-1"));
+    fireEvent.click(screen.getByTestId("parcel-layout-request"));
+    await act(async () => {
+      layout.resolve?.({
+        ...RESULT_OK,
+        parcel_geojson: GEOM,                      // 지도가 자기 필지를 그리므로 캐시 불필요
+        guidance: ["가이드 문구"],                   // 이 패널이 쓰지 않음
+        zone_type: "제2종일반주거지역",
+      } as SiteLayoutResult);
+    });
+
+    const cached = readSatongViewCache<SiteLayoutResult>(SATONG_SITE_LAYOUT_KEY).get(PNU_A);
+    expect(cached?.buildable_geojson).toBeTruthy();
+    expect(cached?.honest_notes).toBeTruthy();
+    // 안 쓰는 무거운 필드·메타는 제외.
+    expect(cached?.parcel_geojson).toBeUndefined();
+    expect(cached?.guidance).toBeUndefined();
+    expect(cached?.zone_type).toBeUndefined();
+    // ★대안은 전부 기하와 함께 남아야 한다 — 캐시 히트 후에도 토글이 동작해야 하므로.
+    expect(cached?.options).toHaveLength(2);
+    expect(cached?.options?.[1].buildings_geojson).toBeTruthy();
+  });
+
+  it("★⑥-c 캐시 히트 후에도 대안 토글이 지도 오버레이를 바꾼다(기하 보존 실증)", async () => {
+    seed();
+    render(<SatongMapShell locale="ko" />);
+    fireEvent.click(screen.getByText("대보리 산1-1"));
+    fireEvent.click(screen.getByTestId("parcel-layout-request"));
+    await act(async () => {
+      layout.resolve?.(RESULT_OK);
+    });
+    // 다른 필지 갔다 와서 캐시로 복원
+    fireEvent.click(screen.getByText("대보리 산2-2"));
+    fireEvent.click(screen.getByText("대보리 산1-1"));
+    expect(layout.calls).toHaveLength(1);
+
+    const first = mapProps.layoutOverlay!.buildings;
+    await act(async () => {
+      screen.getByTestId("parcel-layout-option-탑상형@0").click();
+    });
+    expect(mapProps.layoutOverlay!.buildings).not.toBe(first);
+  });
+
   it("★⑦ ok:false는 캐시하지 않는다 — '다시 조회'가 실제로 재요청을 보낸다", async () => {
     seed();
     render(<SatongMapShell locale="ko" />);

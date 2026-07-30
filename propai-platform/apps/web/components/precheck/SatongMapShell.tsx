@@ -949,7 +949,23 @@ export function SatongMapShell({
       // ★ok:false는 캐시하지 않는다 — 재조회를 막고 사유를 둔갑시킨다(W2 R1 HIGH 교훈).
       //   단 ok:true면 캐시(무거운 기하 재계산 회피).
       if (res && res.ok) {
-        parcelLayoutByKeyRef.current.set(key, res);
+        // ★캐시 슬림(R1 MEDIUM): 화면·지도가 읽지 않는 필드는 담지 않는다. 가장 큰
+        //   parcel_geojson은 지도가 이미 자기 필지 폴리곤을 그리므로 불필요하고, guidance·
+        //   용도지역·면적 등 메타도 이 패널이 쓰지 않는다.
+        //   ★단 **options는 모든 대안의 buildings_geojson을 그대로 유지**한다 — W2(경사도)가
+        //   "렌더에 안 쓰이는 필드"를 잘라낸 것과 달리, 여기서는 캐시 히트 후에도 사용자가
+        //   대안을 토글할 수 있어야 하고 그 순간 각 대안의 기하가 필요하다. 잘라내면 토글이
+        //   빈 오버레이가 되거나 재조회를 유발한다(같은 인프라를 쓰지만 결정이 다른 이유).
+        const slim: SiteLayoutResult = {
+          ok: true,
+          honest_notes: res.honest_notes,
+          buildable_geojson: res.buildable_geojson,
+          buildable_area_sqm: res.buildable_area_sqm,
+          setback_m: res.setback_m,
+          options: res.options,
+          best: res.best,
+        };
+        parcelLayoutByKeyRef.current.set(key, slim);
         writeSatongViewCache<SiteLayoutResult>(
           SATONG_SITE_LAYOUT_KEY, parcelLayoutByKeyRef.current,
         );
