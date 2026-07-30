@@ -454,6 +454,37 @@ async def test_land_info_produces_land_use_plan_status(monkeypatch):
     with_regs = await _run([{"district_name": "개발제한구역"}])
     assert with_regs.get("land_use_plan_status") == "ok"
 
+    # ★조회 코루틴이 예외를 던지면 gather(return_exceptions=True)가 **Exception 인스턴스**를
+    #   담는다 — `is None` 판정은 그것을 "ok"로 흘려보내 실패를 성공으로 표기한다(정반대 오류).
+    async def _boom(pnu):  # noqa: ANN001
+        raise RuntimeError("NED 호출 폭발")
+
+    svc_err = LandInfoService()
+
+    async def _none(*a, **k):  # noqa: ANN002, ANN003
+        return None
+
+    async def _zoning_err(addr):  # noqa: ANN001
+        return {"pnu": _PNU, "zone_type": "보전관리지역", "success": True}
+
+    async def _ord_err(addr, zone, force_refresh=False, pnu=None, resolved_sigungu=None):  # noqa: ANN001
+        return {}
+
+    monkeypatch.setattr(svc_err.zoning, "analyze_by_address", _zoning_err, raising=False)
+    for name in (
+        "_fetch_land_register", "_fetch_official_price", "_fetch_building_info",
+        "_fetch_land_characteristics", "_fetch_building_detail",
+        "_fetch_nearby_transactions", "_fetch_precise_road_width", "_fetch_infrastructure",
+    ):
+        monkeypatch.setattr(svc_err, name, _none, raising=False)
+    monkeypatch.setattr(svc_err, "_fetch_land_use_plan", _boom, raising=True)
+    monkeypatch.setattr(svc_err.ordinance, "get_ordinance_limits", _ord_err, raising=False)
+
+    raised = await svc_err._collect_comprehensive_impl("경북 포항시 남구 호미곶면 대보리 산1-1")  # noqa: SLF001
+    assert raised.get("land_use_plan_status") == "unavailable", (
+        "예외(gather return_exceptions)가 '확인 완료'로 흘러갔다 — 실패를 성공으로 표기"
+    )
+
 
 async def test_analyze_marks_regulation_lookup_failure_as_unverified(monkeypatch):
     """★배선②-d: 종합분석 표면도 "조회 실패"를 "제약 없음"으로 표기하지 않는다.

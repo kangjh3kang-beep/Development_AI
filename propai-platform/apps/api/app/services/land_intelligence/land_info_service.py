@@ -466,7 +466,12 @@ class LandInfoService:
             #   _fetch_land_use_plan은 그 구분(None=하드 실패 / []=규제 없음)을 이미 보존하는데
             #   여기서 뭉개졌다 — 구분이 없으면 소비처(지배 제약 등)가 조회 실패를 "규제 없는
             #   깨끗한 필지"로 표기하는 무음 낙관이 된다.
-            result["land_use_plan_status"] = "unavailable" if land_use is None else "ok"
+            #   ★판정은 `is None`이 아니라 **isinstance(list)**여야 한다: 위 gather가
+            #   return_exceptions=True라 land_use에 Exception 인스턴스가 담길 수 있고, 그러면
+            #   `is None` 검사가 그것을 "ok"(확인 완료)로 흘려보낸다 — 실패를 성공으로 표기하는
+            #   정반대 방향의 오류다. 바로 아래 소비 가드(`isinstance(land_use, list)`)와 같은
+            #   기준으로 맞춘다: list(빈 목록 포함)=확정된 답 / None·Exception=미확인.
+            result["land_use_plan_status"] = "ok" if isinstance(land_use, list) else "unavailable"
 
             # 토지이용계획 (VWORLD NED — 중첩 규제 전부 포함)
             if isinstance(land_use, list) and land_use:
