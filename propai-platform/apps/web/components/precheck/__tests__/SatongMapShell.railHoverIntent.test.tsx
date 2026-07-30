@@ -253,7 +253,6 @@ describe("SatongMapShell 레일 hover 전환 의도 지연(A안)", () => {
     act(() => { vi.advanceTimersByTime(500); });
 
     expect(screen.getByRole("button", { name: "베이스맵: 일반" })).toBeTruthy();
-    expect(shownPanelName()).not.toBe("교통·편의 POI");
   });
 
   it("★⑩ 베이스맵 팝오버에 도달하면 대기 중이던 전환이 취소된다(형제 대칭)", () => {
@@ -268,6 +267,39 @@ describe("SatongMapShell 레일 hover 전환 의도 지연(A안)", () => {
     act(() => { vi.advanceTimersByTime(500); });
 
     expect(screen.getByRole("button", { name: "베이스맵: 일반" })).toBeTruthy();
+  });
+
+  it("★⑫ 고정(클릭)분으로의 복귀는 지연하지 않는다 — 대가까지 의도로 박제", () => {
+    // ★이 테스트는 '좋은 동작'이 아니라 **선택한 트레이드오프**를 박제한다(R2 MEDIUM).
+    //   고정분 복귀를 지연시키면 레일 이탈이 그 예약을 죽여 **클릭으로 고정한 팝오버가 닫힌다**.
+    //   그래서 예외를 뒀고, 그 대가로 **고정된 아이콘 1개는 스침만으로도 즉시 열린다**.
+    //   다음 세션이 이 대가를 '버그'로 보고 예외를 걷어내면 더 심한 회귀가 부활하므로,
+    //   대가 쪽 동작 자체를 테스트로 고정해 '알고 고른 것'임을 남긴다.
+    render(<SatongMapShell locale="ko" />);
+
+    fireEvent.click(railIcon("개발계획")); // 클릭 확정(pin=개발계획)
+    fireEvent.mouseEnter(railIcon("교통·편의 POI"));
+    act(() => { vi.advanceTimersByTime(200); }); // 의도적 전환 — 지금 보이는 건 POI
+    expect(shownPanelName()).toBe("교통·편의 POI");
+
+    // 고정분을 '스치기만' 해도 즉시 열린다 = 알고 수용한 대가.
+    fireEvent.mouseEnter(railIcon("개발계획"));
+    expect(shownPanelName()).toBe("개발계획"); // 타이머 진행 없이 이미
+  });
+
+  it("★⑬ 베이스맵도 Esc로 닫은 뒤 예약 전환이 되살리지 않는다(형제 대칭)", () => {
+    // R2 LOW: `closeBasemapPanel`의 취소만 무커버리지였다(코드는 정상, 테스트 공백).
+    render(<SatongMapShell locale="ko" />);
+
+    fireEvent.mouseEnter(screen.getByRole("button", { name: "베이스맵 선택" }));
+    fireEvent.mouseEnter(railIcon("교통·편의 POI")); // 전환 예약
+    act(() => { vi.advanceTimersByTime(100); });
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(shownPanelName()).toBeNull();
+
+    act(() => { vi.advanceTimersByTime(500); });
+    expect(shownPanelName()).toBeNull();
   });
 
   it("레일을 벗어나면 예약된 전환이 발화하지 않는다", () => {
