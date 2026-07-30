@@ -43,6 +43,11 @@ import {
   zoneColor,
 } from "@/lib/satong-map-layers";
 import { bindSatongLabel, planSatongLabels, satongLabelLOD } from "@/lib/satong-map-labels";
+import type { SiteLayoutOverlay } from "@/lib/site-layout";
+import {
+  clearLayoutOverlay,
+  renderLayoutOverlay,
+} from "@/lib/satong-layout-overlay";
 import { SATONG_PANE_Z, SATONG_UI_Z } from "@/lib/satong-map-z";
 import { clampClickMenuPosition, findFeatureAtPoint, shortJibunLabel } from "@/lib/satong-click-menu";
 import {
@@ -118,6 +123,9 @@ export interface SatongMultiMapProps {
   onBoundaryEnriched?: (features: SatongMapFeature[]) => void;
   /** 경계보강 진행상태 통지 — 부모(Shell)가 "좌표 확인 중" 노트를 실패 시 정직 강등하는 데 쓴다. */
   onBoundaryStatusChange?: (status: "idle" | "loading" | "ready" | "error") => void;
+  /** W3 배치 미리보기 오버레이 — 서버 산정 GeoJSON(건축가능 영역 + 선택 대안의 동 풋프린트).
+   *  ★기하를 여기서 만들지 않는다: null이면 아무것도 그리지 않는다(가짜 배치 금지). */
+  layoutOverlay?: SiteLayoutOverlay | null;
   /** 분양 상태 노트(좌표 대기·조회 실패 등) — 설정 시 건수 라벨 대신 표기(정직원칙).
    *  ★marketLayer 객체에 넣지 않고 별도 prop으로 받는다 — 노트만 바뀔 때 마커 이펙트가
    *  전체 재생성되던 낭비(리뷰 LOW)를 차단. */
@@ -844,6 +852,7 @@ export function SatongMultiMap({
   poiPayload = null,
   developmentPayload = null,
   onCenterChange,
+  layoutOverlay,
   onBoundaryEnriched,
   onBoundaryStatusChange,
   presaleNote = null,
@@ -1899,6 +1908,33 @@ export function SatongMultiMap({
     priceRange.min,
   ]);
   /* eslint-enable react-hooks/set-state-in-effect */
+
+  // ── W3 배치 미리보기 오버레이(건축가능 영역 + 선택 대안의 동 풋프린트) ──────────────
+  //  ★기하는 전부 서버 산정(cad/site_layout_service)이다. 여기서 동을 배치하거나 세트백을
+  //    계산하지 않는다 — layoutOverlay가 null이면 아무것도 그리지 않는다(가짜 배치 금지).
+  //  전용 layerGroup 1개를 만들고 payload가 바뀔 때마다 통째로 갈아끼운다(부분 갱신 시
+  //  이전 대안의 동이 남아 두 대안이 겹쳐 보이는 오도가 생긴다).
+  const layoutLayerRef = useRef<any>(null);
+  useEffect(() => {
+    // ★그리기·정리 로직은 lib/satong-layout-overlay(순수·L 주입)에 있다 — jsdom이 Leaflet을
+    //   초기화하지 못해 effect 내부 로직에 테스트가 닿지 못했고, "이전 레이어 제거+cleanup"을
+    //   지우는 변이가 1550건을 전부 통과했다(R1 실증). 추출로 가짜 L 검증이 가능해졌다.
+    // ★`if (!mapReady) return` 조기반환을 두지 않는다: renderLayoutOverlay가 이미 `!L || !map`을
+    //   안전 처리(그리지 않고 이전 레이어만 정리)하므로 중복 가드이고, 그 조기반환이 있으면
+    //   jsdom(Leaflet 미초기화 → mapReady=false)에서 **위임 호출 자체가 발생하지 않아** 배선
+    //   테스트가 불가능하다 — R2가 "위임 블록을 지워도 90건 전부 통과"로 실증한 잔여 갭.
+    //   mapReady는 deps에 남겨 지도가 준비되는 순간 재실행되게 한다.
+    const map = mapRef.current;
+    const L = window.L;
+    layoutLayerRef.current = renderLayoutOverlay({
+      L, map, previousLayer: layoutLayerRef.current, overlay: layoutOverlay,
+      toRings: geoJsonToLeafletRings,
+    });
+    return () => {
+      clearLayoutOverlay(mapRef.current, layoutLayerRef.current);
+      layoutLayerRef.current = null;
+    };
+  }, [mapReady, layoutOverlay]);
 
   // ── 선택 필지(연결 프로젝트·staged·pending) 식별 라벨 — 전역 라벨 버짓·줌 LOD 무관 항상 표시 ──
   //   ★PR#329 R1 리뷰(LOW1) 반영: 홈 초기 진입(줌 12)은 hover-only LOD라 시장/POI/개발계획

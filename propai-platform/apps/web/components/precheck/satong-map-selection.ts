@@ -21,6 +21,8 @@ export const SATONG_MAP_SELECTION_KEY = "satong_map_selection";
 export const SATONG_DOMINANT_CONSTRAINT_KEY = "satong_dominant_constraint";
 /** W2 필지 경사도(DEM 온디맨드 조회 결과) 뷰 캐시 키. ★계정격리 와이프 목록에 함께 등재. */
 export const SATONG_PARCEL_SLOPE_KEY = "satong_parcel_slope";
+/** W3 배치도(buildable footprint + 동배치) 뷰 캐시 키. ★계정격리 와이프 목록에 함께 등재. */
+export const SATONG_SITE_LAYOUT_KEY = "satong_site_layout";
 /** 캐시 상한 — 뷰 캐시라 무한 성장시킬 이유가 없다(초과분은 오래된 것부터 버린다). */
 const SATONG_VIEW_CACHE_MAX = 200;
 

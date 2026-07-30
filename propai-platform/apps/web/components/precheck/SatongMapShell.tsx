@@ -53,6 +53,16 @@ import {
   type ParcelSlopeStatus,
 } from "@/components/precheck/ParcelSlopeSection"; // W2 경사도 — 필지 상세 온디맨드
 import type { TerrainResult } from "@/components/terrain/types";
+import {
+  ParcelLayoutSection,
+  type ParcelLayoutStatus,
+} from "@/components/precheck/ParcelLayoutSection"; // W3 배치 미리보기
+import {
+  buildLayoutOverlay,
+  resolveSelectedOption,
+  siteLayoutOptionKey,
+  type SiteLayoutResult,
+} from "@/lib/site-layout";
 import type {
   ParcelAtPointResult,
   SatongAuctionItem,
@@ -81,6 +91,7 @@ import { restoreSnapshot } from "@/lib/projectSync";
 import { createProjectFromParcels } from "@/lib/satong-project-create";
 import {
   SATONG_PARCEL_SLOPE_KEY,
+  SATONG_SITE_LAYOUT_KEY,
   dominantConstraintKey,
   readDominantConstraintCache,
   readSatongViewCache,
@@ -858,6 +869,134 @@ export function SatongMapShell({
     }
   }, []);
 
+  // ── W3 배치 미리보기(온디맨드) ──────────────────────────────────────────────
+  //  경사도(W2)와 달리 외부 레이트리밋은 없다(서버 순수 CPU·shapely). 그래도 무거운 기하
+  //  연산이고 사용자가 필지를 훑을 때마다 돌 이유가 없어 **명시적 요청**으로 둔다
+  //  ("선택형 분석 기본" 원칙). 가드 3종은 W2와 동일 계약으로 맞춘다(패턴 발산 방지).
+  const parcelLayoutByKeyRef = useRef<Map<string, SiteLayoutResult | null>>(
+    readSatongViewCache<SiteLayoutResult>(SATONG_SITE_LAYOUT_KEY),
+  );
+  const [layoutStatus, setLayoutStatus] = useState<ParcelLayoutStatus>("idle");
+  const [layoutResult, setLayoutResult] = useState<SiteLayoutResult | null>(null);
+  const [layoutError, setLayoutError] = useState<string | null>(null);
+  const [layoutOptionKey, setLayoutOptionKey] = useState<string | null>(null);
+  const layoutInFlightKeyRef = useRef<string | null>(null);
+  const [layoutBusy, setLayoutBusy] = useState(false);
+
+  const syncLayoutForFeature = useCallback((feature: SatongMapFeature | null) => {
+    if (!feature) {
+      setLayoutStatus("idle");
+      setLayoutResult(null);
+      setLayoutError(null);
+      setLayoutOptionKey(null);
+      return;
+    }
+    const key = dominantConstraintKey(feature);
+    const cached = parcelLayoutByKeyRef.current.get(key);
+    if (cached) {
+      setLayoutStatus("done");
+      setLayoutResult(cached);
+      setLayoutError(null);
+      // 대안 선택은 필지가 바뀌면 초기화 — 남의 대안 키가 남으면 best로 폴백돼 오도된다.
+      setLayoutOptionKey(null);
+    } else if (layoutInFlightKeyRef.current === key) {
+      setLayoutStatus("loading");
+      setLayoutResult(null);
+      setLayoutError(null);
+      setLayoutOptionKey(null);
+    } else {
+      setLayoutStatus("idle");
+      setLayoutResult(null);
+      setLayoutError(null);
+      setLayoutOptionKey(null);
+    }
+  }, []);
+
+  const requestParcelLayout = useCallback(async () => {
+    const feature = detailFeatureRef.current;
+    if (!feature) return;
+    if (layoutInFlightKeyRef.current !== null) return; // 인플라이트 1건(전역)
+    const key = dominantConstraintKey(feature);
+    const cached = parcelLayoutByKeyRef.current.get(key);
+    if (cached) {
+      setLayoutStatus("done");
+      setLayoutResult(cached);
+      return;
+    }
+    // ★기하가 없으면 서버가 ok:false를 줄 뿐이라 헛호출이 된다 — 사유를 먼저 밝힌다.
+    if (!feature.geometry && !feature.pnu) {
+      setLayoutStatus("error");
+      setLayoutError("대지 경계(폴리곤)·PNU가 없어 배치를 산출할 수 없습니다.");
+      return;
+    }
+    layoutInFlightKeyRef.current = key;
+    setLayoutBusy(true);
+    setLayoutStatus("loading");
+    setLayoutError(null);
+    try {
+      const res = await apiClient.post<SiteLayoutResult>("/analysis/site-layout", {
+        body: {
+          // 지도가 이미 가진 기하를 그대로 넘긴다(서버 재조회 회피). 없으면 pnu로 서버가 조회.
+          parcel_geojson: (feature.geometry as Record<string, unknown> | null) ?? null,
+          pnu: feature.pnu || null,
+          zone_type: feature.zoneType || "",
+          bcr_pct: feature.effectiveBcrPct ?? null,
+          far_pct: feature.effectiveFarPct ?? null,
+          land_area_sqm: feature.areaSqm ?? null,
+          priority: "balanced",
+        },
+      });
+      // ★ok:false는 캐시하지 않는다 — 재조회를 막고 사유를 둔갑시킨다(W2 R1 HIGH 교훈).
+      //   단 ok:true면 캐시(무거운 기하 재계산 회피).
+      let slim: SiteLayoutResult | null = null;
+      if (res && res.ok) {
+        // ★캐시 슬림(R1 MEDIUM): 화면·지도가 읽지 않는 필드는 담지 않는다. 가장 큰
+        //   parcel_geojson은 지도가 이미 자기 필지 폴리곤을 그리므로 불필요하고, guidance·
+        //   용도지역·면적 등 메타도 이 패널이 쓰지 않는다.
+        //   ★단 **options는 모든 대안의 buildings_geojson을 그대로 유지**한다 — W2(경사도)가
+        //   "렌더에 안 쓰이는 필드"를 잘라낸 것과 달리, 여기서는 캐시 히트 후에도 사용자가
+        //   대안을 토글할 수 있어야 하고 그 순간 각 대안의 기하가 필요하다. 잘라내면 토글이
+        //   빈 오버레이가 되거나 재조회를 유발한다(같은 인프라를 쓰지만 결정이 다른 이유).
+        slim = {
+          ok: true,
+          honest_notes: res.honest_notes,
+          buildable_geojson: res.buildable_geojson,
+          buildable_area_sqm: res.buildable_area_sqm,
+          setback_m: res.setback_m,
+          options: res.options,
+          best: res.best,
+        };
+        parcelLayoutByKeyRef.current.set(key, slim);
+        writeSatongViewCache<SiteLayoutResult>(
+          SATONG_SITE_LAYOUT_KEY, parcelLayoutByKeyRef.current,
+        );
+      }
+      const current = detailFeatureRef.current;
+      if (!current || dominantConstraintKey(current) !== key) return;
+      if (!res) {
+        setLayoutStatus("error");
+        setLayoutError("배치를 산출하지 못했습니다.");
+        return;
+      }
+      // ok:false도 "done"으로 두고 서버 honest_notes를 화면이 그대로 고지한다
+      //   (가짜 배치 대신 사유 표기 — 컴포넌트의 unavailable 분기).
+      setLayoutStatus("done");
+      // ★상태에도 캐시와 **같은 shape**(성공 시 slim)를 넣는다 — 신규 응답은 전체, 캐시 히트는
+      //   slim이면 "처음엔 되는데 재방문하면 조용히 undefined"인 함정이 남는다(R2 지적).
+      setLayoutResult(res.ok && slim ? slim : res);
+      setLayoutOptionKey(null);
+    } catch (e) {
+      const current = detailFeatureRef.current;
+      if (current && dominantConstraintKey(current) === key) {
+        setLayoutStatus("error");
+        setLayoutError(e instanceof ApiClientError ? e.message : "네트워크 오류");
+      }
+    } finally {
+      layoutInFlightKeyRef.current = null;
+      setLayoutBusy(false);
+    }
+  }, []);
+
   const openFeatureDetail = useCallback((feature: SatongMapFeature) => {
     // ★단일 팝오버 불변식 — right-20 top-20 z-430 좌표를 공유하는 3패널(필지상세·레이어·
     //   베이스맵)은 동시에 뜰 수 없다. 봉합은 '생산 근원'인 이 함수에서 한다 — 호출부
@@ -882,7 +1021,8 @@ export function SatongMapShell({
   useEffect(() => {
     // detailFeatureRef는 ref라 deps가 아니다 — 트리거는 detailParcelKey(필지 동일성) 뿐.
     syncSlopeForFeature(detailFeatureRef.current);
-  }, [detailParcelKey, syncSlopeForFeature]);
+    syncLayoutForFeature(detailFeatureRef.current);
+  }, [detailParcelKey, syncSlopeForFeature, syncLayoutForFeature]);
   // I5: 선택 필지 GeoJSON 내보내기 결과 고지(제외 건수 정직 표기).
   const [exportNote, setExportNote] = useState("");
   // ★R1(stale 고지): 선택이 바뀌면(추가·삭제·초기화·프로젝트 전환) 지난 내보내기 고지를
@@ -1005,6 +1145,16 @@ export function SatongMapShell({
         source: parcel.source,
       })),
     [selectedParcels],
+  );
+
+  // W3 파생값 — 선택 대안과 지도 오버레이. 기하는 서버 산정분만 통과시킨다(가짜 배치 금지).
+  const layoutSelectedOption = useMemo(
+    () => resolveSelectedOption(layoutResult, layoutOptionKey),
+    [layoutResult, layoutOptionKey],
+  );
+  const layoutOverlay = useMemo(
+    () => buildLayoutOverlay(layoutResult, layoutOptionKey),
+    [layoutResult, layoutOptionKey],
   );
 
   const mapLayerState = useMemo<SatongMapLayerState>(
@@ -2816,6 +2966,20 @@ export function SatongMapShell({
 
             {/* ★W2 경사도 — 온디맨드(표고 원천 1req/s·서버 무캐시라 명시적 요청).
                  값·한계 문구는 전부 서버 산정(terrain/analyze)이고 여기선 표시만 한다. */}
+            <ParcelLayoutSection
+              status={layoutStatus}
+              result={layoutResult}
+              errorMessage={layoutError}
+              selectedOption={layoutSelectedOption}
+              selectedKey={
+                layoutOptionKey ??
+                (layoutSelectedOption ? siteLayoutOptionKey(layoutSelectedOption) : null)
+              }
+              otherRequestInFlight={layoutBusy && layoutStatus !== "loading"}
+              onRequest={requestParcelLayout}
+              onSelectOption={setLayoutOptionKey}
+            />
+
             <ParcelSlopeSection
               status={slopeStatus}
               result={slopeResult}
@@ -3407,6 +3571,7 @@ export function SatongMapShell({
                 poiPayload={poiEnabled ? poiPayload : null}
                 developmentPayload={developmentEnabled ? developmentPayload : null}
                 onCenterChange={setMapCenter}
+                layoutOverlay={layoutOverlay}
                 onBoundaryEnriched={handleBoundaryEnriched}
                 onBoundaryStatusChange={handleBoundaryStatusChange}
                 clearSignal={clearNonce}
