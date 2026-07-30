@@ -1980,13 +1980,18 @@ export function SatongMapShell({
    *   따로 지연을 걸면 새 항목이 추가될 때 또 샌다(이 레일에서 반복된 결함 패턴).
    */
   const requestHoverOpen = useCallback(
-    (open: () => void, alreadyShown: boolean) => {
+    (target: SatongMapLayerId | "basemap", open: () => void, alreadyShown: boolean) => {
       cancelHoverClose();
       cancelHoverSwitch();
       if (alreadyShown) return; // 같은 팝오버 — 깜빡임 방지(기존 계약 유지)
       const anyShown = basemapOpen || activeLayerId !== null;
-      if (!anyShown) {
-        open(); // ★첫 열기는 즉시 — 지연은 '전환'에만
+      // ★R1 HIGH-1 봉합: **클릭으로 고정한 항목으로의 복귀는 지연하지 않는다.**
+      //   지연하면 복귀가 예약으로 남고, 그 상태로 레일을 벗어나면 `cancelHoverSwitch`가
+      //   예약을 죽여 activeLayerId가 고정분으로 돌아오지 못한다 → `shownIsPinned`가 false가
+      //   되어 **클릭으로 고정한 팝오버가 닫힌다**(Q2-c 계약 파괴). 스침 방지는 '남의 창을
+      //   뺏는 것'을 막자는 것이지 '내 창으로 돌아오는 것'을 막자는 게 아니다.
+      if (!anyShown || pinnedPanelRef.current === target) {
+        open(); // ★첫 열기·고정분 복귀는 즉시 — 지연은 '남의 창으로의 전환'에만
         return;
       }
       hoverSwitchTimerRef.current = setTimeout(() => {
@@ -2001,14 +2006,20 @@ export function SatongMapShell({
   //   클릭 토글-닫기 2곳에서만 지워, Esc·X·외부클릭으로 닫으면 핀이 stale로 남고 그 뒤
   //   hover 미리보기들이 "핀이 있으니 닫지 마라"에 걸려 지도 위에 눌러붙었다(2차 롤아웃
   //   계약을 가장 흔한 흐름에서 재파괴). 닫힘 근원이 6곳 흩어져 있어 공용 헬퍼로 추출한다.
+  // ★R1 MEDIUM-1(hover 지연) 봉합: 예약 전환 취소도 **여기서** 한다. 취소를 핸들러마다
+  //   흩어 배선했더니 Esc·X·외부클릭 3경로가 샜다 — 아이콘 위에서 Esc를 누르면 닫힌 뒤
+  //   150ms 후 예약이 발화해 **되살아났다**. 이 헬퍼가 이미 "닫힘 근원 6곳"의 수렴점이므로
+  //   한 곳을 고치면 전역이 따라온다(저장소 버그수정 기본정책의 공용화 규칙).
   const closeLayerPanel = useCallback(() => {
+    cancelHoverSwitch();
     pinnedPanelRef.current = null;
     setActiveLayerId(null);
-  }, []);
+  }, [cancelHoverSwitch]);
   const closeBasemapPanel = useCallback(() => {
+    cancelHoverSwitch();
     pinnedPanelRef.current = null;
     setBasemapOpen(false);
-  }, []);
+  }, [cancelHoverSwitch]);
 
   // ★R1 4·5차 HIGH-2/3 종결 봉합 — 닫힘 근원이 6곳(Esc·외부클릭·X·클릭토글·유예타이머·팝오버
   //   onMouseLeave)이라 헬퍼 위임만으론 매번 한둘이 샌다(타이머 콜백·팝오버 mouseleave는
@@ -2667,7 +2678,7 @@ export function SatongMapShell({
           type="button"
           // ★레일 형제와 동일 계약 — 롤오버·포커스는 '열기'(지정), 클릭은 토글.
           //   전환 중 같은 항목 재진입이 닫힘이 되면 깜빡이므로 hover는 열기만 한다.
-          onMouseEnter={() => requestHoverOpen(openBasemapPanel, basemapOpen)}
+          onMouseEnter={() => requestHoverOpen("basemap", openBasemapPanel, basemapOpen)}
           onMouseLeave={cancelHoverSwitch}
           // ★형제와 동일 계약(HIGH-A) + R1 MEDIUM-C: setDetailFeature(null) 삭제
           //   (레이어 경로는 '가림→복원'인데 베이스맵만 파괴적이라 비대칭이었다).
@@ -2711,7 +2722,7 @@ export function SatongMapShell({
               // ★전환 지연 경유(HOVER_SWITCH_DELAY_MS) — 팝오버로 가며 스쳐 지나가는
               //   왼쪽 열 아이콘이 목적 팝오버를 갈아치우지 않게 한다.
               onMouseEnter={() =>
-                requestHoverOpen(() => openLayerPanel(layer.id), activeLayerId === layer.id)
+                requestHoverOpen(layer.id, () => openLayerPanel(layer.id), activeLayerId === layer.id)
               }
               // 아이콘을 벗어나면 대기 중이던 전환은 취소한다(지나간 것은 의도가 아니다).
               onMouseLeave={cancelHoverSwitch}

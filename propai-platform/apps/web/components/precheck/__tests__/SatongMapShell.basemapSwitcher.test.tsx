@@ -361,6 +361,8 @@ describe("SatongMapShell 레일 — 핀 stale 누수(HIGH-1)", () => {
       expect(screen.getByRole("heading", { level: 3, name: "용도지역" })).toBeTruthy();
 
       fireEvent.mouseEnter(screen.getByRole("button", { name: "공시지가" })); // 다른 hover분
+      act(() => { vi.advanceTimersByTime(200); }); // ★전환을 실제로 일으킨다(A안 지연 경유)
+      expect(screen.getByRole("heading", { level: 3, name: "공시지가" })).toBeTruthy();
       fireEvent.mouseLeave(rail);
       act(() => { vi.advanceTimersByTime(400); });
       expect(screen.queryByRole("heading", { level: 3, name: "공시지가" })).toBeNull();
@@ -450,8 +452,12 @@ describe("SatongMapShell 레일 — 전환 vs 완전닫힘(HIGH-3·Q2-c)", () =>
       const aBtn = screen.getByRole("button", { name: /용도지역/ });
       const rail = aBtn.closest("div")!;
       hoverClick(aBtn); // pin=용도지역(클릭 확정)
+      // ★hover 전환 지연(A안) 이후 필수: 체류 없이는 전환 자체가 일어나지 않아
+      //   이 줄이 **무동작**이 되고 테스트가 아무것도 지키지 않는다(R1 HIGH-2 적발 —
+      //   핀 정리 이펙트를 옛 조건식으로 되돌리는 변이가 CAUGHT→SURVIVED로 퇴화했다).
       fireEvent.mouseEnter(screen.getByRole("button", { name: "공시지가" })); // B 스침(전환)
-      fireEvent.mouseEnter(aBtn); // A 복귀(전환)
+      act(() => { vi.advanceTimersByTime(200); }); // 실제로 전환시킨다
+      fireEvent.mouseEnter(aBtn); // A 복귀 — ★고정분 복귀는 지연 없이 즉시(R1 HIGH-1)
       fireEvent.mouseLeave(rail);
       act(() => { vi.advanceTimersByTime(400); });
       // 스침이 있었어도 클릭 확정분은 살아야 한다(전환은 강등이 아니다).
@@ -466,8 +472,12 @@ describe("SatongMapShell 레일 — 전환 vs 완전닫힘(HIGH-3·Q2-c)", () =>
       const bmBtn = screen.getByRole("button", { name: "베이스맵 선택" });
       const rail = bmBtn.closest("div")!;
       hoverClick(bmBtn); // pin=basemap(클릭 확정)
+      // ★hover 전환 지연(A안) 이후 필수: 체류 없이는 전환 자체가 일어나지 않아
+      //   이 줄이 **무동작**이 되고 테스트가 아무것도 지키지 않는다(R1 HIGH-2 적발 —
+      //   핀 정리 이펙트를 옛 조건식으로 되돌리는 변이가 CAUGHT→SURVIVED로 퇴화했다).
       fireEvent.mouseEnter(screen.getByRole("button", { name: /용도지역/ })); // 레이어 스침(basemapOpen=false)
-      fireEvent.mouseEnter(bmBtn); // 베이스맵 복귀
+      act(() => { vi.advanceTimersByTime(200); }); // 실제로 전환시킨다
+      fireEvent.mouseEnter(bmBtn); // 베이스맵 복귀 — ★고정분 복귀는 즉시
       fireEvent.mouseLeave(rail);
       act(() => { vi.advanceTimersByTime(400); });
       expect(screen.getByRole("button", { name: "베이스맵: 일반" })).toBeTruthy();

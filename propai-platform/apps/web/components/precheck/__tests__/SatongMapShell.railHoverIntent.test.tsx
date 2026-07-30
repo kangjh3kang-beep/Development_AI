@@ -79,7 +79,9 @@ function resetStores() {
 
 describe("SatongMapShell 레일 hover 전환 의도 지연(A안)", () => {
   beforeEach(() => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
+    // ★`shouldAdvanceTime`은 쓰지 않는다 — 페이크 타이머가 실경과만큼 자동 전진하면
+    //   느린 CI에서 mouseEnter~단언 사이 실경과가 임계(150ms)를 넘어 위양성 실패한다.
+    vi.useFakeTimers();
     window.sessionStorage.clear();
     resetStores();
   });
@@ -114,11 +116,11 @@ describe("SatongMapShell 레일 hover 전환 의도 지연(A안)", () => {
     expect(shownPanelName()).toBe("개발계획");
 
     // 스치고 벗어난 뒤에도 예약 전환이 뒤늦게 발화하지 않는다.
-    //   (이탈 자체로 팝오버가 닫히는 것은 이 테스트의 관심사가 아닌 **기존** 닫힘 유예 계약이라
-    //    '전환되지 않았다'만 단언한다 — jsdom의 mouseLeave는 relatedTarget이 없어 레일 이탈로도 해석된다.)
+    //   ★단언은 **양성**으로 — `not.toBe(...)`는 그 시점 값이 null이면(닫힘 유예가 먼저 걸림)
+    //   무조건 참이 되어 공허 통과한다(R1 MEDIUM-3). 닫힘 유예(200ms) 이전 시점에서 관측한다.
     fireEvent.mouseLeave(passing);
-    act(() => { vi.advanceTimersByTime(300); });
-    expect(shownPanelName()).not.toBe("교통·편의 POI");
+    act(() => { vi.advanceTimersByTime(180); });
+    expect(shownPanelName()).toBe("개발계획");
   });
 
   it("★③ 팝오버에 도달하면 대기 중이던 전환이 취소된다", () => {
@@ -203,6 +205,71 @@ describe("SatongMapShell 레일 hover 전환 의도 지연(A안)", () => {
     expect(shownPanelName()).toBe("개발계획");
   });
 
+  it("★⑪ Esc로 닫은 뒤 예약 전환이 되살리지 않는다(닫힘 근원 전파)", () => {
+    // ★R1 MEDIUM-1: 취소를 핸들러마다 흩어 배선했더니 Esc·X·외부클릭 3경로가 샜다 —
+    //   아이콘 위에서 Esc를 누르면 닫힌 뒤 150ms 후 예약이 발화해 **되살아났다**.
+    //   봉합은 공용 닫힘 헬퍼(closeLayerPanel/closeBasemapPanel)에서 취소하는 것이고,
+    //   이 테스트가 그 수렴점을 잠근다(한 곳을 고치면 6경로가 따라온다).
+    render(<SatongMapShell locale="ko" />);
+
+    fireEvent.mouseEnter(railIcon("개발계획"));
+    fireEvent.mouseEnter(railIcon("교통·편의 POI")); // 전환 예약
+    act(() => { vi.advanceTimersByTime(100); });
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(shownPanelName()).toBeNull();
+
+    act(() => { vi.advanceTimersByTime(500); });
+    expect(shownPanelName()).toBeNull(); // 되살아나면 안 된다
+  });
+
+  // ── 베이스맵 형제 대칭(R1 MEDIUM-2) ───────────────────────────────────────────
+  //   레이어 쪽 배선(①③⑤)은 잠겼는데 **베이스맵 쌍둥이 3곳은 전부 무커버리지**였다
+  //   (onMouseEnter 지연 경유·onClick 즉시확정·팝오버 도달 취소를 각각 지워도 33/33 통과).
+  //   주석이 주장하는 "레일 형제와 동일 계약"이 강제되지 않던 것 — 이 저장소가 반복 지적하는
+  //   '배선 미변이로 뚫림' 패턴이라 대칭 케이스를 심는다.
+  it("★⑧ 베이스맵도 스쳐 지나가면 전환하지 않는다(형제 대칭)", () => {
+    render(<SatongMapShell locale="ko" />);
+
+    fireEvent.mouseEnter(railIcon("개발계획"));
+    expect(shownPanelName()).toBe("개발계획");
+
+    fireEvent.mouseEnter(screen.getByRole("button", { name: "베이스맵 선택" }));
+    act(() => { vi.advanceTimersByTime(80); }); // 임계 미만
+    expect(shownPanelName()).toBe("개발계획");
+
+    act(() => { vi.advanceTimersByTime(120); }); // 임계 경과 = 의도적 전환
+    expect(screen.getByRole("button", { name: "베이스맵: 일반" })).toBeTruthy();
+  });
+
+  it("★⑨ 베이스맵 클릭은 즉시 확정되고 예약 전환이 덮어쓰지 않는다(형제 대칭)", () => {
+    render(<SatongMapShell locale="ko" />);
+
+    fireEvent.mouseEnter(railIcon("개발계획"));
+    fireEvent.mouseEnter(railIcon("교통·편의 POI")); // 전환 예약
+    act(() => { vi.advanceTimersByTime(100); });
+
+    fireEvent.click(screen.getByRole("button", { name: "베이스맵 선택" })); // 의도 확정
+    act(() => { vi.advanceTimersByTime(500); });
+
+    expect(screen.getByRole("button", { name: "베이스맵: 일반" })).toBeTruthy();
+    expect(shownPanelName()).not.toBe("교통·편의 POI");
+  });
+
+  it("★⑩ 베이스맵 팝오버에 도달하면 대기 중이던 전환이 취소된다(형제 대칭)", () => {
+    render(<SatongMapShell locale="ko" />);
+
+    fireEvent.mouseEnter(screen.getByRole("button", { name: "베이스맵 선택" }));
+    const panel = screen.getByRole("dialog", { name: "베이스맵" });
+
+    fireEvent.mouseEnter(railIcon("교통·편의 POI")); // 전환 예약
+    act(() => { vi.advanceTimersByTime(120); });
+    fireEvent.mouseEnter(panel); // 목적지 도달
+    act(() => { vi.advanceTimersByTime(500); });
+
+    expect(screen.getByRole("button", { name: "베이스맵: 일반" })).toBeTruthy();
+  });
+
   it("레일을 벗어나면 예약된 전환이 발화하지 않는다", () => {
     render(<SatongMapShell locale="ko" />);
 
@@ -210,10 +277,12 @@ describe("SatongMapShell 레일 hover 전환 의도 지연(A안)", () => {
     fireEvent.mouseEnter(railIcon("교통·편의 POI"));
     act(() => { vi.advanceTimersByTime(100); });
 
+    // ★닫힘 유예(200ms) 이전 시점에서 **양성** 단언 — 500ms 뒤엔 전부 닫혀 null이라
+    //   `not.toBe(...)`가 공허 통과했다(R1 MEDIUM-3: 레일 이탈 취소를 지운 변이가 이 테스트를
+    //   통과했고 다른 파일이 우연히 잡았다). 임계(150ms)는 이미 지났으므로 미발화가 증명된다.
     fireEvent.mouseLeave(screen.getByTestId("map-layer-rail"));
-    act(() => { vi.advanceTimersByTime(500); });
+    act(() => { vi.advanceTimersByTime(180); });
 
-    // 전환은 없었고(개발계획 유지), 닫힘 유예는 기존 계약대로 동작한다.
-    expect(shownPanelName()).not.toBe("교통·편의 POI");
+    expect(shownPanelName()).toBe("개발계획");
   });
 });
