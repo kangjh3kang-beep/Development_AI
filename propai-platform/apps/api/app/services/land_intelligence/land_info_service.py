@@ -351,6 +351,11 @@ class LandInfoService:
             "building_detail": None,
             "official_prices": [],
             "land_use_plan": None,
+            # ★기본값을 "unavailable"(미확인)로 둔다 — 실제 판정은 PNU 해석에 성공한 경우에만
+            #   도달하므로(`if effective_pnu is not None:` 블록 안), 기본값이 없으면 PNU 미해석
+            #   필지에서 **키 자체가 빠지고** 소비처가 "확인 완료"로 낙관 폴백한다(R3 MEDIUM).
+            #   "조회를 시도조차 못 했다"는 미확인이지 "규제 없음"이 아니다.
+            "land_use_plan_status": "unavailable",
             "local_ordinance": None,
             "nearby_transactions": None,
             "infrastructure": None,

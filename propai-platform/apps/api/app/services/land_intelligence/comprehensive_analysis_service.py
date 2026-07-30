@@ -1125,7 +1125,10 @@ class ComprehensiveAnalysisService:
                 #   land_use_regulations는 base["land_use_plan"] 단일 출처인데 그 키는 비어있지
                 #   않은 목록일 때만 채워져 실패/0건이 구분되지 않았다 — land_info_service가
                 #   land_use_plan_status로 그 구분을 정직하게 남기고 여기서 소비한다.
-                designations_verified=(base.get("land_use_plan_status") != "unavailable"),
+                #   ★화이트리스트("ok"일 때만 verified) — 부정형(`!= "unavailable"`)이면 키 부재·
+                #   오탈자·새 상태값이 전부 "확인 완료"로 낙관 폴백한다(R3 MEDIUM). 미확인을
+                #   낙관으로 흘려보내는 것이 이 PR이 내내 봉합해 온 결함 클래스다.
+                designations_verified=(base.get("land_use_plan_status") == "ok"),
             )
         except Exception as e:  # noqa: BLE001 — 지배 제약 산출 실패는 분석 무손상(정직 degrade)
             logger.warning("지배 제약 산출 스킵(graceful)", err=str(e)[:160])

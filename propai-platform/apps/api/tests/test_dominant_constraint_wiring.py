@@ -293,6 +293,9 @@ def _stub_analyze_io(monkeypatch, *, districts: list[str], zone_type: str, slope
             "land_register": {"area_sqm": 147_078.0, "land_category": "임야"},
             # 규제 designation은 land_use_plan → _research_dev_plans(sec7)를 통해 흐른다.
             "land_use_plan": {"districts": [{"district_name": n} for n in districts]},
+            # ★실 생산자(collect_comprehensive)가 **항상** 채우는 키다 — 대역이 이걸 빼면
+            #   "조회 성공" 시나리오를 표현하지 못하고 전부 미확인으로 판정된다(대역 충실성).
+            "land_use_plan_status": "ok",
             "special_districts": districts,
             # 외부 왕복 회피용 사전 채움(이 테스트의 관심사가 아닌 경로).
             "nearby_transactions": {"note": "stub"},
@@ -483,6 +486,41 @@ async def test_land_info_produces_land_use_plan_status(monkeypatch):
     raised = await svc_err._collect_comprehensive_impl("경북 포항시 남구 호미곶면 대보리 산1-1")  # noqa: SLF001
     assert raised.get("land_use_plan_status") == "unavailable", (
         "예외(gather return_exceptions)가 '확인 완료'로 흘러갔다 — 실패를 성공으로 표기"
+    )
+
+    # ★R3 MEDIUM: PNU 해석 자체가 실패하면 위 판정 블록(`if effective_pnu is not None:`)에
+    #   **도달조차 못 한다**. 기본값이 없으면 키가 빠지고 소비처가 "확인 완료"로 낙관 폴백한다
+    #   — "조회를 시도조차 못 했다"는 미확인이지 "규제 없음"이 아니다.
+    svc_nopnu = LandInfoService()
+
+    async def _zoning_no_pnu(addr):  # noqa: ANN001
+        return {"pnu": None, "zone_type": None, "success": False}
+
+    monkeypatch.setattr(svc_nopnu.zoning, "analyze_by_address", _zoning_no_pnu, raising=False)
+    for name in (
+        "_fetch_land_register", "_fetch_official_price", "_fetch_building_info",
+        "_fetch_land_characteristics", "_fetch_building_detail",
+        "_fetch_nearby_transactions", "_fetch_precise_road_width", "_fetch_infrastructure",
+        "_fetch_land_use_plan",
+    ):
+        monkeypatch.setattr(svc_nopnu, name, _none, raising=False)
+    monkeypatch.setattr(svc_nopnu.ordinance, "get_ordinance_limits", _ord_err, raising=False)
+
+    no_pnu = await svc_nopnu._collect_comprehensive_impl("해석불가주소")  # noqa: SLF001
+    assert no_pnu.get("land_use_plan_status") == "unavailable", (
+        "PNU 미해석 필지에서 상태 키가 빠져 소비처가 '확인 완료'로 낙관 폴백한다"
+    )
+
+
+def test_designations_verified_uses_whitelist_not_negation():
+    """★소비처는 화이트리스트("ok"일 때만 verified)여야 한다 — 부정형이면 키 부재가 낙관이 된다."""
+    import inspect
+
+    from app.services.land_intelligence import comprehensive_analysis_service as cas
+
+    src = inspect.getsource(cas.ComprehensiveAnalysisService.analyze)
+    assert 'base.get("land_use_plan_status") == "ok"' in src, (
+        "부정형(!= 'unavailable') 판정은 키 부재·오탈자·새 상태값을 전부 verified로 흘려보낸다"
     )
 
 
