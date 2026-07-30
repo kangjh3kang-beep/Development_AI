@@ -205,7 +205,7 @@ describe("SatongMapShell 레일 — 탐색/확정 분리", () => {
       expect(screen.getByRole("heading", { level: 3, name: "용도지역" })).toBeTruthy();
 
       fireEvent.mouseEnter(screen.getByRole("button", { name: "지적도" }));
-      act(() => { vi.advanceTimersByTime(200); }); // 머물렀다 = 의도적 전환
+      act(() => { vi.advanceTimersByTime(300); }); // 머물렀다 = 의도적 전환
       expect(screen.getByRole("heading", { level: 3, name: "지적도" })).toBeTruthy();
       expect(screen.queryByRole("heading", { level: 3, name: "용도지역" })).toBeNull();
     } finally { vi.useRealTimers(); }
@@ -361,7 +361,7 @@ describe("SatongMapShell 레일 — 핀 stale 누수(HIGH-1)", () => {
       expect(screen.getByRole("heading", { level: 3, name: "용도지역" })).toBeTruthy();
 
       fireEvent.mouseEnter(screen.getByRole("button", { name: "공시지가" })); // 다른 hover분
-      act(() => { vi.advanceTimersByTime(200); }); // ★전환을 실제로 일으킨다(A안 지연 경유)
+      act(() => { vi.advanceTimersByTime(300); }); // ★전환을 실제로 일으킨다(A안 지연 경유)
       expect(screen.getByRole("heading", { level: 3, name: "공시지가" })).toBeTruthy();
       fireEvent.mouseLeave(rail);
       act(() => { vi.advanceTimersByTime(400); });
@@ -400,7 +400,7 @@ describe("SatongMapShell 레일 — 핀 잔여 누수(HIGH-2)", () => {
       const rail = bmBtn.closest("div")!;
       hoverClick(bmBtn); // pin="basemap"
       fireEvent.mouseEnter(screen.getByRole("button", { name: /용도지역/ })); // 전환(basemapOpen=false)
-      act(() => { vi.advanceTimersByTime(200); }); // ★A안: 전환은 임계 체류 후 발화
+      act(() => { vi.advanceTimersByTime(300); }); // ★A안: 전환은 임계 체류 후 발화
       fireEvent.mouseLeave(rail);
       act(() => { vi.advanceTimersByTime(400); }); // 타이머가 닫음 → 이펙트가 핀 정리
       expect(screen.queryByRole("heading", { level: 3, name: "용도지역" })).toBeNull();
@@ -422,7 +422,7 @@ describe("SatongMapShell 레일 — 핀 잔여 누수(HIGH-2)", () => {
       hoverClick(btn); // pin=용도지역
       expect(screen.getByRole("dialog", { name: "용도지역" })).toBeTruthy();
       fireEvent.mouseEnter(screen.getByRole("button", { name: "공시지가" })); // 전환 → pin 정리(이펙트)
-      act(() => { vi.advanceTimersByTime(200); }); // ★A안: 전환은 임계 체류 후 발화
+      act(() => { vi.advanceTimersByTime(300); }); // ★A안: 전환은 임계 체류 후 발화
       // 위 전환으로 활성이 공시지가; 팝오버 mouseleave로 닫아본다
       fireEvent.mouseLeave(screen.getByRole("dialog", { name: "공시지가" }));
       act(() => { vi.advanceTimersByTime(400); });
@@ -456,7 +456,7 @@ describe("SatongMapShell 레일 — 전환 vs 완전닫힘(HIGH-3·Q2-c)", () =>
       //   이 줄이 **무동작**이 되고 테스트가 아무것도 지키지 않는다(R1 HIGH-2 적발 —
       //   핀 정리 이펙트를 옛 조건식으로 되돌리는 변이가 CAUGHT→SURVIVED로 퇴화했다).
       fireEvent.mouseEnter(screen.getByRole("button", { name: "공시지가" })); // B 스침(전환)
-      act(() => { vi.advanceTimersByTime(200); }); // 실제로 전환시킨다
+      act(() => { vi.advanceTimersByTime(300); }); // 실제로 전환시킨다
       fireEvent.mouseEnter(aBtn); // A 복귀 — ★고정분 복귀는 지연 없이 즉시(R1 HIGH-1)
       fireEvent.mouseLeave(rail);
       act(() => { vi.advanceTimersByTime(400); });
@@ -476,7 +476,7 @@ describe("SatongMapShell 레일 — 전환 vs 완전닫힘(HIGH-3·Q2-c)", () =>
       //   이 줄이 **무동작**이 되고 테스트가 아무것도 지키지 않는다(R1 HIGH-2 적발 —
       //   핀 정리 이펙트를 옛 조건식으로 되돌리는 변이가 CAUGHT→SURVIVED로 퇴화했다).
       fireEvent.mouseEnter(screen.getByRole("button", { name: /용도지역/ })); // 레이어 스침(basemapOpen=false)
-      act(() => { vi.advanceTimersByTime(200); }); // 실제로 전환시킨다
+      act(() => { vi.advanceTimersByTime(300); }); // 실제로 전환시킨다
       fireEvent.mouseEnter(bmBtn); // 베이스맵 복귀 — ★고정분 복귀는 즉시
       fireEvent.mouseLeave(rail);
       act(() => { vi.advanceTimersByTime(400); });

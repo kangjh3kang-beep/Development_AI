@@ -140,10 +140,17 @@ const RAIL_POPOVER_ANCHOR = {
  * 지나가는 순간 그 아이콘의 mouseenter가 즉시 다른 레이어로 팝오버를 갈아치워 정작 열려던
  * 팝오버가 사라졌다(사용자 지적). 1열이던 시절엔 없던 **2열 전환이 만든 회귀**다.
  *
- * 스쳐 지나가는 체류는 대개 100ms 미만이라 이 임계에서 걸러진다. ★첫 열기(아무 팝오버도
- * 없을 때)에는 지연을 걸지 않아 반응성을 그대로 보존한다 — 지연은 '전환'에만 적용한다.
+ * ★임계 근거(모델 — 실측 아님, 가정을 밝힌다): 레일 실측 CSS로 재구성하면 오른쪽 열 아이콘
+ * 좌단(우측 끝에서 76px)에서 팝오버(144px)까지 68px 중 **51px가 왼쪽 열 아이콘**이다. 즉
+ * 통과 구간의 3/4이 장애물이고 자유 통로는 8px(열 간격)+9px(패딩)뿐이다. 단절 없는 1회
+ * 포인팅이면 통과 체류가 100ms 안팎이지만, **트랙패드·비숙련·저감도 포인터**나 방금 뜬
+ * 팝오버를 읽느라 손이 잠깐 멎는 gaze-lead 구간에서는 150ms를 넘겨 방어가 뚫린다(보수적
+ * Fitts 계수 기준 최하단 행 대각 동선에서 ~172ms). 그래서 임계를 250ms로 둔다 — 통상적인
+ * hover-intent 관행(200~300ms) 안이고, 의도적 전환의 체감 지연보다 **목적 팝오버가 사라지는
+ * 파괴적 실패**를 피하는 쪽이 사용자 지적에 부합한다. 실제 포인터 속도 로그는 **미측정**이다.
+ * ★첫 열기(아무 팝오버도 없을 때)에는 지연을 걸지 않아 반응성을 그대로 보존한다.
  */
-const HOVER_SWITCH_DELAY_MS = 150;
+const HOVER_SWITCH_DELAY_MS = 250;
 
 function railPopoverAnchor(pinned: boolean): string {
   return pinned ? RAIL_POPOVER_ANCHOR.pinned : RAIL_POPOVER_ANCHOR.collapsed;
@@ -2664,7 +2671,14 @@ export function SatongMapShell({
             아이콘은 MapIcon(지도), 지적도 레이어는 Layers로 분리해 아이콘-기능 1:1. */}
         <button
           type="button"
-          onClick={() => setRailPinned((v) => !v)}
+          onClick={() => {
+            // ★레일 1↔2열 토글은 12개 버튼을 리플로우시켜 **마우스를 움직이지 않아도**
+            //   커서 밑 아이콘이 바뀐다 → 예약된 전환이 무관한 레이어로 발화한다.
+            //   '접기' 버튼이 조용히 팝오버를 갈아치우면 안 되므로 예약·닫힘을 먼저 거둔다.
+            cancelHoverSwitch();
+            cancelHoverClose();
+            setRailPinned((v) => !v);
+          }}
           aria-pressed={railPinned}
           aria-label={railPinned ? "레이어 목록 접기" : "레이어 목록 펼치기(고정)"}
           className={`grid size-12 shrink-0 place-items-center rounded-2xl border transition ${

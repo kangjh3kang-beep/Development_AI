@@ -146,7 +146,7 @@ describe("SatongMapShell 레일 hover 전환 의도 지연(A안)", () => {
     expect(shownPanelName()).toBe("개발계획");
 
     fireEvent.mouseEnter(railIcon("교통·편의 POI"));
-    act(() => { vi.advanceTimersByTime(200); }); // 임계(150ms) 경과
+    act(() => { vi.advanceTimersByTime(300); }); // 임계(250ms) 경과
 
     expect(shownPanelName()).toBe("교통·편의 POI");
   });
@@ -238,7 +238,7 @@ describe("SatongMapShell 레일 hover 전환 의도 지연(A안)", () => {
     act(() => { vi.advanceTimersByTime(80); }); // 임계 미만
     expect(shownPanelName()).toBe("개발계획");
 
-    act(() => { vi.advanceTimersByTime(120); }); // 임계 경과 = 의도적 전환
+    act(() => { vi.advanceTimersByTime(220); }); // 임계 경과 = 의도적 전환
     expect(screen.getByRole("button", { name: "베이스맵: 일반" })).toBeTruthy();
   });
 
@@ -279,7 +279,7 @@ describe("SatongMapShell 레일 hover 전환 의도 지연(A안)", () => {
 
     fireEvent.click(railIcon("개발계획")); // 클릭 확정(pin=개발계획)
     fireEvent.mouseEnter(railIcon("교통·편의 POI"));
-    act(() => { vi.advanceTimersByTime(200); }); // 의도적 전환 — 지금 보이는 건 POI
+    act(() => { vi.advanceTimersByTime(300); }); // 의도적 전환 — 지금 보이는 건 POI
     expect(shownPanelName()).toBe("교통·편의 POI");
 
     // 고정분을 '스치기만' 해도 즉시 열린다 = 알고 수용한 대가.
@@ -300,6 +300,21 @@ describe("SatongMapShell 레일 hover 전환 의도 지연(A안)", () => {
 
     act(() => { vi.advanceTimersByTime(500); });
     expect(shownPanelName()).toBeNull();
+  });
+
+  it("★⑭ 레일 1↔2열 토글이 예약된 전환을 발화시키지 않는다", () => {
+    // ★토글은 12개 버튼을 리플로우시켜 **마우스를 1px도 안 움직여도** 커서 밑 아이콘이 바뀐다.
+    //   예약을 안 거두면 '접기' 버튼이 조용히 무관한 레이어로 팝오버를 갈아치운다.
+    render(<SatongMapShell locale="ko" />);
+
+    fireEvent.mouseEnter(railIcon("개발계획"));
+    fireEvent.mouseEnter(railIcon("교통·편의 POI")); // 전환 예약
+    act(() => { vi.advanceTimersByTime(100); });
+
+    fireEvent.click(screen.getByTitle(/레이어 목록 고정 해제|지도 레이어 관리/));
+    act(() => { vi.advanceTimersByTime(500); });
+
+    expect(shownPanelName()).toBe("개발계획");
   });
 
   it("레일을 벗어나면 예약된 전환이 발화하지 않는다", () => {
