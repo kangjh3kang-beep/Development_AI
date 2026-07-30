@@ -47,6 +47,7 @@ import { UseLlmToggle } from "@/components/common/UseLlmToggle";
 import { AnalysisPipelineStepbar, type PipelineStep } from "@/components/common/AnalysisPipelineStepbar"; // UX 트랙 C4 — 엑셀 업로드 진행표시(기존 프리미티브 재사용)
 import { ContextHeader } from "@/components/common/ContextHeader"; // 집계 SSOT 단일표면(UX 트랙 B2)
 import { DataSourceNotice } from "@/components/ui/DataSourceNotice";
+import { DominantConstraintBanner } from "@/components/precheck/DominantConstraintBanner"; // W1 지배 제약 — 필지 상세 최상단
 import type {
   ParcelAtPointResult,
   SatongAuctionItem,
@@ -61,6 +62,7 @@ import {
   MARKET_TRADE_TYPES,
   isRenderableSatongMapLayer,
   resolveSelectionAnchor,
+  type DominantConstraint,
   type SatongMapFeature,
   type SatongMapLayerId,
   type SatongMapLayerState,
@@ -73,9 +75,12 @@ import { useProjectStore } from "@/store/useProjectStore";
 import { restoreSnapshot } from "@/lib/projectSync";
 import { createProjectFromParcels } from "@/lib/satong-project-create";
 import {
+  dominantConstraintKey,
+  readDominantConstraintCache,
   readSatongMapSelection,
   selectionToSiteAnalysisPatch,
   siteAnalysisToSelection,
+  writeDominantConstraintCache,
   writeSatongMapSelection,
   type SatongSelectionParcel,
 } from "./satong-map-selection";
@@ -515,6 +520,8 @@ export function healParcelPnu(
   return existingPnu || boundaryPnu || null;
 }
 
+
+
 function statusText(status: LayerStatus): string {
   if (status === "active") return "활성";
   if (status === "ready") return "준비";
@@ -705,14 +712,44 @@ export function SatongMapShell({
   // ── WS-C 필지 상세 패널 — 지도 폴리곤/카드 클릭 → 통합 정보(개요·공시지가·노후도)와
   //    산출물 원클릭 퍼널. 단일 팝오버 원칙: 레이어 설정 패널과 동시 표출 금지(상호 배타).
   const [detailFeature, setDetailFeature] = useState<SatongMapFeature | null>(null);
+  // ★W1 지배 제약 캐시(state 아님 — ref + sessionStorage). 경계 응답에서만 오는 값이라 좌측
+  //   카드 클릭 경로가 쓰는 selectedMapFeatures(선택 SSOT 유래)엔 없다. state로 두면 매 경계
+  //   응답마다 새 객체 identity가 selectedMapFeatures → SatongMultiMap props로 번져 경계 재조회
+  //   루프를 만든다(identity churn — 이 저장소에서 이미 겪은 결함). ref는 렌더를 유발하지 않는다.
+  //   ★R1 MEDIUM-3: ref만 쓰면 소프트 내비(산출물 페이지 왕복)로 셸이 재마운트될 때 캐시가
+  //     비고, selectionBoundaryReady(geometry+연식 보유)가 true라 경계 재조회도 스킵돼 배너가
+  //     **무음 소실**됐다. 그래서 표시 캐시를 sessionStorage에 함께 둔다 — 선택 SSOT(필지 데이터)가
+  //     아니라 **뷰 캐시**라서 프로젝트 스냅샷·산출물 페이로드를 오염시키지 않는다.
+  const dominantConstraintByKeyRef = useRef<Map<string, DominantConstraint | null>>(
+    readDominantConstraintCache<DominantConstraint>(),
+  );
+  const rememberDominantConstraints = useCallback(
+    (entries: Array<[string, DominantConstraint | null]>) => {
+      if (!entries.length) return;
+      for (const [key, value] of entries) dominantConstraintByKeyRef.current.set(key, value);
+      writeDominantConstraintCache<DominantConstraint>(dominantConstraintByKeyRef.current);
+    },
+    [],
+  );
+  const resolveDominantConstraint = useCallback(
+    (feature: SatongMapFeature): DominantConstraint | null =>
+      feature.dominantConstraint ??
+      dominantConstraintByKeyRef.current.get(dominantConstraintKey(feature)) ??
+      null,
+    [],
+  );
   const openFeatureDetail = useCallback((feature: SatongMapFeature) => {
     // ★단일 팝오버 불변식 — right-20 top-20 z-430 좌표를 공유하는 3패널(필지상세·레이어·
     //   베이스맵)은 동시에 뜰 수 없다. 봉합은 '생산 근원'인 이 함수에서 한다 — 호출부
     //   (좌측 필지 카드·지도 피처 클릭)마다 닫기를 흩뿌리면 새 호출부가 생길 때 또 샌다.
     setBasemapOpen(false);
-    setDetailFeature(feature);
+    // ★같은 이유로 지배 제약 합류도 여기서 한다 — 두 호출부(카드/지도)가 각자 채우면
+    //   한쪽만 고쳐지는 발산이 생긴다. 피처가 이미 값을 갖고 있으면(지도 경계 유래) 그것이
+    //   우선, 없으면 경계 응답 캐시에서 같은 필지 키로 찾는다.
+    const dominantConstraint = resolveDominantConstraint(feature);
+    setDetailFeature(dominantConstraint ? { ...feature, dominantConstraint } : feature);
     setActiveLayerId(null);
-  }, []);
+  }, [resolveDominantConstraint]);
   // I5: 선택 필지 GeoJSON 내보내기 결과 고지(제외 건수 정직 표기).
   const [exportNote, setExportNote] = useState("");
   // ★R1(stale 고지): 선택이 바뀌면(추가·삭제·초기화·프로젝트 전환) 지난 내보내기 고지를
@@ -1737,8 +1774,33 @@ export function SatongMapShell({
       officialPricePerSqm?: number | null; builtYear?: number | null;
       buildingAgeYears?: number | null; ageStatus?: string | null;
       effectiveFarPct?: number | null; effectiveBcrPct?: number | null;
-      currentFarPct?: number | null; geometry?: unknown }>,
+      currentFarPct?: number | null; geometry?: unknown;
+      dominantConstraint?: DominantConstraint | null }>,
     ) => {
+      // ★W1: 지배 제약은 뷰 캐시(ref+sessionStorage)에만 담는다 — 선택 SSOT(필지 객체)에 넣으면
+      //   stale 규제가 프로젝트 스냅샷에 박히고, 새 객체 identity가 매 응답마다 변경감지를 참으로
+      //   만들어 commit/save 루프를 돈다. 표시 합류는 openFeatureDetail이 담당.
+      rememberDominantConstraints(
+        features
+          .filter((f) => f.pnu || f.address)
+          .map((f) => [
+            dominantConstraintKey({ pnu: f.pnu ?? null, address: f.address ?? "" }),
+            f.dominantConstraint ?? null,
+          ]),
+      );
+      // ★R1 MEDIUM-4: 상세 패널이 **열린 채로** 경계 응답이 도착하는 것이 실제 흐름이다
+      //   (필지 담고 바로 카드 클릭 → 경계 왕복 최대 45s). ref 갱신은 렌더를 유발하지 않으므로
+      //   종전엔 사용자가 패널을 닫고 다시 열 때까지 영구히 배너를 못 봤다. 열린 필지와 키가
+      //   같으면 즉시 합류한다(값이 이미 있으면 스킵 — 불필요한 재렌더·churn 방지).
+      setDetailFeature((current) => {
+        if (!current || current.dominantConstraint) return current;
+        const hit = features.find(
+          (f) =>
+            dominantConstraintKey({ pnu: f.pnu ?? null, address: f.address ?? "" }) ===
+            dominantConstraintKey(current),
+        );
+        return hit?.dominantConstraint ? { ...current, dominantConstraint: hit.dominantConstraint } : current;
+      });
       setSelectedParcels((prev) => {
         if (!prev.length || !features.length) return prev;
         let changed = false;
@@ -1796,7 +1858,7 @@ export function SatongMapShell({
         return next;
       });
     },
-    [commitParcelsToContext, saveSelectionForOutputs],
+    [commitParcelsToContext, saveSelectionForOutputs, rememberDominantConstraints],
   );
 
   // 선택 필지로 새 프로젝트 생성·연결(공용) — 셀렉터 아래 버튼과 산출물 실행(연결모드 "new")이 공유.
@@ -2521,6 +2583,10 @@ export function SatongMapShell({
               <X className="size-4" aria-hidden />
             </button>
           </div>
+
+          {/* ★W1 지배 제약 — 필지 상세 최상단("무엇이 발목인가"에 한 줄로 답). 서버가 제약
+               0건이면 null을 주고 컴포넌트도 null이면 렌더하지 않는다(빈 배너 금지). */}
+          <DominantConstraintBanner constraint={detailFeature.dominantConstraint} />
 
           <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-strong)] p-3 text-xs">
             <div>

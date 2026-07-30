@@ -351,6 +351,11 @@ class LandInfoService:
             "building_detail": None,
             "official_prices": [],
             "land_use_plan": None,
+            # ★기본값을 "unavailable"(미확인)로 둔다 — 실제 판정은 PNU 해석에 성공한 경우에만
+            #   도달하므로(`if effective_pnu is not None:` 블록 안), 기본값이 없으면 PNU 미해석
+            #   필지에서 **키 자체가 빠지고** 소비처가 "확인 완료"로 낙관 폴백한다(R3 MEDIUM).
+            #   "조회를 시도조차 못 했다"는 미확인이지 "규제 없음"이 아니다.
+            "land_use_plan_status": "unavailable",
             "local_ordinance": None,
             "nearby_transactions": None,
             "infrastructure": None,
@@ -459,6 +464,19 @@ class LandInfoService:
                 # 최상위 land_area_sqm도 채움(프론트 표시 일원화)
                 if not result.get("land_area_sqm") and land_char.get("area_sqm"):
                     result["land_area_sqm"] = land_char["area_sqm"]
+
+            # ★토지이용계획 조회 성패를 정직 플래그로 남긴다(additive — 기존 키 무변경).
+            #   result["land_use_plan"]은 **비어있지 않은 목록일 때만** 채워지므로, 그것이 None인
+            #   상태가 "조회 실패"인지 "확인 완료·규제 0건"인지 소비처가 구분할 수 없다.
+            #   _fetch_land_use_plan은 그 구분(None=하드 실패 / []=규제 없음)을 이미 보존하는데
+            #   여기서 뭉개졌다 — 구분이 없으면 소비처(지배 제약 등)가 조회 실패를 "규제 없는
+            #   깨끗한 필지"로 표기하는 무음 낙관이 된다.
+            #   ★판정은 `is None`이 아니라 **isinstance(list)**여야 한다: 위 gather가
+            #   return_exceptions=True라 land_use에 Exception 인스턴스가 담길 수 있고, 그러면
+            #   `is None` 검사가 그것을 "ok"(확인 완료)로 흘려보낸다 — 실패를 성공으로 표기하는
+            #   정반대 방향의 오류다. 바로 아래 소비 가드(`isinstance(land_use, list)`)와 같은
+            #   기준으로 맞춘다: list(빈 목록 포함)=확정된 답 / None·Exception=미확인.
+            result["land_use_plan_status"] = "ok" if isinstance(land_use, list) else "unavailable"
 
             # 토지이용계획 (VWORLD NED — 중첩 규제 전부 포함)
             if isinstance(land_use, list) and land_use:

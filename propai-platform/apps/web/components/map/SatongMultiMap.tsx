@@ -36,6 +36,7 @@ import {
   resolveRegulationWmsLayers,
   resolveVWorldBaseLayer,
   satongMapFeatureKey,
+  type DominantConstraint,
   type SatongMapFeature,
   type SatongMapLayerState,
   type VWorldBaseLayer,
@@ -170,6 +171,8 @@ type BoundaryFeature = {
   current_far_pct?: number | null;
   effective_bcr_pct?: number | null;
   total_floor_area_sqm?: number | null;
+  /** W1 지배 제약(서버 산정 — regulation/dominant_constraint). 제약 0건이면 null. */
+  dominant_constraint?: DominantConstraint | null;
   geometry?: any;
   // 서버가 대표좌표를 줄 경우 대비(additive) — 없으면 geometry 대표점으로 파생한다.
   lat?: number | null;
@@ -640,6 +643,9 @@ function boundaryFeatureToMapFeature(feature: BoundaryFeature): SatongMapFeature
     effectiveFarPct: feature.effective_far_pct ?? null,
     currentFarPct: feature.current_far_pct ?? null,
     effectiveBcrPct: feature.effective_bcr_pct ?? null,
+    // ★W1 지배 제약 — 여기가 데이터 유입점(경계 응답만 이 값을 가진다). 이 한 줄이 빠지면
+    //   필지 상세 배너가 조용히 사라진다(순수함수 테스트로는 안 잡히는 배선층).
+    dominantConstraint: feature.dominant_constraint ?? null,
     geometry: feature.geometry,
     source: "boundary",
   };

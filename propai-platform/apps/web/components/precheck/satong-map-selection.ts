@@ -5,6 +5,63 @@ import type { ParcelRow } from "@/lib/parcel-rows";
 
 export const SATONG_MAP_SELECTION_KEY = "satong_map_selection";
 
+// ── W1 지배 제약 뷰 캐시 ─────────────────────────────────────────────────────
+//  경계 응답(/zoning/parcel-boundaries)만 지배 제약을 준다. 선택 SSOT(필지 객체)에 넣지 않고
+//  뷰 캐시로 분리하는 이유: ① stale 규제가 프로젝트 스냅샷·산출물 페이로드에 박히지 않게,
+//  ② 매 응답의 새 객체 identity가 변경감지를 참으로 만들어 commit/save 루프를 돌지 않게.
+//  sessionStorage에 함께 두는 이유: 소프트 내비로 셸이 재마운트되면 ref가 비는데
+//  selectionBoundaryReady(geometry+연식 보유)가 true라 경계 재조회도 스킵돼 배너가 무음 소실된다.
+//  ★이 모듈에 두는 이유(계정 격리): clearAllProjectData(projectSync)가 여기 상수를 import해
+//    세션 미러를 일괄 와이프한다. 셸 안에 키를 숨기면 그 와이프 목록에서 빠져 계정 전환 시
+//    이전 계정 필지의 규제가 잔존한다 — SATONG_MAP_SELECTION_KEY가 과거에 정확히 그렇게
+//    새어나간 전례(레인F P0-3)가 있어 같은 함정을 반복하지 않는다.
+export const SATONG_DOMINANT_CONSTRAINT_KEY = "satong_dominant_constraint";
+/** 캐시 상한 — 뷰 캐시라 무한 성장시킬 이유가 없다(초과분은 오래된 것부터 버린다). */
+const DOMINANT_CONSTRAINT_CACHE_MAX = 200;
+
+/**
+ * 지배 제약 캐시 키 — 저장·조회가 **같은 규칙**이어야 한다.
+ *
+ * satongMapFeatureKey는 `pnu || id || address`인데 id는 클라이언트 생성 합성값이라 서버 응답과
+ * 절대 맞지 않는다. 저장 시엔 id 없는 shape를 넘겨 사실상 `pnu || address`였으므로, pnu 미확보
+ * 필지(엑셀·지오코딩 시드, id="P-xxx")는 조회 키가 id로 잡혀 캐시 미스 → 배너 미표시가 됐다.
+ * 여기서 id를 배제한 단일 규칙만 노출해 비대칭을 구조적으로 막는다.
+ */
+export function dominantConstraintKey(
+  feature: { pnu?: string | null; address?: string | null },
+): string {
+  return feature.pnu || (feature.address || "").trim().replace(/\s+/g, " ");
+}
+
+export function readDominantConstraintCache<T>(): Map<string, T | null> {
+  const map = new Map<string, T | null>();
+  if (typeof window === "undefined") return map;
+  try {
+    const raw = window.sessionStorage.getItem(SATONG_DOMINANT_CONSTRAINT_KEY);
+    if (!raw) return map;
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return map;
+    for (const entry of parsed) {
+      if (Array.isArray(entry) && typeof entry[0] === "string") {
+        map.set(entry[0], (entry[1] ?? null) as T | null);
+      }
+    }
+  } catch {
+    // 손상된 캐시는 조용히 버린다(표시 캐시라 복구 대상이 아니다 — 다음 경계 응답이 채운다).
+  }
+  return map;
+}
+
+export function writeDominantConstraintCache<T>(map: Map<string, T | null>): void {
+  if (typeof window === "undefined") return;
+  try {
+    const entries = Array.from(map.entries()).slice(-DOMINANT_CONSTRAINT_CACHE_MAX);
+    window.sessionStorage.setItem(SATONG_DOMINANT_CONSTRAINT_KEY, JSON.stringify(entries));
+  } catch {
+    // 용량 초과 등은 무시 — ref 캐시만으로도 현재 세션 표시는 동작한다(정직 degrade).
+  }
+}
+
 // ★SPA(단일 페이지 앱) 세션 토큰 — 이 JS 모듈이 처음 로드될 때 딱 1회 생성한다.
 //   router.push 소프트 내비게이션(산출물 갔다가 복귀 등) 간에는 모듈이 그대로 유지돼 값이
 //   같지만, 하드 리로드(F5)·새 탭이면 모듈이 재초기화돼 새 값이 된다. sessionStorage에 저장된

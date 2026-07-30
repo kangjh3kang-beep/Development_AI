@@ -26,6 +26,39 @@ export type SatongMapLayerState = {
   controlsByLayer: Partial<Record<SatongMapLayerId, string[]>>;
 };
 
+/** 높이 상한 항목 1건 — limit_m이 null이면 "지정됐지만 수치 미보유"(정직 표기·추정 금지). */
+export type DominantConstraintHeightItem = {
+  source: string;
+  limit_m?: number | null;
+  basis?: string | null;
+  note?: string | null;
+};
+
+/**
+ * W1 지배 제약 — "이 필지에서 무엇이 발목인가"에 대한 서버 산정 답(백엔드
+ * `regulation/dominant_constraint.build_for_parcel` 계약과 1:1). 제약이 없으면 서버가
+ * null을 주므로 화면은 배너를 렌더하지 않는다(빈 배너 금지를 계약 수준에서 보장).
+ */
+export type DominantConstraint = {
+  /** "군사 통제보호구역 — 군부대 협의 없이는 건축 불가" 형태의 한 줄. 제약 0건이면 null. */
+  headline?: string | null;
+  /** protection_zone_severity SSOT 등급(낮음/보통/중간/높음/극히 높음). */
+  severity?: string | null;
+  /** ★규제 designation 조회가 실패해 제약 유무를 **확정할 수 없음**. true면 "제약 없음"이
+   *  아니라 "모름" — 화면은 배너를 숨기지 말고 확인 실패를 표기해야 한다(무음 낙관 차단). */
+  unverified?: boolean;
+  ranked?: Array<{ name: string; severity?: string | null; action?: string | null }>;
+  height?: {
+    governing_m?: number | null;
+    governing_source?: string | null;
+    /** ★수치 미보유 항목이 있으면 true — governing_m이 최종값이 아님("일부 미반영" 배지). */
+    incomplete?: boolean;
+    /** 반영/미반영 범위 상시 고지(서버 SSOT 문구). incomplete=False라도 전부가 아니다. */
+    coverage_note?: string | null;
+    items?: DominantConstraintHeightItem[];
+  } | null;
+};
+
 export type SatongMapFeature = {
   id: string;
   address: string;
@@ -50,6 +83,8 @@ export type SatongMapFeature = {
   currentFarPct?: number | null;
   /** I7 규제요약 — 실효 건폐율(%, calc_effective_far 동일 계층·서버 산정). 미산정 None. */
   effectiveBcrPct?: number | null;
+  /** W1 지배 제약 — 경계 응답(dominant_constraint) 서버 산정. 제약 0건이면 null(배너 미렌더). */
+  dominantConstraint?: DominantConstraint | null;
   geometry?: unknown;
   source?: "search" | "excel" | "map" | "boundary";
 };
@@ -398,6 +433,9 @@ export function mergeSatongMapFeatures(features: SatongMapFeature[]): SatongMapF
     effectiveFarPct: feature.effectiveFarPct ?? prev?.effectiveFarPct ?? null,
     currentFarPct: feature.currentFarPct ?? prev?.currentFarPct ?? null,
     effectiveBcrPct: feature.effectiveBcrPct ?? prev?.effectiveBcrPct ?? null,
+      // W1 지배 제약 — 경계 응답에서만 오므로 merge에서 흘리면 지도 클릭 경로가 배너를 잃는다
+      //   (선택 SSOT 유래 피처엔 이 필드가 없다 → prev 보존이 필수).
+      dominantConstraint: feature.dominantConstraint ?? prev?.dominantConstraint ?? null,
       geometry: feature.geometry ?? prev?.geometry,
       lat: feature.lat ?? prev?.lat ?? null,
       lon: feature.lon ?? prev?.lon ?? null,

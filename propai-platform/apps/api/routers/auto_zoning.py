@@ -1016,7 +1016,9 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
         #   가중해, 자연녹지처럼 구조상한(건폐율×층수) 대상 용도지역의 통합 실질치가 법정상한
         #   (예: 100%)으로 과대표시됐다 — 다른 6표면(규제·인허가·90초진단·파이프라인·수지·종합)과
         #   불일치하는 재계산이었다. 재계산 금지·소비만.
-        await _enrich_effective_and_special(features)
+        #   ★with_dominant_constraint=True — 지배 제약(W1 배너)을 **소비하는 유일한 표면**이라
+        #     여기서만 NED 토지이용계획 1콜/필지 비용을 낸다(다른 3소비처 무비용·무변경).
+        await _enrich_effective_and_special(features, with_dominant_constraint=True)
 
         zone_set = sorted({f["zone_type"] for f in features if f.get("zone_type")})
         jimok_set = sorted({f["jimok"] for f in features if f.get("jimok")})
@@ -1100,6 +1102,10 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
         # I7 패널 규제요약 — 실효 건폐율도 동일 규약으로 공개(미산정 None 무날조).
         if _f.get("_bcr_eff") is not None:
             _f["effective_bcr_pct"] = _f["_bcr_eff"]
+        # ★W1 지배 제약 — 필지 상세 배너용 공개 필드로 승격. 제약이 없으면 헬퍼가 None을
+        #   돌려주므로 키는 항상 실리되 값이 None이다(프론트는 None이면 배너 미렌더 —
+        #   빈 배너 금지). 아래 "_" 스트립보다 먼저 승격해야 값이 살아남는다.
+        _f["dominant_constraint"] = _f.get("_dominant_constraint")
         # ★R1 HIGH(W2-2 R2 봉합): 종전 고정 튜플 denylist는 _enrich_effective_and_special가
         #   새 내부키(_far_basis_detail·_ordinance — W2-2)를 부착할 때마다 이 목록을 사람이
         #   같이 갱신해야 하는 구조라, 실제로 신규 키가 이 응답(features[])으로 새는 회귀가
@@ -1327,7 +1333,9 @@ def _zone_legal_limits(zone: str | None) -> tuple[int | None, int | None]:
     return (ZONE_LIMITS[key]["max_bcr"], ZONE_LIMITS[key]["max_far"])
 
 
-async def _enrich_effective_and_special(enriched: list[dict]) -> None:
+async def _enrich_effective_and_special(
+    enriched: list[dict], *, with_dominant_constraint: bool = False,
+) -> None:
     """enrich_parcel_list 결과 각 필지에 실효 용적률/건폐율(조례 반영)+특이부지 게이트를 in-place 부착.
 
     ★parcels-info·land-report 공용(단일출처) — 두 소비처가 far_pct/bcr_pct(실효)·
@@ -1335,6 +1343,12 @@ async def _enrich_effective_and_special(enriched: list[dict]) -> None:
     각 dict에 채우는 키: bcr_legal/far_legal·bcr_eff/far_eff·far_basis·special.
     calc_effective_far는 순수 동기 함수(이벤트루프 미접촉)라 async 핸들러에서 await 없이 안전.
     OrdinanceService.get_ordinance_limits만 async → await. 무목업: 실패는 법정값 폴백(정직).
+
+    with_dominant_constraint: W1 지배 제약(_dominant_constraint) 산출 여부. **opt-in**인 이유는
+      지배 제약이 UD802/803(용도지구·용도구역)만으로는 성립하지 않고 NED 토지이용계획
+      (getLandUseAttr — 군사·비행안전·상수원 등 개별법 지역지구)이 필요해 PNU당 외부콜이
+      1건 더 붙기 때문이다. 이 값을 실제로 화면에 쓰는 표면(지도 경계 응답)만 비용을 낸다.
+      나머지 3소비처(parcels-info·integrated-analysis·land-report)는 완전 무변경·무비용.
     """
     from apps.api.app.services.land_intelligence.far_tier_service import calc_effective_far
     from apps.api.app.services.land_intelligence.ordinance_service import OrdinanceService
@@ -1388,6 +1402,41 @@ async def _enrich_effective_and_special(enriched: list[dict]) -> None:
                 return pnu, None
         for pnu, names in await asyncio.gather(*[_districts(x) for x in dict.fromkeys(_pnus)]):
             districts_by_pnu[pnu] = names
+
+    # ── ★R1 HIGH-2 봉합: 지배 제약용 designation 우주(NED 토지이용계획) 별도 수집 ──
+    #   위 _districts는 VWorld UD802/UD803 = **국토계획법 용도지구/용도구역**만 준다. 군사시설
+    #   보호구역·통제보호구역·비행안전구역·상수원보호구역 등은 **개별법 지역지구**라 그 두
+    #   레이어에 없다(vworld_service.get_land_use_districts 실측). 그래서 이 값만으로 지배 제약을
+    #   만들면 대표 케이스(호미곶 군사 통제보호구역)에서 배너가 조용히 비어 있게 된다 —
+    #   종합분석 경로가 쓰는 NED getLandUseAttr(get_land_use_plan)이 그 명칭들을 주는 출처다.
+    #   ★두 표면이 **같은 designation 우주**를 보게 하는 것이 이 수집의 목적(표면 발산 차단).
+    #   ★기존 _sd(detect_special_parcel 게이트 입력)에는 합류시키지 않는다 — 게이트 입력이 넓어지면
+    #     4소비처의 developability 판정이 바뀌어 이 PR 범위를 넘는 행위 변경이 된다(별건 티켓).
+    ned_districts_by_pnu: dict[str, list[str] | None] = {}
+    if with_dominant_constraint:
+        _dc_pnus = [str(p.get("pnu")) for p in enriched if p.get("pnu")]
+        if _dc_pnus:
+            from apps.api.app.services.external_api.vworld_service import VWorldService as _VW2
+            _vw2 = _VW2()
+            _sem2 = asyncio.Semaphore(8)  # UD802/803 수집과 동일 동시성 캡
+
+            async def _ned(pnu: str) -> tuple[str, list[str] | None]:
+                try:
+                    async with _sem2:
+                        raw = await asyncio.wait_for(_vw2.get_land_use_plan(pnu), timeout=6.0)
+                    if raw is None:
+                        return pnu, None  # 하드 실패 — 미확인(빈목록과 구분·무음 낙관 금지)
+                    return pnu, [
+                        str(d.get("district_name") or "").strip()
+                        for d in raw
+                        if isinstance(d, dict) and (d.get("district_name") or "").strip()
+                    ]
+                except Exception:  # noqa: BLE001 — 실패는 미확인(None)
+                    return pnu, None
+            for pnu, names in await asyncio.gather(
+                *[_ned(x) for x in dict.fromkeys(_dc_pnus)]
+            ):
+                ned_districts_by_pnu[pnu] = names
 
     for p in enriched:
         zone = p.get("zone_type")
@@ -1473,6 +1522,38 @@ async def _enrich_effective_and_special(enriched: list[dict]) -> None:
         p["_far_basis_detail"] = far_basis_detail
         p["_ordinance"] = ordinance
         p["_special"] = special
+        # ★사통맵 v2 W1 — 지배 제약 한 줄 + 높이 상한. 위에서 이미 확보한 구역 실값(_sd)과
+        #   필지 geometry만 쓰므로 **추가 외부콜 0**. 이 공용 헬퍼에 두면 4개 소비처
+        #   (parcel-boundaries·parcels-info·integrated-analysis·land-report)가 같은 판정을
+        #   공유한다(표면별 재구현 금지 — 전역 전파방지). 공개 노출은 소비처가 선택하며
+        #   W1은 지도 경계 응답만 승격한다(아래 features 승격부).
+        #   경사도(slope_pct)는 이 경로에 terrain 조회가 없어 미전달 → 경사도 항목 미생성.
+        #   W2(경사도 필지별 표시)에서 terrain_facts가 붙으면 여기 한 인자만 채우면 된다.
+        if with_dominant_constraint:
+            try:
+                from app.services.regulation.dominant_constraint import build_for_parcel
+
+                # NED 토지이용계획(개별법 지역지구 — 군사·비행안전 등) + UD802/803(용도지구·구역)
+                #   합집합. 순서 보존 dedup(dict.fromkeys) — 어느 한쪽이 미확인(None)이어도 나머지로
+                #   판정한다(무음 0건 금지: 둘 다 미확인이면 아래에서 None → 배너 미표시).
+                _ned = ned_districts_by_pnu.get(str(p.get("pnu") or ""))
+                _dc_regs = list(dict.fromkeys([*(_ned or []), *(_sd or [])]))
+                # ★무음 낙관 차단: NED None(하드 실패)과 [](규제 0건)을 구분해 전달한다.
+                #   ★R2 HIGH: 종전 OR 논리(하나라도 성공하면 verified)는 **부분 실패를 다시
+                #   무음 낙관으로 되돌렸다**. 재현: NED 실패(None) + UD802/803 성공(["자연녹지지역"]
+                #   — 보호구역 매치 0건) → verified=True → build_for_parcel이 None → 배너 소실.
+                #   그런데 군사·비행안전을 주는 유일한 출처가 바로 그 실패한 NED다(HIGH-2의 근거).
+                #   **합집합이 완전하려면 두 출처가 모두 성공해야 한다** → AND. 하나라도 미확인이면
+                #   목록은 반쪽이고, 반쪽으로 "확인 완료"라 말하는 것이 정확히 이 결함 클래스다.
+                p["_dominant_constraint"] = build_for_parcel(
+                    regulations=_dc_regs,
+                    zone_type=zone,
+                    geometry=p.get("geometry"),
+                    slope_pct=None,
+                    designations_verified=(_ned is not None and _sd is not None),
+                )
+            except Exception:  # noqa: BLE001 — 지배 제약 산출 실패는 필지 보강 무손상(미표기)
+                p["_dominant_constraint"] = None
 
 
 class ParcelsInfoRequest(BaseModel):
