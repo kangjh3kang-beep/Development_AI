@@ -1121,6 +1121,11 @@ class ComprehensiveAnalysisService:
                 zone_type=zone_type,
                 geometry=None,
                 slope_pct=(_terrain_facts or {}).get("평균경사도_pct"),
+                # ★R2 LOW: 규제 조회 실패를 "제약 없음"으로 표기하지 않는다. sec7의
+                #   land_use_regulations는 base["land_use_plan"] 단일 출처인데 그 키는 비어있지
+                #   않은 목록일 때만 채워져 실패/0건이 구분되지 않았다 — land_info_service가
+                #   land_use_plan_status로 그 구분을 정직하게 남기고 여기서 소비한다.
+                designations_verified=(base.get("land_use_plan_status") != "unavailable"),
             )
         except Exception as e:  # noqa: BLE001 — 지배 제약 산출 실패는 분석 무손상(정직 degrade)
             logger.warning("지배 제약 산출 스킵(graceful)", err=str(e)[:160])

@@ -200,6 +200,35 @@ async def test_parcel_boundaries_marks_lookup_failure_as_unverified(monkeypatch)
     assert dc["headline"] is None, "확정 못 한 상태에서 제약을 만들어내면 날조"
 
 
+async def test_parcel_boundaries_partial_failure_is_unverified(monkeypatch):
+    """★R2 HIGH 회귀락: **한쪽만** 실패해도 unverified다(부분 실패 = 반쪽 목록).
+
+    종전 OR 논리는 "하나라도 성공하면 확인 완료"로 봐서 무음 낙관이 재발했다. 재현:
+    NED(군사·비행안전을 주는 **유일한** 출처)가 실패하고 UD802/803만 성공해 보호구역 매치가
+    0건이면 → 배너가 조용히 사라지고 사용자는 "규제 없는 깨끗한 필지"로 읽는다.
+    합집합이 완전하려면 두 출처가 **모두** 성공해야 한다.
+    """
+    az = _stub_boundary_io(
+        monkeypatch, districts=["자연녹지지역"], zone_type="자연녹지지역", ned_districts=[],
+    )
+    from apps.api.app.services.external_api.vworld_service import VWorldService
+
+    async def _ned_hard_fail(self, pnu):  # noqa: ANN001
+        return None  # 군사·비행안전 출처만 실패
+
+    monkeypatch.setattr(VWorldService, "get_land_use_plan", _ned_hard_fail, raising=True)
+
+    dc = (await az.parcel_boundaries(
+        az.ParcelBoundariesRequest(parcels=[{"pnu": _PNU}])
+    ))["features"][0]["dominant_constraint"]
+
+    assert dc is not None, (
+        "NED(군사·비행안전 유일 출처)가 실패했는데 UD802/803만으로 '제약 없음'이 됐다 — "
+        "부분 실패 무음 낙관 재발"
+    )
+    assert dc["unverified"] is True
+
+
 async def test_parcel_boundaries_zero_regulation_is_verified_and_hidden(monkeypatch):
     """조회 성공 + 규제 0건은 unverified가 아니라 정말 '제약 없음'(배너 미표시)."""
     az = _stub_boundary_io(monkeypatch, districts=[], zone_type="보전관리지역", ned_districts=[])
@@ -372,6 +401,109 @@ async def test_analyze_no_constraint_yields_none(monkeypatch):
     assert result["dominant_constraint"] is None, (
         "제약 없는 필지에 배너 데이터가 생성됨(빈 배너 원인)"
     )
+
+
+async def test_land_info_produces_land_use_plan_status(monkeypatch):
+    """★생산자 관통: land_info_service가 조회 성패 플래그를 **실제로 만들어낸다**.
+
+    ★왜 필요한가(변이 실증): 아래 analyze 테스트는 base에 land_use_plan_status를 **주입**해
+    소비 배선만 검증한다. 그래서 생산자 한 줄을 지우는 변이가 51건 전부 생존했다 — 테스트가
+    검증해야 할 값을 스스로 넣어주는 가짜 골든이었다. 여기서는 값을 주입하지 않고
+    `_fetch_land_use_plan`(외부 I/O 경계)만 대역해 **실제 산출**을 확인한다.
+
+    계약: None(하드 실패)→"unavailable" · [](확인 완료·규제 0건)→"ok" · [..]→"ok"
+    """
+    from app.services.land_intelligence.land_info_service import LandInfoService
+
+    async def _run(land_use_result) -> dict:
+        svc = LandInfoService()
+
+        async def _none(*a, **k):  # noqa: ANN002, ANN003
+            return None
+
+        async def _land_use(pnu):  # noqa: ANN001
+            return land_use_result
+
+        async def _zoning(addr):  # noqa: ANN001
+            return {"pnu": _PNU, "zone_type": "보전관리지역", "success": True}
+
+        async def _ordinance(addr, zone, force_refresh=False, pnu=None, resolved_sigungu=None):  # noqa: ANN001
+            return {}
+
+        monkeypatch.setattr(svc.zoning, "analyze_by_address", _zoning, raising=False)
+        for name in (
+            "_fetch_land_register", "_fetch_official_price", "_fetch_building_info",
+            "_fetch_land_characteristics", "_fetch_building_detail",
+            "_fetch_nearby_transactions", "_fetch_precise_road_width", "_fetch_infrastructure",
+        ):
+            monkeypatch.setattr(svc, name, _none, raising=False)
+        monkeypatch.setattr(svc, "_fetch_land_use_plan", _land_use, raising=True)
+        monkeypatch.setattr(svc.ordinance, "get_ordinance_limits", _ordinance, raising=False)
+        return await svc._collect_comprehensive_impl("경북 포항시 남구 호미곶면 대보리 산1-1")  # noqa: SLF001
+
+    hard_fail = await _run(None)
+    assert hard_fail.get("land_use_plan_status") == "unavailable", (
+        "조회 하드 실패가 '확인 완료'로 표기되면 소비처가 '규제 없음'으로 오독한다"
+    )
+
+    zero_regs = await _run([])
+    assert zero_regs.get("land_use_plan_status") == "ok", (
+        "확인 완료·규제 0건은 실패가 아니다(과잉 경고도 정직이 아니다)"
+    )
+
+    with_regs = await _run([{"district_name": "개발제한구역"}])
+    assert with_regs.get("land_use_plan_status") == "ok"
+
+
+async def test_analyze_marks_regulation_lookup_failure_as_unverified(monkeypatch):
+    """★배선②-d: 종합분석 표면도 "조회 실패"를 "제약 없음"으로 표기하지 않는다.
+
+    sec7의 land_use_regulations는 base["land_use_plan"] 단일 출처인데 그 키는 비어있지 않은
+    목록일 때만 채워져 실패/0건 구분이 소실됐다 — land_info_service의 land_use_plan_status가
+    그 구분을 정직하게 남기고 analyze()가 소비하는지 관통 확인.
+    """
+    svc = _stub_analyze_io(
+        monkeypatch, districts=[], zone_type="자연녹지지역", slope_pct=None,
+    )
+
+    # 조회 실패(land_use_plan_status="unavailable") — collect_comprehensive 대역에 주입.
+    import app.services.land_intelligence.comprehensive_analysis_service as cas  # noqa: F401
+
+    original = type(svc.land_info).collect_comprehensive
+
+    async def _failed_lookup(self, address, pnu=None):  # noqa: ANN001
+        base = await original(self, address, pnu)
+        base["land_use_plan_status"] = "unavailable"
+        return base
+
+    monkeypatch.setattr(
+        type(svc.land_info), "collect_comprehensive", _failed_lookup, raising=True,
+    )
+
+    result = await _analyze(svc)
+
+    dc = result["dominant_constraint"]
+    assert dc is not None, "규제 조회 실패가 '제약 없음'으로 뭉개졌다(무음 낙관)"
+    assert dc["unverified"] is True
+    assert dc["headline"] is None
+
+
+async def test_analyze_successful_lookup_is_verified(monkeypatch):
+    """조회 성공(land_use_plan_status='ok')이면 unverified=False — 과잉 경고도 정직이 아니다."""
+    svc = _stub_analyze_io(
+        monkeypatch, districts=_DISTRICTS, zone_type="보전관리지역", slope_pct=None,
+    )
+    original = type(svc.land_info).collect_comprehensive
+
+    async def _ok_lookup(self, address, pnu=None):  # noqa: ANN001
+        base = await original(self, address, pnu)
+        base["land_use_plan_status"] = "ok"
+        return base
+
+    monkeypatch.setattr(type(svc.land_info), "collect_comprehensive", _ok_lookup, raising=True)
+
+    result = await _analyze(svc)
+    assert result["dominant_constraint"]["unverified"] is False
 
 
 async def test_analyze_headline_severity_agrees_with_risk_level(monkeypatch):

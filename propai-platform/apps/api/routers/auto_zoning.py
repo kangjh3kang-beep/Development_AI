@@ -1539,14 +1539,18 @@ async def _enrich_effective_and_special(
                 _ned = ned_districts_by_pnu.get(str(p.get("pnu") or ""))
                 _dc_regs = list(dict.fromkeys([*(_ned or []), *(_sd or [])]))
                 # ★무음 낙관 차단: NED None(하드 실패)과 [](규제 0건)을 구분해 전달한다.
-                #   둘 다 배너 0건으로 뭉개면 "규제 확인했고 없음"으로 오독된다. UD802/803(_sd)도
-                #   None=미확인이므로 **둘 중 하나라도 확정**됐으면 verified로 본다(합집합 논리와 정합).
+                #   ★R2 HIGH: 종전 OR 논리(하나라도 성공하면 verified)는 **부분 실패를 다시
+                #   무음 낙관으로 되돌렸다**. 재현: NED 실패(None) + UD802/803 성공(["자연녹지지역"]
+                #   — 보호구역 매치 0건) → verified=True → build_for_parcel이 None → 배너 소실.
+                #   그런데 군사·비행안전을 주는 유일한 출처가 바로 그 실패한 NED다(HIGH-2의 근거).
+                #   **합집합이 완전하려면 두 출처가 모두 성공해야 한다** → AND. 하나라도 미확인이면
+                #   목록은 반쪽이고, 반쪽으로 "확인 완료"라 말하는 것이 정확히 이 결함 클래스다.
                 p["_dominant_constraint"] = build_for_parcel(
                     regulations=_dc_regs,
                     zone_type=zone,
                     geometry=p.get("geometry"),
                     slope_pct=None,
-                    designations_verified=(_ned is not None or _sd is not None),
+                    designations_verified=(_ned is not None and _sd is not None),
                 )
             except Exception:  # noqa: BLE001 — 지배 제약 산출 실패는 필지 보강 무손상(미표기)
                 p["_dominant_constraint"] = None

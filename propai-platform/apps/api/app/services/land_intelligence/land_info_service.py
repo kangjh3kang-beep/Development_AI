@@ -460,6 +460,14 @@ class LandInfoService:
                 if not result.get("land_area_sqm") and land_char.get("area_sqm"):
                     result["land_area_sqm"] = land_char["area_sqm"]
 
+            # ★토지이용계획 조회 성패를 정직 플래그로 남긴다(additive — 기존 키 무변경).
+            #   result["land_use_plan"]은 **비어있지 않은 목록일 때만** 채워지므로, 그것이 None인
+            #   상태가 "조회 실패"인지 "확인 완료·규제 0건"인지 소비처가 구분할 수 없다.
+            #   _fetch_land_use_plan은 그 구분(None=하드 실패 / []=규제 없음)을 이미 보존하는데
+            #   여기서 뭉개졌다 — 구분이 없으면 소비처(지배 제약 등)가 조회 실패를 "규제 없는
+            #   깨끗한 필지"로 표기하는 무음 낙관이 된다.
+            result["land_use_plan_status"] = "unavailable" if land_use is None else "ok"
+
             # 토지이용계획 (VWORLD NED — 중첩 규제 전부 포함)
             if isinstance(land_use, list) and land_use:
                 # districts에서 확정된 용도지역으로 채움 — 추론 선점값(keyword_inference)도
