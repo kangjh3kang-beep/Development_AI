@@ -132,6 +132,19 @@ const RAIL_POPOVER_ANCHOR = {
   collapsed: "inset-x-4 sm:inset-x-auto sm:right-20 sm:w-[min(360px,calc(100%-112px))]",
 } as const;
 
+/**
+ * ★레일 hover '전환' 의도 지연(ms).
+ *
+ * 레일이 2열(`railPinned` 펼침 = `grid-cols-2`)이고 팝오버는 레일 **바깥 왼쪽**(`right-36`)에
+ * 뜬다. 그래서 **오른쪽 열 아이콘에서 팝오버로 가려면 왼쪽 열 위를 반드시 지나야** 하는데,
+ * 지나가는 순간 그 아이콘의 mouseenter가 즉시 다른 레이어로 팝오버를 갈아치워 정작 열려던
+ * 팝오버가 사라졌다(사용자 지적). 1열이던 시절엔 없던 **2열 전환이 만든 회귀**다.
+ *
+ * 스쳐 지나가는 체류는 대개 100ms 미만이라 이 임계에서 걸러진다. ★첫 열기(아무 팝오버도
+ * 없을 때)에는 지연을 걸지 않아 반응성을 그대로 보존한다 — 지연은 '전환'에만 적용한다.
+ */
+const HOVER_SWITCH_DELAY_MS = 150;
+
 function railPopoverAnchor(pinned: boolean): string {
   return pinned ? RAIL_POPOVER_ANCHOR.pinned : RAIL_POPOVER_ANCHOR.collapsed;
 }
@@ -1945,6 +1958,45 @@ export function SatongMapShell({
     }
   }, []);
 
+  // ── 레일 hover '전환' 의도 지연(HOVER_SWITCH_DELAY_MS 주석 참조) ──────────────
+  const hoverSwitchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (hoverSwitchTimerRef.current) clearTimeout(hoverSwitchTimerRef.current);
+  }, []);
+  const cancelHoverSwitch = useCallback(() => {
+    if (hoverSwitchTimerRef.current) {
+      clearTimeout(hoverSwitchTimerRef.current);
+      hoverSwitchTimerRef.current = null;
+    }
+  }, []);
+
+  /**
+   * 레일 아이콘 hover → 팝오버 열기 요청(전환만 지연).
+   *
+   * @param open 실제 열기 동작(openLayerPanel/openBasemapPanel 바인딩)
+   * @param alreadyShown 지금 보이는 팝오버가 바로 이 항목인가(같은 항목 재진입은 무동작)
+   *
+   * ★열기 경로를 **여기 하나로** 모은다 — 레일 항목이 12개+베이스맵이라 각 핸들러에서
+   *   따로 지연을 걸면 새 항목이 추가될 때 또 샌다(이 레일에서 반복된 결함 패턴).
+   */
+  const requestHoverOpen = useCallback(
+    (open: () => void, alreadyShown: boolean) => {
+      cancelHoverClose();
+      cancelHoverSwitch();
+      if (alreadyShown) return; // 같은 팝오버 — 깜빡임 방지(기존 계약 유지)
+      const anyShown = basemapOpen || activeLayerId !== null;
+      if (!anyShown) {
+        open(); // ★첫 열기는 즉시 — 지연은 '전환'에만
+        return;
+      }
+      hoverSwitchTimerRef.current = setTimeout(() => {
+        hoverSwitchTimerRef.current = null;
+        open();
+      }, HOVER_SWITCH_DELAY_MS);
+    },
+    [activeLayerId, basemapOpen, cancelHoverClose, cancelHoverSwitch],
+  );
+
   // ★R1 3차 HIGH-1 봉합 — 닫힘은 상태와 '핀'을 함께 정리해야 한다(원자화). 종전엔 핀을
   //   클릭 토글-닫기 2곳에서만 지워, Esc·X·외부클릭으로 닫으면 핀이 stale로 남고 그 뒤
   //   hover 미리보기들이 "핀이 있으니 닫지 마라"에 걸려 지도 위에 눌러붙었다(2차 롤아웃
@@ -2539,6 +2591,7 @@ export function SatongMapShell({
 
       <div
         ref={railRef}
+        data-testid="map-layer-rail"
         // ★사용자 요청('롤아웃하면 창이 닫히고') + R1 MEDIUM-1: hover로 연 팝오버는
         //   레일을 벗어날 때 닫는다. 클릭으로 연 것은 유지해야 팝오버 안 컨트롤로
         //   마우스를 옮겨 확정할 수 있다(고정분은 pinnedPanelRef로 식별·유예 200ms는 팝오버가 취소).
@@ -2551,6 +2604,8 @@ export function SatongMapShell({
             pinnedPanelRef.current === "basemap"
               ? basemapOpen
               : pinnedPanelRef.current != null && activeLayerId === pinnedPanelRef.current;
+          // 레일을 벗어나면 예약된 전환은 무효다(팝오버로 가는 중이면 팝오버가 취소한다).
+          cancelHoverSwitch();
           if (shownIsPinned) return;
           cancelHoverClose();
           hoverCloseTimerRef.current = setTimeout(() => {
@@ -2612,11 +2667,13 @@ export function SatongMapShell({
           type="button"
           // ★레일 형제와 동일 계약 — 롤오버·포커스는 '열기'(지정), 클릭은 토글.
           //   전환 중 같은 항목 재진입이 닫힘이 되면 깜빡이므로 hover는 열기만 한다.
-          onMouseEnter={() => { cancelHoverClose(); openBasemapPanel(); }}
+          onMouseEnter={() => requestHoverOpen(openBasemapPanel, basemapOpen)}
+          onMouseLeave={cancelHoverSwitch}
           // ★형제와 동일 계약(HIGH-A) + R1 MEDIUM-C: setDetailFeature(null) 삭제
           //   (레이어 경로는 '가림→복원'인데 베이스맵만 파괴적이라 비대칭이었다).
           onClick={() => {
             cancelHoverClose();
+            cancelHoverSwitch(); // 클릭 즉시 확정(형제와 동일 계약)
             const wasPinned = basemapOpen && pinnedPanelRef.current === "basemap";
             if (wasPinned) { closeBasemapPanel(); return; }
             pinnedPanelRef.current = "basemap";
@@ -2651,7 +2708,13 @@ export function SatongMapShell({
               //   키보드 사용자가 팝오버 안의 확정 버튼에 영영 도달할 수 없었다(마지막
               //   레일 항목은 렌더불가라 on/off 자체가 없음). Enter/Space는 onClick을
               //   발화하므로 키보드 열기 경로는 그대로다.
-              onMouseEnter={() => { cancelHoverClose(); openLayerPanel(layer.id); }}
+              // ★전환 지연 경유(HOVER_SWITCH_DELAY_MS) — 팝오버로 가며 스쳐 지나가는
+              //   왼쪽 열 아이콘이 목적 팝오버를 갈아치우지 않게 한다.
+              onMouseEnter={() =>
+                requestHoverOpen(() => openLayerPanel(layer.id), activeLayerId === layer.id)
+              }
+              // 아이콘을 벗어나면 대기 중이던 전환은 취소한다(지나간 것은 의도가 아니다).
+              onMouseLeave={cancelHoverSwitch}
               // ★R1 LOW-1: 클릭은 토글 — 레일에서 팝오버를 닫을 수단이 사라졌던 회귀
               //   복원. 깜빡임 논거는 hover에만 유효하고 click에는 적용되지 않는다.
               // ★R1 HIGH-A: 실브라우저는 click 앞에 mouseenter를 반드시 보낸다. 종전
@@ -2660,6 +2723,7 @@ export function SatongMapShell({
               //   hover분을 닫지 말고 '고정(pin)'으로 승격하고, 이미 고정된 것만 닫는다.
               onClick={() => {
                 cancelHoverClose();
+                cancelHoverSwitch(); // 클릭은 즉시 확정 — 예약 전환이 뒤늦게 덮어쓰지 않게
                 const wasPinned = activeLayerId === layer.id && pinnedPanelRef.current === layer.id;
                 if (wasPinned) { closeLayerPanel(); return; }
                 pinnedPanelRef.current = layer.id;
@@ -2705,7 +2769,9 @@ export function SatongMapShell({
           id="satong-basemap-popover"
           role="dialog"
           aria-label="베이스맵"
-          onMouseEnter={cancelHoverClose}
+          // ★팝오버에 도달했다 = 사용자의 목적지다 → 대기 중이던 전환을 취소한다.
+          //   이게 없으면 지나온 아이콘의 예약 전환이 뒤늦게 발화해 팝오버가 바뀐다.
+          onMouseEnter={() => { cancelHoverClose(); cancelHoverSwitch(); }}
           onMouseLeave={() => { if (pinnedPanelRef.current !== "basemap") setBasemapOpen(false); }}
           className={`absolute ${railPopoverAnchor(railPinned)} top-20 z-[430] rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] p-4 shadow-[var(--shadow-xl)] backdrop-blur-xl max-h-[calc(100%-120px)] supports-[height:100dvh]:max-h-[min(calc(100%-120px),calc(100dvh-176px))] overflow-y-auto`}
         >
@@ -2732,7 +2798,8 @@ export function SatongMapShell({
           ref={popoverRef}
           role="dialog"
           aria-label={activeLayer.label}
-          onMouseEnter={cancelHoverClose}
+          // ★팝오버 도달 = 목적지 → 대기 중이던 전환 취소(위 베이스맵 팝오버와 동일 계약).
+          onMouseEnter={() => { cancelHoverClose(); cancelHoverSwitch(); }}
           onMouseLeave={() => { if (pinnedPanelRef.current !== activeLayer.id) setActiveLayerId(null); }}
           className={`absolute ${railPopoverAnchor(railPinned)} top-20 z-[430] rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] p-4 shadow-[var(--shadow-xl)] backdrop-blur-xl max-h-[calc(100%-120px)] supports-[height:100dvh]:max-h-[min(calc(100%-120px),calc(100dvh-176px))] overflow-y-auto`}
         >
