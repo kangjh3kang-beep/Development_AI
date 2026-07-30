@@ -948,6 +948,7 @@ export function SatongMapShell({
       });
       // ★ok:false는 캐시하지 않는다 — 재조회를 막고 사유를 둔갑시킨다(W2 R1 HIGH 교훈).
       //   단 ok:true면 캐시(무거운 기하 재계산 회피).
+      let slim: SiteLayoutResult | null = null;
       if (res && res.ok) {
         // ★캐시 슬림(R1 MEDIUM): 화면·지도가 읽지 않는 필드는 담지 않는다. 가장 큰
         //   parcel_geojson은 지도가 이미 자기 필지 폴리곤을 그리므로 불필요하고, guidance·
@@ -956,7 +957,7 @@ export function SatongMapShell({
         //   "렌더에 안 쓰이는 필드"를 잘라낸 것과 달리, 여기서는 캐시 히트 후에도 사용자가
         //   대안을 토글할 수 있어야 하고 그 순간 각 대안의 기하가 필요하다. 잘라내면 토글이
         //   빈 오버레이가 되거나 재조회를 유발한다(같은 인프라를 쓰지만 결정이 다른 이유).
-        const slim: SiteLayoutResult = {
+        slim = {
           ok: true,
           honest_notes: res.honest_notes,
           buildable_geojson: res.buildable_geojson,
@@ -980,7 +981,9 @@ export function SatongMapShell({
       // ok:false도 "done"으로 두고 서버 honest_notes를 화면이 그대로 고지한다
       //   (가짜 배치 대신 사유 표기 — 컴포넌트의 unavailable 분기).
       setLayoutStatus("done");
-      setLayoutResult(res);
+      // ★상태에도 캐시와 **같은 shape**(성공 시 slim)를 넣는다 — 신규 응답은 전체, 캐시 히트는
+      //   slim이면 "처음엔 되는데 재방문하면 조용히 undefined"인 함정이 남는다(R2 지적).
+      setLayoutResult(res.ok && slim ? slim : res);
       setLayoutOptionKey(null);
     } catch (e) {
       const current = detailFeatureRef.current;

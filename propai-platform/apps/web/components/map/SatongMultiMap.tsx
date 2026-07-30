@@ -1916,12 +1916,16 @@ export function SatongMultiMap({
   //  이전 대안의 동이 남아 두 대안이 겹쳐 보이는 오도가 생긴다).
   const layoutLayerRef = useRef<any>(null);
   useEffect(() => {
-    const map = mapRef.current;
-    const L = window.L;
-    if (!mapReady) return;
     // ★그리기·정리 로직은 lib/satong-layout-overlay(순수·L 주입)에 있다 — jsdom이 Leaflet을
     //   초기화하지 못해 effect 내부 로직에 테스트가 닿지 못했고, "이전 레이어 제거+cleanup"을
     //   지우는 변이가 1550건을 전부 통과했다(R1 실증). 추출로 가짜 L 검증이 가능해졌다.
+    // ★`if (!mapReady) return` 조기반환을 두지 않는다: renderLayoutOverlay가 이미 `!L || !map`을
+    //   안전 처리(그리지 않고 이전 레이어만 정리)하므로 중복 가드이고, 그 조기반환이 있으면
+    //   jsdom(Leaflet 미초기화 → mapReady=false)에서 **위임 호출 자체가 발생하지 않아** 배선
+    //   테스트가 불가능하다 — R2가 "위임 블록을 지워도 90건 전부 통과"로 실증한 잔여 갭.
+    //   mapReady는 deps에 남겨 지도가 준비되는 순간 재실행되게 한다.
+    const map = mapRef.current;
+    const L = window.L;
     layoutLayerRef.current = renderLayoutOverlay({
       L, map, previousLayer: layoutLayerRef.current, overlay: layoutOverlay,
       toRings: geoJsonToLeafletRings,
