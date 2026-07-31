@@ -952,10 +952,14 @@ export function SatongMapShell({
         floors: option.floors,
         // ★R1 HIGH-3: 이 층수가 산정된 부지 면적을 함께 싣는다(다필지 합산 부지에 단일필지
         //   기준 층수가 조용히 적용되던 결함 봉합 — 수신측이 면적으로 대조한다).
-        //   ★R2: 출처는 **배치가 실제로 산정된 면적**(서버 응답 `parcel_area_sqm`)을 우선한다.
-        //   `feature.areaSqm`은 null일 수 있는데(서버는 기하로 산출해 조회가 성공한다) 그러면
-        //   CTA 게이트와 인계의 면적 출처가 어긋나 죽은 버튼이 된다.
-        areaSqm: layoutResult?.parcel_area_sqm ?? feature?.areaSqm ?? null,
+        //   ★출처는 **배치가 실제로 산정된 면적** = `land_area_sqm`이다(서버가 클라이언트
+        //   입력 지적면적을 우선 사용하고, 없을 때만 폴리곤으로 폴백해 되돌려준다).
+        //   ★R3 HIGH 봉합 — 여기 `parcel_area_sqm`을 쓰면 **폴리곤 기하 근사**가 실린다.
+        //   수신측이 대조하는 값은 지적면적이므로 **서로 다른 물리량을 2%로 비교**하게 되고,
+        //   같은 서비스가 두 값의 20% 괴리까지 정상으로 취급하므로(괴리 시에만 note 고지)
+        //   같은 필지가 "다른 부지"로 판정돼 **사실이 아닌 배너**가 뜬다 — 이 PR이 없애려는
+        //   바로 그 결함 클래스다.
+        areaSqm: layoutResult?.land_area_sqm ?? feature?.areaSqm ?? null,
         now: Date.now(),
       });
       // 층수가 없으면 넘길 게 없다 — 빈 인계를 남겨 수신측이 헛돌게 하지 않는다.
@@ -1016,9 +1020,9 @@ export function SatongMapShell({
           honest_notes: res.honest_notes,
           buildable_geojson: res.buildable_geojson,
           buildable_area_sqm: res.buildable_area_sqm,
-          // ★W4: 인계 대조 면적의 정본 — 배치가 **실제로 산정된** 부지 면적이다. 슬림에서
-          //   빠져 있으면 CTA 게이트가 항상 거짓이 되어 인계 버튼이 영영 안 뜬다(테스트가 적발).
-          parcel_area_sqm: res.parcel_area_sqm,
+          // ★W4: 인계 대조 면적의 정본 — 배치가 **실제로 산정된** 부지 면적(지적 우선).
+          //   슬림에서 빠져 있으면 CTA 게이트가 항상 거짓이 되어 인계 버튼이 영영 안 뜬다.
+          land_area_sqm: res.land_area_sqm,
           setback_m: res.setback_m,
           options: res.options,
           best: res.best,

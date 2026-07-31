@@ -84,9 +84,13 @@ const RESULT_OK: SiteLayoutResult = {
   honest_notes: ["v1 한계: 축정렬 직사각형 동·균일 세트백·동지 일조 근사."],
   buildable_geojson: GEOM as never,
   buildable_area_sqm: 820,
-  // ★라이브 응답에 실제로 있는 키(프로덕션 실측 확인) — 인계 면적의 정본 출처다.
-  //   대역에서 빼면 CTA 게이트가 안 걸려 "죽은 버튼 방지" 계약을 검증하지 못한다.
-  parcel_area_sqm: 1000,
+  // ★라이브 응답에 실제로 있는 키(프로덕션 실측 확인).
+  //   ★★두 면적을 **일부러 다르게** 둔다(R3 HIGH 회귀락): `land_area_sqm`은 배치가 실제로
+  //   산정된 면적(클라이언트가 보낸 지적면적 우선)이고, `parcel_area_sqm`은 **폴리곤 기하
+  //   근사**다. 같은 서비스가 두 값의 20% 괴리까지 정상으로 취급하므로, 픽스처에서 둘을
+  //   같게 두면 어느 필드를 읽는지 구분되지 않아 잘못된 필드를 골라도 초록이 된다.
+  land_area_sqm: 1000,
+  parcel_area_sqm: 1050,
   setback_m: 3,
   options: [OPT("판상형", 25.3, 15), OPT("탑상형", 0, 12)],
   best: OPT("판상형", 25.3, 15),
@@ -161,6 +165,8 @@ describe("SatongMapShell 매스 시드 인계 배선(W4)", () => {
     expect(saved!.pnu).toBe(PNU_A);
     expect(saved!.address).toBe(ADDR_A);
     // ★R1 HIGH-3: 이 층수가 산정된 부지 면적도 함께 실려야 수신측이 다필지 합산 부지를 걸러낸다.
+    // ★지적면적(1000)이어야 한다. 폴리곤 근사(1050)를 실으면 수신측이 지적면적과 2%로
+    //   대조하므로 같은 필지를 "다른 부지"로 판정하고 **사실이 아닌 배너**를 띄운다.
     expect(saved!.areaSqm).toBe(1000);
 
     // ★이동: 저장만 하고 안 보내면 사용자는 아무 일도 안 일어난 걸로 본다.
@@ -182,7 +188,7 @@ describe("SatongMapShell 매스 시드 인계 배선(W4)", () => {
   it("★⑥ 필지 면적을 모르면 CTA 대신 사유를 표시한다(R2 MEDIUM-1 — 죽은 버튼 금지)", async () => {
     // 면적이 없으면 수신측이 **무조건 거부**한다(다필지 판정 불가). 그 상태로 버튼을 그리면
     // 눌러도 아무 일이 없다 — 사용자에게 신호가 0인 무음 실패가 된다.
-    const panel = await openWithLayout({ ...RESULT_OK, parcel_area_sqm: undefined } as SiteLayoutResult);
+    const panel = await openWithLayout({ ...RESULT_OK, land_area_sqm: undefined } as SiteLayoutResult);
     expect(within(panel).queryByTestId("parcel-layout-seed-design")).toBeNull();
     expect(within(panel).getByText(/면적을 확인하지 못해/)).toBeTruthy();
   });

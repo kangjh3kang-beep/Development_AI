@@ -261,13 +261,13 @@ export function ParcelLayoutSection({
           {/* ★R2 MEDIUM-1: 부지 면적을 모르면 수신측이 **무조건 거부**한다(다필지 판정 불가).
               그 상태로 버튼을 그리면 눌러도 아무 일이 없는 죽은 버튼이 된다 — 아예 그리지 않고
               사유를 밝힌다. */}
-          {onSeedDesign && selectedOption.floors > 0 && !(result.parcel_area_sqm ?? 0) ? (
+          {onSeedDesign && selectedOption.floors > 0 && !(result.land_area_sqm ?? 0) ? (
             <p className="mt-2 break-keep border-t border-[var(--border-muted)] pt-2 text-[10px] font-semibold leading-relaxed text-[var(--text-hint)]">
               이 필지의 면적을 확인하지 못해 설계 인계는 제공하지 않습니다(다른 부지에 잘못
               적용되는 것을 막기 위함).
             </p>
           ) : null}
-          {onSeedDesign && selectedOption.floors > 0 && (result.parcel_area_sqm ?? 0) > 0 ? (
+          {onSeedDesign && selectedOption.floors > 0 && (result.land_area_sqm ?? 0) > 0 ? (
             <div className="mt-2 border-t border-[var(--border-muted)] pt-2">
               <button
                 type="button"

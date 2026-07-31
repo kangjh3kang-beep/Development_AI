@@ -18,14 +18,16 @@ import { assertWiredThrough } from "@/lib/source-invariant";
 
 describe("DesignStudio — 매스 시드 대조용 식별자 배선(W4)", () => {
   it("★SeedDesignMassComparison 호출부가 pnu를 넘긴다(가드 사문화 방지)", () => {
-    // scope가 그 줄 자체이므로 줄이 사라지면 매치 0건 → `minMatches: 1`이 **하드 실패**시킨다.
-    // (공허진리 방지가 이 도구의 설계 목적이고 여기서 정확히 그 역할을 한다.)
+    // ★하중을 받는 것은 `minMatches`다: 이 파일에는 pnu를 넘기는 호출부가 **2곳**(설계 시드
+    //   비교·등기/토지조서)이고, 시드 비교 쪽 한 줄이 사라지면 1건 < 2건으로 **하드 실패**한다.
+    //   (R3 LOW 지적대로 mustContain을 scope 밖으로 빼려다 scope를 넓혔더니 pnu 줄을 지워도
+    //    컴포넌트 줄이 매치해 **잠금이 깨졌다** — 개수 잠금이 이 도구의 옳은 사용법이다.)
     expect(() =>
       assertWiredThrough({
         file: "components/design/DesignStudio.tsx",
-        scope: /pnu=\{siteAnalysis\?\.pnu \?\? null\}/,
-        mustContain: "pnu=",
-        minMatches: 1,
+        scope: /pnu=\{siteAnalysis\?\.pnu/,
+        mustContain: "siteAnalysis?.pnu",
+        minMatches: 2,
       }),
     ).not.toThrow();
   });
