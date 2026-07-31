@@ -60,6 +60,7 @@ vi.mock("@/lib/api-client", async (importOriginal) => {
 const OVERLAY = (tag: string): SiteLayoutOverlay => ({
   buildable: { type: "Polygon", coordinates: [[[127, 37]]], tag } as never,
   buildings: null,
+  northLightBand: null,
 });
 
 describe("SatongMultiMap 배치 오버레이 위임 배선(W3)", () => {

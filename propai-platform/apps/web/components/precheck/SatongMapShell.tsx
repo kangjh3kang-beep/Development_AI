@@ -1024,6 +1024,10 @@ export function SatongMapShell({
           //   슬림에서 빠져 있으면 CTA 게이트가 항상 거짓이 되어 인계 버튼이 영영 안 뜬다.
           land_area_sqm: res.land_area_sqm,
           setback_m: res.setback_m,
+          // ★W3-b: 정북 밴드 판정은 서버 응답에만 있다. 슬림에서 빠지면 캐시 히트 후
+          //   `applies`가 undefined가 되어 **밴드가 영영 안 그려진다**(W4에서 같은 클래스의
+          //   결함을 겪었다 — 새로 소비하는 필드는 화이트리스트를 반드시 확인한다).
+          north_light: res.north_light,
           options: res.options,
           best: res.best,
         };
@@ -3711,6 +3715,8 @@ export function SatongMapShell({
                 developmentPayload={developmentEnabled ? developmentPayload : null}
                 onCenterChange={setMapCenter}
                 layoutOverlay={layoutOverlay}
+              layoutNorthLightSetbackM={layoutSelectedOption?.north_light_setback_m ?? null}
+              layoutNorthLightHeightM={layoutSelectedOption?.height_m ?? null}
                 onBoundaryEnriched={handleBoundaryEnriched}
                 onBoundaryStatusChange={handleBoundaryStatusChange}
                 clearSignal={clearNonce}

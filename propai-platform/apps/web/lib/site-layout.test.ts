@@ -153,3 +153,51 @@ describe("buildLayoutOverlay — ★가짜 배치 금지", () => {
     expect(ov?.buildings).toBeNull();
   });
 });
+
+
+describe("buildLayoutOverlay — 정북 밴드(W3-b) 판정은 **서버를 따른다**", () => {
+  const BAND = { type: "Polygon", coordinates: [[[0, 0]]] } as never;
+
+  const RESULT = (over: Record<string, unknown> = {}) =>
+    ({
+      ok: true,
+      buildable_geojson: { type: "Polygon", coordinates: [[[1, 1]]] },
+      options: [{
+        kind: "판상형", angle_deg: 0, buildings: 2, floors: 15, height_m: 45,
+        spacing_meaningful: true, spacing_m: 30, total_units_est: 100,
+        north_light_band_geojson: BAND, north_light_setback_m: 22.5,
+      }],
+      ...over,
+    }) as never;
+
+  it("★applies:true면 선택 대안의 밴드를 싣는다", () => {
+    const o = buildLayoutOverlay(RESULT({ north_light: { applies: true } }), null);
+    expect(o?.northLightBand).toBe(BAND);
+  });
+
+  it("★applies:false면 대안에 기하가 있어도 **싣지 않는다** — 화면이 용도지역을 다시 판정하지 않는다", () => {
+    const o = buildLayoutOverlay(
+      RESULT({ north_light: { applies: false, reason: "전용·일반주거지역에만 적용" } }), null,
+    );
+    expect(o?.northLightBand).toBeNull();
+  });
+
+  it("★north_light가 아예 없으면(구버전 응답·슬림 누락) 싣지 않는다(낙관 금지)", () => {
+    const o = buildLayoutOverlay(RESULT(), null);
+    expect(o?.northLightBand).toBeNull();
+  });
+
+  it("밴드만 있고 다른 기하가 없어도 오버레이를 만든다(제약은 보여준다)", () => {
+    const o = buildLayoutOverlay(
+      RESULT({
+        north_light: { applies: true },
+        buildable_geojson: null,
+        options: [{ kind: "판상형", angle_deg: 0, buildings: 0, floors: 0, height_m: 0,
+          spacing_meaningful: false, total_units_est: 0, north_light_band_geojson: BAND }],
+      }),
+      null,
+    );
+    expect(o).not.toBeNull();
+    expect(o?.northLightBand).toBe(BAND);
+  });
+});
