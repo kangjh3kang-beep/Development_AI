@@ -200,3 +200,76 @@ def test_target_floors_now_binds_outside_sunlight_zones():
     assert base > 3, f"기준선이 이미 3층 이하면 이 테스트가 공허해진다(base={base})"
     seeded = mt._compute_mass(zone_code="준공업지역", target_floors=3, **common)["num_floors"]
     assert seeded <= 3, f"비일조 용도지역에서 시드가 무시된다(base={base} → seed3={seeded})"
+
+
+# ── R2 HIGH-1: 형제 필드(regional_typical_mass)의 동일 표기 사기 ──────────────────
+def _reference(monkeypatch, *, median_floors: float, median_far: float = 200.0,
+               median_bcr: float = 30.0):
+    """지역 실측 레퍼런스 대역 — 상류 실응답 키에 충실.
+
+    ★건폐/용적 중앙값을 인자로 받는 이유: 값이 낮으면 FAR가 먼저 층수를 눌러 **층수 상한이
+      물렸는지 여부를 관측할 수 없다**(내가 처음 쓴 상업지역 FAR 200%가 그랬다 — 비현실적으로
+      낮아 테스트가 관측하려던 현상 자체가 안 나왔다). 용도지역별 현실값을 쓴다.
+    """
+    import app.services.mass_backbone.mass_reference as mod
+
+    async def ref(*a, **kw):
+        return {
+            "region": "테스트구", "building_type": "공동주택", "sample_count": 42,
+            "median_bcr_pct": median_bcr, "median_far_pct": median_far,
+            "median_floors": median_floors, "source": "건축물대장",
+        }
+
+    monkeypatch.setattr(mod, "get_mass_reference", ref)
+
+
+@pytest.mark.asyncio
+async def test_regional_note_does_not_claim_median_cap_when_unapplied(monkeypatch):
+    """★R2 HIGH-1 회귀락 — 지역 전형의 층수 상한이 **안 물렸는데** '중앙값까지만 반영'이라고
+    주장하지 않는다.
+
+    종전엔 일반상업지역에서 중앙값 5층 레퍼런스로 22층이 나오는데도 note가 "층수는 중앙값까지만
+    반영해 과도한 고층화를 방지합니다"라고 말했다 — 지도 시드에서 봉합한 표기 사기가 **같은
+    함수 8줄 위 형제 필드**에 그대로 살아 있었다. 판정은 공용 헬퍼(`_floor_seed_status`)로
+    일원화했으므로 한 곳을 고치면 둘 다 따라온다.
+    """
+    # 일반상업지역의 현실적 실측 중앙값(고FAR) — 낮게 잡으면 FAR가 먼저 눌러 관측 불가.
+    _reference(monkeypatch, median_floors=5, median_far=800.0, median_bcr=60.0)
+
+    gc = await mt.seed_design(_base_body(zone_code="GC"), db=None)
+    assert gc["regional_typical_mass"] is not None      # 매스 자체는 유지(건폐/용적 시드는 유효)
+    assert gc["regional_floor_seed"]["applied"] is False, gc["regional_floor_seed"]
+    assert gc["regional_typical_mass"]["num_floors"] > 5  # 실제로 중앙값을 초과한다
+    assert "중앙값까지만 반영" not in gc["note"]
+    assert "층수 상한이 적용되지 않아" in gc["note"]
+
+    # 대조군 — 주거지역에서는 실제로 물리고 주장해도 된다(공허 통과 방지).
+    r3 = await mt.seed_design(_base_body(zone_code="3R"), db=None)
+    assert r3["regional_floor_seed"]["applied"] is True, r3["regional_floor_seed"]
+    assert r3["regional_typical_mass"]["num_floors"] <= 5
+    assert "중앙값까지만 반영" in r3["note"]
+
+
+@pytest.mark.asyncio
+async def test_floor_seed_status_is_shared_by_both_paths(monkeypatch):
+    """공용 헬퍼가 **두 경로 모두**에 걸려 있다 — 한쪽만 고치는 재발을 막는다."""
+    _reference(monkeypatch, median_floors=5, median_far=800.0, median_bcr=60.0)
+    res = await mt.seed_design(_base_body(zone_code="GC", map_target_floors=5), db=None)
+    # 같은 오라클이므로 같은 판정이 나온다(둘 다 미적용).
+    assert res["map_seed"]["applied"] is False
+    assert res["regional_floor_seed"]["applied"] is False
+    assert res["map_seed"]["not_applied_reason"] == mt.FLOOR_SEED_NOT_APPLIED_REASON
+    assert res["regional_floor_seed"]["not_applied_reason"] == mt.FLOOR_SEED_NOT_APPLIED_REASON
+
+
+@pytest.mark.asyncio
+async def test_regional_floor_cap_binds_outside_sunlight_zones_end_to_end(monkeypatch):
+    """★R2 MEDIUM-4 — regional 경로의 동작 변경(준공업 6→5)을 **실엔진으로** 잠근다.
+
+    기존 락(`test_mass_templates_router`)은 `_compute_mass`를 모킹해 배선만 보므로 이 변화를
+    되돌려도 초록이다.
+    """
+    _reference(monkeypatch, median_floors=5)
+    res = await mt.seed_design(_base_body(zone_code="준공업지역"), db=None)
+    assert res["regional_floor_seed"]["applied"] is True
+    assert res["regional_typical_mass"]["num_floors"] <= 5

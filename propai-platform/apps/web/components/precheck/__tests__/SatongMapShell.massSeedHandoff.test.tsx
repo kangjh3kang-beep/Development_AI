@@ -84,6 +84,9 @@ const RESULT_OK: SiteLayoutResult = {
   honest_notes: ["v1 한계: 축정렬 직사각형 동·균일 세트백·동지 일조 근사."],
   buildable_geojson: GEOM as never,
   buildable_area_sqm: 820,
+  // ★라이브 응답에 실제로 있는 키(프로덕션 실측 확인) — 인계 면적의 정본 출처다.
+  //   대역에서 빼면 CTA 게이트가 안 걸려 "죽은 버튼 방지" 계약을 검증하지 못한다.
+  parcel_area_sqm: 1000,
   setback_m: 3,
   options: [OPT("판상형", 25.3, 15), OPT("탑상형", 0, 12)],
   best: OPT("판상형", 25.3, 15),
@@ -174,6 +177,14 @@ describe("SatongMapShell 매스 시드 인계 배선(W4)", () => {
     expect(saved!.targetFloors).toBe(12);
     // 0°는 '각도 없음'이 아니라 **축 정렬**이라는 유효한 정보다 — 라벨에 그대로 남는다.
     expect(saved!.optionLabel).toBe("탑상형 0°");
+  });
+
+  it("★⑥ 필지 면적을 모르면 CTA 대신 사유를 표시한다(R2 MEDIUM-1 — 죽은 버튼 금지)", async () => {
+    // 면적이 없으면 수신측이 **무조건 거부**한다(다필지 판정 불가). 그 상태로 버튼을 그리면
+    // 눌러도 아무 일이 없다 — 사용자에게 신호가 0인 무음 실패가 된다.
+    const panel = await openWithLayout({ ...RESULT_OK, parcel_area_sqm: undefined } as SiteLayoutResult);
+    expect(within(panel).queryByTestId("parcel-layout-seed-design")).toBeNull();
+    expect(within(panel).getByText(/면적을 확인하지 못해/)).toBeTruthy();
   });
 
   it("★④ 층수가 없는 안이면 CTA를 그리지 않는다(빈 인계·죽은 버튼 금지)", async () => {

@@ -161,6 +161,31 @@ describe("SeedDesignMassComparison — 매스 시드 수신(W4)", () => {
     expect(posts[0].body.map_target_floors).toBeUndefined();
   });
 
+  it("★⑨ 마운트 후 만료된 인계는 **요청 시점**에 걸러진다(R2 MR7 — 생존 변이 봉합)", async () => {
+    // 마운트 때 한 번만 판정하면, 탭을 오래 열어둔 뒤 조회할 때 만료분이 그대로 전송된다.
+    // 여기서는 마운트 시엔 신선하고 **클릭 직전에** 만료되도록 시계를 옮긴다.
+    const t0 = Date.now();
+    seedHandoff({ savedAt: t0 });
+    render(<SeedDesignMassComparison address={ADDR} landAreaSqm={1000} zoning="제3종일반주거지역" buildingUse="공동주택" />);
+
+    const spy = vi.spyOn(Date, "now").mockReturnValue(t0 + MASS_SEED_MAX_AGE_MS + 60_000);
+    try {
+      await fetchOnce();
+      expect(posts[0].body.map_target_floors).toBeUndefined();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("★⑩ 부지 불일치로 인계를 쓰지 않으면 **조회 전에도** 그 사실을 알린다(R2 MEDIUM-1)", () => {
+    // 침묵하면 사용자는 "이 안으로 설계 시작"을 누른 뒤 아무 신호도 못 받는다.
+    seedHandoff(); // 인계 면적 1000㎡
+    render(<SeedDesignMassComparison address={ADDR} landAreaSqm={2500} zoning="제3종일반주거지역" buildingUse="공동주택" />);
+
+    const notice = screen.getByText(/적용하지 않았습니다/);
+    expect(notice.textContent).toContain("판상형 25°");
+  });
+
   it("★⑥ 서버가 map_seeded_mass를 주지 않으면 카드를 만들지 않는다(무날조)", async () => {
     seedHandoff();
     response.current = baseResponse(); // map_seeded_mass 없음

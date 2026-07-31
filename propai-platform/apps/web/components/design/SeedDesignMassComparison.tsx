@@ -224,11 +224,16 @@ export function SeedDesignMassComparison({
   //   effect로 읽는 이유: sessionStorage는 서버 렌더에 없어 초기 렌더에서 읽으면 하이드레이션
   //   불일치가 난다. 부지가 바뀌면 다시 판정한다.
   const [massSeed, setMassSeed] = useState<MassSeedHandoff | null>(null);
+  /** ★R2 MEDIUM-1: 인계는 있는데 **이 부지와 일치하지 않아** 적용하지 않은 경우. 침묵하면
+   *  사용자는 "이 안으로 설계 시작"을 누른 뒤 아무 신호도 못 받는다. */
+  const [rejectedSeed, setRejectedSeed] = useState<MassSeedHandoff | null>(null);
   useEffect(() => {
     const h = readMassSeedHandoff(Date.now());
     // ★R1 MEDIUM-1: pnu를 넘기지 않아 강한 식별자 분기가 프로덕션에서 죽어 있었다(주소 원문
     //   비교로만 떨어짐). ★R1 HIGH-3: 면적까지 넘겨 다필지 합산 부지를 걸러낸다.
-    setMassSeed(massSeedAppliesTo(h, { pnu, address, areaSqm: landAreaSqm }) ? h : null);
+    const ok = massSeedAppliesTo(h, { pnu, address, areaSqm: landAreaSqm });
+    setMassSeed(ok ? h : null);
+    setRejectedSeed(!ok && h ? h : null);
   }, [address, pnu, landAreaSqm]);
   const canFetch = !disabled && !!address && landAreaSqm > 0;
   // 미지원/미인식 용도지역 → 백엔드가 기본값 기준으로 추정함을 정직 고지.
@@ -334,6 +339,25 @@ export function SeedDesignMassComparison({
         </p>
       )}
 
+      {/* ★R2 MEDIUM-1: 부지 불일치로 인계를 쓰지 않았다는 사실을 조회 전에도 알린다
+          (조회해야만 알 수 있으면 사용자는 그 사이 계속 "반영됐겠지"라고 믿는다). */}
+      {rejectedSeed && (
+        <div className="mb-4 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3.5 py-3 text-[11px] leading-relaxed text-[var(--text-hint)]">
+          <p className="font-bold text-amber-500">
+            사통맵에서 고른 안({rejectedSeed.optionLabel} · {rejectedSeed.targetFloors}층)은 이
+            부지에 적용하지 않았습니다
+          </p>
+          <p className="mt-1">
+            고른 안은{" "}
+            {rejectedSeed.areaSqm
+              ? `${Math.round(rejectedSeed.areaSqm).toLocaleString()}㎡ 단일 필지`
+              : "면적이 확인되지 않은 필지"}{" "}
+            기준이고, 지금 설계 부지는 {Math.round(landAreaSqm).toLocaleString()}㎡입니다. 다른
+            부지의 층수를 잘못 적용하지 않기 위해 반영하지 않습니다.
+          </p>
+        </div>
+      )}
+
       {data && (
         <div className="space-y-4">
           <div className="flex flex-col gap-4 sm:flex-row">
@@ -399,7 +423,8 @@ export function SeedDesignMassComparison({
                 한도가 적용되므로 이 시드가 용량을 부풀리지 않습니다. <b>동수·동 배치 도형·
                 인동간격은 반영되지 않았습니다</b>(설계엔진이 풋프린트를 시드로 받지 않습니다).
                 ★지도의 &quot;N동 M층&quot;은 여러 동에 나눈 층수이고 여기 매스는 단일 동 기준이라,
-                같은 층수라도 총 연면적은 다를 수 있습니다.
+                같은 층수라도 총 연면적은 다를 수 있습니다. 또한 이 시드는 <b>이 비교 카드에만</b>
+                반영되며, 같은 화면의 자동설계·CAD 생성 패널은 아직 지도 선택을 받지 않습니다.
               </p>
             </div>
           ) : null}

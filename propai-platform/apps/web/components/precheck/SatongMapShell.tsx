@@ -952,7 +952,10 @@ export function SatongMapShell({
         floors: option.floors,
         // ★R1 HIGH-3: 이 층수가 산정된 부지 면적을 함께 싣는다(다필지 합산 부지에 단일필지
         //   기준 층수가 조용히 적용되던 결함 봉합 — 수신측이 면적으로 대조한다).
-        areaSqm: feature?.areaSqm ?? null,
+        //   ★R2: 출처는 **배치가 실제로 산정된 면적**(서버 응답 `parcel_area_sqm`)을 우선한다.
+        //   `feature.areaSqm`은 null일 수 있는데(서버는 기하로 산출해 조회가 성공한다) 그러면
+        //   CTA 게이트와 인계의 면적 출처가 어긋나 죽은 버튼이 된다.
+        areaSqm: layoutResult?.parcel_area_sqm ?? feature?.areaSqm ?? null,
         now: Date.now(),
       });
       // 층수가 없으면 넘길 게 없다 — 빈 인계를 남겨 수신측이 헛돌게 하지 않는다.
@@ -960,7 +963,7 @@ export function SatongMapShell({
       writeMassSeedHandoff(handoff);
       router.push(`/${locale}/design-studio`);
     },
-    [locale, router],
+    [layoutResult, locale, router],
   );
 
   const requestParcelLayout = useCallback(async () => {
@@ -1013,6 +1016,9 @@ export function SatongMapShell({
           honest_notes: res.honest_notes,
           buildable_geojson: res.buildable_geojson,
           buildable_area_sqm: res.buildable_area_sqm,
+          // ★W4: 인계 대조 면적의 정본 — 배치가 **실제로 산정된** 부지 면적이다. 슬림에서
+          //   빠져 있으면 CTA 게이트가 항상 거짓이 되어 인계 버튼이 영영 안 뜬다(테스트가 적발).
+          parcel_area_sqm: res.parcel_area_sqm,
           setback_m: res.setback_m,
           options: res.options,
           best: res.best,
