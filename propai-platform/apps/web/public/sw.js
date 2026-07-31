@@ -146,7 +146,11 @@
 //        신규 컴포넌트·SatongMultiMap layoutOverlay·satong-layout-overlay/site-layout 신설·
 //        SatongMapShell 조회배선이 stale app-shell 캐시에 가려지면 신규 섹션이 기존 사용자에게
 //        아예 노출되지 않으므로 구캐시 일괄 삭제.
-const CACHE_NAME = "propai-v471-parcel-layout";
+// v472: 2열 레일 hover 전환 의도 지연(#510 — 사용자 지적 "팝오버로 가며 스치는 아이콘이
+//        창을 뺏는다"). SatongMapShell 상호작용 로직만 바뀌어 **신규 파일이 없으므로**,
+//        stale app-shell 캐시가 옛 번들을 계속 내주면 사용자는 고쳐진 동작을 영영 못 본다
+//        (신규 컴포넌트 노출 문제가 아니라 **행위 교정**이라 오히려 캐시 무효화가 필수).
+const CACHE_NAME = "propai-v472-rail-hover-intent";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
