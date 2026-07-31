@@ -150,7 +150,11 @@
 //        창을 뺏는다"). SatongMapShell 상호작용 로직만 바뀌어 **신규 파일이 없으므로**,
 //        stale app-shell 캐시가 옛 번들을 계속 내주면 사용자는 고쳐진 동작을 영영 못 본다
 //        (신규 컴포넌트 노출 문제가 아니라 **행위 교정**이라 오히려 캐시 무효화가 필수).
-const CACHE_NAME = "propai-v472-rail-hover-intent";
+// v473: 매스 시드 인계(#512 W4 — 설계사 "지도에서 앉힌 대로 CAD가 시작"). 지도 배치 섹션의
+//        "이 안으로 설계 시작" CTA·lib/satong-mass-seed 신설·설계 스튜디오의 "지도에서 고른 안"
+//        카드와 미적용 고지가 stale app-shell 캐시에 가려지면 **신규 진입점이 아예 노출되지
+//        않는다**. 게다가 인계 실패 시 사용자에게 사유를 알리는 배너도 함께 묻힌다.
+const CACHE_NAME = "propai-v473-mass-seed-handoff";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
