@@ -302,6 +302,43 @@ describe("SatongMapShell 레일 hover 전환 의도 지연(A안)", () => {
     expect(shownPanelName()).toBeNull();
   });
 
+  it("★⑮ 임계 하한을 잠근다 — 모델 최악치(~172ms) 체류로는 전환되지 않는다", () => {
+    // ★이 테스트가 없으면 임계를 150으로 되돌려도 **전 스위트가 침묵한다**(R3 LOW-1 실측:
+    //   delay=0·90은 CAUGHT인데 150·299는 SURVIVED). 즉 임계 상향 커밋의 **존재 이유**가
+    //   회귀 방어되지 않는다. 임계값 자체에 결합시키지 않으면서 하한만 잠그기 위해,
+    //   근거 모델의 최악치(보수 계수·최하단 행 대각 통과 체류 ~172ms)보다 넉넉한 200ms를
+    //   써서 "이 정도 스침으로는 전환되지 않는다"를 단언한다.
+    render(<SatongMapShell locale="ko" />);
+
+    fireEvent.mouseEnter(railIcon("개발계획"));
+    expect(shownPanelName()).toBe("개발계획");
+
+    fireEvent.mouseEnter(railIcon("교통·편의 POI"));
+    act(() => { vi.advanceTimersByTime(200); });
+
+    expect(shownPanelName()).toBe("개발계획");
+  });
+
+  it("★⑯ 앵커 토글은 닫힘 유예도 거두고, 재이탈 시 닫힘이 재무장된다", () => {
+    // R3 LOW-2: 앵커 onClick의 `cancelHoverClose()`가 무커버리지였다(동작은 정상, 테스트 공백).
+    //   앵커는 레일 **안**의 버튼이라 클릭 시점에 포인터가 레일 안에 있다 → 유예를 거두는 것이
+    //   "레일을 벗어날 때 닫는다" 계약과 정합해야 하고, 벗어나면 다시 닫혀야 한다.
+    render(<SatongMapShell locale="ko" />);
+
+    fireEvent.mouseEnter(railIcon("개발계획"));
+    const rail = screen.getByTestId("map-layer-rail");
+    fireEvent.mouseLeave(rail); // 닫힘 유예 가동
+    act(() => { vi.advanceTimersByTime(100); });
+
+    fireEvent.click(screen.getByTitle(/레이어 목록 고정 해제|지도 레이어 관리/));
+    act(() => { vi.advanceTimersByTime(600); });
+    expect(shownPanelName()).toBe("개발계획"); // 유예가 거둬져 살아 있다
+
+    fireEvent.mouseLeave(rail); // 재이탈
+    act(() => { vi.advanceTimersByTime(600); });
+    expect(shownPanelName()).toBeNull(); // 닫힘 계약 재무장
+  });
+
   it("★⑭ 레일 1↔2열 토글이 예약된 전환을 발화시키지 않는다", () => {
     // ★토글은 12개 버튼을 리플로우시켜 **마우스를 1px도 안 움직여도** 커서 밑 아이콘이 바뀐다.
     //   예약을 안 거두면 '접기' 버튼이 조용히 무관한 레이어로 팝오버를 갈아치운다.
