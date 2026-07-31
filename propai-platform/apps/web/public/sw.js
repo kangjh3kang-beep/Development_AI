@@ -154,7 +154,10 @@
 //        "이 안으로 설계 시작" CTA·lib/satong-mass-seed 신설·설계 스튜디오의 "지도에서 고른 안"
 //        카드와 미적용 고지가 stale app-shell 캐시에 가려지면 **신규 진입점이 아예 노출되지
 //        않는다**. 게다가 인계 실패 시 사용자에게 사유를 알리는 배너도 함께 묻힌다.
-const CACHE_NAME = "propai-v473-mass-seed-handoff";
+// v474: 정북 일조 이격 밴드(#514 W3-b — 계획서 W3의 빠진 절반). 지도에 앰버 금지 띠가 새로
+//        그려지고, 배치 대안 자체가 정북 이격을 반영해 **바뀐다**(밴드를 배치 제약으로 되먹임).
+//        stale app-shell이면 사용자는 옛 배치(정북 미반영)를 계속 보게 되므로 반드시 무효화한다.
+const CACHE_NAME = "propai-v474-north-light-band";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
