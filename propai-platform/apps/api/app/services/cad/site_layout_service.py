@@ -164,6 +164,12 @@ def _place_grid(buildable_m, bldg_w: float, bldg_d: float, spacing_m: float, ang
     from shapely.affinity import rotate
     from shapely.geometry import box
 
+    # ★R2 HIGH-1 봉합 — 빈 영역이면 **여기서 끝낸다**. 정북 금지 띠를 차감하면 배치 영역이
+    #   통째로 비는 필지가 실재하는데(세장 주거필지+고FAR), 빈 geometry의 `centroid.x`는
+    #   shapely가 `GEOSException: getX called on empty Point`로 던져 라우터가 무가드라
+    #   **프로덕션 500**이 됐다(실측 스윕 910건 중 62건). 배치 불가는 예외가 아니라 빈 결과다.
+    if buildable_m is None or buildable_m.is_empty or buildable_m.area <= 0:
+        return []
     cx, cy = buildable_m.centroid.x, buildable_m.centroid.y
     # 회전한 buildable의 bbox 위에서 격자 생성(역회전으로 원좌표 복귀).
     rot_inv = rotate(buildable_m, -angle_deg, origin=(cx, cy))
@@ -331,8 +337,7 @@ def build_site_layout(
         band = _nl_band(h)
         if band is None or band.is_empty:
             return buildable_m
-        remain = buildable_m.difference(band)
-        return remain if not remain.is_empty else remain
+        return buildable_m.difference(band)
 
     def _nl_distance(h: float) -> float | None:
         if not nl_applies:
@@ -386,6 +391,34 @@ def build_site_layout(
                     break  # 간격·금지띠 모두 정합 → 종료
                 if not spacing_ok:
                     spacing = required  # 더 큰 인동간격으로 재배치(최종 고층 반영)
+            # ★R2 HIGH-2 봉합 — 루프가 **소진**되는 경로에도 같은 정합 검사가 필요하다.
+            #   `if not placed` 경로의 스테일 배치만 막고 여기를 빠뜨렸더니, 진동(2-주기)으로
+            #   비수렴 확정된 안에서 **배치 영역과 밴드가 불일치**해 겹침 33.75%가 살아남았다
+            #   (n=1이면 floors↑→띠↑→2동→floors↓→띠↓→1동을 반복하고, `spacing_ok`가 n≤1이라
+            #    항상 True·`area_changed`가 항상 True라 종료 조건이 영원히 성립하지 않는다).
+            #   ★확정 층수의 띠를 기준으로 **다시 앉혀** 정합을 강제한다. 못 앉으면 그 안은
+            #   정북일조 아래 성립하지 않으므로 버린다(위법 배치를 대안 목록에 올리지 않는다).
+            if buildings and nl_applies:
+                final_area = _nl_place_area(floors * _FLOOR_HEIGHT_M)
+                refit = _place_grid(final_area, bw, bd, placed_spacing, angle)
+                if len(refit) > max_dongs_by_bcr:
+                    _c = final_area.centroid
+                    refit = sorted(refit, key=lambda b: b.centroid.distance(_c))[:max_dongs_by_bcr]
+                if not refit:
+                    buildings = []
+                    nl_infeasible = True
+                else:
+                    buildings = refit
+                    n = len(refit)
+                    # 동수가 바뀌면 층수도 다시 산정한다(연면적 목표는 그대로).
+                    floors = max(1, min(60, math.ceil(target_gfa / max(1.0, per_footprint * n))))
+                    if n > 1:
+                        _cap = max(1, int(placed_spacing / (0.8 * _FLOOR_HEIGHT_M)))
+                        if floors > _cap:
+                            floors = _cap
+                            spacing_capped = True
+                    place_area = final_area
+
             if not buildings:
                 if nl_infeasible:
                     nl_blocked_kinds.add(kind)
@@ -401,6 +434,17 @@ def build_site_layout(
                     floors = floors_max_by_spacing
                     spacing_capped = True
             height_m = floors * _FLOOR_HEIGHT_M
+            # ★최종 정합 검증(방어 심층) — 재배치로 층수가 다시 바뀔 수 있어 한 번의 fixpoint로는
+            #   정합을 보장하지 못한다. **확정 높이의 띠**로 마지막에 검사해, 조금이라도 침범하면
+            #   그 안을 버린다. 이 검사가 "밴드 안에는 단 한 동도 앉지 않는다"를 구조적으로 만든다
+            #   (수렴이 실패해도 위법 배치가 목록에 오르지 않는다).
+            if nl_applies:
+                _fb = _nl_band(height_m)
+                if _fb is not None and not _fb.is_empty:
+                    _viol = sum(b.intersection(_fb).area for b in buildings)
+                    if _viol > 1e-9:
+                        nl_blocked_kinds.add(kind)
+                        continue
             realized_gfa = n * per_footprint * floors
             if floors >= 60 and realized_gfa < target_gfa:
                 cap60_hit = True

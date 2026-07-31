@@ -25,6 +25,10 @@ from app.services.zoning.legal_zone_limits import legal_limits_for, structural_c
 logger = structlog.get_logger(__name__)
 
 # 정북일조 적용 용도지역(전용/일반주거). 준주거·상업·공업은 통상 미적용/완화.
+# ★수렴 예정(2026-07-31) — 지정 SSOT는 `app/services/common/sunlight_setback.north_light_applies()`.
+#   이 튜플은 **현재 그것과 발산 중**이다: "종"만으로 참이 되어 비주거를 오판하고, 코드형("2R")은
+#   놓친다. 전환하면 이 모듈 출력이 바뀌므로 별건 티켓. 발산 현황은
+#   `tests/test_north_light_zone_divergence.py`가 박제한다.
 _NORTH_LIGHT_ZONES = ("전용주거", "일반주거", "1종", "2종", "3종", "제1종", "제2종", "제3종")
 
 # ★녹지지역 층수 제한(자연녹지 4층 등)은 SSOT(legal_limits_for → ZONE_LIMITS.max_floors)에서

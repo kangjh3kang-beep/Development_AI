@@ -66,6 +66,11 @@ _LOW_RISE_RESIDENTIAL = frozenset({
 _COMMERCIAL_ZONE_CODES = frozenset({"GC", "NC", "CC", "QR"})
 
 # 정북일조 적용 한글 용도지역 키워드(코드가 아닌 한글명으로 들어올 때 보강).
+# ★수렴 예정(2026-07-31) — 정북일조 적용 판정의 지정 SSOT는
+#   `app/services/common/sunlight_setback.north_light_applies()`다. 이 튜플은 **현재 그것과
+#   발산 중**이다: 여기는 "종"만으로도 참이라 `제2종근린생활시설`·`제2종지구단위계획구역`을
+#   주거로 오판하고, 코드형("2R")은 반대로 놓친다. 전환하면 이 모듈의 출력이 바뀌므로 별건
+#   티켓으로 분리했다. 발산 현황은 `tests/test_north_light_zone_divergence.py`가 박제한다.
 _NORTH_LIGHT_ZONE_KEYWORDS = ("전용주거", "일반주거", "1종", "2종", "3종", "제1종", "제2종", "제3종")
 
 # 저층 판정 GFA·세대수 임계(추정·보수). 미만이면 저층 주거(빌라류)로 본다.

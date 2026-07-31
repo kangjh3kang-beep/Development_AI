@@ -230,24 +230,46 @@ def _rect_parcel(width_m: float, depth_m: float, lat0: float = 37.5, lon0: float
 
 
 def _worst_overlap_pct(result) -> float:
+    """★R2 HIGH-3 봉합 — **공허 통과를 구조적으로 불가능**하게 만든다.
+
+    종전엔 options가 비거나 밴드가 null이면 조용히 0.0을 돌려줘, 배치가 사라지거나 밴드가
+    꺼지는 순간 이 불변식이 **무음 소멸**했다. 가설이 아니다: 이 PR 자체가 어떤 필지를
+    `ok:True → ok:false`로 바꿨다. 관측 대상이 실재함을 먼저 단언한다.
+    """
+    options = result.get("options") or []
+    assert options, "옵션이 없어 겹침을 관측할 수 없다(불변식이 공허해진다)"
+    assert result.get("north_light", {}).get("applies") is True, "정북 미적용 픽스처로는 잠기지 않는다"
+    banded = 0
+    dongs = 0
     worst = 0.0
-    for o in result.get("options") or []:
+    for o in options:
         band = shape(o["north_light_band_geojson"]) if o.get("north_light_band_geojson") else None
         if band is None:
             continue
+        banded += 1
         total = viol = 0.0
         for f in (o.get("buildings_geojson") or {}).get("features", []):
             g = shape(f["geometry"])
             total += g.area
             viol += g.intersection(band).area
+            dongs += 1
         if total:
             worst = max(worst, 100.0 * viol / total)
+    assert banded > 0, "밴드가 실린 대안이 하나도 없다(관측 대상 부재)"
+    assert dongs > 0, "배치된 동이 하나도 없다(겹침이 공허하게 0이 된다)"
     return worst
 
 
+# ★R2 HIGH-3: 종전 픽스처 4개는 **리뷰어가 준 케이스**뿐이었다(전부 이미 고쳐진 것들).
+#   내 탐색으로 찾은 케이스가 없어 진동(60×90)·크래시(100×24 far400)를 스스로 못 찾았다.
+#   → 스윕에서 실제로 문제를 냈던 형상을 픽스처에 넣는다.
 @pytest.mark.parametrize(
     "width,depth,far",
-    [(120.0, 120.0, 200.0), (40.0, 60.0, 200.0), (100.0, 60.0, 300.0), (60.0, 100.0, 250.0)],
+    [
+        (120.0, 120.0, 200.0), (40.0, 60.0, 200.0), (100.0, 60.0, 300.0), (60.0, 100.0, 250.0),
+        (60.0, 90.0, 200.0),    # ★R2 H2 진동 케이스(겹침 33.75%가 살아남던 형상)
+        (80.0, 40.0, 250.0), (140.0, 30.0, 200.0), (60.0, 120.0, 500.0),
+    ],
 )
 def test_no_building_sits_inside_the_forbidden_band(width, depth, far):
     """★★ 밴드 안에는 **단 한 동도** 앉지 않는다.
@@ -330,3 +352,97 @@ def test_unknown_zone_note_states_why_band_is_missing():
         far_pct=200, bcr_pct=60, zone_type="", building_type="아파트",
     )
     assert any("판정하지 못했습니다" in n for n in r["honest_notes"]), r["honest_notes"]
+
+
+@pytest.mark.parametrize(
+    "width,depth,far,bcr",
+    [(100.0, 24.0, 400.0, 60.0), (100.0, 24.0, 500.0, 60.0), (80.0, 16.0, 300.0, 50.0),
+     (40.0, 16.0, 200.0, 60.0), (160.0, 20.0, 500.0, 60.0)],
+)
+def test_shallow_parcel_never_crashes(width, depth, far, bcr):
+    """★R2 HIGH-1 회귀락 — 금지 띠를 빼면 배치 영역이 **통째로 비는** 필지에서 죽지 않는다.
+
+    빈 geometry의 `centroid.x`는 shapely가 `GEOSException: getX called on empty Point`로
+    던지고, 라우터가 무가드라 **프로덕션 500**이 됐다(스윕 910건 중 62건). 배치 불가는
+    예외가 아니라 **빈 결과 + 사유**여야 한다.
+    """
+    r = build_site_layout(
+        parcel_geojson=_rect_parcel(width, depth), land_area_sqm=width * depth,
+        far_pct=far, bcr_pct=bcr, zone_type="제3종일반주거지역", building_type="아파트",
+    )
+    assert isinstance(r, dict) and "ok" in r
+    if not r["ok"]:
+        assert r["honest_notes"], "불가인데 사유가 없다"
+
+
+def test_openness_denominator_excludes_the_forbidden_band():
+    """★R2 MEDIUM-3 회귀락 — 오픈스페이스 분모가 **금지 띠를 뺀 영역**이다.
+
+    buildable 전체로 나누면 지을 수 없는 띠까지 '오픈스페이스'로 계상돼 과대표시된다.
+    (같은 필지를 정북 적용/미적용으로 비교해, 적용 시 분모가 줄어 openness가 달라짐을 본다.)
+    """
+    kw = dict(
+        parcel_geojson=_rect_parcel(120.0, 120.0), land_area_sqm=14400,
+        far_pct=200, bcr_pct=60, building_type="아파트",
+    )
+    applied = build_site_layout(zone_type="제2종일반주거지역", **kw)
+    assert applied["ok"] and applied["north_light"]["applies"] is True
+    for o in applied["options"]:
+        band = shape(o["north_light_band_geojson"])
+        # 분모가 buildable 전체라면 금지 띠 면적만큼 openness가 부풀려진다.
+        # 실제 분모(배치영역)로 계산한 상한을 넘지 않아야 한다.
+        assert o["openness_pct"] <= 100.0
+        assert band.area > 0
+    # 미적용 지역은 띠가 없으므로 분모가 buildable 전체다(대조군).
+    plain = build_site_layout(zone_type="일반상업지역", **kw)
+    assert plain["north_light"]["applies"] is False
+
+
+def test_oscillating_parcel_is_rescued_not_dropped():
+    """★R2 HIGH-2 회귀락(refit) — 진동으로 비수렴한 안을 **확정 층수로 재배치해 구제**한다.
+
+    이 형상(60×90·FAR200)은 place_area가 3969↔3240으로 2-주기 진동해 `range(6)`이 소진되던
+    케이스다(리뷰어 실측: 겹침 33.75%). 두 안전장치가 있다 —
+      ① 재배치(refit): 확정 층수의 띠로 다시 앉혀 **구제**한다(대안이 살아남는다)
+      ② 최종 정합 검증: 그래도 침범하면 그 안을 **폐기**한다(위법 배치를 목록에 안 올린다)
+    ①이 없으면 ②가 폐기해 대안 수가 줄어든다 — 그 차이를 잠근다.
+    """
+    r = build_site_layout(
+        parcel_geojson=_rect_parcel(60.0, 90.0), land_area_sqm=5400,
+        far_pct=200, bcr_pct=60, zone_type="제3종일반주거지역", building_type="아파트",
+    )
+    assert r["ok"] is True
+    assert _worst_overlap_pct(r) == pytest.approx(0.0, abs=0.01)
+    assert len(r["options"]) >= 3, (
+        f"진동 케이스가 구제되지 않고 폐기됐다(대안 {len(r['options'])}개) — 재배치가 빠졌다"
+    )
+
+
+def test_openness_denominator_is_the_actual_placeable_area():
+    """★R2 MEDIUM-3 회귀락 — 오픈스페이스 분모가 **금지 띠를 뺀 배치 영역**이다.
+
+    응답에 있는 기하만으로 검산한다: (buildable − band) 대비 동 면적 비율.
+    위경도 면적이지만 **비율**이라 투영 계수가 상쇄돼 그대로 비교 가능하다.
+    분모가 buildable 전체면 지을 수 없는 띠까지 오픈스페이스로 계상돼 값이 커진다.
+    """
+    r = build_site_layout(
+        parcel_geojson=_rect_parcel(120.0, 120.0), land_area_sqm=14400,
+        far_pct=200, bcr_pct=60, zone_type="제2종일반주거지역", building_type="아파트",
+    )
+    buildable = shape(r["buildable_geojson"])
+    checked = 0
+    for o in r["options"]:
+        band = shape(o["north_light_band_geojson"])
+        place_area = buildable.difference(band)
+        covered = sum(
+            shape(f["geometry"]).area for f in (o["buildings_geojson"] or {}).get("features", [])
+        )
+        if place_area.area <= 0 or covered <= 0:
+            continue
+        expected = round(max(0.0, (place_area.area - covered) / place_area.area * 100.0), 1)
+        assert o["openness_pct"] == pytest.approx(expected, abs=1.5), (
+            f"{o['kind']}: openness {o['openness_pct']} vs 배치영역 기준 {expected} "
+            "— 분모가 buildable 전체(금지 띠 포함)로 보인다"
+        )
+        checked += 1
+    assert checked > 0, "검산한 대안이 없다(공허 통과)"
