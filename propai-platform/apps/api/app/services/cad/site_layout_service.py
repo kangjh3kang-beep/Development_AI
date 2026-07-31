@@ -405,6 +405,12 @@ def build_site_layout(
                     _c = final_area.centroid
                     refit = sorted(refit, key=lambda b: b.centroid.distance(_c))[:max_dongs_by_bcr]
                 if not refit:
+                    # ★미잠금 고지(정직): 이 분기와 아래 최종 정합 검증은 실측 1044 케이스에서
+                    #   **한 번도 발화하지 않는다**(refit이 먼저 정합을 만든다). 그래서 이 두 줄을
+                    #   지우는 변이가 테스트를 통과한다 — 잠긴 계약이 아니라 **미발화 방어층**이다.
+                    #   숨기지 않고 적는다. 도달 케이스를 찾으면 그때 회귀락을 건다.
+                    #   ★이 저장소에서 같은 결함 클래스(스테일 배치 잔존)를 이미 두 번 고쳤다
+                    #   (`if not placed` 경로 · `for` 소진 경로). 여기가 세 번째 출구다.
                     buildings = []
                     nl_infeasible = True
                 else:

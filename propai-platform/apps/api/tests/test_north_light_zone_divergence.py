@@ -30,20 +30,33 @@ def _solar(z: str) -> bool:
 
 
 # (용도지역, SSOT, massing_strategy, solar_envelope) — 현재 사실을 그대로 적는다.
+# ★R3 지적 수용: 1차 박제가 발산 11행 중 **5행만** 담아 "은폐된 발산을 드러낸다"는 이 파일의
+#   존재 이유와 어긋났다(정직을 위한 파일이 사실을 절반만 말했다). 전수로 옮긴다.
 _SNAPSHOT = [
-    # 일치 구간(정상)
+    # ── 일치 구간(정상) ──
     ("제2종일반주거지역", True, True, True),
     ("제1종전용주거지역", True, True, True),
+    ("일반주거지역", True, True, True),
+    ("전용주거지역", True, True, True),
     ("일반상업지역", False, False, False),
+    ("준주거지역", False, False, False),
     ("자연녹지지역", False, False, False),
     ("", False, False, False),
-    # ★발산 — 코드형을 SSOT만 인식한다(프론트가 zoneType에 zoneCode를 넣는 경로가 있어 실도달).
-    ("2R", True, False, False),
+    # ── ★발산 A: 엔진 **코드형**을 SSOT만 인식한다 ──────────────────────────────
+    #   프론트가 `zoneType`에 `zoneCode`를 넣는 경로가 여러 곳이라 실제로 도달한다.
     ("1R", True, False, False),
-    # ★발산 — "종"만으로 참이 되는 느슨한 키워드(비주거 오판). SSOT는 '주거'를 요구한다.
+    ("2R", True, False, False),
+    ("3R", True, False, False),
+    ("1r", True, False, False),
+    ("2r", True, False, False),
+    ("3r", True, False, False),
+    # ── ★발산 B: "종"만으로 참이 되는 느슨한 키워드(비주거 오판) ─────────────────
+    #   SSOT는 '주거'를 요구한다. 지도에 법적 금지구역을 칠하는 판정이라 오탐 비용이 크다.
+    ("제1종", False, True, True),
+    ("제2종", False, True, True),
+    ("제3종", False, True, True),
     ("제2종근린생활시설", False, True, True),
     ("제2종지구단위계획구역", False, True, True),
-    ("제3종", False, True, True),
 ]
 
 
@@ -61,4 +74,4 @@ def test_divergence_is_documented_not_accidental():
         "발산이 사라졌다 — 소비처가 SSOT로 수렴한 것으로 보인다. "
         "확인 후 이 스냅샷 테스트를 삭제하라(목표 상태 도달)."
     )
-    assert len(diverging) == 5, f"발산 항목 수가 바뀌었다(현재 {len(diverging)}): {diverging}"
+    assert len(diverging) == 11, f"발산 항목 수가 바뀌었다(현재 {len(diverging)}): {diverging}"
