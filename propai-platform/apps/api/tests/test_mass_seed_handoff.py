@@ -17,6 +17,16 @@ from pydantic import ValidationError
 from app.routers import mass_templates as mt
 
 
+def _patch_no_reference(monkeypatch):
+    """지역 실측 통계 없음으로 고정 — DB 없이 라우터를 실제로 호출하기 위한 최소 대역."""
+    import app.services.mass_backbone.mass_reference as mass_reference_mod
+
+    async def no_reference(*a, **kw):
+        return None
+
+    monkeypatch.setattr(mass_reference_mod, "get_mass_reference", no_reference)
+
+
 def _base_body(**over):
     body = {
         "address": "경기도 성남시 분당구 정자동 178",
@@ -46,32 +56,30 @@ def test_request_rejects_nonpositive_floors():
         _base_body(map_target_floors=-3)
 
 
-def test_compute_mass_receives_target_floors_from_map_seed(monkeypatch):
+@pytest.mark.asyncio
+async def test_router_passes_target_floors_to_engine(monkeypatch):
     """★배선: 인계 층수가 `_compute_mass(target_floors=...)`로 **실제로 전달**된다.
 
-    라우터가 값을 받아놓고 엔진에 안 넘기면 화면엔 카드가 뜨는데 계산은 시드를 무시한다 —
-    이 저장소가 반복 지적한 '배선 미변이로 뚫림' 형태라 호출 인자를 직접 잠근다.
+    ★R1 HIGH-2 봉합 — 종전 이 테스트는 `seed_design`을 **한 번도 호출하지 않고** 라우터 본문을
+      손으로 재구성해 자기가 넘긴 15를 자기가 단언하는 **동어반복**이었다. 그래서 라우터에서
+      `target_floors=` 인자를 지우는 변이가 **생존**했다(저장소가 이미 겪은 '가짜 골든' 재발).
+      이제 실제로 `seed_design`을 호출하고 **엔진이 받은 kwargs**를 단언한다 — 독립 오라클.
     """
     seen: list[dict] = []
 
     def fake_compute(**kw):
         seen.append(kw)
+        # 시드를 받았으면 그 이하를 내놓는다(적용 판정이 통과하도록).
         return {"num_floors": kw.get("target_floors") or 9, "far_percent": 100.0}
 
     monkeypatch.setattr(mt, "_compute_mass", fake_compute)
+    _patch_no_reference(monkeypatch)
 
-    body = _base_body(map_target_floors=15, map_option_label="판상형 25°")
-    # 라우터 본문에서 map 시드 매스를 만드는 부분만 재현(비동기 DB 의존 없이 검증).
-    common = {
-        "land_area_sqm": body.land_area_sqm, "zone_code": body.zone_code,
-        "building_use": body.building_use, "floor_height_m": body.floor_height_m,
-        "ordinance_far": body.effective_far_pct, "ordinance_bcr": body.effective_bcr_pct,
-        "far_basis": body.far_basis, "far_reliable": body.far_reliable,
-    }
-    mt._compute_mass(**common, target_floors=int(body.map_target_floors))
+    res = await mt.seed_design(_base_body(map_target_floors=15, map_option_label="판상형 25°"), db=None)
 
-    assert seen, "_compute_mass가 호출되지 않았다"
-    assert seen[-1]["target_floors"] == 15
+    seeded_calls = [kw for kw in seen if kw.get("target_floors") == 15]
+    assert seeded_calls, f"라우터가 엔진에 target_floors=15를 넘기지 않았다(호출 kwargs: {seen})"
+    assert res["map_seeded_mass"] is not None
 
 
 def test_target_floors_is_upper_bound_only_on_real_engine():
@@ -120,12 +128,7 @@ async def test_router_only_builds_map_mass_when_seed_present(monkeypatch):
     가드를 지우면 인계가 없어도 카드가 뜨고, 사용자는 고르지도 않은 안을 '지도에서 고른 안'으로
     본다. 순수 로직·프론트 테스트로는 이 지점에 닿지 못하므로(라우터 본문) 직접 호출한다.
     """
-    import app.services.mass_backbone.mass_reference as mass_reference_mod
-
-    async def no_reference(*a, **kw):
-        return None
-
-    monkeypatch.setattr(mass_reference_mod, "get_mass_reference", no_reference)
+    _patch_no_reference(monkeypatch)
 
     without = await mt.seed_design(_base_body(), db=None)
     assert without["map_seeded_mass"] is None
@@ -137,7 +140,10 @@ async def test_router_only_builds_map_mass_when_seed_present(monkeypatch):
         _base_body(map_target_floors=15, map_option_label="판상형 25°"), db=None,
     )
     assert with_seed["map_seeded_mass"] is not None
-    assert with_seed["map_seed"] == {"target_floors": 15, "option_label": "판상형 25°"}
+    assert with_seed["map_seed"] == {
+        "target_floors": 15, "option_label": "판상형 25°",
+        "applied": True, "not_applied_reason": None,
+    }
     # ★지역 실측 통계가 없어도 산출된다(근거가 '지역 중앙값'이 아니라 '본인 선택'이므로).
     assert with_seed["regional_typical_mass"] is None
 
@@ -148,14 +154,49 @@ async def test_router_note_discloses_upper_bound_semantics(monkeypatch):
 
     이 문구가 빠지면 소비처가 시드를 '목표'로 오독해 화면 문구를 잘못 쓴다.
     """
-    import app.services.mass_backbone.mass_reference as mass_reference_mod
-
-    async def no_reference(*a, **kw):
-        return None
-
-    monkeypatch.setattr(mass_reference_mod, "get_mass_reference", no_reference)
+    _patch_no_reference(monkeypatch)
 
     res = await mt.seed_design(_base_body(map_target_floors=15), db=None)
     note = res.get("note") or ""
     assert "상한으로만" in note
     assert "부풀리지" in note
+
+
+@pytest.mark.asyncio
+async def test_non_sunlight_zone_does_not_claim_application(monkeypatch):
+    """★R1 HIGH-1 회귀락 — 시드가 **반영되지 않는** 용도지역에서 반영된 척하지 않는다.
+
+    `target_floors`는 정북일조 단계후퇴 대상(전용·일반주거) 밖에서는 엔진에 도달조차 하지
+    않았고, 포디움-타워 경로는 산출 층수를 사후에 덮어쓴다. 그런데 소비처는 "층수를 상한으로
+    반영했다"고 고지했다 → 5층을 고른 사용자가 38층을 '고른 안'으로 보는 **표기 사기**.
+
+    판정은 **결과 기반**이다(엔진 내부 분기를 믿지 않는다): 산출 층수가 시드를 초과하면
+    미적용으로 보고 매스를 내주지 않는다. 엔진이 바뀌어도 이 오라클은 계속 유효하다.
+    """
+    _patch_no_reference(monkeypatch)
+
+    # 일반상업지역(GC)은 포디움-타워 경로라 5층 시드가 물리지 않는다.
+    res = await mt.seed_design(_base_body(zone_code="GC", map_target_floors=5), db=None)
+    assert res["map_seed"]["applied"] is False, res["map_seed"]
+    assert res["map_seed"]["not_applied_reason"]
+    # ★핵심: 반영 안 됐으면 매스를 내주지 않는다(내주면 소비처가 '고른 안'으로 표시한다).
+    assert res["map_seeded_mass"] is None
+
+    # 대조군 — 주거지역에서는 실제로 물리고 applied=True다(공허 통과 방지).
+    ok = await mt.seed_design(_base_body(zone_code="3R", map_target_floors=5), db=None)
+    assert ok["map_seed"]["applied"] is True, ok["map_seed"]
+    assert ok["map_seeded_mass"]["num_floors"] <= 5
+
+
+def test_target_floors_now_binds_outside_sunlight_zones():
+    """★R1 HIGH-1 근원 수정 — 비일조 단일박스 경로에서도 상한이 작동한다.
+
+    종전엔 `floor_candidates`에 target이 없어 준공업 등에서 시드가 통째로 무시됐다.
+    (포디움-타워 경로는 별건 — 층수 상한을 podium/tower로 어떻게 쪼갤지는 설계 판단이 필요해
+     결과 기반 가드로 '미적용'을 정직 고지하는 쪽을 택했다.)
+    """
+    common = dict(land_area_sqm=1000.0, building_use="공동주택", floor_height_m=3.0)
+    base = mt._compute_mass(zone_code="준공업지역", **common)["num_floors"]
+    assert base > 3, f"기준선이 이미 3층 이하면 이 테스트가 공허해진다(base={base})"
+    seeded = mt._compute_mass(zone_code="준공업지역", target_floors=3, **common)["num_floors"]
+    assert seeded <= 3, f"비일조 용도지역에서 시드가 무시된다(base={base} → seed3={seeded})"

@@ -57,12 +57,20 @@ type SeedDesignResponse = {
   applied_limit_source?: "site_analysis_effective_limits" | "engine_zone_defaults" | string;
   /** ★W4: 사통맵에서 고른 배치안 층수를 상한으로 반영한 매스(인계가 없으면 null). */
   map_seeded_mass?: MassResult | null;
-  map_seed?: { target_floors: number; option_label?: string | null } | null;
+  map_seed?: {
+    target_floors: number;
+    option_label?: string | null;
+    /** ★서버가 결과로 판정한 실제 적용 여부 — false면 반영된 척하지 않는다. */
+    applied?: boolean;
+    not_applied_reason?: string | null;
+  } | null;
   note?: string | null;
 };
 
 type Props = {
   address: string;
+  /** ★사통맵 인계 대조용 강한 식별자 — 없으면 주소(정규화)로 떨어진다(R1 MEDIUM-1). */
+  pnu?: string | null;
   landAreaSqm: number;
   /** 한글 용도지역명 또는 코드 — zoningToCode로 엔진 키 변환 */
   zoning: string;
@@ -195,6 +203,7 @@ function MassCard({
  */
 export function SeedDesignMassComparison({
   address,
+  pnu,
   landAreaSqm,
   zoning,
   buildingUse,
@@ -217,8 +226,10 @@ export function SeedDesignMassComparison({
   const [massSeed, setMassSeed] = useState<MassSeedHandoff | null>(null);
   useEffect(() => {
     const h = readMassSeedHandoff(Date.now());
-    setMassSeed(massSeedAppliesTo(h, { address }) ? h : null);
-  }, [address]);
+    // ★R1 MEDIUM-1: pnu를 넘기지 않아 강한 식별자 분기가 프로덕션에서 죽어 있었다(주소 원문
+    //   비교로만 떨어짐). ★R1 HIGH-3: 면적까지 넘겨 다필지 합산 부지를 걸러낸다.
+    setMassSeed(massSeedAppliesTo(h, { pnu, address, areaSqm: landAreaSqm }) ? h : null);
+  }, [address, pnu, landAreaSqm]);
   const canFetch = !disabled && !!address && landAreaSqm > 0;
   // 미지원/미인식 용도지역 → 백엔드가 기본값 기준으로 추정함을 정직 고지.
   const zoneFallback = !zoneCode && !!zoning;
@@ -253,9 +264,12 @@ export function SeedDesignMassComparison({
       // ★W4: 사통맵에서 고른 배치안 인계. **같은 부지일 때만** 싣는다 — 다른 필지의 선택을
       //   조용히 시드로 쓰면 사용자는 "지도에서 고른 대로"라고 믿는데 실제로는 다른 땅의
       //   선택이 반영된다(W2에서 같은 클래스의 결함을 겪었다). 만료분도 read가 걸러낸다.
-      if (massSeed) {
-        body.map_target_floors = massSeed.targetFloors;
-        body.map_option_label = massSeed.optionLabel;
+      // ★R1 LOW-1: 만료는 **요청 시점에** 다시 판정한다. 마운트 때 한 번만 보면 탭을 오래
+      //   열어둔 뒤 조회할 때 만료된 인계가 그대로 전송된다.
+      const fresh = massSeed && readMassSeedHandoff(Date.now()) ? massSeed : null;
+      if (fresh) {
+        body.map_target_floors = fresh.targetFloors;
+        body.map_option_label = fresh.optionLabel;
       }
       const res = await apiClient.post<SeedDesignResponse>("/mass-templates/seed-design", { body });
       setData(res);
@@ -355,6 +369,23 @@ export function SeedDesignMassComparison({
             />
           </div>
 
+          {/* ★R1 HIGH-1 봉합 — 시드가 **적용되지 않았을 때**는 침묵하지 않고 그 사실을 알린다.
+              종전엔 미적용이어도 카드가 뜨고 "반영했다"고 고지해, 5층을 고른 사용자가 38층을
+              '고른 안'으로 읽는 표기 사기가 됐다. */}
+          {data.map_seed && data.map_seed.applied === false ? (
+            <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-3.5 py-3 text-[11px] leading-relaxed text-[var(--text-hint)]">
+              <p className="font-bold text-amber-500">
+                지도에서 고른 안({data.map_seed.option_label ?? "배치안"} ·{" "}
+                {data.map_seed.target_floors}층)은 이 부지 설계에 반영되지 않았습니다
+              </p>
+              <p className="mt-1">
+                {data.map_seed.not_applied_reason ??
+                  "이 용도지역·매스 형식에서는 층수 시드가 반영되지 않습니다."}{" "}
+                아래 매스는 지도 선택과 무관하게 산정된 값입니다.
+              </p>
+            </div>
+          ) : null}
+
           {/* ★W4 정직 고지 — "지도에서 고른 안"이 무엇을 반영하고 무엇을 반영하지 않는지.
               층수가 상한으로만 작용한다는 사실을 밝히지 않으면 사용자는 이 카드를
               "내가 고른 대로 지어진다"로 읽는다. */}
@@ -365,8 +396,10 @@ export function SeedDesignMassComparison({
               </p>
               <p className="mt-1">
                 고른 안의 <b>층수만</b> 상한으로 반영했습니다 — 법정·조례 한도가 더 엄격하면
-                한도가 적용되므로 이 시드가 용량을 부풀리지 않습니다. 동 배치 도형·인동간격은
-                반영되지 않았습니다(설계엔진이 풋프린트를 시드로 받지 않습니다).
+                한도가 적용되므로 이 시드가 용량을 부풀리지 않습니다. <b>동수·동 배치 도형·
+                인동간격은 반영되지 않았습니다</b>(설계엔진이 풋프린트를 시드로 받지 않습니다).
+                ★지도의 &quot;N동 M층&quot;은 여러 동에 나눈 층수이고 여기 매스는 단일 동 기준이라,
+                같은 층수라도 총 연면적은 다를 수 있습니다.
               </p>
             </div>
           ) : null}

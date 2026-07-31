@@ -950,6 +950,9 @@ export function SatongMapShell({
         kind: option.kind,
         angleDeg: option.angle_deg,
         floors: option.floors,
+        // ★R1 HIGH-3: 이 층수가 산정된 부지 면적을 함께 싣는다(다필지 합산 부지에 단일필지
+        //   기준 층수가 조용히 적용되던 결함 봉합 — 수신측이 면적으로 대조한다).
+        areaSqm: feature?.areaSqm ?? null,
         now: Date.now(),
       });
       // 층수가 없으면 넘길 게 없다 — 빈 인계를 남겨 수신측이 헛돌게 하지 않는다.

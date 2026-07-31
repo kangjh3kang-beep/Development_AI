@@ -27,6 +27,13 @@ export type MassSeedHandoff = {
   targetFloors: number;
   /** 출처 표기용(예 "판상형 25°") — 계산 무영향. */
   optionLabel: string;
+  /**
+   * ★R1 HIGH-3: 이 층수가 산정된 **부지 정의**. 배치 조회는 상세를 연 **단일 필지**로 나가므로
+   *   `floors`는 그 필지 기준이다. 그런데 설계 스튜디오는 다필지면 **합산 면적·대표 용도지역**을
+   *   쓴다 — 주소는 대표필지(parcels[0])라 일치해버려 가드를 통과하고, 500㎡ 기준 8층이
+   *   2000㎡ 통합부지의 상한으로 조용히 적용됐다. 면적을 함께 실어 대조한다.
+   */
+  areaSqm: number | null;
   /** 인계 시점(ms) — 오래된 인계를 조용히 되살리지 않기 위한 신선도 판단용. */
   savedAt: number;
 };
@@ -46,6 +53,7 @@ export function buildMassSeedHandoff(args: {
   kind?: string | null;
   angleDeg?: number | null;
   floors?: number | null;
+  areaSqm?: number | null;
   now: number;
 }): MassSeedHandoff | null {
   const floors = args.floors;
@@ -58,6 +66,10 @@ export function buildMassSeedHandoff(args: {
   return {
     pnu: args.pnu ?? null,
     address: args.address ?? null,
+    areaSqm:
+      typeof args.areaSqm === "number" && Number.isFinite(args.areaSqm) && args.areaSqm > 0
+        ? args.areaSqm
+        : null,
     targetFloors: Math.round(floors),
     optionLabel: `${kind}${angle}`,
     savedAt: args.now,
@@ -105,19 +117,45 @@ export function readMassSeedHandoff(now: number): MassSeedHandoff | null {
 }
 
 /**
+ * 주소 비교용 정규화 — 이 저장소의 satong 계열 공통 규약(`normalizeKey`·`dominantConstraintKey`)과
+ * 같은 형태로 맞춘다. 같은 필지가 진입 경로에 따라 다른 문자열이 되면(폴리곤 클릭 vs 경계레이어
+ * 폴백 사슬이 다르다) **CTA를 눌러 이동했는데 아무 일도 안 일어나는** 무표시 위양성이 된다.
+ */
+function normalizeAddress(v: string | null | undefined): string {
+  return (v ?? "").trim().replace(/\s+/g, " ");
+}
+
+/** 부지 면적이 실질적으로 같은가(반올림·재계산 오차 허용, 다필지 합산과는 확실히 구분). */
+function sameArea(a: number, b: number): boolean {
+  return Math.abs(a - b) <= Math.max(1, a * 0.02);
+}
+
+/**
  * 이 인계를 지금 부지에 적용해도 되는가.
  *
  * ★스테일 가드: 인계에 필지 식별자가 있는데 현재 부지와 **다르면 적용하지 않는다**.
  *   다른 필지의 층수를 시드로 쓰면 사용자는 "지도에서 고른 대로"라고 믿는데 실제로는
  *   전혀 다른 땅의 선택이 반영된다(W2에서 같은 클래스의 결함을 겪었다).
  *   식별자가 양쪽 다 없으면 판정 불가이므로 **적용하지 않는다**(낙관 금지).
+ *
+ * ★R1 HIGH-3 봉합: 식별자가 맞아도 **부지 면적이 다르면 적용하지 않는다.** 다필지 선택에서
+ *   대표필지(parcels[0]) 주소는 일치하지만 설계 부지는 합산 면적이라, 단일필지 기준 층수가
+ *   통합부지에 무고지로 적용됐다. 면적이 넘어오지 않으면(구 페이로드) 판정 불가로 보아 막는다.
  */
 export function massSeedAppliesTo(
   h: MassSeedHandoff | null,
-  current: { pnu?: string | null; address?: string | null },
+  current: { pnu?: string | null; address?: string | null; areaSqm?: number | null },
 ): boolean {
   if (!h) return false;
-  if (h.pnu && current.pnu) return h.pnu === current.pnu;
-  if (h.address && current.address) return h.address === current.address;
-  return false;
+
+  const idMatch = h.pnu && current.pnu
+    ? h.pnu === current.pnu
+    : h.address && current.address
+      ? normalizeAddress(h.address) === normalizeAddress(current.address)
+      : false;
+  if (!idMatch) return false;
+
+  // 면적 대조 — 어느 한쪽이라도 없으면 다필지 여부를 판정할 수 없으므로 적용하지 않는다.
+  if (typeof h.areaSqm !== "number" || typeof current.areaSqm !== "number") return false;
+  return sameArea(h.areaSqm, current.areaSqm);
 }

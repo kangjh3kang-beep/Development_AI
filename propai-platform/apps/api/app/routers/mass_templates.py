@@ -289,8 +289,28 @@ async def seed_design(
     # ★W4: 지도에서 고른 배치안 시드(additive). 지역 통계와 **독립**이라 mass_reference가 없어도
     #   산출된다 — 사용자가 직접 고른 안이므로 근거가 '지역 중앙값'이 아니라 '본인 선택'이다.
     map_seeded_mass = None
+    map_seed = None
     if body.map_target_floors:
-        map_seeded_mass = _compute_mass(**common, target_floors=int(body.map_target_floors))
+        _tf = int(body.map_target_floors)
+        _m = _compute_mass(**common, target_floors=_tf)
+        # ★R1 HIGH-1 봉합 — **결과로** 적용 여부를 판정한다(엔진 내부 분기를 믿지 않는다).
+        #   시드가 상한으로 실제 물렸다면 산출 층수는 시드 이하다. 그렇지 않다면 엔진의 어떤
+        #   경로(예: podium-tower가 num_floors를 사후 덮어쓰는 경로)에서 시드가 무시된 것이고,
+        #   그때 "층수를 반영했다"고 고지하면 5층을 고른 사용자에게 38층을 '고른 안'으로
+        #   보여주는 **표기 사기**가 된다. 독립 오라클이라 엔진이 바뀌어도 계속 유효하다.
+        _floors = _m.get("num_floors")
+        _applied = isinstance(_floors, (int, float)) and _floors <= _tf
+        map_seed = {
+            "target_floors": _tf,
+            "option_label": body.map_option_label,
+            "applied": bool(_applied),
+            "not_applied_reason": (
+                None if _applied
+                else "이 용도지역·매스 형식(예 포디움-타워)에서는 층수 시드가 반영되지 않습니다."
+            ),
+        }
+        # 적용되지 않았으면 매스를 내주지 않는다 — 내주면 소비처가 '고른 안'으로 표시한다.
+        map_seeded_mass = _m if _applied else None
 
     return {
         "region": region,
@@ -298,10 +318,7 @@ async def seed_design(
         "regional_typical_mass": regional_mass,   # 실측 전형 시드 결과(없으면 None)
         # ★W4(additive): 사통맵에서 고른 배치안 층수를 상한으로 반영한 매스(미전달이면 None).
         "map_seeded_mass": map_seeded_mass,
-        "map_seed": (
-            {"target_floors": int(body.map_target_floors), "option_label": body.map_option_label}
-            if body.map_target_floors else None
-        ),
+        "map_seed": map_seed,
         "mass_reference": mass_ref,               # 시드 출처(provenance)
         # ★특이부지 게이트(additive·B2) — 학교용지·GB·농지·산지 등 경고(컨텍스트 없으면 None).
         "special_parcel": special_parcel,
@@ -321,6 +338,8 @@ async def seed_design(
                  "반영해 과도한 고층화를 방지합니다. 지역 실측 통계를 확보하지 못하면 지역 실측 "
                  "전형 매스는 제공되지 않고 법정 최대 매스만 제공됩니다. 사통맵에서 고른 배치안을 "
                  "넘긴 경우 그 층수를 **상한으로만** 반영한 매스를 함께 제공합니다(법정 한도를 넘겨 "
-                 "부풀리지 않으며, 한도가 더 엄격하면 한도가 이깁니다). 산정 엔진은 법정상한·조례상한·"
+                 "부풀리지 않으며, 한도가 더 엄격하면 한도가 이깁니다). 층수 시드가 실제로 반영되지 "
+                 "않는 용도지역·매스 형식에서는 반영된 척하지 않고 미반영 사유만 알립니다. "
+                 "산정 엔진은 법정상한·조례상한·"
                  "목표치 중 가장 엄격한 값으로 클램프하며 임의로 상향하지 않습니다."),
     }

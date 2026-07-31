@@ -26,7 +26,7 @@ describe("buildMassSeedHandoff — 없는 값을 만들지 않는다", () => {
   it("층수가 있으면 페이로드를 만든다(라벨은 종류+각도)", () => {
     const h = buildMassSeedHandoff({
       pnu: "4711135022200010001", address: "포항시 남구 호미곶면 대보리 산1-1",
-      kind: "판상형", angleDeg: 25.3, floors: 15, now: NOW,
+      kind: "판상형", angleDeg: 25.3, floors: 15, areaSqm: 1000, now: NOW,
     });
     expect(h).not.toBeNull();
     expect(h!.targetFloors).toBe(15);
@@ -58,7 +58,7 @@ describe("buildMassSeedHandoff — 없는 값을 만들지 않는다", () => {
 });
 
 describe("write/read — 만료·파손은 조용히 되살리지 않는다", () => {
-  const H = () => buildMassSeedHandoff({ pnu: "p1", address: "a1", kind: "판상형", floors: 15, now: NOW })!;
+  const H = () => buildMassSeedHandoff({ pnu: "p1", address: "a1", kind: "판상형", floors: 15, areaSqm: 1000, now: NOW })!;
 
   it("저장한 것을 그대로 읽는다", () => {
     writeMassSeedHandoff(H());
@@ -88,29 +88,50 @@ describe("write/read — 만료·파손은 조용히 되살리지 않는다", ()
 });
 
 describe("massSeedAppliesTo — ★다른 필지의 선택을 조용히 적용하지 않는다", () => {
-  const H = (over: Partial<{ pnu: string | null; address: string | null }> = {}) => ({
-    pnu: "p1", address: "a1", targetFloors: 15, optionLabel: "판상형 25°", savedAt: NOW, ...over,
+  const H = (over: Partial<{ pnu: string | null; address: string | null; areaSqm: number | null }> = {}) => ({
+    pnu: "p1", address: "a1", areaSqm: 1000, targetFloors: 15,
+    optionLabel: "판상형 25°", savedAt: NOW, ...over,
   });
+  const CUR = (over: Record<string, unknown> = {}) => ({ pnu: "p1", address: "a1", areaSqm: 1000, ...over });
 
-  it("같은 PNU면 적용한다", () => {
-    expect(massSeedAppliesTo(H(), { pnu: "p1", address: "다른주소" })).toBe(true);
+  it("같은 PNU·같은 면적이면 적용한다", () => {
+    expect(massSeedAppliesTo(H(), CUR({ address: "다른주소" }))).toBe(true);
   });
 
   it("★PNU가 다르면 적용하지 않는다(주소가 같아 보여도 PNU가 우선)", () => {
-    expect(massSeedAppliesTo(H(), { pnu: "p2", address: "a1" })).toBe(false);
+    expect(massSeedAppliesTo(H(), CUR({ pnu: "p2" }))).toBe(false);
   });
 
   it("PNU가 없으면 주소로 판정한다", () => {
-    expect(massSeedAppliesTo(H({ pnu: null }), { address: "a1" })).toBe(true);
-    expect(massSeedAppliesTo(H({ pnu: null }), { address: "a2" })).toBe(false);
+    expect(massSeedAppliesTo(H({ pnu: null }), { address: "a1", areaSqm: 1000 })).toBe(true);
+    expect(massSeedAppliesTo(H({ pnu: null }), { address: "a2", areaSqm: 1000 })).toBe(false);
+  });
+
+  it("★주소는 **정규화**해 비교한다 — 진입 경로마다 공백이 달라 무표시 위양성이 됐다(R1 MEDIUM-2)", () => {
+    expect(
+      massSeedAppliesTo(H({ pnu: null, address: "포항시  남구   대보리 산1-1 " }),
+        { address: "포항시 남구 대보리 산1-1", areaSqm: 1000 }),
+    ).toBe(true);
   });
 
   it("★양쪽 다 식별자가 없으면 **적용하지 않는다**(판정 불가를 낙관으로 흘리지 않는다)", () => {
-    expect(massSeedAppliesTo(H({ pnu: null, address: null }), {})).toBe(false);
-    expect(massSeedAppliesTo(H({ pnu: null, address: null }), { pnu: "p1", address: "a1" })).toBe(false);
+    expect(massSeedAppliesTo(H({ pnu: null, address: null }), { areaSqm: 1000 })).toBe(false);
+    expect(massSeedAppliesTo(H({ pnu: null, address: null }), CUR())).toBe(false);
+  });
+
+  it("★★면적이 다르면 적용하지 않는다 — 다필지 합산 부지에 단일필지 층수 오적용 차단(R1 HIGH-3)", () => {
+    // 대표필지(parcels[0]) 주소는 일치하지만 설계 부지는 합산 면적이다.
+    expect(massSeedAppliesTo(H({ areaSqm: 500 }), CUR({ areaSqm: 2000 }))).toBe(false);
+    // 반올림·재계산 오차(2%)는 같은 부지로 본다(위양성 방지).
+    expect(massSeedAppliesTo(H({ areaSqm: 1000 }), CUR({ areaSqm: 1015 }))).toBe(true);
+  });
+
+  it("★면적이 한쪽이라도 없으면 적용하지 않는다(다필지 여부 판정 불가 → 낙관 금지)", () => {
+    expect(massSeedAppliesTo(H({ areaSqm: null }), CUR())).toBe(false);
+    expect(massSeedAppliesTo(H(), CUR({ areaSqm: null }))).toBe(false);
   });
 
   it("인계가 없으면 false", () => {
-    expect(massSeedAppliesTo(null, { pnu: "p1" })).toBe(false);
+    expect(massSeedAppliesTo(null, CUR())).toBe(false);
   });
 });

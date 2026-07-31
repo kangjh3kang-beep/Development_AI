@@ -56,6 +56,7 @@ function seedHandoff(over: Partial<{ address: string; savedAt: number }> = {}) {
   writeMassSeedHandoff({
     pnu: null,
     address: over.address ?? ADDR,
+    areaSqm: 1000,
     targetFloors: 15,
     optionLabel: "판상형 25°",
     savedAt: over.savedAt ?? Date.now(),
@@ -128,6 +129,36 @@ describe("SeedDesignMassComparison — 매스 시드 수신(W4)", () => {
     const notice = await screen.findByText(/상한으로 반영/);
     expect(notice.textContent).toContain("부풀리지 않습니다");
     expect(notice.textContent).toContain("동 배치 도형");
+  });
+
+  it("★★⑦ 시드가 **미적용**이면 침묵하지 않고 그 사실을 알린다(R1 HIGH-1 회귀락)", async () => {
+    // 종전엔 미적용이어도 카드가 뜨고 "반영했다"고 고지해, 5층을 고른 사용자가 38층을
+    // '고른 안'으로 읽는 표기 사기가 됐다. 이제 서버가 applied=false로 알리고 화면은 고지한다.
+    seedHandoff();
+    response.current = baseResponse({
+      map_seeded_mass: null,
+      map_seed: {
+        target_floors: 5,
+        option_label: "판상형 25°",
+        applied: false,
+        not_applied_reason: "이 용도지역·매스 형식(예 포디움-타워)에서는 층수 시드가 반영되지 않습니다.",
+      },
+    });
+    render(<SeedDesignMassComparison address={ADDR} landAreaSqm={1000} zoning="일반상업지역" buildingUse="공동주택" />);
+    await fetchOnce();
+
+    const notice = await screen.findByText(/반영되지 않았습니다/);
+    expect(notice.textContent).toContain("판상형 25°");
+    // ★반영 안 됐는데 '고른 안' 카드가 뜨면 안 된다.
+    expect(screen.queryByText("지도에서 고른 안")).toBeNull();
+  });
+
+  it("★⑧ 다필지(합산 면적)면 인계를 싣지 않는다 — 단일필지 층수 오적용 차단(R1 HIGH-3)", async () => {
+    seedHandoff(); // 인계 면적 1000㎡
+    render(<SeedDesignMassComparison address={ADDR} landAreaSqm={2500} zoning="제3종일반주거지역" buildingUse="공동주택" />);
+    await fetchOnce();
+
+    expect(posts[0].body.map_target_floors).toBeUndefined();
   });
 
   it("★⑥ 서버가 map_seeded_mass를 주지 않으면 카드를 만들지 않는다(무날조)", async () => {

@@ -157,6 +157,8 @@ describe("SatongMapShell 매스 시드 인계 배선(W4)", () => {
     expect(saved!.optionLabel).toBe("판상형 25°");
     expect(saved!.pnu).toBe(PNU_A);
     expect(saved!.address).toBe(ADDR_A);
+    // ★R1 HIGH-3: 이 층수가 산정된 부지 면적도 함께 실려야 수신측이 다필지 합산 부지를 걸러낸다.
+    expect(saved!.areaSqm).toBe(1000);
 
     // ★이동: 저장만 하고 안 보내면 사용자는 아무 일도 안 일어난 걸로 본다.
     expect(push).toHaveBeenCalledWith("/ko/design-studio");
