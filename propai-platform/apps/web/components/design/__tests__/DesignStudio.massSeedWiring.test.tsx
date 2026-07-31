@@ -18,16 +18,19 @@ import { assertWiredThrough } from "@/lib/source-invariant";
 
 describe("DesignStudio — 매스 시드 대조용 식별자 배선(W4)", () => {
   it("★SeedDesignMassComparison 호출부가 pnu를 넘긴다(가드 사문화 방지)", () => {
-    // ★하중을 받는 것은 `minMatches`다: 이 파일에는 pnu를 넘기는 호출부가 **2곳**(설계 시드
-    //   비교·등기/토지조서)이고, 시드 비교 쪽 한 줄이 사라지면 1건 < 2건으로 **하드 실패**한다.
-    //   (R3 LOW 지적대로 mustContain을 scope 밖으로 빼려다 scope를 넓혔더니 pnu 줄을 지워도
-    //    컴포넌트 줄이 매치해 **잠금이 깨졌다** — 개수 잠금이 이 도구의 옳은 사용법이다.)
+    // ★스코프는 **이 호출부의 형태에만** 좁힌다(`?? null`). 같은 파일의 다른 pnu 배선
+    //   (등기/토지조서, `|| undefined`)은 이 PR 소관이 아니므로 스코프에 넣지 않는다 —
+    //   넣었더니 그쪽을 **의미 보존 리팩터만 해도 깨지는 위양성**이 났다(R4가 프로브로 실증.
+    //   MEMORY `feedback_mutation_wiring_and_scope`의 "과도스코프가 정상코드 깨뜨림").
+    // ★하중을 받는 것은 `minMatches`다: 이 줄이 사라지면 0건 < 1건으로 **하드 실패**한다.
+    //   `mustContain`은 스코프 정규식의 부분문자열이라 사실상 장식이다(도구가 요구하는
+    //   필수 인자라 채운다) — 정직하게 밝혀 둔다. 진짜 검사는 아래 두 번째 케이스다.
     expect(() =>
       assertWiredThrough({
         file: "components/design/DesignStudio.tsx",
-        scope: /pnu=\{siteAnalysis\?\.pnu/,
+        scope: /pnu=\{siteAnalysis\?\.pnu \?\? null\}/,
         mustContain: "siteAnalysis?.pnu",
-        minMatches: 2,
+        minMatches: 1,
       }),
     ).not.toThrow();
   });
