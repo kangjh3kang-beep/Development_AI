@@ -46,6 +46,9 @@ def _layout(zone_type: str):
         ("제2종일반주거지역", True), ("제1종전용주거지역", True), ("3R", True), ("2r", True),
         ("일반상업지역", False), ("준공업지역", False), ("자연녹지지역", False),
         ("", False), ("   ", False),
+        # ★R1 MEDIUM-3 회귀락: "종"만으로 걸리면 **주거가 아닌** 용도지역에 법적 금지구역을
+        #   칠한다. 이 둘은 종전 구현에서 True였다.
+        ("제2종근린생활시설", False), ("제2종지구단위계획구역", False), ("제3종", False),
     ],
 )
 def test_north_light_applies_scope(zone, expected):
@@ -121,16 +124,57 @@ def test_band_is_inside_parcel_and_on_the_north_edge():
 
 
 def test_band_follows_irregular_parcel_shape():
-    """부정형 필지에서도 필지 형상을 따른다(직사각형으로 뭉개지 않는다)."""
+    """부정형 필지에서도 **열마다 자기 북측 경계**를 따른다(전역 maxy 한 줄이 아니다)."""
     from shapely.geometry import Polygon
 
-    # 북쪽이 뾰족한 오각형.
+    # 북쪽이 뾰족한 오각형 — 모든 열이 d보다 두꺼우므로 밴드는 '열별 상단 d'의 합이다.
     parcel = Polygon([(0, 0), (100, 0), (100, 60), (50, 100), (0, 60)])
     band, d = compute_north_light_band(parcel, height_m=40.0)
     assert band is not None
     assert band.difference(parcel).area == pytest.approx(0.0, abs=1e-6)
-    # 뾰족한 북단이라 밴드 면적이 '폭 × 전체 너비'보다 **작다**(직사각 근사가 아니라는 증거).
-    assert band.area < d * (parcel.bounds[2] - parcel.bounds[0])
+    width = parcel.bounds[2] - parcel.bounds[0]
+    assert band.area == pytest.approx(d * width, rel=0.02)
+    # 밴드 아래 경계가 **평평하지 않다** = 전역 maxy 직선 근사가 아니라는 직접 증거.
+    assert band.bounds[1] < parcel.bounds[3] - d
+
+
+def test_band_covers_every_arm_of_an_L_shaped_parcel():
+    """★R1 HIGH-3 회귀락 — L자 필지에서 **각 팔이 자기 북측 경계** 기준으로 밴드를 갖는다.
+
+    종전 구현은 전역 maxy 한 줄로 띠를 만들어, 북으로 뻗은 팔에만 밴드가 생기고 자기 정북
+    경계가 더 남쪽인 다른 팔에는 **0**이었다(위치가 무관하고 방향이 비보수적).
+    """
+    from shapely.geometry import Polygon, box
+
+    # 서쪽 팔은 y=30까지, 동쪽 팔의 북측 경계는 y=-10.
+    parcel = Polygon([(0, -35), (100, -35), (100, -10), (50, -10), (50, 30), (0, 30)])
+    # 이격(20m)이 동쪽 팔 두께(25m)보다 **작은** 높이를 쓴다 — 그래야 "팔 상단에만 붙는가"를
+    # 관측할 수 있다(이격이 더 크면 팔 전체가 금지가 되어 위치 판정이 공허해진다).
+    band, d = compute_north_light_band(parcel, height_m=40.0)
+    assert d == pytest.approx(20.0)
+    assert band is not None
+    assert band.difference(parcel).area == pytest.approx(0.0, abs=1e-6)
+
+    # ★공유 모서리(x=50)를 피해 팔 **내부**로 좁힌다 — 경계선에서 0면적 선분이 섞이면
+    #   bounds가 옆 팔의 값을 물어와 엉뚱한 것을 재게 된다(실제로 한 번 그렇게 틀렸다).
+    west = band.intersection(box(-1, -40, 49.5, 40))
+    east = band.intersection(box(50.5, -40, 101, 40))
+    assert west.area > 0, "서쪽 팔에 밴드가 없다"
+    assert east.area > 0, "★동쪽 팔에 밴드가 0 — 자기 북측 경계를 무시한다(전역 maxy 회귀)"
+    # 각 팔은 **자기** 북단에 붙는다(동쪽 -10, 서쪽 30).
+    assert east.bounds[3] == pytest.approx(-10.0, abs=1e-6)
+    assert west.bounds[3] == pytest.approx(30.0, abs=1e-6)
+
+
+def test_thin_column_becomes_fully_forbidden():
+    """열 두께가 이격보다 얇으면 그 열은 **통째로** 금지다(그 높이로는 못 짓는다)."""
+    from shapely.geometry import box
+
+    parcel = box(0, 0, 100, 10)  # 남북 폭 10m
+    band, d = compute_north_light_band(parcel, height_m=40.0)  # d = 20m > 10m
+    assert d > 10.0
+    assert band is not None
+    assert band.area == pytest.approx(parcel.area, rel=1e-6)
 
 
 def test_band_none_when_parcel_missing():
@@ -165,3 +209,124 @@ def test_band_is_per_option_not_global():
         )
     else:
         pytest.skip("이 픽스처에서는 대안 높이가 모두 같아 대안별 차이를 관측할 수 없다")
+
+
+# ── ★R1 HIGH-1 회귀락: 밴드는 장식이 아니라 **배치 제약**이다 ─────────────────────
+import math  # noqa: E402
+
+from shapely.geometry import shape  # noqa: E402
+
+
+def _rect_parcel(width_m: float, depth_m: float, lat0: float = 37.5, lon0: float = 127.0):
+    """동서 width_m × 남북 depth_m 직사각 필지(위경도)."""
+    dy = depth_m / 110540.0
+    dx = width_m / (111320.0 * math.cos(math.radians(lat0)))
+    return {
+        "type": "Polygon",
+        "coordinates": [[
+            [lon0, lat0], [lon0 + dx, lat0], [lon0 + dx, lat0 + dy], [lon0, lat0 + dy], [lon0, lat0],
+        ]],
+    }
+
+
+def _worst_overlap_pct(result) -> float:
+    worst = 0.0
+    for o in result.get("options") or []:
+        band = shape(o["north_light_band_geojson"]) if o.get("north_light_band_geojson") else None
+        if band is None:
+            continue
+        total = viol = 0.0
+        for f in (o.get("buildings_geojson") or {}).get("features", []):
+            g = shape(f["geometry"])
+            total += g.area
+            viol += g.intersection(band).area
+        if total:
+            worst = max(worst, 100.0 * viol / total)
+    return worst
+
+
+@pytest.mark.parametrize(
+    "width,depth,far",
+    [(120.0, 120.0, 200.0), (40.0, 60.0, 200.0), (100.0, 60.0, 300.0), (60.0, 100.0, 250.0)],
+)
+def test_no_building_sits_inside_the_forbidden_band(width, depth, far):
+    """★★ 밴드 안에는 **단 한 동도** 앉지 않는다.
+
+    종전엔 밴드를 계산해 응답에 얹기만 하고 배치로 되먹이지 않아, 같은 응답이 "이 높이로
+    건축 불가"라고 칠한 자리에 그 높이의 건물을 그렸다(실측 겹침 80%). 화면은 그 위에
+    "일조권 충족"이라고 썼다 — **밴드가 없던 때보다 나쁜 상태**(플랫폼이 자기 권장안의
+    위법을 그려놓고 적법하다고 말한다). 이 불변식이 그 상태로의 회귀를 막는다.
+    """
+    r = build_site_layout(
+        parcel_geojson=_rect_parcel(width, depth), land_area_sqm=width * depth,
+        far_pct=far, bcr_pct=60, zone_type="제3종일반주거지역", building_type="아파트",
+    )
+    assert _worst_overlap_pct(r) == pytest.approx(0.0, abs=0.01), (
+        "권장 배치가 정북 금지 띠를 침범한다 — 밴드가 배치로 되먹여지지 않는다"
+    )
+
+
+def test_shallow_parcel_says_why_instead_of_illegal_layout():
+    """★이격을 확보하면 동이 안 들어가는 얕은 필지는 **위법 배치 대신 사유**를 말한다."""
+    r = build_site_layout(
+        parcel_geojson=_rect_parcel(100.0, 24.0), land_area_sqm=2400,
+        far_pct=300, bcr_pct=60, zone_type="제3종일반주거지역", building_type="아파트",
+    )
+    assert r["ok"] is False
+    assert not (r.get("options") or [])
+    assert any("정북 일조 이격을 확보하면" in n for n in r["honest_notes"]), r["honest_notes"]
+
+
+def test_non_applying_zone_keeps_previous_placement_behaviour():
+    """★무회귀: 정북 미적용 용도지역에서는 배치가 종전과 같다(밴드 차감 없음)."""
+    parcel = _rect_parcel(100.0, 24.0)
+    r = build_site_layout(
+        parcel_geojson=parcel, land_area_sqm=2400, far_pct=300, bcr_pct=60,
+        zone_type="일반상업지역", building_type="아파트",
+    )
+    assert r["ok"] is True, "미적용 지역인데 배치가 사라졌다 — 밴드가 잘못 차감됐다"
+    assert r["north_light"]["applies"] is False
+
+
+def test_band_geometry_differs_per_option_not_just_the_number():
+    """★B1 회귀락 — 대안별로 **기하 자체가** 달라야 한다(숫자만 다르면 지도는 틀린 띠를 그린다)."""
+    r = build_site_layout(
+        parcel_geojson=_rect_parcel(120.0, 120.0), land_area_sqm=14400,
+        far_pct=200, bcr_pct=60, zone_type="제2종일반주거지역", building_type="아파트",
+    )
+    by_h: dict[float, float] = {}
+    for o in r["options"]:
+        band = shape(o["north_light_band_geojson"])
+        by_h.setdefault(o["height_m"], band.area)
+    if len(by_h) < 2:
+        pytest.skip("이 픽스처에서는 대안 높이가 모두 같아 기하 차이를 관측할 수 없다")
+    assert len(set(round(a, 9) for a in by_h.values())) > 1, (
+        f"높이가 다른데 밴드 **면적**이 같다 = 기하가 고정 높이로 계산된다: {by_h}"
+    )
+
+
+def test_band_width_matches_the_reported_setback():
+    """★B3 회귀락 — 지도 띠의 **폭**과 패널이 표시하는 **수치**가 묶여 있다.
+
+    (단위 테스트에만 있으면 통합 응답에서 둘이 갈라져도 통과한다.)
+    """
+    r = build_site_layout(
+        parcel_geojson=_rect_parcel(120.0, 120.0), land_area_sqm=14400,
+        far_pct=200, bcr_pct=60, zone_type="제2종일반주거지역", building_type="아파트",
+    )
+    for o in r["options"]:
+        band = shape(o["north_light_band_geojson"])
+        # 직사각 필지이므로 밴드 폭(위도 범위)을 미터로 환산하면 표시 이격과 같아야 한다.
+        width_m = (band.bounds[3] - band.bounds[1]) * 110540.0
+        assert width_m == pytest.approx(o["north_light_setback_m"], rel=0.02), (
+            f"{o['kind']}: 띠 폭 {width_m:.1f}m vs 표시 {o['north_light_setback_m']}m"
+        )
+
+
+def test_unknown_zone_note_states_why_band_is_missing():
+    """★B6 회귀락 — 판정 불가 사유가 **honest_notes로도** 나간다(화면이 그대로 고지한다)."""
+    r = build_site_layout(
+        parcel_geojson=_rect_parcel(120.0, 120.0), land_area_sqm=14400,
+        far_pct=200, bcr_pct=60, zone_type="", building_type="아파트",
+    )
+    assert any("판정하지 못했습니다" in n for n in r["honest_notes"]), r["honest_notes"]

@@ -436,6 +436,21 @@ describe("SatongMapShell 정북 일조 밴드 배선(W3-b)", () => {
     expect(mapProps.layoutNorthLightHeightM).toBe(30);
   });
 
+  it("★⑤ 패널 문구가 **높이 기준**임을 밝힌다(F6 — 한정어가 빠지면 확정 제약으로 읽힌다)", async () => {
+    seed();
+    render(<SatongMapShell locale="ko" />);
+    fireEvent.click(screen.getByText("대보리 산1-1"));
+    fireEvent.click(screen.getByTestId("parcel-layout-request"));
+    await act(async () => {
+      layout.resolve?.(RESULT_NL);
+    });
+
+    const box = screen.getByTestId("parcel-layout-north-light");
+    expect(box.textContent).toContain("45m");
+    expect(box.textContent).toContain("높이 기준");
+    expect(box.textContent).toContain("22.5m");
+  });
+
   it("★③ 미적용 용도지역이면 밴드를 그리지 않고 **사유**를 표시한다", async () => {
     seed();
     render(<SatongMapShell locale="ko" />);

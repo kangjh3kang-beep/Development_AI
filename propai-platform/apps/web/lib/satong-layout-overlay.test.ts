@@ -41,12 +41,15 @@ function fakeLeaflet() {
     },
     polygon(rings: [number, number][][], style: Record<string, unknown>) {
       calls.push("polygon");
+      // ★대역 충실도(R1 F3): 실제 Leaflet은 `interactive:false`면 마우스 이벤트를 받지 않아
+      //   **툴팁이 뜨지 않는다**. 대역이 이를 모델링하지 않으면 "툴팁 사망" 변이가 생존한다.
+      const interactive = style.interactive !== false;
       const rec: { rings: unknown; style: Record<string, unknown>; tooltip?: string } = { rings, style };
       polygons.push(rec);
       const poly = {
         addTo: () => poly,
         bindTooltip: (content: string) => {
-          rec.tooltip = content;
+          if (interactive) rec.tooltip = content;
           return poly;
         },
       };
@@ -194,6 +197,13 @@ describe("정북 일조 밴드(W3-b) — 그리는 순서와 정직 문구", () 
 
   it("★밴드 색은 건축가능 영역과 **다르다** — 의미가 반대라 같은 색이면 같은 종류로 읽힌다", () => {
     expect(NORTH_LIGHT_BAND_STYLE.fillColor).not.toBe(BUILDABLE_STYLE.fillColor);
+  });
+
+  it("★밴드는 **반투명**이고 상호작용 가능하다 — 계획서 문언이 '반투명 밴드'이고, 불투명하면 "
+     + "필지·지적을 가리며 interactive:false면 툴팁(한계 고지)이 아예 안 뜬다", () => {
+    expect(NORTH_LIGHT_BAND_STYLE.fillOpacity).toBeLessThan(0.5);
+    expect(NORTH_LIGHT_BAND_STYLE.fillOpacity).toBeGreaterThan(0);
+    expect(NORTH_LIGHT_BAND_STYLE.interactive).toBe(true);
   });
 
   it("밴드가 없으면(미적용 용도지역) 그리지 않는다", () => {

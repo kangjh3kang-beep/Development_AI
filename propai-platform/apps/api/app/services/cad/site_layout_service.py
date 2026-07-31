@@ -98,23 +98,9 @@ def _parcel_to_local(parcel_geojson: dict[str, Any]):
 #   ② 정북 경계를 **필지 북쪽 끝 직선**으로 근사한다(부정형 필지에서 실제 인접지 경계와
 #      다를 수 있다). `exact_envelope`가 같은 근사를 쓰고 그 한계를 명시한 선례를 따른다.
 #   ③ 이격 거리는 **선택한 대안의 높이**에 대한 값이다 — 높이가 바뀌면 밴드도 바뀐다.
-_NORTH_LIGHT_ZONE_KEYWORDS = ("전용주거", "일반주거", "1종", "2종", "3종", "제1종", "제2종", "제3종")
-_NORTH_LIGHT_ZONE_CODES = frozenset({"1R", "2R", "3R"})
-
-
-def north_light_applies(zone_type: str) -> bool:
-    """정북일조(건축법 §61) 적용 용도지역인가.
-
-    한글 명칭·엔진 코드 양쪽을 받는다(호출자가 어느 쪽을 주는지 일정하지 않다).
-    ★판정 불가(빈 문자열)면 **적용하지 않는다** — 모르는데 밴드를 그리면 없는 제약을
-      보여주는 것이고, 이 저장소가 반복해서 고쳐 온 '낙관 폴백'의 반대 방향 오류다.
-    """
-    z = (zone_type or "").strip()
-    if not z:
-        return False
-    if z.upper() in _NORTH_LIGHT_ZONE_CODES:
-        return True
-    return any(k in z for k in _NORTH_LIGHT_ZONE_KEYWORDS)
+# ★R1 HIGH-2 봉합: 적용 판정을 여기서 다시 구현하지 않는다. 공용 SSOT를 재수출만 한다
+#   (기존 소비처·테스트의 import 경로를 깨지 않으면서 판정은 한 곳에서만 나오게 한다).
+from app.services.common.sunlight_setback import north_light_applies  # noqa: E402
 
 
 def compute_north_light_band(parcel_m, *, height_m: float, base_setback_m: float = 0.0):
@@ -133,12 +119,18 @@ def compute_north_light_band(parcel_m, *, height_m: float, base_setback_m: float
     if d <= 0:
         return None, 0.0
 
-    from shapely.geometry import box
+    from shapely.affinity import translate
 
-    minx, miny, maxx, maxy = parcel_m.bounds
-    # 북쪽 끝에서 d만큼의 띠. 넉넉히 감싼 box와 교집합 → 부정형 필지도 그대로 따른다.
-    strip = box(minx - 1.0, maxy - d, maxx + 1.0, maxy + 1.0)
-    band = parcel_m.intersection(strip)
+    # ★R1 HIGH-3 봉합 — 전역 maxy 한 줄로 띠를 만들면 **L자·계단형 필지에서 위치 자체가
+    #   틀린다**: 북으로 뻗은 팔에만 밴드가 생기고, 자기 정북 경계가 더 남쪽에 있는 다른 팔에는
+    #   **0**이 된다(비보수적 과소). 내가 쓴 "부정형 필지도 그대로 따른다"는 거짓이었고,
+    #   내 테스트가 북단이 하나뿐인 볼록 오각형이라 우연히 통과했다.
+    #
+    #   올바른 정의: 열 x마다 그 열의 **자기 북측 경계** maxY(x)에서 d 이내가 금지다.
+    #   `parcel − (parcel를 남으로 d만큼 평행이동)`이 정확히 그 집합이다 —
+    #   열 y∈[a,b]에서 이동본은 [a−d, b−d]이므로 차집합이 (b−d, b], 즉 그 열의 상단 d다.
+    #   폭이 d보다 얇은 열은 통째로 금지가 된다(그 높이로는 못 짓는다 — 맞는 결과).
+    band = parcel_m.difference(translate(parcel_m, yoff=-d))
     if band.is_empty or band.area <= 0:
         return None, d
     return band, d
@@ -325,6 +317,23 @@ def build_site_layout(
             _nl_cache[h] = compute_north_light_band(parcel_m, height_m=h)[0]
         return _nl_cache[h]
 
+    def _nl_place_area(h: float):
+        """★R1 HIGH-1 봉합 — 정북 금지 띠를 **배치 영역에서 차감**한다.
+
+        종전엔 밴드를 계산해 응답에 얹기만 하고 배치로 되먹이지 않았다. 그래서 같은 응답이
+        "이 높이로 건축 불가"라고 칠한 자리에 그 높이의 건물을 그렸고(실측 겹침 80%),
+        화면은 그 위에 "일조권 충족"이라고 썼다 — 밴드가 없던 때보다 나쁜 상태다
+        (플랫폼이 자기 권장안의 위법을 그려놓고 적법하다고 말한다).
+
+        밴드를 차감하면 겹침이 **구조적으로 0**이 되고, 계획서가 W3의 부수 효과로 적은
+        "실효 건폐율 가시화"도 비로소 성립한다(FAR 미달은 note로 고지된다).
+        """
+        band = _nl_band(h)
+        if band is None or band.is_empty:
+            return buildable_m
+        remain = buildable_m.difference(band)
+        return remain if not remain.is_empty else remain
+
     def _nl_distance(h: float) -> float | None:
         if not nl_applies:
             return None
@@ -332,6 +341,8 @@ def build_site_layout(
 
     cap60_hit = False
     spacing_capped = False
+    # 정북 금지 띠 때문에 표준 동을 못 앉힌 유형(사유 고지용 — 침묵하면 "왜 안 나오나"를 모른다).
+    nl_blocked_kinds: set[str] = set()
     for kind, bw, bd in kinds:
         per_footprint = bw * bd
         # 건폐율 상한 → 동수 캡(총 바닥면적 ≤ footprint_budget). 법적 제약 준수.
@@ -344,9 +355,19 @@ def build_site_layout(
             buildings: list = []
             floors, n = 1, 0
             placed_spacing = spacing  # ★실제 배치에 쓰인 간격(기록·정합의 단일 진실)
-            for _ in range(5):
-                placed = _place_grid(buildable_m, bw, bd, spacing, angle)
+            # ★정북 금지 띠를 뺀 실제 배치 가능 영역. 층수가 올라가면 띠가 넓어지므로
+            #   간격↔층수와 **같은 루프에서 함께 수렴**시킨다(관용구 재사용).
+            place_area = buildable_m
+            nl_infeasible = False
+            for _ in range(6):
+                placed = _place_grid(place_area, bw, bd, spacing, angle)
                 if not placed:
+                    # ★띠를 차감한 뒤 못 앉으면 이 안은 정북일조 아래 **성립하지 않는다**.
+                    #   여기서 그냥 break하면 이전 반복의 (띠를 모르는) 배치가 남아 위법 배치를
+                    #   그대로 내보낸다 — 실제로 그렇게 겹침 80%가 유지됐다.
+                    if place_area is not buildable_m:
+                        buildings = []
+                        nl_infeasible = True
                     break
                 # 건폐율 초과분 절단 — 중심 근접 동 우선 유지(한쪽 모서리 편향 방지).
                 if len(placed) > max_dongs_by_bcr:
@@ -356,10 +377,18 @@ def build_site_layout(
                 floors2 = max(1, min(60, math.ceil(target_gfa / max(1.0, per_footprint * n2))))
                 buildings, floors, n, placed_spacing = placed, floors2, n2, spacing
                 required = round(max(6.0, 0.8 * floors2 * _FLOOR_HEIGHT_M), 1)
-                if n2 <= 1 or required <= spacing + 0.5:
-                    break  # 단일동(인접無·인동간격 무관) 또는 간격 정합 → 종료
-                spacing = required  # 더 큰 인동간격으로 재배치(최종 고층 반영)
+                # 이 층수에 대응하는 금지 띠를 반영한 배치 영역(다음 반복의 입력).
+                next_area = _nl_place_area(floors2 * _FLOOR_HEIGHT_M)
+                area_changed = abs(next_area.area - place_area.area) > 1.0
+                place_area = next_area
+                spacing_ok = n2 <= 1 or required <= spacing + 0.5
+                if spacing_ok and not area_changed:
+                    break  # 간격·금지띠 모두 정합 → 종료
+                if not spacing_ok:
+                    spacing = required  # 더 큰 인동간격으로 재배치(최종 고층 반영)
             if not buildings:
+                if nl_infeasible:
+                    nl_blocked_kinds.add(kind)
                 continue
             # ★법적 정합 보장(미수렴 케이스): 실제 배치 간격(placed_spacing)이 허용하는 최대
             #   층수로 캡한다. 다동(n>1)은 인동간격 0.8H가 높이를 제약하므로, 간격을 키워도
@@ -379,7 +408,10 @@ def build_site_layout(
             day = _daylight_compliance(angle, lat0)
             # 조망개방성: 동이 차지하지 않은 가용 대지 비율(오픈스페이스).
             covered = sum(b.area for b in buildings)
-            openness_pct = round(max(0.0, (buildable_m.area - covered) / buildable_m.area * 100.0), 1)
+            # ★분모는 **실제 배치 가능 영역**(정북 금지 띠 차감 후)이다. buildable 전체로 나누면
+            #   지을 수 없는 띠까지 '오픈스페이스'로 계상돼 과대표시된다.
+            _open_base = place_area.area if place_area.area > 0 else buildable_m.area
+            openness_pct = round(max(0.0, (_open_base - covered) / _open_base * 100.0), 1)
             # 멀티오브젝티브 점수(우선순위별 가중).
             score = _score(yield_pct, day, openness_pct, priority)
             options.append({
@@ -422,7 +454,19 @@ def build_site_layout(
 
     options.sort(key=lambda o: o["score"], reverse=True)
     if not options:
-        notes.append("가용 대지에 표준 동(판상 40×15·타워 22×22)이 들어가지 않습니다(소규모·세장).")
+        if nl_blocked_kinds:
+            notes.append(
+                "정북 일조 이격을 확보하면 표준 동이 들어가지 않습니다"
+                f"({'·'.join(sorted(nl_blocked_kinds))}) — 남북 폭이 얕은 필지입니다. "
+                "동 규모 축소·필지 통합·저층 계획을 검토하세요.",
+            )
+        else:
+            notes.append("가용 대지에 표준 동(판상 40×15·타워 22×22)이 들어가지 않습니다(소규모·세장).")
+    elif nl_blocked_kinds:
+        notes.append(
+            f"일부 유형({'·'.join(sorted(nl_blocked_kinds))})은 정북 일조 이격 확보 후 표준 동이 "
+            "들어가지 않아 제외했습니다.",
+        )
 
     # ★W3-b: 밴드의 한계·미적용 사유를 honest_notes로도 내보낸다 — 화면이 서버 note를 그대로
     #   고지하는 계약이라, 여기 없으면 사용자는 밴드가 없는 이유를 영영 모른다.
