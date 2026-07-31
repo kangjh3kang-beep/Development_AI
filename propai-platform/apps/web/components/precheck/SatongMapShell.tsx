@@ -57,10 +57,12 @@ import {
   ParcelLayoutSection,
   type ParcelLayoutStatus,
 } from "@/components/precheck/ParcelLayoutSection"; // W3 배치 미리보기
+import { buildMassSeedHandoff, writeMassSeedHandoff } from "@/lib/satong-mass-seed"; // W4 매스 시드 인계
 import {
   buildLayoutOverlay,
   resolveSelectedOption,
   siteLayoutOptionKey,
+  type SiteLayoutOption,
   type SiteLayoutResult,
 } from "@/lib/site-layout";
 import type {
@@ -931,6 +933,32 @@ export function SatongMapShell({
       setLayoutOptionKey(null);
     }
   }, []);
+
+  /**
+   * ★W4 — 고른 배치안을 설계 스튜디오로 인계한다.
+   *
+   * 저장·이동을 **여기(셸)에서** 한다: 표시 전용 섹션이 sessionStorage와 라우팅을 만지면
+   * 같은 로직이 소비처마다 흩어진다(W2·W3에서 세운 계약과 동일).
+   * 필지 식별자를 함께 실어야 수신측이 **다른 필지의 선택을 조용히 적용하는 일**을 막는다.
+   */
+  const handleSeedDesign = useCallback(
+    (option: SiteLayoutOption) => {
+      const feature = detailFeatureRef.current;
+      const handoff = buildMassSeedHandoff({
+        pnu: feature?.pnu ?? null,
+        address: feature?.address ?? null,
+        kind: option.kind,
+        angleDeg: option.angle_deg,
+        floors: option.floors,
+        now: Date.now(),
+      });
+      // 층수가 없으면 넘길 게 없다 — 빈 인계를 남겨 수신측이 헛돌게 하지 않는다.
+      if (!handoff) return;
+      writeMassSeedHandoff(handoff);
+      router.push(`/${locale}/design-studio`);
+    },
+    [locale, router],
+  );
 
   const requestParcelLayout = useCallback(async () => {
     const feature = detailFeatureRef.current;
@@ -3075,6 +3103,7 @@ export function SatongMapShell({
               otherRequestInFlight={layoutBusy && layoutStatus !== "loading"}
               onRequest={requestParcelLayout}
               onSelectOption={setLayoutOptionKey}
+              onSeedDesign={handleSeedDesign}
             />
 
             <ParcelSlopeSection

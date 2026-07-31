@@ -20,6 +20,7 @@ import {
   SATONG_PARCEL_SLOPE_KEY,
   SATONG_SITE_LAYOUT_KEY,
 } from "@/components/precheck/satong-map-selection";
+import { SATONG_MASS_SEED_KEY } from "@/lib/satong-mass-seed";
 
 const CTX_KEYS = [
   "projectId", "projectName", "projectStatus",
@@ -117,7 +118,10 @@ export function clearAllProjectData(): void {
         //   위반이다. 새 뷰 캐시 키는 만드는 즉시 이 목록에 등재한다(W1 교훈).
         k === SATONG_PARCEL_SLOPE_KEY ||
         // ★W3 배치도 뷰 캐시 — 새 뷰 캐시 키는 만드는 즉시 이 목록에 등재한다(W1·W2 교훈).
-        k === SATONG_SITE_LAYOUT_KEY
+        k === SATONG_SITE_LAYOUT_KEY ||
+        // ★W4 매스 시드 인계 — 뷰 캐시가 아니라 **인계 페이로드**지만 위험은 같거나 더 크다:
+        //   남으면 이전 계정이 고른 배치안 층수가 다음 계정의 설계 시드로 들어간다.
+        k === SATONG_MASS_SEED_KEY
       ) {
         try { window.sessionStorage.removeItem(k); } catch { /* noop */ }
       }
