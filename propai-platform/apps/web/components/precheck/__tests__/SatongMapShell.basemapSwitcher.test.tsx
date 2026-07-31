@@ -193,13 +193,22 @@ describe("SatongMapShell 레일 — 탐색/확정 분리", () => {
   });
 
   it("★롤오버로 팝오버가 열리고, 다른 항목으로 이동하면 전환된다", () => {
-    render(<SatongMapShell locale="ko" />);
-    fireEvent.mouseEnter(screen.getByRole("button", { name: "용도지역" }));
-    expect(screen.getByRole("heading", { level: 3, name: "용도지역" })).toBeTruthy();
+    // ★hover '전환' 의도 지연(A안) 이후 갱신: **첫 열기는 여전히 즉시**지만, 이미 팝오버가
+    //   열려 있을 때의 **전환**은 임계(150ms) 체류를 요구한다(2열 레일에서 팝오버로 가는 길에
+    //   스치는 아이콘이 팝오버를 갈아치우던 사용자 지적 회귀의 봉합).
+    //   이 테스트가 지키는 계약은 "다른 항목으로 이동하면 전환된다"이므로, 계약은 그대로 두고
+    //   체류를 만들어 준다(즉시성은 railHoverIntent 테스트가 ①/②로 분리해 고정한다).
+    vi.useFakeTimers();
+    try {
+      render(<SatongMapShell locale="ko" />);
+      fireEvent.mouseEnter(screen.getByRole("button", { name: "용도지역" }));
+      expect(screen.getByRole("heading", { level: 3, name: "용도지역" })).toBeTruthy();
 
-    fireEvent.mouseEnter(screen.getByRole("button", { name: "지적도" }));
-    expect(screen.getByRole("heading", { level: 3, name: "지적도" })).toBeTruthy();
-    expect(screen.queryByRole("heading", { level: 3, name: "용도지역" })).toBeNull();
+      fireEvent.mouseEnter(screen.getByRole("button", { name: "지적도" }));
+      act(() => { vi.advanceTimersByTime(300); }); // 머물렀다 = 의도적 전환
+      expect(screen.getByRole("heading", { level: 3, name: "지적도" })).toBeTruthy();
+      expect(screen.queryByRole("heading", { level: 3, name: "용도지역" })).toBeNull();
+    } finally { vi.useRealTimers(); }
   });
 
   it("★확정은 팝오버 안에서 — 누른 뒤에도 팝오버가 닫히지 않는다", () => {
@@ -352,6 +361,8 @@ describe("SatongMapShell 레일 — 핀 stale 누수(HIGH-1)", () => {
       expect(screen.getByRole("heading", { level: 3, name: "용도지역" })).toBeTruthy();
 
       fireEvent.mouseEnter(screen.getByRole("button", { name: "공시지가" })); // 다른 hover분
+      act(() => { vi.advanceTimersByTime(300); }); // ★전환을 실제로 일으킨다(A안 지연 경유)
+      expect(screen.getByRole("heading", { level: 3, name: "공시지가" })).toBeTruthy();
       fireEvent.mouseLeave(rail);
       act(() => { vi.advanceTimersByTime(400); });
       expect(screen.queryByRole("heading", { level: 3, name: "공시지가" })).toBeNull();
@@ -389,6 +400,7 @@ describe("SatongMapShell 레일 — 핀 잔여 누수(HIGH-2)", () => {
       const rail = bmBtn.closest("div")!;
       hoverClick(bmBtn); // pin="basemap"
       fireEvent.mouseEnter(screen.getByRole("button", { name: /용도지역/ })); // 전환(basemapOpen=false)
+      act(() => { vi.advanceTimersByTime(300); }); // ★A안: 전환은 임계 체류 후 발화
       fireEvent.mouseLeave(rail);
       act(() => { vi.advanceTimersByTime(400); }); // 타이머가 닫음 → 이펙트가 핀 정리
       expect(screen.queryByRole("heading", { level: 3, name: "용도지역" })).toBeNull();
@@ -410,6 +422,7 @@ describe("SatongMapShell 레일 — 핀 잔여 누수(HIGH-2)", () => {
       hoverClick(btn); // pin=용도지역
       expect(screen.getByRole("dialog", { name: "용도지역" })).toBeTruthy();
       fireEvent.mouseEnter(screen.getByRole("button", { name: "공시지가" })); // 전환 → pin 정리(이펙트)
+      act(() => { vi.advanceTimersByTime(300); }); // ★A안: 전환은 임계 체류 후 발화
       // 위 전환으로 활성이 공시지가; 팝오버 mouseleave로 닫아본다
       fireEvent.mouseLeave(screen.getByRole("dialog", { name: "공시지가" }));
       act(() => { vi.advanceTimersByTime(400); });
@@ -439,8 +452,12 @@ describe("SatongMapShell 레일 — 전환 vs 완전닫힘(HIGH-3·Q2-c)", () =>
       const aBtn = screen.getByRole("button", { name: /용도지역/ });
       const rail = aBtn.closest("div")!;
       hoverClick(aBtn); // pin=용도지역(클릭 확정)
+      // ★hover 전환 지연(A안) 이후 필수: 체류 없이는 전환 자체가 일어나지 않아
+      //   이 줄이 **무동작**이 되고 테스트가 아무것도 지키지 않는다(R1 HIGH-2 적발 —
+      //   핀 정리 이펙트를 옛 조건식으로 되돌리는 변이가 CAUGHT→SURVIVED로 퇴화했다).
       fireEvent.mouseEnter(screen.getByRole("button", { name: "공시지가" })); // B 스침(전환)
-      fireEvent.mouseEnter(aBtn); // A 복귀(전환)
+      act(() => { vi.advanceTimersByTime(300); }); // 실제로 전환시킨다
+      fireEvent.mouseEnter(aBtn); // A 복귀 — ★고정분 복귀는 지연 없이 즉시(R1 HIGH-1)
       fireEvent.mouseLeave(rail);
       act(() => { vi.advanceTimersByTime(400); });
       // 스침이 있었어도 클릭 확정분은 살아야 한다(전환은 강등이 아니다).
@@ -455,8 +472,12 @@ describe("SatongMapShell 레일 — 전환 vs 완전닫힘(HIGH-3·Q2-c)", () =>
       const bmBtn = screen.getByRole("button", { name: "베이스맵 선택" });
       const rail = bmBtn.closest("div")!;
       hoverClick(bmBtn); // pin=basemap(클릭 확정)
+      // ★hover 전환 지연(A안) 이후 필수: 체류 없이는 전환 자체가 일어나지 않아
+      //   이 줄이 **무동작**이 되고 테스트가 아무것도 지키지 않는다(R1 HIGH-2 적발 —
+      //   핀 정리 이펙트를 옛 조건식으로 되돌리는 변이가 CAUGHT→SURVIVED로 퇴화했다).
       fireEvent.mouseEnter(screen.getByRole("button", { name: /용도지역/ })); // 레이어 스침(basemapOpen=false)
-      fireEvent.mouseEnter(bmBtn); // 베이스맵 복귀
+      act(() => { vi.advanceTimersByTime(300); }); // 실제로 전환시킨다
+      fireEvent.mouseEnter(bmBtn); // 베이스맵 복귀 — ★고정분 복귀는 즉시
       fireEvent.mouseLeave(rail);
       act(() => { vi.advanceTimersByTime(400); });
       expect(screen.getByRole("button", { name: "베이스맵: 일반" })).toBeTruthy();
