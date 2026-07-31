@@ -43,6 +43,30 @@ export const BUILDABLE_STYLE = {
   bubblingMouseEvents: false,
 } as const;
 
+/**
+ * ★W3-b 정북 일조 금지 띠 — **경고 색(앰버)·사선 없는 반투명 면**.
+ *
+ * 건축가능 영역(파랑 점선)과 **색으로 구분**한다: 파랑은 "지을 수 있는 곳", 앰버는 "이 높이로는
+ * 지을 수 없는 곳"이라 의미가 반대다. 같은 색 계열로 그리면 두 밴드가 같은 종류로 읽힌다.
+ * 동(불투명 파랑)보다 아래에 깔리도록 **먼저** 그린다.
+ */
+export const NORTH_LIGHT_BAND_STYLE = {
+  color: "#f59e0b",
+  weight: 1,
+  dashArray: "2,3",
+  fillColor: "#f59e0b",
+  fillOpacity: 0.18,
+  interactive: true,
+  bubblingMouseEvents: false,
+} as const;
+
+/** 밴드 툴팁 — ★근사임과 '높이 기준'임을 문구에 박는다(도면으로 오독 방지). */
+export function northLightTooltip(setbackM: unknown, heightM: unknown): string {
+  const d = typeof setbackM === "number" ? `${setbackM}m` : "필요 이격";
+  const h = typeof heightM === "number" ? `${heightM}m 기준` : "선택 안 높이 기준";
+  return `정북 일조 이격 ${d} (${h} · 이 띠에는 그 높이로 건축 불가 · 북측 경계 직선 근사)`;
+}
+
 /** 동 풋프린트 — 실선·불투명도 높임(선택 대안만). */
 export const BUILDING_STYLE = {
   color: "#135bec",
@@ -86,6 +110,9 @@ export function renderLayoutOverlay(args: {
   overlay: SiteLayoutOverlay | null | undefined;
   /** GeoJSON geometry → Leaflet 링. 지도측 공용 변환기를 주입받는다(좌표 재계산 없음). */
   toRings: (geometry: unknown) => [number, number][][];
+  /** ★W3-b 밴드 툴팁용 — 선택 대안의 이격·높이(없으면 문구가 일반형으로 떨어진다). */
+  northLightSetbackM?: number | null;
+  northLightHeightM?: number | null;
 }): LeafletLayerGroupLike | null {
   const { L, map, previousLayer, overlay, toRings } = args;
 
@@ -96,6 +123,23 @@ export function renderLayoutOverlay(args: {
 
   const group = L.layerGroup().addTo(map);
   let drawn = 0;
+
+  // ★정북 금지 띠를 **가장 먼저** 그린다 — 동·건축가능 영역이 위에 오도록(가림 방지).
+  if (overlay.northLightBand) {
+    const rings = toRings(overlay.northLightBand);
+    if (rings.length > 0) {
+      const band = L.polygon(rings, { ...NORTH_LIGHT_BAND_STYLE }).addTo(group);
+      try {
+        band.bindTooltip?.(
+          northLightTooltip(args.northLightSetbackM, args.northLightHeightM),
+          { direction: "top", opacity: 0.92 },
+        );
+      } catch {
+        /* 툴팁 실패는 도형 표시를 막지 않는다 */
+      }
+      drawn += 1;
+    }
+  }
 
   if (overlay.buildable) {
     const rings = toRings(overlay.buildable);

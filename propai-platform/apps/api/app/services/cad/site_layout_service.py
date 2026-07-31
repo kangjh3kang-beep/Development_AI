@@ -85,6 +85,65 @@ def _parcel_to_local(parcel_geojson: dict[str, Any]):
     return _largest_polygon(local) or local, to_wgs84, (lat0, lon0)
 
 
+# ── 정북 일조 이격 밴드(W3-b) ────────────────────────────────────────────────────
+# ★계획서 W3의 두 산출물 중 하나("정북 이격 필요 거리를 필지 위 반투명 밴드로")가 배치
+#   미리보기(#506)에서 빠진 채 인도됐다. 그 갭을 메운다.
+#
+# ★무엇을 그리나: 정북일조 사선 때문에 **그 높이로는 지을 수 없는** 북측 띠다(금지 영역).
+#   설계사가 "왜 북쪽이 비는가"를 지도에서 즉시 본다.
+#
+# ★정직 경계(전부 응답 note로 나간다):
+#   ① 건축법 §61 정북일조는 **전용·일반주거지역에만** 적용된다 — 그 밖에서는 밴드를
+#      만들지 않고 "미적용"이라고 말한다(빈 밴드를 0으로 그리면 "제약 없음"으로 오독된다).
+#   ② 정북 경계를 **필지 북쪽 끝 직선**으로 근사한다(부정형 필지에서 실제 인접지 경계와
+#      다를 수 있다). `exact_envelope`가 같은 근사를 쓰고 그 한계를 명시한 선례를 따른다.
+#   ③ 이격 거리는 **선택한 대안의 높이**에 대한 값이다 — 높이가 바뀌면 밴드도 바뀐다.
+_NORTH_LIGHT_ZONE_KEYWORDS = ("전용주거", "일반주거", "1종", "2종", "3종", "제1종", "제2종", "제3종")
+_NORTH_LIGHT_ZONE_CODES = frozenset({"1R", "2R", "3R"})
+
+
+def north_light_applies(zone_type: str) -> bool:
+    """정북일조(건축법 §61) 적용 용도지역인가.
+
+    한글 명칭·엔진 코드 양쪽을 받는다(호출자가 어느 쪽을 주는지 일정하지 않다).
+    ★판정 불가(빈 문자열)면 **적용하지 않는다** — 모르는데 밴드를 그리면 없는 제약을
+      보여주는 것이고, 이 저장소가 반복해서 고쳐 온 '낙관 폴백'의 반대 방향 오류다.
+    """
+    z = (zone_type or "").strip()
+    if not z:
+        return False
+    if z.upper() in _NORTH_LIGHT_ZONE_CODES:
+        return True
+    return any(k in z for k in _NORTH_LIGHT_ZONE_KEYWORDS)
+
+
+def compute_north_light_band(parcel_m, *, height_m: float, base_setback_m: float = 0.0):
+    """그 높이로는 지을 수 없는 **북측 금지 띠**를 필지 안에서 잘라낸다.
+
+    이격 거리는 공용 산식 SSOT(`common.sunlight_setback.required_north_setback_m`)를 그대로
+    쓴다 — 같은 산식을 여기서 다시 구현하면 법 개정 시 한쪽만 바뀐다.
+
+    @returns (band_polygon | None, required_distance_m). 필지 밖·빈 교집합이면 None.
+    """
+    from app.services.common.sunlight_setback import required_north_setback_m
+
+    if parcel_m is None or parcel_m.is_empty:
+        return None, 0.0
+    d = required_north_setback_m(height_m, base_setback_m)
+    if d <= 0:
+        return None, 0.0
+
+    from shapely.geometry import box
+
+    minx, miny, maxx, maxy = parcel_m.bounds
+    # 북쪽 끝에서 d만큼의 띠. 넉넉히 감싼 box와 교집합 → 부정형 필지도 그대로 따른다.
+    strip = box(minx - 1.0, maxy - d, maxx + 1.0, maxy + 1.0)
+    band = parcel_m.intersection(strip)
+    if band.is_empty or band.area <= 0:
+        return None, d
+    return band, d
+
+
 def _to_geojson(geom_m, to_wgs84) -> dict[str, Any]:
     """shapely 미터 geom → WGS84 GeoJSON geometry."""
     from shapely.geometry import mapping
@@ -254,6 +313,23 @@ def build_site_layout(
     principal = _principal_angle(buildable_m)
     angle_candidates = sorted({0.0, round(principal, 1)})
 
+    # ★W3-b: 정북일조 적용 여부는 **부지 단위**로 한 번 판정하고, 밴드 기하는 대안 높이별로
+    #   계산한다. 미적용이면 두 값 모두 None/0으로 두고 note가 사유를 말한다(무날조).
+    nl_applies = north_light_applies(zone_type)
+    _nl_cache: dict[float, Any] = {}
+
+    def _nl_band(h: float):
+        if not nl_applies:
+            return None
+        if h not in _nl_cache:
+            _nl_cache[h] = compute_north_light_band(parcel_m, height_m=h)[0]
+        return _nl_cache[h]
+
+    def _nl_distance(h: float) -> float | None:
+        if not nl_applies:
+            return None
+        return round(compute_north_light_band(parcel_m, height_m=h)[1], 2)
+
     cap60_hit = False
     spacing_capped = False
     for kind, bw, bd in kinds:
@@ -321,6 +397,12 @@ def build_site_layout(
                 "yield_pct": yield_pct,
                 "openness_pct": openness_pct,
                 "score": score,
+                # ★W3-b: 이 대안의 **높이 기준** 정북 금지 띠. 대안마다 높이가 다르므로
+                #   대안별로 계산한다(전역 1개면 토글할 때 틀린 밴드가 남는다).
+                "north_light_band_geojson": (
+                    _to_geojson(_nl_band(height_m), to_wgs84) if _nl_band(height_m) else None
+                ),
+                "north_light_setback_m": _nl_distance(height_m),
                 "buildings_geojson": {
                     "type": "FeatureCollection",
                     "features": [
@@ -341,10 +423,42 @@ def build_site_layout(
     options.sort(key=lambda o: o["score"], reverse=True)
     if not options:
         notes.append("가용 대지에 표준 동(판상 40×15·타워 22×22)이 들어가지 않습니다(소규모·세장).")
+
+    # ★W3-b: 밴드의 한계·미적용 사유를 honest_notes로도 내보낸다 — 화면이 서버 note를 그대로
+    #   고지하는 계약이라, 여기 없으면 사용자는 밴드가 없는 이유를 영영 모른다.
+    if nl_applies:
+        notes.append(
+            "정북 일조 이격 밴드는 선택한 안의 높이 기준이며, 정북 경계를 필지 북쪽 끝 "
+            "직선으로 근사했습니다(부정형 필지는 실제 인접지 경계와 다를 수 있습니다).",
+        )
+    elif zone_type:
+        notes.append(
+            "정북일조(건축법 §61)는 전용·일반주거지역에만 적용되어 이 부지에는 이격 밴드가 없습니다.",
+        )
+    else:
+        notes.append("용도지역을 확인하지 못해 정북일조 적용 여부를 판정하지 못했습니다(밴드 미표시).")
+
     return {
         "ok": bool(options),
         "honest_notes": notes,
         "zone_type": zone_type,
+        # ★W3-b: 정북일조 적용 여부와 근사 한계를 **응답 자체가** 말한다. 소비처가 판정
+        #   로직을 재구현하면(용도지역 문자열 파싱 등) 서버와 화면이 갈라진다.
+        "north_light": {
+            "applies": nl_applies,
+            "reason": (
+                None if nl_applies
+                else (
+                    "정북일조(건축법 §61)는 전용·일반주거지역에만 적용됩니다."
+                    if zone_type
+                    else "용도지역을 확인하지 못해 정북일조 적용 여부를 판정할 수 없습니다."
+                )
+            ),
+            "boundary_approximation": (
+                "정북 경계를 필지 북쪽 끝 직선으로 근사했습니다(부정형 필지는 실제 인접지 "
+                "경계와 다를 수 있습니다)." if nl_applies else None
+            ),
+        },
         "building_type": building_type,
         "land_area_sqm": round(area, 1),
         "parcel_area_sqm": round(parcel_area_m, 1),

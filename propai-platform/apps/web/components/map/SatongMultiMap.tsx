@@ -126,6 +126,9 @@ export interface SatongMultiMapProps {
   /** W3 배치 미리보기 오버레이 — 서버 산정 GeoJSON(건축가능 영역 + 선택 대안의 동 풋프린트).
    *  ★기하를 여기서 만들지 않는다: null이면 아무것도 그리지 않는다(가짜 배치 금지). */
   layoutOverlay?: SiteLayoutOverlay | null;
+  /** ★W3-b 정북 밴드 툴팁용 — 선택 대안의 이격·높이(수치는 서버 산출, 여기선 전달만). */
+  layoutNorthLightSetbackM?: number | null;
+  layoutNorthLightHeightM?: number | null;
   /** 분양 상태 노트(좌표 대기·조회 실패 등) — 설정 시 건수 라벨 대신 표기(정직원칙).
    *  ★marketLayer 객체에 넣지 않고 별도 prop으로 받는다 — 노트만 바뀔 때 마커 이펙트가
    *  전체 재생성되던 낭비(리뷰 LOW)를 차단. */
@@ -853,6 +856,8 @@ export function SatongMultiMap({
   developmentPayload = null,
   onCenterChange,
   layoutOverlay,
+  layoutNorthLightSetbackM,
+  layoutNorthLightHeightM,
   onBoundaryEnriched,
   onBoundaryStatusChange,
   presaleNote = null,
@@ -1929,12 +1934,14 @@ export function SatongMultiMap({
     layoutLayerRef.current = renderLayoutOverlay({
       L, map, previousLayer: layoutLayerRef.current, overlay: layoutOverlay,
       toRings: geoJsonToLeafletRings,
+      northLightSetbackM: layoutNorthLightSetbackM,
+      northLightHeightM: layoutNorthLightHeightM,
     });
     return () => {
       clearLayoutOverlay(mapRef.current, layoutLayerRef.current);
       layoutLayerRef.current = null;
     };
-  }, [mapReady, layoutOverlay]);
+  }, [mapReady, layoutOverlay, layoutNorthLightSetbackM, layoutNorthLightHeightM]);
 
   // ── 선택 필지(연결 프로젝트·staged·pending) 식별 라벨 — 전역 라벨 버짓·줌 LOD 무관 항상 표시 ──
   //   ★PR#329 R1 리뷰(LOW1) 반영: 홈 초기 진입(줌 12)은 hover-only LOD라 시장/POI/개발계획

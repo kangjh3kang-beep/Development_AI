@@ -29,16 +29,24 @@ vi.mock("next/navigation", () => ({
 }));
 
 /** 지도 스텁이 마지막으로 받은 layoutOverlay — "지도에 실제로 넘어갔나"를 본다. */
-const mapProps: { layoutOverlay?: SiteLayoutOverlay | null } = {};
+const mapProps: {
+  layoutOverlay?: SiteLayoutOverlay | null;
+  layoutNorthLightSetbackM?: number | null;
+  layoutNorthLightHeightM?: number | null;
+} = {};
 
 vi.mock("next/dynamic", () => ({
   default: () => {
     const DynamicStub = (props: {
       topRightSlot?: ReactNode;
       layoutOverlay?: SiteLayoutOverlay | null;
+      layoutNorthLightSetbackM?: number | null;
+      layoutNorthLightHeightM?: number | null;
     }) => {
       useEffect(() => {
         mapProps.layoutOverlay = props.layoutOverlay ?? null;
+        mapProps.layoutNorthLightSetbackM = props.layoutNorthLightSetbackM ?? null;
+        mapProps.layoutNorthLightHeightM = props.layoutNorthLightHeightM ?? null;
       });
       return <div data-testid="dynamic-map-stub">{props.topRightSlot}</div>;
     };
@@ -355,5 +363,110 @@ describe("SatongMapShell 배치 미리보기 배선(W3)", () => {
 
     expect(window.sessionStorage.getItem(SATONG_SITE_LAYOUT_KEY)).toBeNull();
     expect(readSatongViewCache<SiteLayoutResult>(SATONG_SITE_LAYOUT_KEY).size).toBe(0);
+  });
+});
+
+
+// ── W3-b 정북 일조 밴드 배선 ──────────────────────────────────────────────────
+const NL_BAND = {
+  type: "Polygon",
+  coordinates: [[[129.5601, 36.0702], [129.5603, 36.0702], [129.5603, 36.0703], [129.5601, 36.0703], [129.5601, 36.0702]]],
+};
+
+/** 상류 실응답 형태에 충실한 밴드 포함 결과(적용 용도지역). */
+const RESULT_NL: SiteLayoutResult = {
+  ...RESULT_OK,
+  north_light: { applies: true, reason: null, boundary_approximation: "정북 경계를 필지 북쪽 끝 직선으로 근사했습니다." },
+  options: (RESULT_OK.options ?? []).map((o, i) => ({
+    ...o,
+    height_m: i === 0 ? 45 : 30,
+    north_light_band_geojson: NL_BAND,
+    north_light_setback_m: i === 0 ? 22.5 : 15,
+  })),
+  best: {
+    ...(RESULT_OK.best as Record<string, unknown>),
+    height_m: 45, north_light_band_geojson: NL_BAND, north_light_setback_m: 22.5,
+  },
+} as SiteLayoutResult;
+
+describe("SatongMapShell 정북 일조 밴드 배선(W3-b)", () => {
+  beforeEach(() => {
+    window.sessionStorage.clear();
+    resetStores();
+    layout.calls = [];
+    layout.resolve = null;
+    mapProps.layoutOverlay = null;
+    mapProps.layoutNorthLightSetbackM = null;
+    mapProps.layoutNorthLightHeightM = null;
+  });
+
+  afterEach(() => {
+    window.sessionStorage.clear();
+    resetStores();
+  });
+
+  it("★① 밴드가 지도에 실제로 전달된다(툴팁 수치까지) — 이게 없으면 W3-b가 통째로 없다", async () => {
+    seed();
+    render(<SatongMapShell locale="ko" />);
+    fireEvent.click(screen.getByText("대보리 산1-1"));
+    fireEvent.click(screen.getByTestId("parcel-layout-request"));
+    await act(async () => {
+      layout.resolve?.(RESULT_NL);
+    });
+
+    expect(mapProps.layoutOverlay!.northLightBand).toBe(NL_BAND);
+    // 툴팁 수치는 **선택 대안**의 값이어야 한다(전역 1개면 토글 시 틀린 값이 남는다).
+    expect(mapProps.layoutNorthLightSetbackM).toBe(22.5);
+    expect(mapProps.layoutNorthLightHeightM).toBe(45);
+  });
+
+  it("★② 대안을 바꾸면 이격·높이도 함께 바뀐다", async () => {
+    seed();
+    render(<SatongMapShell locale="ko" />);
+    fireEvent.click(screen.getByText("대보리 산1-1"));
+    fireEvent.click(screen.getByTestId("parcel-layout-request"));
+    await act(async () => {
+      layout.resolve?.(RESULT_NL);
+    });
+
+    const panel = screen.getByTestId("parcel-detail-panel");
+    fireEvent.click(within(panel).getByTestId("parcel-layout-option-탑상형@0"));
+
+    expect(mapProps.layoutNorthLightSetbackM).toBe(15);
+    expect(mapProps.layoutNorthLightHeightM).toBe(30);
+  });
+
+  it("★③ 미적용 용도지역이면 밴드를 그리지 않고 **사유**를 표시한다", async () => {
+    seed();
+    render(<SatongMapShell locale="ko" />);
+    fireEvent.click(screen.getByText("대보리 산1-1"));
+    fireEvent.click(screen.getByTestId("parcel-layout-request"));
+    await act(async () => {
+      layout.resolve?.({
+        ...RESULT_NL,
+        north_light: { applies: false, reason: "정북일조(건축법 §61)는 전용·일반주거지역에만 적용됩니다." },
+      } as SiteLayoutResult);
+    });
+
+    expect(mapProps.layoutOverlay!.northLightBand).toBeNull();
+    const box = screen.getByTestId("parcel-layout-north-light");
+    expect(box.textContent).toContain("전용·일반주거지역에만");
+  });
+
+  it("★④ 세션 캐시(슬림)에 north_light가 보존된다 — 빠지면 캐시 히트 후 밴드가 영영 안 뜬다", async () => {
+    seed();
+    render(<SatongMapShell locale="ko" />);
+    fireEvent.click(screen.getByText("대보리 산1-1"));
+    fireEvent.click(screen.getByTestId("parcel-layout-request"));
+    await act(async () => {
+      layout.resolve?.(RESULT_NL);
+    });
+
+    // ★`readSatongViewCache`는 **Map**을 돌려준다(plain object 아님) — Object.values로 읽으면
+    //   조용히 빈 배열이 되어 테스트가 공허해진다(실제로 한 번 그렇게 틀렸다).
+    const cached = readSatongViewCache<SiteLayoutResult>(SATONG_SITE_LAYOUT_KEY);
+    expect(cached.size).toBeGreaterThan(0);
+    const one = [...cached.values()][0];
+    expect(one?.north_light?.applies).toBe(true);
   });
 });

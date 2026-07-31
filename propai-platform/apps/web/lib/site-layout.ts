@@ -50,6 +50,12 @@ export type SiteLayoutOption = {
   openness_pct?: number;
   score?: number;
   buildings_geojson?: SiteLayoutFeatureCollection | null;
+  /**
+   * ★W3-b: 이 대안의 **높이 기준** 정북 일조 금지 띠. 대안마다 높이가 다르므로 대안별로 온다
+   *   (전역 1개면 토글할 때 틀린 밴드가 남는다). 미적용 용도지역·판정 불가면 null.
+   */
+  north_light_band_geojson?: SiteLayoutGeometry | null;
+  north_light_setback_m?: number | null;
 };
 
 export type SiteLayoutResult = {
@@ -67,6 +73,15 @@ export type SiteLayoutResult = {
   /** 세트백 오프셋 후 건축가능 영역 — 대지와의 차이가 곧 세트백 밴드다. */
   buildable_geojson?: SiteLayoutGeometry | null;
   buildable_area_sqm?: number;
+  /**
+   * ★W3-b: 정북일조 적용 여부와 근사 한계를 **서버가** 말한다. 화면이 용도지역 문자열을
+   *   다시 파싱해 판정하면 서버와 갈라진다(이 저장소가 반복해서 겪은 SSOT 이중화).
+   */
+  north_light?: {
+    applies: boolean;
+    reason?: string | null;
+    boundary_approximation?: string | null;
+  } | null;
   setback_m?: number;
   options?: SiteLayoutOption[];
   best?: SiteLayoutOption | null;
@@ -78,6 +93,8 @@ export type SiteLayoutResult = {
 export type SiteLayoutOverlay = {
   buildable: SiteLayoutGeometry | null;
   buildings: SiteLayoutFeatureCollection | null;
+  /** ★W3-b: 정북 일조로 그 높이에 지을 수 없는 북측 띠(미적용이면 null). */
+  northLightBand: SiteLayoutGeometry | null;
 };
 
 /**
@@ -123,6 +140,9 @@ export function buildLayoutOverlay(
   const option = resolveSelectedOption(result, selectedKey);
   const buildable = result.buildable_geojson ?? null;
   const buildings = option?.buildings_geojson ?? null;
-  if (!buildable && !buildings) return null;
-  return { buildable, buildings };
+  // ★서버가 `applies:false`면 밴드를 그리지 않는다 — 여기서 용도지역을 다시 판정하지 않는다.
+  const northLightBand =
+    result.north_light?.applies === true ? option?.north_light_band_geojson ?? null : null;
+  if (!buildable && !buildings && !northLightBand) return null;
+  return { buildable, buildings, northLightBand };
 }

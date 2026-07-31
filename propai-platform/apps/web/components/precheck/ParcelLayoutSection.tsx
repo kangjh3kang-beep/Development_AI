@@ -285,6 +285,34 @@ export function ParcelLayoutSection({
             </div>
           ) : null}
 
+          {/* ★W3-b 정북 일조 이격 — 적용되면 수치를, 아니면 **사유를** 보여준다.
+              밴드가 안 보이는 이유를 화면이 말하지 않으면 사용자는 "제약 없음"으로 읽는다. */}
+          {result.north_light ? (
+            <div
+              data-testid="parcel-layout-north-light"
+              className="mt-2 border-t border-[var(--border-muted)] pt-2"
+            >
+              {result.north_light.applies && selectedOption.north_light_setback_m ? (
+                <>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-black text-[var(--text-hint)]">정북 일조 이격</span>
+                    <span className="font-mono font-bold text-amber-500">
+                      {selectedOption.north_light_setback_m}m
+                    </span>
+                  </div>
+                  <p className="mt-1 break-keep text-[10px] font-semibold leading-relaxed text-[var(--text-hint)]">
+                    지도의 주황 띠는 <b>{selectedOption.height_m}m 높이 기준</b>으로 건축할 수 없는
+                    북측 영역입니다. 높이가 바뀌면 띠도 바뀝니다.
+                  </p>
+                </>
+              ) : (
+                <p className="break-keep text-[10px] font-semibold leading-relaxed text-[var(--text-hint)]">
+                  {result.north_light.reason ?? "정북 일조 이격을 판정하지 못했습니다."}
+                </p>
+              )}
+            </div>
+          ) : null}
+
           {/* ★서버 honest_notes 원문 — v1 한계가 흐려지면 볼륨 감이 도면으로 오독된다. */}
           {notes.length > 0 ? (
             <div

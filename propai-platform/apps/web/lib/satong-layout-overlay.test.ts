@@ -11,6 +11,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   BUILDABLE_STYLE,
+  NORTH_LIGHT_BAND_STYLE,
+  northLightTooltip,
   BUILDING_STYLE,
   buildingTooltip,
   clearLayoutOverlay,
@@ -57,6 +59,7 @@ function fakeLeaflet() {
 const GEOM = (tag: string) => ({ type: "Polygon", coordinates: [[[0, 0]]], tag }) as unknown;
 
 const OVERLAY = (buildingCount: number, tag = "a"): SiteLayoutOverlay => ({
+  northLightBand: null,
   buildable: GEOM(`buildable-${tag}`) as never,
   buildings: {
     type: "FeatureCollection",
@@ -144,7 +147,7 @@ describe("renderLayoutOverlay — 그리는 내용", () => {
     const { L, map, polygons } = fakeLeaflet();
     const g = renderLayoutOverlay({
       L, map, previousLayer: null,
-      overlay: { buildable: GEOM("only") as never, buildings: null },
+      overlay: { buildable: GEOM("only") as never, buildings: null, northLightBand: null },
       toRings,
     });
     expect(g).not.toBeNull();
@@ -171,5 +174,65 @@ describe("buildingTooltip — 결손 필드 정직 처리", () => {
   it("동·층 정보가 없으면 만들어내지 않는다", () => {
     expect(buildingTooltip(undefined, undefined)).toBe("동 (볼륨 감 · 축정렬 근사)");
     expect(buildingTooltip(2, undefined)).toBe("2동 (볼륨 감 · 축정렬 근사)");
+  });
+});
+
+
+describe("정북 일조 밴드(W3-b) — 그리는 순서와 정직 문구", () => {
+  it("★밴드는 **가장 먼저** 그린다 — 동·건축가능 영역이 위에 와야 가려지지 않는다", () => {
+    const { L, map, polygons } = fakeLeaflet();
+    renderLayoutOverlay({
+      L, map, previousLayer: null,
+      overlay: { buildable: GEOM("b") as never, buildings: null, northLightBand: GEOM("nl") as never },
+      toRings,
+    });
+    // 첫 폴리곤이 밴드(앰버), 그 다음이 건축가능(파랑 점선).
+    expect(polygons).toHaveLength(2);
+    expect(polygons[0].style).toMatchObject({ fillColor: NORTH_LIGHT_BAND_STYLE.fillColor });
+    expect(polygons[1].style).toMatchObject({ dashArray: BUILDABLE_STYLE.dashArray });
+  });
+
+  it("★밴드 색은 건축가능 영역과 **다르다** — 의미가 반대라 같은 색이면 같은 종류로 읽힌다", () => {
+    expect(NORTH_LIGHT_BAND_STYLE.fillColor).not.toBe(BUILDABLE_STYLE.fillColor);
+  });
+
+  it("밴드가 없으면(미적용 용도지역) 그리지 않는다", () => {
+    const { L, map, polygons } = fakeLeaflet();
+    renderLayoutOverlay({
+      L, map, previousLayer: null,
+      overlay: { buildable: GEOM("b") as never, buildings: null, northLightBand: null },
+      toRings,
+    });
+    expect(polygons).toHaveLength(1);
+  });
+
+  it("★밴드만 있어도 그린다(대안 기하가 없어도 제약은 보여준다)", () => {
+    const { L, map, polygons } = fakeLeaflet();
+    const g = renderLayoutOverlay({
+      L, map, previousLayer: null,
+      overlay: { buildable: null, buildings: null, northLightBand: GEOM("nl") as never },
+      toRings,
+    });
+    expect(g).not.toBeNull();
+    expect(polygons).toHaveLength(1);
+  });
+
+  it("★툴팁에 '높이 기준'과 '근사'가 박힌다 — 확정 도면으로 오독되면 안 된다", () => {
+    const { L, map, polygons } = fakeLeaflet();
+    renderLayoutOverlay({
+      L, map, previousLayer: null,
+      overlay: { buildable: null, buildings: null, northLightBand: GEOM("nl") as never },
+      toRings, northLightSetbackM: 24, northLightHeightM: 48,
+    });
+    const t = polygons[0].tooltip ?? "";
+    expect(t).toContain("24m");
+    expect(t).toContain("48m 기준");
+    expect(t).toContain("건축 불가");
+    expect(t).toContain("근사");
+  });
+
+  it("수치가 없으면 지어내지 않는다(일반 문구로 떨어진다)", () => {
+    expect(northLightTooltip(undefined, undefined)).toContain("필요 이격");
+    expect(northLightTooltip(undefined, undefined)).toContain("선택 안 높이 기준");
   });
 });
