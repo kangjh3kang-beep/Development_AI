@@ -684,10 +684,28 @@ class AutoDesignEngineService:
                 max_floors_by_sunlight = 10**6  # 미적용(법 61조 적용범위 외)
                 sunlight_mode = "not_applicable"
             # 층수 후보 중 최솟값이 바인딩 제약(동률 시 far→height→sunlight 순 표기)
+            # ★R1 HIGH-1 봉합: target_floors가 **이 분기에는 없었다** — 즉 정북일조 단계후퇴
+            #   대상(전용·일반주거) 밖에서는 시드가 엔진에 도달조차
+            #   하지 않았다. 그런데 소비처(설계 스튜디오 카드)는 "층수를 상한으로 반영했다"고
+            #   고지하므로, 5층을 골라도 38층이 '고른 안'으로 표시되는 **표기 사기**가 됐다.
+            #   상한이므로 여기 넣어도 용량이 늘어날 수 없고(min에 참여), 미전달이면 10**6으로
+            #   무영향이다(기존 동작 불변).
+            #   ★수정 범위를 정확히 적는다(과대 진술 금지): 이 분기는 **단일박스** 경로다.
+            #   준주거·상업(QR/GC/NC)은 아래 포디움-타워가 `num_floors`를 **사후에 덮어써서**
+            #   여기 고쳐도 여전히 시드가 물리지 않는다 — 실측 수혜는 준공업·녹지·관리다.
+            #   그쪽은 라우터의 결과 기반 가드가 '미적용'으로 정직 고지한다(별건 후속).
             floor_candidates = {
                 "far": max_floors_by_far,
                 "height": max_floors_by_height,
                 "sunlight": max_floors_by_sunlight,
+                # ★일조 **비대상** 용도지역에서만 적용한다. 일조 대상(전용·일반주거)의
+                #   hard_cap 경로는 "단계후퇴 전제라 target_floors를 무시한다"가 명시적으로
+                #   설계·테스트된 기존 계약이므로(`tests/test_mass_target_floors.py`) 건드리지
+                #   않는다 — 내 기능을 위해 남의 확정 계약을 덮지 않는다.
+                "target": (
+                    (getattr(site_input, "target_floors", None) or 10**6)
+                    if not sunlight_zone else 10**6
+                ),
             }
             num_floors = max(1, min(floor_candidates.values()))
             binding_constraint = (

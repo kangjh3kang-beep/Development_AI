@@ -1026,6 +1026,7 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
       {siteAnalysis?.address && (
         <SeedDesignMassComparison
           address={siteAnalysis.address}
+          pnu={siteAnalysis?.pnu ?? null}
           landAreaSqm={Number(form.landArea) || effectiveLandAreaSqm(siteAnalysis) || 0}
           zoning={effectiveZoning}
           buildingUse={form.buildingUse}

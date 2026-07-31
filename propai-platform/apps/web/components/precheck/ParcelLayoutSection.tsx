@@ -35,6 +35,7 @@ export function ParcelLayoutSection({
   otherRequestInFlight,
   onRequest,
   onSelectOption,
+  onSeedDesign,
 }: {
   status: ParcelLayoutStatus;
   result?: SiteLayoutResult | null;
@@ -45,6 +46,12 @@ export function ParcelLayoutSection({
   otherRequestInFlight?: boolean;
   onRequest: () => void;
   onSelectOption: (key: string) => void;
+  /**
+   * ★W4 매스 시드 인계 — "이 안으로 설계 시작". 표시 전용 섹션이므로 **저장·이동은 셸이** 한다
+   *   (여기서 sessionStorage를 만지면 같은 로직이 소비처마다 흩어진다 — W2·W3와 동일 계약).
+   *   미전달이면 CTA 자체를 그리지 않는다(죽은 버튼 금지).
+   */
+  onSeedDesign?: (option: SiteLayoutOption) => void;
 }) {
   const options = result?.options ?? [];
   const notes = result?.honest_notes ?? [];
@@ -247,6 +254,36 @@ export function ParcelLayoutSection({
               </div>
             ) : null}
           </dl>
+
+          {/* ★W4 인계 CTA — 고른 안의 **층수만** 설계 시드로 넘긴다. 층수가 없으면 넘길 게
+              없으므로 그리지 않는다(무날조). 문구에 "상한"을 박아, 이 값이 법정 용량을
+              부풀리지 않는다는 사실이 화면에서도 드러나게 한다. */}
+          {/* ★R2 MEDIUM-1: 부지 면적을 모르면 수신측이 **무조건 거부**한다(다필지 판정 불가).
+              그 상태로 버튼을 그리면 눌러도 아무 일이 없는 죽은 버튼이 된다 — 아예 그리지 않고
+              사유를 밝힌다. */}
+          {onSeedDesign && selectedOption.floors > 0 && !(result.land_area_sqm ?? 0) ? (
+            <p className="mt-2 break-keep border-t border-[var(--border-muted)] pt-2 text-[10px] font-semibold leading-relaxed text-[var(--text-hint)]">
+              이 필지의 면적을 확인하지 못해 설계 인계는 제공하지 않습니다(다른 부지에 잘못
+              적용되는 것을 막기 위함).
+            </p>
+          ) : null}
+          {onSeedDesign && selectedOption.floors > 0 && (result.land_area_sqm ?? 0) > 0 ? (
+            <div className="mt-2 border-t border-[var(--border-muted)] pt-2">
+              <button
+                type="button"
+                data-testid="parcel-layout-seed-design"
+                onClick={() => onSeedDesign(selectedOption)}
+                className="w-full rounded-md border border-[var(--accent-strong)] bg-[var(--accent-strong)]/10 px-2 py-1.5 text-[11px] font-black text-[var(--accent-strong)] transition-colors hover:bg-[var(--accent-strong)]/20"
+              >
+                이 안으로 설계 시작 ({selectedOption.kind} {selectedOption.floors}층)
+              </button>
+              <p className="mt-1 break-keep text-[10px] font-semibold leading-relaxed text-[var(--text-hint)]">
+                고른 안의 층수를 설계 시드로 넘깁니다. 층수는 <b>상한으로만</b> 작용해 법정·조례
+                한도를 넘겨 부풀리지 않습니다(한도가 더 엄격하면 한도가 적용). 동 배치 도형은
+                넘어가지 않습니다 — 설계엔진이 풋프린트를 시드로 받지 않습니다.
+              </p>
+            </div>
+          ) : null}
 
           {/* ★서버 honest_notes 원문 — v1 한계가 흐려지면 볼륨 감이 도면으로 오독된다. */}
           {notes.length > 0 ? (

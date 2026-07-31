@@ -57,10 +57,12 @@ import {
   ParcelLayoutSection,
   type ParcelLayoutStatus,
 } from "@/components/precheck/ParcelLayoutSection"; // W3 배치 미리보기
+import { buildMassSeedHandoff, writeMassSeedHandoff } from "@/lib/satong-mass-seed"; // W4 매스 시드 인계
 import {
   buildLayoutOverlay,
   resolveSelectedOption,
   siteLayoutOptionKey,
+  type SiteLayoutOption,
   type SiteLayoutResult,
 } from "@/lib/site-layout";
 import type {
@@ -932,6 +934,42 @@ export function SatongMapShell({
     }
   }, []);
 
+  /**
+   * ★W4 — 고른 배치안을 설계 스튜디오로 인계한다.
+   *
+   * 저장·이동을 **여기(셸)에서** 한다: 표시 전용 섹션이 sessionStorage와 라우팅을 만지면
+   * 같은 로직이 소비처마다 흩어진다(W2·W3에서 세운 계약과 동일).
+   * 필지 식별자를 함께 실어야 수신측이 **다른 필지의 선택을 조용히 적용하는 일**을 막는다.
+   */
+  const handleSeedDesign = useCallback(
+    (option: SiteLayoutOption) => {
+      const feature = detailFeatureRef.current;
+      const handoff = buildMassSeedHandoff({
+        pnu: feature?.pnu ?? null,
+        address: feature?.address ?? null,
+        kind: option.kind,
+        angleDeg: option.angle_deg,
+        floors: option.floors,
+        // ★R1 HIGH-3: 이 층수가 산정된 부지 면적을 함께 싣는다(다필지 합산 부지에 단일필지
+        //   기준 층수가 조용히 적용되던 결함 봉합 — 수신측이 면적으로 대조한다).
+        //   ★출처는 **배치가 실제로 산정된 면적** = `land_area_sqm`이다(서버가 클라이언트
+        //   입력 지적면적을 우선 사용하고, 없을 때만 폴리곤으로 폴백해 되돌려준다).
+        //   ★R3 HIGH 봉합 — 여기 `parcel_area_sqm`을 쓰면 **폴리곤 기하 근사**가 실린다.
+        //   수신측이 대조하는 값은 지적면적이므로 **서로 다른 물리량을 2%로 비교**하게 되고,
+        //   같은 서비스가 두 값의 20% 괴리까지 정상으로 취급하므로(괴리 시에만 note 고지)
+        //   같은 필지가 "다른 부지"로 판정돼 **사실이 아닌 배너**가 뜬다 — 이 PR이 없애려는
+        //   바로 그 결함 클래스다.
+        areaSqm: layoutResult?.land_area_sqm ?? feature?.areaSqm ?? null,
+        now: Date.now(),
+      });
+      // 층수가 없으면 넘길 게 없다 — 빈 인계를 남겨 수신측이 헛돌게 하지 않는다.
+      if (!handoff) return;
+      writeMassSeedHandoff(handoff);
+      router.push(`/${locale}/design-studio`);
+    },
+    [layoutResult, locale, router],
+  );
+
   const requestParcelLayout = useCallback(async () => {
     const feature = detailFeatureRef.current;
     if (!feature) return;
@@ -982,6 +1020,9 @@ export function SatongMapShell({
           honest_notes: res.honest_notes,
           buildable_geojson: res.buildable_geojson,
           buildable_area_sqm: res.buildable_area_sqm,
+          // ★W4: 인계 대조 면적의 정본 — 배치가 **실제로 산정된** 부지 면적(지적 우선).
+          //   슬림에서 빠져 있으면 CTA 게이트가 항상 거짓이 되어 인계 버튼이 영영 안 뜬다.
+          land_area_sqm: res.land_area_sqm,
           setback_m: res.setback_m,
           options: res.options,
           best: res.best,
@@ -3075,6 +3116,7 @@ export function SatongMapShell({
               otherRequestInFlight={layoutBusy && layoutStatus !== "loading"}
               onRequest={requestParcelLayout}
               onSelectOption={setLayoutOptionKey}
+              onSeedDesign={handleSeedDesign}
             />
 
             <ParcelSlopeSection
