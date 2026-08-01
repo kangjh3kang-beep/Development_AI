@@ -157,7 +157,7 @@
 // v474: 정북 일조 이격 밴드(#514 W3-b — 계획서 W3의 빠진 절반). 지도에 앰버 금지 띠가 새로
 //        그려지고, 배치 대안 자체가 정북 이격을 반영해 **바뀐다**(밴드를 배치 제약으로 되먹임).
 //        stale app-shell이면 사용자는 옛 배치(정북 미반영)를 계속 보게 되므로 반드시 무효화한다.
-const CACHE_NAME = "propai-v474-north-light-band";
+const CACHE_NAME = "propai-v475-analysis-stage-split";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
