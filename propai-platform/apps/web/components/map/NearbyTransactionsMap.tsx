@@ -80,10 +80,13 @@ export type NearbyMapPayload = {
     };
   } | null;
   /**
-   * ★AVM이 없거나 반경 보증이 없을 때의 **사유**. 이걸 소비하지 않으면 화면이
+   * ★AVM **신뢰성 단서**. AVM 유무와 **무관하게** 붙을 수 있다 — 가장 위험한 단서
+   *   ("반경 필터 미적용")는 오히려 **AVM이 있을 때** 붙는다. 이걸 소비하지 않으면 화면이
    *   "실거래가 없어 시세를 추정할 수 없습니다"라고 말하면서 같은 화면에서 거래 수십 건을
    *   보여주는 자기모순이 난다(날조된 숫자를 날조된 설명으로 바꾸는 것).
    */
+  avm_caveat?: string | null;
+  /** @deprecated `avm_caveat`과 동일 값(한 릴리스 호환). */
   avm_unavailable_reason?: string | null;
   data_source?: string;
   fetch_failed?: boolean;

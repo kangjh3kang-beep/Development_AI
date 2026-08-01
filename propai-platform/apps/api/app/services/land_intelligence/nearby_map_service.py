@@ -207,7 +207,7 @@ class NearbyMapService:
         avm_summary = self._compute_avm_summary(
             categories.get("apt_trade"), radius_applied=radius_applied, radius_m=radius_m,
         )
-        avm_unavailable_reason = self._avm_unavailable_reason(
+        avm_caveat = self._avm_caveat(
             categories.get("apt_trade"), radius_applied=radius_applied, radius_m=radius_m,
         )
         for _cat in categories.values():
@@ -232,9 +232,16 @@ class NearbyMapService:
             #   시세를 만들지 않고 사유를 말한다(무날조 — 기존 "표본 0건이면 None" 원칙을
             #   반경 기준으로 확장). 종전엔 위치를 모르는 원거리 아파트로 임야 시세를 냈다.
             "avm": avm_summary,
-            # ★AVM이 없을 때의 사유(additive) — 없으면 None. "거래 자체가 없다"와
-            #   "반경 안에서 위치가 확인된 거래가 없다"를 소비처가 구분할 수 있게 한다.
-            "avm_unavailable_reason": avm_unavailable_reason,
+            # ★AVM **신뢰성 단서**(additive) — 없으면 None.
+            #   ★R2 HIGH-1 교훈: 종전 이름 `avm_unavailable_reason`은 "AVM이 **없을** 때의
+            #   사유"라는 **잘못된 멘탈모델을 인코딩**했고, 그 탓에 프론트 배선이 자연스럽게
+            #   빈 상태 가지로만 갔다. 그런데 가장 위험한 단서(반경 필터 미적용)는 **AVM이
+            #   존재할 때** 붙는다 — 즉 경고가 구조적으로 도달 불가능해졌다.
+            #   이름이 곧 계약이다: 이 필드는 **AVM 유무와 무관하게** 붙을 수 있고,
+            #   소비처는 **두 경우 모두** 표시해야 한다.
+            "avm_caveat": avm_caveat,
+            # 구 이름 호환(같은 값) — 외부 소비처가 있을 수 있어 한 릴리스 유지.
+            "avm_unavailable_reason": avm_caveat,
         }
 
         # ★정직 표기: 공공데이터 조회 실패와 "거래 0건(실제 없음)"을 구분한다.
@@ -449,13 +456,16 @@ class NearbyMapService:
         return math.floor(x + 0.5)
 
     @staticmethod
-    def _avm_unavailable_reason(
+    def _avm_caveat(
         apt_trade_category: dict[str, Any] | None,
         *,
         radius_applied: bool,
         radius_m: int | None,
     ) -> str | None:
-        """AVM이 없을 때 **왜 없는지**를 말한다(무날조 — 침묵 대신 사유).
+        """AVM의 **신뢰성 단서**를 말한다(무날조 — 침묵 대신 사유).
+
+        ★AVM이 **없을 때**(사유)와 **있지만 반경 보증이 없을 때**(경고)를 모두 반환한다.
+          후자가 더 위험하다 — 확신에 찬 숫자에 아무 표시가 없으면 사용자는 그대로 믿는다.
 
         ★"거래가 아예 없다"와 "거래는 있는데 반경 안에서 위치가 확인된 게 없다"는 전혀 다른
           상태다. 종전엔 둘 다 조용히 null이라 사용자는 구분할 수 없었고, 그 사이 화면은
@@ -482,7 +492,7 @@ class NearbyMapService:
                 f"(수집 {len(all_groups)}곳 전부 위치 미확인)."
             )
         return (
-            "대상지 중심좌표를 확보하지 못해 **반경 필터를 적용하지 못했습니다** — "
+            "대상지 중심좌표를 확보하지 못해 반경 필터를 적용하지 못했습니다 — "
             f"아래 시세는 시군구 범위의 위치 확인분 {len(resolved)}곳 기준이며 "
             "대상지 인근이라는 보증이 없습니다."
         )

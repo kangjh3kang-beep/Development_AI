@@ -343,9 +343,9 @@ def test_avm_unavailable_reason_distinguishes_no_deals_from_none_in_radius():
     """★'거래가 아예 없다'와 '반경 안에서 위치 확인된 게 없다'를 구분해 말한다."""
     svc = _svc()
     # (1) 거래 자체가 없음 → 사유 없음(기존 '무자료' 표기로 충분)
-    assert svc._avm_unavailable_reason({"groups": []}, radius_applied=True, radius_m=1000) is None
+    assert svc._avm_caveat({"groups": []}, radius_applied=True, radius_m=1000) is None
     # (2) 거래는 있는데 반경 통과 0 → 사유를 말한다
-    reason = svc._avm_unavailable_reason(
+    reason = svc._avm_caveat(
         {"groups": [{"count": 3}], "_in_radius_groups": []}, radius_applied=True, radius_m=1000,
     )
     assert reason and "위치가 확인된" in reason and "1000m" in reason
@@ -463,13 +463,13 @@ def test_avm_reason_warns_when_radius_filter_was_not_applied():
     """★반경 미적용이면 **반경 보증이 없다**는 사실을 반드시 말한다(종전엔 사유가 None)."""
     svc = _svc()
     resolved = {"name": "좌표있음", "count": 2, "lat": 37.5, "lon": 127.0}
-    reason = svc._avm_unavailable_reason(
+    reason = svc._avm_caveat(
         {"groups": [resolved]}, radius_applied=False, radius_m=None,
     )
     assert reason and "반경 필터를 적용하지 못했습니다" in reason
 
     # 좌표가 하나도 없으면 그 사실을 말한다.
-    none_reason = svc._avm_unavailable_reason(
+    none_reason = svc._avm_caveat(
         {"groups": [{"name": "좌표없음", "count": 5}]}, radius_applied=False, radius_m=None,
     )
     assert none_reason and "전부 위치 미확인" in none_reason

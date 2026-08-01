@@ -137,7 +137,14 @@ type MarketResults = {
    *   같은 화면에서 거래 32건을 보여주는 **자기모순**이 난다(날조된 숫자를 날조된 설명으로
    *   바꾼 셈). R1 HIGH-3.
    */
-  avmUnavailableReason?: string | null;
+  /**
+   * ★AVM **신뢰성 단서**(서버 산출). AVM 유무와 **무관하게** 붙을 수 있다.
+   *   ★R2 HIGH-1: 종전 이름(`avm_unavailable_reason`)이 "없을 때의 사유"라는 잘못된
+   *   멘탈모델을 인코딩해, 배선이 **빈 상태 가지로만** 갔다. 그런데 가장 위험한 단서
+   *   ("반경 필터 미적용")는 **AVM이 존재할 때** 붙는다 — 즉 확신에 찬 숫자에서 경고만
+   *   삭제된 형태가 되어 **빈 상태보다 나빴다**. 두 가지 **모두**에서 렌더해야 한다.
+   */
+  avmCaveat?: string | null;
   searchAddress: string;
 };
 
@@ -280,7 +287,7 @@ function deriveResults(payload: NearbyMapPayload | null, fallbackAddr: string): 
     radius: payload.radius_applied === false ? null : payload.radius_m ?? null,
     radiusApplied: payload.radius_applied !== false,
     unknownDistanceCount,
-    avmUnavailableReason: payload.avm_unavailable_reason ?? null,
+    avmCaveat: payload.avm_caveat ?? payload.avm_unavailable_reason ?? null,
     searchAddress: center?.address || fallbackAddr,
   };
 }
@@ -1422,6 +1429,18 @@ export function MarketInsightsWorkspaceClient() {
                     />
                     <MetricTile label="비교 사례" value={`${results.avm.comparable_count.toLocaleString()}건`} />
                   </div>
+                  {/* ★★R2 HIGH-1 봉합 — 신뢰성 단서는 **AVM이 있을 때도** 반드시 뜬다.
+                      가장 위험한 단서("반경 필터 미적용")는 정의상 AVM이 **존재할 때** 붙으므로,
+                      빈 상태 가지에만 배선하면 그 경고는 **한 번도 화면에 뜨지 않는다** —
+                      확신에 찬 숫자에서 경고만 삭제된 형태라 빈 상태보다 나쁘다. */}
+                  {results.avmCaveat ? (
+                    <p
+                      data-testid="avm-caveat"
+                      className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] font-bold leading-relaxed text-amber-600"
+                    >
+                      {results.avmCaveat}
+                    </p>
+                  ) : null}
                   <p className="mt-3 text-[11px] text-[var(--text-hint)]">※ 주변 아파트 실거래 평당가 가중평균을 84㎡ 기준으로 환산한 참고 추정치입니다.</p>
                 </>
               ) : mapLoading || (address && !mapPayload) ? (
@@ -1430,8 +1449,8 @@ export function MarketInsightsWorkspaceClient() {
                 <p className="sa-di-empty">
                   {/* ★서버가 사유를 주면 **그것을 그대로** 말한다. 종전엔 거래가 32건 있어도
                       "실거래가 없어 추정할 수 없습니다"라고 해 같은 화면 안에서 모순됐다. */}
-                  {results?.avmUnavailableReason
-                    ? results.avmUnavailableReason
+                  {results?.avmCaveat
+                    ? results.avmCaveat
                     : address
                       ? "주변 아파트 실거래가 없어 시세를 추정할 수 없습니다."
                       : "주소 입력 후 「분석 시작」을 누르면 AI 시세가 표시됩니다."}
