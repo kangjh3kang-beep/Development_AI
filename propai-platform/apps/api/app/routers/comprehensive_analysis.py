@@ -36,6 +36,15 @@ class ComprehensiveAnalysisRequest(BaseModel):
         None,
         description="필지목록 [{pnu,address,area_sqm,zone_type}]. 다필지 통합분석용(미지정 시 단일).",
     )
+    # ★W2-a(단계분할): AI 해석 2종(부지 해석·시장 내러티브)은 종합분석 소요의 대부분이고,
+    #   Cloudflare 엣지 컷오프(~125초)를 넘기는 주범이다. False로 요청하면 결정론 분석만
+    #   즉시 받아 화면을 채우고, 해석은 후속 호출로 이어붙일 수 있다(점진 렌더).
+    #   ★기본 True — 기존 호출부는 완전 무회귀.
+    include_interpretation: bool = Field(
+        True,
+        description="AI 해석(부지 해석·시장 내러티브) 생성 여부. False면 결정론 분석만 빠르게 반환하고 "
+                    "해당 필드는 status='deferred'로 표기된다(생성 실패와 구분됨).",
+    )
 
 
 @router.post("/comprehensive")
@@ -53,6 +62,7 @@ async def run_comprehensive_analysis(req: ComprehensiveAnalysisRequest, current_
         tenant_id=str(getattr(current_user, "tenant_id", "") or "") or None,
         project_id=req.project_id,
         parcels=req.parcels,
+        include_interpretation=req.include_interpretation,
     )
 
 

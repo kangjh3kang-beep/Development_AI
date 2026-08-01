@@ -486,6 +486,7 @@ class ComprehensiveAnalysisService:
         project_id: str | None = None,
         with_senior: bool = True,
         parcels: list[dict[str, Any]] | None = None,
+        include_interpretation: bool = True,
     ) -> dict[str, Any]:
         logger.info(
             "종합분석 시작",
@@ -966,36 +967,54 @@ class ComprehensiveAnalysisService:
                     error=str(e),
                 )
 
-        try:
-            from app.services.ai.site_analysis_interpreter import SiteAnalysisInterpreter
-            interpreter = SiteAnalysisInterpreter()
-            if custom_llm is not None:
-                interpreter._llm = custom_llm
-            ai_interpretation = await interpreter.generate_interpretation(result, prior_context=prior_block)
-            result["ai_interpretation"] = ai_interpretation
-        except Exception as e:
-            logger.warning("AI 해석 생성 스킵", error=str(e))
-            result["ai_interpretation"] = None
-
-        # Phase 4: 시장분석 AI 내러티브 생성 (선택적 — API 키 있을 때만)
-        # ★D-1(정직화) additive: 실패 시 None만 두면 프론트가 "정상인데 비어있음"과
-        # "생성 자체가 실패함"을 구분할 수 없다. market_interpretation_status로 사유를 병기한다
-        # (기존 market_interpretation 키·값은 완전히 그대로 — 이 필드는 순수 추가).
-        try:
-            from app.services.ai.market_interpreter import MarketInterpreter
-            market_interpreter = MarketInterpreter()
-            if custom_llm is not None:
-                market_interpreter._llm = custom_llm
-            market_interpretation = await market_interpreter.generate_interpretation(result, prior_context=prior_block)
-            result["market_interpretation"] = market_interpretation
-            result["market_interpretation_status"] = {"status": "ok"}
-        except Exception as e:
-            logger.warning("시장분석 AI 해석 생성 스킵", error=str(e))
-            result["market_interpretation"] = None
-            result["market_interpretation_status"] = {
-                "status": "unavailable",
-                "reason": f"{type(e).__name__}: {str(e)[:160]}",
+        # ★W2-a: LLM 해석 2종(Phase 3·4)이 종합분석 소요의 대부분이다. include_interpretation=False
+        #   이면 건너뛰고 **정직하게 deferred로 표기**한다 — None만 두면 프론트가 "생성 실패"와
+        #   "이번 호출에서 요청 안 함"을 구분할 수 없다(D-1 정직화와 동일 규칙).
+        if not include_interpretation:
+            _deferred = {
+                "status": "deferred",
+                "reason": "이 요청에서는 AI 해석을 생성하지 않았습니다(다음 단계에서 생성).",
             }
+            result["ai_interpretation"] = None
+            result["ai_interpretation_status"] = dict(_deferred)
+            result["market_interpretation"] = None
+            result["market_interpretation_status"] = dict(_deferred)
+        else:
+            try:
+                from app.services.ai.site_analysis_interpreter import SiteAnalysisInterpreter
+                interpreter = SiteAnalysisInterpreter()
+                if custom_llm is not None:
+                    interpreter._llm = custom_llm
+                ai_interpretation = await interpreter.generate_interpretation(result, prior_context=prior_block)
+                result["ai_interpretation"] = ai_interpretation
+                result["ai_interpretation_status"] = {"status": "ok"}
+            except Exception as e:
+                logger.warning("AI 해석 생성 스킵", error=str(e))
+                result["ai_interpretation"] = None
+                result["ai_interpretation_status"] = {
+                    "status": "unavailable",
+                    "reason": f"{type(e).__name__}: {str(e)[:160]}",
+                }
+
+            # Phase 4: 시장분석 AI 내러티브 생성 (선택적 — API 키 있을 때만)
+            # ★D-1(정직화) additive: 실패 시 None만 두면 프론트가 "정상인데 비어있음"과
+            # "생성 자체가 실패함"을 구분할 수 없다. market_interpretation_status로 사유를 병기한다
+            # (기존 market_interpretation 키·값은 완전히 그대로 — 이 필드는 순수 추가).
+            try:
+                from app.services.ai.market_interpreter import MarketInterpreter
+                market_interpreter = MarketInterpreter()
+                if custom_llm is not None:
+                    market_interpreter._llm = custom_llm
+                market_interpretation = await market_interpreter.generate_interpretation(result, prior_context=prior_block)
+                result["market_interpretation"] = market_interpretation
+                result["market_interpretation_status"] = {"status": "ok"}
+            except Exception as e:
+                logger.warning("시장분석 AI 해석 생성 스킵", error=str(e))
+                result["market_interpretation"] = None
+                result["market_interpretation_status"] = {
+                    "status": "unavailable",
+                    "reason": f"{type(e).__name__}: {str(e)[:160]}",
+                }
 
         # Phase 1 성장루프: prior 첨부(주입 증거) + write-back(다음 회차 prior가 됨, best-effort)
         result["prior_analysis"] = prior
