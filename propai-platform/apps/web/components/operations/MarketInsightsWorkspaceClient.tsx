@@ -126,7 +126,11 @@ type MarketResults = {
   byType: TradeTypeBreakdown[];
   transactions: TxItem[];
   months: number;
-  radius: number;
+  /** 적용된 반경(m). ★반경 필터가 적용되지 않았으면 null — 1000으로 지어내지 않는다. */
+  radius: number | null;
+  radiusApplied?: boolean;
+  /** 좌표를 얻지 못해 반경 판정이 불가능했던 거래 건수(어느 버킷에도 넣지 않는다). */
+  unknownDistanceCount?: number;
   searchAddress: string;
 };
 
@@ -157,6 +161,8 @@ function deriveResults(payload: NearbyMapPayload | null, fallbackAddr: string): 
 
   const totalCount = tradeEntries.reduce((a, [, c]) => a + (c.count || 0), 0);
 
+  // ★거리 미상(좌표 미확보) 거래 건수 — 반경 버킷 어디에도 넣지 않고 따로 고지한다.
+  let unknownDistanceCount = 0;
   const buckets = [
     { label: "반경 500m", max: 500, count: 0, pSum: 0, pN: 0 },
     { label: "반경 1km", max: 1000, count: 0, pSum: 0, pN: 0 },
@@ -177,15 +183,27 @@ function deriveResults(payload: NearbyMapPayload | null, fallbackAddr: string): 
     const isApt = c.type === "apt";
     let typePSum = 0, typePN = 0;
     for (const g of c.groups || []) {
-      const dist = center?.lat && g.lat ? distanceM(center.lat, center.lon as number, g.lat, g.lon) : 1000;
+      // ★근본수정(P0) — 종전엔 좌표를 못 얻은 그룹의 거리를 **정확히 1000으로 날조**했다.
+      //   그 값은 `dist <= 1000` 버킷에 정확히 걸려 "반경 1km"로 집계되고, 거래행마다
+      //   `distance_m: 1000`이 찍혔다. 강남 실측에서 좌표미확보가 그룹의 79%라, 강남구
+      //   **전역** 4,300여 건이 "반경 1km 내"로 표시됐다 — 결측보다 나쁜 실패모드다.
+      //   백엔드는 이 그룹을 "반경 밖으로 단정 금지"로 보존하는데 프론트가 그 원칙을
+      //   정반대로 뒤집고 있었다. 이제 거리 미상은 **null**이고 반경 집계에서 빠진다.
+      const dist: number | null =
+        center?.lat && g.lat ? distanceM(center.lat, center.lon as number, g.lat, g.lon) : null;
       const cnt = g.count || 0;
       if (g.avg_price_10k) {
         typePSum += g.avg_price_10k * (cnt || 1);
         typePN += cnt || 1;
         if (isApt) { aptPSum += g.avg_price_10k * (cnt || 1); aptPN += cnt || 1; }
       }
-      for (const b of buckets) {
-        if (dist <= b.max) {
+      if (dist === null) {
+        // 거리 미상 — 반경 버킷에 넣지 않고 별도로 센다(어느 반경인지 모르는 것을
+        // 특정 반경으로 계상하면 그 버킷이 거짓이 된다).
+        unknownDistanceCount += cnt;
+      }
+      for (const b of dist === null ? [] : buckets) {
+        if ((dist as number) <= b.max) {
           // 건수는 유형 무관 커먼저러블(합산 문제 없음) — 가격만 apt로 한정(단위 혼합 방지).
           b.count += cnt;
           if (isApt && g.avg_price_10k) { b.pSum += g.avg_price_10k * (cnt || 1); b.pN += cnt || 1; }
@@ -195,7 +213,10 @@ function deriveResults(payload: NearbyMapPayload | null, fallbackAddr: string): 
       for (const d of g.deals || []) {
         transactions.push({
           deal_amount: d.price_10k_won, area_sqm: d.area_m2, floor: d.floor,
-          apt_name: g.name, distance_m: Math.round(dist), ...parseDealDate(d.deal_date),
+          apt_name: g.name,
+          // 거리 미상은 숫자를 지어내지 않는다(표에서 "거리 미상"으로 표기된다).
+          distance_m: dist === null ? undefined : Math.round(dist),
+          ...parseDealDate(d.deal_date),
         });
       }
     }
@@ -220,6 +241,11 @@ function deriveResults(payload: NearbyMapPayload | null, fallbackAddr: string): 
   const radiusGroups: RadiusBucket[] = buckets
     .filter((b) => b.count > 0)
     .map((b) => ({ label: b.label, count: b.count, avgPrice: b.pN ? Math.round(b.pSum / b.pN) : 0 }));
+  // ★거리 미상은 **별도 행**으로 낸다 — 숨기면 "수집=선정+제외" 항등이 깨지고(이 저장소의
+  //   ComparableSet 선례), 특정 반경에 넣으면 그 버킷이 거짓이 된다.
+  if (unknownDistanceCount > 0) {
+    radiusGroups.push({ label: "거리 미상(위치 미확인)", count: unknownDistanceCount, avgPrice: 0 });
+  }
 
   // AI 시세(AVM) — SSOT 일원화(PropAI 아이디어#3): 종전엔 여기서 apt_trade 그룹을 다시
   //   순회해 평당가 가중평균+CV 신뢰도를 재계산했으나, 백엔드(nearby_map_service
@@ -233,7 +259,11 @@ function deriveResults(payload: NearbyMapPayload | null, fallbackAddr: string): 
     avgPrice: aptPN ? Math.round(aptPSum / aptPN) : 0,
     radiusGroups, byType, transactions,
     months: payload.months?.length || 3,
-    radius: payload.radius_m || 1000,
+    // ★반경 필터가 적용되지 않았으면 반경 수치를 라벨로 쓰지 않는다(거짓 라벨 방지).
+    //   `|| 1000` 폴백도 제거 — 값이 없으면 "미상"이어야지 1km라고 말하면 안 된다.
+    radius: payload.radius_applied === false ? null : payload.radius_m ?? null,
+    radiusApplied: payload.radius_applied !== false,
+    unknownDistanceCount,
     searchAddress: center?.address || fallbackAddr,
   };
 }
@@ -929,7 +959,14 @@ export function MarketInsightsWorkspaceClient() {
                 </div>
                 <div className="sa-di-stat">
                   <span className="sa-di-stat__label">분석 반경</span>
-                  <span className="sa-di-stat__value">{(results.radius / 1000).toLocaleString()}km</span>
+                  {/* ★반경 필터가 적용되지 않았으면 반경 수치를 라벨로 쓰지 않는다 —
+                      종전엔 `payload.radius_m || 1000` 폴백 탓에 시군구 전체를 보고 있으면서
+                      "반경 1.0km"라고 표시했다(거짓 라벨). */}
+                  <span className="sa-di-stat__value">
+                    {results.radius == null
+                      ? "시군구 전체(반경 미적용)"
+                      : `${(results.radius / 1000).toLocaleString()}km`}
+                  </span>
                 </div>
               </div>
 

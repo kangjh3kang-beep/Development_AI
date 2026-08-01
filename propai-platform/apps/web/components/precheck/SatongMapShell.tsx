@@ -2630,7 +2630,13 @@ export function SatongMapShell({
   //   오히려 정상이라 좌표 계약(left-4/right-4/top-4/top-20)은 그대로 둔다.
   const mapOverlays = (
     <>
-      <div className="pointer-events-auto absolute left-4 top-4 z-[380] flex flex-wrap items-center gap-2">
+      <div
+        /* ★침묵 데드존 봉합 — 이 칩바는 UX A3에서 자식을 전부 button→span으로 강등
+           (허위 어포던스 제거)했는데 컨테이너의 pointer-events-auto는 남겨,
+           **어포던스는 없애고 클릭 차단만 남은** 상태였다. 그 면적 위의 지도 클릭이
+           무음으로 사라진다. 인터랙티브 자식이 생기면 그 자식에만 다시 부여할 것. */
+        className="absolute left-4 top-4 z-[380] flex flex-wrap items-center gap-2"
+      >
         {/* ★UX A3: 비인터랙티브 배지(허위 어포던스 제거) — 이전엔 <button>이었으나 onClick이
             event.stopPropagation() 뿐이라 클릭 가능해 보이는데 아무 동작도 없었다. */}
         <span className="rounded-full border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] px-3 py-2 text-xs font-black text-[var(--text-primary)] shadow-[var(--shadow-lg)] backdrop-blur-[var(--glass-blur)]">

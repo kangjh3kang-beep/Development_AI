@@ -193,6 +193,25 @@ class NearbyMapService:
             cat["capped_count"] = max(0, len(resolved) - _MAX_GROUPS_PER_CAT)
             cat["groups"] = capped + unresolved
             cat["count"] = sum(g["count"] for g in cat["groups"])
+            # ★근본수정(P0) — 반경을 **실제로 통과한** 그룹을 따로 보관한다.
+            #   종전엔 `capped + unresolved`를 한 리스트로만 내보내 소비처가 둘을 구분할 수
+            #   없었고, 그 결과 AVM이 **반경 판정을 받은 적도 없는** 그룹으로 계산됐다
+            #   (호미곶 실측: 반경 통과 0건인데 AVM 표본 32건 — 전부 좌표미확보분).
+            cat["_in_radius_groups"] = capped
+            # 카운트도 분리 노출한다. 하나로 합치면 프론트가 "반경 내 N건"으로 오독한다.
+            cat["count_in_radius"] = sum(g["count"] for g in capped)
+            cat["count_unresolved"] = sum(g["count"] for g in unresolved)
+
+        # ★내부 전용 필드 정리 — `_in_radius_groups`는 AVM 계산용이고 그대로 두면 응답
+        #   페이로드가 그룹만큼 중복된다(대형 시군구에서 수 MB). 소비 후 제거한다.
+        avm_summary = self._compute_avm_summary(
+            categories.get("apt_trade"), radius_applied=radius_applied, radius_m=radius_m,
+        )
+        avm_unavailable_reason = self._avm_unavailable_reason(
+            categories.get("apt_trade"), radius_applied=radius_applied, radius_m=radius_m,
+        )
+        for _cat in categories.values():
+            _cat.pop("_in_radius_groups", None)
 
         result: dict[str, Any] = {
             "center": center or {"lat": None, "lon": None, "address": address},
@@ -209,7 +228,13 @@ class NearbyMapService:
             # ★AVM SSOT 일원화(PropAI#3): 아파트 매매 실거래 그룹(반경 필터·캡 적용 후,
             #   위 categories와 동일 객체) 통계로 AI 시세를 계산해 함께 싣는다 — 프론트가
             #   같은 payload를 재가공(평당가 가중평균+CV)하던 것을 여기로 이동(SSOT).
-            "avm": self._compute_avm_summary(categories.get("apt_trade")),
+            # ★근본수정(P0): AVM은 **반경을 통과한 그룹만**으로 계산한다. 통과분이 없으면
+            #   시세를 만들지 않고 사유를 말한다(무날조 — 기존 "표본 0건이면 None" 원칙을
+            #   반경 기준으로 확장). 종전엔 위치를 모르는 원거리 아파트로 임야 시세를 냈다.
+            "avm": avm_summary,
+            # ★AVM이 없을 때의 사유(additive) — 없으면 None. "거래 자체가 없다"와
+            #   "반경 안에서 위치가 확인된 거래가 없다"를 소비처가 구분할 수 있게 한다.
+            "avm_unavailable_reason": avm_unavailable_reason,
         }
 
         # ★정직 표기: 공공데이터 조회 실패와 "거래 0건(실제 없음)"을 구분한다.
@@ -423,8 +448,43 @@ class NearbyMapService:
         """
         return math.floor(x + 0.5)
 
-    def _compute_avm_summary(self, apt_trade_category: dict[str, Any] | None) -> dict[str, Any] | None:
-        """아파트 매매 실거래 그룹(반경 필터·캡 적용 후) 통계로 AI 시세(AVM) 요약을 계산한다.
+    @staticmethod
+    def _avm_unavailable_reason(
+        apt_trade_category: dict[str, Any] | None,
+        *,
+        radius_applied: bool,
+        radius_m: int | None,
+    ) -> str | None:
+        """AVM이 없을 때 **왜 없는지**를 말한다(무날조 — 침묵 대신 사유).
+
+        ★"거래가 아예 없다"와 "거래는 있는데 반경 안에서 위치가 확인된 게 없다"는 전혀 다른
+          상태다. 종전엔 둘 다 조용히 null이라 사용자는 구분할 수 없었고, 그 사이 화면은
+          **위치를 모르는 원거리 거래로 만든 시세**를 보여주고 있었다.
+        """
+        cat = apt_trade_category or {}
+        all_groups = cat.get("groups") or []
+        if not all_groups:
+            return None  # 진짜로 거래가 없다 — 기존 "무자료" 표기로 충분
+        if radius_applied and not (cat.get("_in_radius_groups") or []):
+            return (
+                f"반경 {radius_m}m 안에서 위치가 확인된 아파트 실거래를 찾지 못했습니다"
+                f"(위치 미확인 {len(all_groups)}곳은 시세 산정에 쓰지 않습니다)."
+            )
+        return None
+
+    def _compute_avm_summary(
+        self,
+        apt_trade_category: dict[str, Any] | None,
+        *,
+        radius_applied: bool = False,
+        radius_m: int | None = None,
+    ) -> dict[str, Any] | None:
+        """아파트 매매 실거래 그룹(**반경 통과분만**) 통계로 AI 시세(AVM) 요약을 계산한다.
+
+        ★근본수정(P0) — 종전 도크스트링은 "반경 필터·캡 적용 후"라고 적혀 있었으나 실제
+          입력은 `capped + unresolved`였다(주석과 코드 불일치). 그래서 **반경 판정을 받은
+          적조차 없는** 좌표미확보 그룹이 시세를 만들었다. 호미곶 임야 실측: 반경 통과 0건인데
+          AVM 1,490,069원/㎡ — 근거는 20km 밖 아파트였다. 이제 `_in_radius_groups`만 쓴다.
 
         SSOT 일원화(PropAI 아이디어#3): 종전엔 프론트(MarketInsightsWorkspaceClient.tsx
         deriveResults :196-238)가 이 서비스의 apt_trade 응답을 다시 순회해 재계산했다 —
@@ -437,7 +497,19 @@ class NearbyMapService:
           높다. 두 항을 절반씩 반영해 0.3~0.98로 클램프.
         - 표본(비교 가능한 그룹) 0건이면 None — 무날조.
         """
-        groups = (apt_trade_category or {}).get("groups") or []
+        cat = apt_trade_category or {}
+        # ★반경 필터가 적용된 경우에만 통과분으로 한정한다. 미적용(중심좌표 없음 등)이면
+        #   반경 개념 자체가 없으므로 종전처럼 전체를 쓰되, 아래 basis가 그 사실을 밝힌다.
+        if radius_applied:
+            groups = cat.get("_in_radius_groups") or []
+            if not groups:
+                # ★반경 안에 비교 대상이 없다 → **None**(기존 계약 유지 — 소비처가
+                #   `payload.avm ?? null`로 읽어 "미제공"으로 graceful 처리한다).
+                #   사유는 응답 최상위 `avm_unavailable_reason`으로 **additive** 제공한다.
+                #   여기서 truthy 객체를 돌려주면 기존 소비처가 0원·NaN을 그린다.
+                return None
+        else:
+            groups = cat.get("groups") or []
         if not groups:
             return None
 
@@ -480,9 +552,21 @@ class NearbyMapService:
             "estimated_price": self._js_round(per_m2_man * 84 * 10000),
             "price_per_sqm": self._js_round(per_m2_man * 10000),
             "confidence_score": min(0.98, max(0.3, confidence)),
-            "comparable_count": (apt_trade_category or {}).get("count") or 0,
+            # ★`comparable_count`는 이름과 달리 "비교 **거래** 건수"였다(그룹 수 아님).
+            #   기존 소비처 무회귀를 위해 값은 유지하되, 이제 **반경 통과분 기준**이고
+            #   의미가 분명한 별칭을 함께 낸다.
+            "comparable_count": sum(g.get("count") or 0 for g in groups),
+            "comparable_deal_count": sum(g.get("count") or 0 for g in groups),
+            "comparable_group_count": len(groups),
             "sample_count": len(deal_prices),
             "price_cv_percent": self._js_round(cv_percent),
+            # ★근거 표기 — 이 시세가 **무엇으로부터** 나왔는지 소비처가 알 수 있어야 한다.
+            "basis": {
+                "radius_applied": radius_applied,
+                "radius_m": radius_m,
+                "in_radius_group_count": len(groups) if radius_applied else None,
+                "scope": "in_radius" if radius_applied else "all_groups_radius_not_applied",
+            },
         }
 
     # ── 공개 지오코딩(다른 서비스 재사용·캐시 공유) ──
