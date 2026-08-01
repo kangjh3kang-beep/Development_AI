@@ -126,7 +126,25 @@ type MarketResults = {
   byType: TradeTypeBreakdown[];
   transactions: TxItem[];
   months: number;
-  radius: number;
+  /** 적용된 반경(m). ★반경 필터가 적용되지 않았으면 null — 1000으로 지어내지 않는다. */
+  radius: number | null;
+  radiusApplied?: boolean;
+  /** 좌표를 얻지 못해 반경 판정이 불가능했던 거래 건수(어느 버킷에도 넣지 않는다). */
+  unknownDistanceCount?: number;
+  /**
+   * ★AVM이 없거나 반경 보증이 없을 때의 **사유**(서버 산출).
+   *   이걸 배선하지 않으면 화면이 "실거래가 없어 시세를 추정할 수 없습니다"라고 말하면서
+   *   같은 화면에서 거래 32건을 보여주는 **자기모순**이 난다(날조된 숫자를 날조된 설명으로
+   *   바꾼 셈). R1 HIGH-3.
+   */
+  /**
+   * ★AVM **신뢰성 단서**(서버 산출). AVM 유무와 **무관하게** 붙을 수 있다.
+   *   ★R2 HIGH-1: 종전 이름(`avm_unavailable_reason`)이 "없을 때의 사유"라는 잘못된
+   *   멘탈모델을 인코딩해, 배선이 **빈 상태 가지로만** 갔다. 그런데 가장 위험한 단서
+   *   ("반경 필터 미적용")는 **AVM이 존재할 때** 붙는다 — 즉 확신에 찬 숫자에서 경고만
+   *   삭제된 형태가 되어 **빈 상태보다 나빴다**. 두 가지 **모두**에서 렌더해야 한다.
+   */
+  avmCaveat?: string | null;
   searchAddress: string;
 };
 
@@ -157,6 +175,8 @@ function deriveResults(payload: NearbyMapPayload | null, fallbackAddr: string): 
 
   const totalCount = tradeEntries.reduce((a, [, c]) => a + (c.count || 0), 0);
 
+  // ★거리 미상(좌표 미확보) 거래 건수 — 반경 버킷 어디에도 넣지 않고 따로 고지한다.
+  let unknownDistanceCount = 0;
   const buckets = [
     { label: "반경 500m", max: 500, count: 0, pSum: 0, pN: 0 },
     { label: "반경 1km", max: 1000, count: 0, pSum: 0, pN: 0 },
@@ -177,15 +197,27 @@ function deriveResults(payload: NearbyMapPayload | null, fallbackAddr: string): 
     const isApt = c.type === "apt";
     let typePSum = 0, typePN = 0;
     for (const g of c.groups || []) {
-      const dist = center?.lat && g.lat ? distanceM(center.lat, center.lon as number, g.lat, g.lon) : 1000;
+      // ★근본수정(P0) — 종전엔 좌표를 못 얻은 그룹의 거리를 **정확히 1000으로 날조**했다.
+      //   그 값은 `dist <= 1000` 버킷에 정확히 걸려 "반경 1km"로 집계되고, 거래행마다
+      //   `distance_m: 1000`이 찍혔다. 강남 실측에서 좌표미확보가 그룹의 79%라, 강남구
+      //   **전역** 4,300여 건이 "반경 1km 내"로 표시됐다 — 결측보다 나쁜 실패모드다.
+      //   백엔드는 이 그룹을 "반경 밖으로 단정 금지"로 보존하는데 프론트가 그 원칙을
+      //   정반대로 뒤집고 있었다. 이제 거리 미상은 **null**이고 반경 집계에서 빠진다.
+      const dist: number | null =
+        center?.lat && g.lat ? distanceM(center.lat, center.lon as number, g.lat, g.lon) : null;
       const cnt = g.count || 0;
       if (g.avg_price_10k) {
         typePSum += g.avg_price_10k * (cnt || 1);
         typePN += cnt || 1;
         if (isApt) { aptPSum += g.avg_price_10k * (cnt || 1); aptPN += cnt || 1; }
       }
-      for (const b of buckets) {
-        if (dist <= b.max) {
+      if (dist === null) {
+        // 거리 미상 — 반경 버킷에 넣지 않고 별도로 센다(어느 반경인지 모르는 것을
+        // 특정 반경으로 계상하면 그 버킷이 거짓이 된다).
+        unknownDistanceCount += cnt;
+      }
+      for (const b of dist === null ? [] : buckets) {
+        if ((dist as number) <= b.max) {
           // 건수는 유형 무관 커먼저러블(합산 문제 없음) — 가격만 apt로 한정(단위 혼합 방지).
           b.count += cnt;
           if (isApt && g.avg_price_10k) { b.pSum += g.avg_price_10k * (cnt || 1); b.pN += cnt || 1; }
@@ -195,7 +227,13 @@ function deriveResults(payload: NearbyMapPayload | null, fallbackAddr: string): 
       for (const d of g.deals || []) {
         transactions.push({
           deal_amount: d.price_10k_won, area_sqm: d.area_m2, floor: d.floor,
-          apt_name: g.name, distance_m: Math.round(dist), ...parseDealDate(d.deal_date),
+          apt_name: g.name,
+          // 거리 미상은 숫자를 **지어내지 않는다**(undefined).
+          // ★주의: 이 컴포넌트의 실거래 상세 표에는 거리 컬럼이 없다 — "표에 거리 미상으로
+          //   표기된다"고 쓰면 일어나지 않는 일을 주장하는 것이다(이 PR이 봉합한 '주석과 코드
+          //   불일치'를 새로 심는 셈). 미상 건수는 반경 버킷 목록의 별도 행으로만 고지된다.
+          distance_m: dist === null ? undefined : Math.round(dist),
+          ...parseDealDate(d.deal_date),
         });
       }
     }
@@ -220,6 +258,17 @@ function deriveResults(payload: NearbyMapPayload | null, fallbackAddr: string): 
   const radiusGroups: RadiusBucket[] = buckets
     .filter((b) => b.count > 0)
     .map((b) => ({ label: b.label, count: b.count, avgPrice: b.pN ? Math.round(b.pSum / b.pN) : 0 }));
+  // ★거리 미상은 **별도 행**으로 낸다 — 숨기면 "수집=선정+제외" 항등이 깨지고(이 저장소의
+  //   ComparableSet 선례), 특정 반경에 넣으면 그 버킷이 거짓이 된다.
+  if (unknownDistanceCount > 0) {
+    // ★반경 버킷은 **누적**(500m ⊂ 1km ⊂ 3km ⊂ ∞)이고 이 행은 **배타**다 — 합산 규칙이
+    //   달라 같은 라벨 문법을 쓰면 오독된다. "집계 제외"를 라벨에 박아 구분한다.
+    radiusGroups.push({
+      label: "집계 제외 · 거리 미상(위치 미확인)",
+      count: unknownDistanceCount,
+      avgPrice: 0,
+    });
+  }
 
   // AI 시세(AVM) — SSOT 일원화(PropAI 아이디어#3): 종전엔 여기서 apt_trade 그룹을 다시
   //   순회해 평당가 가중평균+CV 신뢰도를 재계산했으나, 백엔드(nearby_map_service
@@ -233,7 +282,12 @@ function deriveResults(payload: NearbyMapPayload | null, fallbackAddr: string): 
     avgPrice: aptPN ? Math.round(aptPSum / aptPN) : 0,
     radiusGroups, byType, transactions,
     months: payload.months?.length || 3,
-    radius: payload.radius_m || 1000,
+    // ★반경 필터가 적용되지 않았으면 반경 수치를 라벨로 쓰지 않는다(거짓 라벨 방지).
+    //   `|| 1000` 폴백도 제거 — 값이 없으면 "미상"이어야지 1km라고 말하면 안 된다.
+    radius: payload.radius_applied === false ? null : payload.radius_m ?? null,
+    radiusApplied: payload.radius_applied !== false,
+    unknownDistanceCount,
+    avmCaveat: payload.avm_caveat ?? payload.avm_unavailable_reason ?? null,
     searchAddress: center?.address || fallbackAddr,
   };
 }
@@ -929,7 +983,14 @@ export function MarketInsightsWorkspaceClient() {
                 </div>
                 <div className="sa-di-stat">
                   <span className="sa-di-stat__label">분석 반경</span>
-                  <span className="sa-di-stat__value">{(results.radius / 1000).toLocaleString()}km</span>
+                  {/* ★반경 필터가 적용되지 않았으면 반경 수치를 라벨로 쓰지 않는다 —
+                      종전엔 `payload.radius_m || 1000` 폴백 탓에 시군구 전체를 보고 있으면서
+                      "반경 1.0km"라고 표시했다(거짓 라벨). */}
+                  <span className="sa-di-stat__value">
+                    {results.radius == null
+                      ? "시군구 전체(반경 미적용)"
+                      : `${(results.radius / 1000).toLocaleString()}km`}
+                  </span>
                 </div>
               </div>
 
@@ -1368,13 +1429,31 @@ export function MarketInsightsWorkspaceClient() {
                     />
                     <MetricTile label="비교 사례" value={`${results.avm.comparable_count.toLocaleString()}건`} />
                   </div>
+                  {/* ★★R2 HIGH-1 봉합 — 신뢰성 단서는 **AVM이 있을 때도** 반드시 뜬다.
+                      가장 위험한 단서("반경 필터 미적용")는 정의상 AVM이 **존재할 때** 붙으므로,
+                      빈 상태 가지에만 배선하면 그 경고는 **한 번도 화면에 뜨지 않는다** —
+                      확신에 찬 숫자에서 경고만 삭제된 형태라 빈 상태보다 나쁘다. */}
+                  {results.avmCaveat ? (
+                    <p
+                      data-testid="avm-caveat"
+                      className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] font-bold leading-relaxed text-amber-600"
+                    >
+                      {results.avmCaveat}
+                    </p>
+                  ) : null}
                   <p className="mt-3 text-[11px] text-[var(--text-hint)]">※ 주변 아파트 실거래 평당가 가중평균을 84㎡ 기준으로 환산한 참고 추정치입니다.</p>
                 </>
               ) : mapLoading || (address && !mapPayload) ? (
                 <p className="sa-di-empty">주변 실거래를 수집해 시세를 추정하는 중…</p>
               ) : (
                 <p className="sa-di-empty">
-                  {address ? "주변 아파트 실거래가 없어 시세를 추정할 수 없습니다." : "주소 입력 후 「분석 시작」을 누르면 AI 시세가 표시됩니다."}
+                  {/* ★서버가 사유를 주면 **그것을 그대로** 말한다. 종전엔 거래가 32건 있어도
+                      "실거래가 없어 추정할 수 없습니다"라고 해 같은 화면 안에서 모순됐다. */}
+                  {results?.avmCaveat
+                    ? results.avmCaveat
+                    : address
+                      ? "주변 아파트 실거래가 없어 시세를 추정할 수 없습니다."
+                      : "주소 입력 후 「분석 시작」을 누르면 AI 시세가 표시됩니다."}
                 </p>
               )}
             </div>

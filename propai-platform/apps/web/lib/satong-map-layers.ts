@@ -272,13 +272,40 @@ export const REGULATION_WMS_BY_CONTROL: Record<string, string> = {
 
 /** 활성 규제 컨트롤 → WMS LAYERS 파라미터(콤마 조인, 사전 정의 순서 고정).
  *  빈 문자열 = 규제 오버레이 없음(타일 레이어 미부설). */
-export function resolveRegulationWmsLayers(state: SatongMapLayerState | undefined): string {
-  if (!hasSatongLayer(state, "zoning")) return "";
-  return Object.keys(REGULATION_WMS_BY_CONTROL)
+/**
+ * ★VWorld WMS GetMap의 **레이어 개수 상한**. 라이브 실측(2026-08-01):
+ *   1·2·3·4개 → `200 image/png` / **5개 → `503 INVALID_RANGE`**.
+ *   레이어 종류·순서·줌(z7~z19)과 무관하게 개수에서만 갈린다.
+ *
+ * 이 상수가 없어서 규제 컨트롤 5개를 모두 켜면 한 요청에 5레이어가 실려 나가고,
+ * **잘 되던 4개까지 함께 죽었다**(all-or-nothing). 사용자가 화면에서 본
+ * "규제 오버레이 타일 조회 실패"의 결정적 원인이다.
+ */
+export const VWORLD_WMS_MAX_LAYERS = 4;
+
+/**
+ * 규제 WMS 레이어를 **상한 이하 청크**로 나눠 돌려준다.
+ *
+ * 소비처는 청크마다 별도 타일 레이어를 부설해야 한다 — 한 문자열로 합치면 5개째에서
+ * 전체가 503이 된다. 청크로 나누면 실패가 나더라도 **그 청크에만** 격리된다.
+ */
+export function resolveRegulationWmsLayerChunks(
+  state: SatongMapLayerState | undefined,
+): string[] {
+  if (!hasSatongLayer(state, "zoning")) return [];
+  const ids = Object.keys(REGULATION_WMS_BY_CONTROL)
     .filter((controlId) => hasSatongLayerControl(state, "zoning", controlId))
-    .map((controlId) => REGULATION_WMS_BY_CONTROL[controlId])
-    .join(",");
+    .map((controlId) => REGULATION_WMS_BY_CONTROL[controlId]);
+  const chunks: string[] = [];
+  for (let i = 0; i < ids.length; i += VWORLD_WMS_MAX_LAYERS) {
+    chunks.push(ids.slice(i, i + VWORLD_WMS_MAX_LAYERS).join(","));
+  }
+  return chunks;
 }
+
+// ★`resolveRegulationWmsLayers`(단일 문자열)는 **삭제했다**. 청크를 `","`로 되붙이면
+//   수정 전과 바이트 단위로 동일한 5레이어 문자열이 되어 503을 그대로 재생산하는 지뢰였고,
+//   생산 소비처는 이미 0이었다. 남겨두면 다음 사람이 "호환용"이라 믿고 다시 쓴다.
 
 export function resolveVWorldBaseLayer(state: SatongMapLayerState | undefined): VWorldBaseLayer {
   if (!hasSatongLayer(state, "terrain")) return "Base";

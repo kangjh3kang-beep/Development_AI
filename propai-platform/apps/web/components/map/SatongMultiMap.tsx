@@ -33,7 +33,7 @@ import {
   priceColor,
   priceManPyeong,
   pricePyeongOnly,
-  resolveRegulationWmsLayers,
+  resolveRegulationWmsLayerChunks,
   resolveVWorldBaseLayer,
   satongMapFeatureKey,
   type DominantConstraint,
@@ -274,6 +274,18 @@ export type SatongPoiPayload = {
 // POI 컨트롤(역·학교·상권·공원·병원) → Kakao Local 카테고리 코드 매핑.
 //   백엔드 poi_inventory 수집 코드(SW8 지하철·SC4 학교·MT1 마트·CS2 편의점·BK9 은행·
 //   HP8 병원·PM9 약국·PARK 공원 키워드)와 정합 — 미수집 코드는 넣지 않는다(무날조).
+/**
+ * ★VWorld WMTS의 **유효 줌 범위**(라이브 실측 2026-08-01):
+ *   z5 → `503 InvalidParameterValue/tilematrix` · z6~z19 → 200 · z20·z21 → 503.
+ *
+ * 지도·타일 어디에도 `minZoom`이 없어 z0까지 축소가 허용됐고, 축소하는 순간 전 타일이
+ * 503이 되어 "기본지도 로드 실패" 전체 스크림이 떴다. 역설적으로 규제/지적편집도 WMS를
+ * 켜 두면 그쪽 `minZoom:7`이 Leaflet 지도 하한을 올려 이 버그가 **가려졌다** —
+ * "레이어를 끄면 지도가 깨진다"는 반직관적 재현 조건이었다.
+ */
+export const VWORLD_TILE_MIN_ZOOM = 6;
+export const VWORLD_TILE_MAX_ZOOM = 19;
+
 const POI_CONTROL_CODES: Record<string, string[]> = {
   station: ["SW8"],
   school: ["SC4"],
@@ -547,7 +559,10 @@ function createOfficialBaseMapLayer(
   const makeTile = (layerName: string, pane?: string) =>
     L.tileLayer(`/tiles/vworld/wmts/${layerName}/{z}/{y}/{x}.png`, {
       attribution: "VWorld · 국토교통부 공간정보 오픈플랫폼",
-      maxZoom: 19,
+      maxZoom: VWORLD_TILE_MAX_ZOOM,
+      // ★유효 줌 하한(6) 명시 — 없으면 z0까지 축소가 허용돼 전 타일이 503이 되고
+      //   "기본지도 로드 실패" 전체 스크림이 뜬다(라이브 실측: z5 → 503 tilematrix).
+      minZoom: VWORLD_TILE_MIN_ZOOM,
       crossOrigin: true,
       ...(pane ? { pane } : {}),
     });
@@ -1460,6 +1475,10 @@ export function SatongMultiMap({
         const map = L.map(mapEl.current, {
           center: [37.5665, 126.978],
           zoom: 12,
+          // ★지도 자체에도 하한을 건다 — 타일 레이어의 minZoom은 "그 레이어를 켰을 때"만
+          //   지도 하한을 올린다. 레이어를 다 끄면 하한이 사라져 축소 시 배경이 깨졌다.
+          minZoom: VWORLD_TILE_MIN_ZOOM,
+          maxZoom: VWORLD_TILE_MAX_ZOOM,
           scrollWheelZoom: true,
           attributionControl: false,
           zoomControl: false, // 아래에서 좌하단으로 재부착(디자인컴프: 줌 좌하단)
@@ -1630,43 +1649,71 @@ export function SatongMultiMap({
   //   zoning 플레이스홀더 컨트롤의 잠금 해제(2026-07-17 — GetCapabilities+GetMap 매트릭스
   //   채증 후 활성화). 활성 컨트롤들을 콤마 조인한 한 장의 WMS 타일로 부설한다(조합이
   //   바뀌면 재부설). 매핑 SSOT는 satong-map-layers.REGULATION_WMS_BY_CONTROL.
-  const regulationTileRef = useRef<any>(null);
+  // ★근본수정(CRITICAL) — VWorld WMS는 GetMap당 **4레이어가 상한**이다(라이브 사다리 실측:
+  //   1·2·3·4개 200 / 5개 503 INVALID_RANGE, 종류·순서·줌 무관). 규제 컨트롤이 정확히
+  //   5개라 다 켜면 한 요청에 5레이어가 실려 **잘 되던 4개까지 함께 죽었다**(all-or-nothing).
+  //   청크(≤4)마다 별도 타일 레이어를 부설해 실패를 청크 단위로 격리한다.
+  const regulationTilesRef = useRef<any[]>([]);
   const [regulationNote, setRegulationNote] = useState("");
-  const regulationWmsLayers = useMemo(() => resolveRegulationWmsLayers(layerState), [layerState]);
+  const regulationWmsChunks = useMemo(
+    () => resolveRegulationWmsLayerChunks(layerState),
+    [layerState],
+  );
+  // 이펙트 의존성용 안정 키(배열 identity churn 방지).
+  const regulationWmsKey = regulationWmsChunks.join("|");
   /* eslint-disable react-hooks/set-state-in-effect -- Imperative Leaflet tile layer wiring. */
   useEffect(() => {
     const map = mapRef.current;
     const L = window.L;
     if (!mapReady || !map || !L) return;
-    if (regulationTileRef.current) {
-      try { map.removeLayer(regulationTileRef.current); } catch { /* noop */ }
-      regulationTileRef.current = null;
+    for (const t of regulationTilesRef.current) {
+      try { map.removeLayer(t); } catch { /* noop */ }
     }
-    if (!regulationWmsLayers) {
+    regulationTilesRef.current = [];
+    if (regulationWmsChunks.length === 0) {
       setRegulationNote("");
       return;
     }
-    const tile = L.tileLayer.wms("/tiles/vworld/wms", {
-      layers: regulationWmsLayers,
-      styles: regulationWmsLayers, // VWorld는 레이어명과 동명 스타일 사용(uq111 관례 동일)
-      format: "image/png",
-      transparent: true,
-      version: "1.3.0", // VWorld WMS는 1.3.0만 허용(#347 채증)
-      opacity: 0.6,
-      zIndex: 4, // z 스케일: zoningWide(3) < 규제(4) < 지적선(5) — 채움이 지적선을 못 덮는다
-      maxZoom: 19,
-      minZoom: 7,
-      attribution: "VWorld 규제(도시계획·보호구역)",
+    // 실패는 **청크 단위**로 센다 — 한 청크가 죽어도 나머지는 살아 있으므로
+    // "전부 실패"와 "일부 실패"를 구분해 고지해야 한다(종전엔 한 장이라 구분 불가).
+    const failed = new Set<string>();
+    const tiles: any[] = regulationWmsChunks.map((layers) => {
+      const tile = L.tileLayer.wms("/tiles/vworld/wms", {
+        layers,
+        styles: layers, // VWorld는 레이어명과 동명 스타일 사용(uq111 관례 동일)
+        format: "image/png",
+        transparent: true,
+        version: "1.3.0", // VWorld WMS는 1.3.0만 허용(#347 채증)
+        opacity: 0.6,
+        zIndex: 4, // z 스케일: zoningWide(3) < 규제(4) < 지적선(5) — 채움이 지적선을 못 덮는다
+        maxZoom: 19,
+        minZoom: 7,
+        attribution: "VWorld 규제(도시계획·보호구역)",
+      });
+      tile.on("tileerror", () => {
+        failed.add(layers);
+        setRegulationNote(
+          failed.size >= regulationWmsChunks.length
+            ? "규제 오버레이 타일 조회 실패 — 아래 자가진단으로 원인 확인"
+            : `규제 오버레이 일부(${failed.size}/${regulationWmsChunks.length}) 조회 실패`,
+        );
+      });
+      tile.on("tileload", () => {
+        failed.delete(layers);
+        setRegulationNote((prev) => (failed.size === 0 && prev ? "" : prev));
+      });
+      tile.addTo(map);
+      return tile;
     });
-    tile.on("tileerror", () => setRegulationNote("규제 오버레이 타일 조회 실패 — 지적 배지의 자가진단으로 원인 확인"));
-    tile.on("tileload", () => setRegulationNote((prev) => (prev ? "" : prev)));
-    tile.addTo(map);
-    regulationTileRef.current = tile;
+    regulationTilesRef.current = tiles;
     return () => {
-      try { map.removeLayer(tile); } catch { /* noop */ }
-      if (regulationTileRef.current === tile) regulationTileRef.current = null;
+      for (const t of tiles) {
+        try { map.removeLayer(t); } catch { /* noop */ }
+      }
+      regulationTilesRef.current = regulationTilesRef.current.filter((t) => !tiles.includes(t));
     };
-  }, [mapReady, regulationWmsLayers]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- regulationWmsKey가 청크 배열의 안정 키다.
+  }, [mapReady, regulationWmsKey]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => {
@@ -2914,7 +2961,12 @@ export function SatongMultiMap({
                 램프만 띄우면 '색=여력' 오인 조장·노후도 범례와 동일 원칙). */}
             {hasSatongLayer(layerState, "capacity") && hasSatongLayerControl(layerState, "capacity", "far-headroom") &&
               overlayFeatures.some((f) => capacityColor(f.effectiveFarPct, f.currentFarPct) != null) && (
-              <div className="pointer-events-auto w-fit rounded-xl border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] p-2 shadow-lg backdrop-blur">
+              <div
+                /* ★침묵 데드존 봉합 — 이 카드는 표시 전용(자식이 전부 p·span)인데
+                   pointer-events-auto가 있어 그 면적 위의 지도 클릭(=주 인터랙션인 필지
+                   선택)이 무음으로 소실됐다. 오류도 로그도 없어 탐지가 사실상 불가능하다.
+                   규칙: pointer-events-auto는 인터랙티브 요소 자신에게만. */
+                className="w-fit max-w-[240px] rounded-xl border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] p-2 shadow-lg backdrop-blur">
                 <p className="mb-1 text-[10px] font-extrabold text-[var(--text-primary)]">개발여력 = (실효−현황)/실효 용적률</p>
                 <div className="flex flex-col gap-0.5">
                   {CAPACITY_LEGEND_ITEMS.map((item) => (
@@ -2934,7 +2986,10 @@ export function SatongMultiMap({
                 무자료(avgAge=null)면 카드 대신 정직 칩 1줄만 — 하단 도크 과점을 구조적으로 제거. */}
             {hasSatongLayer(layerState, "age") && (
               avgAge === null ? (
-                <span className="pointer-events-auto inline-flex w-fit items-center gap-1 rounded-full bg-[var(--glass-bg-strong)] px-3 py-1.5 text-[11px] font-bold text-[var(--text-secondary)] shadow">
+                <span
+                /* ★표시 전용(아이콘+텍스트) — 부모가 pointer-events-none이므로 여기서
+                   auto를 주면 그 면적만 지도 클릭을 삼킨다(데드존). 제거한다. */
+                className="inline-flex w-fit items-center gap-1 rounded-full bg-[var(--glass-bg-strong)] px-3 py-1.5 text-[11px] font-bold text-[var(--text-secondary)] shadow">
                   <Building2 className="size-3" aria-hidden />
                   노후도 — 건물 정보 없음
                   {buildAgeGapDetail(ageStatusCounts) ? ` · ${buildAgeGapDetail(ageStatusCounts)}` : ""}

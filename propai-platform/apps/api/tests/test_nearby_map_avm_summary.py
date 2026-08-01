@@ -27,7 +27,13 @@ from apps.api.app.services.land_intelligence import nearby_map_service as nm
 PYEONG_SQM = 3.305785
 
 
-def _expected_avm(groups: list[dict], comparable_count: int) -> dict | None:
+def _expected_avm(
+    groups: list[dict],
+    comparable_count: int,
+    *,
+    radius_applied: bool = False,
+    radius_m: int | None = None,
+) -> dict | None:
     """종전 프론트(deriveResults :196-238) 계산식의 독립 재구현(golden reference).
 
     서비스 구현(_compute_avm_summary)을 호출하지 않고 이 파일 안에서 별도로 다시 써서,
@@ -72,8 +78,20 @@ def _expected_avm(groups: list[dict], comparable_count: int) -> dict | None:
         "price_per_sqm": js_round(per_m2_man * 10000),
         "confidence_score": min(0.98, max(0.3, confidence)),
         "comparable_count": comparable_count,
+        # ★additive(2026-08-01) — `comparable_count`는 이름과 달리 "비교 **거래** 건수"였다.
+        #   값 계약은 그대로 두고 의미가 분명한 별칭·그룹 수·근거를 함께 낸다.
+        "comparable_deal_count": comparable_count,
+        "comparable_group_count": len(groups),
         "sample_count": len(deal_prices),
         "price_cv_percent": js_round(cv_percent),
+        # ★근거 표기 — 이 시세가 **무엇으로부터** 나왔는지. 반경이 적용된 산출은
+        #   `in_radius`(반경 통과분만), 미적용이면 전체 그룹임을 명시한다.
+        "basis": {
+            "radius_applied": radius_applied,
+            "radius_m": radius_m,
+            "in_radius_group_count": len(groups) if radius_applied else None,
+            "scope": "in_radius" if radius_applied else "all_groups_radius_not_applied",
+        },
     }
 
 
@@ -93,7 +111,11 @@ def test_avm_summary_none_when_category_missing_or_empty():
 def test_avm_summary_none_when_no_group_has_usable_price_and_area():
     """avg_price_10k/avg_area_m2가 없는 그룹뿐이면 비교표본 0건 → None(무날조)."""
     svc = _svc()
-    cat = {"count": 3, "groups": [{"avg_price_10k": 0, "avg_area_m2": 0, "count": 3, "deals": []}]}
+    cat = {
+        "count": 3,
+        "groups": [{"avg_price_10k": 0, "avg_area_m2": 0, "count": 3, "deals": [],
+                    "lat": 37.5, "lon": 127.0}],
+    }
     assert svc._compute_avm_summary(cat) is None
 
 
@@ -102,7 +124,10 @@ def test_avm_summary_single_group_matches_golden_reference():
     svc = _svc()
     prices = [50000, 51000, 49000, 50500, 49500]  # 만원
     group = {
+        # ★대역 충실화(2026-08-01): 시세에 쓰이는 그룹은 생산에서 **좌표가 확보된** 것들이다.
+        #   좌표 없는 그룹은 이제 반경 적용 여부와 무관하게 배제되므로 lat/lon을 채운다.
         "name": "테스트단지", "count": 5, "avg_price_10k": 50000, "avg_area_m2": 84.0,
+        "lat": 37.5, "lon": 127.0,
         "deals": [{"price_10k_won": p, "area_m2": 84.0} for p in prices],
     }
     cat = {"count": 5, "groups": [group]}
@@ -123,11 +148,13 @@ def test_avm_summary_weighted_average_across_multiple_groups_matches_golden():
     svc = _svc()
     group_a = {
         "name": "A단지", "count": 10, "avg_price_10k": 50000, "avg_area_m2": 84.0,
+        "lat": 37.5, "lon": 127.0,
         "deals": [{"price_10k_won": p, "area_m2": 84.0}
                   for p in [48000, 50000, 52000, 49000, 51000, 50000, 50500, 49500, 50200, 49800]],
     }
     group_b = {
         "name": "B단지", "count": 5, "avg_price_10k": 80000, "avg_area_m2": 100.0,
+        "lat": 37.501, "lon": 127.001,
         "deals": [{"price_10k_won": p, "area_m2": 100.0}
                   for p in [78000, 80000, 82000, 79000, 81000]],
     }
@@ -165,6 +192,7 @@ def test_avm_summary_zero_valid_deal_prices_falls_back_to_default_confidence():
     svc = _svc()
     group = {
         "name": "가격결측단지", "count": 4, "avg_price_10k": 60000, "avg_area_m2": 84.0,
+        "lat": 37.5, "lon": 127.0,
         "deals": [{"price_10k_won": 0, "area_m2": 84.0} for _ in range(4)],
     }
     cat = {"count": 4, "groups": [group]}
@@ -182,6 +210,7 @@ def test_avm_summary_confidence_clamped_between_0_3_and_0_98():
     svc = _svc()
     group = {
         "name": "균일가단지", "count": 100, "avg_price_10k": 50000, "avg_area_m2": 84.0,
+        "lat": 37.5, "lon": 127.0,
         "deals": [{"price_10k_won": 50000, "area_m2": 84.0} for _ in range(100)],
     }
     cat = {"count": 100, "groups": [group]}
@@ -220,9 +249,10 @@ def _make_build_service(apt_rows: list[dict], geocode_map: dict[str, dict]) -> n
     return svc
 
 
-def _apt_row(price_10k_won: int, day: int) -> dict:
+def _apt_row(price_10k_won: int, day: int, *, name: str = "통합테스트단지",
+             jibun: str = "1-1") -> dict:
     return {
-        "building_name": "통합테스트단지", "jibun": "1-1", "dong": "역삼동", "sigungu": "강남구",
+        "building_name": name, "jibun": jibun, "dong": "역삼동", "sigungu": "강남구",
         "price_10k_won": price_10k_won, "area_m2": 84.0, "floor": "5",
         "deal_date": f"2024년 3월 {day}일",
     }
@@ -246,12 +276,29 @@ async def test_build_response_includes_avm_field_matching_apt_trade_groups():
 
     assert "avm" in result
     assert result["avm"] is not None
-    # ★배선 정합성: build() 안에서 실제로 쓰인 apt_trade 그룹(반경 필터·캡 적용 완료본)으로
-    #   다시 계산해도 동일한 값이 나와야 한다 — 파이프라인이 다른 데이터를 쓰고 있지 않음을 보장.
-    rewired = svc._compute_avm_summary(result["categories"]["apt_trade"])
-    assert result["avm"] == rewired
-    assert result["avm"]["comparable_count"] == result["categories"]["apt_trade"]["count"]
+
+    # ★배선 정합성(2026-08-01 갱신) — 종전엔 응답의 apt_trade 그룹으로 **재계산**해 대조했다.
+    #   이제 AVM은 **반경을 통과한 그룹만** 쓰고 그 내부 목록은 응답에서 제거되므로(페이로드
+    #   중복 방지) 같은 방식의 재계산이 불가능하다. 대신 **독립 골든**으로 대조한다 —
+    #   이 픽스처는 좌표가 해소되고 중심과 동일 지점이라 그룹 전체가 반경 통과분이다.
+    apt_groups = result["categories"]["apt_trade"]["groups"]
+    assert apt_groups, "픽스처가 그룹을 만들지 못했다(대조가 공허해진다)"
+    assert all(g.get("lat") is not None for g in apt_groups), (
+        "좌표 미해소 그룹이 섞였다 — 이 대조는 '반경 통과분 = 전체'를 전제한다"
+    )
+    expected = _expected_avm(
+        apt_groups,
+        comparable_count=sum(g["count"] for g in apt_groups),
+        radius_applied=True,
+        radius_m=1000,
+    )
+    assert result["avm"] == expected
+    # ★반경 통과분 기준 카운트 — `categories.count`(통과분+미판정분 합)와 **다를 수 있다**.
+    #   이 픽스처에선 미판정분이 0이라 같지만, 같다고 단정하지 않고 통과분으로 단언한다.
+    assert result["avm"]["comparable_count"] == result["categories"]["apt_trade"]["count_in_radius"]
     assert result["avm"]["sample_count"] == 5
+    # ★AVM이 산출됐으면 미제공 사유는 없어야 한다(둘이 동시에 참이면 표기 모순).
+    assert result["avm_unavailable_reason"] is None
 
 
 @pytest.mark.asyncio
@@ -264,3 +311,206 @@ async def test_build_response_avm_is_none_when_no_apt_transactions():
         center_hint={"lat": 37.5000, "lon": 127.0000},
     )
     assert result["avm"] is None
+
+
+# ── ★근본수정 회귀락(2026-08-01): 위치 미확인 거래로 시세를 만들지 않는다 ──────────────
+#
+# 라이브 실측(호미곶 대보리 산1-1, 보전관리지역 임야 152,826㎡):
+#   radius_applied=true · groups_evaluated=315 · radius_filtered_out=315  → 반경 통과 **0건**
+#   그런데 avm.comparable_count=32 · price_per_sqm=1,490,069원
+#   기여 그룹 12개는 전부 lat=None(좌표 미확인)이고 실제 위치는 10~20km 밖 아파트였다.
+#   반경만 100km로 바꾸면 같은 필지 시세가 1.25억 → 2.55억(2.04배)으로 튀었다.
+#
+# 즉 파이프라인의 안전 성질이 **뒤집혀** 있었다 —
+#   위치가 **확인된** 먼 거래는 버리고, 위치를 **모르는** 거래는 남겨 시세로 썼다.
+
+
+def test_avm_ignores_groups_that_never_passed_the_radius_check():
+    """★반경 판정을 받은 적 없는(좌표 미확인) 그룹은 시세에 쓰지 않는다."""
+    svc = _svc()
+    unresolved = {
+        "name": "위치미확인단지", "count": 6, "avg_price_10k": 50000, "avg_area_m2": 84,
+        "lat": None, "lon": None,
+        "deals": [{"price_10k_won": 50000}] * 6,
+    }
+    cat = {"groups": [unresolved], "_in_radius_groups": [], "count": 6}
+    assert svc._compute_avm_summary(cat, radius_applied=True, radius_m=1000) is None, (
+        "좌표 미확인 그룹으로 시세를 만들었다 — 사용자에게 틀린 시세를 보여준다"
+    )
+
+
+def test_avm_unavailable_reason_distinguishes_no_deals_from_none_in_radius():
+    """★'거래가 아예 없다'와 '반경 안에서 위치 확인된 게 없다'를 구분해 말한다."""
+    svc = _svc()
+    # (1) 거래 자체가 없음 → 사유 없음(기존 '무자료' 표기로 충분)
+    assert svc._avm_caveat({"groups": []}, radius_applied=True, radius_m=1000) is None
+    # (2) 거래는 있는데 반경 통과 0 → 사유를 말한다
+    reason = svc._avm_caveat(
+        {"groups": [{"count": 3}], "_in_radius_groups": []}, radius_applied=True, radius_m=1000,
+    )
+    assert reason and "위치가 확인된" in reason and "1000m" in reason
+
+
+def test_avm_uses_only_in_radius_groups_when_both_present():
+    """★통과분과 미판정분이 섞여 있으면 **통과분만** 쓴다(혼입 금지)."""
+    svc = _svc()
+    near = {"name": "반경내", "count": 2, "avg_price_10k": 20000, "avg_area_m2": 84,
+            "lat": 37.5, "lon": 127.0, "deals": [{"price_10k_won": 20000}] * 2}
+    far_unknown = {"name": "위치미확인", "count": 50, "avg_price_10k": 90000, "avg_area_m2": 84,
+                   "lat": None, "lon": None, "deals": [{"price_10k_won": 90000}] * 50}
+    cat = {"groups": [near, far_unknown], "_in_radius_groups": [near], "count": 52}
+    r = svc._compute_avm_summary(cat, radius_applied=True, radius_m=1000)
+    assert r is not None
+    # 거래 50건짜리 미판정 그룹이 섞였다면 시세가 훨씬 높아진다(가중평균).
+    only_near = svc._compute_avm_summary(
+        {"groups": [near], "_in_radius_groups": [near]}, radius_applied=True, radius_m=1000,
+    )
+    assert r["price_per_sqm"] == only_near["price_per_sqm"]
+    assert r["comparable_count"] == 2, f"미판정 그룹이 카운트에 섞였다: {r['comparable_count']}"
+    assert r["basis"]["in_radius_group_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_build_excludes_coordinate_unresolved_groups_from_avm():
+    """★★R1 HIGH-1 회귀락 — `build()`가 `_in_radius_groups`를 **올바르게 채우는지** 잠근다.
+
+    ★왜 필요한가: 앞선 회귀락 3건은 `cat["_in_radius_groups"]`를 **테스트가 손으로 채워**
+      넣고 함수가 그 키를 존중하는지만 봤다(동어반복). `build()` 안에서 그 키에 무엇이
+      들어가는지는 아무도 검증하지 않아, 생산 배선을
+          `cat["_in_radius_groups"] = capped + unresolved`   ← 호미곶 버그 그대로
+      로 되돌리는 변이가 **11개 테스트를 전건 통과**했다(리뷰어 실증, 시세 4.04배 오염).
+      유일한 end-to-end 테스트는 모든 그룹이 좌표해소인 픽스처라 `capped == capped+unresolved`
+      — 판별력이 **구조적으로 0**이었다.
+
+    그래서 이 테스트는 **좌표가 해소되지 않는 그룹**을 일부러 섞고, 그 그룹의 단가를 크게
+    다르게 두어 혼입되면 시세가 눈에 띄게 달라지도록 만든다.
+    """
+    nm._BUILD_CACHE.clear()
+    center = {"lat": 37.5000, "lon": 127.0000}
+    probe = nm.NearbyMapService.__new__(nm.NearbyMapService)
+    q_near = probe._query_for("강남구", "역삼동", "1-1", "가까운단지")
+    q_far = probe._query_for("강남구", "역삼동", "9-9", "위치미확인단지")
+    # ★`q_far`는 지오코딩 맵에 **넣지 않는다** → 좌표 미해소 그룹이 된다(생산의 실제 실패 형태).
+    geocode_map = {q_near: {"lat": 37.5000, "lon": 127.0000}}
+    assert q_far not in geocode_map, (
+        "미해소로 만들려던 쿼리가 지오코딩 맵에 있다 — 이 테스트의 판별력이 사라진다"
+    )
+    assert q_far != q_near, "두 그룹이 같은 쿼리로 접히면 미해소 그룹이 생기지 않는다"
+
+    rows = [_apt_row(30000, day=i + 1, name="가까운단지", jibun="1-1") for i in range(2)]
+    rows += [
+        _apt_row(200000, day=i + 1, name="위치미확인단지", jibun="9-9") for i in range(8)
+    ]
+    svc = _make_build_service(rows, geocode_map)
+
+    result = await svc.build(
+        address="서울 강남구 역삼동 1-1", lawd_cd="11680", months=1, radius_m=1000,
+        center_hint=center,
+    )
+
+    cat = result["categories"]["apt_trade"]
+    resolved = [g for g in cat["groups"] if g.get("lat") is not None]
+    unresolved = [g for g in cat["groups"] if g.get("lat") is None]
+    assert resolved and unresolved, (
+        f"픽스처가 두 종류를 모두 만들지 못했다(해소 {len(resolved)}·미해소 {len(unresolved)}) "
+        "— 이 대조는 둘이 공존해야 판별력이 있다"
+    )
+
+    # ★핵심: AVM은 **좌표 해소분만** 쓴다. 미해소분(단가 20만/㎡급 8건)이 섞이면
+    #   가중평균이 크게 올라가므로 값으로 구분된다.
+    avm = result["avm"]
+    assert avm is not None
+    assert avm["comparable_count"] == sum(g["count"] for g in resolved), (
+        f"AVM 표본에 좌표 미해소분이 섞였다: {avm['comparable_count']} "
+        f"(해소분 합계 {sum(g['count'] for g in resolved)})"
+    )
+    assert avm["comparable_group_count"] == len(resolved)
+    assert avm["basis"]["in_radius_group_count"] == len(resolved)
+
+    # 카운트 분리도 실제로 갈라져 있어야 한다(합쳐 두면 소비처가 "반경 내 N건"으로 오독).
+    assert cat["count_in_radius"] < cat["count"], (
+        "count_in_radius가 전체와 같다 — 미해소분이 통과분으로 계상됐다"
+    )
+    assert cat["count_unresolved"] == sum(g["count"] for g in unresolved)
+
+
+def test_avm_excludes_unresolved_even_when_radius_not_applied():
+    """★R1 HIGH-2 회귀락 — 반경 미적용 경로에서도 좌표 없는 그룹은 시세에 쓰지 않는다.
+
+    종전 `else` 가지는 **전체 그룹**을 썼다. 즉 봉합 대상 결함이 그 가지에 그대로 살아 있었고,
+    이 경로는 생산에서 도달 가능하다(라우터의 `center_hint`는 `lawd_cd`가 없을 때만 계산되므로,
+    필지를 선택해 pnu/bcode가 정상 공급되는 **주경로**에서는 힌트가 없고, 내부 주소 지오코딩이
+    실패하면 `radius_applied=False`가 된다 — 지오코딩이 잘 실패하는 모집단이 바로 산 지번·
+    농어촌 주소다).
+    """
+    svc = _svc()
+    resolved = {"name": "좌표있음", "count": 2, "avg_price_10k": 20000, "avg_area_m2": 84.0,
+                "lat": 37.5, "lon": 127.0, "deals": [{"price_10k_won": 20000}] * 2}
+    unresolved = {"name": "좌표없음", "count": 40, "avg_price_10k": 90000, "avg_area_m2": 84.0,
+                  "lat": None, "lon": None, "deals": [{"price_10k_won": 90000}] * 40}
+    cat = {"groups": [resolved, unresolved], "count": 42}
+
+    r = svc._compute_avm_summary(cat, radius_applied=False, radius_m=None)
+    assert r is not None
+    assert r["comparable_count"] == 2, (
+        f"반경 미적용 경로에 좌표 미확인 그룹이 섞였다: {r['comparable_count']}"
+    )
+    only = svc._compute_avm_summary({"groups": [resolved]}, radius_applied=False)
+    assert r["price_per_sqm"] == only["price_per_sqm"]
+
+
+def test_avm_reason_warns_when_radius_filter_was_not_applied():
+    """★반경 미적용이면 **반경 보증이 없다**는 사실을 반드시 말한다(종전엔 사유가 None)."""
+    svc = _svc()
+    resolved = {"name": "좌표있음", "count": 2, "lat": 37.5, "lon": 127.0}
+    reason = svc._avm_caveat(
+        {"groups": [resolved]}, radius_applied=False, radius_m=None,
+    )
+    assert reason and "반경 필터를 적용하지 못했습니다" in reason
+
+    # 좌표가 하나도 없으면 그 사실을 말한다.
+    none_reason = svc._avm_caveat(
+        {"groups": [{"name": "좌표없음", "count": 5}]}, radius_applied=False, radius_m=None,
+    )
+    assert none_reason and "전부 위치 미확인" in none_reason
+
+
+@pytest.mark.asyncio
+async def test_never_silent_when_deals_exist_but_avm_is_none():
+    """★★R3-MED-2 계약 불변식 — **거래가 있는데 시세도 없고 사유도 없는** 상태는 불가능하다.
+
+    `_compute_avm_summary`와 `_avm_caveat`은 서로를 모른 채 독립 계산한다. 그래서 반경 통과
+    그룹은 있는데 가격·면적이 전부 결측이면 **둘 다 None**이 되고, 화면은 다시
+    "주변 아파트 실거래가 없어 시세를 추정할 수 없습니다"라는 **거짓 문장**을 낸다(거래는 있다).
+
+    이 모순은 R1→R2→R3에서 **세 번 다른 경로로** 나왔다 — 그래서 분기 땜질이 아니라
+    `build()` 말미의 계약으로 봉인했다.
+    """
+    nm._BUILD_CACHE.clear()
+    center = {"lat": 37.5000, "lon": 127.0000}
+    probe = nm.NearbyMapService.__new__(nm.NearbyMapService)
+    q = probe._query_for("강남구", "역삼동", "1-1", "가격결측단지")
+    geocode_map = {q: {"lat": 37.5000, "lon": 127.0000}}
+
+    # 가격·면적이 결측인 거래(수집은 됐다) — MOLIT 응답에서 실제로 나올 수 있는 형태.
+    rows = [
+        {
+            "building_name": "가격결측단지", "jibun": "1-1", "dong": "역삼동", "sigungu": "강남구",
+            "price_10k_won": 0, "area_m2": 0, "floor": "5",
+            "deal_date": f"2024년 3월 {i + 1}일",
+        }
+        for i in range(3)
+    ]
+    svc = _make_build_service(rows, geocode_map)
+    result = await svc.build(
+        address="서울 강남구 역삼동 1-1", lawd_cd="11680", months=1, radius_m=1000,
+        center_hint=center,
+    )
+
+    groups = result["categories"]["apt_trade"]["groups"]
+    assert groups, "픽스처가 그룹을 만들지 못했다(계약을 관측할 수 없다)"
+    if result["avm"] is None:
+        assert result["avm_caveat"], (
+            "거래는 있는데 시세도 없고 사유도 없다 — 화면이 '실거래가 없다'는 거짓 문장을 낸다"
+        )
+        assert "거래가 없는 것이 아닙니다" in result["avm_caveat"]

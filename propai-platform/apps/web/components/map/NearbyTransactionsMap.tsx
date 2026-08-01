@@ -68,7 +68,26 @@ export type NearbyMapPayload = {
     comparable_count: number;
     sample_count: number;     // 신뢰도(CV) 산출에 실제 사용된 개별 거래 표본 수
     price_cv_percent: number; // 표본 가격 변동계수(CV, %) — 낮을수록 가격이 고르게 형성됨
+    /** ★비교 **거래** 건수의 명시적 별칭(`comparable_count`가 이름과 달리 거래 수였다). */
+    comparable_deal_count?: number;
+    comparable_group_count?: number;
+    /** ★이 시세가 무엇으로부터 나왔는가 — 반경 적용 여부·통과 그룹 수. */
+    basis?: {
+      radius_applied: boolean;
+      radius_m: number | null;
+      in_radius_group_count: number | null;
+      scope: string;
+    };
   } | null;
+  /**
+   * ★AVM **신뢰성 단서**. AVM 유무와 **무관하게** 붙을 수 있다 — 가장 위험한 단서
+   *   ("반경 필터 미적용")는 오히려 **AVM이 있을 때** 붙는다. 이걸 소비하지 않으면 화면이
+   *   "실거래가 없어 시세를 추정할 수 없습니다"라고 말하면서 같은 화면에서 거래 수십 건을
+   *   보여주는 자기모순이 난다(날조된 숫자를 날조된 설명으로 바꾸는 것).
+   */
+  avm_caveat?: string | null;
+  /** @deprecated `avm_caveat`과 동일 값(한 릴리스 호환). */
+  avm_unavailable_reason?: string | null;
   data_source?: string;
   fetch_failed?: boolean;
   partial_failed?: boolean;
