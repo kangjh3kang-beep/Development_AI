@@ -4,6 +4,8 @@
 LLM 프로바이더를 선택하여 AI 해석에 사용할 모델을 지정할 수 있다.
 """
 
+from typing import Any
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
@@ -36,6 +38,15 @@ class ComprehensiveAnalysisRequest(BaseModel):
         None,
         description="필지목록 [{pnu,address,area_sqm,zone_type}]. 다필지 통합분석용(미지정 시 단일).",
     )
+    # ★W2-a(단계분할): AI 해석 2종(부지 해석·시장 내러티브)은 종합분석 소요의 대부분이고,
+    #   Cloudflare 엣지 컷오프(~125초)를 넘기는 주범이다. False로 요청하면 결정론 분석만
+    #   즉시 받아 화면을 채우고, 해석은 후속 호출로 이어붙일 수 있다(점진 렌더).
+    #   ★기본 True — 기존 호출부는 완전 무회귀.
+    include_interpretation: bool = Field(
+        True,
+        description="AI 해석(부지 해석·시장 내러티브) 생성 여부. False면 결정론 분석만 빠르게 반환하고 "
+                    "해당 필드는 status='deferred'로 표기된다(생성 실패와 구분됨).",
+    )
 
 
 @router.post("/comprehensive")
@@ -53,7 +64,48 @@ async def run_comprehensive_analysis(req: ComprehensiveAnalysisRequest, current_
         tenant_id=str(getattr(current_user, "tenant_id", "") or "") or None,
         project_id=req.project_id,
         parcels=req.parcels,
+        include_interpretation=req.include_interpretation,
     )
+
+
+class InterpretationRequest(BaseModel):
+    """1단계(결정론) 결과를 받아 AI 해석만 생성한다 — 단계분할 2단.
+
+    ★왜 별도 엔드포인트인가: 2단계를 `/comprehensive`에 include_interpretation=True로 다시
+    호출하면 데이터 수집·산정을 **처음부터 통째로 재실행**한다(오리진 190초가 그대로 반복되고
+    백엔드 부하가 2배). 이 엔드포인트는 이미 산출된 result를 입력으로 받아 LLM 해석만 돌린다.
+    """
+
+    result: dict[str, Any] = Field(
+        ..., description="1단계 종합분석 응답(그대로 전달). 해석 생성의 입력이 된다."
+    )
+    llm_provider: str | None = Field(None, description="LLM 프로바이더(미지정 시 기본값).")
+    llm_model: str | None = Field(None, description="LLM 모델 ID(미지정 시 프로바이더 기본).")
+
+
+@router.post("/interpretation")
+async def run_interpretation(req: InterpretationRequest, current_user=Depends(get_current_user)):
+    """AI 해석 2종만 생성해 반환(부지 해석·시장 내러티브).
+
+    반환 4키(ai_interpretation·market_interpretation + 각 status)를 프론트가 1단계 결과에
+    병합한다. 실패해도 raise하지 않고 status='unavailable'로 정직 degrade하므로, 1단계에서
+    이미 받은 분석 본문을 잃지 않는다(종전엔 524 하나로 분석 전체가 사라졌다).
+    """
+    from app.services.land_intelligence.comprehensive_analysis_service import (
+        ComprehensiveAnalysisService,
+    )
+
+    custom_llm = None
+    if req.llm_provider:
+        try:
+            from app.services.ai.llm_provider import get_llm
+            custom_llm = get_llm(provider=req.llm_provider, model=req.llm_model)
+        except Exception:  # noqa: BLE001 — 커스텀 LLM 실패는 기본 프로바이더로 폴백(analyze와 동일)
+            custom_llm = None
+
+    service = ComprehensiveAnalysisService()
+    # ★analyze()와 **같은 generate_interpretations()** 를 탄다(경로별 품질 분기 구조적 차단).
+    return await service.generate_interpretations(req.result, custom_llm=custom_llm)
 
 
 class SimilarMarketRequest(BaseModel):

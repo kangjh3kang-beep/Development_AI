@@ -212,10 +212,21 @@ def detect_contradictions(
             group_counts[sev] += 1
     max_sev_grouped = next((s for s in ("high", "medium", "low") if group_counts.get(s)), None)
 
+    # ★변경 원인 분류(additive) — "값이 달라졌다"를 "왜 달라졌는지"로 바꾼다.
+    #   기존 키(contradictions·counts·max_severity·groups…)는 그대로 두어 하위호환을 깨지 않는다.
+    #   ★핵심: 입력 지문(signature_parts)이 다르면 애초에 다른 대상을 잰 것이라 '모순'이 아니다.
+    #   표시 계층은 change_cause.cause로 분기해야 한다 — max_severity 단독으로 경고색을 칠하면
+    #   입력 변경(필지 재선택)까지 빨간 경고가 되는 종전 결함이 그대로 재발한다.
+    from app.services.ledger.change_cause import CAUSE_UNEXPLAINED, classify_change_cause
+    cause = classify_change_cause(pp, cc, has_changes=bool(items))
+
     return {
         "contradictions": items, "counts": counts, "max_severity": max_sev,
         "has_contradiction": bool(items),
         "groups": groups, "group_counts": group_counts,
         "max_severity_by_group": max_sev_grouped,
+        "change_cause": cause,
+        # 진짜 확인이 필요한 차이인가 — 입력/기준 변경으로 설명되면 False(경고 억제의 단일 근거).
+        "needs_review": bool(cause.get("cause") == CAUSE_UNEXPLAINED),
         "note": "결정론 모순탐지(prior 대비 status 플립·수치 델타) — 판정/수치 비생성, 비교 전용",
     }

@@ -9,6 +9,7 @@
  */
 
 import { useCallback, useState } from "react";
+import { useAutoRun } from "@/lib/use-auto-run";
 import { AlertTriangle, Building2, Route, TrainFront } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import { EvidencePanel } from "@/components/common/EvidencePanel";
@@ -52,7 +53,7 @@ function scoreColor(s: number): string {
   return "text-rose-400";
 }
 
-export function SiteInfraPoiCard({ address, context, className = "" }: { address?: string; context?: Record<string, unknown>; className?: string }) {
+export function SiteInfraPoiCard({ address, context, className = "", autoRunToken }: { address?: string; context?: Record<string, unknown>; className?: string; autoRunToken?: number }) {
   const [radius, setRadius] = useState(1000);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -73,6 +74,10 @@ export function SiteInfraPoiCard({ address, context, className = "" }: { address
       setLoading(false);
     }
   }, [address, context]);
+
+  // ★파이프라인 편입(W2-d): 종합분석 시작 시 부모가 토큰을 올리면 현재 반경으로 자동 조회한다.
+  //   버튼은 그대로 남긴다 — 반경 변경·재조회는 여전히 사용자가 통제한다.
+  useAutoRun(autoRunToken, () => void run(radius), { enabled: Boolean(address?.trim()) });
 
   return (
     <div className={`rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-5 ${className}`}>

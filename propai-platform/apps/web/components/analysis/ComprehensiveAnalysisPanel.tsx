@@ -23,6 +23,7 @@ import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient } from "@/lib/api-client";
 import { formatArea } from "@/lib/formatters"; // 면적 표기 SSOT(UX A2) — 로컬 중복 formatArea 대체
+import { fieldMeta, formatFieldValue, formatDelta } from "@/lib/analysis-field-labels"; // 필드 라벨·단위 SSOT(원시 키 노출 근절)
 
 /* ── Helpers ── */
 
@@ -124,12 +125,9 @@ const RISK_LEVEL_STYLE: Record<string, string> = {
   "극히 높음": "bg-[var(--status-error)]/20 text-[var(--status-error)]",
 };
 
-// 결정론 모순탐지(contradictions.contradictions[]) 심각도 → 카드 색(status_flip·numeric_delta 공용).
-const SEVERITY_CARD_STYLE: Record<string, string> = {
-  high: "border-[var(--status-error)]/40 bg-[var(--status-error)]/10",
-  medium: "border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10",
-  low: "border-[var(--line-strong)] bg-[var(--surface-strong)]",
-};
+// ★SEVERITY_CARD_STYLE(심각도→카드색) 제거(2026-08-01): 값 변화의 상대폭으로 경고색을 칠하면
+//   입력 변경(필지 재선택)까지 빨간 HIGH가 되는 라이브 오표기가 재발한다. 카드색은 이제
+//   change_cause 기준으로만 정해진다(ChangeCauseCard 참조).
 
 function PermitBadge({ complexity }: { complexity: number }) {
   const colors = ["", "bg-[var(--status-success)]/20 text-[var(--status-success)]", "bg-blue-500/20 text-blue-400", "bg-[var(--status-warning)]/20 text-[var(--status-warning)]", "bg-orange-500/20 text-orange-400", "bg-[var(--status-error)]/20 text-[var(--status-error)]"];
@@ -142,89 +140,122 @@ function PermitBadge({ complexity }: { complexity: number }) {
 }
 
 /**
- * ContradictionsCard — "이전 분석과 모순 감지" 렌더.
+ * ChangeCauseCard — "이전 분석과 무엇이·왜 달라졌는지"를 사용자 언어로 렌더.
  *
- * ★신규(additive) contradictions.groups[] 있으면 패턴별 그룹 카드(파생 필드 N개 + 펼치면
- * sample_keys)로 요약, 없으면 기존 원시 나열을 최대 5행 + 접기로 강등(무제한 나열 방지).
- * 둘 다 없으면 렌더하지 않는다(무목업 — 모순 0건이면 빈 카드도 안 남긴다).
+ * ## 왜 이렇게 바뀌었나 (2026-08-01)
+ *
+ * 종전 "이전 분석과 모순 감지"는 값 차이를 전부 **모순**이라 부르고 상대변화율로 심각도를
+ * 칠했다. 그런데 프로덕션 실제 4건은 하나도 모순이 아니었다 — 셋은 사용자가 필지를 3개→2개로
+ * 다시 고른 것(입력 변경), 하나는 학교 중복집계 버그 수정. 전부 빨간 HIGH로 떠서 *지금 숫자가
+ * 의심스럽다*는 정반대 인상을 줬다.
+ *
+ * 그래서 표시의 기준을 심각도가 아니라 **원인**(backend change_cause)으로 바꾼다:
+ *   INPUT_CHANGED   → 중립색. 비교 대상이 아님을 설명(경고 아님)
+ *   VERSION_CHANGED → 중립색. 최신이 더 정확하다고 안내
+ *   UNEXPLAINED     → ★유일하게 경고색. 사용자가 실제로 확인해야 하는 경우
+ *   NONE            → 카드 대신 한 줄 배지
+ *
+ * ★불변식: max_severity로 카드색을 정하지 않는다. 그렇게 하면 입력 변경까지 빨간 경고가 되는
+ *   종전 결함이 그대로 재발한다(백엔드 contradiction.py 주석과 쌍).
  */
-function ContradictionsCard({ contradictions }: { contradictions?: AnalysisResult }) {
-  const [expanded, setExpanded] = useState(false);
+export function ChangeCauseCard({ contradictions }: { contradictions?: AnalysisResult }) {
+  const [showOther, setShowOther] = useState(false);
   if (!contradictions) return null;
+
+  const cause = (contradictions.change_cause ?? null) as AnalysisResult | null;
   const groups: AnalysisResult[] = Array.isArray(contradictions.groups) ? contradictions.groups : [];
   const raw: AnalysisResult[] = Array.isArray(contradictions.contradictions) ? contradictions.contradictions : [];
-  if (groups.length === 0 && raw.length === 0) return null;
 
-  const maxSeverity = contradictions.max_severity as string | undefined;
-  const visibleRaw = expanded ? raw : raw.slice(0, 5);
+  // ★하위호환: 구버전 백엔드(change_cause 없음)는 원인을 알 수 없다. 원인을 지어내지 않고
+  //   "확인 필요"로만 표기한다(없는 확신 금지 — 백엔드 UNEXPLAINED와 동일 정직 규칙).
+  const causeCode = (cause?.cause as string) ?? (groups.length || raw.length ? "UNEXPLAINED" : "NONE");
+  if (causeCode === "NONE") {
+    if (groups.length === 0 && raw.length === 0) {
+      return (
+        <p className="text-[11px] text-[var(--text-hint)]">
+          ✓ 이전 분석과 동일합니다 (같은 조건 · 주요 수치 일치)
+        </p>
+      );
+    }
+  }
+
+  const needsReview = causeCode === "UNEXPLAINED";
+  const cardStyle = needsReview
+    ? "border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10"
+    : "border-[var(--line-strong)] bg-[var(--surface-strong)]";
+
+  const headline = (cause?.headline as string) || "이전 분석과 달라진 항목이 있습니다";
+  const reason = (cause?.reason as string) || "이전 분석의 조건 정보가 없어 원인을 확인할 수 없습니다.";
+  const trustHint = (cause?.trust_hint as string) || "";
+
+  // 표시 행 — 그룹 우선(패턴 단위 압축본), 없으면 원시 목록.
+  const items = groups.length > 0 ? groups : raw;
+  const known = items.filter((it) => fieldMeta(String(it.key_pattern ?? it.key ?? "")) !== null);
+  const unknown = items.filter((it) => fieldMeta(String(it.key_pattern ?? it.key ?? "")) === null);
 
   return (
-    <div className={`rounded-2xl border p-4 ${SEVERITY_CARD_STYLE[maxSeverity ?? ""] || SEVERITY_CARD_STYLE.low}`}>
+    <div className={`rounded-2xl border p-4 ${cardStyle}`}>
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-sm font-bold text-[var(--text-primary)]">이전 분석과 모순 감지</span>
-        {maxSeverity && (
-          <span className="rounded-full bg-black/10 px-2 py-0.5 text-[10px] font-bold uppercase text-[var(--text-primary)]">
-            최고 심각도 {maxSeverity}
-          </span>
-        )}
+        <span className="text-sm font-bold text-[var(--text-primary)]">
+          {needsReview ? "⚠ " : ""}{headline}
+        </span>
+        <span className="rounded-full bg-black/10 px-2 py-0.5 text-[10px] font-bold text-[var(--text-primary)]">
+          {needsReview ? "확인 필요" : causeCode === "VERSION_CHANGED" ? "최신이 정확" : "비교 불가"}
+        </span>
       </div>
 
-      {groups.length > 0 ? (
-        // ★그룹 카드(패턴키 단위 요약) — leaf_count는 같은 패턴에서 몇 개 세부필드가 함께 변했는지.
-        <div className="mt-2 space-y-2">
-          {groups.map((g, i) => (
-            <div key={i} className={`rounded-xl border p-3 ${SEVERITY_CARD_STYLE[g.severity as string] || SEVERITY_CARD_STYLE.low}`}>
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-xs font-bold text-[var(--text-primary)]">{g.key_pattern}</span>
-                {g.severity ? (
-                  <span className="rounded-full bg-black/10 px-1.5 py-0.5 text-[9px] font-bold uppercase text-[var(--text-primary)]">{g.severity}</span>
-                ) : null}
-                {typeof g.leaf_count === "number" && g.leaf_count > 1 ? (
-                  <span className="text-[10px] text-[var(--text-hint)]">파생 필드 {g.leaf_count}개</span>
-                ) : null}
-              </div>
-              <p className="mt-1 text-[11px] text-[var(--text-secondary)]">
-                {String(g.prev)} → {String(g.now)}
-                {g.rel_change != null ? ` (변화율 ${Math.round((g.rel_change as number) * 100)}%)` : ""}
-              </p>
-              {Array.isArray(g.sample_keys) && g.sample_keys.length > 0 ? (
-                <details className="mt-1.5">
-                  <summary className="cursor-pointer text-[10px] font-semibold text-[var(--accent-strong)]">
-                    세부 키 {g.sample_keys.length}개 보기
-                  </summary>
-                  <ul className="mt-1 space-y-0.5 pl-3">
-                    {(g.sample_keys as string[]).map((k, ki) => (
-                      <li key={ki} className="text-[10px] text-[var(--text-hint)]">· {k}</li>
-                    ))}
-                  </ul>
-                </details>
-              ) : null}
-            </div>
-          ))}
-        </div>
-      ) : (
-        // ★그룹 미제공(구버전 응답) — 원시 나열은 최대 5행 + 접기로 강등(무제한 나열 방지).
-        <>
-          <ul className="mt-2 space-y-1">
-            {visibleRaw.map((c, i) => (
-              <li key={i} className="text-[11px] text-[var(--text-secondary)]">
-                · {c.key}: {String(c.prev)} → {String(c.now)}
-                {c.kind === "numeric_delta" && c.rel_change != null ? ` (변화율 ${Math.round(c.rel_change * 100)}%)` : ""}
-                {c.severity ? ` · 심각도 ${c.severity}` : ""}
-              </li>
-            ))}
+      <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--text-secondary)]">{reason}</p>
+
+      {known.length > 0 && (
+        <div className="mt-2.5 rounded-xl border border-[var(--line-strong)] bg-[var(--surface)]/60 p-2.5">
+          <p className="mb-1.5 text-[10px] font-semibold text-[var(--text-hint)]">무엇이 달라졌나</p>
+          <ul className="space-y-1">
+            {known.map((it, i) => {
+              const key = String(it.key_pattern ?? it.key ?? "");
+              const meta = fieldMeta(key);
+              const delta = formatDelta(it.prev, it.now, meta);
+              return (
+                <li key={i} className="flex flex-wrap items-baseline gap-x-2 text-[11px]">
+                  <span className="min-w-[7rem] text-[var(--text-hint)]">{meta?.label}</span>
+                  <span className="text-[var(--text-secondary)]">{formatFieldValue(it.prev, meta)}</span>
+                  <span className="text-[var(--text-hint)]">→</span>
+                  <span className="font-semibold text-[var(--text-primary)]">{formatFieldValue(it.now, meta)}</span>
+                  {delta ? <span className="text-[10px] text-[var(--text-hint)]">({delta})</span> : null}
+                </li>
+              );
+            })}
           </ul>
-          {raw.length > 5 ? (
-            <button
-              type="button"
-              onClick={() => setExpanded((v) => !v)}
-              className="mt-2 text-[11px] font-semibold text-[var(--accent-strong)]"
-            >
-              {expanded ? "접기 ▲" : `${raw.length - 5}건 더보기 ▼`}
-            </button>
-          ) : null}
-        </>
+        </div>
       )}
+
+      {/* ★등재되지 않은 키는 이름을 지어내지 않는다 — 접어서 원본 그대로 보여준다(숨김도 날조도 아님). */}
+      {unknown.length > 0 && (
+        <div className="mt-2">
+          <button
+            type="button"
+            onClick={() => setShowOther((v) => !v)}
+            className="text-[10px] font-semibold text-[var(--accent-strong)]"
+          >
+            {showOther ? "기타 변경 항목 접기 ▲" : `기타 변경 항목 ${unknown.length}건 보기 ▼`}
+          </button>
+          {showOther && (
+            <ul className="mt-1 space-y-0.5 pl-3">
+              {unknown.map((it, i) => (
+                <li key={i} className="text-[10px] text-[var(--text-hint)]">
+                  · {String(it.key_pattern ?? it.key ?? "")}: {String(it.prev)} → {String(it.now)}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {trustHint ? (
+        <p className="mt-2.5 rounded-lg bg-black/5 px-2.5 py-2 text-[11px] leading-relaxed text-[var(--text-secondary)]">
+          <span className="font-semibold text-[var(--text-primary)]">어느 쪽을 믿어야 하나요? </span>
+          {trustHint}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -368,6 +399,12 @@ export function ComprehensiveAnalysisPanel() {
   const [parcelRows, setParcelRows] = useState<ParcelRow[]>([]);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [loading, setLoading] = useState(false);
+  // ★2단계(AI 해석) 진행 상태 — loading과 분리한다. 1단계 결과는 이미 화면에 있으므로
+  //   전체 로딩으로 덮으면 사용자가 받은 분석이 사라진 것처럼 보인다(점진 렌더의 요점).
+  const [interpreting, setInterpreting] = useState(false);
+  // ★W2-d 파이프라인 토큰 — 종합분석 시작 시 1 올려 POI·개발방식 시뮬을 함께 태운다.
+  //   사용자 지적: "종합 분석 시작을 누르면 입지 인프라·최적 개발방식도 같이 분석되어야 한다."
+  const [pipelineRunToken, setPipelineRunToken] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [selectedProvider, setSelectedProvider] = useState<string>("anthropic");
@@ -440,11 +477,26 @@ export function ComprehensiveAnalysisPanel() {
     }
   }, [siteAnalysis, result]);
 
+  /**
+   * 종합분석 실행 — ★2단계 점진 렌더(W2-c).
+   *
+   * 왜 나눴나: 종합분석은 오리진 실측 190초인데 Cloudflare 엣지가 ~125초에서 끊는다.
+   * 한 번에 다 받으려 하면 **분석 전체가 524로 사라진다**(실측 7회 중 6회 실패).
+   *   1단계 `/analysis/comprehensive` (include_interpretation:false) — 결정론 분석만. 즉시 렌더.
+   *   2단계 `/analysis/interpretation` — 1단계 결과를 넘겨 AI 해석만 생성 후 **병합**.
+   *
+   * ★2단계가 실패해도 1단계 결과를 잃지 않는다. 해석 필드만 'unavailable'로 정직 표기된다
+   * (종전에는 하나의 타임아웃이 분석 전체를 날렸다).
+   */
   const handleAnalyze = useCallback(async () => {
     if (!address.trim()) { setError("주소를 입력해주세요."); return; }
-    setLoading(true); setError(null); setResult(null);
+    setLoading(true); setError(null); setResult(null); setInterpreting(false);
+    // ★착수 시점에 올린다 — POI·시뮬은 종합분석 결과가 아니라 주소만 필요하므로 병렬 실행이
+    //   맞다(1단계 완료를 기다리면 사용자가 그만큼 더 오래 빈 카드를 본다).
+    setPipelineRunToken((t) => t + 1);
+    let core: AnalysisResult | null = null;
     try {
-      const data = await apiClient.post<AnalysisResult>("/analysis/comprehensive", {
+      core = await apiClient.post<AnalysisResult>("/analysis/comprehensive", {
         body: {
           address,
           llm_provider: selectedProvider || undefined,
@@ -452,16 +504,44 @@ export function ComprehensiveAnalysisPanel() {
           // ★다필지(2필지↑)면 통합집계용 필지목록 전송 → 종합분석이 '통합면적' 기준 산출(543㎡ 단일 버그 제거).
           //   단일/미등록은 미전송(백엔드 단일경로 = N=1 항등). 면적 보유 필지만.
           ...(parcelRows.length > 1 ? { parcels: parcelRows } : {}),
+          include_interpretation: false, // 1단계: 해석 제외로 엣지 컷오프 회피
         },
         useMock: false,
       });
-      setResult(data);
+      setResult(core);
       setHistoryRefreshTick((t) => t + 1);
     } catch (e) {
       // 원시 개발자 문자열(Error:…·[object Object]) 노출 금지 — 통상어 안내(정직 표기).
       setError(e instanceof Error ? e.message : "종합분석 중 오류가 발생했습니다. 입력을 확인하고 다시 시도해 주세요.");
-    } finally {
       setLoading(false);
+      return;
+    }
+    setLoading(false);
+
+    // ── 2단계: AI 해석 생성 후 병합(실패해도 1단계 결과 보존) ──
+    setInterpreting(true);
+    try {
+      const parts = await apiClient.post<AnalysisResult>("/analysis/interpretation", {
+        body: {
+          result: core,
+          llm_provider: selectedProvider || undefined,
+          llm_model: selectedModel || undefined,
+        },
+        useMock: false,
+      });
+      setResult((prev) => (prev ? { ...prev, ...parts } : prev));
+    } catch (e) {
+      // ★해석 실패를 '분석 실패'로 승격하지 않는다 — setError를 쓰지 않고 해당 필드만 정직 표기.
+      const reason = e instanceof Error ? e.message : "알 수 없는 오류";
+      setResult((prev) => (prev ? {
+        ...prev,
+        ai_interpretation: null,
+        ai_interpretation_status: { status: "unavailable", reason },
+        market_interpretation: null,
+        market_interpretation_status: { status: "unavailable", reason },
+      } : prev));
+    } finally {
+      setInterpreting(false);
     }
   }, [address, selectedProvider, selectedModel, parcelRows]);
 
@@ -571,17 +651,20 @@ export function ComprehensiveAnalysisPanel() {
         )}
       </div>
 
-      {/* 입지 인프라(POI) 분석 — 주소 선택 시. 분석결과 있으면 context로 통합 입지점수 산출 */}
+      {/* 입지 인프라(POI) 분석 — 주소 선택 시. 분석결과 있으면 context로 통합 입지점수 산출.
+          ★W2-d: 종합분석 시작 시 autoRunToken이 올라 자동 조회된다(버튼 별도 클릭 불요). */}
       {address.trim() && (
         <SiteInfraPoiCard
           address={address}
           context={result ? (result as unknown as Record<string, unknown>) : undefined}
+          autoRunToken={pipelineRunToken}
         />
       )}
 
-      {/* 다필지(2필지↑) 통합 개발방식 분석 — 검색·엑셀로 등록 시 자동 노출 */}
+      {/* 다필지(2필지↑) 통합 개발방식 분석 — 검색·엑셀로 등록 시 자동 노출.
+          ★W2-d: 종합분석과 함께 자동 실행(파이프라인 편입). */}
       {parcels.length > 1 && (
-        <DevelopmentScenarioCard address={address} parcels={parcels} />
+        <DevelopmentScenarioCard address={address} parcels={parcels} autoRunToken={pipelineRunToken} />
       )}
 
       {error && (
@@ -604,10 +687,10 @@ export function ComprehensiveAnalysisPanel() {
 
       {result && (
         <div className="space-y-3">
-          {/* ★결정론 모순탐지(contradictions) — prior(원장) 대비 status 플립·수치 델타(상단 경고).
-              백엔드 detect_contradictions 산출을 그간 미렌더(핸드오프 손실). 모순 0건이면 렌더 안 함.
-              groups[] 있으면 패턴별 그룹 카드, 없으면 원시 나열(최대 5행+접기)로 강등(ContradictionsCard). */}
-          <ContradictionsCard contradictions={result.contradictions} />
+          {/* ★이전 분석 대비 변경 — 값 차이(detect_contradictions)를 **원인**(change_cause)으로
+              분류해 렌더. 입력이 달라진 것/분석 방식이 개선된 것은 경고가 아니며, 입력·기준이
+              같은데 값이 다른 경우(UNEXPLAINED)만 경고색으로 확인을 요청한다(ChangeCauseCard). */}
+          <ChangeCauseCard contradictions={result.contradictions} />
 
           {/* 기본 정보 요약 */}
           <div className="rounded-2xl border border-[var(--accent-strong)]/20 bg-[var(--surface-strong)] p-5">
@@ -723,6 +806,37 @@ export function ComprehensiveAnalysisPanel() {
             title="산출 근거·법령"
             defaultOpen={false}
           />
+
+          {/* ★AI 해석 상태 고지(W2-c) — 결정론 분석은 이미 위에 다 있고 해석만 뒤따라온다.
+              생성 중/실패를 명시하지 않으면 사용자는 "AI 분석이 원래 없는 화면"으로 오해한다.
+              3상태(deferred=생성 중 / unavailable=실패 / ok=정상)를 구분해 표기한다. */}
+          {!result.ai_interpretation?.overall_summary && (
+            interpreting || result.ai_interpretation_status?.status === "deferred" ? (
+              <div className="rounded-2xl border border-[var(--accent-strong)]/30 bg-[var(--accent-strong)]/5 p-4">
+                <p className="text-xs font-semibold text-[var(--accent-strong)]">
+                  AI 종합 해석을 생성하고 있습니다…
+                </p>
+                <p className="mt-1 text-[11px] text-[var(--text-hint)]">
+                  위 분석 결과는 이미 완료되었습니다. 해석은 잠시 후 이 자리에 추가됩니다.
+                </p>
+              </div>
+            ) : result.ai_interpretation_status?.status === "unavailable" ? (
+              <div className="rounded-2xl border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 p-4">
+                <p className="text-xs font-semibold text-[var(--text-primary)]">
+                  AI 종합 해석을 생성하지 못했습니다
+                </p>
+                <p className="mt-1 text-[11px] text-[var(--text-secondary)]">
+                  위 분석 결과는 정상적으로 산출되었습니다. 해석만 생성에 실패했으며, 다시
+                  분석하면 재시도됩니다.
+                  {result.ai_interpretation_status?.reason ? (
+                    <span className="block mt-1 text-[10px] text-[var(--text-hint)]">
+                      사유: {String(result.ai_interpretation_status.reason)}
+                    </span>
+                  ) : null}
+                </p>
+              </div>
+            ) : null
+          )}
 
           {/* AI 종합 요약 */}
           {result.ai_interpretation?.overall_summary && (
