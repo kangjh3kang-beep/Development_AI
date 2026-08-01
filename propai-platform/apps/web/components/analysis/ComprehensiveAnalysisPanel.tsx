@@ -23,6 +23,7 @@ import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient } from "@/lib/api-client";
 import { formatArea } from "@/lib/formatters"; // 면적 표기 SSOT(UX A2) — 로컬 중복 formatArea 대체
+import { fieldMeta, formatFieldValue, formatDelta } from "@/lib/analysis-field-labels"; // 필드 라벨·단위 SSOT(원시 키 노출 근절)
 
 /* ── Helpers ── */
 
@@ -124,12 +125,9 @@ const RISK_LEVEL_STYLE: Record<string, string> = {
   "극히 높음": "bg-[var(--status-error)]/20 text-[var(--status-error)]",
 };
 
-// 결정론 모순탐지(contradictions.contradictions[]) 심각도 → 카드 색(status_flip·numeric_delta 공용).
-const SEVERITY_CARD_STYLE: Record<string, string> = {
-  high: "border-[var(--status-error)]/40 bg-[var(--status-error)]/10",
-  medium: "border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10",
-  low: "border-[var(--line-strong)] bg-[var(--surface-strong)]",
-};
+// ★SEVERITY_CARD_STYLE(심각도→카드색) 제거(2026-08-01): 값 변화의 상대폭으로 경고색을 칠하면
+//   입력 변경(필지 재선택)까지 빨간 HIGH가 되는 라이브 오표기가 재발한다. 카드색은 이제
+//   change_cause 기준으로만 정해진다(ChangeCauseCard 참조).
 
 function PermitBadge({ complexity }: { complexity: number }) {
   const colors = ["", "bg-[var(--status-success)]/20 text-[var(--status-success)]", "bg-blue-500/20 text-blue-400", "bg-[var(--status-warning)]/20 text-[var(--status-warning)]", "bg-orange-500/20 text-orange-400", "bg-[var(--status-error)]/20 text-[var(--status-error)]"];
@@ -142,89 +140,122 @@ function PermitBadge({ complexity }: { complexity: number }) {
 }
 
 /**
- * ContradictionsCard — "이전 분석과 모순 감지" 렌더.
+ * ChangeCauseCard — "이전 분석과 무엇이·왜 달라졌는지"를 사용자 언어로 렌더.
  *
- * ★신규(additive) contradictions.groups[] 있으면 패턴별 그룹 카드(파생 필드 N개 + 펼치면
- * sample_keys)로 요약, 없으면 기존 원시 나열을 최대 5행 + 접기로 강등(무제한 나열 방지).
- * 둘 다 없으면 렌더하지 않는다(무목업 — 모순 0건이면 빈 카드도 안 남긴다).
+ * ## 왜 이렇게 바뀌었나 (2026-08-01)
+ *
+ * 종전 "이전 분석과 모순 감지"는 값 차이를 전부 **모순**이라 부르고 상대변화율로 심각도를
+ * 칠했다. 그런데 프로덕션 실제 4건은 하나도 모순이 아니었다 — 셋은 사용자가 필지를 3개→2개로
+ * 다시 고른 것(입력 변경), 하나는 학교 중복집계 버그 수정. 전부 빨간 HIGH로 떠서 *지금 숫자가
+ * 의심스럽다*는 정반대 인상을 줬다.
+ *
+ * 그래서 표시의 기준을 심각도가 아니라 **원인**(backend change_cause)으로 바꾼다:
+ *   INPUT_CHANGED   → 중립색. 비교 대상이 아님을 설명(경고 아님)
+ *   VERSION_CHANGED → 중립색. 최신이 더 정확하다고 안내
+ *   UNEXPLAINED     → ★유일하게 경고색. 사용자가 실제로 확인해야 하는 경우
+ *   NONE            → 카드 대신 한 줄 배지
+ *
+ * ★불변식: max_severity로 카드색을 정하지 않는다. 그렇게 하면 입력 변경까지 빨간 경고가 되는
+ *   종전 결함이 그대로 재발한다(백엔드 contradiction.py 주석과 쌍).
  */
-function ContradictionsCard({ contradictions }: { contradictions?: AnalysisResult }) {
-  const [expanded, setExpanded] = useState(false);
+export function ChangeCauseCard({ contradictions }: { contradictions?: AnalysisResult }) {
+  const [showOther, setShowOther] = useState(false);
   if (!contradictions) return null;
+
+  const cause = (contradictions.change_cause ?? null) as AnalysisResult | null;
   const groups: AnalysisResult[] = Array.isArray(contradictions.groups) ? contradictions.groups : [];
   const raw: AnalysisResult[] = Array.isArray(contradictions.contradictions) ? contradictions.contradictions : [];
-  if (groups.length === 0 && raw.length === 0) return null;
 
-  const maxSeverity = contradictions.max_severity as string | undefined;
-  const visibleRaw = expanded ? raw : raw.slice(0, 5);
+  // ★하위호환: 구버전 백엔드(change_cause 없음)는 원인을 알 수 없다. 원인을 지어내지 않고
+  //   "확인 필요"로만 표기한다(없는 확신 금지 — 백엔드 UNEXPLAINED와 동일 정직 규칙).
+  const causeCode = (cause?.cause as string) ?? (groups.length || raw.length ? "UNEXPLAINED" : "NONE");
+  if (causeCode === "NONE") {
+    if (groups.length === 0 && raw.length === 0) {
+      return (
+        <p className="text-[11px] text-[var(--text-hint)]">
+          ✓ 이전 분석과 동일합니다 (같은 조건 · 주요 수치 일치)
+        </p>
+      );
+    }
+  }
+
+  const needsReview = causeCode === "UNEXPLAINED";
+  const cardStyle = needsReview
+    ? "border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10"
+    : "border-[var(--line-strong)] bg-[var(--surface-strong)]";
+
+  const headline = (cause?.headline as string) || "이전 분석과 달라진 항목이 있습니다";
+  const reason = (cause?.reason as string) || "이전 분석의 조건 정보가 없어 원인을 확인할 수 없습니다.";
+  const trustHint = (cause?.trust_hint as string) || "";
+
+  // 표시 행 — 그룹 우선(패턴 단위 압축본), 없으면 원시 목록.
+  const items = groups.length > 0 ? groups : raw;
+  const known = items.filter((it) => fieldMeta(String(it.key_pattern ?? it.key ?? "")) !== null);
+  const unknown = items.filter((it) => fieldMeta(String(it.key_pattern ?? it.key ?? "")) === null);
 
   return (
-    <div className={`rounded-2xl border p-4 ${SEVERITY_CARD_STYLE[maxSeverity ?? ""] || SEVERITY_CARD_STYLE.low}`}>
+    <div className={`rounded-2xl border p-4 ${cardStyle}`}>
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-sm font-bold text-[var(--text-primary)]">이전 분석과 모순 감지</span>
-        {maxSeverity && (
-          <span className="rounded-full bg-black/10 px-2 py-0.5 text-[10px] font-bold uppercase text-[var(--text-primary)]">
-            최고 심각도 {maxSeverity}
-          </span>
-        )}
+        <span className="text-sm font-bold text-[var(--text-primary)]">
+          {needsReview ? "⚠ " : ""}{headline}
+        </span>
+        <span className="rounded-full bg-black/10 px-2 py-0.5 text-[10px] font-bold text-[var(--text-primary)]">
+          {needsReview ? "확인 필요" : causeCode === "VERSION_CHANGED" ? "최신이 정확" : "비교 불가"}
+        </span>
       </div>
 
-      {groups.length > 0 ? (
-        // ★그룹 카드(패턴키 단위 요약) — leaf_count는 같은 패턴에서 몇 개 세부필드가 함께 변했는지.
-        <div className="mt-2 space-y-2">
-          {groups.map((g, i) => (
-            <div key={i} className={`rounded-xl border p-3 ${SEVERITY_CARD_STYLE[g.severity as string] || SEVERITY_CARD_STYLE.low}`}>
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-xs font-bold text-[var(--text-primary)]">{g.key_pattern}</span>
-                {g.severity ? (
-                  <span className="rounded-full bg-black/10 px-1.5 py-0.5 text-[9px] font-bold uppercase text-[var(--text-primary)]">{g.severity}</span>
-                ) : null}
-                {typeof g.leaf_count === "number" && g.leaf_count > 1 ? (
-                  <span className="text-[10px] text-[var(--text-hint)]">파생 필드 {g.leaf_count}개</span>
-                ) : null}
-              </div>
-              <p className="mt-1 text-[11px] text-[var(--text-secondary)]">
-                {String(g.prev)} → {String(g.now)}
-                {g.rel_change != null ? ` (변화율 ${Math.round((g.rel_change as number) * 100)}%)` : ""}
-              </p>
-              {Array.isArray(g.sample_keys) && g.sample_keys.length > 0 ? (
-                <details className="mt-1.5">
-                  <summary className="cursor-pointer text-[10px] font-semibold text-[var(--accent-strong)]">
-                    세부 키 {g.sample_keys.length}개 보기
-                  </summary>
-                  <ul className="mt-1 space-y-0.5 pl-3">
-                    {(g.sample_keys as string[]).map((k, ki) => (
-                      <li key={ki} className="text-[10px] text-[var(--text-hint)]">· {k}</li>
-                    ))}
-                  </ul>
-                </details>
-              ) : null}
-            </div>
-          ))}
-        </div>
-      ) : (
-        // ★그룹 미제공(구버전 응답) — 원시 나열은 최대 5행 + 접기로 강등(무제한 나열 방지).
-        <>
-          <ul className="mt-2 space-y-1">
-            {visibleRaw.map((c, i) => (
-              <li key={i} className="text-[11px] text-[var(--text-secondary)]">
-                · {c.key}: {String(c.prev)} → {String(c.now)}
-                {c.kind === "numeric_delta" && c.rel_change != null ? ` (변화율 ${Math.round(c.rel_change * 100)}%)` : ""}
-                {c.severity ? ` · 심각도 ${c.severity}` : ""}
-              </li>
-            ))}
+      <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--text-secondary)]">{reason}</p>
+
+      {known.length > 0 && (
+        <div className="mt-2.5 rounded-xl border border-[var(--line-strong)] bg-[var(--surface)]/60 p-2.5">
+          <p className="mb-1.5 text-[10px] font-semibold text-[var(--text-hint)]">무엇이 달라졌나</p>
+          <ul className="space-y-1">
+            {known.map((it, i) => {
+              const key = String(it.key_pattern ?? it.key ?? "");
+              const meta = fieldMeta(key);
+              const delta = formatDelta(it.prev, it.now, meta);
+              return (
+                <li key={i} className="flex flex-wrap items-baseline gap-x-2 text-[11px]">
+                  <span className="min-w-[7rem] text-[var(--text-hint)]">{meta?.label}</span>
+                  <span className="text-[var(--text-secondary)]">{formatFieldValue(it.prev, meta)}</span>
+                  <span className="text-[var(--text-hint)]">→</span>
+                  <span className="font-semibold text-[var(--text-primary)]">{formatFieldValue(it.now, meta)}</span>
+                  {delta ? <span className="text-[10px] text-[var(--text-hint)]">({delta})</span> : null}
+                </li>
+              );
+            })}
           </ul>
-          {raw.length > 5 ? (
-            <button
-              type="button"
-              onClick={() => setExpanded((v) => !v)}
-              className="mt-2 text-[11px] font-semibold text-[var(--accent-strong)]"
-            >
-              {expanded ? "접기 ▲" : `${raw.length - 5}건 더보기 ▼`}
-            </button>
-          ) : null}
-        </>
+        </div>
       )}
+
+      {/* ★등재되지 않은 키는 이름을 지어내지 않는다 — 접어서 원본 그대로 보여준다(숨김도 날조도 아님). */}
+      {unknown.length > 0 && (
+        <div className="mt-2">
+          <button
+            type="button"
+            onClick={() => setShowOther((v) => !v)}
+            className="text-[10px] font-semibold text-[var(--accent-strong)]"
+          >
+            {showOther ? "기타 변경 항목 접기 ▲" : `기타 변경 항목 ${unknown.length}건 보기 ▼`}
+          </button>
+          {showOther && (
+            <ul className="mt-1 space-y-0.5 pl-3">
+              {unknown.map((it, i) => (
+                <li key={i} className="text-[10px] text-[var(--text-hint)]">
+                  · {String(it.key_pattern ?? it.key ?? "")}: {String(it.prev)} → {String(it.now)}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {trustHint ? (
+        <p className="mt-2.5 rounded-lg bg-black/5 px-2.5 py-2 text-[11px] leading-relaxed text-[var(--text-secondary)]">
+          <span className="font-semibold text-[var(--text-primary)]">어느 쪽을 믿어야 하나요? </span>
+          {trustHint}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -604,10 +635,10 @@ export function ComprehensiveAnalysisPanel() {
 
       {result && (
         <div className="space-y-3">
-          {/* ★결정론 모순탐지(contradictions) — prior(원장) 대비 status 플립·수치 델타(상단 경고).
-              백엔드 detect_contradictions 산출을 그간 미렌더(핸드오프 손실). 모순 0건이면 렌더 안 함.
-              groups[] 있으면 패턴별 그룹 카드, 없으면 원시 나열(최대 5행+접기)로 강등(ContradictionsCard). */}
-          <ContradictionsCard contradictions={result.contradictions} />
+          {/* ★이전 분석 대비 변경 — 값 차이(detect_contradictions)를 **원인**(change_cause)으로
+              분류해 렌더. 입력이 달라진 것/분석 방식이 개선된 것은 경고가 아니며, 입력·기준이
+              같은데 값이 다른 경우(UNEXPLAINED)만 경고색으로 확인을 요청한다(ChangeCauseCard). */}
+          <ChangeCauseCard contradictions={result.contradictions} />
 
           {/* 기본 정보 요약 */}
           <div className="rounded-2xl border border-[var(--accent-strong)]/20 bg-[var(--surface-strong)] p-5">
