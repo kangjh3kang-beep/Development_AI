@@ -399,6 +399,9 @@ export function ComprehensiveAnalysisPanel() {
   const [parcelRows, setParcelRows] = useState<ParcelRow[]>([]);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [loading, setLoading] = useState(false);
+  // ★2단계(AI 해석) 진행 상태 — loading과 분리한다. 1단계 결과는 이미 화면에 있으므로
+  //   전체 로딩으로 덮으면 사용자가 받은 분석이 사라진 것처럼 보인다(점진 렌더의 요점).
+  const [interpreting, setInterpreting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [selectedProvider, setSelectedProvider] = useState<string>("anthropic");
@@ -471,11 +474,23 @@ export function ComprehensiveAnalysisPanel() {
     }
   }, [siteAnalysis, result]);
 
+  /**
+   * 종합분석 실행 — ★2단계 점진 렌더(W2-c).
+   *
+   * 왜 나눴나: 종합분석은 오리진 실측 190초인데 Cloudflare 엣지가 ~125초에서 끊는다.
+   * 한 번에 다 받으려 하면 **분석 전체가 524로 사라진다**(실측 7회 중 6회 실패).
+   *   1단계 `/analysis/comprehensive` (include_interpretation:false) — 결정론 분석만. 즉시 렌더.
+   *   2단계 `/analysis/interpretation` — 1단계 결과를 넘겨 AI 해석만 생성 후 **병합**.
+   *
+   * ★2단계가 실패해도 1단계 결과를 잃지 않는다. 해석 필드만 'unavailable'로 정직 표기된다
+   * (종전에는 하나의 타임아웃이 분석 전체를 날렸다).
+   */
   const handleAnalyze = useCallback(async () => {
     if (!address.trim()) { setError("주소를 입력해주세요."); return; }
-    setLoading(true); setError(null); setResult(null);
+    setLoading(true); setError(null); setResult(null); setInterpreting(false);
+    let core: AnalysisResult | null = null;
     try {
-      const data = await apiClient.post<AnalysisResult>("/analysis/comprehensive", {
+      core = await apiClient.post<AnalysisResult>("/analysis/comprehensive", {
         body: {
           address,
           llm_provider: selectedProvider || undefined,
@@ -483,16 +498,44 @@ export function ComprehensiveAnalysisPanel() {
           // ★다필지(2필지↑)면 통합집계용 필지목록 전송 → 종합분석이 '통합면적' 기준 산출(543㎡ 단일 버그 제거).
           //   단일/미등록은 미전송(백엔드 단일경로 = N=1 항등). 면적 보유 필지만.
           ...(parcelRows.length > 1 ? { parcels: parcelRows } : {}),
+          include_interpretation: false, // 1단계: 해석 제외로 엣지 컷오프 회피
         },
         useMock: false,
       });
-      setResult(data);
+      setResult(core);
       setHistoryRefreshTick((t) => t + 1);
     } catch (e) {
       // 원시 개발자 문자열(Error:…·[object Object]) 노출 금지 — 통상어 안내(정직 표기).
       setError(e instanceof Error ? e.message : "종합분석 중 오류가 발생했습니다. 입력을 확인하고 다시 시도해 주세요.");
-    } finally {
       setLoading(false);
+      return;
+    }
+    setLoading(false);
+
+    // ── 2단계: AI 해석 생성 후 병합(실패해도 1단계 결과 보존) ──
+    setInterpreting(true);
+    try {
+      const parts = await apiClient.post<AnalysisResult>("/analysis/interpretation", {
+        body: {
+          result: core,
+          llm_provider: selectedProvider || undefined,
+          llm_model: selectedModel || undefined,
+        },
+        useMock: false,
+      });
+      setResult((prev) => (prev ? { ...prev, ...parts } : prev));
+    } catch (e) {
+      // ★해석 실패를 '분석 실패'로 승격하지 않는다 — setError를 쓰지 않고 해당 필드만 정직 표기.
+      const reason = e instanceof Error ? e.message : "알 수 없는 오류";
+      setResult((prev) => (prev ? {
+        ...prev,
+        ai_interpretation: null,
+        ai_interpretation_status: { status: "unavailable", reason },
+        market_interpretation: null,
+        market_interpretation_status: { status: "unavailable", reason },
+      } : prev));
+    } finally {
+      setInterpreting(false);
     }
   }, [address, selectedProvider, selectedModel, parcelRows]);
 
@@ -754,6 +797,37 @@ export function ComprehensiveAnalysisPanel() {
             title="산출 근거·법령"
             defaultOpen={false}
           />
+
+          {/* ★AI 해석 상태 고지(W2-c) — 결정론 분석은 이미 위에 다 있고 해석만 뒤따라온다.
+              생성 중/실패를 명시하지 않으면 사용자는 "AI 분석이 원래 없는 화면"으로 오해한다.
+              3상태(deferred=생성 중 / unavailable=실패 / ok=정상)를 구분해 표기한다. */}
+          {!result.ai_interpretation?.overall_summary && (
+            interpreting || result.ai_interpretation_status?.status === "deferred" ? (
+              <div className="rounded-2xl border border-[var(--accent-strong)]/30 bg-[var(--accent-strong)]/5 p-4">
+                <p className="text-xs font-semibold text-[var(--accent-strong)]">
+                  AI 종합 해석을 생성하고 있습니다…
+                </p>
+                <p className="mt-1 text-[11px] text-[var(--text-hint)]">
+                  위 분석 결과는 이미 완료되었습니다. 해석은 잠시 후 이 자리에 추가됩니다.
+                </p>
+              </div>
+            ) : result.ai_interpretation_status?.status === "unavailable" ? (
+              <div className="rounded-2xl border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 p-4">
+                <p className="text-xs font-semibold text-[var(--text-primary)]">
+                  AI 종합 해석을 생성하지 못했습니다
+                </p>
+                <p className="mt-1 text-[11px] text-[var(--text-secondary)]">
+                  위 분석 결과는 정상적으로 산출되었습니다. 해석만 생성에 실패했으며, 다시
+                  분석하면 재시도됩니다.
+                  {result.ai_interpretation_status?.reason ? (
+                    <span className="block mt-1 text-[10px] text-[var(--text-hint)]">
+                      사유: {String(result.ai_interpretation_status.reason)}
+                    </span>
+                  ) : null}
+                </p>
+              </div>
+            ) : null
+          )}
 
           {/* AI 종합 요약 */}
           {result.ai_interpretation?.overall_summary && (
