@@ -10,7 +10,26 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const post = vi.fn<(path: string, opts?: unknown) => Promise<unknown>>();
+/**
+ * ★경로 기반 목: 호출 **순서**가 아니라 **경로**로 응답을 정한다.
+ * 순서 기반(mockResolvedValueOnce 연쇄)은 파이프라인에 호출이 하나 추가되는 순간 전부
+ * 어긋난다 — 실제로 W2-d에서 POI 자동조회가 붙자 W2-c 테스트 5건이 깨졌다.
+ */
+const routes = new Map<string, () => Promise<unknown>>();
+const post = vi.fn<(path: string, opts?: unknown) => Promise<unknown>>(
+  (path: string) => {
+    const h = routes.get(path);
+    return h ? h() : Promise.resolve({});
+  },
+);
+/** 특정 경로의 응답을 지정. */
+function onPost(path: string, handler: () => Promise<unknown>) {
+  routes.set(path, handler);
+}
+/** 그 경로로 나간 호출만 센다(총 호출수 단언 금지 — 파이프라인 확장에 취약). */
+function callsTo(path: string) {
+  return post.mock.calls.filter((c) => c[0] === path);
+}
 // ★get은 마운트 시 LLM 프로바이더 목록을 부른다 — Promise를 돌려주지 않으면 effect에서 터진다.
 const get = vi.fn<(path: string, opts?: unknown) => Promise<unknown>>(
   async () => ({ providers: [] }),
@@ -64,38 +83,41 @@ async function runAnalysis() {
 }
 
 beforeEach(() => {
-  post.mockReset();
+  post.mockClear();
+  routes.clear();
+  // 파이프라인 부수 호출(POI·시뮬)은 기본적으로 무해한 응답으로 흘린다.
+  onPost("/site-score/poi-infra", async () => ({ score: 60 }));
+  onPost("/development-methods/scenarios", async () => ({}));
   useProjectContextStore.setState({ siteAnalysis: null } as never);
 });
 
 describe("종합분석 2단계 점진 렌더", () => {
   it("★1단계는 include_interpretation:false로 호출한다(엣지 컷오프 회피)", async () => {
-    post.mockResolvedValueOnce(CORE).mockResolvedValueOnce(PARTS);
+    onPost("/analysis/comprehensive", async () => CORE);
+    onPost("/analysis/interpretation", async () => PARTS);
     await runAnalysis();
 
-    await waitFor(() => expect(post).toHaveBeenCalled());
-    const [path, opts] = post.mock.calls[0] as [string, { body: Record<string, unknown> }];
-    expect(path).toBe("/analysis/comprehensive");
+    await waitFor(() => expect(callsTo("/analysis/comprehensive")).toHaveLength(1));
+    const [, opts] = callsTo("/analysis/comprehensive")[0] as [string, { body: Record<string, unknown> }];
     expect(opts.body.include_interpretation).toBe(false);
   });
 
   it("★2단계는 해석 전용 엔드포인트에 1단계 결과를 넘긴다(전체 재실행 금지)", async () => {
-    post.mockResolvedValueOnce(CORE).mockResolvedValueOnce(PARTS);
+    onPost("/analysis/comprehensive", async () => CORE);
+    onPost("/analysis/interpretation", async () => PARTS);
     await runAnalysis();
 
-    await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
-    const [path, opts] = post.mock.calls[1] as [string, { body: Record<string, unknown> }];
-    expect(path).toBe("/analysis/interpretation");
+    await waitFor(() => expect(callsTo("/analysis/interpretation")).toHaveLength(1));
+    const [, opts] = callsTo("/analysis/interpretation")[0] as [string, { body: Record<string, unknown> }];
     expect(opts.body.result).toMatchObject({ zone_type: "보전관리지역" });
-    // 2단계가 comprehensive를 다시 부르면 190초가 반복된다.
-    expect(post.mock.calls.filter((c) => c[0] === "/analysis/comprehensive")).toHaveLength(1);
+    // ★2단계가 comprehensive를 다시 부르면 190초가 반복된다.
+    expect(callsTo("/analysis/comprehensive")).toHaveLength(1);
   });
 
   it("1단계 결과가 2단계 완료 전에 이미 렌더된다(점진 렌더)", async () => {
     let releaseStage2: (v: unknown) => void = () => {};
-    post
-      .mockResolvedValueOnce(CORE)
-      .mockReturnValueOnce(new Promise((res) => { releaseStage2 = res; }));
+    onPost("/analysis/comprehensive", async () => CORE);
+    onPost("/analysis/interpretation", () => new Promise((res) => { releaseStage2 = res; }));
     await runAnalysis();
 
     // 2단계가 아직 안 끝났는데 1단계 값이 화면에 있어야 한다.
@@ -107,10 +129,11 @@ describe("종합분석 2단계 점진 렌더", () => {
   });
 
   it("★★2단계가 실패해도 1단계 결과를 잃지 않는다(이번 웨이브의 핵심 이득)", async () => {
-    post.mockResolvedValueOnce(CORE).mockRejectedValueOnce(new Error("타임아웃"));
+    onPost("/analysis/comprehensive", async () => CORE);
+    onPost("/analysis/interpretation", async () => { throw new Error("타임아웃"); });
     await runAnalysis();
 
-    await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(callsTo("/analysis/interpretation")).toHaveLength(1));
     // 분석 본문은 그대로 남는다.
     await waitFor(() => expect(screen.getByText(/보전관리지역/)).toBeTruthy());
     // 해석만 정직하게 실패 표기된다.
@@ -119,19 +142,52 @@ describe("종합분석 2단계 점진 렌더", () => {
   });
 
   it("★해석 실패를 '분석 실패'로 승격하지 않는다(전역 에러 배너 금지)", async () => {
-    post.mockResolvedValueOnce(CORE).mockRejectedValueOnce(new Error("타임아웃"));
+    onPost("/analysis/comprehensive", async () => CORE);
+    onPost("/analysis/interpretation", async () => { throw new Error("타임아웃"); });
     await runAnalysis();
 
-    await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(callsTo("/analysis/interpretation")).toHaveLength(1));
     expect(screen.queryByText(/종합분석 중 오류가 발생했습니다/)).toBeNull();
   });
 
   it("1단계가 실패하면 2단계를 부르지 않는다(무의미한 호출·중복 과금 방지)", async () => {
-    post.mockRejectedValueOnce(new Error("주소 해석 실패"));
+    onPost("/analysis/comprehensive", async () => { throw new Error("주소 해석 실패"); });
     await runAnalysis();
 
-    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
-    expect(post.mock.calls.some((c) => c[0] === "/analysis/interpretation")).toBe(false);
+    await waitFor(() => expect(callsTo("/analysis/comprehensive")).toHaveLength(1));
+    expect(callsTo("/analysis/interpretation")).toHaveLength(0);
     expect(screen.getByText(/주소 해석 실패/)).toBeTruthy();
+  });
+});
+
+describe("W2-d 파이프라인 편입(POI·개발방식 시뮬 자동 실행)", () => {
+  it("★종합분석 시작이 입지 인프라(POI) 조회를 함께 태운다(버튼 별도 클릭 불요)", async () => {
+    onPost("/analysis/comprehensive", async () => CORE);
+    onPost("/analysis/interpretation", async () => PARTS);
+    await runAnalysis();
+
+    await waitFor(() => expect(callsTo("/site-score/poi-infra")).toHaveLength(1));
+  });
+
+  it("POI 자동 조회는 종합분석 1단계 완료를 기다리지 않는다(병렬 — 빈 카드 시간 최소화)", async () => {
+    let releaseCore: (v: unknown) => void = () => {};
+    onPost("/analysis/comprehensive", () => new Promise((res) => { releaseCore = res; }));
+    await runAnalysis();
+
+    // 1단계가 아직 안 끝났는데 POI는 이미 나갔어야 한다.
+    await waitFor(() => expect(callsTo("/site-score/poi-infra")).toHaveLength(1));
+    releaseCore(CORE);
+  });
+
+  it("★분석을 시작하지 않으면 자동 조회가 나가지 않는다(마운트만으로 과금 금지)", async () => {
+    useProjectContextStore.setState({
+      siteAnalysis: { address: ADDRESS, zoneCode: "보전관리지역" } as never,
+    });
+    render(<ComprehensiveAnalysisPanel />);
+    await screen.findByRole("button", { name: /종합 분석 시작/ });
+
+    // 마운트 직후에는 llm-providers(get)만 나가고 POI/시뮬 post는 없어야 한다.
+    expect(callsTo("/site-score/poi-infra")).toHaveLength(0);
+    expect(callsTo("/development-methods/scenarios")).toHaveLength(0);
   });
 });

@@ -9,6 +9,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useAutoRun } from "@/lib/use-auto-run";
 import { AlertTriangle, Building2, Construction, HelpCircle, House, Link2, Pin, Scale, Scissors } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import { UseLlmToggle } from "@/components/common/UseLlmToggle";
@@ -90,10 +91,12 @@ export function DevelopmentScenarioCard({
   address,
   parcels,
   className = "",
+  autoRunToken,
 }: {
   address?: string;
   parcels?: string[];
   className?: string;
+  autoRunToken?: number;
 }) {
   const list = useMemo(() => (parcels || []).map((s) => s.trim()).filter(Boolean), [parcels]);
   const [loading, setLoading] = useState(false);
@@ -134,6 +137,10 @@ export function DevelopmentScenarioCard({
       setLoading(false);
     }
   }, [address, list, cacheKey, useLlm]);
+
+  // ★파이프라인 편입(W2-d): 종합분석 시작 시 부모가 토큰을 올리면 시나리오 분석을 자동 실행한다.
+  //   버튼은 그대로 남긴다(옵션 변경 후 재실행은 사용자 통제).
+  useAutoRun(autoRunToken, () => void run(), { enabled: Boolean((address || list[0])?.trim()) });
 
   const site = result?.site;
   const adj = site?.adjacency;

@@ -402,6 +402,9 @@ export function ComprehensiveAnalysisPanel() {
   // ★2단계(AI 해석) 진행 상태 — loading과 분리한다. 1단계 결과는 이미 화면에 있으므로
   //   전체 로딩으로 덮으면 사용자가 받은 분석이 사라진 것처럼 보인다(점진 렌더의 요점).
   const [interpreting, setInterpreting] = useState(false);
+  // ★W2-d 파이프라인 토큰 — 종합분석 시작 시 1 올려 POI·개발방식 시뮬을 함께 태운다.
+  //   사용자 지적: "종합 분석 시작을 누르면 입지 인프라·최적 개발방식도 같이 분석되어야 한다."
+  const [pipelineRunToken, setPipelineRunToken] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [selectedProvider, setSelectedProvider] = useState<string>("anthropic");
@@ -488,6 +491,9 @@ export function ComprehensiveAnalysisPanel() {
   const handleAnalyze = useCallback(async () => {
     if (!address.trim()) { setError("주소를 입력해주세요."); return; }
     setLoading(true); setError(null); setResult(null); setInterpreting(false);
+    // ★착수 시점에 올린다 — POI·시뮬은 종합분석 결과가 아니라 주소만 필요하므로 병렬 실행이
+    //   맞다(1단계 완료를 기다리면 사용자가 그만큼 더 오래 빈 카드를 본다).
+    setPipelineRunToken((t) => t + 1);
     let core: AnalysisResult | null = null;
     try {
       core = await apiClient.post<AnalysisResult>("/analysis/comprehensive", {
@@ -645,17 +651,20 @@ export function ComprehensiveAnalysisPanel() {
         )}
       </div>
 
-      {/* 입지 인프라(POI) 분석 — 주소 선택 시. 분석결과 있으면 context로 통합 입지점수 산출 */}
+      {/* 입지 인프라(POI) 분석 — 주소 선택 시. 분석결과 있으면 context로 통합 입지점수 산출.
+          ★W2-d: 종합분석 시작 시 autoRunToken이 올라 자동 조회된다(버튼 별도 클릭 불요). */}
       {address.trim() && (
         <SiteInfraPoiCard
           address={address}
           context={result ? (result as unknown as Record<string, unknown>) : undefined}
+          autoRunToken={pipelineRunToken}
         />
       )}
 
-      {/* 다필지(2필지↑) 통합 개발방식 분석 — 검색·엑셀로 등록 시 자동 노출 */}
+      {/* 다필지(2필지↑) 통합 개발방식 분석 — 검색·엑셀로 등록 시 자동 노출.
+          ★W2-d: 종합분석과 함께 자동 실행(파이프라인 편입). */}
       {parcels.length > 1 && (
-        <DevelopmentScenarioCard address={address} parcels={parcels} />
+        <DevelopmentScenarioCard address={address} parcels={parcels} autoRunToken={pipelineRunToken} />
       )}
 
       {error && (
