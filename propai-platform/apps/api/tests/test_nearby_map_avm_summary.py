@@ -473,3 +473,44 @@ def test_avm_reason_warns_when_radius_filter_was_not_applied():
         {"groups": [{"name": "좌표없음", "count": 5}]}, radius_applied=False, radius_m=None,
     )
     assert none_reason and "전부 위치 미확인" in none_reason
+
+
+@pytest.mark.asyncio
+async def test_never_silent_when_deals_exist_but_avm_is_none():
+    """★★R3-MED-2 계약 불변식 — **거래가 있는데 시세도 없고 사유도 없는** 상태는 불가능하다.
+
+    `_compute_avm_summary`와 `_avm_caveat`은 서로를 모른 채 독립 계산한다. 그래서 반경 통과
+    그룹은 있는데 가격·면적이 전부 결측이면 **둘 다 None**이 되고, 화면은 다시
+    "주변 아파트 실거래가 없어 시세를 추정할 수 없습니다"라는 **거짓 문장**을 낸다(거래는 있다).
+
+    이 모순은 R1→R2→R3에서 **세 번 다른 경로로** 나왔다 — 그래서 분기 땜질이 아니라
+    `build()` 말미의 계약으로 봉인했다.
+    """
+    nm._BUILD_CACHE.clear()
+    center = {"lat": 37.5000, "lon": 127.0000}
+    probe = nm.NearbyMapService.__new__(nm.NearbyMapService)
+    q = probe._query_for("강남구", "역삼동", "1-1", "가격결측단지")
+    geocode_map = {q: {"lat": 37.5000, "lon": 127.0000}}
+
+    # 가격·면적이 결측인 거래(수집은 됐다) — MOLIT 응답에서 실제로 나올 수 있는 형태.
+    rows = [
+        {
+            "building_name": "가격결측단지", "jibun": "1-1", "dong": "역삼동", "sigungu": "강남구",
+            "price_10k_won": 0, "area_m2": 0, "floor": "5",
+            "deal_date": f"2024년 3월 {i + 1}일",
+        }
+        for i in range(3)
+    ]
+    svc = _make_build_service(rows, geocode_map)
+    result = await svc.build(
+        address="서울 강남구 역삼동 1-1", lawd_cd="11680", months=1, radius_m=1000,
+        center_hint=center,
+    )
+
+    groups = result["categories"]["apt_trade"]["groups"]
+    assert groups, "픽스처가 그룹을 만들지 못했다(계약을 관측할 수 없다)"
+    if result["avm"] is None:
+        assert result["avm_caveat"], (
+            "거래는 있는데 시세도 없고 사유도 없다 — 화면이 '실거래가 없다'는 거짓 문장을 낸다"
+        )
+        assert "거래가 없는 것이 아닙니다" in result["avm_caveat"]

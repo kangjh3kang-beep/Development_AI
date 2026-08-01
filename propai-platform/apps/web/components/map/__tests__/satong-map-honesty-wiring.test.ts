@@ -15,25 +15,48 @@
  *   실제 클릭 투과·배너 표시는 배포 후 사람이 확인해야 한다. 다만 "되돌리면 조용히 통과"는
  *   막는다.
  */
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import { assertWiredThrough } from "@/lib/source-invariant";
+
+/** apps/web 기준 상대 경로의 소스를 줄 배열로 읽는다(불변식용). */
+function sourceLines(file: string): string[] {
+  return readFileSync(resolve(process.cwd(), file), "utf-8").split("\n");
+}
+
+/** `pattern`에 처음 매치되는 줄 번호(1-indexed). 없으면 -1. */
+function lineOf(lines: string[], pattern: RegExp): number {
+  const i = lines.findIndex((t) => pattern.test(t));
+  return i < 0 ? -1 : i + 1;
+}
 
 describe("정직 배선 — AVM 신뢰성 단서는 시세가 **있을 때도** 렌더된다", () => {
   it("★AVM 존재 가지에 단서 배너가 있다(빈 상태 가지에만 있으면 경고가 영영 안 뜬다)", () => {
     // 가장 위험한 단서("반경 필터 미적용")는 정의상 AVM이 **존재할 때** 붙는다.
     // 그래서 이 배너가 사라지면 사용자는 반경 보증 없는 시세를 경고 없이 본다.
-    // ★불변식 설계 주의: `data-testid` 존재만 보면 **도달 가능성**을 잠그지 못한다.
-    //   조건을 `{false ? (`로 바꾸는 변이에서 testid는 그대로 남아 통과했다(실측).
-    //   그래서 **조건식 자체**를 스코프로 잡는다 — 조건이 사라지면 매치 0건 → 하드 실패.
-    expect(() =>
-      assertWiredThrough({
-        file: "components/operations/MarketInsightsWorkspaceClient.tsx",
-        scope: /\{results\.avmCaveat \? \(/,
-        mustContain: "results.avmCaveat",
-        minMatches: 1,
-      }),
-    ).not.toThrow();
+    // ★불변식 설계 주의(2회 교정):
+    //   1차 — `data-testid` **존재**만 검사 → 조건을 `{false ? (`로 바꿔도 통과(실측).
+    //   2차 — **조건식 존재**를 검사 → 배너를 **빈 상태 가지로 이전**하면 조건 줄은 그대로
+    //         남으므로 여전히 통과(실측). 그런데 **위치가 결함의 전부**였다 —
+    //         R2-HIGH-1은 "조건이 없다"가 아니라 "조건이 빈 상태 가지에만 있다"였다.
+    //   → 3차: **행 순서**로 잠근다. 배너는 AVM 가지 안, 즉
+    //     `※ 참고 추정치` 줄보다 **앞**이고 빈 상태 문구 줄보다 **앞**이어야 한다.
+    const lines = sourceLines("components/operations/MarketInsightsWorkspaceClient.tsx");
+    const banner = lineOf(lines, /data-testid="avm-caveat"/);
+    const disclaimer = lineOf(lines, /※ 주변 아파트 실거래 평당가 가중평균/);
+    const emptyState = lineOf(lines, /주변 아파트 실거래가 없어 시세를 추정할 수 없습니다/);
+
+    expect(banner, "단서 배너(avm-caveat)가 사라졌다").toBeGreaterThan(0);
+    expect(disclaimer, "AVM 가지의 면책 문구를 찾지 못했다 — 스코프 갱신 필요").toBeGreaterThan(0);
+    expect(emptyState, "빈 상태 문구를 찾지 못했다 — 스코프 갱신 필요").toBeGreaterThan(0);
+    // ★핵심: 배너가 AVM 가지 **안**에 있다(면책 문구보다 앞 = 같은 가지의 위쪽).
+    expect(banner, "단서 배너가 AVM 가지 밖으로 이동했다 — 위험한 단서가 다시 도달 불가능해진다")
+      .toBeLessThan(disclaimer);
+    expect(disclaimer, "AVM 가지가 빈 상태 가지보다 뒤에 있다 — 구조 가정이 깨졌다")
+      .toBeLessThan(emptyState);
   });
 
   it("★서버 단서를 페이로드에서 실제로 읽는다(필드 개명 시 조용히 끊기는 것 방지)", () => {
@@ -63,11 +86,15 @@ describe("침묵 데드존 — 표시 전용 오버레이가 지도 클릭을 �
   });
 
   it("★개발여력 범례에 `pointer-events-auto`가 없다(표시 전용 카드)", () => {
+    // ★R3-MED-1 교정 — 종전 스코프는 **텍스트 줄**(`개발여력 = ...`)이었고
+    //   `pointer-events-auto`는 **그 위 className 줄**에 들어간다. 즉 검사 범위 밖이라
+    //   데드존 복원 변이가 **통과했다**(실측). 바로 아래 #5에서 같은 함정을 적발해 파일에
+    //   기록해놓고 형제 불변식에 그대로 남긴 것 — **전역 스윕 미완의 3회차 재발**이다.
     expect(() =>
       assertWiredThrough({
         file: "components/map/SatongMultiMap.tsx",
-        scope: /개발여력 = \(실효−현황\)\/실효 용적률/,
-        mustContain: "개발여력",
+        scope: /className="w-fit max-w-\[240px\] rounded-xl/,
+        mustContain: "max-w-[240px]",
         mustNotContain: "pointer-events-auto",
         minMatches: 1,
       }),

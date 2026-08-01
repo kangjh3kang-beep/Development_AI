@@ -210,6 +210,18 @@ class NearbyMapService:
         avm_caveat = self._avm_caveat(
             categories.get("apt_trade"), radius_applied=radius_applied, radius_m=radius_m,
         )
+        # ★계약 불변식(R3-MED-2) — **거래가 있는데 시세도 없고 사유도 없는** 상태를 봉인한다.
+        #   `_compute_avm_summary`와 `_avm_caveat`은 서로를 모른 채 독립 계산하므로,
+        #   예컨대 반경 통과 그룹은 있는데 그 그룹의 가격·면적이 전부 결측이면
+        #   전자는 None, 후자도 None이 되어 화면이 다시 "실거래가 없어 추정 불가"라는
+        #   **거짓 문장**을 낸다(거래는 있는데). 이 모순은 R1→R2→R3에서 **세 번 다른 경로로**
+        #   나왔다 — 개별 분기를 땜질하지 말고 여기서 한 번에 막는다.
+        _apt = categories.get("apt_trade") or {}
+        if avm_summary is None and (_apt.get("groups") or []) and not avm_caveat:
+            avm_caveat = (
+                "수집된 아파트 실거래는 있으나 가격·면적 정보가 부족해 시세를 산정하지 "
+                "못했습니다(거래가 없는 것이 아닙니다)."
+            )
         for _cat in categories.values():
             _cat.pop("_in_radius_groups", None)
 
