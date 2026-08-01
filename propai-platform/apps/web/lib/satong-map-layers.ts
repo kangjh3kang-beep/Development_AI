@@ -303,13 +303,9 @@ export function resolveRegulationWmsLayerChunks(
   return chunks;
 }
 
-/**
- * @deprecated 개수 상한을 넘길 수 있다(5개 → 503 INVALID_RANGE).
- *   `resolveRegulationWmsLayerChunks`를 쓰라. 기존 소비처 호환을 위해 남겨둔다.
- */
-export function resolveRegulationWmsLayers(state: SatongMapLayerState | undefined): string {
-  return resolveRegulationWmsLayerChunks(state).join(",");
-}
+// ★`resolveRegulationWmsLayers`(단일 문자열)는 **삭제했다**. 청크를 `","`로 되붙이면
+//   수정 전과 바이트 단위로 동일한 5레이어 문자열이 되어 503을 그대로 재생산하는 지뢰였고,
+//   생산 소비처는 이미 0이었다. 남겨두면 다음 사람이 "호환용"이라 믿고 다시 쓴다.
 
 export function resolveVWorldBaseLayer(state: SatongMapLayerState | undefined): VWorldBaseLayer {
   if (!hasSatongLayer(state, "terrain")) return "Base";

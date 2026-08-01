@@ -2634,8 +2634,12 @@ export function SatongMapShell({
         /* ★침묵 데드존 봉합 — 이 칩바는 UX A3에서 자식을 전부 button→span으로 강등
            (허위 어포던스 제거)했는데 컨테이너의 pointer-events-auto는 남겨,
            **어포던스는 없애고 클릭 차단만 남은** 상태였다. 그 면적 위의 지도 클릭이
-           무음으로 사라진다. 인터랙티브 자식이 생기면 그 자식에만 다시 부여할 것. */
-        className="absolute left-4 top-4 z-[380] flex flex-wrap items-center gap-2"
+           무음으로 사라진다.
+           ★R1 HIGH-4 재봉합: `pointer-events-auto`를 **빼는 것만으로는 no-op**이다 —
+           이 속성의 초깃값이 `auto`이고, 조상 체인(mapOverlays 프래그먼트 → topRightSlot →
+           wrapperClass("relative"))에 `pointer-events-none`이 하나도 없기 때문이다.
+           그래서 `none`을 **직접** 건다. 인터랙티브 자식이 생기면 그 자식에만 `auto`. */
+        className="pointer-events-none absolute left-4 top-4 z-[380] flex flex-wrap items-center gap-2"
       >
         {/* ★UX A3: 비인터랙티브 배지(허위 어포던스 제거) — 이전엔 <button>이었으나 onClick이
             event.stopPropagation() 뿐이라 클릭 가능해 보이는데 아무 동작도 없었다. */}

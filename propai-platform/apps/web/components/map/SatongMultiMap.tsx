@@ -2986,7 +2986,10 @@ export function SatongMultiMap({
                 무자료(avgAge=null)면 카드 대신 정직 칩 1줄만 — 하단 도크 과점을 구조적으로 제거. */}
             {hasSatongLayer(layerState, "age") && (
               avgAge === null ? (
-                <span className="pointer-events-auto inline-flex w-fit items-center gap-1 rounded-full bg-[var(--glass-bg-strong)] px-3 py-1.5 text-[11px] font-bold text-[var(--text-secondary)] shadow">
+                <span
+                /* ★표시 전용(아이콘+텍스트) — 부모가 pointer-events-none이므로 여기서
+                   auto를 주면 그 면적만 지도 클릭을 삼킨다(데드존). 제거한다. */
+                className="inline-flex w-fit items-center gap-1 rounded-full bg-[var(--glass-bg-strong)] px-3 py-1.5 text-[11px] font-bold text-[var(--text-secondary)] shadow">
                   <Building2 className="size-3" aria-hidden />
                   노후도 — 건물 정보 없음
                   {buildAgeGapDetail(ageStatusCounts) ? ` · ${buildAgeGapDetail(ageStatusCounts)}` : ""}

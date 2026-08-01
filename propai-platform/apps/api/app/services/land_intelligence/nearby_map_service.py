@@ -465,12 +465,27 @@ class NearbyMapService:
         all_groups = cat.get("groups") or []
         if not all_groups:
             return None  # 진짜로 거래가 없다 — 기존 "무자료" 표기로 충분
-        if radius_applied and not (cat.get("_in_radius_groups") or []):
+        if radius_applied:
+            if not (cat.get("_in_radius_groups") or []):
+                return (
+                    f"반경 {radius_m}m 안에서 위치가 확인된 아파트 실거래를 찾지 못했습니다"
+                    f"(위치 미확인 {len(all_groups)}곳은 시세 산정에 쓰지 않습니다)."
+                )
+            return None
+        # ★반경 미적용(중심좌표 확보 실패) — 좌표가 있는 그룹만 쓰되, **반경 보증이 없다는
+        #   사실**을 반드시 말한다. 종전엔 이 경로에서 사유가 None이라 사용자에게 아무
+        #   경고도 없이 시군구 전역 거래로 만든 시세가 나갔다.
+        resolved = [g for g in all_groups if g.get("lat") is not None]
+        if not resolved:
             return (
-                f"반경 {radius_m}m 안에서 위치가 확인된 아파트 실거래를 찾지 못했습니다"
-                f"(위치 미확인 {len(all_groups)}곳은 시세 산정에 쓰지 않습니다)."
+                f"위치가 확인된 아파트 실거래가 없어 시세를 산정하지 않았습니다"
+                f"(수집 {len(all_groups)}곳 전부 위치 미확인)."
             )
-        return None
+        return (
+            "대상지 중심좌표를 확보하지 못해 **반경 필터를 적용하지 못했습니다** — "
+            f"아래 시세는 시군구 범위의 위치 확인분 {len(resolved)}곳 기준이며 "
+            "대상지 인근이라는 보증이 없습니다."
+        )
 
     def _compute_avm_summary(
         self,
@@ -509,7 +524,16 @@ class NearbyMapService:
                 #   여기서 truthy 객체를 돌려주면 기존 소비처가 0원·NaN을 그린다.
                 return None
         else:
-            groups = cat.get("groups") or []
+            # ★R1 HIGH-2 봉합 — 종전 `else` 가지는 **좌표 미확인 그룹을 포함한 전체**를 썼다.
+            #   즉 봉합 대상 결함(위치를 모르는 거래로 시세를 만든다)이 이 가지에 그대로
+            #   살아 있었고, 게다가 이 경로는 **생산에서 도달 가능**하다:
+            #   라우터의 `center_hint`는 `lawd_cd`가 없을 때만 계산되므로, 프론트가 pnu/bcode를
+            #   정상 공급하는 주경로(사통맵 필지 선택)에서는 힌트가 없고, 내부 주소 지오코딩이
+            #   실패하면 `radius_applied=False`가 된다 — 지오코딩이 잘 실패하는 모집단이
+            #   바로 산 지번·농어촌 주소(호미곶이 속한 그 모집단)다.
+            #   반경 판정은 못 해도 **좌표조차 없는 그룹은 배제**한다(무날조는 반경 적용
+            #   여부에 따라 켜졌다 꺼졌다 하면 안 된다).
+            groups = [g for g in (cat.get("groups") or []) if g.get("lat") is not None]
         if not groups:
             return None
 

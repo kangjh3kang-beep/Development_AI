@@ -8,7 +8,7 @@ import {
   capacityRatio,
   mergeSatongMapFeatures,
   REGULATION_WMS_BY_CONTROL,
-  resolveRegulationWmsLayers,
+  resolveRegulationWmsLayerChunks,
   resolveSelectionAnchor,
   resolveVWorldBaseLayer,
   satongMapFeatureKey,
@@ -172,32 +172,35 @@ describe("satong-map-layers", () => {
   });
 });
 
-describe("resolveRegulationWmsLayers — 규제 오버레이(플레이스홀더 잠금 해제)", () => {
+// ★`resolveRegulationWmsLayers`(단일 문자열)는 삭제됐다 — 청크를 되붙이면 5레이어 문자열이
+//   되어 VWorld 503(INVALID_RANGE)을 재생산하는 지뢰였다. 이 블록이 지키던 계약(빈 상태·
+//   정본 레이어명·정의 순서)은 **그대로 유지**하되 청크 API 기준으로 옮긴다(약화 없음).
+describe("resolveRegulationWmsLayerChunks — 규제 오버레이(플레이스홀더 잠금 해제)", () => {
   const st = (controls: string[]) => ({
     enabledLayerIds: ["zoning" as const],
     controlsByLayer: { zoning: controls },
   });
 
   it("활성 컨트롤이 없으면 빈 문자열(타일 미부설)", () => {
-    expect(resolveRegulationWmsLayers(st(["land-use"]))).toBe("");
-    expect(resolveRegulationWmsLayers(undefined)).toBe("");
+    expect(resolveRegulationWmsLayerChunks(st(["land-use"]))).toEqual([]);
+    expect(resolveRegulationWmsLayerChunks(undefined)).toEqual([]);
   });
 
   it("zoning 레이어가 꺼져 있으면 컨트롤이 남아 있어도 빈 문자열", () => {
     expect(
-      resolveRegulationWmsLayers({ enabledLayerIds: [], controlsByLayer: { zoning: ["development-limit"] } }),
-    ).toBe("");
+      resolveRegulationWmsLayerChunks({ enabledLayerIds: [], controlsByLayer: { zoning: ["development-limit"] } }),
+    ).toEqual([]);
   });
 
   it("★단일·다중 컨트롤 → 정본 소문자 레이어명 콤마 조인(정의 순서 고정)", () => {
     // 2026-07-17 GetCapabilities+GetMap 매트릭스 채증 정본명 — 대문자·축약 회귀 금지(#366 계열).
-    expect(resolveRegulationWmsLayers(st(["development-limit"]))).toBe("lt_c_upisuq171");
-    expect(resolveRegulationWmsLayers(st(["height-district", "development-limit"]))).toBe(
+    expect(resolveRegulationWmsLayerChunks(st(["development-limit"]))).toEqual(["lt_c_upisuq171"]);
+    expect(resolveRegulationWmsLayerChunks(st(["height-district", "development-limit"]))).toEqual([
       "lt_c_upisuq171,lt_c_uq123", // 선택 순서가 아니라 사전 정의 순서
-    );
+    ]);
     expect(
-      resolveRegulationWmsLayers(st(["district-unit", "water-protect", "edu-protect"])),
-    ).toBe("lt_c_upisuq161,lt_c_um710,lt_c_uo101");
+      resolveRegulationWmsLayerChunks(st(["district-unit", "water-protect", "edu-protect"])),
+    ).toEqual(["lt_c_upisuq161,lt_c_um710,lt_c_uo101"]);
   });
 
   it("★매핑 어휘 폐쇄 — Shell 컨트롤 id·프록시 화이트리스트와 1:1(무음 드리프트 방지)", () => {

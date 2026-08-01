@@ -131,6 +131,13 @@ type MarketResults = {
   radiusApplied?: boolean;
   /** 좌표를 얻지 못해 반경 판정이 불가능했던 거래 건수(어느 버킷에도 넣지 않는다). */
   unknownDistanceCount?: number;
+  /**
+   * ★AVM이 없거나 반경 보증이 없을 때의 **사유**(서버 산출).
+   *   이걸 배선하지 않으면 화면이 "실거래가 없어 시세를 추정할 수 없습니다"라고 말하면서
+   *   같은 화면에서 거래 32건을 보여주는 **자기모순**이 난다(날조된 숫자를 날조된 설명으로
+   *   바꾼 셈). R1 HIGH-3.
+   */
+  avmUnavailableReason?: string | null;
   searchAddress: string;
 };
 
@@ -214,7 +221,10 @@ function deriveResults(payload: NearbyMapPayload | null, fallbackAddr: string): 
         transactions.push({
           deal_amount: d.price_10k_won, area_sqm: d.area_m2, floor: d.floor,
           apt_name: g.name,
-          // 거리 미상은 숫자를 지어내지 않는다(표에서 "거리 미상"으로 표기된다).
+          // 거리 미상은 숫자를 **지어내지 않는다**(undefined).
+          // ★주의: 이 컴포넌트의 실거래 상세 표에는 거리 컬럼이 없다 — "표에 거리 미상으로
+          //   표기된다"고 쓰면 일어나지 않는 일을 주장하는 것이다(이 PR이 봉합한 '주석과 코드
+          //   불일치'를 새로 심는 셈). 미상 건수는 반경 버킷 목록의 별도 행으로만 고지된다.
           distance_m: dist === null ? undefined : Math.round(dist),
           ...parseDealDate(d.deal_date),
         });
@@ -244,7 +254,13 @@ function deriveResults(payload: NearbyMapPayload | null, fallbackAddr: string): 
   // ★거리 미상은 **별도 행**으로 낸다 — 숨기면 "수집=선정+제외" 항등이 깨지고(이 저장소의
   //   ComparableSet 선례), 특정 반경에 넣으면 그 버킷이 거짓이 된다.
   if (unknownDistanceCount > 0) {
-    radiusGroups.push({ label: "거리 미상(위치 미확인)", count: unknownDistanceCount, avgPrice: 0 });
+    // ★반경 버킷은 **누적**(500m ⊂ 1km ⊂ 3km ⊂ ∞)이고 이 행은 **배타**다 — 합산 규칙이
+    //   달라 같은 라벨 문법을 쓰면 오독된다. "집계 제외"를 라벨에 박아 구분한다.
+    radiusGroups.push({
+      label: "집계 제외 · 거리 미상(위치 미확인)",
+      count: unknownDistanceCount,
+      avgPrice: 0,
+    });
   }
 
   // AI 시세(AVM) — SSOT 일원화(PropAI 아이디어#3): 종전엔 여기서 apt_trade 그룹을 다시
@@ -264,6 +280,7 @@ function deriveResults(payload: NearbyMapPayload | null, fallbackAddr: string): 
     radius: payload.radius_applied === false ? null : payload.radius_m ?? null,
     radiusApplied: payload.radius_applied !== false,
     unknownDistanceCount,
+    avmUnavailableReason: payload.avm_unavailable_reason ?? null,
     searchAddress: center?.address || fallbackAddr,
   };
 }
@@ -1411,7 +1428,13 @@ export function MarketInsightsWorkspaceClient() {
                 <p className="sa-di-empty">주변 실거래를 수집해 시세를 추정하는 중…</p>
               ) : (
                 <p className="sa-di-empty">
-                  {address ? "주변 아파트 실거래가 없어 시세를 추정할 수 없습니다." : "주소 입력 후 「분석 시작」을 누르면 AI 시세가 표시됩니다."}
+                  {/* ★서버가 사유를 주면 **그것을 그대로** 말한다. 종전엔 거래가 32건 있어도
+                      "실거래가 없어 추정할 수 없습니다"라고 해 같은 화면 안에서 모순됐다. */}
+                  {results?.avmUnavailableReason
+                    ? results.avmUnavailableReason
+                    : address
+                      ? "주변 아파트 실거래가 없어 시세를 추정할 수 없습니다."
+                      : "주소 입력 후 「분석 시작」을 누르면 AI 시세가 표시됩니다."}
                 </p>
               )}
             </div>
