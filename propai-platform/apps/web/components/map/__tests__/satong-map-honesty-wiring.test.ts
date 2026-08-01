@@ -44,19 +44,44 @@ describe("정직 배선 — AVM 신뢰성 단서는 시세가 **있을 때도** 
     //         R2-HIGH-1은 "조건이 없다"가 아니라 "조건이 빈 상태 가지에만 있다"였다.
     //   → 3차: **행 순서**로 잠근다. 배너는 AVM 가지 안, 즉
     //     `※ 참고 추정치` 줄보다 **앞**이고 빈 상태 문구 줄보다 **앞**이어야 한다.
+    //   ★R4 지적(교체 ≠ 추가): 3차가 2차를 **교체**하는 바람에 조건 변조
+    //     (`{false && results.avmCaveat ? (`)가 다시 통과했다 — 피처 플래그 도입이나
+    //     조건 축소(`&& confidence < 0.5`)처럼 **현실적 등가물**이 있고, 후자는 하필
+    //     고신뢰 케이스에서 경고를 지운다. 그래서 세 검사를 **함께** 건다:
+    //     ①존재(아래 앵커 단언) ②조건(별도 assertWiredThrough) ③위치(행 순서).
     const lines = sourceLines("components/operations/MarketInsightsWorkspaceClient.tsx");
+    const avmBranch = lineOf(lines, /\{results\?\.avm \? \(/);
     const banner = lineOf(lines, /data-testid="avm-caveat"/);
     const disclaimer = lineOf(lines, /※ 주변 아파트 실거래 평당가 가중평균/);
     const emptyState = lineOf(lines, /주변 아파트 실거래가 없어 시세를 추정할 수 없습니다/);
 
+    expect(avmBranch, "AVM 가지 시작(`{results?.avm ? (`)을 찾지 못했다 — 스코프 갱신 필요")
+      .toBeGreaterThan(0);
     expect(banner, "단서 배너(avm-caveat)가 사라졌다").toBeGreaterThan(0);
     expect(disclaimer, "AVM 가지의 면책 문구를 찾지 못했다 — 스코프 갱신 필요").toBeGreaterThan(0);
     expect(emptyState, "빈 상태 문구를 찾지 못했다 — 스코프 갱신 필요").toBeGreaterThan(0);
-    // ★핵심: 배너가 AVM 가지 **안**에 있다(면책 문구보다 앞 = 같은 가지의 위쪽).
+
+    // ★핵심: 배너가 AVM 가지 **안**에 있다 — **양쪽으로** 묶는다.
+    //   ★자체 적발(insight-loop): 종전엔 상한(`banner < disclaimer`)만 걸어서, 배너를 파일
+    //   앞쪽의 **무관한 위치**로 옮겨도 통과했다(실측: 1030행으로 이동해도 6/6 통과).
+    //   "면책보다 앞이면 어디든"은 "AVM 가지 안"이 아니다 — 하한을 함께 건다.
+    expect(banner, "단서 배너가 AVM 가지 **시작보다 앞**에 있다 — 다른 섹션으로 새어나갔다")
+      .toBeGreaterThan(avmBranch);
     expect(banner, "단서 배너가 AVM 가지 밖으로 이동했다 — 위험한 단서가 다시 도달 불가능해진다")
       .toBeLessThan(disclaimer);
     expect(disclaimer, "AVM 가지가 빈 상태 가지보다 뒤에 있다 — 구조 가정이 깨졌다")
       .toBeLessThan(emptyState);
+
+    // ★②조건 검사(R3에서 걸었다가 R4에서 교체돼 열렸던 것을 되살린다).
+    //   조건이 `{false && ...}`나 `{flag && ...}`로 바뀌면 이 스코프가 0건 → 하드 실패.
+    expect(() =>
+      assertWiredThrough({
+        file: "components/operations/MarketInsightsWorkspaceClient.tsx",
+        scope: /\{results\.avmCaveat \? \(/,
+        mustContain: "results.avmCaveat",
+        minMatches: 1,
+      }),
+    ).not.toThrow();
   });
 
   it("★서버 단서를 페이로드에서 실제로 읽는다(필드 개명 시 조용히 끊기는 것 방지)", () => {
