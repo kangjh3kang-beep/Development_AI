@@ -565,7 +565,26 @@ export const DEVELOPABILITY_LABEL: Record<string, string> = {
   CONDITIONAL: "조건부 가능",
   // 임야/산지 — 공식 산림데이터 미확보로 확정 판단 불가(참고용 예비안만). 원 enum 노출 금지.
   NEEDS_OFFICIAL_SURVEY: "공식 산림조사 필요(참고안 — 확정 아님)",
+  // 접도·도로 — 법정 접도 근거를 데이터로 확정할 수 없어 관할 확인을 전제로만 진행.
+  REQUIRES_AUTHORITY_CONFIRMATION: "관할 확인 필요(접도 근거 미확정)",
+  // 지목·용도지구 미확인 — '제약 유무를 못 봤다'는 뜻이지 '제약 없음'이 아니다.
+  UNKNOWN: "판정 불가(정보 미확인)",
   PRECONDITION: "선행절차 필요",
   RESTRICTED: "제한적",
   BLOCKED: "개발 불가",
 };
+
+/**
+ * 개발가능성 게이트 → 사용자 라벨. **미등재 코드는 이름을 지어내지 않는다.**
+ *
+ * 등재된 값이면 한국어 라벨을, 아니면 원문을 그대로 돌려주고 `known:false`로 알린다.
+ * 소비처는 이 플래그를 보고 "설명이 아직 준비되지 않았다"를 함께 표기해야 한다 —
+ * 원문을 조용히 뿌리면 사용자가 `NEEDS_OFFICIAL_SURVEY` 같은 코드를 그대로 보게 되고,
+ * 그럴듯한 말을 지어내면 없는 의미를 만든다. 둘 다 하지 않는다.
+ */
+export function developabilityLabel(code?: string | null): { text: string; known: boolean } {
+  const key = String(code ?? "").trim().toUpperCase();
+  if (!key) return { text: "", known: false };
+  const label = DEVELOPABILITY_LABEL[key];
+  return label ? { text: label, known: true } : { text: key, known: false };
+}

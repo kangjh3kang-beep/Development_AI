@@ -28,6 +28,8 @@ import { fetchInterpretation } from "@/lib/interpretation-job"; // 해석 제출
 import { readFieldAudit, findingsForSection } from "@/lib/field-audit"; // 자가검증 표면화 SSOT(W3)
 import { FieldAuditNotice } from "@/components/analysis/FieldAuditNotice";
 import { CredibilitySummaryCard } from "@/components/analysis/CredibilitySummaryCard";
+import { SpecialParcelActions } from "@/components/analysis/SpecialParcelActions";
+import { developabilityLabel } from "@/lib/zoning-ssot"; // 개발가능성 코드 → 사용자 라벨(공용 SSOT)
 
 /* ── Helpers ── */
 
@@ -756,17 +758,32 @@ export function ComprehensiveAnalysisPanel() {
             <div className="rounded-2xl border border-[var(--status-warning)]/40 bg-[color-mix(in_srgb,var(--status-warning)_8%,transparent)] p-4">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-sm font-bold text-[var(--status-warning)]">특이부지 제약 감지</span>
-                {result.developability ? (
-                  <span className="rounded-full border border-[var(--status-warning)]/40 px-2 py-0.5 text-[10px] font-semibold text-[var(--status-warning)]">
-                    {result.developability}
-                  </span>
-                ) : null}
+                {/* ★원시 코드(NEEDS_OFFICIAL_SURVEY 등)를 그대로 뿌리지 않는다 — 공용 라벨 SSOT를
+                    경유한다. 이 맵은 이미 있었는데 이 경로만 안 타서 개발자용 코드가 화면에
+                    노출되고 있었다(다른 화면들은 이미 라벨을 쓴다). 미등재 코드는 이름을
+                    지어내지 않고 원문 + '설명 준비 중'으로 정직 표기한다. */}
+                {(() => {
+                  const dev = developabilityLabel(result.developability);
+                  if (!dev.text) return null;
+                  return (
+                    <span
+                      className="rounded-full border border-[var(--status-warning)]/40 px-2 py-0.5 text-[10px] font-semibold text-[var(--status-warning)]"
+                      title={String(result.developability ?? "")}
+                    >
+                      {dev.text}
+                      {!dev.known && " (설명 준비 중)"}
+                    </span>
+                  );
+                })()}
               </div>
               {(result.special_parcel.honest_disclosure || result.special_parcel.development_caveat) && (
                 <p className="mt-1.5 text-xs leading-relaxed text-[var(--text-secondary)]">
                   {result.special_parcel.honest_disclosure || result.special_parcel.development_caveat}
                 </p>
               )}
+              {/* ★백엔드가 이미 주던 해결 절차·선행 요건·대안을 표면화(소비처 0건이던 고아 핸드오프).
+                  문장은 전부 응답 필드에서 오며 프론트가 지어내지 않는다. */}
+              <SpecialParcelActions factors={result.special_parcel.factors} />
             </div>
           )}
 
