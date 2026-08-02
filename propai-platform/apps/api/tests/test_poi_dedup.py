@@ -183,6 +183,11 @@ def test_invariant_reads_multiple_shapes():
         {"poi": {"schools": _DAEBO5, "school_count": 5}},
         {"education": {"schools": _DAEBO5, "school_count": 5}},
         {"infrastructure": {"schools": _DAEBO5}, "school_count": 5},
+        # ★2026-08-02 추가 — **프로덕션 analyze() 실제 shape**(location 밑에 education이 들어간다).
+        #   이 shape가 빠져 있어서 "경로 비의존"이라는 이 테스트의 제목이 참이 아니었다: 위 3개는
+        #   전부 골든/보조 경로이고, 정작 사용자가 보는 종합분석 응답 경로에서는 규칙이 학교
+        #   카운트를 찾지 못해 **한 번도 발동할 수 없었다**. 라이브 응답으로 실측 확인한 자리다.
+        {"location": {"education": {"schools": _DAEBO5, "school_count": 5}}},
     ]:
         findings = _g2_school_poi_dedup(payload, {})
         assert len(findings) == 1

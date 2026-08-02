@@ -106,14 +106,42 @@ def _g1_protection_zone_risk_floor(
     ]
 
 
+# 학교 POI가 실릴 수 있는 컨테이너 이름(어느 부모 밑이든 이름은 같다).
+_SCHOOL_CONTAINERS = ("poi", "education", "infrastructure")
+
+
+def _school_containers(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """학교 POI 컨테이너 후보를 얕은 곳부터 모은다(경로 비의존).
+
+    ★2026-08-02 봉합(가드 갭): 종전에는 **최상위**의 poi/education/infrastructure만 봤다.
+      그런데 실제 analyze() 응답은 학교를 `result["location"]["education"]`에 담는다 —
+      즉 이 불변식은 **프로덕션 주경로에서 발동할 수 없었다**(평면 shape인 골든 픽스처에서만
+      통과). 규칙은 초록인데 실제로는 아무것도 지키지 않았고, dedup가 회귀해도 못 잡는다.
+      그래서 최상위와 `location` 밑을 모두 후보로 본다.
+    """
+    if not isinstance(payload, dict):
+        return []
+    parents: list[dict[str, Any]] = [payload]
+    loc = payload.get("location")
+    if isinstance(loc, dict):
+        parents.append(loc)
+
+    out: list[dict[str, Any]] = []
+    for parent in parents:
+        for name in _SCHOOL_CONTAINERS:
+            c = parent.get(name)
+            if isinstance(c, dict):
+                out.append(c)
+    return out
+
+
 def _extract_schools(payload: dict[str, Any]) -> list[Any]:
     """result/payload에서 학교 POI 목록을 추출(경로 비의존)."""
     if not isinstance(payload, dict):
         return []
-    # 실 analyze()/site_score 결과: education.schools·infrastructure.schools / 골든 fixture: poi.schools.
-    for container in ("poi", "education", "infrastructure"):
-        c = payload.get(container)
-        if isinstance(c, dict) and isinstance(c.get("schools"), list):
+    # 실 analyze(): location.education.schools / site_score: education.schools / 골든: poi.schools.
+    for c in _school_containers(payload):
+        if isinstance(c.get("schools"), list):
             return c["schools"]
     # 평면 shape: payload["schools"].
     if isinstance(payload.get("schools"), list):
@@ -125,9 +153,8 @@ def _extract_school_count(payload: dict[str, Any]) -> int | None:
     """result/payload에서 산출된 학교 카운트를 추출(경로 비의존). 미산출이면 None."""
     if not isinstance(payload, dict):
         return None
-    for container in ("poi", "education", "infrastructure"):
-        c = payload.get(container)
-        if isinstance(c, dict) and isinstance(c.get("school_count"), int):
+    for c in _school_containers(payload):
+        if isinstance(c.get("school_count"), int):
             return c["school_count"]
     v = payload.get("school_count")
     return v if isinstance(v, int) else None

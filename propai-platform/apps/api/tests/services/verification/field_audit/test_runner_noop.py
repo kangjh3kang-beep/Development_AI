@@ -89,7 +89,11 @@ def test_f4a_growth_emit_is_observation_only(monkeypatch):
     payload = props.get("payload") or {}
     assert payload.get("finding_count") == 0
     assert payload.get("rule_count") == 0
-    assert "field_audit_observation" not in ("verify_result", "verify_issue", "ai_feedback")
+    # ★2026-08-02 제거: 여기 있던
+    #     assert "field_audit_observation" not in ("verify_result", "verify_issue", "ai_feedback")
+    #   는 리터럴끼리 비교하는 **항상 참**이라 검증력이 0이었다(가짜 안전). 이 테스트는 발행측만
+    #   책임지고, 소비측(analyzer가 이 event_type을 읽지 않는가)은 실제 분석기를 호출해 잠그는
+    #   test_f4a_consumer_isolation.py가 맡는다.
 
 
 def test_kill_switch_disables_completely(monkeypatch):
