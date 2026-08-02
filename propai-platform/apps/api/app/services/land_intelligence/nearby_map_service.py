@@ -81,6 +81,28 @@ class NearbyMapService:
         self.settings = get_settings()
         self.molit = MolitClient()
         self._geo_key = getattr(self.settings, "vworld_api_key", "") or ""
+        # ★W2 계측 — 지오코딩 실패를 **원인별로** 센다. 종전엔 `continue` 뿐이라 실패가
+        #   일시장애(429/5xx/타임아웃 → 재시도로 회복 가능)인지 영구 오류(NOT_FOUND →
+        #   주소 자체가 틀림)인지 구분할 수단이 0이었고, 그 위에서 세운 처방은 검증 불가였다.
+        self._geo_failures: dict[str, int] = {}
+        self._geo_fail_samples: list[str] = []
+
+    def _geo_fail(self, reason: str, query: str = "") -> None:
+        """지오코딩 실패 1건을 원인별로 적재(예외 안전 — 계측이 본로직을 깨지 않는다).
+
+        ★지연 초기화: 이 저장소의 테스트는 `NearbyMapService.__new__(...)` 로 `__init__` 을
+        우회해 인스턴스를 만든다(외부 의존 없이 순수 로직만 태우려는 의도). 계측이 그 경로에서
+        AttributeError 를 내면 **계측 때문에 본로직이 죽는다** — 관측 장치의 제1원칙 위반이다.
+        """
+        try:
+            if not hasattr(self, "_geo_failures"):
+                self._geo_failures = {}
+                self._geo_fail_samples = []
+            self._geo_failures[reason] = self._geo_failures.get(reason, 0) + 1
+            if query and len(self._geo_fail_samples) < 5:
+                self._geo_fail_samples.append(f"{reason}:{query}")
+        except Exception:  # noqa: BLE001 — 계측 실패가 응답을 죽이면 안 된다
+            pass
 
     # ── 공개 진입점 ──
     async def build(
@@ -137,9 +159,23 @@ class NearbyMapService:
         #   사전 컷해 콜드 비용을 상수로 묶는다. 반경 내 상위 28건 정합성은 사전 컷 폭(80)이
         #   최종 캡(28)보다 충분히 넓어 실용상 유지된다. 컷된 그룹 수는 정직 카운트로 노출.
         geocode_precut = 0
+        # ★W2 근본수정 — 사전컷 정렬에 **공간 사전확률**을 넣는다.
+        #   종전엔 거래건수만으로 상위 80을 남겼다. 그런데 우리가 원하는 건 "많이 팔린 단지"가
+        #   아니라 "대상지 **가까이** 있는 물건"이다. 라이브 실측(역삼동): 지오코딩한 520개
+        #   그룹 중 **414개(79.6%)가 반경 밖으로 폐기**됐다 — 지오코딩 예산의 80%를 버릴
+        #   후보에 썼다. 게다가 사전컷 자체가 전체 그룹 손실의 **73.8%**(1,629/2,207)로
+        #   지오코딩 실패(2.6%)보다 28배 크다.
+        #   대상지 법정동은 주소에서 **이미 알고 있다** — 추가 호출 0으로 같은 예산에서
+        #   수율을 올린다. 동이 같은 그룹을 앞에 두고, 그 안에서 거래 많은 순으로 자른다.
+        target_dong = self._dong_from_address(address)
         for cat in categories.values():
             if len(cat["groups"]) > _MAX_GEOCODE_GROUPS_PER_CAT:
-                cat["groups"].sort(key=lambda x: x["count"], reverse=True)
+                cat["groups"].sort(
+                    key=lambda x: (
+                        0 if (target_dong and x.get("dong") == target_dong) else 1,
+                        -x["count"],
+                    )
+                )
                 geocode_precut += len(cat["groups"]) - _MAX_GEOCODE_GROUPS_PER_CAT
                 cat["groups"] = cat["groups"][:_MAX_GEOCODE_GROUPS_PER_CAT]
         queries: set[str] = set()
@@ -310,6 +346,10 @@ class NearbyMapService:
             "groups_evaluated_count": groups_evaluated,
             "radius_filtered_out_count": filtered_out,
             "coords_unresolved_count": coords_unresolved,
+            # ★W2 계측 — "좌표를 못 얻었다"만으로는 무엇을 고쳐야 할지 알 수 없다.
+            #   원인별 분해가 있어야 재시도(일시장애)와 주소 교정(영구 오류) 중 무엇이
+            #   지렛대인지 **숫자로** 판정할 수 있다.
+            "geocode_failure_breakdown": dict(getattr(self, "_geo_failures", {})),
             "geocode_precut_count": geocode_precut,
             "lawd_cd": lawd_cd,
             "months": ym_list,
@@ -416,6 +456,22 @@ class NearbyMapService:
         return f"{sgg} {dong}".strip()
 
     @staticmethod
+    def _dong_from_address(address: str) -> str:
+        """주소에서 **법정동 토큰**을 뽑는다(사전컷 우선순위용).
+
+        MOLIT 의 `dong` 은 `umdNm`(법정동명)이므로 같은 표기를 골라야 한다:
+          "서울특별시 강남구 역삼동 736"            → "역삼동"
+          "경상북도 포항시 남구 호미곶면 대보리 산1-1" → "대보리"
+        지번 앞에서 마지막으로 나오는 동/리/가 토큰이 법정동이다. 못 찾으면 빈 문자열 —
+        그때는 종전처럼 거래건수 순으로만 자른다(추측해서 엉뚱한 동을 우대하지 않는다).
+        """
+        best = ""
+        for tok in (address or "").split():
+            if tok.endswith(("동", "리", "가")) and not tok.endswith(("로", "길")):
+                best = tok
+        return best
+
+    @staticmethod
     def _refined_mismatch(grp: dict[str, Any], refined: str | None) -> bool:
         """지오코딩이 **엉뚱한 주소로 매칭됐는지** 판정한다(정밀도 강등 트리거).
 
@@ -462,7 +518,17 @@ class NearbyMapService:
             name = (r.get("building_name") or "").strip()
             jibun = (r.get("jibun") or "").strip()
             dong = (r.get("dong") or "").strip()
-            sigungu = (r.get("sigungu") or sigungu_hint or "").strip()
+            # ★W2 근본수정 — 우선순위를 뒤집는다. `r["sigungu"]` 는 MOLIT 매매 응답의
+            #   `estateAgentSggNm`, 즉 **중개사무소 소재지**이지 물건 소재지가 아니다
+            #   (molit_client.py 매매 파서). 강남 물건을 서초 중개사가 거래하면 질의가
+            #   "서초구 대치동 316" 이 되어 **영구 NOT_FOUND** 다(실측 확증: 시군구를 바꾸면
+            #   VWorld 가 정확히 실패한다).
+            #   ★자연실험 — 같은 지오코더·같은 질의 빌더인데 전월세만 성공률이 압도적이었다:
+            #     apt_rent(sggNm 폴백 있음) located 93/93(100%) vs apt_trade(중개사 단독) 18/105(17%).
+            #     파이프라인 전체에서 코드 차이는 시군구 출처 한 곳뿐이었다.
+            #   MOLIT 은 우리가 넘긴 `lawd_cd` 로 조회되므로 **대상지 시군구가 곧 모든 행의
+            #   시군구**다 — 추측할 필요조차 없이 요청 파라미터로 이미 확정돼 있다.
+            sigungu = (sigungu_hint or r.get("sigungu") or "").strip()
             key = name or jibun or dong
             if not key:
                 continue
@@ -515,7 +581,17 @@ class NearbyMapService:
             name = (r.get("building_name") or "").strip()
             jibun = (r.get("jibun") or "").strip()
             dong = (r.get("dong") or "").strip()
-            sigungu = (r.get("sigungu") or sigungu_hint or "").strip()
+            # ★W2 근본수정 — 우선순위를 뒤집는다. `r["sigungu"]` 는 MOLIT 매매 응답의
+            #   `estateAgentSggNm`, 즉 **중개사무소 소재지**이지 물건 소재지가 아니다
+            #   (molit_client.py 매매 파서). 강남 물건을 서초 중개사가 거래하면 질의가
+            #   "서초구 대치동 316" 이 되어 **영구 NOT_FOUND** 다(실측 확증: 시군구를 바꾸면
+            #   VWorld 가 정확히 실패한다).
+            #   ★자연실험 — 같은 지오코더·같은 질의 빌더인데 전월세만 성공률이 압도적이었다:
+            #     apt_rent(sggNm 폴백 있음) located 93/93(100%) vs apt_trade(중개사 단독) 18/105(17%).
+            #     파이프라인 전체에서 코드 차이는 시군구 출처 한 곳뿐이었다.
+            #   MOLIT 은 우리가 넘긴 `lawd_cd` 로 조회되므로 **대상지 시군구가 곧 모든 행의
+            #   시군구**다 — 추측할 필요조차 없이 요청 파라미터로 이미 확정돼 있다.
+            sigungu = (sigungu_hint or r.get("sigungu") or "").strip()
             key = name or jibun or dong
             if not key:
                 continue
@@ -866,7 +942,16 @@ class NearbyMapService:
 
     async def _geocode_one(self, query: str, client: httpx.AsyncClient | None = None) -> dict | None:
         if not query or not self._geo_key:
+            # 키 미설정은 "주소를 못 찾은 것"과 전혀 다른 상태다 — 섞어 세면 진단이 망가진다.
+            if query and not self._geo_key:
+                self._geo_fail("key_missing")
             return None
+
+        def _fail(reason: str) -> None:
+            # 쿼리를 함께 남긴다 — 원인 코드만으로는 "어떤 주소가 왜 깨지는지" 못 본다
+            # (이번 진단의 결정타가 실패 쿼리의 시군구를 눈으로 본 것이었다).
+            self._geo_fail(reason, query)
+
         cache_key = f"geo:vworld:{query}"
         r = await self._redis()
         if r is not None:
@@ -894,6 +979,11 @@ class NearbyMapService:
                         _VWORLD_GEOCODE_URL, params={**base, "address": query, "type": addr_type}
                     )
                     if resp.status_code != 200:
+                        # ★W2 계측 — 종전엔 `continue` 뿐이라 **왜 실패했는지 아무도 몰랐다**.
+                        #   그 상태에서는 "재시도를 넣으면 좋아진다" 같은 처방이 전부 신앙이 된다
+                        #   (실제로 내가 그 오진을 했다 — 실패는 일시장애가 아니라 주소 오류였다).
+                        _fail(429 if resp.status_code == 429 else
+                              ("http_5xx" if resp.status_code >= 500 else "http_other"))
                         continue
                     j = resp.json()
                     if j.get("response", {}).get("status") == "OK":
@@ -914,7 +1004,16 @@ class NearbyMapService:
                             **({"refined": _refined} if _refined else {}),
                         }
                         break
+                    else:
+                        # VWorld 는 매칭 실패도 **HTTP 200 + status=NOT_FOUND** 로 준다.
+                        # 이건 일시장애가 아니라 **영구 실패**라 재시도로 못 고친다 — 그
+                        # 구분이 없으면 처방의 방향 자체가 틀어진다.
+                        _fail(str((j.get("response") or {}).get("status") or "not_ok").lower())
+                except (httpx.TimeoutException, httpx.RequestError):
+                    _fail("timeout_or_network")
+                    continue
                 except Exception:
+                    _fail("exception")
                     continue
         finally:
             if own:
