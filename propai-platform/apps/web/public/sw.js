@@ -190,7 +190,13 @@
 //           옛 번들은 그 필드를 여전히 무시하므로 캐시를 비워야 실제로 보인다.
 //        ★채번 주의: 직전 상수가 v478이 아니라 **v479**였다(#527이 선점). PR 제목이 아니라
 //          `origin/main`의 실제 상수를 보고 이어야 한다 — 이번에도 그렇게 확인했다.
-const CACHE_NAME = "propai-v480-plain-labels";
+// v481: 비율 표기 정직화(#530 W4-2) + 다필지 매트릭스 게이트 배지 수렴(#532 W4 R1 MED).
+//        ① 비율에서 **0과 '미확보'를 구분**하고 반올림이 격차를 지우지 않게 한다
+//           (formatters.ts·ComprehensiveAnalysisPanel) — 옛 번들은 둘을 같은 "0%"로 그린다.
+//        ② 다필지 속성 매트릭스의 게이트 배지가 중복 라벨맵 2호로 수렴(MultiParcelAttributeMatrix).
+//        표시 로직이 바뀌는 변경이라 stale app-shell 캐시가 남으면 옛 표기가 그대로 보인다.
+//        ★채번: origin/main 실제 상수가 v480이라 v481로 이었다(제목 아닌 상수 기준·직전 관례 유지).
+const CACHE_NAME = "propai-v481-ratio-matrix";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
