@@ -4,19 +4,28 @@
 LLM 프로바이더를 선택하여 AI 해석에 사용할 모델을 지정할 수 있다.
 """
 
+import asyncio
+import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends
+import structlog
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.core.billing_deps import enforce_llm_quota
 from app.services.auth.auth_service import get_current_user
+from app.services.common.job_store import JobStore
 from app.services.land_intelligence.parcel_normalize import ParcelsIn
 
 # P2-2 보안: 종합분석 LLM 호출 라우트 인증 강제(무인증·무쿼터 LLM 호출 → 미과금 비용남용 차단).
 # ★전수감사 보강: 사용자별 LLM 쿼터(enforce_llm_quota)를 라우터 레벨로 부착해 한도초과(402)
 #   차단을 /comprehensive·/similar-market·/site-layout 전 경로에 일관 적용(경로별 과금정책 불일치 해소).
 router = APIRouter(dependencies=[Depends(get_current_user), Depends(enforce_llm_quota)])
+
+logger = structlog.get_logger(__name__)
+# ★실행 중 태스크 강참조 — asyncio는 태스크를 약참조로만 들고 있어, 참조를 잃으면 실행 도중
+#   GC가 수거해 잡이 영원히 pending으로 남는다(조용한 유실).
+_INTERP_TASKS: set[asyncio.Task[None]] = set()
 
 
 class ComprehensiveAnalysisRequest(BaseModel):
@@ -83,29 +92,95 @@ class InterpretationRequest(BaseModel):
     llm_model: str | None = Field(None, description="LLM 모델 ID(미지정 시 프로바이더 기본).")
 
 
-@router.post("/interpretation")
-async def run_interpretation(req: InterpretationRequest, current_user=Depends(get_current_user)):
-    """AI 해석 2종만 생성해 반환(부지 해석·시장 내러티브).
+# ── AI 해석 비동기 잡 ────────────────────────────────────────────────────────
+# ★실측 근거(2026-08-01 프로덕션): 1단계(결정론)는 신규 주소 3.4초·초회 27초로 CF 엣지(~125초)에
+#   한참 못 미치는데, **해석 2종만으로 125초를 넘어 524**가 재현됐다(2/2). 동기 응답으로는
+#   해석을 사용자에게 전달할 방법이 없다 → 제출·폴링 잡으로 전환한다.
+# ★신규 인프라 0: design_audit·registry가 쓰는 공용 JobStore(Redis 우선·인메모리 폴백,
+#   블루그린 컷오버 안전)를 그대로 재사용한다.
+_INTERP_JOBS: dict[str, dict[str, Any]] = {}
+_INTERP_JOB_TTL = 1800  # 30분 — 해석 1회 소요(>125초) 대비 충분하고 결과 재열람 여유
+_INTERP_STORE = JobStore(
+    "job:interpretation:", memory_backing=_INTERP_JOBS, default_ttl_s=_INTERP_JOB_TTL
+)
 
-    반환 4키(ai_interpretation·market_interpretation + 각 status)를 프론트가 1단계 결과에
-    병합한다. 실패해도 raise하지 않고 status='unavailable'로 정직 degrade하므로, 1단계에서
-    이미 받은 분석 본문을 잃지 않는다(종전엔 524 하나로 분석 전체가 사라졌다).
-    """
+
+async def _interp_job_set(job_id: str, **fields: Any) -> None:
+    """잡 항목 병합 갱신(소유자 등 기존 필드 보존) — put이 교체 계약이라 get→merge→put."""
+    cur = dict(await _INTERP_STORE.get(job_id) or {})
+    cur.update(fields)
+    await _INTERP_STORE.put(job_id, cur, _INTERP_JOB_TTL)
+
+
+async def _run_interpretation_job(
+    job_id: str, result: dict[str, Any], llm_provider: str | None, llm_model: str | None,
+) -> None:
+    """백그라운드 실행 — 완료/실패를 잡에 기록한다. **절대 raise하지 않는다**(태스크 유실 방지)."""
     from app.services.land_intelligence.comprehensive_analysis_service import (
         ComprehensiveAnalysisService,
     )
 
     custom_llm = None
-    if req.llm_provider:
+    if llm_provider:
         try:
             from app.services.ai.llm_provider import get_llm
-            custom_llm = get_llm(provider=req.llm_provider, model=req.llm_model)
+            custom_llm = get_llm(provider=llm_provider, model=llm_model)
         except Exception:  # noqa: BLE001 — 커스텀 LLM 실패는 기본 프로바이더로 폴백(analyze와 동일)
             custom_llm = None
 
-    service = ComprehensiveAnalysisService()
-    # ★analyze()와 **같은 generate_interpretations()** 를 탄다(경로별 품질 분기 구조적 차단).
-    return await service.generate_interpretations(req.result, custom_llm=custom_llm)
+    try:
+        service = ComprehensiveAnalysisService()
+        # ★analyze()와 **같은 generate_interpretations()** 를 탄다(경로별 품질 분기 구조적 차단).
+        parts = await service.generate_interpretations(result, custom_llm=custom_llm)
+        await _interp_job_set(job_id, status="done", result=parts)
+    except Exception as e:  # noqa: BLE001 — 잡 실패는 상태로 남긴다(조용한 영구 pending 금지)
+        logger.warning("AI 해석 잡 실패", job_id=job_id, error=str(e)[:160])
+        await _interp_job_set(
+            job_id, status="error", error=f"{type(e).__name__}: {str(e)[:160]}",
+        )
+
+
+@router.post("/interpretation")
+async def submit_interpretation(req: InterpretationRequest, current_user=Depends(get_current_user)):
+    """AI 해석 생성을 **제출**하고 즉시 job_id를 반환한다(폴링형).
+
+    ★동기 반환하지 않는 이유: 해석 2종은 실측 125초 초과로 CF 엣지에서 잘린다. 제출은 즉시
+    끝나므로 엣지 타임아웃과 무관해지고, 프론트는 폴링으로 결과를 받는다.
+    """
+    job_id = f"interp_{uuid.uuid4().hex[:16]}"
+    await _interp_job_set(
+        job_id,
+        status="pending",
+        user_id=str(getattr(current_user, "id", "") or "") or None,
+    )
+    # ★fire-and-forget 태스크 참조를 보관한다 — 참조가 없으면 GC가 실행 중 태스크를 수거할 수 있다.
+    task = asyncio.create_task(
+        _run_interpretation_job(job_id, req.result, req.llm_provider, req.llm_model)
+    )
+    _INTERP_TASKS.add(task)
+    task.add_done_callback(_INTERP_TASKS.discard)
+    return {"job_id": job_id, "status": "pending"}
+
+
+@router.get("/interpretation/{job_id}")
+async def get_interpretation(job_id: str, current_user=Depends(get_current_user)):
+    """해석 잡 상태 조회 — pending / done(result) / error(error).
+
+    ★소유자 검증: 잡은 제출한 사용자만 조회할 수 있다(job_id 추측으로 남의 해석을 읽는 IDOR 차단).
+    """
+    job = await _INTERP_STORE.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="해석 작업을 찾을 수 없습니다(만료되었거나 존재하지 않음).")
+    owner = job.get("user_id")
+    me = str(getattr(current_user, "id", "") or "") or None
+    if owner and owner != me:
+        raise HTTPException(status_code=404, detail="해석 작업을 찾을 수 없습니다.")
+    out: dict[str, Any] = {"job_id": job_id, "status": job.get("status")}
+    if job.get("status") == "done":
+        out["result"] = job.get("result")
+    elif job.get("status") == "error":
+        out["error"] = job.get("error")
+    return out
 
 
 class SimilarMarketRequest(BaseModel):

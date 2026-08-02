@@ -519,9 +519,13 @@ export function ComprehensiveAnalysisPanel() {
     setLoading(false);
 
     // ── 2단계: AI 해석 생성 후 병합(실패해도 1단계 결과 보존) ──
+    // ★실측(2026-08-01 프로덕션): 해석 2종만으로 125초를 넘어 CF 524가 재현됐다(2/2). 동기
+    //   응답으로는 해석을 전달할 방법이 없어 **제출·폴링 잡**으로 받는다.
+    // ★두 응답 형태를 모두 수용한다 — 백엔드가 job_id를 주면 폴링, 결과를 바로 주면 그대로
+    //   병합. 백엔드/프론트 배포 순서가 어긋나도 깨지지 않는다(구버전 백엔드=동기 응답).
     setInterpreting(true);
     try {
-      const parts = await apiClient.post<AnalysisResult>("/analysis/interpretation", {
+      const submitted = await apiClient.post<AnalysisResult>("/analysis/interpretation", {
         body: {
           result: core,
           llm_provider: selectedProvider || undefined,
@@ -529,6 +533,26 @@ export function ComprehensiveAnalysisPanel() {
         },
         useMock: false,
       });
+
+      let parts: AnalysisResult | null = null;
+      const jobId = (submitted as { job_id?: string })?.job_id;
+      if (jobId) {
+        // 폴링 — 3초 간격, 최대 5분. 해석 실측 소요가 125초 이상이라 여유를 둔다.
+        const deadline = Date.now() + 5 * 60 * 1000;
+        while (Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, 3000));
+          const job = await apiClient.get<{ status?: string; result?: AnalysisResult; error?: string }>(
+            `/analysis/interpretation/${jobId}`,
+            { useMock: false },
+          );
+          if (job?.status === "done") { parts = job.result ?? null; break; }
+          if (job?.status === "error") { throw new Error(job.error || "해석 생성에 실패했습니다."); }
+        }
+        if (!parts) throw new Error("해석 생성이 시간 내에 완료되지 않았습니다.");
+      } else {
+        // 구버전 백엔드(동기 응답) — 받은 값을 그대로 병합.
+        parts = submitted;
+      }
       setResult((prev) => (prev ? { ...prev, ...parts } : prev));
     } catch (e) {
       // ★해석 실패를 '분석 실패'로 승격하지 않는다 — setError를 쓰지 않고 해당 필드만 정직 표기.

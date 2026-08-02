@@ -151,13 +151,14 @@ def test_both_paths_share_one_interpretation_implementation():
     import app.routers.comprehensive_analysis as mod
 
     analyze_src = inspect.getsource(ComprehensiveAnalysisService.analyze)
-    endpoint_src = inspect.getsource(mod.run_interpretation)
+    # 비동기화 후 생성은 잡 러너에서 일어난다(제출 핸들러가 아니라).
+    job_src = inspect.getsource(mod._run_interpretation_job)
 
     assert "generate_interpretations(" in analyze_src, "통합 경로가 공용 메서드를 안 쓴다"
-    assert "generate_interpretations(" in endpoint_src, "독립 경로가 공용 메서드를 안 쓴다"
-    # 인터프리터를 엔드포인트가 직접 인스턴스화하면 구현이 갈라진 것이다.
-    assert "SiteAnalysisInterpreter(" not in endpoint_src, "엔드포인트가 해석을 자체 구현(분기)"
-    assert "MarketInterpreter(" not in endpoint_src, "엔드포인트가 해석을 자체 구현(분기)"
+    assert "generate_interpretations(" in job_src, "잡 경로가 공용 메서드를 안 쓴다"
+    # 인터프리터를 잡 러너가 직접 인스턴스화하면 구현이 갈라진 것이다.
+    assert "SiteAnalysisInterpreter(" not in job_src, "잡 러너가 해석을 자체 구현(분기)"
+    assert "MarketInterpreter(" not in job_src, "잡 러너가 해석을 자체 구현(분기)"
 
 
 @pytest.mark.asyncio
@@ -189,3 +190,77 @@ async def test_generate_interpretations_does_not_mutate_input():
     before = dict(src)
     await svc.generate_interpretations(src)
     assert src == before, "입력 result가 변형됐다"
+
+
+# ── 해석 비동기 잡(실측 근거: 해석만으로 CF 125초 초과 재현 2/2) ─────────────
+
+def test_interpretation_submit_returns_job_not_result():
+    """★제출은 즉시 끝나야 한다 — 동기 반환이면 CF 엣지에서 다시 잘린다."""
+    import app.routers.comprehensive_analysis as mod
+
+    src = inspect.getsource(mod.submit_interpretation)
+    assert '"job_id"' in src, "제출이 job_id를 반환하지 않는다(동기 반환 회귀)"
+    # 제출 핸들러가 해석 생성을 직접 await하면 그게 곧 동기 반환이다.
+    assert "await service.generate_interpretations" not in src
+    assert "generate_interpretations" not in src, "제출 경로에서 해석을 직접 생성한다(비동기화 무효)"
+
+
+def test_interpretation_status_endpoint_registered():
+    import app.routers.comprehensive_analysis as mod
+
+    paths = [getattr(r, "path", "") for r in mod.router.routes]
+    assert "/interpretation/{job_id}" in paths, f"상태 조회 경로 미등록: {paths}"
+
+
+def test_background_task_reference_is_retained():
+    """★태스크 강참조 보관 — 참조를 잃으면 GC가 실행 중 태스크를 수거해 잡이 영원히 pending.
+
+    asyncio는 태스크를 약참조로만 들고 있다. create_task 결과를 버리면 조용한 유실이 난다.
+    """
+    import app.routers.comprehensive_analysis as mod
+
+    src = inspect.getsource(mod.submit_interpretation)
+    assert "_INTERP_TASKS.add(" in src, "실행 중 태스크 강참조 미보관(GC 수거로 무음 유실)"
+    assert "add_done_callback" in src, "완료 태스크 정리 미배선(누수)"
+
+
+def test_job_runner_never_raises_and_records_terminal_state():
+    """★잡 러너가 raise하면 상태가 pending에 영원히 머문다 — 실패도 상태로 남겨야 한다."""
+    import app.routers.comprehensive_analysis as mod
+
+    src = inspect.getsource(mod._run_interpretation_job)
+    assert "except Exception" in src
+    assert 'status="error"' in src, "실패를 error 상태로 기록하지 않는다(영구 pending)"
+    assert 'status="done"' in src
+
+
+def test_status_endpoint_enforces_owner_scope():
+    """★IDOR 차단: job_id 추측으로 남의 해석을 읽을 수 없어야 한다."""
+    import app.routers.comprehensive_analysis as mod
+
+    src = inspect.getsource(mod.get_interpretation)
+    assert "user_id" in src and "404" in src, "소유자 검증 부재(IDOR)"
+
+
+def test_job_store_namespace_is_isolated():
+    """다른 라우터 잡과 Redis 키가 충돌하지 않아야 한다."""
+    import app.routers.comprehensive_analysis as mod
+
+    src = inspect.getsource(mod)
+    assert '"job:interpretation:"' in src, "잡 네임스페이스 미격리"
+
+
+@pytest.mark.asyncio
+async def test_job_lifecycle_pending_to_terminal():
+    """제출→실행→종료 상태 전이가 스토어에 실제로 기록된다(인메모리 폴백 경로)."""
+    import app.routers.comprehensive_analysis as mod
+
+    await mod._interp_job_set("interp_test1", status="pending", user_id="u1")
+    got = await mod._INTERP_STORE.get("interp_test1")
+    assert got and got["status"] == "pending" and got["user_id"] == "u1"
+
+    # 병합 갱신이 소유자 필드를 보존한다(put은 교체 계약이므로 여기서 병합해야 한다).
+    await mod._interp_job_set("interp_test1", status="done", result={"ai_interpretation": None})
+    got2 = await mod._INTERP_STORE.get("interp_test1")
+    assert got2["status"] == "done"
+    assert got2["user_id"] == "u1", "병합 갱신이 소유자 필드를 잃었다(IDOR 검증 무력화)"

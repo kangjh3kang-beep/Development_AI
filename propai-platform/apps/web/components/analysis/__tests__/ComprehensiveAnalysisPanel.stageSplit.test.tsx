@@ -31,9 +31,17 @@ function callsTo(path: string) {
   return post.mock.calls.filter((c) => c[0] === path);
 }
 // ★get은 마운트 시 LLM 프로바이더 목록을 부른다 — Promise를 돌려주지 않으면 effect에서 터진다.
+const getRoutes = new Map<string, () => Promise<unknown>>();
 const get = vi.fn<(path: string, opts?: unknown) => Promise<unknown>>(
-  async () => ({ providers: [] }),
+  async (path: string) => {
+    const h = getRoutes.get(path);
+    if (h) return h();
+    return { providers: [] };
+  },
 );
+function onGet(path: string, handler: () => Promise<unknown>) {
+  getRoutes.set(path, handler);
+}
 // ★모듈 전체를 대체하므로 하위 컴포넌트가 쓰는 export도 함께 제공해야 한다 —
 //   빠뜨리면 "No export is defined on the mock"이 **unhandled rejection**으로만 새어나가
 //   테스트는 초록인데 콘솔만 더러워진다(가짜 안전). 실제 모듈의 export 목록과 맞춘다.
@@ -85,6 +93,7 @@ async function runAnalysis() {
 beforeEach(() => {
   post.mockClear();
   routes.clear();
+  getRoutes.clear();
   // 파이프라인 부수 호출(POI·시뮬)은 기본적으로 무해한 응답으로 흘린다.
   onPost("/site-score/poi-infra", async () => ({ score: 60 }));
   onPost("/development-methods/scenarios", async () => ({}));
@@ -189,5 +198,43 @@ describe("W2-d 파이프라인 편입(POI·개발방식 시뮬 자동 실행)", 
     // 마운트 직후에는 llm-providers(get)만 나가고 POI/시뮬 post는 없어야 한다.
     expect(callsTo("/site-score/poi-infra")).toHaveLength(0);
     expect(callsTo("/development-methods/scenarios")).toHaveLength(0);
+  });
+});
+
+
+describe("AI 해석 비동기 잡(폴링)", () => {
+  it("★job_id를 받으면 폴링해 결과를 병합한다", async () => {
+    onPost("/analysis/comprehensive", async () => CORE);
+    onPost("/analysis/interpretation", async () => ({ job_id: "interp_x", status: "pending" }));
+    let polls = 0;
+    onGet("/analysis/interpretation/interp_x", async () => {
+      polls += 1;
+      return polls < 2 ? { status: "pending" } : { status: "done", result: PARTS };
+    });
+    await runAnalysis();
+
+    await waitFor(() => expect(screen.getByText(/개발 제약이 큽니다/)).toBeTruthy(), { timeout: 15000 });
+    expect(polls).toBeGreaterThanOrEqual(2);
+  }, 20000);
+
+  it("★잡이 error면 1단계 결과를 유지한 채 해석만 실패 표기한다", async () => {
+    onPost("/analysis/comprehensive", async () => CORE);
+    onPost("/analysis/interpretation", async () => ({ job_id: "interp_e", status: "pending" }));
+    onGet("/analysis/interpretation/interp_e", async () => ({ status: "error", error: "LLM 한도 초과" }));
+    await runAnalysis();
+
+    await waitFor(() => expect(screen.getByText(/AI 종합 해석을 생성하지 못했습니다/)).toBeTruthy(), { timeout: 15000 });
+    expect(screen.getByText(/보전관리지역/)).toBeTruthy();
+    expect(screen.queryByText(/종합분석 중 오류가 발생했습니다/)).toBeNull();
+  }, 20000);
+
+  it("★구버전 백엔드(동기 응답)도 그대로 수용한다(배포 순서 어긋남 방어)", async () => {
+    onPost("/analysis/comprehensive", async () => CORE);
+    onPost("/analysis/interpretation", async () => PARTS); // job_id 없음
+    await runAnalysis();
+
+    await waitFor(() => expect(screen.getByText(/개발 제약이 큽니다/)).toBeTruthy());
+    // 폴링을 시도하지 않는다.
+    expect(get.mock.calls.some((c) => String(c[0]).startsWith("/analysis/interpretation/"))).toBe(false);
   });
 });
