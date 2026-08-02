@@ -37,10 +37,12 @@ import {
   noSampleReason,
   sampleLabel,
   selectLocatedGroups,
+  selectMappableGroups,
   weightedAvgPrice10k,
 } from "@/lib/market/comparable-sample";
 import homigot from "./fixtures/nearby-map.homigot.live.json";
 import yeoksam from "./fixtures/nearby-map.yeoksam.live.json";
+import newContract from "./fixtures/nearby-map.newcontract.generated.json";
 
 type Payload = { categories?: Record<string, unknown> };
 
@@ -118,9 +120,12 @@ describe("골든 — 라벨은 근거 없이 반경을 주장하지 않는다", 
     // ★배포 스큐·캐시로 구버전 응답이 올 수 있다. 그때 요청 radius 를 에코해 "반경 1km"라고
     //   말하면 그게 바로 이 캠페인이 봉합한 거짓 라벨이다. 모르면 주장하지 않는다.
     const { basis } = selectLocatedGroups(cat(yeoksam, "apt_trade"));
-    expect(basis.scope).toBe("sigungu");
-    expect(sampleLabel(basis)).toBe("시군구 전체(반경 미적용)");
+    // ★M-1 봉합 — 구버전 페이로드는 반경 적용 여부를 **모른다**. "미적용"이라 단정하면
+    //   그것도 거짓이다(이 픽스처의 최상위는 실제로 radius_applied=true 다).
+    expect(basis.scope).toBe("unknown");
+    expect(sampleLabel(basis)).toBe("표본 범위 확인 불가");
     expect(sampleLabel(basis)).not.toContain("반경 1");
+    expect(sampleLabel(basis)).not.toContain("미적용");
   });
 
   it("반경이 실제 적용된 표본만 반경 문구를 얻는다", () => {
@@ -159,5 +164,42 @@ describe("골든 — 라벨은 근거 없이 반경을 주장하지 않는다", 
     // ★`lat != null` 로는 안 걸리는 분류 — 사용자에게 보여야 한다.
     expect(exclusionNote(basis)).toContain("위치 개략(동 단위) 20건");
     expect(sampleLabel(basis)).toBe("반경 1.5km 내 위치 확인 거래");
+  });
+});
+
+describe("골든 — 신 계약(location_status · coord_precision) 실행 경로", () => {
+  /**
+   * ★리뷰(H-2 부속) 봉합 — 위 두 라이브 픽스처는 **구버전 백엔드 응답**이라
+   * `sample_basis`·`location_status`·`coord_precision` 이 하나도 없다. 그래서 셀렉터의
+   * 신 계약 경로가 **한 줄도 실행되지 않았고**, 그 분기를 삭제해도 골든이 전건 통과했다.
+   *
+   * 이 픽스처는 **생산처(`NearbyMapService.build`)를 실제로 실행해** 만들었다 — 손으로
+   * 채우면 "테스트가 값을 넣고 셀렉터가 그걸 존중하는지"만 보는 동어반복이 된다(#516 R2).
+   */
+  it("세 상태가 모두 담긴 픽스처다(판별력 확인)", () => {
+    const c = cat(newContract, "apt_trade") as { groups: Array<{ location_status: string }> };
+    const statuses = c.groups.map((g) => g.location_status).sort();
+    expect(statuses).toEqual(["approximate", "located", "unlocated"]);
+  });
+
+  it("집계는 located 만 — 개략(동 단위)도 배제한다", () => {
+    const { groups, basis } = selectLocatedGroups(cat(newContract, "apt_trade"));
+    expect(groups.length).toBe(1);
+    expect(basis.locatedCount).toBe(2);
+    expect(basis.approximateCount).toBe(1);
+    expect(basis.unlocatedCount).toBe(1);
+  });
+
+  it("반경이 실제 적용됐으므로 반경 문구를 만든다", () => {
+    const { basis } = selectLocatedGroups(cat(newContract, "apt_trade"));
+    expect(basis.scope).toBe("radius");
+    expect(sampleLabel(basis)).toBe("반경 1km 내 위치 확인 거래");
+    expect(exclusionNote(basis)).toContain("위치 개략(동 단위) 1건");
+  });
+
+  it("마커 셀렉터는 개략 좌표도 포함한다(집계와 기준이 다르다)", () => {
+    const mappable = selectMappableGroups(cat(newContract, "apt_trade"));
+    // located 1 + approximate 1 = 2 (unlocated 는 좌표가 없어 못 찍는다)
+    expect(mappable.length).toBe(2);
   });
 });

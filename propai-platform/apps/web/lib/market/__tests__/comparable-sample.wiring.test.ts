@@ -93,10 +93,29 @@ describe("표본 셀렉터 배선 불변식", () => {
       // ★이 소비처는 가격을 만지지 않아 "가격 누산 금지" 류 규칙에 **원리적으로 안 걸린다**.
       //   그런데 바로 위 헤더가 "반경 N"을 말하므로 혼합 건수를 찍으면 그 반경 주장과 결합해
       //   "반경 안에 N건"으로 읽힌다. 카운트 표시도 봉합 대상이다.
+      // ★사슬 2링크 — 판정 출처와 소비를 각각 잠근다. 한 줄만 잠그면 리팩터로 줄이 나뉠 때
+      //   스코프에서 빠져나간다(실제로 M-4 수정 중 이 검사가 그 상태를 잡았다 — 도구가 줄 단위).
+      assertWiredThrough({
+        file: "components/map/NearbyTransactionsMap.tsx",
+        scope: /const chipBasis = /,
+        mustContain: "selectLocatedGroups",
+        minMatches: 1,
+      });
       assertWiredThrough({
         file: "components/map/NearbyTransactionsMap.tsx",
         scope: /const count = /,
-        mustContain: "selectLocatedGroups",
+        mustContain: "chipBasis",
+        minMatches: 1,
+      });
+    });
+
+    it("개략 좌표분을 칩에 병기해 지도 마커와의 불일치를 설명한다", () => {
+      // ★M-4 — 칩은 위치확인분만 세는데 마커는 개략분도 찍는다(기준이 다르다).
+      //   설명이 없으면 "토지 0" 칩 아래에 토지 마커가 보이는 모순만 남는다.
+      assertWiredThrough({
+        file: "components/map/NearbyTransactionsMap.tsx",
+        scope: /const approxOnMap = /,
+        mustContain: "chipBasis.approximateCount",
         minMatches: 1,
       });
     });

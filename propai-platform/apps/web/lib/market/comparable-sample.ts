@@ -75,7 +75,8 @@ export interface ComparableCategory {
 }
 
 export interface SampleBasis {
-  scope: "radius" | "sigungu";
+  /** ★"sigungu"(반경 미적용임을 **안다**)와 "unknown"(알 수 없다)은 다른 상태다. */
+  scope: "radius" | "sigungu" | "unknown";
   radiusApplied: boolean;
   radiusM: number | null;
   locatedCount: number;
@@ -92,7 +93,12 @@ export function sampleLabel(b: SampleBasis): string {
     const kmTxt = `${Number(km.toFixed(2))}km`;
     return `반경 ${kmTxt} 내 위치 확인 거래`;
   }
-  return "시군구 전체(반경 미적용)";
+  if (b.scope === "sigungu") return "시군구 전체(반경 미적용)";
+  // ★W1-b 리뷰(M-1) — 구버전 페이로드(배포 스큐·캐시)에는 `sample_basis` 가 없어 반경 적용
+  //   여부를 **알 수 없다**. 종전엔 이때도 "시군구 전체(반경 미적용)"이라 단정했는데, 실제로는
+  //   구 백엔드도 반경을 적용하고 있었다(라이브 픽스처 최상위 radius_applied=true).
+  //   이 PR 의 존재 이유가 "모르는 것을 단정하지 마라"인데 그 원칙을 스스로 어기는 자리였다.
+  return "표본 범위 확인 불가";
 }
 
 /** 집계에서 빠진 것을 밝힌다. 빠진 게 없으면 null(없는 말을 지어내지 않는다). */
@@ -132,7 +138,8 @@ function basisFromCategory(cat: ComparableCategory | null | undefined): SampleBa
   // ★구버전 페이로드(캐시·배포 스큐) 폴백 — 카운트에서 복원하고, 알 수 없으면 보수적으로
   //   "반경 미적용"으로 본다(모르면 반경을 주장하지 않는다 = 이 모듈의 존재 이유와 같은 방향).
   return {
-    scope: "sigungu",
+    // ★단정하지 않는다 — 반경을 적용했는지 **모르는** 상태다(위 라벨 주석 참조).
+    scope: "unknown",
     radiusApplied: false,
     radiusM: null,
     locatedCount: cat?.count_in_radius ?? 0,
@@ -170,8 +177,17 @@ export function selectMappableGroups(cat: ComparableCategory | null | undefined)
   );
 }
 
-/** 거래건수 가중 평균가(만원). 표본이 없거나 가격이 없으면 **null**(0을 지어내지 않는다). */
-export function weightedAvgPrice10k(groups: ComparableGroup[]): number | null {
+/** 거래건수 가중 평균가(만원)와 **그 평균을 실제로 만든 건수**.
+ *
+ * ★W1-b 리뷰(M-6) — 평균은 `avg_price_10k` 가 있는 그룹만으로 만들어지는데, 화면은
+ * `basis.locatedCount`(위치확인 **전체** 건수)를 "N건 기준"으로 표시했다. 가격 결측 그룹이
+ * 있으면 "18건 평균"이라 써놓고 실제로는 12건으로 만든 값이 된다 — 이 PR 이 봉합하려는
+ * "라벨과 모집단 불일치"가 봉합 코드 안에 그대로 남아 있던 자리다.
+ * 표시 건수로 쓸 수 있도록 가중치 합을 **함께** 돌려준다.
+ */
+export function weightedAvgPrice10kWithCount(
+  groups: ComparableGroup[],
+): { avg: number | null; count: number } {
   let totalW = 0;
   let acc = 0;
   for (const g of groups) {
@@ -181,6 +197,11 @@ export function weightedAvgPrice10k(groups: ComparableGroup[]): number | null {
     acc += price * w;
     totalW += w;
   }
-  if (totalW <= 0) return null;
-  return Math.round(acc / totalW);
+  if (totalW <= 0) return { avg: null, count: 0 };
+  return { avg: Math.round(acc / totalW), count: totalW };
+}
+
+/** 값만 필요한 소비처용 얇은 래퍼(계산은 위 함수 한 곳에서만 한다). */
+export function weightedAvgPrice10k(groups: ComparableGroup[]): number | null {
+  return weightedAvgPrice10kWithCount(groups).avg;
 }

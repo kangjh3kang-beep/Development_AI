@@ -48,7 +48,8 @@ __all__ = [
 class SampleBasis:
     """집계값에 붙일 라벨의 **근거**. 라벨 문자열은 반드시 여기서만 만든다."""
 
-    scope: str  # "radius" | "sigungu"
+    # "radius"(반경 적용) | "sigungu"(반경 미적용임을 **안다**) | "unknown"(알 수 없다)
+    scope: str
     radius_applied: bool
     radius_m: int | None
     located_count: int
@@ -67,7 +68,12 @@ class SampleBasis:
             # 1000m → "1km", 1500m → "1.5km" (불필요한 소수점 제거)
             km_txt = f"{km:g}km"
             return f"반경 {km_txt} 내 위치 확인 거래"
-        return "시군구 전체(반경 미적용)"
+        if self.scope == "sigungu":
+            return "시군구 전체(반경 미적용)"
+        # ★W1-b 리뷰(M-1) — 구버전 페이로드는 반경 적용 여부를 **알 수 없다**. 종전엔 이때도
+        #   "반경 미적용"이라 단정했는데, 실제로는 구 백엔드도 반경을 적용하고 있었다.
+        #   이 모듈의 존재 이유가 "모르는 것을 단정하지 마라"인데 그 원칙을 어기는 자리였다.
+        return "표본 범위 확인 불가"
 
     def exclusion_note(self) -> str | None:
         """집계에서 빠진 것을 밝힌다. 빠진 게 없으면 None(없는 말을 지어내지 않는다)."""
@@ -115,7 +121,8 @@ def _basis_from_category(cat: dict[str, Any] | None) -> SampleBasis:
     #   다룬다. 이때는 카운트 필드에서 복원하고, 알 수 없으면 보수적으로 "반경 미적용"으로 본다
     #   (모르면 반경을 주장하지 않는다 = 이 모듈의 존재 이유와 같은 방향).
     return SampleBasis(
-        scope="sigungu",
+        # ★단정하지 않는다 — 반경을 적용했는지 **모르는** 상태다(label() 주석 참조).
+        scope="unknown",
         radius_applied=False,
         radius_m=None,
         located_count=int(cat.get("count_in_radius") or 0),

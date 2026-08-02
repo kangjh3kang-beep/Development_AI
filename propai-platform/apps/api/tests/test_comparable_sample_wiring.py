@@ -44,7 +44,12 @@ _API_ROOT = Path(__file__).resolve().parents[1]
 _CONSUMES_NEARBY = re.compile(r"NearbyMapService|nearby_map_service")
 
 # 그룹 단위 가격/보증금/월세를 만지는가
-_TOUCHES_GROUP_PRICE = re.compile(r"avg_price_10k|avg_deposit_10k|avg_monthly_10k")
+# ★리뷰(M-3) — `deals[].price_10k_won` 을 누산하는 형태(프론트 ConversationalMarketPanel 이
+#   정확히 그 모양)가 교집합에서 빠져 있었다. 백엔드에 동형 소비처가 생기면 무음 통과한다.
+#   현재 백엔드 오펜더 0건임을 확인하고 넓혔다(기준선 안전).
+_TOUCHES_GROUP_PRICE = re.compile(
+    r"avg_price_10k|avg_deposit_10k|avg_monthly_10k|price_10k_won"
+)
 
 # 셀렉터를 거치는가
 # ★2026-08-02 자체 적발: 처음엔 `comparable_sample|select_located_groups` 라는 **이름 존재**
@@ -68,8 +73,20 @@ _EXEMPT: dict[str, str] = {
 }
 
 
+def _strip_comments_and_docstrings(src: str) -> str:
+    """주석·독스트링을 걷어낸 **코드만** 남긴다.
+
+    ★리뷰(M-3) — 이 검사는 문자열 포함이라 **주석/독스트링의 언급이 조건을 충족**한다.
+    예: `# select_located_groups(cat) 로 바꿔야 함(TODO)` 한 줄이면 배선을 되돌려도 초록.
+    프론트 `assertWiredThrough` 에서 같은 구멍이 실증됐고(주석 5/5 우회), 여기도 같은 계열이다.
+    """
+    # 독스트링/멀티라인 문자열 제거(비탐욕) → 줄 주석 제거
+    src = re.sub(r'("""|\'\'\')(?:.|\n)*?\1', "", src)
+    return re.sub(r"#.*$", "", src, flags=re.MULTILINE)
+
+
 def _scan() -> list[tuple[str, str]]:
-    """(상대경로, 본문) — 검사 대상 파이썬 소스."""
+    """(상대경로, **주석 제거된** 본문) — 검사 대상 파이썬 소스."""
     out: list[tuple[str, str]] = []
     for base in ("app", "routers"):
         root = _API_ROOT / base
@@ -78,7 +95,7 @@ def _scan() -> list[tuple[str, str]]:
         for p in root.rglob("*.py"):
             rel = p.relative_to(_API_ROOT).as_posix()
             try:
-                out.append((rel, p.read_text(encoding="utf-8")))
+                out.append((rel, _strip_comments_and_docstrings(p.read_text(encoding="utf-8"))))
             except (OSError, UnicodeDecodeError):  # pragma: no cover - 읽기 실패는 스킵
                 continue
     return out

@@ -267,12 +267,19 @@ function deriveResults(payload: NearbyMapPayload | null, fallbackAddr: string): 
       //   위치 확인분만으로 만들므로 건수도 같은 모집단이어야 한다 — 아니면 "32건 평균"이라
       //   써놓고 실제로는 0건으로 만든 값을 보여주게 된다.
       const tBasis = selectLocatedGroups(c as never).basis;
+      // ★W1-b 리뷰(M-6) — 표시 건수는 **그 평균을 실제로 만든 모집단**이어야 한다.
+      //   `locatedCount` 는 위치확인 전체 건수라, 가격이 결측인 그룹이 있으면
+      //   "18건 평균"이라 써놓고 실제로는 12건으로 만든 값이 된다.
+      //   차이는 숨기지 않고 제외 고지에 덧붙인다.
+      const priceMissing = Math.max(0, tBasis.locatedCount - typePN);
+      const notes = [exclusionNote(tBasis), priceMissing > 0 ? `가격 결측 ${priceMissing.toLocaleString()}건 집계 제외` : null]
+        .filter(Boolean) as string[];
       byType.push({
         key: c.type || "",
         label: c.label || c.type || "",
-        count: tBasis.locatedCount,
+        count: typePN,
         avgPrice: typePN ? Math.round(typePSum / typePN) : 0,
-        excludedNote: exclusionNote(tBasis),
+        excludedNote: notes.length ? notes.join(" · ") : null,
       });
     }
   }
