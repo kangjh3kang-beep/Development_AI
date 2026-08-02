@@ -41,3 +41,20 @@ describe("formatPercent", () => {
     expect(formatPercent(79.66, 0)).toBe("80%");
   });
 });
+
+describe("표기 정합 — 같은 카드 안에서 자릿수가 갈리지 않는다", () => {
+  it("★법정 상한과 실효치가 같은 자릿수로 나란히 읽힌다", () => {
+    // R1 지적: §1은 포매터를 타는데 §1-B의 상한(capFar)·구조상한은 raw라, 비교의 짝이 갈렸다.
+    // "법정 200%인데 실효 79.6%" 서사는 두 값이 같은 표기일 때만 성립한다.
+    const 법정 = formatPercent(200);
+    const 실효 = formatPercent(79.6);
+    const 구조상한 = formatPercent(80);
+    expect(법정).toBe("200.0%");
+    expect(실효).toBe("79.6%");
+    expect(구조상한).toBe("80.0%");
+    // 셋 다 소수 1자리 — 자릿수 발산 없음.
+    for (const v of [법정, 실효, 구조상한]) {
+      expect(v).toMatch(/^\d+\.\d%$/);
+    }
+  });
+});

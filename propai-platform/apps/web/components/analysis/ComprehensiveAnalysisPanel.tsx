@@ -325,10 +325,10 @@ function FarOptimizationPanel({ farOpt, structuralCapPct }: { farOpt?: AnalysisR
   return (
     <SectionCard title="1-B. 용적률 최적화 시뮬레이션" icon={TrendingUp} defaultOpen>
       <div className="grid grid-cols-3 gap-2 mb-3">
-        <Field label="현재 기본 용적률" value={`${farOpt.base_far}%`} />
-        <Field label="최대 달성 가능" value={`${farOpt.max_achievable_far}%`} />
+        <Field label="현재 기본 용적률" value={formatPercent(farOpt.base_far)} />
+        <Field label="최대 달성 가능" value={formatPercent(farOpt.max_achievable_far)} />
         {/* 통합모드의 상한은 §84 면적가중 통합값(단일필지 시행령 정값과 의미가 달라 라벨 분리) */}
-        <Field label={farOpt.integrated ? "통합 상한 (면적가중)" : "법정 상한"} value={`${capFar}%`} />
+        <Field label={farOpt.integrated ? "통합 상한 (면적가중)" : "법정 상한"} value={formatPercent(capFar)} />
       </div>
       {farOpt.recommended_scenario && (
         <div className="rounded-lg bg-[var(--accent-strong)]/10 border border-[var(--accent-strong)]/30 p-3 mb-3">
@@ -948,7 +948,7 @@ export function ComprehensiveAnalysisPanel() {
             {ef.structural_cap_pct != null && (
               <div className="mt-3 rounded-lg border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/5 p-3">
                 <p className="text-[11px] font-bold text-[var(--status-warning)]">
-                  구조상한 {ef.structural_cap_pct}%{ef.floor_cap != null ? ` · ${ef.floor_cap}층 이하` : ""}
+                  구조상한 {formatPercent(ef.structural_cap_pct)}{ef.floor_cap != null ? ` · ${ef.floor_cap}층 이하` : ""}
                 </p>
                 {ef.floor_cap_basis && (
                   <p className="mt-0.5 text-[10px] text-[var(--text-secondary)]">근거: {ef.floor_cap_basis}</p>
