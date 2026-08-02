@@ -165,9 +165,16 @@ describe("useAiInsight 2단계", () => {
     });
 
     // 주소 전환 — 진행 중이던 A 주소 폴링은 취소돼야 한다.
-    rerender({ addr: "서울특별시 강남구 테헤란로 152" });
-    const afterSwitch = polls;
-    await new Promise((r) => setTimeout(r, 7000));
+    // (취소 catch가 setLoading을 부르므로 act로 감싼다 — 안 감싸면 경고만 남는다.)
+    // ★스냅샷은 **취소가 정착한 뒤** 찍는다. 전환 직후에 찍으면 이미 대기 중이던 폴링 1회가
+    //   뒤늦게 잡혀 취소가 정상 동작해도 실패한다(타이밍 취약 단언 회피).
+    let afterSwitch = 0;
+    await act(async () => {
+      rerender({ addr: "서울특별시 강남구 테헤란로 152" });
+      await new Promise((r) => setTimeout(r, 3500)); // 취소 정착 + 대기 중이던 1회 소화
+      afterSwitch = polls;
+      await new Promise((r) => setTimeout(r, 7000)); // 취소가 없으면 2회 이상 더 돈다
+    });
 
     expect(polls).toBe(afterSwitch);          // 폴링 정지
     expect(result.current.ai).toBeNull();     // A의 해석이 B 화면에 뜨지 않는다

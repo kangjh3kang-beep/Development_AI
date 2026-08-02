@@ -266,6 +266,44 @@ describe("배선 — 패널이 자가검증 결과를 실제로 렌더한다", (
     expect(screen.queryByText(/점검 규칙이 잡아낸 이상 항목은 없습니다/)).toBeNull();
   });
 
+  it("★규칙 전체가 롤백돼 등록만 있고 실행이 0이어도 같은 경고가 뜬다", async () => {
+    // ★이 조합(registered 8 / executed 0)이 현실적으로 더 흔하다 — 운영에서
+    //   FIELD_AUDIT_DISABLED_RULES로 규칙을 전부 끄면 등록 수는 그대로고 실행만 0이 된다.
+    //   위 테스트 픽스처가 '둘 다 0'이라 두 조건 중 하나만 남겨도 통과하는 구멍이 있었다.
+    onPost("/analysis/comprehensive", async () => ({
+      ...resultWith([]),
+      field_audit: {
+        is_valid: true,
+        findings: [],
+        metadata: { enabled: true, rules_registered: 8, rules_executed: 0 },
+        coverage: {},
+      },
+    }));
+    await runAnalysis();
+    await waitFor(() =>
+      expect(screen.getByText(/점검 규칙이 하나도 실행되지 않았습니다/)).toBeTruthy(),
+    );
+    expect(screen.queryByText(/판단할 자료가/)).toBeNull();
+    // 더 약한 '범위 축소' 문구로 대체되지 않는다(강한 경고가 우선).
+    expect(screen.queryByText(/점검 범위가 평소보다 줄었습니다/)).toBeNull();
+  });
+
+  it("★등록이 0인데 실행 수만 남아 있어도 경고가 뜬다(반대 이접항)", async () => {
+    onPost("/analysis/comprehensive", async () => ({
+      ...resultWith([]),
+      field_audit: {
+        is_valid: true,
+        findings: [],
+        metadata: { enabled: true, rules_registered: 0, rules_executed: 8 },
+        coverage: {},
+      },
+    }));
+    await runAnalysis();
+    await waitFor(() =>
+      expect(screen.getByText(/점검 규칙이 하나도 실행되지 않았습니다/)).toBeTruthy(),
+    );
+  });
+
   it("자가검증 정보가 없으면 '없음'을 밝히고 이상 없음으로 위장하지 않는다", async () => {
     const { field_audit: _omit, ...noAudit } = resultWith([]);
     onPost("/analysis/comprehensive", async () => noAudit);
