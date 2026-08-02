@@ -1,0 +1,534 @@
+{
+ "center": {
+  "lat": 36.07248200060519,
+  "lon": 129.55513249915873
+ },
+ "radius_m": 1000,
+ "radius_applied": true,
+ "groups_evaluated_count": 315,
+ "radius_filtered_out_count": 315,
+ "coords_unresolved_count": 30,
+ "geocode_precut_count": 58,
+ "avm": null,
+ "avm_caveat": "반경 1000m 안에서 위치가 확인된 아파트 실거래를 찾지 못했습니다(위치 미확인 12곳은 시세 산정에 쓰지 않습니다).",
+ "months": [
+  "202607",
+  "202606",
+  "202605"
+ ],
+ "categories": {
+  "apt_trade": {
+   "label": "아파트 매매",
+   "type": "apt",
+   "kind": "trade",
+   "count": 32,
+   "capped_count": 0,
+   "count_in_radius": 0,
+   "count_unresolved": 32,
+   "groups": [
+    {
+     "name": "해뜨는마을",
+     "dong": "구룡포읍 병포리",
+     "jibun": "122",
+     "deals": [
+      {
+       "price_10k_won": 4800,
+       "area_m2": 49.8,
+       "floor": 16,
+       "deal_date": "2026년 7월 7일"
+      },
+      {
+       "price_10k_won": 5000,
+       "area_m2": 39.87,
+       "floor": 13,
+       "deal_date": "2026년 7월 3일"
+      }
+     ],
+     "count": 6,
+     "avg_area_m2": 51.6,
+     "build_year": 2000,
+     "jimok": null,
+     "land_use": null,
+     "avg_price_10k": 6050,
+     "min_price_10k": 4800,
+     "max_price_10k": 8000,
+     "excluded_outliers": 0
+    },
+    {
+     "name": "개나리",
+     "dong": "대송면 제내리",
+     "jibun": "1071",
+     "deals": [
+      {
+       "price_10k_won": 1100,
+       "area_m2": 35.91,
+       "floor": 4,
+       "deal_date": "2026년 6월 19일"
+      },
+      {
+       "price_10k_won": 1100,
+       "area_m2": 35.91,
+       "floor": 4,
+       "deal_date": "2026년 6월 14일"
+      }
+     ],
+     "count": 5,
+     "avg_area_m2": 35.9,
+     "build_year": 1987,
+     "jimok": null,
+     "land_use": null,
+     "avg_price_10k": 1410,
+     "min_price_10k": 1000,
+     "max_price_10k": 2300,
+     "excluded_outliers": 0
+    },
+    {
+     "name": "오천제일맨션4",
+     "dong": "오천읍 용덕리",
+     "jibun": "126",
+     "deals": [
+      {
+       "price_10k_won": 2900,
+       "area_m2": 58.56,
+       "floor": 5,
+       "deal_date": "2026년 7월 24일"
+      },
+      {
+       "price_10k_won": 3900,
+       "area_m2": 58.56,
+       "floor": 1,
+       "deal_date": "2026년 7월 23일"
+      }
+     ],
+     "count": 3,
+     "avg_area_m2": 58.6,
+     "build_year": 1991,
+     "jimok": null,
+     "land_use": null,
+     "avg_price_10k": 3100,
+     "min_price_10k": 2500,
+     "max_price_10k": 3900,
+     "excluded_outliers": 0
+    }
+   ]
+  },
+  "villa_trade": {
+   "label": "연립다세대 매매",
+   "type": "villa",
+   "kind": "trade",
+   "count": 9,
+   "capped_count": 0,
+   "count_in_radius": 0,
+   "count_unresolved": 9,
+   "groups": [
+    {
+     "name": "그린",
+     "dong": "대도동",
+     "jibun": "75-1",
+     "deals": [
+      {
+       "price_10k_won": 6800,
+       "area_m2": 59.46,
+       "floor": 3,
+       "deal_date": "2026년 6월 27일"
+      },
+      {
+       "price_10k_won": 6100,
+       "area_m2": 59.46,
+       "floor": 2,
+       "deal_date": "2026년 6월 10일"
+      }
+     ],
+     "count": 2,
+     "avg_area_m2": 59.5,
+     "build_year": 1983,
+     "jimok": null,
+     "land_use": null,
+     "avg_price_10k": 6450,
+     "min_price_10k": 6100,
+     "max_price_10k": 6800,
+     "excluded_outliers": 0
+    },
+    {
+     "name": "상록수",
+     "dong": "해도동",
+     "jibun": "52-3",
+     "deals": [
+      {
+       "price_10k_won": 6800,
+       "area_m2": 44.36,
+       "floor": 1,
+       "deal_date": "2026년 6월 21일"
+      },
+      {
+       "price_10k_won": 7000,
+       "area_m2": 44.36,
+       "floor": 2,
+       "deal_date": "2026년 5월 26일"
+      }
+     ],
+     "count": 2,
+     "avg_area_m2": 44.4,
+     "build_year": 1981,
+     "jimok": null,
+     "land_use": null,
+     "avg_price_10k": 6900,
+     "min_price_10k": 6800,
+     "max_price_10k": 7000,
+     "excluded_outliers": 0
+    },
+    {
+     "name": "송도영보빌라",
+     "dong": "송도동",
+     "jibun": "396-1",
+     "deals": [
+      {
+       "price_10k_won": 4900,
+       "area_m2": 53.06,
+       "floor": 2,
+       "deal_date": "2026년 6월 12일"
+      },
+      {
+       "price_10k_won": 4000,
+       "area_m2": 53.06,
+       "floor": 2,
+       "deal_date": "2026년 5월 22일"
+      }
+     ],
+     "count": 2,
+     "avg_area_m2": 53.1,
+     "build_year": 1993,
+     "jimok": null,
+     "land_use": null,
+     "avg_price_10k": 4450,
+     "min_price_10k": 4000,
+     "max_price_10k": 4900,
+     "excluded_outliers": 0
+    }
+   ]
+  },
+  "house_trade": {
+   "label": "단독다가구 매매",
+   "type": "house",
+   "kind": "trade",
+   "count": 12,
+   "capped_count": 0,
+   "count_in_radius": 0,
+   "count_unresolved": 12,
+   "groups": [
+    {
+     "name": "송도동 4**",
+     "dong": "송도동",
+     "jibun": "4**",
+     "deals": [
+      {
+       "price_10k_won": 6120,
+       "area_m2": 77.04,
+       "floor": 0,
+       "deal_date": "2026년 6월 25일"
+      },
+      {
+       "price_10k_won": 14000,
+       "area_m2": 99.33,
+       "floor": 0,
+       "deal_date": "2026년 6월 19일"
+      }
+     ],
+     "count": 7,
+     "avg_area_m2": 110.9,
+     "build_year": null,
+     "jimok": null,
+     "land_use": null,
+     "avg_price_10k": 11460,
+     "min_price_10k": 4650,
+     "max_price_10k": 20000,
+     "excluded_outliers": 0
+    },
+    {
+     "name": "오천읍 용덕리 9*",
+     "dong": "오천읍 용덕리",
+     "jibun": "9*",
+     "deals": [
+      {
+       "price_10k_won": 12500,
+       "area_m2": 133.21,
+       "floor": 0,
+       "deal_date": "2026년 7월 27일"
+      },
+      {
+       "price_10k_won": 19360,
+       "area_m2": 93.43,
+       "floor": 0,
+       "deal_date": "2026년 7월 10일"
+      }
+     ],
+     "count": 2,
+     "avg_area_m2": 113.3,
+     "build_year": null,
+     "jimok": null,
+     "land_use": null,
+     "avg_price_10k": 15930,
+     "min_price_10k": 12500,
+     "max_price_10k": 19360,
+     "excluded_outliers": 0
+    },
+    {
+     "name": "장기면 계원리 8*",
+     "dong": "장기면 계원리",
+     "jibun": "8*",
+     "deals": [
+      {
+       "price_10k_won": 15000,
+       "area_m2": 94.54,
+       "floor": 0,
+       "deal_date": "2026년 7월 7일"
+      },
+      {
+       "price_10k_won": 13500,
+       "area_m2": 62.3,
+       "floor": 0,
+       "deal_date": "2026년 5월 19일"
+      }
+     ],
+     "count": 2,
+     "avg_area_m2": 78.4,
+     "build_year": null,
+     "jimok": null,
+     "land_use": null,
+     "avg_price_10k": 14250,
+     "min_price_10k": 13500,
+     "max_price_10k": 15000,
+     "excluded_outliers": 0
+    }
+   ]
+  },
+  "officetel_trade": {
+   "label": "오피스텔 매매",
+   "type": "officetel",
+   "kind": "trade",
+   "count": 0,
+   "capped_count": 0,
+   "count_in_radius": 0,
+   "count_unresolved": 0,
+   "groups": []
+  },
+  "land_trade": {
+   "label": "토지 매매",
+   "type": "land",
+   "kind": "trade",
+   "count": 7,
+   "capped_count": 0,
+   "count_in_radius": 0,
+   "count_unresolved": 7,
+   "groups": [
+    {
+     "name": "오천읍 용덕리 9*",
+     "dong": "오천읍 용덕리",
+     "jibun": "9*",
+     "deals": [
+      {
+       "price_10k_won": 500,
+       "area_m2": 55,
+       "floor": 0,
+       "deal_date": "2026년 7월 27일"
+      },
+      {
+       "price_10k_won": 13400,
+       "area_m2": 482,
+       "floor": 0,
+       "deal_date": "2026년 7월 10일"
+      }
+     ],
+     "count": 4,
+     "avg_area_m2": 183.6,
+     "build_year": null,
+     "jimok": null,
+     "land_use": null,
+     "avg_price_10k": 6288,
+     "min_price_10k": 500,
+     "max_price_10k": 13400,
+     "excluded_outliers": 0
+    },
+    {
+     "name": "오천읍 구정리 2*",
+     "dong": "오천읍 구정리",
+     "jibun": "2*",
+     "deals": [
+      {
+       "price_10k_won": 1406,
+       "area_m2": 185,
+       "floor": 0,
+       "deal_date": "2026년 6월 18일"
+      },
+      {
+       "price_10k_won": 4500,
+       "area_m2": 228,
+       "floor": 0,
+       "deal_date": "2026년 6월 13일"
+      }
+     ],
+     "count": 3,
+     "avg_area_m2": 385.7,
+     "build_year": null,
+     "jimok": null,
+     "land_use": null,
+     "avg_price_10k": 3619,
+     "min_price_10k": 1406,
+     "max_price_10k": 4950,
+     "excluded_outliers": 0
+    }
+   ]
+  },
+  "commercial_trade": {
+   "label": "상업업무용 매매",
+   "type": "commercial",
+   "kind": "trade",
+   "count": 7,
+   "capped_count": 0,
+   "count_in_radius": 0,
+   "count_unresolved": 7,
+   "groups": [
+    {
+     "name": "오천읍 구정리 3*",
+     "dong": "오천읍 구정리",
+     "jibun": "3*",
+     "deals": [
+      {
+       "price_10k_won": 40000,
+       "area_m2": 156,
+       "floor": 0,
+       "deal_date": "2026년 7월 31일"
+      },
+      {
+       "price_10k_won": 14000,
+       "area_m2": 171.6,
+       "floor": 0,
+       "deal_date": "2026년 7월 10일"
+      }
+     ],
+     "count": 2,
+     "avg_area_m2": 163.8,
+     "build_year": null,
+     "jimok": null,
+     "land_use": null,
+     "avg_price_10k": 27000,
+     "min_price_10k": 14000,
+     "max_price_10k": 40000,
+     "excluded_outliers": 0
+    },
+    {
+     "name": "대송면 제내리 9**",
+     "dong": "대송면 제내리",
+     "jibun": "9**",
+     "deals": [
+      {
+       "price_10k_won": 101000,
+       "area_m2": 387.84,
+       "floor": 0,
+       "deal_date": "2026년 6월 4일"
+      },
+      {
+       "price_10k_won": 185000,
+       "area_m2": 864,
+       "floor": 0,
+       "deal_date": "2026년 5월 22일"
+      }
+     ],
+     "count": 2,
+     "avg_area_m2": 625.9,
+     "build_year": null,
+     "jimok": null,
+     "land_use": null,
+     "avg_price_10k": 143000,
+     "min_price_10k": 101000,
+     "max_price_10k": 185000,
+     "excluded_outliers": 0
+    },
+    {
+     "name": "효자동 5**",
+     "dong": "효자동",
+     "jibun": "5**",
+     "deals": [
+      {
+       "price_10k_won": 140000,
+       "area_m2": 198.72,
+       "floor": 0,
+       "deal_date": "2026년 6월 30일"
+      }
+     ],
+     "count": 1,
+     "avg_area_m2": 198.7,
+     "build_year": 2013,
+     "jimok": null,
+     "land_use": "제2종일반주거",
+     "avg_price_10k": 140000,
+     "min_price_10k": 140000,
+     "max_price_10k": 140000,
+     "excluded_outliers": 0
+    }
+   ]
+  },
+  "apt_rent": {
+   "label": "아파트 전월세",
+   "type": "apt",
+   "kind": "rent",
+   "count": 1,
+   "capped_count": 0,
+   "count_in_radius": 0,
+   "count_unresolved": 1,
+   "groups": [
+    {
+     "name": "포항일월행복주택",
+     "dong": "일월동",
+     "jibun": "679-458",
+     "deals": [
+      {
+       "deposit_10k_won": 4586,
+       "monthly_rent_10k_won": 6,
+       "area_m2": 44.68,
+       "floor": 8,
+       "deal_date": "2026년 7월 28일"
+      }
+     ],
+     "count": 1,
+     "avg_area_m2": 44.7,
+     "build_year": null,
+     "jimok": null,
+     "land_use": null,
+     "avg_deposit_10k": 4586,
+     "avg_monthly_10k": 6
+    }
+   ]
+  },
+  "villa_rent": {
+   "label": "연립다세대 전월세",
+   "type": "villa",
+   "kind": "rent",
+   "count": 0,
+   "capped_count": 0,
+   "count_in_radius": 0,
+   "count_unresolved": 0,
+   "groups": []
+  },
+  "house_rent": {
+   "label": "단독다가구 전월세",
+   "type": "house",
+   "kind": "rent",
+   "count": 0,
+   "capped_count": 0,
+   "count_in_radius": 0,
+   "count_unresolved": 0,
+   "groups": []
+  },
+  "officetel_rent": {
+   "label": "오피스텔 전월세",
+   "type": "officetel",
+   "kind": "rent",
+   "count": 0,
+   "capped_count": 0,
+   "count_in_radius": 0,
+   "count_unresolved": 0,
+   "groups": []
+  }
+ }
+}

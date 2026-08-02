@@ -13,6 +13,7 @@ import { AnalysisHistoryCard } from "@/components/common/AnalysisHistoryCard";
 import { optionsSummary } from "@/lib/use-analysis-history";
 import { formatCurrencyKRW, formatManwon as formatPrice, formatYm } from "@/lib/formatters";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
+import { exclusionNote, selectLocatedGroups } from "@/lib/market/comparable-sample";
 import { dynamicMap } from "@/components/common/MapShell";
 import type {
   NearbyTransactionsMap as NearbyTransactionsMapType,
@@ -116,11 +117,21 @@ type RadiusBucket = { label: string; count: number; avgPrice: number /* 만원 �
 
 /** ★유형별 분리 집계(P2b — 분석품질 레인G): 토지·상업용·아파트는 단가 스케일이 달라
  *  섞으면 "평균가"가 무의미해진다(deriveResults 주석 참조). 유형별 독립 평균. */
-type TradeTypeBreakdown = { key: string; label: string; count: number; avgPrice: number /* 만원 */ };
+type TradeTypeBreakdown = {
+  key: string;
+  label: string;
+  /** ★W1-b: 위치 확인분 건수 — avgPrice와 **같은 모집단**이어야 한다(혼합 건수 금지). */
+  count: number;
+  avgPrice: number /* 만원 */;
+  /** 집계에서 빠진 것(위치 미확인·개략·상한 초과). 빠진 게 없으면 null. */
+  excludedNote: string | null;
+};
 
 type MarketResults = {
   avm: AvmSummary | null;
   totalCount: number;
+  /** ★W1-b: 위치가 확인돼 반경 판정에 쓸 수 있는 거래 건수(집계의 실제 모집단). */
+  locatedCount: number;
   avgPrice: number; // 만원 — 아파트 매매 기준(P2b, AVM과 동일 축)
   radiusGroups: RadiusBucket[];
   byType: TradeTypeBreakdown[];
@@ -196,6 +207,10 @@ function deriveResults(payload: NearbyMapPayload | null, fallbackAddr: string): 
   for (const [, c] of tradeEntries) {
     const isApt = c.type === "apt";
     let typePSum = 0, typePN = 0;
+    // ★W1-b — 집계 가능 그룹의 판정은 **공용 셀렉터 한 곳**에서만 한다. 여기서 `lat != null`
+    //   같은 자체 판정을 다시 쓰면 백엔드·다른 화면과 기준이 갈라진다(SatongMultiMap이 이미
+    //   자기 판정을 로컬 재구현하고 있었고, 그래서 조용히 어긋날 수 있었다).
+    const locatedKeys = new Set<unknown>(selectLocatedGroups(c as never).groups);
     for (const g of c.groups || []) {
       // ★근본수정(P0) — 종전엔 좌표를 못 얻은 그룹의 거리를 **정확히 1000으로 날조**했다.
       //   그 값은 `dist <= 1000` 버킷에 정확히 걸려 "반경 1km"로 집계되고, 거래행마다
@@ -206,17 +221,26 @@ function deriveResults(payload: NearbyMapPayload | null, fallbackAddr: string): 
       const dist: number | null =
         center?.lat && g.lat ? distanceM(center.lat, center.lon as number, g.lat, g.lon) : null;
       const cnt = g.count || 0;
-      if (g.avg_price_10k) {
+      // ★W1-b 근본수정 — 가격 누산이 아래 `dist === null` 분기보다 **위에** 있어서, 반경
+      //   버킷에서는 제외한 그룹을 헤드라인 평균가에는 그대로 넣고 있었다. 그 결과 같은
+      //   화면이 "집계 제외 · 거리 미상 N건"이라고 고지하면서 바로 위에서는 그 N건으로
+      //   만든 평균가를 "분석 반경 1km" 옆에 표시했다(호미곶 실측: 표시된 1억 1,144만원이
+      //   좌표미확보 12그룹 32건의 가중평균과 산술 완전일치).
+      //   ★`lat != null` 이 아니라 **셀렉터 판정**을 쓰는 이유: 좌표가 있어도 그것이 법정동
+      //   대표점이거나 동명 물건이 여러 동에 병합된 것이면 그룹을 대표하지 않는다. 거리
+      //   계산은 그 좌표로도 "되기 때문에" 조용히 통과한다.
+      const aggregatable = locatedKeys.has(g);
+      if (g.avg_price_10k && aggregatable) {
         typePSum += g.avg_price_10k * (cnt || 1);
         typePN += cnt || 1;
         if (isApt) { aptPSum += g.avg_price_10k * (cnt || 1); aptPN += cnt || 1; }
       }
-      if (dist === null) {
-        // 거리 미상 — 반경 버킷에 넣지 않고 별도로 센다(어느 반경인지 모르는 것을
-        // 특정 반경으로 계상하면 그 버킷이 거짓이 된다).
+      if (!aggregatable) {
+        // 거리 미상이거나 좌표가 그룹을 대표하지 않는 경우 — 반경 버킷에 넣지 않고 별도로
+        // 센다(어느 반경인지 모르는 것을 특정 반경으로 계상하면 그 버킷이 거짓이 된다).
         unknownDistanceCount += cnt;
       }
-      for (const b of dist === null ? [] : buckets) {
+      for (const b of !aggregatable || dist === null ? [] : buckets) {
         if ((dist as number) <= b.max) {
           // 건수는 유형 무관 커먼저러블(합산 문제 없음) — 가격만 apt로 한정(단위 혼합 방지).
           b.count += cnt;
@@ -238,11 +262,17 @@ function deriveResults(payload: NearbyMapPayload | null, fallbackAddr: string): 
       }
     }
     if (c.count) {
+      // ★W1-b — 건수와 평균가의 **모집단을 일치**시킨다. 종전엔 건수는 혼합 전체(c.count),
+      //   평균가는 그 전체로 만든 값이었고, 라벨은 "분석 반경 1km" 옆에 놓였다. 이제 평균가는
+      //   위치 확인분만으로 만들므로 건수도 같은 모집단이어야 한다 — 아니면 "32건 평균"이라
+      //   써놓고 실제로는 0건으로 만든 값을 보여주게 된다.
+      const tBasis = selectLocatedGroups(c as never).basis;
       byType.push({
         key: c.type || "",
         label: c.label || c.type || "",
-        count: c.count,
+        count: tBasis.locatedCount,
         avgPrice: typePN ? Math.round(typePSum / typePN) : 0,
+        excludedNote: exclusionNote(tBasis),
       });
     }
   }
@@ -279,6 +309,12 @@ function deriveResults(payload: NearbyMapPayload | null, fallbackAddr: string): 
 
   return {
     avm, totalCount,
+    // ★W1-b — "수집 거래"와 "위치 확인 거래"를 나란히 보여준다. 종전엔 수집 총건만 있고
+    //   그 옆에 "분석 반경 1km"가 붙어, 수집된 전부가 반경 안이라는 인상을 줬다(호미곶 실측:
+    //   67건 전부가 위치 미확인인데 "반경 1km · 총 거래 67건"으로 표시).
+    locatedCount: tradeEntries.reduce(
+      (a, [, c]) => a + selectLocatedGroups(c as never).basis.locatedCount, 0,
+    ),
     avgPrice: aptPN ? Math.round(aptPSum / aptPN) : 0,
     radiusGroups, byType, transactions,
     months: payload.months?.length || 3,
@@ -971,8 +1007,14 @@ export function MarketInsightsWorkspaceClient() {
                   <span className="sa-di-stat__value">{results.months}개월</span>
                 </div>
                 <div className="sa-di-stat">
-                  <span className="sa-di-stat__label">총 거래</span>
+                  <span className="sa-di-stat__label">수집 거래</span>
                   <span className="sa-di-stat__value" style={{ color: "var(--data-accent)" }}>{results.totalCount.toLocaleString()}건</span>
+                </div>
+                {/* ★W1-b — 수집 건수와 **집계에 실제로 쓴 건수**를 분리 표기한다. 이 둘이
+                    크게 벌어지는 것이 정상 상태다(실측: 표시 표본의 60~100%가 위치 미확인). */}
+                <div className="sa-di-stat">
+                  <span className="sa-di-stat__label">위치 확인</span>
+                  <span className="sa-di-stat__value">{results.locatedCount.toLocaleString()}건</span>
                 </div>
                 <div className="sa-di-stat">
                   {/* ★P2b(레인G) 교정: 종전 "매매 평균가"는 아파트·연립·단독·오피스텔·토지·
@@ -1003,6 +1045,13 @@ export function MarketInsightsWorkspaceClient() {
                         <span className="sa-di-tile__label">{t.label}</span>
                         <span className="sa-di-tile__value">{t.count.toLocaleString()}건</span>
                         <span className="sa-di-tile__label" style={{ marginTop: "0.125rem" }}>{t.avgPrice > 0 ? `평균 ${formatPrice(t.avgPrice)}` : "평균가 미상"}</span>
+                        {/* ★W1-b — 표본이 왜 얇은지를 값 옆에서 밝힌다. 이게 없으면 사용자는
+                            건수가 줄어든 것을 "거래가 없다"로 읽는다(다른 상태다). */}
+                        {t.excludedNote && (
+                          <span className="sa-di-tile__label" style={{ marginTop: "0.125rem", opacity: 0.75 }}>
+                            {t.excludedNote}
+                          </span>
+                        )}
                       </div>
                     ))}
                   </div>

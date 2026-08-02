@@ -411,10 +411,22 @@ async def test_nearby_transactions_tool_formats_summary(monkeypatch):
             "categories": {
                 "apt_trade": {
                     "label": "아파트 매매", "kind": "trade", "count": 5,
+                    # ★W1-b — 프로덕션 응답은 그룹마다 위치 판정을 싣는다. 좌표·판정이 없는
+                    #   그룹은 "위치 미확인"이라 LLM 프롬프트에 시세 근거로 넣지 않는다.
+                    #   여기선 **위치 확인분 1 + 미확인분 1**을 함께 둬서, 확인분은 나열되고
+                    #   미확인분은 빠지는지를 한 번에 본다.
                     "groups": [
                         {"name": "역삼자이", "count": 5, "avg_price_10k": 150000,
-                         "avg_area_m2": 84.9},
+                         "avg_area_m2": 84.9, "lat": 37.5, "lon": 127.0,
+                         "location_status": "located", "coord_precision": "building"},
+                        {"name": "위치미확인단지", "count": 9, "avg_price_10k": 900000,
+                         "avg_area_m2": 84.9, "location_status": "unlocated"},
                     ],
+                    "sample_basis": {
+                        "scope": "radius", "radius_applied": True, "radius_m": 1000,
+                        "located_count": 5, "approximate_count": 0,
+                        "unlocated_count": 9, "capped_count": 0,
+                    },
                 },
             },
         }
@@ -426,6 +438,12 @@ async def test_nearby_transactions_tool_formats_summary(monkeypatch):
     )
     assert "아파트 매매" in out
     assert "역삼자이" in out
+    # ★W1-b 회귀락 — 위치 미확인 그룹은 시세 근거로 프롬프트에 들어가면 안 된다.
+    #   종전엔 이 그룹의 평균가(90만/㎡급)가 "주변(반경 1km)" 라벨 아래 그대로 실려,
+    #   LLM 이 그것을 사실로 복창했다(할루시네이션이 아니라 오염된 그라운딩).
+    assert "위치미확인단지" not in out
+    # 빠진 것을 **빠졌다고 말해야** 한다 — 조용히 사라지면 표본이 왜 얇은지 알 수 없다.
+    assert "위치 미확인 9건" in out
 
 
 async def test_nearby_transactions_tool_no_pnu_is_honest(monkeypatch):

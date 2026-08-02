@@ -42,6 +42,7 @@ import {
   type VWorldBaseLayer,
   zoneColor,
 } from "@/lib/satong-map-layers";
+import { selectMappableGroups } from "@/lib/market/comparable-sample";
 import { bindSatongLabel, planSatongLabels, satongLabelLOD } from "@/lib/satong-map-labels";
 import type { SiteLayoutOverlay } from "@/lib/site-layout";
 import {
@@ -840,7 +841,12 @@ export function resolveMarketRenderPlan(
     return {
       type,
       color: MARKET_TYPE_COLORS[type] || "#2563eb",
-      groups: (category?.groups ?? []).filter((g) => !!g.lat && !!g.lon),
+      // ★W1-b — 종전엔 여기서 `!!g.lat && !!g.lon` 로 **셀렉터를 로컬 재구현**하고 있었다.
+      //   지금은 결과가 우연히 같지만, 판정 기준이 두 곳에 있으면 한쪽이 바뀔 때 조용히
+      //   갈라진다. 지도 마커는 "좌표가 있으면 찍는다"가 맞으므로(개략 좌표도 점으로는 유효)
+      //   집계용 `selectLocatedGroups` 가 아니라 **마커 전용 셀렉터**를 쓴다 — 두 기준이
+      //   다르다는 사실 자체를 공용 모듈에 박아 다음 사람이 헷갈리지 않게 한다.
+      groups: selectMappableGroups(category as never) as MarketRenderEntry["groups"],
       cappedCount: category?.capped_count ?? 0,
     };
   });
