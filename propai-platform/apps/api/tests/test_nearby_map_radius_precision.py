@@ -12,6 +12,13 @@ result["radius_m"]에 요청값을 에코만 했다(라벨 거짓). 또한 _fina
 
 외부 실호출 없음(MOLIT·지오코딩 모두 스텁).
 """
+# ★W2 — 지오코딩 질의의 시군구가 **"서울 강남구"**(시·도 포함)인 이유:
+#   `build()` 가 주소에서 시군구 힌트를 스스로 도출하고(리뷰 H-3 — 라우터 밖 호출부도
+#   따라오게), 그 힌트가 행의 값(중개사무소 소재지)보다 **우선**하기 때문이다.
+#   종전 픽스처는 `"강남구"` 만 썼고, 그 상태로 두면 질의가 어긋나 **전 그룹이 미해결**이 되어
+#   반경 필터가 아예 실행되지 않는다(= 테스트가 검증하려던 것이 사라진다).
+#   ★배포될 이 형태는 라이브로 실측했다(리뷰 M-5): "서울특별시 강남구 대치동 316" ·
+#   "경상북도 포항시 남구 호미곶면 대보리 산1-1" · "경기도 성남시 분당구 정자동 178" 전부 OK.
 from __future__ import annotations
 
 import random
@@ -66,8 +73,8 @@ async def test_radius_filter_keeps_near_excludes_far_preserves_unresolved():
     nogeo_row = _row("미해결빌딩", "3-3", "논현동", "강남구")
 
     probe = nm.NearbyMapService.__new__(nm.NearbyMapService)
-    near_q = probe._query_for("강남구", "역삼동", "1-1", "인근빌딩")
-    far_q = probe._query_for("강남구", "삼성동", "2-2", "먼빌딩")
+    near_q = probe._query_for("서울 강남구", "역삼동", "1-1", "인근빌딩")
+    far_q = probe._query_for("서울 강남구", "삼성동", "2-2", "먼빌딩")
     # nogeo_q는 의도적으로 geocode_map에서 누락 → 좌표 미확보 케이스
 
     geocode_map = {
@@ -118,9 +125,9 @@ async def test_radius_cap_applies_after_filter_not_before():
     probe = nm.NearbyMapService.__new__(nm.NearbyMapService)
     geocode_map: dict[str, dict] = {}
     for i in range(30):
-        q = probe._query_for("강남구", "삼성동", f"9{i}-1", f"원거리대단지{i}")
+        q = probe._query_for("서울 강남구", "삼성동", f"9{i}-1", f"원거리대단지{i}")
         geocode_map[q] = {"lat": 37.5100, "lon": 127.0000}  # ≈1.11km 밖
-    near_q = probe._query_for("강남구", "역삼동", "1-1", "반경내소형빌딩")
+    near_q = probe._query_for("서울 강남구", "역삼동", "1-1", "반경내소형빌딩")
     geocode_map[near_q] = {"lat": 37.5000, "lon": 127.0000}  # 0m
 
     svc = _make_service(far_rows + near_rows, geocode_map)

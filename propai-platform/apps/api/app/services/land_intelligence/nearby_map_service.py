@@ -74,6 +74,52 @@ _GEOCODE_CACHE_TTL_MISS = 300   # 5분
 _MIN_RELIABLE_DEALS = 5
 
 
+# 시/도 단축표기(주소 앞머리에 자주 온다) — 접미사 규칙만으로는 못 잡는다.
+_SIDO_TOKENS = frozenset({
+    "서울", "부산", "대구", "인천", "광주", "대전", "울산", "세종",
+    "경기", "강원", "충북", "충남", "전북", "전남", "경북", "경남", "제주",
+})
+_SIGUNGU_SUFFIXES = ("도", "시", "군", "구")
+
+
+def sigungu_hint_from_address(address: str) -> str:
+    """주소 앞머리에서 **시군구 레벨까지** 취한다. 도달 못 하면 빈 문자열.
+
+    ★리뷰 H-3 봉합 — 이 함수는 원래 라우터에만 있었고, `build()` 의 다른 호출부
+    (`desk_appraisal_service` · `assistant_agent`)는 힌트를 넘기지 않아 **중개사무소 소재지로
+    폴백**했다. 하필 이 진단의 발단인 호미곶 사례가 `desk_appraisal` 경로다 — 라우터만
+    고치면 헤드라인 증상이 안 고쳐진다. 생산처(`build`)로 옮겨 세 호출부가 자동으로 따라오게
+    한다(CLAUDE.md: 한 곳을 고치면 전역이 따라오게).
+
+    ★시군구 레벨 도달 검사가 핵심이다(리뷰 C-1) — 시·도만 뽑힌 반쪽 힌트를 내보내면,
+    그 값이 행의 값을 이겨 전 행에 전파되고 "다른 시군구의 동명 지번"으로 매칭될 수 있다.
+    그러면 좌표는 틀렸는데 refined 대조도 통과해 '위치 확인' 도장을 받는다 —
+    **무해한 실패를 유해한 성공으로** 바꾼다.
+    """
+    out: list[str] = []
+    for i, tok in enumerate((address or "").split()):
+        if tok.endswith(_SIGUNGU_SUFFIXES) or (i == 0 and tok in _SIDO_TOKENS):
+            out.append(tok)
+            continue
+        break
+    if not out or not out[-1].endswith(("시", "군", "구")):
+        return ""
+    return " ".join(out)
+
+
+def _dong_tail(value: str | None) -> str:
+    """법정동 표기의 **마지막 토큰**만 취한다.
+
+    ★리뷰 H-4 봉합 — MOLIT `umdNm` 은 읍·면 지역에서 `"호미곶면 대보리"` 처럼 **두 토큰**으로
+    온다(이 저장소 테스트 픽스처가 그 형태를 쓴다). 그런데 사전컷 프라이어가 완전일치
+    비교였다: `"호미곶면 대보리" != "대보리"` → 프라이어가 **한 그룹도 앞당기지 못하고**
+    종전 건수 정렬로 조용히 되돌아갔다. 하필 이 PR 의 동기가 된 호미곶이 정확히 그 형태다.
+    `_refined_mismatch` 는 이미 같은 규약(`dong.split()[-1]`)을 쓰고 있었다 — 재사용한다.
+    """
+    v = (value or "").strip()
+    return v.split()[-1] if v else ""
+
+
 class NearbyMapService:
     """주변 실거래 지도 페이로드 생성기."""
 
@@ -117,6 +163,12 @@ class NearbyMapService:
         # center_hint: 라우터가 PNU/좌표 확보 과정(주소 지오코딩·point→parcel)에서 이미 얻은
         #   중심좌표. 여기서 다시 주소 지오코딩이 실패해도 이 힌트로 center를 채워, 지도가
         #   선택 필지 위치로 이동한다(백엔드 지오코딩 실패와 무관하게 서울 폴백 제거).
+        # ★리뷰 H-3 — 호출부가 힌트를 안 줘도 **여기서 스스로 도출**한다. 종전엔 라우터만
+        #   힌트를 넘겨, desk_appraisal·assistant_agent 경로는 중개사무소 소재지로 폴백했다.
+        sigungu_hint = (sigungu_hint or "").strip() or sigungu_hint_from_address(address)
+        # 계측은 요청 단위다 — 인스턴스를 재사용하는 소비처가 생겨도 수치가 섞이지 않게 한다.
+        self._geo_failures = {}
+        self._geo_fail_samples = []
         hint_lat = (center_hint or {}).get("lat")
         hint_lon = (center_hint or {}).get("lon")
         has_hint = bool(hint_lat and hint_lon)
@@ -172,7 +224,7 @@ class NearbyMapService:
             if len(cat["groups"]) > _MAX_GEOCODE_GROUPS_PER_CAT:
                 cat["groups"].sort(
                     key=lambda x: (
-                        0 if (target_dong and x.get("dong") == target_dong) else 1,
+                        0 if (target_dong and _dong_tail(x.get("dong")) == target_dong) else 1,
                         -x["count"],
                     )
                 )
@@ -350,6 +402,12 @@ class NearbyMapService:
             #   원인별 분해가 있어야 재시도(일시장애)와 주소 교정(영구 오류) 중 무엇이
             #   지렛대인지 **숫자로** 판정할 수 있다.
             "geocode_failure_breakdown": dict(getattr(self, "_geo_failures", {})),
+            # ★분모가 없으면 "비중"을 계산할 수 없다 — breakdown 만으로는 판정 불가였다.
+            "geocode_attempted_count": len(queries),
+            # ★리뷰 M-1 — 이번 PR 이 새로 넣은 변수(힌트)도 관측 대상이다. 힌트가 비면
+            #   전 행이 조용히 중개사 시군구로 회귀하는데, 응답만 봐서는 구분이 안 됐다.
+            "sigungu_hint": sigungu_hint,
+            "sigungu_source": "hint" if sigungu_hint else "row_fallback",
             "geocode_precut_count": geocode_precut,
             "lawd_cd": lawd_cd,
             "months": ym_list,
@@ -947,10 +1005,17 @@ class NearbyMapService:
                 self._geo_fail("key_missing")
             return None
 
+        # ★리뷰 H-2 봉합 — 계측을 **질의 단위**로 모은다. 종전엔 PARCEL/ROAD 루프 안에서
+        #   바로 적립해, ①실패 질의 1건이 2회 적립되고 ②PARCEL 실패 후 ROAD 성공한
+        #   **성공 질의도 not_found 를 적립**했다. 그러면 `geocode_failure_breakdown` 은
+        #   "좌표를 못 얻은 질의 수"가 아니게 되고 `coords_unresolved_count` 와 비교 불가다.
+        #   ★더 나쁜 건 편향 방향이다 — not_found 만 구조적으로 부풀어 429/5xx 비중이 항상
+        #   과소평가된다. 그런데 나는 재시도 착수 조건을 "이 계기가 429/5xx 가 유의미하다고
+        #   말할 때"로 걸어놨다. 즉 **착수하지 않는 결론 쪽으로 기울어진 계기**였다.
+        attempt_reasons: list[str] = []
+
         def _fail(reason: str) -> None:
-            # 쿼리를 함께 남긴다 — 원인 코드만으로는 "어떤 주소가 왜 깨지는지" 못 본다
-            # (이번 진단의 결정타가 실패 쿼리의 시군구를 눈으로 본 것이었다).
-            self._geo_fail(reason, query)
+            attempt_reasons.append(reason)
 
         cache_key = f"geo:vworld:{query}"
         r = await self._redis()
@@ -982,7 +1047,7 @@ class NearbyMapService:
                         # ★W2 계측 — 종전엔 `continue` 뿐이라 **왜 실패했는지 아무도 몰랐다**.
                         #   그 상태에서는 "재시도를 넣으면 좋아진다" 같은 처방이 전부 신앙이 된다
                         #   (실제로 내가 그 오진을 했다 — 실패는 일시장애가 아니라 주소 오류였다).
-                        _fail(429 if resp.status_code == 429 else
+                        _fail("http_429" if resp.status_code == 429 else
                               ("http_5xx" if resp.status_code >= 500 else "http_other"))
                         continue
                     j = resp.json()
@@ -1018,6 +1083,11 @@ class NearbyMapService:
         finally:
             if own:
                 await client.aclose()
+        if coord is None and attempt_reasons:
+            # 마지막 시도의 사유를 그 질의의 대표 사유로 삼는다(ROAD 폴백까지 갔는데도 실패).
+            # 쿼리를 함께 남긴다 — 원인 코드만으로는 "어떤 주소가 왜 깨지는지" 못 본다
+            # (이번 진단의 결정타가 실패 쿼리의 시군구를 눈으로 본 것이었다).
+            self._geo_fail(attempt_reasons[-1], query)
         if r is not None:
             try:
                 # ★성공은 7일, 실패/미해결은 5분만 캐시 — 일시 실패가 장기 고착되지 않게 한다.

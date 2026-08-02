@@ -21,7 +21,9 @@ from __future__ import annotations
 
 import pytest
 
-from apps.api.routers.auto_zoning import _sigungu_hint_from_address
+from apps.api.app.services.land_intelligence.nearby_map_service import (
+    sigungu_hint_from_address as _sigungu_hint_from_address,
+)
 
 
 @pytest.mark.parametrize(
@@ -41,9 +43,21 @@ from apps.api.routers.auto_zoning import _sigungu_hint_from_address
         ("경기 용인시 수지구 신봉동 56-19", "경기 용인시 수지구"),
         # 군 단위
         ("경상북도 울릉군 울릉읍 도동리 1", "경상북도 울릉군"),
+        # 세종은 시군구 계층이 없다 — 단일 토큰이 시로 끝나므로 그대로 통과
+        ("세종특별자치시 조치원읍 1", "세종특별자치시"),
         # ★판정 불가 — 틀린 시군구를 주는 것보다 **빈 값**이 낫다
         ("역삼동 736", ""),
         ("", ""),
+        # ★리뷰 C-1 — **시·도만 뽑히는** 입력. 종전 구현은 여기서 값을 냈고, 이 PR 이
+        #   힌트를 행보다 우선시키므로 그 반쪽 값이 전 행에 전파돼 "다른 시군구의 동명
+        #   지번"으로 매칭될 수 있었다(무해한 실패 → 유해한 성공). 하필 이 PR 이 고치겠다고
+        #   한 특례시가 정확히 이 케이스다.
+        ("경남 창원 의창구 팔용동 100", ""),
+        ("충남 천안 서북구 두정동 500", ""),
+        ("전북 전주 완산구 효자동 1", ""),
+        ("경기 성남 분당구 정자동 178", ""),
+        ("서울 역삼동 736", ""),
+        ("경상북도 호미곶면 대보리 산1-1", ""),
     ],
 )
 def test_sigungu_hint_extracts_full_sigungu_level(address: str, expected: str) -> None:
@@ -76,20 +90,38 @@ def test_old_two_token_rule_would_fail_these() -> None:
 def test_router_actually_calls_the_helper() -> None:
     """★배선 잠금 — 헬퍼가 옳아도 **호출부가 되돌아가면** 아무 소용이 없다.
 
-    실제로 확인했다: 라우터를 종전 2토큰 규칙으로 되돌리는 변이(3행)를 주입했더니
-    위 골든 14건이 **전건 통과**했다. 골든은 헬퍼를 직접 호출하기 때문이다.
-    이 저장소는 같은 함정(배선 미변이)에 네 번 뚫린 기록이 있다
-    (`feedback_mutation_wiring_and_scope`). 로직·배선을 **따로** 잠근다.
+    ★리뷰 H-1 봉합: 종전 구현은 파일 전체에서 문자열을 찾았는데, 헬퍼가 **같은 파일에
+    정의**돼 있어 `def sigungu_hint_from_address(` 정의 줄이 그 단언을 충족했다. 즉
+    호출부를 지워도 통과하는 **공허 단언**이었고, 내가 "배선을 닫았다"고 한 보고는 과장이었다
+    (내 변이가 잡힌 건 두 번째 단언의 리터럴이 우연히 걸렸기 때문).
+    이제 **호출 함수의 소스만** 떼어내 검사한다 — 정의부가 구조적으로 배제된다.
     """
-    from pathlib import Path
+    import inspect
 
-    src = (Path(__file__).resolve().parents[1] / "routers" / "auto_zoning.py").read_text(encoding="utf-8")
-    # 주석/독스트링의 언급으로 충족되지 않도록 **호출 형태**로 못 박는다.
-    assert "_sigungu_hint_from_address(" in src, (
-        "라우터가 시군구 힌트 헬퍼를 호출하지 않는다 — 3레벨 시군구 절단이 되살아난다"
+    from apps.api.routers import auto_zoning
+
+    body = inspect.getsource(auto_zoning.nearby_transactions_map)
+    # 주석/독스트링의 언급으로 충족되지 않게 코드만 남긴다(이 저장소에서 세 번 뚫린 구멍).
+    code = "\n".join(ln.split("#")[0] for ln in body.splitlines())
+    assert "sigungu_hint_from_address(" in code, (
+        "라우터 핸들러가 시군구 힌트 헬퍼를 호출하지 않는다 — 3레벨 시군구 절단이 되살아난다"
     )
-    # 종전 규칙이 되살아나면 실패한다(변수명이 바뀌어도 이 형태는 남는다).
-    code = "\n".join(ln.split("#")[0] for ln in src.splitlines())
-    assert 'sigungu_hint = " ".join(' not in code, (
-        "라우터에 2토큰 절단 규칙이 되살아났다"
+    assert 'sigungu_hint = " ".join(' not in code, "2토큰 절단 규칙이 되살아났다"
+
+
+def test_build_derives_hint_itself_for_other_callers() -> None:
+    """★리뷰 H-3 — 라우터 밖 호출부(desk_appraisal·assistant_agent)도 힌트를 얻는가.
+
+    라우터 한 곳만 고치면 근본 봉합이 아니다. 하필 이 진단의 발단인 호미곶 사례가
+    `desk_appraisal` 경로다 — 거기서 안 고쳐지면 헤드라인 증상이 그대로 남는다.
+    """
+    import inspect
+
+    from apps.api.app.services.land_intelligence import nearby_map_service as nm
+
+    body = inspect.getsource(nm.NearbyMapService.build)
+    code = "\n".join(ln.split("#")[0] for ln in body.splitlines())
+    assert "sigungu_hint_from_address(" in code, (
+        "build() 가 힌트를 스스로 도출하지 않는다 — 힌트를 안 넘기는 호출부가 "
+        "중개사무소 소재지로 폴백한다(이 PR 이 근원이라 규정한 상태 그대로)"
     )

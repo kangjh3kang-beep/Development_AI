@@ -16,6 +16,13 @@
 외부 실호출 없음(MOLIT·지오코딩 모두 스텁, integration 절은 test_nearby_map_radius_precision
 과 동일 패턴).
 """
+# ★W2 — 지오코딩 질의의 시군구가 **"서울 강남구"**(시·도 포함)인 이유:
+#   `build()` 가 주소에서 시군구 힌트를 스스로 도출하고(리뷰 H-3 — 라우터 밖 호출부도
+#   따라오게), 그 힌트가 행의 값(중개사무소 소재지)보다 **우선**하기 때문이다.
+#   종전 픽스처는 `"강남구"` 만 썼고, 그 상태로 두면 질의가 어긋나 **전 그룹이 미해결**이 되어
+#   반경 필터가 아예 실행되지 않는다(= 테스트가 검증하려던 것이 사라진다).
+#   ★배포될 이 형태는 라이브로 실측했다(리뷰 M-5): "서울특별시 강남구 대치동 316" ·
+#   "경상북도 포항시 남구 호미곶면 대보리 산1-1" · "경기도 성남시 분당구 정자동 178" 전부 OK.
 from __future__ import annotations
 
 import math
@@ -271,7 +278,7 @@ async def test_build_response_includes_avm_field_matching_apt_trade_groups():
     nm._BUILD_CACHE.clear()
     center = {"lat": 37.5000, "lon": 127.0000}
     probe = nm.NearbyMapService.__new__(nm.NearbyMapService)
-    q = probe._query_for("강남구", "역삼동", "1-1", "통합테스트단지")
+    q = probe._query_for("서울 강남구", "역삼동", "1-1", "통합테스트단지")
     geocode_map = {q: {"lat": 37.5000, "lon": 127.0000}}
 
     rows = [_apt_row(50000 + i * 100, day=i + 1) for i in range(5)]
@@ -396,8 +403,8 @@ async def test_build_excludes_coordinate_unresolved_groups_from_avm():
     nm._BUILD_CACHE.clear()
     center = {"lat": 37.5000, "lon": 127.0000}
     probe = nm.NearbyMapService.__new__(nm.NearbyMapService)
-    q_near = probe._query_for("강남구", "역삼동", "1-1", "가까운단지")
-    q_far = probe._query_for("강남구", "역삼동", "9-9", "위치미확인단지")
+    q_near = probe._query_for("서울 강남구", "역삼동", "1-1", "가까운단지")
+    q_far = probe._query_for("서울 강남구", "역삼동", "9-9", "위치미확인단지")
     # ★`q_far`는 지오코딩 맵에 **넣지 않는다** → 좌표 미해소 그룹이 된다(생산의 실제 실패 형태).
     geocode_map = {q_near: {"lat": 37.5000, "lon": 127.0000}}
     assert q_far not in geocode_map, (
@@ -497,7 +504,7 @@ async def test_never_silent_when_deals_exist_but_avm_is_none():
     nm._BUILD_CACHE.clear()
     center = {"lat": 37.5000, "lon": 127.0000}
     probe = nm.NearbyMapService.__new__(nm.NearbyMapService)
-    q = probe._query_for("강남구", "역삼동", "1-1", "가격결측단지")
+    q = probe._query_for("서울 강남구", "역삼동", "1-1", "가격결측단지")
     geocode_map = {q: {"lat": 37.5000, "lon": 127.0000}}
 
     # 가격·면적이 결측인 거래(수집은 됐다) — MOLIT 응답에서 실제로 나올 수 있는 형태.

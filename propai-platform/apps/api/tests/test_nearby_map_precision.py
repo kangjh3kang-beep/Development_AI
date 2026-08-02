@@ -314,11 +314,11 @@ async def test_precut_keeps_target_dong_over_bigger_faraway_groups() -> None:
     for i in range(_PRECUT + 5):
         dong = f"먼동{i}"
         rows += [_row(name="", jibun=f"{i}-1", dong=dong, price=90000, day=d + 1) for d in range(5)]
-        geocode_map[f"남구 {dong} {i}-1"] = {"lat": 36.2, "lon": 129.2}  # 반경 밖
+        geocode_map[f"경상북도 남구 {dong} {i}-1"] = {"lat": 36.2, "lon": 129.2}  # 반경 밖
 
     # 대상지 동의 '작은' 그룹 — 건수로는 최하위지만 반경 안이다.
     rows.append(_row(name="", jibun="9-9", dong="대상동", price=50000, day=1))
-    geocode_map["남구 대상동 9-9"] = {"lat": 36.0003, "lon": 129.0003}
+    geocode_map["경상북도 남구 대상동 9-9"] = {"lat": 36.0003, "lon": 129.0003}
 
     svc = _service(rows, geocode_map)
     payload = await svc.build(

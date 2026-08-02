@@ -1240,37 +1240,6 @@ class NearbyMapRequest(BaseModel):
     months: int = 3
 
 
-# 시/도 단축표기(주소 앞머리에 자주 온다) — 접미사 규칙만으로는 못 잡는다.
-#   "서울 강남구 …" 의 "서울" 은 도/시/군/구 로 끝나지 않아 규칙에서 빠진다.
-_SIDO_TOKENS = frozenset({
-    "서울", "부산", "대구", "인천", "광주", "대전", "울산", "세종",
-    "경기", "강원", "충북", "충남", "전북", "전남", "경북", "경남", "제주",
-})
-# 시군구 레벨 토큰의 접미사. 읍·면·동·리·로·길에서 멈춘다.
-_SIGUNGU_SUFFIXES = ("도", "시", "군", "구")
-
-
-def _sigungu_hint_from_address(address: str) -> str:
-    """주소 앞머리에서 **시군구 레벨까지** 전부 취한다(토큰 수를 세지 않는다).
-
-    ★종전 `" ".join(parts[:2])` 는 3레벨 시군구를 통째로 잘랐다:
-      "경상북도 포항시 남구" → "경상북도 포항시"(남구 소실).
-    잘린 힌트로 만든 지오코딩 질의는 **존재하지 않는 주소**가 되어 영구 실패한다.
-    VWorld 는 시군구가 틀리면 정확히 실패한다(실측: "강남구 대치동 316" OK /
-    "서초구 대치동 316" FAIL). 즉 이 한 줄이 비수도권·특례시 전역의 좌표 확보를 막고 있었다.
-
-    판정을 못 하면 **빈 문자열**을 돌려준다 — 틀린 시군구를 주는 것보다 없는 게 낫다
-    (없으면 소비처가 행의 값으로 폴백하고, 그 사실을 계측으로 관측할 수 있다).
-    """
-    out: list[str] = []
-    for i, tok in enumerate(address.split()):
-        if tok.endswith(_SIGUNGU_SUFFIXES) or (i == 0 and tok in _SIDO_TOKENS):
-            out.append(tok)
-            continue
-        break
-    return " ".join(out)
-
-
 @router.post("/nearby-map")
 async def nearby_transactions_map(req: NearbyMapRequest):
     """대상 지번 주변 실거래를 카테고리별·건물단위로 지오코딩하여 지도 페이로드 반환.
@@ -1323,7 +1292,10 @@ async def nearby_transactions_map(req: NearbyMapRequest):
     #   존재하지 않는 주소가 되어 영구 실패한다(라이브: 호미곶 전 카테고리 located=0).
     #   ★실측 확증: VWorld 는 시군구가 틀리면 정확히 실패한다 —
     #     "강남구 대치동 316" → OK / "서초구 대치동 316" → FAIL / "송파구 …" → FAIL.
-    sigungu_hint = _sigungu_hint_from_address(req.address or "")
+    from apps.api.app.services.land_intelligence.nearby_map_service import (
+        sigungu_hint_from_address,
+    )
+    sigungu_hint = sigungu_hint_from_address(req.address or "")
 
     service = NearbyMapService()
     return await service.build(
