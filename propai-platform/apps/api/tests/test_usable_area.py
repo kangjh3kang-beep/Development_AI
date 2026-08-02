@@ -225,3 +225,86 @@ def test_purity_inputs_not_mutated():
     compute_usable_area(parcels)
     simulate_exclusion(parcels, [parcels[0]["pnu"]])
     assert parcels == snapshot
+
+
+# ── 2026-08-02: '모르는 것'을 '가능'으로 세지 않는다 ──────────────────────────
+#
+# 배경: 다필지 detect 경로는 지목·용도지구 미확인 필지를 만나면 상위 집계를 UNKNOWN으로
+# **정직하게** 강등하고 per_parcel에 analysis_status="unanalyzed"를 심는다. 그런데 면적
+# 정산은 그 신호를 하나도 읽지 않아, 미분석 필지가 usable_confirmed(통상 개발가능 면적)에
+# 그대로 합산됐다. 게이트 기본값이 POSSIBLE이라 '신호 부재'와 '가능'이 구분되지 않은 것이 근원.
+
+def test_unknown_developability_is_not_counted_as_confirmed():
+    """UNKNOWN(판정 불가)은 확정이 아니라 조건부로 센다.
+
+    ★변이-kill: GATE_TENTATIVE_DEVELOPABILITY에서 "UNKNOWN"을 빼면 else 분기로 떨어져
+      confirmed에 합산되므로 이 단언이 깨진다.
+    """
+    # ★res는 일부러 정상값(YES)으로 둔다. res="UNKNOWN"으로 두면 resolvable 게이트가 대신
+    #   조건부로 내려줘서, developability 게이트를 지워도 테스트가 통과한다(변이로 확인).
+    out = compute_usable_area([_p("1111010100100010000", 500.0, "대", dev="UNKNOWN", res="YES")])
+
+    assert out["usable_confirmed_sqm"] == pytest.approx(0.0), (
+        "판정 불가(UNKNOWN) 필지가 확정 개발가능 면적에 합산됐다 — '모르는 것'을 '가능'으로 단정."
+    )
+    assert out["usable_conditional_sqm"] == pytest.approx(500.0)
+    conds = out["conditional_parcels"][0]["conditions"]
+    assert any("판정하지 못했습니다" in c for c in conds), f"사유 문구 부재: {conds}"
+
+
+def test_unanalyzed_parcel_is_not_counted_as_confirmed():
+    """analysis_status='unanalyzed'는 게이트 값과 무관하게 확정으로 올리지 않는다.
+
+    ★이 필지는 게이트가 기본값(POSSIBLE/YES)이라 종전에는 confirmed로 셌다. 상위 집계만
+      정직하고 면적은 낙관이던 비대칭을 잠근다.
+    """
+    out = compute_usable_area([
+        _p("1111010100100010000", 400.0, "대"),                                  # 정상
+        _p("1111010100100020000", 600.0, "대", analysis_status="unanalyzed"),    # 미분석
+    ])
+
+    assert out["usable_confirmed_sqm"] == pytest.approx(400.0), (
+        "미분석 필지가 확정 면적에 합산됐다 — 상위 집계는 UNKNOWN으로 정직 고지하는데 "
+        "면적 정산만 그 신호를 무시하는 상태."
+    )
+    assert out["usable_conditional_sqm"] == pytest.approx(600.0)
+    conds = out["conditional_parcels"][0]["conditions"]
+    assert any("분석되지 않았습니다" in c for c in conds), f"사유 문구 부재: {conds}"
+    # 면적 보존 불변식은 그대로 성립해야 한다.
+    assert out["gross_sqm"] == pytest.approx(1000.0)
+
+
+def test_gate_decision_downgrades_unknown_to_tentative():
+    """공유 SSOT gate_decision도 UNKNOWN을 PASS로 보지 않는다(근원 봉합 확인).
+
+    ★usable_area만 고치면 auto_recommend_top3·integrated_recommender 등 다른 소비처는
+      여전히 확신 %를 낸다. 근원은 special_parcel의 게이트 집합이므로 거기서 잠근다.
+    """
+    from app.services.zoning.special_parcel import gate_decision
+
+    assert gate_decision("UNKNOWN", "UNKNOWN") == "TENTATIVE"
+    assert gate_decision("UNKNOWN", "YES") == "TENTATIVE"
+    # 무회귀: 기존 계약은 그대로.
+    assert gate_decision("POSSIBLE", "YES") == "PASS"
+    assert gate_decision("BLOCKED", "YES") == "BLOCK"
+    assert gate_decision("NEEDS_OFFICIAL_SURVEY", "YES") == "TENTATIVE"
+
+
+def test_unknown_resolvable_is_not_counted_as_confirmed():
+    """해결가능성 UNKNOWN도 확정으로 세지 않는다(developability 축과 별개로 잠금)."""
+    out = compute_usable_area([_p("1111010100100010000", 300.0, "대", dev="POSSIBLE", res="UNKNOWN")])
+    assert out["usable_confirmed_sqm"] == pytest.approx(0.0)
+    assert out["usable_conditional_sqm"] == pytest.approx(300.0)
+
+
+def test_rank_treats_unknown_as_tentative_grade():
+    """다요인 필지에서 '판정 불가'가 '문제 없음'에 밀리지 않는다.
+
+    ★_RANK에 UNKNOWN이 없으면 `.get(dev, 0)`이 0(POSSIBLE 동급)이라, POSSIBLE 요인과
+      UNKNOWN 요인이 함께 있을 때 max()가 POSSIBLE을 골라 종합 게이트가 낙관으로 굳는다.
+    """
+    from app.services.zoning.special_parcel import _RANK
+
+    assert _RANK.get("UNKNOWN", 0) == 2, "UNKNOWN이 미등재라 POSSIBLE과 동급으로 취급된다"
+    assert _RANK["UNKNOWN"] > _RANK["POSSIBLE"]
+    assert _RANK["UNKNOWN"] < _RANK["BLOCKED"]

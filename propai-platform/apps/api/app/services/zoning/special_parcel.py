@@ -27,8 +27,11 @@ from typing import Any
 #   REQUIRES_AUTHORITY_CONFIRMATION(WP-A 접도·도로 access_basis) = 법정 접도 근거를 데이터로
 #   확정할 수 없음(도로접면·도로폭 미상 등) — CONDITIONAL과 같은 '잠정' 급(값 2)으로, 확정 PASS를
 #   막고 관할 확인을 전제로만 진행시킨다(기존 값 불변 — 추가 전용).
+# ★UNKNOWN(판정 불가)도 등재한다(2026-08-02). 없으면 `_RANK.get(dev, 0)`이 0을 돌려줘
+#   **POSSIBLE과 동급**이 되고, 여러 요인 중 가장 심각한 것을 고르는 max() 비교에서 판정 불가가
+#   항상 밀린다 — '모르는 것'이 '문제 없음'과 같은 무게가 되는, 게이트 집합과 동일한 결함 클래스.
 _RANK = {"POSSIBLE": 0, "CAUTION": 1, "CONDITIONAL": 2, "NEEDS_OFFICIAL_SURVEY": 2,
-         "REQUIRES_AUTHORITY_CONFIRMATION": 2, "PRECONDITION": 3, "BLOCKED": 4}
+         "REQUIRES_AUTHORITY_CONFIRMATION": 2, "UNKNOWN": 2, "PRECONDITION": 3, "BLOCKED": 4}
 
 
 def _factor_legal_refs(legal_ref_keys: list[str] | None) -> list[dict]:
@@ -67,9 +70,15 @@ GATE_BLOCK_RESOLVABLE = {"NO"}
 #   (확정 % / 확정 설계 없음 — 공식 산림조사서·경사도조사 확보 전까지 예비안만.)
 # REQUIRES_AUTHORITY_CONFIRMATION(WP-A 접도·도로) — 법정 접도 근거를 데이터로 확정 불가 시,
 #   확정 PASS를 막고 '관할 확인 전제 잠정'으로 강등한다("법정도로 근거 없는 PASS 0" 게이트).
+# ★2026-08-02 추가 — UNKNOWN('판정 불가': 지목·용도지구 미확인이라 특이성 자체를 못 본 상태).
+#   종전에는 이 값이 BLOCK에도 TENTATIVE에도 없어 gate_decision()이 **"PASS"(일상 개발부지 —
+#   특이 없음)** 를 돌려줬다. 즉 '모르는 것'을 '문제 없음'으로 단정했다. 다필지 detect 경로는
+#   미분석을 이미 UNKNOWN으로 **정직하게 고지**하는데(auto_zoning 라우터), 정작 게이트가 그
+#   신호를 안 읽어 확신 %·확정 면적이 그대로 산출됐다. TENTATIVE(잠정)로 강등해 소비처가
+#   '참고안(확정 아님)'으로 다루게 한다.
 GATE_TENTATIVE_DEVELOPABILITY = {"PRECONDITION", "CONDITIONAL", "NEEDS_OFFICIAL_SURVEY",
-                                 "REQUIRES_AUTHORITY_CONFIRMATION"}
-GATE_TENTATIVE_RESOLVABLE = {"CONDITIONAL"}
+                                 "REQUIRES_AUTHORITY_CONFIRMATION", "UNKNOWN"}
+GATE_TENTATIVE_RESOLVABLE = {"CONDITIONAL", "UNKNOWN"}
 
 
 def gate_decision(developability: str | None, resolvable: str | None) -> str:
