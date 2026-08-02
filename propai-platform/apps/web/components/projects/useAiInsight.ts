@@ -13,6 +13,7 @@
 
 import { useEffect, useState } from "react";
 import { apiClient } from "@/lib/api-client";
+import { fetchInterpretation } from "@/lib/interpretation-job";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 
@@ -62,15 +63,27 @@ export function useAiInsight(address?: string | null): UseAiInsight {
     if (!address?.trim() || loading) return;
     setLoading(true); setError("");
     try {
-      const r = await apiClient.post<ComprehensiveResp>("/analysis/comprehensive", {
+      // ── 1단계: 결정론 분석만(해석 제외) ──
+      // ★2026-08-02 봉합: 종전에는 해석까지 한 번에 받으려 했다. 그런데 AI 해석 2종은 실측
+      //   125초 이상이 걸려 중간 경로(Cloudflare)가 응답을 자르고, 그 전에 아래 클라이언트
+      //   타임아웃(90초)이 먼저 터진다 → **이 카드는 라이브에서 성공할 수 없었다.**
+      //   (실측 2026-08-02: 캐시가 가장 두터운 주소도 99.9초 / 신규 주소는 125.2초에 잘림.)
+      //   종합분석 화면은 이미 2단계로 고쳤는데 같은 API를 쓰는 이 형제 소비처만 남아 있었다.
+      const core = await apiClient.post<ComprehensiveResp>("/analysis/comprehensive", {
         body: {
           address: address.trim(),
           // 다필지(2필지↑)면 SSOT 필지목록 전송 → comprehensive가 면적가중 통합집계로 종합 해석
           //   (대표번지 단일 산출 아님). 백엔드 _integrated_context가 camelCase(address/areaSqm/pnu) 수용.
           ...(isMulti && (site?.parcels?.length ?? 0) > 1 ? { parcels: site!.parcels } : {}),
+          include_interpretation: false,
         },
-        useMock: false, timeoutMs: 90000,   // 7섹션+LLM 집계 — /zoning/analyze보다 무거워 타임아웃 상향
+        useMock: false, timeoutMs: 90000,   // 1단계 실측 3~27초 — 여유 있는 상한
       });
+
+      // ── 2단계: 해석만 별도 작업으로 제출·수신(종합분석 화면과 동일한 공용 경로) ──
+      //   ★2단계 결과는 1단계 위에 덮어쓴다(교체 아님) — 1단계 값이 사라지면 안 된다.
+      const parts = (await fetchInterpretation(core)) as ComprehensiveResp | null;
+      const r: ComprehensiveResp = { ...core, ...(parts ?? {}) };
       const interp = r?.ai_interpretation ?? null;
       if (interp && (interp.overall_summary || interp.risk_factors || interp.opportunity_factors)) {
         setAi(interp);
