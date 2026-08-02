@@ -646,6 +646,10 @@ class ComprehensiveAnalysisService:
         if _supply_blocked_reason:
             sec2 = [{
                 "development_type": None, "type_name": "판정불가",
+                # ★판정용 코드(표시 문구와 분리) — 자가검증 규칙은 이 코드를 읽는다.
+                #   종전에는 규칙이 화면 문구 "판정불가"를 정확일치로 읽어, 문구를 쉬운 말로
+                #   바꾸는 순간 규칙이 무음으로 죽는 구조였다(W4 착수 전 봉합).
+                "type_name_code": "UNDETERMINED",
                 "note": _supply_blocked_reason, "blocked_reason": _supply_blocked_reason,
             }]
         else:
@@ -1220,6 +1224,8 @@ class ComprehensiveAnalysisService:
         # ★리뷰 HIGH: 미등재 용도지역은 '허용유형 없음'이 아니라 판정불가 — 빈 섹션 대신 정직 고지.
         if not permitted and not permitted_types_known(zone_type):
             return [{"development_type": None, "type_name": "판정불가",
+                     # ★판정용 코드(표시 문구와 분리) — 자가검증 규칙은 이 코드를 읽는다.
+                     "type_name_code": "UNDETERMINED",
                      "note": f"'{zone_type}' 인허가 매트릭스 미등재 — 허용유형 판정불가"
                              "(국토계획법 시행령 별표 확인 필요)"}]
         results = []
@@ -1459,6 +1465,9 @@ class ComprehensiveAnalysisService:
             "total_estimated_value_won": int(estimated_market * land_area),
             "market_multiplier": market_multiplier,
             "source": "VWORLD 개별공시지가 + 지역별 시세보정",
+            # ★방법론 판정용 코드(표시 문구와 분리) — 규칙이 source 문자열에서 "공시지가"를
+            #   부분일치로 찾던 결합을 끊는다. 표시 문구는 자유롭게 바꿔도 규칙이 안 죽는다.
+            "source_kind": "OFFICIAL_LAND_PRICE",
             "annotations": annotations,
         }
 
@@ -1527,6 +1536,8 @@ class ComprehensiveAnalysisService:
         # ★리뷰 HIGH: 미등재 용도지역은 판정불가 정직 고지(빈 섹션 금지) — _calc_supply_areas와 동일.
         if not permitted and not permitted_types_known(zone_type):
             return [{"development_type": None, "type_name": "판정불가",
+                     # ★판정용 코드(표시 문구와 분리) — 자가검증 규칙은 이 코드를 읽는다.
+                     "type_name_code": "UNDETERMINED",
                      "note": f"'{zone_type}' 인허가 매트릭스 미등재 — 허용유형 판정불가"
                              "(국토계획법 시행령 별표 확인 필요)"}]
         base_price = self._get_base_price(address)
