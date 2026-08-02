@@ -63,13 +63,13 @@ export function CredibilitySummaryCard({
     <div
       role="note"
       className={`rounded-2xl border p-4 ${
-        view.hasHold
+        view.hasHold || view.noRulesRan
           ? "border-[var(--status-error)]/50 bg-[var(--status-error)]/5"
           : "border-[var(--line)] bg-[var(--surface-strong)]"
       }`}
     >
       <div className="flex items-start gap-2">
-        {view.hasHold ? (
+        {view.hasHold || view.noRulesRan ? (
           <AlertTriangle className="size-5 shrink-0 text-[var(--status-error)]" aria-hidden />
         ) : (
           <ShieldCheck className="size-5 shrink-0 text-[var(--text-secondary)]" aria-hidden />
@@ -78,30 +78,43 @@ export function CredibilitySummaryCard({
           <h4 className="text-sm font-bold text-[var(--text-primary)]">
             플랫폼 자체 점검 결과
           </h4>
-          <p className="mt-1 text-[11px] text-[var(--text-secondary)] leading-relaxed">
-            {issueCount > 0 ? (
-              <>
-                점검 규칙이 <strong className="text-[var(--text-primary)]">{issueCount}건</strong>의
-                확인이 필요한 항목을 찾았습니다. 아래 각 섹션 안에 함께 표시했습니다.
-              </>
-            ) : (
-              <>점검 규칙이 잡아낸 이상 항목은 없습니다.</>
-            )}{" "}
-            이 화면이 판별하는 규칙 {view.ruleStatuses.length}개 중{" "}
-            <strong className="text-[var(--text-primary)]">{applied}개</strong>는 판단할 자료가
-            있어 적용됐고,{" "}
-            <strong className="text-[var(--text-primary)]">{undetermined}개</strong>는 볼 자료가
-            없어 판정하지 못했습니다.
-            {/* ★백엔드에 규칙이 더 등록돼 있는데 이 화면이 모르는 경우를 숨기지 않는다.
-                (프론트 목록은 상수라, 규칙이 늘어도 자동으로 따라오지 않는다.) */}
-            {view.rulesRegistered !== null && view.rulesRegistered > view.ruleStatuses.length && (
-              <>
-                {" "}플랫폼에는 규칙이 {view.rulesRegistered}개 있으며, 그중{" "}
-                {view.rulesRegistered - view.ruleStatuses.length}개는 이 화면이 아직 설명하지
-                못합니다.
-              </>
-            )}
-          </p>
+          {/* ★규칙이 하나도 안 돌았으면 다른 숫자를 말하기 전에 이것부터 말한다.
+              이 경우 아래 '적용/미판정'은 의미가 없는데, 그대로 두면 "7개 적용·이상 없음"이라는
+              가장 위험한 거짓 안심이 된다(적대검증 실측). 등록이 무성으로 깨졌을 때가 이 상태다. */}
+          {view.noRulesRan ? (
+            <p className="mt-1 text-[11px] leading-relaxed text-[var(--status-error)]">
+              <strong>이 보고서에서는 점검 규칙이 하나도 실행되지 않았습니다.</strong>{" "}
+              <span className="text-[var(--text-secondary)]">
+                따라서 이상이 없다는 뜻이 아니며, 이 화면은 어떤 숫자도 점검하지 못했습니다.
+                플랫폼 담당자 확인이 필요합니다.
+              </span>
+            </p>
+          ) : (
+            <p className="mt-1 text-[11px] text-[var(--text-secondary)] leading-relaxed">
+              {issueCount > 0 ? (
+                <>
+                  점검 규칙이 <strong className="text-[var(--text-primary)]">{issueCount}건</strong>의
+                  확인이 필요한 항목을 찾았습니다. 아래 각 섹션 안에 함께 표시했습니다.
+                </>
+              ) : (
+                <>점검 규칙이 잡아낸 이상 항목은 없습니다.</>
+              )}{" "}
+              이 화면이 판별하는 규칙 {view.ruleStatuses.length}개 중{" "}
+              <strong className="text-[var(--text-primary)]">{applied}개</strong>는 판단할 자료가
+              있어 적용됐고,{" "}
+              <strong className="text-[var(--text-primary)]">{undetermined}개</strong>는 볼 자료가
+              없어 판정하지 못했습니다.
+              {/* ★프론트 규칙 목록은 상수라 백엔드와 어긋날 수 있다. **양방향으로** 밝힌다 —
+                  한쪽(늘어난 경우)만 고지하면 규칙이 줄어드는 과대안심 방향이 침묵한다. */}
+              {view.rulesRegistered !== null &&
+                view.rulesRegistered !== view.ruleStatuses.length && (
+                  <>
+                    {" "}플랫폼에 등록된 규칙은 {view.rulesRegistered}개로 이 화면이 아는 수와
+                    다릅니다 — 표시된 적용/미판정 수를 그대로 믿지 마십시오.
+                  </>
+                )}
+            </p>
+          )}
         </div>
       </div>
 
@@ -112,7 +125,7 @@ export function CredibilitySummaryCard({
         아닙니다. 지적이 없다고 해서 모든 숫자가 맞다는 뜻은 아닙니다.
       </p>
 
-      {view.executionShortfall && (
+      {view.executionShortfall && !view.noRulesRan && (
         <p className="mt-2 text-[10px] text-[var(--status-warning)] leading-relaxed">
           점검 규칙 {view.rulesRegistered}개 중 {view.rulesExecuted}개만 실행됐습니다 — 이 보고서의
           점검 범위가 평소보다 줄었습니다.

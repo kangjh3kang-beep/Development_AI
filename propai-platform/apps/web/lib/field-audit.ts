@@ -205,6 +205,16 @@ export interface CredibilityView {
   rulesExecuted: number | null;
   /** 등록됐는데 실행되지 못한 규칙이 있다 = 이 보고서의 점검 범위가 줄었다. */
   executionShortfall: boolean;
+  /**
+   * 점검 규칙이 **하나도 돌지 않았다.**
+   *
+   * ★이 상태가 가장 위험하다: 규칙 등록이 무성으로 깨지면 백엔드는 `field_audit`을 붙이긴
+   *   하되 `rules_registered: 0`으로 정직하게 보고한다. 그런데 화면이 그 0을 무시하면
+   *   "규칙 8개 중 7개 적용 · 이상 없음"이라고 **거짓 안심**을 준다(적대검증 실측 확인).
+   *   `registered`와 `executed` 둘 다 0인 경우를 각각 잡는다. 값이 없으면(null) 알 수 없는
+   *   것이므로 0으로 단정하지 않는다.
+   */
+  noRulesRan: boolean;
   /** 규칙별 입력 확보 여부. */
   ruleStatuses: RuleStatus[];
   /** 섹션 매핑이 없는 finding code — 개발 중 발견용(테스트가 실패시킨다). */
@@ -263,6 +273,7 @@ export function readFieldAudit(result: unknown): CredibilityView {
     rulesRegistered: null,
     rulesExecuted: null,
     executionShortfall: false,
+    noRulesRan: false,
     ruleStatuses: [],
     unmappedCodes: [],
   };
@@ -295,6 +306,7 @@ export function readFieldAudit(result: unknown): CredibilityView {
     rulesExecuted,
     executionShortfall:
       rulesRegistered !== null && rulesExecuted !== null && rulesExecuted < rulesRegistered,
+    noRulesRan: rulesRegistered === 0 || rulesExecuted === 0,
     ruleStatuses,
     unmappedCodes: Array.from(
       new Set(findings.filter((f) => !SECTION_BY_CODE[f.code]).map((f) => f.code)),

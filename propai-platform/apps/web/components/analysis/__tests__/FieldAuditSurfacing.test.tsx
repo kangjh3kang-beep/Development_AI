@@ -244,6 +244,28 @@ describe("배선 — 패널이 자가검증 결과를 실제로 렌더한다", (
     expect(screen.getByText(/쉬운 설명이 준비되지 않아/)).toBeTruthy();
   });
 
+  it("★규칙이 하나도 안 돌았으면 '이상 없음'이 아니라 그 사실을 먼저 말한다", async () => {
+    // 등록이 무성으로 깨지면 백엔드는 field_audit을 붙이되 rules_registered:0으로 정직 보고한다.
+    // 화면이 그 0을 무시하면 "규칙 8개 중 7개 적용 · 이상 없음"이라는 가장 위험한 거짓 안심이
+    // 된다(적대검증 실측). 이 저장소가 배포 가드로 잡으려던 바로 그 상태다.
+    onPost("/analysis/comprehensive", async () => ({
+      ...resultWith([]),
+      field_audit: {
+        is_valid: true,
+        findings: [],
+        metadata: { enabled: true, rules_registered: 0, rules_executed: 0 },
+        coverage: {},
+      },
+    }));
+    await runAnalysis();
+    await waitFor(() =>
+      expect(screen.getByText(/점검 규칙이 하나도 실행되지 않았습니다/)).toBeTruthy(),
+    );
+    // 적용/미판정 수치를 그대로 보여주면 안 된다.
+    expect(screen.queryByText(/판단할 자료가/)).toBeNull();
+    expect(screen.queryByText(/점검 규칙이 잡아낸 이상 항목은 없습니다/)).toBeNull();
+  });
+
   it("자가검증 정보가 없으면 '없음'을 밝히고 이상 없음으로 위장하지 않는다", async () => {
     const { field_audit: _omit, ...noAudit } = resultWith([]);
     onPost("/analysis/comprehensive", async () => noAudit);

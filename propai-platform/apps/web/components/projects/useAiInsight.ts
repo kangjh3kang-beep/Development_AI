@@ -59,16 +59,19 @@ export function useAiInsight(address?: string | null): UseAiInsight {
     catch { setAi(null); }
   }, [key]);
 
-  // ★화면을 떠나면 해석 폴링을 멈춘다. 2단계 전환으로 대기 시간이 단발 90초에서 최대 5분
-  //   폴링으로 늘어났는데, 이 훅은 모든 탭 상단 스트립에 붙어 있어 탭만 바꿔도 언마운트된다.
-  //   취소가 없으면 사라진 화면이 3초마다 계속 조회한다.
+  // ★화면을 떠나거나 **대상 주소가 바뀌면** 해석 폴링을 멈춘다.
+  //   2단계 전환으로 대기 시간이 단발 90초에서 최대 5분 폴링으로 늘어났다. 이 훅은 모든 탭
+  //   상단 스트립에 붙어 있어 탭만 바꿔도 언마운트되고, 주소는 prop이라 **언마운트 없이도
+  //   바뀐다.** 주소 변경을 취소하지 않으면 이전 주소의 해석이 도착해 **새 주소 화면에
+  //   엉뚱한 해석이 표시된다**(적대검증 실측: 주소 B인데 A의 해석이 떴다).
+  //   deps를 key(주소+필지 구성)로 두어 두 경우를 한 번에 막는다.
   const abortRef = useRef<AbortController | null>(null);
   useEffect(() => {
     return () => {
       abortRef.current?.abort();
       abortRef.current = null;
     };
-  }, []);
+  }, [key]);
 
   async function run() {
     if (!address?.trim() || loading) return;
@@ -118,8 +121,14 @@ export function useAiInsight(address?: string | null): UseAiInsight {
         ? "부지 분석에 실패했습니다."
         : "AI 해석 생성에 실패했습니다.");
     } finally {
-      if (abortRef.current === controller) abortRef.current = null;
-      setLoading(false);
+      // 뒤늦게 끝난 옛 실행이 **진행 중인 새 실행의 로딩을 꺼버리지 않게** 한다.
+      // ★단, "아무도 소유하지 않음(null)"일 때는 반드시 꺼야 한다 — 주소가 바뀌어 취소된
+      //   경우가 여기다. 이때 로딩을 안 끄면 run()의 중복 가드에 걸려 **다시는 실행되지 않는다.**
+      const supersededByNewerRun = abortRef.current !== null && abortRef.current !== controller;
+      if (!supersededByNewerRun) {
+        abortRef.current = null;
+        setLoading(false);
+      }
     }
   }
 

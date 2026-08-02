@@ -130,13 +130,48 @@ describe("useAiInsight 2단계", () => {
     });
 
     const { result, unmount } = renderHook(() => useAiInsight(ADDRESS));
-    void result.current.run();
-    await new Promise((r) => setTimeout(r, 3500)); // 최소 1회 폴링
+    await act(async () => {
+      void result.current.run();
+      await new Promise((r) => setTimeout(r, 3500)); // 최소 1회 폴링
+    });
     expect(polls).toBeGreaterThanOrEqual(1);
 
     unmount();
     const afterUnmount = polls;
     await new Promise((r) => setTimeout(r, 7000)); // 취소가 없으면 2회 이상 더 돈다
     expect(polls).toBe(afterUnmount);
+  }, 20000);
+
+  it("★주소가 바뀌면 이전 주소의 해석이 화면에 뜨지 않는다", async () => {
+    // 이 훅은 address를 prop으로 받으므로 **언마운트 없이** 대상이 바뀐다. 취소하지 않으면
+    // 이전 주소의 해석이 뒤늦게 도착해 새 주소 화면에 엉뚱한 값이 표시된다(적대검증 실측).
+    onPost("/analysis/comprehensive", async () => CORE);
+    onPost("/analysis/interpretation", async () => ({ job_id: "interp_addr" }));
+    let polls = 0;
+    onGet("/analysis/interpretation/interp_addr", async () => {
+      polls += 1;
+      // 첫 폴링은 미완, 이후 A 주소 해석을 돌려준다(주소 전환 뒤 도착하는 상황).
+      return polls >= 2
+        ? { status: "done", result: { ai_interpretation: { overall_summary: "A주소 해석" } } }
+        : { status: "pending" };
+    });
+
+    const { result, rerender } = renderHook(({ addr }) => useAiInsight(addr), {
+      initialProps: { addr: ADDRESS },
+    });
+    await act(async () => {
+      void result.current.run();
+      await new Promise((r) => setTimeout(r, 3500));
+    });
+
+    // 주소 전환 — 진행 중이던 A 주소 폴링은 취소돼야 한다.
+    rerender({ addr: "서울특별시 강남구 테헤란로 152" });
+    const afterSwitch = polls;
+    await new Promise((r) => setTimeout(r, 7000));
+
+    expect(polls).toBe(afterSwitch);          // 폴링 정지
+    expect(result.current.ai).toBeNull();     // A의 해석이 B 화면에 뜨지 않는다
+    // 로딩이 영구 true로 굳지 않는다(굳으면 중복 가드에 걸려 다시는 실행되지 않는다).
+    expect(result.current.loading).toBe(false);
   }, 20000);
 });
