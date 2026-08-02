@@ -24,6 +24,10 @@ import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient } from "@/lib/api-client";
 import { formatArea } from "@/lib/formatters"; // 면적 표기 SSOT(UX A2) — 로컬 중복 formatArea 대체
 import { fieldMeta, formatFieldValue, formatDelta } from "@/lib/analysis-field-labels"; // 필드 라벨·단위 SSOT(원시 키 노출 근절)
+import { fetchInterpretation } from "@/lib/interpretation-job"; // 해석 제출·폴링 공용(형제 소비처와 공유)
+import { readFieldAudit, findingsForSection } from "@/lib/field-audit"; // 자가검증 표면화 SSOT(W3)
+import { FieldAuditNotice } from "@/components/analysis/FieldAuditNotice";
+import { CredibilitySummaryCard } from "@/components/analysis/CredibilitySummaryCard";
 
 /* ── Helpers ── */
 
@@ -525,34 +529,12 @@ export function ComprehensiveAnalysisPanel() {
     //   병합. 백엔드/프론트 배포 순서가 어긋나도 깨지지 않는다(구버전 백엔드=동기 응답).
     setInterpreting(true);
     try {
-      const submitted = await apiClient.post<AnalysisResult>("/analysis/interpretation", {
-        body: {
-          result: core,
-          llm_provider: selectedProvider || undefined,
-          llm_model: selectedModel || undefined,
-        },
-        useMock: false,
+      // ★제출·폴링은 lib/interpretation-job.ts로 공용화했다 — 같은 API를 쓰는 프로젝트 AI
+      //   인사이트 카드가 이 처리를 놓쳐 라이브에서 100% 실패하고 있었다(형제 소비처 미전파).
+      const parts = await fetchInterpretation(core, {
+        llmProvider: selectedProvider,
+        llmModel: selectedModel,
       });
-
-      let parts: AnalysisResult | null = null;
-      const jobId = (submitted as { job_id?: string })?.job_id;
-      if (jobId) {
-        // 폴링 — 3초 간격, 최대 5분. 해석 실측 소요가 125초 이상이라 여유를 둔다.
-        const deadline = Date.now() + 5 * 60 * 1000;
-        while (Date.now() < deadline) {
-          await new Promise((r) => setTimeout(r, 3000));
-          const job = await apiClient.get<{ status?: string; result?: AnalysisResult; error?: string }>(
-            `/analysis/interpretation/${jobId}`,
-            { useMock: false },
-          );
-          if (job?.status === "done") { parts = job.result ?? null; break; }
-          if (job?.status === "error") { throw new Error(job.error || "해석 생성에 실패했습니다."); }
-        }
-        if (!parts) throw new Error("해석 생성이 시간 내에 완료되지 않았습니다.");
-      } else {
-        // 구버전 백엔드(동기 응답) — 받은 값을 그대로 병합.
-        parts = submitted;
-      }
       setResult((prev) => (prev ? { ...prev, ...parts } : prev));
     } catch (e) {
       // ★해석 실패를 '분석 실패'로 승격하지 않는다 — setError를 쓰지 않고 해당 필드만 정직 표기.
@@ -589,6 +571,10 @@ export function ComprehensiveAnalysisPanel() {
   const salePrices: AnalysisResult[] = result?.sale_prices || [];
   const location = result?.location || {};
   const devPlans = result?.development_plans || {};
+
+  // ★자가검증(W3) — 1단계 분석 응답에 이미 실려 오므로 추가 호출이 없다.
+  //   result 전체를 의존성으로 둔다(리졸버가 여러 하위 키를 함께 읽으므로 부분 의존은 stale).
+  const auditView = useMemo(() => readFieldAudit(result), [result]);
 
   return (
     <div className="space-y-4">
@@ -784,6 +770,10 @@ export function ComprehensiveAnalysisPanel() {
             </div>
           )}
 
+          {/* 경사도 미획득 등 개발행위 판단 근거 갭 — 특이부지 카드 옆에 붙인다.
+              ★특이부지 카드와 독립 렌더: is_special이 아니어도 지적은 나올 수 있다. */}
+          <FieldAuditNotice notes={findingsForSection(auditView, "special-parcel").notes} />
+
           {/* ★현행 허용건축물(별표2~20) — 백엔드 allowed_buildings 소비(orphan handoff 해소).
               스토리: "지금 지을 수 있는 것"을 먼저 보여준 다음, 그 아래 랭킹으로 사업성을 비교한다. */}
           <AllowedBuildingsCard data={result.allowed_buildings} floorCap={ef.floor_cap} />
@@ -830,6 +820,13 @@ export function ComprehensiveAnalysisPanel() {
             title="산출 근거·법령"
             defaultOpen={false}
           />
+
+          {/* ★자가검증 요약(W3) — 근거 계열이 모인 자리에 붙인다. 개별 지적은 각 섹션 안에
+              함께 표시되고, 여기서는 '어디까지 점검됐나'와 섹션에 못 붙은 지적을 맡는다. */}
+          <CredibilitySummaryCard view={auditView} parcelCount={parcelRows.length} />
+
+          {/* 출처·신선도 지적은 근거 섹션 소관 */}
+          <FieldAuditNotice notes={findingsForSection(auditView, "evidence").notes} />
 
           {/* ★AI 해석 상태 고지(W2-c) — 결정론 분석은 이미 위에 다 있고 해석만 뒤따라온다.
               생성 중/실패를 명시하지 않으면 사용자는 "AI 분석이 원래 없는 화면"으로 오해한다.
@@ -949,6 +946,9 @@ export function ComprehensiveAnalysisPanel() {
                 ))}
               </div>
             )}
+            {/* ★자가검증 지적은 AI 해석 문장보다 **위**에 둔다 — 아래에 두면 사용자가 AI 문장을
+                먼저 읽고, 그 문장이 점검을 통과한 것처럼 오해한다(AI 서술문은 점검 대상이 아니다). */}
+            <FieldAuditNotice notes={findingsForSection(auditView, "effective-far").notes} />
             {result.ai_interpretation?.effective_far_interpretation && (
               <AiInterpretation text={result.ai_interpretation.effective_far_interpretation} />
             )}
@@ -1080,6 +1080,7 @@ export function ComprehensiveAnalysisPanel() {
               <Field label="추정 시세 총액" value={formatWon(landPrices.total_estimated_value_won)} />
               <Field label="시세 보정계수" value={`×${landPrices.market_multiplier ?? "-"}`} />
             </div>
+            <FieldAuditNotice notes={findingsForSection(auditView, "land-price").notes} />
             {result.ai_interpretation?.land_price_interpretation && (
               <AiInterpretation text={result.ai_interpretation.land_price_interpretation} />
             )}
@@ -1131,6 +1132,7 @@ export function ComprehensiveAnalysisPanel() {
             ) : (
               <p className="text-xs text-[var(--text-hint)] italic">분양가 데이터 없음</p>
             )}
+            <FieldAuditNotice notes={findingsForSection(auditView, "sale-price").notes} />
             {result.ai_interpretation?.sale_price_interpretation && (
               <AiInterpretation text={result.ai_interpretation.sale_price_interpretation} />
             )}
@@ -1157,6 +1159,7 @@ export function ComprehensiveAnalysisPanel() {
                 ))}
               </div>
             )}
+            <FieldAuditNotice notes={findingsForSection(auditView, "location").notes} />
             {result.ai_interpretation?.location_interpretation && (
               <AiInterpretation text={result.ai_interpretation.location_interpretation} />
             )}
@@ -1264,6 +1267,7 @@ export function ComprehensiveAnalysisPanel() {
                 ) : (
                   <p className="text-xs text-[var(--text-hint)] italic">개발계획/규제 정보 없음</p>
                 )}
+                <FieldAuditNotice notes={findingsForSection(auditView, "dev-plans").notes} />
                 {result.ai_interpretation?.development_plan_interpretation && (
                   <AiInterpretation text={result.ai_interpretation.development_plan_interpretation} />
                 )}
