@@ -22,7 +22,7 @@ import type { ParcelRow } from "@/lib/parcel-rows";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient } from "@/lib/api-client";
-import { formatArea } from "@/lib/formatters"; // 면적 표기 SSOT(UX A2) — 로컬 중복 formatArea 대체
+import { formatArea, formatPercent } from "@/lib/formatters"; // 면적 표기 SSOT(UX A2) — 로컬 중복 formatArea 대체
 import { fieldMeta, formatFieldValue, formatDelta } from "@/lib/analysis-field-labels"; // 필드 라벨·단위 SSOT(원시 키 노출 근절)
 import { fetchInterpretation } from "@/lib/interpretation-job"; // 해석 제출·폴링 공용(형제 소비처와 공유)
 import { readFieldAudit, findingsForSection } from "@/lib/field-audit"; // 자가검증 표면화 SSOT(W3)
@@ -935,12 +935,12 @@ export function ComprehensiveAnalysisPanel() {
           {/* Section 1: 실효용적률 */}
           <SectionCard title="1. 실효용적률 산정" icon={BarChart3} defaultOpen>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-              <Field label="법정 건폐율 (국토계획법)" value={`${ef.national_bcr_pct ?? "-"}%`} />
-              <Field label="법정 용적률 (국토계획법)" value={`${ef.national_far_pct ?? "-"}%`} />
-              <Field label="조례 건폐율 (지자체)" value={`${ef.ordinance_bcr_pct ?? "-"}%`} />
-              <Field label="조례 용적률 (지자체)" value={`${ef.ordinance_far_pct ?? "-"}%`} />
-              <Field label="실효 건폐율" value={`${ef.effective_bcr_pct ?? "-"}%`} />
-              <Field label="실효 용적률" value={`${ef.effective_far_pct ?? "-"}%`} />
+              <Field label="법정 건폐율 (국토계획법)" value={formatPercent(ef.national_bcr_pct)} />
+              <Field label="법정 용적률 (국토계획법)" value={formatPercent(ef.national_far_pct)} />
+              <Field label="조례 건폐율 (지자체)" value={formatPercent(ef.ordinance_bcr_pct)} />
+              <Field label="조례 용적률 (지자체)" value={formatPercent(ef.ordinance_far_pct)} />
+              <Field label="실효 건폐율" value={formatPercent(ef.effective_bcr_pct)} />
+              <Field label="실효 용적률" value={formatPercent(ef.effective_far_pct)} />
             </div>
             {ef.source && <p className="text-[10px] text-[var(--text-hint)] mt-1">출처: {ef.source}</p>}
             {/* ★신규(additive) structural_cap_pct — 구조상한(층수 제한 등)이 조례 용적률보다
