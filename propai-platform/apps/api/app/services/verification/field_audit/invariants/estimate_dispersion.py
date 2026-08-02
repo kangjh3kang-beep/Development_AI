@@ -60,7 +60,14 @@ _PANEL = "분양가"
 # 유효 점추정의 정본 신호 키 — _calc_sale_prices:1469. 이 키가 양수여야 '경고할 표시 분양가'가 실재.
 _POINT_KEY = "sale_price_per_pyeong_man"
 
-# 판정불가 항목 마커(:1451 type_name) — 이 항목은 유효 점추정이 아니므로 배지 대상에서 제외.
+# 판정불가 항목의 **판정용 코드** — 표시 문구와 분리된 안정 식별자. 생산자가 type_name(화면
+# 문구) 옆에 additive로 함께 싣는다. 규칙은 이 코드를 먼저 본다.
+_UNDETERMINED_CODE = "UNDETERMINED"
+
+# 판정불가 항목의 표시 문구 — ★폴백 전용. 코드 필드가 없는 **구버전 저장 payload**만 이걸로
+# 판정한다. 종전에는 이 문자열이 유일한 판정 근거였고, 그래서 화면 문구를 쉬운 말로 바꾸는
+# 순간 이 규칙이 아무 에러 없이 무발동이 됐다(배지가 사라진 걸 아무도 모름). 신규 응답은
+# 코드로 판정하므로 문구를 자유롭게 바꿔도 안전하다.
 _UNDETERMINED_MARK = "판정불가"
 
 # finding expected 마커(값이 아니라 '기대 형태'를 기술 — 특정 분양가 수치가 아님). 테스트가 참조하도록 상수로 노출.
@@ -159,8 +166,14 @@ def _is_valid_point_estimate(item: Any) -> bool:
     """
     if not isinstance(item, dict):
         return False
-    if str(item.get("type_name") or "") == _UNDETERMINED_MARK:
-        return False  # 판정불가 항목(:1451) — 경고할 점추정 아님
+    # ★판정용 코드 우선 — 표시 문구(type_name)에 의존하지 않는다.
+    code = str(item.get("type_name_code") or "").strip().upper()
+    if code:
+        if code == _UNDETERMINED_CODE:
+            return False  # 판정불가 항목 — 경고할 점추정 아님
+    elif str(item.get("type_name") or "") == _UNDETERMINED_MARK:
+        # 코드가 없는 구버전 payload만 표시 문구로 폴백(신규 경로는 위에서 결정된다).
+        return False
     price = item.get(_POINT_KEY)
     if isinstance(price, bool) or not isinstance(price, (int, float)):
         return False

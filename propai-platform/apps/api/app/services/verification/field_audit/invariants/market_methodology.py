@@ -65,6 +65,12 @@ _METHODOLOGY_FINDING_CODE = "MARKET_PRICE_METHODOLOGY"
 # 시세로 교체되면) 무발동 — 방법론-특정 가드라 정직성이 자동 유지된다.
 _OFFICIAL_PRICE_SOURCE_TAG = "공시지가"
 
+# ★방법론 판정용 코드 — 표시 문구(source)와 분리된 안정 식별자. 생산자가 source 옆에 additive로
+#   함께 싣는다. 규칙은 이 코드를 먼저 보고, 없을 때만 위 표시 문구로 폴백한다(구버전 payload).
+#   종전에는 표시 문구가 유일한 판정 근거라, 출처 문구를 쉬운 말로 바꾸면 이 상시 배지가
+#   아무 에러 없이 영구 침묵했다.
+_OFFICIAL_PRICE_SOURCE_KIND = "OFFICIAL_LAND_PRICE"
+
 # finding expected 마커(값이 아니라 '기대 방법론'을 기술). 테스트가 참조하도록 상수로 노출.
 _METHODOLOGY_EXPECTED = "실거래로 교차검증된 시세"
 
@@ -102,9 +108,16 @@ def _market_price_methodology(
     if isinstance(est, bool) or not isinstance(est, (int, float)) or est <= 0:
         return []  # 표시 추정시세 없음(공시지가 조회 실패 등) → 경고할 표시값 없음 → 무발동
 
-    source = lp.get("source")
-    if not isinstance(source, str) or _OFFICIAL_PRICE_SOURCE_TAG not in source:
-        return []  # 공시지가 방법론 아님(미래 실거래 기반 시세 등) → 무발동(방법론-특정 가드)
+    # ★판정용 코드 우선 — 표시 문구에 의존하지 않는다(문구를 바꿔도 배지가 죽지 않게).
+    kind = str(lp.get("source_kind") or "").strip().upper()
+    if kind:
+        if kind != _OFFICIAL_PRICE_SOURCE_KIND:
+            return []  # 공시지가 방법론 아님 → 무발동(방법론-특정 가드)
+    else:
+        # 코드가 없는 구버전 payload만 표시 문구로 폴백.
+        source = lp.get("source")
+        if not isinstance(source, str) or _OFFICIAL_PRICE_SOURCE_TAG not in source:
+            return []
 
     return [
         AuditFinding(
