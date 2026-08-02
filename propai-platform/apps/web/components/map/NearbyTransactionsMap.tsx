@@ -14,6 +14,7 @@ import { SatongMultiMap, type SatongMarketLayerState } from "@/components/map/Sa
 import { KakaoRoadview } from "@/components/map/KakaoRoadview";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 import { MARKET_RENT_TYPES, MARKET_TRADE_TYPES, resolveMapCenter } from "@/lib/satong-map-layers";
+import { selectLocatedGroups } from "@/lib/market/comparable-sample";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 
 type Deal = {
@@ -397,7 +398,18 @@ export function NearbyTransactionsMap({
 
       <div className="mb-3 flex flex-wrap items-center gap-1.5">
         {typeList.map((item) => {
-          const count = payload?.categories?.[`${item.key}_${kind}`]?.count ?? 0;
+          // ★W1-b — 이 칩은 바로 위 "반경 N" 헤더 아래에 놓인다. 종전엔 `cat.count`(= 반경밖
+          //   단정 불가분과 위치 미확인분을 **포함한** 혼합 합계)를 그대로 찍어, 헤더의 반경
+          //   주장과 결합해 "반경 안에 N건"으로 읽혔다. 집계 코드가 아니라 **카운트 표시**라
+          //   가격 누산 금지 규칙에도 안 걸리는 종류의 오염이다.
+          const cat = payload?.categories?.[`${item.key}_${kind}`];
+          const chipBasis = selectLocatedGroups(cat as never).basis;
+          const count = chipBasis.locatedCount;
+          // ★W1-b 리뷰(M-4) — 칩은 위치확인분만 세는데 **지도 마커는 개략 좌표분도 찍는다**
+          //   (마커는 "좌표가 있으면 찍는다"가 맞다 — 기준이 다르다). 그대로 두면 "토지 0" 칩
+          //   아래에 토지 마커가 여러 개 보이는 모순이 되고, 설명이 없으면 사용자는 둘 중
+          //   무엇이 틀렸는지 알 수 없다. **내 변경이 새로 만든 불일치**이므로 여기서 밝힌다.
+          const approxOnMap = chipBasis.approximateCount;
           const active = type === item.key;
           return (
             <button
@@ -412,7 +424,13 @@ export function NearbyTransactionsMap({
               style={active ? { backgroundColor: item.color } : undefined}
             >
               <span className="h-2 w-2 rounded-full" style={{ backgroundColor: item.color }} />
-              {item.label}<span className="opacity-70">{count}</span>
+              {item.label}
+              <span className="opacity-70">{count}</span>
+              {approxOnMap > 0 && (
+                <span className="opacity-60" title="위치가 동 단위까지만 확인돼 집계에서 뺐지만, 지도에는 개략 위치로 표시됩니다">
+                  (개략 {approxOnMap})
+                </span>
+              )}
             </button>
           );
         })}

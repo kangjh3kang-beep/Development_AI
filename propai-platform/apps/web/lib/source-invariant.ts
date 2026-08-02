@@ -36,8 +36,29 @@ export type WiringInvariant = {
   minMatches: number;
 };
 
+/**
+ * 줄 끝 주석을 떼어낸다 — ★2026-08-02 적발한 **세 번째 함정**.
+ *
+ * 이 검사는 `line.includes(mustContain)` 이라 **주석이 조건을 충족시킨다**. 이 저장소는
+ * 줄마다 한국어 설명을 붙이는 스타일이라 적대적 의도가 없어도 발생하고, 실제로 5개 규칙이
+ * 다음 한 줄들로 전부 우회됐다(리뷰어 실증):
+ *
+ *   const aggregatable = true;                 // locatedKeys.has 로 대체 예정(TODO)
+ *   for (const g of cat.groups || []) {        // selectLocatedGroups 복구 필요
+ *
+ * 즉 배선을 되돌리면서 "되돌렸다"는 주석만 남기면 게이트가 초록이 된다. 앞선 두 함정
+ * (①dict 키 이름을 함수 호출로 오인 ②스코프가 타입 선언까지 매치)과 같은 계열이다.
+ *
+ * `://`(URL) 뒤는 자르지 않는다 — 문자열 안의 슬래시를 주석으로 오인하면 정상 코드를
+ * 위반으로 만들어(과도스코프) 기준선이 깨진다.
+ */
+function stripLineComment(line: string): string {
+  return line.replace(/(^|[^:])\/\/.*$/, "$1");
+}
+
 function includes(line: string, needle: string | RegExp): boolean {
-  return typeof needle === "string" ? line.includes(needle) : needle.test(line);
+  const code = stripLineComment(line);
+  return typeof needle === "string" ? code.includes(needle) : needle.test(code);
 }
 
 /**

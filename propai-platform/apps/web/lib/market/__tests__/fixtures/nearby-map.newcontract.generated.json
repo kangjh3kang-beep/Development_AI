@@ -1,0 +1,137 @@
+{
+ "center": {
+  "lat": 36.0,
+  "lon": 129.0,
+  "address": "대상지"
+ },
+ "radius_m": 1000,
+ "radius_applied": true,
+ "avm": {
+  "estimated_price": 510000000,
+  "price_per_sqm": 6071429,
+  "confidence_score": 0.5,
+  "small_sample": true,
+  "min_reliable_deals": 5,
+  "comparable_count": 2,
+  "comparable_deal_count": 2,
+  "comparable_group_count": 1,
+  "sample_count": 2,
+  "price_cv_percent": 2,
+  "basis": {
+   "radius_applied": true,
+   "radius_m": 1000,
+   "in_radius_group_count": 1,
+   "scope": "in_radius"
+  }
+ },
+ "avm_caveat": null,
+ "months": [
+  "202607"
+ ],
+ "categories": {
+  "apt_trade": {
+   "label": "아파트 매매",
+   "type": "apt",
+   "kind": "trade",
+   "count": 4,
+   "groups": [
+    {
+     "name": "A동 1-1",
+     "dong": "A동",
+     "jibun": "1-1",
+     "deals": [
+      {
+       "price_10k_won": 52000,
+       "area_m2": 84.0,
+       "floor": "5",
+       "deal_date": "2026년 7월 2일"
+      },
+      {
+       "price_10k_won": 50000,
+       "area_m2": 84.0,
+       "floor": "5",
+       "deal_date": "2026년 7월 1일"
+      }
+     ],
+     "count": 2,
+     "avg_area_m2": 84.0,
+     "build_year": null,
+     "jimok": null,
+     "land_use": null,
+     "coord_precision": "parcel",
+     "avg_price_10k": 51000,
+     "min_price_10k": 50000,
+     "max_price_10k": 52000,
+     "excluded_outliers": 0,
+     "lat": 36.0005,
+     "lon": 129.0005,
+     "location_status": "located"
+    },
+    {
+     "name": "B동",
+     "dong": "B동",
+     "jibun": "",
+     "deals": [
+      {
+       "price_10k_won": 90000,
+       "area_m2": 84.0,
+       "floor": "5",
+       "deal_date": "2026년 7월 3일"
+      }
+     ],
+     "count": 1,
+     "avg_area_m2": 84.0,
+     "build_year": null,
+     "jimok": null,
+     "land_use": null,
+     "coord_precision": "dong",
+     "avg_price_10k": 90000,
+     "min_price_10k": 90000,
+     "max_price_10k": 90000,
+     "excluded_outliers": 0,
+     "lat": 36.0006,
+     "lon": 129.0006,
+     "location_status": "approximate"
+    },
+    {
+     "name": "미확보단지",
+     "dong": "C동",
+     "jibun": "",
+     "deals": [
+      {
+       "price_10k_won": 99000,
+       "area_m2": 84.0,
+       "floor": "5",
+       "deal_date": "2026년 7월 4일"
+      }
+     ],
+     "count": 1,
+     "avg_area_m2": 84.0,
+     "build_year": null,
+     "jimok": null,
+     "land_use": null,
+     "coord_precision": "building",
+     "avg_price_10k": 99000,
+     "min_price_10k": 99000,
+     "max_price_10k": 99000,
+     "excluded_outliers": 0,
+     "location_status": "unlocated"
+    }
+   ],
+   "capped_count": 0,
+   "capped_group_count": 0,
+   "count_in_radius": 2,
+   "count_approximate": 1,
+   "count_unresolved": 1,
+   "sample_basis": {
+    "scope": "radius",
+    "radius_applied": true,
+    "radius_m": 1000,
+    "located_count": 2,
+    "approximate_count": 1,
+    "unlocated_count": 1,
+    "capped_count": 0
+   }
+  }
+ }
+}

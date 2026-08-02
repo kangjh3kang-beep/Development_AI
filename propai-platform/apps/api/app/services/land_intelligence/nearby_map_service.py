@@ -65,6 +65,14 @@ _VWORLD_GEOCODE_URL = "https://api.vworld.kr/req/address"
 _GEOCODE_CACHE_TTL_OK = 604800  # 7일
 _GEOCODE_CACHE_TTL_MISS = 300   # 5분
 
+# AVM 신뢰도 소표본 기준 — 이 미만이면 신뢰도에 하드 캡을 걸고 `small_sample` 로 고지한다.
+# ★근거: 신뢰도 산식의 표본 항이 log 스케일(`log10(n+1)/2`)이라 표본이 급감해도 거의
+#   떨어지지 않고, 표본 1건은 분산이 0이라 분산 항이 만점을 받는다(실측 1건 → 74.5%).
+#   값 자체는 참일 수 있으나 "얼마나 믿을 만한가"를 그 숫자가 대변하지 못한다.
+#   5는 자의적 상수가 아니라 "분산을 말할 수 있는 최소 표본"의 통상 하한을 택한 것이며,
+#   차단이 아니라 **강등 + 고지**이므로 과소경고 쪽으로 안전하다.
+_MIN_RELIABLE_DEALS = 5
+
 
 class NearbyMapService:
     """주변 실거래 지도 페이로드 생성기."""
@@ -170,6 +178,15 @@ class NearbyMapService:
                     unresolved.append(grp)
                     continue
                 grp["lat"], grp["lon"] = c["lat"], c["lon"]
+                # ★W1-b 리뷰(H-3) 봉합 — 정밀도를 **질의 형태**가 아니라 **매칭 결과**로 최종
+                #   확정한다. 질의만 보면 "지번이 들어갔으니 parcel"이라고 추정하게 되는데,
+                #   `sigungu` 가 결측이거나(중개사무소 소재지에서 오므로 자주 빈다) 힌트가
+                #   시군구가 아닌 값이면 VWorld 가 **다른 시군구의 동명 지번**을 돌려줄 수 있다.
+                #   그때 좌표는 완전히 틀린데 정밀도는 parcel 이라 라벨이 그것을 승인해버린다.
+                #   refined(매칭 주소)에 이 그룹의 법정동·지번이 실제로 들어있는지 대조해
+                #   불일치면 강등한다. refined 가 없으면(구 캐시) 판정을 바꾸지 않는다.
+                if self._refined_mismatch(grp, c.get("refined")):
+                    grp["coord_precision"] = "dong"
                 resolved.append(grp)
             coords_unresolved += len(unresolved)
 
@@ -185,22 +202,82 @@ class NearbyMapService:
 
             # 거래 많은 순 정렬 후 상한 — ★반경 필터 이후에 캡을 적용해야 "반경 내 상위 N건"이
             # 된다(캡을 필터보다 먼저 적용하면 시군구 전체 상위 N건이 되어 radius_m 이 무의미).
-            resolved.sort(key=lambda x: x["count"], reverse=True)
+            # ★W1-b 리뷰(H-1) 봉합 — 정렬 키에 **정밀도를 1순위**로 넣는다.
+            #   종전엔 거래건수만으로 정렬해 상위 28을 자른 뒤 그 안에서 정밀도를 갈랐다.
+            #   그래서 상위 28이 전부 동 대표점이면 29위의 지번 그룹이 **반경 안에 있어도**
+            #   통째로 사라지고 `located_count=0` 이 된다 → 화면은 "반경 1km 내 위치 확인
+            #   거래를 찾지 못했습니다"라고 말한다. 오염과 **정반대 방향의 거짓 진술**이며,
+            #   토지 매매(동 폴백이 흔하고 건수도 크다)가 정확히 이 순서에 노출된다.
+            #   (리뷰어 실측: 반경 안 지번 그룹 5개가 있는데 located_count=0)
+            _precise_first = {"parcel": 0, "building": 0}
+            resolved.sort(
+                key=lambda x: (_precise_first.get(x.get("coord_precision"), 1), -x["count"])
+            )
             capped = resolved[:_MAX_GROUPS_PER_CAT]
             # ★절단 정직 고지: 캡(28)에 걸려 응답에서 빠진 그룹 수를 카테고리별로 센다.
             #   종전엔 이 절단을 아무도 세지 않아 프론트가 "다 보여준다"고 오인할 여지가 있었다
             #   (geocode_precut_count·radius_filtered_out_count와 동일한 정직 원칙 — #459 계보).
-            cat["capped_count"] = max(0, len(resolved) - _MAX_GROUPS_PER_CAT)
+            #   ★W1-b 리뷰(H-4): `sample_basis` 의 다른 카운트는 전부 **거래 건수**인데 이것만
+            #   그룹 수였다. 같은 dict·같은 문장에서 단위가 섞여 "표시 상한 초과 7건"이라고
+            #   써놓고 실제로는 15건이 잘린 상태가 나왔다(evidence 는 verified 만 원칙 위반).
+            #   그룹 수는 이름을 분리해 보존하고, 라벨이 쓰는 값은 건수로 준다.
+            _dropped = resolved[_MAX_GROUPS_PER_CAT:]
+            cat["capped_count"] = sum(g["count"] for g in _dropped)
+            cat["capped_group_count"] = len(_dropped)
+            # ★W1-b — 그룹마다 "이 그룹이 위치 판정을 통과했는가"를 **명시 필드**로 박는다.
+            #   종전엔 `lat is None` 으로 소비처가 **추론**해야 했고, 그 추론을 안 한 소비처가
+            #   전부 오염됐다(시장분석 헤드라인 평균가·탁상감정 거래사례·AI비서 프롬프트·
+            #   대화형 시장분석). 추론 대신 계약으로 바꿔야 감사 규칙도 판정할 수 있다.
+            #   ★배열을 `groups_located`/`groups_unlocated`로 **쪼개지 않는** 이유: 혼합
+            #   `groups`를 남긴 채 분리 배열을 병기하면 같은 그룹이 JSON에 두 번 실려 응답이
+            #   정확히 2배가 된다(암사동 실측 286KB → 약 570KB). 플래그는 +3.5%면 끝난다.
+            #   혼합 배열 제거는 소비처가 전부 셀렉터로 이전한 뒤에 한다(그때는 복제가 없다).
+            #   ★★그리고 좌표가 있다고 다 같은 좌표가 아니다. `coord_precision == "dong"` 인
+            #   그룹은 법정동 대표점이거나 여러 동이 병합된 것이라, 그 점으로 반경 안팎을
+            #   통과시켜도 **그룹 자체가 반경 안이라는 보장이 없다**. 이걸 "located"로 부르면
+            #   호미곶과 같은 클래스의 오염이 이번엔 "위치 확인" 도장을 받고 나간다 —
+            #   `lat is not None` 검사로는 절대 안 걸리는 종류라 더 나쁘다.
+            precise = [g for g in capped if g.get("coord_precision") != "dong"]
+            approximate = [g for g in capped if g.get("coord_precision") == "dong"]
+            for _g in precise:
+                _g["location_status"] = "located"
+            for _g in approximate:
+                _g["location_status"] = "approximate"
+            for _g in unresolved:
+                _g["location_status"] = "unlocated"
             cat["groups"] = capped + unresolved
             cat["count"] = sum(g["count"] for g in cat["groups"])
             # ★근본수정(P0) — 반경을 **실제로 통과한** 그룹을 따로 보관한다.
             #   종전엔 `capped + unresolved`를 한 리스트로만 내보내 소비처가 둘을 구분할 수
             #   없었고, 그 결과 AVM이 **반경 판정을 받은 적도 없는** 그룹으로 계산됐다
             #   (호미곶 실측: 반경 통과 0건인데 AVM 표본 32건 — 전부 좌표미확보분).
-            cat["_in_radius_groups"] = capped
+            #   ★W1-b 강화 — AVM 도 **정밀 좌표분만** 쓴다. `avm_caveat` 문구가 스스로
+            #   "반경 N 안에서 **위치가 확인된**"이라고 주장하므로, 동 대표점·다동 병합
+            #   그룹을 넣으면 그 문장이 거짓이 된다(W1이 프론트에서 봉합한 것과 동일 결함).
+            cat["_in_radius_groups"] = precise
             # 카운트도 분리 노출한다. 하나로 합치면 프론트가 "반경 내 N건"으로 오독한다.
-            cat["count_in_radius"] = sum(g["count"] for g in capped)
+            #   ★`count_in_radius` 는 **정밀 좌표분**만 센다 — 이 이름으로 소비되는 곳이
+            #   전부 "반경 안이라고 말해도 되는 건수"를 원하기 때문이다.
+            cat["count_in_radius"] = sum(g["count"] for g in precise)
+            cat["count_approximate"] = sum(g["count"] for g in approximate)
             cat["count_unresolved"] = sum(g["count"] for g in unresolved)
+            # ★W1-b — 집계값에 붙일 **라벨의 근거**를 카테고리마다 실어 보낸다.
+            #   소비처가 "반경 N km"라고 쓰려면 그 주장이 참인지 알아야 하는데, 종전엔
+            #   판단 재료가 최상위에만 있어(`radius_applied`) 카테고리 단위 소비처가
+            #   요청 radius_m 을 그대로 에코해 라벨을 지어냈다. scope 가 "sigungu"면
+            #   어떤 소비처도 반경 문구를 만들 수 없다 — 라벨 생성의 단일 근거다.
+            cat["sample_basis"] = {
+                "scope": "radius" if radius_applied else "sigungu",
+                "radius_applied": radius_applied,
+                # 반경을 실제로 적용하지 않았으면 숫자를 주지 않는다(주면 또 에코된다).
+                "radius_m": radius_m if radius_applied else None,
+                "located_count": cat["count_in_radius"],
+                # 좌표는 있으나 동 입도라 반경 안팎을 단정할 수 없는 분. 집계에서 빼되
+                # "없는 것"처럼 감추지 않는다 — 사용자가 표본이 왜 얇은지 알아야 한다.
+                "approximate_count": cat["count_approximate"],
+                "unlocated_count": cat["count_unresolved"],
+                "capped_count": cat["capped_count"],
+            }
 
         # ★내부 전용 필드 정리 — `_in_radius_groups`는 AVM 계산용이고 그대로 두면 응답
         #   페이로드가 그룹만큼 중복된다(대형 시군구에서 수 MB). 소비 후 제거한다.
@@ -332,8 +409,52 @@ class NearbyMapService:
         if jibun:
             return f"{sgg} {dong} {jibun}".strip()
         if name:
-            return f"{dong} {name}".strip()
+            # ★W1-b 리뷰(H-3) — 종전엔 `f"{dong} {name}"` 이라 **시군구가 없었다**. 같은 동명이
+            #   전국에 흔해(역삼동·중앙동 등) VWorld 가 다른 시군구의 동명 단지로 매칭할 수
+            #   있고, 그러면 좌표가 완전히 틀린 채 정밀도만 building 으로 남는다.
+            return f"{sgg} {dong} {name}".strip()
         return f"{sgg} {dong}".strip()
+
+    @staticmethod
+    def _refined_mismatch(grp: dict[str, Any], refined: str | None) -> bool:
+        """지오코딩이 **엉뚱한 주소로 매칭됐는지** 판정한다(정밀도 강등 트리거).
+
+        VWorld 는 질의를 관대하게 해석한다 — `sigungu` 가 빠진 `"대보리 산1-1"` 같은 질의는
+        전국의 동명 지번 중 하나로 매칭될 수 있다. 좌표는 정상적으로 돌아오므로 `lat` 검사는
+        물론이고 질의 형태 기반 정밀도 판정도 이 오매칭을 **구조적으로 못 잡는다**.
+
+        판정: 그룹이 아는 법정동·지번이 매칭 주소 문자열에 실제로 들어있는가.
+        - `refined` 가 없으면(구 캐시 엔트리) **판정하지 않는다**(False) — 모르는 것을 근거로
+          강등하면 그것도 날조다. 캐시가 돌면 자연히 해소된다.
+        - 법정동은 마지막 토큰만 본다(`"호미곶면 대보리"` → `"대보리"`) — 행정 표기가
+          `"경북 포항시 남구 호미곶면 대보리"` 처럼 앞부분이 달라지는 경우가 흔하다.
+        """
+        if not refined:
+            return False
+        dong = (grp.get("dong") or "").strip()
+        jibun = (grp.get("jibun") or "").strip()
+        if dong:
+            tail = dong.split()[-1]
+            if tail and tail not in refined:
+                return True
+        if jibun and jibun not in refined:
+            return True
+        return False
+
+    @staticmethod
+    def _query_grain(jibun: str, name: str) -> str:
+        """`_query_for` 가 만든 질의가 **어느 입도**를 가리키는지. 좌표의 의미가 여기서 갈린다.
+
+        ★이 구분이 없으면 "좌표가 있다"를 "이 그룹이 어디인지 안다"로 착각한다.
+        지번·건물명 질의는 **그 물건**을 가리키지만, 마지막 폴백(`시군구 동`)은 VWorld 가
+        **법정동 대표점**을 준다 — 동 전체를 한 점으로 뭉갠 좌표라 반경 안팎 판정에 쓸 수 없다
+        (토지 매매는 건물명이 없어 이 폴백에 자주 걸린다).
+        """
+        if jibun:
+            return "jibun"
+        if name:
+            return "name"
+        return "dong"
 
     def _group_trade(self, type_key, label, rows, sigungu_hint) -> dict[str, Any]:
         groups: dict[str, dict[str, Any]] = {}
@@ -354,8 +475,20 @@ class NearbyMapService:
                 #   집합으로 모아두고(대표값 확정은 _finalize에서 — 혼재 검출을 위해), 원천에
                 #   없으면 빈 채로 남는다(무날조).
                 "_build_years": set(), "_jimoks": set(), "_land_uses": set(),
+                # ★W1-b — 좌표의 **의미**를 판정할 재료. 그룹 키가 `name or jibun or dong`
+                #   이라 같은 건물명이 여러 법정동에 있으면 한 그룹으로 병합되는데, 좌표는
+                #   위 `_query`(첫 행 기준) 하나뿐이다. 병합이 일어났는데 그 좌표로 반경
+                #   안팎을 판정하면 다른 동의 거래까지 "반경 내"가 된다 — 좌표가 있으니
+                #   `lat is not None` 검사로는 절대 걸러지지 않는 종류의 오염이다.
+                "_query_grain": self._query_grain(jibun, name),
+                "_dongs": set(),
                 "deals": [], "_prices": [], "_areas": [],
             })
+            # ★W1-b 리뷰(H-3) — 빈 dong 도 **센티널로 기록**한다. 종전엔 빈 값을 그냥 건너뛰어,
+            #   "법정동을 모르는 행"이 섞여도 `_dongs` 크기가 1로 남아 정밀 좌표로 분류됐다.
+            #   동을 모르는 행이 섞인 것과 여러 동이 섞인 것은 **같은 위험**이다(그룹 대표
+            #   좌표가 일부 행만 대표한다).
+            g["_dongs"].add(dong)
             price = int(r.get("price_10k_won") or 0)
             area = float(r.get("area_m2") or 0)
             if price > 0:
@@ -390,8 +523,17 @@ class NearbyMapService:
                 "name": name or (f"{dong} {jibun}".strip() or "물건"),
                 "dong": dong, "jibun": jibun,
                 "_query": self._query_for(sigungu, dong, jibun, name),
+                # ★W1-b — 매매(_group_trade)와 동일한 좌표 정밀도 재료. 전월세도 같은 그룹핑
+                #   규칙을 쓰므로 같은 병합 오염에 노출된다(한쪽만 고치면 비대칭이 남는다).
+                "_query_grain": self._query_grain(jibun, name),
+                "_dongs": set(),
                 "deals": [], "_deposits": [], "_monthlies": [], "_areas": [],
             })
+            # ★W1-b 리뷰(H-3) — 빈 dong 도 **센티널로 기록**한다. 종전엔 빈 값을 그냥 건너뛰어,
+            #   "법정동을 모르는 행"이 섞여도 `_dongs` 크기가 1로 남아 정밀 좌표로 분류됐다.
+            #   동을 모르는 행이 섞인 것과 여러 동이 섞인 것은 **같은 위험**이다(그룹 대표
+            #   좌표가 일부 행만 대표한다).
+            g["_dongs"].add(dong)
             dep = int(r.get("deposit_10k_won") or 0)
             mon = int(r.get("monthly_rent_10k_won") or 0)
             area = float(r.get("area_m2") or 0)
@@ -430,6 +572,25 @@ class NearbyMapService:
             g["build_year"] = next(iter(build_years)) if len(build_years) == 1 else None
             g["jimok"] = next(iter(jimoks)) if len(jimoks) == 1 else None
             g["land_use"] = next(iter(land_uses)) if len(land_uses) == 1 else None
+            # ★W1-b — 이 그룹의 좌표가 **무엇을 가리키는지**를 공개 계약으로 박는다.
+            #   위 build_year/jimok 혼재 처리와 정확히 같은 논리를 좌표에 적용한 것이다:
+            #   여러 법정동이 한 키로 병합됐는데 좌표는 첫 행 하나뿐이면, 그 좌표는 그룹을
+            #   대표하지 않는다. 그런데 `lat` 은 멀쩡히 채워지므로 좌표 유무 검사로는
+            #   영원히 안 걸린다 — 반경 판정을 "통과"하고 라벨이 그것을 승인해버린다.
+            #     parcel  : 지번 질의 — 그 필지를 가리킨다. 반경 판정에 쓸 수 있다.
+            #     building: 건물명 질의 — 그 단지를 가리킨다. 반경 판정에 쓸 수 있다.
+            #     dong    : 법정동 대표점 폴백이거나 **여러 동이 병합**된 그룹. 동 전체를
+            #               한 점으로 뭉갠 좌표라 반경 안팎을 단정할 수 없다.
+            _dongs = g.pop("_dongs", set())
+            _grain = g.pop("_query_grain", "dong")
+            if len(_dongs) > 1:
+                g["coord_precision"] = "dong"
+            elif _grain == "jibun":
+                g["coord_precision"] = "parcel"
+            elif _grain == "name":
+                g["coord_precision"] = "building"
+            else:
+                g["coord_precision"] = "dong"
             if kind == "trade":
                 p = g.pop("_prices", [])
                 # ★대표통계(이상치 제거) — 지분·정정 등 미미거래·초고가 왜곡 방지(공용 헬퍼).
@@ -489,19 +650,59 @@ class NearbyMapService:
             return None  # 진짜로 거래가 없다 — 기존 "무자료" 표기로 충분
         if radius_applied:
             if not (cat.get("_in_radius_groups") or []):
+                # ★W1-b 리뷰(M-7) — `all_groups` 는 좌표가 **있는** 개략 그룹까지 포함하므로
+                #   전부 "위치 미확인"이라 부르면 거짓이다. 상태별로 나눠 말한다.
+                _approx = sum(
+                    1 for g in all_groups
+                    if g.get("lat") is not None
+                    and g.get("coord_precision") == "dong"
+                )
+                _unlocated = sum(1 for g in all_groups if g.get("lat") is None)
+                _detail = " · ".join(
+                    bit for bit in (
+                        f"위치 미확인 {_unlocated}곳" if _unlocated else "",
+                        f"동 단위까지만 확인 {_approx}곳" if _approx else "",
+                    ) if bit
+                )
                 return (
                     f"반경 {radius_m}m 안에서 위치가 확인된 아파트 실거래를 찾지 못했습니다"
-                    f"(위치 미확인 {len(all_groups)}곳은 시세 산정에 쓰지 않습니다)."
+                    f"({_detail}은 시세 산정에 쓰지 않습니다)."
                 )
             return None
         # ★반경 미적용(중심좌표 확보 실패) — 좌표가 있는 그룹만 쓰되, **반경 보증이 없다는
         #   사실**을 반드시 말한다. 종전엔 이 경로에서 사유가 None이라 사용자에게 아무
         #   경고도 없이 시군구 전역 거래로 만든 시세가 나갔다.
-        resolved = [g for g in all_groups if g.get("lat") is not None]
+        # ★W1-b 리뷰(C-1·M-7) — 판정 기준을 `_compute_avm_summary` 와 **한 식으로 통일**한다.
+        #   둘이 갈라지면 "시세는 만들었는데 사유가 없다" 또는 그 반대가 나온다(계약 불변식이
+        #   막는 것도 바로 그 모순인데, 기준이 다르면 불변식을 통과하면서 문구만 거짓이 된다).
+        resolved = [
+            g for g in all_groups
+            if g.get("lat") is not None and g.get("coord_precision") != "dong"
+        ]
         if not resolved:
+            # ★"위치 미확인"과 "동 단위까지만 확인"은 다른 상태다 — 뭉뚱그리면 이 PR 이 만든
+            #   3분류 어휘와 표면 문구가 어긋난다(리뷰 M-7).
+            approx = sum(
+                1 for g in all_groups
+                if g.get("lat") is not None and g.get("coord_precision") == "dong"
+            )
+            if not approx:
+                # 개략분이 없으면 종전 문구를 그대로 쓴다 — 새 어휘를 도입한다고 기존에
+                # 잠긴 계약 문구를 흔들 이유가 없다(회귀락이 그 문구를 고정하고 있다).
+                return (
+                    "위치가 확인된 아파트 실거래가 없어 시세를 산정하지 않았습니다"
+                    f"(수집 {len(all_groups)}곳 전부 위치 미확인)."
+                )
+            unlocated = sum(1 for g in all_groups if g.get("lat") is None)
+            detail = " · ".join(
+                bit for bit in (
+                    f"위치 미확인 {unlocated}곳" if unlocated else "",
+                    f"동 단위까지만 확인 {approx}곳" if approx else "",
+                ) if bit
+            )
             return (
-                f"위치가 확인된 아파트 실거래가 없어 시세를 산정하지 않았습니다"
-                f"(수집 {len(all_groups)}곳 전부 위치 미확인)."
+                "위치가 확인된 아파트 실거래가 없어 시세를 산정하지 않았습니다"
+                f"({detail})."
             )
         return (
             "대상지 중심좌표를 확보하지 못해 반경 필터를 적용하지 못했습니다 — "
@@ -555,7 +756,17 @@ class NearbyMapService:
             #   바로 산 지번·농어촌 주소(호미곶이 속한 그 모집단)다.
             #   반경 판정은 못 해도 **좌표조차 없는 그룹은 배제**한다(무날조는 반경 적용
             #   여부에 따라 켜졌다 꺼졌다 하면 안 된다).
-            groups = [g for g in (cat.get("groups") or []) if g.get("lat") is not None]
+            #   ★W1-b 리뷰(C-1) 봉합 — 위 원칙을 **정밀도 축에서 어기고 있었다**. 이 가지가
+            #   `lat is not None` 만 보는 동안 True 가지만 정밀분으로 좁혀서, 같은 응답 안에
+            #   `sample_basis.located_count=0` 과 "위치 확인분 N곳 기준"이라는 caveat 가
+            #   동시에 나갔다(리뷰어 실측: comparable_count=2 vs located_count=0·신뢰도 0.768).
+            #   하필 이 가지가 지오코딩이 잘 실패하는 모집단 — 이 PR 이 겨냥한 그 대상이다.
+            groups = [
+                g
+                for g in (cat.get("groups") or [])
+                if g.get("lat") is not None
+                and g.get("coord_precision") != "dong"
+            ]
         if not groups:
             return None
 
@@ -593,11 +804,22 @@ class NearbyMapService:
             count_factor = min(1.0, math.log10(n + 1) / 2)  # 표본 ~100건에서 포화
             dispersion_factor = max(0.0, 1 - cv / 0.5)  # CV 0~50% 구간을 1→0으로 선형 감산
             confidence = 0.4 + 0.3 * count_factor + 0.3 * dispersion_factor
+            # ★W1-b 리뷰(H-5) — **소표본 하드 캡**. 위 산식은 log 스케일이라 표본이 105→18로
+            #   83% 줄어도 신뢰도는 0.820→0.772(−6%p)에 그치고, 표본이 1건이면 분산이 0이라
+            #   `dispersion_factor` 가 **만점**을 받아 다건보다 높아질 수도 있다(실측 1건 74.5%).
+            #   이번 변경은 표본을 구조적으로 줄이므로(위치 확인분만 사용) 붕괴가 일상화되는데,
+            #   그것을 알릴 축이 없으면 "표본 1건 74.5%"가 사용자에게 그대로 나간다.
+            if n < _MIN_RELIABLE_DEALS:
+                confidence = min(confidence, 0.5)
 
         return {
             "estimated_price": self._js_round(per_m2_man * 84 * 10000),
             "price_per_sqm": self._js_round(per_m2_man * 10000),
             "confidence_score": min(0.98, max(0.3, confidence)),
+            # ★소표본 여부를 **값 옆에 실어** 소비처가 반드시 알 수 있게 한다(신뢰도 숫자만
+            #   보고는 표본이 몇 건인지 알 수 없다 — 그게 이 산식의 은폐 지점이었다).
+            "small_sample": len(deal_prices) < _MIN_RELIABLE_DEALS,
+            "min_reliable_deals": _MIN_RELIABLE_DEALS,
             # ★`comparable_count`는 이름과 달리 "비교 **거래** 건수"였다(그룹 수 아님).
             #   기존 소비처 무회귀를 위해 값은 유지하되, 이제 **반경 통과분 기준**이고
             #   의미가 분명한 별칭을 함께 낸다.
@@ -676,7 +898,21 @@ class NearbyMapService:
                     j = resp.json()
                     if j.get("response", {}).get("status") == "OK":
                         pt = j["response"]["result"]["point"]
-                        coord = {"lat": float(pt["y"]), "lon": float(pt["x"])}
+                        # ★W1-b 리뷰(H-3) — VWorld 가 **실제로 어떤 주소로 매칭했는지**(refined)를
+                        #   버리지 않는다. 종전엔 point 만 취해서, 정밀도를 "질의 문자열의 모양"
+                        #   으로 추정할 수밖에 없었다. 그 추정은 시군구가 빠지거나 틀린 질의가
+                        #   **다른 시군구의 동명 지번**으로 해석돼도 `parcel` 로 분류한다 —
+                        #   좌표는 완전히 틀린데 라벨이 "위치 확인"이라고 승인하는 형태다.
+                        #   여기서 정답(매칭 주소)을 함께 실어 보내 소비처가 대조하게 한다.
+                        _refined = (
+                            ((j.get("response", {}).get("refined") or {}).get("text") or "").strip()
+                        )
+                        coord = {
+                            "lat": float(pt["y"]),
+                            "lon": float(pt["x"]),
+                            "addr_type": addr_type,
+                            **({"refined": _refined} if _refined else {}),
+                        }
                         break
                 except Exception:
                     continue

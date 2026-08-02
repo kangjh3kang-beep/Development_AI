@@ -69,6 +69,10 @@ def _expected_avm(
         count_factor = min(1.0, math.log10(n + 1) / 2)
         dispersion_factor = max(0.0, 1 - cv / 0.5)
         confidence = 0.4 + 0.3 * count_factor + 0.3 * dispersion_factor
+        # ★W1-b(H-5) 소표본 하드 캡 — 산식의 표본항이 log 스케일이라 표본이 급감해도 거의
+        #   안 떨어지고, 1건이면 분산항이 만점을 받는다. 골든도 같은 계약을 **독립 재구현**한다.
+        if n < 5:
+            confidence = min(confidence, 0.5)
 
     def js_round(x: float) -> int:
         return math.floor(x + 0.5)
@@ -83,6 +87,10 @@ def _expected_avm(
         "comparable_deal_count": comparable_count,
         "comparable_group_count": len(groups),
         "sample_count": len(deal_prices),
+        # ★W1-b(H-5) — 신뢰도 숫자만으로는 표본이 몇 건인지 알 수 없어 붕괴가 은폐된다.
+        #   소표본 여부를 값 옆에 실어 소비처가 반드시 알게 한다.
+        "small_sample": len(deal_prices) < 5,
+        "min_reliable_deals": 5,
         "price_cv_percent": js_round(cv_percent),
         # ★근거 표기 — 이 시세가 **무엇으로부터** 나왔는지. 반경이 적용된 산출은
         #   `in_radius`(반경 통과분만), 미적용이면 전체 그룹임을 명시한다.

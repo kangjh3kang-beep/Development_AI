@@ -348,11 +348,27 @@ async def nearby_transactions(address: str, months: int = 3) -> str:
     if not active:
         return f"'{address}' 주변 최근 {months_clamped}개월 내 실거래가 없습니다(데이터 없음)."
 
-    lines: list[str] = [f"주변(반경 1km) 최근 {months_clamped}개월 실거래 요약:"]
+    # ★W1-b — 종전엔 "주변(반경 1km) … N건"이라고 **단언**했다. 그 N(`cat["count"]`)은
+    #   반경을 통과한 건수가 아니라 위치 미확인 건수를 포함한 합계였고, 중심 지오코딩이
+    #   실패해 반경 필터가 아예 적용되지 않은 경우(radius_applied=False)에도 같은 문장이
+    #   나갔다. LLM 은 이 문장을 사실로 받아 그대로 복창한다 — 할루시네이션이 아니라
+    #   **오염된 그라운딩**이다. 이제 표본 근거로만 라벨을 만들고, 집계에서 빠진 것은
+    #   빠졌다고 같은 프롬프트 안에서 밝힌다.
+    from app.services.market.comparable_sample import select_located_groups
+
+    lines: list[str] = [f"주변 실거래 요약(최근 {months_clamped}개월):"]
     active.sort(key=lambda kv: kv[1]["count"], reverse=True)
     for _, cat in active[:4]:
-        lines.append(f"- {cat.get('label')}({cat.get('kind')}): {cat.get('count')}건")
-        for g in (cat.get("groups") or [])[:3]:
+        located, basis = select_located_groups(cat)
+        _note = basis.exclusion_note()
+        lines.append(
+            f"- {cat.get('label')}({cat.get('kind')}): {basis.label()} {basis.located_count}건"
+            + (f" · {_note}" if _note else "")
+        )
+        if not located:
+            lines.append(f"  · {basis.no_sample_reason()} 이 유형은 시세 근거로 쓰지 마라.")
+            continue
+        for g in located[:3]:
             if cat.get("kind") == "trade":
                 lines.append(
                     f"  · {g.get('name')} {g.get('count')}건, "
@@ -366,6 +382,16 @@ async def nearby_transactions(address: str, months: int = 3) -> str:
                 )
     if r.get("note"):
         lines.append(f"참고: {r['note']}")
+    # ★W1-b — 위치 불확실성 단서를 프롬프트에 **도달시킨다**. 종전엔 `note`(공공데이터 조회
+    #   실패 시에만 채워지는 필드)만 전달해, 시세 산정 불가 사유(`avm_caveat`)와 좌표 미확보
+    #   규모가 LLM 에게 한 번도 도달하지 않았다.
+    if not r.get("radius_applied"):
+        lines.append(
+            "주의: 중심 좌표를 확보하지 못해 반경 필터가 적용되지 않았다. "
+            "이 결과를 '주변'이나 '반경 N km'라고 말하지 마라(시군구 전체 표본이다)."
+        )
+    if r.get("avm_caveat"):
+        lines.append(f"시세 산정 유의: {r['avm_caveat']}")
     return "\n".join(lines)
 
 

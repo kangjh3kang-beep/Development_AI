@@ -186,23 +186,52 @@ async def desk_appraisal(
         return {"ok": False, "message": "공시지가를 확인할 수 없습니다. PNU 또는 공시지가를 입력하세요."}
 
     # 거래사례 자동 연동: 미입력 시 주변 토지 실거래 평균단가(/㎡)를 자동 추출
+    # ★자동 연동으로 만든 표본의 근거(범위·제외건수). 사용자가 단가를 직접 넣었거나 연동이
+    #   실패하면 None 으로 남고, 그때는 rationale 이 "인근"을 주장하지 않는다.
+    comparable_basis = None
+    # 거래사례비교법을 **왜 못 썼는지**. 값이 사라진 이유를 말하지 않으면 사용자는 그냥
+    # "그런 방법이 없나 보다"로 읽는다(무자료와 판정불가는 다른 상태다).
+    comparable_skip_note: str | None = None
     if comparable_avg_per_sqm is None and pnu and len(pnu) >= 5:
         try:
             from app.services.land_intelligence.nearby_map_service import NearbyMapService
+            from app.services.market.comparable_sample import (
+                select_located_groups,
+                weighted_unit_price_per_sqm,
+            )
             payload = await NearbyMapService().build(
                 address=address or "", lawd_cd=pnu[:5], months=6, radius_m=1500,
             )
             land_cat = (payload.get("categories") or {}).get("land_trade") or {}
-            units: list[tuple[float, int]] = []
-            for g in land_cat.get("groups", []):
-                ap10k = g.get("avg_price_10k") or 0
-                aarea = g.get("avg_area_m2") or 0
-                cnt = int(g.get("count") or 0)
-                if ap10k and aarea:
-                    units.append((ap10k * 10000.0 / aarea, max(1, cnt)))
-            if units:
-                wsum = sum(c for _, c in units)
-                comparable_avg_per_sqm = sum(u * c for u, c in units) / wsum
+            # ★W1-b 근본수정 — 종전엔 `land_cat["groups"]` 를 통째로 순회해 **위치가 확인되지
+            #   않은**(지오코딩 실패) 거래까지 거래사례비교법 단가에 넣었다. 그래놓고 rationale 은
+            #   그 값을 "인근 토지 실거래 평균"이라고 **적극 주장**했다.
+            #   호미곶 대보리 산1-1 라이브 실측(2026-08-02): land_trade 는 count_in_radius=0,
+            #   즉 반경 1.5km 안에서 위치가 확인된 토지 거래가 **한 건도 없는데** 20~30km 밖
+            #   오천읍 거래로 304,979원/㎡ 를 만들었고, 그 결과 채택 단가가 공시지가 기준
+            #   3,264원/㎡ 대비 117,467원/㎡(**36배**)가 됐다. 강남 역삼동에서는 같은 오염이
+            #   반대로 감정단가를 38.5% **낮췄다** — 방향이 일정하지 않아 "보수적이라 안전"이
+            #   성립하지 않는다. 이 단가는 개략수지 토지비 1순위 SSOT 로도 흘러간다.
+            located, basis = select_located_groups(land_cat)
+            # ★W1-b 리뷰(M-2) — **근접성 보증이 없으면 감정 단가를 만들지 않는다.**
+            #   중심 주소 지오코딩이 실패하면 `radius_applied=False` 가 되고, 그때 `located` 는
+            #   "반경 안"이 아니라 **시군구 전역의 정밀 좌표분**이다. 종전 봉합은 그 값을 그대로
+            #   쓰고 rationale 문구만 "시군구 전체"로 바꿨는데, 그러면 호미곶 케이스의 20~30km
+            #   밖 단가(304,979원/㎡)가 이름만 바꾼 채 그대로 재생산된다.
+            #   ★시세 **표시**는 caveat 로 정직해질 수 있지만, 감정 **단가**는 다르다 —
+            #   이 값은 `firm_vals` 가중에 들어가 채택단가가 되고, 개략수지 토지비 1순위
+            #   SSOT 로 전파돼 NPV·IRR·분양가 역산까지 흔든다. 근거가 약하면 만들지 않는다.
+            if basis.scope == "radius":
+                comparable_avg_per_sqm = weighted_unit_price_per_sqm(located)
+                comparable_basis = basis
+            else:
+                comparable_avg_per_sqm = None
+                comparable_basis = None
+                comparable_skip_note = (
+                    "대상지 중심좌표를 확보하지 못해 반경 필터가 적용되지 않았습니다 — "
+                    "근접성이 보증되지 않는 거래를 감정 단가에 쓰지 않고 공시지가기준법 단독으로 "
+                    "산정했습니다."
+                )
         except Exception:  # noqa: BLE001
             pass
 
@@ -268,11 +297,29 @@ async def desk_appraisal(
     cmp_unit_price = 0
     if comparable_avg_per_sqm and comparable_avg_per_sqm > 0:
         cmp_unit_price = int(float(comparable_avg_per_sqm) * road_f * area_fac * shape_f)  # 개별요인 보정
+        # ★W1-b — "인근"이라고 부를 수 있는지는 표본이 정한다. 자동 연동 표본이면 그 근거
+        #   (`SampleBasis`)로 문구를 만들고, 사용자가 직접 넣은 값이면 출처를 우리가 모르므로
+        #   "인근"이라 단정하지 않는다. 종전엔 어느 경우든 "인근 토지 실거래 평균"이라 적었다.
+        _sample_label = comparable_basis.label() if comparable_basis else "입력된 거래사례"
+        _excluded = comparable_basis.exclusion_note() if comparable_basis else None
         method_cmp = {
             "method": "실거래 비교 추정",
             "unit_price": cmp_unit_price,
             "comparable_avg_per_sqm": int(comparable_avg_per_sqm),
-            "rationale": f"인근 토지 실거래 평균 {int(comparable_avg_per_sqm):,}원/㎡ × 접도 {road_f} × 면적 {area_fac} × 형상 {shape_f}",
+            "comparable_sample": (
+                {
+                    "scope": comparable_basis.scope,
+                    "located_count": comparable_basis.located_count,
+                    "unlocated_count": comparable_basis.unlocated_count,
+                }
+                if comparable_basis
+                else None
+            ),
+            "rationale": (
+                f"{_sample_label} 평균 {int(comparable_avg_per_sqm):,}원/㎡"
+                f"{' (' + _excluded + ')' if _excluded else ''}"
+                f" × 접도 {road_f} × 면적 {area_fac} × 형상 {shape_f}"
+            ),
         }
 
     # ── 3) 다법인 교차검증 모사(5개 법인: 그밖의요인 ±5%·거래사례 가중 ±10% 변동) ──
@@ -406,6 +453,9 @@ async def desk_appraisal(
         "irregularity": irregularity,
         "methods": [m for m in (method_pub, method_cmp) if m],
         "weight_note": weight_note,
+        # ★W1-b 리뷰(M-2) — 거래사례비교법이 빠진 **사유**. 값이 조용히 사라지면 사용자는
+        #   "이 지역엔 거래가 없나 보다"로 오독한다(실제로는 근접성 판정 불가라 안 쓴 것).
+        "comparable_skipped_reason": comparable_skip_note,
         "road_side": road_side,
         "source": src,
         "base_year": base_year,
