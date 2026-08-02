@@ -164,7 +164,7 @@
 //        거리 집계에서 "1000m 날조"가 제거돼 반경 버킷 수치가 바뀌며, 규제 오버레이가
 //        4레이어 청크로 부설된다. stale 번들이면 사용자는 옛 계산을 계속 본다.
 //        ★v475는 동시 진행 세션(#518)이 선점 — 번호 충돌을 피해 v476으로 올린다.
-const CACHE_NAME = "propai-v476-interpretation-async";
+const CACHE_NAME = "propai-v477-interpretation-async";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
