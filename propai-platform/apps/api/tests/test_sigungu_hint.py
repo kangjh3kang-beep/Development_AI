@@ -58,6 +58,14 @@ from apps.api.app.services.land_intelligence.nearby_map_service import (
         ("경기 성남 분당구 정자동 178", ""),
         ("서울 역삼동 736", ""),
         ("경상북도 호미곶면 대보리 산1-1", ""),
+        # ★리뷰 R-1 — **시·도 없는 자치구 단독**. 전국 중복(남구 6·중구 6·동구 5·서구 5·북구 4)
+        #   이라 그대로 쓰면 다른 광역시의 동명 지번으로 매칭될 수 있다(C-1 과 같은 기전).
+        ("남구 대보리 산1-1", ""),
+        ("중구 태평로1가 31", ""),
+        ("동구 신암동 1", ""),
+        ("서구 둔산동 1", ""),
+        ("북구 연산동 1", ""),
+        ("강남구 대치동 316", ""),
     ],
 )
 def test_sigungu_hint_extracts_full_sigungu_level(address: str, expected: str) -> None:

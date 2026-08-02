@@ -104,6 +104,19 @@ def sigungu_hint_from_address(address: str) -> str:
         break
     if not out or not out[-1].endswith(("시", "군", "구")):
         return ""
+    # ★리뷰 R-1 — **시·도 없는 자치구 단독**은 판정 불가다. "남구"는 부산·대구·인천·광주·울산·
+    #   포항 6곳, "중구"·"동구"·"서구"·"북구"도 전국에 중복된다. 그 반쪽 힌트가 행의 값을 이겨
+    #   전 행에 전파되면 질의 "남구 대보리 산1-1" 이 되고, VWorld 가 **다른 광역시의 동명 지번**을
+    #   줄 수 있다 — 좌표는 틀렸는데 refined 대조도 통과해(동·지번이 들어 있다) "위치 확인"
+    #   도장을 받는다. C-1 과 **정확히 같은 기전**이고 트리거 입력만 좁다.
+    #   ★H-3(build 내 도출)이 이 구멍의 노출면을 새로 열었다 — assistant_agent 의 address 는
+    #   LLM 이 자연어에서 뽑은 툴 인자고, desk_appraisal 은 pnu 가 있으면 address 를 검증하지
+    #   않는다. 종전엔 두 경로가 힌트를 안 썼으므로 무관했다.
+    #   단일 토큰은 시 계층(세종특별자치시·광역시 등)만 허용한다. 비용은 "강남구 대치동 316"
+    #   같은 입력이 힌트를 잃는 것인데, 그건 **행 폴백(종전 동작)**이고 `sigungu_source` 로
+    #   관측된다 — 오염 대신 폴백으로 틀리는 쪽이 옳다.
+    if len(out) == 1 and not out[0].endswith("시"):
+        return ""
     return " ".join(out)
 
 
@@ -235,6 +248,16 @@ class NearbyMapService:
             for grp in cat["groups"]:
                 queries.add(grp["_query"])
         coords = await self._geocode_many(sorted(queries))
+        # ★리뷰 R-5 — 샘플을 수집만 하고 아무도 읽지 않으면 관측 장치를 넣고 관측구를 안 뚫은
+        #   것이다. 프로덕션에서 "어떤 주소가 왜 깨지는지" 눈으로 보게 한다(이번 진단의 결정타가
+        #   실패 쿼리의 시군구를 본 것이었다). 질의는 MOLIT 공개 물건 주소라 개인정보가 아니다.
+        if getattr(self, "_geo_failures", None):
+            logger.info(
+                "지오코딩 실패 분해",
+                breakdown=dict(self._geo_failures),
+                samples=list(self._geo_fail_samples),
+                queries=len(queries),
+            )
 
         # 4) 중심좌표 확보: (1) 이미 지오코딩된 주소 좌표 → (2) 주소 재지오코딩 → (3) 라우터 힌트.
         #   ★(3) 힌트가 있으면 자체 지오코딩이 실패해도 center가 null로 남지 않는다(서울 폴백 방지).
@@ -1025,6 +1048,11 @@ class NearbyMapService:
                 if cached:
                     await r.aclose()
                     val = json.loads(cached)
+                    if not val:
+                        # ★리뷰 R-4 — 캐시된 실패를 안 세면 `coords_unresolved_count` 는 수십인데
+                        #   breakdown 이 {} 로 나온다(미스 캐시 5분). 그걸 "실패 없음"으로 읽으면
+                        #   정확히 틀린 결론이다 — 가장 오도적인 공백이었다.
+                        self._geo_fail("cached_miss", query)
                     return val or None
             except Exception:
                 pass
@@ -1084,10 +1112,16 @@ class NearbyMapService:
             if own:
                 await client.aclose()
         if coord is None and attempt_reasons:
-            # 마지막 시도의 사유를 그 질의의 대표 사유로 삼는다(ROAD 폴백까지 갔는데도 실패).
+            # ★리뷰 R-3 — 대표 사유를 "마지막 시도"로 잡으면 루프가 ("PARCEL","ROAD") 고정이라
+            #   **항상 ROAD 의 사유**가 된다. 우리 질의는 대부분 지번 형태라 ROAD 는 구조적으로
+            #   not_found 를 잘 내고, 그러면 PARCEL 에서 난 429/5xx 가 계속 가려진다 —
+            #   커밋이 스스로 지적한 "착수하지 않는 결론 쪽으로 기울어진 계기"가 크기만 줄고
+            #   방향은 그대로였다. **일시장애를 우선**해 그 편향을 없앤다.
             # 쿼리를 함께 남긴다 — 원인 코드만으로는 "어떤 주소가 왜 깨지는지" 못 본다
             # (이번 진단의 결정타가 실패 쿼리의 시군구를 눈으로 본 것이었다).
-            self._geo_fail(attempt_reasons[-1], query)
+            _transient = ("http_429", "http_5xx", "timeout_or_network")
+            _reason = next((r for r in attempt_reasons if r in _transient), attempt_reasons[-1])
+            self._geo_fail(_reason, query)
         if r is not None:
             try:
                 # ★성공은 7일, 실패/미해결은 5분만 캐시 — 일시 실패가 장기 고착되지 않게 한다.
