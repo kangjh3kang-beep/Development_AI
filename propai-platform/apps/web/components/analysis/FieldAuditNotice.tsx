@@ -114,8 +114,8 @@ export function FieldAuditNotice({ notes }: { notes: AuditFinding[] }) {
   if (notes.length === 0) return null;
   return (
     <div className="space-y-2">
-      {notes.map((f) => (
-        <FieldAuditNote key={`${f.code}:${f.field}`} finding={f} />
+      {notes.map((f, i) => (
+        <FieldAuditNote key={`${f.code}:${f.field}:${i}`} finding={f} />
       ))}
     </div>
   );

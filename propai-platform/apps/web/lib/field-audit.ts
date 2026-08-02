@@ -106,9 +106,6 @@ export const ALWAYS_ON_CODES: ReadonlySet<string> = new Set([
  */
 export const RULE_INPUT_PATHS: Record<string, readonly string[]> = {
   G1_PROTECTION_ZONE_RISK: ["development_plans.land_use_regulations"],
-  // ★주의: 백엔드 추출기는 최상위 poi/education/infrastructure만 본다. 실제 분석 응답은
-  //   location.education.school_count 라 이 규칙은 화면 경로에서 발동하지 못한다(가드 갭).
-  //   여기에는 **응답의 실제 자리**를 적는다 — 사용자에게는 "입력은 있다"가 사실이기 때문.
   G2_SCHOOL_POI_DEDUP: ["location.education.school_count"],
   G3_ZONE_COVERAGE_GAP: ["effective_far"],
   TERRAIN_SLOPE_COLLECTION_GAP: ["special_parcel", "dev_act_permit_gate"],
@@ -216,14 +213,28 @@ export interface CredibilityView {
 
 const SEVERITY_ORDER: Record<AuditSeverity, number> = { P0: 0, P1: 1, P2: 2 };
 
-/** 점표기 경로가 결과 안에 실제로 존재하는가(null·undefined는 부재로 본다). */
+/**
+ * 점표기 경로에 **판단에 쓸 자료가 실제로 있는가.**
+ *
+ * ★키 존재만 보면 안 된다: 분석 응답은 수집이 실패해도 컨테이너를 **빈 채로 항상 채워
+ *   넣는다**(`effective_far: {}`·`land_prices: {}`·`sale_prices: []`). 키 존재로 세면
+ *   자료가 하나도 없는 보고서가 "규칙 5개 적용됨"으로 보여서, 이 파일이 없애려던 바로 그
+ *   착시(부실할수록 깨끗해 보임)를 그대로 되살린다.
+ *
+ * 빈 배열·빈 객체·빈 문자열은 **부재**로 본다. 숫자 0과 false는 **유효한 값**이다
+ * (학교 0곳·경사도 0%는 정상 수집 결과이지 자료 없음이 아니다).
+ */
 export function hasPath(result: unknown, path: string): boolean {
   let cur: unknown = result;
   for (const seg of path.split(".")) {
     if (cur === null || cur === undefined || typeof cur !== "object") return false;
     cur = (cur as Record<string, unknown>)[seg];
   }
-  return cur !== null && cur !== undefined;
+  if (cur === null || cur === undefined) return false;
+  if (typeof cur === "string") return cur.trim() !== "";
+  if (Array.isArray(cur)) return cur.length > 0;
+  if (typeof cur === "object") return Object.keys(cur as object).length > 0;
+  return true; // 숫자·불리언 — 0/false도 유효한 수집값
 }
 
 function asFindings(raw: unknown): AuditFinding[] {

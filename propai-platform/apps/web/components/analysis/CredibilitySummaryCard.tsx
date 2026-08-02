@@ -87,11 +87,20 @@ export function CredibilitySummaryCard({
             ) : (
               <>점검 규칙이 잡아낸 이상 항목은 없습니다.</>
             )}{" "}
-            규칙 {view.ruleStatuses.length}개 중{" "}
+            이 화면이 판별하는 규칙 {view.ruleStatuses.length}개 중{" "}
             <strong className="text-[var(--text-primary)]">{applied}개</strong>는 판단할 자료가
             있어 적용됐고,{" "}
             <strong className="text-[var(--text-primary)]">{undetermined}개</strong>는 볼 자료가
             없어 판정하지 못했습니다.
+            {/* ★백엔드에 규칙이 더 등록돼 있는데 이 화면이 모르는 경우를 숨기지 않는다.
+                (프론트 목록은 상수라, 규칙이 늘어도 자동으로 따라오지 않는다.) */}
+            {view.rulesRegistered !== null && view.rulesRegistered > view.ruleStatuses.length && (
+              <>
+                {" "}플랫폼에는 규칙이 {view.rulesRegistered}개 있으며, 그중{" "}
+                {view.rulesRegistered - view.ruleStatuses.length}개는 이 화면이 아직 설명하지
+                못합니다.
+              </>
+            )}
           </p>
         </div>
       </div>
@@ -122,8 +131,8 @@ export function CredibilitySummaryCard({
           (섹션 매핑이 없는 지적도 자동으로 여기 포함되므로 조용히 사라지지 않는다.) */}
       {view.issues.length > 0 && (
         <div className="mt-3 space-y-2">
-          {view.issues.map((f) => (
-            <FieldAuditIssue key={`${f.code}:${f.field}`} finding={f} />
+          {view.issues.map((f, i) => (
+            <FieldAuditIssue key={`${f.code}:${f.field}:${i}`} finding={f} />
           ))}
         </div>
       )}

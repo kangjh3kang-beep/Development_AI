@@ -117,4 +117,26 @@ describe("useAiInsight 2단계", () => {
     });
     expect(polls).toBeGreaterThanOrEqual(2);
   }, 20000);
+
+  it("★화면을 떠나면 폴링이 멈춘다(사라진 화면이 계속 조회하지 않는다)", async () => {
+    // 이 훅은 모든 탭 상단 스트립에 붙어 있어 탭만 바꿔도 언마운트된다. 취소가 없으면
+    // 최대 5분간 3초마다 조회가 계속된다(2단계 전환으로 대기창이 90초 → 300초로 늘었다).
+    onPost("/analysis/comprehensive", async () => CORE);
+    onPost("/analysis/interpretation", async () => ({ job_id: "interp_zzz" }));
+    let polls = 0;
+    onGet("/analysis/interpretation/interp_zzz", async () => {
+      polls += 1;
+      return { status: "pending" }; // 끝나지 않는 잡
+    });
+
+    const { result, unmount } = renderHook(() => useAiInsight(ADDRESS));
+    void result.current.run();
+    await new Promise((r) => setTimeout(r, 3500)); // 최소 1회 폴링
+    expect(polls).toBeGreaterThanOrEqual(1);
+
+    unmount();
+    const afterUnmount = polls;
+    await new Promise((r) => setTimeout(r, 7000)); // 취소가 없으면 2회 이상 더 돈다
+    expect(polls).toBe(afterUnmount);
+  }, 20000);
 });

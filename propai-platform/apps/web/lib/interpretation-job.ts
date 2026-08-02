@@ -24,6 +24,21 @@ export interface InterpretationOptions {
   pollIntervalMs?: number;
   /** 전체 대기 상한(ms). 기본 5분 — 해석 실측 소요가 125초 이상이라 여유를 둔다. */
   deadlineMs?: number;
+  /**
+   * 취소 신호. 화면을 떠나면 폴링을 멈추기 위해 쓴다.
+   *
+   * ★없으면 사용자가 탭을 바꿔 컴포넌트가 사라져도 최대 5분간 3초마다 조회가 계속된다.
+   *   종전 단발 호출(90초)보다 노출 창이 길어지는 구간이라 취소를 붙였다.
+   */
+  signal?: AbortSignal;
+}
+
+/** 취소됐을 때 던지는 오류 — 호출부가 '실패'와 구분해 조용히 무시할 수 있게 한다. */
+export class InterpretationAborted extends Error {
+  constructor() {
+    super("해석 수신이 취소되었습니다.");
+    this.name = "InterpretationAborted";
+  }
 }
 
 interface JobStatus {
@@ -44,10 +59,14 @@ export async function fetchInterpretation(
   core: unknown,
   opts: InterpretationOptions = {},
 ): Promise<InterpretationParts | null> {
-  const { llmProvider, llmModel } = opts;
+  const { llmProvider, llmModel, signal } = opts;
   const pollIntervalMs = opts.pollIntervalMs ?? 3000;
   const deadlineMs = opts.deadlineMs ?? 5 * 60 * 1000;
+  const abortedCheck = () => {
+    if (signal?.aborted) throw new InterpretationAborted();
+  };
 
+  abortedCheck();
   const submitted = await apiClient.post<InterpretationParts>("/analysis/interpretation", {
     body: {
       result: core,
@@ -66,6 +85,7 @@ export async function fetchInterpretation(
   const deadline = Date.now() + deadlineMs;
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, pollIntervalMs));
+    abortedCheck();
     const job = await apiClient.get<JobStatus>(`/analysis/interpretation/${jobId}`, {
       useMock: false,
     });

@@ -133,6 +133,29 @@ describe("readFieldAudit — 판정 로직", () => {
     expect(applied).not.toContain("PROV_UNKNOWN_SOURCE"); // provenance 없음 → 미판정
   });
 
+  it("★수집이 전면 실패한 보고서는 '적용'이 거의 없어야 한다(빈 컨테이너를 자료로 세지 않는다)", () => {
+    // ★분석 응답은 수집이 실패해도 컨테이너를 빈 채로 항상 채워 넣는다. 키 존재만 세면
+    //   자료가 하나도 없는 보고서가 "5개 적용됨"으로 보여서, 이 화면이 없애려던 착시
+    //   (부실할수록 깨끗해 보임)가 그대로 되살아난다. R1 적대검증이 실측으로 잡아낸 결함.
+    const empty = {
+      effective_far: {},
+      land_prices: {},
+      sale_prices: [],
+      development_plans: { land_use_regulations: [] },
+      location: { education: { schools: [], school_count: 0 } },
+      field_audit: {
+        is_valid: true,
+        findings: [],
+        metadata: { enabled: true, rules_registered: 8, rules_executed: 8 },
+        coverage: {},
+      },
+    };
+    const v = readFieldAudit(empty);
+    const applied = v.ruleStatuses.filter((r) => r.applicability === "applied").map((r) => r.ruleId);
+    // school_count 0은 정상 수집값이라 '적용'이 맞다(학교가 실제로 없는 필지). 나머지는 전부 미판정.
+    expect(applied).toEqual(["G2_SCHOOL_POI_DEDUP"]);
+  });
+
   it("섹션 매핑이 없는 지적은 버려지지 않고 요약으로 올라온다", () => {
     const unknown: AuditFinding = { ...G2_ISSUE, code: "FUTURE_RULE_X", rule_id: "FUTURE_RULE_X" };
     const v = readFieldAudit(resultWith([unknown]));
@@ -191,6 +214,36 @@ describe("배선 — 패널이 자가검증 결과를 실제로 렌더한다", (
     expect(screen.queryByText(/dedup_school_cluster/)).toBeNull();
   });
 
+  it("★상시 방법론 각주가 해당 섹션 안에 실제로 렌더된다(배선 잠금)", async () => {
+    // ★현재 프로덕션에서 실제로 발화하는 건 상시 고지 2종이 사실상 전부다. 즉 이게 이 기능의
+    //   유일한 실산출물인데, R1 적대검증에서 **섹션 배선 7곳을 전부 지워도 테스트가 그린**이었다.
+    onPost("/analysis/comprehensive", async () => resultWith([LIVE_METHODOLOGY]));
+    await runAnalysis();
+    // 3. 토지 주변시세 섹션을 펼친다(각주는 그 숫자 옆에서 읽어야 의미가 있다).
+    const section = await screen.findByRole("button", { name: /토지 주변시세/ });
+    await userEvent.click(section);
+    await waitFor(() =>
+      expect(screen.getByText(/토지 시세는 실거래가 아니라 공시지가에 계수를 곱한 추정치/)).toBeTruthy(),
+    );
+    // 상시 고지는 '확인 필요' 카운터에 들어가지 않는다.
+    expect(screen.getByText(/점검 규칙이 잡아낸 이상 항목은 없습니다/)).toBeTruthy();
+  });
+
+  it("★섹션 매핑이 없는 지적도 화면에 실제로 보인다(무음 드롭 금지 — 표면 잠금)", async () => {
+    // 헬퍼 단위테스트만으로는 부족하다: R1에서 요약카드가 매핑된 지적만 렌더하도록 변이해도
+    // 전 테스트가 통과했다(미래 규칙이 화면에서 조용히 사라지는 결함이 생존).
+    const unknown: AuditFinding = {
+      ...G2_ISSUE,
+      code: "FUTURE_RULE_X",
+      rule_id: "FUTURE_RULE_X",
+      note: "미래 규칙이 낸 점검 원문",
+    };
+    onPost("/analysis/comprehensive", async () => resultWith([unknown]));
+    await runAnalysis();
+    await waitFor(() => expect(screen.getByText(/미래 규칙이 낸 점검 원문/)).toBeTruthy());
+    expect(screen.getByText(/쉬운 설명이 준비되지 않아/)).toBeTruthy();
+  });
+
   it("자가검증 정보가 없으면 '없음'을 밝히고 이상 없음으로 위장하지 않는다", async () => {
     const { field_audit: _omit, ...noAudit } = resultWith([]);
     onPost("/analysis/comprehensive", async () => noAudit);
@@ -224,5 +277,11 @@ describe("표면 — 사실과 다른 말을 쓰지 않는다", () => {
     expect(screen.queryByText(/% 검증/)).toBeNull();
     // 대신 P0는 "사용 보류 권고"로 말한다.
     expect(screen.getByText(/사용 보류 권고/)).toBeTruthy();
+
+    // ★접힌 설명문 안까지 확인한다 — 열지 않으면 그 안에 "차단"을 써도 검출되지 않는다.
+    await userEvent.click(screen.getByRole("button", { name: /점검이 어떻게 쓰이는지/ }));
+    await waitFor(() => expect(screen.getByText(/관찰해 알려주기만 합니다/)).toBeTruthy());
+    expect(screen.queryByText(/차단/)).toBeNull();
+    expect(screen.queryByText(/검증됨/)).toBeNull();
   });
 });

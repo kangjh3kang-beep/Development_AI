@@ -30,6 +30,19 @@ from app.services.growth.analyzer import _analyze_quality_drop
 from app.services.verification.field_audit.runner import _OBSERVATION_EVENT_TYPE
 
 
+def _mentions(value: Any, needle: str) -> bool:
+    """바인드 파라미터 어딘가에 needle이 들어 있는가(중첩 리스트·딕트 포함)."""
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return needle in value
+    if isinstance(value, dict):
+        return any(_mentions(v, needle) for v in value.values())
+    if isinstance(value, (list, tuple, set)):
+        return any(_mentions(v, needle) for v in value)
+    return False
+
+
 class _FakeResult:
     def __init__(self, rows: list[Any]) -> None:
         self._rows = rows
@@ -51,7 +64,12 @@ class _FieldAuditOnlyDb:
     async def execute(self, stmt: Any, params: dict[str, Any] | None = None) -> _FakeResult:
         sql = str(stmt)
         self.executed_sql.append(sql)
-        if "platform_events" in sql and _OBSERVATION_EVENT_TYPE in sql:
+        # ★SQL 문자열만 보면 안 된다: 같은 누출을 **바인드 파라미터**로 넣는 변이
+        #   (WHERE event_type = ANY(:types), params={"types": [..., "field_audit_observation"]})가
+        #   그대로 살아남는다. 파라미터 바인딩은 SQL 리팩터링의 가장 흔한 형태다.
+        if "platform_events" in sql and (
+            _OBSERVATION_EVENT_TYPE in sql or _mentions(params, _OBSERVATION_EVENT_TYPE)
+        ):
             # 품질저하 판정을 확실히 넘길 만큼(전건 fail) 돌려준다 — 격리가 깨지면 반드시 터지게.
             return _FakeResult([("field_audit", "fail", {"verdict": "fail"}) for _ in range(50)])
         return _FakeResult([])

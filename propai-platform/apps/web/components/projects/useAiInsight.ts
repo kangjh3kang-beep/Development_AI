@@ -11,9 +11,9 @@
  * 한 곳에서 생성하면 다른 표면이 같은 캐시를 읽는다(중복 호출·과금 0).
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { apiClient } from "@/lib/api-client";
-import { fetchInterpretation } from "@/lib/interpretation-job";
+import { fetchInterpretation, InterpretationAborted } from "@/lib/interpretation-job";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 
@@ -59,9 +59,24 @@ export function useAiInsight(address?: string | null): UseAiInsight {
     catch { setAi(null); }
   }, [key]);
 
+  // ★화면을 떠나면 해석 폴링을 멈춘다. 2단계 전환으로 대기 시간이 단발 90초에서 최대 5분
+  //   폴링으로 늘어났는데, 이 훅은 모든 탭 상단 스트립에 붙어 있어 탭만 바꿔도 언마운트된다.
+  //   취소가 없으면 사라진 화면이 3초마다 계속 조회한다.
+  const abortRef = useRef<AbortController | null>(null);
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+      abortRef.current = null;
+    };
+  }, []);
+
   async function run() {
     if (!address?.trim() || loading) return;
     setLoading(true); setError("");
+    abortRef.current?.abort();            // 이전 요청이 남아 있으면 정리(중복 폴링 방지)
+    const controller = new AbortController();
+    abortRef.current = controller;
+    let stage: "분석" | "해석" = "분석";   // 실패 지점을 구분해 안내하기 위한 표식
     try {
       // ── 1단계: 결정론 분석만(해석 제외) ──
       // ★2026-08-02 봉합: 종전에는 해석까지 한 번에 받으려 했다. 그런데 AI 해석 2종은 실측
@@ -82,7 +97,10 @@ export function useAiInsight(address?: string | null): UseAiInsight {
 
       // ── 2단계: 해석만 별도 작업으로 제출·수신(종합분석 화면과 동일한 공용 경로) ──
       //   ★2단계 결과는 1단계 위에 덮어쓴다(교체 아님) — 1단계 값이 사라지면 안 된다.
-      const parts = (await fetchInterpretation(core)) as ComprehensiveResp | null;
+      stage = "해석";
+      const parts = (await fetchInterpretation(core, {
+        signal: controller.signal,
+      })) as ComprehensiveResp | null;
       const r: ComprehensiveResp = { ...core, ...(parts ?? {}) };
       const interp = r?.ai_interpretation ?? null;
       if (interp && (interp.overall_summary || interp.risk_factors || interp.opportunity_factors)) {
@@ -91,9 +109,16 @@ export function useAiInsight(address?: string | null): UseAiInsight {
       } else {
         setError("AI 해석을 생성하지 못했습니다(LLM 미응답).");
       }
-    } catch {
-      setError("AI 해석 생성에 실패했습니다.");
+    } catch (e) {
+      // 취소는 실패가 아니다 — 화면을 떠난 것이므로 조용히 끝낸다.
+      if (e instanceof InterpretationAborted || controller.signal.aborted) return;
+      // ★실패 지점을 구분한다: 2단계로 나눈 뒤로는 "해석 실패"라는 한 문구가 1단계(분석 자체)
+      //   실패까지 덮어써서 사용자를 엉뚱한 곳으로 보낸다.
+      setError(stage === "분석"
+        ? "부지 분석에 실패했습니다."
+        : "AI 해석 생성에 실패했습니다.");
     } finally {
+      if (abortRef.current === controller) abortRef.current = null;
       setLoading(false);
     }
   }
