@@ -9,6 +9,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { developabilityLabel } from "@/lib/zoning-ssot";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import {
@@ -83,13 +84,17 @@ const num = (v: number | null | undefined, suffix = ""): string =>
 const pct = (v: number | null | undefined): string => (v == null ? "—" : `${v}%`);
 
 // 개발가능성 게이트 → 한국어 라벨·색.
+// ★라벨 문구는 공용 SSOT(zoning-ssot.developabilityLabel)만 쓴다. 종전에는 여기에 4종만 아는
+//   로컬 맵이 따로 있어서, SSOT가 아는 NEEDS_OFFICIAL_SURVEY·UNKNOWN 같은 값이 **원시 코드
+//   그대로** "개발가능성: NEEDS_OFFICIAL_SURVEY" 로 굵게 렌더됐다(임야 필지가 정확히 이 구멍).
+//   색(tone)만 이 화면의 관심사라 여기 남긴다.
 function devLabel(d?: string | null): { text: string; tone: "ok" | "warn" | "bad" } {
-  switch ((d || "").toUpperCase()) {
-    case "POSSIBLE": return { text: "개발 가능", tone: "ok" };
-    case "CONDITIONAL": case "PRECONDITION": return { text: "조건부(선행절차)", tone: "warn" };
-    case "BLOCKED": return { text: "개발 제약", tone: "bad" };
-    default: return { text: d || "미상", tone: "warn" };
-  }
+  const { text, known } = developabilityLabel(d);
+  const code = (d || "").toUpperCase();
+  const tone: "ok" | "warn" | "bad" =
+    code === "POSSIBLE" ? "ok" : code === "BLOCKED" || code === "RESTRICTED" ? "bad" : "warn";
+  if (!text) return { text: "미상", tone: "warn" };
+  return { text: known ? text : `${text} (설명 준비 중)`, tone };
 }
 // 시나리오 상태 → 한국어 라벨·색.
 function scnLabel(s?: string): { text: string; tone: "ok" | "warn" | "bad" } {
