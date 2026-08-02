@@ -1994,16 +1994,41 @@ def detect_multi_parcel(
         per.append(entry)
 
     specials = [x for x in per if x["special"]]
+    # ★미분석 필지가 하나라도 있으면 "특이 없음"이라고 단정할 수 없다(2026-08-02 봉합).
+    #   특이성을 **못 본** 것이지 **없는** 것이 아니다. 종전에는 이 판정이 라우터에만 있어,
+    #   detect_multi_parcel()을 직접 부르는 경로(integrated_recommender·persona runner·
+    #   design_ingest·decision_brief)에서는 무정보 필지에도 그대로 POSSIBLE/PASS가 나왔다.
+    unanalyzed = [x for x in per if x.get("analysis_status") == "unanalyzed"]
+
     if not specials:
-        out = {"parcel_count": len(per), "special_count": 0, "developability": "POSSIBLE",
-               "resolvable": "YES", "blocking_parcels": [], "per_parcel": per,
-               "honest_disclosure": "전 필지가 일상적 개발부지로 특이 제약이 없습니다.",
-               "summary": f"{len(per)}개 필지 모두 특이사항 없음 — 통상 개발 가능."}
+        if unanalyzed:
+            out = {
+                "parcel_count": len(per), "special_count": 0,
+                "developability": "UNKNOWN", "resolvable": "UNKNOWN",
+                "blocking_parcels": [], "per_parcel": per,
+                "honest_disclosure": (
+                    f"{len(unanalyzed)}개 필지의 지목·용도지구가 미확인(미분석)이라 특이부지 판정이 "
+                    "불가합니다. 지목·구역 정보를 확보한 뒤 다시 분석하세요 — 제약이 없다는 뜻이 "
+                    "아닙니다."
+                ),
+                "summary": (
+                    f"판정 불가 — {len(unanalyzed)}/{len(per)}개 필지 미분석(지목·구역 미확인)."
+                ),
+            }
+        else:
+            out = {"parcel_count": len(per), "special_count": 0, "developability": "POSSIBLE",
+                   "resolvable": "YES", "blocking_parcels": [], "per_parcel": per,
+                   "honest_disclosure": "전 필지가 일상적 개발부지로 특이 제약이 없습니다.",
+                   "summary": f"{len(per)}개 필지 모두 특이사항 없음 — 통상 개발 가능."}
         out.update(_multi_parcel_addons(parcels, per, [], refresh_fn, roadside_strip_commercial))
         return out
 
     # 사업 전체 게이트 = 가장 제약 큰 필지.
     gate = max(specials, key=lambda x: _RANK.get(x["special"]["developability"], 0))["special"]["developability"]
+    # ★미분석 필지가 섞여 있으면 게이트를 최소 '판정 불가'까지 올린다 — 특이 필지가 따로 있어도
+    #   미분석분의 제약 유무는 여전히 못 본 상태이므로, 그보다 가벼운 게이트로 단정하지 않는다.
+    if unanalyzed and _RANK.get(gate, 0) < _RANK["UNKNOWN"]:
+        gate = "UNKNOWN"
     worst_res = min((_RES_RANK.get(x["special"]["resolvable"], 2) for x in specials), default=2)
     resolvable = {0: "NO", 1: "CONDITIONAL", 2: "YES"}[worst_res]
     blocking = [{"pnu": x["pnu"], "land_category": x["land_category"],

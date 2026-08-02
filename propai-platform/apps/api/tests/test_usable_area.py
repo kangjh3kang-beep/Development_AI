@@ -362,3 +362,51 @@ def test_normal_parcels_are_not_downgraded():
     ])
     assert out["usable_area"]["usable_confirmed_sqm"] == pytest.approx(1000.0)
     assert out["usable_area"]["usable_conditional_sqm"] == pytest.approx(0.0)
+
+
+def test_unanalyzed_parcel_degrades_top_level_gate():
+    """★R1 HIGH — 미분석 필지가 있으면 SSOT가 '특이 없음(PASS)'으로 단정하지 않는다.
+
+    종전에는 이 판정이 라우터에만 있어서, detect_multi_parcel()을 직접 부르는 경로
+    (integrated_recommender·persona runner·design_ingest·decision_brief)에서는 무정보 필지에도
+    POSSIBLE/PASS가 그대로 나왔다 — 게이트 집합에 UNKNOWN을 넣어도 **그 값을 만드는 곳이
+    없으면** 전파되지 않는다.
+    """
+    from app.services.zoning.special_parcel import detect_multi_parcel, gate_decision
+
+    out = detect_multi_parcel([
+        {"pnu": "a", "land_category": "대", "zone_type": "제2종일반주거지역", "area_sqm": 400.0},
+        {"pnu": "b", "area_sqm": 600.0},  # 미분석
+    ])
+    assert out["developability"] == "UNKNOWN", "미분석이 섞였는데 개발가능으로 단정했다"
+    assert gate_decision(out["developability"], out["resolvable"]) == "TENTATIVE", (
+        "게이트가 PASS(일상 개발부지)로 나와 확신 %가 그대로 산출된다"
+    )
+    assert "제약이 없다는 뜻이" in out["honest_disclosure"]
+
+
+def test_unanalyzed_does_not_downgrade_normal_only_set():
+    """★오탐 0 — 정상 필지만이면 종전 계약(POSSIBLE/PASS) 그대로."""
+    from app.services.zoning.special_parcel import detect_multi_parcel, gate_decision
+
+    out = detect_multi_parcel([
+        {"pnu": "a", "land_category": "대", "zone_type": "제2종일반주거지역", "area_sqm": 400.0},
+    ])
+    assert out["developability"] == "POSSIBLE"
+    assert out["resolvable"] == "YES"
+    assert gate_decision(out["developability"], out["resolvable"]) == "PASS"
+
+
+def test_unanalyzed_does_not_weaken_stronger_gate():
+    """미분석 강등이 더 무거운 게이트(BLOCKED 등)를 **약화시키지 않는다**."""
+    from app.services.zoning.special_parcel import detect_multi_parcel
+
+    out = detect_multi_parcel([
+        {"pnu": "a", "land_category": "도로", "zone_type": "제2종일반주거지역", "area_sqm": 100.0},
+        {"pnu": "b", "area_sqm": 600.0},  # 미분석
+    ])
+    # 도로 지목 등으로 산출된 게이트가 UNKNOWN(2)보다 무거우면 그대로 유지돼야 한다.
+    from app.services.zoning.special_parcel import _RANK
+    assert _RANK.get(out["developability"], 0) >= _RANK["UNKNOWN"], (
+        f"미분석 강등이 더 무거운 게이트를 약화시켰다: {out['developability']}"
+    )

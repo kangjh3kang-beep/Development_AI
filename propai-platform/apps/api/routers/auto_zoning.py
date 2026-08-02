@@ -576,23 +576,13 @@ async def special_parcels_check(body: dict):
         enriched.append(p)
 
     result = detect_multi_parcel(enriched)
-    # ★P0(완성도 감사·무날조): 미분석 필지를 "특이 제약 없음"으로 단정하던 관대 폴백 제거.
-    #   지목·구역 미확인 필지는 특이성 '판정 불가'로 정직 고지하고 개발가능 단정을 강등한다.
+    # ★미분석 필지의 표식·게이트 강등·정직 고지는 **SSOT(detect_multi_parcel)가 이미 처리**한다
+    #   (2026-08-02 순서 역전 봉합). 여기서 중복 판정하지 않는다 — 종전에는 이 블록이 함수
+    #   **반환 후**에 표식을 심어 면적 3계층 정산이 그걸 못 봤고, 라우터를 우회하는 호출부에는
+    #   아예 적용되지 않았다. 이 라우터는 API 응답용 카운트와 부분 미분석 경고만 덧붙인다.
     if unanalyzed_idx:
         result["unanalyzed_count"] = len(unanalyzed_idx)
-        for i in unanalyzed_idx:
-            if i < len(result.get("per_parcel") or []):
-                result["per_parcel"][i]["analysis_status"] = "unanalyzed"
-        if result.get("special_count", 0) == 0:
-            # 특이 미검출이 '데이터 부재' 때문일 수 있음 — 단정 문구를 판정불가로 교체.
-            result["developability"] = "UNKNOWN"
-            result["resolvable"] = "UNKNOWN"  # ★리뷰: YES 잔존 시 UNKNOWN과 모순 — 정합화
-            result["honest_disclosure"] = (
-                f"{len(unanalyzed_idx)}개 필지의 지목·용도지구가 미확인(미분석)이라 특이부지 판정이 "
-                "불가합니다. analyze:true로 실분석하거나 지목·구역 정보를 제공하세요."
-            )
-            result["summary"] = f"판정 불가 — {len(unanalyzed_idx)}/{len(enriched)}개 필지 미분석(지목·구역 미확인)."
-        else:
+        if result.get("special_count", 0) > 0:
             result.setdefault("warnings", []).append(
                 f"{len(unanalyzed_idx)}개 필지는 미분석(지목·구역 미확인) — 특이성 누락 가능."
             )
