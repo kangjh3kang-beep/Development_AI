@@ -1940,6 +1940,21 @@ def _multi_parcel_addons(
     }
 
 
+def is_unanalyzed_parcel(p: dict) -> bool:
+    """'미분석' 필지인가 — 지목·용도지구·용도지역이 **전부** 없어 특이성 판정 자체가 불가한 상태.
+
+    ★이 판정의 SSOT다(2026-08-02). 종전에는 `/special-parcels` 라우터 안에만 있었고, 그 결과
+      면적 3계층 정산이 끝난 **뒤에야** 표식이 붙어 소비처가 영원히 못 봤다. 라우터를 우회해
+      `detect_multi_parcel()`을 직접 부르는 호출부(integrated_recommender·persona runner·
+      design_ingest·decision_brief)도 있어서, 판정이 라우터에 있으면 그쪽은 아예 적용되지 않는다.
+
+    '없음'과 '판정 불가'는 다르다 — 신호가 하나도 없으면 "특이 제약 없음"이 아니라 "못 봤음"이다.
+    """
+    if not isinstance(p, dict):
+        return False
+    return not p.get("land_category") and not p.get("special_districts") and not p.get("zone_type")
+
+
 def detect_multi_parcel(
     parcels: list[dict],
     *,
@@ -1963,12 +1978,20 @@ def detect_multi_parcel(
     per: list[dict[str, Any]] = []
     for i, p in enumerate(parcels or []):
         sp = detect_special_parcel(p)
-        per.append({
+        entry: dict[str, Any] = {
             "index": i, "pnu": p.get("pnu"), "address": p.get("address"),
             "land_category": p.get("land_category"),
             "area_sqm": _first_num(p, _AREA_KEYS),  # additive — usable 3계층·matrix 재료
             "special": sp,  # None 이면 일상필지
-        })
+        }
+        # ★미분석 표식은 **여기서** 심는다(2026-08-02 봉합). 종전에는 라우터가 이 함수의
+        #   **반환 후**에 심었는데, 면적 3계층 정산(compute_usable_area)은 이 함수 **안에서**
+        #   이미 끝난 뒤였다 — 순서 역전이라 소비처가 표식을 영원히 못 봤고, 미분석 필지 면적이
+        #   그대로 '확정 개발가능'에 합산됐다. 판정을 SSOT로 끌어와야 이 함수를 직접 쓰는 다른
+        #   호출부(integrated_recommender·persona runner 등 라우터 우회 경로)도 함께 따라온다.
+        if is_unanalyzed_parcel(p):
+            entry["analysis_status"] = "unanalyzed"
+        per.append(entry)
 
     specials = [x for x in per if x["special"]]
     if not specials:

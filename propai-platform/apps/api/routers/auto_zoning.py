@@ -546,7 +546,7 @@ async def special_parcels_check(body: dict):
     한 필지라도 통상 절차로 해결 불가능(개발제한구역·공공기반시설 등)하면 사업 전체를 '개발 불가'로
     정직 고지하여 무리한 개발규모 산정(할루시네이션)을 차단한다.
     """
-    from app.services.zoning.special_parcel import detect_multi_parcel
+    from app.services.zoning.special_parcel import detect_multi_parcel, is_unanalyzed_parcel
 
     parcels = body.get("parcels") or []
     if not isinstance(parcels, list) or not parcels:
@@ -563,8 +563,10 @@ async def special_parcels_check(body: dict):
                 p = {**(await AutoZoningService().analyze_by_address(p["address"])), **p}
             except Exception:  # noqa: BLE001 — 개별 실패는 정직하게 미분석으로 둠
                 p.setdefault("warnings", []).append("분석 실패(주소 해석 불가)")
-        # ★미분석 식별: 지목·구역 정보가 전혀 없으면 특이성 '판정 불가'(없음 아님).
-        if not p.get("land_category") and not p.get("special_districts") and not p.get("zone_type"):
+        # ★미분석 식별은 SSOT(special_parcel.is_unanalyzed_parcel)를 쓴다 — 라우터가 자체 판정을
+        #   갖고 있으면 detect_multi_parcel을 직접 부르는 다른 호출부에 적용되지 않고, 표식이
+        #   면적 정산보다 늦게 붙어 소비처가 못 본다(2026-08-02 순서 역전 봉합).
+        if is_unanalyzed_parcel(p):
             unanalyzed_idx.append(i)
         elif not p.get("land_category"):
             # ★리뷰 MEDIUM: 지목만 없는 필지 — 임야·학교용지 등 지목 기반 게이트가 침묵
