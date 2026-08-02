@@ -153,3 +153,25 @@ def test_producer_emits_source_kind_next_to_display_source():
         f"생산자가 판정 코드를 싣지 않았다 — 규칙이 표시 문구 폴백에 계속 묶인다. out={out!r}"
     )
     assert "공시지가" in str(out.get("source") or ""), "표시 문구는 그대로 유지돼야 한다(무회귀)"
+
+
+def test_producer_emits_type_name_code_for_undetermined_sale_prices():
+    """실제 생산자가 '판정불가' 분양가 항목에 판정 코드를 함께 싣는다.
+
+    ★R1 적대검증 적발: `source_kind` 쪽에는 생산자 계약 테스트가 있었는데 `type_name_code`
+      쪽에는 없었다. 생산자에서 그 1줄을 지워도 전 테스트가 통과했다(변이 생존) — 즉 규칙은
+      영원히 오지 않는 코드를 기다리고 판정은 표시 문구 폴백에 계속 묶인 채 남는다.
+      W4가 "판정불가" 문구를 쉬운 말로 바꾸는 순간 이 규칙이 무음 사망한다.
+    """
+    from app.services.land_intelligence.comprehensive_analysis_service import (
+        ComprehensiveAnalysisService,
+    )
+
+    # 인허가 매트릭스 미등재 용도지역 → 판정불가 항목이 나오는 경로.
+    out = ComprehensiveAnalysisService()._calc_sale_prices("경기도 어딘가 1-1", "미등재가상용도지역")
+    undetermined = [i for i in out if str(i.get("type_name") or "") == "판정불가"]
+    assert undetermined, f"판정불가 항목이 생성되지 않아 계약을 확인할 수 없다: {out!r}"
+    for item in undetermined:
+        assert item.get("type_name_code") == "UNDETERMINED", (
+            f"생산자가 판정 코드를 싣지 않았다 — 규칙이 표시 문구 폴백에 묶인다: {item!r}"
+        )

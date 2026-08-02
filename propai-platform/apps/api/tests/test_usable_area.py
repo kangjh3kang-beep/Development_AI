@@ -308,3 +308,105 @@ def test_rank_treats_unknown_as_tentative_grade():
     assert _RANK.get("UNKNOWN", 0) == 2, "UNKNOWN이 미등재라 POSSIBLE과 동급으로 취급된다"
     assert _RANK["UNKNOWN"] > _RANK["POSSIBLE"]
     assert _RANK["UNKNOWN"] < _RANK["BLOCKED"]
+
+
+# ── 2026-08-02 R1 봉합: 순서 역전 — 표식이 소비처보다 늦게 붙던 문제 ──────────
+#
+# 종전에는 `/special-parcels` 라우터가 detect_multi_parcel() **반환 후**에
+# analysis_status="unanalyzed" 를 심었다. 그런데 면적 3계층 정산(compute_usable_area)은
+# 그 함수 **안에서** 이미 끝난 뒤였다 — 소비처가 표식을 영원히 못 봤고, 미분석 필지 면적이
+# 그대로 '확정 개발가능'에 합산됐다.
+#
+# ★아래 테스트는 compute_usable_area를 직접 부르지 않는다. detect_multi_parcel을 통과시켜
+#   **실제 파이프라인 순서**로 검증한다. 합성 픽스처로 compute_usable_area만 부르면 죽은
+#   경로를 잠그게 되고(가짜 골든), 순서 역전을 영원히 못 잡는다.
+
+def test_detect_multi_parcel_excludes_unanalyzed_from_confirmed():
+    """파이프라인 통합 오라클 — 미분석 필지가 usable_confirmed에 합산되지 않는다."""
+    from app.services.zoning.special_parcel import detect_multi_parcel
+
+    out = detect_multi_parcel([
+        {"pnu": "a", "land_category": "대", "zone_type": "제2종일반주거지역", "area_sqm": 400.0},
+        {"pnu": "b", "area_sqm": 600.0},  # 지목·용도지구·용도지역 전무 = 미분석
+    ])
+    u = out["usable_area"]
+
+    assert u["usable_confirmed_sqm"] == pytest.approx(400.0), (
+        "미분석 필지(600㎡)가 확정 개발가능 면적에 합산됐다 — 표식이 정산보다 늦게 붙는 "
+        "순서 역전이 재발했다."
+    )
+    assert u["usable_conditional_sqm"] == pytest.approx(600.0)
+    assert out["per_parcel"][1].get("analysis_status") == "unanalyzed"
+    conds = u["conditional_parcels"][0]["conditions"]
+    assert any("분석되지 않았습니다" in c for c in conds), f"사유 문구 부재: {conds}"
+
+
+def test_unanalyzed_judgement_is_ssot():
+    """미분석 판정이 SSOT 함수로 노출돼 라우터 우회 호출부도 같은 기준을 쓴다."""
+    from app.services.zoning.special_parcel import is_unanalyzed_parcel
+
+    assert is_unanalyzed_parcel({"pnu": "x"}) is True
+    # 신호가 하나라도 있으면 미분석이 아니다(과잉 강등 방지).
+    assert is_unanalyzed_parcel({"land_category": "대"}) is False
+    assert is_unanalyzed_parcel({"zone_type": "제2종일반주거지역"}) is False
+    assert is_unanalyzed_parcel({"special_districts": ["개발제한구역"]}) is False
+
+
+def test_normal_parcels_are_not_downgraded():
+    """★오탐 0 — 정상 필지만 있으면 종전대로 전부 확정으로 센다(과잉 강등 회귀 방지)."""
+    from app.services.zoning.special_parcel import detect_multi_parcel
+
+    out = detect_multi_parcel([
+        {"pnu": "a", "land_category": "대", "zone_type": "제2종일반주거지역", "area_sqm": 400.0},
+        {"pnu": "b", "land_category": "대", "zone_type": "제2종일반주거지역", "area_sqm": 600.0},
+    ])
+    assert out["usable_area"]["usable_confirmed_sqm"] == pytest.approx(1000.0)
+    assert out["usable_area"]["usable_conditional_sqm"] == pytest.approx(0.0)
+
+
+def test_unanalyzed_parcel_degrades_top_level_gate():
+    """★R1 HIGH — 미분석 필지가 있으면 SSOT가 '특이 없음(PASS)'으로 단정하지 않는다.
+
+    종전에는 이 판정이 라우터에만 있어서, detect_multi_parcel()을 직접 부르는 경로
+    (integrated_recommender·persona runner·design_ingest·decision_brief)에서는 무정보 필지에도
+    POSSIBLE/PASS가 그대로 나왔다 — 게이트 집합에 UNKNOWN을 넣어도 **그 값을 만드는 곳이
+    없으면** 전파되지 않는다.
+    """
+    from app.services.zoning.special_parcel import detect_multi_parcel, gate_decision
+
+    out = detect_multi_parcel([
+        {"pnu": "a", "land_category": "대", "zone_type": "제2종일반주거지역", "area_sqm": 400.0},
+        {"pnu": "b", "area_sqm": 600.0},  # 미분석
+    ])
+    assert out["developability"] == "UNKNOWN", "미분석이 섞였는데 개발가능으로 단정했다"
+    assert gate_decision(out["developability"], out["resolvable"]) == "TENTATIVE", (
+        "게이트가 PASS(일상 개발부지)로 나와 확신 %가 그대로 산출된다"
+    )
+    assert "제약이 없다는 뜻이" in out["honest_disclosure"]
+
+
+def test_unanalyzed_does_not_downgrade_normal_only_set():
+    """★오탐 0 — 정상 필지만이면 종전 계약(POSSIBLE/PASS) 그대로."""
+    from app.services.zoning.special_parcel import detect_multi_parcel, gate_decision
+
+    out = detect_multi_parcel([
+        {"pnu": "a", "land_category": "대", "zone_type": "제2종일반주거지역", "area_sqm": 400.0},
+    ])
+    assert out["developability"] == "POSSIBLE"
+    assert out["resolvable"] == "YES"
+    assert gate_decision(out["developability"], out["resolvable"]) == "PASS"
+
+
+def test_unanalyzed_does_not_weaken_stronger_gate():
+    """미분석 강등이 더 무거운 게이트(BLOCKED 등)를 **약화시키지 않는다**."""
+    from app.services.zoning.special_parcel import detect_multi_parcel
+
+    out = detect_multi_parcel([
+        {"pnu": "a", "land_category": "도로", "zone_type": "제2종일반주거지역", "area_sqm": 100.0},
+        {"pnu": "b", "area_sqm": 600.0},  # 미분석
+    ])
+    # 도로 지목 등으로 산출된 게이트가 UNKNOWN(2)보다 무거우면 그대로 유지돼야 한다.
+    from app.services.zoning.special_parcel import _RANK
+    assert _RANK.get(out["developability"], 0) >= _RANK["UNKNOWN"], (
+        f"미분석 강등이 더 무거운 게이트를 약화시켰다: {out['developability']}"
+    )
