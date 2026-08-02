@@ -1277,9 +1277,17 @@ async def nearby_transactions_map(req: NearbyMapRequest):
         return {"error": "법정동코드(LAWD_CD) 결정 불가 — 주소/pnu 확인 필요",
                 "center": None, "categories": {}}
 
-    # sigungu 힌트(지오코딩 폴백용): 주소 앞 2토큰
-    parts = (req.address or "").split()
-    sigungu_hint = " ".join(parts[:2]) if len(parts) >= 2 else (parts[0] if parts else "")
+    # ★W2 근본수정 — 종전엔 "주소 앞 2토큰"이라 **3레벨 시군구가 통째로 잘렸다**:
+    #   "경상북도 포항시 남구 …" → "경상북도 포항시"(남구 소실).
+    #   성남시 분당구 · 수원시 영통구 · 창원시 의창구 · 고양시 덕양구 · 천안시 서북구 …
+    #   특례시·행정시가 **전부** 같은 방식으로 깨진다. 잘린 힌트로 만든 지오코딩 질의는
+    #   존재하지 않는 주소가 되어 영구 실패한다(라이브: 호미곶 전 카테고리 located=0).
+    #   ★실측 확증: VWorld 는 시군구가 틀리면 정확히 실패한다 —
+    #     "강남구 대치동 316" → OK / "서초구 대치동 316" → FAIL / "송파구 …" → FAIL.
+    from apps.api.app.services.land_intelligence.nearby_map_service import (
+        sigungu_hint_from_address,
+    )
+    sigungu_hint = sigungu_hint_from_address(req.address or "")
 
     service = NearbyMapService()
     return await service.build(

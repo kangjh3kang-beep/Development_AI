@@ -30,6 +30,8 @@ import pytest
 
 from apps.api.app.services.land_intelligence import nearby_map_service as nm
 
+_PRECUT = nm._MAX_GEOCODE_GROUPS_PER_CAT  # 사전컷 상한(테스트가 상수를 재선언하지 않게)
+
 
 def _row(*, name: str, jibun: str, dong: str, price: int = 50000, day: int = 3) -> dict:
     return {
@@ -280,3 +282,129 @@ def test_empty_dong_row_is_treated_as_merge() -> None:
     assert groups[0]["coord_precision"] == "dong", (
         "동을 모르는 행이 섞였는데 정밀 좌표로 분류됐다 — 그룹 대표 좌표가 일부 행만 대표한다"
     )
+
+
+# ── W2: 사전컷 공간 사전확률 ────────────────────────────────────────────────
+
+def test_dong_from_address_picks_legal_dong() -> None:
+    """사전컷 우선순위의 입력 — MOLIT `umdNm` 과 같은 표기를 골라야 한다."""
+    svc = nm.NearbyMapService.__new__(nm.NearbyMapService)
+    assert svc._dong_from_address("서울특별시 강남구 역삼동 736") == "역삼동"
+    assert svc._dong_from_address("경상북도 포항시 남구 호미곶면 대보리 산1-1") == "대보리"
+    # 도로명은 법정동이 아니다 — 잘못 고르면 엉뚱한 동을 우대하게 된다.
+    assert svc._dong_from_address("서울특별시 강남구 테헤란로 152") == ""
+    # 못 찾으면 빈 값(추측 금지) — 그때는 종전처럼 건수 순으로만 자른다.
+    assert svc._dong_from_address("") == ""
+
+
+@pytest.mark.asyncio
+async def test_precut_keeps_target_dong_over_bigger_faraway_groups() -> None:
+    """★W2 회귀락 — 사전컷이 **대상지 동**을 건수 큰 원거리 그룹보다 먼저 지킨다.
+
+    종전엔 `sort(key=count)` 뿐이라, 멀고 큰 단지가 가깝고 작은 물건을 밀어냈다.
+    라이브 실측: 지오코딩한 520개 중 414개(79.6%)가 반경 밖으로 폐기 — 예산의 80%를
+    버릴 후보에 썼다. 사전컷은 전체 그룹 손실의 73.8% 로 지오코딩 실패(2.6%)의 28배다.
+    """
+    nm._BUILD_CACHE.clear()
+    rows: list[dict] = []
+    geocode_map: dict[str, dict] = {}
+    center = {"lat": 36.0, "lon": 129.0}
+
+    # 타 동의 '큰' 그룹을 상한(80)을 넘도록 채운다 — 건수만 보면 전부 상위를 차지한다.
+    for i in range(_PRECUT + 5):
+        dong = f"먼동{i}"
+        rows += [_row(name="", jibun=f"{i}-1", dong=dong, price=90000, day=d + 1) for d in range(5)]
+        geocode_map[f"경상북도 남구 {dong} {i}-1"] = {"lat": 36.2, "lon": 129.2}  # 반경 밖
+
+    # 대상지 동의 '작은' 그룹 — 건수로는 최하위지만 반경 안이다.
+    rows.append(_row(name="", jibun="9-9", dong="대상동", price=50000, day=1))
+    geocode_map["경상북도 남구 대상동 9-9"] = {"lat": 36.0003, "lon": 129.0003}
+
+    svc = _service(rows, geocode_map)
+    payload = await svc.build(
+        address="경상북도 남구 대상동 9-9", lawd_cd="47111", months=1, radius_m=1000,
+        center_hint=center,
+    )
+    cat = payload["categories"]["apt_trade"]
+
+    names = [g["name"] for g in cat["groups"]]
+    assert any("대상동" in n for n in names), (
+        "대상지 동의 그룹이 사전컷에 밀려 사라졌다 — 건수 정렬만으로는 가까운 물건을 못 지킨다"
+    )
+    # ★정수 리터럴 — 반경 안에 남는 건 이 1건뿐이다(나머지는 전부 반경 밖).
+    assert cat["count_in_radius"] == 1
+
+
+@pytest.mark.asyncio
+async def test_precut_prior_works_for_eup_myeon_dong_format() -> None:
+    """★리뷰 R-2 회귀락 — 읍·면 지역의 두 토큰 법정동에서도 프라이어가 켜지는가.
+
+    MOLIT `umdNm` 은 읍·면에서 "호미곶면 대보리" 형태로 온다. 종전엔 완전일치 비교라
+    `"대보리"` 와 안 맞아 프라이어가 **동기가 된 호미곶에서 무동작**이었다(리뷰 H-4).
+    `_dong_tail()` 로 고쳤지만 **회귀락이 없어 1행 되돌리기 변이가 전 골든을 통과**했다
+    (유일한 사전컷 테스트가 단일 토큰 동이라 `_dong_tail` 이 항등함수가 된다).
+    ★나는 이 사실을 '미처리' 목록에도 적지 않았다 — 봉합 보고와 실제 상태가 어긋났던 지점.
+    """
+    nm._BUILD_CACHE.clear()
+    rows: list[dict] = []
+    geocode_map: dict[str, dict] = {}
+    center = {"lat": 36.0, "lon": 129.0}
+
+    # 같은 읍 안의 '다른 리'가 건수로는 전부 상위 — 완전일치로 되돌리면 이들이 사전컷을 채운다.
+    for i in range(_PRECUT + 5):
+        dong = f"호미곶면 강사리{i}"
+        rows += [_row(name="", jibun=f"{i}-1", dong=dong, price=90000, day=d + 1) for d in range(5)]
+        geocode_map[f"경상북도 포항시 남구 {dong} {i}-1"] = {"lat": 36.2, "lon": 129.2}
+
+    # 대상지 리 — 건수 최하위지만 반경 안
+    rows.append(_row(name="", jibun="산1-1", dong="호미곶면 대보리", price=50000, day=1))
+    geocode_map["경상북도 포항시 남구 호미곶면 대보리 산1-1"] = {"lat": 36.0003, "lon": 129.0003}
+
+    svc = _service(rows, geocode_map)
+    payload = await svc.build(
+        address="경상북도 포항시 남구 호미곶면 대보리 산1-1", lawd_cd="47111",
+        months=1, radius_m=1000, center_hint=center,
+    )
+    cat = payload["categories"]["apt_trade"]
+    assert cat["count_in_radius"] == 1, (
+        "읍·면 두 토큰 법정동에서 프라이어가 안 켜졌다 — 완전일치 비교로 되돌아갔다"
+    )
+
+
+@pytest.mark.asyncio
+async def test_observability_contract_is_present() -> None:
+    """★리뷰 R-6 — 신규 관측 계약에 잠금이 없으면 **무성 회귀**한다(#497 교훈).
+
+    `geocode_failure_breakdown`·`geocode_attempted_count`·`sigungu_source`·`sigungu_hint`
+    를 참조하는 테스트가 저장소 전체에 0건이었다. 관측 전용 필드는 스모크가 없으면
+    조용히 사라진다 — 그러면 배포 후 효과 판정 자체가 불가능해진다.
+    """
+    nm._BUILD_CACHE.clear()
+    rows = [_row(name="", jibun="1-1", dong="A동", price=50000, day=1)]
+    geocode_map = {"경상북도 남구 A동 1-1": {"lat": 36.0005, "lon": 129.0005}}
+    svc = _service(rows, geocode_map)
+
+    payload = await svc.build(
+        address="경상북도 남구 A동 1-1", lawd_cd="47111", months=1, radius_m=1000,
+        center_hint={"lat": 36.0, "lon": 129.0},
+    )
+    for key in ("geocode_failure_breakdown", "geocode_attempted_count",
+                "sigungu_source", "sigungu_hint"):
+        assert key in payload, f"관측 계약 {key} 가 응답에서 사라졌다"
+    # 힌트가 도출됐으면 그렇다고 말해야 한다 — 빈 힌트로 조용히 행 폴백하는 것과 구분된다.
+    assert payload["sigungu_hint"] == "경상북도 남구"
+    assert payload["sigungu_source"] == "hint"
+
+
+@pytest.mark.asyncio
+async def test_observability_reports_row_fallback_when_hint_undecidable() -> None:
+    """힌트를 못 만들면 **그 사실이 응답에 드러나야** 한다(조용한 회귀 금지)."""
+    nm._BUILD_CACHE.clear()
+    rows = [_row(name="", jibun="1-1", dong="A동", price=50000, day=1)]
+    svc = _service(rows, {})
+    payload = await svc.build(
+        address="A동 1-1", lawd_cd="47111", months=1, radius_m=1000,
+        center_hint={"lat": 36.0, "lon": 129.0},
+    )
+    assert payload["sigungu_hint"] == ""
+    assert payload["sigungu_source"] == "row_fallback"

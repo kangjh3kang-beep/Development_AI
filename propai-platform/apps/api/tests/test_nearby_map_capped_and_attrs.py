@@ -7,6 +7,13 @@
 
 외부 실호출 없음(MOLIT·지오코딩 모두 스텁, test_nearby_map_radius_precision.py와 동일 패턴).
 """
+# ★W2 — 지오코딩 질의의 시군구가 **"서울 강남구"**(시·도 포함)인 이유:
+#   `build()` 가 주소에서 시군구 힌트를 스스로 도출하고(리뷰 H-3 — 라우터 밖 호출부도
+#   따라오게), 그 힌트가 행의 값(중개사무소 소재지)보다 **우선**하기 때문이다.
+#   종전 픽스처는 `"강남구"` 만 썼고, 그 상태로 두면 질의가 어긋나 **전 그룹이 미해결**이 되어
+#   반경 필터가 아예 실행되지 않는다(= 테스트가 검증하려던 것이 사라진다).
+#   ★배포될 이 형태는 라이브로 실측했다(리뷰 M-5): "서울특별시 강남구 대치동 316" ·
+#   "경상북도 포항시 남구 호미곶면 대보리 산1-1" · "경기도 성남시 분당구 정자동 178" 전부 OK.
 from __future__ import annotations
 
 import pytest
@@ -66,7 +73,7 @@ async def test_capped_count_reflects_groups_cut_by_marker_cap():
     geocode_map: dict[str, dict] = {}
     for i in range(35):
         rows.append(_row(f"빌딩{i}", f"{i}-1", "역삼동", "강남구"))
-        q = probe._query_for("강남구", "역삼동", f"{i}-1", f"빌딩{i}")
+        q = probe._query_for("서울 강남구", "역삼동", f"{i}-1", f"빌딩{i}")
         geocode_map[q] = {"lat": 37.5000, "lon": 127.0000}  # 전부 중심과 동일지점(0m) → 반경 내
 
     svc = _make_service(rows, geocode_map)
@@ -88,7 +95,7 @@ async def test_capped_count_zero_when_under_cap():
     probe = nm.NearbyMapService.__new__(nm.NearbyMapService)
 
     rows = [_row("단일빌딩", "1-1", "역삼동", "강남구")]
-    q = probe._query_for("강남구", "역삼동", "1-1", "단일빌딩")
+    q = probe._query_for("서울 강남구", "역삼동", "1-1", "단일빌딩")
     geocode_map = {q: {"lat": 37.5000, "lon": 127.0000}}
 
     svc = _make_service(rows, geocode_map)
