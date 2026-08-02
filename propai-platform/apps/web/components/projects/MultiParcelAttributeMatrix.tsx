@@ -18,6 +18,7 @@
  */
 
 import { AlertTriangle, CheckCircle2, Grid3X3, Ruler, Scale, Scissors, ShieldCheck, SlidersHorizontal } from "lucide-react";
+import { developabilityLabel } from "@/lib/zoning-ssot";
 
 // ── 계약 타입(전 필드 optional — D 병렬 진행 중 호환 가드) ──────────────────────
 
@@ -137,18 +138,25 @@ const toneCls: Record<Tone, string> = {
   muted: "border-[var(--line-strong)] bg-[var(--surface-strong)] text-[var(--text-tertiary)]",
 };
 
-// 게이트 전 어휘(special_parcel.py _RANK SSOT와 동일 문자열) → 한국어 배지.
+// 게이트 어휘 → 한국어 배지.
+// ★라벨 문구는 공용 SSOT(zoning-ssot.developabilityLabel)를 쓴다. 종전에는 여기에 6종만 아는
+//   로컬 switch 맵이 따로 있었고, `UNKNOWN`·`REQUIRES_AUTHORITY_CONFIRMATION`·`RESTRICTED`가
+//   빠져 있어 default로 떨어지며 **원시 코드가 그대로 렌더**됐다. 특히 `UNKNOWN`은 최근
+//   파이프라인에 도입된 값이라(미분석 필지 강등) 이 구멍이 바로 열려 있었다.
+//   색(tone)은 이 표의 관심사라 여기 남긴다.
+const _GATE_TONE: Record<string, Tone> = {
+  POSSIBLE: "ok",
+  BLOCKED: "bad",
+  RESTRICTED: "bad",
+};
+
 function gateBadge(dev?: string | null): { text: string; tone: Tone } {
-  switch ((dev || "").trim().toUpperCase()) {
-    case "POSSIBLE": return { text: "가능", tone: "ok" };
-    case "CAUTION": return { text: "주의(사전확인)", tone: "warn" };
-    case "CONDITIONAL": return { text: "조건부(확정 아님)", tone: "warn" };
-    case "PRECONDITION": return { text: "조건부·선행절차(확정 아님)", tone: "warn" };
-    case "NEEDS_OFFICIAL_SURVEY": return { text: "공식조사 필요(확정 아님)", tone: "warn" };
-    case "BLOCKED": return { text: "차단", tone: "bad" };
-    case "": return { text: "가능", tone: "ok" }; // special=None=일상 필지(기존 계약)
-    default: return { text: dev as string, tone: "muted" }; // 미지 어휘 — 원문 정직 표기
-  }
+  const code = (dev || "").trim().toUpperCase();
+  // special=None(=일상 필지)은 기존 계약대로 '가능'. 단 호출부가 미분석 여부를 먼저 거른다.
+  if (!code) return { text: "가능", tone: "ok" };
+  const { text, known } = developabilityLabel(code);
+  const tone: Tone = _GATE_TONE[code] ?? (known ? "warn" : "muted");
+  return { text: known ? text : `${text} (설명 준비 중)`, tone };
 }
 
 // 시니어 verdict → 한국어 배지(PASS/WARN/BLOCK — RuleEvaluation SSOT).
@@ -241,7 +249,15 @@ export function MultiParcelAttributeMatrix({
                   const dev = p.developability ?? p.special_parcel?.developability ?? null;
                   // 조회 실패 필지는 기본값 '가능'으로 과대표시하지 않는다(정직 — 판정 불가 표기).
                   const failed = typeof p.status === "string" && p.status !== "ok" && dev == null;
-                  const g = failed ? { text: "판정 불가(조회 실패)", tone: "muted" as Tone } : gateBadge(dev);
+                  // ★미분석 필지를 '가능'으로 과대표시하지 않는다 — 지목·용도지구를 못 봤다는 뜻이지
+                  //   제약이 없다는 뜻이 아니다. 백엔드가 심는 analysis_status를 여기서 존중한다
+                  //   (게이트 값이 비어 있으면 기존 계약상 '가능'으로 떨어지던 구멍).
+                  const unanalyzed = String((p as { analysis_status?: string }).analysis_status || "") === "unanalyzed";
+                  const g = failed
+                    ? { text: "판정 불가(조회 실패)", tone: "muted" as Tone }
+                    : unanalyzed
+                      ? { text: "판정 불가(미분석)", tone: "muted" as Tone }
+                      : gateBadge(dev);
                   return (
                     <tr key={(p.pnu || p.address || "") + i} className="border-t border-[var(--line)]">
                       <td className="max-w-[180px] truncate px-2 py-1.5 font-bold text-[var(--text-primary)]" title={p.address || p.pnu || undefined}>
