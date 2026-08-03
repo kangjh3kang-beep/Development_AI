@@ -140,6 +140,46 @@ def _dong_tail(value: str | None) -> str:
     return v.split()[-1] if v else ""
 
 
+def _target_dong_source(address: str, target_dong: str) -> str:
+    """동 프라이어가 **왜** 켜졌는지/꺼졌는지를 한 값으로 말한다.
+
+    꺼진 이유를 구분하지 않으면 판독자가 정상 동작과 결함을 섞어 집계한다:
+      - `address`            : 주소에서 법정동을 뽑았다(프라이어 켜짐).
+      - `unresolved_road_name`: 도로명 주소라 법정동이 없다 — **설계상 정상**이다
+                                (추측해서 엉뚱한 동을 우대하지 않는다는 문서화된 선택).
+      - `unresolved`          : 지번 주소인데도 못 뽑았다 — **조사 대상**이다.
+    이 구분이 없으면 "프라이어 미발화 30%"가 정상인지 버그인지 판정할 수 없다.
+    """
+    if target_dong:
+        return "address"
+    for tok in (address or "").split():
+        if tok.endswith(("로", "길")):
+            return "unresolved_road_name"
+    return "unresolved"
+
+
+def _count_dong_matches(groups: "list[dict[str, Any]]", target_dong: str) -> int | None:
+    """`groups` 중 대상 법정동과 일치하는 그룹 수. 셀 수 없으면 **None**.
+
+    ★사전컷 정렬키(`_dong_tail(x["dong"]) == target_dong`)와 **정확히 같은 판정**을 써야
+    한다. 다른 규약으로 세면 계측이 관측 대상을 대변하지 못한다(자가검증 골든이 실함수를
+    호출하지 않아 거짓 안전을 준 W2-c 와 같은 계열).
+
+    ★실패 시 0 이 아니라 None 인 이유(무날조) — 0 은 "일치 그룹이 없었다"는 **관측된 사실**을
+    뜻한다. 세는 데 실패한 것을 0 으로 적으면 관측된 적 없는 사실을 만들어 낸다(N-4 와 동일
+    판단). 소비처는 None 을 "미측정"으로 읽어야 하며, 산술에 쓰기 전에 확인해야 한다.
+
+    ★`target_dong` 이 비면(도로명 주소 등) 프라이어 자체가 무동작이므로 0 을 돌려준다 —
+    이건 실패가 아니라 **판정된 사실**이다(`dong_prior_active=False` 와 짝으로 읽는다).
+    """
+    try:
+        if not target_dong:
+            return 0
+        return sum(1 for g in groups if _dong_tail(g.get("dong")) == target_dong)
+    except Exception:  # noqa: BLE001 — 계측이 본로직을 깨지 않는다
+        return None
+
+
 class NearbyMapService:
     """주변 실거래 지도 페이로드 생성기."""
 
@@ -253,8 +293,20 @@ class NearbyMapService:
         #   대상지 법정동은 주소에서 **이미 알고 있다** — 추가 호출 0으로 같은 예산에서
         #   수율을 올린다. 동이 같은 그룹을 앞에 두고, 그 안에서 거래 많은 순으로 자른다.
         target_dong = self._dong_from_address(address)
+        # ★M-4 계측 — 사전컷의 **순효과를 판정할 재료**를 카테고리별로 남긴다.
+        #   종전엔 `geocode_precut_count` 라는 **10개 카테고리 합산 스칼라 하나**뿐이라,
+        #   응답만 보고는 (a)어느 카테고리에서 컷이 발동했는지 (b)대상 법정동 일치 그룹이
+        #   예산(80)을 넘었는지를 **원리적으로 역산할 수 없었다**(미지수 10개에 방정식 1개).
+        #   그 두 가지가 곧 M-4 티켓("동 프라이어가 타 동 반경내 물건을 굶기는가")의
+        #   발동 조건이다 — 즉 티켓을 판정할 계측이 없는 채로 처방부터 논의되고 있었다.
+        #   ★분모(`groups_before`)를 **발동하지 않은 카테고리에도** 싣는다. 안 그러면
+        #     `groups_cut == 0` 이 "80 이하라 안 잘림"인지 "그 카테고리 거래가 0건"인지
+        #     구분되지 않는다(0 과 미확보를 같은 기호로 쓰지 않는다).
+        #   ★추가 외부 호출 0 — 이미 메모리에 있는 리스트를 세는 것뿐이다.
         for cat in categories.values():
-            if len(cat["groups"]) > _MAX_GEOCODE_GROUPS_PER_CAT:
+            _before = len(cat["groups"])
+            _matched_before = _count_dong_matches(cat["groups"], target_dong)
+            if _before > _MAX_GEOCODE_GROUPS_PER_CAT:
                 cat["groups"].sort(
                     key=lambda x: (
                         0 if (target_dong and _dong_tail(x.get("dong")) == target_dong) else 1,
@@ -263,6 +315,24 @@ class NearbyMapService:
                 )
                 geocode_precut += len(cat["groups"]) - _MAX_GEOCODE_GROUPS_PER_CAT
                 cat["groups"] = cat["groups"][:_MAX_GEOCODE_GROUPS_PER_CAT]
+            _matched_kept = _count_dong_matches(cat["groups"], target_dong)
+            cat["precut"] = {
+                "budget": _MAX_GEOCODE_GROUPS_PER_CAT,
+                # 단위는 전부 **그룹 수**다 — 이름에 박는다. 이웃한 `sample_basis` 는
+                # 거래 건수 전용 계약이라 이 블록을 그쪽에 넣지 않는다(H-4 단위 혼입 재발 방지).
+                "groups_before": _before,
+                "groups_cut": max(0, _before - len(cat["groups"])),
+                # 프라이어가 **켜지긴 했는지**. `target_dong` 이 비면(도로명 주소 등)
+                # 정렬 1순위 항이 상수로 붕괴해 순수 건수 정렬로 돌아간다 — 응답만 보고는
+                # 그 사실을 알 수 없었다.
+                "dong_prior_active": bool(target_dong),
+                # ★티켓의 핵심 질문: 대상 동 일치 그룹이 예산을 넘었는가(before > budget)?
+                #   그리고 그중 몇이 살아남았는가(kept)? 둘의 차가 프라이어 포화도다.
+                #   ★`active is True` 인데 `before == 0` 이면 **표기 규약 불일치 경보**다
+                #     (H-4 가 정확히 그 형태였다 — `umdNm` 이 두 토큰인데 완전일치 비교).
+                "dong_matched_group_count_before": _matched_before,
+                "dong_matched_group_count_kept": _matched_kept,
+            }
         queries: set[str] = set()
         for cat in categories.values():
             for grp in cat["groups"]:
@@ -455,6 +525,23 @@ class NearbyMapService:
             "sigungu_hint": sigungu_hint,
             "sigungu_source": "hint" if sigungu_hint else "row_fallback",
             "geocode_precut_count": geocode_precut,
+            # ★M-4 계측 — `sigungu_hint`/`sigungu_source` 와 **대칭**으로 동 프라이어도
+            #   관측한다. 종전엔 힌트 축만 노출돼, `sigungu_source == "hint"`(정상)인데
+            #   동 프라이어만 꺼져 있는 조합이 "전부 정상"으로 보였다. 두 힌트는 서로
+            #   **독립적으로 실패**하고 실패 모드가 다르다(시군구=질의 정확도, 동=정렬 우선순위).
+            # ★이름에 `_hint` 를 박는 이유: 이 값은 PNU/bcode 에서 온 **권위값이 아니라**
+            #   입력 문자열 휴리스틱이다. 소비처가 "대상 법정동"으로 렌더하면 주소 오타가
+            #   사실로 승격된다(`sigungu_hint` 와 같은 판단).
+            "target_dong_hint": target_dong,
+            "target_dong_source": _target_dong_source(address, target_dong),
+            # ★신구 카운터의 **무성 발산**을 스스로 고발한다. 카테고리별 `groups_cut` 합과
+            #   위 스칼라가 갈라지면 둘 중 하나가 틀린 것인데, 런타임 assert 는 계측이
+            #   본로직을 죽이는 것이라 쓰지 않는다(관측 장치 제1원칙). 대신 응답에 실어
+            #   판독자가 즉시 알게 한다 — 정상 상태에서는 항상 False 여야 한다.
+            "precut_accounting_mismatch": (
+                sum((c.get("precut") or {}).get("groups_cut") or 0 for c in categories.values())
+                != geocode_precut
+            ),
             "lawd_cd": lawd_cd,
             "months": ym_list,
             "categories": categories,
@@ -568,9 +655,21 @@ class NearbyMapService:
           "경상북도 포항시 남구 호미곶면 대보리 산1-1" → "대보리"
         지번 앞에서 마지막으로 나오는 동/리/가 토큰이 법정동이다. 못 찾으면 빈 문자열 —
         그때는 종전처럼 거래건수 순으로만 자른다(추측해서 엉뚱한 동을 우대하지 않는다).
+
+        ★D-1 봉합 — 종전엔 **주소 전체**를 훑으며 마지막 매치를 채택해, 지번 **뒤에** 오는
+        동/호 표기가 법정동을 덮어썼다:
+          "서울특별시 강남구 역삼동 736 101동 502호" → "101동"  (기대: "역삼동")
+        `101동` 은 `umdNm` 과 **영영 매칭되지 않으므로**, 사전컷 프라이어의 1순위 항이 전
+        그룹에서 상수 1로 붕괴해 순수 건수 정렬(= W2 이전 동작)로 **무음 회귀**한다.
+        오좌표를 만들지는 않지만(매칭이 안 될 뿐) 기출하 최적화가 조용히 꺼진다.
+        법정동은 **지번보다 앞**에 오므로, 지번 토큰(숫자 시작 또는 "산"+숫자)을 만나면
+        거기서 멈춘다. 도로명 주소가 빈 문자열이 되는 기존 동작은 그대로 유지된다.
         """
         best = ""
         for tok in (address or "").split():
+            # 지번 도달 — 이 뒤의 동/호·건물 표기는 법정동이 아니다.
+            if tok[:1].isdigit() or (tok[:1] == "산" and tok[1:2].isdigit()):
+                break
             if tok.endswith(("동", "리", "가")) and not tok.endswith(("로", "길")):
                 best = tok
         return best

@@ -554,3 +554,211 @@ async def test_live_geocode_branch_locks_attempt_query_and_cache_write() -> None
     # F-2 — 캐시 쓰기에 사유가 실려야 한다. `json.dumps(coord or {})` 로 되돌리면 깨진다.
     assert redis.saved is not None, "실패가 캐시되지 않았다"
     assert _json.loads(redis.saved) == {"_fail": "http_429"}
+
+
+# ── M-4 계측: 사전컷 순효과를 **판정 가능하게** 만든다 ──────────────────────────
+#
+# M-4 티켓("동 프라이어가 타 동 반경내 물건을 굶기는가")은 예산 분할을 처방으로 들고
+# 있었으나, 라이브 실측과 독립 3렌즈 적대검증에서 **순효과 음수**로 판정돼 처방을 철회했다:
+#   - 사전컷 정렬키는 `(동일치, -건수)` 인데 캡(28) 정렬키는 `(정밀도, -건수)` 로 동·거리
+#     항이 없다 → 프라이어가 밀어낸 그룹(정의상 건수 최하위권)은 캡에서 재탈락한다.
+#   - 역삼동 1km 라이브: 반경 내 apt_trade 24건이 **전량 대상동** — 비대상동 후보의
+#     반경내 적중률 0%. 그 상태에서 쿼터를 예약하면 적중률 100%인 대상동을 밀어낸다.
+# 남은 진짜 문제는 **판정 재료가 없다**는 것이었다: `geocode_precut_count` 는 10개 카테고리
+# 합산 스칼라 하나뿐이라 (a)어느 카테고리가 컷됐는지 (b)대상동 그룹이 예산을 넘었는지를
+# 응답에서 **원리적으로 역산할 수 없다**(미지수 10개에 방정식 1개). 이 절이 그 구멍을 잠근다.
+
+
+class _PerTypeMolit:
+    """`prop_type` 별로 다른 행을 주는 스텁 — 카테고리별 귀속을 검증하려면 필요하다."""
+
+    def __init__(self, by_type: dict[str, list[dict]]):
+        self._by_type = by_type
+
+    async def get_transactions(self, lawd_cd, ym, prop_type="apt", num_rows=1000):
+        return list(self._by_type.get(prop_type, []))
+
+    async def get_rent_transactions(self, *_a, **_k):
+        return []
+
+
+def _service_per_type(by_type: dict[str, list[dict]], geocode_map: dict[str, dict]):
+    svc = nm.NearbyMapService.__new__(nm.NearbyMapService)
+    svc.settings = None
+    svc.molit = _PerTypeMolit(by_type)
+    svc._geo_key = ""
+
+    async def _stub_geocode_many(queries):
+        return {q: geocode_map[q] for q in queries if q in geocode_map}
+
+    svc._geocode_many = _stub_geocode_many  # type: ignore[assignment]
+    return svc
+
+
+def test_dong_from_address_stops_at_jibun() -> None:
+    """★D-1 회귀락 — 지번 **뒤**의 동/호 표기가 법정동을 덮어쓰면 안 된다.
+
+    종전엔 주소 전체에서 마지막 동/리/가 토큰을 채택해
+    `"서울특별시 강남구 역삼동 736 101동 502호"` → `"101동"` 이었다.
+    `101동` 은 MOLIT `umdNm` 과 **영영 매칭되지 않으므로** 사전컷 프라이어의 1순위 항이
+    전 그룹에서 상수로 붕괴해 순수 건수 정렬(W2 이전 동작)로 **무음 회귀**한다.
+    오좌표를 만들지는 않지만 기출하 최적화가 조용히 꺼지고, 응답에 그 사실이 0비트도 없었다.
+    """
+    svc = nm.NearbyMapService.__new__(nm.NearbyMapService)
+    assert svc._dong_from_address("서울특별시 강남구 역삼동 736 101동 502호") == "역삼동"
+    assert svc._dong_from_address("서울 강남구 역삼동 736 래미안 101동") == "역삼동"
+    # 산 지번도 경계다 — "산1-1" 에서 멈춰야 그 앞 법정동이 남는다.
+    assert svc._dong_from_address("경상북도 포항시 남구 호미곶면 대보리 산1-1") == "대보리"
+    # 기존 계약 불변 — 도로명은 여전히 빈 값(설계상 정상), 지번 없는 주소도 동을 뽑는다.
+    assert svc._dong_from_address("서울특별시 강남구 테헤란로 152") == ""
+    assert svc._dong_from_address("서울특별시 강남구 역삼동") == "역삼동"
+
+
+@pytest.mark.asyncio
+async def test_precut_attribution_is_per_category_and_totals_reconcile() -> None:
+    """★귀속 락 + 항등식 락 — 어느 카테고리가 컷됐는지 응답만으로 판정 가능한가.
+
+    그리고 카테고리별 `groups_cut` 합이 기존 스칼라 `geocode_precut_count` 와 **일치**하는가.
+    두 카운터가 무성 발산하면 판독자가 어느 쪽을 믿어야 할지 알 수 없다 — 런타임 assert 는
+    계측이 본로직을 죽이므로 쓰지 않고, 응답의 `precut_accounting_mismatch` 로 고발한다.
+    """
+    nm._BUILD_CACHE.clear()
+    center = {"lat": 36.0, "lon": 129.0}
+    geocode_map: dict[str, dict] = {}
+
+    # apt: 상한을 넘겨 컷 발동. villa: 상한 미만이라 미발동(그러나 분모는 있어야 한다).
+    apt_rows: list[dict] = []
+    for i in range(_PRECUT + 7):
+        apt_rows.append(_row(name="", jibun=f"{i}-1", dong="A동", price=50000, day=1))
+        geocode_map[f"경상북도 남구 A동 {i}-1"] = {"lat": 36.0003, "lon": 129.0003}
+    villa_rows = [
+        _row(name="", jibun=f"v{i}", dong="A동", price=40000, day=1) for i in range(5)
+    ]
+    for i in range(5):
+        geocode_map[f"경상북도 남구 A동 v{i}"] = {"lat": 36.0003, "lon": 129.0003}
+
+    svc = _service_per_type({"apt": apt_rows, "villa": villa_rows}, geocode_map)
+    payload = await svc.build(
+        address="경상북도 남구 A동 1-1", lawd_cd="47111", months=1, radius_m=1000,
+        center_hint=center,
+    )
+    apt = payload["categories"]["apt_trade"]["precut"]
+    villa = payload["categories"]["villa_trade"]["precut"]
+
+    # (a) 발동한 카테고리 — 정수 리터럴로 잠근다(초과분 7건이 정확히 잘린다).
+    assert apt["groups_before"] == _PRECUT + 7
+    assert apt["groups_cut"] == 7
+    assert apt["budget"] == _PRECUT
+    # (b) 미발동 카테고리 — `groups_cut == 0` 이 "안 잘림"인지 "데이터 0건"인지
+    #     분모 없이는 구분되지 않는다. 분모를 함께 싣는 이유.
+    assert villa["groups_before"] == 5
+    assert villa["groups_cut"] == 0
+    # (c) 거래가 아예 없는 카테고리도 분모 0 으로 정직하게 나온다.
+    assert payload["categories"]["house_trade"]["precut"]["groups_before"] == 0
+
+    # ★항등식 — 신구 카운터가 갈라지면 즉시 드러난다.
+    total = sum(c["precut"]["groups_cut"] for c in payload["categories"].values())
+    assert total == payload["geocode_precut_count"] == 7
+    assert payload["precut_accounting_mismatch"] is False
+
+
+@pytest.mark.asyncio
+async def test_precut_reports_prior_inactive_for_road_name_address() -> None:
+    """★무동작 락 — 도로명 주소에서 프라이어가 꺼진 사실이 **응답에 나타나는가**.
+
+    이게 없으면 프로덕션 표본을 모을 때 도로명 요청(프라이어 꺼짐)과 지번 요청(켜짐)이
+    한 바구니에 섞여, "효과 없음"으로도 "효과 있음"으로도 나올 수 있고 판별할 축이 없다.
+    정확히 재시도 가설이 계측 부재로 1년을 살아남은 기전이다.
+    ★꺼진 **이유**를 구분하는 것이 핵심이다 — 도로명이라 없는 것(설계상 정상)과
+      지번인데 못 뽑은 것(조사 대상)은 다른 사건이다.
+    """
+    nm._BUILD_CACHE.clear()
+    rows = [_row(name="", jibun="1-1", dong="A동", price=50000, day=1)]
+    geocode_map = {"서울특별시 강남구 A동 1-1": {"lat": 36.0005, "lon": 129.0005}}
+    svc = _service(rows, geocode_map)
+
+    payload = await svc.build(
+        address="서울특별시 강남구 테헤란로 152", lawd_cd="11680", months=1, radius_m=1000,
+        center_hint={"lat": 36.0, "lon": 129.0},
+    )
+    assert payload["target_dong_hint"] == ""
+    assert payload["target_dong_source"] == "unresolved_road_name"
+    assert payload["categories"]["apt_trade"]["precut"]["dong_prior_active"] is False
+    # 시군구 힌트는 정상인데 동 프라이어만 죽은 조합 — 종전엔 "전부 정상"으로 보였다.
+    assert payload["sigungu_source"] == "hint"
+
+
+@pytest.mark.asyncio
+async def test_precut_makes_dong_prior_saturation_observable() -> None:
+    """★역방향 회귀락 — 대상동이 예산을 **가득 채우면** 반경 내 타 동이 굶는다.
+
+    M-4 티켓이 제기한 바로 그 regime 이다. 실측·적대검증 결과 이 상황에서 쿼터를 예약하는
+    처방은 순효과가 음수라 **철회**했으므로, 이 테스트는 "굶지 않는다"가 아니라
+    **"굶는다는 사실이 응답에서 보인다"** 를 잠근다. 무음 트레이드오프를 관측 가능한
+    트레이드오프로 바꾸는 것이 이 PR 의 목적이고, 훗날 누가 쿼터를 넣는다면 이 단언을
+    **의식적으로** 고쳐야 한다(조용히 지나갈 수 없다).
+    """
+    nm._BUILD_CACHE.clear()
+    center = {"lat": 36.0, "lon": 129.0}
+    rows: list[dict] = []
+    geocode_map: dict[str, dict] = {}
+
+    # ★법정동을 **두 토큰**(읍·면 형태)으로 둔다 — 계측이 사전컷 정렬과 **같은 규약**
+    #   (`_dong_tail`)으로 세는지 판별하기 위해서다. 단일 토큰만 쓰면 `_dong_tail` 이
+    #   항등함수가 되어, 계측을 원시 완전일치로 되돌리는 변이가 **생존**한다
+    #   (R-2 에서 실제로 그렇게 뚫렸다 — 로직은 고치고 잠금은 판별력이 없었다).
+    # 대상 리 그룹으로 예산을 정확히 가득 채운다 — 전부 반경 **밖**.
+    for i in range(_PRECUT):
+        rows.append(_row(name="", jibun=f"t{i}", dong="호미곶면 대보리", price=90000, day=1))
+        geocode_map[f"경상북도 포항시 남구 호미곶면 대보리 t{i}"] = {"lat": 36.2, "lon": 129.2}
+    # 반경 **안**의 타 리 그룹 — 건수 최하위라 프라이어에 밀려 컷된다.
+    rows.append(_row(name="", jibun="n1", dong="호미곶면 강사리", price=50000, day=1))
+    geocode_map["경상북도 포항시 남구 호미곶면 강사리 n1"] = {"lat": 36.0003, "lon": 129.0003}
+
+    svc = _service(rows, geocode_map)
+    # ★대상지 주소는 어떤 그룹의 `_query` 와도 겹치면 안 된다 — 겹치면 `build()` 가
+    #   `coords.get(address)` 를 중심좌표로 채택해 **그 그룹의 좌표가 중심**이 되고,
+    #   반경 판정 전체가 무의미해진다. 이 테스트를 처음 쓸 때 실제로 밟은 함정으로,
+    #   반경 밖이어야 할 80건이 전부 "반경 내"로 나와 단언이 거짓 실패했다.
+    payload = await svc.build(
+        address="경상북도 포항시 남구 호미곶면 대보리 산9-9", lawd_cd="47111",
+        months=1, radius_m=1000, center_hint=center,
+    )
+    cat = payload["categories"]["apt_trade"]
+    pre = cat["precut"]
+    assert payload["target_dong_hint"] == "대보리"
+
+    # 굶김이 실제로 일어났다 — 반경 안이던 이웃동 그룹이 지오코딩조차 되지 않았다.
+    assert cat["count_in_radius"] == 0
+    assert pre["groups_cut"] == 1
+    # ★그리고 그 사실이 **보인다**: 대상동 일치 그룹이 예산에 도달했다는 신호.
+    assert pre["dong_prior_active"] is True
+    assert pre["dong_matched_group_count_before"] == _PRECUT
+    assert pre["dong_matched_group_count_kept"] == _PRECUT
+    assert pre["dong_matched_group_count_before"] >= pre["budget"], (
+        "포화 regime 인데 계측이 그것을 말하지 못한다 — 판독자가 굶김을 알 수 없다"
+    )
+
+
+@pytest.mark.asyncio
+async def test_precut_flags_dong_notation_mismatch_as_zero_matches() -> None:
+    """★H-4 재발 자동탐지 — 프라이어가 '켜졌는데' 일치가 0건이면 표기 규약이 어긋난 것이다.
+
+    H-4 가 정확히 그 형태였다: `umdNm` 이 "호미곶면 대보리" 두 토큰인데 완전일치 비교라
+    프라이어가 **한 그룹도 앞당기지 못하고** 조용히 건수 정렬로 돌아갔다. 그때는 그 상태를
+    응답에서 볼 수 없었다. 이제 `active=True && matched_before==0` 조합이 경보로 읽힌다.
+    """
+    nm._BUILD_CACHE.clear()
+    rows = [_row(name="", jibun="1-1", dong="다른동", price=50000, day=1)]
+    geocode_map = {"경상북도 남구 다른동 1-1": {"lat": 36.0005, "lon": 129.0005}}
+    svc = _service(rows, geocode_map)
+
+    payload = await svc.build(
+        address="경상북도 남구 대상동 9-9", lawd_cd="47111", months=1, radius_m=1000,
+        center_hint={"lat": 36.0, "lon": 129.0},
+    )
+    pre = payload["categories"]["apt_trade"]["precut"]
+    assert payload["target_dong_hint"] == "대상동"
+    assert payload["target_dong_source"] == "address"
+    assert pre["dong_prior_active"] is True
+    assert pre["dong_matched_group_count_before"] == 0
