@@ -543,6 +543,9 @@ def _rule_by_road(result: dict) -> dict[str, Any] | None:
     if rc is False or (isinstance(rw, (int, float)) and rw == 0):
         return {
             "category": "맹지(도로 미접)", "developability": "CONDITIONAL",
+            # ★해결경로 판정 코드 — 이름에 "도로"가 들어간다는 이유만으로 '도시계획시설 도로
+            #   폐지' 분기에 먹히던 사고를 끊는다(맹지는 도로를 없애는 게 아니라 만드는 문제다).
+            "resolution_key": "ROAD_NO_ACCESS",
             "implications": ["도로에 접하지 않는 맹지로, 건축법상 접도의무(4m 이상 도로에 2m 이상 접함) 미충족 시 건축허가가 불가합니다.",
                              "진입로(사도/지역권) 확보가 선행되어야 합니다."],
             "legal_basis": ["건축법 제44조(대지와 도로의 관계)"],
@@ -640,6 +643,7 @@ def _rule_by_cul_de_sac(result: dict) -> dict[str, Any] | None:
     return {
         "category": "막다른 도로(길이별 최소 너비)",
         "developability": developability,
+        "resolution_key": "ROAD_DEAD_END",
         "implications": [
             head,
             "막다른 도로는 그 길이에 따라 최소 너비가 정해집니다(건축법 시행령 제3조의3): "
@@ -690,6 +694,7 @@ def _rule_by_flag_lot(result: dict) -> dict[str, Any] | None:
     return {
         "category": "자루형(旗竿) 대지 통로부",
         "developability": developability,
+        "resolution_key": "LOT_FLAG_CORRIDOR",
         "implications": [
             head,
             "자루형 대지는 통로부(자루목)가 도로에 접하는 폭으로 접도의무를 판단하며, 통로 최소너비·길이 "
@@ -743,6 +748,9 @@ def _rule_by_emergency_access(result: dict) -> dict[str, Any] | None:
     return {
         "category": "소방·응급·공사차량 접근",
         "developability": developability,
+        # ★"소방"이 들어간다는 이유로 '성능위주설계(PBD) 심의' 분기에 먹히던 사고를 끊는다
+        #   — 여기서 필요한 건 규모 임계 심의가 아니라 진입로 폭·회차공간 확보다.
+        "resolution_key": "ACCESS_EMERGENCY_VEHICLE",
         "implications": [
             head,
             "소방자동차 통행·소방활동 공간(접근로 폭·회차 공간)은 화재 시 인명안전의 전제로, 관할 소방서 "
@@ -1263,7 +1271,9 @@ def detect_special_parcel(
 
     # 각 요인에 대안·해결방안·해결가능성(resolvable)을 부착.
     for f in factors:
-        f.update(_resolution_for(f.get("category", ""), f.get("developability", "")))
+        f.update(_resolution_for(
+            f.get("category", ""), f.get("developability", ""), f.get("resolution_key"),
+        ))
         # verified 법령링크(레지스트리 단일출처) — 프론트가 LegalRefChip로 클릭 링크/텍스트 폴백.
         #   legal_ref_keys가 없는 요인은 빈 리스트(legal_basis 텍스트로만 정직 표기).
         f["legal_refs"] = _factor_legal_refs(f.get("legal_ref_keys"))
@@ -1344,9 +1354,76 @@ def detect_special_parcel(
 _RES_RANK = {"NO": 0, "CONDITIONAL": 1, "YES": 2}
 
 
-def _resolution_for(category: str, developability: str) -> dict[str, Any]:
-    """특이요인별 대안·해결방안 + 해결가능성(resolvable: YES/CONDITIONAL/NO)."""
+# ── 해결경로 판정 코드 표(생산자가 심는 resolution_key → 해결경로) ──────────────────
+#
+# ★왜 코드로 판정하는가(2026-08-03 적발):
+#   해결경로를 요인 이름(한국어)의 **부분문자열**로 골랐더니, 이름이 겹치는 요인이 엉뚱한
+#   분기에 먹혔다. 실측된 오답 4건:
+#     - "맹지(도로 미접)"          → "도시계획시설(도로) **폐지**·변경"  (도로가 없어서 문제인데 없애라고 했다)
+#     - "막다른 도로(길이별 최소 너비)" → 같은 폐도 경로            (정답은 폭원 확보·건축선 후퇴)
+#     - "소방·응급·공사차량 접근"    → "성능위주설계(PBD) 심의"      (정답은 진입로 폭·회차공간 확보)
+#     - "자루형(旗竿) 대지 통로부"   → 기본값 "관계기관 협의"        (해결경로가 사실상 없었다)
+#   이 값들은 화면의 "이 제약을 푸는 방법" 카드로 그대로 나간다 — 틀린 전문가 조언이다.
+#
+#   같은 처방을 이미 한 번 썼다(#526: 판정 키와 화면 문구 분리). 이름은 사람이 읽는 것이고
+#   판정은 코드로 한다. 이름을 더 쉬운 말로 바꿔도 해결경로가 바뀌지 않는다.
+#
+#   ※ 이 표에 없는 요인은 종전 이름 기반 분기를 그대로 탄다(무회귀). 코드는 additive다.
+_RESOLUTION_BY_KEY: dict[str, dict[str, Any]] = {
+    "ROAD_NO_ACCESS": {
+        "resolvable": "CONDITIONAL",
+        "resolution_paths": ["진입도로 확보(인접 필지 매입·사도개설·지역권 설정)",
+                             "현황도로 인정 협의(허가권자 도로지정·공고)"],
+        "alternatives": ["접도 가능한 인접 필지 추가 편입", "맹지 필지 제외"],
+    },
+    "ROAD_DEAD_END": {
+        "resolvable": "CONDITIONAL",
+        "resolution_paths": ["막다른 도로 길이별 최소 너비 확보(건축법 시행령 제3조의3)",
+                             "건축선 후퇴·사도 개설로 폭원 확대",
+                             "허가권자 도로지정·공고 협의"],
+        "alternatives": ["확보 가능한 폭원에 맞춰 규모·용도 조정", "접도 여건이 나은 인접 필지 편입"],
+    },
+    "LOT_FLAG_CORRIDOR": {
+        "resolvable": "CONDITIONAL",
+        "resolution_paths": ["통로부(자루목) 최소너비 확보 — 지자체 건축조례 기준 확인",
+                             "통로부 소유권·지역권 확보", "소방 진입 가능 폭·회차 여건 확인"],
+        "alternatives": ["통로 폭 확보가 가능한 인접 필지 편입", "통로부 기준 충족 규모로 계획 조정"],
+    },
+    "ACCESS_EMERGENCY_VEHICLE": {
+        "resolvable": "CONDITIONAL",
+        "resolution_paths": ["소방자동차 진입로 폭·회차 공간 확보", "관할 소방서 사전협의",
+                             "건축물 규모에 맞는 소방활동 공간 확보"],
+        "alternatives": ["진입 여건에 맞춘 규모·동선 조정", "대체 진출입 동선 확보"],
+    },
+}
+
+
+# 코드가 없는 구 payload용 이름 힌트 → 같은 표의 키. **가장 구체적인 것부터** 본다
+# (일반 "도로" 분기보다 먼저 걸려야 하므로 이름 기반 체인보다 앞에서 조회한다).
+_KEY_BY_NAME_HINT: tuple[tuple[str, str], ...] = (
+    ("맹지", "ROAD_NO_ACCESS"),
+    ("막다른", "ROAD_DEAD_END"),
+    ("자루형", "LOT_FLAG_CORRIDOR"),
+    ("소방·응급", "ACCESS_EMERGENCY_VEHICLE"),
+)
+
+
+def _resolution_for(
+    category: str, developability: str, resolution_key: str | None = None,
+) -> dict[str, Any]:
+    """특이요인별 대안·해결방안 + 해결가능성(resolvable: YES/CONDITIONAL/NO).
+
+    판정 순서: ①생산자가 심은 resolution_key(코드) ②없으면 종전 이름 기반 분기.
+    코드가 있으면 이름이 무엇이든 그 해결경로가 이긴다.
+    """
+    if resolution_key and resolution_key in _RESOLUTION_BY_KEY:
+        return dict(_RESOLUTION_BY_KEY[resolution_key])
     c = category or ""
+    # 코드가 없는 구 payload(저장된 옛 분석 결과)도 같은 표로 보낸다 — 해결경로 지식이
+    # 두 군데로 갈리지 않게 이름 힌트는 **판정만** 하고 내용은 위 표에서 가져온다.
+    for hint, key in _KEY_BY_NAME_HINT:
+        if hint in c:
+            return dict(_RESOLUTION_BY_KEY[key])
     if "학교" in c or "공원" in c or "유원지" in c or "체육" in c:
         return {"resolvable": "CONDITIONAL",
                 "resolution_paths": ["도시계획시설 폐지/변경(도시·군관리계획 변경 입안·결정)",
