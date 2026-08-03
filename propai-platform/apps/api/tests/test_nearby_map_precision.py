@@ -408,3 +408,66 @@ async def test_observability_reports_row_fallback_when_hint_undecidable() -> Non
     )
     assert payload["sigungu_hint"] == ""
     assert payload["sigungu_source"] == "row_fallback"
+
+
+# ── 후속 F-1/F-2/F-3 회귀락 ─────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_cached_failure_is_not_mistaken_for_success() -> None:
+    """★F-2 함정 회귀락 — 사유를 담은 실패 캐시가 **성공으로 오분류**되면 안 된다.
+
+    실패도 사유와 함께 캐시하도록 바꾸면 엔트리가 `{"_fail": "..."}` 가 되는데, 이건 **truthy**다.
+    종전 판정(`return val or None`)을 그대로 두면 이 dict 가 좌표로 통과해
+    **실패가 성공으로 둔갑**한다(리뷰어가 명시적으로 경고한 함정). 판정은 `lat` 유무여야 한다.
+    """
+    svc = nm.NearbyMapService.__new__(nm.NearbyMapService)
+    svc._geo_key = "k"
+
+    class _FakeRedis:
+        def __init__(self, payload: str):
+            self._payload = payload
+
+        async def get(self, _key):
+            return self._payload
+
+        async def aclose(self):
+            return None
+
+    import json as _json
+
+    async def _redis_fail():
+        return _FakeRedis(_json.dumps({"_fail": "http_429"}))
+
+    svc._redis = _redis_fail  # type: ignore[assignment]
+    got = await svc._geocode_one("남구 대보리 산1-1")
+    assert got is None, "사유를 담은 실패 캐시가 좌표처럼 반환됐다 — 실패가 성공으로 오분류된다"
+    # 사유가 보존돼야 breakdown 이 cached_miss 한 바구니로 뭉개지지 않는다(F-2 본목적).
+    assert svc._geo_failures.get("http_429") == 1
+
+    async def _redis_ok():
+        return _FakeRedis(_json.dumps({"lat": 37.5, "lon": 127.0}))
+
+    svc2 = nm.NearbyMapService.__new__(nm.NearbyMapService)
+    svc2._geo_key = "k"
+    svc2._redis = _redis_ok  # type: ignore[assignment]
+    ok = await svc2._geocode_one("서울특별시 강남구 역삼동 736")
+    assert ok and ok["lat"] == 37.5, "정상 캐시 히트가 깨졌다"
+
+
+@pytest.mark.asyncio
+async def test_attempt_breakdown_is_reported_alongside_query_breakdown() -> None:
+    """★F-3 — 질의 단위와 **시도 단위**를 병기한다.
+
+    질의 단위만 남기면 "429 가 총 몇 번 났나"가 소실돼, 429 스파이크 구간에서 전체가
+    transient 로 쏠려 주소 오류(not_found)가 거꾸로 가려진다. 재시도 착수 판정은 두 숫자를
+    대조해서 내려야 한다.
+    """
+    nm._BUILD_CACHE.clear()
+    rows = [_row(name="", jibun="1-1", dong="A동", price=50000, day=1)]
+    svc = _service(rows, {"경상북도 남구 A동 1-1": {"lat": 36.0005, "lon": 129.0005}})
+    payload = await svc.build(
+        address="경상북도 남구 A동 1-1", lawd_cd="47111", months=1, radius_m=1000,
+        center_hint={"lat": 36.0, "lon": 129.0},
+    )
+    assert "geocode_attempt_breakdown" in payload, "시도 단위 관점이 사라졌다"
+    assert "geocode_failure_breakdown" in payload, "질의 단위 관점이 사라졌다"

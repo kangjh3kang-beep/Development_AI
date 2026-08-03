@@ -66,6 +66,15 @@ from apps.api.app.services.land_intelligence.nearby_map_service import (
         ("서구 둔산동 1", ""),
         ("북구 연산동 1", ""),
         ("강남구 대치동 316", ""),
+        # ★F-1 — 광역시 축약형은 **시군구가 아니다**. endswith("시") 만으로는 시도와 시군구를
+        #   구분 못 해 통과했다. 특히 "광주시" 는 광주광역시 축약형과 경기도 광주시가
+        #   문자열로 충돌한다.
+        ("서울시 역삼동 736", ""),
+        ("부산시 우동 1", ""),
+        ("광주시 충장로1가 1", ""),
+        ("대전시 둔산동 1", ""),
+        # 진짜 시군구인 단일 토큰은 유지되어야 한다(과잉 차단 방지)
+        ("세종특별자치시 조치원읍 1", "세종특별자치시"),
     ],
 )
 def test_sigungu_hint_extracts_full_sigungu_level(address: str, expected: str) -> None:

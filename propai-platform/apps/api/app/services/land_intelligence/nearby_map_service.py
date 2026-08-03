@@ -80,6 +80,13 @@ _SIDO_TOKENS = frozenset({
     "경기", "강원", "충북", "충남", "전북", "전남", "경북", "경남", "제주",
 })
 _SIGUNGU_SUFFIXES = ("도", "시", "군", "구")
+# ★F-1 — `endswith("시")` 는 **시도와 시군구를 구분하지 못한다**. 광역시 축약형이 단일 토큰
+#   시군구인 척 통과했다: "서울시 역삼동 736" → "서울시", "부산시 우동 1" → "부산시".
+#   특히 **"광주시" 는 광주광역시 축약형과 경기도 광주시(진짜 시군구)가 문자열로 충돌**해
+#   광주광역시 주소가 경기 광주시로 해석될 여지가 있다.
+#   차단 비용은 경기 광주시 단독 입력이 행 폴백되는 것뿐이고 `sigungu_source` 로 관측된다 —
+#   오염 대신 폴백으로 틀리는 쪽이 옳다(C-1·R-1 과 같은 판단).
+_SIDO_SHORT_SI = frozenset({"서울시", "부산시", "대구시", "인천시", "광주시", "대전시", "울산시"})
 
 
 def sigungu_hint_from_address(address: str) -> str:
@@ -115,7 +122,7 @@ def sigungu_hint_from_address(address: str) -> str:
     #   단일 토큰은 시 계층(세종특별자치시·광역시 등)만 허용한다. 비용은 "강남구 대치동 316"
     #   같은 입력이 힌트를 잃는 것인데, 그건 **행 폴백(종전 동작)**이고 `sigungu_source` 로
     #   관측된다 — 오염 대신 폴백으로 틀리는 쪽이 옳다.
-    if len(out) == 1 and not out[0].endswith("시"):
+    if len(out) == 1 and (not out[0].endswith("시") or out[0] in _SIDO_SHORT_SI):
         return ""
     return " ".join(out)
 
@@ -145,6 +152,15 @@ class NearbyMapService:
         #   주소 자체가 틀림)인지 구분할 수단이 0이었고, 그 위에서 세운 처방은 검증 불가였다.
         self._geo_failures: dict[str, int] = {}
         self._geo_fail_samples: list[str] = []
+
+    def _geo_attempt_fail(self, reason: str) -> None:
+        """시도(PARCEL/ROAD) 단위 실패를 전량 집계한다 — 질의 단위 대표사유와 **별개 관점**."""
+        try:
+            if not hasattr(self, "_geo_attempt_failures"):
+                self._geo_attempt_failures = {}
+            self._geo_attempt_failures[reason] = self._geo_attempt_failures.get(reason, 0) + 1
+        except Exception:  # noqa: BLE001 — 계측이 본로직을 깨지 않는다
+            pass
 
     def _geo_fail(self, reason: str, query: str = "") -> None:
         """지오코딩 실패 1건을 원인별로 적재(예외 안전 — 계측이 본로직을 깨지 않는다).
@@ -181,6 +197,7 @@ class NearbyMapService:
         sigungu_hint = (sigungu_hint or "").strip() or sigungu_hint_from_address(address)
         # 계측은 요청 단위다 — 인스턴스를 재사용하는 소비처가 생겨도 수치가 섞이지 않게 한다.
         self._geo_failures = {}
+        self._geo_attempt_failures = {}
         self._geo_fail_samples = []
         hint_lat = (center_hint or {}).get("lat")
         hint_lon = (center_hint or {}).get("lon")
@@ -425,6 +442,9 @@ class NearbyMapService:
             #   원인별 분해가 있어야 재시도(일시장애)와 주소 교정(영구 오류) 중 무엇이
             #   지렛대인지 **숫자로** 판정할 수 있다.
             "geocode_failure_breakdown": dict(getattr(self, "_geo_failures", {})),
+            # ★F-3 — 질의 단위(위)와 **시도 단위**(아래)를 병기한다. 재시도 착수 판정은
+            #   두 숫자를 대조해서 내려야 한다(한쪽만 보면 반대 방향으로 가려진다).
+            "geocode_attempt_breakdown": dict(getattr(self, "_geo_attempt_failures", {})),
             # ★분모가 없으면 "비중"을 계산할 수 없다 — breakdown 만으로는 판정 불가였다.
             "geocode_attempted_count": len(queries),
             # ★리뷰 M-1 — 이번 PR 이 새로 넣은 변수(힌트)도 관측 대상이다. 힌트가 비면
@@ -1036,9 +1056,15 @@ class NearbyMapService:
         #   과소평가된다. 그런데 나는 재시도 착수 조건을 "이 계기가 429/5xx 가 유의미하다고
         #   말할 때"로 걸어놨다. 즉 **착수하지 않는 결론 쪽으로 기울어진 계기**였다.
         attempt_reasons: list[str] = []
+        _final_reason = ""  # 캐시 저장에서 재사용(F-2)
 
         def _fail(reason: str) -> None:
             attempt_reasons.append(reason)
+            # ★F-3 — 질의 단위 대표사유(위)와 **시도 단위 전량**은 서로 다른 질문에 답한다.
+            #   질의 단위만 남기면 "429 가 총 몇 번 났나"가 소실돼, 429 스파이크 구간에서
+            #   전체가 transient 로 쏠려 이번 PR 이 고친 근원(주소 오류=not_found)이 거꾸로
+            #   가려진다. 두 관점을 **병기**해 서로를 오염시키지 않게 한다.
+            self._geo_attempt_fail(reason)
 
         cache_key = f"geo:vworld:{query}"
         r = await self._redis()
@@ -1048,12 +1074,17 @@ class NearbyMapService:
                 if cached:
                     await r.aclose()
                     val = json.loads(cached)
-                    if not val:
-                        # ★리뷰 R-4 — 캐시된 실패를 안 세면 `coords_unresolved_count` 는 수십인데
-                        #   breakdown 이 {} 로 나온다(미스 캐시 5분). 그걸 "실패 없음"으로 읽으면
-                        #   정확히 틀린 결론이다 — 가장 오도적인 공백이었다.
-                        self._geo_fail("cached_miss", query)
-                    return val or None
+                    # ★F-2 — 캐시된 실패에 **원래 사유**를 실어 보관한다. 종전엔 전부
+                    #   `cached_miss` 한 바구니로 뭉쳐서, 워밍된 지역을 반복 조회하면 breakdown 이
+                    #   그것에 지배돼 "429 대 not_found 비중"이라는 계측의 존재 이유가 다시
+                    #   판정 불가가 됐다(공백은 메웠으나 정보량은 회복되지 않았다).
+                    #   ★★판정을 `val` 의 truthiness 가 아니라 **`lat` 유무**로 바꾼다 —
+                    #   사유를 담은 실패 엔트리 `{"_fail": ...}` 는 truthy 라, 그대로 두면
+                    #   **실패가 성공으로 오분류**된다(리뷰어가 명시 경고한 함정).
+                    if not val or val.get("lat") is None:
+                        self._geo_fail((val or {}).get("_fail") or "cached_miss", query)
+                        return None
+                    return val
             except Exception:
                 pass
         own = client is None
@@ -1120,13 +1151,15 @@ class NearbyMapService:
             # 쿼리를 함께 남긴다 — 원인 코드만으로는 "어떤 주소가 왜 깨지는지" 못 본다
             # (이번 진단의 결정타가 실패 쿼리의 시군구를 눈으로 본 것이었다).
             _transient = ("http_429", "http_5xx", "timeout_or_network")
-            _reason = next((r for r in attempt_reasons if r in _transient), attempt_reasons[-1])
-            self._geo_fail(_reason, query)
+            _final_reason = next((r for r in attempt_reasons if r in _transient), attempt_reasons[-1])
+            self._geo_fail(_final_reason, query)
         if r is not None:
             try:
                 # ★성공은 7일, 실패/미해결은 5분만 캐시 — 일시 실패가 장기 고착되지 않게 한다.
                 ttl = _GEOCODE_CACHE_TTL_OK if coord else _GEOCODE_CACHE_TTL_MISS
-                await r.setex(cache_key, ttl, json.dumps(coord or {}))
+                # ★F-2 — 실패도 **사유와 함께** 캐시한다(구 엔트리 `{}` 는 5분 뒤 자연 소멸).
+                _cached_val = coord if coord else {"_fail": _final_reason or "not_found"}
+                await r.setex(cache_key, ttl, json.dumps(_cached_val))
                 await r.aclose()
             except Exception:
                 pass
