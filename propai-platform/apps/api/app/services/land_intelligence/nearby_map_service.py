@@ -151,6 +151,9 @@ class NearbyMapService:
         #   일시장애(429/5xx/타임아웃 → 재시도로 회복 가능)인지 영구 오류(NOT_FOUND →
         #   주소 자체가 틀림)인지 구분할 수단이 0이었고, 그 위에서 세운 처방은 검증 불가였다.
         self._geo_failures: dict[str, int] = {}
+        # ★N-5 — 세 계측 중 둘만 초기화하면, 다음 사람이 lazy init 을 "중복"으로 보고 지울 때
+        #   바로 깨진다(W2 에서 그 경로로 테스트 11건이 죽었다). 대칭을 맞춘다.
+        self._geo_attempt_failures: dict[str, int] = {}
         self._geo_fail_samples: list[str] = []
 
     def _geo_attempt_fail(self, reason: str) -> None:
@@ -1082,7 +1085,16 @@ class NearbyMapService:
                     #   사유를 담은 실패 엔트리 `{"_fail": ...}` 는 truthy 라, 그대로 두면
                     #   **실패가 성공으로 오분류**된다(리뷰어가 명시 경고한 함정).
                     if not val or val.get("lat") is None:
-                        self._geo_fail((val or {}).get("_fail") or "cached_miss", query)
+                        # ★N-1 — 사유는 보존하되 **캐시 출처는 지우지 않는다**. F-2 가 사유를
+                        #   되살리면서 "이건 캐시다"라는 신호를 없앴는데, 그러면
+                        #   `geocode_failure_breakdown` 은 라이브 실패와 캐시된 실패를 **같은 키로
+                        #   합산**하고 `geocode_attempt_breakdown` 은 라이브 시도만 센다(캐시 히트는
+                        #   _fail 을 안 거친다). 워밍된 부정 캐시 구간에서 두 숫자를 대조하면
+                        #   "질의 30건이 429 인데 시도는 0건"이 되고, 그 429 는 **최대 5분 전
+                        #   단일 사건이 30개 질의로 증폭된 것**일 수 있다 — R-3 의 transient-first
+                        #   편향과 같은 방향으로 중첩된다. 이 PR 의 유일한 목적(재시도 착수를
+                        #   데이터로 판정)에 대해 첫 판정이 틀릴 수 있는 구조였다.
+                        self._geo_fail("cached:" + ((val or {}).get("_fail") or "unknown"), query)
                         return None
                     return val
             except Exception:
@@ -1158,7 +1170,9 @@ class NearbyMapService:
                 # ★성공은 7일, 실패/미해결은 5분만 캐시 — 일시 실패가 장기 고착되지 않게 한다.
                 ttl = _GEOCODE_CACHE_TTL_OK if coord else _GEOCODE_CACHE_TTL_MISS
                 # ★F-2 — 실패도 **사유와 함께** 캐시한다(구 엔트리 `{}` 는 5분 뒤 자연 소멸).
-                _cached_val = coord if coord else {"_fail": _final_reason or "not_found"}
+                # ★N-4 — 관측된 적 없는 사유를 채우지 않는다(무날조). 현재는 도달 불가한
+                #   방어값이지만, 도달하면 "not_found" 라는 **거짓 관측**을 만든다.
+                _cached_val = coord if coord else {"_fail": _final_reason or "unknown"}
                 await r.setex(cache_key, ttl, json.dumps(_cached_val))
                 await r.aclose()
             except Exception:

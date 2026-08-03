@@ -442,7 +442,11 @@ async def test_cached_failure_is_not_mistaken_for_success() -> None:
     got = await svc._geocode_one("남구 대보리 산1-1")
     assert got is None, "사유를 담은 실패 캐시가 좌표처럼 반환됐다 — 실패가 성공으로 오분류된다"
     # 사유가 보존돼야 breakdown 이 cached_miss 한 바구니로 뭉개지지 않는다(F-2 본목적).
-    assert svc._geo_failures.get("http_429") == 1
+    # ★N-1 — 다만 **캐시 출처는 지우지 않는다**. 접두가 없으면 라이브 실패와 캐시된 실패가
+    #   같은 키로 합산되는데, 시도 단위(`geocode_attempt_breakdown`)는 캐시 히트를 세지
+    #   않으므로 "질의 30건이 429인데 시도는 0건"이라는 오독이 생긴다. 그 429 는 최대 5분 전
+    #   단일 사건이 증폭된 것일 수 있어, 재시도 착수 판정이 첫 회부터 틀릴 수 있었다.
+    assert svc._geo_failures == {"cached:http_429": 1}
 
     async def _redis_ok():
         return _FakeRedis(_json.dumps({"lat": 37.5, "lon": 127.0}))
@@ -471,3 +475,82 @@ async def test_attempt_breakdown_is_reported_alongside_query_breakdown() -> None
     )
     assert "geocode_attempt_breakdown" in payload, "시도 단위 관점이 사라졌다"
     assert "geocode_failure_breakdown" in payload, "질의 단위 관점이 사라졌다"
+
+
+@pytest.mark.asyncio
+async def test_live_geocode_branch_locks_attempt_query_and_cache_write() -> None:
+    """★N-2·N-3 봉합 — `_geocode_one` 의 **라이브 HTTP 분기**를 태우는 유일한 테스트.
+
+    이 분기에 R-3(질의 대표사유=일시장애 우선)·F-3(시도 단위 전량 집계)·F-2(캐시 쓰기 형태)가
+    전부 매달려 있는데 **저장소에 그 분기를 태우는 테스트가 0건**이었다. 그래서 각각을 되돌리는
+    1행 변이가 전 골든을 통과했다 — "로직은 고치고 그 로직의 잠금은 빠지는" 패턴의 세 번째다
+    (H-1 공허 배선단언 · R-2 `_dong_tail` 무잠금 에 이어).
+
+    시나리오: PARCEL → 429, ROAD → 200 + status=NOT_FOUND (실제 VWorld 응답 형태).
+      · 시도 단위: 429 와 not_found 가 **각각 1회** 기록되어야 한다(F-3)
+      · 질의 단위: 대표 사유는 **일시장애 우선**이므로 http_429 (R-3)
+      · 캐시 쓰기: 실패 엔트리에 **사유가 실려야** 한다(F-2)
+    """
+    import json as _json
+
+    class _Resp:
+        def __init__(self, status: int, payload: dict):
+            self.status_code = status
+            self._payload = payload
+
+        def json(self):
+            return self._payload
+
+    class _FakeClient:
+        """PARCEL 은 429, ROAD 는 200+NOT_FOUND 를 준다."""
+
+        def __init__(self):
+            self.calls: list[str] = []
+
+        async def get(self, _url, params=None):
+            addr_type = (params or {}).get("type")
+            self.calls.append(addr_type)
+            if addr_type == "PARCEL":
+                return _Resp(429, {})
+            return _Resp(200, {"response": {"status": "NOT_FOUND"}})
+
+    class _FakeRedis:
+        def __init__(self):
+            self.saved: str | None = None
+
+        async def get(self, _key):
+            return None  # 캐시 미스 → 라이브 분기로 진입
+
+        async def setex(self, _key, _ttl, value):
+            self.saved = value
+
+        async def aclose(self):
+            return None
+
+    svc = nm.NearbyMapService.__new__(nm.NearbyMapService)
+    svc._geo_key = "test-key"
+    svc._geo_failures = {}
+    svc._geo_attempt_failures = {}
+    svc._geo_fail_samples = []
+    redis = _FakeRedis()
+
+    async def _redis():
+        return redis
+
+    svc._redis = _redis  # type: ignore[assignment]
+    client = _FakeClient()
+
+    got = await svc._geocode_one("경상북도 포항시 남구 호미곶면 대보리 산1-1", client)
+
+    assert got is None, "실패인데 좌표가 반환됐다"
+    assert client.calls == ["PARCEL", "ROAD"], "PARCEL→ROAD 폴백 경로를 안 태웠다(테스트가 공허하다)"
+
+    # F-3 — 시도 단위는 **전량**이다. 이 단언이 `_geo_attempt_fail` 호출 삭제 변이를 잡는다.
+    assert svc._geo_attempt_failures == {"http_429": 1, "not_found": 1}
+
+    # R-3 — 질의 단위 대표는 **일시장애 우선**. 마지막 시도(ROAD=not_found)로 되돌리면 깨진다.
+    assert svc._geo_failures == {"http_429": 1}
+
+    # F-2 — 캐시 쓰기에 사유가 실려야 한다. `json.dumps(coord or {})` 로 되돌리면 깨진다.
+    assert redis.saved is not None, "실패가 캐시되지 않았다"
+    assert _json.loads(redis.saved) == {"_fail": "http_429"}
