@@ -180,6 +180,21 @@ def _count_dong_matches(groups: "list[dict[str, Any]]", target_dong: str) -> int
         return None
 
 
+def _precut_accounting_mismatch(
+    categories: "dict[str, dict[str, Any]]", geocode_precut: int
+) -> bool:
+    """카테고리별 `groups_cut` 합이 기존 스칼라와 **갈라졌는가**.
+
+    ★리뷰 F-1 봉합 — 종전엔 이 식이 응답 dict 안에 인라인으로 있었고 골든은 정상 상태의
+    `is False` 만 단언했다. 그러면 **표현식을 리터럴 `False` 로 치환하는 변이가 생존한다**
+    — 즉 "항상 False 를 내는 고장난 탐지기"도 그 단언을 통과한다. 탐지기가 잡아야 할 회귀를
+    스스로 false-healthy 로 가리는 형태로, #497 에서 배포가드가 정확히 이렇게 적발됐다.
+    순수 함수로 빼서 **발산 입력으로 True 분기를 직접 태울 수 있게** 한다.
+    """
+    total = sum((c.get("precut") or {}).get("groups_cut") or 0 for c in categories.values())
+    return total != geocode_precut
+
+
 class NearbyMapService:
     """주변 실거래 지도 페이로드 생성기."""
 
@@ -538,10 +553,7 @@ class NearbyMapService:
             #   위 스칼라가 갈라지면 둘 중 하나가 틀린 것인데, 런타임 assert 는 계측이
             #   본로직을 죽이는 것이라 쓰지 않는다(관측 장치 제1원칙). 대신 응답에 실어
             #   판독자가 즉시 알게 한다 — 정상 상태에서는 항상 False 여야 한다.
-            "precut_accounting_mismatch": (
-                sum((c.get("precut") or {}).get("groups_cut") or 0 for c in categories.values())
-                != geocode_precut
-            ),
+            "precut_accounting_mismatch": _precut_accounting_mismatch(categories, geocode_precut),
             "lawd_cd": lawd_cd,
             "months": ym_list,
             "categories": categories,

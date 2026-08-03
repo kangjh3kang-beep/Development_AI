@@ -607,11 +607,18 @@ def test_dong_from_address_stops_at_jibun() -> None:
     svc = nm.NearbyMapService.__new__(nm.NearbyMapService)
     assert svc._dong_from_address("서울특별시 강남구 역삼동 736 101동 502호") == "역삼동"
     assert svc._dong_from_address("서울 강남구 역삼동 736 래미안 101동") == "역삼동"
-    # 산 지번도 경계다 — "산1-1" 에서 멈춰야 그 앞 법정동이 남는다.
+    # ★리뷰 F-4 — "산1-1" 단독은 이 경계의 **판별 케이스가 아니다**. `산1-1` 은 애초에
+    #   동/리/가 로 끝나지 않아 `best` 를 덮어쓴 적이 없으므로, break 에서 `산` 절을 빼도
+    #   통과한다(주석이 주장하는 이유와 **다른 이유로** 통과하는 H-1 클래스 공허 단언).
+    #   `산` 절이 실제로 일하는 건 산 지번 **뒤에 동으로 끝나는 토큰**이 올 때다.
     assert svc._dong_from_address("경상북도 포항시 남구 호미곶면 대보리 산1-1") == "대보리"
+    assert svc._dong_from_address("경상북도 포항시 남구 호미곶면 대보리 산1-1 관리동") == "대보리"
     # 기존 계약 불변 — 도로명은 여전히 빈 값(설계상 정상), 지번 없는 주소도 동을 뽑는다.
     assert svc._dong_from_address("서울특별시 강남구 테헤란로 152") == ""
     assert svc._dong_from_address("서울특별시 강남구 역삼동") == "역삼동"
+    # ★법정동 표기에 숫자가 들어가는 실제 지명이 깨지지 않는지(과잉 차단 방지).
+    assert svc._dong_from_address("서울특별시 중구 을지로2가 199") == "을지로2가"
+    assert svc._dong_from_address("경기도 고양시 일산동구 백석동 1237") == "백석동"
 
 
 @pytest.mark.asyncio
@@ -684,19 +691,42 @@ async def test_precut_reports_prior_inactive_for_road_name_address() -> None:
     assert payload["target_dong_hint"] == ""
     assert payload["target_dong_source"] == "unresolved_road_name"
     assert payload["categories"]["apt_trade"]["precut"]["dong_prior_active"] is False
+    # ★리뷰 F-3 — "프라이어가 꺼지면 일치 수는 **0**"이라는 계약도 함께 잠근다.
+    #   이 PR 자신의 원칙("0 과 미확보를 같은 기호로 쓰지 않는다")을 인코딩한 분기인데
+    #   종전엔 `return 0` → `return None` 변이가 생존했다.
+    assert payload["categories"]["apt_trade"]["precut"]["dong_matched_group_count_before"] == 0
     # 시군구 힌트는 정상인데 동 프라이어만 죽은 조합 — 종전엔 "전부 정상"으로 보였다.
     assert payload["sigungu_source"] == "hint"
+
+    # ★리뷰 F-5 — 도로명 판정은 "로"뿐 아니라 **"길"**도 본다. `("로",)` 로 축소하는 변이가
+    #   생존했다(길 픽스처 부재). 이유 구분이 틀리면 정상(도로명)이 조사 대상으로 뒤집힌다.
+    nm._BUILD_CACHE.clear()
+    payload_gil = await svc.build(
+        address="서울특별시 강남구 봉은사길 20", lawd_cd="11680", months=1, radius_m=1000,
+        center_hint={"lat": 36.0, "lon": 129.0},
+    )
+    assert payload_gil["target_dong_source"] == "unresolved_road_name"
 
 
 @pytest.mark.asyncio
 async def test_precut_makes_dong_prior_saturation_observable() -> None:
-    """★역방향 회귀락 — 대상동이 예산을 **가득 채우면** 반경 내 타 동이 굶는다.
+    """★역방향 회귀락 — 대상동이 예산을 **넘치면** 반경 내 타 동이 굶는다.
 
-    M-4 티켓이 제기한 바로 그 regime 이다. 실측·적대검증 결과 이 상황에서 쿼터를 예약하는
-    처방은 순효과가 음수라 **철회**했으므로, 이 테스트는 "굶지 않는다"가 아니라
-    **"굶는다는 사실이 응답에서 보인다"** 를 잠근다. 무음 트레이드오프를 관측 가능한
-    트레이드오프로 바꾸는 것이 이 PR 의 목적이고, 훗날 누가 쿼터를 넣는다면 이 단언을
-    **의식적으로** 고쳐야 한다(조용히 지나갈 수 없다).
+    M-4 티켓이 제기한 바로 그 regime 이다.
+
+    ★리뷰 F-7 — 이 테스트는 M-4 기각의 **반례**이기도 하다. 정직하게 적는다.
+    쿼터의 순효과가 음수라는 논증은 **캡(28)이 구속력을 가질 때만** 성립한다(밀려난 그룹은
+    건수 최하위권이라 캡에서 재탈락한다). 그런데 여기가 구성하는 건 **캡 비구속** regime
+    (반경 통과 후보가 캡보다 적다)이고, 거기선 프라이어가 반경 **안**의 이웃 리를 실제로
+    굶긴다 — 그 regime 에서 쿼터의 순효과는 **양수**다. 하필 이 캠페인의 발단인 호미곶이
+    그 계열이다(거래는 멀고 많으며 가까운 물건은 이웃 리).
+    → 그래서 판정은 "철회"가 아니라 **조건부 기각(캡 구속 regime 한정) + 캡 비구속 regime 보류**다.
+      재검토 트리거: `groups_cut > 0 && 반경통과 그룹수 < _MAX_GROUPS_PER_CAT`.
+      이 PR 의 계측이 그 조건을 프로덕션에서 **처음으로 관측 가능**하게 만든다.
+
+    이 테스트가 잠그는 것은 "굶지 않는다"가 아니라 **"굶는다는 사실이 응답에서 보인다"** 다.
+    무음 트레이드오프를 관측 가능한 트레이드오프로 바꾸는 것이 목적이고, 훗날 누가 쿼터를
+    넣는다면 이 단언을 **의식적으로** 고쳐야 한다(조용히 지나갈 수 없다).
     """
     nm._BUILD_CACHE.clear()
     center = {"lat": 36.0, "lon": 129.0}
@@ -707,8 +737,11 @@ async def test_precut_makes_dong_prior_saturation_observable() -> None:
     #   (`_dong_tail`)으로 세는지 판별하기 위해서다. 단일 토큰만 쓰면 `_dong_tail` 이
     #   항등함수가 되어, 계측을 원시 완전일치로 되돌리는 변이가 **생존**한다
     #   (R-2 에서 실제로 그렇게 뚫렸다 — 로직은 고치고 잠금은 판별력이 없었다).
-    # 대상 리 그룹으로 예산을 정확히 가득 채운다 — 전부 반경 **밖**.
-    for i in range(_PRECUT):
+    # ★리뷰 F-2 — 대상 리 그룹을 예산보다 **5 많게** 둔다. 종전엔 정확히 예산만큼이라
+    #   `before == kept` 였고, 그러면 `_matched_kept = _matched_before` 로 만드는 변이가
+    #   **생존**한다 — 이 PR 이 스스로 "둘의 차가 프라이어 포화도"라고 규정한 판별량이
+    #   한 번도 실행되지 않았던 것이다.
+    for i in range(_PRECUT + 5):
         rows.append(_row(name="", jibun=f"t{i}", dong="호미곶면 대보리", price=90000, day=1))
         geocode_map[f"경상북도 포항시 남구 호미곶면 대보리 t{i}"] = {"lat": 36.2, "lon": 129.2}
     # 반경 **안**의 타 리 그룹 — 건수 최하위라 프라이어에 밀려 컷된다.
@@ -728,13 +761,19 @@ async def test_precut_makes_dong_prior_saturation_observable() -> None:
     pre = cat["precut"]
     assert payload["target_dong_hint"] == "대보리"
 
-    # 굶김이 실제로 일어났다 — 반경 안이던 이웃동 그룹이 지오코딩조차 되지 않았다.
+    # 굶김이 실제로 일어났다 — 반경 안이던 이웃 리 그룹이 지오코딩조차 되지 않았다.
     assert cat["count_in_radius"] == 0
-    assert pre["groups_cut"] == 1
-    # ★그리고 그 사실이 **보인다**: 대상동 일치 그룹이 예산에 도달했다는 신호.
+    # 대상 리 85 + 이웃 리 1 = 86 중 예산 80 만 남는다.
+    assert pre["groups_before"] == _PRECUT + 6
+    assert pre["groups_cut"] == 6
+    # ★그리고 그 사실이 **보인다**: 대상 리 일치 그룹이 예산을 넘었고(before), 예산만큼만
+    #   살아남았다(kept). 둘이 **다른 값**이어야 포화도가 판별량으로 기능한다.
     assert pre["dong_prior_active"] is True
-    assert pre["dong_matched_group_count_before"] == _PRECUT
+    assert pre["dong_matched_group_count_before"] == _PRECUT + 5
     assert pre["dong_matched_group_count_kept"] == _PRECUT
+    assert pre["dong_matched_group_count_before"] > pre["dong_matched_group_count_kept"], (
+        "포화도가 0 이면 `kept` 를 `before` 로 치환하는 변이를 잡지 못한다"
+    )
     assert pre["dong_matched_group_count_before"] >= pre["budget"], (
         "포화 regime 인데 계측이 그것을 말하지 못한다 — 판독자가 굶김을 알 수 없다"
     )
@@ -762,3 +801,47 @@ async def test_precut_flags_dong_notation_mismatch_as_zero_matches() -> None:
     assert payload["target_dong_source"] == "address"
     assert pre["dong_prior_active"] is True
     assert pre["dong_matched_group_count_before"] == 0
+
+
+def test_precut_accounting_detector_actually_fires() -> None:
+    """★리뷰 F-1 — 발산 탐지기의 **True 분기**를 직접 태운다.
+
+    종전엔 골든이 정상 상태의 `precut_accounting_mismatch is False` 만 단언했다. 그러면
+    표현식을 리터럴 `False` 로 치환하는 변이가 **생존**한다 — 즉 "항상 False 를 내는 고장난
+    탐지기"도 통과한다. 탐지기가 잡아야 할 회귀를 스스로 false-healthy 로 가리는 형태로,
+    #497 에서 배포가드가 정확히 이렇게 적발됐다(가드 자체가 masking).
+    """
+    ok = {
+        "apt_trade": {"precut": {"groups_cut": 7}},
+        "villa_trade": {"precut": {"groups_cut": 0}},
+    }
+    assert nm._precut_accounting_mismatch(ok, 7) is False
+    # ★발산 — 카테고리 합(7)과 스칼라(9)가 갈라지면 True 여야 한다.
+    assert nm._precut_accounting_mismatch(ok, 9) is True
+    # 한 카테고리가 계측을 통째로 잃어버린 경우도 발산으로 잡힌다(무성 누락 방지).
+    lost = {"apt_trade": {}, "villa_trade": {"precut": {"groups_cut": 0}}}
+    assert nm._precut_accounting_mismatch(lost, 7) is True
+
+
+@pytest.mark.asyncio
+async def test_precut_accounting_detector_is_actually_wired(monkeypatch) -> None:
+    """★F-1 배선 락 — 탐지기가 **응답에 실제로 배선돼 있는가**.
+
+    바로 위 단위 골든은 헬퍼(로직)만 잠근다. 그래서 `build()` 의 호출부를 리터럴 `False` 로
+    바꾸는 변이가 **여전히 생존했다** — 헬퍼는 멀쩡한데 아무도 부르지 않는 상태다.
+    이 저장소가 반복해서 뚫린 층이 정확히 여기다(배선 미변이로 다섯 번).
+    헬퍼를 True 로 대체했을 때 응답이 따라오는지를 보면 호출부가 살아 있음이 증명된다.
+    """
+    nm._BUILD_CACHE.clear()
+    monkeypatch.setattr(nm, "_precut_accounting_mismatch", lambda *_a, **_k: True)
+
+    rows = [_row(name="", jibun="1-1", dong="A동", price=50000, day=1)]
+    geocode_map = {"경상북도 남구 A동 1-1": {"lat": 36.0005, "lon": 129.0005}}
+    svc = _service(rows, geocode_map)
+    payload = await svc.build(
+        address="경상북도 남구 A동 9-9", lawd_cd="47111", months=1, radius_m=1000,
+        center_hint={"lat": 36.0, "lon": 129.0},
+    )
+    assert payload["precut_accounting_mismatch"] is True, (
+        "응답이 탐지기 결과를 따라오지 않는다 — 호출부가 상수로 대체됐거나 배선이 끊겼다"
+    )
