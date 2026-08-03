@@ -65,6 +65,27 @@ async def test_all_analyzed_is_unchanged_single_and_multi():
     assert multi["usable"]["excluded_sqm"] == 0.0
 
 
+def test_special_result_present_is_not_treated_as_unanalyzed():
+    """특이부지 판정 결과가 이미 붙어 있으면 '못 봤음'이 아니다 — 과잉강등 가드.
+
+    ★정직 표기: 이 단언은 공용 통로가 아니라 계산 함수를 직접 부른다. 변이검증에서 이
+    가드를 지워도 아무 테스트가 안 깨져(생존) 무검증임이 드러났고, 그래서 채운다. 다만
+    이 형상이 공용 통로(build_integrated_context)로 실제 도달하는지는 **재현하지 못했다**
+    — 즉 이건 살아 있는 경로의 회귀락이 아니라 **방어 분기의 계약 고정**이다. 그 이상으로
+    읽지 말 것.
+    """
+    from app.services.zoning.usable_area import compute_usable_area
+
+    seen_but_no_top_level_signal = {
+        "address": "B", "area_sqm": 600,
+        "special": {"is_special": True, "developability": "POSSIBLE", "resolvable": "YES",
+                    "factors": [{"category": "맹지(도로 미접)"}]},
+    }
+    got = compute_usable_area([ANALYZED_A, seen_but_no_top_level_signal])
+    assert got["usable_confirmed_sqm"] == 1000.0
+    assert got["usable_conditional_sqm"] == 0.0
+
+
 @pytest.mark.asyncio
 async def test_partial_signal_is_not_downgraded():
     """★과잉강등 금지 — 신호가 하나라도 있으면 미분석이 아니다.
