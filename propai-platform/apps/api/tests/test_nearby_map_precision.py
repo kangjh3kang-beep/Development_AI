@@ -1001,10 +1001,16 @@ async def test_precut_zero_matches_from_group_key_merge() -> None:
     observed = {(g.get("dong") or "") for g in cat["groups"]}
     assert observed == {"다른동"}
 
-    # ★★그런데 대상 동 거래는 **실재한다** — 세 행이 한 그룹으로 병합됐고 그중 2건이 대상 동이다.
-    #   이 한 줄이 (2)와 (5)를 가르는 유일한 증거이며, 응답의 `dong` 분포에는 **나타나지 않는다**.
-    #   그래서 규칙 ④는 "정상"으로 닫을 수 없다.
+    # (문서용 — 이 값은 위 `groups_before == 1` 과 픽스처 3행에 **함의되어 항상 참**이고,
+    #  3행이 전부 "다른동"이어도 성립하므로 대상 동 거래의 실재를 **증명하지 못한다**.
+    #  ★리뷰 정정: (2)와 (5)를 실제로 가르는 것은 **픽스처가 대상 동 2건을 담고 있다는 사실**이지
+    #  이 단언이 아니다. 응답만으로는 규칙 ④-b(`jibun` 이 있는데 `coord_precision == "dong"`)가
+    #  값싼 1차 단서다 — 이 그룹이 정확히 그 서명을 갖는다.)
     assert cat["groups"][0]["count"] == 3
+    assert cat["groups"][0]["coord_precision"] == "dong", (
+        "다동 병합 서명(④-b) — 지번이 있는데 정밀도가 dong 으로 강등된 상태여야 한다"
+    )
+    assert cat["groups"][0]["jibun"] == "1-1"
 
 
 def test_precut_accounting_detector_actually_fires() -> None:
@@ -1294,6 +1300,48 @@ async def test_display_cap_impact_keeps_truncation_when_apt_avm_absent() -> None
     assert land["dropped_all_precisions_group_count"] == 12
     # ★리뷰 R5 — 상위 제약도 카테고리별로 읽을 수 있어야 한다(최상위 값은 apt 전용).
     assert land["geocode_precut_groups_cut"] == 0
+
+
+@pytest.mark.asyncio
+async def test_display_cap_impact_precut_is_wired_per_category() -> None:
+    """★리뷰 MAJOR-1 회귀락 — 카테고리별 사전컷이 **값 축에서** 잠겨 있는가.
+
+    ★같은 결함 클래스의 **3회차**다. R5 로 `geocode_precut_groups_cut` 을 카테고리별로 병기해
+    놓고, 회귀락 픽스처가 apt·land 둘 다 사전컷 0 이라 **두 모집단이 안 갈라졌다**. 그래서
+    리뷰어 변이 3종이 전부 **생존**했다: `_cat.get("precut")` → `apt_cat.get("precut")` ·
+    → 최상위 `precut` 스칼라 · → 리터럴 `0`. **키 존재만 잠기고 배선은 안 잠긴 상태**였고,
+    생존한 두 변이는 R5 주석이 스스로 명시한 결함("최상위는 apt 전용이라 land 판독 시 틀린다")
+    **그 자체**다. B-1(정밀/전체 모집단)·F1(동 대표점 부재)에 이은 같은 실수의 반복이다.
+
+    → 리뷰어가 준 판별입력을 그대로 쓴다: **apt 는 사전컷 발동, land 는 다른 값으로 발동**.
+      두 수가 서로 다르고 최상위 값과도 달라야 세 변이가 전부 죽는다.
+    """
+    nm._BUILD_CACHE.clear()
+    budget = nm._MAX_GEOCODE_GROUPS_PER_CAT          # 80
+    apt_n, land_n = budget + 30, budget + 5          # cut 30 / cut 5 — 서로 다른 값
+    apt_rows: list[dict] = []
+    land_rows: list[dict] = []
+    gmap: dict[str, dict] = {}
+    for i in range(apt_n):
+        apt_rows.append(_row(name="", jibun=f"A{i}", dong="A동", price=100000, day=1))
+        gmap[f"경상북도 남구 A동 A{i}"] = {"lat": 36.0003, "lon": 129.0003}
+    for i in range(land_n):
+        land_rows.append(_row(name="", jibun=f"L{i}", dong="A동", price=60000, day=1))
+        gmap[f"경상북도 남구 A동 L{i}"] = {"lat": 36.0003, "lon": 129.0003}
+    svc = _service_per_type({"apt": apt_rows, "land": land_rows}, gmap)
+    payload = await svc.build(
+        address="경상북도 남구 A동 9-9", lawd_cd="47111", months=1, radius_m=1000,
+        center_hint={"lat": 36.0, "lon": 129.0},
+    )
+    trunc = payload["display_cap_impact"]["truncation_by_category"]
+
+    # ★세 수가 **서로 달라야** 변이가 죽는다(apt 30 / land 5 / villa 0).
+    assert trunc["apt_trade"]["geocode_precut_groups_cut"] == 30
+    assert trunc["land_trade"]["geocode_precut_groups_cut"] == 5
+    assert trunc["villa_trade"]["geocode_precut_groups_cut"] == 0
+    # 최상위 값은 **apt 전용**이다 — land 를 그걸로 판독하면 틀린다(R5 주석의 그 결함).
+    assert payload["display_cap_impact"]["geocode_precut_groups_cut"] == 30
+    assert payload["display_cap_impact"]["price_delta_category"] == "apt_trade"
 
 
 @pytest.mark.asyncio
