@@ -196,7 +196,13 @@
 //        ② 다필지 속성 매트릭스의 게이트 배지가 중복 라벨맵 2호로 수렴(MultiParcelAttributeMatrix).
 //        표시 로직이 바뀌는 변경이라 stale app-shell 캐시가 남으면 옛 표기가 그대로 보인다.
 //        ★채번: origin/main 실제 상수가 v480이라 v481로 이었다(제목 아닌 상수 기준·직전 관례 유지).
-const CACHE_NAME = "propai-v481-ratio-matrix";
+// v482: 프로젝트 전환 시 옛 분석이 화면에 남던 결함 봉합(#537 — 대상 판정 키를 프로젝트+주소로).
+//        useAnalysisTargetGuard/analysis-target 신설 + ComprehensiveAnalysisPanel 배선.
+//        ★이 수정은 **옛 화면 상태를 버리게** 만드는 것이라, 정작 stale app-shell 캐시가
+//        남으면 옛 번들이 그대로 옛 분석을 붙들고 있어 수정이 무력화된다(캐시가 캐시 결함을 가림).
+//        ★채번: origin/main 실제 상수가 v481 이라 v482. PR 생성 전 보드에 v482 claim 선점
+//          (v463·v481 채번 충돌 재발 방지 — 통합자 신규 관행).
+const CACHE_NAME = "propai-v482-analysis-target";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
