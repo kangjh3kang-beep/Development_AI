@@ -780,12 +780,23 @@ async def test_precut_makes_dong_prior_saturation_observable() -> None:
 
 
 @pytest.mark.asyncio
-async def test_precut_flags_dong_notation_mismatch_as_zero_matches() -> None:
-    """★H-4 재발 자동탐지 — 프라이어가 '켜졌는데' 일치가 0건이면 표기 규약이 어긋난 것이다.
+async def test_precut_zero_matches_is_ambiguous_not_an_alarm() -> None:
+    """★`active=True && matched_before==0` 은 **경보가 아니라 "확인 필요"**다.
 
-    H-4 가 정확히 그 형태였다: `umdNm` 이 "호미곶면 대보리" 두 토큰인데 완전일치 비교라
-    프라이어가 **한 그룹도 앞당기지 못하고** 조용히 건수 정렬로 돌아갔다. 그때는 그 상태를
-    응답에서 볼 수 없었다. 이제 `active=True && matched_before==0` 조합이 경보로 읽힌다.
+    ★이 테스트의 종전 이름은 `..._flags_dong_notation_mismatch_...` 였고 독스트링은 이 조합을
+    **표기 규약 불일치 경보**라고 단정했다. 그런데 **이 테스트가 실제로 구성하는 것은
+    규약 불일치가 아니라 "대상 동 무자료"** 다 — 픽스처의 `dong` 은 `"다른동"` 하나뿐이고
+    우리 정규화(`_dong_tail`)는 정상 동작한다. 이름과 내용이 어긋나 있었다.
+
+    2026-08-05 프로덕션 첫 실사용이 그것을 드러냈다: 호미곶에서 이 조합이 떴고 원인은
+    규약 불일치가 **아니라** 대보리에 3개월 실거래가 진짜 0건인 정상 상태였다.
+    조합의 두 원인:
+      (1) 표기 규약 불일치 — 정규화가 `umdNm` 형태를 못 따라간다(**조사 대상**)
+      (2) 대상 동 무자료   — 그 동에 해당 카테고리 거래가 없다(**정상**)
+    가르는 법: 관측된 그룹 `dong` 에 대상 동이 **어떤 형태로도** 없으면 (2)다.
+    (1)은 별도 골든이 잠근다 — `test_precut_makes_dong_prior_saturation_observable` 이
+    두 토큰 `"호미곶면 대보리"` 에서 `matched_before == 85` 를 요구하므로, 정규화가 완전일치로
+    되돌아가면 그쪽이 깨진다.
     """
     nm._BUILD_CACHE.clear()
     rows = [_row(name="", jibun="1-1", dong="다른동", price=50000, day=1)]
@@ -796,11 +807,19 @@ async def test_precut_flags_dong_notation_mismatch_as_zero_matches() -> None:
         address="경상북도 남구 대상동 9-9", lawd_cd="47111", months=1, radius_m=1000,
         center_hint={"lat": 36.0, "lon": 129.0},
     )
-    pre = payload["categories"]["apt_trade"]["precut"]
+    cat = payload["categories"]["apt_trade"]
+    pre = cat["precut"]
     assert payload["target_dong_hint"] == "대상동"
     assert payload["target_dong_source"] == "address"
     assert pre["dong_prior_active"] is True
     assert pre["dong_matched_group_count_before"] == 0
+    # ★판별 근거를 단언으로 박는다 — 관측된 동에 대상 동이 **어떤 형태로도 없다** = (2) 무자료.
+    #   이 대조 없이 위 0 만 보면 (1)로 오독한다(그게 정정 전 주석이 시킨 일이다).
+    observed = {(g.get("dong") or "") for g in cat["groups"]}
+    assert observed == {"다른동"}
+    assert not any(nm._dong_tail(d) == "대상동" for d in observed), (
+        "관측된 동 중 대상 동과 일치하는 것이 있는데 matched_before 가 0 이면 그때는 (1) 규약 불일치다"
+    )
 
 
 def test_precut_accounting_detector_actually_fires() -> None:
