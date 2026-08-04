@@ -30,6 +30,12 @@ from typing import Any
 # ★UNKNOWN(판정 불가)도 등재한다(2026-08-02). 없으면 `_RANK.get(dev, 0)`이 0을 돌려줘
 #   **POSSIBLE과 동급**이 되고, 여러 요인 중 가장 심각한 것을 고르는 max() 비교에서 판정 불가가
 #   항상 밀린다 — '모르는 것'이 '문제 없음'과 같은 무게가 되는, 게이트 집합과 동일한 결함 클래스.
+# '미분석' 표식 값의 SSOT — 면적 3계층(usable_area)과 반드시 같은 문자열이어야 한다.
+#   양쪽이 각자 리터럴을 쓰면 한쪽만 바뀌었을 때 표식이 조용히 안 걸린다.
+_UNANALYZED = "unanalyzed"
+# '분석함' 쪽도 명시한다 — 표식 부재를 '분석됨'으로 읽으면 '아무도 판정 안 함'과 구분이 안 된다.
+_ANALYZED = "analyzed"
+
 _RANK = {"POSSIBLE": 0, "CAUTION": 1, "CONDITIONAL": 2, "NEEDS_OFFICIAL_SURVEY": 2,
          "REQUIRES_AUTHORITY_CONFIRMATION": 2, "UNKNOWN": 2, "PRECONDITION": 3, "BLOCKED": 4}
 
@@ -2066,8 +2072,12 @@ def detect_multi_parcel(
         #   이미 끝난 뒤였다 — 순서 역전이라 소비처가 표식을 영원히 못 봤고, 미분석 필지 면적이
         #   그대로 '확정 개발가능'에 합산됐다. 판정을 SSOT로 끌어와야 이 함수를 직접 쓰는 다른
         #   호출부(integrated_recommender·persona runner 등 라우터 우회 경로)도 함께 따라온다.
-        if is_unanalyzed_parcel(p):
-            entry["analysis_status"] = "unanalyzed"
+        #   ★판정은 **양방향으로** 선언한다(2026-08-03). 미분석일 때만 표식을 심으면, 표식이
+        #     없는 것이 "분석됨"인지 "아무도 판정 안 함"인지 구분되지 않는다. 그 모호함 때문에
+        #     하류(면적 3계층)가 표식 없는 입력을 스스로 판정하려다, 이 entry가 zone_type을
+        #     싣지 않는다는 이유로 **정상 필지를 미분석으로 오판**했다(지목이 빈 필지에서 발현).
+        #     원본 p로 판정한 결과를 그대로 실어 보내면 하류가 다시 추측할 일이 없다.
+        entry["analysis_status"] = _UNANALYZED if is_unanalyzed_parcel(p) else _ANALYZED
         per.append(entry)
 
     specials = [x for x in per if x["special"]]
@@ -2075,7 +2085,7 @@ def detect_multi_parcel(
     #   특이성을 **못 본** 것이지 **없는** 것이 아니다. 종전에는 이 판정이 라우터에만 있어,
     #   detect_multi_parcel()을 직접 부르는 경로(integrated_recommender·persona runner·
     #   design_ingest·decision_brief)에서는 무정보 필지에도 그대로 POSSIBLE/PASS가 나왔다.
-    unanalyzed = [x for x in per if x.get("analysis_status") == "unanalyzed"]
+    unanalyzed = [x for x in per if x.get("analysis_status") == _UNANALYZED]
 
     if not specials:
         if unanalyzed:
@@ -2212,13 +2222,23 @@ def build_multi_parcel_report(
         i = x.get("index")
         src = items[i] if isinstance(i, int) and 0 <= i < len(items) else {}
         sp = x.get("special") if isinstance(x.get("special"), dict) else {}
-        dev = sp.get("developability") or "POSSIBLE"
-        res = sp.get("resolvable") or "YES"
+        # ★미분석 필지를 "가능"으로 덮지 않는다. 종전에는 신호가 없으면 무조건 POSSIBLE/YES로
+        #   폴백해, 못 본 필지가 매트릭스에서 **일상 개발부지(가능·PASS)** 로 표기됐다.
+        #   면적 3계층은 같은 필지를 conditional로 세는데 판정 칸만 "가능"이라 표면끼리 모순이었다.
+        #   '신호 부재'는 '가능'이 아니라 '판정 불가'다 — 더 제약이 큰 쪽을 택한다(약화 금지).
+        _unanalyzed = str(x.get("analysis_status") or "").strip().lower() == _UNANALYZED
+        dev = sp.get("developability") or ("UNKNOWN" if _unanalyzed else "POSSIBLE")
+        res = sp.get("resolvable") or ("UNKNOWN" if _unanalyzed else "YES")
+        if _unanalyzed and _RANK.get(dev, 0) < _RANK["UNKNOWN"]:
+            dev, res = "UNKNOWN", "UNKNOWN"
         matrix.append({
             "index": i, "pnu": x.get("pnu"), "address": x.get("address"),
             "land_category": x.get("land_category"),
             "zone_type": src.get("zone_type"),
             "area_sqm": x.get("area_sqm"),
+            # ★프론트 "판정 불가(미분석)" 배지가 읽는 키 — 종전에는 이 표면에서 탈락해
+            #   배지가 한 번도 뜨지 않는 죽은 코드였다(정직 신호를 만들어놓고 안 실어 보냄).
+            "analysis_status": x.get("analysis_status"),
             "developability": dev, "resolvable": res,
             "gate": gate_decision(dev, res),
             "usable_tier": tier_by_index.get(i),
