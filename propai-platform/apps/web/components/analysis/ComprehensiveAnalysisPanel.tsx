@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo, Fragment, type ReactNode } from "react";
 import { BarChart3, Construction, ExternalLink, Home, Map, MapPin, Tag, TrendingUp, Wallet, type LucideIcon } from "lucide-react";
 import dynamic from "next/dynamic";
 const SatongMapShellDynamic = dynamic(
@@ -25,6 +25,10 @@ import { apiClient } from "@/lib/api-client";
 import { formatArea, formatPercent } from "@/lib/formatters"; // 면적 표기 SSOT(UX A2) — 로컬 중복 formatArea 대체
 import { fieldMeta, formatFieldValue, formatDelta } from "@/lib/analysis-field-labels"; // 필드 라벨·단위 SSOT(원시 키 노출 근절)
 import { fetchInterpretation } from "@/lib/interpretation-job"; // 해석 제출·폴링 공용(형제 소비처와 공유)
+import {
+  PERSONAS, sectionOrderFor, isExpandedFor, personaByKey,
+  type PersonaKey, type AnalysisSectionId,
+} from "@/lib/analysis-persona"; // 관점별 강조 순서·요약문 SSOT(W5)
 import { analysisTargetKey } from "@/lib/analysis-target"; // 분석 대상 판정 키(프로젝트+주소 복합)
 import { useAnalysisTargetGuard } from "@/hooks/useAnalysisTargetGuard"; // 대상 전환 시 옛 결과 무효화 SSOT
 import { readFieldAudit, findingsForSection } from "@/lib/field-audit"; // 자가검증 표면화 SSOT(W3)
@@ -423,6 +427,16 @@ export function ComprehensiveAnalysisPanel() {
   const [selectionNotice, setSelectionNotice] = useState("");
   // 히스토리 카드 재조회 신호 — handleAnalyze 완료 시 증가시켜 AnalysisHistoryCard가 새 항목을 반영한다.
   const [historyRefreshTick, setHistoryRefreshTick] = useState(0);
+  // ★관점(페르소나) — 기본은 중립(null)이다. 아무도 고르지 않으면 종전과 정확히 같은 순서로
+  //   보인다. 관점 기능이 켜졌다는 이유만으로 화면이 멋대로 바뀌면 안 된다.
+  const [persona, setPersona] = useState<PersonaKey | null>(null);
+  const sectionOrder = useMemo(() => sectionOrderFor(persona), [persona]);
+  const personaSpec = personaByKey(persona);
+  // 관점이 지정한 펼침 상태가 있으면 그것을, 없으면(중립) 종전 기본값을 그대로 쓴다.
+  const openFor = useCallback(
+    (id: AnalysisSectionId, fallback: boolean) => isExpandedFor(persona, id) ?? fallback,
+    [persona],
+  );
 
   useEffect(() => {
     apiClient.get<{ providers: ProviderInfo[] }>("/analysis/llm-providers")
@@ -952,364 +966,447 @@ export function ComprehensiveAnalysisPanel() {
             return null;
           })()}
 
-          {/* Section 1: 실효용적률 */}
-          <SectionCard title="1. 실효용적률 산정" icon={BarChart3} defaultOpen>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-              <Field label="법정 건폐율 (국토계획법)" value={formatPercent(ef.national_bcr_pct)} />
-              <Field label="법정 용적률 (국토계획법)" value={formatPercent(ef.national_far_pct)} />
-              <Field label="조례 건폐율 (지자체)" value={formatPercent(ef.ordinance_bcr_pct)} />
-              <Field label="조례 용적률 (지자체)" value={formatPercent(ef.ordinance_far_pct)} />
-              <Field label="실효 건폐율" value={formatPercent(ef.effective_bcr_pct)} />
-              <Field label="실효 용적률" value={formatPercent(ef.effective_far_pct)} />
+          {/* ★관점 선택 — 기본은 '전체'(중립)다. 고르면 그 관점이 먼저 봐야 할 순서로 재배치되고
+              요약 한 줄이 붙는다. 같은 데이터를 다르게 계산하지 않는다(순서와 요약문만 바뀐다). */}
+          <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-strong)] px-5 py-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[11px] font-bold text-[var(--text-secondary)]">보는 관점</span>
+              <div className="flex flex-wrap gap-1.5" role="group" aria-label="보고서를 읽는 관점 선택">
+                <button
+                  type="button"
+                  onClick={() => setPersona(null)}
+                  aria-pressed={persona === null}
+                  className={`rounded-full px-3 py-1 text-[11px] font-bold transition-colors ${
+                    persona === null
+                      ? "bg-[var(--accent-strong)] text-white"
+                      : "bg-[var(--surface-soft)] text-[var(--text-secondary)] hover:bg-[var(--line)]"
+                  }`}
+                >
+                  전체
+                </button>
+                {PERSONAS.map((spec) => (
+                  <button
+                    key={spec.key}
+                    type="button"
+                    onClick={() => setPersona(spec.key)}
+                    aria-pressed={persona === spec.key}
+                    className={`rounded-full px-3 py-1 text-[11px] font-bold transition-colors ${
+                      persona === spec.key
+                        ? "bg-[var(--accent-strong)] text-white"
+                        : "bg-[var(--surface-soft)] text-[var(--text-secondary)] hover:bg-[var(--line)]"
+                    }`}
+                  >
+                    {spec.label}
+                  </button>
+                ))}
+              </div>
             </div>
-            {ef.source && <p className="text-[10px] text-[var(--text-hint)] mt-1">출처: {ef.source}</p>}
-            {/* ★신규(additive) structural_cap_pct — 구조상한(층수 제한 등)이 조례 용적률보다
-                더 타이트하게 걸리는 경우를 명시(예: 4층 이하 제한 부지). 없으면 미표시(무목업). */}
-            {ef.structural_cap_pct != null && (
-              <div className="mt-3 rounded-lg border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/5 p-3">
-                <p className="text-[11px] font-bold text-[var(--status-warning)]">
-                  구조상한 {formatPercent(ef.structural_cap_pct)}{ef.floor_cap != null ? ` · ${ef.floor_cap}층 이하` : ""}
-                </p>
-                {ef.floor_cap_basis && (
-                  <p className="mt-0.5 text-[10px] text-[var(--text-secondary)]">근거: {ef.floor_cap_basis}</p>
+            {personaSpec && (
+              <div className="mt-3 space-y-2">
+                <p className="text-xs text-[var(--text-primary)]">{personaSpec.summary}</p>
+                {/* ★없는 것을 있다고 하지 않는다 — 관점 이름만 붙여놓고 그 관점의 핵심을 안 주면
+                    사용자는 없는 것을 있다고 오해한다. 어디로 가야 하는지까지 적는다. */}
+                {personaSpec.outOfScope && (
+                  <p className="text-[10px] text-[var(--text-hint)]">
+                    이 보고서 범위 밖: <span className="font-bold">{personaSpec.outOfScope.what}</span>
+                    {" — "}{personaSpec.outOfScope.where}
+                  </p>
                 )}
               </div>
             )}
-            {Array.isArray(ef.annotations) && ef.annotations?.length > 0 && (
-              <div className="mt-3 rounded-lg bg-[var(--surface-soft)] border border-[var(--line)] p-3 space-y-1.5">
-                <p className="text-[10px] font-bold text-[var(--text-hint)] mb-1">분석 근거</p>
-                {(ef.annotations ?? []).map((note: string, i: number) => (
-                  <AnnotationLine key={i} text={note} />
-                ))}
+          </div>
+
+          {/* ★관점(페르소나)별 스토리라인 — 본문은 한 벌 그대로 두고 **순서만** 바꾼다.
+              데이터 재계산 0·새 API 0. 순서 판정은 lib/analysis-persona.ts 한 곳(SSOT).
+              ★DOM 순서를 실제로 바꾼다 — CSS order로 시각만 바꾸면 화면 읽기 순서와
+              스크린리더 읽기 순서가 어긋난다(의미 있는 순서 위반). */}
+          {(() => {
+            const sectionNodes: Record<AnalysisSectionId, ReactNode> = {
+              "effective-far": (
+                <>
+            {/* Section 1: 실효용적률 */}
+            <SectionCard title="1. 실효용적률 산정" icon={BarChart3} defaultOpen={openFor("effective-far", true)}>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                <Field label="법정 건폐율 (국토계획법)" value={formatPercent(ef.national_bcr_pct)} />
+                <Field label="법정 용적률 (국토계획법)" value={formatPercent(ef.national_far_pct)} />
+                <Field label="조례 건폐율 (지자체)" value={formatPercent(ef.ordinance_bcr_pct)} />
+                <Field label="조례 용적률 (지자체)" value={formatPercent(ef.ordinance_far_pct)} />
+                <Field label="실효 건폐율" value={formatPercent(ef.effective_bcr_pct)} />
+                <Field label="실효 용적률" value={formatPercent(ef.effective_far_pct)} />
               </div>
-            )}
-            {/* ★자가검증 지적은 AI 해석 문장보다 **위**에 둔다 — 아래에 두면 사용자가 AI 문장을
-                먼저 읽고, 그 문장이 점검을 통과한 것처럼 오해한다(AI 서술문은 점검 대상이 아니다). */}
-            <FieldAuditNotice notes={findingsForSection(auditView, "effective-far").notes} />
-            {result.ai_interpretation?.effective_far_interpretation && (
-              <AiInterpretation text={result.ai_interpretation.effective_far_interpretation} />
-            )}
-          </SectionCard>
+              {ef.source && <p className="text-[10px] text-[var(--text-hint)] mt-1">출처: {ef.source}</p>}
+              {/* ★신규(additive) structural_cap_pct — 구조상한(층수 제한 등)이 조례 용적률보다
+                  더 타이트하게 걸리는 경우를 명시(예: 4층 이하 제한 부지). 없으면 미표시(무목업). */}
+              {ef.structural_cap_pct != null && (
+                <div className="mt-3 rounded-lg border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/5 p-3">
+                  <p className="text-[11px] font-bold text-[var(--status-warning)]">
+                    구조상한 {formatPercent(ef.structural_cap_pct)}{ef.floor_cap != null ? ` · ${ef.floor_cap}층 이하` : ""}
+                  </p>
+                  {ef.floor_cap_basis && (
+                    <p className="mt-0.5 text-[10px] text-[var(--text-secondary)]">근거: {ef.floor_cap_basis}</p>
+                  )}
+                </div>
+              )}
+              {Array.isArray(ef.annotations) && ef.annotations?.length > 0 && (
+                <div className="mt-3 rounded-lg bg-[var(--surface-soft)] border border-[var(--line)] p-3 space-y-1.5">
+                  <p className="text-[10px] font-bold text-[var(--text-hint)] mb-1">분석 근거</p>
+                  {(ef.annotations ?? []).map((note: string, i: number) => (
+                    <AnnotationLine key={i} text={note} />
+                  ))}
+                </div>
+              )}
+              {/* ★자가검증 지적은 AI 해석 문장보다 **위**에 둔다 — 아래에 두면 사용자가 AI 문장을
+                  먼저 읽고, 그 문장이 점검을 통과한 것처럼 오해한다(AI 서술문은 점검 대상이 아니다). */}
+              <FieldAuditNotice notes={findingsForSection(auditView, "effective-far").notes} />
+              {result.ai_interpretation?.effective_far_interpretation && (
+                <AiInterpretation text={result.ai_interpretation.effective_far_interpretation} />
+              )}
+            </SectionCard>
 
-          {/* Section 1-B: 용적률 최적화 시뮬레이션 — 전 시나리오 cap 동일 시 요약+접기(FarOptimizationPanel) */}
-          <FarOptimizationPanel farOpt={ef.far_optimization} structuralCapPct={ef.structural_cap_pct} />
-
-          {/* Section 2: 개발방식별 적정공급면적 */}
-          <SectionCard title="2. 개발방식별 적정공급면적 산정" icon={Construction} defaultOpen>
-            {supplyAreas.length > 0 ? (
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="border-b border-[var(--line)] text-[var(--text-hint)]">
-                      <th className="py-2 px-2 text-left">개발유형</th>
-                      <th className="py-2 px-1 text-right">전용율</th>
-                      <th className="py-2 px-1 text-right">공급면적/세대</th>
-                      <th className="py-2 px-1 text-right">연면적</th>
-                      <th className="py-2 px-1 text-right">세대수</th>
-                      <th className="py-2 px-1 text-right">층수</th>
-                      <th className="py-2 px-1 text-right">주차</th>
-                      <th className="py-2 px-1 text-right">공사비(추정)</th>
-                      <th className="py-2 px-1 text-center">인허가</th>
-                      <th className="py-2 px-1 text-center">적합성</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {supplyAreas.map((sa: SupplyAreaItem, i: number) => {
-                      // ★F3(QA REQUEST CHANGES) 개발불가 게이트 정직 표기 — 백엔드가 공급규모를
-                      //   산정하지 않은 항목(total_gfa_pyeong 미확보 + blocked_reason/note 보유,
-                      //   P0-2/F1의 "판정불가" 스텁)은 undefined평·₩NaN 지표 행 대신 colSpan
-                      //   전체 설명 행으로 사유를 표시한다(가짜 지표 은폐 금지).
-                      const blockedText = sa.blocked_reason || sa.note;
-                      const rowKey = sa.dev_type ?? `blocked-${i}`;
-                      if (sa.total_gfa_pyeong == null && blockedText) {
-                        return (
-                          <tr key={rowKey} className="border-b border-[var(--line)]/50">
-                            <td
-                              colSpan={10}
-                              className="py-3 px-3 text-xs leading-relaxed text-[var(--status-warning)] bg-[color-mix(in_srgb,var(--status-warning)_8%,transparent)] rounded"
-                            >
-                              {sa.type_name ? `${sa.type_name} — ` : ""}{blockedText}
-                            </td>
-                          </tr>
-                        );
-                      }
-                      return (
-                      <tr key={rowKey} className={`border-b border-[var(--line)]/50 hover:bg-[var(--surface-soft)] transition-colors ${sa.feasibility_status === "부적합" ? "opacity-50" : ""}`}>
-                        <td className="py-2.5 px-2 font-bold text-[var(--text-primary)]">{sa.type_name}</td>
-                        <td className="py-2.5 px-1 text-right text-[var(--text-secondary)]">{sa.exclusive_ratio_pct}%</td>
-                        <td className="py-2.5 px-1 text-right text-[var(--text-secondary)]">{sa.supply_area_per_unit_pyeong}평</td>
-                        <td className="py-2.5 px-1 text-right text-[var(--accent-strong)] font-bold">{sa.total_gfa_pyeong}평</td>
-                        <td className="py-2.5 px-1 text-right text-[var(--text-primary)] font-bold">{sa.unit_count}</td>
-                        <td className="py-2.5 px-1 text-right text-[var(--text-secondary)]">{sa.floor_count}층</td>
-                        <td className="py-2.5 px-1 text-right text-[var(--text-secondary)]">{sa.parking_count}대</td>
-                        <td className="py-2.5 px-1 text-right text-[var(--text-secondary)]">{formatWon(sa.estimated_construction_cost_won)}</td>
-                        <td className="py-2.5 px-1 text-center"><PermitBadge complexity={sa.permit_complexity} /></td>
-                        <td className="py-2.5 px-1 text-center">
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                            sa.feasibility_status === "적합" ? "bg-[var(--status-success)]/20 text-[var(--status-success)]" :
-                            sa.feasibility_status === "조건부" ? "bg-[var(--status-warning)]/20 text-[var(--status-warning)]" :
-                            sa.feasibility_status === "부적합" ? "bg-[var(--status-error)]/20 text-[var(--status-error)]" :
-                            "bg-gray-500/20 text-gray-400"
-                          }`}>{sa.feasibility_status || "-"}</span>
-                        </td>
+            {/* Section 1-B: 용적률 최적화 시뮬레이션 — 전 시나리오 cap 동일 시 요약+접기(FarOptimizationPanel) */}
+            <FarOptimizationPanel farOpt={ef.far_optimization} structuralCapPct={ef.structural_cap_pct} />
+                </>
+              ),
+              "supply-area": (
+                <>
+            {/* Section 2: 개발방식별 적정공급면적 */}
+            <SectionCard title="2. 개발방식별 적정공급면적 산정" icon={Construction} defaultOpen={openFor("supply-area", true)}>
+              {supplyAreas.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b border-[var(--line)] text-[var(--text-hint)]">
+                        <th className="py-2 px-2 text-left">개발유형</th>
+                        <th className="py-2 px-1 text-right">전용율</th>
+                        <th className="py-2 px-1 text-right">공급면적/세대</th>
+                        <th className="py-2 px-1 text-right">연면적</th>
+                        <th className="py-2 px-1 text-right">세대수</th>
+                        <th className="py-2 px-1 text-right">층수</th>
+                        <th className="py-2 px-1 text-right">주차</th>
+                        <th className="py-2 px-1 text-right">공사비(추정)</th>
+                        <th className="py-2 px-1 text-center">인허가</th>
+                        <th className="py-2 px-1 text-center">적합성</th>
                       </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-                {/* 유형별 검증 상세 */}
-                {supplyAreas.filter((sa: AnalysisResult) => sa.conditions_met?.length > 0).length > 0 && (
-                  <div className="mt-3 space-y-2">
-                    <p className="text-[10px] font-bold text-[var(--text-hint)]">유형별 법적 조건 검증 상세</p>
-                    {supplyAreas.map((sa: AnalysisResult) => {
-                      const conditions = sa.conditions_met as AnalysisResult[] | undefined;
-                      if (!conditions || conditions.length === 0) return null;
-                      return (
-                        <div key={sa.dev_type} className="rounded-lg bg-[var(--surface-soft)] border border-[var(--line)] p-3">
-                          <p className="text-[11px] font-bold text-[var(--text-primary)] mb-1">
-                            {sa.type_name}
-                            <span className={`ml-2 text-[10px] px-1.5 py-0.5 rounded ${
+                    </thead>
+                    <tbody>
+                      {supplyAreas.map((sa: SupplyAreaItem, i: number) => {
+                        // ★F3(QA REQUEST CHANGES) 개발불가 게이트 정직 표기 — 백엔드가 공급규모를
+                        //   산정하지 않은 항목(total_gfa_pyeong 미확보 + blocked_reason/note 보유,
+                        //   P0-2/F1의 "판정불가" 스텁)은 undefined평·₩NaN 지표 행 대신 colSpan
+                        //   전체 설명 행으로 사유를 표시한다(가짜 지표 은폐 금지).
+                        const blockedText = sa.blocked_reason || sa.note;
+                        const rowKey = sa.dev_type ?? `blocked-${i}`;
+                        if (sa.total_gfa_pyeong == null && blockedText) {
+                          return (
+                            <tr key={rowKey} className="border-b border-[var(--line)]/50">
+                              <td
+                                colSpan={10}
+                                className="py-3 px-3 text-xs leading-relaxed text-[var(--status-warning)] bg-[color-mix(in_srgb,var(--status-warning)_8%,transparent)] rounded"
+                              >
+                                {sa.type_name ? `${sa.type_name} — ` : ""}{blockedText}
+                              </td>
+                            </tr>
+                          );
+                        }
+                        return (
+                        <tr key={rowKey} className={`border-b border-[var(--line)]/50 hover:bg-[var(--surface-soft)] transition-colors ${sa.feasibility_status === "부적합" ? "opacity-50" : ""}`}>
+                          <td className="py-2.5 px-2 font-bold text-[var(--text-primary)]">{sa.type_name}</td>
+                          <td className="py-2.5 px-1 text-right text-[var(--text-secondary)]">{sa.exclusive_ratio_pct}%</td>
+                          <td className="py-2.5 px-1 text-right text-[var(--text-secondary)]">{sa.supply_area_per_unit_pyeong}평</td>
+                          <td className="py-2.5 px-1 text-right text-[var(--accent-strong)] font-bold">{sa.total_gfa_pyeong}평</td>
+                          <td className="py-2.5 px-1 text-right text-[var(--text-primary)] font-bold">{sa.unit_count}</td>
+                          <td className="py-2.5 px-1 text-right text-[var(--text-secondary)]">{sa.floor_count}층</td>
+                          <td className="py-2.5 px-1 text-right text-[var(--text-secondary)]">{sa.parking_count}대</td>
+                          <td className="py-2.5 px-1 text-right text-[var(--text-secondary)]">{formatWon(sa.estimated_construction_cost_won)}</td>
+                          <td className="py-2.5 px-1 text-center"><PermitBadge complexity={sa.permit_complexity} /></td>
+                          <td className="py-2.5 px-1 text-center">
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${
                               sa.feasibility_status === "적합" ? "bg-[var(--status-success)]/20 text-[var(--status-success)]" :
+                              sa.feasibility_status === "조건부" ? "bg-[var(--status-warning)]/20 text-[var(--status-warning)]" :
                               sa.feasibility_status === "부적합" ? "bg-[var(--status-error)]/20 text-[var(--status-error)]" :
-                              "bg-[var(--status-warning)]/20 text-[var(--status-warning)]"
-                            }`}>{sa.feasibility_status}</span>
-                          </p>
-                          <div className="space-y-0.5">
-                            {conditions.map((c: AnalysisResult, i: number) => (
-                              <p key={i} className="text-[10px] text-[var(--text-secondary)]">
-                                <span className={`inline-block w-3 h-3 mr-1 rounded-full text-center text-[8px] leading-3 font-bold ${
-                                  c.status === "pass" ? "bg-[var(--status-success)]/20 text-[var(--status-success)]" :
-                                  c.status === "fail" ? "bg-[var(--status-error)]/20 text-[var(--status-error)]" :
-                                  c.status === "unknown" ? "bg-gray-500/20 text-gray-400" :
-                                  "bg-[var(--status-warning)]/20 text-[var(--status-warning)]"
-                                }`}>{c.status === "pass" ? "O" : c.status === "fail" ? "X" : "?"}</span>
-                                <span className="font-medium">{c.rule}:</span> {c.detail}
-                              </p>
-                            ))}
+                              "bg-gray-500/20 text-gray-400"
+                            }`}>{sa.feasibility_status || "-"}</span>
+                          </td>
+                        </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                  {/* 유형별 검증 상세 */}
+                  {supplyAreas.filter((sa: AnalysisResult) => sa.conditions_met?.length > 0).length > 0 && (
+                    <div className="mt-3 space-y-2">
+                      <p className="text-[10px] font-bold text-[var(--text-hint)]">유형별 법적 조건 검증 상세</p>
+                      {supplyAreas.map((sa: AnalysisResult) => {
+                        const conditions = sa.conditions_met as AnalysisResult[] | undefined;
+                        if (!conditions || conditions.length === 0) return null;
+                        return (
+                          <div key={sa.dev_type} className="rounded-lg bg-[var(--surface-soft)] border border-[var(--line)] p-3">
+                            <p className="text-[11px] font-bold text-[var(--text-primary)] mb-1">
+                              {sa.type_name}
+                              <span className={`ml-2 text-[10px] px-1.5 py-0.5 rounded ${
+                                sa.feasibility_status === "적합" ? "bg-[var(--status-success)]/20 text-[var(--status-success)]" :
+                                sa.feasibility_status === "부적합" ? "bg-[var(--status-error)]/20 text-[var(--status-error)]" :
+                                "bg-[var(--status-warning)]/20 text-[var(--status-warning)]"
+                              }`}>{sa.feasibility_status}</span>
+                            </p>
+                            <div className="space-y-0.5">
+                              {conditions.map((c: AnalysisResult, i: number) => (
+                                <p key={i} className="text-[10px] text-[var(--text-secondary)]">
+                                  <span className={`inline-block w-3 h-3 mr-1 rounded-full text-center text-[8px] leading-3 font-bold ${
+                                    c.status === "pass" ? "bg-[var(--status-success)]/20 text-[var(--status-success)]" :
+                                    c.status === "fail" ? "bg-[var(--status-error)]/20 text-[var(--status-error)]" :
+                                    c.status === "unknown" ? "bg-gray-500/20 text-gray-400" :
+                                    "bg-[var(--status-warning)]/20 text-[var(--status-warning)]"
+                                  }`}>{c.status === "pass" ? "O" : c.status === "fail" ? "X" : "?"}</span>
+                                  <span className="font-medium">{c.rule}:</span> {c.detail}
+                                </p>
+                              ))}
+                            </div>
+                            {sa.recommendations?.length > 0 && (
+                              <div className="mt-1 pt-1 border-t border-[var(--line)]">
+                                {(sa.recommendations as string[]).map((r: string, i: number) => (
+                                  <p key={i} className="text-[10px] text-[var(--accent-strong)]">→ {r}</p>
+                                ))}
+                              </div>
+                            )}
                           </div>
-                          {sa.recommendations?.length > 0 && (
-                            <div className="mt-1 pt-1 border-t border-[var(--line)]">
-                              {(sa.recommendations as string[]).map((r: string, i: number) => (
-                                <p key={i} className="text-[10px] text-[var(--accent-strong)]">→ {r}</p>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="text-xs text-[var(--text-hint)] italic">해당 용도지역에서 허용된 개발유형이 없습니다</p>
+              )}
+              {result.ai_interpretation?.supply_area_interpretation && (
+                <AiInterpretation text={result.ai_interpretation.supply_area_interpretation} />
+              )}
+            </SectionCard>
+                </>
+              ),
+              "land-price": (
+                <>
+            {/* Section 3: 토지 주변시세 */}
+            <SectionCard title="3. 토지 주변시세" icon={Wallet} defaultOpen={openFor("land-price", false)}>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                <Field label="공시지가 (원/m²)" value={formatManWon(landPrices.official_price_per_sqm / 10000)} />
+                <Field label="공시지가 총액" value={formatWon(landPrices.total_official_value_won)} />
+                <Field label="추정 시세 (원/m²)" value={formatManWon(landPrices.estimated_market_per_sqm / 10000)} />
+                <Field label="추정 시세 총액" value={formatWon(landPrices.total_estimated_value_won)} />
+                <Field label="시세 보정계수" value={`×${landPrices.market_multiplier ?? "-"}`} />
+              </div>
+              <FieldAuditNotice notes={findingsForSection(auditView, "land-price").notes} />
+              {result.ai_interpretation?.land_price_interpretation && (
+                <AiInterpretation text={result.ai_interpretation.land_price_interpretation} />
+              )}
+            </SectionCard>
+                </>
+              ),
+              "transactions": (
+                <>
+            {/* Section 4: 물건별 주변 실거래가 */}
+            <SectionCard title="4. 물건별 주변 실거래가" icon={Home} defaultOpen={openFor("transactions", false)}>
+              {Object.keys(transactions).length > 0 && !transactions.error ? (
+                <div className="space-y-2">
+                  {Object.entries(transactions).map(([type, data]) => {
+                    const d = data as AnalysisResult;
+                    if (!d || !d.count) return null;
+                    return (
+                      <div key={type} className="rounded-lg bg-[var(--surface-soft)] border border-[var(--line)] p-3">
+                        <p className="text-xs font-bold text-[var(--text-primary)] mb-1">
+                          {type} ({d.count}건)
+                          {d.excluded_outliers > 0 && (
+                            <span className="ml-1 text-[10px] font-normal text-[var(--text-hint)]">· 이상치 {d.excluded_outliers}건 제외(지분·정정 등)</span>
+                          )}
+                        </p>
+                        <div className="grid grid-cols-3 gap-2 text-[11px]">
+                          <div><span className="text-[var(--text-hint)]">평균: </span><span className="font-bold">{formatManWon(d.avg_price_10k)}</span></div>
+                          <div><span className="text-[var(--text-hint)]">최고: </span><span className="font-bold">{formatManWon(d.max_price_10k)}</span></div>
+                          <div><span className="text-[var(--text-hint)]">최저: </span><span className="font-bold">{formatManWon(d.min_price_10k)}</span></div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="text-xs text-[var(--text-hint)] italic">{transactions.error || transactions.message || "실거래 데이터 없음"}</p>
+              )}
+              {result.ai_interpretation?.transaction_interpretation && (
+                <AiInterpretation text={result.ai_interpretation.transaction_interpretation} />
+              )}
+            </SectionCard>
+                </>
+              ),
+              "sale-price": (
+                <>
+            {/* Section 5: 물건별 분양가 */}
+            <SectionCard title="5. 개발유형별 예상 분양가" icon={Tag} defaultOpen={openFor("sale-price", false)}>
+              {salePrices.length > 0 ? (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {salePrices.map((sp: AnalysisResult) => (
+                    <div key={sp.dev_type} className="rounded-lg bg-[var(--surface-soft)] border border-[var(--line)] p-3">
+                      <p className="text-[10px] text-[var(--text-hint)]">{sp.type_name}</p>
+                      <p className="text-sm font-bold text-[var(--accent-strong)]">{formatManWon(sp.sale_price_per_pyeong_man)}/평</p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-[var(--text-hint)] italic">분양가 데이터 없음</p>
+              )}
+              <FieldAuditNotice notes={findingsForSection(auditView, "sale-price").notes} />
+              {result.ai_interpretation?.sale_price_interpretation && (
+                <AiInterpretation text={result.ai_interpretation.sale_price_interpretation} />
+              )}
+            </SectionCard>
+                </>
+              ),
+              "location": (
+                <>
+            {/* Section 6: 입지분석 */}
+            <SectionCard title="6. 입지분석" icon={MapPin} defaultOpen={openFor("location", false)}>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                <Field label="입지 점수" value={`${location.location_score ?? "-"}점 (${location.grade ?? "-"})`} />
+                {location.transportation?.nearest_subway && (
+                  <>
+                    <Field label="최근접 지하철" value={location.transportation.nearest_subway.name || "-"} />
+                    <Field label="지하철 거리" value={`${location.transportation.nearest_subway.distance_m ?? "-"}m`} />
+                  </>
+                )}
+                <Field label="인근 학교" value={`${location.education?.school_count ?? 0}개교`} />
+              </div>
+              {/* ★입지 점수 산정 근거(score_breakdown) — 핸드오프 손실 해소(그간 location_score만 표시). */}
+              {Array.isArray(location.score_breakdown) && location.score_breakdown.length > 0 && (
+                <div className="mt-3 rounded-lg bg-[var(--surface-soft)] border border-[var(--line)] p-3 space-y-1">
+                  <p className="text-[10px] font-bold text-[var(--text-hint)] mb-1">입지 점수 산정 근거</p>
+                  {(location.score_breakdown as string[]).map((s: string, i: number) => (
+                    <p key={i} className="text-[10px] text-[var(--text-secondary)]">· {s}</p>
+                  ))}
+                </div>
+              )}
+              <FieldAuditNotice notes={findingsForSection(auditView, "location").notes} />
+              {result.ai_interpretation?.location_interpretation && (
+                <AiInterpretation text={result.ai_interpretation.location_interpretation} />
+              )}
+            </SectionCard>
+                </>
+              ),
+              "dev-plans": (
+                <>
+            {/* Section 7: 주변 개발계획 */}
+            {(() => {
+              // ★신규(additive) land_use_regulations_detail — {name, link|null}. 있으면 이름+링크로
+              //   렌더(이름 중복 제거·순서 보존), 없으면 기존 land_use_regulations(문자열 배열)로 폴백.
+              const rawDetail: AnalysisResult[] = Array.isArray(devPlans.land_use_regulations_detail)
+                ? devPlans.land_use_regulations_detail
+                : [];
+              const seenNames = new Set<string>();
+              const regDetail = rawDetail.filter((r) => {
+                const n = (r?.name ?? "").trim();
+                if (!n || seenNames.has(n)) return false;
+                seenNames.add(n);
+                return true;
+              });
+              const regItems: { name: string; link?: string | null }[] =
+                regDetail.length > 0
+                  ? regDetail.map((r) => ({ name: r.name, link: r.link ?? null }))
+                  : (devPlans.land_use_regulations ?? []).map((name: string) => ({ name, link: null }));
+              const specialDistricts: string[] = Array.isArray(devPlans.special_districts)
+                ? devPlans.special_districts
+                : [];
+              const hasAnyRegInfo = regItems.length > 0 || specialDistricts.length > 0;
+
+              return (
+                <SectionCard title="7. 주변 개발계획 및 규제" icon={Map} defaultOpen={openFor("dev-plans", false)}>
+                  {hasAnyRegInfo ? (
+                    <div className="space-y-2">
+                      {regItems.length > 0 && (
+                        <div className="rounded-lg bg-[var(--surface-soft)] border border-[var(--line)] p-3">
+                          <div className="mb-2 flex flex-wrap items-center gap-2">
+                            <p className="text-[10px] font-bold text-[var(--text-hint)]">토지이용계획 규제</p>
+                            {/* ★risk_level(종합 리스크) — 핸드오프 손실 해소(그간 규제명 나열만 표시). */}
+                            {devPlans.risk_level && (
+                              <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[9px] font-bold ${RISK_LEVEL_STYLE[devPlans.risk_level as string] || RISK_LEVEL_STYLE["낮음"]}`}>
+                                종합 리스크 {devPlans.risk_level}
+                              </span>
+                            )}
+                          </div>
+                          <div className="space-y-1">
+                            {regItems.map((reg, i) => {
+                              // ★regulation_notes(이름별 해석 주석) — 매칭되면 회색 보조텍스트로 병기(핸드오프 손실 해소).
+                              const note = (devPlans.regulation_notes as AnalysisResult[] | undefined)?.find(
+                                (n: AnalysisResult) => n?.name === reg.name,
+                              );
+                              return (
+                                <div key={i} className="flex flex-col gap-0.5">
+                                  <div className="flex items-center gap-2 text-[11px]">
+                                    <span className="h-1.5 w-1.5 rounded-full bg-[var(--status-warning)] shrink-0" />
+                                    <span className="text-[var(--text-primary)]">{reg.name}</span>
+                                    {/* 근거 링크 — url 있을 때만(가짜 링크 날조 금지), 새 탭으로 열기. */}
+                                    {reg.link ? (
+                                      <a
+                                        href={reg.link}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        title={`${reg.name} 근거 새 탭에서 열기`}
+                                        aria-label={`${reg.name} 근거 새 탭에서 열기`}
+                                        className="inline-flex items-center text-[var(--accent-strong)] hover:opacity-80"
+                                      >
+                                        <ExternalLink className="size-3" aria-hidden />
+                                      </a>
+                                    ) : null}
+                                  </div>
+                                  {note?.interpretation && (
+                                    <p className="ml-3.5 text-[10px] text-[var(--text-hint)]">{note.interpretation}</p>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                          {/* ★risk_factors(리스크 유발 규제 목록) — 핸드오프 손실 해소. */}
+                          {Array.isArray(devPlans.risk_factors) && devPlans.risk_factors.length > 0 && (
+                            <div className="mt-3 space-y-1 border-t border-[var(--line)] pt-2">
+                              <p className="text-[10px] font-bold text-[var(--text-hint)] mb-1">리스크 요인</p>
+                              {(devPlans.risk_factors as string[]).map((f: string, i: number) => (
+                                <div key={i} className="flex items-center gap-2 text-[11px]">
+                                  <span className="h-1.5 w-1.5 rounded-full bg-[var(--status-warning)] shrink-0" />
+                                  <span className="text-[var(--text-secondary)]">{f}</span>
+                                </div>
                               ))}
                             </div>
                           )}
                         </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            ) : (
-              <p className="text-xs text-[var(--text-hint)] italic">해당 용도지역에서 허용된 개발유형이 없습니다</p>
-            )}
-            {result.ai_interpretation?.supply_area_interpretation && (
-              <AiInterpretation text={result.ai_interpretation.supply_area_interpretation} />
-            )}
-          </SectionCard>
-
-          {/* Section 3: 토지 주변시세 */}
-          <SectionCard title="3. 토지 주변시세" icon={Wallet}>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-              <Field label="공시지가 (원/m²)" value={formatManWon(landPrices.official_price_per_sqm / 10000)} />
-              <Field label="공시지가 총액" value={formatWon(landPrices.total_official_value_won)} />
-              <Field label="추정 시세 (원/m²)" value={formatManWon(landPrices.estimated_market_per_sqm / 10000)} />
-              <Field label="추정 시세 총액" value={formatWon(landPrices.total_estimated_value_won)} />
-              <Field label="시세 보정계수" value={`×${landPrices.market_multiplier ?? "-"}`} />
-            </div>
-            <FieldAuditNotice notes={findingsForSection(auditView, "land-price").notes} />
-            {result.ai_interpretation?.land_price_interpretation && (
-              <AiInterpretation text={result.ai_interpretation.land_price_interpretation} />
-            )}
-          </SectionCard>
-
-          {/* Section 4: 물건별 주변 실거래가 */}
-          <SectionCard title="4. 물건별 주변 실거래가" icon={Home}>
-            {Object.keys(transactions).length > 0 && !transactions.error ? (
-              <div className="space-y-2">
-                {Object.entries(transactions).map(([type, data]) => {
-                  const d = data as AnalysisResult;
-                  if (!d || !d.count) return null;
-                  return (
-                    <div key={type} className="rounded-lg bg-[var(--surface-soft)] border border-[var(--line)] p-3">
-                      <p className="text-xs font-bold text-[var(--text-primary)] mb-1">
-                        {type} ({d.count}건)
-                        {d.excluded_outliers > 0 && (
-                          <span className="ml-1 text-[10px] font-normal text-[var(--text-hint)]">· 이상치 {d.excluded_outliers}건 제외(지분·정정 등)</span>
-                        )}
-                      </p>
-                      <div className="grid grid-cols-3 gap-2 text-[11px]">
-                        <div><span className="text-[var(--text-hint)]">평균: </span><span className="font-bold">{formatManWon(d.avg_price_10k)}</span></div>
-                        <div><span className="text-[var(--text-hint)]">최고: </span><span className="font-bold">{formatManWon(d.max_price_10k)}</span></div>
-                        <div><span className="text-[var(--text-hint)]">최저: </span><span className="font-bold">{formatManWon(d.min_price_10k)}</span></div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <p className="text-xs text-[var(--text-hint)] italic">{transactions.error || transactions.message || "실거래 데이터 없음"}</p>
-            )}
-            {result.ai_interpretation?.transaction_interpretation && (
-              <AiInterpretation text={result.ai_interpretation.transaction_interpretation} />
-            )}
-          </SectionCard>
-
-          {/* Section 5: 물건별 분양가 */}
-          <SectionCard title="5. 개발유형별 예상 분양가" icon={Tag}>
-            {salePrices.length > 0 ? (
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                {salePrices.map((sp: AnalysisResult) => (
-                  <div key={sp.dev_type} className="rounded-lg bg-[var(--surface-soft)] border border-[var(--line)] p-3">
-                    <p className="text-[10px] text-[var(--text-hint)]">{sp.type_name}</p>
-                    <p className="text-sm font-bold text-[var(--accent-strong)]">{formatManWon(sp.sale_price_per_pyeong_man)}/평</p>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-xs text-[var(--text-hint)] italic">분양가 데이터 없음</p>
-            )}
-            <FieldAuditNotice notes={findingsForSection(auditView, "sale-price").notes} />
-            {result.ai_interpretation?.sale_price_interpretation && (
-              <AiInterpretation text={result.ai_interpretation.sale_price_interpretation} />
-            )}
-          </SectionCard>
-
-          {/* Section 6: 입지분석 */}
-          <SectionCard title="6. 입지분석" icon={MapPin}>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-              <Field label="입지 점수" value={`${location.location_score ?? "-"}점 (${location.grade ?? "-"})`} />
-              {location.transportation?.nearest_subway && (
-                <>
-                  <Field label="최근접 지하철" value={location.transportation.nearest_subway.name || "-"} />
-                  <Field label="지하철 거리" value={`${location.transportation.nearest_subway.distance_m ?? "-"}m`} />
-                </>
-              )}
-              <Field label="인근 학교" value={`${location.education?.school_count ?? 0}개교`} />
-            </div>
-            {/* ★입지 점수 산정 근거(score_breakdown) — 핸드오프 손실 해소(그간 location_score만 표시). */}
-            {Array.isArray(location.score_breakdown) && location.score_breakdown.length > 0 && (
-              <div className="mt-3 rounded-lg bg-[var(--surface-soft)] border border-[var(--line)] p-3 space-y-1">
-                <p className="text-[10px] font-bold text-[var(--text-hint)] mb-1">입지 점수 산정 근거</p>
-                {(location.score_breakdown as string[]).map((s: string, i: number) => (
-                  <p key={i} className="text-[10px] text-[var(--text-secondary)]">· {s}</p>
-                ))}
-              </div>
-            )}
-            <FieldAuditNotice notes={findingsForSection(auditView, "location").notes} />
-            {result.ai_interpretation?.location_interpretation && (
-              <AiInterpretation text={result.ai_interpretation.location_interpretation} />
-            )}
-          </SectionCard>
-
-          {/* Section 7: 주변 개발계획 */}
-          {(() => {
-            // ★신규(additive) land_use_regulations_detail — {name, link|null}. 있으면 이름+링크로
-            //   렌더(이름 중복 제거·순서 보존), 없으면 기존 land_use_regulations(문자열 배열)로 폴백.
-            const rawDetail: AnalysisResult[] = Array.isArray(devPlans.land_use_regulations_detail)
-              ? devPlans.land_use_regulations_detail
-              : [];
-            const seenNames = new Set<string>();
-            const regDetail = rawDetail.filter((r) => {
-              const n = (r?.name ?? "").trim();
-              if (!n || seenNames.has(n)) return false;
-              seenNames.add(n);
-              return true;
-            });
-            const regItems: { name: string; link?: string | null }[] =
-              regDetail.length > 0
-                ? regDetail.map((r) => ({ name: r.name, link: r.link ?? null }))
-                : (devPlans.land_use_regulations ?? []).map((name: string) => ({ name, link: null }));
-            const specialDistricts: string[] = Array.isArray(devPlans.special_districts)
-              ? devPlans.special_districts
-              : [];
-            const hasAnyRegInfo = regItems.length > 0 || specialDistricts.length > 0;
-
-            return (
-              <SectionCard title="7. 주변 개발계획 및 규제" icon={Map}>
-                {hasAnyRegInfo ? (
-                  <div className="space-y-2">
-                    {regItems.length > 0 && (
-                      <div className="rounded-lg bg-[var(--surface-soft)] border border-[var(--line)] p-3">
-                        <div className="mb-2 flex flex-wrap items-center gap-2">
-                          <p className="text-[10px] font-bold text-[var(--text-hint)]">토지이용계획 규제</p>
-                          {/* ★risk_level(종합 리스크) — 핸드오프 손실 해소(그간 규제명 나열만 표시). */}
-                          {devPlans.risk_level && (
-                            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[9px] font-bold ${RISK_LEVEL_STYLE[devPlans.risk_level as string] || RISK_LEVEL_STYLE["낮음"]}`}>
-                              종합 리스크 {devPlans.risk_level}
-                            </span>
-                          )}
-                        </div>
-                        <div className="space-y-1">
-                          {regItems.map((reg, i) => {
-                            // ★regulation_notes(이름별 해석 주석) — 매칭되면 회색 보조텍스트로 병기(핸드오프 손실 해소).
-                            const note = (devPlans.regulation_notes as AnalysisResult[] | undefined)?.find(
-                              (n: AnalysisResult) => n?.name === reg.name,
-                            );
-                            return (
-                              <div key={i} className="flex flex-col gap-0.5">
-                                <div className="flex items-center gap-2 text-[11px]">
-                                  <span className="h-1.5 w-1.5 rounded-full bg-[var(--status-warning)] shrink-0" />
-                                  <span className="text-[var(--text-primary)]">{reg.name}</span>
-                                  {/* 근거 링크 — url 있을 때만(가짜 링크 날조 금지), 새 탭으로 열기. */}
-                                  {reg.link ? (
-                                    <a
-                                      href={reg.link}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      title={`${reg.name} 근거 새 탭에서 열기`}
-                                      aria-label={`${reg.name} 근거 새 탭에서 열기`}
-                                      className="inline-flex items-center text-[var(--accent-strong)] hover:opacity-80"
-                                    >
-                                      <ExternalLink className="size-3" aria-hidden />
-                                    </a>
-                                  ) : null}
-                                </div>
-                                {note?.interpretation && (
-                                  <p className="ml-3.5 text-[10px] text-[var(--text-hint)]">{note.interpretation}</p>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-                        {/* ★risk_factors(리스크 유발 규제 목록) — 핸드오프 손실 해소. */}
-                        {Array.isArray(devPlans.risk_factors) && devPlans.risk_factors.length > 0 && (
-                          <div className="mt-3 space-y-1 border-t border-[var(--line)] pt-2">
-                            <p className="text-[10px] font-bold text-[var(--text-hint)] mb-1">리스크 요인</p>
-                            {(devPlans.risk_factors as string[]).map((f: string, i: number) => (
+                      )}
+                      {/* 특별·지구 지정 — devPlans.special_districts(그간 게이트 조건에만 쓰이고 미렌더였던 항목). */}
+                      {specialDistricts.length > 0 && (
+                        <div className="rounded-lg bg-[var(--surface-soft)] border border-[var(--line)] p-3">
+                          <p className="mb-1 text-[10px] font-bold text-[var(--text-hint)]">특별·지구 지정</p>
+                          <div className="space-y-1">
+                            {specialDistricts.map((d, i) => (
                               <div key={i} className="flex items-center gap-2 text-[11px]">
-                                <span className="h-1.5 w-1.5 rounded-full bg-[var(--status-warning)] shrink-0" />
-                                <span className="text-[var(--text-secondary)]">{f}</span>
+                                <span className="h-1.5 w-1.5 rounded-full bg-purple-400 shrink-0" />
+                                <span className="text-[var(--text-secondary)]">{d}</span>
                               </div>
                             ))}
                           </div>
-                        )}
-                      </div>
-                    )}
-                    {/* 특별·지구 지정 — devPlans.special_districts(그간 게이트 조건에만 쓰이고 미렌더였던 항목). */}
-                    {specialDistricts.length > 0 && (
-                      <div className="rounded-lg bg-[var(--surface-soft)] border border-[var(--line)] p-3">
-                        <p className="mb-1 text-[10px] font-bold text-[var(--text-hint)]">특별·지구 지정</p>
-                        <div className="space-y-1">
-                          {specialDistricts.map((d, i) => (
-                            <div key={i} className="flex items-center gap-2 text-[11px]">
-                              <span className="h-1.5 w-1.5 rounded-full bg-purple-400 shrink-0" />
-                              <span className="text-[var(--text-secondary)]">{d}</span>
-                            </div>
-                          ))}
                         </div>
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <p className="text-xs text-[var(--text-hint)] italic">개발계획/규제 정보 없음</p>
-                )}
-                <FieldAuditNotice notes={findingsForSection(auditView, "dev-plans").notes} />
-                {result.ai_interpretation?.development_plan_interpretation && (
-                  <AiInterpretation text={result.ai_interpretation.development_plan_interpretation} />
-                )}
-              </SectionCard>
-            );
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-[var(--text-hint)] italic">개발계획/규제 정보 없음</p>
+                  )}
+                  <FieldAuditNotice notes={findingsForSection(auditView, "dev-plans").notes} />
+                  {result.ai_interpretation?.development_plan_interpretation && (
+                    <AiInterpretation text={result.ai_interpretation.development_plan_interpretation} />
+                  )}
+                </SectionCard>
+              );
+            })()}
+                </>
+              ),
+            };
+            return sectionOrder.map((id) => (
+              <Fragment key={`${persona ?? "neutral"}:${id}`}>{sectionNodes[id]}</Fragment>
+            ));
           })()}
 
           {/* 분석 시간 */}
