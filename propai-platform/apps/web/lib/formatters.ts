@@ -140,6 +140,35 @@ export function formatPercent(value?: number | null, digits = 1): string {
 }
 
 /**
+ * 비율 구간 표기 — `80.0~120.0%`. 한쪽이라도 없으면 구간이 성립하지 않으므로 "미확보".
+ *
+ * ★`{min}~{max}%` 직접 보간을 대체한다 — 그 형태는 값이 없을 때 `"~%"` 를 만들고,
+ *   두 끝의 자릿수가 서로 달라 구간이 눈으로 안 읽힌다.
+ */
+export function formatPercentRange(
+  min?: number | null, max?: number | null, digits = 1,
+): string {
+  const lo = formatPercent(min, digits);
+  const hi = formatPercent(max, digits);
+  if (lo === "미확보" || hi === "미확보") return "미확보";
+  return `${lo.replace("%", "")}~${hi}`;
+}
+
+/**
+ * 증감분 비율 표기 — `formatPercent`와 같은 정책에 **부호**만 얹는다.
+ *
+ * ★왜 별도 함수인가: 증감 칸을 `+{value}%` 로 직접 보간하면 값이 없을 때 `"+%"` 라는
+ *   깨진 문자열이 나온다(실측). 그렇다고 `+${formatPercent(v)}` 로 감싸면 `"+미확보"` 가
+ *   된다. 부호는 **값이 있을 때만** 붙어야 하므로 판정을 한 곳에 둔다.
+ *
+ * 0은 유효값이라 `"+0.0%"` 가 아니라 `"0.0%"` 로 적는다 — 늘지 않았다는 사실을 그대로.
+ */
+export function formatPercentDelta(value?: number | null, digits = 1): string {
+  if (value == null || typeof value !== "number" || !Number.isFinite(value)) return "미확보";
+  return `${value > 0 ? "+" : ""}${value.toFixed(digits)}%`;
+}
+
+/**
  * 분석값 단일 표기 헬퍼 — 빈/null/NaN은 "분석 전"으로 통일한다.
  * 숫자면 천단위 쉼표 + (선택)단위, 문자열이면 그대로 사용한다.
  * (프로젝트 전반의 "—"/빈칸 혼용을 "분석 전"으로 일원화하기 위한 단일 출처)
