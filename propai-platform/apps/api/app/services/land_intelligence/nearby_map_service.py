@@ -224,12 +224,6 @@ def _display_cap_impact(
         if not radius_applied:
             return None
         apt_cat = categories.get("apt_trade") or {}
-        if not avm or not avm_lifted:
-            return None
-        cur = avm.get("price_per_sqm")
-        unc = avm_lifted.get("price_per_sqm")
-        if not cur or not unc:
-            return None
 
         # ★★리뷰 B-1 봉합 — **단위는 맞췄는데 모집단이 어긋나 있었다.**
         #   종전엔 `capped_group_count` 를 실었는데 그건 **정밀·동 대표점을 가리지 않은**
@@ -259,23 +253,42 @@ def _display_cap_impact(
                 "dropped_precise_group_count": _l - _c,
                 # 정밀·동 대표점을 **가리지 않은** 전체 절단 수. 위 값과 다른 것이 정상이다.
                 "dropped_all_precisions_group_count": _cat.get("capped_group_count"),
+                # ★리뷰 R5 — 상위 제약(사전컷)도 **카테고리별**로 병기한다. 최상위
+                #   `geocode_precut_*` 는 apt 전용이라, land 를 판독할 때 그걸 보면 틀린다.
+                "geocode_precut_groups_cut": (_cat.get("precut") or {}).get("groups_cut"),
             }
+
+        # ★★리뷰 R1 봉합 — 종전엔 `avm` 이 없으면 **절단량까지 통째로** None 을 냈다.
+        #   그런데 apt 비교표본이 없는 모집단(농어촌·토지 — 호미곶급)이 정확히 A-2 가 겨냥한
+        #   곳이다. 즉 **가장 알고 싶은 데서 계측이 암전**했다(리뷰어 실행 증거: apt 0건 ·
+        #   land 표시캡 12그룹 절단인데 `display_cap_impact: None`).
+        #   → 가격 델타는 apt AVM 이 있을 때만, **절단량은 `radius_applied` 만으로 항상** 싣는다.
+        #     가격 3종은 계산 불가면 **키를 빼지 않고 None** 으로 둔다 — 키 자체가 사라지면
+        #     소비처가 "이 응답엔 그 개념이 없다"로 읽지만, 실제로는 "못 쟀다"이기 때문이다.
+        _priced = bool(avm and avm_lifted)
+        cur = (avm or {}).get("price_per_sqm") if _priced else None
+        unc = (avm_lifted or {}).get("price_per_sqm") if _priced else None
+        _delta = round((unc - cur) / cur * 100.0, 2) if (cur and unc) else None
 
         return {
             # ★소비처 오용 방지 — 이 플래그를 보고도 렌더하면 그건 의도적 오용이다.
             "diagnostic_only": True,
-            # ── 가격 델타(`apt_trade`/AVM 한정) ──
+            # ── 가격 델타(`apt_trade`/AVM 한정 — 표본이 없으면 None) ──
             "sample_group_count": n_cap,
             "sample_group_count_display_cap_lifted": n_lift,
-            "sample_deal_count": avm.get("comparable_count"),
-            "sample_deal_count_display_cap_lifted": avm_lifted.get("comparable_count"),
+            "sample_deal_count": (avm or {}).get("comparable_count") if _priced else None,
+            "sample_deal_count_display_cap_lifted": (
+                (avm_lifted or {}).get("comparable_count") if _priced else None
+            ),
             "dropped_precise_group_count": n_lift - n_cap,
             "dropped_all_precisions_group_count": apt_cat.get("capped_group_count"),
             "price_per_sqm": cur,
             "price_per_sqm_display_cap_lifted": unc,
-            "delta_pct": round((unc - cur) / cur * 100.0, 2),
-            "confidence_score": avm.get("confidence_score"),
-            "confidence_score_display_cap_lifted": avm_lifted.get("confidence_score"),
+            "delta_pct": _delta,
+            "confidence_score": (avm or {}).get("confidence_score") if _priced else None,
+            "confidence_score_display_cap_lifted": (
+                (avm_lifted or {}).get("confidence_score") if _priced else None
+            ),
             # ── 상위 제약(A-1) — 이걸 안 실으면 "캡을 풀면 전체 표본"으로 오독한다 ──
             "geocode_precut_budget": precut.get("budget"),
             "geocode_precut_groups_cut": precut.get("groups_cut"),
@@ -283,6 +296,10 @@ def _display_cap_impact(
             "truncation_by_category": truncation,
         }
     except Exception:  # noqa: BLE001 — 진단이 본로직을 깨지 않는다
+        # ★리뷰 R2 — 이 try 는 **이 함수 안**만 보호한다. 호출부의 `avm_lifted` 계산
+        #   (`_compute_avm_summary(..., sample_field=...)`)은 이 밖이라 여기서 못 막는다.
+        #   위험은 낮다(lifted 표본은 canonical 의 상위집합이고 원소 형상이 같다)지만,
+        #   "진단이 본로직을 깨지 않는다"는 주장은 **이 함수 범위 한정**임을 명시해 둔다.
         # ★무성 실패 금지 — 로그가 없으면 진단기가 스스로 깨져도 "avm 없음/반경 미적용"과
         #   구분 불가하게 None 으로 수렴한다("관측전용은 스모크 없으면 무성회귀").
         logger.warning("표시상한 영향 계측 실패 — 진단 필드를 None 으로 낸다", exc_info=True)

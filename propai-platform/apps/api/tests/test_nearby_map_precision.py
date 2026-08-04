@@ -1055,8 +1055,11 @@ async def test_precut_accounting_detector_is_actually_wired(monkeypatch) -> None
 #
 # `_MAX_GROUPS_PER_CAT`(28)은 선언부가 스스로 "카테고리별 **마커** 상한 — 페이로드 축소"라고
 # 밝히는 **표시/전송용 상수**인데, `precise` 가 `capped` 에서 나오므로 AVM·탁상감정 표본까지
-# 자른다. 라이브 실측(2026-08-05 역삼동): 탁상감정 자신의 파라미터(1,500m·6개월)에서 반경 통과
-# 정밀 그룹 52개 중 **24개(46%)가 표시 상한 때문에 폐기**됐다.
+# 자른다. 라이브 실측(2026-08-05 역삼동): 반경 1,500m·6개월에서 `apt_trade` 의 반경 통과
+# **정밀** 그룹 52개 중 **24개(46%)가 표시 상한 때문에 폐기**됐다.
+# ★리뷰 R4 — 초판은 이 파라미터를 "탁상감정 자신의 것"이라 썼는데, 탁상감정은 이 페이로드에서
+#   **`land_trade` 만** 읽고 `avm` 은 쓰지 않는다. 서비스 파일은 정정했는데 **이 주석만 정정 전
+#   문장이 남아** 같은 오독(탁상감정이 apt 를 본다)을 재생산하고 있었다. 52/24 는 `apt_trade` 수치다.
 # ★그러나 이 값은 사용자에게 보이는 **금액**이다. 계측 없이 바꾸면 "얼마나 달라지는지 모르는 채"
 #   시세를 흔드는 것이라, 이 절은 **정본(`avm`)을 바꾸지 않고** 델타만 관측한다.
 
@@ -1225,14 +1228,72 @@ async def test_display_cap_impact_is_zero_when_cap_not_binding() -> None:
 
 
 @pytest.mark.asyncio
-async def test_display_cap_impact_is_none_when_avm_absent() -> None:
-    """★무날조 — 비교할 시세가 없으면 **None**. 0 이나 빈 dict 로 만들지 않는다."""
+async def test_display_cap_impact_prices_are_none_when_avm_absent() -> None:
+    """★무날조 — 비교할 시세가 없으면 가격 축은 **None**. 0 이나 빈 dict 로 만들지 않는다.
+
+    ★리뷰 R1 로 **계약이 바뀌었다**. 종전 이 테스트는 `display_cap_impact is None` 을 단언했는데,
+    그건 R1 이 고친 **옛 동작을 잠그고 있었다** — `avm` 이 없으면 절단량까지 통째로 사라져
+    apt 비교표본이 없는 모집단(농어촌·토지, 이 계측이 가장 알고 싶은 곳)에서 계측이 암전했다.
+    지금은 **가격 축만 None** 이고 절단량은 계속 실린다. 옛 단언은 회귀가 아니라 flip 대상이었다.
+    """
     nm._BUILD_CACHE.clear()
     rows = [_row(name="", jibun="", dong="B동", price=90000, day=1)]
     svc = _service(rows, {"경상북도 남구 B동": {"lat": 36.0006, "lon": 129.0006}})
     payload = await _build_cap(svc)
     assert payload["avm"] is None
-    assert payload["display_cap_impact"] is None
+    imp = payload["display_cap_impact"]
+    assert imp is not None
+    assert imp["price_per_sqm"] is None
+    assert imp["delta_pct"] is None
+    # 이 픽스처는 동 대표점 그룹뿐이라 정밀 표본이 0 이고 절단도 0 — **관측된 0** 이다.
+    assert imp["sample_group_count"] == 0
+    assert imp["truncation_by_category"]["apt_trade"]["dropped_precise_group_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_display_cap_impact_keeps_truncation_when_apt_avm_absent() -> None:
+    """★리뷰 R1 회귀락 — apt 비교표본이 없어도 **절단량은 계속 관측돼야** 한다.
+
+    종전엔 `avm` 이 없으면 `display_cap_impact` 를 통째로 None 으로 냈다. 그런데 apt 비교표본이
+    없는 모집단(농어촌·토지 — 호미곶급)이 정확히 A-2 가 겨냥한 곳이다.
+    즉 **가장 알고 싶은 데서 계측이 암전**했다(리뷰어 실행 증거: apt 0건 · land 표시캡 12그룹
+    절단인데 `display_cap_impact: None`).
+
+    → 가격 델타는 apt AVM 이 있을 때만 채우고(없으면 **키를 빼지 않고 None**),
+      절단량(`truncation_by_category`)은 `radius_applied` 만으로 **항상** 싣는다.
+      키를 빼면 소비처가 "이 응답엔 그 개념이 없다"로 읽지만 실제로는 "못 쟀다"이다.
+    """
+    nm._BUILD_CACHE.clear()
+    # apt 는 0건, land_trade 만 캡을 넘게 채운다.
+    land_rows: list[dict] = []
+    gmap: dict[str, dict] = {}
+    n = nm._MAX_GROUPS_PER_CAT + 12          # 40 → 캡 28 → 12 절단
+    for i in range(n):
+        land_rows.append(_row(name="", jibun=f"L{i}", dong="A동", price=60000, day=1))
+        gmap[f"경상북도 남구 A동 L{i}"] = {"lat": 36.0003, "lon": 129.0003}
+    svc = _service_per_type({"land": land_rows}, gmap)
+    payload = await svc.build(
+        address="경상북도 남구 A동 9-9", lawd_cd="47111", months=1, radius_m=1000,
+        center_hint={"lat": 36.0, "lon": 129.0},
+    )
+    imp = payload["display_cap_impact"]
+
+    assert payload["avm"] is None, "이 픽스처는 apt 표본 0건 전제다"
+    # ★★계측이 암전하지 않는다.
+    assert imp is not None and imp["diagnostic_only"] is True
+    # 가격 축은 **키를 유지한 채** None — "그 개념이 없다"와 "못 쟀다"를 구분한다.
+    for k in ("price_per_sqm", "price_per_sqm_display_cap_lifted", "delta_pct",
+              "confidence_score", "confidence_score_display_cap_lifted",
+              "sample_deal_count", "sample_deal_count_display_cap_lifted"):
+        assert k in imp and imp[k] is None, f"{k} 는 키를 유지한 채 None 이어야 한다"
+    # ★그리고 절단량은 **실제로 관측된다** — 이게 이 봉합의 목적이다.
+    land = imp["truncation_by_category"]["land_trade"]
+    assert land["sample_group_count"] == nm._MAX_GROUPS_PER_CAT      # 28
+    assert land["sample_group_count_display_cap_lifted"] == n        # 40
+    assert land["dropped_precise_group_count"] == 12
+    assert land["dropped_all_precisions_group_count"] == 12
+    # ★리뷰 R5 — 상위 제약도 카테고리별로 읽을 수 있어야 한다(최상위 값은 apt 전용).
+    assert land["geocode_precut_groups_cut"] == 0
 
 
 @pytest.mark.asyncio
