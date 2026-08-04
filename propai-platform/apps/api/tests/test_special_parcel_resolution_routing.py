@@ -13,7 +13,6 @@
 """
 from app.services.zoning import special_parcel as sp
 
-
 # (요인 이름, 첫 해결경로에 반드시 들어갈 문구) — 생산자가 실제로 만드는 이름만 적는다.
 # 왼쪽은 특정 분기가 **가로채기 쉬운** 이름들(도로·소방이 이름에 들어간다)이 앞에 온다.
 GOLDEN_FIRST_PATH = [
