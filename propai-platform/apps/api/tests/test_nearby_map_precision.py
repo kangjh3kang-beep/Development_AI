@@ -828,8 +828,9 @@ async def test_precut_zero_matches_is_ambiguous_not_an_alarm() -> None:
     #   상태여야 (1)(2)(3) 판별 대상이 된다(리뷰 지적: 이 선행 조건이 규칙에 빠져 있었다).
     assert pre["groups_before"] == 1
     # ★판별 규칙 ② 의 재료 — 관측된 동 분포가 응답에 남아 있어야 사람이 대조할 수 있다.
-    #   이 단언이 저장소에서 **유일하게** "판별 재료가 응답에서 사라지는 회귀"를 잡는다
-    #   (리뷰어 A/B/C 대조 실험으로 확인 — 이 줄을 지우면 아무도 못 잡는다).
+    #   이 단언과 `test_precut_zero_matches_from_admin_dong_extraction` 의 같은 단언이
+    #   "판별 재료가 응답에서 사라지는 회귀"를 잡는다(리뷰어 A/B/C 대조 + 응답전용 변이로 확인).
+    #   ※ 초판 주석은 "저장소에서 유일하게"라고 썼는데, (3) 골든이 추가되며 stale 이 됐다.
     observed = {(g.get("dong") or "") for g in cat["groups"]}
     assert observed == {"다른동"}
     # (문서용 — 위 단언에 **함의되어 항상 참**이다. 잠금이 아니라 판별 규칙의 실행가능 서술이며,
@@ -854,6 +855,16 @@ async def test_precut_zero_matches_from_admin_dong_extraction() -> None:
     새로 만든다 — 실측 `"중동" in "중동리"` 는 참이다). 대신 이 골든이 (3)이 실재하고
     (2)와 구별 가능한 형태로 관측된다는 사실을 박아, 다음 사람이 판별 규칙에서
     (3)을 지우지 못하게 한다.
+
+    ★★이 골든은 **알려진 결함의 특성화(characterization)** 다 — 단언하는 값들
+    (`target_dong_hint == "길음1동"`, `matched_before == 0`)은 **현재의 잘못된 동작**이다.
+    `_dong_from_address` 가 행정동을 다루게 되면(= (3)의 정당한 수정) 이 골든은 **깨져야 하며,
+    그때는 회귀가 아니라 flip 대상**이다. 라벨이 없으면 다음 사람이 정당한 수정을 회귀로
+    오독한다(리뷰 R-5).
+
+    ★이 픽스처는 (3a) **접두 유사** 서브클래스다. (3b) **병합 행정동**은 관할 법정동과 이름이
+    전혀 안 겹쳐 판별 규칙 ④에서 (2)로 오분류되므로 별도 골든
+    (`test_precut_zero_matches_from_merged_admin_dong`)이 담당한다.
     """
     nm._BUILD_CACHE.clear()
     # 법정동은 "길음동" — 사용자는 행정동 "길음1동" 으로 검색했다.
@@ -880,9 +891,64 @@ async def test_precut_zero_matches_from_admin_dong_extraction() -> None:
     #   "무관한 동만 보이면 (2)" 와 갈리는 지점이 정확히 여기다.
     observed = {(g.get("dong") or "") for g in cat["groups"]}
     assert observed == {"길음동"}
+    # (문서용 — 위 두 단언에 **함의되어 항상 참**이다. 잠금이 아니라 (3a) 서브클래스의
+    #  실행가능 서술이며, 실패 메시지를 달지 않는다. 리뷰 R-2 지적: 같은 PR 안에서 W2-c
+    #  "가짜 골든" 클래스를 재생산하지 않기 위해 정직하게 라벨링한다.
+    #  `observed.pop()` 은 단언 표현식 안에서 set 을 소비해 뒤에 단언을 추가하면 조용히
+    #  깨지므로 리터럴로 바꿨다(R-3).)
     assert payload["target_dong_hint"] not in observed
-    assert payload["target_dong_hint"].startswith(observed.pop()[:2]), (
-        "이 픽스처는 (3) 오추출 — 대상 동과 관측 동이 '유사하지만 다르다'를 구성해야 한다"
+    assert payload["target_dong_hint"].startswith("길음")
+
+
+@pytest.mark.asyncio
+async def test_precut_zero_matches_from_merged_admin_dong() -> None:
+    """★(3b) **병합 행정동** — 관할 법정동과 이름이 **전혀 안 겹친다**.
+
+    ★리뷰 차단(B-1) 봉합. 2판 판별 규칙의 "무관한 동만 보이면 (2) 정상" 분기가 이 케이스를
+    **정상으로 닫아버렸다**. 행정동은 **정의상 병합명**이라 이건 예외가 아니라 **구조적 다수**다:
+      `"청운효자동"`  관할 법정동 = 청운동·신교동·궁정동·효자동·창성동·통인동·누상동·누하동·옥인동
+      `"종로1·2·3·4가동"` 관할 = 관철동·견지동·공평동·인사동…
+    즉 (3a) 접두 유사(`"길음1동"`/`"길음동"`)와 달리 **문자열 유사도가 0** 이라, 사람이
+    "유사하지만 다른 이름"을 찾는 규칙으로는 잡히지 않는다.
+
+    → 판별 규칙에 **③ `target_dong_hint` 가 법정동인가?** 를 ④ 앞에 두어야 한다.
+      행정동이면 관할 법정동과 이름이 안 겹치는 것이 **정상 동작**이므로 (3)이다.
+
+    이 골든도 **알려진 결함의 특성화**다 — `_dong_from_address` 가 행정동을 다루게 되면
+    깨져야 하고, 그때는 회귀가 아니라 flip 대상이다.
+    """
+    nm._BUILD_CACHE.clear()
+    # 법정동은 통인동·누하동 — 사용자는 병합 행정동 "청운효자동" 으로 검색했다.
+    rows = [
+        _row(name="", jibun="1-1", dong="통인동", price=50000, day=1),
+        _row(name="", jibun="2-2", dong="누하동", price=51000, day=2),
+    ]
+    geocode_map = {
+        "서울특별시 종로구 통인동 1-1": {"lat": 36.0005, "lon": 129.0005},
+        "서울특별시 종로구 누하동 2-2": {"lat": 36.0006, "lon": 129.0006},
+    }
+    svc = _service(rows, geocode_map)
+    payload = await svc.build(
+        address="서울특별시 종로구 청운효자동 100-1", lawd_cd="11110", months=1, radius_m=1000,
+        center_hint={"lat": 36.0, "lon": 129.0},
+    )
+    cat = payload["categories"]["apt_trade"]
+    pre = cat["precut"]
+
+    # 추출은 "성공"한 것처럼 보인다.
+    assert payload["target_dong_hint"] == "청운효자동"
+    assert payload["target_dong_source"] == "address"
+    assert pre["dong_prior_active"] is True
+    # 매칭 0 — (2) 무자료와 **같은 서명**.
+    assert pre["dong_matched_group_count_before"] == 0
+    # 판별 규칙 ①: 거래는 있다(카테고리 무자료 아님).
+    assert pre["groups_before"] == 2
+    # ★★핵심 — 관측된 동이 대상 힌트와 **문자열 유사도 0** 이다. 그래서 "유사하지만 다른
+    #   이름" 규칙으로는 (3)으로 못 가고, 규칙 ③(법정동인가?)이 없으면 (2)로 잘못 닫힌다.
+    observed = {(g.get("dong") or "") for g in cat["groups"]}
+    assert observed == {"통인동", "누하동"}
+    assert all(not payload["target_dong_hint"].startswith(d[:2]) for d in observed), (
+        "이 픽스처는 (3b) — 힌트와 관측 동이 접두조차 겹치지 않아야 (3a)와 구분된다"
     )
 
 
