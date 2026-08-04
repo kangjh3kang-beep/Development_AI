@@ -790,13 +790,24 @@ async def test_precut_zero_matches_is_ambiguous_not_an_alarm() -> None:
 
     2026-08-05 프로덕션 첫 실사용이 그것을 드러냈다: 호미곶에서 이 조합이 떴고 원인은
     규약 불일치가 **아니라** 대보리에 3개월 실거래가 진짜 0건인 정상 상태였다.
-    조합의 두 원인:
-      (1) 표기 규약 불일치 — 정규화가 `umdNm` 형태를 못 따라간다(**조사 대상**)
+    조합의 **세 원인**:
+      (1) 표기 규약 불일치 — **정규화**(`_dong_tail`)가 `umdNm` 형태를 못 따라간다(**조사 대상**)
       (2) 대상 동 무자료   — 그 동에 해당 카테고리 거래가 없다(**정상**)
-    가르는 법: 관측된 그룹 `dong` 에 대상 동이 **어떤 형태로도** 없으면 (2)다.
-    (1)은 별도 골든이 잠근다 — `test_precut_makes_dong_prior_saturation_observable` 이
-    두 토큰 `"호미곶면 대보리"` 에서 `matched_before == 85` 를 요구하므로, 정규화가 완전일치로
-    되돌아가면 그쪽이 깨진다.
+      (3) 대상 동 오추출   — `target_dong_hint` **자체가** `umdNm` 과 영영 안 맞는 표기다
+                             (행정동 `"길음1동"` vs 법정동 `"길음동"`). `_dong_from_address` 계열.
+                             관측 서명이 (2)와 **겹치는데 의미는 정반대**다(프라이어 무음 정지).
+                             → `test_precut_zero_matches_from_admin_dong_extraction` 이 잠근다.
+    가르는 법(순서대로): ①`groups_before == 0` 이면 카테고리 전체 무자료(즉답) ②아니면
+    `target_dong_hint` 를 관측 `dong` 분포와 대조 — 같은 동의 다른 표기면 (1) · 유사하지만 다른
+    이름이면 (3) · 무관한 동만 보이면 (2).
+
+    ★(1)의 회귀락 **귀속을 정정**한다(리뷰 지적). 두 축이 따로 잠긴다:
+      - **프로덕션 정렬키** 축 → `test_precut_prior_works_for_eup_myeon_dong_format`
+        (정렬키를 완전일치로 되돌리는 변이를 이쪽이 잡는다)
+      - **계측 카운터** 축 → `test_precut_makes_dong_prior_saturation_observable`
+        (`matched_before == 85` 요구)
+      초판 독스트링은 saturation 하나만 지목했는데, 실제로 정렬키 변이는 saturation 을
+      **통과한다**(픽스처의 `count` 가 전부 1이라 stable sort 가 순서를 보존한다).
     """
     nm._BUILD_CACHE.clear()
     rows = [_row(name="", jibun="1-1", dong="다른동", price=50000, day=1)]
@@ -813,12 +824,65 @@ async def test_precut_zero_matches_is_ambiguous_not_an_alarm() -> None:
     assert payload["target_dong_source"] == "address"
     assert pre["dong_prior_active"] is True
     assert pre["dong_matched_group_count_before"] == 0
-    # ★판별 근거를 단언으로 박는다 — 관측된 동에 대상 동이 **어떤 형태로도 없다** = (2) 무자료.
-    #   이 대조 없이 위 0 만 보면 (1)로 오독한다(그게 정정 전 주석이 시킨 일이다).
+    # ★판별 규칙 ① — 카테고리 자체가 무자료면 동 문제가 아니다. 이 픽스처는 거래가 **있는**
+    #   상태여야 (1)(2)(3) 판별 대상이 된다(리뷰 지적: 이 선행 조건이 규칙에 빠져 있었다).
+    assert pre["groups_before"] == 1
+    # ★판별 규칙 ② 의 재료 — 관측된 동 분포가 응답에 남아 있어야 사람이 대조할 수 있다.
+    #   이 단언이 저장소에서 **유일하게** "판별 재료가 응답에서 사라지는 회귀"를 잡는다
+    #   (리뷰어 A/B/C 대조 실험으로 확인 — 이 줄을 지우면 아무도 못 잡는다).
     observed = {(g.get("dong") or "") for g in cat["groups"]}
     assert observed == {"다른동"}
-    assert not any(nm._dong_tail(d) == "대상동" for d in observed), (
-        "관측된 동 중 대상 동과 일치하는 것이 있는데 matched_before 가 0 이면 그때는 (1) 규약 불일치다"
+    # (문서용 — 위 단언에 **함의되어 항상 참**이다. 잠금이 아니라 판별 규칙의 실행가능 서술이며,
+    #  변이 6종 어디서도 발화하지 않음을 리뷰어가 확인했다. 정직하게 라벨링해 둔다.)
+    assert not any(nm._dong_tail(d) == "대상동" for d in observed)
+
+
+@pytest.mark.asyncio
+async def test_precut_zero_matches_from_admin_dong_extraction() -> None:
+    """★원인 (3) — **행정동 표기 주소**가 법정동과 영영 안 맞아 프라이어가 무음 정지한다.
+
+    ★리뷰 차단 봉합. 정정 초판은 원인을 (1)(2) 둘로만 적고 "대상 동이 어떤 형태로도 없으면
+    (2) 정상"이라고 규정했는데, 그 규칙이 이 케이스를 **정상으로 닫아버린다**.
+    실제 의미는 정반대다 — `target_dong_hint` 자체가 틀려 프라이어의 1순위 항이 전 그룹에서
+    상수로 붕괴한 상태이고, 이 파일이 이미 D-1 로 문서화한 결함 클래스다.
+
+    MOLIT `dong` 은 **법정동**(`umdNm`)인데 사용자가 **행정동**으로 검색하면 갈린다:
+      행정동 "길음1동" / "우1동"  vs  법정동 "길음동" / "우동"
+    `_dong_from_address` 는 주소에 적힌 표기를 그대로 뽑으므로 이 어긋남을 알지 못한다.
+
+    관측 서명이 (2)와 겹치므로 **자동 분리는 하지 않는다**(부분일치 카운터는 위양성을
+    새로 만든다 — 실측 `"중동" in "중동리"` 는 참이다). 대신 이 골든이 (3)이 실재하고
+    (2)와 구별 가능한 형태로 관측된다는 사실을 박아, 다음 사람이 판별 규칙에서
+    (3)을 지우지 못하게 한다.
+    """
+    nm._BUILD_CACHE.clear()
+    # 법정동은 "길음동" — 사용자는 행정동 "길음1동" 으로 검색했다.
+    rows = [_row(name="", jibun="1-1", dong="길음동", price=50000, day=1)]
+    geocode_map = {"서울특별시 성북구 길음동 1-1": {"lat": 36.0005, "lon": 129.0005}}
+    svc = _service(rows, geocode_map)
+
+    payload = await svc.build(
+        address="서울특별시 성북구 길음1동 100-1", lawd_cd="11290", months=1, radius_m=1000,
+        center_hint={"lat": 36.0, "lon": 129.0},
+    )
+    cat = payload["categories"]["apt_trade"]
+    pre = cat["precut"]
+
+    # 추출은 "성공"한 것처럼 보인다 — source 가 address 이고 prior 도 active 다.
+    assert payload["target_dong_hint"] == "길음1동"
+    assert payload["target_dong_source"] == "address"
+    assert pre["dong_prior_active"] is True
+    # 그런데 매칭은 0 — (2) 무자료와 **같은 서명**이다.
+    assert pre["dong_matched_group_count_before"] == 0
+    # ★판별 규칙 ① 통과: 카테고리에 거래는 있다(무자료가 아니다).
+    assert pre["groups_before"] == 1
+    # ★판별 규칙 ②: 관측된 동이 **유사하지만 다른 이름**이면 (3)이다.
+    #   "무관한 동만 보이면 (2)" 와 갈리는 지점이 정확히 여기다.
+    observed = {(g.get("dong") or "") for g in cat["groups"]}
+    assert observed == {"길음동"}
+    assert payload["target_dong_hint"] not in observed
+    assert payload["target_dong_hint"].startswith(observed.pop()[:2]), (
+        "이 픽스처는 (3) 오추출 — 대상 동과 관측 동이 '유사하지만 다르다'를 구성해야 한다"
     )
 
 
