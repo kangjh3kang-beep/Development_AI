@@ -25,6 +25,8 @@ import { apiClient } from "@/lib/api-client";
 import { formatArea, formatPercent } from "@/lib/formatters"; // 면적 표기 SSOT(UX A2) — 로컬 중복 formatArea 대체
 import { fieldMeta, formatFieldValue, formatDelta } from "@/lib/analysis-field-labels"; // 필드 라벨·단위 SSOT(원시 키 노출 근절)
 import { fetchInterpretation } from "@/lib/interpretation-job"; // 해석 제출·폴링 공용(형제 소비처와 공유)
+import { analysisTargetKey } from "@/lib/analysis-target"; // 분석 대상 판정 키(프로젝트+주소 복합)
+import { useAnalysisTargetGuard } from "@/hooks/useAnalysisTargetGuard"; // 대상 전환 시 옛 결과 무효화 SSOT
 import { readFieldAudit, findingsForSection } from "@/lib/field-audit"; // 자가검증 표면화 SSOT(W3)
 import { FieldAuditNotice } from "@/components/analysis/FieldAuditNotice";
 import { CredibilitySummaryCard } from "@/components/analysis/CredibilitySummaryCard";
@@ -398,6 +400,9 @@ type SupplyAreaItem = AnalysisResult & {
 
 export function ComprehensiveAnalysisPanel() {
   const siteAnalysis = useProjectContextStore((state) => state.siteAnalysis);
+  // ★분석 대상 판정은 주소만으로는 부족하다 — 프로젝트까지 함께 본다(analysisTargetKey).
+  //   주소가 없는 프로젝트(다필지)로 바꿔도 대상이 바뀐 것을 알아채야 하기 때문.
+  const projectId = useProjectContextStore((state) => state.projectId);
   const [address, setAddress] = useState("");
   // 다필지: 검색·엑셀로 등록된 전 필지 주소(2필지↑ 시 통합 개발방식 분석 노출)
   const [parcels, setParcels] = useState<string[]>([]);
@@ -431,6 +436,18 @@ export function ComprehensiveAnalysisPanel() {
       .catch(() => {}); // 실패 시 기본값 유지
   }, []);
 
+  // ★대상(프로젝트+주소)이 바뀌면 화면의 옛 결과를 비운다 — 종전에는 주소 문자열만 비교해서
+  //   ①주소 없는 프로젝트로 전환 ②siteAnalysis가 통째로 비는 전환에서 옛 분석이 그대로 남았다
+  //   (머리글=새 프로젝트 / 본문=옛 주소인 모순 표시). 판정은 useAnalysisTargetGuard 한 곳으로.
+  const targetKey = analysisTargetKey(projectId, siteAnalysis?.address ?? "");
+  const { begin: beginAnalysisRun, isCurrent: isCurrentTarget } = useAnalysisTargetGuard(
+    targetKey,
+    useCallback(() => {
+      setResult(null);
+      setError(null);
+    }, []),
+  );
+
   useEffect(() => {
     if (!siteAnalysis) {
       setAddress("");
@@ -440,13 +457,7 @@ export function ComprehensiveAnalysisPanel() {
     }
     const mainAddr = siteAnalysis.address ?? "";
     setAddress(mainAddr);
-    
-    // 이전 분석결과 무효화 (주소 불일치 시 stale 표시 차단)
-    if (mainAddr && result && mainAddr !== (result as any).address) {
-      setResult(null);
-      setError(null);
-    }
-    
+
     const parcelList = siteAnalysis.parcels ?? [];
     if (parcelList.length > 0) {
       setParcels(parcelList.map((p) => p.address).filter(Boolean));
@@ -481,7 +492,9 @@ export function ComprehensiveAnalysisPanel() {
         }
       ]);
     }
-  }, [siteAnalysis, result]);
+    // ★deps에서 result를 뺐다 — 이 이펙트는 더 이상 result를 지우지 않는다(무효화는 가드가 담당).
+    //   result를 deps에 둔 채 안에서 setResult를 부르면 자기 자신을 다시 깨우는 구조가 된다.
+  }, [siteAnalysis]);
 
   /**
    * 종합분석 실행 — ★2단계 점진 렌더(W2-c).
@@ -497,6 +510,9 @@ export function ComprehensiveAnalysisPanel() {
   const handleAnalyze = useCallback(async () => {
     if (!address.trim()) { setError("주소를 입력해주세요."); return; }
     setLoading(true); setError(null); setResult(null); setInterpreting(false);
+    // ★이 분석이 '어느 대상의 것인지' 착수 시점에 못 박는다. 종합분석은 오래 걸려서, 기다리는
+    //   사이 사용자가 프로젝트를 바꾸면 뒤늦게 도착한 옛 대상의 응답이 새 화면에 붙을 수 있다.
+    const runKey = beginAnalysisRun();
     // ★착수 시점에 올린다 — POI·시뮬은 종합분석 결과가 아니라 주소만 필요하므로 병렬 실행이
     //   맞다(1단계 완료를 기다리면 사용자가 그만큼 더 오래 빈 카드를 본다).
     setPipelineRunToken((t) => t + 1);
@@ -514,6 +530,8 @@ export function ComprehensiveAnalysisPanel() {
         },
         useMock: false,
       });
+      // 대상이 바뀌었으면 이 응답은 남의 것이다 — 화면에 붙이지 않고 버린다(무음 오염 차단).
+      if (!isCurrentTarget(runKey)) { setLoading(false); return; }
       setResult(core);
       setHistoryRefreshTick((t) => t + 1);
     } catch (e) {
@@ -537,6 +555,8 @@ export function ComprehensiveAnalysisPanel() {
         llmProvider: selectedProvider,
         llmModel: selectedModel,
       });
+      // 해석은 1단계보다 더 오래 걸린다 — 그 사이 대상이 바뀌었으면 병합하지 않는다.
+      if (!isCurrentTarget(runKey)) { setInterpreting(false); return; }
       setResult((prev) => (prev ? { ...prev, ...parts } : prev));
     } catch (e) {
       // ★해석 실패를 '분석 실패'로 승격하지 않는다 — setError를 쓰지 않고 해당 필드만 정직 표기.
@@ -551,7 +571,7 @@ export function ComprehensiveAnalysisPanel() {
     } finally {
       setInterpreting(false);
     }
-  }, [address, selectedProvider, selectedModel, parcelRows]);
+  }, [address, selectedProvider, selectedModel, parcelRows, beginAnalysisRun, isCurrentTarget]);
 
   // 히스토리 변동감지 시그니처 파트 — 백엔드 계약과 동일 순서: [address, pnu||"", parcelCount, useLlm, options요약].
   //   parcelCount는 handleAnalyze가 실제 전송하는 parcelRows(2필지↑일 때만 전송)와 동일 출처.
