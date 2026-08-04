@@ -780,12 +780,34 @@ async def test_precut_makes_dong_prior_saturation_observable() -> None:
 
 
 @pytest.mark.asyncio
-async def test_precut_flags_dong_notation_mismatch_as_zero_matches() -> None:
-    """★H-4 재발 자동탐지 — 프라이어가 '켜졌는데' 일치가 0건이면 표기 규약이 어긋난 것이다.
+async def test_precut_zero_matches_is_ambiguous_not_an_alarm() -> None:
+    """★`active=True && matched_before==0` 은 **경보가 아니라 "확인 필요"**다.
 
-    H-4 가 정확히 그 형태였다: `umdNm` 이 "호미곶면 대보리" 두 토큰인데 완전일치 비교라
-    프라이어가 **한 그룹도 앞당기지 못하고** 조용히 건수 정렬로 돌아갔다. 그때는 그 상태를
-    응답에서 볼 수 없었다. 이제 `active=True && matched_before==0` 조합이 경보로 읽힌다.
+    ★이 테스트의 종전 이름은 `..._flags_dong_notation_mismatch_...` 였고 독스트링은 이 조합을
+    **표기 규약 불일치 경보**라고 단정했다. 그런데 **이 테스트가 실제로 구성하는 것은
+    규약 불일치가 아니라 "대상 동 무자료"** 다 — 픽스처의 `dong` 은 `"다른동"` 하나뿐이고
+    우리 정규화(`_dong_tail`)는 정상 동작한다. 이름과 내용이 어긋나 있었다.
+
+    2026-08-05 프로덕션 첫 실사용이 그것을 드러냈다: 호미곶에서 이 조합이 떴고 원인은
+    규약 불일치가 **아니라** 대보리에 3개월 실거래가 진짜 0건인 정상 상태였다.
+    조합의 **세 원인**:
+      (1) 표기 규약 불일치 — **정규화**(`_dong_tail`)가 `umdNm` 형태를 못 따라간다(**조사 대상**)
+      (2) 대상 동 무자료   — 그 동에 해당 카테고리 거래가 없다(**정상**)
+      (3) 대상 동 오추출   — `target_dong_hint` **자체가** `umdNm` 과 영영 안 맞는 표기다
+                             (행정동 `"길음1동"` vs 법정동 `"길음동"`). `_dong_from_address` 계열.
+                             관측 서명이 (2)와 **겹치는데 의미는 정반대**다(프라이어 무음 정지).
+                             → `test_precut_zero_matches_from_admin_dong_extraction` 이 잠근다.
+    가르는 법(순서대로): ①`groups_before == 0` 이면 카테고리 전체 무자료(즉답) ②아니면
+    `target_dong_hint` 를 관측 `dong` 분포와 대조 — 같은 동의 다른 표기면 (1) · 유사하지만 다른
+    이름이면 (3) · 무관한 동만 보이면 (2).
+
+    ★(1)의 회귀락 **귀속을 정정**한다(리뷰 지적). 두 축이 따로 잠긴다:
+      - **프로덕션 정렬키** 축 → `test_precut_prior_works_for_eup_myeon_dong_format`
+        (정렬키를 완전일치로 되돌리는 변이를 이쪽이 잡는다)
+      - **계측 카운터** 축 → `test_precut_makes_dong_prior_saturation_observable`
+        (`matched_before == 85` 요구)
+      초판 독스트링은 saturation 하나만 지목했는데, 실제로 정렬키 변이는 saturation 을
+      **통과한다**(픽스처의 `count` 가 전부 1이라 stable sort 가 순서를 보존한다).
     """
     nm._BUILD_CACHE.clear()
     rows = [_row(name="", jibun="1-1", dong="다른동", price=50000, day=1)]
@@ -796,11 +818,193 @@ async def test_precut_flags_dong_notation_mismatch_as_zero_matches() -> None:
         address="경상북도 남구 대상동 9-9", lawd_cd="47111", months=1, radius_m=1000,
         center_hint={"lat": 36.0, "lon": 129.0},
     )
-    pre = payload["categories"]["apt_trade"]["precut"]
+    cat = payload["categories"]["apt_trade"]
+    pre = cat["precut"]
     assert payload["target_dong_hint"] == "대상동"
     assert payload["target_dong_source"] == "address"
     assert pre["dong_prior_active"] is True
     assert pre["dong_matched_group_count_before"] == 0
+    # ★판별 규칙 ① — 카테고리 자체가 무자료면 동 문제가 아니다. 이 픽스처는 거래가 **있는**
+    #   상태여야 (1)(2)(3) 판별 대상이 된다(리뷰 지적: 이 선행 조건이 규칙에 빠져 있었다).
+    assert pre["groups_before"] == 1
+    # ★판별 규칙 ② 의 재료 — 관측된 동 분포가 응답에 남아 있어야 사람이 대조할 수 있다.
+    #   이 단언과 `test_precut_zero_matches_from_admin_dong_extraction` 의 같은 단언이
+    #   "판별 재료가 응답에서 사라지는 회귀"를 잡는다(리뷰어 A/B/C 대조 + 응답전용 변이로 확인).
+    #   ※ 초판 주석은 "저장소에서 유일하게"라고 썼는데, (3) 골든이 추가되며 stale 이 됐다.
+    observed = {(g.get("dong") or "") for g in cat["groups"]}
+    assert observed == {"다른동"}
+    # (문서용 — 위 단언에 **함의되어 항상 참**이다. 잠금이 아니라 판별 규칙의 실행가능 서술이며,
+    #  변이 6종 어디서도 발화하지 않음을 리뷰어가 확인했다. 정직하게 라벨링해 둔다.)
+    assert not any(nm._dong_tail(d) == "대상동" for d in observed)
+
+
+@pytest.mark.asyncio
+async def test_precut_zero_matches_from_admin_dong_extraction() -> None:
+    """★원인 (3) — **행정동 표기 주소**가 법정동과 영영 안 맞아 프라이어가 무음 정지한다.
+
+    ★리뷰 차단 봉합. 정정 초판은 원인을 (1)(2) 둘로만 적고 "대상 동이 어떤 형태로도 없으면
+    (2) 정상"이라고 규정했는데, 그 규칙이 이 케이스를 **정상으로 닫아버린다**.
+    실제 의미는 정반대다 — `target_dong_hint` 자체가 틀려 프라이어의 1순위 항이 전 그룹에서
+    상수로 붕괴한 상태이고, 이 파일이 이미 D-1 로 문서화한 결함 클래스다.
+
+    MOLIT `dong` 은 **법정동**(`umdNm`)인데 사용자가 **행정동**으로 검색하면 갈린다:
+      행정동 "길음1동" / "우1동"  vs  법정동 "길음동" / "우동"
+    `_dong_from_address` 는 주소에 적힌 표기를 그대로 뽑으므로 이 어긋남을 알지 못한다.
+
+    관측 서명이 (2)와 겹치므로 **자동 분리는 하지 않는다**(부분일치 카운터는 위양성을
+    새로 만든다 — 실측 `"중동" in "중동리"` 는 참이다). 대신 이 골든이 (3)이 실재하고
+    (2)와 구별 가능한 형태로 관측된다는 사실을 박아, 다음 사람이 판별 규칙에서
+    (3)을 지우지 못하게 한다.
+
+    ★★이 골든은 **알려진 결함의 특성화(characterization)** 다 — 단언하는 값들
+    (`target_dong_hint == "길음1동"`, `matched_before == 0`)은 **현재의 잘못된 동작**이다.
+    `_dong_from_address` 가 행정동을 다루게 되면(= (3)의 정당한 수정) 이 골든은 **깨져야 하며,
+    그때는 회귀가 아니라 flip 대상**이다. 라벨이 없으면 다음 사람이 정당한 수정을 회귀로
+    오독한다(리뷰 R-5).
+
+    ★이 픽스처는 (3a) **접두 유사** 서브클래스다. (3b) **병합 행정동**은 관할 법정동과 이름이
+    전혀 안 겹쳐 판별 규칙 ④에서 (2)로 오분류되므로 별도 골든
+    (`test_precut_zero_matches_from_merged_admin_dong`)이 담당한다.
+    """
+    nm._BUILD_CACHE.clear()
+    # 법정동은 "길음동" — 사용자는 행정동 "길음1동" 으로 검색했다.
+    rows = [_row(name="", jibun="1-1", dong="길음동", price=50000, day=1)]
+    geocode_map = {"서울특별시 성북구 길음동 1-1": {"lat": 36.0005, "lon": 129.0005}}
+    svc = _service(rows, geocode_map)
+
+    payload = await svc.build(
+        address="서울특별시 성북구 길음1동 100-1", lawd_cd="11290", months=1, radius_m=1000,
+        center_hint={"lat": 36.0, "lon": 129.0},
+    )
+    cat = payload["categories"]["apt_trade"]
+    pre = cat["precut"]
+
+    # 추출은 "성공"한 것처럼 보인다 — source 가 address 이고 prior 도 active 다.
+    assert payload["target_dong_hint"] == "길음1동"
+    assert payload["target_dong_source"] == "address"
+    assert pre["dong_prior_active"] is True
+    # 그런데 매칭은 0 — (2) 무자료와 **같은 서명**이다.
+    assert pre["dong_matched_group_count_before"] == 0
+    # ★판별 규칙 ① 통과: 카테고리에 거래는 있다(무자료가 아니다).
+    assert pre["groups_before"] == 1
+    # ★판별 규칙 ②: 관측된 동이 **유사하지만 다른 이름**이면 (3)이다.
+    #   "무관한 동만 보이면 (2)" 와 갈리는 지점이 정확히 여기다.
+    observed = {(g.get("dong") or "") for g in cat["groups"]}
+    assert observed == {"길음동"}
+    # (문서용 — 위 두 단언에 **함의되어 항상 참**이다. 잠금이 아니라 (3a) 서브클래스의
+    #  실행가능 서술이며, 실패 메시지를 달지 않는다. 리뷰 R-2 지적: 같은 PR 안에서 W2-c
+    #  "가짜 골든" 클래스를 재생산하지 않기 위해 정직하게 라벨링한다.
+    #  `observed.pop()` 은 단언 표현식 안에서 set 을 소비해 뒤에 단언을 추가하면 조용히
+    #  깨지므로 리터럴로 바꿨다(R-3).)
+    assert payload["target_dong_hint"] not in observed
+    assert payload["target_dong_hint"].startswith("길음")
+
+
+@pytest.mark.asyncio
+async def test_precut_zero_matches_from_merged_admin_dong() -> None:
+    """★(3b) **병합 행정동** — 관할 법정동과 이름이 **전혀 안 겹친다**.
+
+    ★리뷰 차단(B-1) 봉합. 2판 판별 규칙의 "무관한 동만 보이면 (2) 정상" 분기가 이 케이스를
+    **정상으로 닫아버렸다**. 행정동은 **정의상 병합명**이라 이건 예외가 아니라 **구조적 다수**다:
+      `"청운효자동"`  관할 법정동 = 청운동·신교동·궁정동·효자동·창성동·통인동·누상동·누하동·옥인동
+      `"종로1·2·3·4가동"` 관할 = 관철동·견지동·공평동·인사동…
+    즉 (3a) 접두 유사(`"길음1동"`/`"길음동"`)와 달리 **문자열 유사도가 0** 이라, 사람이
+    "유사하지만 다른 이름"을 찾는 규칙으로는 잡히지 않는다.
+
+    → 판별 규칙에 **③ `target_dong_hint` 가 법정동인가?** 를 ④ 앞에 두어야 한다.
+      행정동이면 관할 법정동과 이름이 안 겹치는 것이 **정상 동작**이므로 (3)이다.
+
+    이 골든도 **알려진 결함의 특성화**다 — `_dong_from_address` 가 행정동을 다루게 되면
+    깨져야 하고, 그때는 회귀가 아니라 flip 대상이다.
+
+    ★리뷰 R-b 정정 — 커밋 메시지에 "변이로 **단독** CAUGHT" 라고 썼는데 **과장**이었다.
+    리뷰어가 변이 14종을 돌린 결과 이 골든만 잡는 변이는 0 이었고, 저자가 든 변이도
+    `test_dong_from_address_stops_at_jibun` 이 **함께** 잡는다. 공허하지는 않지만
+    (여러 변이에서 실제로 발화한다) **고유 kill 은 없다**. 그래도 유지하는 이유는 (3b)가
+    (2)와 서명이 겹치는 **구조적 다수**임을 규칙과 나란히 박아 두기 위해서다.
+    """
+    nm._BUILD_CACHE.clear()
+    # 법정동은 통인동·누하동 — 사용자는 병합 행정동 "청운효자동" 으로 검색했다.
+    rows = [
+        _row(name="", jibun="1-1", dong="통인동", price=50000, day=1),
+        _row(name="", jibun="2-2", dong="누하동", price=51000, day=2),
+    ]
+    geocode_map = {
+        "서울특별시 종로구 통인동 1-1": {"lat": 36.0005, "lon": 129.0005},
+        "서울특별시 종로구 누하동 2-2": {"lat": 36.0006, "lon": 129.0006},
+    }
+    svc = _service(rows, geocode_map)
+    payload = await svc.build(
+        address="서울특별시 종로구 청운효자동 100-1", lawd_cd="11110", months=1, radius_m=1000,
+        center_hint={"lat": 36.0, "lon": 129.0},
+    )
+    cat = payload["categories"]["apt_trade"]
+    pre = cat["precut"]
+
+    # 추출은 "성공"한 것처럼 보인다.
+    assert payload["target_dong_hint"] == "청운효자동"
+    assert payload["target_dong_source"] == "address"
+    assert pre["dong_prior_active"] is True
+    # 매칭 0 — (2) 무자료와 **같은 서명**.
+    assert pre["dong_matched_group_count_before"] == 0
+    # 판별 규칙 ①: 거래는 있다(카테고리 무자료 아님).
+    assert pre["groups_before"] == 2
+    # ★★핵심 — 관측된 동이 대상 힌트와 **문자열 유사도 0** 이다. 그래서 "유사하지만 다른
+    #   이름" 규칙으로는 (3)으로 못 가고, 규칙 ③(법정동인가?)이 없으면 (2)로 잘못 닫힌다.
+    observed = {(g.get("dong") or "") for g in cat["groups"]}
+    assert observed == {"통인동", "누하동"}
+    # (문서용 — 위 두 리터럴 단언에 **함의되어 항상 참**이다. (3a) 골든과 **동일하게** 라벨링하고
+    #  실패 메시지를 달지 않는다. 리뷰 R-a: 앞선 골든엔 정직 라벨을 붙여 놓고 여기엔 안 붙여
+    #  같은 PR 안에서 W2-c "가짜 골든" 클래스를 재생산했다.)
+    assert all(not payload["target_dong_hint"].startswith(d[:2]) for d in observed)
+
+
+@pytest.mark.asyncio
+async def test_precut_zero_matches_from_group_key_merge() -> None:
+    """★원인 (5) — 대상 동 거래가 **다른 동 이름의 그룹에 흡수**돼 matched=0 이 된다.
+
+    ★3차 리뷰 차단(B-1) 봉합. 그룹 키는 `name or jibun or dong` 이고 그룹 대표 `dong` 은
+    **첫 행의 것**이다. 건물명이 없는 카테고리(토지·단독다가구)는 키가 **지번**으로 강등되는데
+    `"1-1"`·`"산1-1"` 같은 지번은 한 시군구의 거의 모든 법정동에 존재한다 —
+    즉 병합은 **예외가 아니라 상시**다.
+
+    ★이 서명은 (2) 무자료와 **구별 불가능**하다: `groups_before > 0` · `matched_before == 0` ·
+    관측 동에 대상 동 없음. 그런데 **대상 동 거래는 실재한다**(여기선 2건).
+    그래서 판별 규칙 ④를 **"정상"으로 종결하지 않게** 바꿨다 — 열거를 늘리는 방식은
+    다음 라운드에 (6)이 나오면 또 뚫린다.
+
+    이 골든이 잠그는 것은 **그 상태가 도달 가능하다는 사실**이다(변이가 아니라 프로덕션
+    `build()` 경로로 재현). 규칙에서 (5)를 지우거나 ④를 다시 종결형으로 되돌리면
+    이 픽스처가 반례로 남는다.
+    """
+    nm._BUILD_CACHE.clear()
+    # 같은 지번 "1-1" 이 두 법정동에 존재 — 첫 행이 "다른동" 이라 그룹 대표 동이 그것으로 잡힌다.
+    rows = [
+        _row(name="", jibun="1-1", dong="다른동", price=50000, day=1),
+        _row(name="", jibun="1-1", dong="대상동", price=51000, day=2),
+        _row(name="", jibun="1-1", dong="대상동", price=52000, day=3),
+    ]
+    geocode_map = {"경상북도 남구 다른동 1-1": {"lat": 36.0005, "lon": 129.0005}}
+    svc = _service(rows, geocode_map)
+    payload = await svc.build(
+        address="경상북도 남구 대상동 9-9", lawd_cd="47111", months=1, radius_m=1000,
+        center_hint={"lat": 36.0, "lon": 129.0},
+    )
+    cat = payload["categories"]["apt_trade"]
+    pre = cat["precut"]
+
+    # 서명은 (2) 무자료와 **완전히 같다**.
+    assert payload["target_dong_hint"] == "대상동"
+    assert pre["dong_prior_active"] is True
+    assert pre["dong_matched_group_count_before"] == 0
+    assert pre["groups_before"] == 1
+    observed = {(g.get("dong") or "") for g in cat["groups"]}
+    assert observed == {"다른동"}
+
+    # ★★그런데 대상 동 거래는 **실재한다** — 세 행이 한 그룹으로 병합됐고 그중 2건이 대상 동이다.
+    #   이 한 줄이 (2)와 (5)를 가르는 유일한 증거이며, 응답의 `dong` 분포에는 **나타나지 않는다**.
+    #   그래서 규칙 ④는 "정상"으로 닫을 수 없다.
+    assert cat["groups"][0]["count"] == 3
 
 
 def test_precut_accounting_detector_actually_fires() -> None:
