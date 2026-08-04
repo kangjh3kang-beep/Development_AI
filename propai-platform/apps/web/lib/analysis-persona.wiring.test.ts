@@ -44,7 +44,7 @@ describe("종합분석 패널 — 관점 순서 배선", () => {
     //   (실제로 이 검사를 처음 쓸 때 그렇게 실패했다 — 과도스코프).
     //   ※§1-B(용적률 최적화)는 별도 컴포넌트(FarOptimizationPanel) 안의 하위 카드라 openFor에
     //     닿지 않는다. 그건 effective-far 묶음의 일부로 함께 움직이므로 대상에서 제외한다.
-    const usages = (code.match(/<SectionCard[^>]*?>/gs) ?? [])
+    const usages = (code.match(/<SectionCard[^>]*?>/g) ?? [])
       .filter((u) => /title="[1-7]\. /.test(u));
     expect(usages.length).toBe(7); // 공허진리 방지 — 최상위 섹션 7개 전부
     const notWired = usages.filter((u) => !u.includes("defaultOpen={openFor("));
