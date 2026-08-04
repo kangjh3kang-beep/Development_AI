@@ -236,12 +236,13 @@ def _aggregate_parcels(req: DesignRequest) -> dict | None:
                 #   zone_type을 `zn or zc`(용도지역 코드 폴백)로 채우는데 여기만 `zn or ""`라,
                 #   zone_code만 제공된 다필지 요청에서 **집계는 "용도지역 확보"인데 게이트는
                 #   "지목·용도지역 전무"** 가 됐다. 그 비대칭이 미분석 판정을 깨워 정상 필지까지
-                #   통째로 잠정 강등시킨다. 형상을 맞추고, 요청 최상위 값도 폴백으로 상속한다.
-                "land_category": p.get("land_category") or req.land_category or "",
+                #   통째로 잠정 강등시킨다. 형상을 맞춘다.
+                #   ※요청 최상위(req.land_category·special_districts)를 필지로 상속시키는 안도
+                #     검토했으나, 그 상속이 산출을 바꾸는 시나리오를 만들지 못해(zone_code 기본값이
+                #     있어 게이트 판정이 그 전에 갈린다) **추측으로 코드를 늘리지 않았다.**
+                "land_category": p.get("land_category") or "",
                 "zone_type": zn or zc or "",
-                "special_districts": list(
-                    p.get("special_districts") or req.special_districts or []
-                ),
+                "special_districts": list(p.get("special_districts") or []),
                 "area_sqm": area,  # 면적임계 규제(소방PBD·하수도 원인자부담·소규모환경평가) 단일경로 패리티
                 "pnu": p.get("pnu"), "address": p.get("address"),
             })

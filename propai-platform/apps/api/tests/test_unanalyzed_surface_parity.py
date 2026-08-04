@@ -76,6 +76,26 @@ def test_matrix_control_is_unchanged():
         assert row["usable_tier"] == "confirmed"
 
 
+def test_design_ingest_does_not_downgrade_zone_code_only_parcels():
+    """★설계 생성 경로도 같은 형상을 쓴다 — 같은 필지가 두 곳에 다르게 들어가면 안 된다.
+
+    집계(enriched)는 zone_type을 `zone_name or zone_code`로 채우는데 게이트 입력(sp_inputs)만
+    `zone_name or ""` 였다. 그 비대칭 하나로, zone_code만 제공된 다필지 요청에서 정상 필지가
+    통째로 '미분석'이 되어 설계 제안이 전부 잠정 강등됐다.
+    """
+    from app.services.design_ingest.orchestrator import DesignRequest, _aggregate_parcels
+
+    req = DesignRequest(
+        area_sqm=1000.0, zone_code="2R",
+        parcels=[{"area_sqm": 600.0, "zone_code": "2R"}, {"area_sqm": 400.0, "zone_code": "2R"}],
+    )
+    special = _aggregate_parcels(req)["special"]
+    assert [p.get("analysis_status") for p in special["per_parcel"]] == ["analyzed", "analyzed"]
+    assert special["usable_area"]["usable_confirmed_sqm"] == 1000.0
+    assert special["usable_area"]["usable_conditional_sqm"] == 0.0
+    assert special["developability"] == "POSSIBLE"
+
+
 @pytest.mark.parametrize("parcels,expected", [
     ([ANALYZED_A, ANALYZED_B], 0.0),
     ([ANALYZED_A, UNANALYZED_B], 600.0),
