@@ -845,3 +845,127 @@ async def test_precut_accounting_detector_is_actually_wired(monkeypatch) -> None
     assert payload["precut_accounting_mismatch"] is True, (
         "응답이 탐지기 결과를 따라오지 않는다 — 호출부가 상수로 대체됐거나 배선이 끊겼다"
     )
+
+
+# ── D-2: 표시용 캡이 AVM 표본을 자른다 — **그림자 계측**(정본 무변경) ──────────────
+#
+# `_MAX_GROUPS_PER_CAT`(28)은 선언부가 스스로 "카테고리별 **마커** 상한 — 페이로드 축소"라고
+# 밝히는 **표시/전송용 상수**인데, `precise` 가 `capped` 에서 나오므로 AVM·탁상감정 표본까지
+# 자른다. 라이브 실측(2026-08-05 역삼동): 탁상감정 자신의 파라미터(1,500m·6개월)에서 반경 통과
+# 정밀 그룹 52개 중 **24개(46%)가 표시 상한 때문에 폐기**됐다.
+# ★그러나 이 값은 사용자에게 보이는 **금액**이다. 계측 없이 바꾸면 "얼마나 달라지는지 모르는 채"
+#   시세를 흔드는 것이라, 이 절은 **정본(`avm`)을 바꾸지 않고** 델타만 관측한다.
+
+
+def _cap_fixture(n_groups: int, cheap_from: int | None = None):
+    """`n_groups` 개 그룹을 건수 내림차순으로 만든다(정렬·캡 경계를 결정론적으로 태우기 위해).
+
+    `cheap_from` 이후 그룹은 **싸게** 만들어, 캡이 자르는 쪽과 남기는 쪽의 가격이 갈리게 한다.
+    이게 없으면 두 AVM 이 우연히 같아져 `delta_pct` 단언이 **공허**해진다.
+    """
+    rows: list[dict] = []
+    gmap: dict[str, dict] = {}
+    for i in range(n_groups):
+        cnt = n_groups - i                     # 건수 내림차순 = 캡 순서와 동일
+        price = 30000 if (cheap_from is not None and i >= cheap_from) else 100000
+        rows += [_row(name="", jibun=f"g{i}", dong="A동", price=price, day=1) for _ in range(cnt)]
+        gmap[f"경상북도 남구 A동 g{i}"] = {"lat": 36.0003, "lon": 129.0003}   # 전부 반경 안
+    return rows, gmap
+
+
+@pytest.mark.asyncio
+async def test_avm_display_cap_impact_reports_truncation_without_changing_avm() -> None:
+    """★D-2 그림자 계측 — 캡이 표본을 자를 때 그 사실과 금액 차이가 **보이는가**.
+
+    그리고 가장 중요한 것: **정본 `avm` 은 한 글자도 바뀌지 않는가**. 이 PR 은 관측만 넣는다.
+    """
+    nm._BUILD_CACHE.clear()
+    rows, gmap = _cap_fixture(40, cheap_from=nm._MAX_GROUPS_PER_CAT)   # 28 이후는 싼 그룹
+    svc = _service(rows, gmap)
+    payload = await svc.build(
+        address="경상북도 남구 A동 9-9", lawd_cd="47111", months=1, radius_m=1000,
+        center_hint={"lat": 36.0, "lon": 129.0},
+    )
+    cat = payload["categories"]["apt_trade"]
+    imp = payload["avm_display_cap_impact"]
+    assert imp is not None and imp["diagnostic_only"] is True
+
+    # ★그룹 수와 거래 건수를 **각각** 잠근다 — 한 dict 안에서 단위가 섞이면 판독자가 두 수를
+    #   빼서 엉뚱한 결론을 낸다(H-4). `comparable_count` 는 이름과 달리 거래 건수다.
+    assert imp["sample_group_count"] == nm._MAX_GROUPS_PER_CAT      # 28
+    assert imp["sample_group_count_uncapped"] == 40
+    assert imp["dropped_by_display_cap_group_count"] == 12
+    assert imp["sample_deal_count"] == 742                          # 40+39+…+13
+    assert imp["sample_deal_count_uncapped"] == 820                 # 40+39+…+1
+
+    # ★판별 단언 — 캡이 **비싼 쪽만** 남기므로 캡 없는 표본이 더 싸야 한다.
+    #   이게 없으면 그림자를 캡된 표본으로 계산하는 변이(`sample_field` 기본값 복원)가 생존한다.
+    assert imp["price_per_sqm_uncapped"] < imp["price_per_sqm"]
+    assert imp["delta_pct"] < 0
+
+    # ★★정본 불변 — `avm` 과 표시 카운트는 캡된 표본 그대로여야 한다.
+    assert payload["avm"]["price_per_sqm"] == imp["price_per_sqm"]
+    assert cat["count_in_radius"] == 742, "표시용 반경내 건수가 그림자 계측에 오염됐다"
+    assert len([g for g in cat["groups"] if g.get("location_status") == "located"]) == 28
+
+    # 내부 전용 필드는 응답에 새지 않는다(페이로드 비용 0 이라는 주장의 근거).
+    assert "_in_radius_groups" not in cat
+    assert "_in_radius_groups_uncapped" not in cat
+
+
+@pytest.mark.asyncio
+async def test_avm_display_cap_impact_is_zero_when_cap_not_binding() -> None:
+    """캡이 안 물면 델타는 **정확히 0** 이어야 한다 — 0 과 미측정을 구분하는 축."""
+    nm._BUILD_CACHE.clear()
+    rows, gmap = _cap_fixture(5)
+    svc = _service(rows, gmap)
+    payload = await svc.build(
+        address="경상북도 남구 A동 9-9", lawd_cd="47111", months=1, radius_m=1000,
+        center_hint={"lat": 36.0, "lon": 129.0},
+    )
+    imp = payload["avm_display_cap_impact"]
+    assert imp["sample_group_count"] == imp["sample_group_count_uncapped"] == 5
+    assert imp["dropped_by_display_cap_group_count"] == 0
+    assert imp["delta_pct"] == 0.0
+    assert imp["price_per_sqm"] == imp["price_per_sqm_uncapped"]
+
+
+@pytest.mark.asyncio
+async def test_avm_display_cap_impact_is_none_when_avm_absent() -> None:
+    """★무날조 — 비교할 시세가 없으면 **None**. 0 이나 빈 dict 로 만들지 않는다.
+
+    반경 통과 정밀 그룹이 0건이면 `avm` 이 None 이고(기존 계약), 그때 델타는 **존재하지 않는다**.
+    여기서 truthy 를 돌려주면 소비처가 0원·0% 를 그린다(`avm` 자신이 겪은 그 결함).
+    """
+    nm._BUILD_CACHE.clear()
+    # 동 대표점 폴백 그룹만 → 정밀 좌표 0건 → avm None
+    rows = [_row(name="", jibun="", dong="B동", price=90000, day=1)]
+    svc = _service(rows, {"경상북도 남구 B동": {"lat": 36.0006, "lon": 129.0006}})
+    payload = await svc.build(
+        address="경상북도 남구 A동 9-9", lawd_cd="47111", months=1, radius_m=1000,
+        center_hint={"lat": 36.0, "lon": 129.0},
+    )
+    assert payload["avm"] is None
+    assert payload["avm_display_cap_impact"] is None
+
+
+@pytest.mark.asyncio
+async def test_avm_display_cap_impact_is_none_when_radius_not_applied() -> None:
+    """★거짓 음성 차단 — 반경 미적용 가지에서는 **0 이 아니라 None** 이어야 한다.
+
+    그 가지의 `_compute_avm_summary` 는 `sample_field` 를 쓰지 않고 `cat["groups"]`
+    (= 이미 캡된 `capped + unresolved`)를 다시 거른다. 그래서 **절단이 실재해도** 두 값이
+    같아져 `delta_pct == 0` 이 나온다 — "영향 없음"으로 읽히는 false-healthy 다.
+    측정하지 못한 것을 0 으로 적으면 관측 장치가 스스로 결함 클래스를 만든다(N-1 계열).
+    """
+    nm._BUILD_CACHE.clear()
+    rows, gmap = _cap_fixture(40, cheap_from=nm._MAX_GROUPS_PER_CAT)
+    svc = _service(rows, gmap)
+    # center_hint 를 주지 않고 대상지 주소도 지오코딩되지 않게 둔다 → radius_applied=False
+    payload = await svc.build(address="경상북도 남구 A동 9-9", lawd_cd="47111",
+                              months=1, radius_m=1000)
+    assert payload["radius_applied"] is False, "이 테스트는 반경 미적용 가지를 검증한다"
+    assert payload["avm"] is not None, "이 가지에서도 시세 자체는 산출된다(전제 확인)"
+    assert payload["avm_display_cap_impact"] is None, (
+        "측정 불가를 delta_pct=0 으로 적으면 '영향 없음'이라는 거짓 신호가 된다"
+    )
