@@ -180,62 +180,112 @@ def _count_dong_matches(groups: "list[dict[str, Any]]", target_dong: str) -> int
         return None
 
 
-def _avm_display_cap_impact(
-    apt_cat: "dict[str, Any]",
+def _display_cap_impact(
+    categories: "dict[str, dict[str, Any]]",
     avm: "dict[str, Any] | None",
-    avm_uncapped: "dict[str, Any] | None",
+    avm_lifted: "dict[str, Any] | None",
     *,
     radius_applied: bool,
 ) -> "dict[str, Any] | None":
-    """**진단 전용** — 표시 상한이 AVM 표본을 얼마나 자르고 시세를 얼마나 움직이는가.
+    """**진단 전용** — 표시 상한이 표본을 얼마나 자르고 시세를 얼마나 움직이는가.
 
     ★이 필드는 **표시·계산에 쓰지 말 것.** `avm` 이 정본이다. 여기 실리는
-    `price_per_sqm_uncapped` 는 "표시 상한이 없었다면 같은 산식이 냈을 값"이고 **아직 채택된
-    값이 아니다**. 이름에 `_uncapped` 를 박고 `diagnostic_only=True` 를 함께 싣는 이유가
-    그것이다 — 관측용 값이 표시로 새는 것이 이 저장소가 반복해서 겪은 사고다.
+    `price_per_sqm_display_cap_lifted` 는 **아직 채택된 값이 아니다**.
+    이름과 `diagnostic_only=True` 가 유일한 방벽이라 이름을 정확히 쓴다 —
+    관측용 값이 표시로 새는 것이 이 저장소가 반복해서 겪은 사고다.
 
     존재 이유(D-2): `_MAX_GROUPS_PER_CAT` 은 선언부가 스스로 "마커 상한·페이로드 축소"라고
-    밝히는 **표시용 상수**인데 AVM·탁상감정 표본을 결정한다. 그 절단은 `-count` 정렬이라
+    밝히는 **표시용 상수**인데 추정기 표본을 결정한다. 그 절단은 `-count` 정렬이라
     **거래 많은 단지 쪽으로 편향**된다. 고칠지 말지는 **델타를 재고 나서** 정한다 — 큰 숫자를
     보고 처방부터 세웠다가 한계수율이 0 이었던 M-4 를 반복하지 않기 위해서다.
 
-    셋 중 하나라도 없으면 **None**(무날조 — 비교 불가를 0 으로 적지 않는다).
+    ★리뷰 A-1 정정 — **"uncapped" 는 과대 주장이었다.** `cat["groups"]` 는 지오코딩 **전에**
+    `_MAX_GEOCODE_GROUPS_PER_CAT`(80)으로 사전컷되므로, 여기서 푸는 것은 **표시 상한 28 하나
+    뿐**이고 사전컷 80 은 그대로 걸려 있다. 역삼동에서 사전컷은 거의 확실히 결속 중이다
+    (실측 `apt_trade` `groups_cut=158`). 그래서 이름을 `_display_cap_lifted` 로 바꾸고,
+    사전컷 현황(`geocode_precut_*`)을 **같이 실어** 판독자가 "캡을 풀면 전체 표본"으로
+    오독하지 않게 한다.
+
+    ★리뷰 A-2 정정 — 이 **가격 델타는 `apt_trade`(AVM) 한정**이다. 탁상감정은 이 페이로드에서
+    `land_trade` 만 읽고 `avm` 은 쓰지 않는다(`desk_appraisal_service`). 그런데 캡은 전 카테고리에
+    걸리므로 **돈에 더 가까운 쪽(land_trade → 채택단가 → 토지비 SSOT → NPV/IRR)이 미계측**이었다.
+    가격 델타를 land 로 확장하는 것은 산식이 달라 별건이므로, 우선 **절단량만 전 카테고리로**
+    관측한다(`truncation_by_category`). 절단량이 0 인 카테고리는 "고칠 필요 없음"을 말해 주고,
+    0 이 아니면 그 카테고리의 가격 영향은 **아직 모른다**는 뜻이다.
+
+    필요한 값이 하나라도 없으면 **None**(무날조 — 비교 불가를 0 으로 적지 않는다).
     """
     try:
-        # ★거짓 음성 차단(자체 점검에서 적발) — `radius_applied=False` 가지의
-        #   `_compute_avm_summary` 는 `sample_field` 를 쓰지 않고 `cat["groups"]`(= 이미 캡된
-        #   `capped + unresolved`)를 다시 거른다. 그래서 그 경로에서는 **절단이 실재해도**
-        #   두 값이 같아져 `delta_pct=0` 이 나온다 — "영향 없음"으로 읽히는 **false-healthy** 다.
-        #   측정하지 못한 것을 0 으로 적지 않는다(무날조). 왜 None 인지는 응답 최상위
-        #   `radius_applied` 가 이미 말해 준다.
+        # ★거짓 음성 차단 — `radius_applied=False` 가지의 `_compute_avm_summary` 는
+        #   `sample_field` 를 쓰지 않고 `cat["groups"]`(= 이미 캡된 `capped + unresolved`)를
+        #   다시 거른다. 그래서 그 경로에서는 **절단이 실재해도** 두 값이 같아져 `delta_pct=0`
+        #   이 나온다 — "영향 없음"으로 읽히는 **false-healthy** 다. 측정 못 한 것을 0 으로
+        #   적지 않는다. 왜 None 인지는 응답 최상위 `radius_applied` 가 이미 말해 준다.
         if not radius_applied:
             return None
-        if not avm or not avm_uncapped:
+        apt_cat = categories.get("apt_trade") or {}
+        if not avm or not avm_lifted:
             return None
         cur = avm.get("price_per_sqm")
-        unc = avm_uncapped.get("price_per_sqm")
+        unc = avm_lifted.get("price_per_sqm")
         if not cur or not unc:
             return None
-        # ★단위를 이름에 박는다(H-4 재발 방지). `comparable_count` 는 **이름과 달리 거래 건수**다
-        #   — 이 파일 스스로 그렇게 주석을 달아 두었다(`_compute_avm_summary` 반환부). 그것을
-        #   `sample_group_count` 로 실었다면 이웃한 `dropped_..._group_count`(진짜 그룹 수)와
-        #   같은 dict 안에서 단위가 섞여, 판독자가 두 수를 빼서 엉뚱한 결론을 낸다.
-        #   그룹 수는 표본 리스트 길이에서 **직접** 센다(두 출처가 갈리면 안 된다).
+
+        # ★★리뷰 B-1 봉합 — **단위는 맞췄는데 모집단이 어긋나 있었다.**
+        #   종전엔 `capped_group_count` 를 실었는데 그건 **정밀·동 대표점을 가리지 않은**
+        #   전체 절단 그룹 수다. 반면 `sample_group_count(_lifted)` 는 **정밀 좌표분만**이다.
+        #   정렬이 정밀분을 앞세우므로, 반경 안에 동 대표점 그룹이 하나라도 있으면 두 수는
+        #   **반드시 갈라진다**. 리뷰어 실측: 정밀 10·동 40 일 때
+        #   `dropped=22` 인데 `delta_pct=0.0` — "22그룹을 잘랐는데 시세 영향 0%" 라는,
+        #   판독자를 **정확히 반대 결론으로** 끌고 가는 문장이 생성됐다(잘린 22개는 AVM 이
+        #   애초에 안 쓰는 동 대표점이므로).
+        #   ★내가 바로 위에 "단위가 섞이면 판독자가 두 수를 빼서 엉뚱한 결론을 낸다"고 주석까지
+        #     달아 놓고, **단위(그룹/건수) 축만 맞추고 모집단(정밀/전체) 축을 놓쳤다.**
+        #     방지하려던 결함 클래스가 축 하나만 옮겨 그대로 재발한 것이다.
+        #   → AVM 표본이 실제로 잃은 양은 두 표본 길이의 차다. 전체 절단 수도 유용하므로
+        #     **이름을 분리해** 병기한다(같은 dict 안에서 두 수가 다른 것은 정상이며, 이름이
+        #     그 차이를 설명해야 한다).
+        n_cap = len(apt_cat.get("_in_radius_groups") or [])
+        n_lift = len(apt_cat.get("_in_radius_groups_uncapped") or [])
+        precut = apt_cat.get("precut") or {}
+
+        truncation: dict[str, Any] = {}
+        for _key, _cat in categories.items():
+            _c = len(_cat.get("_in_radius_groups") or [])
+            _l = len(_cat.get("_in_radius_groups_uncapped") or [])
+            truncation[_key] = {
+                "sample_group_count": _c,
+                "sample_group_count_display_cap_lifted": _l,
+                "dropped_precise_group_count": _l - _c,
+                # 정밀·동 대표점을 **가리지 않은** 전체 절단 수. 위 값과 다른 것이 정상이다.
+                "dropped_all_precisions_group_count": _cat.get("capped_group_count"),
+            }
+
         return {
             # ★소비처 오용 방지 — 이 플래그를 보고도 렌더하면 그건 의도적 오용이다.
             "diagnostic_only": True,
-            "sample_group_count": len(apt_cat.get("_in_radius_groups") or []),
-            "sample_group_count_uncapped": len(apt_cat.get("_in_radius_groups_uncapped") or []),
+            # ── 가격 델타(`apt_trade`/AVM 한정) ──
+            "sample_group_count": n_cap,
+            "sample_group_count_display_cap_lifted": n_lift,
             "sample_deal_count": avm.get("comparable_count"),
-            "sample_deal_count_uncapped": avm_uncapped.get("comparable_count"),
-            "dropped_by_display_cap_group_count": apt_cat.get("capped_group_count"),
+            "sample_deal_count_display_cap_lifted": avm_lifted.get("comparable_count"),
+            "dropped_precise_group_count": n_lift - n_cap,
+            "dropped_all_precisions_group_count": apt_cat.get("capped_group_count"),
             "price_per_sqm": cur,
-            "price_per_sqm_uncapped": unc,
+            "price_per_sqm_display_cap_lifted": unc,
             "delta_pct": round((unc - cur) / cur * 100.0, 2),
             "confidence_score": avm.get("confidence_score"),
-            "confidence_score_uncapped": avm_uncapped.get("confidence_score"),
+            "confidence_score_display_cap_lifted": avm_lifted.get("confidence_score"),
+            # ── 상위 제약(A-1) — 이걸 안 실으면 "캡을 풀면 전체 표본"으로 오독한다 ──
+            "geocode_precut_budget": precut.get("budget"),
+            "geocode_precut_groups_cut": precut.get("groups_cut"),
+            # ── 절단량은 전 카테고리(A-2) — 가격 델타는 apt_trade 한정임을 이름이 말한다 ──
+            "truncation_by_category": truncation,
         }
     except Exception:  # noqa: BLE001 — 진단이 본로직을 깨지 않는다
+        # ★무성 실패 금지 — 로그가 없으면 진단기가 스스로 깨져도 "avm 없음/반경 미적용"과
+        #   구분 불가하게 None 으로 수렴한다("관측전용은 스모크 없으면 무성회귀").
+        logger.warning("표시상한 영향 계측 실패 — 진단 필드를 None 으로 낸다", exc_info=True)
         return None
 
 
@@ -534,8 +584,13 @@ class NearbyMapService:
             #   `_MAX_GROUPS_PER_CAT` 은 선언부가 스스로 "카테고리별 **마커** 상한 —
             #   지오코딩 부하·**페이로드 축소**"라고 밝히는 표시/전송용 상수인데, `precise` 가
             #   `capped` 에서 나오므로 그 상수가 AVM·탁상감정 표본까지 자른다.
-            #   라이브 실측(2026-08-05 역삼동): 탁상감정 자신의 파라미터(반경 1,500m·6개월)에서
-            #   반경 통과 정밀 그룹 52개 중 **24개(46%)가 표시 상한 때문에 폐기**됐다.
+            #   라이브 실측(2026-08-05 역삼동): 반경 1,500m·6개월에서 `apt_trade` 의 반경 통과
+            #   **정밀** 그룹 52개 중 **24개(46%)가 표시 상한 때문에 폐기**됐다.
+            #   ★리뷰 A-2 정정 — 초판은 이 파라미터를 "탁상감정 자신의 것"이라 썼는데,
+            #     탁상감정은 이 페이로드에서 **`land_trade` 만** 읽고 `avm` 은 쓰지 않는다
+            #     (`desk_appraisal_service`). 파라미터가 같다는 것과 **같은 카테고리를 본다는 것은
+            #     다른 말**이다. 아래 그림자 계측의 **가격 델타는 `apt_trade` 한정**이고,
+            #     `land_trade` 는 **절단량만**(`truncation_by_category`) 관측한다.
             #   그리고 그 절단은 `-count` 정렬이라 **거래 많은 단지 쪽으로 편향**된다.
             #   ★그런데 이 값은 사용자에게 보이는 **시세·감정 단가**다. 계측 없이 바꾸면
             #     "얼마나 달라지는지 모르는 채" 금액을 흔드는 것이다 — M-4 에서 큰 숫자(73.8%)를
@@ -592,12 +647,12 @@ class NearbyMapService:
             )
         # ★D-2 그림자 계측 — 표시 상한이 **없었다면** 같은 산식이 얼마를 냈을지 병기한다.
         #   `avm` 자체는 **한 글자도 바뀌지 않는다**(전환은 이 델타를 프로덕션에서 읽은 뒤).
-        avm_uncapped = self._compute_avm_summary(
+        avm_lifted = self._compute_avm_summary(
             categories.get("apt_trade"), radius_applied=radius_applied, radius_m=radius_m,
             sample_field="_in_radius_groups_uncapped",
         )
-        avm_cap_impact = _avm_display_cap_impact(
-            _apt, avm_summary, avm_uncapped, radius_applied=radius_applied,
+        display_cap_impact = _display_cap_impact(
+            categories, avm_summary, avm_lifted, radius_applied=radius_applied,
         )
         for _cat in categories.values():
             _cat.pop("_in_radius_groups", None)
@@ -659,10 +714,13 @@ class NearbyMapService:
             "avm_caveat": avm_caveat,
             # 구 이름 호환(같은 값) — 외부 소비처가 있을 수 있어 한 릴리스 유지.
             "avm_unavailable_reason": avm_caveat,
-            # ★D-2 **진단 전용**(표시 금지) — 표시용 상한 `_MAX_GROUPS_PER_CAT` 이 AVM 표본을
+            # ★D-2 **진단 전용**(표시 금지) — 표시용 상한 `_MAX_GROUPS_PER_CAT` 이 표본을
             #   얼마나 자르고 시세를 얼마나 움직이는지. `avm` 이 정본이며 이 PR 은 그것을
             #   바꾸지 않는다. 이 델타를 프로덕션에서 읽은 뒤에 전환 여부를 판정한다.
-            "avm_display_cap_impact": avm_cap_impact,
+            #   ★가격 델타는 `apt_trade`(AVM) 한정이고, **절단량은 전 카테고리**로 싣는다
+            #     (`truncation_by_category`) — 탁상감정은 `land_trade` 를 쓰므로 apt 만 보면
+            #     돈에 더 가까운 쪽이 미계측으로 남는다(리뷰 A-2).
+            "display_cap_impact": display_cap_impact,
         }
 
         # ★정직 표기: 공공데이터 조회 실패와 "거래 0건(실제 없음)"을 구분한다.
