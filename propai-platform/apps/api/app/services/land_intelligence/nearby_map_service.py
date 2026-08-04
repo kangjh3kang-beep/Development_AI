@@ -273,6 +273,13 @@ def _display_cap_impact(
         return {
             # ★소비처 오용 방지 — 이 플래그를 보고도 렌더하면 그건 의도적 오용이다.
             "diagnostic_only": True,
+            # ★★리뷰 MAJOR-2 봉합 — **최상위 카운트·가격은 전부 `apt_trade` 전용**인데 이름에
+            #   그 사실이 없었다. R1 이 "최상위는 0 인데 카테고리별은 12" 인 상태를 **새로
+            #   도달 가능하게** 만들었으므로(apt 표본 0 · land 12절단), 최상위만 훑는 판독자는
+            #   "절단 0" 으로 읽는다. 값이 거짓은 아니지만(apt 에 대해 참) 이름이 범위를
+            #   말하지 않으면 그건 판독자 책임이 아니다. 전 카테고리 수치는
+            #   `truncation_by_category` 에 있다.
+            "price_delta_category": "apt_trade",
             # ── 가격 델타(`apt_trade`/AVM 한정 — 표본이 없으면 None) ──
             "sample_group_count": n_cap,
             "sample_group_count_display_cap_lifted": n_lift,
@@ -504,9 +511,19 @@ class NearbyMapService:
                 #     즉 2판 규칙은 그 서브클래스에서 origin/main 의 "전부 경보"보다 탐지력이 낮았다.
                 #     거짓양성보다 거짓음성이 나쁘다는 서열(W2-b·#497·W2-c)을 스스로 어긴 것이다.
                 #   가르는 법(순서대로 — ★★**어느 단계도 "정상"으로 종결하지 않는다**):
-                #     ① `groups_before == 0` 이면 **카테고리 전체 무자료**다(즉답 — 동 문제 아님).
+                #     ① **수집이 성공했는데** `groups_before == 0` 이면 카테고리 전체 무자료다
+                #        (즉답 — 동 문제 아님). ★`_collect` 가 예외를 삼키므로 **조회가 전면
+                #        실패해도** `groups_before == 0` 이 된다 — 최상위 `fetch_failed`/
+                #        `partial_failed`/`data_source` 를 **먼저** 볼 것. 이 코드블록이 스스로
+                #        "0 과 미확보를 같은 기호로 쓰지 않는다"고 못 박아 놓고 ①이 그걸 어겼다.
                 #     ② `lawd_cd` 가 대상지 시군구 코드와 맞는가? `sigungu_source == "row_fallback"` 인가?
                 #        둘 중 하나라도 어긋나면 **(4)**.
+                #        ★대상지 코드는 **법정동코드 앞 5자리**다 — ③과 **같은 표**(juso.go.kr)를 쓴다.
+                #          ③에만 조회 경로를 적고 ②엔 안 적었던 비대칭을 해소한다.
+                #        ★`row_fallback` 절은 **보조 신호**다 — 이 서명(`matched_before == 0`)을
+                #          실제로 생산하는 것은 `lawd_cd` 오지정 쪽뿐이다. `sigungu_hint` 는
+                #          `_query` 에만 들어가고 그룹의 `dong`(=`umdNm`)에는 영향이 없어
+                #          매칭 카운트를 바꿀 수 없다(위양성만 만들고 위음성은 안 만든다).
                 #        ★`sigungu_hint` **단독 대조는 (4)의 증거가 될 수 없다** — 힌트는 호출부가
                 #          안 주면 주소에서 도출되므로(`sigungu_hint or sigungu_hint_from_address`),
                 #          `lawd_cd` 만 틀린 경우 **힌트는 정확**하고 행의 진짜 시군구는 응답에서
@@ -517,6 +534,12 @@ class NearbyMapService:
                 #          `"을지로2가"`·`"충무로1가"` 는 숫자를 포함한 **법정동**이다
                 #          (`test_dong_from_address_stops_at_jibun` 이 그 형태를 잠근다).
                 #     ④ 관측 `dong` 분포와 대조 — 같은 동의 **다른 표기**가 보이면 **(1)**.
+                #     ④-b ★(5) 병합의 **값싼 1차 단서** — `jibun` 이 있는데
+                #        `coord_precision == "dong"`(= `location_status == "approximate"`)인 그룹이
+                #        있는가? `_finalize` 가 법정동이 둘 이상이면 `"dong"` 으로 강등하므로
+                #        그 조합 자체가 **다동 병합 서명**이고 **응답에 이미 실려 있다**.
+                #        ⑤의 "MOLIT 원자료 확인"보다 훨씬 싸다.
+                #        ★확증은 아니다 — `_refined_mismatch` 도 같은 강등을 하므로 **강한 단서**일 뿐.
                 #     ★★⑤ **여기서 "정상"으로 닫지 말 것.** 관측 분포로는 (2)와 (5)를 **구별할 수
                 #        없다** — 대상 동 거래가 다른 동 이름의 그룹에 흡수되면 서명이 (2)와 같다.
                 #        (2)로 닫으려면 **대상 동의 원천 거래 유무를 직접 확인**해야 한다(MOLIT 원자료).
