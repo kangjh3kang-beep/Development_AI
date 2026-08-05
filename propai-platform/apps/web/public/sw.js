@@ -255,7 +255,12 @@
 //        프론트 변경: DeskAppraisalModal 포매터 정본 수렴 · comparable-sample 문구/로케일 ·
 //        source-invariant JSX 주석 처리(여러 줄 주석으로 배선 락이 뚫리던 것).
 //        ★채번: origin/main 실제 상수 v490 확인 → v491. PR 생성 前 보드 claim 선점(9회차).
-const CACHE_NAME = "propai-v491-masked-jibun-followup";
+// v492: 모바일 IA P1(#566) — 접기를 **대상 유무에 종속**시켜 유일한 주소 진입 경로를 접지
+//        않는다(SatongMapShell). #561(v489 P0)·#563(v490 회귀봉합)에 이은 모바일 IA 3번째.
+//        ★레이아웃/접힘 상태 변경이라 stale 캐시가 남으면 **옛 접힘 규칙이 그대로 돌아**
+//        사용자가 주소 입력에 도달하지 못할 수 있다(진입 경로 차단 = 기능 상실과 동급).
+//        ★채번: origin/main 실제 상수 v491 확인 → v492. PR 생성 前 보드 claim 선점(9회차).
+const CACHE_NAME = "propai-v492-mobile-ia-p1";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
