@@ -35,6 +35,8 @@ export type CoordPrecision = "parcel" | "building" | "dong";
 
 export interface ComparableGroup {
   name?: string;
+  /** 지번. 원천(MOLIT)이 가려서 주면 `"5*"`·`"1**"` 형태로 온다. */
+  jibun?: string | null;
   lat?: number | null;
   lon?: number | null;
   count?: number;
@@ -55,6 +57,13 @@ export interface SampleBasisRaw {
   approximate_count?: number;
   unlocated_count?: number;
   capped_count?: number;
+  /**
+   * 원천(MOLIT)이 지번을 가려서 준 **거래 건수**(`"5*"`·`"1**"`). 이 물건들은 질의를
+   * 만들 수 없어 좌표가 없고, `located_count` 에 들어오지 못한다.
+   * ★단위는 이 raw 블록의 다른 카운트와 같은 **거래 건수**다. 물건 수는 아래 별도 키.
+   */
+  masked_jibun_count?: number;
+  masked_jibun_group_count?: number;
 }
 
 export interface ComparableCategory {
@@ -83,6 +92,10 @@ export interface SampleBasis {
   approximateCount: number;
   unlocatedCount: number;
   cappedCount: number;
+  /** 원천이 지번을 가려 위치를 확인할 수 없는 **거래 건수**(백엔드와 같은 단위). */
+  maskedJibunCount: number;
+  /** 같은 축의 **물건 수**(단위 혼입 방지 — 이름으로 가른다). */
+  maskedJibunGroupCount: number;
 }
 
 /** 이 표본이 실제로 무엇인지. 반경을 적용하지 않았으면 **반경을 말하지 않는다**. */
@@ -111,15 +124,54 @@ export function exclusionNote(b: SampleBasis): string | null {
   return `${parts.join(" · ")} 집계 제외`;
 }
 
-/** 표본 0일 때의 사유. 왜 없는지에 따라 문장이 달라야 한다. */
-export function noSampleReason(b: SampleBasis): string {
-  const bits: string[] = [];
-  if (b.unlocatedCount > 0) bits.push(`위치 미확인 ${b.unlocatedCount.toLocaleString()}건`);
-  if (b.approximateCount > 0) bits.push(`동 단위까지만 확인된 ${b.approximateCount.toLocaleString()}건`);
-  if (bits.length > 0) {
-    return `${sampleLabel(b)}를 찾지 못했습니다(${bits.join(" · ")}은 집계에 쓰지 않습니다).`;
+/**
+ * 표본 0 사유의 **서두**. `sampleLabel()` 은 명사구라 "~가 없습니다"를 붙이면 비문이 된다
+ * ("시군구 전체(반경 미적용)가 없습니다"). 범위별로 문장을 통째로 만든다.
+ */
+function noSampleHead(b: SampleBasis): string {
+  if (b.scope === "radius" && b.radiusM) {
+    const km = b.radiusM / 1000;
+    return `반경 ${Number.isInteger(km) ? km : km.toFixed(1)}km 내에서 위치가 확인된 거래가 없습니다`;
   }
-  return "해당 조건에서 수집된 실거래가 없습니다.";
+  if (b.scope === "sigungu") return "시군구 전체에서 위치가 확인된 거래가 없습니다";
+  return "위치가 확인된 거래가 없습니다";
+}
+
+/**
+ * 표본 0일 때의 사유. 왜 없는지에 따라 문장이 달라야 한다.
+ *
+ * ★백엔드 `comparable_sample.no_sample_reason` 과 **같은 계약·같은 문구**다.
+ *   원천(MOLIT)이 지번을 가려서 주는 경우(`"5*"`·`"1**"`)를 종전엔 이 미러가 몰랐다 —
+ *   백엔드만 고치고 미러를 두면 "같은 문구" 약속이 거짓이 된다(R1 리뷰 m-7).
+ * ★배타 분기가 아니라 **누적 서술**이다. 마스킹 1건이 위치 미확인 80건을 가리면
+ *   사용자에게 **틀린 이유**를 말하는 것이고, 틀린 이유는 침묵보다 나쁠 수 있다.
+ */
+export function noSampleReason(b: SampleBasis): string {
+  const maskedWhy =
+    "공개 실거래 자료가 지번을 가려서 제공해(예: 5*, 1**) 위치를 확인할 수 없습니다";
+  const masked = b.maskedJibunCount ?? 0;
+  const bits: string[] = [];
+  if (b.unlocatedCount > 0) {
+    let bit = `위치 미확인 ${b.unlocatedCount.toLocaleString()}건`;
+    // 마스킹은 위치 미확인의 **부분집합이자 그 원인**이다(질의를 만들 수 없어 좌표가 없다).
+    // 두 수가 어긋나면(스큐) 포함 관계를 주장할 수 없으므로 별도 항으로 물러선다.
+    if (masked > 0 && masked <= b.unlocatedCount) {
+      bit += `(그중 ${masked.toLocaleString()}건은 ${maskedWhy})`;
+    }
+    bits.push(bit);
+    if (masked > b.unlocatedCount) {
+      bits.push(`지번이 가려진 거래 ${masked.toLocaleString()}건 — ${maskedWhy}`);
+    }
+  } else if (masked > 0) {
+    bits.push(`지번이 가려진 거래 ${masked.toLocaleString()}건 — ${maskedWhy}`);
+  }
+  if (b.approximateCount > 0) {
+    bits.push(`동 단위까지만 확인 ${b.approximateCount.toLocaleString()}건`);
+  }
+  if (bits.length === 0) {
+    return `${noSampleHead(b)}(해당 기간·범위에 수집된 거래가 없습니다).`;
+  }
+  return `${noSampleHead(b)} — ${bits.join(" · ")}은 단가 산정에 쓰지 않습니다.`;
 }
 
 function basisFromCategory(cat: ComparableCategory | null | undefined): SampleBasis {
@@ -133,6 +185,11 @@ function basisFromCategory(cat: ComparableCategory | null | undefined): SampleBa
       approximateCount: raw.approximate_count ?? 0,
       unlocatedCount: raw.unlocated_count ?? 0,
       cappedCount: raw.capped_count ?? 0,
+      // ★키 **부재**와 값 **0** 을 구분한다(백엔드 M-5 와 같은 규율). 실제 배포 스큐는
+      //   "sample_basis 는 있고 마스킹 키만 없는" 형태이고, 거기서 0 으로 단정하면
+      //   그 구간 내내 마스킹 사유가 조용히 사라진다.
+      maskedJibunCount: raw.masked_jibun_count ?? maskedFromGroups(cat).deals,
+      maskedJibunGroupCount: raw.masked_jibun_group_count ?? maskedFromGroups(cat).groups,
     };
   }
   // ★구버전 페이로드(캐시·배포 스큐) 폴백 — 카운트에서 복원하고, 알 수 없으면 보수적으로
@@ -146,7 +203,29 @@ function basisFromCategory(cat: ComparableCategory | null | undefined): SampleBa
     approximateCount: cat?.count_approximate ?? 0,
     unlocatedCount: cat?.count_unresolved ?? 0,
     cappedCount: cat?.capped_count ?? 0,
+    maskedJibunCount: maskedFromGroups(cat).deals,
+    maskedJibunGroupCount: maskedFromGroups(cat).groups,
   };
+}
+
+/** 한국 지번 표기에 `*` 는 쓰이지 않는다 — 문자 존재만으로 마스킹을 판정한다. */
+export function isMaskedJibun(jibun: string | null | undefined): boolean {
+  return (jibun ?? "").includes("*");
+}
+
+/** `groups` 에서 마스킹 (거래 건수, 물건 수) 를 센다 — 신형 키가 없을 때의 복원 경로. */
+function maskedFromGroups(
+  cat: ComparableCategory | null | undefined,
+): { deals: number; groups: number } {
+  let deals = 0;
+  let groups = 0;
+  for (const g of cat?.groups ?? []) {
+    if (isMaskedJibun(g.jibun)) {
+      groups += 1;
+      deals += g.count ?? 0;
+    }
+  }
+  return { deals, groups };
 }
 
 function statusOf(g: ComparableGroup): LocationStatus {

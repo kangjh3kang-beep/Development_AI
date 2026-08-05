@@ -48,6 +48,14 @@ export type DeskAppraisalResult = {
   confidence: number; range_per_sqm: { low: number; high: number };
   cross_check?: { firms: number[]; mean: number; cv_pct: number; min: number; max: number; note: string };
   irregularity?: number | null; methods: DeskAppraisalMethod[]; weight_note: string;
+  /**
+   * 거래사례비교법을 **왜 못 썼는지**. 값이 조용히 사라지면 사용자는 "이 지역엔 거래가
+   * 없나 보다"로 오독한다 — 실제로는 근접성 판정 불가이거나, 원천(MOLIT)이 지번을 가려서
+   * 줘서(`"5*"`·`"1**"`) 위치를 확인할 수 없는 것이다. 셋은 전혀 다른 상태다.
+   * ★백엔드가 이 필드를 채우기 시작한 뒤에도 **화면 소비처가 0개**여서 사용자가 겪는
+   *   침묵은 그대로였다(R1 리뷰 M-6). 타입에만 있고 렌더가 없으면 배선이 아니다.
+   */
+  comparable_skipped_reason?: string | null;
   road_side?: string | null; time_adjust?: number; time_adjust_basis?: string; source?: string; base_year?: number;
   building?: { building_value_won: number; rationale: string } | null; complex_total_won?: number | null;
   income?: { income_value_won: number; rationale: string } | null; income_total_won?: number | null;
@@ -88,6 +96,8 @@ export type DeskSiteSummary = {
   confidence: number | null;
   /** 방법별 단가·근거. */
   methods: DeskAppraisalMethod[];
+  /** 거래사례비교법이 빠진 사유(없으면 null — 없는 말을 지어내지 않는다). */
+  comparableSkippedReason?: string | null;
   /** 복수 시나리오 교차검증(평균·CV%). */
   crossCheck: NonNullable<DeskAppraisalResult["cross_check"]> | null;
   /** 채택 단가 신뢰구간(원/㎡). */
@@ -113,5 +123,6 @@ export function deskToSiteSummary(r: DeskAppraisalResult): DeskSiteSummary {
     rangePerSqm: r.range_per_sqm ?? null,
     disclaimer: r.disclaimer ?? null,
     source: r.source ?? null,
+    comparableSkippedReason: r.comparable_skipped_reason ?? null,
   };
 }

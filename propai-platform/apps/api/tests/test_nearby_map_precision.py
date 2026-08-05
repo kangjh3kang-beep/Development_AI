@@ -1504,7 +1504,9 @@ async def test_outlier_trim_exclusion_set_is_count_invariant_when_it_fires() -> 
     #   리뷰 지적: 극단값을 낮추면 `[0,0,0]` 이 되어 아래 단언이 **조용히 공허**해진다
     #   (실측 확인 — 60000→9800 이면 제외가 0 이 되는데도 통과한다). 픽스처가 흔들려도
     #   그 사실이 드러나도록 발동 자체를 리터럴로 못 박는다.
-    assert excluded[0] > 0, f"트림이 발동하지 않아 아래 단언이 공허하다: {excluded}"
+    # ★#554 리뷰 LOW-4 — `excluded[0]` 만 보면 `[1, 0, 0]` 을 **단독으로는 못 잡는다**
+    #   (아래 `len(set(...)) == 1` 과 결합해야 3원소를 덮는다). 자기완결적으로 만든다.
+    assert all(e > 0 for e in excluded), f"트림이 발동하지 않아 아래 단언이 공허하다: {excluded}"
     # ★건수 분포가 어떻든 **같은 수의 그룹**이 제외돼야 한다(가격이 동일하므로).
     assert len(set(excluded)) == 1, f"트림 발동 시 제외 집합이 건수에 흔들린다: {excluded}"
 
@@ -1517,11 +1519,12 @@ async def test_outlier_trim_exclusion_set_is_count_invariant_when_it_fires() -> 
 # 표본을 못 얻는 **진짜 병목**이다(표시 캡은 그 경로에 애초에 결속되지 않는다).
 
 
-def test_masked_jibun_is_not_used_as_parcel_query_or_grain() -> None:
-    """★마스킹 지번은 질의·입도·대조 **세 경로에서 모두** 없는 것으로 취급한다.
+def test_masked_jibun_produces_no_query_at_all() -> None:
+    """★마스킹 지번 그룹은 **질의 자체를 만들지 않는다** — 건물명 폴백도 쓰지 않는다.
 
-    그대로 질의하면 (1)매칭 불가 질의에 예산을 쓰고 (2)`not_found` 계측을 오염시키며
-    (3)정밀도가 `parcel` 로 시작했다가 `_refined_mismatch` 로 강등되는 **두 단계 거짓**이 된다.
+    ★R1 리뷰(C-1·C-2) flip. 초판은 여기서 건물명·동 대표점으로 폴백했는데 그게 더 큰
+    결함 둘을 만들었다 — 아래 두 골든이 각각을 잠근다. 위치를 모르는 것이 **사실**이므로
+    좌표를 만들어내지 않고, 그 사실을 `sample_basis` 로 말한다.
     """
     svc = nm.NearbyMapService.__new__(nm.NearbyMapService)
     assert nm._is_masked_jibun("5*") is True
@@ -1530,15 +1533,20 @@ def test_masked_jibun_is_not_used_as_parcel_query_or_grain() -> None:
     assert nm._is_masked_jibun("산1-1") is False
     assert nm._is_masked_jibun(None) is False
 
-    # 질의 — 마스킹이면 지번을 빼고 동 대표점으로(건물명이 있으면 그쪽이 낫다).
-    assert svc._query_for("강남구", "논현동", "5*", "") == "강남구 논현동"
-    assert svc._query_for("강남구", "논현동", "5*", "래미안") == "강남구 논현동 래미안"
+    # 질의 — 마스킹이면 **빈 질의**. 건물명이 있어도 마찬가지다(C-2: 건물명 폴백은
+    # `building` 정밀도를 얻어 AVM 표본에 새로 편입되고, 계측 없이 금액을 움직인다).
+    assert svc._query_for("강남구", "논현동", "5*", "") == ""
+    assert svc._query_for("강남구", "논현동", "5*", "래미안") == ""
     assert svc._query_for("강남구", "논현동", "736", "") == "강남구 논현동 736"
+    assert svc._query_for("강남구", "논현동", "", "래미안") == "강남구 논현동 래미안"
 
-    # 입도 — 마스킹이면 지번 입도가 아니다(좌표의 의미를 실제보다 정밀하게 주장하지 않는다).
-    assert svc._query_grain("5*", "") == "dong"
-    assert svc._query_grain("5*", "래미안") == "name"
+    # 입도 — 마스킹은 어떤 입도도 가리키지 않는다. `"dong"` 으로 뭉뚱그리면
+    # "동 대표점은 받았다"로 읽혀 좌표가 아예 없다는 사실이 관측에서 사라진다.
+    assert svc._query_grain("5*", "") == "masked"
+    assert svc._query_grain("5*", "래미안") == "masked"
     assert svc._query_grain("736", "") == "jibun"
+    assert svc._query_grain("", "래미안") == "name"
+    assert svc._query_grain("", "") == "dong"
 
     # refined 대조 — 마스킹 지번으로는 불일치를 **판정할 수 없다**(모르는 것을 근거로 강등 금지).
     assert svc._refined_mismatch({"dong": "논현동", "jibun": "5*"}, "서울 강남구 논현동") is False
@@ -1546,24 +1554,36 @@ def test_masked_jibun_is_not_used_as_parcel_query_or_grain() -> None:
 
 
 @pytest.mark.asyncio
-async def test_masked_jibun_groups_collapse_to_one_dong_query_and_are_counted() -> None:
-    """★같은 동의 마스킹 그룹들이 **한 질의로 합쳐지고**, 그 수가 응답에 실린다.
+async def test_masked_jibun_groups_are_preserved_not_deleted_by_radius() -> None:
+    """★★C-1 골든 — 마스킹 거래는 **반경 밖으로 단정돼 삭제되지 않는다**.
 
-    실측(역삼동 3km·6개월): 마스킹 31그룹 → 동 단위로 **20질의**.
-    그리고 `masked_jibun_group_count` 가 없으면 소비처는 "거래가 없다"와 "거래는 있는데
-    원천이 지번을 가려 위치를 못 잡는다"를 **구분할 수 없다**.
+    초판은 마스킹 그룹에 동 대표점을 붙였다. 그러면 그룹이 `unresolved` 가 아니라
+    `resolved` 가 되어 **반경 판정 대상**이 되고, 대표점이 반경 밖이면 거래가 응답에서
+    **통째로 사라진다**. 사라진 거래는 어떤 카운트에도 남지 않아 사유가 "수집된 거래가
+    없습니다"로 나온다 — 이 봉합이 **없애려던 바로 그 거짓 문장**이다.
+
+    같은 파일이 "좌표 미확보는 제외하지 않고 보존한다(**반경 밖 단정 금지**)"라고
+    계약을 명문화하고 있고, `_query_grain` 독스트링은 동 대표점을 두고 "반경 안팎 판정에
+    쓸 수 없다"고 말한다 — 쓸 수 없다고 선언한 좌표로 삭제 판정을 내린 것이었다.
+
+    ★픽스처는 두 모집단을 **실제로 가른다** — 먼동 대표점은 반경 밖(5.5km), 역삼동
+    정상 지번은 반경 안. 마스킹 그룹이 대표점을 받으면 반드시 삭제되는 배치다.
     """
     nm._BUILD_CACHE.clear()
-    seen: list[list[str]] = []
+    # ★픽스처가 **그룹 수와 거래 건수를 가른다** — 마스킹 2그룹 / 5거래.
+    #   두 수가 같으면(1행=1그룹) 단위를 뒤집는 변이가 값이 우연히 같아져 **생존한다**
+    #   (이 저장소가 4회 실증한 결함클래스: 픽스처가 두 모집단을 안 가름).
     rows = [
-        _row(name="", jibun="5*", dong="논현동", price=50000, day=1),
-        _row(name="", jibun="1**", dong="논현동", price=51000, day=2),
-        _row(name="", jibun="2*", dong="청담동", price=52000, day=3),
-        _row(name="", jibun="736", dong="역삼동", price=53000, day=4),   # 정상 지번
+        _row(name="", jibun="5*", dong="먼동", price=50000, day=1),
+        _row(name="", jibun="5*", dong="먼동", price=50500, day=2),
+        _row(name="", jibun="5*", dong="먼동", price=50700, day=3),
+        _row(name="", jibun="1**", dong="먼동", price=51000, day=4),
+        _row(name="", jibun="1**", dong="먼동", price=51200, day=5),
+        _row(name="", jibun="736", dong="역삼동", price=53000, day=6),   # 정상 지번·반경 안
     ]
     gmap = {
-        "경상북도 남구 논현동": {"lat": 36.0003, "lon": 129.0003},
-        "경상북도 남구 청담동": {"lat": 36.0004, "lon": 129.0004},
+        # ★대표점이 반경(1km) 밖이다 — 초판이라면 이 좌표로 마스킹 2그룹을 삭제했다.
+        "경상북도 남구 먼동": {"lat": 36.05, "lon": 129.0},
         "경상북도 남구 역삼동 736": {"lat": 36.0005, "lon": 129.0005},
     }
     svc = nm.NearbyMapService.__new__(nm.NearbyMapService)
@@ -1572,7 +1592,8 @@ async def test_masked_jibun_groups_collapse_to_one_dong_query_and_are_counted() 
     svc._geo_key = ""
 
     async def _stub(queries):
-        seen.append(sorted(queries))
+        # ★빈 질의를 지오코딩에 보내면 예산을 버리고 실패 계측을 오염시킨다.
+        assert "" not in queries, "빈 질의가 지오코딩으로 샜다"
         return {q: gmap[q] for q in queries if q in gmap}
 
     svc._geocode_many = _stub  # type: ignore[assignment]
@@ -1582,13 +1603,64 @@ async def test_masked_jibun_groups_collapse_to_one_dong_query_and_are_counted() 
     )
     cat = payload["categories"]["apt_trade"]
 
-    # ★마스킹 3그룹(논현동 2 + 청담동 1)이 **동 질의 2개**로 합쳐진다 — 지번 질의는 정상 1건뿐.
-    assert seen and seen[0] == [
-        "경상북도 남구 논현동", "경상북도 남구 역삼동 736", "경상북도 남구 청담동",
-    ]
-    # ★그 사실이 응답에 실린다 — 없으면 소비처가 "무자료"와 구분할 수 없다.
-    assert cat["sample_basis"]["masked_jibun_group_count"] == 3
-    # 마스킹 그룹은 동 대표점이므로 `located` 가 아니다(정밀도를 처음부터 정직하게 표기).
+    jibuns = {g["jibun"] for g in cat["groups"]}
+    assert {"5*", "1**"} <= jibuns, "마스킹 거래가 응답에서 삭제됐다(반경 밖 단정 금지 위반)"
     statuses = {g["jibun"]: g["location_status"] for g in cat["groups"]}
-    assert statuses["5*"] == "approximate"
+    # 좌표가 없으므로 "위치 미확인" — `approximate`(동 단위 확인)가 **아니다**.
+    assert statuses["5*"] == "unlocated"
+    assert statuses["1**"] == "unlocated"
     assert statuses["736"] == "located"
+    # 그 사실이 응답에 실린다 — 없으면 소비처가 "무자료"와 구분할 수 없다.
+    assert cat["sample_basis"]["masked_jibun_group_count"] == 2, "물건 수"
+    # ★단위 — `sample_basis` 카운트는 **거래 건수** 계약이다(H-4 재발 방지·`capped_*` 선례).
+    #   두 수가 **다르다**는 것이 이 단언의 핵심이다 — 같으면 단위 변이가 판별되지 않는다.
+    assert cat["sample_basis"]["masked_jibun_count"] == 5, "거래 건수"
+
+
+@pytest.mark.asyncio
+async def test_masked_jibun_with_building_name_stays_out_of_avm_sample() -> None:
+    """★★C-2 골든 — 마스킹 + **건물명**이 있어도 AVM 표본에 들어가지 않는다.
+
+    초판은 마스킹일 때 건물명 폴백을 썼고, 그러면 `building` 정밀도 → `located` →
+    **AVM 표본 편입**이다. 리뷰어 실측에서 `price_per_sqm` 이 **+100%** 움직였다.
+    이 저장소는 금액을 바꾸는 변경에 계측·고지를 요구한다(D-2 는 그림자 계측을 먼저
+    돌리고 제목에 "★시세가 바뀝니다"를 달았다) — 이 PR 은 그런 변경이 아니어야 한다.
+
+    ★픽스처가 두 모집단을 가른다 — 정상 지번 5억 / 마스킹+건물명 12억·13억.
+    마스킹분이 편입되면 단가가 **정확히 두 배**가 되므로 값으로 판별된다.
+    """
+    nm._BUILD_CACHE.clear()
+    rows = [
+        _row(name="", jibun="736", dong="역삼동", price=50000, day=1),
+        _row(name="래미안", jibun="5*", dong="역삼동", price=120000, day=2),
+        _row(name="자이", jibun="1**", dong="역삼동", price=130000, day=3),
+    ]
+    gmap = {
+        "경상북도 남구 역삼동 736": {"lat": 36.0005, "lon": 129.0005},
+        # 초판이라면 이 둘로 질의해 building 정밀도를 얻었다.
+        "경상북도 남구 역삼동 래미안": {"lat": 36.0006, "lon": 129.0006},
+        "경상북도 남구 역삼동 자이": {"lat": 36.0007, "lon": 129.0007},
+    }
+    svc = nm.NearbyMapService.__new__(nm.NearbyMapService)
+    svc.settings = None
+    svc.molit = _StubMolit(rows)
+    svc._geo_key = ""
+
+    async def _stub(queries):
+        assert "경상북도 남구 역삼동 래미안" not in queries, "마스킹인데 건물명으로 질의했다"
+        return {q: gmap[q] for q in queries if q in gmap}
+
+    svc._geocode_many = _stub  # type: ignore[assignment]
+    payload = await svc.build(
+        address="경상북도 남구 역삼동 9-9", lawd_cd="47111", months=1, radius_m=1000,
+        center_hint={"lat": 36.0, "lon": 129.0},
+    )
+    cat = payload["categories"]["apt_trade"]
+
+    located = [g for g in cat["groups"] if g["location_status"] == "located"]
+    assert [g["jibun"] for g in located] == ["736"], "마스킹+건물명이 표본에 편입됐다"
+    assert cat["count_in_radius"] == 1
+    # ★금액 무변동 — 정상 지번 5억만으로 계산된다(마스킹분이 섞이면 10억이 된다).
+    avm = payload.get("avm") or {}
+    if avm.get("estimated_price_10k"):
+        assert avm["estimated_price_10k"] == 50000, "마스킹분이 AVM 금액을 움직였다"

@@ -72,10 +72,39 @@ describe("골든 — 호미곶 대보리 산1-1 (위치 확인 0건인 극단 �
   it("표본 0이면 값 대신 사유를 낸다", () => {
     const { basis } = selectLocatedGroups(cat(homigot, "apt_trade"));
     const reason = noSampleReason(basis);
-    expect(reason).toContain("찾지 못했습니다");
+    // ★R1 리뷰(m-4) flip — `sampleLabel()` 은 명사구라 "~가 없습니다"를 붙이면
+    //   "시군구 전체(반경 미적용)가 없습니다" 같은 비문이 된다. 범위별 완성 문장으로 바꿨다.
+    expect(reason).toContain("위치가 확인된 거래가 없습니다");
     expect(reason).toContain("32"); // 위치 미확인 32건 — 실측치
     // "거래가 아예 없다"와 혼동되면 안 된다.
-    expect(reason).not.toBe("해당 조건에서 수집된 실거래가 없습니다.");
+    expect(reason).not.toContain("수집된 거래가 없습니다");
+  });
+
+  it("★마스킹 지번이 원인이면 그 사실을 말한다(백엔드와 같은 문구)", () => {
+    // 원천이 지번을 가려 준 상태 — "거래가 없다"와 전혀 다른 상태다.
+    const basis = {
+      scope: "radius" as const, radiusApplied: true, radiusM: 1500,
+      locatedCount: 0, approximateCount: 0, unlocatedCount: 5, cappedCount: 0,
+      maskedJibunCount: 5, maskedJibunGroupCount: 2,
+    };
+    const reason = noSampleReason(basis);
+    expect(reason).toContain("지번을 가려서");
+    expect(reason).toContain("5*");
+    // ★마스킹은 위치 미확인의 부분집합이다 — 같은 거래를 두 번 세면 안 된다.
+    expect(reason).toContain("그중 5건");
+  });
+
+  it("★마스킹 1건이 위치 미확인 80건을 가리지 않는다(누적 서술)", () => {
+    // R1 리뷰(M-3): 배타 분기였을 때 마스킹이 크기와 무관하게 선점해 80건이 사라졌다.
+    const basis = {
+      scope: "radius" as const, radiusApplied: true, radiusM: 1000,
+      locatedCount: 0, approximateCount: 30, unlocatedCount: 50, cappedCount: 0,
+      maskedJibunCount: 1, maskedJibunGroupCount: 1,
+    };
+    const reason = noSampleReason(basis);
+    expect(reason).toContain("50"); // 위치 미확인이 사라지지 않는다
+    expect(reason).toContain("30"); // 동 단위 확인분도
+    expect(reason).toContain("지번을 가려서");
   });
 });
 

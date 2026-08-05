@@ -22,6 +22,7 @@ import structlog
 from app.core.db_utils import PostGISHelper
 from app.services.data_validation.deal_date import parse_deal_date
 from app.services.data_validation.price_stats import robust_price_stats
+from app.services.market.comparable_sample import is_masked_jibun as _is_masked_jibun
 from apps.api.config import get_settings
 from apps.api.integrations.molit_client import MolitClient
 
@@ -144,22 +145,12 @@ def _dong_tail(value: str | None) -> str:
     return v.split()[-1] if v else ""
 
 
-def _is_masked_jibun(jibun: str | None) -> bool:
-    """MOLIT 이 **가려서 준 지번**인가(`"5*"` · `"1**"` · `"산1**"`).
-
-    ★라이브 실측(2026-08-05 역삼동 3km·6개월): 건물명이 없는 카테고리는 지번이 **전부**
-    마스킹돼 온다 — `land_trade` 13/13 · `house_trade` 12/12 · `commercial_trade` 6/34.
-    그 결과 `"강남구 논현동 5*"` 같은 질의는 **원천적으로 필지 매칭이 불가능**하고,
-    두 카테고리의 `located` 는 **구조적으로 0** 이 된다(탁상감정 거래사례비교의 진짜 병목).
-
-    ★이건 **고칠 수 없는 데이터 한계**다 — 원천이 안 주는 것을 만들어낼 수는 없다.
-    고칠 수 있는 것은 (a)매칭 불가한 질의에 예산을 쓰지 않는 것 (b)정밀도를 처음부터
-    정직하게 표기하는 것 (c)실패 계측을 오염시키지 않는 것 (d)소비처가 **"왜 표본이 0인지"**
-    를 말할 수 있게 하는 것이다.
-
-    한국 지번 표기에 `*` 가 쓰이는 경우는 없으므로 판정은 문자 존재만으로 충분하다.
-    """
-    return "*" in (jibun or "")
+# ★R1 리뷰(m-5) — 마스킹 판정을 **공용 헬퍼 한 곳**으로 모은다.
+#   종전엔 이 파일의 `_is_masked_jibun` 과 `comparable_sample` 의 `"*" in str(...)` 리터럴이
+#   **독립 정의** 둘이었다. 리뷰어가 판정을 전각 `＊` 까지 넓히자 이 파일만 따라오고 소비처는
+#   갈렸다. CLAUDE.md 전역 전파방지("공용 함수로 추출해 한 곳을 고치면 전역이 따라오게")
+#   위반이라, 정의를 소비처 모듈(`comparable_sample`)로 올리고 여기서는 임포트해 쓴다.
+#   (의존 방향: `nearby_map_service` → `comparable_sample`. 역방향 임포트가 없어 순환 없음.)
 
 
 def _target_dong_source(address: str, target_dong: str) -> str:
@@ -612,7 +603,10 @@ class NearbyMapService:
         queries: set[str] = set()
         for cat in categories.values():
             for grp in cat["groups"]:
-                queries.add(grp["_query"])
+                # ★빈 질의(마스킹 지번 등 **질의를 만들 수 없는** 그룹)는 지오코딩하지 않는다.
+                #   빈 문자열을 그대로 보내면 예산을 버리고 실패 계측을 오염시킨다.
+                if grp["_query"]:
+                    queries.add(grp["_query"])
         coords = await self._geocode_many(sorted(queries))
         # ★리뷰 R-5 — 샘플을 수집만 하고 아무도 읽지 않으면 관측 장치를 넣고 관측구를 안 뚫은
         #   것이다. 프로덕션에서 "어떤 주소가 왜 깨지는지" 눈으로 보게 한다(이번 진단의 결정타가
@@ -786,11 +780,23 @@ class NearbyMapService:
                 "unlocated_count": cat["count_unresolved"],
                 "capped_count": cat["capped_count"],
                 # ★★"왜 표본이 0인가"를 소비처가 **말할 수 있게** 한다.
-                #   마스킹 지번 그룹은 위치가 확인될 수 없으므로 `located_count` 에 절대
-                #   들어오지 못한다. 그 사실이 응답에 없으면 소비처는 "거래가 없다"와
-                #   "거래는 있는데 원천이 지번을 가려서 위치를 못 잡는다"를 **구분할 수 없고**,
-                #   탁상감정은 사유 없이 공시지가로 폴백한다(현행 침묵 구간).
+                #   마스킹 지번 그룹은 질의를 만들 수 없어(`_query_for`) 좌표가 없고,
+                #   따라서 `located_count` 에 들어오지 못한다. 그 사실이 응답에 없으면
+                #   소비처는 "거래가 없다"와 "거래는 있는데 원천이 지번을 가려서 위치를 못
+                #   잡는다"를 **구분할 수 없고**, 탁상감정은 사유 없이 공시지가로 폴백한다.
                 #   실측: `land_trade`·`house_trade` 는 이 값이 그룹 전량과 같다.
+                #
+                #   ★★R1 리뷰(M-1) — 단위를 **`capped_*` 선례와 동일하게** 둘로 가른다.
+                #   `sample_basis` 의 카운트는 전부 **거래 건수** 계약인데(같은 파일 :515 가
+                #   H-4 재발 방지로 명문화) 초판은 여기에 **그룹 수**를 넣고 소비처가
+                #   "거래 N건"이라고 렌더했다 — H-4("표시 상한 초과 7건이라 써놓고 실제 15건")와
+                #   **같은 형태의 단위 혼입**이다. 라벨이 쓰는 값은 건수로 주고, 그룹 수는
+                #   이름을 분리해 보존한다.
+                "masked_jibun_count": sum(
+                    int(g.get("count") or 0)
+                    for g in cat["groups"]
+                    if _is_masked_jibun(g.get("jibun"))
+                ),
                 "masked_jibun_group_count": sum(
                     1 for g in cat["groups"] if _is_masked_jibun(g.get("jibun"))
                 ),
@@ -987,9 +993,27 @@ class NearbyMapService:
         #   필지에 매칭될 수 없다. 그대로 질의하면 (1)예산을 매칭 불가 질의에 쓰고
         #   (2)`not_found` 계측을 오염시키며 (3)정밀도가 `parcel` 로 시작했다가
         #   `_refined_mismatch` 로 강등되는 **두 단계 거짓**이 된다.
-        #   건물명이 있으면 그쪽이 낫고, 없으면 동 대표점이 **정직한 최선**이다.
-        #   ★부수 효과: 같은 동의 마스킹 그룹들이 **한 질의로 합쳐진다**(실측 31→20).
-        if jibun and not _is_masked_jibun(jibun):
+        #
+        # ★★R1 리뷰(C-1·C-2) 봉합 — 초판은 여기서 **건물명·동 대표점 폴백으로 넘어갔다**.
+        #   그것이 더 큰 결함 둘을 만들었다:
+        #   (C-1) 동 대표점을 붙이면 그룹이 `unresolved` 가 아니라 `resolved` 가 되어
+        #         **반경 판정 대상**이 된다. 대표점이 반경 밖이면 실거래가 응답에서
+        #         **삭제**되고, 어떤 카운트에도 남지 않아 사유가 "수집된 거래가 없습니다"로
+        #         나온다 — 이 봉합이 없애려던 **바로 그 거짓 문장**이다. 같은 파일이
+        #         "좌표 미확보는 제외하지 않고 보존한다(**반경 밖 단정 금지**)"라고
+        #         계약을 명문화하고 있고, 아래 `_query_grain` 독스트링은 그 좌표를 두고
+        #         "반경 안팎 판정에 쓸 수 없다"고 말한다. 쓸 수 없다고 선언한 좌표로
+        #         삭제 판정을 내린 것이다.
+        #   (C-2) 건물명 폴백은 `building` 정밀도를 얻어 **AVM 표본에 새로 편입**된다 —
+        #         계측도 고지도 없이 사용자가 보는 금액이 움직인다(리뷰어 실측 +100%).
+        #
+        #   ★그래서 **질의 자체를 만들지 않는다**(`""`). 좌표 미확보로 남아 종전처럼
+        #   보존되고(반경 밖 단정 없음·AVM 편입 없음), 매칭 불가 질의에 예산도 쓰지 않는다.
+        #   위치를 모르는 것이 **사실**이므로, 아는 척하는 대신 그 사실을 말한다
+        #   (`sample_basis.masked_jibun_*` → `no_sample_reason`).
+        if jibun and _is_masked_jibun(jibun):
+            return ""
+        if jibun:
             return f"{sgg} {dong} {jibun}".strip()
         if name:
             # ★W1-b 리뷰(H-3) — 종전엔 `f"{dong} {name}"` 이라 **시군구가 없었다**. 같은 동명이
@@ -1064,9 +1088,12 @@ class NearbyMapService:
         **법정동 대표점**을 준다 — 동 전체를 한 점으로 뭉갠 좌표라 반경 안팎 판정에 쓸 수 없다
         (토지 매매는 건물명이 없어 이 폴백에 자주 걸린다).
         """
-        # ★마스킹 지번은 지번 입도가 **아니다** — `_query_for` 가 그것으로 질의하지 않으므로
-        #   여기서 `"jibun"` 을 돌려주면 좌표의 의미를 **실제보다 정밀하게** 주장하게 된다.
-        if jibun and not _is_masked_jibun(jibun):
+        # ★마스킹 지번은 **질의 자체를 만들지 않는다**(`_query_for` 참조) — 어떤 입도도
+        #   가리키지 않으므로 전용 값으로 말한다. `"dong"` 으로 뭉뚱그리면 "동 대표점은
+        #   받았다"로 읽혀, 좌표가 아예 없다는 사실이 관측에서 사라진다.
+        if jibun and _is_masked_jibun(jibun):
+            return "masked"
+        if jibun:
             return "jibun"
         if name:
             return "name"
@@ -1470,10 +1497,13 @@ class NearbyMapService:
                 #   이번 결함의 단일 근원이다. 어긋나면 보고값을 실제 탈락 수로 정직 교정한다
                 #   (조용히 숨기지 않는다 — 관측 장치는 자기 오차를 말해야 한다).
                 _actually_dropped = len(pp_pairs) - len(_kept)
-                # ★등가변이 정직 고지 — 경계가 정수로 맞은 뒤에는 다음 둘이 **증명 가능하게**
-                #   같아서, 이를 바꾸는 변이는 어떤 입력으로도 잡히지 않는다(무작위 3,000회 반례 0):
-                #     (1) `_actually_dropped` vs `_pp["excluded"]` — `int(per_pyeong*100) > 0`
-                #         **인 한** 두 값은 같다(`core ⊆ vals`, 밴드가 `min(core)`~`max(core)`).
+                # ★등가변이 정직 고지 — 아래 (2)는 **무조건** 등가이고, (1)은 **조건부**로만
+                #   등가다. 헤더에서 둘을 뭉뚱그리면 스캔하는 독자가 (1)까지 무조건이라고
+                #   오독한다(#554 리뷰 LOW-1: 초판 헤더가 "어떤 입력으로도 잡히지 않는다"는
+                #   **철회된 절대 주장**을 그대로 이고 있었다 — 6줄 아래에서 철회되는데도).
+                #     (1) **조건부 등가** — `_actually_dropped` vs `_pp["excluded"]` 는
+                #         `int(per_pyeong*100) > 0` **인 한** 같다(`core ⊆ vals`, 밴드가
+                #         `min(core)`~`max(core)`). 그 조건이 깨지면 **갈린다**(아래 반증).
                 #         ★리뷰 반증 — 내 초판 증명은 `robust_price_stats` 의 **사전 필터**
                 #           (`price_stats.py`: `int(p) > 0` 인 값만 `vals` 에 넣는다)를 빠뜨렸다.
                 #           `int(per_pyeong*100) == 0` 인 초미세 그룹은 `excluded` **분모에 안
@@ -1482,9 +1512,14 @@ class NearbyMapService:
                 #           쪽이고 이 코드가 채택한 것이 그것이다.**
                 #         ★즉 "어떤 입력으로도 잡히지 않는다"는 **거짓**이었다 — 무작위 3,000회
                 #           반례 0 은 사실이지만 그 표본이 해당 클래스를 포함하지 않았을 뿐이다.
-                #           (도달 조건: `avg_area_m2 > 330 × avg_price_10k` — MOLIT 아파트
-                #            매매에서는 사실상 불가하나 **없다고 단정할 근거가 아니다**.)
-                #     (2) `_kn > 0` 가드 — `min(core)` 를 낸 그룹은 **반드시** 밴드 안이므로
+                #           ★"반례를 못 찾았다"를 "반례가 없다"로 승격한 것이 오류의 형태다.
+                #           (도달 조건: `avg_area_m2 > PYEONG_SQM × 100 × avg_price_10k`
+                #            ≈ `330.5785 × avg_price_10k`. #554 리뷰 LOW-2 — 초판은 `330` 이라
+                #            썼는데 330~330.58 구간은 조건을 만족해도 발산하지 않는다.
+                #            발산 집합은 `int(per_pyeong*100) == 0` 이 아니라 **`<= 0`** 이다
+                #            — 음수 가격까지 덮는다(LOW-3). MOLIT 아파트 매매에서는 사실상
+                #            불가하나 **없다고 단정할 근거가 아니다**.)
+                #     (2) **무조건 등가** — `_kn > 0` 가드 — `min(core)` 를 낸 그룹은 **반드시** 밴드 안이므로
                 #         `_kept` 는 공집합이 될 수 없다(도달 불가·방어적).
                 #   그래도 (1)은 **정직한 쪽**(실제 탈락 수)을 싣고 (2)는 남겨 둔다 —
                 #   경계가 다시 어긋나면 (1)이 즉시 진실을 말하고 (2)가 죽음을 막는다.
