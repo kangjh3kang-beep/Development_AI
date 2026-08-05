@@ -413,6 +413,38 @@ async def test_desk_appraisal_really_emits_masked_reason_end_to_end() -> None:
     ), "사유를 실으면서 거래사례비교법을 그대로 썼다"
 
 
+def test_user_inputs_do_not_suppress_comparable_lookup() -> None:
+    """★★라이브 적발 — 공시지가·면적을 **둘 다 입력하면** 거래사례비교법이 통째로 사라졌다.
+
+    PNU 는 `if op is None or not area or pnu:` 블록에서만 해석되는데, 아래 거래사례 블록은
+    `pnu` 를 요구한다. 그래서 사용자가 두 값을 다 채우면 → PNU 미해석 → 주변 실거래
+    **조회 자체를 안 함** → 사유도 없이 공시지가 단독.
+
+    ★프로덕션 실측(강남 논현동 1-1, 2026-08-06):
+        공시지가 비움 → pnu=1168010800100010001 · "286건 전부 마스킹" 사유 표시
+        면적 비움     → 같음
+        둘 다 입력    → pnu=None · comparable_skipped_reason=None  ← 완전 침묵
+
+    ★**사용자가 정보를 더 줄수록 분석이 줄어드는** 역설이었다.
+
+    이 테스트는 게이트 **조건식**을 직접 본다 — 실호출은 VWorld 네트워크에 의존해
+    단위 테스트로 태울 수 없고, 조건이 바로 결함의 자리이기 때문이다.
+    """
+    import inspect
+
+    from app.services.land_intelligence import desk_appraisal_service as mod
+
+    src = inspect.getsource(mod.desk_appraisal)
+    gate = [ln for ln in src.splitlines() if ln.strip().startswith("if op is None or not area")]
+    assert gate, "PNU 해석 게이트를 찾지 못했다 — 조건이 바뀌었으면 이 테스트를 갱신하라"
+    assert "comparable_avg_per_sqm is None" in gate[0], (
+        "거래사례 단가를 아직 못 받았는데도 PNU 해석을 건너뛴다 — 사용자가 공시지가·면적을 "
+        "입력했다는 이유로 주변 실거래를 조회조차 하지 않게 된다(라이브 실측 결함)"
+    )
+    # ★비공허 — 조건식이 실제로 네 갈래를 갖는지(하나로 뭉개지지 않았는지) 본다.
+    assert gate[0].count(" or ") >= 3, f"게이트가 축소됐다: {gate[0].strip()}"
+
+
 def test_every_skip_path_says_why() -> None:
     """★R6 리뷰(F-3) — "왜 거래사례비교를 안 썼는지"에 **침묵하는 갈래가 없어야** 한다.
 
