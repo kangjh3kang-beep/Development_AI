@@ -265,7 +265,15 @@ export function AIAssistant() {
   };
 
   return (
-    <div className="fixed bottom-10 right-10 z-[9999] flex flex-col items-end gap-4 print:hidden">
+    /* ★모바일 IA P0(2026-08-05) — z-[9999] → z-[95].
+       종전 서열은 `딤 100 < 네비 드로어 101 < 앱 헤더 1000 < 이 플로팅 버튼 9999`라,
+       모바일 메뉴를 열면 이 버튼이 **네비 메뉴와 딤 위에** 떠서 메뉴를 가리고 오조작을 유발했다
+       (사용자 지적: "메뉴 아이콘·텍스트필드가 네비게이션 위로 나타난다").
+       95를 택한 근거 — 본문 최상단이 z-[70](AuctionWorkspace·CadBimIntegrationPanel)이고
+       71~99 구간은 전역에서 비어 있다. 따라서 95는 **본문 전체 위 · 네비/모달 전부 아래**를
+       동시에 만족하는 유일한 안전 슬롯이다. 이 서열은 __tests__/floating-layer.contract.test.tsx 가
+       실제 렌더 결과로 잠근다(숫자를 되돌리면 그 테스트가 깨진다). */
+    <div className="fixed bottom-10 right-10 z-[95] flex flex-col items-end gap-4 print:hidden">
       <AnimatePresence mode="wait">
         {isOpen && (
           <motion.div
@@ -319,7 +327,12 @@ export function AIAssistant() {
 
             <div 
               ref={scrollRef}
-              className="relative flex h-[380px] flex-col gap-5 overflow-y-auto p-6 scrollbar-hide bg-[var(--surface-soft)]/50 backdrop-blur-sm"
+              /* ★max-h 는 위 z 강등의 짝이다 — 이제 앱 헤더(z-1000)가 이 패널 위에 그려지므로,
+                 짧은 뷰포트에서 패널 상단이 헤더 띠(0~var(--app-header-offset)) 안으로 들어가면
+                 대화 제목이 헤더에 가린다. 헤더 띠 + 패널 크롬(헤더블록·입력줄·하단 여백 ≈18rem)을
+                 뺀 만큼으로 상한을 걸어 그 침범 자체를 없앤다. 844px 뷰포트에선 456px > 380px 라
+                 평소 렌더는 종전 그대로고, 짧은 화면에서만 줄어든다(무회귀). */
+              className="relative flex h-[380px] max-h-[calc(100dvh_-_var(--app-header-offset)_-_18rem)] flex-col gap-5 overflow-y-auto p-6 scrollbar-hide bg-[var(--surface-soft)]/50 backdrop-blur-sm"
             >
               {!connected && (
                 <div className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-center">
@@ -400,7 +413,11 @@ export function AIAssistant() {
       </AnimatePresence>
 
       <motion.button
-        animate={{ 
+        /* 아이콘 전용 버튼이라 접근 가능한 이름이 없었다(스크린리더가 "버튼"으로만 읽음).
+           같은 캠페인의 44px 하한과 같은 계열의 누수라 함께 메운다. */
+        aria-label={isOpen ? "AI 어시스턴트 닫기" : "AI 어시스턴트 열기"}
+        aria-expanded={isOpen}
+        animate={{
           scale: [1, 1.05, 1],
           boxShadow: isOpen ? "0 0 0px var(--accent-strong)" : "0 0 20px var(--accent-strong) / 0.2"
         }}

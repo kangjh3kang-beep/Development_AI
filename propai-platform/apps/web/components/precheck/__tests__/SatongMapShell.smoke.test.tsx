@@ -101,6 +101,17 @@ describe("SatongMapShell 접힘(B4)·문서 위계(B1) 회귀망", () => {
     expect(screen.queryByRole("button", { name: /지도 열기/ })).not.toBeInTheDocument();
   });
 
+  it("★모바일 IA P0: 접힌 셸의 유일 진입점 \"지도 열기\"는 44px 터치 타깃 하한을 지킨다", () => {
+    render(<SatongMapShell locale="ko" defaultCollapsed />);
+
+    const openButton = screen.getByRole("button", { name: /지도 열기/ });
+    // packages/ui Button 의 min-h-11 플로어는 이 raw <button> 에 닿지 않는다
+    // (__tests__/button.44px-floor.contract.test.tsx 스코프 밖) — 여기서 직접 잠근다.
+    expect(openButton.className).toContain("min-h-11");
+    // 종전 h-9(36px) 고정 높이로 되돌리는 변경을 명시적으로 막는다.
+    expect(openButton.className).not.toMatch(/(^|\s)h-9(\s|$)/);
+  });
+
   it("★B1: 지도셸 제목은 h1이 아니라 h2다(문서 개요 h1은 히어로/온보딩이 담당)", () => {
     render(<SatongMapShell locale="ko" />);
 
@@ -110,6 +121,49 @@ describe("SatongMapShell 접힘(B4)·문서 위계(B1) 회귀망", () => {
     expect(
       screen.queryByRole("heading", { level: 1, name: /지도 위에서 입력부터 산출물 생성까지/ }),
     ).not.toBeInTheDocument();
+  });
+});
+
+// ── 모바일 IA P0: 입력이 지도보다 먼저 온다(DOM 순서) 회귀망 ──
+//   ★이 계약이 필요한 이유: 종전 결함은 `order-2/order-1`(CSS)로 <xl 에서 **시각 순서만**
+//   뒤집은 것이었다. DOM 순서는 그대로였으므로 "DOM 순서만 보는" 테스트로는 재발을 못 잡는다.
+//   그래서 두 축을 함께 잠근다 — ①DOM 순서(스크린리더·탭 순서의 진실) ②order 클래스 부재
+//   (화면 순서의 진실). 둘 중 하나만 잠그면 나머지 축으로 결함이 되돌아온다.
+describe("SatongMapShell 모바일 IA(P0) — 입력 우선 배치", () => {
+  function renderShellAndGetPanes() {
+    render(<SatongMapShell locale="ko" />);
+
+    const intake = screen
+      .getByRole("heading", { name: "통합 필지 입력" })
+      .closest("aside");
+    const map = screen.getByTestId("dynamic-map-stub").closest("section");
+
+    // ★공허 진리 방지 — 못 찾았는데 뒤 단언들이 조용히 통과하는 일이 없도록 먼저 못 박는다.
+    expect(intake, "필지 입력 aside 를 찾지 못했다").not.toBeNull();
+    expect(map, "지도 section 을 찾지 못했다").not.toBeNull();
+    // 둘이 같은 그리드의 형제여야 순서 비교가 의미를 갖는다(엉뚱한 조상 매칭 방지).
+    expect(intake!.parentElement).toBe(map!.parentElement);
+
+    return { intake: intake!, map: map! };
+  }
+
+  it("①DOM 순서: 필지 입력(aside)이 지도(section)보다 먼저 온다", () => {
+    const { intake, map } = renderShellAndGetPanes();
+
+    // Node.DOCUMENT_POSITION_FOLLOWING = 4 — map 이 intake '뒤'에 있다는 뜻.
+    expect(intake.compareDocumentPosition(map) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("②order 클래스 금지: CSS order 로 시각 순서를 되뒤집는 회귀를 막는다", () => {
+    const { intake, map } = renderShellAndGetPanes();
+
+    // order-1 / order-2 / xl:order-none / -order-1 등 어떤 형태의 order 유틸도 허용하지 않는다.
+    // (DOM 순서가 곧 화면 순서라는 정책 — ComprehensiveAnalysisPanel 관점 스토리라인과 동일)
+    // ★`\S*order-` 처럼 느슨하게 쓰면 `border-[...]` 를 오탐한다(첫 작성 시 실제로 걸렸다) —
+    //   반드시 유틸 경계(선행 공백/변형자, 후행 공백)와 order 값 문법까지 못 박는다.
+    const ORDER_UTIL = /(?:^|\s)-?(?:[a-z0-9-]+:)*-?order-(?:none|first|last|\d+|\[[^\]]*\])(?=\s|$)/;
+    expect(intake.className).not.toMatch(ORDER_UTIL);
+    expect(map.className).not.toMatch(ORDER_UTIL);
   });
 });
 

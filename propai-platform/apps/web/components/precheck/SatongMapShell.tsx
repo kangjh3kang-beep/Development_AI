@@ -2605,7 +2605,10 @@ export function SatongMapShell({
           <button
             type="button"
             onClick={() => setIsShellExpanded(true)}
-            className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-[var(--r-card)] border border-[var(--border-muted)] bg-[var(--surface-strong)] px-3 text-xs font-black text-[var(--text-primary)] transition-colors hover:border-[var(--accent-strong)]"
+            /* ★모바일 IA P0 — 접힌 셸에서 이 버튼은 지도·검색·엑셀 전체로 가는 **유일한 진입점**인데
+               h-9(36px)라 44px 터치 타깃 하한 미달이었다(packages/ui Button 은 min-h-11 을 지키는데
+               raw <button> 이라 그 계약 밖에 있었다). 시각 크기는 그대로 두고 히트 영역만 44px로 올린다. */
+            className="inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-[var(--r-card)] border border-[var(--border-muted)] bg-[var(--surface-strong)] px-3 text-xs font-black text-[var(--text-primary)] transition-colors hover:border-[var(--accent-strong)]"
           >
             <MapIcon className="size-4" aria-hidden />
             지도 열기
@@ -3238,11 +3241,21 @@ export function SatongMapShell({
       </div>
 
       <div className="grid min-w-0 gap-4 xl:grid-cols-[380px_minmax(0,1fr)]">
-        {/* ★UX 트랙 D2(모바일 지도우선 — 진단G I8): <xl 에서는 그리드가 단일 컬럼으로
-            무너져 DOM 순서(좌패널→지도)대로 쌓이는데, 좌패널(검색·필지목록)이 길어
-            지도까지 스크롤해야 했다. order 로만 시각 순서를 뒤집는다(DOM·그린필드
-            재설계 없음) — xl 이상에선 order-none 으로 원래(좌패널=1열) 배치 그대로. */}
-        <aside className="order-2 min-w-0 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-panel)] p-4 shadow-[var(--shadow-sm)] xl:order-none">
+        {/* ★모바일 IA P0(2026-08-05) — 종전 D2(모바일 지도우선)의 `order-2/order-1`을 철회한다.
+            D2는 "좌패널이 길어 지도까지 스크롤해야 한다"를 풀려고 <xl 에서 시각 순서만 뒤집었는데,
+            그 대가로 **이 페이지의 유일한 진입 행동인 주소 입력이 지도 아래로 내려갔다**
+            (라이브 390×844 실측: 입력 도달까지 2.6화면 — 데스크톱 0.9화면의 3배).
+            사용자 지적("모바일에서 주소 입력을 못 찾겠다")이 정확히 이 역전이다.
+
+            ★CSS order 를 쓰지 않고 DOM 순서 자체로 배치한다 — 같은 앱이 이미 그 정책을 세워 뒀다
+            (ComprehensiveAnalysisPanel 의 관점별 스토리라인: "CSS order로 시각만 바꾸면 화면
+            읽기 순서와 스크린리더 읽기 순서가 어긋난다"). 한 앱에 두 정책이 공존하던 것을 하나로 모은다.
+
+            ★뷰포트 조건부 렌더가 아니라 **단순 제거**인 이유: 데스크톱은 종전에도 `xl:order-none`
+            (=DOM 순서)이라 무변화이고, 모바일도 원하는 순서가 같은 '입력 먼저'다 — 두 뷰포트의
+            목표 순서가 동일하므로 미디어쿼리 훅도, xl 경계 리마운트 위험도 만들 필요가 없다.
+            지도가 아래로 밀리는 양은 유계다: 가변 길이인 선택 필지 목록이 max-h-[360px]로 봉인돼 있다. */}
+        <aside className="min-w-0 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-panel)] p-4 shadow-[var(--shadow-sm)]">
           <div className="rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-secondary)] p-4 text-[var(--text-primary)] shadow-[var(--shadow-md)]">
             <p className="font-[family-name:var(--font-display)] label-caps text-[var(--accent-strong)]">
               Parcel Intake
@@ -3697,7 +3710,8 @@ export function SatongMapShell({
           </div>
         </aside>
 
-        <section className="order-1 min-w-0 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-panel)] p-3 shadow-[var(--shadow-sm)] xl:order-none md:p-4">
+        {/* 지도 — DOM 순서상 입력(aside) 다음. order 클래스 금지(위 aside 주석의 정책). */}
+        <section className="min-w-0 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-panel)] p-3 shadow-[var(--shadow-sm)] md:p-4">
           <div
             className="relative overflow-hidden rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--background-deep)]"
             style={{ minHeight: SATONG_MAP_HEIGHT }}
