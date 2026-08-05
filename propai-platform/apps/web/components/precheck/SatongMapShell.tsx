@@ -675,6 +675,9 @@ export function SatongMapShell({
   const clearProject = useProjectContextStore((state) => state.clearProject);
   const projects = useProjectStore((state) => state.projects);
   const syncFromBackend = useProjectStore((state) => state.syncFromBackend);
+  // 모바일 IA P1 — "프로젝트 목록이 아직 오는 중"과 "왔는데 그 프로젝트에 주소가 없다"를 가르는
+  // 정착 신호(아래 접힘 판정 이펙트 참조). 목록 자체가 미도착이면 대상 유무를 단정할 수 없다.
+  const projectsSyncing = useProjectStore((state) => state.syncing);
 
   useEffect(() => {
     if (!projects.length) void syncFromBackend();
@@ -761,17 +764,30 @@ export function SatongMapShell({
   //   ★대상이 있으면 접힘 유지(무회귀), 없으면 펼친다. 판정을 **effect 에서** 하는 이유:
   //   selectedParcels 는 useState([]) 로 시작해 아래 하이드레이션 이펙트가 채우므로 마운트
   //   시점 판정은 **항상 "대상 없음"**이 되어 defaultCollapsed 를 통째로 무력화한다.
-  //   ★projectId 는 있는데 데이터가 아직 안 온 상태(스냅샷 복원 비동기)에서는 **판정을 미룬다** —
-  //   바로 위 connectInitRef 가 같은 이유로 쓰는 규칙이다. 여기서 "대상 없음"으로 단정하면
-  //   복원 중인 프로젝트의 멀쩡한 접힘을 펼쳐 버린다.
+  //   ★projectId 가 있을 때는 "설정됐는가"가 아니라 "**정착됐는가**"를 본다(R1 지적 HIGH).
+  //   초판은 `if (projectId) return`(=설정만 보고 무기한 보류)이었는데, 그러면 두 곳이 통째로 죽는다:
+  //     · LandScheduleClient 는 `if (!projectId) return <안내>` **뒤에** 이 셸을 렌더한다 — 즉 그
+  //       페이지에서 projectId 는 **항상 truthy** 라 이 수정이 **도달 불가능한 죽은 코드**가 된다.
+  //     · setProject(id, name, status) 를 주소 없이 부르는 경로(ProjectAddressInput)가 있고 그때
+  //       siteAnalysis 는 null 로 **확정**된다 — 대기가 아니라 정상 종착 상태다. 영구 접힘이 된다.
+  //   그래서 ①목록 동기화 중이면 보류(진짜 대기) ②목록의 그 프로젝트가 **주소를 가졌으면** 보류
+  //   (siteAnalysis 복원이 늦게 오는 중 — 곧 hasTarget 이 된다) ③그 외(목록에 없는 삭제·권한없음
+  //   프로젝트, 주소 없는 프로젝트)는 **기다려도 대상이 오지 않으므로** 펼친다.
+  //   ★connectInitRef 선례와 규칙은 같으나 **실패 비용이 비대칭**이라 여기서는 더 좁혀야 한다:
+  //   거기서는 미확정이 지속돼도 connectTarget 이 'new' 기본값으로 화면이 정상 동작하지만,
+  //   여기서는 미확정이 지속되면 **사용자가 아무것도 할 수 없는 화면**이 남는다.
   //
   //   ★1회 래치(ref)를 쓰지 않는다 — 처음엔 넣었다가 **철회**했다. 래치 제거 변이가 생존해
-  //   들여다보니 래치가 막는 경로가 없었다: 이 셸에서 **펼침은 단방향**이다
-  //   (setIsShellExpanded(false) 호출이 파일 전체에 없다 — "지도 열기"도 펼치는 방향뿐).
+  //   들여다보니 래치가 막는 경로가 없었다: 이 셸에서 펼침은 (이 마운트 수명 안에서) 단방향이다
+  //   (setIsShellExpanded(false) 호출이 파일 전체에 없다 — "지도 열기"도 펼치는 방향뿐. 재마운트
+  //   시엔 useState 초기값으로 다시 접힌 채 시작하고 이 이펙트가 다시 평가한다).
   //   그래서 "사용자 조작을 덮지 않으려면 래치가 필요하다"는 전제 자체가 성립하지 않았다.
-  //   오히려 래치가 있으면 접힌 상태에서 사용자가 필지를 전부 지웠을 때 **입력이 접힌 채 남아**
-  //   이 수정이 없애려던 화면으로 되돌아간다 — 정책과 반대로 작동하는 코드였다.
-  //   조건부 재평가가 곧 정책이다(대상이 없어지면 입력이 다시 나온다).
+  //   오히려 래치가 있으면 **프로젝트 연결을 해제**했을 때(clearProject → siteAnalysis null)
+  //   입력이 접힌 채 남아 이 수정이 없애려던 화면으로 되돌아간다 — 정책과 반대로 작동하는
+  //   코드였다. 조건부 재평가가 곧 정책이다(대상이 없어지면 입력이 다시 나온다).
+  //   ※ 초판 주석은 이 경로를 "필지를 전부 지웠을 때"라고 썼는데 **틀렸다**(R1 지적 MEDIUM):
+  //     clearParcels→syncParcelsToStores([]) 는 parcels/parcelCount 만 비우고 address 는 의도적으로
+  //     보존하므로 hasTarget 이 계속 참이다. 실재하는 경로는 연결 해제 쪽이고, 테스트도 그쪽을 잠갔다.
   useEffect(() => {
     if (!defaultCollapsed) return; // 펼침이 기본인 호출측(/ko·/precheck)은 무관 — 무회귀
     const hasTarget =
@@ -779,9 +795,14 @@ export function SatongMapShell({
       !!storeSiteAnalysis?.address ||
       !!storeSiteAnalysis?.parcels?.length;
     if (hasTarget) return; // 대상 있음 — 접힌 요약이 의미를 가지므로 그대로 둔다
-    if (projectId) return; // 데이터 도착 대기 — 미확정이므로 단정 금지(늦은 복원 허용)
+    if (projectId) {
+      if (projectsSyncing) return; // 목록 동기화 중 — 판정 보류(진짜 대기)
+      const linked = projects.find((p) => p.id === projectId);
+      if (linked?.address) return; // 주소 보유 프로젝트 — siteAnalysis 복원이 곧 온다
+      // 목록에 없거나(삭제·권한없음) 주소 없는 프로젝트 — 기다려도 대상은 오지 않는다
+    }
     setIsShellExpanded(true); // 대상 없음 — 입력을 접어 두지 않는다
-  }, [defaultCollapsed, selectedParcels.length, storeSiteAnalysis, projectId]);
+  }, [defaultCollapsed, selectedParcels.length, storeSiteAnalysis, projectId, projects, projectsSyncing]);
   // ── WS-C 필지 상세 패널 — 지도 폴리곤/카드 클릭 → 통합 정보(개요·공시지가·노후도)와
   //    산출물 원클릭 퍼널. 단일 팝오버 원칙: 레이어 설정 패널과 동시 표출 금지(상호 배타).
   const [detailFeature, setDetailFeature] = useState<SatongMapFeature | null>(null);

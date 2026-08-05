@@ -87,17 +87,25 @@ describe("SatongMapShell 접힘(B4)·문서 위계(B1) 회귀망", () => {
   beforeEach(() => {
     act(() => {
       useProjectContextStore.setState({ projectId: null, siteAnalysis: null });
+      // 프로젝트 목록도 초기화한다 — P1 판정이 이 목록(주소 보유 여부)을 정착 신호로 쓴다.
+      useProjectStore.setState({ projects: [], syncing: false });
     });
   });
 
   /**
    * ★모바일 IA P1 이후 접힘은 **대상 유무에 종속**한다 — 접힘 경로를 테스트하려면 대상을 준다.
    *   이 헬퍼가 필요해진 것 자체가 정책 변경의 증거다(종전엔 대상 없이도 접혔다).
+   *
+   *   ★hasTarget 은 세 항의 OR 이다(selectedParcels / siteAnalysis.address / siteAnalysis.parcels).
+   *   한 항만 발화시키는 픽스처를 쓰면 나머지 항을 지우는 변이가 **생존**한다(이 저장소 규율:
+   *   픽스처가 두 모집단을 갈라야 배선 변이가 죽는다). 그래서 항을 골라 시드할 수 있게 한다.
    */
-  function seedTarget() {
+  function seedTarget(via: "address" | "parcels" = "address") {
     act(() => {
       useProjectContextStore.setState({
-        siteAnalysis: { address: "서울시 강남구 역삼동 736" } as SiteAnalysisData,
+        siteAnalysis: (via === "address"
+          ? { address: "서울시 강남구 역삼동 736" }
+          : { parcels: [{ pnu: "1168010100107360000", address: "역삼동 736" }] }) as SiteAnalysisData,
       });
     });
   }
@@ -135,14 +143,27 @@ describe("SatongMapShell 접힘(B4)·문서 위계(B1) 회귀망", () => {
     // 펼쳐졌다 = 주소·엑셀·프로젝트 연결이 들어 있는 입력 패널이 처음부터 보인다.
     expect(screen.getByRole("heading", { name: "통합 필지 입력" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /지도 열기/ })).not.toBeInTheDocument();
+    // ★껍데기만 바뀌는 변경을 막는다 — 펼쳤으면 지도도 실제로 마운트돼야 한다(B4 비용 교환의 실체).
+    expect(screen.getByTestId("dynamic-map-stub")).toBeInTheDocument();
   });
 
-  it("★모바일 IA P1: 대상이 늦게 도착해도(프로젝트 복원 대기) 조기 래치로 접힘을 깨지 않는다", () => {
-    // ★projectId 는 있는데 siteAnalysis 가 아직 안 온 상태 = 스냅샷 복원 비동기 대기.
+  it("★모바일 IA P1: siteAnalysis.parcels 만으로도 대상으로 친다 — hasTarget 세 항이 각각 하중을 받는다", () => {
+    // ★address 로만 시드하면 parcels 항을 지우는 변이가 생존한다(픽스처가 한 모집단만 발화).
+    seedTarget("parcels");
+    render(<SatongMapShell locale="ko" defaultCollapsed />);
+
+    expect(screen.getByRole("button", { name: /지도 열기/ })).toBeInTheDocument();
+  });
+
+  it("★모바일 IA P1: 대상이 늦게 도착해도(프로젝트 복원 대기) 조기 단정으로 접힘을 깨지 않는다", () => {
+    // ★projectId 가 있고 **목록의 그 프로젝트가 주소를 가진** 상태 = 스냅샷 복원 비동기 대기.
     //   여기서 "대상 없음"으로 확정해 펼쳐 버리면, 복원된 프로젝트의 접힘이 깨진다.
-    //   connectInitRef 선례와 같은 규칙(미확정이면 래치 금지)을 잠근다.
     act(() => {
       useProjectContextStore.setState({ projectId: "p-1", siteAnalysis: null });
+      useProjectStore.setState({
+        projects: [{ id: "p-1", name: "역삼 프로젝트", address: "서울시 강남구 역삼동 736" } as Project],
+        syncing: false,
+      });
     });
     render(<SatongMapShell locale="ko" defaultCollapsed />);
 
@@ -158,10 +179,44 @@ describe("SatongMapShell 접힘(B4)·문서 위계(B1) 회귀망", () => {
     expect(screen.getByRole("button", { name: /지도 열기/ })).toBeInTheDocument();
   });
 
+  it("★모바일 IA P1: 주소 없는 프로젝트는 **영구 접힘이 아니다** — 기다려도 안 오는 대상은 기다리지 않는다", () => {
+    // ★R1 지적 HIGH-2. setProject(id, name, status) 를 주소 없이 부르는 경로가 실재하고(그때
+    //   siteAnalysis 는 null 로 **확정**된다), 그건 대기가 아니라 정상 종착 상태다.
+    //   "projectId 가 있으면 무기한 보류"였던 초판은 이 조합에서 셸을 영원히 접어 뒀다.
+    //   ★이 케이스는 LandScheduleClient 회귀망이기도 하다 — 그 페이지는 `if (!projectId) return`
+    //   뒤에 셸을 렌더해 projectId 가 **항상 truthy** 이므로, 초판 가드였다면 P1 이 그 페이지에서
+    //   통째로 죽은 코드였다.
+    act(() => {
+      useProjectContextStore.setState({ projectId: "p-2", siteAnalysis: null });
+      useProjectStore.setState({
+        projects: [{ id: "p-2", name: "주소 없는 프로젝트", address: "" } as Project],
+        syncing: false,
+      });
+    });
+    render(<SatongMapShell locale="ko" defaultCollapsed />);
+
+    expect(screen.getByRole("heading", { name: "통합 필지 입력" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /지도 열기/ })).not.toBeInTheDocument();
+  });
+
+  it("★모바일 IA P1: 프로젝트 목록 동기화 중에는 판정을 보류한다 — 목록이 없다고 대상 없음으로 단정하지 않는다", () => {
+    act(() => {
+      useProjectContextStore.setState({ projectId: "p-3", siteAnalysis: null });
+      useProjectStore.setState({ projects: [], syncing: true });
+    });
+    render(<SatongMapShell locale="ko" defaultCollapsed />);
+
+    // 아직 접힌 채 — 목록이 오기 전에는 "주소 없는 프로젝트"인지 알 수 없다.
+    expect(screen.getByRole("button", { name: /지도 열기/ })).toBeInTheDocument();
+  });
+
   it("★모바일 IA P1: 접힌 뒤 대상이 사라지면 다시 펼친다 — 입력이 접힌 채 갇히지 않는다", () => {
     // ★이 케이스가 1회 래치(ref)를 철회하게 만든 근거다. 래치가 있으면 "대상 있음"으로 확정된
-    //   뒤 사용자가 필지를 전부 지워도 접힌 채 남아, 이 수정이 없애려던 "할 게 없는 화면"으로
-    //   되돌아간다. 펼침이 단방향이라 래치가 막을 사용자 조작도 애초에 없었다.
+    //   뒤 **프로젝트 연결을 해제**해도(clearProject → siteAnalysis null) 접힌 채 남아, 이 수정이
+    //   없애려던 "할 게 없는 화면"으로 되돌아간다. 펼침이 (이 마운트 수명 안에서) 단방향이라
+    //   래치가 막을 사용자 조작도 애초에 없었다.
+    //   ※ "필지를 전부 지우는" 경로는 여기 해당하지 않는다 — clearParcels 는 parcels 만 비우고
+    //     address 를 보존하므로 hasTarget 이 계속 참이다(R1 지적 MEDIUM: 초판 주석의 인과 오기).
     seedTarget();
     render(<SatongMapShell locale="ko" defaultCollapsed />);
     expect(screen.getByRole("button", { name: /지도 열기/ })).toBeInTheDocument();
