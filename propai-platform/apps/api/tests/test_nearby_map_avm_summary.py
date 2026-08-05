@@ -40,12 +40,20 @@ def _expected_avm(
     *,
     radius_applied: bool = False,
     radius_m: int | None = None,
+    display_capped_group_count: int | None = None,
 ) -> dict | None:
     """종전 프론트(deriveResults :196-238) 계산식의 독립 재구현(golden reference).
 
     서비스 구현(_compute_avm_summary)을 호출하지 않고 이 파일 안에서 별도로 다시 써서,
     "같은 입력 → 같은 출력"을 대조하기 위한 것 — 구현 자체를 그대로 베껴 쓰면 회귀를
     잡지 못하므로 의도적으로 별개의 표현(리스트 컴프리헨션 등)으로 작성한다.
+
+    ★D-2 전환(2026-08-05) 반영 — 그룹 **간** 이상치 트림이 추가됐다. 다만 이 파일의 픽스처는
+    표본이 작아(`robust_price_stats` 는 8건 미만이면 트림을 생략한다) **트림이 발동하지 않는
+    영역**만 다룬다. 그래서 위 무절사 가중평균식이 그대로 정답이고, `outliers_excluded` 는 0 이다.
+    ★트림이 **발동하는** 영역은 `test_nearby_map_precision.py` 의
+      `test_avm_outlier_trim_actually_fires_on_realistic_spread` 가 독립 산출값으로 잠근다
+      (균일 픽스처로는 로그 IQR 이 0 이 돼 트림이 무동작이므로 이 파일에선 검증할 수 없다).
     """
     pp_pairs = [
         (g["avg_price_10k"] / (g["avg_area_m2"] / PYEONG_SQM), g.get("count") or 1)
@@ -101,11 +109,19 @@ def _expected_avm(
         "price_cv_percent": js_round(cv_percent),
         # ★근거 표기 — 이 시세가 **무엇으로부터** 나왔는지. 반경이 적용된 산출은
         #   `in_radius`(반경 통과분만), 미적용이면 전체 그룹임을 명시한다.
+        # ★D-2 전환 — 그룹 간 이상치 트림의 관측 축(이 파일 픽스처에선 항상 미발동).
+        "outliers_excluded": 0,
+        "robust_applied": True,
         "basis": {
             "radius_applied": radius_applied,
             "radius_m": radius_m,
             "in_radius_group_count": len(groups) if radius_applied else None,
             "scope": "in_radius" if radius_applied else "all_groups_radius_not_applied",
+            # ★D-2 전환 — **계산 표본 ≠ 표시 표본**임을 계약으로 박은 필드.
+            #   `_compute_avm_summary` 를 직접 호출하는 단위 케이스는 카테고리 dict 에
+            #   `capped_group_count` 가 없어 None 이고, `build()` 경유 케이스는 실제 값이 온다.
+            "sample_scope": "in_radius_precise_all",
+            "display_capped_group_count": display_capped_group_count,
         },
     }
 
@@ -306,8 +322,15 @@ async def test_build_response_includes_avm_field_matching_apt_trade_groups():
         comparable_count=sum(g["count"] for g in apt_groups),
         radius_applied=True,
         radius_m=1000,
+        # ★D-2 전환 — `build()` 경유라 실제 값이 온다. 이 픽스처는 그룹이 캡(28) 미만이라
+        #   표시 상한이 아무것도 자르지 않았다 = **관측된 0**(미측정이 아니다).
+        display_capped_group_count=0,
     )
     assert result["avm"] == expected
+    # ★D-2 전환 회귀락 — 캡이 안 물었으므로 계산 표본과 표시 표본이 **같아야** 한다.
+    #   (캡이 무는 경우의 분리는 test_nearby_map_precision.py 가 값으로 잠근다.)
+    assert result["avm"]["basis"]["sample_scope"] == "in_radius_precise_all"
+    assert result["avm"]["basis"]["display_capped_group_count"] == 0
     # ★반경 통과분 기준 카운트 — `categories.count`(통과분+미판정분 합)와 **다를 수 있다**.
     #   이 픽스처에선 미판정분이 0이라 같지만, 같다고 단정하지 않고 통과분으로 단언한다.
     assert result["avm"]["comparable_count"] == result["categories"]["apt_trade"]["count_in_radius"]
