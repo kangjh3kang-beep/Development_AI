@@ -1434,8 +1434,18 @@ class NearbyMapService:
                 _actually_dropped = len(pp_pairs) - len(_kept)
                 # ★등가변이 정직 고지 — 경계가 정수로 맞은 뒤에는 다음 둘이 **증명 가능하게**
                 #   같아서, 이를 바꾸는 변이는 어떤 입력으로도 잡히지 않는다(무작위 3,000회 반례 0):
-                #     (1) `_actually_dropped` vs `_pp["excluded"]` — `core ⊆ vals` 이고 밴드가
-                #         `min(core)`~`max(core)` 이므로 탈락 집합이 정확히 일치한다.
+                #     (1) `_actually_dropped` vs `_pp["excluded"]` — `int(per_pyeong*100) > 0`
+                #         **인 한** 두 값은 같다(`core ⊆ vals`, 밴드가 `min(core)`~`max(core)`).
+                #         ★리뷰 반증 — 내 초판 증명은 `robust_price_stats` 의 **사전 필터**
+                #           (`price_stats.py`: `int(p) > 0` 인 값만 `vals` 에 넣는다)를 빠뜨렸다.
+                #           `int(per_pyeong*100) == 0` 인 초미세 그룹은 `excluded` **분모에 안
+                #           들어가는데** `pp_pairs` 에는 남아 `_kept` 에서 탈락한다 → 두 값이
+                #           1 만큼 갈린다(리뷰어 반례 실측). **그때 정직한 값은 `_actually_dropped`
+                #           쪽이고 이 코드가 채택한 것이 그것이다.**
+                #         ★즉 "어떤 입력으로도 잡히지 않는다"는 **거짓**이었다 — 무작위 3,000회
+                #           반례 0 은 사실이지만 그 표본이 해당 클래스를 포함하지 않았을 뿐이다.
+                #           (도달 조건: `avg_area_m2 > 330 × avg_price_10k` — MOLIT 아파트
+                #            매매에서는 사실상 불가하나 **없다고 단정할 근거가 아니다**.)
                 #     (2) `_kn > 0` 가드 — `min(core)` 를 낸 그룹은 **반드시** 밴드 안이므로
                 #         `_kept` 는 공집합이 될 수 없다(도달 불가·방어적).
                 #   그래도 (1)은 **정직한 쪽**(실제 탈락 수)을 싣고 (2)는 남겨 둔다 —
@@ -1495,7 +1505,7 @@ class NearbyMapService:
             "sample_count": len(deal_prices),
             "price_cv_percent": self._js_round(cv_percent),
             # ★근거 표기 — 이 시세가 **무엇으로부터** 나왔는지 소비처가 알 수 있어야 한다.
-            # ★그룹 간 이상치로 제외된 **가중 표본 수**(0 이면 트림이 발동하지 않았다는 관측된 사실).
+            # ★그룹 간 이상치로 제외된 수(0 이면 트림이 발동하지 않았다는 **관측된 사실**).
             # ★단위를 이름에 박는다 — 밴드가 **비가중 그룹 표본**에서 나오므로 이건 **그룹 수**다
             #   (건수가 아니다). 종전 건수 가중 시절의 이름을 그대로 두면 판독자가 거래 수로 읽는다.
             "outlier_groups_excluded": outliers_excluded,
