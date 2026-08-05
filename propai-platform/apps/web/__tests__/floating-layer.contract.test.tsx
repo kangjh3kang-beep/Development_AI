@@ -134,6 +134,28 @@ describe("플로팅 레이어 서열 — AI 버튼은 네비/모달 아래에 �
     expect(px, `하한이 ${px}px 로 너무 낮다 — 메시지 한 줄도 안 보인다`).toBeGreaterThanOrEqual(96);
   });
 
+  it("★열린 패널의 모든 버튼은 접근 가능한 이름을 갖는다(아이콘 전용 버튼 무명 금지)", () => {
+    // ★목록형이 아니라 **전수 열거형** 불변식이다 — "닫기·전송 두 개를 고쳤다"를 잠그면 새
+    //   아이콘 버튼이 늘 때 조용히 통과한다. 렌더된 버튼을 전부 훑어 이름 없는 것을 찾는다.
+    //   (이 저장소 교훈: 목록형 골든은 새 항목을 못 잡는다 — 생산물을 실행으로 전수 열거하라.)
+    render(<AIAssistant />);
+    fireEvent.click(screen.getByRole("button", { name: /AI 어시스턴트 열기/ }));
+
+    const buttons = Array.from(document.querySelectorAll("button"));
+    // 공허 진리 방지 — 패널이 안 열려 버튼이 FAB 하나뿐이면 이 검사는 아무것도 증명하지 않는다.
+    expect(buttons.length, "패널이 열리지 않아 검사할 버튼이 없다").toBeGreaterThanOrEqual(3);
+
+    const nameless = buttons
+      .filter((b) => {
+        const label = b.getAttribute("aria-label") ?? b.getAttribute("title") ?? "";
+        // 텍스트 노드가 있으면 그것이 이름이 된다. 아이콘(svg)만 든 버튼은 textContent 가 빈다.
+        return !label.trim() && !(b.textContent ?? "").trim();
+      })
+      .map((b) => b.outerHTML.slice(0, 120));
+
+    expect(nameless, `접근 가능한 이름이 없는 버튼: ${nameless.join(" | ")}`).toHaveLength(0);
+  });
+
   it("★본문 일반 레이어보다는 위에 있다 — 강등이 과해 콘텐츠에 묻히면 안 된다", () => {
     const fab = fabContainerZ();
 
