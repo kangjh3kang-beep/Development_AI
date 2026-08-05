@@ -1500,5 +1500,10 @@ async def test_outlier_trim_exclusion_set_is_count_invariant_when_it_fires() -> 
         payload = await _build_cap(_service(rows, gmap))
         excluded.append(payload["display_cap_impact"]["outlier_groups_excluded_candidate"])
 
+    # ★★비공허성 먼저 — 트림이 **실제로 발동해야** 이 단언에 의미가 있다.
+    #   리뷰 지적: 극단값을 낮추면 `[0,0,0]` 이 되어 아래 단언이 **조용히 공허**해진다
+    #   (실측 확인 — 60000→9800 이면 제외가 0 이 되는데도 통과한다). 픽스처가 흔들려도
+    #   그 사실이 드러나도록 발동 자체를 리터럴로 못 박는다.
+    assert excluded[0] > 0, f"트림이 발동하지 않아 아래 단언이 공허하다: {excluded}"
     # ★건수 분포가 어떻든 **같은 수의 그룹**이 제외돼야 한다(가격이 동일하므로).
     assert len(set(excluded)) == 1, f"트림 발동 시 제외 집합이 건수에 흔들린다: {excluded}"
