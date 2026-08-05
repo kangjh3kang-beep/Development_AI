@@ -92,10 +92,17 @@ describe("골든 — 호미곶 대보리 산1-1 (위치 확인 0건인 극단 �
         scope: c.scope as "radius" | "sigungu" | "unknown",
         radiusApplied: c.scope === "radius",
         radiusM: c.radius_m,
-        locatedCount: 0, approximateCount: c.approximate, unlocatedCount: c.unlocated,
-        cappedCount: 0, maskedJibunCount: c.masked, maskedJibunGroupCount: c.masked_groups,
+        locatedCount: c.located ?? 0,
+        approximateCount: c.approximate,
+        unlocatedCount: c.unlocated,
+        cappedCount: c.capped ?? 0,
+        maskedJibunCount: c.masked,
+        maskedJibunGroupCount: c.masked_groups,
       };
-      expect(noSampleReason(basis)).toBe(c.expected);
+      // ★R5(F-5) — 문구 3종을 **전부** 백엔드와 대조한다(종전엔 사유 하나뿐이었다).
+      expect(sampleLabel(basis)).toBe(c.expected_label);
+      expect(exclusionNote(basis)).toBe(c.expected_exclusion);
+      if (c.expected !== null) expect(noSampleReason(basis)).toBe(c.expected);
     }
   });
 

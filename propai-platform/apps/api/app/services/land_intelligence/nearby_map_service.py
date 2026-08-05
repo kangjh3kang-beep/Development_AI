@@ -13,6 +13,7 @@ import asyncio
 import json
 import math
 import time
+from collections.abc import Iterable
 from datetime import datetime
 from typing import Any
 
@@ -363,6 +364,31 @@ def _precut_accounting_mismatch(
     """
     total = sum((c.get("precut") or {}).get("groups_cut") or 0 for c in categories.values())
     return total != geocode_precut
+
+
+def _pick_representative_pair(
+    pairs: Iterable[tuple[str, str, str]],
+) -> tuple[str, str, str]:
+    """후보 `(시군구, 동, 지번)` 중 **대표 하나**를 결정론적으로 고른다.
+
+    ★R5 리뷰(F-2) — 이 선택이 왜 순수 함수로 분리돼 있는가:
+
+    호출부는 `set` 을 넘긴다. 그런데 파이썬 `set` 순회는 **한 프로세스 안에서는 일정**해서,
+    `sorted` 를 빼도 같은 프로세스에서 도는 테스트는 전부 통과한다(실측: 변이 생존).
+    실제 위험은 그때 드러나지 않는다 — `PYTHONHASHSEED` 는 **프로세스마다 다르므로**,
+    정렬을 빼면 "배포할 때마다 다른 지번이 대표가 되는" 더 은밀한 비결정성이 된다.
+
+    → 선택 로직만 떼어내 **후보 순서를 직접 흔들 수 있게** 한다. 테스트가 같은 원소의
+    여러 순열을 리스트로 넣으면, 정렬이 빠진 순간 답이 갈려 변이가 죽는다.
+
+    규칙: 지번을 쓸 수 있는 후보(마스킹 아님)를 우선하고, 그 안에서 `sorted` 첫 번째.
+    어느 쪽이 "옳은" 지번인지는 알 수 없다. 알 수 없을 때 필요한 것은 정답이 아니라
+    **재현성**이다 — 같은 데이터가 같은 화면을 내야 한다.
+    """
+    usable = sorted(p for p in pairs if p[2] and not _is_masked_jibun(p[2]))
+    if usable:
+        return usable[0]
+    return sorted(pairs)[0]
 
 
 class NearbyMapService:
@@ -1149,6 +1175,8 @@ class NearbyMapService:
                 #   `lat is not None` 검사로는 절대 걸러지지 않는 종류의 오염이다.
                 "_query_grain": self._query_grain(jibun, name),
                 "_dongs": set(),
+                # ★R5(H-2) — 질의 확정에 쓸 **실재 쌍**과 원본 건물명.
+                "_pairs": set(), "_name_raw": name,
                 "deals": [], "_prices": [], "_areas": [],
             })
             # ★W1-b 리뷰(H-3) — 빈 dong 도 **센티널로 기록**한다. 종전엔 빈 값을 그냥 건너뛰어,
@@ -1156,19 +1184,9 @@ class NearbyMapService:
             #   동을 모르는 행이 섞인 것과 여러 동이 섞인 것은 **같은 위험**이다(그룹 대표
             #   좌표가 일부 행만 대표한다).
             g["_dongs"].add(dong)
-            # ★★R4 리뷰(H-2) — 질의는 `setdefault` 때 **첫 행**의 지번으로 정해진다.
-            #   그룹 키가 `name or jibun or dong` 이라, 건물명이 같고 지번이 섞인 그룹에서
-            #   **첫 행이 마스킹이면 단지 전체가 좌표를 잃는다**. 같은 데이터인데 MOLIT
-            #   응답 순서(우리가 통제하지 않는다)에 따라 AVM 표본이 들어왔다 나갔다 하고,
-            #   그러면 **사용자가 보는 시세가 비결정적으로 바뀐다** — 이 저장소가
-            #   "★시세가 바뀝니다"로 게이팅하는 바로 그 클래스다.
-            #   리뷰어 실측: 같은 두 거래, 행 순서만 반대인데 located 2 ↔ 0 으로 뒤집혔다.
-            #   ★비마스킹 지번을 만나면 **그것으로 승격**한다(정보가 더 많은 쪽이 이긴다).
-            #   순서에 무관하게 같은 결과가 나오도록 만드는 것이 요점이다.
-            if jibun and not _is_masked_jibun(jibun) and _is_masked_jibun(g.get("jibun")):
-                g["jibun"] = jibun
-                g["_query"] = self._query_for(sigungu, g["dong"], jibun, name)
-                g["_query_grain"] = self._query_grain(jibun, name)
+            # ★★R5 리뷰(H-2) — **실재하는 (시군구·동·지번) 쌍만** 후보로 모은다.
+            #   자세한 이유는 `_resolve_group_queries` 독스트링 참조.
+            g["_pairs"].add((sigungu, dong, jibun))
             price = int(r.get("price_10k_won") or 0)
             area = float(r.get("area_m2") or 0)
             if price > 0:
@@ -1187,6 +1205,7 @@ class NearbyMapService:
                 "price_10k_won": price, "area_m2": area,
                 "floor": r.get("floor"), "deal_date": r.get("deal_date"),
             })
+        self._resolve_group_queries(groups)
         return self._finalize(type_key, label, "trade", groups)
 
     def _group_rent(self, type_key, label, rows, sigungu_hint) -> dict[str, Any]:
@@ -1217,6 +1236,10 @@ class NearbyMapService:
                 #   규칙을 쓰므로 같은 병합 오염에 노출된다(한쪽만 고치면 비대칭이 남는다).
                 "_query_grain": self._query_grain(jibun, name),
                 "_dongs": set(),
+                # ★R5 리뷰(F-1) — 전월세도 **같은 헬퍼**를 탄다. 바로 윗줄 주석이
+                #   "한쪽만 고치면 비대칭이 남는다"고 스스로 경고해 뒀는데 R4 에서
+                #   매매만 고쳤다(전역 전파방지 미이행). 이번엔 공용화로 봉합한다.
+                "_pairs": set(), "_name_raw": name,
                 "deals": [], "_deposits": [], "_monthlies": [], "_areas": [],
             })
             # ★W1-b 리뷰(H-3) — 빈 dong 도 **센티널로 기록**한다. 종전엔 빈 값을 그냥 건너뛰어,
@@ -1224,6 +1247,7 @@ class NearbyMapService:
             #   동을 모르는 행이 섞인 것과 여러 동이 섞인 것은 **같은 위험**이다(그룹 대표
             #   좌표가 일부 행만 대표한다).
             g["_dongs"].add(dong)
+            g["_pairs"].add((sigungu, dong, jibun))
             dep = int(r.get("deposit_10k_won") or 0)
             mon = int(r.get("monthly_rent_10k_won") or 0)
             area = float(r.get("area_m2") or 0)
@@ -1237,7 +1261,52 @@ class NearbyMapService:
                 "deposit_10k_won": dep, "monthly_rent_10k_won": mon,
                 "area_m2": area, "floor": r.get("floor"), "deal_date": r.get("deal_date"),
             })
+        self._resolve_group_queries(groups)
         return self._finalize(type_key, label, "rent", groups)
+
+    def _resolve_group_queries(self, groups: dict[str, dict[str, Any]]) -> None:
+        """그룹의 지오코딩 질의를 **실재하는 행에서, 결정론적으로** 확정한다.
+
+        ## 왜 이 함수가 있는가 — 두 결함을 한 번에 없앤다
+
+        그룹 키가 `name or jibun or dong` 이라 **같은 건물명이 여러 법정동·여러 지번에
+        걸치면 한 그룹으로 병합**된다(래미안·자이·e편한세상 …). 종전에는 질의를
+        `setdefault` 시점, 즉 **첫 행**으로 정했다.
+
+        ★R4(H-2) 첫 결함 — 첫 행이 마스킹이면 단지 전체가 좌표를 잃었다. MOLIT 응답
+        순서는 우리가 통제하지 않으므로 **AVM 표본이 들어왔다 나갔다** 했다(시세 비결정성).
+
+        ★★R5(H-2) 두 번째 결함 — 그 봉합이 더 나쁜 것을 만들었다. "비마스킹 지번을 만나면
+        승격"하면서 **첫 행의 동 + 승격 행의 지번**을 짝지어, **어느 거래에도 존재하지 않는
+        주소**를 합성해 지오코더로 보냈다. 리뷰어 실측: `(래미안,5*,논현동)` + `(래미안,736,
+        역삼동)` → `"경상북도 남구 논현동 736"`. 실재하지만 **무관한 필지**에 핀이 찍히고,
+        라벨은 "위치 개략(동 단위)"이라며 오차를 축소해 말한다. 좌표가 없어 정직했던 상태가
+        **아는 척하는 상태**로 바뀐 것이라, 이 PR 의 존재 이유를 새 경로에서 위반했다.
+
+        ★R5(F-2) 세 번째 — 승격은 비마스킹 지번이 **1개일 때만** 순서 무관이었다.
+        2개 이상이면 여전히 "첫 행 승"이라 6순열이 2가지 결과를 냈고, 동이 같으면
+        `parcel`→located→**AVM 편입**이라 금액 경로에 비결정성이 살아 있었다.
+
+        ## 그래서 이렇게 한다
+
+        행을 돌며 **실재하는 `(시군구, 동, 지번)` 3튜플만** 모아 두고, 순회가 끝난 뒤
+        그 집합에서 하나를 고른다.
+
+        - 후보는 **한 행에서 통째로** 온다 → 합성이 원천적으로 불가능하다.
+        - 지번을 쓸 수 있는 쌍(마스킹 아님)을 우선한다 → 정보가 많은 쪽이 이긴다.
+        - `sorted(...)[0]` 으로 고른다 → **행 순서와 무관**하게 항상 같은 답이다.
+          (어느 쌍이 "옳은지"는 알 수 없다. 알 수 없을 때 필요한 것은 정답이 아니라
+          **재현성**이다 — 같은 데이터가 같은 화면을 내야 한다.)
+        """
+        for g in groups.values():
+            pairs = g.pop("_pairs", set())
+            name = g.pop("_name_raw", "")
+            if not pairs:
+                continue
+            sigungu, dong, jibun = _pick_representative_pair(pairs)
+            g["dong"], g["jibun"] = dong, jibun
+            g["_query"] = self._query_for(sigungu, dong, jibun, name)
+            g["_query_grain"] = self._query_grain(jibun, name)
 
     def _finalize(self, type_key, label, kind, groups) -> dict[str, Any]:
         out = []

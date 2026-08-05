@@ -24,7 +24,9 @@ export function apiBase(): string {
 
 // 억/원 포매터 — DeskAppraisalReportClient 에서 이관(로직 변경 없음).
 export const eok = (v: number | null | undefined) =>
-  v == null ? "—" : `${(v / 1e8).toLocaleString(undefined, { maximumFractionDigits: 2 })}억`;
+  // ★R5 리뷰(F-7) — `undefined` 로케일은 **브라우저 로케일**을 탄다(de-DE `1.234,56억`).
+  //   금액 표기는 한국어 화면의 고정 서식이어야 한다.
+  v == null ? "—" : `${(v / 1e8).toLocaleString("ko-KR", { maximumFractionDigits: 2 })}억`;
 export const won = (v: number | null | undefined) => (v == null ? "—" : `${Math.round(v).toLocaleString("ko-KR")}원`);
 
 /** 산정방법 1건 — 방법명·추정 단가(원/㎡)·근거. */

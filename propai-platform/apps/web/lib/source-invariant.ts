@@ -75,7 +75,28 @@ function stripJsxComments(src: string): string {
   //   JSX 주석은 `{/*` 로 붙여 쓰는 것이 이 저장소의 실제 형태다.
   //   닫는 쪽은 `*/}` · `*/ }` 를 모두 허용한다 — JSX 주석 안에 `*/` 가 올 수 없으므로
   //   non-greedy 매치가 첫 종료점에서 정확히 닫힌다.
-  return src.replace(/\{\/\*[\s\S]*?\*\/\s*\}/g, (m) => m.replace(/[^\n]/g, " "));
+  // ★★R5 리뷰(F-4) — `[\s\S]*?` 를 **`*/` 를 포함하지 않는 문자열**로 바꾼다.
+  //   non-greedy 백트래킹은 `{/* c */ a: 1 }` 같은 객체 리터럴에서 폭주할 수 있고,
+  //   그것이 R4 에서 44,444자를 삼킨 `{`+JSDoc 사고의 **직계 유사형**이다(공백 불허
+  //   조건은 범위를 좁혔을 뿐 구조를 제거하지 못했다). 이 형태는 구조적으로 막는다.
+  //   ★닫는 쪽 `\s*` 도 제거했다 — 저장소 전역 2,069 매치에서 **한 번도 발화한 적이 없고**,
+  //   수용 조건만 넓히는 순손실이다(리뷰어 실측).
+  const stripped = src.replace(/\{\/\*(?:(?!\*\/)[\s\S])*\*\/\}/g, (m) =>
+    m.replace(/[^\n]/g, " "),
+  );
+  // ★폭주를 **큰 실패로 전환**한다. 저장소 최장 정당 JSX 주석은 13줄이다(실측).
+  //   40줄을 넘겼다면 주석이 아니라 코드를 삼킨 것이고, 그때 조용히 통과시키면
+  //   R4 사고(1,113줄 소실)가 **초록으로** 재발한다.
+  for (const m of src.matchAll(/\{\/\*(?:(?!\*\/)[\s\S])*\*\/\}/g)) {
+    const span = (m[0].match(/\n/g) || []).length;
+    if (span > 40) {
+      throw new Error(
+        `[wiring-invariant] JSX 주석 제거가 ${span}줄을 삼켰다(상한 40). ` +
+          "코드를 주석으로 오인했을 가능성이 높다 — 정규식을 점검하라.",
+      );
+    }
+  }
+  return stripped;
 }
 
 function includes(line: string, needle: string | RegExp): boolean {
