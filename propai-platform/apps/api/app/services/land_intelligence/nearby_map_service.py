@@ -601,12 +601,19 @@ class NearbyMapService:
                 "dong_matched_group_count_kept": _matched_kept,
             }
         queries: set[str] = set()
+        # ★R2 리뷰(L-3) — 질의를 **만들지 못한** 그룹 수를 센다.
+        #   이 그룹들이 `geocode_attempted_count` 분모에서 빠지므로, 이 수가 없으면
+        #   W2 계측 기준선(사전컷 73.8% · 지오코딩 실패 2.6%)과 **직접 비교가 불가**해진다.
+        #   "실패율이 좋아졌다"가 실제 개선인지 분모가 줄어든 것인지 구분할 수 있어야 한다.
+        unqueryable_groups = 0
         for cat in categories.values():
             for grp in cat["groups"]:
                 # ★빈 질의(마스킹 지번 등 **질의를 만들 수 없는** 그룹)는 지오코딩하지 않는다.
                 #   빈 문자열을 그대로 보내면 예산을 버리고 실패 계측을 오염시킨다.
                 if grp["_query"]:
                     queries.add(grp["_query"])
+                else:
+                    unqueryable_groups += 1
         coords = await self._geocode_many(sorted(queries))
         # ★리뷰 R-5 — 샘플을 수집만 하고 아무도 읽지 않으면 관측 장치를 넣고 관측구를 안 뚫은
         #   것이다. 프로덕션에서 "어떤 주소가 왜 깨지는지" 눈으로 보게 한다(이번 진단의 결정타가
@@ -868,6 +875,9 @@ class NearbyMapService:
             "geocode_attempt_breakdown": dict(getattr(self, "_geo_attempt_failures", {})),
             # ★분모가 없으면 "비중"을 계산할 수 없다 — breakdown 만으로는 판정 불가였다.
             "geocode_attempted_count": len(queries),
+            # ★질의를 만들지 못해 **시도 자체를 안 한** 그룹 수(분모에서 빠진 몫).
+            #   이 수가 없으면 실패율 개선이 진짜인지 분모 축소인지 판별할 수 없다.
+            "geocode_unqueryable_group_count": unqueryable_groups,
             # ★리뷰 M-1 — 이번 PR 이 새로 넣은 변수(힌트)도 관측 대상이다. 힌트가 비면
             #   전 행이 조용히 중개사 시군구로 회귀하는데, 응답만 봐서는 구분이 안 됐다.
             "sigungu_hint": sigungu_hint,
@@ -1075,6 +1085,10 @@ class NearbyMapService:
         # ★마스킹 지번(`"5*"`)으로는 불일치를 **판정할 수 없다** — 우리가 그 지번으로 질의하지도
         #   않았고, 매칭 주소에 `*` 가 들어 있을 리도 없다. 판정 불가를 "불일치"로 쓰면
         #   모르는 것을 근거로 강등하는 것이라 무날조 원칙에 어긋난다(`refined` 부재와 동일 취급).
+        #   ★R2 리뷰(L-2) 정직 표기 — 현재 이 가드는 **도달 불가**다. 마스킹 그룹은 질의가
+        #   빈 문자열이라 지오코딩 대상이 아니고, 따라서 이 함수가 마스킹 그룹으로 호출되는
+        #   경로가 없다. 방어로 남기되 **도달 불가라는 사실을 밝힌다** — 여기 붙은 단위
+        #   테스트를 "배선을 잠갔다"로 세면 변이 점수를 부풀리게 된다.
         if jibun and not _is_masked_jibun(jibun) and jibun not in refined:
             return True
         return False
@@ -1252,6 +1266,12 @@ class NearbyMapService:
                 g["coord_precision"] = "parcel"
             elif _grain == "name":
                 g["coord_precision"] = "building"
+            elif _grain == "masked":
+                # ★R2 리뷰(M-1) — `"masked"` 를 `else` 로 흘려보내면 `"dong"` 이 박힌다.
+                #   그러면 `_query_grain` 독스트링이 막겠다고 선언한 상태("동 대표점은
+                #   받았다"로 읽히는 것)가 **그대로 출하된다** — 좌표가 아예 없다는 사실이
+                #   관측에서 사라진다. 선언한 구분을 실제 응답까지 전달한다.
+                g["coord_precision"] = "masked"
             else:
                 g["coord_precision"] = "dong"
             if kind == "trade":

@@ -96,8 +96,6 @@ export type DeskSiteSummary = {
   confidence: number | null;
   /** 방법별 단가·근거. */
   methods: DeskAppraisalMethod[];
-  /** 거래사례비교법이 빠진 사유(없으면 null — 없는 말을 지어내지 않는다). */
-  comparableSkippedReason?: string | null;
   /** 복수 시나리오 교차검증(평균·CV%). */
   crossCheck: NonNullable<DeskAppraisalResult["cross_check"]> | null;
   /** 채택 단가 신뢰구간(원/㎡). */
@@ -123,6 +121,9 @@ export function deskToSiteSummary(r: DeskAppraisalResult): DeskSiteSummary {
     rangePerSqm: r.range_per_sqm ?? null,
     disclaimer: r.disclaimer ?? null,
     source: r.source ?? null,
-    comparableSkippedReason: r.comparable_skipped_reason ?? null,
+    // ★R2 리뷰(H-2) — 여기에 `comparableSkippedReason` 을 실었다가 **뺐다**.
+    //   이 어댑터의 소비처는 현재 테스트뿐이라, 필드를 늘리면 "배선했다"는 **거짓 신호**만
+    //   남는다(타입에만 있고 렌더가 없으면 배선이 아니다 — 내가 M-6 에 쓴 문장을 한 층
+    //   위에서 재생산한 꼴이었다). 화면 3곳은 `DeskAppraisalResult` 를 직접 읽는다.
   };
 }

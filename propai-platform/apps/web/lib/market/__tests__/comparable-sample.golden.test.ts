@@ -34,6 +34,7 @@
 import { describe, it, expect } from "vitest";
 import {
   exclusionNote,
+  kmText,
   noSampleReason,
   sampleLabel,
   selectLocatedGroups,
@@ -43,6 +44,9 @@ import {
 import homigot from "./fixtures/nearby-map.homigot.live.json";
 import yeoksam from "./fixtures/nearby-map.yeoksam.live.json";
 import newContract from "./fixtures/nearby-map.newcontract.generated.json";
+// ★백엔드와 **공유하는 값 골든**. 백엔드 pytest 가 자기 출력이 이 파일과 같은지 보고,
+//   아래 테스트가 TS 출력이 같은 파일과 같은지 본다 — 어느 쪽 문구를 바꾸든 깨진다.
+import sharedCases from "./fixtures/no-sample-reason.cases.json";
 
 type Payload = { categories?: Record<string, unknown> };
 
@@ -80,6 +84,19 @@ describe("골든 — 호미곶 대보리 산1-1 (위치 확인 0건인 극단 �
     expect(reason).not.toContain("수집된 거래가 없습니다");
   });
 
+  it("★★백엔드와 값이 정확히 같다(공유 골든 전건 대조)", () => {
+    // R2 리뷰(M-3) — 종전 "문구 일치"는 소스 조각 grep 이라 값이 갈려도 통과했다.
+    expect(sharedCases.length).toBeGreaterThan(0);
+    for (const c of sharedCases) {
+      const basis = {
+        scope: "radius" as const, radiusApplied: true, radiusM: c.radius_m,
+        locatedCount: 0, approximateCount: c.approximate, unlocatedCount: c.unlocated,
+        cappedCount: 0, maskedJibunCount: c.masked, maskedJibunGroupCount: c.masked_groups,
+      };
+      expect(noSampleReason(basis)).toBe(c.expected);
+    }
+  });
+
   it("★마스킹 지번이 원인이면 그 사실을 말한다(백엔드와 같은 문구)", () => {
     // 원천이 지번을 가려 준 상태 — "거래가 없다"와 전혀 다른 상태다.
     const basis = {
@@ -91,7 +108,56 @@ describe("골든 — 호미곶 대보리 산1-1 (위치 확인 0건인 극단 �
     expect(reason).toContain("지번을 가려서");
     expect(reason).toContain("5*");
     // ★마스킹은 위치 미확인의 부분집합이다 — 같은 거래를 두 번 세면 안 된다.
-    expect(reason).toContain("그중 5건");
+    expect(reason).toContain("위치 미확인 중 5건");
+  });
+
+  it("★신형 페이로드의 마스킹 카운트가 도메인 객체에 배선된다(R2 M-4)", () => {
+    // 백엔드 `test_sample_basis_reads_masked_count_from_modern_payload` 의 미러.
+    // ★두 축이 서로 다른 값이어야 단위 배선이 판별된다.
+    const { basis } = selectLocatedGroups({
+      sample_basis: {
+        scope: "radius", radius_applied: true, radius_m: 1500,
+        located_count: 0, approximate_count: 5, unlocated_count: 8,
+        masked_jibun_count: 13, masked_jibun_group_count: 4, capped_count: 0,
+      },
+      // 그룹엔 마스킹이 없다 — 폴백이 아니라 sample_basis 경로를 태웠는지 구분한다.
+      groups: [{ jibun: "736", count: 99 }],
+    });
+    expect(basis.maskedJibunCount).toBe(13);
+    expect(basis.maskedJibunGroupCount).toBe(4);
+  });
+
+  it("★마스킹 키 부재를 0 으로 단정하지 않는다(R2 M-4 · 배포 스큐)", () => {
+    // 실제 스큐는 "sample_basis 는 있고 마스킹 키만 없는" 형태다.
+    const { basis } = selectLocatedGroups({
+      sample_basis: {
+        scope: "radius", radius_applied: true, radius_m: 1500,
+        located_count: 0, approximate_count: 0, unlocated_count: 5, capped_count: 0,
+      },
+      groups: [
+        { jibun: "5*", count: 3 },
+        { jibun: "1**", count: 2 },
+      ],
+    });
+    expect(basis.maskedJibunCount).toBe(5);
+    expect(basis.maskedJibunGroupCount).toBe(2);
+  });
+
+  it("★반경 표기가 백엔드와 같다(비라운드 값 포함 — R2 M-3)", () => {
+    expect(kmText(1000)).toBe("1");
+    expect(kmText(1500)).toBe("1.5");
+    // ★여기가 갈렸던 지점 — 종전 미러는 1250 → "1.3", 백엔드는 "1.25".
+    expect(kmText(1250)).toBe("1.25");
+    expect(kmText(1234)).toBe("1.234");
+    expect(kmText(300)).toBe("0.3");
+    // 같은 파일 안 두 소비처가 같은 표기를 쓴다(종전엔 세 표기가 공존했다).
+    const b = {
+      scope: "radius" as const, radiusApplied: true, radiusM: 1250,
+      locatedCount: 1, approximateCount: 0, unlocatedCount: 0, cappedCount: 0,
+      maskedJibunCount: 0, maskedJibunGroupCount: 0,
+    };
+    expect(sampleLabel(b)).toContain("1.25km");
+    expect(noSampleReason({ ...b, locatedCount: 0 })).toContain("1.25km");
   });
 
   it("★마스킹 1건이 위치 미확인 80건을 가리지 않는다(누적 서술)", () => {

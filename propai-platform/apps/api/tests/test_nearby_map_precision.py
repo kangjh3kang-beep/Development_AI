@@ -1615,6 +1615,15 @@ async def test_masked_jibun_groups_are_preserved_not_deleted_by_radius() -> None
     # ★단위 — `sample_basis` 카운트는 **거래 건수** 계약이다(H-4 재발 방지·`capped_*` 선례).
     #   두 수가 **다르다**는 것이 이 단언의 핵심이다 — 같으면 단위 변이가 판별되지 않는다.
     assert cat["sample_basis"]["masked_jibun_count"] == 5, "거래 건수"
+    # ★R2 리뷰(M-1) — `"masked"` 를 `else` 로 흘려보내면 `coord_precision` 이 `"dong"` 이
+    #   되고, `_query_grain` 독스트링이 막겠다고 선언한 상태("동 대표점은 받았다"로 읽히는
+    #   것)가 그대로 출하된다. 선언한 구분이 응답까지 **도달하는지** 확인한다.
+    precisions = {g["jibun"]: g.get("coord_precision") for g in cat["groups"]}
+    assert precisions["5*"] == "masked", f"마스킹이 dong 으로 소거됐다: {precisions}"
+    assert precisions["1**"] == "masked"
+    assert precisions["736"] == "parcel"
+    # ★L-3 — 질의를 만들지 못한 그룹이 계측에 남는다(분모에서 빠진 몫을 말한다).
+    assert payload["geocode_unqueryable_group_count"] == 2
 
 
 @pytest.mark.asyncio
@@ -1660,7 +1669,13 @@ async def test_masked_jibun_with_building_name_stays_out_of_avm_sample() -> None
     located = [g for g in cat["groups"] if g["location_status"] == "located"]
     assert [g["jibun"] for g in located] == ["736"], "마스킹+건물명이 표본에 편입됐다"
     assert cat["count_in_radius"] == 1
-    # ★금액 무변동 — 정상 지번 5억만으로 계산된다(마스킹분이 섞이면 10억이 된다).
+    # ★★금액 무변동 — 정상 지번 5억만으로 계산된다(마스킹분이 섞이면 10억이 된다).
+    #   ★R2 리뷰(H-1) — 초판은 `estimated_price_10k` 라는 **존재하지 않는 키**를 `if` 가드
+    #   안에서 봤다. 가드가 항상 거짓이라 단언이 **한 번도 실행되지 않았고**, 기대값을
+    #   999999 로 바꿔도 통과했다. R1 CRITICAL(C-2)에 대한 **유일한 금액 락이 죽어 있었다**.
+    #   → 실제 키(`estimated_price`, 원 단위)로 교정하고 **가드를 없앤다** — 가드 자체가
+    #   공허의 원인이었다. 값이 안 나오는 상황도 실패로 드러나야 한다.
     avm = payload.get("avm") or {}
-    if avm.get("estimated_price_10k"):
-        assert avm["estimated_price_10k"] == 50000, "마스킹분이 AVM 금액을 움직였다"
+    assert avm.get("estimated_price") == 500_000_000, (
+        f"마스킹분이 AVM 금액을 움직였다(또는 avm 이 비었다): {avm.get('estimated_price')!r}"
+    )

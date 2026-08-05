@@ -170,7 +170,7 @@ def _basis_from_category(cat: dict[str, Any] | None) -> SampleBasis:
         _md = raw.get("masked_jibun_count")
         _mg = raw.get("masked_jibun_group_count")
         if _md is None or _mg is None:
-            _fd, _fg = _masked_from_groups(cat)
+            _fd, _fg = _masked_from_groups(cat)   # 이 갈래에서만 필요하므로 여기서 센다
             _md = _fd if _md is None else _md
             _mg = _fg if _mg is None else _mg
         return SampleBasis(
@@ -184,6 +184,7 @@ def _basis_from_category(cat: dict[str, Any] | None) -> SampleBasis:
             masked_jibun_count=int(_md or 0),
             masked_jibun_group_count=int(_mg or 0),
         )
+    _legacy_masked = _masked_from_groups(cat)   # ★L-5 — 분기마다 두 번 세지 않는다.
     # ★구버전 페이로드(캐시·배포 스큐) 폴백 — sample_basis 가 없던 시절의 응답도 안전하게
     #   다룬다. 이때는 카운트 필드에서 복원하고, 알 수 없으면 보수적으로 "반경 미적용"으로 본다
     #   (모르면 반경을 주장하지 않는다 = 이 모듈의 존재 이유와 같은 방향).
@@ -197,8 +198,8 @@ def _basis_from_category(cat: dict[str, Any] | None) -> SampleBasis:
         unlocated_count=int(cat.get("count_unresolved") or 0),
         capped_count=int(cat.get("capped_count") or 0),
         # 구버전 페이로드엔 이 축이 없다 — **모르는 것을 0 으로 단정하지 않고** 그룹에서 센다.
-        masked_jibun_count=_masked_from_groups(cat)[0],
-        masked_jibun_group_count=_masked_from_groups(cat)[1],
+        masked_jibun_count=_legacy_masked[0],
+        masked_jibun_group_count=_legacy_masked[1],
     )
 
 
@@ -219,32 +220,40 @@ def no_sample_reason(basis: SampleBasis) -> str | None:
     #   가리고 그 80건이 문장에서 통째로 사라졌다 — 사용자에게 **틀린 이유**를 말하는 것이고,
     #   틀린 이유는 침묵보다 나쁠 수 있다. 전부 나열하면 우선순위 논쟁 자체가 사라진다.
     # ★m-3 — 0 인 항목은 문장에 넣지 않는다("위치 미확인 0건" 같은 잡음 제거).
-    # ★마스킹 사유 문구는 **어느 갈래로 가든 같은 설명을 담는다**. 갈래마다 문구가 달라지면
-    #   소비처(와 회귀락)가 한 갈래에서만 원인을 찾게 되고, 나머지 갈래는 "지번이 가려졌다"는
-    #   사실이 조용히 빠진 채 출하된다 — 이 PR 이 없애려는 침묵의 축소판이다.
-    _masked_why = "공개 실거래 자료가 지번을 가려서 제공해(예: 5*, 1**) 위치를 확인할 수 없습니다"
+    # ★★R2 리뷰(M-2) — 카운트 항과 **이유 문장을 분리**한다.
+    #   초판은 이유를 항 안에 넣어 세 가지를 한꺼번에 만들었다:
+    #     (a) 이중계수 — "위치 미확인 1건 · 지번이 가려진 거래 3건 · 동 단위 2건"이
+    #         실거래 3건을 **6건으로** 읽히게 했다(M-3 이 없애려던 그 문제를 폴백 갈래가 재생산).
+    #     (b) `—` 가 한 문장에 두 번 나와 절 구조가 무너졌다.
+    #     (c) `…확인할 수 없습니다은 단가 산정에…` 비문 — m-4 가 고친 "명사구+조사" 결합
+    #         결함을 다른 자리에서 재생산했다.
+    #   → 항은 **명사구+건수**만, 마스킹 이유는 **문장 끝에 한 번**.
+    _why = "공개 실거래 자료가 지번을 가려서 제공해(예: 5*, 1**) 위치를 확인할 수 없습니다"
+    _masked = basis.masked_jibun_count
 
     bits: list[str] = []
+    # ★m-3 — 0 인 항목은 넣지 않는다("위치 미확인 0건" 같은 잡음 제거).
     if basis.unlocated_count > 0:
-        bit = f"위치 미확인 {basis.unlocated_count:,}건"
-        # ★마스킹은 위치 미확인의 **부분집합이자 그 원인**이다(질의를 만들 수 없어 좌표가
-        #   없다). 별도 항으로 나열하면 같은 거래를 두 번 세는 것처럼 읽히므로 안에 넣는다.
-        #   단 배포 스큐로 두 수가 어긋나면(마스킹 > 미확인) 포함 관계를 주장할 수 없으므로
-        #   그때는 별도 항으로 물러선다 — 모르는 관계를 단정하지 않는다.
-        if 0 < basis.masked_jibun_count <= basis.unlocated_count:
-            bit += f"(그중 {basis.masked_jibun_count:,}건은 {_masked_why})"
-        bits.append(bit)
-        if basis.masked_jibun_count > basis.unlocated_count:
-            bits.append(f"지번이 가려진 거래 {basis.masked_jibun_count:,}건 — {_masked_why}")
-    elif basis.masked_jibun_count > 0:
-        bits.append(f"지번이 가려진 거래 {basis.masked_jibun_count:,}건 — {_masked_why}")
+        bits.append(f"위치 미확인 {basis.unlocated_count:,}건")
     if basis.approximate_count > 0:
         bits.append(f"동 단위까지만 확인 {basis.approximate_count:,}건")
 
+    # ★마스킹은 **위치 미확인의 부분집합이자 그 원인**이다(질의를 만들 수 없어 좌표가 없다).
+    #   그래서 카운트를 항으로 더하지 않는다 — 더하면 같은 거래를 두 번 세는 것이다.
+    #   스큐로 두 수가 어긋나면 포함 관계를 **주장할 수 없으므로** 그 사실을 말한다.
+    tail = ""
+    if _masked > 0:
+        if _masked <= basis.unlocated_count:
+            tail = f" 위치 미확인 중 {_masked:,}건은 {_why}."
+        else:
+            tail = f" 그 밖에 지번이 가려진 거래가 {_masked:,}건 있습니다 — {_why}."
+
     if not bits:
+        if tail:
+            return f"{basis.no_sample_head()}.{tail}"
         return f"{basis.no_sample_head()}(해당 기간·범위에 수집된 거래가 없습니다)."
     return (
-        f"{basis.no_sample_head()} — {' · '.join(bits)}은 단가 산정에 쓰지 않습니다."
+        f"{basis.no_sample_head()} — {' · '.join(bits)}은 단가 산정에 쓰지 않습니다.{tail}"
     )
 
 

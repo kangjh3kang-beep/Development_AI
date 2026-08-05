@@ -1061,6 +1061,16 @@ export function ProjectSiteAnalysisWorkspaceClient({
                         </tbody>
                       </table>
                     </div>
+                    {/* ★R2 리뷰(H-2) — 거래사례비교법이 빠졌으면 **왜** 빠졌는지 여기서도 말한다.
+                        모달·보고서만 고치고 이 표면을 빼면, 사용자는 부지분석 화면에서
+                        여전히 "이 지역엔 거래가 없나 보다"로 오독한다 = 이 PR 이 없애려는
+                        바로 그 침묵. 정직성 결함은 소비처마다 복제돼 국소 수정이 원리적으로
+                        불충분하다(이 저장소 3연속 실증). */}
+                    {avmResult.comparable_skipped_reason ? (
+                      <p className="border-t border-[var(--line)] bg-[var(--surface-soft)] px-4 py-2 text-[11px] leading-relaxed text-[var(--text-tertiary)] break-keep">
+                        {avmResult.comparable_skipped_reason}
+                      </p>
+                    ) : null}
                   </div>
                 ) : null}
 

@@ -31,7 +31,12 @@
  */
 
 export type LocationStatus = "located" | "approximate" | "unlocated";
-export type CoordPrecision = "parcel" | "building" | "dong";
+/**
+ * 좌표가 **무엇을 가리키는가**. `"masked"` 는 원천이 지번을 가려 질의조차 만들지 못해
+ * **좌표가 아예 없는** 상태다 — `"dong"`(동 대표점은 받았다)과 뭉뚱그리면 그 사실이
+ * 관측에서 사라진다.
+ */
+export type CoordPrecision = "parcel" | "building" | "dong" | "masked";
 
 export interface ComparableGroup {
   name?: string;
@@ -99,12 +104,24 @@ export interface SampleBasis {
 }
 
 /** 이 표본이 실제로 무엇인지. 반경을 적용하지 않았으면 **반경을 말하지 않는다**. */
+/**
+ * 반경(m) → 표기용 km 문자열. **백엔드 `f"{km:g}"` 와 등가**여야 한다.
+ *
+ * ★R2 리뷰(M-3) — 종전엔 한 파일 안에서 두 표기가 공존했다: `sampleLabel` 은
+ * `Number(km.toFixed(2))`, `noSampleHead` 는 `toFixed(1)`. 1250m 이면 각각
+ * "1.25km" / "1.3km" 이고 백엔드는 "1.25km" 다 — **같은 값에 세 표기**.
+ * 현재 호출부가 전부 라운드 값이라 잠복 상태였을 뿐이다. 한 헬퍼로 모은다.
+ */
+export function kmText(radiusM: number): string {
+  const km = radiusM / 1000;
+  // Python `%g` 는 유효숫자 6자리로 자르고 뒤따르는 0 을 제거한다.
+  return String(parseFloat(km.toPrecision(6)));
+}
+
 export function sampleLabel(b: SampleBasis): string {
   if (b.scope === "radius" && b.radiusM) {
-    const km = b.radiusM / 1000;
-    // 1000 → "1km", 1500 → "1.5km"
-    const kmTxt = `${Number(km.toFixed(2))}km`;
-    return `반경 ${kmTxt} 내 위치 확인 거래`;
+    // ★표기는 `kmText` 한 곳에서만 만든다(R2 리뷰 M-3 — 한 파일 안에 세 표기가 공존했다).
+    return `반경 ${kmText(b.radiusM)}km 내 위치 확인 거래`;
   }
   if (b.scope === "sigungu") return "시군구 전체(반경 미적용)";
   // ★W1-b 리뷰(M-1) — 구버전 페이로드(배포 스큐·캐시)에는 `sample_basis` 가 없어 반경 적용
@@ -130,8 +147,7 @@ export function exclusionNote(b: SampleBasis): string | null {
  */
 function noSampleHead(b: SampleBasis): string {
   if (b.scope === "radius" && b.radiusM) {
-    const km = b.radiusM / 1000;
-    return `반경 ${Number.isInteger(km) ? km : km.toFixed(1)}km 내에서 위치가 확인된 거래가 없습니다`;
+    return `반경 ${kmText(b.radiusM)}km 내에서 위치가 확인된 거래가 없습니다`;
   }
   if (b.scope === "sigungu") return "시군구 전체에서 위치가 확인된 거래가 없습니다";
   return "위치가 확인된 거래가 없습니다";
@@ -147,31 +163,35 @@ function noSampleHead(b: SampleBasis): string {
  *   사용자에게 **틀린 이유**를 말하는 것이고, 틀린 이유는 침묵보다 나쁠 수 있다.
  */
 export function noSampleReason(b: SampleBasis): string {
-  const maskedWhy =
+  // ★★백엔드 `comparable_sample.no_sample_reason` 과 **같은 값**을 내야 한다.
+  //   공유 골든 `__tests__/fixtures/no-sample-reason.cases.json` 이 그것을 값으로 잠근다
+  //   (R2 리뷰 M-3: 종전 "문구 일치 불변식"은 소스에 조각이 있는지 grep 할 뿐이라
+  //   실제로는 반경 표기가 갈려 있었다 — 1250m 에서 백엔드 1.25km / 미러 1.3km).
+  const why =
     "공개 실거래 자료가 지번을 가려서 제공해(예: 5*, 1**) 위치를 확인할 수 없습니다";
   const masked = b.maskedJibunCount ?? 0;
+
   const bits: string[] = [];
-  if (b.unlocatedCount > 0) {
-    let bit = `위치 미확인 ${b.unlocatedCount.toLocaleString()}건`;
-    // 마스킹은 위치 미확인의 **부분집합이자 그 원인**이다(질의를 만들 수 없어 좌표가 없다).
-    // 두 수가 어긋나면(스큐) 포함 관계를 주장할 수 없으므로 별도 항으로 물러선다.
-    if (masked > 0 && masked <= b.unlocatedCount) {
-      bit += `(그중 ${masked.toLocaleString()}건은 ${maskedWhy})`;
-    }
-    bits.push(bit);
-    if (masked > b.unlocatedCount) {
-      bits.push(`지번이 가려진 거래 ${masked.toLocaleString()}건 — ${maskedWhy}`);
-    }
-  } else if (masked > 0) {
-    bits.push(`지번이 가려진 거래 ${masked.toLocaleString()}건 — ${maskedWhy}`);
-  }
+  if (b.unlocatedCount > 0) bits.push(`위치 미확인 ${b.unlocatedCount.toLocaleString()}건`);
   if (b.approximateCount > 0) {
     bits.push(`동 단위까지만 확인 ${b.approximateCount.toLocaleString()}건`);
   }
+
+  // 마스킹은 위치 미확인의 **부분집합이자 그 원인**이다 — 카운트를 항으로 더하면
+  // 같은 거래를 두 번 세는 것이다. 스큐로 어긋나면 포함 관계를 주장하지 않는다.
+  let tail = "";
+  if (masked > 0) {
+    tail =
+      masked <= b.unlocatedCount
+        ? ` 위치 미확인 중 ${masked.toLocaleString()}건은 ${why}.`
+        : ` 그 밖에 지번이 가려진 거래가 ${masked.toLocaleString()}건 있습니다 — ${why}.`;
+  }
+
   if (bits.length === 0) {
+    if (tail) return `${noSampleHead(b)}.${tail}`;
     return `${noSampleHead(b)}(해당 기간·범위에 수집된 거래가 없습니다).`;
   }
-  return `${noSampleHead(b)} — ${bits.join(" · ")}은 단가 산정에 쓰지 않습니다.`;
+  return `${noSampleHead(b)} — ${bits.join(" · ")}은 단가 산정에 쓰지 않습니다.${tail}`;
 }
 
 function basisFromCategory(cat: ComparableCategory | null | undefined): SampleBasis {

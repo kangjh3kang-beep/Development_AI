@@ -206,9 +206,44 @@ def test_no_sample_reason_distinguishes_masked_from_absent() -> None:
     assert other is not None and "지번을 가려서" not in other
     assert "위치 미확인 2건" in other
 
+    # ★R2 리뷰(M-6) — `approximate` 항이 무테스트였다(그 두 줄을 지워도 전건 통과했다).
+    assert "동 단위까지만 확인 1건" in other, "동 단위 확인분이 문장에서 사라진다"
+
     # 진짜로 아무것도 없으면 그렇게 말한다.
     empty = no_sample_reason(_basis())
     assert empty is not None and "수집된 거래가 없습니다" in empty
+
+
+def test_masked_skew_branch_is_locked_by_literal() -> None:
+    """★★R2 리뷰(M-2) — 스큐 갈래(`masked > unlocated`)를 **출력 문자열로** 잠근다.
+
+    ★그 갈래는 무테스트였다(포함 관계 상한과 별도 항을 통째로 지워도 56 passed 생존).
+    유일하게 관련 있던 테스트가 `b.no_sample_reason() == no_sample_reason(b)` 라
+    **동어반복**이었다 — 양변이 함께 변이하므로 아무것도 잠그지 못한다.
+
+    ★그리고 초판의 스큐 문장은 세 결함을 한꺼번에 가졌다:
+      (a) 실거래 3건이 `1 + 3 + 2 = 6건`으로 읽히는 **이중계수**(M-3 이 없애려던 그 문제)
+      (b) `—` 가 한 문장에 두 번 나와 절 구조 붕괴
+      (c) `…확인할 수 없습니다은 단가 산정에…` **비문**(m-4 가 고친 결합 결함의 재생산)
+    """
+    from app.services.market.comparable_sample import SampleBasis, no_sample_reason
+
+    skew = SampleBasis(
+        scope="radius", radius_applied=True, radius_m=1500,
+        located_count=0, approximate_count=2, unlocated_count=1,
+        capped_count=0, masked_jibun_count=3, masked_jibun_group_count=2,
+    )
+    got = no_sample_reason(skew)
+    assert got == (
+        "반경 1.5km 내에서 위치가 확인된 거래가 없습니다 — "
+        "위치 미확인 1건 · 동 단위까지만 확인 2건은 단가 산정에 쓰지 않습니다. "
+        "그 밖에 지번이 가려진 거래가 3건 있습니다 — 공개 실거래 자료가 지번을 가려서 "
+        "제공해(예: 5*, 1**) 위치를 확인할 수 없습니다."
+    ), got
+    # 카운트 항에 마스킹을 **더하지 않는다**(더하면 같은 거래를 두 번 센다).
+    assert "지번이 가려진 거래 3건 ·" not in got
+    # `—` 는 절 구분자로 쓰되 한 문장에 하나씩만.
+    assert got.count(" — ") == 2, f"절 구조가 무너졌다: {got}"
 
 
 def test_sample_basis_recovers_masked_count_from_groups_on_legacy_payload() -> None:
@@ -368,46 +403,115 @@ async def test_desk_appraisal_really_emits_masked_reason_end_to_end() -> None:
     ), "사유를 실으면서 거래사례비교법을 그대로 썼다"
 
 
-def test_masked_reason_wording_is_mirrored_on_the_frontend() -> None:
-    """★R1 리뷰(m-7) — 프론트 미러가 **같은 문구**를 쓰는지 값으로 대조한다.
+def test_report_model_carries_the_skip_reason() -> None:
+    """★★R2 리뷰(H-2) — PDF/PPTX/DOCX 보고서 모델에 사유가 **실제로 실리는지** 실호출로 본다.
 
-    `comparable_sample` 모듈 독스트링은 `apps/web/lib/market/comparable-sample.ts` 를
-    "같은 계약·같은 문구"라고 약속한다. 초판은 백엔드에만 마스킹 사유를 넣어 그 약속을
-    **거짓으로 만들었다** — 미러는 마스킹을 몰라 사용자가 웹에서 보는 사유가 달랐다.
+    ★변이 실증: 어댑터의 사유 블록을 지워도 73개 테스트가 전부 통과했다 — 그 락을
+    vitest 파일에만 뒀기 때문이다. **백엔드 변경은 백엔드가 잠가야 한다.**
+    그리고 소스 검사가 아니라 **실호출**이어야 한다(M-2 에서 배운 것: 소스 검사는
+    텍스트를 볼 뿐 행위를 태우지 않는다).
 
-    ★이 검사는 "이름이 있는가"가 아니라 **문구 자체가 양쪽에 같은 값으로 있는가**를 본다.
-    한쪽 문구를 바꾸면 반드시 깨지므로, 두 구현이 조용히 갈라지는 것을 막는다.
+    이건 은행 제출용 산출물이다. 화면에서는 "왜 안 썼는지" 말하면서 PDF 에서는 방법이
+    그냥 사라지면, 읽는 사람은 "이 지역엔 거래가 없다"로 오독한다.
     """
-    from app.services.market import comparable_sample as cs
-
-    # 백엔드가 실제로 만드는 문구에서 조각을 뽑는다(리터럴을 테스트에 복사하지 않는다 —
-    # 복사하면 백엔드가 바뀌어도 테스트가 옛 문구를 지키게 된다).
-    basis = cs.SampleBasis(
-        scope="radius", radius_applied=True, radius_m=1500,
-        located_count=0, approximate_count=0, unlocated_count=5,
-        capped_count=0, masked_jibun_count=5, masked_jibun_group_count=2,
+    from app.services.report.render.appraisal_adapter import (
+        build_report_model_from_appraisal,
     )
-    produced = cs.no_sample_reason(basis) or ""
-    assert "지번을 가려서" in produced, "백엔드가 마스킹 사유를 만들지 않는다"
 
-    mirror = (
-        _API_ROOT.parent.parent / "apps/web/lib/market/comparable-sample.ts"
-    ).read_text(encoding="utf-8")
-    # 백엔드 문구의 **핵심 구절**이 미러에 그대로 있어야 한다.
-    for fragment in ("공개 실거래 자료가 지번을 가려서 제공해", "위치를 확인할 수 없습니다"):
-        assert fragment in mirror, (
-            f"프론트 미러에 백엔드 문구가 없다: {fragment!r} — "
-            "모듈 독스트링이 약속한 '같은 계약·같은 문구'가 거짓이 된다"
+    reason = (
+        "반경 1.5km 내에서 위치가 확인된 거래가 없습니다 — 위치 미확인 5건은 단가 산정에 "
+        "쓰지 않습니다. 위치 미확인 중 5건은 공개 실거래 자료가 지번을 가려서 제공해"
+        "(예: 5*, 1**) 위치를 확인할 수 없습니다."
+    )
+    result = {
+        "ok": True,
+        "appraised_price_per_sqm": 5_000_000,
+        "appraised_total_won": 1_500_000_000,
+        "area_sqm": 300.0,
+        "confidence": 0.7,
+        "range_per_sqm": {"low": 4_500_000, "high": 5_500_000},
+        "methods": [
+            {"method": "공시지가기준법", "unit_price": 5_000_000, "rationale": "공시지가 × 시점수정"}
+        ],
+        "weight_note": "공시지가기준법 단독",
+        "comparable_skipped_reason": reason,
+        "disclaimer": "참고용",
+    }
+    model = build_report_model_from_appraisal(result, address="서울특별시 강남구 논현동 1-1")
+
+    # 모델 어딘가가 아니라 **산정방법 섹션**에 실려야 한다(방법이 빠진 자리에서 설명한다).
+    method_sections = [
+        sec for sec in model.sections if "산정방법" in (sec.title or "")
+    ]
+    assert method_sections, "산정방법 섹션이 없다 — 이 테스트가 공허해진다"
+    rendered = "\n".join(
+        str(getattr(b, "paragraphs", "")) for sec in method_sections for b in sec.blocks
+    )
+    assert "지번을 가려서" in rendered, (
+        "보고서 모델에 거래사례비교법 제외 사유가 없다 — 은행 제출본에서 방법이 "
+        "아무 설명 없이 사라진다"
+    )
+
+
+def test_shared_golden_matches_backend_output_exactly() -> None:
+    """★★R2 리뷰(M-3) — 백엔드와 프론트 미러가 **같은 값**을 내는지 값으로 잠근다.
+
+    ★초판의 "문구 일치 불변식"은 TS 소스에 한국어 조각이 들어 있는지 **grep** 할 뿐이라
+    값 대조가 아니었다. 실제로 반경 표기가 갈려 있었다 —
+    1250m 에서 백엔드 `1.25km` / 미러 `1.3km`, 게다가 같은 TS 파일 안에서
+    `sampleLabel` 은 `1.25km` 를 내 **한 파일에 세 표기**가 공존했다.
+    현재 호출부가 전부 라운드 값이라 잠복해 있었을 뿐이다.
+
+    → 두 구현이 **공유 골든 파일**을 본다. 이 테스트는 백엔드 출력이 그 파일과 같은지 보고,
+      프론트 vitest 골든이 TS 출력이 같은 파일과 같은지 본다. 어느 쪽 문구를 바꾸든
+      그쪽이 깨지므로 두 구현이 조용히 갈라질 수 없다.
+    """
+    import json
+
+    from app.services.market.comparable_sample import SampleBasis, no_sample_reason
+
+    golden_path = (
+        _API_ROOT.parent.parent
+        / "apps/web/lib/market/__tests__/fixtures/no-sample-reason.cases.json"
+    )
+    assert golden_path.exists(), f"공유 골든이 없다: {golden_path}"
+    cases = json.loads(golden_path.read_text(encoding="utf-8"))
+    assert cases, "공유 골든이 비었다 — 아래 대조가 공허해진다"
+    # ★비공허성 — 케이스가 실제로 여러 갈래를 덮는지 확인한다(전부 같은 갈래면 무판별).
+    assert len({c["expected"] for c in cases}) == len(cases), "골든에 중복 기대값이 있다"
+    assert any(c["masked"] > 0 and c["masked"] <= c["unlocated"] for c in cases), "포함 갈래 없음"
+    assert any(c["masked"] > c["unlocated"] for c in cases), "스큐 갈래 없음"
+    assert any(c["masked"] == 0 for c in cases), "마스킹 없는 갈래 없음"
+    assert any(c["radius_m"] % 500 != 0 for c in cases), "비라운드 반경 케이스 없음(표기 갈림 미검증)"
+
+    for c in cases:
+        basis = SampleBasis(
+            scope="radius", radius_applied=True, radius_m=c["radius_m"],
+            located_count=0, approximate_count=c["approximate"],
+            unlocated_count=c["unlocated"], capped_count=0,
+            masked_jibun_count=c["masked"], masked_jibun_group_count=c["masked_groups"],
         )
-    # ★미러가 마스킹 축을 **실제로 읽는지** 본다 — 이름이 어딘가 있는 것으로는 부족하다.
-    #   실증: 처음엔 `"maskedJibunCount" in mirror` 였는데, 그 이름이 **타입 정의**에도 있어
-    #   `const masked = 0;` 로 바꾸는 변이가 **통과했다**. 이 파일 상단이 기록한 바로 그
-    #   함정("이름이 있다 ≠ 그 값을 쓴다")에 같은 형태로 다시 빠진 것이다.
-    #   → **멤버 접근 형태**로 못 박는다. 값을 안 읽으면 이 접근이 사라진다.
-    assert re.search(r"\bb\.maskedJibunCount\b", mirror), (
-        "미러가 마스킹 카운트를 **읽지 않는다** — 타입에만 있고 사유 산출에 쓰지 않으면 "
-        "웹 화면에서는 마스킹 사유가 영영 나오지 않는다"
+        assert no_sample_reason(basis) == c["expected"], (
+            f"백엔드 출력이 공유 골든과 다르다(r={c['radius_m']}) — "
+            "문구를 바꿨으면 골든을 재생성하고 프론트 미러도 함께 맞춰라"
+        )
+
+
+def test_frontend_mirror_reads_the_shared_golden() -> None:
+    """★미러가 공유 골든을 **실제로 소비하는지** 확인한다.
+
+    골든 파일만 있고 프론트가 읽지 않으면 위 테스트는 백엔드 자기 자신만 검증하는
+    **반쪽 계약**이 된다(공허진리의 변형 — 이 저장소에서 6번 나왔다).
+    """
+    mirror_test = (
+        _API_ROOT.parent.parent
+        / "apps/web/lib/market/__tests__/comparable-sample.golden.test.ts"
+    ).read_text(encoding="utf-8")
+    assert "no-sample-reason.cases.json" in mirror_test, (
+        "프론트 골든이 공유 케이스 파일을 읽지 않는다 — 값 대조가 백엔드 한쪽만 남는다"
     )
+    # 읽기만 하고 대조를 안 하면 역시 공허다 — 기대값 필드를 쓰는지 본다.
+    assert re.search(r"\.expected\b", mirror_test), "골든을 읽고도 expected 를 대조하지 않는다"
 
 
 def test_sample_basis_method_and_module_function_agree() -> None:
