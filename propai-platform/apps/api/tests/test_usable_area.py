@@ -410,3 +410,35 @@ def test_unanalyzed_does_not_weaken_stronger_gate():
     assert _RANK.get(out["developability"], 0) >= _RANK["UNKNOWN"], (
         f"미분석 강등이 더 무거운 게이트를 약화시켰다: {out['developability']}"
     )
+    # ★이 픽스처는 상향 분기(_RANK < UNKNOWN)에 **도달하지 않는다** — 도로 지목이
+    #   PRECONDITION(rank 3)을 내기 때문이다. 즉 이 단언은 '약화 금지' 한 방향만 본다.
+    #   반대 방향(가벼운 게이트를 UNKNOWN까지 **올리는지**)은 아래 테스트가 따로 잠근다.
+    assert _RANK.get(out["developability"], 0) > _RANK["UNKNOWN"], (
+        "픽스처가 상향 분기에 도달해버렸다 — 이 테스트의 전제(더 무거운 게이트)가 깨졌다"
+    )
+
+
+def test_unanalyzed_lifts_lighter_gate_to_unknown():
+    """★가벼운 게이트는 '판정 불가'까지 **올린다** — 못 본 필지가 있는데 CAUTION으로 단정 금지.
+
+    2026-08-05 R2 적대검증 MEDIUM: 이 상향 라인을 지워도 저장소의 어떤 테스트도 깨지지
+    않았다(변이 생존). 종전 회귀락의 픽스처가 PRECONDITION(rank 3)을 내서 분기에 아예
+    도달하지 못했기 때문이다 — **통과는 '옳아서'가 아니라 '그 경로를 안 타서'였다.**
+    도달하는 픽스처(성장관리계획구역 = CAUTION, rank 1)로 반대 방향을 잠근다.
+    """
+    from app.services.zoning.special_parcel import _RANK, detect_multi_parcel, gate_decision
+
+    light_only = detect_multi_parcel([
+        {"pnu": "a", "land_category": "대", "zone_type": "제2종일반주거지역",
+         "special_districts": ["성장관리계획구역"], "area_sqm": 100.0},
+    ])
+    # 전제 확인 — 이 픽스처가 정말 UNKNOWN보다 가벼운 게이트를 낸다(공허 방지).
+    assert _RANK.get(light_only["developability"], 0) < _RANK["UNKNOWN"], light_only["developability"]
+
+    with_unanalyzed = detect_multi_parcel([
+        {"pnu": "a", "land_category": "대", "zone_type": "제2종일반주거지역",
+         "special_districts": ["성장관리계획구역"], "area_sqm": 100.0},
+        {"pnu": "b", "area_sqm": 600.0},  # 미분석
+    ])
+    assert with_unanalyzed["developability"] == "UNKNOWN"
+    assert gate_decision(with_unanalyzed["developability"], with_unanalyzed["resolvable"]) != "PASS"
