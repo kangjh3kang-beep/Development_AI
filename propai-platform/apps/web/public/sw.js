@@ -242,7 +242,12 @@
 //        지오코딩 입력단 적용이고, #561 은 모바일 레이아웃이라 **둘 다 화면이 실제로 바뀐다**
 //        — stale app-shell 캐시가 남으면 옛 배치·옛 침묵이 그대로 보인다.
 //        ★채번: origin/main 실제 상수 v488 확인 → v489. PR 생성 前 보드 claim 선점(7회차).
-const CACHE_NAME = "propai-v489-masked-jibun";
+// v490: ★프로덕션 회귀 **긴급 봉합**(#563) — #561(v489 모바일 IA P0)이 넣은 max-h 에 하한이
+//        없어 감산 388px 고정으로 **대화 영역이 사라지던** 회귀. AIAssistant·SatongMapShell.
+//        ★회귀 봉합은 stale 캐시가 남으면 **깨진 화면이 그대로 유지**된다 — 사용자가 이미
+//        피해를 보고 있는 상태라 범프 누락의 비용이 가장 크다(기능 미노출·정직화 지연과 다름).
+//        ★채번: origin/main 실제 상수 v489 확인 → v490. PR 생성 前 보드 claim 선점(8회차).
+const CACHE_NAME = "propai-v490-chat-height-fix";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
