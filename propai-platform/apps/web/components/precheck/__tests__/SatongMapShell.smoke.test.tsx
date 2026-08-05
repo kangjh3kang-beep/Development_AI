@@ -158,56 +158,57 @@ describe("SatongMapShell 접힘(B4)·문서 위계(B1) 회귀망", () => {
   it("★모바일 IA P1: 대상이 늦게 도착해도(프로젝트 복원 대기) 조기 단정으로 접힘을 깨지 않는다", () => {
     // ★projectId 가 있고 **목록의 그 프로젝트가 주소를 가진** 상태 = 스냅샷 복원 비동기 대기.
     //   여기서 "대상 없음"으로 확정해 펼쳐 버리면, 복원된 프로젝트의 접힘이 깨진다.
-    act(() => {
-      useProjectContextStore.setState({ projectId: "p-1", siteAnalysis: null });
-      useProjectStore.setState({
-        projects: [{ id: "p-1", name: "역삼 프로젝트", address: "서울시 강남구 역삼동 736" } as Project],
-        syncing: false,
+    vi.useFakeTimers();
+    try {
+      act(() => {
+        useProjectContextStore.setState({ projectId: "p-1", siteAnalysis: null });
       });
-    });
-    render(<SatongMapShell locale="ko" defaultCollapsed />);
+      render(<SatongMapShell locale="ko" defaultCollapsed />);
 
-    // 아직 접힌 채다 — 대상 없음으로 단정하지 않았다.
-    expect(screen.getByRole("button", { name: /지도 열기/ })).toBeInTheDocument();
+      // 유예 안에는 접힌 채다 — 대상 없음으로 단정하지 않았다.
+      expect(screen.getByRole("button", { name: /지도 열기/ })).toBeInTheDocument();
 
-    // 늦게 도착 → 여전히 접힘 유지(대상 있음으로 확정).
-    act(() => {
-      useProjectContextStore.setState({
-        siteAnalysis: { address: "서울시 강남구 역삼동 736" } as SiteAnalysisData,
+      // 유예 안에 도착 → 이펙트 재실행 + cleanup 이 타이머를 취소해 접힘이 유지된다.
+      act(() => {
+        useProjectContextStore.setState({
+          siteAnalysis: { address: "서울시 강남구 역삼동 736" } as SiteAnalysisData,
+        });
       });
-    });
-    expect(screen.getByRole("button", { name: /지도 열기/ })).toBeInTheDocument();
+      act(() => {
+        vi.advanceTimersByTime(10_000); // 유예를 한참 넘겨도 펼쳐지지 않아야 한다
+      });
+      expect(screen.getByRole("button", { name: /지도 열기/ })).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
-  it("★모바일 IA P1: 주소 없는 프로젝트는 **영구 접힘이 아니다** — 기다려도 안 오는 대상은 기다리지 않는다", () => {
-    // ★R1 지적 HIGH-2. setProject(id, name, status) 를 주소 없이 부르는 경로가 실재하고(그때
-    //   siteAnalysis 는 null 로 **확정**된다), 그건 대기가 아니라 정상 종착 상태다.
-    //   "projectId 가 있으면 무기한 보류"였던 초판은 이 조합에서 셸을 영원히 접어 뒀다.
-    //   ★이 케이스는 LandScheduleClient 회귀망이기도 하다 — 그 페이지는 `if (!projectId) return`
-    //   뒤에 셸을 렌더해 projectId 가 **항상 truthy** 이므로, 초판 가드였다면 P1 이 그 페이지에서
-    //   통째로 죽은 코드였다.
-    act(() => {
-      useProjectContextStore.setState({ projectId: "p-2", siteAnalysis: null });
-      useProjectStore.setState({
-        projects: [{ id: "p-2", name: "주소 없는 프로젝트", address: "" } as Project],
-        syncing: false,
+  it("★모바일 IA P1: 연결됐는데 대상이 끝내 안 오면 유예 후 펼친다 — 영구 접힘 금지", () => {
+    // ★R2 지적 HIGH 2건의 봉합 회귀망. 종전 2판은 프로젝트 **목록**으로 "대상이 올지"를 추론했는데
+    //   ①`syncing` 은 렌더 시점 캡처값이라 콜드 스타트에서 항상 false 라 가드가 발화하지 않았고
+    //   ②목록은 page_size=20 으로 잘려 오고 실패 시 조용히 비어 "목록에 없음=삭제"가 거짓이었다.
+    //   지금은 목록을 아예 보지 않는다 — 기다려 보고 판정한다.
+    //   ★이 케이스는 주소 없이 만든 프로젝트(setProject 를 address 없이 호출)와, 21번째 이후라
+    //   목록에 안 잡히는 프로젝트, 동기화 실패를 **한꺼번에** 덮는다.
+    vi.useFakeTimers();
+    try {
+      act(() => {
+        useProjectContextStore.setState({ projectId: "p-2", siteAnalysis: null });
       });
-    });
-    render(<SatongMapShell locale="ko" defaultCollapsed />);
+      render(<SatongMapShell locale="ko" defaultCollapsed />);
 
-    expect(screen.getByRole("heading", { name: "통합 필지 입력" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /지도 열기/ })).not.toBeInTheDocument();
-  });
+      // 유예 전 — 아직 접힘(복원이 올 수도 있으므로 성급히 펼치지 않는다).
+      expect(screen.getByRole("button", { name: /지도 열기/ })).toBeInTheDocument();
 
-  it("★모바일 IA P1: 프로젝트 목록 동기화 중에는 판정을 보류한다 — 목록이 없다고 대상 없음으로 단정하지 않는다", () => {
-    act(() => {
-      useProjectContextStore.setState({ projectId: "p-3", siteAnalysis: null });
-      useProjectStore.setState({ projects: [], syncing: true });
-    });
-    render(<SatongMapShell locale="ko" defaultCollapsed />);
+      act(() => {
+        vi.advanceTimersByTime(2_000);
+      });
 
-    // 아직 접힌 채 — 목록이 오기 전에는 "주소 없는 프로젝트"인지 알 수 없다.
-    expect(screen.getByRole("button", { name: /지도 열기/ })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "통합 필지 입력" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /지도 열기/ })).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("★모바일 IA P1: 접힌 뒤 대상이 사라지면 다시 펼친다 — 입력이 접힌 채 갇히지 않는다", () => {

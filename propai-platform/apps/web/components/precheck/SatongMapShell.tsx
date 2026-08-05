@@ -154,6 +154,20 @@ const RAIL_POPOVER_ANCHOR = {
  */
 const HOVER_SWITCH_DELAY_MS = 250;
 
+/**
+ * 모바일 IA P1 — 연결된 프로젝트의 대상(주소·필지)이 도착하기를 기다리는 유예(ms).
+ *
+ * ★왜 시간인가: `projectId` 는 있는데 대상이 없는 상태에서 "복원이 오는 중"과 "원래 없음"을
+ *   상태만으로 가를 수 없다. 프로젝트 목록은 `page_size=20` 으로 잘려 오고(프론트가 page 를
+ *   보내지 않는다) 동기화 실패 시 조용히 비며, `syncing` 은 렌더 시점 캡처값이라 콜드 스타트에서
+ *   항상 false 다 — 둘 다 정착 신호가 되지 못한다(R2 실측). 그래서 추론 대신 **기다려 본다**.
+ * ★유예 안에 대상이 오면 판정 이펙트가 재실행되며 cleanup 이 타이머를 취소하므로 접힘이 유지된다.
+ * ★2초는 임의 상수다(스냅샷 복원 왕복의 실측 분포는 **미측정**). 짧으면 복원된 프로젝트의 접힘을
+ *   잃고, 길면 대상 없는 사용자가 빈 화면을 그만큼 오래 본다. 후자가 이 수정이 없애려던 증상이라
+ *   보수적으로 짧은 쪽에 두되, 늦은 도착의 대가(접힘 상실)는 감수한다.
+ */
+const TARGET_RESTORE_GRACE_MS = 2000;
+
 function railPopoverAnchor(pinned: boolean): string {
   return pinned ? RAIL_POPOVER_ANCHOR.pinned : RAIL_POPOVER_ANCHOR.collapsed;
 }
@@ -675,9 +689,6 @@ export function SatongMapShell({
   const clearProject = useProjectContextStore((state) => state.clearProject);
   const projects = useProjectStore((state) => state.projects);
   const syncFromBackend = useProjectStore((state) => state.syncFromBackend);
-  // 모바일 IA P1 — "프로젝트 목록이 아직 오는 중"과 "왔는데 그 프로젝트에 주소가 없다"를 가르는
-  // 정착 신호(아래 접힘 판정 이펙트 참조). 목록 자체가 미도착이면 대상 유무를 단정할 수 없다.
-  const projectsSyncing = useProjectStore((state) => state.syncing);
 
   useEffect(() => {
     if (!projects.length) void syncFromBackend();
@@ -764,18 +775,28 @@ export function SatongMapShell({
   //   ★대상이 있으면 접힘 유지(무회귀), 없으면 펼친다. 판정을 **effect 에서** 하는 이유:
   //   selectedParcels 는 useState([]) 로 시작해 아래 하이드레이션 이펙트가 채우므로 마운트
   //   시점 판정은 **항상 "대상 없음"**이 되어 defaultCollapsed 를 통째로 무력화한다.
-  //   ★projectId 가 있을 때는 "설정됐는가"가 아니라 "**정착됐는가**"를 본다(R1 지적 HIGH).
-  //   초판은 `if (projectId) return`(=설정만 보고 무기한 보류)이었는데, 그러면 두 곳이 통째로 죽는다:
-  //     · LandScheduleClient 는 `if (!projectId) return <안내>` **뒤에** 이 셸을 렌더한다 — 즉 그
-  //       페이지에서 projectId 는 **항상 truthy** 라 이 수정이 **도달 불가능한 죽은 코드**가 된다.
-  //     · setProject(id, name, status) 를 주소 없이 부르는 경로(ProjectAddressInput)가 있고 그때
-  //       siteAnalysis 는 null 로 **확정**된다 — 대기가 아니라 정상 종착 상태다. 영구 접힘이 된다.
-  //   그래서 ①목록 동기화 중이면 보류(진짜 대기) ②목록의 그 프로젝트가 **주소를 가졌으면** 보류
-  //   (siteAnalysis 복원이 늦게 오는 중 — 곧 hasTarget 이 된다) ③그 외(목록에 없는 삭제·권한없음
-  //   프로젝트, 주소 없는 프로젝트)는 **기다려도 대상이 오지 않으므로** 펼친다.
-  //   ★connectInitRef 선례와 규칙은 같으나 **실패 비용이 비대칭**이라 여기서는 더 좁혀야 한다:
-  //   거기서는 미확정이 지속돼도 connectTarget 이 'new' 기본값으로 화면이 정상 동작하지만,
-  //   여기서는 미확정이 지속되면 **사용자가 아무것도 할 수 없는 화면**이 남는다.
+  //   ★projectId 가 있는데 대상이 없을 때가 어렵다 — "복원이 오는 중"과 "원래 없음"이 같아 보인다.
+  //   초판은 `if (projectId) return`(무기한 보류)이었는데 그러면 LandScheduleClient 가 통째로 죽는다
+  //   (그 페이지는 `if (!projectId) return <안내>` **뒤에** 이 셸을 렌더해 projectId 가 항상 truthy).
+  //   2판은 프로젝트 **목록**을 정착 신호로 썼는데 그것도 틀렸다(R2 지적 HIGH 2건, 프로브로 재현):
+  //     · `syncing` 은 렌더 시점에 캡처된 값이라 **콜드 스타트에서 항상 false** 다. 목록을 채우는
+  //       이펙트가 같은 커밋에서 먼저 set 해도 이 클로저는 못 본다 → 가드가 **발화하지 않는다**.
+  //     · 목록은 `page_size=20` 기본값으로 **잘려 온다**(프론트가 page 파라미터를 안 보낸다).
+  //       동기화 실패 시엔 catch 가 조용히 빈 목록을 유지한다. 즉 "목록에 없음 = 삭제·권한없음"은
+  //       **거짓 불변식**이고, 21번째 이후의 멀쩡한 프로젝트가 접힘을 잃는다.
+  //   ★그래서 상태를 **추론하지 않고 기다려 본다**. 유예 안에 대상이 오면 이펙트가 재실행되며
+  //   cleanup 이 타이머를 취소하므로 접힘이 그대로 유지되고, 오지 않으면 없는 것으로 보고 편다.
+  //   목록·동기화 플래그·페이지네이션과 **무관**해지는 것이 이 설계의 요점이다.
+  //   ★늦게(유예 후) 도착하면 이미 펼쳐진 채로 남아 B4 접힘을 잃는다 — 그 대가를 감수한다.
+  //   반대 위험(대상이 영영 안 와서 **입력이 영구히 접힌 화면**)이 명백히 더 나쁘기 때문이다.
+  //
+  //   ★적용 범위의 한계(정직 표기 — R2 지적 MEDIUM): 여기서 "대상"은 **셸의 대상**(주소·필지)이다.
+  //   따라서 `주소 있는 프로젝트 + 편입토지 0건` 조합에서는 hasTarget 이 참이라 **여전히 접힌다**.
+  //   그건 토지조서의 정상 초기 상태이고, 그 페이지의 빈 상태 카피는 "상단 통합 지도의 지번·주소
+  //   검색…으로 편입토지를 등록하세요"라며 접힌 컨트롤을 가리킨다 — 즉 그 조합은 **이 수정이
+  //   덮지 못한다**. 호출측마다 "대상"의 의미가 다르므로(토지조서는 rows, 분석·시장은 주소)
+  //   제대로 풀려면 판정을 호출측이 주입해야 한다(collapseWhen prop). **별건으로 남긴다** —
+  //   여기서 호출측 계약을 바꾸면 P1 의 범위를 넘고 3소비처 회귀 위험이 생긴다.
   //
   //   ★1회 래치(ref)를 쓰지 않는다 — 처음엔 넣었다가 **철회**했다. 래치 제거 변이가 생존해
   //   들여다보니 래치가 막는 경로가 없었다: 이 셸에서 펼침은 (이 마운트 수명 안에서) 단방향이다
@@ -795,14 +816,15 @@ export function SatongMapShell({
       !!storeSiteAnalysis?.address ||
       !!storeSiteAnalysis?.parcels?.length;
     if (hasTarget) return; // 대상 있음 — 접힌 요약이 의미를 가지므로 그대로 둔다
-    if (projectId) {
-      if (projectsSyncing) return; // 목록 동기화 중 — 판정 보류(진짜 대기)
-      const linked = projects.find((p) => p.id === projectId);
-      if (linked?.address) return; // 주소 보유 프로젝트 — siteAnalysis 복원이 곧 온다
-      // 목록에 없거나(삭제·권한없음) 주소 없는 프로젝트 — 기다려도 대상은 오지 않는다
+    if (!projectId) {
+      setIsShellExpanded(true); // 미연결 + 대상 없음 — 기다릴 것이 없다(즉시 확정)
+      return;
     }
-    setIsShellExpanded(true); // 대상 없음 — 입력을 접어 두지 않는다
-  }, [defaultCollapsed, selectedParcels.length, storeSiteAnalysis, projectId, projects, projectsSyncing]);
+    // 연결됐는데 대상이 없다 — 복원이 오는 중일 수도, 원래 없을 수도 있다. 기다려 보고 판정한다.
+    // 유예 안에 대상이 도착하면 이 이펙트가 재실행되고 아래 cleanup 이 타이머를 취소한다.
+    const timer = setTimeout(() => setIsShellExpanded(true), TARGET_RESTORE_GRACE_MS);
+    return () => clearTimeout(timer);
+  }, [defaultCollapsed, selectedParcels.length, storeSiteAnalysis, projectId]);
   // ── WS-C 필지 상세 패널 — 지도 폴리곤/카드 클릭 → 통합 정보(개요·공시지가·노후도)와
   //    산출물 원클릭 퍼널. 단일 팝오버 원칙: 레이어 설정 패널과 동시 표출 금지(상호 배타).
   const [detailFeature, setDetailFeature] = useState<SatongMapFeature | null>(null);
