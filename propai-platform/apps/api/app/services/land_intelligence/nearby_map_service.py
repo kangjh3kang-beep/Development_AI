@@ -180,6 +180,139 @@ def _count_dong_matches(groups: "list[dict[str, Any]]", target_dong: str) -> int
         return None
 
 
+def _display_cap_impact(
+    categories: "dict[str, dict[str, Any]]",
+    avm: "dict[str, Any] | None",
+    avm_lifted: "dict[str, Any] | None",
+    *,
+    radius_applied: bool,
+) -> "dict[str, Any] | None":
+    """**진단 전용** — 표시 상한이 표본을 얼마나 자르고 시세를 얼마나 움직이는가.
+
+    ★이 필드는 **표시·계산에 쓰지 말 것.** `avm` 이 정본이다. 여기 실리는
+    `price_per_sqm_display_cap_lifted` 는 **아직 채택된 값이 아니다**.
+    이름과 `diagnostic_only=True` 가 유일한 방벽이라 이름을 정확히 쓴다 —
+    관측용 값이 표시로 새는 것이 이 저장소가 반복해서 겪은 사고다.
+
+    존재 이유(D-2): `_MAX_GROUPS_PER_CAT` 은 선언부가 스스로 "마커 상한·페이로드 축소"라고
+    밝히는 **표시용 상수**인데 추정기 표본을 결정한다. 그 절단은 `-count` 정렬이라
+    **거래 많은 단지 쪽으로 편향**된다. 고칠지 말지는 **델타를 재고 나서** 정한다 — 큰 숫자를
+    보고 처방부터 세웠다가 한계수율이 0 이었던 M-4 를 반복하지 않기 위해서다.
+
+    ★리뷰 A-1 정정 — **"uncapped" 는 과대 주장이었다.** `cat["groups"]` 는 지오코딩 **전에**
+    `_MAX_GEOCODE_GROUPS_PER_CAT`(80)으로 사전컷되므로, 여기서 푸는 것은 **표시 상한 28 하나
+    뿐**이고 사전컷 80 은 그대로 걸려 있다. 역삼동에서 사전컷은 거의 확실히 결속 중이다
+    (실측 `apt_trade` `groups_cut=158`). 그래서 이름을 `_display_cap_lifted` 로 바꾸고,
+    사전컷 현황(`geocode_precut_*`)을 **같이 실어** 판독자가 "캡을 풀면 전체 표본"으로
+    오독하지 않게 한다.
+
+    ★리뷰 A-2 정정 — 이 **가격 델타는 `apt_trade`(AVM) 한정**이다. 탁상감정은 이 페이로드에서
+    `land_trade` 만 읽고 `avm` 은 쓰지 않는다(`desk_appraisal_service`). 그런데 캡은 전 카테고리에
+    걸리므로 **돈에 더 가까운 쪽(land_trade → 채택단가 → 토지비 SSOT → NPV/IRR)이 미계측**이었다.
+    가격 델타를 land 로 확장하는 것은 산식이 달라 별건이므로, 우선 **절단량만 전 카테고리로**
+    관측한다(`truncation_by_category`). 절단량이 0 인 카테고리는 "고칠 필요 없음"을 말해 주고,
+    0 이 아니면 그 카테고리의 가격 영향은 **아직 모른다**는 뜻이다.
+
+    필요한 값이 하나라도 없으면 **None**(무날조 — 비교 불가를 0 으로 적지 않는다).
+    """
+    try:
+        # ★거짓 음성 차단 — `radius_applied=False` 가지의 `_compute_avm_summary` 는
+        #   `sample_field` 를 쓰지 않고 `cat["groups"]`(= 이미 캡된 `capped + unresolved`)를
+        #   다시 거른다. 그래서 그 경로에서는 **절단이 실재해도** 두 값이 같아져 `delta_pct=0`
+        #   이 나온다 — "영향 없음"으로 읽히는 **false-healthy** 다. 측정 못 한 것을 0 으로
+        #   적지 않는다. 왜 None 인지는 응답 최상위 `radius_applied` 가 이미 말해 준다.
+        if not radius_applied:
+            return None
+        apt_cat = categories.get("apt_trade") or {}
+
+        # ★★리뷰 B-1 봉합 — **단위는 맞췄는데 모집단이 어긋나 있었다.**
+        #   종전엔 `capped_group_count` 를 실었는데 그건 **정밀·동 대표점을 가리지 않은**
+        #   전체 절단 그룹 수다. 반면 `sample_group_count(_lifted)` 는 **정밀 좌표분만**이다.
+        #   정렬이 정밀분을 앞세우므로, 반경 안에 동 대표점 그룹이 하나라도 있으면 두 수는
+        #   **반드시 갈라진다**. 리뷰어 실측: 정밀 10·동 40 일 때
+        #   `dropped=22` 인데 `delta_pct=0.0` — "22그룹을 잘랐는데 시세 영향 0%" 라는,
+        #   판독자를 **정확히 반대 결론으로** 끌고 가는 문장이 생성됐다(잘린 22개는 AVM 이
+        #   애초에 안 쓰는 동 대표점이므로).
+        #   ★내가 바로 위에 "단위가 섞이면 판독자가 두 수를 빼서 엉뚱한 결론을 낸다"고 주석까지
+        #     달아 놓고, **단위(그룹/건수) 축만 맞추고 모집단(정밀/전체) 축을 놓쳤다.**
+        #     방지하려던 결함 클래스가 축 하나만 옮겨 그대로 재발한 것이다.
+        #   → AVM 표본이 실제로 잃은 양은 두 표본 길이의 차다. 전체 절단 수도 유용하므로
+        #     **이름을 분리해** 병기한다(같은 dict 안에서 두 수가 다른 것은 정상이며, 이름이
+        #     그 차이를 설명해야 한다).
+        n_cap = len(apt_cat.get("_in_radius_groups") or [])
+        n_lift = len(apt_cat.get("_in_radius_groups_uncapped") or [])
+        precut = apt_cat.get("precut") or {}
+
+        truncation: dict[str, Any] = {}
+        for _key, _cat in categories.items():
+            _c = len(_cat.get("_in_radius_groups") or [])
+            _l = len(_cat.get("_in_radius_groups_uncapped") or [])
+            truncation[_key] = {
+                "sample_group_count": _c,
+                "sample_group_count_display_cap_lifted": _l,
+                "dropped_precise_group_count": _l - _c,
+                # 정밀·동 대표점을 **가리지 않은** 전체 절단 수. 위 값과 다른 것이 정상이다.
+                "dropped_all_precisions_group_count": _cat.get("capped_group_count"),
+                # ★리뷰 R5 — 상위 제약(사전컷)도 **카테고리별**로 병기한다. 최상위
+                #   `geocode_precut_*` 는 apt 전용이라, land 를 판독할 때 그걸 보면 틀린다.
+                "geocode_precut_groups_cut": (_cat.get("precut") or {}).get("groups_cut"),
+            }
+
+        # ★★리뷰 R1 봉합 — 종전엔 `avm` 이 없으면 **절단량까지 통째로** None 을 냈다.
+        #   그런데 apt 비교표본이 없는 모집단(농어촌·토지 — 호미곶급)이 정확히 A-2 가 겨냥한
+        #   곳이다. 즉 **가장 알고 싶은 데서 계측이 암전**했다(리뷰어 실행 증거: apt 0건 ·
+        #   land 표시캡 12그룹 절단인데 `display_cap_impact: None`).
+        #   → 가격 델타는 apt AVM 이 있을 때만, **절단량은 `radius_applied` 만으로 항상** 싣는다.
+        #     가격 3종은 계산 불가면 **키를 빼지 않고 None** 으로 둔다 — 키 자체가 사라지면
+        #     소비처가 "이 응답엔 그 개념이 없다"로 읽지만, 실제로는 "못 쟀다"이기 때문이다.
+        _priced = bool(avm and avm_lifted)
+        cur = (avm or {}).get("price_per_sqm") if _priced else None
+        unc = (avm_lifted or {}).get("price_per_sqm") if _priced else None
+        _delta = round((unc - cur) / cur * 100.0, 2) if (cur and unc) else None
+
+        return {
+            # ★소비처 오용 방지 — 이 플래그를 보고도 렌더하면 그건 의도적 오용이다.
+            "diagnostic_only": True,
+            # ★★리뷰 MAJOR-2 봉합 — **최상위 카운트·가격은 전부 `apt_trade` 전용**인데 이름에
+            #   그 사실이 없었다. R1 이 "최상위는 0 인데 카테고리별은 12" 인 상태를 **새로
+            #   도달 가능하게** 만들었으므로(apt 표본 0 · land 12절단), 최상위만 훑는 판독자는
+            #   "절단 0" 으로 읽는다. 값이 거짓은 아니지만(apt 에 대해 참) 이름이 범위를
+            #   말하지 않으면 그건 판독자 책임이 아니다. 전 카테고리 수치는
+            #   `truncation_by_category` 에 있다.
+            "price_delta_category": "apt_trade",
+            # ── 가격 델타(`apt_trade`/AVM 한정 — 표본이 없으면 None) ──
+            "sample_group_count": n_cap,
+            "sample_group_count_display_cap_lifted": n_lift,
+            "sample_deal_count": (avm or {}).get("comparable_count") if _priced else None,
+            "sample_deal_count_display_cap_lifted": (
+                (avm_lifted or {}).get("comparable_count") if _priced else None
+            ),
+            "dropped_precise_group_count": n_lift - n_cap,
+            "dropped_all_precisions_group_count": apt_cat.get("capped_group_count"),
+            "price_per_sqm": cur,
+            "price_per_sqm_display_cap_lifted": unc,
+            "delta_pct": _delta,
+            "confidence_score": (avm or {}).get("confidence_score") if _priced else None,
+            "confidence_score_display_cap_lifted": (
+                (avm_lifted or {}).get("confidence_score") if _priced else None
+            ),
+            # ── 상위 제약(A-1) — 이걸 안 실으면 "캡을 풀면 전체 표본"으로 오독한다 ──
+            "geocode_precut_budget": precut.get("budget"),
+            "geocode_precut_groups_cut": precut.get("groups_cut"),
+            # ── 절단량은 전 카테고리(A-2) — 가격 델타는 apt_trade 한정임을 이름이 말한다 ──
+            "truncation_by_category": truncation,
+        }
+    except Exception:  # noqa: BLE001 — 진단이 본로직을 깨지 않는다
+        # ★리뷰 R2 — 이 try 는 **이 함수 안**만 보호한다. 호출부의 `avm_lifted` 계산
+        #   (`_compute_avm_summary(..., sample_field=...)`)은 이 밖이라 여기서 못 막는다.
+        #   위험은 낮다(lifted 표본은 canonical 의 상위집합이고 원소 형상이 같다)지만,
+        #   "진단이 본로직을 깨지 않는다"는 주장은 **이 함수 범위 한정**임을 명시해 둔다.
+        # ★무성 실패 금지 — 로그가 없으면 진단기가 스스로 깨져도 "avm 없음/반경 미적용"과
+        #   구분 불가하게 None 으로 수렴한다("관측전용은 스모크 없으면 무성회귀").
+        logger.warning("표시상한 영향 계측 실패 — 진단 필드를 None 으로 낸다", exc_info=True)
+        return None
+
+
 def _precut_accounting_mismatch(
     categories: "dict[str, dict[str, Any]]", geocode_precut: int
 ) -> bool:
@@ -343,8 +476,90 @@ class NearbyMapService:
                 "dong_prior_active": bool(target_dong),
                 # ★티켓의 핵심 질문: 대상 동 일치 그룹이 예산을 넘었는가(before > budget)?
                 #   그리고 그중 몇이 살아남았는가(kept)? 둘의 차가 프라이어 포화도다.
-                #   ★`active is True` 인데 `before == 0` 이면 **표기 규약 불일치 경보**다
-                #     (H-4 가 정확히 그 형태였다 — `umdNm` 이 두 토큰인데 완전일치 비교).
+                # ★★`active is True` 인데 `before == 0` 인 조합의 해석 — **경보가 아니라
+                #   "확인 필요"다**(2026-08-05 프로덕션 첫 실사용에서 정정).
+                #   종전 주석은 이 조합을 **표기 규약 불일치 경보**라고 단정했는데(H-4 가 그
+                #   형태였다 — `umdNm` 이 두 토큰인데 완전일치 비교였다), 실제로 호미곶에서
+                #   이 조합이 떴을 때 원인은 규약 불일치가 **아니었다**: 대상 법정동(대보리)에
+                #   3개월 실거래가 **진짜 0건**이었다(관측된 동이 오천읍 용덕리·구정리, 대송면
+                #   송동리·제내리, 송도동, 효자동, 일월동 뿐). 즉 이 조합은 **다섯 원인**을 포함한다:
+                #     (1) 표기 규약 불일치 — 우리 **정규화**가 `umdNm` 형태를 못 따라간다.
+                #                            수정 지점은 `_dong_tail`.               → **조사 대상**
+                #     (2) 대상 동 무자료   — 그 동에 해당 카테고리 거래가 없다.        → **정상**
+                #     (3) 대상 동 오추출   — `target_dong_hint` **자체가** `umdNm` 과 영영 안 맞는
+                #                            표기다. 주소가 **행정동**이면 `_dong_from_address` 가
+                #                            그대로 뽑아 온다. 두 서브클래스가 있다:
+                #                              (3a) 접두 유사 — `"길음1동"` vs `"길음동"`, `"우1동"` vs `"우동"`
+                #                              (3b) **병합 행정동** — `"청운효자동"` 관할 법정동은
+                #                                   통인동·누하동·누상동·옥인동…, `"종로1·2·3·4가동"`
+                #                                   관할은 관철동·견지동·공평동. **이름이 전혀 안 겹친다.**
+                #                            수정 지점은 `_dong_from_address`(D-1 계열). → **조사 대상**
+                #     (4) 시군구 오지정    — `lawd_cd`/`sigungu_hint` 가 틀려 **딴 시군구 행**이
+                #                            들어왔다. `build()` 는 세 인자를 독립으로 받고 정합성
+                #                            불변식이 없다. 이 서브시스템에서 **실제로 났다**(#535 —
+                #                            시군구를 중개사무소 소재지에서 가져오던 한 줄). → **조사 대상**
+                #     (5) 그룹 키 병합     — `key = name or jibun or dong` 이고 그룹 대표 `dong` 은
+                #                            **첫 행의 것**이라, 대상 동 거래가 **다른 동 이름으로
+                #                            대표되는 그룹에 흡수**되면 matched=0 인데 거래는 **실재**한다.
+                #                            건물명이 없는 카테고리(토지·단독다가구)는 키가 지번으로
+                #                            강등되고 `"1-1"`·`"산1-1"` 같은 지번은 한 시군구의 거의
+                #                            모든 법정동에 있으므로 병합은 **예외가 아니라 상시**다.
+                #                            수정 지점은 `_group_trade`/`_group_rent` 키·대표동. → **조사 대상**
+                #   ★리뷰 차단 2회 봉합 — 초판은 (3)을 통째로 빠뜨렸고, 2판은 (3)을 넣고도
+                #     "무관한 동만 보이면 (2)"라는 분기가 **(3b) 병합 행정동을 정상으로 닫았다**.
+                #     행정동은 **정의상 병합명**이라 (3b)가 예외가 아니라 **구조적 다수**다 —
+                #     즉 2판 규칙은 그 서브클래스에서 origin/main 의 "전부 경보"보다 탐지력이 낮았다.
+                #     거짓양성보다 거짓음성이 나쁘다는 서열(W2-b·#497·W2-c)을 스스로 어긴 것이다.
+                #   가르는 법(순서대로 — ★★**어느 단계도 "정상"으로 종결하지 않는다**):
+                #     ① **수집이 성공했는데** `groups_before == 0` 이면 카테고리 전체 무자료다
+                #        (즉답 — 동 문제 아님). ★`_collect` 가 예외를 삼키므로 **조회가 전면
+                #        실패해도** `groups_before == 0` 이 된다 — 최상위 `fetch_failed`/
+                #        `partial_failed`/`data_source` 를 **먼저** 볼 것. 이 코드블록이 스스로
+                #        "0 과 미확보를 같은 기호로 쓰지 않는다"고 못 박아 놓고 ①이 그걸 어겼다.
+                #     ② `lawd_cd` 가 대상지 시군구 코드와 맞는가? `sigungu_source == "row_fallback"` 인가?
+                #        둘 중 하나라도 어긋나면 **(4)**.
+                #        ★대상지 코드는 **법정동코드 앞 5자리**다 — ③과 **같은 표**(juso.go.kr)를 쓴다.
+                #          ③에만 조회 경로를 적고 ②엔 안 적었던 비대칭을 해소한다.
+                #        ★`row_fallback` 절은 **보조 신호**다 — 이 서명(`matched_before == 0`)을
+                #          실제로 생산하는 것은 `lawd_cd` 오지정 쪽뿐이다. `sigungu_hint` 는
+                #          `_query` 에만 들어가고 그룹의 `dong`(=`umdNm`)에는 영향이 없어
+                #          매칭 카운트를 바꿀 수 없다(위양성만 만들고 위음성은 안 만든다).
+                #        ★`sigungu_hint` **단독 대조는 (4)의 증거가 될 수 없다** — 힌트는 호출부가
+                #          안 주면 주소에서 도출되므로(`sigungu_hint or sigungu_hint_from_address`),
+                #          `lawd_cd` 만 틀린 경우 **힌트는 정확**하고 행의 진짜 시군구는 응답에서
+                #          사라진다(그룹 시군구가 힌트로 덮인다). 2판 규칙은 이 절반을 놓쳤다.
+                #     ③ `target_dong_hint` 가 **법정동인가**? 행정동이면 **(3)**.
+                #        ★이건 **문자열 판정이 아니다** — 법정동코드 목록(juso.go.kr)으로 **조회**해야
+                #          한다. "숫자 접미"는 휴리스틱일 뿐이고 반례가 이 저장소에 이미 있다:
+                #          `"을지로2가"`·`"충무로1가"` 는 숫자를 포함한 **법정동**이다
+                #          (`test_dong_from_address_stops_at_jibun` 이 그 형태를 잠근다).
+                #     ④ 관측 `dong` 분포와 대조 — 같은 동의 **다른 표기**가 보이면 **(1)**.
+                #     ④-b ★(5) 병합의 **값싼 1차 단서** — `jibun` 이 있는데
+                #        `coord_precision == "dong"`(= `location_status == "approximate"`)인 그룹이
+                #        있는가? `_finalize` 가 법정동이 둘 이상이면 `"dong"` 으로 강등하므로
+                #        그 조합 자체가 **다동 병합 서명**이고 **응답에 이미 실려 있다**.
+                #        ⑤의 "MOLIT 원자료 확인"보다 훨씬 싸다.
+                #        ★확증은 아니다 — `_refined_mismatch` 도 같은 강등을 하므로 **강한 단서**일 뿐.
+                #     ★★⑤ **여기서 "정상"으로 닫지 말 것.** 관측 분포로는 (2)와 (5)를 **구별할 수
+                #        없다** — 대상 동 거래가 다른 동 이름의 그룹에 흡수되면 서명이 (2)와 같다.
+                #        (2)로 닫으려면 **대상 동의 원천 거래 유무를 직접 확인**해야 한다(MOLIT 원자료).
+                #        그 확인 전에는 **"미확인"** 이지 "정상"이 아니다.
+                #        ★이 규칙을 **비종결**로 만든 이유 — 3차 리뷰까지 오는 동안 원인이
+                #          (1)(2) → (3) → (4) → (5) 로 계속 늘었다. 열거를 늘리는 방식은
+                #          다음 라운드에 (6)이 나오면 또 뚫린다. **열거 완결성에 의존하지 않는
+                #          fail-safe** 로 바꾸는 것이 이 루프를 끝내는 수정이다
+                #          (거짓양성 < 거짓음성 서열과도 일치).
+                #     ※ (2) 의 "정상"은 **요청 `months` 창 기준**이다 — 창을 넓히면 나올 수 있다.
+                #   ★가중 신호(증명 아님) — (1)·(3)·(4)는 **힌트 축** 결함이라 `matched_before == 0`
+                #     이 **전 카테고리에서 동시에** 나타난다. (2)는 대개 일부 카테고리만 0 이다.
+                #     `precut` 이 카테고리별로 실리므로 추가 계산 0 으로 얻을 수 있다.
+                #     단 "대상 동에 전 카테고리 거래가 진짜 0" 인 경우가 있으므로 **증명이 아니다**.
+                #   ★부분일치 카운터를 하나 더 실어 자동 분리하는 안은 **기각**했다 —
+                #     `"중동"` 이 `"중동리"` 에 부분일치하는 식의 위양성을 새로 만들고(실측 확인),
+                #     그러면 이 주석이 고치려는 오독을 **다른 형태로 재생산**한다(관측 장치가 결함
+                #     클래스를 만든 F-2/N-1 계열). 판별은 사람이 동 분포와 대조한다.
+                #     ※ 관측된 `dong` 집합 자체를 실어 ②를 눈으로 하게 만드는 안(원시 관측이라
+                #        위양성 결함 클래스를 원리적으로 못 만든다)은 **후속 티켓**으로 남긴다.
                 "dong_matched_group_count_before": _matched_before,
                 "dong_matched_group_count_kept": _matched_kept,
             }
@@ -471,6 +686,27 @@ class NearbyMapService:
             #   "반경 N 안에서 **위치가 확인된**"이라고 주장하므로, 동 대표점·다동 병합
             #   그룹을 넣으면 그 문장이 거짓이 된다(W1이 프론트에서 봉합한 것과 동일 결함).
             cat["_in_radius_groups"] = precise
+            # ★D-2 그림자 계측 — **표시용 상한이 추정기 표본을 결정하고 있다.**
+            #   `_MAX_GROUPS_PER_CAT` 은 선언부가 스스로 "카테고리별 **마커** 상한 —
+            #   지오코딩 부하·**페이로드 축소**"라고 밝히는 표시/전송용 상수인데, `precise` 가
+            #   `capped` 에서 나오므로 그 상수가 AVM·탁상감정 표본까지 자른다.
+            #   라이브 실측(2026-08-05 역삼동): 반경 1,500m·6개월에서 `apt_trade` 의 반경 통과
+            #   **정밀** 그룹 52개 중 **24개(46%)가 표시 상한 때문에 폐기**됐다.
+            #   ★리뷰 A-2 정정 — 초판은 이 파라미터를 "탁상감정 자신의 것"이라 썼는데,
+            #     탁상감정은 이 페이로드에서 **`land_trade` 만** 읽고 `avm` 은 쓰지 않는다
+            #     (`desk_appraisal_service`). 파라미터가 같다는 것과 **같은 카테고리를 본다는 것은
+            #     다른 말**이다. 아래 그림자 계측의 **가격 델타는 `apt_trade` 한정**이고,
+            #     `land_trade` 는 **절단량만**(`truncation_by_category`) 관측한다.
+            #   그리고 그 절단은 `-count` 정렬이라 **거래 많은 단지 쪽으로 편향**된다.
+            #   ★그런데 이 값은 사용자에게 보이는 **시세·감정 단가**다. 계측 없이 바꾸면
+            #     "얼마나 달라지는지 모르는 채" 금액을 흔드는 것이다 — M-4 에서 큰 숫자(73.8%)를
+            #     보고 처방부터 세웠다가 한계수율이 사실상 0 이었던 실수를 그대로 반복하게 된다.
+            #   → **이 PR 은 아무 금액도 바꾸지 않는다.** 캡 없는 표본으로 같은 산식을 돌린 값을
+            #     진단 전용으로 병기해 프로덕션에서 **델타를 먼저 재고**, 그 근거로 전환을 판정한다.
+            #   페이로드 비용 0 — 이 필드는 응답 직전 제거된다(`_in_radius_groups` 와 동일).
+            cat["_in_radius_groups_uncapped"] = [
+                g for g in resolved if g.get("coord_precision") != "dong"
+            ]
             # 카운트도 분리 노출한다. 하나로 합치면 프론트가 "반경 내 N건"으로 오독한다.
             #   ★`count_in_radius` 는 **정밀 좌표분**만 센다 — 이 이름으로 소비되는 곳이
             #   전부 "반경 안이라고 말해도 되는 건수"를 원하기 때문이다.
@@ -515,8 +751,18 @@ class NearbyMapService:
                 "수집된 아파트 실거래는 있으나 가격·면적 정보가 부족해 시세를 산정하지 "
                 "못했습니다(거래가 없는 것이 아닙니다)."
             )
+        # ★D-2 그림자 계측 — 표시 상한이 **없었다면** 같은 산식이 얼마를 냈을지 병기한다.
+        #   `avm` 자체는 **한 글자도 바뀌지 않는다**(전환은 이 델타를 프로덕션에서 읽은 뒤).
+        avm_lifted = self._compute_avm_summary(
+            categories.get("apt_trade"), radius_applied=radius_applied, radius_m=radius_m,
+            sample_field="_in_radius_groups_uncapped",
+        )
+        display_cap_impact = _display_cap_impact(
+            categories, avm_summary, avm_lifted, radius_applied=radius_applied,
+        )
         for _cat in categories.values():
             _cat.pop("_in_radius_groups", None)
+            _cat.pop("_in_radius_groups_uncapped", None)
 
         result: dict[str, Any] = {
             "center": center or {"lat": None, "lon": None, "address": address},
@@ -574,6 +820,13 @@ class NearbyMapService:
             "avm_caveat": avm_caveat,
             # 구 이름 호환(같은 값) — 외부 소비처가 있을 수 있어 한 릴리스 유지.
             "avm_unavailable_reason": avm_caveat,
+            # ★D-2 **진단 전용**(표시 금지) — 표시용 상한 `_MAX_GROUPS_PER_CAT` 이 표본을
+            #   얼마나 자르고 시세를 얼마나 움직이는지. `avm` 이 정본이며 이 PR 은 그것을
+            #   바꾸지 않는다. 이 델타를 프로덕션에서 읽은 뒤에 전환 여부를 판정한다.
+            #   ★가격 델타는 `apt_trade`(AVM) 한정이고, **절단량은 전 카테고리**로 싣는다
+            #     (`truncation_by_category`) — 탁상감정은 `land_trade` 를 쓰므로 apt 만 보면
+            #     돈에 더 가까운 쪽이 미계측으로 남는다(리뷰 A-2).
+            "display_cap_impact": display_cap_impact,
         }
 
         # ★정직 표기: 공공데이터 조회 실패와 "거래 0건(실제 없음)"을 구분한다.
@@ -1007,6 +1260,7 @@ class NearbyMapService:
         *,
         radius_applied: bool = False,
         radius_m: int | None = None,
+        sample_field: str = "_in_radius_groups",
     ) -> dict[str, Any] | None:
         """아파트 매매 실거래 그룹(**반경 통과분만**) 통계로 AI 시세(AVM) 요약을 계산한다.
 
@@ -1030,7 +1284,10 @@ class NearbyMapService:
         # ★반경 필터가 적용된 경우에만 통과분으로 한정한다. 미적용(중심좌표 없음 등)이면
         #   반경 개념 자체가 없으므로 종전처럼 전체를 쓰되, 아래 basis가 그 사실을 밝힌다.
         if radius_applied:
-            groups = cat.get("_in_radius_groups") or []
+            # ★D-2 그림자 계측 — 기본값은 종전과 **완전히 동일**(`_in_radius_groups`).
+            #   `sample_field` 는 "표시 상한이 없었다면 얼마였을까"를 같은 산식으로 재계산하기
+            #   위한 주입점일 뿐이며, 이 인자를 주지 않는 호출부의 동작은 한 글자도 바뀌지 않는다.
+            groups = cat.get(sample_field) or []
             if not groups:
                 # ★반경 안에 비교 대상이 없다 → **None**(기존 계약 유지 — 소비처가
                 #   `payload.avm ?? null`로 읽어 "미제공"으로 graceful 처리한다).

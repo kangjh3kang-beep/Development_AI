@@ -780,12 +780,34 @@ async def test_precut_makes_dong_prior_saturation_observable() -> None:
 
 
 @pytest.mark.asyncio
-async def test_precut_flags_dong_notation_mismatch_as_zero_matches() -> None:
-    """★H-4 재발 자동탐지 — 프라이어가 '켜졌는데' 일치가 0건이면 표기 규약이 어긋난 것이다.
+async def test_precut_zero_matches_is_ambiguous_not_an_alarm() -> None:
+    """★`active=True && matched_before==0` 은 **경보가 아니라 "확인 필요"**다.
 
-    H-4 가 정확히 그 형태였다: `umdNm` 이 "호미곶면 대보리" 두 토큰인데 완전일치 비교라
-    프라이어가 **한 그룹도 앞당기지 못하고** 조용히 건수 정렬로 돌아갔다. 그때는 그 상태를
-    응답에서 볼 수 없었다. 이제 `active=True && matched_before==0` 조합이 경보로 읽힌다.
+    ★이 테스트의 종전 이름은 `..._flags_dong_notation_mismatch_...` 였고 독스트링은 이 조합을
+    **표기 규약 불일치 경보**라고 단정했다. 그런데 **이 테스트가 실제로 구성하는 것은
+    규약 불일치가 아니라 "대상 동 무자료"** 다 — 픽스처의 `dong` 은 `"다른동"` 하나뿐이고
+    우리 정규화(`_dong_tail`)는 정상 동작한다. 이름과 내용이 어긋나 있었다.
+
+    2026-08-05 프로덕션 첫 실사용이 그것을 드러냈다: 호미곶에서 이 조합이 떴고 원인은
+    규약 불일치가 **아니라** 대보리에 3개월 실거래가 진짜 0건인 정상 상태였다.
+    조합의 **세 원인**:
+      (1) 표기 규약 불일치 — **정규화**(`_dong_tail`)가 `umdNm` 형태를 못 따라간다(**조사 대상**)
+      (2) 대상 동 무자료   — 그 동에 해당 카테고리 거래가 없다(**정상**)
+      (3) 대상 동 오추출   — `target_dong_hint` **자체가** `umdNm` 과 영영 안 맞는 표기다
+                             (행정동 `"길음1동"` vs 법정동 `"길음동"`). `_dong_from_address` 계열.
+                             관측 서명이 (2)와 **겹치는데 의미는 정반대**다(프라이어 무음 정지).
+                             → `test_precut_zero_matches_from_admin_dong_extraction` 이 잠근다.
+    가르는 법(순서대로): ①`groups_before == 0` 이면 카테고리 전체 무자료(즉답) ②아니면
+    `target_dong_hint` 를 관측 `dong` 분포와 대조 — 같은 동의 다른 표기면 (1) · 유사하지만 다른
+    이름이면 (3) · 무관한 동만 보이면 (2).
+
+    ★(1)의 회귀락 **귀속을 정정**한다(리뷰 지적). 두 축이 따로 잠긴다:
+      - **프로덕션 정렬키** 축 → `test_precut_prior_works_for_eup_myeon_dong_format`
+        (정렬키를 완전일치로 되돌리는 변이를 이쪽이 잡는다)
+      - **계측 카운터** 축 → `test_precut_makes_dong_prior_saturation_observable`
+        (`matched_before == 85` 요구)
+      초판 독스트링은 saturation 하나만 지목했는데, 실제로 정렬키 변이는 saturation 을
+      **통과한다**(픽스처의 `count` 가 전부 1이라 stable sort 가 순서를 보존한다).
     """
     nm._BUILD_CACHE.clear()
     rows = [_row(name="", jibun="1-1", dong="다른동", price=50000, day=1)]
@@ -796,11 +818,199 @@ async def test_precut_flags_dong_notation_mismatch_as_zero_matches() -> None:
         address="경상북도 남구 대상동 9-9", lawd_cd="47111", months=1, radius_m=1000,
         center_hint={"lat": 36.0, "lon": 129.0},
     )
-    pre = payload["categories"]["apt_trade"]["precut"]
+    cat = payload["categories"]["apt_trade"]
+    pre = cat["precut"]
     assert payload["target_dong_hint"] == "대상동"
     assert payload["target_dong_source"] == "address"
     assert pre["dong_prior_active"] is True
     assert pre["dong_matched_group_count_before"] == 0
+    # ★판별 규칙 ① — 카테고리 자체가 무자료면 동 문제가 아니다. 이 픽스처는 거래가 **있는**
+    #   상태여야 (1)(2)(3) 판별 대상이 된다(리뷰 지적: 이 선행 조건이 규칙에 빠져 있었다).
+    assert pre["groups_before"] == 1
+    # ★판별 규칙 ② 의 재료 — 관측된 동 분포가 응답에 남아 있어야 사람이 대조할 수 있다.
+    #   이 단언과 `test_precut_zero_matches_from_admin_dong_extraction` 의 같은 단언이
+    #   "판별 재료가 응답에서 사라지는 회귀"를 잡는다(리뷰어 A/B/C 대조 + 응답전용 변이로 확인).
+    #   ※ 초판 주석은 "저장소에서 유일하게"라고 썼는데, (3) 골든이 추가되며 stale 이 됐다.
+    observed = {(g.get("dong") or "") for g in cat["groups"]}
+    assert observed == {"다른동"}
+    # (문서용 — 위 단언에 **함의되어 항상 참**이다. 잠금이 아니라 판별 규칙의 실행가능 서술이며,
+    #  변이 6종 어디서도 발화하지 않음을 리뷰어가 확인했다. 정직하게 라벨링해 둔다.)
+    assert not any(nm._dong_tail(d) == "대상동" for d in observed)
+
+
+@pytest.mark.asyncio
+async def test_precut_zero_matches_from_admin_dong_extraction() -> None:
+    """★원인 (3) — **행정동 표기 주소**가 법정동과 영영 안 맞아 프라이어가 무음 정지한다.
+
+    ★리뷰 차단 봉합. 정정 초판은 원인을 (1)(2) 둘로만 적고 "대상 동이 어떤 형태로도 없으면
+    (2) 정상"이라고 규정했는데, 그 규칙이 이 케이스를 **정상으로 닫아버린다**.
+    실제 의미는 정반대다 — `target_dong_hint` 자체가 틀려 프라이어의 1순위 항이 전 그룹에서
+    상수로 붕괴한 상태이고, 이 파일이 이미 D-1 로 문서화한 결함 클래스다.
+
+    MOLIT `dong` 은 **법정동**(`umdNm`)인데 사용자가 **행정동**으로 검색하면 갈린다:
+      행정동 "길음1동" / "우1동"  vs  법정동 "길음동" / "우동"
+    `_dong_from_address` 는 주소에 적힌 표기를 그대로 뽑으므로 이 어긋남을 알지 못한다.
+
+    관측 서명이 (2)와 겹치므로 **자동 분리는 하지 않는다**(부분일치 카운터는 위양성을
+    새로 만든다 — 실측 `"중동" in "중동리"` 는 참이다). 대신 이 골든이 (3)이 실재하고
+    (2)와 구별 가능한 형태로 관측된다는 사실을 박아, 다음 사람이 판별 규칙에서
+    (3)을 지우지 못하게 한다.
+
+    ★★이 골든은 **알려진 결함의 특성화(characterization)** 다 — 단언하는 값들
+    (`target_dong_hint == "길음1동"`, `matched_before == 0`)은 **현재의 잘못된 동작**이다.
+    `_dong_from_address` 가 행정동을 다루게 되면(= (3)의 정당한 수정) 이 골든은 **깨져야 하며,
+    그때는 회귀가 아니라 flip 대상**이다. 라벨이 없으면 다음 사람이 정당한 수정을 회귀로
+    오독한다(리뷰 R-5).
+
+    ★이 픽스처는 (3a) **접두 유사** 서브클래스다. (3b) **병합 행정동**은 관할 법정동과 이름이
+    전혀 안 겹쳐 판별 규칙 ④에서 (2)로 오분류되므로 별도 골든
+    (`test_precut_zero_matches_from_merged_admin_dong`)이 담당한다.
+    """
+    nm._BUILD_CACHE.clear()
+    # 법정동은 "길음동" — 사용자는 행정동 "길음1동" 으로 검색했다.
+    rows = [_row(name="", jibun="1-1", dong="길음동", price=50000, day=1)]
+    geocode_map = {"서울특별시 성북구 길음동 1-1": {"lat": 36.0005, "lon": 129.0005}}
+    svc = _service(rows, geocode_map)
+
+    payload = await svc.build(
+        address="서울특별시 성북구 길음1동 100-1", lawd_cd="11290", months=1, radius_m=1000,
+        center_hint={"lat": 36.0, "lon": 129.0},
+    )
+    cat = payload["categories"]["apt_trade"]
+    pre = cat["precut"]
+
+    # 추출은 "성공"한 것처럼 보인다 — source 가 address 이고 prior 도 active 다.
+    assert payload["target_dong_hint"] == "길음1동"
+    assert payload["target_dong_source"] == "address"
+    assert pre["dong_prior_active"] is True
+    # 그런데 매칭은 0 — (2) 무자료와 **같은 서명**이다.
+    assert pre["dong_matched_group_count_before"] == 0
+    # ★판별 규칙 ① 통과: 카테고리에 거래는 있다(무자료가 아니다).
+    assert pre["groups_before"] == 1
+    # ★판별 규칙 ②: 관측된 동이 **유사하지만 다른 이름**이면 (3)이다.
+    #   "무관한 동만 보이면 (2)" 와 갈리는 지점이 정확히 여기다.
+    observed = {(g.get("dong") or "") for g in cat["groups"]}
+    assert observed == {"길음동"}
+    # (문서용 — 위 두 단언에 **함의되어 항상 참**이다. 잠금이 아니라 (3a) 서브클래스의
+    #  실행가능 서술이며, 실패 메시지를 달지 않는다. 리뷰 R-2 지적: 같은 PR 안에서 W2-c
+    #  "가짜 골든" 클래스를 재생산하지 않기 위해 정직하게 라벨링한다.
+    #  `observed.pop()` 은 단언 표현식 안에서 set 을 소비해 뒤에 단언을 추가하면 조용히
+    #  깨지므로 리터럴로 바꿨다(R-3).)
+    assert payload["target_dong_hint"] not in observed
+    assert payload["target_dong_hint"].startswith("길음")
+
+
+@pytest.mark.asyncio
+async def test_precut_zero_matches_from_merged_admin_dong() -> None:
+    """★(3b) **병합 행정동** — 관할 법정동과 이름이 **전혀 안 겹친다**.
+
+    ★리뷰 차단(B-1) 봉합. 2판 판별 규칙의 "무관한 동만 보이면 (2) 정상" 분기가 이 케이스를
+    **정상으로 닫아버렸다**. 행정동은 **정의상 병합명**이라 이건 예외가 아니라 **구조적 다수**다:
+      `"청운효자동"`  관할 법정동 = 청운동·신교동·궁정동·효자동·창성동·통인동·누상동·누하동·옥인동
+      `"종로1·2·3·4가동"` 관할 = 관철동·견지동·공평동·인사동…
+    즉 (3a) 접두 유사(`"길음1동"`/`"길음동"`)와 달리 **문자열 유사도가 0** 이라, 사람이
+    "유사하지만 다른 이름"을 찾는 규칙으로는 잡히지 않는다.
+
+    → 판별 규칙에 **③ `target_dong_hint` 가 법정동인가?** 를 ④ 앞에 두어야 한다.
+      행정동이면 관할 법정동과 이름이 안 겹치는 것이 **정상 동작**이므로 (3)이다.
+
+    이 골든도 **알려진 결함의 특성화**다 — `_dong_from_address` 가 행정동을 다루게 되면
+    깨져야 하고, 그때는 회귀가 아니라 flip 대상이다.
+
+    ★리뷰 R-b 정정 — 커밋 메시지에 "변이로 **단독** CAUGHT" 라고 썼는데 **과장**이었다.
+    리뷰어가 변이 14종을 돌린 결과 이 골든만 잡는 변이는 0 이었고, 저자가 든 변이도
+    `test_dong_from_address_stops_at_jibun` 이 **함께** 잡는다. 공허하지는 않지만
+    (여러 변이에서 실제로 발화한다) **고유 kill 은 없다**. 그래도 유지하는 이유는 (3b)가
+    (2)와 서명이 겹치는 **구조적 다수**임을 규칙과 나란히 박아 두기 위해서다.
+    """
+    nm._BUILD_CACHE.clear()
+    # 법정동은 통인동·누하동 — 사용자는 병합 행정동 "청운효자동" 으로 검색했다.
+    rows = [
+        _row(name="", jibun="1-1", dong="통인동", price=50000, day=1),
+        _row(name="", jibun="2-2", dong="누하동", price=51000, day=2),
+    ]
+    geocode_map = {
+        "서울특별시 종로구 통인동 1-1": {"lat": 36.0005, "lon": 129.0005},
+        "서울특별시 종로구 누하동 2-2": {"lat": 36.0006, "lon": 129.0006},
+    }
+    svc = _service(rows, geocode_map)
+    payload = await svc.build(
+        address="서울특별시 종로구 청운효자동 100-1", lawd_cd="11110", months=1, radius_m=1000,
+        center_hint={"lat": 36.0, "lon": 129.0},
+    )
+    cat = payload["categories"]["apt_trade"]
+    pre = cat["precut"]
+
+    # 추출은 "성공"한 것처럼 보인다.
+    assert payload["target_dong_hint"] == "청운효자동"
+    assert payload["target_dong_source"] == "address"
+    assert pre["dong_prior_active"] is True
+    # 매칭 0 — (2) 무자료와 **같은 서명**.
+    assert pre["dong_matched_group_count_before"] == 0
+    # 판별 규칙 ①: 거래는 있다(카테고리 무자료 아님).
+    assert pre["groups_before"] == 2
+    # ★★핵심 — 관측된 동이 대상 힌트와 **문자열 유사도 0** 이다. 그래서 "유사하지만 다른
+    #   이름" 규칙으로는 (3)으로 못 가고, 규칙 ③(법정동인가?)이 없으면 (2)로 잘못 닫힌다.
+    observed = {(g.get("dong") or "") for g in cat["groups"]}
+    assert observed == {"통인동", "누하동"}
+    # (문서용 — 위 두 리터럴 단언에 **함의되어 항상 참**이다. (3a) 골든과 **동일하게** 라벨링하고
+    #  실패 메시지를 달지 않는다. 리뷰 R-a: 앞선 골든엔 정직 라벨을 붙여 놓고 여기엔 안 붙여
+    #  같은 PR 안에서 W2-c "가짜 골든" 클래스를 재생산했다.)
+    assert all(not payload["target_dong_hint"].startswith(d[:2]) for d in observed)
+
+
+@pytest.mark.asyncio
+async def test_precut_zero_matches_from_group_key_merge() -> None:
+    """★원인 (5) — 대상 동 거래가 **다른 동 이름의 그룹에 흡수**돼 matched=0 이 된다.
+
+    ★3차 리뷰 차단(B-1) 봉합. 그룹 키는 `name or jibun or dong` 이고 그룹 대표 `dong` 은
+    **첫 행의 것**이다. 건물명이 없는 카테고리(토지·단독다가구)는 키가 **지번**으로 강등되는데
+    `"1-1"`·`"산1-1"` 같은 지번은 한 시군구의 거의 모든 법정동에 존재한다 —
+    즉 병합은 **예외가 아니라 상시**다.
+
+    ★이 서명은 (2) 무자료와 **구별 불가능**하다: `groups_before > 0` · `matched_before == 0` ·
+    관측 동에 대상 동 없음. 그런데 **대상 동 거래는 실재한다**(여기선 2건).
+    그래서 판별 규칙 ④를 **"정상"으로 종결하지 않게** 바꿨다 — 열거를 늘리는 방식은
+    다음 라운드에 (6)이 나오면 또 뚫린다.
+
+    이 골든이 잠그는 것은 **그 상태가 도달 가능하다는 사실**이다(변이가 아니라 프로덕션
+    `build()` 경로로 재현). 규칙에서 (5)를 지우거나 ④를 다시 종결형으로 되돌리면
+    이 픽스처가 반례로 남는다.
+    """
+    nm._BUILD_CACHE.clear()
+    # 같은 지번 "1-1" 이 두 법정동에 존재 — 첫 행이 "다른동" 이라 그룹 대표 동이 그것으로 잡힌다.
+    rows = [
+        _row(name="", jibun="1-1", dong="다른동", price=50000, day=1),
+        _row(name="", jibun="1-1", dong="대상동", price=51000, day=2),
+        _row(name="", jibun="1-1", dong="대상동", price=52000, day=3),
+    ]
+    geocode_map = {"경상북도 남구 다른동 1-1": {"lat": 36.0005, "lon": 129.0005}}
+    svc = _service(rows, geocode_map)
+    payload = await svc.build(
+        address="경상북도 남구 대상동 9-9", lawd_cd="47111", months=1, radius_m=1000,
+        center_hint={"lat": 36.0, "lon": 129.0},
+    )
+    cat = payload["categories"]["apt_trade"]
+    pre = cat["precut"]
+
+    # 서명은 (2) 무자료와 **완전히 같다**.
+    assert payload["target_dong_hint"] == "대상동"
+    assert pre["dong_prior_active"] is True
+    assert pre["dong_matched_group_count_before"] == 0
+    assert pre["groups_before"] == 1
+    observed = {(g.get("dong") or "") for g in cat["groups"]}
+    assert observed == {"다른동"}
+
+    # (문서용 — 이 값은 위 `groups_before == 1` 과 픽스처 3행에 **함의되어 항상 참**이고,
+    #  3행이 전부 "다른동"이어도 성립하므로 대상 동 거래의 실재를 **증명하지 못한다**.
+    #  ★리뷰 정정: (2)와 (5)를 실제로 가르는 것은 **픽스처가 대상 동 2건을 담고 있다는 사실**이지
+    #  이 단언이 아니다. 응답만으로는 규칙 ④-b(`jibun` 이 있는데 `coord_precision == "dong"`)가
+    #  값싼 1차 단서다 — 이 그룹이 정확히 그 서명을 갖는다.)
+    assert cat["groups"][0]["count"] == 3
+    assert cat["groups"][0]["coord_precision"] == "dong", (
+        "다동 병합 서명(④-b) — 지번이 있는데 정밀도가 dong 으로 강등된 상태여야 한다"
+    )
+    assert cat["groups"][0]["jibun"] == "1-1"
 
 
 def test_precut_accounting_detector_actually_fires() -> None:
@@ -845,3 +1055,312 @@ async def test_precut_accounting_detector_is_actually_wired(monkeypatch) -> None
     assert payload["precut_accounting_mismatch"] is True, (
         "응답이 탐지기 결과를 따라오지 않는다 — 호출부가 상수로 대체됐거나 배선이 끊겼다"
     )
+
+
+# ── D-2: 표시용 캡이 AVM 표본을 자른다 — **그림자 계측**(정본 무변경) ──────────────
+#
+# `_MAX_GROUPS_PER_CAT`(28)은 선언부가 스스로 "카테고리별 **마커** 상한 — 페이로드 축소"라고
+# 밝히는 **표시/전송용 상수**인데, `precise` 가 `capped` 에서 나오므로 AVM·탁상감정 표본까지
+# 자른다. 라이브 실측(2026-08-05 역삼동): 반경 1,500m·6개월에서 `apt_trade` 의 반경 통과
+# **정밀** 그룹 52개 중 **24개(46%)가 표시 상한 때문에 폐기**됐다.
+# ★리뷰 R4 — 초판은 이 파라미터를 "탁상감정 자신의 것"이라 썼는데, 탁상감정은 이 페이로드에서
+#   **`land_trade` 만** 읽고 `avm` 은 쓰지 않는다. 서비스 파일은 정정했는데 **이 주석만 정정 전
+#   문장이 남아** 같은 오독(탁상감정이 apt 를 본다)을 재생산하고 있었다. 52/24 는 `apt_trade` 수치다.
+# ★그러나 이 값은 사용자에게 보이는 **금액**이다. 계측 없이 바꾸면 "얼마나 달라지는지 모르는 채"
+#   시세를 흔드는 것이라, 이 절은 **정본(`avm`)을 바꾸지 않고** 델타만 관측한다.
+
+
+def _cap_fixture(n_groups: int, cheap_from: int | None = None, dong_groups: int = 0):
+    """`n_groups` 개 **정밀(지번)** 그룹을 건수 내림차순으로 만든다.
+
+    `cheap_from` 이후 그룹은 **싸게** 만들어, 캡이 자르는 쪽과 남기는 쪽의 가격이 갈리게 한다.
+    이게 없으면 두 AVM 이 우연히 같아져 `delta_pct` 단언이 **공허**해진다.
+
+    ★리뷰 B-2 — `dong_groups` 로 **반경 내 동 대표점 그룹**을 섞는다. 종전 픽스처엔 이게
+    한 개도 없어서 "정밀 표본이 잃은 양"과 "전체 절단 양"이 **우연히 같아졌고**, 그래서
+    올바른 구현과 잘못된 구현이 **둘 다 통과**했다(리뷰어 변이 F1 생존). 두 모집단이 실제로
+    갈라지는 입력이라야 B-1 이 잠긴다.
+    동 대표점을 만들려면 지번·건물명이 **둘 다 없어야** 하고(`_query_for` 가 "{시군구} {동}"
+    으로 폴백), 그룹 키가 `dong` 이므로 동 이름을 서로 다르게 줘야 별개 그룹이 된다.
+    """
+    rows: list[dict] = []
+    gmap: dict[str, dict] = {}
+    for i in range(n_groups):
+        cnt = n_groups - i                     # 건수 내림차순 = 캡 순서와 동일
+        price = 30000 if (cheap_from is not None and i >= cheap_from) else 100000
+        rows += [_row(name="", jibun=f"g{i}", dong="A동", price=price, day=1) for _ in range(cnt)]
+        gmap[f"경상북도 남구 A동 g{i}"] = {"lat": 36.0003, "lon": 129.0003}   # 전부 반경 안
+    for j in range(dong_groups):
+        rows.append(_row(name="", jibun="", dong=f"D{j}동", price=70000, day=1))
+        gmap[f"경상북도 남구 D{j}동"] = {"lat": 36.0004, "lon": 129.0004}      # 반경 안·동 대표점
+    return rows, gmap
+
+
+async def _build_cap(svc, **kw):
+    return await svc.build(
+        address="경상북도 남구 A동 9-9", lawd_cd="47111", months=1, radius_m=1000,
+        center_hint={"lat": 36.0, "lon": 129.0}, **kw,
+    )
+
+
+@pytest.mark.asyncio
+async def test_display_cap_impact_reports_truncation_without_changing_avm() -> None:
+    """★D-2 그림자 계측 — 캡이 표본을 자를 때 그 사실과 **금액 차이**가 보이는가.
+
+    그리고 가장 중요한 것: **정본 `avm` 은 한 글자도 바뀌지 않는가.**
+
+    ★리뷰 B-2 — `delta_pct` 와 두 가격을 **값으로** 못 박는다. 종전엔 `< 0` 뿐이라 값 축이
+    비어 있었고, `* 100.0` 삭제(비율↔퍼센트)·분모 뒤집기·상수화 변이가 전부 **생존**했다.
+    특히 `* 100.0` 이 사라지면 −6.66 이 **−0.07** 로 나가 판독자가 "영향 없음 → 안 고친다"로
+    직행한다 — 이 PR 이 존재하는 이유가 그 판정 하나인데 잠금이 없었다.
+
+    기대값 **독립 산출**(픽스처에서 손으로 계산 — 코드 출력을 베끼지 않는다):
+      전용면적 84㎡ 고정 · 비싼 그룹 100,000만원 → 1,000,000,000원 / 84㎡ = 11,904,761.9원/㎡
+                        · 싼 그룹  30,000만원 →   300,000,000원 / 84㎡ =  3,571,428.6원/㎡
+      캡(28) 표본 거래수 = 40+39+…+13 = **742** (전부 비싼 그룹) → 11,904,762원/㎡
+      캡 해제 표본 거래수 = 40+39+…+1 = **820** (싼 그룹 78건 추가)
+        → (11,904,761.9×742 + 3,571,428.6×78) / 820 = **11,112,079원/㎡**
+      델타 = (11,112,079 − 11,904,762) / 11,904,762 × 100 = **−6.66%**
+    """
+    nm._BUILD_CACHE.clear()
+    rows, gmap = _cap_fixture(40, cheap_from=nm._MAX_GROUPS_PER_CAT)
+    payload = await _build_cap(_service(rows, gmap))
+    cat = payload["categories"]["apt_trade"]
+    imp = payload["display_cap_impact"]
+    assert imp is not None and imp["diagnostic_only"] is True
+
+    # 그룹 수와 거래 건수를 **각각** 잠근다(H-4 단위 혼입 방지).
+    assert imp["sample_group_count"] == nm._MAX_GROUPS_PER_CAT      # 28
+    assert imp["sample_group_count_display_cap_lifted"] == 40
+    assert imp["sample_deal_count"] == 742
+    assert imp["sample_deal_count_display_cap_lifted"] == 820
+
+    # ★★값 고정 — 이 세 수가 잠기면 ×100 소실·분모 뒤집기·상수화·반올림 변이가 전부 죽는다.
+    assert imp["price_per_sqm"] == 11904762
+    assert imp["price_per_sqm_display_cap_lifted"] == 11112079
+    assert imp["delta_pct"] == -6.66
+
+    # 신뢰도도 갈린다 — 캡 표본은 가격이 균일(CV=0)이라 상한, 해제 표본은 혼재라 낮다.
+    assert imp["confidence_score"] == 0.98
+    assert imp["confidence_score_display_cap_lifted"] < 0.98
+
+    # ★상위 제약(A-1) — "캡을 풀면 전체 표본"이 아님을 판독자가 알아야 한다.
+    assert imp["geocode_precut_budget"] == nm._MAX_GEOCODE_GROUPS_PER_CAT
+    assert imp["geocode_precut_groups_cut"] == 0, "이 픽스처(49그룹)는 사전컷 미발동이어야 한다"
+
+    # ★★정본 불변 — `avm` 과 표시 카운트는 캡된 표본 그대로여야 한다.
+    assert payload["avm"]["price_per_sqm"] == imp["price_per_sqm"]
+    assert cat["count_in_radius"] == 742, "표시용 반경내 건수가 그림자 계측에 오염됐다"
+    assert len([g for g in cat["groups"] if g.get("location_status") == "located"]) == 28
+
+    # 내부 전용 필드는 응답에 새지 않는다(페이로드 비용 0 이라는 주장의 근거).
+    assert "_in_radius_groups" not in cat
+    assert "_in_radius_groups_uncapped" not in cat
+
+
+@pytest.mark.asyncio
+async def test_display_cap_impact_separates_precise_and_all_precision_drops() -> None:
+    """★리뷰 B-1 회귀락 — "정밀 표본이 잃은 양"과 "전체 절단 양"은 **다른 수**다.
+
+    종전엔 `dropped_by_display_cap_group_count` 에 `capped_group_count`(정밀·동 대표점을
+    가리지 않은 전체 절단 수)를 실었는데, `sample_group_count(_lifted)` 는 **정밀분만**이다.
+    정렬이 정밀분을 앞세우므로 반경 안에 동 대표점 그룹이 하나라도 있으면 두 수는 갈라진다.
+    리뷰어 실측: 정밀 10·동 40 에서 `dropped=22` 인데 `delta_pct=0.0` —
+    **"22그룹을 잘랐는데 시세 영향 0%"** 라는 정확히 반대 결론을 부르는 문장이 생성됐다.
+
+    ★내가 바로 옆에 "단위가 섞이면 판독자가 두 수를 빼서 엉뚱한 결론을 낸다"고 주석까지 달고
+      **단위 축만 맞추고 모집단 축을 놓쳤다.** 그래서 이름을 분리하고 **불변식으로** 잠근다.
+    """
+    nm._BUILD_CACHE.clear()
+    # 정밀 40 + 반경 내 동 대표점 9 = resolved 49 → 캡 28 → 전체 절단 21, 정밀 손실 12
+    rows, gmap = _cap_fixture(40, cheap_from=nm._MAX_GROUPS_PER_CAT, dong_groups=9)
+    payload = await _build_cap(_service(rows, gmap))
+    imp = payload["display_cap_impact"]
+
+    # ★정밀 표본만 센다 — `!= "dong"` 필터가 사라지면 40 이 49 가 된다(변이 M9 격추).
+    assert imp["sample_group_count_display_cap_lifted"] == 40
+    assert imp["sample_group_count"] == 28
+    assert imp["dropped_precise_group_count"] == 12
+    # 전체 절단은 **다른 수**여야 한다 — 같아지면 두 모집단이 섞인 것이다.
+    assert imp["dropped_all_precisions_group_count"] == 21
+    assert imp["dropped_precise_group_count"] != imp["dropped_all_precisions_group_count"]
+    # ★불변식 — 정밀 손실은 두 표본 길이의 차와 **항상** 같다(파생식이 아니라 계약).
+    assert (
+        imp["dropped_precise_group_count"]
+        == imp["sample_group_count_display_cap_lifted"] - imp["sample_group_count"]
+    )
+    # 동 대표점이 섞여도 가격 델타는 정밀분만 반영한다(위 테스트와 같은 값).
+    assert imp["delta_pct"] == -6.66
+
+
+@pytest.mark.asyncio
+async def test_display_cap_impact_covers_every_category_for_truncation() -> None:
+    """★리뷰 A-2 — 가격 델타는 `apt_trade` 한정이지만 **절단량은 전 카테고리**로 봐야 한다.
+
+    탁상감정은 이 페이로드에서 `land_trade` 만 읽고 `avm` 은 쓰지 않는다. 캡은 전 카테고리에
+    걸리므로, apt 만 관측하면 **돈에 더 가까운 쪽(채택단가→토지비 SSOT→NPV/IRR)이 미계측**으로
+    남는다. 절단량이 0 이면 "그 카테고리는 고칠 필요 없음"을 말해 주고, 0 이 아니면 그
+    카테고리의 **가격 영향은 아직 모른다**는 뜻이다.
+    """
+    nm._BUILD_CACHE.clear()
+    rows, gmap = _cap_fixture(40, cheap_from=nm._MAX_GROUPS_PER_CAT, dong_groups=9)
+    payload = await _build_cap(_service(rows, gmap))
+    trunc = payload["display_cap_impact"]["truncation_by_category"]
+
+    # 전 카테고리가 빠짐없이 실린다(스텁이 apt 만 주므로 나머지는 0 이지만 **키는 있어야** 한다).
+    assert set(trunc) == set(payload["categories"])
+    assert trunc["apt_trade"]["dropped_precise_group_count"] == 12
+    assert trunc["apt_trade"]["dropped_all_precisions_group_count"] == 21
+    # 거래가 없는 카테고리는 0 — "미계측"이 아니라 **관측된 0** 이다.
+    assert trunc["land_trade"]["sample_group_count"] == 0
+    assert trunc["land_trade"]["dropped_precise_group_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_display_cap_impact_is_zero_when_cap_not_binding() -> None:
+    """캡이 안 물면 델타는 **정확히 0** 이어야 한다 — 0 과 미측정을 구분하는 축.
+
+    ★상수화 변이(`delta_pct` ← −6.66)를 격추하는 축이기도 하다.
+    """
+    nm._BUILD_CACHE.clear()
+    rows, gmap = _cap_fixture(5)
+    payload = await _build_cap(_service(rows, gmap))
+    imp = payload["display_cap_impact"]
+    assert imp["sample_group_count"] == imp["sample_group_count_display_cap_lifted"] == 5
+    assert imp["dropped_precise_group_count"] == 0
+    assert imp["dropped_all_precisions_group_count"] == 0
+    assert imp["delta_pct"] == 0.0
+    assert imp["price_per_sqm"] == imp["price_per_sqm_display_cap_lifted"]
+
+
+@pytest.mark.asyncio
+async def test_display_cap_impact_prices_are_none_when_avm_absent() -> None:
+    """★무날조 — 비교할 시세가 없으면 가격 축은 **None**. 0 이나 빈 dict 로 만들지 않는다.
+
+    ★리뷰 R1 로 **계약이 바뀌었다**. 종전 이 테스트는 `display_cap_impact is None` 을 단언했는데,
+    그건 R1 이 고친 **옛 동작을 잠그고 있었다** — `avm` 이 없으면 절단량까지 통째로 사라져
+    apt 비교표본이 없는 모집단(농어촌·토지, 이 계측이 가장 알고 싶은 곳)에서 계측이 암전했다.
+    지금은 **가격 축만 None** 이고 절단량은 계속 실린다. 옛 단언은 회귀가 아니라 flip 대상이었다.
+    """
+    nm._BUILD_CACHE.clear()
+    rows = [_row(name="", jibun="", dong="B동", price=90000, day=1)]
+    svc = _service(rows, {"경상북도 남구 B동": {"lat": 36.0006, "lon": 129.0006}})
+    payload = await _build_cap(svc)
+    assert payload["avm"] is None
+    imp = payload["display_cap_impact"]
+    assert imp is not None
+    assert imp["price_per_sqm"] is None
+    assert imp["delta_pct"] is None
+    # 이 픽스처는 동 대표점 그룹뿐이라 정밀 표본이 0 이고 절단도 0 — **관측된 0** 이다.
+    assert imp["sample_group_count"] == 0
+    assert imp["truncation_by_category"]["apt_trade"]["dropped_precise_group_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_display_cap_impact_keeps_truncation_when_apt_avm_absent() -> None:
+    """★리뷰 R1 회귀락 — apt 비교표본이 없어도 **절단량은 계속 관측돼야** 한다.
+
+    종전엔 `avm` 이 없으면 `display_cap_impact` 를 통째로 None 으로 냈다. 그런데 apt 비교표본이
+    없는 모집단(농어촌·토지 — 호미곶급)이 정확히 A-2 가 겨냥한 곳이다.
+    즉 **가장 알고 싶은 데서 계측이 암전**했다(리뷰어 실행 증거: apt 0건 · land 표시캡 12그룹
+    절단인데 `display_cap_impact: None`).
+
+    → 가격 델타는 apt AVM 이 있을 때만 채우고(없으면 **키를 빼지 않고 None**),
+      절단량(`truncation_by_category`)은 `radius_applied` 만으로 **항상** 싣는다.
+      키를 빼면 소비처가 "이 응답엔 그 개념이 없다"로 읽지만 실제로는 "못 쟀다"이다.
+    """
+    nm._BUILD_CACHE.clear()
+    # apt 는 0건, land_trade 만 캡을 넘게 채운다.
+    land_rows: list[dict] = []
+    gmap: dict[str, dict] = {}
+    n = nm._MAX_GROUPS_PER_CAT + 12          # 40 → 캡 28 → 12 절단
+    for i in range(n):
+        land_rows.append(_row(name="", jibun=f"L{i}", dong="A동", price=60000, day=1))
+        gmap[f"경상북도 남구 A동 L{i}"] = {"lat": 36.0003, "lon": 129.0003}
+    svc = _service_per_type({"land": land_rows}, gmap)
+    payload = await svc.build(
+        address="경상북도 남구 A동 9-9", lawd_cd="47111", months=1, radius_m=1000,
+        center_hint={"lat": 36.0, "lon": 129.0},
+    )
+    imp = payload["display_cap_impact"]
+
+    assert payload["avm"] is None, "이 픽스처는 apt 표본 0건 전제다"
+    # ★★계측이 암전하지 않는다.
+    assert imp is not None and imp["diagnostic_only"] is True
+    # 가격 축은 **키를 유지한 채** None — "그 개념이 없다"와 "못 쟀다"를 구분한다.
+    for k in ("price_per_sqm", "price_per_sqm_display_cap_lifted", "delta_pct",
+              "confidence_score", "confidence_score_display_cap_lifted",
+              "sample_deal_count", "sample_deal_count_display_cap_lifted"):
+        assert k in imp and imp[k] is None, f"{k} 는 키를 유지한 채 None 이어야 한다"
+    # ★그리고 절단량은 **실제로 관측된다** — 이게 이 봉합의 목적이다.
+    land = imp["truncation_by_category"]["land_trade"]
+    assert land["sample_group_count"] == nm._MAX_GROUPS_PER_CAT      # 28
+    assert land["sample_group_count_display_cap_lifted"] == n        # 40
+    assert land["dropped_precise_group_count"] == 12
+    assert land["dropped_all_precisions_group_count"] == 12
+    # ★리뷰 R5 — 상위 제약도 카테고리별로 읽을 수 있어야 한다(최상위 값은 apt 전용).
+    assert land["geocode_precut_groups_cut"] == 0
+
+
+@pytest.mark.asyncio
+async def test_display_cap_impact_precut_is_wired_per_category() -> None:
+    """★리뷰 MAJOR-1 회귀락 — 카테고리별 사전컷이 **값 축에서** 잠겨 있는가.
+
+    ★같은 결함 클래스의 **3회차**다. R5 로 `geocode_precut_groups_cut` 을 카테고리별로 병기해
+    놓고, 회귀락 픽스처가 apt·land 둘 다 사전컷 0 이라 **두 모집단이 안 갈라졌다**. 그래서
+    리뷰어 변이 3종이 전부 **생존**했다: `_cat.get("precut")` → `apt_cat.get("precut")` ·
+    → 최상위 `precut` 스칼라 · → 리터럴 `0`. **키 존재만 잠기고 배선은 안 잠긴 상태**였고,
+    생존한 두 변이는 R5 주석이 스스로 명시한 결함("최상위는 apt 전용이라 land 판독 시 틀린다")
+    **그 자체**다. B-1(정밀/전체 모집단)·F1(동 대표점 부재)에 이은 같은 실수의 반복이다.
+
+    → 리뷰어가 준 판별입력을 그대로 쓴다: **apt 는 사전컷 발동, land 는 다른 값으로 발동**.
+      두 수가 서로 다르고 최상위 값과도 달라야 세 변이가 전부 죽는다.
+    """
+    nm._BUILD_CACHE.clear()
+    budget = nm._MAX_GEOCODE_GROUPS_PER_CAT          # 80
+    apt_n, land_n = budget + 30, budget + 5          # cut 30 / cut 5 — 서로 다른 값
+    apt_rows: list[dict] = []
+    land_rows: list[dict] = []
+    gmap: dict[str, dict] = {}
+    for i in range(apt_n):
+        apt_rows.append(_row(name="", jibun=f"A{i}", dong="A동", price=100000, day=1))
+        gmap[f"경상북도 남구 A동 A{i}"] = {"lat": 36.0003, "lon": 129.0003}
+    for i in range(land_n):
+        land_rows.append(_row(name="", jibun=f"L{i}", dong="A동", price=60000, day=1))
+        gmap[f"경상북도 남구 A동 L{i}"] = {"lat": 36.0003, "lon": 129.0003}
+    svc = _service_per_type({"apt": apt_rows, "land": land_rows}, gmap)
+    payload = await svc.build(
+        address="경상북도 남구 A동 9-9", lawd_cd="47111", months=1, radius_m=1000,
+        center_hint={"lat": 36.0, "lon": 129.0},
+    )
+    trunc = payload["display_cap_impact"]["truncation_by_category"]
+
+    # ★세 수가 **서로 달라야** 변이가 죽는다(apt 30 / land 5 / villa 0).
+    assert trunc["apt_trade"]["geocode_precut_groups_cut"] == 30
+    assert trunc["land_trade"]["geocode_precut_groups_cut"] == 5
+    assert trunc["villa_trade"]["geocode_precut_groups_cut"] == 0
+    # 최상위 값은 **apt 전용**이다 — land 를 그걸로 판독하면 틀린다(R5 주석의 그 결함).
+    assert payload["display_cap_impact"]["geocode_precut_groups_cut"] == 30
+    assert payload["display_cap_impact"]["price_delta_category"] == "apt_trade"
+
+
+@pytest.mark.asyncio
+async def test_display_cap_impact_is_none_when_radius_not_applied() -> None:
+    """★거짓 음성 차단 — 반경 미적용 가지에서는 **0 이 아니라 None** 이어야 한다.
+
+    그 가지의 `_compute_avm_summary` 는 `sample_field` 를 쓰지 않고 `cat["groups"]`
+    (= 이미 캡된 `capped + unresolved`)를 다시 거른다. 그래서 **절단이 실재해도**
+    `delta_pct == 0` 이 나온다 — "영향 없음"으로 읽히는 false-healthy 다.
+    """
+    nm._BUILD_CACHE.clear()
+    rows, gmap = _cap_fixture(40, cheap_from=nm._MAX_GROUPS_PER_CAT)
+    svc = _service(rows, gmap)
+    # center_hint 를 주지 않고 대상지 주소도 지오코딩되지 않게 둔다 → radius_applied=False
+    payload = await svc.build(address="경상북도 남구 A동 9-9", lawd_cd="47111",
+                              months=1, radius_m=1000)
+    assert payload["radius_applied"] is False, "이 테스트는 반경 미적용 가지를 검증한다"
+    assert payload["avm"] is not None, "이 가지에서도 시세 자체는 산출된다(전제 확인)"
+    assert payload["display_cap_impact"] is None, (
+        "측정 불가를 delta_pct=0 으로 적으면 '영향 없음'이라는 거짓 신호가 된다"
+    )
+

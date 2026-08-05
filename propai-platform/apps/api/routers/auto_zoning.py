@@ -1632,6 +1632,7 @@ async def integrated_analysis(req: IntegratedAnalysisRequest):
         _aggregate_integrated_zoning,
         detect_multi_parcel,
         gate_decision,
+        is_unanalyzed_parcel,
     )
     from apps.api.app.services.land_intelligence.parcel_excel_service import ParcelExcelService
 
@@ -1702,6 +1703,14 @@ async def integrated_analysis(req: IntegratedAnalysisRequest):
             "bcr_legal_pct": p.get("_bcr_legal"), "far_legal_pct": p.get("_far_legal"),
             "far_basis": p.get("_far_basis"),
             "special_parcel": p.get("_special"),
+            # ★미분석 표식 — 프론트 "판정 불가(미분석)" 배지가 읽는 키. 이 응답은 다필지 감지
+            #   결과를 그대로 싣지 않고 **자체 재조립본**이라, 여기에 안 실으면 배지가 발현되지
+            #   않는다(형제 표면인 multi-parcel-report matrix도 같은 키를 싣는다 — 대칭).
+            #   판정은 SSOT(is_unanalyzed_parcel)에 위임한다.
+            "analysis_status": (
+                p.get("analysis_status")
+                or ("unanalyzed" if is_unanalyzed_parcel(p) else None)
+            ),
             "status": p.get("status", "ok"), "reason": p.get("reason"),
         })
 

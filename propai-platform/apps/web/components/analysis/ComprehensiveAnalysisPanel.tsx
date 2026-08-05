@@ -22,7 +22,7 @@ import type { ParcelRow } from "@/lib/parcel-rows";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient } from "@/lib/api-client";
-import { formatArea, formatPercent } from "@/lib/formatters"; // 면적 표기 SSOT(UX A2) — 로컬 중복 formatArea 대체
+import { formatArea, formatPercent, formatPercentDelta, formatPercentRange } from "@/lib/formatters"; // 면적 표기 SSOT(UX A2) — 로컬 중복 formatArea 대체
 import { fieldMeta, formatFieldValue, formatDelta } from "@/lib/analysis-field-labels"; // 필드 라벨·단위 SSOT(원시 키 노출 근절)
 import { fetchInterpretation } from "@/lib/interpretation-job"; // 해석 제출·폴링 공용(형제 소비처와 공유)
 import {
@@ -294,9 +294,11 @@ function ScenarioTable({ scenarios, recommended }: { scenarios: AnalysisResult[]
                 {sc.scenario_name === recommended && <span className="text-[var(--accent-strong)] mr-1">★</span>}
                 {sc.scenario_name}
               </td>
-              <td className="py-2 px-1 text-right font-bold text-[var(--accent-strong)]">{sc.achieved_far}%</td>
-              <td className="py-2 px-1 text-right text-[var(--text-secondary)]">+{sc.total_incentive}%</td>
-              <td className="py-2 px-1 text-right text-[var(--text-secondary)]">{sc.donation_pct > 0 ? `${sc.donation_pct}%` : "-"}</td>
+              {/* ★비율 3칸은 포매터 경유(#530 계약) — 종전에는 원시 보간이라 값이 없으면
+                  "%"·"+%" 라는 깨진 표기가 나왔고, 기부체납은 0%와 미확보가 똑같이 "-"였다. */}
+              <td className="py-2 px-1 text-right font-bold text-[var(--accent-strong)]">{formatPercent(sc.achieved_far)}</td>
+              <td className="py-2 px-1 text-right text-[var(--text-secondary)]">{formatPercentDelta(sc.total_incentive)}</td>
+              <td className="py-2 px-1 text-right text-[var(--text-secondary)]">{formatPercent(sc.donation_pct)}</td>
               <td className="py-2 px-1 text-right text-[var(--text-secondary)]">{sc.gfa_increase_sqm > 0 ? `+${sc.gfa_increase_sqm}m²` : "-"}</td>
               <td className="py-2 px-1 text-center">{sc.is_capped ? <span className="text-[var(--status-warning)] text-[10px] font-bold">상한</span> : ""}</td>
             </tr>
@@ -345,11 +347,13 @@ function FarOptimizationPanel({ farOpt, structuralCapPct }: { farOpt?: AnalysisR
       {allCapped ? (
         <div className="rounded-lg bg-[var(--surface-soft)] border border-[var(--line)] p-3">
           <p className="text-xs font-bold text-[var(--text-primary)]">
-            모든 시나리오가 상한 {capFar}%에서 cap — 인센티브 추가 완화 불가
+            {/* ★같은 카드 위쪽 Field가 formatPercent(capFar)를 쓰는데 이 문장만 원시 보간이라
+                "152.8%" 옆에 "152.83333333333334%"가 같이 떴다(실측). 비교 짝을 맞춘다. */}
+            모든 시나리오가 상한 {formatPercent(capFar)}에서 cap — 인센티브 추가 완화 불가
           </p>
           {structuralCapPct != null && (
             <p className="mt-1 text-[11px] text-[var(--status-warning)]">
-              층수 제한이 지배 — 구조상한 {structuralCapPct}% 기준으론 인센티브 무의미
+              층수 제한이 지배 — 구조상한 {formatPercent(structuralCapPct)} 기준으론 인센티브 무의미
             </p>
           )}
           <button
@@ -844,7 +848,7 @@ export function ComprehensiveAnalysisPanel() {
                 <span className="text-[10px] text-[var(--text-secondary)]">★예상치 — 현행 실효 용적률과 분리</span>
                 {result.potential_far_range ? (
                   <span className="text-xs font-semibold text-[var(--accent-strong)]">
-                    예상 상한 {result.potential_far_range.min_pct}~{result.potential_far_range.max_pct}%
+                    예상 상한 {formatPercentRange(result.potential_far_range.min_pct, result.potential_far_range.max_pct)}
                   </span>
                 ) : null}
               </div>
@@ -852,7 +856,7 @@ export function ComprehensiveAnalysisPanel() {
                 {result.upzoning_scenarios.slice(0, 4).map((s: Record<string, any>, i: number) => (
                   <li key={i} className="text-[11px] text-[var(--text-secondary)]">
                     · {s.path} → {s.target_zone}
-                    {s.expected_far_pct_high != null ? ` (예상 ${s.expected_far_pct_high}%)` : ""}
+                    {s.expected_far_pct_high != null ? ` (예상 ${formatPercent(s.expected_far_pct_high)})` : ""}
                     {s.feasibility ? ` · 가능성 ${s.feasibility}` : ""}
                     {/* ★신규(additive) blocked_reasons — 비연접 등으로 구역 성립이 불확실한 사유(정직 표기). */}
                     {Array.isArray(s.blocked_reasons) && s.blocked_reasons.length > 0
@@ -1111,7 +1115,7 @@ export function ComprehensiveAnalysisPanel() {
                         return (
                         <tr key={rowKey} className={`border-b border-[var(--line)]/50 hover:bg-[var(--surface-soft)] transition-colors ${sa.feasibility_status === "부적합" ? "opacity-50" : ""}`}>
                           <td className="py-2.5 px-2 font-bold text-[var(--text-primary)]">{sa.type_name}</td>
-                          <td className="py-2.5 px-1 text-right text-[var(--text-secondary)]">{sa.exclusive_ratio_pct}%</td>
+                          <td className="py-2.5 px-1 text-right text-[var(--text-secondary)]">{formatPercent(sa.exclusive_ratio_pct)}</td>
                           <td className="py-2.5 px-1 text-right text-[var(--text-secondary)]">{sa.supply_area_per_unit_pyeong}평</td>
                           <td className="py-2.5 px-1 text-right text-[var(--accent-strong)] font-bold">{sa.total_gfa_pyeong}평</td>
                           <td className="py-2.5 px-1 text-right text-[var(--text-primary)] font-bold">{sa.unit_count}</td>
