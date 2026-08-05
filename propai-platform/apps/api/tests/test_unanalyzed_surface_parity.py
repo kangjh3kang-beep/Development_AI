@@ -104,3 +104,39 @@ def test_conditional_area_tracks_unanalyzed_area(parcels, expected):
     """조건부 면적이 미분석 면적과 정확히 일치한다 — '값이 있다'가 아니라 '값이 변했다'."""
     usable = detect_multi_parcel(parcels)["usable_area"]
     assert usable["usable_conditional_sqm"] == expected
+
+
+# ── R3 독립 적대검증 봉합 회귀락 (2026-08-05) ──────────────────────────────────────
+
+CAMEL_ALIASES = [
+    ("zoneCode", "2R"), ("zoneType", "제2종일반주거지역"),
+    ("landCategory", "대"), ("jimok", "대"),
+]
+
+
+@pytest.mark.parametrize("key,value", CAMEL_ALIASES)
+def test_camel_case_signals_are_not_misread_as_unanalyzed(key, value):
+    """★H-3: 프론트·지도픽이 쓰는 camelCase 별칭도 '신호 있음'으로 읽는다.
+
+    이 함수를 부르는 경로 중 정규화를 거치지 않는 곳이 있어(직접 호출부·primitive 직호출),
+    방어선이 "호출부가 우연히 snake 키를 쓴다"에 의존하고 있었다. 별칭 하나만 오면 신호를
+    가진 정상 필지가 '못 봤음'으로 강등된다.
+    """
+    out = detect_multi_parcel([ANALYZED_A, {"pnu": "b", "area_sqm": 600.0, key: value}])
+    assert out["per_parcel"][1].get("analysis_status") == "analyzed", key
+    assert out["usable_area"]["usable_confirmed_sqm"] == 1000.0, key
+
+
+def test_camel_special_districts_alias_is_read():
+    """specialDistricts(camel)도 신호다 — 정본 키맵이 이 별칭을 매핑하지 않는다."""
+    out = detect_multi_parcel([
+        ANALYZED_A, {"pnu": "b", "area_sqm": 600.0, "specialDistricts": ["개발제한구역"]},
+    ])
+    assert out["per_parcel"][1].get("analysis_status") == "analyzed"
+
+
+def test_truly_signalless_parcel_is_still_unanalyzed():
+    """★별칭을 넓혔다고 진짜 미분석까지 놓치면 안 된다 — 반대 방향 무회귀."""
+    out = detect_multi_parcel([ANALYZED_A, {"pnu": "b", "area_sqm": 600.0}])
+    assert out["per_parcel"][1].get("analysis_status") == "unanalyzed"
+    assert out["usable_area"]["usable_confirmed_sqm"] == 400.0

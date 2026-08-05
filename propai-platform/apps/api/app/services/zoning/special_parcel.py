@@ -2035,7 +2035,20 @@ def is_unanalyzed_parcel(p: dict) -> bool:
     """
     if not isinstance(p, dict):
         return False
-    return not p.get("land_category") and not p.get("special_districts") and not p.get("zone_type")
+
+    def _any(*keys: str) -> bool:
+        """별칭 중 하나라도 값이 있으면 '신호 있음'."""
+        return any(p.get(k) for k in keys)
+
+    # ★별칭까지 본다(2026-08-05 R3 H-3): 프론트·지도픽이 실제로 쓰는 camelCase 키
+    #   (zoneCode·zoneType·landCategory·jimok·specialDistricts)를 못 보면, **신호를 가진
+    #   정상 필지를 '못 봤음'으로 오판**한다. 이 함수를 부르는 경로 중 정규화를 거치지 않는
+    #   곳(detect_multi_parcel 직접 호출부·compute_usable_area 직호출)이 있어서, 방어선이
+    #   "호출부가 우연히 snake 키를 쓴다"에 의존하고 있었다.
+    has_category = _any("land_category", "landCategory", "jimok")
+    has_districts = _any("special_districts", "specialDistricts")
+    has_zone = _any("zone_type", "zoneType", "zone_code", "zoneCode")
+    return not has_category and not has_districts and not has_zone
 
 
 def detect_multi_parcel(

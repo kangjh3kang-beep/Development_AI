@@ -1707,9 +1707,11 @@ async def integrated_analysis(req: IntegratedAnalysisRequest):
             #   결과를 그대로 싣지 않고 **자체 재조립본**이라, 여기에 안 실으면 배지가 발현되지
             #   않는다(형제 표면인 multi-parcel-report matrix도 같은 키를 싣는다 — 대칭).
             #   판정은 SSOT(is_unanalyzed_parcel)에 위임한다.
+            # ★양방향 선언 — 형제 표면(build_multi_parcel_report matrix)과 대칭.
+            #   부재가 "분석됨"인지 "아무도 판정 안 함"인지 구분되지 않으면 하류가 추측한다.
             "analysis_status": (
                 p.get("analysis_status")
-                or ("unanalyzed" if is_unanalyzed_parcel(p) else None)
+                or ("unanalyzed" if is_unanalyzed_parcel(p) else "analyzed")
             ),
             "status": p.get("status", "ok"), "reason": p.get("reason"),
         })

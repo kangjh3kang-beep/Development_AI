@@ -13,11 +13,21 @@
 """
 from app.services.zoning import special_parcel as sp
 
-# (요인 이름, 첫 해결경로에 반드시 들어갈 문구) — 생산자가 실제로 만드는 이름만 적는다.
-# 왼쪽은 특정 분기가 **가로채기 쉬운** 이름들(도로·소방이 이름에 들어간다)이 앞에 온다.
+# ★정정(2026-08-05, R3 독립 적대검증 C-1): 최초 작성 시 "가로채기 사고가 실제로 났던 4건"
+#   이라고 적었으나 **틀렸다.** `detect_special_parcel`이 실제로 생산하는 category를 전수
+#   열거해 보니 24종이고 그중 아래 3종은 **하나도 도달하지 않는다** —
+#     막다른 도로 / 자루형 대지 통로부 / 소방·응급·공사차량 접근
+#   이들을 만드는 룰(_rule_by_cul_de_sac·_rule_by_flag_lot·_rule_by_emergency_access)은
+#   `access_basis_service`에서만 호출되고, 그 서비스는 `_resolution_for`를 부르지 않는다.
+#   즉 **프로덕션에서 틀린 조언이 나간 것은 맹지 1건뿐**이었다.
+#
+#   그래도 계약은 남긴다 — 세 룰이 요인 체인에 편입되는 순간 곧바로 오답이 나가기 때문이다.
+#   다만 "실측된 사고"가 아니라 **미도달 방어 계약**임을 여기 명시한다. 죽은 경로를 잠그면서
+#   살아 있다고 적어두면 다음 사람이 속는다(이 저장소가 반복해 당한 '가짜 골든').
 GOLDEN_FIRST_PATH = [
-    # ── 가로채기 사고가 실제로 났던 4건 ──
+    # ── 실측 사고(프로덕션 도달) ──
     ("맹지(도로 미접)", "진입도로 확보"),
+    # ── 미도달 방어 계약(현재 detect_special_parcel 체인이 생산하지 않음) ──
     ("막다른 도로(길이별 최소 너비)", "막다른 도로 길이별 최소 너비 확보"),
     ("자루형(旗竿) 대지 통로부", "통로부(자루목) 최소너비 확보"),
     ("소방·응급·공사차량 접근", "소방자동차 진입로 폭"),
@@ -86,3 +96,66 @@ def test_every_key_in_table_is_reachable_from_a_producer_name():
     assert len(sp._RESOLUTION_BY_KEY) >= 4
     reachable = {key for _, key in sp._KEY_BY_NAME_HINT}
     assert set(sp._RESOLUTION_BY_KEY) == reachable
+
+
+# ── ★근원 불변식(R3 C-2) — 카테고리 목록이 아니라 **전수 스윕**으로 잡는다 ──────────────
+#
+# 위 골든은 "내가 아는 이름"만 검사한다. 그래서 **새 요인을 하나 추가하면** 이름에 "도로"가
+# 들어간다는 이유로 다시 '도로 폐지' 오답이 나가는데도 전부 통과한다(R3가 변이로 실증).
+#
+# 그래서 생산되는 category를 **실행으로 열거**해, 그중 하나라도 (a) 도시계획시설 도로가
+# 아닌데 폐도 경로를 받거나 (b) 내용 없는 기본값으로 떨어지면 실패시킨다. 새 요인이 추가되면
+# 이 검사가 자동으로 발화한다 — 목록을 손으로 갱신할 필요가 없다.
+
+_SIGNAL_PROBES = [
+    {"land_category": lc} for lc in
+    ["대", "임야", "전", "답", "도로", "구거", "하천", "제방", "묘지", "학교용지", "종교용지", "공원"]
+] + [
+    {"special_districts": [d]} for d in
+    ["개발제한구역", "문화재보호구역", "군사기지", "상수원보호구역", "성장관리계획구역",
+     "비오톱1등급", "급경사지", "하천구역", "수변구역", "매장유산", "접도구역"]
+] + [
+    {"zone_type": "개발제한구역"}, {"road_contact": False}, {"road_width_m": 0},
+    {"area_sqm": 60000},
+]
+
+
+def _produced_categories() -> set[str]:
+    """detect_special_parcel이 **실제로** 만드는 요인 이름 전수."""
+    found: set[str] = set()
+    for probe in _SIGNAL_PROBES:
+        payload = {"land_category": "대", "zone_type": "제2종일반주거지역", **probe}
+        result = sp.detect_special_parcel(payload)
+        if not isinstance(result, dict):
+            continue
+        for factor in result.get("factors") or []:
+            if factor.get("category"):
+                found.add(factor["category"])
+    return found
+
+
+def test_probe_set_actually_produces_factors():
+    """공허진리 방지 — 스윕이 실제로 다수의 요인을 만들어낸다."""
+    assert len(_produced_categories()) >= 15
+
+
+def test_no_produced_category_falls_to_road_abolition_by_accident():
+    """★이름에 '도로'가 있다는 이유로 폐도 경로를 받는 요인이 없다(새 요인 추가 시 자동 발화)."""
+    offenders = []
+    for category in sorted(_produced_categories()):
+        first = sp._resolution_for(category, "CONDITIONAL")["resolution_paths"][0]
+        if "폐지·변경" in first and "도시계획시설" in first:
+            # 도시계획시설 '도로' 지목 자체는 폐도가 정답이다.
+            if not category.startswith("공공·기반시설 용지(도로"):
+                offenders.append((category, first))
+    assert offenders == [], f"폐도 경로를 잘못 받은 요인: {offenders}"
+
+
+def test_no_produced_category_falls_to_contentless_default():
+    """★생산되는 요인은 전부 실질적인 해결경로를 갖는다 — 기본값('관계기관 협의')로 새지 않는다."""
+    fallbacks = []
+    for category in sorted(_produced_categories()):
+        first = sp._resolution_for(category, "CONDITIONAL")["resolution_paths"][0]
+        if first.strip() == "관계기관 협의":
+            fallbacks.append(category)
+    assert fallbacks == [], f"해결경로가 기본값으로 떨어진 요인: {fallbacks}"

@@ -2005,6 +2005,18 @@ async def build_integrated_context(parcels: list[dict[str, Any]] | None) -> dict
             integrated["land_area_effective_sqm"] = (
                 _confirmed if _confirmed and _confirmed > 0 else integrated.get("total_area_sqm")
             )
+            # ★gross 폴백은 **정직 경고를 동반해야 한다**(2026-08-05 R3 H-1).
+            #   확정 면적이 0인 이유가 '전부 미분석'일 때도 gross가 그대로 land_area로 채택돼
+            #   GFA·세대수·수지로 흐른다 — 혼합 케이스만 막고 전부-미분석은 뚫려 있었다.
+            #   면적 자체는 바꾸지 않는다(그래야 분석이 멈추지 않는다). 대신 **잠정임을 말한다**.
+            if not (_confirmed and _confirmed > 0) and integrated.get("total_area_sqm"):
+                _uw = list(integrated["usable"].get("warnings") or [])
+                _uw.append(
+                    "확정 개발가능 면적을 산출하지 못해 공부면적(gross)을 잠정 채택했습니다 — "
+                    "지목·용도지역 미확인 필지가 포함돼 있어 제약 유무를 확인하지 못했습니다."
+                )
+                integrated["usable"]["warnings"] = _uw
+                integrated["land_area_effective_is_gross_fallback"] = True
         except Exception as e:  # noqa: BLE001 — usable 산출 실패는 그 키만 정직 누락(통합집계 보존)
             logger.warning("usable 산출 실패 — usable만 정직 누락(graceful)", err=str(e)[:160])
             integrated["usable"] = None
