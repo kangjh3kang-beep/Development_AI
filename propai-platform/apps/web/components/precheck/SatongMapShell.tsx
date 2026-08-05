@@ -42,7 +42,7 @@ import {
 
 import { useToastOptional } from "@propai/ui"; // UX 트랙 C3 — 내보내기 완료 등 일시 고지용(호스트 없으면 인라인 폴백)
 import { ApiClientError, apiClient, apiV1BaseUrl, hasAccessToken } from "@/lib/api-client";
-import { formatArea } from "@/lib/formatters"; // 면적 표기 SSOT(UX A2) — 로컬 중복 formatArea 대체
+import { formatArea, formatPercent, formatPercentPoint } from "@/lib/formatters"; // 면적·비율 표기 SSOT(비율=정수 반올림 금지·0과 미확보 구분)
 import { UseLlmToggle } from "@/components/common/UseLlmToggle";
 import { AnalysisPipelineStepbar, type PipelineStep } from "@/components/common/AnalysisPipelineStepbar"; // UX 트랙 C4 — 엑셀 업로드 진행표시(기존 프리미티브 재사용)
 import { ContextHeader } from "@/components/common/ContextHeader"; // 집계 SSOT 단일표면(UX 트랙 B2)
@@ -3078,19 +3078,19 @@ export function SatongMapShell({
                 <div>
                   <p className="text-[10px] font-bold text-[var(--text-hint)]">실효 용적률</p>
                   <p className="font-mono font-bold text-[var(--text-primary)]">
-                    {detailFeature.effectiveFarPct != null ? `${Math.round(detailFeature.effectiveFarPct)}%` : "-"}
+                    {formatPercent(detailFeature.effectiveFarPct)}
                   </p>
                 </div>
                 <div>
                   <p className="text-[10px] font-bold text-[var(--text-hint)]">실효 건폐율</p>
                   <p className="font-mono font-bold text-[var(--text-primary)]">
-                    {detailFeature.effectiveBcrPct != null ? `${Math.round(detailFeature.effectiveBcrPct)}%` : "-"}
+                    {formatPercent(detailFeature.effectiveBcrPct)}
                   </p>
                 </div>
                 <div>
                   <p className="text-[10px] font-bold text-[var(--text-hint)]">현황 용적률</p>
                   <p className="font-mono font-bold text-[var(--text-primary)]">
-                    {detailFeature.currentFarPct != null ? `${Math.round(detailFeature.currentFarPct)}%` : "-"}
+                    {formatPercent(detailFeature.currentFarPct)}
                   </p>
                 </div>
               </dd>
@@ -3109,8 +3109,8 @@ export function SatongMapShell({
                       // ★R1 MAJOR: -ratio*100은 '실효 대비 상대%'라 %p 라벨이 오독(초과 절반
                       //   과소 표기 — 200/260에서 "30%p"로 읽힘). 용적률 초과는 점차이가 관행:
                       //   현황−실효 = 진짜 %p(260−200=60%p). ratio<0이면 두 값 모두 non-null.
-                      ? `한도 초과 — 현황이 실효 한도를 ${Math.round((detailFeature.currentFarPct as number) - (detailFeature.effectiveFarPct as number))}%p 상회`
-                      : `개발여력 ${Math.round(ratio * 100)}% (실효 대비 잔여)`}
+                      ? `한도 초과 — 현황이 실효 한도를 ${formatPercentPoint((detailFeature.currentFarPct as number) - (detailFeature.effectiveFarPct as number))} 상회`
+                      : `개발여력 ${formatPercent(ratio * 100)} (실효 대비 잔여)`}
                   </p>
                 );
               })()}

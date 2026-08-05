@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { formatPercent, formatPercentDelta } from "@/lib/formatters"; // 비율 표기 SSOT
 import { useParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import { motion, AnimatePresence } from "framer-motion";
@@ -236,8 +237,11 @@ function L3EnhancedCards({
   const hasAnyData = tx || infra || bldg || hasFarTier || hasUpzoning || hasGraveInfo || hasAllowedBuildings;
   if (!hasAnyData) return null;
 
-  // 헬퍼: 용적률 퍼센트 안전 포맷
-  const pct = (v: number | null | undefined): string => (v == null ? "—" : `${Math.round(v)}%`);
+  // 헬퍼: 용적률 퍼센트 표기 — 공용 포매터에 위임한다(로컬 규칙 금지).
+  //   ★종전에는 `Math.round(v)`라 실효 79.6%가 "80%"가 되어 **바로 옆 법정 80%와 같아 보였다**
+  //     — 이 화면이 설명하려는 격차 자체가 사라진다(#530이 종합분석에서 봉합한 것과 같은 결함).
+  //   ★`v == null → "—"`도 0과 구분이 안 됐다. 비율에서 0은 유효 측정값이다.
+  const pct = (v: number | null | undefined): string => formatPercent(v);
   // far_basis_detail에서 zone_limits로 폴백한 법정/조례 추출(데이터·호출 무변경, 표시만)
   const fbd = effFar?.far_basis_detail;
   const legalMin = fbd?.법정범위?.min_far_pct ?? effFar?.legal_min_far_pct ?? null;
@@ -321,7 +325,7 @@ function L3EnhancedCards({
                 <div className="hidden sm:flex items-center text-[var(--text-hint)] font-black">→</div>
                 <div className="flex-1 rounded-xl border border-purple-500/30 bg-purple-500/5 p-4">
                   <p className="text-[8px] font-black text-[var(--text-hint)] uppercase tracking-wider mb-1">④ 인센티브 완화율</p>
-                  <p className="text-base font-black text-purple-400">+{Math.round(incentiveRatio)}%</p>
+                  <p className="text-base font-black text-purple-400">{formatPercentDelta(incentiveRatio)}</p>
                 </div>
               </>
             )}

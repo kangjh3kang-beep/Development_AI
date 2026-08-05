@@ -11,7 +11,7 @@
  *   '측정했더니 0'과 '못 구했음'이 구분되지 않는다.
  */
 import { describe, it, expect } from "vitest";
-import { formatPercent, formatPercentDelta, formatPercentRange } from "@/lib/formatters";
+import { formatPercent, formatPercentDelta, formatPercentPoint, formatPercentRange } from "@/lib/formatters";
 
 describe("formatPercentDelta — 증감 비율", () => {
   it("값이 없으면 '미확보' — '+%' 같은 깨진 표기를 만들지 않는다", () => {
@@ -64,5 +64,39 @@ describe("formatPercent — 기존 계약 무회귀", () => {
   it("★정수 반올림 금지 — 79.6이 법정 80과 같아 보이면 안 된다", () => {
     expect(formatPercent(79.6)).toBe("79.6%");
     expect(formatPercent(79.6)).not.toBe(formatPercent(80));
+  });
+});
+
+describe("formatPercentPoint — 퍼센트 포인트(비율끼리의 차이)", () => {
+  it("단위가 %가 아니라 %p — 섞으면 초과분이 절반으로 읽힌다", () => {
+    expect(formatPercentPoint(60)).toBe("60.0%p");
+    expect(formatPercentPoint(60)).not.toBe(formatPercent(60));
+  });
+
+  it("정수 반올림 금지 — 0.6%p 초과가 '1%p'가 되면 안 된다", () => {
+    expect(formatPercentPoint(0.6)).toBe("0.6%p");
+  });
+
+  it("0은 유효값, 없으면 미확보", () => {
+    expect(formatPercentPoint(0)).toBe("0.0%p");
+    expect(formatPercentPoint(null)).toBe("미확보");
+    expect(formatPercentPoint(0)).not.toBe(formatPercentPoint(null));
+  });
+});
+
+describe("formatPercentDelta — 부호는 표시값 기준(R3 LOW-1·LOW-2)", () => {
+  it("반올림해서 0이 되면 '증가'라고 말하지 않는다", () => {
+    expect(formatPercentDelta(0.04)).toBe("0.0%");
+    expect(formatPercentDelta(0.04)).not.toContain("+");
+  });
+
+  it("음의 0을 만들지 않는다", () => {
+    expect(formatPercentDelta(-0.04)).toBe("0.0%");
+    expect(formatPercentDelta(-0.04)).not.toContain("-");
+  });
+
+  it("실제로 표시될 만큼 커지면 부호가 붙는다", () => {
+    expect(formatPercentDelta(0.05)).toBe("+0.1%");
+    expect(formatPercentDelta(-0.05)).toBe("-0.1%");
   });
 });
