@@ -340,7 +340,9 @@ describe("SatongMapShell 모바일 IA(P2) — 44px 터치 타깃 전수 불변�
 
     const buttons = Array.from(document.querySelectorAll("button"));
     // 공허 진리 방지 — 셸이 제대로 렌더되지 않아 버튼이 없으면 "위반 0"이 참이 되어 무의미하다.
-    expect(buttons.length, "셸이 렌더되지 않아 검사할 버튼이 없다").toBeGreaterThan(5);
+    // ★하한이 헐거우면 이 PR 의 load-bearing 변경(스텁의 topRightSlot 렌더)이 되돌려져
+    //   검사 범위가 22→8 로 64% 줄어도 통과한다(R1 실측). 실측 22 기준으로 조인다.
+    expect(buttons.length, "검사 범위가 줄었다 — 지도 오버레이가 렌더되지 않았을 수 있다").toBeGreaterThan(18);
 
     const violations = buttons
       .filter((b) => !meetsTouchFloor(b))
@@ -351,7 +353,9 @@ describe("SatongMapShell 모바일 IA(P2) — 44px 터치 타깃 전수 불변�
 
   it.each([
     ["베이스맵 선택", "베이스맵 닫기"],
-    ["지적도", "레이어 설정 닫기"],
+    // ★"지적도"(cadastre)는 LAYERS_WITHOUT_POPOVER_TOGGLE 에 들어 있어 팝오버에 on/off 토글이
+    //   **렌더되지 않는다** — 그 레이어로만 열면 이번에 고친 토글 칩이 검사에 안 잡힌다(R1 지적).
+    ["용도지역", "레이어 설정 닫기"],
   ])(
     "★지도 오버레이 팝오버(%s)의 닫기 버튼도 하한을 지킨다 — 지도 위라 오조작이 지도 클릭으로 샌다",
     (railName, closeName) => {
@@ -370,7 +374,7 @@ describe("SatongMapShell 모바일 IA(P2) — 44px 터치 타깃 전수 불변�
 
   it("★팝오버 안의 컨트롤도 함께 검사된다 — 열린 상태의 전수 검사(부분 적용 재발 차단)", () => {
     render(<SatongMapShell locale="ko" />);
-    fireEvent.click(screen.getByRole("button", { name: "지적도" }));
+    fireEvent.click(screen.getByRole("button", { name: "용도지역" }));
 
     const buttons = Array.from(document.querySelectorAll("button"));
     // 공허 진리 방지 — 팝오버가 안 열렸으면 닫힌 상태를 다시 검사하는 것이라 의미가 없다.
@@ -384,6 +388,39 @@ describe("SatongMapShell 모바일 IA(P2) — 44px 터치 타깃 전수 불변�
       .map((b) => `${b.getAttribute("aria-label") ?? b.textContent?.trim()?.slice(0, 20)} :: ${b.className.slice(0, 90)}`);
 
     expect(violations, `44px 미달 버튼(팝오버 열림):\n${violations.join("\n")}`).toHaveLength(0);
+  });
+
+  it("★필지를 고른 상태 — 미니 산출물 퍼널·새 프로젝트 생성·자식 섹션 버튼까지 전수 검사한다", () => {
+    // ★R1 지적 HIGH 봉합의 회귀망. 종전 검사는 "빈 상태"와 "팝오버 열림"만 봤는데, 필지를 고르면
+    //   나타나는 미니 산출물 퍼널 4종·새 프로젝트 생성·ParcelLayout/SlopeSection 의 조회 버튼이
+    //   전부 그 범위 밖이었다 — 그래서 32px·18px 짜리가 다섯 개나 살아남았고, 나는 그것을
+    //   "고쳤다"고 커밋에 썼다(거짓 표기). 이 케이스가 그 사각을 덮는다.
+    render(<SatongMapShell locale="ko" />);
+
+    act(() => {
+      capturedMapPropsRef.current?.onPickMany?.([
+        {
+          found: true,
+          address: "서울특별시 강남구 역삼동 736",
+          pnu: "1168010100107360000",
+          lat: 37.5,
+          lon: 127.03,
+        },
+      ]);
+    });
+
+    // 공허 진리 방지 — 선택이 반영되지 않았으면 빈 상태를 다시 검사하는 것이라 무의미하다.
+    expect(
+      screen.getByRole("button", { name: /선택 필지로 새 프로젝트 생성|생성 중/ }),
+      "필지 선택이 반영되지 않았다(새 프로젝트 생성 버튼 미출현)",
+    ).toBeInTheDocument();
+
+    const buttons = Array.from(document.querySelectorAll("button"));
+    const violations = buttons
+      .filter((b) => !meetsTouchFloor(b))
+      .map((b) => `${b.getAttribute("aria-label") ?? b.textContent?.trim()?.slice(0, 24)} :: ${b.className.slice(0, 90)}`);
+
+    expect(violations, `44px 미달 버튼(필지 선택됨):\n${violations.join("\n")}`).toHaveLength(0);
   });
 });
 

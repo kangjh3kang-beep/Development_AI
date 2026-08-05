@@ -2686,9 +2686,12 @@ export function SatongMapShell({
                ★h-9 를 지우고 min-h-11 만 남겼으므로 **시각 높이도 36→44px로 실제 커진다**(의도).
                초판 주석은 "시각 크기는 그대로"라고 썼는데 사실이 아니었다(R1 지적 M3). 감싼 행도
                60→68px 자라지만 고정 높이·overflow 가 없어 클리핑은 없다.
-               ★같은 파일에 44px 미달 raw 버튼이 아직 3건 남아 있다(팝오버 닫기 size-8·검증행 py-1.5
-               ·칩 py-1) — 이 PR 은 접힘 상태의 **유일 진입점**만 P0 로 처리하고, 나머지는 P2(44px
-               누수 일괄, 칩 줄바꿈 QA 동반)로 넘긴다. "이 파일은 끝났다"고 읽지 말 것. */
+               ★P2(#570)에서 이 파일의 나머지를 봉합했다 — 팝오버 닫기 3종·레이어 토글 칩·컨트롤 칩
+               3종·업로드 취소·엑셀 선택·양식 다운로드·산출물 독 토글·미니 산출물 퍼널 4종·새 프로젝트
+               생성, 그리고 자식 섹션 2건(ParcelLayoutSection·ParcelSlopeSection 조회 버튼).
+               ★P0 시점에 "아직 3건 남았다"고 적었으나 실제로는 더 많았다 — 사람이 센 목록이 곧
+               상한이 되는 함정이다. 지금은 렌더 기반 **전수 불변식**이 잠그므로 목록을 세지 않는다
+               (SatongMapShell.smoke.test.tsx "44px 터치 타깃 전수 불변식"). */
             className="inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-[var(--r-card)] border border-[var(--border-muted)] bg-[var(--surface-strong)] px-3 text-xs font-black text-[var(--text-primary)] transition-colors hover:border-[var(--accent-strong)]"
           >
             <MapIcon className="size-4" aria-hidden />
@@ -3264,7 +3267,10 @@ export function SatongMapShell({
                   aria-disabled={miniDisabled}
                   title={miniDisabled ? "필지를 하나 이상 선택하면 산출물 생성 경로가 활성화됩니다." : undefined}
                   onClick={() => void handleOutputClick(action)}
-                  className="rounded-2xl border border-[var(--border-muted)] bg-[var(--surface-panel)] px-3 py-2 text-left text-xs font-black text-[var(--text-primary)] transition hover:border-[var(--accent-strong)]/40 hover:bg-[var(--accent-strong)]/10 disabled:cursor-not-allowed disabled:opacity-50"
+                  /* ★모바일 IA P2(R1 봉합) — px-3 py-2 ≈ 32px 미달이었다. **과금·LLM 이 걸린 산출물
+                     실행 버튼**이라 오탭 비용이 닫기 버튼보다 크다. text-left 를 유지해야 해서
+                     flex-col+justify-center 로 세로 가운데 정렬한 뒤 하한만 건다. */
+                  className="flex min-h-11 flex-col justify-center rounded-2xl border border-[var(--border-muted)] bg-[var(--surface-panel)] px-3 py-2 text-left text-xs font-black text-[var(--text-primary)] transition hover:border-[var(--accent-strong)]/40 hover:bg-[var(--accent-strong)]/10 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {action.label}
                   {miniDisabled && (
@@ -3680,7 +3686,8 @@ export function SatongMapShell({
                 type="button"
                 onClick={handleCreateProjectNow}
                 disabled={creatingProject}
-                className="mt-2 w-full rounded-[var(--r-input)] border border-[var(--accent-strong)]/40 bg-[var(--accent-strong)]/10 px-3 py-2 text-xs font-black text-[var(--accent-strong)] transition hover:bg-[var(--accent-strong)]/15 disabled:cursor-not-allowed disabled:opacity-50"
+                /* ★모바일 IA P2(R1 봉합) — px-3 py-2 ≈ 32px 미달이었다. */
+                className="mt-2 inline-flex min-h-11 w-full items-center justify-center rounded-[var(--r-input)] border border-[var(--accent-strong)]/40 bg-[var(--accent-strong)]/10 px-3 py-2 text-xs font-black text-[var(--accent-strong)] transition hover:bg-[var(--accent-strong)]/15 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {creatingProject ? "생성 중…" : "선택 필지로 새 프로젝트 생성"}
               </button>

@@ -71,7 +71,9 @@ export function ParcelLayoutSection({
             type="button"
             onClick={onRequest}
             data-testid="parcel-layout-request"
-            className="rounded-full border border-[var(--border-muted)] px-2 py-0.5 text-[10px] font-black text-[var(--accent-strong)] transition hover:bg-[var(--surface-muted)]"
+            /* ★모바일 IA P2(R1 봉합) — py-0.5+text-[10px] ≈ 18px 로 이 상세 패널에서 가장 작았다.
+               필지 상세 팝오버 안이라 빗나간 탭이 팝오버 밖 지도로 샌다. */
+            className="inline-flex min-h-11 shrink-0 items-center rounded-full border border-[var(--border-muted)] px-2 py-0.5 text-[10px] font-black text-[var(--accent-strong)] transition hover:bg-[var(--surface-muted)]"
           >
             {status === "error" ? "다시 조회" : "배치 조회"}
           </button>
