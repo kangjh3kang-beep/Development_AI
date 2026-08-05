@@ -213,7 +213,13 @@
 //        **반쪽 상태**가 된다(기능 부재보다 나쁘다 — 눌러도 안 되는 버튼으로 보인다).
 //        ★채번: 라이브 sw.js 실측 v483 + origin/main 상수 v483 대조 → v484. 원격 브랜치
 //        chore/sw-v48* 선점 없음 확인(제목이 아니라 상수와 라이브 값 기준).
-const CACHE_NAME = "propai-v484-persona-storyline";
+// v485: 개발가능성 등급 문구 수렴(#548) — **원시 enum 이 새던 프론트 4곳**을 zoning-ssot 로
+//        일원화(LandIntelligencePanel·ProjectAnalysisSummary·SiteInitiator + 백엔드 2맵).
+//        ★사용자에게 NEEDS_OFFICIAL_SURVEY 같은 코드가 그대로 보이던 것을 사람 말로 바꾸는
+//        변경이라, stale app-shell 캐시가 남으면 **옛 번들이 계속 원시 enum 을 노출**한다.
+//        #549(변이 생존 구멍 봉합·게이트 상향 무검증/라우터 무테스트)도 같은 배포에 포함.
+//        ★채번: origin/main 실제 상수 v484 확인 → v485. PR 생성 前 보드 claim 선점(관행 3회차).
+const CACHE_NAME = "propai-v485-grade-labels";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
