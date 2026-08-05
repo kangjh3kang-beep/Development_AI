@@ -464,6 +464,9 @@ export function ComprehensiveAnalysisPanel() {
       setResult(null);
       setError(null);
     }, []),
+    // ★실제 결과 상태를 함께 넘긴다 — 가드가 begin() 호출로만 추적하면 실행 경로가 아닌
+    //   방법으로 결과가 붙었을 때 조용히 죽는다(대상을 바꿔도 안 지워진다).
+    result != null,
   );
 
   useEffect(() => {

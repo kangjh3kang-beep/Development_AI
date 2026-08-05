@@ -22,9 +22,27 @@ import { useCallback, useEffect, useRef } from "react";
  * @param targetKey 현재 대상 키(`analysisTargetKey`로 만든 값)
  * @param onStale   대상이 바뀌어 화면의 결과가 남의 것이 됐을 때 호출(결과·오류를 비운다)
  */
-export function useAnalysisTargetGuard(targetKey: string, onStale: () => void) {
+/** 실행 토큰 구분자 — 키에 들어갈 수 없는 제어문자(키는 JSON 직렬화라 raw NUL이 없다). */
+const TOKEN_SEP = "\u0000";
+
+export function useAnalysisTargetGuard(
+  targetKey: string,
+  onStale: () => void,
+  /**
+   * 지금 화면에 결과가 붙어 있는가.
+   *
+   * ★이걸 받는 이유(2026-08-05 R3 M-3): 종전에는 "붙은 결과"를 `begin()` 호출로만 추적해서,
+   *   분석 실행이 아닌 경로(히스토리 복원 등)로 결과가 붙으면 가드가 **조용히 죽었다**
+   *   — 대상을 바꿔도 그 결과가 안 지워진다. 실제 상태를 함께 보게 해 추적이 어긋날 수
+   *   없게 한다(현재 패널은 실행 경로 하나뿐이라 잠재였지만, 경로가 하나만 늘면 발현한다).
+   */
+  hasResult = false,
+) {
   /** 화면에 떠 있는(또는 요청 중인) 결과가 어느 대상의 것인지. null이면 붙은 결과 없음. */
   const shownForRef = useRef<string | null>(null);
+  /** 실행 일련번호·최신 실행 토큰 — 같은 대상 재실행 경합을 가른다. */
+  const seqRef = useRef(0);
+  const latestRunRef = useRef<string | null>(null);
   /** 현재 대상 키의 최신값 — 응답이 도착한 시점에 비교하려면 렌더와 무관하게 읽어야 한다. */
   const targetRef = useRef(targetKey);
   targetRef.current = targetKey;
@@ -34,22 +52,41 @@ export function useAnalysisTargetGuard(targetKey: string, onStale: () => void) {
   onStaleRef.current = onStale;
 
   useEffect(() => {
+    // 실행 경로를 안 거치고 결과가 붙었으면(히스토리 복원 등) 현재 대상의 것으로 입양한다 —
+    // 그래야 다음 대상 전환에서 정상적으로 무효화된다.
+    if (hasResult && shownForRef.current === null) shownForRef.current = targetKey;
+    // 결과가 사라졌으면 추적도 비운다(다음 진입에서 헛 무효화 방지).
+    if (!hasResult && shownForRef.current !== null && shownForRef.current === targetKey) {
+      shownForRef.current = null;
+    }
     // 붙은 결과가 없으면(첫 진입 포함) 지울 것도 없다.
     if (shownForRef.current === null) return;
     if (shownForRef.current === targetKey) return;
     shownForRef.current = null;
     onStaleRef.current();
-  }, [targetKey]);
+  }, [targetKey, hasResult]);
 
-  /** 분석을 시작할 때 부른다 — 이 결과가 어느 대상의 것인지 표시하고 그 키를 돌려준다. */
+  /** 분석을 시작할 때 부른다 — 이 실행을 식별하는 토큰을 돌려준다.
+   *
+   * ★키가 아니라 **실행 토큰**을 돌려준다(2026-08-05 R3 M-3): 키만 비교하면 같은 대상에서
+   *   분석을 두 번 시작했을 때 두 실행의 토큰이 같아져, **먼저 시작한 느린 응답**이 나중
+   *   실행의 결과를 덮어쓴다(같은 대상이므로 대상 전환 가드에도 안 걸린다).
+   */
   const begin = useCallback(() => {
     const key = targetRef.current;
+    seqRef.current += 1;
+    const token = `${seqRef.current}${TOKEN_SEP}${key}`;
     shownForRef.current = key;
-    return key;
+    latestRunRef.current = token;
+    return token;
   }, []);
 
-  /** 응답을 화면에 붙이기 전에 부른다 — 그 사이 대상이 바뀌었으면 false. */
-  const isCurrent = useCallback((key: string) => targetRef.current === key, []);
+  /** 응답을 화면에 붙이기 전에 부른다 — 대상이 바뀌었거나 **더 나중 실행이 있으면** false. */
+  const isCurrent = useCallback((token: string) => {
+    if (token !== latestRunRef.current) return false; // 재실행 경합 — 나는 이미 낡았다
+    const key = token.slice(token.indexOf(TOKEN_SEP) + TOKEN_SEP.length);
+    return key === targetRef.current;
+  }, []);
 
   return { begin, isCurrent };
 }
