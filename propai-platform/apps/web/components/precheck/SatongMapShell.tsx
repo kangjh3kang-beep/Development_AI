@@ -2607,7 +2607,13 @@ export function SatongMapShell({
             onClick={() => setIsShellExpanded(true)}
             /* ★모바일 IA P0 — 접힌 셸에서 이 버튼은 지도·검색·엑셀 전체로 가는 **유일한 진입점**인데
                h-9(36px)라 44px 터치 타깃 하한 미달이었다(packages/ui Button 은 min-h-11 을 지키는데
-               raw <button> 이라 그 계약 밖에 있었다). 시각 크기는 그대로 두고 히트 영역만 44px로 올린다. */
+               raw <button> 이라 그 계약 밖에 있었다 — 그 계약 테스트는 프리미티브만 렌더한다).
+               ★h-9 를 지우고 min-h-11 만 남겼으므로 **시각 높이도 36→44px로 실제 커진다**(의도).
+               초판 주석은 "시각 크기는 그대로"라고 썼는데 사실이 아니었다(R1 지적 M3). 감싼 행도
+               60→68px 자라지만 고정 높이·overflow 가 없어 클리핑은 없다.
+               ★같은 파일에 44px 미달 raw 버튼이 아직 3건 남아 있다(팝오버 닫기 size-8·검증행 py-1.5
+               ·칩 py-1) — 이 PR 은 접힘 상태의 **유일 진입점**만 P0 로 처리하고, 나머지는 P2(44px
+               누수 일괄, 칩 줄바꿈 QA 동반)로 넘긴다. "이 파일은 끝났다"고 읽지 말 것. */
             className="inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-[var(--r-card)] border border-[var(--border-muted)] bg-[var(--surface-strong)] px-3 text-xs font-black text-[var(--text-primary)] transition-colors hover:border-[var(--accent-strong)]"
           >
             <MapIcon className="size-4" aria-hidden />
@@ -3547,12 +3553,24 @@ export function SatongMapShell({
                   </ul>
                 )}
                 {(verificationReport.warnings?.length ?? 0) > 0 && (
+                  /* ★모바일 IA P0 의 논거 보강(R1 지적 L2) — "order 를 지워 지도가 아래로 밀려도
+                     밀림은 유계"라는 근거가 성립하려면 이 패널의 가변 블록이 전부 유계여야 한다.
+                     검색후보 slice(0,6)·검증대상 slice(0,8)·보정 slice(0,3)·선택필지 max-h-[360px]
+                     는 이미 봉인돼 있는데 **이 경고 목록만 무계**였다(엑셀 업로드 시 수십 건 가능).
+                     ★잘라내되 숨기지 않는다 — 남은 건수를 명시한다(이 저장소의 "0과 미확보를 같은
+                     기호로 쓰지 않는다"와 같은 계열: 절단을 침묵으로 처리하지 않는다). */
                   <ul className="space-y-1">
-                    {(verificationReport.warnings ?? []).map((w, i) => (
+                    {(verificationReport.warnings ?? []).slice(0, 5).map((w, i) => (
                       <li key={i} className="text-[11px] font-semibold text-[var(--status-error)]">
                         {w}
                       </li>
                     ))}
+                    {(verificationReport.warnings?.length ?? 0) > 5 && (
+                      <li className="text-[11px] font-semibold text-[var(--text-tertiary)]">
+                        외 {(verificationReport.warnings?.length ?? 0) - 5}건 — 전체는 업로드 결과
+                        파일에서 확인하세요.
+                      </li>
+                    )}
                   </ul>
                 )}
               </div>
