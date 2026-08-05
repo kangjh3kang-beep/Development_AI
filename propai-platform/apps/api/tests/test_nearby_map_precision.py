@@ -1507,3 +1507,88 @@ async def test_outlier_trim_exclusion_set_is_count_invariant_when_it_fires() -> 
     assert excluded[0] > 0, f"트림이 발동하지 않아 아래 단언이 공허하다: {excluded}"
     # ★건수 분포가 어떻든 **같은 수의 그룹**이 제외돼야 한다(가격이 동일하므로).
     assert len(set(excluded)) == 1, f"트림 발동 시 제외 집합이 건수에 흔들린다: {excluded}"
+
+
+# ── 마스킹 지번 — 원천이 가려 준 지번은 필지 매칭이 **원천 불가**다 ──────────────────
+#
+# 라이브 실측(2026-08-05 역삼동 3km·6개월): 건물명이 없는 카테고리는 지번이 **전부** 마스킹돼
+# 온다 — `land_trade` 13/13 · `house_trade` 12/12 · `commercial_trade` 6/34.
+# 그 결과 두 카테고리의 `located` 는 **구조적으로 0** 이고, 그게 탁상감정 거래사례비교가
+# 표본을 못 얻는 **진짜 병목**이다(표시 캡은 그 경로에 애초에 결속되지 않는다).
+
+
+def test_masked_jibun_is_not_used_as_parcel_query_or_grain() -> None:
+    """★마스킹 지번은 질의·입도·대조 **세 경로에서 모두** 없는 것으로 취급한다.
+
+    그대로 질의하면 (1)매칭 불가 질의에 예산을 쓰고 (2)`not_found` 계측을 오염시키며
+    (3)정밀도가 `parcel` 로 시작했다가 `_refined_mismatch` 로 강등되는 **두 단계 거짓**이 된다.
+    """
+    svc = nm.NearbyMapService.__new__(nm.NearbyMapService)
+    assert nm._is_masked_jibun("5*") is True
+    assert nm._is_masked_jibun("산1**") is True
+    assert nm._is_masked_jibun("736") is False
+    assert nm._is_masked_jibun("산1-1") is False
+    assert nm._is_masked_jibun(None) is False
+
+    # 질의 — 마스킹이면 지번을 빼고 동 대표점으로(건물명이 있으면 그쪽이 낫다).
+    assert svc._query_for("강남구", "논현동", "5*", "") == "강남구 논현동"
+    assert svc._query_for("강남구", "논현동", "5*", "래미안") == "강남구 논현동 래미안"
+    assert svc._query_for("강남구", "논현동", "736", "") == "강남구 논현동 736"
+
+    # 입도 — 마스킹이면 지번 입도가 아니다(좌표의 의미를 실제보다 정밀하게 주장하지 않는다).
+    assert svc._query_grain("5*", "") == "dong"
+    assert svc._query_grain("5*", "래미안") == "name"
+    assert svc._query_grain("736", "") == "jibun"
+
+    # refined 대조 — 마스킹 지번으로는 불일치를 **판정할 수 없다**(모르는 것을 근거로 강등 금지).
+    assert svc._refined_mismatch({"dong": "논현동", "jibun": "5*"}, "서울 강남구 논현동") is False
+    assert svc._refined_mismatch({"dong": "논현동", "jibun": "736"}, "서울 강남구 논현동") is True
+
+
+@pytest.mark.asyncio
+async def test_masked_jibun_groups_collapse_to_one_dong_query_and_are_counted() -> None:
+    """★같은 동의 마스킹 그룹들이 **한 질의로 합쳐지고**, 그 수가 응답에 실린다.
+
+    실측(역삼동 3km·6개월): 마스킹 31그룹 → 동 단위로 **20질의**.
+    그리고 `masked_jibun_group_count` 가 없으면 소비처는 "거래가 없다"와 "거래는 있는데
+    원천이 지번을 가려 위치를 못 잡는다"를 **구분할 수 없다**.
+    """
+    nm._BUILD_CACHE.clear()
+    seen: list[list[str]] = []
+    rows = [
+        _row(name="", jibun="5*", dong="논현동", price=50000, day=1),
+        _row(name="", jibun="1**", dong="논현동", price=51000, day=2),
+        _row(name="", jibun="2*", dong="청담동", price=52000, day=3),
+        _row(name="", jibun="736", dong="역삼동", price=53000, day=4),   # 정상 지번
+    ]
+    gmap = {
+        "경상북도 남구 논현동": {"lat": 36.0003, "lon": 129.0003},
+        "경상북도 남구 청담동": {"lat": 36.0004, "lon": 129.0004},
+        "경상북도 남구 역삼동 736": {"lat": 36.0005, "lon": 129.0005},
+    }
+    svc = nm.NearbyMapService.__new__(nm.NearbyMapService)
+    svc.settings = None
+    svc.molit = _StubMolit(rows)
+    svc._geo_key = ""
+
+    async def _stub(queries):
+        seen.append(sorted(queries))
+        return {q: gmap[q] for q in queries if q in gmap}
+
+    svc._geocode_many = _stub  # type: ignore[assignment]
+    payload = await svc.build(
+        address="경상북도 남구 역삼동 9-9", lawd_cd="47111", months=1, radius_m=1000,
+        center_hint={"lat": 36.0, "lon": 129.0},
+    )
+    cat = payload["categories"]["apt_trade"]
+
+    # ★마스킹 3그룹(논현동 2 + 청담동 1)이 **동 질의 2개**로 합쳐진다 — 지번 질의는 정상 1건뿐.
+    assert seen and seen[0] == [
+        "경상북도 남구 논현동", "경상북도 남구 역삼동 736", "경상북도 남구 청담동",
+    ]
+    # ★그 사실이 응답에 실린다 — 없으면 소비처가 "무자료"와 구분할 수 없다.
+    assert cat["sample_basis"]["masked_jibun_group_count"] == 3
+    # 마스킹 그룹은 동 대표점이므로 `located` 가 아니다(정밀도를 처음부터 정직하게 표기).
+    statuses = {g["jibun"]: g["location_status"] for g in cat["groups"]}
+    assert statuses["5*"] == "approximate"
+    assert statuses["736"] == "located"

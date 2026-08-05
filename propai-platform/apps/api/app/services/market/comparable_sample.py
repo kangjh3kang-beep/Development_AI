@@ -56,6 +56,10 @@ class SampleBasis:
     approximate_count: int
     unlocated_count: int
     capped_count: int
+    # ★원천(MOLIT)이 지번을 가려서 준 그룹 수 — 이들은 위치가 확인될 수 없으므로
+    #   `located_count` 에 절대 들어오지 못한다. "거래가 없다"와 "거래는 있는데 위치를
+    #   못 잡는다"를 소비처가 구분하려면 이 수가 필요하다. 구버전 페이로드엔 없으므로 기본 0.
+    masked_jibun_count: int = 0
 
     @property
     def has_sample(self) -> bool:
@@ -116,6 +120,7 @@ def _basis_from_category(cat: dict[str, Any] | None) -> SampleBasis:
             approximate_count=int(raw.get("approximate_count") or 0),
             unlocated_count=int(raw.get("unlocated_count") or 0),
             capped_count=int(raw.get("capped_count") or 0),
+            masked_jibun_count=int(raw.get("masked_jibun_group_count") or 0),
         )
     # ★구버전 페이로드(캐시·배포 스큐) 폴백 — sample_basis 가 없던 시절의 응답도 안전하게
     #   다룬다. 이때는 카운트 필드에서 복원하고, 알 수 없으면 보수적으로 "반경 미적용"으로 본다
@@ -129,7 +134,36 @@ def _basis_from_category(cat: dict[str, Any] | None) -> SampleBasis:
         approximate_count=int(cat.get("count_approximate") or 0),
         unlocated_count=int(cat.get("count_unresolved") or 0),
         capped_count=int(cat.get("capped_count") or 0),
+        # 구버전 페이로드엔 이 축이 없다 — **모르는 것을 0 으로 단정하지 않고** 그룹에서 센다.
+        masked_jibun_count=sum(
+            1 for g in (cat.get("groups") or []) if "*" in str(g.get("jibun") or "")
+        ),
     )
+
+
+def no_sample_reason(basis: SampleBasis) -> str | None:
+    """표본이 **왜** 0인지 한 구절로. 표본이 있으면 None.
+
+    ★이 함수가 없던 동안 탁상감정은 `scope=="radius"` 인데 `located` 가 0 이면 **아무 사유
+    없이** 공시지가 기준으로 폴백했다. 사용자는 "왜 거래사례비교를 안 썼는지" 알 수 없었다.
+
+    ★"거래가 없다"와 "거래는 있는데 원천이 지번을 가려 위치를 못 잡는다"는 **전혀 다른 상태**다.
+      후자는 우리가 고칠 수 없는 **데이터 한계**이고, 그 사실을 말해 주는 것이 정직이다.
+    """
+    if basis.has_sample:
+        return None
+    if basis.masked_jibun_count > 0:
+        return (
+            f"{basis.label()}가 없습니다 — 수집된 거래 {basis.masked_jibun_count}건은 "
+            "공개 실거래 자료가 지번을 가려서 제공해(예: 5*, 1**) 위치를 확인할 수 없습니다. "
+            "위치가 확인되지 않은 거래는 단가 산정에 쓰지 않습니다."
+        )
+    if basis.unlocated_count or basis.approximate_count:
+        return (
+            f"{basis.label()}가 없습니다 — 위치 미확인 {basis.unlocated_count}건 · "
+            f"동 단위까지만 확인 {basis.approximate_count}건은 단가 산정에 쓰지 않습니다."
+        )
+    return f"{basis.label()}가 없습니다(해당 기간·범위에 수집된 거래가 없습니다)."
 
 
 def select_located_groups(

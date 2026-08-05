@@ -144,6 +144,24 @@ def _dong_tail(value: str | None) -> str:
     return v.split()[-1] if v else ""
 
 
+def _is_masked_jibun(jibun: str | None) -> bool:
+    """MOLIT 이 **가려서 준 지번**인가(`"5*"` · `"1**"` · `"산1**"`).
+
+    ★라이브 실측(2026-08-05 역삼동 3km·6개월): 건물명이 없는 카테고리는 지번이 **전부**
+    마스킹돼 온다 — `land_trade` 13/13 · `house_trade` 12/12 · `commercial_trade` 6/34.
+    그 결과 `"강남구 논현동 5*"` 같은 질의는 **원천적으로 필지 매칭이 불가능**하고,
+    두 카테고리의 `located` 는 **구조적으로 0** 이 된다(탁상감정 거래사례비교의 진짜 병목).
+
+    ★이건 **고칠 수 없는 데이터 한계**다 — 원천이 안 주는 것을 만들어낼 수는 없다.
+    고칠 수 있는 것은 (a)매칭 불가한 질의에 예산을 쓰지 않는 것 (b)정밀도를 처음부터
+    정직하게 표기하는 것 (c)실패 계측을 오염시키지 않는 것 (d)소비처가 **"왜 표본이 0인지"**
+    를 말할 수 있게 하는 것이다.
+
+    한국 지번 표기에 `*` 가 쓰이는 경우는 없으므로 판정은 문자 존재만으로 충분하다.
+    """
+    return "*" in (jibun or "")
+
+
 def _target_dong_source(address: str, target_dong: str) -> str:
     """동 프라이어가 **왜** 켜졌는지/꺼졌는지를 한 값으로 말한다.
 
@@ -767,6 +785,15 @@ class NearbyMapService:
                 "approximate_count": cat["count_approximate"],
                 "unlocated_count": cat["count_unresolved"],
                 "capped_count": cat["capped_count"],
+                # ★★"왜 표본이 0인가"를 소비처가 **말할 수 있게** 한다.
+                #   마스킹 지번 그룹은 위치가 확인될 수 없으므로 `located_count` 에 절대
+                #   들어오지 못한다. 그 사실이 응답에 없으면 소비처는 "거래가 없다"와
+                #   "거래는 있는데 원천이 지번을 가려서 위치를 못 잡는다"를 **구분할 수 없고**,
+                #   탁상감정은 사유 없이 공시지가로 폴백한다(현행 침묵 구간).
+                #   실측: `land_trade`·`house_trade` 는 이 값이 그룹 전량과 같다.
+                "masked_jibun_group_count": sum(
+                    1 for g in cat["groups"] if _is_masked_jibun(g.get("jibun"))
+                ),
             }
 
         # ★내부 전용 필드 정리 — `_in_radius_groups`는 AVM 계산용이고 그대로 두면 응답
@@ -956,7 +983,13 @@ class NearbyMapService:
     # ── 그룹핑 ──
     def _query_for(self, sigungu: str, dong: str, jibun: str, name: str) -> str:
         sgg = (sigungu or "").strip()
-        if jibun:
+        # ★마스킹 지번은 **없는 것으로 취급**한다 — `"논현동 5*"` 는 어떤 지오코더로도
+        #   필지에 매칭될 수 없다. 그대로 질의하면 (1)예산을 매칭 불가 질의에 쓰고
+        #   (2)`not_found` 계측을 오염시키며 (3)정밀도가 `parcel` 로 시작했다가
+        #   `_refined_mismatch` 로 강등되는 **두 단계 거짓**이 된다.
+        #   건물명이 있으면 그쪽이 낫고, 없으면 동 대표점이 **정직한 최선**이다.
+        #   ★부수 효과: 같은 동의 마스킹 그룹들이 **한 질의로 합쳐진다**(실측 31→20).
+        if jibun and not _is_masked_jibun(jibun):
             return f"{sgg} {dong} {jibun}".strip()
         if name:
             # ★W1-b 리뷰(H-3) — 종전엔 `f"{dong} {name}"` 이라 **시군구가 없었다**. 같은 동명이
@@ -1015,7 +1048,10 @@ class NearbyMapService:
             tail = dong.split()[-1]
             if tail and tail not in refined:
                 return True
-        if jibun and jibun not in refined:
+        # ★마스킹 지번(`"5*"`)으로는 불일치를 **판정할 수 없다** — 우리가 그 지번으로 질의하지도
+        #   않았고, 매칭 주소에 `*` 가 들어 있을 리도 없다. 판정 불가를 "불일치"로 쓰면
+        #   모르는 것을 근거로 강등하는 것이라 무날조 원칙에 어긋난다(`refined` 부재와 동일 취급).
+        if jibun and not _is_masked_jibun(jibun) and jibun not in refined:
             return True
         return False
 
@@ -1028,7 +1064,9 @@ class NearbyMapService:
         **법정동 대표점**을 준다 — 동 전체를 한 점으로 뭉갠 좌표라 반경 안팎 판정에 쓸 수 없다
         (토지 매매는 건물명이 없어 이 폴백에 자주 걸린다).
         """
-        if jibun:
+        # ★마스킹 지번은 지번 입도가 **아니다** — `_query_for` 가 그것으로 질의하지 않으므로
+        #   여기서 `"jibun"` 을 돌려주면 좌표의 의미를 **실제보다 정밀하게** 주장하게 된다.
+        if jibun and not _is_masked_jibun(jibun):
             return "jibun"
         if name:
             return "name"
