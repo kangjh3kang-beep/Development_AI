@@ -413,6 +413,31 @@ async def test_desk_appraisal_really_emits_masked_reason_end_to_end() -> None:
     ), "사유를 실으면서 거래사례비교법을 그대로 썼다"
 
 
+def test_every_skip_path_says_why() -> None:
+    """★R6 리뷰(F-3) — "왜 거래사례비교를 안 썼는지"에 **침묵하는 갈래가 없어야** 한다.
+
+    ★PNU 부재 갈래가 무테스트였다(변이 생존 실측) — 그 갈래는 조회를 **시도조차 못 한**
+    경우인데, 사용자에게는 다른 갈래와 똑같이 "방법이 그냥 사라진" 것으로 보인다.
+
+    ★문구는 **아는 만큼만** 말해야 한다: 조회가 실패한 것과 거래가 없는 것은 다르다.
+    """
+    import asyncio
+
+    from app.services.land_intelligence.desk_appraisal_service import desk_appraisal
+
+    # PNU 를 확정하지 못한 입력 — 위 블록 자체를 타지 않는 갈래.
+    result = asyncio.run(
+        desk_appraisal(
+            pnu=None, address="", area_sqm=300.0, official_price_per_sqm=1_000_000,
+        )
+    )
+    note = result.get("comparable_skipped_reason")
+    assert note, "PNU 부재 갈래가 사유 없이 조용히 폴백한다"
+    assert "거래가 없" not in note, (
+        f"조회를 못 한 것을 '거래가 없다'로 말하면 안 된다: {note}"
+    )
+
+
 def test_report_model_carries_the_skip_reason() -> None:
     """★★R2 리뷰(H-2) — PDF/PPTX/DOCX 보고서 모델에 사유가 **실제로 실리는지** 실호출로 본다.
 

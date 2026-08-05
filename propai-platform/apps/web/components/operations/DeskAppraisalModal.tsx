@@ -7,6 +7,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { NumberInput } from "@/components/common/NumberInput";
+import { eok, won } from "@/lib/land/desk-appraisal";
 
 function apiBase(): string {
   if (typeof window !== "undefined") {
@@ -17,9 +18,11 @@ function apiBase(): string {
   return "/api/proxy";
 }
 
-const eok = (v: number | null | undefined) =>
-  v == null ? "—" : `${(v / 1e8).toLocaleString(undefined, { maximumFractionDigits: 2 })}억`;
-const won = (v: number | null | undefined) => (v == null ? "—" : `${v.toLocaleString()}원`);
+// ★R6 리뷰(F-F) — 자체 재정의를 버리고 **정본**(`lib/land/desk-appraisal`)으로 수렴한다.
+//   여기 있던 사본은 `toLocaleString(undefined, …)` / 인자 없는 `toLocaleString()` 이라
+//   브라우저 로케일을 탔고(de-DE `1.234,56억`), R5 의 로케일 락은 `lib/` 두 파일만 봐서
+//   **이 모달을 놓쳤다** — F-1(전월세)·C-1(미러)과 같은 전역 전파방지 미이행 계열이다.
+//   죽은 코드도 아니었다: 헤드라인 감정총액을 포함해 4곳에서 실사용 중이었다.
 
 type Method = { method: string; unit_price: number; rationale: string };
 type Result = {

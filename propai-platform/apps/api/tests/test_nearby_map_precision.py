@@ -1825,6 +1825,61 @@ def test_representative_pair_choice_is_order_independent() -> None:
 
 
 @pytest.mark.asyncio
+async def test_derived_group_name_follows_the_representative_pair() -> None:
+    """★R6 리뷰(F-A) — 건물명 없이 **파생된** 이름은 대표 쌍을 따라가야 한다.
+
+    `name` 은 `setdefault`(첫 행) 때 `f"{dong} {jibun}"` 으로 굳는데 대표만 바꾸면
+    **한 팝업에 서로 다른 두 주소**가 뜬다(리뷰어 실측: 제목 "역삼동 736" ·
+    부제 "논현동 736 · 2건" — `SatongMultiMap.tsx:766-767` 이 둘을 나란히 그린다).
+
+    ★그리고 R5 독스트링의 "같은 데이터가 같은 화면을 낸다"가 **한 필드만큼 과대 표기**였다
+    — `name` 은 여전히 행 순서로 뒤집혔다.
+    """
+    # ★두 모집단을 가른다 — 이름이 **파생된** 그룹과 **원본 건물명이 있는** 그룹.
+    #   전자만 넣으면 "무조건 덮기" 변이가 생존한다(실측). 후자는 건드리면 안 된다:
+    #   행에서 온 진짜 이름을 `"동 지번"` 으로 갈아치우면 사용자가 아는 단지명이 사라진다.
+    rows = [
+        _row(name="", jibun="736", dong="역삼동", price=50000, day=1),
+        _row(name="", jibun="736", dong="논현동", price=51000, day=2),
+        _row(name="래미안", jibun="820", dong="역삼동", price=53000, day=3),
+        _row(name="래미안", jibun="5*", dong="역삼동", price=54000, day=4),
+    ]
+
+    async def _run(ordered: list[dict]) -> tuple:
+        nm._BUILD_CACHE.clear()
+        svc = nm.NearbyMapService.__new__(nm.NearbyMapService)
+        svc.settings = None
+        svc.molit = _StubMolit(ordered)
+        svc._geo_key = ""
+
+        async def _stub(queries):
+            return {q: {"lat": 36.0005, "lon": 129.0005} for q in queries if q}
+
+        svc._geocode_many = _stub  # type: ignore[assignment]
+        payload = await svc.build(address="경상북도 남구 역삼동 9-9", lawd_cd="47111",
+                                  months=1, radius_m=1000,
+                                  center_hint={"lat": 36.0, "lon": 129.0})
+        return tuple(
+            (g.get("name"), g.get("dong"), g.get("jibun"))
+            for g in payload["categories"]["apt_trade"]["groups"]
+        )
+
+    a, b = await _run(rows), await _run(list(reversed(rows)))
+    assert a == b, f"행 순서로 표시가 갈린다: {a} vs {b}"
+
+    by_name = {n: (d, j) for n, d, j in a}
+    # ① 파생 이름은 대표 쌍과 **일치**해야 한다(한 팝업에 두 주소가 뜨지 않게).
+    derived = [(n, d, j) for n, d, j in a if n not in ("래미안",)]
+    assert derived, "파생 이름 그룹이 없다 — ① 검사가 공허해진다"
+    for name, dong, jibun in derived:
+        assert name == f"{dong} {jibun}", (
+            f"제목과 부제가 다른 주소를 말한다 — name={name!r} 인데 dong/jibun={dong} {jibun}"
+        )
+    # ② 원본 건물명은 **보존**돼야 한다 — 갈아치우면 사용자가 아는 단지명이 사라진다.
+    assert "래미안" in by_name, f"원본 건물명이 사라졌다: {a}"
+
+
+@pytest.mark.asyncio
 async def test_query_choice_is_deterministic_with_multiple_usable_jibuns() -> None:
     """★R5 리뷰(F-2) — 비마스킹 지번이 **2개 이상**일 때도 순서 무관이어야 한다.
 

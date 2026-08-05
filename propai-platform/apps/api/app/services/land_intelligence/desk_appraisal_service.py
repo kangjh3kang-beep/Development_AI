@@ -13,7 +13,11 @@ from __future__ import annotations
 
 from typing import Any
 
+import structlog
+
 from app.services.land_intelligence.land_price_estimator import _market_multiplier
+
+logger = structlog.get_logger(__name__)
 
 # 개별요인 — 접도(road_side) 보정율(감정평가 개별요인의 가로조건 근사)
 _ROAD_FACTOR = [
@@ -250,6 +254,10 @@ async def desk_appraisal(
                     "산정했습니다."
                 )
         except Exception:  # noqa: BLE001
+            # ★R6 리뷰(F-G) — 사유는 **사용자** 몫이고, 원인은 **운영자** 몫이다.
+            #   이 모듈엔 logger 참조가 0건이라 MOLIT·지오코더 장애 때 스택트레이스가
+            #   어디에도 남지 않았다(F-3 의 논거 자체가 관측성인데 정작 관측이 없었다).
+            logger.warning("desk_appraisal.comparable_lookup_failed", exc_info=True)
             # ★★R5 리뷰(F-3) — 여기서 그냥 삼키면 `comparable_skip_note` 가 **None 인 채로**
             #   빠져나가 봉합 이전과 **똑같은 완전 침묵**이 된다. MOLIT 장애·지오코더 장애가
             #   정확히 이 경로다 — 즉 침묵 봉합에 구멍이 남아 있었다.

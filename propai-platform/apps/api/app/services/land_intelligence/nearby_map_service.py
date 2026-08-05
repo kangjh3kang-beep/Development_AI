@@ -1302,9 +1302,21 @@ class NearbyMapService:
             pairs = g.pop("_pairs", set())
             name = g.pop("_name_raw", "")
             if not pairs:
+                # ★R6 리뷰(F-E) 정직 표기 — 이 가지는 **도달 불가**다. 모든 `setdefault`
+                #   직후에 `_pairs.add(...)` 가 무조건 실행되므로 빈 그룹이 생기지 않는다
+                #   (리뷰어 계측: 빈 rows·전필드 공백·None 등 5형태에서 빈 그룹 0개).
+                #   방어로 남기되, 이걸 "순서의존 폴백"으로 읽지 않도록 밝힌다.
                 continue
             sigungu, dong, jibun = _pick_representative_pair(pairs)
             g["dong"], g["jibun"] = dong, jibun
+            # ★R6 리뷰(F-A) — 건물명이 **없어 파생된** 이름은 대표 쌍을 따라가야 한다.
+            #   `name` 은 `setdefault`(첫 행) 때 `f"{dong} {jibun}"` 으로 만들어지는데
+            #   대표만 바꾸면 **한 팝업에 서로 다른 두 주소**가 뜬다(리뷰어 실측:
+            #   제목 "역삼동 736" 아래 부제 "논현동 736 · 2건" — SatongMultiMap:766-767 이
+            #   `name` 과 `dong/jibun` 을 나란히 그린다).
+            #   ★원본 건물명이 있으면 건드리지 않는다 — 그건 행에서 온 진짜 이름이다.
+            if not name:
+                g["name"] = f"{dong} {jibun}".strip() or "물건"
             g["_query"] = self._query_for(sigungu, dong, jibun, name)
             g["_query_grain"] = self._query_grain(jibun, name)
 
