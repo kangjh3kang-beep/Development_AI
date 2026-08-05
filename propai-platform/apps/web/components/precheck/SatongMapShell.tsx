@@ -3056,7 +3056,9 @@ export function SatongMapShell({
                         ? `${control.label} 지도 반영`
                         : control.description || "공식 데이터 소스 연결 후 활성화"
                   }
-                  className={`rounded-2xl border px-3 py-2 text-xs font-black transition ${
+                  /* ★모바일 IA P2 — py-2+text-xs ≈ 32px 로 미달이었다(팝오버를 연 상태의 전수
+                     검사가 적발 — 닫힌 상태만 보면 이 칩들은 DOM 에 아예 없다). */
+                  className={`inline-flex min-h-11 items-center rounded-2xl border px-3 py-2 text-xs font-black transition ${
                     layerControls[activeLayer.id]?.includes(control.id) && !rentUnsupported
                       ? "border-[var(--accent-strong)] bg-[var(--accent-strong)] text-[var(--on-primary)]"
                       : effectiveMapEffect

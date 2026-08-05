@@ -349,18 +349,41 @@ describe("SatongMapShell 모바일 IA(P2) — 44px 터치 타깃 전수 불변�
     expect(violations, `44px 미달 버튼:\n${violations.join("\n")}`).toHaveLength(0);
   });
 
-  it("★지도 오버레이 팝오버의 닫기 버튼도 하한을 지킨다 — 지도 위라 오조작이 지도 클릭으로 샌다", () => {
+  it.each([
+    ["베이스맵 선택", "베이스맵 닫기"],
+    ["지적도", "레이어 설정 닫기"],
+  ])(
+    "★지도 오버레이 팝오버(%s)의 닫기 버튼도 하한을 지킨다 — 지도 위라 오조작이 지도 클릭으로 샌다",
+    (railName, closeName) => {
+      render(<SatongMapShell locale="ko" />);
+
+      // 레이어 레일에서 팝오버를 연다(오버레이는 topRightSlot 으로 지도 스텁 안에 렌더된다).
+      fireEvent.click(screen.getByRole("button", { name: railName }));
+
+      const closeButton = screen.getByRole("button", { name: closeName });
+      expect(
+        meetsTouchFloor(closeButton),
+        `팝오버 닫기 버튼이 44px 미달이다: ${closeButton.className}`,
+      ).toBe(true);
+    },
+  );
+
+  it("★팝오버 안의 컨트롤도 함께 검사된다 — 열린 상태의 전수 검사(부분 적용 재발 차단)", () => {
     render(<SatongMapShell locale="ko" />);
+    fireEvent.click(screen.getByRole("button", { name: "지적도" }));
 
-    // 레이어 레일에서 베이스맵 팝오버를 연다(오버레이는 topRightSlot 으로 지도 스텁 안에 렌더된다).
-    const railButton = screen.getByRole("button", { name: "베이스맵 선택" });
-    fireEvent.click(railButton);
-
-    const closeButton = screen.getByRole("button", { name: "베이스맵 닫기" });
+    const buttons = Array.from(document.querySelectorAll("button"));
+    // 공허 진리 방지 — 팝오버가 안 열렸으면 닫힌 상태를 다시 검사하는 것이라 의미가 없다.
     expect(
-      meetsTouchFloor(closeButton),
-      `팝오버 닫기 버튼이 44px 미달이다: ${closeButton.className}`,
-    ).toBe(true);
+      screen.getByRole("button", { name: "레이어 설정 닫기" }),
+      "레이어 팝오버가 열리지 않았다",
+    ).toBeInTheDocument();
+
+    const violations = buttons
+      .filter((b) => !meetsTouchFloor(b))
+      .map((b) => `${b.getAttribute("aria-label") ?? b.textContent?.trim()?.slice(0, 20)} :: ${b.className.slice(0, 90)}`);
+
+    expect(violations, `44px 미달 버튼(팝오버 열림):\n${violations.join("\n")}`).toHaveLength(0);
   });
 });
 
