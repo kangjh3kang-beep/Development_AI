@@ -188,7 +188,7 @@ def _display_cap_impact(
     categories: "dict[str, dict[str, Any]]",
     avm: "dict[str, Any] | None",
     avm_legacy: "dict[str, Any] | None",
-    avm_cap_only: "dict[str, Any] | None",
+    avm_trimmed: "dict[str, Any] | None",
     *,
     radius_applied: bool,
 ) -> "dict[str, Any] | None":
@@ -273,18 +273,20 @@ def _display_cap_impact(
         #   → 가격 델타는 apt AVM 이 있을 때만, **절단량은 `radius_applied` 만으로 항상** 싣는다.
         #     가격 3종은 계산 불가면 **키를 빼지 않고 None** 으로 둔다 — 키 자체가 사라지면
         #     소비처가 "이 응답엔 그 개념이 없다"로 읽지만, 실제로는 "못 쟀다"이기 때문이다.
-        _priced = bool(avm and avm_legacy and avm_cap_only)
+        _priced = bool(avm and avm_legacy)
         cur = (avm or {}).get("price_per_sqm") if _priced else None
         leg = (avm_legacy or {}).get("price_per_sqm") if _priced else None
-        cap = (avm_cap_only or {}).get("price_per_sqm") if _priced else None
 
         def _pct(a, b):
             """b 대비 a 의 변화율(%). 분모가 없으면 **None**(0 으로 날조하지 않는다)."""
             return round((a - b) / b * 100.0, 2) if (a and b) else None
 
-        _delta_total = _pct(cur, leg)          # 사용자가 보던 값 대비 총 변화
-        _delta_cap = _pct(cap, leg)            # 캡 해제 기여
-        _delta_trim = _pct(cur, cap)           # 이상치 트림 기여
+        # ★리뷰 C-2 — 트림은 **정본이 아니다**. 캐노니컬(`cur`)은 캡 해제 + 무절사이고,
+        #   트림은 아직 채택되지 않은 **진단 값**(`trm`)이다. 델타도 그렇게 나눈다.
+        trm = (avm_trimmed or {}).get("price_per_sqm") if avm_trimmed else None
+        _delta_total = _pct(cur, leg)          # 이 PR 이 실제로 바꾼 양(= 캡 해제분)
+        _delta_cap = _pct(cur, leg)            # 총 변화 = 캡 해제 기여(트림 미채택이므로 동일)
+        _delta_trim_candidate = _pct(trm, cur)  # ★미채택 — 트림을 채택하면 추가로 이만큼 움직인다
 
         return {
             # ★소비처 오용 방지 — 이 플래그를 보고도 렌더하면 그건 의도적 오용이다.
@@ -308,11 +310,16 @@ def _display_cap_impact(
             # ── 전환 변화량의 **원인별 귀속** ──
             "price_per_sqm": cur,                       # 전환 후(= 현재 사용자가 보는 값)
             "price_per_sqm_before_transition": leg,     # 전환 전(표시캡 표본 + 무절사)
-            "price_per_sqm_cap_lifted_untrimmed": cap,  # 캡만 해제(트림 없음)
-            "delta_pct": _delta_total,                  # 총 변화
-            "delta_pct_from_cap_lift": _delta_cap,      # 그중 캡 해제 기여
-            "delta_pct_from_outlier_trim": _delta_trim, # 그중 이상치 트림 기여
-            "outliers_excluded": (avm or {}).get("outliers_excluded") if _priced else None,
+            "delta_pct": _delta_total,                  # 이 PR 이 실제로 바꾼 양
+            "delta_pct_from_cap_lift": _delta_cap,      # 그 전부가 캡 해제 기여다
+            # ── ★미채택 진단 — 이상치 트림을 **채택하면** 추가로 얼마나 움직이는가 ──
+            #   `avm` 은 트림을 쓰지 않는다. 이 값들은 프로덕션에서 델타를 재고 부호·크기
+            #   일관성을 확인한 뒤 별도 PR 로 전환 여부를 판정하기 위한 것이다.
+            "price_per_sqm_outlier_trimmed_candidate": trm,
+            "delta_pct_from_outlier_trim_candidate": _delta_trim_candidate,
+            "outlier_groups_excluded_candidate": (
+                (avm_trimmed or {}).get("outlier_groups_excluded") if avm_trimmed else None
+            ),
             "confidence_score": (avm or {}).get("confidence_score") if _priced else None,
             "confidence_score_before_transition": (
                 (avm_legacy or {}).get("confidence_score") if _priced else None
@@ -784,22 +791,28 @@ class NearbyMapService:
             )
         # ★D-2 그림자 계측 — 표시 상한이 **없었다면** 같은 산식이 얼마를 냈을지 병기한다.
         #   `avm` 자체는 **한 글자도 바뀌지 않는다**(전환은 이 델타를 프로덕션에서 읽은 뒤).
-        # ★D-2 전환의 **변화량을 원인별로 귀속**한다. 금액을 바꾸는 변경이므로 "얼마나
-        #   달라졌나"뿐 아니라 "무엇 때문에 달라졌나"까지 관측 가능해야 한다.
-        #     legacy   = 표시캡 표본 + 무절사  (= 전환 **이전** 사용자가 보던 값)
-        #     cap_only = 캡 해제 표본 + 무절사  (= 캡 해제분만 반영)
-        #     canonical(`avm_summary`) = 캡 해제 표본 + 트림 (= 전환 **이후** 값)
-        #   → 캡 해제 기여 = cap_only − legacy · 트림 기여 = canonical − cap_only
+        # ★D-2 전환의 변화량을 관측 가능하게 한다. 금액을 바꾸는 변경이므로 "얼마나
+        #   달라졌나"를 응답이 스스로 말해야 한다.
+        #     legacy    = 표시캡 표본 + 무절사 (= 전환 **이전** 사용자가 보던 값)
+        #     canonical = 캡 해제 표본 + 무절사 (= 전환 **이후** 값, `avm_summary`)
+        #     trimmed   = 캡 해제 표본 + 트림   (= **미채택** 후보 — 진단 전용)
         avm_legacy = self._compute_avm_summary(
             categories.get("apt_trade"), radius_applied=radius_applied, radius_m=radius_m,
             sample_field="_in_radius_groups_display_capped", robust=False,
         )
-        avm_cap_only = self._compute_avm_summary(
+        # ★★리뷰 C-2 봉합 — **트림은 정본에서 뗀다.** 캡 해제는 프로덕션 6표본 계측 후
+        #   전환했는데 트림은 **계측 0 으로 즉시 정본화**했다 — 이 커밋이 삭제한 주석에
+        #   내가 직접 적어둔 규율("계측 없이 바꾸면 얼마나 달라지는지 모르는 채 금액을
+        #   흔드는 것")을 트림에만 적용하지 않은 것이다. 두 변경이 같은 기준을 받아야 한다.
+        #   → 트림은 **진단 전용**으로만 계산해 델타를 프로덕션에서 먼저 재고,
+        #     부호·크기 일관성을 확인한 뒤 별도 PR 로 전환한다.
+        avm_trimmed = self._compute_avm_summary(
             categories.get("apt_trade"), radius_applied=radius_applied, radius_m=radius_m,
-            robust=False,
+            robust=True,
         )
         display_cap_impact = _display_cap_impact(
-            categories, avm_summary, avm_legacy, avm_cap_only, radius_applied=radius_applied,
+            categories, avm_summary, avm_legacy, avm_trimmed,
+            radius_applied=radius_applied,
         )
         for _cat in categories.values():
             _cat.pop("_in_radius_groups", None)
@@ -1302,7 +1315,7 @@ class NearbyMapService:
         radius_applied: bool = False,
         radius_m: int | None = None,
         sample_field: str = "_in_radius_groups",
-        robust: bool = True,
+        robust: bool = False,
     ) -> dict[str, Any] | None:
         """아파트 매매 실거래 그룹(**반경 통과분만**) 통계로 AI 시세(AVM) 요약을 계산한다.
 
@@ -1362,7 +1375,8 @@ class NearbyMapService:
 
         pp_sum = 0.0
         pp_n = 0
-        pp_weighted: list[float] = []   # 그룹 간 이상치 트림용(건수 가중 확장)
+        pp_unweighted: list[float] = []      # 트림 **밴드** 산출용 — 그룹당 1개(비가중)
+        pp_pairs: list[tuple[float, int]] = []  # (평당가, 건수) — 가중평균 산출용
         for g in groups:
             avg_price_10k = g.get("avg_price_10k")
             avg_area_m2 = g.get("avg_area_m2") or 0
@@ -1377,24 +1391,38 @@ class NearbyMapService:
                 #   그대로 노출된다("표본만 늘리면 더 정확"이 자명하지 않은 이유).
                 #   건수 가중을 유지하려고 그룹당 `cnt` 개로 확장해 넣는다(새 산식이 아니라
                 #   기존 공용 헬퍼 재사용 — 로그 IQR·표본 8건 미만 트림 생략 규약 그대로).
-                #   ★`robust_price_stats` 는 `int(p)` 로 절단한다(만원 단위 정수 입력을 전제한
-                #     헬퍼다). 평당가는 실수라 그대로 넣으면 소수부가 잘려 계통 편차가 생긴다
-                #     — **100배 스케일**로 넣고 나중에 되돌려 절단 편차를 제거한다.
-                pp_weighted.extend([per_pyeong * _PP_SCALE] * int(cnt))
+                #   ★★리뷰 C-1 봉합 — 밴드는 **비가중 그룹 표본**에서 산출한다.
+                #     종전엔 건수만큼 확장한 표본으로 사분위를 계산했는데, 그러면 **거래가 많은
+                #     그룹이 사분위 구간을 점유**해 밴드가 그쪽으로 붕괴하고 **정상 이웃 단지가
+                #     이상치로 제거**된다. 리뷰어 실측: 가격 집합은 그대로 두고 **건수 분포만**
+                #     바꿨더니 제외 판정이 완전히 달라졌다(−10.16% / 0% / +5.62%).
+                #     즉 그건 이상치 판정이 아니라 **거래량 편중 판정**이었다.
+                #   ★`robust_price_stats` 는 `int(p)` 절단(만원 정수 입력 전제)이므로 실수인
+                #     평당가는 **100배 스케일**로 넣고 되돌려 절단 편차를 제거한다.
+                pp_unweighted.append(per_pyeong * _PP_SCALE)   # 밴드 산출용(그룹당 1개)
+                pp_pairs.append((per_pyeong, int(cnt)))        # 가중평균용
         if pp_n <= 0:
             return None
 
         outliers_excluded = 0
-        if robust and pp_weighted:
-            _pp = robust_price_stats(pp_weighted)
+        if robust and pp_unweighted:
+            _pp = robust_price_stats(pp_unweighted)
             # ★트림이 **아무것도 제거하지 않았으면 추정치도 바뀌지 않아야 한다.**
             #   `robust_price_stats` 를 경유하면 스케일 왕복·정수 반올림으로 값이 미세하게
             #   움직이는데(실측 0.0002%), 그러면 "트림 미발동인데 값이 변했다"는 설명 불가능한
             #   상태가 된다. 제외 0 건이면 **원래 가중평균을 그대로** 쓴다 — 이 판정의 부작용을
             #   0 으로 만들고, `delta_pct_from_outlier_trim == 0.0` 이 **정확히** 참이 된다.
             if _pp["avg"] > 0 and _pp["excluded"] > 0:
-                per_pyeong = float(_pp["avg"]) / _PP_SCALE
-                outliers_excluded = _pp["excluded"]
+                # ★밴드는 비가중으로 정하되, **평균은 건수 가중**으로 낸다 — 살아남은 그룹만
+                #   원래 가중치로 다시 평균한다(트림이 가중 구조를 바꾸지 않는다).
+                _lo, _hi = float(_pp["min"]), float(_pp["max"])
+                _kept = [(v, c) for v, c in pp_pairs if _lo <= v * _PP_SCALE <= _hi]
+                _kn = sum(c for _v, c in _kept)
+                if _kn > 0:
+                    per_pyeong = sum(v * c for v, c in _kept) / _kn
+                    outliers_excluded = _pp["excluded"]
+                else:
+                    per_pyeong = pp_sum / pp_n
             else:
                 per_pyeong = pp_sum / pp_n
         else:
@@ -1445,7 +1473,9 @@ class NearbyMapService:
             "price_cv_percent": self._js_round(cv_percent),
             # ★근거 표기 — 이 시세가 **무엇으로부터** 나왔는지 소비처가 알 수 있어야 한다.
             # ★그룹 간 이상치로 제외된 **가중 표본 수**(0 이면 트림이 발동하지 않았다는 관측된 사실).
-            "outliers_excluded": outliers_excluded,
+            # ★단위를 이름에 박는다 — 밴드가 **비가중 그룹 표본**에서 나오므로 이건 **그룹 수**다
+            #   (건수가 아니다). 종전 건수 가중 시절의 이름을 그대로 두면 판독자가 거래 수로 읽는다.
+            "outlier_groups_excluded": outliers_excluded,
             "robust_applied": bool(robust),
             # ★근거 표기 — 이 시세가 **무엇으로부터** 나왔는지 소비처가 알 수 있어야 한다.
             "basis": {
@@ -1458,8 +1488,15 @@ class NearbyMapService:
                 #   정상이며, 그 차이가 곧 표시 상한이 잘라낸 양이다. 이걸 안 실으면
                 #   두 수를 비교한 판독자가 "둘 중 하나가 틀렸다"고 읽는다.
                 "sample_scope": "in_radius_precise_all",
-                "display_capped_group_count": (
-                    (apt_trade_category or {}).get("capped_group_count")
+                # ★★리뷰 M-1 봉합 — 종전엔 `capped_group_count` 를 실었는데 그건
+                #   **정밀·동 대표점을 가리지 않은 전체 절단 수**이고, 이 주석이 설명하려는
+                #   차이(계산 표본 − 표시 표본)는 **정밀분 기준**이다. 실측 불일치:
+                #   정밀 10·동 40 → 필드 22 인데 AVM 이 캡으로 잃은 정밀 그룹은 **0**.
+                #   ★`_display_cap_impact` 에서 고친 바로 그 결함(B-1)을 여기에 재도입했다.
+                #   → 정밀 기준 차이를 싣고 이름도 그렇게 바꾼다.
+                "dropped_precise_group_count": (
+                    len((apt_trade_category or {}).get("_in_radius_groups") or [])
+                    - len((apt_trade_category or {}).get("_in_radius_groups_display_capped") or [])
                 ),
             },
         }

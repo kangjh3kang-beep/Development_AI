@@ -40,7 +40,7 @@ def _expected_avm(
     *,
     radius_applied: bool = False,
     radius_m: int | None = None,
-    display_capped_group_count: int | None = None,
+    dropped_precise_group_count: int = 0,
 ) -> dict | None:
     """종전 프론트(deriveResults :196-238) 계산식의 독립 재구현(golden reference).
 
@@ -109,9 +109,10 @@ def _expected_avm(
         "price_cv_percent": js_round(cv_percent),
         # ★근거 표기 — 이 시세가 **무엇으로부터** 나왔는지. 반경이 적용된 산출은
         #   `in_radius`(반경 통과분만), 미적용이면 전체 그룹임을 명시한다.
-        # ★D-2 전환 — 그룹 간 이상치 트림의 관측 축(이 파일 픽스처에선 항상 미발동).
-        "outliers_excluded": 0,
-        "robust_applied": True,
+        # ★D-2 전환 — 트림은 **정본이 아니다**(리뷰 C-2). 캐노니컬은 무절사이고 트림은
+        #   `display_cap_impact` 에 **미채택 후보**로만 실린다. 그래서 여기선 항상 0/False.
+        "outlier_groups_excluded": 0,
+        "robust_applied": False,
         "basis": {
             "radius_applied": radius_applied,
             "radius_m": radius_m,
@@ -121,7 +122,9 @@ def _expected_avm(
             #   `_compute_avm_summary` 를 직접 호출하는 단위 케이스는 카테고리 dict 에
             #   `capped_group_count` 가 없어 None 이고, `build()` 경유 케이스는 실제 값이 온다.
             "sample_scope": "in_radius_precise_all",
-            "display_capped_group_count": display_capped_group_count,
+            # ★리뷰 M-1 — 종전엔 `capped_group_count`(정밀·동 대표점 무구분 전체 절단 수)를
+            #   실어 이 주석이 설명하려는 차이(계산−표시, **정밀 기준**)와 모집단이 어긋났다.
+            "dropped_precise_group_count": dropped_precise_group_count,
         },
     }
 
@@ -322,15 +325,15 @@ async def test_build_response_includes_avm_field_matching_apt_trade_groups():
         comparable_count=sum(g["count"] for g in apt_groups),
         radius_applied=True,
         radius_m=1000,
-        # ★D-2 전환 — `build()` 경유라 실제 값이 온다. 이 픽스처는 그룹이 캡(28) 미만이라
-        #   표시 상한이 아무것도 자르지 않았다 = **관측된 0**(미측정이 아니다).
-        display_capped_group_count=0,
+        # ★D-2 전환 — 이 픽스처는 그룹이 캡(28) 미만이라 표시 상한이 아무것도 자르지
+        #   않았다 = 계산 표본과 표시 표본이 같다 → 차 0(**관측된 0**, 미측정이 아니다).
+        dropped_precise_group_count=0,
     )
     assert result["avm"] == expected
     # ★D-2 전환 회귀락 — 캡이 안 물었으므로 계산 표본과 표시 표본이 **같아야** 한다.
     #   (캡이 무는 경우의 분리는 test_nearby_map_precision.py 가 값으로 잠근다.)
     assert result["avm"]["basis"]["sample_scope"] == "in_radius_precise_all"
-    assert result["avm"]["basis"]["display_capped_group_count"] == 0
+    assert result["avm"]["basis"]["dropped_precise_group_count"] == 0
     # ★반경 통과분 기준 카운트 — `categories.count`(통과분+미판정분 합)와 **다를 수 있다**.
     #   이 픽스처에선 미판정분이 0이라 같지만, 같다고 단정하지 않고 통과분으로 단언한다.
     assert result["avm"]["comparable_count"] == result["categories"]["apt_trade"]["count_in_radius"]

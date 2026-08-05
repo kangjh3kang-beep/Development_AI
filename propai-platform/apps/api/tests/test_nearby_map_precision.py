@@ -1058,7 +1058,8 @@ async def test_precut_accounting_detector_is_actually_wired(monkeypatch) -> None
 
 
 def _cap_fixture(n_groups: int, cheap_from: int | None = None, dong_groups: int = 0,
-                 spread: int = 0, extreme_price: int | None = None):
+                 spread: int = 0, extreme_price: int | None = None,
+                 extreme_count: int = 5):
     """`n_groups` 개 **정밀(지번)** 그룹을 건수 내림차순으로 만든다.
 
     - `cheap_from` 이후 그룹은 **싸게** — 캡이 자르는 쪽과 남기는 쪽의 가격을 가른다.
@@ -1070,7 +1071,9 @@ def _cap_fixture(n_groups: int, cheap_from: int | None = None, dong_groups: int 
         밴드가 한 점으로 붕괴해 `exp(log(x))` 왕복 오차로 그 값조차 밴드 밖이 된다 →
         `or vals` 폴백으로 **트림이 무동작**한다(공용 헬퍼의 선재 축퇴 — 실측 확인).
         즉 균일 픽스처로는 "이상치 보강이 실제로 일하는가"를 **검증할 수 없다**.
-    - `extreme_price` — 극단 이상치 그룹 1개. 트림이 **발동**하는지 보는 축.
+    - `extreme_price` / `extreme_count` — 극단 이상치 그룹 1개와 그 건수.
+      ★건수가 캡 순위를 결정한다 — 건수가 작으면 극단이 **캡 밖**에 남아 표시(legacy) 표본엔
+        들어가지 않는다. legacy 쪽 트림 여부를 판별하려면 건수를 키워 **캡 안**에 넣어야 한다.
     """
     rows: list[dict] = []
     gmap: dict[str, dict] = {}
@@ -1081,7 +1084,8 @@ def _cap_fixture(n_groups: int, cheap_from: int | None = None, dong_groups: int 
         rows += [_row(name="", jibun=f"g{i}", dong="A동", price=price, day=1) for _ in range(cnt)]
         gmap[f"경상북도 남구 A동 g{i}"] = {"lat": 36.0003, "lon": 129.0003}
     if extreme_price is not None:
-        rows += [_row(name="", jibun="X", dong="A동", price=extreme_price, day=1) for _ in range(5)]
+        rows += [_row(name="", jibun="X", dong="A동", price=extreme_price, day=1)
+                 for _ in range(extreme_count)]
         gmap["경상북도 남구 A동 X"] = {"lat": 36.0003, "lon": 129.0003}
     for j in range(dong_groups):
         rows.append(_row(name="", jibun="", dong=f"D{j}동", price=70000, day=1))
@@ -1131,7 +1135,9 @@ async def test_avm_uses_compute_sample_not_display_sample() -> None:
     assert avm["comparable_count"] == 820          # 계산 표본 거래 수
     assert avm["comparable_group_count"] == 40     # 계산 표본 그룹 수
     assert avm["basis"]["sample_scope"] == "in_radius_precise_all"
-    assert avm["basis"]["display_capped_group_count"] == 12
+    # ★리뷰 M-1 — 종전엔 `capped_group_count`(정밀·동 무구분)를 실어 모집단이 어긋났다.
+    #   이제 **정밀 기준** 차(계산 40 − 표시 28)를 싣고 이름도 그것을 말한다.
+    assert avm["basis"]["dropped_precise_group_count"] == 12
 
     # ★표시 계약은 **캡 기준 그대로** — 응답에 실린 groups 배열을 설명하는 수이기 때문이다.
     assert cat["count_in_radius"] == 742
@@ -1142,11 +1148,12 @@ async def test_avm_uses_compute_sample_not_display_sample() -> None:
 
     # ★변화량이 **원인별로 귀속**된다 — 금액을 바꾸는 변경이므로 "왜 바뀌었나"까지 관측한다.
     assert imp["price_per_sqm_before_transition"] == 11904762
-    assert imp["price_per_sqm_cap_lifted_untrimmed"] == 11112079
     assert imp["delta_pct"] == -6.66
     assert imp["delta_pct_from_cap_lift"] == -6.66
-    assert imp["delta_pct_from_outlier_trim"] == 0.0
-    assert imp["outliers_excluded"] == 0
+    # ★리뷰 C-2 — 트림은 **정본이 아니다**. 이 픽스처에선 후보값도 캐노니컬과 같다(미발동).
+    assert avm["robust_applied"] is False
+    assert imp["outlier_groups_excluded_candidate"] == 0
+    assert imp["delta_pct_from_outlier_trim_candidate"] == 0.0
     assert imp["sample_group_count_display"] == 28
     assert imp["sample_group_count_compute"] == 40
     assert imp["dropped_precise_group_count"] == 12
@@ -1175,11 +1182,13 @@ async def test_avm_outlier_trim_actually_fires_on_realistic_spread() -> None:
     imp = payload["display_cap_impact"]
 
     # ★트림이 **발동**했다 — 이 단언이 이 절의 존재 이유다.
-    assert avm["outliers_excluded"] == 5          # 극단 그룹의 5건이 정확히 제외된다
-    assert avm["robust_applied"] is True
-    # 극단이 **고가** 쪽이므로 트림은 값을 **낮춘다**(방향까지 잠근다).
-    assert imp["price_per_sqm"] < imp["price_per_sqm_cap_lifted_untrimmed"]
-    assert imp["delta_pct_from_outlier_trim"] < 0
+    #   ★리뷰 C-1 봉합 후 밴드는 **비가중 그룹 표본**에서 나오므로 제외 단위도 **그룹**이다
+    #     (종전 건수 가중 시절엔 5"건"이었다 — 이름과 단위가 함께 바뀌었다).
+    assert imp["outlier_groups_excluded_candidate"] == 1   # 극단 그룹 1개
+    # ★트림은 **미채택**이므로 정본은 무절사다 — 후보만 낮아진다.
+    assert avm["robust_applied"] is False
+    assert imp["price_per_sqm_outlier_trimmed_candidate"] < imp["price_per_sqm"]
+    assert imp["delta_pct_from_outlier_trim_candidate"] < 0
 
     # ★★값 고정 — **독립 산출**(픽스처 정의만 보고 로그 IQR 트림을 손으로 재구성):
     #     평당가 = price / (84㎡ / 3.3057851…) · 건수 40..1 · spread=300 · 극단 900,000만원 5건
@@ -1188,8 +1197,9 @@ async def test_avm_outlier_trim_actually_fires_on_realistic_spread() -> None:
     #     무절사였다면 3,973.7158 → 12,020,491원/㎡ (즉 트림이 −4.8% 낮춘다)
     #   ★이 리터럴이 `_PP_SCALE` 보정을 **값으로** 잠근다 — 스케일을 빼면 `int(p)` 절단으로
     #     11,437,525원(−2,935원)이 되어 이 단언이 깨진다. 관계 단언(`<`)만으로는 못 잡는다.
-    assert imp["price_per_sqm"] == 11440460
-    assert imp["price_per_sqm_cap_lifted_untrimmed"] == 12020491
+    #   캐노니컬(무절사·캡해제) = 12,020,491 · 트림 후보 = 11,416,667 (극단 그룹 1개 제외)
+    assert imp["price_per_sqm"] == 12020491
+    assert imp["price_per_sqm_outlier_trimmed_candidate"] == 11416667
 
     # ★★귀속 잠금 — 이 픽스처는 캡과 트림이 **동시에** 물고 세 값이 전부 다르다.
     #   독립 산출: legacy(캡28·무절사) = 11,510,557 (상위 28 그룹 가중평균 — 극단은 건수 5라
@@ -1201,9 +1211,9 @@ async def test_avm_outlier_trim_actually_fires_on_realistic_spread() -> None:
     #     그건 데이터 의존이지 구조적 보장이 아니다. 셋을 각각 잠가야 귀속이 뒤섞이는 변이
     #     (예: 캡 기여 자리에 총 변화를 싣기)가 잡힌다.
     assert imp["price_per_sqm_before_transition"] == 11510557
-    assert imp["delta_pct"] == -0.61
+    assert imp["delta_pct"] == 4.43
     assert imp["delta_pct_from_cap_lift"] == 4.43
-    assert imp["delta_pct_from_outlier_trim"] == -4.83
+    assert imp["delta_pct_from_outlier_trim_candidate"] == -5.02
 
 
 @pytest.mark.asyncio
@@ -1219,10 +1229,10 @@ async def test_avm_unchanged_when_trim_inactive_and_cap_not_binding() -> None:
     imp = payload["display_cap_impact"]
     assert imp["sample_group_count_display"] == imp["sample_group_count_compute"] == 5
     assert imp["dropped_precise_group_count"] == 0
-    assert imp["outliers_excluded"] == 0
+    assert imp["outlier_groups_excluded_candidate"] == 0
     assert imp["delta_pct"] == 0.0
     assert imp["delta_pct_from_cap_lift"] == 0.0
-    assert imp["delta_pct_from_outlier_trim"] == 0.0
+    assert imp["delta_pct_from_outlier_trim_candidate"] == 0.0
     assert imp["price_per_sqm"] == imp["price_per_sqm_before_transition"] == 11904762
 
 
@@ -1319,9 +1329,9 @@ async def test_display_cap_impact_keeps_truncation_when_apt_avm_absent() -> None
 
     assert payload["avm"] is None
     assert imp is not None and imp["diagnostic_only"] is True
-    for k in ("price_per_sqm", "price_per_sqm_before_transition",
-              "price_per_sqm_cap_lifted_untrimmed", "delta_pct",
-              "delta_pct_from_cap_lift", "delta_pct_from_outlier_trim",
+    for k in ("price_per_sqm", "price_per_sqm_before_transition", "delta_pct",
+              "delta_pct_from_cap_lift", "price_per_sqm_outlier_trimmed_candidate",
+              "delta_pct_from_outlier_trim_candidate", "outlier_groups_excluded_candidate",
               "confidence_score", "confidence_score_before_transition",
               "sample_deal_count", "sample_deal_count_display_capped"):
         assert k in imp and imp[k] is None, f"{k} 는 키를 유지한 채 None 이어야 한다"
@@ -1343,3 +1353,102 @@ async def test_display_cap_impact_is_none_when_radius_not_applied() -> None:
     assert payload["radius_applied"] is False
     assert payload["avm"] is not None
     assert payload["display_cap_impact"] is None
+
+
+@pytest.mark.asyncio
+async def test_outlier_trim_band_is_not_swayed_by_transaction_volume() -> None:
+    """★★리뷰 C-1(차단) 회귀락 — 트림 밴드가 **가격**으로 정해지는가, **거래량**으로 정해지는가.
+
+    종전엔 평당가를 건수만큼 확장한 표본에서 사분위를 계산했다. 그러면 **거래가 많은 그룹이
+    사분위 구간을 점유**해 밴드가 그쪽으로 붕괴하고 **정상 이웃 단지가 이상치로 제거**된다.
+    리뷰어 실측: 가격 집합을 **한 글자도 바꾸지 않고 건수 분포만** 바꿨더니
+      균등(각 5건) → 제외 0 · Δ 0.00%
+      최저가 단지만 100건 → 밴드 3,997~6,514 로 붕괴, **정상 4개 제거** · Δ **−10.16%**
+      최고가 단지만 100건 → 정상 3개 제거 · Δ **+5.62%**
+    즉 그건 이상치 판정이 아니라 **거래량 편중 판정**이었다.
+
+    → 밴드는 **비가중 그룹 표본**에서 산출하고 건수 가중은 **평균에만** 적용한다.
+      이 골든은 같은 반례 세 개를 그대로 태워 **제외 0 · Δ 0.0%** 를 요구한다.
+    """
+    prices = [4800, 5200, 5500, 6000, 6500, 7000, 8000, 9500, 11000]   # 만원/평 스케일
+    results = []
+    for counts in ([5] * 9, [100] + [5] * 8, [5] * 8 + [100]):
+        nm._BUILD_CACHE.clear()
+        rows: list[dict] = []
+        gmap: dict[str, dict] = {}
+        for i, (pr, c) in enumerate(zip(prices, counts, strict=True)):
+            rows += [_row(name="", jibun=f"g{i}", dong="A동", price=pr * 100, day=1)
+                     for _ in range(c)]
+            gmap[f"경상북도 남구 A동 g{i}"] = {"lat": 36.0003, "lon": 129.0003}
+        payload = await _build_cap(_service(rows, gmap))
+        imp = payload["display_cap_impact"]
+        results.append((imp["outlier_groups_excluded_candidate"],
+                        imp["delta_pct_from_outlier_trim_candidate"]))
+
+    # ★가격이 같으면 **건수 분포가 어떻든** 제외 판정이 같아야 한다.
+    assert results == [(0, 0.0), (0, 0.0), (0, 0.0)], (
+        f"밴드가 거래량에 흔들린다 — 가격은 동일한데 판정이 갈렸다: {results}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_display_capped_sample_keeps_precision_filter() -> None:
+    """★리뷰 M-6(생존 변이) 회귀락 — 표시 표본도 **정밀분만**이어야 한다.
+
+    ★같은 결함 클래스의 **4회차**다. 기존 회귀락 픽스처가 `_cap_fixture(40, dong_groups=9)`
+    라 **정밀 40 ≥ 캡 28** → `capped` 가 100% 정밀분이 되어, `_in_radius_groups_display_capped`
+    를 `precise` 대신 `capped`(정밀도 무시)로 바꾸는 변이가 **생존**했다.
+    리뷰어 실측(정밀 10·동 40): 그 변이에서 `price_per_sqm_before_transition` 이
+    11,797,619 → **8,543,302 (−28%)**, `dropped_precise_group_count` 가 **−18**(음수)가 된다.
+    즉 **전환 근거 자체가 조용히 −28% 오염**되는데 골든이 전혀 못 잡았다.
+
+    → 판별입력은 **정밀 < 캡 AND 동 대표점 그룹 존재**여야 한다.
+      그래야 `capped` 에 동 대표점이 섞여 두 모집단이 갈라진다.
+    """
+    nm._BUILD_CACHE.clear()
+    rows: list[dict] = []
+    gmap: dict[str, dict] = {}
+    n_precise, n_dong = 10, 40          # 정밀 10 < 캡 28 · 동 40
+    for i in range(n_precise):
+        rows += [_row(name="", jibun=f"p{i}", dong="A동", price=100000, day=1)
+                 for _ in range(n_precise - i)]
+        gmap[f"경상북도 남구 A동 p{i}"] = {"lat": 36.0003, "lon": 129.0003}
+    for j in range(n_dong):
+        rows.append(_row(name="", jibun="", dong=f"D{j}동", price=70000, day=1))
+        gmap[f"경상북도 남구 D{j}동"] = {"lat": 36.0004, "lon": 129.0004}
+    payload = await _build_cap(_service(rows, gmap))
+    imp = payload["display_cap_impact"]
+
+    # ★정밀분이 캡보다 적으므로 계산·표시 표본이 **둘 다 10** 이어야 한다.
+    #   표시 표본을 `capped`(동 대표점 포함)로 바꾸면 28 이 되어 이 단언이 깨진다.
+    assert imp["sample_group_count_compute"] == n_precise
+    assert imp["sample_group_count_display"] == n_precise
+    assert imp["dropped_precise_group_count"] == 0
+    # 전환 근거(전환 전 값)가 오염되지 않았다 — 정밀분만으로 계산된 값이어야 한다.
+    assert imp["price_per_sqm_before_transition"] == imp["price_per_sqm"]
+    assert imp["delta_pct"] == 0.0
+    # 전체 절단은 **다른 수**다(동 대표점이 캡에서 잘린다).
+    assert imp["dropped_all_precisions_group_count"] > 0
+
+
+@pytest.mark.asyncio
+async def test_transition_baseline_is_untrimmed() -> None:
+    """★리뷰 M-5(생존 변이) 회귀락 — 전환 **기준선**(legacy)은 무절사여야 한다.
+
+    `avm_legacy` 호출의 `robust=False` 를 `True` 로 바꾸면 "전환 전 값"이 **트림된 값**이 되어
+    `delta_pct` 와 `delta_pct_from_cap_lift` 가 전부 틀어지는데 잠금이 없었다.
+    극단 그룹이 있는 픽스처에서 legacy 가 트림되면 값이 달라지므로 리터럴로 못 박는다.
+    """
+    nm._BUILD_CACHE.clear()
+    # ★극단 그룹을 **건수 45** 로 둬 캡 순위 1위 → **표시(legacy) 표본 안**에 들어간다.
+    #   그래야 legacy 에 트림을 걸었을 때 값이 달라져 변이가 판별된다.
+    rows, gmap = _cap_fixture(40, spread=300, extreme_price=900000, extreme_count=45)
+    payload = await _build_cap(_service(rows, gmap))
+    imp = payload["display_cap_impact"]
+    # legacy 표본에 극단이 포함돼 있으므로, 트림이 걸리면 이 값이 크게 내려간다.
+    assert imp["outlier_groups_excluded_candidate"] == 1, "이 픽스처는 트림 발동을 전제한다"
+    assert imp["price_per_sqm_before_transition"] > imp["price_per_sqm_outlier_trimmed_candidate"]
+    # ★기준선이 무절사임을 값으로 잠근다 — legacy 에 robust=True 를 걸면 깨진다.
+    #   독립 산출: 표시캡(28) 표본 = 극단(건수 45, 순위 1위) + 건수 상위 27개의 무절사
+    #   가중평균 = **17,080,150원/㎡**. legacy 에 트림을 걸면 극단이 빠져 크게 내려간다.
+    assert imp["price_per_sqm_before_transition"] == 17080150
