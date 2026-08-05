@@ -158,6 +158,22 @@ describe("SatongMapShell 접힘(B4)·문서 위계(B1) 회귀망", () => {
     expect(screen.getByRole("button", { name: /지도 열기/ })).toBeInTheDocument();
   });
 
+  it("★모바일 IA P1: 접힌 뒤 대상이 사라지면 다시 펼친다 — 입력이 접힌 채 갇히지 않는다", () => {
+    // ★이 케이스가 1회 래치(ref)를 철회하게 만든 근거다. 래치가 있으면 "대상 있음"으로 확정된
+    //   뒤 사용자가 필지를 전부 지워도 접힌 채 남아, 이 수정이 없애려던 "할 게 없는 화면"으로
+    //   되돌아간다. 펼침이 단방향이라 래치가 막을 사용자 조작도 애초에 없었다.
+    seedTarget();
+    render(<SatongMapShell locale="ko" defaultCollapsed />);
+    expect(screen.getByRole("button", { name: /지도 열기/ })).toBeInTheDocument();
+
+    act(() => {
+      useProjectContextStore.setState({ siteAnalysis: null });
+    });
+
+    expect(screen.getByRole("heading", { name: "통합 필지 입력" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /지도 열기/ })).not.toBeInTheDocument();
+  });
+
   it("★모바일 IA P0: 접힌 셸의 유일 진입점 \"지도 열기\"는 44px 터치 타깃 하한을 지킨다", () => {
     seedTarget();
     render(<SatongMapShell locale="ko" defaultCollapsed />);

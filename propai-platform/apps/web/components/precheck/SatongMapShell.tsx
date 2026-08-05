@@ -761,25 +761,26 @@ export function SatongMapShell({
   //   ★대상이 있으면 접힘 유지(무회귀), 없으면 펼친다. 판정을 **effect 에서** 하는 이유:
   //   selectedParcels 는 useState([]) 로 시작해 아래 하이드레이션 이펙트가 채우므로 마운트
   //   시점 판정은 **항상 "대상 없음"**이 되어 defaultCollapsed 를 통째로 무력화한다.
-  //   ★래치 규칙은 바로 위 connectInitRef 선례를 그대로 따른다 — projectId 는 있는데 데이터가
-  //   아직 안 온 상태(스냅샷 복원 비동기)에서는 **래치하지 않고** 다음 갱신에 재평가한다.
-  //   조기 래치하면 복원 중인 프로젝트를 "대상 없음"으로 오판해 멀쩡한 접힘을 펼쳐 버린다.
-  //   ★1회 래치라 사용자가 이후 직접 접는/펴는 조작을 덮지 않는다.
-  const collapseDecidedRef = useRef(false);
+  //   ★projectId 는 있는데 데이터가 아직 안 온 상태(스냅샷 복원 비동기)에서는 **판정을 미룬다** —
+  //   바로 위 connectInitRef 가 같은 이유로 쓰는 규칙이다. 여기서 "대상 없음"으로 단정하면
+  //   복원 중인 프로젝트의 멀쩡한 접힘을 펼쳐 버린다.
+  //
+  //   ★1회 래치(ref)를 쓰지 않는다 — 처음엔 넣었다가 **철회**했다. 래치 제거 변이가 생존해
+  //   들여다보니 래치가 막는 경로가 없었다: 이 셸에서 **펼침은 단방향**이다
+  //   (setIsShellExpanded(false) 호출이 파일 전체에 없다 — "지도 열기"도 펼치는 방향뿐).
+  //   그래서 "사용자 조작을 덮지 않으려면 래치가 필요하다"는 전제 자체가 성립하지 않았다.
+  //   오히려 래치가 있으면 접힌 상태에서 사용자가 필지를 전부 지웠을 때 **입력이 접힌 채 남아**
+  //   이 수정이 없애려던 화면으로 되돌아간다 — 정책과 반대로 작동하는 코드였다.
+  //   조건부 재평가가 곧 정책이다(대상이 없어지면 입력이 다시 나온다).
   useEffect(() => {
     if (!defaultCollapsed) return; // 펼침이 기본인 호출측(/ko·/precheck)은 무관 — 무회귀
-    if (collapseDecidedRef.current) return;
     const hasTarget =
       selectedParcels.length > 0 ||
       !!storeSiteAnalysis?.address ||
       !!storeSiteAnalysis?.parcels?.length;
-    if (hasTarget) {
-      collapseDecidedRef.current = true; // 대상 있음 — 접힌 요약이 의미를 가지므로 그대로 둔다
-      return;
-    }
-    if (projectId) return; // 데이터 도착 대기 — 미확정이므로 래치 금지(늦은 복원 허용)
-    collapseDecidedRef.current = true;
-    setIsShellExpanded(true); // 대상 없음 확정 — 입력을 접어 두지 않는다
+    if (hasTarget) return; // 대상 있음 — 접힌 요약이 의미를 가지므로 그대로 둔다
+    if (projectId) return; // 데이터 도착 대기 — 미확정이므로 단정 금지(늦은 복원 허용)
+    setIsShellExpanded(true); // 대상 없음 — 입력을 접어 두지 않는다
   }, [defaultCollapsed, selectedParcels.length, storeSiteAnalysis, projectId]);
   // ── WS-C 필지 상세 패널 — 지도 폴리곤/카드 클릭 → 통합 정보(개요·공시지가·노후도)와
   //    산출물 원클릭 퍼널. 단일 팝오버 원칙: 레이어 설정 패널과 동시 표출 금지(상호 배타).
