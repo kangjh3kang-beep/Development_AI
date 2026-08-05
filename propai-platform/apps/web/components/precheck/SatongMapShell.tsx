@@ -3557,20 +3557,21 @@ export function SatongMapShell({
                      밀림은 유계"라는 근거가 성립하려면 이 패널의 가변 블록이 전부 유계여야 한다.
                      검색후보 slice(0,6)·검증대상 slice(0,8)·보정 slice(0,3)·선택필지 max-h-[360px]
                      는 이미 봉인돼 있는데 **이 경고 목록만 무계**였다(엑셀 업로드 시 수십 건 가능).
-                     ★잘라내되 숨기지 않는다 — 남은 건수를 명시한다(이 저장소의 "0과 미확보를 같은
-                     기호로 쓰지 않는다"와 같은 계열: 절단을 침묵으로 처리하지 않는다). */
-                  <ul className="space-y-1">
-                    {(verificationReport.warnings ?? []).slice(0, 5).map((w, i) => (
+
+                     ★절단이 아니라 **유계 스크롤**로 푼다(R2 지적 HIGH). 초판은 slice(0,5) + "외 N건 —
+                     전체는 업로드 결과 파일에서 확인하세요"였는데, **그런 결과 파일은 존재하지 않는다**:
+                     parse-parcels 응답은 JSON 전용(ParseParcelsResponse)이고 이 화면의 다운로드는
+                     업로드용 템플릿과 '선택된 필지' export 둘뿐이라, 선택에 못 들어간 행에 대한 경고는
+                     어느 파일에도 없다. 절단을 정직하게 고지하려던 문장이 **없는 회수 경로를 약속**해
+                     침묵보다 나쁜 오도가 됐다 — 화면 밖을 가리키는 문구는 그 경로가 실재할 때만 쓴다.
+                     max-h + overflow-y-auto 는 밀림을 유계로 만들면서 **전체 도달성도 보존**한다
+                     (같은 파일 선택 필지 목록 max-h-[360px] 와 동일 관용구). */
+                  <ul className="max-h-[120px] space-y-1 overflow-y-auto">
+                    {(verificationReport.warnings ?? []).map((w, i) => (
                       <li key={i} className="text-[11px] font-semibold text-[var(--status-error)]">
                         {w}
                       </li>
                     ))}
-                    {(verificationReport.warnings?.length ?? 0) > 5 && (
-                      <li className="text-[11px] font-semibold text-[var(--text-tertiary)]">
-                        외 {(verificationReport.warnings?.length ?? 0) - 5}건 — 전체는 업로드 결과
-                        파일에서 확인하세요.
-                      </li>
-                    )}
                   </ul>
                 )}
               </div>

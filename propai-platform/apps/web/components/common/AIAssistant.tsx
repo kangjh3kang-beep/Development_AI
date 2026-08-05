@@ -276,7 +276,8 @@ export function AIAssistant() {
 
        ★"본문 전체 위"는 아니다(R1 지적 H1 — 초판 주석의 사실오기를 정정한다). 사통맵 지도
        오버레이(SatongMapShell 팝오버 z-[430]·레이어 레일 z-[420], lib/satong-map-z.ts 의
-       SATONG_UI_Z 380~500)는 지도 래퍼가 스태킹 컨텍스트를 만들지 않아 루트에서 경쟁하므로
+       SATONG_UI_Z 400~500, 그리고 SatongMapShell 배지 칩바 z-[380])는 지도 래퍼가 스태킹
+       컨텍스트를 만들지 않아 루트에서 경쟁하므로
        **이 버튼보다 위에 온다**. 종전(9999)엔 반대로 이 버튼이 지도 컨트롤을 덮었으니 승자가
        뒤바뀐 것이고, 지도 위에서는 지도 컨트롤이 이기는 편이 옳다 — 의도된 서열로 둔다.
        근원(지도 오버레이를 지도 박스 안에 가두는 SatongMultiMap 래퍼 `isolate`)은 풀스크린
@@ -344,20 +345,31 @@ export function AIAssistant() {
               ref={scrollRef}
               /* ★max-h 는 위 z 강등의 짝이다 — 이제 앱 헤더(z-1000)가 이 패널 위에 그려지므로,
                  짧은 뷰포트에서 패널 상단이 헤더 띠(0~var(--app-header-offset)) 안으로 들어가면
-                 대화 제목이 헤더에 가린다. 헤더 띠 + 패널 크롬(헤더블록·입력줄·하단 여백 ≈18rem)을
-                 뺀 만큼으로 상한을 걸어 그 침범 자체를 없앤다.
+                 대화 제목이 헤더에 가린다.
+
+                 ★감산 항이 세 개인 이유 — 이 패널은 **뷰포트 하단에서 위로 자란다**(컨테이너가
+                 `fixed bottom-10` + FAB h-16 + gap-4 + 패널 mb-6). 그래서 대화 영역 위쪽 여백은
+                 「헤더 띠 + 패널 크롬 + **하단 앵커**」를 전부 뺀 나머지다:
+                   · var(--app-header-offset) 6.25rem(100px) — 헤더 띠(:root 단일 정의·상수)
+                   · 12rem(192px) — 패널 크롬(헤더블록 92 + 입력블록 95 ≈ 187)
+                   · 9rem(144px) — 하단 앵커(bottom-10 40 + FAB 64 + gap-4 16 + mb-6 24)
+                 ★초판은 **하단 앵커를 빼먹어**(감산 388px) "침범 자체를 없앤다"고 써 놓고 실제로는
+                 dvh 768 이하에서 상단 ~31px 이 헤더 뒤에 남았다 — 상한이 자기가 없애겠다고 선언한
+                 결함을 못 없애고 있었다(R2 지적 MEDIUM). 감산을 436px 로 맞춰 그 선언을 참으로 만든다.
 
                  ★min-h 는 그 상한이 만든 신규 회귀를 막는다(R1 지적 H2 — 초판은 하한이 없었다).
-                 감산량은 6.25rem(--app-header-offset, :root 단일 정의라 뷰포트 무관 상수) + 18rem
-                 = 388px **고정**이라, 대화 영역 = clamp(0, 100dvh − 388, 380) 이 된다:
-                   844px(폰 세로) 380 = 종전 그대로 · 768px 380(경계) · 667px(SE) 279(−27%)
-                   · 390px(폰 가로) **2px** · 388px 이하 **0px = 답변이 한 글자도 안 보인다**.
-                 "짧은 화면에서만 줄어든다"고 썼지만 실제로는 **사라졌다** — 헤더에 가리는 것보다
-                 대화가 소실되는 쪽이 명백히 더 나쁘므로 하한(9rem)을 우선한다. 즉 아주 짧은
-                 뷰포트에서는 헤더 침범을 다시 허용한다(정직한 우선순위 교환이다).
-                 CSS 상 min-height 가 max-height 를 이기므로 이 한 줄로 봉인된다.
-                 무회귀 범위는 "dvh ≥ 768px"이다 — 그 아래는 종전보다 짧아진다. */
-              className="relative flex h-[380px] min-h-[9rem] max-h-[calc(100dvh_-_var(--app-header-offset)_-_18rem)] flex-col gap-5 overflow-y-auto p-6 scrollbar-hide bg-[var(--surface-soft)]/50 backdrop-blur-sm"
+                 하한이 없으면 대화 영역 = clamp(0, 100dvh − 감산, 380) 이라 dvh 390(폰 가로)에서
+                 2px, 감산 이하에서 **0px = 답변이 한 글자도 안 보인다**. 그래서 9rem 을 하한으로 둔다
+                 (CSS 상 min-height 가 max-height 를 이기므로 이 한 줄로 봉인된다).
+
+                 ★결과 구간 — 세 층으로 정직하게 나뉜다:
+                   · dvh ≥ 816: 380px 그대로 = **무회귀**(폰 세로 844 포함)
+                   · 575 ≤ dvh < 816: 줄어들지만 **헤더 침범 없음**(스크롤로 전체 도달)
+                   · dvh < 575: min-h 가 이겨 침범을 다시 허용한다. 특히 **dvh < 552 에서는 패널
+                     상단이 헤더에 가리는 정도가 아니라 뷰포트 밖으로 잘려 닫기 버튼에 손이 닿지
+                     않는다**(회수 경로는 FAB 토글뿐 — 트랩은 아니다). 그럼에도 대화 소실보다는
+                     낫다고 판단해 하한을 우선한다(정직한 우선순위 교환이다). */
+              className="relative flex h-[380px] min-h-[9rem] max-h-[calc(100dvh_-_var(--app-header-offset)_-_12rem_-_9rem)] flex-col gap-5 overflow-y-auto p-6 scrollbar-hide bg-[var(--surface-soft)]/50 backdrop-blur-sm"
             >
               {!connected && (
                 <div className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-center">
@@ -444,7 +456,9 @@ export function AIAssistant() {
            같은 캠페인의 44px 하한과 같은 계열의 누수라 함께 메운다. */
         aria-label={isOpen ? "AI 어시스턴트 닫기" : "AI 어시스턴트 열기"}
         aria-expanded={isOpen}
-        aria-controls="ai-assistant-panel"
+        /* 닫힘 상태에서는 패널이 언마운트되므로 IDREF 를 비운다 — 없는 id 를 가리키는
+           미해석 참조를 만들지 않는다(관용 범위지만 검증기가 지적하는 형태). */
+        aria-controls={isOpen ? "ai-assistant-panel" : undefined}
         animate={{
           scale: [1, 1.05, 1],
           boxShadow: isOpen ? "0 0 0px var(--accent-strong)" : "0 0 20px var(--accent-strong) / 0.2"
