@@ -14,7 +14,7 @@ import { analysisTargetKey } from "@/lib/analysis-target";
 describe("useAnalysisTargetGuard", () => {
   it("붙은 결과가 없으면(첫 진입) 대상이 바뀌어도 비우지 않는다 — 헛발 방지", () => {
     const onStale = vi.fn();
-    const { rerender } = renderHook(({ k }) => useAnalysisTargetGuard(k, onStale), {
+    const { rerender } = renderHook(({ k }) => useAnalysisTargetGuard(k, onStale, false), {
       initialProps: { k: analysisTargetKey("p1", "역삼동 736") },
     });
     rerender({ k: analysisTargetKey("p2", "산1-1") });
@@ -23,7 +23,7 @@ describe("useAnalysisTargetGuard", () => {
 
   it("결과가 붙은 뒤 프로젝트가 바뀌면 비운다", () => {
     const onStale = vi.fn();
-    const { result, rerender } = renderHook(({ k }) => useAnalysisTargetGuard(k, onStale), {
+    const { result, rerender } = renderHook(({ k }) => useAnalysisTargetGuard(k, onStale, false), {
       initialProps: { k: analysisTargetKey("p1", "역삼동 736") },
     });
     act(() => { result.current.begin(); });
@@ -35,7 +35,7 @@ describe("useAnalysisTargetGuard", () => {
     // 다필지 프로젝트는 레코드에 대표 주소가 없어 siteAnalysis가 통째로 비는 전환이 된다.
     // 주소 문자열만 비교하던 종전 코드는 이 경로에서 아무것도 지우지 않았다.
     const onStale = vi.fn();
-    const { result, rerender } = renderHook(({ k }) => useAnalysisTargetGuard(k, onStale), {
+    const { result, rerender } = renderHook(({ k }) => useAnalysisTargetGuard(k, onStale, false), {
       initialProps: { k: analysisTargetKey("p1", "역삼동 736") },
     });
     act(() => { result.current.begin(); });
@@ -46,7 +46,7 @@ describe("useAnalysisTargetGuard", () => {
   it("대상이 그대로면 다시 렌더해도 비우지 않는다 — 오탐 0", () => {
     const onStale = vi.fn();
     const key = analysisTargetKey("p1", "역삼동 736");
-    const { result, rerender } = renderHook(({ k }) => useAnalysisTargetGuard(k, onStale), {
+    const { result, rerender } = renderHook(({ k }) => useAnalysisTargetGuard(k, onStale, false), {
       initialProps: { k: key },
     });
     act(() => { result.current.begin(); });
@@ -60,7 +60,7 @@ describe("useAnalysisTargetGuard", () => {
     const calls: number[] = [];
     const key = analysisTargetKey("p1", "역삼동 736");
     const { result, rerender } = renderHook(
-      ({ k, n }) => useAnalysisTargetGuard(k, () => calls.push(n)),
+      ({ k, n }) => useAnalysisTargetGuard(k, () => calls.push(n), false),
       { initialProps: { k: key, n: 1 } },
     );
     act(() => { result.current.begin(); });
@@ -71,7 +71,7 @@ describe("useAnalysisTargetGuard", () => {
 
   it("★분석 중 대상이 바뀌면 뒤늦게 온 응답을 버린다(isCurrent=false)", () => {
     const onStale = vi.fn();
-    const { result, rerender } = renderHook(({ k }) => useAnalysisTargetGuard(k, onStale), {
+    const { result, rerender } = renderHook(({ k }) => useAnalysisTargetGuard(k, onStale, false), {
       initialProps: { k: analysisTargetKey("p1", "역삼동 736") },
     });
     let runKey = "";
@@ -83,7 +83,7 @@ describe("useAnalysisTargetGuard", () => {
 
   it("대상이 그대로면 응답을 받아들인다(isCurrent=true) — 정상 경로 무회귀", () => {
     const key = analysisTargetKey("p1", "역삼동 736");
-    const { result } = renderHook(() => useAnalysisTargetGuard(key, vi.fn()));
+    const { result } = renderHook(() => useAnalysisTargetGuard(key, vi.fn(), false));
     let runKey = "";
     act(() => { runKey = result.current.begin(); });
     expect(result.current.isCurrent(runKey)).toBe(true);
@@ -105,5 +105,58 @@ describe("analysisTargetKey", () => {
 
   it("값이 서로 밀려 들어가 우연히 같은 키가 되지 않는다", () => {
     expect(analysisTargetKey("a", "b c")).not.toBe(analysisTargetKey("a b", "c"));
+  });
+});
+
+// ── R3 MEDIUM 봉합 회귀락 (2026-08-05) ────────────────────────────────────────
+
+describe("★키 충돌 — 구분자 방식이 갖지 못한 보장(R3 M-2)", () => {
+  it("값에 개행이 들어와도 서로 다른 대상이 같은 키가 되지 않는다", () => {
+    // 종전 주석은 "줄바꿈은 ID·주소에 들어갈 수 없다"고 단언했지만, 주소는 trim만 하므로
+    // 내부 개행이 남는다. 그 반증 케이스를 그대로 고정한다.
+    expect(analysisTargetKey("p1\nX", "Y")).not.toBe(analysisTargetKey("p1", "X\nY"));
+  });
+
+  it("따옴표·역슬래시 같은 문자도 대상을 뒤섞지 않는다", () => {
+    expect(analysisTargetKey('p"1', "Y")).not.toBe(analysisTargetKey("p", '"1","Y'));
+    expect(analysisTargetKey("p\\", "Y")).not.toBe(analysisTargetKey("p", "\\Y"));
+  });
+});
+
+describe("★같은 대상 재실행 경합(R3 M-3)", () => {
+  it("먼저 시작한 느린 응답이 나중 실행 결과를 덮지 못한다", () => {
+    const { result } = renderHook(() =>
+      useAnalysisTargetGuard(analysisTargetKey("p1", "역삼동 736"), vi.fn(), false),
+    );
+    let first = "";
+    let second = "";
+    act(() => { first = result.current.begin(); });
+    act(() => { second = result.current.begin(); });
+    expect(first).not.toBe(second);
+    expect(result.current.isCurrent(first)).toBe(false); // 낡은 실행
+    expect(result.current.isCurrent(second)).toBe(true);
+  });
+});
+
+describe("★결과 추적이 begin()에만 매달리지 않는다(R3 M-3)", () => {
+  it("실행 경로 밖에서 결과가 붙어도 대상 전환 시 비운다", () => {
+    const onStale = vi.fn();
+    // begin()을 한 번도 부르지 않고 결과만 존재하는 상태(히스토리 복원 등).
+    const { rerender } = renderHook(
+      ({ k, has }) => useAnalysisTargetGuard(k, onStale, has),
+      { initialProps: { k: analysisTargetKey("p1", "역삼동 736"), has: true } },
+    );
+    rerender({ k: analysisTargetKey("p2", "산1-1"), has: true });
+    expect(onStale).toHaveBeenCalledTimes(1);
+  });
+
+  it("결과가 없으면 대상이 바뀌어도 헛 무효화하지 않는다 — 오탐 0", () => {
+    const onStale = vi.fn();
+    const { rerender } = renderHook(
+      ({ k, has }) => useAnalysisTargetGuard(k, onStale, has),
+      { initialProps: { k: analysisTargetKey("p1", "역삼동 736"), has: false } },
+    );
+    rerender({ k: analysisTargetKey("p2", "산1-1"), has: false });
+    expect(onStale).not.toHaveBeenCalled();
   });
 });

@@ -24,7 +24,12 @@ export function analysisTargetKey(
   projectId: string | null | undefined,
   address: string | null | undefined,
 ): string {
-  // 구분자는 줄바꿈 — 프로젝트 ID에도 주소에도 들어갈 수 없는 문자라, 두 값이 서로
-  // 밀려 들어가 우연히 같은 키가 되는 일이 없다(id "a"+주소 "b c" vs id "a b"+주소 "c").
-  return [projectId ?? "", (address ?? "").trim()].join("\n");
+  // ★구분자 방식으로는 충돌을 **막을 수 없다**(2026-08-05 R3가 반증):
+  //   구분자를 줄바꿈으로 두고 "ID에도 주소에도 들어갈 수 없다"고 적어놨었는데,
+  //   주소는 `.trim()`만 하므로 **내부 개행이 남는다** —
+  //     key("p1\nX", "Y")  === "p1\nX\nY"
+  //     key("p1",    "X\nY") === "p1\nX\nY"   ← 서로 다른 대상이 같은 키
+  //   확률은 낮지만 **주석이 갖지 않은 보장을 단언**하고 있었다. 그래서 구분자를 고르는 대신
+  //   길이 정보가 함께 들어가는 직렬화를 쓴다 — 어떤 문자가 들어와도 역구성이 유일하다.
+  return JSON.stringify([projectId ?? "", (address ?? "").trim()]);
 }
