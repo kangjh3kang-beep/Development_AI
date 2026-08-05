@@ -437,6 +437,14 @@ export function DeskAppraisalReportClient({ locale }: { locale: Locale }) {
                 </table>
               </div>
               <p className="mt-1.5 text-[11px] text-[var(--text-hint)]">{res.weight_note}</p>
+              {/* ★거래사례비교법이 빠진 **사유**(R1 리뷰 M-6 — 백엔드가 채우는데 화면
+                  소비처가 0개라 사용자가 겪는 침묵은 그대로였다). "거래가 없다"와
+                  "원천이 지번을 가려서 위치를 못 잡는다"는 전혀 다른 상태다. */}
+              {res.comparable_skipped_reason ? (
+                <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--text-hint)] break-keep">
+                  {res.comparable_skipped_reason}
+                </p>
+              ) : null}
             </Section>
 
             {/* IV. 복수 시나리오 교차검증 */}

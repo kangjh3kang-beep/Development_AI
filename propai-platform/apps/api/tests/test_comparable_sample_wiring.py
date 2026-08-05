@@ -170,3 +170,530 @@ def test_known_consumers_are_actually_wired(rel: str) -> None:
     assert _USES_SELECTOR.search(src), (
         f"{rel} 이 셀렉터를 거치지 않는다 — 위치 미확인·개략 표본이 다시 섞인다"
     )
+
+
+# ── 표본 0 의 **사유**를 말한다 ────────────────────────────────────────────────
+
+def test_no_sample_reason_distinguishes_masked_from_absent() -> None:
+    """★"거래가 없다"와 "거래는 있는데 원천이 지번을 가려 위치를 못 잡는다"는 **다른 상태**다.
+
+    ★이 함수가 없던 동안 탁상감정은 `scope=="radius"` 인데 `located` 가 0 이면 **아무 사유
+    없이** 공시지가 기준으로 폴백했다(`comparable_skip_note` 는 반경 **미적용** 가지에만
+    있었다). 사용자는 왜 거래사례비교를 안 썼는지 알 수 없었다.
+    ★라이브 실측: 토지·단독다가구는 MOLIT 이 지번을 가려 주므로(`"5*"`·`"1**"`) 위치
+    확인분이 **구조적으로 0** 이다 — 이 침묵 구간의 지배적 원인이고, 우리가 고칠 수 없는
+    **데이터 한계**다. 그러면 그 사실을 말하는 것이 정직이다.
+    """
+    from app.services.market.comparable_sample import SampleBasis, no_sample_reason
+
+    def _basis(**kw):
+        base = dict(scope="radius", radius_applied=True, radius_m=1500, located_count=0,
+                    approximate_count=0, unlocated_count=0, capped_count=0)
+        base.update(kw)
+        return SampleBasis(**base)
+
+    # 표본이 있으면 사유가 없다.
+    assert no_sample_reason(_basis(located_count=3)) is None
+
+    # ★마스킹이 원인이면 그렇게 말한다 — 이게 land/house 의 지배적 사유다.
+    masked = no_sample_reason(_basis(masked_jibun_count=13))
+    assert masked is not None
+    assert "지번을 가려서" in masked and "13건" in masked
+    assert "반경 1.5km" in masked, "라벨은 SampleBasis 가 만든다(문구 중복 생성 금지)"
+
+    # 마스킹이 아니면 다른 사유를 말한다 — 두 상태가 **구분돼야** 한다.
+    other = no_sample_reason(_basis(unlocated_count=2, approximate_count=1))
+    assert other is not None and "지번을 가려서" not in other
+    assert "위치 미확인 2건" in other
+
+    # ★R2 리뷰(M-6) — `approximate` 항이 무테스트였다(그 두 줄을 지워도 전건 통과했다).
+    assert "동 단위까지만 확인 1건" in other, "동 단위 확인분이 문장에서 사라진다"
+
+    # 진짜로 아무것도 없으면 그렇게 말한다.
+    empty = no_sample_reason(_basis())
+    assert empty is not None and "수집된 거래가 없습니다" in empty
+
+
+def test_masked_skew_branch_is_locked_by_literal() -> None:
+    """★★R2 리뷰(M-2) — 스큐 갈래(`masked > unlocated`)를 **출력 문자열로** 잠근다.
+
+    ★그 갈래는 무테스트였다(포함 관계 상한과 별도 항을 통째로 지워도 56 passed 생존).
+    유일하게 관련 있던 테스트가 `b.no_sample_reason() == no_sample_reason(b)` 라
+    **동어반복**이었다 — 양변이 함께 변이하므로 아무것도 잠그지 못한다.
+
+    ★그리고 초판의 스큐 문장은 세 결함을 한꺼번에 가졌다:
+      (a) 실거래 3건이 `1 + 3 + 2 = 6건`으로 읽히는 **이중계수**(M-3 이 없애려던 그 문제)
+      (b) `—` 가 한 문장에 두 번 나와 절 구조 붕괴
+      (c) `…확인할 수 없습니다은 단가 산정에…` **비문**(m-4 가 고친 결합 결함의 재생산)
+    """
+    from app.services.market.comparable_sample import SampleBasis, no_sample_reason
+
+    skew = SampleBasis(
+        scope="radius", radius_applied=True, radius_m=1500,
+        located_count=0, approximate_count=2, unlocated_count=1,
+        capped_count=0, masked_jibun_count=3, masked_jibun_group_count=2,
+    )
+    got = no_sample_reason(skew)
+    assert got == (
+        "반경 1.5km 내에서 위치가 확인된 거래가 없습니다 — "
+        "위치 미확인 1건 · 동 단위까지만 확인 2건은 단가 산정에 쓰지 않습니다. "
+        "지번이 가려진 거래는 3건으로 집계됐습니다(위 '위치 미확인' 건수에 포함되는지는 "
+        "확인할 수 없습니다) — 공개 실거래 자료가 지번을 가려서 제공해(예: 5*, 1**) "
+        "위치를 확인할 수 없습니다."
+    ), got
+    # 카운트 항에 마스킹을 **더하지 않는다**(더하면 같은 거래를 두 번 센다).
+    assert "지번이 가려진 거래 3건 ·" not in got
+    # ★R3 리뷰(F-5) — "그 밖에"는 **서로소를 적극 주장**해 독자가 1+3+2=6건으로 읽는다.
+    #   M-2 가 없앤 이중계수의 어법판이라 문구를 바꿨다. 되돌아오면 이 단언이 잡는다.
+    assert "그 밖에" not in got, "서로소를 단정하는 어법이 되살아났다"
+    assert "포함되는지는 확인할 수 없습니다" in got
+    # ★R4 리뷰(M-1·M-2) — "위 건수"는 지시 대상이 없거나(앞 건수 0) 틀린 대상(동 단위
+    #   확인분)을 가리켰다. 대상을 **명시**하고, 앞 건수가 없으면 괄호를 생략한다.
+    assert "위 '위치 미확인' 건수" in got, "지시 대상이 모호한 문구가 되살아났다"
+    # `—` 는 절 구분자로 쓰되 한 문장에 하나씩만.
+    assert got.count(" — ") == 2, f"절 구조가 무너졌다: {got}"
+
+
+def test_sample_basis_recovers_masked_count_from_groups_on_legacy_payload() -> None:
+    """구버전 페이로드엔 `masked_jibun_group_count` 가 없다 — **0 으로 단정하지 않고** 센다.
+
+    0 으로 단정하면 "마스킹 때문"이라는 사유가 구버전에서 조용히 사라져, 사용자가
+    "거래가 없다"는 **틀린 설명**을 받는다(모르는 것을 0 으로 쓰지 않는다).
+    """
+    from app.services.market.comparable_sample import _basis_from_category
+
+    # ★그룹 수(2)와 거래 건수(7)를 **실제로 가른다** — 같으면 단위 변이가 생존한다.
+    legacy = {   # sample_basis 가 없던 시절 형태
+        "count_in_radius": 0, "count_approximate": 2, "count_unresolved": 1,
+        "groups": [
+            {"jibun": "5*", "count": 3},
+            {"jibun": "1**", "count": 4},
+            {"jibun": "736", "count": 9},   # 정상 지번 — 마스킹 집계에 들어오면 안 된다
+        ],
+    }
+    b = _basis_from_category(legacy)
+    assert b.masked_jibun_count == 7, "거래 건수"
+    assert b.masked_jibun_group_count == 2, "물건 수"
+
+
+def test_sample_basis_reads_masked_count_from_modern_payload() -> None:
+    """★배선 락 — `sample_basis` 경로에서 `masked_jibun_group_count` 를 **실제로 읽는가**.
+
+    ★변이 실증: 이 읽기를 지워도 다른 골든이 전부 통과했다(내 테스트가 `SampleBasis` 를
+    **직접 구성**하거나 구버전 폴백 경로만 태웠기 때문). 즉 신형 페이로드 → 도메인 객체
+    **배선이 무잠금**이었다. 배선 미변이로 뚫린 다섯 번째 사례다.
+    """
+    from app.services.market.comparable_sample import _basis_from_category
+
+    modern = {
+        "sample_basis": {
+            "scope": "radius", "radius_applied": True, "radius_m": 1500,
+            "located_count": 0, "approximate_count": 5, "unlocated_count": 8,
+            # ★두 축이 **서로 다른 값**이어야 단위 배선이 판별된다.
+            "masked_jibun_count": 13, "masked_jibun_group_count": 4,
+            "capped_count": 0,
+        },
+        # ★그룹 배열엔 마스킹이 **없다** — 폴백 경로가 아니라 `sample_basis` 경로를 태웠는지
+        #   구분하기 위해서다(둘이 같은 값을 내면 변이가 생존한다).
+        "groups": [{"jibun": "736", "count": 99}],
+    }
+    b = _basis_from_category(modern)
+    assert b.masked_jibun_count == 13, "신형 페이로드의 마스킹 거래 건수가 배선되지 않았다"
+    assert b.masked_jibun_group_count == 4, "신형 페이로드의 마스킹 물건 수가 배선되지 않았다"
+
+
+def test_sample_basis_does_not_assume_zero_when_masked_key_is_absent() -> None:
+    """★★R1 리뷰(M-5) — `sample_basis` 는 있는데 **마스킹 키만 없는** 배포 스큐.
+
+    초판이 방어한 것은 `sample_basis` **자체가 없는** 아주 옛 응답인데, 그 필드는 W1-b
+    이후 상시 존재한다. 즉 **실제로 일어나는 스큐는 이 형태**(프론트 캐시·백엔드 롤아웃
+    지연)이고, 초판은 여기서 `or 0` 으로 **0 이라고 단정**했다 — "모르는 것을 0 으로
+    단정하지 않는다"는 이 모듈의 선언이 정작 실제 스큐 구간에서 거짓이 되고, 그동안
+    마스킹 사유가 조용히 사라진다.
+
+    ★값 **0** 과 키 **부재**를 구분해야 한다 — 0 이면 그대로 0 을 쓴다(아래 두 번째 단언).
+    """
+    from app.services.market.comparable_sample import _basis_from_category
+
+    skewed = {
+        "sample_basis": {   # 마스킹 키가 **없다**
+            "scope": "radius", "radius_applied": True, "radius_m": 1500,
+            "located_count": 0, "approximate_count": 0, "unlocated_count": 5,
+            "capped_count": 0,
+        },
+        "groups": [{"jibun": "5*", "count": 3}, {"jibun": "1**", "count": 2}],
+    }
+    b = _basis_from_category(skewed)
+    assert b.masked_jibun_count == 5, "키 부재를 0 으로 단정했다 — 그룹에서 복원해야 한다"
+    assert b.masked_jibun_group_count == 2
+
+    # ★키가 있고 값이 0 이면 **그대로 0** 이다(복원 경로가 0 을 덮어써서는 안 된다).
+    explicit_zero = {
+        "sample_basis": dict(skewed["sample_basis"], masked_jibun_count=0,
+                             masked_jibun_group_count=0),
+        "groups": skewed["groups"],
+    }
+    assert _basis_from_category(explicit_zero).masked_jibun_count == 0
+
+
+@pytest.mark.asyncio
+async def test_desk_appraisal_really_emits_masked_reason_end_to_end() -> None:
+    """★★R1 리뷰(M-2) — `desk_appraisal()` 을 **실제로 호출**해 사유가 응답에 실리는지 본다.
+
+    ★이 테스트가 없던 동안 이 봉합의 **행위 커버리지는 0** 이었다. 리뷰어가 넣은 변이
+    3종이 전부 **생존**했다:
+      1. 판정 분기(`comparable_avg_per_sqm is None`)를 항상 거짓으로  → 51 통과
+      2. 같은 변이 + 관련 11개 테스트파일 전량                        → 198 통과
+      3. **봉합 2줄을 지우고 주석으로 남기되 임포트는 유지**          → 51 통과
+
+    3번이 특히 뼈아프다 — 아래 소스 검사 락은 그 함정을 **안다고 주석에 적어 뒀는데**
+    (임포트까지 본다) 임포트를 남기면 두 정규식이 **모두 통과**한다. 소스 검사는 텍스트를
+    볼 뿐 **행위를 태우지 않는다**. 공허진리는 한 층 더 아래에 있었다.
+
+    ★외부 의존은 넷뿐이고(아래 patch) 전부 `try/except` 로 감싸져 있어, 이 테스트는
+    **실제 분기**를 그대로 통과시킨다 — 판정 조합을 재현하는 것이 아니다.
+    """
+    from app.services.land_intelligence import desk_appraisal_service as das
+
+    class _StubNearby:
+        async def build(self, **_kw):
+            return {
+                "categories": {
+                    "land_trade": {
+                        # 마스킹 지번뿐 — 위치 확인분이 구조적으로 0 이다(라이브 상시 상태).
+                        "groups": [
+                            {"jibun": "5*", "dong": "논현동", "location_status": "unlocated",
+                             "avg_price_10k": 50000, "avg_area_m2": 100.0, "count": 3},
+                            {"jibun": "1**", "dong": "논현동", "location_status": "unlocated",
+                             "avg_price_10k": 60000, "avg_area_m2": 120.0, "count": 2},
+                        ],
+                        "sample_basis": {
+                            "scope": "radius", "radius_applied": True, "radius_m": 1500,
+                            "located_count": 0, "approximate_count": 0, "unlocated_count": 5,
+                            "capped_count": 0,
+                            "masked_jibun_count": 5, "masked_jibun_group_count": 2,
+                        },
+                    }
+                }
+            }
+
+    async def _ta(*_a, **_k):
+        return {"factor": 1.0, "rationale": "테스트 고정"}
+
+    async def _ms(*_a, **_k):
+        return None
+
+    import app.services.land_intelligence.land_price_index as lpi
+    import app.services.land_intelligence.nearby_map_service as nms
+    import app.services.land_intelligence.reb_statistics_service as reb
+
+    _orig = (nms.NearbyMapService, lpi.time_adjust_factor_async, reb.get_market_stats)
+    nms.NearbyMapService = _StubNearby            # type: ignore[assignment]
+    lpi.time_adjust_factor_async = _ta            # type: ignore[assignment]
+    reb.get_market_stats = _ms                    # type: ignore[assignment]
+    try:
+        # `official_price_per_sqm` 을 주면 VWorld 조회 경로를 타지 않는다(네트워크 없음).
+        result = await das.desk_appraisal(
+            pnu="1168010100100010000", address="서울특별시 강남구 논현동 1-1",
+            area_sqm=300.0, official_price_per_sqm=5_000_000.0,
+        )
+    finally:
+        nms.NearbyMapService, lpi.time_adjust_factor_async, reb.get_market_stats = _orig
+
+    assert result.get("ok") is not False, f"탁상감정이 실패했다: {result.get('message')}"
+    note = result.get("comparable_skipped_reason")
+    assert note, "반경이 적용됐는데 표본이 0 인데도 **사유가 응답에 없다**(침묵 구간 복원)"
+    assert "지번을 가려서" in note, f"마스킹이 원인인데 그 사실을 말하지 않는다: {note}"
+    # ★거래사례비교법이 실제로 빠졌는지도 확인 — 사유만 싣고 값은 쓰는 상태면 모순이다.
+    assert not any(
+        "거래사례" in str(m.get("name") or m.get("method") or "")
+        for m in (result.get("methods") or [])
+    ), "사유를 실으면서 거래사례비교법을 그대로 썼다"
+
+
+def test_report_model_carries_the_skip_reason() -> None:
+    """★★R2 리뷰(H-2) — PDF/PPTX/DOCX 보고서 모델에 사유가 **실제로 실리는지** 실호출로 본다.
+
+    ★변이 실증: 어댑터의 사유 블록을 지워도 73개 테스트가 전부 통과했다 — 그 락을
+    vitest 파일에만 뒀기 때문이다. **백엔드 변경은 백엔드가 잠가야 한다.**
+    그리고 소스 검사가 아니라 **실호출**이어야 한다(M-2 에서 배운 것: 소스 검사는
+    텍스트를 볼 뿐 행위를 태우지 않는다).
+
+    이건 은행 제출용 산출물이다. 화면에서는 "왜 안 썼는지" 말하면서 PDF 에서는 방법이
+    그냥 사라지면, 읽는 사람은 "이 지역엔 거래가 없다"로 오독한다.
+    """
+    from app.services.report.render.appraisal_adapter import (
+        build_report_model_from_appraisal,
+    )
+
+    reason = (
+        "반경 1.5km 내에서 위치가 확인된 거래가 없습니다 — 위치 미확인 5건은 단가 산정에 "
+        "쓰지 않습니다. 위치 미확인 중 5건은 공개 실거래 자료가 지번을 가려서 제공해"
+        "(예: 5*, 1**) 위치를 확인할 수 없습니다."
+    )
+    result = {
+        "ok": True,
+        "appraised_price_per_sqm": 5_000_000,
+        "appraised_total_won": 1_500_000_000,
+        "area_sqm": 300.0,
+        "confidence": 0.7,
+        "range_per_sqm": {"low": 4_500_000, "high": 5_500_000},
+        "methods": [
+            {"method": "공시지가기준법", "unit_price": 5_000_000, "rationale": "공시지가 × 시점수정"}
+        ],
+        "weight_note": "공시지가기준법 단독",
+        "comparable_skipped_reason": reason,
+        "disclaimer": "참고용",
+    }
+    model = build_report_model_from_appraisal(result, address="서울특별시 강남구 논현동 1-1")
+
+    # 모델 어딘가가 아니라 **산정방법 섹션**에 실려야 한다(방법이 빠진 자리에서 설명한다).
+    method_sections = [
+        sec for sec in model.sections if "산정방법" in (sec.title or "")
+    ]
+    assert method_sections, "산정방법 섹션이 없다 — 이 테스트가 공허해진다"
+    rendered = "\n".join(
+        str(getattr(b, "paragraphs", "")) for sec in method_sections for b in sec.blocks
+    )
+    assert "지번을 가려서" in rendered, (
+        "보고서 모델에 거래사례비교법 제외 사유가 없다 — 은행 제출본에서 방법이 "
+        "아무 설명 없이 사라진다"
+    )
+
+
+def test_legacy_payload_never_treats_masked_as_located() -> None:
+    """레거시 페이로드(`location_status` 부재)에서 `coord_precision="masked"` 처리.
+
+    ★R3 리뷰(F-9) — 4번째 enum 값을 추가하면서 양쪽 레거시 폴백을 손대지 않아
+    **백엔드 `approximate` / 프론트 `located`** 로 두 미러가 갈려 있었다.
+    마스킹은 좌표가 **없다**는 뜻이므로 정밀을 주장하지 않는다.
+
+    ★정직 표기 두 가지:
+    ① 이 조합(`location_status` 부재 + `lat` 존재 + `masked`)은 **현재 생산 경로에서
+       도달 불가**다(마스킹 그룹은 질의를 안 만들어 `lat` 이 없다). 레거시/스큐 방어다.
+    ② **백엔드 쪽은 이 테스트로 잠기지 않는다** — `masked` 분기를 지워도 `else` 가
+       `approximate` 를 주고 둘 다 `located` 가 아니라 반환값이 같다(실측 확인).
+       실제로 갈렸던 것은 **프론트**(`!== "dong"` → `located`)이고 아래 단언이 그것을 잡는다.
+       "이 테스트가 두 곳을 다 잠근다"고 쓰면 거짓이 된다.
+    """
+    from app.services.market.comparable_sample import select_located_groups
+
+    legacy = {
+        "groups": [
+            # location_status 가 없고 lat 은 있는 옛 형태 — 폴백 가지를 태운다.
+            {"jibun": "5*", "lat": 36.0, "lon": 129.0, "coord_precision": "masked",
+             "avg_price_10k": 50000, "avg_area_m2": 84.0, "count": 3},
+            {"jibun": "736", "lat": 36.001, "lon": 129.001, "coord_precision": "parcel",
+             "avg_price_10k": 53000, "avg_area_m2": 84.0, "count": 1},
+        ],
+    }
+    located, _ = select_located_groups(legacy)
+    assert [g["jibun"] for g in located] == ["736"], (
+        "마스킹 그룹이 위치 확인분으로 취급됐다 — 좌표가 없다는 뜻인데 정밀을 주장했다"
+    )
+    # 프론트 미러도 같은 답을 내야 한다(소스로 계약 확인 — 실행은 vitest·CI).
+    mirror = (
+        _API_ROOT.parent.parent / "apps/web/lib/market/comparable-sample.ts"
+    ).read_text(encoding="utf-8")
+    assert re.search(r'coord_precision === "masked"\)\s*return "unlocated"', mirror), (
+        "프론트 레거시 폴백이 masked 를 다루지 않는다 — 두 미러가 갈린다"
+    )
+
+
+def test_shared_golden_matches_backend_output_exactly() -> None:
+    """★★R2 리뷰(M-3) — 백엔드와 프론트 미러가 **같은 값**을 내는지 값으로 잠근다.
+
+    ★초판의 "문구 일치 불변식"은 TS 소스에 한국어 조각이 들어 있는지 **grep** 할 뿐이라
+    값 대조가 아니었다. 실제로 반경 표기가 갈려 있었다 —
+    1250m 에서 백엔드 `1.25km` / 미러 `1.3km`, 게다가 같은 TS 파일 안에서
+    `sampleLabel` 은 `1.25km` 를 내 **한 파일에 세 표기**가 공존했다.
+    현재 호출부가 전부 라운드 값이라 잠복해 있었을 뿐이다.
+
+    → 두 구현이 **공유 골든 파일**을 본다. 이 테스트는 백엔드 출력이 그 파일과 같은지 보고,
+      프론트 vitest 골든이 TS 출력이 같은 파일과 같은지 본다. 어느 쪽 문구를 바꾸든
+      그쪽이 깨지므로 두 구현이 조용히 갈라질 수 없다.
+    """
+    import json
+
+    from app.services.market.comparable_sample import SampleBasis, no_sample_reason
+
+    golden_path = (
+        _API_ROOT.parent.parent
+        / "apps/web/lib/market/__tests__/fixtures/no-sample-reason.cases.json"
+    )
+    assert golden_path.exists(), f"공유 골든이 없다: {golden_path}"
+    cases = json.loads(golden_path.read_text(encoding="utf-8"))
+    assert cases, "공유 골든이 비었다 — 아래 대조가 공허해진다"
+    # ★비공허성 — 케이스가 실제로 여러 갈래를 덮는지 확인한다(전부 같은 갈래면 무판별).
+    assert len({c["expected"] for c in cases}) == len(cases), "골든에 중복 기대값이 있다"
+    assert any(c["masked"] > 0 and c["masked"] <= c["unlocated"] for c in cases), "포함 갈래 없음"
+    assert any(c["masked"] > c["unlocated"] for c in cases), "스큐 갈래 없음"
+    assert any(c["masked"] == 0 for c in cases), "마스킹 없는 갈래 없음"
+    assert any(
+        c["radius_m"] and c["radius_m"] % 500 != 0 for c in cases
+    ), "비라운드 반경 케이스 없음(표기 갈림 미검증)"
+    # ★R3 리뷰(F-6·F-2) — 축을 더 덮는다.
+    #   ① 카운트 ≥ 1000: 천단위 구분자를 지우는 변이가 **생존**했다(전 케이스가 3자리 미만).
+    #      게다가 미러의 `toLocaleString()` 은 로케일을 타서(de-DE `5.601`) 선언한 값 등가가
+    #      비콤마 로케일에서 거짓이 됐다 — M-3 가 반경에서 잡은 것과 같은 클래스다.
+    #   ② `scope` 3종: `sigungu`/`unknown` 가지가 **양쪽 다 무테스트**였다.
+    assert any(c["unlocated"] >= 1000 or c["masked"] >= 1000 for c in cases), "천단위 케이스 없음"
+    assert {c["scope"] for c in cases} >= {"radius", "sigungu", "unknown"}, "scope 갈래 미달"
+
+    for c in cases:
+        basis = SampleBasis(
+            scope=c["scope"], radius_applied=c["scope"] == "radius", radius_m=c["radius_m"],
+            located_count=0, approximate_count=c["approximate"],
+            unlocated_count=c["unlocated"], capped_count=0,
+            masked_jibun_count=c["masked"], masked_jibun_group_count=c["masked_groups"],
+        )
+        assert no_sample_reason(basis) == c["expected"], (
+            f"백엔드 출력이 공유 골든과 다르다(scope={c['scope']} r={c['radius_m']}) — "
+            "문구를 바꿨으면 골든을 재생성하고 프론트 미러도 함께 맞춰라"
+        )
+
+
+def test_mirror_does_not_drift_from_backend_wording_or_locale() -> None:
+    """★★R4 리뷰(C-1·M-4) — 미러가 백엔드에서 **갈라졌는지** pytest 로 잡는다.
+
+    ★C-1 실측: R3 에서 F-5 문구를 **백엔드만** 고치고 미러를 놓쳐 공유 골든 13건 중
+    3건이 어긋났다(vitest 확정 실패). 사용자가 실제로 읽는 화면에는 없애겠다고 선언한
+    "그 밖에"(서로소 단정 → 이중계수 오독)가 **그대로 출하될 뻔했다**.
+    → pytest 로 잡을 수 있었는데 안 잡았다. 전역 전파방지 미이행이다.
+
+    ★M-4 실측: `toLocaleString()` 을 인자 없이 부르면 **브라우저 로케일**을 탄다
+    (de-DE `5.601` vs 백엔드 `5,601`). CI 는 en-US 라 골든 케이스로는 **못 잡는다** —
+    로케일 고정은 **소스로** 잠가야 한다.
+    """
+    mirror = (
+        _API_ROOT.parent.parent / "apps/web/lib/market/comparable-sample.ts"
+    ).read_text(encoding="utf-8")
+
+    # ① 폐기된 문구가 미러에 남아 있으면 두 구현이 갈린 것이다.
+    for dead in ("그 밖에", "를 찾지 못했습니다"):
+        assert dead not in mirror, (
+            f"미러에 폐기된 문구가 남아 있다: {dead!r} — 백엔드만 고치고 미러를 놓쳤다"
+        )
+
+    # ② 로케일 비고정 호출이 남아 있으면 값 등가 계약이 비콤마 로케일에서 거짓이 된다.
+    assert not re.search(r"toLocaleString\(\s*\)", mirror), (
+        "미러에 로케일 비고정 `toLocaleString()` 이 남아 있다 — de-DE 에서 `5.601` 이 돼 "
+        "'백엔드와 같은 값' 계약이 거짓이 된다(CI 는 en-US 라 골든으로 못 잡는다)"
+    )
+
+
+def test_frontend_mirror_reads_the_shared_golden() -> None:
+    """미러가 공유 골든을 소비하도록 **작성돼 있는지** 소스로 확인한다.
+
+    ★R3 리뷰(F-4) 정직 표기 — 이 검사는 **소스 grep 이다**. `it.skip` 으로 바꾸거나
+    루프를 죽은 분기에 넣으면 통과한다. 진짜 방벽은 이 테스트가 아니라
+    **CI 가 vitest 전체를 돌린다는 사실**이다(`.github/workflows/ci.yml` — `propai-platform/**`
+    변경 PR 에서 `pnpm test:run` 실행, 판별 실패 시 fail-safe 전체 실행. vitest include
+    글롭이 `lib/**/*.test.ts` 라 신규 파일도 덮는다). 이 테스트의 역할은
+    **골든 파일만 만들어 두고 미러 소비를 잊는 것**을 막는 얕은 그물이다.
+    "반쪽 계약을 막는다"고 쓰면 과대 표기가 된다.
+    """
+    mirror_test = (
+        _API_ROOT.parent.parent
+        / "apps/web/lib/market/__tests__/comparable-sample.golden.test.ts"
+    ).read_text(encoding="utf-8")
+    assert "no-sample-reason.cases.json" in mirror_test, (
+        "프론트 골든이 공유 케이스 파일을 읽지 않는다 — 값 대조가 백엔드 한쪽만 남는다"
+    )
+    # 읽기만 하고 대조를 안 하면 역시 공허다 — 기대값 필드를 쓰는지 본다.
+    assert re.search(r"\.expected\b", mirror_test), "골든을 읽고도 expected 를 대조하지 않는다"
+
+
+def test_sample_basis_method_and_module_function_agree() -> None:
+    """★R1 리뷰(M-4) 락 — 메서드와 모듈 함수가 **같은 답**을 낸다(정의는 한 곳).
+
+    ★변이 실증: 메서드의 위임을 걷어내고 옛 문장을 되돌려도 70개 테스트가 전부 통과했다.
+    그게 M-4 가 지적한 실제 피해의 형태다 — 유일한 기존 소비처(`ai/assistant_agent`)가
+    메서드를 쓰고 있어서, 모듈 함수만 고치면 **AI 비서는 마스킹 사유를 영영 말하지 않는다**.
+    두 구현이 갈렸다는 사실 자체가 아무 데서도 잡히지 않았다.
+    """
+    from app.services.market.comparable_sample import SampleBasis, no_sample_reason
+
+    cases = [
+        # (unlocated, approximate, masked_deals, masked_groups)
+        (5, 0, 5, 2),      # 마스킹이 지배 원인
+        (50, 30, 1, 1),    # 마스킹은 소수 — 나머지가 사라지면 안 된다
+        (0, 7, 0, 0),      # 마스킹 없음
+        (0, 0, 0, 0),      # 진짜 무자료
+        (2, 0, 9, 3),      # 스큐로 포함 관계가 깨진 경우
+    ]
+    for un, ap, md, mg in cases:
+        b = SampleBasis(
+            scope="radius", radius_applied=True, radius_m=1000,
+            located_count=0, approximate_count=ap, unlocated_count=un,
+            capped_count=0, masked_jibun_count=md, masked_jibun_group_count=mg,
+        )
+        assert b.no_sample_reason() == no_sample_reason(b), (
+            f"메서드와 모듈 함수가 다른 답을 낸다(un={un} ap={ap} md={md}) — "
+            "소비처가 어느 쪽을 부르냐에 따라 사용자가 다른 설명을 받는다"
+        )
+
+
+def test_desk_appraisal_actually_calls_no_sample_reason() -> None:
+    """★배선 락(소스 검사) — 탁상감정이 표본 0 사유 헬퍼를 **실제로 호출하는가**.
+
+    ★아래 행위 테스트는 판정 **조합을 재현**할 뿐 `desk_appraisal_service` 를 태우지 않는다.
+    실제로 그 봉합을 지우는 변이가 **생존했다**(H-1 공허 배선 단언과 같은 형태).
+    이 파일이 이미 확립한 방식대로 소스 검사로 못 박는다 — 그리고 **이름 존재가 아니라
+    호출 형태**로 잠근다(이 파일 상단이 기록한 그 함정: 응답 키 이름이 정규식에 매치돼
+    변이가 통과했던 사건).
+    """
+    src = (_API_ROOT / "app/services/land_intelligence/desk_appraisal_service.py").read_text(
+        encoding="utf-8"
+    )
+    assert re.search(r"\bno_sample_reason\s*\(", src), (
+        "탁상감정이 표본 0 사유 헬퍼를 호출하지 않는다 — 반경이 적용됐는데 표본이 0 이면 "
+        "아무 사유 없이 공시지가로 폴백하던 침묵 구간이 되살아난다"
+    )
+    # ★임포트까지 확인 — 호출 형태만 보면 주석·문자열에 든 형태도 매치될 수 있다.
+    assert re.search(r"^\s*no_sample_reason,\s*$", src, re.M), (
+        "헬퍼가 임포트되지 않았다 — 호출 형태만 남고 실제로는 다른 이름을 쓰고 있을 수 있다"
+    )
+
+
+def test_desk_appraisal_emits_skip_note_when_radius_applied_but_no_sample() -> None:
+    """★배선 락 — 탁상감정이 표본 0 일 때 **사유를 실제로 싣는가**.
+
+    ★변이 실증: 이 봉합(`comparable_skip_note = no_sample_reason(basis)`)을 지워도 골든이
+    전부 통과했다 — 탁상감정 경로를 태우는 테스트가 **0건**이었기 때문이다.
+    종전 동작은 반경이 적용됐는데 표본이 0 이면 **아무 사유 없이** 공시지가로 폴백하는 것이고,
+    그게 토지·단독다가구의 **상시 상태**(원천 지번 마스킹)였다.
+
+    `desk_appraisal()` 전체는 외부 의존이 많아, 이 테스트는 그 함수가 사용하는 **정확한
+    판정 조합**(`basis.scope == "radius"` + `weighted_unit_price_per_sqm(located) is None`)을
+    같은 헬퍼로 재현해 사유가 나오는지 확인한다 — 헬퍼가 곧 그 분기의 유일한 근거다.
+    """
+    from app.services.market.comparable_sample import (
+        no_sample_reason,
+        select_located_groups,
+        weighted_unit_price_per_sqm,
+    )
+
+    # 마스킹 지번 그룹만 있는 카테고리 — 위치 확인분이 구조적으로 0 이다.
+    cat = {
+        "groups": [
+            {"jibun": "5*", "dong": "논현동", "location_status": "approximate",
+             "avg_price_10k": 50000, "avg_area_m2": 100.0, "count": 2},
+            {"jibun": "1**", "dong": "청담동", "location_status": "unlocated",
+             "avg_price_10k": 60000, "avg_area_m2": 120.0, "count": 1},
+        ],
+        "sample_basis": {
+            "scope": "radius", "radius_applied": True, "radius_m": 1500,
+            "located_count": 0, "approximate_count": 2, "unlocated_count": 1,
+            "capped_count": 0, "masked_jibun_group_count": 2,
+        },
+    }
+    located, basis = select_located_groups(cat)
+    assert basis.scope == "radius", "이 테스트는 반경 적용 가지를 검증한다"
+    assert located == [], "마스킹 그룹은 위치 확인분이 될 수 없다"
+    assert weighted_unit_price_per_sqm(located) is None, "표본 0 → 단가를 만들 수 없다"
+
+    # ★그 조합에서 **사유가 나와야** 한다 — 종전엔 여기가 침묵이었다.
+    note = no_sample_reason(basis)
+    assert note is not None
+    assert "지번을 가려서" in note, f"마스킹이 원인인데 그 사실을 말하지 않는다: {note}"

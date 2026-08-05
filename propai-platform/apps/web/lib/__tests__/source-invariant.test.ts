@@ -71,6 +71,64 @@ describe("assertWiredThrough", () => {
     })).toThrow(/우회한 줄 1건/);
   });
 
+  // ── 주석 제거 계약 (★R4 리뷰 M-3) ──────────────────────────────────────────
+  //
+  // 이 도구는 22개 불변식이 의존하는 공용 인프라인데 **주석 제거를 태우는 테스트가 0건**
+  // 이었다. 그래서 "여러 줄 JSX 주석으로 렌더를 감싸면 락이 초록"(R4 H-1)이 안 잡혔다.
+  // 주석 처리는 이 도구의 **핵심 계약**이므로 직접 잠근다.
+
+  it("줄 끝 `//` 주석은 조건을 충족시키지 못한다", () => {
+    const f = write("g.ts", 'const aggregatable = true;  // locatedKeys.has 로 대체 예정\n');
+    expect(() => assertWiredThrough({
+      file: f, scope: /const aggregatable/, mustContain: "locatedKeys.has", minMatches: 1,
+    })).toThrow(/우회한 줄|공용 경로/);
+  });
+
+  it("`://`(URL)는 주석으로 오인하지 않는다 — 정상 코드를 위반으로 만들지 않는다", () => {
+    const f = write("h.ts", 'const u = "https://x.test/track(";  // 설명\n');
+    expect(() => assertWiredThrough({
+      file: f, scope: /const u =/, mustContain: "track(", minMatches: 1,
+    })).not.toThrow();
+  });
+
+  it("★한 줄 JSX 주석은 조건을 충족시키지 못한다", () => {
+    const f = write("i.tsx", '{/* TODO: {res.reason} 렌더 복구 예정 */}\n');
+    expect(() => assertWiredThrough({
+      file: f, scope: /TODO/, mustContain: "res.reason", minMatches: 1,
+    })).toThrow(/매치 0건|우회한 줄|공용 경로/);
+  });
+
+  it("★★여러 줄 JSX 주석도 조건을 충족시키지 못한다(H-1 회귀락)", () => {
+    // 렌더를 통째로 여러 줄 주석에 넣으면 화면은 침묵인데 게이트는 초록이었다.
+    // 줄 단위 검사의 한계라 **줄 분할 전에** 파일 수준에서 지워야 잡힌다.
+    const f = write("j.tsx", [
+      "{/* TODO(정직성): 디자인 검토중이라 잠시 뺀다 — 복구 예정.",
+      "      {res.reason ? (",
+      "        <p>{res.reason}</p>",
+      "      ) : null}",
+      "*/}",
+    ].join("\n"));
+    expect(() => assertWiredThrough({
+      file: f, scope: /\{res\.reason\}/, mustContain: "res.reason", minMatches: 1,
+    })).toThrow(/매치 0건/);
+  });
+
+  it("★JSX 주석 제거가 정상 코드를 삼키지 않는다(과도 제거 방지)", () => {
+    // `{` + JSDoc `/** */` 조합을 JSX 주석으로 오인해 **44,444자를 삼킨** 실측 사고가 있었다.
+    // 여는 쪽 공백을 불허하는 것이 그 방어다.
+    const f = write("k.tsx", [
+      "interface P {",
+      "  /** 단일 필지 선택 콜백 */",
+      "  onPick?: () => void;",
+      "}",
+      "const x = () => { track(true); /* noop */ };",
+      'base.on("tileload", () => track(true));',
+    ].join("\n"));
+    expect(() => assertWiredThrough({
+      file: f, scope: /base\.on\("tile/, mustContain: "track(", minMatches: 1,
+    })).not.toThrow();
+  });
+
   it("스코프 밖 줄은 검사하지 않는다(과도한 불변식이 정상 코드를 깨뜨리지 않게)", () => {
     const f = write("f.ts", [
       'base.on("tileload", () => track(true));',

@@ -56,6 +56,28 @@ function stripLineComment(line: string): string {
   return line.replace(/(^|[^:])\/\/.*$/, "$1");
 }
 
+/**
+ * 파일 전체에서 JSX 주석(`{/* … *\/}`)을 **줄 수를 보존한 채** 지운다.
+ *
+ * ★R3(F-3)에서 한 줄짜리 JSX 주석만 벗겼는데, R4 가 **여러 줄 주석으로 뚫었다** —
+ * 이 저장소의 지배적 주석 형태가 여러 줄이고, `assertWiredThrough` 는 줄 단위라
+ * 주석 중간 줄에는 `{/*` 가 없어 아무것도 안 벗겨졌다. 렌더를 통째로 여러 줄 주석에
+ * 넣으면 배선 락이 **그대로 초록**이 된다(= 화면은 침묵인데 게이트는 통과).
+ * 이 PR 에서 공허한 참이 나온 **다섯 번째** 형태다.
+ *
+ * ★줄 단위 검사의 한계이므로 **줄 분할 전에** 파일 수준에서 지우는 것이 근원 수정이다.
+ * 줄 번호를 보존해야 위반 위치를 정확히 보고할 수 있으므로, 지우는 대신 **개행만 남기고
+ * 나머지를 공백으로 치환**한다.
+ */
+function stripJsxComments(src: string): string {
+  // ★여는 괄호와 `/*` 사이에 **공백을 허용하지 않는다**. 허용했더니 TS 인터페이스의
+  //   `{` + JSDoc `/** … */` 이 매치돼 **44,444자(1,113줄)를 통째로 삼켰다**(실측).
+  //   JSX 주석은 `{/*` 로 붙여 쓰는 것이 이 저장소의 실제 형태다.
+  //   닫는 쪽은 `*/}` · `*/ }` 를 모두 허용한다 — JSX 주석 안에 `*/` 가 올 수 없으므로
+  //   non-greedy 매치가 첫 종료점에서 정확히 닫힌다.
+  return src.replace(/\{\/\*[\s\S]*?\*\/\s*\}/g, (m) => m.replace(/[^\n]/g, " "));
+}
+
 function includes(line: string, needle: string | RegExp): boolean {
   const code = stripLineComment(line);
   return typeof needle === "string" ? code.includes(needle) : needle.test(code);
@@ -66,7 +88,8 @@ function includes(line: string, needle: string | RegExp): boolean {
  * 위반 시 어느 줄이 문제인지 그대로 보여준다(원인 오도 방지).
  */
 export function assertWiredThrough(inv: WiringInvariant): void {
-  const src = readFileSync(resolve(process.cwd(), inv.file), "utf-8");
+  // ★R4(H-1) — 줄 분할 **전에** JSX 주석을 지운다. 줄 단위로는 여러 줄 주석을 못 벗긴다.
+  const src = stripJsxComments(readFileSync(resolve(process.cwd(), inv.file), "utf-8"));
   const lines = src.split("\n");
   const matched: { no: number; text: string }[] = [];
   lines.forEach((text, i) => {

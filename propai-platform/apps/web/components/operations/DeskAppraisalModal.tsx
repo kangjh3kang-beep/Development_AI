@@ -29,6 +29,7 @@ type Result = {
   confidence: number; range_per_sqm: { low: number; high: number };
   cross_check?: { firms: number[]; mean: number; cv_pct: number; min: number; max: number; note: string };
   irregularity?: number | null; methods: Method[]; weight_note: string;
+  comparable_skipped_reason?: string | null;
   road_side?: string | null; time_adjust?: number; time_adjust_basis?: string;
   building?: { building_value_won: number; rationale: string } | null; complex_total_won?: number | null;
   income?: { income_value_won: number; rationale: string } | null; income_total_won?: number | null;
@@ -176,6 +177,15 @@ export function DeskAppraisalModal({
                   </div>
                 ))}
               </div>
+              {/* ★거래사례비교법이 빠졌으면 **왜** 빠졌는지 말한다(R1 리뷰 M-6).
+                  값이 조용히 사라지면 사용자는 "이 지역엔 거래가 없나 보다"로 오독하는데,
+                  실제로는 원천이 지번을 가려서(예: 5*, 1**) 위치를 못 잡은 것일 수 있다.
+                  우리가 고칠 수 없는 데이터 한계이므로, 고칠 수 없으면 말하는 것이 정직이다. */}
+              {res.comparable_skipped_reason ? (
+                <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--text-hint)] break-keep">
+                  {res.comparable_skipped_reason}
+                </p>
+              ) : null}
             </div>
 
             {/* 복수 시나리오 교차검증 */}

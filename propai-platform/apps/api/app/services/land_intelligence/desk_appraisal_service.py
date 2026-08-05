@@ -196,6 +196,7 @@ async def desk_appraisal(
         try:
             from app.services.land_intelligence.nearby_map_service import NearbyMapService
             from app.services.market.comparable_sample import (
+                no_sample_reason,
                 select_located_groups,
                 weighted_unit_price_per_sqm,
             )
@@ -224,6 +225,22 @@ async def desk_appraisal(
             if basis.scope == "radius":
                 comparable_avg_per_sqm = weighted_unit_price_per_sqm(located)
                 comparable_basis = basis
+                # ★★침묵 봉합 — 반경은 적용됐는데 **표본이 0** 이면 종전엔 아무 사유 없이
+                #   공시지가 기준으로 폴백했다(`comparable_skip_note` 는 반경 **미적용**
+                #   가지에만 있었다). 사용자는 "왜 거래사례비교를 안 썼는지" 알 수 없었다.
+                #   ★라이브 실측: 토지·단독다가구는 원천(MOLIT)이 지번을 가려서 주므로
+                #     (`"5*"`·`"1**"`) 위치 확인분이 **구조적으로 0** 이다 — 이 침묵 구간의
+                #     지배적 원인이고, 우리가 고칠 수 없는 **데이터 한계**다. 그러면 그 사실을
+                #     말하는 것이 정직이다("거래가 없다"와 전혀 다른 상태다).
+                if comparable_avg_per_sqm is None:
+                    # ★R1 리뷰(m-6)는 이 줄을 **죽은 대입**이라 지적했고 사실이다 — 아래
+                    #   `method_cmp` 블록은 단가가 있어야 실행되므로 이 값은 관측되지 않는다.
+                    #   그럼에도 남긴다: "값이 없으면 근거도 없다"는 불변식을 코드로 말하는
+                    #   자리이고, 나중에 이 아래에서 basis 를 읽는 소비처가 생기면 삭제된
+                    #   상태에서는 **표본 0 인데 근거는 있음**이 된다. 죽은 줄이라는 사실을
+                    #   주석으로 밝히는 편이 조용히 지우는 것보다 안전하다.
+                    comparable_basis = None
+                    comparable_skip_note = no_sample_reason(basis)
             else:
                 comparable_avg_per_sqm = None
                 comparable_basis = None

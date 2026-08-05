@@ -24,8 +24,9 @@
 1. 집계(평균·합계·단가·분위수)는 **`select_located_groups()` 가 돌려준 그룹으로만** 한다.
 2. 표면 라벨은 **`SampleBasis.label()`** 로만 만든다. 요청 `radius_m` 을 직접 문자열에 넣지 않는다
    (반경 필터가 실제로 적용됐는지는 요청값이 아니라 응답의 `scope` 가 말해준다).
-3. 표본이 0이면 값을 만들지 않고 **`SampleBasis.no_sample_reason()`** 으로 사유를 고지한다.
+3. 표본이 0이면 값을 만들지 않고 **`no_sample_reason(basis)`**(모듈 함수)로 사유를 고지한다.
    "거래가 없다"와 "반경 안에서 위치가 확인된 거래가 없다"는 다른 상태다.
+   `SampleBasis.no_sample_reason()` 은 그 함수로 위임하는 얇은 껍데기다 — 정의는 한 곳이다.
 
 프론트 미러: `apps/web/lib/market/comparable-sample.ts` (같은 계약·같은 문구).
 """
@@ -38,10 +39,34 @@ from typing import Any
 
 __all__ = [
     "SampleBasis",
+    "is_masked_jibun",
+    "no_sample_reason",
     "select_located_groups",
     "weighted_avg_price_10k",
     "weighted_unit_price_per_sqm",
 ]
+
+
+def is_masked_jibun(jibun: str | None) -> bool:
+    """MOLIT 이 **가려서 준 지번**인가(`"5*"` · `"1**"` · `"산1**"`).
+
+    ★라이브 실측(2026-08-05 역삼동 3km·6개월): 건물명이 없는 카테고리는 지번이 **전부**
+    마스킹돼 온다 — `land_trade` 13/13 · `house_trade` 12/12 · `commercial_trade` 6/34.
+    그 결과 `"강남구 논현동 5*"` 같은 질의는 **원천적으로 필지 매칭이 불가능**하고,
+    두 카테고리의 `located` 는 **구조적으로 0** 이 된다(탁상감정 거래사례비교의 진짜 병목).
+
+    ★이건 **고칠 수 없는 데이터 한계**다 — 원천이 안 주는 것을 만들어낼 수는 없다.
+    고칠 수 있는 것은 (a)매칭 불가한 질의에 예산을 쓰지 않는 것 (b)좌표를 **아는 척하지
+    않는 것** (c)실패 계측을 오염시키지 않는 것 (d)소비처가 **"왜 표본이 0인지"** 를
+    말할 수 있게 하는 것이다.
+
+    ★★R1 리뷰(m-5) — 정의가 여기 하나여야 한다. 종전엔 `nearby_map_service._is_masked_jibun`
+    과 이 모듈의 `"*" in str(...)` 리터럴이 **독립 정의** 둘이었고, 판정을 넓히자 한쪽만
+    따라와 갈렸다(CLAUDE.md 전역 전파방지 위반). 생산처가 이 함수를 임포트해 쓴다.
+
+    한국 지번 표기에 `*` 가 쓰이는 경우는 없으므로 판정은 문자 존재만으로 충분하다.
+    """
+    return "*" in (jibun or "")
 
 
 @dataclass(frozen=True)
@@ -56,6 +81,14 @@ class SampleBasis:
     approximate_count: int
     unlocated_count: int
     capped_count: int
+    # ★원천(MOLIT)이 지번을 가려서 준 **거래 건수** — 이 물건들은 질의를 만들 수 없어
+    #   좌표가 없고, 따라서 `located_count` 에 들어오지 못한다. "거래가 없다"와 "거래는
+    #   있는데 위치를 못 잡는다"를 소비처가 구분하려면 이 수가 필요하다.
+    #   ★단위는 이 dataclass 의 다른 카운트와 같은 **거래 건수**다(R1 리뷰 M-1 — 초판은
+    #   그룹 수를 넣고 "거래 N건"이라 렌더해 H-4 단위 혼입을 재생산했다). 물건 수는
+    #   `masked_jibun_group_count` 로 따로 보존한다. 구버전 페이로드엔 없으므로 기본 0.
+    masked_jibun_count: int = 0
+    masked_jibun_group_count: int = 0
 
     @property
     def has_sample(self) -> bool:
@@ -88,26 +121,58 @@ class SampleBasis:
             return None
         return " · ".join(parts) + " 집계 제외"
 
+    def no_sample_head(self) -> str:
+        """표본 0 사유의 **서두**. `label()` 은 명사구라 "~가 없습니다"를 붙이면 비문이 된다.
+
+        ★R1 리뷰(m-4) — 초판은 `f"{label()}가 없습니다"` 로 조립해
+        `"시군구 전체(반경 미적용)가 없습니다"` · `"표본 범위 확인 불가가 없습니다"` 같은
+        문장을 만들었다(현재 호출부가 `scope=="radius"` 가지뿐이라 잠복 상태였다).
+        범위별로 **문장을 통째로** 만든다.
+        """
+        if self.scope == "radius" and self.radius_m:
+            return f"반경 {self.radius_m / 1000.0:g}km 내에서 위치가 확인된 거래가 없습니다"
+        if self.scope == "sigungu":
+            return "시군구 전체에서 위치가 확인된 거래가 없습니다"
+        return "위치가 확인된 거래가 없습니다"
+
     def no_sample_reason(self) -> str:
-        """표본 0일 때의 사유. 왜 없는지에 따라 문장이 달라야 한다."""
-        excluded = self.unlocated_count + self.approximate_count
-        if excluded > 0:
-            bits: list[str] = []
-            if self.unlocated_count:
-                bits.append(f"위치 미확인 {self.unlocated_count:,}건")
-            if self.approximate_count:
-                bits.append(f"동 단위까지만 확인된 {self.approximate_count:,}건")
-            return (
-                f"{self.label()}를 찾지 못했습니다"
-                f"({' · '.join(bits)}은 집계에 쓰지 않습니다)."
-            )
-        return "해당 조건에서 수집된 실거래가 없습니다."
+        """표본 0일 때의 사유.
+
+        ★R1 리뷰(M-4) — 정의는 **모듈 함수 하나**다. 종전엔 이 메서드와 모듈 함수가
+        독립 구현이라 **같은 근거에 다른 답**을 냈고, 유일한 기존 소비처
+        (`ai/assistant_agent`)는 메서드를 쓰고 있어 **AI 비서는 마스킹 사유를 영영
+        말하지 못했다**(CLAUDE.md 전역 전파방지 미이행). 여기서는 위임만 한다.
+        """
+        return no_sample_reason(self) or "해당 조건에서 수집된 실거래가 없습니다."
+
+
+def _masked_from_groups(cat: dict[str, Any]) -> tuple[int, int]:
+    """`groups` 에서 마스킹 (거래 건수, 물건 수) 를 직접 센다 — 신형 키가 없을 때의 복원 경로."""
+    deals = 0
+    groups = 0
+    for g in cat.get("groups") or []:
+        if is_masked_jibun(g.get("jibun")):
+            groups += 1
+            deals += int(g.get("count") or 0)
+    return deals, groups
 
 
 def _basis_from_category(cat: dict[str, Any] | None) -> SampleBasis:
     cat = cat or {}
     raw = cat.get("sample_basis")
     if isinstance(raw, dict):
+        # ★★R1 리뷰(M-5) — 키 **부재**와 값 **0** 을 구분한다.
+        #   초판이 방어한 것은 `sample_basis` **자체가 없는** 아주 옛 응답인데, 그 필드는
+        #   W1-b 이후 상시 존재하므로 실제 배포 스큐는 **"`sample_basis` 는 있고 마스킹
+        #   키만 없는"** 형태다. 초판은 그 경우 `or 0` 으로 **0 이라고 단정**했다 —
+        #   "모르는 것을 0 으로 단정하지 않는다"는 이 모듈의 선언이 정작 실제 스큐 구간에서
+        #   거짓이 되고, 그 구간 내내 마스킹 사유가 **조용히 사라진다**.
+        _md = raw.get("masked_jibun_count")
+        _mg = raw.get("masked_jibun_group_count")
+        if _md is None or _mg is None:
+            _fd, _fg = _masked_from_groups(cat)   # 이 갈래에서만 필요하므로 여기서 센다
+            _md = _fd if _md is None else _md
+            _mg = _fg if _mg is None else _mg
         return SampleBasis(
             scope=str(raw.get("scope") or "sigungu"),
             radius_applied=bool(raw.get("radius_applied")),
@@ -116,7 +181,10 @@ def _basis_from_category(cat: dict[str, Any] | None) -> SampleBasis:
             approximate_count=int(raw.get("approximate_count") or 0),
             unlocated_count=int(raw.get("unlocated_count") or 0),
             capped_count=int(raw.get("capped_count") or 0),
+            masked_jibun_count=int(_md or 0),
+            masked_jibun_group_count=int(_mg or 0),
         )
+    _legacy_masked = _masked_from_groups(cat)   # ★L-5 — 분기마다 두 번 세지 않는다.
     # ★구버전 페이로드(캐시·배포 스큐) 폴백 — sample_basis 가 없던 시절의 응답도 안전하게
     #   다룬다. 이때는 카운트 필드에서 복원하고, 알 수 없으면 보수적으로 "반경 미적용"으로 본다
     #   (모르면 반경을 주장하지 않는다 = 이 모듈의 존재 이유와 같은 방향).
@@ -129,6 +197,77 @@ def _basis_from_category(cat: dict[str, Any] | None) -> SampleBasis:
         approximate_count=int(cat.get("count_approximate") or 0),
         unlocated_count=int(cat.get("count_unresolved") or 0),
         capped_count=int(cat.get("capped_count") or 0),
+        # 구버전 페이로드엔 이 축이 없다 — **모르는 것을 0 으로 단정하지 않고** 그룹에서 센다.
+        masked_jibun_count=_legacy_masked[0],
+        masked_jibun_group_count=_legacy_masked[1],
+    )
+
+
+def no_sample_reason(basis: SampleBasis) -> str | None:
+    """표본이 **왜** 0인지 한 구절로. 표본이 있으면 None.
+
+    ★이 함수가 없던 동안 탁상감정은 `scope=="radius"` 인데 `located` 가 0 이면 **아무 사유
+    없이** 공시지가 기준으로 폴백했다. 사용자는 "왜 거래사례비교를 안 썼는지" 알 수 없었다.
+
+    ★"거래가 없다"와 "거래는 있는데 원천이 지번을 가려 위치를 못 잡는다"는 **전혀 다른 상태**다.
+      후자는 우리가 고칠 수 없는 **데이터 한계**이고, 그 사실을 말해 주는 것이 정직이다.
+    """
+    if basis.has_sample:
+        return None
+
+    # ★★R1 리뷰(M-3) — **배타 분기가 아니라 누적 서술**이다.
+    #   초판은 `masked > 0` 이 **크기와 무관하게** 선점해, 마스킹 1건이 위치 미확인 80건을
+    #   가리고 그 80건이 문장에서 통째로 사라졌다 — 사용자에게 **틀린 이유**를 말하는 것이고,
+    #   틀린 이유는 침묵보다 나쁠 수 있다. 전부 나열하면 우선순위 논쟁 자체가 사라진다.
+    # ★m-3 — 0 인 항목은 문장에 넣지 않는다("위치 미확인 0건" 같은 잡음 제거).
+    # ★★R2 리뷰(M-2) — 카운트 항과 **이유 문장을 분리**한다.
+    #   초판은 이유를 항 안에 넣어 세 가지를 한꺼번에 만들었다:
+    #     (a) 이중계수 — "위치 미확인 1건 · 지번이 가려진 거래 3건 · 동 단위 2건"이
+    #         실거래 3건을 **6건으로** 읽히게 했다(M-3 이 없애려던 그 문제를 폴백 갈래가 재생산).
+    #     (b) `—` 가 한 문장에 두 번 나와 절 구조가 무너졌다.
+    #     (c) `…확인할 수 없습니다은 단가 산정에…` 비문 — m-4 가 고친 "명사구+조사" 결합
+    #         결함을 다른 자리에서 재생산했다.
+    #   → 항은 **명사구+건수**만, 마스킹 이유는 **문장 끝에 한 번**.
+    _why = "공개 실거래 자료가 지번을 가려서 제공해(예: 5*, 1**) 위치를 확인할 수 없습니다"
+    _masked = basis.masked_jibun_count
+
+    bits: list[str] = []
+    # ★m-3 — 0 인 항목은 넣지 않는다("위치 미확인 0건" 같은 잡음 제거).
+    if basis.unlocated_count > 0:
+        bits.append(f"위치 미확인 {basis.unlocated_count:,}건")
+    if basis.approximate_count > 0:
+        bits.append(f"동 단위까지만 확인 {basis.approximate_count:,}건")
+
+    # ★마스킹은 **위치 미확인의 부분집합이자 그 원인**이다(질의를 만들 수 없어 좌표가 없다).
+    #   그래서 카운트를 항으로 더하지 않는다 — 더하면 같은 거래를 두 번 세는 것이다.
+    #   스큐로 두 수가 어긋나면 포함 관계를 **주장할 수 없으므로** 그 사실을 말한다.
+    tail = ""
+    if _masked > 0:
+        if _masked <= basis.unlocated_count:
+            tail = f" 위치 미확인 중 {_masked:,}건은 {_why}."
+        else:
+            # ★R3 리뷰(F-5) — "그 밖에"는 **서로소를 적극 주장**한다. 독자는 앞 건수와
+            #   더해서 읽고, 그러면 M-2 가 없앤 이중계수가 **어법으로** 되살아난다.
+            #   이 갈래의 사실은 "포함 관계를 **모른다**"이므로 그렇게 쓴다.
+            # ★★R4 리뷰(M-1·M-2) — "위 건수"는 지시 대상이 **없거나 틀렸다**.
+            #   `u=0 a=0 m>0` 이면 앞에 건수가 하나도 없어 가리킬 것이 없고,
+            #   `u=0 a>0 m>0` 이면 앞의 유일한 건수가 "동 단위 확인분"이라 그쪽을 가리키는
+            #   것으로 읽힌다 — 마스킹은 **위치 미확인**의 부분집합이지 동 단위 확인분과는
+            #   무관하다. 오독 하나를 없애고 다른 오독을 넣은 셈이라 **대상을 명시**하고,
+            #   앞 건수가 없으면 그 괄호를 **아예 생략**한다.
+            _rel = (
+                "(위 '위치 미확인' 건수에 포함되는지는 확인할 수 없습니다)"
+                if basis.unlocated_count > 0
+                else ""
+            )
+            tail = f" 지번이 가려진 거래는 {_masked:,}건으로 집계됐습니다{_rel} — {_why}."
+
+    if not bits:
+        if tail:
+            return f"{basis.no_sample_head()}.{tail}"
+        return f"{basis.no_sample_head()}(해당 기간·범위에 수집된 거래가 없습니다)."
+    return (
+        f"{basis.no_sample_head()} — {' · '.join(bits)}은 단가 산정에 쓰지 않습니다.{tail}"
     )
 
 
@@ -151,6 +290,17 @@ def select_located_groups(
             #   표본이 실제보다 낙관적일 수 있다는 사실은 `location_status` 도입 이후
             #   자동으로 해소된다(신규 응답에는 항상 필드가 있다).
             if g.get("lat") is None:
+                status = "unlocated"
+            elif g.get("coord_precision") == "masked":
+                # ★R3 리뷰(F-9) — 4번째 enum 값을 추가하면서 양쪽 레거시 폴백을 손대지
+                #   않으면 두 미러가 조용히 갈라진다. **실제로 갈려 있었다** —
+                #   백엔드는 `else` 로 떨어져 `approximate`, 프론트는 `!== "dong"` 이라
+                #   `located` 였다. 위험한 쪽은 프론트다(마스킹을 집계에 넣는다).
+                #   마스킹은 좌표가 **없다**는 뜻이므로 정밀을 주장하지 않는다.
+                # ★정직 표기 — 이 한 줄은 **변이로 잠기지 않는다**. 지워도 `else` 가
+                #   `approximate` 를 주고, 둘 다 `located` 가 아니라 이 함수의 반환값이
+                #   같기 때문이다(하류 영향 0). 의미 정합을 위한 줄이며, 실제로 고쳐야
+                #   했던 곳은 **프론트 미러**다(그쪽은 회귀락이 잡는다).
                 status = "unlocated"
             elif g.get("coord_precision") in ("parcel", "building", None):
                 status = "located"

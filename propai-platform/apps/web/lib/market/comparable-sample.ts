@@ -31,10 +31,17 @@
  */
 
 export type LocationStatus = "located" | "approximate" | "unlocated";
-export type CoordPrecision = "parcel" | "building" | "dong";
+/**
+ * 좌표가 **무엇을 가리키는가**. `"masked"` 는 원천이 지번을 가려 질의조차 만들지 못해
+ * **좌표가 아예 없는** 상태다 — `"dong"`(동 대표점은 받았다)과 뭉뚱그리면 그 사실이
+ * 관측에서 사라진다.
+ */
+export type CoordPrecision = "parcel" | "building" | "dong" | "masked";
 
 export interface ComparableGroup {
   name?: string;
+  /** 지번. 원천(MOLIT)이 가려서 주면 `"5*"`·`"1**"` 형태로 온다. */
+  jibun?: string | null;
   lat?: number | null;
   lon?: number | null;
   count?: number;
@@ -55,6 +62,13 @@ export interface SampleBasisRaw {
   approximate_count?: number;
   unlocated_count?: number;
   capped_count?: number;
+  /**
+   * 원천(MOLIT)이 지번을 가려서 준 **거래 건수**(`"5*"`·`"1**"`). 이 물건들은 질의를
+   * 만들 수 없어 좌표가 없고, `located_count` 에 들어오지 못한다.
+   * ★단위는 이 raw 블록의 다른 카운트와 같은 **거래 건수**다. 물건 수는 아래 별도 키.
+   */
+  masked_jibun_count?: number;
+  masked_jibun_group_count?: number;
 }
 
 export interface ComparableCategory {
@@ -83,15 +97,31 @@ export interface SampleBasis {
   approximateCount: number;
   unlocatedCount: number;
   cappedCount: number;
+  /** 원천이 지번을 가려 위치를 확인할 수 없는 **거래 건수**(백엔드와 같은 단위). */
+  maskedJibunCount: number;
+  /** 같은 축의 **물건 수**(단위 혼입 방지 — 이름으로 가른다). */
+  maskedJibunGroupCount: number;
 }
 
 /** 이 표본이 실제로 무엇인지. 반경을 적용하지 않았으면 **반경을 말하지 않는다**. */
+/**
+ * 반경(m) → 표기용 km 문자열. **백엔드 `f"{km:g}"` 와 등가**여야 한다.
+ *
+ * ★R2 리뷰(M-3) — 종전엔 한 파일 안에서 두 표기가 공존했다: `sampleLabel` 은
+ * `Number(km.toFixed(2))`, `noSampleHead` 는 `toFixed(1)`. 1250m 이면 각각
+ * "1.25km" / "1.3km" 이고 백엔드는 "1.25km" 다 — **같은 값에 세 표기**.
+ * 현재 호출부가 전부 라운드 값이라 잠복 상태였을 뿐이다. 한 헬퍼로 모은다.
+ */
+export function kmText(radiusM: number): string {
+  const km = radiusM / 1000;
+  // Python `%g` 는 유효숫자 6자리로 자르고 뒤따르는 0 을 제거한다.
+  return String(parseFloat(km.toPrecision(6)));
+}
+
 export function sampleLabel(b: SampleBasis): string {
   if (b.scope === "radius" && b.radiusM) {
-    const km = b.radiusM / 1000;
-    // 1000 → "1km", 1500 → "1.5km"
-    const kmTxt = `${Number(km.toFixed(2))}km`;
-    return `반경 ${kmTxt} 내 위치 확인 거래`;
+    // ★표기는 `kmText` 한 곳에서만 만든다(R2 리뷰 M-3 — 한 파일 안에 세 표기가 공존했다).
+    return `반경 ${kmText(b.radiusM)}km 내 위치 확인 거래`;
   }
   if (b.scope === "sigungu") return "시군구 전체(반경 미적용)";
   // ★W1-b 리뷰(M-1) — 구버전 페이로드(배포 스큐·캐시)에는 `sample_basis` 가 없어 반경 적용
@@ -104,26 +134,78 @@ export function sampleLabel(b: SampleBasis): string {
 /** 집계에서 빠진 것을 밝힌다. 빠진 게 없으면 null(없는 말을 지어내지 않는다). */
 export function exclusionNote(b: SampleBasis): string | null {
   const parts: string[] = [];
-  if (b.unlocatedCount > 0) parts.push(`위치 미확인 ${b.unlocatedCount.toLocaleString()}건`);
-  if (b.approximateCount > 0) parts.push(`위치 개략(동 단위) ${b.approximateCount.toLocaleString()}건`);
-  if (b.cappedCount > 0) parts.push(`표시 상한 초과 ${b.cappedCount.toLocaleString()}건`);
+  if (b.unlocatedCount > 0) parts.push(`위치 미확인 ${b.unlocatedCount.toLocaleString("ko-KR")}건`);
+  if (b.approximateCount > 0) parts.push(`위치 개략(동 단위) ${b.approximateCount.toLocaleString("ko-KR")}건`);
+  if (b.cappedCount > 0) parts.push(`표시 상한 초과 ${b.cappedCount.toLocaleString("ko-KR")}건`);
   if (parts.length === 0) return null;
   return `${parts.join(" · ")} 집계 제외`;
 }
 
-/** 표본 0일 때의 사유. 왜 없는지에 따라 문장이 달라야 한다. */
-export function noSampleReason(b: SampleBasis): string {
-  const bits: string[] = [];
-  if (b.unlocatedCount > 0) bits.push(`위치 미확인 ${b.unlocatedCount.toLocaleString()}건`);
-  if (b.approximateCount > 0) bits.push(`동 단위까지만 확인된 ${b.approximateCount.toLocaleString()}건`);
-  if (bits.length > 0) {
-    return `${sampleLabel(b)}를 찾지 못했습니다(${bits.join(" · ")}은 집계에 쓰지 않습니다).`;
+/**
+ * 표본 0 사유의 **서두**. `sampleLabel()` 은 명사구라 "~가 없습니다"를 붙이면 비문이 된다
+ * ("시군구 전체(반경 미적용)가 없습니다"). 범위별로 문장을 통째로 만든다.
+ */
+function noSampleHead(b: SampleBasis): string {
+  if (b.scope === "radius" && b.radiusM) {
+    return `반경 ${kmText(b.radiusM)}km 내에서 위치가 확인된 거래가 없습니다`;
   }
-  return "해당 조건에서 수집된 실거래가 없습니다.";
+  if (b.scope === "sigungu") return "시군구 전체에서 위치가 확인된 거래가 없습니다";
+  return "위치가 확인된 거래가 없습니다";
+}
+
+/**
+ * 표본 0일 때의 사유. 왜 없는지에 따라 문장이 달라야 한다.
+ *
+ * ★백엔드 `comparable_sample.no_sample_reason` 과 **같은 계약·같은 문구**다.
+ *   원천(MOLIT)이 지번을 가려서 주는 경우(`"5*"`·`"1**"`)를 종전엔 이 미러가 몰랐다 —
+ *   백엔드만 고치고 미러를 두면 "같은 문구" 약속이 거짓이 된다(R1 리뷰 m-7).
+ * ★배타 분기가 아니라 **누적 서술**이다. 마스킹 1건이 위치 미확인 80건을 가리면
+ *   사용자에게 **틀린 이유**를 말하는 것이고, 틀린 이유는 침묵보다 나쁠 수 있다.
+ */
+export function noSampleReason(b: SampleBasis): string {
+  // ★★백엔드 `comparable_sample.no_sample_reason` 과 **같은 값**을 내야 한다.
+  //   공유 골든 `__tests__/fixtures/no-sample-reason.cases.json` 이 그것을 값으로 잠근다
+  //   (R2 리뷰 M-3: 종전 "문구 일치 불변식"은 소스에 조각이 있는지 grep 할 뿐이라
+  //   실제로는 반경 표기가 갈려 있었다 — 1250m 에서 백엔드 1.25km / 미러 1.3km).
+  const why =
+    "공개 실거래 자료가 지번을 가려서 제공해(예: 5*, 1**) 위치를 확인할 수 없습니다";
+  const masked = b.maskedJibunCount ?? 0;
+
+  const bits: string[] = [];
+  if (b.unlocatedCount > 0) bits.push(`위치 미확인 ${b.unlocatedCount.toLocaleString("ko-KR")}건`);
+  if (b.approximateCount > 0) {
+    bits.push(`동 단위까지만 확인 ${b.approximateCount.toLocaleString("ko-KR")}건`);
+  }
+
+  // 마스킹은 위치 미확인의 **부분집합이자 그 원인**이다 — 카운트를 항으로 더하면
+  // 같은 거래를 두 번 세는 것이다. 스큐로 어긋나면 포함 관계를 주장하지 않는다.
+  let tail = "";
+  if (masked > 0) {
+    // ★R4 리뷰(C-1) — 이 문구는 백엔드와 **글자까지 같아야** 한다. R3 에서 백엔드만
+    //   고치고 여기를 놓쳐 공유 골든 13건 중 3건이 어긋났다(전역 전파방지 미이행).
+    //   ★M-1·M-2 — "위 건수"는 앞에 건수가 없으면 가리킬 것이 없고, 동 단위 확인분만
+    //   있으면 **틀린 대상**을 가리킨다. 대상을 명시하고, 없으면 괄호를 생략한다.
+    const rel =
+      b.unlocatedCount > 0
+        ? "(위 '위치 미확인' 건수에 포함되는지는 확인할 수 없습니다)"
+        : "";
+    tail =
+      masked <= b.unlocatedCount
+        ? ` 위치 미확인 중 ${masked.toLocaleString("ko-KR")}건은 ${why}.`
+        : ` 지번이 가려진 거래는 ${masked.toLocaleString("ko-KR")}건으로 집계됐습니다${rel} — ${why}.`;
+  }
+
+  if (bits.length === 0) {
+    if (tail) return `${noSampleHead(b)}.${tail}`;
+    return `${noSampleHead(b)}(해당 기간·범위에 수집된 거래가 없습니다).`;
+  }
+  return `${noSampleHead(b)} — ${bits.join(" · ")}은 단가 산정에 쓰지 않습니다.${tail}`;
 }
 
 function basisFromCategory(cat: ComparableCategory | null | undefined): SampleBasis {
   const raw = cat?.sample_basis;
+  // ★R3 리뷰(F-8) — 백엔드 L-5(중복 순회 제거)를 미러에도 전파한다(전역 전파방지).
+  const fromGroups = maskedFromGroups(cat);
   if (raw) {
     return {
       scope: raw.scope === "radius" ? "radius" : "sigungu",
@@ -133,6 +215,11 @@ function basisFromCategory(cat: ComparableCategory | null | undefined): SampleBa
       approximateCount: raw.approximate_count ?? 0,
       unlocatedCount: raw.unlocated_count ?? 0,
       cappedCount: raw.capped_count ?? 0,
+      // ★키 **부재**와 값 **0** 을 구분한다(백엔드 M-5 와 같은 규율). 실제 배포 스큐는
+      //   "sample_basis 는 있고 마스킹 키만 없는" 형태이고, 거기서 0 으로 단정하면
+      //   그 구간 내내 마스킹 사유가 조용히 사라진다.
+      maskedJibunCount: raw.masked_jibun_count ?? fromGroups.deals,
+      maskedJibunGroupCount: raw.masked_jibun_group_count ?? fromGroups.groups,
     };
   }
   // ★구버전 페이로드(캐시·배포 스큐) 폴백 — 카운트에서 복원하고, 알 수 없으면 보수적으로
@@ -146,13 +233,39 @@ function basisFromCategory(cat: ComparableCategory | null | undefined): SampleBa
     approximateCount: cat?.count_approximate ?? 0,
     unlocatedCount: cat?.count_unresolved ?? 0,
     cappedCount: cat?.capped_count ?? 0,
+    maskedJibunCount: fromGroups.deals,
+    maskedJibunGroupCount: fromGroups.groups,
   };
+}
+
+/** 한국 지번 표기에 `*` 는 쓰이지 않는다 — 문자 존재만으로 마스킹을 판정한다. */
+export function isMaskedJibun(jibun: string | null | undefined): boolean {
+  return (jibun ?? "").includes("*");
+}
+
+/** `groups` 에서 마스킹 (거래 건수, 물건 수) 를 센다 — 신형 키가 없을 때의 복원 경로. */
+function maskedFromGroups(
+  cat: ComparableCategory | null | undefined,
+): { deals: number; groups: number } {
+  let deals = 0;
+  let groups = 0;
+  for (const g of cat?.groups ?? []) {
+    if (isMaskedJibun(g.jibun)) {
+      groups += 1;
+      deals += g.count ?? 0;
+    }
+  }
+  return { deals, groups };
 }
 
 function statusOf(g: ComparableGroup): LocationStatus {
   if (g.location_status) return g.location_status;
   // 구버전 페이로드 폴백 — 정밀도 필드가 있으면 그것까지 본다.
   if (g.lat === null || g.lat === undefined) return "unlocated";
+  // ★R3 리뷰(F-9) — 마스킹은 좌표가 **없다**는 뜻이다. 백엔드 레거시 폴백과 같은 답을 낸다
+  //   (종전엔 백엔드 approximate / 프론트 located 로 두 미러가 갈렸다 — 도달 불가였으나
+  //   enum 을 늘리면서 양쪽을 안 맞추면 조용히 갈라지는 전형 경로다).
+  if (g.coord_precision === "masked") return "unlocated";
   if (g.coord_precision && g.coord_precision === "dong") return "approximate";
   return "located";
 }

@@ -130,6 +130,15 @@ def build_report_model_from_appraisal(
     )]
     if data.get("weight_note"):
         method_blocks.append(NarrativeBlock(paragraphs=[str(data["weight_note"])]))
+    # ★R2 리뷰(H-2) — 거래사례비교법이 빠진 **사유**를 보고서에도 싣는다.
+    #   이건 은행 제출용 산출물이다. 화면에서는 "왜 안 썼는지" 말하면서 PDF 에서는
+    #   방법이 그냥 사라지면, 읽는 사람은 "이 지역엔 거래가 없다"로 오독한다.
+    #   "거래가 없다" · "근접성 판정 불가" · "원천이 지번을 가려 위치 확인 불가"는
+    #   전혀 다른 상태다.
+    if data.get("comparable_skipped_reason"):
+        method_blocks.append(
+            NarrativeBlock(paragraphs=[str(data["comparable_skipped_reason"])])
+        )
     sections.append(Section(title="2. 산정방법별 추정", blocks=method_blocks))
 
     # 3. 복수 시나리오 교차검증(다법인) — firms 있을 때만
