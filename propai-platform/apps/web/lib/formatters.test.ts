@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 
-import { formatArea } from "./formatters";
+import { formatArea, formatManwon, formatPercent } from "./formatters";
 
 /**
  * formatArea 출력 고정 테스트(UX 트랙 A R2 — R1 리뷰어 지적 반영).
@@ -46,17 +46,43 @@ describe("formatArea — 면적 표시 SSOT", () => {
   });
 
   it('null/undefined/NaN → "-"(가짜 "0㎡"·"NaN㎡" 날조 금지)', () => {
-    expect(formatArea(null)).toBe("-");
-    expect(formatArea(undefined)).toBe("-");
+    expect(formatArea(null)).toBe("미확보");
+    expect(formatArea(undefined)).toBe("미확보");
     // ★R1 리뷰어 확인 항목: 구 SiteAnalysisDetail 로컬 formatArea(sqm: unknown)는
     //   `typeof sqm !== "number" || sqm <= 0` 만 체크했다 — typeof NaN === "number"이고
     //   NaN <= 0 은 false이므로 이 가드를 모두 통과해 "NaN m² (NaN평)"이 실제로 표시됐다.
     //   Number.isFinite 가드로 이 선재 버그가 여기서 함께 막히는지 고정한다.
-    expect(formatArea(Number.NaN)).toBe("-");
+    expect(formatArea(Number.NaN)).toBe("미확보");
   });
 
   it('0·음수 → "-"(무효 입력을 실측값처럼 보이게 하지 않는다 — formatCurrencyKRW 등과 동일 원칙)', () => {
-    expect(formatArea(0)).toBe("-");
-    expect(formatArea(-500)).toBe("-");
+    expect(formatArea(0)).toBe("미확보");
+    expect(formatArea(-500)).toBe("미확보");
+  });
+});
+
+describe("원장량 0 정책 — 0이 불가능한 필드는 미확보라고 말한다", () => {
+  it("★대지면적 0㎡는 존재할 수 없다 — 측정값이 아니라 수집 실패로 읽는다", () => {
+    expect(formatArea(0)).toBe("미확보");
+    expect(formatArea(null)).toBe("미확보");
+    // 원장량에서는 0과 null이 **같은 뜻**이라 같은 기호가 맞다(비율과 반대 방향·같은 기준).
+    expect(formatArea(0)).toBe(formatArea(null));
+  });
+
+  it("★'-'로 되돌아가지 않는다 — '-'는 0으로도 '해당없음'으로도 읽힌다", () => {
+    expect(formatArea(0)).not.toBe("-");
+    expect(formatManwon(0)).not.toBe("-");
+    expect(formatManwon(null)).toBe("미확보");
+  });
+
+  it("양수는 종전과 동일 — 판정이 아니라 문구만 바뀌었다(무회귀)", () => {
+    expect(formatArea(1000)).toContain("1,000㎡");
+    expect(formatManwon(12500)).toBe("1억 2,500만원");
+    expect(formatManwon(500)).toBe("500만원");
+  });
+
+  it("비율은 반대 정책을 유지한다 — 0은 유효 측정값", () => {
+    expect(formatPercent(0)).toBe("0.0%");
+    expect(formatPercent(0)).not.toBe(formatPercent(null));
   });
 });
