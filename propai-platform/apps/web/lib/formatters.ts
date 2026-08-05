@@ -99,13 +99,25 @@ export function formatCurrencyCompact(value: number): string {
  * 반올림 근사이므로 접두가 군더더기). SatongMapShell 로컬 formatArea·satong-measure의
  * satong-measure 이외 자리(ComprehensiveAnalysisPanel·SiteAnalysisDetail) 로컬 중복분을
  * 이 함수로 흡수한다(㎡ vs m²·"약" 유무·en-US/ko-KR 5중 분기 통일).
- * 무효(null/NaN)·비양수(≤0)는 "-" — 가짜 "0㎡" 날조 금지(formatCurrencyKRW 등과 동일 원칙).
+ * ## 0의 의미 — 이 함수는 **원장량(stock)** 전용이다
+ *
+ * 대지면적·연면적·필지면적은 **0이 물리적으로 불가능**하다. 출처가 0을 줬다면 그건 측정값이
+ * 아니라 수집 실패다. 그래서 `null/NaN`과 `≤0`을 **같은 뜻(미확보)** 으로 묶는다 — 비율에서
+ * 0과 미확보를 갈라놓은 것과 반대 방향이지만, 이유는 같다: **그 필드에서 0이 무엇을 뜻하는가.**
+ *
+ * ★`"-"`가 아니라 `"미확보"`라고 적는다(2026-08-05). `"-"`는 0으로도 '해당없음'으로도 읽혀,
+ *   정작 하고 싶은 말("아직 못 구했다")을 안 한다. 값 판정은 종전과 **완전히 동일**하고
+ *   문구만 정직해진다.
+ *
+ * ★증분·부분량(면적 증가분·제외 면적처럼 0이 유효한 측정 결과인 필드)에는 이 함수를 쓰지 마라.
+ *   그런 필드는 0을 "없음"으로 **보여줘야** 한다. 소비처가 생기면 그때 전용 함수를 만든다
+ *   (지금 만들면 쓰는 곳 없는 추측성 코드가 된다).
  * fractionDigits: 주 수치(㎡) 소수 자릿수 상한. 미지정 시 toLocaleString 기본(최대 3자리)으로
  * 기존 호출부 표기를 그대로 보존 — 정수 반올림이 필요한 호출부(예: SatongMapShell)는 0을 넘긴다.
  * 평 환산은 모든 기존 호출부와 동일하게 항상 소수 1자리(toFixed(1), 천단위 콤마 없음).
  */
 export function formatArea(value?: number | null, fractionDigits?: number): string {
-  if (value == null || !Number.isFinite(value) || value <= 0) return "-";
+  if (value == null || !Number.isFinite(value) || value <= 0) return "미확보";
   const pyeong = value / PYEONG_SQM;
   const mainOpts = fractionDigits == null ? undefined : { maximumFractionDigits: fractionDigits };
   return `${value.toLocaleString("ko-KR", mainOpts)}㎡ (${pyeong.toFixed(1)}평)`;
@@ -208,7 +220,9 @@ export function formatAnalysisValue(
  * 4중복)의 단일 출처(SSOT). 무효/0 이하 입력은 "-"(가짜 0원 표기 금지).
  */
 export function formatManwon(man?: number | null): string {
-  if (!man || man <= 0) return "-";
+  // ★원장량(거래가·감정가) 전용 — 0원은 물리적으로 불가능하므로 미확보와 같은 뜻이다.
+  //   증감분은 이 함수를 거치기 전에 호출부가 `±0`으로 처리한다(AnalysisDiffTable.computeDelta).
+  if (!man || man <= 0) return "미확보";
   if (man >= 10000) {
     const uk = Math.floor(man / 10000);
     const rest = man % 10000;

@@ -1878,8 +1878,18 @@ async def build_integrated_context(parcels: list[dict[str, Any]] | None) -> dict
     #     받는 다른 엔드포인트(auto_zoning enrich_parcel_list 등, area 를 실제 조회)에서 보강된다.
     from app.services.land_intelligence.parcel_normalize import normalize_parcels
 
-    items: list[dict[str, Any]] = [
-        q for q in normalize_parcels(parcels) if (q.get("area_sqm") or 0) > 0
+    _normalized = normalize_parcels(parcels)
+    items: list[dict[str, Any]] = [q for q in _normalized if (q.get("area_sqm") or 0) > 0]
+    # ★면적 없는 필지를 **조용히 버리지 않는다**(2026-08-05). 지번(PNU)이 특정된 필지의
+    #   면적 0은 존재할 수 없으므로 그건 값이 아니라 **수집 실패**다. 그런데 종전에는 이 줄에서
+    #   걸러진 뒤 아무 흔적도 남지 않아, 2필지를 넣었는데 통합면적이 1필지분으로 나오고
+    #   사용자는 필지가 빠진 사실 자체를 몰랐다(그 면적이 land_area로 흘러 GFA·수지까지 간다).
+    #   하위 compute_usable_area는 area_unknown_parcels로 이미 이걸 잡아내는데, 상위가 필지를
+    #   먼저 버려서 그 신호가 만들어질 기회조차 없었다 — 이번 캠페인의 '미분석 면적'과 같은 계열.
+    _area_missing = [
+        {"pnu": q.get("pnu"), "address": q.get("address")}
+        for q in _normalized
+        if not ((q.get("area_sqm") or 0) > 0) and (q.get("pnu") or q.get("address"))
     ]
     if not items:
         return None
@@ -1994,6 +2004,8 @@ async def build_integrated_context(parcels: list[dict[str, Any]] | None) -> dict
             _usable = compute_usable_area(usable_input)
             integrated["usable"] = {
                 "confirmed_sqm": _usable.get("usable_confirmed_sqm"),
+                # 면적 미확보 필지(하위 산출) — 상위에서 거른 분은 아래서 합류시킨다.
+                "area_unknown": _usable.get("area_unknown_parcels") or [],
                 "conditional_sqm": _usable.get("usable_conditional_sqm"),
                 "excluded_sqm": _usable.get("excluded_sqm"),
                 "excluded": _usable.get("excluded_parcels") or [],
@@ -2021,6 +2033,18 @@ async def build_integrated_context(parcels: list[dict[str, Any]] | None) -> dict
             logger.warning("usable 산출 실패 — usable만 정직 누락(graceful)", err=str(e)[:160])
             integrated["usable"] = None
             integrated["land_area_effective_sqm"] = None
+
+        # ★면적 미확보로 집계에서 빠진 필지를 최상위에 정직 고지한다(usable 실패해도 남는다).
+        if _area_missing:
+            integrated["area_missing_parcels"] = _area_missing
+            if isinstance(integrated.get("usable"), dict):
+                _w = list(integrated["usable"].get("warnings") or [])
+                _w.append(
+                    f"면적 미확보 {len(_area_missing)}필지는 통합 집계에서 제외했습니다 — "
+                    "지번이 특정된 필지의 면적 0은 값이 아니라 수집 실패이므로, 통합면적·"
+                    "실효한도가 그만큼 과소 산출됩니다."
+                )
+                integrated["usable"]["warnings"] = _w
 
         return integrated
     except Exception as e:  # noqa: BLE001 — 통합집계(_aggregate_integrated_zoning) 실패는 단일 경로로 폴백(분석 무중단)
