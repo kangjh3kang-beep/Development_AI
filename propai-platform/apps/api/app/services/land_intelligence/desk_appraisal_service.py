@@ -13,7 +13,11 @@ from __future__ import annotations
 
 from typing import Any
 
+import structlog
+
 from app.services.land_intelligence.land_price_estimator import _market_multiplier
+
+logger = structlog.get_logger(__name__)
 
 # 개별요인 — 접도(road_side) 보정율(감정평가 개별요인의 가로조건 근사)
 _ROAD_FACTOR = [
@@ -250,7 +254,31 @@ async def desk_appraisal(
                     "산정했습니다."
                 )
         except Exception:  # noqa: BLE001
-            pass
+            # ★R6 리뷰(F-G) — 사유는 **사용자** 몫이고, 원인은 **운영자** 몫이다.
+            #   이 모듈엔 logger 참조가 0건이라 MOLIT·지오코더 장애 때 스택트레이스가
+            #   어디에도 남지 않았다(F-3 의 논거 자체가 관측성인데 정작 관측이 없었다).
+            logger.warning("desk_appraisal.comparable_lookup_failed", exc_info=True)
+            # ★★R5 리뷰(F-3) — 여기서 그냥 삼키면 `comparable_skip_note` 가 **None 인 채로**
+            #   빠져나가 봉합 이전과 **똑같은 완전 침묵**이 된다. MOLIT 장애·지오코더 장애가
+            #   정확히 이 경로다 — 즉 침묵 봉합에 구멍이 남아 있었다.
+            #   ★사유를 만들되 원인을 **아는 만큼만** 말한다: 우리 연동이 실패했다는 사실은
+            #   확실하고, 그 지역에 거래가 있는지 없는지는 **모른다**(그걸 알 방법이 없어서
+            #   실패한 것이다). "거래가 없다"로 읽히지 않게 쓰는 것이 요점이다.
+            comparable_avg_per_sqm = None
+            comparable_basis = None
+            comparable_skip_note = (
+                "실거래 자료를 불러오지 못해 거래사례비교법을 쓰지 못했습니다 — "
+                "이 지역에 거래가 없다는 뜻이 아니라 조회가 실패했다는 뜻입니다. "
+                "공시지가기준법 단독으로 산정했습니다."
+            )
+
+    elif comparable_avg_per_sqm is None:
+        # ★R5 리뷰(F-3) — `pnu` 가 없거나 짧으면 위 블록을 **아예 타지 않아** 사유가 없다.
+        #   조회를 시도조차 못 한 것도 "왜 안 썼는지"의 한 갈래다.
+        comparable_skip_note = (
+            "대상지 필지번호(PNU)를 확정하지 못해 주변 실거래를 조회하지 못했습니다 — "
+            "공시지가기준법 단독으로 산정했습니다."
+        )
 
     # 형상 개별요인 — 필지 폴리곤 부정형도로 형상 감가
     irregularity = None

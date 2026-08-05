@@ -41,15 +41,25 @@ def _row(*, name: str, jibun: str, dong: str, price: int = 50000, day: int = 3) 
     }
 
 
+def _rent_row(*, name: str, jibun: str, dong: str, deposit: int = 50000, day: int = 3) -> dict:
+    """전월세 행 — ★R5(F-1) 전월세도 매매와 **같은 그룹핑 규칙**을 타므로 같은 픽스처가 필요하다."""
+    return {
+        "building_name": name, "jibun": jibun, "dong": dong, "sigungu": "남구",
+        "deposit_10k_won": deposit, "monthly_rent_10k_won": 0, "area_m2": 84.0,
+        "floor": "5", "deal_date": f"2026년 7월 {day}일",
+    }
+
+
 class _StubMolit:
-    def __init__(self, rows: list[dict]):
+    def __init__(self, rows: list[dict], rent_rows: list[dict] | None = None):
         self._rows = rows
+        self._rent_rows = rent_rows or []
 
     async def get_transactions(self, lawd_cd, ym, prop_type="apt", num_rows=1000):
         return list(self._rows) if prop_type == "apt" else []
 
     async def get_rent_transactions(self, *_a, **_k):
-        return []
+        return list(self._rent_rows)
 
 
 def _service(rows: list[dict], geocode_map: dict[str, dict]) -> nm.NearbyMapService:
@@ -1685,6 +1695,238 @@ async def test_group_query_does_not_depend_on_row_order() -> None:
     )
     # ★두 모집단을 가른다 — 결과가 "둘 다 0"이면 같기만 하고 아무것도 잠그지 못한다.
     assert normal_first[0] > 0, "두 순서 모두 표본 0 이면 이 비교는 공허하다"
+
+
+@pytest.mark.asyncio
+async def test_rent_groups_get_the_same_treatment_as_trade() -> None:
+    """★R5 리뷰(F-1) — 전월세도 **같은 헬퍼**를 타야 한다.
+
+    ★코드가 스스로 경고를 남겨 뒀는데도 R4 에서 매매만 고쳤다:
+    `_group_rent` 의 `_query_grain` 주석 — "전월세도 같은 그룹핑 규칙을 쓰므로 같은 병합
+    오염에 노출된다(**한쪽만 고치면 비대칭이 남는다**)". 리뷰어 실측(봉합 전):
+
+        RENT 정상먼저 → jibun=736, parcel  /  RENT 마스킹먼저 → jibun=5*, masked
+        TRADE 두 순서 → jibun=736, parcel   ← 매매만 고쳐져 있었다
+
+    CLAUDE.md 전역 전파방지("공용 함수로 추출해 한 곳을 고치면 전역이 따라오게")를
+    어긴 것이라, 이번엔 `_resolve_group_queries` 로 공용화해 봉합했다.
+    """
+    normal = _rent_row(name="래미안", jibun="736", dong="역삼동", deposit=50000, day=1)
+    masked = _rent_row(name="래미안", jibun="5*", dong="역삼동", deposit=52000, day=2)
+
+    async def _run(rows: list[dict]) -> tuple:
+        nm._BUILD_CACHE.clear()
+        svc = nm.NearbyMapService.__new__(nm.NearbyMapService)
+        svc.settings = None
+        svc.molit = _StubMolit([], rent_rows=rows)
+        svc._geo_key = ""
+
+        async def _stub(queries):
+            return {q: {"lat": 36.0005, "lon": 129.0005} for q in queries if q}
+
+        svc._geocode_many = _stub  # type: ignore[assignment]
+        payload = await svc.build(address="경상북도 남구 역삼동 9-9", lawd_cd="47111",
+                                  months=1, radius_m=1000,
+                                  center_hint={"lat": 36.0, "lon": 129.0})
+        cat = payload["categories"]["apt_rent"]
+        return (
+            cat["count_in_radius"],
+            tuple((g.get("jibun"), g.get("coord_precision")) for g in cat["groups"]),
+        )
+
+    normal_first = await _run([normal, masked])
+    masked_first = await _run([masked, normal])
+    assert normal_first == masked_first, (
+        f"전월세가 행 순서에 따라 갈린다 — 정상먼저={normal_first} 마스킹먼저={masked_first}"
+    )
+    assert normal_first[0] > 0, "두 순서 모두 표본 0 이면 이 비교는 공허하다"
+
+
+@pytest.mark.asyncio
+async def test_group_query_is_never_synthesized_across_rows() -> None:
+    """★★R5 리뷰(H-2) — 질의는 **한 행에서 통째로** 나와야 한다.
+
+    R4 의 "비마스킹 지번 승격"은 **첫 행의 동 + 승격 행의 지번**을 짝지어, 어느 거래에도
+    존재하지 않는 주소를 합성해 지오코더로 보냈다(리뷰어 실측: `(래미안,5*,논현동)` +
+    `(래미안,736,역삼동)` → `"경상북도 남구 논현동 736"`).
+
+    ★이게 왜 봉합 전보다 나쁜가 — 봉합 전에는 좌표가 **없었다**(정직한 미확인).
+    봉합 후에는 실재하지만 **무관한 필지**에 핀이 찍히고 라벨은 "위치 개략(동 단위)"이라며
+    오차를 축소해 말한다. 좌표가 없어 정직하던 상태가 **아는 척하는 상태**로 바뀐 것이라,
+    이 PR 의 존재 이유(R1 C-1: 쓸 수 없다고 선언한 좌표로 판정하지 않는다)를 새 경로에서
+    재생산했다.
+    """
+    rows = [
+        _row(name="래미안", jibun="5*", dong="논현동", price=52000, day=1),
+        _row(name="래미안", jibun="736", dong="역삼동", price=50000, day=2),
+    ]
+    # 입력 행에 **실재하는** (동, 지번) 쌍만 질의로 나가야 한다.
+    real_pairs = {("논현동", "5*"), ("역삼동", "736")}
+    seen: list[str] = []
+
+    for ordered in (rows, list(reversed(rows))):
+        nm._BUILD_CACHE.clear()
+        svc = nm.NearbyMapService.__new__(nm.NearbyMapService)
+        svc.settings = None
+        svc.molit = _StubMolit(ordered)
+        svc._geo_key = ""
+
+        async def _capture(queries):
+            seen.extend(queries)
+            return {}
+
+        svc._geocode_many = _capture  # type: ignore[assignment]
+        await svc.build(address="경상북도 남구 역삼동 9-9", lawd_cd="47111", months=1,
+                        radius_m=1000, center_hint={"lat": 36.0, "lon": 129.0})
+
+    assert seen, "질의가 하나도 나가지 않았다 — 아래 검사가 공허해진다"
+    for q in seen:
+        # 질의는 "시군구 동 지번" 형태다. 동·지번 조각이 같은 행에서 왔는지 본다.
+        parts = q.split()
+        if len(parts) < 2:
+            continue
+        dong_jibun = (parts[-2], parts[-1])
+        assert dong_jibun in real_pairs, (
+            f"어느 행에도 없는 주소를 합성했다: {q!r} — 실재 쌍은 {real_pairs}. "
+            "실재하지만 무관한 필지에 핀이 찍히고 라벨은 오차를 축소해 말한다"
+        )
+
+
+def test_representative_pair_choice_is_order_independent() -> None:
+    """★★R5 리뷰(F-2) — 대표 쌍 선택이 **후보 순서와 무관**한지 직접 흔들어 본다.
+
+    ★왜 통합 테스트로는 부족한가(실측): 호출부가 `set` 을 넘기는데 파이썬 `set` 순회는
+    **한 프로세스 안에서 일정**하다. 그래서 `sorted` 를 빼는 변이가 6순열 통합 테스트에서
+    **생존했다**. 실제 위험은 거기서 안 보인다 — `PYTHONHASHSEED` 는 프로세스마다 다르므로,
+    정렬이 없으면 "배포할 때마다 대표 지번이 달라지는" 더 은밀한 비결정성이 된다.
+
+    → 순수 함수에 **리스트**로 여러 순열을 직접 넣는다. 정렬이 빠지면 답이 갈린다.
+    """
+    import itertools
+
+    candidates = [
+        ("남구", "역삼동", "736"),
+        ("남구", "역삼동", "5*"),
+        ("남구", "역삼동", "820"),
+        ("남구", "논현동", "12"),
+    ]
+    picks = {nm._pick_representative_pair(list(p)) for p in itertools.permutations(candidates)}
+    assert len(picks) == 1, f"후보 순서에 따라 대표가 갈린다: {picks}"
+
+    # ★마스킹만 있으면 그때도 결정론적이어야 한다(질의는 못 만들지만 답은 일정해야 한다).
+    masked_only = [("남구", "논현동", "5*"), ("남구", "역삼동", "1**")]
+    picks2 = {nm._pick_representative_pair(list(p)) for p in itertools.permutations(masked_only)}
+    assert len(picks2) == 1, f"마스킹만 있을 때 대표가 갈린다: {picks2}"
+
+    # ★두 모집단을 가른다 — 비마스킹이 있으면 **반드시 그쪽**이 뽑혀야 한다.
+    only = next(iter(picks))
+    assert not nm._is_masked_jibun(only[2]), f"마스킹 지번이 대표로 뽑혔다: {only}"
+    assert nm._is_masked_jibun(next(iter(picks2))[2]), "픽스처가 마스킹 전용이 아니다"
+
+
+@pytest.mark.asyncio
+async def test_derived_group_name_follows_the_representative_pair() -> None:
+    """★R6 리뷰(F-A) — 건물명 없이 **파생된** 이름은 대표 쌍을 따라가야 한다.
+
+    `name` 은 `setdefault`(첫 행) 때 `f"{dong} {jibun}"` 으로 굳는데 대표만 바꾸면
+    **한 팝업에 서로 다른 두 주소**가 뜬다(리뷰어 실측: 제목 "역삼동 736" ·
+    부제 "논현동 736 · 2건" — `SatongMultiMap.tsx:766-767` 이 둘을 나란히 그린다).
+
+    ★그리고 R5 독스트링의 "같은 데이터가 같은 화면을 낸다"가 **한 필드만큼 과대 표기**였다
+    — `name` 은 여전히 행 순서로 뒤집혔다.
+    """
+    # ★두 모집단을 가른다 — 이름이 **파생된** 그룹과 **원본 건물명이 있는** 그룹.
+    #   전자만 넣으면 "무조건 덮기" 변이가 생존한다(실측). 후자는 건드리면 안 된다:
+    #   행에서 온 진짜 이름을 `"동 지번"` 으로 갈아치우면 사용자가 아는 단지명이 사라진다.
+    rows = [
+        _row(name="", jibun="736", dong="역삼동", price=50000, day=1),
+        _row(name="", jibun="736", dong="논현동", price=51000, day=2),
+        _row(name="래미안", jibun="820", dong="역삼동", price=53000, day=3),
+        _row(name="래미안", jibun="5*", dong="역삼동", price=54000, day=4),
+    ]
+
+    async def _run(ordered: list[dict]) -> tuple:
+        nm._BUILD_CACHE.clear()
+        svc = nm.NearbyMapService.__new__(nm.NearbyMapService)
+        svc.settings = None
+        svc.molit = _StubMolit(ordered)
+        svc._geo_key = ""
+
+        async def _stub(queries):
+            return {q: {"lat": 36.0005, "lon": 129.0005} for q in queries if q}
+
+        svc._geocode_many = _stub  # type: ignore[assignment]
+        payload = await svc.build(address="경상북도 남구 역삼동 9-9", lawd_cd="47111",
+                                  months=1, radius_m=1000,
+                                  center_hint={"lat": 36.0, "lon": 129.0})
+        return tuple(
+            (g.get("name"), g.get("dong"), g.get("jibun"))
+            for g in payload["categories"]["apt_trade"]["groups"]
+        )
+
+    a, b = await _run(rows), await _run(list(reversed(rows)))
+    assert a == b, f"행 순서로 표시가 갈린다: {a} vs {b}"
+
+    by_name = {n: (d, j) for n, d, j in a}
+    # ① 파생 이름은 대표 쌍과 **일치**해야 한다(한 팝업에 두 주소가 뜨지 않게).
+    derived = [(n, d, j) for n, d, j in a if n not in ("래미안",)]
+    assert derived, "파생 이름 그룹이 없다 — ① 검사가 공허해진다"
+    for name, dong, jibun in derived:
+        assert name == f"{dong} {jibun}", (
+            f"제목과 부제가 다른 주소를 말한다 — name={name!r} 인데 dong/jibun={dong} {jibun}"
+        )
+    # ② 원본 건물명은 **보존**돼야 한다 — 갈아치우면 사용자가 아는 단지명이 사라진다.
+    assert "래미안" in by_name, f"원본 건물명이 사라졌다: {a}"
+
+
+@pytest.mark.asyncio
+async def test_query_choice_is_deterministic_with_multiple_usable_jibuns() -> None:
+    """★R5 리뷰(F-2) — 비마스킹 지번이 **2개 이상**일 때도 순서 무관이어야 한다.
+
+    R4 승격은 비마스킹이 1개일 때만 순서 무관이었다. 2개 이상이면 여전히 "첫 행 승"이라
+    리뷰어 실측에서 **6순열이 2가지 결과**를 냈고, 동이 같으면 `parcel` → located →
+    **AVM 편입**이라 금액 경로에 비결정성이 살아 있었다.
+
+    ★어느 쌍이 "옳은지"는 알 수 없다. 알 수 없을 때 필요한 것은 정답이 아니라
+    **재현성**이다 — 같은 데이터가 같은 화면을 내야 한다.
+    """
+    import itertools
+
+    rows = [
+        _row(name="래미안", jibun="736", dong="역삼동", price=50000, day=1),
+        _row(name="래미안", jibun="5*", dong="역삼동", price=52000, day=2),
+        _row(name="래미안", jibun="820", dong="역삼동", price=54000, day=3),
+    ]
+
+    outcomes = set()
+    for perm in itertools.permutations(rows):
+        nm._BUILD_CACHE.clear()
+        svc = nm.NearbyMapService.__new__(nm.NearbyMapService)
+        svc.settings = None
+        svc.molit = _StubMolit(list(perm))
+        svc._geo_key = ""
+
+        async def _stub(queries):
+            return {q: {"lat": 36.0005, "lon": 129.0005} for q in queries if q}
+
+        svc._geocode_many = _stub  # type: ignore[assignment]
+        payload = await svc.build(address="경상북도 남구 역삼동 9-9", lawd_cd="47111",
+                                  months=1, radius_m=1000,
+                                  center_hint={"lat": 36.0, "lon": 129.0})
+        cat = payload["categories"]["apt_trade"]
+        outcomes.add((
+            cat["count_in_radius"],
+            tuple(g.get("jibun") for g in cat["groups"]),
+            (payload.get("avm") or {}).get("estimated_price"),
+        ))
+
+    assert len(outcomes) == 1, (
+        f"6순열이 {len(outcomes)}가지 결과를 냈다: {outcomes}. "
+        "동이 같으면 parcel → located → AVM 편입이라 **금액이 순서에 따라 바뀐다**"
+    )
+    # ★비공허 — 표본이 실제로 잡혀야 이 비교가 의미를 갖는다.
+    only = next(iter(outcomes))
+    assert only[0] > 0, "모든 순열에서 표본 0 이면 '같다'는 것이 아무것도 말하지 않는다"
 
 
 @pytest.mark.asyncio
