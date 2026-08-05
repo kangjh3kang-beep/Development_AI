@@ -39,6 +39,36 @@ _ANALYZED = "analyzed"
 _RANK = {"POSSIBLE": 0, "CAUTION": 1, "CONDITIONAL": 2, "NEEDS_OFFICIAL_SURVEY": 2,
          "REQUIRES_AUTHORITY_CONFIRMATION": 2, "UNKNOWN": 2, "PRECONDITION": 3, "BLOCKED": 4}
 
+# 개발가능성 등급 → 사용자 문구(일반 개발가능성 도메인).
+#
+# ★도메인을 섞지 않는다: 같은 토큰이 도메인마다 다른 뜻이라 접도(access_basis_service)의
+#   문구와 **일부러 다르다**(예: POSSIBLE = 여기선 "개발 가능", 접도에선 "접도 가능").
+#   하나로 합치면 한쪽이 오역을 생산한다(2026-08-02 W4 교훈 14 — 평면 사전 금지).
+#
+# ★키 집합은 _RANK와 같아야 한다. 등급을 _RANK에만 추가하고 여기 빠뜨리면 그 등급이
+#   화면에 **원시 enum 그대로** 나간다(종전 폴백이 `.get(gate, gate)`였다). 불변식 테스트가
+#   두 집합의 일치를 잠근다 — _RANK는 이 맵과 무관하게 유지되는 **독립 오라클**이다.
+_SEVERITY_LABEL_BY_GATE: dict[str, str] = {
+    "POSSIBLE": "개발 가능",
+    "CAUTION": "사전확인 필요",
+    "CONDITIONAL": "조건부 가능(인허가·전용·협의 선행)",
+    "NEEDS_OFFICIAL_SURVEY": "공식 산림조사 필요(참고안 — 확정 아님)",
+    "REQUIRES_AUTHORITY_CONFIRMATION": "관할 확인 필요(접도 근거 미확정)",
+    "UNKNOWN": "판정 불가(정보 미확인)",
+    "PRECONDITION": "중대한 선행절차 필수(도시계획시설 폐지·용도변경 등)",
+    "BLOCKED": "원칙적 개발 불가",
+}
+
+
+def _severity_label(gate: str | None) -> str:
+    """등급 문구. 미등재는 이름을 지어내지 않되 원시 코드만 던지지도 않는다."""
+    key = str(gate or "").strip().upper()
+    if not key:
+        return ""
+    label = _SEVERITY_LABEL_BY_GATE.get(key)
+    return label if label else f"{key} (설명 준비 중)"
+
+
 
 def _factor_legal_refs(legal_ref_keys: list[str] | None) -> list[dict]:
     """특이요인의 legal_ref_keys를 레지스트리(get_legal_refs)로 직렬화해 verified 법령 링크 반환.
@@ -1286,13 +1316,7 @@ def detect_special_parcel(
 
     # 종합 게이트 = 가장 제약 큰 요인.
     gate = max(factors, key=lambda f: _RANK.get(f.get("developability", "POSSIBLE"), 0))["developability"]
-    label = {
-        "BLOCKED": "원칙적 개발 불가",
-        "PRECONDITION": "중대한 선행절차 필수(도시계획시설 폐지·용도변경 등)",
-        "CONDITIONAL": "조건부 가능(인허가·전용·협의 선행)",
-        "NEEDS_OFFICIAL_SURVEY": "공식 산림조사 필요(참고안 — 확정 아님)",
-        "CAUTION": "사전확인 필요", "POSSIBLE": "개발 가능",
-    }.get(gate, gate)
+    label = _severity_label(gate)
 
     warnings: list[str] = [f"[특이부지] {f['category']}: {f['implications'][0]}" for f in factors]
     if mismatch:

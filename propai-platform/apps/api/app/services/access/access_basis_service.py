@@ -54,6 +54,10 @@ _RESOLVABLE_BY_DEV: dict[str, str] = {
 }
 
 # 종합 등급 한글 라벨.
+# ★접도 **도메인 전용** 문구 — 일반 개발가능성(special_parcel._SEVERITY_LABEL_BY_GATE)과
+#   일부러 다르다(POSSIBLE = 여기선 "접도 가능", 저기선 "개발 가능"). 같은 토큰이 도메인마다
+#   다른 뜻이므로 하나로 합치면 한쪽이 오역을 생산한다(W4 교훈 14 — 평면 사전 금지).
+#   ★단, **키 집합**은 _RANK와 같아야 한다 — 등급이 늘었는데 여기 빠지면 원시 enum이 샌다.
 _SEVERITY_LABEL: dict[str, str] = {
     "POSSIBLE": "접도 가능",
     "CAUTION": "사전확인 필요",
@@ -62,6 +66,7 @@ _SEVERITY_LABEL: dict[str, str] = {
     "NEEDS_OFFICIAL_SURVEY": "공식 확인 필요",
     "REQUIRES_AUTHORITY_CONFIRMATION": "법정 접도 근거 미확정(관할 확인 필요)",
     "BLOCKED": "접도 불가",
+    "UNKNOWN": "판정 불가(정보 미확인)",
 }
 
 # 접도요건 판정(assess_road_conditions status) → 개발가능성 등급.
@@ -144,7 +149,8 @@ def _build_state(
 
 def _state_summary(state: str, dev: str, findings: list[AccessFinding]) -> str:
     """상태 정직 요약 — 등급별 문장 + 대표 요인."""
-    label = _SEVERITY_LABEL.get(dev, dev)
+    # 미등재 등급은 이름을 지어내지 않되 원시 코드만 던지지도 않는다(정직 표기).
+    label = _SEVERITY_LABEL.get(dev) or f"{dev} (설명 준비 중)"
     head = f"{_STATE_LABEL[state]}: {label}."
     if dev in ("REQUIRES_AUTHORITY_CONFIRMATION", "NEEDS_OFFICIAL_SURVEY"):
         head += " 근거 데이터 미확보로 확정할 수 없어 관할 확인이 필요합니다(확정 아님)."
