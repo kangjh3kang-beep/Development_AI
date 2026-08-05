@@ -13,7 +13,11 @@ from __future__ import annotations
 
 from typing import Any
 
+import structlog
+
 from app.services.land_intelligence.land_price_estimator import _market_multiplier
+
+logger = structlog.get_logger(__name__)
 
 # 개별요인 — 접도(road_side) 보정율(감정평가 개별요인의 가로조건 근사)
 _ROAD_FACTOR = [
@@ -144,7 +148,19 @@ async def desk_appraisal(
     src = "입력값"
     subject: dict[str, Any] = {}   # 대상물건 표시(지목·용도지역·이용상황 등)
 
-    if op is None or not area or pnu:
+    # ★★라이브 검증(2026-08-06)에서 적발 — 이 조건이 **거래사례비교법을 통째로 삼킨다**.
+    #   종전엔 "공시지가나 면적이 없을 때만" 이 블록을 탔다. 그런데 PNU 는 여기서만 해석되고,
+    #   아래 거래사례 블록은 `pnu` 를 요구한다. 그래서 **사용자가 공시지가와 면적을 둘 다
+    #   입력하면** PNU 가 안 잡히고 → 주변 실거래를 조회조차 못 하고 → 사유도 없이 조용히
+    #   공시지가 단독으로 떨어졌다.
+    #   ★프로덕션 실측(강남 논현동 1-1):
+    #     · 공시지가 비움 → pnu=1168010800100010001 · "286건 전부 마스킹 지번" 사유 표시
+    #     · 면적 비움     → 같음
+    #     · **둘 다 입력  → pnu=None · 사유 None(완전 침묵)**
+    #   ★사용자가 정보를 **더 줄수록 분석이 줄어드는** 역설이었다. 공시지가·면적 입력은
+    #   공시지가기준법의 정확도를 높일 뿐, 거래사례비교법을 포기할 이유가 되지 못한다.
+    #   → 거래사례 단가를 아직 못 받았으면 PNU 해석을 **시도한다**(이미 받았으면 불필요).
+    if op is None or not area or pnu or comparable_avg_per_sqm is None:
         try:
             import asyncio as _asyncio
 
@@ -250,7 +266,31 @@ async def desk_appraisal(
                     "산정했습니다."
                 )
         except Exception:  # noqa: BLE001
-            pass
+            # ★R6 리뷰(F-G) — 사유는 **사용자** 몫이고, 원인은 **운영자** 몫이다.
+            #   이 모듈엔 logger 참조가 0건이라 MOLIT·지오코더 장애 때 스택트레이스가
+            #   어디에도 남지 않았다(F-3 의 논거 자체가 관측성인데 정작 관측이 없었다).
+            logger.warning("desk_appraisal.comparable_lookup_failed", exc_info=True)
+            # ★★R5 리뷰(F-3) — 여기서 그냥 삼키면 `comparable_skip_note` 가 **None 인 채로**
+            #   빠져나가 봉합 이전과 **똑같은 완전 침묵**이 된다. MOLIT 장애·지오코더 장애가
+            #   정확히 이 경로다 — 즉 침묵 봉합에 구멍이 남아 있었다.
+            #   ★사유를 만들되 원인을 **아는 만큼만** 말한다: 우리 연동이 실패했다는 사실은
+            #   확실하고, 그 지역에 거래가 있는지 없는지는 **모른다**(그걸 알 방법이 없어서
+            #   실패한 것이다). "거래가 없다"로 읽히지 않게 쓰는 것이 요점이다.
+            comparable_avg_per_sqm = None
+            comparable_basis = None
+            comparable_skip_note = (
+                "실거래 자료를 불러오지 못해 거래사례비교법을 쓰지 못했습니다 — "
+                "이 지역에 거래가 없다는 뜻이 아니라 조회가 실패했다는 뜻입니다. "
+                "공시지가기준법 단독으로 산정했습니다."
+            )
+
+    elif comparable_avg_per_sqm is None:
+        # ★R5 리뷰(F-3) — `pnu` 가 없거나 짧으면 위 블록을 **아예 타지 않아** 사유가 없다.
+        #   조회를 시도조차 못 한 것도 "왜 안 썼는지"의 한 갈래다.
+        comparable_skip_note = (
+            "대상지 필지번호(PNU)를 확정하지 못해 주변 실거래를 조회하지 못했습니다 — "
+            "공시지가기준법 단독으로 산정했습니다."
+        )
 
     # 형상 개별요인 — 필지 폴리곤 부정형도로 형상 감가
     irregularity = None

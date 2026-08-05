@@ -129,6 +129,41 @@ describe("assertWiredThrough", () => {
     })).not.toThrow();
   });
 
+  it("★★JSX 주석 제거가 사이 코드를 삼키지 않는다(R6 F-B — 이 수정 자체가 무잠금이었다)", () => {
+    // ★이 PR 의 **공허한 참 6번째** 형태: 빈 단언이 아니라 **잠기지 않은 수정**.
+    //   R5 가 정규식을 `(?:(?!\*\/)[\s\S])*` 로 구조화했는데, 되돌려도 전건 통과했다
+    //   (리뷰어 변이 실증). 실효 있는 하드닝이 무보호로 남아 누구든 조용히 되돌릴 수 있었다.
+    //
+    //   구정규식(`[\s\S]*?`)은 `{/* c */ a: 1 }` 같은 **객체 리터럴**에서 시작해
+    //   한참 뒤 `*/}` 까지를 통째로 삼켰다 — R4 에서 44,444자를 날린 그 구조다.
+    const f = write("l.tsx", [
+      "const o = {/* c */ a: 1 };",
+      "base.on(\"tileload\", () => track(true));",
+      "const tail = 1; {/* tail */}",
+    ].join("\n"));
+    // 사이 코드가 살아 있어야 스코프에 걸리고, 걸려야 위반 여부를 판정할 수 있다.
+    expect(() => assertWiredThrough({
+      file: f, scope: /base\.on\("tile/, mustContain: "track(", minMatches: 1,
+    })).not.toThrow();
+  });
+
+  it("★JSX 주석이 40줄을 넘으면 큰 실패로 알린다(정규식 회귀 백스톱)", () => {
+    const body = Array.from({ length: 45 }, (_, i) => `   설명 ${i}`).join("\n");
+    const f = write("m.tsx", `{/* ${body} */}\nbase.on("tileload", () => track(true));\n`);
+    expect(() => assertWiredThrough({
+      file: f, scope: /base\.on\("tile/, mustContain: "track(", minMatches: 1,
+    })).toThrow(/상한 40/);
+  });
+
+  it("★닫는 쪽 공백(`*/ }`)도 제거한다 — 안 지우면 주석이 조건을 충족시킨다", () => {
+    // R5 가 `\s*` 를 지웠는데 방향이 반대였다(R6 F-D). 주석이 남으면 **주석 처리된 JSX**
+    // 위에서 락이 초록이 된다 = R4 H-1 과 같은 계열.
+    const f = write("n.tsx", '{/* {res.reason} */ }\n');
+    expect(() => assertWiredThrough({
+      file: f, scope: /res\.reason/, mustContain: "res.reason", minMatches: 1,
+    })).toThrow(/매치 0건/);
+  });
+
   it("스코프 밖 줄은 검사하지 않는다(과도한 불변식이 정상 코드를 깨뜨리지 않게)", () => {
     const f = write("f.ts", [
       'base.on("tileload", () => track(true));',

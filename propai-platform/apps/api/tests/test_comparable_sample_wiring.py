@@ -405,10 +405,69 @@ async def test_desk_appraisal_really_emits_masked_reason_end_to_end() -> None:
     assert note, "반경이 적용됐는데 표본이 0 인데도 **사유가 응답에 없다**(침묵 구간 복원)"
     assert "지번을 가려서" in note, f"마스킹이 원인인데 그 사실을 말하지 않는다: {note}"
     # ★거래사례비교법이 실제로 빠졌는지도 확인 — 사유만 싣고 값은 쓰는 상태면 모순이다.
+    # ★R5 리뷰(F-9) — `methods` 가 비면 아래 `not any(...)` 는 **공허하게 참**이 된다.
+    assert result.get("methods"), "산정방법이 비었다 — 아래 단언이 공허해진다"
     assert not any(
         "거래사례" in str(m.get("name") or m.get("method") or "")
         for m in (result.get("methods") or [])
     ), "사유를 실으면서 거래사례비교법을 그대로 썼다"
+
+
+def test_user_inputs_do_not_suppress_comparable_lookup() -> None:
+    """★★라이브 적발 — 공시지가·면적을 **둘 다 입력하면** 거래사례비교법이 통째로 사라졌다.
+
+    PNU 는 `if op is None or not area or pnu:` 블록에서만 해석되는데, 아래 거래사례 블록은
+    `pnu` 를 요구한다. 그래서 사용자가 두 값을 다 채우면 → PNU 미해석 → 주변 실거래
+    **조회 자체를 안 함** → 사유도 없이 공시지가 단독.
+
+    ★프로덕션 실측(강남 논현동 1-1, 2026-08-06):
+        공시지가 비움 → pnu=1168010800100010001 · "286건 전부 마스킹" 사유 표시
+        면적 비움     → 같음
+        둘 다 입력    → pnu=None · comparable_skipped_reason=None  ← 완전 침묵
+
+    ★**사용자가 정보를 더 줄수록 분석이 줄어드는** 역설이었다.
+
+    이 테스트는 게이트 **조건식**을 직접 본다 — 실호출은 VWorld 네트워크에 의존해
+    단위 테스트로 태울 수 없고, 조건이 바로 결함의 자리이기 때문이다.
+    """
+    import inspect
+
+    from app.services.land_intelligence import desk_appraisal_service as mod
+
+    src = inspect.getsource(mod.desk_appraisal)
+    gate = [ln for ln in src.splitlines() if ln.strip().startswith("if op is None or not area")]
+    assert gate, "PNU 해석 게이트를 찾지 못했다 — 조건이 바뀌었으면 이 테스트를 갱신하라"
+    assert "comparable_avg_per_sqm is None" in gate[0], (
+        "거래사례 단가를 아직 못 받았는데도 PNU 해석을 건너뛴다 — 사용자가 공시지가·면적을 "
+        "입력했다는 이유로 주변 실거래를 조회조차 하지 않게 된다(라이브 실측 결함)"
+    )
+    # ★비공허 — 조건식이 실제로 네 갈래를 갖는지(하나로 뭉개지지 않았는지) 본다.
+    assert gate[0].count(" or ") >= 3, f"게이트가 축소됐다: {gate[0].strip()}"
+
+
+def test_every_skip_path_says_why() -> None:
+    """★R6 리뷰(F-3) — "왜 거래사례비교를 안 썼는지"에 **침묵하는 갈래가 없어야** 한다.
+
+    ★PNU 부재 갈래가 무테스트였다(변이 생존 실측) — 그 갈래는 조회를 **시도조차 못 한**
+    경우인데, 사용자에게는 다른 갈래와 똑같이 "방법이 그냥 사라진" 것으로 보인다.
+
+    ★문구는 **아는 만큼만** 말해야 한다: 조회가 실패한 것과 거래가 없는 것은 다르다.
+    """
+    import asyncio
+
+    from app.services.land_intelligence.desk_appraisal_service import desk_appraisal
+
+    # PNU 를 확정하지 못한 입력 — 위 블록 자체를 타지 않는 갈래.
+    result = asyncio.run(
+        desk_appraisal(
+            pnu=None, address="", area_sqm=300.0, official_price_per_sqm=1_000_000,
+        )
+    )
+    note = result.get("comparable_skipped_reason")
+    assert note, "PNU 부재 갈래가 사유 없이 조용히 폴백한다"
+    assert "거래가 없" not in note, (
+        f"조회를 못 한 것을 '거래가 없다'로 말하면 안 된다: {note}"
+    )
 
 
 def test_report_model_carries_the_skip_reason() -> None:
@@ -525,7 +584,12 @@ def test_shared_golden_matches_backend_output_exactly() -> None:
     cases = json.loads(golden_path.read_text(encoding="utf-8"))
     assert cases, "공유 골든이 비었다 — 아래 대조가 공허해진다"
     # ★비공허성 — 케이스가 실제로 여러 갈래를 덮는지 확인한다(전부 같은 갈래면 무판별).
-    assert len({c["expected"] for c in cases}) == len(cases), "골든에 중복 기대값이 있다"
+    #   ★R5(F-5) — 표본이 **있는** 케이스는 사유가 `None` 이므로(정상) 사유 중복 검사에서
+    #   제외한다. 그 케이스들은 `label`/`exclusion` 축으로 판별한다.
+    reasons = [c["expected"] for c in cases if c["expected"] is not None]
+    assert len(set(reasons)) == len(reasons), "골든에 중복 사유가 있다"
+    labels = {(c["expected_label"], c["expected_exclusion"]) for c in cases}
+    assert len(labels) >= 5, f"label/exclusion 갈래가 {len(labels)}종뿐 — 판별력이 부족하다"
     assert any(c["masked"] > 0 and c["masked"] <= c["unlocated"] for c in cases), "포함 갈래 없음"
     assert any(c["masked"] > c["unlocated"] for c in cases), "스큐 갈래 없음"
     assert any(c["masked"] == 0 for c in cases), "마스킹 없는 갈래 없음"
@@ -540,13 +604,27 @@ def test_shared_golden_matches_backend_output_exactly() -> None:
     assert any(c["unlocated"] >= 1000 or c["masked"] >= 1000 for c in cases), "천단위 케이스 없음"
     assert {c["scope"] for c in cases} >= {"radius", "sigungu", "unknown"}, "scope 갈래 미달"
 
+    # ★R5 리뷰(F-5) — 골든이 `no_sample_reason` **만** 덮고 있었다. `label`/`exclusion_note`
+    #   ↔ `sampleLabel`/`exclusionNote` 는 지금 일치하지만 **값 대조가 없어**, R4 C-1
+    #   (한쪽만 고쳐서 갈림)과 같은 계열이 여기서 재발할 수 있었다.
+    assert any(c.get("located", 0) > 0 for c in cases), "표본이 있는 갈래가 없다(label 미검증)"
+    assert any(c.get("capped", 0) > 0 for c in cases), "상한 초과 갈래가 없다"
+
     for c in cases:
         basis = SampleBasis(
             scope=c["scope"], radius_applied=c["scope"] == "radius", radius_m=c["radius_m"],
-            located_count=0, approximate_count=c["approximate"],
-            unlocated_count=c["unlocated"], capped_count=0,
+            located_count=c.get("located", 0), approximate_count=c["approximate"],
+            unlocated_count=c["unlocated"], capped_count=c.get("capped", 0),
             masked_jibun_count=c["masked"], masked_jibun_group_count=c["masked_groups"],
         )
+        assert basis.label() == c["expected_label"], (
+            f"label 이 공유 골든과 다르다(scope={c['scope']}) — 미러도 함께 맞춰라"
+        )
+        assert basis.exclusion_note() == c["expected_exclusion"], (
+            f"exclusion_note 가 공유 골든과 다르다(scope={c['scope']}) — 미러도 함께 맞춰라"
+        )
+        if c["expected"] is None:
+            continue
         assert no_sample_reason(basis) == c["expected"], (
             f"백엔드 출력이 공유 골든과 다르다(scope={c['scope']} r={c['radius_m']}) — "
             "문구를 바꿨으면 골든을 재생성하고 프론트 미러도 함께 맞춰라"
@@ -554,7 +632,12 @@ def test_shared_golden_matches_backend_output_exactly() -> None:
 
 
 def test_mirror_does_not_drift_from_backend_wording_or_locale() -> None:
-    """★★R4 리뷰(C-1·M-4) — 미러가 백엔드에서 **갈라졌는지** pytest 로 잡는다.
+    """미러에 **이미 폐기된** 문구·로케일 비고정 호출이 남았는지 본다(스냅샷 검사).
+
+    ★R5 리뷰(F-6) 표기 강등 — 이 테스트는 "미러가 갈라졌는지 잡는다"는 **일반 주장을 할 수
+    없다**. 목록에 없는 새 갈림은 못 잡는다(리뷰어 실측: 미러만 `why` 를 *새* 문구로 바꾸면
+    전건 통과). **구조적 재발 방지는 공유 골든 JSON 이 한다** — 양측이 같은 파일과 대조하므로
+    어느 쪽을 바꿔도 그쪽이 깨진다. 이 테스트는 그 위에 얹은 보조물이다.
 
     ★C-1 실측: R3 에서 F-5 문구를 **백엔드만** 고치고 미러를 놓쳐 공유 골든 13건 중
     3건이 어긋났다(vitest 확정 실패). 사용자가 실제로 읽는 화면에는 없애겠다고 선언한
@@ -576,10 +659,20 @@ def test_mirror_does_not_drift_from_backend_wording_or_locale() -> None:
         )
 
     # ② 로케일 비고정 호출이 남아 있으면 값 등가 계약이 비콤마 로케일에서 거짓이 된다.
-    assert not re.search(r"toLocaleString\(\s*\)", mirror), (
-        "미러에 로케일 비고정 `toLocaleString()` 이 남아 있다 — de-DE 에서 `5.601` 이 돼 "
-        "'백엔드와 같은 값' 계약이 거짓이 된다(CI 는 en-US 라 골든으로 못 잡는다)"
-    )
+    #   ★R5 리뷰(F-7) — 스코프를 **탁상감정 표기 파일까지** 넓힌다. 종전엔 미러 한 파일만
+    #   봐서, 같은 PR 이 고친 `desk-appraisal.ts` 의 `won()` 은 되돌려도 무검출이었고
+    #   `eok()` 은 `toLocaleString(undefined, …)` 로 여전히 브라우저 로케일을 타고 있었다.
+    web_root = _API_ROOT.parent.parent / "apps/web/lib"
+    for rel in ("market/comparable-sample.ts", "land/desk-appraisal.ts"):
+        src = (web_root / rel).read_text(encoding="utf-8")
+        assert not re.search(r"toLocaleString\(\s*\)", src), (
+            f"{rel} 에 로케일 비고정 `toLocaleString()` 이 남아 있다 — de-DE 에서 `5.601` 이 "
+            "돼 '백엔드와 같은 값' 계약이 거짓이 된다(CI 는 en-US 라 골든으로 못 잡는다)"
+        )
+        assert not re.search(r"toLocaleString\(\s*undefined", src), (
+            f"{rel} 에 `toLocaleString(undefined, …)` 가 남아 있다 — 명시적으로 보이지만 "
+            "실제로는 브라우저 로케일이다(de-DE `1.234,56`)"
+        )
 
 
 def test_frontend_mirror_reads_the_shared_golden() -> None:
