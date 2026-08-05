@@ -219,7 +219,14 @@
 //        변경이라, stale app-shell 캐시가 남으면 **옛 번들이 계속 원시 enum 을 노출**한다.
 //        #549(변이 생존 구멍 봉합·게이트 상향 무검증/라우터 무테스트)도 같은 배포에 포함.
 //        ★채번: origin/main 실제 상수 v484 확인 → v485. PR 생성 前 보드 claim 선점(관행 3회차).
-const CACHE_NAME = "propai-v485-grade-labels";
+// v486: 비율 표기 **전역 스윕**(#551) — 정수 반올림·깨진 표기·부호 오표기 봉합.
+//        formatters + 소비처 4곳(site-analysis page·ChangeForecastCard·SatongMapShell·
+//        FairPriceSuggestCard). ★#530(v481 §비율)·#541(v483 §1-B)에 이은 **3차이자 전역**
+//        — 같은 결함이 소비처별로 흩어져 있었고 이번에 전수로 쓸었다.
+//        표시 정직화는 stale 캐시가 남으면 **거짓이 계속 보이는** 상태가 유지된다.
+//        #552(R3 적대검증 — 가짜 골든 정직화·근원 불변식)도 같은 배포 구간(백엔드).
+//        ★채번: origin/main 실제 상수 v485 확인 → v486. PR 생성 前 보드 claim 선점(4회차).
+const CACHE_NAME = "propai-v486-ratio-sweep";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
