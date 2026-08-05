@@ -1156,6 +1156,19 @@ class NearbyMapService:
             #   동을 모르는 행이 섞인 것과 여러 동이 섞인 것은 **같은 위험**이다(그룹 대표
             #   좌표가 일부 행만 대표한다).
             g["_dongs"].add(dong)
+            # ★★R4 리뷰(H-2) — 질의는 `setdefault` 때 **첫 행**의 지번으로 정해진다.
+            #   그룹 키가 `name or jibun or dong` 이라, 건물명이 같고 지번이 섞인 그룹에서
+            #   **첫 행이 마스킹이면 단지 전체가 좌표를 잃는다**. 같은 데이터인데 MOLIT
+            #   응답 순서(우리가 통제하지 않는다)에 따라 AVM 표본이 들어왔다 나갔다 하고,
+            #   그러면 **사용자가 보는 시세가 비결정적으로 바뀐다** — 이 저장소가
+            #   "★시세가 바뀝니다"로 게이팅하는 바로 그 클래스다.
+            #   리뷰어 실측: 같은 두 거래, 행 순서만 반대인데 located 2 ↔ 0 으로 뒤집혔다.
+            #   ★비마스킹 지번을 만나면 **그것으로 승격**한다(정보가 더 많은 쪽이 이긴다).
+            #   순서에 무관하게 같은 결과가 나오도록 만드는 것이 요점이다.
+            if jibun and not _is_masked_jibun(jibun) and _is_masked_jibun(g.get("jibun")):
+                g["jibun"] = jibun
+                g["_query"] = self._query_for(sigungu, g["dong"], jibun, name)
+                g["_query_grain"] = self._query_grain(jibun, name)
             price = int(r.get("price_10k_won") or 0)
             area = float(r.get("area_m2") or 0)
             if price > 0:

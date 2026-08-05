@@ -35,18 +35,25 @@ describe("표본 0 사유 표면 배선", () => {
       //   불가능**했고(공허), 실질 판별력이 `minMatches: 2` 하나였다. 게다가 그 매치는
       //   `{/* … comparable_skipped_reason … */}` JSX 주석으로 **패딩**되어 렌더를 지워도
       //   초록이 됐다(공용 도구 `stripLineComment` 를 함께 고쳤다).
-      //   → `mustContain` 을 **실제 렌더 형태**(`{expr.comparable_skipped_reason}`)로 좁힌다.
+      //   ★★R4 리뷰(M-5) 표기 정정 — 개선을 만든 것은 `mustContain` 이 아니라 **`scope`**
+      //   다. `mustContain` 이 `scope` 에 함의되면 위반이 원리적으로 불가능해(공허) 판별력이
+      //   `scope` + `minMatches` 에만 있다. 그러니 함의된 `mustContain` 을 쓰는 대신,
+      //   **렌더 형태**를 `scope` 로 잡고 그 줄이 **가드 안**에 있는지를 별도로 확인한다.
+      //   ★그리고 이 락의 실효는 공용 도구가 **여러 줄 JSX 주석**을 벗기는 데 달려 있다
+      //   (R4 H-1 — 그전엔 렌더를 여러 줄 주석에 넣으면 초록이었다).
       assertWiredThrough({
         file: s.file,
         scope: /\{\s*\w+\.comparable_skipped_reason\s*\}/,
-        mustContain: /\{\s*\w+\.comparable_skipped_reason\s*\}/,
+        // 렌더 줄은 반드시 값 표현이어야 한다 — 타입 선언·주석은 여기 걸리지 않는다.
+        mustContain: /\.comparable_skipped_reason\s*\}/,
         minMatches: 1,
       });
-      // 조건부 가드도 함께 있어야 한다 — 값이 없을 때 빈 문단을 그리지 않는다.
+      // 조건부 가드가 **따로** 있어야 한다 — 값이 없을 때 빈 문단을 그리지 않는다.
+      // (`minMatches: 1` 이 실질 판별자다. 가드가 사라지면 0건이 되어 실패한다.)
       assertWiredThrough({
         file: s.file,
         scope: /\.comparable_skipped_reason \?/,
-        mustContain: "?",
+        mustContain: /\?\s*\(/,
         minMatches: 1,
       });
     });

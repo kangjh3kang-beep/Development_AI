@@ -1635,6 +1635,59 @@ async def test_masked_jibun_groups_are_preserved_not_deleted_by_radius() -> None
 
 
 @pytest.mark.asyncio
+async def test_group_query_does_not_depend_on_row_order() -> None:
+    """★★R4 리뷰(H-2) — 같은 데이터라면 **행 순서가 달라도 같은 결과**여야 한다.
+
+    질의는 `setdefault` 때 **첫 행**의 지번으로 정해진다. 그룹 키가 `name or jibun or dong`
+    이라, 건물명이 같고 지번이 섞인 그룹에서 **첫 행이 마스킹이면 단지 전체가 좌표를 잃었다**.
+    MOLIT 응답 순서는 우리가 통제하지 않으므로, AVM 표본이 들어왔다 나갔다 하며
+    **사용자가 보는 시세가 비결정적으로 바뀐다** — 이 저장소가 "★시세가 바뀝니다"로
+    게이팅하는 바로 그 클래스다.
+
+    리뷰어 실측(봉합 전): 같은 두 거래, 순서만 반대인데 `located` 2 ↔ 0 으로 뒤집혔다.
+
+    ★비마스킹 지번을 만나면 그것으로 **승격**한다(정보가 더 많은 쪽이 이긴다).
+    """
+    normal = _row(name="래미안", jibun="736", dong="역삼동", price=50000, day=1)
+    masked = _row(name="래미안", jibun="5*", dong="역삼동", price=52000, day=2)
+
+    async def _run(rows: list[dict]) -> tuple:
+        nm._BUILD_CACHE.clear()
+        svc = nm.NearbyMapService.__new__(nm.NearbyMapService)
+        svc.settings = None
+        svc.molit = _StubMolit(rows)
+        svc._geo_key = ""
+
+        async def _stub(queries):
+            return {
+                q: {"lat": 36.0005, "lon": 129.0005}
+                for q in queries
+                if "래미안" in q or "736" in q
+            }
+
+        svc._geocode_many = _stub  # type: ignore[assignment]
+        payload = await svc.build(
+            address="경상북도 남구 역삼동 9-9", lawd_cd="47111", months=1, radius_m=1000,
+            center_hint={"lat": 36.0, "lon": 129.0},
+        )
+        cat = payload["categories"]["apt_trade"]
+        return (
+            cat["count_in_radius"],
+            cat["count_unresolved"],
+            (payload.get("avm") or {}).get("estimated_price"),
+        )
+
+    normal_first = await _run([normal, masked])
+    masked_first = await _run([masked, normal])
+    assert normal_first == masked_first, (
+        f"행 순서에 따라 결과가 갈린다 — 정상먼저={normal_first} 마스킹먼저={masked_first}. "
+        "MOLIT 응답 순서에 따라 사용자가 보는 시세가 비결정적으로 바뀐다"
+    )
+    # ★두 모집단을 가른다 — 결과가 "둘 다 0"이면 같기만 하고 아무것도 잠그지 못한다.
+    assert normal_first[0] > 0, "두 순서 모두 표본 0 이면 이 비교는 공허하다"
+
+
+@pytest.mark.asyncio
 async def test_masked_jibun_with_building_name_stays_out_of_avm_sample() -> None:
     """★★C-2 골든 — 마스킹 + **건물명**이 있어도 AVM 표본에 들어가지 않는다.
 

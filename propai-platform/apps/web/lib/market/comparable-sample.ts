@@ -181,10 +181,18 @@ export function noSampleReason(b: SampleBasis): string {
   // 같은 거래를 두 번 세는 것이다. 스큐로 어긋나면 포함 관계를 주장하지 않는다.
   let tail = "";
   if (masked > 0) {
+    // ★R4 리뷰(C-1) — 이 문구는 백엔드와 **글자까지 같아야** 한다. R3 에서 백엔드만
+    //   고치고 여기를 놓쳐 공유 골든 13건 중 3건이 어긋났다(전역 전파방지 미이행).
+    //   ★M-1·M-2 — "위 건수"는 앞에 건수가 없으면 가리킬 것이 없고, 동 단위 확인분만
+    //   있으면 **틀린 대상**을 가리킨다. 대상을 명시하고, 없으면 괄호를 생략한다.
+    const rel =
+      b.unlocatedCount > 0
+        ? "(위 '위치 미확인' 건수에 포함되는지는 확인할 수 없습니다)"
+        : "";
     tail =
       masked <= b.unlocatedCount
         ? ` 위치 미확인 중 ${masked.toLocaleString("ko-KR")}건은 ${why}.`
-        : ` 그 밖에 지번이 가려진 거래가 ${masked.toLocaleString("ko-KR")}건 있습니다 — ${why}.`;
+        : ` 지번이 가려진 거래는 ${masked.toLocaleString("ko-KR")}건으로 집계됐습니다${rel} — ${why}.`;
   }
 
   if (bits.length === 0) {

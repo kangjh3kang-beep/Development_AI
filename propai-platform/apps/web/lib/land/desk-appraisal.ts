@@ -25,7 +25,7 @@ export function apiBase(): string {
 // 억/원 포매터 — DeskAppraisalReportClient 에서 이관(로직 변경 없음).
 export const eok = (v: number | null | undefined) =>
   v == null ? "—" : `${(v / 1e8).toLocaleString(undefined, { maximumFractionDigits: 2 })}억`;
-export const won = (v: number | null | undefined) => (v == null ? "—" : `${Math.round(v).toLocaleString()}원`);
+export const won = (v: number | null | undefined) => (v == null ? "—" : `${Math.round(v).toLocaleString("ko-KR")}원`);
 
 /** 산정방법 1건 — 방법명·추정 단가(원/㎡)·근거. */
 export type DeskAppraisalMethod = { method: string; unit_price: number; rationale: string };

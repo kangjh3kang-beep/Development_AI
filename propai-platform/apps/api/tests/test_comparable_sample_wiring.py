@@ -237,16 +237,19 @@ def test_masked_skew_branch_is_locked_by_literal() -> None:
     assert got == (
         "반경 1.5km 내에서 위치가 확인된 거래가 없습니다 — "
         "위치 미확인 1건 · 동 단위까지만 확인 2건은 단가 산정에 쓰지 않습니다. "
-        "지번이 가려진 거래는 3건으로 집계됐습니다(위 건수와의 포함 관계는 확인할 수 "
-        "없습니다) — 공개 실거래 자료가 지번을 가려서 제공해(예: 5*, 1**) 위치를 확인할 수 "
-        "없습니다."
+        "지번이 가려진 거래는 3건으로 집계됐습니다(위 '위치 미확인' 건수에 포함되는지는 "
+        "확인할 수 없습니다) — 공개 실거래 자료가 지번을 가려서 제공해(예: 5*, 1**) "
+        "위치를 확인할 수 없습니다."
     ), got
     # 카운트 항에 마스킹을 **더하지 않는다**(더하면 같은 거래를 두 번 센다).
     assert "지번이 가려진 거래 3건 ·" not in got
     # ★R3 리뷰(F-5) — "그 밖에"는 **서로소를 적극 주장**해 독자가 1+3+2=6건으로 읽는다.
     #   M-2 가 없앤 이중계수의 어법판이라 문구를 바꿨다. 되돌아오면 이 단언이 잡는다.
     assert "그 밖에" not in got, "서로소를 단정하는 어법이 되살아났다"
-    assert "포함 관계는 확인할 수 없습니다" in got
+    assert "포함되는지는 확인할 수 없습니다" in got
+    # ★R4 리뷰(M-1·M-2) — "위 건수"는 지시 대상이 없거나(앞 건수 0) 틀린 대상(동 단위
+    #   확인분)을 가리켰다. 대상을 **명시**하고, 앞 건수가 없으면 괄호를 생략한다.
+    assert "위 '위치 미확인' 건수" in got, "지시 대상이 모호한 문구가 되살아났다"
     # `—` 는 절 구분자로 쓰되 한 문장에 하나씩만.
     assert got.count(" — ") == 2, f"절 구조가 무너졌다: {got}"
 
@@ -548,6 +551,35 @@ def test_shared_golden_matches_backend_output_exactly() -> None:
             f"백엔드 출력이 공유 골든과 다르다(scope={c['scope']} r={c['radius_m']}) — "
             "문구를 바꿨으면 골든을 재생성하고 프론트 미러도 함께 맞춰라"
         )
+
+
+def test_mirror_does_not_drift_from_backend_wording_or_locale() -> None:
+    """★★R4 리뷰(C-1·M-4) — 미러가 백엔드에서 **갈라졌는지** pytest 로 잡는다.
+
+    ★C-1 실측: R3 에서 F-5 문구를 **백엔드만** 고치고 미러를 놓쳐 공유 골든 13건 중
+    3건이 어긋났다(vitest 확정 실패). 사용자가 실제로 읽는 화면에는 없애겠다고 선언한
+    "그 밖에"(서로소 단정 → 이중계수 오독)가 **그대로 출하될 뻔했다**.
+    → pytest 로 잡을 수 있었는데 안 잡았다. 전역 전파방지 미이행이다.
+
+    ★M-4 실측: `toLocaleString()` 을 인자 없이 부르면 **브라우저 로케일**을 탄다
+    (de-DE `5.601` vs 백엔드 `5,601`). CI 는 en-US 라 골든 케이스로는 **못 잡는다** —
+    로케일 고정은 **소스로** 잠가야 한다.
+    """
+    mirror = (
+        _API_ROOT.parent.parent / "apps/web/lib/market/comparable-sample.ts"
+    ).read_text(encoding="utf-8")
+
+    # ① 폐기된 문구가 미러에 남아 있으면 두 구현이 갈린 것이다.
+    for dead in ("그 밖에", "를 찾지 못했습니다"):
+        assert dead not in mirror, (
+            f"미러에 폐기된 문구가 남아 있다: {dead!r} — 백엔드만 고치고 미러를 놓쳤다"
+        )
+
+    # ② 로케일 비고정 호출이 남아 있으면 값 등가 계약이 비콤마 로케일에서 거짓이 된다.
+    assert not re.search(r"toLocaleString\(\s*\)", mirror), (
+        "미러에 로케일 비고정 `toLocaleString()` 이 남아 있다 — de-DE 에서 `5.601` 이 돼 "
+        "'백엔드와 같은 값' 계약이 거짓이 된다(CI 는 en-US 라 골든으로 못 잡는다)"
+    )
 
 
 def test_frontend_mirror_reads_the_shared_golden() -> None:
