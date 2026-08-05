@@ -750,6 +750,37 @@ export function SatongMapShell({
   //   사용자가 "지도 열기"를 누르면 이 컴포넌트 인스턴스는 그대로 유지한 채(재마운트 없음 —
   //   선택·레이어 상태 보존) 펼침으로 전환한다.
   const [isShellExpanded, setIsShellExpanded] = useState(!defaultCollapsed);
+  // ★모바일 IA P1(2026-08-06) — 접기를 **대상 유무에 종속**시킨다.
+  //   B4의 원 의도(착지 페이지에서 방금 떠난 지도가 첫 화면을 또 먹는 문제)는 여전히 유효하나,
+  //   접기가 대상 확정 여부와 **무관하게** 걸려 있었다. 대상이 없으면 접힌 셸에 남는 것은
+  //   "지도에서 필지를 선택하면 요약이 표시됩니다" 한 줄과 "지도 열기" 버튼뿐이고, 주소 입력·
+  //   엑셀 업로드·프로젝트 연결이 전부 접혀 있다 — **이 셸이 이 세 페이지의 유일한 주소 진입
+  //   경로**인데(분석·시장·토지조서 어디에도 자체 주소 입력이 없다) 그것을 접어 버린 것이다.
+  //   사용자 지적("모바일에서 주소 입력을 못 찾겠다")의 나머지 절반이 여기다.
+  //
+  //   ★대상이 있으면 접힘 유지(무회귀), 없으면 펼친다. 판정을 **effect 에서** 하는 이유:
+  //   selectedParcels 는 useState([]) 로 시작해 아래 하이드레이션 이펙트가 채우므로 마운트
+  //   시점 판정은 **항상 "대상 없음"**이 되어 defaultCollapsed 를 통째로 무력화한다.
+  //   ★래치 규칙은 바로 위 connectInitRef 선례를 그대로 따른다 — projectId 는 있는데 데이터가
+  //   아직 안 온 상태(스냅샷 복원 비동기)에서는 **래치하지 않고** 다음 갱신에 재평가한다.
+  //   조기 래치하면 복원 중인 프로젝트를 "대상 없음"으로 오판해 멀쩡한 접힘을 펼쳐 버린다.
+  //   ★1회 래치라 사용자가 이후 직접 접는/펴는 조작을 덮지 않는다.
+  const collapseDecidedRef = useRef(false);
+  useEffect(() => {
+    if (!defaultCollapsed) return; // 펼침이 기본인 호출측(/ko·/precheck)은 무관 — 무회귀
+    if (collapseDecidedRef.current) return;
+    const hasTarget =
+      selectedParcels.length > 0 ||
+      !!storeSiteAnalysis?.address ||
+      !!storeSiteAnalysis?.parcels?.length;
+    if (hasTarget) {
+      collapseDecidedRef.current = true; // 대상 있음 — 접힌 요약이 의미를 가지므로 그대로 둔다
+      return;
+    }
+    if (projectId) return; // 데이터 도착 대기 — 미확정이므로 래치 금지(늦은 복원 허용)
+    collapseDecidedRef.current = true;
+    setIsShellExpanded(true); // 대상 없음 확정 — 입력을 접어 두지 않는다
+  }, [defaultCollapsed, selectedParcels.length, storeSiteAnalysis, projectId]);
   // ── WS-C 필지 상세 패널 — 지도 폴리곤/카드 클릭 → 통합 정보(개요·공시지가·노후도)와
   //    산출물 원클릭 퍼널. 단일 팝오버 원칙: 레이어 설정 패널과 동시 표출 금지(상호 배타).
   const [detailFeature, setDetailFeature] = useState<SatongMapFeature | null>(null);

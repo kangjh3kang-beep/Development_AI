@@ -80,7 +80,30 @@ describe("SatongMapShell 스모크", () => {
 //   collapsed 경로를 실제로 렌더/클릭하는 테스트가 없어, early-return 무력화나 h2→h1
 //   되돌림 같은 변이가 통과해도 아무 테스트도 잡지 못했다. 이 스위트가 그 공백을 메운다.
 describe("SatongMapShell 접힘(B4)·문서 위계(B1) 회귀망", () => {
-  it("★B4: defaultCollapsed면 지도 스텁 없이 요약+\"지도 열기\" 토글만 뜨고, 클릭하면 펼쳐져 지도가 마운트된다", () => {
+  // ★테스트 간 격리 — useProjectContextStore 는 모듈 전역이라 앞 케이스가 넣은 대상이 그대로
+  //   남는다. 이게 없으면 "대상 없음" 케이스가 **앞 케이스의 잔존 대상으로 오염**돼, 실행 순서에
+  //   따라 결과가 갈린다(실제로 그렇게 실패했다). 이 스위트가 이 describe 안에서 store 를
+  //   건드리게 된 것은 P1 부터이므로 격리도 여기서 시작한다.
+  beforeEach(() => {
+    act(() => {
+      useProjectContextStore.setState({ projectId: null, siteAnalysis: null });
+    });
+  });
+
+  /**
+   * ★모바일 IA P1 이후 접힘은 **대상 유무에 종속**한다 — 접힘 경로를 테스트하려면 대상을 준다.
+   *   이 헬퍼가 필요해진 것 자체가 정책 변경의 증거다(종전엔 대상 없이도 접혔다).
+   */
+  function seedTarget() {
+    act(() => {
+      useProjectContextStore.setState({
+        siteAnalysis: { address: "서울시 강남구 역삼동 736" } as SiteAnalysisData,
+      });
+    });
+  }
+
+  it("★B4: 대상이 있고 defaultCollapsed면 지도 스텁 없이 요약+\"지도 열기\" 토글만 뜨고, 클릭하면 펼쳐져 지도가 마운트된다", () => {
+    seedTarget();
     render(<SatongMapShell locale="ko" defaultCollapsed />);
 
     // 접힌 상태 — 무거운 지도(스텁이라도)는 아직 마운트되지 않는다.
@@ -101,7 +124,42 @@ describe("SatongMapShell 접힘(B4)·문서 위계(B1) 회귀망", () => {
     expect(screen.queryByRole("button", { name: /지도 열기/ })).not.toBeInTheDocument();
   });
 
+  it("★모바일 IA P1: 대상이 없으면 defaultCollapsed 여도 펼쳐서 렌더한다 — 유일한 주소 진입 경로를 접지 않는다", () => {
+    // ★이 셸은 착지 3페이지(분석·시장·토지조서)의 **유일한 주소 진입 경로**다(그 페이지들에
+    //   자체 주소 입력이 없다). 대상이 없는데 접으면 사용자가 할 수 있는 일이 "지도 열기" 한
+    //   번뿐이고, 그게 사용자 지적("모바일에서 주소 입력을 못 찾겠다")의 나머지 절반이었다.
+    //   ★대상을 주지 않는다 — 위 beforeEach 가 store 를 비운 상태다(그 격리가 없으면 앞
+    //   케이스의 대상이 남아 이 검사가 조용히 반대 경로를 타고 통과한다).
+    render(<SatongMapShell locale="ko" defaultCollapsed />);
+
+    // 펼쳐졌다 = 주소·엑셀·프로젝트 연결이 들어 있는 입력 패널이 처음부터 보인다.
+    expect(screen.getByRole("heading", { name: "통합 필지 입력" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /지도 열기/ })).not.toBeInTheDocument();
+  });
+
+  it("★모바일 IA P1: 대상이 늦게 도착해도(프로젝트 복원 대기) 조기 래치로 접힘을 깨지 않는다", () => {
+    // ★projectId 는 있는데 siteAnalysis 가 아직 안 온 상태 = 스냅샷 복원 비동기 대기.
+    //   여기서 "대상 없음"으로 확정해 펼쳐 버리면, 복원된 프로젝트의 접힘이 깨진다.
+    //   connectInitRef 선례와 같은 규칙(미확정이면 래치 금지)을 잠근다.
+    act(() => {
+      useProjectContextStore.setState({ projectId: "p-1", siteAnalysis: null });
+    });
+    render(<SatongMapShell locale="ko" defaultCollapsed />);
+
+    // 아직 접힌 채다 — 대상 없음으로 단정하지 않았다.
+    expect(screen.getByRole("button", { name: /지도 열기/ })).toBeInTheDocument();
+
+    // 늦게 도착 → 여전히 접힘 유지(대상 있음으로 확정).
+    act(() => {
+      useProjectContextStore.setState({
+        siteAnalysis: { address: "서울시 강남구 역삼동 736" } as SiteAnalysisData,
+      });
+    });
+    expect(screen.getByRole("button", { name: /지도 열기/ })).toBeInTheDocument();
+  });
+
   it("★모바일 IA P0: 접힌 셸의 유일 진입점 \"지도 열기\"는 44px 터치 타깃 하한을 지킨다", () => {
+    seedTarget();
     render(<SatongMapShell locale="ko" defaultCollapsed />);
 
     const openButton = screen.getByRole("button", { name: /지도 열기/ });
