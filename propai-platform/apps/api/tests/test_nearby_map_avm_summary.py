@@ -40,7 +40,7 @@ def _expected_avm(
     *,
     radius_applied: bool = False,
     radius_m: int | None = None,
-    dropped_precise_group_count: int = 0,
+    dropped_precise_group_count: int | None = None,
 ) -> dict | None:
     """종전 프론트(deriveResults :196-238) 계산식의 독립 재구현(golden reference).
 
@@ -124,6 +124,8 @@ def _expected_avm(
             "sample_scope": "in_radius_precise_all",
             # ★리뷰 M-1 — 종전엔 `capped_group_count`(정밀·동 대표점 무구분 전체 절단 수)를
             #   실어 이 주석이 설명하려는 차이(계산−표시, **정밀 기준**)와 모집단이 어긋났다.
+            # ★리뷰 MINOR-1 — 표시 표본 키가 **없는** 직접 호출 경로에서는 그 차를 계산할 수
+            #   없으므로 **None**(미확보)이다. `build()` 경유 케이스만 실제 값이 온다.
             "dropped_precise_group_count": dropped_precise_group_count,
         },
     }

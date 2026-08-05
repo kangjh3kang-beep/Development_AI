@@ -1190,30 +1190,30 @@ async def test_avm_outlier_trim_actually_fires_on_realistic_spread() -> None:
     assert imp["price_per_sqm_outlier_trimmed_candidate"] < imp["price_per_sqm"]
     assert imp["delta_pct_from_outlier_trim_candidate"] < 0
 
-    # ★★값 고정 — **독립 산출**(픽스처 정의만 보고 로그 IQR 트림을 손으로 재구성):
+    # ★★값 고정 — **독립 산출**(픽스처 정의만 보고 손으로 재구성. 코드 출력 미참조):
     #     평당가 = price / (84㎡ / 3.3057851…) · 건수 40..1 · spread=300 · 극단 900,000만원 5건
-    #     전체 825건 중 로그 IQR 밴드 밖 **5건 제외** → core 820 → 평당가 3,781.97
-    #     → 3,781.97 / 3.3057851 × 10,000 = **11,440,460원/㎡**
-    #     무절사였다면 3,973.7158 → 12,020,491원/㎡ (즉 트림이 −4.8% 낮춘다)
-    #   ★이 리터럴이 `_PP_SCALE` 보정을 **값으로** 잠근다 — 스케일을 빼면 `int(p)` 절단으로
-    #     11,437,525원(−2,935원)이 되어 이 단언이 깨진다. 관계 단언(`<`)만으로는 못 잡는다.
-    #   캐노니컬(무절사·캡해제) = 12,020,491 · 트림 후보 = 11,416,667 (극단 그룹 1개 제외)
+    #     밴드는 **비가중 그룹 표본**(41개)에서 로그 IQR → 극단 **1그룹** 제외 → 생존 40그룹을
+    #     **원래 건수 가중**으로 재평균 = 평당 3,781.98 → **11,440,476원/㎡**
+    #     무절사(캡 해제·트림 없음) = 3,973.7158 → **12,020,491원/㎡**
+    #     표시캡(28) 무절사 = **11,510,557원/㎡** (극단은 건수 5라 순위 36위 → 캡 밖)
+    #
+    #   ★★리뷰 MAJOR-1 정정 — 종전 리터럴은 **손계산이 아니라 코드 출력을 쫓아갔다**
+    #     (assert 11,416,667 / −5.02 인데 바로 위 독스트링은 11,440,4xx / −4.83).
+    #     그 코드 출력이 CRITICAL 결함(경계 정수 절단으로 **최고가 정상 그룹 추가 삭제**)의
+    #     산물이었으므로, 골든이 **오답을 정답으로 단언**하며 독립 오라클을 무력화하고 있었다
+    #     — W2-c "가짜 골든" 클래스의 재발이다. 손계산값으로 되돌린다.
     assert imp["price_per_sqm"] == 12020491
-    assert imp["price_per_sqm_outlier_trimmed_candidate"] == 11416667
+    assert imp["price_per_sqm_outlier_trimmed_candidate"] == 11440476
 
-    # ★★귀속 잠금 — 이 픽스처는 캡과 트림이 **동시에** 물고 세 값이 전부 다르다.
-    #   독립 산출: legacy(캡28·무절사) = 11,510,557 (상위 28 그룹 가중평균 — 극단은 건수 5라
-    #   순위 36위이므로 캡 밖) · cap_only = 12,020,491 · canonical = 11,440,460
-    #     총 변화 = (11,440,460 − 11,510,557)/11,510,557 = **−0.61%**
-    #     캡 해제 = (12,020,491 − 11,510,557)/11,510,557 = **+4.43%**  ← 총 변화와 **부호가 반대**
-    #     트림    = (11,440,460 − 12,020,491)/12,020,491 = **−4.83%**
-    #   ★캡 해제가 **양수**일 수도 있음을 이 골든이 박는다 — 프로덕션 5표본은 전부 음수였지만
-    #     그건 데이터 의존이지 구조적 보장이 아니다. 셋을 각각 잠가야 귀속이 뒤섞이는 변이
-    #     (예: 캡 기여 자리에 총 변화를 싣기)가 잡힌다.
+    # ★★귀속 잠금 — 캡 해제(정본)와 트림(미채택 후보)이 **서로 다른 값**이어야 한다.
+    #     이 PR 이 실제로 바꾼 양 = (12,020,491 − 11,510,557)/11,510,557 = **+4.43%**
+    #       ★캡 해제가 **양수**일 수도 있음을 이 골든이 박는다 — 프로덕션 6표본은 전부
+    #         음수였지만 그건 **데이터 의존이지 구조적 보장이 아니다.**
+    #     트림 후보(미채택) = (11,440,476 − 12,020,491)/12,020,491 = **−4.83%**
     assert imp["price_per_sqm_before_transition"] == 11510557
     assert imp["delta_pct"] == 4.43
     assert imp["delta_pct_from_cap_lift"] == 4.43
-    assert imp["delta_pct_from_outlier_trim_candidate"] == -5.02
+    assert imp["delta_pct_from_outlier_trim_candidate"] == -4.83
 
 
 @pytest.mark.asyncio
@@ -1452,3 +1452,53 @@ async def test_transition_baseline_is_untrimmed() -> None:
     #   독립 산출: 표시캡(28) 표본 = 극단(건수 45, 순위 1위) + 건수 상위 27개의 무절사
     #   가중평균 = **17,080,150원/㎡**. legacy 에 트림을 걸면 극단이 빠져 크게 내려간다.
     assert imp["price_per_sqm_before_transition"] == 17080150
+
+
+@pytest.mark.asyncio
+async def test_outlier_trim_reports_exactly_what_it_dropped() -> None:
+    """★리뷰 CRITICAL 회귀락 — 보고한 제외 수와 **실제로 빠진 그룹 수**가 같아야 한다.
+
+    종전엔 `_kept` 경계 비교가 `_lo <= v * _PP_SCALE <= _hi` 였는데 `_hi` 는
+    `robust_price_stats` 가 `int(p)` 절단 후 낸 **정수**라, **최고 생존 그룹이 자기 자신을
+    밴드 밖으로 판정**해 매번 추가 탈락했다 — 그것도 **최고가 정상 단지**를, 보고 없이.
+    리뷰어 몬테카를로: 발동 건의 **100%** 가 정확한 트림과 불일치, 후보 델타 **부호 22.3%
+    뒤집힘**, 평균 편향 −1.90%(최악 −21.21%).
+    ★직전 REJECT 의 C-1 과 **같은 피해 클래스**(정상 고가 단지 삭제)이고 원인만
+      "거래량 편중"에서 "정수 절단"으로 바뀐 것이다.
+
+    → 경계를 정수로 맞추고, **자기정합 불변식**(밴드가 남긴 그룹 수 == 평균에 들어간 그룹 수)을
+      코드에 박았다. 이 불변식만 있었으면 100% 잡혔다.
+    """
+    nm._BUILD_CACHE.clear()
+    rows, gmap = _cap_fixture(40, spread=300, extreme_price=900000)
+    payload = await _build_cap(_service(rows, gmap))
+    imp = payload["display_cap_impact"]
+
+    # 극단 **1그룹**만 빠져야 한다 — 최고가 정상 단지가 함께 빠지면 이 값이 2가 된다.
+    assert imp["outlier_groups_excluded_candidate"] == 1
+    # 그리고 그 1그룹만 뺀 값이어야 한다(손계산 11,440,476). 최고가가 함께 빠지면 11,416,667.
+    assert imp["price_per_sqm_outlier_trimmed_candidate"] == 11440476
+
+
+@pytest.mark.asyncio
+async def test_outlier_trim_exclusion_set_is_count_invariant_when_it_fires() -> None:
+    """★리뷰 지적 — C-1 골든이 "제외 0"만 잠그는 **단측** 잠금이었다.
+
+    트림이 **발동하는** 입력에서도 제외 집합이 건수 분포에 흔들리지 않아야 밴드의
+    건수 독립성이 **양측**으로 봉인된다. 같은 가격집합 + 극단 1개로 건수만 바꿔 확인한다.
+    """
+    prices = [4800, 5200, 5500, 6000, 6500, 7000, 8000, 9500, 60000]   # 마지막이 극단
+    excluded = []
+    for counts in ([5] * 9, [100] + [5] * 8, [5] * 8 + [100]):
+        nm._BUILD_CACHE.clear()
+        rows: list[dict] = []
+        gmap: dict[str, dict] = {}
+        for i, (pr, c) in enumerate(zip(prices, counts, strict=True)):
+            rows += [_row(name="", jibun=f"g{i}", dong="A동", price=pr * 100, day=1)
+                     for _ in range(c)]
+            gmap[f"경상북도 남구 A동 g{i}"] = {"lat": 36.0003, "lon": 129.0003}
+        payload = await _build_cap(_service(rows, gmap))
+        excluded.append(payload["display_cap_impact"]["outlier_groups_excluded_candidate"])
+
+    # ★건수 분포가 어떻든 **같은 수의 그룹**이 제외돼야 한다(가격이 동일하므로).
+    assert len(set(excluded)) == 1, f"트림 발동 시 제외 집합이 건수에 흔들린다: {excluded}"

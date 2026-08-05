@@ -1415,12 +1415,35 @@ class NearbyMapService:
             if _pp["avg"] > 0 and _pp["excluded"] > 0:
                 # ★밴드는 비가중으로 정하되, **평균은 건수 가중**으로 낸다 — 살아남은 그룹만
                 #   원래 가중치로 다시 평균한다(트림이 가중 구조를 바꾸지 않는다).
-                _lo, _hi = float(_pp["min"]), float(_pp["max"])
-                _kept = [(v, c) for v, c in pp_pairs if _lo <= v * _PP_SCALE <= _hi]
+                # ★★리뷰 CRITICAL 봉합 — 경계 비교를 **정수로** 맞춘다.
+                #   `robust_price_stats` 는 `int(p)` 로 절단한 값에서 min/max 를 돌려주므로
+                #   `_hi` 는 정수인데 비교 대상 `v * _PP_SCALE` 은 실수다. 그래서 **최고 생존
+                #   그룹이 자기 자신을 밴드 밖으로 판정**해 매번 추가 탈락했다 —
+                #   그것도 **최고가 정상 단지**를, 보고 없이(제외 수는 밴드 판정분만 셌다).
+                #   리뷰어 몬테카를로: 발동 건의 **100%** 가 정확한 트림과 불일치, 후보 델타
+                #   **부호가 22.3% 뒤집힘**, 평균 편향 −1.90%(최악 −21.21%).
+                #   ★이건 직전 REJECT 의 C-1 과 **같은 피해 클래스**(정상 고가 단지 삭제)이고
+                #     원인만 "거래량 편중"에서 "정수 절단"으로 바뀐 것이다.
+                _lo, _hi = int(_pp["min"]), int(_pp["max"])
+                _kept = [(v, c) for v, c in pp_pairs if _lo <= int(v * _PP_SCALE) <= _hi]
                 _kn = sum(c for _v, c in _kept)
+                # ★자기정합 불변식 — **밴드가 남긴 그룹 수 == 평균에 실제로 들어간 그룹 수.**
+                #   이 확인이 없어서 밴드 판정과 평균 산출이 **다른 집합**을 써도 통과했다.
+                #   이번 결함의 단일 근원이다. 어긋나면 보고값을 실제 탈락 수로 정직 교정한다
+                #   (조용히 숨기지 않는다 — 관측 장치는 자기 오차를 말해야 한다).
+                _actually_dropped = len(pp_pairs) - len(_kept)
+                # ★등가변이 정직 고지 — 경계가 정수로 맞은 뒤에는 다음 둘이 **증명 가능하게**
+                #   같아서, 이를 바꾸는 변이는 어떤 입력으로도 잡히지 않는다(무작위 3,000회 반례 0):
+                #     (1) `_actually_dropped` vs `_pp["excluded"]` — `core ⊆ vals` 이고 밴드가
+                #         `min(core)`~`max(core)` 이므로 탈락 집합이 정확히 일치한다.
+                #     (2) `_kn > 0` 가드 — `min(core)` 를 낸 그룹은 **반드시** 밴드 안이므로
+                #         `_kept` 는 공집합이 될 수 없다(도달 불가·방어적).
+                #   그래도 (1)은 **정직한 쪽**(실제 탈락 수)을 싣고 (2)는 남겨 둔다 —
+                #   경계가 다시 어긋나면 (1)이 즉시 진실을 말하고 (2)가 죽음을 막는다.
+                #   ★"변이가 안 잡힌다"를 "잠겼다"로 보고하지 않기 위해 근거를 여기 남긴다.
                 if _kn > 0:
                     per_pyeong = sum(v * c for v, c in _kept) / _kn
-                    outliers_excluded = _pp["excluded"]
+                    outliers_excluded = _actually_dropped
                 else:
                     per_pyeong = pp_sum / pp_n
             else:
@@ -1494,9 +1517,13 @@ class NearbyMapService:
                 #   정밀 10·동 40 → 필드 22 인데 AVM 이 캡으로 잃은 정밀 그룹은 **0**.
                 #   ★`_display_cap_impact` 에서 고친 바로 그 결함(B-1)을 여기에 재도입했다.
                 #   → 정밀 기준 차이를 싣고 이름도 그렇게 바꾼다.
+                # ★리뷰 MINOR-1 — 표시 표본 키가 **없는** 직접 호출 경로에서는 이 차가
+                #   "표본 전량이 절단됐다"는 정반대 문장이 된다. 미확보는 **None**(무날조).
                 "dropped_precise_group_count": (
                     len((apt_trade_category or {}).get("_in_radius_groups") or [])
-                    - len((apt_trade_category or {}).get("_in_radius_groups_display_capped") or [])
+                    - len((apt_trade_category or {})["_in_radius_groups_display_capped"] or [])
+                    if apt_trade_category and "_in_radius_groups_display_capped" in apt_trade_category
+                    else None
                 ),
             },
         }
