@@ -7,6 +7,7 @@
  * 직접입력(평당 만원) 도 지원. 가짜값 금지: data_source!=live 면 근거/경고 그대로 표기.
  */
 import { useState } from "react";
+import { formatPercentDelta, formatPercentRange } from "@/lib/formatters"; // 비율 표기 SSOT
 import { AlertTriangle } from "lucide-react";
 import { salesApi } from "@/lib/salesApi";
 import { ApiClientError } from "@/lib/api-client";
@@ -77,7 +78,7 @@ export default function FairPriceSuggestCard({ siteCode, onAdopt }: { siteCode: 
           <div className="grid grid-cols-3 gap-2">
             {data.tiers.map((t) => (
               <div key={t.tier} className={`rounded-lg border p-2 text-center ${t.tier === "base" ? "border-[var(--accent-strong)] bg-[var(--accent-soft)]" : "border-[var(--line)] bg-[var(--surface-strong)]"}`}>
-                <p className="text-[11px] font-bold text-[var(--text-secondary)]">{t.label} <span className="text-[var(--text-hint)]">+{t.premium_pct}%</span></p>
+                <p className="text-[11px] font-bold text-[var(--text-secondary)]">{t.label} <span className="text-[var(--text-hint)]">{formatPercentDelta(t.premium_pct)}</span></p>
                 <p className="mt-0.5 text-base font-black text-[var(--text-primary)]">{t.per_pyeong_10k.toLocaleString()}<span className="text-[10px] font-normal">만원/평</span></p>
                 <p className="text-[10px] text-[var(--text-tertiary)]">84타입 {eok(t.ref_unit_total_10k)}</p>
                 {/* ★[iter-2 반쪽출하 해소] 백엔드 cost_validation 이 tier별로 부착하는 원가 회수 지표를 렌더.

@@ -163,9 +163,24 @@ export function formatPercentRange(
  *
  * 0은 유효값이라 `"+0.0%"` 가 아니라 `"0.0%"` 로 적는다 — 늘지 않았다는 사실을 그대로.
  */
+/**
+ * 퍼센트 **포인트** 표기 — 단위가 `%`가 아니라 `%p`다(비율끼리의 차이).
+ *
+ * ★`%`와 `%p`를 섞으면 초과분이 절반으로 읽히는 오독이 난다(200/260을 "30%p"로 읽는 식).
+ *   규칙은 formatPercent와 같다 — 정수 반올림 금지, 0과 미확보 구분.
+ */
+export function formatPercentPoint(value?: number | null, digits = 1): string {
+  if (value == null || typeof value !== "number" || !Number.isFinite(value)) return "미확보";
+  return `${value.toFixed(digits)}%p`;
+}
+
 export function formatPercentDelta(value?: number | null, digits = 1): string {
   if (value == null || typeof value !== "number" || !Number.isFinite(value)) return "미확보";
-  return `${value > 0 ? "+" : ""}${value.toFixed(digits)}%`;
+  // ★부호는 **표시될 값** 기준으로 정한다. 원값 기준으로 정하면 0.04가 "+0.0%"가 되어
+  //   "증가했다"고 말하면서 "변화 없음"을 보여준다(-0.04는 "-0.0%" — 음의 0까지 나온다).
+  const shown = Number(value.toFixed(digits));
+  const body = (shown === 0 ? 0 : value).toFixed(digits);
+  return `${shown > 0 ? "+" : ""}${shown === 0 ? Math.abs(Number(body)).toFixed(digits) : body}%`;
 }
 
 /**

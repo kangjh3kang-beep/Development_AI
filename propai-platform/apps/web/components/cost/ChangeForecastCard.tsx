@@ -9,6 +9,7 @@
  */
 
 import { useCallback, useState } from "react";
+import { formatPercentDelta, formatPercentRange } from "@/lib/formatters"; // 비율 표기 SSOT
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import type { ChangeForecastResponse, ChangeForecastRiskInput } from "@/components/cost/cmTypes";
@@ -175,7 +176,9 @@ export function ChangeForecastCard({
                       <td className="px-3 py-2 text-[var(--text-primary)]">{s.risk_item}</td>
                       <td className="px-3 py-2 text-[var(--text-secondary)]">{s.wb_names.filter(Boolean).join(", ")}</td>
                       <td className="px-3 py-2 text-[var(--text-secondary)]">
-                        {s.delta_pct_low === s.delta_pct_high ? `+${s.delta_pct_low}%` : `+${s.delta_pct_low}~${s.delta_pct_high}%`}
+                        {s.delta_pct_low === s.delta_pct_high
+                          ? formatPercentDelta(s.delta_pct_low)
+                          : formatPercentRange(s.delta_pct_low, s.delta_pct_high)}
                       </td>
                       <td className="px-3 py-2 text-right font-bold text-rose-400">
                         {s.delta_low === s.delta_high ? `+${fmtKrw(s.delta_low)}` : `+${fmtKrw(s.delta_low)}~${fmtKrw(s.delta_high)}`}

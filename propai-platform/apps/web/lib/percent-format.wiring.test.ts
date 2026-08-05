@@ -46,7 +46,7 @@ describe("종합분석 패널 — 비율 표기 배선", () => {
     expect(code).not.toMatch(/sc\.donation_pct\s*>\s*0\s*\?/);
   });
 
-  it("비율 필드에 원시 보간이 남아 있지 않다(전역 스캔)", () => {
+  it("비율 필드에 원시 보간이 남아 있지 않다(이 패널 한정 — 전역 스윕은 percent-sweep.wiring)", () => {
     // {…far}% · {…pct}% · {…percent}% 형태의 직접 보간
     const raw = code.match(/\{[^{}]*(?:far|Far|pct|Pct|percent|Percent)[^{}]*\}%/g) ?? [];
     expect(raw).toEqual([]);

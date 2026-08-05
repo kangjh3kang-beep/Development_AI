@@ -233,10 +233,12 @@ describe("I7 규제 요약(상세 패널 인라인)", () => {
     fireEvent.click(screen.getByText("판교동 200").closest("[role='button']")!);
     const panel = screen.getByTestId("parcel-detail-panel");
     expect(panel).toHaveTextContent("규제 요약");
-    expect(panel).toHaveTextContent("200%");
-    expect(panel).toHaveTextContent("60%");
-    expect(panel).toHaveTextContent("120%");
-    expect(panel).toHaveTextContent("개발여력 40%"); // (200-120)/200
+    // ★소수 1자리 고정(#530 계약) — 정수 반올림은 실효 79.6%를 법정 80%와 같아 보이게 해
+    //   이 화면이 설명하려는 격차 자체를 지운다. 값은 그대로고 표기 정밀도만 바뀌었다.
+    expect(panel).toHaveTextContent("200.0%");
+    expect(panel).toHaveTextContent("60.0%");
+    expect(panel).toHaveTextContent("120.0%");
+    expect(panel).toHaveTextContent("개발여력 40.0%"); // (200-120)/200
   });
 
   it("★한도 초과(현황>실효)는 초과로 정직 표기 — '여력'으로 오표기 금지", () => {
@@ -248,7 +250,7 @@ describe("I7 규제 요약(상세 패널 인라인)", () => {
     render(<SatongMapShell locale="ko" />);
     fireEvent.click(screen.getByText("신당동 349").closest("[role='button']")!);
     // ★R1 MAJOR 회귀 핀 — 초과는 점차이 %p(260−200=60%p). 상대%(30) 오표기 재발 금지.
-    expect(screen.getByTestId("parcel-detail-panel")).toHaveTextContent("60%p 상회");
+    expect(screen.getByTestId("parcel-detail-panel")).toHaveTextContent("60.0%p 상회");
     expect(screen.getByTestId("parcel-detail-panel")).not.toHaveTextContent("개발여력 ");
   });
 
@@ -260,5 +262,9 @@ describe("I7 규제 요약(상세 패널 인라인)", () => {
     fireEvent.click(screen.getByText("판교동 300").closest("[role='button']")!);
     const panel = screen.getByTestId("parcel-detail-panel");
     expect(panel).toHaveTextContent("산정 자료 미확보");
+    // ★제목이 말하는 "'-' 3개"를 실제로 단언한다 — 종전에는 안내 문구만 봐서, 표기가
+    //   무엇으로 바뀌든 통과하는 느슨한 테스트였다. 이제 미확보는 "미확보"라고 적는다
+    //   ("-"는 0으로도 읽혀 유효 측정값 0과 구분되지 않는다).
+    expect(panel.textContent?.match(/미확보/g)?.length ?? 0).toBeGreaterThanOrEqual(3);
   });
 });
