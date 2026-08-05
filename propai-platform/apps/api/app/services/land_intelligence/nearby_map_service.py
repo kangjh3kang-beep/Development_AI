@@ -73,6 +73,10 @@ _GEOCODE_CACHE_TTL_MISS = 300   # 5분
 #   차단이 아니라 **강등 + 고지**이므로 과소경고 쪽으로 안전하다.
 _MIN_RELIABLE_DEALS = 5
 
+# 그룹 간 이상치 트림 시 `robust_price_stats`(정수 입력 전제)에 넘길 스케일.
+# 평당가는 실수라 그대로 넣으면 `int(p)` 절단으로 계통 편차가 생긴다 — 100배로 넣고 되돌린다.
+_PP_SCALE = 100
+
 
 # 시/도 단축표기(주소 앞머리에 자주 온다) — 접미사 규칙만으로는 못 잡는다.
 _SIDO_TOKENS = frozenset({
@@ -183,7 +187,8 @@ def _count_dong_matches(groups: "list[dict[str, Any]]", target_dong: str) -> int
 def _display_cap_impact(
     categories: "dict[str, dict[str, Any]]",
     avm: "dict[str, Any] | None",
-    avm_lifted: "dict[str, Any] | None",
+    avm_legacy: "dict[str, Any] | None",
+    avm_trimmed: "dict[str, Any] | None",
     *,
     radius_applied: bool,
 ) -> "dict[str, Any] | None":
@@ -239,18 +244,21 @@ def _display_cap_impact(
         #   → AVM 표본이 실제로 잃은 양은 두 표본 길이의 차다. 전체 절단 수도 유용하므로
         #     **이름을 분리해** 병기한다(같은 dict 안에서 두 수가 다른 것은 정상이며, 이름이
         #     그 차이를 설명해야 한다).
-        n_cap = len(apt_cat.get("_in_radius_groups") or [])
-        n_lift = len(apt_cat.get("_in_radius_groups_uncapped") or [])
+        # ★D-2 전환으로 **이름의 의미가 바뀌었다** — `_in_radius_groups` 는 이제 **계산 표본**
+        #   (캡 이전 전량)이고, `_in_radius_groups_display_capped` 가 **표시 표본**이다.
+        #   두 수의 차 = 표시 상한이 화면에서 잘라낸 정밀 그룹 수(계산에는 이제 포함된다).
+        n_compute = len(apt_cat.get("_in_radius_groups") or [])
+        n_display = len(apt_cat.get("_in_radius_groups_display_capped") or [])
         precut = apt_cat.get("precut") or {}
 
         truncation: dict[str, Any] = {}
         for _key, _cat in categories.items():
-            _c = len(_cat.get("_in_radius_groups") or [])
-            _l = len(_cat.get("_in_radius_groups_uncapped") or [])
+            _all = len(_cat.get("_in_radius_groups") or [])
+            _disp = len(_cat.get("_in_radius_groups_display_capped") or [])
             truncation[_key] = {
-                "sample_group_count": _c,
-                "sample_group_count_display_cap_lifted": _l,
-                "dropped_precise_group_count": _l - _c,
+                "sample_group_count_display": _disp,
+                "sample_group_count_compute": _all,
+                "dropped_precise_group_count": _all - _disp,
                 # 정밀·동 대표점을 **가리지 않은** 전체 절단 수. 위 값과 다른 것이 정상이다.
                 "dropped_all_precisions_group_count": _cat.get("capped_group_count"),
                 # ★리뷰 R5 — 상위 제약(사전컷)도 **카테고리별**로 병기한다. 최상위
@@ -265,10 +273,20 @@ def _display_cap_impact(
         #   → 가격 델타는 apt AVM 이 있을 때만, **절단량은 `radius_applied` 만으로 항상** 싣는다.
         #     가격 3종은 계산 불가면 **키를 빼지 않고 None** 으로 둔다 — 키 자체가 사라지면
         #     소비처가 "이 응답엔 그 개념이 없다"로 읽지만, 실제로는 "못 쟀다"이기 때문이다.
-        _priced = bool(avm and avm_lifted)
+        _priced = bool(avm and avm_legacy)
         cur = (avm or {}).get("price_per_sqm") if _priced else None
-        unc = (avm_lifted or {}).get("price_per_sqm") if _priced else None
-        _delta = round((unc - cur) / cur * 100.0, 2) if (cur and unc) else None
+        leg = (avm_legacy or {}).get("price_per_sqm") if _priced else None
+
+        def _pct(a, b):
+            """b 대비 a 의 변화율(%). 분모가 없으면 **None**(0 으로 날조하지 않는다)."""
+            return round((a - b) / b * 100.0, 2) if (a and b) else None
+
+        # ★리뷰 C-2 — 트림은 **정본이 아니다**. 캐노니컬(`cur`)은 캡 해제 + 무절사이고,
+        #   트림은 아직 채택되지 않은 **진단 값**(`trm`)이다. 델타도 그렇게 나눈다.
+        trm = (avm_trimmed or {}).get("price_per_sqm") if avm_trimmed else None
+        _delta_total = _pct(cur, leg)          # 이 PR 이 실제로 바꾼 양(= 캡 해제분)
+        _delta_cap = _pct(cur, leg)            # 총 변화 = 캡 해제 기여(트림 미채택이므로 동일)
+        _delta_trim_candidate = _pct(trm, cur)  # ★미채택 — 트림을 채택하면 추가로 이만큼 움직인다
 
         return {
             # ★소비처 오용 방지 — 이 플래그를 보고도 렌더하면 그건 의도적 오용이다.
@@ -281,20 +299,30 @@ def _display_cap_impact(
             #   `truncation_by_category` 에 있다.
             "price_delta_category": "apt_trade",
             # ── 가격 델타(`apt_trade`/AVM 한정 — 표본이 없으면 None) ──
-            "sample_group_count": n_cap,
-            "sample_group_count_display_cap_lifted": n_lift,
+            "sample_group_count_display": n_display,   # 화면에 실린 정밀 그룹 수
+            "sample_group_count_compute": n_compute,   # AVM 이 실제로 쓴 정밀 그룹 수
             "sample_deal_count": (avm or {}).get("comparable_count") if _priced else None,
-            "sample_deal_count_display_cap_lifted": (
-                (avm_lifted or {}).get("comparable_count") if _priced else None
+            "sample_deal_count_display_capped": (
+                (avm_legacy or {}).get("comparable_count") if _priced else None
             ),
-            "dropped_precise_group_count": n_lift - n_cap,
+            "dropped_precise_group_count": n_compute - n_display,
             "dropped_all_precisions_group_count": apt_cat.get("capped_group_count"),
-            "price_per_sqm": cur,
-            "price_per_sqm_display_cap_lifted": unc,
-            "delta_pct": _delta,
+            # ── 전환 변화량의 **원인별 귀속** ──
+            "price_per_sqm": cur,                       # 전환 후(= 현재 사용자가 보는 값)
+            "price_per_sqm_before_transition": leg,     # 전환 전(표시캡 표본 + 무절사)
+            "delta_pct": _delta_total,                  # 이 PR 이 실제로 바꾼 양
+            "delta_pct_from_cap_lift": _delta_cap,      # 그 전부가 캡 해제 기여다
+            # ── ★미채택 진단 — 이상치 트림을 **채택하면** 추가로 얼마나 움직이는가 ──
+            #   `avm` 은 트림을 쓰지 않는다. 이 값들은 프로덕션에서 델타를 재고 부호·크기
+            #   일관성을 확인한 뒤 별도 PR 로 전환 여부를 판정하기 위한 것이다.
+            "price_per_sqm_outlier_trimmed_candidate": trm,
+            "delta_pct_from_outlier_trim_candidate": _delta_trim_candidate,
+            "outlier_groups_excluded_candidate": (
+                (avm_trimmed or {}).get("outlier_groups_excluded") if avm_trimmed else None
+            ),
             "confidence_score": (avm or {}).get("confidence_score") if _priced else None,
-            "confidence_score_display_cap_lifted": (
-                (avm_lifted or {}).get("confidence_score") if _priced else None
+            "confidence_score_before_transition": (
+                (avm_legacy or {}).get("confidence_score") if _priced else None
             ),
             # ── 상위 제약(A-1) — 이걸 안 실으면 "캡을 풀면 전체 표본"으로 오독한다 ──
             "geocode_precut_budget": precut.get("budget"),
@@ -685,7 +713,20 @@ class NearbyMapService:
             #   ★W1-b 강화 — AVM 도 **정밀 좌표분만** 쓴다. `avm_caveat` 문구가 스스로
             #   "반경 N 안에서 **위치가 확인된**"이라고 주장하므로, 동 대표점·다동 병합
             #   그룹을 넣으면 그 문장이 거짓이 된다(W1이 프론트에서 봉합한 것과 동일 결함).
-            cat["_in_radius_groups"] = precise
+            # ★★D-2 전환 — **계산 표본과 표시 표본을 분리한다.**
+            #   `_MAX_GROUPS_PER_CAT` 은 선언부가 스스로 "마커 상한·페이로드 축소"라고 밝히는
+            #   **표시용 상수**인데 종전엔 그것이 AVM 표본까지 결정했다. 프로덕션 계측 결과
+            #   (5표본 전부 음수 · −3.2 ~ −6.75%) **부호 일관성**이 확인돼 전환한다.
+            #   - 계산 표본(`_in_radius_groups`) = **캡 이전** 반경통과 정밀분 전량
+            #   - 표시 표본(`_in_radius_groups_display_capped`) = 종전과 동일(캡 적용분)
+            #   `count_in_radius` 등 **표시 계약은 캡 기준 그대로** 둔다 — 실제로 응답에 실리는
+            #   `groups` 배열이 캡 적용분이므로, 그 배열을 설명하는 카운트는 캡 기준이어야 한다.
+            #   두 수가 다른 것이 정상이며, 그 차이는 `capped_group_count` 와
+            #   `avm.basis.display_capped_group_count` 가 설명한다.
+            cat["_in_radius_groups"] = [
+                g for g in resolved if g.get("coord_precision") != "dong"
+            ]
+            cat["_in_radius_groups_display_capped"] = precise
             # ★D-2 그림자 계측 — **표시용 상한이 추정기 표본을 결정하고 있다.**
             #   `_MAX_GROUPS_PER_CAT` 은 선언부가 스스로 "카테고리별 **마커** 상한 —
             #   지오코딩 부하·**페이로드 축소**"라고 밝히는 표시/전송용 상수인데, `precise` 가
@@ -704,9 +745,6 @@ class NearbyMapService:
             #   → **이 PR 은 아무 금액도 바꾸지 않는다.** 캡 없는 표본으로 같은 산식을 돌린 값을
             #     진단 전용으로 병기해 프로덕션에서 **델타를 먼저 재고**, 그 근거로 전환을 판정한다.
             #   페이로드 비용 0 — 이 필드는 응답 직전 제거된다(`_in_radius_groups` 와 동일).
-            cat["_in_radius_groups_uncapped"] = [
-                g for g in resolved if g.get("coord_precision") != "dong"
-            ]
             # 카운트도 분리 노출한다. 하나로 합치면 프론트가 "반경 내 N건"으로 오독한다.
             #   ★`count_in_radius` 는 **정밀 좌표분**만 센다 — 이 이름으로 소비되는 곳이
             #   전부 "반경 안이라고 말해도 되는 건수"를 원하기 때문이다.
@@ -753,16 +791,32 @@ class NearbyMapService:
             )
         # ★D-2 그림자 계측 — 표시 상한이 **없었다면** 같은 산식이 얼마를 냈을지 병기한다.
         #   `avm` 자체는 **한 글자도 바뀌지 않는다**(전환은 이 델타를 프로덕션에서 읽은 뒤).
-        avm_lifted = self._compute_avm_summary(
+        # ★D-2 전환의 변화량을 관측 가능하게 한다. 금액을 바꾸는 변경이므로 "얼마나
+        #   달라졌나"를 응답이 스스로 말해야 한다.
+        #     legacy    = 표시캡 표본 + 무절사 (= 전환 **이전** 사용자가 보던 값)
+        #     canonical = 캡 해제 표본 + 무절사 (= 전환 **이후** 값, `avm_summary`)
+        #     trimmed   = 캡 해제 표본 + 트림   (= **미채택** 후보 — 진단 전용)
+        avm_legacy = self._compute_avm_summary(
             categories.get("apt_trade"), radius_applied=radius_applied, radius_m=radius_m,
-            sample_field="_in_radius_groups_uncapped",
+            sample_field="_in_radius_groups_display_capped", robust=False,
+        )
+        # ★★리뷰 C-2 봉합 — **트림은 정본에서 뗀다.** 캡 해제는 프로덕션 6표본 계측 후
+        #   전환했는데 트림은 **계측 0 으로 즉시 정본화**했다 — 이 커밋이 삭제한 주석에
+        #   내가 직접 적어둔 규율("계측 없이 바꾸면 얼마나 달라지는지 모르는 채 금액을
+        #   흔드는 것")을 트림에만 적용하지 않은 것이다. 두 변경이 같은 기준을 받아야 한다.
+        #   → 트림은 **진단 전용**으로만 계산해 델타를 프로덕션에서 먼저 재고,
+        #     부호·크기 일관성을 확인한 뒤 별도 PR 로 전환한다.
+        avm_trimmed = self._compute_avm_summary(
+            categories.get("apt_trade"), radius_applied=radius_applied, radius_m=radius_m,
+            robust=True,
         )
         display_cap_impact = _display_cap_impact(
-            categories, avm_summary, avm_lifted, radius_applied=radius_applied,
+            categories, avm_summary, avm_legacy, avm_trimmed,
+            radius_applied=radius_applied,
         )
         for _cat in categories.values():
             _cat.pop("_in_radius_groups", None)
-            _cat.pop("_in_radius_groups_uncapped", None)
+            _cat.pop("_in_radius_groups_display_capped", None)
 
         result: dict[str, Any] = {
             "center": center or {"lat": None, "lon": None, "address": address},
@@ -1261,6 +1315,7 @@ class NearbyMapService:
         radius_applied: bool = False,
         radius_m: int | None = None,
         sample_field: str = "_in_radius_groups",
+        robust: bool = False,
     ) -> dict[str, Any] | None:
         """아파트 매매 실거래 그룹(**반경 통과분만**) 통계로 AI 시세(AVM) 요약을 계산한다.
 
@@ -1320,6 +1375,8 @@ class NearbyMapService:
 
         pp_sum = 0.0
         pp_n = 0
+        pp_unweighted: list[float] = []      # 트림 **밴드** 산출용 — 그룹당 1개(비가중)
+        pp_pairs: list[tuple[float, int]] = []  # (평당가, 건수) — 가중평균 산출용
         for g in groups:
             avg_price_10k = g.get("avg_price_10k")
             avg_area_m2 = g.get("avg_area_m2") or 0
@@ -1328,10 +1385,71 @@ class NearbyMapService:
                 cnt = g.get("count") or 1
                 pp_sum += per_pyeong * cnt
                 pp_n += cnt
+                # ★D-2 동반 — **그룹 간** 이상치 트림용 표본. `robust_price_stats` 는
+                #   `_finalize` 에서 그룹 **내부** 거래에만 걸려 있었고, 그룹 사이는 무보정이었다.
+                #   표시 캡을 풀어 표본을 늘리면 소량·이질 그룹이 대거 들어오므로 그 구멍이
+                #   그대로 노출된다("표본만 늘리면 더 정확"이 자명하지 않은 이유).
+                #   건수 가중을 유지하려고 그룹당 `cnt` 개로 확장해 넣는다(새 산식이 아니라
+                #   기존 공용 헬퍼 재사용 — 로그 IQR·표본 8건 미만 트림 생략 규약 그대로).
+                #   ★★리뷰 C-1 봉합 — 밴드는 **비가중 그룹 표본**에서 산출한다.
+                #     종전엔 건수만큼 확장한 표본으로 사분위를 계산했는데, 그러면 **거래가 많은
+                #     그룹이 사분위 구간을 점유**해 밴드가 그쪽으로 붕괴하고 **정상 이웃 단지가
+                #     이상치로 제거**된다. 리뷰어 실측: 가격 집합은 그대로 두고 **건수 분포만**
+                #     바꿨더니 제외 판정이 완전히 달라졌다(−10.16% / 0% / +5.62%).
+                #     즉 그건 이상치 판정이 아니라 **거래량 편중 판정**이었다.
+                #   ★`robust_price_stats` 는 `int(p)` 절단(만원 정수 입력 전제)이므로 실수인
+                #     평당가는 **100배 스케일**로 넣고 되돌려 절단 편차를 제거한다.
+                pp_unweighted.append(per_pyeong * _PP_SCALE)   # 밴드 산출용(그룹당 1개)
+                pp_pairs.append((per_pyeong, int(cnt)))        # 가중평균용
         if pp_n <= 0:
             return None
 
-        per_pyeong = pp_sum / pp_n          # 만원/평
+        outliers_excluded = 0
+        if robust and pp_unweighted:
+            _pp = robust_price_stats(pp_unweighted)
+            # ★트림이 **아무것도 제거하지 않았으면 추정치도 바뀌지 않아야 한다.**
+            #   `robust_price_stats` 를 경유하면 스케일 왕복·정수 반올림으로 값이 미세하게
+            #   움직이는데(실측 0.0002%), 그러면 "트림 미발동인데 값이 변했다"는 설명 불가능한
+            #   상태가 된다. 제외 0 건이면 **원래 가중평균을 그대로** 쓴다 — 이 판정의 부작용을
+            #   0 으로 만들고, `delta_pct_from_outlier_trim == 0.0` 이 **정확히** 참이 된다.
+            if _pp["avg"] > 0 and _pp["excluded"] > 0:
+                # ★밴드는 비가중으로 정하되, **평균은 건수 가중**으로 낸다 — 살아남은 그룹만
+                #   원래 가중치로 다시 평균한다(트림이 가중 구조를 바꾸지 않는다).
+                # ★★리뷰 CRITICAL 봉합 — 경계 비교를 **정수로** 맞춘다.
+                #   `robust_price_stats` 는 `int(p)` 로 절단한 값에서 min/max 를 돌려주므로
+                #   `_hi` 는 정수인데 비교 대상 `v * _PP_SCALE` 은 실수다. 그래서 **최고 생존
+                #   그룹이 자기 자신을 밴드 밖으로 판정**해 매번 추가 탈락했다 —
+                #   그것도 **최고가 정상 단지**를, 보고 없이(제외 수는 밴드 판정분만 셌다).
+                #   리뷰어 몬테카를로: 발동 건의 **100%** 가 정확한 트림과 불일치, 후보 델타
+                #   **부호가 22.3% 뒤집힘**, 평균 편향 −1.90%(최악 −21.21%).
+                #   ★이건 직전 REJECT 의 C-1 과 **같은 피해 클래스**(정상 고가 단지 삭제)이고
+                #     원인만 "거래량 편중"에서 "정수 절단"으로 바뀐 것이다.
+                _lo, _hi = int(_pp["min"]), int(_pp["max"])
+                _kept = [(v, c) for v, c in pp_pairs if _lo <= int(v * _PP_SCALE) <= _hi]
+                _kn = sum(c for _v, c in _kept)
+                # ★자기정합 불변식 — **밴드가 남긴 그룹 수 == 평균에 실제로 들어간 그룹 수.**
+                #   이 확인이 없어서 밴드 판정과 평균 산출이 **다른 집합**을 써도 통과했다.
+                #   이번 결함의 단일 근원이다. 어긋나면 보고값을 실제 탈락 수로 정직 교정한다
+                #   (조용히 숨기지 않는다 — 관측 장치는 자기 오차를 말해야 한다).
+                _actually_dropped = len(pp_pairs) - len(_kept)
+                # ★등가변이 정직 고지 — 경계가 정수로 맞은 뒤에는 다음 둘이 **증명 가능하게**
+                #   같아서, 이를 바꾸는 변이는 어떤 입력으로도 잡히지 않는다(무작위 3,000회 반례 0):
+                #     (1) `_actually_dropped` vs `_pp["excluded"]` — `core ⊆ vals` 이고 밴드가
+                #         `min(core)`~`max(core)` 이므로 탈락 집합이 정확히 일치한다.
+                #     (2) `_kn > 0` 가드 — `min(core)` 를 낸 그룹은 **반드시** 밴드 안이므로
+                #         `_kept` 는 공집합이 될 수 없다(도달 불가·방어적).
+                #   그래도 (1)은 **정직한 쪽**(실제 탈락 수)을 싣고 (2)는 남겨 둔다 —
+                #   경계가 다시 어긋나면 (1)이 즉시 진실을 말하고 (2)가 죽음을 막는다.
+                #   ★"변이가 안 잡힌다"를 "잠겼다"로 보고하지 않기 위해 근거를 여기 남긴다.
+                if _kn > 0:
+                    per_pyeong = sum(v * c for v, c in _kept) / _kn
+                    outliers_excluded = _actually_dropped
+                else:
+                    per_pyeong = pp_sum / pp_n
+            else:
+                per_pyeong = pp_sum / pp_n
+        else:
+            per_pyeong = pp_sum / pp_n      # 만원/평(무절사 — 전환 전 동작 재현용)
         per_m2_man = per_pyeong / PYEONG_SQM  # 만원/㎡
 
         deal_prices = [
@@ -1377,11 +1495,36 @@ class NearbyMapService:
             "sample_count": len(deal_prices),
             "price_cv_percent": self._js_round(cv_percent),
             # ★근거 표기 — 이 시세가 **무엇으로부터** 나왔는지 소비처가 알 수 있어야 한다.
+            # ★그룹 간 이상치로 제외된 **가중 표본 수**(0 이면 트림이 발동하지 않았다는 관측된 사실).
+            # ★단위를 이름에 박는다 — 밴드가 **비가중 그룹 표본**에서 나오므로 이건 **그룹 수**다
+            #   (건수가 아니다). 종전 건수 가중 시절의 이름을 그대로 두면 판독자가 거래 수로 읽는다.
+            "outlier_groups_excluded": outliers_excluded,
+            "robust_applied": bool(robust),
+            # ★근거 표기 — 이 시세가 **무엇으로부터** 나왔는지 소비처가 알 수 있어야 한다.
             "basis": {
                 "radius_applied": radius_applied,
                 "radius_m": radius_m,
                 "in_radius_group_count": len(groups) if radius_applied else None,
                 "scope": "in_radius" if radius_applied else "all_groups_radius_not_applied",
+                # ★★D-2 — **계산 표본 ≠ 표시 표본**임을 계약으로 박는다.
+                #   `sample_basis.located_count`(표시)와 위 `comparable_count`(계산)가 다른 것이
+                #   정상이며, 그 차이가 곧 표시 상한이 잘라낸 양이다. 이걸 안 실으면
+                #   두 수를 비교한 판독자가 "둘 중 하나가 틀렸다"고 읽는다.
+                "sample_scope": "in_radius_precise_all",
+                # ★★리뷰 M-1 봉합 — 종전엔 `capped_group_count` 를 실었는데 그건
+                #   **정밀·동 대표점을 가리지 않은 전체 절단 수**이고, 이 주석이 설명하려는
+                #   차이(계산 표본 − 표시 표본)는 **정밀분 기준**이다. 실측 불일치:
+                #   정밀 10·동 40 → 필드 22 인데 AVM 이 캡으로 잃은 정밀 그룹은 **0**.
+                #   ★`_display_cap_impact` 에서 고친 바로 그 결함(B-1)을 여기에 재도입했다.
+                #   → 정밀 기준 차이를 싣고 이름도 그렇게 바꾼다.
+                # ★리뷰 MINOR-1 — 표시 표본 키가 **없는** 직접 호출 경로에서는 이 차가
+                #   "표본 전량이 절단됐다"는 정반대 문장이 된다. 미확보는 **None**(무날조).
+                "dropped_precise_group_count": (
+                    len((apt_trade_category or {}).get("_in_radius_groups") or [])
+                    - len((apt_trade_category or {})["_in_radius_groups_display_capped"] or [])
+                    if apt_trade_category and "_in_radius_groups_display_capped" in apt_trade_category
+                    else None
+                ),
             },
         }
 

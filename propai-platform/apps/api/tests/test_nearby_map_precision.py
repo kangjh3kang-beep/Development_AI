@@ -1057,42 +1057,39 @@ async def test_precut_accounting_detector_is_actually_wired(monkeypatch) -> None
     )
 
 
-# ── D-2: 표시용 캡이 AVM 표본을 자른다 — **그림자 계측**(정본 무변경) ──────────────
-#
-# `_MAX_GROUPS_PER_CAT`(28)은 선언부가 스스로 "카테고리별 **마커** 상한 — 페이로드 축소"라고
-# 밝히는 **표시/전송용 상수**인데, `precise` 가 `capped` 에서 나오므로 AVM·탁상감정 표본까지
-# 자른다. 라이브 실측(2026-08-05 역삼동): 반경 1,500m·6개월에서 `apt_trade` 의 반경 통과
-# **정밀** 그룹 52개 중 **24개(46%)가 표시 상한 때문에 폐기**됐다.
-# ★리뷰 R4 — 초판은 이 파라미터를 "탁상감정 자신의 것"이라 썼는데, 탁상감정은 이 페이로드에서
-#   **`land_trade` 만** 읽고 `avm` 은 쓰지 않는다. 서비스 파일은 정정했는데 **이 주석만 정정 전
-#   문장이 남아** 같은 오독(탁상감정이 apt 를 본다)을 재생산하고 있었다. 52/24 는 `apt_trade` 수치다.
-# ★그러나 이 값은 사용자에게 보이는 **금액**이다. 계측 없이 바꾸면 "얼마나 달라지는지 모르는 채"
-#   시세를 흔드는 것이라, 이 절은 **정본(`avm`)을 바꾸지 않고** 델타만 관측한다.
-
-
-def _cap_fixture(n_groups: int, cheap_from: int | None = None, dong_groups: int = 0):
+def _cap_fixture(n_groups: int, cheap_from: int | None = None, dong_groups: int = 0,
+                 spread: int = 0, extreme_price: int | None = None,
+                 extreme_count: int = 5):
     """`n_groups` 개 **정밀(지번)** 그룹을 건수 내림차순으로 만든다.
 
-    `cheap_from` 이후 그룹은 **싸게** 만들어, 캡이 자르는 쪽과 남기는 쪽의 가격이 갈리게 한다.
-    이게 없으면 두 AVM 이 우연히 같아져 `delta_pct` 단언이 **공허**해진다.
-
-    ★리뷰 B-2 — `dong_groups` 로 **반경 내 동 대표점 그룹**을 섞는다. 종전 픽스처엔 이게
-    한 개도 없어서 "정밀 표본이 잃은 양"과 "전체 절단 양"이 **우연히 같아졌고**, 그래서
-    올바른 구현과 잘못된 구현이 **둘 다 통과**했다(리뷰어 변이 F1 생존). 두 모집단이 실제로
-    갈라지는 입력이라야 B-1 이 잠긴다.
-    동 대표점을 만들려면 지번·건물명이 **둘 다 없어야** 하고(`_query_for` 가 "{시군구} {동}"
-    으로 폴백), 그룹 키가 `dong` 이므로 동 이름을 서로 다르게 줘야 별개 그룹이 된다.
+    - `cheap_from` 이후 그룹은 **싸게** — 캡이 자르는 쪽과 남기는 쪽의 가격을 가른다.
+      이게 없으면 두 AVM 이 우연히 같아져 델타 단언이 **공허**해진다.
+    - `dong_groups` — 반경 내 **동 대표점** 그룹. 정밀/전체 두 모집단이 실제로 갈라지게 한다
+      (없으면 올바른 구현과 잘못된 구현이 같은 값을 내 변이가 생존한다 — 리뷰 B-1/F1).
+    - `spread` — 그룹마다 가격을 조금씩 달리해 **연속 분포**를 만든다.
+      ★이게 0 이면 평당가가 전부 같아 로그 IQR 이 **정확히 0** 이 되고, `robust_price_stats` 의
+        밴드가 한 점으로 붕괴해 `exp(log(x))` 왕복 오차로 그 값조차 밴드 밖이 된다 →
+        `or vals` 폴백으로 **트림이 무동작**한다(공용 헬퍼의 선재 축퇴 — 실측 확인).
+        즉 균일 픽스처로는 "이상치 보강이 실제로 일하는가"를 **검증할 수 없다**.
+    - `extreme_price` / `extreme_count` — 극단 이상치 그룹 1개와 그 건수.
+      ★건수가 캡 순위를 결정한다 — 건수가 작으면 극단이 **캡 밖**에 남아 표시(legacy) 표본엔
+        들어가지 않는다. legacy 쪽 트림 여부를 판별하려면 건수를 키워 **캡 안**에 넣어야 한다.
     """
     rows: list[dict] = []
     gmap: dict[str, dict] = {}
     for i in range(n_groups):
         cnt = n_groups - i                     # 건수 내림차순 = 캡 순서와 동일
         price = 30000 if (cheap_from is not None and i >= cheap_from) else 100000
+        price -= i * spread                    # 연속 분포(IQR > 0)를 만들기 위한 미세 변동
         rows += [_row(name="", jibun=f"g{i}", dong="A동", price=price, day=1) for _ in range(cnt)]
-        gmap[f"경상북도 남구 A동 g{i}"] = {"lat": 36.0003, "lon": 129.0003}   # 전부 반경 안
+        gmap[f"경상북도 남구 A동 g{i}"] = {"lat": 36.0003, "lon": 129.0003}
+    if extreme_price is not None:
+        rows += [_row(name="", jibun="X", dong="A동", price=extreme_price, day=1)
+                 for _ in range(extreme_count)]
+        gmap["경상북도 남구 A동 X"] = {"lat": 36.0003, "lon": 129.0003}
     for j in range(dong_groups):
         rows.append(_row(name="", jibun="", dong=f"D{j}동", price=70000, day=1))
-        gmap[f"경상북도 남구 D{j}동"] = {"lat": 36.0004, "lon": 129.0004}      # 반경 안·동 대표점
+        gmap[f"경상북도 남구 D{j}동"] = {"lat": 36.0004, "lon": 129.0004}
     return rows, gmap
 
 
@@ -1103,222 +1100,193 @@ async def _build_cap(svc, **kw):
     )
 
 
+# ── D-2 **전환** — 계산 표본과 표시 표본을 분리한다(금액이 바뀐다) ──────────────────
+#
+# `_MAX_GROUPS_PER_CAT`(28)은 선언부가 스스로 "마커 상한·페이로드 축소"라고 밝히는
+# **표시용 상수**인데 종전엔 그것이 AVM 표본까지 결정했다. 프로덕션 계측(5표본 전부 음수 ·
+# −3.2 ~ −6.75% · 캡 비결속이면 정확히 0)으로 **부호 일관성**이 확인돼 전환했다.
+# 동반으로 **그룹 간** 이상치 트림을 넣었다 — `robust_price_stats` 는 `_finalize` 에서 그룹
+# **내부** 거래에만 걸려 있었고 그룹 사이는 무보정이라, 표본을 늘리면 그 구멍이 노출된다.
+
+
 @pytest.mark.asyncio
-async def test_display_cap_impact_reports_truncation_without_changing_avm() -> None:
-    """★D-2 그림자 계측 — 캡이 표본을 자를 때 그 사실과 **금액 차이**가 보이는가.
+async def test_avm_uses_compute_sample_not_display_sample() -> None:
+    """★D-2 전환 회귀락 — AVM 은 **캡 이전** 표본을, 화면은 **캡 적용분**을 쓴다.
 
-    그리고 가장 중요한 것: **정본 `avm` 은 한 글자도 바뀌지 않는가.**
-
-    ★리뷰 B-2 — `delta_pct` 와 두 가격을 **값으로** 못 박는다. 종전엔 `< 0` 뿐이라 값 축이
-    비어 있었고, `* 100.0` 삭제(비율↔퍼센트)·분모 뒤집기·상수화 변이가 전부 **생존**했다.
-    특히 `* 100.0` 이 사라지면 −6.66 이 **−0.07** 로 나가 판독자가 "영향 없음 → 안 고친다"로
-    직행한다 — 이 PR 이 존재하는 이유가 그 판정 하나인데 잠금이 없었다.
-
-    기대값 **독립 산출**(픽스처에서 손으로 계산 — 코드 출력을 베끼지 않는다):
-      전용면적 84㎡ 고정 · 비싼 그룹 100,000만원 → 1,000,000,000원 / 84㎡ = 11,904,761.9원/㎡
-                        · 싼 그룹  30,000만원 →   300,000,000원 / 84㎡ =  3,571,428.6원/㎡
-      캡(28) 표본 거래수 = 40+39+…+13 = **742** (전부 비싼 그룹) → 11,904,762원/㎡
-      캡 해제 표본 거래수 = 40+39+…+1 = **820** (싼 그룹 78건 추가)
-        → (11,904,761.9×742 + 3,571,428.6×78) / 820 = **11,112,079원/㎡**
-      델타 = (11,112,079 − 11,904,762) / 11,904,762 × 100 = **−6.66%**
+    기대값 **독립 산출**(84㎡ 고정 · 건수 40..1 · `cheap_from=28`):
+      비싼 그룹 100,000만원 → 1,000,000,000원 / 84㎡ = 11,904,761.9원/㎡
+      싼 그룹  30,000만원 →   300,000,000원 / 84㎡ =  3,571,428.6원/㎡
+      표시(캡28) 표본 거래 = 40+39+…+13 = **742** → 11,904,762원/㎡  ← **전환 전 값**
+      계산(캡해제) 표본 거래 = 40+…+1 = **820**
+        → (11,904,761.9×742 + 3,571,428.6×78)/820 = **11,112,079원/㎡**  ← **전환 후 값**
+      총 변화 = −792,683 / 11,904,762 × 100 = **−6.66%**
+    ★이 픽스처는 가격이 두 값뿐이라 로그 IQR 이 0 으로 붕괴해 **트림은 무동작**이다
+      (`spread=0`). 그래서 총 변화 = 캡 해제 기여이고 트림 기여는 **정확히 0** 이어야 한다.
     """
     nm._BUILD_CACHE.clear()
     rows, gmap = _cap_fixture(40, cheap_from=nm._MAX_GROUPS_PER_CAT)
     payload = await _build_cap(_service(rows, gmap))
     cat = payload["categories"]["apt_trade"]
+    avm = payload["avm"]
     imp = payload["display_cap_impact"]
-    assert imp is not None and imp["diagnostic_only"] is True
 
-    # 그룹 수와 거래 건수를 **각각** 잠근다(H-4 단위 혼입 방지).
-    assert imp["sample_group_count"] == nm._MAX_GROUPS_PER_CAT      # 28
-    assert imp["sample_group_count_display_cap_lifted"] == 40
-    assert imp["sample_deal_count"] == 742
-    assert imp["sample_deal_count_display_cap_lifted"] == 820
+    # ★★전환의 본체 — AVM 이 **캡 이전** 표본을 쓴다.
+    assert avm["price_per_sqm"] == 11112079
+    assert avm["comparable_count"] == 820          # 계산 표본 거래 수
+    assert avm["comparable_group_count"] == 40     # 계산 표본 그룹 수
+    assert avm["basis"]["sample_scope"] == "in_radius_precise_all"
+    # ★리뷰 M-1 — 종전엔 `capped_group_count`(정밀·동 무구분)를 실어 모집단이 어긋났다.
+    #   이제 **정밀 기준** 차(계산 40 − 표시 28)를 싣고 이름도 그것을 말한다.
+    assert avm["basis"]["dropped_precise_group_count"] == 12
 
-    # ★★값 고정 — 이 세 수가 잠기면 ×100 소실·분모 뒤집기·상수화·반올림 변이가 전부 죽는다.
-    assert imp["price_per_sqm"] == 11904762
-    assert imp["price_per_sqm_display_cap_lifted"] == 11112079
-    assert imp["delta_pct"] == -6.66
-
-    # 신뢰도도 갈린다 — 캡 표본은 가격이 균일(CV=0)이라 상한, 해제 표본은 혼재라 낮다.
-    assert imp["confidence_score"] == 0.98
-    assert imp["confidence_score_display_cap_lifted"] < 0.98
-
-    # ★상위 제약(A-1) — "캡을 풀면 전체 표본"이 아님을 판독자가 알아야 한다.
-    assert imp["geocode_precut_budget"] == nm._MAX_GEOCODE_GROUPS_PER_CAT
-    assert imp["geocode_precut_groups_cut"] == 0, "이 픽스처(49그룹)는 사전컷 미발동이어야 한다"
-
-    # ★★정본 불변 — `avm` 과 표시 카운트는 캡된 표본 그대로여야 한다.
-    assert payload["avm"]["price_per_sqm"] == imp["price_per_sqm"]
-    assert cat["count_in_radius"] == 742, "표시용 반경내 건수가 그림자 계측에 오염됐다"
+    # ★표시 계약은 **캡 기준 그대로** — 응답에 실린 groups 배열을 설명하는 수이기 때문이다.
+    assert cat["count_in_radius"] == 742
     assert len([g for g in cat["groups"] if g.get("location_status") == "located"]) == 28
+    assert cat["sample_basis"]["located_count"] == 742
+    # 두 수가 다른 것이 정상이고, 그 차이는 capped_group_count 가 설명한다.
+    assert cat["capped_group_count"] == 12
 
-    # 내부 전용 필드는 응답에 새지 않는다(페이로드 비용 0 이라는 주장의 근거).
+    # ★변화량이 **원인별로 귀속**된다 — 금액을 바꾸는 변경이므로 "왜 바뀌었나"까지 관측한다.
+    assert imp["price_per_sqm_before_transition"] == 11904762
+    assert imp["delta_pct"] == -6.66
+    assert imp["delta_pct_from_cap_lift"] == -6.66
+    # ★리뷰 C-2 — 트림은 **정본이 아니다**. 이 픽스처에선 후보값도 캐노니컬과 같다(미발동).
+    assert avm["robust_applied"] is False
+    assert imp["outlier_groups_excluded_candidate"] == 0
+    assert imp["delta_pct_from_outlier_trim_candidate"] == 0.0
+    assert imp["sample_group_count_display"] == 28
+    assert imp["sample_group_count_compute"] == 40
+    assert imp["dropped_precise_group_count"] == 12
+
+    # 내부 전용 필드는 응답에 새지 않는다.
     assert "_in_radius_groups" not in cat
-    assert "_in_radius_groups_uncapped" not in cat
+    assert "_in_radius_groups_display_capped" not in cat
+
+
+@pytest.mark.asyncio
+async def test_avm_outlier_trim_actually_fires_on_realistic_spread() -> None:
+    """★★"이상치 보강"이 **실제로 일하는가** — 선언과 동작의 괴리를 잠근다.
+
+    균일 픽스처로는 검증할 수 없다: 평당가가 전부 같으면 로그 IQR 이 **정확히 0** 이 되고
+    `robust_price_stats` 의 밴드가 한 점으로 붕괴해 `exp(log(x))` 왕복 오차로 그 값조차
+    밴드 밖이 된다 → `or vals` 폴백으로 **트림이 무동작**한다.
+    실측: 균일 픽스처에 **50배 극단**을 넣어도 `excluded == 0` 이었다.
+
+    → **연속 분포**(`spread`)를 만든 뒤 극단 그룹을 넣어야 트림이 발동한다.
+      이 골든이 없으면 "이상치 보강을 넣었다"가 **무동작인 채로** 출하된다.
+    """
+    nm._BUILD_CACHE.clear()
+    rows, gmap = _cap_fixture(40, spread=300, extreme_price=900000)   # 9배 극단
+    payload = await _build_cap(_service(rows, gmap))
+    avm = payload["avm"]
+    imp = payload["display_cap_impact"]
+
+    # ★트림이 **발동**했다 — 이 단언이 이 절의 존재 이유다.
+    #   ★리뷰 C-1 봉합 후 밴드는 **비가중 그룹 표본**에서 나오므로 제외 단위도 **그룹**이다
+    #     (종전 건수 가중 시절엔 5"건"이었다 — 이름과 단위가 함께 바뀌었다).
+    assert imp["outlier_groups_excluded_candidate"] == 1   # 극단 그룹 1개
+    # ★트림은 **미채택**이므로 정본은 무절사다 — 후보만 낮아진다.
+    assert avm["robust_applied"] is False
+    assert imp["price_per_sqm_outlier_trimmed_candidate"] < imp["price_per_sqm"]
+    assert imp["delta_pct_from_outlier_trim_candidate"] < 0
+
+    # ★★값 고정 — **독립 산출**(픽스처 정의만 보고 손으로 재구성. 코드 출력 미참조):
+    #     평당가 = price / (84㎡ / 3.3057851…) · 건수 40..1 · spread=300 · 극단 900,000만원 5건
+    #     밴드는 **비가중 그룹 표본**(41개)에서 로그 IQR → 극단 **1그룹** 제외 → 생존 40그룹을
+    #     **원래 건수 가중**으로 재평균 = 평당 3,781.98 → **11,440,476원/㎡**
+    #     무절사(캡 해제·트림 없음) = 3,973.7158 → **12,020,491원/㎡**
+    #     표시캡(28) 무절사 = **11,510,557원/㎡** (극단은 건수 5라 순위 36위 → 캡 밖)
+    #
+    #   ★★리뷰 MAJOR-1 정정 — 종전 리터럴은 **손계산이 아니라 코드 출력을 쫓아갔다**
+    #     (assert 11,416,667 / −5.02 인데 바로 위 독스트링은 11,440,4xx / −4.83).
+    #     그 코드 출력이 CRITICAL 결함(경계 정수 절단으로 **최고가 정상 그룹 추가 삭제**)의
+    #     산물이었으므로, 골든이 **오답을 정답으로 단언**하며 독립 오라클을 무력화하고 있었다
+    #     — W2-c "가짜 골든" 클래스의 재발이다. 손계산값으로 되돌린다.
+    assert imp["price_per_sqm"] == 12020491
+    assert imp["price_per_sqm_outlier_trimmed_candidate"] == 11440476
+
+    # ★★귀속 잠금 — 캡 해제(정본)와 트림(미채택 후보)이 **서로 다른 값**이어야 한다.
+    #     이 PR 이 실제로 바꾼 양 = (12,020,491 − 11,510,557)/11,510,557 = **+4.43%**
+    #       ★캡 해제가 **양수**일 수도 있음을 이 골든이 박는다 — 프로덕션 6표본은 전부
+    #         음수였지만 그건 **데이터 의존이지 구조적 보장이 아니다.**
+    #     트림 후보(미채택) = (11,440,476 − 12,020,491)/12,020,491 = **−4.83%**
+    assert imp["price_per_sqm_before_transition"] == 11510557
+    assert imp["delta_pct"] == 4.43
+    assert imp["delta_pct_from_cap_lift"] == 4.43
+    assert imp["delta_pct_from_outlier_trim_candidate"] == -4.83
+
+
+@pytest.mark.asyncio
+async def test_avm_unchanged_when_trim_inactive_and_cap_not_binding() -> None:
+    """캡도 안 물고 트림도 안 걸리면 **값이 정확히 그대로**여야 한다.
+
+    ★트림이 아무것도 제거하지 않았는데 값이 움직이면(스케일 왕복 반올림) "왜 바뀌었는지"를
+    설명할 수 없다. 제외 0 건이면 원래 가중평균을 그대로 쓰도록 해 부작용을 0 으로 만들었다.
+    """
+    nm._BUILD_CACHE.clear()
+    rows, gmap = _cap_fixture(5)
+    payload = await _build_cap(_service(rows, gmap))
+    imp = payload["display_cap_impact"]
+    assert imp["sample_group_count_display"] == imp["sample_group_count_compute"] == 5
+    assert imp["dropped_precise_group_count"] == 0
+    assert imp["outlier_groups_excluded_candidate"] == 0
+    assert imp["delta_pct"] == 0.0
+    assert imp["delta_pct_from_cap_lift"] == 0.0
+    assert imp["delta_pct_from_outlier_trim_candidate"] == 0.0
+    assert imp["price_per_sqm"] == imp["price_per_sqm_before_transition"] == 11904762
 
 
 @pytest.mark.asyncio
 async def test_display_cap_impact_separates_precise_and_all_precision_drops() -> None:
     """★리뷰 B-1 회귀락 — "정밀 표본이 잃은 양"과 "전체 절단 양"은 **다른 수**다.
 
-    종전엔 `dropped_by_display_cap_group_count` 에 `capped_group_count`(정밀·동 대표점을
-    가리지 않은 전체 절단 수)를 실었는데, `sample_group_count(_lifted)` 는 **정밀분만**이다.
     정렬이 정밀분을 앞세우므로 반경 안에 동 대표점 그룹이 하나라도 있으면 두 수는 갈라진다.
     리뷰어 실측: 정밀 10·동 40 에서 `dropped=22` 인데 `delta_pct=0.0` —
     **"22그룹을 잘랐는데 시세 영향 0%"** 라는 정확히 반대 결론을 부르는 문장이 생성됐다.
-
-    ★내가 바로 옆에 "단위가 섞이면 판독자가 두 수를 빼서 엉뚱한 결론을 낸다"고 주석까지 달고
-      **단위 축만 맞추고 모집단 축을 놓쳤다.** 그래서 이름을 분리하고 **불변식으로** 잠근다.
     """
     nm._BUILD_CACHE.clear()
-    # 정밀 40 + 반경 내 동 대표점 9 = resolved 49 → 캡 28 → 전체 절단 21, 정밀 손실 12
     rows, gmap = _cap_fixture(40, cheap_from=nm._MAX_GROUPS_PER_CAT, dong_groups=9)
     payload = await _build_cap(_service(rows, gmap))
     imp = payload["display_cap_impact"]
 
-    # ★정밀 표본만 센다 — `!= "dong"` 필터가 사라지면 40 이 49 가 된다(변이 M9 격추).
-    assert imp["sample_group_count_display_cap_lifted"] == 40
-    assert imp["sample_group_count"] == 28
+    assert imp["sample_group_count_compute"] == 40     # 정밀분만(동 대표점 9는 제외)
+    assert imp["sample_group_count_display"] == 28
     assert imp["dropped_precise_group_count"] == 12
-    # 전체 절단은 **다른 수**여야 한다 — 같아지면 두 모집단이 섞인 것이다.
-    assert imp["dropped_all_precisions_group_count"] == 21
+    assert imp["dropped_all_precisions_group_count"] == 21   # **다른 수**여야 한다
     assert imp["dropped_precise_group_count"] != imp["dropped_all_precisions_group_count"]
-    # ★불변식 — 정밀 손실은 두 표본 길이의 차와 **항상** 같다(파생식이 아니라 계약).
     assert (
         imp["dropped_precise_group_count"]
-        == imp["sample_group_count_display_cap_lifted"] - imp["sample_group_count"]
+        == imp["sample_group_count_compute"] - imp["sample_group_count_display"]
     )
-    # 동 대표점이 섞여도 가격 델타는 정밀분만 반영한다(위 테스트와 같은 값).
     assert imp["delta_pct"] == -6.66
 
 
 @pytest.mark.asyncio
 async def test_display_cap_impact_covers_every_category_for_truncation() -> None:
-    """★리뷰 A-2 — 가격 델타는 `apt_trade` 한정이지만 **절단량은 전 카테고리**로 봐야 한다.
-
-    탁상감정은 이 페이로드에서 `land_trade` 만 읽고 `avm` 은 쓰지 않는다. 캡은 전 카테고리에
-    걸리므로, apt 만 관측하면 **돈에 더 가까운 쪽(채택단가→토지비 SSOT→NPV/IRR)이 미계측**으로
-    남는다. 절단량이 0 이면 "그 카테고리는 고칠 필요 없음"을 말해 주고, 0 이 아니면 그
-    카테고리의 **가격 영향은 아직 모른다**는 뜻이다.
-    """
+    """★리뷰 A-2 — 가격 델타는 `apt_trade` 한정이지만 **절단량은 전 카테고리**로 봐야 한다."""
     nm._BUILD_CACHE.clear()
     rows, gmap = _cap_fixture(40, cheap_from=nm._MAX_GROUPS_PER_CAT, dong_groups=9)
     payload = await _build_cap(_service(rows, gmap))
     trunc = payload["display_cap_impact"]["truncation_by_category"]
 
-    # 전 카테고리가 빠짐없이 실린다(스텁이 apt 만 주므로 나머지는 0 이지만 **키는 있어야** 한다).
     assert set(trunc) == set(payload["categories"])
     assert trunc["apt_trade"]["dropped_precise_group_count"] == 12
     assert trunc["apt_trade"]["dropped_all_precisions_group_count"] == 21
-    # 거래가 없는 카테고리는 0 — "미계측"이 아니라 **관측된 0** 이다.
-    assert trunc["land_trade"]["sample_group_count"] == 0
+    assert trunc["land_trade"]["sample_group_count_compute"] == 0
     assert trunc["land_trade"]["dropped_precise_group_count"] == 0
-
-
-@pytest.mark.asyncio
-async def test_display_cap_impact_is_zero_when_cap_not_binding() -> None:
-    """캡이 안 물면 델타는 **정확히 0** 이어야 한다 — 0 과 미측정을 구분하는 축.
-
-    ★상수화 변이(`delta_pct` ← −6.66)를 격추하는 축이기도 하다.
-    """
-    nm._BUILD_CACHE.clear()
-    rows, gmap = _cap_fixture(5)
-    payload = await _build_cap(_service(rows, gmap))
-    imp = payload["display_cap_impact"]
-    assert imp["sample_group_count"] == imp["sample_group_count_display_cap_lifted"] == 5
-    assert imp["dropped_precise_group_count"] == 0
-    assert imp["dropped_all_precisions_group_count"] == 0
-    assert imp["delta_pct"] == 0.0
-    assert imp["price_per_sqm"] == imp["price_per_sqm_display_cap_lifted"]
-
-
-@pytest.mark.asyncio
-async def test_display_cap_impact_prices_are_none_when_avm_absent() -> None:
-    """★무날조 — 비교할 시세가 없으면 가격 축은 **None**. 0 이나 빈 dict 로 만들지 않는다.
-
-    ★리뷰 R1 로 **계약이 바뀌었다**. 종전 이 테스트는 `display_cap_impact is None` 을 단언했는데,
-    그건 R1 이 고친 **옛 동작을 잠그고 있었다** — `avm` 이 없으면 절단량까지 통째로 사라져
-    apt 비교표본이 없는 모집단(농어촌·토지, 이 계측이 가장 알고 싶은 곳)에서 계측이 암전했다.
-    지금은 **가격 축만 None** 이고 절단량은 계속 실린다. 옛 단언은 회귀가 아니라 flip 대상이었다.
-    """
-    nm._BUILD_CACHE.clear()
-    rows = [_row(name="", jibun="", dong="B동", price=90000, day=1)]
-    svc = _service(rows, {"경상북도 남구 B동": {"lat": 36.0006, "lon": 129.0006}})
-    payload = await _build_cap(svc)
-    assert payload["avm"] is None
-    imp = payload["display_cap_impact"]
-    assert imp is not None
-    assert imp["price_per_sqm"] is None
-    assert imp["delta_pct"] is None
-    # 이 픽스처는 동 대표점 그룹뿐이라 정밀 표본이 0 이고 절단도 0 — **관측된 0** 이다.
-    assert imp["sample_group_count"] == 0
-    assert imp["truncation_by_category"]["apt_trade"]["dropped_precise_group_count"] == 0
-
-
-@pytest.mark.asyncio
-async def test_display_cap_impact_keeps_truncation_when_apt_avm_absent() -> None:
-    """★리뷰 R1 회귀락 — apt 비교표본이 없어도 **절단량은 계속 관측돼야** 한다.
-
-    종전엔 `avm` 이 없으면 `display_cap_impact` 를 통째로 None 으로 냈다. 그런데 apt 비교표본이
-    없는 모집단(농어촌·토지 — 호미곶급)이 정확히 A-2 가 겨냥한 곳이다.
-    즉 **가장 알고 싶은 데서 계측이 암전**했다(리뷰어 실행 증거: apt 0건 · land 표시캡 12그룹
-    절단인데 `display_cap_impact: None`).
-
-    → 가격 델타는 apt AVM 이 있을 때만 채우고(없으면 **키를 빼지 않고 None**),
-      절단량(`truncation_by_category`)은 `radius_applied` 만으로 **항상** 싣는다.
-      키를 빼면 소비처가 "이 응답엔 그 개념이 없다"로 읽지만 실제로는 "못 쟀다"이다.
-    """
-    nm._BUILD_CACHE.clear()
-    # apt 는 0건, land_trade 만 캡을 넘게 채운다.
-    land_rows: list[dict] = []
-    gmap: dict[str, dict] = {}
-    n = nm._MAX_GROUPS_PER_CAT + 12          # 40 → 캡 28 → 12 절단
-    for i in range(n):
-        land_rows.append(_row(name="", jibun=f"L{i}", dong="A동", price=60000, day=1))
-        gmap[f"경상북도 남구 A동 L{i}"] = {"lat": 36.0003, "lon": 129.0003}
-    svc = _service_per_type({"land": land_rows}, gmap)
-    payload = await svc.build(
-        address="경상북도 남구 A동 9-9", lawd_cd="47111", months=1, radius_m=1000,
-        center_hint={"lat": 36.0, "lon": 129.0},
-    )
-    imp = payload["display_cap_impact"]
-
-    assert payload["avm"] is None, "이 픽스처는 apt 표본 0건 전제다"
-    # ★★계측이 암전하지 않는다.
-    assert imp is not None and imp["diagnostic_only"] is True
-    # 가격 축은 **키를 유지한 채** None — "그 개념이 없다"와 "못 쟀다"를 구분한다.
-    for k in ("price_per_sqm", "price_per_sqm_display_cap_lifted", "delta_pct",
-              "confidence_score", "confidence_score_display_cap_lifted",
-              "sample_deal_count", "sample_deal_count_display_cap_lifted"):
-        assert k in imp and imp[k] is None, f"{k} 는 키를 유지한 채 None 이어야 한다"
-    # ★그리고 절단량은 **실제로 관측된다** — 이게 이 봉합의 목적이다.
-    land = imp["truncation_by_category"]["land_trade"]
-    assert land["sample_group_count"] == nm._MAX_GROUPS_PER_CAT      # 28
-    assert land["sample_group_count_display_cap_lifted"] == n        # 40
-    assert land["dropped_precise_group_count"] == 12
-    assert land["dropped_all_precisions_group_count"] == 12
-    # ★리뷰 R5 — 상위 제약도 카테고리별로 읽을 수 있어야 한다(최상위 값은 apt 전용).
-    assert land["geocode_precut_groups_cut"] == 0
 
 
 @pytest.mark.asyncio
 async def test_display_cap_impact_precut_is_wired_per_category() -> None:
     """★리뷰 MAJOR-1 회귀락 — 카테고리별 사전컷이 **값 축에서** 잠겨 있는가.
 
-    ★같은 결함 클래스의 **3회차**다. R5 로 `geocode_precut_groups_cut` 을 카테고리별로 병기해
-    놓고, 회귀락 픽스처가 apt·land 둘 다 사전컷 0 이라 **두 모집단이 안 갈라졌다**. 그래서
-    리뷰어 변이 3종이 전부 **생존**했다: `_cat.get("precut")` → `apt_cat.get("precut")` ·
-    → 최상위 `precut` 스칼라 · → 리터럴 `0`. **키 존재만 잠기고 배선은 안 잠긴 상태**였고,
-    생존한 두 변이는 R5 주석이 스스로 명시한 결함("최상위는 apt 전용이라 land 판독 시 틀린다")
-    **그 자체**다. B-1(정밀/전체 모집단)·F1(동 대표점 부재)에 이은 같은 실수의 반복이다.
-
-    → 리뷰어가 준 판별입력을 그대로 쓴다: **apt 는 사전컷 발동, land 는 다른 값으로 발동**.
-      두 수가 서로 다르고 최상위 값과도 달라야 세 변이가 전부 죽는다.
+    ★같은 결함 클래스의 3회차였다. 회귀락 픽스처가 apt·land 둘 다 사전컷 0 이라 **두 모집단이
+    안 갈라져** 변이 3종이 전부 생존했다(`_cat`→`apt_cat` · 최상위 스칼라 · 리터럴 0).
+    판별입력: apt 사전컷 **30** · land **5** · villa **0** 으로 세 수가 서로 달라야 한다.
     """
     nm._BUILD_CACHE.clear()
     budget = nm._MAX_GEOCODE_GROUPS_PER_CAT          # 80
-    apt_n, land_n = budget + 30, budget + 5          # cut 30 / cut 5 — 서로 다른 값
+    apt_n, land_n = budget + 30, budget + 5
     apt_rows: list[dict] = []
     land_rows: list[dict] = []
     gmap: dict[str, dict] = {}
@@ -1335,32 +1303,202 @@ async def test_display_cap_impact_precut_is_wired_per_category() -> None:
     )
     trunc = payload["display_cap_impact"]["truncation_by_category"]
 
-    # ★세 수가 **서로 달라야** 변이가 죽는다(apt 30 / land 5 / villa 0).
     assert trunc["apt_trade"]["geocode_precut_groups_cut"] == 30
     assert trunc["land_trade"]["geocode_precut_groups_cut"] == 5
     assert trunc["villa_trade"]["geocode_precut_groups_cut"] == 0
-    # 최상위 값은 **apt 전용**이다 — land 를 그걸로 판독하면 틀린다(R5 주석의 그 결함).
     assert payload["display_cap_impact"]["geocode_precut_groups_cut"] == 30
     assert payload["display_cap_impact"]["price_delta_category"] == "apt_trade"
 
 
 @pytest.mark.asyncio
-async def test_display_cap_impact_is_none_when_radius_not_applied() -> None:
-    """★거짓 음성 차단 — 반경 미적용 가지에서는 **0 이 아니라 None** 이어야 한다.
+async def test_display_cap_impact_keeps_truncation_when_apt_avm_absent() -> None:
+    """★리뷰 R1 회귀락 — apt 비교표본이 없어도 **절단량은 계속 관측돼야** 한다."""
+    nm._BUILD_CACHE.clear()
+    land_rows: list[dict] = []
+    gmap: dict[str, dict] = {}
+    n = nm._MAX_GROUPS_PER_CAT + 12          # 40 → 캡 28 → 표시 12 절단
+    for i in range(n):
+        land_rows.append(_row(name="", jibun=f"L{i}", dong="A동", price=60000, day=1))
+        gmap[f"경상북도 남구 A동 L{i}"] = {"lat": 36.0003, "lon": 129.0003}
+    svc = _service_per_type({"land": land_rows}, gmap)
+    payload = await svc.build(
+        address="경상북도 남구 A동 9-9", lawd_cd="47111", months=1, radius_m=1000,
+        center_hint={"lat": 36.0, "lon": 129.0},
+    )
+    imp = payload["display_cap_impact"]
 
-    그 가지의 `_compute_avm_summary` 는 `sample_field` 를 쓰지 않고 `cat["groups"]`
-    (= 이미 캡된 `capped + unresolved`)를 다시 거른다. 그래서 **절단이 실재해도**
-    `delta_pct == 0` 이 나온다 — "영향 없음"으로 읽히는 false-healthy 다.
-    """
+    assert payload["avm"] is None
+    assert imp is not None and imp["diagnostic_only"] is True
+    for k in ("price_per_sqm", "price_per_sqm_before_transition", "delta_pct",
+              "delta_pct_from_cap_lift", "price_per_sqm_outlier_trimmed_candidate",
+              "delta_pct_from_outlier_trim_candidate", "outlier_groups_excluded_candidate",
+              "confidence_score", "confidence_score_before_transition",
+              "sample_deal_count", "sample_deal_count_display_capped"):
+        assert k in imp and imp[k] is None, f"{k} 는 키를 유지한 채 None 이어야 한다"
+    land = imp["truncation_by_category"]["land_trade"]
+    assert land["sample_group_count_display"] == nm._MAX_GROUPS_PER_CAT      # 28
+    assert land["sample_group_count_compute"] == n                           # 40
+    assert land["dropped_precise_group_count"] == 12
+    assert land["geocode_precut_groups_cut"] == 0
+
+
+@pytest.mark.asyncio
+async def test_display_cap_impact_is_none_when_radius_not_applied() -> None:
+    """★거짓 음성 차단 — 반경 미적용 가지에서는 **0 이 아니라 None** 이어야 한다."""
     nm._BUILD_CACHE.clear()
     rows, gmap = _cap_fixture(40, cheap_from=nm._MAX_GROUPS_PER_CAT)
     svc = _service(rows, gmap)
-    # center_hint 를 주지 않고 대상지 주소도 지오코딩되지 않게 둔다 → radius_applied=False
     payload = await svc.build(address="경상북도 남구 A동 9-9", lawd_cd="47111",
                               months=1, radius_m=1000)
-    assert payload["radius_applied"] is False, "이 테스트는 반경 미적용 가지를 검증한다"
-    assert payload["avm"] is not None, "이 가지에서도 시세 자체는 산출된다(전제 확인)"
-    assert payload["display_cap_impact"] is None, (
-        "측정 불가를 delta_pct=0 으로 적으면 '영향 없음'이라는 거짓 신호가 된다"
+    assert payload["radius_applied"] is False
+    assert payload["avm"] is not None
+    assert payload["display_cap_impact"] is None
+
+
+@pytest.mark.asyncio
+async def test_outlier_trim_band_is_not_swayed_by_transaction_volume() -> None:
+    """★★리뷰 C-1(차단) 회귀락 — 트림 밴드가 **가격**으로 정해지는가, **거래량**으로 정해지는가.
+
+    종전엔 평당가를 건수만큼 확장한 표본에서 사분위를 계산했다. 그러면 **거래가 많은 그룹이
+    사분위 구간을 점유**해 밴드가 그쪽으로 붕괴하고 **정상 이웃 단지가 이상치로 제거**된다.
+    리뷰어 실측: 가격 집합을 **한 글자도 바꾸지 않고 건수 분포만** 바꿨더니
+      균등(각 5건) → 제외 0 · Δ 0.00%
+      최저가 단지만 100건 → 밴드 3,997~6,514 로 붕괴, **정상 4개 제거** · Δ **−10.16%**
+      최고가 단지만 100건 → 정상 3개 제거 · Δ **+5.62%**
+    즉 그건 이상치 판정이 아니라 **거래량 편중 판정**이었다.
+
+    → 밴드는 **비가중 그룹 표본**에서 산출하고 건수 가중은 **평균에만** 적용한다.
+      이 골든은 같은 반례 세 개를 그대로 태워 **제외 0 · Δ 0.0%** 를 요구한다.
+    """
+    prices = [4800, 5200, 5500, 6000, 6500, 7000, 8000, 9500, 11000]   # 만원/평 스케일
+    results = []
+    for counts in ([5] * 9, [100] + [5] * 8, [5] * 8 + [100]):
+        nm._BUILD_CACHE.clear()
+        rows: list[dict] = []
+        gmap: dict[str, dict] = {}
+        for i, (pr, c) in enumerate(zip(prices, counts, strict=True)):
+            rows += [_row(name="", jibun=f"g{i}", dong="A동", price=pr * 100, day=1)
+                     for _ in range(c)]
+            gmap[f"경상북도 남구 A동 g{i}"] = {"lat": 36.0003, "lon": 129.0003}
+        payload = await _build_cap(_service(rows, gmap))
+        imp = payload["display_cap_impact"]
+        results.append((imp["outlier_groups_excluded_candidate"],
+                        imp["delta_pct_from_outlier_trim_candidate"]))
+
+    # ★가격이 같으면 **건수 분포가 어떻든** 제외 판정이 같아야 한다.
+    assert results == [(0, 0.0), (0, 0.0), (0, 0.0)], (
+        f"밴드가 거래량에 흔들린다 — 가격은 동일한데 판정이 갈렸다: {results}"
     )
 
+
+@pytest.mark.asyncio
+async def test_display_capped_sample_keeps_precision_filter() -> None:
+    """★리뷰 M-6(생존 변이) 회귀락 — 표시 표본도 **정밀분만**이어야 한다.
+
+    ★같은 결함 클래스의 **4회차**다. 기존 회귀락 픽스처가 `_cap_fixture(40, dong_groups=9)`
+    라 **정밀 40 ≥ 캡 28** → `capped` 가 100% 정밀분이 되어, `_in_radius_groups_display_capped`
+    를 `precise` 대신 `capped`(정밀도 무시)로 바꾸는 변이가 **생존**했다.
+    리뷰어 실측(정밀 10·동 40): 그 변이에서 `price_per_sqm_before_transition` 이
+    11,797,619 → **8,543,302 (−28%)**, `dropped_precise_group_count` 가 **−18**(음수)가 된다.
+    즉 **전환 근거 자체가 조용히 −28% 오염**되는데 골든이 전혀 못 잡았다.
+
+    → 판별입력은 **정밀 < 캡 AND 동 대표점 그룹 존재**여야 한다.
+      그래야 `capped` 에 동 대표점이 섞여 두 모집단이 갈라진다.
+    """
+    nm._BUILD_CACHE.clear()
+    rows: list[dict] = []
+    gmap: dict[str, dict] = {}
+    n_precise, n_dong = 10, 40          # 정밀 10 < 캡 28 · 동 40
+    for i in range(n_precise):
+        rows += [_row(name="", jibun=f"p{i}", dong="A동", price=100000, day=1)
+                 for _ in range(n_precise - i)]
+        gmap[f"경상북도 남구 A동 p{i}"] = {"lat": 36.0003, "lon": 129.0003}
+    for j in range(n_dong):
+        rows.append(_row(name="", jibun="", dong=f"D{j}동", price=70000, day=1))
+        gmap[f"경상북도 남구 D{j}동"] = {"lat": 36.0004, "lon": 129.0004}
+    payload = await _build_cap(_service(rows, gmap))
+    imp = payload["display_cap_impact"]
+
+    # ★정밀분이 캡보다 적으므로 계산·표시 표본이 **둘 다 10** 이어야 한다.
+    #   표시 표본을 `capped`(동 대표점 포함)로 바꾸면 28 이 되어 이 단언이 깨진다.
+    assert imp["sample_group_count_compute"] == n_precise
+    assert imp["sample_group_count_display"] == n_precise
+    assert imp["dropped_precise_group_count"] == 0
+    # 전환 근거(전환 전 값)가 오염되지 않았다 — 정밀분만으로 계산된 값이어야 한다.
+    assert imp["price_per_sqm_before_transition"] == imp["price_per_sqm"]
+    assert imp["delta_pct"] == 0.0
+    # 전체 절단은 **다른 수**다(동 대표점이 캡에서 잘린다).
+    assert imp["dropped_all_precisions_group_count"] > 0
+
+
+@pytest.mark.asyncio
+async def test_transition_baseline_is_untrimmed() -> None:
+    """★리뷰 M-5(생존 변이) 회귀락 — 전환 **기준선**(legacy)은 무절사여야 한다.
+
+    `avm_legacy` 호출의 `robust=False` 를 `True` 로 바꾸면 "전환 전 값"이 **트림된 값**이 되어
+    `delta_pct` 와 `delta_pct_from_cap_lift` 가 전부 틀어지는데 잠금이 없었다.
+    극단 그룹이 있는 픽스처에서 legacy 가 트림되면 값이 달라지므로 리터럴로 못 박는다.
+    """
+    nm._BUILD_CACHE.clear()
+    # ★극단 그룹을 **건수 45** 로 둬 캡 순위 1위 → **표시(legacy) 표본 안**에 들어간다.
+    #   그래야 legacy 에 트림을 걸었을 때 값이 달라져 변이가 판별된다.
+    rows, gmap = _cap_fixture(40, spread=300, extreme_price=900000, extreme_count=45)
+    payload = await _build_cap(_service(rows, gmap))
+    imp = payload["display_cap_impact"]
+    # legacy 표본에 극단이 포함돼 있으므로, 트림이 걸리면 이 값이 크게 내려간다.
+    assert imp["outlier_groups_excluded_candidate"] == 1, "이 픽스처는 트림 발동을 전제한다"
+    assert imp["price_per_sqm_before_transition"] > imp["price_per_sqm_outlier_trimmed_candidate"]
+    # ★기준선이 무절사임을 값으로 잠근다 — legacy 에 robust=True 를 걸면 깨진다.
+    #   독립 산출: 표시캡(28) 표본 = 극단(건수 45, 순위 1위) + 건수 상위 27개의 무절사
+    #   가중평균 = **17,080,150원/㎡**. legacy 에 트림을 걸면 극단이 빠져 크게 내려간다.
+    assert imp["price_per_sqm_before_transition"] == 17080150
+
+
+@pytest.mark.asyncio
+async def test_outlier_trim_reports_exactly_what_it_dropped() -> None:
+    """★리뷰 CRITICAL 회귀락 — 보고한 제외 수와 **실제로 빠진 그룹 수**가 같아야 한다.
+
+    종전엔 `_kept` 경계 비교가 `_lo <= v * _PP_SCALE <= _hi` 였는데 `_hi` 는
+    `robust_price_stats` 가 `int(p)` 절단 후 낸 **정수**라, **최고 생존 그룹이 자기 자신을
+    밴드 밖으로 판정**해 매번 추가 탈락했다 — 그것도 **최고가 정상 단지**를, 보고 없이.
+    리뷰어 몬테카를로: 발동 건의 **100%** 가 정확한 트림과 불일치, 후보 델타 **부호 22.3%
+    뒤집힘**, 평균 편향 −1.90%(최악 −21.21%).
+    ★직전 REJECT 의 C-1 과 **같은 피해 클래스**(정상 고가 단지 삭제)이고 원인만
+      "거래량 편중"에서 "정수 절단"으로 바뀐 것이다.
+
+    → 경계를 정수로 맞추고, **자기정합 불변식**(밴드가 남긴 그룹 수 == 평균에 들어간 그룹 수)을
+      코드에 박았다. 이 불변식만 있었으면 100% 잡혔다.
+    """
+    nm._BUILD_CACHE.clear()
+    rows, gmap = _cap_fixture(40, spread=300, extreme_price=900000)
+    payload = await _build_cap(_service(rows, gmap))
+    imp = payload["display_cap_impact"]
+
+    # 극단 **1그룹**만 빠져야 한다 — 최고가 정상 단지가 함께 빠지면 이 값이 2가 된다.
+    assert imp["outlier_groups_excluded_candidate"] == 1
+    # 그리고 그 1그룹만 뺀 값이어야 한다(손계산 11,440,476). 최고가가 함께 빠지면 11,416,667.
+    assert imp["price_per_sqm_outlier_trimmed_candidate"] == 11440476
+
+
+@pytest.mark.asyncio
+async def test_outlier_trim_exclusion_set_is_count_invariant_when_it_fires() -> None:
+    """★리뷰 지적 — C-1 골든이 "제외 0"만 잠그는 **단측** 잠금이었다.
+
+    트림이 **발동하는** 입력에서도 제외 집합이 건수 분포에 흔들리지 않아야 밴드의
+    건수 독립성이 **양측**으로 봉인된다. 같은 가격집합 + 극단 1개로 건수만 바꿔 확인한다.
+    """
+    prices = [4800, 5200, 5500, 6000, 6500, 7000, 8000, 9500, 60000]   # 마지막이 극단
+    excluded = []
+    for counts in ([5] * 9, [100] + [5] * 8, [5] * 8 + [100]):
+        nm._BUILD_CACHE.clear()
+        rows: list[dict] = []
+        gmap: dict[str, dict] = {}
+        for i, (pr, c) in enumerate(zip(prices, counts, strict=True)):
+            rows += [_row(name="", jibun=f"g{i}", dong="A동", price=pr * 100, day=1)
+                     for _ in range(c)]
+            gmap[f"경상북도 남구 A동 g{i}"] = {"lat": 36.0003, "lon": 129.0003}
+        payload = await _build_cap(_service(rows, gmap))
+        excluded.append(payload["display_cap_impact"]["outlier_groups_excluded_candidate"])
+
+    # ★건수 분포가 어떻든 **같은 수의 그룹**이 제외돼야 한다(가격이 동일하므로).
+    assert len(set(excluded)) == 1, f"트림 발동 시 제외 집합이 건수에 흔들린다: {excluded}"
