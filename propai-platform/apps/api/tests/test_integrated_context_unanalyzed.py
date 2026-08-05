@@ -99,3 +99,29 @@ async def test_partial_signal_is_not_downgraded():
         ctx = await build_integrated_context([ANALYZED_A, partial])
         assert ctx["usable"]["conditional_sqm"] == 0.0, partial
         assert ctx["usable"]["confirmed_sqm"] == 1000.0, partial
+
+
+@pytest.mark.asyncio
+async def test_gross_fallback_is_flagged_when_everything_is_unanalyzed():
+    """★H-1: 확정 면적이 0이라 gross를 채택할 때는 **잠정임을 말한다**.
+
+    혼합 케이스만 막고 '전부 미분석'은 뚫려 있었다 — gross 1000이 그대로 land_area가 되어
+    GFA·세대수·수지로 흐르는데 경고조차 동반되지 않았다. 면적 자체는 바꾸지 않는다(분석이
+    멈추면 안 된다). 대신 소비처가 잠정으로 다룰 수 있게 신호를 싣는다.
+    """
+    all_unanalyzed = await build_integrated_context([
+        {"address": "A", "area_sqm": 400}, {"address": "B", "area_sqm": 600},
+    ])
+    assert all_unanalyzed["land_area_effective_sqm"] == 1000.0  # 면적은 불변
+    assert all_unanalyzed.get("land_area_effective_is_gross_fallback") is True
+    warnings = all_unanalyzed["usable"].get("warnings") or []
+    assert any("잠정" in str(w) for w in warnings), warnings
+
+
+@pytest.mark.asyncio
+async def test_normal_cases_carry_no_gross_fallback_flag():
+    """정상·혼합 케이스에는 폴백 표식이 붙지 않는다 — 오탐 0."""
+    for parcels in ([ANALYZED_A, ANALYZED_B], [ANALYZED_A, UNANALYZED_B]):
+        ctx = await build_integrated_context(parcels)
+        assert ctx.get("land_area_effective_is_gross_fallback") is None
+        assert (ctx["usable"].get("warnings") or []) == []
