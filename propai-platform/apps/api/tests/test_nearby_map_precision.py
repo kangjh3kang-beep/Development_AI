@@ -1573,10 +1573,16 @@ async def test_masked_jibun_groups_are_preserved_not_deleted_by_radius() -> None
     # ★픽스처가 **그룹 수와 거래 건수를 가른다** — 마스킹 2그룹 / 5거래.
     #   두 수가 같으면(1행=1그룹) 단위를 뒤집는 변이가 값이 우연히 같아져 **생존한다**
     #   (이 저장소가 4회 실증한 결함클래스: 픽스처가 두 모집단을 안 가름).
+    #   ★★R3 리뷰(F-1) — 마스킹 `"5*"` 을 **두 법정동**(먼동·딴동)에 배치한다.
+    #   그룹 키가 `name or jibun or dong` 이라 두 동의 `"5*"` 이 **한 그룹으로 병합**되고
+    #   `_dongs` 가 2가 된다. 초판은 `len(_dongs) > 1` 검사가 masked 보다 **먼저** 와서
+    #   그 그룹에 `"dong"` 이 박혔다 — M-1 이 없애겠다고 선언한 상태의 재생산이다.
+    #   마스킹 지번은 짧아 동 간 충돌이 흔하므로 오히려 지배적 갈래일 수 있다.
+    #   ★픽스처가 병합 갈래와 단일 갈래를 **둘 다** 갖는다(하나만 있으면 무판별).
     rows = [
         _row(name="", jibun="5*", dong="먼동", price=50000, day=1),
         _row(name="", jibun="5*", dong="먼동", price=50500, day=2),
-        _row(name="", jibun="5*", dong="먼동", price=50700, day=3),
+        _row(name="", jibun="5*", dong="딴동", price=50700, day=3),   # ← 병합 유발
         _row(name="", jibun="1**", dong="먼동", price=51000, day=4),
         _row(name="", jibun="1**", dong="먼동", price=51200, day=5),
         _row(name="", jibun="736", dong="역삼동", price=53000, day=6),   # 정상 지번·반경 안
@@ -1619,7 +1625,9 @@ async def test_masked_jibun_groups_are_preserved_not_deleted_by_radius() -> None
     #   되고, `_query_grain` 독스트링이 막겠다고 선언한 상태("동 대표점은 받았다"로 읽히는
     #   것)가 그대로 출하된다. 선언한 구분이 응답까지 **도달하는지** 확인한다.
     precisions = {g["jibun"]: g.get("coord_precision") for g in cat["groups"]}
-    assert precisions["5*"] == "masked", f"마스킹이 dong 으로 소거됐다: {precisions}"
+    assert precisions["5*"] == "masked", (
+        f"다동 병합 마스킹 그룹이 dong 으로 소거됐다(F-1): {precisions}"
+    )
     assert precisions["1**"] == "masked"
     assert precisions["736"] == "parcel"
     # ★L-3 — 질의를 만들지 못한 그룹이 계측에 남는다(분모에서 빠진 몫을 말한다).

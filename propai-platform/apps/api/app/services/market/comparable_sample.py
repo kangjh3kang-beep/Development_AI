@@ -246,7 +246,13 @@ def no_sample_reason(basis: SampleBasis) -> str | None:
         if _masked <= basis.unlocated_count:
             tail = f" 위치 미확인 중 {_masked:,}건은 {_why}."
         else:
-            tail = f" 그 밖에 지번이 가려진 거래가 {_masked:,}건 있습니다 — {_why}."
+            # ★R3 리뷰(F-5) — "그 밖에"는 **서로소를 적극 주장**한다. 독자는 앞 건수와
+            #   더해서 읽고, 그러면 M-2 가 없앤 이중계수가 **어법으로** 되살아난다.
+            #   이 갈래의 사실은 "포함 관계를 **모른다**"이므로 그렇게 쓴다.
+            tail = (
+                f" 지번이 가려진 거래는 {_masked:,}건으로 집계됐습니다"
+                f"(위 건수와의 포함 관계는 확인할 수 없습니다) — {_why}."
+            )
 
     if not bits:
         if tail:
@@ -276,6 +282,17 @@ def select_located_groups(
             #   표본이 실제보다 낙관적일 수 있다는 사실은 `location_status` 도입 이후
             #   자동으로 해소된다(신규 응답에는 항상 필드가 있다).
             if g.get("lat") is None:
+                status = "unlocated"
+            elif g.get("coord_precision") == "masked":
+                # ★R3 리뷰(F-9) — 4번째 enum 값을 추가하면서 양쪽 레거시 폴백을 손대지
+                #   않으면 두 미러가 조용히 갈라진다. **실제로 갈려 있었다** —
+                #   백엔드는 `else` 로 떨어져 `approximate`, 프론트는 `!== "dong"` 이라
+                #   `located` 였다. 위험한 쪽은 프론트다(마스킹을 집계에 넣는다).
+                #   마스킹은 좌표가 **없다**는 뜻이므로 정밀을 주장하지 않는다.
+                # ★정직 표기 — 이 한 줄은 **변이로 잠기지 않는다**. 지워도 `else` 가
+                #   `approximate` 를 주고, 둘 다 `located` 가 아니라 이 함수의 반환값이
+                #   같기 때문이다(하류 영향 0). 의미 정합을 위한 줄이며, 실제로 고쳐야
+                #   했던 곳은 **프론트 미러**다(그쪽은 회귀락이 잡는다).
                 status = "unlocated"
             elif g.get("coord_precision") in ("parcel", "building", None):
                 status = "located"

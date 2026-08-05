@@ -1260,18 +1260,25 @@ class NearbyMapService:
             #               한 점으로 뭉갠 좌표라 반경 안팎을 단정할 수 없다.
             _dongs = g.pop("_dongs", set())
             _grain = g.pop("_query_grain", "dong")
-            if len(_dongs) > 1:
+            if _grain == "masked":
+                # ★R2 리뷰(M-1) — `"masked"` 를 `else` 로 흘려보내면 `"dong"` 이 박힌다.
+                #   그러면 `_query_grain` 독스트링이 막겠다고 선언한 상태("동 대표점은
+                #   받았다"로 읽히는 것)가 **그대로 출하된다** — 좌표가 아예 없다는 사실이
+                #   관측에서 사라진다. 선언한 구분을 실제 응답까지 전달한다.
+                # ★★R3 리뷰(F-1) — 이 검사가 `len(_dongs) > 1` **아래**에 있어 봉합이
+                #   절반만 도달했다. 그룹 키가 `name or jibun or dong` 이라 같은 마스킹
+                #   리터럴(`"5*"`)이 서로 다른 법정동에서 오면 **한 그룹으로 병합**되고
+                #   `_dongs` 가 2가 돼 `"dong"` 이 박혔다. 마스킹 지번은 짧아서 동 간
+                #   충돌이 흔하므로 오히려 지배적 갈래일 수 있다.
+                #   ★질의를 만들지 않았으므로 **병합 여부와 무관하게 좌표가 없다** —
+                #   병합 검사보다 위에 두는 것이 옳다.
+                g["coord_precision"] = "masked"
+            elif len(_dongs) > 1:
                 g["coord_precision"] = "dong"
             elif _grain == "jibun":
                 g["coord_precision"] = "parcel"
             elif _grain == "name":
                 g["coord_precision"] = "building"
-            elif _grain == "masked":
-                # ★R2 리뷰(M-1) — `"masked"` 를 `else` 로 흘려보내면 `"dong"` 이 박힌다.
-                #   그러면 `_query_grain` 독스트링이 막겠다고 선언한 상태("동 대표점은
-                #   받았다"로 읽히는 것)가 **그대로 출하된다** — 좌표가 아예 없다는 사실이
-                #   관측에서 사라진다. 선언한 구분을 실제 응답까지 전달한다.
-                g["coord_precision"] = "masked"
             else:
                 g["coord_precision"] = "dong"
             if kind == "trade":

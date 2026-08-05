@@ -89,7 +89,9 @@ describe("골든 — 호미곶 대보리 산1-1 (위치 확인 0건인 극단 �
     expect(sharedCases.length).toBeGreaterThan(0);
     for (const c of sharedCases) {
       const basis = {
-        scope: "radius" as const, radiusApplied: true, radiusM: c.radius_m,
+        scope: c.scope as "radius" | "sigungu" | "unknown",
+        radiusApplied: c.scope === "radius",
+        radiusM: c.radius_m,
         locatedCount: 0, approximateCount: c.approximate, unlocatedCount: c.unlocated,
         cappedCount: 0, maskedJibunCount: c.masked, maskedJibunGroupCount: c.masked_groups,
       };

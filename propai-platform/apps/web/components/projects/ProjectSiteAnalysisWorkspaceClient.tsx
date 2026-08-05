@@ -1066,12 +1066,16 @@ export function ProjectSiteAnalysisWorkspaceClient({
                         여전히 "이 지역엔 거래가 없나 보다"로 오독한다 = 이 PR 이 없애려는
                         바로 그 침묵. 정직성 결함은 소비처마다 복제돼 국소 수정이 원리적으로
                         불충분하다(이 저장소 3연속 실증). */}
-                    {avmResult.comparable_skipped_reason ? (
-                      <p className="border-t border-[var(--line)] bg-[var(--surface-soft)] px-4 py-2 text-[11px] leading-relaxed text-[var(--text-tertiary)] break-keep">
-                        {avmResult.comparable_skipped_reason}
-                      </p>
-                    ) : null}
                   </div>
+                ) : null}
+                {/* ★R3 리뷰(F-7) — 사유를 `methods.length > 0` **밖**으로 뺀다.
+                    다른 세 표면(모달·보고서·PDF 어댑터)은 무조건 렌더하는데 여기만
+                    방법표 안에 중첩돼 있었다. 현재는 `method_pub` 이 무조건 생성돼 무해하나,
+                    그것이 조건부가 되는 순간 **이 표면만 조용해진다**. */}
+                {avmResult.comparable_skipped_reason ? (
+                  <p className="rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-2 text-[11px] leading-relaxed text-[var(--text-tertiary)] break-keep">
+                    {avmResult.comparable_skipped_reason}
+                  </p>
                 ) : null}
 
                 {/* 정직성: 응답 disclaimer 노출 + '참고용 · 감정평가 아님' 배지(DeskAppraisalReportClient 관례 미러). */}

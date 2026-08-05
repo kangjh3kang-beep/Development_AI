@@ -134,9 +134,9 @@ export function sampleLabel(b: SampleBasis): string {
 /** 집계에서 빠진 것을 밝힌다. 빠진 게 없으면 null(없는 말을 지어내지 않는다). */
 export function exclusionNote(b: SampleBasis): string | null {
   const parts: string[] = [];
-  if (b.unlocatedCount > 0) parts.push(`위치 미확인 ${b.unlocatedCount.toLocaleString()}건`);
-  if (b.approximateCount > 0) parts.push(`위치 개략(동 단위) ${b.approximateCount.toLocaleString()}건`);
-  if (b.cappedCount > 0) parts.push(`표시 상한 초과 ${b.cappedCount.toLocaleString()}건`);
+  if (b.unlocatedCount > 0) parts.push(`위치 미확인 ${b.unlocatedCount.toLocaleString("ko-KR")}건`);
+  if (b.approximateCount > 0) parts.push(`위치 개략(동 단위) ${b.approximateCount.toLocaleString("ko-KR")}건`);
+  if (b.cappedCount > 0) parts.push(`표시 상한 초과 ${b.cappedCount.toLocaleString("ko-KR")}건`);
   if (parts.length === 0) return null;
   return `${parts.join(" · ")} 집계 제외`;
 }
@@ -172,9 +172,9 @@ export function noSampleReason(b: SampleBasis): string {
   const masked = b.maskedJibunCount ?? 0;
 
   const bits: string[] = [];
-  if (b.unlocatedCount > 0) bits.push(`위치 미확인 ${b.unlocatedCount.toLocaleString()}건`);
+  if (b.unlocatedCount > 0) bits.push(`위치 미확인 ${b.unlocatedCount.toLocaleString("ko-KR")}건`);
   if (b.approximateCount > 0) {
-    bits.push(`동 단위까지만 확인 ${b.approximateCount.toLocaleString()}건`);
+    bits.push(`동 단위까지만 확인 ${b.approximateCount.toLocaleString("ko-KR")}건`);
   }
 
   // 마스킹은 위치 미확인의 **부분집합이자 그 원인**이다 — 카운트를 항으로 더하면
@@ -183,8 +183,8 @@ export function noSampleReason(b: SampleBasis): string {
   if (masked > 0) {
     tail =
       masked <= b.unlocatedCount
-        ? ` 위치 미확인 중 ${masked.toLocaleString()}건은 ${why}.`
-        : ` 그 밖에 지번이 가려진 거래가 ${masked.toLocaleString()}건 있습니다 — ${why}.`;
+        ? ` 위치 미확인 중 ${masked.toLocaleString("ko-KR")}건은 ${why}.`
+        : ` 그 밖에 지번이 가려진 거래가 ${masked.toLocaleString("ko-KR")}건 있습니다 — ${why}.`;
   }
 
   if (bits.length === 0) {
@@ -196,6 +196,8 @@ export function noSampleReason(b: SampleBasis): string {
 
 function basisFromCategory(cat: ComparableCategory | null | undefined): SampleBasis {
   const raw = cat?.sample_basis;
+  // ★R3 리뷰(F-8) — 백엔드 L-5(중복 순회 제거)를 미러에도 전파한다(전역 전파방지).
+  const fromGroups = maskedFromGroups(cat);
   if (raw) {
     return {
       scope: raw.scope === "radius" ? "radius" : "sigungu",
@@ -208,8 +210,8 @@ function basisFromCategory(cat: ComparableCategory | null | undefined): SampleBa
       // ★키 **부재**와 값 **0** 을 구분한다(백엔드 M-5 와 같은 규율). 실제 배포 스큐는
       //   "sample_basis 는 있고 마스킹 키만 없는" 형태이고, 거기서 0 으로 단정하면
       //   그 구간 내내 마스킹 사유가 조용히 사라진다.
-      maskedJibunCount: raw.masked_jibun_count ?? maskedFromGroups(cat).deals,
-      maskedJibunGroupCount: raw.masked_jibun_group_count ?? maskedFromGroups(cat).groups,
+      maskedJibunCount: raw.masked_jibun_count ?? fromGroups.deals,
+      maskedJibunGroupCount: raw.masked_jibun_group_count ?? fromGroups.groups,
     };
   }
   // ★구버전 페이로드(캐시·배포 스큐) 폴백 — 카운트에서 복원하고, 알 수 없으면 보수적으로
@@ -223,8 +225,8 @@ function basisFromCategory(cat: ComparableCategory | null | undefined): SampleBa
     approximateCount: cat?.count_approximate ?? 0,
     unlocatedCount: cat?.count_unresolved ?? 0,
     cappedCount: cat?.capped_count ?? 0,
-    maskedJibunCount: maskedFromGroups(cat).deals,
-    maskedJibunGroupCount: maskedFromGroups(cat).groups,
+    maskedJibunCount: fromGroups.deals,
+    maskedJibunGroupCount: fromGroups.groups,
   };
 }
 
@@ -252,6 +254,10 @@ function statusOf(g: ComparableGroup): LocationStatus {
   if (g.location_status) return g.location_status;
   // 구버전 페이로드 폴백 — 정밀도 필드가 있으면 그것까지 본다.
   if (g.lat === null || g.lat === undefined) return "unlocated";
+  // ★R3 리뷰(F-9) — 마스킹은 좌표가 **없다**는 뜻이다. 백엔드 레거시 폴백과 같은 답을 낸다
+  //   (종전엔 백엔드 approximate / 프론트 located 로 두 미러가 갈렸다 — 도달 불가였으나
+  //   enum 을 늘리면서 양쪽을 안 맞추면 조용히 갈라지는 전형 경로다).
+  if (g.coord_precision === "masked") return "unlocated";
   if (g.coord_precision && g.coord_precision === "dong") return "approximate";
   return "located";
 }

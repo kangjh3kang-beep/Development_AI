@@ -53,7 +53,15 @@ export type WiringInvariant = {
  * 위반으로 만들어(과도스코프) 기준선이 깨진다.
  */
 function stripLineComment(line: string): string {
-  return line.replace(/(^|[^:])\/\/.*$/, "$1");
+  // ★R3 리뷰(F-3) — `{/* … */}`(JSX 주석)도 벗긴다.
+  //   종전엔 `//` 만 벗겨서, 렌더를 지우고 `{/* TODO: foo.bar 렌더 복구 예정 */}` 한 줄만
+  //   남기면 배선 락이 **초록으로 통과**했다(실측 재현). 이 저장소는 한국어 주석을 많이
+  //   쓰는 .tsx 가 많아 **적대적 의도 없이도** 발생한다 — 이 도구가 잡아야 할 바로 그 상태
+  //   ("값은 있는데 화면은 침묵")를 주석이 가려 준다.
+  //   한 줄 안에 닫힌 JSX 주석만 처리한다(여러 줄에 걸친 것은 줄 단위 검사의 한계).
+  return line
+    .replace(/\{\s*\/\*[\s\S]*?\*\/\s*\}/g, "")
+    .replace(/(^|[^:])\/\/.*$/, "$1");
 }
 
 function includes(line: string, needle: string | RegExp): boolean {

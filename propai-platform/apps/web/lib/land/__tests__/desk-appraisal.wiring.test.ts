@@ -31,13 +31,23 @@ describe("표본 0 사유 표면 배선", () => {
       // ★스코프를 **멤버 접근**(`.comparable_skipped_reason`)으로 좁힌다 — 타입 선언 줄
       //   (`comparable_skipped_reason?: string | null;`)은 접근이 아니라서 걸리지 않는다.
       //   "이름이 어딘가 있다"와 "그 값을 읽는다"는 다르다(이 저장소에서 반복 실증).
-      // ★판별력은 `minMatches: 2` 에 있다 — 조건부 가드 한 줄만 남기고 **렌더를 지우면**
-      //   매치가 1로 떨어져 실패한다. 그게 정확히 M-6(값은 있는데 화면은 침묵) 상태다.
+      // ★R3 리뷰(F-3) — 종전 `mustContain` 은 `scope` 가 이미 함의해 **위반이 원리적으로
+      //   불가능**했고(공허), 실질 판별력이 `minMatches: 2` 하나였다. 게다가 그 매치는
+      //   `{/* … comparable_skipped_reason … */}` JSX 주석으로 **패딩**되어 렌더를 지워도
+      //   초록이 됐다(공용 도구 `stripLineComment` 를 함께 고쳤다).
+      //   → `mustContain` 을 **실제 렌더 형태**(`{expr.comparable_skipped_reason}`)로 좁힌다.
       assertWiredThrough({
         file: s.file,
-        scope: /\.comparable_skipped_reason/,
-        mustContain: "comparable_skipped_reason",
-        minMatches: 2,
+        scope: /\{\s*\w+\.comparable_skipped_reason\s*\}/,
+        mustContain: /\{\s*\w+\.comparable_skipped_reason\s*\}/,
+        minMatches: 1,
+      });
+      // 조건부 가드도 함께 있어야 한다 — 값이 없을 때 빈 문단을 그리지 않는다.
+      assertWiredThrough({
+        file: s.file,
+        scope: /\.comparable_skipped_reason \?/,
+        mustContain: "?",
+        minMatches: 1,
       });
     });
   }

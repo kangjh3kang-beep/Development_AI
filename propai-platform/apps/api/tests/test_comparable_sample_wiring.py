@@ -237,11 +237,16 @@ def test_masked_skew_branch_is_locked_by_literal() -> None:
     assert got == (
         "반경 1.5km 내에서 위치가 확인된 거래가 없습니다 — "
         "위치 미확인 1건 · 동 단위까지만 확인 2건은 단가 산정에 쓰지 않습니다. "
-        "그 밖에 지번이 가려진 거래가 3건 있습니다 — 공개 실거래 자료가 지번을 가려서 "
-        "제공해(예: 5*, 1**) 위치를 확인할 수 없습니다."
+        "지번이 가려진 거래는 3건으로 집계됐습니다(위 건수와의 포함 관계는 확인할 수 "
+        "없습니다) — 공개 실거래 자료가 지번을 가려서 제공해(예: 5*, 1**) 위치를 확인할 수 "
+        "없습니다."
     ), got
     # 카운트 항에 마스킹을 **더하지 않는다**(더하면 같은 거래를 두 번 센다).
     assert "지번이 가려진 거래 3건 ·" not in got
+    # ★R3 리뷰(F-5) — "그 밖에"는 **서로소를 적극 주장**해 독자가 1+3+2=6건으로 읽는다.
+    #   M-2 가 없앤 이중계수의 어법판이라 문구를 바꿨다. 되돌아오면 이 단언이 잡는다.
+    assert "그 밖에" not in got, "서로소를 단정하는 어법이 되살아났다"
+    assert "포함 관계는 확인할 수 없습니다" in got
     # `—` 는 절 구분자로 쓰되 한 문장에 하나씩만.
     assert got.count(" — ") == 2, f"절 구조가 무너졌다: {got}"
 
@@ -453,6 +458,45 @@ def test_report_model_carries_the_skip_reason() -> None:
     )
 
 
+def test_legacy_payload_never_treats_masked_as_located() -> None:
+    """레거시 페이로드(`location_status` 부재)에서 `coord_precision="masked"` 처리.
+
+    ★R3 리뷰(F-9) — 4번째 enum 값을 추가하면서 양쪽 레거시 폴백을 손대지 않아
+    **백엔드 `approximate` / 프론트 `located`** 로 두 미러가 갈려 있었다.
+    마스킹은 좌표가 **없다**는 뜻이므로 정밀을 주장하지 않는다.
+
+    ★정직 표기 두 가지:
+    ① 이 조합(`location_status` 부재 + `lat` 존재 + `masked`)은 **현재 생산 경로에서
+       도달 불가**다(마스킹 그룹은 질의를 안 만들어 `lat` 이 없다). 레거시/스큐 방어다.
+    ② **백엔드 쪽은 이 테스트로 잠기지 않는다** — `masked` 분기를 지워도 `else` 가
+       `approximate` 를 주고 둘 다 `located` 가 아니라 반환값이 같다(실측 확인).
+       실제로 갈렸던 것은 **프론트**(`!== "dong"` → `located`)이고 아래 단언이 그것을 잡는다.
+       "이 테스트가 두 곳을 다 잠근다"고 쓰면 거짓이 된다.
+    """
+    from app.services.market.comparable_sample import select_located_groups
+
+    legacy = {
+        "groups": [
+            # location_status 가 없고 lat 은 있는 옛 형태 — 폴백 가지를 태운다.
+            {"jibun": "5*", "lat": 36.0, "lon": 129.0, "coord_precision": "masked",
+             "avg_price_10k": 50000, "avg_area_m2": 84.0, "count": 3},
+            {"jibun": "736", "lat": 36.001, "lon": 129.001, "coord_precision": "parcel",
+             "avg_price_10k": 53000, "avg_area_m2": 84.0, "count": 1},
+        ],
+    }
+    located, _ = select_located_groups(legacy)
+    assert [g["jibun"] for g in located] == ["736"], (
+        "마스킹 그룹이 위치 확인분으로 취급됐다 — 좌표가 없다는 뜻인데 정밀을 주장했다"
+    )
+    # 프론트 미러도 같은 답을 내야 한다(소스로 계약 확인 — 실행은 vitest·CI).
+    mirror = (
+        _API_ROOT.parent.parent / "apps/web/lib/market/comparable-sample.ts"
+    ).read_text(encoding="utf-8")
+    assert re.search(r'coord_precision === "masked"\)\s*return "unlocated"', mirror), (
+        "프론트 레거시 폴백이 masked 를 다루지 않는다 — 두 미러가 갈린다"
+    )
+
+
 def test_shared_golden_matches_backend_output_exactly() -> None:
     """★★R2 리뷰(M-3) — 백엔드와 프론트 미러가 **같은 값**을 내는지 값으로 잠근다.
 
@@ -482,26 +526,40 @@ def test_shared_golden_matches_backend_output_exactly() -> None:
     assert any(c["masked"] > 0 and c["masked"] <= c["unlocated"] for c in cases), "포함 갈래 없음"
     assert any(c["masked"] > c["unlocated"] for c in cases), "스큐 갈래 없음"
     assert any(c["masked"] == 0 for c in cases), "마스킹 없는 갈래 없음"
-    assert any(c["radius_m"] % 500 != 0 for c in cases), "비라운드 반경 케이스 없음(표기 갈림 미검증)"
+    assert any(
+        c["radius_m"] and c["radius_m"] % 500 != 0 for c in cases
+    ), "비라운드 반경 케이스 없음(표기 갈림 미검증)"
+    # ★R3 리뷰(F-6·F-2) — 축을 더 덮는다.
+    #   ① 카운트 ≥ 1000: 천단위 구분자를 지우는 변이가 **생존**했다(전 케이스가 3자리 미만).
+    #      게다가 미러의 `toLocaleString()` 은 로케일을 타서(de-DE `5.601`) 선언한 값 등가가
+    #      비콤마 로케일에서 거짓이 됐다 — M-3 가 반경에서 잡은 것과 같은 클래스다.
+    #   ② `scope` 3종: `sigungu`/`unknown` 가지가 **양쪽 다 무테스트**였다.
+    assert any(c["unlocated"] >= 1000 or c["masked"] >= 1000 for c in cases), "천단위 케이스 없음"
+    assert {c["scope"] for c in cases} >= {"radius", "sigungu", "unknown"}, "scope 갈래 미달"
 
     for c in cases:
         basis = SampleBasis(
-            scope="radius", radius_applied=True, radius_m=c["radius_m"],
+            scope=c["scope"], radius_applied=c["scope"] == "radius", radius_m=c["radius_m"],
             located_count=0, approximate_count=c["approximate"],
             unlocated_count=c["unlocated"], capped_count=0,
             masked_jibun_count=c["masked"], masked_jibun_group_count=c["masked_groups"],
         )
         assert no_sample_reason(basis) == c["expected"], (
-            f"백엔드 출력이 공유 골든과 다르다(r={c['radius_m']}) — "
+            f"백엔드 출력이 공유 골든과 다르다(scope={c['scope']} r={c['radius_m']}) — "
             "문구를 바꿨으면 골든을 재생성하고 프론트 미러도 함께 맞춰라"
         )
 
 
 def test_frontend_mirror_reads_the_shared_golden() -> None:
-    """★미러가 공유 골든을 **실제로 소비하는지** 확인한다.
+    """미러가 공유 골든을 소비하도록 **작성돼 있는지** 소스로 확인한다.
 
-    골든 파일만 있고 프론트가 읽지 않으면 위 테스트는 백엔드 자기 자신만 검증하는
-    **반쪽 계약**이 된다(공허진리의 변형 — 이 저장소에서 6번 나왔다).
+    ★R3 리뷰(F-4) 정직 표기 — 이 검사는 **소스 grep 이다**. `it.skip` 으로 바꾸거나
+    루프를 죽은 분기에 넣으면 통과한다. 진짜 방벽은 이 테스트가 아니라
+    **CI 가 vitest 전체를 돌린다는 사실**이다(`.github/workflows/ci.yml` — `propai-platform/**`
+    변경 PR 에서 `pnpm test:run` 실행, 판별 실패 시 fail-safe 전체 실행. vitest include
+    글롭이 `lib/**/*.test.ts` 라 신규 파일도 덮는다). 이 테스트의 역할은
+    **골든 파일만 만들어 두고 미러 소비를 잊는 것**을 막는 얕은 그물이다.
+    "반쪽 계약을 막는다"고 쓰면 과대 표기가 된다.
     """
     mirror_test = (
         _API_ROOT.parent.parent
