@@ -80,7 +80,38 @@ describe("SatongMapShell 스모크", () => {
 //   collapsed 경로를 실제로 렌더/클릭하는 테스트가 없어, early-return 무력화나 h2→h1
 //   되돌림 같은 변이가 통과해도 아무 테스트도 잡지 못했다. 이 스위트가 그 공백을 메운다.
 describe("SatongMapShell 접힘(B4)·문서 위계(B1) 회귀망", () => {
-  it("★B4: defaultCollapsed면 지도 스텁 없이 요약+\"지도 열기\" 토글만 뜨고, 클릭하면 펼쳐져 지도가 마운트된다", () => {
+  // ★테스트 간 격리 — useProjectContextStore 는 모듈 전역이라 앞 케이스가 넣은 대상이 그대로
+  //   남는다. 이게 없으면 "대상 없음" 케이스가 **앞 케이스의 잔존 대상으로 오염**돼, 실행 순서에
+  //   따라 결과가 갈린다(실제로 그렇게 실패했다). 이 스위트가 이 describe 안에서 store 를
+  //   건드리게 된 것은 P1 부터이므로 격리도 여기서 시작한다.
+  beforeEach(() => {
+    act(() => {
+      useProjectContextStore.setState({ projectId: null, siteAnalysis: null });
+      // 프로젝트 목록도 초기화한다 — P1 판정이 이 목록(주소 보유 여부)을 정착 신호로 쓴다.
+      useProjectStore.setState({ projects: [], syncing: false });
+    });
+  });
+
+  /**
+   * ★모바일 IA P1 이후 접힘은 **대상 유무에 종속**한다 — 접힘 경로를 테스트하려면 대상을 준다.
+   *   이 헬퍼가 필요해진 것 자체가 정책 변경의 증거다(종전엔 대상 없이도 접혔다).
+   *
+   *   ★hasTarget 은 세 항의 OR 이다(selectedParcels / siteAnalysis.address / siteAnalysis.parcels).
+   *   한 항만 발화시키는 픽스처를 쓰면 나머지 항을 지우는 변이가 **생존**한다(이 저장소 규율:
+   *   픽스처가 두 모집단을 갈라야 배선 변이가 죽는다). 그래서 항을 골라 시드할 수 있게 한다.
+   */
+  function seedTarget(via: "address" | "parcels" = "address") {
+    act(() => {
+      useProjectContextStore.setState({
+        siteAnalysis: (via === "address"
+          ? { address: "서울시 강남구 역삼동 736" }
+          : { parcels: [{ pnu: "1168010100107360000", address: "역삼동 736" }] }) as SiteAnalysisData,
+      });
+    });
+  }
+
+  it("★B4: 대상이 있고 defaultCollapsed면 지도 스텁 없이 요약+\"지도 열기\" 토글만 뜨고, 클릭하면 펼쳐져 지도가 마운트된다", () => {
+    seedTarget();
     render(<SatongMapShell locale="ko" defaultCollapsed />);
 
     // 접힌 상태 — 무거운 지도(스텁이라도)는 아직 마운트되지 않는다.
@@ -101,7 +132,106 @@ describe("SatongMapShell 접힘(B4)·문서 위계(B1) 회귀망", () => {
     expect(screen.queryByRole("button", { name: /지도 열기/ })).not.toBeInTheDocument();
   });
 
+  it("★모바일 IA P1: 대상이 없으면 defaultCollapsed 여도 펼쳐서 렌더한다 — 유일한 주소 진입 경로를 접지 않는다", () => {
+    // ★이 셸은 착지 3페이지(분석·시장·토지조서)의 **유일한 주소 진입 경로**다(그 페이지들에
+    //   자체 주소 입력이 없다). 대상이 없는데 접으면 사용자가 할 수 있는 일이 "지도 열기" 한
+    //   번뿐이고, 그게 사용자 지적("모바일에서 주소 입력을 못 찾겠다")의 나머지 절반이었다.
+    //   ★대상을 주지 않는다 — 위 beforeEach 가 store 를 비운 상태다(그 격리가 없으면 앞
+    //   케이스의 대상이 남아 이 검사가 조용히 반대 경로를 타고 통과한다).
+    render(<SatongMapShell locale="ko" defaultCollapsed />);
+
+    // 펼쳐졌다 = 주소·엑셀·프로젝트 연결이 들어 있는 입력 패널이 처음부터 보인다.
+    expect(screen.getByRole("heading", { name: "통합 필지 입력" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /지도 열기/ })).not.toBeInTheDocument();
+    // ★껍데기만 바뀌는 변경을 막는다 — 펼쳤으면 지도도 실제로 마운트돼야 한다(B4 비용 교환의 실체).
+    expect(screen.getByTestId("dynamic-map-stub")).toBeInTheDocument();
+  });
+
+  it("★모바일 IA P1: siteAnalysis.parcels 만으로도 대상으로 친다 — hasTarget 세 항이 각각 하중을 받는다", () => {
+    // ★address 로만 시드하면 parcels 항을 지우는 변이가 생존한다(픽스처가 한 모집단만 발화).
+    seedTarget("parcels");
+    render(<SatongMapShell locale="ko" defaultCollapsed />);
+
+    expect(screen.getByRole("button", { name: /지도 열기/ })).toBeInTheDocument();
+  });
+
+  it("★모바일 IA P1: 대상이 늦게 도착해도(프로젝트 복원 대기) 조기 단정으로 접힘을 깨지 않는다", () => {
+    // ★projectId 가 있고 **목록의 그 프로젝트가 주소를 가진** 상태 = 스냅샷 복원 비동기 대기.
+    //   여기서 "대상 없음"으로 확정해 펼쳐 버리면, 복원된 프로젝트의 접힘이 깨진다.
+    vi.useFakeTimers();
+    try {
+      act(() => {
+        useProjectContextStore.setState({ projectId: "p-1", siteAnalysis: null });
+      });
+      render(<SatongMapShell locale="ko" defaultCollapsed />);
+
+      // 유예 안에는 접힌 채다 — 대상 없음으로 단정하지 않았다.
+      expect(screen.getByRole("button", { name: /지도 열기/ })).toBeInTheDocument();
+
+      // 유예 안에 도착 → 이펙트 재실행 + cleanup 이 타이머를 취소해 접힘이 유지된다.
+      act(() => {
+        useProjectContextStore.setState({
+          siteAnalysis: { address: "서울시 강남구 역삼동 736" } as SiteAnalysisData,
+        });
+      });
+      act(() => {
+        vi.advanceTimersByTime(10_000); // 유예를 한참 넘겨도 펼쳐지지 않아야 한다
+      });
+      expect(screen.getByRole("button", { name: /지도 열기/ })).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("★모바일 IA P1: 연결됐는데 대상이 끝내 안 오면 유예 후 펼친다 — 영구 접힘 금지", () => {
+    // ★R2 지적 HIGH 2건의 봉합 회귀망. 종전 2판은 프로젝트 **목록**으로 "대상이 올지"를 추론했는데
+    //   ①`syncing` 은 렌더 시점 캡처값이라 콜드 스타트에서 항상 false 라 가드가 발화하지 않았고
+    //   ②목록은 page_size=20 으로 잘려 오고 실패 시 조용히 비어 "목록에 없음=삭제"가 거짓이었다.
+    //   지금은 목록을 아예 보지 않는다 — 기다려 보고 판정한다.
+    //   ★이 케이스는 주소 없이 만든 프로젝트(setProject 를 address 없이 호출)와, 21번째 이후라
+    //   목록에 안 잡히는 프로젝트, 동기화 실패를 **한꺼번에** 덮는다.
+    vi.useFakeTimers();
+    try {
+      act(() => {
+        useProjectContextStore.setState({ projectId: "p-2", siteAnalysis: null });
+      });
+      render(<SatongMapShell locale="ko" defaultCollapsed />);
+
+      // 유예 전 — 아직 접힘(복원이 올 수도 있으므로 성급히 펼치지 않는다).
+      expect(screen.getByRole("button", { name: /지도 열기/ })).toBeInTheDocument();
+
+      act(() => {
+        vi.advanceTimersByTime(2_000);
+      });
+
+      expect(screen.getByRole("heading", { name: "통합 필지 입력" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /지도 열기/ })).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("★모바일 IA P1: 접힌 뒤 대상이 사라지면 다시 펼친다 — 입력이 접힌 채 갇히지 않는다", () => {
+    // ★이 케이스가 1회 래치(ref)를 철회하게 만든 근거다. 래치가 있으면 "대상 있음"으로 확정된
+    //   뒤 **프로젝트 연결을 해제**해도(clearProject → siteAnalysis null) 접힌 채 남아, 이 수정이
+    //   없애려던 "할 게 없는 화면"으로 되돌아간다. 펼침이 (이 마운트 수명 안에서) 단방향이라
+    //   래치가 막을 사용자 조작도 애초에 없었다.
+    //   ※ "필지를 전부 지우는" 경로는 여기 해당하지 않는다 — clearParcels 는 parcels 만 비우고
+    //     address 를 보존하므로 hasTarget 이 계속 참이다(R1 지적 MEDIUM: 초판 주석의 인과 오기).
+    seedTarget();
+    render(<SatongMapShell locale="ko" defaultCollapsed />);
+    expect(screen.getByRole("button", { name: /지도 열기/ })).toBeInTheDocument();
+
+    act(() => {
+      useProjectContextStore.setState({ siteAnalysis: null });
+    });
+
+    expect(screen.getByRole("heading", { name: "통합 필지 입력" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /지도 열기/ })).not.toBeInTheDocument();
+  });
+
   it("★모바일 IA P0: 접힌 셸의 유일 진입점 \"지도 열기\"는 44px 터치 타깃 하한을 지킨다", () => {
+    seedTarget();
     render(<SatongMapShell locale="ko" defaultCollapsed />);
 
     const openButton = screen.getByRole("button", { name: /지도 열기/ });
