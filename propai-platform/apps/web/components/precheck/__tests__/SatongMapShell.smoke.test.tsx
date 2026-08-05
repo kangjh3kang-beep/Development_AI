@@ -31,10 +31,16 @@ const { capturedMapPropsRef } = vi.hoisted(() => ({
 
 vi.mock("next/dynamic", () => ({
   default: () => {
-    const DynamicStub = (props: { onPickMany?: (parcels: unknown[]) => void }) => {
+    const DynamicStub = (props: {
+      onPickMany?: (parcels: unknown[]) => void;
+      topRightSlot?: React.ReactNode;
+    }) => {
       // eslint-disable-next-line react-hooks/immutability -- 테스트 전용 스텁: 지도 props(onPickMany)를 캡처해 가드 통합테스트에서 직접 호출하기 위한 의도적 렌더 부작용
       capturedMapPropsRef.current = props;
-      return <div data-testid="dynamic-map-stub" />;
+      // ★topRightSlot 을 실제로 렌더한다(모바일 IA P2) — 셸이 소유한 지도 오버레이(레이어 레일·
+      //   팝오버 3종)가 여기로 넘어오므로, 렌더하지 않으면 그 안의 버튼들은 어떤 테스트에도
+      //   잡히지 않는다. 44px 하한을 **렌더 기반**으로 잠그려면 이 슬롯이 살아 있어야 한다.
+      return <div data-testid="dynamic-map-stub">{props.topRightSlot}</div>;
     };
     return DynamicStub;
   },
@@ -294,6 +300,67 @@ describe("SatongMapShell 모바일 IA(P0) — 입력 우선 배치", () => {
     const ORDER_UTIL = /(?:^|\s)-?(?:[a-z0-9-]+:)*-?order-(?:none|first|last|\d+|\[[^\]]*\])(?=\s|$)/;
     expect(intake.className).not.toMatch(ORDER_UTIL);
     expect(map.className).not.toMatch(ORDER_UTIL);
+  });
+});
+
+// ── 모바일 IA P2: 44px 터치 타깃 하한 — **파일 단위 전수 불변식** ──
+//   ★목록형("이 버튼과 저 버튼을 고쳤다")이 아니라 **렌더된 버튼을 전부 훑는** 형태다.
+//   이 파일은 raw <button> 을 많이 쓰는데 일부만 min-h-11 을 갖고 있었다 — 그 "부분 적용"
+//   상태가 문제의 본체였고(P0 에서 진입점 하나, P2 에서 다섯 곳), 목록형으로 잠그면 **다음에
+//   추가되는 버튼이 또 조용히 빠진다**. packages/ui 의 44px 계약 테스트는 프리미티브
+//   `<Button>` 만 렌더하므로 raw <button> 에는 닿지 않는다(그 스코프 밖).
+//   ★소스 grep 이 아니라 **실제 렌더 결과의 class** 를 본다(이 저장소 교훈: 소스 검사는
+//   주석처리·문자열 변이에 뚫린다).
+describe("SatongMapShell 모바일 IA(P2) — 44px 터치 타깃 전수 불변식", () => {
+  /**
+   * 44px(=Tailwind 스케일 11) 하한을 만족하는 형태인지 판정한다.
+   *
+   * ★첫 판은 `min-h-11` 과 `h-N` 만 봐서 **위양성 18건**을 냈다 — `size-12`(48px)·`min-h-12`(48px)
+   *   처럼 하한을 **넘는** 표기를 위반으로 신고했다. 가드가 정상 코드를 막는 것도 결함이다
+   *   (이 캠페인에서 `min-h-36` 등가 표기를 거짓 실패시킨 것과 같은 클래스 — 두 번째다).
+   *   그래서 세로 크기를 주는 유틸을 **전부** 받고 값으로 비교한다: `h-` / `min-h-` / `size-`,
+   *   스케일(1=0.25rem=4px)과 임의값(px/rem) 양쪽.
+   */
+  function meetsTouchFloor(el: HTMLElement): boolean {
+    const cls = el.className ?? "";
+    const FLOOR_PX = 44;
+    // 스케일 표기: h-11 / min-h-12 / size-12 …
+    for (const m of cls.matchAll(/(?:^|\s)(?:min-)?(?:h|size)-(\d+(?:\.\d+)?)(?=\s|$)/g)) {
+      if (Number(m[1]) * 4 >= FLOOR_PX) return true;
+    }
+    // 임의값 표기: h-[44px] / min-h-[3rem] / size-[48px] …
+    for (const m of cls.matchAll(/(?:^|\s)(?:min-)?(?:h|size)-\[(\d+(?:\.\d+)?)(px|rem)\](?=\s|$)/g)) {
+      if ((m[2] === "rem" ? Number(m[1]) * 16 : Number(m[1])) >= FLOOR_PX) return true;
+    }
+    return false;
+  }
+
+  it("★펼친 셸에서 렌더되는 모든 raw 버튼이 44px 하한을 지킨다", () => {
+    render(<SatongMapShell locale="ko" />);
+
+    const buttons = Array.from(document.querySelectorAll("button"));
+    // 공허 진리 방지 — 셸이 제대로 렌더되지 않아 버튼이 없으면 "위반 0"이 참이 되어 무의미하다.
+    expect(buttons.length, "셸이 렌더되지 않아 검사할 버튼이 없다").toBeGreaterThan(5);
+
+    const violations = buttons
+      .filter((b) => !meetsTouchFloor(b))
+      .map((b) => `${b.getAttribute("aria-label") ?? b.textContent?.trim()?.slice(0, 20)} :: ${b.className.slice(0, 90)}`);
+
+    expect(violations, `44px 미달 버튼:\n${violations.join("\n")}`).toHaveLength(0);
+  });
+
+  it("★지도 오버레이 팝오버의 닫기 버튼도 하한을 지킨다 — 지도 위라 오조작이 지도 클릭으로 샌다", () => {
+    render(<SatongMapShell locale="ko" />);
+
+    // 레이어 레일에서 베이스맵 팝오버를 연다(오버레이는 topRightSlot 으로 지도 스텁 안에 렌더된다).
+    const railButton = screen.getByRole("button", { name: "베이스맵 선택" });
+    fireEvent.click(railButton);
+
+    const closeButton = screen.getByRole("button", { name: "베이스맵 닫기" });
+    expect(
+      meetsTouchFloor(closeButton),
+      `팝오버 닫기 버튼이 44px 미달이다: ${closeButton.className}`,
+    ).toBe(true);
   });
 });
 

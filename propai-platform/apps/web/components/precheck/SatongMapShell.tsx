@@ -2950,7 +2950,10 @@ export function SatongMapShell({
               type="button"
               onClick={closeBasemapPanel}
               aria-label="베이스맵 닫기"
-              className="grid size-8 place-items-center rounded-xl border border-[var(--border-muted)] bg-[var(--surface-panel)] text-[var(--text-secondary)] transition hover:bg-[var(--surface-strong)]"
+              /* ★모바일 IA P2 — size-8(32px)은 44px 터치 타깃 하한 미달이었다. 지도 위 팝오버라
+                 빗나간 탭이 지도 클릭으로 새므로 정확도가 특히 중요하다. grid+place-items-center
+                 라 min-h/min-w 를 더해도 아이콘은 가운데 그대로다(시각 변화는 상자 크기뿐). */
+              className="grid size-8 min-h-11 min-w-11 place-items-center rounded-xl border border-[var(--border-muted)] bg-[var(--surface-panel)] text-[var(--text-secondary)] transition hover:bg-[var(--surface-strong)]"
             >
               <X className="size-4" aria-hidden />
             </button>
@@ -2993,7 +2996,9 @@ export function SatongMapShell({
                   type="button"
                   onClick={() => toggleLayerEnabled(activeLayer.id)}
                   aria-pressed={enabledLayers.has(activeLayer.id)}
-                  className={`rounded-xl border px-3 py-1.5 text-xs font-black transition ${
+                  /* ★모바일 IA P2 — py-1.5+text-xs ≈ 28px 로 44px 하한 미달이었다.
+                     inline-flex+items-center 로 라벨을 세로 가운데 고정한 뒤 히트 영역만 넓힌다. */
+                  className={`inline-flex min-h-11 items-center rounded-xl border px-3 py-1.5 text-xs font-black transition ${
                     enabledLayers.has(activeLayer.id)
                       ? "border-[var(--accent-strong)] bg-[var(--accent-strong)] text-[var(--on-primary)]"
                       : "border-[var(--border-muted)] bg-[var(--surface-panel)] text-[var(--text-secondary)] hover:border-[var(--accent-strong)]/40 hover:text-[var(--accent-strong)]"
@@ -3006,7 +3011,9 @@ export function SatongMapShell({
               <button
                 type="button"
                 onClick={closeLayerPanel}
-                className="rounded-full p-2 text-[var(--text-hint)] transition hover:bg-[var(--surface-muted)] hover:text-[var(--text-primary)]"
+                /* ★모바일 IA P2 — p-2(8px) + 아이콘 16px = 32px 라 44px 하한 미달이었다.
+                   inline-grid + place-items-center 로 아이콘을 가운데 고정한 뒤 히트 영역만 넓힌다. */
+                className="inline-grid min-h-11 min-w-11 place-items-center rounded-full p-2 text-[var(--text-hint)] transition hover:bg-[var(--surface-muted)] hover:text-[var(--text-primary)]"
                 aria-label="레이어 설정 닫기"
               >
                 <X className="size-4" aria-hidden />
@@ -3096,7 +3103,8 @@ export function SatongMapShell({
             <button
               type="button"
               onClick={() => setDetailFeature(null)}
-              className="rounded-full p-2 text-[var(--text-hint)] transition hover:bg-[var(--surface-muted)] hover:text-[var(--text-primary)]"
+              /* ★모바일 IA P2 — 위 두 닫기 버튼과 동일(32px → 44px 히트 영역). */
+              className="inline-grid min-h-11 min-w-11 shrink-0 place-items-center rounded-full p-2 text-[var(--text-hint)] transition hover:bg-[var(--surface-muted)] hover:text-[var(--text-primary)]"
               aria-label="필지 상세 닫기"
             >
               <X className="size-4" aria-hidden />
@@ -3507,7 +3515,9 @@ export function SatongMapShell({
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[var(--border-muted)] bg-[var(--surface-strong)] px-3 py-3 text-xs font-black text-[var(--text-primary)] transition hover:border-[var(--accent-strong)]/40 hover:bg-[var(--accent-strong)]/10"
+                /* ★모바일 IA P2 — py-3+text-xs ≈ 40px 로 44px 하한에 살짝 못 미쳤다(진단서 목록엔
+                   없던 건 — 전수 불변식이 찾아냈다). */
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-[var(--border-muted)] bg-[var(--surface-strong)] px-3 py-3 text-xs font-black text-[var(--text-primary)] transition hover:border-[var(--accent-strong)]/40 hover:bg-[var(--accent-strong)]/10"
               >
                 {uploadStatus === "loading" ? (
                   <Loader2 className="size-4 animate-spin" aria-hidden />
@@ -3519,7 +3529,9 @@ export function SatongMapShell({
               <button
                 type="button"
                 onClick={handleTemplateDownload}
-                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[var(--border-muted)] bg-[var(--surface-strong)] px-3 py-3 text-xs font-black text-[var(--text-primary)] transition hover:bg-[var(--surface-muted)]"
+                /* ★모바일 IA P2 — py-3+text-xs ≈ 40px 로 44px 하한에 살짝 못 미쳤다(진단서 목록엔
+                   없던 건 — 전수 불변식이 찾아냈다). */
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-[var(--border-muted)] bg-[var(--surface-strong)] px-3 py-3 text-xs font-black text-[var(--text-primary)] transition hover:bg-[var(--surface-muted)]"
               >
                 <Download className="size-4" aria-hidden />
                 양식 다운로드
@@ -3542,7 +3554,9 @@ export function SatongMapShell({
                   <button
                     type="button"
                     onClick={cancelExcelUpload}
-                    className="rounded-full border border-[var(--border-muted)] bg-[var(--surface-strong)] px-3 py-1 text-[11px] font-black text-[var(--text-secondary)] transition hover:border-[var(--status-error)]/40 hover:text-[var(--status-error)]"
+                    /* ★모바일 IA P2 — py-1+text-[11px] ≈ 24px 로 이 파일에서 가장 작았다.
+                       업로드가 최대 180초 도는 동안 **유일한 중단 수단**이라 놓치면 3분을 기다린다. */
+                    className="inline-flex min-h-11 shrink-0 items-center rounded-full border border-[var(--border-muted)] bg-[var(--surface-strong)] px-3 py-1 text-[11px] font-black text-[var(--text-secondary)] transition hover:border-[var(--status-error)]/40 hover:text-[var(--status-error)]"
                   >
                     업로드 취소
                   </button>
@@ -3859,7 +3873,9 @@ export function SatongMapShell({
               <button
                 type="button"
                 onClick={() => setIsOutputDockOpen((value) => !value)}
-                className="rounded-full border border-[var(--border-muted)] bg-[var(--surface-strong)] px-3 py-2 text-xs font-black text-[var(--text-primary)] transition hover:bg-[var(--surface-muted)]"
+                /* ★모바일 IA P2 — py-2+text-xs ≈ 32px 로 미달이었다(진단서 목록 밖 — 전수 불변식 적발).
+                   산출물 독을 여닫는 유일한 토글이라 놓치면 산출물 목록에 접근할 수 없다. */
+                className="inline-flex min-h-11 shrink-0 items-center rounded-full border border-[var(--border-muted)] bg-[var(--surface-strong)] px-3 py-2 text-xs font-black text-[var(--text-primary)] transition hover:bg-[var(--surface-muted)]"
               >
                 {isOutputDockOpen ? "접기" : "열기"}
               </button>
