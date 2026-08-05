@@ -107,17 +107,43 @@ describe("플로팅 레이어 서열 — AI 버튼은 네비/모달 아래에 �
     render(<AIAssistant />);
     fireEvent.click(screen.getByRole("button", { name: /AI 어시스턴트 열기/ }));
 
-    const scroller = document.querySelector('[class*="max-h-[calc(100dvh"]');
-    expect(scroller, "대화 패널의 뷰포트 기반 높이 상한을 찾지 못했다").not.toBeNull();
+    // ★대상을 "스크롤되는 대화 영역"으로 못 박는다(R1 지적 L3) — 종전엔 문서 전체에서 max-h
+    //   문자열만 찾아, 상한이 엉뚱한 장식용 div 로 옮겨가도 통과했다.
+    const scroller = document.querySelector(".overflow-y-auto[class*='max-h-[calc(100dvh']");
+    expect(scroller, "대화 스크롤 영역에서 뷰포트 기반 높이 상한을 찾지 못했다").not.toBeNull();
     // 헤더 띠를 실제로 빼고 있는지까지 확인한다(임의의 max-h 로 때우는 변경을 막는다).
     expect(scroller!.getAttribute("class")).toContain("--app-header-offset");
   });
 
-  it("★본문 최상단 레이어보다는 위에 있다 — 강등이 과해 콘텐츠에 묻히면 안 된다", () => {
+  it("★상한의 짝: 대화 영역에는 하한도 있어야 한다 — 짧은 뷰포트에서 0px로 붕괴 금지", () => {
+    // ★이 케이스가 없으면 상한만 단독으로 존재해도 위 테스트가 통과한다. 실제로 초판이 그랬고,
+    //   감산량이 388px 고정(= --app-header-offset 6.25rem + 18rem)이라 dvh 390px(폰 가로모드)에서
+    //   대화 영역이 2px, 388px 이하에서 0px 로 붕괴했다 — 답변이 한 글자도 안 보이는 상태다.
+    //   "상한을 걸었다"가 곧 "안전하다"가 아니라는 것을 이 하한 단언이 잠근다.
+    render(<AIAssistant />);
+    fireEvent.click(screen.getByRole("button", { name: /AI 어시스턴트 열기/ }));
+
+    const scroller = document.querySelector(".overflow-y-auto[class*='max-h-[calc(100dvh']");
+    expect(scroller, "대화 스크롤 영역을 찾지 못했다").not.toBeNull();
+    const cls = scroller!.getAttribute("class") ?? "";
+
+    // min-h-[Nrem|Npx] 가 실제로 붙어 있고, 그 값이 0 이 아님을 확인한다(min-h-0 은 하한이 아니다).
+    const min = cls.match(/(?:^|\s)min-h-\[(\d+(?:\.\d+)?)(rem|px)\]/);
+    expect(min, `대화 영역에 높이 하한(min-h-[N])이 없다: "${cls}"`).not.toBeNull();
+    const px = min![2] === "rem" ? Number(min![1]) * 16 : Number(min![1]);
+    expect(px, `하한이 ${px}px 로 너무 낮다 — 메시지 한 줄도 안 보인다`).toBeGreaterThanOrEqual(96);
+  });
+
+  it("★본문 일반 레이어보다는 위에 있다 — 강등이 과해 콘텐츠에 묻히면 안 된다", () => {
     const fab = fabContainerZ();
 
-    // 본문에서 가장 높은 층은 z-[70](AuctionWorkspace·CadBimIntegrationPanel 오버레이).
+    // 본문 **일반** 레이어의 최상단은 z-[70](AuctionWorkspace·CadBimIntegrationPanel 오버레이).
     // 이 하한이 없으면 "네비 아래로 내린다"는 요구를 z-0 으로도 만족시켜 버튼이 사라진다.
+    // ★"본문 전체 위"는 아니다(R1 지적 H1 — 초판 주석의 사실오기 정정): 사통맵 지도 오버레이
+    //   (SatongMapShell 팝오버 z-[430]·레이어 레일 z-[420]·lib/satong-map-z.ts SATONG_UI_Z 380~500)
+    //   는 지도 래퍼가 스태킹 컨텍스트를 만들지 않아 루트에서 경쟁하므로 이 버튼보다 위에 온다.
+    //   지도 위에서는 지도 컨트롤이 이기는 편이 옳아 의도된 서열로 두며, 근원 봉합(래퍼 isolate)은
+    //   풀스크린 경로 회귀 위험 때문에 별도 PR 대상이다.
     expect(fab).toBeGreaterThan(70);
   });
 });
