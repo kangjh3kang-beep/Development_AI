@@ -9,7 +9,7 @@ import { apiClient } from "@/lib/api-client";
 import { getCachedAnalysis, setCachedAnalysis, TTL_30D, TTL_7D, TTL_3D } from "@/lib/analysis-fetch-cache";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import {
-  DEVELOPABILITY_LABEL,
+  developabilityText,
   resolveFarPct,
   resolveBcrPct,
   specialFactorLabels,
@@ -1244,7 +1244,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
                                       {metrics.length > 0 && <span>{metrics.join(" · ")}</span>}
                                       {isSpecial && p.special_parcel?.developability && (
                                         <span className="rounded-full bg-[color-mix(in_srgb,var(--status-warning)_12%,transparent)] px-1.5 py-0.5 font-black text-[var(--status-warning)]">
-                                          특이 · {DEVELOPABILITY_LABEL[p.special_parcel.developability] ?? p.special_parcel.developability}
+                                          특이 · {developabilityText(p.special_parcel.developability)}
                                         </span>
                                       )}
                                       {p.status && p.status !== "ok" && (
@@ -1280,7 +1280,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
                     <Icons.AlertCircle />
                     특이부지{specialParcel.factors.length > 0 ? ` · ${specialParcel.factors.join(" · ")}` : ""}
                     {specialParcel.developability && (
-                      <span className="normal-case tracking-normal"> — {DEVELOPABILITY_LABEL[specialParcel.developability] ?? specialParcel.developability}</span>
+                      <span className="normal-case tracking-normal"> — {developabilityText(specialParcel.developability)}</span>
                     )}
                   </p>
                   {specialParcel.honest && (

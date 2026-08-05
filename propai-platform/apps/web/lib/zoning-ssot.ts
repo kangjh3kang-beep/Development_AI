@@ -588,3 +588,25 @@ export function developabilityLabel(code?: string | null): { text: string; known
   const label = DEVELOPABILITY_LABEL[key];
   return label ? { text: label, known: true } : { text: key, known: false };
 }
+
+/**
+ * 화면에 **그대로 넣을 수 있는** 개발가능성 문자열.
+ *
+ * ★왜 필요한가(2026-08-05 실측): 소비처 여러 곳이 `DEVELOPABILITY_LABEL[code] ?? code` 로
+ *   맵을 직접 뒤지고 있었다. 지금은 맵이 등급 전부를 덮어 누수가 없지만, **등급이 하나만
+ *   늘어도 그 순간 여러 화면이 동시에 `NEEDS_OFFICIAL_SURVEY` 같은 원시 코드를 뿌린다.**
+ *   같은 폴백 문장을 소비처마다 다시 쓰게 두지 않으려고 여기 한 곳에 둔다.
+ *
+ * 미등재 코드는 이름을 지어내지 않되 원문만 던지지도 않는다 — "(설명 준비 중)"을 붙여
+ * **아직 설명이 준비되지 않았다는 사실**을 함께 말한다(무날조 + 정직 표기).
+ *
+ * ※`severity_label` 같은 **백엔드가 준 다른 한국어 라벨로 폴백하는 소비처**는 이 함수를
+ *   쓰지 않아도 된다(land-profile·PermitAiWorkspaceClient·AutoZoningBadge). 그쪽은 미등재
+ *   시 원시 코드가 아니라 더 구체적인 문구로 떨어지므로 이미 안전하다 — 바꾸면 오히려
+ *   덜 구체적인 문구가 된다.
+ */
+export function developabilityText(code?: string | null): string {
+  const { text, known } = developabilityLabel(code);
+  if (!text) return "";
+  return known ? text : `${text} (설명 준비 중)`;
+}

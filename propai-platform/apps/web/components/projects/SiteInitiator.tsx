@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { AlertTriangle } from "lucide-react";
 import { GlobalAddressSearch, type AddressEntry } from "@/components/common/GlobalAddressSearch";
 import { apiClient } from "@/lib/api-client";
-import { DEVELOPABILITY_LABEL, specialFactorLabels } from "@/lib/zoning-ssot";
+import { developabilityText, specialFactorLabels } from "@/lib/zoning-ssot";
 
 const Icons = {
   Search: () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>,
@@ -208,7 +208,7 @@ export function SiteInitiator({ onInitiate, loading }: SiteInitiatorProps) {
                               <p className="inline-flex flex-wrap items-center gap-1 text-[11px] font-bold text-[var(--status-warning)]">
                                 <AlertTriangle className="size-3" aria-hidden />특이부지{zoningPreview.special.factors.length > 0 ? ` · ${zoningPreview.special.factors.join(" · ")}` : ""}
                                 {zoningPreview.special.developability && (
-                                  <span className="font-semibold"> — {DEVELOPABILITY_LABEL[zoningPreview.special.developability] ?? zoningPreview.special.developability}</span>
+                                  <span className="font-semibold"> — {developabilityText(zoningPreview.special.developability)}</span>
                                 )}
                               </p>
                               {zoningPreview.special.honest && (

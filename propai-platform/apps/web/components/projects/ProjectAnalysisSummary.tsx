@@ -19,7 +19,7 @@ import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient } from "@/lib/api-client";
 import { getCachedAnalysis, setCachedAnalysis, TTL_7D } from "@/lib/analysis-fetch-cache";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
-import { DEVELOPABILITY_LABEL, specialFactorLabels } from "@/lib/zoning-ssot";
+import { developabilityText, specialFactorLabels } from "@/lib/zoning-ssot";
 import { verifyLedger } from "@/lib/analysis-ledger";
 import { SiteScoreCard } from "@/components/projects/SiteScoreCard";
 import { BuildableEnvelopeCard } from "@/components/projects/BuildableEnvelopeCard";
@@ -476,7 +476,7 @@ export function ProjectAnalysisSummary({ locale }: { locale?: string }) {
           <Section title={`${nextNo()}. 특이부지 검토(정직고지)`} dataSource={site?.dataSource} fetchedAt={site?.fetchedAt}>
             <DataField
               label="개발 가능성"
-              value={sp.developability ? (DEVELOPABILITY_LABEL[sp.developability] ?? sp.developability) : null}
+              value={sp.developability ? developabilityText(sp.developability) : null}
               accent
             />
             <DataField
