@@ -226,7 +226,12 @@
 //        표시 정직화는 stale 캐시가 남으면 **거짓이 계속 보이는** 상태가 유지된다.
 //        #552(R3 적대검증 — 가짜 골든 정직화·근원 불변식)도 같은 배포 구간(백엔드).
 //        ★채번: origin/main 실제 상수 v485 확인 → v486. PR 생성 前 보드 claim 선점(4회차).
-const CACHE_NAME = "propai-v486-ratio-sweep";
+// v487: 면적·금액 **0 정책 확정**(#555) — 원장량은 "미확보"라고 말하고, 빠진 필지를 숨기지
+//        않는다(formatters + comprehensive_analysis_service). ★비율에서 세운 "0과 미확보를
+//        같은 기호로 쓰지 않는다"(#530 v481 → #541 v483 → #551 v486)를 **면적·금액 계열로
+//        확장**한 건이다. 표시 정직화라 stale 캐시가 남으면 거짓이 계속 보인다.
+//        ★채번: origin/main 실제 상수 v486 확인 → v487. PR 생성 前 보드 claim 선점(5회차).
+const CACHE_NAME = "propai-v487-zero-policy";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
