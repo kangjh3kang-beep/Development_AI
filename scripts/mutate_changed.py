@@ -120,6 +120,26 @@ def _changed_files(base: str) -> list[Path]:
     return out
 
 
+def _docstring_line_nos(path: Path) -> set[int]:
+    """파일의 **문자열/독스트링 내부** 줄 번호. 그 안의 문장은 코드가 아니라 설명이다.
+
+    ★전수 감사에서 오탐이 여럿 나왔다 — 독스트링에 적어 둔 설명 문장을 "문자열 변경"
+    변이로 잡아, 진짜 구멍이 소음에 묻혔다. `tokenize` 로 정확히 걸러 낸다.
+    """
+    import io
+    import tokenize
+
+    out: set[int] = set()
+    try:
+        src = path.read_text(encoding="utf-8")
+        for tok in tokenize.generate_tokens(io.StringIO(src).readline):
+            if tok.type == tokenize.STRING and tok.end[0] > tok.start[0]:
+                out.update(range(tok.start[0], tok.end[0] + 1))
+    except Exception:  # noqa: BLE001 — 걸러 내기 실패는 소음만 늘릴 뿐 결과를 왜곡하지 않는다
+        return set()
+    return out
+
+
 def _added_lines(base: str, path: Path) -> list[tuple[int, str]]:
     """`path` 에서 이 브랜치가 **추가한** 줄만. 기존 코드를 망가뜨려 소음을 내지 않는다."""
     diff = subprocess.run(
@@ -184,7 +204,10 @@ def main() -> int:
 
     muts: list[Mutation] = []
     for f in files:
+        skip = _docstring_line_nos(f)
         for no, line in _added_lines(args.base, f):
+            if no in skip:
+                continue      # 여러 줄 문자열(독스트링) 내부 — 코드가 아니다
             muts.extend(_mutations_for_line(f, line, no))
     muts = muts[: args.max]
 

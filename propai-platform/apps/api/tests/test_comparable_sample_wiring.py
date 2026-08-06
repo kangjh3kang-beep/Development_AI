@@ -492,6 +492,10 @@ def test_cross_check_note_does_not_claim_unused_comparables() -> None:
     assert b_wo and b_w, "신뢰도 근거가 비었다 — 아래 검사가 공허해진다"
     assert "실거래 가중" not in b_wo, f"근거 표기가 안 쓴 것을 썼다고 말한다: {b_wo}"
     assert "실거래 가중" in b_w, f"근거 표기가 쓴 것을 빠뜨렸다: {b_w}"
+    # ★전수 감사 적발 — 부분 문자열만 보면 나머지 문구가 깨져도 통과한다.
+    #   CV 값은 입력에 따라 달라지므로 **꼬리 문장**을 고정한다.
+    assert b_wo.endswith("→ 신뢰도 = 1 − CV×3(하한 0.4) · 실거래 사례 미확보"), b_wo
+    assert b_w.endswith("→ 신뢰도 = 1 − CV×3(하한 0.4)"), b_w
 
     # ★같은 응답 안에서 두 문구가 서로 모순되지 않아야 한다(라이브에서 실제로 모순이었다).
     wn = without.get("weight_note") or ""
@@ -623,6 +627,109 @@ def _run_land_stats_assertions(fake_stats, common, nm_mod, _FakeNearby) -> None:
     assert without.get("land_market_stats_note") is None
 
 
+def test_lookup_failure_path_says_why_and_is_actually_exercised() -> None:
+    """★★전수 감사 적발 — **예외 경로가 어떤 테스트에도 안 걸려 있었다**.
+
+    `except Exception` 안의 사유 문구·`comparable_basis = None` 을 전부 지워도 통과했다
+    (`scripts/mutate_changed.py` 세션 전수 감사). MOLIT·지오코더 장애가 정확히 이 경로인데,
+    그때 사용자가 무엇을 보는지 아무도 확인하지 않고 있었다.
+
+    ★두 모집단을 가른다 — 조회가 **실패한** 경우와 **성공했지만 표본 0** 인 경우가 서로
+    다른 문구를 내야 한다(둘이 같으면 사용자는 "거래가 없다"로 오독한다).
+    """
+    import asyncio
+    from unittest.mock import patch
+
+    from app.services.external_api import vworld_service as vw_mod
+    from app.services.land_intelligence import desk_appraisal_service as mod
+    from app.services.land_intelligence import nearby_map_service as nm_mod
+
+    class _FakeVWorld:
+        async def geocode_address(self, *_a, **_k):
+            return {}
+
+        async def get_land_characteristics(self, *_a, **_k):
+            return {"zone_type": "제2종일반주거지역"}
+
+    class _Boom:
+        async def build(self, **_k):
+            raise RuntimeError("MOLIT 장애 시뮬레이션")
+
+    class _Empty:
+        async def build(self, **_k):
+            return {
+                "categories": {"land_trade": {"groups": [], "sample_basis": {
+                    "scope": "radius", "radius_applied": True, "radius_m": 1500,
+                    "located_count": 0, "approximate_count": 0, "unlocated_count": 0,
+                    "capped_count": 0,
+                }}},
+                "land_dong_stats": None,
+            }
+
+    common = dict(pnu="1168010800100010001", address="", area_sqm=500.0,
+                  official_price_per_sqm=15_000_000)
+
+    with patch.object(vw_mod, "VWorldService", _FakeVWorld):
+        with patch.object(nm_mod, "NearbyMapService", _Boom):
+            failed = asyncio.run(mod.desk_appraisal(**common))
+        with patch.object(nm_mod, "NearbyMapService", _Empty):
+            empty = asyncio.run(mod.desk_appraisal(**common))
+
+    fail_note = failed.get("comparable_skipped_reason") or ""
+    empty_note = empty.get("comparable_skipped_reason") or ""
+
+    # ★★부분 문자열만 보면 나머지가 깨져도 통과한다(전수 감사에서 마지막 문장이 생존).
+    #   사용자가 읽는 문장이므로 **전문을 리터럴로** 잠근다.
+    assert fail_note == (
+        "실거래 자료를 불러오지 못해 거래사례비교법을 쓰지 못했습니다 — "
+        "이 지역에 거래가 없다는 뜻이 아니라 조회가 실패했다는 뜻입니다. "
+        "공시지가기준법 단독으로 산정했습니다."
+    ), fail_note
+    # ★두 모집단이 실제로 갈린다 — 같으면 이 검사가 아무것도 잠그지 못한다.
+    assert fail_note != empty_note, "실패와 표본 0 이 같은 문구를 낸다"
+    # 실패 경로에서는 근거도 남기지 않는다(값이 없으면 근거도 없다).
+    assert failed.get("comparable_basis") in (None, {}), failed.get("comparable_basis")
+
+
+def test_cross_check_wording_is_locked_by_literal() -> None:
+    """★★전수 감사 적발 — #568 에서 **조건만 잠그고 문구는 안 잠갔다**.
+
+    그때 "변이 3/3 CAUGHT" 라고 보고했지만, 내가 고른 변이가 전부 **조건 분기**였다.
+    문구 자체를 `"__MUTATED__"` 로 바꾸면 그대로 통과한다(전수 감사에서 생존).
+    사용자가 읽는 문장이므로 **리터럴로 잠근다**.
+    """
+    import asyncio
+    from unittest.mock import patch
+
+    from app.services.external_api import vworld_service as vw_mod
+    from app.services.land_intelligence import desk_appraisal_service as mod
+
+    class _FakeVWorld:
+        async def geocode_address(self, *_a, **_k):
+            return {}
+
+        async def get_land_characteristics(self, *_a, **_k):
+            return {"zone_type": "제2종일반주거지역"}
+
+    common = dict(pnu="1168010800100010001", address="", area_sqm=500.0,
+                  official_price_per_sqm=15_000_000)
+
+    with patch.object(vw_mod, "VWorldService", _FakeVWorld):
+        without = asyncio.run(mod.desk_appraisal(**common))
+        with_cmp = asyncio.run(mod.desk_appraisal(**common, comparable_avg_per_sqm=18_000_000))
+
+    note_wo = (without.get("cross_check") or {}).get("note") or ""
+    note_w = (with_cmp.get("cross_check") or {}).get("note") or ""
+
+    assert note_wo == (
+        "복수 시나리오(보정계수 변동) 교차검증 — 실거래 사례를 확보하지 못해 공시지가 "
+        "기준 경로만 비교했습니다. 편차(CV)가 낮을수록 추정 안정성↑."
+    ), note_wo
+    assert note_w == (
+        "복수 시나리오(보정계수·실거래 가중 분포) 교차검증. 편차(CV)가 낮을수록 추정 안정성↑."
+    ), note_w
+
+
 def test_every_skip_path_says_why() -> None:
     """★R6 리뷰(F-3) — "왜 거래사례비교를 안 썼는지"에 **침묵하는 갈래가 없어야** 한다.
 
@@ -646,6 +753,11 @@ def test_every_skip_path_says_why() -> None:
     assert "거래가 없" not in note, (
         f"조회를 못 한 것을 '거래가 없다'로 말하면 안 된다: {note}"
     )
+    # ★전수 감사 적발 — 존재·부정만 보면 문구가 깨져도 통과한다. 전문을 잠근다.
+    assert note == (
+        "대상지 필지번호(PNU)를 확정하지 못해 주변 실거래를 조회하지 못했습니다 — "
+        "공시지가기준법 단독으로 산정했습니다."
+    ), note
 
 
 def test_report_model_carries_the_skip_reason() -> None:
