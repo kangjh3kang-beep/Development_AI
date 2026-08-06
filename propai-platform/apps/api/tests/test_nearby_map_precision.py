@@ -33,11 +33,14 @@ from apps.api.app.services.land_intelligence import nearby_map_service as nm
 _PRECUT = nm._MAX_GEOCODE_GROUPS_PER_CAT  # 사전컷 상한(테스트가 상수를 재선언하지 않게)
 
 
-def _row(*, name: str, jibun: str, dong: str, price: int = 50000, day: int = 3) -> dict:
+def _row(*, name: str, jibun: str, dong: str, price: int = 50000, day: int = 3,
+         share: bool = False) -> dict:
     return {
         "building_name": name, "jibun": jibun, "dong": dong, "sigungu": "남구",
         "price_10k_won": price, "area_m2": 84.0, "floor": "5",
         "deal_date": f"2026년 7월 {day}일",
+        # ★2026-08-06 — 원천(`shareDealingType`)이 주는 지분거래 구분.
+        "share_dealing_type": "지분" if share else "",
     }
 
 
@@ -1740,6 +1743,60 @@ async def test_rent_groups_get_the_same_treatment_as_trade() -> None:
         f"전월세가 행 순서에 따라 갈린다 — 정상먼저={normal_first} 마스킹먼저={masked_first}"
     )
     assert normal_first[0] > 0, "두 순서 모두 표본 0 이면 이 비교는 공허하다"
+
+
+@pytest.mark.asyncio
+async def test_share_deals_are_counted_not_silently_mixed() -> None:
+    """★★2026-08-06 실측 — 지분거래가 표본에 몇 건 섞였는지 **셀 수 있어야** 한다.
+
+    원천 MOLIT 토지 매매는 `shareDealingType`("지분"/공백)으로 구분해 주는데, 우리 파서가
+    그 필드를 **읽지 않아** 지분과 일반이 한 통에 섞였고 아무도 그 사실을 알 수 없었다.
+
+    ★왜 중요한가(실측 3지역·30개월 3,113건): 지분/일반 단가 비가 **지역마다 방향까지
+    다르다** — 강남 0.27배 · 해운대 0.65배 · 포항북 2.14배. 섞인 채로 낸 대표값은
+    그것이 무엇인지 아무도 말할 수 없다.
+
+    ★왜 제외가 아니라 계측인가: 같은 (동·지번·금액·면적·날짜)가 최다 29회 반복되는데,
+    **중복 신고**인지 **한 필지를 여럿이 나눠 산 실제 지분거래**인지 구분할 수 없다.
+    구분할 수 없는 것을 지우면 실거래를 없앤다(무날조). 먼저 셀 수 있게 한다.
+
+    ★픽스처가 두 모집단을 가른다 — 지분 그룹과 일반 그룹이 **서로 다른 수**를 내야 한다
+    (둘이 같으면 배선이 끊겨도 통과한다).
+    """
+    rows = [
+        _row(name="래미안", jibun="736", dong="역삼동", price=50000, day=1, share=True),
+        _row(name="래미안", jibun="736", dong="역삼동", price=51000, day=2, share=True),
+        _row(name="래미안", jibun="736", dong="역삼동", price=52000, day=3, share=False),
+        _row(name="자이", jibun="820", dong="역삼동", price=53000, day=4, share=False),
+    ]
+    nm._BUILD_CACHE.clear()
+    svc = nm.NearbyMapService.__new__(nm.NearbyMapService)
+    svc.settings = None
+    svc.molit = _StubMolit(rows)
+    svc._geo_key = ""
+
+    async def _stub(queries):
+        return {q: {"lat": 36.0005, "lon": 129.0005} for q in queries if q}
+
+    svc._geocode_many = _stub  # type: ignore[assignment]
+    payload = await svc.build(address="경상북도 남구 역삼동 9-9", lawd_cd="47111",
+                              months=1, radius_m=1000,
+                              center_hint={"lat": 36.0, "lon": 129.0})
+    cat = payload["categories"]["apt_trade"]
+
+    by_name = {g["name"]: g for g in cat["groups"]}
+    assert "래미안" in by_name and "자이" in by_name, f"그룹이 없다: {list(by_name)}"
+    # ★두 모집단이 실제로 갈린다 — 같은 수면 이 검사가 공허해진다.
+    assert by_name["래미안"]["share_deal_count"] == 2, by_name["래미안"]
+    assert by_name["자이"]["share_deal_count"] == 0, by_name["자이"]
+    # sample_basis 까지 도달한다(타입에만 있고 안 흐르면 배선이 아니다).
+    assert cat["sample_basis"]["share_deal_count"] == 2
+
+    # ★도메인 객체까지 — 소비처가 실제로 읽는 층이다.
+    from app.services.market.comparable_sample import select_located_groups
+
+    _, basis = select_located_groups(cat)
+    assert basis.share_deal_count == 2, "sample_basis 는 채웠는데 도메인 객체가 못 읽는다"
 
 
 @pytest.mark.asyncio

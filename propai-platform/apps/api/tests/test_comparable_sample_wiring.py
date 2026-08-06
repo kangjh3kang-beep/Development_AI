@@ -498,6 +498,43 @@ def test_cross_check_note_does_not_claim_unused_comparables() -> None:
     assert "실거래 확보 시" in wn, f"weight_note 가 바뀌었다 — 이 대조를 갱신하라: {wn}"
 
 
+def test_molit_parser_preserves_share_dealing_type() -> None:
+    """★파서가 원천의 지분거래 구분을 **버리지 않는지** 실제 파서로 확인한다.
+
+    ★왜 이 테스트가 따로 필요한가: 상위 배선 테스트는 `_StubMolit` 을 써서 **파서를
+    우회**한다. 그래서 파서에서 이 필드를 지워도 전건 통과했다(변이 실증) —
+    이 저장소가 반복해 겪은 "배선 층 미변이"다.
+
+    ★원천 응답 형태는 라이브에서 확인했다(2026-08-06, 강남 202606):
+        {"umdNm":"역삼동","jibun":"6**","jimok":"도로",
+         "landUse":"제2종일반주거지역","dealAmount":"2,000","dealArea":3.31,
+         "shareDealingType":"지분"}
+    """
+    from integrations.molit_client import MolitClient
+
+    raw = {
+        "response": {"body": {"items": {"item": [
+            {"umdNm": "역삼동", "jibun": "6**", "jimok": "도로",
+             "landUse": "제2종일반주거지역", "dealAmount": "2,000", "dealArea": "3.31",
+             "dealYear": "2026", "dealMonth": "6", "dealDay": "10",
+             "estateAgentSggNm": "강남구", "shareDealingType": "지분"},
+            {"umdNm": "역삼동", "jibun": "7**", "jimok": "대",
+             "landUse": "제3종일반주거지역", "dealAmount": "50,000", "dealArea": "100",
+             "dealYear": "2026", "dealMonth": "6", "dealDay": "11",
+             "estateAgentSggNm": "강남구", "shareDealingType": ""},
+        ]}}}
+    }
+    client = MolitClient.__new__(MolitClient)
+    rows = client._parse_trade_items(raw, "land")
+    assert len(rows) == 2, f"파싱 건수가 다르다: {rows}"
+    # ★두 모집단이 갈린다 — 지분 행과 일반 행이 **서로 다른 값**을 내야 한다.
+    assert rows[0].get("share_dealing_type") == "지분", rows[0]
+    assert rows[1].get("share_dealing_type") == "", rows[1]
+    # 같은 응답에서 지목·용도지역도 살아 있어야 한다(층화의 재료).
+    assert rows[0].get("jimok") == "도로" and rows[1].get("jimok") == "대"
+    assert rows[0].get("land_use") == "제2종일반주거지역"
+
+
 def test_every_skip_path_says_why() -> None:
     """★R6 리뷰(F-3) — "왜 거래사례비교를 안 썼는지"에 **침묵하는 갈래가 없어야** 한다.
 
