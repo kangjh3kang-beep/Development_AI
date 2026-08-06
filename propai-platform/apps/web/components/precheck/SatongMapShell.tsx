@@ -3290,7 +3290,10 @@ export function SatongMapShell({
                   href={roadview}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="col-span-2 rounded-2xl border border-[var(--border-muted)] bg-[var(--surface-panel)] px-3 py-2 text-left text-xs font-black text-[var(--text-primary)] transition hover:border-[var(--accent-strong)]/40 hover:bg-[var(--accent-strong)]/10"
+                  /* ★모바일 IA P2(R2 봉합) — 바로 위 미니 퍼널 4종과 **같은 그리드**인데 이것만
+                     32px 로 남아 44/44/44/44 아래 32 한 행이 붙는 상태였다. 터치 타깃 하한에
+                     button/a 구분은 없다(불변식 셀렉터도 a[href] 로 넓혔다). */
+                  className="col-span-2 inline-flex min-h-11 flex-col justify-center rounded-2xl border border-[var(--border-muted)] bg-[var(--surface-panel)] px-3 py-2 text-left text-xs font-black text-[var(--text-primary)] transition hover:border-[var(--accent-strong)]/40 hover:bg-[var(--accent-strong)]/10"
                 >
                   <span className="inline-flex items-center gap-1">
                     <Route className="size-3.5" aria-hidden />카카오 로드뷰로 현장 보기 ↗

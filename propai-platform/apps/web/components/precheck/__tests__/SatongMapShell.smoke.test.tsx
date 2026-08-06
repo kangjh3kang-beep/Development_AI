@@ -311,6 +311,11 @@ describe("SatongMapShell 모바일 IA(P0) — 입력 우선 배치", () => {
 //   `<Button>` 만 렌더하므로 raw <button> 에는 닿지 않는다(그 스코프 밖).
 //   ★소스 grep 이 아니라 **실제 렌더 결과의 class** 를 본다(이 저장소 교훈: 소스 검사는
 //   주석처리·문자열 변이에 뚫린다).
+//   ★**경계**(무경계 주장 금지 — R2 지적): 이 스윕이 잠그는 것은 아래 렌더 상태에 한한다.
+//     ①빈 상태 ②레이어 팝오버 열림 ③베이스맵 팝오버 열림 ④필지 선택 + 상세 패널 열림.
+//     그 밖(업로드 진행 중·자식 섹션의 조회 완료 상태 등)은 여전히 무잠금이다 —
+//     "전수 불변식이 있으니 다 잡힌다"는 말은 **스윕한 상태의 수만큼만** 참이다.
+//   ★대상은 `button` 과 `a[href]` 둘 다다 — 터치 타깃 하한에 그 구분은 없다.
 describe("SatongMapShell 모바일 IA(P2) — 44px 터치 타깃 전수 불변식", () => {
   /**
    * 44px(=Tailwind 스케일 11) 하한을 만족하는 형태인지 판정한다.
@@ -338,7 +343,7 @@ describe("SatongMapShell 모바일 IA(P2) — 44px 터치 타깃 전수 불변�
   it("★펼친 셸에서 렌더되는 모든 raw 버튼이 44px 하한을 지킨다", () => {
     render(<SatongMapShell locale="ko" />);
 
-    const buttons = Array.from(document.querySelectorAll("button"));
+    const buttons = Array.from(document.querySelectorAll<HTMLElement>("button, a[href]"));
     // 공허 진리 방지 — 셸이 제대로 렌더되지 않아 버튼이 없으면 "위반 0"이 참이 되어 무의미하다.
     // ★하한이 헐거우면 이 PR 의 load-bearing 변경(스텁의 topRightSlot 렌더)이 되돌려져
     //   검사 범위가 22→8 로 64% 줄어도 통과한다(R1 실측). 실측 22 기준으로 조인다.
@@ -376,7 +381,7 @@ describe("SatongMapShell 모바일 IA(P2) — 44px 터치 타깃 전수 불변�
     render(<SatongMapShell locale="ko" />);
     fireEvent.click(screen.getByRole("button", { name: "용도지역" }));
 
-    const buttons = Array.from(document.querySelectorAll("button"));
+    const buttons = Array.from(document.querySelectorAll<HTMLElement>("button, a[href]"));
     // 공허 진리 방지 — 팝오버가 안 열렸으면 닫힌 상태를 다시 검사하는 것이라 의미가 없다.
     expect(
       screen.getByRole("button", { name: "레이어 설정 닫기" }),
@@ -388,6 +393,26 @@ describe("SatongMapShell 모바일 IA(P2) — 44px 터치 타깃 전수 불변�
       .map((b) => `${b.getAttribute("aria-label") ?? b.textContent?.trim()?.slice(0, 20)} :: ${b.className.slice(0, 90)}`);
 
     expect(violations, `44px 미달 버튼(팝오버 열림):\n${violations.join("\n")}`).toHaveLength(0);
+  });
+
+  it("★베이스맵 팝오버를 연 상태도 전수 검사한다 — 닫기 버튼만 보면 그 안의 옵션 칩이 무잠금이다", () => {
+    // ★R2 변이 M7 이 생존한 자리다. it.each 의 베이스맵 케이스는 **닫기 버튼 하나만** 단언하므로
+    //   팝오버 안 옵션 칩의 하한을 지워도 아무것도 죽지 않았다. 상태를 하나 더 스윕해 덮는다.
+    render(<SatongMapShell locale="ko" />);
+    fireEvent.click(screen.getByRole("button", { name: "베이스맵 선택" }));
+
+    // 공허 진리 방지 — 팝오버가 실제로 열렸는지 먼저 못 박는다.
+    expect(
+      screen.getByRole("button", { name: "베이스맵 닫기" }),
+      "베이스맵 팝오버가 열리지 않았다",
+    ).toBeInTheDocument();
+
+    const buttons = Array.from(document.querySelectorAll<HTMLElement>("button, a[href]"));
+    const violations = buttons
+      .filter((b) => !meetsTouchFloor(b))
+      .map((b) => `${b.getAttribute("aria-label") ?? b.textContent?.trim()?.slice(0, 24)} :: ${b.className.slice(0, 90)}`);
+
+    expect(violations, `44px 미달(베이스맵 팝오버 열림):\n${violations.join("\n")}`).toHaveLength(0);
   });
 
   it("★필지를 고른 상태 — 미니 산출물 퍼널·새 프로젝트 생성·자식 섹션 버튼까지 전수 검사한다", () => {
@@ -430,7 +455,7 @@ describe("SatongMapShell 모바일 IA(P2) — 44px 터치 타깃 전수 불변�
       "필지 상세 패널이 열리지 않았다(미니 산출물 퍼널·자식 섹션이 검사에서 빠진다)",
     ).toBeInTheDocument();
 
-    const buttons = Array.from(document.querySelectorAll("button"));
+    const buttons = Array.from(document.querySelectorAll<HTMLElement>("button, a[href]"));
     const violations = buttons
       .filter((b) => !meetsTouchFloor(b))
       .map((b) => `${b.getAttribute("aria-label") ?? b.textContent?.trim()?.slice(0, 24)} :: ${b.className.slice(0, 90)}`);

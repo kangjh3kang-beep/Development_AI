@@ -148,7 +148,11 @@ export function ParcelLayoutSection({
                     onClick={() => onSelectOption(key)}
                     aria-pressed={active}
                     data-testid={`parcel-layout-option-${key}`}
-                    className={`rounded-full border px-2 py-0.5 text-[10px] font-black transition ${
+                    /* ★모바일 IA P2(R2 봉합) — 위 조회 버튼과 **완전히 같은 치수**(px-2 py-0.5
+                       text-[10px] ≈ 18px)인데 미수정으로 남아 있었다. 조회 성공 뒤에만 렌더되는
+                       대안 칩이라 스윕 상태(idle)에 안 잡혔다 — "검사는 있는데 대상이 DOM 에
+                       없다"의 또 다른 사례. */
+                    className={`inline-flex min-h-11 items-center rounded-full border px-2 py-0.5 text-[10px] font-black transition ${
                       active
                         ? "border-[var(--accent-strong)] text-[var(--accent-strong)]"
                         : "border-[var(--border-muted)] text-[var(--text-hint)] hover:bg-[var(--surface-muted)]"
@@ -275,7 +279,9 @@ export function ParcelLayoutSection({
                 type="button"
                 data-testid="parcel-layout-seed-design"
                 onClick={() => onSeedDesign(selectedOption)}
-                className="w-full rounded-md border border-[var(--accent-strong)] bg-[var(--accent-strong)]/10 px-2 py-1.5 text-[11px] font-black text-[var(--accent-strong)] transition-colors hover:bg-[var(--accent-strong)]/20"
+                /* ★모바일 IA P2(R2 봉합) — py-1.5+text-[11px] ≈ 27px 미달. 설계엔진에 시드를
+                   넘기는 **상태 변경 액션**이라 오탭 비용이 크다. */
+                className="inline-flex min-h-11 w-full items-center justify-center rounded-md border border-[var(--accent-strong)] bg-[var(--accent-strong)]/10 px-2 py-1.5 text-[11px] font-black text-[var(--accent-strong)] transition-colors hover:bg-[var(--accent-strong)]/20"
               >
                 이 안으로 설계 시작 ({selectedOption.kind} {selectedOption.floors}층)
               </button>
