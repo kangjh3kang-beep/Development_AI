@@ -266,7 +266,12 @@
 //        누르기 어려운 상태가 유지된다(접근성 회귀 지속).
 //        모바일 IA 계열 4번째 범프: #561(v489 P0)·#563(v490 회귀봉합)·#566(v492 P1)·#570(v493 P2).
 //        ★채번: origin/main 실제 상수 v492 확인 → v493. PR 생성 前 보드 claim 선점(10회차).
-const CACHE_NAME = "propai-v493-touch-target";
+// v494: ①층위 사다리 계약(#573) — ContextHeader 승격이 **데스크톱 네비를 덮던 회귀** 봉합
+//        (WorkspaceNavBar·satong-map-z) ②토지 실거래 지분거래 카운트(#571·백엔드).
+//        ★#573 은 z-index 층위 회귀라 stale 캐시가 남으면 **네비가 계속 가려진다** —
+//        모바일 IA 계열(#561·#563·#566·#570)에 이은 5번째 레이아웃 범프.
+//        ★채번: origin/main 실제 상수 v493 확인 → v494. PR 생성 前 보드 claim 선점(11회차).
+const CACHE_NAME = "propai-v494-z-ladder";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
