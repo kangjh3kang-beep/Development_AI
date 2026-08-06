@@ -87,7 +87,11 @@ export function InputResolveModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-[color-mix(in_srgb,var(--background)_70%,transparent)] p-4"
+      /* ★z-[800] = 층위 계약의 모달 칸(lib/satong-map-z.ts 의 SATONG_CONTENT_Z.appModal).
+         이 모달은 MarketInsightsWorkspaceClient(지도를 함께 그리는 화면) → OrchestratorPanel
+         경로로 열린다. z-50 이던 종전에는 지도 오버레이(≤500)와 본문 sticky ContextHeader(600)가
+         백드롭을 관통해 **모달 위로** 떠 있었다. 사다리 잠금: __tests__/layer-ladder.contract.test.tsx */
+      className="fixed inset-0 z-[800] flex items-center justify-center bg-[color-mix(in_srgb,var(--background)_70%,transparent)] p-4"
       role="dialog"
       aria-modal="true"
       aria-label={`${node.label} 입력 확인`}

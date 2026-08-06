@@ -21,9 +21,10 @@
  *   · 오버레이 rung — 여기서는 `SATONG_UI_Z` **상수만** 본다. 소스 리터럴(z-[380]·z-[430] …)의
  *     렌더 전수는 `components/precheck/__tests__/SatongMapShell.contentLayer.test.tsx` 가 맡는다.
  *   · 본문 rung — 상수만. 소스 락은 위 contentLayer 계약에 있다.
- *   · 모달 rung — **계약에는 있으나**(appModal=800) 검사 강도가 갈린다: 렌더 가능한 3종은
+ *   · 모달 rung — **계약에는 있으나**(appModal=800) 검사 강도가 갈린다: 렌더 가능한 4종은
  *     렌더 기반, 렌더 불가한 2종(경매 상세·라이트박스 — 컴포넌트가 export 되지 않는다)은
- *     **소스 락**이다. 그리고 감시 대상은 **하드코딩 목록**이라 신규 지도공존 모달은 무잠금이다.
+ *     **소스 락**이다. 감시 대상은 하드코딩 목록이 아니라 **지도 공존 화면의 임포트 폐포에서
+ *     파생**한다(2026-08-07 — 상대 임포트·다단계까지).
  *   · jsdom 은 레이아웃·페인트를 하지 않으므로 **z 서열만** 증명한다. 실제 픽셀 겹침은 라이브 확인 대상.
  */
 import { readFileSync, readdirSync } from "node:fs";
@@ -37,6 +38,8 @@ import { DeskAppraisalModal } from "@/components/operations/DeskAppraisalModal";
 import { LandShareModal } from "@/components/operations/LandShareModal";
 import { buildPrimaryNav } from "@/components/layout/nav-config";
 import { WorkspaceNavBar } from "@/components/layout/WorkspaceNavBar";
+import { InputResolveModal } from "@/components/orchestration/InputResolveModal";
+import { collectBackdrops, importClosure } from "@/lib/source-invariant";
 import { SATONG_CONTENT_Z, SATONG_UI_Z } from "@/lib/satong-map-z";
 
 vi.mock("next/navigation", () => ({ usePathname: () => "/ko" }));
@@ -117,8 +120,10 @@ describe("앱 전역 층위 사다리", () => {
     const zOfBackdrop = (root: HTMLElement) => {
       const el = root.querySelector<HTMLElement>('[class*="fixed"][class*="inset-0"]');
       expect(el, "모달 백드롭을 찾지 못했다 — 렌더되지 않았다").not.toBeNull();
-      const m = (el!.className ?? "").toString().match(/(?:^|\s)z-\[(\d+)\]/);
-      expect(m, `백드롭에서 z-[N] 을 읽지 못했다: ${el!.className}`).not.toBeNull();
+      // ★`z-50` 같은 **대괄호 없는** 표기도 읽는다 — 종전엔 `z-[N]` 만 봐서, 계약 위반인
+      //   z-50 백드롭이 "값 불일치"가 아니라 "z 를 읽지 못했다"로 보고돼 원인을 오도했다.
+      const m = (el!.className ?? "").toString().match(/(?:^|\s)z-\[?(\d+)\]?(?=\s|$)/);
+      expect(m, `백드롭에서 z 유틸을 찾지 못했다: ${el!.className}`).not.toBeNull();
       return Number(m![1]);
     };
 
@@ -141,6 +146,22 @@ describe("앱 전역 층위 사다리", () => {
     const c = render(<OnboardingWizard />);
     expect(zOfBackdrop(c.container)).toBe(SATONG_CONTENT_Z.appModal);
     c.unmount();
+
+    // ④ 입력 자동해소 모달 — 2026-08-07 파생 확장이 **새로 찾아낸** 실누락(z-50 이었다).
+    //    MarketInsightsWorkspaceClient(지도 공존) → OrchestratorPanel → 이 모달.
+    //    소스 락으로도 잡히지만, 렌더 가능한 모달은 렌더로 판정한다(주석 처리 변이 면역).
+    const d = render(
+      <InputResolveModal
+        nodeId="feasibility"
+        resolution={{ ready: [], missing: [], autoCandidates: [] }}
+        onClose={() => {}}
+        onRun={() => {}}
+        onAutoRunUpstream={() => {}}
+        onManualSubmit={() => {}}
+      />,
+    );
+    expect(zOfBackdrop(d.container)).toBe(SATONG_CONTENT_Z.appModal);
+    d.unmount();
   });
 
   it("★전체화면 오버레이가 계약값(appFullscreen)과 일치한다 — 상수를 장식으로 두지 않는다", () => {
@@ -168,9 +189,18 @@ describe("앱 전역 층위 사다리", () => {
     //   잡히지 않았다(리뷰 지적 — 이 저장소가 "목록형 골든은 새 항목을 못 잡는다"고 스스로
     //   박제한 교훈의 재발). 그래서 **시드만 고정하고 대상은 파생**한다:
     //     ①지도 컴포넌트를 임포트하는 파일 = 지도 공존 화면
-    //     ②그 화면들이 임포트하는 컴포넌트 + 자기 자신에서 `fixed inset-0` 백드롭을 수집
+    //     ②그 화면에서 시작해 **임포트를 끝까지** 따라간 폐포에서 백드롭을 수집
     //     ③각 백드롭 z 가 계약값(appModal)이거나 앱 크롬급(≥1000)이어야 한다
     //   새 모달이 지도 화면에 추가되면 **자동으로 감시망에 들어온다**.
+    //
+    // ★2026-08-07 두 구멍을 메웠다(자기 지적 → 실측 확인):
+    //   ①임포트를 **1단계만**, 그것도 `@/…` 별칭만 따라갔다. 이 저장소는 같은 폴더를
+    //     `./X` 로 부르므로 **상대 임포트가 통째로 안 보였다** → 실누락 1건
+    //     (MarketInsights → OrchestratorPanel → `./InputResolveModal` z-50).
+    //   ②백드롭을 `className="…"` 리터럴만 봤다 → 삼항·`cn()`·템플릿은 정규식 밖.
+    //   둘 다 `lib/source-invariant.ts` 의 공용 도구(importClosure·collectBackdrops)로 옮겼고,
+    //   **비리터럴 파서의 능력은 픽스처로** 잠근다(`lib/__tests__/source-invariant.backdrop.test.ts`)
+    //   — 저장소에 비리터럴 백드롭이 실제로 0건이라 스캔만으로는 아무것도 증명되지 않는다.
     const MAP_SEEDS = [
       "components/precheck/SatongMapShell",
       "components/map/SatongMultiMap",
@@ -204,56 +234,58 @@ describe("앱 전역 층위 사다리", () => {
     // 공허 진리 방지 — 시드가 아무 파일도 못 찾으면 아래 전부가 무의미하다.
     expect(mapScreens.length, "지도 공존 화면을 하나도 찾지 못했다 — 시드 경로가 낡았다").toBeGreaterThan(3);
 
-    // ② 백드롭 수집(자기 자신 + 1단계 임포트)
-    const BACKDROP = /className="([^"]*\bfixed\b[^"]*\binset-0\b[^"]*)"/g;
-    const Z_IN = /(?:^|\s)z-\[?(\d+)\]?(?=\s|$)/;
-    const collected = new Map<string, (number | null)[]>();
-    const addFrom = (rel: string) => {
-      if (collected.has(rel)) return;
-      let src: string;
+    // ② 지도 공존 화면에서 시작한 **전이 폐포**(정적·동적·상대 임포트 전부)
+    const closure = importClosure(mapScreens);
+    // 공허 진리 가드 ①: 폐포가 무너지면(경로 해석이 깨지면) 위반이 조용히 0 이 된다.
+    //   실측 157파일(최대깊이 4) — 하한은 그 절반 아래로만 둔다.
+    expect(
+      closure.length,
+      `임포트 폐포가 ${closure.length}파일로 쪼그라들었다 — 경로 해석이 깨지면 위반이 조용히 사라진다`,
+    ).toBeGreaterThan(80);
+    // 공허 진리 가드 ②: **상대 임포트로만 닿는** 파일이 폐포에 실제로 들어왔는지 못 박는다.
+    //   이 한 줄이 "@/ 별칭만 따라가던" 종전 구멍의 회귀를 직접 죽인다(깊이 2·상대 경로).
+    expect(
+      closure,
+      "상대 임포트(OrchestratorPanel → ./InputResolveModal)를 따라가지 못했다 — 파생이 다시 좁아졌다",
+    ).toContain("components/orchestration/InputResolveModal.tsx");
+
+    const collected = closure.flatMap((rel) => {
       try {
-        src = readFileSync(join(process.cwd(), rel), "utf8");
+        return collectBackdrops(readFileSync(join(process.cwd(), rel), "utf8"), rel);
       } catch {
-        return;
+        return [];
       }
-      const zs = Array.from(src.matchAll(BACKDROP)).map((m) => {
-        const hit = m[1].match(Z_IN);
-        return hit ? Number(hit[1]) : null;
-      });
-      if (zs.length) collected.set(rel, zs);
-    };
-    for (const screen of mapScreens) {
-      addFrom(screen);
-      const src = readFileSync(screen, "utf8");
-      // 정적 + **동적** import 둘 다 따라간다(이 저장소는 무거운 모달을 dynamic 으로 단다).
-      for (const m of src.matchAll(/(?:from\s+|import\()["'`]@\/(components\/[^"'`]+)["'`]/g))
-        addFrom(`${m[1]}.tsx`);
-    }
+    });
+    // 공허 진리 가드 ③: 수집 0 이면 아래 판정이 무의미하다. 실측 8건 → 통째 주석 처리·
+    //   렌더 삭제로 대상이 사라지면 여기서 죽는다.
+    expect(
+      collected.length,
+      `지도 공존 폐포에서 모달 백드롭을 ${collected.length}건만 수집했다(실측 8) — 대상이 사라졌다`,
+    ).toBeGreaterThanOrEqual(6);
 
-    expect(collected.size, "지도 공존 화면에서 모달 백드롭을 하나도 수집하지 못했다").toBeGreaterThan(0);
-
-    // ③ 판정
+    // ③ 판정 — 조건부 z(삼항)면 **갈래 전부**가 계약을 만족해야 한다.
     const violations: string[] = [];
-    for (const [rel, zs] of collected) {
-      zs.forEach((z, i) => {
-        if (z === null) violations.push(`${rel}[${i}] — 백드롭에 z 유틸이 없다(클래스 순서 변경 누락 방지)`);
-        else if (z !== SATONG_CONTENT_Z.appModal && z < APP_CHROME_Z)
-          violations.push(`${rel}[${i}] z=${z} — 계약값(${SATONG_CONTENT_Z.appModal}) 또는 앱 크롬급(≥${APP_CHROME_Z})이어야 한다`);
-      });
+    for (const hit of collected) {
+      if (!hit.zs.length)
+        violations.push(`${hit.file} — 백드롭에 z 유틸이 없다: ${hit.classes.slice(0, 70)}`);
+      for (const z of hit.zs)
+        if (z !== SATONG_CONTENT_Z.appModal && z < APP_CHROME_Z)
+          violations.push(
+            `${hit.file} z=${z} — 계약값(${SATONG_CONTENT_Z.appModal}) 또는 앱 크롬급(≥${APP_CHROME_Z})이어야 한다`,
+          );
     }
     expect(violations, `지도 공존 모달 층위 위반:\n${violations.join("\n")}`).toHaveLength(0);
   });
 
-  // ★후속 2단계 판정(2026-08-06 실측 → 리뷰 반증 반영): 전역 `fixed inset-0` 백드롭 35건 중
-  //   800 미만이 21건이다. 초판은 "높은 오버레이 화면과의 조합 0건"이라 적었는데 **거짓**이었다 —
-  //   `MarketInsightsWorkspaceClient`(지도 렌더) → `OrchestratorPanel` → `InputResolveModal(z-50)`
-  //   **2단계 임포트** 경로가 실재한다(리뷰 실증). 그래서 파생 추적을 정적+동적 임포트로 넓히고
-  //   아래 todo 에 남은 경계를 적는다. 일괄 승격은 여전히 하지 않는다(회귀 위험 대비 이득이 낮고,
-  //   실제 위험 조합은 파생 검사가 잡는 쪽이 맞다).
+  // ★남은 경계(2026-08-07 재실측 — 앞선 두 항목 ①다단계·상대 임포트 ②비리터럴 className 은
+  //   해소했다). 폐포는 157파일/최대깊이 4 로 넓어졌지만 **전 저장소 468 중 일부**다 —
+  //   지도와 공존하지 않는 화면의 모달은 여전히 이 계약 밖이고, 그건 의도한 범위다.
+  //   전역 백드롭 36건 중 계약 밖 위반이 22건이나, **일괄 승격은 하지 않기로 판정**했다
+  //   (2026-08-06 실측 근거: 실위험 조합이 적어 회귀 위험 대비 이득이 낮다). 새로 생기는
+  //   위험 조합은 위 파생 검사가 자동으로 잡는다.
   it.todo(
-    "★파생이 놓치는 경계: ①**2단계 이상 임포트**(실재 1건 — MarketInsights→OrchestratorPanel→" +
-      "InputResolveModal z-50) ②**비리터럴 className**(삼항·cn() 로 조립한 백드롭은 정규식 밖) " +
-      "③지도 **비공존** 화면의 모달 z 산재(50/60/70/100/120/1000)",
+    "★파생 밖 경계: 지도 **비공존** 화면의 모달 z 산재(40/50/100/120) — 일괄 승격 대신 " +
+      "지도 공존 폐포에 들어오는 순간 위 파생 검사가 잡는다(의도한 범위)",
   );
 
   it("★모바일 네비는 앱 헤더 안에 렌더돼 계약 밖이다 — 그 전제가 유지되는지 확인", () => {

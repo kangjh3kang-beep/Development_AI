@@ -17,8 +17,8 @@
  *   대신 이 도구는 **런타임 동작을 증명하지 않는다** — 계약이 코드에 남아있는지만 본다.
  *   행위 검증이 가능하면 그쪽이 우선이고, 이건 닿지 않는 곳의 최후 수단이다.
  */
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { dirname, relative, resolve } from "node:path";
 
 export type WiringInvariant = {
   /** apps/web 기준 상대 경로. 예: "components/map/SatongMultiMap.tsx" */
@@ -107,6 +107,178 @@ function stripJsxComments(src: string): string {
 function includes(line: string, needle: string | RegExp): boolean {
   const code = stripLineComment(line);
   return typeof needle === "string" ? code.includes(needle) : needle.test(code);
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * 층위(z) 감시용 소스 파생 도구 — 2026-08-07 추가.
+ *
+ * ★왜 공용화하나: 층위 사다리 계약(`__tests__/layer-ladder.contract.test.tsx`)이
+ *   "지도와 공존하는 화면의 모달"을 **하드코딩 목록**이 아니라 임포트 그래프에서
+ *   **파생**하는데, 그 파생에 두 구멍이 있었다(자기 지적 → 실측 확인):
+ *     ① 임포트를 **1단계만** 따라가고, 게다가 `@/...` 별칭만 봤다. 이 저장소는
+ *        같은 폴더 컴포넌트를 `./X` 로 부르므로 **상대 임포트가 통째로 안 보였다**.
+ *        실제 누락 1건 — MarketInsightsWorkspaceClient → `@/…/OrchestratorPanel`
+ *        → `./InputResolveModal`(z-50). 지도(SatongMapShell)와 같은 화면인데
+ *        본문 sticky(600)·지도 오버레이(≤500) 아래로 깔려 있었다.
+ *     ② 백드롭을 `className="…"` **리터럴만** 봤다. 삼항·`cn()`·템플릿으로 조립한
+ *        className 은 정규식 밖이었다.
+ *   두 도구 모두 여기 두어 다른 층위 검사도 같은 눈을 쓰게 한다.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** 한 개의 `className` 속성에서 읽어낸 백드롭 후보. */
+export type BackdropHit = {
+  /** apps/web 기준 상대 경로(수집기가 채운다). */
+  file: string;
+  /** className 이 통짜 문자열이었으면 true. false = 삼항·`cn()`·템플릿 조립. */
+  literal: boolean;
+  /** 표현식 안 문자열 조각을 이어붙인 클래스 후보(판정 근거를 그대로 보고하기 위함). */
+  classes: string;
+  /** 그 안에서 읽어낸 z 값들. 조건부면 여러 개이고, 하나도 없으면 빈 배열. */
+  zs: number[];
+};
+
+/**
+ * 주석을 **줄 수를 보존한 채** 지운다(JSX 주석 + 줄 끝 `//`).
+ *
+ * ★정직한 경계: 최상위 블록 주석(`/* … *\/`)은 벗기지 않는다. JSX 본문 안에서는
+ *   블록 주석이 문법상 `{/* … *\/}` 형태여야 하므로 실제 "렌더를 주석 처리하는"
+ *   변이는 위 두 형태로 나타난다. 그래도 소스 검사인 이상 완전면역은 아니므로,
+ *   소비처는 **수집 개수 하한**을 함께 단언해 통째 주석 처리가 초록으로 지나가지
+ *   않게 해야 한다(rule 2 — 공허 진리 가드).
+ */
+function stripComments(src: string): string {
+  return stripJsxComments(src)
+    .split("\n")
+    .map((l) => stripLineComment(l))
+    .join("\n");
+}
+
+/**
+ * `className` 속성의 값을 잘라낸다. `="…"` 는 그대로, `={…}` 는 **중괄호 균형**으로
+ * 끝을 찾는다(문자열 안의 괄호는 세지 않는다).
+ */
+function classNameValues(src: string): { raw: string; literal: boolean }[] {
+  const out: { raw: string; literal: boolean }[] = [];
+  const re = /className\s*=\s*/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(src))) {
+    const i = m.index + m[0].length;
+    const ch = src[i];
+    if (ch === '"' || ch === "'") {
+      const end = src.indexOf(ch, i + 1);
+      if (end < 0) continue;
+      out.push({ raw: src.slice(i + 1, end), literal: true });
+      re.lastIndex = end;
+    } else if (ch === "{") {
+      let depth = 0;
+      let quote: string | null = null;
+      let j = i;
+      for (; j < src.length; j++) {
+        const c = src[j];
+        if (quote) {
+          if (c === "\\") j++;
+          else if (c === quote) quote = null;
+          continue;
+        }
+        if (c === '"' || c === "'" || c === "`") quote = c;
+        else if (c === "{") depth++;
+        else if (c === "}" && --depth === 0) break;
+      }
+      out.push({ raw: src.slice(i + 1, j), literal: false });
+      re.lastIndex = j;
+    }
+  }
+  return out;
+}
+
+/** 표현식 안의 문자열/템플릿 조각만 모은다(삼항·`cn()` 인자 등). */
+function stringChunks(expr: string): string[] {
+  const chunks: string[] = [];
+  const re = /(["'`])((?:\\.|(?!\1)[^\\])*)\1/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(expr))) chunks.push(m[2]);
+  return chunks;
+}
+
+const HAS_CLASS = (t: string, cls: string) =>
+  new RegExp(`(?:^|\\s)${cls}(?:\\s|$)`).test(t);
+
+/**
+ * 소스에서 **모달 백드롭**(`fixed` + `inset-0`)인 className 을 전부 모은다.
+ *
+ * ★`pointer-events-none` 이 붙은 것은 제외한다 — 클릭을 받지 않는 **배경 장식**이지
+ *   모달 백드롭이 아니다(실측 2건: AuthWorkspaceClient·PasswordRecoveryClient 의
+ *   `pointer-events-none fixed inset-0 -z-10`). 이걸 위반으로 신고하면 정상 코드를
+ *   막는다 — 이 저장소가 이미 두 번 데인 **가드 위양성**(rule 6)이다.
+ */
+export function collectBackdrops(source: string, file = ""): BackdropHit[] {
+  const src = stripComments(source);
+  const hits: BackdropHit[] = [];
+  for (const v of classNameValues(src)) {
+    const classes = (v.literal ? [v.raw] : stringChunks(v.raw))
+      .join(" ")
+      // ★템플릿 안의 보간(`${big ? "z-[800]" : "z-50"}`)은 조각 하나로 들어오므로, 따옴표·
+      //   `${`·중괄호를 공백으로 바꿔 **클래스 토큰을 공백으로 분리**한다. 이걸 빼먹으면
+      //   `"z-50"` 이 따옴표에 붙어 z 정규식(앞이 공백)에 걸리지 않고 **조용히 z 없음**이
+      //   되어, 삼항으로 낮은 z 를 숨기는 형태가 그대로 통과한다(실측으로 적발).
+      .replace(/\$\{|[`"'{}]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!HAS_CLASS(classes, "fixed") || !HAS_CLASS(classes, "inset-0")) continue;
+    if (HAS_CLASS(classes, "pointer-events-none")) continue;
+    const zs = Array.from(classes.matchAll(/(?:^|\s)z-\[?(\d+)\]?(?=\s|$)/g)).map((z) =>
+      Number(z[1]),
+    );
+    hits.push({ file, literal: v.literal, classes, zs });
+  }
+  return hits;
+}
+
+/**
+ * 임포트 지정자 → apps/web 기준 상대 경로. 별칭(`@/…`)과 **상대(`./`·`../`)** 를 모두
+ * 푼다. 확장자·index 파일까지 시도하고, 저장소 밖(패키지)이면 null.
+ */
+export function resolveModuleSpec(fromFile: string, spec: string): string | null {
+  let base: string;
+  if (spec.startsWith("@/")) base = spec.slice(2);
+  else if (spec.startsWith("./") || spec.startsWith("../"))
+    base = relative(process.cwd(), resolve(dirname(resolve(process.cwd(), fromFile)), spec));
+  else return null;
+  for (const cand of [
+    `${base}.tsx`,
+    `${base}.ts`,
+    `${base}/index.tsx`,
+    `${base}/index.ts`,
+  ]) {
+    const abs = resolve(process.cwd(), cand);
+    if (existsSync(abs) && statSync(abs).isFile()) return cand;
+  }
+  return null;
+}
+
+/**
+ * 진입 파일들에서 시작해 **정적·동적 임포트를 끝까지** 따라간 전이 폐포를 돌려준다
+ * (진입 파일 포함). 저장소 안(별칭·상대)만 따라가므로 node_modules 로 새지 않는다.
+ */
+export function importClosure(entries: string[]): string[] {
+  const seen = new Set(entries);
+  const queue = [...entries];
+  while (queue.length) {
+    const rel = queue.shift()!;
+    let src: string;
+    try {
+      src = readFileSync(resolve(process.cwd(), rel), "utf8");
+    } catch {
+      continue;
+    }
+    for (const m of src.matchAll(/(?:from\s+|import\()\s*["'`]([^"'`]+)["'`]/g)) {
+      const next = resolveModuleSpec(rel, m[1]);
+      if (!next || seen.has(next)) continue;
+      seen.add(next);
+      queue.push(next);
+    }
+  }
+  return [...seen];
 }
 
 /**
