@@ -276,7 +276,12 @@
 //         LandShareModal·satong-map-z 등 프론트 7파일) ②동 단위 토지 실거래 통계(#574·백엔드).
 //        ★층위 회귀는 stale 캐시가 남으면 **가려짐이 그대로** — 레이아웃 계열 6번째 범프.
 //        ★채번: origin/main 실제 상수 v494 확인 → v495. PR 생성 前 보드 claim 선점(12회차).
-const CACHE_NAME = "propai-v495-z-ladder-render";
+// v496: ①층위 계약 후속 5단계(#579) — 모달 칸을 파생값으로 고정하고 소비처를 수렴시킨다
+//        (analysis/page·CadBimIntegrationPanel·DesignWorkspace·LandScheduleClient·
+//         SatongMapShell·lib/satong-map-z 6파일) ②MOLIT 429 가드(#578·백엔드).
+//        ★층위는 stale 셸이 남으면 **가려짐이 그대로** — 레이아웃 계열 7번째 연속 대행.
+//        ★채번: origin/main 실제 상수 v495 확인 → v496. PR 생성 前 보드 claim 선점(13회차).
+const CACHE_NAME = "propai-v496-modal-rung";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
