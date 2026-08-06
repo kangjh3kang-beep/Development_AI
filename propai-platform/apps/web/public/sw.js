@@ -271,7 +271,12 @@
 //        ★#573 은 z-index 층위 회귀라 stale 캐시가 남으면 **네비가 계속 가려진다** —
 //        모바일 IA 계열(#561·#563·#566·#570)에 이은 5번째 레이아웃 범프.
 //        ★채번: origin/main 실제 상수 v493 확인 → v494. PR 생성 前 보드 claim 선점(11회차).
-const CACHE_NAME = "propai-v494-z-ladder";
+// v495: ①층위 사다리 후속(#575) — 회귀망을 **렌더 기반으로 되돌리고** 모달 칸 추가
+//        (AuctionWorkspace·AIAssistant·WorkspaceNavBar·OnboardingWizard·DeskAppraisalModal·
+//         LandShareModal·satong-map-z 등 프론트 7파일) ②동 단위 토지 실거래 통계(#574·백엔드).
+//        ★층위 회귀는 stale 캐시가 남으면 **가려짐이 그대로** — 레이아웃 계열 6번째 범프.
+//        ★채번: origin/main 실제 상수 v494 확인 → v495. PR 생성 前 보드 claim 선점(12회차).
+const CACHE_NAME = "propai-v495-z-ladder-render";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
