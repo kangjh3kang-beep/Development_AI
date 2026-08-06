@@ -26,7 +26,7 @@ import structlog
 from prometheus_client import Counter, Histogram
 from tenacity import (
     retry,
-    retry_if_exception_type,
+    retry_if_exception,
     stop_after_attempt,
     wait_exponential,
 )
@@ -215,6 +215,27 @@ class CircuitBreaker:
                 )
 
 
+# ★★2026-08-06 실측으로 추가 — **재시도가 상황을 악화시키는** 상태 코드.
+#
+# 종전엔 `retry_if_exception_type(httpx.HTTPStatusError)` 로 **모든 HTTP 오류를 3회** 재시도했다.
+# 그런데 429(Too Many Requests)는 **일일 쿼터 초과**라, 재시도하면 남은 쿼터를 3배로 태우고
+# 차단만 길어진다. 403(권한/차단)도 같다 — 같은 키로 다시 물어봐야 답이 달라지지 않는다.
+#
+# ★실측 계기: 토지 실거래 30개월 창을 여러 지역으로 조회하다 `HTTP 429 × 60건` 을 만났다.
+#   그 시점엔 재시도 때문에 실제 호출이 그 3배였다.
+#
+# 5xx·타임아웃 등 **일시적** 실패는 종전대로 재시도한다(재시도가 실제로 도움이 되는 경우).
+_NO_RETRY_STATUS = frozenset({403, 429})
+
+
+def _is_retryable_http_error(exc: BaseException) -> bool:
+    """재시도할 가치가 있는 오류인가. 쿼터·권한 거절은 **아니다**."""
+    if not isinstance(exc, httpx.HTTPStatusError):
+        return False
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    return status not in _NO_RETRY_STATUS
+
+
 class BaseAPIClient:
     """외부 API 공통 베이스 클라이언트."""
 
@@ -287,7 +308,7 @@ class BaseAPIClient:
             pass
 
     @retry(
-        retry=retry_if_exception_type(httpx.HTTPStatusError),
+        retry=retry_if_exception(_is_retryable_http_error),
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
         reraise=True,

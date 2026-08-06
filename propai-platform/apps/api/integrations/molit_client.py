@@ -7,6 +7,7 @@ AVM 서비스의 비교 사례 데이터 소스.
 """
 
 import re
+from datetime import datetime
 from typing import Any
 
 import structlog
@@ -43,6 +44,37 @@ _RENT_ENDPOINTS: dict[str, str] = {
 # operation 'getRTMSDataSvc...' → 경로 '/1613000/{service}/{operation}' (service = operation[3:]).
 # 응답은 _type=json 파라미터로 JSON, 필드명은 영문(dealAmount/excluUseAr/aptNm/umdNm 등).
 _RTMS_HOST_PATH = "/1613000"
+
+
+# ── 실거래 캐시 TTL — 과거 월은 오래 들고 있는다 ─────────────────────────────
+#
+# ★★2026-08-06 실측 배경: 토지 통계는 **30개월 창**이 필요하다(6개월로는 강남조차 동 단위가
+# 무너진다 — 전처리 후 36건). 그런데 30개월 × 여러 지역을 매번 조회하면 **일일 쿼터**에
+# 걸린다(`HTTP 429 × 60건` 실측). 속도는 문제가 아니었다(병렬 30회 0.7초).
+#
+# ★해법의 근거: 실거래는 **확정 신고분**이라 지난 달들의 내용은 거의 변하지 않는다.
+# 변할 수 있는 것은 (a)지연 신고 (b)계약 해제 반영(`cdealType`)이고, 둘 다 **최근 몇 달**에
+# 몰린다. 그래서 최근 구간만 짧게 들고, 나머지는 길게 캐시해 쿼터를 아낀다.
+#
+# ★경계(6개월)는 **보수적 추정**이지 측정값이 아니다 — 과거 월이 실제로 얼마나 변하는지는
+# 재보지 못했다(측정하려던 시점에 쿼터가 소진됐다). 지연 신고·해제가 6개월을 넘겨 반영되면
+# 그만큼 낡은 값을 보게 된다. 더 짧게 잡는 쪽이 안전한 방향이고, 실측이 생기면 조정해야 한다.
+_RECENT_MONTHS_SHORT_TTL = 6
+_TTL_RECENT = 86_400        # 1일 — 아직 움직일 수 있는 구간
+_TTL_SETTLED = 2_592_000    # 30일 — 사실상 확정된 구간
+
+
+def _deal_ymd_ttl(deal_ymd: str, *, now: "datetime | None" = None) -> int:
+    """`YYYYMM` 이 얼마나 지났는지로 캐시 수명을 정한다. 파싱 실패 시 **짧은 쪽**(안전)."""
+    try:
+        year, month = int(str(deal_ymd)[:4]), int(str(deal_ymd)[4:6])
+        if not (1 <= month <= 12):
+            return _TTL_RECENT
+    except (TypeError, ValueError):
+        return _TTL_RECENT
+    ref = now or datetime.now()
+    elapsed = (ref.year - year) * 12 + (ref.month - month)
+    return _TTL_SETTLED if elapsed > _RECENT_MONTHS_SHORT_TTL else _TTL_RECENT
 
 
 def _rtms_path(operation: str) -> str:
@@ -139,7 +171,8 @@ class MolitClient(BaseAPIClient):
                     "pageNo": str(page), "numOfRows": str(num_rows), "_type": "json",
                 },
                 cache_key=f"{cache_ns}:{lawd_cd}:{deal_ymd}:{num_rows}:p{page}",
-                cache_ttl=86400,
+                # ★과거 월은 길게 — 30개월 창을 매번 새로 받으면 쿼터가 버티지 못한다.
+                cache_ttl=_deal_ymd_ttl(deal_ymd),
             )
             items = parse(data)
             all_items.extend(items)
