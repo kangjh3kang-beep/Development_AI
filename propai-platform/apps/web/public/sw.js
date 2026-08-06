@@ -260,7 +260,13 @@
 //        ★레이아웃/접힘 상태 변경이라 stale 캐시가 남으면 **옛 접힘 규칙이 그대로 돌아**
 //        사용자가 주소 입력에 도달하지 못할 수 있다(진입 경로 차단 = 기능 상실과 동급).
 //        ★채번: origin/main 실제 상수 v491 확인 → v492. PR 생성 前 보드 claim 선점(9회차).
-const CACHE_NAME = "propai-v492-mobile-ia-p1";
+// v493: 모바일 IA P2(#570) — 44px 터치 타깃을 파일 전체에 채우고 **전수 불변식으로 잠근다**
+//        (ParcelLayoutSection·ParcelSlopeSection·SatongMapShell·satong-map-z).
+//        ★터치 영역 변경이라 stale 캐시가 남으면 **옛 터치 타깃이 그대로** — 모바일에서
+//        누르기 어려운 상태가 유지된다(접근성 회귀 지속).
+//        모바일 IA 계열 4번째 범프: #561(v489 P0)·#563(v490 회귀봉합)·#566(v492 P1)·#570(v493 P2).
+//        ★채번: origin/main 실제 상수 v492 확인 → v493. PR 생성 前 보드 claim 선점(10회차).
+const CACHE_NAME = "propai-v493-touch-target";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
