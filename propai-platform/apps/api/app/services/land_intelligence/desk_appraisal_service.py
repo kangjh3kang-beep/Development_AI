@@ -16,6 +16,7 @@ from typing import Any
 import structlog
 
 from app.services.land_intelligence.land_price_estimator import _market_multiplier
+from app.services.market.land_dong_stats import stats_note as land_stats_note
 
 logger = structlog.get_logger(__name__)
 
@@ -208,6 +209,8 @@ async def desk_appraisal(
     # 거래사례비교법을 **왜 못 썼는지**. 값이 사라진 이유를 말하지 않으면 사용자는 그냥
     # "그런 방법이 없나 보다"로 읽는다(무자료와 판정불가는 다른 상태다).
     comparable_skip_note: str | None = None
+    # ★토지 층화 통계(참고) — 좌표가 없어 반경으로는 못 말하는 것을 행정구역+용도 축으로.
+    land_dong_stats_out: dict | None = None
     if comparable_avg_per_sqm is None and pnu and len(pnu) >= 5:
         try:
             from app.services.land_intelligence.nearby_map_service import NearbyMapService
@@ -218,7 +221,11 @@ async def desk_appraisal(
             )
             payload = await NearbyMapService().build(
                 address=address or "", lawd_cd=pnu[:5], months=6, radius_m=1500,
+                # ★용도지역을 넘겨 토지 층화 통계가 `동+용도` 층까지 내려갈 수 있게 한다.
+                #   모르면 빈 값 — 그때는 `동` 층부터 시작한다(빈값끼리 매칭하지 않는다).
+                target_land_use=str((subject or {}).get("zone_type") or ""),
             )
+            land_dong_stats_out = payload.get("land_dong_stats")
             land_cat = (payload.get("categories") or {}).get("land_trade") or {}
             # ★W1-b 근본수정 — 종전엔 `land_cat["groups"]` 를 통째로 순회해 **위치가 확인되지
             #   않은**(지오코딩 실패) 거래까지 거래사례비교법 단가에 넣었다. 그래놓고 rationale 은
@@ -530,6 +537,14 @@ async def desk_appraisal(
         # ★W1-b 리뷰(M-2) — 거래사례비교법이 빠진 **사유**. 값이 조용히 사라지면 사용자는
         #   "이 지역엔 거래가 없나 보다"로 오독한다(실제로는 근접성 판정 불가라 안 쓴 것).
         "comparable_skipped_reason": comparable_skip_note,
+        # ★★토지 층화 통계 — **참고값**이다. 채택 단가에 넣지 않았다.
+        #   토지 실거래는 지번이 100% 마스킹돼 좌표를 만들 수 없어(실측 3지역 30개월
+        #   3,113건 전수) 반경으로는 아무 말도 못 한다. 대신 원천이 100% 채워 주는
+        #   법정동·용도지역 축으로 "이 동네 이 용도지역의 실거래는 이렇다"를 말한다.
+        #   ★값만 주면 "내 땅 시세"로 오독한다 — `note` 가 **개별 필지 위치가 반영되지
+        #   않았다**는 것을 같은 자리에서 말한다.
+        "land_market_stats": land_dong_stats_out,
+        "land_market_stats_note": land_stats_note(land_dong_stats_out, window_months=6),
         "road_side": road_side,
         "source": src,
         "base_year": base_year,

@@ -535,6 +535,94 @@ def test_molit_parser_preserves_share_dealing_type() -> None:
     assert rows[0].get("land_use") == "제2종일반주거지역"
 
 
+def test_desk_appraisal_carries_land_market_stats() -> None:
+    """★토지 층화 통계가 **탁상감정 응답까지** 흐르는지.
+
+    ★`scripts/mutate_changed.py` 가 이 구간이 **통째로 무잠금**임을 잡아냈다 —
+    `land_market_stats` · `land_market_stats_note` · `target_land_use` 전달 · 통계 캡처를
+    전부 지워도 95개 테스트가 통과했다. 내가 추가한 배선 락은 `NearbyMapService.build()`
+    층만 봤고, 그 위(desk_appraisal)는 비어 있었다.
+
+    ★두 모집단을 가른다 — 통계가 **있는** 경우와 **없는** 경우가 서로 다른 응답을 내야 한다.
+    """
+    from unittest.mock import patch
+
+
+    fake_stats = {
+        "unit_price_per_sqm": 1_190_476, "sample_count": 5, "layer": "dong_zone",
+        "layer_label": "법정동 · 용도지역", "scope_label": "역삼동 · 제2종일반주거지역",
+        "time_adjusted": False, "share_deal_count_excluded": 3,
+        "avg_per_sqm": 1_190_476, "min_per_sqm": 1_000_000, "max_per_sqm": 1_300_000,
+        "excluded_outliers": 0, "time_adjusted_count": 0, "masked_jibun_count": 5,
+    }
+
+    class _FakeNearby:
+        def __init__(self, stats):
+            self._stats = stats
+
+        called: list = []
+
+        async def build(self, **kwargs):
+            _FakeNearby.called.append(kwargs)
+            # ★★전달 **여부**만 보면 값이 틀려도 통과한다(변이 실증) — 실제 값을 본다.
+            #   그리고 이 단언은 한 번 리팩토링 중 **유실됐다가** 도구가 다시 잡았다.
+            assert kwargs.get("target_land_use") == "제2종일반주거지역", (
+                f"용도지역이 그대로 전달되지 않는다: {kwargs.get('target_land_use')!r}"
+            )
+            # ★용도지역이 실제로 넘어오는지 — 안 넘기면 `dong_zone` 층까지 못 내려간다.
+            assert "target_land_use" in kwargs, "용도지역이 전달되지 않는다"
+            return {"categories": {"land_trade": {"groups": [], "sample_basis": {}}},
+                    "land_dong_stats": self._stats}
+
+    common = dict(pnu="1168010800100010001", address="", area_sqm=500.0,
+                  official_price_per_sqm=15_000_000)
+
+    # ★`NearbyMapService` 는 함수 안에서 지연 import 된다 — 원본 모듈을 패치해야 잡힌다.
+    from app.services.external_api import vworld_service as vw_mod
+    from app.services.land_intelligence import nearby_map_service as nm_mod
+
+    # ★VWorld 도 스텁한다 — 안 하면 이 테스트가 **외부 네트워크에 의존**해
+    #   CI(키 없음)와 로컬에서 다르게 동작한다. 용도지역은 여기서 결정론적으로 준다.
+    class _FakeVWorld:
+        async def geocode_address(self, *_a, **_k):
+            return {}
+
+        async def get_land_characteristics(self, *_a, **_k):
+            return {"zone_type": "제2종일반주거지역"}
+
+    stack = patch.object(vw_mod, "VWorldService", _FakeVWorld)
+    stack.start()
+    try:
+        _run_land_stats_assertions(fake_stats, common, nm_mod, _FakeNearby)
+    finally:
+        stack.stop()
+    return
+
+
+def _run_land_stats_assertions(fake_stats, common, nm_mod, _FakeNearby) -> None:
+    import asyncio
+    from unittest.mock import patch
+
+    from app.services.land_intelligence import desk_appraisal_service as mod
+
+    with patch.object(nm_mod, "NearbyMapService", lambda: _FakeNearby(fake_stats)):
+        with_stats = asyncio.run(mod.desk_appraisal(**common))
+    with patch.object(nm_mod, "NearbyMapService", lambda: _FakeNearby(None)):
+        without = asyncio.run(mod.desk_appraisal(**common))
+
+    # ★★단언이 **실행되긴 했는지** — build 가 안 불리면 위 검증은 공허하다.
+    assert _FakeNearby.called, "NearbyMapService.build 가 호출되지 않았다 — 검증이 공허하다"
+
+    # ① 통계가 응답에 실린다
+    assert with_stats.get("land_market_stats") == fake_stats, "통계가 응답에 없다"
+    # ② 고지도 함께 — 값만 주면 "내 땅 시세"로 오독한다
+    note = with_stats.get("land_market_stats_note") or ""
+    assert "역삼동" in note and "개별 필지 위치는 반영되지 않았습니다" in note, note
+    # ③ ★두 모집단이 갈린다 — 통계가 없으면 둘 다 None(없는 말을 지어내지 않는다)
+    assert without.get("land_market_stats") is None
+    assert without.get("land_market_stats_note") is None
+
+
 def test_every_skip_path_says_why() -> None:
     """★R6 리뷰(F-3) — "왜 거래사례비교를 안 썼는지"에 **침묵하는 갈래가 없어야** 한다.
 

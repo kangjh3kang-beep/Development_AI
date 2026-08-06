@@ -103,7 +103,9 @@ def _mutations_for_line(path: Path, line: str, line_no: int) -> list[Mutation]:
 
 
 def _changed_files(base: str) -> list[Path]:
-    cmd = ["git", "diff", "--name-only", f"{base}...HEAD"]
+    # ★`A...B`(three-dot)는 **커밋된 것만** 본다. 커밋 전에 돌리는 것이 자연스러운
+    # 사용법이라(실사용에서 발견) `A`(two-dot)로 워킹트리까지 포함한다.
+    cmd = ["git", "diff", "--name-only", base]
     names = subprocess.run(cmd, capture_output=True, text=True).stdout.split()
     out = []
     for n in names:
@@ -112,6 +114,8 @@ def _changed_files(base: str) -> list[Path]:
             continue
         if "/tests/" in n or p.name.startswith("test_"):
             continue          # 테스트 자체는 변이 대상이 아니다
+        if n.startswith("scripts/"):
+            continue          # 도구 자신은 이 테스트들의 대상이 아니다(오탐)
         out.append(p)
     return out
 
@@ -119,7 +123,7 @@ def _changed_files(base: str) -> list[Path]:
 def _added_lines(base: str, path: Path) -> list[tuple[int, str]]:
     """`path` 에서 이 브랜치가 **추가한** 줄만. 기존 코드를 망가뜨려 소음을 내지 않는다."""
     diff = subprocess.run(
-        ["git", "diff", "-U0", f"{base}...HEAD", "--", str(path)],
+        ["git", "diff", "-U0", base, "--", str(path)],
         capture_output=True, text=True,
     ).stdout
     out: list[tuple[int, str]] = []

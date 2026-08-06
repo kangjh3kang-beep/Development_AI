@@ -24,6 +24,7 @@ from app.core.db_utils import PostGISHelper
 from app.services.data_validation.deal_date import parse_deal_date
 from app.services.data_validation.price_stats import robust_price_stats
 from app.services.market.comparable_sample import is_masked_jibun as _is_masked_jibun
+from app.services.market.land_dong_stats import dong_land_stats
 from apps.api.config import get_settings
 from apps.api.integrations.molit_client import MolitClient
 
@@ -442,6 +443,7 @@ class NearbyMapService:
         radius_m: int = 1000,
         sigungu_hint: str = "",
         center_hint: dict[str, float] | None = None,
+        target_land_use: str = "",
     ) -> dict[str, Any]:
         # center_hint: 라우터가 PNU/좌표 확보 과정(주소 지오코딩·point→parcel)에서 이미 얻은
         #   중심좌표. 여기서 다시 주소 지오코딩이 실패해도 이 힌트로 center를 채워, 지도가
@@ -487,6 +489,38 @@ class NearbyMapService:
             categories[f"{tkey}_rent"] = self._group_rent(
                 tkey, f"{tlabel} 전월세", rent_raw.get(tkey, []), sigungu_hint
             )
+
+        # ── 2-b) 토지 층화 통계 — **좌표 없이 말할 수 있는 것** ────────────────────
+        # ★토지 실거래는 지번이 100% 마스킹돼 좌표를 만들 수 없다(실측 3지역 30개월
+        #   3,113건 전수). 그래서 반경으로는 아무 말도 못 한다. 그런데 원천은 법정동·
+        #   용도지역을 100% 채워 주므로, **행정구역+용도 축**으로는 말할 수 있다.
+        # ★여기서 계산하는 이유: `trade_raw["land"]` 는 **이미 받아 둔 원본 행**이다.
+        #   추가 API 호출이 0이고, 그룹 평균이 아니라 **개별 거래**로 통계를 낸다
+        #   (그룹 평균으로 다시 평균을 내면 이중 평균이 된다).
+        # ★`try` 밖에서 초기화 — 예외가 나도 아래 payload 조립이 `NameError` 로 깨지지 않는다.
+        #   (참고 통계가 본 응답을 무너뜨리지 않는다는 이 블록의 전제를 지키는 줄이다.)
+        # ★정직 표기 — 이 줄과 아래 `logger.debug` 는 **변이로 잠기지 않는다**
+        #   (`scripts/mutate_changed.py` 실측). 둘 다 `dong_land_stats` 가 던졌을 때만
+        #   관측되는데, 그 함수는 순수 계산이라 정상 입력에서 던지지 않는다.
+        #   방어·관측용으로 남기되 "잠갔다"고 세지 않는다.
+        land_dong_stats_out = None
+        try:
+            land_dong_stats_out = dong_land_stats(
+                trade_raw.get("land", []),
+                # ★`target_dong` 은 아래(사전컷)에서 정의되므로 여기서 직접 도출한다 —
+                #   같은 헬퍼를 쓰므로 두 곳의 판정이 갈리지 않는다.
+                target_dong=self._dong_from_address(address),
+                target_land_use=target_land_use,
+                # ★시점수정은 **하지 않는다** — 하는 척하지 않기 위해 `now_ym` 도 넘기지 않는다.
+                #   보정하려면 R-ONE 월별 변동률 시계열(`rate_series`)이 필요한데, 그건 외부
+                #   호출이라 이 경로에서 매번 부를 수 없다. `now_ym` 만 넘기면 `_time_factor` 가
+                #   시계열이 없어 어차피 None 을 돌려주므로 **아무 일도 일어나지 않는다**.
+                #   그 상태로 두면 "시점수정 인자를 넘겼다"는 외형만 남는다.
+                #   → 넘기지 않고, 산출물의 `time_adjusted=False` 와 고지 문구가 그 사실을 말한다.
+                #   ★창이 6개월이라 보정 없이도 왜곡이 작다(30개월 창을 쓸 때 다시 판단할 것).
+            )
+        except Exception as e:  # noqa: BLE001 — 참고 통계가 본 응답을 깨뜨리지 않는다
+            logger.debug("토지 층화 통계 산출 실패", err=str(e)[:80])
 
         # 3) 고유 지오코딩 쿼리 수집 → dedupe → 병렬 지오코딩
         # ★지오코딩 사전 컷(R1 P2): 캡(28)을 반경 필터 뒤로 옮기면서 지오코딩 대상이 시군구
@@ -914,6 +948,11 @@ class NearbyMapService:
             # ★질의를 만들지 못해 **시도 자체를 안 한** 그룹 수(분모에서 빠진 몫).
             #   이 수가 없으면 실패율 개선이 진짜인지 분모 축소인지 판별할 수 없다.
             "geocode_unqueryable_group_count": unqueryable_groups,
+            # ★토지 층화 통계 — 좌표가 없어 반경으로는 못 말하는 것을 **행정구역+용도** 축으로
+            #   말한다. 값이 아니라 **값과 그 값이 무엇인지**를 함께 싣는다(층·표본수·시점수정
+            #   여부·지분 제외 건수). 표본이 모자라면 `None` — 없는 것을 만들지 않는다.
+            #   ★이 값은 **참고 통계**다. 채택 단가를 바꾸지 않는다(소비처가 그렇게 표시해야 한다).
+            "land_dong_stats": land_dong_stats_out,
             # ★리뷰 M-1 — 이번 PR 이 새로 넣은 변수(힌트)도 관측 대상이다. 힌트가 비면
             #   전 행이 조용히 중개사 시군구로 회귀하는데, 응답만 봐서는 구분이 안 됐다.
             "sigungu_hint": sigungu_hint,
