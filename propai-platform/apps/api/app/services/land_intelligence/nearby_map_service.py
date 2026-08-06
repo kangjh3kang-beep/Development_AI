@@ -833,6 +833,16 @@ class NearbyMapService:
                 "masked_jibun_group_count": sum(
                     1 for g in cat["groups"] if _is_masked_jibun(g.get("jibun"))
                 ),
+                # ★★2026-08-06 실측 — 표본에 **지분거래가 몇 건 섞였는지**. 원천이 주는
+                #   구분인데 종전엔 파서에서 버려 아무도 알 수 없었다.
+                #   ★왜 제외가 아니라 계측인가: 같은 (동·지번·금액·면적·날짜)가 최다 29회
+                #   반복되는데, 이것이 **중복 신고**인지 **한 필지를 여럿이 나눠 산 실제
+                #   지분거래**인지 우리는 **구분할 수 없다**. 구분할 수 없는 것을 지우면
+                #   실거래를 없애게 된다(무날조). 지금 할 수 있는 정직은 "무엇이 섞여
+                #   있는지 말하는 것"이고, 제외·가중은 그 다음 판단이다.
+                "share_deal_count": sum(
+                    int(g.get("share_deal_count") or 0) for g in cat["groups"]
+                ),
             }
 
         # ★내부 전용 필드 정리 — `_in_radius_groups`는 AVM 계산용이고 그대로 두면 응답
@@ -1176,7 +1186,7 @@ class NearbyMapService:
                 "_query_grain": self._query_grain(jibun, name),
                 "_dongs": set(),
                 # ★R5(H-2) — 질의 확정에 쓸 **실재 쌍**과 원본 건물명.
-                "_pairs": set(), "_name_raw": name,
+                "_pairs": set(), "_name_raw": name, "_share_deals": 0,
                 "deals": [], "_prices": [], "_areas": [],
             })
             # ★W1-b 리뷰(H-3) — 빈 dong 도 **센티널로 기록**한다. 종전엔 빈 값을 그냥 건너뛰어,
@@ -1187,6 +1197,11 @@ class NearbyMapService:
             # ★★R5 리뷰(H-2) — **실재하는 (시군구·동·지번) 쌍만** 후보로 모은다.
             #   자세한 이유는 `_resolve_group_queries` 독스트링 참조.
             g["_pairs"].add((sigungu, dong, jibun))
+            # ★2026-08-06 — 지분거래 건수를 센다. 원천(`shareDealingType`)이 주는 구분인데
+            #   종전엔 파서에서 버려 **지분과 일반이 한 통에** 섞였다. 단가 차이가 지역마다
+            #   방향까지 다르므로(강남 0.27배 · 포항북 2.14배) 섞인 채로는 대표값을 말할 수 없다.
+            if str(r.get("share_dealing_type") or "").strip() == "지분":
+                g["_share_deals"] += 1
             price = int(r.get("price_10k_won") or 0)
             area = float(r.get("area_m2") or 0)
             if price > 0:
@@ -1239,7 +1254,7 @@ class NearbyMapService:
                 # ★R5 리뷰(F-1) — 전월세도 **같은 헬퍼**를 탄다. 바로 윗줄 주석이
                 #   "한쪽만 고치면 비대칭이 남는다"고 스스로 경고해 뒀는데 R4 에서
                 #   매매만 고쳤다(전역 전파방지 미이행). 이번엔 공용화로 봉합한다.
-                "_pairs": set(), "_name_raw": name,
+                "_pairs": set(), "_name_raw": name, "_share_deals": 0,
                 "deals": [], "_deposits": [], "_monthlies": [], "_areas": [],
             })
             # ★W1-b 리뷰(H-3) — 빈 dong 도 **센티널로 기록**한다. 종전엔 빈 값을 그냥 건너뛰어,
@@ -1341,6 +1356,8 @@ class NearbyMapService:
             jimoks = g.pop("_jimoks", set())
             land_uses = g.pop("_land_uses", set())
             g["build_year"] = next(iter(build_years)) if len(build_years) == 1 else None
+            # ★지분거래 건수 — 그룹 대표값이 무엇으로 이뤄졌는지 소비처가 알 수 있게 한다.
+            g["share_deal_count"] = g.pop("_share_deals", 0)
             g["jimok"] = next(iter(jimoks)) if len(jimoks) == 1 else None
             g["land_use"] = next(iter(land_uses)) if len(land_uses) == 1 else None
             # ★W1-b — 이 그룹의 좌표가 **무엇을 가리키는지**를 공개 계약으로 박는다.

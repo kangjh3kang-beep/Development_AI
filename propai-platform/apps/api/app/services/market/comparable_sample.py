@@ -99,6 +99,12 @@ class SampleBasis:
     #   → 코드가 아니라 **이 설명**을 계산값에 맞춘다.
     masked_jibun_count: int = 0
     masked_jibun_group_count: int = 0
+    # ★2026-08-06 — 표본에 섞인 **지분거래** 건수. 원천(`shareDealingType`)이 주는 구분인데
+    #   파서가 버려서 종전엔 관측 자체가 불가능했다. 라이브 실측(3지역·30개월 3,113건)에서
+    #   지분/일반 단가 비가 **지역마다 방향까지 다르다**(강남 0.27배 · 해운대 0.65배 ·
+    #   포항북 2.14배). 섞인 채로 대표값을 말하면 그 값이 무엇인지 아무도 모른다.
+    #   구버전 페이로드엔 없으므로 기본 0.
+    share_deal_count: int = 0
 
     @property
     def has_sample(self) -> bool:
@@ -193,6 +199,8 @@ def _basis_from_category(cat: dict[str, Any] | None) -> SampleBasis:
             capped_count=int(raw.get("capped_count") or 0),
             masked_jibun_count=int(_md or 0),
             masked_jibun_group_count=int(_mg or 0),
+            # ★신형 페이로드에만 있다 — 구버전엔 축 자체가 없으므로 0(모르는 것을 세지 않는다).
+            share_deal_count=int(raw.get("share_deal_count") or 0),
         )
     _legacy_masked = _masked_from_groups(cat)   # ★L-5 — 분기마다 두 번 세지 않는다.
     # ★구버전 페이로드(캐시·배포 스큐) 폴백 — sample_basis 가 없던 시절의 응답도 안전하게
@@ -210,6 +218,11 @@ def _basis_from_category(cat: dict[str, Any] | None) -> SampleBasis:
         # 구버전 페이로드엔 이 축이 없다 — **모르는 것을 0 으로 단정하지 않고** 그룹에서 센다.
         masked_jibun_count=_legacy_masked[0],
         masked_jibun_group_count=_legacy_masked[1],
+        # ★구버전 페이로드엔 이 축이 없다 — masked 와 같은 규율로 **그룹에서 센다**
+        #   (0 으로 단정하지 않는다). 그룹에도 없으면 그때는 진짜 0이다.
+        share_deal_count=sum(
+            int(g.get("share_deal_count") or 0) for g in (cat.get("groups") or [])
+        ),
     )
 
 
@@ -272,6 +285,14 @@ def no_sample_reason(basis: SampleBasis) -> str | None:
             )
             tail = f" 지번이 가려진 거래는 {_masked:,}건으로 집계됐습니다{_rel} — {_why}."
 
+    # ★2026-08-06 — 지분거래 고지는 여기 넣지 않는다(작성 중 자체 반증).
+    #   ① `no_sample_reason` 은 **표본이 0일 때만** 발화한다. 아무것도 안 쓴 상태에서
+    #      "지분이 섞였다"고 말해 봐야 무엇에 대한 설명도 되지 못한다.
+    #   ② 문구가 실제로 모순을 냈다 — "위치 미확인 5건" 뒤에 "이 가운데 12건"이 붙었다
+    #      (지분 수는 전체 표본 기준이라 위치 미확인 수보다 클 수 있다). R6 M-1·M-2 에서
+    #      고친 "지시 대상이 없거나 틀린 문구"와 **같은 결함 클래스**를 재생산할 뻔했다.
+    #   → 지분은 **계측 필드로만** 노출한다(`share_deal_count`). 문구가 필요한 자리는
+    #     표본을 **실제로 쓰는** 소비처이고, 그 경로가 생길 때 그쪽에서 말하는 것이 옳다.
     if not bits:
         if tail:
             return f"{basis.no_sample_head()}.{tail}"
