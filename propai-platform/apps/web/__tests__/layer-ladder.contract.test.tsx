@@ -8,7 +8,7 @@
  *   봉합이 새로 만든 것이다.
  *
  * ★그래서 이 파일은 개별 값이 아니라 **사다리의 순서 관계**를 잠근다:
- *     지도 오버레이(≤500) < 본문 sticky(600) < 앱 네비 플라이아웃(700) < 앱 크롬(1000)
+ *     지도 오버레이(≤500) < 본문 sticky(600) < 앱 네비 플라이아웃(700) < 모달(800) < 앱 크롬(1000)
  *   한 칸을 올리면 위/아래 칸과의 관계가 함께 검사되므로, 이번 같은 "한쪽만 올려 다른 쪽을
  *   덮는" 변경이 자동으로 깨진다.
  *
@@ -21,7 +21,9 @@
  *   · 오버레이 rung — 여기서는 `SATONG_UI_Z` **상수만** 본다. 소스 리터럴(z-[380]·z-[430] …)의
  *     렌더 전수는 `components/precheck/__tests__/SatongMapShell.contentLayer.test.tsx` 가 맡는다.
  *   · 본문 rung — 상수만. 소스 락은 위 contentLayer 계약에 있다.
- *   · **모달 rung 은 계약에 없고, 현재 실제로 깨져 있다**(아래 it.todo 참조).
+ *   · 모달 rung — **계약에는 있으나**(appModal=800) 검사 강도가 갈린다: 렌더 가능한 3종은
+ *     렌더 기반, 렌더 불가한 2종(경매 상세·라이트박스 — 컴포넌트가 export 되지 않는다)은
+ *     **소스 락**이다. 그리고 감시 대상은 **하드코딩 목록**이라 신규 지도공존 모달은 무잠금이다.
  *   · jsdom 은 레이아웃·페인트를 하지 않으므로 **z 서열만** 증명한다. 실제 픽셀 겹침은 라이브 확인 대상.
  */
 import { readFileSync } from "node:fs";
@@ -30,6 +32,9 @@ import { join } from "node:path";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
+import { OnboardingWizard } from "@/components/onboarding/OnboardingWizard";
+import { DeskAppraisalModal } from "@/components/operations/DeskAppraisalModal";
+import { LandShareModal } from "@/components/operations/LandShareModal";
 import { buildPrimaryNav } from "@/components/layout/nav-config";
 import { WorkspaceNavBar } from "@/components/layout/WorkspaceNavBar";
 import { SATONG_CONTENT_Z, SATONG_UI_Z } from "@/lib/satong-map-z";
@@ -45,12 +50,14 @@ vi.mock("@/lib/use-is-admin", () => ({
 function openFlyoutAndReadZ(): { dropdown: number; bridge: number | null } {
   render(<WorkspaceNavBar sections={buildPrimaryNav("ko")} />);
   const nav = screen.getByRole("navigation", { name: "Workspace navigation" });
-  const button = within(nav).getAllByRole("button")[0];
+  // ★섹션 버튼을 **명시적으로** 고른다 — getAllByRole("button")[0] 은 네비 선두에 다른 버튼이
+  //   추가되면 엉뚱한 것을 집어 "menu 를 못 찾음"으로 원인을 오도한다(리뷰 지적).
+  const button = within(nav).getAllByRole("button", { expanded: false })[0];
+  expect(button, "aria-expanded 를 가진 섹션 버튼을 찾지 못했다").toBeTruthy();
   fireEvent.mouseEnter(button.parentElement!);
 
+  // 플라이아웃이 안 열렸으면 여기서 throw 한다(공허 진리 방지 — 주석 처리·렌더 억제 변이가 죽는다).
   const menu = within(nav).getAllByRole("menu")[0];
-  // 공허 진리 방지 — 플라이아웃이 안 열렸으면 아래 단언이 무의미하다(주석 처리 변이가 여기서 죽는다).
-  expect(menu, "네비 플라이아웃이 열리지 않았다").toBeTruthy();
   const zOf = (el: Element | null | undefined) => {
     const m = (el?.className ?? "").toString().match(/(?:^|\s)z-\[(\d+)\]/);
     return m ? Number(m[1]) : null;
@@ -67,10 +74,6 @@ function readSource(rel: string): string {
   return readFileSync(join(process.cwd(), rel), "utf8");
 }
 
-/** 소스에서 `z-[N]` 유틸을 전부 뽑는다(변형자 접두 허용). */
-function zLiterals(src: string): number[] {
-  return Array.from(src.matchAll(/(?:^|[\s"'`])(?:[a-z0-9-]+:)*z-\[(\d+)\]/g)).map((m) => Number(m[1]));
-}
 
 describe("앱 전역 층위 사다리", () => {
   it("★사다리 순서: 지도 오버레이 < 본문 sticky < 네비 플라이아웃 < 앱 크롬", () => {
@@ -108,33 +111,66 @@ describe("앱 전역 층위 사다리", () => {
     expect(bridge!).toBeLessThan(SATONG_CONTENT_Z.appNavFlyout);
   });
 
-  it("★지도 공존 화면의 모달이 지도 오버레이·본문 위에 온다 — 소스 전수", () => {
-    // ★백드롭이 관통당하면 모달 조작 위로 지도 레일·팝오버·ContextHeader 가 뜬다.
-    //   렌더 기반이 이상적이나 네 모달의 오픈 조건이 제각각(온보딩=최초방문·감정=행선택 …)이라
-    //   여기서는 소스로 잠그고, **주석 안 문자열에 속지 않도록** 실제 className 리터럴을 찾는다.
-    const modals = [
-      "components/onboarding/OnboardingWizard.tsx",
-      "components/operations/DeskAppraisalModal.tsx",
-      "components/operations/LandShareModal.tsx",
-      "components/auction/AuctionWorkspace.tsx",
-    ];
-    for (const rel of modals) {
-      const src = readSource(rel);
-      const backdrops = Array.from(src.matchAll(/className="fixed inset-0 z-\[?(\d+)\]?\s/g)).map((m) => Number(m[1]));
-      // 공허 진리 방지 — 백드롭을 못 찾으면 "위반 0"이 참이 되어 무의미하다.
-      expect(backdrops.length, `${rel} 에서 fixed inset-0 백드롭을 찾지 못했다`).toBeGreaterThan(0);
-      for (const z of backdrops) {
-        expect(
-          z,
-          `${rel} 의 모달 백드롭 z(${z}) 가 본문 sticky(${SATONG_CONTENT_Z.stickyContextHeader}) 이하다 — 지도 오버레이·헤더가 관통한다`,
-        ).toBeGreaterThan(SATONG_CONTENT_Z.stickyContextHeader);
-      }
+  it("★지도 공존 모달(렌더 가능분)이 계약값과 정확히 일치한다 — 렌더 기반", () => {
+    // ★소스 grep 은 주석 처리 변이에 뚫린다(이 파일이 네비 rung 에서 이미 겪은 결함).
+    //   prop 만으로 렌더되는 모달은 **실제 렌더 결과**로 판정한다.
+    const zOfBackdrop = (root: HTMLElement) => {
+      const el = root.querySelector<HTMLElement>('[class*="fixed"][class*="inset-0"]');
+      expect(el, "모달 백드롭을 찾지 못했다 — 렌더되지 않았다").not.toBeNull();
+      const m = (el!.className ?? "").toString().match(/(?:^|\s)z-\[(\d+)\]/);
+      expect(m, `백드롭에서 z-[N] 을 읽지 못했다: ${el!.className}`).not.toBeNull();
+      return Number(m![1]);
+    };
+
+    // ① 감정평가 모달
+    const a = render(
+      <DeskAppraisalModal jibun="역삼동 736" areaSqm={100} onClose={() => {}} onApply={() => {}} />,
+    );
+    expect(zOfBackdrop(a.container)).toBe(SATONG_CONTENT_Z.appModal);
+    a.unmount();
+
+    // ② 지분 모달
+    const b = render(
+      <LandShareModal jibun="역삼동 736" onClose={() => {}} onApplyArea={() => {}} />,
+    );
+    expect(zOfBackdrop(b.container)).toBe(SATONG_CONTENT_Z.appModal);
+    b.unmount();
+
+    // ③ 온보딩 위저드 — localStorage 가 비어 있어야 표시된다(최초 방문 재현).
+    localStorage.clear();
+    const c = render(<OnboardingWizard />);
+    expect(zOfBackdrop(c.container)).toBe(SATONG_CONTENT_Z.appModal);
+    c.unmount();
+  });
+
+  it("★렌더 불가 모달(경매 상세·라이트박스)은 소스 락 — 순서 무관 토큰 + 개수까지 잠근다", () => {
+    // ★AuctionWorkspace 의 DetailModal 은 export 되지 않아 렌더할 수 없다. 소스로 잠그되,
+    //   초판 정규식(`fixed inset-0 z-[N]` 연속 매칭)은 **클래스 순서만 바꿔도 스캔에서 사라지고**,
+    //   같은 파일의 다른 백드롭이 "0개 아님" 가드를 만족시켜 **무성 통과**했다(리뷰 실증).
+    //   그래서 ①순서 무관 토큰으로 후보를 뽑고 ②후보에 z 가 없으면 실패시키고 ③개수까지 잠근다.
+    const rel = "components/auction/AuctionWorkspace.tsx";
+    const src = readSource(rel);
+    const candidates = Array.from(
+      src.matchAll(/className="([^"]*\bfixed\b[^"]*\binset-0\b[^"]*)"/g),
+    ).map((m) => m[1]);
+
+    // 공허 진리 방지 + 개수 잠금 — 하나가 스캔에서 사라지는 경로를 막는다.
+    expect(candidates.length, `${rel} 에서 fixed inset-0 백드롭 후보를 찾지 못했다`).toBe(2);
+
+    for (const cls of candidates) {
+      const m = cls.match(/(?:^|\s)z-\[(\d+)\]/);
+      expect(m, `백드롭 후보에 z-[N] 이 없다(클래스 순서 변경으로 누락되면 여기서 죽는다): "${cls}"`).not.toBeNull();
+      expect(
+        Number(m![1]),
+        `${rel} 의 모달 백드롭 z(${m![1]}) 가 계약값(${SATONG_CONTENT_Z.appModal})과 다르다`,
+      ).toBe(SATONG_CONTENT_Z.appModal);
     }
   });
 
   it.todo(
-    "★모달 rung 렌더 기반 전환 — 네 모달의 오픈 조건이 제각각이라 현재는 소스 락이다. " +
-      "그리고 저장소 전역 모달 z(50/60/70/100/120/1000)는 여전히 흩어져 있다(지도 비공존 화면은 미적용)",
+    "★모달 감시가 **하드코딩 목록**이다 — 지도공존 화면에 새 모달이 z-50 으로 추가돼도 잡히지 않는다. " +
+      "파생형(지도 컴포넌트를 임포트하는 파일 글롭)으로 바꾸는 것이 옳다. " +
+      "그리고 저장소 전역 모달 z(50/60/70/100/120/1000)는 여전히 흩어져 있다(지도 비공존 화면 미적용)",
   );
 
   it("★모바일 네비는 앱 헤더 안에 렌더돼 계약 밖이다 — 그 전제가 유지되는지 확인", () => {

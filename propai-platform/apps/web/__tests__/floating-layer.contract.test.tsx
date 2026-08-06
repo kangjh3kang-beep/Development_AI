@@ -203,7 +203,8 @@ describe("플로팅 레이어 서열 — AI 버튼은 네비/모달 아래에 �
   it("★본문 일반 레이어보다는 위에 있다 — 강등이 과해 콘텐츠에 묻히면 안 된다", () => {
     const fab = fabContainerZ();
 
-    // 본문 **일반** 레이어의 최상단은 z-[70](AuctionWorkspace·CadBimIntegrationPanel 오버레이).
+    // 본문 **일반** 레이어의 최상단은 z-[70](CadBimIntegrationPanel 배지).
+    // ※ AuctionWorkspace 의 z-[70] 라이트박스는 모달 계약(appModal=800)으로 승격돼 더 이상 여기 없다.
     // 이 하한이 없으면 "네비 아래로 내린다"는 요구를 z-0 으로도 만족시켜 버튼이 사라진다.
     // ★"본문 전체 위"는 아니다(R1 지적 H1 — 초판 주석의 사실오기 정정): 사통맵 지도 오버레이
     //   (SatongMapShell 팝오버 z-[430]·레이어 레일 z-[420]·배지 칩바 z-[380]
