@@ -573,7 +573,15 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
       {/* 사통팔땅 전역 싱글 통합지도 워크스페이스 (대시보드와 100% 동일한 필지 입력 + 멀티지도 엔진).
           ★UX 트랙 B4: 착지 페이지라 기본 접힘(defaultCollapsed) — 요약 1줄+"지도 열기" 토글.
           ★UX 트랙 B2: 내부 ContextHeader 활성화(showContextHeader) — 집계를 한 곳으로 흡수. */}
-      <SatongMapShellDynamic locale={locale} defaultCollapsed showContextHeader />
+      {/* ★hasTarget 주입 — 이 화면에서 "대상"은 주소가 아니라 **편입토지 행**이다.
+          주소만 있고 행이 0건이면 셸이 접힌 채 남아, 아래 빈 상태 안내("상단 통합 지도의
+          지번·주소 검색…으로 등록하세요")가 **접힌 컨트롤을 가리키는** 모순이 됐다. */}
+      <SatongMapShellDynamic
+        locale={locale}
+        defaultCollapsed
+        showContextHeader
+        hasTarget={rows.length > 0}
+      />
       <Card className="cc-bracketed overflow-hidden rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
         <i className="cc-bracket cc-bracket--tl" />
         <i className="cc-bracket cc-bracket--tr" />

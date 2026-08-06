@@ -663,12 +663,24 @@ function mapParcelToSelection(parcel: ParcelAtPointResult): SatongParcel {
 export function SatongMapShell({
   locale,
   defaultCollapsed = false,
+  hasTarget: hasTargetProp,
   showContextHeader = false,
 }: {
   locale: string;
   /** true면 접힌 요약(1줄)+"지도 열기" 토글로 시작한다(UX 트랙 B4 — 착지 페이지 반복
    *  렌더 완화). 기본 false(펼침 — 입력 주화면인 /ko·/precheck는 호출측에서 생략해 무회귀). */
   defaultCollapsed?: boolean;
+  /**
+   * ★호출측이 "이 화면에서 대상이란 무엇인가"를 주입한다(2026-08-06 후속 4단계).
+   *
+   * 셸이 아는 대상은 주소·필지지만, 화면마다 의미가 다르다 — 토지조서에서 사용자가 채워야
+   * 하는 것은 **편입토지 행(rows)** 이라, 주소만 있고 행이 0건이면 셸이 접힌 채로 남아
+   * "상단 통합 지도의 지번·주소 검색으로 등록하세요"라는 그 페이지 안내가 **접힌 컨트롤을
+   * 가리키는** 상태가 됐다(P1 이 덮지 못한 조합).
+   *
+   * 미주입이면 셸 기본 판정(주소·필지)을 그대로 쓴다 — 무회귀가 기본값이다.
+   */
+  hasTarget?: boolean;
   /** true면 셸 내부에 ContextHeader(프로젝트·주소·PNU·용도지역·대지면적 SSOT)를 sticky로
    *  얹는다(UX 트랙 B2 — 집계 단일표면). 기본 false — 이 셸을 직접 렌더하는 기존 단위테스트가
    *  선택 필지 카드의 주소 title과 ContextHeader 주소 칩의 title이 겹쳐 getByTitle 단일매치
@@ -811,10 +823,12 @@ export function SatongMapShell({
   //     보존하므로 hasTarget 이 계속 참이다. 실재하는 경로는 연결 해제 쪽이고, 테스트도 그쪽을 잠갔다.
   useEffect(() => {
     if (!defaultCollapsed) return; // 펼침이 기본인 호출측(/ko·/precheck)은 무관 — 무회귀
+    // ★호출측 주입이 있으면 그것이 이 화면의 "대상" 정의다(없으면 셸 기본 판정 — 무회귀).
     const hasTarget =
-      selectedParcels.length > 0 ||
-      !!storeSiteAnalysis?.address ||
-      !!storeSiteAnalysis?.parcels?.length;
+      hasTargetProp ??
+      (selectedParcels.length > 0 ||
+        !!storeSiteAnalysis?.address ||
+        !!storeSiteAnalysis?.parcels?.length);
     if (hasTarget) return; // 대상 있음 — 접힌 요약이 의미를 가지므로 그대로 둔다
     if (!projectId) {
       setIsShellExpanded(true); // 미연결 + 대상 없음 — 기다릴 것이 없다(즉시 확정)
@@ -824,7 +838,7 @@ export function SatongMapShell({
     // 유예 안에 대상이 도착하면 이 이펙트가 재실행되고 아래 cleanup 이 타이머를 취소한다.
     const timer = setTimeout(() => setIsShellExpanded(true), TARGET_RESTORE_GRACE_MS);
     return () => clearTimeout(timer);
-  }, [defaultCollapsed, selectedParcels.length, storeSiteAnalysis, projectId]);
+  }, [defaultCollapsed, hasTargetProp, selectedParcels.length, storeSiteAnalysis, projectId]);
   // ── WS-C 필지 상세 패널 — 지도 폴리곤/카드 클릭 → 통합 정보(개요·공시지가·노후도)와
   //    산출물 원클릭 퍼널. 단일 팝오버 원칙: 레이어 설정 패널과 동시 표출 금지(상호 배타).
   const [detailFeature, setDetailFeature] = useState<SatongMapFeature | null>(null);
