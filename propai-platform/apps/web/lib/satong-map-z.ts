@@ -72,6 +72,18 @@ export const SATONG_PANE_Z = {
 export const SATONG_CONTENT_Z = {
   /** 지도와 화면을 공유하는 sticky 본문(ContextHeader). Tailwind 로는 `z-[600]`. */
   stickyContextHeader: 600,
+  /**
+   * 앱 워크스페이스 네비 드롭다운(WorkspaceNavBar 플라이아웃). Tailwind 로는 `z-[700]`.
+   *
+   * ★왜 본문(600)보다 위인가 — **전역 내비게이션은 본문 정보보다 항상 위**여야 한다.
+   *   그리고 이 값이 없으면 실제로 뒤집힌다: 종전 드롭다운 z-50 은 ContextHeader 가 z-30
+   *   이던 시절엔 이겼지만, 위 stickyContextHeader 를 600 으로 올리는 순간 **네비 메뉴가
+   *   본문 카드에 가려 클릭 불가**가 된다(전역 z 스윕이 적발한 신규 역전).
+   * ★모바일 네비(MobileSidebarToggle z-[100]/[101])는 앱 헤더(z-[1000]) **안**에 렌더돼
+   *   컨텍스트째 1000 으로 올라가므로 이 계약이 필요 없다 — 데스크톱 네비만 헤더 밖 형제라
+   *   맨몸으로 경쟁한다. 이 비대칭이 결함의 서식지였다.
+   */
+  appNavFlyout: 700,
 } as const;
 
 export const SATONG_UI_Z = {

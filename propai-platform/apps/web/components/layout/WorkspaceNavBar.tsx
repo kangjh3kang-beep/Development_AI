@@ -203,7 +203,9 @@ export function WorkspaceNavBar({ sections }: { sections: NavSection[] }) {
                   <div
                     aria-hidden="true"
                     data-testid={`workspace-nav-hover-bridge-${section.id}`}
-                    className="absolute left-0 top-10 z-40 h-2 min-w-64"
+                    /* ★z-[699] — 아래 드롭다운(700)의 짝. 본문 sticky(600)보다 위여야
+                       마우스가 이 다리를 지날 때 hover 가 끊기지 않는다. */
+                    className="absolute left-0 top-10 z-[699] h-2 min-w-64"
                     onMouseEnter={() => openSection(section.id)}
                   />
                   <div
@@ -213,7 +215,7 @@ export function WorkspaceNavBar({ sections }: { sections: NavSection[] }) {
                     //   Tailwind 임의값은 '_'(언더스코어) 공백 표기 필수 — calc(100dvh_-_5rem)로 써야
                     //   CSS `calc(100dvh - 5rem)`가 되고, 무공백 calc(100dvh-5rem)은 브라우저가 무시한다.
                     //   모든 섹션 드롭다운에 공통(공용 role=menu 패널) 적용.
-                    className="absolute left-0 top-12 z-50 max-h-[calc(100dvh_-_5rem)] min-w-64 overflow-y-auto rounded-lg border border-[var(--line)] bg-[var(--surface-secondary)] p-2 shadow-[var(--shadow-md)]"
+                    className="absolute left-0 top-12 z-[700] max-h-[calc(100dvh_-_5rem)] min-w-64 overflow-y-auto rounded-lg border border-[var(--line)] bg-[var(--surface-secondary)] p-2 shadow-[var(--shadow-md)]"
                     onMouseEnter={() => openSection(section.id)}
                   >
                     {links.map((link) => {
