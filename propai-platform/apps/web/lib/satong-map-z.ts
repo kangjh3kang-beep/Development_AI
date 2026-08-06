@@ -84,6 +84,21 @@ export const SATONG_CONTENT_Z = {
    *   맨몸으로 경쟁한다. 이 비대칭이 결함의 서식지였다.
    */
   appNavFlyout: 700,
+  /**
+   * 지도와 화면을 공유하는 모달(백드롭 `fixed inset-0`). Tailwind 로는 `z-[800]`.
+   *
+   * ★왜 필요한가 — 지도 공존 화면의 모달이 **지도 오버레이·본문 sticky 아래로 깔려 있었다**:
+   *   온보딩 위저드 z-50(DashboardHome — **신규 사용자 첫 화면**) · DeskAppraisalModal z-50 ·
+   *   LandShareModal z-100(LandScheduleClient·GlobalAddressSearch) · 경매 상세 z-50.
+   *   모달을 열었는데 지도 레일·팝오버(380~500)와 ContextHeader(600)가 백드롭을 관통했다.
+   * ★네비 플라이아웃(700)보다 위인 이유 — 모달이 열린 동안에는 전역 내비보다 모달이 우선이다
+   *   (키보드로 두 개가 동시에 열릴 수 있는 경로가 실재한다: 모달에 포커스 트랩이 없어
+   *   Shift+Tab 으로 네비 버튼에 도달하고 onFocus 가 플라이아웃을 연다).
+   * ★앱 크롬(헤더 z-1000)은 그대로 모달 위에 남긴다 — 현행 동작이고, 바꾸면 별개 회귀다.
+   * ★적용 범위는 **지도와 공존하는 모달**로 한정한다. 저장소 전역 모달 z 는 50/60/70/100/120/1000
+   *   여섯 등급으로 흩어져 있고 일괄 조정은 회귀 위험이 커서 여기서 다루지 않는다.
+   */
+  appModal: 800,
 } as const;
 
 export const SATONG_UI_Z = {

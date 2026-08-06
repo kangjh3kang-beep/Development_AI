@@ -1251,7 +1251,7 @@ function DetailModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      className="fixed inset-0 z-[800] flex items-center justify-center bg-black/50 p-4"
       role="dialog"
       aria-modal="true"
       onClick={onClose}
@@ -1352,7 +1352,7 @@ function DetailModal({
             배경/✕ 클릭·Esc로 닫고, 사진이 여러 장이면 ‹ › 또는 ←/→ 로 넘긴다. */}
         {zoomOpen && mainImage ? (
           <div
-            className="fixed inset-0 z-[70] flex items-center justify-center bg-black/90 p-4"
+            className="fixed inset-0 z-[800] flex items-center justify-center bg-black/90 p-4"
             role="dialog"
             aria-modal="true"
             aria-label="물건 사진 확대 보기"
