@@ -49,6 +49,31 @@ export const SATONG_PANE_Z = {
  *   └ 지도 기준(Leaflet): 줌=bottomleft · 출처표기=bottomright — 래퍼 기준 absolute와
  *     좌표계가 다름(완료바 높이만큼 어긋남)에 주의.
  */
+/**
+ * ★본문 ↔ 지도 오버레이 층위 계약 (2026-08-06 — 사용자 실측 지적의 근원).
+ *
+ * 종전에 이 파일은 **오버레이끼리의 상대 층위만** 정의했고, 지도 밖 본문과의 층위는
+ * 어디에도 계약이 없었다. 그 공백에서 실제 결함이 났다:
+ *   · 지도 래퍼(SatongMultiMap 의 wrapperRef)는 `relative` 뿐이라 **스태킹 컨텍스트를
+ *     만들지 않는다** → 오버레이 380~500 이 **루트에서** 본문과 경쟁한다.
+ *   · 그런데 지도 타일은 `.leaflet-container { isolation:isolate; z-index:0 }`(globals.css)
+ *     으로 격리돼 본문 아래로 얌전히 지나간다. **지도는 헤더 밑으로 가는데 지도 위
+ *     컨트롤만 헤더 위로 뜨는** 비대칭이 여기서 나온다.
+ *   · 그 결과 sticky ContextHeader(종전 z-30)가 스크롤 중 지도 영역에 들어오면
+ *     레이어 레일·팝오버·코너 도크에 **가려졌다**. sticky 를 건 목적(집계 SSOT 를 스크롤
+ *     중에도 보이게)을 오버레이가 무효화한 셈이다.
+ *
+ * ★그래서 "지도 위에 떠 있어야 하는 본문"의 층위를 여기서 함께 계약한다 —
+ *   오버레이 최대(confirmCard 500) **위**, 앱 셸 크롬(헤더 z-1000) **아래**.
+ *   ※ 대안으로 지도 래퍼에 `isolate` 를 넣어 오버레이를 지도 박스에 가두는 방법이 있으나,
+ *     그러면 루트의 플로팅 AI 버튼(z-95)이 지도 컨트롤 **위**로 올라와 의도한 서열
+ *     (지도 위에서는 지도 컨트롤이 이긴다)이 뒤집힌다. 그래서 본문 쪽을 올린다.
+ */
+export const SATONG_CONTENT_Z = {
+  /** 지도와 화면을 공유하는 sticky 본문(ContextHeader). Tailwind 로는 `z-[600]`. */
+  stickyContextHeader: 600,
+} as const;
+
 export const SATONG_UI_Z = {
   fullscreenButton: 400,
   cornerDock: 410, // 좌하단 코너 도크(상태 칩 + 노후도 범례)

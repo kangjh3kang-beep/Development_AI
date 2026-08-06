@@ -2663,8 +2663,10 @@ export function SatongMapShell({
   if (!isShellExpanded) {
     return (
       <section className="min-w-0 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface)] p-4 shadow-[var(--shadow-lg)] md:p-5">
+        {/* ★z-[600] = SATONG_CONTENT_Z.stickyContextHeader — 지도 오버레이(380~500) 위,
+            앱 헤더(1000) 아래. 종전 z-30 은 오버레이에 가려졌다(lib/satong-map-z.ts 계약 참조). */}
         {showContextHeader && (
-          <ContextHeader sitePipeline className="sticky top-[var(--app-header-offset)] z-30 mb-3" />
+          <ContextHeader sitePipeline className="sticky top-[var(--app-header-offset)] z-[600] mb-3" />
         )}
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-panel)] px-4 py-3">
           <div className="min-w-0">
@@ -3316,8 +3318,9 @@ export function SatongMapShell({
           지도셸을 아래로 스크롤해도 프로젝트·주소·PNU·용도지역·대지면적이 계속 보이게 한다.
           아래 로컬 "합산 면적" 배지는 여기로 흡수되어 제거됨(격리 표면 4→1). "필지 선택 N건"은
           지도 조작 직후 즉시 피드백(선택 반응성 계약 — connectTargetLeak.test.tsx)이라 유지. */}
+      {/* ★z-[600] = SATONG_CONTENT_Z.stickyContextHeader (위 접힘 경로와 동일 계약). */}
       {showContextHeader && (
-        <ContextHeader sitePipeline className="sticky top-[var(--app-header-offset)] z-30 mb-4" />
+        <ContextHeader sitePipeline className="sticky top-[var(--app-header-offset)] z-[600] mb-4" />
       )}
       <div className="mb-4 flex flex-col gap-3 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-panel)] p-4 shadow-[var(--shadow-sm)] lg:flex-row lg:items-center lg:justify-between">
         <div>
