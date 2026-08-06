@@ -164,6 +164,57 @@ describe("assertWiredThrough", () => {
     })).toThrow(/매치 0건/);
   });
 
+  // ── 블록 주석 `/* … */` (2026-08-06 실증한 여섯 번째 형태) ────────────────────
+  //
+  // R3~R6 네 라운드가 이 헬퍼를 다듬었지만 전부 `{/* … */}` 만 봤다. TS/TSX 에서 가장
+  // 흔한 평범한 블록 주석은 검토된 적이 없어, **배선을 끊고도 락이 초록**이었다.
+  // origin/main 실측: `avmCaveat: payload.avm_caveat` 를 `/* … */` 로 감싸면 통과.
+
+  it("★평범한 한 줄 블록 주석으로 배선을 끊으면 실패한다(= 종전엔 통과했다)", () => {
+    const f = write("o.ts", "/* avmCaveat: payload.avm_caveat, */\n");
+    expect(() => assertWiredThrough({
+      file: f, scope: /avmCaveat:/, mustContain: "avm_caveat", minMatches: 1,
+    })).toThrow(/매치 0건/);
+  });
+
+  it("★여러 줄 블록 주석으로 감싸도 실패한다", () => {
+    const f = write("p.ts", ["/*", "avmCaveat: payload.avm_caveat,", "*/"].join("\n"));
+    expect(() => assertWiredThrough({
+      file: f, scope: /avmCaveat:/, mustContain: "avm_caveat", minMatches: 1,
+    })).toThrow(/매치 0건/);
+  });
+
+  // ★줄끝 주석은 `//` 만 떼어냈다 — 같은 줄에 `/* … */` 로 needle 을 적으면 **우회한 줄이
+  //   needle 을 충족시켜** 락이 초록이었다. 종전 구현에서 실제로 통과한다(확인함).
+  it("★같은 줄의 블록 주석이 needle 을 대신 충족시키지 못한다", () => {
+    const f = write("q.ts", 'base.on("tileload", () => sendDirect(true)); /* track( */\n');
+    expect(() => assertWiredThrough({
+      file: f, scope: /base\.on\("tile/, mustContain: "track(", minMatches: 1,
+    })).toThrow(/우회한 줄 1건/);
+  });
+
+  // ★스트립이 과도하면 정상 코드를 삼켜 기준선이 깨진다 — 이 파일이 두 번 데인 실패다.
+  //   문자열 리터럴 안의 `/*` 는 주석이 아니므로 **살아 있어야** 한다.
+  it("★문자열 안의 `/*` 를 주석으로 오인하지 않는다(과도스코프 방지)", () => {
+    const f = write("r.ts", [
+      'const glob = "src/*";',
+      'base.on("tileload", () => track(true));',
+    ].join("\n"));
+    expect(() => assertWiredThrough({
+      file: f, scope: /base\.on\("tile/, mustContain: "track(", minMatches: 1,
+    })).not.toThrow();
+  });
+
+  // ★봉합 순서가 만든 함정 — `stripBlockComments` 를 먼저 돌리면 `{/* … */}` 가 이미
+  //   공백이 되어 40줄 폭주 백스톱이 **한 건도 못 보는 공허한 검사**로 죽는다.
+  //   그 백스톱이 살아 있는지를 여기서 직접 태운다(주석으로 주장하지 않는다).
+  it("★JSX 주석 40줄 폭주 백스톱이 살아 있다(봉합 순서로 공허해지지 않았다)", () => {
+    const f = write("s.tsx", `{/*${"\n".repeat(41)}*/}\nconst x = 1;\n`);
+    expect(() => assertWiredThrough({
+      file: f, scope: /const x/, mustContain: "1", minMatches: 1,
+    })).toThrow(/JSX 주석이 41줄이다/);
+  });
+
   it("스코프 밖 줄은 검사하지 않는다(과도한 불변식이 정상 코드를 깨뜨리지 않게)", () => {
     const f = write("f.ts", [
       'base.on("tileload", () => track(true));',

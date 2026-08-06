@@ -69,6 +69,90 @@ function stripLineComment(line: string): string {
  * 줄 번호를 보존해야 위반 위치를 정확히 보고할 수 있으므로, 지우는 대신 **개행만 남기고
  * 나머지를 공백으로 치환**한다.
  */
+/**
+ * 파일 전체에서 **블록 주석 `/* … *\/`** 을 줄 수를 보존한 채 지운다.
+ *
+ * ★2026-08-06 실증한 **여섯 번째** 공허한 참 — 그리고 이 파일 역사상 가장 뼈아픈 것.
+ *   R3~R6 네 라운드가 이 함수를 다듬었는데 **전부 `{/* … *\/}`(JSX 형태)만** 손봤다.
+ *   그동안 TS/TSX 에서 가장 흔한 **평범한 `/* … *\/`** 는 한 번도 검토되지 않았다.
+ *   실측(origin/main, `MarketInsightsWorkspaceClient.tsx:333`):
+ *
+ *     avmCaveat: payload.avm_caveat ?? …      → 락 초록 (정상)
+ *     // avmCaveat: payload.avm_caveat ?? …   → 락 빨강 (기존 가드가 잡음)
+ *     /* avmCaveat: payload.avm_caveat ?? … *\/  → ★락 초록 (배선이 끊겼는데 통과)
+ *
+ *   `CLAUDE.md` 규율 A-3 이 "렌더가 불가하면 이 헬퍼를 경유하라"고 지시하는데, 그
+ *   헬퍼가 뚫려 있었다. 이 위에 배선 락 38개가 서 있었다.
+ *
+ * ★가드가 목록형이면 목록 밖 형태로 뚫린다 — 규율 A-4 가 골든에 대해 말한 것이
+ *   **가드 자신에게도** 적용된다. 그래서 "JSX 주석"이 아니라 **블록 주석 일반**을 지운다.
+ *
+ * ★문자열 안의 `/*` 를 주석으로 오인하면 정상 코드를 삼켜 기준선이 깨진다(과도스코프는
+ *   이 파일이 이미 두 번 데인 실패다). 그래서 정규식이 아니라 **따옴표 상태를 추적하는
+ *   스캐너**로 짠다. 줄 주석(`//`)은 지우지 않고 **건너뛰기만** 한다 — 지우는 일은
+ *   URL 예외를 아는 `stripLineComment` 의 몫이고, 여기서는 주석 안의 아포스트로피
+ *   (`// don't`)가 따옴표 상태를 오염시키는 것만 막으면 된다.
+ *
+ * ★못 하는 것(면역을 주장하지 않는다 — 규율 C-11):
+ *   ① **JSX 텍스트 노드의 아포스트로피** — `<p>don't</p>` 처럼 따옴표가 홀로 있으면
+ *      그 지점부터 다음 따옴표까지를 문자열로 오인해, 그 사이의 블록 주석을 **안 지운다**.
+ *      결과는 종전과 같은 미탐(거짓 초록)이지 새 오탐이 아니다 — 축소된 한계일 뿐.
+ *   ② **정규식 리터럴 안의 `/*`** (`/[/*]/`) 는 주석 시작으로 오인될 수 있다. 저장소
+ *      전수 실행으로 기준선이 깨지지 않음을 확인했고, 깨지면 **빨강**으로 드러난다
+ *      (거짓 초록이 아니라 거짓 빨강 방향이라 안전한 실패다).
+ */
+function stripBlockComments(src: string): string {
+  let out = "";
+  let i = 0;
+  let quote: '"' | "'" | "`" | null = null;
+
+  while (i < src.length) {
+    const c = src[i];
+
+    if (quote) {
+      if (c === "\\") {
+        out += src.slice(i, i + 2);
+        i += 2;
+        continue;
+      }
+      if (c === quote) quote = null;
+      out += c;
+      i += 1;
+      continue;
+    }
+
+    if (c === '"' || c === "'" || c === "`") {
+      quote = c;
+      out += c;
+      i += 1;
+      continue;
+    }
+
+    // 줄 주석은 그대로 두되 **따옴표 판정에서 제외**한다(아포스트로피 오염 방지).
+    if (c === "/" && src[i + 1] === "/") {
+      const nl = src.indexOf("\n", i);
+      const stop = nl === -1 ? src.length : nl;
+      out += src.slice(i, stop);
+      i = stop;
+      continue;
+    }
+
+    if (c === "/" && src[i + 1] === "*") {
+      const end = src.indexOf("*/", i + 2);
+      const stop = end === -1 ? src.length : end + 2;
+      // 줄 번호를 보존해야 위반 위치를 정확히 보고할 수 있다 → 개행만 남긴다.
+      out += src.slice(i, stop).replace(/[^\n]/g, " ");
+      i = stop;
+      continue;
+    }
+
+    out += c;
+    i += 1;
+  }
+
+  return out;
+}
+
 function stripJsxComments(src: string): string {
   // ★여는 괄호와 `/*` 사이에 **공백을 허용하지 않는다**. 허용했더니 TS 인터페이스의
   //   `{` + JSDoc `/** … */` 이 매치돼 **44,444자(1,113줄)를 통째로 삼켰다**(실측).
@@ -114,8 +198,13 @@ function includes(line: string, needle: string | RegExp): boolean {
  * 위반 시 어느 줄이 문제인지 그대로 보여준다(원인 오도 방지).
  */
 export function assertWiredThrough(inv: WiringInvariant): void {
-  // ★R4(H-1) — 줄 분할 **전에** JSX 주석을 지운다. 줄 단위로는 여러 줄 주석을 못 벗긴다.
-  const src = stripJsxComments(readFileSync(resolve(process.cwd(), inv.file), "utf-8"));
+  // ★R4(H-1) — 줄 분할 **전에** 주석을 지운다. 줄 단위로는 여러 줄 주석을 못 벗긴다.
+  // ★2026-08-06 — 순서가 중요하다. `stripJsxComments` 를 **먼저** 돌린다.
+  //   그 안의 **40줄 폭주 백스톱**은 `{/* … */}` 매치를 세는데, 블록 스트립을 먼저 하면
+  //   그 형태가 이미 공백이 되어 백스톱이 **한 건도 못 보는 공허한 검사**로 죽는다.
+  //   (내가 지금 고치고 있는 바로 그 결함을 봉합 순서로 다시 만들 뻔했다.)
+  const raw = readFileSync(resolve(process.cwd(), inv.file), "utf-8");
+  const src = stripBlockComments(stripJsxComments(raw));
   const lines = src.split("\n");
   const matched: { no: number; text: string }[] = [];
   lines.forEach((text, i) => {
