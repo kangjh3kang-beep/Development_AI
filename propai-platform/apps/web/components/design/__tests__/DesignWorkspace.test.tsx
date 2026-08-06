@@ -297,3 +297,32 @@ describe("DesignWorkspace", () => {
     ).toBeInTheDocument();
   });
 });
+
+// ── 층위 계약: 이 워크스페이스가 **스태킹 컨텍스트를 만들지 않는다** ──
+//   ★왜 계약인가: 배경(absolute inset-0)과 본문(relative)이 각각 z 를 가지면 본문이 스태킹
+//   컨텍스트가 되고, 그 안의 CAD **전체화면**(fixed z-[9990])이 실효 10 으로 갇힌다 —
+//   앱 헤더(1000)·FAB(95) 아래로 깔려 "전체화면"이 전역 크롬을 못 덮었다. z 를 올려도
+//   소용없는 상태였으므로 **컨텍스트 자체를 만들지 않는 것**이 계약이다.
+//   ★소스 grep 이 아니라 **렌더된 class** 로 본다(주석 처리 변이 면역 — CLAUDE.md 회귀망 규율 A-3).
+describe("DesignWorkspace 층위 계약 — 스태킹 컨텍스트 금지", () => {
+  it("★배경·본문 어느 쪽도 z 유틸을 갖지 않는다(전체화면이 갇히지 않도록)", () => {
+    resetStores();
+    render(<DesignWorkspace projectId="p1" />);
+
+    const positioned = Array.from(
+      document.querySelectorAll<HTMLElement>('[class*="absolute"], [class*="relative"]'),
+    );
+    // 공허 진리 방지 — positioned 요소를 하나도 못 찾으면 아래 검사가 무의미하다.
+    expect(positioned.length, "positioned 요소를 찾지 못했다 — 렌더가 비었다").toBeGreaterThan(0);
+
+    // 스태킹 컨텍스트를 만드는 조합: positioned + z-index(auto 아님).
+    const contexts = positioned
+      .filter((el) => /(?:^|\s)(?:[a-z0-9-]+:)*z-(?:\[\d+\]|\d+)(?=\s|$)/.test(el.className ?? ""))
+      .map((el) => (el.className ?? "").toString().slice(0, 80));
+
+    expect(
+      contexts,
+      `이 워크스페이스에 스태킹 컨텍스트가 생겼다 — 내부 전체화면(z-9990)이 갇힌다:\n${contexts.join("\n")}`,
+    ).toHaveLength(0);
+  });
+});
