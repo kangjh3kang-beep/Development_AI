@@ -203,8 +203,11 @@ export function WorkspaceNavBar({ sections }: { sections: NavSection[] }) {
                   <div
                     aria-hidden="true"
                     data-testid={`workspace-nav-hover-bridge-${section.id}`}
-                    /* ★z-[699] — 아래 드롭다운(700)의 짝. 본문 sticky(600)보다 위여야
-                       마우스가 이 다리를 지날 때 hover 가 끊기지 않는다. */
+                    /* ★z-[699] — 아래 드롭다운(700)의 짝. 버튼과 드롭다운 사이 8px 틈을 덮어
+                       마우스가 그 틈을 지날 때 hover 가 끊기지 않게 한다.
+                       ※ 초판 주석은 "본문 sticky(600)보다 위여야 hover 가 끊기지 않는다"고 썼는데
+                         **기하로 성립하지 않는다**(리뷰 반증): 이 다리는 nav 패딩 안 8px 띠라
+                         ContextHeader 와 겹치지 않는다. 값은 드롭다운의 짝으로 계약 대역 안에 둔다. */
                     className="absolute left-0 top-10 z-[699] h-2 min-w-64"
                     onMouseEnter={() => openSection(section.id)}
                   />

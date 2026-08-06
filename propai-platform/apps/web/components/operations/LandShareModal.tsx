@@ -78,7 +78,7 @@ export function LandShareModal({
   }, [jibun, pnu]);
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[800] flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
       <div
         className="max-h-[88vh] w-full max-w-3xl overflow-y-auto rounded-[var(--radius-2xl)] border border-[var(--line)] bg-[var(--surface)] p-6 shadow-[var(--shadow-lg)]"
         onClick={(e) => e.stopPropagation()}
