@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DesignWorkspace } from "@/components/design/DesignWorkspace";
 import { useProjectContextStore, type DesignData, type SiteAnalysisData } from "@/store/useProjectContextStore";
 import { useProjectStore, type Project } from "@/store/useProjectStore";
+import { SATONG_CONTENT_Z } from "@/lib/satong-map-z";
 
 vi.mock("@/components/design/DesignStudio", () => ({
   DesignStudio: ({ onOpen3D }: { onOpen3D?: () => void }) => (
@@ -296,4 +297,46 @@ describe("DesignWorkspace", () => {
       screen.getByRole("group", { name: /설계 흐름 진행 상태/ }),
     ).toBeInTheDocument();
   });
+});
+
+// ── 층위 계약: 이 워크스페이스가 **스태킹 컨텍스트를 만들지 않는다** ──
+//   ★왜 계약인가: 배경(absolute inset-0)과 본문(relative)이 각각 z 를 가지면 본문이 스태킹
+//   컨텍스트가 되고, 그 안의 CAD **전체화면**(fixed z-[9990])이 실효 10 으로 갇힌다 —
+//   앱 헤더(1000)·FAB(95) 아래로 깔려 "전체화면"이 전역 크롬을 못 덮었다. z 를 올려도
+//   소용없는 상태였으므로 **컨텍스트 자체를 만들지 않는 것**이 계약이다.
+//   ★소스 grep 이 아니라 **렌더된 class** 로 본다(주석 처리 변이 면역 — CLAUDE.md 회귀망 규율 A-3).
+describe("DesignWorkspace 층위 계약 — 스태킹 컨텍스트 금지", () => {
+  it("★워크스페이스 **직계 래퍼**가 스태킹 컨텍스트를 만들지 않는다", () => {
+    resetStores();
+    const { container } = render(<DesignWorkspace projectId="p1" />);
+
+    // ★스코프를 직계 자식으로 한정한다(리뷰 지적 H3):
+    //   · 넓게 훑으면 CadBim 등 하위 패널의 **정상적인** 내부 z(relative z-10·z-30)가 위반으로
+    //     잡혀 위양성이 된다(규율 A-6).
+    //   · 반대로 종전 셀렉터는 `absolute|relative` 만 봐서 실재하는 `sticky z-20` 컨텍스트를
+    //     **못 봤다**(거짓 초록). 전체화면이 갇히느냐는 **직계 래퍼**가 컨텍스트인지에 달렸다.
+    const root = container.firstElementChild;
+    expect(root, "워크스페이스 루트를 찾지 못했다").not.toBeNull();
+    const direct = Array.from(root!.children) as HTMLElement[];
+    // 공허 진리 방지 — 직계 자식이 없으면 아래 검사가 무의미하다.
+    expect(direct.length, "직계 자식이 없다 — 렌더가 비었다").toBeGreaterThan(0);
+
+    // 스태킹 컨텍스트 생성 조합: positioned(+z) · isolate · transform/filter 유틸.
+    const POSITIONED = /(?:^|\s)(?:[a-z0-9-]+:)*(?:absolute|relative|sticky|fixed)(?=\s|$)/;
+    const Z_UTIL = /(?:^|\s)(?:[a-z0-9-]+:)*-?z-(?:\[\d+\]|\d+)(?=\s|$)/;
+    const ISOLATE = /(?:^|\s)(?:[a-z0-9-]+:)*isolate(?=\s|$)/;
+
+    const contexts = [root as HTMLElement, ...direct]
+      .filter((el) => {
+        const cls = (el.className ?? "").toString();
+        return (POSITIONED.test(cls) && Z_UTIL.test(cls)) || ISOLATE.test(cls);
+      })
+      .map((el) => (el.className ?? "").toString().slice(0, 80));
+
+    expect(
+      contexts,
+      `워크스페이스 직계에 스태킹 컨텍스트가 생겼다 — 내부 전체화면(z-${SATONG_CONTENT_Z.appFullscreen})이 갇힌다:\n${contexts.join("\n")}`,
+    ).toHaveLength(0);
+  });
+
 });

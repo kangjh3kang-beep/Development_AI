@@ -495,7 +495,11 @@ export function DesignWorkspace({ projectId }: { projectId: string }) {
           overflow-hidden 대신 rounded-[inherit]로 모서리를 배경 자체에 둥글려 클립 없이 정합. */}
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-0 z-0 rounded-[var(--r-panel)]"
+        /* ★z-0 제거 — 이 배경과 아래 본문이 각각 z-0/z-10 을 갖는 바람에 본문이 **스태킹
+           컨텍스트**가 되어, 그 안의 CAD 전체화면(fixed z-[9990])이 실효 10 으로 갇혔다
+           (전체화면이 앱 헤더·FAB 아래로 깔림). 둘 다 z 를 빼면 DOM 순서로 본문이 위이므로
+           시각 결과는 같고, 컨텍스트만 사라진다. */
+        className="pointer-events-none absolute inset-0 rounded-[var(--r-panel)]"
         style={{
           backgroundImage:
             "linear-gradient(var(--grid-line) 1px, transparent 1px), linear-gradient(90deg, var(--grid-line) 1px, transparent 1px)",
@@ -503,7 +507,8 @@ export function DesignWorkspace({ projectId }: { projectId: string }) {
         }}
       />
 
-      <div className="relative z-10 flex flex-col gap-3 p-3 lg:flex-row lg:items-start">
+      <div /* ★z-10 제거(위 배경 주석 참조) — DOM 순서상 배경 뒤라 그대로 위에 그려진다. */
+        className="relative flex flex-col gap-3 p-3 lg:flex-row lg:items-start">
         {/* ── 좌측 dock: 산출 단계 스테퍼(1차 법규·부지 → 2차 개요 Top-N → 3차 CAD·BIM) ──
             Pillar D: lg에서 sticky-top + self-start로 페이지를 스크롤해도 파이프라인 레일이 고정
             노출된다. 레일 자체는 max-h로 뷰포트 이내로 묶고 내부 nav가 넘치면 스크롤(레일만 국소). */}

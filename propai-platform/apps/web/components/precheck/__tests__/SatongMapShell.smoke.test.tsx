@@ -236,6 +236,25 @@ describe("SatongMapShell 접힘(B4)·문서 위계(B1) 회귀망", () => {
     expect(screen.queryByRole("button", { name: /지도 열기/ })).not.toBeInTheDocument();
   });
 
+  it("★후속 4단계: 호출측이 hasTarget 을 주입하면 그것이 이 화면의 대상 정의가 된다", () => {
+    // ★토지조서에서 "대상"은 주소가 아니라 **편입토지 행**이다. 주소만 있고 행이 0건이면
+    //   셸이 접힌 채 남아, 그 페이지의 빈 상태 안내("상단 통합 지도의 지번·주소 검색으로
+    //   등록하세요")가 **접힌 컨트롤을 가리키는** 모순이 됐다(P1 이 덮지 못한 조합).
+    seedTarget(); // 주소는 있다 — 셸 기본 판정이라면 접힌다
+    render(<SatongMapShell locale="ko" defaultCollapsed hasTarget={false} />);
+
+    // 호출측이 "대상 없음"이라 했으므로 펼쳐야 한다.
+    expect(screen.getByRole("heading", { name: "통합 필지 입력" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /지도 열기/ })).not.toBeInTheDocument();
+  });
+
+  it("★후속 4단계: 미주입이면 셸 기본 판정을 그대로 쓴다(무회귀)", () => {
+    seedTarget();
+    render(<SatongMapShell locale="ko" defaultCollapsed />);
+
+    expect(screen.getByRole("button", { name: /지도 열기/ })).toBeInTheDocument();
+  });
+
   it("★모바일 IA P0: 접힌 셸의 유일 진입점 \"지도 열기\"는 44px 터치 타깃 하한을 지킨다", () => {
     seedTarget();
     render(<SatongMapShell locale="ko" defaultCollapsed />);

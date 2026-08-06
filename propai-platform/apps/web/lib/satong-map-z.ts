@@ -99,6 +99,17 @@ export const SATONG_CONTENT_Z = {
    *   여섯 등급으로 흩어져 있고 일괄 조정은 회귀 위험이 커서 여기서 다루지 않는다.
    */
   appModal: 800,
+  /**
+   * 전체화면 뷰포트 오버레이(지도 풀스크린 CSS 폴백·CAD/BIM 전체화면). Tailwind 로는 `z-[9990]`.
+   *
+   * ★유일하게 **앱 크롬(헤더 z-1000)보다 위**인 칸이다 — "전체화면"이 전역 크롬에 가리면
+   *   그 이름이 거짓이 된다. 지도 풀스크린(useMapFullscreen 의 CSS 폴백)이 이미 9990 을 쓰고
+   *   있어 값을 맞춘다.
+   * ★주의: 이 값을 쓰려면 조상에 **스태킹 컨텍스트가 없어야** 한다. CAD 전체화면이 실제로
+   *   DesignWorkspace 의 `relative z-10` 에 갇혀 실효 10 이었고(=헤더·FAB 아래), z 를 올려도
+   *   소용없는 상태였다 — 그래서 그 컨텍스트를 함께 걷어냈다.
+   */
+  appFullscreen: 9990,
 } as const;
 
 export const SATONG_UI_Z = {
