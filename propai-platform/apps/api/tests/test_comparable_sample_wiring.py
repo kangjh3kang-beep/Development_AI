@@ -445,6 +445,59 @@ def test_user_inputs_do_not_suppress_comparable_lookup() -> None:
     assert gate[0].count(" or ") >= 3, f"게이트가 축소됐다: {gate[0].strip()}"
 
 
+def test_cross_check_note_does_not_claim_unused_comparables() -> None:
+    """★★라이브 적발 — 거래사례를 **하나도 안 썼는데** "실거래 가중 분포"라고 말했다.
+
+    `cross_check` 는 `cmp_unit_price > 0` 일 때만 거래사례 가중을 섞고, 아니면 공시지가
+    경로 단독이다. 그런데 `note` 와 신뢰도 `basis` 는 **무조건** 실거래를 언급했다.
+
+    ★같은 함수의 `weight_note` 는 이미 조건부로 정확했다("실거래 확보 시 정밀도↑") —
+    저자가 그 구분을 알고 있었는데 두 문구만 따라오지 않은 **한 곳만 고침** 패턴이다.
+
+    ★프로덕션 자기모순 실측(강남 논현동, 2026-08-06): 한 응답 안에서
+        weight_note = "…복수 시나리오 교차검증 평균 채택(**실거래 확보 시 정밀도↑**)"
+        cross_check.note = "복수 시나리오(보정계수·**실거래 가중 분포**) 교차검증…"
+    앞은 "아직 없다", 뒤는 "썼다"고 말한다.
+
+    ★두 모집단을 가른다 — 거래사례 **있는** 호출과 **없는** 호출이 서로 다른 문구를
+    내야 한다(둘이 같으면 이 검사는 아무것도 잠그지 못한다).
+    """
+    import asyncio
+
+    from app.services.land_intelligence.desk_appraisal_service import desk_appraisal
+
+    common = dict(pnu="1168010800100010001", address="", area_sqm=500.0,
+                  official_price_per_sqm=15_000_000)
+    without = asyncio.run(desk_appraisal(**common))
+    with_cmp = asyncio.run(desk_appraisal(**common, comparable_avg_per_sqm=18_000_000))
+
+    note_wo = (without.get("cross_check") or {}).get("note") or ""
+    note_w = (with_cmp.get("cross_check") or {}).get("note") or ""
+    assert note_wo and note_w, "교차검증 note 가 비었다 — 아래 검사가 공허해진다"
+    assert note_wo != note_w, (
+        "거래사례 유무와 무관하게 같은 문구를 낸다 — 안 쓴 방법을 썼다고 말하게 된다"
+    )
+    assert "실거래 가중" not in note_wo, f"거래사례를 안 썼는데 썼다고 말한다: {note_wo}"
+    assert "실거래 가중" in note_w, f"거래사례를 썼는데 언급이 없다: {note_w}"
+
+    # 신뢰도 근거도 같은 규율을 따른다.
+    def _basis(res: dict) -> str:
+        items = (res.get("evidence") or {}).get("evidence") or []
+        for it in items:
+            if "신뢰도" in str(it.get("label") or ""):
+                return str(it.get("basis") or "")
+        return ""
+
+    b_wo, b_w = _basis(without), _basis(with_cmp)
+    assert b_wo and b_w, "신뢰도 근거가 비었다 — 아래 검사가 공허해진다"
+    assert "실거래 가중" not in b_wo, f"근거 표기가 안 쓴 것을 썼다고 말한다: {b_wo}"
+    assert "실거래 가중" in b_w, f"근거 표기가 쓴 것을 빠뜨렸다: {b_w}"
+
+    # ★같은 응답 안에서 두 문구가 서로 모순되지 않아야 한다(라이브에서 실제로 모순이었다).
+    wn = without.get("weight_note") or ""
+    assert "실거래 확보 시" in wn, f"weight_note 가 바뀌었다 — 이 대조를 갱신하라: {wn}"
+
+
 def test_every_skip_path_says_why() -> None:
     """★R6 리뷰(F-3) — "왜 거래사례비교를 안 썼는지"에 **침묵하는 갈래가 없어야** 한다.
 
