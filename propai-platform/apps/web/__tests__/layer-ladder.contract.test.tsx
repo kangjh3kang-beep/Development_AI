@@ -26,7 +26,7 @@
  *     **소스 락**이다. 그리고 감시 대상은 **하드코딩 목록**이라 신규 지도공존 모달은 무잠금이다.
  *   · jsdom 은 레이아웃·페인트를 하지 않으므로 **z 서열만** 증명한다. 실제 픽셀 겹침은 라이브 확인 대상.
  */
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 import { fireEvent, render, screen, within } from "@testing-library/react";
@@ -143,34 +143,84 @@ describe("앱 전역 층위 사다리", () => {
     c.unmount();
   });
 
-  it("★렌더 불가 모달(경매 상세·라이트박스)은 소스 락 — 순서 무관 토큰 + 개수까지 잠근다", () => {
-    // ★AuctionWorkspace 의 DetailModal 은 export 되지 않아 렌더할 수 없다. 소스로 잠그되,
-    //   초판 정규식(`fixed inset-0 z-[N]` 연속 매칭)은 **클래스 순서만 바꿔도 스캔에서 사라지고**,
-    //   같은 파일의 다른 백드롭이 "0개 아님" 가드를 만족시켜 **무성 통과**했다(리뷰 실증).
-    //   그래서 ①순서 무관 토큰으로 후보를 뽑고 ②후보에 z 가 없으면 실패시키고 ③개수까지 잠근다.
-    const rel = "components/auction/AuctionWorkspace.tsx";
-    const src = readSource(rel);
-    const candidates = Array.from(
-      src.matchAll(/className="([^"]*\bfixed\b[^"]*\binset-0\b[^"]*)"/g),
-    ).map((m) => m[1]);
+  it("★지도 공존 화면의 모달을 **파생으로** 찾아 전수 검사한다 — 목록형 금지", () => {
+    // ★종전엔 감시 대상이 하드코딩 4파일이라, 지도 공존 화면에 새 모달이 z-50 으로 추가돼도
+    //   잡히지 않았다(리뷰 지적 — 이 저장소가 "목록형 골든은 새 항목을 못 잡는다"고 스스로
+    //   박제한 교훈의 재발). 그래서 **시드만 고정하고 대상은 파생**한다:
+    //     ①지도 컴포넌트를 임포트하는 파일 = 지도 공존 화면
+    //     ②그 화면들이 임포트하는 컴포넌트 + 자기 자신에서 `fixed inset-0` 백드롭을 수집
+    //     ③각 백드롭 z 가 계약값(appModal)이거나 앱 크롬급(≥1000)이어야 한다
+    //   새 모달이 지도 화면에 추가되면 **자동으로 감시망에 들어온다**.
+    const MAP_SEEDS = [
+      "components/precheck/SatongMapShell",
+      "components/map/SatongMultiMap",
+      "components/map/KakaoMapControls",
+      "components/auction/AuctionMonitorPanel",
+    ];
 
-    // 공허 진리 방지 + 개수 잠금 — 하나가 스캔에서 사라지는 경로를 막는다.
-    expect(candidates.length, `${rel} 에서 fixed inset-0 백드롭 후보를 찾지 못했다`).toBe(2);
+    const walk = (dir: string, out: string[] = []): string[] => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, e.name);
+        if (e.isDirectory()) {
+          if (e.name === "node_modules" || e.name === "__tests__") continue;
+          walk(full, out);
+        } else if (e.name.endsWith(".tsx") && !e.name.includes(".test.")) {
+          out.push(full);
+        }
+      }
+      return out;
+    };
+    const all = [...walk("components"), ...walk("app")];
 
-    for (const cls of candidates) {
-      const m = cls.match(/(?:^|\s)z-\[(\d+)\]/);
-      expect(m, `백드롭 후보에 z-[N] 이 없다(클래스 순서 변경으로 누락되면 여기서 죽는다): "${cls}"`).not.toBeNull();
-      expect(
-        Number(m![1]),
-        `${rel} 의 모달 백드롭 z(${m![1]}) 가 계약값(${SATONG_CONTENT_Z.appModal})과 다르다`,
-      ).toBe(SATONG_CONTENT_Z.appModal);
+    // ① 지도 공존 화면
+    const mapScreens = all.filter((f) => {
+      const src = readFileSync(f, "utf8");
+      return MAP_SEEDS.some((seed) => src.includes(seed));
+    });
+    // 공허 진리 방지 — 시드가 아무 파일도 못 찾으면 아래 전부가 무의미하다.
+    expect(mapScreens.length, "지도 공존 화면을 하나도 찾지 못했다 — 시드 경로가 낡았다").toBeGreaterThan(3);
+
+    // ② 백드롭 수집(자기 자신 + 1단계 임포트)
+    const BACKDROP = /className="([^"]*\bfixed\b[^"]*\binset-0\b[^"]*)"/g;
+    const Z_IN = /(?:^|\s)z-\[?(\d+)\]?(?=\s|$)/;
+    const collected = new Map<string, (number | null)[]>();
+    const addFrom = (rel: string) => {
+      if (collected.has(rel)) return;
+      let src: string;
+      try {
+        src = readFileSync(join(process.cwd(), rel), "utf8");
+      } catch {
+        return;
+      }
+      const zs = Array.from(src.matchAll(BACKDROP)).map((m) => {
+        const hit = m[1].match(Z_IN);
+        return hit ? Number(hit[1]) : null;
+      });
+      if (zs.length) collected.set(rel, zs);
+    };
+    for (const screen of mapScreens) {
+      addFrom(screen);
+      const src = readFileSync(screen, "utf8");
+      for (const m of src.matchAll(/from "@\/(components\/[^"]+)"/g)) addFrom(`${m[1]}.tsx`);
     }
+
+    expect(collected.size, "지도 공존 화면에서 모달 백드롭을 하나도 수집하지 못했다").toBeGreaterThan(0);
+
+    // ③ 판정
+    const violations: string[] = [];
+    for (const [rel, zs] of collected) {
+      zs.forEach((z, i) => {
+        if (z === null) violations.push(`${rel}[${i}] — 백드롭에 z 유틸이 없다(클래스 순서 변경 누락 방지)`);
+        else if (z !== SATONG_CONTENT_Z.appModal && z < APP_CHROME_Z)
+          violations.push(`${rel}[${i}] z=${z} — 계약값(${SATONG_CONTENT_Z.appModal}) 또는 앱 크롬급(≥${APP_CHROME_Z})이어야 한다`);
+      });
+    }
+    expect(violations, `지도 공존 모달 층위 위반:\n${violations.join("\n")}`).toHaveLength(0);
   });
 
   it.todo(
-    "★모달 감시가 **하드코딩 목록**이다 — 지도공존 화면에 새 모달이 z-50 으로 추가돼도 잡히지 않는다. " +
-      "파생형(지도 컴포넌트를 임포트하는 파일 글롭)으로 바꾸는 것이 옳다. " +
-      "그리고 저장소 전역 모달 z(50/60/70/100/120/1000)는 여전히 흩어져 있다(지도 비공존 화면 미적용)",
+    "★파생 범위는 **1단계 임포트**까지다 — 지도 화면이 A 를 임포트하고 A 가 B(모달)를 임포트하면 " +
+      "B 는 안 잡힌다. 그리고 지도 **비공존** 화면의 모달 z 는 여전히 흩어져 있다(50/60/70/100/120/1000)",
   );
 
   it("★모바일 네비는 앱 헤더 안에 렌더돼 계약 밖이다 — 그 전제가 유지되는지 확인", () => {
