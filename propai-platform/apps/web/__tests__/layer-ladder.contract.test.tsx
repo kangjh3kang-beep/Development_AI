@@ -143,6 +143,26 @@ describe("앱 전역 층위 사다리", () => {
     c.unmount();
   });
 
+  it("★전체화면 오버레이가 계약값(appFullscreen)과 일치한다 — 상수를 장식으로 두지 않는다", () => {
+    // ★리뷰 지적(H2): 계약에 appFullscreen=9990 을 넣고 **아무데서도 참조하지 않았다**.
+    //   두 소비처가 문자열 하드코딩이라, CAD 를 z-[60] 으로 되돌려도 깨지는 테스트가 없었다.
+    //   Tailwind JIT 상 `z-[${상수}]` 동적 생성은 불가하므로 소스로 결속한다.
+    const consumers = [
+      "components/design/CadBimIntegrationPanel.tsx",
+      "hooks/useMapFullscreen.ts",
+    ];
+    for (const rel of consumers) {
+      const src = readSource(rel);
+      const zs = Array.from(src.matchAll(/(?:^|[\s"'`])z-\[(\d+)\]/g)).map((m) => Number(m[1]));
+      // 공허 진리 방지 — z 유틸이 없으면 "위반 0"이 무의미하다.
+      expect(zs.length, `${rel} 에서 z-[N] 을 찾지 못했다`).toBeGreaterThan(0);
+      expect(
+        zs,
+        `${rel} 에 전체화면 계약값(${SATONG_CONTENT_Z.appFullscreen})이 없다 — 전체화면이 앱 크롬에 가린다`,
+      ).toContain(SATONG_CONTENT_Z.appFullscreen);
+    }
+  });
+
   it("★지도 공존 화면의 모달을 **파생으로** 찾아 전수 검사한다 — 목록형 금지", () => {
     // ★종전엔 감시 대상이 하드코딩 4파일이라, 지도 공존 화면에 새 모달이 z-50 으로 추가돼도
     //   잡히지 않았다(리뷰 지적 — 이 저장소가 "목록형 골든은 새 항목을 못 잡는다"고 스스로
@@ -156,6 +176,7 @@ describe("앱 전역 층위 사다리", () => {
       "components/map/SatongMultiMap",
       "components/map/KakaoMapControls",
       "components/auction/AuctionMonitorPanel",
+      "components/presale/ProjectPresaleMap",
     ];
 
     const walk = (dir: string, out: string[] = []): string[] => {
@@ -173,10 +194,13 @@ describe("앱 전역 층위 사다리", () => {
     const all = [...walk("components"), ...walk("app")];
 
     // ① 지도 공존 화면
-    const mapScreens = all.filter((f) => {
-      const src = readFileSync(f, "utf8");
-      return MAP_SEEDS.some((seed) => src.includes(seed));
-    });
+    // ★`src.includes(seed)` 는 **주석 안 언급**까지 지도 화면으로 오인한다(리뷰 실증: 마케팅
+    //   문서 파일이 감시망에 끌려 들어왔다). 정적/동적 임포트 **문**만 본다.
+    const importsSeed = (src: string) =>
+      MAP_SEEDS.some((seed) =>
+        new RegExp(`(?:from\\s+|import\\()["'\`]@/${seed}["'\`]`).test(src),
+      );
+    const mapScreens = all.filter((f) => importsSeed(readFileSync(f, "utf8")));
     // 공허 진리 방지 — 시드가 아무 파일도 못 찾으면 아래 전부가 무의미하다.
     expect(mapScreens.length, "지도 공존 화면을 하나도 찾지 못했다 — 시드 경로가 낡았다").toBeGreaterThan(3);
 
@@ -201,7 +225,9 @@ describe("앱 전역 층위 사다리", () => {
     for (const screen of mapScreens) {
       addFrom(screen);
       const src = readFileSync(screen, "utf8");
-      for (const m of src.matchAll(/from "@\/(components\/[^"]+)"/g)) addFrom(`${m[1]}.tsx`);
+      // 정적 + **동적** import 둘 다 따라간다(이 저장소는 무거운 모달을 dynamic 으로 단다).
+      for (const m of src.matchAll(/(?:from\s+|import\()["'`]@\/(components\/[^"'`]+)["'`]/g))
+        addFrom(`${m[1]}.tsx`);
     }
 
     expect(collected.size, "지도 공존 화면에서 모달 백드롭을 하나도 수집하지 못했다").toBeGreaterThan(0);
@@ -218,13 +244,16 @@ describe("앱 전역 층위 사다리", () => {
     expect(violations, `지도 공존 모달 층위 위반:\n${violations.join("\n")}`).toHaveLength(0);
   });
 
-  // ★후속 2단계 판정(2026-08-06 실측): 저장소 전역 `fixed inset-0` 백드롭 35건 중 800 미만이
-  //   21건이지만, 그 모달들이 **높은 오버레이(380~999)를 가진 화면에 쓰이는 조합은 0건**이다.
-  //   즉 z 가 낮아도 만날 상대가 없어 무해하다 → **일괄 승격은 불필요**하고 회귀 위험만 크다.
-  //   새 위험 조합이 생기면 위 파생형 검사가 자동으로 잡는다(지도 화면에 모달이 추가되는 경우).
+  // ★후속 2단계 판정(2026-08-06 실측 → 리뷰 반증 반영): 전역 `fixed inset-0` 백드롭 35건 중
+  //   800 미만이 21건이다. 초판은 "높은 오버레이 화면과의 조합 0건"이라 적었는데 **거짓**이었다 —
+  //   `MarketInsightsWorkspaceClient`(지도 렌더) → `OrchestratorPanel` → `InputResolveModal(z-50)`
+  //   **2단계 임포트** 경로가 실재한다(리뷰 실증). 그래서 파생 추적을 정적+동적 임포트로 넓히고
+  //   아래 todo 에 남은 경계를 적는다. 일괄 승격은 여전히 하지 않는다(회귀 위험 대비 이득이 낮고,
+  //   실제 위험 조합은 파생 검사가 잡는 쪽이 맞다).
   it.todo(
-    "★파생 범위는 **1단계 임포트**까지다 — 지도 화면이 A 를 임포트하고 A 가 B(모달)를 임포트하면 " +
-      "B 는 안 잡힌다. 그리고 지도 **비공존** 화면의 모달 z 는 여전히 흩어져 있다(50/60/70/100/120/1000)",
+    "★파생이 놓치는 경계: ①**2단계 이상 임포트**(실재 1건 — MarketInsights→OrchestratorPanel→" +
+      "InputResolveModal z-50) ②**비리터럴 className**(삼항·cn() 로 조립한 백드롭은 정규식 밖) " +
+      "③지도 **비공존** 화면의 모달 z 산재(50/60/70/100/120/1000)",
   );
 
   it("★모바일 네비는 앱 헤더 안에 렌더돼 계약 밖이다 — 그 전제가 유지되는지 확인", () => {
