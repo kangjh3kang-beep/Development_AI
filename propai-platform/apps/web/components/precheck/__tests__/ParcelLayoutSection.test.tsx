@@ -169,6 +169,47 @@ describe("ParcelLayoutSection 표시 계약(W3)", () => {
     expect(onSelectOption).toHaveBeenCalledWith("탑상형@0");
   });
 
+  it("★모바일 IA P2: done 상태에서만 나타나는 컨트롤도 44px 터치 타깃 하한을 지킨다", () => {
+    // ★이 케이스가 필요한 이유: SatongMapShell 의 전수 불변식은 이 섹션을 `status="idle"` 로만
+    //   스윕하므로, done 뒤에 나타나는 **대안 칩**과 **설계 시작** 버튼이 그 검사에 잡히지 않는다
+    //   (R2 가 변이로 실증 — 하한을 지워도 전건 통과했다). 상태를 만들 수 있는 이 파일에서 잠근다.
+    //   ★두 컨트롤은 종전 18px·27px 로 이 상세 패널에서 가장 작았다.
+    const tower: SiteLayoutOption = { ...MULTI, kind: "탑상형" };
+    render(
+      <ParcelLayoutSection
+        status="done"
+        // ★land_area_sqm 이 있어야 "설계 시작"이 렌더된다(면적 미확인이면 죽은 버튼을 안 그리는
+        //   정책 — ParcelLayoutSection.tsx:270). 픽스처가 그 조건을 만족시켜야 검사가 성립한다.
+        result={{ ...OK(MULTI, [MULTI, tower]), land_area_sqm: 820 }}
+        selectedOption={MULTI}
+        selectedKey="판상형@0"
+        onRequest={vi.fn()}
+        onSelectOption={vi.fn()}
+        onSeedDesign={vi.fn()}
+      />,
+    );
+
+    const floorOk = (el: HTMLElement) => {
+      const cls = el.className ?? "";
+      for (const m of cls.matchAll(/(?:^|\s)(?:min-)?(?:h|size)-(\d+(?:\.\d+)?)(?=\s|$)/g)) {
+        if (Number(m[1]) * 4 >= 44) return true;
+      }
+      for (const m of cls.matchAll(/(?:^|\s)(?:min-)?(?:h|size)-\[(\d+(?:\.\d+)?)(px|rem)\](?=\s|$)/g)) {
+        if ((m[2] === "rem" ? Number(m[1]) * 16 : Number(m[1])) >= 44) return true;
+      }
+      return false;
+    };
+
+    const chip = screen.getByTestId("parcel-layout-option-탑상형@0");
+    const seed = screen.getByTestId("parcel-layout-seed-design");
+    // 공허 진리 방지 — 둘 다 실제로 렌더된 상태에서만 이 단언이 의미를 갖는다.
+    expect(chip).toBeInTheDocument();
+    expect(seed).toBeInTheDocument();
+
+    expect(floorOk(chip), `대안 칩이 44px 미달이다: ${chip.className}`).toBe(true);
+    expect(floorOk(seed), `설계 시작 버튼이 44px 미달이다: ${seed.className}`).toBe(true);
+  });
+
   it("⑥-b 대안이 1개면 토글을 만들지 않는다(고를 게 없는 UI 금지)", () => {
     render(
       <ParcelLayoutSection
