@@ -70,6 +70,15 @@ def test_unparseable_month_falls_back_to_short_ttl() -> None:
     for bad in ("", "abcd", "2026", "202613", "20260a", None):
         assert _deal_ymd_ttl(bad, now=now) == _TTL_RECENT, bad
 
+    # ★★`202600`(월 0)이 **월 범위 가드를 판별하는 유일한 케이스**다.
+    #   `202613`(월 13)으로는 못 잡는다 — 경과가 음수(8-13=-5)라 가드가 없어도 어차피
+    #   짧은 쪽으로 떨어지기 때문이다. 반면 월 0 은 경과가 8개월로 계산돼, 가드가 없으면
+    #   **장기 캐시로 새어 나간다**.
+    #   ★이 구멍은 `scripts/mutate_changed.py` 가 찾았다 — 내가 고른 변이 목록엔 없었다.
+    assert _deal_ymd_ttl("202600", now=now) == _TTL_RECENT, (
+        "월 범위 가드가 없으면 깨진 월이 장기 캐시로 새어 나간다"
+    )
+
 
 def test_paged_collect_actually_uses_the_tiered_ttl() -> None:
     """★TTL 함수를 만들어 놓고 **수집부가 안 쓰면** 쿼터는 그대로 탄다.
