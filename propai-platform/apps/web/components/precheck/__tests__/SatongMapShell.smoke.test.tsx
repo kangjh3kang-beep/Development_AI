@@ -409,10 +409,25 @@ describe("SatongMapShell 모바일 IA(P2) — 44px 터치 타깃 전수 불변�
       ]);
     });
 
-    // 공허 진리 방지 — 선택이 반영되지 않았으면 빈 상태를 다시 검사하는 것이라 무의미하다.
+    // 공허 진리 방지 ① — 선택이 반영되지 않았으면 빈 상태를 다시 검사하는 것이라 무의미하다.
     expect(
       screen.getByRole("button", { name: /선택 필지로 새 프로젝트 생성|생성 중/ }),
       "필지 선택이 반영되지 않았다(새 프로젝트 생성 버튼 미출현)",
+    ).toBeInTheDocument();
+
+    // ★선택만으로는 부족하다 — 미니 산출물 퍼널과 자식 섹션(ParcelLayout/Slope)은 **상세 패널**
+    //   (`detailFeature && !activeLayer && !basemapOpen`) 안에 있어 카드를 눌러야 렌더된다.
+    //   이 클릭이 없으면 그 블록 전체가 DOM 에 없어 "위반 0"이 조용히 참이 된다 —
+    //   실제로 첫 판이 그 상태였고 변이(미니 퍼널·자식 섹션의 하한 제거)가 생존했다.
+    const parcelCard = document.querySelector('[role="button"][title*="역삼동 736"]')
+      ?? document.querySelector('[role="button"]');
+    expect(parcelCard, "선택 필지 카드를 찾지 못했다").not.toBeNull();
+    fireEvent.click(parcelCard as Element);
+
+    // 공허 진리 방지 ② — 상세 패널이 실제로 열렸는지 못 박는다.
+    expect(
+      screen.getByRole("button", { name: "필지 상세 닫기" }),
+      "필지 상세 패널이 열리지 않았다(미니 산출물 퍼널·자식 섹션이 검사에서 빠진다)",
     ).toBeInTheDocument();
 
     const buttons = Array.from(document.querySelectorAll("button"));
