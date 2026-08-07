@@ -253,6 +253,9 @@ export function resolveModuleSpec(fromFile: string, spec: string): string | null
     const abs = resolve(process.cwd(), cand);
     if (existsSync(abs) && statSync(abs).isFile()) return cand;
   }
+  // ★이 `return null` 은 변이로 잠기지 않는다(실측): 호출부가 `if (!next)` 로 보므로
+  //   null 이든 undefined 든 동작이 같은 **등가 변이**다. 위 두 return 경로(패키지 · 해석 성공)가
+  //   실제 판정을 지고, 그건 잠겨 있다.
   return null;
 }
 
@@ -265,12 +268,13 @@ export function importClosure(entries: string[]): string[] {
   const queue = [...entries];
   while (queue.length) {
     const rel = queue.shift()!;
-    let src: string;
-    try {
-      src = readFileSync(resolve(process.cwd(), rel), "utf8");
-    } catch {
-      continue;
-    }
+    // ★읽기 실패를 **삼키지 않는다**. 초판은 try/catch 로 `continue` 했는데 두 가지가 나빴다:
+    //   ① 폐포가 조용히 줄어든다 = 감시 대상이 사라지는데 초록 — 이 도구가 막으려는 바로 그 실패.
+    //   ② 변이검증에서 이 catch 가 `rel` 미정의(ReferenceError)까지 삼켜 **큐가 안 줄어드는
+    //      무한 루프**가 됐다(실측: 변이 하나가 vitest 를 영원히 멈춰 세웠다).
+    //   진입은 walk() 로 실재를 확인했고 확장은 resolveModuleSpec 이 existsSync 로 거른다 —
+    //   그래도 못 읽으면 그건 알아야 할 사건이므로 그대로 던진다.
+    const src = readFileSync(resolve(process.cwd(), rel), "utf8");
     for (const m of src.matchAll(/(?:from\s+|import\()\s*["'`]([^"'`]+)["'`]/g)) {
       const next = resolveModuleSpec(rel, m[1]);
       if (!next || seen.has(next)) continue;

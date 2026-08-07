@@ -249,13 +249,10 @@ describe("앱 전역 층위 사다리", () => {
       "상대 임포트(OrchestratorPanel → ./InputResolveModal)를 따라가지 못했다 — 파생이 다시 좁아졌다",
     ).toContain("components/orchestration/InputResolveModal.tsx");
 
-    const collected = closure.flatMap((rel) => {
-      try {
-        return collectBackdrops(readFileSync(join(process.cwd(), rel), "utf8"), rel);
-      } catch {
-        return [];
-      }
-    });
+    // ★읽기 실패를 삼키면 대상이 조용히 사라진다 — 폐포 파일은 존재가 확인된 것들이므로 그대로 던진다.
+    const collected = closure.flatMap((rel) =>
+      collectBackdrops(readFileSync(join(process.cwd(), rel), "utf8"), rel),
+    );
     // 공허 진리 가드 ③: 수집 0 이면 아래 판정이 무의미하다. 실측 8건 → 통째 주석 처리·
     //   렌더 삭제로 대상이 사라지면 여기서 죽는다.
     expect(

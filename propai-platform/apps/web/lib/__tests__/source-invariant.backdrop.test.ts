@@ -82,6 +82,18 @@ describe("collectBackdrops — 백드롭 className 파서", () => {
     expect(hits[0].zs).toEqual([800]);
   });
 
+  it("★문자열 안의 중괄호를 세지 않는다 — 안 그러면 표현식이 **일찍 끊겨** 뒤쪽 z 를 잃는다", () => {
+    // ★이 케이스가 없으면 중괄호 균형의 **따옴표 추적**이 무잠금이다(변이검증이 적발:
+    //   `if (quote)` 무력화·그 안의 `continue` 삭제가 **둘 다 생존**했다). 문자열 안에 `}` 가
+    //   있으면 추적 없이는 거기서 depth 가 0 이 되어 표현식이 잘리고, 뒤에 오는 낮은 z 갈래가
+    //   통째로 안 보인다 — 즉 "삼항으로 낮은 z 를 숨기는" 형태와 정확히 같은 결과가 된다.
+    const hits = collectBackdrops(
+      `<div className={cn("fixed inset-0 after:content-['}']", big ? "z-[800]" : "z-50")} />`,
+    );
+    expect(hits).toHaveLength(1);
+    expect(hits[0].zs.sort((a, b) => a - b)).toEqual([50, 800]);
+  });
+
   it("★파일당 여러 백드롭을 전부 수집한다(첫 건에서 멈추지 않는다)", () => {
     const hits = collectBackdrops(
       `<div className="fixed inset-0 z-[800]" /><div className="fixed inset-0 z-50" />`,
