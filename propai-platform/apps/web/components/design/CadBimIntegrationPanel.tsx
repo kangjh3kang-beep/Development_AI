@@ -1830,6 +1830,10 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
 
       {/* ── 편집화면(2D/3D 뷰포트) — 생성 UX 바로 아래(상단 배치). 설계 해석 요약은 뷰포트 아래로 이동. ── */}
       <div
+        // ★락이 **위치가 아니라 이 요소**에 결속되게 한다. 종전 테스트는 토글 버튼의
+        //   `parentElement` 를 뷰포트로 가정했는데, 버튼만 감싸는 래퍼를 하나 끼우면
+        //   전체화면이 죽은 채로도 락이 통과했다(적대검증 실증).
+        data-testid="cadbim-viewport"
         className={
           fullscreen
             ? "fixed inset-0 z-[9990] h-screen w-screen overflow-hidden rounded-none border-0 bg-[#0d1520] shadow-none group"
