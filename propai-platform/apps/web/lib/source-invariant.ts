@@ -173,41 +173,18 @@ function stripComments(src: string): string {
 }
 
 /**
- * `className` 속성의 값을 잘라낸다. `="…"` 는 그대로, `={…}` 는 **중괄호 균형**으로
- * 끝을 찾는다(문자열 안의 괄호는 세지 않는다).
+ * **문자열 리터럴** `className` 값만 뽑는다 — `="…"` 와 `={"…"}` 두 형태.
+ *
+ * ★종전엔 `={…}` 표현식을 중괄호 균형으로 파싱했는데, 수집 범위를 리터럴 전용으로 줄이면서
+ *   그 25줄이 통째로 **죽은 코드**가 됐다(변이검증이 적발: `else if (ch === "{")` 를 무력화해도
+ *   전부 초록 = 아무도 그 경로를 쓰지 않는다). 남겨두면 다음 사람이 "표현식도 본다"고 오해한다.
+ * ★표현식은 자연히 걸러진다 — `className={cn(…)}` 는 `=` 뒤가 따옴표가 아니라 매치되지 않는다.
+ *   템플릿(백틱)도 일부러 제외한다: 보간이 있으면 리터럴이 아니고, 없으면 굳이 쓸 이유가 없다.
  */
-function classNameValues(src: string): { raw: string; literal: boolean; end: number }[] {
-  const out: { raw: string; literal: boolean; end: number }[] = [];
-  const re = /className\s*=\s*/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(src))) {
-    const i = m.index + m[0].length;
-    const ch = src[i];
-    if (ch === '"' || ch === "'") {
-      const end = src.indexOf(ch, i + 1);
-      if (end < 0) continue;
-      out.push({ raw: src.slice(i + 1, end), literal: true, end });
-      re.lastIndex = end;
-    } else if (ch === "{") {
-      let depth = 0;
-      let quote: string | null = null;
-      let j = i;
-      for (; j < src.length; j++) {
-        const c = src[j];
-        if (quote) {
-          if (c === "\\") j++;
-          else if (c === quote) quote = null;
-          continue;
-        }
-        if (c === '"' || c === "'" || c === "`") quote = c;
-        else if (c === "{") depth++;
-        else if (c === "}" && --depth === 0) break;
-      }
-      out.push({ raw: src.slice(i + 1, j), literal: false, end: j });
-      re.lastIndex = j;
-    }
-  }
-  return out;
+function literalClassNames(src: string): string[] {
+  return Array.from(src.matchAll(/className\s*=\s*\{?\s*(["'])((?:(?!\1)[^\\])*)\1/g)).map(
+    (m) => m[2],
+  );
 }
 
 const HAS_CLASS = (t: string, cls: string) =>
@@ -238,15 +215,16 @@ const Z_UTIL = /(?:^|\s)(?:[\w-]+:)*z-\[?(\d+)\]?(?=\s|$)/g;
  * ★못 보는 형태는 계약 테스트의 `it.todo` 에 부채로 드러낸다 — 조용히 넘기지 않는다.
  */
 export function collectBackdrops(source: string, file = ""): BackdropHit[] {
-  const src = stripComments(source);
   const hits: BackdropHit[] = [];
-  for (const v of classNameValues(src)) {
-    if (!v.literal) continue;
-    const classes = v.raw.replace(/\s+/g, " ").trim();
+  for (const raw of literalClassNames(stripComments(source))) {
+    const classes = raw.replace(/\s+/g, " ").trim();
     if (!HAS_CLASS(classes, "fixed") || !HAS_CLASS(classes, "inset-0")) continue;
     if (HAS_CLASS(classes, "pointer-events-none")) continue;
-    const zs = Array.from(classes.matchAll(Z_UTIL)).map((z) => Number(z[1]));
-    hits.push({ file, classes, zs });
+    hits.push({
+      file,
+      classes,
+      zs: Array.from(classes.matchAll(Z_UTIL)).map((z) => Number(z[1])),
+    });
   }
   return hits;
 }

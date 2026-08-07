@@ -20,6 +20,21 @@ describe("collectBackdrops — 백드롭 className 파서", () => {
     expect(hits[0].zs).toEqual([800]);
   });
 
+  it("★`className={\"…\"}`(중괄호 안 통짜 리터럴)도 같은 리터럴로 본다", () => {
+    // 이 저장소에 실사용 1건이 있다(SatongMultiMap:2945 — 백드롭은 아니다).
+    // 변이검증이 이 지원을 무잠금으로 적발해 추가했다.
+    const hits = collectBackdrops(`<div className={"fixed inset-0 z-[800]"} />`);
+    expect(hits).toHaveLength(1);
+    expect(hits[0].zs).toEqual([800]);
+  });
+
+  it("★반대로 **표현식**은 보지 않는다 — 축소된 범위를 단언으로 못 박는다", () => {
+    // `cn(...)`·삼항·템플릿·상수는 수집 대상이 아니다(it.todo 로 부채를 드러낸 그 경계).
+    expect(collectBackdrops(`<div className={cn("fixed inset-0 z-50")} />`)).toHaveLength(0);
+    expect(collectBackdrops(`<div className={\`fixed inset-0 z-50\`} />`)).toHaveLength(0);
+    expect(collectBackdrops(`<div className={BACKDROP_CLS} />`)).toHaveLength(0);
+  });
+
   it("★`z-50`(대괄호 없는 표기)도 같은 값으로 읽는다", () => {
     expect(collectBackdrops(`<div className="fixed inset-0 z-50 p-4" />`)[0].zs).toEqual([50]);
   });
