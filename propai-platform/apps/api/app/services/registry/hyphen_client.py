@@ -290,7 +290,10 @@ async def search_by_simple_address(
             for cand in candidates[1:]
         ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        for cand, res in zip(candidates[1:], results):
+        # strict=True: tasks 를 candidates[1:] 로 만들었고 gather 는 순서·길이를 보존하므로
+        #   두 열의 길이는 항상 같다. 어긋나면 조용히 잘려 **엉뚱한 후보를 성공으로 기록**하게
+        #   되므로(로그의 corrected 가 실제 검색어와 달라진다) 즉시 터지는 편이 낫다.
+        for cand, res in zip(candidates[1:], results, strict=True):
             if isinstance(res, dict) and res.get("ok") and res.get("items"):
                 logger.info("하이픈 주소검색 병렬 자동보정 성공", original=addr, corrected=cand, count=len(res["items"]))
                 return res
