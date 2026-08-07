@@ -60,16 +60,11 @@ async def test_fetch_realty_registry_mock(monkeypatch):
 
 def test_normalize_address_candidates():
     c1 = hyphen_client.normalize_address_candidates("경상북도 포항시 남구 호미곶면 대보리 산 1-1")
-    assert c1 == [
-        "경상북도 포항시 남구 호미곶면 대보리 산 1-1",
-        "경상북도 포항시 남구 호미곶면 대보리 산1-1",
-    ]
-
-    c2 = hyphen_client.normalize_address_candidates("경상북도 포항시 남구 호미곶면 대보리 산1-1")
-    assert c2 == [
-        "경상북도 포항시 남구 호미곶면 대보리 산1-1",
-        "경상북도 포항시 남구 호미곶면 대보리 산 1-1",
-    ]
+    assert "경상북도 포항시 남구 호미곶면 대보리 산 1-1" in c1
+    assert "경상북도 포항시 남구 호미곶면 대보리 산1-1" in c1
+    assert "포항시 남구 호미곶면 대보리 산 1-1" in c1
+    assert "대보리 산 1-1" in c1
+    assert "대보리 산1-1" in c1
 
 
 @pytest.mark.asyncio

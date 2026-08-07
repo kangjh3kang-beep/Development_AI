@@ -120,26 +120,52 @@ async def probe_api_access(force: bool = False) -> dict[str, Any]:
 
 
 def normalize_address_candidates(address: str) -> list[str]:
-    """임야/산지 지번(산 1-1 ↔ 산1-1) 등 띄어쓰기·지번 형태 변형 후보를 자동 생성.
+    """임야/산지 지번(산 1-1 ↔ 산1-1) 및 광역시/도 축약 주소 변형 후보를 자동 생성.
 
     1차 주소검색 실패 시 자동 폴백하여 벤더 주소검색 파서의 미세한 포맷 차이에 따른
     주소검색 누락(no_match)을 자동 보정한다.
     """
     import re
 
-    addr = (address or "").strip()
+    addr = " ".join((address or "").split()).strip()
     if not addr:
         return []
-    candidates = [addr]
-    # 1. "산 1-1" → "산1-1" (산과 본번 사이 띄어쓰기 제거)
+
+    candidates: list[str] = []
+
+    def _add(s: str) -> None:
+        s = " ".join(s.split()).strip()
+        if s and s not in candidates:
+            candidates.append(s)
+
+    _add(addr)
+
+    # 1. "산 1-1" ↔ "산1-1" (산과 본번 사이 띄어쓰기 변형)
     v1 = re.sub(r"산\s+(\d+)", r"산\1", addr)
-    if v1 != addr and v1 not in candidates:
-        candidates.append(v1)
-    # 2. "산1-1" → "산 1-1" (산과 본번 사이 띄어쓰기 추가)
+    _add(v1)
     v2 = re.sub(r"산(\d+)", r"산 \1", addr)
-    if v2 != addr and v2 not in candidates:
-        candidates.append(v2)
+    _add(v2)
+
+    # 2. 광역시/도 제거 및 시/군/구 이하 축약 주소 후보 생성
+    parts = addr.split()
+    if len(parts) >= 3:
+        # 광역시/도 제거
+        if any(parts[0].endswith(e) for e in ("도", "시", "특별시", "광역시", "특별자치도", "특별자치시")):
+            without_do = " ".join(parts[1:])
+            _add(without_do)
+            _add(re.sub(r"산\s+(\d+)", r"산\1", without_do))
+            _add(re.sub(r"산(\d+)", r"산 \1", without_do))
+
+        # 읍/면/동/리 + 지번 축약
+        for i in range(1, len(parts) - 1):
+            sub = " ".join(parts[i:])
+            if re.search(r"(?:산\s*)?\d+", sub):
+                _add(sub)
+                _add(re.sub(r"산\s+(\d+)", r"산\1", sub))
+                _add(re.sub(r"산(\d+)", r"산 \1", sub))
+
     return candidates
+
 
 
 async def _search_single_address(
