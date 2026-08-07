@@ -132,7 +132,12 @@ class RegistryService:
             res = parse_registry_pdf(pdf_input)
             return {**item, **res}
 
-        from app.services.registry.hyphen_client import fetch_realty_registry, fetch_registry_by_address, hyphen_ready
+        from app.services.registry.hyphen_client import (
+            fetch_realty_registry,
+            fetch_registry_by_address,
+            hyphen_ready,
+            probe_api_access,
+        )
         from app.services.registry.tilko_client import fetch_realty_registry as fetch_tilko_registry
         from app.services.registry.tilko_client import tilko_ready
 
@@ -141,19 +146,23 @@ class RegistryService:
 
         # 1순위: 하이픈 (Hyphen)
         if (p == "hyphen" or not p) and hyphen_ready():
-            if unique_no:
-                h_res = await fetch_realty_registry(unique_no=unique_no)
-            elif address:
-                h_res = await fetch_registry_by_address(
-                    address=address, realty_type=realty_type, dong=dong, ho=ho
-                )
+            probe = await probe_api_access()
+            if probe.get("access") == "ok":
+                if unique_no:
+                    h_res = await fetch_realty_registry(unique_no=unique_no)
+                elif address:
+                    h_res = await fetch_registry_by_address(
+                        address=address, realty_type=realty_type, dong=dong, ho=ho
+                    )
+                else:
+                    return {**item, "status": "bad_request", "message": "주소 또는 고유번호가 필요합니다."}
+
+                if h_res.get("status") == "ok":
+                    return {**item, **h_res}
+
+                logger.warning("하이픈 등기 조회 실패, 2순위 Tilko 폴백 시도", err=h_res.get("message"))
             else:
-                return {**item, "status": "bad_request", "message": "주소 또는 고유번호가 필요합니다."}
-
-            if h_res.get("status") == "ok":
-                return {**item, **h_res}
-
-            logger.warning("하이픈 등기 조회 실패, 2순위 Tilko 폴백 시도", err=h_res.get("message"))
+                logger.warning("하이픈 API 인증/권한 실패, 2순위 Tilko 폴백 시도", msg=probe.get("message"))
 
         # 2순위: 틸코 (Tilko)
         if tilko_ready():
