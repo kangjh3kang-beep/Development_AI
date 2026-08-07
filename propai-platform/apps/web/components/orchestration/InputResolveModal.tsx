@@ -87,7 +87,19 @@ export function InputResolveModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-[color-mix(in_srgb,var(--background)_70%,transparent)] p-4"
+      /* ★z-[800] = 층위 계약의 모달 칸(lib/satong-map-z.ts 의 SATONG_CONTENT_Z.appModal).
+         이 모달을 렌더하는 화면은 둘뿐이고(MarketInsightsWorkspaceClient · OrchestrateWorkspaceClient),
+         그중 **market-insights 가 지도를 함께 그린다**(SatongMapShell + 실거래·필지·인구·이동 지도).
+         z-50 이던 종전에는 지도 오버레이가 백드롭을 관통해 **모달 위로** 떠 있었다 —
+         칩바 z-[380]·레이어 레일 z-[420]·팝오버 z-[430], SATONG_UI_Z 400~500(인라인).
+         지도 래퍼가 스태킹 컨텍스트를 만들지 않아 이들이 **루트에서** 모달과 경쟁하고,
+         백드롭이 뷰포트 전체라 좌표도 실제로 겹친다.
+         ★정정(2026-08-07): 종전 주석은 "본문 sticky ContextHeader(600)도 관통했다"고 적었으나
+           **거짓**이다 — z-[600] ContextHeader 는 `showContextHeader` 게이트 안에만 있고(기본 false),
+           이 모달의 두 화면 어디에도 켜져 있지 않다(market-insights 는 위에서 자체 ContextHeader 를
+           렌더하므로 **의도적으로** 안 켠다). 근거를 실측 없이 적었고, 독립 검증이 잡았다.
+         사다리 잠금: __tests__/layer-ladder.contract.test.tsx */
+      className="fixed inset-0 z-[800] flex items-center justify-center bg-[color-mix(in_srgb,var(--background)_70%,transparent)] p-4"
       role="dialog"
       aria-modal="true"
       aria-label={`${node.label} 입력 확인`}

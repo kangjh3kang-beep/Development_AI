@@ -17,8 +17,8 @@
  *   대신 이 도구는 **런타임 동작을 증명하지 않는다** — 계약이 코드에 남아있는지만 본다.
  *   행위 검증이 가능하면 그쪽이 우선이고, 이건 닿지 않는 곳의 최후 수단이다.
  */
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { dirname, relative, resolve } from "node:path";
 
 import ts from "typescript";
 
@@ -209,6 +209,233 @@ export const __blockCommentRangesForOracle = blockCommentRanges;
 /** 주석은 이미 파일 수준에서 전부 지워졌으므로 여기서는 줄을 그대로 본다. */
 function includes(line: string, needle: string | RegExp): boolean {
   return typeof needle === "string" ? line.includes(needle) : needle.test(line);
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * 층위(z) 감시용 소스 파생 도구 — 2026-08-07 추가.
+ *
+ * ★왜 공용화하나: 층위 사다리 계약(`__tests__/layer-ladder.contract.test.tsx`)이
+ *   "지도와 공존하는 화면의 모달"을 **하드코딩 목록**이 아니라 임포트 그래프에서
+ *   **파생**하는데, 그 파생에 두 구멍이 있었다(자기 지적 → 실측 확인):
+ *     ① 임포트를 **1단계만** 따라가고, 게다가 `@/...` 별칭만 봤다. 이 저장소는
+ *        같은 폴더 컴포넌트를 `./X` 로 부르므로 **상대 임포트가 통째로 안 보였다**.
+ *        실제 누락 1건 — MarketInsightsWorkspaceClient → `@/…/OrchestratorPanel`
+ *        → `./InputResolveModal`(z-50). 지도(SatongMapShell)와 같은 화면인데
+ *        본문 sticky(600)·지도 오버레이(≤500) 아래로 깔려 있었다.
+ *     ② 백드롭을 `className="…"` **리터럴만** 봤다. 삼항·`cn()`·템플릿으로 조립한
+ *        className 은 정규식 밖이었다.
+ *   두 도구 모두 여기 두어 다른 층위 검사도 같은 눈을 쓰게 한다.
+ *
+ * ★변이검증(2026-08-08 재실행 — **저장소 도구로**):
+ *   `python3 scripts/mutate_changed.py --base origin/main --tests <계약·파서·불변식 테스트 3개>`
+ *   → 15변이 · **생존 7**.
+ *   ※정정: 한때 "저장소 도구는 `.py` 전용이라 이 PR 에 한 건도 안 돈다"고 적었고 그때는
+ *     사실이었으나, **다른 세션이 #586 에서 TS·vitest 지원을 넣어** 더는 참이 아니다.
+ *     임시 어댑터는 버리고 본체로 돌렸다 — 이제 다음 사람이 같은 명령으로 **재현**할 수 있다.
+ * ★생존 7건은 전부 **문자열**이고 설명된다:
+ *   · `importClosure` 오류 메시지 6건 — 던지는 **조건**은 픽스처로 잠겨 있다
+ *     (`source-invariant.backdrop.test.ts` 의 throw 3종). 문구는 사용자 산출물이 아니라
+ *     개발자 진단이라 계약이 아니다.
+ *   · `InputResolveModal` 의 **주석** 1건 — 주석은 동작이 아니다(도구가 문자열로 집었을 뿐).
+ *   ※도구가 **TS 타입 선언을 아예 변이 대상에서 뺀다**(런타임에 사라지므로 vitest 로는 원리적으로
+ *     못 잡는다) — 종전에 내가 "타입 필드 생존은 tsc 게이트의 몫"이라 분류한 것과 같은 판단이
+ *     이제 도구에 내장돼 있다.
+ *   ★"설명 못 하는 생존 0" 은 **그 실행 시점 코드에 대한 주장**이다. 코드를 고친 뒤에는
+ *     다시 돌려 분류하기 전까지 그 문장을 재사용하지 마라(한 번 그렇게 해서 틀렸다).
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** 한 개의 리터럴 `className` 에서 읽어낸 백드롭 후보. */
+export type BackdropHit = {
+  /** apps/web 기준 상대 경로(수집기가 채운다). */
+  file: string;
+  /** 그 className 문자열(판정 근거를 그대로 보고하기 위함). */
+  classes: string;
+  /** 그 안에서 읽어낸 z 값들(변이 prefix `md:z-50` 포함). 없으면 빈 배열. */
+  zs: number[];
+};
+
+/**
+ * 백드롭 수집 전 주석을 지운다 — **같은 파일의 `stripBlockComments`(TS 파서)를 그대로 쓴다.**
+ *
+ * ★내력: 2026-08-07 에 내가 정규식으로 블록 주석을 지웠다가 **수백 파일의 실코드를 삼키는
+ *   맹점**을 만들었다(줄주석 안의 `/*`·문자열 안의 `image/*` 를 블록 시작으로 오인).
+ *   지도 시드인 `AuctionMonitorPanel` 에 z-50 백드롭을 주입해도 계약이 초록이었다.
+ *   그래서 되돌리고 "다시 넣으려면 ①줄주석 뒤에 ②문자열을 건너뛰는 스캔으로 ③상한 throw
+ *   까지 갖춰야 한다"고 적어 두었다.
+ * ★그 조건을 **다른 세션이 #584 에서 TS 파서로 충족**시켰다(간극 주사 — 문자열·템플릿·정규식은
+ *   애초에 토큰이라 간극이 아니므로 오인 여지가 없고, 파스 실패는 시끄럽게 던진다).
+ *   그래서 손수 정규식을 버리고 그쪽에 합류한다 — 같은 판정을 두 메커니즘으로 하지 않는다.
+ */
+function stripComments(src: string): string {
+  return stripBlockComments(src, "backdrop-scan.tsx");
+}
+
+/**
+ * **문자열 리터럴** `className` 값만 뽑는다 — `="…"` 와 `={"…"}` 두 형태.
+ *
+ * ★종전엔 `={…}` 표현식을 중괄호 균형으로 파싱했는데, 수집 범위를 리터럴 전용으로 줄이면서
+ *   그 25줄이 통째로 **죽은 코드**가 됐다(변이검증이 적발: `else if (ch === "{")` 를 무력화해도
+ *   전부 초록 = 아무도 그 경로를 쓰지 않는다). 남겨두면 다음 사람이 "표현식도 본다"고 오해한다.
+ * ★표현식은 자연히 걸러진다 — `className={cn(…)}` 는 `=` 뒤가 따옴표가 아니라 매치되지 않는다.
+ *   템플릿(백틱)도 일부러 제외한다: 보간이 있으면 리터럴이 아니고, 없으면 굳이 쓸 이유가 없다.
+ */
+function literalClassNames(src: string): string[] {
+  // ★`[^\\]` 를 쓰지 않는다 — 백슬래시를 품은 리터럴(`after:content-['\2014']`)에서 매치가
+  //   통째로 실패해 **리터럴인데 못 보는** 형태가 생긴다(독립 검증이 적발·저장소 현황 0건이나
+  //   축소 전 파서는 정상 처리했으므로 순손실이었다). 이스케이프는 `\\.` 로 건너뛴다.
+  return Array.from(src.matchAll(/className\s*=\s*\{?\s*(["'])((?:\\.|(?!\1)[^\\])*)\1/g)).map(
+    (m) => m[2],
+  );
+}
+
+const HAS_CLASS = (t: string, cls: string) =>
+  new RegExp(`(?:^|\\s)${cls}(?:\\s|$)`).test(t);
+
+const Z_UTIL = /(?:^|\s)(?:[\w-]+:)*z-\[?(\d+)\]?(?=\s|$)/g;
+
+/**
+ * 소스에서 **모달 백드롭**(`fixed` + `inset-0`)인 className 을 모은다.
+ *
+ * ★★범위(2026-08-07 R3 판정으로 **줄였다** — 이게 이 도구의 핵심 결정이다):
+ *   **통짜 문자열 리터럴 className 만** 본다. 삼항·`cn()`·템플릿으로 조립한 것은 보지 않는다.
+ *
+ *   R1~R2 에서 비리터럴 파서를 만들었다가 **3라운드 연속 위양성**을 생산했다(삼항 갈래 병합 →
+ *   갈래 분리 → 이번엔 `cn("fixed inset-0", c ? "a" : "b", "z-[800]")` 같은 **준수 코드가
+ *   CI 를 깨뜨림`). 그리고 실측하니 그 90줄이 지키는 대상은 **전 저장소에 단 1건**이고
+ *   그마저 계약을 지키고 있었다(`CadBimIntegrationPanel` z-[9990]).
+ *   지도 공존 폐포의 백드롭 **8건은 전부 리터럴**이라, 리터럴 전용으로 줄여도 **감시 8/8 유지**다.
+ *   → 지키는 게 1건(준수)인데 위양성을 계속 만드는 코드는 **순손실**이라 걷어낸다.
+ *
+ * ★`pointer-events-none` 은 제외한다 — 클릭을 받지 않는 **배경 장식**이지 모달 백드롭이 아니다
+ *   (실측 2건: Auth·PasswordRecovery 의 `pointer-events-none fixed inset-0 -z-10`). 위반으로
+ *   신고하면 정상 코드를 막는다(rule 6).
+ * ★인라인 `style={{ zIndex }}` 도 보지 않는다 — R2 에서 창(窓) 휴리스틱으로 읽었다가
+ *   **양방향으로 틀렸다**(제목 속성·자식 텍스트의 "zIndex: 800" 을 z 로 오인 / `style` 이
+ *   className **앞**에 오면 준수 코드를 위반으로 신고). 모달 층위는 이 저장소에서 전부
+ *   클래스로 표기되므로(폐포 8/8), 클래스 표기를 계약으로 삼는다.
+ * ★못 보는 형태는 계약 테스트의 `it.todo` 에 부채로 드러낸다 — 조용히 넘기지 않는다.
+ */
+export function collectBackdrops(source: string, file = ""): BackdropHit[] {
+  const hits: BackdropHit[] = [];
+  for (const raw of literalClassNames(stripComments(source))) {
+    const classes = raw.replace(/\s+/g, " ").trim();
+    if (!HAS_CLASS(classes, "fixed") || !HAS_CLASS(classes, "inset-0")) continue;
+    if (HAS_CLASS(classes, "pointer-events-none")) continue;
+    hits.push({
+      file,
+      classes,
+      zs: Array.from(classes.matchAll(Z_UTIL)).map((z) => Number(z[1])),
+    });
+  }
+  return hits;
+}
+
+/**
+ * 임포트 지정자 → apps/web 기준 상대 경로. 별칭(`@/…`)과 **상대(`./`·`../`)** 를 모두
+ * 푼다. 확장자·index 파일까지 시도하고, 저장소 밖(패키지)이면 null.
+ */
+export function resolveModuleSpec(fromFile: string, spec: string): string | null {
+  let base: string;
+  if (spec.startsWith("@/")) base = spec.slice(2);
+  else if (spec.startsWith("./") || spec.startsWith("../"))
+    base = relative(process.cwd(), resolve(dirname(resolve(process.cwd(), fromFile)), spec));
+  else return null;
+  for (const cand of [
+    `${base}.tsx`,
+    `${base}.ts`,
+    `${base}/index.tsx`,
+    `${base}/index.ts`,
+  ]) {
+    const abs = resolve(process.cwd(), cand);
+    if (existsSync(abs) && statSync(abs).isFile()) return cand;
+  }
+  // ★R1 은 여기를 "등가 변이라 안 잠긴다"고 적었는데 **틀렸다**(R2 지적) — 같은 PR 이 추가한
+  //   해석기 픽스처("존재하지 않는 경로는 null")가 `undefined` 로 바꾸면 실패한다. 봉합 뒤
+  //   갱신하지 않은 주석이 다음 사람을 오도할 뻔했다.
+  return null;
+}
+
+/** `importClosure` 가 **반드시** 받아야 하는 공허진리 방지 선언. */
+export type ClosureExpectation = {
+  /**
+   * 최소 파일 수 — **필수**. ★**성긴 붕괴 하한**이다. 배선 회귀를 이걸로 잡으려 하지 마라.
+   *
+   * 두 번 틀렸다: 초판은 "정상 157 의 절반"이라며 80 을 썼고(회귀 다수 통과), 그다음엔
+   * 회귀값을 잘못 실측해 130 을 썼다(실제 최대 회귀값 143 이 통과). 그래서 150 까지 올렸더니
+   * 이번엔 **정상 제품 변경이 관통**했다 — 지도 공존 화면 15개 중 하나가 지도를 그만 쓰면
+   * 폐포가 122~155 로 줄어드는데(3개는 즉시 실패·1개는 여유 0), 그중 143 은 **회귀 A 와 정확히
+   * 같은 값**이라 이 지표로는 두 사건이 **원리적으로 구분되지 않는다**(R3 실증).
+   *
+   * ★그래서 축을 바꾼다. 회귀는 `mustInclude`(경로 형태별)와 `minDepth` 가 진다 —
+   *   실측으로 확인했다: `minFiles: 1` 로 낮추고 상대 임포트 해석을 제거해도
+   *   `mustInclude` 가 단독으로 잡는다. 이 하한은 "폐포가 통째로 무너졌다"만 본다.
+   */
+  minFiles: number;
+  /**
+   * 최소 최대깊이 — **필수**. 개수 하한만으로는 "깊이에서 자르기"를 못 잡는다
+   * (실측: 깊이 2 절단 140 · 깊이 3 절단 155 — 개수로는 정상과 구분되지 않는다).
+   * 이 PR 이 고친 결함 "1단계만 봤다"의 한 칸 옆 버전이 그대로 재발하는 자리다.
+   * ※깊이 4 인 파일은 실측 2건뿐이라, 앱 구조가 정상적으로 얕아지면 이 가드가 먼저 운다 —
+   *   오류 메시지가 그 가능성을 함께 말하게 해 두었다(도구 고장으로 오도하지 않도록).
+   */
+  minDepth: number;
+  /**
+   * 반드시 폐포에 들어와야 하는 파일들 — **필수**. 해석기의 **분기마다** 하나씩 넣어야
+   * 목록형이 아니라 경로형 잠금이 된다(`./`·`../`·확장자·index 별로).
+   */
+  mustInclude: string[];
+};
+
+/**
+ * 진입 파일들에서 시작해 **정적·동적 임포트를 끝까지** 따라간 전이 폐포를 돌려준다
+ * (진입 파일 포함). 저장소 안(별칭·상대)만 따라가므로 node_modules 로 새지 않는다.
+ *
+ * ★`expect` 는 **필수 인자**다 — 이 파일의 `assertWiredThrough` 가 `minMatches` 를 필수로
+ *   받아 공허진리를 구조적으로 막는 것과 같은 설계다. 초판은 그 강제 없이 호출자의 느슨한
+ *   단언에 맡겼고, 그중 하나가 실제로 공허했다(독립 검증 M4·H2).
+ */
+export function importClosure(entries: string[], expect: ClosureExpectation): string[] {
+  const seen = new Set(entries);
+  const depth = new Map(entries.map((e) => [e, 0]));
+  const queue = [...entries];
+  while (queue.length) {
+    const rel = queue.shift()!;
+    // ★읽기 실패를 **삼키지 않는다**. 초판은 try/catch 로 `continue` 했는데 두 가지가 나빴다:
+    //   ① 폐포가 조용히 줄어든다 = 감시 대상이 사라지는데 초록 — 이 도구가 막으려는 바로 그 실패.
+    //   ② 변이검증에서 이 catch 가 `rel` 미정의(ReferenceError)까지 삼켜 **큐가 안 줄어드는
+    //      무한 루프**가 됐다(실측: 변이 하나가 vitest 를 영원히 멈춰 세웠다).
+    //   진입은 walk() 로 실재를 확인했고 확장은 resolveModuleSpec 이 existsSync 로 거른다 —
+    //   그래도 못 읽으면 그건 알아야 할 사건이므로 그대로 던진다.
+    const src = readFileSync(resolve(process.cwd(), rel), "utf8");
+    for (const m of src.matchAll(/(?:from\s+|import\()\s*["'`]([^"'`]+)["'`]/g)) {
+      const next = resolveModuleSpec(rel, m[1]);
+      if (!next || seen.has(next)) continue;
+      seen.add(next);
+      depth.set(next, depth.get(rel)! + 1);
+      queue.push(next);
+    }
+  }
+  const maxDepth = Math.max(...depth.values());
+  if (seen.size < expect.minFiles)
+    throw new Error(
+      `[import-closure] 폐포 ${seen.size}파일 < 최소 ${expect.minFiles} — 경로 해석이 통째로 ` +
+        "깨졌거나(감시 대상이 조용히 사라진다), 지도 공존 화면이 정상적으로 줄었다. " +
+        "후자면 기대값을 낮춰라 — 도구 고장으로 오도하지 말 것.",
+    );
+  if (maxDepth < expect.minDepth)
+    throw new Error(
+      `[import-closure] 최대깊이 ${maxDepth} < 최소 ${expect.minDepth} — 임포트를 끝까지 ` +
+        "따라가지 못하고 있거나(깊은 곳의 모달이 감시망 밖), 앱 임포트 체인이 정상적으로 " +
+        "얕아졌다. 후자면 기대값을 낮춰라 — 도구 고장으로 오도하지 말 것.",
+    );
+  for (const f of expect.mustInclude)
+    if (!seen.has(f))
+      throw new Error(
+        `[import-closure] ${f} 가 폐포에 없다 — 그 파일에 닿는 임포트 형태(상대·확장자·index)의 ` +
+          "해석이 깨졌거나, 그 파일을 끌어오던 지도 공존 화면이 정상적으로 사라졌다. " +
+          "후자면 기대 목록을 갱신하라 — 도구 고장으로 오도하지 말 것.",
+      );
+  return [...seen];
 }
 
 /**

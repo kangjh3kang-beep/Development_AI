@@ -50,9 +50,16 @@ def _headers() -> dict[str, str]:
 # 틸코가 공개키를 실제로 받아와 검증(public_key_ok)하는 것과 대칭을 맞춘다.
 _ACCESS_CACHE: dict[str, Any] = {}
 _ACCESS_TTL_SEC = 300.0
-# 권한 거절을 알리는 벤더 문구(부분일치). 문구가 바뀌어도 오탐이 나지 않도록
-# '권한' + 'API' 동시 포함을 기본 신호로 쓰고, 알려진 원문도 함께 본다.
-_FORBIDDEN_HINTS = ("권한이 없는 API", "권한이 없습니다", "권한 없음")
+# 권한 거절 및 인증 실패를 알리는 벤더 문구/코드
+_FORBIDDEN_HINTS = (
+    "권한이 없는 API",
+    "권한이 없습니다",
+    "권한 없음",
+    "UserId 또는 HKey가 올바르지 않습니다",
+    "HKey가 올바르지 않습니다",
+    "회원 정보가 존재하지 않습니다",
+    "올바르지 않습니다",
+)
 
 
 def _is_forbidden_message(msg: str) -> bool:
@@ -61,7 +68,7 @@ def _is_forbidden_message(msg: str) -> bool:
         return False
     if any(h in m for h in _FORBIDDEN_HINTS):
         return True
-    return ("권한" in m) and ("API" in m.upper())
+    return ("권한" in m or "HKey" in m or "UserId" in m) and ("API" in m.upper() or "올바르지" in m or "없습니다" in m)
 
 
 async def probe_api_access(force: bool = False) -> dict[str, Any]:
@@ -100,16 +107,22 @@ async def probe_api_access(force: bool = False) -> dict[str, Any]:
             else:
                 data = resp.json()
                 common = data.get("common") or {}
+                err_yn = common.get("errYn")
+                err_cd = str(common.get("errCd") or "")
                 err_msg = str(common.get("errMsg") or "")
-                if _is_forbidden_message(err_msg):
-                    out = {"access": "forbidden", "checked": True,
-                           "message": ("하이픈 키는 정상이나 등기 조회 API 사용 권한이 없습니다 — "
-                                       "하이픈에 부동산등기 API(주소검색·고유번호검색·등기열람) "
-                                       "이용 권한 활성화를 요청하세요.")}
+
+                if err_yn == "Y":
+                    if err_cd in ("HDM009", "HDM008") or _is_forbidden_message(err_msg):
+                        out = {
+                            "access": "forbidden",
+                            "checked": True,
+                            "message": f"하이픈 인증 실패 ({err_msg or 'UserId 또는 HKey가 올바르지 않습니다'}) — 설정에서 HKey 및 User-Id를 확인하세요.",
+                        }
+                    else:
+                        # errYn=Y여도 '권한/인증' 사유가 아니면 관문은 통과한 것(데이터 없음 등)
+                        out = {"access": "ok", "checked": True, "message": "하이픈 등기 API 호출 권한 확인됨"}
                 else:
-                    # errYn=Y여도 '권한' 사유가 아니면 관문은 통과한 것(데이터 없음 등)
-                    out = {"access": "ok", "checked": True,
-                           "message": "하이픈 등기 API 호출 권한 확인됨"}
+                    out = {"access": "ok", "checked": True, "message": "하이픈 등기 API 호출 권한 확인됨"}
     except Exception as e:  # noqa: BLE001
         logger.warning("하이픈 권한 점검 예외", err=str(e)[:120])
         out = {"access": "unreachable", "checked": True,
@@ -260,18 +273,29 @@ async def search_by_simple_address(
         return {"ok": False, "status": "bad_request", "items": [], "message": "주소가 필요합니다."}
 
     candidates = normalize_address_candidates(addr)
-    last_res: dict[str, Any] | None = None
-    for cand in candidates:
-        res = await _search_single_address(
-            cand, kindcls=kindcls, cls_flag=cls_flag, limit_page=limit_page, page_no=page_no
-        )
-        if res.get("ok") and res.get("items"):
-            if cand != addr:
-                logger.info("하이픈 주소검색 자동보정 성공", original=addr, corrected=cand, count=len(res["items"]))
-            return res
-        last_res = res
 
-    return last_res or {"ok": False, "status": "no_match", "items": [], "message": "주소 검색 결과가 없습니다."}
+    # 1차: 원본 주소 즉시 검색
+    first_res = await _search_single_address(
+        candidates[0], kindcls=kindcls, cls_flag=cls_flag, limit_page=limit_page, page_no=page_no
+    )
+    if first_res.get("ok") and first_res.get("items"):
+        return first_res
+
+    # 2차: 1차 실패 시 나머지 후보들을 병렬로 동시 검색(지연 및 타임아웃 방지)
+    import asyncio
+
+    if len(candidates) > 1:
+        tasks = [
+            _search_single_address(cand, kindcls=kindcls, cls_flag=cls_flag, limit_page=limit_page, page_no=page_no)
+            for cand in candidates[1:]
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for cand, res in zip(candidates[1:], results):
+            if isinstance(res, dict) and res.get("ok") and res.get("items"):
+                logger.info("하이픈 주소검색 병렬 자동보정 성공", original=addr, corrected=cand, count=len(res["items"]))
+                return res
+
+    return first_res or {"ok": False, "status": "no_match", "items": [], "message": "주소 검색 결과가 없습니다."}
 
 
 
