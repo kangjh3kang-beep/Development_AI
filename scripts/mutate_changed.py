@@ -251,8 +251,10 @@ def main() -> int:
 
     files = _changed_files(args.base)
     if not files:
-        print("변경된 .py 파일이 없다.")
-        return 0
+        # ★"변경 없음"은 성공이 아니라 **아무것도 검증하지 않음**이다. EXIT 0 으로 두면
+        #   호출자가 초록으로 읽는다(테스트 미발견 경로가 이미 2 로 실패하는 것과 대칭).
+        print("★감사할 소스 변경이 없다 — 이 실행은 **아무것도 검증하지 않았다**.")
+        return 2
 
     tests = args.tests or _guess_tests(files)
     if not tests:
@@ -305,7 +307,8 @@ def main() -> int:
     front_tests = [t for t in rel_tests if t.endswith((".ts", ".tsx"))]
     if front_files and not front_tests:
         print(f"★★프론트 변경 {len(front_files)}개가 있는데 프론트 테스트가 지정되지 않았다.")
-        print("  이 도구는 pytest 만 돌린다 — 프론트는 **검증되지 않는다**.")
+        print("  ★러너는 확장자로 고르지만(#586) **탐색은 pytest 전용**이다 —")
+        print("    프론트는 `--tests <경로>` 로 직접 줘야 vitest 로 돈다.")
         for f in front_files[:8]:
             print(f"    미검증: {f}")
         print("  → vitest 로 따로 돌리거나, 최소한 이 공백을 기록하라(조용히 넘기지 말 것).")
