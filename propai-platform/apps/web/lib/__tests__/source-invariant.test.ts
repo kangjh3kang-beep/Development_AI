@@ -205,14 +205,48 @@ describe("assertWiredThrough", () => {
     })).not.toThrow();
   });
 
-  // ★봉합 순서가 만든 함정 — `stripBlockComments` 를 먼저 돌리면 `{/* … */}` 가 이미
-  //   공백이 되어 40줄 폭주 백스톱이 **한 건도 못 보는 공허한 검사**로 죽는다.
-  //   그 백스톱이 살아 있는지를 여기서 직접 태운다(주석으로 주장하지 않는다).
-  it("★JSX 주석 40줄 폭주 백스톱이 살아 있다(봉합 순서로 공허해지지 않았다)", () => {
-    const f = write("s.tsx", `{/*${"\n".repeat(41)}*/}\nconst x = 1;\n`);
+  // ── R1 적대검증이 뚫은 두 형태 (2026-08-07) ───────────────────────────────────
+  //
+  // 첫 봉합은 따옴표 상태를 **손으로** 추적하는 스캐너였다. 정규식 리터럴 안의 따옴표를
+  // 문자열 시작으로 오인해, 그 지점부터 파일 끝까지 스트립이 죽었다 — 872파일 중
+  // 146파일(16.7%)에 오염 구간이 생겼고, 리뷰어가 실제 락에서 배선을 죽이고도 전수 초록을
+  // 재현했다. "정규식도 예외 처리"는 또 하나의 목록형이라, 판정을 TS 파서에 넘겼다.
+
+  // ★판별하려면 **주석만이 유일한 매치**여야 한다. 다른 줄이 대신 실패시키면 양쪽 판이
+  //   똑같이 빨강이 되어 아무것도 잠그지 못한다(첫 시도에서 실제로 그랬다).
+  it("★정규식 리터럴 안의 따옴표가 뒤따르는 블록 주석을 살려두지 않는다", () => {
+    const f = write("t.ts", [
+      // 손수 스캐너를 오염시킨 실제 형태 — 여는 `'` 뒤로 짝이 없어 EOF 까지 문자열로 오인됐다
+      "const clean = (s: string) => s.replace(/'/g, \"\");",
+      '/* base.on("tileload", () => track(true)); */',
+    ].join("\n"));
     expect(() => assertWiredThrough({
-      file: f, scope: /const x/, mustContain: "1", minMatches: 1,
-    })).toThrow(/JSX 주석이 41줄이다/);
+      file: f, scope: /base\.on\("tile/, mustContain: "track(", minMatches: 1,
+    })).toThrow(/매치 0건/);
+  });
+
+  it("★템플릿 리터럴 `${}` 안의 블록 주석이 매치 수를 위조하지 못한다", () => {
+    const f = write("u.ts", [
+      'const t = `x ${ /* base.on("tileload", () => track(true)); */ 1 } y`;',
+    ].join("\n"));
+    expect(() => assertWiredThrough({
+      file: f, scope: /base\.on\("tile/, mustContain: "track(", minMatches: 1,
+    })).toThrow(/매치 0건/);
+  });
+
+  // ★과도 스트립의 실패 방향은 **거짓 초록**이다(첫 봉합은 "거짓 빨강이라 안전"이라고
+  //   반대로 적었고 R1 이 반증했다). 정상 코드가 지워지면 **위반 줄이 삼켜지고** 남은
+  //   정상 줄이 minMatches 를 채워 통과한다. 그 방향을 여기서 직접 태운다.
+  it("★정규식 리터럴을 주석으로 오인해 위반 줄을 삼키지 않는다(거짓 초록 방지)", () => {
+    const f = write("v.ts", [
+      "const re = /[/*]/;",                          // 오인하면 여기서 주석이 열린다
+      'base.on("tileload", () => bypass(true));',    // ★위반 줄 — 삼켜지면 안 된다
+      "const marker = 0; /* 닫는 지점 */",
+      'base.on("tileerror", () => track(false));',   // 정상 줄
+    ].join("\n"));
+    expect(() => assertWiredThrough({
+      file: f, scope: /base\.on\("tile/, mustContain: "track(", minMatches: 1,
+    })).toThrow(/우회한 줄 1건/);
   });
 
   it("스코프 밖 줄은 검사하지 않는다(과도한 불변식이 정상 코드를 깨뜨리지 않게)", () => {

@@ -20,6 +20,8 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
+import ts from "typescript";
+
 export type WiringInvariant = {
   /** apps/web 기준 상대 경로. 예: "components/map/SatongMultiMap.tsx" */
   file: string;
@@ -82,74 +84,77 @@ function stripLineComment(line: string): string {
  *     /* avmCaveat: payload.avm_caveat ?? … *\/  → ★락 초록 (배선이 끊겼는데 통과)
  *
  *   `CLAUDE.md` 규율 A-3 이 "렌더가 불가하면 이 헬퍼를 경유하라"고 지시하는데, 그
- *   헬퍼가 뚫려 있었다. 이 위에 배선 락 38개가 서 있었다.
+ *   헬퍼가 뚫려 있었다. 그 위에 **실배선 락 24개**(+ 이 파일 자신의 단위테스트 14개)가
+ *   서 있었다.
  *
  * ★가드가 목록형이면 목록 밖 형태로 뚫린다 — 규율 A-4 가 골든에 대해 말한 것이
- *   **가드 자신에게도** 적용된다. 그래서 "JSX 주석"이 아니라 **블록 주석 일반**을 지운다.
+ *   **가드 자신에게도** 적용된다.
  *
- * ★문자열 안의 `/*` 를 주석으로 오인하면 정상 코드를 삼켜 기준선이 깨진다(과도스코프는
- *   이 파일이 이미 두 번 데인 실패다). 그래서 정규식이 아니라 **따옴표 상태를 추적하는
- *   스캐너**로 짠다. 줄 주석(`//`)은 지우지 않고 **건너뛰기만** 한다 — 지우는 일은
- *   URL 예외를 아는 `stripLineComment` 의 몫이고, 여기서는 주석 안의 아포스트로피
- *   (`// don't`)가 따옴표 상태를 오염시키는 것만 막으면 된다.
+ * ★★그리고 그 교훈을 **한 단계 덜 적용해서 R1 에서 다시 뚫렸다.** 첫 봉합은 따옴표
+ *   상태를 손으로 추적하는 스캐너였는데, **정규식 리터럴 안의 따옴표**(`.replace(/'/g, …)`)
+ *   를 문자열 시작으로 오인해 그 지점부터 파일 끝까지 스트립이 죽었다. 실측: 872파일 중
+ *   **146파일(16.7%)에 오염 구간**, `MarketInsightsWorkspaceClient.tsx` 는 L801~EOF
+ *   **55.5%가 면제**. 리뷰어가 실제 락(`comparable-sample.wiring`)에서 공용 셀렉터를
+ *   `/* *\/` 로 죽이고 로컬 재구현으로 우회해 **전수 1890 초록**을 재현했다.
  *
- * ★못 하는 것(면역을 주장하지 않는다 — 규율 C-11):
- *   ① **JSX 텍스트 노드의 아포스트로피** — `<p>don't</p>` 처럼 따옴표가 홀로 있으면
- *      그 지점부터 다음 따옴표까지를 문자열로 오인해, 그 사이의 블록 주석을 **안 지운다**.
- *      결과는 종전과 같은 미탐(거짓 초록)이지 새 오탐이 아니다 — 축소된 한계일 뿐.
- *   ② **정규식 리터럴 안의 `/*`** (`/[/*]/`) 는 주석 시작으로 오인될 수 있다. 저장소
- *      전수 실행으로 기준선이 깨지지 않음을 확인했고, 깨지면 **빨강**으로 드러난다
- *      (거짓 초록이 아니라 거짓 빨강 방향이라 안전한 실패다).
+ *   "정규식도 예외 처리" 는 또 하나의 목록형이다. 그래서 **직접 토큰을 읽지 않고
+ *   TypeScript 파서에게 묻는다** — 파서는 정규식·템플릿·JSX·중첩 따옴표를 이미 전부
+ *   안다. 목록을 늘리는 대신 **판정 주체를 바꾸는 것**이 이 결함 클래스의 근원 수정이다.
+ *
+ * ★줄 번호를 보존해야 위반 위치를 정확히 보고할 수 있으므로, 지우는 대신 **개행만 남기고
+ *   나머지를 공백으로 치환**한다.
+ *
+ * ★못 하는 것 — 면역을 주장하지 않는다(규율 C-11):
+ *   ① **파서가 실패하면 조용히 덜 지운다.** TS 는 오류 복구형이라 예외를 던지지 않고
+ *      토큰 위치만 어긋난다. 방향은 **거짓 초록**(미탐)이다.
+ *   ② **JSX children 위치의 `/* *\/` 는 애초에 주석이 아니라 텍스트**다 — 파서가 옳고
+ *      이 함수도 안 지운다. 그 자리를 주석으로 죽이려는 변이는 성립하지 않는다.
+ *
+ * ★★첫 봉합이 여기서 **거짓 주장을 두 개** 했다(R1 이 반증):
+ *   "한계는 JSX 텍스트의 아포스트로피" → **틀렸다.** 실제 오염 7건이 **전부 정규식 리터럴**,
+ *   JSX 아포스트로피는 **0건**이었다. 짐작한 원인을 실측 원인처럼 적었다.
+ *   "과도 스트립은 거짓 **빨강** 방향이라 안전" → **틀렸다.** 과도 스트립은 **위반 줄을
+ *   삼키고** 정상 줄이 `minMatches` 를 채우면 **거짓 초록**이 되고, `mustNotContain` 도
+ *   같은 방식으로 무력화된다. 실패 방향을 반대로 적은 것이 더 위험했다.
  */
-function stripBlockComments(src: string): string {
-  let out = "";
-  let i = 0;
-  let quote: '"' | "'" | "`" | null = null;
+function stripBlockComments(src: string, fileName: string): string {
+  // `setParentNodes=false` — 부모 링크가 필요 없고, 큰 파일에서 그만큼 싸다.
+  // `ScriptKind.TSX` 로 고정한다: JSX 를 못 읽으면 토큰 위치가 어긋나 주석을 놓친다.
+  const sf = ts.createSourceFile(
+    fileName,
+    src,
+    ts.ScriptTarget.Latest,
+    /* setParentNodes */ false,
+    ts.ScriptKind.TSX,
+  );
 
-  while (i < src.length) {
-    const c = src[i];
-
-    if (quote) {
-      if (c === "\\") {
-        out += src.slice(i, i + 2);
-        i += 2;
-        continue;
-      }
-      if (c === quote) quote = null;
-      out += c;
-      i += 1;
-      continue;
+  const ranges: Array<[number, number]> = [];
+  const seen = new Set<number>();
+  const collect = (found: readonly ts.CommentRange[] | undefined): void => {
+    for (const r of found ?? []) {
+      // 줄 주석(`//`)은 여기서 손대지 않는다 — URL 예외를 아는 `stripLineComment` 의 몫.
+      if (r.kind !== ts.SyntaxKind.MultiLineCommentTrivia) continue;
+      if (seen.has(r.pos)) continue;
+      seen.add(r.pos);
+      ranges.push([r.pos, r.end]);
     }
+  };
 
-    if (c === '"' || c === "'" || c === "`") {
-      quote = c;
-      out += c;
-      i += 1;
-      continue;
-    }
+  const visit = (node: ts.Node): void => {
+    collect(ts.getLeadingCommentRanges(src, node.pos));
+    collect(ts.getTrailingCommentRanges(src, node.end));
+    node.forEachChild(visit);
+  };
+  visit(sf);
 
-    // 줄 주석은 그대로 두되 **따옴표 판정에서 제외**한다(아포스트로피 오염 방지).
-    if (c === "/" && src[i + 1] === "/") {
-      const nl = src.indexOf("\n", i);
-      const stop = nl === -1 ? src.length : nl;
-      out += src.slice(i, stop);
-      i = stop;
-      continue;
-    }
+  if (ranges.length === 0) return src;
 
-    if (c === "/" && src[i + 1] === "*") {
-      const end = src.indexOf("*/", i + 2);
-      const stop = end === -1 ? src.length : end + 2;
-      // 줄 번호를 보존해야 위반 위치를 정확히 보고할 수 있다 → 개행만 남긴다.
-      out += src.slice(i, stop).replace(/[^\n]/g, " ");
-      i = stop;
-      continue;
-    }
-
-    out += c;
-    i += 1;
+  // 뒤에서부터 치환해 앞쪽 오프셋이 밀리지 않게 한다.
+  ranges.sort((a, b) => b[0] - a[0]);
+  let out = src;
+  for (const [pos, end] of ranges) {
+    out = out.slice(0, pos) + out.slice(pos, end).replace(/[^\n]/g, " ") + out.slice(end);
   }
-
   return out;
 }
 
@@ -204,7 +209,7 @@ export function assertWiredThrough(inv: WiringInvariant): void {
   //   그 형태가 이미 공백이 되어 백스톱이 **한 건도 못 보는 공허한 검사**로 죽는다.
   //   (내가 지금 고치고 있는 바로 그 결함을 봉합 순서로 다시 만들 뻔했다.)
   const raw = readFileSync(resolve(process.cwd(), inv.file), "utf-8");
-  const src = stripBlockComments(stripJsxComments(raw));
+  const src = stripBlockComments(stripJsxComments(raw), inv.file);
   const lines = src.split("\n");
   const matched: { no: number; text: string }[] = [];
   lines.forEach((text, i) => {
