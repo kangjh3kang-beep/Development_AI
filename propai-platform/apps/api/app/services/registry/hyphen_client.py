@@ -119,32 +119,43 @@ async def probe_api_access(force: bool = False) -> dict[str, Any]:
     return out
 
 
-async def search_by_simple_address(
+def normalize_address_candidates(address: str) -> list[str]:
+    """임야/산지 지번(산 1-1 ↔ 산1-1) 등 띄어쓰기·지번 형태 변형 후보를 자동 생성.
+
+    1차 주소검색 실패 시 자동 폴백하여 벤더 주소검색 파서의 미세한 포맷 차이에 따른
+    주소검색 누락(no_match)을 자동 보정한다.
+    """
+    import re
+
+    addr = (address or "").strip()
+    if not addr:
+        return []
+    candidates = [addr]
+    # 1. "산 1-1" → "산1-1" (산과 본번 사이 띄어쓰기 제거)
+    v1 = re.sub(r"산\s+(\d+)", r"산\1", addr)
+    if v1 != addr and v1 not in candidates:
+        candidates.append(v1)
+    # 2. "산1-1" → "산 1-1" (산과 본번 사이 띄어쓰기 추가)
+    v2 = re.sub(r"산(\d+)", r"산 \1", addr)
+    if v2 != addr and v2 not in candidates:
+        candidates.append(v2)
+    return candidates
+
+
+async def _search_single_address(
     address: str,
     kindcls: str = "0",
     cls_flag: str = "1",
     limit_page: str = "1",
     page_no: str = "1",
 ) -> dict[str, Any]:
-    """간편주소로 부동산 고유번호 검색 (POST /in0004000168)."""
-    if not hyphen_ready():
-        return {
-            "ok": False,
-            "status": "not_configured",
-            "items": [],
-            "message": "HYPHEN_HKEY / HYPHEN_USER_ID 미설정",
-        }
-
-    addr = (address or "").strip()
-    if not addr:
-        return {"ok": False, "status": "bad_request", "items": [], "message": "주소가 필요합니다."}
-
+    """단일 주소 원시 검색 (POST /in0004000168)."""
     import httpx
 
     url = f"{_host()}/in0004000168"
     body = {
         "kindcls": kindcls,
-        "simple_address": addr,
+        "simple_address": address,
         "cls_flag": cls_flag,
         "limitPage": limit_page,
         "pageNo": page_no,
@@ -196,6 +207,46 @@ async def search_by_simple_address(
     except Exception as e:  # noqa: BLE001
         logger.warning("하이픈 간편주소검색 예외", err=str(e)[:120])
         return {"ok": False, "status": "error", "items": [], "message": str(e)[:200]}
+
+
+async def search_by_simple_address(
+    address: str,
+    kindcls: str = "0",
+    cls_flag: str = "1",
+    limit_page: str = "1",
+    page_no: str = "1",
+) -> dict[str, Any]:
+    """간편주소로 부동산 고유번호 검색 (POST /in0004000168).
+
+    산지/임야 지번(산 1-1 ↔ 산1-1) 등 띄어쓰기 변형 후보를 자동 폴백 시도하여
+    주소검색 누락을 자동 보정한다.
+    """
+    if not hyphen_ready():
+        return {
+            "ok": False,
+            "status": "not_configured",
+            "items": [],
+            "message": "HYPHEN_HKEY / HYPHEN_USER_ID 미설정",
+        }
+
+    addr = (address or "").strip()
+    if not addr:
+        return {"ok": False, "status": "bad_request", "items": [], "message": "주소가 필요합니다."}
+
+    candidates = normalize_address_candidates(addr)
+    last_res: dict[str, Any] | None = None
+    for cand in candidates:
+        res = await _search_single_address(
+            cand, kindcls=kindcls, cls_flag=cls_flag, limit_page=limit_page, page_no=page_no
+        )
+        if res.get("ok") and res.get("items"):
+            if cand != addr:
+                logger.info("하이픈 주소검색 자동보정 성공", original=addr, corrected=cand, count=len(res["items"]))
+            return res
+        last_res = res
+
+    return last_res or {"ok": False, "status": "no_match", "items": [], "message": "주소 검색 결과가 없습니다."}
+
 
 
 async def search_by_unique_no(unique_no: str) -> dict[str, Any]:
