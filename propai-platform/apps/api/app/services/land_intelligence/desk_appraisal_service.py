@@ -224,6 +224,10 @@ async def desk_appraisal(
                 # ★용도지역을 넘겨 토지 층화 통계가 `동+용도` 층까지 내려갈 수 있게 한다.
                 #   모르면 빈 값 — 그때는 `동` 층부터 시작한다(빈값끼리 매칭하지 않는다).
                 target_land_use=str((subject or {}).get("zone_type") or ""),
+                # ★지목(`land_category`)도 넘긴다 — 같은 동에서도 `대` 와 `도로` 는 단가가
+                #   자릿수로 다르다. 안 넘기면 섞인 값이 나온다(라이브에서 실제로 겪었다:
+                #   논현동 실거래 중앙값이 공시지가의 0.54배).
+                target_jimok=str((subject or {}).get("land_category") or ""),
             )
             land_dong_stats_out = payload.get("land_dong_stats")
             land_cat = (payload.get("categories") or {}).get("land_trade") or {}
