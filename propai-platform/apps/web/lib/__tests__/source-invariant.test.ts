@@ -35,7 +35,12 @@ function oracleBlockComments(src: string, fileName: string): Array<[number, numb
   const out: Array<[number, number]> = [];
   const take = (rs: readonly ts.CommentRange[] | undefined): void => {
     for (const r of rs ?? []) {
-      if (r.kind !== ts.SyntaxKind.MultiLineCommentTrivia) continue;
+      // ★R3 — 줄 주석까지 등가 대조에 편입한다. 종전엔 블록만 봐서, 줄 주석 쪽
+      //   관통(`://` 예외)을 이 테스트가 **구조적으로 못 봤다**.
+      if (
+        r.kind !== ts.SyntaxKind.MultiLineCommentTrivia &&
+        r.kind !== ts.SyntaxKind.SingleLineCommentTrivia
+      ) continue;
       if (seen.has(r.pos) || inJsx(r.pos)) continue;
       seen.add(r.pos);
       out.push([r.pos, r.end]);
@@ -203,13 +208,14 @@ describe("assertWiredThrough", () => {
     })).not.toThrow();
   });
 
-  it("★JSX 주석이 40줄을 넘으면 큰 실패로 알린다(정규식 회귀 백스톱)", () => {
-    const body = Array.from({ length: 45 }, (_, i) => `   설명 ${i}`).join("\n");
-    const f = write("m.tsx", `{/* ${body} */}\nbase.on("tileload", () => track(true));\n`);
-    expect(() => assertWiredThrough({
-      file: f, scope: /base\.on\("tile/, mustContain: "track(", minMatches: 1,
-    })).toThrow(/상한 40/);
-  });
+  // ★R3 — "JSX 주석 40줄 폭주 백스톱"과 그 테스트를 **삭제했다.** 근거를 남긴다:
+  //   그 가드는 "정규식이 폭주해 코드를 삼켰다"의 신호를 잡는 것이었는데, 이제 **정규식으로
+  //   지우는 코드가 없다**(간극 열거로 대체). raw 소스에서 `{/* */}` 매치의 개행 수만 세므로
+  //   스트립이 무엇을 삼켰는지와 **원리적으로 무관**하고, 남은 실효는 한 방향뿐이다 —
+  //   락 대상 파일이 41줄 넘는 정당한 JSX 주석을 가지면 그 파일의 모든 락이 **거짓 빨강**.
+  //   변이 실측(R3): 가드 호출을 지워도 **자기 자신의 테스트만** 실패했다(자기참조 락).
+  //   ★R2 때 "중복이라 걷어냈다"가 거짓이었던 전례가 있어, 이번엔 지우는 이유를 실측으로
+  //   댄다 — 지킬 대상이 사라진 가드는 유지가 아니라 **거짓 근거**다.
 
   it("★닫는 쪽 공백(`*/ }`)도 제거한다 — 안 지우면 주석이 조건을 충족시킨다", () => {
     // R5 가 `\s*` 를 지웠는데 방향이 반대였다(R6 F-D). 주석이 남으면 **주석 처리된 JSX**
@@ -265,7 +271,7 @@ describe("assertWiredThrough", () => {
   //
   // 첫 봉합은 따옴표 상태를 **손으로** 추적하는 스캐너였다. 정규식 리터럴 안의 따옴표를
   // 문자열 시작으로 오인해, 그 지점부터 파일 끝까지 스트립이 죽었다 — 872파일 중
-  // 146파일(16.7%)에 오염 구간이 생겼고, 리뷰어가 실제 락에서 배선을 죽이고도 전수 초록을
+  // 따옴표 상태를 오인해 그 지점부터 파일 끝까지 스트립이 죽었다. 리뷰어가 실제 락에서
   // 재현했다. "정규식도 예외 처리"는 또 하나의 목록형이라, 판정을 TS 파서에 넘겼다.
 
   // ★판별하려면 **주석만이 유일한 매치**여야 한다. 다른 줄이 대신 실패시키면 양쪽 판이
@@ -309,7 +315,8 @@ describe("assertWiredThrough", () => {
   //
   // 2차 봉합은 AST `forEachChild` 순회였는데, 그건 `}` `)` `]` 같은 **구두점 토큰을
   // 방문하지 않는다**. 그래서 블록·객체·배열·인자목록의 **닫는 괄호 앞 자기 줄 주석**이
-  // 전부 살아남았다(미탐 230건·81파일 — 옛 손수 스캐너보다 11배 넓은 면제).
+  // 전부 살아남았다. R3 재실측(873파일): 오라클 대비 미탐 2,301건/311파일, 그중 "자기 줄
+  // 평범 주석"만 109건/50파일 — 어느 쪽이든 옛 손수 스캐너(9파일)보다 훨씬 넓었다.
 
   it("★객체 리터럴 닫는 괄호 앞 주석이 매치 수를 위조하지 못한다", () => {
     const f = write("w.ts", [
@@ -340,10 +347,12 @@ describe("assertWiredThrough", () => {
   // ★★형태를 세는 것으로는 끝나지 않는다 — 네 라운드 모두 "다음 형태"로 뚫렸다.
   //   그래서 **구현과 다른 메커니즘**(AST 토큰 순회)으로 같은 답이 나오는지를 잠근다.
   //   구현이 어떤 형태를 놓치기 시작하면 형태를 몰라도 여기서 터진다.
-  it("★★구현이 찾는 블록 주석 = 독립 오라클(AST 토큰 순회)이 찾는 것 — 저장소 전수", () => {
-    const roots = [resolveRepo("components"), resolveRepo("lib"), resolveRepo("hooks")];
+  it("★★구현이 찾는 블록 주석 = 독립 오라클(AST 토큰 순회)이 찾는 것 — 저장소 전수(app·components·hooks·lib)", () => {
+    const roots = ["app", "components", "hooks", "lib"].map(resolveRepo);
     const files = roots.flatMap((r) => listSources(r));
-    expect(files.length).toBeGreaterThan(300); // 공허 진리 방지: 대상이 실제로 모였는가
+    // 공허 진리 방지 — 하한을 실측(873)에 붙인다. 헐거우면 한 디렉토리가 통째로
+    // 빠져도 통과한다(종전 하한 300 은 lib+hooks 197 이 빠져도 못 잡았다).
+    expect(files.length).toBeGreaterThan(800);
 
     const mismatched: string[] = [];
     for (const abs of files) {
@@ -362,6 +371,44 @@ describe("assertWiredThrough", () => {
     // ★기본 10s 로는 **단독 실행에선 통과하고 전수에선 실패**한다(병렬 부하에서 6s→14s).
     //   그런 테스트는 없느니만 못하므로 넉넉히 준다. 실제 비용은 1회 6초대다.
   }, 60_000);
+
+  // ── R3 적대검증이 뚫은 형태 + 무잠금 수정 3건 (2026-08-07) ────────────────────
+  //
+  // 블록 주석은 막혔는데 **같은 함수의 다른 절반**(줄 주석)이 열려 있었다. 종전
+  // `stripLineComment` 은 `(^|[^:])//` 라 **`:` 바로 앞의 `//` 를 주석으로 안 봤다**.
+  // TS 에서 `:` 직후 줄바꿈은 타입 주석·삼항 else·객체 속성 어디서나 합법이므로,
+  // `X://needle` 로 쓰면 주석 속 needle 이 `mustContain` 을 충족시킨다.
+  // R3 가 이 형태로 실제 락 2개를 **tsc·eslint 클린 상태로** 초록으로 만들었다.
+
+  it("★`://` 앞이라도 줄 주석은 조건을 충족시키지 못한다(다섯 번째 관통구)", () => {
+    // R3 익스플로잇의 실제 형태 — 삼항 else 의 `:` 뒤에 붙인다(문법상 완전히 합법).
+    const f = write("y.ts", [
+      "const groups = flag ? localRebuild(cat) ://selectMappableGroups",
+      "  [];",
+    ].join("\n"));
+    expect(() => assertWiredThrough({
+      file: f, scope: /const groups/, mustContain: "selectMappableGroups", minMatches: 1,
+    })).toThrow(/우회한 줄|매치 0건/);
+  });
+
+  it("★`.ts` 를 TSX 로 읽지 않는다 — 제네릭 화살표가 JSX 로 오독되면 뒤가 다 어긋난다", () => {
+    const f = write("z.ts", [
+      // ★`<T,>` 는 TSX 에서도 합법이라 판별하지 못한다(첫 픽스처가 그래서 생존했다).
+      //   TSX 가 **JSX 로 오독하는** 레거시 타입 단언을 써야 갈린다.
+      "const n = <number>raw;",
+      '/* base.on("tileload", () => track(true)); */',
+    ].join("\n"));
+    expect(() => assertWiredThrough({
+      file: f, scope: /base\.on\("tile/, mustContain: "track(", minMatches: 1,
+    })).toThrow(/매치 0건/);
+  });
+
+  it("★파스가 깨진 파일은 조용히 통과시키지 않고 시끄럽게 실패한다", () => {
+    const f = write("bad.ts", "const a = ;\nbase.on(\n");
+    expect(() => assertWiredThrough({
+      file: f, scope: /base\.on/, mustContain: "track(", minMatches: 1,
+    })).toThrow(/파싱에 실패했다/);
+  });
 
   it("스코프 밖 줄은 검사하지 않는다(과도한 불변식이 정상 코드를 깨뜨리지 않게)", () => {
     const f = write("f.ts", [
