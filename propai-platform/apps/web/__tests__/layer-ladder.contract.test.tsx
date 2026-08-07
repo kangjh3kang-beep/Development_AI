@@ -235,34 +235,48 @@ describe("앱 전역 층위 사다리", () => {
     expect(mapScreens.length, "지도 공존 화면을 하나도 찾지 못했다 — 시드 경로가 낡았다").toBeGreaterThan(3);
 
     // ② 지도 공존 화면에서 시작한 **전이 폐포**(정적·동적·상대 임포트 전부)
-    const closure = importClosure(mapScreens);
-    // 공허 진리 가드 ①: 폐포가 무너지면(경로 해석이 깨지면) 위반이 조용히 0 이 된다.
-    //   실측 157파일(최대깊이 4) — 하한은 그 절반 아래로만 둔다.
-    expect(
-      closure.length,
-      `임포트 폐포가 ${closure.length}파일로 쪼그라들었다 — 경로 해석이 깨지면 위반이 조용히 사라진다`,
-    ).toBeGreaterThan(80);
-    // 공허 진리 가드 ②: **상대 임포트로만 닿는** 파일이 폐포에 실제로 들어왔는지 못 박는다.
-    //   이 한 줄이 "@/ 별칭만 따라가던" 종전 구멍의 회귀를 직접 죽인다(깊이 2·상대 경로).
-    expect(
-      closure,
-      "상대 임포트(OrchestratorPanel → ./InputResolveModal)를 따라가지 못했다 — 파생이 다시 좁아졌다",
-    ).toContain("components/orchestration/InputResolveModal.tsx");
+    // 공허 진리 가드는 `importClosure` 가 **구조적으로** 강제한다(선언 없이는 호출 불가) —
+    // 이 파일의 assertWiredThrough 가 minMatches 를 필수로 받는 것과 같은 설계다.
+    const closure = importClosure(mapScreens, {
+      // ★하한은 "정상값의 절반"이 아니라 **회귀 상태보다 위**다. 구판(별칭 전용·1단계)이 66,
+      //   별칭 전용·전깊이가 99 로 실측됐다 — 초판 하한 80 은 후자를 통과시켰다(독립 검증 H2).
+      minFiles: 130,
+      // ★개수만으로는 "깊이에서 자르기"를 못 잡는다(깊이 2 절단 140파일·깊이 3 절단 155파일이
+      //   둘 다 통과했다 — 독립 검증 H1). 실측 최대깊이 4 를 그대로 요구한다.
+      minDepth: 4,
+      // ★해석기 **분기마다** 하나씩 — 목록형 1건이면 나머지 분기가 무잠금이다.
+      mustInclude: [
+        "components/orchestration/InputResolveModal.tsx", // `./` + .tsx (이 PR 이 고친 형태·깊이 2)
+        "components/precheck/types.ts", // `./` + .ts
+        "lib/parcel-rows.ts", // 별칭 + .ts (lib/* 가 통째로 빠지는지)
+        "components/cad/types.ts", // 깊이 4 — 끝까지 따라갔는가
+      ],
+    });
+    // ※ `../` 와 index 배럴은 **폐포에 그 형태로만 닿는 파일이 없어** 여기서 잠기지 않는다.
+    //    그 두 분기는 `lib/__tests__/source-invariant.backdrop.test.ts` 의 해석기 픽스처가 맡는다.
 
     // ★읽기 실패를 삼키면 대상이 조용히 사라진다 — 폐포 파일은 존재가 확인된 것들이므로 그대로 던진다.
     const collected = closure.flatMap((rel) =>
       collectBackdrops(readFileSync(join(process.cwd(), rel), "utf8"), rel),
     );
-    // 공허 진리 가드 ③: 수집 0 이면 아래 판정이 무의미하다. 실측 8건 → 통째 주석 처리·
-    //   렌더 삭제로 대상이 사라지면 여기서 죽는다.
+    // 공허 진리 가드: 수집 0 이면 아래 판정이 무의미하다. 실측 8건 — 여유를 두면 그만큼
+    // "조용히 사라져도 통과"하는 창이 생기므로 실측값 그대로 하한으로 쓴다.
     expect(
       collected.length,
       `지도 공존 폐포에서 모달 백드롭을 ${collected.length}건만 수집했다(실측 8) — 대상이 사라졌다`,
-    ).toBeGreaterThanOrEqual(6);
+    ).toBeGreaterThanOrEqual(8);
 
-    // ③ 판정 — 조건부 z(삼항)면 **갈래 전부**가 계약을 만족해야 한다.
+    // ③ 판정 — 삼항이면 **백드롭인 갈래**의 z 만 따진다(비백드롭 갈래의 z 를 끌어오면 위양성).
+    //    그리고 **판정불가**(변수 z·인라인 style zIndex)는 위반과 섞지 않는다 —
+    //    섞으면 정상 코드가 막힌다. 대신 판정불가 자체를 기준선(실측 0)으로 잠가,
+    //    "판정불가로 빠져나가는" 새 표기가 조용히 늘지 않게 한다.
     const violations: string[] = [];
+    const undecidable: string[] = [];
     for (const hit of collected) {
+      if (!hit.resolvable) {
+        undecidable.push(`${hit.file} — ${hit.classes.slice(0, 70)}`);
+        continue;
+      }
       if (!hit.zs.length)
         violations.push(`${hit.file} — 백드롭에 z 유틸이 없다: ${hit.classes.slice(0, 70)}`);
       for (const z of hit.zs)
@@ -272,17 +286,33 @@ describe("앱 전역 층위 사다리", () => {
           );
     }
     expect(violations, `지도 공존 모달 층위 위반:\n${violations.join("\n")}`).toHaveLength(0);
+    expect(
+      undecidable,
+      `소스로 z 를 판정할 수 없는 백드롭이 새로 생겼다(실측 기준선 0) — 위반은 아니지만 감시망 밖이다:\n${undecidable.join("\n")}`,
+    ).toHaveLength(0);
   });
 
   // ★남은 경계(2026-08-07 재실측 — 앞선 두 항목 ①다단계·상대 임포트 ②비리터럴 className 은
-  //   해소했다). 폐포는 157파일/최대깊이 4 로 넓어졌지만 **전 저장소 468 중 일부**다 —
+  //   해소했다). 폐포는 **157파일**(tsx 84 + ts 73)이고, 저장소 전체 tsx 는 468 이다
+  //   (분모가 다르므로 tsx 기준이면 84/468 — 독립 검증 L4 정정).
   //   지도와 공존하지 않는 화면의 모달은 여전히 이 계약 밖이고, 그건 의도한 범위다.
-  //   전역 백드롭 36건 중 계약 밖 위반이 22건이나, **일괄 승격은 하지 않기로 판정**했다
+  //   같은 파서 규칙으로 센 전역 백드롭은 **34건**(리터럴 33 + 비리터럴 1)이고 그중 계약 밖
+  //   위반이 **20건**이다(초판이 적은 36/22 는 스스로 위양성이라 제외한 `pointer-events-none`
+  //   2건을 포함한 수였다 — 독립 검증 L3 정정). **일괄 승격은 하지 않기로 판정**했다
   //   (2026-08-06 실측 근거: 실위험 조합이 적어 회귀 위험 대비 이득이 낮다). 새로 생기는
   //   위험 조합은 위 파생 검사가 자동으로 잡는다.
   it.todo(
     "★파생 밖 경계: 지도 **비공존** 화면의 모달 z 산재(40/50/100/120) — 일괄 승격 대신 " +
       "지도 공존 폐포에 들어오는 순간 위 파생 검사가 잡는다(의도한 범위)",
+  );
+
+  // ★파서의 정직한 경계(독립 검증 H3): 문자열 조각이 **표현식 안에 리터럴로** 있어야 보인다.
+  //   `className={BACKDROP_CLS}` 처럼 상수·변수·props 로 조립하면 조각이 없어 **아무것도 못 본다**
+  //   (종전 정규식과 동일). 저장소 현황은 0건이라 오늘은 무해하지만, "비리터럴을 본다"는 말이
+  //   그 형태까지 덮는 것처럼 읽히면 안 되므로 부채로 남긴다.
+  it.todo(
+    "★파서 밖 경계: className 을 **상수·변수로 조립한** 백드롭(`className={BACKDROP_CLS}`)은 " +
+      "문자열 조각이 표현식 안에 없어 수집되지 않는다(현황 0건)",
   );
 
   it("★모바일 네비는 앱 헤더 안에 렌더돼 계약 밖이다 — 그 전제가 유지되는지 확인", () => {

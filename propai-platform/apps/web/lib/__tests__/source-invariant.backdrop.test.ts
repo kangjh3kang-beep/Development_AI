@@ -12,7 +12,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { collectBackdrops } from "@/lib/source-invariant";
+import { collectBackdrops, resolveModuleSpec } from "@/lib/source-invariant";
 
 describe("collectBackdrops — 백드롭 className 파서", () => {
   it("★리터럴 백드롭에서 z 를 읽는다", () => {
@@ -94,10 +94,88 @@ describe("collectBackdrops — 백드롭 className 파서", () => {
     expect(hits[0].zs.sort((a, b) => a - b)).toEqual([50, 800]);
   });
 
+  it("★위양성 금지 — 삼항의 **비백드롭 갈래** z 를 위반으로 신고하지 않는다", () => {
+    // ★독립 검증 H4 실증: 갈래를 합치면 `hidden z-10`(백드롭 아님)의 z-10 이 백드롭 위반이 된다.
+    //   실물 근접 사례가 CadBimIntegrationPanel 의 전체화면 삼항이다 — 비전체화면 갈래에
+    //   평범한 z-10 하나만 붙어도 정상 코드가 CI 를 깨뜨린다.
+    const hits = collectBackdrops(
+      `<div className={cn(open ? "fixed inset-0 z-[800]" : "hidden z-10")} />`,
+    );
+    expect(hits).toHaveLength(1);
+    expect(hits[0].zs, "백드롭이 아닌 갈래의 z 까지 끌어왔다").toEqual([800]);
+  });
+
+  it("★변이 prefix 가 붙은 z 도 읽는다 — `md:z-50` 으로 계약을 빠져나가지 못하게", () => {
+    // 종전 정규식은 `md:`·`dark:`·`group-hover:` 앞에서 끊겨, "준수처럼 보이면서 특정
+    // 브레이크포인트에서만 z-50 으로 떨어지는" 백드롭이 통과했다(독립 검증 M1).
+    const hits = collectBackdrops(`<div className="fixed inset-0 z-[800] md:z-50" />`);
+    expect(hits[0].zs.sort((a, b) => a - b)).toEqual([50, 800]);
+  });
+
+  it("★판정불가 — 변수로 조립한 z 는 위반이 아니다(resolvable=false)", () => {
+    const [hit] = collectBackdrops(`<div className={\`fixed inset-0 \${Z_BACKDROP}\`} />`);
+    expect(hit.zs).toEqual([]);
+    expect(hit.resolvable, "변수 z 를 '위반'으로 신고하면 정상 코드를 막는다").toBe(false);
+  });
+
+  it("★판정불가 — 같은 요소의 인라인 style zIndex(이 저장소의 실제 관용)", () => {
+    // SATONG_UI_Z 는 `style={{ zIndex: … }}` 로 흘리는 것이 이 저장소의 SSOT 규칙이다.
+    const [hit] = collectBackdrops(
+      `<div className="fixed inset-0" style={{ zIndex: SATONG_CONTENT_Z.appModal }} />`,
+    );
+    expect(hit.zs).toEqual([]);
+    expect(hit.resolvable).toBe(false);
+  });
+
+  it("★그래도 리터럴이고 z 도 style 도 없으면 판정 가능 — 위반으로 남는다", () => {
+    const [hit] = collectBackdrops(`<div className="fixed inset-0 bg-black/60" />`);
+    expect(hit.resolvable, "판정불가를 남발하면 진짜 누락이 숨는다").toBe(true);
+  });
+
+  it("★최상위 블록 주석 안의 백드롭도 세지 않는다", () => {
+    // 독립 검증 L1: JSX 주석·줄 주석만 벗기고 `/* … */` 는 그대로 집계했다(위양성 방향).
+    expect(collectBackdrops(`/* <div className="fixed inset-0 z-50" /> */`)).toHaveLength(0);
+  });
+
   it("★파일당 여러 백드롭을 전부 수집한다(첫 건에서 멈추지 않는다)", () => {
     const hits = collectBackdrops(
       `<div className="fixed inset-0 z-[800]" /><div className="fixed inset-0 z-50" />`,
     );
     expect(hits.map((h) => h.zs.flat())).toEqual([[800], [50]]);
+  });
+});
+
+describe("resolveModuleSpec — 임포트 경로 해석기", () => {
+  // ★왜 해석기를 따로 잠그나(독립 검증 M2): 폐포 단언은 "그 경로 형태로만 닿는 파일"이
+  //   있어야 잠근다. 실측 결과 `../` 와 index 배럴로만 닿는 파일은 폐포에 **없어서**,
+  //   그 두 분기는 폐포 단언으로는 원리적으로 잠기지 않는다(변이 실증: 각각 SURVIVED).
+  //   목록형 1건에 기대지 말고 **분기마다** 여기서 잠근다.
+  const OP = "components/orchestration/OrchestratorPanel.tsx";
+
+  it("★`./` + .tsx — 이 PR 이 고친 바로 그 형태", () => {
+    expect(resolveModuleSpec(OP, "./InputResolveModal")).toBe(
+      "components/orchestration/InputResolveModal.tsx",
+    );
+  });
+
+  it("★`../` — 폐포에 이 형태로만 닿는 파일이 없어 폐포 단언으로는 못 잡는다", () => {
+    expect(resolveModuleSpec(OP, "../precheck/types")).toBe("components/precheck/types.ts");
+  });
+
+  it("★`.ts` 확장자 — .tsx 만 시도하면 lib/* 가 통째로 폐포에서 빠진다", () => {
+    expect(resolveModuleSpec(OP, "@/lib/parcel-rows")).toBe("lib/parcel-rows.ts");
+  });
+
+  it("★index 배럴 — 실사용 1건(lib/stores)", () => {
+    expect(resolveModuleSpec(OP, "@/lib/stores")).toBe("lib/stores/index.ts");
+  });
+
+  it("★저장소 밖(패키지)은 따라가지 않는다 — node_modules 로 새면 폐포가 폭발한다", () => {
+    expect(resolveModuleSpec(OP, "react")).toBeNull();
+    expect(resolveModuleSpec(OP, "framer-motion")).toBeNull();
+  });
+
+  it("★존재하지 않는 경로는 null — 있는 척하지 않는다", () => {
+    expect(resolveModuleSpec(OP, "./NoSuchModule")).toBeNull();
   });
 });

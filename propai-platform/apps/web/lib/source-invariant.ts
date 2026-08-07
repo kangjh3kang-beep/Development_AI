@@ -135,19 +135,26 @@ export type BackdropHit = {
   classes: string;
   /** 그 안에서 읽어낸 z 값들. 조건부면 여러 개이고, 하나도 없으면 빈 배열. */
   zs: number[];
+  /**
+   * z 를 **소스만으로 판정할 수 있는가**. false = 판정불가(변수로 조립한 z ·
+   * 같은 요소의 인라인 `style={{ zIndex }}`). ★판정불가를 위반과 섞으면 정상 코드를
+   * 막는다 — 이 저장소가 zoning 커버리지에서 쓰는 "갭 vs 판정불가" 구분과 같은 처방이다.
+   */
+  resolvable: boolean;
 };
 
 /**
- * 주석을 **줄 수를 보존한 채** 지운다(JSX 주석 + 줄 끝 `//`).
+ * 주석을 **줄 수를 보존한 채** 지운다(JSX 주석 + 블록 주석 + 줄 끝 `//`).
  *
- * ★정직한 경계: 최상위 블록 주석(`/* … *\/`)은 벗기지 않는다. JSX 본문 안에서는
- *   블록 주석이 문법상 `{/* … *\/}` 형태여야 하므로 실제 "렌더를 주석 처리하는"
- *   변이는 위 두 형태로 나타난다. 그래도 소스 검사인 이상 완전면역은 아니므로,
- *   소비처는 **수집 개수 하한**을 함께 단언해 통째 주석 처리가 초록으로 지나가지
- *   않게 해야 한다(rule 2 — 공허 진리 가드).
+ * ★블록 주석(`/* … *\/`)도 벗긴다 — 초판은 "JSX 안에서는 `{/* *\/}` 형태여야 하므로
+ *   불필요"라고 적었는데 **방향이 반대**였다(독립 검증 L1). 컴포넌트 위 JSDoc 예시나
+ *   주석 처리된 컴포넌트 전체가 그대로 집계돼 **없는 백드롭을 신고**한다(위양성).
+ * ★그래도 소스 검사인 이상 완전면역은 아니므로, 소비처는 **수집 개수 하한**을 함께
+ *   단언해 통째 주석 처리가 초록으로 지나가지 않게 해야 한다(rule 2 — 공허 진리 가드).
  */
 function stripComments(src: string): string {
   return stripJsxComments(src)
+    .replace(/\/\*(?:(?!\*\/)[\s\S])*\*\//g, (m) => m.replace(/[^\n]/g, " "))
     .split("\n")
     .map((l) => stripLineComment(l))
     .join("\n");
@@ -157,8 +164,8 @@ function stripComments(src: string): string {
  * `className` 속성의 값을 잘라낸다. `="…"` 는 그대로, `={…}` 는 **중괄호 균형**으로
  * 끝을 찾는다(문자열 안의 괄호는 세지 않는다).
  */
-function classNameValues(src: string): { raw: string; literal: boolean }[] {
-  const out: { raw: string; literal: boolean }[] = [];
+function classNameValues(src: string): { raw: string; literal: boolean; end: number }[] {
+  const out: { raw: string; literal: boolean; end: number }[] = [];
   const re = /className\s*=\s*/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(src))) {
@@ -167,7 +174,7 @@ function classNameValues(src: string): { raw: string; literal: boolean }[] {
     if (ch === '"' || ch === "'") {
       const end = src.indexOf(ch, i + 1);
       if (end < 0) continue;
-      out.push({ raw: src.slice(i + 1, end), literal: true });
+      out.push({ raw: src.slice(i + 1, end), literal: true, end });
       re.lastIndex = end;
     } else if (ch === "{") {
       let depth = 0;
@@ -184,24 +191,65 @@ function classNameValues(src: string): { raw: string; literal: boolean }[] {
         else if (c === "{") depth++;
         else if (c === "}" && --depth === 0) break;
       }
-      out.push({ raw: src.slice(i + 1, j), literal: false });
+      out.push({ raw: src.slice(i + 1, j), literal: false, end: j });
       re.lastIndex = j;
     }
   }
   return out;
 }
 
-/** 표현식 안의 문자열/템플릿 조각만 모은다(삼항·`cn()` 인자 등). */
-function stringChunks(expr: string): string[] {
-  const chunks: string[] = [];
-  const re = /(["'`])((?:\\.|(?!\1)[^\\])*)\1/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(expr))) chunks.push(m[2]);
-  return chunks;
-}
-
 const HAS_CLASS = (t: string, cls: string) =>
   new RegExp(`(?:^|\\s)${cls}(?:\\s|$)`).test(t);
+
+/** 표현식 텍스트를 **런타임에 가능한 클래스 조합**으로 펼친다(삼항 갈래별). */
+function classVariants(expr: string, literal: boolean): string[] {
+  const normalize = (t: string) =>
+    // ★템플릿 보간(`${big ? "z-[800]" : "z-50"}`)은 조각 하나로 들어오므로, 따옴표·`${`·중괄호를
+    //   공백으로 바꿔 **클래스 토큰을 공백으로 분리**한다. 빼먹으면 `"z-50"` 이 따옴표에 붙어
+    //   z 정규식(앞이 공백)에 안 걸려 **조용히 z 없음**이 된다(실측으로 적발).
+    t.replace(/\$\{|[`"'{}]/g, " ").replace(/\s+/g, " ").trim();
+
+  if (literal) return [normalize(expr)];
+
+  // ★삼항은 **갈래를 합치지 않는다**. 합치면 배타적인 두 상태가 한 덩어리가 되어
+  //   `open ? "fixed inset-0 z-[800]" : "hidden z-10"` 의 z-10 이 백드롭 위반으로 신고된다
+  //   (독립 검증 H4 실증 — 정상 코드를 막는 가드 위양성). 갈래별로 펼쳐, **그 갈래 자체가
+  //   백드롭일 때만** z 를 따진다.
+  // ★단 `?`·`:` 는 **따옴표 밖에서만** 갈래 경계다. 문자열을 쪼개면 템플릿 안의 보간
+  //   (`` `fixed inset-0 ${big ? "z-[800]" : "z-50"}` ``)이 통째로 잘려 백드롭 자체를
+  //   못 알아본다(실측으로 적발 — 이 변경의 첫 판이 그랬다). 템플릿 한 덩이는 한 조각이다.
+  // ★`:` 는 **`?` 를 본 뒤에만** 경계다. 안 그러면 객체 리터럴 `{ "fixed inset-0 …": open }` 의
+  //   콜론이 갈래를 쪼갠다.
+  const chunks: { text: string; seg: number }[] = [];
+  let seg = 0;
+  let sawTernary = false;
+  const QUOTED = /(["'`])((?:\\.|(?!\1)[^\\])*)\1/y;
+  for (let i = 0; i < expr.length; i++) {
+    const c = expr[i];
+    if (c === '"' || c === "'" || c === "`") {
+      QUOTED.lastIndex = i;
+      const m = QUOTED.exec(expr);
+      if (m) {
+        chunks.push({ text: m[2], seg });
+        i = QUOTED.lastIndex - 1;
+        continue;
+      }
+    } else if (c === "?") {
+      sawTernary = true;
+      seg++;
+    } else if (c === ":" && sawTernary) seg++;
+  }
+  if (!sawTernary) return [normalize(chunks.map((c) => c.text).join(" "))];
+
+  const base = chunks.filter((c) => c.seg === 0).map((c) => c.text).join(" ");
+  const branchSegs = [...new Set(chunks.filter((c) => c.seg > 0).map((c) => c.seg))];
+  if (!branchSegs.length) return [normalize(base)];
+  return branchSegs.map((s) =>
+    normalize(`${base} ${chunks.filter((c) => c.seg === s).map((c) => c.text).join(" ")}`),
+  );
+}
+
+const Z_UTIL = /(?:^|\s)(?:[\w-]+:)*z-\[?(\d+)\]?(?=\s|$)/g;
 
 /**
  * 소스에서 **모달 백드롭**(`fixed` + `inset-0`)인 className 을 전부 모은다.
@@ -210,26 +258,31 @@ const HAS_CLASS = (t: string, cls: string) =>
  *   모달 백드롭이 아니다(실측 2건: AuthWorkspaceClient·PasswordRecoveryClient 의
  *   `pointer-events-none fixed inset-0 -z-10`). 이걸 위반으로 신고하면 정상 코드를
  *   막는다 — 이 저장소가 이미 두 번 데인 **가드 위양성**(rule 6)이다.
+ *
+ * ★★정직한 커버리지 경계(독립 검증 H3 지적 — "면역을 거짓 주장하지 마라"):
+ *   문자열 조각이 **표현식 안에 리터럴로** 있어야 보인다. `className={BACKDROP_CLS}` 처럼
+ *   상수·변수·props 로 조립하면 조각이 없으므로 **아무것도 못 본다**(종전 정규식과 동일).
+ *   그 경계는 계약 테스트의 `it.todo` 에 부채로 남겼다.
+ * ★z 를 못 읽었을 때 `resolvable` 이 false 면 그것은 **위반이 아니라 판정불가**다
+ *   (변수 z·인라인 `style={{zIndex}}`). 소비처가 둘을 갈라 보고해야 한다 —
+ *   "갭 vs 판정불가"를 섞으면 정상 코드가 위반으로 신고된다.
  */
 export function collectBackdrops(source: string, file = ""): BackdropHit[] {
   const src = stripComments(source);
   const hits: BackdropHit[] = [];
   for (const v of classNameValues(src)) {
-    const classes = (v.literal ? [v.raw] : stringChunks(v.raw))
-      .join(" ")
-      // ★템플릿 안의 보간(`${big ? "z-[800]" : "z-50"}`)은 조각 하나로 들어오므로, 따옴표·
-      //   `${`·중괄호를 공백으로 바꿔 **클래스 토큰을 공백으로 분리**한다. 이걸 빼먹으면
-      //   `"z-50"` 이 따옴표에 붙어 z 정규식(앞이 공백)에 걸리지 않고 **조용히 z 없음**이
-      //   되어, 삼항으로 낮은 z 를 숨기는 형태가 그대로 통과한다(실측으로 적발).
-      .replace(/\$\{|[`"'{}]/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-    if (!HAS_CLASS(classes, "fixed") || !HAS_CLASS(classes, "inset-0")) continue;
-    if (HAS_CLASS(classes, "pointer-events-none")) continue;
-    const zs = Array.from(classes.matchAll(/(?:^|\s)z-\[?(\d+)\]?(?=\s|$)/g)).map((z) =>
-      Number(z[1]),
+    const variants = classVariants(v.raw, v.literal).filter(
+      (c) => HAS_CLASS(c, "fixed") && HAS_CLASS(c, "inset-0") && !HAS_CLASS(c, "pointer-events-none"),
     );
-    hits.push({ file, literal: v.literal, classes, zs });
+    if (!variants.length) continue;
+    const zs = variants.flatMap((c) => Array.from(c.matchAll(Z_UTIL)).map((z) => Number(z[1])));
+    // ★z 를 못 읽었을 때만 "정말 소스로 판정 불가한가"를 따진다.
+    //   ①비리터럴이면 z 가 변수로 조립됐을 수 있다 ②같은 요소가 인라인 `style={{ zIndex }}`
+    //   로 층위를 줄 수 있다(이 저장소의 실제 관용 — SATONG_UI_Z 는 인라인으로 흘린다).
+    //   창(窓)은 같은 태그 안으로 제한한다 — 다음 여는 태그(`<`)를 만나면 멈춘다.
+    const tail = src.slice(v.end, v.end + 400).split("<")[0];
+    const resolvable = zs.length > 0 || (v.literal && !/\bzIndex\b/.test(tail));
+    hits.push({ file, literal: v.literal, classes: variants.join(" | "), zs, resolvable });
   }
   return hits;
 }
@@ -259,12 +312,39 @@ export function resolveModuleSpec(fromFile: string, spec: string): string | null
   return null;
 }
 
+/** `importClosure` 가 **반드시** 받아야 하는 공허진리 방지 선언. */
+export type ClosureExpectation = {
+  /**
+   * 최소 파일 수 — **필수**. ★하한은 "정상값의 절반"이 아니라 **회귀 상태의 값보다 위**여야
+   * 한다. 초판은 실측 157 의 절반인 80 을 썼는데, 이 도구가 막겠다고 선언한 회귀
+   * (별칭 전용·1단계 = 구판)의 폐포가 **99파일**이라 그 하한으로는 구판으로 되돌려도
+   * 통과한다(독립 검증 H2 실증). 즉 하한을 정할 때 **회귀 쪽 값을 실측**해야 한다.
+   */
+  minFiles: number;
+  /**
+   * 최소 최대깊이 — **필수**. 개수 하한만으로는 "깊이 2 에서 자르기"를 못 잡는다
+   * (독립 검증 H1 실증: 깊이 2·3 절단이 둘 다 SURVIVED). 이 PR 이 고친 결함
+   * "1단계만 봤다"의 한 칸 옆 버전이 그대로 재발하는 자리다.
+   */
+  minDepth: number;
+  /**
+   * 반드시 폐포에 들어와야 하는 파일들 — **필수**. 해석기의 **분기마다** 하나씩 넣어야
+   * 목록형이 아니라 경로형 잠금이 된다(`./`·`../`·확장자·index 별로).
+   */
+  mustInclude: string[];
+};
+
 /**
  * 진입 파일들에서 시작해 **정적·동적 임포트를 끝까지** 따라간 전이 폐포를 돌려준다
  * (진입 파일 포함). 저장소 안(별칭·상대)만 따라가므로 node_modules 로 새지 않는다.
+ *
+ * ★`expect` 는 **필수 인자**다 — 이 파일의 `assertWiredThrough` 가 `minMatches` 를 필수로
+ *   받아 공허진리를 구조적으로 막는 것과 같은 설계다. 초판은 그 강제 없이 호출자의 느슨한
+ *   단언에 맡겼고, 그중 하나가 실제로 공허했다(독립 검증 M4·H2).
  */
-export function importClosure(entries: string[]): string[] {
+export function importClosure(entries: string[], expect: ClosureExpectation): string[] {
   const seen = new Set(entries);
+  const depth = new Map(entries.map((e) => [e, 0]));
   const queue = [...entries];
   while (queue.length) {
     const rel = queue.shift()!;
@@ -279,9 +359,27 @@ export function importClosure(entries: string[]): string[] {
       const next = resolveModuleSpec(rel, m[1]);
       if (!next || seen.has(next)) continue;
       seen.add(next);
+      depth.set(next, depth.get(rel)! + 1);
       queue.push(next);
     }
   }
+  const maxDepth = Math.max(...depth.values());
+  if (seen.size < expect.minFiles)
+    throw new Error(
+      `[import-closure] 폐포 ${seen.size}파일 < 최소 ${expect.minFiles} — 경로 해석이 깨지면 ` +
+        "감시 대상이 조용히 사라지고 위반이 0 이 된다.",
+    );
+  if (maxDepth < expect.minDepth)
+    throw new Error(
+      `[import-closure] 최대깊이 ${maxDepth} < 최소 ${expect.minDepth} — 임포트를 끝까지 ` +
+        "따라가지 못하고 있다(깊은 곳의 모달이 감시망 밖).",
+    );
+  for (const f of expect.mustInclude)
+    if (!seen.has(f))
+      throw new Error(
+        `[import-closure] ${f} 가 폐포에 없다 — 그 파일에 닿는 임포트 형태(상대·확장자·index)의 ` +
+          "해석이 깨졌다.",
+      );
   return [...seen];
 }
 
