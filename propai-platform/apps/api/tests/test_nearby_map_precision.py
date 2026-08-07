@@ -54,11 +54,16 @@ def _rent_row(*, name: str, jibun: str, dong: str, deposit: int = 50000, day: in
 
 
 class _StubMolit:
-    def __init__(self, rows: list[dict], rent_rows: list[dict] | None = None):
+    def __init__(self, rows: list[dict], rent_rows: list[dict] | None = None,
+                 land_rows: list[dict] | None = None):
         self._rows = rows
         self._rent_rows = rent_rows or []
+        # ★토지 원본 행 — 층화 통계는 그룹 평균이 아니라 **개별 거래**를 본다.
+        self._land_rows = land_rows or []
 
     async def get_transactions(self, lawd_cd, ym, prop_type="apt", num_rows=1000):
+        if prop_type == "land":
+            return list(self._land_rows)
         return list(self._rows) if prop_type == "apt" else []
 
     async def get_rent_transactions(self, *_a, **_k):
@@ -1743,6 +1748,62 @@ async def test_rent_groups_get_the_same_treatment_as_trade() -> None:
         f"전월세가 행 순서에 따라 갈린다 — 정상먼저={normal_first} 마스킹먼저={masked_first}"
     )
     assert normal_first[0] > 0, "두 순서 모두 표본 0 이면 이 비교는 공허하다"
+
+
+@pytest.mark.asyncio
+async def test_land_dong_stats_reach_the_payload() -> None:
+    """★토지 층화 통계가 **응답까지 흐르는지**. 계산만 하고 안 실으면 소비처가 못 쓴다.
+
+    좌표가 없어 반경으로는 아무 말도 못 하는 토지에 대해, 원천이 100% 채워 주는
+    **법정동·용도지역** 축으로 말한다. 추가 API 호출은 0이다 — 이미 받아 둔 원본 행을 쓴다.
+
+    ★픽스처가 두 모집단을 가른다 — 대상 동(역삼동)과 다른 동(논현동)이 **서로 다른 단가**를
+    내야 한다. 같은 값이면 층이 어디로 떨어지든 결과가 같아 배선이 끊겨도 통과한다.
+    """
+    rows = []
+    # ① 대상 동 + **대상 용도지역** — 5건이라 `dong_zone` 층이 선다(1억/84㎡ ≈ 119만원)
+    for d in range(1, 6):
+        r = _row(name="", jibun="5*", dong="역삼동", price=10_000, day=d)
+        r["land_use"], r["jimok"] = "제2종일반주거지역", "대"
+        rows.append(r)
+    # ② 같은 동 + **다른 용도지역** — 단가 10배. `target_land_use` 를 안 쓰면 이게 섞여
+    #    중앙값이 확 올라간다(★두 모집단을 가르는 축이 여기다).
+    for d in range(1, 6):
+        r = _row(name="", jibun="6*", dong="역삼동", price=100_000, day=d)
+        r["land_use"], r["jimok"] = "일반상업지역", "대"
+        rows.append(r)
+    # ③ 다른 동 — 동 축도 함께 판별한다.
+    for d in range(1, 6):
+        r = _row(name="", jibun="7*", dong="논현동", price=100_000, day=d)
+        r["land_use"], r["jimok"] = "제2종일반주거지역", "대"
+        rows.append(r)
+
+    nm._BUILD_CACHE.clear()
+    svc = nm.NearbyMapService.__new__(nm.NearbyMapService)
+    svc.settings = None
+    svc.molit = _StubMolit([], land_rows=rows)
+    svc._geo_key = ""
+
+    async def _stub(queries):
+        return {}
+
+    svc._geocode_many = _stub  # type: ignore[assignment]
+    payload = await svc.build(address="서울특별시 강남구 역삼동 736", lawd_cd="11680",
+                              months=1, radius_m=1000,
+                              center_hint={"lat": 37.5, "lon": 127.0},
+                              target_land_use="제2종일반주거지역")
+
+    stats = payload.get("land_dong_stats")
+    assert stats is not None, "층화 통계가 응답에 실리지 않았다 — 계산만 하고 배선이 없다"
+    # ★대상 동으로 좁혀졌는지 — 다른 동이 섞였으면 단가가 훨씬 높게 나온다.
+    # ★`dong_zone` 층이어야 한다 — `target_land_use` 가 안 넘어가면 `dong` 층(10건)이 되고
+    #   다른 용도지역이 섞여 단가가 10배 가까이 올라간다.
+    assert stats["layer"] == "dong_zone", f"용도지역 축이 안 먹었다: {stats}"
+    assert stats["sample_count"] == 5, f"대상 동+용도로 안 좁혀졌다: {stats}"
+    # 1억원 / 84㎡ ≈ 119만원/㎡. 다른 동(10배)이 섞였다면 1,190만원대가 나온다 —
+    # 두 모집단이 실제로 갈리는지가 이 단언의 요점이다.
+    assert 1_100_000 <= stats["unit_price_per_sqm"] <= 1_300_000, stats["unit_price_per_sqm"]
+    assert "역삼동" in stats["scope_label"], stats["scope_label"]
 
 
 @pytest.mark.asyncio

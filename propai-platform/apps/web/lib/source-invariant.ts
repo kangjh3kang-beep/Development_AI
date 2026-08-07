@@ -20,6 +20,8 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 
+import ts from "typescript";
+
 export type WiringInvariant = {
   /** apps/web 기준 상대 경로. 예: "components/map/SatongMultiMap.tsx" */
   file: string;
@@ -37,76 +39,176 @@ export type WiringInvariant = {
 };
 
 /**
- * 줄 끝 주석을 떼어낸다 — ★2026-08-02 적발한 **세 번째 함정**.
+ * ── 블록 주석 제거의 이력 (왜 네 번 고쳤는가) ────────────────────────────────
  *
- * 이 검사는 `line.includes(mustContain)` 이라 **주석이 조건을 충족시킨다**. 이 저장소는
- * 줄마다 한국어 설명을 붙이는 스타일이라 적대적 의도가 없어도 발생하고, 실제로 5개 규칙이
- * 다음 한 줄들로 전부 우회됐다(리뷰어 실증):
+ * 이 락들은 `line.includes(mustContain)` 이라 **주석이 조건을 대신 충족시킨다**.
+ * 그래서 검사 전에 주석을 지워야 하는데, 그 "지우기"가 네 번 뚫렸다:
  *
- *   const aggregatable = true;                 // locatedKeys.has 로 대체 예정(TODO)
- *   for (const g of cat.groups || []) {        // selectLocatedGroups 복구 필요
+ *   ① `{/* … *\/}` 정규식만       → 평범한 `/* … *\/` 로 관통 (실배선 락 24개 노출)
+ *   ② 손수 짠 따옴표 스캐너        → **정규식 리터럴**이 상태를 오염(R1)
+ *   ③ AST `forEachChild` 순회      → **구두점 토큰 미방문**으로 닫는 괄호 앞 주석 생존(R2)
+ *   ④ 트리비아 간극 전수 주사      → **블록 주석은 막혔다**(R3: 44개 적대 구문 프로브 +
+ *                                   873파일에서 미탐 0·오탐 0). 그런데 같은 함수의
+ *                                   **다른 절반**인 줄 주석이 `://` 예외로 열려 있었다
+ *   ⑤ **줄 주석도 같은 간극 경로**  → 현재. `stripLineComment` 정규식을 삭제했다
  *
- * 즉 배선을 되돌리면서 "되돌렸다"는 주석만 남기면 게이트가 초록이 된다. 앞선 두 함정
- * (①dict 키 이름을 함수 호출로 오인 ②스코프가 타입 선언까지 매치)과 같은 계열이다.
- *
- * `://`(URL) 뒤는 자르지 않는다 — 문자열 안의 슬래시를 주석으로 오인하면 정상 코드를
- * 위반으로 만들어(과도스코프) 기준선이 깨진다.
+ * ★매번 처방이 **목록을 한 칸 늘렸다**. ③은 "판정을 파서에게 넘긴다"고 선언해 놓고
+ *   파서에게 *묻지* 않고 노드를 돌며 주워 담은 것이라 특히 뼈아프다.
+ *   그래서 ④는 형태를 세지 않고 **누락이 구조적으로 불가능한 열거**로 갔고,
+ *   그것이 참인지를 **오라클 등가 테스트**로 잠갔다(형태가 아니라 등가성을 잠근다).
  */
-function stripLineComment(line: string): string {
-  return line.replace(/(^|[^:])\/\/.*$/, "$1");
+/** `.tsx` 만 JSX 로 읽는다 — `.ts` 를 TSX 로 읽으면 `<T>x`(레거시 타입 단언)와 `<T,>` 제네릭이 JSX 로 오독돼 그 뒤 토큰 위치가 어긋난다(R2 실증, 현 트리 미발화). */
+function scriptKindOf(fileName: string): ts.ScriptKind {
+  return /\.tsx$/.test(fileName) ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+}
+
+/** 파일의 모든 **리프 토큰**을 등장 순서로. `getChildren` 은 `forEachChild` 와 달리 `}` `)` 같은 구두점 토큰까지 준다(R2 가 잡아낸 미탐의 원인이 정확히 그 차이였다). */
+function leafTokens(sf: ts.SourceFile): ts.Node[] {
+  const out: ts.Node[] = [];
+  const walk = (n: ts.Node): void => {
+    // ★JSDoc(`/** … */`)은 트리비아가 아니라 **노드**로 파싱된다 — 간극에 없다.
+    //   내려가지 않고 통째로 하나의 단위로 다룬다(미탐 67건의 원인이었다).
+    if (ts.isJSDoc(n)) {
+      out.push(n);
+      return;
+    }
+    const kids = n.getChildren(sf);
+    if (kids.length === 0) {
+      out.push(n);
+      return;
+    }
+    for (const k of kids) walk(k);
+  };
+  walk(sf);
+  return out;
 }
 
 /**
- * 파일 전체에서 JSX 주석(`{/* … *\/}`)을 **줄 수를 보존한 채** 지운다.
+ * 소스에서 **블록 주석 구간**을 전부 찾는다.
  *
- * ★R3(F-3)에서 한 줄짜리 JSX 주석만 벗겼는데, R4 가 **여러 줄 주석으로 뚫었다** —
- * 이 저장소의 지배적 주석 형태가 여러 줄이고, `assertWiredThrough` 는 줄 단위라
- * 주석 중간 줄에는 `{/*` 가 없어 아무것도 안 벗겨졌다. 렌더를 통째로 여러 줄 주석에
- * 넣으면 배선 락이 **그대로 초록**이 된다(= 화면은 침묵인데 게이트는 통과).
- * 이 PR 에서 공허한 참이 나온 **다섯 번째** 형태다.
+ * ★이 함수의 유일한 설계 목표는 **누락이 구조적으로 불가능한 것**이다. 이 결함은
+ *   세 번 연속 "내가 안 떠올린 형태"로 뚫렸고, 매번 처방이 목록을 한 칸 늘렸다:
  *
- * ★줄 단위 검사의 한계이므로 **줄 분할 전에** 파일 수준에서 지우는 것이 근원 수정이다.
- * 줄 번호를 보존해야 위반 위치를 정확히 보고할 수 있으므로, 지우는 대신 **개행만 남기고
- * 나머지를 공백으로 치환**한다.
+ *     ① `{/* … *\/}` 정규식        → 평범한 `/* … *\/` 로 관통
+ *     ② 손수 짠 따옴표 스캐너      → **정규식 리터럴**이 상태를 오염시켜 관통
+ *     ③ AST `forEachChild` 순회    → **구두점 토큰을 방문하지 않아** 닫는 괄호 앞
+ *                                    자기 줄 주석이 전부 생존. R3 재실측(873파일):
+ *                                    오라클 대비 미탐 **2,301건/311파일(35.6%)**,
+ *                                    그중 "자기 줄 평범 주석"만 **109건/50파일**
+ *                                    (R2 가 인용한 230/81 은 어느 정의로도 재현 안 됨)
+ *     ④ 스캐너 단독 열거           → 파서 문맥이 없어 **정규식 리터럴을 주석으로 오인**
+ *                                    (= 정상 코드를 삼키는 거짓 초록). 실측으로 기각
+ *
+ *   ③ 이 특히 뼈아프다 — "판정을 파서에게 넘긴다"고 선언해 놓고, **파서에게 "이 파일의
+ *   주석을 다 달라"고 묻지 않고 노드를 돌며 주워 담았다.** 방향은 옳았고 실행이 모자랐다.
+ *
+ * ★그래서 **간극 전수 주사**를 쓴다. 주석은 오직 **토큰과 토큰 사이(트리비아)**에만
+ *   존재할 수 있다. 그러니 리프 토큰을 순서대로 늘어놓고 **모든 간극**을 훑으면
+ *   "안 들른 자리"가 원리적으로 없다. 간극에는 공백과 주석밖에 없으므로 그 안에서는
+ *   단순 주사로 충분하다 — 문자열·템플릿·정규식은 애초에 **토큰이라 간극이 아니다.**
+ *
+ *   `ts.createScanner` 단독은 안 된다(시도했다가 실측으로 기각): 파서 문맥이 없어
+ *   `/[/*]/` 같은 **정규식 리터럴을 주석으로 오인**해 정상 코드를 삼킨다(= 거짓 초록).
+ *   JSX children 의 `/* … *\/` 도 같은 이유로 오인하는데, 간극 방식은 그것이 `JsxText`
+ *   **토큰**이라 자동으로 제외된다 — 예외 처리를 적을 필요가 없다.
  */
-function stripJsxComments(src: string): string {
-  // ★여는 괄호와 `/*` 사이에 **공백을 허용하지 않는다**. 허용했더니 TS 인터페이스의
-  //   `{` + JSDoc `/** … */` 이 매치돼 **44,444자(1,113줄)를 통째로 삼켰다**(실측).
-  //   JSX 주석은 `{/*` 로 붙여 쓰는 것이 이 저장소의 실제 형태다.
-  //   닫는 쪽은 `*/}` · `*/ }` 를 모두 허용한다 — JSX 주석 안에 `*/` 가 올 수 없으므로
-  //   non-greedy 매치가 첫 종료점에서 정확히 닫힌다.
-  // ★★R5 리뷰(F-4) — `[\s\S]*?` 를 **`*/` 를 포함하지 않는 문자열**로 바꾼다.
-  //   non-greedy 백트래킹은 `{/* c */ a: 1 }` 같은 객체 리터럴에서 폭주할 수 있고,
-  //   그것이 R4 에서 44,444자를 삼킨 `{`+JSDoc 사고의 **직계 유사형**이다(공백 불허
-  //   조건은 범위를 좁혔을 뿐 구조를 제거하지 못했다). 이 형태는 구조적으로 막는다.
-  //   ★R6 리뷰(F-D) 정정 — R5 에서 닫는 쪽 `\s*` 를 "수용 조건만 넓히는 순손실"이라며
-  //   지웠는데 **방향이 반대**였다. `\s*` 는 *제거* 범위를 넓히는 쪽이고, 그게 거짓 초록에
-  //   안전하다: `{/* <DeadPanel /> */ }` 가 안 지워지면 그 주석이 `mustContain` 을 충족시켜
-  //   **주석 처리된 JSX 위에서 락이 초록**이 된다(= R4 H-1 과 같은 계열).
-  //   새 내부 클래스(`(?!\*\/)`)와 조합하면 첫 `*/` 에서 멈추므로 폭주도 없다 → 복원한다.
-  const stripped = src.replace(/\{\/\*(?:(?!\*\/)[\s\S])*\*\/\s*\}/g, (m) =>
-    m.replace(/[^\n]/g, " "),
+function blockCommentRanges(src: string, fileName: string): Array<[number, number]> {
+  const sf = ts.createSourceFile(
+    fileName,
+    src,
+    ts.ScriptTarget.Latest,
+    /* setParentNodes */ true,
+    scriptKindOf(fileName),
   );
-  // ★R6 리뷰(F-C) 정직 표기 — 이 가드가 **무엇을 잡고 무엇을 못 잡는지** 바로잡는다.
-  //   새 내부 클래스가 첫 `*/` 를 넘지 못하므로 R4 형태의 **폭주는 구조적으로 불가능**하다
-  //   (리뷰어 실측: 폭주 시도의 매치 span 이 전부 0줄). 따라서 이 조건이 성립하는 경우는
-  //   사실상 **정당하게 긴 JSX 주석**뿐이고, 실질은 "주석 40줄 제한" 린트 + 정규식을
-  //   되돌렸을 때를 대비한 **회귀 백스톱**이다. 저장소 최장 정당 주석은 13줄이라 여유 3.08배(R3 재실측 — 12줄이라 적었던 것 정정).
-  for (const m of src.matchAll(/\{\/\*(?:(?!\*\/)[\s\S])*\*\/\s*\}/g)) {
-    const span = (m[0].match(/\n/g) || []).length;
-    if (span > 40) {
-      throw new Error(
-        `[wiring-invariant] JSX 주석이 ${span}줄이다(상한 40). ` +
-          "주석을 쪼개거나, 정규식을 되돌린 게 아닌지 확인하라(코드를 삼켰을 수 있다).",
-      );
-    }
+
+  // ★파스가 깨지면 **조용히 덜 지운다**(= 거짓 초록). 조용한 미탐 대신 시끄럽게 실패한다.
+  // ★`parseDiagnostics` 는 TS **비공개 필드**다(공개 타입에 없다). 버전이 올라가 사라지면
+  //   `undefined && …` 로 **검사가 조용히 증발**한다 — 없애겠다던 "조용한 미탐"으로 복귀다.
+  //   그래서 부재 자체를 실패로 만든다.
+  const diagnostics = (sf as unknown as { parseDiagnostics?: readonly unknown[] }).parseDiagnostics;
+  // ★이 분기는 **오늘 도달 불가**다(TS 5.9 에 필드가 있다) — 변이로 지워도 아무 테스트가
+  //   죽지 않는다. 가짜 잠금을 만들지 않고 도달 불가임을 적어 둔다(규율 B: 설명할 수 있는
+  //   생존은 코드에 적는다). 미래에 필드가 사라지면 **여기서 시끄럽게** 실패한다.
+  if (diagnostics === undefined) {
+    throw new Error(
+      "[wiring-invariant] TS 의 parseDiagnostics 가 사라졌다(비공개 API). " +
+        "파스 실패를 못 잡으면 락이 거짓 초록이 되므로 중단한다 — 대체 경로를 찾아라.",
+    );
   }
-  return stripped;
+  if (diagnostics.length > 0) {
+    throw new Error(
+      `[wiring-invariant] ${fileName} 파싱에 실패했다(진단 ${diagnostics.length}건). ` +
+        "주석 제거가 불완전해 락이 거짓 초록이 될 수 있어 중단한다.",
+    );
+  }
+
+  const out: Array<[number, number]> = [];
+  /** 간극(트리비아)에서 블록 주석을 집는다. 여기엔 공백과 주석만 있어 오인 여지가 없다. */
+  const scanGap = (from: number, to: number): void => {
+    let i = from;
+    while (i < to) {
+      const ch = src[i];
+      // ★줄 주석 안의 `/*` 를 블록 시작으로 오인하면 **정상 코드를 삼킨다**(거짓 초록).
+      //   실측: `// 라이브 모드 /api/*는 RBAC 게이트` 같은 줄이 9개 파일에서 오탐을 냈다.
+      //   간극에는 공백·줄주석·블록주석만 있으므로 셋을 그대로 구분하면 끝난다.
+      if (ch === "/" && src[i + 1] === "/") {
+        // ★2026-08-07(R3) — 줄 주석도 **여기서 범위로 잡는다**(종전엔 건너뛰기만 했다).
+        //   줄 주석은 `stripLineComment` 의 손수 정규식이 따로 처리했는데, 그 안의
+        //   `://` 예외(`(^|[^:])//`)가 **다섯 번째 관통구**였다: `X://needle` 로 쓰면
+        //   `:` 앞이라 주석으로 안 보고, 주석 속 needle 이 `mustContain` 을 충족시킨다.
+        //   TS 에서 `:` 직후 줄바꿈은 타입 주석·삼항 else·객체 속성 어디서나 합법이라
+        //   실제 락 2개를 tsc·eslint 클린 상태로 초록으로 만들 수 있었다(R3 실증).
+        //   간극 기반으로 옮기면 그 예외가 **필요 없어진다** — 문자열 안의 `//`(URL)는
+        //   토큰이라 애초에 간극에 없다.
+        const nl = src.indexOf("\n", i);
+        const end = nl === -1 || nl >= to ? to : nl;
+        out.push([i, end]);
+        i = end;
+        continue;
+      }
+      if (ch === "/" && src[i + 1] === "*") {
+        const close = src.indexOf("*/", i + 2);
+        const end = close === -1 ? to : Math.min(close + 2, to);
+        out.push([i, end]);
+        i = end;
+        continue;
+      }
+      i += 1;
+    }
+  };
+
+  let cursor = 0;
+  for (const tok of leafTokens(sf)) {
+    const start = tok.getStart(sf);
+    scanGap(cursor, start); // 토큰 앞 트리비아 = 간극
+    // JSDoc 은 노드지만 의미상 주석이다 — 통째로 지운다.
+    if (ts.isJSDoc(tok)) out.push([start, tok.end]);
+    cursor = tok.end;
+  }
+  scanGap(cursor, src.length); // 마지막 토큰 뒤(EOF 토큰이 있어 보통 비지만 안전망)
+  return out;
 }
 
+/** 블록 주석을 **줄 수를 보존한 채**(개행만 남기고) 지운다. */
+function stripBlockComments(src: string, fileName: string): string {
+  const ranges = blockCommentRanges(src, fileName);
+  if (ranges.length === 0) return src;
+
+  // 뒤에서부터 치환해 앞쪽 오프셋이 밀리지 않게 한다.
+  ranges.sort((a, b) => b[0] - a[0]);
+  let out = src;
+  for (const [pos, end] of ranges) {
+    out = out.slice(0, pos) + out.slice(pos, end).replace(/[^\n]/g, " ") + out.slice(end);
+  }
+  return out;
+}
+
+/** 테스트가 구현과 **다른 메커니즘**으로 같은 답이 나오는지 대조할 수 있게 공개한다. */
+export const __blockCommentRangesForOracle = blockCommentRanges;
+
+/** 주석은 이미 파일 수준에서 전부 지워졌으므로 여기서는 줄을 그대로 본다. */
 function includes(line: string, needle: string | RegExp): boolean {
-  const code = stripLineComment(line);
-  return typeof needle === "string" ? code.includes(needle) : needle.test(code);
+  return typeof needle === "string" ? line.includes(needle) : needle.test(line);
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -152,29 +254,19 @@ export type BackdropHit = {
 };
 
 /**
- * 주석을 **줄 수를 보존한 채** 지운다(JSX 주석 + 줄 끝 `//`).
+ * 백드롭 수집 전 주석을 지운다 — **같은 파일의 `stripBlockComments`(TS 파서)를 그대로 쓴다.**
  *
- * ★★최상위 블록 주석(`/* … *\/`)은 **일부러 벗기지 않는다**. R1 에서 "주석 안 백드롭을
- *   집계한다(위양성)"는 지적을 받고 스트립을 넣었다가 **수백 파일 규모의 실코드를 삼키는
- *   맹점**을 만들었다(스코프에 따라 404~576파일·6,890~11,258줄 — R2 가 보고한 474/9,882 는
- *   R3 가 재현하지 못했다. ★나는 그 숫자를 **재실측 없이 옮겨 적었다**. 결론(맹점 실재)은
- *   주입 실증으로 확증됐지만 수치는 근거가 없었다). 원인: 이 저장소에는 `//` 주석 안의 `/*`(`// /auction/* 는 …`)와
- *   문자열 안의 `/*`(`accept="…,image/*"`)가 흔한데, 그게 블록 주석 시작으로 잡혀 다음 `*\/`
- *   까지 통째로 공백이 됐다. 실제로 `AuctionMonitorPanel`(지도 시드!)에 z-50 백드롭을 주입해도
- *   계약이 초록이었다 — **봉합 전에는 잡던 위반을 못 잡게** 됐다.
- * ★그리고 고치려던 위양성은 **실저장소에 0건**이었다(832파일 대조에서 달라진 2건이 모두
- *   테스트 픽스처). 없는 결함을 고치려다 실재하는 맹점을 만든 것이라 되돌린다.
- * ★같은 파일 위쪽 `stripJsxComments` 가 "44,444자를 통째로 삼켰다"고 스스로 박제한 사고의
- *   **직계 재발**이다. 다시 넣으려면 ①줄주석 제거 **뒤에** ②문자열을 건너뛰는 스캔으로
- *   ③span 상한 throw 까지 갖춰야 한다.
- * ★소비처는 **수집 개수 하한**을 함께 단언해 통째 주석 처리가 초록으로 지나가지 않게 한다
- *   (rule 2). 다만 그 하한은 "사라짐"만 잡고 "안 보임"은 못 잡는다(위 맹점이 그래서 통과했다).
+ * ★내력: 2026-08-07 에 내가 정규식으로 블록 주석을 지웠다가 **수백 파일의 실코드를 삼키는
+ *   맹점**을 만들었다(줄주석 안의 `/*`·문자열 안의 `image/*` 를 블록 시작으로 오인).
+ *   지도 시드인 `AuctionMonitorPanel` 에 z-50 백드롭을 주입해도 계약이 초록이었다.
+ *   그래서 되돌리고 "다시 넣으려면 ①줄주석 뒤에 ②문자열을 건너뛰는 스캔으로 ③상한 throw
+ *   까지 갖춰야 한다"고 적어 두었다.
+ * ★그 조건을 **다른 세션이 #584 에서 TS 파서로 충족**시켰다(간극 주사 — 문자열·템플릿·정규식은
+ *   애초에 토큰이라 간극이 아니므로 오인 여지가 없고, 파스 실패는 시끄럽게 던진다).
+ *   그래서 손수 정규식을 버리고 그쪽에 합류한다 — 같은 판정을 두 메커니즘으로 하지 않는다.
  */
 function stripComments(src: string): string {
-  return stripJsxComments(src)
-    .split("\n")
-    .map((l) => stripLineComment(l))
-    .join("\n");
+  return stripBlockComments(src, "backdrop-scan.tsx");
 }
 
 /**
@@ -350,8 +442,19 @@ export function importClosure(entries: string[], expect: ClosureExpectation): st
  * 위반 시 어느 줄이 문제인지 그대로 보여준다(원인 오도 방지).
  */
 export function assertWiredThrough(inv: WiringInvariant): void {
-  // ★R4(H-1) — 줄 분할 **전에** JSX 주석을 지운다. 줄 단위로는 여러 줄 주석을 못 벗긴다.
-  const src = stripJsxComments(readFileSync(resolve(process.cwd(), inv.file), "utf-8"));
+  // ★R4(H-1) — 줄 분할 **전에** 주석을 지운다. 줄 단위로는 여러 줄 주석을 못 벗긴다.
+  // ★2026-08-06 — 순서가 중요하다. `stripJsxComments` 를 **먼저** 돌린다.
+  //   그 안의 **40줄 폭주 백스톱**은 `{/* … */}` 매치를 세는데, 블록 스트립을 먼저 하면
+  //   그 형태가 이미 공백이 되어 백스톱이 **한 건도 못 보는 공허한 검사**로 죽는다.
+  //   (내가 지금 고치고 있는 바로 그 결함을 봉합 순서로 다시 만들 뻔했다.)
+  const raw = readFileSync(resolve(process.cwd(), inv.file), "utf-8");
+  // ★2026-08-07(R2) — 스트립은 **한 곳**에서만 한다. 종전에는 JSX 스트립을 먼저 돌리고
+  //   블록 스트립을 뒤에 돌렸는데, ①어느 쪽이 먼저인지가 load-bearing 이 되어 순서
+  //   자체가 결함원이 됐고 ②JSX 스트립이 남긴 빈 `{ }` 가 **실제로 2개 파일에서 파스
+  //   오류를 유발**했다(원본은 진단 0건인데 스트립 후 3건·8건). 스캐너 열거는 JSX 주석도
+  //   똑같이 트리비아로 보므로 전처리가 필요 없다 — 순서 문제를 없애서 없앤다.
+  //   `stripJsxComments` 는 이제 **폭주 백스톱 전용**이다(지우지 않고 검사만).
+  const src = stripBlockComments(raw, inv.file);
   const lines = src.split("\n");
   const matched: { no: number; text: string }[] = [];
   lines.forEach((text, i) => {

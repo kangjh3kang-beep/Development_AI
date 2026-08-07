@@ -87,15 +87,19 @@ describe("collectBackdrops — 백드롭 className 파서", () => {
     expect(hits[0].zs).toEqual([50]);
   });
 
-  it("★알려진 경계: 최상위 블록 주석 안의 백드롭은 **집계된다**(위양성 — 실저장소 0건)", () => {
-    // 정직 표기: 고치려던 위양성이 실저장소에 0건이라, 위 맹점을 감수하면서까지 고치지 않는다.
-    // 이 단언은 "안 고쳤다"는 사실 자체를 박제해 다음 사람이 오해하지 않게 한다.
-    expect(collectBackdrops(`/* <div className="fixed inset-0 z-50" /> */`)).toHaveLength(1);
+  it("★최상위 블록 주석 안의 백드롭은 세지 않는다 — TS 파서가 지운다", () => {
+    // ★내력: 2026-08-07 에 이 경계를 손수 정규식으로 닫으려다 **수백 파일의 실코드를 삼켰고**,
+    //   되돌리면서 "안 고쳤다"를 단언으로 박제했다. 그 뒤 다른 세션(#584)이 같은 문제를
+    //   **TS 파서(간극 주사)** 로 제대로 풀었고 여기서 그쪽에 합류해 경계가 닫혔다.
+    //   손수 정규식으로 되돌리면 이 단언이 죽는다.
+    expect(collectBackdrops(`const A = /* <div className="fixed inset-0 z-50" /> */ 1;`)).toHaveLength(0);
   });
 
   it("★파일당 여러 백드롭을 전부 수집한다(첫 건에서 멈추지 않는다)", () => {
     const hits = collectBackdrops(
-      `<div className="fixed inset-0 z-[800]" /><div className="fixed inset-0 z-50" />`,
+      // ★스니펫도 **파스 가능해야** 한다 — 수집기가 TS 파서를 경유하므로(파스 실패는
+      //   조용한 미탐 대신 시끄럽게 던진다). 실파일은 당연히 유효하다.
+      `const A = <div className="fixed inset-0 z-[800]" />; const B = <div className="fixed inset-0 z-50" />;`,
     );
     expect(hits.map((h) => h.zs.flat())).toEqual([[800], [50]]);
   });

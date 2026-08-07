@@ -63,16 +63,31 @@ class Mutation:
 # 각 규칙은 "추가된 줄"을 보고 **의미를 죽이는** 최소 변형을 만든다.
 # 값을 바꾸는 것보다 **경로를 끊는** 변이가 배선 구멍을 잘 드러낸다.
 
+# 프론트 테스트 러너 위치(저장소 루트 기준). vitest 는 여기서 돌아야 한다.
+_WEB_ROOT = Path("propai-platform/apps/web")
+
 _ASSIGN = re.compile(r'^\s*(?:"[\w_]+"|[\w_]+)\s*[:=]\s*.+[,;]?\s*$')
 _IF = re.compile(r'^(\s*)(el)?if\s+(.+?):\s*$')
 _STR = re.compile(r'^(.*?)(["\'])((?:(?!\2).){8,})\2(.*)$')
 _CALL_ARG = re.compile(r'^(\s*\w+\s*=\s*)(\w+\([^)]*\))\s*,?\s*$')
 
 
+# ★TS **타입 선언**은 런타임에 사라진다 — vitest 로는 **원리적으로** 잡을 수 없다.
+#   (`export type X = ...` · 인터페이스 필드 `name: Type;`)
+#   변이해 봐야 전부 "생존"으로 나와 **진짜 신호를 묻는다**. 타입은 CI 의 `tsc --noEmit`
+#   (Frontend type-check 잡)이 검증한다 — 여기서 제외하는 것이 역할 분담이다.
+_TS_TYPE_DECL = re.compile(
+    r'^\s*(?:export\s+)?(?:type|interface)\s'
+    r'|^\s*\w+\??\s*:\s*[A-Za-z_][\w.<>\[\]|\s]*;?\s*$'
+)
+
+
 def _mutations_for_line(path: Path, line: str, line_no: int) -> list[Mutation]:
     out: list[Mutation] = []
     stripped = line.strip()
     if not stripped or stripped.startswith(("#", "//", "*", '"""', "'''")):
+        return out
+    if path.suffix in (".ts", ".tsx") and _TS_TYPE_DECL.match(line):
         return out
 
     # ① 조건을 무력화한다 — 가드가 실제로 무엇을 막는지 드러난다.
@@ -103,23 +118,52 @@ def _mutations_for_line(path: Path, line: str, line_no: int) -> list[Mutation]:
 
 
 def _changed_files(base: str) -> list[Path]:
-    cmd = ["git", "diff", "--name-only", f"{base}...HEAD"]
+    # ★`A...B`(three-dot)는 **커밋된 것만** 본다. 커밋 전에 돌리는 것이 자연스러운
+    # 사용법이라(실사용에서 발견) `A`(two-dot)로 워킹트리까지 포함한다.
+    cmd = ["git", "diff", "--name-only", base]
     names = subprocess.run(cmd, capture_output=True, text=True).stdout.split()
     out = []
     for n in names:
         p = Path(n)
-        if p.suffix != ".py" or not p.exists():
+        if p.suffix not in (".py", ".ts", ".tsx") or not p.exists():
             continue
-        if "/tests/" in n or p.name.startswith("test_"):
-            continue          # 테스트 자체는 변이 대상이 아니다
+        # 테스트 자체는 변이 대상이 아니다. ★프론트 관례(`__tests__/`, `*.test.ts(x)`)도
+        #   함께 거른다 — 종전엔 py 관례(`tests/`, `test_*`)만 걸러 프론트 테스트 파일이
+        #   변이 대상으로 들어왔다(자기 자신을 변이하는 셈).
+        if "/tests/" in n or "/__tests__/" in n:
+            continue
+        if p.name.startswith("test_") or ".test." in p.name or ".spec." in p.name:
+            continue
+        if n.startswith("scripts/"):
+            continue          # 도구 자신은 이 테스트들의 대상이 아니다(오탐)
         out.append(p)
+    return out
+
+
+def _docstring_line_nos(path: Path) -> set[int]:
+    """파일의 **문자열/독스트링 내부** 줄 번호. 그 안의 문장은 코드가 아니라 설명이다.
+
+    ★전수 감사에서 오탐이 여럿 나왔다 — 독스트링에 적어 둔 설명 문장을 "문자열 변경"
+    변이로 잡아, 진짜 구멍이 소음에 묻혔다. `tokenize` 로 정확히 걸러 낸다.
+    """
+    import io
+    import tokenize
+
+    out: set[int] = set()
+    try:
+        src = path.read_text(encoding="utf-8")
+        for tok in tokenize.generate_tokens(io.StringIO(src).readline):
+            if tok.type == tokenize.STRING and tok.end[0] > tok.start[0]:
+                out.update(range(tok.start[0], tok.end[0] + 1))
+    except Exception:  # noqa: BLE001 — 걸러 내기 실패는 소음만 늘릴 뿐 결과를 왜곡하지 않는다
+        return set()
     return out
 
 
 def _added_lines(base: str, path: Path) -> list[tuple[int, str]]:
     """`path` 에서 이 브랜치가 **추가한** 줄만. 기존 코드를 망가뜨려 소음을 내지 않는다."""
     diff = subprocess.run(
-        ["git", "diff", "-U0", f"{base}...HEAD", "--", str(path)],
+        ["git", "diff", "-U0", base, "--", str(path)],
         capture_output=True, text=True,
     ).stdout
     out: list[tuple[int, str]] = []
@@ -147,13 +191,39 @@ def _guess_tests(paths: list[Path]) -> list[str]:
     return sorted(set(found))
 
 
+def _is_front(test: str) -> bool:
+    return test.endswith((".ts", ".tsx"))
+
+
 def _run(tests: list[str], cwd: Path) -> bool:
-    """테스트가 **통과**하면 True(= 변이 생존)."""
-    r = subprocess.run(
-        [sys.executable, "-m", "pytest", *tests, "-q", "--no-header", "-x"],
-        capture_output=True, text=True, cwd=cwd,
-    )
-    return r.returncode == 0
+    """테스트가 **통과**하면 True(= 변이 생존).
+
+    ★러너를 테스트 확장자로 고른다 — `.ts/.tsx` 는 vitest, 나머지는 pytest.
+    종전엔 pytest 만 돌려 **프론트가 통째로 검증에서 빠졌다**(실제로 그 상태로
+    "전수 감사·생존 0"을 선언했다).
+    """
+    front = [t for t in tests if _is_front(t)]
+    back = [t for t in tests if not _is_front(t)]
+
+    if back:
+        r = subprocess.run(
+            [sys.executable, "-m", "pytest", *back, "-q", "--no-header", "-x"],
+            capture_output=True, text=True, cwd=cwd,
+        )
+        if r.returncode != 0:
+            return False
+
+    if front:
+        web = _WEB_ROOT
+        rel = [t.split("apps/web/", 1)[-1] if "apps/web/" in t else t for t in front]
+        r = subprocess.run(
+            ["pnpm", "exec", "vitest", "run", *rel, "--reporter=dot"],
+            capture_output=True, text=True, cwd=web,
+        )
+        if r.returncode != 0:
+            return False
+
+    return True
 
 
 def main() -> int:
@@ -161,13 +231,30 @@ def main() -> int:
     ap.add_argument("--base", default="origin/main")
     ap.add_argument("--tests", nargs="*", default=None)
     ap.add_argument("--max", type=int, default=60)
+    # ★★`--only` — 지정한 테스트가 **실제로 덮는 파일**로 좁힌다.
+    #   확장자만 맞추면(프론트 테스트 ↔ 모든 .tsx) 무관한 파일이 전부 "생존"으로 나와
+    #   진짜 신호가 묻힌다(멀티세션 저장소라 남의 변경까지 diff 에 들어온다).
+    ap.add_argument("--only", nargs="*", default=None,
+                    help="경로에 이 문자열이 포함된 파일만 변이(부분 일치)")
     ap.add_argument("--cwd", default="propai-platform/apps/api")
     args = ap.parse_args()
 
+    # ★★CWD 의존 제거 — 하위 디렉토리에서 돌리면 `git diff` 가 그 경로만 보여
+    #   "변경 없음"으로 **조용히 무효**가 된다(실측). 저장소 루트로 고정한다.
+    root = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True,
+    ).stdout.strip()
+    if root:
+        import os
+
+        os.chdir(root)
+
     files = _changed_files(args.base)
     if not files:
-        print("변경된 .py 파일이 없다.")
-        return 0
+        # ★"변경 없음"은 성공이 아니라 **아무것도 검증하지 않음**이다. EXIT 0 으로 두면
+        #   호출자가 초록으로 읽는다(테스트 미발견 경로가 이미 2 로 실패하는 것과 대칭).
+        print("★감사할 소스 변경이 없다 — 이 실행은 **아무것도 검증하지 않았다**.")
+        return 2
 
     tests = args.tests or _guess_tests(files)
     if not tests:
@@ -178,13 +265,62 @@ def main() -> int:
     cwd = Path(args.cwd)
     rel_tests = [t.split("apps/api/", 1)[-1] if "apps/api/" in t else t for t in tests]
 
+    # ★★지정한 테스트와 **짝이 맞는 파일만** 변이한다.
+    #   종전엔 변경 파일 전체 × 지정 테스트로 돌려, 프론트 테스트를 줬을 때 백엔드 변이가
+    #   전부 "생존"으로 나왔다(무관한 조합이라 당연하다). 그러면 **진짜 신호가 소음에
+    #   묻힌다** — 이 도구가 없애려는 상태를 이 도구가 만드는 셈이다.
+    want_front = any(_is_front(t) for t in rel_tests)
+    want_back = any(not _is_front(t) for t in rel_tests)
+    scoped = [
+        f for f in files
+        if (f.suffix in (".ts", ".tsx") and want_front)
+        or (f.suffix == ".py" and want_back)
+    ]
+    if args.only:
+        scoped = [f for f in scoped if any(pat in str(f) for pat in args.only)]
+    dropped = len(files) - len(scoped)
+    if dropped:
+        print(f"  (테스트와 짝이 맞지 않는 파일 {dropped}개는 대상에서 제외)")
+    files = scoped
+
     muts: list[Mutation] = []
     for f in files:
+        skip = _docstring_line_nos(f)
         for no, line in _added_lines(args.base, f):
+            if no in skip:
+                continue      # 여러 줄 문자열(독스트링) 내부 — 코드가 아니다
             muts.extend(_mutations_for_line(f, line, no))
     muts = muts[: args.max]
 
     print(f"대상 파일 {len(files)}개 · 테스트 {rel_tests} · 변이 {len(muts)}건\n")
+
+    # ★★변이가 0건인데 "생존 0" 을 찍으면 **공허한 초록**이다 — 아무것도 검증하지 않고
+    #   통과한 것을 통과로 보고하게 된다. 이 도구가 잡으려는 결함을 이 도구가 저지르면 안 된다.
+    if not muts:
+        print("★변이를 하나도 만들지 못했다 — 검증된 것이 **없다**(초록이 아니다).")
+        print("  변경이 주석·공백뿐이거나, 대상 파일이 규칙에 안 걸렸을 수 있다.")
+        return 2
+
+    # ★★프론트(.ts/.tsx) 변경이 있는데 프론트 테스트를 못 돌리면 **그 사실을 알린다**.
+    #   조용히 넘기면 "백엔드만 감사하고 전수라고 부르는" 실수를 반복한다(실제로 저질렀다).
+    front_files = [f for f in files if f.suffix in (".ts", ".tsx")]
+    front_tests = [t for t in rel_tests if t.endswith((".ts", ".tsx"))]
+    if front_files and not front_tests:
+        print(f"★★프론트 변경 {len(front_files)}개가 있는데 프론트 테스트가 지정되지 않았다.")
+        print("  ★러너는 확장자로 고르지만(#586) **탐색은 pytest 전용**이다 —")
+        print("    프론트는 `--tests <경로>` 로 직접 줘야 vitest 로 돈다.")
+        for f in front_files[:8]:
+            print(f"    미검증: {f}")
+        print("  → vitest 로 따로 돌리거나, 최소한 이 공백을 기록하라(조용히 넘기지 말 것).")
+        print()
+
+    # ★★프론트 테스트를 지정했는데 `node_modules` 가 없으면 vitest 가 못 돈다.
+    #   그대로 두면 "전부 kill" 로 보여 **거짓 초록**이 된다(변이가 안 죽은 게 아니라
+    #   테스트가 아예 못 돈 것이다). 먼저 확인하고 명시적으로 실패한다.
+    if any(_is_front(t) for t in rel_tests) and not (_WEB_ROOT / "node_modules").exists():
+        print(f"★프론트 테스트를 지정했는데 {_WEB_ROOT}/node_modules 가 없다 — vitest 를 "
+              "돌릴 수 없다. `pnpm install` 후 다시 실행하라(지금 결과는 신뢰할 수 없다).")
+        return 2
 
     # ★기준선 먼저 — 변이 전에 통과하지 않으면 결과가 무의미하다.
     if not _run(rel_tests, cwd):
@@ -197,9 +333,13 @@ def main() -> int:
         if original.count(m.old) != 1:
             print(f"  [{i:3}/{len(muts)}] skip(유일하지 않음)  {m.label()}")
             continue
-        m.path.write_text(original.replace(m.old, m.new, 1), encoding="utf-8")
-        alive = _run(rel_tests, cwd)
-        m.path.write_text(original, encoding="utf-8")
+        # ★`try/finally` — 중간에 예외(KeyboardInterrupt 포함)가 나도 **변이가 남지 않는다**.
+        #   종전엔 원복이 정상 경로에만 있어, 끊기면 오염된 소스가 그대로 남았다.
+        try:
+            m.path.write_text(original.replace(m.old, m.new, 1), encoding="utf-8")
+            alive = _run(rel_tests, cwd)
+        finally:
+            m.path.write_text(original, encoding="utf-8")
         assert m.path.read_text(encoding="utf-8") == original, f"원복 실패: {m.path}"
         print(f"  [{i:3}/{len(muts)}] {'★생존' if alive else 'kill '}  {m.label()}")
         if alive:

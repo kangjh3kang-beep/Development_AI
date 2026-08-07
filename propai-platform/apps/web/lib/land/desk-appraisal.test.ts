@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
   deskToSiteSummary,
+  eok,
+  won,
   type DeskAppraisalResult,
 } from "@/lib/land/desk-appraisal";
 
@@ -75,5 +77,23 @@ describe("deskToSiteSummary — null 가드(무목업·0 강제 금지)", () => 
     const r = result();
     (r as unknown as { methods: unknown }).methods = undefined;
     expect(deskToSiteSummary(r).methods).toEqual([]);
+  });
+});
+
+describe("금액 포매터 — 로케일 고정(프론트 변이 감사 적발)", () => {
+  // ★`eok`/`won` 은 로케일만 고치고 **동작 테스트가 없었다** — 변이로 지워도 통과했다.
+  //   화면 헤드라인 금액이라 표기가 깨지면 바로 보인다.
+  it("억 단위는 ko-KR 서식으로 소수 2자리까지", () => {
+    expect(eok(1_234_567_890)).toBe("12.35억");
+    expect(eok(100_000_000)).toBe("1억");
+    // ★두 모집단을 가른다 — null 은 값이 아니라 "모른다"다.
+    expect(eok(null)).toBe("—");
+    expect(eok(undefined)).toBe("—");
+  });
+
+  it("원 단위는 천단위 구분자와 함께", () => {
+    expect(won(1_234_567)).toBe("1,234,567원");
+    expect(won(0)).toBe("0원");
+    expect(won(null)).toBe("—");
   });
 });
