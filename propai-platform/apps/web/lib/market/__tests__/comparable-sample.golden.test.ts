@@ -120,6 +120,22 @@ describe("골든 — 호미곶 대보리 산1-1 (위치 확인 0건인 극단 �
     expect(reason).toContain("위치 미확인 중 5건");
   });
 
+  it("★★구버전 폴백이 그룹에서 마스킹을 센다(프론트 변이 감사 적발)", () => {
+    // 백엔드는 이 폴백을 잠갔는데 **프론트 미러는 구멍**이었다 — `maskedJibunCount:
+    // fromGroups.deals` 를 지워도 통과했다(변이 감사). 미러 계약의 절반만 잠근 셈이다.
+    // ★두 모집단을 가른다 — 마스킹 그룹과 정상 그룹이 서로 다른 수를 내야 한다.
+    const { basis } = selectLocatedGroups({
+      // sample_basis 없음 = 구버전 페이로드(배포 스큐·캐시)
+      groups: [
+        { jibun: "5*", count: 3 },
+        { jibun: "1**", count: 2 },
+        { jibun: "736", count: 9 },
+      ],
+    });
+    expect(basis.maskedJibunCount).toBe(5);
+    expect(basis.maskedJibunGroupCount).toBe(2);
+  });
+
   it("★신형 페이로드의 마스킹 카운트가 도메인 객체에 배선된다(R2 M-4)", () => {
     // 백엔드 `test_sample_basis_reads_masked_count_from_modern_payload` 의 미러.
     // ★두 축이 서로 다른 값이어야 단위 배선이 판별된다.
