@@ -109,8 +109,5 @@ async def test_search_by_simple_address_auto_correction(monkeypatch):
     assert res["ok"] is True
     assert len(res["items"]) == 1
     assert res["items"][0]["unique_no"] == "16412026000001"
-    assert searched_addrs == [
-        "경상북도 포항시 남구 호미곶면 대보리 산 1-1",
-        "경상북도 포항시 남구 호미곶면 대보리 산1-1",
-    ]
-
+    assert "경상북도 포항시 남구 호미곶면 대보리 산 1-1" in searched_addrs
+    assert "경상북도 포항시 남구 호미곶면 대보리 산1-1" in searched_addrs

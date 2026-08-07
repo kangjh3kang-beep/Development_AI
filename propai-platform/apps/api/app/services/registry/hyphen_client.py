@@ -260,18 +260,29 @@ async def search_by_simple_address(
         return {"ok": False, "status": "bad_request", "items": [], "message": "주소가 필요합니다."}
 
     candidates = normalize_address_candidates(addr)
-    last_res: dict[str, Any] | None = None
-    for cand in candidates:
-        res = await _search_single_address(
-            cand, kindcls=kindcls, cls_flag=cls_flag, limit_page=limit_page, page_no=page_no
-        )
-        if res.get("ok") and res.get("items"):
-            if cand != addr:
-                logger.info("하이픈 주소검색 자동보정 성공", original=addr, corrected=cand, count=len(res["items"]))
-            return res
-        last_res = res
 
-    return last_res or {"ok": False, "status": "no_match", "items": [], "message": "주소 검색 결과가 없습니다."}
+    # 1차: 원본 주소 즉시 검색
+    first_res = await _search_single_address(
+        candidates[0], kindcls=kindcls, cls_flag=cls_flag, limit_page=limit_page, page_no=page_no
+    )
+    if first_res.get("ok") and first_res.get("items"):
+        return first_res
+
+    # 2차: 1차 실패 시 나머지 후보들을 병렬로 동시 검색(지연 및 타임아웃 방지)
+    import asyncio
+
+    if len(candidates) > 1:
+        tasks = [
+            _search_single_address(cand, kindcls=kindcls, cls_flag=cls_flag, limit_page=limit_page, page_no=page_no)
+            for cand in candidates[1:]
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for cand, res in zip(candidates[1:], results):
+            if isinstance(res, dict) and res.get("ok") and res.get("items"):
+                logger.info("하이픈 주소검색 병렬 자동보정 성공", original=addr, corrected=cand, count=len(res["items"]))
+                return res
+
+    return first_res or {"ok": False, "status": "no_match", "items": [], "message": "주소 검색 결과가 없습니다."}
 
 
 
