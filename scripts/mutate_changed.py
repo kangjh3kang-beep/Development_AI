@@ -103,23 +103,52 @@ def _mutations_for_line(path: Path, line: str, line_no: int) -> list[Mutation]:
 
 
 def _changed_files(base: str) -> list[Path]:
-    cmd = ["git", "diff", "--name-only", f"{base}...HEAD"]
+    # ★`A...B`(three-dot)는 **커밋된 것만** 본다. 커밋 전에 돌리는 것이 자연스러운
+    # 사용법이라(실사용에서 발견) `A`(two-dot)로 워킹트리까지 포함한다.
+    cmd = ["git", "diff", "--name-only", base]
     names = subprocess.run(cmd, capture_output=True, text=True).stdout.split()
     out = []
     for n in names:
         p = Path(n)
-        if p.suffix != ".py" or not p.exists():
+        if p.suffix not in (".py", ".ts", ".tsx") or not p.exists():
             continue
-        if "/tests/" in n or p.name.startswith("test_"):
-            continue          # 테스트 자체는 변이 대상이 아니다
+        # 테스트 자체는 변이 대상이 아니다. ★프론트 관례(`__tests__/`, `*.test.ts(x)`)도
+        #   함께 거른다 — 종전엔 py 관례(`tests/`, `test_*`)만 걸러 프론트 테스트 파일이
+        #   변이 대상으로 들어왔다(자기 자신을 변이하는 셈).
+        if "/tests/" in n or "/__tests__/" in n:
+            continue
+        if p.name.startswith("test_") or ".test." in p.name or ".spec." in p.name:
+            continue
+        if n.startswith("scripts/"):
+            continue          # 도구 자신은 이 테스트들의 대상이 아니다(오탐)
         out.append(p)
+    return out
+
+
+def _docstring_line_nos(path: Path) -> set[int]:
+    """파일의 **문자열/독스트링 내부** 줄 번호. 그 안의 문장은 코드가 아니라 설명이다.
+
+    ★전수 감사에서 오탐이 여럿 나왔다 — 독스트링에 적어 둔 설명 문장을 "문자열 변경"
+    변이로 잡아, 진짜 구멍이 소음에 묻혔다. `tokenize` 로 정확히 걸러 낸다.
+    """
+    import io
+    import tokenize
+
+    out: set[int] = set()
+    try:
+        src = path.read_text(encoding="utf-8")
+        for tok in tokenize.generate_tokens(io.StringIO(src).readline):
+            if tok.type == tokenize.STRING and tok.end[0] > tok.start[0]:
+                out.update(range(tok.start[0], tok.end[0] + 1))
+    except Exception:  # noqa: BLE001 — 걸러 내기 실패는 소음만 늘릴 뿐 결과를 왜곡하지 않는다
+        return set()
     return out
 
 
 def _added_lines(base: str, path: Path) -> list[tuple[int, str]]:
     """`path` 에서 이 브랜치가 **추가한** 줄만. 기존 코드를 망가뜨려 소음을 내지 않는다."""
     diff = subprocess.run(
-        ["git", "diff", "-U0", f"{base}...HEAD", "--", str(path)],
+        ["git", "diff", "-U0", base, "--", str(path)],
         capture_output=True, text=True,
     ).stdout
     out: list[tuple[int, str]] = []
@@ -164,6 +193,16 @@ def main() -> int:
     ap.add_argument("--cwd", default="propai-platform/apps/api")
     args = ap.parse_args()
 
+    # ★★CWD 의존 제거 — 하위 디렉토리에서 돌리면 `git diff` 가 그 경로만 보여
+    #   "변경 없음"으로 **조용히 무효**가 된다(실측). 저장소 루트로 고정한다.
+    root = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True,
+    ).stdout.strip()
+    if root:
+        import os
+
+        os.chdir(root)
+
     files = _changed_files(args.base)
     if not files:
         print("변경된 .py 파일이 없다.")
@@ -180,11 +219,33 @@ def main() -> int:
 
     muts: list[Mutation] = []
     for f in files:
+        skip = _docstring_line_nos(f)
         for no, line in _added_lines(args.base, f):
+            if no in skip:
+                continue      # 여러 줄 문자열(독스트링) 내부 — 코드가 아니다
             muts.extend(_mutations_for_line(f, line, no))
     muts = muts[: args.max]
 
     print(f"대상 파일 {len(files)}개 · 테스트 {rel_tests} · 변이 {len(muts)}건\n")
+
+    # ★★변이가 0건인데 "생존 0" 을 찍으면 **공허한 초록**이다 — 아무것도 검증하지 않고
+    #   통과한 것을 통과로 보고하게 된다. 이 도구가 잡으려는 결함을 이 도구가 저지르면 안 된다.
+    if not muts:
+        print("★변이를 하나도 만들지 못했다 — 검증된 것이 **없다**(초록이 아니다).")
+        print("  변경이 주석·공백뿐이거나, 대상 파일이 규칙에 안 걸렸을 수 있다.")
+        return 2
+
+    # ★★프론트(.ts/.tsx) 변경이 있는데 프론트 테스트를 못 돌리면 **그 사실을 알린다**.
+    #   조용히 넘기면 "백엔드만 감사하고 전수라고 부르는" 실수를 반복한다(실제로 저질렀다).
+    front_files = [f for f in files if f.suffix in (".ts", ".tsx")]
+    front_tests = [t for t in rel_tests if t.endswith((".ts", ".tsx"))]
+    if front_files and not front_tests:
+        print(f"★★프론트 변경 {len(front_files)}개가 있는데 프론트 테스트가 지정되지 않았다.")
+        print("  이 도구는 pytest 만 돌린다 — 프론트는 **검증되지 않는다**.")
+        for f in front_files[:8]:
+            print(f"    미검증: {f}")
+        print("  → vitest 로 따로 돌리거나, 최소한 이 공백을 기록하라(조용히 넘기지 말 것).")
+        print()
 
     # ★기준선 먼저 — 변이 전에 통과하지 않으면 결과가 무의미하다.
     if not _run(rel_tests, cwd):
@@ -197,9 +258,13 @@ def main() -> int:
         if original.count(m.old) != 1:
             print(f"  [{i:3}/{len(muts)}] skip(유일하지 않음)  {m.label()}")
             continue
-        m.path.write_text(original.replace(m.old, m.new, 1), encoding="utf-8")
-        alive = _run(rel_tests, cwd)
-        m.path.write_text(original, encoding="utf-8")
+        # ★`try/finally` — 중간에 예외(KeyboardInterrupt 포함)가 나도 **변이가 남지 않는다**.
+        #   종전엔 원복이 정상 경로에만 있어, 끊기면 오염된 소스가 그대로 남았다.
+        try:
+            m.path.write_text(original.replace(m.old, m.new, 1), encoding="utf-8")
+            alive = _run(rel_tests, cwd)
+        finally:
+            m.path.write_text(original, encoding="utf-8")
         assert m.path.read_text(encoding="utf-8") == original, f"원복 실패: {m.path}"
         print(f"  [{i:3}/{len(muts)}] {'★생존' if alive else 'kill '}  {m.label()}")
         if alive:
