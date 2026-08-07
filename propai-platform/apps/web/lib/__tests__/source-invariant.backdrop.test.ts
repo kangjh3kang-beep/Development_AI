@@ -12,7 +12,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { collectBackdrops, resolveModuleSpec } from "@/lib/source-invariant";
+import { collectBackdrops, importClosure, resolveModuleSpec } from "@/lib/source-invariant";
 
 describe("collectBackdrops — 백드롭 className 파서", () => {
   it("★리터럴 백드롭에서 z 를 읽는다", () => {
@@ -132,10 +132,53 @@ describe("collectBackdrops — 백드롭 className 파서", () => {
     expect(hit.resolvable, "판정불가를 남발하면 진짜 누락이 숨는다").toBe(true);
   });
 
-  it("★최상위 블록 주석 안의 백드롭도 세지 않는다", () => {
-    // 독립 검증 L1: JSX 주석·줄 주석만 벗기고 `/* … */` 는 그대로 집계했다(위양성 방향).
-    expect(collectBackdrops(`/* <div className="fixed inset-0 z-50" /> */`)).toHaveLength(0);
+  it("★★블록 주석을 벗기려다 만든 맹점의 회귀락 — 줄주석·문자열 안의 `/*` 뒤 코드가 살아 있어야 한다", () => {
+    // R1 에서 `/* … */` 스트립을 넣었다가 **474파일·9,882줄의 실코드를 삼켰다**(R2 실측).
+    // 이 저장소엔 줄주석 안의 `/*`(`// /auction/* 는 …`)와 문자열 안의 `/*`(`image/*`)가 흔한데,
+    // 그게 블록 주석 시작으로 잡혀 다음 `*/` 까지 통째로 공백이 됐다 — 지도 시드인
+    // AuctionMonitorPanel 에 z-50 을 주입해도 계약이 초록이었다.
+    const src = [
+      `// 경로 규칙: /auction/* 는 RBAC 게이트를 탄다`,
+      `<input accept=".dxf,image/*" />`,
+      `const x = 1; /* 진짜 블록 주석 */`,
+      `<div className="fixed inset-0 z-50" />`,
+    ].join("\n");
+    const hits = collectBackdrops(src);
+    expect(hits, "줄주석·문자열 안의 `/*` 뒤 백드롭이 삼켜졌다 — 맹점 재발").toHaveLength(1);
+    expect(hits[0].zs).toEqual([50]);
   });
+
+  it("★알려진 경계: 최상위 블록 주석 안의 백드롭은 **집계된다**(위양성 — 실저장소 0건)", () => {
+    // 정직 표기: 고치려던 위양성이 실저장소에 0건이라, 위 맹점을 감수하면서까지 고치지 않는다.
+    // 이 단언은 "안 고쳤다"는 사실 자체를 박제해 다음 사람이 오해하지 않게 한다.
+    expect(collectBackdrops(`/* <div className="fixed inset-0 z-50" /> */`)).toHaveLength(1);
+  });
+
+  it("★인라인 style zIndex 는 **읽어서 판정한다** — 판정불가 탈출구를 막는다", () => {
+    // R2 M-A: 종전엔 zIndex 토큰만 보면 통째로 판정불가로 넘겨, `style={{ zIndex: 50 }}`
+    // (= 명백한 계약 위반)이 감시망을 빠져나갔다.
+    const [bad] = collectBackdrops(
+      `<div className="fixed inset-0 bg-black/60" style={{ zIndex: 50 }} />`,
+    );
+    expect(bad.zs, "인라인 z 를 읽지 못하면 위반이 판정불가로 빠져나간다").toEqual([50]);
+    expect(bad.resolvable).toBe(true);
+    // 못 읽는 경우만 판정불가다.
+    const [opaque] = collectBackdrops(
+      `<div className="fixed inset-0 bg-black/60" style={{ zIndex: MODAL_Z }} />`,
+    );
+    expect(opaque.zs).toEqual([]);
+    expect(opaque.resolvable).toBe(false);
+  });
+
+  it("★갈래별로 z 부재를 본다 — 준수 갈래가 z 없는 갈래를 가리지 못하게", () => {
+    // R2 M-C: `zs` 를 풀링하면 갈래A 의 z-[800] 이 갈래B 의 z 부재를 masking 한다.
+    const [hit] = collectBackdrops(
+      `<div className={cn(open ? "fixed inset-0 z-[800]" : "fixed inset-0")} />`,
+    );
+    expect(hit.zs).toEqual([800]);
+    expect(hit.missingZ, "z 없는 갈래가 다른 갈래의 z 에 가려졌다").toBe(true);
+  });
+
 
   it("★파일당 여러 백드롭을 전부 수집한다(첫 건에서 멈추지 않는다)", () => {
     const hits = collectBackdrops(
@@ -177,5 +220,31 @@ describe("resolveModuleSpec — 임포트 경로 해석기", () => {
 
   it("★존재하지 않는 경로는 null — 있는 척하지 않는다", () => {
     expect(resolveModuleSpec(OP, "./NoSuchModule")).toBeNull();
+  });
+});
+
+describe("importClosure — 공허진리 강제가 실제로 무는가", () => {
+  // ★R2 H-C: `minFiles`·`minDepth`·`mustInclude` 세 가드를 `if (false && …)` 로 무력화해도
+  //   계약 테스트가 **전부 초록**이었다. "구조적으로 강제한다"고 선언한 코드 자체가
+  //   공허진리 검증을 안 받은 것이다(규율 9·16). 여기서 각각을 직접 문다.
+  const SEEDS = ["components/orchestration/OrchestratorPanel.tsx"];
+  const OK = { minFiles: 1, minDepth: 0, mustInclude: [] as string[] };
+
+  it("★기준선 — 느슨한 기대값이면 통과한다(아래 세 단언이 공허하지 않음을 보인다)", () => {
+    expect(importClosure(SEEDS, OK).length).toBeGreaterThan(1);
+  });
+
+  it("★minFiles 미달이면 던진다", () => {
+    expect(() => importClosure(SEEDS, { ...OK, minFiles: 99999 })).toThrow(/폐포/);
+  });
+
+  it("★minDepth 미달이면 던진다", () => {
+    expect(() => importClosure(SEEDS, { ...OK, minDepth: 99 })).toThrow(/최대깊이/);
+  });
+
+  it("★mustInclude 가 폐포에 없으면 던진다", () => {
+    expect(() =>
+      importClosure(SEEDS, { ...OK, mustInclude: ["components/does/not/Exist.tsx"] }),
+    ).toThrow(/폐포에 없다/);
   });
 });

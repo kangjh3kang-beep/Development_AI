@@ -124,16 +124,19 @@ function includes(line: string, needle: string | RegExp): boolean {
  *        className 은 정규식 밖이었다.
  *   두 도구 모두 여기 두어 다른 층위 검사도 같은 눈을 쓰게 한다.
  *
- * ★변이검증에서 **설명되는 생존 12건**(69변이 중). 다음 사람이 다시 판정하지 않게 적어 둔다:
- *   · 타입 필드 삭제 8건(BackdropHit 5 · ClosureExpectation 3) — vitest 는 타입을 지우고
+ * ★변이검증 생존 판정(다음 사람이 다시 판정하지 않게). **합이 맞는지 세어라** — R1 에서
+ *   "12건"이라 적었는데 내역 합은 13이었다(R2 지적):
+ *   · 타입 필드 삭제 **8**건(BackdropHit 5 · ClosureExpectation 3) — vitest 는 타입을 지우고
  *     돌리므로 생존이 당연하다. **추정이 아니라 실측**했다: `minFiles` 를 지우면
  *     `tsc --noEmit` 이 TS2353 1건 + TS2339 2건을 낸다(= type-check 게이트가 지는 몫).
- *   · `classVariants` 안 문자열 소비 뒤의 `continue` 1건 — 바깥 `if` 가 이미 다른 갈래를
+ *   · `classVariants` 안 문자열 소비 뒤의 `continue` **1**건 — 바깥 `if` 가 이미 다른 갈래를
  *     배제하므로 있으나 없으나 같다(**등가 변이**).
- *   · `resolveModuleSpec` 말미 `return null` 1건 — 호출부가 `if (!next)` 로 보므로 등가.
- *   · `importClosure` 의 **오류 메시지 문구** 3건 — 던지는 조건 자체는 전부 CAUGHT 이고,
- *     문구는 사용자에게 나가는 산출물이 아니라 개발자 진단이라 계약이 아니다.
- *   ★즉 **설명 못 하는 생존은 0**이다. 생존 0 이 목표가 아니라 이게 목표다.
+ *   · `importClosure` 의 **오류 메시지 문구** **3**건 — 던지는 조건 자체는 잠겨 있다
+ *     (R1 은 "전부 CAUGHT"라고 적었지만 **거짓이었다**: R2 가 세 가드를 `if (false && …)` 로
+ *     무력화해도 전부 초록임을 실증했다. 그래서 `source-invariant.backdrop.test.ts` 에
+ *     가드별 throw 픽스처를 넣고, 무력화 변이가 죽는 것을 확인했다).
+ *   ★합계 **12**. `resolveModuleSpec` 말미 `return null` 은 이제 등가가 아니다 —
+ *     같은 PR 이 추가한 해석기 픽스처("존재하지 않는 경로는 null")가 잡는다(R2 지적).
  * ──────────────────────────────────────────────────────────────────────────── */
 
 /** 한 개의 `className` 속성에서 읽어낸 백드롭 후보. */
@@ -147,6 +150,11 @@ export type BackdropHit = {
   /** 그 안에서 읽어낸 z 값들. 조건부면 여러 개이고, 하나도 없으면 빈 배열. */
   zs: number[];
   /**
+   * **갈래 중 하나라도** z 를 못 읽었는가. ★`zs.length === 0` 으로 대신하면, 준수하는 갈래의
+   * z 가 **z 없는 갈래를 가려** 통과한다(R2 실측). 소비처는 이 필드로 판정해야 한다.
+   */
+  missingZ: boolean;
+  /**
    * z 를 **소스만으로 판정할 수 있는가**. false = 판정불가(변수로 조립한 z ·
    * 같은 요소의 인라인 `style={{ zIndex }}`). ★판정불가를 위반과 섞으면 정상 코드를
    * 막는다 — 이 저장소가 zoning 커버리지에서 쓰는 "갭 vs 판정불가" 구분과 같은 처방이다.
@@ -155,17 +163,24 @@ export type BackdropHit = {
 };
 
 /**
- * 주석을 **줄 수를 보존한 채** 지운다(JSX 주석 + 블록 주석 + 줄 끝 `//`).
+ * 주석을 **줄 수를 보존한 채** 지운다(JSX 주석 + 줄 끝 `//`).
  *
- * ★블록 주석(`/* … *\/`)도 벗긴다 — 초판은 "JSX 안에서는 `{/* *\/}` 형태여야 하므로
- *   불필요"라고 적었는데 **방향이 반대**였다(독립 검증 L1). 컴포넌트 위 JSDoc 예시나
- *   주석 처리된 컴포넌트 전체가 그대로 집계돼 **없는 백드롭을 신고**한다(위양성).
- * ★그래도 소스 검사인 이상 완전면역은 아니므로, 소비처는 **수집 개수 하한**을 함께
- *   단언해 통째 주석 처리가 초록으로 지나가지 않게 해야 한다(rule 2 — 공허 진리 가드).
+ * ★★최상위 블록 주석(`/* … *\/`)은 **일부러 벗기지 않는다**. R1 에서 "주석 안 백드롭을
+ *   집계한다(위양성)"는 지적을 받고 스트립을 넣었다가 **474파일·9,882줄의 실코드를 삼키는
+ *   맹점**을 만들었다(R2 실측). 원인: 이 저장소에는 `//` 주석 안의 `/*`(`// /auction/* 는 …`)와
+ *   문자열 안의 `/*`(`accept="…,image/*"`)가 흔한데, 그게 블록 주석 시작으로 잡혀 다음 `*\/`
+ *   까지 통째로 공백이 됐다. 실제로 `AuctionMonitorPanel`(지도 시드!)에 z-50 백드롭을 주입해도
+ *   계약이 초록이었다 — **봉합 전에는 잡던 위반을 못 잡게** 됐다.
+ * ★그리고 고치려던 위양성은 **실저장소에 0건**이었다(832파일 대조에서 달라진 2건이 모두
+ *   테스트 픽스처). 없는 결함을 고치려다 실재하는 맹점을 만든 것이라 되돌린다.
+ * ★같은 파일 위쪽 `stripJsxComments` 가 "44,444자를 통째로 삼켰다"고 스스로 박제한 사고의
+ *   **직계 재발**이다. 다시 넣으려면 ①줄주석 제거 **뒤에** ②문자열을 건너뛰는 스캔으로
+ *   ③span 상한 throw 까지 갖춰야 한다.
+ * ★소비처는 **수집 개수 하한**을 함께 단언해 통째 주석 처리가 초록으로 지나가지 않게 한다
+ *   (rule 2). 다만 그 하한은 "사라짐"만 잡고 "안 보임"은 못 잡는다(위 맹점이 그래서 통과했다).
  */
 function stripComments(src: string): string {
   return stripJsxComments(src)
-    .replace(/\/\*(?:(?!\*\/)[\s\S])*\*\//g, (m) => m.replace(/[^\n]/g, " "))
     .split("\n")
     .map((l) => stripLineComment(l))
     .join("\n");
@@ -286,14 +301,34 @@ export function collectBackdrops(source: string, file = ""): BackdropHit[] {
       (c) => HAS_CLASS(c, "fixed") && HAS_CLASS(c, "inset-0") && !HAS_CLASS(c, "pointer-events-none"),
     );
     if (!variants.length) continue;
-    const zs = variants.flatMap((c) => Array.from(c.matchAll(Z_UTIL)).map((z) => Number(z[1])));
-    // ★z 를 못 읽었을 때만 "정말 소스로 판정 불가한가"를 따진다.
-    //   ①비리터럴이면 z 가 변수로 조립됐을 수 있다 ②같은 요소가 인라인 `style={{ zIndex }}`
-    //   로 층위를 줄 수 있다(이 저장소의 실제 관용 — SATONG_UI_Z 는 인라인으로 흘린다).
+    // ★같은 요소의 인라인 `style={{ zIndex: N }}` 은 **읽어서 z 로 쓴다**. 종전엔 통째로
+    //   "판정불가"로 넘겼는데, 그러면 `style={{ zIndex: 50 }}`(= 명백한 계약 위반)이
+    //   판정불가로 **빠져나가는 탈출구**가 된다(R2 실측 M-A). 못 읽는 경우만 판정불가다.
     //   창(窓)은 같은 태그 안으로 제한한다 — 다음 여는 태그(`<`)를 만나면 멈춘다.
     const tail = src.slice(v.end, v.end + 400).split("<")[0];
-    const resolvable = zs.length > 0 || (v.literal && !/\bzIndex\b/.test(tail));
-    hits.push({ file, literal: v.literal, classes: variants.join(" | "), zs, resolvable });
+    const styleZ = tail.match(/\bzIndex\s*:\s*(\d+)/);
+    const hasOpaqueZIndex = /\bzIndex\b/.test(tail) && !styleZ;
+
+    // ★갈래마다 따로 센다. 풀링하면 **닫힌 갈래의 z 부재가 다른 갈래의 z 로 가려진다**
+    //   (R2 실측 M-C: 갈래A 준수 + 갈래B 백드롭인데 z 없음 → zs=[800] 이라 통과했다).
+    const perVariant = variants.map((c) => {
+      const zs = Array.from(c.matchAll(Z_UTIL)).map((z) => Number(z[1]));
+      if (!zs.length && styleZ) zs.push(Number(styleZ[1]));
+      return zs;
+    });
+    const zs = perVariant.flat();
+    // z 를 못 읽은 갈래가 하나라도 있으면, 그 부재가 소스로 설명되는지 따진다.
+    const missing = perVariant.some((zsOf) => !zsOf.length);
+    const resolvable = !missing || (v.literal && !hasOpaqueZIndex);
+    hits.push({
+      file,
+      literal: v.literal,
+      classes: variants.join(" | "),
+      zs,
+      // ★"z 부재"는 갈래 단위로 보고한다 — 소비처가 `zs.length` 만 보면 masking 이 남는다.
+      missingZ: missing,
+      resolvable,
+    });
   }
   return hits;
 }
@@ -317,25 +352,36 @@ export function resolveModuleSpec(fromFile: string, spec: string): string | null
     const abs = resolve(process.cwd(), cand);
     if (existsSync(abs) && statSync(abs).isFile()) return cand;
   }
-  // ★이 `return null` 은 변이로 잠기지 않는다(실측): 호출부가 `if (!next)` 로 보므로
-  //   null 이든 undefined 든 동작이 같은 **등가 변이**다. 위 두 return 경로(패키지 · 해석 성공)가
-  //   실제 판정을 지고, 그건 잠겨 있다.
+  // ★R1 은 여기를 "등가 변이라 안 잠긴다"고 적었는데 **틀렸다**(R2 지적) — 같은 PR 이 추가한
+  //   해석기 픽스처("존재하지 않는 경로는 null")가 `undefined` 로 바꾸면 실패한다. 봉합 뒤
+  //   갱신하지 않은 주석이 다음 사람을 오도할 뻔했다.
   return null;
 }
 
 /** `importClosure` 가 **반드시** 받아야 하는 공허진리 방지 선언. */
 export type ClosureExpectation = {
   /**
-   * 최소 파일 수 — **필수**. ★하한은 "정상값의 절반"이 아니라 **회귀 상태의 값보다 위**여야
-   * 한다. 초판은 실측 157 의 절반인 80 을 썼는데, 이 도구가 막겠다고 선언한 회귀
-   * (별칭 전용·1단계 = 구판)의 폐포가 **99파일**이라 그 하한으로는 구판으로 되돌려도
-   * 통과한다(독립 검증 H2 실증). 즉 하한을 정할 때 **회귀 쪽 값을 실측**해야 한다.
+   * 최소 파일 수 — **필수**. ★하한은 "정상값의 절반"이 아니라 **모든 회귀 상태의 값보다
+   * 위**여야 한다. 회귀별 폐포 실측(2026-08-07):
+   *
+   *     현행(별칭+상대·전깊이)            157 (깊이 4)
+   *     회귀A 별칭 전용·전깊이            143 (깊이 4)   ← minDepth 로 안 잡힌다. 하한이 져야 한다
+   *     회귀B 별칭 전용·1단계              99 (깊이 1)
+   *     회귀C 구판(별칭·.tsx만·1단계)       62 (깊이 1)
+   *     회귀D 상대 유지·.tsx만             84 (깊이 3)
+   *     회귀E 깊이 2 절단                140 · 회귀F 깊이 3 절단  155  ← minDepth 가 진다
+   *
+   * ★★두 번 틀렸다: 초판은 "157 의 절반"이라며 80 을 썼고(회귀 B·D 통과), R1 은 근거 수치를
+   *   66·99 로 **잘못 적고** 130 을 썼다 — 실제 최대 회귀값은 **143** 이라 회귀 A 가 그대로
+   *   통과했다(R2 실증). 하한을 정할 땐 **회귀 쪽을 전부 실측**해야 한다.
    */
   minFiles: number;
   /**
-   * 최소 최대깊이 — **필수**. 개수 하한만으로는 "깊이 2 에서 자르기"를 못 잡는다
-   * (독립 검증 H1 실증: 깊이 2·3 절단이 둘 다 SURVIVED). 이 PR 이 고친 결함
-   * "1단계만 봤다"의 한 칸 옆 버전이 그대로 재발하는 자리다.
+   * 최소 최대깊이 — **필수**. 개수 하한만으로는 "깊이에서 자르기"를 못 잡는다
+   * (실측: 깊이 2 절단 140 · 깊이 3 절단 155 — 개수로는 정상과 구분되지 않는다).
+   * 이 PR 이 고친 결함 "1단계만 봤다"의 한 칸 옆 버전이 그대로 재발하는 자리다.
+   * ※깊이 4 인 파일은 실측 2건뿐이라, 앱 구조가 정상적으로 얕아지면 이 가드가 먼저 운다 —
+   *   오류 메시지가 그 가능성을 함께 말하게 해 두었다(도구 고장으로 오도하지 않도록).
    */
   minDepth: number;
   /**
@@ -383,7 +429,8 @@ export function importClosure(entries: string[], expect: ClosureExpectation): st
   if (maxDepth < expect.minDepth)
     throw new Error(
       `[import-closure] 최대깊이 ${maxDepth} < 최소 ${expect.minDepth} — 임포트를 끝까지 ` +
-        "따라가지 못하고 있다(깊은 곳의 모달이 감시망 밖).",
+        "따라가지 못하고 있거나(깊은 곳의 모달이 감시망 밖), 앱 임포트 체인이 정상적으로 " +
+        "얕아졌다. 후자면 기대값을 낮춰라 — 도구 고장으로 오도하지 말 것.",
     );
   for (const f of expect.mustInclude)
     if (!seen.has(f))
