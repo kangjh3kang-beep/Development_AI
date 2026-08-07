@@ -91,7 +91,7 @@ function stripJsxComments(src: string): string {
   //   새 내부 클래스가 첫 `*/` 를 넘지 못하므로 R4 형태의 **폭주는 구조적으로 불가능**하다
   //   (리뷰어 실측: 폭주 시도의 매치 span 이 전부 0줄). 따라서 이 조건이 성립하는 경우는
   //   사실상 **정당하게 긴 JSX 주석**뿐이고, 실질은 "주석 40줄 제한" 린트 + 정규식을
-  //   되돌렸을 때를 대비한 **회귀 백스톱**이다. 저장소 최장 정당 주석은 12줄이라 여유 3.2배.
+  //   되돌렸을 때를 대비한 **회귀 백스톱**이다. 저장소 최장 정당 주석은 13줄이라 여유 3.08배(R3 재실측 — 12줄이라 적었던 것 정정).
   for (const m of src.matchAll(/\{\/\*(?:(?!\*\/)[\s\S])*\*\/\s*\}/g)) {
     const span = (m[0].match(/\n/g) || []).length;
     if (span > 40) {
@@ -124,50 +124,36 @@ function includes(line: string, needle: string | RegExp): boolean {
  *        className 은 정규식 밖이었다.
  *   두 도구 모두 여기 두어 다른 층위 검사도 같은 눈을 쓰게 한다.
  *
- * ★변이검증 생존 판정(다음 사람이 다시 판정하지 않게). **합이 맞는지 세어라** — R1 에서
- *   "12건"이라 적었는데 내역 합은 13이었다(R2 지적):
- *   · 타입 필드 삭제 **8**건(BackdropHit 5 · ClosureExpectation 3) — vitest 는 타입을 지우고
- *     돌리므로 생존이 당연하다. **추정이 아니라 실측**했다: `minFiles` 를 지우면
- *     `tsc --noEmit` 이 TS2353 1건 + TS2339 2건을 낸다(= type-check 게이트가 지는 몫).
- *   · `classVariants` 안 문자열 소비 뒤의 `continue` **1**건 — 바깥 `if` 가 이미 다른 갈래를
- *     배제하므로 있으나 없으나 같다(**등가 변이**).
- *   · `importClosure` 의 **오류 메시지 문구** **3**건 — 던지는 조건 자체는 잠겨 있다
- *     (R1 은 "전부 CAUGHT"라고 적었지만 **거짓이었다**: R2 가 세 가드를 `if (false && …)` 로
- *     무력화해도 전부 초록임을 실증했다. 그래서 `source-invariant.backdrop.test.ts` 에
- *     가드별 throw 픽스처를 넣고, 무력화 변이가 죽는 것을 확인했다).
- *   ★합계 **12**. `resolveModuleSpec` 말미 `return null` 은 이제 등가가 아니다 —
- *     같은 PR 이 추가한 해석기 픽스처("존재하지 않는 경로는 null")가 잡는다(R2 지적).
+ * ★변이검증 생존 판정(다음 사람이 다시 판정하지 않게). **합이 맞는지 세어라** — 한 번은
+ *   "12건"이라 적었는데 내역 합이 13이었다:
+ *   · 타입 필드 삭제 — vitest 는 타입을 지우고 돌리므로 생존이 당연하다. **추정이 아니라
+ *     실측**했다: `minFiles` 를 지우면 `tsc --noEmit` 이 TS2353 1건 + TS2339 2건을 낸다
+ *     (= type-check 게이트가 지는 몫).
+ *   · `importClosure` 의 **오류 메시지 문구** — 던지는 **조건**은 픽스처로 잠겨 있다
+ *     (`source-invariant.backdrop.test.ts` 의 throw 3종). 한때 "조건도 전부 CAUGHT"라고
+ *     적었으나 **거짓이었고**(무력화해도 초록이었다) 그래서 픽스처를 넣었다. 문구 자체는
+ *     사용자 산출물이 아니라 개발자 진단이라 계약이 아니다.
+ *   ★생존 0 이 목표가 아니라 **설명 못 하는 생존을 남기지 않는 것**이 목표다.
  * ──────────────────────────────────────────────────────────────────────────── */
 
-/** 한 개의 `className` 속성에서 읽어낸 백드롭 후보. */
+/** 한 개의 리터럴 `className` 에서 읽어낸 백드롭 후보. */
 export type BackdropHit = {
   /** apps/web 기준 상대 경로(수집기가 채운다). */
   file: string;
-  /** className 이 통짜 문자열이었으면 true. false = 삼항·`cn()`·템플릿 조립. */
-  literal: boolean;
-  /** 표현식 안 문자열 조각을 이어붙인 클래스 후보(판정 근거를 그대로 보고하기 위함). */
+  /** 그 className 문자열(판정 근거를 그대로 보고하기 위함). */
   classes: string;
-  /** 그 안에서 읽어낸 z 값들. 조건부면 여러 개이고, 하나도 없으면 빈 배열. */
+  /** 그 안에서 읽어낸 z 값들(변이 prefix `md:z-50` 포함). 없으면 빈 배열. */
   zs: number[];
-  /**
-   * **갈래 중 하나라도** z 를 못 읽었는가. ★`zs.length === 0` 으로 대신하면, 준수하는 갈래의
-   * z 가 **z 없는 갈래를 가려** 통과한다(R2 실측). 소비처는 이 필드로 판정해야 한다.
-   */
-  missingZ: boolean;
-  /**
-   * z 를 **소스만으로 판정할 수 있는가**. false = 판정불가(변수로 조립한 z ·
-   * 같은 요소의 인라인 `style={{ zIndex }}`). ★판정불가를 위반과 섞으면 정상 코드를
-   * 막는다 — 이 저장소가 zoning 커버리지에서 쓰는 "갭 vs 판정불가" 구분과 같은 처방이다.
-   */
-  resolvable: boolean;
 };
 
 /**
  * 주석을 **줄 수를 보존한 채** 지운다(JSX 주석 + 줄 끝 `//`).
  *
  * ★★최상위 블록 주석(`/* … *\/`)은 **일부러 벗기지 않는다**. R1 에서 "주석 안 백드롭을
- *   집계한다(위양성)"는 지적을 받고 스트립을 넣었다가 **474파일·9,882줄의 실코드를 삼키는
- *   맹점**을 만들었다(R2 실측). 원인: 이 저장소에는 `//` 주석 안의 `/*`(`// /auction/* 는 …`)와
+ *   집계한다(위양성)"는 지적을 받고 스트립을 넣었다가 **수백 파일 규모의 실코드를 삼키는
+ *   맹점**을 만들었다(스코프에 따라 404~576파일·6,890~11,258줄 — R2 가 보고한 474/9,882 는
+ *   R3 가 재현하지 못했다. ★나는 그 숫자를 **재실측 없이 옮겨 적었다**. 결론(맹점 실재)은
+ *   주입 실증으로 확증됐지만 수치는 근거가 없었다). 원인: 이 저장소에는 `//` 주석 안의 `/*`(`// /auction/* 는 …`)와
  *   문자열 안의 `/*`(`accept="…,image/*"`)가 흔한데, 그게 블록 주석 시작으로 잡혀 다음 `*\/`
  *   까지 통째로 공백이 됐다. 실제로 `AuctionMonitorPanel`(지도 시드!)에 z-50 백드롭을 주입해도
  *   계약이 초록이었다 — **봉합 전에는 잡던 위반을 못 잡게** 됐다.
@@ -227,108 +213,40 @@ function classNameValues(src: string): { raw: string; literal: boolean; end: num
 const HAS_CLASS = (t: string, cls: string) =>
   new RegExp(`(?:^|\\s)${cls}(?:\\s|$)`).test(t);
 
-/** 표현식 텍스트를 **런타임에 가능한 클래스 조합**으로 펼친다(삼항 갈래별). */
-function classVariants(expr: string, literal: boolean): string[] {
-  const normalize = (t: string) =>
-    // ★템플릿 보간(`${big ? "z-[800]" : "z-50"}`)은 조각 하나로 들어오므로, 따옴표·`${`·중괄호를
-    //   공백으로 바꿔 **클래스 토큰을 공백으로 분리**한다. 빼먹으면 `"z-50"` 이 따옴표에 붙어
-    //   z 정규식(앞이 공백)에 안 걸려 **조용히 z 없음**이 된다(실측으로 적발).
-    t.replace(/\$\{|[`"'{}]/g, " ").replace(/\s+/g, " ").trim();
-
-  if (literal) return [normalize(expr)];
-
-  // ★삼항은 **갈래를 합치지 않는다**. 합치면 배타적인 두 상태가 한 덩어리가 되어
-  //   `open ? "fixed inset-0 z-[800]" : "hidden z-10"` 의 z-10 이 백드롭 위반으로 신고된다
-  //   (독립 검증 H4 실증 — 정상 코드를 막는 가드 위양성). 갈래별로 펼쳐, **그 갈래 자체가
-  //   백드롭일 때만** z 를 따진다.
-  // ★단 `?`·`:` 는 **따옴표 밖에서만** 갈래 경계다. 문자열을 쪼개면 템플릿 안의 보간
-  //   (`` `fixed inset-0 ${big ? "z-[800]" : "z-50"}` ``)이 통째로 잘려 백드롭 자체를
-  //   못 알아본다(실측으로 적발 — 이 변경의 첫 판이 그랬다). 템플릿 한 덩이는 한 조각이다.
-  // ★`:` 는 **`?` 를 본 뒤에만** 경계다. 안 그러면 객체 리터럴 `{ "fixed inset-0 …": open }` 의
-  //   콜론이 갈래를 쪼갠다.
-  const chunks: { text: string; seg: number }[] = [];
-  let seg = 0;
-  let sawTernary = false;
-  const QUOTED = /(["'`])((?:\\.|(?!\1)[^\\])*)\1/y;
-  for (let i = 0; i < expr.length; i++) {
-    const c = expr[i];
-    if (c === '"' || c === "'" || c === "`") {
-      QUOTED.lastIndex = i;
-      const m = QUOTED.exec(expr);
-      if (m) {
-        chunks.push({ text: m[2], seg });
-        i = QUOTED.lastIndex - 1;
-        continue;
-      }
-    } else if (c === "?") {
-      sawTernary = true;
-      seg++;
-    } else if (c === ":" && sawTernary) seg++;
-  }
-  if (!sawTernary) return [normalize(chunks.map((c) => c.text).join(" "))];
-
-  const base = chunks.filter((c) => c.seg === 0).map((c) => c.text).join(" ");
-  const branchSegs = [...new Set(chunks.filter((c) => c.seg > 0).map((c) => c.seg))];
-  if (!branchSegs.length) return [normalize(base)];
-  return branchSegs.map((s) =>
-    normalize(`${base} ${chunks.filter((c) => c.seg === s).map((c) => c.text).join(" ")}`),
-  );
-}
-
 const Z_UTIL = /(?:^|\s)(?:[\w-]+:)*z-\[?(\d+)\]?(?=\s|$)/g;
 
 /**
- * 소스에서 **모달 백드롭**(`fixed` + `inset-0`)인 className 을 전부 모은다.
+ * 소스에서 **모달 백드롭**(`fixed` + `inset-0`)인 className 을 모은다.
  *
- * ★`pointer-events-none` 이 붙은 것은 제외한다 — 클릭을 받지 않는 **배경 장식**이지
- *   모달 백드롭이 아니다(실측 2건: AuthWorkspaceClient·PasswordRecoveryClient 의
- *   `pointer-events-none fixed inset-0 -z-10`). 이걸 위반으로 신고하면 정상 코드를
- *   막는다 — 이 저장소가 이미 두 번 데인 **가드 위양성**(rule 6)이다.
+ * ★★범위(2026-08-07 R3 판정으로 **줄였다** — 이게 이 도구의 핵심 결정이다):
+ *   **통짜 문자열 리터럴 className 만** 본다. 삼항·`cn()`·템플릿으로 조립한 것은 보지 않는다.
  *
- * ★★정직한 커버리지 경계(독립 검증 H3 지적 — "면역을 거짓 주장하지 마라"):
- *   문자열 조각이 **표현식 안에 리터럴로** 있어야 보인다. `className={BACKDROP_CLS}` 처럼
- *   상수·변수·props 로 조립하면 조각이 없으므로 **아무것도 못 본다**(종전 정규식과 동일).
- *   그 경계는 계약 테스트의 `it.todo` 에 부채로 남겼다.
- * ★z 를 못 읽었을 때 `resolvable` 이 false 면 그것은 **위반이 아니라 판정불가**다
- *   (변수 z·인라인 `style={{zIndex}}`). 소비처가 둘을 갈라 보고해야 한다 —
- *   "갭 vs 판정불가"를 섞으면 정상 코드가 위반으로 신고된다.
+ *   R1~R2 에서 비리터럴 파서를 만들었다가 **3라운드 연속 위양성**을 생산했다(삼항 갈래 병합 →
+ *   갈래 분리 → 이번엔 `cn("fixed inset-0", c ? "a" : "b", "z-[800]")` 같은 **준수 코드가
+ *   CI 를 깨뜨림`). 그리고 실측하니 그 90줄이 지키는 대상은 **전 저장소에 단 1건**이고
+ *   그마저 계약을 지키고 있었다(`CadBimIntegrationPanel` z-[9990]).
+ *   지도 공존 폐포의 백드롭 **8건은 전부 리터럴**이라, 리터럴 전용으로 줄여도 **감시 8/8 유지**다.
+ *   → 지키는 게 1건(준수)인데 위양성을 계속 만드는 코드는 **순손실**이라 걷어낸다.
+ *
+ * ★`pointer-events-none` 은 제외한다 — 클릭을 받지 않는 **배경 장식**이지 모달 백드롭이 아니다
+ *   (실측 2건: Auth·PasswordRecovery 의 `pointer-events-none fixed inset-0 -z-10`). 위반으로
+ *   신고하면 정상 코드를 막는다(rule 6).
+ * ★인라인 `style={{ zIndex }}` 도 보지 않는다 — R2 에서 창(窓) 휴리스틱으로 읽었다가
+ *   **양방향으로 틀렸다**(제목 속성·자식 텍스트의 "zIndex: 800" 을 z 로 오인 / `style` 이
+ *   className **앞**에 오면 준수 코드를 위반으로 신고). 모달 층위는 이 저장소에서 전부
+ *   클래스로 표기되므로(폐포 8/8), 클래스 표기를 계약으로 삼는다.
+ * ★못 보는 형태는 계약 테스트의 `it.todo` 에 부채로 드러낸다 — 조용히 넘기지 않는다.
  */
 export function collectBackdrops(source: string, file = ""): BackdropHit[] {
   const src = stripComments(source);
   const hits: BackdropHit[] = [];
   for (const v of classNameValues(src)) {
-    const variants = classVariants(v.raw, v.literal).filter(
-      (c) => HAS_CLASS(c, "fixed") && HAS_CLASS(c, "inset-0") && !HAS_CLASS(c, "pointer-events-none"),
-    );
-    if (!variants.length) continue;
-    // ★같은 요소의 인라인 `style={{ zIndex: N }}` 은 **읽어서 z 로 쓴다**. 종전엔 통째로
-    //   "판정불가"로 넘겼는데, 그러면 `style={{ zIndex: 50 }}`(= 명백한 계약 위반)이
-    //   판정불가로 **빠져나가는 탈출구**가 된다(R2 실측 M-A). 못 읽는 경우만 판정불가다.
-    //   창(窓)은 같은 태그 안으로 제한한다 — 다음 여는 태그(`<`)를 만나면 멈춘다.
-    const tail = src.slice(v.end, v.end + 400).split("<")[0];
-    const styleZ = tail.match(/\bzIndex\s*:\s*(\d+)/);
-    const hasOpaqueZIndex = /\bzIndex\b/.test(tail) && !styleZ;
-
-    // ★갈래마다 따로 센다. 풀링하면 **닫힌 갈래의 z 부재가 다른 갈래의 z 로 가려진다**
-    //   (R2 실측 M-C: 갈래A 준수 + 갈래B 백드롭인데 z 없음 → zs=[800] 이라 통과했다).
-    const perVariant = variants.map((c) => {
-      const zs = Array.from(c.matchAll(Z_UTIL)).map((z) => Number(z[1]));
-      if (!zs.length && styleZ) zs.push(Number(styleZ[1]));
-      return zs;
-    });
-    const zs = perVariant.flat();
-    // z 를 못 읽은 갈래가 하나라도 있으면, 그 부재가 소스로 설명되는지 따진다.
-    const missing = perVariant.some((zsOf) => !zsOf.length);
-    const resolvable = !missing || (v.literal && !hasOpaqueZIndex);
-    hits.push({
-      file,
-      literal: v.literal,
-      classes: variants.join(" | "),
-      zs,
-      // ★"z 부재"는 갈래 단위로 보고한다 — 소비처가 `zs.length` 만 보면 masking 이 남는다.
-      missingZ: missing,
-      resolvable,
-    });
+    if (!v.literal) continue;
+    const classes = v.raw.replace(/\s+/g, " ").trim();
+    if (!HAS_CLASS(classes, "fixed") || !HAS_CLASS(classes, "inset-0")) continue;
+    if (HAS_CLASS(classes, "pointer-events-none")) continue;
+    const zs = Array.from(classes.matchAll(Z_UTIL)).map((z) => Number(z[1]));
+    hits.push({ file, classes, zs });
   }
   return hits;
 }
@@ -361,19 +279,17 @@ export function resolveModuleSpec(fromFile: string, spec: string): string | null
 /** `importClosure` 가 **반드시** 받아야 하는 공허진리 방지 선언. */
 export type ClosureExpectation = {
   /**
-   * 최소 파일 수 — **필수**. ★하한은 "정상값의 절반"이 아니라 **모든 회귀 상태의 값보다
-   * 위**여야 한다. 회귀별 폐포 실측(2026-08-07):
+   * 최소 파일 수 — **필수**. ★**성긴 붕괴 하한**이다. 배선 회귀를 이걸로 잡으려 하지 마라.
    *
-   *     현행(별칭+상대·전깊이)            157 (깊이 4)
-   *     회귀A 별칭 전용·전깊이            143 (깊이 4)   ← minDepth 로 안 잡힌다. 하한이 져야 한다
-   *     회귀B 별칭 전용·1단계              99 (깊이 1)
-   *     회귀C 구판(별칭·.tsx만·1단계)       62 (깊이 1)
-   *     회귀D 상대 유지·.tsx만             84 (깊이 3)
-   *     회귀E 깊이 2 절단                140 · 회귀F 깊이 3 절단  155  ← minDepth 가 진다
+   * 두 번 틀렸다: 초판은 "정상 157 의 절반"이라며 80 을 썼고(회귀 다수 통과), 그다음엔
+   * 회귀값을 잘못 실측해 130 을 썼다(실제 최대 회귀값 143 이 통과). 그래서 150 까지 올렸더니
+   * 이번엔 **정상 제품 변경이 관통**했다 — 지도 공존 화면 15개 중 하나가 지도를 그만 쓰면
+   * 폐포가 122~155 로 줄어드는데(3개는 즉시 실패·1개는 여유 0), 그중 143 은 **회귀 A 와 정확히
+   * 같은 값**이라 이 지표로는 두 사건이 **원리적으로 구분되지 않는다**(R3 실증).
    *
-   * ★★두 번 틀렸다: 초판은 "157 의 절반"이라며 80 을 썼고(회귀 B·D 통과), R1 은 근거 수치를
-   *   66·99 로 **잘못 적고** 130 을 썼다 — 실제 최대 회귀값은 **143** 이라 회귀 A 가 그대로
-   *   통과했다(R2 실증). 하한을 정할 땐 **회귀 쪽을 전부 실측**해야 한다.
+   * ★그래서 축을 바꾼다. 회귀는 `mustInclude`(경로 형태별)와 `minDepth` 가 진다 —
+   *   실측으로 확인했다: `minFiles: 1` 로 낮추고 상대 임포트 해석을 제거해도
+   *   `mustInclude` 가 단독으로 잡는다. 이 하한은 "폐포가 통째로 무너졌다"만 본다.
    */
   minFiles: number;
   /**
@@ -423,8 +339,9 @@ export function importClosure(entries: string[], expect: ClosureExpectation): st
   const maxDepth = Math.max(...depth.values());
   if (seen.size < expect.minFiles)
     throw new Error(
-      `[import-closure] 폐포 ${seen.size}파일 < 최소 ${expect.minFiles} — 경로 해석이 깨지면 ` +
-        "감시 대상이 조용히 사라지고 위반이 0 이 된다.",
+      `[import-closure] 폐포 ${seen.size}파일 < 최소 ${expect.minFiles} — 경로 해석이 통째로 ` +
+        "깨졌거나(감시 대상이 조용히 사라진다), 지도 공존 화면이 정상적으로 줄었다. " +
+        "후자면 기대값을 낮춰라 — 도구 고장으로 오도하지 말 것.",
     );
   if (maxDepth < expect.minDepth)
     throw new Error(
