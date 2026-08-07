@@ -224,9 +224,39 @@ def dong_land_stats(
             # 지분거래는 통계에서 뺐지만 **몇 건이었는지는 밝힌다**(버린 사실도 사실이다).
             "share_deal_count_excluded": share_seen,
             "masked_jibun_count": sum(1 for r in bucket if is_masked_jibun(r.get("jibun"))),
+            # ★★2026-08-07 라이브 실측으로 추가 — **지목이 섞이면 값이 크게 왜곡된다**.
+            #   같은 동 안에서도 `대`(대지)와 `도로`·`전`·`답`은 단가가 자릿수로 다르다.
+            #   실측(프로덕션 5지역): 강남 논현동 실거래 중앙값이 **공시지가의 0.54배**로
+            #   나왔다 — 대지 시세가 공시지가보다 낮을 수 없으므로 혼입의 증거다.
+            #   반대로 수원 영통은 9.62배(넓은 층에 상업지 대지가 섞임).
+            #   ★층을 더 쪼개면 표본이 사라지므로(동+용도+지목 중앙 1건) **구성을 밝힌다** —
+            #   값을 왜곡하지 않으면서 "이 값이 무엇으로 이뤄졌는지"를 소비처가 알 수 있다.
+            "jimok_mix": _jimok_mix(bucket),
         }
 
     return None
+
+
+def _jimok_mix(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """표본의 **지목 구성**(많은 순). 값을 바꾸지 않고 무엇이 섞였는지만 밝힌다.
+
+    ★왜 필터가 아니라 구성인가: 지목까지 좁히면 표본이 사라진다(실측상 `동+용도+지목`은
+    중앙 1건). 그렇다고 섞인 채 값만 주면 사용자는 대지 시세로 읽는다.
+    → **거르지 말고 밝힌다**. 판단에 필요한 것을 주되, 없는 정밀도를 지어내지 않는다.
+    """
+    counts: dict[str, int] = {}
+    for r in rows:
+        key = _norm(r.get("jimok")) or "미상"
+        counts[key] = counts.get(key, 0) + 1
+    total = sum(counts.values())
+    # ★정직 표기 — 이 가드는 **도달 불가**다(변이 생존 실측). 호출부가 최소 표본을 이미
+    #   보장하므로 `rows` 가 비어 오지 않는다. 0 나눗셈 방어로 남기되 "잠갔다"고 세지 않는다.
+    if not total:
+        return []
+    return [
+        {"jimok": k, "count": v, "share_pct": round(v * 100 / total, 1)}
+        for k, v in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    ]
 
 
 def _scope_label(layer: str, target: dict[str, str]) -> str:
@@ -255,7 +285,15 @@ def stats_note(stats: dict[str, Any] | None, window_months: int) -> str | None:
     if stats.get("share_deal_count_excluded"):
         bits.append(f"지분거래 {stats['share_deal_count_excluded']:,}건 제외")
     head = " · ".join(bits)
+    # ★정직 표기 — 이 초기화도 변이로 잠기지 않는다(위와 같은 이유로 `mix` 가 항상 비지
+    #   않는다). 아래 분기가 늘어날 때를 위한 방어다.
+    tail = ""
+    mix = stats.get("jimok_mix") or []
+    if mix:
+        # ★지목 구성을 밝힌다 — 대지와 도로가 섞인 값을 "대지 시세"로 읽으면 크게 틀린다.
+        top = " · ".join(f"{m['jimok']} {m['share_pct']:g}%" for m in mix[:3])
+        tail = f" 표본의 지목 구성은 {top} 입니다 — 지목에 따라 단가가 크게 다릅니다."
     return (
         f"{head}입니다. 공개 실거래 자료가 지번을 가려서 제공해 **개별 필지 위치는 "
-        "반영되지 않았습니다** — 같은 구역 안에서도 필지별 차이가 클 수 있습니다."
+        f"반영되지 않았습니다** — 같은 구역 안에서도 필지별 차이가 클 수 있습니다.{tail}"
     )

@@ -125,6 +125,47 @@ def test_layers_do_not_include_unusable_depth() -> None:
         assert "jimok" not in fields, "성립하지 않는 지목 층이 들어왔다"
 
 
+def test_jimok_mix_is_disclosed_because_it_moves_the_number() -> None:
+    """★★라이브 실측이 시킨 것 — **지목이 섞이면 값이 크게 왜곡된다**.
+
+    프로덕션 5지역 실측(2026-08-07):
+
+        강남 논현동  공시 6,051만 · 실거래 중앙 3,278만  → **공시지가의 0.54배**
+        수원 영통    공시   127만 · 실거래 중앙 1,227만  → **9.62배**
+
+    대지 시세가 공시지가보다 낮을 수 없으므로 0.54배는 **혼입의 증거**다(도로·전·답이
+    같은 통에 있다). 방향이 지역마다 뒤집히는 것도 같은 이유다.
+
+    ★층을 더 쪼개면 표본이 사라지므로(`동+용도+지목` 중앙 1건) **거르지 말고 밝힌다**.
+    없는 정밀도를 지어내지 않으면서, 판단에 필요한 것은 준다.
+
+    ★픽스처가 두 모집단을 가른다 — 지목이 **섞인** 표본과 **단일** 표본이 서로 다른
+    구성을 내야 한다(같으면 이 검사가 아무것도 잠그지 못한다).
+    """
+    mixed = [_row(dong="논현동") for _ in range(3)]
+    for r in mixed:
+        r["jimok"] = "대"
+    road = [_row(dong="논현동") for _ in range(2)]
+    for r in road:
+        r["jimok"] = "도로"
+
+    out = dong_land_stats(mixed + road, target_dong="논현동")
+    assert out is not None
+    mix = out["jimok_mix"]
+    assert [m["jimok"] for m in mix] == ["대", "도로"], mix
+    assert mix[0]["count"] == 3 and mix[1]["count"] == 2
+    assert mix[0]["share_pct"] == 60.0 and mix[1]["share_pct"] == 40.0
+
+    # ★단일 지목 표본은 구성이 하나뿐 — 두 모집단이 실제로 갈린다.
+    single = dong_land_stats(mixed + [_row(dong="논현동") for _ in range(2)], target_dong="논현동")
+    assert single is not None
+    assert len(single["jimok_mix"]) == 1, single["jimok_mix"]
+
+    # ★고지에도 나와야 한다 — 값만 주면 "대지 시세"로 읽는다.
+    note = stats_note(out, window_months=6)
+    assert note and "지목 구성" in note and "대 60%" in note, note
+
+
 def test_note_says_what_the_number_is_not_just_the_number() -> None:
     """고지는 **값이 무엇인지**와 **위치가 반영되지 않았다는 것**을 같은 자리에서 말한다."""
     rows = [_row(dong="논현동") for _ in range(6)]
