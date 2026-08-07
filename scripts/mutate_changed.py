@@ -63,16 +63,31 @@ class Mutation:
 # 각 규칙은 "추가된 줄"을 보고 **의미를 죽이는** 최소 변형을 만든다.
 # 값을 바꾸는 것보다 **경로를 끊는** 변이가 배선 구멍을 잘 드러낸다.
 
+# 프론트 테스트 러너 위치(저장소 루트 기준). vitest 는 여기서 돌아야 한다.
+_WEB_ROOT = Path("propai-platform/apps/web")
+
 _ASSIGN = re.compile(r'^\s*(?:"[\w_]+"|[\w_]+)\s*[:=]\s*.+[,;]?\s*$')
 _IF = re.compile(r'^(\s*)(el)?if\s+(.+?):\s*$')
 _STR = re.compile(r'^(.*?)(["\'])((?:(?!\2).){8,})\2(.*)$')
 _CALL_ARG = re.compile(r'^(\s*\w+\s*=\s*)(\w+\([^)]*\))\s*,?\s*$')
 
 
+# ★TS **타입 선언**은 런타임에 사라진다 — vitest 로는 **원리적으로** 잡을 수 없다.
+#   (`export type X = ...` · 인터페이스 필드 `name: Type;`)
+#   변이해 봐야 전부 "생존"으로 나와 **진짜 신호를 묻는다**. 타입은 CI 의 `tsc --noEmit`
+#   (Frontend type-check 잡)이 검증한다 — 여기서 제외하는 것이 역할 분담이다.
+_TS_TYPE_DECL = re.compile(
+    r'^\s*(?:export\s+)?(?:type|interface)\s'
+    r'|^\s*\w+\??\s*:\s*[A-Za-z_][\w.<>\[\]|\s]*;?\s*$'
+)
+
+
 def _mutations_for_line(path: Path, line: str, line_no: int) -> list[Mutation]:
     out: list[Mutation] = []
     stripped = line.strip()
     if not stripped or stripped.startswith(("#", "//", "*", '"""', "'''")):
+        return out
+    if path.suffix in (".ts", ".tsx") and _TS_TYPE_DECL.match(line):
         return out
 
     # ① 조건을 무력화한다 — 가드가 실제로 무엇을 막는지 드러난다.
@@ -176,13 +191,39 @@ def _guess_tests(paths: list[Path]) -> list[str]:
     return sorted(set(found))
 
 
+def _is_front(test: str) -> bool:
+    return test.endswith((".ts", ".tsx"))
+
+
 def _run(tests: list[str], cwd: Path) -> bool:
-    """테스트가 **통과**하면 True(= 변이 생존)."""
-    r = subprocess.run(
-        [sys.executable, "-m", "pytest", *tests, "-q", "--no-header", "-x"],
-        capture_output=True, text=True, cwd=cwd,
-    )
-    return r.returncode == 0
+    """테스트가 **통과**하면 True(= 변이 생존).
+
+    ★러너를 테스트 확장자로 고른다 — `.ts/.tsx` 는 vitest, 나머지는 pytest.
+    종전엔 pytest 만 돌려 **프론트가 통째로 검증에서 빠졌다**(실제로 그 상태로
+    "전수 감사·생존 0"을 선언했다).
+    """
+    front = [t for t in tests if _is_front(t)]
+    back = [t for t in tests if not _is_front(t)]
+
+    if back:
+        r = subprocess.run(
+            [sys.executable, "-m", "pytest", *back, "-q", "--no-header", "-x"],
+            capture_output=True, text=True, cwd=cwd,
+        )
+        if r.returncode != 0:
+            return False
+
+    if front:
+        web = _WEB_ROOT
+        rel = [t.split("apps/web/", 1)[-1] if "apps/web/" in t else t for t in front]
+        r = subprocess.run(
+            ["pnpm", "exec", "vitest", "run", *rel, "--reporter=dot"],
+            capture_output=True, text=True, cwd=web,
+        )
+        if r.returncode != 0:
+            return False
+
+    return True
 
 
 def main() -> int:
@@ -190,6 +231,11 @@ def main() -> int:
     ap.add_argument("--base", default="origin/main")
     ap.add_argument("--tests", nargs="*", default=None)
     ap.add_argument("--max", type=int, default=60)
+    # ★★`--only` — 지정한 테스트가 **실제로 덮는 파일**로 좁힌다.
+    #   확장자만 맞추면(프론트 테스트 ↔ 모든 .tsx) 무관한 파일이 전부 "생존"으로 나와
+    #   진짜 신호가 묻힌다(멀티세션 저장소라 남의 변경까지 diff 에 들어온다).
+    ap.add_argument("--only", nargs="*", default=None,
+                    help="경로에 이 문자열이 포함된 파일만 변이(부분 일치)")
     ap.add_argument("--cwd", default="propai-platform/apps/api")
     args = ap.parse_args()
 
@@ -216,6 +262,24 @@ def main() -> int:
 
     cwd = Path(args.cwd)
     rel_tests = [t.split("apps/api/", 1)[-1] if "apps/api/" in t else t for t in tests]
+
+    # ★★지정한 테스트와 **짝이 맞는 파일만** 변이한다.
+    #   종전엔 변경 파일 전체 × 지정 테스트로 돌려, 프론트 테스트를 줬을 때 백엔드 변이가
+    #   전부 "생존"으로 나왔다(무관한 조합이라 당연하다). 그러면 **진짜 신호가 소음에
+    #   묻힌다** — 이 도구가 없애려는 상태를 이 도구가 만드는 셈이다.
+    want_front = any(_is_front(t) for t in rel_tests)
+    want_back = any(not _is_front(t) for t in rel_tests)
+    scoped = [
+        f for f in files
+        if (f.suffix in (".ts", ".tsx") and want_front)
+        or (f.suffix == ".py" and want_back)
+    ]
+    if args.only:
+        scoped = [f for f in scoped if any(pat in str(f) for pat in args.only)]
+    dropped = len(files) - len(scoped)
+    if dropped:
+        print(f"  (테스트와 짝이 맞지 않는 파일 {dropped}개는 대상에서 제외)")
+    files = scoped
 
     muts: list[Mutation] = []
     for f in files:
@@ -246,6 +310,14 @@ def main() -> int:
             print(f"    미검증: {f}")
         print("  → vitest 로 따로 돌리거나, 최소한 이 공백을 기록하라(조용히 넘기지 말 것).")
         print()
+
+    # ★★프론트 테스트를 지정했는데 `node_modules` 가 없으면 vitest 가 못 돈다.
+    #   그대로 두면 "전부 kill" 로 보여 **거짓 초록**이 된다(변이가 안 죽은 게 아니라
+    #   테스트가 아예 못 돈 것이다). 먼저 확인하고 명시적으로 실패한다.
+    if any(_is_front(t) for t in rel_tests) and not (_WEB_ROOT / "node_modules").exists():
+        print(f"★프론트 테스트를 지정했는데 {_WEB_ROOT}/node_modules 가 없다 — vitest 를 "
+              "돌릴 수 없다. `pnpm install` 후 다시 실행하라(지금 결과는 신뢰할 수 없다).")
+        return 2
 
     # ★기준선 먼저 — 변이 전에 통과하지 않으면 결과가 무의미하다.
     if not _run(rel_tests, cwd):
