@@ -5,13 +5,69 @@
  *   false-healthy로 가리는" 사례를 이미 겪었다. 특히 **매치 0건 공허진리**는
  *   이 기법의 대표 실패모드라 반드시 실패해야 한다.
  */
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import ts from "typescript";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { assertWiredThrough } from "@/lib/source-invariant";
+import { assertWiredThrough, __blockCommentRangesForOracle } from "@/lib/source-invariant";
+
+/**
+ * ★독립 오라클 — 구현(스캐너 전수 열거)과 **다른 메커니즘**이어야 의미가 있다.
+ * 여기서는 AST 를 **토큰 단위**로 훑는다(`getChildren` 은 `forEachChild` 와 달리
+ * `}` `)` 같은 구두점 토큰까지 준다 — R2 가 구현의 미탐을 잡아낸 바로 그 순회).
+ * 같은 코드를 두 번 쓰는 게 아니라 **다른 길로 같은 답에 도달하는지**를 본다.
+ */
+function oracleBlockComments(src: string, fileName: string): Array<[number, number]> {
+  const kind = /\.tsx$/.test(fileName) ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+  const sf = ts.createSourceFile(fileName, src, ts.ScriptTarget.Latest, true, kind);
+  const jsx: Array<[number, number]> = [];
+  const collectJsx = (n: ts.Node): void => {
+    if (n.kind === ts.SyntaxKind.JsxText) jsx.push([n.pos, n.end]);
+    n.forEachChild(collectJsx);
+  };
+  collectJsx(sf);
+  const inJsx = (p: number): boolean => jsx.some(([s, e]) => p >= s && p < e);
+
+  const seen = new Set<number>();
+  const out: Array<[number, number]> = [];
+  const take = (rs: readonly ts.CommentRange[] | undefined): void => {
+    for (const r of rs ?? []) {
+      if (r.kind !== ts.SyntaxKind.MultiLineCommentTrivia) continue;
+      if (seen.has(r.pos) || inJsx(r.pos)) continue;
+      seen.add(r.pos);
+      out.push([r.pos, r.end]);
+    }
+  };
+  const walk = (n: ts.Node): void => {
+    const kids = n.getChildren(sf);
+    if (kids.length === 0) {
+      take(ts.getLeadingCommentRanges(src, n.pos));
+      take(ts.getTrailingCommentRanges(src, n.end));
+      return;
+    }
+    for (const k of kids) walk(k);
+  };
+  walk(sf);
+  return out;
+}
+
+/** apps/web 기준 절대경로 — 테스트가 `process.chdir` 로 tmp 에 들어가므로 미리 고정한다. */
+const WEB_ROOT = process.cwd();
+const resolveRepo = (p: string): string => join(WEB_ROOT, p);
+
+function listSources(dir: string): string[] {
+  const out: string[] = [];
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    if (e.name === "node_modules" || e.name.startsWith(".")) continue;
+    const full = join(dir, e.name);
+    if (e.isDirectory()) out.push(...listSources(full));
+    else if (/\.tsx?$/.test(e.name)) out.push(full);
+  }
+  return out;
+}
 
 let dir: string;
 let cwd: string;
@@ -248,6 +304,64 @@ describe("assertWiredThrough", () => {
       file: f, scope: /base\.on\("tile/, mustContain: "track(", minMatches: 1,
     })).toThrow(/우회한 줄 1건/);
   });
+
+  // ── R2 적대검증이 뚫은 형태 (2026-08-07) ──────────────────────────────────────
+  //
+  // 2차 봉합은 AST `forEachChild` 순회였는데, 그건 `}` `)` `]` 같은 **구두점 토큰을
+  // 방문하지 않는다**. 그래서 블록·객체·배열·인자목록의 **닫는 괄호 앞 자기 줄 주석**이
+  // 전부 살아남았다(미탐 230건·81파일 — 옛 손수 스캐너보다 11배 넓은 면제).
+
+  it("★객체 리터럴 닫는 괄호 앞 주석이 매치 수를 위조하지 못한다", () => {
+    const f = write("w.ts", [
+      "const entry = {",
+      "  cappedCount: 0,",
+      '  /* groups: base.on("tileload", () => track(true)) */',
+      "};",
+    ].join("\n"));
+    expect(() => assertWiredThrough({
+      file: f, scope: /base\.on\("tile/, mustContain: "track(", minMatches: 1,
+    })).toThrow(/매치 0건/);
+  });
+
+  it("★블록 끝·빈 블록의 주석도 지워진다", () => {
+    const f = write("x.ts", [
+      "function f() {",
+      '  /* base.on("tileload", () => track(true)); */',
+      "}",
+      "const empty = () => {",
+      '  /* base.on("tileerror", () => track(false)); */',
+      "};",
+    ].join("\n"));
+    expect(() => assertWiredThrough({
+      file: f, scope: /base\.on\("tile/, mustContain: "track(", minMatches: 1,
+    })).toThrow(/매치 0건/);
+  });
+
+  // ★★형태를 세는 것으로는 끝나지 않는다 — 네 라운드 모두 "다음 형태"로 뚫렸다.
+  //   그래서 **구현과 다른 메커니즘**(AST 토큰 순회)으로 같은 답이 나오는지를 잠근다.
+  //   구현이 어떤 형태를 놓치기 시작하면 형태를 몰라도 여기서 터진다.
+  it("★★구현이 찾는 블록 주석 = 독립 오라클(AST 토큰 순회)이 찾는 것 — 저장소 전수", () => {
+    const roots = [resolveRepo("components"), resolveRepo("lib"), resolveRepo("hooks")];
+    const files = roots.flatMap((r) => listSources(r));
+    expect(files.length).toBeGreaterThan(300); // 공허 진리 방지: 대상이 실제로 모였는가
+
+    const mismatched: string[] = [];
+    for (const abs of files) {
+      const src = readFileSync(abs, "utf-8");
+      const mine = new Set(
+        __blockCommentRangesForOracle(src, abs).map(([a, b]) => `${a}:${b}`),
+      );
+      const oracle = new Set(oracleBlockComments(src, abs).map(([a, b]) => `${a}:${b}`));
+      const missed = [...oracle].filter((k) => !mine.has(k));   // 미탐 = 거짓 초록
+      const extra = [...mine].filter((k) => !oracle.has(k));    // 오탐 = 위반 줄 삼킴
+      if (missed.length || extra.length) {
+        mismatched.push(`${abs}: 미탐 ${missed.length} · 오탐 ${extra.length}`);
+      }
+    }
+    expect(mismatched).toEqual([]);
+    // ★기본 10s 로는 **단독 실행에선 통과하고 전수에선 실패**한다(병렬 부하에서 6s→14s).
+    //   그런 테스트는 없느니만 못하므로 넉넉히 준다. 실제 비용은 1회 6초대다.
+  }, 60_000);
 
   it("스코프 밖 줄은 검사하지 않는다(과도한 불변식이 정상 코드를 깨뜨리지 않게)", () => {
     const f = write("f.ts", [
