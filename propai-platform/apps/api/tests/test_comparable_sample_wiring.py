@@ -573,6 +573,11 @@ def test_desk_appraisal_carries_land_market_stats() -> None:
             assert kwargs.get("target_land_use") == "제2종일반주거지역", (
                 f"용도지역이 그대로 전달되지 않는다: {kwargs.get('target_land_use')!r}"
             )
+            # ★지목도 전달돼야 한다 — 안 넘기면 `대` 와 `도로` 가 한 통에 섞여
+            #   단가가 자릿수로 틀린다(라이브 실측: 논현동 공시지가의 0.54배).
+            assert kwargs.get("target_jimok") == "대", (
+                f"지목이 그대로 전달되지 않는다: {kwargs.get('target_jimok')!r}"
+            )
             # ★용도지역이 실제로 넘어오는지 — 안 넘기면 `dong_zone` 층까지 못 내려간다.
             assert "target_land_use" in kwargs, "용도지역이 전달되지 않는다"
             return {"categories": {"land_trade": {"groups": [], "sample_basis": {}}},
@@ -592,7 +597,7 @@ def test_desk_appraisal_carries_land_market_stats() -> None:
             return {}
 
         async def get_land_characteristics(self, *_a, **_k):
-            return {"zone_type": "제2종일반주거지역"}
+            return {"zone_type": "제2종일반주거지역", "land_category": "대"}
 
     stack = patch.object(vw_mod, "VWorldService", _FakeVWorld)
     stack.start()
@@ -649,7 +654,7 @@ def test_lookup_failure_path_says_why_and_is_actually_exercised() -> None:
             return {}
 
         async def get_land_characteristics(self, *_a, **_k):
-            return {"zone_type": "제2종일반주거지역"}
+            return {"zone_type": "제2종일반주거지역", "land_category": "대"}
 
     class _Boom:
         async def build(self, **_k):
@@ -709,7 +714,7 @@ def test_cross_check_wording_is_locked_by_literal() -> None:
             return {}
 
         async def get_land_characteristics(self, *_a, **_k):
-            return {"zone_type": "제2종일반주거지역"}
+            return {"zone_type": "제2종일반주거지역", "land_category": "대"}
 
     common = dict(pnu="1168010800100010001", address="", area_sqm=500.0,
                   official_price_per_sqm=15_000_000)

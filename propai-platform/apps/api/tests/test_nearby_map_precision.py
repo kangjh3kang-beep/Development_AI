@@ -1777,6 +1777,12 @@ async def test_land_dong_stats_reach_the_payload() -> None:
         r = _row(name="", jibun="7*", dong="논현동", price=100_000, day=d)
         r["land_use"], r["jimok"] = "제2종일반주거지역", "대"
         rows.append(r)
+    # ④ 같은 동·같은 용도인데 **지목만 다르다** — `target_jimok` 이 안 넘어가면 이게 섞여
+    #    층이 `dong_zone` 으로 떨어진다(★지목 축을 가르는 모집단).
+    for d in range(1, 6):
+        r = _row(name="", jibun="9*", dong="역삼동", price=100_000, day=d)
+        r["land_use"], r["jimok"] = "제2종일반주거지역", "도로"
+        rows.append(r)
 
     nm._BUILD_CACHE.clear()
     svc = nm.NearbyMapService.__new__(nm.NearbyMapService)
@@ -1791,14 +1797,17 @@ async def test_land_dong_stats_reach_the_payload() -> None:
     payload = await svc.build(address="서울특별시 강남구 역삼동 736", lawd_cd="11680",
                               months=1, radius_m=1000,
                               center_hint={"lat": 37.5, "lon": 127.0},
-                              target_land_use="제2종일반주거지역")
+                              target_land_use="제2종일반주거지역",
+                              target_jimok="대")
 
     stats = payload.get("land_dong_stats")
     assert stats is not None, "층화 통계가 응답에 실리지 않았다 — 계산만 하고 배선이 없다"
     # ★대상 동으로 좁혀졌는지 — 다른 동이 섞였으면 단가가 훨씬 높게 나온다.
     # ★`dong_zone` 층이어야 한다 — `target_land_use` 가 안 넘어가면 `dong` 층(10건)이 되고
     #   다른 용도지역이 섞여 단가가 10배 가까이 올라간다.
-    assert stats["layer"] == "dong_zone", f"용도지역 축이 안 먹었다: {stats}"
+    # ★지목까지 좁혀져야 한다 — 안 넘어가면 도로가 섞여 `dong_zone` 이 된다.
+    assert stats["layer"] == "dong_zone_jimok", f"지목 축이 안 먹었다: {stats}"
+    assert "대" in stats["scope_label"], stats["scope_label"]
     assert stats["sample_count"] == 5, f"대상 동+용도로 안 좁혀졌다: {stats}"
     # 1억원 / 84㎡ ≈ 119만원/㎡. 다른 동(10배)이 섞였다면 1,190만원대가 나온다 —
     # 두 모집단이 실제로 갈리는지가 이 단언의 요점이다.

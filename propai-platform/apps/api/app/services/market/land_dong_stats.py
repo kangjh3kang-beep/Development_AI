@@ -62,18 +62,35 @@ from app.services.market.comparable_sample import is_masked_jibun
 
 # ── 층 정의 ────────────────────────────────────────────────────────────────
 # 좁은 층부터. 표본이 모자라면 다음(넓은) 층으로 내려간다.
-# ★`동+용도+지목` 은 넣지 않는다 — 실측상 중앙 1건이라 **성립하지 않는 층**이다.
-#   "가능한 한 좁게"가 아니라 "성립하는 만큼만"이 정직이다.
+# ★★2026-08-08 실측으로 **지목 축을 넣었다**. 앞서 "동+용도+지목은 중앙 1건이라 성립하지
+#   않는 층"이라며 뺐는데, 그 판단이 과했다 — `MIN_SAMPLE` 가드가 이미 성립 여부를 막으므로
+#   **넣어 두고 안 되면 폴백**하는 것이 손해가 없다. 오히려 안 넣어서 왜곡이 남았다.
+#
+#   ★거래 커버율 실측(6개월·지분 제외·최소 5건):
+#       강남구   동+지목 **66%** · 동+용도 15% · 동 79%
+#       해운대구 동+지목 53%     · 동+용도 59% · 동 92%
+#   즉 `동+지목` 이 `동+용도` 만큼(강남은 4배) 덮는다. 그리고 **지목은 가격을 자릿수로
+#   가르는 축**이다(대 vs 도로). 용도지역은 배수 차이라 우선순위가 낮다.
+#   → 지목을 용도지역보다 **앞에** 둔다.
+#
+#   ★왜곡 사례: 논현동 1-1 은 실제 **일반상업지역**이라 `동+용도` 가 실패하고 `동` 으로
+#   떨어졌고, 그 통에 주거지 거래와 도로가 섞여 공시지가의 0.54배가 나왔다.
 LAYERS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("dong_zone_jimok", ("dong", "land_use", "jimok")),
+    ("dong_jimok", ("dong", "jimok")),
     ("dong_zone", ("dong", "land_use")),
     ("dong", ("dong",)),
+    ("sigungu_jimok", ("jimok",)),
     ("sigungu_zone", ("land_use",)),
     ("sigungu", ()),
 )
 
 LAYER_LABELS = {
+    "dong_zone_jimok": "법정동 · 용도지역 · 지목",
+    "dong_jimok": "법정동 · 지목",
     "dong_zone": "법정동 · 용도지역",
     "dong": "법정동",
+    "sigungu_jimok": "시군구 · 지목",
     "sigungu_zone": "시군구 · 용도지역",
     "sigungu": "시군구",
 }
@@ -149,6 +166,7 @@ def dong_land_stats(
     *,
     target_dong: str,
     target_land_use: str = "",
+    target_jimok: str = "",
     rate_series: list[tuple[str, float]] | None = None,
     now_ym: str = "",
     min_sample: int = MIN_SAMPLE,
@@ -162,7 +180,11 @@ def dong_land_stats(
     if not rows:
         return None
 
-    target = {"dong": _norm(target_dong), "land_use": _norm(target_land_use)}
+    target = {
+        "dong": _norm(target_dong),
+        "land_use": _norm(target_land_use),
+        "jimok": _norm(target_jimok),
+    }
     series = rate_series or []
 
     # ── 지분 분리 — 원천이 명시한 구분이라 추측이 아니다 ──
@@ -260,13 +282,16 @@ def _jimok_mix(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _scope_label(layer: str, target: dict[str, str]) -> str:
-    if layer == "dong_zone":
-        return f"{target['dong']} · {target['land_use']}"
-    if layer == "dong":
-        return target["dong"]
-    if layer == "sigungu_zone":
-        return f"시군구 전체 · {target['land_use']}"
-    return "시군구 전체"
+    """사용자가 읽을 범위 문구. **어느 축으로 좁혔는지**가 그대로 드러나야 한다."""
+    dong, use, jimok = target["dong"], target["land_use"], target["jimok"]
+    return {
+        "dong_zone_jimok": f"{dong} · {use} · {jimok}",
+        "dong_jimok": f"{dong} · {jimok}",
+        "dong_zone": f"{dong} · {use}",
+        "dong": dong,
+        "sigungu_jimok": f"시군구 전체 · {jimok}",
+        "sigungu_zone": f"시군구 전체 · {use}",
+    }.get(layer, "시군구 전체")
 
 
 def stats_note(stats: dict[str, Any] | None, window_months: int) -> str | None:
