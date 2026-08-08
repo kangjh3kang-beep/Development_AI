@@ -239,7 +239,51 @@ def test_jimok_mix_is_disclosed_because_it_moves_the_number() -> None:
 
     # ★고지에도 나와야 한다 — 값만 주면 "대지 시세"로 읽는다.
     note = stats_note(out, window_months=6)
-    assert note and "지목 구성" in note and "대 60%" in note, note
+    assert note and "지목 대 60%" in note, note
+
+
+def test_land_use_mix_is_disclosed_first_because_it_caused_real_misreading() -> None:
+    """★★라이브가 시킨 것 — **용도지역 구성**이 지목보다 먼저 필요했다.
+
+    프로덕션 실측(2026-08-08, 논현동 1-1): 대상지는 **일반상업지역**인데 `dong_zone` 이
+    표본 부족으로 실패해 `dong` 으로 떨어졌고, 그 표본은 **전부 주거지역** 거래였다
+    (제1·2·3종). 상업지 대상에 주거지 시세를 "논현동 시세"로 준 셈이다.
+
+    ★그 결과가 "공시지가의 0.54배" 였다 — 처음엔 **지목 혼입**이라 진단했지만
+    지목=대 만 봐도 ×0.55 로 같았다. **혼입도 왜곡도 아니고 모집단이 달랐다.**
+    범위 문구가 "논현동" 뿐이라 사용자가 그 사실을 알 수 없는 것이 진짜 결함이었다.
+
+    ★값을 막지 않는다(막으면 아무 정보도 없다) — **무엇으로 이뤄졌는지** 밝힌다.
+    ★두 모집단을 가른다: 용도지역이 섞인 표본과 단일 표본이 다른 구성을 내야 한다.
+    """
+    rows = []
+    for _ in range(4):
+        r = _row(dong="논현동", land_use="제3종일반주거지역")
+        r["jimok"] = "대"
+        rows.append(r)
+    for _ in range(2):
+        r = _row(dong="논현동", land_use="일반상업지역")
+        r["jimok"] = "대"
+        rows.append(r)
+
+    out = dong_land_stats(rows, target_dong="논현동")
+    assert out is not None and out["layer"] == "dong", out["layer"]
+    mix = out["land_use_mix"]
+    assert [m["land_use"] for m in mix] == ["제3종일반주거지역", "일반상업지역"], mix
+    assert mix[0]["share_pct"] == 66.7 and mix[1]["share_pct"] == 33.3, mix
+
+    note = stats_note(out, window_months=6)
+    # ★용도지역이 **먼저** 나와야 한다 — 실제 오독을 일으킨 축이다.
+    assert note and "용도지역 제3종일반주거지역 66.7%" in note, note
+    assert note.index("용도지역") < note.index("지목"), note
+    assert "대상지와 다른 용도지역·지목이 섞여 있으면" in note, note
+
+    # ★단일 용도지역이면 구성이 하나 — 두 모집단이 실제로 갈린다.
+    single = dong_land_stats(
+        [_row(dong="논현동", land_use="일반상업지역") for _ in range(6)],
+        target_dong="논현동",
+    )
+    assert single is not None and len(single["land_use_mix"]) == 1, single["land_use_mix"]
 
 
 def test_note_says_what_the_number_is_not_just_the_number() -> None:
