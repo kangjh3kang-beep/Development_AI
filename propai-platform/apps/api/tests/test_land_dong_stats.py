@@ -113,16 +113,92 @@ def test_time_adjustment_lifts_older_deals() -> None:
     assert 1.04 < ratio < 1.07, f"시점수정이 값에 반영되지 않았다: {ratio}"
 
 
-def test_layers_do_not_include_unusable_depth() -> None:
-    """`동+용도+지목` 층은 **두지 않는다** — 실측상 성립하지 않는 층이다(중앙 1건).
+def test_jimok_layer_comes_before_zone_because_it_moves_price_more() -> None:
+    """★★2026-08-08 판단 정정 — 지목 축을 **넣고**, 용도지역보다 **앞에** 둔다.
 
-    ★"가능한 한 좁게"가 아니라 "성립하는 만큼만"이 정직이다. 성립하지 않는 층을 두면
-    표본 1~2건짜리 값이 가장 정밀한 것처럼 표시된다.
+    앞서 "동+용도+지목은 중앙 1건이라 성립하지 않는 층"이라며 뺐는데 **그 판단이 과했다**.
+    `MIN_SAMPLE` 가드가 이미 성립 여부를 막으므로 **넣어 두고 안 되면 폴백**하는 것이
+    손해가 없다. 오히려 안 넣어서 왜곡이 남았다(논현동 실거래가 공시지가의 0.54배).
+
+    ★거래 커버율 실측(6개월·지분 제외·최소 5건):
+
+        강남구   동+지목 **66%** · 동+용도 15% · 동 79%
+        해운대구 동+지목 53%     · 동+용도 59% · 동 92%
+
+    `동+지목` 이 `동+용도` 만큼(강남은 4배) 덮고, **지목은 가격을 자릿수로 가른다**
+    (대 vs 도로). 용도지역은 배수 차이라 우선순위가 낮다.
     """
-    keys = {layer for layer, _ in LAYERS}
-    assert keys == {"dong_zone", "dong", "sigungu_zone", "sigungu"}, keys
-    for _layer, fields in LAYERS:
-        assert "jimok" not in fields, "성립하지 않는 지목 층이 들어왔다"
+    order = [layer for layer, _ in LAYERS]
+    assert order.index("dong_jimok") < order.index("dong_zone"), (
+        f"지목 층이 용도지역 층보다 뒤에 있다: {order}"
+    )
+    assert order.index("dong_zone_jimok") == 0, f"가장 좁은 층이 처음이 아니다: {order}"
+    # ★넓어지는 순서여야 한다 — 뒤로 갈수록 조건이 줄어든다.
+    widths = [len(fields) for _layer, fields in LAYERS]
+    assert widths == sorted(widths, reverse=True), f"층이 넓어지는 순서가 아니다: {widths}"
+
+
+def test_every_layer_says_its_own_scope() -> None:
+    """★모든 층의 **범위 문구**를 잠근다 — 사용자가 "무엇의 대표값인지" 읽는 자리다.
+
+    ★변이 감사 적발: 두 층만 검증하고 나머지 라벨은 무잠금이었다. 라벨이 틀리면
+    사용자는 좁혀지지 않은 값을 좁혀진 것으로 읽는다(그 반대도 마찬가지).
+
+    ★층마다 **서로 다른 문구**여야 한다 — 같으면 어느 층인지 구분할 수 없다.
+    """
+    from app.services.market.land_dong_stats import LAYER_LABELS, _scope_label
+
+    target = {"dong": "논현동", "land_use": "일반상업지역", "jimok": "대"}
+    expected = {
+        "dong_zone_jimok": "논현동 · 일반상업지역 · 대",
+        "dong_jimok": "논현동 · 대",
+        "dong_zone": "논현동 · 일반상업지역",
+        "dong": "논현동",
+        "sigungu_jimok": "시군구 전체 · 대",
+        "sigungu_zone": "시군구 전체 · 일반상업지역",
+        "sigungu": "시군구 전체",
+    }
+    for layer, _fields in LAYERS:
+        assert _scope_label(layer, target) == expected[layer], layer
+    # ★전부 서로 달라야 한다(같은 문구가 둘이면 구분이 사라진다).
+    labels = [_scope_label(layer, target) for layer, _ in LAYERS]
+    assert len(set(labels)) == len(labels), labels
+    # 라벨 사전도 층과 짝이 맞아야 한다 — 한쪽만 늘리면 KeyError 가 난다.
+    assert {layer for layer, _ in LAYERS} == set(LAYER_LABELS), LAYER_LABELS
+
+
+def test_jimok_layer_actually_narrows_the_sample() -> None:
+    """지목 축이 **실제로 표본을 좁히는지**. 라벨만 바뀌고 값이 같으면 잠금이 아니다.
+
+    ★두 모집단을 가른다 — 같은 동에 `대`(비싼)와 `도로`(싼)를 섞고, 지목을 주면
+    대지만 잡혀야 한다. 안 주면 섞인 값이 나온다.
+    """
+    rows = []
+    for _ in range(5):
+        r = _row(dong="논현동", price_10k=10_000, area=10.0)   # 1000만원/㎡
+        r["jimok"] = "대"
+        rows.append(r)
+    # ★도로를 더 많이 넣어 **섞인 중앙값이 도로 쪽으로** 가게 한다.
+    #   5:5 로 두면 중앙값이 정확히 중간이라 두 모집단이 2배밖에 안 갈린다 — 판별이 약하다.
+    for _ in range(9):
+        r = _row(dong="논현동", price_10k=10_000, area=1000.0)  # 10만원/㎡
+        r["jimok"] = "도로"
+        rows.append(r)
+
+    with_jimok = dong_land_stats(rows, target_dong="논현동", target_jimok="대")
+    without = dong_land_stats(rows, target_dong="논현동")
+    assert with_jimok is not None and without is not None
+
+    assert with_jimok["layer"] == "dong_jimok", with_jimok["layer"]
+    assert with_jimok["sample_count"] == 5, with_jimok
+    assert without["layer"] == "dong" and without["sample_count"] == 14, without
+    # ★값이 **자릿수로** 다르다 — 대지만 보면 1000만원/㎡, 섞이면 도로 쪽 10만원/㎡.
+    #   이 차이가 곧 "지목을 안 가르면 얼마나 틀리는가"다(라이브에서 실제로 겪었다).
+    assert with_jimok["unit_price_per_sqm"] > without["unit_price_per_sqm"] * 20, (
+        with_jimok["unit_price_per_sqm"], without["unit_price_per_sqm"]
+    )
+    # 범위 문구에도 지목이 드러나야 한다(사용자가 무엇을 보는지 알아야 한다).
+    assert "대" in with_jimok["scope_label"], with_jimok["scope_label"]
 
 
 def test_jimok_mix_is_disclosed_because_it_moves_the_number() -> None:

@@ -444,6 +444,7 @@ class NearbyMapService:
         sigungu_hint: str = "",
         center_hint: dict[str, float] | None = None,
         target_land_use: str = "",
+        target_jimok: str = "",
     ) -> dict[str, Any]:
         # center_hint: 라우터가 PNU/좌표 확보 과정(주소 지오코딩·point→parcel)에서 이미 얻은
         #   중심좌표. 여기서 다시 주소 지오코딩이 실패해도 이 힌트로 center를 채워, 지도가
@@ -511,6 +512,8 @@ class NearbyMapService:
                 #   같은 헬퍼를 쓰므로 두 곳의 판정이 갈리지 않는다.
                 target_dong=self._dong_from_address(address),
                 target_land_use=target_land_use,
+                # ★지목은 가격을 **자릿수로** 가른다(대 vs 도로) — 용도지역보다 앞선 축이다.
+                target_jimok=target_jimok,
                 # ★시점수정은 **하지 않는다** — 하는 척하지 않기 위해 `now_ym` 도 넘기지 않는다.
                 #   보정하려면 R-ONE 월별 변동률 시계열(`rate_series`)이 필요한데, 그건 외부
                 #   호출이라 이 경로에서 매번 부를 수 없다. `now_ym` 만 넘기면 `_time_factor` 가

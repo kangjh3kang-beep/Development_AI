@@ -132,7 +132,12 @@ class RegistryService:
             res = parse_registry_pdf(pdf_input)
             return {**item, **res}
 
-        from app.services.registry.hyphen_client import fetch_realty_registry, fetch_registry_by_address, hyphen_ready
+        from app.services.registry.hyphen_client import (
+            fetch_realty_registry,
+            fetch_registry_by_address,
+            hyphen_ready,
+            probe_api_access,
+        )
         from app.services.registry.tilko_client import fetch_realty_registry as fetch_tilko_registry
         from app.services.registry.tilko_client import tilko_ready
 
@@ -141,19 +146,29 @@ class RegistryService:
 
         # 1순위: 하이픈 (Hyphen)
         if (p == "hyphen" or not p) and hyphen_ready():
-            if unique_no:
-                h_res = await fetch_realty_registry(unique_no=unique_no)
-            elif address:
-                h_res = await fetch_registry_by_address(
-                    address=address, realty_type=realty_type, dong=dong, ho=ho
-                )
+            probe = await probe_api_access()
+            # ★"권한 없음(forbidden)"과 "점검 자체를 못 했다(unreachable)"를 **구분한다**.
+            #   종전엔 `access == "ok"` 만 통과시켜, 권한점검의 **일시 오류 하나로 주 프로바이더를
+            #   통째로 건너뛰고** 2순위(Tilko)로 갔다 — 점검이 주 경로 앞의 단일 실패점이 된 셈이다.
+            #   점검을 못 했다면 본 호출을 **시도해 보는 것**이 옳다: 하이픈이 정말 죽었으면 그
+            #   호출이 실패해 그때 폴백하면 되고(호출 1회 손해), 일시 오류였으면 정상 조회된다.
+            #   자격증명이 거부된 경우(forbidden)만 시도할 가치가 없으므로 즉시 폴백한다.
+            if probe.get("access") != "forbidden":
+                if unique_no:
+                    h_res = await fetch_realty_registry(unique_no=unique_no)
+                elif address:
+                    h_res = await fetch_registry_by_address(
+                        address=address, realty_type=realty_type, dong=dong, ho=ho
+                    )
+                else:
+                    return {**item, "status": "bad_request", "message": "주소 또는 고유번호가 필요합니다."}
+
+                if h_res.get("status") == "ok":
+                    return {**item, **h_res}
+
+                logger.warning("하이픈 등기 조회 실패, 2순위 Tilko 폴백 시도", err=h_res.get("message"))
             else:
-                return {**item, "status": "bad_request", "message": "주소 또는 고유번호가 필요합니다."}
-
-            if h_res.get("status") == "ok":
-                return {**item, **h_res}
-
-            logger.warning("하이픈 등기 조회 실패, 2순위 Tilko 폴백 시도", err=h_res.get("message"))
+                logger.warning("하이픈 자격증명 거부(forbidden), 2순위 Tilko 폴백 시도", msg=probe.get("message"))
 
         # 2순위: 틸코 (Tilko)
         if tilko_ready():

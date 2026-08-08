@@ -50,9 +50,16 @@ def _headers() -> dict[str, str]:
 # 틸코가 공개키를 실제로 받아와 검증(public_key_ok)하는 것과 대칭을 맞춘다.
 _ACCESS_CACHE: dict[str, Any] = {}
 _ACCESS_TTL_SEC = 300.0
-# 권한 거절을 알리는 벤더 문구(부분일치). 문구가 바뀌어도 오탐이 나지 않도록
-# '권한' + 'API' 동시 포함을 기본 신호로 쓰고, 알려진 원문도 함께 본다.
-_FORBIDDEN_HINTS = ("권한이 없는 API", "권한이 없습니다", "권한 없음")
+# 권한 거절 및 인증 실패를 알리는 벤더 문구/코드
+_FORBIDDEN_HINTS = (
+    "권한이 없는 API",
+    "권한이 없습니다",
+    "권한 없음",
+    "UserId 또는 HKey가 올바르지 않습니다",
+    "HKey가 올바르지 않습니다",
+    "회원 정보가 존재하지 않습니다",
+    "올바르지 않습니다",
+)
 
 
 def _is_forbidden_message(msg: str) -> bool:
@@ -61,7 +68,7 @@ def _is_forbidden_message(msg: str) -> bool:
         return False
     if any(h in m for h in _FORBIDDEN_HINTS):
         return True
-    return ("권한" in m) and ("API" in m.upper())
+    return ("권한" in m or "HKey" in m or "UserId" in m) and ("API" in m.upper() or "올바르지" in m or "없습니다" in m)
 
 
 async def probe_api_access(force: bool = False) -> dict[str, Any]:
@@ -100,16 +107,22 @@ async def probe_api_access(force: bool = False) -> dict[str, Any]:
             else:
                 data = resp.json()
                 common = data.get("common") or {}
+                err_yn = common.get("errYn")
+                err_cd = str(common.get("errCd") or "")
                 err_msg = str(common.get("errMsg") or "")
-                if _is_forbidden_message(err_msg):
-                    out = {"access": "forbidden", "checked": True,
-                           "message": ("하이픈 키는 정상이나 등기 조회 API 사용 권한이 없습니다 — "
-                                       "하이픈에 부동산등기 API(주소검색·고유번호검색·등기열람) "
-                                       "이용 권한 활성화를 요청하세요.")}
+
+                if err_yn == "Y":
+                    if err_cd in ("HDM009", "HDM008") or _is_forbidden_message(err_msg):
+                        out = {
+                            "access": "forbidden",
+                            "checked": True,
+                            "message": f"하이픈 인증 실패 ({err_msg or 'UserId 또는 HKey가 올바르지 않습니다'}) — 설정에서 HKey 및 User-Id를 확인하세요.",
+                        }
+                    else:
+                        # errYn=Y여도 '권한/인증' 사유가 아니면 관문은 통과한 것(데이터 없음 등)
+                        out = {"access": "ok", "checked": True, "message": "하이픈 등기 API 호출 권한 확인됨"}
                 else:
-                    # errYn=Y여도 '권한' 사유가 아니면 관문은 통과한 것(데이터 없음 등)
-                    out = {"access": "ok", "checked": True,
-                           "message": "하이픈 등기 API 호출 권한 확인됨"}
+                    out = {"access": "ok", "checked": True, "message": "하이픈 등기 API 호출 권한 확인됨"}
     except Exception as e:  # noqa: BLE001
         logger.warning("하이픈 권한 점검 예외", err=str(e)[:120])
         out = {"access": "unreachable", "checked": True,
@@ -277,7 +290,10 @@ async def search_by_simple_address(
             for cand in candidates[1:]
         ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        for cand, res in zip(candidates[1:], results):
+        # ★`strict=True` — `tasks` 가 바로 위에서 `candidates[1:]` 로 생성되므로 길이가
+        #   **항상 같다**. 어긋나는 일이 생기면 조용히 잘리는 대신 드러나는 편이 안전하다.
+        #   (이 줄의 B905 로 main CI 가 막혀 **모든 PR** 이 함께 멈춰 있었다.)
+        for cand, res in zip(candidates[1:], results, strict=True):
             if isinstance(res, dict) and res.get("ok") and res.get("items"):
                 logger.info("하이픈 주소검색 병렬 자동보정 성공", original=addr, corrected=cand, count=len(res["items"]))
                 return res
