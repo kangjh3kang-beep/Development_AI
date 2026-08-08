@@ -62,11 +62,14 @@ def captured(monkeypatch, hyphen_env):
 
     async def fake_post(self, url, *args, **kwargs):  # noqa: ANN001, ARG001
         body = kwargs.get("json") or {}
-        if url.endswith("/in0004000169"):  # ★권한 점검(preflight) — 2026-08-08 추가된 관문
-            # 이 스텁이 없으면 fake 가 AssertionError 를 던지고, 서비스가 그것을 "연결 실패"로
-            # 읽어 **Tilko 로 폴백**해 버린다 → 등기부 열람에 도달하지 못해 이 파일의 락 6개가
-            # 통째로 죽는다(실제로 그렇게 main 이 빨개졌다). 새 외부 호출을 추가하는 쪽이
-            # 기존 락의 픽스처도 함께 갱신해야 한다.
+        # ★★2026-08-08 추가 — 권한 관문(`/in0004000169`).
+        #   `hyphen_client.check_access()` 가 조회 전용·무과금 호출로 **관문만 통과 확인**한다.
+        #   이 위조가 없으면 여기서 `AssertionError` 가 나고 → "하이픈 연결 실패" →
+        #   **Tilko 자동 폴백** → 최종 `status=not_configured` 가 되어, 아래 선택 배선
+        #   단언들이 전부 `fetched_uno is None` 으로 무너진다.
+        #   즉 **선택 로직과 무관한 관문 하나 때문에** 배선 회귀망 5개가 통째로 죽었다.
+        #   ★관문은 `common.errYn` 만 본다(hyphen_client:107-125) — 정상 통과를 위조한다.
+        if url.endswith("/in0004000169"):
             return _FakeResponse({"common": {"errYn": "N"}, "data": {}})
         if url.endswith("/in0004000168"):  # 간편주소 검색
             return _FakeResponse({"common": {"errYn": "N"},
@@ -344,7 +347,9 @@ class TestProbeFailureIsNotForbidden:
 
     ★2026-08-08 실사고: 권한 점검(`/in0004000169`)이 추가되면서 `access == "ok"` 만 통과하게 됐고,
       점검이 예외로 끝나면(`unreachable`) **주 프로바이더를 통째로 건너뛰고** 2순위로 갔다.
-      점검이 주 경로 앞의 **단일 실패점**이 된 셈이다. 아래 두 케이스가 그 구분을 잠근다.
+      점검이 주 경로 앞의 **단일 실패점**이 된 셈이다 — 하이픈이 멀쩡해도 점검만 타임아웃 나면
+      모든 등기 조회가 다른 프로바이더로 샌다(다른 데이터·다른 과금).
+    ★#595 가 픽스처와 린트를 봉합했지만 **이 판정은 남아 있었다** — 여기서 가른다.
     """
 
     @pytest.mark.asyncio

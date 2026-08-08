@@ -290,9 +290,9 @@ async def search_by_simple_address(
             for cand in candidates[1:]
         ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        # ★strict=True — `tasks` 가 `candidates[1:]` 로 만들어지고 `gather` 는 태스크당 결과 1개를
-        #   돌려주므로 두 열은 **구조상 같은 길이**다. 어긋나면 조용히 짝이 밀리는 대신 터지게 한다.
-        #   (#593 과 동일 수정 — 교착 해소를 위해 여기서도 넣는다. 먼저 머지되는 쪽이 이긴다.)
+        # ★`strict=True` — `tasks` 가 바로 위에서 `candidates[1:]` 로 생성되므로 길이가
+        #   **항상 같다**. 어긋나는 일이 생기면 조용히 잘리는 대신 드러나는 편이 안전하다.
+        #   (이 줄의 B905 로 main CI 가 막혀 **모든 PR** 이 함께 멈춰 있었다.)
         for cand, res in zip(candidates[1:], results, strict=True):
             if isinstance(res, dict) and res.get("ok") and res.get("items"):
                 logger.info("하이픈 주소검색 병렬 자동보정 성공", original=addr, corrected=cand, count=len(res["items"]))
