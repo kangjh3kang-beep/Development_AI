@@ -281,7 +281,11 @@
 //         SatongMapShell·lib/satong-map-z 6파일) ②MOLIT 429 가드(#578·백엔드).
 //        ★층위는 stale 셸이 남으면 **가려짐이 그대로** — 레이아웃 계열 7번째 연속 대행.
 //        ★채번: origin/main 실제 상수 v495 확인 → v496. PR 생성 前 보드 claim 선점(13회차).
-const CACHE_NAME = "propai-v496-modal-rung";
+// v497: ①전체화면 조건 배선을 렌더로 잠금(#588·CadBimIntegrationPanel) ②지목 구성 고지(#589)
+//        ③등기 하이픈 조회 주소 후보 확장(산 필지 정규화 폴백·백엔드).
+//        ★정직 고지 계열이 섞여 있다 — 비해시 자산이 스테일하면 옛 표기가 한 번 더 보인다.
+//        ★채번: origin/main 실제 상수 v496 확인 → v497. PR 생성 前 보드 claim 선점(14회차).
+const CACHE_NAME = "propai-v497-fullscreen-wiring";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
