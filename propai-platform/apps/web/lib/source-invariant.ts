@@ -203,6 +203,9 @@ function stripBlockComments(src: string, fileName: string): string {
   return out;
 }
 
+/** 다른 소스 스캐너가 **주석에 뚫리지 않도록** 같은 스트립을 쓰게 공개한다. */
+export const __stripCommentsForScan = stripBlockComments;
+
 /** 테스트가 구현과 **다른 메커니즘**으로 같은 답이 나오는지 대조할 수 있게 공개한다. */
 export const __blockCommentRangesForOracle = blockCommentRanges;
 

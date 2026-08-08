@@ -30,7 +30,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
-/** apps/web 절대경로 — 테스트 cwd 가 바뀌어도 흔들리지 않게 모듈 최상단에서 고정한다. */
+/** apps/web 절대경로. 모듈 최상단에서 한 번만 평가한다(테스트가 cwd 를 바꾸면 그대로 흔들린다 — 이 파일은 바꾸지 않는다). */
 const WEB_ROOT = process.cwd();
 
 import { fireEvent, render, screen, within } from "@testing-library/react";
@@ -43,6 +43,7 @@ import { buildPrimaryNav } from "@/components/layout/nav-config";
 import { WorkspaceNavBar } from "@/components/layout/WorkspaceNavBar";
 import { InputResolveModal } from "@/components/orchestration/InputResolveModal";
 import { collectBackdrops, importClosure } from "@/lib/source-invariant";
+import { __stripCommentsForScan as stripCommentsForScan } from "@/lib/source-invariant";
 import { SATONG_CONTENT_Z, SATONG_UI_Z } from "@/lib/satong-map-z";
 
 vi.mock("next/navigation", () => ({ usePathname: () => "/ko" }));
@@ -89,7 +90,6 @@ describe("앱 전역 층위 사다리", () => {
     //   자기 본문보다 위, 전역 내비보다 아래.
     expect(SATONG_CONTENT_Z.stickyContextHeader).toBeLessThan(SATONG_CONTENT_Z.contentPopover);
     expect(SATONG_CONTENT_Z.contentPopover).toBeLessThan(SATONG_CONTENT_Z.appNavFlyout);
-    expect(SATONG_CONTENT_Z.stickyContextHeader).toBeLessThan(SATONG_CONTENT_Z.appNavFlyout);
     expect(SATONG_CONTENT_Z.appNavFlyout).toBeLessThan(SATONG_CONTENT_Z.appModal);
     expect(SATONG_CONTENT_Z.appModal).toBeLessThan(APP_CHROME_Z);
   });
@@ -347,7 +347,7 @@ describe("앱 전역 층위 사다리", () => {
   //   종전엔 둘 다 z-30 이라 DOM 순서로 목록이 이겼는데, 한쪽만 600 으로 올려 뒤집힌 것이다.
   //   ★전역 값을 올리면 **그 값과 경쟁하던 모든 것을 다시 봐야 한다** — 네비 플라이아웃에 이어
   //   두 번째 짝 결함이라, 이번엔 목록형이 아니라 **형태로 파생**시켜 전수로 잠근다.
-  it("★입력에 붙는 드롭다운은 본문 sticky 위에 있다 — 전수 파생(목록 아님)", () => {
+  it("★입력에 붙는 드롭다운은 계약 상수(contentPopover)를 쓴다 — 형태로 파생", () => {
     const files: string[] = [];
     const walk = (dir: string): void => {
       for (const e of readdirSync(dir, { withFileTypes: true })) {
@@ -360,32 +360,58 @@ describe("앱 전역 층위 사다리", () => {
     walk(join(WEB_ROOT, "components"));
     walk(join(WEB_ROOT, "app"));
 
-    // `top-full` = 입력 바로 아래로 펼쳐지는 드롭다운의 이 저장소 관용구.
+    // ★주석을 스트립한 뒤 본다 — 안 하면 **주석이 className 을 인용만 해도** 위반으로
+    //   신고한다(적대검증 실증: 문서용 예시 주석 한 줄이 offender 가 됐다).
     const offenders: string[] = [];
-    let seen = 0;
+    const anchors = new Set<string>();
     for (const f of files) {
-      for (const m of readFileSync(f, "utf-8").matchAll(/className="([^"]*\btop-full\b[^"]*)"/g)) {
-        seen += 1;
-        const z = /\bz-\[(\d+)\]/.exec(m[1]);
-        const val = z ? Number(z[1]) : (/\bz-(\d+)\b/.exec(m[1]) ? Number(/\bz-(\d+)\b/.exec(m[1])![1]) : null);
-        if (val === null || val <= SATONG_CONTENT_Z.stickyContextHeader) {
-          offenders.push(`${f.replace(WEB_ROOT + "/", "")} → z=${val ?? "없음"}`);
+      const raw = readFileSync(f, "utf-8");
+      // ★값싼 사전 필터 — 주석 스트립(TS 파서)은 파일당 수 ms 라 전 파일에 돌리면
+      //   전수 실행에서 10초를 넘긴다(단독 통과·전수 실패는 없느니만 못하다).
+      //   `top-full` 이 아예 없는 파일은 스트립해도 결과가 같으므로 건너뛴다.
+      if (!raw.includes("top-full")) continue;
+      const src = stripCommentsForScan(raw, f);
+      for (const m of src.matchAll(/className="([^"]*\btop-full\b[^"]*)"/g)) {
+        const rel = f.replace(`${WEB_ROOT}/`, "");
+        anchors.add(rel);
+        const hit = /\bz-\[(\d+)\]/.exec(m[1]);
+        // ★대역이 아니라 **값**으로 건다. `> 600` 으로 걸면 상수가 장식이 되고 상한이
+        //   무제한이 된다 — z-900 이면 모달(800) 위인데도 통과한다(실증됨).
+        if (!hit || Number(hit[1]) !== SATONG_CONTENT_Z.contentPopover) {
+          offenders.push(`${rel} → z=${hit ? hit[1] : "없음"}`);
         }
       }
     }
-    // ★공허 진리 방지 — 대상을 실제로 모았는가.
-    expect(seen).toBeGreaterThan(0);
+
+    // ★공허 진리 방지 — `seen > 0` 만으로는 **절반이 사라져도** 통과한다(실증됨).
+    //   알려진 앵커가 모집단에 실재하는지를 단언한다.
+    for (const known of [
+      "components/precheck/SatongMapShell.tsx",
+      "components/common/GlobalAddressSearch.tsx",
+    ]) {
+      expect(anchors, `알려진 드롭다운이 모집단에서 사라졌다: ${known}`).toContain(known);
+    }
     expect(
       offenders,
-      `입력에 붙는 드롭다운이 본문 sticky(${SATONG_CONTENT_Z.stickyContextHeader}) 이하다 — ` +
-        "sticky 헤더가 목록 상단을 덮어 클릭 불가가 된다(라이브에서 127px 겹침 실측)",
+      `입력에 붙는 드롭다운이 계약값(${SATONG_CONTENT_Z.contentPopover})을 안 쓴다 — ` +
+        "sticky 본문(600)에 덮이거나 모달(800) 위로 튀어오른다",
     ).toEqual([]);
   });
 
-  // ★z 승격의 **짝 결함**(같은 독립 검증): InputResolveModal 에 포커스 트랩·ESC·스크롤 락이 없다.
-  //   종전엔 네비 플라이아웃(700) > 모달(50) 이라 Shift+Tab 으로 열린 메뉴가 보이기라도 했는데,
-  //   이제 모달(800) > 플라이아웃(700) 이라 **포커스는 갔는데 화면엔 안 보이는** 상태가 된다
-  //   (WCAG 2.4.11 Focus Not Obscured). 승격이 만든 부작용이므로 짝으로 처리해야 한다.
+  // ★이 소스 파생의 **정직한 경계**(다음 리뷰어가 "전수"로 오독하지 않게):
+  //   ①`className="…"` 리터럴만 본다 — `cn()`·삼항·배열 join 은 안 보인다(저장소 관용구다).
+  //   ②`top-full` 이라는 **위치 관용구**를 대리 지표로 쓴다 — `top-[52px]` 같은 하드코딩
+  //     오프셋이나 portal 로 띄우는 형태는 안 보인다.
+  //   ③스캔 루트가 `apps/web` 이라 **`packages/ui` 는 사각지대**다. 거기 `dropdown.tsx` 가
+  //     `cn("absolute z-50 mt-1 …")` 로 세 겹(패키지 밖·비리터럴·top-full 아님) 안 보인다.
+  //     현재 apps/web 소비처 0건이라 오늘의 결함은 아니나, z-600 화면에서 쓰이는 순간이
+  //     "셋째 짝 결함"이다.
+  //   실효 층위(조상 스태킹 컨텍스트)는 소스로 못 본다 —
+  //   `components/common/__tests__/GlobalAddressSearch.popoverRung.test.tsx` 가 렌더로 맡는다.
+  it.todo(
+    "★수집 밖 경계: 비리터럴 className·`top-full` 아닌 위치 관용구·`packages/ui/dropdown.tsx`(cn 비리터럴)",
+  );
+
   it.todo(
     "★z 승격의 짝: InputResolveModal 포커스 트랩·ESC 부재 — 모달(800)이 네비 플라이아웃(700) 위로 가며 " +
       "포커스가 보이지 않게 된다(WCAG 2.4.11)",
