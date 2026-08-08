@@ -340,3 +340,40 @@ class TestRegistryTextGrounding:
         text = _registry_text_from_codef(codef)
         assert _has_registry_entries(text) is True
         assert "근저당권설정" in text
+
+
+class TestProbeFailureIsNotForbidden:
+    """권한 점검이 **실패한 것**과 자격증명이 **거부된 것**을 가른다.
+
+    ★2026-08-08 실사고: 권한 점검(`/in0004000169`)이 추가되면서 `access == "ok"` 만 통과하게 됐고,
+      점검이 예외로 끝나면(`unreachable`) **주 프로바이더를 통째로 건너뛰고** 2순위로 갔다.
+      점검이 주 경로 앞의 **단일 실패점**이 된 셈이다 — 하이픈이 멀쩡해도 점검만 타임아웃 나면
+      모든 등기 조회가 다른 프로바이더로 샌다(다른 데이터·다른 과금).
+    ★#595 가 픽스처와 린트를 봉합했지만 **이 판정은 남아 있었다** — 여기서 가른다.
+    """
+
+    @pytest.mark.asyncio
+    async def test_unreachable_probe_still_tries_hyphen(self, captured, monkeypatch):
+        """점검을 못 했으면(unreachable) **본 호출은 시도한다** — 일시 오류로 프로바이더를 갈아타지 않는다."""
+        async def probe_unreachable():
+            return {"access": "unreachable", "checked": True, "message": "하이픈 연결 실패: timeout"}
+
+        monkeypatch.setattr(
+            "app.services.registry.hyphen_client.probe_api_access", probe_unreachable
+        )
+        await RegistryService().get_one(address="○○동 1-1")
+        assert captured["fetched_uno"] == "3333333", (
+            "권한 점검이 실패했다는 이유로 하이픈 본 호출을 건너뛰었다 — 일시 오류가 프로바이더를 갈아치운다"
+        )
+
+    @pytest.mark.asyncio
+    async def test_forbidden_probe_skips_hyphen(self, captured, monkeypatch):
+        """자격증명이 거부됐으면(forbidden) 시도할 가치가 없으므로 **건너뛴다**(두 모집단 분리)."""
+        async def probe_forbidden():
+            return {"access": "forbidden", "checked": True, "message": "하이픈 인증 실패"}
+
+        monkeypatch.setattr(
+            "app.services.registry.hyphen_client.probe_api_access", probe_forbidden
+        )
+        await RegistryService().get_one(address="○○동 1-1")
+        assert captured["fetched_uno"] is None, "자격증명 거부인데도 하이픈을 호출했다"
