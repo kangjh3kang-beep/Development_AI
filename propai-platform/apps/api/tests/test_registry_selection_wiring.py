@@ -62,6 +62,15 @@ def captured(monkeypatch, hyphen_env):
 
     async def fake_post(self, url, *args, **kwargs):  # noqa: ANN001, ARG001
         body = kwargs.get("json") or {}
+        # ★★2026-08-08 추가 — 권한 관문(`/in0004000169`).
+        #   `hyphen_client.check_access()` 가 조회 전용·무과금 호출로 **관문만 통과 확인**한다.
+        #   이 위조가 없으면 여기서 `AssertionError` 가 나고 → "하이픈 연결 실패" →
+        #   **Tilko 자동 폴백** → 최종 `status=not_configured` 가 되어, 아래 선택 배선
+        #   단언들이 전부 `fetched_uno is None` 으로 무너진다.
+        #   즉 **선택 로직과 무관한 관문 하나 때문에** 배선 회귀망 5개가 통째로 죽었다.
+        #   ★관문은 `common.errYn` 만 본다(hyphen_client:107-125) — 정상 통과를 위조한다.
+        if url.endswith("/in0004000169"):
+            return _FakeResponse({"common": {"errYn": "N"}, "data": {}})
         if url.endswith("/in0004000168"):  # 간편주소 검색
             return _FakeResponse({"common": {"errYn": "N"},
                                   "data": {"list": _SEARCH_ITEMS, "totCnt": len(_SEARCH_ITEMS)}})
