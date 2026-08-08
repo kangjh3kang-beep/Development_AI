@@ -1402,7 +1402,7 @@ export function GlobalAddressSearch({
                       className="h-12 w-full rounded-full border border-[var(--line-strong)] bg-white px-4 text-[13px] font-semibold text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
                     />
                     {showCandidates && (candidates.length > 0 || searching) && (
-                      <ul className="absolute left-0 right-0 top-full z-30 mt-1 max-h-64 overflow-y-auto rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-panel)] p-1 shadow-[var(--shadow-lg)]">
+                      <ul className="absolute left-0 right-0 top-full z-[650] mt-1 max-h-64 overflow-y-auto rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-panel)] p-1 shadow-[var(--shadow-lg)]">
                         {searching && <li className="px-3 py-2 text-[11px] text-[var(--text-tertiary)]">검색 중…</li>}
                         {candidates.map((c, i) => (
                           <li key={`${c.address}-${i}`}>

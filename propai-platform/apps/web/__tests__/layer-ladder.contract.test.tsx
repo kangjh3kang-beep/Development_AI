@@ -30,6 +30,9 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
+/** apps/web 절대경로 — 테스트 cwd 가 바뀌어도 흔들리지 않게 모듈 최상단에서 고정한다. */
+const WEB_ROOT = process.cwd();
+
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
@@ -82,6 +85,10 @@ describe("앱 전역 층위 사다리", () => {
   it("★사다리 순서: 지도 오버레이 < 본문 sticky < 네비 플라이아웃 < 앱 크롬", () => {
     const maxOverlay = Math.max(...Object.values(SATONG_UI_Z));
     expect(maxOverlay).toBeLessThan(SATONG_CONTENT_Z.stickyContextHeader);
+    // ★본문 팝오버(650)는 sticky 본문(600)과 네비(700) **사이**다 — 입력에 붙는 목록은
+    //   자기 본문보다 위, 전역 내비보다 아래.
+    expect(SATONG_CONTENT_Z.stickyContextHeader).toBeLessThan(SATONG_CONTENT_Z.contentPopover);
+    expect(SATONG_CONTENT_Z.contentPopover).toBeLessThan(SATONG_CONTENT_Z.appNavFlyout);
     expect(SATONG_CONTENT_Z.stickyContextHeader).toBeLessThan(SATONG_CONTENT_Z.appNavFlyout);
     expect(SATONG_CONTENT_Z.appNavFlyout).toBeLessThan(SATONG_CONTENT_Z.appModal);
     expect(SATONG_CONTENT_Z.appModal).toBeLessThan(APP_CHROME_Z);
@@ -334,9 +341,46 @@ describe("앱 전역 층위 사다리", () => {
   //       `top-full` 로 지도 상단 띠에 내려앉으면 오버레이에 가린다(z 서열은 실측·기하 겹침은
   //       정적 판독 기반 추정 — 라이브 확인 대상).
   //   이 PR 에서 고치지 않는다(3라운드 연속 감시망 결함 뒤라 범위를 넓히지 않기로 판정).
-  it.todo(
-    "★다른 결함 클래스: 백드롭이 아닌 **패널 자체**의 낮은 z — SatongMapShell 주소 후보 리스트박스 z-30(실재 1건)",
-  );
+  // ★2026-08-08 라이브 실측으로 **회귀 확정 → 봉합**했다(종전 `it.todo` 를 실측이 대체).
+  //   `/ko` 에서 주소 후보 목록을 연 채 240px 스크롤하니 ContextHeader(600)가 목록(z-30)을
+  //   **127px 덮어** 상단 후보 2~3행이 클릭 불가였다(`elementFromPoint` 로 판정).
+  //   종전엔 둘 다 z-30 이라 DOM 순서로 목록이 이겼는데, 한쪽만 600 으로 올려 뒤집힌 것이다.
+  //   ★전역 값을 올리면 **그 값과 경쟁하던 모든 것을 다시 봐야 한다** — 네비 플라이아웃에 이어
+  //   두 번째 짝 결함이라, 이번엔 목록형이 아니라 **형태로 파생**시켜 전수로 잠근다.
+  it("★입력에 붙는 드롭다운은 본문 sticky 위에 있다 — 전수 파생(목록 아님)", () => {
+    const files: string[] = [];
+    const walk = (dir: string): void => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        if (e.name === "node_modules" || e.name.startsWith(".")) continue;
+        const full = join(dir, e.name);
+        if (e.isDirectory()) walk(full);
+        else if (/\.tsx$/.test(e.name)) files.push(full);
+      }
+    };
+    walk(join(WEB_ROOT, "components"));
+    walk(join(WEB_ROOT, "app"));
+
+    // `top-full` = 입력 바로 아래로 펼쳐지는 드롭다운의 이 저장소 관용구.
+    const offenders: string[] = [];
+    let seen = 0;
+    for (const f of files) {
+      for (const m of readFileSync(f, "utf-8").matchAll(/className="([^"]*\btop-full\b[^"]*)"/g)) {
+        seen += 1;
+        const z = /\bz-\[(\d+)\]/.exec(m[1]);
+        const val = z ? Number(z[1]) : (/\bz-(\d+)\b/.exec(m[1]) ? Number(/\bz-(\d+)\b/.exec(m[1])![1]) : null);
+        if (val === null || val <= SATONG_CONTENT_Z.stickyContextHeader) {
+          offenders.push(`${f.replace(WEB_ROOT + "/", "")} → z=${val ?? "없음"}`);
+        }
+      }
+    }
+    // ★공허 진리 방지 — 대상을 실제로 모았는가.
+    expect(seen).toBeGreaterThan(0);
+    expect(
+      offenders,
+      `입력에 붙는 드롭다운이 본문 sticky(${SATONG_CONTENT_Z.stickyContextHeader}) 이하다 — ` +
+        "sticky 헤더가 목록 상단을 덮어 클릭 불가가 된다(라이브에서 127px 겹침 실측)",
+    ).toEqual([]);
+  });
 
   // ★z 승격의 **짝 결함**(같은 독립 검증): InputResolveModal 에 포커스 트랩·ESC·스크롤 락이 없다.
   //   종전엔 네비 플라이아웃(700) > 모달(50) 이라 Shift+Tab 으로 열린 메뉴가 보이기라도 했는데,
