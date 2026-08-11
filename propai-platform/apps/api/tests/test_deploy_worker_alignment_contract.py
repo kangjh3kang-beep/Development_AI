@@ -197,6 +197,7 @@ def test_정렬_진입점을_실제로_실행하면_두_워커를_모두_부른�
     shutil.copy2(ALIGN_SCRIPT, sandbox / ALIGN_SCRIPT.name)
 
     targets = _worker_alignment_scripts()
+    celery_marker = sandbox / "a1-backend-workers.sh.called"
     for script in targets:
         marker = sandbox / f"{script.name}.called"
         (sandbox / script.name).write_text(
@@ -204,11 +205,29 @@ def test_정렬_진입점을_실제로_실행하면_두_워커를_모두_부른�
         )
         (sandbox / script.name).chmod(0o755)
 
+    # docker 스텁 — **상태를 가진다**: celery 정렬이 돌기 전에는 구 이미지 ID 를,
+    # 돈 뒤에는 최신 ID 를 돌려준다. 그래야 "드리프트 감지 → 재생성 → 사후 확인"
+    # 흐름이 실제로 태워진다(스텁이 늘 최신을 주면 재생성 분기가 아예 안 돈다).
+    docker_stub = tmp_path / "docker-stub.sh"
+    docker_stub.write_text(
+        "#!/usr/bin/env bash\n"
+        'if [ "$1" = "image" ] && [ "$2" = "inspect" ]; then echo "sha256:NEWNEWNEWNEW"; exit 0; fi\n'
+        'if [ "$1" = "inspect" ]; then\n'
+        f'  if [ -f "{celery_marker}" ]; then echo "sha256:NEWNEWNEWNEW";'
+        ' else echo "sha256:OLDOLDOLDOLD"; fi\n'
+        "  exit 0\n"
+        "fi\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    docker_stub.chmod(0o755)
+
     result = subprocess.run(
         ["bash", str(sandbox / ALIGN_SCRIPT.name)],
         capture_output=True,
         text=True,
         timeout=60,
+        env={"PATH": "/usr/bin:/bin", "DOCKER_BIN": str(docker_stub), "HOME": str(tmp_path)},
     )
 
     미호출 = [s.name for s in targets if not (sandbox / f"{s.name}.called").exists()]

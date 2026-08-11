@@ -27,8 +27,26 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DOCKER_BIN="${DOCKER_BIN:-docker}"
+IMAGE="${PROPAI_API_IMAGE:-propai-api:latest}"
+CELERY_CONTAINERS="${CELERY_CONTAINERS:-propai-celery-worker propai-celery-beat propai-celery-flower}"
 
 failed=""
+
+# 이미지 ID 대조 — ★유일한 드리프트 탐지 수단이다.
+#   컨테이너가 Up 인 것도, 태스크가 등록된 것도 신 이미지라는 뜻이 아니다:
+#   a1-backend-workers.sh 의 `verify_registered_tasks`/`verify_active_queues` 가 보는
+#   태스크·큐 **이름**은 2026-07-22 구 이미지에도 전부 있다 → 신·구를 원리적으로 구분 못 한다
+#   (두 모집단의 차가 0인 픽스처와 같은 공허한 단언이다). 그래서 여기서 ID 를 직접 본다.
+latest_id() { "$DOCKER_BIN" image inspect "$IMAGE" --format '{{.Id}}' 2>/dev/null || echo ""; }
+container_image_id() { "$DOCKER_BIN" inspect "$1" --format '{{.Image}}' 2>/dev/null || echo ""; }
+short() { printf '%s' "${1#sha256:}" | cut -c1-12; }
+
+LATEST="$(latest_id)"
+if [ -z "$LATEST" ]; then
+  echo "[align] ERROR: 이미지 없음 — $IMAGE"
+  exit 1
+fi
 
 echo "== 워커 정렬 ① arq =="
 if ! bash "$SCRIPT_DIR/a1-arq-worker.sh"; then
@@ -36,12 +54,42 @@ if ! bash "$SCRIPT_DIR/a1-arq-worker.sh"; then
 fi
 
 echo "== 워커 정렬 ② celery(worker·beat·flower) =="
-# a1-backend-workers.sh 는 systemd 유닛을 재설치·재시작하고 **등록 태스크·활성 큐·beat**
-# 까지 검증한다(멱등). 컨테이너가 Up 인 것만으로는 신 이미지라는 뜻이 아니므로,
-# "돌고 있다"가 아니라 "무엇을 등록했다"까지 확인하는 그 검증을 그대로 쓴다.
-if ! bash "$SCRIPT_DIR/a1-backend-workers.sh"; then
-  failed="$failed celery"
+# ★재시작을 조건부로 한다. celery 재시작은 공짜가 아니다 — systemd 유닛이
+#   `docker stop -t 10` 이라 SIGTERM 10초 뒤 SIGKILL 이고, warm shutdown 이 그 안에
+#   못 끝나면 `task_acks_late=True` + Redis 브로커라 미ack 메시지가 visibility_timeout
+#   (기본 1시간) 뒤에야 재전달된다 → 대량필지 배치가 처음부터 다시 돈다.
+#   arq 는 이미 이미지 ID 가 같으면 no-op 로 빠진다. celery 도 같게 만든다.
+drifted=""
+for c in $CELERY_CONTAINERS; do
+  cur="$(container_image_id "$c")"
+  if [ "$cur" != "$LATEST" ]; then
+    drifted="$drifted $c"
+  fi
+done
+
+if [ -z "$drifted" ]; then
+  echo "[align] celery 이미 최신 — 재시작 불요 (image=$(short "$LATEST"))"
+else
+  echo "[align] celery 이미지 드리프트:$drifted → 재생성"
+  # a1-backend-workers.sh 는 systemd 유닛을 재설치·재시작하고 등록 태스크·활성 큐·beat 를
+  # 검증한다. 위에서 말한 대로 그 검증만으로는 드리프트를 못 보므로, 아래에서 ID 를 재확인한다.
+  if ! bash "$SCRIPT_DIR/a1-backend-workers.sh"; then
+    failed="$failed celery"
+  fi
 fi
+
+# ★정렬 후 실측 — "재생성했다"가 아니라 "지금 신 이미지로 돌고 있다"를 확인한다.
+#   부분 재시작(worker 는 됐는데 beat 는 안 된 상태)이 조용히 남는 것을 여기서 잡는다.
+for c in $CELERY_CONTAINERS; do
+  cur="$(container_image_id "$c")"
+  if [ -z "$cur" ]; then
+    echo "[align] ⚠️ $c 컨테이너가 없다"
+    failed="$failed $c(없음)"
+  elif [ "$cur" != "$LATEST" ]; then
+    echo "[align] ⚠️ $c 이미지 불일치 — 컨테이너=$(short "$cur") 최신=$(short "$LATEST")"
+    failed="$failed $c(불일치)"
+  fi
+done
 
 if [ -n "$failed" ]; then
   echo "⚠️ 워커 정렬 실패:$failed — 해당 워커가 구 이미지일 수 있습니다."
