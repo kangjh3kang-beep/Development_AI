@@ -17,6 +17,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import sys
+import threading
 import types
 from pathlib import Path
 
@@ -325,6 +326,12 @@ def test_자식이_상한을_넘으면_포기하고_경고한다(
 
     ★상한은 **호출 시점에** 읽어야 한다: 기본 인자로 굳히면 이 monkeypatch 가 무시돼
       테스트가 실제 경로를 못 태운다(값이 장식이 되는 형태).
+
+    ★★**별도 스레드에서 돌려 join 으로 판정한다.** 여기서 그냥 호출하면, 상한을 잃은 변이가
+      이 케이스를 **실패시키는 게 아니라 영원히 멈추게** 한다(`asyncio.wait(timeout=None)`).
+      실제로 변이 도구가 이 형태에서 900초 상한에 걸려 **결과 없이 SIGTERM** 으로 죽었다 —
+      멈추는 테스트는 CI 를 세우고, 무엇보다 **변이가 잡혔는지 알 수 없게 만든다**.
+      daemon 스레드라 설령 멈춰도 pytest 종료를 막지 않는다.
     """
     monkeypatch.setattr(_async_batch, "_CHILD_DRAIN_TIMEOUT_SEC", 0.01)
 
@@ -336,8 +343,24 @@ def test_자식이_상한을_넘으면_포기하고_경고한다(
         task.set_name("느린-자식")
         return "ok"
 
+    outcome: dict[str, object] = {}
+
+    def _run() -> None:
+        try:
+            outcome["value"] = run_async_batch(lambda: _body())
+        except BaseException as exc:  # noqa: BLE001 — 스레드 밖으로 그대로 옮겨 판정한다
+            outcome["error"] = exc
+
     with caplog.at_level("WARNING", logger=_async_batch.__name__):
-        assert run_async_batch(lambda: _body()) == "ok"  # ★배치가 멈추지 않는다
+        worker = threading.Thread(target=_run, daemon=True)
+        worker.start()
+        worker.join(timeout=10.0)
+
+    assert not worker.is_alive(), (
+        "상한이 무시돼 배치가 자식을 무한정 기다린다 — 누수를 막으려다 배치를 멈추는 결함이다"
+    )
+    assert "error" not in outcome, f"배치가 예외로 끝났다: {outcome.get('error')!r}"
+    assert outcome.get("value") == "ok"  # ★포기하되 배치 결과는 그대로 돌려준다
 
     # ★`getMessage()` 로 **최종 문구**를 본다 — 포맷 인자에 담긴 태스크 이름이 실제로 문구에
     #   들어갔는지까지 봐야, "경고는 찍는데 무엇이 남았는지 안 알려주는" 형태가 걸린다.
