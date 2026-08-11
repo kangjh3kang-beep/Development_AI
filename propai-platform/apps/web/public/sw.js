@@ -285,7 +285,11 @@
 //        ③등기 하이픈 조회 주소 후보 확장(산 필지 정규화 폴백·백엔드).
 //        ★정직 고지 계열이 섞여 있다 — 비해시 자산이 스테일하면 옛 표기가 한 번 더 보인다.
 //        ★채번: origin/main 실제 상수 v496 확인 → v497. PR 생성 前 보드 claim 선점(14회차).
-const CACHE_NAME = "propai-v497-fullscreen-wiring";
+// v498: 주소 후보 드롭다운이 sticky ContextHeader(600)에 가리던 회귀 봉합(#597) —
+//        본문 팝오버 칸 `contentPopover: 650` 신설 + SatongMapShell·GlobalAddressSearch 승격.
+//        ★이 범프가 필요한 이유: v497 이 **#597 보다 먼저** 머지돼(규율 E-20 이 경고하는 경합)
+//          위 3파일이 캐시로 가려진다 — `<v497커밋>..origin/main` 실측으로 확인하고 채번했다.
+const CACHE_NAME = "propai-v498-content-popover";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
