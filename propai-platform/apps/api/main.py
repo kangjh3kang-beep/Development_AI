@@ -22,7 +22,7 @@ from slowapi.middleware import SlowAPIMiddleware
 from apps.api.app.routers.bank_report import router as bank_report_router
 from apps.api.app.routers.uploads import router as uploads_router
 from apps.api.config import get_settings
-from apps.api.database.init_qdrant import check_qdrant_health, init_qdrant_collections
+from apps.api.database.init_qdrant import init_qdrant_collections
 from apps.api.exceptions import register_exception_handlers
 from apps.api.logging_config import get_logger, setup_logging
 from apps.api.metrics import DB_POOL_SIZE
@@ -730,40 +730,18 @@ app.include_router(create_latest_redirect_router())
 
 @app.get("/health", response_model=HealthResponse, tags=["시스템"])
 async def health_check() -> HealthResponse:
-    """헬스체크. 의존 서비스 상태를 함께 반환한다."""
-    from apps.api.database.session import engine
+    """헬스체크. 의존 서비스 상태를 함께 반환한다.
 
-    services: dict[str, str] = {}
+    각 의존처 점검에 개별 상한을 건다(``health_probe.PROBE_TIMEOUT_S``). 초과하면 그
+    의존처만 ``timeout`` 으로 표기하고 나머지 점검은 계속한다 — 응답은 항상 상한 안에서
+    끝난다. 같은 점검을 ``/api/v1/system/health/full`` 도 쓰므로 공용 통로로 뺐다.
+    """
+    from apps.api.app.core.health_probe import collect_service_health, overall_status
 
-    # PostgreSQL 연결 확인
-    try:
-        async with engine.connect() as conn:
-            await conn.execute(__import__("sqlalchemy").text("SELECT 1"))
-        services["postgres"] = "healthy"
-    except Exception as e:
-        db_url = str(engine.url)
-        masked = db_url.split("@")[-1] if "@" in db_url else db_url
-        logger.error("PostgreSQL health check failed", host=masked, error=str(e)[:200])
-        services["postgres"] = "unhealthy"
-
-    # Redis 연결 확인
-    try:
-        import redis.asyncio as aioredis
-        r = aioredis.from_url(settings.redis_url)
-        await r.ping()
-        await r.aclose()
-        services["redis"] = "healthy"
-    except Exception:
-        services["redis"] = "unhealthy"
-
-    # Qdrant 확인
-    qdrant_ok = await check_qdrant_health()
-    services["qdrant"] = "healthy" if qdrant_ok else "unhealthy"
-
-    overall = "healthy" if all(v == "healthy" for v in services.values()) else "degraded"
+    services = await collect_service_health()
 
     return HealthResponse(
-        status=overall,
+        status=overall_status(services),
         version=settings.app_version,
         services=services,
     )
