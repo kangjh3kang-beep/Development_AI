@@ -190,3 +190,31 @@ def test_동기_컨텍스트가_전역_엔진을_파기하지_않는다(monkeypa
     assert disposed == [], (
         "인프로세스 경로가 전역 엔진 정리를 호출했다 — Celery 용 처방을 API 프로세스에 오적용했다"
     )
+
+
+def test_건너뛴_코루틴을_닫아_미await_경고를_남기지_않는다() -> None:
+    """★적재를 건너뛰기만 하고 코루틴을 **버리면** 파이썬이 GC 시점에
+    `coroutine ... was never awaited` 를 찍고 그 코루틴의 자원도 늦게 반납된다.
+
+    ★이 락은 **도구가 만들지 못한 변이**를 막는다: `scripts/mutate_changed.py` 는 이 파일에서
+      로그 문자열 3건만 변이했고 `coro.close()` 는 건드리지 않았다. 직접 주입해 보니
+      **SURVIVED**(경고만 4→6으로 늘고 아무 케이스도 실패하지 않았다) — 그래서 여기 잠근다.
+    """
+    import gc
+    import warnings
+
+    async def _work() -> None:
+        return None
+
+    coro = _work()
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        growth_dispatch.fire_and_forget(coro, label="동기호출3")
+        del coro
+        gc.collect()  # 참조가 끊긴 코루틴을 즉시 수거해 경고를 결정론적으로 만든다
+
+    never_awaited = [w for w in caught if "never awaited" in str(w.message)]
+    assert not never_awaited, (
+        "건너뛴 코루틴을 닫지 않았다 — 미-await 경고가 남고 자원 반납이 늦어진다: "
+        f"{[str(w.message) for w in never_awaited]}"
+    )
