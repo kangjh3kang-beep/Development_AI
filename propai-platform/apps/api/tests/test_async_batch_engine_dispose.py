@@ -370,3 +370,42 @@ def test_자식이_상한을_넘으면_포기하고_경고한다(
     )
     # 포기해도 정리 자체는 반드시 한다.
     assert all(e.disposed == 1 for e in spy_engines)
+
+
+def test_손자_태스크도_정리_전에_기다린다(spy_engines: list[_SpyEngine]) -> None:
+    """★한 번만 스냅샷하면 **손자가 빠져나간다** — 자식이 끝나며 또 자식을 띄우는 형태다.
+
+    ★자식이 **끝난 뒤에** 손자를 띄우게 만든다: 자식과 동시에 존재하면 첫 스냅샷에 함께
+      잡혀, 재스냅샷이 없어도 통과한다(공허해진다).
+    """
+    grandchild_done: list[bool] = []
+
+    async def _grandchild() -> None:
+        await asyncio.sleep(0.05)
+        grandchild_done.append(True)
+
+    async def _child() -> None:
+        await asyncio.sleep(0.05)
+        asyncio.ensure_future(_grandchild())  # noqa: RUF006 — 첫 스냅샷 **이후**에 태어난다
+
+    async def _body() -> str:
+        asyncio.ensure_future(_child())  # noqa: RUF006
+        return "ok"
+
+    seen_at_dispose: list[bool] = []
+    original = _SpyEngine.dispose
+
+    async def _recording_dispose(self: _SpyEngine) -> None:
+        seen_at_dispose.append(bool(grandchild_done))
+        await original(self)
+
+    _SpyEngine.dispose = _recording_dispose  # type: ignore[method-assign]
+    try:
+        assert run_async_batch(lambda: _body()) == "ok"
+    finally:
+        _SpyEngine.dispose = original  # type: ignore[method-assign]
+
+    assert seen_at_dispose, "dispose 가 불리지 않았다 — 이 케이스가 공허해졌다"
+    assert all(seen_at_dispose), (
+        "정리 시점에 **손자** 태스크가 아직 살아 있었다 — 한 겹 아래로 같은 누수가 새어 나간다"
+    )

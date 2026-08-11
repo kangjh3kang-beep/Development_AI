@@ -146,12 +146,21 @@ async def _drain_child_tasks(timeout: float | None = None) -> int:
       바로 그 `idle in transaction` 이 다른 문으로 돌아온다.**
       종전 이 모듈은 그 상황을 **경고로 알리기만 했다**(탐지≠교정) — 여기서 교정한다.
 
-    ★도달성(정직 경계): 오늘 이 저장소에서 배치가 자식을 띄우는 경로는
-      `growth_dispatch.fire_and_forget` 하나이고, 그 경로에 닿는 배치 두 개
-      (`tasks.memory.ingest_experience`·`tasks.specialists.run_for_analysis`)는
-      **`GROWTH_CELERY_WORKER` 가 켜져야만 발화**한다(전 배포 설정에 미설정 — 실측).
-      즉 **잠재이고 오늘 라이브가 아니다.** 그럼에도 막아 두는 이유는 그 플래그가
-      "미래 배포 대비"로 코드에 명시돼 있고, 켜는 순간 조용히 사고가 돌아오기 때문이다.
+    ★도달성(정직 경계) — **두 경로가 있고 성격이 다르다.** 이 함수를 처음 넣을 때
+      "자식을 띄우는 경로는 `growth_dispatch` 하나"라고 적었는데 **틀렸다**(실측으로 정정):
+
+      ① `record_llm_response_billing_sync` → `loop.create_task(...)` — **게이트 없이 라이브**다.
+         `analyze_growth`(beat 시간별)·`evaluate_improvement`(일별)이 LLM 을 태우며 발화한다.
+         다만 배치에는 요청 컨텍스트가 없어 `get_current_user_id()` 가 None → **DB 접근 전
+         조기 반환**한다. 즉 **자식 생성은 라이브이나 DB 를 쥐지는 않는다.**
+      ② `growth_dispatch.fire_and_forget` — 이쪽이 **DB 를 쥔다**(세션을 연다). 그런데 닿는
+         배치 둘(`tasks.memory.ingest_experience`·`tasks.specialists.run_for_analysis`)이
+         **`GROWTH_CELERY_WORKER` 가 켜져야 발화**한다(전 배포 설정에 미설정 — grep 실측).
+
+      정리하면 **오늘 누수는 없고, 누수 가능한 자식만 게이트 뒤에 있다.** 그럼에도 막아
+      두는 이유는 그 플래그가 "미래 배포 대비"로 코드에 명시돼 있고, `#605` 로 celery 워커가
+      실제 배포되기 시작해 **켜는 순간 조용히 돌아오기** 때문이다.
+      ★이 문단을 한 번 틀렸다는 사실을 남긴다 — 도달성은 **한 경로를 찾고 멈추면** 틀린다.
 
     ★모집단을 "성장뇌 태스크"로 좁히지 않는다 — **누가 띄웠든** 정리 시점에 살아 있는
       자식은 같은 결함이다(목록형 금지·CLAUDE.md §A-4).
@@ -160,11 +169,39 @@ async def _drain_child_tasks(timeout: float | None = None) -> int:
     #   테스트가 실제 경로를 태우지 못한다(값이 장식이 되는 형태).
     timeout = _CHILD_DRAIN_TIMEOUT_SEC if timeout is None else timeout
 
-    pending = {t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()}
-    if not pending:
-        return 0
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    drained = 0
+    still_pending: set[asyncio.Task] = set()
 
-    _done, still_pending = await asyncio.wait(pending, timeout=timeout)
+    # ★한 번만 스냅샷하면 **손자가 빠져나간다** — 자식이 끝나며 또 자식을 띄우면 그것은
+    #   기다리지 않은 채 루프가 닫힌다(같은 결함의 한 겹 아래). 그래서 마감까지 재스냅샷한다.
+    #   마감이 유일한 종료 보장이다 — 자식이 무한히 자식을 낳아도 여기서 멈춘다.
+    while True:
+        pending = {
+            t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()
+        }
+        if not pending:
+            break
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            still_pending = pending
+            break
+        done, still_pending = await asyncio.wait(pending, timeout=remaining)
+        drained += len(done)
+        # ★끝난 자식의 예외를 **회수**한다. 안 하면 GC 시점에 asyncio 가
+        #   "Task exception was never retrieved" 를 찍는다 — 종전에는 `asyncio.run` 의
+        #   종료 처리가 대신 해 주던 일이라, 배수를 넣으면서 새로 생기는 소음이다.
+        # ★변이 도구가 이 두 줄의 삭제를 **생존**으로 보고한다(설명 가능한 생존):
+        #   경고는 **GC 시점에 asyncio 내부**에서 나오므로 결정론적으로 단언할 수 없다.
+        #   여기에 사적 속성(`_log_traceback`)을 들여다보는 락을 만들면 깨지기 쉬운
+        #   가짜 잠금이 된다 — 그래서 두지 않고 이유를 적는다.
+        for task in done:
+            if not task.cancelled():
+                task.exception()
+        if still_pending:
+            break
+
     if still_pending:
         # 막지 못한 것을 조용히 두지 않는다 — 관측이 없으면 다음 사고도 사용자 신고로 안다.
         logger.warning(
@@ -174,7 +211,7 @@ async def _drain_child_tasks(timeout: float | None = None) -> int:
             timeout,
             sorted(t.get_name() for t in still_pending),
         )
-    return len(pending) - len(still_pending)
+    return drained
 
 
 # ruff: noqa: UP047 — PEP695(`def f[T](...)`)를 쓰지 않는 것은 **의도**다(위 T 정의 주석 참조).
