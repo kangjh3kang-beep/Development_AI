@@ -41,7 +41,14 @@ if [ -n "$OLD_IMG_ID" ] && [ "$OLD_IMG_ID" != "$NEW_IMG_ID" ]; then
 else
   echo "prev 유지(이미지 내용 동일 — 같은 커밋 재빌드): $(sudo docker image inspect propai-api:prev --format {{.Id}} 2>/dev/null | cut -c1-20)"
 fi
-CUR=$(grep -oE 'localhost:[0-9]+' ~/caddy/Caddyfile | grep -oE '[0-9]+' | tail -1)
+# ★`|| true` 가 필요하다(2026-08-12 리뷰 지적·실측): pipefail 을 켜면 grep 의 '매칭 없음'
+#   (exit 1)이 파이프라인 종료코드로 승격되고, set -e 가 **이 대입에서 배포를 죽인다**.
+#   그러면 바로 아래 폴백 `CUR=8000` — 정확히 그 경우를 위해 있는 줄 — 이 도달 불가가 된다.
+#   실측: Caddyfile 에 localhost:<포트> 가 없을 때 종전은 CUR=8000 도달, pipefail 은 exit 1
+#   (메시지 한 줄 없이). 빌드까지 끝낸 뒤 조용히 죽으므로 원인 추적이 어렵다.
+#   ★pipefail 은 빌드 실패 은폐를 막으려고 켠 것이다 — 그 목적을 지키면서, '실패해도 되는'
+#   이 한 대입만 면제한다(면제를 넓히면 은폐가 돌아온다).
+CUR=$(grep -oE 'localhost:[0-9]+' ~/caddy/Caddyfile | grep -oE '[0-9]+' | tail -1) || true
 [ -z "$CUR" ] && CUR=8000
 NEW=$([ "$CUR" = "8000" ] && echo 8001 || echo 8000)
 NAME=propai-api-$NEW

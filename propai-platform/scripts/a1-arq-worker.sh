@@ -33,8 +33,13 @@ HEALTH_WAIT="${ARQ_HEALTH_WAIT:-40}"
 #   실제로 3일 내내 unhealthy 였고(로그의 cron 은 정상 실행 중이었다), 그래서
 #   **진짜 워커 장애가 나도 같은 화면**이 된다 — 감시가 마비된 상태였다.
 #   `arq --check` 는 워커가 Redis 에 쓴 health 키를 읽으므로 실제 대상을 태운다.
-#   ★단, 이 신호가 유효하려면 WorkerSettings.health_check_interval 이 짧아야 한다
-#     (키 TTL = interval + 1). 기본 3600 이면 죽어도 1시간 초록 — 그래서 60 으로 낮췄다.
+#   ★단, 이 신호가 유효하려면 WorkerSettings.health_check_interval 이 **적당해야** 한다
+#     (키 TTL = interval + 1). 경계는 **양방향**이다:
+#       · 너무 길면(기본 3600) 죽은 워커가 1시간 초록이다.
+#       · 너무 짧으면(60) 루프를 막는 정상 작업(모델 재학습·대용량 IFC) 중에
+#         **일하는 워커가 빨개진다** — 위양성의 형태만 바뀐다.
+#     그래서 300 으로 뒀다(main.py 에 근거 상세). 탐지까지는 TTL 301초 + 연속
+#     실패 3회(60초 간격) ⇒ 최선 약 7분 · 최악 약 8분이다.
 ARQ_HEALTH_CMD="${ARQ_HEALTH_CMD:-arq --check $ARQ_SETTINGS}"
 ARQ_HEALTH_INTERVAL="${ARQ_HEALTH_INTERVAL:-60s}"
 ARQ_HEALTH_TIMEOUT="${ARQ_HEALTH_TIMEOUT:-15s}"
