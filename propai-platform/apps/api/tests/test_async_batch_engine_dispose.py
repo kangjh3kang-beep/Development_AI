@@ -272,3 +272,78 @@ def test_루프_생성은_공용_진입점에서만_한다() -> None:
         "공용 진입점을 우회해 루프를 직접 만든다 — 커넥션 누수가 돌아온다:\n"
         + "\n".join(offenders)
     )
+
+
+# ── 정리 前 자식 태스크 배수 ──────────────────────────────────────────────
+# ★이 두 케이스가 잠그는 것: `dispose()` 는 **풀에 반납된** 연결만 닫는다. 배치가
+#   `create_task` 로 띄운 자식이 DB 를 쥔 채 남아 있으면 정리는 그것을 못 닫고, 곧이어
+#   `asyncio.run` 이 루프를 닫으며 **쿼리 도중 취소**한다 = 서버에 트랜잭션이 남는다.
+#   종전 이 모듈은 그 상황을 **경고로 알리기만 했다**(탐지≠교정).
+
+
+def test_배치가_띄운_자식_태스크를_정리_전에_기다린다(spy_engines: list[_SpyEngine]) -> None:
+    """★정리 시점에 자식이 **이미 끝나 있어야** 한다 — "끝났는지"를 dispose 안에서 기록한다.
+
+    ★"자식이 결국 끝났다"를 배치 밖에서 확인하는 것으로는 부족하다: 배수를 없애도
+      취소 전에 우연히 끝날 수 있다. 순서를 잠그려면 **정리 시점의 상태**를 봐야 한다.
+    """
+    child_done: list[bool] = []
+
+    async def _child() -> None:
+        await asyncio.sleep(0.05)
+        child_done.append(True)
+
+    async def _body() -> str:
+        asyncio.ensure_future(_child())  # noqa: RUF006 — 참조 보관은 이 테스트의 관심이 아니다
+        return "ok"
+
+    # dispose 가 불리는 **그 순간** 자식이 끝나 있었는지 기록한다.
+    seen_at_dispose: list[bool] = []
+    original = _SpyEngine.dispose
+
+    async def _recording_dispose(self: _SpyEngine) -> None:
+        seen_at_dispose.append(bool(child_done))
+        await original(self)
+
+    _SpyEngine.dispose = _recording_dispose  # type: ignore[method-assign]
+    try:
+        assert run_async_batch(lambda: _body()) == "ok"
+    finally:
+        _SpyEngine.dispose = original  # type: ignore[method-assign]
+
+    assert seen_at_dispose, "dispose 가 불리지 않았다 — 이 케이스가 공허해졌다"
+    assert all(seen_at_dispose), (
+        "정리 시점에 자식 태스크가 아직 살아 있었다 — 루프가 닫히며 취소되고,"
+        " DB 를 쥐고 있었다면 서버에 트랜잭션이 남는다"
+    )
+
+
+def test_자식이_상한을_넘으면_포기하고_경고한다(
+    spy_engines: list[_SpyEngine], caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """★상한이 없으면 "누수를 막으려다 배치를 멈추는" 새 결함이 된다 — 포기 경로를 잠근다.
+
+    ★상한은 **호출 시점에** 읽어야 한다: 기본 인자로 굳히면 이 monkeypatch 가 무시돼
+      테스트가 실제 경로를 못 태운다(값이 장식이 되는 형태).
+    """
+    monkeypatch.setattr(_async_batch, "_CHILD_DRAIN_TIMEOUT_SEC", 0.01)
+
+    async def _never() -> None:
+        await asyncio.sleep(3600)
+
+    async def _body() -> str:
+        task = asyncio.ensure_future(_never())
+        task.set_name("느린-자식")
+        return "ok"
+
+    with caplog.at_level("WARNING", logger=_async_batch.__name__):
+        assert run_async_batch(lambda: _body()) == "ok"  # ★배치가 멈추지 않는다
+
+    # ★`getMessage()` 로 **최종 문구**를 본다 — 포맷 인자에 담긴 태스크 이름이 실제로 문구에
+    #   들어갔는지까지 봐야, "경고는 찍는데 무엇이 남았는지 안 알려주는" 형태가 걸린다.
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("느린-자식" in m for m in messages), (
+        f"상한 초과를 조용히 넘겼다 — 막지 못한 것은 드러나야 한다: {messages}"
+    )
+    # 포기해도 정리 자체는 반드시 한다.
+    assert all(e.disposed == 1 for e in spy_engines)

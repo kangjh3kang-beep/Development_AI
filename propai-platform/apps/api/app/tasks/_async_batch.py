@@ -129,6 +129,54 @@ async def _dispose_engines() -> int:
     return disposed
 
 
+# 자식 태스크를 기다려 주는 상한(초). 넘으면 **포기하고 시끄럽게 알린 뒤** 정리로 넘어간다.
+# ★상한을 반드시 둔다: 무한 대기는 "누수를 막으려다 배치를 멈추는" 새 결함이 된다
+#   (CLAUDE.md §"봉합이 새 결함을 만듦"). 상한을 넘은 경우의 결과는 **종전과 동일**하므로
+#   이 값이 커지든 작아지든 안전 방향은 바뀌지 않는다 — 그래서 여기에 가짜 락을 만들지 않는다.
+_CHILD_DRAIN_TIMEOUT_SEC = 30.0
+
+
+async def _drain_child_tasks(timeout: float | None = None) -> int:
+    """배치가 이 루프에 띄워 둔 **아직 끝나지 않은 자식 태스크**를 기다린다.
+
+    ★왜 필요한가 — `dispose()` 는 **풀에 반납된** 연결만 닫는다. 배치 본문이
+      `create_task(...)` 로 백그라운드 작업을 띄웠고 그 작업이 DB 를 쥔 채 남아 있으면,
+      정리는 그 연결을 못 닫고 곧이어 `asyncio.run` 이 **루프를 닫으며 그 태스크를 취소**한다.
+      쿼리 도중 취소된 연결은 서버에 트랜잭션을 남긴 채 끊긴다 = **이 모듈이 막으려던
+      바로 그 `idle in transaction` 이 다른 문으로 돌아온다.**
+      종전 이 모듈은 그 상황을 **경고로 알리기만 했다**(탐지≠교정) — 여기서 교정한다.
+
+    ★도달성(정직 경계): 오늘 이 저장소에서 배치가 자식을 띄우는 경로는
+      `growth_dispatch.fire_and_forget` 하나이고, 그 경로에 닿는 배치 두 개
+      (`tasks.memory.ingest_experience`·`tasks.specialists.run_for_analysis`)는
+      **`GROWTH_CELERY_WORKER` 가 켜져야만 발화**한다(전 배포 설정에 미설정 — 실측).
+      즉 **잠재이고 오늘 라이브가 아니다.** 그럼에도 막아 두는 이유는 그 플래그가
+      "미래 배포 대비"로 코드에 명시돼 있고, 켜는 순간 조용히 사고가 돌아오기 때문이다.
+
+    ★모집단을 "성장뇌 태스크"로 좁히지 않는다 — **누가 띄웠든** 정리 시점에 살아 있는
+      자식은 같은 결함이다(목록형 금지·CLAUDE.md §A-4).
+    """
+    # ★상한은 **호출 시점에** 읽는다 — 기본 인자로 굳히면 상수를 바꿔도 반영되지 않아
+    #   테스트가 실제 경로를 태우지 못한다(값이 장식이 되는 형태).
+    timeout = _CHILD_DRAIN_TIMEOUT_SEC if timeout is None else timeout
+
+    pending = {t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()}
+    if not pending:
+        return 0
+
+    _done, still_pending = await asyncio.wait(pending, timeout=timeout)
+    if still_pending:
+        # 막지 못한 것을 조용히 두지 않는다 — 관측이 없으면 다음 사고도 사용자 신고로 안다.
+        logger.warning(
+            "자식 태스크 %d개가 %.0f초 안에 끝나지 않았다 — 루프가 닫히며 취소되고,"
+            " 그 연결은 서버에 트랜잭션을 남길 수 있다: %s",
+            len(still_pending),
+            timeout,
+            sorted(t.get_name() for t in still_pending),
+        )
+    return len(pending) - len(still_pending)
+
+
 # ruff: noqa: UP047 — PEP695(`def f[T](...)`)를 쓰지 않는 것은 **의도**다(위 T 정의 주석 참조).
 #   3.12 전용 문법이라 이 모듈을 임포트하는 태스크 8개가 3.12 미만에서 임포트 불가가 된다.
 def run_async_batch(factory: Callable[[], Awaitable[T]]) -> T:
@@ -160,6 +208,8 @@ def run_async_batch(factory: Callable[[], Awaitable[T]]) -> T:
             return await factory()
         finally:
             # ★배치가 실패해도 정리는 반드시 한다 — 예외 경로가 오히려 더 잘 샌다.
+            # ★정리 **전에** 배치가 띄운 자식 태스크를 먼저 기다린다(아래 함수 주석 참조).
+            await _drain_child_tasks()
             await _dispose_engines()
 
     return asyncio.run(_runner())
