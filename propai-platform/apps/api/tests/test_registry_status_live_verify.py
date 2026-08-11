@@ -113,6 +113,32 @@ class TestLiveStatusHonesty:
         assert st["hyphen_access"] == "ok"
         assert st["register_ready"] is True
 
+    async def test_unreachable_keeps_ready_but_surfaces_reason(self, monkeypatch):
+        """★점검을 **못 했을 때**(unreachable)는 ready 를 내리지 않는다 — 상태가 동작과 같아야 한다.
+
+        `get_one` 은 unreachable 이면 **하이픈 본 호출을 시도**한다(2026-08-08). 그런데 상태만
+        '준비 안 됨'이라 말하면 **조회는 하이픈으로 가는데 화면은 아니라고 하는 발산**이 생긴다.
+        동시에 점검이 실패했다는 사실 자체는 숨기지 않는다(관리자가 원인을 봐야 한다).
+        """
+        import httpx
+
+        async def boom(self, url, *args, **kwargs):  # noqa: ANN001, ARG001
+            raise httpx.ConnectTimeout("timeout")
+
+        monkeypatch.setenv("HYPHEN_HKEY", "k")
+        monkeypatch.setenv("HYPHEN_USER_ID", "u")
+        import app.services.registry.hyphen_client as hc
+
+        hc._ACCESS_CACHE.pop("v", None)
+        monkeypatch.setattr(httpx.AsyncClient, "post", boom)
+
+        st = await RegistryService().live_status()
+        assert st["hyphen_access"] == "unreachable"
+        assert st["register_ready"] is True, (
+            "점검을 못 했다는 이유로 ready 를 내렸다 — 실제로는 하이픈 본 호출을 시도한다(상태↔동작 발산)"
+        )
+        assert "실패" in (st["message"] or ""), "점검 실패 사실이 상태 메시지에 실리지 않았다"
+
     async def test_sync_status_contract_unchanged(self):
         """status()는 동기 계약 유지 — 호출부(테스트·admin)를 깨지 않는다."""
         st = RegistryService().status()

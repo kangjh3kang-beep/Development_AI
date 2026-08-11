@@ -96,9 +96,16 @@ class RegistryService:
         probe = await probe_api_access()
         out["hyphen_access"] = probe.get("access")
         out["hyphen_access_message"] = probe.get("message")
-        if probe.get("access") != "ok":
-            # 실제로 못 쓰는 상태를 '연결됨'이라 말하지 않는다.
+        # ★상태는 **실제 동작과 같은 기준**으로 말해야 한다(2026-08-08 전역 스윕).
+        #   `get_one` 이 `forbidden` 일 때만 하이픈을 건너뛰도록 바뀌었는데, 여기만 `!= "ok"` 로
+        #   남아 있으면 **조회는 하이픈으로 가는데 상태는 '준비 안 됨'** 이라고 말하는 발산이 생긴다.
+        #   · forbidden(자격증명 거부) → 정말 못 쓴다. ready 를 내리고 사유를 말한다.
+        #   · unreachable(점검을 못 했다) → 본 호출은 시도하므로 ready 는 유지하되,
+        #     **점검이 실패했다는 사실은 숨기지 않는다**(관리자가 원인을 봐야 한다).
+        if probe.get("access") == "forbidden":
             out["register_ready"] = bool(out.get("tilko_ready"))
+            out["message"] = probe.get("message") or out.get("message")
+        elif probe.get("access") != "ok":
             out["message"] = probe.get("message") or out.get("message")
         return out
 
