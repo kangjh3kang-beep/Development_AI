@@ -3496,7 +3496,7 @@ export function SatongMapShell({
                     role="listbox"
                     id={searchListboxId}
                     aria-label="주소 후보"
-                    className="absolute left-0 right-14 top-full z-30 mt-1 overflow-hidden rounded-2xl border border-[var(--border-muted)] bg-[var(--surface-panel)] shadow-[var(--shadow-xl)]"
+                    className="absolute left-0 right-14 top-full z-[650] mt-1 overflow-hidden rounded-2xl border border-[var(--border-muted)] bg-[var(--surface-panel)] shadow-[var(--shadow-xl)]"
                   >
                     {searchCandidates.slice(0, 6).map((candidate, index) => {
                       const label = getCandidateLabel(candidate);
