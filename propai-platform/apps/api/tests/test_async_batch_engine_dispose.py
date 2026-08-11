@@ -185,31 +185,83 @@ def test_계약에_풀드_엔진이_최소_하나_실재한다() -> None:
     )
 
 
+_LOOP_MAKERS = {"run", "new_event_loop"}
+
+
+def _loop_makers_in(path: Path) -> list[str]:
+    """파일이 **직접 루프를 만드는** 자리를 돌려준다.
+
+    ★두 형태를 모두 본다 — `asyncio.run(...)`(속성 호출)과 `from asyncio import run`(직접
+      임포트). 후자를 빠뜨리면 임포트 한 줄로 배선 락을 통째로 우회할 수 있다.
+    """
+    found: list[str] = []
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "asyncio":
+            for alias in node.names:
+                if alias.name in _LOOP_MAKERS:
+                    found.append(f"{path.name}:{node.lineno} from asyncio import {alias.name}")
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            owner = node.func.value
+            if (
+                node.func.attr in _LOOP_MAKERS
+                and isinstance(owner, ast.Name)
+                and owner.id == "asyncio"
+            ):
+                found.append(f"{path.name}:{node.lineno} asyncio.{node.func.attr}")
+    return found
+
+
 def test_태스크는_맨_asyncio_run_을_쓰지_않는다() -> None:
     """★배선 락 — 공용 진입점을 만들어도 **소비처가 그걸 쓰는지**를 아무도 안 보면
     누가 `asyncio.run` 으로 되돌려도 초록이다("정의만 하고 소비처 0").
-    목록이 아니라 **AST 전수**로 본다(주석·문자열은 `ast` 가 자동 배제한다)."""
+    목록이 아니라 **AST 전수**로 본다(주석·문자열은 `ast` 가 자동 배제한다).
+    하위 디렉토리가 생겨도 따라오도록 `rglob` 을 쓴다."""
     tasks_dir = Path(_async_batch.__file__).parent
     offenders: list[str] = []
     scanned = 0
 
-    for path in sorted(tasks_dir.glob("*.py")):
+    for path in sorted(tasks_dir.rglob("*.py")):
         if path.name == "_async_batch.py":
             continue
         scanned += 1
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
-                continue
-            if node.func.attr not in {"run", "new_event_loop"}:
-                continue
-            owner = node.func.value
-            if isinstance(owner, ast.Name) and owner.id == "asyncio":
-                offenders.append(f"{path.name}:{node.lineno} asyncio.{node.func.attr}")
+        offenders.extend(_loop_makers_in(path))
 
     # 공허 진리 방지 — 대상 파일을 실제로 훑었는가.
     assert scanned >= 5, f"태스크 파일을 {scanned}개만 훑었다 — 경로가 바뀌었다"
     assert offenders == [], (
         "태스크가 공용 진입점을 우회해 루프를 직접 만든다 — 커넥션 누수가 돌아온다:\n"
         + "\n".join(offenders)
+    )
+
+
+def test_진입점을_임포트한_파일은_그것을_우회하지_않는다() -> None:
+    """★`app/tasks` **밖**의 소비처도 잠근다 — 형제 스윕으로 고친
+    `app/services/agents/growth_dispatch.py` 가 되돌려져도 위 테스트는 못 본다.
+
+    목록을 적지 않고 **파생**한다: "`run_async_batch` 를 임포트한 파일"은 정의상 이 계약의
+    소비처이므로, 그 파일이 동시에 맨 루프 생성을 하고 있으면 우회다."""
+    # ★`.resolve()` 필수 — pytest 는 이 모듈을 `tests/../app/...` 로 로드해서, 정규화하지
+    #   않으면 **모든 경로에 `/tests/` 가 들어가** 아래 필터가 전부를 걸러낸다(가드가 조용히
+    #   공허해진다). 실제로 그렇게 0개를 훑고 통과할 뻔했다 — 하한 단언이 그걸 잡았다.
+    api_root = Path(_async_batch.__file__).resolve().parents[2]  # .../apps/api
+    consumers: list[Path] = []
+    offenders: list[str] = []
+
+    for path in sorted(api_root.rglob("*.py")):
+        if path.name == "_async_batch.py" or "tests" in path.parts:
+            continue
+        try:
+            src = path.read_text(encoding="utf-8")
+        except Exception:  # noqa: BLE001 — 읽을 수 없는 파일은 대상 밖
+            continue
+        if "run_async_batch" not in src:
+            continue
+        consumers.append(path)
+        offenders.extend(_loop_makers_in(path))
+
+    # 공허 진리 방지 — 소비처를 실제로 찾았는가(0이면 파생이 무너진 것이다).
+    assert len(consumers) >= 8, f"진입점 소비처를 {len(consumers)}개만 찾았다 — 파생이 깨졌다"
+    assert offenders == [], (
+        "공용 진입점을 임포트해 놓고 **동시에** 루프를 직접 만든다(우회):\n" + "\n".join(offenders)
     )
