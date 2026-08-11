@@ -91,7 +91,9 @@ def _invocations(code: str, script_name: str) -> list[str]:
         # 명령 위치: 줄 시작 · `if/then/else/do/{` 뒤 · `&&`/`||`/`;`/`|` 뒤 · `eval` 경유.
         pattern = (
             rf"(?:^|(?:^|[;&|{{])\s*(?:if|then|else|do|eval|\{{)\s+|[;&|{{]\s*)"
-            rf"(?:!\s*)?(?:eval\s+)?{_RUNNERS}\s+\S*{re.escape(script_name)}(?:\s|$|;|[\"'])"
+            # `eval "bash x.sh"` 처럼 러너가 따옴표 뒤에 오는 형태까지 허용한다
+            # (허용 표기를 좁게 열거하면 정상 리팩터가 빨개진다 — 이 저장소의 반복 결함).
+            rf"""(?:!\s*)?(?:eval\s+["']?)?{_RUNNERS}\s+\S*{re.escape(script_name)}(?:\s|$|;|["'])"""
         )
         if re.search(pattern, stripped):
             hits.append(stripped)
@@ -278,6 +280,30 @@ def test_배포가_트래픽_전환_전에_마이그레이션_게이트를_지�
         f"마이그레이션(줄 {migrate_at})이 트래픽 전환(줄 {switch_at}) 뒤에 있다 — "
         "새 스키마를 요구하는 코드가 이미 트래픽을 받는다"
     )
+
+
+def test_포트_판정_폴백이_pipefail_에_죽지_않는다() -> None:
+    """★내가 만든 회귀를 잠근다.
+
+    `set -eo pipefail` 을 켠 뒤 이 대입이 그대로 남아 있으면::
+
+        CUR=$(grep -oE 'localhost:[0-9]+' ~/caddy/Caddyfile | grep -oE '[0-9]+' | tail -1)
+        [ -z "$CUR" ] && CUR=8000     # ← 도달 불가
+
+    grep 의 '매칭 없음'(exit 1)이 파이프라인 종료코드로 승격되고 `set -e` 가 **이 대입에서**
+    배포를 죽인다 — 바로 아래 폴백이, 정확히 그 경우를 위해 있는데 영원히 실행되지 않는다.
+    실측: 종전은 `CUR=8000` 도달(exit 0), pipefail 은 **메시지 없이 exit 1**.
+    """
+    code = _code(DEPLOY_SCRIPT)
+    has_pipefail = re.search(r"^\s*set\s+-[a-z]*o\s+pipefail|^\s*set\s+-o\s+pipefail", code, re.M)
+    port_lines = [ln for ln in code.splitlines() if re.search(r"^\s*CUR=\$\(", ln)]
+    assert port_lines, "포트 판정 대입을 찾지 못했다 — 패턴이 낡았을 수 있다"
+    if has_pipefail:
+        assert any("|| true" in ln for ln in port_lines), (
+            "pipefail 을 켠 채 포트 판정 대입이 면제되지 않았다 — Caddyfile 에 "
+            "localhost:<포트> 가 없으면 배포가 메시지 없이 죽고 폴백이 도달 불가가 된다. "
+            f"해당 줄: {port_lines}"
+        )
 
 
 def test_마이그레이션_게이트가_실패하면_배포가_멈춘다() -> None:
