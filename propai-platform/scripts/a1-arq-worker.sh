@@ -23,9 +23,24 @@ REPO_DIR="${REPO_DIR:-$HOME/Development_AI/propai-platform}"
 IMAGE="${PROPAI_API_IMAGE:-propai-api:latest}"
 DOCKER_BIN="${DOCKER_BIN:-docker}"
 ARQ_NAME="${ARQ_WORKER_NAME:-propai-arq-worker}"
-ARQ_CMD="${ARQ_WORKER_CMD:-arq apps.worker.main.WorkerSettings}"
+ARQ_SETTINGS="${ARQ_WORKER_SETTINGS:-apps.worker.main.WorkerSettings}"
+ARQ_CMD="${ARQ_WORKER_CMD:-arq $ARQ_SETTINGS}"
 ARQ_RESTART="${ARQ_RESTART_POLICY:-unless-stopped}"
 HEALTH_WAIT="${ARQ_HEALTH_WAIT:-40}"
+# ★워커에 맞는 헬스체크로 덮어쓴다 (2026-08-12).
+#   워커는 API 이미지(propai-api)로 뜨는데 그 이미지의 HEALTHCHECK 는
+#   `curl -f http://localhost:8000/health` 다. 워커는 HTTP 서버가 아니라 **영원히 실패**한다.
+#   실제로 3일 내내 unhealthy 였고(로그의 cron 은 정상 실행 중이었다), 그래서
+#   **진짜 워커 장애가 나도 같은 화면**이 된다 — 감시가 마비된 상태였다.
+#   `arq --check` 는 워커가 Redis 에 쓴 health 키를 읽으므로 실제 대상을 태운다.
+#   ★단, 이 신호가 유효하려면 WorkerSettings.health_check_interval 이 짧아야 한다
+#     (키 TTL = interval + 1). 기본 3600 이면 죽어도 1시간 초록 — 그래서 60 으로 낮췄다.
+ARQ_HEALTH_CMD="${ARQ_HEALTH_CMD:-arq --check $ARQ_SETTINGS}"
+ARQ_HEALTH_INTERVAL="${ARQ_HEALTH_INTERVAL:-60s}"
+ARQ_HEALTH_TIMEOUT="${ARQ_HEALTH_TIMEOUT:-15s}"
+ARQ_HEALTH_RETRIES="${ARQ_HEALTH_RETRIES:-3}"
+# 기동 직후 health 키가 아직 없을 수 있다 — 실측상 기동 1초 뒤 기록되지만 여유를 둔다.
+ARQ_HEALTH_START="${ARQ_HEALTH_START:-90s}"
 ENV_FILE="$REPO_DIR/.env"
 
 log() { echo "[arq] $1"; }
@@ -63,6 +78,11 @@ if ! "$DOCKER_BIN" run -d \
       --name "$ARQ_NAME" \
       --restart "$ARQ_RESTART" \
       --env-file "$ENV_FILE" \
+      --health-cmd "$ARQ_HEALTH_CMD" \
+      --health-interval "$ARQ_HEALTH_INTERVAL" \
+      --health-timeout "$ARQ_HEALTH_TIMEOUT" \
+      --health-retries "$ARQ_HEALTH_RETRIES" \
+      --health-start-period "$ARQ_HEALTH_START" \
       "$IMAGE" $ARQ_CMD >/dev/null; then
   log "ERROR: 워커 기동 실패"; exit 1
 fi

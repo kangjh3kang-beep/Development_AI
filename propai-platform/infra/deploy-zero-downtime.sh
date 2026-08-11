@@ -1,10 +1,41 @@
 #!/usr/bin/env bash
-# 무중단(블루-그린) 배포: Caddy(80) 뒤에서 앱을 8000↔8001 교대 기동 + graceful reload.
+# ════════════════════════════════════════════════════════════════
+# deploy-zero-downtime.sh — 백엔드(168) 무중단(블루-그린) 배포 **정본**.
+#
+# ★이 파일이 정본인 이유 (2026-08-12):
+#   실제로 도는 것은 서버 홈의 `~/deploy.sh` 였고, 저장소의 이 파일은 그보다 한참
+#   낡아 있었다 — 동시배포 락도, prev 롤백 승계도, field_audit 게이트도, 워커 정렬도
+#   **저장소 사본에는 없었다**. 홈 사본은 리뷰도 이력도 없이 자란다(#583 이 롤백
+#   스크립트에서 지적한 것과 같은 문제이며, 여기서는 방향이 반대였다).
+#   그래서 서버 실물을 저장소로 끌어올리고, 이후 변경은 여기서만 한다.
+#
+# 사용법(168에서):  bash ~/Development_AI/propai-platform/infra/deploy-zero-downtime.sh
+# ════════════════════════════════════════════════════════════════
 set -e
+
+# ★동시배포 락 — 두 세션 동시 실행 시 블루그린 포트판정 레이스(2026-07-22 12:31/12:33 중복 실행 실측).
+#   락 획득 실패=다른 배포 진행 중 → 즉시 중단(대기 아님: 대개 같은 커밋의 중복 배포라 재시도가 안전).
+LOCKFILE=/tmp/propai-deploy.lock
+exec 9>"$LOCKFILE"
+if ! flock -n 9; then
+  echo "!! 다른 배포가 진행 중(락 $LOCKFILE) — 중단. 완료 후 재시도하세요."
+  exit 1
+fi
 cd ~/Development_AI/propai-platform
 git pull origin main 2>&1 | tail -1
 echo "== build =="
+# ★롤백 경로 확보(insight-loop 2026-07-29 / 2026-07-30 보정): 빌드 후 이미지 ID를 비교해
+#   **내용이 실제로 바뀐 경우에만** 직전 이미지를 prev 로 승계한다.
+#   무조건 태깅하면 같은 커밋 재배포 시 캐시로 동일 ID가 나와 prev==latest 가 되어
+#   롤백 자산이 조용히 무효화된다(2026-07-30 재배포에서 실측·직전 세대가 태그에서 밀려남).
+OLD_IMG_ID=$(sudo docker image inspect propai-api:latest --format {{.Id}} 2>/dev/null || echo "")
 sudo docker build -f Dockerfile.oracle -t propai-api:latest . 2>&1 | tail -2
+NEW_IMG_ID=$(sudo docker image inspect propai-api:latest --format {{.Id}} 2>/dev/null || echo "")
+if [ -n "$OLD_IMG_ID" ] && [ "$OLD_IMG_ID" != "$NEW_IMG_ID" ]; then
+  sudo docker image tag "$OLD_IMG_ID" propai-api:prev && echo "prev 승계: ${OLD_IMG_ID:0:20}"
+else
+  echo "prev 유지(이미지 내용 동일 — 같은 커밋 재빌드): $(sudo docker image inspect propai-api:prev --format {{.Id}} 2>/dev/null | cut -c1-20)"
+fi
 CUR=$(grep -oE 'localhost:[0-9]+' ~/caddy/Caddyfile | grep -oE '[0-9]+' | tail -1)
 [ -z "$CUR" ] && CUR=8000
 NEW=$([ "$CUR" = "8000" ] && echo 8001 || echo 8000)
@@ -15,22 +46,41 @@ sudo docker run -d --name "$NAME" --restart always --env-file .env -p ${NEW}:800
 echo "== 신앱 health 대기(8000 내부) =="
 ok=0; for i in $(seq 1 60); do if curl -sf -o /dev/null "http://localhost:${NEW}/health"; then ok=1; break; fi; sleep 3; done
 if [ "$ok" != "1" ]; then echo "!! 신앱 health 실패 — 배포중단(기존 유지)"; sudo docker rm -f "$NAME"; exit 1; fi
-# ★DB 마이그레이션(신 컨테이너 내부 alembic upgrade head) — 트래픽 전환 '전'에 수행.
-#  새 코드가 요구하는 스키마(신규 컬럼/테이블)를 트래픽 받기 전에 반영해, 코드-스키마 불일치로
-#  로그인 등이 500 나던 사고(2026-07-15 042)를 원천 차단한다. additive 마이그레이션 전제라
-#  구 컨테이너는 마이그레이션 중에도 정상 서빙(하위호환). 실패 시 트래픽 전환 없이 배포중단.
-#  ★프로덕션 DB는 alembic 관리(alembic_version=042 stamp 완료) — 이후 신규 리비전만 자동 적용.
-echo "== DB 마이그레이션(alembic upgrade head, 신 컨테이너 내부) =="
-if ! sudo docker exec "$NAME" sh -c "cd /app/apps/api && PYTHONPATH=/app alembic upgrade head"; then
-  echo "!! 마이그레이션 실패 — 배포중단(기존 유지·트래픽 전환 안 함)"; sudo docker rm -f "$NAME"; exit 1
+# ★field_audit 활성 게이트(insight-loop 2026-07-30) — Caddy 전환 전에 신규 컨테이너를 검사한다.
+#   #497 진단 엔드포인트로 자가검증 레이어의 무성(silent) 회귀를 배포 시점에 차단(fail-closed).
+#   introspect 전용이라 비용·부작용 0. 실패 시 신앱만 제거하고 기존 앱을 유지 → 무중단.
+echo "== field_audit 활성 게이트(전환 전 검사) =="
+if ! PROPAI_API_BASE="http://localhost:${NEW}" bash scripts/smoke_field_audit.sh; then
+  echo "!! field_audit 비활성/등록0 — 배포중단(기존 앱 유지·전환 안 함)"
+  sudo docker rm -f "$NAME"
+  exit 1
 fi
+
 echo "== Caddy 전환(graceful reload) → $NEW =="
-printf ":80 {\n  reverse_proxy localhost:%s\n}\n" "$NEW" > ~/caddy/Caddyfile
+printf ":80 {\n  handle /flower* {\n    reverse_proxy localhost:5555\n  }\n  reverse_proxy localhost:%s\n}\n" "$NEW" > ~/caddy/Caddyfile
 sudo docker exec caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
 sleep 2
 code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:80/health)
 echo "전환 후 80 -> $code"
-if [ "$code" != "200" ]; then echo "!! 전환 실패 — 롤백(Caddy를 $CUR로)"; printf ":80 {\n  reverse_proxy localhost:%s\n}\n" "$CUR" > ~/caddy/Caddyfile; sudo docker exec caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile; sudo docker rm -f "$NAME"; exit 1; fi
+if [ "$code" != "200" ]; then echo "!! 전환 실패 — 롤백(Caddy를 $CUR로)"; printf ":80 {\n  handle /flower* {\n    reverse_proxy localhost:5555\n  }\n  reverse_proxy localhost:%s\n}\n" "$CUR" > ~/caddy/Caddyfile; sudo docker exec caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile; sudo docker rm -f "$NAME"; exit 1; fi
 echo "== 구앱 제거 =="
 for c in $(sudo docker ps -a --format '{{.Names}}' | grep -E '^propai-api'); do [ "$c" = "$NAME" ] || sudo docker rm -f "$c" 2>/dev/null || true; done
+# ★백그라운드 워커 이미지 정렬 — 로직은 리포에 있고 여기선 호출만 한다.
+#   이 스크립트는 API 컨테이너만 블루-그린으로 교체하므로 워커는 대상이 아니다.
+#   컨테이너는 계속 Up 이라 헬스체크로도 안 잡히고, 워커가 조용히 **옛 코드로** 잡을
+#   처리한다(무성 회귀). 탐지 수단은 컨테이너 나이가 아니라 이미지 ID 대조뿐이다.
+#
+#   ★2026-08-12 — 종전에는 여기서 arq **만** 정렬했다. 그래서 celery 3종
+#   (worker·beat·flower)이 **2026-07-22 이미지로 3주간** 돌았고, 그 사이 배포된
+#   모든 백엔드 수정이 celery 가 실행하는 태스크에는 도달하지 않았다.
+#   지금은 "어떤 워커를 정렬할지"를 a1-align-workers.sh 한 곳이 안다 —
+#   워커가 늘어도 이 파일은 고치지 않는다(고치는 걸 잊어 누락되는 게 원인이었다).
+#
+#   ★비치명적: 여기는 이미 트래픽 전환이 끝난 지점이라, 실패해도 배포를 되돌리지 않고
+#   경고만 남긴다(운영자가 수동 재실행하면 됨).
+if ! bash scripts/a1-align-workers.sh; then
+  echo "⚠️ 워커 정렬 실패 — 워커가 구 이미지일 수 있습니다. 수동 확인 필요:"
+  echo "   bash ~/Development_AI/propai-platform/scripts/a1-align-workers.sh"
+fi
+
 echo "✅ 무중단 배포 완료 (활성=$NEW)"
