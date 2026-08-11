@@ -11,7 +11,12 @@
 #
 # 사용법(168에서):  bash ~/Development_AI/propai-platform/infra/deploy-zero-downtime.sh
 # ════════════════════════════════════════════════════════════════
-set -e
+# ★pipefail 이 필요하다: 아래 `git pull … | tail -1` 과 `docker build … | tail -2` 는
+#   파이프 마지막 명령(tail)의 종료코드를 쓴다 — tail 은 항상 0 이다. set -e 만으로는
+#   **빌드가 실패해도 배포가 계속되고** 옛 이미지로 스왑한 뒤 "완료"를 찍는다(은폐).
+#   이 저장소가 이미 문서화한 결함이다(_workspace/PLAN_image_generation_inc2-4.md).
+#   ★서버 실물에는 pipefail 이 없다 — 정본으로 올리면서 함께 고친다.
+set -eo pipefail
 
 # ★동시배포 락 — 두 세션 동시 실행 시 블루그린 포트판정 레이스(2026-07-22 12:31/12:33 중복 실행 실측).
 #   락 획득 실패=다른 배포 진행 중 → 즉시 중단(대기 아님: 대개 같은 커밋의 중복 배포라 재시도가 안전).
@@ -54,6 +59,23 @@ if ! PROPAI_API_BASE="http://localhost:${NEW}" bash scripts/smoke_field_audit.sh
   echo "!! field_audit 비활성/등록0 — 배포중단(기존 앱 유지·전환 안 함)"
   sudo docker rm -f "$NAME"
   exit 1
+fi
+
+# ★DB 마이그레이션(신 컨테이너 내부 alembic upgrade head) — 트래픽 전환 '전'에 수행.
+#  새 코드가 요구하는 스키마(신규 컬럼/테이블)를 트래픽 받기 전에 반영해, 코드-스키마 불일치로
+#  로그인 등이 500 나던 사고(2026-07-15 042)를 원천 차단한다. additive 마이그레이션 전제라
+#  구 컨테이너는 마이그레이션 중에도 정상 서빙(하위호환). 실패 시 트래픽 전환 없이 배포중단.
+#
+#  ★★2026-08-12 — 이 블록은 **한 번 사라졌다가 복원됐다**. 저장소 사본을 서버 실물(~/deploy.sh)로
+#  덮어쓰며 조용히 지워졌고 리뷰가 잡았다. 서버 사본에는 이게 **원래 없다** — 실측 결과
+#  프로덕션 DB 는 `042_member_account_system`, head 는 `043_mypage_coin_orders_ledger` 로
+#  **리비전 1건이 미적용**이다(코드가 그 사실을 알고 방어적으로 쓰여 있다:
+#  disbursement_ledger_service.py · migrations/versions/043_*.py 의 "deploy.sh가 alembic 미실행이어도").
+#  ★그래서 서버 배포 경로를 이 스크립트로 바꾸는 것은 **스키마를 움직이는 행위**다 —
+#  배포 배선을 바꾸는 김에 곁다리로 할 일이 아니라, 043 적용을 의도한 시점에 별도로 한다.
+echo "== DB 마이그레이션(alembic upgrade head, 신 컨테이너 내부) =="
+if ! sudo docker exec "$NAME" sh -c "cd /app/apps/api && PYTHONPATH=/app alembic upgrade head"; then
+  echo "!! 마이그레이션 실패 — 배포중단(기존 유지·트래픽 전환 안 함)"; sudo docker rm -f "$NAME"; exit 1
 fi
 
 echo "== Caddy 전환(graceful reload) → $NEW =="

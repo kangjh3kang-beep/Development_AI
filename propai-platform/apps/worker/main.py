@@ -236,6 +236,13 @@ class WorkerSettings:
     #   그 상태로 컨테이너 헬스체크를 걸면 위양성 빨강을 **위양성 초록**으로 바꿀 뿐이다
     #   (종전 상태가 정확히 위양성 빨강이었다 — API 이미지의 HTTP 헬스체크를 상속해
     #   워커가 멀쩡한데 3일째 unhealthy 였고, 그래서 아무도 그 신호를 보지 않았다).
-    #   60 으로 낮추면 키 TTL 이 61초라 죽은 워커가 다음 판정에서 실제로 빨개진다.
-    #   비용은 Redis 쓰기 분당 1회로 무시할 수준이다.
-    health_check_interval = 60
+    #   ★★값을 60 이 아니라 300 으로 둔다(리뷰 지적으로 정정). arq 는 health 키를
+    #   **이벤트 루프에서** 쓰는데, 이 워커의 태스크 일부는 루프를 막는 동기 작업을
+    #   `async def` 안에서 그대로 돈다(`run_in_executor`/`to_thread` 사용 0건 — 실측):
+    #     · tasks/mlops.py `model.fit(...)`  · tasks/parse_large_ifc.py `ifcopenshell.open(...)`
+    #     · tasks/generate_report_pdf.py `doc.build(...)`
+    #   60 이면 새벽 2시 재학습이 루프를 몇 분 막는 동안 키가 만료돼 **일하는 중인
+    #   워커가 unhealthy** 가 된다 — "상시 위양성"을 "중부하 위양성"으로 바꿀 뿐이다.
+    #   TTL 301초는 그 블로킹을 견디면서도 죽은 워커를 5~6분 안에 빨갛게 만든다.
+    #   ★진짜 해법은 블로킹 작업을 스레드로 빼는 것이다 — 별건으로 남긴다.
+    health_check_interval = 300
