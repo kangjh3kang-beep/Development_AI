@@ -176,7 +176,10 @@ def test_계약에_풀드_엔진이_최소_하나_실재한다() -> None:
         engine = getattr(module, attr, None)
         if engine is None:
             continue
-        if not isinstance(getattr(engine, "pool", None), NullPool):
+        # ★`not isinstance(None, NullPool)` 는 **참**이다 — `.pool` 이 없는 객체(엔진이
+        #   아닌 것)가 "풀드"로 계수돼, 실효 엔진을 빼도 통과했다(적대검증 실증).
+        pool = getattr(engine, "pool", None)
+        if pool is not None and not isinstance(pool, NullPool):
             pooled.append(f"{module_name}.{attr}")
 
     assert pooled, (
@@ -185,83 +188,87 @@ def test_계약에_풀드_엔진이_최소_하나_실재한다() -> None:
     )
 
 
-_LOOP_MAKERS = {"run", "new_event_loop"}
+# 루프를 **직접 만들거나 직접 돌리는** API 이름.
+# ★`run_until_complete` 를 빠뜨리면 안 된다 — R1 이 방금 제거한 폴백이 쓰던 바로 그 API 다.
+#   그 이름을 안 보는 락은 "고친 것을 되돌리는 형태"를 못 잡는다.
+_LOOP_MAKERS = {"run", "new_event_loop", "run_until_complete", "Runner", "set_event_loop"}
+
+
+def _asyncio_aliases(tree: ast.AST) -> set[str]:
+    """`import asyncio as aio` 같은 **별칭**을 모은다 — 별칭 하나로 락을 우회할 수 있다."""
+    names = {"asyncio"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "asyncio" and alias.asname:
+                    names.add(alias.asname)
+    return names
 
 
 def _loop_makers_in(path: Path) -> list[str]:
-    """파일이 **직접 루프를 만드는** 자리를 돌려준다.
+    """파일이 **직접 루프를 만들거나 돌리는** 자리를 돌려준다.
 
-    ★두 형태를 모두 본다 — `asyncio.run(...)`(속성 호출)과 `from asyncio import run`(직접
-      임포트). 후자를 빠뜨리면 임포트 한 줄로 배선 락을 통째로 우회할 수 있다.
+    ★네 형태를 모두 본다(각각 실측으로 우회가 확인된 것들이다):
+      ① `asyncio.run(...)`                    — 속성 호출
+      ② `from asyncio import run`             — 직접 임포트(임포트 한 줄로 우회)
+      ③ `import asyncio as aio` → `aio.run()` — 별칭
+      ④ `asyncio.get_event_loop().run_until_complete(...)` — 호출 결과에 대한 속성 호출
     """
     found: list[str] = []
     tree = ast.parse(path.read_text(encoding="utf-8"))
+    aliases = _asyncio_aliases(tree)
+
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.module == "asyncio":
             for alias in node.names:
                 if alias.name in _LOOP_MAKERS:
                     found.append(f"{path.name}:{node.lineno} from asyncio import {alias.name}")
-        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            owner = node.func.value
-            if (
-                node.func.attr in _LOOP_MAKERS
-                and isinstance(owner, ast.Name)
-                and owner.id == "asyncio"
-            ):
-                found.append(f"{path.name}:{node.lineno} asyncio.{node.func.attr}")
+            continue
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            continue
+        if node.func.attr not in _LOOP_MAKERS:
+            continue
+        owner = node.func.value
+        # ①③ `asyncio.run` / `aio.run`
+        if isinstance(owner, ast.Name) and owner.id in aliases:
+            found.append(f"{path.name}:{node.lineno} {owner.id}.{node.func.attr}")
+        # ④ `<무엇이든>().run_until_complete(...)` — 루프 객체를 받아 직접 돌리는 형태.
+        #   소유자를 특정하지 않는다: 루프를 어디서 얻었든 직접 돌리면 같은 결함이다.
+        elif node.func.attr in {"run_until_complete", "run_forever"}:
+            found.append(f"{path.name}:{node.lineno} <loop>.{node.func.attr}")
     return found
 
 
-def test_태스크는_맨_asyncio_run_을_쓰지_않는다() -> None:
-    """★배선 락 — 공용 진입점을 만들어도 **소비처가 그걸 쓰는지**를 아무도 안 보면
-    누가 `asyncio.run` 으로 되돌려도 초록이다("정의만 하고 소비처 0").
-    목록이 아니라 **AST 전수**로 본다(주석·문자열은 `ast` 가 자동 배제한다).
-    하위 디렉토리가 생겨도 따라오도록 `rglob` 을 쓴다."""
-    tasks_dir = Path(_async_batch.__file__).parent
+def test_루프_생성은_공용_진입점에서만_한다() -> None:
+    """★배선 락 — `app/` **전역**에서 루프를 만들거나 직접 돌리는 곳은 `_async_batch.py`
+    하나뿐이어야 한다.
+
+    ★종전에는 "`run_async_batch` 를 임포트한 파일"로 소비처를 **파생**했는데, 그 모집단은
+      **자기배제로 뚫린다**: 되돌리는 사람은 ruff `F401`(unused import) 때문에 그 임포트를
+      **반드시 지우게 되고**, 지우는 순간 모집단에서 빠져나간다. lint 가 우회를 강제하는
+      구조였다(적대검증 실증 — import 를 남긴 변종만 잡히고 지운 변종은 생존).
+
+    ★그래서 모집단을 **소비처가 아니라 `app/` 전체**로 바꾼다. 실측상 루프를 만드는 파일은
+      진입점 하나뿐이므로(측정이 설계를 정했다), 목록도 파생도 필요 없이 **전역 불변식**이
+      성립한다. 어느 파일이 어떤 형태로 되돌리든, 임포트가 있든 없든 잡힌다.
+    """
+    app_root = Path(_async_batch.__file__).resolve().parent.parent  # .../apps/api/app
     offenders: list[str] = []
     scanned = 0
 
-    for path in sorted(tasks_dir.rglob("*.py")):
-        if path.name == "_async_batch.py":
+    for path in sorted(app_root.rglob("*.py")):
+        if path.resolve() == Path(_async_batch.__file__).resolve():
             continue
         scanned += 1
-        offenders.extend(_loop_makers_in(path))
-
-    # 공허 진리 방지 — 대상 파일을 실제로 훑었는가.
-    assert scanned >= 5, f"태스크 파일을 {scanned}개만 훑었다 — 경로가 바뀌었다"
-    assert offenders == [], (
-        "태스크가 공용 진입점을 우회해 루프를 직접 만든다 — 커넥션 누수가 돌아온다:\n"
-        + "\n".join(offenders)
-    )
-
-
-def test_진입점을_임포트한_파일은_그것을_우회하지_않는다() -> None:
-    """★`app/tasks` **밖**의 소비처도 잠근다 — 형제 스윕으로 고친
-    `app/services/agents/growth_dispatch.py` 가 되돌려져도 위 테스트는 못 본다.
-
-    목록을 적지 않고 **파생**한다: "`run_async_batch` 를 임포트한 파일"은 정의상 이 계약의
-    소비처이므로, 그 파일이 동시에 맨 루프 생성을 하고 있으면 우회다."""
-    # ★`.resolve()` 필수 — pytest 는 이 모듈을 `tests/../app/...` 로 로드해서, 정규화하지
-    #   않으면 **모든 경로에 `/tests/` 가 들어가** 아래 필터가 전부를 걸러낸다(가드가 조용히
-    #   공허해진다). 실제로 그렇게 0개를 훑고 통과할 뻔했다 — 하한 단언이 그걸 잡았다.
-    api_root = Path(_async_batch.__file__).resolve().parents[2]  # .../apps/api
-    consumers: list[Path] = []
-    offenders: list[str] = []
-
-    for path in sorted(api_root.rglob("*.py")):
-        if path.name == "_async_batch.py" or "tests" in path.parts:
-            continue
         try:
-            src = path.read_text(encoding="utf-8")
-        except Exception:  # noqa: BLE001 — 읽을 수 없는 파일은 대상 밖
+            offenders.extend(_loop_makers_in(path))
+        except SyntaxError:  # noqa: PERF203 — 파싱 불가 파일은 이 계약의 대상이 아니다
             continue
-        if "run_async_batch" not in src:
-            continue
-        consumers.append(path)
-        offenders.extend(_loop_makers_in(path))
 
-    # 공허 진리 방지 — 소비처를 실제로 찾았는가(0이면 파생이 무너진 것이다).
-    assert len(consumers) >= 8, f"진입점 소비처를 {len(consumers)}개만 찾았다 — 파생이 깨졌다"
+    # 공허 진리 방지 — 경로가 어긋나 0개를 훑고 통과하는 것을 막는다.
+    # (실제로 `.resolve()` 누락으로 스캔이 통째로 비었던 적이 있다.)
+    assert scanned >= 100, f"`app/` 를 {scanned}개만 훑었다 — 경로가 어긋났다"
     assert offenders == [], (
-        "공용 진입점을 임포트해 놓고 **동시에** 루프를 직접 만든다(우회):\n" + "\n".join(offenders)
+        "공용 진입점을 우회해 루프를 직접 만든다 — 커넥션 누수가 돌아온다:\n"
+        + "\n".join(offenders)
     )
