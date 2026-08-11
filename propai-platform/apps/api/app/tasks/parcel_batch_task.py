@@ -6,8 +6,9 @@ celery 미설치/미가동 시에도 import 가 깨지지 않도록 안전 폴�
 
 from __future__ import annotations
 
-import asyncio
 import logging
+
+from app.tasks._async_batch import run_async_batch
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,7 @@ def run_batch(job_id: str) -> dict:
             "counts": record.job.counts.model_dump(),
         }
 
-    result = asyncio.run(_go())
+    result = run_async_batch(lambda: _go())
     logger.info("배치 잡 실행 완료: %s (%s)", job_id, result.get("state"))
     return result
 

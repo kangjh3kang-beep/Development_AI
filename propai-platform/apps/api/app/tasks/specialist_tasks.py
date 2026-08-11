@@ -9,8 +9,9 @@ ledger 어댑터(record_specialist_result·load_prior)는 세션을 자체관리
 실제 발화는 Celery 워커 가동 의존(deploy-pending) — 미가동 시 .delay 는 큐 적재만/ graceful no-op.
 """
 
-import asyncio
 import logging
+
+from app.tasks._async_batch import run_async_batch
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +50,7 @@ async def _run_specialists_async(payload: dict) -> int:
 def _run_domain_specialists(payload: dict) -> int:
     """Celery 워커 스레드에서 async 실행(memory_tasks 선례)."""
     try:
-        return asyncio.run(_run_specialists_async(payload))
+        return run_async_batch(lambda: _run_specialists_async(payload))
     except Exception as e:  # noqa: BLE001
         logger.warning("specialist task 실패(graceful): %s", str(e)[:160])
         return 0
