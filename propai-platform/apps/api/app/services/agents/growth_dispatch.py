@@ -55,8 +55,17 @@ def fire_and_forget(coro: Coroutine[Any, Any, Any], *, label: str = "") -> None:
             #   죽은 루프에 묶인 연결**을 남기고, 다음 실행의 `pool_pre_ping` 이 그 연결로
             #   `BEGIN` 을 보내다 끊겨 서버에 `idle in transaction` 이 고착된다
             #   (2026-08-08 프로덕션 장애의 기전 — `app/tasks/_async_batch.py` 참조).
-            #   이 경로는 현재 호출부가 전부 async 라 휴면이지만, 동기 호출부가 하나만
-            #   생기면 즉시 같은 사고다(형제 스윕에서 빠졌던 자리).
+            #   이 경로는 현재 호출부가 전부 async 라 **도달하지 않는다**(실증:
+            #   `specialist_agent.run`·`expert_panel_service.analyze`·
+            #   `comprehensive_analysis_service.analyze` 세 곳 모두 async 함수 안).
+            # ★★단, 동기 호출부가 생기면 **"같은 사고"가 아니라 더 나쁜 사고**다 —
+            #   이 모듈은 Celery 워커가 아니라 **API 프로세스 안**에서 돈다. 그래서 여기서
+            #   `run_async_batch` 를 부르면 `_dispose_engines()` 가 **라이브 HTTP 요청을
+            #   서빙 중인 전역 엔진**을 다른 스레드·다른 루프에서 파기한다.
+            #   Celery 프로세스용 처방을 인프로세스 경로에 그대로 옮긴 상태다.
+            #   올바른 처방은 이 경로만 **일회용 엔진**으로 가르는 것이다
+            #   (`deliberation-review` 가 INC-13 에서 택한 방식) — 범위가 커서 별건으로 둔다.
+            #   지금은 **도달 불가**라 실해가 없고, 그 사실을 여기 적어 둔다(잠금 0인 분기).
             from app.tasks._async_batch import run_async_batch
 
             try:
