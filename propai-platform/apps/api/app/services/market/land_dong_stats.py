@@ -253,14 +253,25 @@ def dong_land_stats(
             #   반대로 수원 영통은 9.62배(넓은 층에 상업지 대지가 섞임).
             #   ★층을 더 쪼개면 표본이 사라지므로(동+용도+지목 중앙 1건) **구성을 밝힌다** —
             #   값을 왜곡하지 않으면서 "이 값이 무엇으로 이뤄졌는지"를 소비처가 알 수 있다.
-            "jimok_mix": _jimok_mix(bucket),
+            "jimok_mix": _mix_of(bucket, "jimok"),
+            # ★★2026-08-08 라이브가 시킨 것 — **용도지역 구성**도 밝힌다.
+            #   지목만으로는 부족했다. 논현동 1-1(일반상업지역) 조회에서 `dong_zone` 이
+            #   표본 부족으로 실패해 `dong` 으로 떨어졌는데, 그 표본은 **전부 주거지역**
+            #   거래였다(제1·2·3종). 상업지 대상에 주거지 시세를 "논현동 시세"로 준 것이다.
+            #   ★그 결과가 "공시지가의 0.54배" 였다 — **혼입도 왜곡도 아니고 모집단이 다른**
+            #   것이었는데, `scope_label` 이 "논현동" 뿐이라 사용자는 구분할 수 없다.
+            #   → 값을 막지 않고(막으면 아무 정보도 없다) **무엇으로 이뤄졌는지** 밝힌다.
+            "land_use_mix": _mix_of(bucket, "land_use"),
         }
 
     return None
 
 
-def _jimok_mix(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """표본의 **지목 구성**(많은 순). 값을 바꾸지 않고 무엇이 섞였는지만 밝힌다.
+def _mix_of(rows: list[dict[str, Any]], field: str) -> list[dict[str, Any]]:
+    """표본의 **구성**(많은 순). 값을 바꾸지 않고 무엇이 섞였는지만 밝힌다.
+
+    ★`jimok`(지목)과 `land_use`(용도지역) 둘 다 이 함수를 쓴다 — 두 축 모두
+    "값이 무엇으로 이뤄졌는지"를 말해야 하고, 산식이 같은데 두 벌로 두면 갈린다.
 
     ★왜 필터가 아니라 구성인가: 지목까지 좁히면 표본이 사라진다(실측상 `동+용도+지목`은
     중앙 1건). 그렇다고 섞인 채 값만 주면 사용자는 대지 시세로 읽는다.
@@ -268,7 +279,7 @@ def _jimok_mix(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
     counts: dict[str, int] = {}
     for r in rows:
-        key = _norm(r.get("jimok")) or "미상"
+        key = _norm(r.get(field)) or "미상"
         counts[key] = counts.get(key, 0) + 1
     total = sum(counts.values())
     # ★정직 표기 — 이 가드는 **도달 불가**다(변이 생존 실측). 호출부가 최소 표본을 이미
@@ -276,7 +287,7 @@ def _jimok_mix(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if not total:
         return []
     return [
-        {"jimok": k, "count": v, "share_pct": round(v * 100 / total, 1)}
+        {field: k, "count": v, "share_pct": round(v * 100 / total, 1)}
         for k, v in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
     ]
 
@@ -313,11 +324,22 @@ def stats_note(stats: dict[str, Any] | None, window_months: int) -> str | None:
     # ★정직 표기 — 이 초기화도 변이로 잠기지 않는다(위와 같은 이유로 `mix` 가 항상 비지
     #   않는다). 아래 분기가 늘어날 때를 위한 방어다.
     tail = ""
-    mix = stats.get("jimok_mix") or []
-    if mix:
-        # ★지목 구성을 밝힌다 — 대지와 도로가 섞인 값을 "대지 시세"로 읽으면 크게 틀린다.
-        top = " · ".join(f"{m['jimok']} {m['share_pct']:g}%" for m in mix[:3])
-        tail = f" 표본의 지목 구성은 {top} 입니다 — 지목에 따라 단가가 크게 다릅니다."
+    jm = stats.get("jimok_mix") or []
+    lm = stats.get("land_use_mix") or []
+    bits2: list[str] = []
+    if lm:
+        # ★★용도지역 구성이 **먼저**다 — 라이브에서 실제로 이것 때문에 오독이 났다.
+        #   상업지 대상인데 표본이 전부 주거지였고, 범위 문구는 "논현동" 뿐이라
+        #   사용자는 "논현동 시세"로 읽었다(공시지가의 0.54배가 그렇게 나왔다).
+        bits2.append("용도지역 " + " · ".join(f"{m['land_use']} {m['share_pct']:g}%" for m in lm[:3]))
+    if jm:
+        # 지목은 단가를 자릿수로 가른다(대 vs 도로).
+        bits2.append("지목 " + " · ".join(f"{m['jimok']} {m['share_pct']:g}%" for m in jm[:3]))
+    if bits2:
+        tail = (
+            f" 이 표본의 구성은 {' / '.join(bits2)} 입니다 — "
+            "대상지와 다른 용도지역·지목이 섞여 있으면 단가가 크게 다를 수 있습니다."
+        )
     return (
         f"{head}입니다. 공개 실거래 자료가 지번을 가려서 제공해 **개별 필지 위치는 "
         f"반영되지 않았습니다** — 같은 구역 안에서도 필지별 차이가 클 수 있습니다.{tail}"
