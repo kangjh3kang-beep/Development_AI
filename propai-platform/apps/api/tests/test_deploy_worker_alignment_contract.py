@@ -90,6 +90,20 @@ def _invocations(code: str, script_name: str) -> list[str]:
     return hits
 
 
+def _strip_quoted(line: str) -> str:
+    """따옴표 안 내용을 지운다 — **문구는 명령이 아니다**.
+
+    ★이 함수도 변이가 만들었다. alembic 게이트 검사를 단순 문자열 탐색으로 썼더니,
+    실행 블록을 통째로 지워도 다음 한 줄이 검사를 만족시켰다::
+
+        echo "== DB 마이그레이션(alembic upgrade head, 신 컨테이너 내부) =="
+
+    같은 결함(표기 vs 실행)을 **그 결함을 고치는 커밋 안에서** 재생산한 것이다.
+    따옴표를 걷어내면 위 줄은 ``echo`` 만 남아 `docker exec` 를 찾지 못한다.
+    """
+    return re.sub(r"""(["']).*?\1""", "", line)
+
+
 def _worker_alignment_scripts() -> list[Path]:
     """정렬 대상 워커 스크립트를 **파생**시킨다(사람이 센 목록을 쓰지 않는다).
 
@@ -135,10 +149,20 @@ def test_배포가_트래픽_전환_전에_마이그레이션_게이트를_지�
     """
     code = _code(DEPLOY_SCRIPT)
     lines = code.splitlines()
-    migrate_at = next((i for i, ln in enumerate(lines) if "alembic upgrade head" in ln), None)
+    # ★"alembic upgrade head" 라는 **문자열**이 아니라, 그것을 실제로 **실행하는** 줄을 찾는다.
+    #   안내 echo 도 같은 문자열을 담으므로(변이로 실증) 따옴표를 걷어낸 뒤 docker exec 를 본다.
+    migrate_at = next(
+        (
+            i
+            for i, ln in enumerate(lines)
+            if "alembic upgrade head" in ln and "docker exec" in _strip_quoted(ln)
+        ),
+        None,
+    )
     assert migrate_at is not None, (
-        "배포에 alembic upgrade head 게이트가 없다 — 새 코드가 요구하는 스키마 없이 "
-        "트래픽이 전환된다(2026-07-15 사고). 한 번 조용히 삭제된 적이 있다"
+        "배포가 alembic upgrade head 를 **실행**하지 않는다 — 새 코드가 요구하는 스키마 없이 "
+        "트래픽이 전환된다(2026-07-15 사고). 한 번 조용히 삭제된 적이 있다. "
+        "★안내 문구만 있는 것은 게이트가 아니다"
     )
     switch_at = next((i for i, ln in enumerate(lines) if "caddy reload" in ln.lower()), None)
     assert switch_at is not None, "Caddy 전환 지점을 찾지 못했다 — 패턴이 낡았을 수 있다"
