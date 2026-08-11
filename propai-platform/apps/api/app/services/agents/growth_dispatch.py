@@ -51,8 +51,16 @@ def fire_and_forget(coro: Coroutine[Any, Any, Any], *, label: str = "") -> None:
         import threading
 
         def _run() -> None:
+            # ★맨 `asyncio.run` 을 쓰지 않는다 — 루프를 닫으면서 **모듈 전역 엔진 풀에
+            #   죽은 루프에 묶인 연결**을 남기고, 다음 실행의 `pool_pre_ping` 이 그 연결로
+            #   `BEGIN` 을 보내다 끊겨 서버에 `idle in transaction` 이 고착된다
+            #   (2026-08-08 프로덕션 장애의 기전 — `app/tasks/_async_batch.py` 참조).
+            #   이 경로는 현재 호출부가 전부 async 라 휴면이지만, 동기 호출부가 하나만
+            #   생기면 즉시 같은 사고다(형제 스윕에서 빠졌던 자리).
+            from app.tasks._async_batch import run_async_batch
+
             try:
-                asyncio.run(_guard())
+                run_async_batch(_guard)
             except Exception as e:  # noqa: BLE001
                 logger.warning("성장뇌 적재 스레드 실패(%s): %s", label, str(e)[:200])
 

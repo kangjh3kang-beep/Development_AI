@@ -13,7 +13,7 @@
 flush_growth_events: in-memory 큐(capture_service)의 이벤트를 platform_events
 로 배치 INSERT 한다. Celery Beat 가 5초 주기로 호출(celery_app.py 등록).
 
-Celery 워커는 동기 컨텍스트이므로 asyncio.run 으로 async flush_batch 를 구동한다.
+Celery 워커는 동기 컨텍스트이므로 `run_async_batch` 로 async flush_batch 를 구동한다.
 DB 는 새 AsyncSession 1개를 열어 사용(요청 세션과 무관). best-effort: 어떤
 예외도 워커를 죽이지 않는다.
 """
@@ -55,7 +55,7 @@ async def _flush_async(limit: int = 500) -> int:
 def flush_growth_events() -> dict:
     """큐 → platform_events 배치 적재. Beat 5초 주기.
 
-    반환: {"flushed": N}. 동기 진입점(Celery 워커)에서 asyncio.run 으로 구동.
+    반환: {"flushed": N}. 동기 진입점(Celery 워커)에서 `run_async_batch` 로 구동(루프 종료 전 커넥션 정리).
     """
 
     try:
@@ -87,7 +87,7 @@ async def _analyze_async(window_hours: int = 1) -> int:
 def analyze_growth(window_hours: int = 1) -> dict:
     """platform_events → platform_insights 분석 배치. Beat hourly/daily 호출.
 
-    반환: {"insights": N}. 동기 진입점(Celery 워커)에서 asyncio.run 으로 구동.
+    반환: {"insights": N}. 동기 진입점(Celery 워커)에서 `run_async_batch` 로 구동(루프 종료 전 커넥션 정리).
     best-effort: 어떤 예외도 워커를 죽이지 않는다.
     """
 
@@ -119,7 +119,7 @@ async def _heal_async() -> dict:
 def evaluate_healing() -> dict:
     """heal 평가 배치(healing_rules → heal_actions). Beat 10분 주기 호출.
 
-    반환: healing_rules.evaluate 요약 dict. 동기 진입점에서 asyncio.run 구동.
+    반환: healing_rules.evaluate 요약 dict. 동기 진입점에서 `run_async_batch` 구동.
     best-effort: 어떤 예외도 워커를 죽이지 않는다.
     """
 
@@ -154,7 +154,7 @@ async def _correct_async() -> dict:
 def evaluate_correction() -> dict:
     """L1 자가수정 평가 배치(feature_flags.evaluate). Beat 주기 호출(analyze 후속).
 
-    반환: feature_flags.evaluate 요약 dict. 동기 진입점에서 asyncio.run 구동.
+    반환: feature_flags.evaluate 요약 dict. 동기 진입점에서 `run_async_batch` 구동.
     best-effort: 어떤 예외도 워커를 죽이지 않는다.
     """
 

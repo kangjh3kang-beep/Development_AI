@@ -51,7 +51,7 @@ def run_learning() -> dict:
     """L3 자가학습 주간 배치. Beat 일요일 04:00 호출.
 
     반환: {"cycle": {...}, "prompt_candidates": {...}}. 동기 진입점(Celery 워커)에서
-    asyncio.run 으로 구동. best-effort: 어떤 예외도 워커를 죽이지 않는다.
+    `run_async_batch` 로 구동(루프 종료 전 커넥션 정리). best-effort: 어떤 예외도 워커를 죽이지 않는다.
     """
 
     try:

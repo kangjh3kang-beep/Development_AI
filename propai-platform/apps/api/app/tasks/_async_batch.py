@@ -49,21 +49,56 @@ import asyncio
 import importlib
 import logging
 from collections.abc import Awaitable, Callable
+from typing import TypeVar
 
 logger = logging.getLogger(__name__)
 
+# ★PEP695(`def f[T](...)`)를 쓰지 않는다 — 3.12 전용 문법이라 이 모듈을 임포트하는
+#   태스크 8개가 3.12 미만에서 통째로 임포트 불가가 된다(운영은 3.12지만 로컬·도구가 깨진다).
+#   실제로 그렇게 바꿨다가 로컬 테스트가 SyntaxError 로 죽었다.
+# ★변이 도구가 이 줄의 삭제·상수화를 **생존**으로 보고한다(설명 가능한 생존):
+#   `from __future__ import annotations` 로 애노테이션이 문자열이라 **런타임 동작이 없다**.
+#   이 줄을 지키는 것은 테스트가 아니라 **타입 검사기**다 — 여기에 가짜 락을 만들지 않는다.
+T = TypeVar("T")
 
-# 이 저장소가 만드는 비동기 엔진 전부(모듈, 속성명).
+
+# 이 저장소의 **모듈 스코프 비동기 엔진 전부**(모듈, 속성명).
+#
+# ★실측(프로덕션 3.12 컨테이너):
+#     app.core.database.engine                   → AsyncAdaptedQueuePool  ← **유일하게 실효**
+#     apps.api.database.session.engine           → NullPool
+#     apps.api.database.session.timescale_engine → NullPool
+#     core.database.engine                       → NullPool
+#   `NullPool.dispose()` 는 SQLAlchemy 소스상 **문자 그대로 `pass`** 다. 즉 이 목록에서
+#   **풀드 엔진 하나가 이탈하면 프로덕션 누수가 그대로 돌아온다** — 나머지가 남아 있어도
+#   "엔진을 찾았다"는 검사는 통과한다(적대검증이 이 형태로 실증했다).
+#   그래서 테스트는 개수가 아니라 **풀드 엔진의 실재**를 단언한다.
 # ★새 엔진을 만들면 여기 추가한다 — 빠지면 그 엔진의 연결만 조용히 새어 나간다.
 _ENGINES: tuple[tuple[str, str], ...] = (
     ("app.core.database", "engine"),
     ("apps.api.database.session", "engine"),
     ("apps.api.database.session", "timescale_engine"),
+    # ★현재 임포트 소비처 0이지만 모듈 스코프 엔진이라 넣어 둔다(누락이 다음 사고가 된다).
+    # ★변이 도구가 이 항목의 문자열 변경을 **생존**으로 보고한다(설명 가능한 생존):
+    #   이 엔진은 오늘 **소비처 0 + NullPool** 이라 이름을 바꿔도 런타임 차이가 없다.
+    #   실효 엔진의 이탈은 위 `test_계약에_풀드_엔진이_최소_하나_실재한다` 가 잡는다.
+    #   여기에 이름 검사를 박으면 **상수를 복창하는 동어반복 락**이 되므로 두지 않는다.
+    ("core.database", "engine"),
 )
 
 
 async def _dispose_engines() -> int:
-    """현재 루프에 묶인 커넥션 풀을 정리하고, 정리한 엔진 수를 돌려준다."""
+    """현재 루프에 묶인 커넥션 풀을 정리하고, 정리한 엔진 수를 돌려준다.
+
+    ★`dispose()` 가 닫는 것은 **풀에 반납된(checked-in) 연결**이다. 아직 **체크아웃 중**인
+      연결은 닫지 않고 엔진에서 분리만 한다 — 그래서 배치가 연결을 쥔 채 예외로 빠지거나,
+      `create_task` 로 띄운 백그라운드 작업이 DB 를 쥐고 있으면 **그 연결은 여전히 샌다**
+      (`asyncio.run` 의 pending 태스크 취소는 이 정리보다 **뒤**에 일어난다).
+      막지 못하는 그 경로를 **조용히 두지 않고 경고로 드러낸다** — 관측이 없으면 다음 사고도
+      사용자 신고로 알게 된다.
+    ★그리고 dispose 는 ROLLBACK 을 보내지 않는다(소켓을 닫고 서버가 절단 시 롤백한다).
+      종전 주석이 "ROLLBACK 후 close" 라고 적었는데 사실이 아니라 바로잡았다.
+    """
     disposed = 0
     for module_name, attr in _ENGINES:
         try:
@@ -74,6 +109,18 @@ async def _dispose_engines() -> int:
         if engine is None:
             continue
         try:
+            checked_out = engine.pool.checkedout()
+            if checked_out:
+                logger.warning(
+                    "정리 시점에 반납되지 않은 연결 %d개 — 이 연결은 dispose 로 닫히지 않는다"
+                    " (%s.%s). 배치가 연결을 쥔 채 끝났거나 백그라운드 태스크가 남았다.",
+                    checked_out,
+                    module_name,
+                    attr,
+                )
+        except Exception:  # noqa: BLE001 — 관측 실패가 정리를 막지 않게 한다
+            pass
+        try:
             await engine.dispose()
             disposed += 1
         except Exception:  # noqa: BLE001 — 정리 실패가 배치 결과를 덮지 않게 한다
@@ -81,12 +128,31 @@ async def _dispose_engines() -> int:
     return disposed
 
 
-def run_async_batch[T](factory: Callable[[], Awaitable[T]]) -> T:
+# ruff: noqa: UP047 — PEP695(`def f[T](...)`)를 쓰지 않는 것은 **의도**다(위 T 정의 주석 참조).
+#   3.12 전용 문법이라 이 모듈을 임포트하는 태스크 8개가 3.12 미만에서 임포트 불가가 된다.
+def run_async_batch(factory: Callable[[], Awaitable[T]]) -> T:
     """async 배치를 돌리고, **루프를 닫기 전에** 커넥션 풀을 정리한다.
 
     `factory` 는 코루틴을 만드는 함수다(코루틴 객체가 아니라). 재시도 경로에서 코루틴을
     두 번 await 하는 사고를 막기 위해 매번 새로 만들게 한다.
+
+    ★**`except RuntimeError` 폴백을 두지 않는다**(적대검증이 두 가지를 실증했다):
+      ① 원래 노린 상황(이미 루프가 도는 환경)에서 **작동하지 않는다** — 러닝 루프 안에서
+         `loop.run_until_complete()` 는 원리적으로 불가능하고, 미-await 코루틴 경고까지 남는다.
+      ② 실제로 발화하는 유일한 경로는 **본문이 던진 RuntimeError** 이고, 그때 배치가
+         **통째로 재실행**된다. 종전에 폴백이 없던 4곳(경공매 전국 수집·대량필지 배치(과금
+         게이트)·성장뇌 적재·전문가 원장(append-only))에 그 위험을 새로 넣을 뻔했다.
+      대신 **진입 시점에 판정해 시끄럽게 거절**한다 — 같은 저장소의
+      `services/deliberation-review/.../reconcile_tasks.py` 가 같은 사고(INC-13) 뒤 택한 방식이다.
     """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        pass  # 러닝 루프 없음 = 정상적인 동기 배치 경로
+    else:
+        raise RuntimeError(
+            "run_async_batch 는 동기 컨텍스트 전용이다 — 러닝 루프 안에서는 코루틴을 직접 await 하라"
+        )
 
     async def _runner() -> T:
         try:
@@ -95,12 +161,4 @@ def run_async_batch[T](factory: Callable[[], Awaitable[T]]) -> T:
             # ★배치가 실패해도 정리는 반드시 한다 — 예외 경로가 오히려 더 잘 샌다.
             await _dispose_engines()
 
-    try:
-        return asyncio.run(_runner())
-    except RuntimeError:
-        # 이미 루프가 도는 환경(일부 워커·테스트) — 격리된 새 루프로 실행한다.
-        loop = asyncio.new_event_loop()
-        try:
-            return loop.run_until_complete(_runner())
-        finally:
-            loop.close()
+    return asyncio.run(_runner())

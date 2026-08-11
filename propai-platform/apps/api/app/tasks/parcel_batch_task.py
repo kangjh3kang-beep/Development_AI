@@ -1,6 +1,6 @@
 """F-Parcel 배치 Celery 태스크.
 
-run_batch(job_id): 동기 래퍼로 asyncio.run(BatchService(DbJobStore...).run(job_id)).
+run_batch(job_id): 동기 래퍼로 run_async_batch(BatchService(DbJobStore...).run(job_id)).
 celery 미설치/미가동 시에도 import 가 깨지지 않도록 안전 폴백(try/except).
 """
 
@@ -26,7 +26,8 @@ def _get_celery_app():
 def run_batch(job_id: str) -> dict:
     """배치 잡을 동기 컨텍스트에서 실행한다(Celery 워커 진입점).
 
-    내부적으로 async BatchService.run 을 asyncio.run 으로 구동한다.
+    내부적으로 async BatchService.run 을 `run_async_batch` 로 구동한다
+    (루프 종료 전 커넥션 풀 정리 — 2026-08-08 누수 사고 대응).
     """
     from app.foundation.parcel.batch.batch_service import BatchService
     from app.foundation.parcel.batch.job_store import DbJobStore

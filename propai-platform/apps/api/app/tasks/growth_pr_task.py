@@ -208,7 +208,7 @@ async def _run_async() -> dict[str, Any]:
 def run_pr_bot() -> dict:
     """L2 PR 봇 배치 진입점. GH_TOKEN 없으면 아티팩트만 보존(graceful).
 
-    동기 진입점(Celery 워커)에서 asyncio.run 으로 구동. best-effort.
+    동기 진입점(Celery 워커)에서 `run_async_batch` 로 구동(루프 종료 전 커넥션 정리). best-effort.
     """
 
     try:
