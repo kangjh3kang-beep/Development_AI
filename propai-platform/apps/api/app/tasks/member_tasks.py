@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import logging
 
+from app.tasks._async_batch import run_async_batch
+
 logger = logging.getLogger(__name__)
 
 
@@ -31,17 +33,8 @@ async def _anonymize_async() -> dict:
 
 def anonymize_withdrawn_accounts() -> dict:
     """유예 경과 탈퇴 계정 익명화 배치 진입점. 반환: {"scanned": n, "anonymized": n}."""
-    import asyncio
 
-    try:
-        result = asyncio.run(_anonymize_async())
-    except RuntimeError:
-        # 이미 이벤트루프가 있는 환경(테스트 등) — 새 루프로 격리 실행
-        loop = asyncio.new_event_loop()
-        try:
-            result = loop.run_until_complete(_anonymize_async())
-        finally:
-            loop.close()
+    result = run_async_batch(lambda: _anonymize_async())
     logger.info("탈퇴 익명화 배치 완료: %s", result)
     return result
 
@@ -58,16 +51,8 @@ def purge_expired_order_pii() -> dict:
     개인정보보호법 §21(보유기간 경과 시 지체 없는 파기) 정합 — 회원 익명화(탈퇴 기준)와
     독립적으로 주문 자체의 법정 보존기간을 근거로 buyer_name/buyer_email을 NULL화한다.
     """
-    import asyncio
 
-    try:
-        result = asyncio.run(_purge_order_pii_async())
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        try:
-            result = loop.run_until_complete(_purge_order_pii_async())
-        finally:
-            loop.close()
+    result = run_async_batch(lambda: _purge_order_pii_async())
     logger.info("충전주문 PII 파기 배치 완료: %s", result)
     return result
 

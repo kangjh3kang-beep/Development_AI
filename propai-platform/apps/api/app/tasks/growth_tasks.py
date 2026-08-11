@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import logging
 
+from app.tasks._async_batch import run_async_batch
+
 logger = logging.getLogger(__name__)
 
 
@@ -55,17 +57,9 @@ def flush_growth_events() -> dict:
 
     반환: {"flushed": N}. 동기 진입점(Celery 워커)에서 asyncio.run 으로 구동.
     """
-    import asyncio
 
     try:
-        flushed = asyncio.run(_flush_async())
-    except RuntimeError:
-        # 이미 이벤트 루프가 도는 환경(인프로세스 폴백 등) — 새 루프로 격리.
-        loop = asyncio.new_event_loop()
-        try:
-            flushed = loop.run_until_complete(_flush_async())
-        finally:
-            loop.close()
+        flushed = run_async_batch(lambda: _flush_async())
     except Exception as e:  # noqa: BLE001
         logger.warning("flush_growth_events 실패: %s", str(e)[:160])
         return {"flushed": 0, "error": str(e)[:160]}
@@ -96,17 +90,9 @@ def analyze_growth(window_hours: int = 1) -> dict:
     반환: {"insights": N}. 동기 진입점(Celery 워커)에서 asyncio.run 으로 구동.
     best-effort: 어떤 예외도 워커를 죽이지 않는다.
     """
-    import asyncio
 
     try:
-        n = asyncio.run(_analyze_async(window_hours))
-    except RuntimeError:
-        # 이미 이벤트 루프가 도는 환경 — 새 루프로 격리(flush 선례 동일).
-        loop = asyncio.new_event_loop()
-        try:
-            n = loop.run_until_complete(_analyze_async(window_hours))
-        finally:
-            loop.close()
+        n = run_async_batch(lambda: _analyze_async(window_hours))
     except Exception as e:  # noqa: BLE001
         logger.warning("analyze_growth 실패: %s", str(e)[:160])
         return {"insights": 0, "error": str(e)[:160]}
@@ -136,17 +122,9 @@ def evaluate_healing() -> dict:
     반환: healing_rules.evaluate 요약 dict. 동기 진입점에서 asyncio.run 구동.
     best-effort: 어떤 예외도 워커를 죽이지 않는다.
     """
-    import asyncio
 
     try:
-        result = asyncio.run(_heal_async())
-    except RuntimeError:
-        # 이미 이벤트 루프가 도는 환경 — 새 루프로 격리(flush/analyze 선례 동일).
-        loop = asyncio.new_event_loop()
-        try:
-            result = loop.run_until_complete(_heal_async())
-        finally:
-            loop.close()
+        result = run_async_batch(lambda: _heal_async())
     except Exception as e:  # noqa: BLE001
         logger.warning("evaluate_healing 실패: %s", str(e)[:160])
         return {"executed": 0, "error": str(e)[:160]}
@@ -179,16 +157,9 @@ def evaluate_correction() -> dict:
     반환: feature_flags.evaluate 요약 dict. 동기 진입점에서 asyncio.run 구동.
     best-effort: 어떤 예외도 워커를 죽이지 않는다.
     """
-    import asyncio
 
     try:
-        result = asyncio.run(_correct_async())
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        try:
-            result = loop.run_until_complete(_correct_async())
-        finally:
-            loop.close()
+        result = run_async_batch(lambda: _correct_async())
     except Exception as e:  # noqa: BLE001
         logger.warning("evaluate_correction 실패: %s", str(e)[:160])
         return {"applied": 0, "error": str(e)[:160]}
@@ -225,16 +196,9 @@ def evaluate_improvement() -> dict:
 
     반환: {"generated": {...}, "pr_bot": {...}}. best-effort.
     """
-    import asyncio
 
     try:
-        result = asyncio.run(_improve_async())
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        try:
-            result = loop.run_until_complete(_improve_async())
-        finally:
-            loop.close()
+        result = run_async_batch(lambda: _improve_async())
     except Exception as e:  # noqa: BLE001
         logger.warning("evaluate_improvement 실패: %s", str(e)[:160])
         return {"generated": {}, "error": str(e)[:160]}

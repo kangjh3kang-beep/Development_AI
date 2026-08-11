@@ -10,12 +10,12 @@ expert_panel_service)의 `from app.tasks.memory_tasks import ingest_experience_t
 프로세스-로컬 :memory: 라 워커↔API 교차 불가) + OPENAI_API_KEY(임베딩). 미비 시 graceful 스킵.
 """
 
-import asyncio
 import logging
 
 from app.core.database import async_session_factory
 from app.schemas.memory import MemoryCreate
 from app.services.memory_hub.memory_service import get_memory_hub
+from app.tasks._async_batch import run_async_batch
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,7 @@ def _ingest_experience(memory_data_dict: dict) -> bool:
     """Celery 워커 스레드에서 async 저장을 동기 실행(원본 동작 보존)."""
     logger.info("Starting memory ingestion task (session=%s).", memory_data_dict.get("session_id"))
     try:
-        return asyncio.run(_ingest_async(memory_data_dict))
+        return run_async_batch(lambda: _ingest_async(memory_data_dict))
     except Exception as e:  # noqa: BLE001 — 임베딩/Qdrant/DB 실패는 graceful(분석 무중단)
         logger.error("Error during memory ingestion: %s", str(e)[:200])
         return False
