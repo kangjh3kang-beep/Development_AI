@@ -120,7 +120,16 @@ async def collect_service_health(timeout: float | None = None) -> dict[str, str]
 
     # ★check_qdrant_health 는 내부 동기 호출을 스레드로 뺀다(init_qdrant.py 참조).
     #   동기 호출을 이벤트 루프에 그대로 올리면 wait_for 가 **취소하지 못해** 상한이 장식이 된다.
-    services["qdrant"] = await probe("qdrant", check_qdrant_health(), timeout)
+    #
+    # ★★반환값을 반드시 본다. probe() 는 '예외 없이 끝났는가'만 보므로, 예외를 안에서
+    #   삼키고 False 를 돌려주는 함수를 그냥 넘기면 **무조건 healthy 로 보고**된다.
+    #   실제로 이 리팩터링에서 그 회귀를 넣었고(종전 코드는 불리언을 봤다), 위조 지점을
+    #   직접 태워 보고 나서야 잡았다 — 헬스체크가 거짓말을 하게 되는 결함이다.
+    async def _qdrant() -> None:
+        if not await check_qdrant_health():
+            raise RuntimeError("qdrant 응답 없음")
+
+    services["qdrant"] = await probe("qdrant", _qdrant(), timeout)
 
     return services
 

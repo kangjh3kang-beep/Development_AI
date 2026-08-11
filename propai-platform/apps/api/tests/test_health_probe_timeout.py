@@ -161,6 +161,38 @@ async def test_인자를_안_주면_기본_상한이_쓰인다(monkeypatch: pyte
     assert elapsed < 3.0, f"기본 경로가 상한을 넘겼다: {elapsed:.2f}초"
 
 
+@pytest.mark.asyncio
+async def test_불리언을_돌려주는_점검은_그_값을_봐야_한다(monkeypatch: pytest.MonkeyPatch) -> None:
+    """★리팩터링에서 실제로 넣었던 회귀 — 헬스체크가 거짓말을 하게 된다.
+
+    ``probe()`` 는 '예외 없이 끝났는가'만 본다. 그런데 ``check_qdrant_health`` 는 예외를
+    **안에서 삼키고 False 를 돌려준다**. 그래서 그 코루틴을 그냥 넘기면 qdrant 가 죽어도
+    ``healthy`` 로 보고된다 — 종전 코드는 불리언을 봤는데 공용 통로로 옮기며 빠뜨렸다.
+
+    위조 지점(``init_qdrant.check_qdrant_health``)을 직접 태워서야 잡혔다. 단위 테스트가
+    타임아웃만 보고 있었기 때문이다.
+    """
+    from unittest.mock import AsyncMock
+
+    from apps.api.database import init_qdrant
+
+    monkeypatch.setattr(
+        init_qdrant, "check_qdrant_health", AsyncMock(return_value=False)
+    )
+    services = await health_probe.collect_service_health(timeout=0.5)
+    assert services["qdrant"] == health_probe.UNHEALTHY, (
+        f"qdrant 점검이 False 를 돌려줬는데 {services['qdrant']} 로 보고됐다 — 헬스체크가 거짓말한다"
+    )
+
+    monkeypatch.setattr(
+        init_qdrant, "check_qdrant_health", AsyncMock(return_value=True)
+    )
+    services = await health_probe.collect_service_health(timeout=0.5)
+    assert services["qdrant"] == health_probe.HEALTHY, (
+        "정상인데 healthy 로 보고되지 않았다 — 위양성 가드도 결함이다"
+    )
+
+
 def test_상태_기호의_문자열이_계약이다() -> None:
     """★변이 적발: ``UNHEALTHY = "unhealthy"`` 의 **문자열만** 바꿔도 아무 테스트가 안 죽었다.
 
