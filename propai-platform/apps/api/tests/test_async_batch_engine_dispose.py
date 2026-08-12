@@ -28,16 +28,25 @@ from app.tasks._async_batch import run_async_batch
 
 
 class _SpyEngine:
-    """정리 시점의 **루프 정체**까지 기록한다 — 횟수만으로는 틀린 처방을 못 가른다."""
+    """정리 시점의 **루프 정체**와 **`close` 인자**까지 기록한다 — 횟수만으로는 틀린 처방을 못 가른다.
+
+    ★시그니처는 실제 `AsyncEngine.dispose(close=True)` 와 **같아야** 한다. 종전 스파이는
+      `close` 를 안 받아서 `dispose(close=False)` 변이를 **엉뚱한 이유로** 잡았다:
+      TypeError 가 `_dispose_engines` 의 except 에 삼켜져 카운터가 0이 됐을 뿐이다.
+      **우연한 적발은 잠금이 아니다** — 스파이 시그니처를 실제와 맞추는 순간 그 변이는
+      전부 생존한다(실측). 그래서 시그니처를 맞추고 **`close` 값 자체를 단언**한다.
+    """
 
     def __init__(self) -> None:
         self.disposed = 0
         self.loop: asyncio.AbstractEventLoop | None = None
         self.loop_was_open: bool | None = None
+        self.close_arg: bool | None = None
         self.pool = types.SimpleNamespace(checkedout=lambda: 0)
 
-    async def dispose(self) -> None:
+    async def dispose(self, close: bool = True) -> None:
         self.disposed += 1
+        self.close_arg = close
         self.loop = asyncio.get_running_loop()
         self.loop_was_open = not self.loop.is_closed()
 
@@ -73,6 +82,14 @@ def test_배치_본문과_같은_살아있는_루프에서_정리한다(spy_engi
         assert engine.disposed == 1
         assert engine.loop is seen["body"], "배치 본문과 **다른 루프**에서 정리했다 — 사고가 안 고쳐진다"
         assert engine.loop_was_open is True, "**이미 닫힌 루프**에서 정리했다 — 사고가 안 고쳐진다"
+        # ★`dispose(close=False)` 는 풀만 갈아치우고 **소켓을 닫지 않는다**(fork 용 옵션).
+        #   그러면 죽은 루프에 묶인 연결이 서버 쪽에 그대로 남아 사고가 안 고쳐진다.
+        #   실제 엔진 케이스는 이걸 **못 잡는다**(풀 교체는 close 와 무관하게 일어난다) —
+        #   그래서 여기서 인자 자체를 잠근다.
+        assert engine.close_arg is True, (
+            "정리가 `close=False` 로 불렸다 — 풀은 갈리지만 **연결은 닫히지 않아** "
+            "죽은 루프에 묶인 소켓이 서버에 그대로 남는다"
+        )
 
 
 def test_배치가_실패해도_정리한다(spy_engines: list[_SpyEngine]) -> None:
@@ -630,3 +647,51 @@ def test_모듈_전역_엔진은_전수가_계약에_들어있다() -> None:
         + "\n".join(missing)
         + f"\n계약: {_async_batch._ENGINES}"
     )
+
+
+def test_실제_엔진의_풀이_배치_루프_안에서_교체된다(monkeypatch: pytest.MonkeyPatch) -> None:
+    """★J3 봉합 — 여기까지의 모든 케이스는 `_SpyEngine`(스텁)을 태운다. 즉 잠근 것은
+    **"살아 있는 같은 루프에서 dispose 를 불렀다"** 이지 **"그래서 풀이 실제로 갈린다"** 가
+    아니었다. 스텁이 실제 층을 우회하면 그 층을 지워도 초록이다(CLAUDE.md §검증 규율).
+
+    ★이 케이스는 **진짜 `AsyncEngine`** 을 태운다. DB 접속은 필요 없다 —
+      SQLAlchemy 의 `dispose()` 는 **풀 객체 자체를 새것으로 교체**하고, 그 교체는 연결 없이도
+      관측된다(실측 확인). 죽은 루프에 묶인 연결이 남지 않는 이유가 바로 이 교체다.
+
+    ★잠그는 것: `_ENGINES` 가 가리키는 대상이 **그 실제 효과를 내는 객체**여야 하고,
+      우리가 의존하는 SQLAlchemy 의미(=dispose 는 풀을 교체한다)가 **여전히 참**이어야 한다.
+      라이브러리 업그레이드가 그 의미를 바꾸면 여기서 먼저 빨개진다.
+
+    ★★**안 잠그는 것(정직)**: "연결이 실제로 닫혔는가"는 여기서 못 본다 —
+      `dispose(close=False)` 를 주입해도 **이 케이스는 통과한다**(실측). 풀 교체는 `close` 와
+      무관하게 일어나기 때문이다. 그 축은 `_SpyEngine.close_arg` 단언이 잠근다.
+      소켓이 정말 닫혔는지는 DB 가 필요해 **통합 테스트의 몫**이다(여기 없다).
+    """
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    # ★접속하지 않는다 — 포트 1 은 의도적으로 닿지 않는 주소다(엔진 생성은 지연 평가).
+    engine = create_async_engine("postgresql+asyncpg://u:p@127.0.0.1:1/db", pool_pre_ping=True)
+    module = types.ModuleType("_real_engine_mod")
+    module.engine = engine  # type: ignore[attr-defined]
+    sys.modules["_real_engine_mod"] = module
+    monkeypatch.setattr(_async_batch, "_ENGINES", (("_real_engine_mod", "engine"),))
+
+    pool_before = engine.pool
+    seen: dict[str, object] = {}
+
+    async def work() -> str:
+        seen["loop"] = asyncio.get_running_loop()
+        seen["pool_during_body"] = engine.pool
+        return "ok"
+
+    try:
+        assert run_async_batch(work) == "ok"
+
+        # 공허 진리 방지 — 본문이 실제로 돌았고, 그 시점 풀이 원래 풀이었음을 먼저 못박는다.
+        assert seen.get("pool_during_body") is pool_before, "본문 실행 전에 이미 풀이 갈렸다"
+        assert engine.pool is not pool_before, (
+            "실제 엔진의 풀이 갈리지 않았다 — dispose 가 호출은 됐어도 **실효가 없다**. "
+            "죽은 루프에 묶인 연결이 그대로 남는다."
+        )
+    finally:
+        sys.modules.pop("_real_engine_mod", None)
