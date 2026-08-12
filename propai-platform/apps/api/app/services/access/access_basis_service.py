@@ -94,8 +94,24 @@ def _status_of(dev: str) -> str:
 
 
 def _factor_to_finding(factor: dict[str, Any]) -> AccessFinding:
-    """special_parcel 룰이 반환한 factor 1건 → AccessFinding."""
+    """special_parcel 룰이 반환한 factor 1건 → AccessFinding.
+
+    ★해결경로를 여기서 붙인다(2026-08-12). 이 함수가 factor→finding 의 **단일 통로**라
+    한 곳만 고치면 이 서비스가 만드는 모든 요인이 따라온다.
+
+    ★왜 필요했나: `detect_special_parcel` 은 요인마다 `_resolution_for` 를 붙이는데,
+    이 서비스는 판정 룰만 재사용하고 그 호출을 하지 않았다. 그래서 **이 서비스에서만
+    도달하는 3요인**(막다른 도로·자루형 통로부·소방 접근)은 `resolution_key` 가 심겨
+    있는데도 그 코드를 소비하는 곳이 없었다 — #538 이 만든 코드 기반 라우팅이 이 표면에는
+    닿지 않는 상태였다(2026-08-12 라이브 검증 중 발견).
+
+    판정은 `_resolution_for` 에 **위임**한다(재구현 금지). 코드(`resolution_key`)가 있으면
+    코드가 이기고, 없으면 종전 이름 기반 분기를 탄다.
+    """
     dev = str(factor.get("developability") or "POSSIBLE")
+    res = sp._resolution_for(
+        str(factor.get("category") or ""), dev, factor.get("resolution_key"),
+    )
     return AccessFinding(
         category=str(factor.get("category") or ""),
         developability=dev,
@@ -104,6 +120,11 @@ def _factor_to_finding(factor: dict[str, Any]) -> AccessFinding:
         permit_prerequisites=[str(x) for x in (factor.get("permit_prerequisites") or [])],
         legal_basis=[str(x) for x in (factor.get("legal_basis") or [])],
         legal_ref_keys=[str(x) for x in (factor.get("legal_ref_keys") or [])],
+        resolution_paths=[str(x) for x in (res.get("resolution_paths") or [])],
+        alternatives=[str(x) for x in (res.get("alternatives") or [])],
+        # ★요인 단위 값이다. 상태 종합 `resolvable` 은 등급(dev)에서 따로 산출하므로
+        #   덮어쓰지 않는다 — 두 값의 의미가 다르다(요인 하나 vs 상태 전체).
+        resolvable=str(res.get("resolvable") or ""),
     )
 
 
