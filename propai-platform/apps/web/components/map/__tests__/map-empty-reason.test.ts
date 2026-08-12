@@ -57,6 +57,9 @@ describe("코로플레스 겹침 고지", () => {
 
 describe("실거래 0건 사유", () => {
   const payload = {
+    // ★center 는 SatongMarketPayload 의 **필수** 필드다(값은 null 허용).
+    //   빠뜨렸다가 CI 가 잡았다 — 워크트리에서는 프론트 타입체크가 안 돌아 CI 가 유일한 검증자다.
+    center: null,
     radius_m: 1500,
     radius_applied: true,
     categories: {
@@ -79,7 +82,7 @@ describe("실거래 0건 사유", () => {
   it("★가려진 것도 위치 미확인도 없으면 사유를 지어내지 않는다", () => {
     expect(
       buildMaskedSampleReason({
-        radius_m: 1500, radius_applied: true,
+        center: null, radius_m: 1500, radius_applied: true,
         categories: { land_trade: { sample_basis: { located_count: 0, unlocated_count: 0, masked_jibun_count: 0 } } },
       }),
     ).toBe("");
