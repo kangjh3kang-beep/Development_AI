@@ -1247,3 +1247,145 @@ def test_음성_대조표가_조용히_줄지_않는다() -> None:
     assert len(_LOOP_VIOLATIONS) >= 16, (
         f"양성 대조표가 {len(_LOOP_VIOLATIONS)}건으로 줄었다 — 탐지력 방지선이 약해졌다."
     )
+
+
+# ── 종료 신호 3종을 **각각** 태운다 ──────────────────────────────────────
+# ★4라운드 지적: `except (CancelledError, KeyboardInterrupt, SystemExit)` 로 좁힌 것이
+#   이 커밋의 **유일한 프로덕션 변경**인데, 되돌려도(`except BaseException`) 테스트가 하나도
+#   안 죽었다. 테스트 파일에 `KeyboardInterrupt`·`SystemExit` 토큰이 **0회**였기 때문 —
+#   튜플의 뒤 두 이름이 **장식**이었다. "탐지력을 하나도 잠그지 않았다"는 제목의 커밋이
+#   자기 변경에서 같은 형태를 재발시킨 것이다(CLAUDE.md §1·§A-5).
+_TERMINATION_SIGNALS = (
+    ("취소", asyncio.CancelledError),
+    ("인터럽트", KeyboardInterrupt),
+    ("종료요청", SystemExit),
+)
+
+
+@pytest.mark.parametrize(
+    ("label", "exc_type"), _TERMINATION_SIGNALS, ids=[s[0] for s in _TERMINATION_SIGNALS]
+)
+def test_배수가_어떤_종료신호로_끊겨도_엔진은_정리한다(
+    label: str,
+    exc_type: type[BaseException],
+    spy_engines: list[_SpyEngine],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """★세 신호를 **각각** 태운다 — 하나만 태우면 나머지 둘은 튜플 안의 장식이 된다."""
+
+    async def _signal(*_a: object, **_k: object) -> int:
+        raise exc_type
+
+    monkeypatch.setattr(_async_batch, "_drain_child_tasks", _signal)
+
+    async def _body() -> str:
+        return "ok"
+
+    with pytest.raises(exc_type):
+        run_async_batch(lambda: _body())
+
+    assert all(e.disposed == 1 for e in spy_engines), (
+        f"배수가 {label}으로 끊기자 정리에 도달하지 못했다 — 장애 기전이 종료 경로로 돌아온다"
+    )
+
+
+@pytest.mark.parametrize(
+    ("label", "exc_type"), _TERMINATION_SIGNALS, ids=[s[0] for s in _TERMINATION_SIGNALS]
+)
+def test_한_엔진이_어떤_종료신호로_끊겨도_나머지는_정리한다(
+    label: str,
+    exc_type: type[BaseException],
+    spy_engines: list[_SpyEngine],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """★`_dispose_engines` 의 엔진별 핸들러도 같은 셋을 잡아야 한다 — 한 겹 위에서만 좁히고
+    여기엔 적용하지 않았던 것이 4라운드 지적이다(§D-20)."""
+
+    async def _signal(close: bool = True) -> None:
+        raise exc_type
+
+    monkeypatch.setattr(spy_engines[0], "dispose", _signal)
+
+    async def work() -> int:
+        return 7
+
+    with pytest.raises(exc_type):
+        run_async_batch(work)
+
+    assert spy_engines[1].disposed == 1, (
+        f"첫 엔진이 {label}으로 끊기자 나머지 엔진 정리가 통째로 건너뛰어졌다"
+    )
+
+
+def test_종료신호가_취소보다_우선_전파된다(
+    spy_engines: list[_SpyEngine], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """★마지막 것만 보관하면 앞선 `KeyboardInterrupt` 가 뒤따르는 `CancelledError` 에 덮여
+    **Ctrl-C 가 먹힌다** — 코드가 "취소를 먹으면 워커 종료가 지연된다"고 쓴 그 일이다."""
+
+    async def _interrupt(close: bool = True) -> None:
+        raise KeyboardInterrupt
+
+    async def _cancel(close: bool = True) -> None:
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(spy_engines[0], "dispose", _interrupt)  # 먼저
+    monkeypatch.setattr(spy_engines[1], "dispose", _cancel)  # 나중
+
+    async def work() -> int:
+        return 1
+
+    with pytest.raises(KeyboardInterrupt):
+        run_async_batch(work)
+
+
+# ★무의미한 값만 폴백 대상이다. **양수는 존중**한다(호출부가 일부러 짧게 주는 것은 의도).
+_CLAMP_CASES: tuple[tuple[str, float], ...] = (
+    ("0", 0.0),
+    ("음수", -5.0),
+)
+
+
+@pytest.mark.parametrize(("label", "bad"), _CLAMP_CASES, ids=[c[0] for c in _CLAMP_CASES])
+def test_상한_인자의_하한도_클램프된다(label: str, bad: float) -> None:
+    """★"경계는 양방향(§D-19)"이라고 **주석에만 적고** 런타임엔 `min()` 만 있었다 —
+    `timeout=0`·음수면 배수가 **통째로 건너뛰어졌다**(4라운드 실측 drained=0·elapsed=0.000s).
+    `max-h` 만 걸고 `min-h` 를 안 걸어 프로덕션이 0px 이 된 그 사고와 같은 형태다."""
+
+    async def _child() -> None:
+        await asyncio.sleep(0.02)
+
+    async def _body() -> int:
+        asyncio.ensure_future(_child())  # noqa: RUF006
+        return await _async_batch._drain_child_tasks(timeout=bad)
+
+    drained = asyncio.run(_body())
+    assert drained >= 1, (
+        f"timeout={label} 에서 배수가 건너뛰어졌다(drained={drained}) — "
+        "무의미한 값은 기본값으로 돌아가야 한다"
+    )
+
+
+def test_NaN_상한이_상한을_무력화하지_않는다(monkeypatch: pytest.MonkeyPatch) -> None:
+    """★`min(nan, 60)` 은 **`nan`** 을 돌려줘 상한마저 무력화된다(4라운드 실측: NaN + 3600초
+    자식이 5초 뒤에도 대기 중). `max()` 를 앞에 두는 형태로는 NaN 을 못 잡는다 —
+    `not (timeout >= MIN)` 이어야 NaN 이 하한으로 떨어진다."""
+    import math
+
+    async def _never() -> None:
+        await asyncio.sleep(3600)
+
+    monkeypatch.setattr(_async_batch, "_CHILD_DRAIN_TIMEOUT_SEC", 0.05)
+
+    async def _body() -> float:
+        task = asyncio.ensure_future(_never())
+        task.set_name("NaN-확인용")
+        started = asyncio.get_running_loop().time()
+        await asyncio.wait_for(_async_batch._drain_child_tasks(timeout=math.nan), timeout=3.0)
+        return asyncio.get_running_loop().time() - started
+
+    try:
+        elapsed = asyncio.run(_body())
+    except TimeoutError:
+        pytest.fail("NaN 상한이 클램프되지 않아 무한 대기했다 — 상한이 무력화된다")
+    assert elapsed < 1.0, f"NaN 이 하한으로 떨어지지 않았다({elapsed:.2f}초)"

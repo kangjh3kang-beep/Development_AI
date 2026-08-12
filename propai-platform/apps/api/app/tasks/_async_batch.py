@@ -127,14 +127,26 @@ async def _dispose_engines() -> int:
             disposed += 1
         except Exception:  # noqa: BLE001 — 정리 실패가 배치 결과를 덮지 않게 한다
             logger.warning("engine dispose 실패: %s.%s", module_name, attr, exc_info=True)
-        except BaseException as exc:  # noqa: BLE001
+        except (asyncio.CancelledError, KeyboardInterrupt, SystemExit) as exc:
             # ★★취소(`CancelledError`)는 **`BaseException` 계열**이라 위 `except Exception` 을
             #   통과한다 → **첫 엔진에서 끊기면 나머지 엔진은 정리 시도조차 못 한다.**
             #   호출부(`_runner`)에서 같은 결함을 고쳐 놓고 **여기 한 겹 아래에 그대로 남아
             #   있었다** — 독립 적대검증 3라운드가 실제 `run_async_batch` 로 재현했다.
             #   ★"처방을 적용한 범위 = 결함이 사는 범위인가"(CLAUDE.md §D-20)의 실례다.
+            #   ★`BaseException` 을 통째로 잡지 **않는다** — `GeneratorExit` 까지 잡으면 그 안에서
+            #     `await` 하는 순간 `RuntimeError: coroutine ignored GeneratorExit` 가 된다.
+            #     한 겹 위(`_runner`)에서 같은 이유로 좁혀 놓고 **여기엔 적용하지 않았다**
+            #     (4라운드 지적 — §D-20 "처방을 적용한 범위 = 결함이 사는 범위인가"를
+            #     인용한 바로 그 커밋 안에서 재발).
             logger.warning("engine dispose 취소됨: %s.%s", module_name, attr, exc_info=True)
-            cancelled = exc  # 나머지 엔진은 계속 시도하고, 취소는 루프 끝에서 전파한다
+            # ★**우선순위로 보관**한다. 마지막 것만 남기면 앞선 `KeyboardInterrupt` 가 뒤따르는
+            #   `CancelledError` 에 덮여 **Ctrl-C 가 먹힌다** — 바로 아래 주석이 "취소를 먹으면
+            #   워커 종료가 지연된다"고 쓴 그 일이다(4라운드 실측).
+            if cancelled is None or (
+                isinstance(cancelled, asyncio.CancelledError)
+                and not isinstance(exc, asyncio.CancelledError)
+            ):
+                cancelled = exc  # 종료 신호(KI·SystemExit)가 취소보다 우선한다
     # ★반환값 `disposed` 는 **소비처 0**이고 잠금도 없다(변이 생존 — 설명 가능한 생존).
     #   진단 로그·수동 확인용으로만 남긴다. 여기에 락을 만들면 아무도 안 쓰는 값을
     #   복창하는 동어반복이 된다 — 대신 그 사실을 적는다(CLAUDE.md §5).
@@ -156,9 +168,16 @@ async def _dispose_engines() -> int:
 _CHILD_DRAIN_TIMEOUT_SEC = 30.0
 
 # 가용성 계약: 배수 상한은 이 범위를 벗어나면 안 된다.
-#   하한 > 0 — 0 이면 배수가 사실상 없는 것과 같다(경계는 양방향·CLAUDE.md §D-19).
 #   상한 60 — 가장 촘촘한 beat 주기(`flush_growth_events` 5초)의 큐 적체를 막는 실무 상한.
 _CHILD_DRAIN_TIMEOUT_MAX_SEC = 60.0
+
+# ★하한 쪽은 **기본값 폴백**으로 건다. 종전에는 "경계는 양방향(§D-19)"이라고 **주석에만 적고**
+#   런타임에는 `min()` 만 있어서, `timeout=0`·음수를 주면 배수가 **통째로 건너뛰어졌다**
+#   (4라운드 실측: drained=0 · elapsed=0.000s). `max-h` 만 걸고 `min-h` 를 안 걸어
+#   프로덕션이 0px 이 된 그 사고와 **같은 형태**다.
+# ★작은 엡실론(0.001 같은 값)으로 클램프하지 **않는다** — 1ms 배수는 건너뛴 것과 사실상
+#   같아서 "고쳤다"는 착각만 만든다. 무의미한 값이 들어오면 **설정된 기본값**으로 돌린다.
+# ★단 **양수는 존중한다**: 호출부가 일부러 짧게 주는 것은 의도다(테스트가 그렇게 쓴다).
 
 
 async def _drain_child_tasks(timeout: float | None = None) -> int:
@@ -211,7 +230,15 @@ async def _drain_child_tasks(timeout: float | None = None) -> int:
     #   2단 편집이 범위 락을 통과했다(독립 적대검증 실증: MAX 3600 → SEC 3600 둘 다 생존).
     #   여기서 소비하면 ① 상수가 장식이 아니게 되고 ② `timeout=` **인자 경로까지** 묶인다
     #   (종전 범위 락은 기본 상수만 봤다).
-    timeout = min(timeout, _CHILD_DRAIN_TIMEOUT_MAX_SEC)
+    # ★**양방향**으로 건다. `min()` 만 두면 `timeout=0`·음수가 배수를 통째로 건너뛴다.
+    # ★`not (timeout > 0)` 형태여야 **NaN 도 함께 잡힌다** — `min(nan, 60)` 은 `nan` 을 돌려줘
+    #   상한마저 무력화된다(4라운드 실측: NaN + 3600초 자식이 5초 뒤에도 대기 중).
+    #   `max()` 를 앞에 두는 형태는 NaN 을 못 잡는다(NaN 비교는 전부 False).
+    timeout = (
+        _CHILD_DRAIN_TIMEOUT_SEC
+        if not (timeout > 0)
+        else min(timeout, _CHILD_DRAIN_TIMEOUT_MAX_SEC)
+    )
 
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
@@ -313,6 +340,12 @@ def run_async_batch(factory: Callable[[], Awaitable[T]]) -> T:
                 #   생겼고 워커 종료·Ctrl-C 가 그 창에 떨어지면 누수가 그대로 돌아온다.
                 #   (독립 적대검증이 실제 SIGINT 로 재현: dispose 0회)
                 #   ★정리는 하고 **취소는 반드시 전파**한다 — 삼키면 종료가 지연된다.
+                # ★**설명 가능한 생존**: 이 셋을 `except BaseException` 으로 **넓히는** 변이는
+                #   테스트가 못 잡는다. 차이가 나는 유일한 형태가 `GeneratorExit` 인데,
+                #   그건 `run_async_batch` 의 공개 경로로는 발생시킬 수 없다(`Task` 는 정지 중
+                #   코루틴을 `close()` 하지 않는다). 잠그려면 `_runner` 를 모듈 스코프로 끌어내
+                #   직접 `close()` 해야 하는데, **테스트를 위해 구현 구조를 바꾸는 것**이라
+                #   하지 않는다. 좁히는 변이(셋 → CancelledError 만)는 잡힌다.
                 # ★`BaseException` 을 통째로 잡지 **않는다**: `GeneratorExit` 까지 잡으면
                 #   그 안에서 `await` 하는 순간 `RuntimeError: coroutine ignored GeneratorExit`
                 #   가 되어 **깨끗한 코루틴 종료를 에러로 바꾼다**(3라운드 실측).
