@@ -6,6 +6,7 @@ import { DesignWorkspace } from "@/components/design/DesignWorkspace";
 import { useProjectContextStore, type DesignData, type SiteAnalysisData } from "@/store/useProjectContextStore";
 import { useProjectStore, type Project } from "@/store/useProjectStore";
 import { SATONG_CONTENT_Z } from "@/lib/satong-map-z";
+import { createsStackingContext } from "@/lib/stacking-context";
 
 vi.mock("@/components/design/DesignStudio", () => ({
   DesignStudio: ({ onOpen3D }: { onOpen3D?: () => void }) => (
@@ -321,16 +322,14 @@ describe("DesignWorkspace 층위 계약 — 스태킹 컨텍스트 금지", () =
     // 공허 진리 방지 — 직계 자식이 없으면 아래 검사가 무의미하다.
     expect(direct.length, "직계 자식이 없다 — 렌더가 비었다").toBeGreaterThan(0);
 
-    // 스태킹 컨텍스트 생성 조합: positioned(+z) · isolate · transform/filter 유틸.
-    const POSITIONED = /(?:^|\s)(?:[a-z0-9-]+:)*(?:absolute|relative|sticky|fixed)(?=\s|$)/;
-    const Z_UTIL = /(?:^|\s)(?:[a-z0-9-]+:)*-?z-(?:\[\d+\]|\d+)(?=\s|$)/;
-    const ISOLATE = /(?:^|\s)(?:[a-z0-9-]+:)*isolate(?=\s|$)/;
-
+    // 스태킹 컨텍스트 판정은 **공용 판정기**에 맡긴다(lib/stacking-context.ts).
+    //   ★왜 공용인가: 종전 이 자리의 정규식은 `isolate` **하나만** 봤는데 바로 위 주석은
+    //     "transform/filter 유틸"까지 본다고 적혀 있었다 — 코드가 갖지 않은 면역을 주장한
+    //     주석이다(규율 C-11). 같은 판정을 주소 팝오버 가드도 따로 들고 있었고, 그쪽은
+    //     Tailwind **v3** 토큰을 찾고 있었다(저장소는 v4 — `backdrop-blur-*` 106건 미탐).
+    //     판정을 한 곳으로 모아 한 곳을 고치면 두 가드가 함께 따라오게 한다.
     const contexts = [root as HTMLElement, ...direct]
-      .filter((el) => {
-        const cls = (el.className ?? "").toString();
-        return (POSITIONED.test(cls) && Z_UTIL.test(cls)) || ISOLATE.test(cls);
-      })
+      .filter((el) => createsStackingContext((el.className ?? "").toString()))
       .map((el) => (el.className ?? "").toString().slice(0, 80));
 
     expect(
