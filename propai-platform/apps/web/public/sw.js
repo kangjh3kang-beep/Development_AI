@@ -294,7 +294,14 @@
 //        ★채번: origin/main 실제 상수 v498 확인 → v499. PR 생성 前 보드 claim 선점(15회차).
 //        ★경합 방향 확인: 기능 PR(#614 `fdd2fa09`)이 **먼저** 머지된 뒤 이 범프를 올린다.
 //          반대 순서였다면 그 기능이 캐시로 가려진다(규율 E-22 가 경고하는 그것).
-const CACHE_NAME = "propai-v500-popover-ancestor";
+// v501: 간편 분양성 조사(#619) — 지번 1개로 시세·계획시설·입지·분양사례.
+//        프론트 런타임 4파일이 렌더에 닿는다: `quick-survey/page.tsx`(신규 라우트) ·
+//        `QuickSalesSurveyClient.tsx`(신규) · `DashboardHome.tsx` · `lib/navigation/route-registry.ts`.
+//        ★신규 **라우트와 네비 레지스트리**가 함께 바뀌었다 — 구 번들은 이 경로를 아예 모르므로
+//          캐시가 남으면 진입점이 보이지 않는다(기능이 있어도 도달 불가).
+//        ★채번: origin/main 실제 상수 v500 확인 → v501. PR 생성 前 보드 claim 선점(16회차).
+//        ★경합 방향: 기능 PR(#619 `3b1c8997`)이 **먼저** 머지된 뒤 이 범프를 올린다.
+const CACHE_NAME = "propai-v501-quick-sales-survey";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
