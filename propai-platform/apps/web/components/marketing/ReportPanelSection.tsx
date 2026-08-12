@@ -8,7 +8,7 @@ import { ArrowRight, BarChart3, MapPin, Search, ShieldCheck, type LucideIcon } f
  * 리포트 패널 — white 섹션.
  *  • 주소 입력 pill: 미인증 상태이므로 실 분석 호출은 하지 않고
  *    로그인/가입(`/{locale}/login?next=...`)으로 유도한다.
- *  • 보고서 4종 선택 카드(실제 제공 산출물 명칭과 정합 —
+ *  • 보고서 선택 카드(실제 제공 산출물 명칭과 정합 —
  *    app/[locale]/(dashboard)/page.tsx creationProducts 기준).
  */
 type ReportOption = {
@@ -20,6 +20,15 @@ type ReportOption = {
 };
 
 const reports: ReportOption[] = [
+  {
+    // ★맨 앞 — "지번 하나만"이 이 산출물의 전부이자 차별점이다.
+    //   대시보드 `creationProducts` 의 첫 카드와 순서를 맞춘다(두 목록은 서로의 미러다).
+    id: "quick-survey",
+    title: "간편 분양성 조사",
+    desc: "주변시세·계획시설·입지·분양사례 (수요 지표 미포함)",
+    icon: Search,
+    routeId: "quick-survey",
+  },
   {
     id: "precheck",
     title: "후보지 진단서",
@@ -121,8 +130,15 @@ export function ReportPanelSection({ locale }: { locale: string }) {
           </div>
         </form>
 
-        {/* 보고서 4종 선택 카드 */}
-        <div role="radiogroup" aria-label="생성할 보고서 종류" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {/* 보고서 선택 카드 — ★열 수를 개수에 **하드코딩하지 않는다**. `lg:grid-cols-4` 에
+            5번째가 들어오면 마지막 한 장이 홀로 떨어진다(카드가 늘 때마다 깨지는 형태).
+            `auto-fit` + `minmax` 로 개수와 무관하게 채운다. */}
+        <div
+          role="radiogroup"
+          aria-label="생성할 보고서 종류"
+          className="grid gap-3"
+          style={{ gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))" }}
+        >
           {reports.map((r) => {
             const Icon = r.icon;
             const active = selected === r.id;
