@@ -42,7 +42,11 @@ import {
   type VWorldBaseLayer,
   zoneColor,
 } from "@/lib/satong-map-layers";
-import { selectMappableGroups } from "@/lib/market/comparable-sample";
+import {
+  noSampleReason,
+  selectMappableGroups,
+  type SampleBasis,
+} from "@/lib/market/comparable-sample";
 import { bindSatongLabel, planSatongLabels, satongLabelLOD } from "@/lib/satong-map-labels";
 import type { SiteLayoutOverlay } from "@/lib/site-layout";
 import {
@@ -463,7 +467,87 @@ export function buildOverlayNotes(counts: OverlayNoteCounts): string {
   }
   if (counts.showCapacity) notes.push(counts.capacityCount ? `개발여력 ${counts.capacityCount}건` : "개발여력 무자료(실효·현황 용적률 필요)");
   if (counts.markerCount) notes.push(`좌표 ${counts.markerCount}건`);
+  const covered = buildChoroplethOverlapNote(counts);
+  if (covered) notes.push(covered);
   return notes.join(" · ");
+}
+
+/**
+ * 지도 상태줄용 "왜 실거래가 하나도 안 나오나" 문장.
+ *
+ * ★재구현하지 않는다 — `noSampleReason` 은 **백엔드와 글자까지 같아야** 하고 공유 골든
+ *   (`__tests__/fixtures/no-sample-reason.cases.json`)이 그 값을 잠그고 있다. 여기서는
+ *   카테고리별 `sample_basis` 를 **합산**해 그 함수에 넘기기만 한다.
+ *
+ * ★합산이 안전한 이유: located/unlocated/masked 는 전부 **거래 건수**이고 카테고리끼리
+ *   서로소다(한 거래가 두 카테고리에 들지 않는다). 단위가 다른 group 계열은 더하지 않는다.
+ */
+export function buildMaskedSampleReason(payload: {
+  radius_m?: number | null;
+  radius_applied?: boolean | null;
+  categories?: Record<string, { sample_basis?: {
+    located_count?: number; approximate_count?: number; unlocated_count?: number;
+    capped_count?: number; masked_jibun_count?: number; masked_jibun_group_count?: number;
+  } | null } | null> | null;
+}): string {
+  const cats = Object.values(payload.categories || {});
+  let located = 0, approximate = 0, unlocated = 0, capped = 0, masked = 0, maskedGroups = 0;
+  for (const c of cats) {
+    const b = c?.sample_basis;
+    if (!b) continue;
+    located += b.located_count ?? 0;
+    approximate += b.approximate_count ?? 0;
+    unlocated += b.unlocated_count ?? 0;
+    capped += b.capped_count ?? 0;
+    masked += b.masked_jibun_count ?? 0;
+    maskedGroups += b.masked_jibun_group_count ?? 0;
+  }
+  // 가려진 것도 위치 미확인도 없으면 굳이 사유를 지어내지 않는다(그냥 거래가 없는 것이다).
+  if (masked === 0 && unlocated === 0) return "";
+  const basis: SampleBasis = {
+    scope: payload.radius_applied ? "radius" : "sigungu",
+    radiusApplied: !!payload.radius_applied,
+    radiusM: payload.radius_m ?? null,
+    locatedCount: located,
+    approximateCount: approximate,
+    unlocatedCount: unlocated,
+    cappedCount: capped,
+    maskedJibunCount: masked,
+    maskedJibunGroupCount: maskedGroups,
+  };
+  return noSampleReason(basis);
+}
+
+/** 채움 색상으로 같은 필지를 칠하는 레이어들 — **그리는 순서**대로 나열한다(뒤가 앞을 덮는다). */
+const CHOROPLETH_PAINT_ORDER = ["용도지역", "공시지가", "개발여력", "노후도"] as const;
+
+/**
+ * 코로플레스 겹침 고지 — "N건 있다는데 화면엔 없다"의 정체를 말한다.
+ *
+ * ★왜 (2026-08-12 사용자 지적 "공시지가가 지도에 안 나온다"):
+ *   데이터도 있었고 **실제로 칠해지고 있었다**(priceCount 는 폴리곤을 그린 뒤에만 증가한다).
+ *   문제는 같은 폴리곤에 용도지역(0.34) → 공시지가(0.42) → 개발여력(0.50) → 노후도 순으로
+ *   **채움을 덧칠**한다는 것이다. 코로플레스는 원리적으로 **한 번에 하나만 보인다** —
+ *   뒤에 그린 것이 앞을 완전히 가린다.
+ *
+ *   그런데 상태줄은 "공시지가 2건"이라고만 해서, 사용자는 **데이터가 나오는데 왜 안 보이나**로
+ *   읽는다. 숫자는 맞고 화면은 비어 보이니 시스템 결함으로 보일 수밖에 없다.
+ *
+ * ★여기서는 '고지'만 한다. 색상 레이어를 라디오(상호배타)로 바꿀지는 UX 결정이라
+ *   지도 소유 세션 판단으로 남긴다 — 고지는 되돌리기 쉽고, 배타 전환은 그렇지 않다.
+ */
+export function buildChoroplethOverlapNote(counts: OverlayNoteCounts): string {
+  const active = [
+    counts.showZoning ? "용도지역" : null,
+    counts.showPrice ? "공시지가" : null,
+    counts.showCapacity ? "개발여력" : null,
+    counts.showAge ? "노후도" : null,
+  ].filter((x): x is string => x != null);
+  if (active.length < 2) return "";
+  // 그리는 순서의 **마지막** 것이 화면에 보이는 색이다.
+  const visible = CHOROPLETH_PAINT_ORDER.filter((name) => active.includes(name)).at(-1);
+  const hidden = active.filter((name) => name !== visible);
+  return `색상 레이어 ${active.length}개 겹침 — 화면 색은 ${visible} (${hidden.join("·")}는 가려짐)`;
 }
 
 /** 선택 상태 SSOT 멤버십 키(공용) — pnu 우선, 없으면 주소 정규화(공백 축약) 폴백.
@@ -2396,8 +2480,21 @@ export function SatongMultiMap({
     if (cappedTotal > 0) {
       cutParts.push(`유형별 상한초과 ${cappedTotal}건 생략`);
     }
-    // 분양·경매 노트는 독립 이펙트(presaleAuctionNote)가 담당 — 실거래만 여기서.
-    setMarketNote([marketCount ? `실거래 ${marketCount}곳` : "실거래 무자료", ...cutParts].join(" · "));
+    // ★표시할 거래가 하나도 없으면 **왜 없는지**를 말한다(2026-08-12 사용자 지적).
+    //   종전 문구는 "실거래 무자료 · 사전컷 67건 생략 · 좌표미확보 47건 제외 · 반경밖 301건 제외"
+    //   였는데, 이건 **우리 파이프라인 내부 용어**라 사용자가 원인을 알 수 없다. 실제 원인은
+    //   국토부 공개자료가 **지번을 가려서**(예: 2**, 3**) 제공해 좌표를 찍을 수 없다는 것이다.
+    //   ★같은 사유 문장이 이미 있다 — 탁상감정은 comparable_skipped_reason 으로 정확히
+    //     말하고 있었고, 프론트에도 noSampleReason 이 **백엔드와 글자까지 일치하도록**
+    //     공유 골든으로 잠겨 있다. 지도만 그 통로를 안 쓰고 있었다(코드는 있는데 소비처 없음).
+    //   → 재구현하지 않고 그 공용 함수를 부른다.
+    const maskedReason = marketCount === 0 ? buildMaskedSampleReason(marketPayload) : "";
+    setMarketNote(
+      [
+        marketCount ? `실거래 ${marketCount}곳` : "실거래 무자료",
+        ...(maskedReason ? [maskedReason] : cutParts),
+      ].join(" · "),
+    );
 
     // ★선택필지가 있을 때만 fitBounds(선택 대상지로 이동). 선택 없이 지도중심으로 탐색(브라우즈
     //   모드)할 땐 fitBounds 금지 — 사용자가 보던 화면을 유지하고, moveend→재조회 루프를 끊는다.
