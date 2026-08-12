@@ -213,7 +213,7 @@ def test_계약에_풀드_엔진이_최소_하나_실재한다() -> None:
 
 # 루프를 **직접 만들거나 직접 돌리는** API 이름.
 # ★`run_until_complete` 를 빠뜨리면 안 된다 — R1 이 제거한 폴백이 쓰던 바로 그 API 다.
-_LOOP_MAKERS = {
+_LOOP_MAKERS: set[str] = {
     "run", "new_event_loop", "run_until_complete", "run_forever", "Runner", "set_event_loop",
     # ★독립 적대검증이 실측한 우회 — 루프 객체를 직접 만든다.
     "SelectorEventLoop", "ProactorEventLoop",
@@ -229,7 +229,7 @@ _LOOP_MAKERS = {
 # ★임포트 자체를 위반으로 보면 안 된다(위양성 실측): `termination_cert.py` 는 `anyio` 를
 #   `anyio.to_thread.run_sync` 로만 쓴다 — 그건 스레드 오프로드지 루프 생성이 아니다.
 #   같은 이유로 `asgiref` 의 `sync_to_async` 도 무해하다. **호출 이름으로 가른다.**
-_THIRD_PARTY_LOOP_RUNNERS = {
+_THIRD_PARTY_LOOP_RUNNERS: set[tuple[str, str]] = {
     ("anyio", "run"),
     ("uvloop", "run"),
     ("uvloop", "install"),
@@ -355,6 +355,7 @@ def _loop_makers_in(path: Path) -> list[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"))
     aliases = _asyncio_aliases(tree)
     bound_makers = _aliased_loop_makers(tree, aliases)
+    loop_names = _loop_valued_names(tree)
 
     # ⑧ ★**루프 생성자를 "값으로" 넘기는 것 자체**를 위반으로 본다 — 호출되는 자리(`Call.func`)가
     #   아닌 곳에 나타난 `asyncio.run` 등. 이 한 규칙이 `functools.partial(asyncio.run)`,
@@ -431,25 +432,70 @@ def _loop_makers_in(path: Path) -> list[str]:
         #     `run_forever` 는 서드파티(websocket-client 등)에 흔한 메서드명이라
         #     잠재 위양성이 아니라 시간 문제였다. **루프처럼 보이는 소유자**로 좁힌다.
         elif node.func.attr in {"run_until_complete", "run_forever"} and _looks_like_loop(
-            owner, aliases
+            owner, aliases, loop_names
         ):
             found.append(f"{path.name}:{node.lineno} <loop>.{node.func.attr}")
     return found
 
 
-def _looks_like_loop(owner: ast.expr, aliases: set[str]) -> bool:
+def _detect(source: str, tmp_path: Path) -> bool:
+    """소스 한 조각을 탐지기에 먹여 위반 여부를 돌려준다(대조표 전용 헬퍼)."""
+    probe = tmp_path / "meta_probe.py"
+    probe.write_text(source, encoding="utf-8")
+    return bool(_loop_makers_in(probe))
+
+
+def _loop_valued_names(tree: ast.AST) -> set[str]:
+    """**루프를 담은 변수 이름**을 모은다 — 소유자 뿌리가 asyncio 가 아니어도 잡기 위해.
+
+    ★4라운드 실측 우회(둘 다 교과서적 형태다):
+      · `policy = asyncio.get_event_loop_policy()` → `lp = policy.new_event_loop()`
+        → `lp.run_until_complete(...)`  — 뿌리가 `policy` 라 별칭이 아니고 `lp` 에 'loop' 도 없다
+      · `ev = uvloop.new_event_loop()` → `ev.run_until_complete(...)`
+    ★고정점까지 돈다 — `a = mk_loop()` · `b = a` 사슬도 따라간다.
+    """
+    names: set[str] = set()
+    while True:
+        before = len(names)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Assign | ast.AnnAssign):
+                continue
+            value = node.value
+            hit = False
+            if isinstance(value, ast.Call):
+                fn = value.func
+                attr = fn.attr if isinstance(fn, ast.Attribute) else getattr(fn, "id", "")
+                hit = attr in _LOOP_MAKERS
+            elif isinstance(value, ast.Name):
+                hit = value.id in names
+            if not hit:
+                continue
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            names.update(t.id for t in targets if isinstance(t, ast.Name))
+        if len(names) == before:
+            return names
+
+
+def _looks_like_loop(owner: ast.expr, aliases: set[str], loop_names: set[str]) -> bool:
     """소유자가 **이벤트 루프일 법한가** — ④의 위양성을 줄이되 실제 형태는 놓치지 않는다.
 
     참: 호출 결과(`asyncio.get_event_loop()....`) · asyncio 별칭 뿌리 · 이름에 `loop` 포함.
     거짓: `self` · 임의 도메인 객체.
     """
-    if isinstance(owner, ast.Call):
-        return True
     root = _attr_root(owner)
-    if root is not None and root in aliases:
+    if root is not None and (root in aliases or root in loop_names):
         return True
     name = owner.attr if isinstance(owner, ast.Attribute) else getattr(owner, "id", "")
-    return "loop" in str(name).lower()
+    if isinstance(owner, ast.Call):
+        # ★호출 결과를 **무조건 참**으로 두면 `make_client().run_forever()` 같은 평범한 코드를
+        #   막는다(4라운드 실측 위양성). 호출 대상이 루프를 만드는 것일 때만 참으로 본다.
+        fn = owner.func
+        callee = fn.attr if isinstance(fn, ast.Attribute) else getattr(fn, "id", "")
+        return callee in _LOOP_MAKERS or "event_loop" in str(callee)
+    # ★`self.render_loop.run_forever()` · `game_loop.run_forever()` 는 루프가 **아닌** 도메인
+    #   객체일 수 있다(렌더 루프·게임 루프). 이름에 'loop' 가 들었다는 것만으로는 부족하므로
+    #   **asyncio 문맥**(별칭·루프 변수)과 함께일 때만 본다 — 위 두 검사가 그 역할이다.
+    return str(name).lower() in {"loop", "event_loop", "_loop"}
 
 
 def test_루프_생성은_공용_진입점에서만_한다() -> None:
@@ -1049,6 +1095,11 @@ _LOOP_VIOLATIONS: tuple[tuple[str, str], ...] = (
     ("uvloop 설치", "import uvloop\nuvloop.install()"),
     ("asgiref 동기변환", "import asgiref.sync\nasgiref.sync.async_to_sync(x)()"),
     ("nest_asyncio 패치", "import nest_asyncio\nnest_asyncio.apply()"),
+    # ★4라운드 실측 우회 — 둘 다 **교과서적 형태**라 적대적 표기가 아니다.
+    ("policy 경유 루프", "import asyncio\np = asyncio.get_event_loop_policy()\nlp = p.new_event_loop()\nlp.run_until_complete(x())"),
+    ("서드파티 루프 생성", "import uvloop\nev = uvloop.new_event_loop()\nev.run_until_complete(x())"),
+    ("서드파티 from-import", "from uvloop import run\nrun(x)"),
+    ("루프 변수 사슬", "import asyncio\na = asyncio.new_event_loop()\nb = a\nb.run_forever()"),
 )
 
 # ★위양성 대조 — 이게 없으면 "전부 위반"이라고 답하는 탐지기도 위 표를 통과한다.
@@ -1063,6 +1114,12 @@ _LOOP_ALLOWED: tuple[tuple[str, str], ...] = (
     ("플랫폼 종류 확인", "import asyncio\nx = isinstance(l, asyncio.SelectorEventLoop)"),
     ("루프 아닌 객체의 run_forever", "class C:\n    def run_forever(self):\n        pass\n    def go(self):\n        self.run_forever()"),
     ("애노테이션 유니온", "import asyncio\ndef d(r: asyncio.Runner | None) -> None:\n    pass"),
+    # ★4라운드 실측 위양성 — `run_forever` 는 서드파티·도메인 객체에 흔한 메서드명이다.
+    ("팩토리 호출 결과", "def go():\n    make_client().run_forever()"),
+    ("도메인 루프 객체", "game_loop.run_forever()"),
+    ("속성 루프 객체", "class C:\n    def go(self):\n        self.render_loop.run_forever()"),
+    ("반환 애노테이션", "import asyncio\ndef mk() -> asyncio.Runner:\n    raise NotImplementedError"),
+    ("키워드전용 애노테이션", "import asyncio\ndef f(*, r: asyncio.Runner) -> None:\n    pass"),
 )
 
 
@@ -1098,6 +1155,10 @@ _ENGINE_SCOPES: tuple[tuple[str, str, bool], ...] = (
     ("애노테이션 대입", "e: object = create_async_engine(U)", True),
     ("함수 안(일회용)", "async def go():\n    e = create_async_engine(U)\n    await e.dispose()", False),
     ("클래스 안", "class C:\n    e = create_async_engine(U)", False),
+    # ★4라운드 실측 무잠금 — 이 커밋이 추가한 하강인데 태우는 표본이 없었다.
+    ("except 핸들러 안", "try:\n    pass\nexcept Exception:\n    e = create_async_engine(U)", True),
+    ("finally 안", "try:\n    pass\nfinally:\n    e = create_async_engine(U)", True),
+    ("match case 안", "match V:\n    case 1:\n        e = create_async_engine(U)", True),
 )
 
 
@@ -1210,7 +1271,7 @@ def test_계약_항목이_import_불가하면_잡는다(monkeypatch: pytest.Monk
         test_계약의_모든_항목이_실제로_import_되고_속성이_있다()
 
 
-def test_양성_대조표가_구현의_모든_루프생성자를_덮는다() -> None:
+def test_양성_대조표가_구현의_모든_루프생성자를_덮는다(tmp_path: Path) -> None:
     """★대조표는 **손으로 쓴 목록**이라 그 자체가 §A-4 위험이다 — 새 규칙을 추가하고 표에
     안 넣으면 그 규칙은 다시 무잠금이 된다(자가점검에서 표를 축소해도 조용히 통과함을 확인).
 
@@ -1218,18 +1279,41 @@ def test_양성_대조표가_구현의_모든_루프생성자를_덮는다() -> 
       `_THIRD_PARTY_LOOP_RUNNERS` 의 **모든 이름**이 양성 표의 어느 표본엔가 등장해야 한다.
       이름을 추가하고 표본을 안 넣으면 여기서 빨개진다.
     """
-    covered = " ".join(source for _label, source in _LOOP_VIOLATIONS)
-    missing = [name for name in _LOOP_MAKERS if name not in covered]
-    assert missing == [], (
-        f"`_LOOP_MAKERS` 의 이름이 양성 대조표에 표본 없이 남아 있다 — 그 규칙은 무잠금이다: {missing}"
+    # ★★**부분문자열 매칭은 잠금이 아니다**(4라운드 실증): `"get_event_loop" in covered` 는
+    #   `get_event_loop_policy` 표본 때문에 참이 되고, 서드파티 쪽 `import {mod}` 탈출구는
+    #   `("uvloop","new_event_loop")` 를 **표본 0건으로** 통과시켰다.
+    #   대신 **규칙별로 파생 검증**한다: 그 이름을 `_LOOP_MAKERS` 에서 빼면 **어떤 표본이
+    #   깨끗해지는가**. 깨끗해지는 표본이 없으면 그 규칙은 아무 표본도 태우지 않는 것이다.
+    original = set(_LOOP_MAKERS)
+    unexercised: list[str] = []
+    for name in sorted(original):
+        _LOOP_MAKERS.discard(name)
+        try:
+            weakened = any(
+                not _detect(source, tmp_path) for _label, source in _LOOP_VIOLATIONS
+            )
+        finally:
+            _LOOP_MAKERS.add(name)
+        if not weakened:
+            unexercised.append(name)
+    assert unexercised == [], (
+        f"`_LOOP_MAKERS` 의 이름이 **아무 표본도 태우지 않는다** — 그 규칙은 무잠금이다: {unexercised}"
     )
-    missing_tp = [
-        f"{mod}.{attr}"
-        for mod, attr in _THIRD_PARTY_LOOP_RUNNERS
-        if f"{mod}.{attr}" not in covered and f"import {mod}" not in covered
-    ]
-    assert missing_tp == [], (
-        f"서드파티 실행기가 양성 대조표에 표본 없이 남아 있다: {missing_tp}"
+
+    original_tp = set(_THIRD_PARTY_LOOP_RUNNERS)
+    unexercised_tp: list[str] = []
+    for pair in sorted(original_tp):
+        _THIRD_PARTY_LOOP_RUNNERS.discard(pair)
+        try:
+            weakened = any(
+                not _detect(source, tmp_path) for _label, source in _LOOP_VIOLATIONS
+            )
+        finally:
+            _THIRD_PARTY_LOOP_RUNNERS.add(pair)
+        if not weakened:
+            unexercised_tp.append(f"{pair[0]}.{pair[1]}")
+    assert unexercised_tp == [], (
+        f"서드파티 실행기가 아무 표본도 태우지 않는다: {unexercised_tp}"
     )
 
 
@@ -1389,3 +1473,29 @@ def test_NaN_상한이_상한을_무력화하지_않는다(monkeypatch: pytest.M
     except TimeoutError:
         pytest.fail("NaN 상한이 클램프되지 않아 무한 대기했다 — 상한이 무력화된다")
     assert elapsed < 1.0, f"NaN 이 하한으로 떨어지지 않았다({elapsed:.2f}초)"
+
+
+# ★R3 커밋 메시지가 "별칭 추적 + **그걸 태우는 케이스**"라고 선언했는데 **산출물에 케이스가
+#   없었다**(4라운드 지적으로 발각 — `_CTOR_FORMS` 가 저장소 어디에도 없었다).
+#   §F-24: 선언과 산출물이 갈리면 리뷰어·다음 세션이 이미 된 것으로 오독한다.
+_CTOR_FORMS: tuple[tuple[str, str, bool], ...] = (
+    ("평문 생성자", "from sqlalchemy.ext.asyncio import create_async_engine\ne = create_async_engine(U)", True),
+    ("생성자 별칭 임포트", "from sqlalchemy.ext.asyncio import create_async_engine as _mk\ne = _mk(U)", True),
+    ("생성자 재바인딩", "from sqlalchemy.ext.asyncio import create_async_engine\n_mk = create_async_engine\ne = _mk(U)", True),
+    ("모듈 경유 호출", "import sqlalchemy.ext.asyncio as sa\ne = sa.create_async_engine(U)", True),
+    ("★위양성 다른 함수", "from x import create_sync_engine\ne = create_sync_engine(U)", False),
+)
+
+
+@pytest.mark.parametrize(
+    ("label", "source", "should_find"), _CTOR_FORMS, ids=[c[0] for c in _CTOR_FORMS]
+)
+def test_엔진_수집기가_생성자_별칭도_본다(
+    label: str, source: str, should_find: bool, tmp_path: Path
+) -> None:
+    """★`from ... import create_async_engine as _mk` 한 줄로 엔진 전수수집이 통째로 우회된다."""
+    (tmp_path / "m.py").write_text(source, encoding="utf-8")
+    found = _module_scope_engines(tmp_path)
+    assert bool(found) is should_find, (
+        f"'{label}' 를 {'놓쳤다' if should_find else '잘못 신고했다'}: {found}\n{source}"
+    )
