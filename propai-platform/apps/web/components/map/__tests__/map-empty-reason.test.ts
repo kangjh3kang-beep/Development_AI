@@ -38,7 +38,33 @@ describe("코로플레스 겹침 고지", () => {
     // 그리는 순서상 개발여력이 공시지가를 덮는다 — 그 방향을 틀리면 안내가 거짓말이 된다.
     expect(note).toContain("개발여력");
     expect(note).toContain("공시지가");
-    expect(note).toMatch(/가려짐/);
+    expect(note).toMatch(/가려짐:/);
+  });
+
+  it("★자료가 0건인 레이어는 '가려짐'에 넣지 않는다 — 가릴 것이 없다", () => {
+    // 적대검증 반례B: 켜짐만 보면 "용도지역는 가려짐"이라고 말했다(사실도 틀리고 조사도 틀렸다).
+    const note = buildChoroplethOverlapNote({
+      ...BASE, showZoning: true, zoningCount: 0, showPrice: true, priceCount: 2,
+    });
+    expect(note).toBe("");  // 실제로 칠해진 것이 1개뿐이면 겹침이 아니다
+  });
+
+  it("★마지막 레이어가 0건이면 그 아래 것이 보인다고 말한다", () => {
+    // 적대검증 반례A: 공시지가 2건 + 노후도 0건인데 "화면 색은 노후도"라고 말했다.
+    const note = buildChoroplethOverlapNote({
+      ...BASE, showPrice: true, priceCount: 2, showAge: true, ageCount: 0,
+      showCapacity: true, capacityCount: 1,
+    });
+    expect(note).toContain("화면 색은 개발여력");
+    expect(note).not.toContain("노후도");
+  });
+
+  it("★조사를 붙이지 않는다 — 받침에 따라 는/은이 갈려 또 틀린다", () => {
+    const note = buildChoroplethOverlapNote({
+      ...BASE, showZoning: true, zoningCount: 1, showPrice: true, priceCount: 2,
+    });
+    expect(note).not.toMatch(/용도지역는|공시지가은/);
+    expect(note).toContain("가려짐:");
   });
 
   it("★하나만 켜져 있으면 고지하지 않는다(소음 금지)", () => {

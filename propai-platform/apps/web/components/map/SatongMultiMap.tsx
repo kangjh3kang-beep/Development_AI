@@ -537,17 +537,24 @@ const CHOROPLETH_PAINT_ORDER = ["용도지역", "공시지가", "개발여력", 
  *   지도 소유 세션 판단으로 남긴다 — 고지는 되돌리기 쉽고, 배타 전환은 그렇지 않다.
  */
 export function buildChoroplethOverlapNote(counts: OverlayNoteCounts): string {
-  const active = [
-    counts.showZoning ? "용도지역" : null,
-    counts.showPrice ? "공시지가" : null,
-    counts.showCapacity ? "개발여력" : null,
-    counts.showAge ? "노후도" : null,
+  // ★"켜져 있다"가 아니라 **실제로 칠해졌다**를 기준으로 센다(적대검증에서 반례 2건 적발).
+  //   ① 마지막 레이어가 0건이면 화면에 보이는 색은 그 아래 것이다 — 켜짐만 보면 **틀린
+  //      레이어를 지목**한다(공시지가 2건 + 노후도 0건 → "화면 색은 노후도"라고 말했다).
+  //   ② 0건인 레이어를 "가려짐"이라고 말하면 **가릴 것이 없는데 가려졌다**고 하는 것이다.
+  //   정직 표기를 고치려는 안내가 스스로 거짓말을 하면 없느니만 못하다.
+  const painted = [
+    counts.showZoning && counts.zoningCount ? "용도지역" : null,
+    counts.showPrice && counts.priceCount ? "공시지가" : null,
+    counts.showCapacity && counts.capacityCount ? "개발여력" : null,
+    counts.showAge && counts.ageCount ? "노후도" : null,
   ].filter((x): x is string => x != null);
-  if (active.length < 2) return "";
+  if (painted.length < 2) return "";
   // 그리는 순서의 **마지막** 것이 화면에 보이는 색이다.
-  const visible = CHOROPLETH_PAINT_ORDER.filter((name) => active.includes(name)).at(-1);
-  const hidden = active.filter((name) => name !== visible);
-  return `색상 레이어 ${active.length}개 겹침 — 화면 색은 ${visible} (${hidden.join("·")}는 가려짐)`;
+  const visible = CHOROPLETH_PAINT_ORDER.filter((name) => painted.includes(name)).at(-1);
+  const hidden = painted.filter((name) => name !== visible);
+  // ★조사(는/은)를 붙이지 않는다 — 앞말 받침에 따라 갈리는데 레이어명이 늘면 또 틀린다
+  //   ("용도지역는"이 실제로 나왔다). 목록형으로 적어 문법 의존을 없앤다.
+  return `색상 레이어 ${painted.length}개 겹침 — 화면 색은 ${visible}(가려짐: ${hidden.join("·")})`;
 }
 
 /** 선택 상태 SSOT 멤버십 키(공용) — pnu 우선, 없으면 주소 정규화(공백 축약) 폴백.
