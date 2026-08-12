@@ -131,9 +131,19 @@ async def _dispose_engines() -> int:
 
 # 자식 태스크를 기다려 주는 상한(초). 넘으면 **포기하고 시끄럽게 알린 뒤** 정리로 넘어간다.
 # ★상한을 반드시 둔다: 무한 대기는 "누수를 막으려다 배치를 멈추는" 새 결함이 된다
-#   (CLAUDE.md §"봉합이 새 결함을 만듦"). 상한을 넘은 경우의 결과는 **종전과 동일**하므로
-#   이 값이 커지든 작아지든 안전 방향은 바뀌지 않는다 — 그래서 여기에 가짜 락을 만들지 않는다.
+#   (CLAUDE.md §"봉합이 새 결함을 만듦").
+# ★★종전 주석은 "값이 커지든 작아지든 안전 방향은 바뀌지 않으므로 잠그지 않는다"고 했는데,
+#   **절반만 맞았다**(독립 적대검증 지적). 이 상수가 지키는 것은 *안전*이 아니라 **가용성**이고,
+#   3600 같은 값은 바로 그 결함이다 — beat 5초 주기 `flush_growth_events` 가 한 시간 매달릴 수
+#   있다(도착률 > 처리율 → 큐 적체 → 같은 워커의 parcel_batch·auction·rates 까지 굶는다).
+#   그래서 **동어반복(`== 30.0`)이 아니라 범위**를 잠근다 — 아래 상수가 그 계약이다.
+#   `test_상한은_가용성_범위_안에_있다` 가 이 두 값에 결속돼 있다.
 _CHILD_DRAIN_TIMEOUT_SEC = 30.0
+
+# 가용성 계약: 배수 상한은 이 범위를 벗어나면 안 된다.
+#   하한 > 0 — 0 이면 배수가 사실상 없는 것과 같다(경계는 양방향·CLAUDE.md §D-19).
+#   상한 60 — 가장 촘촘한 beat 주기(`flush_growth_events` 5초)의 큐 적체를 막는 실무 상한.
+_CHILD_DRAIN_TIMEOUT_MAX_SEC = 60.0
 
 
 async def _drain_child_tasks(timeout: float | None = None) -> int:
@@ -168,6 +178,12 @@ async def _drain_child_tasks(timeout: float | None = None) -> int:
     # ★상한은 **호출 시점에** 읽는다 — 기본 인자로 굳히면 상수를 바꿔도 반영되지 않아
     #   테스트가 실제 경로를 태우지 못한다(값이 장식이 되는 형태).
     timeout = _CHILD_DRAIN_TIMEOUT_SEC if timeout is None else timeout
+    # ★★상한을 **런타임에 클램프**한다. 종전에는 `_CHILD_DRAIN_TIMEOUT_MAX_SEC` 가
+    #   테스트에서만 쓰여 **프로덕션 소비처 0**이었다 — 그래서 두 상수를 차례로 키우는
+    #   2단 편집이 범위 락을 통과했다(독립 적대검증 실증: MAX 3600 → SEC 3600 둘 다 생존).
+    #   여기서 소비하면 ① 상수가 장식이 아니게 되고 ② `timeout=` **인자 경로까지** 묶인다
+    #   (종전 범위 락은 기본 상수만 봤다).
+    timeout = min(timeout, _CHILD_DRAIN_TIMEOUT_MAX_SEC)
 
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
@@ -245,8 +261,30 @@ def run_async_batch(factory: Callable[[], Awaitable[T]]) -> T:
             return await factory()
         finally:
             # ★배치가 실패해도 정리는 반드시 한다 — 예외 경로가 오히려 더 잘 샌다.
-            # ★정리 **전에** 배치가 띄운 자식 태스크를 먼저 기다린다(아래 함수 주석 참조).
-            await _drain_child_tasks()
+            # ★정리 **전에** 배치가 띄운 자식 태스크를 먼저 기다린다(위 함수 주석 참조).
+            #
+            # ★★배수는 **반드시 예외 격리**한다. 이 자리가 `finally` 라, 배수가 던지면
+            #   ① `_dispose_engines()` 에 **도달조차 못 해** 이 모듈이 막으려던 누수가
+            #      그대로 돌아오고, ② 원래 배치 예외가 배수 예외에 **가려져** 진단을 잃는다.
+            #   `_dispose_engines` 는 엔진별 try/except 로 그 대칭을 이미 갖고 있었는데,
+            #   앞에 끼워 넣은 배수에는 없었다 — 독립 적대검증이 재현으로 적발했다
+            #   (배수에서 OSError → dispose 0회 · 원래 ValueError 가 OSError 로 뒤바뀜).
+            #   ★"봉합이 새 결함을 만든다"의 실례다(CLAUDE.md §회귀망 규율).
+            try:
+                await _drain_child_tasks()
+            except Exception:  # noqa: BLE001 — 배수 실패가 **정리를 막아서는 안 된다**
+                logger.warning("자식 배수 실패 — 정리는 계속한다", exc_info=True)
+            except BaseException:
+                # ★★`CancelledError`·`KeyboardInterrupt` 는 **`BaseException` 계열**이라 위
+                #   `except Exception` 을 통과해 `finally` 를 빠져나간다 → 정리에 도달 못 한다.
+                #   그냥 잔존 결함이 아니라 **이 배수가 만든 노출면**이다: 도입 전에는 `finally`
+                #   가 즉시 dispose 로 갔는데, 이제 **최대 상한만큼 `finally` 안에 머무는 창**이
+                #   생겼고 워커 종료·Ctrl-C 가 그 창에 떨어지면 누수가 그대로 돌아온다.
+                #   (독립 적대검증이 실제 SIGINT 로 재현: dispose 0회)
+                #   ★정리는 하고 **취소는 반드시 전파**한다 — 삼키면 종료가 지연된다.
+                logger.warning("자식 배수가 취소됐다 — 정리는 계속한다", exc_info=True)
+                await _dispose_engines()
+                raise
             await _dispose_engines()
 
     return asyncio.run(_runner())

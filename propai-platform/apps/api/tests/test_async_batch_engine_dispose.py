@@ -19,6 +19,7 @@ import asyncio
 import sys
 import threading
 import types
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -28,22 +29,31 @@ from app.tasks._async_batch import run_async_batch
 
 
 class _SpyEngine:
-    """정리 시점의 **루프 정체**까지 기록한다 — 횟수만으로는 틀린 처방을 못 가른다."""
+    """정리 시점의 **루프 정체**와 **`close` 인자**까지 기록한다 — 횟수만으로는 틀린 처방을 못 가른다.
+
+    ★시그니처는 실제 `AsyncEngine.dispose(close=True)` 와 **같아야** 한다. 종전 스파이는
+      `close` 를 안 받아서 `dispose(close=False)` 변이를 **엉뚱한 이유로** 잡았다:
+      TypeError 가 `_dispose_engines` 의 except 에 삼켜져 카운터가 0이 됐을 뿐이다.
+      **우연한 적발은 잠금이 아니다** — 스파이 시그니처를 실제와 맞추는 순간 그 변이는
+      전부 생존한다(실측). 그래서 시그니처를 맞추고 **`close` 값 자체를 단언**한다.
+    """
 
     def __init__(self) -> None:
         self.disposed = 0
         self.loop: asyncio.AbstractEventLoop | None = None
         self.loop_was_open: bool | None = None
+        self.close_arg: bool | None = None
         self.pool = types.SimpleNamespace(checkedout=lambda: 0)
 
-    async def dispose(self) -> None:
+    async def dispose(self, close: bool = True) -> None:
         self.disposed += 1
+        self.close_arg = close
         self.loop = asyncio.get_running_loop()
         self.loop_was_open = not self.loop.is_closed()
 
 
 @pytest.fixture
-def spy_engines(monkeypatch: pytest.MonkeyPatch) -> list[_SpyEngine]:
+def spy_engines(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[_SpyEngine]]:
     engines: list[_SpyEngine] = []
     entries: list[tuple[str, str]] = []
     # ★속성명을 **일부러 다르게** 둔다 — 전부 `engine` 이면 구현이 `getattr(module, "engine")`
@@ -57,7 +67,11 @@ def spy_engines(monkeypatch: pytest.MonkeyPatch) -> list[_SpyEngine]:
         engines.append(engine)
         entries.append((mod_name, attr))
     monkeypatch.setattr(_async_batch, "_ENGINES", tuple(entries))
-    return engines
+    yield engines
+    # ★가짜 모듈을 `sys.modules` 에 남기지 않는다 — `monkeypatch` 는 `_ENGINES` 만 되돌린다.
+    #   같은 파일의 실제엔진 케이스는 정리하는데 여기만 안 하는 **규율 비대칭**이었다.
+    for mod_name, _attr in entries:
+        sys.modules.pop(mod_name, None)
 
 
 def test_배치_본문과_같은_살아있는_루프에서_정리한다(spy_engines: list[_SpyEngine]) -> None:
@@ -73,6 +87,14 @@ def test_배치_본문과_같은_살아있는_루프에서_정리한다(spy_engi
         assert engine.disposed == 1
         assert engine.loop is seen["body"], "배치 본문과 **다른 루프**에서 정리했다 — 사고가 안 고쳐진다"
         assert engine.loop_was_open is True, "**이미 닫힌 루프**에서 정리했다 — 사고가 안 고쳐진다"
+        # ★`dispose(close=False)` 는 풀만 갈아치우고 **소켓을 닫지 않는다**(fork 용 옵션).
+        #   그러면 죽은 루프에 묶인 연결이 서버 쪽에 그대로 남아 사고가 안 고쳐진다.
+        #   실제 엔진 케이스는 이걸 **못 잡는다**(풀 교체는 close 와 무관하게 일어난다) —
+        #   그래서 여기서 인자 자체를 잠근다.
+        assert engine.close_arg is True, (
+            "정리가 `close=False` 로 불렸다 — 풀은 갈리지만 **연결은 닫히지 않아** "
+            "죽은 루프에 묶인 소켓이 서버에 그대로 남는다"
+        )
 
 
 def test_배치가_실패해도_정리한다(spy_engines: list[_SpyEngine]) -> None:
@@ -190,51 +212,195 @@ def test_계약에_풀드_엔진이_최소_하나_실재한다() -> None:
 
 
 # 루프를 **직접 만들거나 직접 돌리는** API 이름.
-# ★`run_until_complete` 를 빠뜨리면 안 된다 — R1 이 방금 제거한 폴백이 쓰던 바로 그 API 다.
-#   그 이름을 안 보는 락은 "고친 것을 되돌리는 형태"를 못 잡는다.
-_LOOP_MAKERS = {"run", "new_event_loop", "run_until_complete", "Runner", "set_event_loop"}
+# ★`run_until_complete` 를 빠뜨리면 안 된다 — R1 이 제거한 폴백이 쓰던 바로 그 API 다.
+_LOOP_MAKERS = {
+    "run", "new_event_loop", "run_until_complete", "run_forever", "Runner", "set_event_loop",
+    # ★독립 적대검증이 실측한 우회 — 루프 객체를 직접 만든다.
+    "SelectorEventLoop", "ProactorEventLoop",
+}
+
+# ★`get_event_loop` 는 **일부러 뺐다** — 위양성이 실측됐다(CLAUDE.md §A-6 "가드의 위양성도
+#   결함이다"). `photoreal_render_service.py:312·337` 은 async 함수 안에서
+#   `asyncio.get_event_loop().time()` 로 **시계만 읽는다** — 러닝 루프가 있으면 그것을 돌려줄
+#   뿐 새 루프를 만들지 않는다. 진짜 위험한 형태(`get_event_loop().run_until_complete(...)`)는
+#   아래 ④ 분기가 **소유자와 무관하게** 이미 잡는다. 넣었다가 정상 코드 2곳을 막았다.
+
+# 새 루프를 만들어 코루틴을 **돌리는** 서드파티 진입점 — (모듈 뿌리, 호출명) 쌍.
+# ★임포트 자체를 위반으로 보면 안 된다(위양성 실측): `termination_cert.py` 는 `anyio` 를
+#   `anyio.to_thread.run_sync` 로만 쓴다 — 그건 스레드 오프로드지 루프 생성이 아니다.
+#   같은 이유로 `asgiref` 의 `sync_to_async` 도 무해하다. **호출 이름으로 가른다.**
+_THIRD_PARTY_LOOP_RUNNERS = {
+    ("anyio", "run"),
+    ("uvloop", "run"),
+    ("uvloop", "install"),
+    ("asgiref", "async_to_sync"),
+    ("nest_asyncio", "apply"),
+}
 
 
 def _asyncio_aliases(tree: ast.AST) -> set[str]:
-    """`import asyncio as aio` 같은 **별칭**을 모은다 — 별칭 하나로 락을 우회할 수 있다."""
+    """asyncio 를 가리키는 **모든 이름**을 모은다 — 이름 하나로 락을 우회할 수 있다.
+
+    ★세 형태를 본다(전부 독립 적대검증이 우회로 실증한 것):
+      · `import asyncio as aio`                 → aio
+      · `import asyncio.runners as r`           → r        (서브모듈 별칭)
+      · `from asyncio import runners`           → runners  (서브모듈 직접 임포트)
+      · `_a = asyncio`                          → _a       (모듈 재바인딩)
+    """
     names = {"asyncio"}
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                if alias.name == "asyncio" and alias.asname:
-                    names.add(alias.asname)
+                if alias.name == "asyncio" or alias.name.startswith("asyncio."):
+                    names.add(alias.asname or alias.name.split(".")[0])
+        elif isinstance(node, ast.ImportFrom) and (node.module or "").split(".")[0] == "asyncio":
+            for alias in node.names:
+                # `from asyncio import runners` — 이름 자체가 asyncio 서브모듈이다.
+                names.add(alias.asname or alias.name)
+    # ★재바인딩은 **고정점까지 반복**한다 — 한 번만 훑으면 `_b = _a` 가 `_a = asyncio` 보다
+    #   앞줄에 있을 때 놓친다(순서 의존). 형태도 셋을 본다: 일반 대입 · 애노테이션 대입 ·
+    #   튜플 대입. 전부 독립 적대검증이 통과시킨 우회다.
+    for _ in range(len(names) + 8):  # 유계 반복 — 별칭 사슬 길이 상한
+        before = len(names)
+        for node in ast.walk(tree):
+            value = getattr(node, "value", None)
+            if isinstance(node, ast.Assign | ast.AnnAssign) and isinstance(value, ast.Name):
+                if value.id not in names:
+                    continue
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                names.update(t.id for t in targets if isinstance(t, ast.Name))
+            elif isinstance(node, ast.Assign) and isinstance(value, ast.Tuple):
+                # `_a, _b = asyncio, None` — 위치가 맞는 것만 별칭이 된다.
+                for target in node.targets:
+                    if not isinstance(target, ast.Tuple):
+                        continue
+                    for tgt, val in zip(target.elts, value.elts, strict=False):
+                        if isinstance(tgt, ast.Name) and isinstance(val, ast.Name) and val.id in names:
+                            names.add(tgt.id)
+            elif isinstance(node, ast.NamedExpr) and isinstance(node.value, ast.Name):
+                # `(_a := asyncio).run(x)` — 월러스 재바인딩.
+                if node.value.id in names and isinstance(node.target, ast.Name):
+                    names.add(node.target.id)
+        if len(names) == before:
+            break
     return names
+
+
+def _aliased_loop_makers(tree: ast.AST, aliases: set[str]) -> set[str]:
+    """`_run = asyncio.run` 처럼 **함수 자체를 별칭으로 묶은** 이름을 모은다.
+
+    ★독립 적대검증이 꼽은 **가장 현실적인 우회**다(적대적 표기가 아니라 평범한 리팩토링처럼
+      보인다). 이 이름으로 호출하면 `ast.Attribute` 가 아니라 `ast.Name` 호출이라
+      속성 검사만 하는 락은 통째로 빠져나간다.
+    """
+    bound: set[str] = set()
+    for node in ast.walk(tree):
+        value = getattr(node, "value", None)
+        if not isinstance(node, ast.Assign | ast.AnnAssign) or not isinstance(value, ast.Attribute):
+            continue
+        if value.attr not in _LOOP_MAKERS:
+            continue
+        if _attr_root(value) not in aliases:
+            continue
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        bound.update(t.id for t in targets if isinstance(t, ast.Name))
+    return bound
+
+
+def _attr_root(node: ast.AST) -> str | None:
+    """`a.b.c.d` 의 **뿌리 이름** `a` 를 돌려준다(중간 속성이 몇 겹이든).
+
+    ★종전 락은 소유자가 `ast.Name` 일 때만 봤다 — 그래서 `asyncio.runners.Runner()` 처럼
+      **한 겹만 깊어져도 통째로 빠져나갔다**(실측 확인된 우회).
+    """
+    while isinstance(node, ast.Attribute | ast.NamedExpr):
+        # ★`(_a := asyncio).run(x)` — 월러스가 중간에 끼면 `Attribute` 만 벗겨서는 뿌리에
+        #   닿지 못한다(적대검증이 통과시킨 형태). 대입식은 **대입되는 값**으로 내려간다.
+        node = node.value
+    return node.id if isinstance(node, ast.Name) else None
 
 
 def _loop_makers_in(path: Path) -> list[str]:
     """파일이 **직접 루프를 만들거나 돌리는** 자리를 돌려준다.
 
-    ★네 형태를 모두 본다(각각 실측으로 우회가 확인된 것들이다):
-      ① `asyncio.run(...)`                    — 속성 호출
-      ② `from asyncio import run`             — 직접 임포트(임포트 한 줄로 우회)
-      ③ `import asyncio as aio` → `aio.run()` — 별칭
-      ④ `asyncio.get_event_loop().run_until_complete(...)` — 호출 결과에 대한 속성 호출
+    ★★이 함수의 커버리지를 **과대 주장하지 않는다**(CLAUDE.md §C-11 "면역을 거짓 주장하지
+      마라"). 종전 주석은 "어느 파일이 어떤 형태로 되돌리든 잡힌다"고 단정했는데 **거짓이었다** —
+      독립 적대검증이 17형태 중 11개를 통과시켰다. 아래는 지금 **실제로** 보는 것과
+      **여전히 못 보는 것**이다.
+
+    본다:
+      ① `asyncio.run(...)` · `aio.run(...)`            — 별칭 포함
+      ② `from asyncio import run`                      — 직접 임포트
+      ③ `asyncio.runners.Runner().run(...)`            — 속성 체인(뿌리까지 평탄화)
+      ④ `<무엇이든>().run_until_complete/run_forever`   — 루프 객체를 받아 직접 돌리는 형태
+      ⑤ `anyio.run` · `uvloop.run/install` · `asgiref…async_to_sync` · `nest_asyncio.apply`
+         — 서드파티 루프 실행기. ★**호출 이름으로 가른다**(임포트로 가르면 위양성).
+      ⑥ `_a = asyncio` 재바인딩(일반·애노테이션·튜플·월러스, 고정점까지)
+      ⑦ `_run = asyncio.run` 후 `_run(x)`             — 함수 자체를 별칭으로 묶는 형태
+
+    ★여전히 못 본다(정직 — 실측으로 확인한 목록이다):
+      · `getattr(asyncio, "run")(...)`        — 동적 속성 접근
+      · `exec("asyncio.run(...)")`            — 문자열 실행
+      · `functools.partial(asyncio.run)(x)`   — 고차 함수로 감싸 넘기는 형태
+      정적 AST 로는 원리적으로 불가하거나, 잡으려면 위양성이 커진다.
+      **이 목록 밖도 있을 수 있다** — "어떤 형태로든 잡힌다"고 단정하지 않는다(§C-11).
     """
     found: list[str] = []
     tree = ast.parse(path.read_text(encoding="utf-8"))
     aliases = _asyncio_aliases(tree)
+    bound_makers = _aliased_loop_makers(tree, aliases)
+
+    # ⑧ ★**루프 생성자를 "값으로" 넘기는 것 자체**를 위반으로 본다 — 호출되는 자리(`Call.func`)가
+    #   아닌 곳에 나타난 `asyncio.run` 등. 이 한 규칙이 `functools.partial(asyncio.run)`,
+    #   데코레이터·딕셔너리 등록·콜백 전달 같은 **고차 함수 우회를 형태별 열거 없이** 덮는다
+    #   (목록형 금지의 같은 정신). `_run = asyncio.run` 도 여기 걸리지만, 그쪽은 ⑦이 호출
+    #   지점까지 알려 주므로 둘 다 남긴다.
+    called_funcs = {id(n.func) for n in ast.walk(tree) if isinstance(n, ast.Call)}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Attribute) or node.attr not in _LOOP_MAKERS:
+            continue
+        if id(node) in called_funcs:
+            continue  # 직접 호출은 아래 ①③⑥ 이 다룬다
+        if _attr_root(node) in aliases:
+            found.append(f"{path.name}:{node.lineno} {node.attr} 를 값으로 전달")
 
     for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module == "asyncio":
+        # ⑦ `_run(x)` — 별칭으로 묶인 이름의 **직접 호출**(Attribute 가 아니라 Name 호출).
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            if node.func.id in bound_makers:
+                found.append(f"{path.name}:{node.lineno} {node.func.id}() ← 루프 생성자 별칭")
+            continue
+        if isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            # ★`node.module == "asyncio"` 로만 비교하면 `from asyncio.runners import Runner` 가
+            #   통과한다 — 뿌리로 비교한다.
+            if module.split(".")[0] == "asyncio":
+                for alias in node.names:
+                    if alias.name in _LOOP_MAKERS:
+                        found.append(
+                            f"{path.name}:{node.lineno} from {module} import {alias.name}"
+                        )
+                continue
+            # ⑤ `from anyio import run` 처럼 **실행기 이름을 직접** 들여오는 형태만 잡는다.
+            root = module.split(".")[0]
             for alias in node.names:
-                if alias.name in _LOOP_MAKERS:
-                    found.append(f"{path.name}:{node.lineno} from asyncio import {alias.name}")
+                if (root, alias.name) in _THIRD_PARTY_LOOP_RUNNERS:
+                    found.append(f"{path.name}:{node.lineno} from {module} import {alias.name}")
             continue
         if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
             continue
+        owner = node.func.value
+        root = _attr_root(owner)
+        # ⑤ 서드파티 실행기 — (뿌리 모듈, 호출명) 쌍으로 판정한다.
+        if root is not None and (root, node.func.attr) in _THIRD_PARTY_LOOP_RUNNERS:
+            found.append(f"{path.name}:{node.lineno} {root}.{node.func.attr}")
+            continue
         if node.func.attr not in _LOOP_MAKERS:
             continue
-        owner = node.func.value
-        # ①③ `asyncio.run` / `aio.run`
-        if isinstance(owner, ast.Name) and owner.id in aliases:
-            found.append(f"{path.name}:{node.lineno} {owner.id}.{node.func.attr}")
-        # ④ `<무엇이든>().run_until_complete(...)` — 루프 객체를 받아 직접 돌리는 형태.
-        #   소유자를 특정하지 않는다: 루프를 어디서 얻었든 직접 돌리면 같은 결함이다.
+        # ①③⑥ 뿌리가 asyncio 별칭이면 몇 겹이든 잡는다.
+        if root is not None and root in aliases:
+            found.append(f"{path.name}:{node.lineno} {root}….{node.func.attr}")
+        # ④ 루프 객체를 어디서 얻었든 **직접 돌리면** 같은 결함이다(소유자 무관).
         elif node.func.attr in {"run_until_complete", "run_forever"}:
             found.append(f"{path.name}:{node.lineno} <loop>.{node.func.attr}")
     return found
@@ -251,7 +417,13 @@ def test_루프_생성은_공용_진입점에서만_한다() -> None:
 
     ★그래서 모집단을 **소비처가 아니라 `app/` 전체**로 바꾼다. 실측상 루프를 만드는 파일은
       진입점 하나뿐이므로(측정이 설계를 정했다), 목록도 파생도 필요 없이 **전역 불변식**이
-      성립한다. 어느 파일이 어떤 형태로 되돌리든, 임포트가 있든 없든 잡힌다.
+      성립한다.
+
+    ★★**범위를 정직하게 적는다**(CLAUDE.md §D-20). 이 락의 모집단은 `apps/api/app/` 이고,
+      그 **밖**(`database/migrations/env.py`·`database/seeds/`·`ml/`·`scripts/`)에는
+      `asyncio.run` 이 7곳 있다. 전부 1회성 CLI·alembic 이라 프로세스가 끝나며 죽으므로
+      이 결함 클래스가 아니다 — 하지만 "전역에 하나뿐"이라는 문장이 그 밖까지 뜻하지는 않는다.
+      못 잡는 형태(동적 `getattr`·`exec`)는 `_loop_makers_in` 주석에 적었다.
     """
     app_root = Path(_async_batch.__file__).resolve().parent.parent  # .../apps/api/app
     offenders: list[str] = []
@@ -268,7 +440,9 @@ def test_루프_생성은_공용_진입점에서만_한다() -> None:
 
     # 공허 진리 방지 — 경로가 어긋나 0개를 훑고 통과하는 것을 막는다.
     # (실제로 `.resolve()` 누락으로 스캔이 통째로 비었던 적이 있다.)
-    assert scanned >= 100, f"`app/` 를 {scanned}개만 훑었다 — 경로가 어긋났다"
+    # ★하한 100 은 **7.75배 느슨했다** — `app/` 실제 파일은 775개다. 스캔이 87% 붕괴해도
+    #   통과하는 하한은 잠금이 아니다(독립 적대검증 지적). 실측치에 붙여 다시 건다.
+    assert scanned >= 600, f"`app/` 를 {scanned}개만 훑었다 — 경로가 어긋났다(실측 775개)"
     assert offenders == [], (
         "공용 진입점을 우회해 루프를 직접 만든다 — 커넥션 누수가 돌아온다:\n"
         + "\n".join(offenders)
@@ -408,4 +582,307 @@ def test_손자_태스크도_정리_전에_기다린다(spy_engines: list[_SpyEn
     assert seen_at_dispose, "dispose 가 불리지 않았다 — 이 케이스가 공허해졌다"
     assert all(seen_at_dispose), (
         "정리 시점에 **손자** 태스크가 아직 살아 있었다 — 한 겹 아래로 같은 누수가 새어 나간다"
+    )
+
+
+# ── 독립 적대검증이 적발한 무잠금 4건 ────────────────────────────────────
+# ★이 파일은 한때 "설명할 수 없는 변이 생존 0건"을 주장했다. **거짓이었다** —
+#   도구가 만든 18개만 감사하고 그것을 자기 커버리지로 착각한 형태다
+#   (CLAUDE.md §5 가 경고한 바로 그 착각). 아래는 손으로 찾아낸 생존들의 락이다.
+
+
+def test_배수가_실패해도_엔진은_정리한다(
+    spy_engines: list[_SpyEngine], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """★`finally` 안에서 배수가 던지면 `_dispose_engines()` 에 **도달조차 못 한다** —
+    이 모듈이 막으려던 누수가 그대로 돌아오고, 원래 배치 예외까지 가려진다.
+
+    `_dispose_engines` 는 엔진별 try/except 로 그 대칭을 갖고 있었는데 **앞에 끼워 넣은
+    배수에는 없었다**. 재현으로 적발됐다(배수 OSError → dispose 0회 · ValueError 가 OSError 로 뒤바뀜).
+    """
+
+    async def _explode(*_a: object, **_k: object) -> int:
+        raise OSError("배수 중 사고")
+
+    monkeypatch.setattr(_async_batch, "_drain_child_tasks", _explode)
+
+    async def _body() -> str:
+        return "ok"
+
+    assert run_async_batch(lambda: _body()) == "ok"
+    assert all(e.disposed == 1 for e in spy_engines), (
+        "배수가 던지자 정리가 건너뛰어졌다 — 누수가 그대로 돌아온다"
+    )
+
+
+def test_배수_실패가_원래_배치_예외를_덮지_않는다(
+    spy_engines: list[_SpyEngine], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """★진짜 실패 원인이 배수 예외로 **뒤바뀌면** 진단을 잃는다. 두 축을 따로 잠근다."""
+
+    async def _explode(*_a: object, **_k: object) -> int:
+        raise OSError("배수 중 사고")
+
+    monkeypatch.setattr(_async_batch, "_drain_child_tasks", _explode)
+
+    async def _body() -> str:
+        raise ValueError("진짜 배치 실패")
+
+    with pytest.raises(ValueError, match="진짜 배치 실패"):
+        run_async_batch(lambda: _body())
+    assert all(e.disposed == 1 for e in spy_engines)
+
+
+def test_취소된_자식이_있어도_정리는_끝까지_간다(spy_engines: list[_SpyEngine]) -> None:
+    """★`task.exception()` 은 **취소된 태스크에서 CancelledError 를 던진다**. 그래서 배수는
+    `if not task.cancelled()` 로 거르는데, 그 가드가 **아무 케이스에도 안 걸려 있었다**
+    (지우면 dispose 0회 + 배치 결과 파괴 — 독립 적대검증이 재현).
+
+    ★픽스처가 두 모집단을 갈라야 한다: 종전 케이스들의 `done` 집합에는 **취소된 태스크가
+      한 번도 들어오지 않아** 이 분기의 False 경로가 영영 실행되지 않았다.
+    """
+
+    async def _body() -> str:
+        task = asyncio.ensure_future(asyncio.sleep(3600))
+        task.set_name("취소될-자식")
+        task.cancel()  # ★취소된 채로 `done` 에 들어간다 — 이 케이스의 두 번째 모집단이다
+        return "ok"
+
+    assert run_async_batch(lambda: _body()) == "ok", "취소된 자식이 배치 결과를 파괴했다"
+    assert all(e.disposed == 1 for e in spy_engines), (
+        "취소된 자식 때문에 정리에 도달하지 못했다 — 2026-08-08 장애 기전이 돌아온다"
+    )
+
+
+def test_상한은_가용성_범위_안에_있다() -> None:
+    """★상수를 만들었으면 **그 상수에 결속**시킨다(CLAUDE.md §A-5). 종전에는 무잠금이라
+    `30.0 → 3600.0` 변이가 통과했다.
+
+    ★단, `== 30.0` 은 상수를 복창하는 **동어반복 락**이라 두지 않는다. 이 상수가 지키는 것은
+      *안전*이 아니라 **가용성**이므로, 그 계약인 **범위**를 잠근다 —
+      3600 이면 beat 5초 주기 `flush_growth_events` 가 한 시간 매달려 큐가 적체된다.
+    """
+    assert 0 < _async_batch._CHILD_DRAIN_TIMEOUT_SEC <= _async_batch._CHILD_DRAIN_TIMEOUT_MAX_SEC, (
+        f"배수 상한 {_async_batch._CHILD_DRAIN_TIMEOUT_SEC}s 가 가용성 범위를 벗어났다 "
+        f"(0 초과 ~ {_async_batch._CHILD_DRAIN_TIMEOUT_MAX_SEC}s 이하). "
+        "너무 크면 촘촘한 beat 주기 배치가 매달려 큐가 적체되고, 0 이면 배수가 없는 것과 같다."
+    )
+
+
+def _module_scope_stmts(body: list[ast.stmt]) -> list[ast.stmt]:
+    """**모듈 스코프에서 실행되는** 문장을 전부 모은다.
+
+    ★`tree.body` 만 보면 **과소**다: `try:` 안(배포 형태별 조건부 임포트)·`if flag:` 안(기능
+      플래그)의 모듈 전역 대입을 놓친다 — 둘 다 이 저장소에 흔하고, 독립 적대검증이 그 형태로
+      새 엔진을 넣어 **통과시켰다**.
+    ★`ast.walk` 는 **과대**다: 함수·클래스 body 까지 들어가 일회용 엔진을 위반으로 신고한다.
+      그래서 `If`/`Try`/`With` 만 내려가고 `FunctionDef`/`ClassDef` 에서는 멈춘다.
+    """
+    out: list[ast.stmt] = []
+    for node in body:
+        out.append(node)
+        if isinstance(node, ast.If | ast.Try | ast.With | ast.AsyncWith):
+            out.extend(_module_scope_stmts(node.body))
+            out.extend(_module_scope_stmts(getattr(node, "orelse", []) or []))
+            out.extend(_module_scope_stmts(getattr(node, "finalbody", []) or []))
+            for handler in getattr(node, "handlers", []) or []:
+                out.extend(_module_scope_stmts(handler.body))
+    return out
+
+
+def _dotted(path: Path, api_root: Path) -> str:
+    """파일 경로를 점 표기 모듈 경로로 — `app/core/database.py` → `app.core.database`."""
+    return ".".join(path.relative_to(api_root).with_suffix("").parts)
+
+
+def _normalize_contract_module(module: str) -> str:
+    """`_ENGINES` 의 모듈명을 `apps/api` 기준으로 정규화한다.
+
+    저장소는 같은 파일을 두 이름으로 부른다(`apps.api.database.session` ↔ `database.session`) —
+    실행 위치에 따라 sys.path 가 다르기 때문이다. 대조 전에 한쪽으로 모은다.
+    """
+    prefix = "apps.api."
+    return module[len(prefix):] if module.startswith(prefix) else module
+
+
+def _module_scope_engines(api_root: Path) -> list[tuple[str, str, str]]:
+    """`apps/api` 전체에서 **모듈 스코프** `X = create_async_engine(...)` 를 전수 수집한다.
+
+    반환: (점표기 모듈, 속성명, 표시용 위치). 함수 안에서 만드는 일회용 엔진은 **제외**한다 —
+    그건 자기 루프에서 dispose 되므로 이 계약의 대상이 아니다(`reconcile_tasks.py` 선례).
+    """
+    found: list[tuple[str, str, str]] = []
+    for path in sorted(api_root.rglob("*.py")):
+        if "tests" in path.parts or path.name.startswith("test_"):
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (SyntaxError, UnicodeDecodeError):  # noqa: PERF203
+            continue
+        module = _dotted(path, api_root)
+        for node in _module_scope_stmts(tree.body):
+            targets: list[ast.expr] = []
+            if isinstance(node, ast.Assign):
+                targets = list(node.targets)
+            elif isinstance(node, ast.AnnAssign) and node.target is not None:
+                targets = [node.target]
+            else:
+                continue
+            value = node.value
+            if not isinstance(value, ast.Call):
+                continue
+            fn = value.func
+            name = fn.attr if isinstance(fn, ast.Attribute) else getattr(fn, "id", "")
+            if name != "create_async_engine":
+                continue
+            for target in targets:
+                if isinstance(target, ast.Name):
+                    found.append((module, target.id, f"{module}:{node.lineno}"))
+    return found
+
+
+def test_모듈_전역_엔진은_전수가_계약에_들어있다() -> None:
+    """★`_ENGINES` 는 **목록형이었다** — 새 모듈 전역 엔진을 추가해도 전 케이스가 초록이었다
+    (독립 적대검증 실증). 모듈 자신이 "새 엔진을 만들면 여기 추가한다"고 적어 놓고 그 **빠짐**을
+    잡는 장치가 없었다.
+
+    ★★같은 파일 안에서 규율이 **비대칭**이었다: 루프 생성 모집단은 `app/` 전역 AST 파생인데,
+      엔진 모집단은 손으로 쓴 4줄 튜플이었다. 여기서 대칭을 맞춘다 — 모집단을 **코드에서 파생**해
+      새 엔진이 자동으로 감시망에 들어오게 한다(CLAUDE.md §A-4 목록형 금지).
+    """
+    api_root = Path(_async_batch.__file__).resolve().parents[2]  # .../apps/api
+    discovered = _module_scope_engines(api_root)
+
+    # 공허 진리 방지 — 스캔이 비면 "위반 0"이 무의미해진다.
+    assert len(discovered) >= 3, (
+        f"모듈 전역 엔진을 {len(discovered)}개만 찾았다 — 경로가 어긋났거나 파생이 깨졌다"
+    )
+
+    # ★★**(모듈, 속성) 쌍**으로 대조한다. 종전에는 속성명만 봤는데, `_ENGINES` 4항목이 쓰는
+    #   구별되는 이름은 **2개뿐**(`engine`·`timescale_engine`)이고 실제 엔진 4개 중 **3개가
+    #   `engine`** 이다. 즉 그 단언은 "전부 계약에 있다"가 아니라 **"이름이 engine 이거나
+    #   timescale_engine 이다"** 라는 명명규약 검사였다 — 저장소 관례가 바로 `engine` 이므로
+    #   **재발 확률이 가장 높은 형태**(새 모듈 + 관례 이름)가 정확히 통과했다(적대검증 실증).
+    contracted = {(_normalize_contract_module(mod), attr) for mod, attr in _async_batch._ENGINES}
+    missing = [where for mod, attr, where in discovered if (mod, attr) not in contracted]
+    assert missing == [], (
+        "모듈 전역 엔진이 `_ENGINES` 계약에서 빠졌다 — 그 엔진의 연결만 조용히 새어 나간다:\n"
+        + "\n".join(missing)
+        + f"\n계약(정규화): {sorted(contracted)}"
+    )
+
+
+def test_실제_엔진의_풀이_배치_루프_안에서_교체된다(monkeypatch: pytest.MonkeyPatch) -> None:
+    """★J3 봉합 — 여기까지의 모든 케이스는 `_SpyEngine`(스텁)을 태운다. 즉 잠근 것은
+    **"살아 있는 같은 루프에서 dispose 를 불렀다"** 이지 **"그래서 풀이 실제로 갈린다"** 가
+    아니었다. 스텁이 실제 층을 우회하면 그 층을 지워도 초록이다(CLAUDE.md §검증 규율).
+
+    ★이 케이스는 **진짜 `AsyncEngine`** 을 태운다. DB 접속은 필요 없다 —
+      SQLAlchemy 의 `dispose()` 는 **풀 객체 자체를 새것으로 교체**하고, 그 교체는 연결 없이도
+      관측된다(실측 확인). 죽은 루프에 묶인 연결이 남지 않는 이유가 바로 이 교체다.
+
+    ★잠그는 것: `_ENGINES` 가 가리키는 대상이 **그 실제 효과를 내는 객체**여야 하고,
+      우리가 의존하는 SQLAlchemy 의미(=dispose 는 풀을 교체한다)가 **여전히 참**이어야 한다.
+      라이브러리 업그레이드가 그 의미를 바꾸면 여기서 먼저 빨개진다.
+
+    ★★**안 잠그는 것(정직)**: "연결이 실제로 닫혔는가"는 여기서 못 본다 —
+      `dispose(close=False)` 를 주입해도 **이 케이스는 통과한다**(실측). 풀 교체는 `close` 와
+      무관하게 일어나기 때문이다. 그 축은 `_SpyEngine.close_arg` 단언이 잠근다.
+      소켓이 정말 닫혔는지는 DB 가 필요해 **통합 테스트의 몫**이다(여기 없다).
+    """
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    # ★접속하지 않는다 — 포트 1 은 의도적으로 닿지 않는 주소다(엔진 생성은 지연 평가).
+    engine = create_async_engine("postgresql+asyncpg://u:p@127.0.0.1:1/db", pool_pre_ping=True)
+    module = types.ModuleType("_real_engine_mod")
+    module.engine = engine  # type: ignore[attr-defined]
+    sys.modules["_real_engine_mod"] = module
+    monkeypatch.setattr(_async_batch, "_ENGINES", (("_real_engine_mod", "engine"),))
+
+    pool_before = engine.pool
+    seen: dict[str, object] = {}
+
+    async def work() -> str:
+        seen["loop"] = asyncio.get_running_loop()
+        seen["pool_during_body"] = engine.pool
+        return "ok"
+
+    try:
+        assert run_async_batch(work) == "ok"
+
+        # 공허 진리 방지 — 본문이 실제로 돌았고, 그 시점 풀이 원래 풀이었음을 먼저 못박는다.
+        assert seen.get("pool_during_body") is pool_before, "본문 실행 전에 이미 풀이 갈렸다"
+        assert engine.pool is not pool_before, (
+            "실제 엔진의 풀이 갈리지 않았다 — dispose 가 호출은 됐어도 **실효가 없다**. "
+            "죽은 루프에 묶인 연결이 그대로 남는다."
+        )
+    finally:
+        sys.modules.pop("_real_engine_mod", None)
+
+
+def test_배수가_취소돼도_엔진은_정리한다(
+    spy_engines: list[_SpyEngine], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """★`CancelledError` 는 **`BaseException` 계열**이라 `except Exception` 을 통과한다 —
+    그러면 `finally` 를 그대로 빠져나가 **정리에 도달하지 못한다**.
+
+    ★★이건 잔존 결함이 아니라 **배수가 만든 노출면**이다: 배수 도입 전에는 `finally` 가 즉시
+      dispose 로 갔는데, 이제 **최대 상한만큼 `finally` 안에 머무는 창**이 생겼다.
+      워커 종료·Ctrl-C 가 그 창에 떨어지면 막으려던 누수가 그대로 돌아온다
+      (독립 적대검증이 실제 SIGINT 로 재현 — dispose 0회).
+
+    ★취소는 **삼키지 않고 전파**해야 한다 — 삼키면 종료가 지연된다. 두 축을 함께 단언한다.
+    """
+
+    async def _cancelled(*_a: object, **_k: object) -> int:
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(_async_batch, "_drain_child_tasks", _cancelled)
+
+    async def _body() -> str:
+        return "ok"
+
+    with pytest.raises(asyncio.CancelledError):
+        run_async_batch(lambda: _body())
+
+    assert all(e.disposed == 1 for e in spy_engines), (
+        "배수가 취소되자 정리에 도달하지 못했다 — 2026-08-08 장애 기전이 종료 경로로 돌아온다"
+    )
+
+
+def test_상한_인자도_최대치로_클램프된다() -> None:
+    """★종전 범위 락은 **기본 상수만** 봤다 — `_drain_child_tasks(timeout=3600)` 인자 경로는
+    범위 밖이었고, `_CHILD_DRAIN_TIMEOUT_MAX_SEC` 는 **프로덕션 소비처 0**이라 두 상수를
+    차례로 키우는 2단 편집이 통과했다(적대검증 실증).
+
+    ★이제 런타임에 클램프하므로 인자로도 상한을 넘을 수 없다. **경과 시간으로** 확인한다 —
+      상수를 복창하는 대신 실제 동작을 본다.
+
+    ★★`wait_for` 로 **바깥에서 한 번 더** 상한을 건다. 안 걸면 클램프를 없앤 변이가 이 케이스를
+      실패시키는 게 아니라 **3600초 멈추게** 한다 — 같은 파일에서 이미 한 번 당한 함정이고
+      (변이 도구가 SIGTERM 으로 죽어 결과를 통째로 잃었다), 여기서 그대로 재생산했었다.
+    """
+    original_max = _async_batch._CHILD_DRAIN_TIMEOUT_MAX_SEC
+    _async_batch._CHILD_DRAIN_TIMEOUT_MAX_SEC = 0.05  # type: ignore[assignment]
+
+    async def _never() -> None:
+        await asyncio.sleep(3600)
+
+    async def _body() -> float:
+        task = asyncio.ensure_future(_never())
+        task.set_name("클램프-확인용")
+        started = asyncio.get_running_loop().time()
+        # ★바깥 상한 2초 — 클램프가 살아 있으면 0.05초에 끝나고, 죽었으면 여기서 잘린다.
+        await asyncio.wait_for(_async_batch._drain_child_tasks(timeout=3600.0), timeout=2.0)
+        return asyncio.get_running_loop().time() - started
+
+    try:
+        elapsed = asyncio.run(_body())
+    except TimeoutError:
+        pytest.fail("인자 3600s 가 클램프되지 않았다 — 상한 계약이 인자 경로에 안 걸려 있다")
+    finally:
+        _async_batch._CHILD_DRAIN_TIMEOUT_MAX_SEC = original_max  # type: ignore[assignment]
+
+    assert elapsed < 1.0, (
+        f"클램프는 됐지만 {elapsed:.2f}초 걸렸다 — 상한이 인자 경로에 제대로 안 걸렸다"
     )
