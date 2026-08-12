@@ -48,8 +48,6 @@ type Labels = {
   eyebrow: string;
   title: string;
   description: string;
-  modeLabels: Record<AuthMode, string>;
-  modeDescriptions: Record<AuthMode, string>;
   loginFields: {
     email: string;
     password: string;
@@ -118,14 +116,6 @@ const LABELS: Record<Locale, Labels> = {
     title: "실사용 인증 작업 공간",
     description:
       "이제 로그인과 테넌트 관리자 등록이 placeholder가 아니라 실제 `/auth` API에 연결됩니다.",
-    modeLabels: {
-      login: "로그인",
-      register: "관리자 등록",
-    },
-    modeDescriptions: {
-      login: "기존 계정으로 JWT 세션을 발급합니다.",
-      register: "새 테넌트와 첫 관리자 계정을 생성합니다.",
-    },
     loginFields: {
       email: "이메일",
       password: "비밀번호",
@@ -197,14 +187,6 @@ const LABELS: Record<Locale, Labels> = {
     title: "Live authentication workspace",
     description:
       "Login and tenant-admin onboarding now run against the real `/auth` API instead of placeholder screens.",
-    modeLabels: {
-      login: "Login",
-      register: "Register admin",
-    },
-    modeDescriptions: {
-      login: "Issue a JWT session for an existing account.",
-      register: "Create a new tenant and its first administrator.",
-    },
     loginFields: {
       email: "Email",
       password: "Password",
@@ -275,14 +257,6 @@ const LABELS: Record<Locale, Labels> = {
     eyebrow: "AUTH / LIVE",
     title: "实时认证工作台",
     description: "登录和租户管理员注册现在直接连接真实 `/auth` API，而不是占位页面。",
-    modeLabels: {
-      login: "登录",
-      register: "注册管理员",
-    },
-    modeDescriptions: {
-      login: "为现有账号签发 JWT 会话。",
-      register: "创建新的租户和首个管理员账号。",
-    },
     loginFields: {
       email: "邮箱",
       password: "密码",

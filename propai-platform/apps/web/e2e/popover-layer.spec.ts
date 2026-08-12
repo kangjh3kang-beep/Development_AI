@@ -40,13 +40,27 @@ async function seedSession(page: Page): Promise<void> {
     localStorage.setItem("propai_access_token", "playwright-access-token");
     localStorage.setItem("propai_refresh_token", "playwright-refresh-token");
   });
-  // 후보 조회만 고정한다 — 나머지는 건드리지 않아 페이지 본래 렌더 경로를 태운다.
-  await page.route("**/api/v1/zoning/search", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ candidates: CANDIDATES }),
-    });
+  // ★★API 를 **전부** 고정한다 — 후보 조회만 막으면 이 스펙은 **환경에 의존**한다.
+  //
+  //   실제로 그랬다: 종전엔 `/zoning/search` 만 가로챘고, 백엔드가 **없는** 로컬에서는
+  //   나머지 호출이 네트워크 오류로 끝나 아무 일도 없었다. 그런데 CI 에는 백엔드가 **있어서**
+  //   시드한 가짜 토큰이 **401 로 거부**되고, `lib/api-client.ts:426` 의 `handleSessionExpired()`
+  //   가 토큰을 지우고 **로그인으로 리다이렉트**한다 → 입력칸은 잠깐 보였다가 사라지고
+  //   후보 목록은 영영 안 뜬다. 그래서 **로컬 초록 / CI 빨강**이었다.
+  //   (401 만 돌려주는 더미 서버를 :8000 에 세워 로컬에서 CI 를 그대로 재현해 확인했다.)
+  //
+  //   층위 계약은 **인증과 무관**하다 — 인증 왕복에 의존하지 않게 만든다.
+  //   미지정 엔드포인트는 200 `{}` 로 답해 401 경로 자체가 생기지 않게 한다.
+  await page.route("**/api/v1/**", async (route) => {
+    if (route.request().url().includes("/zoning/search")) {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ candidates: CANDIDATES }),
+      });
+      return;
+    }
+    await route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
   });
 }
 
