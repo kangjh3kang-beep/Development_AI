@@ -36,8 +36,9 @@ Celery 태스크는 동기 함수라 `asyncio.run(...)` 으로 async 배치를 �
 
 ## 처방
 
-루프가 닫히기 **전에**, 그 루프 안에서 엔진을 `dispose()` 한다. dispose 는 풀의 연결을
-정상 종료(=ROLLBACK 후 close)하므로 서버에 `idle in transaction` 이 남지 않는다.
+루프가 닫히기 **전에**, 그 루프 안에서 엔진을 `dispose()` 한다. dispose 는 **풀에 반납된**
+연결의 소켓을 닫고(ROLLBACK 을 보내지는 않는다 — 절단 시 서버가 롤백한다), 그래서 다음
+실행이 죽은 루프의 연결을 물려받지 않는다. 체크아웃 중인 연결은 닫지 않는다(아래 한계 참조).
 
 ★태스크마다 손으로 `dispose` 를 넣지 않는다 — 6개 파일이 같은 결함을 공유했으므로
 **한 곳을 고치면 전역이 따라오도록** 이 진입점으로 모은다.
@@ -49,21 +50,56 @@ import asyncio
 import importlib
 import logging
 from collections.abc import Awaitable, Callable
+from typing import TypeVar
 
 logger = logging.getLogger(__name__)
 
+# ★PEP695(`def f[T](...)`)를 쓰지 않는다 — 3.12 전용 문법이라 이 모듈을 임포트하는
+#   태스크 8개가 3.12 미만에서 통째로 임포트 불가가 된다(운영은 3.12지만 로컬·도구가 깨진다).
+#   실제로 그렇게 바꿨다가 로컬 테스트가 SyntaxError 로 죽었다.
+# ★변이 도구가 이 줄의 삭제·상수화를 **생존**으로 보고한다(설명 가능한 생존):
+#   `from __future__ import annotations` 로 애노테이션이 문자열이라 **런타임 동작이 없다**.
+#   이 줄을 지키는 것은 테스트가 아니라 **타입 검사기**다 — 여기에 가짜 락을 만들지 않는다.
+T = TypeVar("T")
 
-# 이 저장소가 만드는 비동기 엔진 전부(모듈, 속성명).
+
+# 이 저장소의 **모듈 스코프 비동기 엔진 전부**(모듈, 속성명).
+#
+# ★실측(프로덕션 3.12 컨테이너):
+#     app.core.database.engine                   → AsyncAdaptedQueuePool  ← **유일하게 실효**
+#     apps.api.database.session.engine           → NullPool
+#     apps.api.database.session.timescale_engine → NullPool
+#     core.database.engine                       → NullPool
+#   `NullPool.dispose()` 는 SQLAlchemy 소스상 **문자 그대로 `pass`** 다. 즉 이 목록에서
+#   **풀드 엔진 하나가 이탈하면 프로덕션 누수가 그대로 돌아온다** — 나머지가 남아 있어도
+#   "엔진을 찾았다"는 검사는 통과한다(적대검증이 이 형태로 실증했다).
+#   그래서 테스트는 개수가 아니라 **풀드 엔진의 실재**를 단언한다.
 # ★새 엔진을 만들면 여기 추가한다 — 빠지면 그 엔진의 연결만 조용히 새어 나간다.
 _ENGINES: tuple[tuple[str, str], ...] = (
     ("app.core.database", "engine"),
     ("apps.api.database.session", "engine"),
     ("apps.api.database.session", "timescale_engine"),
+    # ★현재 임포트 소비처 0이지만 모듈 스코프 엔진이라 넣어 둔다(누락이 다음 사고가 된다).
+    # ★변이 도구가 이 항목의 문자열 변경을 **생존**으로 보고한다(설명 가능한 생존):
+    #   이 엔진은 오늘 **소비처 0 + NullPool** 이라 이름을 바꿔도 런타임 차이가 없다.
+    #   실효 엔진의 이탈은 위 `test_계약에_풀드_엔진이_최소_하나_실재한다` 가 잡는다.
+    #   여기에 이름 검사를 박으면 **상수를 복창하는 동어반복 락**이 되므로 두지 않는다.
+    ("core.database", "engine"),
 )
 
 
 async def _dispose_engines() -> int:
-    """현재 루프에 묶인 커넥션 풀을 정리하고, 정리한 엔진 수를 돌려준다."""
+    """현재 루프에 묶인 커넥션 풀을 정리하고, 정리한 엔진 수를 돌려준다.
+
+    ★`dispose()` 가 닫는 것은 **풀에 반납된(checked-in) 연결**이다. 아직 **체크아웃 중**인
+      연결은 닫지 않고 엔진에서 분리만 한다 — 그래서 배치가 연결을 쥔 채 예외로 빠지거나,
+      `create_task` 로 띄운 백그라운드 작업이 DB 를 쥐고 있으면 **그 연결은 여전히 샌다**
+      (`asyncio.run` 의 pending 태스크 취소는 이 정리보다 **뒤**에 일어난다).
+      막지 못하는 그 경로를 **조용히 두지 않고 경고로 드러낸다** — 관측이 없으면 다음 사고도
+      사용자 신고로 알게 된다.
+    ★그리고 dispose 는 ROLLBACK 을 보내지 않는다(소켓을 닫고 서버가 절단 시 롤백한다).
+      종전 주석이 "ROLLBACK 후 close" 라고 적었는데 사실이 아니라 바로잡았다.
+    """
     disposed = 0
     for module_name, attr in _ENGINES:
         try:
@@ -74,6 +110,18 @@ async def _dispose_engines() -> int:
         if engine is None:
             continue
         try:
+            checked_out = engine.pool.checkedout()
+            if checked_out:
+                logger.warning(
+                    "정리 시점에 반납되지 않은 연결 %d개 — 이 연결은 dispose 로 닫히지 않는다"
+                    " (%s.%s). 배치가 연결을 쥔 채 끝났거나 백그라운드 태스크가 남았다.",
+                    checked_out,
+                    module_name,
+                    attr,
+                )
+        except Exception:  # noqa: BLE001 — 관측 실패가 정리를 막지 않게 한다
+            pass
+        try:
             await engine.dispose()
             disposed += 1
         except Exception:  # noqa: BLE001 — 정리 실패가 배치 결과를 덮지 않게 한다
@@ -81,26 +129,124 @@ async def _dispose_engines() -> int:
     return disposed
 
 
-def run_async_batch[T](factory: Callable[[], Awaitable[T]]) -> T:
+# 자식 태스크를 기다려 주는 상한(초). 넘으면 **포기하고 시끄럽게 알린 뒤** 정리로 넘어간다.
+# ★상한을 반드시 둔다: 무한 대기는 "누수를 막으려다 배치를 멈추는" 새 결함이 된다
+#   (CLAUDE.md §"봉합이 새 결함을 만듦"). 상한을 넘은 경우의 결과는 **종전과 동일**하므로
+#   이 값이 커지든 작아지든 안전 방향은 바뀌지 않는다 — 그래서 여기에 가짜 락을 만들지 않는다.
+_CHILD_DRAIN_TIMEOUT_SEC = 30.0
+
+
+async def _drain_child_tasks(timeout: float | None = None) -> int:
+    """배치가 이 루프에 띄워 둔 **아직 끝나지 않은 자식 태스크**를 기다린다.
+
+    ★왜 필요한가 — `dispose()` 는 **풀에 반납된** 연결만 닫는다. 배치 본문이
+      `create_task(...)` 로 백그라운드 작업을 띄웠고 그 작업이 DB 를 쥔 채 남아 있으면,
+      정리는 그 연결을 못 닫고 곧이어 `asyncio.run` 이 **루프를 닫으며 그 태스크를 취소**한다.
+      쿼리 도중 취소된 연결은 서버에 트랜잭션을 남긴 채 끊긴다 = **이 모듈이 막으려던
+      바로 그 `idle in transaction` 이 다른 문으로 돌아온다.**
+      종전 이 모듈은 그 상황을 **경고로 알리기만 했다**(탐지≠교정) — 여기서 교정한다.
+
+    ★도달성(정직 경계) — **두 경로가 있고 성격이 다르다.** 이 함수를 처음 넣을 때
+      "자식을 띄우는 경로는 `growth_dispatch` 하나"라고 적었는데 **틀렸다**(실측으로 정정):
+
+      ① `record_llm_response_billing_sync` → `loop.create_task(...)` — **게이트 없이 라이브**다.
+         `analyze_growth`(beat 시간별)·`evaluate_improvement`(일별)이 LLM 을 태우며 발화한다.
+         다만 배치에는 요청 컨텍스트가 없어 `get_current_user_id()` 가 None → **DB 접근 전
+         조기 반환**한다. 즉 **자식 생성은 라이브이나 DB 를 쥐지는 않는다.**
+      ② `growth_dispatch.fire_and_forget` — 이쪽이 **DB 를 쥔다**(세션을 연다). 그런데 닿는
+         배치 둘(`tasks.memory.ingest_experience`·`tasks.specialists.run_for_analysis`)이
+         **`GROWTH_CELERY_WORKER` 가 켜져야 발화**한다(전 배포 설정에 미설정 — grep 실측).
+
+      정리하면 **오늘 누수는 없고, 누수 가능한 자식만 게이트 뒤에 있다.** 그럼에도 막아
+      두는 이유는 그 플래그가 "미래 배포 대비"로 코드에 명시돼 있고, `#605` 로 celery 워커가
+      실제 배포되기 시작해 **켜는 순간 조용히 돌아오기** 때문이다.
+      ★이 문단을 한 번 틀렸다는 사실을 남긴다 — 도달성은 **한 경로를 찾고 멈추면** 틀린다.
+
+    ★모집단을 "성장뇌 태스크"로 좁히지 않는다 — **누가 띄웠든** 정리 시점에 살아 있는
+      자식은 같은 결함이다(목록형 금지·CLAUDE.md §A-4).
+    """
+    # ★상한은 **호출 시점에** 읽는다 — 기본 인자로 굳히면 상수를 바꿔도 반영되지 않아
+    #   테스트가 실제 경로를 태우지 못한다(값이 장식이 되는 형태).
+    timeout = _CHILD_DRAIN_TIMEOUT_SEC if timeout is None else timeout
+
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    drained = 0
+    still_pending: set[asyncio.Task] = set()
+
+    # ★한 번만 스냅샷하면 **손자가 빠져나간다** — 자식이 끝나며 또 자식을 띄우면 그것은
+    #   기다리지 않은 채 루프가 닫힌다(같은 결함의 한 겹 아래). 그래서 마감까지 재스냅샷한다.
+    #   마감이 유일한 종료 보장이다 — 자식이 무한히 자식을 낳아도 여기서 멈춘다.
+    while True:
+        pending = {
+            t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()
+        }
+        if not pending:
+            break
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            still_pending = pending
+            break
+        done, still_pending = await asyncio.wait(pending, timeout=remaining)
+        drained += len(done)
+        # ★끝난 자식의 예외를 **회수**한다. 안 하면 GC 시점에 asyncio 가
+        #   "Task exception was never retrieved" 를 찍는다 — 종전에는 `asyncio.run` 의
+        #   종료 처리가 대신 해 주던 일이라, 배수를 넣으면서 새로 생기는 소음이다.
+        # ★변이 도구가 이 두 줄의 삭제를 **생존**으로 보고한다(설명 가능한 생존):
+        #   경고는 **GC 시점에 asyncio 내부**에서 나오므로 결정론적으로 단언할 수 없다.
+        #   여기에 사적 속성(`_log_traceback`)을 들여다보는 락을 만들면 깨지기 쉬운
+        #   가짜 잠금이 된다 — 그래서 두지 않고 이유를 적는다.
+        for task in done:
+            if not task.cancelled():
+                task.exception()
+        if still_pending:
+            break
+
+    if still_pending:
+        # 막지 못한 것을 조용히 두지 않는다 — 관측이 없으면 다음 사고도 사용자 신고로 안다.
+        logger.warning(
+            "자식 태스크 %d개가 %.0f초 안에 끝나지 않았다 — 루프가 닫히며 취소되고,"
+            " 그 연결은 서버에 트랜잭션을 남길 수 있다: %s",
+            len(still_pending),
+            timeout,
+            sorted(t.get_name() for t in still_pending),
+        )
+    return drained
+
+
+# ruff: noqa: UP047 — PEP695(`def f[T](...)`)를 쓰지 않는 것은 **의도**다(위 T 정의 주석 참조).
+#   3.12 전용 문법이라 이 모듈을 임포트하는 태스크 8개가 3.12 미만에서 임포트 불가가 된다.
+def run_async_batch(factory: Callable[[], Awaitable[T]]) -> T:
     """async 배치를 돌리고, **루프를 닫기 전에** 커넥션 풀을 정리한다.
 
     `factory` 는 코루틴을 만드는 함수다(코루틴 객체가 아니라). 재시도 경로에서 코루틴을
     두 번 await 하는 사고를 막기 위해 매번 새로 만들게 한다.
+
+    ★**`except RuntimeError` 폴백을 두지 않는다**(적대검증이 두 가지를 실증했다):
+      ① 원래 노린 상황(이미 루프가 도는 환경)에서 **작동하지 않는다** — 러닝 루프 안에서
+         `loop.run_until_complete()` 는 원리적으로 불가능하고, 미-await 코루틴 경고까지 남는다.
+      ② 실제로 발화하는 유일한 경로는 **본문이 던진 RuntimeError** 이고, 그때 배치가
+         **통째로 재실행**된다. 종전에 폴백이 없던 4곳(경공매 전국 수집·대량필지 배치(과금
+         게이트)·성장뇌 적재·전문가 원장(append-only))에 그 위험을 새로 넣을 뻔했다.
+      대신 **진입 시점에 판정해 시끄럽게 거절**한다 — 같은 저장소의
+      `services/deliberation-review/.../reconcile_tasks.py` 가 같은 사고(INC-13) 뒤 택한 방식이다.
     """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        pass  # 러닝 루프 없음 = 정상적인 동기 배치 경로
+    else:
+        raise RuntimeError(
+            "run_async_batch 는 동기 컨텍스트 전용이다 — 러닝 루프 안에서는 코루틴을 직접 await 하라"
+        )
 
     async def _runner() -> T:
         try:
             return await factory()
         finally:
             # ★배치가 실패해도 정리는 반드시 한다 — 예외 경로가 오히려 더 잘 샌다.
+            # ★정리 **전에** 배치가 띄운 자식 태스크를 먼저 기다린다(아래 함수 주석 참조).
+            await _drain_child_tasks()
             await _dispose_engines()
 
-    try:
-        return asyncio.run(_runner())
-    except RuntimeError:
-        # 이미 루프가 도는 환경(일부 워커·테스트) — 격리된 새 루프로 실행한다.
-        loop = asyncio.new_event_loop()
-        try:
-            return loop.run_until_complete(_runner())
-        finally:
-            loop.close()
+    return asyncio.run(_runner())

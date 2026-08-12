@@ -1,7 +1,7 @@
 """회원 수명주기 Celery 태스크 — 탈퇴 30일 유예 경과 계정 익명화(§7-2).
 
 매일 03:30 실행(beat_schedule "anonymize-withdrawn-daily").
-Celery 워커는 동기 컨텍스트이므로 asyncio.run 으로 async 서비스를 구동한다
+Celery 워커는 동기 컨텍스트이므로 `run_async_batch` 로 async 서비스를 구동한다
 (growth_tasks 와 동일 패턴).
 """
 

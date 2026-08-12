@@ -1,17 +1,25 @@
-"""`run_async_batch` 계약 — 배치가 끝나면 커넥션 풀이 반드시 정리된다.
+"""`run_async_batch` 계약 — 2026-08-08 프로덕션 장애의 회귀 락.
 
-★2026-08-08 프로덕션 장애의 회귀 락이다. Celery 태스크가 `asyncio.run()` 으로 루프를 만들고
-  닫는데 엔진 풀은 모듈 전역이라, 정리 없이 끝나면 **닫힌 루프에 묶인 연결**이 남아 서버에
-  `idle in transaction`(마지막 쿼리 `BEGIN;`)으로 고착됐다. 매일 1건씩 16~17일 누적되어
-  Supabase 트랜잭션 풀러 슬롯을 고갈시켰고 로그인 불가로 이어졌다.
+★사고 기전(재현으로 확인): Celery 배치가 `asyncio.run()` 으로 루프를 만들고 닫으면, 모듈
+  전역 엔진 풀에 **죽은 루프에 묶인 연결**이 남는다. 다음 실행이 그 연결을 꺼내면
+  `pool_pre_ping` 이 생사 검사를 위해 **`BEGIN` 을 서버로 보내고**, 응답 future 가 죽은
+  루프라 끊긴다 → 서버에 **끝나지 않는 트랜잭션**(`idle in transaction`, 마지막 쿼리 `BEGIN;`)이
+  고착. 누적되어 Supabase 트랜잭션 풀러 슬롯을 고갈시켰다.
 
-  그래서 여기서 잠그는 것은 "코드가 예쁘게 생겼는가"가 아니라 **dispose 가 실제로 불렸는가**다.
+★★이 파일이 잠그는 것은 "dispose 가 몇 번 불렸나"가 **아니다**. 적대검증이 실증했듯,
+  횟수만 세면 **루프가 닫힌 뒤 새 루프에서 dispose 하는 틀린 처방도 통과한다**(죽은 루프에
+  묶인 연결은 새 루프의 dispose 로 정리되지 않으므로 사고가 그대로다).
+  진짜 불변식은 **"배치 본문과 같은, 아직 살아 있는 루프에서 정리했는가"** 다.
 """
 
 from __future__ import annotations
 
+import ast
+import asyncio
 import sys
+import threading
 import types
+from pathlib import Path
 
 import pytest
 
@@ -20,39 +28,54 @@ from app.tasks._async_batch import run_async_batch
 
 
 class _SpyEngine:
+    """정리 시점의 **루프 정체**까지 기록한다 — 횟수만으로는 틀린 처방을 못 가른다."""
+
     def __init__(self) -> None:
         self.disposed = 0
+        self.loop: asyncio.AbstractEventLoop | None = None
+        self.loop_was_open: bool | None = None
+        self.pool = types.SimpleNamespace(checkedout=lambda: 0)
 
     async def dispose(self) -> None:
         self.disposed += 1
+        self.loop = asyncio.get_running_loop()
+        self.loop_was_open = not self.loop.is_closed()
 
 
 @pytest.fixture
 def spy_engines(monkeypatch: pytest.MonkeyPatch) -> list[_SpyEngine]:
-    """`_ENGINES` 가 가리키는 자리에 스파이 엔진을 꽂는다."""
     engines: list[_SpyEngine] = []
     entries: list[tuple[str, str]] = []
-    for i in range(2):
+    # ★속성명을 **일부러 다르게** 둔다 — 전부 `engine` 이면 구현이 `getattr(module, "engine")`
+    #   으로 하드코딩돼도 통과한다(실제 저장소의 `timescale_engine` 이 영구 미정리가 된다).
+    for i, attr in enumerate(("engine", "timescale_engine")):
         mod_name = f"_spy_engine_mod_{i}"
         module = types.ModuleType(mod_name)
         engine = _SpyEngine()
-        module.engine = engine  # type: ignore[attr-defined]
+        setattr(module, attr, engine)
         sys.modules[mod_name] = module
         engines.append(engine)
-        entries.append((mod_name, "engine"))
+        entries.append((mod_name, attr))
     monkeypatch.setattr(_async_batch, "_ENGINES", tuple(entries))
     return engines
 
 
-def test_배치가_성공하면_엔진이_정리된다(spy_engines: list[_SpyEngine]) -> None:
+def test_배치_본문과_같은_살아있는_루프에서_정리한다(spy_engines: list[_SpyEngine]) -> None:
+    """★핵심 불변식 — 횟수가 아니라 **루프 동일성**이다."""
+    seen: dict[str, asyncio.AbstractEventLoop] = {}
+
     async def work() -> str:
+        seen["body"] = asyncio.get_running_loop()
         return "done"
 
     assert run_async_batch(work) == "done"
-    assert [e.disposed for e in spy_engines] == [1, 1]
+    for engine in spy_engines:
+        assert engine.disposed == 1
+        assert engine.loop is seen["body"], "배치 본문과 **다른 루프**에서 정리했다 — 사고가 안 고쳐진다"
+        assert engine.loop_was_open is True, "**이미 닫힌 루프**에서 정리했다 — 사고가 안 고쳐진다"
 
 
-def test_배치가_실패해도_엔진이_정리된다(spy_engines: list[_SpyEngine]) -> None:
+def test_배치가_실패해도_정리한다(spy_engines: list[_SpyEngine]) -> None:
     """★예외 경로가 오히려 더 잘 샌다 — 실제 사고도 조용한 실패에서 누적됐다."""
 
     async def boom() -> None:
@@ -63,11 +86,9 @@ def test_배치가_실패해도_엔진이_정리된다(spy_engines: list[_SpyEng
     assert [e.disposed for e in spy_engines] == [1, 1]
 
 
-def test_dispose_가_실패해도_배치_결과를_덮지_않는다(
+def test_정리_실패가_배치_결과를_덮지_않는다(
     monkeypatch: pytest.MonkeyPatch, spy_engines: list[_SpyEngine]
 ) -> None:
-    """정리 실패가 성공한 배치를 실패로 둔갑시키면 안 된다(운영 중 오탐 방지)."""
-
     async def explode() -> None:
         raise RuntimeError("dispose 불가")
 
@@ -77,12 +98,39 @@ def test_dispose_가_실패해도_배치_결과를_덮지_않는다(
         return 42
 
     assert run_async_batch(work) == 42
-    # 첫 엔진이 터져도 **나머지 엔진은 계속 정리**해야 한다(하나 실패로 전체가 새면 안 된다).
+    # 하나가 터져도 **나머지는 계속 정리**해야 한다.
     assert spy_engines[1].disposed == 1
 
 
+def test_본문이_RuntimeError_를_던져도_두_번_실행하지_않는다(spy_engines: list[_SpyEngine]) -> None:
+    """★종전 `except RuntimeError` 폴백이 배치를 **재실행**했다. 경공매 전국 수집·대량필지
+    배치(과금 게이트)·append-only 원장이 두 번 도는 위험이었다."""
+    calls: list[int] = []
+
+    async def boom() -> None:
+        calls.append(1)
+        raise RuntimeError("업무 로직이 던진 RuntimeError")
+
+    with pytest.raises(RuntimeError, match="업무 로직"):
+        run_async_batch(boom)
+    assert len(calls) == 1, f"배치가 {len(calls)}회 실행됐다 — 재실행 위험이 살아 있다"
+
+
+def test_러닝_루프_안에서는_시끄럽게_거절한다() -> None:
+    """★종전 폴백은 이 상황에서 **작동조차 못 하면서**(러닝 루프 안 run_until_complete 불가)
+    미-await 코루틴 경고까지 남겼다. 조용한 오작동 대신 명시적 거절로 바꿨다."""
+
+    async def outer() -> None:
+        async def work() -> int:
+            return 1
+
+        with pytest.raises(RuntimeError, match="동기 컨텍스트 전용"):
+            run_async_batch(work)
+
+    asyncio.run(outer())
+
+
 def test_팩토리는_매번_새_코루틴을_만든다() -> None:
-    """코루틴 객체가 아니라 **팩토리**를 받는다 — 재시도 경로에서 두 번 await 하는 사고 방지."""
     calls: list[int] = []
 
     async def work() -> int:
@@ -93,17 +141,271 @@ def test_팩토리는_매번_새_코루틴을_만든다() -> None:
     assert run_async_batch(work) == 2
 
 
-def test_계약이_가리키는_엔진들이_실제로_존재한다() -> None:
-    """★목록형 상수의 공허화 방지 — `_ENGINES` 가 실재하지 않는 모듈만 가리키면
-    dispose 는 늘 0회이고 이 파일의 다른 테스트는 스파이라서 그걸 못 본다."""
+def test_반납되지_않은_연결이_있으면_경고로_드러난다(
+    spy_engines: list[_SpyEngine], caplog: pytest.LogCaptureFixture
+) -> None:
+    """★`dispose()` 는 **체크아웃 중인 연결을 닫지 않는다** — 배치가 연결을 쥔 채 끝나거나
+    백그라운드 태스크가 남으면 그 연결은 여전히 샌다. 막지 못하는 경로를 **조용히 두면**
+    다음 사고도 사용자 신고로 알게 된다(이번이 그랬다). 그래서 경고 자체를 잠근다."""
+    spy_engines[0].pool = types.SimpleNamespace(checkedout=lambda: 2)
+
+    async def work() -> None:
+        return None
+
+    with caplog.at_level("WARNING"):
+        run_async_batch(work)
+
+    warned = [r for r in caplog.records if "반납되지 않은 연결" in r.getMessage()]
+    assert warned, "체크아웃 잔여를 경고하지 않는다 — 누수가 다시 조용해진다"
+    assert "2" in warned[0].getMessage(), "잔여 **개수**를 알려주지 않으면 심각도를 못 잰다"
+
+
+def test_계약에_풀드_엔진이_최소_하나_실재한다() -> None:
+    """★"엔진을 하나 이상 찾았다"로는 부족하다 — 이 저장소 엔진 4개 중 **3개가 `NullPool`**
+    이고 `NullPool.dispose()` 는 문자 그대로 `pass` 다. 즉 **유일한 풀드 엔진이 목록에서
+    이탈해도** 그런 검사는 통과하고 프로덕션 누수는 그대로 돌아온다(적대검증 실증)."""
     import importlib
 
-    found = 0
+    from sqlalchemy.pool import NullPool
+
+    pooled: list[str] = []
     for module_name, attr in _async_batch._ENGINES:
         try:
             module = importlib.import_module(module_name)
         except Exception:  # noqa: BLE001 — 배포 형태에 따라 없을 수 있다
             continue
-        if getattr(module, attr, None) is not None:
-            found += 1
-    assert found >= 1, f"_ENGINES 가 실제 엔진을 하나도 못 찾는다: {_async_batch._ENGINES}"
+        engine = getattr(module, attr, None)
+        if engine is None:
+            continue
+        # ★`not isinstance(None, NullPool)` 는 **참**이다 — `.pool` 이 없는 객체(엔진이
+        #   아닌 것)가 "풀드"로 계수돼, 실효 엔진을 빼도 통과했다(적대검증 실증).
+        pool = getattr(engine, "pool", None)
+        if pool is not None and not isinstance(pool, NullPool):
+            pooled.append(f"{module_name}.{attr}")
+
+    assert pooled, (
+        "_ENGINES 에 **풀드 엔진이 하나도 없다** — dispose 가 전부 no-op 이라 "
+        f"정리가 실효를 잃었다: {_async_batch._ENGINES}"
+    )
+
+
+# 루프를 **직접 만들거나 직접 돌리는** API 이름.
+# ★`run_until_complete` 를 빠뜨리면 안 된다 — R1 이 방금 제거한 폴백이 쓰던 바로 그 API 다.
+#   그 이름을 안 보는 락은 "고친 것을 되돌리는 형태"를 못 잡는다.
+_LOOP_MAKERS = {"run", "new_event_loop", "run_until_complete", "Runner", "set_event_loop"}
+
+
+def _asyncio_aliases(tree: ast.AST) -> set[str]:
+    """`import asyncio as aio` 같은 **별칭**을 모은다 — 별칭 하나로 락을 우회할 수 있다."""
+    names = {"asyncio"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "asyncio" and alias.asname:
+                    names.add(alias.asname)
+    return names
+
+
+def _loop_makers_in(path: Path) -> list[str]:
+    """파일이 **직접 루프를 만들거나 돌리는** 자리를 돌려준다.
+
+    ★네 형태를 모두 본다(각각 실측으로 우회가 확인된 것들이다):
+      ① `asyncio.run(...)`                    — 속성 호출
+      ② `from asyncio import run`             — 직접 임포트(임포트 한 줄로 우회)
+      ③ `import asyncio as aio` → `aio.run()` — 별칭
+      ④ `asyncio.get_event_loop().run_until_complete(...)` — 호출 결과에 대한 속성 호출
+    """
+    found: list[str] = []
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    aliases = _asyncio_aliases(tree)
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "asyncio":
+            for alias in node.names:
+                if alias.name in _LOOP_MAKERS:
+                    found.append(f"{path.name}:{node.lineno} from asyncio import {alias.name}")
+            continue
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            continue
+        if node.func.attr not in _LOOP_MAKERS:
+            continue
+        owner = node.func.value
+        # ①③ `asyncio.run` / `aio.run`
+        if isinstance(owner, ast.Name) and owner.id in aliases:
+            found.append(f"{path.name}:{node.lineno} {owner.id}.{node.func.attr}")
+        # ④ `<무엇이든>().run_until_complete(...)` — 루프 객체를 받아 직접 돌리는 형태.
+        #   소유자를 특정하지 않는다: 루프를 어디서 얻었든 직접 돌리면 같은 결함이다.
+        elif node.func.attr in {"run_until_complete", "run_forever"}:
+            found.append(f"{path.name}:{node.lineno} <loop>.{node.func.attr}")
+    return found
+
+
+def test_루프_생성은_공용_진입점에서만_한다() -> None:
+    """★배선 락 — `app/` **전역**에서 루프를 만들거나 직접 돌리는 곳은 `_async_batch.py`
+    하나뿐이어야 한다.
+
+    ★종전에는 "`run_async_batch` 를 임포트한 파일"로 소비처를 **파생**했는데, 그 모집단은
+      **자기배제로 뚫린다**: 되돌리는 사람은 ruff `F401`(unused import) 때문에 그 임포트를
+      **반드시 지우게 되고**, 지우는 순간 모집단에서 빠져나간다. lint 가 우회를 강제하는
+      구조였다(적대검증 실증 — import 를 남긴 변종만 잡히고 지운 변종은 생존).
+
+    ★그래서 모집단을 **소비처가 아니라 `app/` 전체**로 바꾼다. 실측상 루프를 만드는 파일은
+      진입점 하나뿐이므로(측정이 설계를 정했다), 목록도 파생도 필요 없이 **전역 불변식**이
+      성립한다. 어느 파일이 어떤 형태로 되돌리든, 임포트가 있든 없든 잡힌다.
+    """
+    app_root = Path(_async_batch.__file__).resolve().parent.parent  # .../apps/api/app
+    offenders: list[str] = []
+    scanned = 0
+
+    for path in sorted(app_root.rglob("*.py")):
+        if path.resolve() == Path(_async_batch.__file__).resolve():
+            continue
+        scanned += 1
+        try:
+            offenders.extend(_loop_makers_in(path))
+        except SyntaxError:  # noqa: PERF203 — 파싱 불가 파일은 이 계약의 대상이 아니다
+            continue
+
+    # 공허 진리 방지 — 경로가 어긋나 0개를 훑고 통과하는 것을 막는다.
+    # (실제로 `.resolve()` 누락으로 스캔이 통째로 비었던 적이 있다.)
+    assert scanned >= 100, f"`app/` 를 {scanned}개만 훑었다 — 경로가 어긋났다"
+    assert offenders == [], (
+        "공용 진입점을 우회해 루프를 직접 만든다 — 커넥션 누수가 돌아온다:\n"
+        + "\n".join(offenders)
+    )
+
+
+# ── 정리 前 자식 태스크 배수 ──────────────────────────────────────────────
+# ★이 두 케이스가 잠그는 것: `dispose()` 는 **풀에 반납된** 연결만 닫는다. 배치가
+#   `create_task` 로 띄운 자식이 DB 를 쥔 채 남아 있으면 정리는 그것을 못 닫고, 곧이어
+#   `asyncio.run` 이 루프를 닫으며 **쿼리 도중 취소**한다 = 서버에 트랜잭션이 남는다.
+#   종전 이 모듈은 그 상황을 **경고로 알리기만 했다**(탐지≠교정).
+
+
+def test_배치가_띄운_자식_태스크를_정리_전에_기다린다(spy_engines: list[_SpyEngine]) -> None:
+    """★정리 시점에 자식이 **이미 끝나 있어야** 한다 — "끝났는지"를 dispose 안에서 기록한다.
+
+    ★"자식이 결국 끝났다"를 배치 밖에서 확인하는 것으로는 부족하다: 배수를 없애도
+      취소 전에 우연히 끝날 수 있다. 순서를 잠그려면 **정리 시점의 상태**를 봐야 한다.
+    """
+    child_done: list[bool] = []
+
+    async def _child() -> None:
+        await asyncio.sleep(0.05)
+        child_done.append(True)
+
+    async def _body() -> str:
+        asyncio.ensure_future(_child())  # noqa: RUF006 — 참조 보관은 이 테스트의 관심이 아니다
+        return "ok"
+
+    # dispose 가 불리는 **그 순간** 자식이 끝나 있었는지 기록한다.
+    seen_at_dispose: list[bool] = []
+    original = _SpyEngine.dispose
+
+    async def _recording_dispose(self: _SpyEngine) -> None:
+        seen_at_dispose.append(bool(child_done))
+        await original(self)
+
+    _SpyEngine.dispose = _recording_dispose  # type: ignore[method-assign]
+    try:
+        assert run_async_batch(lambda: _body()) == "ok"
+    finally:
+        _SpyEngine.dispose = original  # type: ignore[method-assign]
+
+    assert seen_at_dispose, "dispose 가 불리지 않았다 — 이 케이스가 공허해졌다"
+    assert all(seen_at_dispose), (
+        "정리 시점에 자식 태스크가 아직 살아 있었다 — 루프가 닫히며 취소되고,"
+        " DB 를 쥐고 있었다면 서버에 트랜잭션이 남는다"
+    )
+
+
+def test_자식이_상한을_넘으면_포기하고_경고한다(
+    spy_engines: list[_SpyEngine], caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """★상한이 없으면 "누수를 막으려다 배치를 멈추는" 새 결함이 된다 — 포기 경로를 잠근다.
+
+    ★상한은 **호출 시점에** 읽어야 한다: 기본 인자로 굳히면 이 monkeypatch 가 무시돼
+      테스트가 실제 경로를 못 태운다(값이 장식이 되는 형태).
+
+    ★★**별도 스레드에서 돌려 join 으로 판정한다.** 여기서 그냥 호출하면, 상한을 잃은 변이가
+      이 케이스를 **실패시키는 게 아니라 영원히 멈추게** 한다(`asyncio.wait(timeout=None)`).
+      실제로 변이 도구가 이 형태에서 900초 상한에 걸려 **결과 없이 SIGTERM** 으로 죽었다 —
+      멈추는 테스트는 CI 를 세우고, 무엇보다 **변이가 잡혔는지 알 수 없게 만든다**.
+      daemon 스레드라 설령 멈춰도 pytest 종료를 막지 않는다.
+    """
+    monkeypatch.setattr(_async_batch, "_CHILD_DRAIN_TIMEOUT_SEC", 0.01)
+
+    async def _never() -> None:
+        await asyncio.sleep(3600)
+
+    async def _body() -> str:
+        task = asyncio.ensure_future(_never())
+        task.set_name("느린-자식")
+        return "ok"
+
+    outcome: dict[str, object] = {}
+
+    def _run() -> None:
+        try:
+            outcome["value"] = run_async_batch(lambda: _body())
+        except BaseException as exc:  # noqa: BLE001 — 스레드 밖으로 그대로 옮겨 판정한다
+            outcome["error"] = exc
+
+    with caplog.at_level("WARNING", logger=_async_batch.__name__):
+        worker = threading.Thread(target=_run, daemon=True)
+        worker.start()
+        worker.join(timeout=10.0)
+
+    assert not worker.is_alive(), (
+        "상한이 무시돼 배치가 자식을 무한정 기다린다 — 누수를 막으려다 배치를 멈추는 결함이다"
+    )
+    assert "error" not in outcome, f"배치가 예외로 끝났다: {outcome.get('error')!r}"
+    assert outcome.get("value") == "ok"  # ★포기하되 배치 결과는 그대로 돌려준다
+
+    # ★`getMessage()` 로 **최종 문구**를 본다 — 포맷 인자에 담긴 태스크 이름이 실제로 문구에
+    #   들어갔는지까지 봐야, "경고는 찍는데 무엇이 남았는지 안 알려주는" 형태가 걸린다.
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("느린-자식" in m for m in messages), (
+        f"상한 초과를 조용히 넘겼다 — 막지 못한 것은 드러나야 한다: {messages}"
+    )
+    # 포기해도 정리 자체는 반드시 한다.
+    assert all(e.disposed == 1 for e in spy_engines)
+
+
+def test_손자_태스크도_정리_전에_기다린다(spy_engines: list[_SpyEngine]) -> None:
+    """★한 번만 스냅샷하면 **손자가 빠져나간다** — 자식이 끝나며 또 자식을 띄우는 형태다.
+
+    ★자식이 **끝난 뒤에** 손자를 띄우게 만든다: 자식과 동시에 존재하면 첫 스냅샷에 함께
+      잡혀, 재스냅샷이 없어도 통과한다(공허해진다).
+    """
+    grandchild_done: list[bool] = []
+
+    async def _grandchild() -> None:
+        await asyncio.sleep(0.05)
+        grandchild_done.append(True)
+
+    async def _child() -> None:
+        await asyncio.sleep(0.05)
+        asyncio.ensure_future(_grandchild())  # noqa: RUF006 — 첫 스냅샷 **이후**에 태어난다
+
+    async def _body() -> str:
+        asyncio.ensure_future(_child())  # noqa: RUF006
+        return "ok"
+
+    seen_at_dispose: list[bool] = []
+    original = _SpyEngine.dispose
+
+    async def _recording_dispose(self: _SpyEngine) -> None:
+        seen_at_dispose.append(bool(grandchild_done))
+        await original(self)
+
+    _SpyEngine.dispose = _recording_dispose  # type: ignore[method-assign]
+    try:
+        assert run_async_batch(lambda: _body()) == "ok"
+    finally:
+        _SpyEngine.dispose = original  # type: ignore[method-assign]
+
+    assert seen_at_dispose, "dispose 가 불리지 않았다 — 이 케이스가 공허해졌다"
+    assert all(seen_at_dispose), (
+        "정리 시점에 **손자** 태스크가 아직 살아 있었다 — 한 겹 아래로 같은 누수가 새어 나간다"
+    )
