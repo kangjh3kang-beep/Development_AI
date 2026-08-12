@@ -261,6 +261,20 @@ export const PRIMARY_ROUTE_REGISTRY: RouteRegistryItem[] = [
     apiDependencies: ["/market"],
   },
   {
+    // 간편 분양성 조사 — 지번 1개로 주변시세·계획시설·입지·분양사례를 한 화면에 모은다.
+    // ★새 분석엔진이 아니라 기존 셋(시장조사보고서·VWorld 도시계획시설·청약홈)의 **조립**이다.
+    id: "quick-survey",
+    label: "간편 분양성 조사",
+    sectionId: "market-acquisition",
+    parentId: "market-sales",
+    order: 5,
+    path: "/quick-survey",
+    status: "beta",
+    scope: "global",
+    lifecyclePhase: "market",
+    apiDependencies: ["/market"],
+  },
+  {
     // 대화형 시장분석 AI — 자연어 질의 → /zoning/nearby-map(국토부 실거래) → 차트. 그동안
     // 컴포넌트(ConversationalMarketPanel)만 있고 라우트가 없어 orphan 이던 것을 전용 라우트로 배선.
     id: "market-ai",

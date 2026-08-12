@@ -74,8 +74,11 @@ describe("buildPrimaryNav", () => {
 
     const marketAcquisition = NAV.find((s) => s.id === "market-acquisition")!;
     const marketSales = marketAcquisition.items.find((n) => n.id === "market-sales");
+    // ★이 단언은 **목록형**이라 라우트가 하나 늘 때마다 깨진다(CLAUDE.md §A-4 가 경고하는 형태).
+    //   지금은 최소 변경으로 신규 라우트만 반영한다 — 파생형 전환은 이 PR 범위 밖이다.
+    //   `quick-survey` 는 order 5 로 `market-insights`(10) 보다 앞에 온다.
     expect(marketSales?.children?.map((c) => c.href)).toEqual([
-      "/en/market-insights", "/en/market-ai", "/en/sales-info",
+      "/en/quick-survey", "/en/market-insights", "/en/market-ai", "/en/sales-info",
     ]);
     const acquisition = marketAcquisition.items.find((n) => n.id === "acquisition");
     expect(acquisition?.children?.map((c) => c.href)).toEqual(["/en/auction", "/en/g2b"]);

@@ -31,6 +31,17 @@ type CreationProduct = {
 
 const creationProducts: CreationProduct[] = [
   {
+    // ★메인 첫 카드 — "지번 하나만"이 이 기능의 전부이자 차별점이라 맨 앞에 둔다.
+    title: "간편 분양성 조사",
+    routeId: "quick-survey",
+    icon: Search,
+    intent: "지번 하나만 입력하면 주변시세·계획 고시 시설·입지·분양사례를 한 화면에 모읍니다.",
+    inputs: "지번 주소 1개",
+    result: "주변시세, 계획시설, 입지, 분양사례 (수요 지표 미포함)",
+    time: "약 1분",
+    tone: "coral",
+  },
+  {
     title: "법규검토서",
     routeId: "regulations",
     icon: Scale,
