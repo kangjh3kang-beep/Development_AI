@@ -38,6 +38,20 @@ class AccessFinding(BaseModel):
     permit_prerequisites: list[str] = Field(default_factory=list, description="선행/확인 절차")
     legal_basis: list[str] = Field(default_factory=list, description="근거 법령(텍스트)")
     legal_ref_keys: list[str] = Field(default_factory=list, description="verified 법령링크 키")
+    # ── "이 제약을 푸는 방법" 카드 (2026-08-12 배선) ──
+    #   종전에는 이 서비스가 special_parcel 의 판정 룰만 재사용하고 `_resolution_for` 는
+    #   부르지 않아, 해결경로가 `implications` 문장 안에 서술로만 섞여 있었다. 구조화 필드가
+    #   없으면 소비처가 문장을 파싱해야 하고, 그 순간 **표기가 계약**이 된다.
+    #   ★특히 이 서비스에서만 도달하는 3요인(막다른 도로·자루형 통로부·소방 접근)은
+    #     resolution_key 가 심겨 있는데도 **그 코드를 소비하는 곳이 없었다**(#538 의 코드
+    #     기반 라우팅이 이 표면에는 닿지 않았다).
+    resolution_paths: list[str] = Field(
+        default_factory=list, description="해결경로(선행/병행 절차) — resolution_key 코드 기반"
+    )
+    alternatives: list[str] = Field(default_factory=list, description="대안(회피·제외 등)")
+    resolvable: str = Field(
+        "", description="요인 단위 해결가능성 YES/CONDITIONAL/NO(상태 종합값과 별개)"
+    )
 
 
 class AccessStateResult(BaseEvidenceResponse):
