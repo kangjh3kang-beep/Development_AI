@@ -178,6 +178,12 @@ async def _drain_child_tasks(timeout: float | None = None) -> int:
     # ★상한은 **호출 시점에** 읽는다 — 기본 인자로 굳히면 상수를 바꿔도 반영되지 않아
     #   테스트가 실제 경로를 태우지 못한다(값이 장식이 되는 형태).
     timeout = _CHILD_DRAIN_TIMEOUT_SEC if timeout is None else timeout
+    # ★★상한을 **런타임에 클램프**한다. 종전에는 `_CHILD_DRAIN_TIMEOUT_MAX_SEC` 가
+    #   테스트에서만 쓰여 **프로덕션 소비처 0**이었다 — 그래서 두 상수를 차례로 키우는
+    #   2단 편집이 범위 락을 통과했다(독립 적대검증 실증: MAX 3600 → SEC 3600 둘 다 생존).
+    #   여기서 소비하면 ① 상수가 장식이 아니게 되고 ② `timeout=` **인자 경로까지** 묶인다
+    #   (종전 범위 락은 기본 상수만 봤다).
+    timeout = min(timeout, _CHILD_DRAIN_TIMEOUT_MAX_SEC)
 
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
@@ -268,6 +274,17 @@ def run_async_batch(factory: Callable[[], Awaitable[T]]) -> T:
                 await _drain_child_tasks()
             except Exception:  # noqa: BLE001 — 배수 실패가 **정리를 막아서는 안 된다**
                 logger.warning("자식 배수 실패 — 정리는 계속한다", exc_info=True)
+            except BaseException:
+                # ★★`CancelledError`·`KeyboardInterrupt` 는 **`BaseException` 계열**이라 위
+                #   `except Exception` 을 통과해 `finally` 를 빠져나간다 → 정리에 도달 못 한다.
+                #   그냥 잔존 결함이 아니라 **이 배수가 만든 노출면**이다: 도입 전에는 `finally`
+                #   가 즉시 dispose 로 갔는데, 이제 **최대 상한만큼 `finally` 안에 머무는 창**이
+                #   생겼고 워커 종료·Ctrl-C 가 그 창에 떨어지면 누수가 그대로 돌아온다.
+                #   (독립 적대검증이 실제 SIGINT 로 재현: dispose 0회)
+                #   ★정리는 하고 **취소는 반드시 전파**한다 — 삼키면 종료가 지연된다.
+                logger.warning("자식 배수가 취소됐다 — 정리는 계속한다", exc_info=True)
+                await _dispose_engines()
+                raise
             await _dispose_engines()
 
     return asyncio.run(_runner())
