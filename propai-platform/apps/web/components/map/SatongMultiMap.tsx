@@ -46,6 +46,7 @@ import {
   noSampleReason,
   selectMappableGroups,
   type SampleBasis,
+  type SampleBasisRaw,
 } from "@/lib/market/comparable-sample";
 import { bindSatongLabel, planSatongLabels, satongLabelLOD } from "@/lib/satong-map-labels";
 import type { SiteLayoutOverlay } from "@/lib/site-layout";
@@ -240,6 +241,12 @@ export type SatongMarketCategory = {
   /** ★P1(절단 정직 고지) — 카테고리별 마커 상한(28)에 걸려 응답에서 빠진 그룹 수. */
   capped_count?: number;
   groups?: SatongMarketGroup[];
+  /**
+   * 표본이 무엇인지(위치확인·미확인·마스킹 건수). 백엔드가 **이미 보내고 있었는데**
+   * 이 타입에 선언이 없어 프론트가 존재를 모르고 있었다(2026-08-12).
+   * 그래서 "실거래 0건"의 사유를 말할 재료를 손에 쥐고도 내부 용어만 늘어놓았다.
+   */
+  sample_basis?: SampleBasisRaw;
 };
 
 export type SatongMarketPayload = {
@@ -482,14 +489,7 @@ export function buildOverlayNotes(counts: OverlayNoteCounts): string {
  * ★합산이 안전한 이유: located/unlocated/masked 는 전부 **거래 건수**이고 카테고리끼리
  *   서로소다(한 거래가 두 카테고리에 들지 않는다). 단위가 다른 group 계열은 더하지 않는다.
  */
-export function buildMaskedSampleReason(payload: {
-  radius_m?: number | null;
-  radius_applied?: boolean | null;
-  categories?: Record<string, { sample_basis?: {
-    located_count?: number; approximate_count?: number; unlocated_count?: number;
-    capped_count?: number; masked_jibun_count?: number; masked_jibun_group_count?: number;
-  } | null } | null> | null;
-}): string {
+export function buildMaskedSampleReason(payload: SatongMarketPayload): string {
   const cats = Object.values(payload.categories || {});
   let located = 0, approximate = 0, unlocated = 0, capped = 0, masked = 0, maskedGroups = 0;
   for (const c of cats) {
