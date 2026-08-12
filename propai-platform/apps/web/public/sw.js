@@ -294,7 +294,7 @@
 //        ★채번: origin/main 실제 상수 v498 확인 → v499. PR 생성 前 보드 claim 선점(15회차).
 //        ★경합 방향 확인: 기능 PR(#614 `fdd2fa09`)이 **먼저** 머지된 뒤 이 범프를 올린다.
 //          반대 순서였다면 그 기능이 캐시로 가려진다(규율 E-22 가 경고하는 그것).
-const CACHE_NAME = "propai-v499-cadastre-honesty";
+const CACHE_NAME = "propai-v500-popover-ancestor";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
