@@ -289,7 +289,12 @@
 //        본문 팝오버 칸 `contentPopover: 650` 신설 + SatongMapShell·GlobalAddressSearch 승격.
 //        ★이 범프가 필요한 이유: v497 이 **#597 보다 먼저** 머지돼(규율 E-20 이 경고하는 경합)
 //          위 3파일이 캐시로 가려진다 — `<v497커밋>..origin/main` 실측으로 확인하고 채번했다.
-const CACHE_NAME = "propai-v498-content-popover";
+// v499: 지적도가 '안 보이는 것'과 '오류'를 가른다(#614) — 실측 임계 + 상류 재시도.
+//        프론트 런타임은 `SatongMultiMap.tsx` 44줄(줌 임계·상태 구분)이라 **렌더에 닿는다**.
+//        ★채번: origin/main 실제 상수 v498 확인 → v499. PR 생성 前 보드 claim 선점(15회차).
+//        ★경합 방향 확인: 기능 PR(#614 `fdd2fa09`)이 **먼저** 머지된 뒤 이 범프를 올린다.
+//          반대 순서였다면 그 기능이 캐시로 가려진다(규율 E-22 가 경고하는 그것).
+const CACHE_NAME = "propai-v499-cadastre-honesty";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
