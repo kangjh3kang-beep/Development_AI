@@ -70,8 +70,8 @@ describe("주소 후보 드롭다운 — 본문 팝오버 칸", () => {
 
     // ★판정은 **공용 판정기**가 한다(lib/stacking-context.ts). 종전 이 자리의 정규식은
     //   `isolate|transform|filter|backdrop-filter` 를 찾았는데 이건 Tailwind **v3** 토큰이다.
-    //   저장소는 v4 라서 실측 결과 `backdrop-filter` 0건·`filter` 0건인 반면
-    //   v4 에서 실제로 층 상자를 만드는 `backdrop-blur-*`(106건)·`opacity-N`·`blur-*` 는
+    //   저장소는 v4 라서 실측 결과 `backdrop-filter` 0건·맨몸 `filter` 2건인 반면
+    //   v4 에서 실제로 층 상자를 만드는 `backdrop-blur-*`(120건)·`opacity-N`(603건)·`blur-*`(27건) 는
     //   **한 건도 못 봤다** — "조상이 깨끗한지 검사한다"는 선언이 대부분 공허했다.
     const scan = scanAncestorTraps(list);
 
@@ -86,14 +86,18 @@ describe("주소 후보 드롭다운 — 본문 팝오버 칸", () => {
   // ★★위 검사만으로는 **아무것도 잠기지 않는다.** 단독 렌더의 조상 체인에는 스태킹 컨텍스트가
   //   원래 0개라서, 판정 로직을 통째로 지워도 초록이기 때문이다(차가 0인 픽스처 = 잠금 아님, 규율 A-2).
   //   그래서 **실제 프로덕션에서 트랩을 만드는 모양**을 조상으로 세워 두 모집단을 가른다.
-  //   아래 모양은 지어낸 것이 아니라 실측한 소비처 그대로다:
-  //     · `app/[locale]/(dashboard)/projects/new/page.tsx:199` — `grid gap-2 relative z-10`
-  //     · `components/projects/ProjectAnalysisFlow.tsx:62`      — `relative z-10 max-w-2xl space-y-5`
-  //     · `components/projects/SiteInitiator.tsx:140`           — `backdrop-blur-3xl`
+  //   아래 셋은 실측한 소비처 className 을 **그대로(verbatim)** 옮긴 것이다
+  //   (종전엔 SiteInitiator 것만 손질된 편집본이라 "실측 그대로"가 사실이 아니었다):
+  //     · `app/[locale]/(dashboard)/projects/new/page.tsx:199`
+  //     · `components/projects/ProjectAnalysisFlow.tsx:62`
+  //     · `components/projects/SiteInitiator.tsx:140`
   describe.each([
     ["relative z-10 max-w-2xl space-y-5", "ProjectAnalysisFlow.tsx:62"],
     ["grid gap-2 relative z-10", "projects/new/page.tsx:199"],
-    ["rounded-[var(--radius-lg)] border bg-[var(--glass-bg)] p-8 shadow-2xl backdrop-blur-3xl", "SiteInitiator.tsx:140"],
+    [
+      "relative rounded-[var(--radius-lg)] border border-[var(--line)] bg-[var(--glass-bg)] p-8 shadow-2xl backdrop-blur-3xl",
+      "SiteInitiator.tsx:140",
+    ],
   ])("실측된 소비처 모양(%s = %s)을 조상으로 세우면", (wrapper) => {
     it("★가드가 빨개진다 — 이게 성립해야 위 '위반 0' 이 의미를 갖는다", async () => {
       const list = await openCandidates(wrapper);
@@ -117,24 +121,35 @@ describe("주소 후보 드롭다운 — 본문 팝오버 칸", () => {
     //     다만 그 경우에도 **조용히 통과시키지 않는다**: 아래 두 상수 확인은 그대로 수행한다.
     const clip = scanAncestorTraps(list, { kinds: ["clipping"] });
 
-    const maxH = /\bmax-h-(\d+)\b/.exec(String(list.className));
-    expect(maxH, `팝오버에서 max-h 를 찾지 못했다: ${list.className}`).not.toBeNull();
-    const popoverMaxPx = Number(maxH![1]) * 4; // Tailwind 간격 1 = 0.25rem = 4px
+    // 팝오버 최대높이 — 스케일 표기(`max-h-64`)와 임의값(`max-h-[256px]`) 둘 다 읽는다.
+    //   ★종전엔 스케일 표기만 읽어서, 임의값으로 바꾸면 기하 단언이 **실행조차 안 됐다**.
+    const cls = String(list.className);
+    const scale = /\bmax-h-(\d+)\b/.exec(cls);
+    const arb = /\bmax-h-\[(\d+)px\]/.exec(cls);
+    expect(scale ?? arb, `팝오버에서 max-h 를 찾지 못했다: ${cls}`).not.toBeNull();
+    const popoverMaxPx = arb ? Number(arb[1]) : Number(scale![1]) * 4; // 간격 1 = 0.25rem = 4px
 
-    // 여유 높이는 **잘라내는 상자 안**에서 세야 의미가 있다 — 바깥 요소의 높이는 전제가 아니다.
+    // 여유는 **잘라내는 상자 안에서, 그리고 팝오버 앵커보다 뒤(아래)에 오는** 요소로만 센다.
+    //   ★종전엔 상자 안 전체에서 `Math.max` 를 골라, 앵커 **위**에 있는 큰 요소도 근거가 될 수
+    //     있었다. 실제로 이 잠금은 `min-h-[500px]` 을 80% 줄여도 초록이었다(적대검증 실측) —
+    //     같은 상자 안 `min-h-[420px]` 이 백업으로 남았기 때문이다. 그래서 **앵커 뒤**로 좁히고
+    //     **가장 작은 값**을 본다: 어느 하나만 줄어도 여기서 빨개진다.
     const box = clip.traps[0]?.element ?? document.body;
-    const bodies = Array.from(box.querySelectorAll("*"))
-      .map((el) => /\bmin-h-\[(\d+)px\]/.exec(String((el as HTMLElement).className ?? ""))?.[1])
+    const below = Array.from(box.querySelectorAll("*")).filter(
+      (el) => !!(list.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING),
+    );
+    const bodies = below
+      .map((el) => /\bmin-h-\[(\d+)px\]/.exec(el.getAttribute("class") ?? "")?.[1])
       .filter((v): v is string => !!v)
       .map(Number);
     expect(
       bodies.length,
-      "잘라내는 상자 안에 본문 최소높이(min-h-[Npx])가 없다 — 무해하다는 근거가 사라졌다",
+      "팝오버 아래에 최소높이(min-h-[Npx])를 선언한 요소가 없다 — 무해하다는 근거가 사라졌다",
     ).toBeGreaterThan(0);
 
     expect(
-      Math.max(...bodies),
-      `팝오버 최대높이(${popoverMaxPx}px)가 본문 최소높이(${Math.max(...bodies)}px)를 넘어선다 — 잘라내는 조상 ${clip.traps.length}개 아래에서 하단 후보가 잘린다`,
+      Math.min(...bodies),
+      `팝오버 최대높이(${popoverMaxPx}px)가 아래 본문 최소높이(최소 ${Math.min(...bodies)}px)를 넘어선다 — 잘라내는 조상 ${clip.traps.length}개 아래에서 하단 후보가 잘린다`,
     ).toBeGreaterThan(popoverMaxPx);
   });
 
