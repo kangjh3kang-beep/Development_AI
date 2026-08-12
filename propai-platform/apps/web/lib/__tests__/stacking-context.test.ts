@@ -7,10 +7,17 @@
  *
  * ★픽스처는 **두 모집단을 가른다**(규율 A-2·B): 층 상자를 만드는 표기와, 이름이 비슷하지만
  *   만들지 **않는** 표기를 짝으로 둔다. 둘이 같은 답을 내면 정규식을 아무렇게나 고쳐도 초록이다.
+ *
+ * ★변이 검증 결과(2026-08-12 · `scripts/mutate_changed.py`, 13변이) — **설명 가능한 생존만 남겼다**:
+ *   · `LayerTrap.kind` / `scanAncestorTraps` 시그니처의 **타입 라인** 3건 → vitest 는 타입을 안 보므로
+ *     생존하지만, 실제로 주입해 `tsc --noEmit` 을 돌려 **오류 5건으로 잡히는 것을 확인**했다
+ *     (CI 의 type-check 잡이 이 층을 지킨다 — 추정이 아니라 실측).
+ *   · 주석 줄 1건 → 실행되지 않는다.
+ *   · `describeTraps` 의 출력 문자열 1건 → **진짜 구멍이었다.** 아래 케이스로 잠갔다.
  */
 import { describe, expect, it } from "vitest";
 
-import { clipsDescendants, createsStackingContext, scanAncestorTraps } from "@/lib/stacking-context";
+import { clipsDescendants, createsStackingContext, describeTraps, scanAncestorTraps } from "@/lib/stacking-context";
 
 /** 층 상자를 **만드는** 표기 — Tailwind v4 실사용형. */
 const CREATES: Array<[string, string]> = [
@@ -170,6 +177,22 @@ describe("조상 훑기", () => {
     const withClip = scanAncestorTraps(target, { kinds: ["stacking", "clipping"] });
     expect(withClip.traps).toHaveLength(1);
     expect(withClip.traps[0].kind).toBe("clipping");
+  });
+
+  // ★진단 메시지도 계약이다 — 실패 출력이 "어디의 무엇을 고쳐야 하는지"를 말하지 못하면
+  //   가드가 빨개져도 다음 사람이 못 고친다. 그리고 이 메시지는 어떤 단언에도 안 쓰여
+  //   **변이 검증에서 실제로 생존**했다(2026-08-12 실측) — 그래서 여기서 잠근다.
+  it("진단 메시지가 깊이·종류·클래스를 모두 담는다", () => {
+    document.body.innerHTML = "";
+    const target = chain(["overflow-hidden rounded-xl", "relative z-10", "px-4"]);
+    const scan = scanAncestorTraps(target, { kinds: ["stacking", "clipping"] });
+    const msg = describeTraps(scan.traps);
+    expect(scan.traps.length, "전제: 두 종류가 모두 잡혀야 이 검사가 의미가 있다").toBe(2);
+    expect(msg, "층 상자 위반을 그렇게 부르지 않는다").toContain("층 상자 생성");
+    expect(msg, "클리핑 위반을 그렇게 부르지 않는다").toContain("잘라냄");
+    expect(msg, "어느 조상인지(깊이)를 말하지 않는다").toMatch(/조상 \d+/);
+    expect(msg, "무엇을 고쳐야 하는지(클래스)를 말하지 않는다").toContain("relative z-10");
+    expect(msg, "클리핑 조상의 클래스를 말하지 않는다").toContain("overflow-hidden");
   });
 
   it("자기 자신은 기본적으로 검사하지 않는다 — 자기 z 는 자기를 가두지 않는다", () => {
