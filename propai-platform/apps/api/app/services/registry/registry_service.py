@@ -151,6 +151,14 @@ class RegistryService:
         cfg = _config()
         p = cfg["provider"]
 
+        # ★상류가 말한 실패 사유를 모은다(2026-08-12 라이브 진단으로 추가).
+        #   종전에는 각 프로바이더의 실패가 `logger.warning` 으로만 남고 **응답에는 실리지
+        #   않아**, 최종적으로 "API 미설정 또는 장애 발생" 한 문장으로 뭉개졌다.
+        #   실제 상류 응답은 하이픈의 `[C0000-002] 입력하신 검색조건에 대한 결과가 없습니다`
+        #   였는데, 사용자는 **시스템 장애로 오인**하고 진짜 단서(주소·검색 결과)를 잃었다.
+        #   원인을 아는 쪽(상류)의 말을 사용자에게 그대로 전달한다.
+        attempts: list[dict[str, Any]] = []
+
         # 1순위: 하이픈 (Hyphen)
         if (p == "hyphen" or not p) and hyphen_ready():
             probe = await probe_api_access()
@@ -174,8 +182,24 @@ class RegistryService:
                     return {**item, **h_res}
 
                 logger.warning("하이픈 등기 조회 실패, 2순위 Tilko 폴백 시도", err=h_res.get("message"))
+                attempts.append({
+                    "provider": "hyphen",
+                    "status": h_res.get("status") or "error",
+                    "message": h_res.get("message"),
+                })
             else:
                 logger.warning("하이픈 자격증명 거부(forbidden), 2순위 Tilko 폴백 시도", msg=probe.get("message"))
+                attempts.append({
+                    "provider": "hyphen",
+                    "status": "forbidden",
+                    "message": probe.get("message"),
+                })
+        elif p in ("", None, "hyphen"):
+            attempts.append({
+                "provider": "hyphen",
+                "status": "not_configured",
+                "message": "HYPHEN_HKEY / HYPHEN_USER_ID 미설정",
+            })
 
         # 2순위: 틸코 (Tilko)
         if tilko_ready():
@@ -190,6 +214,11 @@ class RegistryService:
                         "has_pdf": bool(t_res.get("pdf_data")),
                         "message": "Tilko 등기부 조회 성공",
                     }
+                attempts.append({
+                    "provider": "tilko",
+                    "status": t_res.get("status") or "error",
+                    "message": t_res.get("message"),
+                })
             elif address:
                 from app.services.registry.realty_kind import select_registry_item
                 from app.services.registry.tilko_client import search_unique_no
@@ -212,6 +241,24 @@ class RegistryService:
                             "has_pdf": bool(t_res.get("pdf_data")),
                             "message": "Tilko 등기부 조회 성공",
                         }
+                    attempts.append({
+                        "provider": "tilko",
+                        "status": t_res.get("status") or "error",
+                        "message": t_res.get("message"),
+                    })
+                else:
+                    # 주소검색 자체가 실패/무결과 — 이 사유가 사용자에게 도달해야 한다.
+                    attempts.append({
+                        "provider": "tilko",
+                        "status": s_res.get("status") or "no_match",
+                        "message": s_res.get("message"),
+                    })
+        else:
+            attempts.append({
+                "provider": "tilko",
+                "status": "not_configured",
+                "message": "TILKO_API_KEY 미설정",
+            })
 
         # 커스텀 URL 방식 (설정 시)
         if cfg["url"] and cfg["key"]:
@@ -238,10 +285,34 @@ class RegistryService:
             except Exception as e:  # noqa: BLE001
                 logger.warning("커스텀 등기부 API 조회 실패", err=str(e)[:120])
 
+        # ★"미설정" 과 "조회 실패" 를 구분한다. 종전에는 둘 다 `not_configured` 로 뭉개
+        #   "API 미설정 또는 장애 발생" 이라 답했다 — 실제로는 자격증명이 멀쩡하고 상류가
+        #   "검색 결과가 없다" 고 답한 경우까지 시스템 장애로 오인하게 만들었다(라이브 실측).
+        #   원인을 아는 쪽의 말을 그대로 싣고, 상태도 실제에 맞춘다.
+        configured_any = any(a.get("status") != "not_configured" for a in attempts)
+        detail = " / ".join(
+            f"{a['provider']}: {a.get('message') or a.get('status')}"
+            for a in attempts
+            if a.get("message") or a.get("status")
+        )
+        if configured_any:
+            msg = (
+                f"등기부 조회에 실패했습니다 — {detail}. "
+                "주소를 확인하거나 '비상 등기부 PDF 직접 업로드' 를 이용하세요."
+                if detail
+                else "등기부 조회에 실패했습니다. '비상 등기부 PDF 직접 업로드' 를 이용하세요."
+            )
+        else:
+            msg = (
+                "등기부 API(Hyphen/Tilko) 미설정 — 관리자 키 설정이 필요합니다. "
+                "'비상 등기부 PDF 직접 업로드' 를 이용하세요."
+            )
         return {
             **item,
-            "status": "not_configured",
-            "message": "등기부 API(Hyphen/Tilko) 미설정 또는 장애 발생 — '비상 등기부 PDF 직접 업로드' 기능을 이용하세요.",
+            # 자격증명이 있는데 조회가 안 된 것은 `provider_error` 다 — `not_configured` 가 아니다.
+            "status": "not_configured" if not configured_any else "provider_error",
+            "message": msg,
+            "attempts": attempts,
         }
 
     async def bulk(self, items: list[dict[str, Any]]) -> dict[str, Any]:

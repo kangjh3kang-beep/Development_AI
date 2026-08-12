@@ -163,6 +163,40 @@ async def tilko_realty(
     return result
 
 
+@router.post("/get-one", summary="단건 등기부 조회 / 비상 PDF 업로드 파싱")
+async def registry_get_one(
+    req: dict[str, Any],
+    current_user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """단건 등기부 조회(주소·PNU·고유번호) 또는 **비상 등기부 PDF 업로드 파싱**.
+
+    ★이 라우트는 **없었다**(2026-08-12 라이브 진단으로 발각). 프론트
+    `RegistryUploadModal` 은 `POST /registry/get-one` 을 부르는데(2026-07-24 `588ea8ed`)
+    백엔드에 그 경로가 **한 번도 존재한 적이 없어** 약 3주간 상시 404 였다.
+    서비스 함수 `RegistryService.get_one(pdf_input=...)` 은 PDF 파서 분기까지 구현돼
+    있었으므로 **문만 없던 셈**이다.
+
+    ★왜 이게 특히 나빴나: 조회 실패 응답이 사용자에게 "'비상 등기부 PDF 직접 업로드'
+    기능을 이용하세요" 라고 안내한다. 즉 **주 경로가 막혔을 때의 탈출구가 404** 였다.
+
+    과금: PDF 업로드 파싱은 **발급이 아니므로 과금하지 않는다**(외부 발급 없음).
+    주소·고유번호로 실제 발급이 일어난 경우에만 건당 1,200원(발급 성공 시).
+    """
+    pdf_input = req.get("pdf_input")
+    result = await RegistryService().get_one(
+        pnu=req.get("pnu"),
+        address=req.get("address"),
+        unique_no=req.get("unique_no") or req.get("pin"),
+        pdf_input=pdf_input,
+        realty_type=req.get("realty_type"),
+        dong=req.get("dong"),
+        ho=req.get("ho"),
+    )
+    if not pdf_input:
+        await _charge_registry_issue(current_user.user_id, result, times=1)
+    return result
+
+
 @router.post("/bulk", summary="다필지 등기부 일괄 조회/다운로드")
 async def registry_bulk(
     req: RegistryBulkRequest,
