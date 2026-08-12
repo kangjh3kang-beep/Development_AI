@@ -101,6 +101,7 @@ async def _dispose_engines() -> int:
       종전 주석이 "ROLLBACK 후 close" 라고 적었는데 사실이 아니라 바로잡았다.
     """
     disposed = 0
+    cancelled: BaseException | None = None
     for module_name, attr in _ENGINES:
         try:
             module = importlib.import_module(module_name)
@@ -126,6 +127,17 @@ async def _dispose_engines() -> int:
             disposed += 1
         except Exception:  # noqa: BLE001 — 정리 실패가 배치 결과를 덮지 않게 한다
             logger.warning("engine dispose 실패: %s.%s", module_name, attr, exc_info=True)
+        except BaseException as exc:  # noqa: BLE001
+            # ★★취소(`CancelledError`)는 **`BaseException` 계열**이라 위 `except Exception` 을
+            #   통과한다 → **첫 엔진에서 끊기면 나머지 엔진은 정리 시도조차 못 한다.**
+            #   호출부(`_runner`)에서 같은 결함을 고쳐 놓고 **여기 한 겹 아래에 그대로 남아
+            #   있었다** — 독립 적대검증 3라운드가 실제 `run_async_batch` 로 재현했다.
+            #   ★"처방을 적용한 범위 = 결함이 사는 범위인가"(CLAUDE.md §D-20)의 실례다.
+            logger.warning("engine dispose 취소됨: %s.%s", module_name, attr, exc_info=True)
+            cancelled = exc  # 나머지 엔진은 계속 시도하고, 취소는 루프 끝에서 전파한다
+    if cancelled is not None:
+        # ★삼키지 않는다 — 취소를 먹으면 워커 종료가 지연된다.
+        raise cancelled
     return disposed
 
 
@@ -274,7 +286,7 @@ def run_async_batch(factory: Callable[[], Awaitable[T]]) -> T:
                 await _drain_child_tasks()
             except Exception:  # noqa: BLE001 — 배수 실패가 **정리를 막아서는 안 된다**
                 logger.warning("자식 배수 실패 — 정리는 계속한다", exc_info=True)
-            except BaseException:
+            except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
                 # ★★`CancelledError`·`KeyboardInterrupt` 는 **`BaseException` 계열**이라 위
                 #   `except Exception` 을 통과해 `finally` 를 빠져나간다 → 정리에 도달 못 한다.
                 #   그냥 잔존 결함이 아니라 **이 배수가 만든 노출면**이다: 도입 전에는 `finally`
@@ -282,6 +294,10 @@ def run_async_batch(factory: Callable[[], Awaitable[T]]) -> T:
                 #   생겼고 워커 종료·Ctrl-C 가 그 창에 떨어지면 누수가 그대로 돌아온다.
                 #   (독립 적대검증이 실제 SIGINT 로 재현: dispose 0회)
                 #   ★정리는 하고 **취소는 반드시 전파**한다 — 삼키면 종료가 지연된다.
+                # ★`BaseException` 을 통째로 잡지 **않는다**: `GeneratorExit` 까지 잡으면
+                #   그 안에서 `await` 하는 순간 `RuntimeError: coroutine ignored GeneratorExit`
+                #   가 되어 **깨끗한 코루틴 종료를 에러로 바꾼다**(3라운드 실측).
+                #   그래서 종료 신호 셋만 명시한다.
                 logger.warning("자식 배수가 취소됐다 — 정리는 계속한다", exc_info=True)
                 await _dispose_engines()
                 raise
