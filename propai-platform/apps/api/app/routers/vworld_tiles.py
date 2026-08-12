@@ -18,10 +18,12 @@ settings는 import 시점 고정이라 런타임 등록 키를 못 받는다).
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 import os
 import re
+from collections.abc import Awaitable, Callable
 from urllib.parse import quote
 
 import httpx
@@ -133,6 +135,58 @@ def _transparent_tile() -> Response:
     )
 
 
+# 상류 간헐 실패에 대한 짧은 재시도.
+#
+# ★왜 (2026-08-12 프로덕션 실측):
+#   같은 요청을 두 서버에서 각 6회 보냈더니 168 은 6/6 200, 158 은 6/6 실패(502·연결끊김)였다.
+#   상류(VWorld)가 **간헐적으로 502 를 내고** 그때마다 화면에 "지적 타일 오류"가 뜬다.
+#   최근 6시간 이 프록시 로그에 502 가 171건·연결 실패가 144건 쌓였는데, 같은 파라미터를
+#   지금 5회 재요청하면 5/5 성공한다(34,824B) — **재시도 한 번이면 대부분 살아난다**.
+#
+# ★재시도하지 않는 것: 4xx 는 우리 요청이 잘못된 것이라 다시 보내도 같다(키 무효·레이어 오기).
+#   재시도는 5xx 와 네트워크 예외에만 건다. 타일은 멱등 GET 이라 재시도가 안전하다.
+_RETRY_STATUSES = frozenset({500, 502, 503, 504})
+_RETRY_ATTEMPTS = 2          # 총 시도 횟수(최초 1 + 재시도 1)
+_RETRY_BACKOFF_S = 0.25      # 타일은 사용자 대기 경로라 길게 끌지 않는다
+
+
+async def _fetch_with_retry(
+    send: Callable[[httpx.AsyncClient], Awaitable[httpx.Response]],
+    *,
+    kind: str,
+    ctx: dict[str, str],
+) -> httpx.Response | Response:
+    """상류 요청 + 짧은 재시도. 최종 실패 시 정직 오류 응답(Response)을 돌려준다."""
+    last_exc: Exception | None = None
+    for attempt in range(1, _RETRY_ATTEMPTS + 1):
+        try:
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                resp = await send(client)
+        except Exception as exc:  # noqa: BLE001 — 네트워크 오류는 재시도 대상
+            last_exc = exc
+            if attempt < _RETRY_ATTEMPTS:
+                logger.warning(
+                    "[vworld-tiles] %s fetch 실패(%d/%d) → 재시도: %s", kind, attempt,
+                    _RETRY_ATTEMPTS, exc,
+                )
+                await asyncio.sleep(_RETRY_BACKOFF_S)
+                continue
+            logger.error("[vworld-tiles] %s proxy fetch failed: %s", kind, exc)
+            return _json_error(f"VWorld {kind} proxy failed: {exc}", 502)
+
+        if resp.status_code in _RETRY_STATUSES and attempt < _RETRY_ATTEMPTS:
+            logger.warning(
+                "[vworld-tiles] %s 상류 %d(%d/%d) → 재시도 %s", kind, resp.status_code,
+                attempt, _RETRY_ATTEMPTS, ctx,
+            )
+            await asyncio.sleep(_RETRY_BACKOFF_S)
+            continue
+        return resp
+
+    # 도달 불가(위 루프가 항상 return 하거나 continue 한다). 방어적으로만 둔다.
+    return _json_error(f"VWorld {kind} proxy failed: {last_exc}", 502)
+
+
 def _relay_tile(resp: httpx.Response, *, kind: str, ctx: dict[str, str]) -> Response:
     """상류 응답 → 타일/오류 변환(web 프록시와 동일 분기)."""
     if resp.status_code >= 400:
@@ -211,19 +265,19 @@ async def proxy_vworld_wms(request: Request) -> Response:
     if not any(k.lower() == "service" for k, _ in params):
         params.append(("SERVICE", "WMS"))
 
-    try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            resp = await client.get(
-                VWORLD_WMS_BASE,
-                # tuple 변환: list 불변성 탓에 정확 일치 원소타입만 허용되는 타입체커 오탐 회피
-                # (tuple은 공변 — httpx 시그니처의 tuple[tuple[str, ...], ...] 분기에 안착).
-                params=httpx.QueryParams(tuple(params)),
-                headers={"Referer": VWORLD_REFERER},
-            )
-    except Exception as exc:  # noqa: BLE001 — 네트워크 오류 정직 503
-        logger.error("[vworld-tiles] WMS proxy fetch failed: %s", exc)
-        return _json_error(f"VWorld WMS proxy failed: {exc}", 502)
-    return _relay_tile(resp, kind="WMS", ctx={"layers": canonical})
+    async def _send(client: httpx.AsyncClient) -> httpx.Response:
+        return await client.get(
+            VWORLD_WMS_BASE,
+            # tuple 변환: list 불변성 탓에 정확 일치 원소타입만 허용되는 타입체커 오탐 회피
+            # (tuple은 공변 — httpx 시그니처의 tuple[tuple[str, ...], ...] 분기에 안착).
+            params=httpx.QueryParams(tuple(params)),
+            headers={"Referer": VWORLD_REFERER},
+        )
+
+    got = await _fetch_with_retry(_send, kind="WMS", ctx={"layers": canonical})
+    if isinstance(got, Response):   # 재시도까지 실패 — 이미 정직 오류 응답이다
+        return got
+    return _relay_tile(got, kind="WMS", ctx={"layers": canonical})
 
 
 @router.get("/wmts/{layer}/{z}/{y}/{x_file}", summary="VWorld WMTS(베이스맵) 타일 프록시 — web 키 부재 폴백")
@@ -241,10 +295,12 @@ async def proxy_vworld_wmts(request: Request, layer: str, z: int, y: int, x_file
     ext = "jpeg" if clean_layer == "Satellite" else "png"
     target = f"{VWORLD_WMTS_BASE}/{quote(key, safe='')}/{clean_layer}/{z}/{y}/{x}.{ext}"
 
-    try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            resp = await client.get(target, headers={"Referer": VWORLD_REFERER})
-    except Exception as exc:  # noqa: BLE001
-        logger.error("[vworld-tiles] WMTS proxy fetch failed: %s", exc)
-        return _json_error(f"VWorld WMTS proxy failed: {exc}", 502)
-    return _relay_tile(resp, kind="WMTS", ctx={"layer": clean_layer, "z": str(z), "y": str(y), "x": x})
+    ctx = {"layer": clean_layer, "z": str(z), "y": str(y), "x": x}
+
+    async def _send(client: httpx.AsyncClient) -> httpx.Response:
+        return await client.get(target, headers={"Referer": VWORLD_REFERER})
+
+    got = await _fetch_with_retry(_send, kind="WMTS", ctx=ctx)
+    if isinstance(got, Response):
+        return got
+    return _relay_tile(got, kind="WMTS", ctx=ctx)
