@@ -168,7 +168,14 @@ export function scanAncestorTraps(
   let node: Element | null = opts.skipSelf === false ? el : el.parentElement;
   let depth = 0;
 
-  while (node && node !== node.ownerDocument?.body) {
+  // ★상한을 두는 이유(변이 검증이 알려줬다): 이 순회는 **동기 루프**라 전진이 멈추면
+  //   테스트 러너가 통째로 멈춘다 — vitest 의 `testTimeout` 은 동기 루프를 끊지 못한다.
+  //   실제로 `node = node.parentElement` 를 지운 변이가 러너를 무한정 붙잡아
+  //   변이 검증 실행 전체가 50분 타임아웃으로 죽었다(생존/사망 판정 자체가 불가능했다).
+  //   상한이 있으면 같은 변이가 **멈춤 대신 실패**로 드러난다. 실제 DOM 깊이는 10 안팎이다.
+  const MAX_DEPTH = 200;
+
+  while (node && node !== node.ownerDocument?.body && depth < MAX_DEPTH) {
     const cls = String((node as HTMLElement).className ?? "");
     if (kinds.includes("stacking") && createsStackingContext(cls)) {
       traps.push({ element: node, depth, className: cls.slice(0, 90), kind: "stacking" });
