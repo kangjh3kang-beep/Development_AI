@@ -181,6 +181,44 @@ def normalize_address_candidates(address: str) -> list[str]:
 
 
 
+# ★하이픈 주소검색은 **한글 문자열**을 받는다 — 숫자 코드가 아니다(2026-08-12 명세 확인).
+#   내부 구분 코드(realty_kind: "1"집합건물 "2"토지 "3"건물 "0"/None 전체)를 그 표기로 옮긴다.
+_KINDCLS_KO = {"0": "전체", "1": "집합건물", "2": "토지", "3": "건물", "": "전체"}
+#   등기등록상태도 마찬가지다(현행/폐쇄/현행+폐쇄).
+_CLSFLAG_KO = {"1": "현행", "2": "폐쇄", "3": "현행+폐쇄", "": "현행"}
+
+# 시/도 표기(`admin_regn1`)는 **필수**인데 종전 요청에는 아예 없었다.
+_SIDO = (
+    "서울특별시", "부산광역시", "대구광역시", "인천광역시", "광주광역시", "대전광역시",
+    "울산광역시", "세종특별자치시", "경기도", "강원특별자치도", "강원도",
+    "충청북도", "충청남도", "전북특별자치도", "전라북도", "전라남도",
+    "경상북도", "경상남도", "제주특별자치도",
+)
+# 축약 표기도 흔히 들어온다("서울 강남구 …").
+_SIDO_ALIAS = {
+    "서울": "서울특별시", "부산": "부산광역시", "대구": "대구광역시", "인천": "인천광역시",
+    "광주": "광주광역시", "대전": "대전광역시", "울산": "울산광역시", "세종": "세종특별자치시",
+    "경기": "경기도", "강원": "강원특별자치도", "충북": "충청북도", "충남": "충청남도",
+    "전북": "전북특별자치도", "전남": "전라남도", "경북": "경상북도", "경남": "경상남도",
+    "제주": "제주특별자치도",
+}
+
+
+def extract_sido(address: str) -> str:
+    """주소 문자열에서 시/도(`admin_regn1`)를 뽑는다. 못 뽑으면 빈 문자열.
+
+    ★이 값이 **필수**다. 빠지면 하이픈은 `[C0000-002] 검색조건에 대한 결과가 없습니다`
+    를 돌려준다 — "결과 없음" 처럼 보이지만 실제로는 **요청이 불완전**한 것이다.
+    그 오해 때문에 "등기 열람이 안 된다" 가 오래 방치됐다.
+    """
+    a = (address or "").strip()
+    for s in _SIDO:
+        if a.startswith(s):
+            return s
+    head = a.split()[0] if a.split() else ""
+    return _SIDO_ALIAS.get(head, "")
+
+
 async def _search_single_address(
     address: str,
     kindcls: str = "0",
@@ -188,14 +226,24 @@ async def _search_single_address(
     limit_page: str = "1",
     page_no: str = "1",
 ) -> dict[str, Any]:
-    """단일 주소 원시 검색 (POST /in0004000168)."""
+    """단일 주소 원시 검색 (POST /in0004000168).
+
+    ★2026-08-12 명세 대조로 두 결함을 고쳤다(라이브 실측으로 확증):
+      1) 값 형식 — `kindcls`·`cls_flag` 는 **한글 문자열**인데 숫자 코드를 보내고 있었다.
+      2) 필수 누락 — `admin_regn1`(시/도)를 아예 안 보냈다.
+    둘 다 `[C0000-002] 결과가 없습니다` 로 나타나 **데이터가 없는 것처럼 보였다.**
+    """
     import httpx
 
     url = f"{_host()}/in0004000168"
+    sido = extract_sido(address)
     body = {
-        "kindcls": kindcls,
+        "kindcls": _KINDCLS_KO.get(kindcls, kindcls or "전체"),
+        # 시/도를 못 뽑으면 "전체" 로 둔다(문서상 기본값) — 빈 문자열은 VALID 오류다.
+        "admin_regn1": sido or "전체",
+        "cls_flag": _CLSFLAG_KO.get(cls_flag, cls_flag or "현행"),
         "simple_address": address,
-        "cls_flag": cls_flag,
+        "detailYn": "Y",
         "limitPage": limit_page,
         "pageNo": page_no,
     }
@@ -226,14 +274,22 @@ async def _search_single_address(
         res_data = data.get("data") or {}
         raw_list = res_data.get("list") or []
         items = []
+        # ★응답 키에 `get` 접두사가 **없다**(2026-08-12 라이브 실측).
+        #   명세 화면의 스키마는 `get부동산고유번호` 로 표시하지만 실제 응답은
+        #   `부동산고유번호` 다. 종전 파서는 `get…` 만 읽어, **검색이 성공해도**
+        #   `unique_no` 가 빈 문자열이 돼 "고유번호를 찾을 수 없습니다" 로 떨어졌다.
+        #   문서 표기와 실제 응답이 갈리므로 **양쪽을 모두 읽는다**(둘 중 있는 쪽 채택).
+        def _pick(d: dict[str, Any], name: str) -> Any:
+            return d.get(name) if d.get(name) is not None else d.get(f"get{name}")
+
         for item in raw_list:
             if isinstance(item, dict):
                 items.append({
-                    "unique_no": (item.get("get부동산고유번호") or "").replace("-", "").strip(),
-                    "gubun": item.get("get구분"),
-                    "owner": item.get("get소유자"),
-                    "jibun": item.get("get부동산소재지번"),
-                    "sangtae": item.get("get상태"),
+                    "unique_no": (_pick(item, "부동산고유번호") or "").replace("-", "").strip(),
+                    "gubun": _pick(item, "구분"),
+                    "owner": _pick(item, "소유자"),
+                    "jibun": _pick(item, "부동산소재지번"),
+                    "sangtae": _pick(item, "상태"),
                 })
 
         return {
