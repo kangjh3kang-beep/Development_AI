@@ -184,7 +184,12 @@ export default function NewProjectPage() {
             <span className="cc-label">프로젝트 메타데이터</span>
           </div>
         </header>
-        <div className="relative z-10 cc-panel__body space-y-6">
+        {/* ★`z-10` 을 걷어냈다(`relative` 은 유지) — 이 안에 주소 후보 팝오버(z-[650])가 산다.
+            조상이 z 를 가지면 스태킹 컨텍스트가 되어 팝오버가 **그 안에 갇히고 실효 10**이 된다
+            (라이브·e2e 로 확인). 페인트 순서는 그대로다: 장식(`cc-grid-bg`·코너 브래킷)이 DOM 에서
+            **앞**에 오고 이 본문이 뒤라, z 없이도 본문이 위에 그려진다.
+            계약=`lib/satong-map-z.ts` 의 "전제 조건" · 잠금=`e2e/popover-layer.spec.ts` */}
+        <div className="relative cc-panel__body space-y-6">
           <div className="grid gap-2">
             <label className="cc-label">프로젝트 명칭</label>
             <input
@@ -196,7 +201,8 @@ export default function NewProjectPage() {
             />
           </div>
 
-          <div className="grid gap-2 relative z-10">
+          {/* ★여기도 같은 이유로 `z-10` 제거 — 팝오버의 **직속 조상**이다. */}
+          <div className="grid gap-2 relative">
             <label className="cc-label">소재지 (주소 검색)</label>
             <GlobalAddressSearch
               onChange={handleAddressChange}
