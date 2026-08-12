@@ -16,6 +16,7 @@ import { motion } from "framer-motion";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { LIFECYCLE_STAGES, STAGE_META, type LifecycleStage } from "@/lib/lifecycle-stages";
 import { StageIcon } from "@/components/common/StageIcon";
+import { useHydrated } from "@/hooks/useHydrated";
 
 /**
  * 현재 단계(currentStage) 기준 워크플로우상 "바로 다음 단계"를 계산한다.
@@ -44,7 +45,14 @@ export function NextStageCta({
   // props가 주어지면 우선(레이아웃 route param), 없으면 store 폴백.
   const projectId = projectIdProp ?? storeProjectId;
   const getNextRecommendedStage = useProjectContextStore((s) => s.getNextRecommendedStage);
+  // ★persist(localStorage) 파생값은 **재수화 이후에만** 렌더에 쓴다 — 서버엔 그 저장소가 없어
+  //   서버/클라가 다른 것을 그리면 하이드레이션이 깨진다(prod 에선 `Minified React error #418`).
+  //   같은 결함을 `LifecycleProgressRail` 에서 먼저 잡았고, 이 파일은 **같은 레이아웃의 형제**다.
+  const hydrated = useHydrated();
 
+  // props 로 받은 projectId 는 route param 이라 서버·클라가 같다 — 그건 게이트가 필요 없다.
+  // store 폴백으로 얻은 값만 재수화 이후로 미룬다.
+  if (!projectIdProp && !hydrated) return null;
   if (!projectId) return null;
 
   // 현재 단계가 전달되면 그 "바로 다음 단계"로 안내(자기참조 방지).

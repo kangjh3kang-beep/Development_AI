@@ -34,10 +34,17 @@ const SEEDED_CONTEXT = {
 
 test.describe("라이프사이클 레일 — 하이드레이션 일치", () => {
   test("★저장된 프로젝트 컨텍스트가 있어도 하이드레이션 불일치가 없다", async ({ page }) => {
-    const hydrationErrors: string[] = [];
+    // ★★필터를 걸지 않는다 — 걸었다가 **CI 에서 공허해졌다**(적대검증 지적, 실측 확인).
+    //   dev 번들은 "Hydration failed …" 라는 산문을 던지지만, **프로덕션 번들에는 그 문자열이
+    //   0건**이고 `Minified React error #418` 로 최소화된다(`.next/static` 실측: "Hydration failed" 0,
+    //   "Minified React error" 6파일). CI 는 `pnpm build && pnpm start` = **프로덕션**이므로
+    //   `/Hydration failed/i` 필터는 **절대 매치되지 않아 무조건 초록**이 된다.
+    //   → 이 페이지에서 나는 **모든 uncaught error** 를 대상으로 삼는다(형제 스펙
+    //     `digital-twin-scene.spec.ts` 도 같은 방식이고, 그래서 그쪽이 이 버그를 잡았다).
+    const pageErrors: string[] = [];
     page.on("pageerror", (e) => {
       const msg = String((e as Error)?.message ?? e);
-      if (/Hydration failed|hydration/i.test(msg)) hydrationErrors.push(msg.split("\n")[0]);
+      pageErrors.push(msg.split("\n")[0]);
     });
 
     await installReleaseHarness(page);
@@ -61,8 +68,22 @@ test.describe("라이프사이클 레일 — 하이드레이션 일치", () => {
       .toBeGreaterThan(0);
 
     expect(
-      hydrationErrors,
-      `하이드레이션 불일치가 발생했다 — 서버와 클라가 다른 값을 그린다:\n${hydrationErrors.join("\n")}`,
+      pageErrors,
+      `이 화면에서 uncaught error 가 났다 — 대개 하이드레이션 불일치이며 prod 에서는 ` +
+        `\`Minified React error #418\` 로 최소화돼 나온다:\n${pageErrors.join("\n")}`,
     ).toEqual([]);
   });
 });
+
+// ── 부채: 같은 패턴이 남아 있는 소비처(적대검증이 실측으로 준 목록 — 스냅샷) ──
+// `persist` 스토어(6개, 어느 것도 `skipHydration` 을 쓰지 않는다)에서 파생한 값을 SSR 경로에서
+// 그대로 렌더하는 자리가 더 있다. 이 PR 은 **같은 레이아웃의 3곳**(레일·주소바·다음단계 CTA)만 고쳤다.
+//   · `app/[locale]/(dashboard)/projects/[id]/permit/page.tsx:201` — `진행률 {pct}%`(글자 그대로 같은 형태)
+//   · `components/common/ContextHeader.tsx` · `components/common/ProjectSwitcher.tsx`
+//   · `canvas` · `bim-studio` · `design-studio` · `analytics/investment` · `multi-parcel` 페이지 등
+// ★4개 페이지는 **의도가 아니라 `useDictionary` 스피너로 우연히 가려져** 있다 — 사전 로딩을
+//   서버로 옮기는 "당연한 최적화"를 하면 한꺼번에 결함으로 바뀐다.
+test.fixme(
+  "persist 파생값을 SSR 경로에서 렌더하는 잔여 소비처 — 전수 스윕 + 재발 강제(lint/락)",
+  async () => {},
+);

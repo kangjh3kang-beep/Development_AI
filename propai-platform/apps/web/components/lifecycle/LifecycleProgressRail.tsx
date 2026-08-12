@@ -66,6 +66,9 @@ export function LifecycleProgressRail({
   const hydrated = useHydrated();
 
   // 활성 프로젝트가 없으면 표시하지 않는다(대시보드/레이아웃 무파괴).
+  // ★props 로 받은 id 는 route param 이라 서버·클라가 같다 — 게이트 불필요.
+  //   store 폴백으로 얻은 값만 재수화 뒤로 미룬다. 안 그러면 **컴포넌트 유무 자체**가 갈린다.
+  if (!projectIdProp && !hydrated) return null;
   if (!projectId) return null;
 
   const nextStage = hydrated ? getNextRecommendedStage() : undefined;
@@ -99,14 +102,17 @@ export function LifecycleProgressRail({
           )}
         </div>
         <span className="shrink-0 rounded-full border border-[var(--line)] bg-[var(--surface-muted)] px-3 py-1 text-[11px] font-bold text-[var(--text-secondary)]">
-          {completedCount}/{LIFECYCLE_STAGES.length} · {pct}%
+          {hydrated ? `${completedCount}/${LIFECYCLE_STAGES.length} · ${pct}%` : `—/${LIFECYCLE_STAGES.length}`}
         </span>
       </header>
 
       {/* 진행 바 */}
       <div className="mb-4 h-1.5 w-full overflow-hidden rounded-full bg-[var(--surface-muted)]">
         <div
-          className="h-full rounded-full bg-[var(--accent-strong)] transition-[width] duration-500"
+          className={`h-full rounded-full bg-[var(--accent-strong)] ${
+            // 재수화 직후 0%→실제값이 0.5초에 걸쳐 자라 보이지 않게, 첫 채움에는 전이를 끈다.
+            hydrated ? "transition-[width] duration-500" : ""
+          }`}
           style={{ width: `${pct}%` }}
         />
       </div>
