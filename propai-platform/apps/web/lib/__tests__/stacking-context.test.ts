@@ -14,6 +14,15 @@
  *     (CI 의 type-check 잡이 이 층을 지킨다 — 추정이 아니라 실측).
  *   · 주석 줄 1건 → 실행되지 않는다.
  *   · `describeTraps` 의 출력 문자열 1건 → **진짜 구멍이었다.** 아래 케이스로 잠갔다.
+ *
+ * ★R1(2026-08-12 · 16변이 · kill 8 / skip 3 / 생존 5) — 생존 트리아지:
+ *   · `culpritTokens` 의 **클리핑 분기** 2건 → **진짜 구멍이었다**(메시지 문자열만 보면 클래스 줄에
+ *     같은 토큰이 이미 있어 분기를 망가뜨려도 초록). 범인 토큰을 **종류별로** 단언해 잠갔고
+ *     변이 재주입으로 CAUGHT 확인.
+ *   · 함수 시그니처의 타입 리터럴 1건 → 주입해 `tsc --noEmit` 이 잡는 것을 확인(TS2345).
+ *   · `culpritTokens(cls, "stacking")` 인자 1건 → **등가 변이**다. 구현이 `kind === "clipping"`
+ *     만 분기하므로 "clipping" 이 아닌 어떤 값이어도 결과가 같다 — 잡을 수 없는 게 맞다.
+ *   · 진단 **라벨 문구** 1건 → 표시 문구는 계약이 아니다(범인 토큰·클래스는 위에서 잠겼다).
  */
 import { describe, expect, it } from "vitest";
 
@@ -205,6 +214,13 @@ describe("조상 훑기", () => {
     expect(msg, "어느 조상인지(깊이)를 말하지 않는다").toMatch(/조상 \d+/);
     expect(msg, "무엇을 고쳐야 하는지(클래스)를 말하지 않는다").toContain("relative z-10");
     expect(msg, "클리핑 조상의 클래스를 말하지 않는다").toContain("overflow-hidden");
+
+    // ★범인 토큰을 **종류별로** 단언한다. 메시지 문자열만 보면 클래스 줄에 같은 토큰이 이미
+    //   들어 있어, `culpritTokens` 의 클리핑 분기를 망가뜨려도 초록이었다(변이 실측 2건 생존).
+    const clip = scan.traps.find((t) => t.kind === "clipping");
+    const stack = scan.traps.find((t) => t.kind === "stacking");
+    expect(clip?.culprits, "클리핑 범인은 `overflow-hidden` 하나여야 한다").toEqual(["overflow-hidden"]);
+    expect(stack?.culprits, "층 상자 범인은 positioned+z 두 토큰이어야 한다").toEqual(["relative", "z-10"]);
   });
 
   it("자기 자신은 기본적으로 검사하지 않는다 — 자기 z 는 자기를 가두지 않는다", () => {
