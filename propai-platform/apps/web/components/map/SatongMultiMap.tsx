@@ -287,6 +287,27 @@ export type SatongPoiPayload = {
 export const VWORLD_TILE_MIN_ZOOM = 6;
 export const VWORLD_TILE_MAX_ZOOM = 19;
 
+/**
+ * 연속지적도(WMS)가 **실제로 그려지기 시작하는** 최소 줌.
+ *
+ * ★추정이 아니라 실측이다(2026-08-12, 프로덕션 키로 상류 직접 조회·강남 256px 타일):
+ *   z15 1,784B · z16 1,784B · z17 1,784B · z18 24,493B · z19 9,818B
+ *   1,784B 는 **완전투명 PNG**(불투명 0픽셀)다 — 200 OK 라 오류로도 안 잡힌다.
+ *
+ * 즉 z17 이하에서는 아무리 기다려도 지적선이 나오지 않는다. 그 배율에서 타일을 계속
+ * 요청하면 사용자는 **설명 없는 빈 지도**를 보고, 상류에는 헛요청이 쌓여 간헐 502 노출만
+ * 커진다. 그래서 레이어 하한을 여기 맞추고, 그 아래에서는 "오류"가 아니라 **안내**를 띄운다.
+ *
+ * ★재측정 방법(값을 바꾸려면 먼저 재라):
+ *   GetMap 을 z별 BBOX(폭 = 40075016.686 / 2^z)로 호출해 응답 바이트를 비교한다.
+ *   1,784B 가 나오면 그 배율은 빈 타일이다.
+ */
+export const CADASTRE_MIN_ZOOM = 18;
+
+/** 저배율 안내 문구 — **오류가 아니다**. 이 문구는 진짜 오류 노트를 덮지 않는다. */
+export const CADASTRE_ZOOM_HINT =
+  `지적도는 z${CADASTRE_MIN_ZOOM} 이상에서 제공됩니다 — 확대하면 지번·경계가 표시됩니다`;
+
 const POI_CONTROL_CODES: Record<string, string[]> = {
   station: ["SW8"],
   school: ["SC4"],
@@ -1766,7 +1787,13 @@ export function SatongMultiMap({
       //   지적선은 모든 채움 오버레이 '위'가 계약이므로 5로 승격.
       zIndex: 5,
       maxZoom: 19,
-      minZoom: 10,
+      // ★minZoom 을 **실측값**으로 올린다(2026-08-12). 종전 10 은 근거가 없었다.
+      //   VWorld 연속지적도는 z18 미만에서 **완전투명 타일**(1,784B·불투명 0픽셀)을 준다.
+      //   같은 좌표를 줌별로 재 봤다(강남·256px 타일):
+      //     z15 1,784B · z16 1,784B · z17 1,784B · z18 24,493B · z19 9,818B
+      //   즉 z10~17 여덟 배율은 **반드시 빈 타일**이다. 그걸 계속 요청하면
+      //   ①사용자는 설명 없이 빈 지도를 보고 ②상류에 헛요청을 보내 502 노출만 키운다.
+      minZoom: CADASTRE_MIN_ZOOM,
       attribution: "VWorld 연속지적도",
     });
     // ★PR#329 R1 리뷰(MEDIUM2) 반영: 종전엔 tileerror 핸들러가 없어 키 미설정/상류 오류
@@ -1783,7 +1810,22 @@ export function SatongMultiMap({
     cadastreTile.addTo(map);
     cadastreTileRef.current = cadastreTile;
 
+    // ★"안 보임"을 "오류"로 말하지 않는다(2026-08-12).
+    //   z18 미만은 상류가 빈 타일을 주는 **정상 동작**이라 tileerror 도 안 뜨고, 사용자는
+    //   아무 설명 없이 빈 지도를 본다. 그 상태를 오류가 아니라 **안내**로 표면화한다.
+    //   ★진짜 오류 노트를 덮지 않는다 — 안내 문구일 때만 갈아끼운다.
+    const syncZoomNote = () => {
+      const below = map.getZoom() < CADASTRE_MIN_ZOOM;
+      setCadastreTileNote((prev) => {
+        if (below) return prev && prev !== CADASTRE_ZOOM_HINT ? prev : CADASTRE_ZOOM_HINT;
+        return prev === CADASTRE_ZOOM_HINT ? "" : prev;
+      });
+    };
+    syncZoomNote();
+    map.on("zoomend", syncZoomNote);
+
     return () => {
+      map.off("zoomend", syncZoomNote);
       if (cadastreTileRef.current) {
         try { map.removeLayer(cadastreTileRef.current); } catch { /* noop */ }
         cadastreTileRef.current = null;
