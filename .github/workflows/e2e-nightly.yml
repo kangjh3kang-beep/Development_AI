@@ -88,12 +88,22 @@ jobs:
           JWT_SECRET_KEY: e2e-test-secret-key-not-for-prod
           ENVIRONMENT: test
         run: |
-          PYTHONPATH=. python -m uvicorn main:app --host 0.0.0.0 --port 8000 &
+          # ★`PYTHONPATH=.` 만으로는 뜨지 않는다 — `apps/api/main.py:17` 이
+          #   `from packages.schemas.models import HealthResponse` 를 하는데 `packages/` 는
+          #   `propai-platform/` 아래(= 여기서 두 단계 위)에 있다. `.` 은 `apps/api` 뿐이라
+          #   `ModuleNotFoundError: No module named 'packages'` 로 죽었다.
+          #   (재현: `cd apps/api && PYTHONPATH=. python -c "import packages"` → 동일 오류.
+          #    `PYTHONPATH=.:../..` 이면 임포트 성공.)
+          PYTHONPATH=.:../.. python -m uvicorn main:app --host 0.0.0.0 --port 8000 > /tmp/api-start.log 2>&1 &
           for i in $(seq 1 45); do
             if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
               echo "API server ready (${i}s)"; break
             fi
-            if [ "$i" -eq 45 ]; then echo "API server start failed"; exit 1; fi
+            if [ "$i" -eq 45 ]; then
+              # ★실패하면 **왜** 죽었는지 로그를 남긴다 — 종전엔 "start failed" 한 줄뿐이라
+              #   6일 동안 원인을 모른 채 붉었다(원인은 위 한 줄이었다).
+              echo "API server start failed — 아래는 uvicorn 출력:"; tail -50 /tmp/api-start.log; exit 1
+            fi
             sleep 2
           done
 
