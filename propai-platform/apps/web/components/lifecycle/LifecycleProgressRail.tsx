@@ -14,6 +14,7 @@
 
 import Link from "next/link";
 import { motion } from "framer-motion";
+import { useHydrated } from "@/hooks/useHydrated";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import {
   LIFECYCLE_STAGES,
@@ -57,20 +58,26 @@ export function LifecycleProgressRail({
   // markStageComplete를 일관 호출하지 않는 모듈 탓에 completedStages가 비어 "0/11 고정"되던
   // 버그를 해소: 실데이터가 채워진 단계(부지분석 등)를 완료로 일관 표시한다.
   const stageHasData = useProjectContextStore((s) => s.stageHasData);
+  // ★진행도는 **persist 저장소(localStorage)** 에서 파생된다 — 서버엔 그 저장소가 없다.
+  //   재수화 전에 그대로 쓰면 서버 `0` / 클라 `1` 로 **하이드레이션 불일치**가 나고,
+  //   React 가 이 서브트리를 버리고 다시 그리며 uncaught error 를 던진다(2026-08-13 실측).
+  //   그래서 저장소 파생값은 **재수화 이후에만** 렌더에 쓴다.
+  //   잠금: `e2e/hydration-lifecycle-rail.spec.ts`(수정 전 red → 후 green 확인)
+  const hydrated = useHydrated();
 
   // 활성 프로젝트가 없으면 표시하지 않는다(대시보드/레이아웃 무파괴).
   if (!projectId) return null;
 
-  const nextStage = getNextRecommendedStage();
+  const nextStage = hydrated ? getNextRecommendedStage() : undefined;
   // 완료 판정 = 완료 단계 기록(completedStages) OR 실데이터 존재(stageHasData).
   const isDone = (id: LifecycleStage) =>
-    completedStages.includes(id) || stageHasData(id) === true;
+    hydrated && (completedStages.includes(id) || stageHasData(id) === true);
   const completedCount = LIFECYCLE_STAGES.filter((id) => isDone(id)).length;
   const pct = Math.round((completedCount / LIFECYCLE_STAGES.length) * 100);
 
   function statusOf(id: LifecycleStage): StageStatus {
     if (isDone(id)) return "completed";
-    if (currentStage === id) return "current";
+    if (hydrated && currentStage === id) return "current";
     if (nextStage === id) return "next";
     return "pending";
   }
@@ -87,7 +94,7 @@ export function LifecycleProgressRail({
           <p className="text-[10px] font-black uppercase tracking-[0.25em] text-[var(--accent-strong)]">
             라이프사이클 진행
           </p>
-          {projectName && (
+          {hydrated && projectName && (
             <p className="truncate text-[13px] font-bold text-[var(--text-primary)]">{projectName}</p>
           )}
         </div>
