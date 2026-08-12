@@ -326,16 +326,36 @@ describe("DesignWorkspace 층위 계약 — 스태킹 컨텍스트 금지", () =
     //   ★왜 공용인가: 종전 이 자리의 정규식은 `isolate` **하나만** 봤는데 바로 위 주석은
     //     "transform/filter 유틸"까지 본다고 적혀 있었다 — 코드가 갖지 않은 면역을 주장한
     //     주석이다(규율 C-11). 같은 판정을 주소 팝오버 가드도 따로 들고 있었고, 그쪽은
-    //     Tailwind **v3** 토큰을 찾고 있었다(저장소는 v4 — `backdrop-blur-*` 106건 미탐).
+    //     Tailwind **v3** 토큰을 찾고 있었다(저장소는 v4 — `backdrop-blur-*` 120건 미탐).
     //     판정을 한 곳으로 모아 한 곳을 고치면 두 가드가 함께 따라오게 한다.
-    const contexts = [root as HTMLElement, ...direct]
-      .filter((el) => createsStackingContext((el.className ?? "").toString()))
-      .map((el) => (el.className ?? "").toString().slice(0, 80));
+    const scanDirect = () =>
+      [root as HTMLElement, ...direct]
+        .filter((el) => createsStackingContext((el.className ?? "").toString()))
+        .map((el) => (el.className ?? "").toString().slice(0, 80));
+
+    const contexts = scanDirect();
 
     expect(
       contexts,
       `워크스페이스 직계에 스태킹 컨텍스트가 생겼다 — 내부 전체화면(z-${SATONG_CONTENT_Z.appFullscreen})이 갇힌다:\n${contexts.join("\n")}`,
     ).toHaveLength(0);
+
+    // ★★"위반 0"이 참인 이유가 **판정기가 아무것도 안 잡기 때문**일 수 있다.
+    //   실제로 그랬다: `createsStackingContext` 를 통째로 `false` 로 만들어도 이 테스트는
+    //   초록이었다(적대검증 실측). 위 단언은 **차가 0인 픽스처** 위에 서 있었던 셈이다
+    //   — 이 PR 이 팝오버 가드에서 고친 바로 그 결함을 여기엔 적용하지 않았다(규율 D-16).
+    //   그래서 같은 필터에 **알려진 위반 모양**을 태워 판별력을 함께 확인한다.
+    const probe = direct[0];
+    const original = probe.className;
+    probe.className = `${original} sticky z-20`;
+    try {
+      expect(
+        scanDirect().length,
+        "판정기가 `sticky z-20` 조차 잡지 못한다 — 위 '위반 0' 은 공허하다",
+      ).toBeGreaterThan(0);
+    } finally {
+      probe.className = original;
+    }
   });
 
 });

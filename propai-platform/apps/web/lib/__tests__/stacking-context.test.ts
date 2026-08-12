@@ -3,7 +3,7 @@
  *
  * ★왜 판정기에 테스트를 다는가 — 이 저장소가 실제로 데인 자리다. 조상 가드는 두 벌 있었고
  *   둘 다 **Tailwind v3 토큰**을 찾고 있었다(`backdrop-filter` 저장소 실재 0건 vs
- *   `backdrop-blur-*` 106건). "가드가 있다"와 "그 가드가 현재 스택에서 성립한다"는 다르다.
+ *   `backdrop-blur-*` 120건). "가드가 있다"와 "그 가드가 현재 스택에서 성립한다"는 다르다.
  *
  * ★픽스처는 **두 모집단을 가른다**(규율 A-2·B): 층 상자를 만드는 표기와, 이름이 비슷하지만
  *   만들지 **않는** 표기를 짝으로 둔다. 둘이 같은 답을 내면 정규식을 아무렇게나 고쳐도 초록이다.
@@ -57,7 +57,10 @@ const DOES_NOT: Array<[string, string]> = [
   ["", "빈 문자열"],
   ["relative", "z 없는 positioned 는 층 상자가 아니다"],
   ["absolute left-0 right-0 top-full", "위치만 잡은 팝오버 자신"],
-  ["z-10", "positioned 아닌 z 는 무효"],
+  // ★정확히는 "부모가 flex/grid 가 **아닐 때만**" 무효다 — flex·grid **아이템**은 static 이어도
+  //   `z-index ≠ auto` 면 층 상자를 만든다(CSS Flexbox §5.4 · Grid §6). 클래스 문자열만으로는
+  //   부모의 display 를 알 수 없어 여기서는 무효로 둔다(저장소 실사용 1건). 아래 it.todo 참조.
+  ["z-10", "positioned 아닌 z — 부모가 flex/grid 가 아닐 때만 무효"],
   ["shadow-lg", "box-shadow 는 필터가 아니다"],
   ["shadow-[var(--shadow-lg)]", "임의값 box-shadow"],
   // ★★v4 실측(tailwind 4.2.1 컴파일): 맨몸 `transform`·`filter`·`backdrop-filter` 는
@@ -126,6 +129,15 @@ describe("스태킹 컨텍스트 판정 — 두 모집단이 갈린다", () => {
     }
   });
 });
+
+// ── 부채(초록 안에 드러낸다) ──
+// flex/grid 아이템의 `z-index` 는 `position:static` 이어도 층 상자를 만드는데, 클래스 문자열만
+// 보는 이 판정기는 **부모의 display 를 모른다**. 부모 요소를 함께 받는 오버로드가 필요하다.
+it.todo("flex/grid 아이템의 z-index — 부모 display 를 함께 봐야 판정할 수 있다");
+
+// 수작업 CSS(`.glass`·`.cc-panel`·`.leaflet-container`)와 인라인 style·framer-motion 의
+// 인라인 transform 은 클래스 토큰으로 원리적으로 못 본다 — 브라우저 페인트 순서로만 잡힌다.
+it.todo("수작업 CSS·인라인 style 층 — e2e 페인트 순서 판정으로 덮는다");
 
 describe("클리핑 판정", () => {
   it.each([
@@ -201,5 +213,63 @@ describe("조상 훑기", () => {
     target.className = "absolute z-[650]";
     expect(scanAncestorTraps(target).traps).toHaveLength(0);
     expect(scanAncestorTraps(target, { skipSelf: false }).traps).toHaveLength(1);
+  });
+});
+
+// ── 적대검증(2026-08-12)이 짚은 미탐을 잠근다 ──
+describe("★종전 미탐 — 실제 저장소 표기에서 새던 것들", () => {
+  it.each([
+    ["blur-[var(--glass-blur)]", "SatongMapShell 의 유리효과 — `var()` 때문에 통째로 미탐이었다"],
+    ["opacity-[var(--x)]", "런타임 변수 투명도"],
+    ["blur-[calc(2px*3)]", "calc 임의값"],
+    ["opacity-(--my-op)", "v4 CSS 변수 단축 표기"],
+    ["opacity-40!", "v4 후행 important — 종전엔 v3 식 선행 `!` 만 처리했다"],
+    ["drop-shadow", "맨몸 drop-shadow"],
+  ])("이제 잡는다: %s (%s)", (cls) => {
+    expect(createsStackingContext(cls)).toBe(true);
+  });
+
+  it.each([
+    ["truncate", "= overflow:hidden — 저장소 112건"],
+    ["line-clamp-3", "= overflow:hidden — 저장소 9건"],
+    ["overflow-hidden!", "후행 important"],
+  ])("클리핑으로 잡는다: %s (%s)", (cls) => {
+    expect(clipsDescendants(cls)).toBe(true);
+  });
+
+  it.each([
+    ["line-clamp-none", "클램프 해제는 자르지 않는다"],
+    ["perspective-origin-center", "원점만 옮긴다 — 층 상자 아님"],
+    ["mask-type-alpha", "SVG 마스크 종류 — 마스크를 거는 게 아니다"],
+  ])("여전히 놓아준다: %s (%s)", (cls) => {
+    expect(createsStackingContext(cls) || clipsDescendants(cls)).toBe(false);
+  });
+
+  it("★진단이 범인 토큰을 잘라먹지 않는다 — 인용하던 그 모양에서 실제로 잘렸다", () => {
+    document.body.innerHTML = "";
+    const outer = document.createElement("div");
+    // SiteInitiator.tsx:140 verbatim(길이 117) — 범인 `backdrop-blur-3xl` 이 맨 뒤라
+    // 종전 90자 절단에서 사라졌다.
+    outer.className =
+      "relative rounded-[var(--radius-lg)] border border-[var(--line)] bg-[var(--glass-bg)] p-8 shadow-2xl backdrop-blur-3xl";
+    document.body.appendChild(outer);
+    const target = document.createElement("ul");
+    outer.appendChild(target);
+
+    const msg = describeTraps(scanAncestorTraps(target).traps);
+    expect(msg, "범인 토큰이 진단에 없다 — 무엇을 고쳐야 하는지 말하지 못한다").toContain("backdrop-blur-3xl");
+  });
+
+  it("★상한에 닿으면 조용히 부분 결과를 돌려주지 않고 던진다", () => {
+    document.body.innerHTML = "";
+    let parent: HTMLElement = document.body;
+    for (let i = 0; i < 205; i += 1) {
+      const el = document.createElement("div");
+      parent.appendChild(el);
+      parent = el;
+    }
+    const target = document.createElement("ul");
+    parent.appendChild(target);
+    expect(() => scanAncestorTraps(target)).toThrow(/조상 200단을 넘었다/);
   });
 });
