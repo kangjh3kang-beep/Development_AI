@@ -444,3 +444,42 @@ async def market_report_docx(
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={"Content-Disposition": 'attachment; filename="market_report.docx"'},
     )
+
+
+# ── 간편 분양성 조사(지번 1개 → 한 화면) ──────────────────────────────────
+# ★새 분석엔진을 만들지 않는다 — `QuickSalesSurveyService` 는 기존 셋(시장조사보고서·
+#   VWorld 도시계획시설·청약홈 인근분양)을 **조립만** 한다. 계산은 상위 엔진 소유다.
+# ★과금·인증은 `/report` 와 **같은 게이트**를 쓴다. 여기만 열어 두면 무료 우회로가 된다.
+
+@router.post(
+    "/quick-survey",
+    dependencies=[Depends(enforce_llm_quota)],
+    summary="간편 분양성 조사(지번 1개 → 주변시세·개발호재·입지·분양사례)",
+)
+async def quick_sales_survey(
+    req: MarketReportRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """지번 하나로 공급·가격 축을 한 화면에 모은다.
+
+    ★**이름과 내용의 경계**: 분양성의 수요 축(청약경쟁률·미분양·흡수율)은 이 저장소에
+      데이터원이 없다. 응답의 `demand_indicators` 가 그 사실을 **항상** 실어 나른다 —
+      블록을 생략하면 "안 본 것"과 "없는 것"이 화면에서 구분되지 않는다.
+    """
+    lawd_cd, pnu = _resolve(req)
+    from app.services.common.analysis_cache import _key, cache_get, cache_put
+    from app.services.market.quick_sales_survey_service import QuickSalesSurveyService
+
+    # ★캐시 키는 `/report` 와 **같은 재료**를 쓰되 네임스페이스를 분리한다 —
+    #   같은 네임스페이스를 쓰면 표면이 다른 두 산출물이 서로를 덮어쓴다.
+    cache_key = _key(*_market_report_signature_parts(req, pnu))
+    if not req.refresh:
+        cached = await cache_get("quick_sales_survey", cache_key)
+        if cached is not None:
+            return cached
+
+    result = await QuickSalesSurveyService().build(
+        address=req.address, lawd_cd=lawd_cd, pnu=pnu, use_llm=req.use_llm
+    )
+    await cache_put("quick_sales_survey", cache_key, result)
+    return result
