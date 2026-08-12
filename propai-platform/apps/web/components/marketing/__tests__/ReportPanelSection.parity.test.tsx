@@ -38,10 +38,15 @@ describe("랜딩 ↔ 대시보드 산출물 목록 정합", () => {
     expect(dangling).toEqual([]);
   });
 
-  it("랜딩 카드는 대시보드 목록의 부분집합이다", () => {
-    // 랜딩은 대시보드 산출물 중 일부만 보여준다(선별은 자유) — 다만 **없는 것을 광고하면 안 된다**.
-    const missing = landing.filter((id) => !dashboard.includes(id));
-    expect(missing).toEqual([]);
+  it("두 목록은 서로 **부분집합일 필요가 없다**(위양성 방지 — 실측으로 확인)", () => {
+    // ★처음에 "랜딩 ⊆ 대시보드" 를 단언했다가 **CI 에서 위양성으로 걸렸다**:
+    //   랜딩의 `precheck`(후보지 진단서)는 실재 라우트인데 대시보드 카드 목록엔 없다.
+    //   랜딩 docstring 의 "creationProducts 기준"이라는 문장을 **검증 없이 믿은** 결과다.
+    //   두 화면은 노출 산출물을 각자 선별한다 — 그게 정상이다.
+    // ★진짜 불변식은 위 "실재 라우트를 가리킨다" 하나다(없는 것을 광고하지 않는다).
+    //   여기서는 **둘 다 비어 있지 않고 겹치는 게 있다**만 확인해 완전한 분기를 막는다.
+    const shared = landing.filter((id) => dashboard.includes(id));
+    expect(shared.length).toBeGreaterThan(0);
   });
 
   it("간편 분양성 조사가 양쪽 모두의 **첫 항목**이다", () => {

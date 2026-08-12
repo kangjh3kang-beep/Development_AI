@@ -8,8 +8,11 @@ import { ArrowRight, BarChart3, MapPin, Search, ShieldCheck, type LucideIcon } f
  * 리포트 패널 — white 섹션.
  *  • 주소 입력 pill: 미인증 상태이므로 실 분석 호출은 하지 않고
  *    로그인/가입(`/{locale}/login?next=...`)으로 유도한다.
- *  • 보고서 선택 카드(실제 제공 산출물 명칭과 정합 —
- *    app/[locale]/(dashboard)/page.tsx creationProducts 기준).
+ *  • 보고서 선택 카드 — 실제 제공 산출물 중 **랜딩용으로 선별**한 목록이다.
+ *    ★종전 주석은 "creationProducts 기준"이라고 단정했는데 **사실이 아니다**:
+ *      `precheck`(후보지 진단서)는 여기 있고 대시보드 카드 목록엔 없다(실측).
+ *      두 화면은 각자 선별한다 — 그 문장을 믿고 "부분집합" 락을 걸었다가 CI 에서 걸렸다.
+ *    지켜야 할 것은 하나다: **실재하는 라우트만 내건다**(없는 것을 광고하지 않는다).
  */
 type ReportOption = {
   id: string;
