@@ -1039,6 +1039,16 @@ _LOOP_VIOLATIONS: tuple[tuple[str, str], ...] = (
     ("콜백 등록", "import asyncio\nHANDLERS = {'go': asyncio.run}"),
     ("새 루프 생성", "import asyncio\nl = asyncio.new_event_loop()"),
     ("서드파티 실행기", "import anyio\nanyio.run(x)"),
+    # ★아래 4건은 **파생 검증이 찾아낸 무잠금**이다 — `_LOOP_MAKERS` 에 이름은 있는데
+    #   양성 표에 표본이 없어 그 규칙들이 잠기지 않고 있었다(대조표 자체를 잠그자 즉시 드러남).
+    ("루프 교체", "import asyncio\nasyncio.set_event_loop(l)"),
+    ("루프 영구 구동", "loop = get()\nloop.run_forever()"),
+    ("Selector 루프 생성", "import asyncio\nl = asyncio.SelectorEventLoop()"),
+    ("Proactor 루프 생성", "import asyncio\nl = asyncio.ProactorEventLoop()"),
+    ("uvloop 실행", "import uvloop\nuvloop.run(x)"),
+    ("uvloop 설치", "import uvloop\nuvloop.install()"),
+    ("asgiref 동기변환", "import asgiref.sync\nasgiref.sync.async_to_sync(x)()"),
+    ("nest_asyncio 패치", "import nest_asyncio\nnest_asyncio.apply()"),
 )
 
 # ★위양성 대조 — 이게 없으면 "전부 위반"이라고 답하는 탐지기도 위 표를 통과한다.
@@ -1198,3 +1208,42 @@ def test_계약_항목이_import_불가하면_잡는다(monkeypatch: pytest.Monk
     )
     with pytest.raises(AssertionError, match="import 실패"):
         test_계약의_모든_항목이_실제로_import_되고_속성이_있다()
+
+
+def test_양성_대조표가_구현의_모든_루프생성자를_덮는다() -> None:
+    """★대조표는 **손으로 쓴 목록**이라 그 자체가 §A-4 위험이다 — 새 규칙을 추가하고 표에
+    안 넣으면 그 규칙은 다시 무잠금이 된다(자가점검에서 표를 축소해도 조용히 통과함을 확인).
+
+    ★그래서 표를 **구현의 상수에서 파생 검증**한다: `_LOOP_MAKERS` 와
+      `_THIRD_PARTY_LOOP_RUNNERS` 의 **모든 이름**이 양성 표의 어느 표본엔가 등장해야 한다.
+      이름을 추가하고 표본을 안 넣으면 여기서 빨개진다.
+    """
+    covered = " ".join(source for _label, source in _LOOP_VIOLATIONS)
+    missing = [name for name in _LOOP_MAKERS if name not in covered]
+    assert missing == [], (
+        f"`_LOOP_MAKERS` 의 이름이 양성 대조표에 표본 없이 남아 있다 — 그 규칙은 무잠금이다: {missing}"
+    )
+    missing_tp = [
+        f"{mod}.{attr}"
+        for mod, attr in _THIRD_PARTY_LOOP_RUNNERS
+        if f"{mod}.{attr}" not in covered and f"import {mod}" not in covered
+    ]
+    assert missing_tp == [], (
+        f"서드파티 실행기가 양성 대조표에 표본 없이 남아 있다: {missing_tp}"
+    )
+
+
+def test_음성_대조표가_조용히_줄지_않는다() -> None:
+    """★음성 표는 **파생할 수 없다**(정상 코드의 형태는 구현 상수에서 나오지 않는다).
+    그래서 **개수 하한**으로 조용한 축소만 막는다 — 이것이 이 표의 정직한 한계다.
+
+    ★이 하한은 계약이 아니라 **회귀 방지선**이다: 위양성 형태를 하나 발견할 때마다 표에
+      넣고 하한을 올린다. 지금까지 발견분 = 3라운드까지의 실측 위양성 전부.
+    """
+    assert len(_LOOP_ALLOWED) >= 10, (
+        f"음성 대조표가 {len(_LOOP_ALLOWED)}건으로 줄었다 — 위양성 방지선이 조용히 약해졌다. "
+        "항목을 지우려면 그 형태가 더는 위양성이 아님을 먼저 보여라."
+    )
+    assert len(_LOOP_VIOLATIONS) >= 16, (
+        f"양성 대조표가 {len(_LOOP_VIOLATIONS)}건으로 줄었다 — 탐지력 방지선이 약해졌다."
+    )
