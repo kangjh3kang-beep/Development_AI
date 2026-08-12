@@ -101,6 +101,7 @@ async def _dispose_engines() -> int:
       종전 주석이 "ROLLBACK 후 close" 라고 적었는데 사실이 아니라 바로잡았다.
     """
     disposed = 0
+    cancelled: BaseException | None = None
     for module_name, attr in _ENGINES:
         try:
             module = importlib.import_module(module_name)
@@ -126,6 +127,20 @@ async def _dispose_engines() -> int:
             disposed += 1
         except Exception:  # noqa: BLE001 — 정리 실패가 배치 결과를 덮지 않게 한다
             logger.warning("engine dispose 실패: %s.%s", module_name, attr, exc_info=True)
+        except BaseException as exc:  # noqa: BLE001
+            # ★★취소(`CancelledError`)는 **`BaseException` 계열**이라 위 `except Exception` 을
+            #   통과한다 → **첫 엔진에서 끊기면 나머지 엔진은 정리 시도조차 못 한다.**
+            #   호출부(`_runner`)에서 같은 결함을 고쳐 놓고 **여기 한 겹 아래에 그대로 남아
+            #   있었다** — 독립 적대검증 3라운드가 실제 `run_async_batch` 로 재현했다.
+            #   ★"처방을 적용한 범위 = 결함이 사는 범위인가"(CLAUDE.md §D-20)의 실례다.
+            logger.warning("engine dispose 취소됨: %s.%s", module_name, attr, exc_info=True)
+            cancelled = exc  # 나머지 엔진은 계속 시도하고, 취소는 루프 끝에서 전파한다
+    # ★반환값 `disposed` 는 **소비처 0**이고 잠금도 없다(변이 생존 — 설명 가능한 생존).
+    #   진단 로그·수동 확인용으로만 남긴다. 여기에 락을 만들면 아무도 안 쓰는 값을
+    #   복창하는 동어반복이 된다 — 대신 그 사실을 적는다(CLAUDE.md §5).
+    if cancelled is not None:
+        # ★삼키지 않는다 — 취소를 먹으면 워커 종료가 지연된다.
+        raise cancelled
     return disposed
 
 
@@ -156,21 +171,34 @@ async def _drain_child_tasks(timeout: float | None = None) -> int:
       바로 그 `idle in transaction` 이 다른 문으로 돌아온다.**
       종전 이 모듈은 그 상황을 **경고로 알리기만 했다**(탐지≠교정) — 여기서 교정한다.
 
-    ★도달성(정직 경계) — **두 경로가 있고 성격이 다르다.** 이 함수를 처음 넣을 때
-      "자식을 띄우는 경로는 `growth_dispatch` 하나"라고 적었는데 **틀렸다**(실측으로 정정):
+    ★도달성(정직 경계) — **두 번 고쳐 잡았다. 두 번째는 인과가 뒤집혀 있었다.**
 
       ① `record_llm_response_billing_sync` → `loop.create_task(...)` — **게이트 없이 라이브**다.
          `analyze_growth`(beat 시간별)·`evaluate_improvement`(일별)이 LLM 을 태우며 발화한다.
          다만 배치에는 요청 컨텍스트가 없어 `get_current_user_id()` 가 None → **DB 접근 전
-         조기 반환**한다. 즉 **자식 생성은 라이브이나 DB 를 쥐지는 않는다.**
-      ② `growth_dispatch.fire_and_forget` — 이쪽이 **DB 를 쥔다**(세션을 연다). 그런데 닿는
-         배치 둘(`tasks.memory.ingest_experience`·`tasks.specialists.run_for_analysis`)이
-         **`GROWTH_CELERY_WORKER` 가 켜져야 발화**한다(전 배포 설정에 미설정 — grep 실측).
+         조기 반환**한다. 즉 **자식 생성은 라이브이나 DB 를 쥐지는 않는다.**(재확인 완료)
 
-      정리하면 **오늘 누수는 없고, 누수 가능한 자식만 게이트 뒤에 있다.** 그럼에도 막아
-      두는 이유는 그 플래그가 "미래 배포 대비"로 코드에 명시돼 있고, `#605` 로 celery 워커가
-      실제 배포되기 시작해 **켜는 순간 조용히 돌아오기** 때문이다.
-      ★이 문단을 한 번 틀렸다는 사실을 남긴다 — 도달성은 **한 경로를 찾고 멈추면** 틀린다.
+      ② `growth_dispatch.fire_and_forget` — 이쪽이 **DB 를 쥔다**(세션을 연다).
+         ★종전 이 문단은 "`GROWTH_CELERY_WORKER` 가 켜져야 발화하고, 켜는 순간 돌아온다"고
+         적었는데 **정반대였다**(독립 적대검증 3라운드 지적, 소스로 재확인):
+
+             if _celery is not None and worker_enabled():
+                 ...delay(...); return          # 플래그 ON → Celery 로 위임
+             fire_and_forget(...)               # 플래그 OFF(=오늘 기본) → in-process 자식
+
+         즉 `fire_and_forget` 은 **게이트 뒤가 아니라 게이트가 꺼졌을 때 도는 기본 경로**다.
+         그런데 그때는 배치(`_ingest_experience`·`_run_domain_specialists`)가 **발화하지 않는다**
+         — 그것들은 `.delay()` 로만 도달하고 `.delay()` 는 플래그 ON 에서만 쓰인다.
+         반대로 플래그 ON 이면 배치 안에서 `dispatch_*` 가 다시 `.delay()` 로 빠져 in-process
+         자식이 생기지 않는다. **두 상태가 서로 배타적이라 오늘 배치 안에 DB 를 쥔 자식이 없다.**
+
+      ★그래도 이 배수를 두는 이유(정직하게):
+        · 플래그가 **비대칭 설정**되면(디스패치 쪽 ON·워커 쪽 OFF) 워커 배치 안에서
+          `fire_and_forget` 이 살아나 DB 를 쥔 자식이 생긴다 — 구성 실수 하나면 열린다.
+        · 배치가 자식을 띄우는 경로는 위 ①처럼 **성장뇌와 무관한 곳에서도** 생긴다.
+          모집단을 좁히지 않는 이유가 이것이다.
+      ★이 문단은 **두 번 틀렸다**(첫 번째는 "경로가 하나", 두 번째는 인과 역전).
+        도달성은 한 경로를 찾고 멈추면 틀리고, 조건을 반대로 읽어도 틀린다.
 
     ★모집단을 "성장뇌 태스크"로 좁히지 않는다 — **누가 띄웠든** 정리 시점에 살아 있는
       자식은 같은 결함이다(목록형 금지·CLAUDE.md §A-4).
@@ -193,6 +221,9 @@ async def _drain_child_tasks(timeout: float | None = None) -> int:
     # ★한 번만 스냅샷하면 **손자가 빠져나간다** — 자식이 끝나며 또 자식을 띄우면 그것은
     #   기다리지 않은 채 루프가 닫힌다(같은 결함의 한 겹 아래). 그래서 마감까지 재스냅샷한다.
     #   마감이 유일한 종료 보장이다 — 자식이 무한히 자식을 낳아도 여기서 멈춘다.
+    # ★회귀망은 **손자(깊이 2)까지만** 잠근다 — 증손자 이하는 무잠금이다(변이 생존).
+    #   로직은 깊이 무관이지만 락은 아니다. 과대주장하지 않으려 여기 적는다.
+    # ★`drained` 반환값도 소비처 0·무잠금이다(설명 가능한 생존).
     while True:
         pending = {
             t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()
@@ -274,7 +305,7 @@ def run_async_batch(factory: Callable[[], Awaitable[T]]) -> T:
                 await _drain_child_tasks()
             except Exception:  # noqa: BLE001 — 배수 실패가 **정리를 막아서는 안 된다**
                 logger.warning("자식 배수 실패 — 정리는 계속한다", exc_info=True)
-            except BaseException:
+            except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
                 # ★★`CancelledError`·`KeyboardInterrupt` 는 **`BaseException` 계열**이라 위
                 #   `except Exception` 을 통과해 `finally` 를 빠져나간다 → 정리에 도달 못 한다.
                 #   그냥 잔존 결함이 아니라 **이 배수가 만든 노출면**이다: 도입 전에는 `finally`
@@ -282,6 +313,10 @@ def run_async_batch(factory: Callable[[], Awaitable[T]]) -> T:
                 #   생겼고 워커 종료·Ctrl-C 가 그 창에 떨어지면 누수가 그대로 돌아온다.
                 #   (독립 적대검증이 실제 SIGINT 로 재현: dispose 0회)
                 #   ★정리는 하고 **취소는 반드시 전파**한다 — 삼키면 종료가 지연된다.
+                # ★`BaseException` 을 통째로 잡지 **않는다**: `GeneratorExit` 까지 잡으면
+                #   그 안에서 `await` 하는 순간 `RuntimeError: coroutine ignored GeneratorExit`
+                #   가 되어 **깨끗한 코루틴 종료를 에러로 바꾼다**(3라운드 실측).
+                #   그래서 종료 신호 셋만 명시한다.
                 logger.warning("자식 배수가 취소됐다 — 정리는 계속한다", exc_info=True)
                 await _dispose_engines()
                 raise
