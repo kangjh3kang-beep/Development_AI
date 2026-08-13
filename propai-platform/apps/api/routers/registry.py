@@ -93,8 +93,13 @@ async def _charge_registry_issue(user_id: Any, result: Any, times: int | None = 
     10건이 청구될 수 있었다.)
     """
     n = issued_count(result)
+    # ★이 상한은 지금 **한 번도 구속하지 않는다**(변이로 무력화해도 결과가 같다).
+    #   `issued_count` 가 이미 **실제 발급 수**를 세므로, 모든 호출부에서 `times >= n` 이다
+    #   (단건 `times=1`·일괄 `times=len(items)`). 하위호환·신규 호출부 대비로만 남긴다.
     if times is not None:
         n = min(n, max(0, times))
+    # ★이중 가드 — 아래 `range(n)` 이 n=0 이면 어차피 한 번도 돌지 않는다.
+    #   조기 반환은 DB 세션을 열지 않기 위한 것이다(실패 조회가 대부분인 상황에서 유의미).
     if n <= 0:
         return
     try:

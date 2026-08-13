@@ -229,3 +229,75 @@ async def test_분석_집행도_실패에는_쓰지_않는다(monkeypatch: pytes
 
     await _charge_registry_analysis("u1", {"status": "ok", "ai": {"grade": "A"}})
     assert charged == ["registry_analysis"], charged
+
+
+@pytest.mark.asyncio
+async def test_잡_완료_시점에만_분석_과금이_일어난다(monkeypatch: pytest.MonkeyPatch) -> None:
+    """★H2 수정 **그 자체**를 태운다 — 과금을 제출 시점에서 완료 시점으로 옮긴 배선.
+
+    기계 변이가 이 배선(`owner = ...` · `if owner:`)의 생존을 드러냈다: 고친 자리에
+    락이 없으면 다음 사람이 되돌려도 아무도 모른다.
+    """
+    import routers.registry as rr
+
+    charged = _spy_billing(monkeypatch)
+
+    class _Svc:
+        result: dict[str, Any] = {}
+
+        async def analyze(self, **_kw: Any) -> dict[str, Any]:
+            return type(self).result
+
+    import app.services.registry.registry_analysis_service as ras
+
+    monkeypatch.setattr(ras, "RegistryAnalysisService", _Svc)
+    await rr._REGISTRY_STORE.put("job-1", {"status": "pending", "user_id": "u1"}, 60)
+
+    # ── 모집단 A: 등기부 미확보(ai None) → 한 푼도 안 나간다
+    _Svc.result = {"status": "not_available", "origin": "none", "ai": None}
+    await rr._run_registry_job("job-1", {})
+    assert charged == [], f"분석이 0인데 {len(charged)}건 청구됐다"
+
+    # ── 모집단 B: 분석 성공 → 1건
+    _Svc.result = {"status": "ok", "origin": "hyphen", "ai": {"grade": "A"}}
+    await rr._run_registry_job("job-1", {})
+    assert charged == ["registry_analysis"], charged
+
+
+@pytest.mark.asyncio
+async def test_분석_라우트가_분석없는_결과에_과금하지_않는다(monkeypatch: pytest.MonkeyPatch) -> None:
+    """라우트 → 판정 → 과금까지 한 줄로 태운다(프로덕션에서 돈이 새던 자리)."""
+    import app.services.registry.registry_analysis_service as ras
+    import routers.registry as rr
+
+    charged = _spy_billing(monkeypatch)
+
+    class _Svc:
+        result: dict[str, Any] = {}
+
+        async def analyze(self, **_kw: Any) -> dict[str, Any]:
+            return dict(type(self).result)
+
+    monkeypatch.setattr(ras, "RegistryAnalysisService", _Svc)
+
+    class _U:
+        user_id = "u1"
+
+    class _Req:
+        address = "서울특별시 강남구 역삼동 737"
+        pnu = None
+        registry_text = None
+        realty_type = None
+        dong = None
+        ho = None
+        land_hint = None
+
+    _Svc.result = {"status": "not_available", "ai": None}
+    out = await rr.registry_analyze(_Req(), current_user=_U())
+    assert charged == [], f"AI 분석이 없는 응답에 {len(charged)}건 청구됐다: {out.get('status')}"
+    assert "service_charge" not in out, "과금하지 않았는데 과금 필드를 달면 안 된다"
+
+    _Svc.result = {"status": "ok", "ai": {"grade": "A"}}
+    out = await rr.registry_analyze(_Req(), current_user=_U())
+    assert charged == ["registry_analysis"], charged
+    assert out.get("service_charge"), f"과금 결과가 응답에 실려야 한다: {out}"

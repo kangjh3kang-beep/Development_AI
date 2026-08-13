@@ -138,6 +138,8 @@ async def test_키가_있는데_입력이_부족하면_미설정이라_말하지
     )
     assert out.get("attempts"), f"어느 프로바이더에서 왜 멈췄는지 기록이 없다: {out}"
     assert "미설정" not in out["message"], out["message"]
+    # 상태만 잠그면 안내 문구 분기가 무잠금이다(기계 변이가 그 생존을 드러냈다).
+    assert "주소 또는 부동산 고유번호가 필요합니다" in out["message"], out["message"]
 
 
 @pytest.mark.asyncio
@@ -191,7 +193,91 @@ async def test_커스텀_URL_실패도_사유가_응답에_실린다(monkeypatch
 
     out = await rs.RegistryService().get_one(address="서울특별시 강남구 역삼동 737")
 
-    assert any(x.get("provider") == "custom" for x in out.get("attempts") or []), (
-        f"커스텀 실패가 attempts 에 없다 — 사유가 로그로만 새고 사용자에겐 안 간다: {out.get('attempts')}"
-    )
+    cus = [x for x in out.get("attempts") or [] if x.get("provider") == "custom"]
+    assert cus, f"커스텀 실패가 attempts 에 없다 — 사유가 로그로만 새고 사용자에겐 안 간다: {out.get('attempts')}"
+    assert cus[0]["status"] == "provider_error", cus[0]
     assert "502" in out["message"], f"상류 사유가 메시지에 실려야 한다: {out['message']}"
+
+
+@pytest.mark.asyncio
+async def test_라우트가_모든_입력을_서비스에_그대로_넘긴다(monkeypatch: pytest.MonkeyPatch) -> None:
+    """★배선 락 — 프론트가 보낸 값이 서비스까지 도달하는지.
+
+    기계 변이가 `pnu=`·`address=`·`unique_no=`·`pdf_input=` 줄삭제의 생존을 드러냈다.
+    한 줄만 지워도 사용자는 "왜 내가 넣은 동/호가 무시되지" 를 겪는다.
+    """
+    import routers.registry as rr
+
+    seen: dict[str, Any] = {}
+
+    class _Svc:
+        async def get_one(self, **kw: Any) -> dict[str, Any]:
+            seen.update(kw)
+            return {"status": "ok", "origin": "hyphen"}
+
+    async def _no_charge(*_a: Any, **_k: Any) -> None:
+        return None
+
+    monkeypatch.setattr(rr, "RegistryService", _Svc)
+    monkeypatch.setattr(rr, "_charge_registry_issue", _no_charge)
+
+    class _U:
+        user_id = "u1"
+
+    await rr.registry_get_one({
+        "pnu": "1168010100107370000", "address": "서울특별시 강남구 역삼동 737",
+        "pin": "1101-2012-009048", "realty_type": "1", "dong": "101", "ho": "1502",
+    }, current_user=_U())
+
+    assert seen["pnu"] == "1168010100107370000"
+    assert seen["address"] == "서울특별시 강남구 역삼동 737"
+    # `pin` 은 `unique_no` 의 별칭이다 — 별칭 경로가 끊기면 프론트 일부가 조용히 실패한다.
+    assert seen["unique_no"] == "1101-2012-009048"
+    assert seen["realty_type"] == "1" and seen["dong"] == "101" and seen["ho"] == "1502"
+    # PDF 미첨부 시 None 이어야 한다(빈 문자열이면 파서 분기로 잘못 들어간다).
+    assert not seen.get("pdf_input")
+
+
+@pytest.mark.asyncio
+async def test_자격증명_거부는_forbidden_사유를_그대로_싣는다(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`probe` 가 거부를 말한 경우 — 그 문장이 사용자에게 도달해야 한다."""
+    import app.services.registry.hyphen_client as hc
+    import app.services.registry.tilko_client as tc
+
+    monkeypatch.setattr(rs, "_config", lambda: {"provider": "hyphen", "url": "", "key": ""})
+    monkeypatch.setattr(hc, "hyphen_ready", lambda: True)
+    monkeypatch.setattr(tc, "tilko_ready", lambda: False)
+
+    async def _probe() -> dict[str, Any]:
+        return {"access": "forbidden", "message": "하이픈 인증 실패 (HDM009)"}
+
+    monkeypatch.setattr(hc, "probe_api_access", _probe)
+
+    out = await rs.RegistryService().get_one(address="서울특별시 강남구 역삼동 737")
+    att = [x for x in out["attempts"] if x.get("provider") == "hyphen"]
+    assert att and att[0]["status"] == "forbidden", out["attempts"]
+    assert "HDM009" in (att[0].get("message") or ""), att[0]
+    assert "HDM009" in out["message"], out["message"]
+
+
+@pytest.mark.asyncio
+async def test_틸코_고유번호_조회_실패도_사유가_실린다(monkeypatch: pytest.MonkeyPatch) -> None:
+    """형제 분기 — hyphen 쪽만 잠그고 tilko 쪽을 놓치는 미스윕을 막는다."""
+    import app.services.registry.hyphen_client as hc
+    import app.services.registry.tilko_client as tc
+
+    monkeypatch.setattr(rs, "_config", lambda: {"provider": "tilko", "url": "", "key": ""})
+    monkeypatch.setattr(hc, "hyphen_ready", lambda: False)
+    monkeypatch.setattr(tc, "tilko_ready", lambda: True)
+
+    async def _fetch(**_kw: Any) -> dict[str, Any]:
+        return {"ok": False, "status": "iros_login_failed", "message": "IROS 로그인 실패"}
+
+    # ★서비스는 `fetch_realty_registry` 를 **별칭으로 임포트**한다(`as fetch_tilko_registry`).
+    #   별칭 이름으로 패치하면 존재하지 않는 속성이라 AttributeError 다 — 원래 이름을 패치한다.
+    monkeypatch.setattr(tc, "fetch_realty_registry", _fetch)
+
+    out = await rs.RegistryService().get_one(unique_no="1101-2012-009048")
+    att = [x for x in out["attempts"] if x.get("provider") == "tilko"]
+    assert att and att[0]["status"] == "iros_login_failed", out["attempts"]
+    assert "IROS 로그인 실패" in out["message"], out["message"]
