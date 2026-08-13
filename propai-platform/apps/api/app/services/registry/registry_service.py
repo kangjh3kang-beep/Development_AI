@@ -330,6 +330,9 @@ class RegistryService:
                 f"등기부 조회에 실패했습니다 — {detail}. "
                 "주소를 확인하거나 '비상 등기부 PDF 직접 업로드' 를 이용하세요."
                 if detail
+                # ★`detail` 이 빈 경우의 폴백 — 실제로는 도달하기 어렵다(모든 attempt 가
+                #   status 를 싣고, detail 은 status 만으로도 채워진다). 변이가 생존하는
+                #   이유가 그것이다. 신규 경로가 message·status 를 모두 빠뜨릴 때의 방어.
                 else "등기부 조회에 실패했습니다. '비상 등기부 PDF 직접 업로드' 를 이용하세요."
             )
         else:
