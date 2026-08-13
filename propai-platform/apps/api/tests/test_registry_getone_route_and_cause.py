@@ -152,6 +152,8 @@ async def test_하이픈_경로의_조기반환도_attempts를_싣는다(monkeyp
 
     assert out["status"] == "bad_request", out
     assert "attempts" in out, f"조기반환에 attempts 키가 없다 — 소비처가 구분을 못 한다: {out}"
+    # 사용자가 **무엇을 해야 하는지**가 이 문장에 있다 — 상태 코드만 잠그면 안내가 비어도 초록이다.
+    assert "주소" in out["message"] and "고유번호" in out["message"], out["message"]
 
 
 @pytest.mark.asyncio

@@ -150,7 +150,14 @@ def test_시도_별칭을_전수로_확인한다() -> None:
     종전엔 "서울" 하나만 봐서, 별칭 표의 다른 줄을 통째로 지워도 초록이었다.
     새 별칭이 추가돼도 이 검사가 자동으로 감시한다.
     """
-    assert len(hc._SIDO_ALIAS) >= 15, f"별칭 표가 비었거나 수집 실패: {len(hc._SIDO_ALIAS)}"
+    # ★파생 루프는 **삭제에 면역**이다 — 표에서 한 줄을 지우면 그 줄을 안 볼 뿐 초록이다
+    #   (기계 변이가 "제주" 줄 삭제로 실증). 그래서 개수를 사실에 결속시킨다:
+    #   대한민국 광역자치단체는 **17개**이고, 축약 표기는 그 전부에 있어야 한다.
+    assert len(hc._SIDO_ALIAS) == 17, (
+        f"광역자치단체 17개의 축약 표기가 모두 있어야 한다 — 현재 {len(hc._SIDO_ALIAS)}개"
+    )
+    assert len(set(hc._SIDO_ALIAS.values())) == 17, "별칭이 같은 시/도로 중복 매핑됐다"
+    assert set(hc._SIDO_ALIAS.values()) <= set(hc._SIDO), "별칭이 정식 표기 표에 없는 값을 가리킨다"
     for short, full in hc._SIDO_ALIAS.items():
         assert hc.extract_sido(f"{short} 어느구 어느동 1") == full, (
             f"별칭 {short!r} → {full!r} 매핑이 끊겼다"
