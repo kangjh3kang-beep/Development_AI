@@ -98,9 +98,11 @@ async def test_미설정과_조회실패를_다른_상태로_구분한다(monkey
     assert "C0000-002" in b["message"], (
         f"상류가 말한 사유가 사용자 메시지에 실려야 한다: {b['message']}"
     )
-    assert any(x.get("provider") == "hyphen" for x in b.get("attempts") or []), (
-        f"어느 프로바이더가 왜 실패했는지 구조화 필드로도 남아야 한다: {b.get('attempts')}"
-    )
+    att = [x for x in b.get("attempts") or [] if x.get("provider") == "hyphen"]
+    assert att, f"어느 프로바이더가 왜 실패했는지 구조화 필드로도 남아야 한다: {b.get('attempts')}"
+    # ★사유 필드까지 본다 — provider 만 보면 status 줄을 지워도 초록이었다(기계 변이 생존).
+    assert att[0]["status"] == "no_match", f"상류 상태가 그대로 실려야 한다: {att[0]}"
+    assert "C0000-002" in (att[0].get("message") or ""), att[0]
 
     # ★두 모집단이 실제로 다른 값을 낸다(차가 0이면 잠금이 아니다).
     assert a["status"] != b["status"], "두 경우가 같은 상태를 내면 이 검사는 공허하다"
@@ -131,6 +133,25 @@ async def test_키가_있는데_입력이_부족하면_미설정이라_말하지
     )
     assert out.get("attempts"), f"어느 프로바이더에서 왜 멈췄는지 기록이 없다: {out}"
     assert "미설정" not in out["message"], out["message"]
+
+
+@pytest.mark.asyncio
+async def test_하이픈_경로의_조기반환도_attempts를_싣는다(monkeypatch: pytest.MonkeyPatch) -> None:
+    """형제 분기다 — tilko 쪽만 고치고 hyphen 쪽을 놓치는 미스윕을 막는다."""
+    import app.services.registry.hyphen_client as hc
+
+    monkeypatch.setattr(rs, "_config", lambda: {"provider": "hyphen", "url": "", "key": ""})
+    monkeypatch.setattr(hc, "hyphen_ready", lambda: True)
+
+    async def _probe() -> dict[str, Any]:
+        return {"access": "ok"}
+
+    monkeypatch.setattr(hc, "probe_api_access", _probe)
+
+    out = await rs.RegistryService().get_one(pnu="1168010100107370000")
+
+    assert out["status"] == "bad_request", out
+    assert "attempts" in out, f"조기반환에 attempts 키가 없다 — 소비처가 구분을 못 한다: {out}"
 
 
 @pytest.mark.asyncio

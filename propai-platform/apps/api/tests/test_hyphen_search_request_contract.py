@@ -93,6 +93,8 @@ async def test_요청이_한글값과_필수_시도를_보낸다(monkeypatch: py
         f"필수 필드 admin_regn1 이 빠졌거나 틀렸다: {body.get('admin_regn1')!r}"
     )
     assert body["simple_address"] == "서울특별시 강남구 역삼동 737"
+    # 명세가 요구하는 필드 — 빠지면 상세 항목이 안 실린다(값의 효과는 미실측·별도 티켓).
+    assert body["detailYn"] == "Y", f"detailYn 이 빠졌거나 바뀌었다: {body.get('detailYn')!r}"
 
 
 @pytest.mark.asyncio
@@ -115,3 +117,137 @@ async def test_응답을_get접두사_없이도_읽는다(monkeypatch: pytest.Mo
     )
     assert items[0]["gubun"] == "토지"
     assert items[0]["jibun"] == "서울특별시 강남구 역삼동 737"
+    # ★다섯 필드를 **전부** 본다 — 셋만 보던 판에서 `owner`·`sangtae` 줄을 지워도
+    #   테스트가 초록이었다(기계 변이가 잡아냈다).
+    assert items[0]["owner"] == "강***~"
+    assert items[0]["sangtae"] == "현행"
+
+
+# ── pick_field 자체를 태운다 ────────────────────────────────────────────────
+# ★위 검사들의 픽스처는 전부 **접두사 없는** 키다. 그래서 `get` 폴백 분기(`v2 = d.get(f"get{name}")`)
+#   를 통째로 지워도 살아남았다 — 두 표기 중 **한 모집단만** 태우고 있었던 것이다.
+
+def test_pick_field는_두_표기를_모두_읽는다() -> None:
+    # 모집단 A: 접두사 없음(라이브 실측 형태)
+    assert hc.pick_field({"소유자": "김**"}, "소유자") == "김**"
+    # 모집단 B: 접두사 있음(벤더 명세 화면 형태) — 이 분기가 없으면 None 이 된다
+    assert hc.pick_field({"get소유자": "이**"}, "소유자") == "이**"
+    # 두 모집단이 실제로 다른 입력이다(차가 0이면 잠금이 아니다)
+    assert {"소유자": "김**"} != {"get소유자": "이**"}
+
+
+def test_pick_field는_빈_문자열을_값으로_치지_않는다() -> None:
+    """두 표기가 공존하고 한쪽이 비었을 때 **찬 쪽**을 고른다."""
+    assert hc.pick_field({"소유자": "", "get소유자": "박**"}, "소유자") == "박**"
+    # 반대로 폴백도 비었으면 원래 값을 그대로 돌려준다(없는 값을 지어내지 않는다).
+    assert hc.pick_field({"소유자": "", "get소유자": ""}, "소유자") == ""
+    assert hc.pick_field({}, "소유자") is None
+
+
+def test_시도_별칭을_전수로_확인한다() -> None:
+    """★목록형 금지 — 표에서 **파생**시킨다.
+
+    종전엔 "서울" 하나만 봐서, 별칭 표의 다른 줄을 통째로 지워도 초록이었다.
+    새 별칭이 추가돼도 이 검사가 자동으로 감시한다.
+    """
+    assert len(hc._SIDO_ALIAS) >= 15, f"별칭 표가 비었거나 수집 실패: {len(hc._SIDO_ALIAS)}"
+    for short, full in hc._SIDO_ALIAS.items():
+        assert hc.extract_sido(f"{short} 어느구 어느동 1") == full, (
+            f"별칭 {short!r} → {full!r} 매핑이 끊겼다"
+        )
+    # 정식 표기도 파생으로 전수 확인한다.
+    assert len(hc._SIDO) >= 17, f"시/도 표가 비었거나 수집 실패: {len(hc._SIDO)}"
+    for full in hc._SIDO:
+        assert hc.extract_sido(f"{full} 어느구 어느동 1") == full, f"정식 표기 {full!r} 를 못 뽑는다"
+
+
+# ── 형제 파서 둘도 같은 규칙을 지키는지 태운다 ──────────────────────────────
+# ★리뷰가 "형제 미스윕" 으로 잡은 자리다. 공용화만 하고 락을 안 걸면, 다음 사람이
+#   여기를 되돌려도 아무도 모른다(기계 변이에서 이 줄들이 전부 생존했다).
+
+class _UniqNoClient(_CapturingClient):
+    async def post(self, url: str, headers: Any = None, json: Any = None) -> Any:  # noqa: A002
+        type(self).captured = {"url": url, "body": json}
+
+        class _R:
+            status_code = 200
+
+            @staticmethod
+            def raise_for_status() -> None:
+                return None
+
+            @staticmethod
+            def json() -> dict[str, Any]:
+                # ★여기는 **접두사 있는** 표기로 태운다 — 두 파서가 서로 다른 모집단을 본다.
+                return {"common": {"errYn": "N"}, "data": {"list": [{
+                    "get부동산고유번호": "1101-2012-009048",
+                    "get구분": "토지",
+                    "get소유자": "최***",
+                    "get부동산소재지번": "서울특별시 강남구 역삼동 737",
+                    "get상태": "현행",
+                }]}}
+
+        return _R()
+
+
+@pytest.mark.asyncio
+async def test_고유번호검색_파서도_두_표기를_읽는다(monkeypatch: pytest.MonkeyPatch) -> None:
+    import httpx
+
+    monkeypatch.setattr(httpx, "AsyncClient", _UniqNoClient)
+    monkeypatch.setattr(hc, "hyphen_ready", lambda: True)
+    monkeypatch.setattr(hc, "_headers", lambda: {})
+    monkeypatch.setattr(hc, "_host", lambda: "https://example.invalid")
+
+    res = await hc.search_by_unique_no("1101-2012-009048")
+
+    assert res["ok"] is True, res
+    it = res["items"][0]
+    assert it["unique_no"] == "11012012009048", it
+    assert it["gubun"] == "토지"
+    assert it["owner"] == "최***"
+    assert it["jibun"] == "서울특별시 강남구 역삼동 737"
+    assert it["sangtae"] == "현행"
+
+
+class _RegistryClient(_CapturingClient):
+    """등기부 열람 응답 — `outList` 가 dict 인 형태."""
+
+    payload: dict[str, Any] = {}
+
+    async def post(self, url: str, headers: Any = None, json: Any = None) -> Any:  # noqa: A002
+        type(self).captured = {"url": url, "body": json}
+        body = type(self).payload
+
+        class _R:
+            status_code = 200
+
+            @staticmethod
+            def json() -> dict[str, Any]:
+                return body
+
+        return _R()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("out_list", [
+    {"get소유자": "정***"},          # dict 형태
+    [{"get소유자": "정***"}],        # list 형태 — 두 분기를 모두 태운다
+])
+async def test_등기부_열람_파서도_두_표기를_읽는다(
+    monkeypatch: pytest.MonkeyPatch, out_list: Any,
+) -> None:
+    import httpx
+
+    _RegistryClient.payload = {"common": {"errYn": "N"}, "data": {"outList": out_list, "pdfHex": ""}}
+    monkeypatch.setattr(httpx, "AsyncClient", _RegistryClient)
+    monkeypatch.setattr(hc, "hyphen_ready", lambda: True)
+    monkeypatch.setattr(hc, "_headers", lambda: {})
+    monkeypatch.setattr(hc, "_host", lambda: "https://example.invalid")
+
+    res = await hc.fetch_realty_registry(unique_no="1101-2012-009048")
+
+    assert res["ok"] is True, res
+    assert res["owner"] == "정***", (
+        f"소유자 파싱이 끊겼다(형제 파서가 명세 표기만 읽던 자리다): {res.get('owner')!r}"
+    )
