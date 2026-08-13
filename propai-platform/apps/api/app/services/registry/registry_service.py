@@ -176,7 +176,10 @@ class RegistryService:
                         address=address, realty_type=realty_type, dong=dong, ho=ho
                     )
                 else:
-                    return {**item, "status": "bad_request", "message": "주소 또는 고유번호가 필요합니다."}
+                    # ★조기반환도 `attempts` 를 실어야 한다 — 실으면 빈 리스트여도 키가 존재해,
+                    #   소비처가 "시도 기록 없음"과 "필드 자체가 없음"을 구분할 수 있다.
+                    return {**item, "status": "bad_request",
+                            "message": "주소 또는 고유번호가 필요합니다.", "attempts": attempts}
 
                 if h_res.get("status") == "ok":
                     return {**item, **h_res}
@@ -253,6 +256,15 @@ class RegistryService:
                         "status": s_res.get("status") or "no_match",
                         "message": s_res.get("message"),
                     })
+            else:
+                # ★pnu 만 들어온 경로. 종전에는 여기서 **아무 것도 남기지 않아** `attempts` 가
+                #   비었고, 최종 판정이 `configured_any=False` → **"API 미설정"** 으로 뒤집혔다.
+                #   키는 멀쩡한데 관리자에게 "키를 설정하라" 고 말하는 오진이다.
+                attempts.append({
+                    "provider": "tilko",
+                    "status": "bad_request",
+                    "message": "주소 또는 고유번호가 필요합니다(PNU 만으로는 조회할 수 없습니다).",
+                })
         else:
             attempts.append({
                 "provider": "tilko",
@@ -284,6 +296,14 @@ class RegistryService:
                 }
             except Exception as e:  # noqa: BLE001
                 logger.warning("커스텀 등기부 API 조회 실패", err=str(e)[:120])
+                # ★로그에만 남기면 사용자에게 도달하지 않는다 — 이 PR 이 고치려던 결함
+                #   그 자체(사유가 응답에 안 실려 "미설정 또는 장애" 로 뭉개짐)가
+                #   커스텀 경로에 **그대로 남아 있었다**. 세 프로바이더를 같은 규칙으로 싣는다.
+                attempts.append({
+                    "provider": "custom",
+                    "status": "provider_error",
+                    "message": str(e)[:200],
+                })
 
         # ★"미설정" 과 "조회 실패" 를 구분한다. 종전에는 둘 다 `not_configured` 로 뭉개
         #   "API 미설정 또는 장애 발생" 이라 답했다 — 실제로는 자격증명이 멀쩡하고 상류가

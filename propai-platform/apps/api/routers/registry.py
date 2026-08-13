@@ -38,26 +38,63 @@ async def _set_registry_job(job_id: str, **fields: Any) -> None:
     await _REGISTRY_STORE.put(job_id, cur, _JOB_TTL)
 
 
-def _issue_failed(result: Any) -> bool:
-    """발급 결과가 실패/미설정(미발급)인지 판정 — 실패면 과금하지 않는다."""
+# 실제 발급/열람이 일어났다고 볼 수 있는 출처.
+_ISSUED_ORIGINS = ("hyphen", "tilko", "custom")
+
+
+def issued_count(result: Any) -> int:
+    """**실제로 발급·열람된 건수**를 센다. 과금은 딱 이 수만큼만 한다.
+
+    ★2026-08-12 — 블랙리스트를 **화이트리스트로 뒤집었다**. 종전 `_issue_failed` 는
+    `("unavailable","error","failed")` 만 실패로 봤다. 그런데 등기 조회의 실제 실패 상태는
+    `not_configured`·`provider_error`·`no_match`·`bad_request`·`forbidden` 이라 **하나도
+    걸리지 않았고**, 실패한 조회마다 1,200원이 청구됐다.
+
+    ★추정이 아니라 실측이다: 진단으로 `/registry/bulk` 를 4회 호출해 **전부 실패**했는데
+    원장에 `service_fee -1200` 이 **4건** 남았다(23:16~23:18). 합계 4,800원.
+
+    ★블랙리스트가 위험한 이유가 여기 있다 — **새 실패 상태를 추가하는 사람이 돈 가드를
+    같이 고쳐야 한다는 것을 모른다**(이 PR 이 `provider_error` 를 추가하며 실제로 놓쳤다).
+    화이트리스트는 "성공을 증명하지 못하면 과금하지 않는다" 로 기본값이 안전하다.
+
+    - `results` 를 가진 일괄 응답은 **성공 건수만** 센다(요청 필지 수가 아니라).
+    - PDF 업로드 파싱은 외부 발급이 아니므로 과금 대상이 아니다.
+    """
     if not isinstance(result, dict):
-        return False
+        return 0
+    if isinstance(result.get("results"), list):
+        return sum(issued_count(r) for r in result["results"])
     if result.get("error"):
-        return True
+        return 0
     status = str(result.get("status", "")).lower()
-    return status in ("unavailable", "error", "failed")
+    ok = status == "ok" or (result.get("ok") is True and not status)
+    if not ok:
+        return 0
+    if result.get("origin") == "pdf_upload":
+        return 0
+    # 발급 근거: 알려진 프로바이더가 처리했거나, 실제 문서(PDF)를 받았다.
+    has_doc = bool(result.get("has_pdf") or result.get("pdf_data") or result.get("pdf_base64"))
+    return 1 if (result.get("origin") in _ISSUED_ORIGINS or has_doc) else 0
 
 
-async def _charge_registry_issue(user_id: Any, result: Any, times: int = 1) -> None:
-    """등기부등본 발급·열람 사용료(건당) 누적(best-effort). 발급 실패/미설정은 과금 제외."""
-    if _issue_failed(result):
+async def _charge_registry_issue(user_id: Any, result: Any, times: int | None = None) -> None:
+    """등기부등본 발급·열람 사용료 누적(best-effort). **발급된 건수만** 과금한다.
+
+    `times` 는 하위호환용 상한이다 — 실제 과금은 `issued_count` 가 센 수를 넘지 않는다.
+    (종전에는 `times=len(items)` 로 **요청 수만큼** 과금해, 10필지 중 1건만 발급돼도
+    10건이 청구될 수 있었다.)
+    """
+    n = issued_count(result)
+    if times is not None:
+        n = min(n, max(0, times))
+    if n <= 0:
         return
     try:
         from app.core.database import async_session_factory
         from app.services.billing import billing_service
 
         async with async_session_factory() as _db:
-            for _ in range(max(1, int(times))):
+            for _ in range(n):
                 await billing_service.charge_service(_db, user_id, "registry_issue")
     except Exception:  # noqa: BLE001
         pass

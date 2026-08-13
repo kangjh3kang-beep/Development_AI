@@ -204,6 +204,27 @@ _SIDO_ALIAS = {
 }
 
 
+def pick_field(d: dict[str, Any], name: str) -> Any:
+    """응답에서 필드를 읽는다 — `get` 접두사 유무를 **양쪽 다** 본다.
+
+    ★2026-08-12 라이브 실측: 실제 응답 키에는 `get` 접두사가 **없다**(`부동산고유번호`).
+    그런데 벤더 명세 화면의 스키마는 `get부동산고유번호` 로 표시한다. 그 표기를 믿고 짠
+    파서는 **검색이 성공해도** 값을 못 읽어 `unique_no` 가 빈 문자열이 됐다.
+
+    ★모듈 레벨 공용 헬퍼인 이유: 같은 파일 안에 같은 파서가 **셋**(주소검색·고유번호검색·
+    등기부 열람) 있는데 처음엔 한 곳만 고쳤다. 리뷰가 "형제 미스윕" 으로 잡았다 —
+    한 곳을 고치면 전역이 따라오게 공용화한다(CLAUDE.md 전역 전파방지).
+
+    ★빈 문자열은 값으로 인정하지 않는다 — 두 표기가 공존하고 한쪽이 비어 있을 때
+    비어 있는 쪽을 채택하면 결함이 그대로 남는다.
+    """
+    v = d.get(name)
+    if v is None or v == "":
+        v2 = d.get(f"get{name}")
+        return v if v2 is None or v2 == "" else v2
+    return v
+
+
 def extract_sido(address: str) -> str:
     """주소 문자열에서 시/도(`admin_regn1`)를 뽑는다. 못 뽑으면 빈 문자열.
 
@@ -274,22 +295,14 @@ async def _search_single_address(
         res_data = data.get("data") or {}
         raw_list = res_data.get("list") or []
         items = []
-        # ★응답 키에 `get` 접두사가 **없다**(2026-08-12 라이브 실측).
-        #   명세 화면의 스키마는 `get부동산고유번호` 로 표시하지만 실제 응답은
-        #   `부동산고유번호` 다. 종전 파서는 `get…` 만 읽어, **검색이 성공해도**
-        #   `unique_no` 가 빈 문자열이 돼 "고유번호를 찾을 수 없습니다" 로 떨어졌다.
-        #   문서 표기와 실제 응답이 갈리므로 **양쪽을 모두 읽는다**(둘 중 있는 쪽 채택).
-        def _pick(d: dict[str, Any], name: str) -> Any:
-            return d.get(name) if d.get(name) is not None else d.get(f"get{name}")
-
         for item in raw_list:
             if isinstance(item, dict):
                 items.append({
-                    "unique_no": (_pick(item, "부동산고유번호") or "").replace("-", "").strip(),
-                    "gubun": _pick(item, "구분"),
-                    "owner": _pick(item, "소유자"),
-                    "jibun": _pick(item, "부동산소재지번"),
-                    "sangtae": _pick(item, "상태"),
+                    "unique_no": (pick_field(item, "부동산고유번호") or "").replace("-", "").strip(),
+                    "gubun": pick_field(item, "구분"),
+                    "owner": pick_field(item, "소유자"),
+                    "jibun": pick_field(item, "부동산소재지번"),
+                    "sangtae": pick_field(item, "상태"),
                 })
 
         return {
@@ -382,11 +395,11 @@ async def search_by_unique_no(unique_no: str) -> dict[str, Any]:
         raw_list = res_data.get("list") or []
         items = [
             {
-                "unique_no": (it.get("get부동산고유번호") or "").replace("-", "").strip(),
-                "gubun": it.get("get구분"),
-                "owner": it.get("get소유자"),
-                "jibun": it.get("get부동산소재지번"),
-                "sangtae": it.get("get상태"),
+                "unique_no": (pick_field(it, "부동산고유번호") or "").replace("-", "").strip(),
+                "gubun": pick_field(it, "구분"),
+                "owner": pick_field(it, "소유자"),
+                "jibun": pick_field(it, "부동산소재지번"),
+                "sangtae": pick_field(it, "상태"),
             }
             for it in raw_list
             if isinstance(it, dict)
@@ -491,9 +504,9 @@ async def fetch_realty_registry(
         out_list = res_data.get("outList") or {}
         owner = None
         if isinstance(out_list, dict):
-            owner = out_list.get("get소유자")
+            owner = pick_field(out_list, "소유자")
         elif isinstance(out_list, list) and out_list:
-            owner = out_list[0].get("get소유자")
+            owner = pick_field(out_list[0], "소유자")
 
         return {
             "ok": True,

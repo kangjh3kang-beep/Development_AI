@@ -104,3 +104,66 @@ async def test_미설정과_조회실패를_다른_상태로_구분한다(monkey
 
     # ★두 모집단이 실제로 다른 값을 낸다(차가 0이면 잠금이 아니다).
     assert a["status"] != b["status"], "두 경우가 같은 상태를 내면 이 검사는 공허하다"
+
+
+@pytest.mark.asyncio
+async def test_키가_있는데_입력이_부족하면_미설정이라_말하지_않는다(monkeypatch: pytest.MonkeyPatch) -> None:
+    """★`attempts` 가 비면 판정이 뒤집힌다 — 리뷰가 잡은 구멍.
+
+    `configured_any` 는 **`attempts` 로부터 파생**된다. 그래서 어떤 경로가 아무 것도
+    남기지 않으면(=`attempts == []`), 키가 멀쩡해도 `not_configured` 로 떨어져
+    관리자에게 **"키를 설정하라"** 는 오진을 낸다.
+
+    여기서 태우는 경로: provider=tilko · 키 있음 · 입력은 `pnu` 뿐(주소·고유번호 없음).
+    종전 코드에는 이 경우의 `else` 가 아예 없었다.
+    """
+    import app.services.registry.hyphen_client as hc
+    import app.services.registry.tilko_client as tc
+
+    monkeypatch.setattr(rs, "_config", lambda: {"provider": "tilko", "url": "", "key": ""})
+    monkeypatch.setattr(hc, "hyphen_ready", lambda: False)
+    monkeypatch.setattr(tc, "tilko_ready", lambda: True)
+
+    out = await rs.RegistryService().get_one(pnu="1168010100107370000")
+
+    assert out["status"] != "not_configured", (
+        f"키가 설정돼 있는데 '미설정' 이라 답한다 — attempts 가 비어 판정이 뒤집혔다: {out}"
+    )
+    assert out.get("attempts"), f"어느 프로바이더에서 왜 멈췄는지 기록이 없다: {out}"
+    assert "미설정" not in out["message"], out["message"]
+
+
+@pytest.mark.asyncio
+async def test_커스텀_URL_실패도_사유가_응답에_실린다(monkeypatch: pytest.MonkeyPatch) -> None:
+    """세 프로바이더를 **같은 규칙**으로 싣는다 — 커스텀만 로그로 새면 같은 결함이 남는다."""
+    import httpx
+
+    import app.services.registry.hyphen_client as hc
+    import app.services.registry.tilko_client as tc
+
+    monkeypatch.setattr(rs, "_config",
+                        lambda: {"provider": "custom", "url": "https://example.invalid/reg", "key": "k"})
+    monkeypatch.setattr(hc, "hyphen_ready", lambda: False)
+    monkeypatch.setattr(tc, "tilko_ready", lambda: False)
+
+    class _Boom:
+        def __init__(self, *a: Any, **k: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> _Boom:
+            return self
+
+        async def __aexit__(self, *a: Any) -> None:
+            return None
+
+        async def post(self, *a: Any, **k: Any) -> Any:
+            raise RuntimeError("커스텀 등기 API 502")
+
+    monkeypatch.setattr(httpx, "AsyncClient", _Boom)
+
+    out = await rs.RegistryService().get_one(address="서울특별시 강남구 역삼동 737")
+
+    assert any(x.get("provider") == "custom" for x in out.get("attempts") or []), (
+        f"커스텀 실패가 attempts 에 없다 — 사유가 로그로만 새고 사용자에겐 안 간다: {out.get('attempts')}"
+    )
+    assert "502" in out["message"], f"상류 사유가 메시지에 실려야 한다: {out['message']}"
