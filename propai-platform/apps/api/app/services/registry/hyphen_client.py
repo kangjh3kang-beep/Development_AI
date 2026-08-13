@@ -181,6 +181,65 @@ def normalize_address_candidates(address: str) -> list[str]:
 
 
 
+# ★하이픈 주소검색은 **한글 문자열**을 받는다 — 숫자 코드가 아니다(2026-08-12 명세 확인).
+#   내부 구분 코드(realty_kind: "1"집합건물 "2"토지 "3"건물 "0"/None 전체)를 그 표기로 옮긴다.
+_KINDCLS_KO = {"0": "전체", "1": "집합건물", "2": "토지", "3": "건물", "": "전체"}
+#   등기등록상태도 마찬가지다(현행/폐쇄/현행+폐쇄).
+_CLSFLAG_KO = {"1": "현행", "2": "폐쇄", "3": "현행+폐쇄", "": "현행"}
+
+# 시/도 표기(`admin_regn1`)는 **필수**인데 종전 요청에는 아예 없었다.
+_SIDO = (
+    "서울특별시", "부산광역시", "대구광역시", "인천광역시", "광주광역시", "대전광역시",
+    "울산광역시", "세종특별자치시", "경기도", "강원특별자치도", "강원도",
+    "충청북도", "충청남도", "전북특별자치도", "전라북도", "전라남도",
+    "경상북도", "경상남도", "제주특별자치도",
+)
+# 축약 표기도 흔히 들어온다("서울 강남구 …").
+_SIDO_ALIAS = {
+    "서울": "서울특별시", "부산": "부산광역시", "대구": "대구광역시", "인천": "인천광역시",
+    "광주": "광주광역시", "대전": "대전광역시", "울산": "울산광역시", "세종": "세종특별자치시",
+    "경기": "경기도", "강원": "강원특별자치도", "충북": "충청북도", "충남": "충청남도",
+    "전북": "전북특별자치도", "전남": "전라남도", "경북": "경상북도", "경남": "경상남도",
+    "제주": "제주특별자치도",
+}
+
+
+def pick_field(d: dict[str, Any], name: str) -> Any:
+    """응답에서 필드를 읽는다 — `get` 접두사 유무를 **양쪽 다** 본다.
+
+    ★2026-08-12 라이브 실측: 실제 응답 키에는 `get` 접두사가 **없다**(`부동산고유번호`).
+    그런데 벤더 명세 화면의 스키마는 `get부동산고유번호` 로 표시한다. 그 표기를 믿고 짠
+    파서는 **검색이 성공해도** 값을 못 읽어 `unique_no` 가 빈 문자열이 됐다.
+
+    ★모듈 레벨 공용 헬퍼인 이유: 같은 파일 안에 같은 파서가 **셋**(주소검색·고유번호검색·
+    등기부 열람) 있는데 처음엔 한 곳만 고쳤다. 리뷰가 "형제 미스윕" 으로 잡았다 —
+    한 곳을 고치면 전역이 따라오게 공용화한다(CLAUDE.md 전역 전파방지).
+
+    ★빈 문자열은 값으로 인정하지 않는다 — 두 표기가 공존하고 한쪽이 비어 있을 때
+    비어 있는 쪽을 채택하면 결함이 그대로 남는다.
+    """
+    v = d.get(name)
+    if v is None or v == "":
+        v2 = d.get(f"get{name}")
+        return v if v2 is None or v2 == "" else v2
+    return v
+
+
+def extract_sido(address: str) -> str:
+    """주소 문자열에서 시/도(`admin_regn1`)를 뽑는다. 못 뽑으면 빈 문자열.
+
+    ★이 값이 **필수**다. 빠지면 하이픈은 `[C0000-002] 검색조건에 대한 결과가 없습니다`
+    를 돌려준다 — "결과 없음" 처럼 보이지만 실제로는 **요청이 불완전**한 것이다.
+    그 오해 때문에 "등기 열람이 안 된다" 가 오래 방치됐다.
+    """
+    a = (address or "").strip()
+    for s in _SIDO:
+        if a.startswith(s):
+            return s
+    head = a.split()[0] if a.split() else ""
+    return _SIDO_ALIAS.get(head, "")
+
+
 async def _search_single_address(
     address: str,
     kindcls: str = "0",
@@ -188,14 +247,24 @@ async def _search_single_address(
     limit_page: str = "1",
     page_no: str = "1",
 ) -> dict[str, Any]:
-    """단일 주소 원시 검색 (POST /in0004000168)."""
+    """단일 주소 원시 검색 (POST /in0004000168).
+
+    ★2026-08-12 명세 대조로 두 결함을 고쳤다(라이브 실측으로 확증):
+      1) 값 형식 — `kindcls`·`cls_flag` 는 **한글 문자열**인데 숫자 코드를 보내고 있었다.
+      2) 필수 누락 — `admin_regn1`(시/도)를 아예 안 보냈다.
+    둘 다 `[C0000-002] 결과가 없습니다` 로 나타나 **데이터가 없는 것처럼 보였다.**
+    """
     import httpx
 
     url = f"{_host()}/in0004000168"
+    sido = extract_sido(address)
     body = {
-        "kindcls": kindcls,
+        "kindcls": _KINDCLS_KO.get(kindcls, kindcls or "전체"),
+        # 시/도를 못 뽑으면 "전체" 로 둔다(문서상 기본값) — 빈 문자열은 VALID 오류다.
+        "admin_regn1": sido or "전체",
+        "cls_flag": _CLSFLAG_KO.get(cls_flag, cls_flag or "현행"),
         "simple_address": address,
-        "cls_flag": cls_flag,
+        "detailYn": "Y",
         "limitPage": limit_page,
         "pageNo": page_no,
     }
@@ -229,11 +298,11 @@ async def _search_single_address(
         for item in raw_list:
             if isinstance(item, dict):
                 items.append({
-                    "unique_no": (item.get("get부동산고유번호") or "").replace("-", "").strip(),
-                    "gubun": item.get("get구분"),
-                    "owner": item.get("get소유자"),
-                    "jibun": item.get("get부동산소재지번"),
-                    "sangtae": item.get("get상태"),
+                    "unique_no": (pick_field(item, "부동산고유번호") or "").replace("-", "").strip(),
+                    "gubun": pick_field(item, "구분"),
+                    "owner": pick_field(item, "소유자"),
+                    "jibun": pick_field(item, "부동산소재지번"),
+                    "sangtae": pick_field(item, "상태"),
                 })
 
         return {
@@ -326,11 +395,11 @@ async def search_by_unique_no(unique_no: str) -> dict[str, Any]:
         raw_list = res_data.get("list") or []
         items = [
             {
-                "unique_no": (it.get("get부동산고유번호") or "").replace("-", "").strip(),
-                "gubun": it.get("get구분"),
-                "owner": it.get("get소유자"),
-                "jibun": it.get("get부동산소재지번"),
-                "sangtae": it.get("get상태"),
+                "unique_no": (pick_field(it, "부동산고유번호") or "").replace("-", "").strip(),
+                "gubun": pick_field(it, "구분"),
+                "owner": pick_field(it, "소유자"),
+                "jibun": pick_field(it, "부동산소재지번"),
+                "sangtae": pick_field(it, "상태"),
             }
             for it in raw_list
             if isinstance(it, dict)
@@ -435,9 +504,9 @@ async def fetch_realty_registry(
         out_list = res_data.get("outList") or {}
         owner = None
         if isinstance(out_list, dict):
-            owner = out_list.get("get소유자")
+            owner = pick_field(out_list, "소유자")
         elif isinstance(out_list, list) and out_list:
-            owner = out_list[0].get("get소유자")
+            owner = pick_field(out_list[0], "소유자")
 
         return {
             "ok": True,
