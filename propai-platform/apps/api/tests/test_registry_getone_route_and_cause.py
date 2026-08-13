@@ -74,6 +74,12 @@ async def test_미설정과_조회실패를_다른_상태로_구분한다(monkey
     a = await rs.RegistryService().get_one(address="서울특별시 강남구 역삼동 737")
     assert a["status"] == "not_configured", a
     assert "미설정" in a["message"], a["message"]
+    # ★어느 키가 없는지까지 남아야 관리자가 무엇을 설정할지 안다 — 총평만으로는 못 고친다.
+    by = {x["provider"]: x for x in a.get("attempts") or []}
+    assert set(by) == {"hyphen", "tilko"}, a.get("attempts")
+    assert all(x["status"] == "not_configured" for x in by.values()), by
+    assert "HYPHEN_HKEY" in (by["hyphen"].get("message") or ""), by["hyphen"]
+    assert "TILKO_API_KEY" in (by["tilko"].get("message") or ""), by["tilko"]
 
     # ── 모집단 B: 자격증명 있음 + 상류가 "결과 없음" → provider_error + 그 사유 전달
     monkeypatch.setattr(hc, "hyphen_ready", lambda: True)
@@ -98,6 +104,10 @@ async def test_미설정과_조회실패를_다른_상태로_구분한다(monkey
     assert "C0000-002" in b["message"], (
         f"상류가 말한 사유가 사용자 메시지에 실려야 한다: {b['message']}"
     )
+    # ★탈출구 안내는 이 PR 의 핵심이다 — 주 경로가 막혔을 때 사용자가 갈 곳을 알려야 한다
+    #   (그 탈출구가 3주간 404였고, 실패 메시지는 그걸 쓰라고 안내하고 있었다).
+    assert "비상 등기부 PDF 직접 업로드" in b["message"], b["message"]
+    assert "비상 등기부 PDF 직접 업로드" in a["message"], a["message"]
     att = [x for x in b.get("attempts") or [] if x.get("provider") == "hyphen"]
     assert att, f"어느 프로바이더가 왜 실패했는지 구조화 필드로도 남아야 한다: {b.get('attempts')}"
     # ★사유 필드까지 본다 — provider 만 보면 status 줄을 지워도 초록이었다(기계 변이 생존).
@@ -140,6 +150,7 @@ async def test_키가_있는데_입력이_부족하면_미설정이라_말하지
     assert "미설정" not in out["message"], out["message"]
     # 상태만 잠그면 안내 문구 분기가 무잠금이다(기계 변이가 그 생존을 드러냈다).
     assert "주소 또는 부동산 고유번호가 필요합니다" in out["message"], out["message"]
+    assert "PNU" in (out["attempts"][0].get("message") or ""), out["attempts"]
 
 
 @pytest.mark.asyncio
@@ -281,3 +292,74 @@ async def test_틸코_고유번호_조회_실패도_사유가_실린다(monkeypa
     att = [x for x in out["attempts"] if x.get("provider") == "tilko"]
     assert att and att[0]["status"] == "iros_login_failed", out["attempts"]
     assert "IROS 로그인 실패" in out["message"], out["message"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("search", "fetch", "want_status", "want_msg"), [
+    # 주소검색 자체가 무결과 — 이 사유가 사용자에게 도달해야 한다
+    ({"ok": False, "status": "no_match", "message": "틸코 주소검색 결과 없음"}, None,
+     "no_match", "틸코 주소검색 결과 없음"),
+    # 주소검색은 됐는데 열람이 실패 — 형제 분기다
+    ({"ok": True, "items": [{"unique_no": "11012012009048", "gubun": "토지"}]},
+     {"ok": False, "status": "iros_pay_failed", "message": "전자결제 실패"},
+     "iros_pay_failed", "전자결제 실패"),
+])
+async def test_틸코_주소경로_두_실패지점이_각각_사유를_싣는다(
+    monkeypatch: pytest.MonkeyPatch, search: Any, fetch: Any, want_status: str, want_msg: str,
+) -> None:
+    """★같은 프로바이더 안에서도 실패 지점이 둘이다(검색 / 열람). 한쪽만 잠그면 다른 쪽이 샌다."""
+    import app.services.registry.hyphen_client as hc
+    import app.services.registry.tilko_client as tc
+
+    monkeypatch.setattr(rs, "_config", lambda: {"provider": "tilko", "url": "", "key": ""})
+    monkeypatch.setattr(hc, "hyphen_ready", lambda: False)
+    monkeypatch.setattr(tc, "tilko_ready", lambda: True)
+
+    async def _search(_addr: str, **_kw: Any) -> dict[str, Any]:
+        return search
+
+    async def _fetch(**_kw: Any) -> dict[str, Any]:
+        return fetch or {}
+
+    monkeypatch.setattr(tc, "search_unique_no", _search)
+    monkeypatch.setattr(tc, "fetch_realty_registry", _fetch)
+
+    out = await rs.RegistryService().get_one(address="서울특별시 강남구 역삼동 737")
+    att = [x for x in out["attempts"] if x.get("provider") == "tilko"]
+    assert att and att[0]["status"] == want_status, out["attempts"]
+    assert want_msg in (att[0].get("message") or ""), att[0]
+    assert want_msg in out["message"], out["message"]
+
+
+@pytest.mark.asyncio
+async def test_라우트가_PDF_업로드와_고유번호_직접입력도_넘긴다(monkeypatch: pytest.MonkeyPatch) -> None:
+    """★위 배선 락의 사각 — `pdf_input` 이 항상 None 이고 `unique_no` 를 `pin` 으로만 태우면
+    그 두 줄을 망가뜨려도 초록이다(기계 변이가 실증). 두 값이 **실제로 흐르는** 케이스를 만든다.
+    """
+    import routers.registry as rr
+
+    seen: dict[str, Any] = {}
+    charged: list[Any] = []
+
+    class _Svc:
+        async def get_one(self, **kw: Any) -> dict[str, Any]:
+            seen.update(kw)
+            return {"status": "ok", "origin": "pdf_upload", "has_pdf": True}
+
+    async def _charge(*a: Any, **k: Any) -> None:
+        charged.append(a)
+
+    monkeypatch.setattr(rr, "RegistryService", _Svc)
+    monkeypatch.setattr(rr, "_charge_registry_issue", _charge)
+
+    class _U:
+        user_id = "u1"
+
+    await rr.registry_get_one({
+        "unique_no": "1146-2009-000054", "pdf_input": "data:application/pdf;base64,JVBER",
+    }, current_user=_U())
+
+    assert seen["unique_no"] == "1146-2009-000054", seen
+    assert seen["pdf_input"] == "data:application/pdf;base64,JVBER", seen
+    # PDF 업로드는 외부 발급이 아니다 — 과금 통로를 아예 타지 않는다.
+    assert charged == [], "PDF 업로드 파싱에 발급 과금이 걸렸다"
