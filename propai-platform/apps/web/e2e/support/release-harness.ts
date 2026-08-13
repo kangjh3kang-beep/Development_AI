@@ -221,7 +221,9 @@ async function handleApiRoute(route: Route, state: MutableState) {
   const request = route.request();
   const url = new URL(request.url());
   const method = request.method();
-  const path = url.pathname.replace("/api/latest", "") || "/";
+  // ★`/api/v1` 도 같은 핸들러가 답한다 — 앱의 주 클라이언트(`lib/api-client.ts`)가 그쪽으로 나간다.
+  //   접두사만 다르고 자원 경로는 같으므로, 둘 다 벗겨 하나의 라우팅 표를 쓴다.
+  const path = url.pathname.replace(/\/api\/(?:latest|v1)/, "") || "/";
 
   if (method === "POST" && (path === "/auth/login" || path === "/auth/register")) {
     return json(route, {
@@ -690,6 +692,22 @@ export async function installReleaseHarness(
 
   const state = createState();
   await page.route("**/api/latest/**", async (route) => {
+    await handleApiRoute(route, state);
+  });
+
+  // ★★`/api/v1/**` 도 가로챈다 — 이걸 빼면 스펙이 **환경에 의존**한다(2026-08-13 실측).
+  //
+  //   앱의 주 클라이언트(`lib/api-client.ts`)는 `/api/v1/**` 로 나간다. 해네스가 그걸 안 막으면:
+  //     · 백엔드가 **없는** 로컬 → 네트워크 오류로 끝나 아무 일도 없다(초록)
+  //     · 백엔드가 **있는** CI  → 시드한 가짜 토큰이 **401** 로 거부되고
+  //       `lib/api-client.ts:426` 의 `handleSessionExpired()` 가 토큰을 지우고 **로그인으로
+  //       리다이렉트**한다 → 페이지가 통째로 사라져 모든 `toBeVisible` 이 타임아웃(빨강)
+  //   실제로 나이틀리 로그에 `navigated to /en/login?next=…` 가 찍혔고, 401 만 돌려주는 더미
+  //   서버를 :8000 에 세워 로컬에서 **CI 와 동일한 10건 실패**를 재현해 확인했다.
+  //
+  //   이 스펙들은 인증 왕복을 검증하지 않는다 → 미지정 엔드포인트는 200 `{}` 로 답해
+  //   **401 경로 자체가 생기지 않게** 한다. 데이터가 필요한 호출은 위 `/api/latest` 핸들러가 답한다.
+  await page.route("**/api/v1/**", async (route) => {
     await handleApiRoute(route, state);
   });
 }
