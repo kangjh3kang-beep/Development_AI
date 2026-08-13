@@ -131,6 +131,11 @@ async def test_키가_있는데_입력이_부족하면_미설정이라_말하지
     assert out["status"] != "not_configured", (
         f"키가 설정돼 있는데 '미설정' 이라 답한다 — attempts 가 비어 판정이 뒤집혔다: {out}"
     )
+    # ★hyphen 경로의 같은 입력은 `bad_request` 다(위 조기반환). 프로바이더에 따라 상태가
+    #   갈리면 재시도·알림 로직이 잘못 걸린다 — **상류는 호출조차 되지 않았다**.
+    assert out["status"] == "bad_request", (
+        f"입력이 모자란 것을 '프로바이더 오류' 로 부르면 안 된다: {out['status']}"
+    )
     assert out.get("attempts"), f"어느 프로바이더에서 왜 멈췄는지 기록이 없다: {out}"
     assert "미설정" not in out["message"], out["message"]
 

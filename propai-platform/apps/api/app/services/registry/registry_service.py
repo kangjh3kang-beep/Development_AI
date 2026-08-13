@@ -176,8 +176,11 @@ class RegistryService:
                         address=address, realty_type=realty_type, dong=dong, ho=ho
                     )
                 else:
-                    # ★조기반환도 `attempts` 를 실어야 한다 — 실으면 빈 리스트여도 키가 존재해,
-                    #   소비처가 "시도 기록 없음"과 "필드 자체가 없음"을 구분할 수 있다.
+                    # ★조기반환도 `attempts` 키를 싣는다 — 응답 계약을 한 모양으로 고정한다.
+                    #   정직하게 적어 둔다: 이 지점의 값은 **항상 `[]`** 이고(여기까지
+                    #   `attempts.append` 가 한 번도 실행되지 않는다), 현재 이 필드를 읽는
+                    #   소비처는 **0곳**이다(프론트·registry_analysis_service 전수 확인).
+                    #   향후 소비처를 위한 계약 고정이지, 지금 무엇을 해결하지는 않는다.
                     return {**item, "status": "bad_request",
                             "message": "주소 또는 고유번호가 필요합니다.", "attempts": attempts}
 
@@ -310,12 +313,19 @@ class RegistryService:
         #   "검색 결과가 없다" 고 답한 경우까지 시스템 장애로 오인하게 만들었다(라이브 실측).
         #   원인을 아는 쪽의 말을 그대로 싣고, 상태도 실제에 맞춘다.
         configured_any = any(a.get("status") != "not_configured" for a in attempts)
+        # ★입력 오류를 "프로바이더 오류" 라 부르지 않는다. 같은 입력(pnu 만)이 hyphen 경로에서는
+        #   `bad_request`(위 조기반환)인데 tilko 경로에서는 `provider_error` 로 갈리던 비대칭을
+        #   없앤다 — **상류는 호출조차 되지 않았다**. 상태 의미가 오염되면 재시도·알림 로직이
+        #   잘못 걸린다.
+        only_bad_request = bool(attempts) and all(a.get("status") == "bad_request" for a in attempts)
         detail = " / ".join(
             f"{a['provider']}: {a.get('message') or a.get('status')}"
             for a in attempts
             if a.get("message") or a.get("status")
         )
-        if configured_any:
+        if only_bad_request:
+            msg = f"등기부를 조회하려면 주소 또는 부동산 고유번호가 필요합니다 — {detail}."
+        elif configured_any:
             msg = (
                 f"등기부 조회에 실패했습니다 — {detail}. "
                 "주소를 확인하거나 '비상 등기부 PDF 직접 업로드' 를 이용하세요."
@@ -330,7 +340,9 @@ class RegistryService:
         return {
             **item,
             # 자격증명이 있는데 조회가 안 된 것은 `provider_error` 다 — `not_configured` 가 아니다.
-            "status": "not_configured" if not configured_any else "provider_error",
+            # 입력이 모자란 것은 둘 다 아니다 — `bad_request` 로 hyphen 경로와 표기를 맞춘다.
+            "status": ("bad_request" if only_bad_request
+                       else "not_configured" if not configured_any else "provider_error"),
             "message": msg,
             "attempts": attempts,
         }

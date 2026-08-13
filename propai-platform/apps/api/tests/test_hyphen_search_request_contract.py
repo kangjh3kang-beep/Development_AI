@@ -153,10 +153,15 @@ def test_시도_별칭을_전수로_확인한다() -> None:
     # ★파생 루프는 **삭제에 면역**이다 — 표에서 한 줄을 지우면 그 줄을 안 볼 뿐 초록이다
     #   (기계 변이가 "제주" 줄 삭제로 실증). 그래서 개수를 사실에 결속시킨다:
     #   대한민국 광역자치단체는 **17개**이고, 축약 표기는 그 전부에 있어야 한다.
-    assert len(hc._SIDO_ALIAS) == 17, (
-        f"광역자치단체 17개의 축약 표기가 모두 있어야 한다 — 현재 {len(hc._SIDO_ALIAS)}개"
+    # ★잠그는 것은 **커버리지**(17개 시/도가 모두 닿는가)이지 전단사가 아니다.
+    #   첫 판은 `len(_SIDO_ALIAS) == 17` + `len(set(values)) == 17` 로 **전단사를 강제**했다.
+    #   그러면 "서울시 강남구 …"(현재 `extract_sido` 가 "" 를 내는 실제 결함) 를 고치려고
+    #   `"서울시": "서울특별시"` 를 추가하는 **정당한 수정이 빨개진다** — 가드의 위양성도
+    #   결함이다(CLAUDE.md §A-6, 2회 재발). 별칭은 늘 수 있고, 빠지는 것만 막으면 된다.
+    assert len(hc._SIDO_ALIAS) >= 17, f"별칭이 모자라다 — {len(hc._SIDO_ALIAS)}개"
+    assert len(set(hc._SIDO_ALIAS.values())) == 17, (
+        f"17개 시/도 중 별칭이 닿지 않는 곳이 있다 — 도달 {len(set(hc._SIDO_ALIAS.values()))}개"
     )
-    assert len(set(hc._SIDO_ALIAS.values())) == 17, "별칭이 같은 시/도로 중복 매핑됐다"
     assert set(hc._SIDO_ALIAS.values()) <= set(hc._SIDO), "별칭이 정식 표기 표에 없는 값을 가리킨다"
     for short, full in hc._SIDO_ALIAS.items():
         assert hc.extract_sido(f"{short} 어느구 어느동 1") == full, (
@@ -258,3 +263,59 @@ async def test_등기부_열람_파서도_두_표기를_읽는다(
     assert res["owner"] == "정***", (
         f"소유자 파싱이 끊겼다(형제 파서가 명세 표기만 읽던 자리다): {res.get('owner')!r}"
     )
+
+
+# ── 두 표기가 공존할 때의 우선순위 ────────────────────────────────────────
+# ★승격 전 형제 파서 둘은 `get` 접두사 **만** 읽었다. 승격 후엔 접두사 없는 쪽이 우선이다.
+#   두 표기가 라이브에서 공존하고 값이 다르면 **읽는 값이 조용히 바뀐다**(리뷰 지적).
+# ★정직하게: 라이브 실측(2026-08-12)은 주소검색(`in0004000168`) **한 엔드포인트뿐**이다.
+#   고유번호검색·등기부열람의 실제 응답 형태는 아직 캡처하지 않았다. 그래서 여기서 잠그는
+#   것은 "관측된 사실" 이 아니라 **의도된 우선순위**다 — 그 사실을 적어 둔다.
+
+class _CoexistUniqNoClient(_UniqNoClient):
+    async def post(self, url: str, headers: Any = None, json: Any = None) -> Any:  # noqa: A002
+        class _R:
+            status_code = 200
+
+            @staticmethod
+            def raise_for_status() -> None:
+                return None
+
+            @staticmethod
+            def json() -> dict[str, Any]:
+                return {"common": {"errYn": "N"}, "data": {"list": [{
+                    "부동산고유번호": "1101-2012-009048", "get부동산고유번호": "9999-9999-999999",
+                    "소유자": "마스킹본", "get소유자": "원본",
+                }]}}
+
+        return _R()
+
+
+@pytest.mark.asyncio
+async def test_공존시_접두사_없는_쪽을_채택한다(monkeypatch: pytest.MonkeyPatch) -> None:
+    import httpx
+
+    monkeypatch.setattr(httpx, "AsyncClient", _CoexistUniqNoClient)
+    monkeypatch.setattr(hc, "hyphen_ready", lambda: True)
+    monkeypatch.setattr(hc, "_headers", lambda: {})
+    monkeypatch.setattr(hc, "_host", lambda: "https://example.invalid")
+
+    it = (await hc.search_by_unique_no("1101-2012-009048"))["items"][0]
+    # 두 값이 실제로 다르다 — 차가 0이면 우선순위를 잠그지 못한다.
+    assert it["unique_no"] == "11012012009048" != "999999999999999"
+    assert it["owner"] == "마스킹본", f"우선순위가 뒤집혔다: {it['owner']!r}"
+
+
+@pytest.mark.asyncio
+async def test_등기부_열람도_공존시_접두사_없는_쪽을_채택한다(monkeypatch: pytest.MonkeyPatch) -> None:
+    import httpx
+
+    _RegistryClient.payload = {"common": {"errYn": "N"}, "data": {
+        "outList": {"소유자": "마스킹본", "get소유자": "원본"}, "pdfHex": ""}}
+    monkeypatch.setattr(httpx, "AsyncClient", _RegistryClient)
+    monkeypatch.setattr(hc, "hyphen_ready", lambda: True)
+    monkeypatch.setattr(hc, "_headers", lambda: {})
+    monkeypatch.setattr(hc, "_host", lambda: "https://example.invalid")
+
+    res = await hc.fetch_realty_registry(unique_no="1101-2012-009048")
+    assert res["owner"] == "마스킹본", f"우선순위가 뒤집혔다: {res.get('owner')!r}"
