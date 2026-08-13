@@ -28,7 +28,6 @@ import pytest
 
 from routers.registry import issued_count
 
-
 # get_one 이 낼 수 있는 **실패** 상태 전수(코드에서 파생 — 사람이 센 목록이 아니다).
 FAILURE_STATUSES = ("not_configured", "provider_error", "no_match", "bad_request", "forbidden",
                     "unavailable", "error", "failed")
