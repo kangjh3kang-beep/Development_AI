@@ -654,16 +654,25 @@ export function buildTileFailureNotice(
  */
 export function makeTileStateAggregator(
   onState: (state: "ready" | "error") => void,
-  opts: { minSamples?: number; failureRatio?: number } = {},
+  opts: { minSamples?: number; failureRatio?: number; window?: number } = {},
 ): (ok: boolean) => void {
   const minSamples = opts.minSamples ?? 6;      // 표본이 적을 때 단발 실패로 단정하지 않는다
   const failureRatio = opts.failureRatio ?? 0.5; // 절반 이상 실패해야 '배경지도 미표시'
-  let ok = 0;
-  let fail = 0;
+  // ★최근 N건만 본다(2026-08-13 추가). 종전에는 **누적**만 해서 감쇠가 없었다 —
+  //   상류(VWorld) 간헐 장애가 끝나 타일이 다시 떠도, 장애 중 쌓인 실패가 분모에 남아
+  //   배너가 오래 버텼다. 실제 로직으로 회복 비용을 계산해 보면:
+  //     실패 10건 → 해제까지 성공 11건 · 30건 → 31건 · 60건 → 61건 · 120건 → 121건
+  //   지도 한 화면이 10~20타일이므로 긴 장애 뒤에는 **팬을 10여 번** 해야 배너가 사라진다.
+  //   그동안 사용자는 지도가 정상 복귀했는데도 빨간 배너를 보고 '재시도'를 누르게 된다.
+  //   윈도를 두면 회복이 **장애 길이와 무관하게 일정**해진다.
+  const window = opts.window ?? 24;
+  const recent: boolean[] = [];
   return (success: boolean) => {
-    if (success) ok += 1;
-    else fail += 1;
-    const total = ok + fail;
+    recent.push(success);
+    if (recent.length > window) recent.shift();
+    const total = recent.length;
+    const ok = recent.filter(Boolean).length;
+    const fail = total - ok;
     // 성공이 하나라도 있으면 지도는 그려지고 있다 — 표본이 쌓이기 전엔 ready 우선.
     if (total < minSamples) {
       onState(ok > 0 ? "ready" : "error");
