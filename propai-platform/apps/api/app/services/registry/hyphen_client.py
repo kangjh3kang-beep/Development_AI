@@ -410,6 +410,72 @@ async def search_by_unique_no(unique_no: str) -> dict[str, Any]:
         return {"ok": False, "status": "error", "items": [], "message": str(e)[:200]}
 
 
+# ── 등기부 열람 응답 파서 ──────────────────────────────────────────────────
+# ★2026-08-15 프로덕션 실측으로 드러난 **마지막 구간 결함**. 열람은 계속 성공하고
+#   있었다(`errYn: N`, `열람일시` 기록). 벤더는 127KB PDF 와 26KB 구조화 등기 데이터를
+#   매번 보냈다. 그런데 우리 파서가 **키 이름을 틀려** 둘 다 버렸다:
+#     · PDF   : 우리가 읽은 `pdfHex` ↔ 실제 `pdfHexString`
+#     · 소유자: 우리가 읽은 `소유자` ↔ 실제 `소유지분현황_갑구[].등기명의인`
+#   결과는 `ok: True` + `has_pdf: False` + `owner: None` — **문서 없는 성공**이었고,
+#   사용자에게는 "열람이 안 된다" 로 보였다. RC-1(주소검색 키)과 **같은 결함 클래스**다.
+# ★그래서 이름 후보를 표로 두고 **하나라도 맞으면** 쓴다 — 벤더가 표기를 바꿔도 견딘다.
+_PDF_HEX_KEYS = ("pdfHexString", "pdfHex", "pdf_hex", "pdfHexStr")
+# 소유자는 갑구 여러 표에 흩어져 있다. 앞의 것이 더 직접적이다.
+_OWNER_TABLES = ("소유지분현황_갑구", "소유권에_관한_사항_갑구")
+_OWNER_FIELDS = ("등기명의인", "소유자", "권리자_및_기타사항")
+
+
+def extract_pdf_hex(res_data: dict[str, Any]) -> str:
+    """열람 응답에서 PDF 16진 문자열을 찾는다 — 표기 후보를 **전부** 본다."""
+    for k in _PDF_HEX_KEYS:
+        v = res_data.get(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return ""
+
+
+def _clean(v: Any) -> str:
+    """벤더 값에는 줄바꿈(`\r\n`)이 섞여 온다 — 표시용으로 한 줄로 만든다."""
+    return " ".join(str(v or "").split())
+
+
+def extract_owner(out_list: Any) -> str | None:
+    """등기 본문에서 소유자(등기명의인)를 뽑는다.
+
+    ★`outList` 는 dict 이고 그 안의 갑구 표들이 **JSON 문자열 또는 리스트**로 온다.
+      실측 형태: `{"소유지분현황_갑구": [{"등기명의인": "○○주식회사 (소유자)", ...}]}`
+    """
+    import json
+
+    if isinstance(out_list, list):
+        out_list = out_list[0] if out_list else {}
+    if not isinstance(out_list, dict):
+        return None
+
+    # 종전 표기(평평한 `소유자` 필드)도 계속 지원한다 — 있으면 그대로 쓴다.
+    flat = pick_field(out_list, "소유자")
+    if flat:
+        return _clean(flat)
+
+    for table in _OWNER_TABLES:
+        rows = out_list.get(table)
+        if isinstance(rows, str):
+            try:
+                rows = json.loads(rows)
+            except Exception:  # noqa: BLE001
+                continue
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            for f in _OWNER_FIELDS:
+                v = _clean(row.get(f))
+                if v:
+                    return v
+    return None
+
+
 async def fetch_realty_registry(
     *,
     unique_no: str,
@@ -492,21 +558,17 @@ async def fetch_realty_registry(
             }
 
         res_data = data.get("data") or {}
-        pdf_hex = res_data.get("pdfHex") or ""
+        pdf_hex = extract_pdf_hex(res_data)
         pdf_b64 = None
         if pdf_hex:
             try:
                 pdf_bytes = bytes.fromhex(pdf_hex)
                 pdf_b64 = base64.b64encode(pdf_bytes).decode()
             except Exception as pe:  # noqa: BLE001
-                logger.warning("하이픈 pdfHex 변환 실패", err=str(pe)[:80])
+                logger.warning("하이픈 등기부 PDF 변환 실패", err=str(pe)[:80])
 
         out_list = res_data.get("outList") or {}
-        owner = None
-        if isinstance(out_list, dict):
-            owner = pick_field(out_list, "소유자")
-        elif isinstance(out_list, list) and out_list:
-            owner = pick_field(out_list[0], "소유자")
+        owner = extract_owner(out_list)
 
         return {
             "ok": True,
