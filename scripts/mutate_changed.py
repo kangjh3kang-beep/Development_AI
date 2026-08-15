@@ -182,12 +182,32 @@ def _added_lines(base: str, path: Path) -> list[tuple[int, str]]:
 
 
 def _guess_tests(paths: list[Path]) -> list[str]:
+    """변경 파일 → 짝 테스트 **추정**. 못 찾으면 호출부가 EXIT=2 로 시끄럽게 실패한다.
+
+    ★`test_{stem}.py` 만 보던 규칙은 이 저장소의 **실제 명명규칙과 어긋났다**. 서비스 모듈은
+      `_service` 접미를 달지만 테스트 파일명은 그 접미를 뗀다:
+        `parcel_rights_survey_service.py` → `test_parcel_rights_survey.py`
+      그래서 `app/services/**` 상당수가 **자동탐색 0건**이었고, 그 결과 변이 감사가
+      "사람이 손수 고른 변이"로 대체됐다(CLAUDE.md §5 가 금지하는 바로 그것 — #588 R1 에서
+      설명 불가 생존 3건을 놓친 원인). 접미 제거 폴백을 추가해 그 계열을 회복한다.
+
+    ★★남은 한계(정직 표기 — 이걸 모르면 또 "전수 감사했다"고 착각한다):
+      이 폴백으로도 **테스트명이 모듈명과 무관하면 여전히 못 찾는다**(실측: 폴백 적용 후에도
+      `registry_analysis_service` · `registry` 는 MISS). 즉 이 함수는 완전 탐색이 아니라
+      **휴리스틱**이다. 자동탐색이 비면 반드시 `--tests` 를 명시하라 — EXIT=2 를 "대상 없음"으로
+      넘기면 그 변경은 **감사되지 않은 것**이다.
+    """
     found: list[str] = []
     for p in paths:
+        stems = [p.stem]
+        # 서비스 모듈 명명규칙: `foo_service.py` ↔ `test_foo.py`
+        if p.stem.endswith("_service"):
+            stems.append(p.stem[: -len("_service")])
         for root in (Path("propai-platform/apps/api/tests"), Path("tests")):
-            cand = root / f"test_{p.stem}.py"
-            if cand.exists():
-                found.append(str(cand))
+            for stem in stems:
+                cand = root / f"test_{stem}.py"
+                if cand.exists():
+                    found.append(str(cand))
     return sorted(set(found))
 
 
