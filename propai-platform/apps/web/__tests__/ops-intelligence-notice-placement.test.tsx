@@ -15,7 +15,14 @@
  * ★계약: **결과 묶음 하나당 고지는 정확히 1개**이고, 결과 그리드의 직계 자식이 아니다.
  *
  * ★한계(정직 바운딩): jsdom 은 레이아웃을 계산하지 않는다. 이 테스트가 증명하는 것은
- *   **DOM 구조와 개수**이지 "화면에서 어떻게 보이는가"가 아니다.
+ *   **DOM 구조·개수·역할**이지 "화면에서 어떻게 보이는가"가 아니다.
+ *
+ * ★변이 실측(2026-08-15, `scripts/mutate_changed.py --tests <이 파일>`)에서 남은 생존과 그 이유:
+ *   · `role="note"` 삭제 → 잠갔다(아래 ③). 지워도 아무 검사가 안 깨지던 진짜 구멍이었다.
+ *   · 고지의 `className` 삭제·변경 → **생존을 남긴다.** jsdom 은 페인트를 하지 않으므로
+ *     "고지가 눈에 띄는가"는 여기서 증명할 수 없다. 클래스 문자열을 하드코딩해 잠그면
+ *     정당한 토큰 재조정까지 막는 위양성 가드가 된다(이 저장소에서 2회 재발한 형태).
+ *     → 시각적 확인은 라이브 뷰포트의 몫으로 남긴다. **모르는 것을 아는 척하지 않는다.**
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -94,14 +101,23 @@ describe("정직 고지 배치", () => {
       "고지가 결과마다 반복돼 같은 문장이 여러 번 보인다"
     ).toHaveLength(1);
 
-    // ② 자리 — 결과 그리드의 직계 자식이면 격자 칸 하나를 차지한다.
-    for (const n of notices) {
-      const parentClass = n.parentElement?.className ?? "";
-      expect(
-        /(^|\s)grid(\s|$)/.test(parentClass),
-        `고지가 그리드의 직계 자식이라 격자 칸을 차지한다 — parent="${parentClass}"`
-      ).toBe(false);
-    }
+    // ③ 접근성 — 고지는 스크린리더에도 고지여야 한다. `role="note"` 를 지워도
+    //    아무 검사가 안 깨지던 구멍을 변이 실측으로 확인하고 여기서 잠근다.
+    expect(
+      notices[0].getAttribute("role"),
+      '고지에서 role="note" 가 사라졌다 — 화면에만 보이고 스크린리더에는 평범한 문단이 된다'
+    ).toBe("note");
+
+    // ② 자리 — 결과 카드와 **같은 컨테이너의 형제**면 격자 칸 하나를 차지한다.
+    //    ★클래스 이름(`grid`)이 아니라 **구조**로 판정한다. 클래스명으로 보면 타이틀을
+    //    바꾸는 것만으로 이 검사가 공허해진다(변이 실측에서 드러난 약점).
+    const feedbackCard = screen.getByText("감성 라벨").closest("div");
+    const resultsContainer = feedbackCard?.parentElement;
+    expect(resultsContainer, "결과 컨테이너를 못 찾았다 — 검사가 공허하다").toBeTruthy();
+    expect(
+      notices[0].parentElement,
+      "고지가 결과 카드와 같은 컨테이너의 형제다 — 격자 칸을 차지하고 결과마다 반복된다"
+    ).not.toBe(resultsContainer);
   });
 
   it("정비 결과에도 고지가 붙고, 그 고지 역시 결과 그리드 밖이다", async () => {
