@@ -1591,8 +1591,9 @@ def test_다필지_요청모델은_전부_길이상한을_가진다() -> None:
     """유료·다필지 경로에서 길이는 곧 청구액/부하다. 하나라도 무제한이면 실패한다."""
     import inspect
 
-    import routers.registry as reg
     from pydantic import BaseModel
+
+    import routers.registry as reg
 
     def _list_fields_without_cap(model: type[BaseModel]) -> list[str]:
         bad = []
