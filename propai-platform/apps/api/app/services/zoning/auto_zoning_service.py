@@ -59,6 +59,50 @@ ZONE_LIMITS = {
 }
 
 
+def land_analysis_charged(result: Any) -> bool:
+    """토지분석을 **실제로 수행했는가**. `land_analysis` 과금은 이 판정이 참일 때만 한다.
+
+    ★2026-08-16 신설 — 종전 라우트(`routers/auto_zoning.py`)는 **`result` 를 한 번도 보지
+      않고** 무조건 2,000원을 청구했다. `cached` 판정도 `status` 판정도 중복 방지도 없었다.
+
+    ★추정이 아니라 **원장 실측**이다. `billing/ledger` 에 `land_analysis` **18건 · 36,000원**
+      이 찍혀 있고, 사람이 낼 수 없는 간격으로 군집한다:
+          2026-08-15 12:27:21 · 12:29:17              (116초)
+          2026-08-02 22:12:49 · 22:13:42 · 22:15:00   ( 53초 ·  78초)
+          2026-07-22 05:49:41 · 05:49:57 · 05:51:30   ( 16초 ·  93초)
+      16초 만에 서로 다른 부지분석 3건을 돌리는 사람은 없다.
+
+    ★같은 결함 클래스가 등기에서 이미 **두 번** 났다(`routers/registry.py` 의 `issued_count`
+      ·`analysis_charged`). 그 처방을 이식한다 — **성공을 증명하지 못하면 과금하지 않는다**
+      (화이트리스트). 블랙리스트는 새 실패 상태가 생겨도 가드가 따라오지 않는다.
+
+    판정 — **실조회로 용도지역이 확정된 경우만** 과금한다:
+      · `cached` 는 과금하지 않는다. 오늘 이 경로에 서버 캐시는 없지만 **게이트를 미리 둔다**
+        — 등기가 정확히 이 순서로 당했다(캐시를 나중에 넣으며 돈 가드를 안 고쳐 적중마다
+        재청구). 캐시를 넣는 사람이 가드를 같이 고쳐야 함을 모르는 쪽이 기본값이면 안 된다.
+      · `pnu` 가 없으면 **필지 실조회 자체가 없었다**(VWorld 키 미설정·지오코딩 실패 시
+        `pnu=None` 으로 조기 return 한다 — 이 파일 `AutoZoningService.detect_zoning` 참조).
+      · `zone_source == "keyword_inference"` 는 과금하지 않는다. 이 코드가 스스로
+        `ZONE_INFERENCE_WARNING`("실조회 확인 필요")을 붙여 **추론값임을 사용자에게 고지**
+        하는 결과다. 고지해 놓고 실조회와 같은 값을 받을 수는 없다.
+        ※이 한 줄은 **매출 방향에 영향**을 준다(추론 응답 무과금). 의도적 판단이며 리뷰 대상.
+
+    ★남은 부채(이 PR 범위 밖·초록 안에 보이게 남김): 위 군집이 보여주는 **동일 주소 재청구**는
+      이 판정만으로 막히지 않는다(둘 다 성공한 실조회다). 서버 결과 캐시 또는 (사용자·주소)
+      중복창 설계가 필요하고 TTL·창 길이는 제품 결정이다 →
+      `tests/test_land_analysis_charging.py` 의 skip 테스트로 부채를 가시화했다.
+    """
+    if not isinstance(result, dict):
+        return False
+    if result.get("cached"):
+        return False
+    if not result.get("pnu"):
+        return False
+    if str(result.get("zone_source") or "") == "keyword_inference":
+        return False
+    return bool(result.get("zone_type"))
+
+
 def build_zone_limits(zone_key: str, limits: dict) -> dict:
     """ZONE_LIMITS 항목 → 표준 zone_limits 페이로드(공용 빌더, SSOT 단일경유).
 

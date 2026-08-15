@@ -515,12 +515,16 @@ async def analyze_zoning(req: ZoningAnalyzeRequest):
 
         structlog.get_logger().warning("부지분석 AI 해석 스킵", error=str(e)[:120])
 
-    # 서비스 사용료(LLM 별개): 토지분석 1건 차감(로그인 사용자, best-effort)
+    # 서비스 사용료(LLM 별개): 토지분석 1건 차감(로그인 사용자, best-effort).
+    # ★2026-08-16 — 종전에는 `result` 를 **보지 않고** 무조건 청구했다(원장 18건·36,000원,
+    #   16초 간격 재청구 군집). 판정은 공용 층(`auto_zoning_service.land_analysis_charged`)에
+    #   두고 여기서는 호출만 한다 — 라우트별로 판정을 넣으면 **다음 호출부가 또 샌다**.
     try:
         from app.core.request_context import get_current_user_id
+        from app.services.zoning.auto_zoning_service import land_analysis_charged
 
         uid = get_current_user_id()
-        if uid:
+        if uid and land_analysis_charged(result):
             from app.core.database import async_session_factory
             from app.services.billing import billing_service
 
