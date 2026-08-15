@@ -301,7 +301,7 @@
 //          캐시가 남으면 진입점이 보이지 않는다(기능이 있어도 도달 불가).
 //        ★채번: origin/main 실제 상수 v500 확인 → v501. PR 생성 前 보드 claim 선점(16회차).
 //        ★경합 방향: 기능 PR(#619 `3b1c8997`)이 **먼저** 머지된 뒤 이 범프를 올린다.
-const CACHE_NAME = "propai-v501-quick-sales-survey";
+const CACHE_NAME = "propai-v502-hydration-map-landing";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
