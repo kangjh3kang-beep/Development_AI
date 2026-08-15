@@ -14,9 +14,18 @@
       "engine": "Zero silent misjudgment · deterministic & evidence-traced"
     },
     "pillars": {
-      "multimodal": { "title": "Multimodal auto-interpretation", "desc": "VLLM interprets design documents (drawings, tables, HWP) at the sheet and element level." },
-      "deterministic": { "title": "Deterministic & evidence-traced", "desc": "Statutory computation and verdicts run on a deterministic core; every output carries its basis (article, trace)." },
-      "frontier": { "title": "Commercial & public frontier", "desc": "Standardized deliberation analysis leads the open frontier of domestic commercial and public systems." }
+      "multimodal": {
+        "title": "Multimodal auto-interpretation",
+        "desc": "VLLM interprets design documents (drawings, tables, HWP) at the sheet and element level."
+      },
+      "deterministic": {
+        "title": "Deterministic & evidence-traced",
+        "desc": "Statutory computation and verdicts run on a deterministic core; every output carries its basis (article, trace)."
+      },
+      "frontier": {
+        "title": "Commercial & public frontier",
+        "desc": "Standardized deliberation analysis leads the open frontier of domestic commercial and public systems."
+      }
     },
     "engineTitle": "Deliberation engine composition",
     "engineNote": "Engine core implemented · platform integration wired (live output after deployment)",
@@ -515,11 +524,11 @@
     "maintenance": {
       "eyebrow": "PROP / MAINTENANCE",
       "title": "디지털 트윈 유지보수",
-      "description": "설비의 센서 기반 예지 정비 및 현장 유지보수 일정을 관리합니다.",
+      "description": "설비 상태값을 입력하면 정비 우선순위를 간이 추정합니다. 센서 실시간 연동과 서버 예측모델은 아직 연결되지 않았습니다.",
       "items": [
-        "✓ 설비 IoT 센서 22개소 실시간 연동",
-        "✓ 예지 정비(Predictive ML) 모델 가동",
-        "✓ 현장 유지보수 디지털 워크로 정렬"
+        "· 입력값 기반 간이 이상도 산출 — 브라우저에서 계산",
+        "· 설비 IoT 센서 실시간 연동 — 미연결",
+        "· 예지 정비 모델(서버) — 미연결"
       ]
     },
     "tenant": {

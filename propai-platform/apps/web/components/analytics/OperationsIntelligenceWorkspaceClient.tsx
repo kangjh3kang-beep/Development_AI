@@ -346,6 +346,25 @@ function extractErrorMessage(error: unknown, authMessage: string) {
   return authMessage || "요청 실패.";
 }
 
+/**
+ * ★정직 고지 — 이 워크스페이스의 "분석" 4종(정비·피드백·만족도·자산)은 **서버를 부르지 않는다.**
+ *   위 입력 폼의 값으로 **브라우저에서 산술**해 결과를 만든다(각 실행부에 `setTimeout` 지연만 있다).
+ *   백엔드에는 해당 라우터가 없다(DB 테이블만 존재). 그러므로 결과 옆에 그 사실을 밝힌다 —
+ *   무목업·정직 표기 원칙(CLAUDE.md)에 따라 **추정을 분석으로 보이게 하지 않는다.**
+ *   실측 경위: e2e 트리아지에서 클릭 후 API 요청 0건을 관측(2026-08-13).
+ */
+function LocalEstimateNotice() {
+  return (
+    <p
+      role="note"
+      data-testid="local-estimate-notice"
+      className="mt-2 rounded-[var(--radius-lg)] border border-[var(--line)] bg-[var(--surface-soft)] px-3 py-2 text-[11px] leading-relaxed text-[var(--text-tertiary)]"
+    >
+      위 입력값으로 <b>브라우저에서 계산한 간이 추정</b>입니다 — 센서 실시간 연동이나 서버 예측모델을 사용하지 않습니다.
+    </p>
+  );
+}
+
 export function OperationsIntelligenceWorkspaceClient({
   locale,
   sections = ["maintenance", "tenant", "asset"],
@@ -800,6 +819,7 @@ export function OperationsIntelligenceWorkspaceClient({
               </Button>
             </form>
 
+            {maintenanceResult ? <LocalEstimateNotice /> : null}
             {maintenanceResult ? (
               <div className="relative z-10 mt-5 grid gap-4 md:grid-cols-2">
                 <MetricTile
@@ -1000,7 +1020,8 @@ export function OperationsIntelligenceWorkspaceClient({
 
                   {(feedbackResult || satisfactionResult) && (
                     <div className="mt-5 grid gap-4 md:grid-cols-2">
-                      {feedbackResult ? (
+                      {feedbackResult ? <LocalEstimateNotice /> : null}
+            {feedbackResult ? (
                         <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
                           <p className="label-caps text-[var(--text-tertiary)]">
                             {labels.sentimentLabel}
@@ -1017,7 +1038,8 @@ export function OperationsIntelligenceWorkspaceClient({
                           </p>
                         </div>
                       ) : null}
-                      {satisfactionResult ? (
+                      {satisfactionResult ? <LocalEstimateNotice /> : null}
+            {satisfactionResult ? (
                         <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
                           <p className="label-caps text-[var(--text-tertiary)]">
                             {labels.gradeLabel}
@@ -1079,7 +1101,8 @@ export function OperationsIntelligenceWorkspaceClient({
                     </Button>
                   </form>
 
-                  {assetResult ? (
+                  {assetResult ? <LocalEstimateNotice /> : null}
+            {assetResult ? (
                     <div className="mt-5 space-y-4">
                       <div className="grid gap-4 md:grid-cols-2">
                         <MetricTile
