@@ -260,10 +260,18 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
           <CardContent className="p-5">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="inline-flex items-center gap-1.5 text-sm font-black text-[var(--accent-strong)]"><Receipt className="size-4" aria-hidden />프로젝트 필지 ({rows.length}) — 단일/다필지 일괄 분석</p>
-              <button onClick={() => void analyzeAll()} disabled={loading || !!busyId || rows.length === 0}
-                className="rounded-xl bg-[var(--accent-strong)] px-3.5 py-1.5 text-xs font-black text-white hover:opacity-90 disabled:opacity-50">
-                {busyId ? "분석 중…" : (<span className="inline-flex items-center gap-1.5"><Scale className="size-4" aria-hidden />전체 분석</span>)}
-              </button>
+              <div className="flex items-center gap-2">
+                {/* 전체 분석은 필지당 건당 과금(발급+분석)이다 — 다필지를 그대로 돌리기 전에
+                    무과금 견적·선별 화면으로 먼저 보내는 가벼운 유도(로직 변경 없음). */}
+                <Link href={`/${locale}/registry-analysis/quote`}
+                  className="rounded-xl border border-[var(--line)] px-3.5 py-1.5 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)] hover:text-[var(--accent-strong)]">
+                  발급 전 비용 견적
+                </Link>
+                <button onClick={() => void analyzeAll()} disabled={loading || !!busyId || rows.length === 0}
+                  className="rounded-xl bg-[var(--accent-strong)] px-3.5 py-1.5 text-xs font-black text-white hover:opacity-90 disabled:opacity-50">
+                  {busyId ? "분석 중…" : (<span className="inline-flex items-center gap-1.5"><Scale className="size-4" aria-hidden />전체 분석</span>)}
+                </button>
+              </div>
             </div>
             <div className="mt-3 space-y-1.5">
               {rows.map((r) => (

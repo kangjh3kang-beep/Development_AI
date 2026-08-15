@@ -722,8 +722,32 @@ async def parcel_survey_quote(
     )
 
     parcels = req.parcels or []
+    result_quote = quote(parcels)
+
+    # ── 성장루프 결속 ────────────────────────────────────────────────
+    # ★P0 에서 **학습 가능한 신호**만 보낸다. 분류 결과는 아직 없다(P2) — 여기서 보낼 수 있는 건
+    #   ①견적 규모 ②건축물 미상 비율 ③**폴리곤 미확보율**이다.
+    #   ③이 특히 값지다: 이 비율이 높으면 제척 판정 자체가 불가하다는 뜻이라, 플랫폼이
+    #   지적도 확보를 개선해야 한다는 신호가 된다(사용자 불만이 오기 전에).
+    # ★식별자(pnu·주소)는 **보내지 않는다** — 집계에 불필요하고, 보내면 마스킹에 의존하게 된다.
+    # ★best-effort: 적재 실패가 견적을 막으면 이 단계의 목적이 무너진다.
+    try:
+        from app.services.growth import capture_service
+
+        capture_service.record_event(
+            "parcel_survey_quote",
+            {
+                "parcel_count": result_quote["parcel_count"],
+                "building_unknown": result_quote["building_status"]["unknown"],
+                "geometry_missing": len(result_quote["geometry"]["missing"]),
+                "cost_max": result_quote["estimated_cost"]["max"],
+            },
+        )
+    except Exception:  # noqa: BLE001 — 성장루프 실패가 본기능을 막지 않는다
+        logger.debug("성장루프 적재 스킵(견적 무손상)", exc_info=True)
+
     return {
-        "quote": quote(parcels),
+        "quote": result_quote,
         # ★무료 미리보기는 **부가정보**다. 실패해도 견적(이 단계의 본질)은 나와야 하므로
         #   서비스 내부에서 이미 예외를 흡수하고 사유를 담아 돌려준다.
         "preview": free_preview(parcels),
