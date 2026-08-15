@@ -48,9 +48,16 @@ def test_PDF_키_표기를_전부_본다() -> None:
 def test_소유자를_갑구_표에서_뽑는다(rows: Any) -> None:
     """`outList` 는 dict 이고 갑구 표는 **리스트 또는 JSON 문자열**로 온다(둘 다 실측 가능)."""
     owner = hc.extract_owner({"고유번호": "11012012009048", "소유지분현황_갑구": rows})
-    assert owner == "○○금융센터주 식회사 (소유자)", owner
-    # ★줄바꿈(\r\n)이 값 안에 섞여 온다 — 그대로 두면 화면이 깨진다.
+    # ★줄바꿈은 **공백이 아니라 제거**다. 벤더가 지면 너비에 맞춰 **단어 중간에서** 접기
+    #   때문에, 공백으로 치환하면 "○○금융센터주 식회사" 라는 존재하지 않는 상호가 된다.
+    assert owner == "○○금융센터주식회사 (소유자)", owner
     assert "\r" not in owner and "\n" not in owner
+
+
+def test_공백_뒤에서_접힌_경우는_표기가_보존된다() -> None:
+    """두 모집단을 가른다 — 단어 중간 접힘(붙여야 함) vs 공백 뒤 접힘(이미 공백 있음)."""
+    assert hc.extract_owner({"소유지분현황_갑구": [{"등기명의인": "홍길동 \r\n(소유자)"}]}) == "홍길동 (소유자)"
+    assert hc.extract_owner({"소유지분현황_갑구": [{"등기명의인": "주식회\r\n사가나"}]}) == "주식회사가나"
 
 
 def test_종전_평평한_표기도_계속_읽는다() -> None:
@@ -122,4 +129,4 @@ async def test_열람이_문서와_소유자를_실제로_싣는다(monkeypatch:
     assert res["ok"] is True and res["status"] == "ok", res
     assert res["has_pdf"] is True, f"문서를 받았는데 has_pdf 가 False 다: {res.get('has_pdf')}"
     assert base64.b64decode(res["pdf_base64"]).startswith(b"%PDF-"), "PDF 로 복원되지 않는다"
-    assert res["owner"] == "○○금융센터주 식회사 (소유자)", res.get("owner")
+    assert res["owner"] == "○○금융센터주식회사 (소유자)", res.get("owner")
