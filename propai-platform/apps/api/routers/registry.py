@@ -689,3 +689,42 @@ async def _llm_extract_land_schedule(all_rows: list[list[str]]) -> list[dict[str
     except Exception as e:  # noqa: BLE001
         logger.warning("토지조서 LLM 파싱 실패: %s", str(e)[:160])
         return []
+
+
+# ── 토지필지 종합분석 P0 — 견적·선별(무과금) ───────────────────────────
+# ★★이 엔드포인트는 **과금하지 않는다.** 존재 이유가 "비용을 쓰기 전에 알려주는 것"이라
+#   여기서 과금하면 목적과 정면으로 모순된다(견적을 보려고 돈을 내는 꼴).
+#   대신 **인증은 요구**한다 — 요율·정책은 계정 컨텍스트에 딸린 정보다.
+# ★계산은 순수함수(`parcel_survey_quote_service`)에 있고 이 라우터는 배선만 한다.
+
+class ParcelSurveyQuoteRequest(BaseModel):
+    """필지 목록. 각 행은 `pnu`/`address` 와 선택적 `has_building`·`geometry` 를 담는다."""
+
+    parcels: list[dict[str, Any]] = Field(default_factory=list)
+
+
+@router.post(
+    "/survey/quote",
+    summary="토지필지 종합분석 견적·선별(무과금) — 발급 전 비용·판정가능성 안내",
+)
+async def parcel_survey_quote(
+    req: ParcelSurveyQuoteRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """등기 발급 **전에** ①비용 ②등기 없이 아는 것 ③폴리곤 확보 여부를 돌려준다.
+
+    ★견적은 **상한**이다 — 실제 청구는 발급에 성공한 건수(`issued_count`)만 집계한다.
+      응답의 `billing_basis`·`note` 가 그 사실을 실어 나른다.
+    """
+    from app.services.land_intelligence.parcel_survey_quote_service import (
+        free_preview,
+        quote,
+    )
+
+    parcels = req.parcels or []
+    return {
+        "quote": quote(parcels),
+        # ★무료 미리보기는 **부가정보**다. 실패해도 견적(이 단계의 본질)은 나와야 하므로
+        #   서비스 내부에서 이미 예외를 흡수하고 사유를 담아 돌려준다.
+        "preview": free_preview(parcels),
+    }

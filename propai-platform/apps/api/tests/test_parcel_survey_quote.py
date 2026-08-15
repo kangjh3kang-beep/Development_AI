@@ -115,3 +115,17 @@ def test_인접구조_계산이_실패해도_견적은_살아있다(monkeypatch:
     assert preview.get("note"), "실패 사유가 없다 — 조용히 빈 것과 구분되지 않는다"
     # 견적 자체는 무관하게 나와야 한다
     assert q.quote([_p(pnu="a")])["parcel_count"] == 1
+
+
+def test_견적이_상한임을_밝힌다() -> None:
+    """★실제 과금은 `issued_count`(**발급 성공 건수**)만 집계한다 — 조회 실패 건은 청구되지 않는다.
+    그 사실을 안 적으면 견적이 **과대 공포**를 만든다.
+
+    ★방어가 한쪽만이면 결함이다: 과소산정(사용자가 놀람)만 막고 과대(사용자가 아예 안 씀)를
+      두면, 이 단계의 목적(비용을 알고 선별하게 하기)이 절반만 달성된다.
+    """
+    out = q.quote([_p(pnu="a", has_building=True)])
+    assert out.get("billing_basis") == "issued_count"
+    assert "성공한 건수" in out["note"], (
+        f"실제 청구가 발급 성공분만이라는 사실이 전달되지 않는다: {out['note']}"
+    )
