@@ -38,29 +38,112 @@ async def _set_registry_job(job_id: str, **fields: Any) -> None:
     await _REGISTRY_STORE.put(job_id, cur, _JOB_TTL)
 
 
-def _issue_failed(result: Any) -> bool:
-    """발급 결과가 실패/미설정(미발급)인지 판정 — 실패면 과금하지 않는다."""
+# 실제 발급/열람이 일어났다고 볼 수 있는 출처.
+_ISSUED_ORIGINS = ("hyphen", "tilko", "custom")
+
+
+def issued_count(result: Any) -> int:
+    """**실제로 발급·열람된 건수**를 센다. 과금은 딱 이 수만큼만 한다.
+
+    ★2026-08-12 — 블랙리스트를 **화이트리스트로 뒤집었다**. 종전 `_issue_failed` 는
+    `("unavailable","error","failed")` 만 실패로 봤다. 그런데 등기 조회의 실제 실패 상태는
+    `not_configured`·`provider_error`·`no_match`·`bad_request`·`forbidden` 이라 **하나도
+    걸리지 않았고**, 실패한 조회마다 1,200원이 청구됐다.
+
+    ★추정이 아니라 실측이다: 진단으로 `/registry/bulk` 를 4회 호출해 **전부 실패**했는데
+    원장에 `service_fee -1200` 이 **4건** 남았다(23:16~23:18). 합계 4,800원.
+
+    ★블랙리스트가 위험한 이유가 여기 있다 — **새 실패 상태를 추가하는 사람이 돈 가드를
+    같이 고쳐야 한다는 것을 모른다**(이 PR 이 `provider_error` 를 추가하며 실제로 놓쳤다).
+    화이트리스트는 "성공을 증명하지 못하면 과금하지 않는다" 로 기본값이 안전하다.
+
+    - `results` 를 가진 일괄 응답은 **성공 건수만** 센다(요청 필지 수가 아니라).
+    - PDF 업로드 파싱은 외부 발급이 아니므로 과금 대상이 아니다.
+    """
     if not isinstance(result, dict):
-        return False
+        return 0
+    if isinstance(result.get("results"), list):
+        return sum(issued_count(r) for r in result["results"])
     if result.get("error"):
-        return True
+        return 0
     status = str(result.get("status", "")).lower()
-    return status in ("unavailable", "error", "failed")
+    # ★`ok is True and not status` 는 **방어적 절이다** — 2026-08-12 기준 tilko·hyphen·
+    #   pdf 파서·registry_service 의 모든 return 을 전수로 확인한 결과, `ok:True` 를 내면서
+    #   `status` 가 없는 shape 은 **하나도 없다**. 지금은 도달 불가라 변이가 생존한다
+    #   (그 사실을 적어 둔다 — 변이 점수 부풀리기 방지). 신규 프로바이더 대비로 남긴다.
+    ok = status == "ok" or (result.get("ok") is True and not status)
+    if not ok:
+        return 0
+    # ★이중 가드다 — 단건 라우트가 이미 `if not pdf_input:` 으로 과금을 건너뛰고,
+    #   `bulk` 은 PDF 를 넘기지 않는다. 한쪽만 죽어도 동작이 옳아 변이가 생존한다.
+    #   그래도 남기는 이유: 판정 함수 자체가 "업로드 파싱은 발급이 아니다" 를 말해야
+    #   새 호출부가 생겼을 때 라우트 가드를 잊어도 안전하다.
+    if result.get("origin") == "pdf_upload":
+        return 0
+    # 발급 근거: 알려진 프로바이더가 처리했거나, 실제 문서(PDF)를 받았다.
+    has_doc = bool(result.get("has_pdf") or result.get("pdf_data") or result.get("pdf_base64"))
+    return 1 if (result.get("origin") in _ISSUED_ORIGINS or has_doc) else 0
 
 
-async def _charge_registry_issue(user_id: Any, result: Any, times: int = 1) -> None:
-    """등기부등본 발급·열람 사용료(건당) 누적(best-effort). 발급 실패/미설정은 과금 제외."""
-    if _issue_failed(result):
+async def _charge_registry_issue(user_id: Any, result: Any, times: int | None = None) -> None:
+    """등기부등본 발급·열람 사용료 누적(best-effort). **발급된 건수만** 과금한다.
+
+    `times` 는 하위호환용 상한이다 — 실제 과금은 `issued_count` 가 센 수를 넘지 않는다.
+    (종전에는 `times=len(items)` 로 **요청 수만큼** 과금해, 10필지 중 1건만 발급돼도
+    10건이 청구될 수 있었다.)
+    """
+    n = issued_count(result)
+    # ★이 상한은 지금 **한 번도 구속하지 않는다**(변이로 무력화해도 결과가 같다).
+    #   `issued_count` 가 이미 **실제 발급 수**를 세므로, 모든 호출부에서 `times >= n` 이다
+    #   (단건 `times=1`·일괄 `times=len(items)`). 하위호환·신규 호출부 대비로만 남긴다.
+    if times is not None:
+        n = min(n, max(0, times))
+    # ★이중 가드 — 아래 `range(n)` 이 n=0 이면 어차피 한 번도 돌지 않는다.
+    #   조기 반환은 DB 세션을 열지 않기 위한 것이다(실패 조회가 대부분인 상황에서 유의미).
+    if n <= 0:
         return
     try:
         from app.core.database import async_session_factory
         from app.services.billing import billing_service
 
         async with async_session_factory() as _db:
-            for _ in range(max(1, int(times))):
+            for _ in range(n):
                 await billing_service.charge_service(_db, user_id, "registry_issue")
     except Exception:  # noqa: BLE001
         pass
+
+
+def analysis_charged(result: Any) -> bool:
+    """권리분석을 **실제로 수행했는가**. 과금은 이 판정이 참일 때만 한다.
+
+    ★`issued_count` 와 **대칭**이다. 발급 쪽만 화이트리스트로 뒤집고 분석 쪽을 두면
+    같은 결함이 같은 파일 안에 남는다(리뷰가 잡았다 — 30줄 아래에 그대로 있었다).
+
+    분석기가 등기부를 못 받으면 `status="not_available"`·`"empty"` 에 **`ai=None`** 을
+    돌려준다(`registry_analysis_service.py:391,403`). 종전 라우트는 결과를 **보지도 않고**
+    1,200원을 청구해, **AI 분석이 0인 응답에 돈을 받고 있었다**.
+
+    ★캐시 적중(`cached=True`)도 과금하지 않는다 — 신규 분석이 일어나지 않았다.
+    """
+    if not isinstance(result, dict):
+        return False
+    if result.get("cached"):
+        return False
+    return str(result.get("status", "")).lower() == "ok" and bool(result.get("ai"))
+
+
+async def _charge_registry_analysis(user_id: Any, result: Any) -> Any:
+    """등기 권리분석 사용료(1,200원) — **분석이 실제로 나온 경우만**(best-effort)."""
+    if not analysis_charged(result):
+        return None
+    try:
+        from app.core.database import async_session_factory
+        from app.services.billing import billing_service
+
+        async with async_session_factory() as _db:
+            return await billing_service.charge_service(_db, user_id, "registry_analysis")
+    except Exception:  # noqa: BLE001
+        return None
 
 
 async def _run_registry_job(job_id: str, params: dict[str, Any]) -> None:
@@ -69,6 +152,12 @@ async def _run_registry_job(job_id: str, params: dict[str, Any]) -> None:
 
         res = await RegistryAnalysisService().analyze(**params)
         await _set_registry_job(job_id, status="done", result=res)
+        # ★과금을 **제출 시점에서 완료 시점으로** 옮겼다. 종전에는 작업을 시작하기도 전에
+        #   청구하고, 그 작업이 실패해도 환불 경로가 없었다(리뷰 지적).
+        #   소유자는 잡 엔트리에 기록돼 있다(IDOR 스코프용) — 그 값을 그대로 쓴다.
+        owner = (await _REGISTRY_STORE.get(job_id) or {}).get("user_id")
+        if owner:
+            await _charge_registry_analysis(owner, res)
     except Exception as e:  # noqa: BLE001
         await _set_registry_job(job_id, status="error", error=str(e)[:200])
 
@@ -163,6 +252,40 @@ async def tilko_realty(
     return result
 
 
+@router.post("/get-one", summary="단건 등기부 조회 / 비상 PDF 업로드 파싱")
+async def registry_get_one(
+    req: dict[str, Any],
+    current_user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """단건 등기부 조회(주소·PNU·고유번호) 또는 **비상 등기부 PDF 업로드 파싱**.
+
+    ★이 라우트는 **없었다**(2026-08-12 라이브 진단으로 발각). 프론트
+    `RegistryUploadModal` 은 `POST /registry/get-one` 을 부르는데(2026-07-24 `588ea8ed`)
+    백엔드에 그 경로가 **한 번도 존재한 적이 없어** 약 3주간 상시 404 였다.
+    서비스 함수 `RegistryService.get_one(pdf_input=...)` 은 PDF 파서 분기까지 구현돼
+    있었으므로 **문만 없던 셈**이다.
+
+    ★왜 이게 특히 나빴나: 조회 실패 응답이 사용자에게 "'비상 등기부 PDF 직접 업로드'
+    기능을 이용하세요" 라고 안내한다. 즉 **주 경로가 막혔을 때의 탈출구가 404** 였다.
+
+    과금: PDF 업로드 파싱은 **발급이 아니므로 과금하지 않는다**(외부 발급 없음).
+    주소·고유번호로 실제 발급이 일어난 경우에만 건당 1,200원(발급 성공 시).
+    """
+    pdf_input = req.get("pdf_input")
+    result = await RegistryService().get_one(
+        pnu=req.get("pnu"),
+        address=req.get("address"),
+        unique_no=req.get("unique_no") or req.get("pin"),
+        pdf_input=pdf_input,
+        realty_type=req.get("realty_type"),
+        dong=req.get("dong"),
+        ho=req.get("ho"),
+    )
+    if not pdf_input:
+        await _charge_registry_issue(current_user.user_id, result, times=1)
+    return result
+
+
 @router.post("/bulk", summary="다필지 등기부 일괄 조회/다운로드")
 async def registry_bulk(
     req: RegistryBulkRequest,
@@ -205,18 +328,11 @@ async def registry_analyze(
         land_hint=req.land_hint,
     )
     # 서비스 사용료: 등기부등본 권리분석 1건 1,200원(LLM 과금 별개, best-effort).
-    try:
-        from app.core.database import async_session_factory
-        from app.services.billing import billing_service
-
-        async with async_session_factory() as _db:
-            charge = await billing_service.charge_service(
-                _db, current_user.user_id, "registry_analysis"
-            )
-        if isinstance(result, dict):
-            result["service_charge"] = charge
-    except Exception:  # noqa: BLE001
-        pass
+    # ★분석이 실제로 나온 경우만 청구한다 — 종전에는 결과를 **보지도 않고** 청구해
+    #   `ai: null` 인 응답에도 돈을 받았다(`analysis_charged` 주석 참조).
+    charge = await _charge_registry_analysis(current_user.user_id, result)
+    if charge is not None and isinstance(result, dict):
+        result["service_charge"] = charge
     return result
 
 
@@ -237,18 +353,8 @@ async def registry_analyze_submit(
         # 캐시 적중 = 신규 분석 없음 → 과금 안 함(동일 입력 재조회 무료).
         return {"job_id": None, "status": "done", "result": cached}
 
-    # 캐시 미적중 → 신규 권리분석 수행 예정 → 1,200원 과금(best-effort, LLM 별개).
-    try:
-        from app.core.database import async_session_factory
-        from app.services.billing import billing_service
-
-        async with async_session_factory() as _db:
-            await billing_service.charge_service(
-                _db, current_user.user_id, "registry_analysis"
-            )
-    except Exception:  # noqa: BLE001
-        pass
-
+    # ★과금은 여기서 하지 않는다 — 작업이 **끝나고** 분석이 실제로 나왔을 때
+    #   `_run_registry_job` 이 청구한다. 종전에는 시작 전에 청구하고 실패해도 환불이 없었다.
     job_id = uuid.uuid4().hex
     # ★소유권 기록(IDOR 봉합 — R1 범위외 발견): 등기 권리분석 결과는 개인정보 급이라
     #   제출자만 조회 가능해야 한다. GET 이 이 user_id 로 스코프한다(불일치=404).
