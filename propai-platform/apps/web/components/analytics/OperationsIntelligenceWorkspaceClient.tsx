@@ -1019,9 +1019,13 @@ export function OperationsIntelligenceWorkspaceClient({
                   </div>
 
                   {(feedbackResult || satisfactionResult) && (
-                    <div className="mt-5 grid gap-4 md:grid-cols-2">
-                      {feedbackResult ? <LocalEstimateNotice /> : null}
-            {feedbackResult ? (
+                    <>
+                      {/* 고지는 결과 **묶음당 1개**이고 결과 그리드 **바깥**이다. 그리드의
+                          직계 자식으로 넣으면 격자 칸을 하나 차지하고, 두 결과가 함께 있을 때
+                          같은 문장이 두 번 보인다(#634 R1 — 정비·자산과 같은 자리로 통일). */}
+                      <LocalEstimateNotice />
+                      <div className="mt-5 grid gap-4 md:grid-cols-2">
+                      {feedbackResult ? (
                         <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
                           <p className="label-caps text-[var(--text-tertiary)]">
                             {labels.sentimentLabel}
@@ -1038,8 +1042,7 @@ export function OperationsIntelligenceWorkspaceClient({
                           </p>
                         </div>
                       ) : null}
-                      {satisfactionResult ? <LocalEstimateNotice /> : null}
-            {satisfactionResult ? (
+                      {satisfactionResult ? (
                         <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
                           <p className="label-caps text-[var(--text-tertiary)]">
                             {labels.gradeLabel}
@@ -1057,7 +1060,8 @@ export function OperationsIntelligenceWorkspaceClient({
                           </p>
                         </div>
                       ) : null}
-                    </div>
+                      </div>
+                    </>
                   )}
                 </CardContent>
               </Card>
