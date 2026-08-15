@@ -194,6 +194,21 @@ export const PRIMARY_ROUTE_REGISTRY: RouteRegistryItem[] = [
     apiDependencies: ["/desk-appraisal"],
   },
   {
+    // 등기부등본 열람(registry-analysis)의 "전체 분석"은 필지당 건당 과금(발급+분석)이라,
+    // 다필지를 그대로 돌리면 비용이 버튼 한 번에 나간다. 발급 **전에** 예상 비용·판정가능성을
+    // 보여주고 필지를 선별하게 하는 무과금 게이트라 등기부등본 열람 바로 아래(order 25)에 둔다.
+    id: "parcel-survey-quote",
+    label: "발급 전 비용 견적",
+    sectionId: "projects",
+    parentId: "land-rights",
+    order: 25,
+    path: "/registry-analysis/quote",
+    status: "live",
+    scope: "global",
+    lifecyclePhase: "land-rights",
+    apiDependencies: ["/registry/survey/quote"],
+  },
+  {
     // 사업성·비용 얇은 L2 그룹 해체 — 기본 접힘 그룹이 핵심 사업기능(투자·ESG)을 가려 발견성이
     // 나빴다. 투자 수익성·ESG를 프로젝트 섹션 직속 L2 리프로 승격(상시 노출). 적산·공사비 관리는
     // 이후 최상위 독립 섹션(cost-mgmt)으로 재승격. 프로젝트 섹션 항목수는 여전히 7개 미만이라
