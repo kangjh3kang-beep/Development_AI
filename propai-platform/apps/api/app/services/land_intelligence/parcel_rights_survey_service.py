@@ -35,6 +35,13 @@ P0(`parcel_survey_quote_service`)가 "얼마인가·무엇을 아는가"를 보�
    못해도(`status != "ok"`) 전체 응답이 죽지 않는다. 그 필지의 카드에 `status`와
    `message`(사유)를 남기고 나머지 필지는 계속 처리한다.
 6. **동시성 상한**: 아래 `_MAX_CONCURRENT_ISSUES` 참조.
+7. **★보유기간 요건은 주택법 계열에만 있다**(2026-08-15 정정). 최초 구현은 주택법 §22①2호의
+   10년 규칙을 **모든 사업방식에** 적용하고 사유 문자열에 "주택법 §22①2호"를 하드코딩했다.
+   그러나 소규모정비특례법 §35·도정법 §64 는 **동의율** 기반이라 보유기간 조건이 없고,
+   도시개발법 §22 는 매도청구가 아니라 **수용**이다 — 그대로 두면 동의율 기반 사업의 필지를
+   "매도청구 불가(장기보유)"로 **법적으로 잘못 분류**한다. 그래서 `scheme` 을 판정 전제로
+   받고, 근거법령은 `MAGDO_RULES[scheme]["governing_act"]`(명시 필드)로만 읽는다
+   (`basis` 문자열 추론 금지 — "역세권 활성화사업"의 basis 는 주택법을 담고도 모호하다).
 """
 
 from __future__ import annotations
@@ -57,6 +64,15 @@ _MAX_CONCURRENT_ISSUES = 4
 # 지구단위계획구역 결정고시일(주택법 §22①2호) 기준 이 연수 이상 "계속 보유"하면
 # 매도청구 대상에서 제외되는 것으로 1차 판정한다(장기보유 예외).
 _LONG_TERM_HOLDING_YEARS = 10
+
+# 보유기간 요건이 존재하는 **유일한** 법령 계열(정책표 SSOT 재수출 — 문자열 하드코딩 금지).
+try:  # pragma: no cover — 정책표 임포트 실패 시에도 모듈이 살아 있어야 한다
+    from app.services.development.scenario_simulator import HOLDING_PERIOD_ACT as _HOLDING_PERIOD_ACT
+except Exception:  # noqa: BLE001
+    _HOLDING_PERIOD_ACT = "주택법"
+
+# 보유기간 요건이 적용되지 않는 사업방식에서 내는 판정값(계약 상수 — 테스트가 이 값에 결속한다).
+_JUDGMENT_OUT_OF_SCOPE = "판정 불가(해당 사업방식 기준 없음)"
 
 # 등기 취득원인 문자열에서 상속 여부를 판별하는 키워드. 목록에 없는 표현은
 # "판별 불가"로 정직하게 처리한다(추측 금지).
@@ -140,23 +156,89 @@ def _predecessor_acquisition(
     return None, None
 
 
+def _scheme_profile(scheme: str | None) -> dict[str, Any] | None:
+    """사업방식의 근거법령 프로파일 — `MAGDO_RULES`(SSOT)의 명시 필드만 읽는다.
+
+    ★`basis` 문자열에서 법령을 **추론하지 않는다**. 실제로 "역세권 활성화사업"의 basis 에는
+      "주택법"이 들어 있지만 같은 문장이 "사업방식에 따라 정비/소규모정비 준용"이라 적는다 —
+      문자열 매칭이면 그 방식에 보유기간 10년 요건을 잘못 씌우게 된다.
+    """
+    try:
+        from app.services.development.scenario_simulator import scheme_legal_profile
+
+        return scheme_legal_profile(scheme)
+    except Exception:  # noqa: BLE001 — 정책표를 못 읽으면 '판정 불가'로 흘려보낸다(추측 금지)
+        logger.warning("사업방식 정책표(MAGDO_RULES) 조회 실패: %s", scheme)
+        return None
+
+
+def _out_of_scope_reason(scheme: str | None, profile: dict[str, Any] | None) -> str:
+    """보유기간 요건이 **적용되지 않는** 사유 문구 — 실제 근거법령을 이름으로 밝힌다."""
+    tail = (
+        f"보유기간(결정고시일 기준 {_LONG_TERM_HOLDING_YEARS}년) 요건은 "
+        f"{_HOLDING_PERIOD_ACT} §22①2호 계열에만 적용됩니다."
+    )
+    if not scheme:
+        return "사업방식(scheme)이 지정되지 않아 어느 법령의 요건을 적용할지 정할 수 없습니다. " + tail
+    if profile is None:
+        return (
+            f"'{scheme}'은(는) 매도청구·수용 정책표(MAGDO_RULES)에 없는 방식이라 근거법령을 "
+            "확정할 수 없습니다. " + tail
+        )
+    if profile.get("requires_track_input"):
+        return (
+            f"'{scheme}'은(는) 근거법령이 사업 트랙(정비/소규모정비 준용)에 따라 갈려 확정할 수 "
+            f"없습니다(정책표 requires_track_input). {tail}"
+        )
+    act = profile.get("governing_act") or "미상"
+    instrument = profile.get("instrument") or "미상"
+    return (
+        f"'{scheme}'의 근거법령은 {act}이고 강제취득 수단은 '{instrument}'입니다 — "
+        f"{act}은(는) 동의율·수용 기준이라 보유기간 요건이 없습니다. {tail}"
+    )
+
+
 def _judge_owner(
     owner: dict[str, Any],
     decision_date: date | None,
     history: list[dict[str, Any]] | None = None,
+    scheme: str | None = None,
 ) -> dict[str, Any]:
-    """소유자 1인의 매도청구 가능여부(보유기간 기준) 판정. 항상 `evidence`를 동반한다."""
+    """소유자 1인의 매도청구 가능여부(보유기간 기준) 판정. 항상 `evidence`를 동반한다.
+
+    ★★`scheme`(사업방식)이 **판정의 전제**다. 보유기간 10년 요건은 주택법 §22①2호에만 있고,
+      도정법 §64·소규모정비특례법 §35 는 **동의율** 기반이라 보유기간 조건이 아예 없으며,
+      도시개발법 §22 는 매도청구가 아니라 **수용**이다. 사업방식 없이 10년 규칙을 모든 방식에
+      적용하면 동의율 기반 사업의 필지를 "매도청구 불가"로 **법적으로 잘못 분류**한다.
+      → 주택법 계열이 아니면 보유기간을 **계산조차 하지 않고** 판정 불가를 낸다.
+    """
     name = owner.get("name") or "성명 미상"
     share = owner.get("share")
     evidence = _owner_evidence(owner)
     inheritance = _classify_inheritance(owner.get("acquisition_cause"))
+    profile = _scheme_profile(scheme)
+    governing_act = (profile or {}).get("governing_act")
 
     base = {
         "owner": name,
         "share": share,
         "inheritance": inheritance,
         "evidence": evidence,
+        "scheme": scheme,
+        "governing_act": governing_act,
+        "instrument": (profile or {}).get("instrument"),
     }
+
+    # ★사업방식 게이트가 **가장 먼저**다 — 기준일이 있든 없든, 주택법 계열이 아니면
+    #   보유기간은 애초에 판정 요소가 아니다(그래서 holding_period_years 를 만들지 않는다).
+    if governing_act != _HOLDING_PERIOD_ACT:
+        return {
+            **base,
+            "holding_period_basis": None,
+            "holding_period_years": None,
+            "sell_claim_judgment": _JUDGMENT_OUT_OF_SCOPE,
+            "sell_claim_reason": _out_of_scope_reason(scheme, profile),
+        }
 
     # ★제약2 — 기준일 미입력이면 판정하지 않는다(오늘 날짜로 임의 계산 금지).
     if decision_date is None:
@@ -245,7 +327,11 @@ def _parcel_label(parcel: dict[str, Any], idx: int) -> str:
 
 
 def _build_card(
-    parcel: dict[str, Any], idx: int, analysis: dict[str, Any], decision_date: date | None
+    parcel: dict[str, Any],
+    idx: int,
+    analysis: dict[str, Any],
+    decision_date: date | None,
+    scheme: str | None = None,
 ) -> dict[str, Any]:
     """RegistryAnalysisService.analyze() 결과 위에 소유자별 매도청구 판정 계층을 얹는다."""
     label = _parcel_label(parcel, idx)
@@ -273,7 +359,7 @@ def _build_card(
     #   이력이 없으면 `_judge_owner` 가 합산하지 않고 '미확인'으로 남긴다(추정 금지).
     history = ((ai or {}).get("ownership") or {}).get("ownership_history")
     history = history if isinstance(history, list) else None
-    owner_judgments = [_judge_owner(o, decision_date, history) for o in owners_raw]
+    owner_judgments = [_judge_owner(o, decision_date, history, scheme) for o in owners_raw]
 
     return {
         "parcel": label,
@@ -299,6 +385,7 @@ async def _survey_one(
     idx: int,
     decision_date: date | None,
     sem: asyncio.Semaphore,
+    scheme: str | None = None,
 ) -> dict[str, Any]:
     async with sem:
         from app.services.registry.registry_analysis_service import RegistryAnalysisService
@@ -326,12 +413,13 @@ async def _survey_one(
                 "owners": [],
                 "analysis": None,
             }
-        return _build_card(parcel, idx, analysis, decision_date)
+        return _build_card(parcel, idx, analysis, decision_date, scheme)
 
 
 def _summarize(cards: list[dict[str, Any]], decision_date_provided: bool) -> dict[str, Any]:
     owners_total = 0
     owners_undetermined = 0
+    owners_out_of_scope = 0
     owners_long_term = 0
     owners_inheritance_unconfirmed = 0
     parcels_ok = 0
@@ -346,6 +434,10 @@ def _summarize(cards: list[dict[str, Any]], decision_date_provided: bool) -> dic
             owners_total += 1
             if o.get("sell_claim_judgment") == "판정 보류":
                 owners_undetermined += 1
+            # ★"판정 보류"(자료 부족)와 "판정 불가"(해당 사업방식에 기준이 없음)를 **섞지 않는다**.
+            #   섞으면 "자료를 더 모으면 판정된다"는 오독이 생긴다 — 후자는 자료 문제가 아니다.
+            if o.get("sell_claim_judgment") == _JUDGMENT_OUT_OF_SCOPE:
+                owners_out_of_scope += 1
             if o.get("holding_period_years") is not None and o["holding_period_years"] >= _LONG_TERM_HOLDING_YEARS:
                 owners_long_term += 1
             if (o.get("inheritance") or {}).get("status") in ("상속", "판별 불가"):
@@ -356,6 +448,7 @@ def _summarize(cards: list[dict[str, Any]], decision_date_provided: bool) -> dic
         "parcels_failed": parcels_failed,
         "owners_total": owners_total,
         "owners_holding_period_undetermined": owners_undetermined,
+        "owners_holding_period_out_of_scope": owners_out_of_scope,
         "owners_long_term_holders": owners_long_term,
         "owners_inheritance_aggregation_unconfirmed": owners_inheritance_unconfirmed,
         "decision_date_provided": decision_date_provided,
@@ -370,27 +463,36 @@ def _summarize(cards: list[dict[str, Any]], decision_date_provided: bool) -> dic
 async def survey_selected_parcels(
     parcels: list[dict[str, Any]],
     district_plan_decision_date: str | None = None,
+    scheme: str | None = None,
 ) -> dict[str, Any]:
     """선택 필지를 병렬 발급→권리분석하고, 필지별 카드 + 세트 요약을 돌려준다.
 
     `district_plan_decision_date`: 지구단위계획구역 결정고시일(주택법 §22①2호 보유기간
-    기준일). 미입력이면 모든 소유자 판정이 "판정 보류"로 나온다(제약2 — 오늘 날짜로
-    임의 계산하지 않는다).
+    기준일). 미입력이면 주택법 계열 방식에서 모든 소유자 판정이 "판정 보류"로 나온다
+    (제약2 — 오늘 날짜로 임의 계산하지 않는다).
+
+    `scheme`: 사업방식(MAGDO_RULES 키). **보유기간 판정의 전제**다 — 주택법 계열이 아니면
+    보유기간 요건 자체가 없으므로 "판정 불가(해당 사업방식 기준 없음)"를 낸다. 기본값을
+    몰래 넣지 않는다(미지정이면 미지정으로 판정 불가).
     """
     rows = [p for p in (parcels or []) if isinstance(p, dict)]
     decision_date = _parse_kdate(district_plan_decision_date)
     decision_date_provided = decision_date is not None
+    profile = _scheme_profile(scheme)
 
     sem = asyncio.Semaphore(_MAX_CONCURRENT_ISSUES)
     cards = list(
         await asyncio.gather(
-            *[_survey_one(p, idx, decision_date, sem) for idx, p in enumerate(rows)]
+            *[_survey_one(p, idx, decision_date, sem, scheme) for idx, p in enumerate(rows)]
         )
     )
 
     return {
         "parcel_count": len(rows),
         "district_plan_decision_date": decision_date.isoformat() if decision_date else None,
+        "scheme": scheme,
+        "governing_act": (profile or {}).get("governing_act"),
+        "instrument": (profile or {}).get("instrument"),
         "cards": cards,
         "summary": _summarize(cards, decision_date_provided),
     }

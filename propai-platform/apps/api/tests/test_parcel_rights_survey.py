@@ -17,6 +17,14 @@ import pytest
 import app.services.registry.registry_analysis_service as ras
 from app.services.land_intelligence import parcel_rights_survey_service as svc
 
+# ★보유기간 10년 요건이 **실제로 존재하는** 사업방식(주택법 계열). 이 파일의 기존 케이스는
+#   전부 "보유기간 판정이 성립하는" 세계를 다루므로 이 방식으로 태운다.
+#   ★2026-08-15 정정: 이 인자가 없던 시절 코드는 주택법 §22①2호의 10년 규칙을 **모든**
+#     사업방식에 적용하고 사유에 "주택법 §22①2호"를 하드코딩했다(동의율 기반 사업의 법적
+#     오분류). 아래 `_CONSENT_SCHEME` 대조군이 그 차이를 잠근다.
+_HOUSING_SCHEME = "지구단위계획 연계"
+_CONSENT_SCHEME = "가로주택정비사업"  # 소규모정비특례법 §35 — 보유기간 요건 없음
+
 
 def _owner(name: str, share: str, acq_date: str | None, acq_cause: str | None) -> dict[str, Any]:
     return {
@@ -79,7 +87,7 @@ async def test_기준일_미입력시_보유기간_판정을_하지_않는다(mo
     _install_fake_registry_analysis(monkeypatch, {"서울시 A": _ok_analysis(owners)})
 
     out = await svc.survey_selected_parcels(
-        [{"address": "서울시 A"}], district_plan_decision_date=None
+        [{"address": "서울시 A"}], district_plan_decision_date=None, scheme=_HOUSING_SCHEME
     )
 
     assert out["district_plan_decision_date"] is None
@@ -105,7 +113,7 @@ async def test_기준일_입력시엔_보유기간이_계산된다(monkeypatch: 
     _install_fake_registry_analysis(monkeypatch, {"서울시 A": _ok_analysis(owners)})
 
     out = await svc.survey_selected_parcels(
-        [{"address": "서울시 A"}], district_plan_decision_date="2024-01-01"
+        [{"address": "서울시 A"}], district_plan_decision_date="2024-01-01", scheme=_HOUSING_SCHEME
     )
 
     assert out["summary"]["decision_date_provided"] is True
@@ -126,7 +134,7 @@ async def test_상속_판별_불가시_미확인을_낸다(monkeypatch: pytest.M
     _install_fake_registry_analysis(monkeypatch, {"서울시 B": _ok_analysis(owners)})
 
     out = await svc.survey_selected_parcels(
-        [{"address": "서울시 B"}], district_plan_decision_date="2024-01-01"
+        [{"address": "서울시 B"}], district_plan_decision_date="2024-01-01", scheme=_HOUSING_SCHEME
     )
     owner = out["cards"][0]["owners"][0]
     assert owner["inheritance"]["status"] == "판별 불가"
@@ -146,7 +154,7 @@ async def test_상속으로_판별돼도_합산값을_확정처럼_내지_않는
     _install_fake_registry_analysis(monkeypatch, {"서울시 C": _ok_analysis(owners)})
 
     out = await svc.survey_selected_parcels(
-        [{"address": "서울시 C"}], district_plan_decision_date="2024-01-01"
+        [{"address": "서울시 C"}], district_plan_decision_date="2024-01-01", scheme=_HOUSING_SCHEME
     )
     owner = out["cards"][0]["owners"][0]
     assert owner["inheritance"]["status"] == "상속"
@@ -170,7 +178,7 @@ async def test_취득일이_인식되지_않으면_보유기간_대신_판정보
     _install_fake_registry_analysis(monkeypatch, {"서울시 F": _ok_analysis(owners)})
 
     out = await svc.survey_selected_parcels(
-        [{"address": "서울시 F"}], district_plan_decision_date="2024-01-01"
+        [{"address": "서울시 F"}], district_plan_decision_date="2024-01-01", scheme=_HOUSING_SCHEME
     )
     owner = out["cards"][0]["owners"][0]
     assert owner["sell_claim_judgment"] == "판정 보류"
@@ -192,7 +200,7 @@ async def test_공유필지가_소유자별로_갈린_결과를_낸다(monkeypat
     _install_fake_registry_analysis(monkeypatch, {"서울시 D": _ok_analysis(owners)})
 
     out = await svc.survey_selected_parcels(
-        [{"address": "서울시 D"}], district_plan_decision_date="2024-01-01"
+        [{"address": "서울시 D"}], district_plan_decision_date="2024-01-01", scheme=_HOUSING_SCHEME
     )
     card = out["cards"][0]
     assert len(card["owners"]) == 2, "공유필지인데 소유자가 하나로 뭉개졌다"
@@ -229,7 +237,7 @@ async def test_한_필지_실패가_전체를_죽이지_않고_사유가_남는�
 
     out = await svc.survey_selected_parcels(
         [{"address": "실패필지"}, {"address": "정상필지"}],
-        district_plan_decision_date="2024-01-01",
+        district_plan_decision_date="2024-01-01", scheme=_HOUSING_SCHEME,
     )
 
     assert out["parcel_count"] == 2, "실패 필지가 전체 응답에서 조용히 빠졌다"
@@ -263,7 +271,7 @@ async def test_등기부_미확보_필지도_사유를_남기고_계속된다(
     )
 
     out = await svc.survey_selected_parcels(
-        [{"address": "등기없음"}], district_plan_decision_date="2024-01-01"
+        [{"address": "등기없음"}], district_plan_decision_date="2024-01-01", scheme=_HOUSING_SCHEME
     )
     card = out["cards"][0]
     assert card["status"] == "not_available"
@@ -283,10 +291,10 @@ async def test_근거_스니펫_없는_판정을_만들지_않는다(monkeypatch
 
     # 기준일 있는 케이스 + 없는 케이스 둘 다 확인 — 판정을 '안 내는' 경로도 evidence는 있어야 한다.
     with_date = await svc.survey_selected_parcels(
-        [{"address": "서울시 E"}], district_plan_decision_date="2024-01-01"
+        [{"address": "서울시 E"}], district_plan_decision_date="2024-01-01", scheme=_HOUSING_SCHEME
     )
     without_date = await svc.survey_selected_parcels(
-        [{"address": "서울시 E"}], district_plan_decision_date=None
+        [{"address": "서울시 E"}], district_plan_decision_date=None, scheme=_HOUSING_SCHEME
     )
 
     for out in (with_date, without_date):
@@ -325,8 +333,8 @@ def test_상속이면_피상속인_취득일을_실제로_합산한다() -> None
     ]
     base = _date(2026, 1, 1)
 
-    without = _svc._judge_owner(owner, base, None)
-    with_hist = _svc._judge_owner(owner, base, history)
+    without = _svc._judge_owner(owner, base, None, _HOUSING_SCHEME)
+    with_hist = _svc._judge_owner(owner, base, history, _HOUSING_SCHEME)
 
     assert without["holding_period_years"] < 10, "대조군이 대조군이 아니다(합산 없이도 10년 초과)"
     assert without["sell_claim_judgment"].startswith("가능")
@@ -345,7 +353,7 @@ def test_합산에_성공하면_더는_미확인이라_말하지_않는다() -> 
         {"date": "2003-01-01", "cause": "매매", "owner": "김부친"},
         {"date": "2023-01-01", "cause": "상속", "owner": "김상속"},
     ]
-    out = _svc._judge_owner(owner, _date(2026, 1, 1), history)
+    out = _svc._judge_owner(owner, _date(2026, 1, 1), history, _HOUSING_SCHEME)
     assert "미확인" not in out["inheritance_aggregation_note"]
     assert "합산" in out["inheritance_aggregation_note"]
     assert "합산 미반영" not in out["sell_claim_reason"]
@@ -355,7 +363,7 @@ def test_이력에_피상속인이_없으면_추정하지_않는다() -> None:
     """★없는 것을 만들지 않는다 — 이력의 **최초** 등기면 앞선 소유자가 없다."""
     owner = _heir_owner("김상속", "2003-01-01", "상속")
     history = [{"date": "2003-01-01", "cause": "상속", "owner": "김상속"}]
-    out = _svc._judge_owner(owner, _date(2026, 1, 1), history)
+    out = _svc._judge_owner(owner, _date(2026, 1, 1), history, _HOUSING_SCHEME)
     assert out["inheritance_aggregated"] is False
     assert "미확인" in out["inheritance_aggregation_note"]
 
@@ -367,7 +375,7 @@ def test_합산_근거를_함께_낸다() -> None:
         {"date": "2003-01-01", "cause": "매매", "owner": "김부친"},
         {"date": "2023-01-01", "cause": "상속", "owner": "김상속"},
     ]
-    out = _svc._judge_owner(owner, _date(2026, 1, 1), history)
+    out = _svc._judge_owner(owner, _date(2026, 1, 1), history, _HOUSING_SCHEME)
     ev = out["predecessor_evidence"]
     assert ev and ev.get("owner") == "김부친", f"합산 근거(피상속인 등기 항목)가 없다: {ev}"
 
@@ -379,7 +387,7 @@ def test_상속이_아니면_합산하지_않는다() -> None:
         {"date": "2003-01-01", "cause": "매매", "owner": "박전소유"},
         {"date": "2023-01-01", "cause": "매매", "owner": "이매수"},
     ]
-    out = _svc._judge_owner(owner, _date(2026, 1, 1), history)
+    out = _svc._judge_owner(owner, _date(2026, 1, 1), history, _HOUSING_SCHEME)
     assert out["inheritance_aggregated"] is False
     assert out["holding_period_years"] < 10, "매매인데 합산됐다 — 반대 방향 오분류"
 
@@ -402,7 +410,7 @@ async def test_조립경로에서_이력이_판정까지_전달된다(monkeypatc
     _install_fake_registry_analysis(monkeypatch, {"서울시 H": analysis})
 
     out = await svc.survey_selected_parcels(
-        [{"address": "서울시 H"}], district_plan_decision_date="2026-01-01"
+        [{"address": "서울시 H"}], district_plan_decision_date="2026-01-01", scheme=_HOUSING_SCHEME
     )
     owner_row = out["cards"][0]["owners"][0]
 
@@ -421,8 +429,100 @@ async def test_이력이_없으면_조립경로에서도_미확인으로_남는�
     _install_fake_registry_analysis(monkeypatch, {"서울시 I": _ok_analysis(owners)})
 
     out = await svc.survey_selected_parcels(
-        [{"address": "서울시 I"}], district_plan_decision_date="2026-01-01"
+        [{"address": "서울시 I"}], district_plan_decision_date="2026-01-01", scheme=_HOUSING_SCHEME
     )
     owner_row = out["cards"][0]["owners"][0]
     assert owner_row["inheritance_aggregated"] is False
     assert "미확인" in owner_row["inheritance_aggregation_note"]
+
+
+# ── ★사업방식 게이트(2026-08-15 B2 수정) ────────────────────────────────
+# 주택법 §22①2호의 10년 요건은 **주택법 계열에만** 있다. 소규모정비특례법 §35·도정법 §64 는
+# 동의율 기반이라 보유기간 조건이 없고, 도시개발법 §22 는 매도청구가 아니라 **수용**이다.
+# 종전 코드는 이 구분 없이 모든 방식에 10년 규칙을 적용했다 — 법적 오분류였다.
+
+@pytest.mark.asyncio
+async def test_같은_필지가_사업방식에_따라_다른_판정을_낸다(monkeypatch: pytest.MonkeyPatch) -> None:
+    """★★두 모집단을 가른다 — **같은 소유자·같은 기준일**인데 사업방식만 바꾼다.
+    두 결과가 같다면 `scheme` 인자는 장식이고, 게이트를 지워도 아무도 모른다."""
+    owners = [_owner("장기보유자", "단독", "2005-03-02", "매매")]  # 결정고시일 기준 ~18.8년
+    _install_fake_registry_analysis(
+        monkeypatch, {"서울시 G": _ok_analysis(owners)}
+    )
+
+    housing = await svc.survey_selected_parcels(
+        [{"address": "서울시 G"}], district_plan_decision_date="2024-01-01", scheme=_HOUSING_SCHEME
+    )
+    consent = await svc.survey_selected_parcels(
+        [{"address": "서울시 G"}], district_plan_decision_date="2024-01-01", scheme=_CONSENT_SCHEME
+    )
+
+    h = housing["cards"][0]["owners"][0]
+    c = consent["cards"][0]["owners"][0]
+
+    assert h["sell_claim_judgment"] == "불가(장기보유 추정)"
+    assert c["sell_claim_judgment"] == svc._JUDGMENT_OUT_OF_SCOPE
+    assert h["sell_claim_judgment"] != c["sell_claim_judgment"], (
+        "사업방식이 판정을 가르지 않는다 — scheme 인자가 장식이다"
+    )
+    # ★동의율 기반 방식에서는 보유기간을 **계산조차 하지 않는다**(있으면 오해를 부른다).
+    assert c["holding_period_years"] is None, f"보유기간 요건이 없는 방식에서 연수를 냈다: {c}"
+    assert h["holding_period_years"] is not None
+    # ★사유는 실제 근거법령을 이름으로 밝힌다(주택법 하드코딩 금지).
+    assert "소규모정비특례법" in c["sell_claim_reason"], c["sell_claim_reason"]
+    assert c["governing_act"] == "소규모정비특례법"
+    assert h["governing_act"] == "주택법"
+    assert consent["summary"]["owners_holding_period_out_of_scope"] == 1
+    assert housing["summary"]["owners_holding_period_out_of_scope"] == 0
+
+
+@pytest.mark.asyncio
+async def test_사업방식_미지정이면_보유기간을_계산하지_않는다(monkeypatch: pytest.MonkeyPatch) -> None:
+    """★기본값을 몰래 넣지 않는다 — 방식이 없으면 어느 법령의 요건인지 알 수 없다."""
+    owners = [_owner("장기보유자", "단독", "2005-03-02", "매매")]
+    _install_fake_registry_analysis(monkeypatch, {"서울시 J": _ok_analysis(owners)})
+
+    out = await svc.survey_selected_parcels(
+        [{"address": "서울시 J"}], district_plan_decision_date="2024-01-01", scheme=None
+    )
+    o = out["cards"][0]["owners"][0]
+    assert o["sell_claim_judgment"] == svc._JUDGMENT_OUT_OF_SCOPE
+    assert o["holding_period_years"] is None
+    assert "사업방식" in o["sell_claim_reason"]
+
+
+@pytest.mark.asyncio
+async def test_도시개발사업은_수단이_수용으로_실린다(monkeypatch: pytest.MonkeyPatch) -> None:
+    """★도시개발법 §22 는 매도청구가 아니라 **수용**(토지보상법 준용)이다 — 절차가 다르다."""
+    owners = [_owner("소유자", "단독", "2005-03-02", "매매")]
+    _install_fake_registry_analysis(monkeypatch, {"서울시 K": _ok_analysis(owners)})
+
+    out = await svc.survey_selected_parcels(
+        [{"address": "서울시 K"}],
+        district_plan_decision_date="2024-01-01",
+        scheme="도시개발사업(도시개발법)",
+    )
+    assert out["instrument"] == "수용"
+    assert out["governing_act"] == "도시개발법"
+    assert out["cards"][0]["owners"][0]["instrument"] == "수용"
+
+
+def test_역세권_활성화사업은_근거법령을_추론하지_않는다() -> None:
+    """★basis 문자열에 '주택법'이 있다고 주택법으로 단정하면 안 된다 — 같은 문장이
+    '사업방식에 따라 정비/소규모정비 준용'이라 적는다(문자열 추론이 틀리는 실증)."""
+    from app.services.development.scenario_simulator import MAGDO_RULES
+
+    rule = MAGDO_RULES["역세권 활성화사업"]
+    assert "주택법" in rule["basis"], "전제가 깨졌다 — basis 에 주택법이 없으면 이 테스트는 공허하다"
+    assert rule["governing_act"] is None, "모호한 방식에 근거법령을 단정했다"
+    assert rule["requires_track_input"] is True
+
+    out = svc._judge_owner(
+        {"name": "소유자", "share": "단독", "acquisition_date": "2005-03-02",
+         "acquisition_cause": "매매"},
+        _date(2024, 1, 1),
+        None,
+        "역세권 활성화사업",
+    )
+    assert out["sell_claim_judgment"] == svc._JUDGMENT_OUT_OF_SCOPE
+    assert out["holding_period_years"] is None

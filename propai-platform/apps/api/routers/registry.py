@@ -752,3 +752,104 @@ async def parcel_survey_quote(
         #   서비스 내부에서 이미 예외를 흡수하고 사유를 담아 돌려준다.
         "preview": free_preview(parcels),
     }
+
+
+# ── 토지필지 종합분석 P2 — 매입전략 분류 ────────────────────────────────
+# ★★이 엔드포인트의 존재 이유 하나는 **"소비처 0" 결함의 봉합**이다. P1
+#   (`survey_selected_parcels`)은 머지된 뒤로 자기 테스트 밖에 호출부가 하나도 없었다 —
+#   그런 코드는 배선을 끊어도 아무도 모른다. 그래서 여기서 **반드시 P1 을 태우고**,
+#   그 카드를 P2 분류기(`build_strategy`)에 먹인다(우회 금지).
+# ★계산은 전부 순수함수에 있고 이 라우터는 배선만 한다(/survey/quote 와 동일 패턴).
+
+class ParcelPurchaseStrategyRequest(BaseModel):
+    """필지 목록 + 사업방식·기준일·주택건설대지면적.
+
+    `scheme` 은 **기본값을 몰래 넣지 않는다** — 보유기간 10년 요건은 주택법 계열에만 있어
+    방식이 없으면 판정 자체가 성립하지 않는다(미지정이면 미지정으로 판정 불가가 나온다).
+    """
+
+    parcels: list[dict[str, Any]] = Field(default_factory=list)
+    scheme: str | None = None
+    district_plan_decision_date: str | None = None
+    housing_site_area_sqm: float | None = None
+    exclusion_candidates: list[str] = Field(default_factory=list)
+
+
+@router.post(
+    "/survey/strategy",
+    summary="토지필지 종합분석 P2 — 매입전략 분류(협의매수/매도청구/수용/제척검토/판정보류)",
+)
+async def parcel_purchase_strategy(
+    req: ParcelPurchaseStrategyRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """선택 필지를 **P1 로 발급·권리분석**한 뒤 매입전략으로 분류한다.
+
+    ★발급은 건당 유료다(`registry_issue`+`registry_analysis`). P0(`/survey/quote`)에서 비용을
+      확인한 뒤 진입하는 단계이며, 실제 청구는 **발급·분석에 성공한 건수만** 집계한다
+      (`issued_count`/`analysis_charged` — 실패한 조회에는 청구하지 않는다).
+    """
+    from app.services.land_intelligence.parcel_purchase_strategy_service import build_strategy
+    from app.services.land_intelligence.parcel_rights_survey_service import (
+        survey_selected_parcels,
+    )
+
+    parcels = req.parcels or []
+
+    # ① P1 을 **실제로** 태운다(우회하면 이 엔드포인트의 존재 이유가 사라진다).
+    survey = await survey_selected_parcels(
+        parcels,
+        district_plan_decision_date=req.district_plan_decision_date,
+        scheme=req.scheme,
+    )
+
+    # ② 과금 — P1 이 카드에 원본 분석 결과(`analysis`)를 그대로 실어 보내므로, 기존 라우터
+    #    헬퍼가 그대로 소비한다(P1 서비스 자체는 과금하지 않는다 — 배선은 호출부의 몫).
+    #    ★성공한 건만 청구한다: 두 헬퍼 모두 결과를 보고 판정한다(화이트리스트).
+    for card in survey.get("cards") or []:
+        analysis = card.get("analysis")
+        if not analysis:
+            continue
+        await _charge_registry_issue(current_user.user_id, analysis, times=1)
+        await _charge_registry_analysis(current_user.user_id, analysis)
+
+    # ③ 제척 위상판정용 인접 그래프 — 실패해도 분류(본기능)는 살아 있어야 한다.
+    graph: dict[str, Any] | None = None
+    try:
+        from app.services.zoning.parcel_graph import build_parcel_graph
+
+        graph = build_parcel_graph(parcels)
+    except Exception:  # noqa: BLE001 — 그래프 실패는 severability 가 '판정 불가'로 흡수한다
+        logger.warning("인접 그래프 계산 실패 — 제척 위상판정 미제공", exc_info=True)
+
+    strategy = build_strategy(
+        survey,
+        parcels,
+        scheme=req.scheme,
+        housing_site_area_sqm=req.housing_site_area_sqm,
+        graph=graph,
+        exclusion_candidates=req.exclusion_candidates or None,
+    )
+
+    # ── 성장루프 결속(best-effort) ───────────────────────────────────────
+    # ★식별자(pnu·주소)는 **보내지 않는다** — 집계에 불필요하고, 보내면 마스킹에 의존하게 된다.
+    #   보낼 가치가 있는 것은 **플랫폼이 고쳐야 할 신호**다: 판정보류가 왜 나는지
+    #   (확보율 미산정 · geometry 미확보)를 세면 데이터 확보 우선순위가 나온다.
+    try:
+        from app.services.growth import capture_service
+
+        capture_service.record_event(
+            "parcel_purchase_strategy",
+            {
+                "parcel_count": survey.get("parcel_count"),
+                "row_count": strategy["summary"]["row_count"],
+                "undecided_rows": strategy["summary"]["by_action"].get("판정보류", 0),
+                "secured_ratio_available": strategy["summary"]["secured_ratio_available"],
+                "geometry_unknown": strategy["summary"]["geometry_unknown_count"],
+                "scheme_provided": bool(req.scheme),
+            },
+        )
+    except Exception:  # noqa: BLE001 — 성장루프 실패가 본기능을 막지 않는다
+        logger.debug("성장루프 적재 스킵(분류 무손상)", exc_info=True)
+
+    return {"survey": survey, "strategy": strategy}

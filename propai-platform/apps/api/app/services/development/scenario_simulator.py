@@ -24,50 +24,113 @@ PYEONG_SQM = 3.305785
 # 정책별 매도청구권 — 동의요건 충족 시 미동의자(잔여)에 매도청구 가능.
 # consent_pct=사업 추진 동의 임계, claimable_remainder=임계 충족 시 매도청구 가능한 잔여(=100-임계),
 # basis=근거 법령. (실제 적용은 소유관계·동의현황·보유기간 등 현장확인 필요)
+#
+# ★★`governing_act`(근거 법령 계열)는 **명시 필드**다 — `basis` 문자열에서 추론하지 않는다.
+#   추론이 왜 틀리는지 실증: "역세권 활성화사업"의 basis 에는 "주택법"이 들어 있지만 그 문장이
+#   스스로 *"사업방식에 따라 정비/소규모정비 준용"* 이라고 적는다. 문자열 매칭으로 주택법이라
+#   단정하면 **보유기간 10년 요건을 동의율 기반 사업에 잘못 적용**하게 된다(실제 결함).
+#   → 그래서 그 방식만 `governing_act=None` + `requires_track_input=True` 로 두고, 트랙(정비/
+#     소규모정비 준용)이 입력되기 전에는 보유기간 판정을 **하지 않는다**.
+#
+# ★★`instrument`(강제취득 수단)도 명시한다. 보유기간 10년 요건(주택법 §22①2호)은
+#   **주택법 계열에만** 있다. 도정법 §64·소규모정비특례법 §35 는 **동의율** 기반이라 보유기간
+#   요건이 아예 없고, 도시개발법 §22 는 매도청구가 아니라 **수용**(토지보상법 준용: 협의→재결→
+#   보상)이라 절차 자체가 다르다.
 MAGDO_RULES: dict[str, dict[str, Any]] = {
     "재개발·재건축(정비사업)": {
         "consent_required": "조합설립: 토지등소유자 3/4 이상 + 토지면적 1/2 이상(재건축은 각 동 과반·전체 3/4·면적 3/4)",
         "consent_pct": 75,
         "basis": "도시 및 주거환경정비법 제64조(매도청구)",
+        "governing_act": "도정법",
+        "instrument": "매도청구",
         "note": "조합설립 동의 후 미동의 조합원·토지등소유자에게 매도청구",
     },
     "가로주택정비사업": {
         "consent_required": "토지등소유자 80% 이상 + 토지면적 2/3 이상(공동주택 각 동 과반)",
         "consent_pct": 80,
         "basis": "빈집 및 소규모주택 정비에 관한 특례법 제35조(매도청구)",
+        "governing_act": "소규모정비특례법",
+        "instrument": "매도청구",
         "note": "사업시행 동의요건 충족 후 미동의자에게 매도청구",
     },
     "모아주택/모아타운": {
         "consent_required": "소규모재건축: 전체 3/4 이상 + 각 동 과반 + 토지면적 3/4 이상",
         "consent_pct": 75,
         "basis": "빈집 및 소규모주택 정비에 관한 특례법 제35조(매도청구)",
+        "governing_act": "소규모정비특례법",
+        "instrument": "매도청구",
         "note": "동의요건 충족 후 미동의자 매도청구(모아타운 내 개별 소규모정비)",
     },
     "도시개발사업(도시개발법)": {
         "consent_required": "수용·사용방식: 토지면적 2/3 이상 + 토지소유자 총수 1/2 이상 동의",
         "consent_pct": 67,
         "basis": "도시개발법 제22조(토지등의 수용·사용) · 토지보상법",
-        "note": "수용방식은 미동의 토지 수용(매도청구에 준함). 환지방식은 환지처분으로 갈음",
+        "governing_act": "도시개발법",
+        # ★"매도청구에 준함"이라는 종전 note 문구는 **부정확**해서 삭제했다(법령 대조 2026-08-13).
+        #   수용은 토지보상법 준용(협의→재결→보상)이라 매도청구와 절차·기한·보상기준이 다르다.
+        "instrument": "수용",
+        "note": "수용방식은 미동의 토지를 수용(토지보상법 준용: 협의→재결→보상). 환지방식은 환지처분으로 갈음",
     },
     "역세권 장기전세주택(시프트)": {
         "consent_required": "대지 사용권원 95% 이상 확보(주택건설사업)",
         "consent_pct": 95,
         "basis": "주택법 제22조·제23조(매도청구)",
+        "governing_act": "주택법",
+        "instrument": "매도청구",
         "note": "95%↑ 확보→잔여 전부 매도청구 / 80~95%→10년 미만 보유 토지에 매도청구",
     },
     "지구단위계획 연계": {
         "consent_required": "주택건설사업: 대지 사용권원 95% 이상 확보",
         "consent_pct": 95,
         "basis": "주택법 제22조(매도청구)",
+        "governing_act": "주택법",
+        "instrument": "매도청구",
         "note": "지구단위 내 주택건설사업 시 95%↑ 확보→잔여 매도청구(80~95%는 10년 미만 보유분)",
     },
     "역세권 활성화사업": {
         "consent_required": "주택건설사업 준용: 대지 사용권원 95% 이상 확보",
         "consent_pct": 95,
         "basis": "주택법 제22조(매도청구) — 사업방식에 따라 정비/소규모정비 준용",
+        # ★모호 — basis 에 "주택법"이 있지만 같은 문장이 정비/소규모정비 준용도 함께 적는다.
+        #   근거법령을 확정하지 못하므로 None. 트랙 입력 전에는 보유기간 판정을 하지 않는다.
+        "governing_act": None,
+        "requires_track_input": True,
+        # instrument 는 정비/소규모정비 준용 시 매도청구가 되지만, 확정은 트랙 입력 후다
+        # (requires_track_input 이 그 사실을 실어 나른다 — 이 값만 보고 단정하면 안 된다).
+        "instrument": "매도청구",
         "note": "용도상향 복합개발. 주택 포함 시 95%↑ 확보→잔여 매도청구",
     },
 }
+
+# 보유기간(지구단위계획구역 결정고시일 기준 10년) 요건이 존재하는 **유일한** 법령 계열.
+# 도정법 §64·소규모정비특례법 §35 는 동의율 기반이라 보유기간 조건이 없고, 도시개발법 §22 는
+# 수용이라 매도청구 자체가 성립하지 않는다.
+HOLDING_PERIOD_ACT = "주택법"
+
+
+def scheme_legal_profile(scheme: str | None) -> dict[str, Any] | None:
+    """사업방식 → {governing_act, instrument, requires_track_input, basis, consent_*}.
+
+    ★MAGDO_RULES 를 읽는 **공용 통로**다. 소비처가 직접 dict 를 뒤지면 키 이름이 갈라지고
+      `basis` 문자열에서 법령을 추론하는 결함이 다시 생긴다(P2 가 실제로 그 결함을 고쳤다).
+    미등록 방식(단순 건축 등)은 None — 매도청구·수용 제도가 적용되지 않는다는 뜻이다.
+
+    ★소비처가 없는 필드는 싣지 않는다("정의는 했는데 소비처 0"은 이 저장소가 반복해서 데인
+      패턴이다 — 변이로 지워도 아무도 모른다). 여기 여섯은 전부 소비된다: 앞 셋은 보유기간
+      게이트(`parcel_rights_survey_service._judge_owner`)가, 뒤 셋은 P2 판정표의 `legal`
+      블록이 쓴다(동의율 기반 방식은 동의요건이 곧 판정 근거다).
+    """
+    r = MAGDO_RULES.get(scheme or "")
+    if not r:
+        return None
+    return {
+        "governing_act": r.get("governing_act"),
+        "instrument": r.get("instrument"),
+        "requires_track_input": bool(r.get("requires_track_input")),
+        "basis": r.get("basis"),
+        "consent_required": r.get("consent_required"),
+        "consent_threshold_pct": r.get("consent_pct"),
+    }
 
 
 def _magdo(scheme: str) -> dict[str, Any] | None:
