@@ -81,7 +81,7 @@ def land_analysis_charged(result: Any) -> bool:
         — 등기가 정확히 이 순서로 당했다(캐시를 나중에 넣으며 돈 가드를 안 고쳐 적중마다
         재청구). 캐시를 넣는 사람이 가드를 같이 고쳐야 함을 모르는 쪽이 기본값이면 안 된다.
       · `pnu` 가 없으면 **필지 실조회 자체가 없었다**(VWorld 키 미설정·지오코딩 실패 시
-        `pnu=None` 으로 조기 return 한다 — 이 파일 `AutoZoningService.detect_zoning` 참조).
+        `pnu=None` 으로 조기 return 한다 — 이 파일 `AutoZoningService.analyze_by_address` 참조).
       · `zone_source == "keyword_inference"` 는 과금하지 않는다. 이 코드가 스스로
         `ZONE_INFERENCE_WARNING`("실조회 확인 필요")을 붙여 **추론값임을 사용자에게 고지**
         하는 결과다. 고지해 놓고 실조회와 같은 값을 받을 수는 없다.
