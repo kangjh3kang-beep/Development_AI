@@ -100,7 +100,10 @@ describe("ParcelSurveyQuotePanel — 견적·선별 정직성 계약", () => {
     // ★MarkdownLite가 "**실제 청구는 발급에 성공한 건수만**"을 <strong>으로 렌더한다.
     //   그 구간 안에만 있는 문자열로 매칭하면 <strong>과 부모 문단이 동시에 매치돼
     //   "multiple elements found"로 깨진다 — 굵게 경계를 넘나드는 문구로 유일 매치를 보장한다.
-    expect(await screen.findByText(/발급에 성공한 건수만 집계되므로/)).toBeInTheDocument();
+    // ★★굵게 경계를 **넘나드는** 문구로 매칭하면 `<strong>` 과 부모 문단으로 쪼개져
+    //   "broken up by multiple elements" 로 실패한다(CI 실측). 픽스처의 굵게 범위는
+    //   "**실제 청구는 발급에 성공한 건수만**" 까지이므로, **그 안쪽**만 매칭한다.
+    expect(await screen.findByText(/발급에 성공한 건수만/)).toBeInTheDocument();
   });
 
   it("geometry.missing이 있으면 필지 목록과 함께 위상판정 불가 경고를 보여준다", async () => {
