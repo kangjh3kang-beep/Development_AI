@@ -107,6 +107,27 @@ def test_소유자_자리에_채권자나_등록번호를_넣지_않는다() -> 
     assert hc.extract_owner(가압류) is None
 
 
+def test_outList가_리스트로_와도_읽는다() -> None:
+    """벤더 응답은 dict 로 실측됐지만 형제 파서에서는 리스트로도 온다 — 두 형태를 가른다."""
+    rows = [{"등기명의인": "김철수 (소유자)", "최종지분": "단독소유"}]
+    as_dict = {"소유지분현황_갑구": rows}
+    as_list = [as_dict]
+    assert hc.extract_owner(as_dict) == "김철수 (소유자)"
+    assert hc.extract_owner(as_list) == "김철수 (소유자)", "리스트 형태를 못 읽는다"
+    assert hc.extract_owners([]) == []
+
+
+def test_표에_이상한_행이_섞여도_건너뛴다() -> None:
+    """★벤더 표에 문자열·None 이 섞여 오면 종전엔 그 행에서 터졌다(전체 조회 실패)."""
+    ol = {"소유지분현황_갑구": [
+        "머리말 문자열",
+        None,
+        {"등기명의인": "박영희 (소유자)", "최종지분": "단독소유"},
+    ]}
+    owners = hc.extract_owners(ol)
+    assert [o["name"] for o in owners] == ["박영희 (소유자)"], owners
+
+
 def test_리스트로_온_값에_파이썬_repr을_내지_않는다() -> None:
     """벤더가 공유 소유자를 리스트로 주면 화면에 `['김철수', '박영희']` 가 떴다."""
     out = hc.extract_owner({"소유자": ["김철수", "박영희"]})

@@ -501,6 +501,8 @@ def extract_owners(out_list: Any) -> list[dict[str, str]]:
         for row in rows:
             if not isinstance(row, dict):
                 continue
+            # 초기값은 표(_OWNER_FIELDS)가 비었을 때만 쓰인다 — 지금은 도달 불가라
+            # 변이가 생존한다(그 사실을 적어 둔다). 표를 비우는 변경에 대한 방어.
             name = ""
             for f in _OWNER_FIELDS:
                 name = _clean(row.get(f))
@@ -508,7 +510,7 @@ def extract_owners(out_list: Any) -> list[dict[str, str]]:
                     break
             if not name:
                 continue
-            share = ""
+            share = ""   # 위와 같은 이유의 초기값(표가 비었을 때만 쓰임)
             for f in _SHARE_FIELDS:
                 share = _clean(row.get(f))
                 if share:
