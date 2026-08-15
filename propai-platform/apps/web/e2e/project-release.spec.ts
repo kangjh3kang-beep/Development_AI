@@ -12,9 +12,14 @@ test("project release chain covers finance, report, design, and BIM", async ({
 
   await page.goto("/en/projects");
   await expect(page.getByText(RELEASE_PROJECT_NAME)).toBeVisible();
+  // ★카드의 "Open project" 는 **그 프로젝트로** 가야 한다 — 다만 착지 단계는 계약이 아니다.
+  //   제품은 의도적으로 첫 워크플로 단계로 딥링크한다(카드의 `nextAction: "부지분석 이어가기"`
+  //   → `/en/projects/{id}/site-analysis`). 종전 스펙은 맨 프로젝트 URL 을 **정확히** 요구해
+  //   그 UX 결정이 들어온 순간부터 실패했다(prod 빌드 로컬 재현 실측 2026-08-16).
+  //   → 프로젝트 **동일성**만 잠근다. 엉뚱한 id 로 가면 여전히 깨지고, 착지 단계 변경은 통과한다.
   await expect(page.getByRole("link", { name: "Open project" })).toHaveAttribute(
     "href",
-    `/en/projects/${RELEASE_PROJECT_ID}`,
+    new RegExp(`^/en/projects/${RELEASE_PROJECT_ID}(/|$)`),
   );
 
   await page.goto(`/en/projects/${RELEASE_PROJECT_ID}`);

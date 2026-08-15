@@ -294,10 +294,29 @@ async function handleApiRoute(route: Route, state: MutableState) {
     });
   }
 
+  /**
+   * ★쿼리 없는 `/projects` — **두 소비자가 서로 다른 키를 읽는다.**
+   *
+   *   종전에는 이 분기가 `{projects: […]}` 만 돌려줬다. 그런데 목록 화면의 실제 데이터원인
+   *   `store/useProjectStore.ts:syncFromBackend()` 는 `apiClient.get("/projects")` 를
+   *   **쿼리 없이** 부르고 `res.items` 를 읽는다 → `items` 가 없으니 `backend = []` 가 되고
+   *   화면은 **"No projects yet"** 을 그렸다. 위 `page=1` 분기는 그 호출이 `page` 를 안 붙이므로
+   *   **영원히 닿지 않는다.**
+   *
+   *   즉 픽스처를 보강해도 통과하지 않는 게 아니라, **픽스처가 앱이 읽지 않는 키에 담겨 있었다.**
+   *   실측(2026-08-16): prod 빌드 로컬 재현에서 `/en/projects` DOM 이 "No projects yet".
+   *
+   *   → 한 응답에 **두 키를 함께** 담는다. 어느 소비자가 오든 같은 프로젝트를 본다.
+   *     새 소비자가 또 다른 키를 읽으면 여기서 한 번만 늘리면 된다.
+   */
   if (method === "GET" && path === "/projects") {
     return json(route, {
+      items: [projectSummaryItem()],
       projects: [listProjectCard()],
       total: 1,
+      page: 1,
+      page_size: 20,
+      has_next: false,
       updatedAt: "2026-03-26T00:00:00Z",
     });
   }
