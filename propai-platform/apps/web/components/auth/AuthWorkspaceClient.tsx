@@ -725,7 +725,7 @@ export function AuthWorkspaceClient({
               </header>
               <div className="cc-panel__body">
 
-              <form className="grid gap-4" onSubmit={handleSubmit}>
+              <form method="post" className="grid gap-4" onSubmit={handleSubmit}>
                 {mode === "register" ? (
                   <>
                     <label className="grid gap-2 text-sm font-medium text-[var(--text-primary)]">
