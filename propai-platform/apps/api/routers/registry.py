@@ -780,8 +780,11 @@ async def parcel_survey_quote(
 #   일으키므로, 입력 길이가 곧 청구액이다. 상한이 없으면 요청 하나로 임의 금액이 빠진다
 #   (800필지 = 256만원). `MAX_PARCELS_FOR_GRAPH`(200)는 **그래프 연산 비용**을 막을 뿐
 #   지갑을 막지 않는다 — 축이 다르므로 별도 상한을 둔다.
-# ★경계는 양방향으로 건다: 상한만 걸고 하한을 안 걸면 빈 요청이 조용히 통과한다(min_length=1).
+# ★경계는 양방향으로 건다(CLAUDE.md D19) — 상한만 걸면 반대쪽이 무제한이 된다.
+#   ★자기적발: 최초 커밋은 이 줄에 "(min_length=1)" 이라고 **적어 놓고 실제로는 안 걸었다**.
+#     실측 `parcels=[] → HTTP 200`. 주석이 없는 면역을 주장한 형태(C11)라 아래에 실제로 건다.
 MAX_STRATEGY_PARCELS = 100
+MIN_STRATEGY_PARCELS = 1
 
 
 class ParcelPurchaseStrategyRequest(BaseModel):
@@ -790,12 +793,15 @@ class ParcelPurchaseStrategyRequest(BaseModel):
     `scheme` 은 **기본값을 몰래 넣지 않는다** — 보유기간 10년 요건은 주택법 계열에만 있어
     방식이 없으면 판정 자체가 성립하지 않는다(미지정이면 미지정으로 판정 불가가 나온다).
 
-    ★`parcels` 에 **상한**이 있다(`MAX_STRATEGY_PARCELS`) — 유료 경로라 길이가 곧 청구액이다.
+    ★`parcels` 에 **상한·하한이 둘 다** 있다 — 유료 경로라 길이가 곧 청구액이다.
       초과하면 422 로 거부한다(조용히 잘라내면 사용자가 뺀 필지를 모른 채 결과를 신뢰한다).
+      빈 목록도 422 다(빈 요청으로 판정표를 받는 것은 의미가 없고, 조용한 200 은 오독을 만든다).
     """
 
     parcels: list[dict[str, Any]] = Field(
-        default_factory=list, max_length=MAX_STRATEGY_PARCELS
+        default_factory=list,
+        min_length=MIN_STRATEGY_PARCELS,
+        max_length=MAX_STRATEGY_PARCELS,
     )
     scheme: str | None = None
     district_plan_decision_date: str | None = None

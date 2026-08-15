@@ -1449,3 +1449,49 @@ def test_소유자에_확보표시가_없으면_필지_단위_값을_승계한�
     assert inherit_unknown["undetermined_secured_pnus"] == ["미상"]
     # ★세 모집단이 실제로 다른 값을 낸다(차가 0이면 승계 배선이 잠기지 않는다).
     assert inherit_yes["secured_ratio_pct"] != inherit_no["secured_ratio_pct"]
+
+
+# ── 유료 경로의 지출 경계 ─────────────────────────────────────────────
+# ★★이 락이 없어서 변이(`max_length=…` 줄 삭제)가 **생존**했다. 상수를 만들었으면 테스트는
+#   같은 커밋에 — 손으로 재고 커밋에 안 넣으면 그 상한은 다음 리팩토링에서 조용히 사라진다.
+#   (실제로 최초 커밋이 그 상태였고 독립 리뷰가 잡았다.)
+# ★대역이 아니라 **계약 상수에 `==` 로 결속**한다 — 매직넘버 100 을 쓰면 상수가 장식이 된다.
+
+def _boundary_client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    """경계 검사 전용 클라이언트 — 본문 처리 전에 422 가 나는지만 본다."""
+    return _client(monkeypatch, [])
+
+
+def test_필지수_상한을_넘으면_거부한다(monkeypatch: pytest.MonkeyPatch) -> None:
+    """★유료 경로라 **입력 길이가 곧 청구액**이다. 상한이 없으면 요청 하나로 임의 금액이 빠진다.
+
+    조용히 잘라내지 않고 **422 로 거부**한다 — 잘라내면 사용자가 빠진 필지를 모른 채 결과를
+    신뢰한다(=조용한 오답). 두 모집단을 갈라 잠근다: 상한 = 통과 / 상한+1 = 거부.
+    """
+    import routers.registry as reg
+
+    at_limit = [{"pnu": f"P{i}", "area_sqm": 100} for i in range(reg.MAX_STRATEGY_PARCELS)]
+    over_limit = at_limit + [{"pnu": "OVER", "area_sqm": 100}]
+
+    with _boundary_client(monkeypatch) as client:
+        ok = client.post("/registry/survey/strategy", json={"parcels": at_limit})
+        over = client.post("/registry/survey/strategy", json={"parcels": over_limit})
+
+    # ★공허 진리 가드 — 두 모집단이 실제로 다른 응답을 내야 잠금이다(차가 0이면 잠금이 아니다).
+    assert ok.status_code != 422, f"상한 이내인데 거부됐다: {ok.text[:200]}"
+    assert over.status_code == 422, f"상한을 넘겼는데 통과했다 — 지출 상한이 없다: {over.text[:200]}"
+    assert len(over_limit) == reg.MAX_STRATEGY_PARCELS + 1  # 계약 상수 결속
+
+
+def test_빈_필지목록도_거부한다_경계는_양방향(monkeypatch: pytest.MonkeyPatch) -> None:
+    """★상한만 걸고 하한을 안 걸면 반대쪽이 무제한이 된다(CLAUDE.md D19).
+
+    ★자기적발 회귀: 최초 커밋은 주석에 `(min_length=1)` 이라 **적어 놓고 실제로는 안 걸어**
+      `parcels=[] → HTTP 200` 이었다. 없는 면역을 주장한 형태라 이 락으로 고정한다.
+    """
+    import routers.registry as reg
+
+    assert reg.MIN_STRATEGY_PARCELS == 1  # 계약 상수 결속(대역 금지)
+    with _boundary_client(monkeypatch) as client:
+        empty = client.post("/registry/survey/strategy", json={"parcels": []})
+    assert empty.status_code == 422, f"빈 요청이 조용히 통과했다: {empty.text[:200]}"
