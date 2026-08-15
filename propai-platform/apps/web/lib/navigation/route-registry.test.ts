@@ -64,6 +64,7 @@ describe("route registry IA gate", () => {
     expect(landRights?.children?.map((child) => child.href)).toEqual([
       "/ko/land-schedule",
       "/ko/registry-analysis",
+      "/ko/registry-analysis/quote",
       "/ko/desk-appraisal",
     ]);
     expect(acquisition?.children?.map((child) => child.href)).toEqual(["/ko/auction", "/ko/g2b"]);
