@@ -260,7 +260,7 @@ export function AccountSecurityClient({ locale }: { locale: Locale }) {
               소셜 로그인 계정은 비밀번호가 없습니다. 로그인은 연결된 소셜 계정(카카오·구글·네이버)으로 진행됩니다.
             </p>
           ) : (
-            <form className="grid gap-4" onSubmit={handleChangePassword}>
+            <form method="post" className="grid gap-4" onSubmit={handleChangePassword}>
               <label className="grid gap-2 text-sm font-medium text-[var(--text-primary)]">
                 <span>현재 비밀번호</span>
                 <Input
@@ -330,7 +330,7 @@ export function AccountSecurityClient({ locale }: { locale: Locale }) {
               </Button>
             </div>
           ) : (
-            <form className="grid gap-4" onSubmit={handleWithdraw}>
+            <form method="post" className="grid gap-4" onSubmit={handleWithdraw}>
               {isSocialOnly ? (
                 <p className="rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-3 text-sm text-[var(--text-secondary)]">
                   소셜 로그인 계정은 본인 확인을 위해 <b>최근 10분 이내에 소셜 로그인</b>한 상태에서만

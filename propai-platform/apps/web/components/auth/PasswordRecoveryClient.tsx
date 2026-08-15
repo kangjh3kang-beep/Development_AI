@@ -112,7 +112,7 @@ export function ForgotPasswordClient({ locale }: { locale: Locale }) {
       title="비밀번호 찾기"
       description="가입하신 이메일 주소를 입력하면 비밀번호 재설정 링크를 보내드립니다."
     >
-      <form className="grid gap-4" onSubmit={handleSubmit}>
+      <form method="post" className="grid gap-4" onSubmit={handleSubmit}>
         <label className="grid gap-2 text-sm font-medium text-[var(--text-primary)]">
           <span>이메일</span>
           <Input
@@ -255,7 +255,7 @@ export function ResetPasswordClient({ locale }: { locale: Locale }) {
       ) : null}
 
       {phase === "ready" ? (
-        <form className="grid gap-4" onSubmit={handleSubmit}>
+        <form method="post" className="grid gap-4" onSubmit={handleSubmit}>
           <label className="grid gap-2 text-sm font-medium text-[var(--text-primary)]">
             <span>새 비밀번호</span>
             <Input
