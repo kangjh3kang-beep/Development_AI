@@ -39,6 +39,26 @@ describe("타일 상태 집계", () => {
     expect(run(seq).last).toBe("ready");
   });
 
+  it("★상류가 회복하면 배너가 스스로 사라진다 — 회복 비용이 장애 길이에 비례하지 않는다", () => {
+    // ★종전에는 **누적**만 해서 감쇠가 없었다. 실제 로직으로 회복 비용을 계산하면
+    //   실패 10건→성공 11건 · 30건→31건 · 60건→61건 · 120건→121건이 필요했다.
+    //   지도 한 화면이 10~20타일이므로 긴 장애 뒤엔 팬을 10여 번 해야 배너가 사라진다 —
+    //   그동안 사용자는 지도가 정상 복귀했는데도 빨간 배너를 보고 '재시도'를 누른다.
+    const cost = (outage: number) => {
+      const states: string[] = [];
+      const track = makeTileStateAggregator((s) => states.push(s));
+      for (let i = 0; i < outage; i += 1) track(false);
+      expect(states.at(-1)).toBe("error");   // 공허진리 방지 — 실제로 배너가 떠 있어야 한다
+      let need = 0;
+      while (states.at(-1) !== "ready" && need < 500) { track(true); need += 1; }
+      return need;
+    };
+    const short = cost(10);
+    const long = cost(120);
+    expect(long).toBeLessThanOrEqual(short + 4);  // 장애가 12배여도 회복은 비슷해야 한다
+    expect(long).toBeLessThan(30);                // 팬 1~2회면 사라지는 수준
+  });
+
   it("표본이 적어도 성공이 하나라도 있으면 정상으로 본다(초기 깜빡임 방지)", () => {
     expect(run([false, true]).last).toBe("ready");
   });
