@@ -1108,17 +1108,46 @@ def test_그래프_계산이_던져도_분류는_살고_제척은_판정불가�
     assert len(events) == 1 and events[0][1]["geometry_unknown"] == 0
 
 
-def _capture_growth(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict[str, Any]]]:
-    """성장루프 `record_event` 를 가로챈다 — payload 를 **값으로** 확인하기 위해서다."""
+class _GrowthEvents:
+    """실제 적재된 이벤트 큐를 `(event_type, payload)` 로 보여주는 **지연 뷰**.
+
+    큐를 접근 시점에 읽으므로 요청 **전에** 만들어 두고 요청 **후에** 단언하면 된다.
+    """
+
+    def __init__(self, queue: Any) -> None:
+        self._q = queue
+
+    def _rows(self) -> list[dict[str, Any]]:
+        return list(self._q)
+
+    def __len__(self) -> int:
+        return len(self._rows())
+
+    def __getitem__(self, i: int) -> tuple[Any, dict[str, Any]]:
+        row = self._rows()[i]
+        # ★`payload` 를 돌려준다 — 화이트리스트를 **통과해 실제로 저장된** 도메인 필드만 보인다.
+        return row.get("event_type"), dict(row.get("payload") or {})
+
+    def __repr__(self) -> str:  # 실패 메시지 가독성
+        return repr([(r.get("event_type"), r.get("payload")) for r in self._rows()])
+
+
+def _capture_growth(monkeypatch: pytest.MonkeyPatch) -> _GrowthEvents:
+    """성장루프를 **실제 적재 경로로** 태운다 — `record_event` 를 스텁하지 않는다.
+
+    ★★이전 구현은 `record_event` **자체를** monkeypatch 로 갈아 끼웠다. 그러면 단언이
+      "호출부가 넘긴 dict" 를 볼 뿐이라, `record_event` **안에서** 화이트리스트
+      (`capture_service._EVENT_COLS`)가 **평면 키를 통째로 버리는** 사실을 원리적으로 볼 수 없다.
+      실측: 그 상태에서 도메인 필드 6개가 **전량 소실**되는데도 이 테스트는 초록이었다
+      — 단언 6줄이 전부 **공허한 참**이었다(검증이 실제 대상을 태우지 않는 그 형태).
+    → 큐를 비우고 **실제 적재된 row 의 `payload`** 를 단언한다. emitter 가 평면 키로 되돌아가는
+      변이가 즉시 빨갛게 뜬다.
+    ★`monkeypatch` 인자는 호출부 시그니처 호환으로 남긴다(더는 아무것도 패치하지 않는다).
+    """
     import app.services.growth.capture_service as cap
 
-    events: list[tuple[str, dict[str, Any]]] = []
-
-    def _spy(event_type: str, props: dict[str, Any] | None = None) -> None:
-        events.append((event_type, dict(props or {})))
-
-    monkeypatch.setattr(cap, "record_event", _spy)
-    return events
+    cap._QUEUE.clear()
+    return _GrowthEvents(cap._QUEUE)
 
 
 def test_성장루프_payload가_실제_판정값을_싣는다(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1495,3 +1524,57 @@ def test_빈_필지목록도_거부한다_경계는_양방향(monkeypatch: pytes
     with _boundary_client(monkeypatch) as client:
         empty = client.post("/registry/survey/strategy", json={"parcels": []})
     assert empty.status_code == 422, f"빈 요청이 조용히 통과했다: {empty.text[:200]}"
+
+
+# ── 응답 표면의 데이터 노출 경계 ──────────────────────────────────────
+# ★★P1 카드는 `analysis`(RegistryAnalysisService 원본)를 통째로 싣는데 그 안에 `pdf_url` 이
+#   있다 — `upload_registry_pdf(ttl_days=30)` 가 만든 **30일짜리 무인증 서명 URL**이다.
+#   그대로 응답에 나가면 JSON 을 가진 사람이 30일간 등기부등본 전문(소유자 실명·지분·거래가액·
+#   근저당 채권최고액)을 인증 없이 받는다. 라우터는 이 블롭을 **과금에만** 쓰므로 응답에서 뺀다.
+
+def test_응답에_등기부_원본블롭과_서명URL이_실리지_않는다(monkeypatch: pytest.MonkeyPatch) -> None:
+    """★과금 뒤 `analysis` 를 걷어냈는지 — **조립된 응답 표면 전체**를 훑어 확인한다.
+
+    키 하나만 보지 않고 응답을 직렬화해 `pdf_url` 문자열 자체를 찾는다(중첩 어디에 있어도 잡힌다).
+    """
+    import json
+
+    body = _post_strategy(
+        monkeypatch, _ring_endpoint_parcels(True),
+        scheme=HOUSING_SCHEME, district_plan_decision_date="2024-01-01",
+        housing_site_area_sqm=1100,
+    )
+    cards = body["survey"]["cards"]
+    # ★공허 진리 가드 — 카드가 0개면 "노출 없음"이 무의미하다.
+    assert len(cards) == 5, f"카드 수가 예상과 다르다: {len(cards)}"
+
+    for c in cards:
+        assert "analysis" not in c, f"원본 분석 블롭이 응답에 남았다: {c.get('parcel')}"
+
+    blob = json.dumps(body, ensure_ascii=False, default=str)
+    assert "pdf_url" not in blob, "응답에 등기부 PDF 서명 URL 이 실렸다(30일 무인증 다운로드)"
+
+    # ★반대 방향도 건다 — 필요한 표면까지 같이 사라지면 그것도 결함이다.
+    ok = [c for c in cards if c.get("status") == "ok"]
+    assert ok, "정상 카드가 하나도 없다 — 픽스처가 이 락을 공허하게 만든다"
+    assert all(c.get("registry") is not None for c in ok), "권리분석 요약(registry)까지 사라졌다"
+
+
+def test_성장루프는_payload_아래로_실어야_적재된다(monkeypatch: pytest.MonkeyPatch) -> None:
+    """★★`capture_service` 는 화이트리스트라 **평면 키를 버린다**.
+
+    이 테스트는 **실제 적재된 row** 를 본다(`record_event` 를 스텁하지 않는다) — emitter 가
+    평면 키로 되돌아가면 payload 가 비어 빨갛게 뜬다. 두 모집단을 가른다:
+    평면 전송(버려짐) vs payload 전송(보존).
+    """
+    import app.services.growth.capture_service as cap
+
+    cap._QUEUE.clear()
+    cap.record_event("__t_flat__", {"parcel_count": 5, "undecided_rows": 3})
+    cap.record_event("__t_wrapped__", {"service": "x", "payload": {"parcel_count": 5}})
+    rows = {r["event_type"]: r for r in cap._QUEUE}
+    cap._QUEUE.clear()
+
+    # 두 모집단이 **다른 결과**를 내야 잠금이다(차가 0이면 잠금이 아니다).
+    assert rows["__t_flat__"].get("payload") is None, "평면 키가 보존됐다 — 화이트리스트 전제가 바뀌었다"
+    assert rows["__t_wrapped__"]["payload"]["parcel_count"] == 5, "payload 가 보존되지 않는다"

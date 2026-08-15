@@ -749,13 +749,23 @@ async def parcel_survey_quote(
     try:
         from app.services.growth import capture_service
 
+        # ★★도메인 메타는 반드시 `payload` **아래로** 넣는다.
+        #   `capture_service._EVENT_COLS` 는 화이트리스트라 **평면 키를 조용히 버린다**
+        #   (그 파일 주석: "그 외 키는 payload 로 흡수하지 않고 버림").
+        #   실측 — 평면으로 보내면 적재 결과가 `{'event_type': 'parcel_survey_quote'}` 뿐이고
+        #   도메인 필드 4개가 **전량 소실**된다. 즉 "성장루프에 실었다"가 거짓이 된다.
+        #   ★이 규약은 형제 emitter 가 이미 주석으로 적어 둔 것이다
+        #     (`design_ingest/orchestrator.py`·`ingest_service.py`) — 그걸 안 보고 재발시켰다.
         capture_service.record_event(
             "parcel_survey_quote",
             {
-                "parcel_count": result_quote["parcel_count"],
-                "building_unknown": result_quote["building_status"]["unknown"],
-                "geometry_missing": len(result_quote["geometry"]["missing"]),
-                "cost_max": result_quote["estimated_cost"]["max"],
+                "service": "parcel_survey",
+                "payload": {
+                    "parcel_count": result_quote["parcel_count"],
+                    "building_unknown": result_quote["building_status"]["unknown"],
+                    "geometry_missing": len(result_quote["geometry"]["missing"]),
+                    "cost_max": result_quote["estimated_cost"]["max"],
+                },
             },
         )
     except Exception:  # noqa: BLE001 — 성장루프 실패가 본기능을 막지 않는다
@@ -854,6 +864,22 @@ async def parcel_purchase_strategy(
         await _charge_registry_issue(current_user.user_id, analysis, times=1)
         await _charge_registry_analysis(current_user.user_id, analysis)
 
+    # ★★③ 과금이 끝나면 **원본 분석 블롭을 응답에서 걷어낸다.**
+    #
+    #   `_build_card` 는 P1 이 낸 `analysis`(RegistryAnalysisService 원본)를 카드에 통째로 싣는데,
+    #   그 안에는 `pdf_url` 이 들어 있다 — `upload_registry_pdf(ttl_days=30)` 가 만든
+    #   **30일짜리 서명 URL**이고 **인증이 걸려 있지 않다**(`services/storage_service.py`).
+    #   즉 이 JSON 을 손에 넣은 사람은 누구나 30일간 등기부등본 전문을 내려받는다
+    #   — 소유자 실명·지분·거래가액·근저당 채권최고액/근저당권자·압류권리자까지.
+    #
+    #   ★이 블롭은 **과금 외에는 아무도 쓰지 않는다**(위 루프가 유일한 소비처). 응답에 남길
+    #     이유가 없고, 100필지면 페이로드가 수 MB 로 부푼다.
+    #   ★카드가 이미 필요한 것만 추린 `registry` 블록을 따로 갖고 있으므로 표면 손실은 없다.
+    #   ★순서 주의 — **반드시 과금 뒤**다. 앞에서 지우면 `issued_count` 가 셀 대상이 사라져
+    #     발급 성공분이 청구되지 않는다(매출 누수). 두 방향 다 결함이라 순서가 계약이다.
+    for card in survey.get("cards") or []:
+        card.pop("analysis", None)
+
     # ③ 제척 위상판정용 인접 그래프 — 실패해도 분류(본기능)는 살아 있어야 한다.
     # ★이 초기화가 사라지면 `build_parcel_graph` 가 던졌을 때 `graph` 가 미정의라 500 이 난다
     #   (예외를 흡수한 의미가 사라진다). `test_그래프_계산이_던져도_분류는_살고...` 가 잠근다.
@@ -886,14 +912,25 @@ async def parcel_purchase_strategy(
         capture_service.record_event(
             "parcel_purchase_strategy",
             {
-                "parcel_count": survey.get("parcel_count"),
-                "row_count": strategy["summary"]["row_count"],
-                # ★액션 라벨을 문자열로 다시 적으면 계약 상수와 갈라진다(상수 이름이 바뀌어도
-                #   이 줄은 조용히 0 을 세고, 성장루프는 "판정보류 없음"으로 오독한다).
-                "undecided_rows": strategy["summary"]["by_action"].get(ACTION_UNDECIDED, 0),
-                "secured_ratio_available": strategy["summary"]["secured_ratio_available"],
-                "geometry_unknown": strategy["summary"]["geometry_unknown_count"],
-                "scheme_provided": bool(req.scheme),
+                "service": "parcel_survey",
+                # ★★도메인 메타는 `payload` 아래로 — 평면 키는 화이트리스트에서 **버려진다**
+                #   (`capture_service._EVENT_COLS`). 실측: 평면으로 보내면 적재 결과가
+                #   `{'event_type': 'parcel_purchase_strategy'}` 뿐이고 아래 6개가 전량 소실됐다.
+                "payload": {
+                    "parcel_count": survey.get("parcel_count"),
+                    "row_count": strategy["summary"]["row_count"],
+                    # ★액션 라벨을 문자열로 다시 적으면 계약 상수와 갈라진다(상수 이름이 바뀌어도
+                    #   이 줄은 조용히 0 을 세고, 성장루프는 "판정보류 없음"으로 오독한다).
+                    "undecided_rows": strategy["summary"]["by_action"].get(ACTION_UNDECIDED, 0),
+                    "secured_ratio_available": strategy["summary"]["secured_ratio_available"],
+                    "geometry_unknown": strategy["summary"]["geometry_unknown_count"],
+                    "scheme_provided": bool(req.scheme),
+                    # ★`scheme_provided` 는 "문자열이 있었는가"만 본다 — **해석됐는가**는
+                    #   별개다(미등록 사업방식은 문자열이 있어도 `governing_act=None` 이라
+                    #   판정보류가 된다). 그 둘을 못 가르면 성장루프가 판정보류의 원인을
+                    #   "사용자 미입력"으로 오귀속한다 → 해석 성공 여부를 따로 싣는다.
+                    "scheme_resolved": strategy.get("legal", {}).get("governing_act") is not None,
+                },
             },
         )
     except Exception:  # noqa: BLE001 — 성장루프 실패가 본기능을 막지 않는다
