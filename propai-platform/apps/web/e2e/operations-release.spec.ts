@@ -35,50 +35,13 @@ test("maintenance, tenant, and digital twin routes stay executable", async ({
   ).toBeVisible();
 });
 
-test("agent and approval operations share the same release queue context", async ({
-  page,
-}) => {
-  await installReleaseHarness(page);
+// ── 삭제된 화면을 겨냥하던 테스트 2건을 걷어냈다(2026-08-13) ──
+// `d8f9c3da refactor(ux): … 고아 라우트 정리` 가 **10개 라우트를 의도적으로 삭제**했고,
+// 그중 셋이 이 스펙의 대상이었다 — 실측 404:
+//     /en/agent · /en/dashboard/kdx · /en/feasibility
+// 삭제된 화면을 "브라우저에서 실행 가능한가"로 검사하는 것은 의미가 없다. 제품이 되살리기로
+// 결정하면 그때 스펙도 함께 되살릴 것.
+// ★부수 관찰(제품 쪽 사실): `KdxMonitoringWorkspaceClient` 는 **어떤 page 에서도 마운트되지
+//   않는다**(컴포넌트·API 목은 남아 있다). 고아 라우트 정리가 컴포넌트까지는 정리하지 않았다.
+test.fixme("KDX 워크스페이스 진입점 — 컴포넌트만 남고 라우트가 없다(제품 결정 필요)", async () => {});
 
-  await page.goto("/en/agent");
-  await expect(
-    page.getByText("Domain agent orchestration workspace"),
-  ).toBeVisible();
-  await expect(page.getByText("Execution history")).toBeVisible();
-
-  await page
-    .getByRole("navigation", { name: "Operations navigation" })
-    .getByRole("link", { name: "Approval Ops" })
-    .click();
-  await expect(page).toHaveURL(/\/en\/approvals$/);
-  await expect(
-    page.getByRole("heading", { name: "Approval operations center" }).first(),
-  ).toBeVisible();
-  await page
-    .getByLabel("Bulk decision note (optional)")
-    .fill("Approved after approval center review.");
-  await page.getByRole("button", { name: "Approve all pending" }).click();
-
-  await expect(
-    page.getByText("No approval items match the current filters."),
-  ).toBeVisible();
-  await expect(
-    page.getByText(/Capital structure analysis completed with confidence 74%/i),
-  ).toBeVisible();
-});
-
-test("kdx and feasibility release surfaces stay browser-executable", async ({
-  page,
-}) => {
-  await installReleaseHarness(page);
-
-  await page.goto("/en/dashboard/kdx");
-  await expect(page.getByText("KDX Monitoring Center")).toBeVisible();
-  await expect(page.getByRole("banner").getByText("connected")).toBeVisible();
-
-  await page.goto("/en/feasibility");
-  await expect(page.getByText("Feasibility and LCC")).toBeVisible();
-  await page.getByRole("button", { name: "Run live feasibility" }).click();
-  await expect(page.getByText(/₩1,450,000,000/)).toBeVisible();
-  await expect(page.getByText("60m")).toBeVisible();
-});

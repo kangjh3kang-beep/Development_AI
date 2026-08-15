@@ -4,11 +4,14 @@ import {
   installReleaseHarness,
   RELEASE_PROJECT_ID,
 } from "./support/release-harness";
+import { gotoLive } from "./support/goto-live";
 
 const routes = [
   { name: "login", path: "/en/login", withSession: false },
   { name: "dashboard", path: "/en", withSession: true },
-  { name: "approval ops", path: "/en/approvals", withSession: true },
+  // ★`/en/approvals` 를 뺐다 — `d8f9c3da`(고아 라우트 정리)에서 **삭제된 라우트**다.
+  //   404 페이지는 본문이 33자뿐이라 접근성 위반이 있을 수 없어, 이 감사는 대상이 사라진 뒤에도
+  //   **조용히 초록**이었다(실측). 아래 `gotoLive` 가 앞으로 같은 일을 막는다.
   {
     name: "project contracts",
     path: `/en/projects/${RELEASE_PROJECT_ID}/contracts`,
@@ -22,7 +25,8 @@ for (const route of routes) {
     page,
   }) => {
     await installReleaseHarness(page, { withSession: route.withSession });
-    await page.goto(route.path);
+    // ★404 면 여기서 실패한다 — 감사 대상이 실재하는지를 먼저 강제한다(공허한 초록 차단).
+    await gotoLive(page, route.path);
 
     const results = await new AxeBuilder({ page })
       .withTags(["wcag2a", "wcag2aa"])
