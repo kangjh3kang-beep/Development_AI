@@ -32,8 +32,11 @@ from app.services.zoning.parcel_graph import build_parcel_graph
 
 # 사업방식 — 두 모집단(보유기간 요건 있음/없음)을 가르는 축.
 HOUSING_SCHEME = "지구단위계획 연계"          # 주택법 §22 — 보유기간 10년 요건 있음
-CONSENT_SCHEME = "가로주택정비사업"            # 소규모정비특례법 §35 — 동의율 기준(보유기간 무관)
+CONSENT_SCHEME = "재개발·재건축(정비사업)"      # 도정법 §64 — 동의율 기준(보유기간 무관·트랙 모호성 없음)
 EXPROPRIATION_SCHEME = "도시개발사업(도시개발법)"  # 도시개발법 §22 — 매도청구가 아니라 수용
+# ★소규모정비특례법 §35 **본문 단서**(「§35의2 에 따라 수용·사용할 수 있는 경우는 제외」)로
+#   시행자 유형·관리지역 여부에 따라 매도청구/수용이 갈리는 방식. `scheme` 만으로 갈리지 않는다.
+TRACK_SCHEME = "가로주택정비사업"
 
 # 행에 **숫자로** 들어와도 되는 필드의 전수. 시가·보상액이 숫자로 새면 이 집합을 벗어난다.
 # ★목록형이 아니라 **파생형**이다 — 새 숫자 필드가 생기면 자동으로 이 가드에 걸린다.
@@ -316,9 +319,14 @@ def _cand(pnu: str, area: float | None) -> dict[str, Any]:
 
 
 def test_최소_건수_조합은_면적_상위부터_고른다() -> None:
-    """★목적함수는 **하나**(최소 건수)다. 정확성 근거를 매 결과가 실어 나른다."""
+    """★목적함수는 **하나**(최소 건수)다. 정확성 근거를 매 결과가 실어 나른다.
+
+    ★픽스처 정합(2026-08-15): 종전 픽스처는 확보 6400 + 후보 5500 = 11,900㎡ 로 대지
+      10,000㎡ 를 넘는 **모순 입력**이었다(그래서 결과가 114% 였는데 아무도 안 봤다).
+      100% 초과 가드를 넣으면서 합이 대지를 넘지 않도록 고쳤다.
+    """
     out = ps.min_count_combination(
-        [_cand("A", 3000), _cand("B", 2000), _cand("C", 500)],
+        [_cand("A", 3000), _cand("B", 500), _cand("C", 100)],
         housing_site_area_sqm=10000,
         current_secured_sqm=6400,   # 목표 9500 → 부족분 3100
     )
@@ -327,6 +335,9 @@ def test_최소_건수_조합은_면적_상위부터_고른다() -> None:
     assert out["count"] == 2
     assert out["optimality"] == ps.OPTIMALITY_MIN_COUNT
     assert out["resulting_ratio_pct"] >= ps.SECURED_RATIO_THRESHOLD_PCT
+    assert out["resulting_ratio_pct"] <= 100.0, (
+        f"확보율이 100% 를 넘었다 — 불가능한 숫자다: {out['resulting_ratio_pct']}"
+    )
 
 
 def test_전부_확보해도_모자라면_빈_배열이_아니라_달성_불가를_낸다() -> None:
@@ -363,7 +374,7 @@ def test_이미_충족이면_추가_확보를_요구하지_않는다() -> None:
 def test_모든_결과가_최적성_근거와_비용_미산출_사실을_싣는다() -> None:
     """★단가 데이터가 저장소에 없다 — '최소 비용'을 흉내 내면 그 숫자가 매입 결정에 쓰인다."""
     outs = [
-        ps.min_count_combination([_cand("A", 3000), _cand("B", 2000)], 10000, 6400),
+        ps.min_count_combination([_cand("A", 3000), _cand("B", 500)], 10000, 6400),
         ps.min_count_combination([_cand("A", 100)], 10000, 6400),
         ps.min_count_combination([_cand("A", None)], 10000, 6400),
         ps.min_count_combination([_cand("A", 100)], None, None),
@@ -374,6 +385,221 @@ def test_모든_결과가_최적성_근거와_비용_미산출_사실을_싣는�
         assert out["optimality"] == ps.OPTIMALITY_MIN_COUNT, out
         assert out["price_basis"] == ps.PRICE_BASIS
         assert "단가" in out["cost_note"]
+
+
+# ══ 4-b) ★★이중계상 — 이미 확보한 면적을 후보 기여분에서 빼야 한다 ═════════
+# ★2026-08-15 실증: `secured_ratio` 의 분자는 **소유자 지분 단위**로 확보분을 셌는데
+#   후보 필터는 **필지 단위 플래그**만 봤다. 소유자 단위로만 확보된 필지가 **전체 면적**으로
+#   후보에 들어가 확보분이 두 번 세어졌고, 사용자가 **이미 100% 보유한 필지를 사라**고
+#   권고하면서 `resulting_ratio_pct = 160.0` 이라는 불가능한 숫자가 나왔다.
+#   ★기존 `_cand` 픽스처(`{pnu, area_sqm}` 뿐)는 소유자도 플래그도 없어 두 모집단을 가르지
+#     못했다 — 아래 세 픽스처가 그 구멍을 메운다.
+
+def _fully_unsecured(pnu: str, area: float) -> dict[str, Any]:
+    """(a) 전량 미확보 — 기여분 = 면적 전부."""
+    return {"pnu": pnu, "area_sqm": area, "use_right_secured": False,
+            "owners": [{"name": "남", "share": "전부", "use_right_secured": False}]}
+
+
+def _partly_secured(pnu: str, area: float) -> dict[str, Any]:
+    """(b) **부분 확보**(90%) — 기여분 = 면적의 10% 뿐이다."""
+    return {"pnu": pnu, "area_sqm": area, "owners": [
+        {"name": "우리", "share": "90%", "use_right_secured": True},
+        {"name": "남", "share": "10%", "use_right_secured": False},
+    ]}
+
+
+def _owner_level_secured(pnu: str, area: float) -> dict[str, Any]:
+    """(c) 전량 확보인데 **필지 단위 플래그가 없다**(소유자 단위로만 확보).
+
+    ★이 모집단이 결함의 진원지다 — 종전 필터 `use_right_secured is not True` 는 필지 키가
+      아예 없는 이 행을 **미확보 후보**로 통과시켰다.
+    """
+    return {"pnu": pnu, "area_sqm": area,
+            "owners": [{"name": "우리", "share": "전부", "use_right_secured": True}]}
+
+
+def test_세_모집단의_후보_기여분이_실제로_다르다() -> None:
+    """★★확보 상태 세 모집단이 **다른 기여분**을 내야 한다(차가 0이면 잠금이 아니다).
+
+    대지 10,000㎡ · 확보 9,400㎡ → 부족분 100㎡.
+    ★(b) 와 (c) 는 **면적이 1,000㎡ 로 같다** — 그래서 둘의 차이는 오직 '이미 확보된 지분'
+      에서만 나온다(면적으로는 구별되지 않는다는 것이 요점이다).
+    """
+    unsecured = ps.min_count_combination([_fully_unsecured("A", 500)], 10000, 9400)
+    partial = ps.min_count_combination([_partly_secured("B", 1000)], 10000, 9400)
+    secured = ps.min_count_combination([_owner_level_secured("C", 1000)], 10000, 9400)
+
+    # (a) 전량 미확보 → 면적 전부(500㎡)가 기여분
+    assert unsecured["status"] == ps.STATUS_OK
+    assert unsecured["combination_pnus"] == ["A"]
+    assert unsecured["added_area_sqm"] == 500.0
+    assert unsecured["already_secured_pnus"] == []
+
+    # (b) 90% 확보 → 기여분은 **100㎡ 뿐**(원면적 1,000 이 아니다)
+    assert partial["status"] == ps.STATUS_OK
+    assert partial["combination_pnus"] == ["B"]
+    assert partial["added_area_sqm"] == 100.0, (
+        f"부분 확보 필지를 **원면적**으로 셌다(이중계상): {partial}"
+    )
+    assert partial["already_secured_pnus"] == []
+
+    # (c) 전량 확보(소유자 단위만) → 후보가 아니다. 살 것이 없으니 부족분을 못 메운다.
+    assert secured["status"] == ps.STATUS_UNREACHABLE, (
+        f"이미 100% 보유한 필지를 매입 후보로 셌다: {secured}"
+    )
+    assert secured["combination_pnus"] is None
+    assert secured["already_secured_pnus"] == ["C"], secured
+
+    # ★면적이 같은 (b)·(c) 가 실제로 다른 결과를 낸다 — 확보 지분이 결과를 가른다.
+    assert partial["added_area_sqm"] != secured.get("added_area_sqm")
+    assert len({unsecured["status"], partial["status"], secured["status"]}) == 2
+
+    # ★셋을 **함께** 넣어도 같다: 기여분 상위(A 500)가 부족분 100 을 먼저 넘긴다.
+    together = ps.min_count_combination(
+        [_fully_unsecured("A", 500), _partly_secured("B", 1000), _owner_level_secured("C", 1000)],
+        10000, 9400,
+    )
+    assert together["status"] == ps.STATUS_OK
+    assert together["combination_pnus"] == ["A"], together
+    assert together["already_secured_pnus"] == ["C"]
+
+
+def test_이미_확보한_필지를_사라고_권고하지_않는다() -> None:
+    """★★재현된 결함 그대로 — 소유자 단위로만 확보된 8,000㎡ 가 **전체 면적**으로 후보에
+    들어가면, 이미 100% 보유한 필지가 1순위 추천이 되고 확보율이 **160%** 로 찍혔다."""
+    parcels = [_owner_level_secured("이미확보8000", 8000), _fully_unsecured("진짜필요2000", 2000)]
+
+    ratio = ps.secured_ratio(parcels, 10000)
+    assert ratio["secured_ratio_pct"] == 80.0  # ★전제(분자는 처음부터 옳았다)
+    assert ratio["secured_area_sqm"] == 8000.0
+
+    out = ps.min_count_combination(parcels, 10000, ratio["secured_area_sqm"])
+    assert out["status"] == ps.STATUS_OK
+    assert out["combination_pnus"] == ["진짜필요2000"], (
+        f"이미 확보한 필지를 매입 대상으로 권고했다: {out['combination_pnus']}"
+    )
+    assert out["already_secured_pnus"] == ["이미확보8000"]
+    assert out["resulting_ratio_pct"] == 100.0
+    assert out["resulting_ratio_pct"] <= 100.0
+
+
+def test_확보율_100퍼센트_초과는_숫자로_내지_않고_모순으로_거부한다() -> None:
+    """★`secured_ratio` 가 `확보면적 > 대지면적` 을 '모순'으로 거부하는 것과 **같은 규율**이다.
+    분자가 분모를 넘을 수 없다 — 넘으면 입력이 틀린 것이지 결과가 아니다."""
+    # 확보 6,000 + 후보 기여 6,000 = 12,000 > 대지 10,000 → 모순
+    out = ps.min_count_combination([_fully_unsecured("A", 6000)], 10000, 6000)
+    assert out["status"] == ps.STATUS_UNDECIDABLE, out
+    assert "resulting_ratio_pct" not in out, f"모순인데 숫자를 냈다: {out}"
+    assert out["combination_pnus"] is None
+    assert "모순" in out["reason"] and "100%" in out["reason"], out["reason"]
+
+    # ★대조군 — 합이 대지를 넘지 않으면 정상 산정된다(차가 0이면 잠금이 아니다).
+    ok = ps.min_count_combination([_fully_unsecured("A", 4000)], 10000, 6000)
+    assert ok["status"] == ps.STATUS_OK
+    assert ok["resulting_ratio_pct"] == 100.0
+    assert ok["status"] != out["status"]
+
+
+def test_최소조합_응답이_어느_경로에서도_계약키를_갖춘다() -> None:
+    """★거부 경로에서 키가 빠지면 UI 가 `undefined` 를 그린다(성공 경로만 보면 못 잡는다).
+
+    ★변이 감사 잔존 봉합(2026-08-15): `common` 의 `"already_secured_pnus": []` 초기화를
+      지워도 아무 테스트가 몰랐다 — **분모 미입력 조기 반환**은 후보 루프에 닿기 전에
+      나가므로 그 경로에서만 키가 사라진다. 전 경로를 파생형으로 태운다.
+    ★같은 이유로 전제 가드(`denom <= 0 or secured < 0`)도 함께 잠근다 — 무력화하면 부족분이
+      엉뚱한 기준으로 계산돼 근거 없는 조합이 나간다.
+    """
+    outs = {
+        "분모미입력": ps.min_count_combination([_fully_unsecured("A", 100)], None, 0),
+        "확보면적미입력": ps.min_count_combination([_fully_unsecured("A", 100)], 10000, None),
+        "면적미상": ps.min_count_combination([_cand("A", None)], 10000, 6400),
+        "달성불가": ps.min_count_combination([_fully_unsecured("A", 100)], 10000, 6400),
+        "이미충족": ps.min_count_combination([_fully_unsecured("A", 100)], 10000, 9600),
+        "산정": ps.min_count_combination([_fully_unsecured("A", 4000)], 10000, 6000),
+        "모순": ps.min_count_combination([_fully_unsecured("A", 6000)], 10000, 6000),
+    }
+    assert len(outs) == 7  # ★개수 하한 — 대상이 0개면 아래 루프는 공허하다
+
+    for label, out in outs.items():
+        for key in ("already_secured_pnus", "optimality", "price_basis",
+                    "threshold_pct", "cost_note", "disclaimer", "status", "reason"):
+            assert key in out, f"{label} 응답에 계약키 {key} 가 없다: {sorted(out)}"
+        assert isinstance(out["already_secured_pnus"], list), label
+
+    # ★전제 가드가 실제로 거부한다(무력화하면 아래 네 줄이 죽는다).
+    assert outs["분모미입력"]["status"] == ps.STATUS_UNDECIDABLE
+    assert outs["확보면적미입력"]["status"] == ps.STATUS_UNDECIDABLE
+    assert outs["분모미입력"]["combination_pnus"] is None
+    assert outs["확보면적미입력"]["combination_pnus"] is None
+    # ★대조군 — 둘 다 있으면 산정된다(차가 0이면 잠금이 아니다).
+    assert outs["산정"]["status"] == ps.STATUS_OK
+    assert outs["산정"]["status"] != outs["분모미입력"]["status"]
+
+
+@pytest.mark.asyncio
+async def test_조립부가_확보분을_후보에서_빼고_넘긴다(monkeypatch: pytest.MonkeyPatch) -> None:
+    """★★배선 락 — `build_strategy` 가 후보를 **필지 플래그로 거르면** 부분·소유자단위 확보가
+    새어 들어온다. 조립 표면에서 이중계상이 없는지 잠근다(순수함수만 고쳐도 여기서 샜다)."""
+    owners = [_owner("소유자", "전부", "2005-03-02", "매매")]
+    fixtures = {"이미확보8000": _ok_analysis(owners), "진짜필요2000": _ok_analysis(owners)}
+    parcels = [_owner_level_secured("이미확보8000", 8000), _fully_unsecured("진짜필요2000", 2000)]
+    for p in parcels:
+        p["address"] = p["pnu"]
+
+    out = ps.build_strategy(
+        await _survey(monkeypatch, fixtures, HOUSING_SCHEME), parcels,
+        scheme=HOUSING_SCHEME, housing_site_area_sqm=10000,
+    )
+    combo = out["min_count_combination"]
+    assert out["secured_ratio"]["secured_ratio_pct"] == 80.0
+    assert combo["status"] == ps.STATUS_OK, combo
+    assert combo["combination_pnus"] == ["진짜필요2000"], (
+        f"조립부가 이미 확보한 필지를 후보로 넘겼다: {combo['combination_pnus']}"
+    )
+    assert combo["already_secured_pnus"] == ["이미확보8000"]
+    assert combo["resulting_ratio_pct"] == 100.0
+
+
+@pytest.mark.asyncio
+async def test_필지플래그_필터는_필요한_필지를_빠뜨린다(monkeypatch: pytest.MonkeyPatch) -> None:
+    """★★같은 결함의 **반대 방향** — 필지 단위 플래그로 후보를 거르면 부분확보 필지의
+    **미확보 잔여 지분**이 후보에서 통째로 사라진다.
+
+    필지 플래그가 `True` 여도 소유자 지분은 60%만 확보된 필지(잔여 40% = 2,000㎡)가 있다.
+    종전 필터(`use_right_secured is not True`)는 이 필지를 **빼 버려** 도달 가능한 사업을
+    '달성 불가'로 오판했다. 후보 판정을 `_parcel_secured_area` 로 일원화하면 잔여만 들어온다.
+    """
+    owners = [_owner("소유자", "전부", "2005-03-02", "매매")]
+    parcels = [
+        {"pnu": "부분확보5000", "address": "부분확보5000", "area_sqm": 5000,
+         "use_right_secured": True,   # ★필지 플래그는 True 인데 지분은 60%만 확보다
+         "owners": [
+             {"name": "우리", "share": "60%", "use_right_secured": True},
+             {"name": "남", "share": "40%", "use_right_secured": False},
+         ]},
+        {"pnu": "미확보5000", "address": "미확보5000", "area_sqm": 5000,
+         "use_right_secured": False,
+         "owners": [{"name": "남", "share": "전부", "use_right_secured": False}]},
+    ]
+    fixtures: dict[str, Any] = {str(p["address"]): _ok_analysis(owners) for p in parcels}
+
+    out = ps.build_strategy(
+        await _survey(monkeypatch, fixtures, HOUSING_SCHEME), parcels,
+        scheme=HOUSING_SCHEME, housing_site_area_sqm=10000,
+    )
+    assert out["secured_ratio"]["secured_area_sqm"] == 3000.0  # ★전제: 5000×60%
+
+    combo = out["min_count_combination"]
+    assert combo["status"] == ps.STATUS_OK, (
+        f"도달 가능한데 조합을 내지 못했다 — 후보에서 부분확보 잔여가 빠졌다: {combo}"
+    )
+    # 부족분 9500−3000 = 6500. 잔여 기여분 5000(미확보) + 2000(부분확보 잔여) = 7000.
+    assert combo["needed_area_sqm"] == 6500.0
+    assert combo["combination_pnus"] == ["미확보5000", "부분확보5000"], combo
+    assert combo["added_area_sqm"] == 7000.0, f"부분확보 잔여 2,000㎡ 가 빠졌다: {combo}"
+    assert combo["already_secured_pnus"] == []
+    assert combo["resulting_ratio_pct"] == 100.0
 
 
 # ══ 5) 조립 표면 — build_strategy ════════════════════════════════════════
@@ -420,6 +646,12 @@ async def test_같은_필지가_사업방식에_따라_다른_행을_낸다(monk
         await _survey(monkeypatch, fixtures, CONSENT_SCHEME), parcels,
         scheme=CONSENT_SCHEME, housing_site_area_sqm=10000,
     )
+    # ★★세 번째 모집단 — 트랙(시행자 유형·관리지역)이 수단을 뒤집는 방식은 **판정보류**다.
+    #   `scheme` 만으로 "매도청구"라 단정하면 §35의2 수용 대상을 잘못 분류한다.
+    track = ps.build_strategy(
+        await _survey(monkeypatch, fixtures, TRACK_SCHEME), parcels,
+        scheme=TRACK_SCHEME, housing_site_area_sqm=10000,
+    )
 
     assert housing["summary"]["row_count"] == 2  # ★개수 하한
     assert consent["summary"]["row_count"] == 2
@@ -444,7 +676,24 @@ async def test_같은_필지가_사업방식에_따라_다른_행을_낸다(monk
     assert consent["summary"]["priority_a_count"] == 0
 
     assert housing["governing_act"] == "주택법"
-    assert consent["governing_act"] == "소규모정비특례법"
+    assert consent["governing_act"] == "도정법"
+
+    # ④ ★★소규모정비특례법 §35 본문 단서 — 트랙이 수단을 뒤집는 방식은 **판정보류**다.
+    #    같은 법령 계열인데도 `scheme` 만으로 갈리지 않는다는 사실을 액션이 반영해야 한다.
+    t = track["rows"][0]
+    assert track["governing_act"] == "소규모정비특례법"
+    assert track["legal"]["requires_track_input"] is True, (
+        "트랙 입력 필요 표시가 판정표 표면까지 전달되지 않았다"
+    )
+    assert t["action"] == ps.ACTION_UNDECIDED, (
+        f"§35의2 수용 대상이 될 수 있는 방식을 매도청구로 단정했다: {t['action_reason']}"
+    )
+    assert "§35의2" in t["action_reason"], t["action_reason"]
+    # ★세 모집단이 실제로 **다른 액션**을 낸다(차가 0이면 잠금이 아니다).
+    assert len({h["action"], c["action"], t["action"]}) == 3, (
+        f"주택법·동의율·트랙모호 세 방식이 같은 액션을 낸다: "
+        f"{h['action']}·{c['action']}·{t['action']}"
+    )
 
 
 @pytest.mark.asyncio
@@ -621,7 +870,13 @@ def test_액션_열거는_다섯이며_계약_상수와_일치한다() -> None:
         ps.ACTION_EXCLUSION_REVIEW, ps.ACTION_UNDECIDED,
     )
     assert ps.SECURED_RATIO_THRESHOLD_PCT == 95.0
+    # ★계약 **문자열 값**을 못박는다. 다른 테스트들은 필드를 상수와 비교하는데(자기참조),
+    #   그러면 값 자체는 자유라 문자열 변이가 전부 생존한다 — 값의 잠금은 여기 한 곳이다.
     assert ps.PRICE_BASIS == "시가 = 감정평가 필요"
+    assert ps.PROCEDURE_REQUIRED == "구역계 변경 — 주민공람·도시계획위원회 심의"
+    assert ps.OPTIMALITY_MIN_COUNT == "exact(k-largest 증명)"
+    assert ps.ACTION_UNDECIDED == "판정보류"
+    assert ps.PRIORITY_A_LABEL == "A(1순위 핵심관리필지)"
 
 
 # ══ 6) 엔드포인트 — P1 을 **실제로** 태우는가(소비처 0 봉합) ═══════════════
@@ -720,6 +975,221 @@ def test_엔드포인트는_사업방식_없이는_판정하지_않는다(monkey
     assert all(r["sell_claim_judgment"] == prs._JUDGMENT_OUT_OF_SCOPE for r in rows)
 
 
+# ══ 6-b) ★★라우터 배선 락 — 변이 감사에서 41개 중 22개가 생존한 자리 ═══════
+# ★2026-08-15 `scripts/mutate_changed.py --only routers/registry.py` 실행에서 아래가 **생존**했다:
+#     줄삭제 `graph = build_parcel_graph(parcels)` · `graph=graph,`
+#     줄삭제 `exclusion_candidates=req.exclusion_candidates or None,`
+#     줄삭제/문자열변경 성장루프 payload 6줄 전부
+#   근본은 **어떤 엔드포인트 테스트도 `exclusion_candidates` 를 보내지 않았다**는 것이다
+#   (`build_strategy` 가 그 인자에 게이트를 걸어 `severability()` 가 라우터를 통해서는 한 번도
+#   실행되지 않았다). 그래서 프로덕션에서 `parcel_graph` 가 던지기 시작하면 :822 의
+#   `except` 가 삼키고 **모든 제척 요청이 `severable: null` · `geometry_unknown_count: 0`** 이
+#   되어, 성장루프에 "형상 문제 없음"이라는 **거짓 신호**가 무기한 흘러든다.
+
+def _ring_endpoint_parcels(include_nogeom: bool = True) -> list[dict[str, Any]]:
+    """엔드포인트로 보낼 고리 픽스처(주소·소유자·확보여부 포함). JSON 직렬화 가능해야 한다."""
+    rows = _ring_parcels() if include_nogeom else _ring_parcels()[:4]
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        row = dict(row)
+        row["address"] = row["pnu"]
+        row["use_right_secured"] = False
+        row["owners"] = [{"name": "소유자", "share": "전부", "use_right_secured": False}]
+        out.append(row)
+    return out
+
+
+def _post_strategy(
+    monkeypatch: pytest.MonkeyPatch,
+    parcels: list[dict[str, Any]],
+    **body: Any,
+) -> dict[str, Any]:
+    owners = [_owner("소유자", "전부", "2005-03-02", "매매")]
+    _install_fake_registry(monkeypatch, {p["address"]: _ok_analysis(owners) for p in parcels})
+    with _client(monkeypatch, []) as client:
+        resp = client.post("/registry/survey/strategy", json={"parcels": parcels, **body})
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+def test_엔드포인트가_제척_집합_위상판정을_실제로_돌린다(monkeypatch: pytest.MonkeyPatch) -> None:
+    """★★`severability()` 를 **라우터를 통해** 태운다(직접 호출이 아니라).
+
+    이 테스트가 죽이는 변이: `graph = build_parcel_graph(parcels)` 줄삭제 ·
+    `graph=graph,` 줄삭제 · `exclusion_candidates=req.exclusion_candidates or None,` 줄삭제.
+    셋 중 무엇이 끊겨도 `severability` 는 `None` 이 되거나 아예 없어진다.
+    """
+    parcels = _ring_endpoint_parcels()
+    common = {"scheme": HOUSING_SCHEME, "district_plan_decision_date": "2024-01-01",
+              "housing_site_area_sqm": 1100}
+
+    pair = _post_strategy(monkeypatch, parcels, exclusion_candidates=["LEFT", "RIGHT"], **common)
+    single = _post_strategy(monkeypatch, parcels, exclusion_candidates=["LEFT"], **common)
+
+    sev_pair = pair["strategy"]["severability"]
+    sev_single = single["strategy"]["severability"]
+    assert sev_pair is not None, "제척 후보를 보냈는데 위상 판정이 응답에 없다(배선 절단)"
+    assert sev_single is not None
+
+    # ★★고리 반증이 **엔드포인트를 통해** 재현된다 — LEFT+RIGHT 를 함께 빼면 2조각이다.
+    assert sev_pair["component_count_before"] == 1
+    assert sev_pair["component_count_after"] == 2, (
+        f"집합 제거 후 재계산이 라우터 경로에서 돌지 않았다: {sev_pair}"
+    )
+    assert sev_pair["severable"] is False
+
+    # ★대조군(두 모집단) — LEFT 하나만 빼면 한 덩어리 그대로다.
+    assert sev_single["component_count_after"] == 1
+    assert sev_single["severable"] is True
+    assert sev_pair["severable"] != sev_single["severable"], "집합 판정이 필지별 판정으로 퇴화했다"
+
+    # 조립 표면까지: 분단되는 집합에는 제척검토를 권고하지 않는다.
+    pair_actions = {r["pnu"]: r["action"] for r in pair["strategy"]["rows"]}
+    single_actions = {r["pnu"]: r["action"] for r in single["strategy"]["rows"]}
+    assert len(pair_actions) == 5  # ★개수 하한
+    assert single_actions["LEFT"] == ps.ACTION_EXCLUSION_REVIEW
+    assert pair_actions["LEFT"] != ps.ACTION_EXCLUSION_REVIEW
+
+
+def test_엔드포인트가_형상_미확보_건수를_실제로_센다(monkeypatch: pytest.MonkeyPatch) -> None:
+    """★두 모집단 — 형상 미확보 필지가 섞이면 1, 전부 형상이 있으면 0.
+
+    이 값이 항상 0 이면 성장루프는 "형상 문제 없음"으로 읽는다(고칠 우선순위가 사라진다).
+    `graph = build_parcel_graph(parcels)` 가 끊기면 여기서 죽는다.
+    """
+    common = {"scheme": HOUSING_SCHEME, "district_plan_decision_date": "2024-01-01"}
+    with_unknown = _post_strategy(
+        monkeypatch, _ring_endpoint_parcels(True), housing_site_area_sqm=1100, **common
+    )
+    all_known = _post_strategy(
+        monkeypatch, _ring_endpoint_parcels(False), housing_site_area_sqm=1000, **common
+    )
+
+    a = with_unknown["strategy"]["summary"]["geometry_unknown_count"]
+    b = all_known["strategy"]["summary"]["geometry_unknown_count"]
+    assert a == 1, f"형상 미확보 1건을 세지 못했다: {a}"
+    assert b == 0, f"전부 형상이 있는데 미확보로 셌다: {b}"
+    assert a != b, "두 모집단이 같은 값을 낸다 — 그래프 배선이 끊겨도 통과한다"
+
+
+def test_그래프_계산이_던져도_분류는_살고_제척은_판정불가로_남는다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """★★리뷰가 지목한 **프로덕션 실패 시나리오** 그 자체다.
+
+    `parcel_graph` 가 던지기 시작하면 :841 의 `except` 가 삼킨다. 그때 본기능(분류)은 살아야
+    하지만, 제척은 **'가능'이 아니라 '판정 불가'** 여야 하고 형상 미확보 수는 0 이어야 한다.
+    ★`graph: ... | None = None` 초기화가 사라지면 여기서 NameError 로 500 이 난다
+    (변이 감사 생존 1건을 이 테스트가 죽인다).
+    """
+    import app.services.zoning.parcel_graph as pg
+
+    def _boom(*_a: Any, **_kw: Any) -> dict[str, Any]:
+        raise RuntimeError("shapely 실패(프로덕션 재현)")
+
+    monkeypatch.setattr(pg, "build_parcel_graph", _boom)
+    events = _capture_growth(monkeypatch)
+
+    body = _post_strategy(
+        monkeypatch, _ring_endpoint_parcels(True),
+        scheme=HOUSING_SCHEME, district_plan_decision_date="2024-01-01",
+        housing_site_area_sqm=1100, exclusion_candidates=["LEFT", "RIGHT"],
+    )
+
+    strategy = body["strategy"]
+    assert strategy["summary"]["row_count"] == 5, "그래프 실패가 본기능(분류)까지 죽였다"
+    sev = strategy["severability"]
+    assert sev["severable"] is None, f"그래프가 없는데 제척을 확정 판정했다: {sev}"
+    assert "인접 그래프" in sev["reason"], sev["reason"]
+    # ★제척검토를 권고하면 안 된다 — 근거가 없다.
+    actions = {r["action"] for r in strategy["rows"]}
+    assert ps.ACTION_EXCLUSION_REVIEW not in actions, actions
+    # ★성장루프는 계속 돈다(0 이라는 값 자체는 그래프 실패의 결과다 — 위 sev 가 그 사실을 말한다).
+    assert len(events) == 1 and events[0][1]["geometry_unknown"] == 0
+
+
+def _capture_growth(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict[str, Any]]]:
+    """성장루프 `record_event` 를 가로챈다 — payload 를 **값으로** 확인하기 위해서다."""
+    import app.services.growth.capture_service as cap
+
+    events: list[tuple[str, dict[str, Any]]] = []
+
+    def _spy(event_type: str, props: dict[str, Any] | None = None) -> None:
+        events.append((event_type, dict(props or {})))
+
+    monkeypatch.setattr(cap, "record_event", _spy)
+    return events
+
+
+def test_성장루프_payload가_실제_판정값을_싣는다(monkeypatch: pytest.MonkeyPatch) -> None:
+    """★★payload 6줄이 전부 무잠금이었다 — 줄삭제·문자열변경 변이가 모두 생존했다.
+
+    ★식별자(pnu·주소)는 보내지 않는다. 보낼 가치가 있는 것은 **플랫폼이 고쳐야 할 신호**다.
+    """
+    events = _capture_growth(monkeypatch)
+    body = _post_strategy(
+        monkeypatch, _ring_endpoint_parcels(True),
+        scheme=HOUSING_SCHEME, district_plan_decision_date="2024-01-01",
+        housing_site_area_sqm=1100, exclusion_candidates=["LEFT"],
+    )
+
+    assert len(events) == 1, f"성장루프 이벤트가 정확히 1건이 아니다: {events}"
+    name, props = events[0]
+    assert name == "parcel_purchase_strategy", name
+
+    summary = body["strategy"]["summary"]
+    assert props["parcel_count"] == 5
+    assert props["row_count"] == summary["row_count"] == 5
+    assert props["geometry_unknown"] == summary["geometry_unknown_count"] == 1
+    assert props["secured_ratio_available"] is True
+    assert props["scheme_provided"] is True
+    assert props["undecided_rows"] == 0
+
+    # ★식별자 유출 금지 — 필지 식별자·주소는 payload 에 들어가면 안 된다.
+    blob = " ".join(f"{k}={v}" for k, v in props.items())
+    for pnu in ("LEFT", "RIGHT", "TOP", "BOTTOM", "NOGEOM"):
+        assert pnu not in blob, f"성장루프 payload 에 식별자가 실렸다: {blob}"
+
+
+def test_성장루프_판정보류_집계가_계약_상수에_결속된다(monkeypatch: pytest.MonkeyPatch) -> None:
+    """★`by_action.get("판정보류")` 처럼 라벨을 **다시 적으면** 계약 상수와 갈라진다 —
+    상수가 바뀌어도 이 줄은 조용히 0 을 세고 성장루프는 '판정보류 없음'으로 오독한다.
+
+    두 모집단: 사업방식 있음(판정보류 0) vs 없음(전 행 판정보류).
+    """
+    events = _capture_growth(monkeypatch)
+    parcels = _strategy_parcels()
+
+    # (A) 사업방식 없음 → 전 행이 판정보류다.
+    no_scheme = _post_strategy(
+        monkeypatch, parcels,
+        district_plan_decision_date="2024-01-01", housing_site_area_sqm=10000,
+    )
+    # (B) 사업방식 있음 → 판정보류 0.
+    with_scheme = _post_strategy(
+        monkeypatch, parcels, scheme=HOUSING_SCHEME,
+        district_plan_decision_date="2024-01-01", housing_site_area_sqm=10000,
+    )
+
+    assert len(events) == 2, events
+    props_a, props_b = events[0][1], events[1][1]
+
+    by_action_a = no_scheme["strategy"]["summary"]["by_action"]
+    assert by_action_a[ps.ACTION_UNDECIDED] == 2, by_action_a
+    assert props_a["undecided_rows"] == by_action_a[ps.ACTION_UNDECIDED] == 2, (
+        f"판정보류 집계가 계약 상수와 갈라졌다: {props_a}"
+    )
+    assert props_a["scheme_provided"] is False
+    assert props_a["secured_ratio_available"] is True
+
+    assert with_scheme["strategy"]["summary"]["by_action"][ps.ACTION_UNDECIDED] == 0
+    assert props_b["undecided_rows"] == 0
+    assert props_b["scheme_provided"] is True
+    # ★차가 0이면 잠금이 아니다.
+    assert props_a["undecided_rows"] != props_b["undecided_rows"]
+    assert props_a["scheme_provided"] != props_b["scheme_provided"]
+
+
 def test_엔드포인트는_인증을_요구한다() -> None:
     """★요율·정책은 계정 컨텍스트에 딸린 정보다(무인증 발급 금지)."""
     import routers.registry as reg
@@ -787,7 +1257,7 @@ def test_out_of_scope_사유가_주택법_전용_요건임을_밝힌다() -> Non
         _owner("소유자", "전부", "2005-03-02", "매매"), None, None, CONSENT_SCHEME
     )
     reason = consent["sell_claim_reason"]
-    assert "소규모정비특례법" in reason, reason
+    assert "도정법" in reason, reason
     assert "주택법" in reason, "보유기간 요건이 어느 법 소관인지 밝히지 않았다"
     assert "보유기간" in reason and "10년" in reason, reason
 
@@ -798,6 +1268,18 @@ def test_out_of_scope_사유가_주택법_전용_요건임을_밝힌다() -> Non
         f"근거법령이 트랙에 따라 갈린다는 사실이 사유에 없다: {track['sell_claim_reason']}"
     )
     assert track["sell_claim_reason"] != reason, "모호 방식과 동의율 방식이 같은 사유를 낸다"
+
+    # ★소규모정비 트랙 — 근거법령은 **확정**이고 갈리는 것은 **수단**이다. 아는 법령 이름까지
+    #   지워 버리면 사용자가 무엇을 보완해야 하는지 알 수 없다(세 사유가 전부 달라야 한다).
+    small = prs._judge_owner(
+        _owner("소유자", "전부", "2005-03-02", "매매"), None, None, TRACK_SCHEME
+    )
+    small_reason = small["sell_claim_reason"]
+    assert "소규모정비특례법" in small_reason, small_reason
+    assert "트랙" in small_reason and "시행자" in small_reason, small_reason
+    assert len({reason, track["sell_claim_reason"], small_reason}) == 3, (
+        "동의율·법령모호·수단모호 세 사유가 구별되지 않는다"
+    )
 
 
 @pytest.mark.asyncio

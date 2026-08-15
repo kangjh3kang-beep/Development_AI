@@ -310,7 +310,29 @@ def main() -> int:
             if no in skip:
                 continue      # 여러 줄 문자열(독스트링) 내부 — 코드가 아니다
             muts.extend(_mutations_for_line(f, line, no))
-    muts = muts[: args.max]
+    # ★★상한 절단은 **절대 조용히 하지 않는다.** 잘린 부분은 감사되지 않았는데, 그 사실을
+    #   안 알리면 "생존 N건"이 전수 결과로 읽힌다 — 이 도구가 잡으려는 '공허한 초록'을
+    #   이 도구가 저지르는 꼴이다.
+    #   ★실증(2026-08-15): `--max 300` 을 준 실행이 **정확히 300건에서 소스 순서로 잘려**
+    #     변경 파일 하나에 변이가 **0건** 배정됐고, 신규 로직에는 도달조차 못 했다. 그런데도
+    #     출력은 평온해서 "34 생존"이 전수 감사로 보고될 뻔했다. 같은 함정에 두 사람이
+    #     연달아 빠졌다 — 침묵이 원인이었다.
+    total_generated = len(muts)
+    if total_generated > args.max:
+        dropped = total_generated - args.max
+        muts = muts[: args.max]
+        by_file: dict[str, int] = {}
+        for m in muts:
+            by_file[m.path.name] = by_file.get(m.path.name, 0) + 1
+        print(
+            f"⚠️  상한 절단 — 생성 {total_generated}건 중 **{dropped}건을 버렸다**"
+            f"(--max {args.max}).\n"
+            f"    절단은 **소스 순서**라 뒤쪽 파일·뒤쪽 함수가 통째로 빠진다. "
+            f"이 실행은 **전수 감사가 아니다**.\n"
+            f"    실제 배정: "
+            + " · ".join(f"{k} {v}건" for k, v in by_file.items())
+            + f"\n    전수로 돌리려면 `--max {total_generated}` 이상을 주거나 `--only` 로 좁혀라.\n"
+        )
 
     print(f"대상 파일 {len(files)}개 · 테스트 {rel_tests} · 변이 {len(muts)}건\n")
 

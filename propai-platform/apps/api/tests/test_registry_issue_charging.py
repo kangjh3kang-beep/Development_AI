@@ -95,6 +95,70 @@ def test_일괄조회는_성공한_건수만_센다() -> None:
     assert issued_count(all_fail) != issued_count(all_ok), "차가 0이면 잠금이 아니다"
 
 
+# ── 캐시 적중(2026-08-15) — **같은 결함 클래스의 두 번째 발생** ───────────────
+# ★`RegistryAnalysisService.analyze()` 는 캐시 적중 시 `{**cached, "cached": True}` 를 돌려준다.
+#   `status` 는 `"ok"`, `origin` 도 원본 그대로라 **발급 성공과 구별되지 않는다**.
+#   `analysis_charged` 는 `cached` 를 보고 건너뛰었는데 `issued_count` 는 **보지 않았다** —
+#   같은 파일, 같은 결함 클래스가 두 번째로 났다(2026-08-12 는 블랙리스트 실패판정이었다).
+#   실측: 같은 20필지로 `/registry/survey/strategy` 를 두 번 부르면 외부 발급 0건인데
+#   두 번째에 24,000원이 청구됐다. 캐시는 DB 영속·세션 공유라 다른 세션에서도 터진다.
+
+def test_캐시_적중은_한_건도_과금하지_않는다() -> None:
+    """★캐시 = 외부 발급 없음. `status:"ok"`·`origin:"hyphen"` 이어도 0 이어야 한다."""
+    cached = {"status": "ok", "origin": "hyphen", "data": {"x": 1}, "cached": True}
+    assert issued_count(cached) == 0, "캐시 적중에 발급료가 재청구된다(외부 발급 0건)"
+
+    # ★두 모집단을 가른다 — 같은 응답에서 `cached` 만 뗀 것은 **1** 이다(차가 0이면 잠금이 아니다).
+    fresh = {k: v for k, v in cached.items() if k != "cached"}
+    assert issued_count(fresh) == 1
+    assert issued_count(cached) != issued_count(fresh)
+
+
+def test_일괄응답의_캐시_건만_빠지고_신규는_과금된다() -> None:
+    """★일괄에서도 **건 단위**로 갈린다 — 통째로 0 이 되거나 통째로 세면 둘 다 틀렸다."""
+    bulk = {"results": [
+        {"status": "ok", "origin": "hyphen"},                 # 신규 발급 → 1
+        {"status": "ok", "origin": "hyphen", "cached": True},  # 캐시 → 0
+        {"status": "ok", "origin": "tilko", "cached": True},   # 캐시 → 0
+    ]}
+    assert issued_count(bulk) == 1, f"캐시 2건이 함께 청구됐다: {issued_count(bulk)}"
+
+
+def test_발급과_분석_판정이_캐시를_같은_방식으로_본다() -> None:
+    """★두 판정이 갈라져 있었다 — 한쪽만 고치면 다음 사람이 반대쪽을 또 놓친다.
+    네 모집단(신규ok·캐시ok·실패·빈값)에서 **둘의 판단이 일치**하는지 못박는다."""
+    from routers.registry import analysis_charged
+
+    fresh_ok = {"status": "ok", "origin": "hyphen", "ai": {"grade": "A"}}
+    cached_ok = {**fresh_ok, "cached": True}
+    failed = {"status": "provider_error", "origin": "hyphen", "ai": None}
+    empty: dict[str, Any] = {}
+
+    assert (issued_count(fresh_ok), analysis_charged(fresh_ok)) == (1, True)
+    assert (issued_count(cached_ok), analysis_charged(cached_ok)) == (0, False)
+    assert (issued_count(failed), analysis_charged(failed)) == (0, False)
+    assert (issued_count(empty), analysis_charged(empty)) == (0, False)
+
+
+@pytest.mark.asyncio
+async def test_집행_함수도_캐시에는_한_푼도_쓰지_않는다(monkeypatch: pytest.MonkeyPatch) -> None:
+    """★판정이 아니라 **집행**을 태운다 — 실제로 `charge_service` 가 불리는지 본다.
+    (판정만 잠그면 `_charge_registry_issue` 가 판정을 무시하는 변이가 생존한다.)"""
+    from routers.registry import _charge_registry_analysis, _charge_registry_issue
+
+    charged = _spy_billing(monkeypatch)
+    cached = {"status": "ok", "origin": "hyphen", "ai": {"grade": "A"}, "cached": True}
+    await _charge_registry_issue("u1", cached, times=1)
+    await _charge_registry_analysis("u1", cached)
+    assert charged == [], f"캐시 적중에 {len(charged)}건이 청구됐다: {charged}"
+
+    # ★대조군 — 캐시 표시만 떼면 발급·분석 각 1건이 나간다(차가 0이면 잠금이 아니다).
+    fresh = {k: v for k, v in cached.items() if k != "cached"}
+    await _charge_registry_issue("u1", fresh, times=1)
+    await _charge_registry_analysis("u1", fresh)
+    assert charged == ["registry_issue", "registry_analysis"], charged
+
+
 @pytest.mark.asyncio
 async def test_라우트가_실패결과를_과금통로에_그대로_넘긴다(monkeypatch: pytest.MonkeyPatch) -> None:
     """라우트가 **실패 결과를** 과금 통로로 넘기는지까지만 본다.

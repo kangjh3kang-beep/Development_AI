@@ -42,7 +42,7 @@ from __future__ import annotations
 
 import re
 from fractions import Fraction
-from typing import Any
+from typing import Any, NamedTuple
 
 # 보유기간(10년) 요건이 존재하는 유일한 법령 계열 — 정책표(MAGDO_RULES) SSOT 를 그대로 쓴다.
 # ★여기서 "주택법" 문자열을 다시 적으면 정책표와 갈라진다(전역 값은 한 곳에서만 산다).
@@ -179,6 +179,68 @@ def _owner_secured(owner: dict[str, Any], parcel_flag: bool | None) -> bool | No
     return parcel_flag
 
 
+class _SecuredArea(NamedTuple):
+    """`_parcel_secured_area()` 의 반환 — 필지 하나의 면적·**이미 확보된 면적**·미상 사유."""
+
+    area_sqm: float | None          # 면적 미상이면 None
+    secured_sqm: float | None       # ★None = "확보 면적을 알 수 없다"(0 이 아니다)
+    unparsed_share: bool            # 확보 소유자의 지분 표기를 못 읽었다
+    undetermined_secured: bool      # 확보 여부(True/False) 자체가 미상이다
+
+
+def _parcel_secured_area(parcel: dict[str, Any]) -> _SecuredArea:
+    """필지 하나의 **이미 확보된 면적**(= 면적 × 확보 지분합). 확보 판정의 **단일 출처**다.
+
+    ★★이 함수가 존재하는 이유는 실제로 갈라졌기 때문이다(2026-08-15 실증). `secured_ratio` 의
+      분자는 **소유자 지분 단위**로 확보분을 셌는데, 최소건수 조합의 후보 필터는 **필지 단위
+      플래그**(`use_right_secured is not True`)만 봤다. 그래서 소유자 단위로만 확보된(또는
+      부분 확보된) 필지가 **전체 면적 그대로** 후보에 들어가, 이미 분자에 들어간 확보분을
+      **두 번** 셌다:
+
+          이미확보8000(소유자 지분 전부 확보) + 진짜필요2000 · 대지 10,000㎡
+          → 확보율 80%(확보면적 8000) 인데 **추천 매입 = 이미확보8000**(이미 100% 보유한 필지!)
+          → `resulting_ratio_pct` = **160.0%** (불가능한 숫자)
+
+      같은 판정이 두 곳에 살면 반드시 갈라진다 — 그래서 `secured_ratio` 와
+      `min_count_combination` 이 **둘 다 이 함수만** 호출한다(로직 복제 금지).
+
+    ★미상은 0 으로 접지 않는다: 확보 여부·지분을 못 읽으면 `secured_sqm=None` 을 돌려주고,
+      그 사실을 두 불리언으로 함께 실어 보낸다(호출부가 사유별로 다르게 처리해야 한다).
+    """
+    area = _parcel_area(parcel)
+
+    parcel_flag = parcel.get("use_right_secured")
+    parcel_flag = parcel_flag if isinstance(parcel_flag, bool) else None
+    owners = [o for o in (parcel.get("owners") or []) if isinstance(o, dict)]
+
+    if not owners:
+        # 소유자 구조가 없으면 필지 단위 플래그가 곧 전 지분(1.0)이다. 미상이면 미상이다.
+        if parcel_flag is None:
+            return _SecuredArea(area, None, False, True)
+        share = 1.0 if parcel_flag else 0.0
+        return _SecuredArea(area, None if area is None else area * share, False, False)
+
+    share_sum = 0.0
+    unparsed = False
+    undetermined = False
+    for o in owners:
+        sec = _owner_secured(o, parcel_flag)
+        if sec is None:
+            undetermined = True
+            continue
+        if not sec:
+            continue  # 미확보 지분은 확보면적에 안 들어간다 — 지분 파싱도 불필요
+        r = _share_ratio(o.get("share"))
+        if r is None:
+            unparsed = True
+            continue
+        share_sum += r
+
+    if area is None or unparsed or undetermined:
+        return _SecuredArea(area, None, unparsed, undetermined)
+    return _SecuredArea(area, area * min(share_sum, 1.0), unparsed, undetermined)
+
+
 def secured_ratio(
     parcels: list[dict[str, Any]] | None,
     housing_site_area_sqm: float | None,
@@ -209,38 +271,19 @@ def secured_ratio(
 
     for idx, p in enumerate(rows):
         pid = _pnu_of(p, idx)
-        area = _parcel_area(p)
-        if area is None:
+        # ★확보면적 계산은 **공용 헬퍼 하나**만 쓴다 — 최소건수 조합의 후보 기여분도 같은
+        #   함수를 쓴다(두 곳에서 따로 세다가 이중계상이 났다. `_parcel_secured_area` 참조).
+        got = _parcel_secured_area(p)
+        if got.area_sqm is None:
             missing_area.append(pid)
             continue
-        row_area_sum += area
-
-        parcel_flag = p.get("use_right_secured")
-        parcel_flag = parcel_flag if isinstance(parcel_flag, bool) else None
-        owners = [o for o in (p.get("owners") or []) if isinstance(o, dict)]
-
-        if not owners:
-            # 소유자 구조가 없으면 필지 단위 플래그가 곧 전 지분(1.0)이다. 미상이면 거부.
-            if parcel_flag is None:
-                undetermined_secured.append(pid)
-            elif parcel_flag:
-                secured_area += area
-            continue
-
-        share_sum = 0.0
-        for o in owners:
-            sec = _owner_secured(o, parcel_flag)
-            if sec is None:
-                undetermined_secured.append(pid)
-                continue
-            if not sec:
-                continue  # 미확보 지분은 분자에 안 들어간다 — 지분 파싱도 불필요
-            r = _share_ratio(o.get("share"))
-            if r is None:
-                unparsed_share.append(pid)
-                continue
-            share_sum += r
-        secured_area += area * min(share_sum, 1.0)
+        row_area_sum += got.area_sqm
+        if got.unparsed_share:
+            unparsed_share.append(pid)
+        if got.undetermined_secured:
+            undetermined_secured.append(pid)
+        if got.secured_sqm is not None:
+            secured_area += got.secured_sqm
 
     if denom <= 0:
         return {
@@ -449,11 +492,16 @@ def severability(
 # ── 95% 도달 최소 **건수** 조합 ────────────────────────────────────────────
 
 def min_count_combination(
-    unsecured_parcels: list[dict[str, Any]] | None,
+    candidate_parcels: list[dict[str, Any]] | None,
     housing_site_area_sqm: float | None,
     current_secured_sqm: float | None,
 ) -> dict[str, Any]:
     """95% 확보에 필요한 **최소 건수** 조합. 목적함수는 **하나**다.
+
+    ★★후보의 기여분은 **면적 − 이미 확보된 면적**이다(원면적이 아니다). 원면적을 쓰면
+      `current_secured_sqm` 에 이미 들어간 확보분을 **두 번** 세게 되어, 사용자가 이미 100%
+      보유한 필지를 "사라"고 권고하고 확보율 160% 라는 불가능한 숫자를 낸다(실증 2026-08-15).
+      기여분이 0 인 필지(전량 확보)는 후보 목록에서 **아예 뺀다** — 살 것이 없는 필지다.
 
     ★"최소 비용/최소 건수"를 한 함수에 섞지 않는다 — 두 목적은 최적해가 다르다(워크드 예제:
       면적 그리디 1필지 30억 vs 최소비용 2필지 7억, 4.3배). 이 저장소에는 **단가 필드가 어디에도
@@ -468,10 +516,13 @@ def min_count_combination(
     ★전부 확보해도 95% 에 못 미치면 빈 배열이 아니라 `"달성 불가"` 를 명시한다 —
       빈 배열은 "쉽다"로 오독된다.
     """
-    rows = [p for p in (unsecured_parcels or []) if isinstance(p, dict)]
-    common = {
+    rows = [p for p in (candidate_parcels or []) if isinstance(p, dict)]
+    common: dict[str, Any] = {
         "optimality": OPTIMALITY_MIN_COUNT,
         "threshold_pct": SECURED_RATIO_THRESHOLD_PCT,
+        # ★기여분 0(=이미 전량 확보)으로 후보에서 빠진 필지를 **표면에 드러낸다**.
+        #   조용히 빼면 "왜 이 필지가 추천에 없지?"를 사용자가 알 수 없다.
+        "already_secured_pnus": [],
         "cost_note": (
             "최소 **비용** 조합은 산출하지 않습니다 — 이 플랫폼에 필지 단가 데이터가 없습니다. "
             "단가 입력이 생기면 별도 탐색으로 추가합니다(면적 최소건수와 최적해가 다릅니다)."
@@ -501,14 +552,26 @@ def min_count_combination(
         }
 
     missing: list[str] = []
+    already_secured: list[str] = []
     candidates: list[tuple[str, float]] = []
     for idx, p in enumerate(rows):
         pid = _pnu_of(p, idx)
-        area = _parcel_area(p)
-        if area is None:
+        got = _parcel_secured_area(p)   # ★확보면적 판정의 단일 출처(분자와 같은 함수)
+        if got.area_sqm is None:
             missing.append(pid)
             continue
-        candidates.append((pid, area))
+        # ★확보 정보가 아예 없는 행은 확보분 0 으로 본다 — 이 인자는 '매입 후보'이고,
+        #   조립 경로(`build_strategy`)는 **확보율이 산정된 경우에만** 기준선을 넘긴다.
+        #   확보율 산정 = 모든 행의 확보 여부·지분이 확정됐다는 뜻이라, 그 경로에서
+        #   `secured_sqm is None` 은 나오지 않는다(미상은 확보율 단계에서 이미 거부된다).
+        already = 0.0 if got.secured_sqm is None else got.secured_sqm
+        remaining = got.area_sqm - already
+        if remaining <= 0:
+            already_secured.append(pid)   # 이미 전량 확보 — 살 것이 없다(후보가 아니다)
+            continue
+        candidates.append((pid, remaining))
+
+    common["already_secured_pnus"] = sorted(set(already_secured))
 
     if missing:
         return {
@@ -557,11 +620,30 @@ def min_count_combination(
     ordered = sorted(candidates, key=lambda x: (-x[1], x[0]))
     picked: list[str] = []
     acc = 0.0
-    for pid, area in ordered:
+    for pid, remaining in ordered:
         picked.append(pid)
-        acc += area
+        acc += remaining
         if acc >= needed:
             break
+
+    # ★★확보율 100% 초과는 **결과가 아니라 버그다** — 숫자로 내지 않는다.
+    #   `secured_ratio` 가 `secured_area > denom` 을 '모순'으로 거부하는 것과 같은 규율이다
+    #   (분자가 분모를 넘을 수 없다). 이중계상이 살아 있던 동안 이 자리에서 실제로 160% 가
+    #   찍혔다 — 그때 이 가드가 있었다면 틀린 실행 지시가 조용히 나가지 않았을 것이다.
+    if secured + acc > denom * 1.0001:
+        return {
+            **common,
+            "status": STATUS_UNDECIDABLE,
+            "reason": (
+                f"확보면적({round(secured, 2)}㎡) + 추가 확보면적({round(acc, 2)}㎡)이 "
+                f"주택건설대지면적({round(denom, 2)}㎡)을 넘습니다 — 입력이 서로 모순되어 "
+                "조합을 내지 않습니다(확보율은 100% 를 넘을 수 없습니다)."
+            ),
+            "combination_pnus": None,
+            "needed_area_sqm": round(needed, 2),
+            "available_area_sqm": round(total_available, 2),
+            "missing_area_pnus": [],
+        }
 
     return {
         **common,
@@ -573,7 +655,7 @@ def min_count_combination(
         "resulting_ratio_pct": round((secured + acc) / denom * 100.0, 4),
         "missing_area_pnus": [],
         "reason": (
-            f"면적 상위 {len(picked)}필지({round(acc, 2)}㎡)를 먼저 확보하면 부족분"
+            f"미확보 기여분 상위 {len(picked)}필지({round(acc, 2)}㎡)를 먼저 확보하면 부족분"
             f"({round(needed, 2)}㎡)을 넘겨 {SECURED_RATIO_THRESHOLD_PCT}% 에 도달합니다. "
             "그 시점부터 잔여 전부에 매도청구가 가능해집니다(주택법 §22①1호)."
         ),
@@ -587,6 +669,7 @@ def _row_action(
     owner_judgment: str | None,
     governing_act: str | None,
     instrument: str | None,
+    requires_track_input: bool,
     ratio_known: bool,
     meets_threshold: bool,
     in_exclusion_set: bool,
@@ -600,6 +683,17 @@ def _row_action(
         return ACTION_UNDECIDED, (
             "사업방식의 근거법령이 확정되지 않아(미지정 또는 트랙 입력 필요) 강제취득 수단을 "
             "말할 수 없습니다."
+        )
+    # ①-b 근거법령은 확정이어도 **강제취득 수단**이 트랙에 따라 갈리면 액션을 단정할 수 없다.
+    #     소규모정비특례법 §35 **본문 단서**: 「§35의2 에 따라 수용·사용할 수 있는 경우는 제외」
+    #     → 소규모재개발·관리지역 가로주택(공공시행)은 **수용**이라 매도청구 대상이 아니다.
+    #     `scheme` 만으로 갈리지 않는다 — 시행자 유형·관리지역 여부가 분류를 뒤집는다.
+    #     ★역세권 활성화(근거법령 자체가 모호)와 **같은 기제**를 쓴다(정책표 하나로 관리).
+    if requires_track_input:
+        return ACTION_UNDECIDED, (
+            f"근거법령은 {governing_act}이나 강제취득 수단이 사업 트랙(시행자 유형·관리지역 "
+            "여부)에 따라 매도청구/수용으로 갈립니다 — 트랙이 입력되기 전에는 액션을 확정하지 "
+            "않습니다(소규모정비특례법 §35 본문 단서: §35의2 수용 대상 제외)."
         )
     # ② 주택법 계열인데 보유기간 판정이 보류면(기준일·취득일 부재) 행을 확정하지 않는다.
     if housing_act and owner_judgment not in ("가능(원칙)", "불가(장기보유 추정)"):
@@ -679,6 +773,9 @@ def build_strategy(
     profile = scheme_legal_profile(scheme) or {}
     governing_act = profile.get("governing_act")
     instrument = profile.get("instrument")
+    # ★`instrument` 는 트랙이 확정된 뒤에만 단정할 수 있다 — 정책표가 그 사실을 이 플래그로
+    #   실어 나른다(값만 보고 "매도청구"라 단정하면 §35의2 수용 대상을 오분류한다).
+    requires_track_input = bool(profile.get("requires_track_input"))
 
     ratio = secured_ratio(rows_in, housing_site_area_sqm)
     ratio_known = ratio.get("status") == STATUS_OK
@@ -688,10 +785,14 @@ def build_strategy(
     exclusion_set = set(str(x) for x in (exclusion_candidates or []))
     exclusion_ok = sev.get("severable") if isinstance(sev, dict) else None
 
-    # 미확보 필지 = 확보 플래그가 명시적 True 가 아닌 행(모름은 미확보로 **낙관하지 않는다**).
-    unsecured = [p for p in rows_in if p.get("use_right_secured") is not True]
+    # ★★후보는 **전 행**을 그대로 넘긴다. 종전에는 여기서 `use_right_secured is not True` 로
+    #   걸렀는데, 그 필터는 **필지 단위 플래그**만 보고 `secured_ratio` 의 분자는 **소유자 지분
+    #   단위**로 셌다 — 두 판정이 갈라져, 소유자 단위로만 확보된(또는 부분 확보된) 필지가
+    #   확보분과 후보에 **동시에** 잡히는 이중계상이 났다(확보율 160%·이미 가진 필지를 매입 추천).
+    #   기여분(면적 − 이미 확보면적)과 전량 확보 제외는 `min_count_combination` 이 같은 공용
+    #   헬퍼(`_parcel_secured_area`)로 판정한다 — 필터를 두 곳에 두지 않는다.
     combo = min_count_combination(
-        unsecured,
+        rows_in,
         housing_site_area_sqm,
         ratio.get("secured_area_sqm") if ratio_known else current_secured_sqm,
     )
@@ -737,6 +838,7 @@ def build_strategy(
                 owner_judgment=judgment,
                 governing_act=governing_act,
                 instrument=instrument,
+                requires_track_input=requires_track_input,
                 ratio_known=ratio_known,
                 meets_threshold=meets,
                 in_exclusion_set=in_excl,

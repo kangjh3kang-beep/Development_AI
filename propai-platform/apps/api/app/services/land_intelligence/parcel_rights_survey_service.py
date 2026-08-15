@@ -186,6 +186,18 @@ def _out_of_scope_reason(scheme: str | None, profile: dict[str, Any] | None) -> 
             "확정할 수 없습니다. " + tail
         )
     if profile.get("requires_track_input"):
+        # ★트랙 모호성은 **두 형태**다 — 근거법령 자체가 갈리는 경우(역세권 활성화)와,
+        #   근거법령은 확정이되 **강제취득 수단**이 갈리는 경우(소규모정비특례법 §35 본문 단서:
+        #   「§35의2 에 따라 수용·사용할 수 있는 경우는 제외」 → 공공시행·관리지역 가로주택은
+        #   매도청구가 아니라 수용이다). 아는 데까지는 말한다 — 확정된 법령 이름까지 지우면
+        #   사용자가 무엇을 보완해야 하는지 알 수 없다.
+        known_act = profile.get("governing_act")
+        if known_act:
+            return (
+                f"'{scheme}'의 근거법령은 {known_act}이나, 강제취득 수단이 사업 트랙"
+                "(시행자 유형·관리지역 여부)에 따라 매도청구/수용으로 갈려 확정할 수 없습니다"
+                f"(정책표 requires_track_input). {tail}"
+            )
         return (
             f"'{scheme}'은(는) 근거법령이 사업 트랙(정비/소규모정비 준용)에 따라 갈려 확정할 수 "
             f"없습니다(정책표 requires_track_input). {tail}"

@@ -57,10 +57,25 @@ def issued_count(result: Any) -> int:
     같이 고쳐야 한다는 것을 모른다**(이 PR 이 `provider_error` 를 추가하며 실제로 놓쳤다).
     화이트리스트는 "성공을 증명하지 못하면 과금하지 않는다" 로 기본값이 안전하다.
 
+    ★★2026-08-15 — **같은 결함 클래스가 두 번째로 났다: 캐시 적중에 발급료를 재청구했다.**
+    `RegistryAnalysisService.analyze()` 는 캐시 적중 시 `{**cached, "cached": True}` 를
+    돌려주는데 `status` 는 `"ok"` 이고 `origin` 도 원본 그대로다. `analysis_charged` 는
+    `cached` 를 보고 건너뛰었지만 **이 함수는 보지 않았다** — 실측:
+    `issued_count({"status":"ok","origin":"hyphen","cached":True})` 가 **1** 을 냈다.
+
+    결과: `/registry/survey/strategy` 를 같은 20필지로 두 번 부르면 **외부 발급이 0건인데**
+    두 번째 호출에 24,000원이 청구된다. 캐시는 DB 영속·세션 공유라 다른 세션에서도 터진다.
+    호출부가 넷(단건·bulk 2곳·전략)이라 **판정 함수 한 곳**에서 막는다 — 라우트마다
+    `cached` 를 따로 보게 하면 새 호출부가 또 빠뜨린다(2026-08-12 블랙리스트와 같은 구조).
+
     - `results` 를 가진 일괄 응답은 **성공 건수만** 센다(요청 필지 수가 아니라).
     - PDF 업로드 파싱은 외부 발급이 아니므로 과금 대상이 아니다.
     """
     if not isinstance(result, dict):
+        return 0
+    # ★캐시 적중 = 외부 발급이 일어나지 않았다 → 0건. `analysis_charged` 와 **같은 자리·같은
+    #   방식**으로 본다(두 판정이 갈라지면 한쪽만 고치는 일이 반복된다).
+    if result.get("cached"):
         return 0
     if isinstance(result.get("results"), list):
         return sum(issued_count(r) for r in result["results"])
@@ -761,14 +776,27 @@ async def parcel_survey_quote(
 #   그 카드를 P2 분류기(`build_strategy`)에 먹인다(우회 금지).
 # ★계산은 전부 순수함수에 있고 이 라우터는 배선만 한다(/survey/quote 와 동일 패턴).
 
+# ★★유료 엔드포인트의 **지출 상한**. 이 엔드포인트는 필지당 실제 발급(1,200원)+분석(2,000원)을
+#   일으키므로, 입력 길이가 곧 청구액이다. 상한이 없으면 요청 하나로 임의 금액이 빠진다
+#   (800필지 = 256만원). `MAX_PARCELS_FOR_GRAPH`(200)는 **그래프 연산 비용**을 막을 뿐
+#   지갑을 막지 않는다 — 축이 다르므로 별도 상한을 둔다.
+# ★경계는 양방향으로 건다: 상한만 걸고 하한을 안 걸면 빈 요청이 조용히 통과한다(min_length=1).
+MAX_STRATEGY_PARCELS = 100
+
+
 class ParcelPurchaseStrategyRequest(BaseModel):
     """필지 목록 + 사업방식·기준일·주택건설대지면적.
 
     `scheme` 은 **기본값을 몰래 넣지 않는다** — 보유기간 10년 요건은 주택법 계열에만 있어
     방식이 없으면 판정 자체가 성립하지 않는다(미지정이면 미지정으로 판정 불가가 나온다).
+
+    ★`parcels` 에 **상한**이 있다(`MAX_STRATEGY_PARCELS`) — 유료 경로라 길이가 곧 청구액이다.
+      초과하면 422 로 거부한다(조용히 잘라내면 사용자가 뺀 필지를 모른 채 결과를 신뢰한다).
     """
 
-    parcels: list[dict[str, Any]] = Field(default_factory=list)
+    parcels: list[dict[str, Any]] = Field(
+        default_factory=list, max_length=MAX_STRATEGY_PARCELS
+    )
     scheme: str | None = None
     district_plan_decision_date: str | None = None
     housing_site_area_sqm: float | None = None
@@ -789,7 +817,10 @@ async def parcel_purchase_strategy(
       확인한 뒤 진입하는 단계이며, 실제 청구는 **발급·분석에 성공한 건수만** 집계한다
       (`issued_count`/`analysis_charged` — 실패한 조회에는 청구하지 않는다).
     """
-    from app.services.land_intelligence.parcel_purchase_strategy_service import build_strategy
+    from app.services.land_intelligence.parcel_purchase_strategy_service import (
+        ACTION_UNDECIDED,
+        build_strategy,
+    )
     from app.services.land_intelligence.parcel_rights_survey_service import (
         survey_selected_parcels,
     )
@@ -808,18 +839,26 @@ async def parcel_purchase_strategy(
     #    ★성공한 건만 청구한다: 두 헬퍼 모두 결과를 보고 판정한다(화이트리스트).
     for card in survey.get("cards") or []:
         analysis = card.get("analysis")
+        # ★이중 가드다(변이 감사 2026-08-15 — 이 조건을 무력화해도 결과가 같아 생존한다):
+        #   `analysis` 가 None 이면 `issued_count`/`analysis_charged` 가 각각 0·False 를 내므로
+        #   한 푼도 나가지 않는다. 그래도 남기는 이유는 **DB 세션을 열지 않기 위해서**다
+        #   (조회 실패가 대부분인 상황에서 유의미하다 — `_charge_registry_issue` 와 같은 이유).
         if not analysis:
             continue
         await _charge_registry_issue(current_user.user_id, analysis, times=1)
         await _charge_registry_analysis(current_user.user_id, analysis)
 
     # ③ 제척 위상판정용 인접 그래프 — 실패해도 분류(본기능)는 살아 있어야 한다.
+    # ★이 초기화가 사라지면 `build_parcel_graph` 가 던졌을 때 `graph` 가 미정의라 500 이 난다
+    #   (예외를 흡수한 의미가 사라진다). `test_그래프_계산이_던져도_분류는_살고...` 가 잠근다.
     graph: dict[str, Any] | None = None
     try:
         from app.services.zoning.parcel_graph import build_parcel_graph
 
         graph = build_parcel_graph(parcels)
     except Exception:  # noqa: BLE001 — 그래프 실패는 severability 가 '판정 불가'로 흡수한다
+        # ★로그 문구는 동작이 아니다(변이 감사 생존 — 문자열 변경은 잡히지 않는다).
+        #   **동작**의 잠금은 위 테스트가 담당한다: severable=None · 제척검토 미권고 · 200 응답.
         logger.warning("인접 그래프 계산 실패 — 제척 위상판정 미제공", exc_info=True)
 
     strategy = build_strategy(
@@ -843,7 +882,9 @@ async def parcel_purchase_strategy(
             {
                 "parcel_count": survey.get("parcel_count"),
                 "row_count": strategy["summary"]["row_count"],
-                "undecided_rows": strategy["summary"]["by_action"].get("판정보류", 0),
+                # ★액션 라벨을 문자열로 다시 적으면 계약 상수와 갈라진다(상수 이름이 바뀌어도
+                #   이 줄은 조용히 0 을 세고, 성장루프는 "판정보류 없음"으로 오독한다).
+                "undecided_rows": strategy["summary"]["by_action"].get(ACTION_UNDECIDED, 0),
                 "secured_ratio_available": strategy["summary"]["secured_ratio_available"],
                 "geometry_unknown": strategy["summary"]["geometry_unknown_count"],
                 "scheme_provided": bool(req.scheme),
