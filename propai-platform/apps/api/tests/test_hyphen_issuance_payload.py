@@ -13,8 +13,13 @@
     소유자: 우리가 읽은 `소유자`   ↔ 실제 `소유지분현황_갑구[].등기명의인`
 
 ★RC-1(주소검색 요청·응답 키)과 **같은 결함 클래스**다: 벤더가 준 것을 우리가 못 읽어
-"안 된다" 로 보였다. 사용자에게는 3주 내내 '열람 실패' 였고, 그 사이 **문서 없는 성공**은
-과금 대상으로 읽혔다(`origin=hyphen` 이므로).
+"안 된다" 로 보였다.
+
+★과금에 대해 정직하게 — `issued_count({"status":"ok","origin":"hyphen"}) == 1` 은
+`tests/test_registry_issue_charging.py` 가 **의도된 동작으로 잠가 둔 계약**이다
+(하이픈 민원캐시는 호출 시점에 차감되므로 문서를 못 읽었어도 비용은 이미 나갔다).
+따라서 이건 "과금 버그" 가 아니라 **우리가 산 문서를 못 꺼내 쓴 것**이다.
+그 3주치 청구에 대한 소급 보정은 이 PR 의 범위가 아니다.
 
 ★이 파일은 **실측한 응답 형태 그대로** 픽스처를 만든다 — 명세 화면이 아니라.
 """
@@ -38,10 +43,18 @@ def test_PDF_키_표기를_전부_본다() -> None:
     assert hc.extract_pdf_hex({"pdfHexString": "255044"}) == "255044"
     # 종전 표기도 계속 지원한다(벤더가 되돌려도 깨지지 않게).
     assert hc.extract_pdf_hex({"pdfHex": "255044"}) == "255044"
-    # 두 모집단이 실제로 다르다 — 옛 키만 보던 파서는 새 키에서 빈 문자열을 냈다.
-    assert hc.extract_pdf_hex({"pdfHexString": "255044"}) != ""
+    # ★두 모집단을 **옛 파서와 대조**해 가른다(단순 != "" 는 위 == 단언에 함의돼 공허하다).
+    live = {"pdfHexString": "255044"}          # 실측 응답 형태
+    legacy_parser = lambda d: d.get("pdfHex") or ""   # noqa: E731 — 종전 코드 그대로
+    assert legacy_parser(live) == "", "옛 파서가 실측 형태를 읽었다면 이 PR 의 전제가 틀렸다"
+    assert hc.extract_pdf_hex(live) == "255044", "새 파서가 실측 형태를 못 읽는다"
+
     assert hc.extract_pdf_hex({}) == ""
     assert hc.extract_pdf_hex({"pdfHexString": "   "}) == "", "공백만 있는 값을 문서로 치면 안 된다"
+    # 앞뒤 공백은 다듬어야 한다 — 그대로 두면 `bytes.fromhex` 가 깨진다.
+    assert hc.extract_pdf_hex({"pdfHexString": " 255044 "}) == "255044"
+    # 근거 없는 표기는 표에 없다(추측을 넣으면 다음 사람이 실측으로 읽는다).
+    assert hc.extract_pdf_hex({"pdf_hex": "255044"}) == ""
 
 
 @pytest.mark.parametrize("rows", [_OWNER_ROWS, json.dumps(_OWNER_ROWS, ensure_ascii=False)])
@@ -58,6 +71,47 @@ def test_공백_뒤에서_접힌_경우는_표기가_보존된다() -> None:
     """두 모집단을 가른다 — 단어 중간 접힘(붙여야 함) vs 공백 뒤 접힘(이미 공백 있음)."""
     assert hc.extract_owner({"소유지분현황_갑구": [{"등기명의인": "홍길동 \r\n(소유자)"}]}) == "홍길동 (소유자)"
     assert hc.extract_owner({"소유지분현황_갑구": [{"등기명의인": "주식회\r\n사가나"}]}) == "주식회사가나"
+
+
+def test_공유_필지의_소유자를_한_명으로_줄이지_않는다() -> None:
+    """★벤더는 행마다 지분을 준다 — 첫 행만 쓰면 나머지 소유자가 통째로 사라진다.
+
+    그 값이 화면·DB 캐시·외부 LLM 프롬프트 **세 표면**에 "이 필지의 소유자" 로 흐른다.
+    """
+    ol = {"소유지분현황_갑구": [
+        {"등기명의인": "김철수 (공유자)", "최종지분": "2분의 1"},
+        {"등기명의인": "박영희 (공유자)", "최종지분": "2분의 1"},
+    ]}
+    owners = hc.extract_owners(ol)
+    assert [o["name"] for o in owners] == ["김철수 (공유자)", "박영희 (공유자)"], owners
+    assert [o["share"] for o in owners] == ["2분의 1", "2분의 1"], owners
+    # 표시용 한 줄은 **축약했다는 사실이 보여야** 한다 — "김철수" 만 내면 단독으로 읽힌다.
+    # 벤더가 붙여 주는 "(공유자)" 표기는 지우지 않는다 — 그 자체가 정보다.
+    assert hc.extract_owner(ol) == "김철수 (공유자) 외 1인"
+    # ★두 모집단을 가른다: 단독은 그대로, 공유는 "외 N인".
+    single = {"소유지분현황_갑구": [{"등기명의인": "김철수 (소유자)", "최종지분": "단독소유"}]}
+    assert hc.extract_owner(single) == "김철수 (소유자)"
+    assert hc.extract_owner(single) != hc.extract_owner(ol), "차가 0이면 잠금이 아니다"
+
+
+def test_소유자_자리에_채권자나_등록번호를_넣지_않는다() -> None:
+    """★첫 판에 넣었던 폴백(`소유권에_관한_사항_갑구`·`권리자_및_기타사항`)의 재발 방지.
+
+    갑구에는 가압류·압류도 살고, 그 칸은 이름·주민등록번호·주소가 붙은 블롭이다.
+    측정한 적 없는 표를 추측으로 읽으면 **채권자가 소유자로** 나온다.
+    """
+    가압류 = {"소유권에_관한_사항_갑구": [
+        {"등기목적": "가압류", "권리자_및_기타사항": "채권자 국민은행 110111-0000000"},
+    ]}
+    assert hc.extract_owners(가압류) == [], hc.extract_owners(가압류)
+    assert hc.extract_owner(가압류) is None
+
+
+def test_리스트로_온_값에_파이썬_repr을_내지_않는다() -> None:
+    """벤더가 공유 소유자를 리스트로 주면 화면에 `['김철수', '박영희']` 가 떴다."""
+    out = hc.extract_owner({"소유자": ["김철수", "박영희"]})
+    assert out == "김철수, 박영희", out
+    assert "[" not in out and "'" not in out
 
 
 def test_종전_평평한_표기도_계속_읽는다() -> None:
@@ -85,7 +139,11 @@ class _IssuanceClient:
     def __init__(self, *a: Any, **k: Any) -> None:
         pass
 
+    captured: dict[str, Any] = {}
+
     async def post(self, url: str, headers: Any = None, json: Any = None) -> Any:  # noqa: A002
+        type(self).captured = {"url": url, "body": json}
+
         class _R:
             status_code = 200
 
@@ -130,3 +188,15 @@ async def test_열람이_문서와_소유자를_실제로_싣는다(monkeypatch:
     assert res["has_pdf"] is True, f"문서를 받았는데 has_pdf 가 False 다: {res.get('has_pdf')}"
     assert base64.b64decode(res["pdf_base64"]).startswith(b"%PDF-"), "PDF 로 복원되지 않는다"
     assert res["owner"] == "○○금융센터주식회사 (소유자)", res.get("owner")
+    assert res["owner_count"] == 1 and res["owners"][0]["share"] == "단독소유", res
+
+    # ★배선 락 — 우리가 **PDF 를 달라고 요청**하는지. 이 플래그를 "N" 으로 뒤집으면
+    #   벤더가 문서를 안 보내고 3주 장애가 그대로 재현되는데, 종전 스텁은 요청 본문을
+    #   받기만 하고 아무 것도 단언하지 않아 그 변이가 초록으로 생존했다.
+    body = _IssuanceClient.captured["body"]
+    assert body["pdfHex"] == "Y", f"PDF 를 달라고 요청하지 않는다: {body.get('pdfHex')!r}"
+    assert body["uniqNo"] == "11012012009048", body
+    assert body["searchDiv"] == "uniqNo", body
+
+    # ★MED-2 — 같은 문서를 두 번 싣지 않는다(base64 + 원본 hex = 건당 ~430KB).
+    assert "pdfHexString" not in (res["raw"].get("data") or {}), "raw 에 PDF 원본이 남아 있다"
