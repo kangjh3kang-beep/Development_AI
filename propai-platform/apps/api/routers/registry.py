@@ -177,9 +177,34 @@ async def _run_registry_job(job_id: str, params: dict[str, Any]) -> None:
         await _set_registry_job(job_id, status="error", error=str(e)[:200])
 
 
+# ── 유료·다필지 경로의 **지출/부하 상한** (형제 공용) ────────────────────
+# ★★이 상한은 원래 `/survey/strategy` **하나에만** 걸려 있었다. 그게 결함이다 —
+#   `/registry/bulk` 는 **더 오래됐고 더 많이 쓰이며 똑같이 유료**인데(아래 `times=len(items)`)
+#   상한이 없었다. CLAUDE.md D20: *"처방을 적용한 범위 = 결함이 사는 범위인지 확인하라."*
+#   신규 엔드포인트에만 방어를 걸고 **형제를 스윕하지 않은** 전형적 형태였다.
+# ★상수를 한 곳에 두는 이유: 값이 갈리면 "어느 게 진짜 상한인가"를 아무도 모르게 된다.
+MAX_BULK_ITEMS = 100
+MIN_BULK_ITEMS = 1
+
+# 토지조서 엑셀(무과금·메모리 축)은 업로드 관례와 맞춘다 —
+# `parcel_excel_service._MAX_ROWS = 500`. 과금 상한과 값이 다른 것은 **의도**다(축이 다르다).
+MAX_LAND_SCHEDULE_ROWS = 500
+
+
 class RegistryBulkRequest(BaseModel):
-    items: list[dict[str, Any]] = Field(default_factory=list, description="[{pnu?, address?}]")
-    addresses: list[str] | None = None  # 단축 입력
+    """다필지 등기부 일괄 조회. **건당 과금**이라 길이가 곧 청구액이다.
+
+    ★`items`·`addresses` 둘 다 상한을 건다 — `addresses` 는 "단축 입력"이라 같은 경로로
+      들어오므로 한쪽만 막으면 우회된다(양방향 경계, D19).
+    ★하한도 건다 — 빈 요청이 조용히 200 을 내면 사용자가 "조회됐다"로 오독한다.
+    """
+
+    items: list[dict[str, Any]] = Field(
+        default_factory=list,
+        max_length=MAX_BULK_ITEMS,
+        description="[{pnu?, address?}]",
+    )
+    addresses: list[str] | None = Field(default=None, max_length=MAX_BULK_ITEMS)  # 단축 입력
 
 
 @router.get("/status", summary="등기부 API 연동 상태")
@@ -433,8 +458,16 @@ class LandRow(BaseModel):
 
 
 class LandScheduleExcelRequest(BaseModel):
+    """토지조서 엑셀 생성. **무과금**이지만 상한을 건다 — 메모리에 워크북을 통째로 짓는다.
+
+    ★상한값은 업로드 쪽 관례(`parcel_excel_service._MAX_ROWS = 500`)에 맞춘다. 다운로드가
+      업로드보다 좁으면 **자기가 받은 조서를 되돌려받지 못하는** 비대칭이 생긴다.
+      과금 경로(`MAX_BULK_ITEMS=100`)와 값이 다른 것은 **의도적**이다 — 축이 다르다
+      (여기는 지갑이 아니라 메모리).
+    """
+
     project_name: str = "토지조서"
-    rows: list[LandRow] = Field(default_factory=list)
+    rows: list[LandRow] = Field(default_factory=list, max_length=MAX_LAND_SCHEDULE_ROWS)
 
 
 @router.post("/land-schedule/excel", summary="토지조서 엑셀 다운로드")
@@ -713,9 +746,14 @@ async def _llm_extract_land_schedule(all_rows: list[list[str]]) -> list[dict[str
 # ★계산은 순수함수(`parcel_survey_quote_service`)에 있고 이 라우터는 배선만 한다.
 
 class ParcelSurveyQuoteRequest(BaseModel):
-    """필지 목록. 각 행은 `pnu`/`address` 와 선택적 `has_building`·`geometry` 를 담는다."""
+    """필지 목록. 각 행은 `pnu`/`address` 와 선택적 `has_building`·`geometry` 를 담는다.
 
-    parcels: list[dict[str, Any]] = Field(default_factory=list)
+    ★무과금이지만 상한을 건다 — `free_preview` 가 `build_parcel_graph` 를 태우고 그건
+      O(V²) shapely 거리계산이다. **지갑이 아니라 CPU 를 막는 상한**이며, 형제 3경로가
+      같은 값을 쓰게 해 "어느 게 진짜 상한인가"가 갈리지 않게 한다(D20 형제 스윕).
+    """
+
+    parcels: list[dict[str, Any]] = Field(default_factory=list, max_length=MAX_BULK_ITEMS)
 
 
 @router.post(
@@ -793,8 +831,10 @@ async def parcel_survey_quote(
 # ★경계는 양방향으로 건다(CLAUDE.md D19) — 상한만 걸면 반대쪽이 무제한이 된다.
 #   ★자기적발: 최초 커밋은 이 줄에 "(min_length=1)" 이라고 **적어 놓고 실제로는 안 걸었다**.
 #     실측 `parcels=[] → HTTP 200`. 주석이 없는 면역을 주장한 형태(C11)라 아래에 실제로 건다.
-MAX_STRATEGY_PARCELS = 100
-MIN_STRATEGY_PARCELS = 1
+# ★형제와 **같은 상수**를 쓴다 — 값을 따로 적어 두면 한쪽만 바뀌었을 때
+#   "어느 게 진짜 상한인가"를 아무도 모르게 된다(이 저장소가 반복해서 데인 형태).
+MAX_STRATEGY_PARCELS = MAX_BULK_ITEMS
+MIN_STRATEGY_PARCELS = MIN_BULK_ITEMS
 
 
 class ParcelPurchaseStrategyRequest(BaseModel):
@@ -816,7 +856,9 @@ class ParcelPurchaseStrategyRequest(BaseModel):
     scheme: str | None = None
     district_plan_decision_date: str | None = None
     housing_site_area_sqm: float | None = None
-    exclusion_candidates: list[str] = Field(default_factory=list)
+    # ★파생형 락이 잡아낸 **내 필드**다 — 상한을 형제에만 걸고 자기 요청모델의 다른 리스트는
+    #   빠뜨렸다. 제척 후보는 필지 부분집합이므로 필지 상한을 넘을 수 없다.
+    exclusion_candidates: list[str] = Field(default_factory=list, max_length=MAX_BULK_ITEMS)
 
 
 @router.post(

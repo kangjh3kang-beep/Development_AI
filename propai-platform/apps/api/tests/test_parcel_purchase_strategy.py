@@ -1578,3 +1578,49 @@ def test_성장루프는_payload_아래로_실어야_적재된다(monkeypatch: p
     # 두 모집단이 **다른 결과**를 내야 잠금이다(차가 0이면 잠금이 아니다).
     assert rows["__t_flat__"].get("payload") is None, "평면 키가 보존됐다 — 화이트리스트 전제가 바뀌었다"
     assert rows["__t_wrapped__"]["payload"]["parcel_count"] == 5, "payload 가 보존되지 않는다"
+
+
+# ── 형제 스윕: 다필지 요청 모델은 **전부** 상한을 가져야 한다 ──────────────
+# ★★최초 구현은 `/survey/strategy` 에만 상한을 걸었다. `/registry/bulk` 는 **더 오래됐고
+#   더 많이 쓰이며 똑같이 유료**(`times=len(items)`)인데 무제한이었다 — D20(처방 범위 ≠
+#   결함 범위). 다른 세션이 원장 실측으로 잡아 줬다.
+# ★목록형이 아니라 **파생형**으로 쓴다: 모듈에서 요청 모델을 긁어오므로 새 엔드포인트가
+#   상한 없이 추가되면 **자동으로** 이 락에 걸린다(사람이 센 목록이 상한이 되지 않게).
+
+def test_다필지_요청모델은_전부_길이상한을_가진다() -> None:
+    """유료·다필지 경로에서 길이는 곧 청구액/부하다. 하나라도 무제한이면 실패한다."""
+    import inspect
+
+    import routers.registry as reg
+    from pydantic import BaseModel
+
+    def _list_fields_without_cap(model: type[BaseModel]) -> list[str]:
+        bad = []
+        for name, f in model.model_fields.items():
+            ann = str(f.annotation)
+            if "list[" not in ann.lower():
+                continue
+            caps = [m for m in (f.metadata or []) if type(m).__name__ == "MaxLen"]
+            if not caps:
+                bad.append(f"{model.__name__}.{name}")
+        return bad
+
+    models = [
+        obj for _n, obj in inspect.getmembers(reg, inspect.isclass)
+        if issubclass(obj, BaseModel) and obj is not BaseModel
+        and obj.__module__ == reg.__name__
+        and any("list[" in str(f.annotation).lower() for f in obj.model_fields.values())
+    ]
+    # ★공허 진리 가드 — 대상이 0개면 "위반 0"이 무의미하다.
+    assert len(models) >= 3, f"다필지 요청모델을 못 찾았다(파생이 깨졌다): {models}"
+
+    violations = [v for m in models for v in _list_fields_without_cap(m)]
+    assert not violations, f"길이 상한이 없는 다필지 필드: {violations}"
+
+
+def test_형제_상한이_같은_상수를_공유한다() -> None:
+    """★값을 따로 적어 두면 한쪽만 바뀌었을 때 '어느 게 진짜 상한인가'가 갈린다."""
+    import routers.registry as reg
+
+    assert reg.MAX_STRATEGY_PARCELS == reg.MAX_BULK_ITEMS
+    assert reg.MIN_STRATEGY_PARCELS == reg.MIN_BULK_ITEMS
