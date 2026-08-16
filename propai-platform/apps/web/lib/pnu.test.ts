@@ -81,3 +81,28 @@ describe("parcelDedupKey — 프로덕션 버그의 회귀 잠금", () => {
     expect(parcelDedupKey({ address: "오산시  내삼미동 " })).toBe(parcelDedupKey({ address: "오산시 내삼미동" }));
   });
 });
+
+describe("프로젝트 불러오기 — PNU 가 없는 필지의 잔여 접힘", () => {
+  /**
+   * ★`parcelDedupKey` 는 PNU 가 없으면 주소로 떨어진다. 붙여넣기 경로에서는 그게 옳지만,
+   *   **프로젝트 필지는 SSOT 가 이미 유일**하므로 같은 동이면 또 접힌다.
+   *   패널은 그 경우 인덱스를 섞어 접히지 않게 한다 — 그 규칙을 여기서 잠근다.
+   */
+  const projectKey = (p: { pnu?: string | null; address?: string | null }, i: number) =>
+    p.pnu ? parcelDedupKey(p) : `project-idx:${i}:${(p.address || "").trim()}`;
+
+  it("PNU 없는 같은 동 필지 3건이 접히지 않는다", () => {
+    const parcels = [
+      { address: "경기도 오산시 내삼미동" },
+      { address: "경기도 오산시 내삼미동" },
+      { address: "경기도 오산시 내삼미동" },
+    ];
+    expect(new Set(parcels.map(projectKey)).size).toBe(3);
+  });
+
+  it("PNU 가 있으면 인덱스와 무관하게 같은 필지는 한 건이다", () => {
+    const a = projectKey({ pnu: "4148025329101230004", address: "x" }, 0);
+    const b = projectKey({ pnu: "4148025329101230004", address: "y" }, 9);
+    expect(a).toBe(b);
+  });
+});
