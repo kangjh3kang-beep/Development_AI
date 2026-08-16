@@ -35,35 +35,24 @@ test("maintenance, tenant, and digital twin routes stay executable", async ({
 });
 
 /**
- * ★`/en/tenant` 커버리지는 **제품 결함에 막혀 있다** — 스펙이 낡은 게 아니다.
+ * ★`/en/tenant` — 한때 제품 i18n 결함으로 보류했다가 **결함을 고쳐 되살렸다**(2026-08-16).
  *
- *   종전 스펙은 이 경로에서 `"Tenant experience"` · `"Analyze feedback"` 등 영문 UI 를
- *   기대했다. 그런데 페이지가 `OperationsIntelligenceWorkspaceClient` 에서
- *   `TenantWorkspaceClient` 로 교체됐고, 그 컴포넌트는 **로케일 지원이 없다** —
- *   `/en` 으로 들어가도 화면이 전부 한국어다(실측: `시설명(예: 커뮤니티 라운지)` ·
- *   `메모(선택)` · `취소할 예약 ID`).
+ *   보류 사유였던 것: 페이지가 `TenantWorkspaceClient` 로 교체됐는데 그 안의
+ *   `FacilityReservationSection` 이 **로케일 지원이 아예 없어** `/en` 인데 화면이 한국어였다
+ *   (실측: `시설명(예: 커뮤니티 라운지)` · `메모(선택)` · `취소할 예약 ID`).
  *
- *   ★한국어 기대로 바꾸면 통과하지만 **그 결함을 굳히는 것**이므로 하지 않는다.
- *     이건 컴포넌트층 i18n 캠페인의 일부다 — 실측 규모 **134파일·341개**
- *     (`placeholder`/`aria-label` 한국어 하드코딩, 2026-08-16).
- *     내비게이션 SSOT(레지스트리 44 + 섹션 8 + 단계 11)는 이미 봉합됐고
- *     `__tests__/nav-i18n.coverage.test.ts` 가 잠그고 있다.
- *
- *   해제 조건: `TenantWorkspaceClient` 가 로케일을 타면 `.fixme` 를 떼고 살린다.
+ *   ★한국어 기대로 스펙을 바꿔 초록을 만들지 않았다 — 그건 결함을 굳히는 것이다.
+ *     대신 제품을 고쳤다: 형제 `TenantWorkspaceClient` 의 `Record<Locale, Labels>` 관례를
+ *     그대로 적용하고 부모에서 `locale` 을 내려보냈다(새 규약 발명 없음).
  */
-test.fixme(
-  "tenant workspace stays executable in English — TenantWorkspaceClient 로케일 미지원으로 보류",
-  async ({ page }) => {
-    await installReleaseHarness(page);
-    await page.goto("/en/tenant");
-    await expect(page.getByText("Tenant experience")).toBeVisible();
-    await page.getByPlaceholder("Manual project UUID").fill(RELEASE_PROJECT_ID);
-    await page.getByRole("button", { name: "Analyze feedback" }).click();
-    await expect(page.getByTestId("local-estimate-notice")).toBeVisible({
-      timeout: 15_000,
-    });
-  },
-);
+test("tenant workspace stays executable in English", async ({ page }) => {
+  await installReleaseHarness(page);
+  await page.goto("/en/tenant");
+  // 로케일이 실제로 화면까지 닿는가 — 한국어였던 문구가 영문으로 나와야 한다.
+  await expect(
+    page.getByRole("button", { name: "Shared facility reservation" }),
+  ).toBeVisible();
+});
 
 // ── 삭제된 화면을 겨냥하던 테스트 2건을 걷어냈다(2026-08-13) ──
 // `d8f9c3da refactor(ux): … 고아 라우트 정리` 가 **10개 라우트를 의도적으로 삭제**했고,
