@@ -26,6 +26,23 @@ import pytest
 from app.services.registry import registry_service as rs
 
 
+def _http_req():
+    """slowapi 리미터가 요구하는 **실제** starlette Request.
+
+    ★유료 라우트(`/get-one` 등)에 `@limiter.limit(ai_limiter)` 를 붙이면서 핸들러 첫 인자가
+      `request: Request` 가 됐다. 이 테스트는 HTTP 층을 우회해 핸들러를 직접 부르므로
+      최소 스코프의 진짜 Request 를 만들어 넘긴다(가짜 객체는 slowapi 가 거부한다).
+    ★TestClient 경유로 바꾸지 않는 이유: 리미터가 20/분이라 **레이트리밋 때문에 빨개지는**
+      플래키가 생긴다 — 원인 오분류를 보려는 테스트가 엉뚱한 이유로 실패하면 진단이 흐려진다.
+    """
+    from starlette.requests import Request as _R
+
+    return _R({
+        "type": "http", "method": "POST", "path": "/",
+        "headers": [], "client": ("127.0.0.1", 0), "query_string": b"",
+    })
+
+
 def _routes() -> set[str]:
     from routers.registry import router
 
@@ -235,7 +252,7 @@ async def test_라우트가_모든_입력을_서비스에_그대로_넘긴다(mo
     class _U:
         user_id = "u1"
 
-    await rr.registry_get_one({
+    await rr.registry_get_one(_http_req(), {
         "pnu": "1168010100107370000", "address": "서울특별시 강남구 역삼동 737",
         "pin": "1101-2012-009048", "realty_type": "1", "dong": "101", "ho": "1502",
     }, current_user=_U())
@@ -355,7 +372,7 @@ async def test_라우트가_PDF_업로드와_고유번호_직접입력도_넘긴
     class _U:
         user_id = "u1"
 
-    await rr.registry_get_one({
+    await rr.registry_get_one(_http_req(), {
         "unique_no": "1146-2009-000054", "pdf_input": "data:application/pdf;base64,JVBER",
     }, current_user=_U())
 

@@ -28,16 +28,36 @@ import pytest
 
 from routers.registry import issued_count
 
+
 # ★정직하게: 이건 **손수 열거한 표본**이지 코드에서 파생시킨 전수가 아니다.
 #   첫 판에는 주석에 "코드에서 파생" 이라고 썼는데 거짓이었고, 실제로 둘을 빠뜨렸다 —
 #   `registry_pdf_parser.py:65` 의 `parse_failed`, `tilko_client.py:203` 의 `need_unique_no`.
 #   (CLAUDE.md §C-11 — 면역을 거짓 주장하지 마라.)
 #   전수 보증은 아래 `test_ok가_아닌_어떤_상태도_과금하지_않는다` 가 담당한다.
+def _http_req():
+    """slowapi 리미터가 요구하는 **실제** starlette Request.
+
+    ★유료 라우트에 `@limiter.limit(ai_limiter)` 를 붙이면서 핸들러 첫 인자가
+      `request: Request` 가 됐다. 이 테스트들은 HTTP 층을 우회해 핸들러를 직접 부르므로
+      최소 스코프로 진짜 Request 를 만들어 넘긴다(가짜 객체는 slowapi 가 거부한다).
+    ★TestClient 경유로 바꾸지 않는 이유: 리미터가 20/분이라 테스트 수가 늘면
+      **레이트리밋 때문에 빨개지는** 플래키가 생긴다 — 과금 판정을 보려는 테스트가
+      엉뚱한 이유로 실패하면 진단이 흐려진다.
+    """
+    from starlette.requests import Request as _R
+
+    return _R({
+        "type": "http", "method": "POST", "path": "/",
+        "headers": [], "client": ("127.0.0.1", 0), "query_string": b"",
+    })
+
 FAILURE_STATUSES = ("not_configured", "provider_error", "no_match", "bad_request", "forbidden",
                     "unavailable", "error", "failed", "parse_failed", "need_unique_no")
 
 
 @pytest.mark.parametrize("status", FAILURE_STATUSES)
+
+
 def test_실패는_한_건도_과금하지_않는다(status: str) -> None:
     assert issued_count({"status": status, "message": "…"}) == 0, (
         f"status={status!r} 가 과금 대상으로 읽힌다 — 실패한 조회에 돈이 청구된다"
@@ -185,7 +205,7 @@ async def test_라우트가_실패결과를_과금통로에_그대로_넘긴다(
     class _U:
         user_id = "u1"
 
-    out = await rr.registry_get_one({"address": "서울특별시 강남구 역삼동 737"}, current_user=_U())
+    out = await rr.registry_get_one(_http_req(), {"address": "서울특별시 강남구 역삼동 737"}, current_user=_U())
     assert out["status"] == "provider_error"
     # 과금 함수는 호출되되(단일 통로), 그 안에서 0건으로 판정돼야 한다.
     assert calls == ["provider_error"], calls
@@ -357,11 +377,11 @@ async def test_분석_라우트가_분석없는_결과에_과금하지_않는다
         land_hint = None
 
     _Svc.result = {"status": "not_available", "ai": None}
-    out = await rr.registry_analyze(_Req(), current_user=_U())
+    out = await rr.registry_analyze(_http_req(), _Req(), current_user=_U())
     assert charged == [], f"AI 분석이 없는 응답에 {len(charged)}건 청구됐다: {out.get('status')}"
     assert "service_charge" not in out, "과금하지 않았는데 과금 필드를 달면 안 된다"
 
     _Svc.result = {"status": "ok", "ai": {"grade": "A"}}
-    out = await rr.registry_analyze(_Req(), current_user=_U())
+    out = await rr.registry_analyze(_http_req(), _Req(), current_user=_U())
     assert charged == ["registry_analysis"], charged
     assert out.get("service_charge"), f"과금 결과가 응답에 실려야 한다: {out}"
