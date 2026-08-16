@@ -198,7 +198,7 @@ export default function DrawMode({ siteCode }: { siteCode: string }) {
                       {/* 라벨은 세대 상태 SSOT 소비(전 화면 동일 표기). 색은 여기선 '계약 존재' 성공
                           플래그라 emerald 유지(재고 상태 셀이 아니므로 rose 강제 안 함). */}
                       {r.contract_id ? (
-                        <span className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-bold text-emerald-400">{UNIT_STATUS_LABEL.CONTRACTED}</span>
+                        <span className="rounded-md border border-[var(--status-success)]/40 bg-[var(--status-success)]/10 px-1.5 py-0.5 text-[9px] font-bold text-[var(--status-success)]">{UNIT_STATUS_LABEL.CONTRACTED}</span>
                       ) : (
                         <button onClick={() => makeContract(r.id)} disabled={busy}
                           className="rounded-md border border-[var(--accent-strong)] px-2 py-0.5 text-[10px] font-bold text-[var(--accent-strong)] disabled:opacity-50">계약 생성</button>

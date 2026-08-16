@@ -140,7 +140,7 @@ export default function BillingConfigPage() {
                   />
                   {!PROTECTED.has(t) && (
                     <button onClick={() => deletePlan(t)} title="플랜 삭제"
-                      className="shrink-0 rounded-md border border-rose-500/30 px-2 py-1 text-[11px] font-bold text-rose-400 hover:bg-rose-500/10">
+                      className="shrink-0 rounded-md border border-[var(--status-error)]/30 px-2 py-1 text-[11px] font-bold text-[var(--status-error)] hover:bg-[var(--status-error)]/10">
                       삭제
                     </button>
                   )}

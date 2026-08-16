@@ -165,15 +165,15 @@ const REGIONS = [
 ] as const;
 
 const GRADE_COLORS: Record<string, string> = {
-  A: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
+  A: "bg-[var(--status-success)]/15 text-[var(--status-success)] border-[var(--status-success)]/30",
   B: "bg-blue-500/15 text-blue-400 border-blue-500/30",
-  C: "bg-amber-500/15 text-amber-400 border-amber-500/30",
+  C: "bg-[var(--status-warning)]/15 text-[var(--status-warning)] border-[var(--status-warning)]/30",
   D: "bg-orange-500/15 text-orange-400 border-orange-500/30",
   F: "bg-red-500/15 text-red-400 border-red-500/30",
 };
 
 const PERMIT_COLORS: Record<string, string> = {
-  "매우쉬움": "bg-emerald-500/15 text-emerald-400",
+  "매우쉬움": "bg-[var(--status-success)]/15 text-[var(--status-success)]",
   "쉬움": "bg-green-500/15 text-green-400",
   "보통": "bg-yellow-500/15 text-yellow-400",
   "어려움": "bg-red-500/15 text-red-400",
@@ -610,7 +610,7 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.95 }}
-            className="rounded-2xl border border-rose-500/20 bg-rose-500/10 p-5 text-sm font-bold text-rose-400 flex items-center gap-3"
+            className="rounded-2xl border border-[var(--status-error)]/20 bg-[var(--status-error)]/10 p-5 text-sm font-bold text-[var(--status-error)] flex items-center gap-3"
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <circle cx="12" cy="12" r="10" />
@@ -775,15 +775,15 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
 
       {/* ── ★P1 미래속성: 종상향 잠재(현행 추천과 분리·예상치) ── */}
       {upzoning?.potential_far_range && (upzoning.potential_far_range.max_pct ?? 0) > (upzoning.current_far_pct ?? 0) && (
-        <div className="rounded-[var(--radius-lg)] border border-amber-500/30 bg-amber-500/5 p-6">
+        <div className="rounded-[var(--radius-lg)] border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/5 p-6">
           <div className="mb-2 flex items-center gap-2">
-            <TrendingUp className="size-5 text-amber-400" aria-hidden />
+            <TrendingUp className="size-5 text-[var(--status-warning)]" aria-hidden />
             <h3 className="text-base font-black text-[var(--text-primary)]">미래 토지속성 — 종상향 잠재(예상치)</h3>
           </div>
           <p className="text-sm text-[var(--text-secondary)]">
             현행 실효 용적률 <b className="text-[var(--text-primary)]">{upzoning.current_far_pct}%</b> 기준 추천입니다.
             종상향(역세권·지구단위 등) 시 잠재 용적률은{" "}
-            <b className="text-amber-400">
+            <b className="text-[var(--status-warning)]">
               {upzoning.potential_far_range.min_pct === upzoning.potential_far_range.max_pct
                 ? `${upzoning.potential_far_range.max_pct}%`
                 : `${upzoning.potential_far_range.min_pct}~${upzoning.potential_far_range.max_pct}%`}
@@ -802,16 +802,16 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
       {/* ★100% 완성: 종상향이 '실제 추천 사업방식'으로 랭킹 반영(IntegratedRecommender 2축의 종상향 후보).
           ★배너(upzoning_potential)와 독립 — 두 엔진(calc_upzoning vs IntegratedRecommender) 판정이 달라도 노출. */}
       {upzoningRanked.length > 0 && (
-        <div className="rounded-[var(--radius-lg)] border border-amber-500/30 bg-amber-500/5 p-6">
+        <div className="rounded-[var(--radius-lg)] border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/5 p-6">
           <div className="mb-2 flex items-center gap-2">
-            <TrendingUp className="size-5 text-amber-400" aria-hidden />
+            <TrendingUp className="size-5 text-[var(--status-warning)]" aria-hidden />
             <h3 className="text-base font-black text-[var(--text-primary)]">종상향 시 추천 사업방식(수익순·잠재)</h3>
           </div>
           <div className="space-y-1.5">
             {upzoningRanked.map((c) => (
               <div key={`${c.method ?? ""}-${c.target_zone ?? ""}-${c.applied_far_pct ?? ""}`} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] px-3 py-2">
                 <span className="flex items-center gap-2">
-                  <span className="text-[10px] font-bold text-amber-400">종상향</span>
+                  <span className="text-[10px] font-bold text-[var(--status-warning)]">종상향</span>
                   <span className="text-[12px] font-bold text-[var(--text-primary)]">{c.type_name || c.method}</span>
                   {c.applied_far_pct != null && (
                     <span className="text-[10px] text-[var(--text-tertiary)]">용적 {c.applied_far_pct}%</span>

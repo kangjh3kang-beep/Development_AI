@@ -286,7 +286,7 @@ function L3EnhancedCards({
               <p className="text-[9px] font-bold text-indigo-400 uppercase tracking-widest">법정범위 → 조례 → 계획상한 → 인센티브</p>
             </div>
             {ordinanceNeedCheck && (
-              <span className="shrink-0 rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[8px] font-black uppercase tracking-wider text-amber-400">
+              <span className="shrink-0 rounded-full border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 px-2.5 py-1 text-[8px] font-black uppercase tracking-wider text-[var(--status-warning)]">
                 조례 확인 필요
               </span>
             )}
@@ -303,9 +303,9 @@ function L3EnhancedCards({
             </div>
             <div className="hidden sm:flex items-center text-[var(--text-hint)] font-black">→</div>
             {/* 조례 적용값 */}
-            <div className={`flex-1 rounded-xl border p-4 ${ordinanceConfirmed ? "border-emerald-500/30 bg-emerald-500/5" : "border-dashed border-[var(--line)] bg-[var(--surface-muted)]"}`}>
+            <div className={`flex-1 rounded-xl border p-4 ${ordinanceConfirmed ? "border-[var(--status-success)]/30 bg-[var(--status-success)]/5" : "border-dashed border-[var(--line)] bg-[var(--surface-muted)]"}`}>
               <p className="text-[8px] font-black text-[var(--text-hint)] uppercase tracking-wider mb-1">② 조례 적용 (지자체)</p>
-              <p className={`text-base font-black ${ordinanceConfirmed ? "text-emerald-400" : "text-[var(--text-hint)] italic"}`}>
+              <p className={`text-base font-black ${ordinanceConfirmed ? "text-[var(--status-success)]" : "text-[var(--text-hint)] italic"}`}>
                 {ordinanceConfirmed && ordinanceFarVal != null ? pct(ordinanceFarVal) : "확인 필요"}
               </p>
             </div>
@@ -363,8 +363,8 @@ function L3EnhancedCards({
           </div>
 
           {/* ★예상치 고지 */}
-          <div className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3">
-            <p className="text-[11px] font-black text-amber-400 leading-relaxed">
+          <div className="mb-4 rounded-xl border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 p-3">
+            <p className="text-[11px] font-black text-[var(--status-warning)] leading-relaxed">
               예상치 — 도시·군관리계획 결정 및 인허가를 전제로 한 잠재 시나리오이며, 실현을 보장하지 않습니다.
             </p>
           </div>
@@ -1211,7 +1211,7 @@ export default function SiteAnalysisPage() {
 
             {/* API 연결 실패 안내 */}
             {analysisError && (
-              <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 p-5 text-sm text-amber-600 dark:text-amber-400 font-medium">
+              <div className="rounded-2xl border border-[var(--status-warning)]/20 bg-[var(--status-warning)]/5 p-5 text-sm text-amber-600 dark:text-[var(--status-warning)] font-medium">
                 {analysisError}
               </div>
             )}

@@ -80,7 +80,7 @@ export function EnvironmentSummaryCard({
       <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-5">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Sun className="size-5 shrink-0 text-amber-500" aria-hidden />
+            <Sun className="size-5 shrink-0 text-[var(--status-warning)]" aria-hidden />
             <div>
               <h4 className="text-sm font-black text-[var(--text-primary)]">일조 환경 (법정 요건)</h4>
               <p className="text-[10px] text-[var(--text-hint)]">정북 일조사선·동지 일조시간 (약식 추정)</p>
@@ -102,7 +102,7 @@ export function EnvironmentSummaryCard({
           <div
             className={`rounded-lg border p-3 text-center ${
               setbackApplies
-                ? "border-amber-500/40 bg-amber-500/10"
+                ? "border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10"
                 : "border-[var(--line)] bg-[var(--surface-muted)]"
             }`}
           >
@@ -114,7 +114,7 @@ export function EnvironmentSummaryCard({
         </div>
 
         {setbackApplies && solar.north_setback.detail && (
-          <p className="mt-2 inline-flex items-baseline gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-200/90">
+          <p className="mt-2 inline-flex items-baseline gap-1.5 rounded-lg border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 px-3 py-2 text-[11px] leading-relaxed text-amber-200/90">
             <AlertTriangle className="size-3.5 self-center shrink-0" aria-hidden /> {solar.north_setback.detail}
           </p>
         )}
@@ -165,7 +165,7 @@ export function EnvironmentSummaryCard({
           {(view.best_directions ?? []).map((d, i) => (
             <span
               key={`${d}-${i}`}
-              className="inline-flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-bold text-emerald-300"
+              className="inline-flex items-center gap-1 rounded-full border border-[var(--status-success)]/40 bg-[var(--status-success)]/10 px-2.5 py-1 text-[11px] font-bold text-emerald-300"
             >
               <Compass className="size-3 shrink-0" aria-hidden /> {d} 트임
             </span>
