@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { AlertTriangle } from "lucide-react";
 import { GlobalAddressSearch, type AddressEntry } from "@/components/common/GlobalAddressSearch";
 import { apiClient } from "@/lib/api-client";
+import { idempotencyHeaders } from "@/lib/idempotency";
 import { developabilityText, specialFactorLabels } from "@/lib/zoning-ssot";
 
 const Icons = {
@@ -72,7 +73,12 @@ export function SiteInitiator({ onInitiate, loading }: SiteInitiatorProps) {
             factors?: Array<{ category?: string | null } | string> | null;
             honest_disclosure?: string | null;
           } | null;
-        }>("/zoning/analyze", { useMock: false, body: { address: address.trim() } });
+        }>("/zoning/analyze", {
+          useMock: false,
+          body: { address: address.trim() },
+          // ★유료 경로(land_analysis) — 재전송이면 이중청구된다.
+          headers: idempotencyHeaders("zoning.analyze", { address: address.trim() }),
+        });
         if (!cancelled) {
           const ef = res.effective_far ?? null;
           const sp = res.special_parcel ?? null;

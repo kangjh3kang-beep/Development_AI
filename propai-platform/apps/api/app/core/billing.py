@@ -84,8 +84,42 @@ def get_config() -> dict[str, Any]:
     return _CONFIG
 
 
+def coerce_fee(value: Any, *, where: str) -> float | None:
+    """요율 값을 float(0 이상)으로 정규화한다. **숫자가 아니면 None**(= 적용 거부).
+
+    왜 거부가 맞나: 이 값들의 소비처(`service_fee_project_create()` 등)는 `float(...)` 를
+    **무방비로** 호출한다. 숫자가 아닌 값을 설정에 넣으면 그 순간이 아니라 **나중에 과금하는
+    요청 경로에서** ValueError 가 터진다. 게다가 `save_config` 가 그것을 DB 에 영속시키므로
+    재기동해도 되살아난다 — 즉 관리자 오타 하나가 **지속적인 과금 장애**가 된다.
+
+    그래서 적용을 거부하고 **이전 값을 보존**한다. 다만 조용히 버리면 관리자는 설정이 반영된
+    줄 알므로 반드시 경고를 남긴다(무언 실패 금지).
+
+    음수는 0으로 clamp 한다(허위 마이너스 차감 차단).
+    """
+    try:
+        return max(0.0, float(value))
+    except (ValueError, TypeError):
+        # ★락의 범위: 테스트는 "경고가 뜬다"와 "`where` 가 **어느 키**인지 말한다"를 잠근다.
+        #   아래 **문구 자체는 일부러 잠그지 않았다** — 사람이 읽는 산문이라 계약이 아니고,
+        #   단언하면 표현을 다듬을 때마다 깨지는 취약한 락이 된다(변이 검증에서 이 줄만
+        #   살아남는 것은 그 때문이며 구멍이 아니다).
+        logger.warning(
+            "과금 요율 값이 숫자가 아니어서 **적용하지 않았다**(이전 값 유지)",
+            where=where, value=repr(value)[:80],
+        )
+        return None
+
+
 def apply_config(override: dict[str, Any]) -> None:
-    """관리자 수정값을 런타임 설정에 병합(in-place, 별칭 유지)."""
+    """관리자 수정값을 런타임 설정에 병합(in-place, 별칭 유지).
+
+    ★값 위생은 `coerce_fee` 한 곳으로 모았다. 이전에는 같은 함수 안에서 요율 세 뭉치가
+    **서로 다르게** 처리됐다 — `service_fees` 단일 키는 변환 실패 시 **원본을 그대로 저장**해
+    "음수 차단" 주석이 약속한 위생을 우회했고, `stages` 는 **검증이 아예 없었으며**,
+    `analysis_modules` 만 올바르게 건너뛰었다. 옳은 패턴이 바로 옆에 있었는데 나머지가
+    그것을 안 쓰고 있었다.
+    """
     if not isinstance(override, dict):
         return
     if "budget_ratio" in override:
@@ -110,19 +144,20 @@ def apply_config(override: dict[str, Any]) -> None:
     for k in ("project_create", "land_analysis", "sales_provision", "photoreal_render",
               "concept_render", "registry_issue", "registry_analysis", "bulk_parcel_per_unit"):
         if k in sf:
-            try:
-                _CONFIG["service_fees"][k] = max(0.0, float(sf[k]))  # 음수 차단
-            except (ValueError, TypeError):
-                _CONFIG["service_fees"][k] = sf[k]
+            fee = coerce_fee(sf[k], where=f"service_fees.{k}")
+            if fee is not None:
+                _CONFIG["service_fees"][k] = fee
     for s, v in (sf.get("stages") or {}).items():
         if s in _CONFIG["service_fees"]["stages"]:
-            _CONFIG["service_fees"]["stages"][s] = v
+            fee = coerce_fee(v, where=f"service_fees.stages.{s}")
+            if fee is not None:
+                _CONFIG["service_fees"]["stages"][s] = fee
     # 분석 모듈 사용료 병합 — 관리자가 보낸 키:값(원)을 set한다.
-    # 숫자로 변환 가능할 때만, 음수는 0으로 방지(허위 마이너스 차감 차단).
     am = _CONFIG["service_fees"].setdefault("analysis_modules", {})
     for k, v in (sf.get("analysis_modules") or {}).items():
-        with contextlib.suppress(ValueError, TypeError):
-            am[k] = max(0.0, float(v))
+        fee = coerce_fee(v, where=f"service_fees.analysis_modules.{k}")
+        if fee is not None:
+            am[k] = fee
     ft = override.get("free_tier") or {}
     for sub in ("analysis_fee", "analysis_quota"):
         for t, v in (ft.get(sub) or {}).items():
