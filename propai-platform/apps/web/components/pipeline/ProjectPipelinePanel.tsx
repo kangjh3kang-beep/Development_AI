@@ -10,6 +10,7 @@ import { currentUserId } from "@/lib/projectSync";
 import { useProjectStore as useProjectListStore } from "@/store/useProjectStore";
 import { useUiReset } from "@/store/useUiReset";
 import { apiClient } from "@/lib/api-client";
+import { idempotencyHeaders } from "@/lib/idempotency";
 import { parcelDataToRows, shouldSendParcels } from "@/lib/parcel-rows";
 import { GlobalAddressSearch, type AddressEntry } from "@/components/common/GlobalAddressSearch";
 import { PipelineResultDetail } from "./PipelineResultDetail";
@@ -800,6 +801,8 @@ export function ProjectPipelinePanel({
 
       // 백엔드 진행 단계 호출 (부지분석만)
       const result = await apiClient.postV2<PipelineRunResponse>("/pipeline/run", {
+        // ★단계마다 과금하므로 재실행이면 여러 건이 한꺼번에 이중청구된다.
+        headers: idempotencyHeaders("pipeline.run", { address: address.trim(), projectId }),
         body: {
           address: address.trim(),
           project_id: projectId,
@@ -868,6 +871,8 @@ export function ProjectPipelinePanel({
       const parcelRowsForFull = parcelDataToRows(siteAnalysis?.parcels);
 
       const result = await apiClient.postV2<PipelineRunResponse>("/pipeline/run", {
+        // ★단계마다 과금하므로 재실행이면 여러 건이 한꺼번에 이중청구된다.
+        headers: idempotencyHeaders("pipeline.run", { address: address.trim(), projectId }),
         body: {
           address: address.trim(),
           project_id: projectId,

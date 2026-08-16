@@ -26,6 +26,7 @@ import { LiveProFormaStrip, type LiveProFormaDesign } from "@/components/design/
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { apiClient, ApiClientError, apiV1BaseUrl } from "@/lib/api-client";
+import { idempotencyHeaders } from "@/lib/idempotency";
 import { EvidencePanel } from "@/components/common/EvidencePanel";
 import type { EvidenceItem, EvidenceLegalRef } from "@/components/common/EvidencePanel";
 import { parseDesignCompliance } from "@/lib/design-contract";
@@ -1552,6 +1553,10 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
           message?: string;
           charged?: number;
         }>(`/design/${encodeURIComponent(projectId)}/render-photoreal`, {
+          // ★건당 유료 AI 렌더 — 더블서브밋이 그대로 이중 렌더·이중 청구다.
+          headers: idempotencyHeaders("photoreal_render", {
+            projectId, imageBase64, renderStyle, renderProvider, renderModel,
+          }),
           // 무회귀: renderProvider가 null(가용목록 없음/미선택)이면 provider·model을 아예 보내지 않는다
           // → 백엔드가 기존 기본 엔진(replicate)으로 처리(바디 100% 동일).
           body: {
