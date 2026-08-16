@@ -177,9 +177,34 @@ async def _run_registry_job(job_id: str, params: dict[str, Any]) -> None:
         await _set_registry_job(job_id, status="error", error=str(e)[:200])
 
 
+# ── 유료·다필지 경로의 **지출/부하 상한** (형제 공용) ────────────────────
+# ★★이 상한은 원래 `/survey/strategy` **하나에만** 걸려 있었다. 그게 결함이다 —
+#   `/registry/bulk` 는 **더 오래됐고 더 많이 쓰이며 똑같이 유료**인데(아래 `times=len(items)`)
+#   상한이 없었다. CLAUDE.md D20: *"처방을 적용한 범위 = 결함이 사는 범위인지 확인하라."*
+#   신규 엔드포인트에만 방어를 걸고 **형제를 스윕하지 않은** 전형적 형태였다.
+# ★상수를 한 곳에 두는 이유: 값이 갈리면 "어느 게 진짜 상한인가"를 아무도 모르게 된다.
+MAX_BULK_ITEMS = 100
+MIN_BULK_ITEMS = 1
+
+# 토지조서 엑셀(무과금·메모리 축)은 업로드 관례와 맞춘다 —
+# `parcel_excel_service._MAX_ROWS = 500`. 과금 상한과 값이 다른 것은 **의도**다(축이 다르다).
+MAX_LAND_SCHEDULE_ROWS = 500
+
+
 class RegistryBulkRequest(BaseModel):
-    items: list[dict[str, Any]] = Field(default_factory=list, description="[{pnu?, address?}]")
-    addresses: list[str] | None = None  # 단축 입력
+    """다필지 등기부 일괄 조회. **건당 과금**이라 길이가 곧 청구액이다.
+
+    ★`items`·`addresses` 둘 다 상한을 건다 — `addresses` 는 "단축 입력"이라 같은 경로로
+      들어오므로 한쪽만 막으면 우회된다(양방향 경계, D19).
+    ★하한도 건다 — 빈 요청이 조용히 200 을 내면 사용자가 "조회됐다"로 오독한다.
+    """
+
+    items: list[dict[str, Any]] = Field(
+        default_factory=list,
+        max_length=MAX_BULK_ITEMS,
+        description="[{pnu?, address?}]",
+    )
+    addresses: list[str] | None = Field(default=None, max_length=MAX_BULK_ITEMS)  # 단축 입력
 
 
 @router.get("/status", summary="등기부 API 연동 상태")
@@ -433,8 +458,16 @@ class LandRow(BaseModel):
 
 
 class LandScheduleExcelRequest(BaseModel):
+    """토지조서 엑셀 생성. **무과금**이지만 상한을 건다 — 메모리에 워크북을 통째로 짓는다.
+
+    ★상한값은 업로드 쪽 관례(`parcel_excel_service._MAX_ROWS = 500`)에 맞춘다. 다운로드가
+      업로드보다 좁으면 **자기가 받은 조서를 되돌려받지 못하는** 비대칭이 생긴다.
+      과금 경로(`MAX_BULK_ITEMS=100`)와 값이 다른 것은 **의도적**이다 — 축이 다르다
+      (여기는 지갑이 아니라 메모리).
+    """
+
     project_name: str = "토지조서"
-    rows: list[LandRow] = Field(default_factory=list)
+    rows: list[LandRow] = Field(default_factory=list, max_length=MAX_LAND_SCHEDULE_ROWS)
 
 
 @router.post("/land-schedule/excel", summary="토지조서 엑셀 다운로드")
@@ -713,9 +746,14 @@ async def _llm_extract_land_schedule(all_rows: list[list[str]]) -> list[dict[str
 # ★계산은 순수함수(`parcel_survey_quote_service`)에 있고 이 라우터는 배선만 한다.
 
 class ParcelSurveyQuoteRequest(BaseModel):
-    """필지 목록. 각 행은 `pnu`/`address` 와 선택적 `has_building`·`geometry` 를 담는다."""
+    """필지 목록. 각 행은 `pnu`/`address` 와 선택적 `has_building`·`geometry` 를 담는다.
 
-    parcels: list[dict[str, Any]] = Field(default_factory=list)
+    ★무과금이지만 상한을 건다 — `free_preview` 가 `build_parcel_graph` 를 태우고 그건
+      O(V²) shapely 거리계산이다. **지갑이 아니라 CPU 를 막는 상한**이며, 형제 3경로가
+      같은 값을 쓰게 해 "어느 게 진짜 상한인가"가 갈리지 않게 한다(D20 형제 스윕).
+    """
+
+    parcels: list[dict[str, Any]] = Field(default_factory=list, max_length=MAX_BULK_ITEMS)
 
 
 @router.post(
@@ -749,13 +787,23 @@ async def parcel_survey_quote(
     try:
         from app.services.growth import capture_service
 
+        # ★★도메인 메타는 반드시 `payload` **아래로** 넣는다.
+        #   `capture_service._EVENT_COLS` 는 화이트리스트라 **평면 키를 조용히 버린다**
+        #   (그 파일 주석: "그 외 키는 payload 로 흡수하지 않고 버림").
+        #   실측 — 평면으로 보내면 적재 결과가 `{'event_type': 'parcel_survey_quote'}` 뿐이고
+        #   도메인 필드 4개가 **전량 소실**된다. 즉 "성장루프에 실었다"가 거짓이 된다.
+        #   ★이 규약은 형제 emitter 가 이미 주석으로 적어 둔 것이다
+        #     (`design_ingest/orchestrator.py`·`ingest_service.py`) — 그걸 안 보고 재발시켰다.
         capture_service.record_event(
             "parcel_survey_quote",
             {
-                "parcel_count": result_quote["parcel_count"],
-                "building_unknown": result_quote["building_status"]["unknown"],
-                "geometry_missing": len(result_quote["geometry"]["missing"]),
-                "cost_max": result_quote["estimated_cost"]["max"],
+                "service": "parcel_survey",
+                "payload": {
+                    "parcel_count": result_quote["parcel_count"],
+                    "building_unknown": result_quote["building_status"]["unknown"],
+                    "geometry_missing": len(result_quote["geometry"]["missing"]),
+                    "cost_max": result_quote["estimated_cost"]["max"],
+                },
             },
         )
     except Exception:  # noqa: BLE001 — 성장루프 실패가 본기능을 막지 않는다
@@ -783,8 +831,10 @@ async def parcel_survey_quote(
 # ★경계는 양방향으로 건다(CLAUDE.md D19) — 상한만 걸면 반대쪽이 무제한이 된다.
 #   ★자기적발: 최초 커밋은 이 줄에 "(min_length=1)" 이라고 **적어 놓고 실제로는 안 걸었다**.
 #     실측 `parcels=[] → HTTP 200`. 주석이 없는 면역을 주장한 형태(C11)라 아래에 실제로 건다.
-MAX_STRATEGY_PARCELS = 100
-MIN_STRATEGY_PARCELS = 1
+# ★형제와 **같은 상수**를 쓴다 — 값을 따로 적어 두면 한쪽만 바뀌었을 때
+#   "어느 게 진짜 상한인가"를 아무도 모르게 된다(이 저장소가 반복해서 데인 형태).
+MAX_STRATEGY_PARCELS = MAX_BULK_ITEMS
+MIN_STRATEGY_PARCELS = MIN_BULK_ITEMS
 
 
 class ParcelPurchaseStrategyRequest(BaseModel):
@@ -806,7 +856,9 @@ class ParcelPurchaseStrategyRequest(BaseModel):
     scheme: str | None = None
     district_plan_decision_date: str | None = None
     housing_site_area_sqm: float | None = None
-    exclusion_candidates: list[str] = Field(default_factory=list)
+    # ★파생형 락이 잡아낸 **내 필드**다 — 상한을 형제에만 걸고 자기 요청모델의 다른 리스트는
+    #   빠뜨렸다. 제척 후보는 필지 부분집합이므로 필지 상한을 넘을 수 없다.
+    exclusion_candidates: list[str] = Field(default_factory=list, max_length=MAX_BULK_ITEMS)
 
 
 @router.post(
@@ -854,6 +906,22 @@ async def parcel_purchase_strategy(
         await _charge_registry_issue(current_user.user_id, analysis, times=1)
         await _charge_registry_analysis(current_user.user_id, analysis)
 
+    # ★★③ 과금이 끝나면 **원본 분석 블롭을 응답에서 걷어낸다.**
+    #
+    #   `_build_card` 는 P1 이 낸 `analysis`(RegistryAnalysisService 원본)를 카드에 통째로 싣는데,
+    #   그 안에는 `pdf_url` 이 들어 있다 — `upload_registry_pdf(ttl_days=30)` 가 만든
+    #   **30일짜리 서명 URL**이고 **인증이 걸려 있지 않다**(`services/storage_service.py`).
+    #   즉 이 JSON 을 손에 넣은 사람은 누구나 30일간 등기부등본 전문을 내려받는다
+    #   — 소유자 실명·지분·거래가액·근저당 채권최고액/근저당권자·압류권리자까지.
+    #
+    #   ★이 블롭은 **과금 외에는 아무도 쓰지 않는다**(위 루프가 유일한 소비처). 응답에 남길
+    #     이유가 없고, 100필지면 페이로드가 수 MB 로 부푼다.
+    #   ★카드가 이미 필요한 것만 추린 `registry` 블록을 따로 갖고 있으므로 표면 손실은 없다.
+    #   ★순서 주의 — **반드시 과금 뒤**다. 앞에서 지우면 `issued_count` 가 셀 대상이 사라져
+    #     발급 성공분이 청구되지 않는다(매출 누수). 두 방향 다 결함이라 순서가 계약이다.
+    for card in survey.get("cards") or []:
+        card.pop("analysis", None)
+
     # ③ 제척 위상판정용 인접 그래프 — 실패해도 분류(본기능)는 살아 있어야 한다.
     # ★이 초기화가 사라지면 `build_parcel_graph` 가 던졌을 때 `graph` 가 미정의라 500 이 난다
     #   (예외를 흡수한 의미가 사라진다). `test_그래프_계산이_던져도_분류는_살고...` 가 잠근다.
@@ -886,14 +954,25 @@ async def parcel_purchase_strategy(
         capture_service.record_event(
             "parcel_purchase_strategy",
             {
-                "parcel_count": survey.get("parcel_count"),
-                "row_count": strategy["summary"]["row_count"],
-                # ★액션 라벨을 문자열로 다시 적으면 계약 상수와 갈라진다(상수 이름이 바뀌어도
-                #   이 줄은 조용히 0 을 세고, 성장루프는 "판정보류 없음"으로 오독한다).
-                "undecided_rows": strategy["summary"]["by_action"].get(ACTION_UNDECIDED, 0),
-                "secured_ratio_available": strategy["summary"]["secured_ratio_available"],
-                "geometry_unknown": strategy["summary"]["geometry_unknown_count"],
-                "scheme_provided": bool(req.scheme),
+                "service": "parcel_survey",
+                # ★★도메인 메타는 `payload` 아래로 — 평면 키는 화이트리스트에서 **버려진다**
+                #   (`capture_service._EVENT_COLS`). 실측: 평면으로 보내면 적재 결과가
+                #   `{'event_type': 'parcel_purchase_strategy'}` 뿐이고 아래 6개가 전량 소실됐다.
+                "payload": {
+                    "parcel_count": survey.get("parcel_count"),
+                    "row_count": strategy["summary"]["row_count"],
+                    # ★액션 라벨을 문자열로 다시 적으면 계약 상수와 갈라진다(상수 이름이 바뀌어도
+                    #   이 줄은 조용히 0 을 세고, 성장루프는 "판정보류 없음"으로 오독한다).
+                    "undecided_rows": strategy["summary"]["by_action"].get(ACTION_UNDECIDED, 0),
+                    "secured_ratio_available": strategy["summary"]["secured_ratio_available"],
+                    "geometry_unknown": strategy["summary"]["geometry_unknown_count"],
+                    "scheme_provided": bool(req.scheme),
+                    # ★`scheme_provided` 는 "문자열이 있었는가"만 본다 — **해석됐는가**는
+                    #   별개다(미등록 사업방식은 문자열이 있어도 `governing_act=None` 이라
+                    #   판정보류가 된다). 그 둘을 못 가르면 성장루프가 판정보류의 원인을
+                    #   "사용자 미입력"으로 오귀속한다 → 해석 성공 여부를 따로 싣는다.
+                    "scheme_resolved": strategy.get("legal", {}).get("governing_act") is not None,
+                },
             },
         )
     except Exception:  # noqa: BLE001 — 성장루프 실패가 본기능을 막지 않는다
