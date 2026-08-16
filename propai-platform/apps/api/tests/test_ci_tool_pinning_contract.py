@@ -120,3 +120,36 @@ def test_dev_요구사항_파일이_실제로_핀돼_있다() -> None:
 def test_탐지기_대조군(line: str, should_flag: bool) -> None:
     flagged = not any(p.search(line) for p in _PINNED)
     assert flagged is should_flag, f"판정이 기대와 다르다: {line!r} → flagged={flagged}"
+
+
+def test_병렬_실행과_핀이_한_쌍으로_움직인다() -> None:
+    """`-n auto` 를 쓰면 xdist·execnet 이 **반드시 핀돼 있어야** 한다 — 양방향으로 잠근다.
+
+    ★한쪽만 걸면 반대쪽이 무제한이 된다(CLAUDE.md D.19 — 상한만 걸었더니 하한이 0으로 붕괴).
+      · `-n auto` 만 있고 핀이 없으면 → 도구 릴리스가 코드 변경 0으로 CI 를 뒤집는다
+        (이 파일이 존재하는 바로 그 이유다)
+      · 핀만 있고 `-n auto` 가 사라지면 → 측정으로 얻은 1.95배가 조용히 사라진다
+        (CI 실측: 직렬 750초 → 병렬 385초, 9392 passed 완전 일치)
+
+    ★전이 의존성(execnet)까지 본다. xdist 만 핀하면 이 파일의 존재 이유가 반만 지켜진다.
+    """
+    dev = Path(__file__).resolve().parents[1] / "requirements-dev.txt"
+    dev_text = dev.read_text(encoding="utf-8")
+    ci = (_REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    # 주석 줄 제외 — 이 PR 의 주석에 `-n auto` 라는 문구가 설명으로 들어 있다.
+    ci_code = "\n".join(ln for ln in ci.splitlines() if not ln.strip().startswith("#"))
+
+    uses_parallel = re.search(r"pytest[^\n]*\s-n\s+auto", ci_code) is not None
+    pinned = {t: (f"{t}==" in dev_text) for t in ("pytest-xdist", "execnet")}
+
+    if uses_parallel:
+        missing = [t for t, ok in pinned.items() if not ok]
+        assert not missing, (
+            f"CI 가 `-n auto` 로 병렬 실행하는데 {missing} 이(가) 핀되지 않았다. "
+            "도구 릴리스 하나가 코드 변경 0으로 CI 를 뒤집을 수 있다."
+        )
+    else:
+        assert not any(pinned.values()), (
+            "xdist/execnet 이 핀돼 있는데 CI 는 병렬로 돌지 않는다 — 측정으로 얻은 1.95배가 "
+            "조용히 사라진 상태다. 되돌린 것이 의도라면 핀도 함께 지워라."
+        )
