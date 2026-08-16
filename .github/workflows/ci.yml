@@ -119,6 +119,29 @@ jobs:
           pip install -c requirements-dev.txt ruff
           python -m ruff check .
 
+      # ★★실험(exp/measure-pytest-xdist) — **머지 대상 아님.** P1-D(CI 시간 단축) 판단에
+      #   필요한 수치를 CI 에서 직접 잰다. 로컬은 네트워크·DB 타임아웃에 지배되어 비율이
+      #   전이되지 않는다(실측: 표본 996개가 로컬에서 10분+, CI 는 약 9,000개를 16분).
+      #   ★같은 잡 안에서 연속 측정 — 머신 편차를 없앤다.
+      #   ★`|| true` — 병렬에서 깨지는 것도 **데이터**다. 스텝이 죽으면 수치를 잃는다.
+      - name: MEASURE-A serial (apps/api)
+        working-directory: propai-platform/apps/api
+        run: |
+          echo "nproc=$(nproc)  mem=$(free -m | awk '/^Mem:/{print $2}')MB"
+          S=$(date +%s)
+          python -m pytest tests/ -q --no-header > /tmp/serial.log 2>&1 || true
+          echo "SERIAL_SEC=$(( $(date +%s) - S ))"
+          tail -3 /tmp/serial.log
+
+      - name: MEASURE-B xdist -n auto (apps/api)
+        working-directory: propai-platform/apps/api
+        run: |
+          pip install -c requirements-dev.txt pytest-xdist
+          S=$(date +%s)
+          python -m pytest tests/ -q --no-header -n auto > /tmp/par.log 2>&1 || true
+          echo "PARALLEL_SEC=$(( $(date +%s) - S ))"
+          tail -5 /tmp/par.log
+
       - name: Run unit tests (apps/api)
         working-directory: propai-platform/apps/api
         # ★TEST_PG_DSN 만 실 DB 를 가리킨다(기본 DATABASE_URL=5432 는 그대로 비어 있다).

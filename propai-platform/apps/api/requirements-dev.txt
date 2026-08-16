@@ -31,3 +31,6 @@
 ruff==0.16.3
 bandit==1.9.4
 pip-audit==2.10.1
+
+# ★실험 전용(exp/measure-pytest-xdist) — P1-D 판단용 측정. 병합 대상 아님.
+pytest-xdist==3.8.0
