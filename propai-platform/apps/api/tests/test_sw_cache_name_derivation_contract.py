@@ -169,7 +169,15 @@ def _doc_files() -> list[Path]:
 
 
 def _probe_pipelines() -> list[tuple[Path, int, str]]:
-    """문서에서 ``… sw.js | <필터>`` 형태를 뽑는다. (파일, 줄번호, 파이프 뒤 세그먼트)"""
+    """문서에서 ``… sw.js | <필터>`` 형태를 뽑는다. (파일, 줄번호, 파이프 뒤 세그먼트)
+
+    ★알려진 잠재 위양성(아직 발생 안 함 · 다음 사람을 위해 적는다):
+        문서가 **틀린 형태를 반례로 보여줄 때** 그 줄에 ``sw.js`` 와 파이프가 함께 있으면
+        이 추출기가 그것을 "문서가 권하는 프로브"로 오인한다.
+        현재 ``CLAUDE.md`` §G-28 의 반례 표는 줄에 ``sw.js`` 가 없어 걸리지 않는다.
+        반례를 적을 때는 **같은 줄에 ``sw.js`` 를 쓰지 마라**(또는 이 함수에 제외 표식을 넣어라).
+        검사기가 반례를 위반으로 신고하기 시작하면 그건 가드의 결함이다(§회귀망 A.6).
+    """
     found: list[tuple[Path, int, str]] = []
     for path in _doc_files():
         for lineno, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
@@ -214,7 +222,20 @@ def _run_probe(segment: str, sw_text: str) -> str:
 
 
 # 줄 시작 앵커. 이게 없으면 주석을 집는다 — 이 파일이 잠그는 결함의 본질이다.
-_ANCHOR = "^const"
+#
+# ★허용 표기를 **전부** 열거한다(CLAUDE.md §회귀망 A.6 — "하한을 넘는 등가 표기를 위반으로
+#   신고하면 정상 코드를 막는다"). 실측으로 잡은 위양성:
+#       ^const        ← 최소 형태
+#       ^ *const      ← 들여쓰기 허용(더 넓지만 여전히 줄 시작 고정)
+#       ^\s*const     ← 같은 것을 정규식 원자로
+#   셋 다 **주석 줄을 집지 않는다**는 목적을 똑같이 달성한다. 한 표기만 인정하면
+#   나머지 둘을 쓴 정당한 문서가 막힌다 — 이 파일이 방금 그 실수를 했다.
+_ANCHOR_RX = re.compile(r"\^(?:\\s|[ *+])*const")
+
+
+def _has_anchor(segment: str) -> bool:
+    """줄 시작 앵커가 **어떤 등가 표기로든** 있는가."""
+    return bool(_ANCHOR_RX.search(segment))
 
 
 def _classify(segment: str, sw_text: str) -> tuple[str, str]:
@@ -239,9 +260,12 @@ def _classify(segment: str, sw_text: str) -> tuple[str, str]:
         out = _run_probe(segment, sw_text)
     except AssertionError as why:
         # 실행 불가 — 여기서 막지 않는다. 대신 앵커를 본다.
-        if _ANCHOR in segment:
+        if _has_anchor(segment):
             return "skipped", f"실행 불가라 앵커만 확인했다({str(why)[:60]}…)"
-        return "broken", f"실행할 수 없고 줄 시작 앵커({_ANCHOR})도 없다: {str(why)[:80]}"
+        return "broken", (
+            f"실행할 수 없고 줄 시작 앵커(^const · ^ *const · ^\\s*const 중 아무거나)도 없다: "
+            f"{str(why)[:80]}"
+        )
     expected = _DEV_PLACEHOLDER.split('"')[1]
     if expected in out:
         return "executed", out.strip()[:60]
@@ -300,6 +324,9 @@ def test_실행할_수_없는_프로브도_앵커가_없으면_걸린다() -> No
         # (세그먼트, 기대 판정, 왜)
         ("""grep -m1 "^const CACHE_NAME"'""", "skipped", "실행 불가·앵커 O → 통과(위양성 방지)"),
         ("""grep -m1 '^const CACHE_NAME' > /tmp/x""", "skipped", "리다이렉트·앵커 O → 통과"),
+        # ★등가 앵커 표기 — 한 표기만 인정하면 이 둘을 쓴 정당한 문서가 막힌다(§A.6).
+        ("""sh -c 'grep -m1 "^ *const CACHE_NAME"'""", "skipped", "들여쓰기 허용 앵커도 앵커다"),
+        ("""sh -c 'grep -mE "^\\s*const CACHE_NAME"'""", "skipped", "정규식 원자 앵커도 앵커다"),
         ("""grep -m1 "CACHE_NAME"'""", "broken", "실행 불가·앵커 X → 걸려야 한다"),
         ("""grep -m1 CACHE_NAME > /tmp/x""", "broken", "리다이렉트·앵커 X → 걸려야 한다"),
         ("""grep -m1 '^const CACHE_NAME'""", "executed", "정상 → 실행되어 값을 준다"),
