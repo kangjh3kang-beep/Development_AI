@@ -35,10 +35,14 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core import charge_idempotency as ci
 
-_DSN = os.environ.get(
-    "TEST_PG_DSN",
-    "postgresql+asyncpg://propai_user:propai_pass_dev@localhost:5432/propai_db",
-)
+# ★게이트 조건을 `CI` 환경변수가 아니라 **`TEST_PG_DSN` 의 존재**에 건다.
+#   `CI` 에 기대면 "GitHub Actions 가 CI=true 를 준다"는 **내가 확인하지 않은 전제**에 락 전체가
+#   매달린다 — 그 전제가 틀리면 17건이 조용히 skip 되고, fail-open 모듈이라 아무도 모른다.
+#   반면 `TEST_PG_DSN` 은 **우리 워크플로가 직접 설정**하는 값이라 확인 가능한 사실이다.
+#     · 설정돼 있는데 못 붙으면 → **fail**(누군가 DB 를 주기로 해 놓고 안 준 것이다)
+#     · 설정이 없으면 → skip(로컬 편의). 로컬은 게이트가 아니므로 허용된다.
+_EXPLICIT_DSN = os.environ.get("TEST_PG_DSN")
+_DSN = _EXPLICIT_DSN or "postgresql+asyncpg://propai_user:propai_pass_dev@localhost:5432/propai_db"
 _ENDPOINT = "test.charge_idem"
 
 
@@ -68,9 +72,10 @@ async def sessions():
     except Exception as e:  # noqa: BLE001
         await engine.dispose()
         msg = f"Postgres 에 붙지 못했다({_DSN}): {str(e)[:200]}"
-        if os.environ.get("CI"):
-            # ★CI 에서는 **절대 skip 하지 않는다** — fail-open 모듈이라 skip 은 곧 무잠금이다.
-            pytest.fail(f"CI 에 Postgres 가 없다 — 이 락은 실 DB 를 태워야 의미가 있다. {msg}")
+        if _EXPLICIT_DSN:
+            # ★TEST_PG_DSN 을 준 환경에서는 **절대 skip 하지 않는다** — fail-open 모듈이라
+            #   skip 은 곧 무잠금이고, 그 무잠금이 초록으로 보인다.
+            pytest.fail(f"TEST_PG_DSN 이 설정됐는데 붙지 못했다 — 이 락은 실 DB 를 태워야 한다. {msg}")
         pytest.skip(msg)
 
     ci._SCHEMA_READY = False  # 테스트마다 schema_guard 를 실제로 태운다

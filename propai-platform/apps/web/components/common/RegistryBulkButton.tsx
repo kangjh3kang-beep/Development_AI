@@ -7,7 +7,7 @@
 
 import { useCallback, useRef, useState } from "react";
 import { AlertTriangle, FileUp, Files, Settings } from "lucide-react";
-import { apiClient } from "@/lib/api-client";
+import { ApiClientError, apiClient } from "@/lib/api-client";
 import { RegistryUploadModal } from "./RegistryUploadModal";
 
 type RegItem = {
@@ -58,8 +58,21 @@ export function RegistryBulkButton({ addresses, className = "" }: { addresses: s
         headers: { "Idempotency-Key": idemRef.current.key },
       });
       setRes(r);
-    } catch {
-      setRes({ configured: false, count: 0, results: [], message: "등기부 조회 요청에 실패했습니다." });
+    } catch (err) {
+      // ★멱등 가드가 새로 만드는 상태를 "조회 실패"로 뭉뚱그리면 안 된다.
+      //   409 = 같은 요청이 **아직 처리 중**이다(중복 청구를 막으려고 두 번째를 안 받았다).
+      //   타임아웃(120초) 뒤 다시 누르면 서버가 아직 돌고 있어 실제로 이 경로가 나온다 —
+      //   여기서 "실패했습니다"라고 하면 사용자는 또 누르고, 매번 같은 답을 받는다.
+      //   422 = 같은 키를 **다른 필지 묶음**에 재사용했다(정상적으로는 안 나온다 — 키를
+      //   묶음 시그니처로 갱신하므로. 나오면 그건 우리 배선 결함이라 문구로 드러낸다).
+      const status = err instanceof ApiClientError ? err.status : 0;
+      const message =
+        status === 409
+          ? "같은 조회가 아직 처리 중입니다. 잠시 후 결과를 확인하세요(중복 청구를 막기 위해 다시 실행하지 않았습니다)."
+          : status === 422
+            ? "요청 식별키가 다른 내용으로 재사용되었습니다. 페이지를 새로고침한 뒤 다시 시도하세요."
+            : "등기부 조회 요청에 실패했습니다.";
+      setRes({ configured: false, count: 0, results: [], message });
     } finally {
       setLoading(false);
     }

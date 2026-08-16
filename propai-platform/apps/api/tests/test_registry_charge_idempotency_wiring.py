@@ -19,10 +19,10 @@ import pytest
 
 from app.core import charge_idempotency as ci
 
-_DSN = os.environ.get(
-    "TEST_PG_DSN",
-    "postgresql+asyncpg://propai_user:propai_pass_dev@localhost:5432/propai_db",
-)
+# ★게이트 조건은 `CI` 가 아니라 **`TEST_PG_DSN` 의 존재**다(형제 파일과 같은 이유):
+#   `CI=true` 는 내가 확인하지 않은 전제이고, 틀리면 락이 조용히 skip 된다.
+_EXPLICIT_DSN = os.environ.get("TEST_PG_DSN")
+_DSN = _EXPLICIT_DSN or "postgresql+asyncpg://propai_user:propai_pass_dev@localhost:5432/propai_db"
 
 
 def _req(idem_key: str | None = None):
@@ -66,8 +66,8 @@ def _require_pg(monkeypatch: pytest.MonkeyPatch):
     err = asyncio.get_event_loop_policy().new_event_loop().run_until_complete(_probe())
     if err:
         msg = f"Postgres 미가용({_DSN}): {err}"
-        if os.environ.get("CI"):
-            pytest.fail(f"CI 에 Postgres 가 없다 — 배선 락이 fail-open 으로 공허해진다. {msg}")
+        if _EXPLICIT_DSN:
+            pytest.fail(f"TEST_PG_DSN 이 설정됐는데 붙지 못했다 — 배선 락이 fail-open 으로 공허해진다. {msg}")
         pytest.skip(msg)
 
     # ★라우터의 과금 헬퍼는 자체 세션을 열지만, 가드는 `async_session_factory` 를 쓴다.
