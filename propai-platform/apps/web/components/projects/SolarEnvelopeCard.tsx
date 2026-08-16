@@ -180,13 +180,13 @@ export function SolarEnvelopeCard({
         <div className="flex flex-wrap items-center justify-end gap-1.5">
           {usedFallback && (
             <span
-              className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2.5 py-1 text-[11px] font-black text-amber-600"
+              className="inline-flex items-center gap-1 rounded-full bg-[var(--status-warning)]/10 px-2.5 py-1 text-[11px] font-black text-amber-600"
               title="실효 용적률이 산정되지 않아 용도지역 기본값으로 추정한 결과입니다. 부지분석(용도지역·실효 용적률)을 완료하면 실제값으로 재계산됩니다."
             >
               <AlertTriangle className="size-3" aria-hidden />{fallbackLabel}
             </span>
           )}
-          <span className={`rounded-full px-2.5 py-1 text-xs font-black ${lossBinding ? "bg-amber-500/10 text-amber-600" : "bg-emerald-500/10 text-emerald-600"}`}>
+          <span className={`rounded-full px-2.5 py-1 text-xs font-black ${lossBinding ? "bg-[var(--status-warning)]/10 text-amber-600" : "bg-[var(--status-success)]/10 text-emerald-600"}`}>
             한도: {res.binding}
           </span>
         </div>
@@ -224,8 +224,8 @@ export function SolarEnvelopeCard({
             verdict.includes("block") || verdict.includes("fail")
               ? "border-red-500/40 bg-red-500/10 text-red-600"
               : verdict.includes("warn")
-              ? "border-amber-500/40 bg-amber-500/10 text-amber-600"
-              : "border-emerald-500/40 bg-emerald-500/10 text-emerald-600";
+              ? "border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 text-amber-600"
+              : "border-[var(--status-success)]/40 bg-[var(--status-success)]/10 text-emerald-600";
           const ruleTone = (status?: string) => {
             const s = (status || "").toLowerCase();
             if (s.includes("block") || s.includes("fail")) return "text-red-600";

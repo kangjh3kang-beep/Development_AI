@@ -99,9 +99,9 @@ export type RegResult = {
 };
 
 const IMPACT_STYLE: Record<string, string> = {
-  상: "bg-rose-500/15 text-rose-400 border-rose-500/30",
-  중: "bg-amber-500/15 text-amber-400 border-amber-500/30",
-  하: "bg-emerald-500/12 text-emerald-400 border-emerald-500/25",
+  상: "bg-[var(--status-error)]/15 text-[var(--status-error)] border-[var(--status-error)]/30",
+  중: "bg-[var(--status-warning)]/15 text-[var(--status-warning)] border-[var(--status-warning)]/30",
+  하: "bg-[var(--status-success)]/12 text-[var(--status-success)] border-[var(--status-success)]/25",
 };
 const LEVEL_META: Record<string, { color: string; Icon: LucideIcon }> = {
   "상위법령": { color: "var(--accent-strong)", Icon: Scale },
@@ -210,7 +210,7 @@ export function RegulationHierarchyView({
               {tightenedCount > 0 && (
                 <>
                   {" · "}
-                  <span className="font-bold text-amber-400">조례 강화 {tightenedCount}건</span>
+                  <span className="font-bold text-[var(--status-warning)]">조례 강화 {tightenedCount}건</span>
                 </>
               )}
             </span>
@@ -361,7 +361,7 @@ export function RegulationHierarchyView({
                 </span>
               ))}
             </div>
-            <p className="mt-3 text-[11px] text-[var(--text-hint)]">영향도: <span className="text-rose-400">상</span>(개발 결정적) · <span className="text-amber-400">중</span>(밀도·절차 영향) · <span className="text-emerald-400">하</span>(일반)</p>
+            <p className="mt-3 text-[11px] text-[var(--text-hint)]">영향도: <span className="text-[var(--status-error)]">상</span>(개발 결정적) · <span className="text-[var(--status-warning)]">중</span>(밀도·절차 영향) · <span className="text-[var(--status-success)]">하</span>(일반)</p>
           </CardContent>
         </Card>
       )}
@@ -380,9 +380,9 @@ function LimitCard({ label, trio }: { label: string; trio: LimitTrio }) {
       <p className="mt-1 text-lg font-black text-[var(--accent-strong)]">{eff != null ? `${eff}${trio.unit}` : "-"}</p>
       <div className="mt-1.5 space-y-0.5 text-[10px] text-[var(--text-hint)]">
         <div className="flex justify-between"><span>법정</span><span>{trio.legal != null ? `${trio.legal}${trio.unit}` : "-"}</span></div>
-        <div className="flex justify-between"><span>조례</span><span className={tightened ? "text-amber-400 font-bold" : ""}>{trio.ordinance != null ? `${trio.ordinance}${trio.unit}` : "-"}</span></div>
+        <div className="flex justify-between"><span>조례</span><span className={tightened ? "text-[var(--status-warning)] font-bold" : ""}>{trio.ordinance != null ? `${trio.ordinance}${trio.unit}` : "-"}</span></div>
       </div>
-      {tightened && <p className="mt-1 text-[10px] font-bold text-amber-400">조례 강화 ↓</p>}
+      {tightened && <p className="mt-1 text-[10px] font-bold text-[var(--status-warning)]">조례 강화 ↓</p>}
     </div>
   );
 }
@@ -390,7 +390,7 @@ function LimitCard({ label, trio }: { label: string; trio: LimitTrio }) {
 function AiList({ title, icon: Icon, items, tone }: { title: string; icon?: LucideIcon; items?: string[]; tone: string }) {
   if (!items || items.length === 0) return null;
   const color: Record<string, string> = {
-    rose: "text-rose-400", emerald: "text-emerald-400", sky: "text-sky-400", amber: "text-amber-400",
+    rose: "text-[var(--status-error)]", emerald: "text-[var(--status-success)]", sky: "text-sky-400", amber: "text-[var(--status-warning)]",
   };
   return (
     <div>

@@ -32,12 +32,12 @@ type VerifyResult = {
 };
 
 const VERDICT_META: Record<string, { label: string; cls: string; icon: LucideIcon }> = {
-  pass: { label: "검증 통과", cls: "border-emerald-500/30 bg-emerald-500/10 text-emerald-400", icon: CheckCircle2 },
-  warn: { label: "주의", cls: "border-amber-500/30 bg-amber-500/10 text-amber-400", icon: AlertTriangle },
-  fail: { label: "오류 발견", cls: "border-rose-500/30 bg-rose-500/10 text-rose-400", icon: XCircle },
+  pass: { label: "검증 통과", cls: "border-[var(--status-success)]/30 bg-[var(--status-success)]/10 text-[var(--status-success)]", icon: CheckCircle2 },
+  warn: { label: "주의", cls: "border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 text-[var(--status-warning)]", icon: AlertTriangle },
+  fail: { label: "오류 발견", cls: "border-[var(--status-error)]/30 bg-[var(--status-error)]/10 text-[var(--status-error)]", icon: XCircle },
 };
 const SEV_CLS: Record<string, string> = {
-  high: "text-rose-400", medium: "text-amber-400", low: "text-[var(--text-tertiary)]",
+  high: "text-[var(--status-error)]", medium: "text-[var(--status-warning)]", low: "text-[var(--text-tertiary)]",
 };
 
 // 검증 플래그 유형 → 일반인이 이해하기 쉬운 한국어 라벨(과거 "할루시네이션" 캐시도 친화 표기)
@@ -181,7 +181,7 @@ export function VerificationBadge({
               {result.calc_checks!.map((c, i) => (
                 <div key={i} className="flex items-center justify-between text-[11px]">
                   <span className="inline-flex items-center gap-1 text-[var(--text-secondary)]">
-                    {c.ok ? <CheckCircle2 className="size-3.5 text-emerald-400" aria-label="통과" /> : <XCircle className="size-3.5 text-rose-400" aria-label="불일치" />} {c.name} <span className="text-[var(--text-tertiary)]">({c.formula})</span>
+                    {c.ok ? <CheckCircle2 className="size-3.5 text-[var(--status-success)]" aria-label="통과" /> : <XCircle className="size-3.5 text-[var(--status-error)]" aria-label="불일치" />} {c.name} <span className="text-[var(--text-tertiary)]">({c.formula})</span>
                   </span>
                   {!c.ok && (
                     <span className="text-red-500">출력 {c.claimed.toLocaleString()} ≠ 계산 {c.recomputed.toLocaleString()}</span>

@@ -48,9 +48,9 @@ const STAGE_LABEL: Record<string, string> = Object.fromEntries(STAGES.map((s) =>
 
 const KIND_META: Record<string, { icon: LucideIcon; label: string; cls: string }> = {
   consult: { icon: MessageCircle, label: "상담", cls: "border-sky-500/40 bg-sky-500/10 text-sky-300" },
-  visit: { icon: Footprints, label: "방문", cls: "border-emerald-500/40 bg-emerald-500/10 text-emerald-300" },
+  visit: { icon: Footprints, label: "방문", cls: "border-[var(--status-success)]/40 bg-[var(--status-success)]/10 text-emerald-300" },
   stage: { icon: Shuffle, label: "단계변경", cls: "border-violet-500/40 bg-violet-500/10 text-violet-300" },
-  message: { icon: Mail, label: "문자/알림톡", cls: "border-amber-500/40 bg-amber-500/10 text-amber-300" },
+  message: { icon: Mail, label: "문자/알림톡", cls: "border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 text-amber-300" },
   note: { icon: PenLine, label: "메모", cls: "border-slate-500/40 bg-slate-500/10 text-slate-300" },
 };
 
@@ -197,10 +197,10 @@ export default function CustomerCardDrawer({
 
   const toastCls =
     toast?.tone === "ok"
-      ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-300"
+      ? "border-[var(--status-success)]/40 bg-[var(--status-success)]/10 text-emerald-300"
       : toast?.tone === "warn"
-        ? "border-amber-400/40 bg-amber-500/10 text-amber-300"
-        : "border-rose-400/40 bg-rose-500/10 text-rose-300";
+        ? "border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 text-amber-300"
+        : "border-[var(--status-error)]/40 bg-[var(--status-error)]/10 text-rose-300";
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true">
@@ -324,7 +324,7 @@ export default function CustomerCardDrawer({
           {loading ? (
             <div className="h-16 animate-pulse rounded-xl border border-[var(--line)] bg-[var(--surface-soft)]" />
           ) : err ? (
-            <p className="rounded-xl border border-rose-400/40 bg-rose-500/10 px-3 py-2 text-xs font-semibold text-rose-300">
+            <p className="rounded-xl border border-[var(--status-error)]/40 bg-[var(--status-error)]/10 px-3 py-2 text-xs font-semibold text-rose-300">
               {err}
             </p>
           ) : items.length === 0 ? (
@@ -357,8 +357,8 @@ export default function CustomerCardDrawer({
                         <span
                           className={`rounded-md px-1.5 py-0.5 text-[10px] font-bold ${
                             it.status.toUpperCase() === "SENT"
-                              ? "bg-emerald-500/15 text-emerald-300"
-                              : "bg-amber-500/15 text-amber-300"
+                              ? "bg-[var(--status-success)]/15 text-emerald-300"
+                              : "bg-[var(--status-warning)]/15 text-amber-300"
                           }`}
                         >
                           {it.channel ? `${it.channel} · ` : ""}
