@@ -294,11 +294,24 @@ class TestRouterSelectionWiring:
         monkeypatch.setattr(tk, "fetch_realty_registry", fake_fetch)
         monkeypatch.setattr(rr, "_charge_registry_issue", no_charge)
 
-        user = type("U", (), {"user_id": "u1"})()
-        out = await rr.tilko_realty({"address": "○○동 1-1", "realty_type": "2"}, user)
+        # ★`CurrentUser` 계약대로 tenant_id 도 준다 — 스텁이 실제보다 좁으면 그 필드를 쓰는
+        #   코드가 테스트에서만 터진다(이 세션에서 형제 파일 3곳이 같은 이유로 깨졌다).
+        user = type("U", (), {"user_id": "u1", "tenant_id": "t1"})()
+        # ★핸들러를 **키워드로** 부른다. 위치인자로 부르면 시그니처에 인자가 하나 추가될
+        #   때마다 조용히 밀려서 깨진다(실제로 그렇게 깨졌다).
+        from starlette.requests import Request as _R
+
+        def _http_req() -> _R:
+            return _R({"type": "http", "method": "POST", "path": "/",
+                       "headers": [], "client": ("127.0.0.1", 0), "query_string": b""})
+        out = await rr.tilko_realty(
+            _http_req(), {"address": "○○동 1-1", "realty_type": "2"}, current_user=user
+        )
         assert seen["uno"] == "1111111", "라우터가 구분을 무시하고 첫 건을 발급함(과금 경로)"
 
-        out2 = await rr.tilko_realty({"address": "○○동 1-1", "realty_type": "9"}, user)
+        out2 = await rr.tilko_realty(
+            _http_req(), {"address": "○○동 1-1", "realty_type": "9"}, current_user=user
+        )
         assert out2.get("select_note"), "라우터에서 정직성 고지가 유실됨"
         assert out is not None
 
