@@ -320,7 +320,13 @@
 //          그 봉합이 **캐시에 가려진다** — CLAUDE.md E22 가 경고한 형태 그대로다.
 //          이 범프가 ①과 ②를 함께 실어 보낸다.
 //        ★채번: origin/main 실제 상수 v504 확인 → v505.
-const CACHE_NAME = "propai-v505-charge-idempotency";
+// v506: CAD 패널 비율 표기 수렴(#647) — 건폐율·용적률이 `toFixed(0)` 로 반올림돼
+//        실효 79.6% 가 "80%" 가 되어 **바로 옆 법정 80% 와 같아 보이던** 것을
+//        formatPercent(소수 1자리·null→"미확보")로 일원화. 표시 문자열이 바뀌므로 범프.
+//        ★채번: 범프 커밋을 **CACHE_NAME 대조로 특정**(3bddbeb0=v505 · acdf9b6c=v504 ·
+//        c18898ba=v503). `git log -1 -- sw.js` 는 기능 커밋도 집어 두 세대 전을 가리켰다.
+//        그 기준으로 재면 "60파일 밀림", 올바른 기준으로는 실제 델타 **2파일**이다.
+const CACHE_NAME = "propai-v506-cad-percent-parity";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
