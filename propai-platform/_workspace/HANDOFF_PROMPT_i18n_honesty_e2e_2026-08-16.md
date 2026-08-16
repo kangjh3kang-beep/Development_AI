@@ -40,19 +40,25 @@ CI=1 BASE_URL=http://127.0.0.1:3100 npx playwright test --retries=0 e2e/project-
 경우가 많다 — 그때 `pnpm install --frozen-lockfile` 로 복구된다.
 ★실패 시 `test-results/<스펙>/error-context.md` 에 **DOM 스냅샷**이 남는다. 추정하지 말고 이걸 봐라.
 
-## e2e 상태
+## e2e 상태 — **전체 16 통과 / 0 실패**
 
-| 스펙 | 상태 |
+나이틀리 실패 7건이 전량 닫혔다. 보류 5건은 `test.fixme` 로 사유·해제조건과 함께 노출한다.
+
+| 스펙 | 근본원인 |
 |---|---|
-| `project-release:8` | **통과** — 해네스 `items` 키 + i18n + placeholder prop 순차 해소 |
-| `operations-release:7` | **통과** — 존재할 수 없는 픽스처 단언을 제품 산출물로 교체 |
-| `digital-twin-scene:36` | **통과** — 내비 i18n 봉합으로 자동 해소 |
-| `project-release:66` | 114행 `getByText("watch")` 에서 **503**. 해네스에 `/digital-twin/status/snapshot` 분기는 **있는데** 요청이 안 잡힌다 — 미규명 |
-| `auth-dashboard:7` | 로그인 성공 문구 미출현. DOM 상 **이미 로그인 상태**(헤더 로그아웃 버튼) + **온보딩 마법사(1/6)가 화면을 덮음** |
-| `collaboration-room:42` | `getByRole('img', {name:'DXF 설계도면 미리보기'})` 미출현(115행) |
-| `design-3d-viewer:12` | `getByTestId('cadbim-to-3d')` 45초 미가시. **testid 는 소스에 실재** — 조건부 렌더 전제 미충족 쪽 |
+| `project-release:8` | 해네스 `/projects` 폴백이 **앱이 안 읽는 키**(`projects`)에만 픽스처를 담았다 → `items` 병기 |
+| `digital-twin-scene:36` | 내비 i18n 봉합으로 자동 해소 |
+| `operations-release:7` | 해네스 픽스처를 기다렸으나 **앱이 그 API 를 안 부른다**(로컬 산술) → 제품 산출물(정직 고지)로 교체 |
+| `project-release:66` | **서비스워커**가 가로채기를 우회해 같은 URL 이 404→503 → `serviceWorkers:"block"` |
+| `collaboration-room:42` | 모달이 포털 없이 인라인 렌더라 **닫기 버튼이 페이지 요소에 덮임** → `createPortal`+`z-[1000]` |
+| `design-3d-viewer:12` | 조건부 렌더 전제 누락 — `view==="draw"` 전환이 있어야 패널이 보인다(§A.1) |
+| `auth-dashboard:7` | `withSession:false` 가 **세션 없음을 뜻하지 않았다**(`/auth/me` 200) + 삭제된 UI 를 기다리는 죽은 단언 4건 |
 
-★인계문서(08-13)의 *"C-3 는 그 화면에 testid 0"* 은 **현재 사실이 아니다**(9개 전부 실재).
+### 보류 5건(`test.fixme`)
+
+- `/en/tenant` · `/en/design` · `/en/bim` — 화면 전체가 한국어(컴포넌트층 i18n 캠페인)
+- 3D 툴바 토글 **클릭** — actionability 미달. **환경 아티팩트인지 실제 클릭 불가인지
+  확정하지 못했다.** `force:true` 로 초록을 만들면 정말 못 누르는 결함을 덮으므로 하지 않았다.
 
 ## 고친 것
 
