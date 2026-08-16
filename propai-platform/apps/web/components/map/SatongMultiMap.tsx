@@ -54,7 +54,7 @@ import {
   clearLayoutOverlay,
   renderLayoutOverlay,
 } from "@/lib/satong-layout-overlay";
-import { SATONG_PANE_Z, SATONG_UI_Z } from "@/lib/satong-map-z";
+import { SATONG_PANE_Z, SATONG_POPUP_YIELD, SATONG_UI_Z } from "@/lib/satong-map-z";
 import { clampClickMenuPosition, findFeatureAtPoint, shortJibunLabel } from "@/lib/satong-click-menu";
 import {
   formatAreaSqm,
@@ -1073,6 +1073,9 @@ export function SatongMultiMap({
     wrapperRef,
   } = useMapFullscreen(mapRef, { mode: "css" });
   const [mapReady, setMapReady] = useState(false);
+  /** 상세정보팝업(Leaflet bindPopup)이 열려 있나 — 수동적 크롬 양보 트리거.
+   *  ★z 로는 못 이긴다(격리된 컨테이너 안). SATONG_POPUP_YIELD 주석 참조. */
+  const [detailPopupOpen, setDetailPopupOpen] = useState(false);
   // 현재 줌 레벨 — 라벨 LOD(z≥17 전체 / 15~16 상위 N / <15 hover-only) 판정 입력.
   //   zoomend 에서만 갱신하고, 임계(15·17) 교차 시에만 버짓이 바뀌어 라벨 이펙트가 재부착된다.
   const [mapZoom, setMapZoom] = useState(12);
@@ -1668,6 +1671,10 @@ export function SatongMultiMap({
         setMapZoom(map.getZoom());
         // 줌 변경 → 라벨 LOD 재판정(임계 교차 시에만 버짓이 바뀌어 라벨이 재부착된다).
         map.on("zoomend", () => setMapZoom(map.getZoom()));
+        // ★상세팝업 양보 계약 배선. Leaflet 은 팝업이 하나만 열리므로(autoClose 기본 true)
+        //   open/close 를 그대로 boolean 으로 쓴다. 지도 파괴 시 리스너도 함께 사라진다.
+        map.on("popupopen", () => setDetailPopupOpen(true));
+        map.on("popupclose", () => setDetailPopupOpen(false));
         const focus = focusTargetRef.current;
         if (focus) {
           map.setView([focus.lat, focus.lon], 17);
@@ -2857,7 +2864,15 @@ export function SatongMultiMap({
       )}
 
       {/* Leaflet 지도 캔버스 — useMapFullscreen 래퍼 */}
-      <div ref={wrapperRef} className={wrapperClass("relative")}>
+      <div
+        ref={wrapperRef}
+        className={wrapperClass("relative")}
+        /* ★상세정보팝업 양보 계약(SATONG_POPUP_YIELD) — 사용자 신고 "팝업이 가려진다".
+           Leaflet 팝업은 격리된 .leaflet-container 안이라 **z 로는 크롬을 못 이긴다**
+           (라이브 실측: popup pane 계산 z = 1, 컨테이너 isolate/0). 그래서 팝업이 열리면
+           수동적 크롬이 물러난다. 감쇄 규칙은 globals.css 한 곳에만 둔다. */
+        {...{ [SATONG_POPUP_YIELD.wrapperAttr]: detailPopupOpen ? "true" : undefined }}
+      >
         {/* 줌 컨트롤은 좌하단(디자인컴프) — 상단 칩바 겹침 CSS 불필요. ping은 마커 애니메이션용. */}
         <style jsx global>{`
           @keyframes ping {
@@ -3148,6 +3163,7 @@ export function SatongMultiMap({
             data-testid="satong-bottom-dock"
             className={"pointer-events-none absolute bottom-16 left-14 right-3 flex flex-row flex-wrap items-end gap-1.5 transition-all duration-300"}
             style={{ zIndex: SATONG_UI_Z.cornerDock }}
+            {...{ [SATONG_POPUP_YIELD.passiveAttr]: SATONG_POPUP_YIELD.passiveValue }}
           >
             {/* I4 저줌 안내(jootek 패턴) — 라벨 줌 롤업 구간에서 정보가 '숨은 게 아니라 접힘'임을
                 알리고 원클릭 확대 제공. 닫으면 세션 내 재표시 안 함. */}
