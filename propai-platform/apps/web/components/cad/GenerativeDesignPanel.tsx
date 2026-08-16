@@ -1,5 +1,7 @@
 "use client";
 
+import { formatPercent } from "@/lib/formatters";
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, LayoutGrid, Mic, Sparkles, Sun } from "lucide-react";
 import { apiClient, ApiClientError } from "@/lib/api-client";
@@ -1330,8 +1332,8 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
                     <div className="grid grid-cols-4 gap-2">
                       <Metric label="세대" value={`${alt.summary.total_units}`} />
                       <Metric label="층수" value={`${alt.summary.num_floors}F`} />
-                      <Metric label="건폐율" value={`${alt.summary.bcr_percent.toFixed(0)}%`} />
-                      <Metric label="용적률" value={`${alt.summary.far_percent.toFixed(0)}%`} />
+                      <Metric label="건폐율" value={formatPercent(alt.summary.bcr_percent)} />
+                      <Metric label="용적률" value={formatPercent(alt.summary.far_percent)} />
                     </div>
 
                     {/* W-A: 목표(슬라이더) 미달 시 바인딩 제약 — 응답에 있을 때만 표시(정직) */}
@@ -1521,8 +1523,8 @@ function SummaryRow({
       <Metric label="세대" value={`${summary.total_units}`} />
       <Metric label="층수" value={`${summary.num_floors}F`} />
       <Metric label="높이" value={`${summary.building_height_m.toFixed(0)}m`} />
-      <Metric label="건폐율" value={`${summary.bcr_percent.toFixed(0)}%`} />
-      <Metric label="용적률" value={`${summary.far_percent.toFixed(0)}%`} />
+      <Metric label="건폐율" value={formatPercent(summary.bcr_percent)} />
+      <Metric label="용적률" value={formatPercent(summary.far_percent)} />
       <Metric label="주차" value={`${summary.parking_count}`} />
     </div>
   );
@@ -1658,7 +1660,7 @@ function MixBar({
               width: `${(d.ratio_pct / total) * 100}%`,
               background: palette[i % palette.length],
             }}
-            title={`${d.name} ${Math.round(d.ratio_pct)}%`}
+            title={`${d.name} ${formatPercent(d.ratio_pct)}`}
           />
         ))}
       </div>
@@ -1669,7 +1671,7 @@ function MixBar({
               className="inline-block h-2 w-2 rounded-sm"
               style={{ background: palette[i % palette.length] }}
             />
-            {d.code} {Math.round(d.ratio_pct)}%
+            {d.code} {formatPercent(d.ratio_pct)}
           </span>
         ))}
       </div>
