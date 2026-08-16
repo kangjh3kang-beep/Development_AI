@@ -5,7 +5,7 @@
  * 하이픈(Hyphen) API 1순위 연동 + 비상 등기부 PDF 직접 업로드 지원.
  */
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { AlertTriangle, FileUp, Files, Settings } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import { RegistryUploadModal } from "./RegistryUploadModal";
@@ -37,13 +37,25 @@ export function RegistryBulkButton({ addresses, className = "" }: { addresses: s
   const [loading, setLoading] = useState(false);
   const [res, setRes] = useState<RegResult | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  // ★재전송 안전 키 — **같은 필지 묶음이면 같은 키**여야 한다.
+  //   이 호출은 필지당 1,200원이고 100필지 상한이라 한 번에 최대 120,000원이 나간다.
+  //   타임아웃이 120초인데 서버는 그 뒤로도 계속 돌며 과금하므로, 사용자가 "실패"를 보고
+  //   다시 누르면 **두 번 청구**된다. 키가 같으면 백엔드가 두 번째를 청구하지 않는다.
+  //   ★목록이 바뀌면 새 키를 만든다 — 다른 요청에 같은 키를 쓰면 백엔드가 422 로 거절한다.
+  const idemRef = useRef<{ sig: string; key: string } | null>(null);
 
   const run = useCallback(async () => {
     if (!list.length) return;
     setLoading(true); setRes(null);
     try {
+      const items = list.map((a) => ({ address: a }));
+      const sig = JSON.stringify(items);
+      if (idemRef.current?.sig !== sig) {
+        idemRef.current = { sig, key: crypto.randomUUID() };
+      }
       const r = await apiClient.post<RegResult>("/registry/bulk", {
-        body: { items: list.map((a) => ({ address: a })) }, useMock: false, timeoutMs: 120000,
+        body: { items }, useMock: false, timeoutMs: 120000,
+        headers: { "Idempotency-Key": idemRef.current.key },
       });
       setRes(r);
     } catch {

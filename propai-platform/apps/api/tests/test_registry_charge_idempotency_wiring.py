@@ -205,8 +205,18 @@ async def test_처리_중인_키가_또_오면_409(monkeypatch: pytest.MonkeyPat
     first = asyncio.create_task(_call_bulk(key, u, ["서울특별시 강남구 역삼동 737"]))
     await asyncio.wait_for(started.wait(), timeout=5)
 
-    with pytest.raises(HTTPException) as ei:
-        await _call_bulk(key, u, ["서울특별시 강남구 역삼동 737"])
+    # ★`wait_for` 로 감싼다 — 선점이 깨지면 두 번째 요청이 409 대신 `_SlowSvc` 안에서
+    #   **영원히 매달린다**(변이 실측: 그 상태로 스위트가 통째로 멈췄다). 잠금이 hang 으로
+    #   나타나면 CI 는 타임아웃까지 끌려가고 원인도 안 보인다 — 빠르게 빨개지게 만든다.
+    try:
+        with pytest.raises(HTTPException) as ei:
+            await asyncio.wait_for(
+                _call_bulk(key, u, ["서울특별시 강남구 역삼동 737"]), timeout=5
+            )
+    except TimeoutError:
+        release.set()
+        await first
+        pytest.fail("두 번째 요청이 409 로 튕기지 않고 본작업에 진입했다 — 선점이 깨졌다")
     assert ei.value.status_code == 409, "처리 중인 키를 두 번째 요청이 그대로 실행했다"
 
     release.set()

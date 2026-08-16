@@ -312,7 +312,15 @@
 //        앱셸이 스테일하면 옛 번들이 계속 크래시한다 → 범프 동반.
 //        ★채번: origin/main 실제 상수 v503 확인 → v504. ★v503 때 세 세션이 1분 안에 동시
 //        채번해 PR 2건이 충돌했다 — 이번엔 **기능 PR 머지 前** 보드 선점으로 창을 없앴다.
-const CACHE_NAME = "propai-v504-ops-honesty-cadastre-z17";
+// v505: 과금 재전송 안전(`Idempotency-Key`) + **#644 의 밀린 범프**.
+//        ①`RegistryBulkButton` 이 등기 일괄조회에 재전송 안전 키를 붙인다(백엔드 멱등 배선과 짝).
+//        ②★#644(정책표 통로 일원화 — 도시개발이 "매도청구"로 오표시되던 건)는 프론트
+//          `DevelopmentScenarioCard` 를 바꿨는데 **범프 없이 머지됐다**(실측: 머지 후에도
+//          origin/main 상수가 v504). 앱셸이 스테일한 재방문자는 옛 번들을 계속 보므로
+//          그 봉합이 **캐시에 가려진다** — CLAUDE.md E22 가 경고한 형태 그대로다.
+//          이 범프가 ①과 ②를 함께 실어 보낸다.
+//        ★채번: origin/main 실제 상수 v504 확인 → v505.
+const CACHE_NAME = "propai-v505-charge-idempotency";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
