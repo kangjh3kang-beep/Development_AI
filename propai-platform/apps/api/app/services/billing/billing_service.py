@@ -15,7 +15,6 @@ LLM 실계측: 모든 LLM 호출은 llm_usage_log에 service 귀속으로 1건 I
 사용자 청구사용량에 누적된다.
 """
 
-import contextlib
 import copy
 import json
 from datetime import UTC, datetime, timedelta
@@ -529,7 +528,11 @@ def diff_config(before: dict[str, Any], after: dict[str, Any]) -> dict[str, dict
 
 
 async def save_config(
-    db: AsyncSession, override: dict[str, Any], *, actor_id: str | None = None
+    db: AsyncSession,
+    override: dict[str, Any],
+    *,
+    actor_id: str | None = None,
+    actor_role: str | None = None,
 ) -> dict[str, Any]:
     """관리자 설정 저장(DB 영속 + 런타임 반영 + **변경 감사**).
 
@@ -543,6 +546,15 @@ async def save_config(
     ★deepcopy 가 필수인 이유(공허한 감사 방지): `get_config()` 는 `_CONFIG` 를 **그대로**
     돌려주고 `apply_config()` 는 그것을 **in-place** 로 고친다. 사본을 뜨지 않으면 before 와
     after 가 같은 객체라 diff 가 **항상 비고**, 감사는 "변경 없음"만 영원히 기록한다.
+
+    ★왜 라우터가 아니라 여기서 감사하나: 같은 라우터의 형제 엔드포인트(`billing.set_tier`)는
+    **라우터에서** `audit_admin_action` 을 부른다. 그 관례를 따르지 않은 이유는, 이 결함이
+    생긴 방식이 바로 **"엔드포인트를 추가하면서 감사 호출을 빠뜨린 것"** 이기 때문이다.
+    서비스 층에 두면 앞으로 어떤 호출 경로가 설정을 저장하든 감사를 **잊을 수 없다**.
+
+    ★왜 `audit_admin_action` 인가: 그것이 이 저장소가 "권한/설정 변경"에 쓰는 표준 통로이고,
+    `admin_audit_log` 테이블 **과** 감사 원장(해시체인) **양쪽**에 흡수한다 — `append_audit`
+    직접 호출은 그 부분집합이다. `actor_role` 도 같이 남아 "누가, 무슨 권한으로" 가 남는다.
     """
     before = copy.deepcopy(get_config())
     await db.execute(text(_CONFIG_DDL))
@@ -558,19 +570,18 @@ async def save_config(
     await db.commit()
     if changes:
         # 실제로 값이 바뀐 경우만 남긴다(무변경 저장까지 적으면 원장이 소음으로 덮인다).
-        # best-effort: 원장 append 실패가 설정 저장을 되돌리지 않는다(append_audit 계약).
-        # ★한계(정직): 그래서 감사 누락 가능성이 0은 아니다. 요율 변경을 감사 성공에
-        #   묶으려면 별도 트랜잭션 설계가 필요하고 그건 이 변경의 범위 밖이다.
-        with contextlib.suppress(Exception):
-            from app.services.ledger import audit_ledger
+        # ★한계(정직): audit_admin_action 은 계약상 best-effort 라 내부에서 예외를 삼킨다 —
+        #   그래서 감사 누락 가능성이 0은 아니다. 요율 변경을 감사 성공에 묶으려면 별도
+        #   트랜잭션 설계가 필요하고 그건 이 변경의 범위 밖이다.
+        from app.core.audit import audit_admin_action
 
-            await audit_ledger.append_audit(
-                action="billing_config_update",
-                user_id=actor_id,
-                resource_type="billing_config",
-                resource_id="1",  # billing_config 는 단일 행(id=1)이다
-                changes=changes,
-            )
+        await audit_admin_action(
+            actor_id=actor_id,
+            actor_role=actor_role,
+            action="billing.update_config",
+            target="billing_config",  # 단일 행(id=1) — 대상 식별자가 하나뿐이다
+            detail={"changes": changes},
+        )
     return after
 
 

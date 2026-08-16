@@ -62,13 +62,23 @@ def _restore_config():
     live.update(snapshot)
 
 
-async def _save(override: dict[str, Any], actor_id: str | None = "admin-1"):
-    """save_config 를 태우고 append_audit 호출을 가로챈다."""
+async def _save(
+    override: dict[str, Any],
+    actor_id: str | None = "admin-1",
+    actor_role: str | None = "super_admin",
+):
+    """save_config 를 태우고 감사 호출을 가로챈다.
+
+    ★가로채는 대상은 `app.core.audit.audit_admin_action` 이다 — 같은 라우터의 형제
+    엔드포인트(`billing.set_tier`)가 쓰는 **표준 통로**이고, `admin_audit_log` 테이블과
+    감사 원장(해시체인) 양쪽에 흡수한다. 원장에 직접 넣는 것은 그 부분집합이다.
+    """
     with patch(
-        "app.services.ledger.audit_ledger.append_audit", new_callable=AsyncMock
+        "app.core.audit.audit_admin_action", new_callable=AsyncMock
     ) as spy:
-        spy.return_value = {"ok": True}
-        await billing_service.save_config(_FakeSession(), override, actor_id=actor_id)
+        await billing_service.save_config(
+            _FakeSession(), override, actor_id=actor_id, actor_role=actor_role
+        )
         return spy
 
 
@@ -98,16 +108,18 @@ async def test_rate_change_is_audited() -> None:
 
     assert spy.await_count == 1, "요율이 바뀌었는데 감사가 남지 않았다"
     kwargs = spy.await_args.kwargs
-    assert kwargs["action"] == "billing_config_update"
-    assert kwargs["resource_type"] == "billing_config"
-    # ★resource_id 도 단언한다. `append_audit` 의 필수 kwarg 라 빠지면 TypeError 가 나는데,
-    #   호출부가 `contextlib.suppress(Exception)` 안이라 **감사가 조용히 사라진다**
-    #   (예외가 삼켜져 저장은 성공하고 원장만 빈다). 모킹된 테스트는 kwarg 누락을 그냥
-    #   통과시키므로, 여기서 명시하지 않으면 그 변이가 살아남는다 — 실제로 살아남았다.
-    assert kwargs["resource_id"] == "1"
-    assert kwargs["user_id"] == "admin-1", "변경 주체가 원장에 안 실렸다"
+    # ★형제 관례와 같은 이름공간을 쓴다. 같은 라우터의 `billing.set_tier` 가 그 형태다 —
+    #   조회할 때 `action LIKE 'billing.%'` 하나로 등급 변경과 요율 변경이 같이 잡혀야 한다.
+    assert kwargs["action"] == "billing.update_config"
+    assert kwargs["action"].startswith("billing."), "형제(billing.set_tier)와 이름공간이 갈라졌다"
+    # ★target 도 단언한다. 빠지면 감사 행에 대상이 비는데, audit_admin_action 은 계약상
+    #   내부에서 예외를 삼키므로 **조용히** 반쪽 기록이 남는다. 모킹 테스트는 kwarg 누락을
+    #   그냥 통과시키므로 여기서 명시하지 않으면 그 변이가 살아남는다 — 실제로 살아남았다.
+    assert kwargs["target"] == "billing_config"
+    assert kwargs["actor_id"] == "admin-1", "변경 주체가 감사에 안 실렸다"
+    assert kwargs["actor_role"] == "super_admin", "**무슨 권한으로** 바꿨는지가 안 남았다"
 
-    changes = kwargs["changes"]
+    changes = kwargs["detail"]["changes"]
     assert changes, (
         "변경 diff 가 비었다 — before 스냅샷이 _CONFIG 의 **별칭**일 때 나타나는 증상이다"
         "(get_config() 는 라이브 dict 를 돌려주고 apply_config() 는 in-place 다). deepcopy 를 확인하라."
@@ -141,10 +153,12 @@ async def test_actor_absence_is_recorded_as_null_not_dropped() -> None:
 
     주체 미상이라고 기록을 생략하면, 가장 수상한 변경이 가장 조용해진다.
     """
-    spy = await _save({"service_fees": {"project_create": 4321}}, actor_id=None)
+    spy = await _save(
+        {"service_fees": {"project_create": 4321}}, actor_id=None, actor_role=None
+    )
 
     assert spy.await_count == 1
-    assert spy.await_args.kwargs["user_id"] is None
+    assert spy.await_args.kwargs["actor_id"] is None
 
 
 def test_diff_records_removed_keys() -> None:
