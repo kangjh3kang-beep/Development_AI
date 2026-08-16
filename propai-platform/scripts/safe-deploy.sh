@@ -88,6 +88,13 @@ status "SYNC"
 git fetch origin "$DEPLOY_REF" >>"$LOG" 2>&1 || { status "FAIL fetch-$DEPLOY_REF"; exit 1; }
 git reset --hard FETCH_HEAD >>"$LOG" 2>&1 || { status "FAIL reset"; exit 1; }
 HEAD=$(git log --oneline -1)
+
+# ★앱 버전을 여기서 한 번 만든다 — sw 캐시명과 텔레메트리가 **같은 값**에서 갈라진다.
+#   seq 는 제로패딩(정렬 가능성) · shortsha 는 커밋 식별. 손으로 올리던 범프를 대체한다.
+#   ★이 export 가 빠지면 Dockerfile.web 이 빌드를 죽인다(조용히 옛 캐시명이 나가지 않는다).
+APP_BUILD_ID="propai-v$(printf '%06d' "$(git rev-list --count HEAD)")-$(git rev-parse --short=8 HEAD)"
+export APP_BUILD_ID
+log "APP_BUILD_ID = $APP_BUILD_ID"
 log "DEPLOY_REF = $DEPLOY_REF"
 log "HEAD = $HEAD"
 

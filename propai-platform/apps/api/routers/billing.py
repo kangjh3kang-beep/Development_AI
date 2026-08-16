@@ -186,10 +186,22 @@ async def update_billing_config(
     current: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """관리자 전용: 과금 금액 설정 수정/변경(DB 영속 + 즉시 반영)."""
+    """관리자 전용: 과금 금액 설정 수정/변경(DB 영속 + 즉시 반영 + 변경 감사).
+
+    ★주체를 반드시 넘긴다. 저장은 billing_config 단일 행을 덮어써 이전 요율이 소멸하므로,
+    여기서 안 넘기면 감사에 주체가 빈 채로 남는다 — 그러면 "이 청구가 어떤 요율에서
+    나왔나"에는 답해도 "누가, 무슨 권한으로 그렇게 정했나"에는 못 답한다.
+    감사 자체는 서비스 층(`save_config`)이 수행한다 — 이 결함이 생긴 방식이 바로
+    **엔드포인트를 추가하며 감사 호출을 빠뜨린 것**이라, 잊을 수 없는 자리로 옮겼다.
+    """
     if not await billing_service.is_super_admin(db, current.user_id):
         raise HTTPException(status_code=403, detail="관리자 권한이 필요합니다.")
-    return await billing_service.save_config(db, override or {})
+    return await billing_service.save_config(
+        db,
+        override or {},
+        actor_id=str(current.user_id),
+        actor_role=getattr(current, "role", None),
+    )
 
 
 @router.post("/admin/set-tier")
