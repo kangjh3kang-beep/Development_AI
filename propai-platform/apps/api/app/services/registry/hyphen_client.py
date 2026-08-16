@@ -410,6 +410,132 @@ async def search_by_unique_no(unique_no: str) -> dict[str, Any]:
         return {"ok": False, "status": "error", "items": [], "message": str(e)[:200]}
 
 
+# ── 등기부 열람 응답 파서 ──────────────────────────────────────────────────
+# ★2026-08-15 프로덕션 실측으로 드러난 **마지막 구간 결함**. 열람은 계속 성공하고
+#   있었다(`errYn: N`, `열람일시` 기록). 벤더는 127KB PDF 와 26KB 구조화 등기 데이터를
+#   매번 보냈다. 그런데 우리 파서가 **키 이름을 틀려** 둘 다 버렸다:
+#     · PDF   : 우리가 읽은 `pdfHex` ↔ 실제 `pdfHexString`
+#     · 소유자: 우리가 읽은 `소유자` ↔ 실제 `소유지분현황_갑구[].등기명의인`
+#   결과는 `ok: True` + `has_pdf: False` + `owner: None` — **문서 없는 성공**이었고,
+#   사용자에게는 "열람이 안 된다" 로 보였다. RC-1(주소검색 키)과 **같은 결함 클래스**다.
+# ★그래서 이름 후보를 표로 두고 **하나라도 맞으면** 쓴다 — 벤더가 표기를 바꿔도 견딘다.
+# ★근거 있는 둘만 둔다. 첫 판에는 `pdf_hex`·`pdfHexStr` 도 넣었는데 **어디에도 근거가
+#   없는 추측**이었다(소비처 0). 추측을 표에 넣으면 다음 사람이 "실측된 표기" 로 읽는다.
+_PDF_HEX_KEYS = ("pdfHexString", "pdfHex")
+# ★**실측된 표 하나만** 본다(2026-08-15 역삼동 737 열람 응답).
+#   첫 판에는 폴백으로 `소유권에_관한_사항_갑구` 와 `권리자_및_기타사항` 을 넣었는데,
+#   리뷰가 그 조합의 파괴력을 실행으로 보였다:
+#     · 갑구는 순위번호 **오름차순** — 첫 행은 소유권보존, 즉 **최초 소유자**다(현재가 아니라)
+#     · 갑구에는 가압류·압류·경매개시결정도 산다 → **채권자가 소유자로** 나온다
+#     · `권리자_및_기타사항` 은 이름·주민등록번호·주소가 **줄 단위로 구분된 블롭**이라,
+#       줄바꿈을 접착하는 우리 `_clean` 과 만나면 번호까지 붙어 화면·DB·LLM 으로 흐른다
+#   그 표가 실제로 오는지조차 **측정한 적이 없다**. 측정 전까지 넣지 않는다 —
+#   "이름 후보를 여럿 두면 견고하다" 는 **동종 스칼라(PDF 키)에서만** 참이고,
+#   **의미가 다른 칸**에 적용하면 견고한 게 아니라 오답을 만든다.
+_OWNER_TABLES = ("소유지분현황_갑구",)
+_OWNER_FIELDS = ("등기명의인", "소유자")
+_SHARE_FIELDS = ("최종지분", "지분")
+
+
+def extract_pdf_hex(res_data: dict[str, Any]) -> str:
+    """열람 응답에서 PDF 16진 문자열을 찾는다 — 표기 후보를 **전부** 본다."""
+    for k in _PDF_HEX_KEYS:
+        v = res_data.get(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return ""
+
+
+def _clean(v: Any) -> str:
+    """벤더 값의 줄바꿈을 없앤다 — **공백으로 바꾸지 않고 이어 붙인다**.
+
+    ★실측: 소유자가 `"강남금융센터주\r\n식회사 (소유자)"` 로 온다. 벤더가 등기부 지면
+      너비에 맞춰 **단어 중간에서** 접은 것이다. 그래서 흔한 처리인 `" ".join(v.split())`
+      을 쓰면 `"강남금융센터주 식회사"` 라는 **존재하지 않는 상호**가 만들어진다 —
+      상호 검색·대조가 전부 빗나간다(첫 판에서 실제로 그렇게 짰다가 잡았다).
+    ★줄바꿈만 제거하고, 남은 공백 연속은 하나로 줄인다. 벤더가 공백 뒤에서 접은 경우
+      (`"홍길동 \r\n(소유자)"`)는 그 공백이 이미 있으므로 표기가 보존된다.
+    """
+    # ★스칼라만 문자열로 만든다. 벤더가 공유 소유자를 리스트로 주면 종전 코드는
+    #   `"['김철수', '박영희']"` 라는 **파이썬 repr** 을 화면에 그대로 띄웠다.
+    if isinstance(v, (list, tuple)):
+        return ", ".join(_clean(x) for x in v if _clean(x))
+    if v is None or isinstance(v, (dict, set)):
+        return ""
+    t = str(v).replace("\r\n", "").replace("\r", "").replace("\n", "")
+    return " ".join(t.split())
+
+
+def extract_owners(out_list: Any) -> list[dict[str, str]]:
+    """등기 본문에서 소유자를 **전부** 뽑는다 — `[{"name":…, "share":…}, …]`.
+
+    ★한 명으로 줄이지 않는 이유: 공유 필지는 `소유지분현황_갑구` 에 행이 여럿이고
+      벤더가 **행마다 `최종지분`("2분의 1"/"단독소유")을 준다**. 첫 행만 쓰면 나머지
+      소유자와 지분이 통째로 사라지는데, 그 값이 화면·DB 캐시·외부 LLM 프롬프트
+      **세 표면**에 "이 필지의 소유자" 로 흐른다(이 저장소의 다필지 대표값 혼입 클래스).
+
+    ★`outList` 는 dict 이고 갑구 표는 **리스트 또는 JSON 문자열**로 온다.
+    """
+    import json
+
+    if isinstance(out_list, list):
+        out_list = out_list[0] if out_list else {}
+    if not isinstance(out_list, dict):
+        return []
+
+    # 종전 표기(평평한 `소유자` 필드)도 계속 지원한다 — 있으면 그대로 한 명으로 본다.
+    flat = _clean(pick_field(out_list, "소유자"))
+    if flat:
+        return [{"name": flat, "share": ""}]
+
+    owners: list[dict[str, str]] = []
+    for table in _OWNER_TABLES:
+        rows = out_list.get(table)
+        if isinstance(rows, str):
+            try:
+                rows = json.loads(rows)
+            except Exception:  # noqa: BLE001
+                continue
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            # 초기값은 표(_OWNER_FIELDS)가 비었을 때만 쓰인다 — 지금은 도달 불가라
+            # 변이가 생존한다(그 사실을 적어 둔다). 표를 비우는 변경에 대한 방어.
+            name = ""
+            for f in _OWNER_FIELDS:
+                name = _clean(row.get(f))
+                if name:
+                    break
+            if not name:
+                continue
+            share = ""   # 위와 같은 이유의 초기값(표가 비었을 때만 쓰임)
+            for f in _SHARE_FIELDS:
+                share = _clean(row.get(f))
+                if share:
+                    break
+            owners.append({"name": name, "share": share})
+    return owners
+
+
+def format_owner(owners: list[dict[str, str]]) -> str | None:
+    """표시용 한 줄. **축약했다는 사실이 보이게** 만든다.
+
+    ★"김철수" 로만 내면 읽는 쪽은 단독 소유라고 믿는다. "김철수 외 1인" 이면
+      더 있다는 것이 화면·프롬프트 어디서든 드러난다.
+    """
+    if not owners:
+        return None
+    head = owners[0]["name"]
+    return head if len(owners) == 1 else f"{head} 외 {len(owners) - 1}인"
+
+
+def extract_owner(out_list: Any) -> str | None:
+    """표시용 소유자 한 줄(하위호환 진입점)."""
+    return format_owner(extract_owners(out_list))
+
+
 async def fetch_realty_registry(
     *,
     unique_no: str,
@@ -492,21 +618,25 @@ async def fetch_realty_registry(
             }
 
         res_data = data.get("data") or {}
-        pdf_hex = res_data.get("pdfHex") or ""
+        pdf_hex = extract_pdf_hex(res_data)
         pdf_b64 = None
         if pdf_hex:
             try:
                 pdf_bytes = bytes.fromhex(pdf_hex)
                 pdf_b64 = base64.b64encode(pdf_bytes).decode()
             except Exception as pe:  # noqa: BLE001
-                logger.warning("하이픈 pdfHex 변환 실패", err=str(pe)[:80])
+                logger.warning("하이픈 등기부 PDF 변환 실패", err=str(pe)[:80])
 
         out_list = res_data.get("outList") or {}
-        owner = None
-        if isinstance(out_list, dict):
-            owner = pick_field(out_list, "소유자")
-        elif isinstance(out_list, list) and out_list:
-            owner = pick_field(out_list[0], "소유자")
+        owners = extract_owners(out_list)
+        # ★MED-2: `raw` 에 pdfHexString(254KB)이 그대로 있어 같은 문서를 두 번 실어 보냈다.
+        #   base64 로 이미 싣고 있으므로 원본 hex 는 응답에서 뺀다(내용 손실 없음).
+        raw_slim = dict(data)
+        if isinstance(raw_slim.get("data"), dict):
+            d2 = dict(raw_slim["data"])
+            for k in _PDF_HEX_KEYS:
+                d2.pop(k, None)
+            raw_slim["data"] = d2
 
         return {
             "ok": True,
@@ -515,9 +645,11 @@ async def fetch_realty_registry(
             "unique_no": uno,
             "pdf_base64": pdf_b64,
             "has_pdf": bool(pdf_b64),
-            "owner": owner,
+            "owner": format_owner(owners),
+            "owners": owners,
+            "owner_count": len(owners),
             "out_list": out_list,
-            "raw": data,
+            "raw": raw_slim,
             "message": "하이픈 부동산 등기부 열람 성공",
         }
     except Exception as e:  # noqa: BLE001
