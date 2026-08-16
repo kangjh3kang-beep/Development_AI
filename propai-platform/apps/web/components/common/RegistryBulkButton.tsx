@@ -84,7 +84,7 @@ export function RegistryBulkButton({ addresses, className = "" }: { addresses: s
       </div>
 
       {res && !res.configured && (
-        <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-[11px] text-amber-400">
+        <div className="mt-3 rounded-lg border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 p-3 text-[11px] text-[var(--status-warning)]">
           <span className="inline-flex items-center gap-1 font-bold">
             <Settings className="size-3.5" aria-hidden /> {res.message || "등기부 발급 API 미설정"}
           </span> <br />
@@ -106,7 +106,7 @@ export function RegistryBulkButton({ addresses, className = "" }: { addresses: s
                 ) : it.pdf_url ? (
                   <a href={it.pdf_url} target="_blank" rel="noopener noreferrer" className="rounded-md bg-[var(--accent-strong)] px-2 py-0.5 text-[10px] font-bold text-white">PDF ↗</a>
                 ) : it.status !== "ok" ? (
-                  <span className="text-[10px] text-amber-400">{it.status}</span>
+                  <span className="text-[10px] text-[var(--status-warning)]">{it.status}</span>
                 ) : null}
               </div>
               {it.status === "ok" && (

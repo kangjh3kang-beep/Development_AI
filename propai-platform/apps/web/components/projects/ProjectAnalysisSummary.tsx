@@ -339,8 +339,8 @@ export function ProjectAnalysisSummary({ locale }: { locale?: string }) {
               title={`분석 원장 해시체인 검증 — 버전 v${integrity.version}`}
               className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${
                 integrity.verified
-                  ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/30"
-                  : "bg-rose-500/10 text-rose-500 border border-rose-500/30"
+                  ? "bg-[var(--status-success)]/10 text-[var(--status-success)] border border-[var(--status-success)]/30"
+                  : "bg-[var(--status-error)]/10 text-[var(--status-error)] border border-[var(--status-error)]/30"
               }`}
             >
               {integrity.verified ? (

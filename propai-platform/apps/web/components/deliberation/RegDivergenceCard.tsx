@@ -115,7 +115,7 @@ export function RegDivergenceCard() {
         // ★실제 트리거 법령명 기반(감시는 모법 Act 수준 — '시행령 개정' 단정 금지, 오라벨 회피).
         <p
           role="alert"
-          className="relative z-10 mt-2 flex items-start gap-1 rounded-lg border border-rose-500/40 bg-rose-500/10 px-2.5 py-1.5 text-[11px] text-rose-500"
+          className="relative z-10 mt-2 flex items-start gap-1 rounded-lg border border-[var(--status-error)]/40 bg-[var(--status-error)]/10 px-2.5 py-1.5 text-[11px] text-[var(--status-error)]"
         >
           <AlertTriangle className="mt-px size-3 shrink-0" aria-hidden />
           <span>
@@ -140,9 +140,9 @@ function ReadyBody({ data }: { data: DivergenceResp }) {
   const aligned = comparable && drift === 0 && unexpected.length === 0;
   // 일치=emerald, 미일치(대조됨)=amber, 대조불가=중립(미일치 암시 회피·거짓 안심 금지).
   const tone = aligned
-    ? "text-emerald-500"
+    ? "text-[var(--status-success)]"
     : comparable
-      ? "text-amber-500"
+      ? "text-[var(--status-warning)]"
       : "text-[var(--text-tertiary)]";
 
   return (
@@ -159,7 +159,7 @@ function ReadyBody({ data }: { data: DivergenceResp }) {
         // role=alert: 핵심 회귀 신호를 스크린리더가 즉시 announce(a11y).
         <p
           role="alert"
-          className="flex items-start gap-1 rounded-lg border border-rose-500/40 bg-rose-500/10 px-2.5 py-1.5 text-[11px] text-rose-500"
+          className="flex items-start gap-1 rounded-lg border border-[var(--status-error)]/40 bg-[var(--status-error)]/10 px-2.5 py-1.5 text-[11px] text-[var(--status-error)]"
         >
           <AlertTriangle className="mt-px size-3 shrink-0" aria-hidden />
           <span>엔진 규제 누락 의심: {unexpected.join(", ")}</span>

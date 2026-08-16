@@ -323,7 +323,7 @@ function statusIcon(status: PipelineStageStatus["status"]) {
   switch (status) {
     case "completed":
       return (
-        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-400 text-xs font-bold">
+        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[var(--status-success)]/20 text-[var(--status-success)] text-xs font-bold">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
         </span>
       );
@@ -1371,7 +1371,7 @@ export function ProjectPipelinePanel({
                 </span>
 
                 {/* Status */}
-                <span className={`text-xs font-medium ${stage.status === "completed" ? "text-emerald-400" :
+                <span className={`text-xs font-medium ${stage.status === "completed" ? "text-[var(--status-success)]" :
                     stage.status === "running" ? "text-[var(--accent-strong)]" :
                       stage.status === "failed" ? "text-red-400" :
                         "text-[var(--text-hint)]"
@@ -1622,7 +1622,7 @@ export function ProjectPipelinePanel({
 
                     {/* Profit rate badge */}
                     {typeof profitRate === "number" && (
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shrink-0">
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[var(--status-success)]/10 text-[var(--status-success)] border border-[var(--status-success)]/20 shrink-0">
                         {profitRate.toFixed(1)}%
                       </span>
                     )}

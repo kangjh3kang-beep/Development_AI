@@ -310,7 +310,7 @@ export function ProjectCompareView({ results }: ProjectCompareViewProps) {
                       <span
                         className={
                           diff.positive === true
-                            ? "text-emerald-400"
+                            ? "text-[var(--status-success)]"
                             : diff.positive === false
                               ? "text-red-400"
                               : "text-[var(--text-tertiary)]"
@@ -347,7 +347,7 @@ export function ProjectCompareView({ results }: ProjectCompareViewProps) {
                   수익률 {typeof profitRate === "number" ? `${profitRate.toFixed(1)}%` : "-"}
                 </span>
                 {typeof grade === "string" && (
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[var(--status-success)]/10 text-[var(--status-success)] border border-[var(--status-success)]/20">
                     {grade}등급
                   </span>
                 )}

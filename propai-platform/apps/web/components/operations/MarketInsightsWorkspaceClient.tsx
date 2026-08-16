@@ -1492,7 +1492,7 @@ export function MarketInsightsWorkspaceClient() {
                   {results.avmCaveat ? (
                     <p
                       data-testid="avm-caveat"
-                      className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] font-bold leading-relaxed text-amber-600"
+                      className="mt-3 rounded-lg border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 px-3 py-2 text-[11px] font-bold leading-relaxed text-amber-600"
                     >
                       {results.avmCaveat}
                     </p>
