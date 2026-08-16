@@ -134,6 +134,12 @@ interface GlobalAddressSearchProps {
   className?: string;
   /** placeholder */
   placeholder?: string;
+  /**
+   * 검색 입력의 **접근 가능한 이름**(스크린리더가 읽는 이름).
+   * placeholder 는 형식 예시라 이름으로 부적절하다 — 둘을 분리한다.
+   * 미지정이면 한국어 기본값(컴포넌트층 i18n 캠페인 대상).
+   */
+  ariaLabel?: string;
   /** 비활성화 */
   disabled?: boolean;
   /** 초기 주소 (스토어에서 가져온 값 사전 표시) */
@@ -153,6 +159,7 @@ export function GlobalAddressSearch({
   onChange,
   className = "",
   placeholder = "주소를 검색하세요",
+  ariaLabel,
   disabled = false,
   initialAddress,
   writeToContext = true,
@@ -1397,12 +1404,16 @@ export function GlobalAddressSearch({
                       onFocus={() => { if (candidates.length) setShowCandidates(true); }}
                       onBlur={() => setTimeout(() => setShowCandidates(false), 150)}
                       onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); if (candidates.length) pickCandidate(candidates[0]); else void handleDirectAdd(); } }}
-                      // ★`placeholder` prop 을 **받고도 쓰지 않고** 있었다(실측 2026-08-16).
-                      //   호출부가 `/en` 화면에서 "Address" 를 넘겨도 DOM 에는 아래 한국어
-                      //   문자열이 그대로 나갔다 — prop 은 정의됐는데 소비처가 0인 형태다.
-                      //   기본값은 유지해 한국어 화면의 안내 예시를 잃지 않는다.
-                      placeholder={placeholder || "지번·도로명 검색 (예: 의정부동 224, 산 12-3, 판교역로 166)"}
-                      aria-label={placeholder || "지번·도로명 주소 검색"}
+                      // ★이 검색창의 placeholder 는 **형식 예시**다(필드 라벨이 아니다).
+                      //   한때 호출부의 `placeholder` prop 으로 덮었다가 되돌렸다 —
+                      //   호출부가 넘기는 값은 "주소"/"Address" 같은 **필드 라벨**이라,
+                      //   덮으면 `예: 의정부동 224, 산 12-3` 형식 안내를 잃고
+                      //   `popover-layer.spec.ts` 의 층위 계약(입력칸 탐색)도 깨졌다(실측).
+                      //   ★남은 문제는 이 문자열이 **한국어 하드코딩**이라 `/en`·`/zh-CN`
+                      //     에서도 한국어로 나온다는 것이다 — 컴포넌트층 i18n 캠페인 대상
+                      //     (실측 134파일·341개). 여기서 필드 라벨로 때우지 않는다.
+                      placeholder="지번·도로명 검색 (예: 의정부동 224, 산 12-3, 판교역로 166)"
+                      aria-label={ariaLabel || "지번·도로명 주소 검색"}
                       className="h-12 w-full rounded-full border border-[var(--line-strong)] bg-white px-4 text-[13px] font-semibold text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
                     />
                     {showCandidates && (candidates.length > 0 || searching) && (

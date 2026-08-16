@@ -33,7 +33,10 @@ test("project release chain covers finance, report, design, and BIM", async ({
   await expect(page).toHaveURL(
     new RegExp(`/en/projects/${RELEASE_PROJECT_ID}/finance$`),
   );
-  await page.getByPlaceholder("Address").fill("Seoul Mapo-gu 100");
+  // ★주소 입력은 **접근 가능한 이름**으로 찾는다 — placeholder 는 형식 예시(한국어 하드코딩)라
+  //   로케일에 따라 달라지고, 그걸로 잠그면 i18n 결함을 스펙이 굳히게 된다.
+  //   `ProjectAddressInput` 의 라벨이 `<span>` 이라 연결이 없었으므로 `ariaLabel` 을 배선했다.
+  await page.getByLabel("Address").fill("Seoul Mapo-gu 100");
   await page.getByPlaceholder("Area (sqm)").fill("9800");
   await page.getByRole("button", { name: "Run finance analysis" }).click();
   await expect(page.getByText("MEDIUM")).toBeVisible();

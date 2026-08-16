@@ -196,6 +196,8 @@ export function ProjectAddressInput({
         single={single}
         initialAddress={value || undefined}
         placeholder={placeholder}
+        // 라벨은 `<span>` 이라 입력과 연결되지 않았다 — 접근 가능한 이름을 직접 준다.
+        ariaLabel={label}
         disabled={disabled}
         writeToContext={writeToContext}
         onChange={handleAddressChange}
