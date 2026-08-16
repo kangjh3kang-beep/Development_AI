@@ -1,6 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { SATONG_POPUP_YIELD } from "@/lib/satong-map-z";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
@@ -2740,6 +2741,7 @@ export function SatongMapShell({
            이 속성의 초깃값이 `auto`이고, 조상 체인(mapOverlays 프래그먼트 → topRightSlot →
            wrapperClass("relative"))에 `pointer-events-none`이 하나도 없기 때문이다.
            그래서 `none`을 **직접** 건다. 인터랙티브 자식이 생기면 그 자식에만 `auto`. */
+        {...{ [SATONG_POPUP_YIELD.passiveAttr]: SATONG_POPUP_YIELD.passiveValue }}
         className="pointer-events-none absolute left-4 top-4 z-[380] flex flex-wrap items-center gap-2"
       >
         {/* ★UX A3: 비인터랙티브 배지(허위 어포던스 제거) — 이전엔 <button>이었으나 onClick이
@@ -2817,6 +2819,7 @@ export function SatongMapShell({
         //   접힘 상태에서도 1열(단일 컬럼) 전체를 항상 노출하도록 높이 클리핑을 걷어내고
         //   가용고 내 세로 스크롤로 전 버튼 도달을 보장한다(hover 확장은 폭만 넓히는
         //   보조 어포던스로 격하 — 가시성 자체는 더 이상 hover에 의존하지 않는다).
+        {...{ [SATONG_POPUP_YIELD.passiveAttr]: SATONG_POPUP_YIELD.passiveValue }}
         className={`group absolute right-4 top-20 z-[420] rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--glass-bg)] p-2 shadow-[var(--shadow-lg)] backdrop-blur-[var(--glass-blur)] transition-all duration-300 ease-in-out ${
           railPinned
             ? "grid w-32 auto-rows-min grid-cols-2 gap-2 h-auto max-h-[calc(100%-120px)] supports-[height:100dvh]:max-h-[min(calc(100%-120px),calc(100dvh-176px))] overflow-y-auto"
