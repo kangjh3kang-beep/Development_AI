@@ -43,6 +43,10 @@
   ★스크립트 자체가 바뀐 배포는 **직전에 선갱신**:
     ssh -i ~/.oci.key ubuntu@<ip> 'cd ~/Development_AI && git fetch origin main -q && git reset --hard FETCH_HEAD -q'
     (안 하면 그 배포는 옛 스크립트로 돈다 — "한 판 지연". #668 역할가드가 지금 그 상태다)
+    적용 확인: grep -c "exit 10" propai-platform/scripts/safe-deploy.sh   → 1 이상이면 적용
+      ★"caddy/Caddyfile" 로 확인하지 마라 — 판별력이 없다. deploy-zero-downtime.sh 는 원래
+        caddy 를 reload 하므로 #668 **이전** 버전에도 4건 나온다(실측: 168 HEAD=2b8146dc 에서 4건).
+        'exit 10' 은 #668 전 0 · 후 1 로 갈린다. 대조군도 함께: grep -c docker → 20
 
 ## 검증 규율 (오늘 세 번 고쳤다 — 이게 이 역할의 핵심이다)
 

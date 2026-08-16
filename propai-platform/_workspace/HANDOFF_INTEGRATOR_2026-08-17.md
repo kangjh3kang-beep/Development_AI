@@ -72,7 +72,13 @@ ssh -i ~/.oci.key ubuntu@158.179.174.207 'cat /tmp/deploy_status.txt; pgrep -c -
 
 ```bash
 ssh -i ~/.oci.key ubuntu@<ip> 'cd ~/Development_AI && git fetch origin main -q && git reset --hard FETCH_HEAD -q'
-# 확인 후 평소 절차대로
+    # 적용 확인 — ★판별력을 검증한 표식만 쓴다
+    ssh -i ~/.oci.key ubuntu@<ip> 'cd ~/Development_AI && grep -c "exit 10" propai-platform/scripts/safe-deploy.sh'
+    #   1 이상이면 적용됨. ★"caddy/Caddyfile" 로 확인하지 마라 — 판별력이 없다:
+    #     deploy-zero-downtime.sh 는 원래 caddy 를 reload 하므로 #668 **이전**에도 4건 나온다(실측).
+    #     'exit 10' 은 #668 전 0 · 후 1 로 갈린다.
+    #   ★대조군도 함께: grep -c docker ...safe-deploy.sh → 20 (0 이면 조회기가 죽은 것)
+# 그 다음 평소 절차대로
 ```
 
 **현재 미적용 건**: `#668`(서버 역할 가드)이 main 에 있으나 두 서버 스크립트엔 아직 없다.
