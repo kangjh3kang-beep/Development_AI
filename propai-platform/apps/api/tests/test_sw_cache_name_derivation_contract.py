@@ -88,7 +88,7 @@ def test_치환이_조용히_실패할_수_없다() -> None:
     d = _read(_DOCKERFILE)
     guards = {
         "인자 비었음 감지": 'if [ -z "${APP_BUILD_ID}" ]',
-        "치환 앵커 존재 확인": f"grep -q 'const CACHE_NAME = \"propai-vdev-local\";'",
+        "치환 앵커 존재 확인": "grep -q 'const CACHE_NAME = \"propai-vdev-local\";'",
         "치환 결과 검증": 'grep -q "const CACHE_NAME = \\"${APP_BUILD_ID}\\";"',
     }
     missing = [name for name, needle in guards.items() if needle not in d]
