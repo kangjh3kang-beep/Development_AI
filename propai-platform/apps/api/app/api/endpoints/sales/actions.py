@@ -3,12 +3,13 @@
 import uuid
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.api.deps_sales import SalesCtx, require_role, sales_ctx
+from app.core.charge_guard import charge_once
 from app.services.sales.contract.service import (
     NotFoundError,
     cancel_contract,
@@ -662,7 +663,12 @@ async def contract_cancel(contract_id: uuid.UUID, body: dict, db: AsyncSession =
 
 
 @actions_router.post("/provision")
-async def provision(body: dict, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
+async def provision(
+    request: Request,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
     """현장 ERP 프로비저닝(신규 site 생성).
 
     구독자 포함 인증 사용자 누구나 본인 테넌트에 현장을 만들 수 있고, 생성 시
@@ -682,21 +688,29 @@ async def provision(body: dict, db: AsyncSession = Depends(get_db), user=Depends
     if not getattr(user, "tenant_id", None):
         raise HTTPException(403, "테넌트 정보가 없어 현장을 만들 수 없습니다. 다시 로그인해 주세요.")
 
-    res = await provision_site(db, pid, user.tenant_id,
-                               body["site_name"], body.get("development_type", "APT"))
-    await db.commit()
+    # ★재전송 안전 — 더블서브밋이면 **현장이 두 개 생기고 두 번 청구**된다.
+    #   가드가 선점(동시요청 409)·정산(같은 키 재요청은 과금 스킵)을 형태로 강제한다.
+    #   ★키를 안 보내면 종전 동작 그대로다(하위호환) — 프론트가 보내야 실제 보호가 켜진다.
+    async with charge_once(
+        request, endpoint="sales.provision", payload=body,
+        tenant_id=getattr(user, "tenant_id", None), user_id=getattr(user, "id", None),
+    ) as guard:
+        res = await provision_site(db, pid, user.tenant_id,
+                                   body["site_name"], body.get("development_type", "APT"))
+        await db.commit()
 
-    # 분양현장 생성 사용료(관리자 책정) 부과 — best-effort(실패해도 현장 생성 유지, 후불 누적)
-    fee_krw = None
-    try:
-        await billing_service.load_config(db)
-        charged = await billing_service.charge_service(db, user.id, "sales_provision")
-        fee_krw = charged.get("charged_krw")
-    except Exception:  # noqa: BLE001
-        pass
-    if isinstance(res, dict):
-        res = {**res, "service_fee_krw": fee_krw}
-    return res
+        # 분양현장 생성 사용료(관리자 책정) 부과 — best-effort(실패해도 현장 생성 유지, 후불 누적)
+        fee_krw = None
+        if guard.billable:
+            try:
+                await billing_service.load_config(db)
+                charged = await billing_service.charge_service(db, user.id, "sales_provision")
+                fee_krw = charged.get("charged_krw")
+            except Exception:  # noqa: BLE001
+                pass
+        if isinstance(res, dict):
+            res = {**res, "service_fee_krw": fee_krw}
+        return res
 
 
 @actions_router.get("/commission/tax-pref")

@@ -61,7 +61,6 @@ _EXEMPT = {
     "render_photoreal": "★부채: photoreal_render 과금(건당 유료 AI 렌더). Request 없음",
     "render_concept": "★부채: concept_render 과금. Request 없음",
     "run_pipeline": "★부채: stage:* 단계별 과금. Request 없음",
-    "provision": "★부채: sales_provision 과금. Request 없음",
 }
 
 
