@@ -90,19 +90,32 @@ async def _get_project_or_404(
 
 @router.get("/{project_id}/operations/status")
 async def get_operations_status(project_id: UUID) -> dict:
-    """프로젝트 운영 현황."""
+    """프로젝트 운영 현황 — **수집원이 아직 없다는 사실을 정직하게 알린다.**
+
+    ★2026-08-16 — 종전 구현은 `project_id` 를 **에코만 하고 DB 조회 0** 인 채
+      입주율 92.5·유지보수 87·에너지 "1+"·만족도 4.2·IoT 센서 45/48 을 **리터럴로** 돌려줬다.
+      `current_user`·`db` 의존성조차 없었다.
+
+    ★대조 실험(프로덕션 실측): 성격이 전혀 다른 두 프로젝트가 **바이트 단위로 같은 값**을 냈다.
+        458d7c86…(역삼동 736 · 강남 상업지)   → 입주율 92.5 · 센서 45/48
+        49b59c62…(산 1-1 외 1필지 · 147,074㎡ 임야) → 입주율 92.5 · 센서 45/48
+      개발되지 않은 임야에 "입주율 92.5%" 와 "IoT 센서 45개 온라인" 이 붙는다.
+
+    ★그런데 이 화면은 **지금 뜨지 않는다**(프론트가 `kpis` 를 배열로 가정 →
+      `TypeError: kpis.map is not a function`). 즉 **고장이 거짓말을 가리고 있었다** —
+      크래시만 고치면 그때부터 거짓 지표가 사용자에게 보인다. 그래서 **함께** 고친다.
+
+    센서·입주·만족도의 **수집원이 아직 연동되지 않았다**. 없는 것을 지어내지 않고
+    `available=False` + 사유로 알린다. 배열 3종은 프론트 계약에 맞춘 **빈 배열**이다
+    (형태 불일치로 인한 크래시를 구조적으로 없앤다).
+    """
     return {
         "project_id": str(project_id),
-        "kpis": {
-            "occupancy_rate_pct": 92.5,
-            "maintenance_score": 87,
-            "energy_efficiency_grade": "1+",
-            "tenant_satisfaction": 4.2,
-        },
-        "active_maintenance_requests": 3,
-        "upcoming_inspections": 2,
-        "iot_sensors_online": 45,
-        "iot_sensors_total": 48,
+        "available": False,
+        "reason": "운영 지표(입주·유지보수·센서) 수집원이 아직 연동되지 않았습니다",
+        "kpis": [],
+        "maintenance": [],
+        "sensors": [],
     }
 
 
