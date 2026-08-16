@@ -8,6 +8,8 @@
  */
 
 import dynamic from "next/dynamic";
+import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import type { CollabDocument } from "@/store/use-collaboration-store";
 import { CadDocViewer } from "./CadDocViewer";
 
@@ -33,14 +35,34 @@ export function DocumentViewerModal({
   doc: CollabDocument | null;
   onClose: () => void;
 }) {
-  if (!doc) return null;
+  // 포털은 클라이언트에서만 — SSR 단계엔 `document` 가 없다(ConfirmDeleteModal 과 같은 관례).
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
+  if (!doc || !mounted) return null;
   const url = doc.file_url ?? "";
   const name = doc.original_filename;
 
-  return (
+  /**
+   * ★`createPortal` + `z-[1000]` — 종전에는 인라인 렌더 + `z-[120]` 이었고,
+   *   그래서 **닫기 버튼이 페이지 요소에 덮였다**(실측 2026-08-16).
+   *
+   *   `fixed` 는 조상에 `transform`·`filter`·`z-index` 가 있으면 그 **쌓임맥락 안에**
+   *   갇힌다. 이 모달은 문서교환 패널 내부에 인라인으로 렌더돼, 자기 `z-[120]` 이
+   *   페이지 전역과 겨루지 못했다. 실측: 닫기 버튼 중앙에서 `elementFromPoint` 가
+   *   심의 카테고리 칩(`<label>`)을 반환했다 — 사용자가 ✕ 를 눌러도 칩이 먹는다.
+   *
+   *   ★좌표가 겹치는지가 아니라 **무엇이 위에 그려지는지**로 판정했다
+   *   (`rect` 교차가 아니라 `elementFromPoint` — CLAUDE.md §D.18).
+   *
+   *   층위·포털 관례는 `components/common/ConfirmDeleteModal.tsx` 를 따른다(새 규약 발명 금지).
+   */
+  return createPortal(
     <div
       data-testid="doc-viewer-modal"
-      className="fixed inset-0 z-[120] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
       onClick={onClose}
     >
       <div
@@ -98,6 +120,7 @@ export function DocumentViewerModal({
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

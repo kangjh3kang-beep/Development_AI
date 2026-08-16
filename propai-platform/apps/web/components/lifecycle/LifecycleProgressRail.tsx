@@ -21,6 +21,7 @@ import {
   STAGE_META,
   type LifecycleStage,
 } from "@/lib/lifecycle-stages";
+import { resolveStageLabel } from "@/lib/navigation/nav-i18n";
 import { StageIcon } from "@/components/common/StageIcon";
 
 type StageStatus = "completed" | "current" | "next" | "pending";
@@ -127,6 +128,9 @@ export function LifecycleProgressRail({
       >
         {LIFECYCLE_STAGES.map((id, index) => {
           const meta = STAGE_META[id];
+          // ★라벨은 로케일을 탄다 — `locale` 은 이미 링크(`stageRoute`)에만 쓰이고
+          //   있었다. 같은 결함이 route-registry 에도 있었고 함께 봉합했다.
+          const stageLabel = resolveStageLabel(id, meta.label, locale);
           const status = statusOf(id);
 
           const node = (
@@ -137,7 +141,7 @@ export function LifecycleProgressRail({
               className={`relative flex items-center gap-2 rounded-[var(--radius-xl)] px-3 py-2 transition-all duration-300 ${
                 isVertical ? "w-full" : "min-w-[88px] flex-col text-center"
               } ${STATUS_NODE[status]} cursor-pointer`}
-              title={meta.label}
+              title={stageLabel}
             >
               {status === "current" && (
                 <span className="absolute -right-1 -top-1 flex h-3 w-3" aria-hidden="true">
@@ -172,7 +176,7 @@ export function LifecycleProgressRail({
                 )}
               </span>
               <span className="text-[10px] font-bold uppercase leading-tight tracking-[0.08em]">
-                {meta.label}
+                {stageLabel}
               </span>
             </motion.div>
           );

@@ -124,10 +124,18 @@ type MutableState = {
   digitalTwinStatus: Record<string, unknown> | null;
   riskSnapshot: Record<string, unknown> | null;
   permitSnapshot: Record<string, unknown> | null;
+  /**
+   * ★세션이 있는가 — `installReleaseHarness({ withSession })` 와 **의미가 맞아야** 한다.
+   *   종전에는 `withSession` 이 localStorage 토큰 시드만 껐고 `/auth/me` 는 그대로
+   *   200 + 사용자를 돌려줬다. 그래서 "세션 없음"을 요구한 스펙에서도 앱이 로그인 상태로
+   *   판단해 `/en/login` 이 대시보드로 리다이렉트됐고, 로그인 화면 자체를 검사할 수 없었다.
+   */
+  hasSession: boolean;
 };
 
-function createState(): MutableState {
+function createState(withSession: boolean): MutableState {
   return {
+    hasSession: withSession,
     contractSignStatus: "not_requested",
     esignRequestId: null,
     pendingApprovals: [
@@ -226,6 +234,7 @@ async function handleApiRoute(route: Route, state: MutableState) {
   const path = url.pathname.replace(/\/api\/(?:latest|v1)/, "") || "/";
 
   if (method === "POST" && (path === "/auth/login" || path === "/auth/register")) {
+    state.hasSession = true; // 로그인 성공 = 이 시점부터 세션이 있다
     return json(route, {
       access_token: ACCESS_TOKEN,
       refresh_token: REFRESH_TOKEN,
@@ -244,6 +253,8 @@ async function handleApiRoute(route: Route, state: MutableState) {
   }
 
   if (method === "GET" && path === "/auth/me") {
+    // 세션이 없으면 401 — 앱이 "미로그인"으로 판단해 로그인 화면을 그려야 한다.
+    if (!state.hasSession) return json(route, { detail: "Not authenticated" }, 401);
     return json(route, {
       id: "user-release-001",
       tenant_id: "tenant-release-001",
@@ -294,10 +305,29 @@ async function handleApiRoute(route: Route, state: MutableState) {
     });
   }
 
+  /**
+   * ★쿼리 없는 `/projects` — **두 소비자가 서로 다른 키를 읽는다.**
+   *
+   *   종전에는 이 분기가 `{projects: […]}` 만 돌려줬다. 그런데 목록 화면의 실제 데이터원인
+   *   `store/useProjectStore.ts:syncFromBackend()` 는 `apiClient.get("/projects")` 를
+   *   **쿼리 없이** 부르고 `res.items` 를 읽는다 → `items` 가 없으니 `backend = []` 가 되고
+   *   화면은 **"No projects yet"** 을 그렸다. 위 `page=1` 분기는 그 호출이 `page` 를 안 붙이므로
+   *   **영원히 닿지 않는다.**
+   *
+   *   즉 픽스처를 보강해도 통과하지 않는 게 아니라, **픽스처가 앱이 읽지 않는 키에 담겨 있었다.**
+   *   실측(2026-08-16): prod 빌드 로컬 재현에서 `/en/projects` DOM 이 "No projects yet".
+   *
+   *   → 한 응답에 **두 키를 함께** 담는다. 어느 소비자가 오든 같은 프로젝트를 본다.
+   *     새 소비자가 또 다른 키를 읽으면 여기서 한 번만 늘리면 된다.
+   */
   if (method === "GET" && path === "/projects") {
     return json(route, {
+      items: [projectSummaryItem()],
       projects: [listProjectCard()],
       total: 1,
+      page: 1,
+      page_size: 20,
+      has_next: false,
       updatedAt: "2026-03-26T00:00:00Z",
     });
   }
@@ -690,7 +720,7 @@ export async function installReleaseHarness(
     },
   );
 
-  const state = createState();
+  const state = createState(withSession);
   await page.route("**/api/latest/**", async (route) => {
     await handleApiRoute(route, state);
   });

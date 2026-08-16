@@ -9,29 +9,48 @@ test("maintenance, tenant, and digital twin routes stay executable", async ({
 }) => {
   await installReleaseHarness(page);
 
+  /**
+   * ★이 화면의 "분석"은 **서버를 부르지 않는다** — 폼 입력값으로 브라우저에서 산술한다
+   *   (`OperationsIntelligenceWorkspaceClient`, 클릭 후 API 요청 0건·2026-08-13 실측).
+   *
+   *   종전 스펙은 해네스 픽스처 문자열(`"Schedule HVAC inspection within 48 hours."` ·
+   *   `"NPS: 41.2"`)이 화면에 뜨기를 기다렸다. **앱이 그 API 를 부르지 않으므로 원리적으로
+   *   뜰 수 없다** — 픽스처를 보강해도 통과하지 않는다(그 착각으로 한 번 우회됐다).
+   *
+   *   → **제품이 실제로 내는 것**을 잠근다: 로컬 산출 결과에 그것이 추정임을 밝히는
+   *     정직 고지(#634)가 붙어 있는가. 고지가 사라지면 여기서 빨강이 된다.
+   */
   await page.goto("/en/maintenance");
   await expect(page.getByText("Predictive maintenance")).toBeVisible();
   await page.getByPlaceholder("Manual project UUID").fill(RELEASE_PROJECT_ID);
   await page.getByRole("button", { name: "Run maintenance analysis" }).click();
-  await expect(
-    page.getByText("Schedule HVAC inspection within 48 hours."),
-  ).toBeVisible({ timeout: 15_000 });
-
-  await page.goto("/en/tenant");
-  await expect(page.getByText("Tenant experience")).toBeVisible();
-  await page.getByPlaceholder("Manual project UUID").fill(RELEASE_PROJECT_ID);
-  await page.getByRole("button", { name: "Analyze feedback" }).click();
-  await expect(
-    page.getByText(
-      "A same-day maintenance follow-up has been scheduled for the tenant.",
-    ),
-  ).toBeVisible({ timeout: 15_000 });
-  await page.getByRole("button", { name: "Calculate health" }).click();
-  await expect(page.getByText(/NPS: 41.2/i)).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("local-estimate-notice")).toBeVisible({
+    timeout: 15_000,
+  });
 
   await page.goto("/en/digital-twin");
   await expect(
     page.getByText("Digital twin, risk, and permit readiness"),
+  ).toBeVisible();
+});
+
+/**
+ * ★`/en/tenant` — 한때 제품 i18n 결함으로 보류했다가 **결함을 고쳐 되살렸다**(2026-08-16).
+ *
+ *   보류 사유였던 것: 페이지가 `TenantWorkspaceClient` 로 교체됐는데 그 안의
+ *   `FacilityReservationSection` 이 **로케일 지원이 아예 없어** `/en` 인데 화면이 한국어였다
+ *   (실측: `시설명(예: 커뮤니티 라운지)` · `메모(선택)` · `취소할 예약 ID`).
+ *
+ *   ★한국어 기대로 스펙을 바꿔 초록을 만들지 않았다 — 그건 결함을 굳히는 것이다.
+ *     대신 제품을 고쳤다: 형제 `TenantWorkspaceClient` 의 `Record<Locale, Labels>` 관례를
+ *     그대로 적용하고 부모에서 `locale` 을 내려보냈다(새 규약 발명 없음).
+ */
+test("tenant workspace stays executable in English", async ({ page }) => {
+  await installReleaseHarness(page);
+  await page.goto("/en/tenant");
+  // 로케일이 실제로 화면까지 닿는가 — 한국어였던 문구가 영문으로 나와야 한다.
+  await expect(
+    page.getByRole("button", { name: "Shared facility reservation" }),
   ).toBeVisible();
 });
 
