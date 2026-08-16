@@ -57,10 +57,6 @@ _EXEMPT = {
     "charge": "명시 과금 엔드포인트(POST /billing/charge) — 사용자가 '청구하라'를 직접 부른다."
               " 재전송 안전이 필요하긴 하나 의미가 달라 별도 설계가 필요하다",
     # ── ★부채(배선 가능한데 아직 안 함) — 재전송하면 이중청구된다 ──
-    "analyze_zoning": "★부채: land_analysis 과금. Request 파라미터가 없어 헤더를 못 읽는다",
-    "render_photoreal": "★부채: photoreal_render 과금(건당 유료 AI 렌더). Request 없음",
-    "render_concept": "★부채: concept_render 과금. Request 없음",
-    "run_pipeline": "★부채: stage:* 단계별 과금. Request 없음",
 }
 
 
