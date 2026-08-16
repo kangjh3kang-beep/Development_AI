@@ -172,7 +172,13 @@ async def test_zoning_analyze_flags_legal_excess(monkeypatch):
     monkeypatch.setattr(SiteAnalysisInterpreter, "generate_interpretation", _fake_interp, raising=True)
 
     req = az.ZoningAnalyzeRequest(address="경기도 용인시 처인구 어딘가")
-    result = await az.analyze_zoning(req)
+    # ★핸들러가 `request: Request` 를 받는다(멱등 가드용). 위치인자로 부르면 시그니처에
+    #   인자가 늘 때마다 조용히 밀리므로 **키워드**로 넘긴다.
+    from starlette.requests import Request as _R
+
+    _req = _R({"type": "http", "method": "POST", "path": "/",
+               "headers": [], "client": ("127.0.0.1", 0), "query_string": b""})
+    result = await az.analyze_zoning(_req, req=req)
 
     assert result.get("integrity_warnings"), "법정초과(자연녹지 139.6%)가 적발되지 않음"
     assert any(i["severity"] == "high" for i in result["integrity_warnings"])
