@@ -20,7 +20,7 @@
 | 항목 | 값 | 재측정 명령 |
 |---|---|---|
 | main HEAD | `3bddbeb0` | `git rev-parse --short origin/main` |
-| sw (main·프로덕션) | `propai-v505-charge-idempotency` **일치 = 배포 최신** | `curl -s https://4t8t.net/sw.js \| grep CACHE_NAME` |
+| sw (main·프로덕션) | `propai-v505-charge-idempotency` **일치 = 배포 최신** | `curl -s https://4t8t.net/sw.js \| grep -m1 '^const CACHE_NAME'` |
 | 나이틀리 e2e | **전체 17 통과 / 0 실패**(보류 4) | 아래 §5 재현 절차 |
 | 프론트 유닛 | 232파일 2104 통과 | `npx vitest run` |
 | 열린 PR | `#652`(플래키 판정기준 문서·BEHIND) | `gh pr view 652` |
