@@ -56,10 +56,10 @@ type BatchResult = {
 };
 
 const STATUS_STYLE: Record<ItemStatus, string> = {
-  confirmed: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
-  ambiguous: "bg-amber-500/15 text-amber-400 border-amber-500/30",
+  confirmed: "bg-[var(--status-success)]/15 text-[var(--status-success)] border-[var(--status-success)]/30",
+  ambiguous: "bg-[var(--status-warning)]/15 text-[var(--status-warning)] border-[var(--status-warning)]/30",
   not_found: "bg-[var(--surface-strong)] text-[var(--text-tertiary)] border-[var(--line-strong)]",
-  error: "bg-rose-500/15 text-rose-400 border-rose-500/30",
+  error: "bg-[var(--status-error)]/15 text-[var(--status-error)] border-[var(--status-error)]/30",
 };
 const STATUS_LABEL: Record<ItemStatus, string> = {
   confirmed: "확정", ambiguous: "모호", not_found: "미발견", error: "오류",
@@ -203,7 +203,7 @@ export function BulkParcelBatchPanel({ className = "" }: { className?: string })
           </button>
         )}
       </div>
-      {error && <p className="mt-2 text-xs font-semibold text-rose-500">{error}</p>}
+      {error && <p className="mt-2 text-xs font-semibold text-[var(--status-error)]">{error}</p>}
 
       {/* 진행률 스택바 + 카운트 */}
       {result && c && (
@@ -216,7 +216,7 @@ export function BulkParcelBatchPanel({ className = "" }: { className?: string })
               {["queued", "running"].includes(result.state)
                 ? (<span className="inline-flex items-center gap-1"><Clock className="size-3.5" aria-hidden />진행</span>)
                 : result.state === "failed"
-                  ? (<span className="inline-flex items-center gap-1 text-rose-500"><AlertTriangle className="size-3.5" aria-hidden />실패</span>)
+                  ? (<span className="inline-flex items-center gap-1 text-[var(--status-error)]"><AlertTriangle className="size-3.5" aria-hidden />실패</span>)
                   : result.state === "cancelled"
                     ? (<span className="inline-flex items-center gap-1 text-[var(--text-tertiary)]"><AlertTriangle className="size-3.5" aria-hidden />취소됨</span>)
                     : result.completeness === "complete"
@@ -228,7 +228,7 @@ export function BulkParcelBatchPanel({ className = "" }: { className?: string })
             </span>
           </div>
           {result.state === "failed" && (
-            <p className="inline-flex items-start gap-1 rounded-lg border border-rose-500/30 bg-rose-500/10 px-2.5 py-1.5 text-[11px] font-semibold text-rose-500">
+            <p className="inline-flex items-start gap-1 rounded-lg border border-[var(--status-error)]/30 bg-[var(--status-error)]/10 px-2.5 py-1.5 text-[11px] font-semibold text-[var(--status-error)]">
               <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
               {result.error || "배치 실행 중 오류가 발생했습니다."}
             </p>
@@ -237,20 +237,20 @@ export function BulkParcelBatchPanel({ className = "" }: { className?: string })
           <div className="text-[11px] text-[var(--text-secondary)]">
             예상 사용료: {(result.estimated_fee_krw ?? 0) > 0
               ? <b className="text-[var(--accent-strong)]">₩{Math.round(result.estimated_fee_krw!).toLocaleString()}</b>
-              : <b className="text-emerald-400">무료</b>}
+              : <b className="text-[var(--status-success)]">무료</b>}
             {(result.fee_per_unit_krw ?? 0) > 0 ? ` (필지당 ₩${Math.round(result.fee_per_unit_krw!).toLocaleString()} × 확정 ${c.confirmed})` : " (관리자 미책정)"}
           </div>
           <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-[var(--surface-strong)]">
-            <div style={{ width: pct(c.confirmed) }} className="bg-emerald-500" />
-            <div style={{ width: pct(c.ambiguous) }} className="bg-amber-500" />
-            <div style={{ width: pct(c.error) }} className="bg-rose-500" />
+            <div style={{ width: pct(c.confirmed) }} className="bg-[var(--status-success)]" />
+            <div style={{ width: pct(c.ambiguous) }} className="bg-[var(--status-warning)]" />
+            <div style={{ width: pct(c.error) }} className="bg-[var(--status-error)]" />
             <div style={{ width: pct(c.not_found) }} className="bg-[var(--text-tertiary)]/40" />
           </div>
 
           {/* 통합 집계 */}
           <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-strong)] p-3 text-xs">
             {result.aggregate?.held ? (
-              <p className="inline-flex items-center gap-1 text-amber-500"><Clock className="size-3.5 shrink-0" aria-hidden />통합 집계 보류 — 전 필지 확정 후 합필 경계·면적을 산출합니다(미처리 {result.pending?.length ?? 0}건).</p>
+              <p className="inline-flex items-center gap-1 text-[var(--status-warning)]"><Clock className="size-3.5 shrink-0" aria-hidden />통합 집계 보류 — 전 필지 확정 후 합필 경계·면적을 산출합니다(미처리 {result.pending?.length ?? 0}건).</p>
             ) : result.aggregate?.total_area_sqm ? (
               <p className="inline-flex flex-wrap items-center gap-1 text-[var(--text-primary)]">
                 <Puzzle className="size-3.5 shrink-0" aria-hidden />통합 합필 면적 <b className="text-[var(--accent-strong)]">{Math.round(result.aggregate.total_area_sqm).toLocaleString()}㎡</b>
@@ -271,8 +271,8 @@ export function BulkParcelBatchPanel({ className = "" }: { className?: string })
 
           {/* 신뢰루프: 면적 이상치(검토 권고) */}
           {(result.outliers?.length ?? 0) > 0 && (
-            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-[11px]">
-              <p className="flex items-center gap-1 font-bold text-amber-500"><AlertTriangle className="size-3.5 shrink-0" aria-hidden /> 면적 이상치 {result.outliers!.length}건 — 데이터 확인 권고(자동 배제 안 함)</p>
+            <div className="rounded-xl border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 p-3 text-[11px]">
+              <p className="flex items-center gap-1 font-bold text-[var(--status-warning)]"><AlertTriangle className="size-3.5 shrink-0" aria-hidden /> 면적 이상치 {result.outliers!.length}건 — 데이터 확인 권고(자동 배제 안 함)</p>
               <ul className="mt-1 space-y-0.5 text-[var(--text-secondary)]">
                 {result.outliers!.slice(0, 5).map((o, i) => (
                   <li key={i} className="truncate" title={o.reason || o.pnu}>· {o.address || o.pnu} — {o.area_sqm?.toLocaleString()}㎡ ({o.ratio}×)</li>

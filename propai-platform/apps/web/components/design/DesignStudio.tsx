@@ -878,8 +878,8 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
       </motion.div>
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
         {siteMatch === "match" && siteAnalysis?.address && (
-          <p className="text-xs text-emerald-500 mt-2 flex flex-wrap items-center gap-1.5">
-            <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
+          <p className="text-xs text-[var(--status-success)] mt-2 flex flex-wrap items-center gap-1.5">
+            <span className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--status-success)]" />
             {/* 다필지(parcelCount>1)면 통합 필지수·통합 대지면적을 정직 표기 — 설계 계산이
                 대표 1필지가 아니라 통합 면적(landAreaSqm=Σ) 기준임을 명확히 한다.
                 단일필지는 종전과 동일(주소·용도지역만) — 무회귀. */}
@@ -889,7 +889,7 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
           </p>
         )}
         {siteMatch === "mismatch" && (
-          <p className="text-xs text-amber-500 mt-2 flex flex-wrap items-center gap-1.5">
+          <p className="text-xs text-[var(--status-warning)] mt-2 flex flex-wrap items-center gap-1.5">
             <AlertTriangle className="size-3.5" aria-hidden />
             부지분석 데이터가 다른 주소({siteAnalysis?.address})의 결과입니다 — 현 프로젝트
             {projectRecord?.address ? `(${projectRecord.address})` : ""} 기준 재분석이 필요합니다
@@ -905,7 +905,7 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
         )}
         {/* 특이부지 경고 — 학교용지·개발제한·농지·맹지 등은 일반 설계 산출이 부정확할 수 있음 */}
         {siteMatch !== "mismatch" && siteAnalysis?.specialParcel?.isSpecial && (
-          <div className="mt-3 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3.5 py-2.5 text-xs text-amber-500">
+          <div className="mt-3 rounded-xl border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 px-3.5 py-2.5 text-xs text-[var(--status-warning)]">
             <p className="flex flex-wrap items-center gap-1.5 font-bold">
               <AlertTriangle className="size-3.5" aria-hidden />
               특이부지 감지
@@ -913,7 +913,7 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
               {siteAnalysis.specialParcel.factors?.length ? ` (${siteAnalysis.specialParcel.factors.join(", ")})` : ""}
             </p>
             {siteAnalysis.specialParcel.honest && (
-              <p className="mt-1 leading-snug text-amber-500/90">{siteAnalysis.specialParcel.honest}</p>
+              <p className="mt-1 leading-snug text-[var(--status-warning)]/90">{siteAnalysis.specialParcel.honest}</p>
             )}
             <p className="mt-1 leading-snug text-[var(--text-hint)]">
               아래 자동 산출값은 일반 용도지역 가정 기반이라 실제와 다를 수 있습니다 — 부지분석의 특이부지 진단을 우선 검토하세요.
@@ -1079,11 +1079,11 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
           <InspectorGrid minItemRem={7}>
             {[
               { label: "건폐율", val: `${calc.buildingCoverage}%`, sub: calc.bcrIsEffective ? `실효(법정상한 ${calc.bcrLegalMax}%)` : `법정상한 ${calc.bcrLegalMax}%`, color: "text-blue-400" },
-              { label: "용적률", val: `${calc.floorAreaRatio}%`, sub: calc.farIsEffective ? `실효(법정상한 ${calc.farLegalMax}%)` : `법정상한 ${calc.farLegalMax}%`, color: "text-emerald-400" },
+              { label: "용적률", val: `${calc.floorAreaRatio}%`, sub: calc.farIsEffective ? `실효(법정상한 ${calc.farLegalMax}%)` : `법정상한 ${calc.farLegalMax}%`, color: "text-[var(--status-success)]" },
               // 예상 층수 — 정본(canonicalFloors) 기준. 폴백도 산술하한(maxFloors) 대신 정본→권장(recFloors).
               // 산술하한은 sub에 '근거'로만 작게 부기해 정본 층수와 구분(무날조 투명성).
               { label: "예상 층수", val: expectedFloors?.val ?? (canonicalFloors != null ? `${canonicalFloors}층` : `${calc.recFloors}층`), sub: `${expectedFloors?.sub ?? `${calc.maxHeight}m (${calc.heightNote})`} · 산술하한 ${calc.maxFloors}층(건폐율 만충)`, color: "text-purple-400" },
-              { label: "주차 대수", val: `${calc.parking}대`, sub: "주차장법 기준", color: "text-amber-400" },
+              { label: "주차 대수", val: `${calc.parking}대`, sub: "주차장법 기준", color: "text-[var(--status-warning)]" },
             ].map((k) => (
               <div key={k.label} className="cc-panel cc-interactive min-w-0 p-5 text-center">
                 <p className={`cc-label ${k.color} mb-2`}>{k.label}</p>
@@ -1180,7 +1180,7 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
               {aiEff?.setbacks ? (
                 <span className="rounded-full bg-[var(--accent-soft)] px-2 py-0.5 text-[10px] font-bold text-[var(--accent-strong)]">AI 분석 산출값</span>
               ) : (
-                <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold text-amber-500">기본 가정치</span>
+                <span className="rounded-full bg-[var(--status-warning)]/10 px-2 py-0.5 text-[10px] font-bold text-[var(--status-warning)]">기본 가정치</span>
               )}
             </div>
             <div className="grid grid-cols-3 gap-4 text-center">

@@ -807,8 +807,8 @@ function JeonseRiskPatterns({
 }) {
   const LEVEL_STYLES: Record<string, { bg: string; text: string; border: string }> = {
     "높음": { bg: "bg-red-500/10", text: "text-red-500", border: "border-red-500/20" },
-    "중간": { bg: "bg-amber-500/10", text: "text-amber-500", border: "border-amber-500/20" },
-    "낮음": { bg: "bg-emerald-500/10", text: "text-emerald-500", border: "border-emerald-500/20" },
+    "중간": { bg: "bg-[var(--status-warning)]/10", text: "text-[var(--status-warning)]", border: "border-[var(--status-warning)]/20" },
+    "낮음": { bg: "bg-[var(--status-success)]/10", text: "text-[var(--status-success)]", border: "border-[var(--status-success)]/20" },
   };
 
   return (

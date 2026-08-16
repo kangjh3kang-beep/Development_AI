@@ -235,9 +235,9 @@ interface ExecKPI {
 }
 
 const EXEC_KPIS: ExecKPI[] = [
-  { label: "수익률", key: "profit_rate_pct", source: "feasibility", unit: "%", format: fmtPct, color: "text-emerald-400" },
+  { label: "수익률", key: "profit_rate_pct", source: "feasibility", unit: "%", format: fmtPct, color: "text-[var(--status-success)]" },
   { label: "총사업비", key: "total_cost_won", source: "feasibility", unit: "", format: fmtNum, color: "text-[var(--accent-strong)]" },
-  { label: "순이익", key: "net_profit_won", source: "feasibility", unit: "", format: fmtNum, color: "text-emerald-400" },
+  { label: "순이익", key: "net_profit_won", source: "feasibility", unit: "", format: fmtNum, color: "text-[var(--status-success)]" },
   { label: "탄소밀도", key: "total_carbon_per_sqm", source: "esg_carbon", unit: "kgCO\u2082/m\u00B2", format: fmtPct, color: "text-yellow-400" },
   { label: "법규준수", key: "compliance_pass", source: "report", unit: "", format: (v) => String(v ?? "-"), color: "text-blue-400" },
 ];
@@ -648,7 +648,7 @@ export function PipelineResultDetail({ result, onRerun, addresses }: PipelineRes
               핵심 요약
             </h3>
             {typeof profitRate === "number" && typeof grade === "string" && (
-              <span className="ml-auto text-xs font-bold px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+              <span className="ml-auto text-xs font-bold px-3 py-1 rounded-full bg-[var(--status-success)]/10 text-[var(--status-success)] border border-[var(--status-success)]/20">
                 수익률 {fmtPct(profitRate)}% ({String(grade)}등급)
               </span>
             )}
@@ -693,7 +693,7 @@ export function PipelineResultDetail({ result, onRerun, addresses }: PipelineRes
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="inline-flex items-center gap-1.5 text-[11px] font-black uppercase tracking-widest text-[var(--accent-strong)]"><IconPin /> 종합 의견</span>
                   {og ? <span className="rounded-full bg-[var(--accent-soft)] px-2.5 py-0.5 text-[11px] font-black text-[var(--accent-strong)]">종합등급 {String(og)}</span> : null}
-                  {risk ? <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-0.5 text-[11px] font-bold text-amber-500">리스크 {String(risk)}</span> : null}
+                  {risk ? <span className="rounded-full border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 px-2.5 py-0.5 text-[11px] font-bold text-[var(--status-warning)]">리스크 {String(risk)}</span> : null}
                 </div>
                 {rec ? <p className="mt-2 text-sm leading-relaxed text-[var(--text-primary)]">{String(rec)}</p> : null}
               </div>
@@ -874,9 +874,9 @@ export function PipelineResultDetail({ result, onRerun, addresses }: PipelineRes
                 </div>
               )}
               {hasErr && (
-                <div className="flex items-center gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-400">
+                <div className="flex items-center gap-3 rounded-xl border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 p-3 text-xs text-[var(--status-warning)]">
                   <span>해석 생성이 길어지고 있습니다 — 잠시 후 재시도하면 (서버에 생성·캐시된) 결과가 즉시 표시됩니다.</span>
-                  <button onClick={() => fetchNarr(stg, true, true)} className="rounded-md border border-amber-500/40 px-2.5 py-1 font-bold hover:bg-amber-500/10">↻ 재시도</button>
+                  <button onClick={() => fetchNarr(stg, true, true)} className="rounded-md border border-[var(--status-warning)]/40 px-2.5 py-1 font-bold hover:bg-[var(--status-warning)]/10">↻ 재시도</button>
                 </div>
               )}
             </div>

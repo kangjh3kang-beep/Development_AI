@@ -163,7 +163,7 @@ export function BillingMeter({ compact = false }: { compact?: boolean }) {
     const soaked = remaining <= 0;
     return (
       <>
-        <div className={`rounded-xl border ${soaked ? "border-amber-500/40" : "border-[var(--line-strong)]"} bg-[var(--surface-soft)] ${compact ? "p-3" : "p-4"}`}>
+        <div className={`rounded-xl border ${soaked ? "border-[var(--status-warning)]/40" : "border-[var(--line-strong)]"} bg-[var(--surface-soft)] ${compact ? "p-3" : "p-4"}`}>
           <MonitorBadge />
           <div className="flex items-center justify-between gap-2 mb-2">
             <span className="text-xs font-bold text-[var(--text-secondary)]">● 일반회원 (무료)</span>
@@ -177,7 +177,7 @@ export function BillingMeter({ compact = false }: { compact?: boolean }) {
           </div>
           <div className="mt-1.5 text-[10px] text-[var(--text-hint)]">
             {soaked
-              ? <span className="text-amber-500 font-bold">무료 토지분석을 모두 사용했습니다 · 구독 시 계속 이용</span>
+              ? <span className="text-[var(--status-warning)] font-bold">무료 토지분석을 모두 사용했습니다 · 구독 시 계속 이용</span>
               : <span>무료 토지분석 잔여 <b className="text-[var(--text-secondary)]">{remaining}</b> / {quota}회</span>}
           </div>
         </div>
@@ -196,7 +196,7 @@ export function BillingMeter({ compact = false }: { compact?: boolean }) {
 
   return (
     <>
-      <div className={`rounded-xl border ${status.blocked || lowBalance ? "border-amber-500/40" : "border-[var(--line-strong)]"} bg-[var(--surface-soft)] ${compact ? "p-3" : "p-4"}`}>
+      <div className={`rounded-xl border ${status.blocked || lowBalance ? "border-[var(--status-warning)]/40" : "border-[var(--line-strong)]"} bg-[var(--surface-soft)] ${compact ? "p-3" : "p-4"}`}>
         <MonitorBadge />
         <div className="flex items-center justify-between gap-2 mb-2">
           <span className="flex items-center gap-1.5 text-xs font-bold text-[var(--text-secondary)]">
@@ -223,7 +223,7 @@ export function BillingMeter({ compact = false }: { compact?: boolean }) {
         </div>
         <div className="mt-1.5 flex items-center justify-between text-[10px] text-[var(--text-hint)]">
           <span>{balance?.unlimited ? "관리자 · 코인 차감 없음" : `코인 ${won(status.billed_krw)} 사용 / ${won(status.budget_krw)}`}</span>
-          <span className={status.blocked ? "text-red-500 font-bold" : lowBalance ? "text-amber-500 font-bold" : ""}>
+          <span className={status.blocked ? "text-red-500 font-bold" : lowBalance ? "text-[var(--status-warning)] font-bold" : ""}>
             {balance?.unlimited ? "무제한" : status.blocked ? "코인 소진 · 추가결제" : `잔여 ${won(totalRemaining)}`}
           </span>
         </div>
@@ -234,7 +234,7 @@ export function BillingMeter({ compact = false }: { compact?: boolean }) {
           </div>
         )}
         {lowBalance && (
-          <p className="mt-1 text-[10px] font-bold text-amber-500">코인 소진 임박 · 충전을 권장합니다</p>
+          <p className="mt-1 text-[10px] font-bold text-[var(--status-warning)]">코인 소진 임박 · 충전을 권장합니다</p>
         )}
       </div>
 
@@ -247,7 +247,7 @@ export function BillingMeter({ compact = false }: { compact?: boolean }) {
               {status.tier_label} 구독 · 현재 잔여 {won(status.remaining_krw)}. 충전 금액을 선택하세요.
             </p>
             {topupError && (
-              <div role="status" className="mt-3 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-xs text-amber-700">
+              <div role="status" className="mt-3 rounded-xl border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 px-3 py-2.5 text-xs text-amber-700">
                 이 화면의 직접 충전은 더 이상 지원되지 않습니다.{" "}
                 <Link href={coinsHref} className="font-bold underline underline-offset-2" onClick={() => setModalOpen(false)}>
                   마이페이지 코인 충전
@@ -303,11 +303,11 @@ function MonitorBadge() {
   const locale = pathname?.split("/")[1] || "ko";
   return (
     <Link href={`/${locale}/sales-info`}
-      className="mb-2 flex items-center justify-between gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5 text-[10px] font-bold text-amber-500 hover:opacity-90">
+      className="mb-2 flex items-center justify-between gap-2 rounded-lg border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 px-2.5 py-1.5 text-[10px] font-bold text-[var(--status-warning)] hover:opacity-90">
       <span className="flex items-center gap-1.5">
         <span className="relative flex h-2 w-2">
-          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75" />
-          <span className="relative inline-flex h-2 w-2 rounded-full bg-amber-500" />
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--status-warning)] opacity-75" />
+          <span className="relative inline-flex h-2 w-2 rounded-full bg-[var(--status-warning)]" />
         </span>
         분양 모니터링 {n}건
       </span>

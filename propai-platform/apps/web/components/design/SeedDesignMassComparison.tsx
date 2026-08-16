@@ -326,7 +326,7 @@ export function SeedDesignMassComparison({
 
       {/* 미지원 용도지역 정직 고지(M1) — 엔진 키가 없어 기본(제2종 일반주거) 기준으로 추정됨. */}
       {zoneFallback && (
-        <p className="mb-3 inline-flex items-start gap-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5 text-[11px] leading-relaxed text-amber-500">
+        <p className="mb-3 inline-flex items-start gap-1.5 rounded-xl border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 px-3.5 py-2.5 text-[11px] leading-relaxed text-[var(--status-warning)]">
           <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden />
           이 용도지역({zoning})은 설계엔진 코드가 없어 <b className="mx-0.5">기본(제2종 일반주거)</b> 기준으로 추정합니다 — 실제 한도와 다를 수 있습니다.
         </p>
@@ -342,8 +342,8 @@ export function SeedDesignMassComparison({
       {/* ★R2 MEDIUM-1: 부지 불일치로 인계를 쓰지 않았다는 사실을 조회 전에도 알린다
           (조회해야만 알 수 있으면 사용자는 그 사이 계속 "반영됐겠지"라고 믿는다). */}
       {rejectedSeed && (
-        <div className="mb-4 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3.5 py-3 text-[11px] leading-relaxed text-[var(--text-hint)]">
-          <p className="font-bold text-amber-500">
+        <div className="mb-4 rounded-xl border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 px-3.5 py-3 text-[11px] leading-relaxed text-[var(--text-hint)]">
+          <p className="font-bold text-[var(--status-warning)]">
             사통맵에서 고른 안({rejectedSeed.optionLabel} · {rejectedSeed.targetFloors}층)은 이
             부지에 적용하지 않았습니다
           </p>
@@ -397,8 +397,8 @@ export function SeedDesignMassComparison({
               종전엔 미적용이어도 카드가 뜨고 "반영했다"고 고지해, 5층을 고른 사용자가 38층을
               '고른 안'으로 읽는 표기 사기가 됐다. */}
           {data.map_seed && data.map_seed.applied === false ? (
-            <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-3.5 py-3 text-[11px] leading-relaxed text-[var(--text-hint)]">
-              <p className="font-bold text-amber-500">
+            <div className="rounded-xl border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 px-3.5 py-3 text-[11px] leading-relaxed text-[var(--text-hint)]">
+              <p className="font-bold text-[var(--status-warning)]">
                 지도에서 고른 안({data.map_seed.option_label ?? "배치안"} ·{" "}
                 {data.map_seed.target_floors}층)은 이 부지 설계에 반영되지 않았습니다
               </p>

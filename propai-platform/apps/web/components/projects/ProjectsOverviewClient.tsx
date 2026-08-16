@@ -148,7 +148,7 @@ export function ProjectsOverviewClient({
         {isError ? (
           <Card className="rounded-[var(--radius-2xl)] border-[var(--line-strong)] bg-[var(--surface-strong)] md:col-span-2 overflow-hidden">
             <CardContent className="p-12 text-center flex flex-col items-center">
-              <div className="h-16 w-16 rounded-3xl bg-rose-500/10 flex items-center justify-center text-rose-500 mb-6 font-bold text-2xl">!</div>
+              <div className="h-16 w-16 rounded-3xl bg-[var(--status-error)]/10 flex items-center justify-center text-[var(--status-error)] mb-6 font-bold text-2xl">!</div>
               <h3 className="text-2xl font-[1000] text-[var(--text-primary)] tracking-tighter">
                 {labels.errorStateTitle}
               </h3>
@@ -156,7 +156,7 @@ export function ProjectsOverviewClient({
                 {labels.errorStateDescription}
               </p>
               {errorDetail ? (
-                <p className="mt-4 text-xs font-black bg-rose-500/5 px-4 py-2 rounded-xl text-rose-400 italic">
+                <p className="mt-4 text-xs font-black bg-[var(--status-error)]/5 px-4 py-2 rounded-xl text-[var(--status-error)] italic">
                   {errorDetail}
                 </p>
               ) : null}
@@ -278,7 +278,7 @@ export function ProjectsOverviewClient({
                   type="button"
                   title="프로젝트 삭제(이름 입력 확인 필요)"
                   onClick={() => setDeleteTarget({ id: project.id, name: project.name })}
-                  className="h-14 w-14 shrink-0 rounded-3xl border border-rose-500/30 text-rose-500 transition-colors hover:bg-rose-500/10"
+                  className="h-14 w-14 shrink-0 rounded-3xl border border-[var(--status-error)]/30 text-[var(--status-error)] transition-colors hover:bg-[var(--status-error)]/10"
                 >
                   ✕
                 </button>

@@ -22,9 +22,9 @@ export function GlassCard({
     default: "bg-background-dark/80 border-card-border hover:border-slate-700",
     surface: "bg-surface-dark/90 border-card-border hover:border-slate-700",
     primary: "bg-primary/10 border-primary/30 shadow-[0_0_15px_rgba(19,91,236,0.15)]",
-    warning: "bg-amber-500/10 border-amber-500/30",
+    warning: "bg-[var(--status-warning)]/10 border-[var(--status-warning)]/30",
     danger: "bg-red-500/10 border-red-500/30",
-    success: "bg-emerald-500/10 border-emerald-500/30",
+    success: "bg-[var(--status-success)]/10 border-[var(--status-success)]/30",
   };
 
   return (
