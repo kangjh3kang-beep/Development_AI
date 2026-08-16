@@ -20,17 +20,29 @@ function hashStr(s: string): string {
   return (h >>> 0).toString(36);
 }
 
+/** 강제취득 수단. ★"매도청구"로 가정하지 않는다 — 도시개발은 **수용**이다. */
+type Instrument = "매도청구" | "수용" | null;
+/** 동의 임계의 **기준 축**. 축이 다르면 필지 개수로 환산할 수 없다. */
+type ConsentBasis = "owner_count" | "land_area" | "use_right_area" | null;
+
 type Magdo = {
+  governing_act?: string | null; instrument?: Instrument;
+  instrument_undetermined?: boolean; consent_basis?: ConsentBasis;
   consent_required?: string; consent_threshold_pct?: number;
-  claimable_remainder_pct?: number; basis?: string; note?: string;
+  claimable_remainder_pct?: number | null; basis?: string; note?: string;
 };
 type MagdoSummary = {
   applicable: boolean; scheme?: string; consent_required?: string;
-  consent_threshold_pct?: number; claimable_remainder_pct?: number;
+  governing_act?: string | null; instrument?: Instrument;
+  instrument_undetermined?: boolean; consent_basis?: ConsentBasis;
+  consent_threshold_pct?: number; claimable_remainder_pct?: number | null;
   basis?: string; note?: string;
   parcel_estimate?: {
-    total_parcels: number; consent_needed_parcels: number;
-    claimable_parcels_max: number; assumption: string;
+    total_parcels: number;
+    /** false 면 축이 달라 환산 불가 — 숫자 대신 `reason` 을 렌더한다. */
+    estimable?: boolean; reason?: string;
+    consent_needed_parcels?: number;
+    claimable_parcels_max?: number; assumption?: string;
   } | null;
 };
 type Scenario = {
@@ -303,20 +315,46 @@ export function DevelopmentScenarioCard({
           {/* 매도청구 요약 */}
           {result.magdo_summary && (
             <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-strong)] p-4">
-              <p className="inline-flex items-center gap-1.5 text-xs font-black text-[var(--text-primary)]"><Scale className="size-3.5 shrink-0" aria-hidden />매도청구 분석 {result.magdo_summary.scheme ? `· ${result.magdo_summary.scheme}` : ""}</p>
+              {/* ★★수단을 하드코딩하지 않는다. 종전에는 "매도청구"를 3곳에 박아 두어
+                  **도시개발사업(실제 수용·토지보상법 준용)** 을 "매도청구 가능"으로 렌더했다.
+                  수용은 절차(협의→재결→보상)도 보상기준(공시지가·개발이익 배제 vs 시가)도 다르다.
+                  이제 백엔드 `instrument` 를 그대로 쓰고, 미정이면 **수단을 말하지 않는다.** */}
+              <p className="inline-flex items-center gap-1.5 text-xs font-black text-[var(--text-primary)]"><Scale className="size-3.5 shrink-0" aria-hidden />강제취득 분석 {result.magdo_summary.scheme ? `· ${result.magdo_summary.scheme}` : ""}</p>
               {result.magdo_summary.applicable ? (
                 <div className="mt-2 space-y-1.5 text-xs text-[var(--text-secondary)]">
                   <p>동의 요건: <b className="text-[var(--text-primary)]">{result.magdo_summary.consent_required}</b></p>
-                  <p>
-                    동의 임계 <b className="text-[var(--accent-strong)]">{result.magdo_summary.consent_threshold_pct}%</b> 충족 시
-                    {" "}미동의 잔여 <b className="text-[var(--status-error)]">~{result.magdo_summary.claimable_remainder_pct}%</b> 매도청구 가능
-                  </p>
-                  {result.magdo_summary.parcel_estimate && (
-                    <p className="text-[11px] text-[var(--text-tertiary)]">
-                      다필지 추정: 총 {result.magdo_summary.parcel_estimate.total_parcels}필지 중 동의 필요 ~{result.magdo_summary.parcel_estimate.consent_needed_parcels}필지,
-                      매도청구 가능 최대 {result.magdo_summary.parcel_estimate.claimable_parcels_max}필지
-                      <span className="block opacity-70">({result.magdo_summary.parcel_estimate.assumption})</span>
+                  {result.magdo_summary.instrument_undetermined ? (
+                    /* 트랙(시행자 유형·관리지역)이 정해져야 매도청구/수용이 갈린다 —
+                       잔여 비율을 단정하면 그 자체가 거짓이므로 숫자를 내지 않는다. */
+                    <p>
+                      <b className="text-[var(--status-warn,var(--accent-strong))]">강제취득 수단 판정 보류</b>
+                      {" "}— 이 사업방식은 시행자 유형·관리지역 여부에 따라 <b>매도청구</b> 또는 <b>수용</b>으로
+                      갈립니다(소규모정비 특례법 §35 단서). 동의 임계는 {result.magdo_summary.consent_threshold_pct}% 입니다.
                     </p>
+                  ) : (
+                    <p>
+                      동의 임계 <b className="text-[var(--accent-strong)]">{result.magdo_summary.consent_threshold_pct}%</b>
+                      {result.magdo_summary.consent_basis === "owner_count" ? "(소유자 수 기준)"
+                        : result.magdo_summary.consent_basis === "land_area" ? "(토지 면적 기준)"
+                        : result.magdo_summary.consent_basis === "use_right_area" ? "(사용권원 면적 기준)" : ""} 충족 시
+                      {" "}미동의 잔여 <b className="text-[var(--status-error)]">~{result.magdo_summary.claimable_remainder_pct}%</b>
+                      {" "}<b className="text-[var(--text-primary)]">{result.magdo_summary.instrument ?? "강제취득"}</b> 가능
+                    </p>
+                  )}
+                  {result.magdo_summary.parcel_estimate && (
+                    result.magdo_summary.parcel_estimate.estimable === false ? (
+                      /* 면적 기준 임계를 필지 개수로 환산하지 않는다 — 축이 다르다. */
+                      <p className="text-[11px] text-[var(--text-tertiary)]">
+                        다필지 추정: 총 {result.magdo_summary.parcel_estimate.total_parcels}필지 —
+                        {" "}{result.magdo_summary.parcel_estimate.reason}
+                      </p>
+                    ) : (
+                      <p className="text-[11px] text-[var(--text-tertiary)]">
+                        다필지 추정: 총 {result.magdo_summary.parcel_estimate.total_parcels}필지 중 동의 필요 ~{result.magdo_summary.parcel_estimate.consent_needed_parcels}필지,
+                        {" "}{result.magdo_summary.instrument ?? "강제취득"} 가능 최대 {result.magdo_summary.parcel_estimate.claimable_parcels_max}필지
+                        <span className="block opacity-70">({result.magdo_summary.parcel_estimate.assumption})</span>
+                      </p>
+                    )
                   )}
                   <p className="text-[11px] text-[var(--text-tertiary)]">근거: {result.magdo_summary.basis} · {result.magdo_summary.note}</p>
                 </div>
