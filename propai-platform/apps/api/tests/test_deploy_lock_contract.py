@@ -97,3 +97,142 @@ def test_sw_상수는_따옴표로_뽑는다() -> None:
         'grep -m1 "^const CACHE_NAME" | cut -d\'"\' -f2 처럼 따옴표로 뽑을 것.'
     )
     assert 'cut -d\'"\' -f2' in text, "sw 상수 추출이 따옴표 기반이 아니다"
+
+
+# ── 서버 역할 가드 (2026-08-17 추가) ────────────────────────────────────────
+#
+# 왜 있나 (실사고):
+#     168(백엔드)에서 `safe-deploy.sh` 를 돌렸다. 그 스크립트는 158(프론트) 전용이라
+#     **트래픽을 받지 않는 compose 스택**만 갱신하고 "성공"을 찍었다.
+#     그날 #630·#653·#662 가 배포된 줄 알았으나, 실서비스(caddy → propai-api-800x)
+#     컨테이너 안은 **전부 0** 이었다.
+#
+#     검증도 못 잡았다: 그 스크립트는 `$VERIFY_BASE_URL/ko` 를 보는데 백엔드엔 프론트가
+#     없어 **web=404** 가 났고, 그걸 `WARN 검증미흡` 으로만 찍었다. 사람이 "백엔드 전용이라
+#     당연"이라고 해석해 경고가 배경이 됐다.
+#
+#     → 그래서 **시작 지점에서** 서로를 배타적으로 잠근다. 여기서는 그 가드가
+#       조용히 사라지지 않도록 **실행 라인**에 존재하는지 확인한다.
+
+INFRA_DIR = Path(__file__).resolve().parents[3] / "infra"
+ZERO_DOWNTIME = INFRA_DIR / "deploy-zero-downtime.sh"
+
+# (스크립트, 기대하는 판별 방향) — 방향이 **반대**여야 배타 잠금이 성립한다.
+_ROLE_GUARDS = [
+    (SAFE_DEPLOY, "present"),   # Caddyfile 이 **있으면** 백엔드 → 중단
+    (ZERO_DOWNTIME, "absent"),  # Caddyfile 이 **없으면** 백엔드 아님 → 중단
+]
+
+
+def _executable_lines(path: Path) -> list[str]:
+    """주석·빈 줄을 걷어낸 **실행되는 줄**만 돌려준다.
+
+    ★이 저장소는 소스 검사가 주석에 뚫린 사고를 반복했다(가드를 주석 처리하고
+      임포트만 남겨도 초록이었다). 그래서 검사 대상을 실행 라인으로 좁힌다 —
+      "주석에 가드를 적어 두는 것"으로는 이 테스트를 통과할 수 없다.
+    """
+    out: list[str] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        out.append(stripped)
+    return out
+
+
+@pytest.mark.parametrize(
+    ("script", "sense"), _ROLE_GUARDS, ids=["safe-deploy", "zero-downtime"]
+)
+def test_배포_스크립트는_서버역할_가드를_갖는다(script: Path, sense: str) -> None:
+    """각 배포 스크립트가 **자기 서버가 맞는지** 시작 지점에서 확인하고 아니면 멈춘다."""
+    assert script.exists(), f"{script} 가 없다 — 경로가 바뀌었으면 이 테스트도 고칠 것"
+    lines = _executable_lines(script)
+    # ★공허한 초록 방지: 대상이 실제로 읽혔는지 먼저 단언한다.
+    #   파일을 못 읽거나 전부 주석이면 아래 검사가 "위반 0" 으로 통과해 버린다.
+    assert len(lines) > 30, f"{script.name}: 실행 라인이 {len(lines)}줄뿐 — 대상을 못 읽었다"
+
+    guard_lines = [ln for ln in lines if "caddy/Caddyfile" in ln]
+    assert guard_lines, (
+        f"{script.name}: 서버 역할 가드가 **실행 라인에 없다**. "
+        "배포 스크립트를 잘못된 서버에서 돌리면 조용히 성공을 찍는다(2026-08-17 실사고)."
+    )
+
+    joined = " ".join(guard_lines)
+    if sense == "present":
+        assert re.search(r'\[\s+-f\s+"\$HOME/caddy/Caddyfile"\s+\]', joined), (
+            f"{script.name}: 프론트 전용 스크립트는 Caddyfile 이 **있을 때** 중단해야 한다"
+        )
+    else:
+        assert re.search(r'\[\s+!\s+-f\s+"\$HOME/caddy/Caddyfile"\s+\]', joined), (
+            f"{script.name}: 백엔드 전용 스크립트는 Caddyfile 이 **없을 때** 중단해야 한다"
+        )
+
+    # ★파일 전체에서 `exit N` 을 찾으면 **가드와 무관한 줄**에 걸린다.
+    #   실제로 safe-deploy.sh 의 디스크부족 `exit 7` 때문에, 가드의 종료코드를 바꾸는
+    #   변이가 **살아남았다**(2026-08-17 변이 검증에서 적발). 그래서 블록으로 좁힌다.
+    block = _guard_block(script)
+    assert block, f"{script.name}: 가드 블록을 잘라 내지 못했다"
+    assert any(re.search(r"\bexit 10\b", ln) for ln in block), (
+        f"{script.name}: 역할 불일치는 **전용 종료코드 10** 으로 끝나야 한다 — "
+        "다른 실패와 구분되지 않으면 운영자가 원인을 못 읽는다"
+    )
+
+
+def _guard_block(path: Path) -> list[str]:
+    """``~/caddy/Caddyfile`` 을 검사하는 ``if`` 블록의 실행 라인만 잘라 낸다.
+
+    가드에 대한 단언이 **가드 밖의 우연한 문자열**로 충족되는 것을 막는다.
+    """
+    lines = _executable_lines(path)
+    start = next((i for i, ln in enumerate(lines) if "caddy/Caddyfile" in ln), None)
+    if start is None:
+        return []
+    block: list[str] = []
+    for ln in lines[start:]:
+        block.append(ln)
+        if ln == "fi":
+            break
+    return block
+
+
+def test_역할가드_종료코드는_다른_실패와_겹치지_않는다() -> None:
+    """운영자가 종료코드만 보고 '서버를 잘못 골랐다'를 식별할 수 있어야 한다.
+
+    ★이 테스트가 생긴 이유: 처음에는 가드를 ``exit 7`` 로 썼는데, ``safe-deploy.sh`` 는
+      이미 **디스크 부족**에 7 을 쓰고 있었다. 의미가 겹치면 진단이 흐려지고,
+      실제로 그 중복 때문에 종료코드 변이가 잡히지 않았다.
+    """
+    for script, _sense in _ROLE_GUARDS:
+        lines = _executable_lines(script)
+        start = next((i for i, ln in enumerate(lines) if "caddy/Caddyfile" in ln), None)
+        assert start is not None, f"{script.name}: 가드가 없다"
+        end = start
+        while end < len(lines) and lines[end] != "fi":
+            end += 1
+
+        codes = {c for ln in lines[start : end + 1] for c in re.findall(r"\bexit (\d+)", ln)}
+        assert len(codes) == 1, f"{script.name}: 가드 블록의 종료코드가 하나가 아니다({codes})"
+        code = codes.pop()
+
+        outside = [
+            ln
+            for i, ln in enumerate(lines)
+            if not (start <= i <= end) and re.search(rf"\bexit {code}\b", ln)
+        ]
+        assert not outside, (
+            f"{script.name}: 역할가드 종료코드 {code} 가 다른 실패에도 쓰인다 → {outside}. "
+            "겹치면 운영자가 원인을 구분할 수 없다."
+        )
+
+
+def test_두_배포_스크립트의_가드는_서로_반대여야_한다() -> None:
+    """같은 방향이면 배타 잠금이 성립하지 않는다 — 한 서버에서 둘 다 돌거나 둘 다 막힌다."""
+    senses = set()
+    for script, sense in _ROLE_GUARDS:
+        guard = " ".join(ln for ln in _executable_lines(script) if "caddy/Caddyfile" in ln)
+        negated = bool(re.search(r'\[\s+!\s+-f', guard))
+        senses.add((script.name, negated))
+        assert negated == (sense == "absent"), f"{script.name}: 가드 방향이 뒤집혔다"
+    assert len({neg for _, neg in senses}) == 2, (
+        "두 스크립트의 가드 방향이 같다 — 배타 잠금이 성립하지 않는다"
+    )

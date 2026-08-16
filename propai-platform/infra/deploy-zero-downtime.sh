@@ -18,6 +18,19 @@
 #   ★서버 실물에는 pipefail 이 없다 — 정본으로 올리면서 함께 고친다.
 set -eo pipefail
 
+# ★서버 역할 가드 — 이 스크립트는 **168(백엔드) 전용**이다(위 사용법 참조).
+#   짝인 `scripts/safe-deploy.sh` 에 반대 방향 가드가 있고, 둘이 서로를 배타적으로 잠근다.
+#   ★판별 근거(2026-08-17 실측): 백엔드(168)에만 `~/caddy/Caddyfile` 이 있다. 프론트(158)에는
+#     없다. 이 스크립트는 Caddyfile 을 읽어 활성 포트를 판정하고 **직접 덮어쓰므로**, 파일이
+#     없는 서버에서 돌리면 아래 `CUR` 폴백(8000)으로 엉뚱한 포트에 컨테이너를 띄우고
+#     존재하지 않던 Caddyfile 을 새로 만든다 — 조용히 잘못된 상태를 만든다.
+if [ ! -f "$HOME/caddy/Caddyfile" ]; then
+  echo "!! 여기는 백엔드 서버가 아닙니다(~/caddy/Caddyfile 없음)." >&2
+  echo "   deploy-zero-downtime.sh 는 168 전용입니다. 프론트(158)는 아래를 쓰세요:" >&2
+  echo "   bash ~/Development_AI/propai-platform/scripts/safe-deploy.sh web main" >&2
+  exit 10
+fi
+
 # ★동시배포 락 — 두 세션 동시 실행 시 블루그린 포트판정 레이스(2026-07-22 12:31/12:33 중복 실행 실측).
 #   락 획득 실패=다른 배포 진행 중 → 즉시 중단(대기 아님: 대개 같은 커밋의 중복 배포라 재시도가 안전).
 LOCKFILE=/tmp/propai-deploy.lock
