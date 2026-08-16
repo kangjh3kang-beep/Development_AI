@@ -162,7 +162,7 @@ export default function SocialPanel() {
       {/* 헤더: 뷰 탭 + WS 상태 */}
       <div className="flex flex-wrap items-center gap-2">
         <button onClick={() => setView("rooms")} className={TAB_BTN(view === "rooms")}>
-          단톡{totalUnread > 0 && <span className="ml-1 rounded-full bg-rose-500 px-1.5 text-[10px] font-black text-white">{totalUnread}</span>}
+          단톡{totalUnread > 0 && <span className="ml-1 rounded-full bg-[var(--status-error)] px-1.5 text-[10px] font-black text-white">{totalUnread}</span>}
         </button>
         <button onClick={() => setView("friends")} className={TAB_BTN(view === "friends")}>
           친구
@@ -173,7 +173,7 @@ export default function SocialPanel() {
         <span className="ml-auto flex items-center gap-1.5 text-[11px] font-bold">
           <span
             className={`h-2 w-2 rounded-full ${
-              wsStatus === "open" ? "bg-emerald-400" : wsStatus === "connecting" ? "bg-amber-400 animate-pulse" : "bg-rose-400"
+              wsStatus === "open" ? "bg-[var(--status-success)]" : wsStatus === "connecting" ? "bg-[var(--status-warning)] animate-pulse" : "bg-[var(--status-error)]"
             }`}
           />
           <span className="text-[var(--text-tertiary)]">
@@ -280,7 +280,7 @@ function RoomsView({
                   </span>
                   <span className="truncate text-sm font-black text-[var(--text-primary)]">{r.title || "제목 없는 대화"}</span>
                   {(r.unread_count ?? 0) > 0 && (
-                    <span className="ml-auto rounded-full bg-rose-500 px-2 py-0.5 text-[10px] font-black text-white">{r.unread_count}</span>
+                    <span className="ml-auto rounded-full bg-[var(--status-error)] px-2 py-0.5 text-[10px] font-black text-white">{r.unread_count}</span>
                   )}
                 </div>
                 {last && (
@@ -500,7 +500,7 @@ function FriendsView() {
         <div className="space-y-2">
           <p className="text-sm font-bold text-[var(--text-primary)]">받은 친구 요청 ({incoming.length})</p>
           {incoming.map((f) => (
-            <div key={f.friendship_id} className="flex items-center gap-2 rounded-xl border border-amber-400/30 bg-amber-500/5 px-3 py-2">
+            <div key={f.friendship_id} className="flex items-center gap-2 rounded-xl border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/5 px-3 py-2">
               <span className="text-sm font-bold text-[var(--text-primary)]">{f.name}</span>
               <div className="ml-auto flex gap-1.5">
                 <button
@@ -548,7 +548,7 @@ function FriendsView() {
               <button
                 onClick={() => act(f.friendship_id, "block")}
                 disabled={busyId === f.friendship_id}
-                className="ml-auto rounded-lg border border-rose-400/40 px-2.5 py-1 text-[11px] font-bold text-rose-300 transition hover:bg-rose-500/10 disabled:opacity-50"
+                className="ml-auto rounded-lg border border-[var(--status-error)]/40 px-2.5 py-1 text-[11px] font-bold text-rose-300 transition hover:bg-[var(--status-error)]/10 disabled:opacity-50"
               >
                 차단
               </button>
@@ -1094,7 +1094,7 @@ function BroadcastView({ rooms }: { rooms: Room[] }) {
       </label>
 
       {isNight && (
-        <label className="flex items-center gap-2 rounded-lg border border-amber-400/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-300">
+        <label className="flex items-center gap-2 rounded-lg border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/5 px-3 py-2 text-xs text-amber-300">
           <input type="checkbox" checked={forceNight} onChange={(e) => setForceNight(e.target.checked)} />
           현재 야간 시간(21~08시)입니다. 부득이한 경우에만 야간 강제 발송에 동의합니다.
         </label>

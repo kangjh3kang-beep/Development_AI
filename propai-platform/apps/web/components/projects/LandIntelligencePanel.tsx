@@ -257,8 +257,8 @@ interface LandIntelligencePanelProps {
 
 // ── Status badge colors ──
 const statusColors: Record<string, string> = {
-  safe: "text-emerald-400 bg-emerald-500/10 border-emerald-500/20",
-  warning: "text-amber-400 bg-amber-500/10 border-amber-500/20",
+  safe: "text-[var(--status-success)] bg-[var(--status-success)]/10 border-[var(--status-success)]/20",
+  warning: "text-[var(--status-warning)] bg-[var(--status-warning)]/10 border-[var(--status-warning)]/20",
   danger: "text-red-400 bg-red-500/10 border-red-500/20",
 };
 
@@ -917,10 +917,10 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
 
   // ── Data source label ──
   const dataSourceLabel = useMemo(() => {
-    if (isAnalyzing || deepAnalysisLoading) return { dot: "bg-amber-400 animate-pulse", text: "AI 분석 중...", color: "text-amber-400" };
-    if (deepAnalysisResult || aiData) return { dot: "bg-emerald-400", text: "AI 분석 완료", color: "text-emerald-400" };
+    if (isAnalyzing || deepAnalysisLoading) return { dot: "bg-[var(--status-warning)] animate-pulse", text: "AI 분석 중...", color: "text-[var(--status-warning)]" };
+    if (deepAnalysisResult || aiData) return { dot: "bg-[var(--status-success)]", text: "AI 분석 완료", color: "text-[var(--status-success)]" };
     if (hasZoningApi) return { dot: "bg-teal-400", text: "실시간 API 연동 완료", color: "text-teal-400" };
-    if (zoningError || txError || scenarioError) return { dot: "bg-amber-400", text: "API 연결 실패 — 로컬 추정 표시 중", color: "text-amber-400" };
+    if (zoningError || txError || scenarioError) return { dot: "bg-[var(--status-warning)]", text: "API 연결 실패 — 로컬 추정 표시 중", color: "text-[var(--status-warning)]" };
     if (localResult) return { dot: "bg-blue-400", text: "로컬 추정값 (백엔드 연결 필요)", color: "text-blue-400" };
     return { dot: "bg-slate-400", text: "대기 중", color: "text-[var(--accent-strong)]" };
   }, [isAnalyzing, deepAnalysisLoading, deepAnalysisResult, aiData, hasZoningApi, localResult]);
@@ -986,7 +986,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
                     {zoningLoading && <span className="text-[8px] text-[var(--text-hint)]">조회 중...</span>}
                   </div>
                   <div className="rounded-xl bg-[var(--surface-muted)] p-4 border border-[var(--line)] text-center">
-                    <p className="text-[9px] font-black text-emerald-400 uppercase tracking-widest mb-1">
+                    <p className="text-[9px] font-black text-[var(--status-success)] uppercase tracking-widest mb-1">
                       용적률 {analysis.isEffectiveFar ? "(실효)" : "(법정상한)"}
                     </p>
                     <p className="text-2xl font-black text-[var(--text-primary)]">
@@ -1050,7 +1050,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
                             )}
                         </div>
                         <div className="rounded-lg bg-[var(--surface-soft)] p-2.5 text-center border border-[var(--line)]">
-                          <p className="text-[8px] font-black text-emerald-400 uppercase tracking-widest mb-0.5">용적률(통합실효)</p>
+                          <p className="text-[8px] font-black text-[var(--status-success)] uppercase tracking-widest mb-0.5">용적률(통합실효)</p>
                           <p className="text-base font-black text-[var(--text-primary)]">
                             {integratedData.integrated?.blended_far_eff_pct != null
                               ? `${integratedData.integrated.blended_far_eff_pct}%`
@@ -1378,8 +1378,8 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
 
             {/* Zoning API Error */}
             {zoningError && (
-              <div className="mt-3 rounded-xl bg-amber-500/10 border border-amber-500/20 p-3">
-                <p className="text-xs text-amber-400 font-medium flex items-center gap-1.5">
+              <div className="mt-3 rounded-xl bg-[var(--status-warning)]/10 border border-[var(--status-warning)]/20 p-3">
+                <p className="text-xs text-[var(--status-warning)] font-medium flex items-center gap-1.5">
                   <Icons.AlertCircle />{zoningError}
                 </p>
               </div>
@@ -1394,8 +1394,8 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
 
             {/* AI Summary */}
             {(aiData?.summary || deepAnalysisResult) && (
-              <div className="mt-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 p-3">
-                <p className="text-[9px] font-black text-emerald-400 mb-1 uppercase tracking-widest">AI 종합 분석</p>
+              <div className="mt-3 rounded-xl bg-[var(--status-success)]/10 border border-[var(--status-success)]/20 p-3">
+                <p className="text-[9px] font-black text-[var(--status-success)] mb-1 uppercase tracking-widest">AI 종합 분석</p>
                 <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
                   {aiData?.summary || (deepAnalysisResult?.recommendations?.[0]
                     ? (() => {
@@ -1437,9 +1437,9 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
                  isScenarioReal ? "실제 분석 기반 시나리오" : "법규 기반 개발 시나리오"}
               </h4>
               <div className={`h-2 w-2 rounded-full ${
-                scenarioLoading ? "bg-amber-500 animate-pulse" :
-                isScenarioReal && isScenarioTentative ? "bg-amber-500 shadow-[0_0_10px_rgba(245,158,11,0.9)]" :
-                isScenarioReal ? "bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,1)]" :
+                scenarioLoading ? "bg-[var(--status-warning)] animate-pulse" :
+                isScenarioReal && isScenarioTentative ? "bg-[var(--status-warning)] shadow-[0_0_10px_rgba(245,158,11,0.9)]" :
+                isScenarioReal ? "bg-[var(--status-success)] shadow-[0_0_10px_rgba(16,185,129,1)]" :
                 hasData ? "bg-blue-500" : "bg-slate-500"
               } animate-pulse`} />
             </div>
@@ -1486,7 +1486,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
                           잠정
                         </span>
                       ) : (
-                        <span className={`text-2xl font-black ${s.score >= 80 ? "text-emerald-400" : s.score >= 50 ? "text-amber-400" : "text-red-400"}`}>
+                        <span className={`text-2xl font-black ${s.score >= 80 ? "text-[var(--status-success)]" : s.score >= 50 ? "text-[var(--status-warning)]" : "text-red-400"}`}>
                           {s.score}%
                         </span>
                       )}
@@ -1511,7 +1511,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
                 )}
 
                 {scenarioError && (
-                  <p className="text-[10px] text-amber-400 text-center mt-2 flex items-center justify-center gap-1">
+                  <p className="text-[10px] text-[var(--status-warning)] text-center mt-2 flex items-center justify-center gap-1">
                     <Icons.AlertCircle />API 시나리오 조회 실패 — 로컬 추정값 표시 중
                   </p>
                 )}
@@ -1537,7 +1537,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
             <div className="px-2">
               <p className="text-sm font-bold text-[var(--text-secondary)]">{displayAddress}</p>
               {hasData && (
-                <p className="text-[10px] text-emerald-400 mt-1 font-bold">
+                <p className="text-[10px] text-[var(--status-success)] mt-1 font-bold">
                   {analysis.zoning.current} · 건폐율 {analysis.buildingCoverageMax}%{analysis.isEffectiveBcr ? "(실효)" : "(법정상한)"} · 용적률 {analysis.floorAreaRatioMax}%{analysis.isEffectiveFar ? "(실효)" : "(법정상한)"}
                   {analysis.landAreaSqm != null && ` · ${analysis.landAreaSqm.toLocaleString()}m²`}
                   {specialParcel && <span className="inline-flex items-center gap-1 text-[var(--status-warning)]"> · <AlertTriangle className="size-3" aria-hidden />특이부지</span>}

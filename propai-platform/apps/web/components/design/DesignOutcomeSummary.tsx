@@ -93,9 +93,9 @@ function fmtKrw(won?: number | null): string {
 /** ESG 탄소집약도(㎡당 kgCO2) → 쉬운 등급 라벨(낮을수록 우수). 임계는 표시용 가이드. */
 function carbonGrade(perSqm?: number | null): { label: string; tone: string } | null {
   if (perSqm == null || perSqm <= 0) return null;
-  if (perSqm <= 500) return { label: "우수", tone: "text-emerald-400 border-emerald-400/30 bg-emerald-400/10" };
-  if (perSqm <= 800) return { label: "양호", tone: "text-amber-400 border-amber-400/30 bg-amber-400/10" };
-  return { label: "개선필요", tone: "text-rose-400 border-rose-400/30 bg-rose-400/10" };
+  if (perSqm <= 500) return { label: "우수", tone: "text-[var(--status-success)] border-[var(--status-success)]/30 bg-[var(--status-success)]/10" };
+  if (perSqm <= 800) return { label: "양호", tone: "text-[var(--status-warning)] border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10" };
+  return { label: "개선필요", tone: "text-[var(--status-error)] border-[var(--status-error)]/30 bg-[var(--status-error)]/10" };
 }
 
 /* ── FAR/BCR 법규 근거(신뢰 레이어·additive) ──
@@ -391,8 +391,8 @@ export function DesignOutcomeSummary({ projectId, designAi, designAiStale, onReg
                 roiPct == null
                   ? "text-[var(--text-hint)]"
                   : roiPct >= 0
-                    ? "text-emerald-400"
-                    : "text-rose-400"
+                    ? "text-[var(--status-success)]"
+                    : "text-[var(--status-error)]"
               }
             />
             {/* NPV */}
@@ -400,7 +400,7 @@ export function DesignOutcomeSummary({ projectId, designAi, designAiStale, onReg
               label="NPV"
               value={npvWon != null ? fmtKrw(npvWon) : "—"}
               hint={npvWon == null ? "수지분석 필요" : npvWon >= 0 ? "사업성 양호" : "사업성 주의"}
-              tone={npvWon == null ? "text-[var(--text-hint)]" : npvWon >= 0 ? "text-emerald-400" : "text-rose-400"}
+              tone={npvWon == null ? "text-[var(--text-hint)]" : npvWon >= 0 ? "text-[var(--status-success)]" : "text-[var(--status-error)]"}
             />
           </div>
 
@@ -412,7 +412,7 @@ export function DesignOutcomeSummary({ projectId, designAi, designAiStale, onReg
             </p>
           )}
           {costError && (
-            <p className="-mt-2 px-2 text-[11px] font-bold text-amber-400">{costError}</p>
+            <p className="-mt-2 px-2 text-[11px] font-bold text-[var(--status-warning)]">{costError}</p>
           )}
           {/* 수지/ROI가 아직 없으면 무목업: 수지분석 화면으로 유도(가짜 ROI 금지). */}
           {!costLoading && roiPct == null && (
@@ -478,7 +478,7 @@ export function DesignOutcomeSummary({ projectId, designAi, designAiStale, onReg
                 <p className="text-[9px] font-black uppercase tracking-[0.3em] text-indigo-300">설계 해설 · 왜 이런 설계인가 · Claude</p>
                 {/* ★stale 배지(간단 표시 수준) — 해설 생성 이후 설계(연면적 등)가 바뀌면 재생성 유도 */}
                 {designAiStale && (
-                  <span className="flex items-center gap-2 rounded-full border border-amber-400/40 bg-amber-400/10 px-2.5 py-0.5 text-[9px] font-bold text-amber-400">
+                  <span className="flex items-center gap-2 rounded-full border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 px-2.5 py-0.5 text-[9px] font-bold text-[var(--status-warning)]">
                     최신 설계와 불일치 · 재생성 필요
                     {onRegenerateDesignAi && (
                       <button
@@ -508,14 +508,14 @@ export function DesignOutcomeSummary({ projectId, designAi, designAiStale, onReg
 
           {/* ── ③' 파싱 실패 폴백(원문 JSON/절단 텍스트)을 raw로 노출하지 않고 정직 고지 ── */}
           {designAi && isRawFallback && (
-            <div className="rounded-2xl border border-dashed border-amber-400/40 bg-amber-400/5 px-5 py-4 text-center">
-              <p className="text-xs font-bold text-amber-400">해설 생성이 불완전합니다 — 재생성이 필요합니다</p>
+            <div className="rounded-2xl border border-dashed border-[var(--status-warning)]/40 bg-[var(--status-warning)]/5 px-5 py-4 text-center">
+              <p className="text-xs font-bold text-[var(--status-warning)]">해설 생성이 불완전합니다 — 재생성이 필요합니다</p>
               <p className="mt-1 text-[11px] text-[var(--text-hint)]">AI 응답이 중간에 잘리거나 형식이 어긋나 원문을 표시하지 않았습니다.</p>
               {onRegenerateDesignAi && (
                 <button
                   type="button"
                   onClick={onRegenerateDesignAi}
-                  className="mt-3 rounded-full border border-amber-400/50 px-4 py-1.5 text-[11px] font-black uppercase tracking-widest text-amber-400 transition-colors hover:bg-amber-400/10"
+                  className="mt-3 rounded-full border border-[var(--status-warning)]/50 px-4 py-1.5 text-[11px] font-black uppercase tracking-widest text-[var(--status-warning)] transition-colors hover:bg-[var(--status-warning)]/10"
                 >
                   설계 해설 재생성
                 </button>

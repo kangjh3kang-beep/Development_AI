@@ -24,63 +24,179 @@ PYEONG_SQM = 3.305785
 # 정책별 매도청구권 — 동의요건 충족 시 미동의자(잔여)에 매도청구 가능.
 # consent_pct=사업 추진 동의 임계, claimable_remainder=임계 충족 시 매도청구 가능한 잔여(=100-임계),
 # basis=근거 법령. (실제 적용은 소유관계·동의현황·보유기간 등 현장확인 필요)
+#
+# ★★`governing_act`(근거 법령 계열)는 **명시 필드**다 — `basis` 문자열에서 추론하지 않는다.
+#   추론이 왜 틀리는지 실증: "역세권 활성화사업"의 basis 에는 "주택법"이 들어 있지만 그 문장이
+#   스스로 *"사업방식에 따라 정비/소규모정비 준용"* 이라고 적는다. 문자열 매칭으로 주택법이라
+#   단정하면 **보유기간 10년 요건을 동의율 기반 사업에 잘못 적용**하게 된다(실제 결함).
+#   → 그래서 그 방식만 `governing_act=None` + `requires_track_input=True` 로 두고, 트랙(정비/
+#     소규모정비 준용)이 입력되기 전에는 보유기간 판정을 **하지 않는다**.
+#
+# ★★`instrument`(강제취득 수단)도 명시한다. 보유기간 10년 요건(주택법 §22①2호)은
+#   **주택법 계열에만** 있다. 도정법 §64·소규모정비특례법 §35 는 **동의율** 기반이라 보유기간
+#   요건이 아예 없고, 도시개발법 §22 는 매도청구가 아니라 **수용**(토지보상법 준용: 협의→재결→
+#   보상)이라 절차 자체가 다르다.
 MAGDO_RULES: dict[str, dict[str, Any]] = {
     "재개발·재건축(정비사업)": {
         "consent_required": "조합설립: 토지등소유자 3/4 이상 + 토지면적 1/2 이상(재건축은 각 동 과반·전체 3/4·면적 3/4)",
         "consent_pct": 75,
+        "consent_basis": "owner_count",
         "basis": "도시 및 주거환경정비법 제64조(매도청구)",
+        "governing_act": "도정법",
+        "instrument": "매도청구",
         "note": "조합설립 동의 후 미동의 조합원·토지등소유자에게 매도청구",
     },
+    # ★★소규모정비특례법 §35 **본문 단서**: 「제35조의2 에 따라 수용·사용할 수 있는 경우는
+    #   **제외**」. 소규모재개발·관리지역 가로주택을 **공공이 시행**하면 §35의2 수용이 되어
+    #   **매도청구 대상이 아니다**(법령 대조 2026-08-13 · 계획서 §5). 즉 이 두 방식은
+    #   `scheme` **하나만으로 갈리지 않는다** — 시행자 유형(민간/공공)·관리지역 여부가 분류를
+    #   뒤집는다. 그래서 "역세권 활성화사업"과 **같은 기제**(`requires_track_input`)를 쓴다:
+    #   트랙이 입력되기 전에는 강제취득 수단을 **단정하지 않는다**.
+    #   ★`instrument` 는 민간시행 기본 트랙 값이며 **이 값만 보고 단정하면 안 된다**
+    #     (`requires_track_input` 이 그 사실을 실어 나른다 — 역세권 활성화와 동일 계약).
     "가로주택정비사업": {
         "consent_required": "토지등소유자 80% 이상 + 토지면적 2/3 이상(공동주택 각 동 과반)",
         "consent_pct": 80,
-        "basis": "빈집 및 소규모주택 정비에 관한 특례법 제35조(매도청구)",
-        "note": "사업시행 동의요건 충족 후 미동의자에게 매도청구",
+        "consent_basis": "owner_count",
+        "basis": "빈집 및 소규모주택 정비에 관한 특례법 제35조(매도청구) — 제35조의2 수용 대상은 제외",
+        "governing_act": "소규모정비특례법",
+        "requires_track_input": True,
+        "instrument": "매도청구",
+        "note": (
+            "민간시행: 동의요건 충족 후 미동의자에게 매도청구. "
+            "★관리지역 가로주택을 공공이 시행하면 §35의2 수용이라 매도청구가 아니다 — "
+            "시행자 유형·관리지역 여부가 입력되기 전에는 수단을 확정하지 않는다."
+        ),
     },
     "모아주택/모아타운": {
         "consent_required": "소규모재건축: 전체 3/4 이상 + 각 동 과반 + 토지면적 3/4 이상",
         "consent_pct": 75,
-        "basis": "빈집 및 소규모주택 정비에 관한 특례법 제35조(매도청구)",
-        "note": "동의요건 충족 후 미동의자 매도청구(모아타운 내 개별 소규모정비)",
+        "consent_basis": "owner_count",
+        "basis": "빈집 및 소규모주택 정비에 관한 특례법 제35조(매도청구) — 제35조의2 수용 대상은 제외",
+        "governing_act": "소규모정비특례법",
+        "requires_track_input": True,
+        "instrument": "매도청구",
+        "note": (
+            "민간시행: 동의요건 충족 후 미동의자 매도청구(모아타운 내 개별 소규모정비). "
+            "★소규모재개발·공공시행 트랙은 §35의2 수용이라 매도청구 대상이 아니다."
+        ),
     },
     "도시개발사업(도시개발법)": {
         "consent_required": "수용·사용방식: 토지면적 2/3 이상 + 토지소유자 총수 1/2 이상 동의",
         "consent_pct": 67,
+        "consent_basis": "land_area",
         "basis": "도시개발법 제22조(토지등의 수용·사용) · 토지보상법",
-        "note": "수용방식은 미동의 토지 수용(매도청구에 준함). 환지방식은 환지처분으로 갈음",
+        "governing_act": "도시개발법",
+        # ★"매도청구에 준함"이라는 종전 note 문구는 **부정확**해서 삭제했다(법령 대조 2026-08-13).
+        #   수용은 토지보상법 준용(협의→재결→보상)이라 매도청구와 절차·기한·보상기준이 다르다.
+        "instrument": "수용",
+        "note": "수용방식은 미동의 토지를 수용(토지보상법 준용: 협의→재결→보상). 환지방식은 환지처분으로 갈음",
     },
     "역세권 장기전세주택(시프트)": {
         "consent_required": "대지 사용권원 95% 이상 확보(주택건설사업)",
         "consent_pct": 95,
+        "consent_basis": "use_right_area",
         "basis": "주택법 제22조·제23조(매도청구)",
+        "governing_act": "주택법",
+        "instrument": "매도청구",
         "note": "95%↑ 확보→잔여 전부 매도청구 / 80~95%→10년 미만 보유 토지에 매도청구",
     },
     "지구단위계획 연계": {
         "consent_required": "주택건설사업: 대지 사용권원 95% 이상 확보",
         "consent_pct": 95,
+        "consent_basis": "use_right_area",
         "basis": "주택법 제22조(매도청구)",
+        "governing_act": "주택법",
+        "instrument": "매도청구",
         "note": "지구단위 내 주택건설사업 시 95%↑ 확보→잔여 매도청구(80~95%는 10년 미만 보유분)",
     },
     "역세권 활성화사업": {
         "consent_required": "주택건설사업 준용: 대지 사용권원 95% 이상 확보",
         "consent_pct": 95,
+        "consent_basis": "use_right_area",
         "basis": "주택법 제22조(매도청구) — 사업방식에 따라 정비/소규모정비 준용",
+        # ★모호 — basis 에 "주택법"이 있지만 같은 문장이 정비/소규모정비 준용도 함께 적는다.
+        #   근거법령을 확정하지 못하므로 None. 트랙 입력 전에는 보유기간 판정을 하지 않는다.
+        "governing_act": None,
+        "requires_track_input": True,
+        # instrument 는 정비/소규모정비 준용 시 매도청구가 되지만, 확정은 트랙 입력 후다
+        # (requires_track_input 이 그 사실을 실어 나른다 — 이 값만 보고 단정하면 안 된다).
+        "instrument": "매도청구",
         "note": "용도상향 복합개발. 주택 포함 시 95%↑ 확보→잔여 매도청구",
     },
 }
 
+# 보유기간(지구단위계획구역 결정고시일 기준 10년) 요건이 존재하는 **유일한** 법령 계열.
+# 도정법 §64·소규모정비특례법 §35 는 동의율 기반이라 보유기간 조건이 없고, 도시개발법 §22 는
+# 수용이라 매도청구 자체가 성립하지 않는다.
+HOLDING_PERIOD_ACT = "주택법"
+
+
+def scheme_legal_profile(scheme: str | None) -> dict[str, Any] | None:
+    """사업방식 → {governing_act, instrument, requires_track_input, basis, consent_*}.
+
+    ★MAGDO_RULES 를 읽는 **공용 통로**다. 소비처가 직접 dict 를 뒤지면 키 이름이 갈라지고
+      `basis` 문자열에서 법령을 추론하는 결함이 다시 생긴다(P2 가 실제로 그 결함을 고쳤다).
+    미등록 방식(단순 건축 등)은 None — 매도청구·수용 제도가 적용되지 않는다는 뜻이다.
+
+    ★소비처가 없는 필드는 싣지 않는다("정의는 했는데 소비처 0"은 이 저장소가 반복해서 데인
+      패턴이다 — 변이로 지워도 아무도 모른다). 여기 여섯은 전부 소비된다: 앞 셋은 보유기간
+      게이트(`parcel_rights_survey_service._judge_owner`)가, 뒤 셋은 P2 판정표의 `legal`
+      블록이 쓴다(동의율 기반 방식은 동의요건이 곧 판정 근거다).
+    """
+    r = MAGDO_RULES.get(scheme or "")
+    if not r:
+        return None
+    return {
+        "governing_act": r.get("governing_act"),
+        "instrument": r.get("instrument"),
+        "requires_track_input": bool(r.get("requires_track_input")),
+        "basis": r.get("basis"),
+        "consent_required": r.get("consent_required"),
+        "consent_threshold_pct": r.get("consent_pct"),
+        # ★임계의 **기준 축**을 명시한다 — 이 값이 없으면 소비처가 면적 임계를
+        #   필지 개수에 곱하는 축 오류를 낸다(실제로 `_magdo_summary` 가 그랬다).
+        "consent_basis": r.get("consent_basis"),
+    }
+
 
 def _magdo(scheme: str) -> dict[str, Any] | None:
-    """정책별 매도청구권 분석(동의요건·매도청구 가능 잔여 비율·근거)."""
-    r = MAGDO_RULES.get(scheme)
-    if not r:
-        return None  # 단순건축 등 단일 사업주체/소유 → 매도청구 불요
+    """정책별 **강제취득 수단** 분석(수단·동의요건·잔여 비율·근거).
+
+    ★★2026-08-16 일원화 — 이 함수는 `MAGDO_RULES` 를 **두 번째로** 직접 읽던 통로였고,
+      `scheme_legal_profile()` 이 신설한 `instrument`·`requires_track_input` 을 **읽지 않아
+      화면과 판정이 갈라져 있었다.** 실측(프로덕션 배포 중이던 값):
+
+          도시개발사업      화면 "매도청구 가능 잔여 33%"  ← 실제 instrument=**수용**
+          가로주택정비사업   화면 "매도청구 가능 잔여 20%"  ← 실제 판정보류(트랙 미정)
+
+      수용과 매도청구는 **절차**(협의→재결→보상 vs 3개월협의→소)도 **보상기준**
+      (공시지가·개발이익 배제 vs **시가**)도 다르다. 사용자가 잘못된 트랙을 준비한다.
+    → 이제 **`scheme_legal_profile()` 을 경유**한다. `MAGDO_RULES` 직접 조회는 그 함수 하나뿐이며
+      새 필드가 생겨도 이쪽이 자동으로 따라온다(같은 판정이 두 곳에 살면 반드시 갈라진다).
+
+    ★`claimable_remainder_pct` 는 **수단이 확정된 경우에만** 낸다. 트랙 미정인데 잔여 비율을
+      숫자로 내면 그 단정 자체가 거짓이므로 `None` 이다.
+    """
+    prof = scheme_legal_profile(scheme)
+    if not prof:
+        return None  # 단순건축 등 단일 사업주체/소유 → 강제취득 불요
+    r = MAGDO_RULES.get(scheme) or {}
+    thr = prof.get("consent_threshold_pct")
+    undetermined = bool(prof.get("requires_track_input"))
     return {
-        "consent_required": r["consent_required"],
-        "consent_threshold_pct": r["consent_pct"],
-        "claimable_remainder_pct": round(100 - r["consent_pct"], 1),
-        "basis": r["basis"],
-        "note": r["note"],
+        "governing_act": prof.get("governing_act"),
+        # ★"매도청구"라고 단정하지 않는다 — 도시개발은 **수용**이다.
+        "instrument": None if undetermined else prof.get("instrument"),
+        "instrument_undetermined": undetermined,
+        "consent_required": prof.get("consent_required"),
+        "consent_threshold_pct": thr,
+        "consent_basis": prof.get("consent_basis"),
+        "claimable_remainder_pct": (
+            None if (undetermined or thr is None) else round(100 - thr, 1)
+        ),
+        "basis": prof.get("basis"),
+        "note": r.get("note"),
     }
 
 
@@ -711,9 +827,17 @@ class DevelopmentScenarioSimulator:
         n = ctx.get("parcel_count") or 1
         thr = m.get("consent_threshold_pct")
         remainder = m.get("claimable_remainder_pct")
-        # 다필지(소유자=필지 가정)일 때 동의 필요 필지수·매도청구 가능 필지수 추정
+        basis_axis = m.get("consent_basis")
+        undetermined = bool(m.get("instrument_undetermined"))
+
+        # ★★필지 개수 추정은 임계가 **소유자 수 기준일 때만** 성립한다.
+        #   종전에는 축을 보지 않고 `ceil(parcel_count × thr/100)` 을 돌렸다 — 도시개발(면적 2/3)과
+        #   주택법 계열(사용권원 면적 95%)에서 **면적 임계를 필지 개수에 곱하는** 축 오류였다.
+        #   같은 95% 를 P2 `secured_ratio` 는 면적으로 올바르게 계산하므로 **두 기준이 갈렸다.**
+        # ★수단이 미정(트랙 입력 필요)이면 애초에 추정하지 않는다 — 무엇을 청구할지도 모르는데
+        #   "몇 필지에 청구 가능"을 세는 것은 순서가 뒤집힌 것이다.
         parcel_est = None
-        if n >= 2 and thr:
+        if n >= 2 and thr and not undetermined and basis_axis == "owner_count":
             import math
 
             need = math.ceil(n * thr / 100.0)
@@ -723,11 +847,28 @@ class DevelopmentScenarioSimulator:
                 "claimable_parcels_max": max(0, n - need),
                 "assumption": "1필지=1소유자 가정(실제 소유관계·지분 확인 필요)",
             }
+        elif n >= 2 and basis_axis in ("land_area", "use_right_area"):
+            # 축이 다르면 **숫자를 내지 않고 사유를 낸다**(무언의 생략은 "해당 없음"으로 오독된다).
+            parcel_est = {
+                "total_parcels": n,
+                "estimable": False,
+                "reason": (
+                    f"이 사업방식의 동의 임계({thr}%)는 **면적 기준**이라 필지 개수로 환산할 수 "
+                    "없습니다. 필지별 면적·지분이 확정돼야 산정됩니다."
+                ),
+            }
+
         return {
             "applicable": True,
             "scheme": recommended.get("scheme"),
+            # ★수단을 명시한다 — 도시개발은 **수용**(토지보상법 준용)이지 매도청구가 아니다.
+            #   미정이면 None 이고, 소비처는 그때 "매도청구"라는 단어를 렌더하면 안 된다.
+            "governing_act": m.get("governing_act"),
+            "instrument": m.get("instrument"),
+            "instrument_undetermined": undetermined,
             "consent_required": m.get("consent_required"),
             "consent_threshold_pct": thr,
+            "consent_basis": basis_axis,
             "claimable_remainder_pct": remainder,
             "basis": m.get("basis"),
             "note": m.get("note"),

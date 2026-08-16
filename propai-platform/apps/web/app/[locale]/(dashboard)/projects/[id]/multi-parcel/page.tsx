@@ -107,9 +107,9 @@ function scnLabel(s?: string): { text: string; tone: "ok" | "warn" | "bad" } {
 }
 
 const toneCls: Record<"ok" | "warn" | "bad", string> = {
-  ok: "border-emerald-500/30 bg-emerald-500/10 text-emerald-400",
-  warn: "border-amber-500/30 bg-amber-500/10 text-amber-400",
-  bad: "border-rose-500/30 bg-rose-500/10 text-rose-400",
+  ok: "border-[var(--status-success)]/30 bg-[var(--status-success)]/10 text-[var(--status-success)]",
+  warn: "border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 text-[var(--status-warning)]",
+  bad: "border-[var(--status-error)]/30 bg-[var(--status-error)]/10 text-[var(--status-error)]",
 };
 
 function Metric({ label, value, sub }: { label: string; value: string; sub?: string }) {
@@ -310,7 +310,7 @@ export default function MultiParcelPage() {
             </div>
           )}
 
-          {error && <p className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-400">{error}</p>}
+          {error && <p className="rounded-xl border border-[var(--status-error)]/30 bg-[var(--status-error)]/10 px-3 py-2 text-[11px] text-[var(--status-error)]">{error}</p>}
           {isMulti && loading && !data && (
             <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-6 text-center text-xs text-[var(--text-hint)]">통합 용도·건폐·용적·인접성 집계 중…</div>
           )}
@@ -412,7 +412,7 @@ export default function MultiParcelPage() {
                       <p className="text-[11px] text-[var(--text-hint)]">usable 3계층·§84 걸침·제외 시나리오·시니어 리뷰 조립 중…</p>
                     )}
                     {s5Error && (
-                      <p className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-400">{s5Error}</p>
+                      <p className="rounded-xl border border-[var(--status-error)]/30 bg-[var(--status-error)]/10 px-3 py-2 text-[11px] text-[var(--status-error)]">{s5Error}</p>
                     )}
                     {!s5Loading && !s5Error && s5Data && (
                       <>
@@ -421,8 +421,8 @@ export default function MultiParcelPage() {
                           perParcel={s5Data.matrix ?? data.per_parcel}
                         />
                         {(s5Data.honest_limitations?.length ?? 0) > 0 && (
-                          <div className="mt-2 rounded-xl border border-amber-500/30 bg-amber-500/5 p-2.5">
-                            <p className="mb-1 inline-flex items-center gap-1 text-[10px] font-bold text-amber-500">
+                          <div className="mt-2 rounded-xl border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/5 p-2.5">
+                            <p className="mb-1 inline-flex items-center gap-1 text-[10px] font-bold text-[var(--status-warning)]">
                               <AlertTriangle className="size-3" aria-hidden /> 정직 한계 고지
                             </p>
                             <ul className="list-disc space-y-0.5 pl-4 text-[10px] leading-relaxed text-[var(--text-secondary)]">
@@ -466,7 +466,7 @@ export default function MultiParcelPage() {
                             {p.land_category && <span>· {p.land_category}</span>}
                             {p.bcr_eff_pct != null && <span>· 건폐 {p.bcr_eff_pct}%</span>}
                             {p.far_eff_pct != null && <span>· 용적 {p.far_eff_pct}%</span>}
-                            {spBad && <span className="rounded bg-amber-500/15 px-1 py-0.5 font-bold text-amber-500">{sp?.label || "특이부지"}</span>}
+                            {spBad && <span className="rounded bg-[var(--status-warning)]/15 px-1 py-0.5 font-bold text-[var(--status-warning)]">{sp?.label || "특이부지"}</span>}
                           </div>
                         </li>
                       );
@@ -477,8 +477,8 @@ export default function MultiParcelPage() {
 
               {/* 경고(정직 degrade) */}
               {data.warnings && data.warnings.length > 0 && (
-                <section className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3">
-                  <p className="mb-1 inline-flex items-center gap-1 text-[11px] font-bold text-amber-500"><AlertTriangle className="size-3.5" aria-hidden /> 데이터 유의사항</p>
+                <section className="rounded-xl border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/5 p-3">
+                  <p className="mb-1 inline-flex items-center gap-1 text-[11px] font-bold text-[var(--status-warning)]"><AlertTriangle className="size-3.5" aria-hidden /> 데이터 유의사항</p>
                   <ul className="list-disc space-y-0.5 pl-4 text-[10px] leading-relaxed text-[var(--text-secondary)]">
                     {data.warnings.map((w, i) => <li key={i}>{w}</li>)}
                   </ul>

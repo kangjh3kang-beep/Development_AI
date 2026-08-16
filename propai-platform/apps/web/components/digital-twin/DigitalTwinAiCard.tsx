@@ -109,7 +109,7 @@ export function DigitalTwinAiCard({
           <span className="text-sm font-black tracking-tight text-[var(--text-primary)]">
             ✦ 가상준공 AI 해설
           </span>
-          <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold text-amber-600 dark:text-amber-400">
+          <span className="rounded-full border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 px-2 py-0.5 text-[10px] font-bold text-amber-600 dark:text-[var(--status-warning)]">
             AI 해석·참고용
           </span>
           {res?.cached && (

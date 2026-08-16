@@ -61,8 +61,8 @@ const GEO_STATUS_LABEL: Record<GeoStatus, string> = {
   FAIL: "오류(FAIL)",
 };
 const GEO_STATUS_CLASS: Record<GeoStatus, string> = {
-  PASS: "border-emerald-500/40 bg-emerald-500/10 text-emerald-400",
-  PASS_WITH_WARNINGS: "border-amber-500/40 bg-amber-500/10 text-amber-400",
+  PASS: "border-[var(--status-success)]/40 bg-[var(--status-success)]/10 text-[var(--status-success)]",
+  PASS_WITH_WARNINGS: "border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 text-[var(--status-warning)]",
   FAIL: "border-red-500/40 bg-red-500/10 text-red-400",
 };
 
@@ -273,8 +273,8 @@ export function MetricBar({ className }: { className?: string }) {
 
           {/* 2) 특이부지 정직 경고 — 학교용지·맹지 등 정직 고지(앰버 박스). 없으면 생략. */}
           {isSpecial && (
-            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-[11px]">
-              <p className="font-bold text-amber-400">특이부지 — 정직 고지</p>
+            <div className="rounded-xl border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 px-4 py-2.5 text-[11px]">
+              <p className="font-bold text-[var(--status-warning)]">특이부지 — 정직 고지</p>
               {special?.honest?.trim() && (
                 <p className="mt-1 leading-relaxed text-[var(--text-secondary)]">
                   {special.honest.trim()}
@@ -331,7 +331,7 @@ export function MetricBar({ className }: { className?: string }) {
                   <span className="font-bold text-[var(--text-primary)]">{contractSummary.ruleCount}건</span>
                 </span>
                 {contractSummary.warningCount > 0 && (
-                  <span className="text-amber-400">경고 {contractSummary.warningCount}건</span>
+                  <span className="text-[var(--status-warning)]">경고 {contractSummary.warningCount}건</span>
                 )}
                 {contractSummary.errorCount > 0 && (
                   <span className="text-red-400">오류 {contractSummary.errorCount}건</span>

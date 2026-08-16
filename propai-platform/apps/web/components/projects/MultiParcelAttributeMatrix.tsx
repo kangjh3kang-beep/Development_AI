@@ -132,9 +132,9 @@ const sqm = (v: number | null | undefined): string => {
 
 type Tone = "ok" | "warn" | "bad" | "muted";
 const toneCls: Record<Tone, string> = {
-  ok: "border-emerald-500/30 bg-emerald-500/10 text-emerald-400",
-  warn: "border-amber-500/30 bg-amber-500/10 text-amber-400",
-  bad: "border-rose-500/30 bg-rose-500/10 text-rose-400",
+  ok: "border-[var(--status-success)]/30 bg-[var(--status-success)]/10 text-[var(--status-success)]",
+  warn: "border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 text-[var(--status-warning)]",
+  bad: "border-[var(--status-error)]/30 bg-[var(--status-error)]/10 text-[var(--status-error)]",
   muted: "border-[var(--line-strong)] bg-[var(--surface-strong)] text-[var(--text-tertiary)]",
 };
 
@@ -288,27 +288,27 @@ export function MultiParcelAttributeMatrix({
             총면적 <b className="text-[var(--text-primary)]">{sqm(gross)}</b> 기준(확정+조건부+제외 = 총면적)
           </p>
           <div className="mt-2 flex h-3 w-full overflow-hidden rounded-full bg-[var(--surface-strong)]" aria-hidden>
-            <div style={{ width: pctW(usable.usable_confirmed_sqm) }} className="bg-emerald-500" />
-            <div style={{ width: pctW(usable.usable_conditional_sqm) }} className="bg-amber-500" />
-            <div style={{ width: pctW(usable.excluded_sqm) }} className="bg-rose-500" />
+            <div style={{ width: pctW(usable.usable_confirmed_sqm) }} className="bg-[var(--status-success)]" />
+            <div style={{ width: pctW(usable.usable_conditional_sqm) }} className="bg-[var(--status-warning)]" />
+            <div style={{ width: pctW(usable.excluded_sqm) }} className="bg-[var(--status-error)]" />
           </div>
           <ul className="mt-2 space-y-1 text-[11px]">
             <li className="flex items-center justify-between gap-2">
-              <span className="inline-flex items-center gap-1.5 text-[var(--text-secondary)]"><span className="size-2 rounded-full bg-emerald-500" aria-hidden /> 확정 사용가능</span>
+              <span className="inline-flex items-center gap-1.5 text-[var(--text-secondary)]"><span className="size-2 rounded-full bg-[var(--status-success)]" aria-hidden /> 확정 사용가능</span>
               <b className="text-[var(--text-primary)]">{sqm(usable.usable_confirmed_sqm)}{usable.share?.confirmed_pct != null ? ` · ${usable.share.confirmed_pct}%` : ""}</b>
             </li>
             <li className="flex items-center justify-between gap-2">
-              <span className="inline-flex items-center gap-1.5 text-[var(--text-secondary)]"><span className="size-2 rounded-full bg-amber-500" aria-hidden /> 조건부(확정 아님 — 선행절차 전제)</span>
+              <span className="inline-flex items-center gap-1.5 text-[var(--text-secondary)]"><span className="size-2 rounded-full bg-[var(--status-warning)]" aria-hidden /> 조건부(확정 아님 — 선행절차 전제)</span>
               <b className="text-[var(--text-primary)]">{sqm(usable.usable_conditional_sqm)}{usable.share?.conditional_pct != null ? ` · ${usable.share.conditional_pct}%` : ""}</b>
             </li>
             <li className="flex items-center justify-between gap-2">
-              <span className="inline-flex items-center gap-1.5 text-[var(--text-secondary)]"><span className="size-2 rounded-full bg-rose-500" aria-hidden /> 제외(차단·건축불가 지목)</span>
+              <span className="inline-flex items-center gap-1.5 text-[var(--text-secondary)]"><span className="size-2 rounded-full bg-[var(--status-error)]" aria-hidden /> 제외(차단·건축불가 지목)</span>
               <b className="text-[var(--text-primary)]">{sqm(usable.excluded_sqm)}{usable.share?.excluded_pct != null ? ` · ${usable.share.excluded_pct}%` : ""}</b>
             </li>
           </ul>
           {(usable.excluded_parcels?.length ?? 0) > 0 && (
-            <div className="mt-2 rounded-lg border border-rose-500/20 bg-rose-500/5 p-2">
-              <p className="text-[10px] font-bold text-rose-400">제외 필지 사유 명세</p>
+            <div className="mt-2 rounded-lg border border-[var(--status-error)]/20 bg-[var(--status-error)]/5 p-2">
+              <p className="text-[10px] font-bold text-[var(--status-error)]">제외 필지 사유 명세</p>
               <ul className="mt-1 space-y-0.5 text-[10px] leading-relaxed text-[var(--text-secondary)]">
                 {usable.excluded_parcels!.map((ep, i) => (
                   <li key={(ep.pnu || "") + i}>
@@ -320,7 +320,7 @@ export function MultiParcelAttributeMatrix({
             </div>
           )}
           {(usable.area_unknown_parcels?.length ?? 0) > 0 && (
-            <p className="mt-2 inline-flex items-start gap-1 text-[10px] text-amber-500">
+            <p className="mt-2 inline-flex items-start gap-1 text-[10px] text-[var(--status-warning)]">
               <AlertTriangle className="mt-0.5 size-3 shrink-0" aria-hidden />
               면적 미확보 {usable.area_unknown_parcels!.length}필지 — 합산 제외(0 가정 안 함), 공부 면적 확보 후 재정산 필요.
             </p>
@@ -393,7 +393,7 @@ export function MultiParcelAttributeMatrix({
             </p>
           )}
           {straddle.honest_note && (
-            <p className="mt-1 inline-flex items-start gap-1 text-[10px] leading-relaxed text-amber-500">
+            <p className="mt-1 inline-flex items-start gap-1 text-[10px] leading-relaxed text-[var(--status-warning)]">
               <AlertTriangle className="mt-0.5 size-3 shrink-0" aria-hidden /> {straddle.honest_note}
             </p>
           )}

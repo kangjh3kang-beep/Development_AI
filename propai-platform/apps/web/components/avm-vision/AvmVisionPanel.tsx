@@ -185,7 +185,7 @@ export function AvmVisionPanel({
         </div>
 
         {err && (
-          <p className="mt-3 flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+          <p className="mt-3 flex items-center gap-1.5 rounded-lg border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 px-3 py-2 text-xs text-amber-300">
             <AlertTriangle className="size-3.5 shrink-0" aria-hidden /> {err}
           </p>
         )}

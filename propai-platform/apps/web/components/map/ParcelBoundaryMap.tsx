@@ -209,7 +209,7 @@ export function ParcelBoundaryMap({
         </p>
         {loading && <span className="text-xs text-[var(--text-hint)]">불러오는 중…</span>}
       </div>
-      {error && <p className="mb-2 text-xs text-rose-500">{error}</p>}
+      {error && <p className="mb-2 text-xs text-[var(--status-error)]">{error}</p>}
       {/* 면적 교차검증 — 주 필지(첫 필지)의 토지대장↔지적도 대조 결과 */}
       {(() => {
         const f0 = data?.features?.[0];
@@ -217,7 +217,7 @@ export function ParcelBoundaryMap({
         const low = f0.area_confidence === "low";
         return (
           <div className={`mb-2 inline-flex flex-wrap items-baseline gap-1 rounded-lg border px-3 py-2 text-[11px] font-semibold ${
-            low ? "border-amber-500/30 bg-amber-500/10 text-amber-400" : "border-[var(--line)] bg-[var(--surface-muted)] text-[var(--text-secondary)]"
+            low ? "border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 text-[var(--status-warning)]" : "border-[var(--line)] bg-[var(--surface-muted)] text-[var(--text-secondary)]"
           }`}>
             {low ? <AlertTriangle className="size-3.5 self-center shrink-0" aria-hidden /> : <Info className="size-3.5 self-center shrink-0" aria-hidden />}
             {low ? "면적 검증 주의 — " : "면적 출처 — "}{f0.area_note}
@@ -231,10 +231,10 @@ export function ParcelBoundaryMap({
       {data && data.parcel_count >= 2 && data.adjacency && (
         <div className={`mb-2 inline-flex flex-wrap items-baseline gap-1 rounded-lg border px-3 py-2 text-[11px] font-semibold ${
           data.adjacency.contiguous === true
-            ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
+            ? "border-[var(--status-success)]/30 bg-[var(--status-success)]/10 text-[var(--status-success)]"
             : data.adjacency.contiguous === false
-              ? "border-rose-500/30 bg-rose-500/10 text-rose-400"
-              : "border-amber-500/30 bg-amber-500/10 text-amber-400"
+              ? "border-[var(--status-error)]/30 bg-[var(--status-error)]/10 text-[var(--status-error)]"
+              : "border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 text-[var(--status-warning)]"
         }`}>
           {data.adjacency.contiguous === true ? <Link2 className="size-3.5 self-center shrink-0" aria-hidden /> : data.adjacency.contiguous === false ? <Scissors className="size-3.5 self-center shrink-0" aria-hidden /> : <HelpCircle className="size-3.5 self-center shrink-0" aria-hidden />}
           {data.adjacency.contiguous === true ? "통합개발 가능 — " : data.adjacency.contiguous === false ? "통합개발 불가 — " : "인접성 미상 — "}
@@ -251,7 +251,7 @@ export function ParcelBoundaryMap({
             {data.integrated_analysis.effective_bcr_pct != null && <span>실질 건폐율 <b className="text-[var(--text-primary)]">{data.integrated_analysis.effective_bcr_pct}%</b></span>}
             {data.integrated_analysis.effective_far_pct != null && <span>실질 용적률 <b className="text-[var(--text-primary)]">{data.integrated_analysis.effective_far_pct}%</b></span>}
             {data.integrated_analysis.total_gfa_sqm != null && <span>가능 연면적 <b className="text-[var(--text-primary)]">{Math.round(data.integrated_analysis.total_gfa_sqm).toLocaleString()}㎡</b></span>}
-            {data.integrated_analysis.zone_mixed && <span className="inline-flex items-center gap-1 text-amber-500"><AlertTriangle className="size-3.5 shrink-0" aria-hidden /> 용도지역 혼재({data.integrated_analysis.zone_types?.join("·")})</span>}
+            {data.integrated_analysis.zone_mixed && <span className="inline-flex items-center gap-1 text-[var(--status-warning)]"><AlertTriangle className="size-3.5 shrink-0" aria-hidden /> 용도지역 혼재({data.integrated_analysis.zone_types?.join("·")})</span>}
           </div>
           {data.integrated_analysis.development_methods && data.integrated_analysis.development_methods.length > 0 && (
             <p className="mt-1.5 text-[11px] text-[var(--text-secondary)]">

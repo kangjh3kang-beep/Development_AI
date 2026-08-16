@@ -40,7 +40,17 @@ def _cache_key(address: str | None, pnu: str | None, realty_type: str | None,
                dong: str | None, ho: str | None) -> str:
     """페이지·호출부와 무관하게 동일 필지는 동일 키. 주소(정규화) 우선, realty 기본 토지(2)."""
     base = _norm_addr(address) or (pnu or "")
-    return f"{base}|{realty_type or '2'}|{dong or ''}|{ho or ''}"
+    # ★★스키마 버전을 키에 넣는다. 없으면 **프롬프트 스키마를 늘려도 옛 캐시가 그대로 반환**되어
+    #   새 필드가 영영 비고, 소비처는 그것을 "자료 없음"으로 읽는다(이 저장소가 이미 겪은
+    #   '폴백 캐시 박제' 결함 클래스). 스키마를 바꿀 때마다 이 값을 올린다.
+    #   v2: ownership.ownership_history 추가(주택법 §22 상속 보유기간 합산 근거)
+    # ★변이 도구가 이 접두 삭제를 **생존**으로 보고한다(설명 가능한 생존):
+    #   캐시 키는 **DB/Redis 왕복**이 있어야 효과가 관측되는데 단위 테스트는 그 층을 안 태운다.
+    #   여기에 문자열을 복창하는 락(`assert key.startswith("v2|")`)을 만들면 **동어반복**이라
+    #   스키마를 바꾸고 버전을 안 올리는 진짜 실수를 못 잡는다.
+    #   대신 규율을 코드에 남긴다: **스키마를 바꾸면 이 값을 올린다.** 안 올리면 옛 캐시가
+    #   새 필드 없이 반환되고 소비처가 그것을 "자료 없음"으로 읽는다(폴백 캐시 박제).
+    return f"v2|{base}|{realty_type or '2'}|{dong or ''}|{ho or ''}"
 
 
 async def _db_cache_get(key: str) -> dict[str, Any] | None:
@@ -126,7 +136,8 @@ _TMPL = """\
     "acquisition_date": "소유권 취득일(등기원인일/접수일)",
     "acquisition_cause": "취득 원인(매매·상속·증여 등)",
     "acquisition_price": "거래가액(매매시, 기재 있으면)",
-    "ownership_period": "현 소유자 보유기간(취득일~현재 추정)"
+    "ownership_period": "현 소유자 보유기간(취득일~현재 추정)",
+    "ownership_history": [{{"date": "접수일/등기원인일", "cause": "이전 원인(매매·상속·증여 등)", "owner": "취득자", "predecessor": "전 소유자(기재 있으면)", "share": "지분"}}]
   }},
   "provisional_registration": {{"exists": true/false, "detail": "가등기 내용(있으면)"}},
   "seizure": [{{"type": "압류|가압류|경매개시|가처분", "holder": "권리자", "detail": "내용", "date": "일자"}}],
@@ -140,6 +151,11 @@ _TMPL = """\
   "safety_grade": "안전|주의|위험",
   "summary": "한줄 요약"
 }}
+
+★`ownership.ownership_history` 는 **갑구의 소유권 이전 등기를 오래된 것부터 순서대로** 담는다.
+  상속으로 취득한 경우 「주택법」 제22조가 **피상속인의 소유기간을 합산**하도록 정하므로,
+  전 소유자(`predecessor`)와 그 취득일을 알 수 있으면 반드시 함께 적는다.
+  ★등기 내용에 없는 것은 만들지 말고 해당 항목을 생략한다(추정 금지).
 """
 
 

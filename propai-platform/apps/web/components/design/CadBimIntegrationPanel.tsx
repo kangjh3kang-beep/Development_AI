@@ -1724,7 +1724,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
           {/* ★/mass 호출 실패 → 추정 기본값 사용 중임을 정직 표기(산출값으로 오인 방지) */}
           {spec?.isFallback && (
             <span
-              className="flex items-center gap-1 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-[10px] font-bold text-amber-500"
+              className="flex items-center gap-1 rounded-lg border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 px-2.5 py-1 text-[10px] font-bold text-[var(--status-warning)]"
               title="네트워크 오류로 매스 산출에 실패했습니다. 대지·개요에서 역산한 추정 기본값을 표시 중입니다. '개요 재적용'으로 다시 시도하세요."
             >
               <AlertTriangle className="size-3" aria-hidden />네트워크 오류로 기본값 사용 중 · 추정치
@@ -2175,7 +2175,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
               </div>
             )}
             {bimError && !bimLoading && (
-              <div className="absolute bottom-6 left-1/2 z-20 flex -translate-x-1/2 items-center gap-3 rounded-full bg-black/65 px-4 py-2 backdrop-blur-xl border border-amber-400/30">
+              <div className="absolute bottom-6 left-1/2 z-20 flex -translate-x-1/2 items-center gap-3 rounded-full bg-black/65 px-4 py-2 backdrop-blur-xl border border-[var(--status-warning)]/30">
                 <span className="text-[10px] font-bold text-amber-200">절차모델 표시 중 · 정밀 IFC 생성 실패</span>
                 <button
                   onClick={() => { setBimError(null); loadBimModel(); }}

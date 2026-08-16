@@ -32,8 +32,8 @@ interface MyCustomer {
 }
 
 const GRADE: Record<string, string> = {
-  A: "border-rose-500/40 bg-rose-500/10 text-rose-300",
-  B: "border-amber-500/40 bg-amber-500/10 text-amber-300",
+  A: "border-[var(--status-error)]/40 bg-[var(--status-error)]/10 text-rose-300",
+  B: "border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 text-amber-300",
   C: "border-sky-500/40 bg-sky-500/10 text-sky-300",
 };
 const GLABEL: Record<string, string> = { A: "핫(A)", B: "웜(B)", C: "콜드(C)" };
@@ -157,7 +157,7 @@ export default function CrmPanel({ siteCode }: { siteCode: string }) {
         </div>
 
         {scope === "all" && (
-          <p className="rounded-lg border border-amber-400/30 bg-amber-500/10 px-3 py-1.5 text-[11px] text-amber-300">
+          <p className="rounded-lg border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 px-3 py-1.5 text-[11px] text-amber-300">
             통합뷰는 요약·마스킹(010****5678)만 표시됩니다. 연락처 등 민감상세는 해당 현장 진입(2차인증) 후 열람하세요.
           </p>
         )}
@@ -165,7 +165,7 @@ export default function CrmPanel({ siteCode }: { siteCode: string }) {
         {listLoading ? (
           <div className="h-14 animate-pulse rounded-xl border border-[var(--line)] bg-[var(--surface-strong)]" />
         ) : listErr ? (
-          <p className="rounded-xl border border-rose-400/40 bg-rose-500/10 px-3 py-2 text-xs font-semibold text-rose-300">{listErr}</p>
+          <p className="rounded-xl border border-[var(--status-error)]/40 bg-[var(--status-error)]/10 px-3 py-2 text-xs font-semibold text-rose-300">{listErr}</p>
         ) : customers.length === 0 ? (
           <p className="rounded-xl border border-[var(--line)] bg-[var(--surface-strong)] px-3 py-4 text-xs text-[var(--text-secondary)]">고객이 없습니다.</p>
         ) : (

@@ -128,13 +128,13 @@ export function ExpertPanelCard({
           </button>
         </div>
       </div>
-      {error && <p className="mt-2 text-xs font-semibold text-rose-500">{error}</p>}
+      {error && <p className="mt-2 text-xs font-semibold text-[var(--status-error)]">{error}</p>}
 
       {result && (
         <div className="mt-4 space-y-4">
           {/* WP-R4: degraded 사유 배너(침묵 폴백 금지) — 저신뢰/미연결/형식오류를 구분 표기. */}
           {degradedMsg && (
-            <div className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-600 dark:text-amber-400">
+            <div className="flex items-start gap-2 rounded-xl border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 p-3 text-xs text-amber-600 dark:text-[var(--status-warning)]">
               <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
               <span>전문가 패널 검증 미완료 — {degradedMsg}</span>
             </div>
@@ -174,7 +174,7 @@ export function ExpertPanelCard({
                   </ul>
                 )}
                 {(e.concerns?.length ?? 0) > 0 && (
-                  <p className="mt-1.5 flex items-start gap-1 text-[11px] text-amber-500"><AlertTriangle className="mt-0.5 size-3 shrink-0" aria-hidden /><span>{e.concerns!.join(" / ")}</span></p>
+                  <p className="mt-1.5 flex items-start gap-1 text-[11px] text-[var(--status-warning)]"><AlertTriangle className="mt-0.5 size-3 shrink-0" aria-hidden /><span>{e.concerns!.join(" / ")}</span></p>
                 )}
               </div>
             ))}
@@ -189,7 +189,7 @@ export function ExpertPanelCard({
                   <div key={i} className="rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] p-3 text-xs">
                     <p className="font-bold text-[var(--text-primary)]">{d.issue}</p>
                     <p className="mt-0.5 text-[var(--text-secondary)]">이견: {d.positions}</p>
-                    <p className="mt-0.5 text-emerald-500">→ {d.resolution}</p>
+                    <p className="mt-0.5 text-[var(--status-success)]">→ {d.resolution}</p>
                   </div>
                 ))}
               </div>
@@ -212,7 +212,7 @@ export function ExpertPanelCard({
 
 function VBlock({ title, items, tone }: { title: ReactNode; items?: string[]; tone: string }) {
   if (!items || items.length === 0) return null;
-  const color: Record<string, string> = { rose: "text-rose-400", amber: "text-amber-400", sky: "text-sky-400" };
+  const color: Record<string, string> = { rose: "text-[var(--status-error)]", amber: "text-[var(--status-warning)]", sky: "text-sky-400" };
   return (
     <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] p-3">
       <p className={`text-[11px] font-bold ${color[tone] || ""}`}>{title}</p>

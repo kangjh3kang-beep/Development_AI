@@ -30,12 +30,12 @@ const CATEGORY_META: Record<
 > = {
   법규초과: {
     label: "법규 초과",
-    cls: "border-rose-500/30 bg-rose-500/10 text-rose-400",
+    cls: "border-[var(--status-error)]/30 bg-[var(--status-error)]/10 text-[var(--status-error)]",
     hint: "건폐율·용적률·높이 등 법정 한도를 넘었습니다.",
   },
   누락: {
     label: "필수 요소 누락",
-    cls: "border-amber-500/30 bg-amber-500/10 text-amber-400",
+    cls: "border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 text-[var(--status-warning)]",
     hint: "주차·계단·승강기 등 법정 필수 항목이 빠졌습니다.",
   },
   간섭정합: {
@@ -51,12 +51,12 @@ const SEVERITY_META: Record<
 > = {
   high: {
     label: "심각",
-    cls: "border-rose-500/30 bg-rose-500/10 text-rose-400",
+    cls: "border-[var(--status-error)]/30 bg-[var(--status-error)]/10 text-[var(--status-error)]",
     icon: "●",
   },
   warn: {
     label: "주의",
-    cls: "border-amber-500/30 bg-amber-500/10 text-amber-400",
+    cls: "border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 text-[var(--status-warning)]",
     icon: "●",
   },
   info: {
@@ -338,7 +338,7 @@ export function DesignChangePredictPanel({ projectId }: { projectId: string }) {
             </p>
           ) : null}
           {error ? (
-            <p className="rounded-[var(--radius-md)] border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-400">
+            <p className="rounded-[var(--radius-md)] border border-[var(--status-error)]/30 bg-[var(--status-error)]/10 p-3 text-sm text-[var(--status-error)]">
               {error}
             </p>
           ) : null}
@@ -347,8 +347,8 @@ export function DesignChangePredictPanel({ projectId }: { projectId: string }) {
 
       {/* ok:false */}
       {okFalseError ? (
-        <div className="rounded-[var(--radius-2xl)] border border-amber-500/30 bg-amber-500/10 p-6">
-          <p className="text-sm font-semibold text-amber-400">예측 불가</p>
+        <div className="rounded-[var(--radius-2xl)] border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 p-6">
+          <p className="text-sm font-semibold text-[var(--status-warning)]">예측 불가</p>
           <p className="mt-2 text-sm leading-7 text-[var(--text-secondary)]">
             {okFalseError}
           </p>
@@ -435,7 +435,7 @@ export function DesignChangePredictPanel({ projectId }: { projectId: string }) {
 
           {/* 리스크 리스트(카테고리 그룹) */}
           {risks.length === 0 ? (
-            <div className="rounded-[var(--radius-2xl)] border border-emerald-500/30 bg-emerald-500/10 p-6 text-sm leading-7 text-emerald-400">
+            <div className="rounded-[var(--radius-2xl)] border border-[var(--status-success)]/30 bg-[var(--status-success)]/10 p-6 text-sm leading-7 text-[var(--status-success)]">
               예측된 설계변경 리스크가 없습니다. (입력 범위 내 — 상세 설계 시 재검토
               권장)
             </div>

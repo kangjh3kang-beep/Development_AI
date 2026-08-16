@@ -5,9 +5,9 @@
  * 하이픈(Hyphen) API 1순위 연동 + 비상 등기부 PDF 직접 업로드 지원.
  */
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { AlertTriangle, FileUp, Files, Settings } from "lucide-react";
-import { apiClient } from "@/lib/api-client";
+import { ApiClientError, apiClient } from "@/lib/api-client";
 import { RegistryUploadModal } from "./RegistryUploadModal";
 
 type RegItem = {
@@ -37,17 +37,42 @@ export function RegistryBulkButton({ addresses, className = "" }: { addresses: s
   const [loading, setLoading] = useState(false);
   const [res, setRes] = useState<RegResult | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  // ★재전송 안전 키 — **같은 필지 묶음이면 같은 키**여야 한다.
+  //   이 호출은 필지당 1,200원이고 100필지 상한이라 한 번에 최대 120,000원이 나간다.
+  //   타임아웃이 120초인데 서버는 그 뒤로도 계속 돌며 과금하므로, 사용자가 "실패"를 보고
+  //   다시 누르면 **두 번 청구**된다. 키가 같으면 백엔드가 두 번째를 청구하지 않는다.
+  //   ★목록이 바뀌면 새 키를 만든다 — 다른 요청에 같은 키를 쓰면 백엔드가 422 로 거절한다.
+  const idemRef = useRef<{ sig: string; key: string } | null>(null);
 
   const run = useCallback(async () => {
     if (!list.length) return;
     setLoading(true); setRes(null);
     try {
+      const items = list.map((a) => ({ address: a }));
+      const sig = JSON.stringify(items);
+      if (idemRef.current?.sig !== sig) {
+        idemRef.current = { sig, key: crypto.randomUUID() };
+      }
       const r = await apiClient.post<RegResult>("/registry/bulk", {
-        body: { items: list.map((a) => ({ address: a })) }, useMock: false, timeoutMs: 120000,
+        body: { items }, useMock: false, timeoutMs: 120000,
+        headers: { "Idempotency-Key": idemRef.current.key },
       });
       setRes(r);
-    } catch {
-      setRes({ configured: false, count: 0, results: [], message: "등기부 조회 요청에 실패했습니다." });
+    } catch (err) {
+      // ★멱등 가드가 새로 만드는 상태를 "조회 실패"로 뭉뚱그리면 안 된다.
+      //   409 = 같은 요청이 **아직 처리 중**이다(중복 청구를 막으려고 두 번째를 안 받았다).
+      //   타임아웃(120초) 뒤 다시 누르면 서버가 아직 돌고 있어 실제로 이 경로가 나온다 —
+      //   여기서 "실패했습니다"라고 하면 사용자는 또 누르고, 매번 같은 답을 받는다.
+      //   422 = 같은 키를 **다른 필지 묶음**에 재사용했다(정상적으로는 안 나온다 — 키를
+      //   묶음 시그니처로 갱신하므로. 나오면 그건 우리 배선 결함이라 문구로 드러낸다).
+      const status = err instanceof ApiClientError ? err.status : 0;
+      const message =
+        status === 409
+          ? "같은 조회가 아직 처리 중입니다. 잠시 후 결과를 확인하세요(중복 청구를 막기 위해 다시 실행하지 않았습니다)."
+          : status === 422
+            ? "요청 식별키가 다른 내용으로 재사용되었습니다. 페이지를 새로고침한 뒤 다시 시도하세요."
+            : "등기부 조회 요청에 실패했습니다.";
+      setRes({ configured: false, count: 0, results: [], message });
     } finally {
       setLoading(false);
     }
@@ -84,7 +109,7 @@ export function RegistryBulkButton({ addresses, className = "" }: { addresses: s
       </div>
 
       {res && !res.configured && (
-        <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-[11px] text-amber-400">
+        <div className="mt-3 rounded-lg border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 p-3 text-[11px] text-[var(--status-warning)]">
           <span className="inline-flex items-center gap-1 font-bold">
             <Settings className="size-3.5" aria-hidden /> {res.message || "등기부 발급 API 미설정"}
           </span> <br />
@@ -106,7 +131,7 @@ export function RegistryBulkButton({ addresses, className = "" }: { addresses: s
                 ) : it.pdf_url ? (
                   <a href={it.pdf_url} target="_blank" rel="noopener noreferrer" className="rounded-md bg-[var(--accent-strong)] px-2 py-0.5 text-[10px] font-bold text-white">PDF ↗</a>
                 ) : it.status !== "ok" ? (
-                  <span className="text-[10px] text-amber-400">{it.status}</span>
+                  <span className="text-[10px] text-[var(--status-warning)]">{it.status}</span>
                 ) : null}
               </div>
               {it.status === "ok" && (

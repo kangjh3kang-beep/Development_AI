@@ -598,7 +598,7 @@ function HonestyBadges({ payload }: { payload: DigitalTwinScenePayload }) {
       {items.map((it) => (
         <span
           key={it}
-          className="rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-[10px] font-bold text-amber-600 dark:text-amber-400"
+          className="rounded-full border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 px-3 py-1 text-[10px] font-bold text-amber-600 dark:text-[var(--status-warning)]"
         >
           {it}
         </span>
@@ -1061,9 +1061,9 @@ export default function DigitalTwinScene({
 
           {/* 건물 매스 없음 안내 — 설계 미연동 시 지형·필지만 표시(가짜 건물 금지) */}
           {!hasBuildingGlb && (
-            <div className="flex flex-col gap-3 rounded-2xl border border-amber-500/30 bg-amber-500/5 p-5 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-col gap-3 rounded-2xl border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/5 p-5 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-start gap-3">
-                <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-500/15 text-amber-500">
+                <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[var(--status-warning)]/15 text-[var(--status-warning)]">
                   <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M3 21h18" /><path d="M5 21V7l8-4v18" /><path d="M19 21V11l-6-4" /></svg>
                 </div>
                 <div className="space-y-1">

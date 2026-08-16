@@ -266,7 +266,7 @@ function AIResponseCard({ result }: { result: MarketResult }) {
         <p className="text-sm leading-relaxed text-[var(--text-primary)]">
           &ldquo;{result.query}&rdquo; 지역의 실거래 데이터를 표시할 수 없습니다.
         </p>
-        <div className="inline-flex items-center gap-1.5 rounded-[var(--radius-sm)] border border-amber-400/40 bg-amber-500/10 px-3 py-2 text-xs text-[var(--text-secondary)]">
+        <div className="inline-flex items-center gap-1.5 rounded-[var(--radius-sm)] border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 px-3 py-2 text-xs text-[var(--text-secondary)]">
           <AlertTriangle className="size-4" aria-hidden />{result.note || "실거래 데이터를 확보하지 못했습니다."}
         </div>
       </div>

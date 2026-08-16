@@ -319,7 +319,7 @@ export function CarbonEmissionsWorkspaceClient({
       {/* Hero */}
       <div className="rounded-[var(--radius-xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-10 shadow-[var(--shadow-xl)]">
         <div className="flex items-center gap-3 mb-4">
-          <span className="flex h-3 w-3 rounded-full bg-emerald-500 animate-pulse" />
+          <span className="flex h-3 w-3 rounded-full bg-[var(--status-success)] animate-pulse" />
           <span className="label-caps text-emerald-600">
             EPD Carbon · ISO 21930
           </span>
@@ -391,7 +391,7 @@ export function CarbonEmissionsWorkspaceClient({
                   className="flex items-center justify-between rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-5 py-3"
                 >
                   <div className="flex items-center gap-4">
-                    <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                    <span className="h-2 w-2 rounded-full bg-[var(--status-success)]" />
                     <span className="text-sm font-bold text-[var(--text-primary)]">{m.name}</span>
                   </div>
                   <div className="flex items-center gap-4">
@@ -400,7 +400,7 @@ export function CarbonEmissionsWorkspaceClient({
                     </span>
                     <button
                       onClick={() => removeMaterial(i)}
-                      className="text-[10px] font-bold text-rose-500 hover:text-rose-600 uppercase"
+                      className="text-[10px] font-bold text-[var(--status-error)] hover:text-rose-600 uppercase"
                     >
                       {t.removeBtn}
                     </button>
@@ -420,7 +420,7 @@ export function CarbonEmissionsWorkspaceClient({
 
           {/* 오류·무자료 정직 표기 (가짜 데이터 대체 금지) */}
           {error && (
-            <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+            <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800 dark:border-[var(--status-warning)]/30 dark:bg-[var(--status-warning)]/10 dark:text-amber-300">
               {error}
             </div>
           )}
@@ -432,12 +432,12 @@ export function CarbonEmissionsWorkspaceClient({
         <>
           {/* (G3/B-4) SSOT 반영 안내 — 실커밋 여부(committed) 3분기로 정직 표기(무오염·무추측). */}
           {committed === "done" && (
-            <div className="rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-xs font-bold text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300">
+            <div className="rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-xs font-bold text-emerald-800 dark:border-[var(--status-success)]/30 dark:bg-[var(--status-success)]/10 dark:text-emerald-300">
               연결된 프로젝트의 ESG 데이터(embodiedCarbonKg)에 반영되었습니다.
             </div>
           )}
           {committed === "skipped" && (
-            <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-xs font-bold text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+            <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-xs font-bold text-amber-800 dark:border-[var(--status-warning)]/30 dark:bg-[var(--status-warning)]/10 dark:text-amber-300">
               ESG 데이터에 반영되지 않았습니다 — 분석 도중 프로젝트가 전환되었거나, 반영할 변경사항이
               없어 건너뛰었습니다.
             </div>
@@ -450,7 +450,7 @@ export function CarbonEmissionsWorkspaceClient({
 
           {/* Summary Cards */}
           <div className="grid gap-4 md:grid-cols-3">
-            <div className="rounded-[var(--radius-lg)] border border-emerald-500/20 bg-emerald-500/5 p-8">
+            <div className="rounded-[var(--radius-lg)] border border-[var(--status-success)]/20 bg-[var(--status-success)]/5 p-8">
               <p className="label-caps text-emerald-600">{t.totalLabel}</p>
               <p className="mt-3 text-4xl font-[1000] tracking-tighter text-[var(--text-primary)]">
                 {formatCurrencyCompact(result.total_carbon_footprint_kgco2e)}
@@ -489,9 +489,9 @@ export function CarbonEmissionsWorkspaceClient({
                 </p>
                 <div className="space-y-4">
                   {[
-                    { label: t.scope1, value: scopeData.scope1, pct: 5, color: "bg-amber-500" },
+                    { label: t.scope1, value: scopeData.scope1, pct: 5, color: "bg-[var(--status-warning)]" },
                     { label: t.scope2, value: scopeData.scope2, pct: 15, color: "bg-blue-500" },
-                    { label: t.scope3, value: scopeData.scope3, pct: 80, color: "bg-emerald-500" },
+                    { label: t.scope3, value: scopeData.scope3, pct: 80, color: "bg-[var(--status-success)]" },
                   ].map((s) => (
                     <div key={s.label} className="space-y-1">
                       <div className="flex items-center justify-between">
@@ -550,7 +550,7 @@ export function CarbonEmissionsWorkspaceClient({
                       </div>
                       <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--surface-soft)]">
                         <div
-                          className={`h-full transition-all duration-500 ${isNeg ? "bg-blue-500" : "bg-rose-400"}`}
+                          className={`h-full transition-all duration-500 ${isNeg ? "bg-blue-500" : "bg-[var(--status-error)]"}`}
                           style={{ width: `${pct}%` }}
                         />
                       </div>
@@ -569,7 +569,7 @@ export function CarbonEmissionsWorkspaceClient({
                             alternatives[b.material].alternatives.map((alt) => (
                               <div
                                 key={alt.alternative_name}
-                                className="flex items-center justify-between rounded-xl bg-emerald-50 dark:bg-emerald-500/5 px-4 py-2 border border-emerald-200 dark:border-emerald-500/10"
+                                className="flex items-center justify-between rounded-xl bg-emerald-50 dark:bg-[var(--status-success)]/5 px-4 py-2 border border-emerald-200 dark:border-[var(--status-success)]/10"
                               >
                                 <span className="text-xs font-bold text-emerald-800 dark:text-emerald-300">
                                   {alt.alternative_name}

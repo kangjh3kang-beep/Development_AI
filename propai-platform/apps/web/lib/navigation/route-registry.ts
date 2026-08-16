@@ -4,7 +4,12 @@
  * This is the non-visual source of truth for primary IA, sitemap generation,
  * route status audits, and later dashboard shortcuts. Visual navigation maps
  * these records to icons in components/layout/nav-config.tsx.
+ *
+ * ★`label`/`title` 은 **한국어 원문**이다. 화면에 나가는 문자열은 `buildPrimaryRegistrySections`
+ *   에서 `lib/navigation/nav-i18n.ts` 를 거쳐 로케일로 옮겨진다 — 여기에 직접 영어를 쓰지 말 것.
  */
+
+import { resolveNavLabel, resolveNavSectionTitle } from "./nav-i18n";
 
 export type RouteStatus = "live" | "beta" | "placeholder" | "hidden";
 export type RouteScope = "global" | "project" | "admin";
@@ -192,6 +197,21 @@ export const PRIMARY_ROUTE_REGISTRY: RouteRegistryItem[] = [
     scope: "global",
     lifecyclePhase: "land-rights",
     apiDependencies: ["/desk-appraisal"],
+  },
+  {
+    // 등기부등본 열람(registry-analysis)의 "전체 분석"은 필지당 건당 과금(발급+분석)이라,
+    // 다필지를 그대로 돌리면 비용이 버튼 한 번에 나간다. 발급 **전에** 예상 비용·판정가능성을
+    // 보여주고 필지를 선별하게 하는 무과금 게이트라 등기부등본 열람 바로 아래(order 25)에 둔다.
+    id: "parcel-survey-quote",
+    label: "발급 전 비용 견적",
+    sectionId: "projects",
+    parentId: "land-rights",
+    order: 25,
+    path: "/registry-analysis/quote",
+    status: "live",
+    scope: "global",
+    lifecyclePhase: "land-rights",
+    apiDependencies: ["/registry/survey/quote"],
   },
   {
     // 사업성·비용 얇은 L2 그룹 해체 — 기본 접힘 그룹이 핵심 사업기능(투자·ESG)을 가려 발견성이
@@ -624,8 +644,13 @@ export function buildPrimaryRegistrySections(locale: string): RegistryNavSection
   const childrenByParent = new Map<string, RegistryNavNode[]>();
   const topLevelBySection = new Map<PrimaryNavSectionId, RegistryNavNode[]>();
 
+  // ★라벨도 로케일을 탄다. 종전에는 `locale` 이 **`href` 에만** 쓰여(`localizedHref`)
+  //   `/en`·`/zh-CN` 사용자에게 하위 내비게이션 전체가 한국어로 나왔다(실측 2026-08-16 —
+  //   e2e 가 `link "금융분석"` 을 잡았다). 번역 누락은 한국어로 폴백하고,
+  //   `__tests__/nav-i18n.coverage.test.ts` 가 레지스트리에서 **파생**해 전수로 잡는다.
   const nodes = PRIMARY_ROUTE_REGISTRY.map<RegistryNavNode>((item) => ({
     ...item,
+    label: resolveNavLabel(item.id, item.label, locale),
     href: localizedHref(locale, item.path),
   }));
 
@@ -652,6 +677,7 @@ export function buildPrimaryRegistrySections(locale: string): RegistryNavSection
     .sort((a, b) => a.order - b.order)
     .map((section) => ({
       ...section,
+      title: resolveNavSectionTitle(section.id, section.title, locale),
       items: (topLevelBySection.get(section.id) ?? [])
         .sort((a, b) => a.order - b.order)
         .map(attachChildren),
