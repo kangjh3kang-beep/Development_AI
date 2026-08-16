@@ -9,6 +9,9 @@ services:
       args:
         NEXT_PUBLIC_KAKAO_MAP_KEY: ${NEXT_PUBLIC_KAKAO_MAP_KEY:-}
         NEXT_PUBLIC_VWORLD_API_KEY: ${NEXT_PUBLIC_VWORLD_API_KEY:-}
+        # ★앱 버전(캐시명 + 텔레메트리). safe-deploy.sh 가 export 한다.
+        #   비어 있으면 Dockerfile.web 이 **빌드를 죽인다**(fail closed — 조용한 미치환 금지).
+        APP_BUILD_ID: ${APP_BUILD_ID:-}
     image: propai-web:oracle
     restart: always
     expose:
