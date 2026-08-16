@@ -24,6 +24,13 @@ import { describe, expect, it } from "vitest";
 
 const LOCALES = ["ko", "en", "zh-CN"] as const;
 
+/** 로케일별 "미연결"의 실제 표기 — 한 언어의 단어를 전 로케일에 요구하지 않는다. */
+const UNWIRED_MARK: Record<(typeof LOCALES)[number], RegExp> = {
+  ko: /미연결|연결되지 않/,
+  en: /not connected/i,
+  "zh-CN": /未接入|尚未接入/,
+};
+
 /** 되돌아오면 안 되는 거짓 주장(실측된 원문). */
 const FALSE_CLAIMS = [
   "센서 기반 예지",
@@ -48,7 +55,13 @@ describe("운영 인텔리전스 정직 표기", () => {
       expect(blob.includes(claim), `${loc}: 검증되지 않은 주장이 되돌아왔다 — "${claim}"`).toBe(false);
     }
     // 미연결 사실을 실제로 밝히고 있는가(정직의 존재를 함께 단언 — 삭제만으로는 부족하다).
-    expect(blob, `${loc}: 무엇이 미연결인지 밝히지 않는다`).toMatch(/미연결/);
+    //
+    // ★2026-08-16 정정: 종전에는 세 로케일 **전부**에 한국어 `미연결` 을 요구했다.
+    //   그건 en·zh-CN 에 한국어 원문이 방치돼 있어야만 통과하는 단언이었다 —
+    //   **테스트가 i18n 결함을 요구하고 있었다.** 로케일을 번역하자 이 줄이 빨강이 됐고,
+    //   정답은 번역을 되돌리는 게 아니라 단언을 고치는 것이었다
+    //   (하루 전 같은 형태를 만났다: 회귀망이 잘못된 계약을 잠그면 결함을 통과시킨다).
+    expect(blob, `${loc}: 무엇이 미연결인지 밝히지 않는다`).toMatch(UNWIRED_MARK[loc]);
   });
 
   /**
