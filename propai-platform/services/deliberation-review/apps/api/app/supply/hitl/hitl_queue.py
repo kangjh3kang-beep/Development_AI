@@ -18,6 +18,12 @@ approve()는 반드시 "①task 발견 ②candidate-task 결속 일치 ③SoD �
 skip(레거시 데이터 문제가 아니라 배선 미완료). add()가 author를 받으면 그 태스크부터 SoD 실질
 적용(후속 배선 지점). skip 상태는 sod_check="skipped(author 미기록)"으로 명시(무언 통과 금지).
 
+★배선 상태의 정본은 `propai-platform/tests/unit/test_deliberation_supply_wiring.py`다(수치를 여기
+복제하지 않는다 — 두 곳에 적으면 한쪽이 썩는다). 이 모듈은 진입점에서 **도달하지 않는다**는
+사실이 그 테스트로 잠겨 있다. 그래서 "SoD가 프로덕션에 없다"는 **재배포로 고칠 문제가 아니다**
+(여러 세션이 이것을 보안 P0로 반복 제기했다). 그 테스트가 실패하며 이 모듈이 도달하게 됐다고
+알리는 날이, 승인 경로의 신원 계약과 큐 영속성을 함께 손볼 시점이다.
+
 reject()는 활성화(ACTIVE 전이·신뢰 상승)를 유발하지 않으므로 자기거부(author==approver)까지
 차단하지는 않는다(설계 결정 — SoD는 신뢰 상승 행위인 승인에 한정) — approver 신원은 동일하게
 필수·기록하되, sod_check는 실제 차단이 수행되지 않았음을 "n/a(reject)"로 정직하게 표기한다
