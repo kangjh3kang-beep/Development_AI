@@ -85,6 +85,15 @@ export interface AddressEntry {
   areaSqm?: number; // 면적 (m²) — 공공데이터(공부상) 우선. API에서 자동 반영
   areaPyeong?: number; // 면적 (평) — 자동 환산
   areaInputSqm?: number; // 엑셀 입력 면적(비권위·참고용) — 공부상과 크게 다르면 보존
+  // ── 토지조서 동의 3종(O/X) — 사용자가 **양식에서 직접 채우는** 값이다 ──
+  // ★양식 안내 시트가 이 칸을 '활용됩니다'라고 **약속**한다. 여기 선언이 없으면 업로드
+  //   응답에 실려 온 값이 타입 경계에서 조용히 버려지고 그 약속이 거짓이 된다
+  //   (실측: 이 경계 하나에서 7개 필드가 버려지고 있었다).
+  // ★필지 단위 진술이다 — 소유자 단위가 아니다. 공유지분 필지에 그대로 승계하면
+  //   분자가 과대해진다(계산 배선은 소유자 식별자 확보 후에 한다).
+  consentLand?: boolean | null;      // 토지사용동의
+  consentDistrict?: boolean | null;  // 지구단위계획동의
+  consentOperator?: boolean | null;  // 시행자지정동의
   areaWarning?: string | null; // 엑셀 입력↔공부상 면적 괴리 경고(공부상 채택했음을 정직 고지)
   // ── 필지별 토지정보(/zoning/parcels-info 일괄 보강) — 등록된 모든 필지가 갖는다 ──
   pnu?: string; // PNU(19자리)
@@ -1040,7 +1049,9 @@ export function GlobalAddressSearch({
       fd.append("file", file);
       fd.append("use_llm", String(useLlm));
       const res = await apiClient.post<{
-        parcels?: Array<{ address?: string | null; jibun?: string | null; bcode?: string | null; pnu?: string | null; area_sqm?: number | null; zone_type?: string | null; jimok?: string | null; official_price_per_sqm?: number | null; injectable?: boolean | null }>;
+        parcels?: Array<{ address?: string | null; jibun?: string | null; bcode?: string | null; pnu?: string | null; area_sqm?: number | null; zone_type?: string | null; jimok?: string | null; official_price_per_sqm?: number | null; injectable?: boolean | null;
+          consent_land?: boolean | null; consent_district?: boolean | null;
+          consent_operator?: boolean | null }>;
         note?: string; error?: string; registry_guidance?: { message?: string };
         verification_report?: { counts?: { verified?: number; corrected?: number; needs_review?: number; excluded?: number } | null } | null;
       }>("/zoning/parse-parcels", { body: fd, useMock: false, timeoutMs: 120000 });
@@ -1069,6 +1080,11 @@ export function GlobalAddressSearch({
           ...(p.zone_type ? { zoneCode: p.zone_type } : {}),
           ...(p.jimok ? { jimok: p.jimok } : {}),
           ...(p.official_price_per_sqm ? { officialPrice: p.official_price_per_sqm } : {}),
+          // 동의 3종은 **null 과 false 를 구분**해 옮긴다 — false(미동의)를 누락으로
+          // 접으면 '아직 안 받았다'와 '거부했다'가 같아진다.
+          ...(p.consent_land != null ? { consentLand: p.consent_land } : {}),
+          ...(p.consent_district != null ? { consentDistrict: p.consent_district } : {}),
+          ...(p.consent_operator != null ? { consentOperator: p.consent_operator } : {}),
         });
         });
       // ★같은 필지가 여러 행(공유지분·다소유자)으로 들어오면 병합셀 forward-fill 후 같은
