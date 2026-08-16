@@ -9,13 +9,18 @@
 > **★★배포 상태는 이 문서에 값으로 적지 않는다 — 아래 명령으로 재라.**
 >
 > ```bash
-> curl -s https://4t8t.net/sw.js | grep -m1 CACHE_NAME   # 끝의 sha = 158 에 배포된 커밋
-> curl -s https://api.4t8t.net/health                    # 168 백엔드
+> curl -s https://4t8t.net/sw.js | grep -m1 '^const CACHE_NAME'   # 끝의 sha = 158 에 배포된 커밋
+> curl -s https://api.4t8t.net/health                             # 168 백엔드
 > curl -s -o /dev/null -w '%{http_code}\n' https://4t8t.net/zzz-nope   # 대조군(404 여야 정상)
-> git log --oneline origin/main -1                       # 정본
+> git log --oneline origin/main -1                                # 정본
 > ```
 >
 > `CACHE_NAME` 끝의 sha 를 `origin/main` 과 대조하면 **무엇이 미배포인지 한 번에** 나온다.
+>
+> ★**줄 시작 앵커(`^const`)를 빼지 마라.** 이 문서는 종전에 앵커 없는 형태를 실어 날랐고,
+> 그것을 그대로 쓴 세션이 **주석의 예시값**을 배포 상수로 읽어 *"서빙이 뒤로 갔다"* 는
+> 유령을 만들었다(2026-08-17). `sw.js` 의 `propai-v` 문자열 셋 중 **둘이 주석**이다.
+> 자세한 것은 `CLAUDE.md` §회귀망 G-28.
 > (`#658` 이후 캐시명이 **빌드 파생** `propai-v<카운터>-<커밋sha>` 다 — 예전 `v50x` 표기는 없다.)
 >
 > ★★★**왜 값을 안 적나 — 이 자리에서 두 번 썩었다.**
