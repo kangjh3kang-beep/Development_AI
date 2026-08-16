@@ -245,6 +245,7 @@ async def tilko_search(
 
 @router.post("/tilko/realty", summary="틸코 등기부등본 조회/발급(IROS ID로그인)")
 async def tilko_realty(
+    request: Request,
     req: dict[str, Any],
     current_user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
@@ -279,19 +280,27 @@ async def tilko_realty(
             return {"ok": False, "status": s.get("status", "need_unique_no"),
                     "message": s.get("message") or "주소로 부동산 고유번호를 찾지 못했습니다.",
                     "search": s}
-    result = await tk.fetch_realty_registry(
-        unique_no=uno,
-        cmort_flag=str(req.get("cmort_flag", "N")),
-        trade_seq_flag=str(req.get("trade_seq_flag", "N")),
-        abs_cls=str(req.get("abs_cls", "11")),
-        rgs_mttr_smry=str(req.get("rgs_mttr_smry", "")),
-    )
-    # 등기부등본 발급·열람 1건 1,200원(발급 성공 시, best-effort).
-    await _charge_registry_issue(current_user.user_id, result, times=1)
-    if select_note and isinstance(result, dict):
-        # 요청과 다른 물건을 골랐을 수 있다는 사실을 과금 결과와 함께 반드시 전달한다.
-        result["select_note"] = select_note
-    return result
+    # ★이 라우트는 **파생형 락이 잡아냈다.** 나는 과금 경로를 손으로 넷(get-one·bulk·analyze·
+    #   survey/strategy)만 세고 여기를 빠뜨렸다 — 목록형으로 열거했으면 영영 안 걸렸을 자리다.
+    #   틸코는 IROS 전자지급수단에서 **실제로 수수료가 차감**되므로 재전송 노출이 형제들과 같다.
+    async with charge_once(
+        request, endpoint="registry.tilko_realty", payload=req,
+        tenant_id=current_user.tenant_id, user_id=current_user.user_id,
+    ) as guard:
+        result = await tk.fetch_realty_registry(
+            unique_no=uno,
+            cmort_flag=str(req.get("cmort_flag", "N")),
+            trade_seq_flag=str(req.get("trade_seq_flag", "N")),
+            abs_cls=str(req.get("abs_cls", "11")),
+            rgs_mttr_smry=str(req.get("rgs_mttr_smry", "")),
+        )
+        # 등기부등본 발급·열람 1건 1,200원(발급 성공 시, best-effort).
+        if guard.billable:
+            await _charge_registry_issue(current_user.user_id, result, times=1)
+        if select_note and isinstance(result, dict):
+            # 요청과 다른 물건을 골랐을 수 있다는 사실을 과금 결과와 함께 반드시 전달한다.
+            result["select_note"] = select_note
+        return result
 
 
 @router.post("/get-one", summary="단건 등기부 조회 / 비상 PDF 업로드 파싱")
