@@ -54,7 +54,7 @@ import {
   clearLayoutOverlay,
   renderLayoutOverlay,
 } from "@/lib/satong-layout-overlay";
-import { SATONG_PANE_Z, SATONG_UI_Z } from "@/lib/satong-map-z";
+import { SATONG_PANE_Z, SATONG_POPUP_YIELD, SATONG_UI_Z } from "@/lib/satong-map-z";
 import { clampClickMenuPosition, findFeatureAtPoint, shortJibunLabel } from "@/lib/satong-click-menu";
 import {
   formatAreaSqm,
@@ -1073,6 +1073,9 @@ export function SatongMultiMap({
     wrapperRef,
   } = useMapFullscreen(mapRef, { mode: "css" });
   const [mapReady, setMapReady] = useState(false);
+  /** 상세정보팝업(Leaflet bindPopup)이 열려 있나 — 수동적 크롬 양보 트리거.
+   *  ★z 로는 못 이긴다(격리된 컨테이너 안). SATONG_POPUP_YIELD 주석 참조. */
+  const [detailPopupOpen, setDetailPopupOpen] = useState(false);
   // 현재 줌 레벨 — 라벨 LOD(z≥17 전체 / 15~16 상위 N / <15 hover-only) 판정 입력.
   //   zoomend 에서만 갱신하고, 임계(15·17) 교차 시에만 버짓이 바뀌어 라벨 이펙트가 재부착된다.
   const [mapZoom, setMapZoom] = useState(12);
@@ -1296,6 +1299,25 @@ export function SatongMultiMap({
 
   // addStagedLayer(useCallback [])가 최신 onFeatureClick을 보도록 ref 경유(onPickRef 관례).
   const onFeatureClickRef = useRef(onFeatureClick);
+  /**
+   * ★필지 상세 **중복 표면** 상호배제 (2026-08-17 — 라이브 실측이 진단을 바꿨다).
+   *
+   * 라이브(`포항시 호미곶면 대보리 산1-1`)에서 폴리곤을 클릭하니 **같은 필지 정보를 담은
+   * 표면 둘**이 동시에 열렸다 — Leaflet 팝업과 셸의 필지 상세 패널(z-430). 그리고 뒤엣것이
+   * 앞엣것을 덮었다(elementFromPoint 3점 전부 `rival`).
+   *
+   * 즉 이건 **층위 문제가 아니라 중복 문제**다. z 를 어떻게 조정해도 "같은 내용을 두 번
+   * 그리는" 사실은 남는다. 그래서 **상세를 맡는 쪽이 있으면 지도는 팝업을 열지 않는다.**
+   *
+   * 판정 기준은 `onFeatureClick` **프롭의 존재**다 — 그 콜백을 준 부모는 곧 상세를
+   * 자기가 렌더하겠다고 선언한 것이다. 프롭이 없으면(임베드·읽기전용 사용처) 지도가
+   * 스스로 팝업을 띄워야 정보가 사라지지 않는다.
+   */
+  const featureDetailOwnedByParent = !!onFeatureClick;
+  const featureDetailOwnedRef = useRef(featureDetailOwnedByParent);
+  useEffect(() => {
+    featureDetailOwnedRef.current = featureDetailOwnedByParent;
+  }, [featureDetailOwnedByParent]);
   useEffect(() => {
     onFeatureClickRef.current = onFeatureClick;
   }, [onFeatureClick]);
@@ -1668,6 +1690,10 @@ export function SatongMultiMap({
         setMapZoom(map.getZoom());
         // 줌 변경 → 라벨 LOD 재판정(임계 교차 시에만 버짓이 바뀌어 라벨이 재부착된다).
         map.on("zoomend", () => setMapZoom(map.getZoom()));
+        // ★상세팝업 양보 계약 배선. Leaflet 은 팝업이 하나만 열리므로(autoClose 기본 true)
+        //   open/close 를 그대로 boolean 으로 쓴다. 지도 파괴 시 리스너도 함께 사라진다.
+        map.on("popupopen", () => setDetailPopupOpen(true));
+        map.on("popupclose", () => setDetailPopupOpen(false));
         const focus = focusTargetRef.current;
         if (focus) {
           map.setView([focus.lat, focus.lon], 17);
@@ -2035,7 +2061,11 @@ export function SatongMultiMap({
           // 하이라이트(선택 강조) = primary 블루 — 디자인컴프 정합(#ef4444 에러적색은 컴프 위반).
           ...(isHighlighted ? { color: "#135bec", weight: 4, fillOpacity: 0.5 } : {}),
         };
-	      const polygon = L.polygon(rings, resolvedStyle).bindPopup(popup, { maxWidth: 280 }).addTo(group);
+	      const polygonBase = L.polygon(rings, resolvedStyle);
+	      // 상세를 부모가 맡으면 팝업을 걸지 않는다(중복 표면 상호배제 — 위 주석 참조).
+	      const polygon = (featureDetailOwnedRef.current
+	        ? polygonBase
+	        : polygonBase.bindPopup(popup, { maxWidth: 280 })).addTo(group);
         polygon.on("click", () => onFeatureClickRef.current?.(feature));
 	      try { bounds.extend(polygon.getBounds()); } catch { /* noop */ }
 	    };
@@ -2094,14 +2124,17 @@ export function SatongMultiMap({
 
       if (!hasGeometry && feature.lat != null && feature.lon != null) {
         markerCount += 1;
-        L.circleMarker([feature.lat, feature.lon], {
+        const circle = L.circleMarker([feature.lat, feature.lon], {
           radius: 8,
           color: "#1d4ed8",
           weight: 2,
           fillColor: "#bfdbfe",
           fillOpacity: 0.95,
           bubblingMouseEvents: false, // 점 클릭 = 정보 팝업만(지도 클릭 팝오버로 미전파 — U6)
-        }).bindPopup(popup, { maxWidth: 280 }).on("click", () => onFeatureClickRef.current?.(feature)).addTo(group);
+        });
+        // 같은 규칙 — 형제를 함께 고친다(한쪽만 고치면 대체 마커 경로에서 중복이 남는다).
+        (featureDetailOwnedRef.current ? circle : circle.bindPopup(popup, { maxWidth: 280 }))
+          .on("click", () => onFeatureClickRef.current?.(feature)).addTo(group);
         bounds.extend([feature.lat, feature.lon]);
       }
     });
@@ -2857,7 +2890,15 @@ export function SatongMultiMap({
       )}
 
       {/* Leaflet 지도 캔버스 — useMapFullscreen 래퍼 */}
-      <div ref={wrapperRef} className={wrapperClass("relative")}>
+      <div
+        ref={wrapperRef}
+        className={wrapperClass("relative")}
+        /* ★상세정보팝업 양보 계약(SATONG_POPUP_YIELD) — 사용자 신고 "팝업이 가려진다".
+           Leaflet 팝업은 격리된 .leaflet-container 안이라 **z 로는 크롬을 못 이긴다**
+           (라이브 실측: popup pane 계산 z = 1, 컨테이너 isolate/0). 그래서 팝업이 열리면
+           수동적 크롬이 물러난다. 감쇄 규칙은 globals.css 한 곳에만 둔다. */
+        {...{ [SATONG_POPUP_YIELD.wrapperAttr]: detailPopupOpen ? "true" : undefined }}
+      >
         {/* 줌 컨트롤은 좌하단(디자인컴프) — 상단 칩바 겹침 CSS 불필요. ping은 마커 애니메이션용. */}
         <style jsx global>{`
           @keyframes ping {
@@ -3148,6 +3189,7 @@ export function SatongMultiMap({
             data-testid="satong-bottom-dock"
             className={"pointer-events-none absolute bottom-16 left-14 right-3 flex flex-row flex-wrap items-end gap-1.5 transition-all duration-300"}
             style={{ zIndex: SATONG_UI_Z.cornerDock }}
+            {...{ [SATONG_POPUP_YIELD.passiveAttr]: SATONG_POPUP_YIELD.passiveValue }}
           >
             {/* I4 저줌 안내(jootek 패턴) — 라벨 줌 롤업 구간에서 정보가 '숨은 게 아니라 접힘'임을
                 알리고 원클릭 확대 제공. 닫으면 세션 내 재표시 안 함. */}
