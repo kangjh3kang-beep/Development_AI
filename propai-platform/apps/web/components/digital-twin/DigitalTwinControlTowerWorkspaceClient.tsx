@@ -335,11 +335,21 @@ export function DigitalTwinControlTowerWorkspaceClient({
               />
             </div>
             <div className="space-y-3">
-              <label className="ml-5 text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">Manual Override (UUID)</label>
-              <Input 
-                value={manualProjectId} 
-                onChange={(event) => setManualProjectId(event.target.value)} 
-                placeholder="00000000-0000-0000-0000-000000000000" 
+              {/* ★종전에는 `<label>` 에 `htmlFor` 가, `<Input>` 에 `id` 가 없어 둘이
+                  **연결되지 않았다** — 스크린리더에는 이름 없는 입력이었고, 이름으로
+                  요소를 찾는 e2e 도 영원히 못 찾았다(실측 2026-08-16).
+                  `Input` 의 `label` prop 을 쓰면 연결은 컴포넌트가 보장한다. */}
+              <label
+                htmlFor="dt-manual-project-id"
+                className="ml-5 block text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]"
+              >
+                Manual Override (UUID)
+              </label>
+              <Input
+                id="dt-manual-project-id"
+                value={manualProjectId}
+                onChange={(event) => setManualProjectId(event.target.value)}
+                placeholder="00000000-0000-0000-0000-000000000000"
                 className="h-16 rounded-[var(--radius-lg)] border-[var(--line-strong)] bg-[var(--surface-soft)]/50 px-8 font-mono text-sm"
               />
             </div>

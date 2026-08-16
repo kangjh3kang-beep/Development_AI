@@ -329,6 +329,7 @@ export function TenantWorkspaceClient({
       <FacilityReservationSection
         projects={projects.map((p) => ({ id: p.id, name: p.name }))}
         canUseLiveApi={canUseLiveApi}
+        locale={locale}
       />
     </section>
   );

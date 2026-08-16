@@ -28,6 +28,7 @@ import {
   buildFacilityCancelBody,
 } from "@/lib/workspace-extended-panels";
 import { extractApiErrorMessage } from "@/lib/esg-extended-panels";
+import type { Locale } from "@/i18n/config";
 
 type ReservationResponse = {
   id: string;
@@ -38,13 +39,107 @@ type ReservationResponse = {
   reserved_by: string;
 };
 
+
+/**
+ * ★로케일 라벨 — 종전에는 **전부 한국어 하드코딩**이라 `/en`·`/zh-CN` 사용자에게도
+ *   한국어가 그대로 나갔다(실측 2026-08-16: `시설명(예: 커뮤니티 라운지)` 등).
+ *   구조는 형제인 `TenantWorkspaceClient` 의 `Record<Locale, Labels>` 관례를 그대로 따른다
+ *   (새 규약을 발명하지 않는다).
+ */
+type Labels = {
+  drawerLabel: string;
+  projectSelectLabel: string;
+  facilityPlaceholder: string;
+  notePlaceholder: string;
+  cancelIdPlaceholder: string;
+  reserveAction: string;
+  reservePending: string;
+  cancelAction: string;
+  cancelPending: string;
+  errorTitle: string;
+  errorDescription: string;
+  retryAction: string;
+  authError: string;
+  missingProject: string;
+  missingFields: string;
+  missingReservationId: string;
+  reservationIdLabel: string;
+  emptyHint: string;
+};
+
+const LABELS: Record<Locale, Labels> = {
+  ko: {
+    drawerLabel: "공유시설 예약",
+    projectSelectLabel: "예약 대상 프로젝트",
+    facilityPlaceholder: "시설명(예: 커뮤니티 라운지)",
+    notePlaceholder: "메모(선택)",
+    cancelIdPlaceholder: "취소할 예약 ID",
+    reserveAction: "예약 생성",
+    reservePending: "예약 중...",
+    cancelAction: "예약 취소",
+    cancelPending: "취소 중...",
+    errorTitle: "공유시설 예약 오류",
+    errorDescription: "입력값을 확인한 뒤 다시 시도하세요.",
+    retryAction: "다시 시도",
+    authError: "라이브 작업 공간 호출을 위해 API 인증이 필요합니다.",
+    missingProject: "예약할 프로젝트를 선택하세요.",
+    missingFields: "시설명·시작·종료 시각을 모두 입력하세요.",
+    missingReservationId: "취소할 예약 ID를 입력하세요.",
+    reservationIdLabel: "예약 ID",
+    emptyHint: "프로젝트를 선택하고 예약을 생성하면 결과가 표시됩니다.",
+  },
+  en: {
+    drawerLabel: "Shared facility reservation",
+    projectSelectLabel: "Project to reserve for",
+    facilityPlaceholder: "Facility name (e.g. community lounge)",
+    notePlaceholder: "Note (optional)",
+    cancelIdPlaceholder: "Reservation ID to cancel",
+    reserveAction: "Create reservation",
+    reservePending: "Reserving...",
+    cancelAction: "Cancel reservation",
+    cancelPending: "Cancelling...",
+    errorTitle: "Facility reservation error",
+    errorDescription: "Check the inputs and try again.",
+    retryAction: "Try again",
+    authError: "API authentication is required for live workspace calls.",
+    missingProject: "Select a project to reserve for.",
+    missingFields: "Enter the facility name and both start and end times.",
+    missingReservationId: "Enter the reservation ID to cancel.",
+    reservationIdLabel: "Reservation ID",
+    emptyHint: "Select a project and create a reservation to see the result here.",
+  },
+  "zh-CN": {
+    drawerLabel: "共享设施预约",
+    projectSelectLabel: "预约对象项目",
+    facilityPlaceholder: "设施名称（例：社区休息室）",
+    notePlaceholder: "备注（可选）",
+    cancelIdPlaceholder: "要取消的预约 ID",
+    reserveAction: "创建预约",
+    reservePending: "预约中...",
+    cancelAction: "取消预约",
+    cancelPending: "取消中...",
+    errorTitle: "共享设施预约错误",
+    errorDescription: "请检查输入后重试。",
+    retryAction: "重试",
+    authError: "实时工作区调用需要 API 认证。",
+    missingProject: "请选择要预约的项目。",
+    missingFields: "请填写设施名称与开始·结束时间。",
+    missingReservationId: "请输入要取消的预约 ID。",
+    reservationIdLabel: "预约 ID",
+    emptyHint: "选择项目并创建预约后，结果将显示在这里。",
+  },
+};
+
 export function FacilityReservationSection({
   projects,
   canUseLiveApi,
+  locale,
 }: {
   projects: { id: string; name: string }[];
   canUseLiveApi: boolean;
+  locale: Locale;
 }) {
+  const labels = LABELS[locale] ?? LABELS.ko;
   const [projectId, setProjectId] = useState(projects[0]?.id ?? "");
   const [values, setValues] = useState(() => facilityReserveInitialValues());
   const [reservationId, setReservationId] = useState("");
@@ -62,16 +157,16 @@ export function FacilityReservationSection({
     }
   }, [projectId, projects]);
 
-  const authErrorMessage = "라이브 작업 공간 호출을 위해 API 인증이 필요합니다.";
+  const authErrorMessage = labels.authError;
 
   const reserve = useCallback(async () => {
     setError("");
     if (!projectId) {
-      setError("예약할 프로젝트를 선택하세요.");
+      setError(labels.missingProject);
       return;
     }
     if (!values.facilityName.trim() || !values.startTime || !values.endTime) {
-      setError("시설명·시작·종료 시각을 모두 입력하세요.");
+      setError(labels.missingFields);
       return;
     }
     setPending("reserve");
@@ -91,7 +186,7 @@ export function FacilityReservationSection({
   const cancel = useCallback(async () => {
     setError("");
     if (!reservationId.trim()) {
-      setError("취소할 예약 ID를 입력하세요.");
+      setError(labels.missingReservationId);
       return;
     }
     setPending("cancel");
@@ -119,7 +214,7 @@ export function FacilityReservationSection({
   }
 
   return (
-    <AdvancedDrawer label="공유시설 예약">
+    <AdvancedDrawer label={labels.drawerLabel}>
       <Card>
         <CardContent className="p-6">
           <p className="label-caps text-[var(--text-tertiary)]">
@@ -135,7 +230,7 @@ export function FacilityReservationSection({
             <Input
               value={values.facilityName}
               onChange={(e) => setValues((prev) => ({ ...prev, facilityName: e.target.value }))}
-              placeholder="시설명(예: 커뮤니티 라운지)"
+              placeholder={labels.facilityPlaceholder}
             />
             <div className="grid gap-3 md:grid-cols-2">
               <input
@@ -154,10 +249,10 @@ export function FacilityReservationSection({
             <Input
               value={values.notes}
               onChange={(e) => setValues((prev) => ({ ...prev, notes: e.target.value }))}
-              placeholder="메모(선택)"
+              placeholder={labels.notePlaceholder}
             />
             <Button type="submit" disabled={!canUseLiveApi || pending === "reserve"}>
-              {pending === "reserve" ? "예약 중..." : "예약 생성"}
+              {pending === "reserve" ? labels.reservePending : labels.reserveAction}
             </Button>
           </form>
 
@@ -165,24 +260,24 @@ export function FacilityReservationSection({
             <Input
               value={reservationId}
               onChange={(e) => setReservationId(e.target.value)}
-              placeholder="취소할 예약 ID"
+              placeholder={labels.cancelIdPlaceholder}
             />
             <Button
               type="submit"
               variant="secondary"
               disabled={!canUseLiveApi || pending === "cancel"}
             >
-              {pending === "cancel" ? "취소 중..." : "예약 취소"}
+              {pending === "cancel" ? labels.cancelPending : labels.cancelAction}
             </Button>
           </form>
 
           {error ? (
             <div className="mt-4">
               <WorkspaceQueryErrorCard
-                title="공유시설 예약 오류"
-                description="입력값을 확인한 뒤 다시 시도하세요."
+                title={labels.errorTitle}
+                description={labels.errorDescription}
                 message={error}
-                actionLabel="다시 시도"
+                actionLabel={labels.retryAction}
                 onRetry={pending === "cancel" ? cancel : reserve}
               />
             </div>
@@ -196,11 +291,11 @@ export function FacilityReservationSection({
               <p className="text-[var(--text-secondary)]">
                 {result.start_time} ~ {result.end_time}
               </p>
-              <p className="text-xs text-[var(--text-tertiary)]">예약 ID: {result.id}</p>
+              <p className="text-xs text-[var(--text-tertiary)]">{labels.reservationIdLabel}: {result.id}</p>
             </div>
           ) : !error ? (
             <div className="mt-6 rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
-              프로젝트를 선택하고 예약을 생성하면 결과가 표시됩니다.
+              {labels.emptyHint}
             </div>
           ) : null}
         </CardContent>
