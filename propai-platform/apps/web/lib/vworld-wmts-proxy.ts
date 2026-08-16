@@ -26,10 +26,12 @@ export type VWorldWmtsParams = {
 };
 
 /**
- * ★PR#329 R1 리뷰(HIGH) 반영 — 서버 전용 키(`VWORLD_API_KEY`)만 사용, `NEXT_PUBLIC_VWORLD_API_KEY`
- *   (공개·도메인 제한 키, `lib/vworld-client.ts`·`AvmVisionPanel.tsx`가 브라우저에서 직접 사용하는
- *   별도 정책의 키)로 폴백하지 않는다. 폴백을 두면 서버 전용 키 미설정 시 조용히 같은 공개 키로
- *   동작해 "서버 전용 키 분리" 의도가 무력화된다(순 보안이득 ≈ 0). 미설정이면 503으로 정직 실패한다.
+ * ★PR#329 R1 리뷰(HIGH) 반영 — 서버 전용 키(`VWORLD_API_KEY`)만 사용,
+ *   `NEXT_PUBLIC_VWORLD_API_KEY`(브라우저에 노출되는 키)로 폴백하지 않는다. 폴백을 두면 서버
+ *   전용 키 미설정 시 조용히 같은 공개 키로 동작해 "서버 전용 키 분리" 의도가 무력화된다
+ *   (순 보안이득 ≈ 0). 미설정이면 503으로 정직 실패한다.
+ *   ★★2026-08-17: **두 키가 실제로는 같은 값**이다 — 근거와 복구 조건은
+ *   `vworld-wms-proxy.ts` 상단 정정 블록 한 곳에만 둔다(수치·근거를 복제하지 않는다).
  */
 function vworldKey(): string {
   return (process.env.VWORLD_API_KEY || "").trim();
