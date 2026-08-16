@@ -8,29 +8,58 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { assertWiredThrough } from "@/lib/source-invariant";
+import { __stripCommentsForScan, assertWiredThrough } from "@/lib/source-invariant";
 
 const PANEL = "components/analysis/ComprehensiveAnalysisPanel.tsx";
 
+/** 주석·독스트링을 걷어낸 소스.
+ *
+ *  ★종전에는 이 파일이 **원시 `readFileSync` 결과**에 `toContain`/`match` 를 걸었다.
+ *    `/* beginAnalysisRun() *​/` 한 줄이면 단언이 충족된다 — 이 저장소가 실제로 겪은 우회 경로다.
+ *  ★형제 파일들이 쓰는 손수 만든 스트리퍼(`//` 제거 + `^\s*\*` 필터)는 **단일행 `/* … *​/` 를
+ *    못 벗긴다**. 공용 도구를 쓴다 — 스트립 규칙이 갈리면 한쪽만 뚫린다.
+ */
+function code(): string {
+  return __stripCommentsForScan(readFileSync(resolve(process.cwd(), PANEL), "utf-8"), PANEL);
+}
+
+/** `setResult(core…)` / `setResult((prev)…)` 로 **서버 응답을 화면에 붙이는** 줄 번호들. */
+const SET_RESULT = /setResult\((core|\(prev\))/;
+/** 응답을 붙이기 전에 통과해야 하는 관문. */
+const GUARD = /isCurrentTarget\(runKey\)/;
+/** 관문이 응답 반영 **앞** 몇 줄 안에 있어야 하는가(같은 핸들러 블록 범위). */
+const GUARD_WINDOW = 12;
+
 describe("종합분석 패널 — 분석 대상 전환 가드 배선", () => {
-  it("응답을 화면에 붙이기 전에 대상이 여전히 그 대상인지 확인한다", () => {
-    assertWiredThrough({
-      file: PANEL,
-      // setResult로 서버 응답을 붙이는 줄들(초기화 setResult(null)은 제외).
-      scope: /setResult\((core|\(prev\))/,
-      mustContain: /.*/,
-      minMatches: 2,
-    });
-    const src = readFileSync(resolve(process.cwd(), PANEL), "utf-8");
-    // 두 번의 응답 반영(1단계 core·2단계 해석 병합) 각각 앞에 isCurrentTarget 관문이 있어야 한다.
-    const guards = src.match(/isCurrentTarget\(runKey\)/g) ?? [];
-    expect(guards.length).toBeGreaterThanOrEqual(2);
+  it("★응답을 화면에 붙이기 전에 대상이 여전히 그 대상인지 확인한다", () => {
+    // ★2026-08-16 — 종전 이 자리에는 `mustContain: /.*/` 가 있었다. 그 정규식은 **빈 줄을
+    //   포함해 모든 줄에 참**이라 위반이 구조적으로 0이었다(`assertWiredThrough` 가 잠근
+    //   것은 `minMatches` 뿐). CLAUDE.md 검증 규율 표가 **이름으로 지목한 결함**
+    //   ("mustContain 이 scope 에 함의됨 — 공허한 참")이 이 트리에 그대로 살아 있었다.
+    //   → 대역이 아니라 **관문과 응답반영의 근접성**이라는 실제 계약을 잠근다.
+    const lines = code().split("\n");
+    const sites = lines
+      .map((text, i) => ({ text, i }))
+      .filter(({ text }) => SET_RESULT.test(text));
+
+    // 공허진리 가드 — 대상이 0개라 "위반 0"이 참이 되는 것을 막는다.
+    expect(sites.length, "응답 반영 지점이 없다 — 아래 검사가 공허해진다").toBeGreaterThanOrEqual(2);
+
+    for (const { i } of sites) {
+      const before = lines.slice(Math.max(0, i - GUARD_WINDOW), i).join("\n");
+      expect(
+        GUARD.test(before),
+        `setResult @${i + 1} 앞 ${GUARD_WINDOW}줄에 대상 확인 관문(isCurrentTarget)이 없다 — ` +
+          "전환된 대상에 옛 응답이 붙는다",
+      ).toBe(true);
+    }
+
     // 착수 시점 대상 못박기가 있어야 runKey 자체가 성립한다.
-    expect(src).toContain("beginAnalysisRun()");
+    expect(code()).toContain("beginAnalysisRun()");
   });
 
   it("무효화 판정이 주소 문자열 단독으로 되돌아가지 않는다", () => {
-    const src = readFileSync(resolve(process.cwd(), PANEL), "utf-8");
+    const src = code();  // ★주석 경유 우회 차단 — 원시 소스 금지
     // 종전 결함 형태: 주소만 비교해 결과를 지우던 조건. 되살아나면 주소 없는 프로젝트에서 또 샌다.
     expect(src).not.toMatch(/mainAddr\s*!==\s*\(result/);
     // 판정 키는 공용 헬퍼로만 만든다(로컬 재구성 금지 — 두 곳이 갈리면 한쪽만 고쳐진다).
@@ -44,7 +73,7 @@ describe("종합분석 패널 — 분석 대상 전환 가드 배선", () => {
       mustContain: "projectId",
       minMatches: 1,
     });
-    const src = readFileSync(resolve(process.cwd(), PANEL), "utf-8");
+    const src = code();  // ★주석 경유 우회 차단 — 원시 소스 금지
     expect(src).toContain("useProjectContextStore((state) => state.projectId)");
   });
 });

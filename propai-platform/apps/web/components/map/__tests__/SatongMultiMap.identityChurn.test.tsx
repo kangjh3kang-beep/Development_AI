@@ -16,12 +16,18 @@
  *   한계: 런타임 재생성 횟수를 재지는 않는다. 실제 성능 회귀는 브라우저 계측이 필요하다.
  */
 import { readFileSync } from "node:fs";
+
+import { __stripCommentsForScan } from "@/lib/source-invariant";
 import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+/** ★2026-08-16 — 종전에는 **원시 소스**를 그대로 돌려줬다. 이 파일의 정방향 `toContain`
+ *  단언들이 전부 **주석 안 문자열로 충족**됐다(`/* onFeatureClickRef.current?.(feature) *​/`).
+ *  이 파일은 메모리상 "배선 미변이로 4회 뚫림(identity churn 포함)" 사례의 그 파일이다 —
+ *  **처방이 공용화됐는데 정작 환자에게 오지 않았다.** 공용 스트리퍼를 경유한다. */
 function readSource(rel: string): string {
-  return readFileSync(resolve(process.cwd(), rel), "utf-8");
+  return __stripCommentsForScan(readFileSync(resolve(process.cwd(), rel), "utf-8"), rel);
 }
 
 describe("identity churn — 오버레이 effect deps 계약", () => {
