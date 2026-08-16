@@ -29,7 +29,7 @@ jobs:
       #   정본은 apps/api/requirements-dev.txt.
       - name: Run Bandit
         run: |
-          pip install -r propai-platform/apps/api/requirements-dev.txt
+          pip install -c propai-platform/apps/api/requirements-dev.txt bandit
           bandit -r propai-platform/apps/api/ -ll -ii \
             -x propai-platform/apps/api/tests,propai-platform/apps/api/.venv
 
@@ -51,7 +51,7 @@ jobs:
       #   핀은 그 진단을 **재현 가능**하게 만든다(버전이 매번 달라지면 원인 분리가 안 된다).
       - name: Scan Python dependencies
         run: |
-          pip install -r propai-platform/apps/api/requirements-dev.txt
+          pip install -c propai-platform/apps/api/requirements-dev.txt pip-audit
           pip-audit --strict --desc -r propai-platform/apps/api/requirements.txt
 
   gitleaks:
