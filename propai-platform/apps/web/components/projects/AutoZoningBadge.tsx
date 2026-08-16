@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
+import { idempotencyHeaders } from "@/lib/idempotency";
 import { getCachedAnalysis, setCachedAnalysis, TTL_7D } from "@/lib/analysis-fetch-cache";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { LegalRefChip } from "@/components/common/LegalRefChip";
@@ -160,6 +161,8 @@ export function AutoZoningBadge({ address }: { address: string }) {
           {
             useMock: false,
             body: { address: address.trim() },
+            // ★유료 경로(land_analysis) — 재전송이면 이중청구된다.
+            headers: idempotencyHeaders("zoning.analyze", { address: address.trim() }),
           },
         );
         if (!cancelled) {

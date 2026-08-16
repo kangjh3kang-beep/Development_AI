@@ -6,6 +6,7 @@ import { AlertTriangle } from "lucide-react";
 import { useAIAnalyze, useAIReady } from "@/lib/ai-analyze-client";
 import { analyzeLocally } from "@/lib/kr-building-regulations";
 import { apiClient } from "@/lib/api-client";
+import { idempotencyHeaders } from "@/lib/idempotency";
 import { getCachedAnalysis, setCachedAnalysis, TTL_30D, TTL_7D, TTL_3D } from "@/lib/analysis-fetch-cache";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import {
@@ -368,9 +369,12 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
       setZoningLoading(true);
       setZoningError(null);
       try {
+        // ★가장 많이 쓰이는 유료 경로(land_analysis) — 재전송이면 이중청구된다.
+        const zoningBody = { address: data!.address!.trim() };
         const res = await apiClient.post<ZoningAnalysisResponse>("/zoning/analyze", {
           useMock: false,
-          body: { address: data!.address!.trim() },
+          body: zoningBody,
+          headers: idempotencyHeaders("zoning.analyze", zoningBody),
         });
         if (!cancelled) {
           setZoningData(res);

@@ -33,6 +33,7 @@ import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { useLandScheduleStore, type LandRow, BIZ_METHODS, BIZ_METHOD_PRESETS, DEFAULT_BIZ_METHOD } from "@/store/useLandScheduleStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import type { Locale } from "@/i18n/config";
+import { parcelDisplayAddress } from "@/lib/pnu";
 
 const EMPTY_ROWS: LandRow[] = []; // zustand v5: 안정적 참조(매 렌더 새 [] 반환→무한루프 방지)
 
@@ -201,7 +202,13 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
     
     if (parcels && parcels.length) {
       const merged = parcels.map((p) => {
-        const existing = currentRows.find((r) => (p.pnu && r.pnu === p.pnu) || (r.jibun.trim() === p.address.trim()));
+        // ★PNU 우선 매칭은 그대로. 주소 폴백은 **옛 라벨(주소만)과 새 라벨(주소+지번)** 을
+        //   둘 다 인식해야 한다 — 안 그러면 기존 행이 안 잡혀 사용자가 입력한 소유자·매입가가
+        //   새 행으로 갈아치워진다(무음 손실).
+        const newLabel = parcelDisplayAddress(p.address, p.pnu).trim();
+        const existing = currentRows.find(
+          (r) => (p.pnu && r.pnu === p.pnu) || r.jibun.trim() === p.address.trim() || r.jibun.trim() === newLabel,
+        );
         if (existing) {
           return {
             ...existing,
@@ -209,7 +216,11 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
             owner_type: toOwnerType(p.ownerType) || existing.owner_type,
           };
         }
-        return mk(p.address, p.areaSqm ?? null, p.ownerType, p.pnu);
+        // ★★지번 칸에 **지번이 아니라 주소**가 들어가던 자리다.
+        //   `p.pnu` 를 이미 4번째 인자로 넘기면서도 지번을 파생하지 않아, 동 단위 주소만
+        //   저장된 프로젝트에서는 77행이 전부 "경기도 오산시 내삼미동" 이 됐다.
+        //   이 칸은 **사용자가 편집하고 엑셀·등기분석으로 흘러가는 값**이라 표시만의 문제가 아니다.
+        return mk(parcelDisplayAddress(p.address, p.pnu), p.areaSqm ?? null, p.ownerType, p.pnu);
       });
       setRows(projectId, merged);
     } else if (siteAnalysis?.address) {
@@ -220,7 +231,8 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
           area_sqm: effectiveLandAreaSqm(siteAnalysis) ?? existing.area_sqm,
         }]);
       } else {
-        setRows(projectId, [mk(siteAnalysis.address ?? "", effectiveLandAreaSqm(siteAnalysis), "", siteAnalysis.pnu)]);
+        setRows(projectId, [mk(parcelDisplayAddress(siteAnalysis.address ?? "", siteAnalysis.pnu),
+          effectiveLandAreaSqm(siteAnalysis), "", siteAnalysis.pnu)]);
       }
     }
   }, [projectId, siteAnalysis, setRows]);

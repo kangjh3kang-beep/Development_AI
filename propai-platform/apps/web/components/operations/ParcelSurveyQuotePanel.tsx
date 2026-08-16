@@ -124,9 +124,13 @@ export function ParcelSurveyQuotePanel({ locale }: { locale: Locale }) {
       //   저장소 기준선도 `pnu || address` 다(GlobalAddressSearch·satong-map-selection 등).
       const existing = new Set(prev.map((r) => parcelDedupKey(r)).filter(Boolean) as string[]);
       const added: QuoteParcelRow[] = [];
-      for (const p of projectParcels) {
-        const k = parcelDedupKey(p);
-        // ★키를 못 만드는 행(PNU·주소 둘 다 없음)은 **중복으로 접지 않는다** — 접으면 손실이다.
+      for (const [i, p] of projectParcels.entries()) {
+        // ★PNU 가 없으면 주소로 떨어지는데, 프로젝트 필지는 **이미 서로 다른 필지**라
+        //   같은 동이면 또 접힌다(이 버그의 잔여분). 프로젝트 소스는 SSOT 가 이미 유일하므로
+        //   PNU 가 없을 때는 **인덱스를 섞어 접히지 않게** 한다.
+        //   대가: 불러오기를 두 번 누르면 PNU 없는 행이 중복될 수 있다 — 그건 **화면에 보이고
+        //   지울 수 있는** 문제이고, 조용히 사라지는 것보다 낫다(무음 손실 금지).
+        const k = p.pnu ? parcelDedupKey(p) : `project-idx:${i}:${(p.address || "").trim()}`;
         if (!k || existing.has(k)) continue;
         existing.add(k);
         added.push({

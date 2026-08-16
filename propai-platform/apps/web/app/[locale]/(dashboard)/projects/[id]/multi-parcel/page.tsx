@@ -25,6 +25,7 @@ import { apiClient } from "@/lib/api-client";
 import { PYEONG_SQM } from "@/lib/formatters";
 import { GlobalAddressSearch } from "@/components/common/GlobalAddressSearch";
 import { ParcelExportButton } from "@/components/projects/ParcelExportButton";
+import { parcelDisplayAddress } from "@/lib/pnu";
 import {
   MultiParcelAttributeMatrix,
   resolveMultiParcelReport,
@@ -458,7 +459,9 @@ export default function MultiParcelPage() {
                       return (
                         <li key={(p.pnu || p.address || "") + i} className="rounded-lg border border-[var(--line)] bg-[var(--surface)] px-2.5 py-2">
                           <div className="flex items-center justify-between gap-2">
-                            <span className="truncate text-[11px] font-bold text-[var(--text-primary)]">{p.address || p.pnu || `필지 ${i + 1}`}</span>
+                            {/* ★동 단위 주소만 저장된 필지는 목록이 전부 같은 글자로 보인다 — PNU 에서 지번을 파생해
+                                구분 가능하게 한다(공용 헬퍼: 표기 규칙이 화면마다 갈라지지 않게). */}
+                            <span className="truncate text-[11px] font-bold text-[var(--text-primary)]" title={parcelDisplayAddress(p.address, p.pnu) || undefined}>{parcelDisplayAddress(p.address, p.pnu) || p.pnu || `필지 ${i + 1}`}</span>
                             <span className="shrink-0 text-[10px] text-[var(--text-hint)]">{p.area_sqm != null ? `${num(p.area_sqm)}㎡` : "면적 미상"}</span>
                           </div>
                           <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-[var(--text-secondary)]">
