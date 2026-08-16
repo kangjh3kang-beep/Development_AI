@@ -169,7 +169,15 @@ def _doc_files() -> list[Path]:
 
 
 def _probe_pipelines() -> list[tuple[Path, int, str]]:
-    """문서에서 ``… sw.js | <필터>`` 형태를 뽑는다. (파일, 줄번호, 파이프 뒤 세그먼트)"""
+    """문서에서 ``… sw.js | <필터>`` 형태를 뽑는다. (파일, 줄번호, 파이프 뒤 세그먼트)
+
+    ★알려진 잠재 위양성(아직 발생 안 함 · 다음 사람을 위해 적는다):
+        문서가 **틀린 형태를 반례로 보여줄 때** 그 줄에 ``sw.js`` 와 파이프가 함께 있으면
+        이 추출기가 그것을 "문서가 권하는 프로브"로 오인한다.
+        현재 ``CLAUDE.md`` §G-28 의 반례 표는 줄에 ``sw.js`` 가 없어 걸리지 않는다.
+        반례를 적을 때는 **같은 줄에 ``sw.js`` 를 쓰지 마라**(또는 이 함수에 제외 표식을 넣어라).
+        검사기가 반례를 위반으로 신고하기 시작하면 그건 가드의 결함이다(§회귀망 A.6).
+    """
     found: list[tuple[Path, int, str]] = []
     for path in _doc_files():
         for lineno, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
@@ -213,6 +221,57 @@ def _run_probe(segment: str, sw_text: str) -> str:
     return proc.stdout
 
 
+# 줄 시작 앵커. 이게 없으면 주석을 집는다 — 이 파일이 잠그는 결함의 본질이다.
+#
+# ★허용 표기를 **전부** 열거한다(CLAUDE.md §회귀망 A.6 — "하한을 넘는 등가 표기를 위반으로
+#   신고하면 정상 코드를 막는다"). 실측으로 잡은 위양성:
+#       ^const        ← 최소 형태
+#       ^ *const      ← 들여쓰기 허용(더 넓지만 여전히 줄 시작 고정)
+#       ^\s*const     ← 같은 것을 정규식 원자로
+#   셋 다 **주석 줄을 집지 않는다**는 목적을 똑같이 달성한다. 한 표기만 인정하면
+#   나머지 둘을 쓴 정당한 문서가 막힌다 — 이 파일이 방금 그 실수를 했다.
+_ANCHOR_RX = re.compile(r"\^(?:\\s|[ *+])*const")
+
+
+def _has_anchor(segment: str) -> bool:
+    """줄 시작 앵커가 **어떤 등가 표기로든** 있는가."""
+    return bool(_ANCHOR_RX.search(segment))
+
+
+def _classify(segment: str, sw_text: str) -> tuple[str, str]:
+    """프로브를 (판정, 근거) 로 분류한다.
+
+    ★2026-08-17 위양성 봉합. 종전에는 **실행할 수 없는 세그먼트를 곧바로 실패**시켰다.
+      그런데 실측해 보니 차단된 것 중 둘이 **앵커를 올바르게 쓴 정당한 문서**였다:
+
+          docker exec web sh -c '… | grep -m1 "^const CACHE_NAME"'   ← 따옴표가 안 닫혀 파싱 실패
+          … | grep -m1 '^const CACHE_NAME' > /tmp/x                  ← 리다이렉트 메타문자
+
+      정상 표기를 위반으로 신고하는 것은 **가드의 결함**이다(CLAUDE.md §회귀망 A.6 — 2회 재발).
+      ★이 규율이 적힌 파일을 고치는 PR 에서 내가 그 규율을 어겼다(§D.16).
+
+    그래서 2단으로 나눈다 — **약한 판정으로 강등하되, 놓치지는 않는다**:
+        실행 가능  → 실제 sw.js 에 흘려 **출력**으로 판정(가장 강함)
+        실행 불가  → **앵커 유무만** 정적으로 본다(위양성 없음 · 핵심 결함은 여전히 잡힘)
+
+    앵커 없는 프로브는 실행 가능하든 아니든 **양쪽 경로에서 다 걸린다** — 그게 요점이다.
+    """
+    try:
+        out = _run_probe(segment, sw_text)
+    except AssertionError as why:
+        # 실행 불가 — 여기서 막지 않는다. 대신 앵커를 본다.
+        if _has_anchor(segment):
+            return "skipped", f"실행 불가라 앵커만 확인했다({str(why)[:60]}…)"
+        return "broken", (
+            f"실행할 수 없고 줄 시작 앵커(^const · ^ *const · ^\\s*const 중 아무거나)도 없다: "
+            f"{str(why)[:80]}"
+        )
+    expected = _DEV_PLACEHOLDER.split('"')[1]
+    if expected in out:
+        return "executed", out.strip()[:60]
+    return "broken", f"출력에 {expected!r} 가 없다 — 출력={out.strip()[:80]!r}"
+
+
 def test_문서가_적은_프로브가_실제_sw_js_에서_상수를_뽑는다() -> None:
     """★**소스가 아니라 실행을 본다.** 문서의 명령을 진짜 `sw.js` 에 흘려 결과를 판정한다."""
     sw_text = _read(_SW)
@@ -226,15 +285,25 @@ def test_문서가_적은_프로브가_실제_sw_js_에서_상수를_뽑는다()
         f"문서를 옮겼다면 _DOC_ROOTS 를 고칠 것. 찾은 것: {[str(p) for p, _, _ in probes]}"
     )
 
-    expected = _DEV_PLACEHOLDER.split('"')[1]  # propai-vdev-local (저장소 소스의 값)
     broken: list[str] = []
+    executed = 0
     for path, lineno, seg in probes:
-        out = _run_probe(seg, sw_text)
-        if expected not in out:
-            broken.append(
-                f"{path.relative_to(_REPO)}:{lineno}  프로브={seg!r}  출력={out.strip()[:80]!r}"
-            )
+        verdict, why = _classify(seg, sw_text)
+        if verdict == "executed":
+            executed += 1
+        elif verdict == "broken":
+            broken.append(f"{path.relative_to(_REPO)}:{lineno}  프로브={seg!r}  {why}")
 
+    # ★두 번째 공허 진리 가드 — **하한을 "찾은 수"가 아니라 "실행한 수"에 건다.**
+    #   위양성 봉합으로 실행 불가 프로브를 통과시키게 됐는데, 그 완화가 지나치면
+    #   "전부 skipped 라 위반 0" 이라는 새 공허함이 생긴다. 그 문을 여기서 닫는다.
+    assert executed >= 3, (
+        f"실제로 **실행된** 프로브가 {executed}건뿐이다(찾은 것 {len(probes)}건) — "
+        "이 상태의 '위반 0'은 근거가 약하다. 문서의 프로브가 전부 실행 불가 형태로 바뀌었는지, "
+        "아니면 allowlist·메타문자 규칙이 지나치게 좁아졌는지 보라."
+    )
+
+    expected = _DEV_PLACEHOLDER.split('"')[1]  # propai-vdev-local (저장소 소스의 값)
     assert not broken, (
         "문서의 프로브가 **실제 sw.js 에서 상수를 뽑지 못한다**:\n  "
         + "\n  ".join(broken)
@@ -242,6 +311,33 @@ def test_문서가_적은_프로브가_실제_sw_js_에서_상수를_뽑는다()
         "grep -m1 '^const CACHE_NAME'. 앵커가 없으면 **주석의 예시값**이나 "
         "엉뚱한 주석 줄을 집는다(2026-08-17 실사고)."
     )
+
+
+def test_실행할_수_없는_프로브도_앵커가_없으면_걸린다() -> None:
+    """★위양성 봉합이 **구멍이 되지 않았는지** 확인한다(완화의 대조군).
+
+    실행 불가 세그먼트를 통과시키기로 했으니, "따옴표로 감싸면 앵커 없이도 통과한다"는
+    새 우회로가 생겼는지 물어야 한다. 생기지 않았음을 여기서 잠근다.
+    """
+    sw_text = _read(_SW)
+    cases = [
+        # (세그먼트, 기대 판정, 왜)
+        ("""grep -m1 "^const CACHE_NAME"'""", "skipped", "실행 불가·앵커 O → 통과(위양성 방지)"),
+        ("""grep -m1 '^const CACHE_NAME' > /tmp/x""", "skipped", "리다이렉트·앵커 O → 통과"),
+        # ★등가 앵커 표기 — 한 표기만 인정하면 이 둘을 쓴 정당한 문서가 막힌다(§A.6).
+        ("""sh -c 'grep -m1 "^ *const CACHE_NAME"'""", "skipped", "들여쓰기 허용 앵커도 앵커다"),
+        ("""sh -c 'grep -mE "^\\s*const CACHE_NAME"'""", "skipped", "정규식 원자 앵커도 앵커다"),
+        ("""grep -m1 "CACHE_NAME"'""", "broken", "실행 불가·앵커 X → 걸려야 한다"),
+        ("""grep -m1 CACHE_NAME > /tmp/x""", "broken", "리다이렉트·앵커 X → 걸려야 한다"),
+        ("""grep -m1 '^const CACHE_NAME'""", "executed", "정상 → 실행되어 값을 준다"),
+        ("""grep -m1 CACHE_NAME""", "broken", "실행되지만 주석을 집는다"),
+    ]
+    wrong = []
+    for seg, want, why in cases:
+        got, detail = _classify(seg, sw_text)
+        if got != want:
+            wrong.append(f"{seg!r}: 기대 {want} · 실제 {got} ({why}) — {detail}")
+    assert not wrong, "완화가 우회로를 만들었다:\n  " + "\n  ".join(wrong)
 
 
 def test_앵커_없는_프로브는_이_테스트에_반드시_걸린다() -> None:
