@@ -11,12 +11,22 @@ import json
 from typing import Any, Literal
 
 import structlog
-from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+)
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import idempotency  # WP-L: Idempotency-Key 재전송 안전(뮤테이팅 커맨드)
+from app.core.charge_guard import charge_once
 from app.services.auth.auth_service import get_current_user, get_current_user_optional
 from app.services.cad import design_run_cache  # 설계 매스 input_hash 멱등 캐시(시간절감)
 from app.services.cad.design_contract import build_mass_contract  # C2R 계약 부착 공용 헬퍼
@@ -2045,6 +2055,9 @@ async def render_photoreal(
     project_id: str,
     req: PhotorealRenderRequest,
     db: AsyncSession = Depends(get_db),
+    # ★`request` 를 뒤쪽에 둔다 — 앞에 넣으면 위치인자 호출부가 조용히 밀린다
+    #   (이 세션에서 tilko_realty 가 그렇게 깨졌다). FastAPI 는 애노테이션으로 주입한다.
+    request: Request = None,  # type: ignore[assignment]
     user=Depends(get_current_user_optional),
 ):
     """3D 뷰포트 이미지를 ControlNet으로 포토리얼 렌더(비파괴 — 원본 3D 불변).
@@ -2070,14 +2083,21 @@ async def render_photoreal(
 
     # 렌더 성공 시에만 사용료 차감(로그인 사용자일 때만; best-effort — 실패해도 결과 제공).
     # ★프로바이더 무관 동일 과금코드(photoreal_render) — INC2는 단일 코드(신규 과금 추가 금지).
+    # ★재전송 안전 — 유료 AI 렌더라 더블서브밋이 **그대로 이중청구**된다.
+    #   익명(user=None)은 과금 자체가 없으므로 가드도 걸지 않는다(빈 스코프 공유 방지).
     charged = None
     if user is not None:
-        try:
-            await billing_service.load_config(db)
-            c = await billing_service.charge_service(db, user.id, "photoreal_render")
-            charged = c.get("charged_krw")
-        except Exception:  # noqa: BLE001
-            pass
+        async with charge_once(
+            request, endpoint="photoreal_render", payload=req,
+            tenant_id=getattr(user, "tenant_id", None), user_id=getattr(user, "id", None),
+        ) as guard:
+            if guard.billable:
+                try:
+                    await billing_service.load_config(db)
+                    c = await billing_service.charge_service(db, user.id, "photoreal_render")
+                    charged = c.get("charged_krw")
+                except Exception:  # noqa: BLE001
+                    pass
 
     # 프로바이더별 성공 반환형이 다르다(replicate=image_url / openai·google=image_base64).
     # 둘 중 있는 것을 그대로 전달(소비처는 image_base64 우선, 없으면 image_url 사용).
@@ -2097,6 +2117,9 @@ async def render_concept(
     project_id: str,
     req: ConceptRenderRequest,
     db: AsyncSession = Depends(get_db),
+    # ★`request` 를 뒤쪽에 둔다 — 앞에 넣으면 위치인자 호출부가 조용히 밀린다
+    #   (이 세션에서 tilko_realty 가 그렇게 깨졌다). FastAPI 는 애노테이션으로 주입한다.
+    request: Request = None,  # type: ignore[assignment]
     user=Depends(get_current_user_optional),
 ):
     """텍스트→컨셉 조감도/투시도(text2img). 3D가 없어도 설명만으로 컨셉 이미지 생성.
@@ -2122,14 +2145,21 @@ async def render_concept(
 
     # 생성 성공 시에만 사용료 차감(로그인 사용자일 때만; best-effort — 실패해도 결과 제공).
     # ★concept_render 과금코드 — 관리자 미설정 시 0원=무료(미설정무료 정책).
+    # ★재전송 안전 — 유료 AI 렌더라 더블서브밋이 **그대로 이중청구**된다.
+    #   익명(user=None)은 과금 자체가 없으므로 가드도 걸지 않는다(빈 스코프 공유 방지).
     charged = None
     if user is not None:
-        try:
-            await billing_service.load_config(db)
-            c = await billing_service.charge_service(db, user.id, "concept_render")
-            charged = c.get("charged_krw")
-        except Exception:  # noqa: BLE001
-            pass
+        async with charge_once(
+            request, endpoint="concept_render", payload=req,
+            tenant_id=getattr(user, "tenant_id", None), user_id=getattr(user, "id", None),
+        ) as guard:
+            if guard.billable:
+                try:
+                    await billing_service.load_config(db)
+                    c = await billing_service.charge_service(db, user.id, "concept_render")
+                    charged = c.get("charged_krw")
+                except Exception:  # noqa: BLE001
+                    pass
 
     # 프로바이더별 성공 반환형이 다르다(replicate=image_url / openai·google=image_base64).
     # 둘 중 있는 것을 그대로 전달(소비처는 image_base64 우선, 없으면 image_url 사용).

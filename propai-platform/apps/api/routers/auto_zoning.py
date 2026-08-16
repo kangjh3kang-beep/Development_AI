@@ -4,7 +4,7 @@ import asyncio
 import logging
 import re
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -381,7 +381,7 @@ def _classify_age_status(
 
 
 @router.post("/analyze", dependencies=[Depends(enforce_llm_quota)])
-async def analyze_zoning(req: ZoningAnalyzeRequest):
+async def analyze_zoning(request: Request, req: ZoningAnalyzeRequest):
     """주소 기반 자동 용도지역 감지 및 법적 한도 매핑.
 
     구조화 분석 결과에 SiteAnalysisInterpreter(LLM) 해석을 ai_interpretation으로
@@ -525,12 +525,20 @@ async def analyze_zoning(req: ZoningAnalyzeRequest):
 
         uid = get_current_user_id()
         if uid and land_analysis_charged(result):
+            from app.core.charge_guard import charge_once
             from app.core.database import async_session_factory
             from app.services.billing import billing_service
 
-            async with async_session_factory() as _db:
-                charge = await billing_service.charge_service(_db, uid, "land_analysis")
-            result["service_charge"] = charge  # 프론트 표시용(차감/무료/잔여)
+            # ★재전송 안전 — 토지분석은 가장 많이 쓰이는 유료 경로다.
+            #   테넌트는 이 경로에서 못 얻어 사용자 스코프만 쓴다.
+            async with charge_once(
+                request, endpoint="zoning.analyze", payload=req,
+                tenant_id=None, user_id=uid,
+            ) as guard:
+                if guard.billable:
+                    async with async_session_factory() as _db:
+                        charge = await billing_service.charge_service(_db, uid, "land_analysis")
+                    result["service_charge"] = charge  # 프론트 표시용(차감/무료/잔여)
     except Exception:  # noqa: BLE001
         pass
 
