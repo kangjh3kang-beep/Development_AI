@@ -30,6 +30,7 @@ import Link from "next/link";
 import { AlertTriangle, Calculator, Layers, Loader2, ListPlus, Trash2 } from "lucide-react";
 import { Card, CardContent } from "@propai/ui";
 import { apiClient } from "@/lib/api-client";
+import { parcelDedupKey, parcelDisplayAddress } from "@/lib/pnu";
 import { withCommas } from "@/lib/formatters";
 import { MarkdownLite } from "@/components/common/MarkdownLite";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
@@ -38,7 +39,10 @@ import type { Locale } from "@/i18n/config";
 /** 화면 안에서만 쓰는 필지 입력 행 — 백엔드 요청 payload보다 표시용 필드(key)가 더 있다. */
 interface QuoteParcelRow {
   key: string;
+  /** 백엔드로 보내는 값 — **표시용과 분리한다**(표시 라벨을 그대로 보내면 계약이 흔들린다). */
   address: string;
+  /** 화면 표기 전용. 동 단위 주소만 온 경우 PNU 에서 파생한 지번을 붙여 **행을 구분 가능**하게 한다. */
+  label?: string;
   pnu?: string | null;
   geometry?: unknown;
   /** true=건물 있음 · false=토지만 · undefined=미상(모르면 절대 false로 접지 않는다). */
@@ -94,11 +98,13 @@ export function ParcelSurveyQuotePanel({ locale }: { locale: Locale }) {
       .filter(Boolean);
     if (lines.length === 0) return;
     setRows((prev) => {
-      const existing = new Set(prev.map((r) => r.address));
+      // 붙여넣기 행은 PNU 가 없어 주소가 곧 키다 — 그래도 **같은 헬퍼**를 쓴다(규칙 분기 방지).
+      const existing = new Set(prev.map((r) => parcelDedupKey(r)).filter(Boolean) as string[]);
       const added: QuoteParcelRow[] = [];
       for (const addr of lines) {
-        if (existing.has(addr)) continue;
-        existing.add(addr);
+        const k = parcelDedupKey({ address: addr });
+        if (!k || existing.has(k)) continue;
+        existing.add(k);
         added.push({ key: `paste:${addr}:${prev.length + added.length}`, address: addr, source: "paste" });
       }
       return [...prev, ...added];
@@ -111,14 +117,22 @@ export function ParcelSurveyQuotePanel({ locale }: { locale: Locale }) {
   const addFromProject = () => {
     if (!projectParcels || projectParcels.length === 0) return;
     setRows((prev) => {
-      const existing = new Set(prev.map((r) => r.address));
+      // ★★근본수정 — 종전에는 **주소로** 중복제거해서, 같은 동의 필지 77개가 **1건으로 접혔다**
+      //   (신고: "현재 프로젝트 필지 불러오기 (77)" 인데 목록에 1건).
+      //   필지의 정체성은 주소가 아니라 **PNU** 다. 같은 함수가 React key 는 이미
+      //   `p.pnu || p.address` 로 잡고 있었는데 중복제거만 주소로 남아 있었다.
+      //   저장소 기준선도 `pnu || address` 다(GlobalAddressSearch·satong-map-selection 등).
+      const existing = new Set(prev.map((r) => parcelDedupKey(r)).filter(Boolean) as string[]);
       const added: QuoteParcelRow[] = [];
       for (const p of projectParcels) {
-        if (!p.address || existing.has(p.address)) continue;
-        existing.add(p.address);
+        const k = parcelDedupKey(p);
+        // ★키를 못 만드는 행(PNU·주소 둘 다 없음)은 **중복으로 접지 않는다** — 접으면 손실이다.
+        if (!k || existing.has(k)) continue;
+        existing.add(k);
         added.push({
           key: `project:${p.pnu || p.address}`,
           address: p.address,
+          label: parcelDisplayAddress(p.address, p.pnu),
           pnu: p.pnu || null,
           geometry: p.geometry ?? undefined,
           // builtYear가 있으면 건축물 존재 확인 신호. 없다고 "토지만"으로 단정하지 않는다(모름=undefined).
@@ -286,8 +300,8 @@ export function ParcelSurveyQuotePanel({ locale }: { locale: Locale }) {
                       onChange={(e) => setSelected((prev) => ({ ...prev, [r.key]: e.target.checked }))}
                       className="size-4 accent-[var(--accent-strong)]"
                     />
-                    <span className="min-w-[160px] flex-1 truncate text-xs font-semibold text-[var(--text-primary)]" title={r.address}>
-                      {r.address}
+                    <span className="min-w-[160px] flex-1 truncate text-xs font-semibold text-[var(--text-primary)]" title={r.label || r.address}>
+                      {r.label || r.address}
                     </span>
                     {r.pnu && <span className="rounded-full bg-[var(--surface-strong)] px-2 py-0.5 text-[10px] text-[var(--text-tertiary)]">PNU 확보</span>}
                     {r.geometry ? (

@@ -61,6 +61,24 @@ network_name() {
   echo "$NET_PRIMARY"
 }
 
+# ── 0-A) ★서버 역할 가드 — 이 스크립트는 **158(A1 프론트) 전용**이다 ──
+#   ★2026-08-17 실사고. 이걸 168(백엔드)에서 돌리면 **트래픽을 받지 않는 compose 스택**만
+#     갱신하고 "성공"을 찍는다. 그날 #630·#653·#662 가 배포된 줄 알았으나 실서비스
+#     (caddy → propai-api-800x) 컨테이너 안은 **전부 0** 이었다.
+#   ★왜 검증도 못 잡았나: 이 스크립트의 검증은 `$VERIFY_BASE_URL/ko` 를 보는데 백엔드
+#     서버엔 프론트가 없어 **web=404** 가 난다. 그것을 `WARN 검증미흡 — 수동확인 필요`
+#     로만 찍고 넘어갔고, 사람이 "백엔드 전용이라 당연"이라고 해석해 배경이 됐다.
+#     → 그래서 **검증이 아니라 시작 지점**에서 막는다(16분을 태우기 전에).
+#   ★판별 근거(2026-08-17 실측): 백엔드(168)에만 `~/caddy/Caddyfile` 과 caddy 컨테이너가
+#     있고 프론트(158)에는 **둘 다 없다**. 백엔드가 caddy 를 버리는 날 이 가드도 함께 고쳐야
+#     한다 — 그때는 이 스크립트가 백엔드에서 조용히 다시 통과하게 되므로.
+if [ -f "$HOME/caddy/Caddyfile" ]; then
+  echo "ABORT: 여기는 **백엔드 서버**입니다(~/caddy/Caddyfile 존재)." >&2
+  echo "       safe-deploy.sh 는 158(프론트) 전용이라 여기서는 트래픽 없는 스택만 갱신합니다." >&2
+  echo "       백엔드 정본을 쓰세요: bash ~/Development_AI/propai-platform/infra/deploy-zero-downtime.sh" >&2
+  exit 10
+fi
+
 # ── 0) 동시배포 방지 락 (원자적 mkdir) ──
 if ! mkdir "$LOCKDIR" 2>/dev/null; then
   echo "ABORT: 다른 배포가 진행중입니다($LOCKDIR). 끝나면 재시도." > "$STATUS"; exit 9
