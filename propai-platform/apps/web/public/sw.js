@@ -326,7 +326,12 @@
 //        ★채번: 범프 커밋을 **CACHE_NAME 대조로 특정**(3bddbeb0=v505 · acdf9b6c=v504 ·
 //        c18898ba=v503). `git log -1 -- sw.js` 는 기능 커밋도 집어 두 세대 전을 가리켰다.
 //        그 기준으로 재면 "60파일 밀림", 올바른 기준으로는 실제 델타 **2파일**이다.
-const CACHE_NAME = "propai-v506-cad-percent-parity";
+// v507: 엑셀 업로드 동의 3종이 **프론트 타입 경계에서 버려지던 것** 봉합.
+//        `GlobalAddressSearch` 가 업로드 응답을 `AddressEntry` 로 옮기는데, 응답 타입에
+//        consent 키가 없어 `.map()` 이 안 옮겼다(실측: 그 경계 하나에서 7개 필드 소실).
+//        런타임 경로 변경이라 앱셸이 스테일하면 옛 번들이 계속 값을 버린다 → 범프 동반.
+//        ★채번: origin/main 실제 상수 v506 확인 → v507(보드 선점).
+const CACHE_NAME = "propai-v507-consent-field-boundary";
 const OFFLINE_URL = "/offline";
 
 // ★API 캐시 정합(보안·정확성): 인증/실시간/머니패스/현장세션 응답은 절대 캐시하지 않는다.
