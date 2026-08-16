@@ -22,6 +22,11 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+# ★대조군 강제 통로(2026-08-17 신설). 이 파일의 스캔은 종전에 손수 grep 이었고,
+#   그 방식이 이 세션에서 **위양성 7건**을 냈다(전부 "위반 0"이라는 결과는 같았고
+#   대조군만이 검사기 사망과 진짜 부재를 갈랐다). 이제 통로를 거친다.
+from tests._scan_guard import assert_absent, code_lines
+
 _REPO = Path(__file__).resolve().parents[4]
 _PLATFORM = _REPO / "propai-platform"
 _SW = _PLATFORM / "apps" / "web" / "public" / "sw.js"
@@ -44,18 +49,22 @@ def test_sw_상수는_손으로_올린_버전이_아니라_치환_앵커다() ->
         f"sw.js 에 치환 앵커가 없다. Dockerfile.web 이 이 문자열을 찾아 바꾸므로, "
         f"형식을 바꾸려면 Dockerfile 도 함께 바꿔야 한다. 기대: {_DEV_PLACEHOLDER!r}"
     )
-    # 실행되는 상수 선언만 본다(주석의 예시 문자열은 제외 — 위 독스트링과 sw.js 주석에
-    # `propai-v002612-e527b6e8` 같은 **예시**가 일부러 들어 있다. 주석을 코드로 읽으면
-    # 정상을 위반으로 신고한다 — 위양성도 결함이다).
-    decls = [
-        ln for ln in src.splitlines()
-        if re.match(r'\s*const\s+CACHE_NAME\s*=', ln) and not ln.lstrip().startswith("//")
-    ]
+    # ★주석을 걷어낸 뒤 본다 — 이 파일과 sw.js 주석에 `propai-v002612-e527b6e8` 같은
+    #   **예시**가 일부러 들어 있다. 실제로 그 예시를 상수로 착각한 적이 있다(위양성 #7).
+    code = code_lines(src)
+    decls = [ln for ln in code.splitlines() if re.match(r"\s*const\s+CACHE_NAME\s*=", ln)]
     assert len(decls) == 1, f"CACHE_NAME 선언이 {len(decls)}건 — 정확히 하나여야 한다: {decls}"
-    hand_bumped = re.search(r'const CACHE_NAME = "propai-v\d+-', decls[0])
-    assert not hand_bumped, (
-        f"손으로 채번한 캐시명이 남아 있다: {decls[0].strip()}\n"
-        "이 상수는 빌드가 만든다 — 범프 PR 을 다시 만들지 마라(그 방식이 E-22 순서 결함의 원인이다)."
+    # ★대조군을 강제하는 통로로 단언한다. `positive_control` 이 필수 인자라
+    #   "대조군 없이 위반 0" 을 주장하는 것이 **문법적으로 불가능**하다.
+    assert_absent(
+        code,
+        pattern=r'const CACHE_NAME = "propai-v\d+-\w',
+        positive_control=r"const CACHE_NAME",
+        reason=(
+            "손으로 채번한 캐시명이 남아 있다. 이 상수는 빌드가 만든다 — "
+            "범프 PR 을 다시 만들지 마라(그 방식이 E-22 순서 결함의 원인이었다)."
+        ),
+        where="sw.js",
     )
 
 
