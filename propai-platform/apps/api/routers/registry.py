@@ -7,13 +7,14 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.services.common.job_store import JobStore
 from app.services.registry.registry_service import RegistryService
 from apps.api.auth.jwt_handler import CurrentUser, get_current_user
+from apps.api.rate_limit import ai_limiter, limiter
 
 router = APIRouter(prefix="/registry", tags=["부동산 등기부"])
 
@@ -293,7 +294,9 @@ async def tilko_realty(
 
 
 @router.post("/get-one", summary="단건 등기부 조회 / 비상 PDF 업로드 파싱")
+@limiter.limit(ai_limiter)
 async def registry_get_one(
+    request: Request,
     req: dict[str, Any],
     current_user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
@@ -327,7 +330,9 @@ async def registry_get_one(
 
 
 @router.post("/bulk", summary="다필지 등기부 일괄 조회/다운로드")
+@limiter.limit(ai_limiter)
 async def registry_bulk(
+    request: Request,
     req: RegistryBulkRequest,
     current_user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
@@ -353,7 +358,9 @@ class RegistryAnalyzeRequest(BaseModel):
 
 
 @router.post("/analyze", summary="부동산 등기정보 권리분석(법무사·변호사 AI)")
+@limiter.limit(ai_limiter)
 async def registry_analyze(
+    request: Request,
     req: RegistryAnalyzeRequest,
     current_user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
@@ -865,7 +872,9 @@ class ParcelPurchaseStrategyRequest(BaseModel):
     "/survey/strategy",
     summary="토지필지 종합분석 P2 — 매입전략 분류(협의매수/매도청구/수용/제척검토/판정보류)",
 )
+@limiter.limit(ai_limiter)
 async def parcel_purchase_strategy(
+    request: Request,
     req: ParcelPurchaseStrategyRequest,
     current_user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
