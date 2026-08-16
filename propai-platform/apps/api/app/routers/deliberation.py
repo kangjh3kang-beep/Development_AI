@@ -526,7 +526,22 @@ def _compat_fields(result: dict[str, Any] | None) -> dict[str, Any]:
     return {"complianceScore": compliance_score, "finalStatus": final_status,
             "findings": findings, "sections": sections,
             "skipped": result.get("skipped") or [],
-            "snapshot_id": result.get("snapshot_id"), "input_hash": result.get("input_hash")}
+            "snapshot_id": result.get("snapshot_id"), "input_hash": result.get("input_hash"),
+            # ★2026-08-16 — 엔진 원시 계약의 **공학지표(L3-B)·유사사례(L4)·정성평가(L3-C)** 를
+            #   평면으로 함께 노출한다. 종전에는 이 셋이 빠져 있어 소비처
+            #   `DeliberationResultPanel.tsx:195` 가 `result?.sim_metrics` 를 최상위에서 읽고
+            #   **항상 빈 배열**을 받았다 — 프로덕션 `/deliberation-review` 화면의 세 섹션이
+            #   늘 비어 있었다(계산·직렬화는 정상이고 **평면화 목록에서만 누락**).
+            #
+            #   ★대조: 형제 소비처 `DeliberationConsole.tsx:277` 은 **중첩 경로**로 읽어 정상이었다.
+            #   같은 데이터의 두 소비처가 서로 다른 계약을 가정했고, 평면화가 한쪽만 만족시켰다.
+            #
+            #   ★이 셋은 미배포 3커밋(#319·#326·#420) **이전부터** 엔진 계약에 있다(전수 확인:
+            #   세 커밋 diff 에 `sim_metrics` 0건). 즉 **돌고 있는 엔진이 이미 주고 있고**,
+            #   심의엔진 재배포와 무관하게 이 층만 고치면 화면이 채워진다.
+            "sim_metrics": result.get("sim_metrics") or [],
+            "precedent": result.get("precedent"),
+            "qualitative": result.get("qualitative") or []}
 
 
 async def run_deliberation_analysis(
