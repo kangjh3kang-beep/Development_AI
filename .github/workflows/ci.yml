@@ -53,6 +53,31 @@ jobs:
     defaults:
       run:
         working-directory: propai-platform
+    # ★2026-08-16 — 이 잡에는 DB가 없었다. 그 결과 `app/core/idempotency.py` 처럼 **fail-open**
+    #   으로 설계된 모듈(DB를 못 쓰면 조용히 "처음 보는 키"로 판정)은, 무엇을 단언하든 통과하는
+    #   **공허한 초록**이었다 — `ON CONFLICT (COALESCE(...), ...)` 표현식 인덱스가 진짜
+    #   Postgres 에서 성립하는지조차 확인된 적이 없다. 돈 가드에서 그건 허용할 수 없다.
+    #   ★★포트를 **5432 가 아니라 55432** 로 연다. 기본 `DATABASE_URL` 은 5432 를 가리키므로,
+    #     5432 에 DB 를 띄우면 "DB 가 없을 때 우아하게 동작하는가"를 검증하던 기존 테스트들이
+    #     전제를 잃고 깨진다(실측: 그 조건에서 3건이 빨개진다 — 성장루프 e2e·원장 경쟁·지출원장).
+    #     즉 이 잡에 DB 를 그냥 붙이면 **내가 회귀를 만든다.** 새 테스트만 `TEST_PG_DSN` 으로
+    #     명시 접속하고, 나머지 스위트가 보는 세상은 종전 그대로 둔다.
+    #   ★이 서비스가 없으면 `tests/test_charge_idempotency.py` 는 skip 이 아니라 **fail** 한다
+    #     (CI 환경변수로 감지 — fail-open 모듈에서 skip 은 곧 무잠금이다).
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: propai_user
+          POSTGRES_PASSWORD: propai_pass_dev
+          POSTGRES_DB: propai_db
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U propai_user -d propai_db"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     steps:
       - uses: actions/checkout@v4
 
@@ -87,6 +112,10 @@ jobs:
 
       - name: Run unit tests (apps/api)
         working-directory: propai-platform/apps/api
+        # ★TEST_PG_DSN 만 실 DB 를 가리킨다(기본 DATABASE_URL=5432 는 그대로 비어 있다).
+        #   과금 멱등 락은 fail-open 모듈이라 **실 Postgres 를 태우지 않으면 무잠금**이다.
+        env:
+          TEST_PG_DSN: postgresql+asyncpg://propai_user:propai_pass_dev@localhost:55432/propai_db
         run: python -m pytest tests/ -q --no-header
 
       # 루트 계약 스위트(propai-platform/tests) — 과거 CI 밖에서 17실패가 방치됐던

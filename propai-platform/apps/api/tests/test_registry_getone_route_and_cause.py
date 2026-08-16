@@ -251,6 +251,9 @@ async def test_라우트가_모든_입력을_서비스에_그대로_넘긴다(mo
 
     class _U:
         user_id = "u1"
+        # ★`CurrentUser` 계약에는 tenant_id 도 있다 — 스텁이 실제보다 좁으면 그 필드를
+        #   쓰는 코드가 테스트에서만 터진다(형제 파일에서 같은 누락이 함께 났다).
+        tenant_id = "t1"
 
     await rr.registry_get_one(_http_req(), {
         "pnu": "1168010100107370000", "address": "서울특별시 강남구 역삼동 737",
@@ -371,6 +374,9 @@ async def test_라우트가_PDF_업로드와_고유번호_직접입력도_넘긴
 
     class _U:
         user_id = "u1"
+        # ★`CurrentUser` 계약에는 tenant_id 도 있다 — 스텁이 실제보다 좁으면 그 필드를
+        #   쓰는 코드가 테스트에서만 터진다(형제 파일에서 같은 누락이 함께 났다).
+        tenant_id = "t1"
 
     await rr.registry_get_one(_http_req(), {
         "unique_no": "1146-2009-000054", "pdf_input": "data:application/pdf;base64,JVBER",

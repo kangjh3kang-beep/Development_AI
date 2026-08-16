@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from app.core.charge_guard import charge_once
 from app.services.common.job_store import JobStore
 from app.services.registry.registry_service import RegistryService
 from apps.api.auth.jwt_handler import CurrentUser, get_current_user
@@ -315,18 +316,24 @@ async def registry_get_one(
     주소·고유번호로 실제 발급이 일어난 경우에만 건당 1,200원(발급 성공 시).
     """
     pdf_input = req.get("pdf_input")
-    result = await RegistryService().get_one(
-        pnu=req.get("pnu"),
-        address=req.get("address"),
-        unique_no=req.get("unique_no") or req.get("pin"),
-        pdf_input=pdf_input,
-        realty_type=req.get("realty_type"),
-        dong=req.get("dong"),
-        ho=req.get("ho"),
-    )
-    if not pdf_input:
-        await _charge_registry_issue(current_user.user_id, result, times=1)
-    return result
+    # ★`req` 는 pydantic 모델이 아니라 dict 다 — `req.model_dump()` 를 부르면 즉시 500 이다.
+    #   `compute_request_hash` 는 dict 를 그대로 받는다.
+    async with charge_once(
+        request, endpoint="registry.get_one", payload=req,
+        tenant_id=current_user.tenant_id, user_id=current_user.user_id,
+    ) as guard:
+        result = await RegistryService().get_one(
+            pnu=req.get("pnu"),
+            address=req.get("address"),
+            unique_no=req.get("unique_no") or req.get("pin"),
+            pdf_input=pdf_input,
+            realty_type=req.get("realty_type"),
+            dong=req.get("dong"),
+            ho=req.get("ho"),
+        )
+        if not pdf_input and guard.billable:
+            await _charge_registry_issue(current_user.user_id, result, times=1)
+        return result
 
 
 @router.post("/bulk", summary="다필지 등기부 일괄 조회/다운로드")
@@ -340,10 +347,18 @@ async def registry_bulk(
     items = list(req.items or [])
     if not items and req.addresses:
         items = [{"address": a} for a in req.addresses if a and a.strip()]
-    result = await RegistryService().bulk(items)
-    # 발급·열람 1건당 1,200원 × 필지수(발급 성공 시, best-effort).
-    await _charge_registry_issue(current_user.user_id, result, times=max(1, len(items)))
-    return result
+    # ★이 경로가 이중청구 노출이 가장 크다 — 100필지 × 1,200원이 한 번에 나간다.
+    #   프론트 타임아웃(120초)이 서버 실행보다 먼저 끊기면 사용자는 "실패"를 보고 다시 누른다.
+    #   그때 두 요청이 서버에서 겹친다 → 선점이 없으면 둘 다 과금된다.
+    async with charge_once(
+        request, endpoint="registry.bulk", payload={"items": items},
+        tenant_id=current_user.tenant_id, user_id=current_user.user_id,
+    ) as guard:
+        result = await RegistryService().bulk(items)
+        # 발급·열람 1건당 1,200원 × 필지수(발급 성공 시, best-effort).
+        if guard.billable:
+            await _charge_registry_issue(current_user.user_id, result, times=max(1, len(items)))
+        return result
 
 
 class RegistryAnalyzeRequest(BaseModel):
@@ -369,18 +384,22 @@ async def registry_analyze(
     집합건물은 realty_type=1 + dong/ho로 특정 호 등기를 조회한다."""
     from app.services.registry.registry_analysis_service import RegistryAnalysisService
 
-    result = await RegistryAnalysisService().analyze(
-        address=req.address, pnu=req.pnu, registry_text=req.registry_text,
-        realty_type=req.realty_type, dong=req.dong, ho=req.ho,
-        land_hint=req.land_hint,
-    )
-    # 서비스 사용료: 등기부등본 권리분석 1건 1,200원(LLM 과금 별개, best-effort).
-    # ★분석이 실제로 나온 경우만 청구한다 — 종전에는 결과를 **보지도 않고** 청구해
-    #   `ai: null` 인 응답에도 돈을 받았다(`analysis_charged` 주석 참조).
-    charge = await _charge_registry_analysis(current_user.user_id, result)
-    if charge is not None and isinstance(result, dict):
-        result["service_charge"] = charge
-    return result
+    async with charge_once(
+        request, endpoint="registry.analyze", payload=req,
+        tenant_id=current_user.tenant_id, user_id=current_user.user_id,
+    ) as guard:
+        result = await RegistryAnalysisService().analyze(
+            address=req.address, pnu=req.pnu, registry_text=req.registry_text,
+            realty_type=req.realty_type, dong=req.dong, ho=req.ho,
+            land_hint=req.land_hint,
+        )
+        # 서비스 사용료: 등기부등본 권리분석 1건 1,200원(LLM 과금 별개, best-effort).
+        # ★분석이 실제로 나온 경우만 청구한다 — 종전에는 결과를 **보지도 않고** 청구해
+        #   `ai: null` 인 응답에도 돈을 받았다(`analysis_charged` 주석 참조).
+        charge = await _charge_registry_analysis(current_user.user_id, result) if guard.billable else None
+        if charge is not None and isinstance(result, dict):
+            result["service_charge"] = charge
+        return result
 
 
 @router.post("/analyze/jobs", summary="등기 권리분석 비동기 작업 제출(모바일 안정)")
@@ -894,26 +913,33 @@ async def parcel_purchase_strategy(
 
     parcels = req.parcels or []
 
-    # ① P1 을 **실제로** 태운다(우회하면 이 엔드포인트의 존재 이유가 사라진다).
-    survey = await survey_selected_parcels(
-        parcels,
-        district_plan_decision_date=req.district_plan_decision_date,
-        scheme=req.scheme,
-    )
+    # ★멱등 가드는 **발급이 일어나기 전**에 잡아야 한다 — 아래 P1 호출이 곧 외부 유료 발급이다.
+    #   필지당 발급 1,200 + 분석 2,000 = 3,200원이라 중복 실행의 손해가 가장 크다.
+    async with charge_once(
+        request, endpoint="registry.survey_strategy", payload=req,
+        tenant_id=current_user.tenant_id, user_id=current_user.user_id,
+    ) as guard:
+        # ① P1 을 **실제로** 태운다(우회하면 이 엔드포인트의 존재 이유가 사라진다).
+        survey = await survey_selected_parcels(
+            parcels,
+            district_plan_decision_date=req.district_plan_decision_date,
+            scheme=req.scheme,
+        )
 
-    # ② 과금 — P1 이 카드에 원본 분석 결과(`analysis`)를 그대로 실어 보내므로, 기존 라우터
-    #    헬퍼가 그대로 소비한다(P1 서비스 자체는 과금하지 않는다 — 배선은 호출부의 몫).
-    #    ★성공한 건만 청구한다: 두 헬퍼 모두 결과를 보고 판정한다(화이트리스트).
-    for card in survey.get("cards") or []:
-        analysis = card.get("analysis")
-        # ★이중 가드다(변이 감사 2026-08-15 — 이 조건을 무력화해도 결과가 같아 생존한다):
-        #   `analysis` 가 None 이면 `issued_count`/`analysis_charged` 가 각각 0·False 를 내므로
-        #   한 푼도 나가지 않는다. 그래도 남기는 이유는 **DB 세션을 열지 않기 위해서**다
-        #   (조회 실패가 대부분인 상황에서 유의미하다 — `_charge_registry_issue` 와 같은 이유).
-        if not analysis:
-            continue
-        await _charge_registry_issue(current_user.user_id, analysis, times=1)
-        await _charge_registry_analysis(current_user.user_id, analysis)
+        # ② 과금 — P1 이 카드에 원본 분석 결과(`analysis`)를 그대로 실어 보내므로, 기존 라우터
+        #    헬퍼가 그대로 소비한다(P1 서비스 자체는 과금하지 않는다 — 배선은 호출부의 몫).
+        #    ★성공한 건만 청구한다: 두 헬퍼 모두 결과를 보고 판정한다(화이트리스트).
+        #    ★같은 키로 이미 청구된 재요청이면 과금만 건너뛴다(결과는 새로 계산해 돌려준다).
+        for card in (survey.get("cards") or []) if guard.billable else []:
+            analysis = card.get("analysis")
+            # ★이중 가드다(변이 감사 2026-08-15 — 이 조건을 무력화해도 결과가 같아 생존한다):
+            #   `analysis` 가 None 이면 `issued_count`/`analysis_charged` 가 각각 0·False 를 내므로
+            #   한 푼도 나가지 않는다. 그래도 남기는 이유는 **DB 세션을 열지 않기 위해서**다
+            #   (조회 실패가 대부분인 상황에서 유의미하다 — `_charge_registry_issue` 와 같은 이유).
+            if not analysis:
+                continue
+            await _charge_registry_issue(current_user.user_id, analysis, times=1)
+            await _charge_registry_analysis(current_user.user_id, analysis)
 
     # ★★③ 과금이 끝나면 **원본 분석 블롭을 응답에서 걷어낸다.**
     #
