@@ -30,17 +30,38 @@ from pathlib import Path
 
 import pytest
 
-_ROUTER = Path(__file__).resolve().parents[1] / "routers" / "registry.py"
+# ★★모집단은 **파일 하나가 아니라 라우터 전부**다.
+#   초판은 `routers/registry.py` 만 봤다 — 함수는 파생했지만 **파일은 손으로 고른 목록(1개)** 이었다.
+#   그건 이 락이 고치려던 결함 클래스 그 자체다(CLAUDE.md D20: 처방 범위 = 결함 범위인가).
+#   실측: 과금 호출부는 **5개 파일 12개 함수**에 걸쳐 있었고, 초판은 그중 5개만 덮었다.
+_API_ROOT = Path(__file__).resolve().parents[1]
+_ROUTER_DIRS = (
+    _API_ROOT / "routers",
+    _API_ROOT / "app" / "routers",
+    _API_ROOT / "app" / "api" / "endpoints",
+)
 
 # 과금을 실제로 집행하는 헬퍼(= 돈이 나가는 자리).
-_CHARGE_FNS = {"_charge_registry_issue", "_charge_registry_analysis"}
+_CHARGE_FNS = {"charge_service", "_charge_registry_issue", "_charge_registry_analysis"}
 # 가드 컨텍스트 매니저.
 _GUARD = "charge_once"
 
 # ★면제 — 이유를 **여기 적은 것만** 면제된다. 목록이 늘면 리뷰에서 보인다.
+# ★면제 = **사유를 적은 것만**. 그리고 아래 대부분은 **설계가 아니라 부채**다 —
+#   부채를 목록에 적어 두는 이유는 초록 안에서 보이게 하기 위해서다(CLAUDE.md C13).
+#   배선하면 해당 줄을 지우면 된다. 새 과금 라우트가 생기면 면제에 없으므로 **자동으로 실패**한다.
 _EXEMPT = {
-    # 백그라운드 잡: 요청 헤더가 없어 Idempotency-Key 를 받을 자리가 자체가 없다.
-    "_run_registry_job": "백그라운드 잡 — 요청 컨텍스트 없음(후속: 제출 시 선점 + 워커 정산)",
+    # ── 구조적 면제(배선 불가) ──
+    "_run_registry_job": "백그라운드 잡 — 요청 컨텍스트가 없어 Idempotency-Key 를 받을 자리 자체가 없다"
+                         "(후속: 제출 시 선점 + 워커 정산)",
+    "charge": "명시 과금 엔드포인트(POST /billing/charge) — 사용자가 '청구하라'를 직접 부른다."
+              " 재전송 안전이 필요하긴 하나 의미가 달라 별도 설계가 필요하다",
+    # ── ★부채(배선 가능한데 아직 안 함) — 재전송하면 이중청구된다 ──
+    "analyze_zoning": "★부채: land_analysis 과금. Request 파라미터가 없어 헤더를 못 읽는다",
+    "render_photoreal": "★부채: photoreal_render 과금(건당 유료 AI 렌더). Request 없음",
+    "render_concept": "★부채: concept_render 과금. Request 없음",
+    "run_pipeline": "★부채: stage:* 단계별 과금. Request 없음",
+    "provision": "★부채: sales_provision 과금. Request 없음",
 }
 
 
@@ -61,29 +82,60 @@ def _guarded_ranges(fn: ast.AST) -> list[tuple[int, int]]:
     return out
 
 
-def _charging_handlers() -> dict[str, list[int]]:
-    """과금 헬퍼를 호출하는 함수 → 그 호출들의 줄번호."""
-    tree = ast.parse(_ROUTER.read_text(encoding="utf-8"))
-    found: dict[str, list[int]] = {}
-    for fn in ast.walk(tree):
-        if not isinstance(fn, ast.AsyncFunctionDef | ast.FunctionDef):
+def _router_sources() -> list[tuple[str, str]]:
+    """라우터 소스를 **디렉토리에서 파생**한다(파일 목록을 손으로 적지 않는다)."""
+    out: list[tuple[str, str]] = []
+    for d in _ROUTER_DIRS:
+        if not d.exists():
             continue
-        lines = [
-            n.lineno
-            for n in ast.walk(fn)
-            if isinstance(n, ast.Call)
-            and (getattr(n.func, "id", "") or getattr(n.func, "attr", "")) in _CHARGE_FNS
-        ]
-        # 헬퍼 자신의 정의는 제외(자기 몸통 안의 billing 호출).
-        if lines and fn.name not in _CHARGE_FNS:
-            found[fn.name] = lines
+        for f in sorted(d.rglob("*.py")):
+            if "__pycache__" in str(f):
+                continue
+            out.append((str(f.relative_to(_API_ROOT)), f.read_text(encoding="utf-8")))
+    return out
+
+
+def _charging_handlers() -> dict[str, list[int]]:
+    """과금 헬퍼를 호출하는 함수 → 그 호출들의 줄번호(라우터 전역)."""
+    found: dict[str, list[int]] = {}
+    for _rel, src in _router_sources():
+        try:
+            tree = ast.parse(src)
+        except SyntaxError:
+            continue
+        for fn in ast.walk(tree):
+            if not isinstance(fn, ast.AsyncFunctionDef | ast.FunctionDef):
+                continue
+            lines = [
+                n.lineno
+                for n in ast.walk(fn)
+                if isinstance(n, ast.Call)
+                and (getattr(n.func, "id", "") or getattr(n.func, "attr", "")) in _CHARGE_FNS
+            ]
+            # 헬퍼 자신의 정의는 제외(자기 몸통 안의 billing 호출).
+            if lines and fn.name not in _CHARGE_FNS:
+                found[fn.name] = lines
     return found
+
+
+def _fn_nodes() -> dict[str, ast.AST]:
+    """이름 → 함수 노드(라우터 전역)."""
+    out: dict[str, ast.AST] = {}
+    for _rel, src in _router_sources():
+        try:
+            tree = ast.parse(src)
+        except SyntaxError:
+            continue
+        for fn in ast.walk(tree):
+            if isinstance(fn, ast.AsyncFunctionDef | ast.FunctionDef):
+                out.setdefault(fn.name, fn)
+    return out
 
 
 def test_과금_라우트를_소스에서_파생한다():
     """공허 진리 가드 — 대상이 0개면 아래 단언이 전부 무의미하다."""
     handlers = _charging_handlers()
-    assert len(handlers) >= 4, (
+    assert len(handlers) >= 10, (
         f"과금 핸들러를 {len(handlers)}개밖에 못 찾았다 — 파서가 깨졌거나 라우터가 바뀌었다. "
         f"찾은 것={sorted(handlers)}"
     )
@@ -91,12 +143,7 @@ def test_과금_라우트를_소스에서_파생한다():
 
 def test_과금하는_모든_핸들러가_멱등_가드_안에_있다():
     """★목록형이 아니다 — 새 과금 라우트가 생기면 자동으로 여기서 잡힌다."""
-    tree = ast.parse(_ROUTER.read_text(encoding="utf-8"))
-    fns = {
-        fn.name: fn
-        for fn in ast.walk(tree)
-        if isinstance(fn, ast.AsyncFunctionDef | ast.FunctionDef)
-    }
+    fns = _fn_nodes()
 
     unguarded: list[str] = []
     guarded: list[str] = []
@@ -133,12 +180,7 @@ def test_각_과금_핸들러_개별_판정(route_fn: str):
     """핸들러별로 갈라 놓아 **어느 것이 뚫렸는지** 실패 메시지에서 바로 보이게 한다."""
     if route_fn in _EXEMPT:
         pytest.skip(f"면제: {_EXEMPT[route_fn]}")
-    tree = ast.parse(_ROUTER.read_text(encoding="utf-8"))
-    fn = next(
-        f
-        for f in ast.walk(tree)
-        if isinstance(f, ast.AsyncFunctionDef | ast.FunctionDef) and f.name == route_fn
-    )
+    fn = _fn_nodes()[route_fn]
     ranges = _guarded_ranges(fn)
     outside = [
         ln
