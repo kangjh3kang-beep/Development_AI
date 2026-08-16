@@ -287,7 +287,13 @@ describe("vworld-wms-proxy", () => {
     const res = await proxyVWorldWms(leafletWmsQuery());
     expect(res.status).toBe(503);
     const body = await res.json();
-    expect(body.error).toContain("api fallback failed");
+    // ★2026-08-17: 종전엔 `api fallback failed` 문자열을 단언했으나 그것은 **부수 문구**였다.
+    //   이 케이스가 지키려는 계약은 "무음 회색타일 금지 = 정직한 503"이다.
+    //   문구는 이제 관측된 사실(릴레이 전송 실패)만 말한다 — 키 상태를 단정하지 않는다.
+    //   (여기선 키가 실제로 비어 있지만, 프로덕션 실장애에선 키가 정상인데도 이 경로를
+    //    탔고 옛 문구가 사람을 키 쪽으로 오도했다. vworld-relay-fallback.test.ts 의
+    //    대조군 쌍이 그 구분을 잠근다.)
+    expect(body.error).toContain("relay");
   });
 
   it("상류 4xx/5xx 는 503 JSON 으로 승격(무음 회색타일 금지)", async () => {

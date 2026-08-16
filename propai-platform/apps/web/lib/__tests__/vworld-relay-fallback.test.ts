@@ -99,3 +99,48 @@ describe("상류 도달 불가 → api 릴레이", () => {
     expect(resp.status).toBe(502);
   });
 });
+
+/**
+ * ★2026-08-17 실장애: VWorld 가 web 서버(158) IP 를 차단해 상류가 죽었는데, 릴레이까지
+ *   끊긴 순간의 오류 문구가 `VWORLD_API_KEY is not configured` 였다. 키는 **정상**이었다.
+ *   그 거짓 원인이 화면 배너로 올라가 "관리자 화면에 키를 등록하라"는 없는 복구 경로를
+ *   안내했고, 여러 세션이 키를 의심하며 시간을 썼다.
+ *   이 블록은 "원인을 지어내지 않는다"를 잠근다 — 두 모집단이 **다른 문구**를 내야 한다.
+ */
+describe("릴레이도 끊겼을 때 — 원인을 지어내지 않는다", () => {
+  /** 상류·릴레이 둘 다 죽은 상태(실장애 최악 경로). */
+  function installAllDeadFetch() {
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new TypeError("fetch failed");
+    }));
+  }
+
+  it("★키가 멀쩡한데 '키 미설정'이라고 단정하지 않는다", async () => {
+    installAllDeadFetch();
+    const { proxyVWorldWms } = await import("@/lib/vworld-wms-proxy");
+
+    const resp = await proxyVWorldWms(wmsParams());
+    const body = (await resp.json()) as { error: string };
+
+    expect(resp.status).toBe(503);
+    // 키는 이 테스트에서 설정돼 있다(beforeEach) — 키를 원인으로 지목하면 거짓이다.
+    expect(process.env.VWORLD_API_KEY, "전제: 키는 설정돼 있다").toBeTruthy();
+    expect(body.error, "키가 정상인데 키를 원인으로 단정했다").not.toContain("VWORLD_API_KEY");
+    // 어느 경로가 끊겼는지 식별 가능해야 한다(무엇이 실패했는지 말한다).
+    expect(body.error).toContain("relay");
+  });
+
+  it("대조군: 키가 **정말** 없고 릴레이 오리진도 없으면 키를 원인으로 말해도 참이다", async () => {
+    delete process.env.VWORLD_API_KEY;
+    delete process.env.NEXT_PUBLIC_API_BASE_URL;
+    installAllDeadFetch();
+    const { proxyVWorldWms } = await import("@/lib/vworld-wms-proxy");
+
+    const resp = await proxyVWorldWms(wmsParams());
+    const body = (await resp.json()) as { error: string };
+
+    expect(resp.status).toBe(503);
+    // ★이 단언이 위 케이스와 **다른 값**을 내야 잠금이 성립한다(둘 다 같은 문구면 무잠금).
+    expect(body.error).toContain("VWORLD_API_KEY");
+  });
+});
