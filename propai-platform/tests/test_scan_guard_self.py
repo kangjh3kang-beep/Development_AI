@@ -56,10 +56,10 @@ def test_부분문자열_위양성은_호출자가_경계를_주면_잡힌다() 
 
 def test_주석은_코드가_아니다() -> None:
     """★사고 재현 #7 — **주석의 예시값**을 상수 선언으로 착각했다."""
-    src = '\n'.join([
-        '// 형식: propai-v<seq>-<sha>   예) propai-v002612-e527b6e8',
-        'const CACHE_NAME = "propai-vdev-local";',
-    ])
+    src = (
+        "// 형식: propai-v<seq>-<sha>   예) propai-v002612-e527b6e8\n"
+        'const CACHE_NAME = "propai-vdev-local";'
+    )
     # 주석을 걷어내면 예시값은 사라진다
     stripped = code_lines(src)
     assert "propai-v002612" not in stripped
