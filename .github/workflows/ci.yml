@@ -104,10 +104,19 @@ jobs:
 
       # ★#148로 위반 0 달성(전면 --fix+무해규칙 ignore) → W1-9에서 차단(required) 게이트로
       #   승격. 위반 0 시점의 차단화라 기존 PR에 비용 없음; ignore 규칙은 점진 해제.
+      # ★버전을 핀한다(2026-08-16 실사고). 종전 `pip install ruff` 는 실행마다 **최신**을 받아,
+      #   로컬 0.15.7 통과 / CI 0.16.3 실패가 **같은 명령으로** 났다(명령이 아니라 버전이 달랐다).
+      #   린터 릴리스 하나가 **코드 변경 0으로 전 PR 을 빨갛게** 만들 수 있고, 원인이 자기 diff 에
+      #   없어 진단이 길다(CI 한 사이클 ≈ 16분). 정본은 requirements-dev.txt —
+      #   로컬에서도 같은 제약으로 설치하면 CI 와 같은 결과가 난다.
+      # ★`-r` 이 아니라 **`-c`(제약)** 를 쓴다. `-r` 로 하면 이 **필수 잡**에 bandit·pip-audit 까지
+      #   설치돼 패키지가 1개 → **32개**로 늘고(PyYAML·packaging·requests·certifi·urllib3 …),
+      #   이미 설치된 api 의존성과 버전이 충돌할 여지를 임계경로에 들인다(실측 dry-run).
+      #   `-c` 는 **설치 대상은 ruff 하나로 두고 버전만 핀**한다(dry-run 확인: 1개·0.16.3).
       - name: Ruff (lint)
         working-directory: propai-platform/apps/api
         run: |
-          pip install ruff
+          pip install -c requirements-dev.txt ruff
           python -m ruff check .
 
       - name: Run unit tests (apps/api)
