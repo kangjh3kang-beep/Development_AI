@@ -204,6 +204,9 @@ async def test_라우트가_실패결과를_과금통로에_그대로_넘긴다(
 
     class _U:
         user_id = "u1"
+        # ★`CurrentUser` 는 tenant_id 도 갖는다 — 스텁이 실제 계약보다 좁으면,
+        #   그 필드를 쓰는 코드가 테스트에서만 터진다(스텁이 실제 층을 우회하는 형태).
+        tenant_id = "t1"
 
     out = await rr.registry_get_one(_http_req(), {"address": "서울특별시 강남구 역삼동 737"}, current_user=_U())
     assert out["status"] == "provider_error"
@@ -366,6 +369,9 @@ async def test_분석_라우트가_분석없는_결과에_과금하지_않는다
 
     class _U:
         user_id = "u1"
+        # ★`CurrentUser` 는 tenant_id 도 갖는다 — 스텁이 실제 계약보다 좁으면,
+        #   그 필드를 쓰는 코드가 테스트에서만 터진다(스텁이 실제 층을 우회하는 형태).
+        tenant_id = "t1"
 
     class _Req:
         address = "서울특별시 강남구 역삼동 737"
