@@ -81,6 +81,20 @@ describe("상세팝업 양보 계약 — SSOT ↔ CSS ↔ 컴포넌트", () => {
     expect(read("components/precheck/SatongMapShell.tsx")).toContain("SATONG_POPUP_YIELD.passiveAttr");
   });
 
+  it("★중복 표면 상호배제 — 부모가 상세를 맡으면 지도는 팝업을 걸지 않는다", () => {
+    const src = read("components/map/SatongMultiMap.tsx");
+    // 라이브 실측(포항 호미곶 산1-1)에서 폴리곤 클릭 시 **같은 필지 정보 표면 둘**이 열리고
+    // 상세 패널(z430)이 Leaflet 팝업을 덮었다(elementFromPoint 3점 전부 rival).
+    // z 를 조정해도 "같은 내용을 두 번 그린다"는 사실은 남으므로, 소유권으로 가른다.
+    expect(src).toContain("featureDetailOwnedRef");
+    // 판정 기준이 onFeatureClick 프롭의 존재여야 한다 — 다른 기준으로 바뀌면 알린다.
+    expect(src).toContain("const featureDetailOwnedByParent = !!onFeatureClick");
+    // ★형제 둘 다 적용됐는가: 폴리곤 경로와 지오메트리 없는 대체 마커 경로.
+    //   한쪽만 고치면 대체 마커에서 중복이 그대로 남는다(형제 스윕).
+    const guarded = src.match(/featureDetailOwnedRef\.current\s*\?/g) || [];
+    expect(guarded.length).toBeGreaterThanOrEqual(2);
+  });
+
   it("불양보 표면은 표시하지 않는다 — 확인 카드는 사용자 결정 흐름이다", () => {
     const src = read("components/map/SatongMultiMap.tsx");
     const confirmIdx = src.indexOf("SATONG_UI_Z.confirmCard");

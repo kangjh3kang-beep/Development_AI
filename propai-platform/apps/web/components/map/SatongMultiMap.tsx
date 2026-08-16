@@ -1299,6 +1299,25 @@ export function SatongMultiMap({
 
   // addStagedLayer(useCallback [])가 최신 onFeatureClick을 보도록 ref 경유(onPickRef 관례).
   const onFeatureClickRef = useRef(onFeatureClick);
+  /**
+   * ★필지 상세 **중복 표면** 상호배제 (2026-08-17 — 라이브 실측이 진단을 바꿨다).
+   *
+   * 라이브(`포항시 호미곶면 대보리 산1-1`)에서 폴리곤을 클릭하니 **같은 필지 정보를 담은
+   * 표면 둘**이 동시에 열렸다 — Leaflet 팝업과 셸의 필지 상세 패널(z-430). 그리고 뒤엣것이
+   * 앞엣것을 덮었다(elementFromPoint 3점 전부 `rival`).
+   *
+   * 즉 이건 **층위 문제가 아니라 중복 문제**다. z 를 어떻게 조정해도 "같은 내용을 두 번
+   * 그리는" 사실은 남는다. 그래서 **상세를 맡는 쪽이 있으면 지도는 팝업을 열지 않는다.**
+   *
+   * 판정 기준은 `onFeatureClick` **프롭의 존재**다 — 그 콜백을 준 부모는 곧 상세를
+   * 자기가 렌더하겠다고 선언한 것이다. 프롭이 없으면(임베드·읽기전용 사용처) 지도가
+   * 스스로 팝업을 띄워야 정보가 사라지지 않는다.
+   */
+  const featureDetailOwnedByParent = !!onFeatureClick;
+  const featureDetailOwnedRef = useRef(featureDetailOwnedByParent);
+  useEffect(() => {
+    featureDetailOwnedRef.current = featureDetailOwnedByParent;
+  }, [featureDetailOwnedByParent]);
   useEffect(() => {
     onFeatureClickRef.current = onFeatureClick;
   }, [onFeatureClick]);
@@ -2042,7 +2061,11 @@ export function SatongMultiMap({
           // 하이라이트(선택 강조) = primary 블루 — 디자인컴프 정합(#ef4444 에러적색은 컴프 위반).
           ...(isHighlighted ? { color: "#135bec", weight: 4, fillOpacity: 0.5 } : {}),
         };
-	      const polygon = L.polygon(rings, resolvedStyle).bindPopup(popup, { maxWidth: 280 }).addTo(group);
+	      const polygonBase = L.polygon(rings, resolvedStyle);
+	      // 상세를 부모가 맡으면 팝업을 걸지 않는다(중복 표면 상호배제 — 위 주석 참조).
+	      const polygon = (featureDetailOwnedRef.current
+	        ? polygonBase
+	        : polygonBase.bindPopup(popup, { maxWidth: 280 })).addTo(group);
         polygon.on("click", () => onFeatureClickRef.current?.(feature));
 	      try { bounds.extend(polygon.getBounds()); } catch { /* noop */ }
 	    };
@@ -2101,14 +2124,17 @@ export function SatongMultiMap({
 
       if (!hasGeometry && feature.lat != null && feature.lon != null) {
         markerCount += 1;
-        L.circleMarker([feature.lat, feature.lon], {
+        const circle = L.circleMarker([feature.lat, feature.lon], {
           radius: 8,
           color: "#1d4ed8",
           weight: 2,
           fillColor: "#bfdbfe",
           fillOpacity: 0.95,
           bubblingMouseEvents: false, // 점 클릭 = 정보 팝업만(지도 클릭 팝오버로 미전파 — U6)
-        }).bindPopup(popup, { maxWidth: 280 }).on("click", () => onFeatureClickRef.current?.(feature)).addTo(group);
+        });
+        // 같은 규칙 — 형제를 함께 고친다(한쪽만 고치면 대체 마커 경로에서 중복이 남는다).
+        (featureDetailOwnedRef.current ? circle : circle.bindPopup(popup, { maxWidth: 280 }))
+          .on("click", () => onFeatureClickRef.current?.(feature)).addTo(group);
         bounds.extend([feature.lat, feature.lon]);
       }
     });
