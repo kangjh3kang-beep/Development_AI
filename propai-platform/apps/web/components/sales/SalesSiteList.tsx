@@ -6,6 +6,7 @@ import { Construction, CreditCard, Key, LockKeyhole, Plus, Wrench } from "lucide
 import SitePasswordModal from "@/components/sales-app/SitePasswordModal";
 import { SalesMarketingSection } from "@/components/sales/SalesMarketingSection";
 import { salesGlobal } from "@/lib/salesApi";
+import { idempotencyHeaders } from "@/lib/idempotency";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 import { useProjectStore } from "@/store/useProjectStore";
 import type { Locale } from "@/i18n/config";
@@ -72,7 +73,8 @@ export default function SalesSiteList({ locale }: { locale: Locale }) {
     if (!form.site_name || !form.project_id) { setErr("현장 이름과 프로젝트 번호를 입력하세요."); return; }
     setBusy(true); setErr("");
     try {
-      await salesGlobal.post("/provision", form);
+      // ★분양현장 생성은 유료다 — 더블서브밋이면 **현장이 두 개 생기고 두 번 청구**된다.
+      await salesGlobal.post("/provision", form, idempotencyHeaders("sales.provision", form));
       setForm({ site_name: "", development_type: "APT", project_id: "" });
       load();
     } catch (e) {

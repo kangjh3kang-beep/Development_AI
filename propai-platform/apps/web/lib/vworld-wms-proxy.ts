@@ -96,7 +96,15 @@ export async function relayViaApi(url: string, proxyTag: string): Promise<Respon
     });
   } catch (error) {
     console.error(`[${proxyTag}] api fallback failed`, { url, error: String(error) });
-    return jsonError("VWORLD_API_KEY is not configured (api fallback failed)", 503);
+    // ★원인을 지어내지 마라(2026-08-17 실장애에서 실제로 사람을 오도했다).
+    //   여기까지 온 것은 "api 릴레이로 가는 전송이 실패"했다는 사실뿐이다 — 키 상태는 **모른다**.
+    //   종전 문구는 `VWORLD_API_KEY is not configured` 라고 **단정**했고, 그 문구가 화면
+    //   진단 배너(SatongMultiMap 의 keyFault 분기)까지 그대로 올라가 "관리자 화면에 키를
+    //   등록하면 복구된다"는 **없는 복구 경로**를 안내했다.
+    //   실측된 실제 원인은 상류(VWorld)가 web 서버 IP 를 차단한 것이었고 키는 정상이었다
+    //   (158→VWorld 5/5 실패 · 168→VWorld 5/5 200, 같은 DNS IP).
+    //   → 관측된 사실만 말하고, 어느 경로가 끊겼는지 proxyTag 로 식별 가능하게 남긴다.
+    return jsonError(`VWorld api relay unreachable (${proxyTag})`, 503);
   }
 }
 

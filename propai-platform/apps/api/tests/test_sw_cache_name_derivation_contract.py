@@ -20,6 +20,8 @@
 from __future__ import annotations
 
 import re
+import shlex
+import subprocess
 from pathlib import Path
 
 # ★대조군 강제 통로(2026-08-17 신설). 이 파일의 스캔은 종전에 손수 grep 이었고,
@@ -125,3 +127,148 @@ def test_소비처_계약이_유지된다() -> None:
     assert "cut -d" in r and "CACHE_NAME" in r, (
         "rollback-web.sh 가 상수를 따옴표로 뽑지 않는다 — 형식 의존 정규식은 파생값에서 잘린다."
     )
+
+
+# ── 문서가 적은 프로브 명령 (2026-08-17 추가) ────────────────────────────────
+#
+# 왜 있나 (실사고):
+#     인계서·CLAUDE.md 가 "배포 상태는 값으로 적지 말고 **이 명령으로 재라**" 며
+#     `curl -s .../sw.js | grep -m1 CACHE_NAME` 를 실었다. 그 명령은 **틀렸다.**
+#     `sw.js` 에는 `propai-v` 문자열이 셋 있고 **둘이 주석**이다(형식 설명의 예시값 ·
+#     레거시 이름 안내). 앵커가 없으면 그 **주석**을 집는다.
+#
+#     그대로 잰 세션이 *"라이브 sw 가 뒤로 갔다 — 롤백인가 CDN 편차인가"* 라는 유령을
+#     만들었다. 롤백도 편차도 아니었다(CDN 6회 md5 동일·오리진 직접과 바이트 동일).
+#     **조회기가 주석을 집은 것**이다.
+#
+# ★이 테스트는 **소스를 검사하지 않고 실행한다.** 문서에서 파이프 프로브를 뽑아
+#   **실제 `sw.js` 에 흘려** 그 출력이 진짜 상수를 담는지 본다. 그래야
+#   "문서에 좋은 말이 적혀 있다"가 아니라 "그 명령이 실제로 값을 준다"를 잠근다.
+#   (소스 grep 락은 표현을 조금만 바꿔도 뚫린다 — CLAUDE.md §회귀망 A.3)
+
+# 파이프 뒤에서 실행을 허용하는 명령. 문서에서 뽑은 문자열을 셸에 넘기므로
+# **allowlist 를 통과하지 못하면 실행하지 않고 실패**시킨다(검증 불가 = 통과 아님).
+_ALLOWED_FILTERS = {"grep", "sed", "awk", "cut", "head", "tail", "tr"}
+_SHELL_METACHARS = (";", "&", "`", "$(", ">", "<", "\n")
+
+_DOC_ROOTS = [
+    _REPO / "CLAUDE.md",
+    _PLATFORM / "_workspace",
+    _PLATFORM / "docs",
+]
+
+
+def _doc_files() -> list[Path]:
+    out: list[Path] = []
+    for root in _DOC_ROOTS:
+        if root.is_file():
+            out.append(root)
+        elif root.is_dir():
+            out.extend(sorted(root.rglob("*.md")))
+    return out
+
+
+def _probe_pipelines() -> list[tuple[Path, int, str]]:
+    """문서에서 ``… sw.js | <필터>`` 형태를 뽑는다. (파일, 줄번호, 파이프 뒤 세그먼트)"""
+    found: list[tuple[Path, int, str]] = []
+    for path in _doc_files():
+        for lineno, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            # 마크다운 겉치레를 벗긴다: 인용부호 · 표 안의 이스케이프 파이프 · 인라인 코드 백틱
+            line = raw.lstrip().lstrip("> ").replace(r"\|", "|").replace("`", "")
+            if "sw.js" not in line or "|" not in line:
+                continue
+            head, _, tail = line.partition("|")
+            if "sw.js" not in head:
+                continue  # sw.js 를 읽는 파이프가 아니다
+            seg = tail.strip().rstrip("|").strip()
+            if not seg:
+                continue
+            if "CACHE_NAME" not in seg and "propai-v" not in seg:
+                continue
+            found.append((path, lineno, seg))
+    return found
+
+
+def _run_probe(segment: str, sw_text: str) -> str:
+    """프로브를 **실제 sw.js 본문에** 실행한다. 안전하지 않으면 실행 대신 실패."""
+    for meta in _SHELL_METACHARS:
+        assert meta not in segment, (
+            f"문서의 프로브에 셸 메타문자 {meta!r} 가 있다 — 이 테스트는 그것을 실행하지 않는다. "
+            f"검증 불가는 통과가 아니다. 프로브를 단순한 필터 파이프로 적을 것: {segment!r}"
+        )
+    # 인라인 주석(`  # …`)은 셸이 알아서 자르지만, allowlist 검사 전에 먼저 떼어 낸다.
+    body = segment.split("#", 1)[0].strip() if " #" in f" {segment}" else segment
+    for stage in body.split("|"):
+        try:
+            tokens = shlex.split(stage)
+        except ValueError as exc:  # 따옴표가 안 닫힌 문서 조각
+            raise AssertionError(f"프로브를 파싱할 수 없다({exc}): {stage!r}") from exc
+        assert tokens, f"빈 파이프 단계가 있다: {segment!r}"
+        assert tokens[0] in _ALLOWED_FILTERS, (
+            f"허용되지 않은 명령 {tokens[0]!r} — 문서 프로브는 읽기 전용 필터여야 한다: {segment!r}"
+        )
+    proc = subprocess.run(
+        body, shell=True, input=sw_text, capture_output=True, text=True, timeout=20
+    )
+    return proc.stdout
+
+
+def test_문서가_적은_프로브가_실제_sw_js_에서_상수를_뽑는다() -> None:
+    """★**소스가 아니라 실행을 본다.** 문서의 명령을 진짜 `sw.js` 에 흘려 결과를 판정한다."""
+    sw_text = _read(_SW)
+    probes = _probe_pipelines()
+
+    # 공허 진리 가드 — 단언 **앞에** 둔다. 문서가 옮겨지거나 표현이 바뀌어 0건이 되면
+    # "위반 0"이 참이 되는 이유가 "대상이 0개"가 된다.
+    assert len(probes) >= 3, (
+        f"문서에서 sw.js 프로브를 {len(probes)}건만 찾았다 — **검사기가 죽었을 수 있다.** "
+        f"CLAUDE.md 와 _workspace 인계서들이 이 명령을 싣고 있어야 한다. "
+        f"문서를 옮겼다면 _DOC_ROOTS 를 고칠 것. 찾은 것: {[str(p) for p, _, _ in probes]}"
+    )
+
+    expected = _DEV_PLACEHOLDER.split('"')[1]  # propai-vdev-local (저장소 소스의 값)
+    broken: list[str] = []
+    for path, lineno, seg in probes:
+        out = _run_probe(seg, sw_text)
+        if expected not in out:
+            broken.append(
+                f"{path.relative_to(_REPO)}:{lineno}  프로브={seg!r}  출력={out.strip()[:80]!r}"
+            )
+
+    assert not broken, (
+        "문서의 프로브가 **실제 sw.js 에서 상수를 뽑지 못한다**:\n  "
+        + "\n  ".join(broken)
+        + f"\n\n기대값 {expected!r} 이 출력에 없다. 줄 시작 앵커를 줘라: "
+        "grep -m1 '^const CACHE_NAME'. 앵커가 없으면 **주석의 예시값**이나 "
+        "엉뚱한 주석 줄을 집는다(2026-08-17 실사고)."
+    )
+
+
+def test_앵커_없는_프로브는_이_테스트에_반드시_걸린다() -> None:
+    """★**대조군 — 실패도 이 필터에 걸리는가.**
+
+    위 테스트가 초록인 이유가 "판별력이 없어서"일 수 있다. 종전에 실제로 쓰이던
+    **고장난 두 형태**를 같은 sw.js 에 흘려, 그것들이 **기대값을 주지 못함**을 확인한다.
+    이게 무너지면(=고장난 형태도 통과하면) 위 테스트는 아무것도 잠그지 않는 것이다.
+    """
+    sw_text = _read(_SW)
+    expected = _DEV_PLACEHOLDER.split('"')[1]
+
+    # 양성대조 — 올바른 형태는 값을 준다(조회기 생존).
+    good = _run_probe("grep -m1 '^const CACHE_NAME'", sw_text)
+    assert expected in good, (
+        f"앵커를 준 프로브조차 {expected!r} 를 못 뽑았다 — **테스트 하네스가 죽었다.** "
+        f"sw.js 의 상수 형식이 바뀌었는지 먼저 볼 것. 출력={good.strip()[:120]!r}"
+    )
+
+    # 음성대조 — 실사고를 낸 두 형태는 반드시 실패해야 한다.
+    for label, seg in (
+        ("앵커 없는 grep(주석 줄을 집는다)", "grep -m1 CACHE_NAME"),
+        ("패턴 매칭(주석의 예시값을 집는다)", "grep -oE propai-v[0-9a-z-]+ | head -1"),
+    ):
+        out = _run_probe(seg, sw_text)
+        assert expected not in out, (
+            f"고장난 형태({label})가 기대값을 뽑았다 — **이 대조군이 무너졌다.** "
+            f"sw.js 의 주석 예시가 사라졌거나 형식이 바뀌었을 수 있다. 그렇다면 위 테스트는 "
+            f"더 이상 앵커 유무를 가르지 못하므로 대조군을 다시 설계할 것. 출력={out.strip()[:120]!r}"
+        )

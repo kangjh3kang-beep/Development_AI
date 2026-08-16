@@ -157,3 +157,45 @@ export const SATONG_UI_Z = {
   clickMenu: 470, // 지도 클릭 팝오버(단일 팝오버) + 거리재기 상태 칩 — 확인 카드 아래
   confirmCard: 500,
 } as const;
+
+/**
+ * ★상세정보팝업 **양보 계약** (2026-08-17 — 사용자 신고 "팝업이 다른 정보에 가려진다").
+ *
+ * ## 왜 z 로 못 고치나 — 실측으로 확정된 제약
+ *
+ * 상세팝업은 Leaflet `bindPopup`(**9곳**)이라 `.leaflet-container` **안**에 산다. 그 컨테이너는
+ * `globals.css` 에서 `isolation:isolate; z-index:0` 이다(라이브 실측 `isolate/0`).
+ * → **컨테이너 안에서 아무리 올려도** 바깥 형제(오버레이 380~500)와의 서열은 **컨테이너의 0**
+ *   으로 결정된다. 실제로 프로덕션 `.leaflet-popup-pane` 의 계산된 z 는 **1** 이다
+ *   (`.leaflet-pane { z-index:1 !important }` 가 pane 서열을 통째로 평탄화한다).
+ *
+ * 그래서 아래 셋 중 **①은 원리적으로 불가능**하다 — 처음 세운 처방이었고 폐기했다:
+ *   ① ~~popupPane 을 !important 예외로 승격~~ → 격리 안이라 바깥과의 서열이 안 바뀐다
+ *   ② 컨테이너 자체를 승격 → **타일까지** 올라가 레일 위를 덮는다(부작용이 더 크다)
+ *   ③ **팝업이 열리면 수동적 크롬이 양보한다** ← 채택
+ *
+ * ## 무엇이 양보하고 무엇이 안 하나 — 기준은 "누가 열었나"
+ *
+ * **양보(passive)**: 사용자가 열지 않았는데 상시 떠 있는 것. 상세를 읽는 동안 물러난다.
+ * **불양보(active)**: 사용자가 직접 연 것 · 결정을 기다리는 것 · 오류 고지.
+ *   양보시키면 사용자의 진행을 막거나 장애를 숨기게 된다.
+ *
+ * ## 사용법
+ *
+ * 지도 래퍼에 `data-satong-popup-open="true"` 가 붙고, 양보 대상 오버레이는
+ * `data-satong-chrome="passive"` 를 단다. 실제 감쇄는 `globals.css` 의 한 규칙이 한다 —
+ * **컴포넌트마다 조건부 클래스를 흩뿌리지 않는다**(그 방식이 x/y 겹침을 3회 재발시킨 원인이다).
+ *
+ * ★한계(정직): 이것은 **가림을 없애는 게 아니라 줄이는** 처방이다. 구조적 정답은 팝업을
+ *   React 오버레이로 **포탈**해 격리 밖으로 꺼내는 것이고(그러면 SATONG_UI_Z 사다리에
+ *   정식으로 편입된다), `bindPopup` 9곳 교체가 필요해 후속으로 남긴다.
+ */
+export const SATONG_POPUP_YIELD = {
+  /** 지도 래퍼에 붙는 속성 — Leaflet `popupopen`/`popupclose` 로 토글한다. */
+  wrapperAttr: "data-satong-popup-open",
+  /** 양보 대상 표시 — 이 속성이 있는 오버레이만 감쇄된다. */
+  passiveAttr: "data-satong-chrome",
+  passiveValue: "passive",
+  /** 감쇄 강도(globals.css 와 같은 값이어야 한다 — 테스트가 이 일치를 잠근다). */
+  dimOpacity: 0.25,
+} as const;
