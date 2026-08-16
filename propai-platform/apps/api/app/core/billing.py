@@ -100,6 +100,10 @@ def coerce_fee(value: Any, *, where: str) -> float | None:
     try:
         return max(0.0, float(value))
     except (ValueError, TypeError):
+        # ★락의 범위: 테스트는 "경고가 뜬다"와 "`where` 가 **어느 키**인지 말한다"를 잠근다.
+        #   아래 **문구 자체는 일부러 잠그지 않았다** — 사람이 읽는 산문이라 계약이 아니고,
+        #   단언하면 표현을 다듬을 때마다 깨지는 취약한 락이 된다(변이 검증에서 이 줄만
+        #   살아남는 것은 그 때문이며 구멍이 아니다).
         logger.warning(
             "과금 요율 값이 숫자가 아니어서 **적용하지 않았다**(이전 값 유지)",
             where=where, value=repr(value)[:80],

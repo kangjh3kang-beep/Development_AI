@@ -123,6 +123,43 @@ def test_negative_is_clamped_to_zero(group: str) -> None:
     assert _read(group) == 0.0
 
 
+@pytest.mark.parametrize(
+    ("group", "expected_path"),
+    [
+        ("plain", "service_fees.project_create"),
+        ("stages", "service_fees.stages.design"),
+        ("analysis_modules", "service_fees.analysis_modules.persona_sales_agent"),
+    ],
+)
+def test_rejection_warning_names_the_key(group: str, expected_path: str) -> None:
+    """★거부는 **조용하면 안 된다** — 경고가 *어느 키* 였는지 말해야 한다.
+
+    이 단언이 없으면, 경고에서 `where=` 를 지워도(=관리자가 "무언가 거부됐다"만 보고 무엇인지
+    모르게 돼도) 테스트가 통과한다. 실제로 변이 검증에서 그 줄이 **살아남았다** —
+    "어느 키가 왜 거부됐는지 남긴다"고 커밋에 써 놓고 아무것도 그것을 지키지 않았다.
+
+    거부 자체는 이전 값을 지키므로 시스템은 멀쩡하다. 그래서 **경고만이 유일한 단서**다.
+    """
+    calls: list[dict] = []
+    original = billing_core.logger.warning
+
+    def _capture(*args: object, **kwargs: object) -> None:
+        calls.append(kwargs)
+        original(*args, **kwargs)
+
+    billing_core.logger.warning = _capture  # type: ignore[assignment]
+    try:
+        billing_core.apply_config(_override(group, "숫자아님"))
+    finally:
+        billing_core.logger.warning = original  # type: ignore[assignment]
+
+    assert calls, "거부했는데 경고가 없다 — 관리자는 설정이 반영된 줄 안다(무언 실패)"
+    wheres = [c.get("where") for c in calls]
+    assert expected_path in wheres, (
+        f"경고가 **어느 키**인지 말하지 않는다. 기대={expected_path} 실제={wheres}"
+    )
+
+
 def test_coerce_fee_contract() -> None:
     """공용 헬퍼 계약 — 숫자는 float(0 이상), 그 외는 None(적용 거부)."""
     assert billing_core.coerce_fee(1500, where="t") == 1500.0
