@@ -3,6 +3,7 @@
 import { useCallback, useState } from "react";
 import { AlertCircle, FileUp, CheckCircle2, Loader2, X } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
+import { idempotencyHeaders } from "@/lib/idempotency";
 
 type UploadResult = {
   ok: boolean;
@@ -44,9 +45,13 @@ export function RegistryUploadModal({
       reader.readAsDataURL(file);
       reader.onload = async () => {
         const base64Str = (reader.result as string).split(",")[1];
+        // ★PDF 업로드 자체는 무과금이지만 같은 라우트가 주소/고유번호로 오면 건당 과금이다.
+        //   호출부가 하나라 여기서 키를 붙여 두면 그 경로도 함께 보호된다.
+        const getOneBody = { pdf_input: base64Str };
         const res = await apiClient.post<UploadResult>("/registry/get-one", {
-          body: { pdf_input: base64Str },
+          body: getOneBody,
           useMock: false,
+          headers: idempotencyHeaders("registry.get_one", getOneBody),
         });
         setResult(res);
         if (onParsed && res.ok) {

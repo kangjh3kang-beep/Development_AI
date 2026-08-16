@@ -19,6 +19,7 @@
 
 import { AlertTriangle, CheckCircle2, Grid3X3, Ruler, Scale, Scissors, ShieldCheck, SlidersHorizontal } from "lucide-react";
 import { developabilityLabel } from "@/lib/zoning-ssot";
+import { parcelDisplayAddress } from "@/lib/pnu";
 
 // ── 계약 타입(전 필드 optional — D 병렬 진행 중 호환 가드) ──────────────────────
 
@@ -260,8 +261,10 @@ export function MultiParcelAttributeMatrix({
                       : gateBadge(dev);
                   return (
                     <tr key={(p.pnu || p.address || "") + i} className="border-t border-[var(--line)]">
-                      <td className="max-w-[180px] truncate px-2 py-1.5 font-bold text-[var(--text-primary)]" title={p.address || p.pnu || undefined}>
-                        {p.address || p.pnu || `필지 ${i + 1}`}
+                      {/* ★같은 동의 필지가 여러 건이면 주소만으로는 행을 구분할 수 없다 —
+                          PNU 에서 지번을 파생해 붙인다(견적·다필지 목록과 같은 헬퍼). */}
+                      <td className="max-w-[180px] truncate px-2 py-1.5 font-bold text-[var(--text-primary)]" title={parcelDisplayAddress(p.address, p.pnu) || p.pnu || undefined}>
+                        {parcelDisplayAddress(p.address, p.pnu) || p.pnu || `필지 ${i + 1}`}
                       </td>
                       <td className="px-2 py-1.5 text-[var(--text-secondary)]" data-testid={`mpx-area-${i}`}>{sqm(p.area_sqm)}</td>
                       <td className="px-2 py-1.5 text-[var(--text-secondary)]">{p.land_category || "미상"}</td>
