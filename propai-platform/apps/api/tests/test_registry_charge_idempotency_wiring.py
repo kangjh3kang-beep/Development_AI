@@ -72,9 +72,10 @@ def _require_pg(monkeypatch: pytest.MonkeyPatch):
 
     # ★라우터의 과금 헬퍼는 자체 세션을 열지만, 가드는 `async_session_factory` 를 쓴다.
     #   테스트 DSN 을 그 팩토리에 주입해 **가드가 실제 DB 를 태우게** 한다.
-    import app.core.database as db_mod
     from sqlalchemy.ext.asyncio import async_sessionmaker as _mk
     from sqlalchemy.ext.asyncio import create_async_engine as _mkeng
+
+    import app.core.database as db_mod
 
     monkeypatch.setattr(db_mod, "async_session_factory", _mk(_mkeng(_DSN), expire_on_commit=False))
     ci._SCHEMA_READY = False
