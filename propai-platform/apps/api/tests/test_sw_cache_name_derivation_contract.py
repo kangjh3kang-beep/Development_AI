@@ -213,6 +213,41 @@ def _run_probe(segment: str, sw_text: str) -> str:
     return proc.stdout
 
 
+# 줄 시작 앵커. 이게 없으면 주석을 집는다 — 이 파일이 잠그는 결함의 본질이다.
+_ANCHOR = "^const"
+
+
+def _classify(segment: str, sw_text: str) -> tuple[str, str]:
+    """프로브를 (판정, 근거) 로 분류한다.
+
+    ★2026-08-17 위양성 봉합. 종전에는 **실행할 수 없는 세그먼트를 곧바로 실패**시켰다.
+      그런데 실측해 보니 차단된 것 중 둘이 **앵커를 올바르게 쓴 정당한 문서**였다:
+
+          docker exec web sh -c '… | grep -m1 "^const CACHE_NAME"'   ← 따옴표가 안 닫혀 파싱 실패
+          … | grep -m1 '^const CACHE_NAME' > /tmp/x                  ← 리다이렉트 메타문자
+
+      정상 표기를 위반으로 신고하는 것은 **가드의 결함**이다(CLAUDE.md §회귀망 A.6 — 2회 재발).
+      ★이 규율이 적힌 파일을 고치는 PR 에서 내가 그 규율을 어겼다(§D.16).
+
+    그래서 2단으로 나눈다 — **약한 판정으로 강등하되, 놓치지는 않는다**:
+        실행 가능  → 실제 sw.js 에 흘려 **출력**으로 판정(가장 강함)
+        실행 불가  → **앵커 유무만** 정적으로 본다(위양성 없음 · 핵심 결함은 여전히 잡힘)
+
+    앵커 없는 프로브는 실행 가능하든 아니든 **양쪽 경로에서 다 걸린다** — 그게 요점이다.
+    """
+    try:
+        out = _run_probe(segment, sw_text)
+    except AssertionError as why:
+        # 실행 불가 — 여기서 막지 않는다. 대신 앵커를 본다.
+        if _ANCHOR in segment:
+            return "skipped", f"실행 불가라 앵커만 확인했다({str(why)[:60]}…)"
+        return "broken", f"실행할 수 없고 줄 시작 앵커({_ANCHOR})도 없다: {str(why)[:80]}"
+    expected = _DEV_PLACEHOLDER.split('"')[1]
+    if expected in out:
+        return "executed", out.strip()[:60]
+    return "broken", f"출력에 {expected!r} 가 없다 — 출력={out.strip()[:80]!r}"
+
+
 def test_문서가_적은_프로브가_실제_sw_js_에서_상수를_뽑는다() -> None:
     """★**소스가 아니라 실행을 본다.** 문서의 명령을 진짜 `sw.js` 에 흘려 결과를 판정한다."""
     sw_text = _read(_SW)
@@ -226,15 +261,25 @@ def test_문서가_적은_프로브가_실제_sw_js_에서_상수를_뽑는다()
         f"문서를 옮겼다면 _DOC_ROOTS 를 고칠 것. 찾은 것: {[str(p) for p, _, _ in probes]}"
     )
 
-    expected = _DEV_PLACEHOLDER.split('"')[1]  # propai-vdev-local (저장소 소스의 값)
     broken: list[str] = []
+    executed = 0
     for path, lineno, seg in probes:
-        out = _run_probe(seg, sw_text)
-        if expected not in out:
-            broken.append(
-                f"{path.relative_to(_REPO)}:{lineno}  프로브={seg!r}  출력={out.strip()[:80]!r}"
-            )
+        verdict, why = _classify(seg, sw_text)
+        if verdict == "executed":
+            executed += 1
+        elif verdict == "broken":
+            broken.append(f"{path.relative_to(_REPO)}:{lineno}  프로브={seg!r}  {why}")
 
+    # ★두 번째 공허 진리 가드 — **하한을 "찾은 수"가 아니라 "실행한 수"에 건다.**
+    #   위양성 봉합으로 실행 불가 프로브를 통과시키게 됐는데, 그 완화가 지나치면
+    #   "전부 skipped 라 위반 0" 이라는 새 공허함이 생긴다. 그 문을 여기서 닫는다.
+    assert executed >= 3, (
+        f"실제로 **실행된** 프로브가 {executed}건뿐이다(찾은 것 {len(probes)}건) — "
+        "이 상태의 '위반 0'은 근거가 약하다. 문서의 프로브가 전부 실행 불가 형태로 바뀌었는지, "
+        "아니면 allowlist·메타문자 규칙이 지나치게 좁아졌는지 보라."
+    )
+
+    expected = _DEV_PLACEHOLDER.split('"')[1]  # propai-vdev-local (저장소 소스의 값)
     assert not broken, (
         "문서의 프로브가 **실제 sw.js 에서 상수를 뽑지 못한다**:\n  "
         + "\n  ".join(broken)
@@ -242,6 +287,30 @@ def test_문서가_적은_프로브가_실제_sw_js_에서_상수를_뽑는다()
         "grep -m1 '^const CACHE_NAME'. 앵커가 없으면 **주석의 예시값**이나 "
         "엉뚱한 주석 줄을 집는다(2026-08-17 실사고)."
     )
+
+
+def test_실행할_수_없는_프로브도_앵커가_없으면_걸린다() -> None:
+    """★위양성 봉합이 **구멍이 되지 않았는지** 확인한다(완화의 대조군).
+
+    실행 불가 세그먼트를 통과시키기로 했으니, "따옴표로 감싸면 앵커 없이도 통과한다"는
+    새 우회로가 생겼는지 물어야 한다. 생기지 않았음을 여기서 잠근다.
+    """
+    sw_text = _read(_SW)
+    cases = [
+        # (세그먼트, 기대 판정, 왜)
+        ("""grep -m1 "^const CACHE_NAME"'""", "skipped", "실행 불가·앵커 O → 통과(위양성 방지)"),
+        ("""grep -m1 '^const CACHE_NAME' > /tmp/x""", "skipped", "리다이렉트·앵커 O → 통과"),
+        ("""grep -m1 "CACHE_NAME"'""", "broken", "실행 불가·앵커 X → 걸려야 한다"),
+        ("""grep -m1 CACHE_NAME > /tmp/x""", "broken", "리다이렉트·앵커 X → 걸려야 한다"),
+        ("""grep -m1 '^const CACHE_NAME'""", "executed", "정상 → 실행되어 값을 준다"),
+        ("""grep -m1 CACHE_NAME""", "broken", "실행되지만 주석을 집는다"),
+    ]
+    wrong = []
+    for seg, want, why in cases:
+        got, detail = _classify(seg, sw_text)
+        if got != want:
+            wrong.append(f"{seg!r}: 기대 {want} · 실제 {got} ({why}) — {detail}")
+    assert not wrong, "완화가 우회로를 만들었다:\n  " + "\n  ".join(wrong)
 
 
 def test_앵커_없는_프로브는_이_테스트에_반드시_걸린다() -> None:
