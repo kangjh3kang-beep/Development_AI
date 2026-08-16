@@ -125,10 +125,22 @@ jobs:
         #   과금 멱등 락은 fail-open 모듈이라 **실 Postgres 를 태우지 않으면 무잠금**이다.
         env:
           TEST_PG_DSN: postgresql+asyncpg://propai_user:propai_pass_dev@localhost:55432/propai_db
-        run: python -m pytest tests/ -q --no-header
+        # ★병렬화(2026-08-17) — 이 잡이 CI 임계경로다(총 16분 중 15~16분).
+        #   CI 실측(같은 잡 안 연속 측정 · 러너 nproc=4):
+        #     직렬     750초   9392 passed · 96 skipped · 3 xfailed
+        #     -n auto  385초   9392 passed · 96 skipped · 3 xfailed   ← 완전 일치 = 회귀 0
+        #   → 1.95배. 머지큐를 못 쓰는 저장소(개인 계정 소유)에서 사이클 비용을 줄이는
+        #     **유일한 직접 레버**다. 리베이스 왕복(#649 5회·#658 3회)의 비용도 함께 준다.
+        #   ★`-n auto` — 워커 수를 러너에 맡긴다(고정하면 러너 사양 변경 시 어긋난다).
+        #   ★`-c` 로 설치한다(`-r` 아님) — 이 필수 잡에 불필요한 패키지를 들이지 않는다.
+        run: |
+          pip install -c requirements-dev.txt pytest-xdist
+          python -m pytest tests/ -q --no-header -n auto
 
       # 루트 계약 스위트(propai-platform/tests) — 과거 CI 밖에서 17실패가 방치됐던
       # 갭을 게이트로 편입(931+ tests, 무DB). apps/api 스위트와 별개 커버리지.
+      # ★여기는 **직렬을 유지한다** — 병렬 이득을 **재보지 않았다**(apps/api 만 쟀다).
+      #   안 잰 것을 바꾸면 이득은 불확실한데 병렬 안전성 위험만 새로 들인다.
       - name: Run root contract suite (propai-platform/tests)
         working-directory: propai-platform
         run: python -m pytest tests/ -q --no-header
