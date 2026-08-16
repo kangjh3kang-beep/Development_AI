@@ -1397,8 +1397,12 @@ export function GlobalAddressSearch({
                       onFocus={() => { if (candidates.length) setShowCandidates(true); }}
                       onBlur={() => setTimeout(() => setShowCandidates(false), 150)}
                       onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); if (candidates.length) pickCandidate(candidates[0]); else void handleDirectAdd(); } }}
-                      placeholder="지번·도로명 검색 (예: 의정부동 224, 산 12-3, 판교역로 166)"
-                      aria-label="지번·도로명 주소 검색"
+                      // ★`placeholder` prop 을 **받고도 쓰지 않고** 있었다(실측 2026-08-16).
+                      //   호출부가 `/en` 화면에서 "Address" 를 넘겨도 DOM 에는 아래 한국어
+                      //   문자열이 그대로 나갔다 — prop 은 정의됐는데 소비처가 0인 형태다.
+                      //   기본값은 유지해 한국어 화면의 안내 예시를 잃지 않는다.
+                      placeholder={placeholder || "지번·도로명 검색 (예: 의정부동 224, 산 12-3, 판교역로 166)"}
+                      aria-label={placeholder || "지번·도로명 주소 검색"}
                       className="h-12 w-full rounded-full border border-[var(--line-strong)] bg-white px-4 text-[13px] font-semibold text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
                     />
                     {showCandidates && (candidates.length > 0 || searching) && (
