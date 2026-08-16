@@ -19,12 +19,86 @@
  * ★소스 검사는 공용 도구(assertWiredThrough)를 쓴다 — 직접 파일을 읽으면 주석이 조건을
  *   대신 충족시킨다(그 함정은 이 저장소에서 다섯 번 봉합됐다).
  */
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import { CADASTRE_MIN_ZOOM, CADASTRE_ZOOM_HINT } from "@/components/map/SatongMultiMap";
-import { assertWiredThrough } from "@/lib/source-invariant";
+import { __blockCommentRangesForOracle, assertWiredThrough } from "@/lib/source-invariant";
 
 const FILE = "components/map/SatongMultiMap.tsx";
+
+/**
+ * ── 근거 복제 금지 락 (2026-08-16 신설) ──────────────────────────────────────
+ *
+ * ★왜: 2026-08-15 재측정으로 임계가 18→17 로 내려갔을 때 **CADASTRE_MIN_ZOOM 독스트링만**
+ *   갱신됐고, 같은 파일 안의 복제본 두 개(minZoom 옆 · syncZoomNote 위)가 옛 임계를
+ *   그대로 들고 남았다. 다음 세션이 그 낡은 숫자를 읽고 **정상인 임계를 되돌리려다**
+ *   판정이 하루 늦어졌다. 낡은 주석이 오판을 *지지하는 증거*로 작동한 것이다.
+ *
+ * ★그래서 잠그는 것은 문구가 아니라 **구조**다: 근거(배율·바이트)는 그것을 정당화하는
+ *   **export 상수의 독스트링 한 곳**에만 산다. 다른 자리는 상수를 가리키기만 한다.
+ *   문구 목록을 잠그면 새 문구가 그대로 빠져나가지만, 이 규칙은 파생형이라 따라온다.
+ *
+ * ★한계(정직 고지): 이 락은 `z<숫자> 미만/이하` 꼴의 임계 주장과 `1,784B` 꼴의 바이트
+ *   수치만 본다. `z10~17 전부 빈 타일` 같은 **구간 서술은 잡지 못한다** — 같은 패턴이
+ *   용도지역(다른 레이어)의 정당한 근거와 구분되지 않아 오탐이 나기 때문이다.
+ *   실제 결함은 두 규칙 모두에 걸렸으므로 잠금은 성립하지만, 전수는 아니다.
+ */
+type Comment = { text: string; isExportDoc: boolean };
+
+/** 파일의 모든 주석을, "export 선언의 독스트링인가"와 함께 뽑는다. */
+function commentsOf(src: string): Comment[] {
+  return __blockCommentRangesForOracle(src, FILE).map(([start, end]) => ({
+    text: src.slice(start, end),
+    // 주석 뒤 공백을 건너뛴 자리가 export 면 그 선언의 독스트링이다 = 근거가 사는 자리.
+    isExportDoc: /^\s*export\b/.test(src.slice(end, end + 40)),
+  }));
+}
+
+const BYTES = /\d{1,3},\d{3}\s*B/;
+/** `z17 미만`·`z16 이하` 꼴 + 근처(±40자)의 "빈 타일" 계열 판정. */
+const THRESHOLD = /z\s*(\d{1,2})\s*(미만|이하)/g;
+const EMPTY_VERDICT = /(빈 타일|완전투명|투명 타일|나오지 않는다|나오지 않았다)/;
+
+/** 상수와 어긋난 임계 주장을 모은다(주석 전체 대상 — 독스트링도 예외가 아니다). */
+function inconsistentThresholdClaims(src: string, minZoom: number): string[] {
+  const bad: string[] = [];
+  for (const c of commentsOf(src)) {
+    for (const m of c.text.matchAll(THRESHOLD)) {
+      const at = m.index ?? 0;
+      const near = c.text.slice(Math.max(0, at - 40), at + m[0].length + 40);
+      if (!EMPTY_VERDICT.test(near)) continue;
+      const claimed = Number(m[1]);
+      // "z<N> 미만이 빈 타일" ⇔ N === 임계 · "z<N> 이하가 빈 타일" ⇔ N === 임계-1
+      const expected = m[2] === "미만" ? minZoom : minZoom - 1;
+      if (claimed !== expected) bad.push(near.replace(/\s+/g, " ").trim());
+    }
+  }
+  return bad;
+}
+
+/** export 독스트링 **밖**에 있는 바이트 수치 = 근거표 복제. */
+function duplicatedEvidence(src: string): string[] {
+  return commentsOf(src)
+    .filter((c) => !c.isExportDoc && BYTES.test(c.text))
+    .map((c) => c.text.replace(/\s+/g, " ").trim().slice(0, 120));
+}
+
+/** 2026-08-15 에 실제로 남았던 복제본을 그대로 재현한 대조군 — 탐지기가 살아 있는지 먼저 본다. */
+const REGRESSION_SPECIMEN = `
+/** 연속지적도가 그려지기 시작하는 최소 줌. */
+export const CADASTRE_MIN_ZOOM = 17;
+function f() {
+  const t = wms({
+    // VWorld 연속지적도는 z18 미만에서 완전투명 타일(1,784B)을 준다.
+    //   z15 1,784B · z16 1,784B · z17 1,784B · z18 24,493B
+    minZoom: CADASTRE_MIN_ZOOM,
+  });
+  return t;
+}
+`;
 
 describe("지적도 저배율 계약", () => {
   it("★minZoom 이 실측 임계에 결속돼 있다 — 대역이 아니라 상수", () => {
@@ -82,6 +156,32 @@ describe("지적도 저배율 계약", () => {
         minMatches: 1,
       }),
     ).not.toThrow();
+  });
+
+  it("★★탐지기가 살아 있다 — 실제로 있었던 복제본을 대조군으로 먼저 태운다", () => {
+    // "위반 0"을 믿으려면 **같은 도구가 진짜 위반을 잡는지**를 먼저 봐야 한다.
+    // (0건은 부재가 아니라 조회 오류일 수 있다 — 이 저장소가 반복해서 데인 자리다.)
+    expect(inconsistentThresholdClaims(REGRESSION_SPECIMEN, 17)).not.toHaveLength(0);
+    expect(duplicatedEvidence(REGRESSION_SPECIMEN)).not.toHaveLength(0);
+    // 임계가 실제로 그 값이었다면(=18) 같은 문장은 위반이 아니다 — 상수에 결속돼 있다.
+    expect(inconsistentThresholdClaims(REGRESSION_SPECIMEN, 18)).toHaveLength(0);
+  });
+
+  it("★임계를 말하는 주석이 상수와 어긋나지 않는다", () => {
+    const src = readFileSync(resolve(process.cwd(), FILE), "utf-8");
+    // 공허 진리 가드 — 검사 대상이 0건이면 "위반 0"은 아무 뜻이 없다.
+    expect(commentsOf(src).length).toBeGreaterThan(20);
+    const claims = [...src.matchAll(THRESHOLD)];
+    expect(claims.length).toBeGreaterThan(0);
+    expect(inconsistentThresholdClaims(src, CADASTRE_MIN_ZOOM)).toEqual([]);
+  });
+
+  it("★근거표는 상수 독스트링 한 곳에만 산다 — 복제가 낡으면 오판을 지지한다", () => {
+    const src = readFileSync(resolve(process.cwd(), FILE), "utf-8");
+    // 대상 모집단이 비지 않았는지 먼저 본다: 근거를 담은 독스트링이 실재해야 한다.
+    expect(commentsOf(src).filter((c) => c.isExportDoc && BYTES.test(c.text)).length).toBeGreaterThan(0);
+    // 그리고 독스트링 밖에는 없어야 한다.
+    expect(duplicatedEvidence(src)).toEqual([]);
   });
 
   it("★zoomend 구독을 정리한다 — 언마운트 후 setState 누수 방지", () => {
