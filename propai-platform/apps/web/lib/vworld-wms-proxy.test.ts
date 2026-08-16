@@ -1,6 +1,22 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { proxyVWorldWms } from "./vworld-wms-proxy";
+import { __resetDirectProbeForTest, proxyVWorldWms } from "./vworld-wms-proxy";
+
+/**
+ * ★전제를 **명시**한다(2026-08-17 릴레이 1순위 승격 이후 필수).
+ *
+ * 이 파일의 케이스들은 **직접 경로(158→VWorld)를 태우는 것**을 전제로 쓰였다.
+ * 릴레이가 1순위가 된 뒤로는 그 전제가 자동으로 성립하지 않는다 — 회복 탐색 간격
+ * (`DIRECT_RECOVERY_PROBE_MS`) 안이면 요청이 릴레이로 새고, 그러면 여기 단언들이
+ * **다른 층을 검사하게 된다**(상류 URL·키 주입·스머글링 방지가 전부 관측 불가).
+ * 종전엔 이 전제가 **어디에도 적혀 있지 않았다** — 그 상태로 두면 앰비언트 하나로
+ * 파일 전체 의미가 바뀌고도 초록이다.
+ * → 매 케이스 시작에 프로브를 열어 **직접 경로를 강제**한다.
+ * ※릴레이 1순위 자체의 배선은 `__tests__/vworld-relay-primary.test.ts` 가 잠근다.
+ */
+beforeEach(() => {
+  __resetDirectProbeForTest();
+});
 
 const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47];
 

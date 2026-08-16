@@ -61,12 +61,18 @@ function vworldKey(): string {
   return (process.env.VWORLD_API_KEY || "").trim();
 }
 
-function jsonError(message: string, status: number): Response {
+/**
+ * @param cacheSec 음성 캐시 초. **0 이면 `no-store`**.
+ *   ★기본을 no-store 로 두지 않는다 — 오류를 no-store 로 돌려주면 팬/줌마다 전 타일이
+ *   재요청되고, 그 폭주가 바로 차단기를 만들게 한 실장애의 구조다
+ *   (`vworld-circuit-breaker.ts` 상단 참조). 호출자가 "폭주해도 되는 오류"인지 정해라.
+ */
+function jsonError(message: string, status: number, cacheSec = 0): Response {
   return new Response(JSON.stringify({ error: message, status }), {
     status,
     headers: {
       "Content-Type": "application/json; charset=utf-8",
-      "Cache-Control": "no-store",
+      "Cache-Control": cacheSec > 0 ? `public, max-age=${cacheSec}` : "no-store",
     },
   });
 }
@@ -84,10 +90,34 @@ export function vworldApiFallbackOrigin(): string | null {
   return raw.replace(/\/+$/, "").replace(/\/api\/v[12]$/, "");
 }
 
-export async function relayViaApi(url: string, proxyTag: string): Promise<Response> {
+/** 릴레이 링크(158→168) 전용 차단기 키 — 상류(VWorld) 직접 경로와 **별개로** 센다. */
+export const RELAY_BREAKER_KEY = "vworld-relay";
+
+/**
+ * api(168) 타일 프록시로 중계한다.
+ *
+ * ★2026-08-17: 릴레이가 **1순위 경로**가 되면서 이 함수도 차단기에 기록한다.
+ *   종전엔 `recordSuccess`/`recordFailure` 를 **한 번도 호출하지 않았다** — 직접 경로가
+ *   주 경로일 때는 그래도 됐지만, 릴레이가 주 경로가 되면 그 순간
+ *   `vworld-circuit-breaker.ts` 가 **아무것도 보호하지 않는 죽은 코드**가 된다.
+ *   그러면 #495 가 고친 "실패 폭주" 구조가 158→168 링크에서 그대로 재생산된다 —
+ *   자해 대상만 VWorld 에서 우리 백엔드로 바뀔 뿐이다.
+ *   → 차단기를 **삭제하지 않고 대상을 옮긴다**(별도 키).
+ */
+export async function relayViaApi(
+  url: string,
+  proxyTag: string,
+  breakerKey: string | null = null,
+): Promise<Response> {
   try {
     const resp = await fetch(url, { next: { revalidate: 60 * 60 * 24 } });
     // api측이 이미 web과 동일 계약(투명타일/503+code)으로 변환해 주므로 그대로 통과.
+    if (breakerKey) {
+      // 5xx 는 링크/백엔드 장애로 센다. 4xx 는 **요청 자체가 틀린 것**이라 링크 건강과 무관 —
+      // 그걸 실패로 세면 잘못된 요청 몇 개가 정상 링크를 차단시킨다(위양성 차단).
+      if (resp.status >= 500) recordFailure(breakerKey);
+      else recordSuccess(breakerKey);
+    }
     const body = await resp.arrayBuffer();
     return new Response(body, {
       status: resp.status,
@@ -97,16 +127,23 @@ export async function relayViaApi(url: string, proxyTag: string): Promise<Respon
       },
     });
   } catch (error) {
+    if (breakerKey) recordFailure(breakerKey);
     console.error(`[${proxyTag}] api fallback failed`, { url, error: String(error) });
     // ★원인을 지어내지 마라(2026-08-17 실장애에서 실제로 사람을 오도했다).
     //   여기까지 온 것은 "api 릴레이로 가는 전송이 실패"했다는 사실뿐이다 — 키 상태는 **모른다**.
     //   종전 문구는 `VWORLD_API_KEY is not configured` 라고 **단정**했고, 그 문구가 화면
-    //   진단 배너(SatongMultiMap 의 keyFault 분기)까지 그대로 올라가 "관리자 화면에 키를
-    //   등록하면 복구된다"는 **없는 복구 경로**를 안내했다.
-    //   실측된 실제 원인은 상류(VWorld)가 web 서버 IP 를 차단한 것이었고 키는 정상이었다
-    //   (158→VWorld 5/5 실패 · 168→VWorld 5/5 200, 같은 DNS IP).
+    //   진단 배너(SatongMultiMap 의 keyFault 분기)까지 올라가 "관리자 화면에 키를 등록하면
+    //   복구된다"는 **없는 복구 경로**를 안내했다.
+    // ★★2026-08-17 2차 정정 — 여기 있던 "상류(VWorld)가 web 서버 IP 를 차단했다"는 서술도
+    //   **근거를 넘은 단정**이었다. 확증되는 것은 "158 출발지에서만 vworld 경로가 막혀 있다"
+    //   까지다(158→VWorld 5/5 실패 · 168→VWorld 5/5 200 · DNS 동일). 실패 응답에는
+    //   **헤더가 전혀 없어(Server/Date 없음) 응답 주체를 특정할 수 없다.**
+    //   TCP·TLS 는 158 에서도 성공하고 그 뒤 HTTP 응답이 오지 않는다는 것까지가 관측이다.
+    //   ※"VWorld 에 IP 차단 해제를 요청한다"는 **2026-07-29 에 이미 기각된 오진**이다
+    //     (VWorld 에 IP 등록 기능 자체가 없다). 그 선택지를 되살리지 마라.
     //   → 관측된 사실만 말하고, 어느 경로가 끊겼는지 proxyTag 로 식별 가능하게 남긴다.
-    return jsonError(`VWorld api relay unreachable (${proxyTag})`, 503);
+    // ★음성 캐시를 붙인다 — no-store 로 돌려주면 팬할 때마다 전 타일이 168 을 때린다.
+    return jsonError(`VWorld api relay unreachable (${proxyTag})`, 503, NEGATIVE_CACHE_SEC);
   }
 }
 
@@ -120,6 +157,44 @@ function upstreamError(message: string, upstreamStatus: number, detail: Record<s
 //   짧은 TTL로 실패를 흡수해 폭주를 끊되, 회복은 지연되지 않을 만큼만 잡는다.
 const NEGATIVE_CACHE_SEC = 30;
 const BREAKER_KEY = "vworld-wms";
+
+/**
+ * 직접 경로(158→VWorld) **회복 탐색 간격**.
+ *
+ * ★왜 직접 경로를 지우지 않는가(2026-08-17 설계 결정):
+ *   158 에서 VWorld 로 나가는 요청이 막혀 있어 릴레이를 1순위로 올린다. 그러나 직접 경로를
+ *   **삭제하면** 두 가지를 잃는다:
+ *     (1) **회복 경로** — 근본원인이 **미상**이라 회복 시점도 미상이다. 미상 원인은 미상
+ *         시점에 사라진다. 직접 시도가 없으면 158 이 나아도 아무도 모르고, 복구는 사람이
+ *         코드를 되돌려야만 일어난다(= 사실상 영구 우회).
+ *     (2) **관측점** — 직접 시도가 158 egress 건강의 유일한 상시 프로브다. 원인이 미상인
+ *         상태에서 유일한 진단 신호원을 끄는 것은 비싸다.
+ *   → 그래서 **지우지 않고 저빈도로 낮춘다**. 5분에 1건이면 폭주가 아니고(실장애는 팬/줌마다
+ *     수십 타일이 전부 실패한 것이었다), 회복은 최대 5분 안에 감지된다.
+ * ★프로세스 로컬이다(차단기와 동일 전제). 인스턴스가 여러 개면 각자 5분에 1건씩 태운다.
+ */
+const DIRECT_RECOVERY_PROBE_MS = 5 * 60_000;
+let lastDirectProbeAt = 0;
+
+/**
+ * 이번 요청을 **직접 경로**로 태울 것인가.
+ * 릴레이 오리진이 없으면(폴백 불가) 직접이 유일 경로이므로 항상 true.
+ *
+ * ★WMS·WMTS 가 이 게이트를 **공유**한다(모듈 전역 `lastDirectProbeAt`). 둘 다 같은
+ *   158→VWorld 경로를 재므로 프로브 1건이 양쪽 질문에 동시에 답한다 — 서비스마다
+ *   따로 두면 같은 사실을 재느라 프로브가 2배가 된다.
+ */
+export function shouldProbeDirect(hasRelay: boolean, now: number = Date.now()): boolean {
+  if (!hasRelay) return true;
+  if (now - lastDirectProbeAt < DIRECT_RECOVERY_PROBE_MS) return false;
+  lastDirectProbeAt = now;
+  return true;
+}
+
+/** 테스트 전용 — 프로브 시각 초기화. */
+export function __resetDirectProbeForTest(): void {
+  lastDirectProbeAt = 0;
+}
 
 function breakerOpenTile(remainingSec: number): Response {
   // 차단 중에는 상류를 호출하지 않고 투명 타일로 즉시 응답한다(지도는 필지·오버레이 유지).
@@ -160,7 +235,7 @@ export async function proxyVWorldWms(incoming: URLSearchParams): Promise<Respons
     //   없으면 기존 정직 503([MAP-006] 평문 금지 — 오류는 항상 JSON).
     const origin = vworldApiFallbackOrigin();
     if (origin) {
-      return relayViaApi(`${origin}/api/v1/tiles/vworld/wms?${incoming.toString()}`, "vworld-wms-proxy");
+      return relayViaApi(`${origin}/api/v1/tiles/vworld/wms?${incoming.toString()}`, "vworld-wms-proxy", RELAY_BREAKER_KEY);
     }
     return jsonError("VWORLD_API_KEY is not configured", 503);
   }
@@ -215,17 +290,28 @@ export async function proxyVWorldWms(incoming: URLSearchParams): Promise<Respons
   if (![...params.keys()].some((k) => k.toLowerCase() === "service")) params.set("SERVICE", "WMS");
 
   const targetUrl = `${VWORLD_WMS_BASE}?${params.toString()}`;
-  // ★상류가 연속 실패 중이면 아예 호출하지 않는다 — 실패 요청 폭주가 IP 차단을 부른 실장애.
+  const relayOrigin = vworldApiFallbackOrigin();
+  const relayUrl = relayOrigin
+    ? `${relayOrigin}/api/v1/tiles/vworld/wms?${incoming.toString()}`
+    : null;
+
+  // ★★2026-08-17 — **릴레이를 1순위로 승격**한다(A② 타일 경로 168 일원화).
+  //   158 에서 VWorld 로 나가는 요청이 막혀 있다(5/5 실패 · 168 은 5/5 200 · 원인 미상).
+  //   종전 구조는 매 요청마다 **먼저 직접을 때리고 실패한 뒤** 릴레이했다. 차단기가 5연속
+  //   실패 후 그걸 줄여 주긴 하지만, 쿨다운(60s)마다 다시 열려 같은 실패를 반복한다.
+  //   → 릴레이를 먼저 태우고, 직접은 **회복 탐색**으로만 남긴다(DIRECT_RECOVERY_PROBE_MS).
+  //   ★"직접을 지우자"는 기각됐다 — 지우면 회복 경로와 158 관측점을 함께 잃는다.
+  //     근거는 shouldProbeDirect 독스트링에 한 곳으로 모았다.
+  if (relayUrl && !shouldProbeDirect(true)) {
+    return relayViaApi(relayUrl, "vworld-wms-proxy(relay-primary)", RELAY_BREAKER_KEY);
+  }
+
+  // ★상류가 연속 실패 중이면 아예 호출하지 않는다 — 실패 요청 폭주가 실장애를 키웠다.
   //   다만 투명 타일로 끝내지 않고 **api(168) 타일 프록시로 릴레이**를 먼저 시도한다:
-  //   이 서버(web)에서만 VWorld 경로가 막히고 api 서버는 정상인 상황이 실제로 발생했다
-  //   (같은 클라우드인데 web만 502/연결실패, api는 200). 릴레이가 되면 지도가 살아난다.
+  //   이 서버(web)에서만 VWorld 경로가 막히고 api 서버는 정상인 상황이 실제로 발생했다.
   if (!shouldAttempt(BREAKER_KEY)) {
-    const origin = vworldApiFallbackOrigin();
-    if (origin) {
-      return relayViaApi(
-        `${origin}/api/v1/tiles/vworld/wms?${incoming.toString()}`,
-        "vworld-wms-proxy(breaker-open)",
-      );
+    if (relayUrl) {
+      return relayViaApi(relayUrl, "vworld-wms-proxy(breaker-open)", RELAY_BREAKER_KEY);
     }
     return breakerOpenTile(cooldownRemainingSec(BREAKER_KEY));
   }
@@ -242,6 +328,7 @@ export async function proxyVWorldWms(incoming: URLSearchParams): Promise<Respons
         return relayViaApi(
           `${origin}/api/v1/tiles/vworld/wms?${incoming.toString()}`,
           "vworld-wms-proxy(upstream-error)",
+          RELAY_BREAKER_KEY,
         );
       }
       return upstreamError("VWorld WMS upstream error", resp.status, { layers: canonicalLayers });
@@ -273,7 +360,7 @@ export async function proxyVWorldWms(incoming: URLSearchParams): Promise<Respons
           const origin = vworldApiFallbackOrigin();
           if (origin) {
             console.warn(`[vworld-wms-proxy] local key fault (${detail.code}) → api fallback retry`);
-            return relayViaApi(`${origin}/api/v1/tiles/vworld/wms?${incoming.toString()}`, "vworld-wms-proxy(key-fault)");
+            return relayViaApi(`${origin}/api/v1/tiles/vworld/wms?${incoming.toString()}`, "vworld-wms-proxy(key-fault)", RELAY_BREAKER_KEY);
           }
         }
         recordFailure(BREAKER_KEY);
@@ -311,6 +398,7 @@ export async function proxyVWorldWms(incoming: URLSearchParams): Promise<Respons
       return relayViaApi(
         `${origin}/api/v1/tiles/vworld/wms?${incoming.toString()}`,
         "vworld-wms-proxy(unreachable)",
+        RELAY_BREAKER_KEY,
       );
     }
     return jsonError(`VWorld WMS proxy failed: ${String(error)}`, 502);

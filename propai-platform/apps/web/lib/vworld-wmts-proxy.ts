@@ -5,7 +5,7 @@ import {
   shouldAttempt,
 } from "@/lib/vworld-circuit-breaker";
 import { classifyVWorldXmlException, extractVWorldXmlExceptionDetail, isVWorldKeyFault } from "@/lib/vworld-xml-exception";
-import { relayViaApi, vworldApiFallbackOrigin } from "@/lib/vworld-wms-proxy";
+import { RELAY_BREAKER_KEY, relayViaApi, shouldProbeDirect, vworldApiFallbackOrigin } from "@/lib/vworld-wms-proxy";
 
 const VWORLD_WMTS_BASE = "https://api.vworld.kr/req/wmts/1.0.0";
 // ★tiletype 정본(2026-07-17 라이브 채증 — 상류 InvalidParameterValue 본문이 유효값을 직접
@@ -110,6 +110,7 @@ export async function proxyVWorldWmts(params: VWorldWmtsParams): Promise<Respons
       return relayViaApi(
         `${origin}/api/v1/tiles/vworld/wmts/${cleanLayer}/${params.z}/${params.y}/${cleanX}.${ext}`,
         "vworld-wmts-proxy",
+        RELAY_BREAKER_KEY,
       );
     }
     // [MAP-006] 평문 본문 금지 — 오류는 항상 JSON({ error, status })으로 반환한다.
@@ -128,6 +129,21 @@ export async function proxyVWorldWmts(params: VWorldWmtsParams): Promise<Respons
 
   const targetUrl = `${VWORLD_WMTS_BASE}/${encodeURIComponent(key)}/${cleanLayer}/${params.z}/${params.y}/${cleanX}.${ext}`;
 
+  // ★★2026-08-17 — **릴레이 1순위 승격**(A② 일원화). 근거·설계 판단은 형제 파일
+  //   `vworld-wms-proxy.ts` 의 `DIRECT_RECOVERY_PROBE_MS` 독스트링 **한 곳**에만 둔다
+  //   (수치·근거를 두 파일에 복제하면 한쪽만 갱신돼 옛 값이 남는다 — 이 저장소의 실제 사고).
+  //   직접 경로는 지우지 않고 저빈도 회복 탐색으로만 남긴다.
+  {
+    const origin = vworldApiFallbackOrigin();
+    if (origin && !shouldProbeDirect(true)) {
+      return relayViaApi(
+        `${origin}/api/v1/tiles/vworld/wmts/${cleanLayer}/${params.z}/${params.y}/${cleanX}.${ext}`,
+        "vworld-wmts-proxy(relay-primary)",
+        RELAY_BREAKER_KEY,
+      );
+    }
+  }
+
   if (!shouldAttempt(BREAKER_KEY)) {
     // ★투명 타일로 끝내지 않고 api(168) 릴레이를 먼저 시도한다 — web에서만 VWorld 경로가
     //   막히고 api는 정상인 상황이 실제로 발생했다(같은 클라우드, web만 502/연결실패).
@@ -136,6 +152,7 @@ export async function proxyVWorldWmts(params: VWorldWmtsParams): Promise<Respons
       return relayViaApi(
         `${origin}/api/v1/tiles/vworld/wmts/${cleanLayer}/${params.z}/${params.y}/${cleanX}.${ext}`,
         "vworld-wmts-proxy(breaker-open)",
+        RELAY_BREAKER_KEY,
       );
     }
     return breakerOpenTile(cooldownRemainingSec(BREAKER_KEY));
@@ -153,7 +170,8 @@ export async function proxyVWorldWmts(params: VWorldWmtsParams): Promise<Respons
         return relayViaApi(
           `${origin}/api/v1/tiles/vworld/wmts/${cleanLayer}/${params.z}/${params.y}/${cleanX}.${ext}`,
           "vworld-wmts-proxy(upstream-error)",
-        );
+        RELAY_BREAKER_KEY,
+      );
       }
       // 상태 코드 무음 전파 금지 — 4xx/5xx는 명시적 프록시 오류로 변환.
       return upstreamError("VWorld WMTS upstream error", resp.status, {
@@ -188,7 +206,8 @@ export async function proxyVWorldWmts(params: VWorldWmtsParams): Promise<Respons
             return relayViaApi(
               `${origin}/api/v1/tiles/vworld/wmts/${cleanLayer}/${params.z}/${params.y}/${cleanX}.${ext}`,
               "vworld-wmts-proxy(key-fault)",
-            );
+        RELAY_BREAKER_KEY,
+      );
           }
         }
         // ★locator 병기 필수 — OWS는 code가 InvalidParameterValue 하나로 뭉뚱그려져
@@ -230,6 +249,7 @@ export async function proxyVWorldWmts(params: VWorldWmtsParams): Promise<Respons
       return relayViaApi(
         `${origin}/api/v1/tiles/vworld/wmts/${cleanLayer}/${params.z}/${params.y}/${cleanX}.${ext}`,
         "vworld-wmts-proxy(unreachable)",
+        RELAY_BREAKER_KEY,
       );
     }
 
