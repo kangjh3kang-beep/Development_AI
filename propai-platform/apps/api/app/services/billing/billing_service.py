@@ -15,6 +15,8 @@ LLM 실계측: 모든 LLM 호출은 llm_usage_log에 service 귀속으로 1건 I
 사용자 청구사용량에 누적된다.
 """
 
+import contextlib
+import copy
 import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -503,18 +505,73 @@ async def load_config(db: AsyncSession, force: bool = False) -> None:
         logger.warning("빌링 설정 로드 실패 — 기본값 유지", err=str(e)[:160])
 
 
-async def save_config(db: AsyncSession, override: dict[str, Any]) -> dict[str, Any]:
-    """관리자 설정 저장(DB 영속 + 런타임 반영)."""
+def diff_config(before: dict[str, Any], after: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """설정 변경분만 `경로 -> {old, new}` 로 평탄화한다(값이 같으면 넣지 않는다).
+
+    왜 old 를 같이 담나: 과금 분쟁의 질문은 "지금 얼마냐"가 아니라 **"그때 얼마였냐"** 다.
+    new 만 남기면 원장에 요율이 늘어설 뿐 **어떤 청구가 어떤 요율에서 나왔는지 복원되지 않는다.**
+
+    삭제된 키도 기록한다(new=None). 요율 키가 사라지면 접근자가 기본값으로 되돌아가므로,
+    그것도 **금액을 바꾸는 변경**이다.
+    """
+    changes: dict[str, dict[str, Any]] = {}
+
+    def walk(old_node: Any, new_node: Any, path: str) -> None:
+        if isinstance(old_node, dict) and isinstance(new_node, dict):
+            for key in set(old_node) | set(new_node):
+                walk(old_node.get(key), new_node.get(key), f"{path}.{key}" if path else str(key))
+            return
+        if old_node != new_node:
+            changes[path] = {"old": old_node, "new": new_node}
+
+    walk(before, after, "")
+    return changes
+
+
+async def save_config(
+    db: AsyncSession, override: dict[str, Any], *, actor_id: str | None = None
+) -> dict[str, Any]:
+    """관리자 설정 저장(DB 영속 + 런타임 반영 + **변경 감사**).
+
+    ★왜 감사가 필요한가: 아래 INSERT 는 `ON CONFLICT DO UPDATE` 로 **단일 행을 덮어쓴다.**
+    이전 요율은 그 순간 소멸하고 스키마에는 `updated_at` 만 남는다(누가·무엇을→무엇으로
+    바꿨는지 없음). 그래서 "이 청구는 어떤 요율에서 나왔나"라는 질문이 **원리적으로 답이
+    없었다** — 코인원장은 청구 *금액*을 남기지만 그 근거 *요율*은 사라진다.
+    실제로 `project_create` 원장 50,000원 vs 요율 SSOT 2,000원(25배) 괴리가
+    "관리자 요율 변경 이력을 봐야 판정 가능"으로 미확정 처리됐는데, **볼 이력이 없었다.**
+
+    ★deepcopy 가 필수인 이유(공허한 감사 방지): `get_config()` 는 `_CONFIG` 를 **그대로**
+    돌려주고 `apply_config()` 는 그것을 **in-place** 로 고친다. 사본을 뜨지 않으면 before 와
+    after 가 같은 객체라 diff 가 **항상 비고**, 감사는 "변경 없음"만 영원히 기록한다.
+    """
+    before = copy.deepcopy(get_config())
     await db.execute(text(_CONFIG_DDL))
     apply_config(override)
-    cfg = json.dumps(get_config(), ensure_ascii=False)
+    after = get_config()
+    changes = diff_config(before, after)
+    cfg = json.dumps(after, ensure_ascii=False)
     await db.execute(
         text("INSERT INTO billing_config(id, config, updated_at) VALUES (1, CAST(:c AS jsonb), now()) "
              "ON CONFLICT (id) DO UPDATE SET config=CAST(:c AS jsonb), updated_at=now()"),
         {"c": cfg},
     )
     await db.commit()
-    return get_config()
+    if changes:
+        # 실제로 값이 바뀐 경우만 남긴다(무변경 저장까지 적으면 원장이 소음으로 덮인다).
+        # best-effort: 원장 append 실패가 설정 저장을 되돌리지 않는다(append_audit 계약).
+        # ★한계(정직): 그래서 감사 누락 가능성이 0은 아니다. 요율 변경을 감사 성공에
+        #   묶으려면 별도 트랜잭션 설계가 필요하고 그건 이 변경의 범위 밖이다.
+        with contextlib.suppress(Exception):
+            from app.services.ledger import audit_ledger
+
+            await audit_ledger.append_audit(
+                action="billing_config_update",
+                user_id=actor_id,
+                resource_type="billing_config",
+                resource_id="1",  # billing_config 는 단일 행(id=1)이다
+                changes=changes,
+            )
+    return after
 
 
 async def _meta(db: AsyncSession, user_id: Any):
