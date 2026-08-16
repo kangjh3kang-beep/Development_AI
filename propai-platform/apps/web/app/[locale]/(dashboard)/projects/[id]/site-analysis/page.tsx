@@ -24,6 +24,7 @@ import { isMockMode } from "@/lib/runtime-mode";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { useDictionary } from "@/hooks/use-dictionary";
 import { apiClient } from "@/lib/api-client";
+import { idempotencyHeaders } from "@/lib/idempotency";
 import { useProjectContextStore, type SiteAnalysisData } from "@/store/useProjectContextStore";
 import { analysisSignature } from "@/lib/use-analysis-cache";
 import { farLimitForZone, bcrLimitForZone } from "@/lib/kr-building-regulations";
@@ -987,6 +988,8 @@ export default function SiteAnalysisPage() {
       }>("/zoning/analyze", {
         useMock: false,
         body: { address },
+        // ★유료 경로(land_analysis) — 재전송이면 이중청구된다.
+        headers: idempotencyHeaders("zoning.analyze", { address }),
       });
 
       const resolvedAddress = zoningResult.address || address;
