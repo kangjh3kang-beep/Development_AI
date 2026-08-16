@@ -7,17 +7,16 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+
+import { __stripCommentsForScan } from "@/lib/source-invariant";
 import { NEUTRAL_SECTION_ORDER } from "@/lib/analysis-persona";
 
 const PANEL = "components/analysis/ComprehensiveAnalysisPanel.tsx";
 const src = readFileSync(resolve(process.cwd(), PANEL), "utf-8");
 
-/** 줄 끝·블록 주석이 검사를 충족시키는 것을 막는다(이 저장소가 실제로 겪은 우회 경로). */
-const code = src
-  .split("\n")
-  .map((line) => line.replace(/(^|[^:])\/\/.*$/, "$1"))
-  .filter((line) => !/^\s*\*/.test(line) && !/^\s*\{?\s*\/\*/.test(line))
-  .join("\n");
+/** ★2026-08-16 — 손수 만든 스트리퍼는 **단일행 `/* … *​/` 를 못 벗긴다**.
+ *  스트립 규칙이 파일마다 갈리면 약한 쪽만 뚫린다 — 공용 도구로 일원화한다. */
+const code = __stripCommentsForScan(src, PANEL);
 
 describe("종합분석 패널 — 관점 순서 배선", () => {
   it("검사가 공허하지 않다 — 섹션 노드 맵이 실제로 존재한다", () => {
