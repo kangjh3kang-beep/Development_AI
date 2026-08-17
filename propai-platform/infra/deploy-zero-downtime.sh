@@ -42,12 +42,40 @@ fi
 cd ~/Development_AI/propai-platform
 git pull origin main 2>&1 | tail -1
 echo "== build =="
+# ★이미지가 **어느 커밋인지** 스스로 말하게 한다 — 프론트 `safe-deploy.sh` 와 같은 형식·같은 이름.
+#   seq 는 제로패딩(정렬 가능성) · shortsha 는 커밋 식별.
+#   ★이 값이 빠지면 `Dockerfile.oracle` 이 빌드를 죽인다(조용히 "어느 커밋인지 모르는" 이미지가
+#     나가지 않는다). 배포 후 실행 컨테이너에서 이 값을 되읽어 대조하는 것이 아래 VERIFY-BUILD 다.
+APP_BUILD_ID="propai-v$(printf '%06d' "$(git rev-list --count HEAD)")-$(git rev-parse --short=8 HEAD)"
+export APP_BUILD_ID
+echo "APP_BUILD_ID = $APP_BUILD_ID"
+
+# ★이 정리는 **위 build-arg 가 만드는 부작용**을 같은 자리에서 봉합한다.
+#   `APP_BUILD_ID` 가 커밋마다 달라지므로 **매 배포가 새 이미지 ID** 를 만들고, 직전 세대는
+#   태그를 잃으면 dangling 으로 남는다. 158(프론트)은 이미 그 구조라 2026-08-17 에
+#   **dangling 89개 · 디스크 90% 로 배포가 죽었다**(`ABORT 디스크부족`). 168 도 같은 축적이 시작된다.
+#
+#   ★★`-a` 를 절대 붙이지 마라. `-a` 는 **참조되지 않는 태그 이미지까지** 지워
+#     `propai-api:prev`(롤백 자산)와 베이스 이미지를 날린다. 그러면 이 스크립트의 자동 롤백이
+#     **조용히 무효**가 된다 — 실패한 배포를 되돌릴 수단이 사라진 뒤에야 드러난다.
+#     dangling 한정이 안전한 근거: 태그가 붙은 이미지는 dangling 이 아니다(`:latest`·`:prev` 생존).
+#     2026-08-17 실측 — 삭제 전 보존대상(실행중 5 + 태그 4)과 dangling 목록의 **교집합 0**.
+#   ★과거 `docker system prune -af` 가 빌드를 죽인 사고가 있어 이 스크립트는 prune 을 피해 왔다.
+#     그 사고의 원인은 **`-af`(all+force)** 였지 dangling 정리가 아니다.
+echo "== dangling 이미지 정리(★-a 금지 — prev 롤백 자산 보호) =="
+sudo docker image prune -f 2>&1 | tail -1 || true
+
 # ★롤백 경로 확보(insight-loop 2026-07-29 / 2026-07-30 보정): 빌드 후 이미지 ID를 비교해
 #   **내용이 실제로 바뀐 경우에만** 직전 이미지를 prev 로 승계한다.
 #   무조건 태깅하면 같은 커밋 재배포 시 캐시로 동일 ID가 나와 prev==latest 가 되어
 #   롤백 자산이 조용히 무효화된다(2026-07-30 재배포에서 실측·직전 세대가 태그에서 밀려남).
+#   ★★2026-08-17 갱신 — **위 방어는 이제 거의 발동하지 않는다.** `APP_BUILD_ID` 가 커밋마다
+#     달라져 이미지 ID 도 항상 달라지므로 `OLD != NEW` 가 사실상 상시 참이 된다.
+#     그래도 비교를 **남겨 둔다**: ①`APP_BUILD_ID` 주입이 미래에 빠지면 방어가 되살아나야 하고
+#     ②같은 커밋을 재배포하면(`git pull` 이 no-op) 여전히 동일 ID 가 나온다.
+#     ※근거가 낡은 채 남으면 다음 사람이 그것을 재사용한다 — 그래서 조건이 바뀐 사실을 여기 적는다.
 OLD_IMG_ID=$(sudo docker image inspect propai-api:latest --format {{.Id}} 2>/dev/null || echo "")
-sudo docker build -f Dockerfile.oracle -t propai-api:latest . 2>&1 | tail -2
+sudo docker build -f Dockerfile.oracle --build-arg "APP_BUILD_ID=$APP_BUILD_ID" -t propai-api:latest . 2>&1 | tail -2
 NEW_IMG_ID=$(sudo docker image inspect propai-api:latest --format {{.Id}} 2>/dev/null || echo "")
 if [ -n "$OLD_IMG_ID" ] && [ "$OLD_IMG_ID" != "$NEW_IMG_ID" ]; then
   sudo docker image tag "$OLD_IMG_ID" propai-api:prev && echo "prev 승계: ${OLD_IMG_ID:0:20}"
@@ -71,6 +99,24 @@ sudo docker run -d --name "$NAME" --restart always --env-file .env -p ${NEW}:800
 echo "== 신앱 health 대기(8000 내부) =="
 ok=0; for i in $(seq 1 60); do if curl -sf -o /dev/null "http://localhost:${NEW}/health"; then ok=1; break; fi; sleep 3; done
 if [ "$ok" != "1" ]; then echo "!! 신앱 health 실패 — 배포중단(기존 유지)"; sudo docker rm -f "$NAME"; exit 1; fi
+# ★VERIFY-BUILD — **떠 있는 컨테이너가 방금 빌드한 그것인지** 확인한다(Caddy 전환 전).
+#   2026-08-17 실사고가 이 자리를 비워 두어 일어났다: 배포 후 확인을 **호스트 파일시스템의
+#   소스**로 했는데, 그 경로는 `git reset --hard` 로 늘 최신이라 **무엇을 배포하든 통과**한다.
+#   그래서 `#630`·`#653`·`#662` 가 반영된 줄 알았으나 **실서비스 컨테이너 안은 전부 0** 이었다.
+#   ★여기서는 **실행 중인 컨테이너에게 직접 묻는다**. 소스도, 저장소 상태도 근거로 쓰지 않는다.
+#   ★불일치면 전환하지 않는다 — 잘못된 이미지가 라이브로 올라간 뒤 되돌리는 것보다 싸다.
+echo "== VERIFY-BUILD(전환 전 · 실행 컨테이너에 직접 질의) =="
+RUNNING_ID=$(sudo docker exec "$NAME" printenv APP_BUILD_ID 2>/dev/null || echo "")
+if [ "$RUNNING_ID" != "$APP_BUILD_ID" ]; then
+  echo "!! 배포하려는 것과 떠 있는 것이 다르다 — 전환 중단(기존 앱 유지)"
+  echo "   빌드한 값 = [$APP_BUILD_ID]"
+  echo "   컨테이너  = [$RUNNING_ID]"
+  echo "   ※빈 값이면 이미지에 APP_BUILD_ID 가 없다(구 이미지 재사용/캐시 의심)."
+  sudo docker rm -f "$NAME"
+  exit 1
+fi
+echo "  OK 실행 컨테이너 = $RUNNING_ID"
+
 # ★field_audit 활성 게이트(insight-loop 2026-07-30) — Caddy 전환 전에 신규 컨테이너를 검사한다.
 #   #497 진단 엔드포인트로 자가검증 레이어의 무성(silent) 회귀를 배포 시점에 차단(fail-closed).
 #   introspect 전용이라 비용·부작용 0. 실패 시 신앱만 제거하고 기존 앱을 유지 → 무중단.

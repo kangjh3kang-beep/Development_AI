@@ -236,3 +236,91 @@ def test_두_배포_스크립트의_가드는_서로_반대여야_한다() -> No
     assert len({neg for _, neg in senses}) == 2, (
         "두 스크립트의 가드 방향이 같다 — 배타 잠금이 성립하지 않는다"
     )
+
+
+# ── 백엔드 빌드 식별자 · 배포 검증 (2026-08-17 추가) ────────────────────────
+#
+# 왜 있나 (실사고):
+#     배포 후 확인을 **호스트 파일시스템의 소스**로 했다. 그 경로는 `git reset --hard` 로
+#     늘 최신이라 **무엇을 배포하든 통과**한다. 그래서 `#630`·`#653`·`#662` 가 반영된 줄
+#     알았으나 **실서비스 컨테이너 안은 전부 0** 이었다.
+#
+#     프론트는 `#658` 이후 **sw 끝 sha** 로 배포 커밋을 읽을 수 있었는데 백엔드에는 그 수단이
+#     없었다 — 그 **비대칭**이 오보의 구조적 원인이다. 이제 이미지가 `APP_BUILD_ID` 를 들고
+#     있고, 배포 스크립트가 **실행 컨테이너에 직접 물어** 대조한다(Caddy 전환 **전**).
+
+DOCKERFILE_ORACLE = Path(__file__).resolve().parents[3] / "Dockerfile.oracle"
+
+
+def test_백엔드_이미지는_빌드식별자를_들고_있다() -> None:
+    """`Dockerfile.oracle` 이 `APP_BUILD_ID` 를 받아 런타임 ENV 로 박는다."""
+    assert DOCKERFILE_ORACLE.exists(), f"{DOCKERFILE_ORACLE} 없음 — 경로가 바뀌었으면 이 테스트도 고칠 것"
+    lines = _executable_lines(DOCKERFILE_ORACLE)
+    assert len(lines) > 15, f"실행 라인이 {len(lines)}줄뿐 — 대상을 못 읽었다"
+
+    assert any(re.match(r"ARG\s+APP_BUILD_ID", ln) for ln in lines), (
+        "Dockerfile.oracle 에 `ARG APP_BUILD_ID` 가 없다 — 이미지가 어느 커밋인지 말할 수 없다"
+    )
+    assert any(re.match(r"ENV\s+APP_BUILD_ID=", ln) for ln in lines), (
+        "`ENV APP_BUILD_ID=` 가 없다 — build-arg 는 런타임에 남지 않으므로 "
+        "`docker exec … printenv` 로 되읽을 수 없다"
+    )
+    # ★빈 값으로 조용히 나가면 검증이 "무엇이 떴는지 모른다"로 되돌아간다.
+    assert any('-z "${APP_BUILD_ID}"' in ln for ln in lines), (
+        "APP_BUILD_ID 가 비었을 때 빌드를 죽이는 fail-closed 검사가 없다"
+    )
+
+
+def test_배포는_실행컨테이너에_직접_물어_대조한다() -> None:
+    """`docker exec … printenv APP_BUILD_ID` 로 **떠 있는 것**을 확인한다.
+
+    ★소스·저장소 상태를 근거로 쓰면 안 된다 — 그게 이 사고의 원인이었다.
+    """
+    lines = _executable_lines(ZERO_DOWNTIME)
+    verify = [ln for ln in lines if "printenv APP_BUILD_ID" in ln]
+    assert verify, (
+        "deploy-zero-downtime.sh 가 실행 컨테이너에 APP_BUILD_ID 를 묻지 않는다. "
+        "호스트 소스 grep 은 `git reset --hard` 때문에 무엇을 배포하든 통과한다."
+    )
+    assert any("docker exec" in ln for ln in verify), (
+        "printenv 를 **컨테이너 안에서** 실행해야 한다(`docker exec`)"
+    )
+    assert any('--build-arg' in ln and "APP_BUILD_ID" in ln for ln in lines), (
+        "빌드에 `--build-arg APP_BUILD_ID` 를 넘기지 않는다 — 이미지에 값이 안 박힌다"
+    )
+
+
+def test_이미지_정리는_dangling_한정이어야_한다() -> None:
+    """``docker image prune`` 에 ``-a`` 를 붙이면 **롤백 자산이 사라진다**.
+
+    ★`-a` 는 참조되지 않는 **태그 이미지까지** 지운다 → `propai-api:prev` 소멸.
+      그러면 이 스크립트의 자동 롤백이 **조용히 무효**가 되고, 실패한 배포를 되돌릴 수단이
+      없어진 뒤에야 드러난다. dangling 한정은 태그 있는 이미지를 건드리지 않는다.
+    """
+    # ★prune 을 **실행하는** 줄만 본다. `safe-deploy.sh` 에는
+    #   `pgrep -f "docker system prune|builder prune"` 처럼 **진행 중인지 감지**하는 줄이 있는데,
+    #   그것을 위반으로 신고하면 정상 코드를 막는다(첫 판에서 실제로 그렇게 빨개졌다 —
+    #   이 저장소가 반복해서 데인 "가드의 위양성도 결함이다").
+    executed = 0
+    for script in (ZERO_DOWNTIME, SAFE_DEPLOY):
+        for ln in _executable_lines(script):
+            if not re.search(r"(?:^|[|&;]\s*)(?:sudo\s+)?docker\s+\w+\s+prune\b", ln):
+                continue
+            if re.search(r"\b(pgrep|pkill|ps)\b", ln):
+                continue  # 감지·조회 줄은 대상이 아니다
+            executed += 1
+            assert not re.search(r"prune\b[^|]*\s(-\w*a\w*|--all)\b", ln), (
+                f"{script.name}: prune 에 -a/--all 이 붙어 있다 → {ln}\n"
+                "롤백 자산(propai-api:prev)과 베이스 이미지가 삭제된다. dangling 한정으로 둘 것."
+            )
+            assert "system prune" not in ln, (
+                f"{script.name}: `docker system prune` 은 빌드 캐시·네트워크까지 건드린다"
+                "(과거 빌드를 죽인 사고). `docker image prune -f` 만 쓸 것."
+            )
+
+    # ★공허한 초록 방지: prune 실행 줄이 0개면 위 단언은 한 번도 돌지 않는다.
+    #   이 PR 이 `deploy-zero-downtime.sh` 에 dangling 정리를 넣었으므로 최소 1개여야 한다.
+    assert executed >= 1, (
+        "prune 실행 줄을 하나도 찾지 못했다 — 정리가 사라졌거나 패턴이 대상을 놓쳤다. "
+        "둘 다 이 테스트가 잡아야 할 상태다."
+    )
