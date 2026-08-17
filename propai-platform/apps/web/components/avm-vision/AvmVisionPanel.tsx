@@ -12,10 +12,8 @@ import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { useCallback, useState } from "react";
 import { AlertTriangle, FlaskConical, Map, Satellite } from "lucide-react";
 import { Card, CardContent } from "@propai/ui";
-import { apiClient } from "@/lib/api-client";
+import { apiClient, apiV1BaseUrl } from "@/lib/api-client";
 import type { AvmVisionResult, RoadFrontage } from "./types";
-
-const VWORLD_API_KEY = process.env.NEXT_PUBLIC_VWORLD_API_KEY ?? "";
 
 const eok = (v: number | null | undefined) =>
   v == null ? "—" : `${(v / 1e8).toLocaleString(undefined, { maximumFractionDigits: 2 })}억`;
@@ -26,33 +24,35 @@ const ROAD_LABEL: Record<RoadFrontage, string> = { good: "양호", normal: "보�
 const ROAD_COLOR: Record<RoadFrontage, string> = { good: "#10b981", normal: "#f59e0b", poor: "#ef4444" };
 
 /**
- * VWorld 항공영상 썸네일 URL.
+ * 항공영상 썸네일 URL — **이미 있는 백엔드 통로**를 쓴다.
  *
- * ★키 이원 계약(PR#329 R1 리뷰 HIGH 반영 — 정직 명시, `lib/vworld-client.ts` 상단
- *   독스트링과 동일 계약): 여기서 쓰는 `NEXT_PUBLIC_VWORLD_API_KEY`는 공개(도메인
- *   제한) 키 — 브라우저 노출을 전제로 발급되며 VWorld 콘솔의 Referer/도메인
- *   화이트리스트가 보호 기제다. 사통맵 타일 프록시가 쓰는 서버 전용 키
- *   (`VWORLD_API_KEY`)와는 별개 계약이며 섞이지 않는다.
- * getmap 엔드포인트는 Referer 헤더를 요구하므로 Next.js 프록시(/api/vworld/data?service=image)를 경유한다.
- * (브라우저 <img>는 Referer를 설정할 수 없어 직접 호출 시 403/빈응답 위험)
+ * ★2026-08-17 근본수정: 종전엔 `/api/vworld/data?service=image&key=<공개키>` 를 불렀는데
+ *   그 경로는 **프로덕션에서 404** 다. `4t8t.net/api/*` 는 nginx 가 백엔드(FastAPI)로
+ *   보내므로 `apps/web/app/api/**` 의 Next 라우트는 **도달 자체가 불가**했다
+ *   (실측: `/api/vworld/data`·`/api/health` 404 · 대조군 `/tiles/vworld/*` 200).
+ *   살아 있는 지적/배경 타일이 `/tiles/*`(‎`/api/` 밖)에 있어서 그것만 멀쩡했던 것이다.
+ *
+ * ★그리고 **새 프록시를 만들지 않는다** — `GET /api/v1/digital-twin/aerial-image` 가
+ *   이미 같은 일을 더 안전하게 한다(키를 서버측에서 주입 · zoom/size 를 Query 바운드로
+ *   클램프 · 응답을 PNG 매직넘버로 검증). 신설하면 더 약한 **두 번째 문**이 생긴다.
+ *   실측: `4t8t.net/api/v1/digital-twin/aerial-image?...` → 200 image/png.
+ *
+ * ★키를 더 이상 참조하지 않는다. 종전 독스트링은 이 키를 "공개(도메인 제한) 키이며
+ *   서버 전용 키와 섞이지 않는다"고 단언했으나, 실측 결과 `.env` 의
+ *   `VWORLD_API_KEY` 와 `NEXT_PUBLIC_VWORLD_API_KEY` 가 **같은 값**이었다(2계약 붕괴).
+ *   서버측 주입 통로로 옮기면 이 컴포넌트는 키 계약과 무관해진다.
  */
-function thumbUrl(center: [number, number], zoom: number): string | null {
-  if (!VWORLD_API_KEY) return null;
+function thumbUrl(center: [number, number], zoom: number): string {
   const [lon, lat] = center;
+  // 백엔드도 ge/le 로 클램프하지만, 상류로 나가는 값을 여기서도 좁혀 둔다(이중 가드).
   const z = Math.max(7, Math.min(18, Math.round(zoom)));
   const qs = new URLSearchParams({
-    service: "image",
-    request: "getmap",
-    basemap: "PHOTO",
-    crs: "EPSG:4326",
-    center: `${lon},${lat}`,
+    lat: String(lat),
+    lon: String(lon),
     zoom: String(z),
-    size: "512,512",
-    format: "png",
-    version: "2.0",
-    key: VWORLD_API_KEY,
+    size: "512",
   });
-  return `/api/vworld/data?${qs.toString()}`;
+  return `${apiV1BaseUrl()}/digital-twin/aerial-image?${qs.toString()}`;
 }
 
 function FeatureBar({ label, value, color }: { label: string; value: number; color: string }) {
@@ -208,13 +208,24 @@ export function AvmVisionPanel({
                 ) : (
                   <div className="flex aspect-square w-full flex-col items-center justify-center gap-2 p-6 text-center">
                     <Map className="size-8 text-[var(--text-tertiary)]" aria-hidden />
+                    {/* ★2026-08-17 정직표기: 종전엔 로드 '실패'와 '미취득'을 뭉뚱그려
+                        "썸네일 직접 표시는 생략되고" 라고 띄웠다. 그 문구는 **의도적 사양**처럼
+                        읽혀서, 실제로는 URL 이 404 라 <img> 의 onError 가 터진 것인데도
+                        아무도 결함으로 보지 않았다(무목업·정직표기 원칙 위반).
+                        이제 세 상태를 가른다: 미취득 / 취득했으나 로드 실패 / 정상. */}
                     <p className="text-xs font-bold text-[var(--text-secondary)]">
-                      {img?.available ? "영상 분석 완료(서버측)" : "항공영상 미취득"}
+                      {!img?.available
+                        ? "항공영상 미취득"
+                        : imgOk
+                          ? "영상 분석 완료(서버측)"
+                          : "항공영상 표시 실패"}
                     </p>
                     <p className="text-[11px] text-[var(--text-hint)]">
-                      {img?.available
-                        ? "썸네일 직접 표시는 생략되고 특징만 표시됩니다."
-                        : "공간컨텍스트 추론(프록시)으로 보정합니다."}
+                      {!img?.available
+                        ? "공간컨텍스트 추론(프록시)으로 보정합니다."
+                        : imgOk
+                          ? "썸네일을 불러오는 중입니다."
+                          : "서버 분석은 정상 완료됐고 썸네일 이미지 요청만 실패했습니다 — 아래 특징 수치는 유효합니다."}
                     </p>
                   </div>
                 )}
