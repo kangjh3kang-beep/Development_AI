@@ -43,13 +43,25 @@ vi.mock("@/lib/api-client", async (importOriginal) => {
   };
 });
 
-/** 렌더된 요소들의 class 에서 `z-[N]` 을 전부 뽑는다(변형자 접두 허용). */
+/**
+ * 렌더된 요소들의 z 를 **전수** 뽑는다 — class 의 `z-[N]`(변형자 접두 허용) **와 인라인 style**.
+ *
+ * ★2026-08-17 — 인라인 style 을 추가했다. 종전에는 class 리터럴만 봐서, **SSOT 가 규정한
+ *   사용법을 따르는 오버레이에 오히려 눈이 멀었다.** `satong-map-z.ts` 는
+ *   *"Tailwind v4 는 `z-[${동적값}]` 을 생성하지 못하므로 상수를 인라인 스타일로 흘려보낸다"*
+ *   고 규정한다 — 즉 **계약을 지킬수록 이 수집기에서 사라졌다.**
+ *   실제로 레일·배지행을 `SATONG_UI_Z` 상수로 결속하자 수집이 **0건**이 되어 아래 공허 진리
+ *   가드가 발동했다. 그 가드가 없었으면 "위반 0"으로 **조용히 통과**했을 것이다.
+ */
 function renderedZValues(root: ParentNode): number[] {
   const out: number[] = [];
-  root.querySelectorAll<HTMLElement>("[class]").forEach((el) => {
+  root.querySelectorAll<HTMLElement>("[class], [style]").forEach((el) => {
     for (const m of (el.className ?? "").toString().matchAll(/(?:^|\s)(?:[a-z0-9-]+:)*z-\[(\d+)\]/g)) {
       out.push(Number(m[1]));
     }
+    const raw = el.style?.zIndex ?? "";
+    const inline = Number(raw);
+    if (raw !== "" && Number.isFinite(inline)) out.push(inline);
   });
   return out;
 }
