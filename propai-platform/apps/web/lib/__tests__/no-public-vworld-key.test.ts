@@ -16,7 +16,7 @@
  * 그래서 이 락은 env 값이 아니라 **배관의 존재**를 본다 — 값은 환경마다 다르지만
  * 배관은 저장소에 있고, 배관이 없으면 값이 무엇이든 샐 수 없다.
  */
-import { readFileSync, existsSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -88,8 +88,6 @@ describe("VWorld 공개키 배관이 되살아나지 않는다", () => {
     const webRoot = join(__dirname, "..", "..");
     const stack: string[] = [join(webRoot, "app"), join(webRoot, "components"), join(webRoot, "lib")];
     const readers: string[] = [];
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { readdirSync, statSync } = require("node:fs") as typeof import("node:fs");
     while (stack.length) {
       const dir = stack.pop() as string;
       let entries: string[] = [];
