@@ -40,10 +40,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install pnpm
-        uses: pnpm/action-setup@v3
-        with:
-          version: 9
+      # ★pnpm 은 외부 액션이 아니라 **corepack** 으로 켠다(2026-08-18).
+      #   `pnpm/action-setup` 은 codeload 에서 tar 를 받는데 그 다운로드가 **429(Too Many
+      #   Requests)** 로 실패해 `Set up job` 단계에서 죽었다 — 같은 날 PR 3건(#684·#687·#688)이
+      #   **코드가 검사되지도 못한 채** 빨갰다(실측: 실패 job 로그 37줄 · 429 4건 ·
+      #   tsc/eslint/vitest 진입 흔적 **0**). corepack 은 Node 에 동봉돼 있고 버전은
+      #   `package.json` 의 `packageManager: pnpm@9.0.0` 이 정한다 — 네트워크 의존이 사라진다.
+      # ★형제 패턴: `propai-platform/Dockerfile.web:4` 가 이미 `corepack enable` 을 쓴다.
+      # ★★setup-node **앞**에 둔다 — 그 액션의 `cache: pnpm` 이 셋업 중 `pnpm store path` 를
+      #   호출하므로 pnpm 이 그 시점에 PATH 에 없으면 **셋업 자체가 죽는다**.
+      - name: Enable pnpm (corepack)
+        run: corepack enable
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
