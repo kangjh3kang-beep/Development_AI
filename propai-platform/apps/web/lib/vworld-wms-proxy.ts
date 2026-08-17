@@ -269,6 +269,15 @@ export const VWORLD_DEGRADED_HEADER = "X-VWorld-Degraded";
  *   회복이 지연되지 않을 만큼만 잡는다.
  */
 export function degradedTile(reason: string): Response {
+  // ★★관측점 상실을 상쇄한다(통합자 지적 2026-08-18).
+  //   강등을 200 으로 주면 **nginx 접근로그에서 사라진다** — 2026-08-16 실사용 장애가
+  //   보였던 이유가 정확히 "5xx 라서 로그에 남았다" 였다. UX(회색지도 제거)를 택한 대가로
+  //   그 관측점을 잃는다. 그래서 **서버 로그에 안정된 표식**을 남긴다:
+  //   `[vworld-degraded]` 는 grep 앵커이고 reason 이 어느 경로인지 말한다.
+  //   ※이것은 nginx 로그의 완전한 대체가 아니다(집계·시계열이 아니다). 지속 관측은
+  //     api 쪽 `platform_events` 나 접근로그 설정이 담당해야 하며 그쪽은 이 PR 범위 밖이다.
+  //     여기 적어 두는 이유는 **대가를 치렀다는 사실을 지우지 않기 위해서**다.
+  console.warn(`[vworld-degraded] ${reason}`);
   return new Response(TRANSPARENT_PNG, {
     status: 200,
     headers: {

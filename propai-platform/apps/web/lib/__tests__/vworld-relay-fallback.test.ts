@@ -90,13 +90,20 @@ describe("상류 도달 불가 → api 릴레이", () => {
     expect(resp.headers.get("X-VWorld-Breaker")).toBeNull();
   });
 
-  it("릴레이 오리진이 없으면 기존 정직 실패를 유지한다(무음 성공 금지)", async () => {
+  it("릴레이 오리진이 없어도 **무음 성공은 금지** — 강등 사유를 다르게 말한다", async () => {
     delete process.env.NEXT_PUBLIC_API_BASE_URL;
     installSplitFetch("throw");
-    const { proxyVWorldWms } = await import("@/lib/vworld-wms-proxy");
+    const { proxyVWorldWms, VWORLD_DEGRADED_HEADER } = await import("@/lib/vworld-wms-proxy");
 
     const resp = await proxyVWorldWms(wmsParams());
-    expect(resp.status).toBe(502);
+
+    // ★★2026-08-18: 종전 502 → 강등(투명타일). 이 케이스가 지키는 것은 **"무음 성공 금지"** 이고
+    //   그것은 그대로다 — 다만 "실패했다"를 status 가 아니라 **헤더**로 말한다.
+    //   ★그리고 사유가 **다른 값**이어야 한다: 오리진 없음은 **설정 결함**이라 처방이 다르다
+    //     (릴레이가 있는데 못 닿은 것과 혼동되면 다음 사람이 엉뚱한 곳을 본다).
+    //     두 모집단이 같은 문자열을 내면 이 락은 아무것도 구분하지 못한다.
+    expect(resp.status).toBe(200);
+    expect(resp.headers.get(VWORLD_DEGRADED_HEADER)).toContain("no-relay-origin");
   });
 });
 
@@ -115,19 +122,26 @@ describe("릴레이도 끊겼을 때 — 원인을 지어내지 않는다", () =
     }));
   }
 
-  it("★키가 멀쩡한데 '키 미설정'이라고 단정하지 않는다", async () => {
+  it("★키가 멀쩡한데 '키 미설정'이라고 단정하지 않는다 (근거를 강등 헤더로 이관)", async () => {
     installAllDeadFetch();
-    const { proxyVWorldWms } = await import("@/lib/vworld-wms-proxy");
+    const { proxyVWorldWms, VWORLD_DEGRADED_HEADER } = await import("@/lib/vworld-wms-proxy");
 
     const resp = await proxyVWorldWms(wmsParams());
-    const body = (await resp.json()) as { error: string };
 
-    expect(resp.status).toBe(503);
+    // ★★2026-08-18 **매체 변경** — 이 케이스가 지키는 것은 "원인을 지어내지 않는다"(#677)이고
+    //   그 원칙은 그대로다. 바뀐 것은 **어디에 적히는가**다: JSON 본문 → 강등 헤더.
+    //   응답이 투명 PNG 가 되었으므로 `res.json()` 은 PNG 바이트를 파싱하려다 죽는다.
+    //   ※이 케이스를 **지우면 안 된다** — 지우는 순간 "강등 시 무엇을 말하는가"가 무잠금이 되고,
+    //     옛 문구("키 미설정")가 되살아나도 아무도 모른다.
+    const reason = resp.headers.get(VWORLD_DEGRADED_HEADER) ?? "";
+
+    expect(resp.status, "회색 지도를 만들지 않는다").toBe(200);
+    expect(resp.headers.get("content-type")).toContain("image/png");
     // 키는 이 테스트에서 설정돼 있다(beforeEach) — 키를 원인으로 지목하면 거짓이다.
     expect(process.env.VWORLD_API_KEY, "전제: 키는 설정돼 있다").toBeTruthy();
-    expect(body.error, "키가 정상인데 키를 원인으로 단정했다").not.toContain("VWORLD_API_KEY");
+    expect(reason, "키가 정상인데 키를 원인으로 단정했다").not.toContain("VWORLD_API_KEY");
     // 어느 경로가 끊겼는지 식별 가능해야 한다(무엇이 실패했는지 말한다).
-    expect(body.error).toContain("relay");
+    expect(reason, "강등 사유가 비었다 — 무음 강등이다").toContain("relay");
   });
 
   it("대조군: 키가 **정말** 없고 릴레이 오리진도 없으면 키를 원인으로 말해도 참이다", async () => {
