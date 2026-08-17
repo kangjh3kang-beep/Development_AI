@@ -158,8 +158,19 @@ export async function relayViaApi(
     //   ※"VWorld 에 IP 차단 해제를 요청한다"는 **2026-07-29 에 이미 기각된 오진**이다
     //     (VWorld 에 IP 등록 기능 자체가 없다). 그 선택지를 되살리지 마라.
     //   → 관측된 사실만 말하고, 어느 경로가 끊겼는지 proxyTag 로 식별 가능하게 남긴다.
-    // ★음성 캐시를 붙인다 — no-store 로 돌려주면 팬할 때마다 전 타일이 168 을 때린다.
-    return jsonError(`VWorld api relay unreachable (${proxyTag})`, 503, NEGATIVE_CACHE_SEC);
+    // ★★2026-08-18 강등 — 회색 지도 대신 **투명타일 + 강등 헤더**.
+    //   실장애(2026-08-16 17:58~17:59)에서 사용자는 이유 없이 회색 지도를 봤다. 근본은
+    //   릴레이 목적지(168)의 **상류가 2분간 죽은 것**이었고(그쪽 5xx 183건, 배포 없이 회복)
+    //   릴레이로는 우회할 대상이 없다 — 그때 할 수 있는 최선은 **정직하게 알리는 것**이다.
+    //
+    //   ★그런데 투명타일만 주면 `tileerror` 가 안 떠서 **배너조차 안 뜨는 무음 강등**이 된다.
+    //     이 저장소가 세운 "무음 회색타일 금지" 계약을 반대편으로 깨는 것이다.
+    //     그래서 강등 사유를 **헤더로 실어** 진단 프로브(fetch — 헤더를 읽을 수 있다)가
+    //     배너를 띄우게 한다. `<img>` 는 헤더를 못 읽지만 지도는 안 회색이 되고,
+    //     프로브는 강등을 정확히 본다 — 둘 다 만족한다.
+    //   ★`X-VWorld-Breaker` 와 **다른 헤더**를 쓴다: 차단기 열림(상류 보호)과
+    //     릴레이 도달 불가(대안 없음)는 사용자에게 다른 사실이다.
+    return degradedTile(`relay-unreachable:${proxyTag}`);
   }
 }
 
@@ -236,6 +247,35 @@ function transparentTile(): Response {
   return new Response(TRANSPARENT_PNG, {
     status: 200,
     headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=3600" },
+  });
+}
+
+/**
+ * 강등 사유를 실은 헤더 이름 — 진단 프로브가 이걸 보고 정직 배너를 띄운다.
+ * ★`<img>` 는 헤더를 못 읽는다. 그래서 지도는 회색이 되지 않고(투명타일),
+ *   헤더를 읽을 수 있는 **fetch 프로브**만 강등을 본다. 둘의 역할이 다르다.
+ */
+export const VWORLD_DEGRADED_HEADER = "X-VWorld-Degraded";
+
+/**
+ * 정직 강등 — 타일 자리는 **투명**으로 비우고, 강등 사실은 **헤더로 관측 가능**하게 남긴다.
+ *
+ * ★왜 503 JSON 이 아닌가: 503 이면 Leaflet 이 tileerror 로만 처리해 **지도 전체가 회색**이 된다.
+ *   2026-08-16 실장애에서 사용자가 본 것이 그것이고, 이유를 알 수 없었다.
+ * ★왜 그냥 투명타일이 아닌가: 그러면 `tileerror` 가 안 떠서 **배너조차 안 뜨는 무음 강등**이 된다.
+ *   이 저장소의 "무음 회색타일 금지" 계약을 반대편으로 깨는 것이다.
+ *   → 투명타일 **+ 헤더**. 지도는 살고, 강등은 숨지 않는다.
+ * ★음성 캐시를 짧게 붙인다 — 강등 상태에서 팬/줌하면 전 타일이 재요청되는 폭주를 끊되,
+ *   회복이 지연되지 않을 만큼만 잡는다.
+ */
+export function degradedTile(reason: string): Response {
+  return new Response(TRANSPARENT_PNG, {
+    status: 200,
+    headers: {
+      "Content-Type": "image/png",
+      "Cache-Control": `public, max-age=${NEGATIVE_CACHE_SEC}`,
+      [VWORLD_DEGRADED_HEADER]: reason,
+    },
   });
 }
 
@@ -417,6 +457,10 @@ export async function proxyVWorldWms(incoming: URLSearchParams): Promise<Respons
         RELAY_BREAKER_KEY,
       );
     }
-    return jsonError(`VWorld WMS proxy failed: ${String(error)}`, 502);
+    // ★릴레이 오리진조차 없다 = 대안이 아예 없다. 그래도 **사용자에게는 회색 지도가 아니라
+    //   정직 강등**을 준다(위 degradedTile 독스트링 참조). 운영자용 시끄러움은 바로 위
+    //   `console.warn/error` 가 담당한다 — 화면을 회색으로 만드는 것이 관측성이 아니다.
+    //   ★사유를 구분해 남긴다: 오리진 미설정은 **설정 결함**이라 처방이 다르다.
+    return degradedTile("no-relay-origin:vworld-wms-proxy");
   }
 }
