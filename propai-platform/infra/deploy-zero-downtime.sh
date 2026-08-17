@@ -111,7 +111,9 @@ if [ "$RUNNING_ID" != "$APP_BUILD_ID" ]; then
   echo "!! 배포하려는 것과 떠 있는 것이 다르다 — 전환 중단(기존 앱 유지)"
   echo "   빌드한 값 = [$APP_BUILD_ID]"
   echo "   컨테이너  = [$RUNNING_ID]"
-  echo "   ※빈 값이면 이미지에 APP_BUILD_ID 가 없다(구 이미지 재사용/캐시 의심)."
+  echo "   ※빈 값이면 이미지에 APP_BUILD_ID 가 없다 = **이 빌드의 산출물이 아니다**."
+  echo "     정상 빌드는 빈 값을 만들 수 없다(Dockerfile.oracle 이 fail-closed 로 죽인다)."
+  echo "     따라서 빈 값은 '옛 propai-api:latest 를 그대로 run 했다'는 뜻이다 — 빌드 로그를 보라."
   sudo docker rm -f "$NAME"
   exit 1
 fi

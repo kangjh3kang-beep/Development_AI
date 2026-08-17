@@ -324,3 +324,86 @@ def test_이미지_정리는_dangling_한정이어야_한다() -> None:
         "prune 실행 줄을 하나도 찾지 못했다 — 정리가 사라졌거나 패턴이 대상을 놓쳤다. "
         "둘 다 이 테스트가 잡아야 할 상태다."
     )
+
+
+def test_빌드식별자는_의존성설치_뒤에_있어야_한다() -> None:
+    """``ARG APP_BUILD_ID`` 가 설치 **앞**에 오면 매 배포가 의존성을 재빌드한다.
+
+    ``ARG`` 값이 바뀌면 **그 이후 모든 레이어의 캐시가 무효화**된다. `APP_BUILD_ID` 는 커밋마다
+    바뀌므로, 설치 앞에 두면 `apt-get`·`pip install`(2.4GB 이미지의 대부분)이 매번 다시 돌고
+    **dangling 축적도 함께 커진다**.
+
+    ★`Dockerfile.web` 이 `pnpm install` **뒤**에 두는 것과 같은 이유다 — 그 위치가 **계약**이고
+      우연이 아니라는 것을 여기서 잠근다(2026-08-17 통합자 리뷰에서 제기된 리스크).
+    """
+    lines = DOCKERFILE_ORACLE.read_text(encoding="utf-8").splitlines()
+
+    def first(pattern: str) -> int:
+        for i, ln in enumerate(lines):
+            if re.match(pattern, ln.strip()):
+                return i
+        return -1
+
+    pip = first(r"RUN pip install")
+    apt = first(r"RUN apt-get")
+    arg = first(r"ARG APP_BUILD_ID")
+
+    # ★공허한 초록 방지: 세 앵커가 모두 실제로 있어야 비교가 의미를 갖는다.
+    assert pip >= 0, "`RUN pip install` 을 못 찾았다 — Dockerfile 구조가 바뀌었으면 이 테스트도 고칠 것"
+    assert apt >= 0, "`RUN apt-get` 을 못 찾았다"
+    assert arg >= 0, "`ARG APP_BUILD_ID` 가 없다"
+
+    assert arg > pip, (
+        f"ARG APP_BUILD_ID({arg + 1}줄)가 `RUN pip install`({pip + 1}줄) **앞**에 있다. "
+        "커밋마다 값이 바뀌므로 의존성 설치 캐시가 매 배포 무효화된다 — 설치 뒤로 옮길 것."
+    )
+    assert arg > apt, (
+        f"ARG APP_BUILD_ID({arg + 1}줄)가 `RUN apt-get`({apt + 1}줄) **앞**에 있다."
+    )
+
+
+# ── 배포 자산이 **실행 가능한 상태인가** (2026-08-17 추가) ──────────────────
+#
+# 왜 있나 (실사고 — 이 락 자체의 구멍이었다):
+#     머지 충돌이 `deploy-zero-downtime.sh` 에 `<<<<<<<`/`>>>>>>>` 마커를 남겼는데
+#     **위의 모든 계약 테스트가 그대로 통과했다**(13 passed). 마커가 남은 스크립트는
+#     실행하면 문법 오류로 죽는다 — 즉 락이 "가드가 있는가"만 보고
+#     **"이 파일이 실행될 수 있는가"** 를 보지 않았다.
+#
+#     ★배포 자산은 그 자체가 실행물이다. 내용 계약을 아무리 잠가도
+#       **파일이 깨져 있으면 배포가 시작조차 못 한다** — 그게 더 큰 사고다.
+
+_SHELL_ASSETS = [SAFE_DEPLOY, ROLLBACK_WEB, ZERO_DOWNTIME]
+
+
+@pytest.mark.parametrize("script", _SHELL_ASSETS, ids=lambda p: p.name)
+def test_배포_스크립트에_머지충돌_마커가_없다(script: Path) -> None:
+    """`<<<<<<<`·`=======`·`>>>>>>>` 가 남으면 실행 즉시 문법 오류로 죽는다."""
+    raw = script.read_text(encoding="utf-8")
+    assert len(raw) > 500, f"{script.name}: 내용이 너무 짧다({len(raw)}자) — 대상을 못 읽었다"
+    offenders = [
+        f"{i}: {ln[:40]}"
+        for i, ln in enumerate(raw.splitlines(), 1)
+        if ln.startswith(("<<<<<<<", ">>>>>>>")) or ln.rstrip() == "======="
+    ]
+    assert not offenders, f"{script.name}: 머지 충돌 마커가 남아 있다 → {offenders}"
+
+
+@pytest.mark.parametrize("script", _SHELL_ASSETS, ids=lambda p: p.name)
+def test_배포_스크립트가_문법적으로_유효하다(script: Path) -> None:
+    """``bash -n`` 으로 파싱된다 — 배포 자산은 그 자체가 실행물이다.
+
+    ★내용 계약(가드 존재·종료코드·prune 옵션)을 다 잠가도 **파일이 깨져 있으면**
+      배포가 시작조차 못 한다. 실제로 충돌 마커가 남은 채 위 13개 테스트가 통과했다.
+    """
+    import shutil
+    import subprocess
+
+    bash = shutil.which("bash")
+    assert bash, "bash 를 찾을 수 없다 — 이 검사는 bash 가 있는 환경을 전제한다"
+    proc = subprocess.run(  # noqa: S603
+        [bash, "-n", str(script)], capture_output=True, text=True, timeout=30
+    )
+    assert proc.returncode == 0, (
+        f"{script.name}: bash -n 실패(exit {proc.returncode})\n{proc.stderr.strip()[:500]}"
+    )
