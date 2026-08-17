@@ -360,3 +360,50 @@ def test_빌드식별자는_의존성설치_뒤에_있어야_한다() -> None:
     assert arg > apt, (
         f"ARG APP_BUILD_ID({arg + 1}줄)가 `RUN apt-get`({apt + 1}줄) **앞**에 있다."
     )
+
+
+# ── 배포 자산이 **실행 가능한 상태인가** (2026-08-17 추가) ──────────────────
+#
+# 왜 있나 (실사고 — 이 락 자체의 구멍이었다):
+#     머지 충돌이 `deploy-zero-downtime.sh` 에 `<<<<<<<`/`>>>>>>>` 마커를 남겼는데
+#     **위의 모든 계약 테스트가 그대로 통과했다**(13 passed). 마커가 남은 스크립트는
+#     실행하면 문법 오류로 죽는다 — 즉 락이 "가드가 있는가"만 보고
+#     **"이 파일이 실행될 수 있는가"** 를 보지 않았다.
+#
+#     ★배포 자산은 그 자체가 실행물이다. 내용 계약을 아무리 잠가도
+#       **파일이 깨져 있으면 배포가 시작조차 못 한다** — 그게 더 큰 사고다.
+
+_SHELL_ASSETS = [SAFE_DEPLOY, ROLLBACK_WEB, ZERO_DOWNTIME]
+
+
+@pytest.mark.parametrize("script", _SHELL_ASSETS, ids=lambda p: p.name)
+def test_배포_스크립트에_머지충돌_마커가_없다(script: Path) -> None:
+    """`<<<<<<<`·`=======`·`>>>>>>>` 가 남으면 실행 즉시 문법 오류로 죽는다."""
+    raw = script.read_text(encoding="utf-8")
+    assert len(raw) > 500, f"{script.name}: 내용이 너무 짧다({len(raw)}자) — 대상을 못 읽었다"
+    offenders = [
+        f"{i}: {ln[:40]}"
+        for i, ln in enumerate(raw.splitlines(), 1)
+        if ln.startswith(("<<<<<<<", ">>>>>>>")) or ln.rstrip() == "======="
+    ]
+    assert not offenders, f"{script.name}: 머지 충돌 마커가 남아 있다 → {offenders}"
+
+
+@pytest.mark.parametrize("script", _SHELL_ASSETS, ids=lambda p: p.name)
+def test_배포_스크립트가_문법적으로_유효하다(script: Path) -> None:
+    """``bash -n`` 으로 파싱된다 — 배포 자산은 그 자체가 실행물이다.
+
+    ★내용 계약(가드 존재·종료코드·prune 옵션)을 다 잠가도 **파일이 깨져 있으면**
+      배포가 시작조차 못 한다. 실제로 충돌 마커가 남은 채 위 13개 테스트가 통과했다.
+    """
+    import shutil
+    import subprocess
+
+    bash = shutil.which("bash")
+    assert bash, "bash 를 찾을 수 없다 — 이 검사는 bash 가 있는 환경을 전제한다"
+    proc = subprocess.run(  # noqa: S603
+        [bash, "-n", str(script)], capture_output=True, text=True, timeout=30
+    )
+    assert proc.returncode == 0, (
+        f"{script.name}: bash -n 실패(exit {proc.returncode})\n{proc.stderr.strip()[:500]}"
+    )
