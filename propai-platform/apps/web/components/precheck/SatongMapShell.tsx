@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { SATONG_POPUP_YIELD } from "@/lib/satong-map-z";
+import { SATONG_POPUP_YIELD, SATONG_UI_Z } from "@/lib/satong-map-z";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
@@ -2742,7 +2742,10 @@ export function SatongMapShell({
            wrapperClass("relative"))에 `pointer-events-none`이 하나도 없기 때문이다.
            그래서 `none`을 **직접** 건다. 인터랙티브 자식이 생기면 그 자식에만 `auto`. */
         {...{ [SATONG_POPUP_YIELD.passiveAttr]: SATONG_POPUP_YIELD.passiveValue }}
-        className="pointer-events-none absolute left-4 top-4 z-[380] flex flex-wrap items-center gap-2"
+        /* ★z 는 SSOT 상수를 **인라인 스타일**로 흘려보낸다 — Tailwind v4 는 런타임 문자열
+           클래스(`z-[${값}]`)를 생성하지 못한다(satong-map-z.ts 사용 규칙). */
+        style={{ zIndex: SATONG_UI_Z.badgeRow }}
+        className="pointer-events-none absolute left-4 top-4 flex flex-wrap items-center gap-2"
       >
         {/* ★UX A3: 비인터랙티브 배지(허위 어포던스 제거) — 이전엔 <button>이었으나 onClick이
             event.stopPropagation() 뿐이라 클릭 가능해 보이는데 아무 동작도 없었다. */}
@@ -2820,7 +2823,11 @@ export function SatongMapShell({
         //   가용고 내 세로 스크롤로 전 버튼 도달을 보장한다(hover 확장은 폭만 넓히는
         //   보조 어포던스로 격하 — 가시성 자체는 더 이상 hover에 의존하지 않는다).
         {...{ [SATONG_POPUP_YIELD.passiveAttr]: SATONG_POPUP_YIELD.passiveValue }}
-        className={`group absolute right-4 top-20 z-[420] rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--glass-bg)] p-2 shadow-[var(--shadow-lg)] backdrop-blur-[var(--glass-blur)] transition-all duration-300 ease-in-out ${
+        /* ★종전 `z-[420]` 은 `SATONG_UI_Z.tileFailure` 와 **동률**이었다. 화면 결과(스크림이
+           레일 위)는 옳았지만 그건 DOM 순서에서 나온 **우연**이었다 — 셸의 JSX 순서를 바꾸는
+           리팩토링 하나로 조용히 뒤집힌다. 이제 `layerRail`(415)로 **값이 순서를 선언**한다. */
+        style={{ zIndex: SATONG_UI_Z.layerRail }}
+        className={`group absolute right-4 top-20 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--glass-bg)] p-2 shadow-[var(--shadow-lg)] backdrop-blur-[var(--glass-blur)] transition-all duration-300 ease-in-out ${
           railPinned
             ? "grid w-32 auto-rows-min grid-cols-2 gap-2 h-auto max-h-[calc(100%-120px)] supports-[height:100dvh]:max-h-[min(calc(100%-120px),calc(100dvh-176px))] overflow-y-auto"
             : "flex w-16 flex-col gap-2 h-auto max-h-[calc(100%-120px)] supports-[height:100dvh]:max-h-[min(calc(100%-120px),calc(100dvh-176px))] overflow-y-auto"
