@@ -1,6 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { registerDismissible } from "@/lib/satong-dismiss";
 import { SATONG_POPUP_YIELD, SATONG_UI_Z } from "@/lib/satong-map-z";
 import { useRouter } from "next/navigation";
 import {
@@ -2564,18 +2565,19 @@ export function SatongMapShell({
 
   useEffect(() => {
     if (!activeLayerId) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") closeLayerPanel();
-    };
+    // ★ESC 는 **조정기**를 거친다(lib/satong-dismiss) — 종전에는 이 리스너가 지도의
+    //   clickMenu ESC 와 같은 keydown 에 함께 발화해 **한 번에 둘이 닫혔다**(라이브 실측).
+    //   이제 z(SSOT rung)가 가장 큰 표면 하나만 닫힌다. 외부 포인터다운은 대상 판정이
+    //   표면마다 달라 일반화하지 않고 여기 그대로 둔다.
+    const unregister = registerDismissible(SATONG_UI_Z.railPopover, closeLayerPanel);
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as Node;
       if (popoverRef.current?.contains(target) || railRef.current?.contains(target)) return;
       closeLayerPanel();
     };
-    window.addEventListener("keydown", onKeyDown);
     window.addEventListener("pointerdown", onPointerDown);
     return () => {
-      window.removeEventListener("keydown", onKeyDown);
+      unregister();
       window.removeEventListener("pointerdown", onPointerDown);
     };
   }, [activeLayerId, closeLayerPanel]);
@@ -2584,18 +2586,19 @@ export function SatongMapShell({
   // 뜨는 형제 UI라 닫힘 규칙이 다르면 사용자가 두 규칙을 학습해야 한다(일관성).
   useEffect(() => {
     if (!basemapOpen) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") closeBasemapPanel();
-    };
+    // ★ESC 는 **조정기**를 거친다(lib/satong-dismiss) — 종전에는 이 리스너가 지도의
+    //   clickMenu ESC 와 같은 keydown 에 함께 발화해 **한 번에 둘이 닫혔다**(라이브 실측).
+    //   이제 z(SSOT rung)가 가장 큰 표면 하나만 닫힌다. 외부 포인터다운은 대상 판정이
+    //   표면마다 달라 일반화하지 않고 여기 그대로 둔다.
+    const unregister = registerDismissible(SATONG_UI_Z.railPopover, closeBasemapPanel);
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as Node;
       if (basemapPopoverRef.current?.contains(target) || railRef.current?.contains(target)) return;
       closeBasemapPanel();
     };
-    window.addEventListener("keydown", onKeyDown);
     window.addEventListener("pointerdown", onPointerDown);
     return () => {
-      window.removeEventListener("keydown", onKeyDown);
+      unregister();
       window.removeEventListener("pointerdown", onPointerDown);
     };
   }, [basemapOpen, closeBasemapPanel]);
