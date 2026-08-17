@@ -54,7 +54,11 @@ import {
   clearLayoutOverlay,
   renderLayoutOverlay,
 } from "@/lib/satong-layout-overlay";
+import { registerDismissible } from "@/lib/satong-dismiss";
 import { SATONG_PANE_Z, SATONG_POPUP_YIELD, SATONG_UI_Z } from "@/lib/satong-map-z";
+
+/** 측정 해제는 **표면이 아니다** — 열린 표면이 하나도 없을 때만 ESC 차례가 오도록 최하위. */
+const MEASURE_DISMISS_Z = -1;
 import { clampClickMenuPosition, findFeatureAtPoint, shortJibunLabel } from "@/lib/satong-click-menu";
 import {
   formatAreaSqm,
@@ -2360,17 +2364,25 @@ export function SatongMultiMap({
   }, [mapReady, measureOn]);
 
   // ESC 단계적 해제 — ①팝오버 닫기 → ②측정 종료 → ③측정 결과 지우기.
+  //
+  // ★2026-08-17 — **조정기를 거친다**(lib/satong-dismiss). 종전에는 이 리스너가 셸의
+  //   레일·베이스맵 팝오버 ESC 와 같은 keydown 에 조율 없이 함께 발화해, 사용자가 한 번
+  //   눌렀는데 **둘이 사라졌다**(라이브 실측: clickMenu 470 + role=dialog 430 동시 개방 →
+  //   ESC 1회에 둘 다 닫힘). 이제 z(SSOT rung)가 가장 큰 표면 하나만 닫힌다.
+  // ★단계 ②③(측정)은 **표면이 아니다** — 아주 낮은 z 로 등록해 "열린 표면이 없을 때만"
+  //   차례가 오게 한다. 종전 우선순위(①→②→③)가 그대로 보존된다.
   useEffect(() => {
-    if (!clickMenu && !measureOn && measurePoints.length === 0) return;
-    const onKey = (ev: KeyboardEvent) => {
-      if (ev.key !== "Escape") return;
-      if (clickMenu) { setClickMenu(null); return; }
+    if (!clickMenu) return;
+    return registerDismissible(SATONG_UI_Z.clickMenu, () => setClickMenu(null));
+  }, [clickMenu]);
+
+  useEffect(() => {
+    if (!measureOn && measurePoints.length === 0) return;
+    return registerDismissible(MEASURE_DISMISS_Z, () => {
       if (measureOn) { setMeasureOn(false); return; }
       setMeasurePoints([]);
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [clickMenu, measureOn, measurePoints.length]);
+    });
+  }, [measureOn, measurePoints.length]);
 
   // 클릭 지점의 오버레이 피처(용도지역·공시지가·노후도 색면) — 팝오버 헤더 정보(레이캐스팅).
   const clickMenuFeature = useMemo(() => {
