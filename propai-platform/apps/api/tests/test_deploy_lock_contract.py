@@ -324,3 +324,39 @@ def test_이미지_정리는_dangling_한정이어야_한다() -> None:
         "prune 실행 줄을 하나도 찾지 못했다 — 정리가 사라졌거나 패턴이 대상을 놓쳤다. "
         "둘 다 이 테스트가 잡아야 할 상태다."
     )
+
+
+def test_빌드식별자는_의존성설치_뒤에_있어야_한다() -> None:
+    """``ARG APP_BUILD_ID`` 가 설치 **앞**에 오면 매 배포가 의존성을 재빌드한다.
+
+    ``ARG`` 값이 바뀌면 **그 이후 모든 레이어의 캐시가 무효화**된다. `APP_BUILD_ID` 는 커밋마다
+    바뀌므로, 설치 앞에 두면 `apt-get`·`pip install`(2.4GB 이미지의 대부분)이 매번 다시 돌고
+    **dangling 축적도 함께 커진다**.
+
+    ★`Dockerfile.web` 이 `pnpm install` **뒤**에 두는 것과 같은 이유다 — 그 위치가 **계약**이고
+      우연이 아니라는 것을 여기서 잠근다(2026-08-17 통합자 리뷰에서 제기된 리스크).
+    """
+    lines = DOCKERFILE_ORACLE.read_text(encoding="utf-8").splitlines()
+
+    def first(pattern: str) -> int:
+        for i, ln in enumerate(lines):
+            if re.match(pattern, ln.strip()):
+                return i
+        return -1
+
+    pip = first(r"RUN pip install")
+    apt = first(r"RUN apt-get")
+    arg = first(r"ARG APP_BUILD_ID")
+
+    # ★공허한 초록 방지: 세 앵커가 모두 실제로 있어야 비교가 의미를 갖는다.
+    assert pip >= 0, "`RUN pip install` 을 못 찾았다 — Dockerfile 구조가 바뀌었으면 이 테스트도 고칠 것"
+    assert apt >= 0, "`RUN apt-get` 을 못 찾았다"
+    assert arg >= 0, "`ARG APP_BUILD_ID` 가 없다"
+
+    assert arg > pip, (
+        f"ARG APP_BUILD_ID({arg + 1}줄)가 `RUN pip install`({pip + 1}줄) **앞**에 있다. "
+        "커밋마다 값이 바뀌므로 의존성 설치 캐시가 매 배포 무효화된다 — 설치 뒤로 옮길 것."
+    )
+    assert arg > apt, (
+        f"ARG APP_BUILD_ID({arg + 1}줄)가 `RUN apt-get`({apt + 1}줄) **앞**에 있다."
+    )
