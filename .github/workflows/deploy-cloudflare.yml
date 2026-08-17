@@ -50,7 +50,16 @@ jobs:
       # ★★setup-node **앞**에 둔다 — 그 액션의 `cache: pnpm` 이 셋업 중 `pnpm store path` 를
       #   호출하므로 pnpm 이 그 시점에 PATH 에 없으면 **셋업 자체가 죽는다**.
       - name: Enable pnpm (corepack)
-        run: corepack enable
+        run: |
+          corepack enable
+          # ★store 경로를 **우리가 정하고 미리 만든다**(2026-08-18 · #689 1차 실패 교훈).
+          #   `actions/setup-node` 의 `cache: pnpm` 은 셋업 때 `pnpm store path` 로 경로를 잡고
+          #   **post 단계에서 그 경로의 존재를 검증**한다. corepack 경로에서는 그 값이 실제 설치
+          #   위치와 갈려 post 가 죽었다(실측: 본체 전부 success · `Post Run actions/setup-node@v4`
+          #   만 실패 — `Path Validation Error: Path(s) … do(es) not exist`).
+          #   경로를 고정하고 `mkdir -p` 로 존재를 보장하면 셋업·설치·post 가 같은 곳을 본다.
+          pnpm config set store-dir "$HOME/.pnpm-store" --global
+          mkdir -p "$HOME/.pnpm-store"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
