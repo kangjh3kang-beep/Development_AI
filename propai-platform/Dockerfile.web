@@ -11,9 +11,14 @@ RUN pnpm install --frozen-lockfile
 # 컨텍스트에서 제외되므로(런타임 env_file로만 주입), 클라이언트가 직접 쓰는 공개키는
 # build-arg → ENV로 넘겨 next build가 인라인하게 한다(카카오맵 JS SDK 키 등).
 ARG NEXT_PUBLIC_KAKAO_MAP_KEY=""
-ARG NEXT_PUBLIC_VWORLD_API_KEY=""
 ENV NEXT_PUBLIC_KAKAO_MAP_KEY=${NEXT_PUBLIC_KAKAO_MAP_KEY}
-ENV NEXT_PUBLIC_VWORLD_API_KEY=${NEXT_PUBLIC_VWORLD_API_KEY}
+# ★2026-08-17 제거 — NEXT_PUBLIC_VWORLD_API_KEY 배관을 걷어낸다.
+#   VWorld 키를 읽는 **클라이언트 코드가 0개**다(실측). 그런데 ARG/ENV 배관만 남아 있어
+#   누군가 .env 에 값을 넣는 순간 **조용히 브라우저 번들로 인라인**되는 구조였다.
+#   실제로 이 이미지에는 빈 값이 구워져 있었고(sha256=e3b0c44298fc = 빈 문자열),
+#   그래서 종전 AvmVisionPanel 의 `if (!VWORLD_API_KEY) return null` 이 **항상 null** 을
+#   반환해 항공영상이 아예 렌더되지 않았다 — 배관이 있는데 값이 없는 상태가 결함을 만들었다.
+#   서버 전용 키는 `VWORLD_API_KEY`(런타임 env_file)로만 쓰고, 공개키 개념은 두지 않는다.
 
 # ★앱 버전 = **한 값에서 둘 다** 파생한다(2026-08-16).
 #   · sw.js 의 CACHE_NAME  — 앱셸 캐시 무효화
