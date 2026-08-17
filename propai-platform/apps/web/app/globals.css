@@ -1552,14 +1552,52 @@ textarea {
   }
 }
 
-/* Leaflet 지도 z-index 격리 — 지도 panes/controls(z 400~1000)가 sticky 헤더(z-50)·
-   사이드바 위로 떠오르는 문제 방지. 컨테이너를 독립 스택 컨텍스트로 묶고 낮은 층에 고정. */
+/* ═══════════════════════════════════════════════════════════════
+   Leaflet 지도 z-index 격리 — 지도 panes/controls(z 400~1000)가 sticky 헤더(z-50)·
+   사이드바 위로 떠오르는 문제 방지(cd27a264).
+
+   ★★이 격리가 **유일한 방어**다. 지우지 마라.
+     종전에는 아래 평탄화(`.leaflet-pane { z-index:1 !important }`)가 함께 있어 이중
+     방어처럼 보였다. 2026-08-17 라이브 실험으로 평탄화가 **잉여**임을 확인하고 걷어냈으므로,
+     이제 새는 것을 막는 것은 `isolation: isolate` 하나뿐이다.
+     → `lib/__tests__/satong-pane-ladder.test.ts` 가 이 규칙의 실재를 잠근다.
+   ═══════════════════════════════════════════════════════════════ */
 .leaflet-container {
   isolation: isolate;
   position: relative;
   z-index: 0;
 }
-.leaflet-pane,
+
+/* ═══════════════════════════════════════════════════════════════
+   ★`.leaflet-pane` 을 평탄화하지 않는다 — 걷어낸 이유(2026-08-17 라이브 실측)
+   ───────────────────────────────────────────────────────────────
+   종전: `.leaflet-pane, .leaflet-top, .leaflet-bottom, .leaflet-control { z-index:1 !important }`
+
+   【무엇이 잘못됐나】pane 을 전부 1 로 눌러 **지도 내부 사다리를 죽였다.**
+     · `LEAFLET_PANE_Z`(6상수)와 `SATONG_PANE_Z.label=450` 이 런타임 무효가 됐다
+       (label 은 `labelPane.style.zIndex` 인라인인데 `!important` 에 진다).
+     · 전부 z=1 이면 **페인트 순서 = DOM 순서**가 되고, 실측 DOM 순서는
+         tile < overlay < shadow < marker < tooltip < popup < proxy < **label**
+       즉 **커스텀 label pane 이 팝업 위에 그려진다.**
+     · 그런데 `satong-map-z.test.ts` 는 "overlay < label < marker < tooltip < popup —
+       라벨이 팝업을 가리면 안 된다"를 **초록으로 보증**하고 있었다(같은 모듈 리터럴끼리
+       비교라 항상 참). **거짓을 보증하는 락**이었다.
+
+   【평탄화가 잉여라는 근거 — 라이브 실험, 대조군 포함】
+     · 지도와 겹치는 상위 크롬 6건에 대해 평탄화 유/무 두 조건의 페인트순서 판정이 **동일**.
+     · 원 사고 기하를 합성 재현(body 직속 `position:fixed; z-index:50` 을 지도 위에 겹침):
+         평탄화 O → 크롬이 이김(popup pane z=1)
+         평탄화 X → **크롬이 이김**(popup pane z=700)   ← 사다리를 살려도 새지 않는다
+         음성대조(합성 크롬 z=-1) → 지도가 이김          ← 프로브에 판별력이 있다
+       `isolation: isolate` 가 스택 컨텍스트를 만들므로 내부 z 가 아무리 높아도 바깥
+       형제를 이길 수 없다. 평탄화는 그 위에 **아무것도 더하지 않았다.**
+
+   【정직 경계】라벨이 팝업을 **실제로 가리는 장면은 관측하지 못했다**(그 자리에 라벨이 있어야
+     가린다). 확정된 것은 **구조적 사실**(겹치면 반드시 라벨이 이긴다)까지다.
+
+   ★controls(`.leaflet-top/.leaflet-bottom/.leaflet-control`)는 **그대로 둔다.** 실험에서
+     1000 으로 되돌려도 새지 않았지만, 이 PR 이 고치는 결함과 무관해 범위를 넓히지 않는다.
+   ═══════════════════════════════════════════════════════════════ */
 .leaflet-top,
 .leaflet-bottom,
 .leaflet-control {

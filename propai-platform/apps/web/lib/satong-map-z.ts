@@ -12,7 +12,19 @@
  *   상수를 클래스가 아닌 인라인 스타일로 흘려보내 SSOT를 깨지 않는다.
  */
 
-/** Leaflet 기본 pane z-index(참고용 — 격리 전제이므로 UI 비교엔 쓰지 않는다). */
+/**
+ * Leaflet 기본 pane z-index.
+ *
+ * ★2026-08-17 — **이 값들은 다시 살아 있다.** 종전 주석은 "참고용"이라 했고 실제로도 그랬다:
+ *   `globals.css` 의 `.leaflet-pane { z-index:1 !important }` 가 pane 을 전부 1 로 눌러
+ *   **지도 내부 사다리 자체가 없었다**(라이브 실측 `.leaflet-popup-pane` = 1).
+ *   그 평탄화가 `isolation: isolate` 앞에 **잉여**임을 라이브 실험(합성 z=50 형제 + 음성대조)
+ *   으로 확인하고 걷어냈다. 이제 Leaflet 이 실제로 적용하는 값이다.
+ *
+ * ★단, 이 파일 안에서 `LEAFLET_PANE_Z` 와 `SATONG_PANE_Z` 의 대소를 비교하는 것은
+ *   **같은 모듈 리터럴끼리의 항등식**이라 그 자체로는 런타임을 보증하지 못한다.
+ *   효과를 보증하는 것은 `lib/__tests__/satong-pane-ladder.test.ts`(CSS 불변식)다.
+ */
 export const LEAFLET_PANE_Z = {
   tile: 200,
   overlay: 400, // 폴리곤
