@@ -28,7 +28,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { SATONG_UI_Z } from "@/lib/satong-map-z";
+import { SATONG_BOTTOM_BAND_OWNERS, SATONG_UI_Z } from "@/lib/satong-map-z";
 
 const SHELL = join(__dirname, "..", "SatongMapShell.tsx");
 const source = () => readFileSync(SHELL, "utf8");
@@ -141,3 +141,66 @@ describe("사통맵 셸 — z rung 이 값으로 선언된다", () => {
 it.todo(
   "ESC 는 **가장 위 표면 하나만** 닫아야 한다 — 현재 clickMenu(470)와 레일 팝오버(430)가 한 번에 닫힌다",
 );
+
+/**
+ * ── P3: 하단 밴드 슬롯 소유권 ─────────────────────────────────────────────
+ *
+ * SSOT 주석이 *"하단 신규 요소는 도크 flow 에 합류 · **독립 absolute 금지**"* 를 규정하면서
+ * 같은 문단에 *"겹침이 **3회 재발**했다"* 고 적는다. **주석은 강제하지 않는다.**
+ * → `SATONG_BOTTOM_BAND_OWNERS` 로 옮기고 여기서 **수를 세어** 강제한다.
+ *
+ * ★이 검사는 겹침을 **없애지 않는다.** 등록되지 않은 새 점유자가 **조용히** 들어오는 것을
+ *   막을 뿐이다(알려진 겹침 2건은 사유와 함께 등록돼 있다).
+ */
+describe("사통맵 하단 밴드 — 점유자는 등록돼야 한다", () => {
+  /** 두 컴포넌트에서 하단 밴드를 **독립 absolute** 로 점유하는 줄을 파생한다. */
+  const bandOwners = () => {
+    const files = [
+      join(__dirname, "..", "..", "map", "SatongMultiMap.tsx"),
+      SHELL,
+    ];
+    const hits: string[] = [];
+    for (const f of files) {
+      for (const line of executable(readFileSync(f, "utf8")).split("\n")) {
+        if (!/\babsolute\b/.test(line)) continue;
+        if (!/\bbottom-\d/.test(line)) continue;
+        hits.push(line.trim().slice(0, 100));
+      }
+    }
+    return hits;
+  };
+
+  it("전제: 파생 검사가 실제로 무언가를 찾는다(공허 진리 가드)", () => {
+    expect(bandOwners().length, "밴드 점유자를 하나도 못 찾았다 — 검사기가 죽었다").toBeGreaterThan(0);
+    expect(SATONG_BOTTOM_BAND_OWNERS.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("★등록되지 않은 밴드 점유자가 없다 — 수가 늘면 등록을 강제한다", () => {
+    const found = bandOwners();
+    expect(
+      found.length,
+      `하단 밴드 독립 absolute ${found.length}건 ≠ 등록 ${SATONG_BOTTOM_BAND_OWNERS.length}건.\n` +
+        `새 요소를 밴드에 넣었다면 **도크 flow 에 합류**시키거나 ` +
+        `SATONG_BOTTOM_BAND_OWNERS 에 사유와 함께 등록하라(주석 레지스트리는 3회 재발을 못 막았다).\n` +
+        found.map((f) => `  ${f}`).join("\n"),
+    ).toBe(SATONG_BOTTOM_BAND_OWNERS.length);
+  });
+
+  it("★등록 항목은 **사유**를 갖는다 — 빈 사유는 허용 목록을 쓰레기통으로 만든다", () => {
+    for (const owner of SATONG_BOTTOM_BAND_OWNERS) {
+      expect(owner.id.length, "id 가 비었다").toBeGreaterThan(0);
+      expect(owner.anchor).toMatch(/bottom-/);
+      expect(owner.why.length, `${owner.id}: why 가 너무 짧다 — 왜 flow 에 합류할 수 없는지 적어라`)
+        .toBeGreaterThan(30);
+    }
+  });
+
+  it("★검사기 판별력 — 밴드가 아닌 absolute 는 잡지 않는다(대조군)", () => {
+    // "등록 수와 일치"가 참인 이유가 "아무거나 다 잡아서"이면 안 된다.
+    const probe = (line: string) =>
+      /\babsolute\b/.test(line) && /\bbottom-\d/.test(line);
+    expect(probe('className="absolute bottom-16 left-1/2"')).toBe(true);
+    expect(probe('className="absolute left-4 top-4"'), "상단 슬롯을 밴드로 오인한다").toBe(false);
+    expect(probe('className="relative bottom-16"'), "absolute 가 아닌 것을 잡는다").toBe(false);
+  });
+});
