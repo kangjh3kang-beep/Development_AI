@@ -37,10 +37,17 @@ const ROAD_COLOR: Record<RoadFrontage, string> = { good: "#10b981", normal: "#f5
  *   클램프 · 응답을 PNG 매직넘버로 검증). 신설하면 더 약한 **두 번째 문**이 생긴다.
  *   실측: `4t8t.net/api/v1/digital-twin/aerial-image?...` → 200 image/png.
  *
- * ★키를 더 이상 참조하지 않는다. 종전 독스트링은 이 키를 "공개(도메인 제한) 키이며
- *   서버 전용 키와 섞이지 않는다"고 단언했으나, 실측 결과 `.env` 의
- *   `VWORLD_API_KEY` 와 `NEXT_PUBLIC_VWORLD_API_KEY` 가 **같은 값**이었다(2계약 붕괴).
- *   서버측 주입 통로로 옮기면 이 컴포넌트는 키 계약과 무관해진다.
+ * ★키를 더 이상 참조하지 않는다.
+ *   ★★2026-08-17 정정 — 이 자리에 있던 "두 키가 같은 값이었다(2계약 붕괴)"는
+ *   **저장소 `.env` 를 잰 결과**였고 그 파일은 실효값이 아니다. 노출 여부의 정답은
+ *   **빌드 산출물**이다: web 이미지에 구워진 `NEXT_PUBLIC_VWORLD_API_KEY` 는 **빈 값**이었고
+ *   (sha256 e3b0c44298fc) 브라우저 정적 청크에서 키 검색은 **0 건**이었다
+ *   (조회기 생존: 양성 대조 186/224 · 음성 0). 즉 **브라우저에 유출된 적이 없다.**
+ *
+ *   ★그리고 그 **빈 값이 진짜 결함이었다.** 종전 이 함수는 `if (!VWORLD_API_KEY) return null`
+ *   이었는데 빌드 arg 가 비어 있어 **항상 null** 을 반환했다 — 항공영상이 아예 렌더되지
+ *   않았고, 아래의 `/api/vworld/data` 404 경로는 **UI 에서 도달조차 하지 않았다.**
+ *   두 결함(빈 빌드 arg · 가려진 라우트)이 같은 증상을 냈고, 서버측 통로로 옮기면 둘 다 사라진다.
  */
 function thumbUrl(center: [number, number], zoom: number): string {
   const [lon, lat] = center;
