@@ -12,7 +12,19 @@
  *   상수를 클래스가 아닌 인라인 스타일로 흘려보내 SSOT를 깨지 않는다.
  */
 
-/** Leaflet 기본 pane z-index(참고용 — 격리 전제이므로 UI 비교엔 쓰지 않는다). */
+/**
+ * Leaflet 기본 pane z-index.
+ *
+ * ★2026-08-17 — **이 값들은 다시 살아 있다.** 종전 주석은 "참고용"이라 했고 실제로도 그랬다:
+ *   `globals.css` 의 `.leaflet-pane { z-index:1 !important }` 가 pane 을 전부 1 로 눌러
+ *   **지도 내부 사다리 자체가 없었다**(라이브 실측 `.leaflet-popup-pane` = 1).
+ *   그 평탄화가 `isolation: isolate` 앞에 **잉여**임을 라이브 실험(합성 z=50 형제 + 음성대조)
+ *   으로 확인하고 걷어냈다. 이제 Leaflet 이 실제로 적용하는 값이다.
+ *
+ * ★단, 이 파일 안에서 `LEAFLET_PANE_Z` 와 `SATONG_PANE_Z` 의 대소를 비교하는 것은
+ *   **같은 모듈 리터럴끼리의 항등식**이라 그 자체로는 런타임을 보증하지 못한다.
+ *   효과를 보증하는 것은 `lib/__tests__/satong-pane-ladder.test.ts`(CSS 불변식)다.
+ */
 export const LEAFLET_PANE_Z = {
   tile: 200,
   overlay: 400, // 폴리곤
@@ -150,9 +162,34 @@ export const SATONG_CONTENT_Z = {
 } as const;
 
 export const SATONG_UI_Z = {
+  /** 좌상단 활성 레이어 배지행(`SatongMapShell`). 종전 `z-[380]` 하드코딩. */
+  badgeRow: 380,
   fullscreenButton: 400,
   cornerDock: 410, // 좌하단 코너 도크(상태 칩 + 노후도 범례)
+  /**
+   * 우상단 레이어 레일(`SatongMapShell`). 종전 `z-[420]` 하드코딩 = **`tileFailure` 와 동률**.
+   *
+   * ★2026-08-17 — 동률을 없애고 **순서를 선언한다.** 종전에도 화면 결과는 옳았다:
+   *   타일실패 스크림이 레일 **위**로 그려졌고, 그건 `SATONG_POPUP_YIELD` 가 선언한 분류
+   *   (스크림 = **불양보**(오류 고지) · 레일 = **양보**(상시 크롬))와 일치한다.
+   *   문제는 그 옳은 순서가 **DOM 순서에서 우연히** 나왔다는 것이다 — 레일이 셸에서
+   *   `<SatongMultiMap>` 보다 **앞**에 있고 z 가 같아서 나중 것이 이겼을 뿐이다.
+   *   ★셸의 JSX 순서를 바꾸는 무해해 보이는 리팩토링 하나로 **조용히 뒤집힌다.**
+   *
+   *   라이브 실측(대조군 포함): 레일 rect 128×402 가 스크림 `inset-0` 영역과 겹치고,
+   *   동률에서 스크림이 이겼다(양성대조 z=421 스크림 승 · 음성대조 z=419 레일 승).
+   *   지도 래퍼는 `relative`(z 없음)라 **스택 컨텍스트를 만들지 않는다** — 둘은 같은 층에서 경쟁한다.
+   *
+   * → 415 로 내려 **`tileFailure`(420) 보다 아래임을 값으로 선언**한다. `cornerDock`(410)
+   *   보다는 위라 화면 결과는 종전과 같다(동작 보존 · 취약성만 제거).
+   * ★한계: 스크림은 `pointer-events:none` 이라 이 겹침은 **시각 가림**이고 클릭은 통과한다.
+   *   그래서 `elementFromPoint` 판정(§회귀망 D.18)은 이 결함에 **눈이 먼다** — 위 실측은
+   *   같은 부모·같은 z 에 pointer-events 를 켠 **대리 스크림**으로 쌓임만 갈라 낸 것이다.
+   */
+  layerRail: 415,
   tileFailure: 420,
+  /** 레일 팝오버 3종(베이스맵·레이어설정·범례). 종전 `z-[430]` 하드코딩. **불양보**(사용자가 연 것). */
+  railPopover: 430,
   bottomBar: 460, // 선택 현황·완료/전체취소 바(풀스크린 오버레이 모드)
   clickMenu: 470, // 지도 클릭 팝오버(단일 팝오버) + 거리재기 상태 칩 — 확인 카드 아래
   confirmCard: 500,
