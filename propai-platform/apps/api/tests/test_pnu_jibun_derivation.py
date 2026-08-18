@@ -70,29 +70,60 @@ class TestParcelDisplayAddress:
 
 
 class TestResponseWiring:
-    """★임포트만 하고 안 쓰는 '소비처 0' 을 잡는다 — 응답 키가 헬퍼에 결속됐는가."""
+    """★임포트만 하고 안 쓰는 '소비처 0' 을 잡는다 — 응답 키가 헬퍼에 결속됐는가.
+
+    【파생의 축 = **함수**】파일 전체 grep 은 두 엔드포인트를 **구분하지 못한다**. 실제로
+    변이감사에서 그 형태로 3건이 생존했다: `parcel-boundaries` 의 `"jibun"` 줄을 지워도
+    `parcel-at-point` 의 같은 모양 줄이 정규식을 만족시켜 초록이었다. 그래서 아래는
+    **각 라우터 함수 본문만 잘라내어** 그 안에서 단언한다.
+    """
 
     @pytest.fixture(scope="class")
     def src(self) -> str:
         return ROUTER.read_text(encoding="utf-8")
 
-    def test_전제_라우터를_실제로_읽었다(self, src):
-        # 공허한 초록 방지 — 조회기가 죽으면 아래가 전부 무의미하게 통과한다.
-        assert len(src) > 10_000
-        assert "/parcel-boundaries" in src and "/parcel-at-point" in src
+    @staticmethod
+    def _body(src: str, route: str) -> str:
+        """`@router.post("<route>")` 다음 함수 본문을 **다음 데코레이터 직전까지** 잘라낸다."""
+        i = src.index(f'@router.post("{route}")')
+        j = src.find("\n@router.", i + 1)
+        return src[i : j if j != -1 else len(src)]
+
+    def test_전제_두_함수_본문을_실제로_갈랐다(self, src):
+        # ★공허한 초록 방지 — 잘라내기가 깨지면 아래 단언이 전부 무의미해진다.
+        b = self._body(src, "/parcel-boundaries")
+        a = self._body(src, "/parcel-at-point")
+        assert 1_000 < len(b) < len(src) and 1_000 < len(a) < len(src)
+        # 대조군: 두 본문은 실제로 **다른 영역**이어야 한다(같은 걸 두 번 보면 구분이 없다).
+        assert "/parcel-at-point" not in b
+        assert "/parcel-boundaries" not in a
 
     def test_boundaries_주소가_파생헬퍼를_통과한다(self, src):
-        assert re.search(r'"address":\s*parcel_display_address\(address,\s*pnu\)', src), (
+        b = self._body(src, "/parcel-boundaries")
+        assert re.search(r'"address":\s*parcel_display_address\(address,\s*pnu\)', b), (
             "parcel-boundaries 가 입력 주소를 그대로 echo 한다 — 동 단위 입력이 동 단위로 나간다"
         )
-        assert re.search(r'"jibun":\s*jibun_from_pnu\(pnu\)', src)
+
+    def test_boundaries_지번_단독필드가_있다(self, src):
+        b = self._body(src, "/parcel-boundaries")
+        assert re.search(r'"jibun":\s*jibun_from_pnu\(pnu\)', b), (
+            "boundaries 응답에 jibun 이 없다 — 소비처가 주소를 파싱해야 한다"
+        )
 
     def test_boundaries_입력주소_원본을_남긴다(self, src):
         # ★표시를 보강하면서 매칭 키를 없애면 프론트 healParcelPnu 가 끊긴다(표시 고치다 배선 절단).
-        assert re.search(r'"input_address":\s*address', src), (
+        b = self._body(src, "/parcel-boundaries")
+        assert re.search(r'"input_address":\s*address', b), (
             "input_address 가 없으면 프론트가 pnu 미확보 씨드를 주소로 찾지 못한다"
         )
 
+    def test_at_point_주소도_파생헬퍼를_통과한다(self, src):
+        a = self._body(src, "/parcel-at-point")
+        assert re.search(r'"address":\s*parcel_display_address\(', a), (
+            "parcel-at-point 주소가 보강되지 않는다 — 지도 클릭 필지만 지번이 사라진다"
+        )
+
     def test_at_point_지번이_주소의_복제가_아니다(self, src):
-        assert '"jibun": pp.get("address")' not in src, "jibun 이 address 복제로 되돌아갔다"
-        assert re.search(r'"jibun":\s*jibun_from_pnu\(pnu\)\s*or\s*""', src)
+        a = self._body(src, "/parcel-at-point")
+        assert '"jibun": pp.get("address")' not in a, "jibun 이 address 복제로 되돌아갔다"
+        assert re.search(r'"jibun":\s*jibun_from_pnu\(pnu\)', a)
