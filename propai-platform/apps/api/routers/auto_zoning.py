@@ -4,7 +4,6 @@ import asyncio
 import logging
 import re
 
-from apps.api.app.utils.pnu import jibun_from_pnu, parcel_display_address
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -15,6 +14,7 @@ from app.core.database import get_db
 from app.services.land_intelligence.parcel_normalize import ParcelsIn
 from apps.api.app.services.land_intelligence.land_info_service import LandInfoService
 from apps.api.app.services.zoning.auto_zoning_service import AutoZoningService
+from apps.api.app.utils.pnu import jibun_from_pnu, parcel_display_address
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
