@@ -150,9 +150,9 @@ export function ParcelPurchaseStrategyPanel({ parcels }: { parcels: StrategyParc
         {overCap && (
           <div
             role="alert"
-            className="mt-4 flex items-start gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3"
+            className="sa-chip--warning mt-4 flex items-start gap-2 rounded-xl border p-3"
           >
-            <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-500" aria-hidden />
+            <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
             <p className="text-xs text-[var(--text-secondary)]">
               선택 <b>{count}</b>필지는 1회 분석 상한(<b>{MAX_STRATEGY_PARCELS}</b>필지)을 넘습니다.
               상한을 넘겨 보내면 서버가 거부하며, <b>조용히 잘라내지 않습니다</b> — 뺀 필지를 모른 채
@@ -246,7 +246,7 @@ export function ParcelPurchaseStrategyPanel({ parcels }: { parcels: StrategyParc
             )}
             {/* ★사업방식이 상류에서 해석되지 않으면 전건 판정보류가 된다 — 조용히 두지 않는다 */}
             {res?.strategy?.governing_act == null && (
-              <p role="alert" className="text-[11px] font-bold text-amber-500">
+              <p role="alert" className="text-[11px] font-bold" style={{ color: "var(--status-warning)" }}>
                 선택한 사업방식이 매도청구·수용 제도 대상으로 등록돼 있지 않아 판정이 보류됩니다.
               </p>
             )}
