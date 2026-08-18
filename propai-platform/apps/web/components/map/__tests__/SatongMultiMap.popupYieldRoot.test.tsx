@@ -8,6 +8,8 @@
  * ★Leaflet 은 jsdom 에서 못 뜬다(CDN 로드가 발화하지 않음) — 그래도 이 락이 보는 것은
  *   지도 초기화가 아니라 **루트 요소의 속성**이라 영향이 없다(스모크 테스트와 같은 전제).
  */
+import type React from "react";
+
 import { render } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
@@ -20,17 +22,27 @@ vi.mock("@/lib/api-client", async (importOriginal) => {
   return { ...actual, apiClient: { ...actual.apiClient, get: vi.fn(pending), post: vi.fn(pending) } };
 });
 
+/**
+ * ★실 소비처는 대부분 `chrome="immersive"` + `readOnly` 다(NearbyTransactionsMap ·
+ *   ZoningSignalMap · ParcelBoundaryMap). 기본 크롬만 검사하면 그 분기에서 루트가
+ *   달라져도 모른다 — 두 분기를 모두 태운다.
+ */
+const VARIANTS: Array<{ label: string; node: React.ReactElement }> = [
+  { label: 'chrome="default"', node: <SatongMultiMap /> },
+  { label: 'chrome="immersive" + readOnly', node: <SatongMultiMap chrome="immersive" readOnly /> },
+];
+
 describe("SatongMultiMap — 팝업 양보 트리거는 루트에 산다", () => {
-  it("루트 요소가 트리거 속성을 갖고, 닫힘 상태에서 값이 'false' 다", () => {
-    const { container } = render(<SatongMultiMap />);
+  it.each(VARIANTS)("$label — 루트 요소가 트리거를 갖고 닫힘 값이 'false' 다", ({ node }) => {
+    const { container } = render(node);
     const root = container.firstElementChild as HTMLElement;
     expect(root).toBeTruthy();
     // ★속성을 **항상** 렌더한다 — 닫힘일 때 속성을 지우면 위치를 관측할 수 없다.
     expect(root.getAttribute(SATONG_POPUP_YIELD.wrapperAttr)).toBe("false");
   });
 
-  it("트리거는 딱 하나다 — 안쪽에 중복으로 남아 있으면 어느 쪽이 진짜인지 모른다", () => {
-    const { container } = render(<SatongMultiMap />);
+  it.each(VARIANTS)("$label — 트리거는 딱 하나다(안쪽에 중복이 남으면 어느 쪽이 진짜인지 모른다)", ({ node }) => {
+    const { container } = render(node);
     const all = container.querySelectorAll(`[${SATONG_POPUP_YIELD.wrapperAttr}]`);
     expect(all).toHaveLength(1);
     expect(all[0]).toBe(container.firstElementChild);

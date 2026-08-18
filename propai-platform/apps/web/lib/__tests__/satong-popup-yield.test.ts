@@ -40,20 +40,36 @@ describe("상세팝업 양보 계약 — SSOT ↔ CSS ↔ 컴포넌트", () => {
     expect(SATONG_POPUP_YIELD.dimOpacity).toBeLessThan(1);
   });
 
-  it("globals.css 의 감쇄 규칙이 계약 선택자와 **정확히** 맞는다", () => {
+  it("계약 값 두 단계가 **접두를 공유**한다 — CSS 가 `^=\"passive\"` 로 둘을 함께 흐린다", () => {
+    // 이 전제가 깨지면 시각 양보 규칙이 조용히 한쪽만 덮는다.
+    expect(SATONG_POPUP_YIELD.passiveVisualValue.startsWith(SATONG_POPUP_YIELD.passiveValue)).toBe(true);
+    expect(SATONG_POPUP_YIELD.passiveVisualValue).not.toBe(SATONG_POPUP_YIELD.passiveValue);
+  });
+
+  it("globals.css 가 **부모 스코프**(:has)로 도달한다 — 자손 전용이면 형제가 계약 밖이다", () => {
     const css = stripCssComments(read("app/globals.css"));
-    const selector = `[${SATONG_POPUP_YIELD.wrapperAttr}="true"] [${SATONG_POPUP_YIELD.passiveAttr}="${SATONG_POPUP_YIELD.passiveValue}"]`;
-    expect(css).toContain(selector);
+    const w = `[${SATONG_POPUP_YIELD.wrapperAttr}="true"]`;
+    // ★자손 선택자(`[트리거] [양보]`)로 되돌리는 변경을 막는다 — 그게 형제를 통째로 놓친 원인이다.
+    expect(css).toContain(`:has(> ${w}) [${SATONG_POPUP_YIELD.passiveAttr}^="passive"]`);
+    expect(css).toContain(`:has(> * > ${w}) [${SATONG_POPUP_YIELD.passiveAttr}^="passive"]`);
+    expect(css).toContain(`:has(> ${w}) [${SATONG_POPUP_YIELD.passiveAttr}="${SATONG_POPUP_YIELD.passiveValue}"]`);
   });
 
   it("★감쇄 값이 상수와 일치한다 — 한쪽만 바뀌면 초록인데 화면은 안 바뀐다", () => {
     const css = stripCssComments(read("app/globals.css"));
-    const selector = `[${SATONG_POPUP_YIELD.wrapperAttr}="true"] [${SATONG_POPUP_YIELD.passiveAttr}="${SATONG_POPUP_YIELD.passiveValue}"]`;
-    const block = css.slice(css.indexOf(selector));
-    const body = block.slice(block.indexOf("{"), block.indexOf("}"));
-    expect(body).toContain(`opacity: ${SATONG_POPUP_YIELD.dimOpacity}`);
-    // 시각만 흐리고 클릭은 그대로면 "가려서 못 누르는" 상태가 남는다.
-    expect(body).toContain("pointer-events: none");
+    const visual = `:has(> ${`[${SATONG_POPUP_YIELD.wrapperAttr}="true"]`}) [${SATONG_POPUP_YIELD.passiveAttr}^="passive"]`;
+    const body = css.slice(css.indexOf(visual)).slice(0, 400);
+    const rule1 = body.slice(body.indexOf("{"), body.indexOf("}"));
+    expect(rule1).toContain(`opacity: ${SATONG_POPUP_YIELD.dimOpacity}`);
+    // ★시각 규칙은 클릭을 건드리면 **안 된다** — 건드리면 차단이 목적인 스크림이 뚫린다.
+    expect(rule1).not.toContain("pointer-events");
+  });
+
+  it("★클릭 양보는 **완전 양보에만** 준다 — 이 분리가 없어 결함이 면제로 정당화됐다", () => {
+    const css = stripCssComments(read("app/globals.css"));
+    const click = `:has(> ${`[${SATONG_POPUP_YIELD.wrapperAttr}="true"]`}) [${SATONG_POPUP_YIELD.passiveAttr}="${SATONG_POPUP_YIELD.passiveValue}"]`;
+    const body = css.slice(css.indexOf(click)).slice(0, 400);
+    expect(body.slice(body.indexOf("{"), body.indexOf("}"))).toContain("pointer-events: none");
   });
 
   it("★감쇄 규칙은 @layer 밖이어야 한다 — 안에 있으면 Leaflet 무레이어 CSS 에 진다", () => {
