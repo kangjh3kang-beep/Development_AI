@@ -270,18 +270,47 @@ describe("모달 ESC 해제 계약 — 소스 파생 전수", () => {
  *   본다. 핸들러는 이 저장소에서 항상 등록 직전에 `const 이름 = …` 로 선언된다 — 그 사이 구간을
  *   읽는다. 선언을 못 찾으면 **조용히 넘기지 않고 실패**시킨다(스캐너가 눈먼 채 초록이 되는 것 방지).
  */
+const KEYDOWN_LISTENER = /(?:window|document)\.addEventListener\(\s*"keydown"\s*,\s*/g;
+/** 핸들러 본문을 얼마나 읽을지 — 이 저장소의 keydown 핸들러는 전부 이보다 짧다(실측 최대 ~350자). */
+const HANDLER_WINDOW = 800;
+
+/**
+ * 한 소스에서 "ESC 를 다루는 전역 keydown 리스너"를 찾는다. **순수 함수**라 합성 소스로
+ * 스캐너 자신을 대조할 수 있다(아래 양성·음성 대조군).
+ *
+ * ★두 등록 형태를 모두 읽는다:
+ *   ① `const onKey = …; window.addEventListener("keydown", onKey)` — 이름을 거슬러 선언을 찾는다.
+ *   ② `window.addEventListener("keydown", (e) => { … })` — 인라인. **초판은 이 형태를 아예 못 봤다**
+ *      (정규식이 식별자만 받았다) — 즉 인라인으로 쓰면 가드를 그냥 지나간다. 내가 방금 만든
+ *      가드의 구멍이라 스스로 막는다.
+ * ★이름을 썼는데 선언을 못 찾으면 **조용히 넘기지 않고 실패**시킨다(스캐너가 눈먼 채 초록이 되는 것 방지).
+ */
+export function escListenersIn(src: string, label: string): string[] {
+  const hits: string[] = [];
+  for (const m of src.matchAll(KEYDOWN_LISTENER)) {
+    const after = src.slice(m.index + m[0].length, m.index + m[0].length + HANDLER_WINDOW);
+    const named = /^(\w+)\s*[),]/.exec(after);
+    let body: string;
+    let name: string;
+    if (named) {
+      name = named[1];
+      const declIdx = src.lastIndexOf(`const ${name} =`, m.index);
+      expect(declIdx, `${label}: keydown 핸들러 ${name} 의 선언을 못 찾았다 — 스캐너를 고쳐라`).toBeGreaterThan(-1);
+      body = src.slice(declIdx, m.index);
+    } else {
+      name = "(인라인)";
+      body = after;
+    }
+    if (/["']Escape["']/.test(body)) hits.push(`${label}: ${name}`);
+  }
+  return hits.sort();
+}
+
 function findGlobalEscListeners(): string[] {
   const hits: string[] = [];
   for (const f of sourceFiles()) {
     if (rel(f) === COORDINATOR) continue; // 조정기 자신 — 이 하나만 ESC 를 받는다
-    const src = executable(f);
-    for (const m of src.matchAll(/(?:window|document)\.addEventListener\(\s*"keydown"\s*,\s*(\w+)/g)) {
-      const handler = m[1];
-      const declIdx = src.lastIndexOf(`const ${handler} =`, m.index);
-      expect(declIdx, `${rel(f)}: keydown 핸들러 ${handler} 의 선언을 못 찾았다 — 스캐너를 고쳐라`).toBeGreaterThan(-1);
-      const body = src.slice(declIdx, m.index);
-      if (/["']Escape["']/.test(body)) hits.push(`${rel(f)}: ${handler}`);
-    }
+    hits.push(...escListenersIn(executable(f), rel(f)));
   }
   return hits.sort();
 }
@@ -300,6 +329,24 @@ describe("조정기 밖 ESC 리스너", () => {
     // R2 실측 4건 = 조정기 1 + ESC 아닌 리스너 3(AuctionMonitorPanel·CADEditor 의 Ctrl+Z,
     // AuctionWorkspace 라이트박스 화살표). 이 수가 0 이면 스캐너가 눈이 먼 것이다.
     expect(total, "keydown 리스너를 하나도 못 찾았다 — 스캐너가 죽었다").toBeGreaterThanOrEqual(4);
+  });
+
+  it("전제: 스캐너가 두 등록 형태를 모두 본다(합성 소스 대조군)", () => {
+    // ★양성 — 이름 붙은 핸들러
+    expect(
+      escListenersIn(`const onKey = (e) => { if (e.key === "Escape") close(); };\nwindow.addEventListener("keydown", onKey);`, "f"),
+    ).toEqual(["f: onKey"]);
+    // ★양성 — **인라인** 핸들러(초판 스캐너가 못 보던 형태)
+    expect(
+      escListenersIn(`document.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });`, "f"),
+    ).toEqual(["f: (인라인)"]);
+    // ★음성 — ESC 를 다루지 않는 전역 리스너(Ctrl+Z)는 위반이 아니다
+    expect(
+      escListenersIn(`const onKey = (e) => { if (e.ctrlKey && e.key === "z") undo(); };\nwindow.addEventListener("keydown", onKey);`, "f"),
+    ).toEqual([]);
+    // ★음성(위양성 방지) — **요소 레벨** onKeyDown 의 Escape 는 대상이 아니다.
+    //   포커스가 그 요소에 있을 때만 발화하므로 문서 전역 리스너끼리의 충돌을 만들지 않는다.
+    expect(escListenersIn(`<input onKeyDown={(e) => { if (e.key === "Escape") cancel(); }} />`, "f")).toEqual([]);
   });
 
   it("★ESC 를 다루는 문서/윈도우 리스너는 조정기 하나뿐이다", () => {
