@@ -193,6 +193,80 @@ describe("AI 학습 사례 승인 화면 배선", () => {
     vi.unstubAllGlobals();
   });
 
+  it("페이지 크기·시작 위치를 요청에 실어 보낸다", async () => {
+    render(<LearningApprovalPanel />);
+    await waitFor(() => expect(candidateCalls().length).toBeGreaterThan(0));
+    const url = String(candidateCalls()[0][0]);
+    expect(url).toContain("limit=20");
+    expect(url).toContain("offset=0");
+  });
+
+  it("다음 페이지로 이동하면 offset 을 올려 다시 부른다", async () => {
+    const user = userEvent.setup();
+    // total 이 한 페이지를 넘어야 페이지 이동 버튼이 그려진다 — 그 상태를 만들어서 검사한다.
+    getMock.mockResolvedValue({ ...listPayload(), total: 45 });
+    render(<LearningApprovalPanel />);
+    await screen.findAllByRole("listitem");
+
+    const next = screen.getByRole("button", { name: "다음" });
+    expect(screen.getByRole("button", { name: "이전" })).toHaveProperty("disabled", true);
+    await user.click(next);
+
+    await waitFor(() =>
+      expect(candidateCalls().some((c) => String(c[0]).includes("offset=20"))).toBe(true),
+    );
+  });
+
+  it("상태 탭을 바꾸면 그 status 로 다시 부른다", async () => {
+    const user = userEvent.setup();
+    render(<LearningApprovalPanel />);
+    await screen.findAllByRole("listitem");
+
+    await user.click(screen.getByRole("button", { name: "사용 중" }));
+    await waitFor(() =>
+      expect(candidateCalls().some((c) => String(c[0]).includes("status=active"))).toBe(true),
+    );
+  });
+
+  it("서비스 필터를 입력하면 그 값으로 좁혀 다시 부른다", async () => {
+    const user = userEvent.setup();
+    render(<LearningApprovalPanel />);
+    await screen.findAllByRole("listitem");
+
+    await user.type(screen.getByLabelText("서비스 필터"), "avm");
+    await waitFor(() =>
+      expect(candidateCalls().some((c) => String(c[0]).includes("service=avm"))).toBe(true),
+    );
+  });
+
+  it("행마다 현재 상태를 한국어로 보여준다", async () => {
+    render(<LearningApprovalPanel />);
+    const rows = await screen.findAllByRole("listitem");
+    expect(within(rows[0]).getByText("승인 대기")).toBeTruthy();
+  });
+
+  it("승인 결과를 화면에 알리고 목록을 다시 읽는다", async () => {
+    const user = userEvent.setup();
+    render(<LearningApprovalPanel />);
+    const rows = await screen.findAllByRole("listitem");
+    const before = candidateCalls().length;
+
+    await user.click(within(rows[0]).getByRole("button", { name: "승인" }));
+
+    await waitFor(() => expect(screen.getByRole("status").textContent).toMatch(/승인했습니다/));
+    // 승인 후 목록을 다시 읽어야 그 건이 '승인 대기'에서 빠진 것이 화면에 반영된다.
+    expect(candidateCalls().length).toBeGreaterThan(before);
+  });
+
+  it("승인 요청은 목업을 타지 않는다(무목업 — 실 API 만)", async () => {
+    const user = userEvent.setup();
+    render(<LearningApprovalPanel />);
+    const rows = await screen.findAllByRole("listitem");
+    await user.click(within(rows[0]).getByRole("button", { name: "승인" }));
+    await waitFor(() => expect(postMock).toHaveBeenCalled());
+    expect(postMock.mock.calls[0][1].useMock).toBe(false);
+  });
+
   it("후보가 0건이면 목업 대신 정직하게 비어 있다고 적는다", async () => {
     getMock.mockResolvedValue(listPayload([]));
     render(<LearningApprovalPanel />);
