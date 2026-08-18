@@ -267,6 +267,29 @@ class UpzoningPotentialAnalyzer:
             low_far, high_far, far_source = _target_far_pct(
                 target_zone, sigungu, ordinance_far_resolver
             )
+            # ★★범위 복원 — 종전엔 후보를 **하나만** 고르고 끝나, 상·하한이 같은 숫자가 됐다.
+            #   화면엔 "예상 상한 150.0~150.0%" 로 찍혔고, 개발사는 그것을 **"그 위는 안 된다"**
+            #   로 읽는다. 실제로는 `UPZONE_TARGETS["자연녹지지역"]` 에 제2종일반주거지역이
+            #   index 1 로 **이미 들어 있었다**(2026-08-19 사용자 지적 — 도시개발법으로 2종
+            #   상향이 가능한데 어떤 경로도 150% 를 넘지 못했다).
+            #   모델의 **보수성이 사실로 표시되던 것**이 결함의 본체다. 후보 전체를 훑어
+            #   범위로 낸다: 하한=보수 1단계, 상한=최대 후보.
+            cands: list[dict] = []
+            for tz in targets:
+                c_low, c_high, c_src = _target_far_pct(tz, sigungu, ordinance_far_resolver)
+                cands.append({
+                    "target_zone": tz,
+                    "expected_far_pct_low": round(c_low) if c_low is not None else None,
+                    "expected_far_pct_high": round(c_high) if c_high is not None else None,
+                    "expected_far_source": c_src,
+                })
+            _highs = [c["expected_far_pct_high"] for c in cands
+                      if c["expected_far_pct_high"] is not None]
+            _lows = [c["expected_far_pct_low"] for c in cands
+                     if c["expected_far_pct_low"] is not None]
+            # 상한은 최대 후보까지, 하한은 최소 후보부터 — 어느 쪽도 임의로 좁히지 않는다.
+            range_high = max(_highs) if _highs else None
+            range_low = min(_lows) if _lows else None
             feasibility, reason, conditions, blocked_reasons = self._grade(
                 pkey, path, area, near_station, near_station_m,
                 adjacency_contiguous, parcel_count, key, blockers,
@@ -275,9 +298,16 @@ class UpzoningPotentialAnalyzer:
                 "path": path["label"],
                 "path_key": pkey,
                 "target_zone": target_zone,
-                "expected_far_pct_low": round(low_far) if low_far is not None else None,
-                "expected_far_pct_high": round(high_far) if high_far is not None else None,
+                # ★상·하한은 **후보 전체**에서 나온다(단일 후보로 좁히면 범위가 소멸한다).
+                #   target_zone 은 종전 의미(경로별 대표 후보)를 그대로 유지 — 가산 변경이다.
+                "expected_far_pct_low": range_low if range_low is not None
+                else (round(low_far) if low_far is not None else None),
+                "expected_far_pct_high": range_high if range_high is not None
+                else (round(high_far) if high_far is not None else None),
                 "expected_far_source": far_source,
+                # 후보별 상세 — 화면이 "1단계 1종 150% / 최대 2종 250%" 를 나눠 보이도록.
+                "target_zone_candidates": cands,
+                "target_zone_max": (cands[-1]["target_zone"] if cands else None),
                 "conditions": conditions,
                 "feasibility": feasibility,
                 "feasibility_reason": reason,
