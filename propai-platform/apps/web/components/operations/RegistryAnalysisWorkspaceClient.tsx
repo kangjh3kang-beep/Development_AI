@@ -15,6 +15,7 @@ import { Card, CardContent } from "@propai/ui";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { DataSourceNotice } from "@/components/ui/DataSourceNotice";
 import { analyzeRegistry } from "@/lib/registry-analyze";
+import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { useLandScheduleStore, type LandRow } from "@/store/useLandScheduleStore";
 import { parcelDisplayAddress } from "@/lib/pnu";
@@ -168,6 +169,57 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
       ]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, siteAnalysis]);
+
+  // ★★PNU 미보유 필지의 **지오코딩 폴백**(2026-08-18).
+  //   PNU 가 없으면 지번을 파생할 수 없고, 그러면 **등기조회까지 깨진다** — 하이픈은
+  //   지번 없는 주소에 `[C0000-002] 조회에 실패…` 를 준다(실측: 지번 있으면 ok=True 6건).
+  //   즉 이 한 값이 표시·조회·개별필지 분석을 동시에 좌우한다.
+  //   ★새로 만들지 않는다 — `POST /zoning/geocode` 가 이미 `pnu` 를 돌려준다(백엔드 무변경).
+  //   ★없는 값을 지어내지 않는다: 해석 실패는 **그대로 둔다**(주소만 남는다). 추측 PNU 는
+  //     엉뚱한 필지의 등기를 조회하게 만들어 조용한 오답이 된다 — 실패가 낫다.
+  useEffect(() => {
+    if (!projectId) return;
+    const targets = rows.filter((r) => !r.pnu && r.jibun.trim());
+    if (targets.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      // ★동시성 상한 — 77필지가 한꺼번에 나가면 상류를 때린다(이 저장소가 타일에서 겪은 그 구조).
+      const LIMIT = 4;
+      const resolved = new Map<string, string>();
+      for (let i = 0; i < targets.length; i += LIMIT) {
+        if (cancelled) return;
+        const slice = targets.slice(i, i + LIMIT);
+        await Promise.all(
+          slice.map(async (r) => {
+            try {
+              const g = await apiClient.post<{ found?: boolean; pnu?: string | null }>(
+                "/zoning/geocode",
+                { body: { query: r.jibun }, timeoutMs: 15000 },
+              );
+              if (g?.found && g.pnu) resolved.set(r.id, g.pnu);
+            } catch {
+              /* 해석 실패는 무시한다 — 주소만 남고, 그 필지는 지번 미확보로 남는다 */
+            }
+          }),
+        );
+      }
+      if (cancelled || resolved.size === 0) return;
+      // 해석된 것만 갱신한다(나머지는 손대지 않는다).
+      setRows(
+        projectId,
+        rows.map((r) => {
+          const pnu = resolved.get(r.id);
+          if (!pnu) return r;
+          return { ...r, pnu, jibun: parcelDisplayAddress(r.jibun, pnu) };
+        }),
+      );
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // ★rows 전체를 의존성에 넣으면 갱신→재실행 루프가 된다. 미보유 건수만 본다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, rows.filter((r) => !r.pnu).length]);
 
   // ★다필지 일괄 분석(순차 — CODEF 과부하 방지). 필지별 결과를 누적 보관(마지막 1건만 남던 부정합 해소).
   const analyzeAll = useCallback(async () => {
