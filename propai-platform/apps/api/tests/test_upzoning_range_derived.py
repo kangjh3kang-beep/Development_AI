@@ -67,11 +67,19 @@ def test_상한은_최대후보에서_나온다(zone: str):
 
 @pytest.mark.parametrize("zone", MULTI)
 def test_상하한이_같은_숫자로_붕괴하지_않는다(zone: str):
-    """`150.0~150.0%` 처럼 폭이 0이면 추정이 확정으로 읽힌다."""
+    """`150.0~150.0%` 처럼 폭이 0이면 추정이 확정으로 읽힌다.
+
+    ★변이감사가 잡은 내 구멍: 처음엔 `if lo is None: continue` 를 뒀는데, 그러면
+    **키 이름이 바뀌어 사라져도 조용히 건너뛰어** 통과했다(공허한 진리). 키의 **존재**를
+    먼저 단언한다 — 없어지는 것도 결함이다.
+    """
     for sc in _scenarios(zone):
-        lo, hi = sc.get("expected_far_pct_low"), sc.get("expected_far_pct_high")
-        if lo is None or hi is None:
-            continue
+        assert "expected_far_pct_low" in sc, f"{zone}: 하한 키가 없다 — 화면이 범위를 못 그린다"
+        assert "expected_far_pct_high" in sc, f"{zone}: 상한 키가 없다"
+        lo, hi = sc["expected_far_pct_low"], sc["expected_far_pct_high"]
+        assert lo is not None and hi is not None, (
+            f"{zone}/{sc.get('path_key')}: 상·하한이 비었다 ({lo}~{hi})"
+        )
         assert hi > lo, f"{zone}/{sc.get('path_key')}: 폭 0 ({lo}~{hi}) — 범위가 소멸했다"
 
 
@@ -84,6 +92,16 @@ def test_후보_상세가_전부_실린다(zone: str):
             f"{zone}: 후보 상세가 정본과 다르다 — 화면이 최대 후보를 못 보인다"
         )
         assert sc.get("target_zone_max") == UPZONE_TARGETS[zone][-1]
+        # ★후보별 출처가 없으면 화면이 "법정범위인가 조례인가"를 말할 수 없다 —
+        #   숫자만 있고 출처가 없는 표시는 이 저장소가 금지하는 형태다.
+        for c, tz in zip(cands, UPZONE_TARGETS[zone]):
+            assert c.get("expected_far_source") == _target_far_pct(tz, None, None)[2], (
+                f"{zone}/{tz}: 후보 용적률 출처가 비거나 어긋난다"
+            )
+            assert c.get("expected_far_pct_high") == (
+                round(_target_far_pct(tz, None, None)[1])
+                if _target_far_pct(tz, None, None)[1] is not None else None
+            )
 
 
 @pytest.mark.parametrize("zone", SINGLE)
