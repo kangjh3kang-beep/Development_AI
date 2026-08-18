@@ -16,6 +16,7 @@
  */
 
 import { useState } from "react";
+import { DISMISS_Z, useDismissible } from "@/lib/satong-dismiss";
 import { NODES } from "@/lib/orchestration/node-registry";
 import type {
   AnalysisNode,
@@ -74,6 +75,9 @@ export function InputResolveModal({
   const node = BY_ID[nodeId];
   const { ready, missing, autoCandidates } = resolution;
   const [manual, setManual] = useState<Record<string, string>>({});
+
+  // ESC 로 닫기 — 화면 층위(z-[800])와 같은 칸으로 해제 순서를 등록한다.
+  useDismissible(DISMISS_Z.appModal, Boolean(node), onClose);
 
   if (!node) return null;
 

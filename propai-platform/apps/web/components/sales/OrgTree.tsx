@@ -19,6 +19,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Building2, ChevronDown, ChevronRight, Plus } from "lucide-react";
 import { salesApi } from "@/lib/salesApi";
 import { ApiClientError } from "@/lib/api-client";
+import { DISMISS_Z, useDismissible } from "@/lib/satong-dismiss";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import {
   NODE_TYPE_LABEL, ROLE_LABEL, nodeTypeOptions, nodeTypeLabel, orgRank, addableChildTypes,
@@ -185,6 +186,12 @@ export default function OrgTree({ siteCode }: { siteCode: string }) {
   // ★UX 감사(2026-07-23) 지적 반영: 모바일에서 최악이던 브라우저 prompt() 대신 인라인 배정 시트
   //   (이메일 입력 폼)로 교체 — 결과/오류도 시트 안에 표시한다.
   const [assign, setAssign] = useState<{ nodeId: string; name: string; email: string; err: string | null; busy: boolean } | null>(null);
+  // ESC 로 시트 닫기 — 두 시트 모두 `fixed inset-0` 으로 화면을 덮으므로 **동시에 열릴 수 없다**
+  // (한쪽이 열린 동안 다른 쪽을 여는 버튼이 가려져 눌리지 않는다). 그래서 같은 칸으로 등록해도
+  // 두 개가 경쟁하는 상황이 실제로 만들어지지 않는다.
+  useDismissible(DISMISS_Z.appModal, sheet != null, () => setSheet(null));
+  useDismissible(DISMISS_Z.appModal, assign != null, () => setAssign(null));
+
   const submitAssign = async () => {
     if (!assign || !assign.email.trim()) return;
     setAssign({ ...assign, busy: true, err: null });

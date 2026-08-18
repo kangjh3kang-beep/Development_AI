@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+
+import { DISMISS_Z, useDismissible } from "@/lib/satong-dismiss";
 import { motion, AnimatePresence } from "framer-motion";
 import { Brain, Paperclip } from "lucide-react";
 import { apiClient, ApiClientError } from "@/lib/api-client";
@@ -154,12 +156,10 @@ export function G2BBidDetailModal({
   const sections = detail?.detail ?? null;
   const g2bUrl = pickG2bUrl(sections, detail?.g2b_url ?? seed.g2b_url);
 
-  // 키보드 ESC 닫기 + 스크롤 락
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  // 키보드 ESC 닫기 — **자체 window 리스너에서 조정기로 이관**(2026-08-18).
+  // 종전에는 이 모달이 window 에 ESC 를 직접 걸어, 다른 표면이 함께 열려 있으면 같은 keydown 에
+  // 조율 없이 둘 다 닫혔다. 이제 조정기가 **열린 표면 중 가장 위 하나만** 닫는다.
+  useDismissible(DISMISS_Z.appModal, true, onClose);
 
   return (
     <AnimatePresence>

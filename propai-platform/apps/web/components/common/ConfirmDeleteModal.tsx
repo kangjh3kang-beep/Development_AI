@@ -11,6 +11,8 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { AlertTriangle, Check } from "lucide-react";
 
+import { DISMISS_Z, useDismissible } from "@/lib/satong-dismiss";
+
 type ConfirmDeleteModalProps = {
   open: boolean;
   /** 삭제 대상 이름(이 값을 그대로 입력해야 삭제 가능) */
@@ -41,6 +43,13 @@ export function ConfirmDeleteModal({
       setCopied(false);
     }
   }, [open, name]);
+
+  // ESC 로 취소 — **조정기로 이관**(종전에는 아래 입력의 onKeyDown 이었다).
+  // 종전 결함: 사용자가 '복사' 버튼이나 본문을 클릭해 포커스가 입력에서 벗어나면 ESC 가
+  //   아무 일도 하지 않았다(핸들러가 입력에만 붙어 있었다).
+  // ★이 확인창은 문서 뷰어 모달(DocumentViewerModal) **위에** 겹쳐 열리는 경로가 실재한다.
+  //   그때 ESC 1회는 확인창만 닫아야 하므로 한 칸 위(`nestedOverModal`)로 등록한다.
+  useDismissible(DISMISS_Z.nestedOverModal, open, onCancel);
 
   if (!open || typeof document === "undefined") return null;
 
@@ -106,7 +115,8 @@ export function ConfirmDeleteModal({
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && match) onConfirm();
-            if (e.key === "Escape") onCancel();
+            // ESC 는 여기서 처리하지 않는다 — 위 `useDismissible` 이 포커스와 무관하게 받는다.
+            // (여기 남겨 두면 같은 keydown 에 onCancel 이 두 번 불린다.)
           }}
           placeholder="위 이름을 그대로 입력하세요"
           className="mt-3 w-full rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 py-2.5 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"

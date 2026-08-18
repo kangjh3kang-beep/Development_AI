@@ -1,6 +1,12 @@
 /**
  * ESC 해제 조정기 — **가장 위 표면 하나만** 닫는다.
  *
+ * ★이 조정기는 **사통맵 전용이 아니다** — 앱 전역 모달이 함께 쓴다.
+ *   (파일명이 `satong-` 으로 시작하는 것은 처음 만들어진 자리가 사통맵이었기 때문이고,
+ *    내용은 처음부터 범용이다. 이름을 바꾸면 진행 중인 사통맵 작업과 충돌하므로 그대로 둔다.)
+ *   소비처: `components/precheck/SatongMapShell.tsx` · `components/map/SatongMultiMap.tsx`
+ *          · 앱 모달 13개 표면(`__tests__/modal-dismiss.contract.test.tsx` 가 전수 파생으로 감시).
+ *
  * ## 왜 필요한가 (2026-08-17 라이브 실측)
  *
  * `/ko/precheck` 에서:
@@ -37,6 +43,42 @@
  * - 입력 요소에 붙은 `onKeyDown` ESC(검색 콤보박스 등)는 **포커스가 있을 때만** 발화하므로
  *   여기 편입하지 않는다. 문서 전역 리스너끼리의 충돌만 조정 대상이다.
  */
+
+import { useEffect, useRef } from "react";
+
+import { SATONG_CONTENT_Z } from "./satong-map-z";
+
+/**
+ * **해제 순서** 층위(ESC 전용 SSOT).
+ *
+ * ★화면에 그려지는 z(페인트 층위)와 **같은 뜻이 아니다.** 저장소 전역 모달의 페인트 z 는
+ *   40/50/800/1000 으로 흩어져 있고(실측), 그 값을 통일하는 것은 회귀 위험이 커서 이번 범위가
+ *   아니다. 그래서 여기서는 "무엇이 먼저 닫혀야 하는가"만 **역할별로** 선언하고, 값은 화면
+ *   층위 SSOT(`SATONG_CONTENT_Z`)에서 파생시켜 두 사다리가 갈라지지 않게 묶어 둔다.
+ */
+export const DISMISS_Z = {
+  /**
+   * 전체 화면을 덮는 앱 모달(`role="dialog" aria-modal="true"` 표면 기본값).
+   * 화면 층위 계약의 모달 칸을 그대로 쓴다.
+   */
+  appModal: SATONG_CONTENT_Z.appModal,
+  /**
+   * **다른 모달 위에** 겹쳐 뜨는 표면(확인창·이미지 라이트박스). 아래 모달보다 **먼저** 닫혀야 한다.
+   *
+   * ★왜 +1 인가 — 겹침 관계는 실재한다(실측 2건):
+   *   · `DocumentViewerModal` 안에서 `ConfirmDeleteModal` 이 열린다
+   *   · 경매 상세 모달 안에서 사진 라이트박스가 열린다
+   *   둘 다 페인트 z 는 아래 모달과 **같다**(뷰어·확인창 z-[1000] · 상세·라이트박스 z-[800]).
+   *   같은 값으로 등록하면 조정기는 "먼저 등록된 쪽"을 닫는다 — 그건 이 조정기가 없애려던
+   *   **등록 순서 의존** 그 자체다. 그래서 해제 순서에서만 한 칸 위로 선언한다.
+   */
+  nestedOverModal: SATONG_CONTENT_Z.appModal + 1,
+  /**
+   * 전역 내비게이션 시트(모바일 '전체 메뉴'). 그 위에 모달이 열리면 모달이 먼저 닫힌다.
+   * 화면 층위도 실제로 모달보다 아래다(FieldNav 시트 z-40 < SiteEnterModal z-50 — 실측).
+   */
+  navSheet: SATONG_CONTENT_Z.appNavFlyout,
+} as const;
 
 type Entry = { z: number; close: () => void };
 
@@ -88,6 +130,27 @@ export function registerDismissible(z: number, close: () => void): () => void {
     entries.delete(id);
     releaseIfEmpty();
   };
+}
+
+/**
+ * React 표면용 얇은 배선 — **열려 있는 동안만** 조정기에 등록한다.
+ *
+ * 표면마다 `useEffect` + 해제 반환을 손으로 쓰면 (ㄱ)해제를 빠뜨리거나 (ㄴ)닫기 함수가
+ * 매 렌더 새로 만들어져 등록/해제가 계속 되풀이된다. 그 둘을 여기서 한 번만 막는다.
+ *
+ * @param z 해제 순서(`DISMISS_Z` 에서 고른다).
+ * @param open 표면이 열려 있는가. `false` 면 등록하지 않는다(닫힌 표면이 ESC 를 먹지 않게).
+ * @param close 닫기 함수. 매 렌더 새로 만들어져도 재등록하지 않는다(ref 로 최신값만 따라간다).
+ */
+export function useDismissible(z: number, open: boolean, close: () => void): void {
+  const closeRef = useRef(close);
+  useEffect(() => {
+    closeRef.current = close;
+  });
+  useEffect(() => {
+    if (!open) return;
+    return registerDismissible(z, () => closeRef.current());
+  }, [z, open]);
 }
 
 /** 테스트 전용 — 등록 현황(개수와 z 목록). 공허한 초록을 막기 위한 관찰창이다. */

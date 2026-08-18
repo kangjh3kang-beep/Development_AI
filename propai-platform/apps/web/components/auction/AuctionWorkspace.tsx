@@ -10,6 +10,7 @@ import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { AuctionMonitorPanel } from "@/components/auction/AuctionMonitorPanel";
 import { ApiClientError, apiClient, resolveApiOrigin } from "@/lib/api-client";
 import { analyzeRegistry } from "@/lib/registry-analyze";
+import { DISMISS_Z, useDismissible } from "@/lib/satong-dismiss";
 import { writePreCheckHandoff } from "@/components/precheck/handoff";
 import { useRouter } from "next/navigation";
 import type { Locale } from "@/i18n/config";
@@ -1095,12 +1096,21 @@ function DetailModal({
   const [zoomOpen, setZoomOpen] = useState(false);
   const prevBids = Array.isArray(detail?.prev_bids) ? detail!.prev_bids! : [];
 
-  // 라이트박스에서 키보드로 닫기(Esc)·좌우 이동(←/→) 지원.
+  // 상세 모달을 ESC 로 닫기 — **종전에는 ESC 가 아무 일도 하지 않았다**(배경 클릭·✕ 뿐이었다).
+  useDismissible(DISMISS_Z.appModal, true, onClose);
+
+  // 라이트박스도 ESC 로 닫기 — **자체 window 리스너에서 조정기로 이관**(2026-08-18).
+  // ★라이트박스는 이 상세 모달 **위에** 뜬다. 종전에는 ESC 한 번에 라이트박스만 닫혔지만
+  //   그건 상세 모달에 ESC 가 아예 없었기 때문이고, 위에서 상세에도 ESC 를 주는 순간
+  //   같은 keydown 에 둘 다 닫히게 된다. 그래서 라이트박스를 한 칸 위로 등록해
+  //   **ESC 1회 = 라이트박스만 닫힘**을 값으로 선언한다(페인트 z 는 둘 다 z-[800] 로 같다).
+  useDismissible(DISMISS_Z.nestedOverModal, zoomOpen && Boolean(mainImage), () => setZoomOpen(false));
+
+  // 라이트박스 좌우 이동(←/→). ESC 는 위 조정기가 받는다.
   useEffect(() => {
     if (!zoomOpen) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setZoomOpen(false);
-      else if (e.key === "ArrowRight") setImgIdx((i) => Math.min(i + 1, galleryImages.length - 1));
+      if (e.key === "ArrowRight") setImgIdx((i) => Math.min(i + 1, galleryImages.length - 1));
       else if (e.key === "ArrowLeft") setImgIdx((i) => Math.max(i - 1, 0));
     };
     window.addEventListener("keydown", onKey);

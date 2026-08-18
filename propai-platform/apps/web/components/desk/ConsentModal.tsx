@@ -10,6 +10,8 @@
 
 import { useMemo, useState } from "react";
 
+import { DISMISS_Z, useDismissible } from "@/lib/satong-dismiss";
+
 export interface ConsentItem {
   type: string;
   required: boolean;
@@ -77,6 +79,9 @@ interface Props {
 }
 
 export default function ConsentModal({ template, onConfirm, onCancel }: Props) {
+  // ESC 로 취소 — 이 컴포넌트는 부모가 마운트한 동안 항상 열려 있다(열림 플래그가 따로 없다).
+  useDismissible(DISMISS_Z.appModal, true, onCancel);
+
   const tpl = template ?? FALLBACK_TEMPLATE;
   // 동의상태는 모든 항목 false에서 시작(필수도 사용자가 명시 동의해야 함).
   // 모달은 열릴 때마다 새로 마운트되므로 초기화 effect 없이 lazy 초기값으로 충분하다.
