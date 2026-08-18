@@ -13,6 +13,7 @@ import { apiClient, ApiClientError } from "@/lib/api-client";
 import { normalizeZoning } from "@/lib/kr-building-regulations";
 import { SatongMultiMap } from "@/components/map/SatongMultiMap";
 import type { SatongMapFeature, SatongMapLayerState } from "@/lib/satong-map-layers";
+import { SATONG_POPUP_YIELD } from "@/lib/satong-map-z";
 
 type Feature = {
   pnu: string;
@@ -328,8 +329,17 @@ export function ParcelBoundaryMap({
           highlightFeatureAddress={highlight}
         />
         {/* 로딩/빈결과 오버레이 — 무한 '불러오는 중' 방지 */}
+        {/* ★양보 계약 판정(SATONG_POPUP_YIELD) — 이 스크림은 **양보하지 않는다**.
+            ① 전면(inset-0) 차단형이라 감쇄시키면 "조회 중"이라는 사실이 흐려진다.
+            ② 이 화면은 onFeatureClick 을 넘기므로 지도가 필지 팝업을 **아예 걸지 않는다**
+               (SatongMultiMap 의 featureDetailOwnedByParent 상호배제) — 겹칠 팝업 자체가
+               드물다. ★단정하지 않는다: 분양·경매 마커 경로는 이 화면에서 안 쓰지만
+               라이브로 재보지는 않았다. */}
         {(loading || (!loading && !error && (!data || !data.features?.length))) && (
-          <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-[var(--surface-soft)]/70 text-xs text-[var(--text-hint)]">
+          <div
+            {...{ [SATONG_POPUP_YIELD.exemptAttr]: "blocking-scrim" }}
+            className="absolute inset-0 flex items-center justify-center rounded-xl bg-[var(--surface-soft)]/70 text-xs text-[var(--text-hint)]"
+          >
             {loading
               ? "지적도 경계 불러오는 중…"
               : "필지 경계를 찾지 못했습니다 (지번 정확도·VWorld 지적도 미제공 가능). 주소를 확인하세요."}

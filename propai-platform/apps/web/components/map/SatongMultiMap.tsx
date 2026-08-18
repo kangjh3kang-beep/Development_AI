@@ -2893,6 +2893,23 @@ export function SatongMultiMap({
           ? "flex flex-col gap-2"
           : "flex flex-col gap-2 rounded-xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-3"
       }
+      /* ★상세정보팝업 양보 계약(SATONG_POPUP_YIELD)의 **트리거**. 사용자 신고 "팝업이 가려진다".
+         Leaflet 팝업은 격리된 .leaflet-container 안이라 **z 로는 크롬을 못 이긴다**
+         (라이브 실측: popup pane 계산 z = 1, 컨테이너 isolate/0). 그래서 팝업이 열리면
+         수동적 크롬이 물러난다. 감쇄 규칙은 globals.css 한 곳에만 둔다.
+
+         ★왜 지도 래퍼가 아니라 **여기(컴포넌트 루트)** 인가 — 2026-08-18.
+         종전엔 아래 `wrapperClass("relative")` 래퍼에 붙였다. 그러면 CSS 자손 선택자가
+         래퍼 **안**의 크롬만 닿는다. 실제로 이 지도를 쓰는 화면들은 지도의 **형제**로
+         오버레이를 얹는다(실측: NearbyTransactionsMap 6개 · ZoningSignalMap 1개 ·
+         ParcelBoundaryMap 1개). 형제는 자손 선택자에 **원리적으로** 안 걸려 계약 밖이었다.
+         트리거를 루트로 올리면 globals.css 의 형제 결합자(`~`)가 그 형제들에 닿는다.
+         래퍼 안쪽 크롬은 여전히 루트의 자손이라 **기존 동작은 그대로**다.
+
+         ★값을 "true"/"false" 로 **항상** 렌더한다(종전엔 닫힘일 때 속성 자체가 없었다).
+         속성이 없으면 "루트에 트리거가 붙는다"는 사실을 테스트가 관측할 수 없다.
+         CSS 는 `="true"` 만 매치하므로 "false" 는 화면에 영향이 없다. */
+      {...{ [SATONG_POPUP_YIELD.wrapperAttr]: detailPopupOpen ? "true" : "false" }}
     >
       {/* 안내 메시지 */}
       {chrome === "default" && !readOnly && (
@@ -2921,11 +2938,6 @@ export function SatongMultiMap({
       <div
         ref={wrapperRef}
         className={wrapperClass("relative")}
-        /* ★상세정보팝업 양보 계약(SATONG_POPUP_YIELD) — 사용자 신고 "팝업이 가려진다".
-           Leaflet 팝업은 격리된 .leaflet-container 안이라 **z 로는 크롬을 못 이긴다**
-           (라이브 실측: popup pane 계산 z = 1, 컨테이너 isolate/0). 그래서 팝업이 열리면
-           수동적 크롬이 물러난다. 감쇄 규칙은 globals.css 한 곳에만 둔다. */
-        {...{ [SATONG_POPUP_YIELD.wrapperAttr]: detailPopupOpen ? "true" : undefined }}
       >
         {/* 줌 컨트롤은 좌하단(디자인컴프) — 상단 칩바 겹침 CSS 불필요. ping은 마커 애니메이션용. */}
         <style jsx global>{`

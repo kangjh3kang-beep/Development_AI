@@ -284,6 +284,16 @@ export const SATONG_POPUP_YIELD = {
   /** 양보 대상 표시 — 이 속성이 있는 오버레이만 감쇄된다. */
   passiveAttr: "data-satong-chrome",
   passiveValue: "passive",
+  /**
+   * **양보하면 안 되는** 오버레이가 그 사유를 적어 두는 자리(값 = 짧은 사유 id).
+   *
+   * 왜 필요한가: 파생 락(`satong-sibling-yield.derived.test.ts`)은 지도 형제로 놓인
+   * 절대위치 오버레이를 **전수로** 수집해 "양보 표시가 있는가"를 묻는다. 그런데 전면
+   * 차단 스크림·오류 패널처럼 **양보시키면 안 되는** 것도 있다(감쇄+pointer-events:none 을
+   * 걸면 사용자의 진행을 막거나 '다시 시도' 버튼을 죽인다). 그 예외를 테스트 파일의
+   * 손수 목록으로 두면 목록이 곧 상한이 되므로, **코드가 스스로 예외를 선언**하게 한다.
+   */
+  exemptAttr: "data-satong-chrome-exempt",
   /** 감쇄 강도(globals.css 와 같은 값이어야 한다 — 테스트가 이 일치를 잠근다). */
   dimOpacity: 0.25,
 } as const;
