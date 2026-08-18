@@ -178,6 +178,8 @@ export interface SatongMultiMapProps {
 type BoundaryFeature = {
   pnu: string;
   address: string;
+  /** 입력 주소 원본 — address 는 지번이 붙어 보강된다(매칭용 키). */
+  input_address?: string | null;
   area_sqm?: number | null;
   zone_type?: string | null;
   zone_type_2?: string | null;
@@ -826,6 +828,7 @@ function boundaryFeatureToMapFeature(feature: BoundaryFeature): SatongMapFeature
     id: feature.pnu || feature.address,
     pnu: feature.pnu ?? null,
     address: feature.address || feature.pnu || "필지",
+    inputAddress: feature.input_address ?? null,
     lat: typeof feature.lat === "number" ? feature.lat : null,
     lon: typeof feature.lon === "number" ? feature.lon : null,
     areaSqm: feature.area_sqm ?? null,

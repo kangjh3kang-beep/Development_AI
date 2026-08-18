@@ -62,6 +62,12 @@ export type DominantConstraint = {
 export type SatongMapFeature = {
   id: string;
   address: string;
+  /**
+   * 백엔드가 **되돌려준 입력 주소 원본**(`input_address`). 표시용 `address` 는 PNU 에서 파생한
+   * 지번이 붙어 보강되므로, pnu 미확보 씨드를 **주소로 찾는** 병합(healParcelPnu)이 그 보강으로
+   * 어긋난다. 매칭은 이 원본으로, 표시는 `address` 로 — 표시를 고치다 배선을 끊지 않는다.
+   */
+  inputAddress?: string | null;
   pnu?: string | null;
   lat?: number | null;
   lon?: number | null;
