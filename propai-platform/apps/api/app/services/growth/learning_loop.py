@@ -353,6 +353,9 @@ async def list_examples(db, *, statuses: tuple[str, ...] = ("candidate",),
     """
     from sqlalchemy import text
 
+    # ★이중 가드(의도적): 인자 기본값이 무엇이든, 어휘에 없는 값은 걸러진 뒤 빈 튜플이 되고
+    #   `or ("candidate",)` 가 다시 candidate 로 되돌린다. 그래서 시그니처 기본값만 바꾸는
+    #   변이는 죽지 않는다 — 그건 구멍이 아니라 두 겹으로 막았다는 뜻이다.
     valid = tuple(s for s in statuses if s in _VALID_STATUSES) or ("candidate",)
     lim = max(1, min(int(limit or 50), LIST_MAX_LIMIT))
     off = max(0, int(offset or 0))
@@ -381,7 +384,6 @@ async def list_examples(db, *, statuses: tuple[str, ...] = ("candidate",),
     except Exception as e:  # noqa: BLE001
         logger.warning("L3 후보 건수 조회 실패: %s", str(e)[:160])
 
-    rows: list[Any] = []
     try:
         params_page = dict(params)
         params_page["lim"] = lim

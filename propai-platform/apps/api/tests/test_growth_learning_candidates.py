@@ -28,6 +28,7 @@ from __future__ import annotations
 import os
 import re
 import sys
+from datetime import UTC, datetime
 
 import pytest
 
@@ -65,6 +66,26 @@ class _Result:
 
     def scalar(self):
         return self._scalar
+
+
+def _select_cols(sql: str) -> list[str]:
+    """`SELECT a, b, c FROM learning_examples` 의 컬럼 목록을 읽는다(별칭 없음 전제)."""
+    m = re.search(r"SELECT\s+(.+?)\s+FROM learning_examples", sql, re.S)
+    assert m, f"learning_examples SELECT 를 파싱하지 못했다: {sql[:80]}"
+    return [c.strip() for c in m.group(1).split(",") if c.strip()]
+
+
+_KNOWN_COLUMNS = {
+    "id", "service", "analysis_type", "status", "tenant_id", "content_hash",
+    "input_summary", "good_output", "created_at", "source_feedback_id",
+}
+
+
+def _col(row: dict, name: str):
+    """없는 컬럼을 고르면 실제 DB 처럼 터진다(오타·잘못된 컬럼 변이를 살려두지 않는다)."""
+    if name not in _KNOWN_COLUMNS:
+        raise RuntimeError(f'column "{name}" does not exist')
+    return row.get(name)
 
 
 class _FakeDB:
@@ -129,18 +150,10 @@ class _FakeDB:
                 rows = rows[off:off + lim]
             elif "LIMIT :lim" in sql:
                 rows = rows[: int(p.get("lim", 50))]
-            # build_dataset_jsonl 계약: (input_summary, good_output, content_hash, tenant_id)
-            if sql.strip().startswith("SELECT input_summary"):
-                return _Result(rows=[
-                    (r.get("input_summary"), r.get("good_output"),
-                     r.get("content_hash"), r.get("tenant_id")) for r in rows
-                ])
-            # list_examples 계약: id 를 **첫 컬럼**으로 준다.
-            return _Result(rows=[
-                (r.get("id"), r.get("service"), r.get("analysis_type"), r.get("status"),
-                 r.get("tenant_id"), r.get("content_hash"), r.get("input_summary"),
-                 r.get("good_output"), r.get("created_at")) for r in rows
-            ])
+            # ★SELECT 컬럼 목록을 **질의문에서 읽어** 그 순서대로 값을 돌려준다.
+            #   고정 튜플을 돌려주면 SELECT 에서 `id` 를 빼는 변이가 살아남는다 —
+            #   그건 이 커밋이 고치는 결함(=조회가 id 를 안 준다) 그 자체다.
+            return _Result(rows=[tuple(_col(r, c) for c in _select_cols(sql)) for r in rows])
         return _Result()
 
     async def commit(self):
@@ -188,6 +201,11 @@ CAND_OTHER = {
 }
 
 ALL_ROWS = [CAND, ACTIVE, REJECTED, CAND_OTHER]
+
+# ★created_at 이 문자열인 픽스처만 쓰면 `isoformat()` 분기와 `str()` 분기가 **같은 값**을 내
+#   그 배선을 끊어도 결과가 안 변한다(모집단이 안 갈린 상태). 진짜 datetime 행을 따로 둔다.
+CAND_DT = dict(CAND, id="ex-cand-dt", content_hash="hash-cand-dt",
+               created_at=datetime(2026, 8, 15, 9, 30, tzinfo=UTC))
 
 
 def _db() -> _FakeDB:
@@ -405,3 +423,131 @@ async def test_status_어휘가_learning_loop와_어긋나지_않는다():
     from app.routers import growth as g
 
     assert g._LEARNING_LIST_STATUSES == ll._VALID_STATUSES
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# 6) 행 모양 · 날짜 직렬화 — 화면이 읽는 필드가 실제로 실려 온다
+# ════════════════════════════════════════════════════════════════════════════
+async def test_행에_화면이_쓰는_필드가_전부_실린다():
+    res = await ll.list_examples(_FakeDB(examples=[dict(CAND)]))
+    it = res["items"][0]
+    assert it["id"] == "ex-cand-1"
+    assert it["service"] == "avm"
+    assert it["analysis_type"] == "avm_valuation"
+    assert it["status"] == "candidate"
+    assert it["tenant_id"] == "tenant-A"
+    assert it["content_hash"] == "hash-cand"
+    assert it["input_summary"] == "후보 입력요약"
+    assert it["good_output"] == "후보-미승인-본문"
+    assert it["created_at"] == "2026-08-18T10:00:00+00:00"
+
+
+async def test_datetime_created_at은_ISO_문자열로_직렬화된다():
+    """JSON 응답에 그대로 실리려면 문자열이어야 한다(datetime 그대로면 직렬화가 깨진다)."""
+    res = await ll.list_examples(_FakeDB(examples=[dict(CAND_DT)]))
+    created = res["items"][0]["created_at"]
+    assert isinstance(created, str)
+    assert created == datetime(2026, 8, 15, 9, 30, tzinfo=UTC).isoformat()
+    assert created.startswith("2026-08-15T09:30")
+
+
+async def test_created_at이_없어도_터지지_않는다():
+    res = await ll.list_examples(_FakeDB(examples=[dict(CAND, created_at=None)]))
+    assert res["items"][0]["created_at"] is None
+
+
+def test_공개목록_all_에_적힌_이름이_전부_실재한다():
+    """`__all__` 오타는 `from ... import *` 를 조용히 깨뜨린다 — 이름을 실물과 결속한다."""
+    assert ll.__all__, "공개목록이 비었다 — 아래 단언이 공허해진다"
+    missing = [n for n in ll.__all__ if not hasattr(ll, n)]
+    assert missing == [], f"__all__ 에만 있고 실물이 없는 이름: {missing}"
+    for name in ("list_examples", "_preview", "CANDIDATE_PREVIEW_MAX_CHARS", "LIST_MAX_LIMIT"):
+        assert name in ll.__all__
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# 7) 엔드포인트 — 응답 계약·필터 전달·감사기록·status 검증
+# ════════════════════════════════════════════════════════════════════════════
+async def _call_endpoint(monkeypatch, db, **kw):
+    """총괄관리자 통과 상태로 후보목록 엔드포인트를 직접 호출한다."""
+    import app.core.audit as audit_mod
+    from app.routers import growth as g
+
+    async def _admin(_request, _db):
+        return "admin-1"
+
+    audits: list[dict] = []
+
+    async def _audit(**payload):
+        audits.append(payload)
+
+    monkeypatch.setattr(g, "_require_admin", _admin)
+    monkeypatch.setattr(audit_mod, "audit_admin_action", _audit)
+
+    params = {"service": None, "status": "candidate", "tenant_id": None,
+              "limit": 50, "offset": 0}
+    params.update(kw)
+    res = await g.list_learning_candidates(request=_FakeRequest(), db=db, **params)
+    return res, audits
+
+
+async def test_엔드포인트가_후보를_응답계약대로_돌려준다(monkeypatch):
+    res, _ = await _call_endpoint(monkeypatch, _db())
+
+    assert [it.id for it in res.items] == ["ex-cand-2", "ex-cand-1"]  # 최신순
+    assert res.total == 2
+    assert res.statuses == ["candidate"]
+    assert res.limit == 50 and res.offset == 0
+    first = res.items[0]
+    assert first.service == "permit"
+    assert first.analysis_type == "permit_ai"
+    assert first.status == "candidate"
+    assert first.tenant_id == "tenant-B"
+    assert first.content_hash == "hash-cand-2"
+    assert first.input_summary == "다른 테넌트 후보"
+    assert first.good_output == "다른-서비스-본문"
+    assert first.input_summary_truncated is False
+    assert first.created_at == "2026-08-19T10:00:00+00:00"
+    assert first.train_allowed is False  # 권리 미등록 = 불명 = 학습 금지(표시만)
+    assert first.rights_scope == "unknown"
+
+
+async def test_엔드포인트가_필터를_서비스층에_그대로_넘긴다(monkeypatch):
+    res, _ = await _call_endpoint(monkeypatch, _db(), service="permit", limit=1)
+    assert [it.id for it in res.items] == ["ex-cand-2"]
+    assert res.service == "permit" and res.limit == 1
+
+    res2, _ = await _call_endpoint(monkeypatch, _db(), tenant_id="tenant-A")
+    assert [it.id for it in res2.items] == ["ex-cand-1"]
+    assert res2.tenant_id == "tenant-A"
+
+    res3, _ = await _call_endpoint(monkeypatch, _db(), status="active")
+    assert [it.id for it in res3.items] == ["ex-active-1"]
+    assert res3.statuses == ["active"]
+
+
+async def test_엔드포인트가_페이지_이동을_전달한다(monkeypatch):
+    res, _ = await _call_endpoint(monkeypatch, _db(), limit=1, offset=1)
+    assert [it.id for it in res.items] == ["ex-cand-1"]
+    assert res.offset == 1 and res.total == 2
+
+
+async def test_열람은_감사에_남는다(monkeypatch):
+    """promote 가 감사를 남기는 것과 짝을 맞춘다 — 누가 어떤 묶음을 봤는지 추적된다."""
+    _, audits = await _call_endpoint(monkeypatch, _db(), service="permit")
+    assert len(audits) == 1, "감사 기록이 남지 않았다"
+    a = audits[0]
+    assert a["action"] == "growth.learn.candidates_list"
+    assert a["actor_id"] == "admin-1"
+    assert a["actor_role"] == "super_admin"
+    assert a["target"] == "permit@candidate"
+    assert a["detail"]["count"] == 1
+    assert a["detail"]["total"] == 1
+
+
+async def test_어휘에_없는_status는_400(monkeypatch):
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as ei:
+        await _call_endpoint(monkeypatch, _db(), status="banana")
+    assert ei.value.status_code == 400
