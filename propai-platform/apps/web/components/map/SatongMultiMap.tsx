@@ -1135,6 +1135,22 @@ export function SatongMultiMap({
         `&width=64&height=64&crs=EPSG:3857&bbox=14134000,4518000,14136000,4520000&_ts=${Date.now()}`;
       const resp = await fetch(probe, { cache: "no-store" });
       const contentType = resp.headers.get("content-type") || "";
+      // ★★강등 판정은 "200 + image/" **앞에** 둔다(2026-08-18).
+      //   정직 강등은 회색 지도를 피하려고 **투명타일(200 image/png)** 을 준다 —
+      //   아래 정상 분기가 먼저 걸리면 프로브가 강등을 **"정상"으로 오진**한다(거짓 초록).
+      //   그래서 강등 헤더를 가장 먼저 본다. `<img>` 는 헤더를 못 읽지만 이 프로브는 읽는다.
+      // ★헤더명은 `lib/vworld-wms-proxy.ts` 의 `VWORLD_DEGRADED_HEADER` 가 정본이다.
+      //   여기서 **import 하지 않고 리터럴을 쓴다** — 그 모듈은 서버 전용(Buffer·process.env)이라
+      //   클라이언트 컴포넌트가 import 하면 번들로 끌려온다.
+      //   대신 두 곳이 어긋나지 않게 `lib/__tests__/degraded-header-parity.test.ts` 가 묶는다.
+      const degraded = resp.headers.get("X-VWorld-Degraded");
+      if (degraded) {
+        // ★관측된 사실만 말한다 — 복구 방법을 안내하지 않는다(#677: 없는 복구 경로 금지).
+        //   실장애(2026-08-16)의 원인은 릴레이 목적지의 **상류가 2분간 죽은 것**이었고
+        //   사용자가 할 수 있는 조치는 없었다. "다시 시도하세요" 는 거짓 안내가 된다.
+        setCadastreTileNote("지도 타일 서버에 일시적으로 닿지 않습니다 — 필지·오버레이는 그대로 표시됩니다");
+        return;
+      }
       if (resp.ok && contentType.startsWith("image/")) {
         setCadastreTileNote("지적 프록시 정상 — 지도를 이동/새로고침해도 안 보이면 줌·영역을 확인하세요");
         return;
