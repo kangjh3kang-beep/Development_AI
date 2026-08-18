@@ -84,6 +84,7 @@ export const NAV_ITEM_LABELS: Record<string, Record<TranslatedLocale, string>> =
   users: { en: "User Management", "zh-CN": "用户管理" },
   billing: { en: "Billing Rates", "zh-CN": "计费金额设置" },
   lists: { en: "Editorial List Management", "zh-CN": "编辑列表管理" },
+  "learning-approval": { en: "AI Learning Example Approval", "zh-CN": "AI 学习案例审批" },
 };
 
 /** 섹션 id → 로케일별 제목. */

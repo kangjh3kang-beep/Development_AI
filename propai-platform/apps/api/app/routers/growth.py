@@ -621,6 +621,9 @@ async def rollback_growth_setting(
 # ════════════════════════════════════════════════════════════════════════════
 # 자가학습 L3 — 데이터셋 다운로드 · few-shot 후보 승인 (Phase 5, 관리자, 설계 §6.4)
 # ════════════════════════════════════════════════════════════════════════════
+# GET  /learning/candidates   : 후보 목록(id 포함) — 사람이 무엇을 승인할지 고를 수 있게.
+#                               ★이게 없으면 promote 가 요구하는 example_id 를 알 길이 없어
+#                                 "사람 승인 게이트"에 문이 없다(2026-08-19 결함).
 # GET  /learning/dataset      : (input_summary, good_output) 페어 JSONL 다운로드.
 #                               ★생성/다운로드까지만 — 파인튜닝 잡 트리거 절대 없음.
 # POST /learning/promote      : learning_example candidate → active (사람 승인) + 감사.
@@ -628,6 +631,8 @@ async def rollback_growth_setting(
 # 모두 super_admin(tier) 전용.
 
 _PROMOTE_STATUSES = {"active", "rejected"}
+# 후보 목록에서 조회 가능한 status(learning_loop._VALID_STATUSES 와 같은 어휘).
+_LEARNING_LIST_STATUSES = {"candidate", "active", "rejected"}
 
 
 @router.get("/learning/dataset", response_class=PlainTextResponse)
@@ -680,6 +685,100 @@ async def learning_dataset(
         media_type="application/x-ndjson",
         headers={"Content-Disposition": f'attachment; filename="{fname}"',
                  "X-Dataset-Count": str(ds.get("count", 0))},
+    )
+
+
+class LearningCandidateOut(BaseModel):
+    """few-shot 후보 1건(관리자 검토용). ★`id` 가 곧 promote 의 `example_id` 다."""
+
+    id: str
+    service: str | None = None
+    analysis_type: str | None = None
+    status: str
+    tenant_id: str | None = None
+    content_hash: str | None = None
+    input_summary: str = ""
+    input_summary_truncated: bool = False
+    good_output: str = ""
+    good_output_truncated: bool = False
+    created_at: str | None = None
+    # 자산권리 표시(거르기 아님) — False 면 화면이 "권리 미확인"을 눈에 보이게 띄운다.
+    train_allowed: bool = False
+    rights_scope: str | None = None
+
+
+class LearningCandidateList(BaseModel):
+    items: list[LearningCandidateOut]
+    total: int
+    statuses: list[str]
+    service: str | None = None
+    tenant_id: str | None = None
+    limit: int
+    offset: int
+
+
+@router.get("/learning/candidates", response_model=LearningCandidateList)
+async def list_learning_candidates(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    service: str | None = Query(default=None, description="service 필터(미지정=전체)"),
+    status: str = Query(default="candidate", description="candidate(기본) | active | rejected"),
+    tenant_id: str | None = Query(default=None, description="테넌트 필터(미지정=전체)"),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> LearningCandidateList:
+    """few-shot 후보 목록(관리자 검토용) — 승인 화면이 이 목록으로 promote 대상을 지목한다.
+
+    ★왜 필요했나: promote 는 `example_id` 를 요구하는데, 그때까지 learning_examples 를 읽는
+      유일한 경로(build_dataset_jsonl)가 id 를 안 돌려줬다. 화면을 만들어도 무엇을 승인할지
+      지목할 수가 없었다 = 사람 승인 게이트에 문이 없었다.
+
+    ★테넌트 범위: 기본 전체다(테넌트로 자동 축소하지 않는다). 근거 —
+      ① 이 엔드포인트의 문지기 `_require_admin` 은 users.tier='super_admin' = **플랫폼 총괄
+         관리자**이고, 같은 문지기를 쓰는 promote 도 테넌트 조건 없이 id 로 전이한다.
+         목록만 좁히면 다른 테넌트의 후보는 **보이지도 승인되지도 않아** 그 테넌트에서는
+         few-shot 이 영영 비는, 지금 고치는 결함이 그대로 남는다.
+      ② 대신 행마다 tenant_id 를 실어 보낸다 — 승인 시 그 예시가 **어느 테넌트의 프롬프트에**
+         주입될지(base_interpreter._load_fewshot 은 tenant_id 로 스코핑한다) 화면에서 보이게.
+      ③ 특정 테넌트만 보려면 `tenant_id` 쿼리로 **명시적으로** 좁힌다(조용히 숨기지 않는다).
+      본문은 적재 시점에 이미 PII 마스킹(learning_loop._summarize_payload → mask_pii)된 요약이다.
+    """
+    from app.services.growth import learning_loop
+
+    user_id = await _require_admin(request, db)
+    if status not in _LEARNING_LIST_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail="status 는 candidate, active, rejected 중 하나여야 합니다.",
+        )
+
+    res = await learning_loop.list_examples(
+        db, statuses=(status,), service=service, tenant_id=tenant_id,
+        limit=limit, offset=offset,
+    )
+
+    # 감사: 누가 어떤 후보 묶음을 열람했는지(승인 이력과 짝이 되게 — promote 도 감사를 남긴다).
+    try:
+        from app.core.audit import audit_admin_action
+
+        await audit_admin_action(
+            actor_id=user_id, actor_role="super_admin",
+            action="growth.learn.candidates_list",
+            target=f"{service or 'all'}@{status}",
+            detail={"count": len(res.get("items", [])), "total": res.get("total", 0),
+                    "tenant_id": tenant_id},
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+    return LearningCandidateList(
+        items=[LearningCandidateOut(**it) for it in res.get("items", [])],
+        total=int(res.get("total", 0)),
+        statuses=list(res.get("statuses", [status])),
+        service=service,
+        tenant_id=tenant_id,
+        limit=int(res.get("limit", limit)),
+        offset=int(res.get("offset", offset)),
     )
 
 

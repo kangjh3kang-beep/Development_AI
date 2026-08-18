@@ -47,7 +47,11 @@ describe("buildPrimaryNav", () => {
     const adminItems = NAV.find((s) => s.id === "admin")?.items ?? [];
 
     expect(designRefs?.prefetch).toBe(false);
-    expect(adminItems.map((item) => item.prefetch)).toEqual([false, false, false, false]);
+    // ★사람이 센 목록(길이 4)을 쓰지 않는다 — 관리자 화면이 하나 늘 때마다 이 줄이 깨졌고,
+    //   그 목록이 곧 상한이 되어 새 항목이 감시망 밖으로 밀려난다(CLAUDE.md §A.4).
+    //   불변식은 "관리자 항목은 전부 프리페치하지 않는다"이므로 그것을 파생형으로 잠근다.
+    expect(adminItems.length, "관리자 항목이 0개 — 아래 단언이 공허해진다").toBeGreaterThanOrEqual(4);
+    expect(adminItems.filter((item) => item.prefetch !== false)).toEqual([]);
   });
 
   it("L2 그룹 신설 + L3 children('└' 흉내 제거)", () => {
