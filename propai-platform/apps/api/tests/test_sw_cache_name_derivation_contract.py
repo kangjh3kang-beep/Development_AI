@@ -189,6 +189,13 @@ def _probe_pipelines() -> list[tuple[Path, int, str]]:
             if "sw.js" not in head:
                 continue  # sw.js 를 읽는 파이프가 아니다
             seg = tail.strip().rstrip("|").strip()
+            # ★`LIVE=$(curl … | grep …)` 처럼 **명령 치환 안**에 든 프로브는 닫는 괄호가
+            #   파이프라인 끝에 붙어 온다. 그대로 실행하면 문법 오류로 빈 출력이 나고
+            #   "프로브가 값을 못 뽑는다"는 **위양성**이 된다(2026-08-18 실측 — 이 검사가
+            #   같은 날 작성한 인계서를 그렇게 신고했다).
+            #   여는 괄호가 앞머리에 있을 때만 짝지어 떼어 낸다(무조건 떼면 정상 문법을 망친다).
+            if seg.endswith(")") and "$(" in head:
+                seg = seg[:-1].rstrip()
             if not seg:
                 continue
             if "CACHE_NAME" not in seg and "propai-v" not in seg:
