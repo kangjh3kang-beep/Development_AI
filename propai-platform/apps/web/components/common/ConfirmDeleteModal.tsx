@@ -47,8 +47,11 @@ export function ConfirmDeleteModal({
   // ESC 로 취소 — **조정기로 이관**(종전에는 아래 입력의 onKeyDown 이었다).
   // 종전 결함: 사용자가 '복사' 버튼이나 본문을 클릭해 포커스가 입력에서 벗어나면 ESC 가
   //   아무 일도 하지 않았다(핸들러가 입력에만 붙어 있었다).
-  // ★이 확인창은 문서 뷰어 모달(DocumentViewerModal) **위에** 겹쳐 열리는 경로가 실재한다.
-  //   그때 ESC 1회는 확인창만 닫아야 하므로 한 칸 위(`nestedOverModal`)로 등록한다.
+  // ★정정(R2) — 초판 주석은 "문서 뷰어 모달 위에 겹쳐 열리는 경로가 실재한다"고 적었으나
+  //   **거짓이다**: 이 확인창의 소비처는 `components/projects/ProjectsOverviewClient.tsx`
+  //   하나뿐이고(전수 확인), 문서뷰어 쪽 삭제는 확인창 없이 바로 지운다.
+  //   그래도 한 칸 위(`nestedOverModal`)로 등록한다 — 되돌릴 수 없는 삭제를 확인하는 창은
+  //   무엇 위에 뜨든 가장 먼저 닫혀야 하고, 단독으로 열려도 최댓값이라 동작은 같다.
   useDismissible(DISMISS_Z.nestedOverModal, open, onCancel);
 
   if (!open || typeof document === "undefined") return null;

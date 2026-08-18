@@ -10,7 +10,7 @@ import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { AuctionMonitorPanel } from "@/components/auction/AuctionMonitorPanel";
 import { ApiClientError, apiClient, resolveApiOrigin } from "@/lib/api-client";
 import { analyzeRegistry } from "@/lib/registry-analyze";
-import { DISMISS_Z, useDismissible } from "@/lib/satong-dismiss";
+import { DISMISS_Z, useDismissible, useDismissibleWhileMounted } from "@/lib/satong-dismiss";
 import { writePreCheckHandoff } from "@/components/precheck/handoff";
 import { useRouter } from "next/navigation";
 import type { Locale } from "@/i18n/config";
@@ -1097,7 +1097,8 @@ function DetailModal({
   const prevBids = Array.isArray(detail?.prev_bids) ? detail!.prev_bids! : [];
 
   // 상세 모달을 ESC 로 닫기 — **종전에는 ESC 가 아무 일도 하지 않았다**(배경 클릭·✕ 뿐이었다).
-  useDismissible(DISMISS_Z.appModal, true, onClose);
+  // 이 모달은 부모가 선택된 물건이 있을 때만 마운트한다.
+  useDismissibleWhileMounted(DISMISS_Z.appModal, onClose);
 
   // 라이트박스도 ESC 로 닫기 — **자체 window 리스너에서 조정기로 이관**(2026-08-18).
   // ★라이트박스는 이 상세 모달 **위에** 뜬다. 종전에는 ESC 한 번에 라이트박스만 닫혔지만

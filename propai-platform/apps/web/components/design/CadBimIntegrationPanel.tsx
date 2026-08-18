@@ -16,6 +16,7 @@ import CADEditor, { type CADEditorMetrics } from "./CADEditor";
 import { ProceduralBuilding } from "./ProceduralBuilding";
 import { sectionCutHeightM, visibleFloorCount } from "./bimSection";
 import { resolveAppliedOverview } from "./appliedOverview";
+import { DISMISS_Z, useDismissible } from "@/lib/satong-dismiss";
 import { distance3D, formatLength, midpoint3D, type Vec3 } from "./bimMeasure";
 import { cycleTransformMode, transformReadout, type TransformMode } from "./bimTransform";
 import { GenerativeDesignPanel } from "@/components/cad/GenerativeDesignPanel";
@@ -459,15 +460,19 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
   const [fullscreen, setFullscreen] = useState(false);
   const t = dictionary;
 
-  // 전체화면 동안 ESC로 해제 + body 스크롤 잠금(오버레이가 페이지와 겹치지 않도록).
+  // 전체화면 ESC 해제 — **자체 window 리스너에서 조정기로 이관**(2026-08-18 R2).
+  // 종전에는 이 오버레이가 window 에 ESC 를 직접 걸어, 위에 모달·팝오버가 열려 있어도 같은
+  // keydown 에 전체화면까지 함께 벗겨졌다. 조정기의 `fullscreenExit` 칸은 **가장 마지막**
+  // 차례라, 안쪽 표면을 먼저 닫고 더 닫을 게 없을 때 전체화면이 풀린다.
+  // ★라이브 미검증 — 전체화면과 모달이 공존하는 실제 경로를 브라우저에서 확인하지 못했다.
+  useDismissible(DISMISS_Z.fullscreenExit, fullscreen, () => setFullscreen(false));
+
+  // 전체화면 동안 body 스크롤 잠금(오버레이가 페이지와 겹치지 않도록).
   useEffect(() => {
     if (!fullscreen) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setFullscreen(false); };
-    window.addEventListener("keydown", onKey);
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
-      window.removeEventListener("keydown", onKey);
       document.body.style.overflow = prevOverflow;
     };
   }, [fullscreen]);

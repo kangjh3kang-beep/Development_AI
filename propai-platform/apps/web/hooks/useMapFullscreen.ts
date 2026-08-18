@@ -24,6 +24,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { DISMISS_Z, useDismissible } from "@/lib/satong-dismiss";
+
 export type MapFullscreen = {
   isFull: boolean;
   toggle: () => void;
@@ -137,20 +139,26 @@ export function useMapFullscreen(mapRef: { current: any }, options: MapFullscree
     return () => document.removeEventListener("fullscreenchange", onFsChange);
   }, [relayoutSoon]);
 
-  // CSS 폴백 오버레이 동안에만: body 스크롤 잠금 + ESC 해제(네이티브는 브라우저가 처리).
+  // CSS 폴백 오버레이 ESC 해제 — **자체 window 리스너에서 조정기로 이관**(2026-08-18 R2).
+  // 지도 팝오버·측정도 같은 조정기를 쓴다. 종전에는 이 리스너가 따로 발화해 팝오버를 열어 둔
+  // 채 ESC 를 누르면 **전체화면까지 함께** 벗겨졌다. `fullscreenExit` 은 가장 마지막 차례라
+  // 팝오버 → (측정 정리) → 전체화면 순으로 풀린다.
+  // ★네이티브 풀스크린은 브라우저가 ESC 를 처리하므로 등록하지 않는다(종전과 같다).
+  // ★라이브 미검증 — jsdom 은 전체화면 API 를 흉내 내지 못한다.
+  useDismissible(DISMISS_Z.fullscreenExit, isFull && !nativeFs, () => {
+    setIsFull(false);
+    relayoutSoon();
+  });
+
+  // CSS 폴백 오버레이 동안 body 스크롤 잠금.
   useEffect(() => {
     if (!isFull || nativeFs) return;
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { setIsFull(false); relayoutSoon(); }
-    };
-    window.addEventListener("keydown", onKey);
     return () => {
       document.body.style.overflow = prevOverflow;
-      window.removeEventListener("keydown", onKey);
     };
-  }, [isFull, nativeFs, relayoutSoon]);
+  }, [isFull, nativeFs]);
 
   const wrapperClass = useCallback(
     (base = "") => {

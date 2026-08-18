@@ -10,7 +10,7 @@
 
 import { useMemo, useState } from "react";
 
-import { DISMISS_Z, useDismissible } from "@/lib/satong-dismiss";
+import { DISMISS_Z, useDismissibleWhileMounted } from "@/lib/satong-dismiss";
 
 export interface ConsentItem {
   type: string;
@@ -79,8 +79,8 @@ interface Props {
 }
 
 export default function ConsentModal({ template, onConfirm, onCancel }: Props) {
-  // ESC 로 취소 — 이 컴포넌트는 부모가 마운트한 동안 항상 열려 있다(열림 플래그가 따로 없다).
-  useDismissible(DISMISS_Z.appModal, true, onCancel);
+  // ESC 로 취소 — 부모(DeskCheckin)가 **열 때만 마운트**한다(열림 플래그가 따로 없다).
+  useDismissibleWhileMounted(DISMISS_Z.appModal, onCancel);
 
   const tpl = template ?? FALLBACK_TEMPLATE;
   // 동의상태는 모든 항목 false에서 시작(필수도 사용자가 명시 동의해야 함).

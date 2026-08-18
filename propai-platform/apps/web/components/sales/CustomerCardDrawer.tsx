@@ -13,7 +13,7 @@
 import { Clock, Footprints, type LucideIcon, Mail, MessageCircle, PenLine, Shuffle } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { salesApi } from "@/lib/salesApi";
-import { DISMISS_Z, useDismissible } from "@/lib/satong-dismiss";
+import { DISMISS_Z, useDismissibleWhileMounted } from "@/lib/satong-dismiss";
 
 export interface HistoryItem {
   id?: string;
@@ -104,8 +104,8 @@ export default function CustomerCardDrawer({
   onClose: () => void;
   onChanged?: () => void;
 }) {
-  // ESC 로 닫기 — 부모가 마운트한 동안 항상 열려 있다(열림 플래그가 따로 없다).
-  useDismissible(DISMISS_Z.appModal, true, onClose);
+  // ESC 로 닫기 — 부모(CrmPanel)가 **열 때만 마운트**한다(열림 플래그가 따로 없다).
+  useDismissibleWhileMounted(DISMISS_Z.appModal, onClose);
 
   const api = salesApi(siteCode);
   const [items, setItems] = useState<HistoryItem[]>([]);
