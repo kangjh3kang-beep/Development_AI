@@ -407,3 +407,37 @@ def test_배포_스크립트가_문법적으로_유효하다(script: Path) -> No
     assert proc.returncode == 0, (
         f"{script.name}: bash -n 실패(exit {proc.returncode})\n{proc.stderr.strip()[:500]}"
     )
+
+
+def test_빌드가_캐시를_썼는지_로그에_남긴다() -> None:
+    """빌드 출력을 통째로 버리면 **느려졌을 때 원인을 못 가린다**.
+
+    2026-08-18 첫 VERIFY-BUILD 배포가 **699초**(기준선 39초의 18배)였는데,
+    빌드 줄이 `docker build … | tail -2` 라 `Using cache` 가 버려져
+    *첫 적용 비용인지* / *dangling prune 의 간접 영향인지* 를 **사후에 가릴 수 없었다**.
+
+    ★관측은 가장 먼저 사라지는 코드다(당장 아무것도 안 하므로). 그래서 잠근다.
+    """
+    lines = _executable_lines(ZERO_DOWNTIME)
+
+    build = [ln for ln in lines if "docker build" in ln]
+    assert build, "docker build 줄을 찾지 못했다 — 스크립트 구조가 바뀌었으면 이 테스트도 고칠 것"
+
+    # ★출력을 파이프로 흘려 버리면 캐시 정보가 남지 않는다.
+    piped_away = [ln for ln in build if re.search(r"docker build[^|]*\|\s*(tail|head)\b", ln)]
+    assert not piped_away, (
+        f"docker build 출력을 곧바로 tail/head 로 버린다 → {piped_away}. "
+        "파일로 받아 캐시 히트를 센 뒤 요약만 출력할 것."
+    )
+
+    assert any("CACHE_HITS" in ln for ln in lines), (
+        "빌드 캐시 히트를 세지 않는다 — 배포가 느려져도 원인을 가릴 수 없다"
+    )
+    # ★`grep -c` 는 매칭 0 에서 exit 1 이고(pipefail+set -e 아래 배포 중단),
+    #   결과에 개행이 섞이면 정수 비교가 깨진다. 둘 다 방어했는지 확인한다.
+    cache_line = next(ln for ln in lines if ln.startswith("CACHE_HITS="))
+    assert "|| true" in cache_line, f"grep -c 실패(매칭 0)를 흡수하지 않는다 → {cache_line}"
+    assert "tr -d" in cache_line, (
+        f"grep -c 결과를 한 줄로 정규화하지 않는다 → {cache_line}. "
+        "개행이 섞이면 `[: integer expression expected` 가 난다(2026-08-18 실측)."
+    )
