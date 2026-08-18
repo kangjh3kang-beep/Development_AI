@@ -23,6 +23,7 @@ import { AlertTriangle, Scale } from "lucide-react";
 import { Card, CardContent } from "@propai/ui";
 
 import { apiClient } from "@/lib/api-client";
+import { idempotencyHeaders } from "@/lib/idempotency";
 
 /** 백엔드 `MAX_STRATEGY_PARCELS`(= `MAX_BULK_ITEMS`) 와 같은 값. 초과 시 상류가 422 로 거부한다. */
 export const MAX_STRATEGY_PARCELS = 100;
@@ -115,8 +116,17 @@ export function ParcelPurchaseStrategyPanel({ parcels }: { parcels: StrategyParc
           ...(p.geometry ? { geometry: p.geometry } : {}),
         })),
       };
+      // ★★멱등키 필수 — 이 호출은 **필지당 3,200원**(발급 1,200 + 분석 2,000)이 실제로 나간다.
+      //   최대 100필지면 1회 32만원이라 **중복 실행의 손해가 가장 큰 경로**다.
+      //   백엔드는 `charge_once(endpoint="registry.survey_strategy")` 로 가드하지만
+      //   **키를 안 보내면 그 가드는 아무것도 막지 못한다**(#671 이 고친 결함 클래스:
+      //   "백엔드는 가드했는데 프론트가 키를 안 보내 보호가 0"). 그 파생형 락이 이 호출부를 잡았다.
+      //   ★스코프는 백엔드 endpoint 명과 맞춘다 — 갈리면 사람이 두 이름을 대조해야 한다.
+      //   ★키는 (스코프 + 요청 지문)에서 파생되므로 **같은 필지·같은 방식의 재실행은 재청구되지 않고**,
+      //     필지나 방식을 바꾸면 새 키가 나와 정상 청구된다.
       const r = await apiClient.post<StrategyResponse>("/registry/survey/strategy", {
         body,
+        headers: idempotencyHeaders("registry.survey_strategy", body),
         timeoutMs: 120000,
       });
       setRes(r);
