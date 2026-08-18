@@ -7,6 +7,7 @@
 import { useEffect, useState } from "react";
 import { CheckCircle2, Wrench } from "lucide-react";
 import { apiClient, ApiClientError } from "@/lib/api-client";
+import { DISMISS_Z, useDismissible } from "@/lib/satong-dismiss";
 
 interface Props {
   siteId: string;
@@ -30,6 +31,9 @@ export default function SitePasswordModal({ siteId, open, onClose, onDone }: Pro
       setDone(false);
     }
   }, [open]);
+
+  // ESC 로 닫기 — SiteEnterModal 과 같은 관례(열림 동안만 등록 · 입력은 열 때마다 초기화됨).
+  useDismissible(DISMISS_Z.appModal, open, onClose);
 
   if (!open) return null;
 
