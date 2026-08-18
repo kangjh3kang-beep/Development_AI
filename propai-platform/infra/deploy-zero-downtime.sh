@@ -75,7 +75,25 @@ sudo docker image prune -f 2>&1 | tail -1 || true
 #     ②같은 커밋을 재배포하면(`git pull` 이 no-op) 여전히 동일 ID 가 나온다.
 #     ※근거가 낡은 채 남으면 다음 사람이 그것을 재사용한다 — 그래서 조건이 바뀐 사실을 여기 적는다.
 OLD_IMG_ID=$(sudo docker image inspect propai-api:latest --format {{.Id}} 2>/dev/null || echo "")
-sudo docker build -f Dockerfile.oracle --build-arg "APP_BUILD_ID=$APP_BUILD_ID" -t propai-api:latest . 2>&1 | tail -2
+# ★빌드가 **캐시를 썼는지** 남긴다 — 안 남기면 느려졌을 때 원인을 못 가린다.
+#   2026-08-18 첫 VERIFY-BUILD 배포가 **699초**(기준선 39초의 18배)였는데, 로그가
+#   `| tail -2` 라 `Using cache` 줄이 버려져 **사후에 가릴 방법이 없었다**:
+#     ①첫 적용 비용(ARG 레이어 신설 + 소스 변경)인지
+#     ②위 dangling prune 의 **간접 영향**인지(지운 이미지가 참조하던 레이어가 사라져
+#       캐시 재사용이 깨졌을 수 있다 — 빌드 캐시 엔트리가 남아도 레이어가 없으면 못 쓴다)
+#   ★`image prune -f` 가 빌드 캐시를 직접 지우는 것은 **아니다**(그건 `builder prune`).
+#     배포 후 `docker system df` 에 Build Cache 50개·6.374GB 가 남아 있음을 실측했다.
+#   → 원인을 모르는 채 prune 위치를 바꾸는 것은 추측이므로, **먼저 관측을 남기고**
+#     다음 배포의 캐시 히트 수로 판별한다.
+BUILD_LOG=$(mktemp)
+sudo docker build -f Dockerfile.oracle --build-arg "APP_BUILD_ID=$APP_BUILD_ID" -t propai-api:latest . > "$BUILD_LOG" 2>&1
+tail -2 "$BUILD_LOG"
+# ★`grep -c` 는 매칭 0 이면 exit 1 이라 pipefail+set -e 아래서 배포를 죽인다 → `|| true`.
+#   그리고 결과를 **정수로 쓸 때 개행이 섞이면** `[: integer expression expected` 가 난다
+#   (2026-08-18 통합자 감시 루프가 그 형태로 10분 헛돌았다) → `tr -d` 로 한 줄로 만든다.
+CACHE_HITS=$(grep -cE 'Using cache|^#[0-9]+ CACHED' "$BUILD_LOG" 2>/dev/null | tr -d '[:space:]' || true)
+BUILD_STEPS=$(grep -cE '^Step [0-9]+/|^#[0-9]+ \[' "$BUILD_LOG" 2>/dev/null | tr -d '[:space:]' || true)
+echo "빌드 캐시 재사용 = ${CACHE_HITS:-0} / 단계 ${BUILD_STEPS:-0}  (로그: $BUILD_LOG)"
 NEW_IMG_ID=$(sudo docker image inspect propai-api:latest --format {{.Id}} 2>/dev/null || echo "")
 if [ -n "$OLD_IMG_ID" ] && [ "$OLD_IMG_ID" != "$NEW_IMG_ID" ]; then
   sudo docker image tag "$OLD_IMG_ID" propai-api:prev && echo "prev 승계: ${OLD_IMG_ID:0:20}"
