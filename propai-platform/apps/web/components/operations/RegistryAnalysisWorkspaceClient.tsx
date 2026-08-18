@@ -17,6 +17,7 @@ import { DataSourceNotice } from "@/components/ui/DataSourceNotice";
 import { analyzeRegistry } from "@/lib/registry-analyze";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { useLandScheduleStore, type LandRow } from "@/store/useLandScheduleStore";
+import { parcelDisplayAddress } from "@/lib/pnu";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import type { Locale } from "@/i18n/config";
 
@@ -143,14 +144,28 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
   useEffect(() => {
     if (!projectId || rows.length > 0) return;
     const parcels = siteAnalysis?.parcels;
-    const mk = (jibun: string, area: number | null, ot: string): LandRow => ({
-      id: Math.random().toString(36).slice(2, 9), jibun, owner: "", share: "",
+    // ★★2026-08-18 두 결함을 함께 고친다(#673 이 형제 3화면을 스윕했으나 **이 화면을 놓쳤다**).
+    //   (1) 표시: `p.address` 를 그대로 지번으로 쓰면 **동 단위 주소만 온 목록이 전부 같은 글자**가 된다
+    //       (실제 화면: 77행이 모두 "경기도 오산시 내삼미동"). 공용 헬퍼가 PNU 에서 지번을 파생한다.
+    //       ★없는 값을 지어내지 않는다 — 본번 0 이거나 PNU 가 형식 밖이면 주소를 그대로 둔다.
+    //   (2) ★더 깊은 결함: `mk` 가 **pnu 를 담지 않아** 아래 run() 의 `row?.pnu` 가 **항상 undefined** 였다.
+    //       그러면 개별 필지 분석이 대표 PNU 로 떨어져 **"대표값 누출 차단"이 무력화**된다 —
+    //       그 방어를 설명하는 주석(96~99행)만 남고 동작은 없었다.
+    const mk = (jibun: string, area: number | null, ot: string, pnu?: string | null): LandRow => ({
+      id: Math.random().toString(36).slice(2, 9), jibun, pnu: pnu || null, owner: "", share: "",
       area_sqm: area, owner_type: toOwnerType(ot), expected_price: null, purchase_price: null,
       contracted: false, land_use_consent: false, district_consent: false, operator_consent: false, pdf_url: null,
     });
-    if (parcels && parcels.length) setRows(projectId, parcels.map((p) => mk(p.address, p.areaSqm ?? null, p.ownerType)));
+    if (parcels && parcels.length)
+      setRows(
+        projectId,
+        parcels.map((p) => mk(parcelDisplayAddress(p.address, p.pnu), p.areaSqm ?? null, p.ownerType, p.pnu)),
+      );
     // 폴백 단일행: 다필지면 통합면적 우선(대표값 덮어쓰기 면역).
-    else if (siteAnalysis?.address) setRows(projectId, [mk(siteAnalysis.address, effectiveLandAreaSqm(siteAnalysis), "")]);
+    else if (siteAnalysis?.address)
+      setRows(projectId, [
+        mk(parcelDisplayAddress(siteAnalysis.address, siteAnalysis.pnu), effectiveLandAreaSqm(siteAnalysis), "", siteAnalysis.pnu),
+      ]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, siteAnalysis]);
 
