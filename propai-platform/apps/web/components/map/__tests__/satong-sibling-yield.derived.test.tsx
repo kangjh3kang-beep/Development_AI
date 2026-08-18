@@ -25,7 +25,7 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 
-import { render } from "@testing-library/react";
+import { cleanup, fireEvent, render } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SATONG_POPUP_YIELD } from "@/lib/satong-map-z";
@@ -63,20 +63,35 @@ const isContainingBlock = (el: Element) => tokens(el).some((t) => CONTAINING.has
 function collectOverlays(container: HTMLElement): HTMLElement[] {
   const map = container.querySelector(`[${SATONG_POPUP_YIELD.wrapperAttr}]`);
   if (!map) throw new Error("지도 루트를 찾지 못했다 — 프로브 하네스가 깨졌다(공허한 초록 금지)");
-  const scopes = [map.parentElement, map.parentElement?.parentElement].filter(Boolean) as Element[];
+  // ★스코프는 CSS 와 **정확히 같은 한 겹**이다(`:has(> [트리거])` = 지도의 부모).
+  //   R3 에서 두 겹(`> * >`)을 걷어냈다 — 그 단계가 컴포넌트 경계를 넘어 남의 크롬을 흐렸다.
+  const scope = map.parentElement;
+  if (!scope) throw new Error("지도 루트에 부모가 없다 — 하네스가 깨졌다");
   const found = new Set<HTMLElement>();
-  for (const scope of scopes) {
-    for (const el of scope.querySelectorAll<HTMLElement>("*")) {
-      if (el === map || map.contains(el)) continue;
-      if (!isPositioned(el)) continue;
-      let boxed = false;
-      for (let a = el.parentElement; a && a !== scope; a = a.parentElement) {
-        if (isContainingBlock(a)) { boxed = true; break; }
-      }
-      if (!boxed) found.add(el);
+  for (const el of scope.querySelectorAll<HTMLElement>("*")) {
+    if (el === map || map.contains(el)) continue;
+    if (!isPositioned(el)) continue;
+    let boxed = false;
+    for (let a = el.parentElement; a && a !== scope; a = a.parentElement) {
+      if (isContainingBlock(a)) { boxed = true; break; }
     }
+    if (!boxed) found.add(el);
   }
   return [...found];
+}
+
+/**
+ * **표시는 달았는데 계약이 못 닿는** 요소 — 조용한 무배선의 정확한 형태다.
+ * 지도를 래퍼로 한 겹 더 감싸고 그 래퍼의 형제에 표시를 달면 CSS 가 안 닿는데 화면은 그대로다.
+ */
+function unreachableMarked(container: HTMLElement): HTMLElement[] {
+  const map = container.querySelector(`[${SATONG_POPUP_YIELD.wrapperAttr}]`);
+  const scope = map?.parentElement;
+  if (!map || !scope) return [];
+  const marked = container.querySelectorAll<HTMLElement>(
+    `[${SATONG_POPUP_YIELD.passiveAttr}], [${SATONG_POPUP_YIELD.exemptAttr}]`,
+  );
+  return [...marked].filter((el) => !scope.contains(el));
 }
 
 /** 위반 요소를 소스에서 되짚어 `파일:줄` 을 만든다(분류 비용을 낮춘다). */
@@ -94,6 +109,12 @@ function locate(file: string, el: HTMLElement): string {
  * 소비처별 처분. **소스 파생 목록과 집합이 같아야** 한다 — 새 소비처가 생기면 빨강이 되어
  * "프로브를 붙일지, 오버레이가 없는지"를 사람이 판정하게 만든다(목록이 조용히 stale 되지 않는다).
  */
+const PROBED_FILES = [
+  "components/map/NearbyTransactionsMap.tsx",
+  "components/map/ParcelBoundaryMap.tsx",
+  "components/precheck/ZoningSignalMap.tsx",
+];
+
 const DISPOSITION: Record<string, "probe" | "no-sibling-overlay"> = {
   "components/map/NearbyTransactionsMap.tsx": "probe",
   "components/map/ParcelBoundaryMap.tsx": "probe",
@@ -102,6 +123,35 @@ const DISPOSITION: Record<string, "probe" | "no-sibling-overlay"> = {
   "components/operations/LandScheduleClient.tsx": "no-sibling-overlay",
   "components/precheck/SatongMapShell.tsx": "no-sibling-overlay",
 };
+
+/**
+ * 프로브 대상 파일에서 **지도 형제 자리의 절대위치 여는 태그 수**를 센다(앞뒤 양쪽).
+ * 이 값이 렌더 커버리지의 **하한**이 된다 — 사람이 센 숫자로 굳는 것을 막는다.
+ * ★한때 하한이 `>= 5` 였고 실제 수집도 정확히 5였다. 여유가 0이라 "5면 충분"이 되어,
+ *   프로브 없는 분기 3개(오류 패널·위치확인불가 리본·분양 0곳 pill)가 감시망 밖이었다.
+ *   그 중 하나는 표시를 지워도 118 테스트가 전원 통과했다(리뷰어 실증 — 구판 대비 회귀).
+ * ★리터럴 스캔이라 상수 호이스팅에 뚫린다. 그래도 **하한 산출**에만 쓰므로, 뚫리면 하한이
+ *   낮아질 뿐 위반을 놓치지 않는다(정본은 렌더 수집이다).
+ */
+function siblingTagCountInSource(file: string): number {
+  const src = __stripCommentsForScan(readFileSync(join(WEB_ROOT, file), "utf8"), join(WEB_ROOT, file));
+  const lines = src.split("\n");
+  let count = 0;
+  lines.forEach((line, i) => {
+    if (!MAP_TAG_RE.test(line)) return;
+    const indent = line.length - line.trimStart().length;
+    const scan = (from: number, step: number) => {
+      for (let j = from; j >= 0 && j < lines.length; j += step) {
+        if (!lines[j].trim()) continue;
+        if (lines[j].length - lines[j].trimStart().length < indent) break;
+        if (/\b(absolute|fixed)\b/.test(lines[j])) count += 1;
+      }
+    };
+    scan(i + 1, 1); // 뒤따르는 형제
+    scan(i - 1, -1); // ★앞선 형제도 센다 — CSS 는 이제 양쪽을 덮는다
+  });
+  return count;
+}
 
 function walk(dir: string, acc: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
@@ -169,6 +219,50 @@ const PROBES: Array<{ file: string; label: string; mount: () => Promise<HTMLElem
     },
   },
   {
+    file: "components/map/NearbyTransactionsMap.tsx",
+    label: "조회 실패(전면 오류 패널 — 유일한 '면제' 요소)",
+    mount: async () => {
+      // ★이 프로브가 없어서 `exemptReasons`(닫힌 집합 + inset-0 요구)가 **공허**했다:
+      //   코드베이스의 유일한 면제 요소가 이 패널인데 그 상태를 아무도 만들지 않았다.
+      postMock.mockImplementation(async () => { throw new Error("network down"); });
+      const { NearbyTransactionsMap } = await import("@/components/map/NearbyTransactionsMap");
+      const { container, findByText } = render(<NearbyTransactionsMap address="서울 종로구 청운동 1-1" />);
+      await findByText(/지도 표시 실패/);
+      return container;
+    },
+  },
+  {
+    file: "components/map/NearbyTransactionsMap.tsx",
+    label: "좌표 폴백까지 실패(상단 '위치 확인 불가' 리본)",
+    mount: async () => {
+      postMock.mockImplementation(async (path: string) => {
+        if (path === "/zoning/nearby-map") return { center: null, radius_m: 1000, lawd_cd: "11110", months: [], categories: {} };
+        if (path === "/zoning/parcel-boundaries") throw new Error("timeout");
+        return { available: false, items: [] };
+      });
+      const { NearbyTransactionsMap } = await import("@/components/map/NearbyTransactionsMap");
+      const { container, findByText } = render(<NearbyTransactionsMap address="서울 종로구 청운동 1-1" pnu="1111010100100010000" />);
+      await findByText(/위치 확인 불가/);
+      return container;
+    },
+  },
+  {
+    file: "components/map/NearbyTransactionsMap.tsx",
+    label: "분양 겹쳐보기 ON · 0곳(하단 pill)",
+    mount: async () => {
+      postMock.mockImplementation(async (path: string) =>
+        path === "/zoning/nearby-map"
+          ? { center: { lat: 37.57, lon: 126.98 }, radius_m: 1000, lawd_cd: "11110", months: [], categories: {} }
+          : { available: false, items: [] },
+      );
+      const { NearbyTransactionsMap } = await import("@/components/map/NearbyTransactionsMap");
+      const { container, findByRole, findByText } = render(<NearbyTransactionsMap address="서울 종로구 청운동 1-1" />);
+      fireEvent.click(await findByRole("button", { name: /분양 겹쳐보기/ }));
+      await findByText(/반경 내 분양 단지 없음/);
+      return container;
+    },
+  },
+  {
     file: "components/map/ParcelBoundaryMap.tsx",
     label: "경계 조회 중(전면 스크림)",
     mount: async () => {
@@ -189,6 +283,17 @@ const PROBES: Array<{ file: string; label: string; mount: () => Promise<HTMLElem
   },
 ];
 
+/**
+ * 프로브를 **깨끗한 문서에서** 마운트한다.
+ * ★RTL 의 바인딩된 쿼리는 `baseElement`(= document.body)를 본다 — 앞 프로브의 렌더가 남아 있으면
+ *   `findByRole` 이 "여러 개 찾음"으로 죽는다(실측). 프로브마다 문서를 비운다.
+ */
+async function mountProbe(probe: (typeof PROBES)[number]): Promise<HTMLElement> {
+  cleanup();
+  postMock.mockReset();
+  return probe.mount();
+}
+
 describe("사통맵 형제 오버레이 — 팝업 양보 계약 파생 락(렌더 기반)", () => {
   beforeEach(() => { postMock.mockReset(); });
 
@@ -200,23 +305,46 @@ describe("사통맵 형제 오버레이 — 팝업 양보 계약 파생 락(렌�
   });
 
   it("★렌더된 형제 오버레이는 전부 '양보'(완전/시각) 또는 '열거된 면제 사유'를 단다", async () => {
-    const allowedChrome: string[] = [SATONG_POPUP_YIELD.passiveValue, SATONG_POPUP_YIELD.passiveVisualValue];
     const reasons = SATONG_POPUP_YIELD.exemptReasons;
     const violations: string[] = [];
-    let collected = 0;
+    const coveredClasses = new Set<string>();
+    const stagesSeen = new Set<string>();
 
     for (const probe of PROBES) {
-      const container = await probe.mount();
-      const overlays = collectOverlays(container);
-      collected += overlays.length;
-      for (const el of overlays) {
+      const container = await mountProbe(probe);
+
+      // ★계약이 **못 닿는 자리에 표시를 단** 경우 — 화면은 그대로인데 코드는 고친 줄 안다.
+      for (const el of unreachableMarked(container)) {
+        violations.push(
+          `${probe.label} → ${locate(probe.file, el)} :: 표시는 있으나 계약 스코프 밖이다 ` +
+            "(오버레이는 지도 루트의 **직계 형제**여야 한다 — SATONG_POPUP_YIELD 문서 참조)",
+        );
+      }
+
+      for (const el of collectOverlays(container)) {
+        coveredClasses.add(el.getAttribute("class") ?? "");
         const chrome = el.getAttribute(SATONG_POPUP_YIELD.passiveAttr);
         const exempt = el.getAttribute(SATONG_POPUP_YIELD.exemptAttr);
+        if (chrome) stagesSeen.add(chrome);
         const at = `${probe.label} → ${locate(probe.file, el)}`;
-        if (chrome) {
-          if (!allowedChrome.includes(chrome)) violations.push(`${at} :: 알 수 없는 양보 값 "${chrome}"`);
+        const fullBleed = tokens(el).includes(SATONG_POPUP_YIELD.visualOnlyRequiredClass);
+
+        if (chrome === SATONG_POPUP_YIELD.passiveVisualValue) {
+          // ★NEW-3: 단계 **선택**을 잠근다. 상시 고지형을 시각만 양보로 강등하면 흐려진 채
+          //   팝업 위 클릭을 계속 삼켜 "가려서 못 누르는" 상태가 그 밴드에서 부활한다.
+          if (!fullBleed) {
+            violations.push(`${at} :: 시각만 양보(${chrome})는 전면(${SATONG_POPUP_YIELD.visualOnlyRequiredClass}) 차단형에만 준다 — 상시 고지형은 완전 양보여야 한다`);
+          }
           continue;
         }
+        if (chrome === SATONG_POPUP_YIELD.passiveValue) {
+          if (fullBleed) {
+            violations.push(`${at} :: 전면 오버레이를 완전 양보로 두면 조회 중 지도가 조작된다 — ${SATONG_POPUP_YIELD.passiveVisualValue} 를 쓰라`);
+          }
+          continue;
+        }
+        if (chrome) { violations.push(`${at} :: 알 수 없는 양보 값 "${chrome}"`); continue; }
+
         if (exempt) {
           const reason = reasons.find((r) => r.id === exempt);
           if (!reason) { violations.push(`${at} :: 열거되지 않은 면제 사유 "${exempt}" — SATONG_POPUP_YIELD.exemptReasons 에 추가하고 근거를 적어라`); continue; }
@@ -230,22 +358,36 @@ describe("사통맵 형제 오버레이 — 팝업 양보 계약 파생 락(렌�
       }
     }
 
-    // 공허 진리 가드를 단언 **앞**에: 수집이 0이면 "위반 0"은 아무 뜻도 없다.
-    expect(collected, "형제 오버레이를 하나도 수집하지 못했다 — 프로브가 상태를 못 만든 것이다").toBeGreaterThanOrEqual(5);
+    // ★공허 진리 가드를 단언 **앞**에. 하한은 사람이 센 숫자가 아니라 **소스 파생값**이다 —
+    //   분기가 늘면 하한이 따라 올라가 "프로브 없는 분기"가 자동으로 빨강이 된다.
+    const required = PROBED_FILES.reduce((sum, f) => sum + siblingTagCountInSource(f), 0);
+    expect(required, "소스에서 형제 오버레이를 하나도 못 셌다 — 스캐너가 깨졌다").toBeGreaterThanOrEqual(8);
+    expect(
+      coveredClasses.size,
+      `프로브가 덮은 형제 오버레이가 ${coveredClasses.size}종뿐이다(소스 파생 하한 ${required}) — ` +
+        "덮이지 않은 분기가 남아 있다. 그 상태를 만드는 프로브를 추가하라",
+    ).toBeGreaterThanOrEqual(required);
+    // 대조군: 두 단계가 **둘 다** 실제로 쓰인다 — 한쪽으로 몰리면 구분이 이름만 남는다.
+    expect([...stagesSeen].sort()).toEqual(
+      [SATONG_POPUP_YIELD.passiveValue, SATONG_POPUP_YIELD.passiveVisualValue].sort(),
+    );
     expect(violations).toEqual([]);
   });
 
-  it("★두 양보 단계가 실제로 **둘 다** 쓰인다 — 한쪽으로 몰리면 구분이 이름만 남는다", async () => {
-    const values = new Set<string>();
+  it("★면제 채널이 **실제 대상 위에서** 검사된다 — 분기 로직만 멀쩡한 상태 금지", async () => {
+    // 리뷰어 실증: 닫힌 집합·requiredClass 를 도입했는데 코드베이스의 유일한 면제 요소를
+    // 렌더하는 프로브가 없어, 열거 밖 사유로 바꿔도 전원 통과했다(도달 불가 분기).
+    const seen: string[] = [];
     for (const probe of PROBES) {
-      for (const el of collectOverlays(await probe.mount())) {
-        const v = el.getAttribute(SATONG_POPUP_YIELD.passiveAttr);
-        if (v) values.add(v);
+      for (const el of collectOverlays(await mountProbe(probe))) {
+        const exempt = el.getAttribute(SATONG_POPUP_YIELD.exemptAttr);
+        if (exempt) seen.push(exempt);
       }
     }
-    expect([...values].sort()).toEqual(
-      [SATONG_POPUP_YIELD.passiveValue, SATONG_POPUP_YIELD.passiveVisualValue].sort(),
-    );
+    expect(seen.length, "면제 요소를 렌더하는 프로브가 하나도 없다 — 면제 규칙이 공허하다").toBeGreaterThanOrEqual(1);
+    for (const id of new Set(seen)) {
+      expect(SATONG_POPUP_YIELD.exemptReasons.map((r) => r.id)).toContain(id);
+    }
   });
 
   it("프로브 없는 소비처는 소스에도 형제 오버레이가 없다(약한 2차망 — 리터럴 기반)", () => {
@@ -260,11 +402,16 @@ describe("사통맵 형제 오버레이 — 팝업 양보 계약 파생 락(렌�
       lines.forEach((line, i) => {
         if (!MAP_TAG_RE.test(line)) return;
         const indent = line.length - line.trimStart().length;
-        for (let j = i + 1; j < lines.length; j += 1) {
-          if (!lines[j].trim()) continue;
-          if (lines[j].length - lines[j].trimStart().length < indent) break;
-          if (/\b(absolute|fixed)\b/.test(lines[j])) offenders.push(`${file}:${j + 1}`);
-        }
+        // ★앞뒤 **양쪽**을 본다 — CSS 가 이제 앞선 형제도 덮으므로 한쪽만 보면 비대칭이 된다.
+        const scan = (from: number, step: number) => {
+          for (let j = from; j >= 0 && j < lines.length; j += step) {
+            if (!lines[j].trim()) continue;
+            if (lines[j].length - lines[j].trimStart().length < indent) break;
+            if (/\b(absolute|fixed)\b/.test(lines[j])) offenders.push(`${file}:${j + 1}`);
+          }
+        };
+        scan(i + 1, 1);
+        scan(i - 1, -1);
       });
     }
     expect(offenders).toEqual([]);
@@ -283,4 +430,5 @@ describe("사통맵 형제 오버레이 — 팝업 양보 계약 파생 락(렌�
   });
 
   it.todo("프로브 없는 소비처도 렌더로 태운다 — SatongMapShell 등은 마운트 비용이 커 미착수(부채)");
+  it.todo("지도를 래퍼로 감싸고 **표시 없는** 오버레이를 래퍼 형제에 두는 경우 — CSS 도 락도 못 잡는다(잔여 위험)");
 });

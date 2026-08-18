@@ -100,7 +100,8 @@ async function closeMapPopup(page: Page): Promise<void> {
 }
 
 /**
- * 지도 루트의 **부모·조부모 스코프**에 프로브를 심는다 — CSS `:has()` 의 도달 범위 그대로.
+ * 지도 루트의 **부모 스코프**에 프로브를 심는다 — CSS `:has(> [트리거])` 의 도달 범위 그대로.
+ * 조부모 자리에도 하나 심는다 — 그건 **계약 밖**임을 못 박는 경계 대조군이다.
  * 앞선 형제도 심는다: "앞선 형제는 지도보다 먼저 그려져 안전"은 CSS 스펙상 거짓이기 때문이다
  * (양수 z 를 쓰면 DOM 순서와 무관하게 지도 위로 간다).
  */
@@ -120,6 +121,9 @@ async function plantProbes(page: Page): Promise<void> {
     parent.insertBefore(make("probe-before", "passive"), map);
     parent.appendChild(make("probe-visual", "passive-visual"));
     parent.appendChild(make("probe-control", null)); // 음성 대조군 — 표시가 없으면 안 흐려져야 한다
+    // ★경계 대조군 — 지도를 한 겹 더 감싼 자리(조부모 스코프)는 **계약 밖**이다.
+    //   한때 `:has(> * > …)` 로 여기까지 덮었다가 걷어냈다(컴포넌트 경계를 넘어 같은 섹션의
+    //   남의 크롬을 흐리는 것이 실측됐다). 그래서 이 프로브는 **감쇄되면 안 된다**.
     const grand = parent.parentElement;
     if (grand) {
       const wrapper = document.createElement("div");
@@ -151,7 +155,7 @@ const readProbes = (page: Page) =>
   });
 
 test.describe("상세팝업 양보 계약 — 실브라우저 판정", () => {
-  test("★팝업이 열리면 수동 크롬이 실제로 감쇄된다(자손·앞뒤 형제·래퍼 건너까지)", async ({ page }) => {
+  test("★팝업이 열리면 수동 크롬이 실제로 감쇄된다(자손·앞뒤 형제) — 래퍼 건너는 계약 밖", async ({ page }) => {
     await seedSession(page);
     await page.goto("/ko/precheck");
     await waitForMap(page);
@@ -167,7 +171,9 @@ test.describe("상세팝업 양보 계약 — 실브라우저 판정", () => {
     // ★핵심: 감쇄가 **실제로 계산된다**. 여기가 초록이면 `:has()` 가 브라우저·빌드를 통과한 것이다.
     expect(open.after!.opacity, ":has() 형제 도달이 안 먹는다(뒤따르는 형제)").toBe("0.25");
     expect(open.before!.opacity, "앞선 형제가 계약 밖이다 — DOM 순서는 안전 보증이 아니다").toBe("0.25");
-    expect(open.nested!.opacity, "래퍼 한 겹 건너(:has(> * >))가 안 닿는다").toBe("0.25");
+    // ★경계: 래퍼 한 겹 건너는 **계약 밖**이어야 한다. 0.25 가 되면 스코프가 다시 컴포넌트
+    //   경계를 넘은 것이다(같은 섹션의 남의 크롬까지 흐려진다).
+    expect(open.nested!.opacity, "스코프가 조부모까지 번졌다 — 남의 크롬을 흐린다").toBe("1");
     expect(open.after!.pointerEvents, "완전 양보인데 클릭이 안 통과된다").toBe("none");
 
     // ★두 단계 구분 — 시각만 양보는 흐려지되 **계속 막아야** 한다.
@@ -187,6 +193,7 @@ test.describe("상세팝업 양보 계약 — 실브라우저 판정", () => {
     const closed = await readProbes(page);
     expect(closed.after!.opacity).toBe("1");
     expect(closed.before!.opacity).toBe("1");
+    expect(closed.nested!.opacity).toBe("1");
     expect(closed.visual!.opacity).toBe("1");
     expect(closed.after!.pointerEvents).not.toBe("none");
   });

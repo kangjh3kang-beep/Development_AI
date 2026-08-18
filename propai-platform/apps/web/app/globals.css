@@ -1631,8 +1631,10 @@ textarea {
      ★한때 "앞선 형제는 지도보다 먼저 그려지니 못 덮는다"고 적었는데 **거짓**이었다.
        DOM 순서가 페인트를 정하는 건 z-index:auto/0 끼리일 때뿐이고(CSS 2.1 부록 E),
        이 저장소 오버레이는 전부 z-[400](양수)이라 지도(z:0) **뒤에** 그려진다.
-     ★두 단계까지만 올라간다 — `*:has(…)` 는 html 까지 매치해 **다른 지도**의 크롬도 흐린다.
-       `> * >` 한 겹은 "지도를 래퍼로 감싼 소비처"(GlobalAddressSearch)를 위한 것이다.
+     ★스코프는 **딱 한 겹**이다. 한때 `:has(> * > …)` 를 얹었다가 걷어냈다(R3) — 그 두 번째
+       단계가 **컴포넌트 경계를 넘어** 소비처 컨테이너까지 올라가, 같은 섹션에 있는 **남의**
+       크롬을 흐리는 것이 실측됐다(ZoningSignalMap ↔ PreCheckWorkspace 의 section).
+       대신 "오버레이는 지도 루트의 **직계 형제**로 둔다"를 계약으로 못 박았다(SSOT 참조).
      ★:has 가 필수다. 지원 확인은 e2e(`e2e/satong-popup-yield.spec.ts`)가 실브라우저에서
        계산된 opacity 로 **실측**한다 — 정적 판독으로 단정하지 않는다.
 
@@ -1642,13 +1644,11 @@ textarea {
         흐려지되 계속 막아야 한다. 이 분리가 없어서 "스크림이 팝업을 90초 덮는" 결함을
         면제로 정당화하고 있었다.
      ★opacity 값은 SATONG_POPUP_YIELD.dimOpacity 와 같아야 한다(테스트가 일치를 잠근다). */
-:has(> [data-satong-popup-open="true"]) [data-satong-chrome^="passive"],
-:has(> * > [data-satong-popup-open="true"]) [data-satong-chrome^="passive"] {
+:has(> [data-satong-popup-open="true"]) [data-satong-chrome^="passive"] {
   opacity: 0.25;
   transition: opacity 160ms ease-out;
 }
-:has(> [data-satong-popup-open="true"]) [data-satong-chrome="passive"],
-:has(> * > [data-satong-popup-open="true"]) [data-satong-chrome="passive"] {
+:has(> [data-satong-popup-open="true"]) [data-satong-chrome="passive"] {
   pointer-events: none;
 }
 

@@ -51,8 +51,10 @@ describe("상세팝업 양보 계약 — SSOT ↔ CSS ↔ 컴포넌트", () => {
     const w = `[${SATONG_POPUP_YIELD.wrapperAttr}="true"]`;
     // ★자손 선택자(`[트리거] [양보]`)로 되돌리는 변경을 막는다 — 그게 형제를 통째로 놓친 원인이다.
     expect(css).toContain(`:has(> ${w}) [${SATONG_POPUP_YIELD.passiveAttr}^="passive"]`);
-    expect(css).toContain(`:has(> * > ${w}) [${SATONG_POPUP_YIELD.passiveAttr}^="passive"]`);
     expect(css).toContain(`:has(> ${w}) [${SATONG_POPUP_YIELD.passiveAttr}="${SATONG_POPUP_YIELD.passiveValue}"]`);
+    // ★스코프는 **한 겹**이어야 한다 — 두 번째 단계(`> * >`)는 컴포넌트 경계를 넘어 같은 섹션의
+    //   **남의 크롬**까지 흐렸다(리뷰어 실측). 되살아나면 여기서 빨강.
+    expect(css).not.toContain(":has(> * >");
   });
 
   it("★감쇄 값이 상수와 일치한다 — 한쪽만 바뀌면 초록인데 화면은 안 바뀐다", () => {

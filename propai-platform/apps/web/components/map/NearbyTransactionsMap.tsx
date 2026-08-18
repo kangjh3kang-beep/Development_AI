@@ -474,8 +474,11 @@ export function NearbyTransactionsMap({
             ★종전엔 면제였다. "차단이 목적이라 감쇄하면 클릭이 되살아난다"는 이유였는데,
               그건 계약이 opacity 와 pointer-events 를 **한 규칙에 묶어** 이분법만 준 탓이다.
               `passive-visual` 을 만들어 끊었다 — 흐려져서 팝업이 읽히고, 클릭은 계속 막힌다.
-            ★대가(정직): 스크림 안의 "수집 중…" 문구도 함께 흐려진다. 팝업이 열려 있는
-              동안만이고, 팝업을 닫으면 즉시 돌아온다. */}
+            ★대가(정직) — 두 가지다. ①스크림 안의 "수집 중…" 문구도 함께 흐려진다.
+              ②`pointer-events` 는 그대로 두므로 **팝업을 읽을 수는 있어도 만질 수는 없다** —
+              팝업의 닫기 버튼·링크도 재조회가 끝날 때까지(최대 90초) 눌리지 않는다.
+              종전(불투명 스크림이 팝업을 완전히 가림)보다 나아진 것이지 겹침이 사라진 것은
+              아니다. 둘 다 팝업이 열려 있는 동안만이고, 조회가 끝나면 스크림 자체가 사라진다. */}
         {(loading || presaleLoading) && (
           <div
             {...{ [SATONG_POPUP_YIELD.passiveAttr]: SATONG_POPUP_YIELD.passiveVisualValue }}
