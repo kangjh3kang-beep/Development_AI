@@ -774,6 +774,9 @@ async def list_learning_candidates(
     return LearningCandidateList(
         items=[LearningCandidateOut(**it) for it in res.get("items", [])],
         total=int(res.get("total", 0)),
+        # `[status]` 폴백은 **도달해도 같은 값**이다: 위 400 게이트를 지난 status 는 어휘에
+        #   있는 값이고, list_examples 는 그런 값을 그대로 정규화해 돌려준다. 방어용으로만 둔다
+        #   (변이가 이 줄에서 살아남는 이유 — 구멍이 아니라 등가 폴백이다).
         statuses=list(res.get("statuses", [status])),
         service=service,
         tenant_id=tenant_id,

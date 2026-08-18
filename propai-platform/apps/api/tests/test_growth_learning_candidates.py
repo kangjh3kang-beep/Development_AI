@@ -507,6 +507,7 @@ async def test_엔드포인트가_후보를_응답계약대로_돌려준다(monk
     assert first.input_summary == "다른 테넌트 후보"
     assert first.good_output == "다른-서비스-본문"
     assert first.input_summary_truncated is False
+    assert first.good_output_truncated is False
     assert first.created_at == "2026-08-19T10:00:00+00:00"
     assert first.train_allowed is False  # 권리 미등록 = 불명 = 학습 금지(표시만)
     assert first.rights_scope == "unknown"
@@ -543,6 +544,7 @@ async def test_열람은_감사에_남는다(monkeypatch):
     assert a["target"] == "permit@candidate"
     assert a["detail"]["count"] == 1
     assert a["detail"]["total"] == 1
+    assert a["detail"]["tenant_id"] is None  # 테넌트를 안 좁혔다는 사실도 감사에 남는다
 
 
 async def test_어휘에_없는_status는_400(monkeypatch):
@@ -551,3 +553,31 @@ async def test_어휘에_없는_status는_400(monkeypatch):
     with pytest.raises(HTTPException) as ei:
         await _call_endpoint(monkeypatch, _db(), status="banana")
     assert ei.value.status_code == 400
+    # 안내문이 "무엇을 써야 하는지"를 실제로 알려야 한다(빈 400 은 관리자를 막다른 길에 둔다).
+    assert "candidate" in str(ei.value.detail)
+
+
+async def test_잘린_본문_표시가_엔드포인트까지_전달된다(monkeypatch):
+    long_row = dict(CAND, good_output="가" * 5000, input_summary="나" * 5000)
+    res, _ = await _call_endpoint(monkeypatch, _FakeDB(examples=[long_row]))
+    it = res.items[0]
+    assert it.good_output_truncated is True
+    assert it.input_summary_truncated is True
+    assert len(it.good_output) == ll.CANDIDATE_PREVIEW_MAX_CHARS
+
+
+def test_엔드포인트_기본값이_승인대기_목록이다():
+    """★기본이 candidate 여야 관리자가 화면을 열자마자 '승인할 것'을 본다.
+
+    직접 호출 테스트는 인자를 명시하므로 기본값을 태우지 않는다 — 선언을 직접 잠근다.
+    """
+    import inspect
+
+    from app.routers import growth as g
+
+    params = inspect.signature(g.list_learning_candidates).parameters
+    assert params["status"].default.default == "candidate"
+    assert params["service"].default.default is None
+    assert params["tenant_id"].default.default is None
+    assert params["limit"].default.default == 50
+    assert params["offset"].default.default == 0
