@@ -296,20 +296,32 @@ describe("vworld-wms-proxy", () => {
     expect(requested).not.toContain("key=");
   });
 
-  it("★WS-B2: api 폴백 fetch 실패 시 정직 503(무음 회색타일 금지)", async () => {
+  it("★WS-B2: api 폴백 fetch 실패 시 **정직 강등**(무음 금지 + 회색지도 금지)", async () => {
     vi.stubEnv("VWORLD_API_KEY", "");
     vi.stubEnv("NEXT_PUBLIC_API_BASE_URL", "https://api.4t8t.net");
     vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("ECONNREFUSED"); }));
     const res = await proxyVWorldWms(leafletWmsQuery());
-    expect(res.status).toBe(503);
-    const body = await res.json();
-    // ★2026-08-17: 종전엔 `api fallback failed` 문자열을 단언했으나 그것은 **부수 문구**였다.
-    //   이 케이스가 지키려는 계약은 "무음 회색타일 금지 = 정직한 503"이다.
-    //   문구는 이제 관측된 사실(릴레이 전송 실패)만 말한다 — 키 상태를 단정하지 않는다.
-    //   (여기선 키가 실제로 비어 있지만, 프로덕션 실장애에선 키가 정상인데도 이 경로를
-    //    탔고 옛 문구가 사람을 키 쪽으로 오도했다. vworld-relay-fallback.test.ts 의
-    //    대조군 쌍이 그 구분을 잠근다.)
-    expect(body.error).toContain("relay");
+
+    // ★★2026-08-18 계약 변경 — 이 케이스는 종전 `503 JSON` 을 단언했다.
+    //   그 계약의 목적은 "무음 회색타일 금지"(실패를 조용히 삼키지 않는다)였는데
+    //   **503 은 목적의 절반만 달성했다**: 실패는 드러나지만 Leaflet 이 tileerror 로만
+    //   처리해 **지도 전체가 회색**이 된다. 2026-08-16 17:58~17:59 실장애에서 사용자가
+    //   본 것이 정확히 그것이고 이유를 알 수 없었다(원인은 168 의 상류가 2분간 죽은 것).
+    //
+    //   → 새 계약: **투명타일 200 + 강등 헤더.** 지도는 살고(필지·오버레이 유지),
+    //     강등은 헤더로 **관측 가능**하다(진단 프로브가 읽어 정직 배너를 띄운다).
+    //   ★이것은 후퇴가 아니다 — 종전보다 **더 많이** 지킨다:
+    //       무음 금지 ✔(헤더) · 회색지도 금지 ✔(투명타일) · 폭주 금지 ✔(음성 캐시)
+    //     "200 이면 무음"이라는 우려는 아래 헤더 단언이 막는다 — 헤더가 빠지면 이 케이스가 죽는다.
+    expect(res.status, "503 이면 지도가 회색이 된다 — 실장애의 사용자 경험").toBe(200);
+    expect(res.headers.get("content-type")).toContain("image/png");
+    expect(
+      res.headers.get("X-VWorld-Degraded"),
+      "강등 헤더가 없으면 배너가 뜰 수 없다 — 무음 강등이 된다",
+    ).toContain("relay-unreachable");
+    expect(res.headers.get("cache-control") ?? "", "no-store 면 팬마다 폭주한다").not.toContain(
+      "no-store",
+    );
   });
 
   it("상류 4xx/5xx 는 503 JSON 으로 승격(무음 회색타일 금지)", async () => {

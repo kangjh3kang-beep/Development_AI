@@ -54,7 +54,11 @@ import {
   clearLayoutOverlay,
   renderLayoutOverlay,
 } from "@/lib/satong-layout-overlay";
+import { registerDismissible } from "@/lib/satong-dismiss";
 import { SATONG_PANE_Z, SATONG_POPUP_YIELD, SATONG_UI_Z } from "@/lib/satong-map-z";
+
+/** 측정 해제는 **표면이 아니다** — 열린 표면이 하나도 없을 때만 ESC 차례가 오도록 최하위. */
+const MEASURE_DISMISS_Z = -1;
 import { clampClickMenuPosition, findFeatureAtPoint, shortJibunLabel } from "@/lib/satong-click-menu";
 import {
   formatAreaSqm,
@@ -1131,6 +1135,22 @@ export function SatongMultiMap({
         `&width=64&height=64&crs=EPSG:3857&bbox=14134000,4518000,14136000,4520000&_ts=${Date.now()}`;
       const resp = await fetch(probe, { cache: "no-store" });
       const contentType = resp.headers.get("content-type") || "";
+      // ★★강등 판정은 "200 + image/" **앞에** 둔다(2026-08-18).
+      //   정직 강등은 회색 지도를 피하려고 **투명타일(200 image/png)** 을 준다 —
+      //   아래 정상 분기가 먼저 걸리면 프로브가 강등을 **"정상"으로 오진**한다(거짓 초록).
+      //   그래서 강등 헤더를 가장 먼저 본다. `<img>` 는 헤더를 못 읽지만 이 프로브는 읽는다.
+      // ★헤더명은 `lib/vworld-wms-proxy.ts` 의 `VWORLD_DEGRADED_HEADER` 가 정본이다.
+      //   여기서 **import 하지 않고 리터럴을 쓴다** — 그 모듈은 서버 전용(Buffer·process.env)이라
+      //   클라이언트 컴포넌트가 import 하면 번들로 끌려온다.
+      //   대신 두 곳이 어긋나지 않게 `lib/__tests__/degraded-header-parity.test.ts` 가 묶는다.
+      const degraded = resp.headers.get("X-VWorld-Degraded");
+      if (degraded) {
+        // ★관측된 사실만 말한다 — 복구 방법을 안내하지 않는다(#677: 없는 복구 경로 금지).
+        //   실장애(2026-08-16)의 원인은 릴레이 목적지의 **상류가 2분간 죽은 것**이었고
+        //   사용자가 할 수 있는 조치는 없었다. "다시 시도하세요" 는 거짓 안내가 된다.
+        setCadastreTileNote("지도 타일 서버에 일시적으로 닿지 않습니다 — 필지·오버레이는 그대로 표시됩니다");
+        return;
+      }
       if (resp.ok && contentType.startsWith("image/")) {
         setCadastreTileNote("지적 프록시 정상 — 지도를 이동/새로고침해도 안 보이면 줌·영역을 확인하세요");
         return;
@@ -2360,17 +2380,25 @@ export function SatongMultiMap({
   }, [mapReady, measureOn]);
 
   // ESC 단계적 해제 — ①팝오버 닫기 → ②측정 종료 → ③측정 결과 지우기.
+  //
+  // ★2026-08-17 — **조정기를 거친다**(lib/satong-dismiss). 종전에는 이 리스너가 셸의
+  //   레일·베이스맵 팝오버 ESC 와 같은 keydown 에 조율 없이 함께 발화해, 사용자가 한 번
+  //   눌렀는데 **둘이 사라졌다**(라이브 실측: clickMenu 470 + role=dialog 430 동시 개방 →
+  //   ESC 1회에 둘 다 닫힘). 이제 z(SSOT rung)가 가장 큰 표면 하나만 닫힌다.
+  // ★단계 ②③(측정)은 **표면이 아니다** — 아주 낮은 z 로 등록해 "열린 표면이 없을 때만"
+  //   차례가 오게 한다. 종전 우선순위(①→②→③)가 그대로 보존된다.
   useEffect(() => {
-    if (!clickMenu && !measureOn && measurePoints.length === 0) return;
-    const onKey = (ev: KeyboardEvent) => {
-      if (ev.key !== "Escape") return;
-      if (clickMenu) { setClickMenu(null); return; }
+    if (!clickMenu) return;
+    return registerDismissible(SATONG_UI_Z.clickMenu, () => setClickMenu(null));
+  }, [clickMenu]);
+
+  useEffect(() => {
+    if (!measureOn && measurePoints.length === 0) return;
+    return registerDismissible(MEASURE_DISMISS_Z, () => {
       if (measureOn) { setMeasureOn(false); return; }
       setMeasurePoints([]);
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [clickMenu, measureOn, measurePoints.length]);
+    });
+  }, [measureOn, measurePoints.length]);
 
   // 클릭 지점의 오버레이 피처(용도지역·공시지가·노후도 색면) — 팝오버 헤더 정보(레이캐스팅).
   const clickMenuFeature = useMemo(() => {
