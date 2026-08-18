@@ -63,6 +63,11 @@ describe("AI 학습 사례 승인 — 승인 게이트의 문이 선언대로 �
     expect(route?.status).toBe("live");
   });
 
+  it("한국어 원문 라벨이 있다(레지스트리 label 이 ko 폴백이다)", () => {
+    expect(route?.label).toBeTruthy();
+    expect(route?.label).toMatch(/[가-힣]/);
+  });
+
   it("영어·중국어 라벨이 있다(내비게이션 i18n 누락 재발 방지)", () => {
     expect(NAV_ITEM_LABELS["learning-approval"]?.en).toBeTruthy();
     expect(NAV_ITEM_LABELS["learning-approval"]?.["zh-CN"]).toBeTruthy();

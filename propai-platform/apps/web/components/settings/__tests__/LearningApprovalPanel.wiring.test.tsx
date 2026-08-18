@@ -26,9 +26,11 @@ vi.mock("@/lib/api-client", () => ({
   apiClient: { get: (...a: unknown[]) => getMock(...a), post: (...a: unknown[]) => postMock(...a) },
   ApiClientError: class ApiClientError extends Error {
     status: number;
-    constructor(message: string, status: number) {
+    payload: unknown;
+    constructor(message: string, status: number, payload?: unknown) {
       super(message);
       this.status = status;
+      this.payload = payload;
     }
   },
 }));
@@ -217,15 +219,63 @@ describe("AI 학습 사례 승인 화면 배선", () => {
     );
   });
 
-  it("상태 탭을 바꾸면 그 status 로 다시 부른다", async () => {
+  it("이전 페이지로 돌아가면 offset 이 되돌아온다", async () => {
+    const user = userEvent.setup();
+    getMock.mockResolvedValue({ ...listPayload(), total: 45 });
+    render(<LearningApprovalPanel />);
+    await screen.findAllByRole("listitem");
+
+    await user.click(screen.getByRole("button", { name: "다음" }));
+    await waitFor(() =>
+      expect(candidateCalls().some((c) => String(c[0]).includes("offset=20"))).toBe(true),
+    );
+    const afterNext = candidateCalls().length;
+
+    await user.click(screen.getByRole("button", { name: "이전" }));
+    await waitFor(() => expect(candidateCalls().length).toBeGreaterThan(afterNext));
+    expect(String(candidateCalls().at(-1)?.[0])).toContain("offset=0");
+  });
+
+  it("마지막 페이지에서는 다음으로 더 갈 수 없다", async () => {
+    const user = userEvent.setup();
+    getMock.mockResolvedValue({ ...listPayload(), total: 25 }); // 2페이지 분량
+    render(<LearningApprovalPanel />);
+    await screen.findAllByRole("listitem");
+
+    expect(screen.getByRole("button", { name: "다음" })).toHaveProperty("disabled", false);
+    await user.click(screen.getByRole("button", { name: "다음" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "다음" })).toHaveProperty("disabled", true),
+    );
+  });
+
+  it("상태 탭을 바꾸면 그 status 로 다시 부르고 그 상태를 배지로 보여준다", async () => {
     const user = userEvent.setup();
     render(<LearningApprovalPanel />);
     await screen.findAllByRole("listitem");
 
+    // 탭을 바꾸면 백엔드가 그 상태의 행을 준다 — 배지 문구도 함께 바뀌어야 한다.
+    getMock.mockResolvedValue(
+      listPayload([{ ...CANDIDATES[0], id: "ex-active-1", status: "active" }]),
+    );
     await user.click(screen.getByRole("button", { name: "사용 중" }));
     await waitFor(() =>
       expect(candidateCalls().some((c) => String(c[0]).includes("status=active"))).toBe(true),
     );
+    const rows = await screen.findAllByRole("listitem");
+    expect(within(rows[0]).getByText("사용 중")).toBeTruthy();
+    // 이미 승인된 건에는 승인/거부 버튼을 그리지 않는다(재전이 금지 — 백엔드도 409 로 막는다).
+    expect(within(rows[0]).queryByRole("button", { name: "승인" })).toBeNull();
+  });
+
+  it("권한이 없으면 관리자 권한이 필요하다고 알린다(빈 화면으로 침묵하지 않는다)", async () => {
+    const { ApiClientError } = await import("@/lib/api-client");
+    getMock.mockRejectedValue(new ApiClientError("forbidden", 403, null));
+    render(<LearningApprovalPanel />);
+    await waitFor(() =>
+      expect(screen.getByText(/총괄관리자 권한이 필요합니다/)).toBeTruthy(),
+    );
+    expect(screen.getByText(/403/)).toBeTruthy();
   });
 
   it("서비스 필터를 입력하면 그 값으로 좁혀 다시 부른다", async () => {
@@ -233,7 +283,9 @@ describe("AI 학습 사례 승인 화면 배선", () => {
     render(<LearningApprovalPanel />);
     await screen.findAllByRole("listitem");
 
-    await user.type(screen.getByLabelText("서비스 필터"), "avm");
+    const input = screen.getByLabelText("서비스 필터") as HTMLInputElement;
+    await user.type(input, "avm");
+    expect(input.value).toBe("avm"); // 제어 입력 — 입력값이 화면에 남아야 한다
     await waitFor(() =>
       expect(candidateCalls().some((c) => String(c[0]).includes("service=avm"))).toBe(true),
     );
