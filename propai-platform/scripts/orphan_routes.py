@@ -42,6 +42,13 @@
          **경계 없는 부분문자열**이라 소비로 셌다
      이 저장소는 소스 검사가 주석에 뚫리는 결함으로 반복해 데었다(회귀망 규율 A-3).
 
+  ②-미러 **백엔드 반쪽도 같은 결함이었다**(2026-08-20 R2, 적대리뷰 H-2). 프론트 주석은
+     배제하면서 **백엔드 추출은 파이썬 주석·독스트링을 그대로 셌다**. 그래서 실재하지 않는
+     라우트가 "확정 고아"로 기준선에 실렸다 — `/admin-only` 는 `app/core/rbac.py:114`
+     **독스트링의 사용 예**다. `tokenize` 마스킹으로 봉합(575건 중 정확히 3건 배제,
+     백엔드 총수 549 → 546 · 확정 고아 124 → 123).
+     ★교훈: 처방을 적용한 범위 = 결함이 사는 범위인지 확인하라(규율 20).
+
 【한계 — 이 수치를 "결함 수"로 읽지 마라】
 소비처 0 ≠ 결함이다. 정당하게 백엔드 내부용인 라우트가 섞인다(운영·정리·알림 발송 등).
 이 도구는 **후보를 좁힐 뿐**이고, 진짜 결함인지는 사람이 라우트별로 판단해야 한다.
@@ -50,20 +57,34 @@
   · **문자열 리터럴은 배제하지 않는다.** 이 도구의 신호가 **전부 문자열 리터럴 안에**
     살기 때문이다(`apiClient.get("/market/report")`). 배제하면 도구가 통째로 죽는다.
     따라서 "죽은 상수에 남은 경로"는 여전히 소비로 세어진다.
+  · **import 경로·Next 페이지 경로를 "API 소비"로 센다.** 짧은 경로일수록 심하다 —
+    실측(2026-08-20, 전수 분류) `/cost` 는 경계를 통과한 매칭 **52건 중 25건이
+    `@/components/cost/…` import·`/{locale}/analytics/cost` 링크**이고 27건만 진짜
+    API 호출이다. 이 라우트는 실제로 소비되므로 오늘 결론은 안 바뀌지만, **같은 이름의
+    컴포넌트 폴더만 있고 호출은 없는 라우트**는 import 경로만으로 "소비"가 되어 숨는다.
+    ※적대리뷰는 이 비율을 "52건 중 50건"으로 적었으나 내 전수 분류로는 재현되지 않았다
+      (25건). 구조적 위음성이 존재한다는 결론 자체는 같다.
   · **마운트 접두사 미해결 라우트가 85건 있다**(2026-08-20 실측). `main.py` 가
     `include_router(<별칭>, prefix=...)` 처럼 **별칭**으로 부르면 이 도구의 정규식이 못 읽어
     라우트가 접두사 없는 **꼬리 경로**로 남는다(예: `comprehensive_analysis.py` 의
     `/comprehensive` 는 실제로 `/api/v2/analysis/comprehensive`). 그래서 대조는
-    **오른쪽 경계만** 본다 — 왼쪽까지 고정하면 그 85건이 통째로 위양성이 된다(실측).
+    **오른쪽 경계만** 본다 — 왼쪽까지 고정하면 **137 → 143(+6)** 이 되는데 그 6건이
+    전부 위양성이다(실측 2026-08-20: `/comprehensive` · `/interpretation` ×2 ·
+    `/llm-providers` · `/site-layout` 은 전부 `comprehensive_analysis.py` 의 접두사
+    미해결 꼬리 경로다). ★종전에 "144(+7)"로 적었던 것은 중간 구성(최소길이 5) 수치였다 —
+    현재 구성 기준 실측은 **143(+6)** 이다.
 
 사용:  python3 scripts/orphan_routes.py            # 요약(3분류)
        python3 scripts/orphan_routes.py --list     # 전체 목록(3분류 구분 출력)
 """
 from __future__ import annotations
 
+import functools
+import io
 import os
 import re
 import sys
+import tokenize
 
 API_DIR = os.path.join(os.path.dirname(__file__), "..", "apps", "api")
 WEB_DIR = os.path.join(os.path.dirname(__file__), "..", "apps", "web")
@@ -110,11 +131,21 @@ def _strip_js_comments(src: str) -> str:
         · 줄 주석 안의 `/*` 를 블록 시작으로 오인하지 않는다 → 줄 주석을 먼저 끊는다
 
     ★남는 한계(정직하게 적는다 — 규율 C.11 "면역을 거짓 주장하지 마라"):
-      · **정규식 리터럴을 토큰으로 인식하지 않는다.** `/…\\/\\/…/` 처럼 이스케이프된
-        슬래시는 백슬래시 건너뛰기로 넘어가지만, 이스케이프 없는 `[//]` 류는 오인할 수 있다.
-      · **JSX 텍스트**를 코드로 본다. `<p>a // b</p>` 의 `//` 를 주석으로 지운다.
-      두 오인은 모두 "실제보다 **더 많이** 지우는" 방향이라 결과는 **고아 과대** 쪽으로 튄다.
-      → 그래서 이 배제로 늘어난 항목은 **손수 표본 확인했다**(2026-08-20: 6건 전수 확인,
+      · **JSX 텍스트**를 코드로 본다. `<p>a // b</p>` 의 `//` 를 주석으로 지운다
+        (= **더 많이** 지우는 방향 → 고아 과대).
+      · ★**정규식 리터럴·따옴표 짝이 어긋나면 반대로 `덜` 지운다.** 정규식 안의 `'`/`"`
+        (예: `/[\'"]/`)나 JSX 아포스트로피(`It's`)를 문자열 시작으로 오인하면, 스캐너가
+        문자열 상태에 갇혀 **그 뒤 구간의 주석을 통째로 못 지운다** = 결함② 재발 방향이다.
+        **실측(2026-08-20, 663 프론트 파일)**: 배제 실패 **10개 파일** ·
+        놓친 줄주석 **127줄** · 다중행 문자열 구간 **4,600줄 / 177,002줄 = 2.60%**
+        (SatongMultiMap · MarketInsightsWorkspaceClient · vworld-xml-exception ·
+         MarkdownLite · source-invariant · ProjectPresaleMap 등).
+        → **이 배제는 완전하지 않다.** 단정하지 마라.
+      ★그러나 **오늘 분류 영향은 0이다**(실측): 놓친 줄주석을 오라클로 강제 제거해
+        문자 5,444자를 더 지워도 **124/13 불변 · 신규 고아 0 · 사라진 고아 0**.
+        다음 사람이 정확히 판단하도록 둘 다 적는다 — "완전하다"도 "그래서 수치가 틀렸다"도
+        모두 거짓이다.
+      → 이 배제로 늘어난 항목은 **손수 표본 확인했다**(2026-08-20: 6건 전수 확인,
         전부 진짜 고아. 위양성 1건(`/api/v1/avm`)은 오른쪽 경계 검사로 잡아냈다).
     """
     out = list(src)
@@ -138,6 +169,11 @@ def _strip_js_comments(src: str) -> str:
             i += 1
             continue
         # 여기부터는 코드(또는 템플릿 표현식) 문맥.
+        # ★무잠금(2026-08-20 변이 감사): 아래 두 줄의 백슬래시 건너뛰기는 **테스트가 잠그지
+        #   못한다**. 코드 문맥 쪽은 픽스처의 정규식이 `\/` 를 담고는 있으나 그 줄을 지워도
+        #   결과가 같아 원리적으로 위반 불가였고(공허), 문자열 쪽은 위 독스트링이 말한
+        #   desync 를 **직접 유발하는 층**이라 정직한 픽스처를 만들지 못했다.
+        #   고쳤다고 적지 않는다 — 미검증이다.
         if ch == "\\":  # 정규식 리터럴의 `\/` 를 슬래시로 오인하지 않게 건너뛴다.
             i += 2
             continue
@@ -189,6 +225,37 @@ def _mount_prefixes() -> dict[str, str]:
     return out
 
 
+def _py_comment_string_spans(src: str) -> list[tuple[int, int]] | None:
+    """파이썬 소스의 **주석·문자열 리터럴** 절대 오프셋 범위. 실패하면 None.
+
+    ★왜 필요한가(2026-08-20 — 프론트 반쪽만 고쳤던 것을 봉합): 이 도구는 프론트 주석을
+      배제하면서 **백엔드 추출은 주석·독스트링을 그대로 셌다**. 그래서 실재하지 않는
+      라우트가 "확정 고아"로 기준선에 실렸다:
+        · `app/core/rbac.py:114`            `/admin-only`   ← 함수 **독스트링의 사용 예**
+        · `app/services/auth/project_ownership.py:12`  `/from-project`
+        · `auth/rbac.py:338`                `/projects`
+      전수 실측: `@router.<메서드>(...)` 매칭 **575건 중 정확히 3건**이 주석/문자열 내부.
+      `/admin-only` 는 기준선에 실려 **없는 결함이 후보로 공표**됐다.
+
+    ★`@` 의 위치만 본다 — 라우트 경로 자체는 별개의 STRING 토큰이라 마스킹해도 안전하다.
+      (문자열을 통째로 배제하면 경로 추출이 죽는다. 그래서 "매칭 시작점 포함 여부"만 본다.)
+    """
+    lines = src.splitlines(keepends=True)
+    off = [0]
+    for ln in lines:
+        off.append(off[-1] + len(ln))
+    out: list[tuple[int, int]] = []
+    try:
+        for t in tokenize.generate_tokens(io.StringIO(src).readline):
+            if t.type in (tokenize.COMMENT, tokenize.STRING):
+                out.append((off[t.start[0] - 1] + t.start[1], off[t.end[0] - 1] + t.end[1]))
+    except (tokenize.TokenError, IndentationError, SyntaxError, IndexError):
+        # ★조용히 넘기지 않는다 — 이 파일만 마스킹 없이(=종전 동작으로) 처리되므로
+        #   그 사실을 호출자가 알아야 한다. 실측 2026-08-20 기준 실패 파일은 **0건**이다.
+        return None
+    return out
+
+
 def backend_routes() -> dict[str, tuple[str, str]]:
     out: dict[str, tuple[str, str]] = {}
     mounts = _mount_prefixes()
@@ -206,7 +273,15 @@ def backend_routes() -> dict[str, tuple[str, str]]:
             pref = re.search(r'APIRouter\([^)]*prefix\s*=\s*["\']([^"\']+)', src, re.S)
             # 라우터 자체 prefix 가 없으면 main.py 의 마운트 접두사를 쓴다(모듈명으로 매칭).
             pfx = pref.group(1) if pref else mounts.get(os.path.splitext(f)[0], "")
+            spans = _py_comment_string_spans(src)
+            if spans is None:
+                print(f"★{os.path.relpath(p, API_DIR)} 토큰화 실패 — 주석/독스트링 배제 없이 셌다",
+                      file=sys.stderr)
+                spans = []
             for m in re.finditer(r'@router\.(get|post|put|patch|delete)\(\s*["\']([^"\']*)["\']', src):
+                # ★주석·독스트링 안의 "사용 예"는 라우트가 아니다(유령 라우트 차단).
+                if any(a <= m.start() < b for a, b in spans):
+                    continue
                 full = (pfx + m.group(2)).replace("//", "/")
                 if full and full != "/":
                     out.setdefault(full, (m.group(1), os.path.relpath(p, API_DIR)))
@@ -273,11 +348,19 @@ def is_dynamically_reachable(full: str, blob: str) -> bool:
     return False
 
 
+@functools.lru_cache(maxsize=1)
 def classify() -> tuple[list[tuple[str, str, str]], list[tuple[str, str, str]]]:
-    """(확정 고아, 판정 불가) 를 돌려준다. 나머지는 확정 소비다."""
+    """(확정 고아, 판정 불가) 를 돌려준다. 나머지는 확정 소비다.
+
+    ★캐시하는 이유: 한 번 호출에 저장소를 **전수 스캔**한다(백엔드 .py + 프론트 .ts/.tsx).
+      테스트 1회가 `orphans()`·`undecided_routes()`·파라미터화로 7회 호출해 ≈38초였다.
+      한 프로세스 안에서 소스는 안 바뀌므로 안전하다 — 소스를 바꿔가며 재분류하고 싶으면
+      `classify.cache_clear()` 를 부르라(변이 검증은 프로세스를 새로 띄우므로 무관하다).
+    """
     routes = backend_routes()
     blob = frontend_blob()
     # ★대조군 — 조회기가 죽으면 전부 "소비처 0"으로 보인다. 그 경우 시끄럽게 실패한다.
+    #   (이 단언은 **조회기 사망 탐지용**이지 하한 목표가 아니다.)
     if "apiClient" not in blob:
         raise SystemExit("★프론트 스캔이 비었다(조회기 사망) — apiClient 가 한 번도 안 보인다")
     confirmed: list[tuple[str, str, str]] = []

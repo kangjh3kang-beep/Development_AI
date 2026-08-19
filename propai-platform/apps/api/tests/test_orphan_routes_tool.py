@@ -24,6 +24,7 @@ sys.path.insert(0, _SCRIPTS)
 
 from orphan_routes import (  # type: ignore[import-not-found]  # noqa: E402
     _strip_js_comments,
+    backend_routes,
     classify,
     is_consumed,
     is_dynamically_reachable,
@@ -99,6 +100,53 @@ def test_파일이_줄주석으로_끝나도_지운다():
     assert "run();" in kept, "주석 아닌 코드까지 삼켰다"
 
 
+def test_파이썬_주석과_독스트링_속_라우트는_세지_않는다():
+    """★적대리뷰 H-2 — 프론트 주석만 배제하고 **백엔드 주석은 세고 있었다**(미러 누락).
+
+    `/admin-only` 는 `app/core/rbac.py:114` **독스트링의 사용 예**인데 라우트로 추출돼
+    기준선에 "확정 고아"로 실려 있었다 — 실재하지 않는 결함이 후보로 공표된 것이다.
+    전수 575건 중 정확히 3건이 주석/문자열 내부였다.
+    """
+    routes = backend_routes()
+
+    # 공허 진리 가드 — 추출기가 죽으면 아래 `not in` 이 전부 공허하게 참이 된다.
+    assert len(routes) > 400, f"백엔드 라우트가 비정상적으로 적다({len(routes)}) — 추출기 사망 의심"
+
+    for ghost in ("/admin-only", "/from-project", "/projects"):
+        assert ghost not in routes, f"주석/독스트링 속 유령 라우트가 다시 세어졌다: {ghost}"
+
+    # 대조군 — 진짜 라우트는 여전히 잡혀야 한다(다 배제해서 통과하면 잠금이 아니다).
+    assert "/api/v1/market/report/pdf" in routes, "실제 라우트까지 배제됐다 — 마스킹이 과하다"
+
+
+def test_블록주석이_닫히지_않고_끝나도_지운다():
+    """★변이 감사 생존 — 줄주석 미러(`…줄주석으로_끝나도…`)는 있는데 **블록주석 미러가 없었다**.
+
+    도달 경로가 실재한다: JSX·정규식의 가짜 `/*` 는 `*/` 가 없어 `close == -1` 이 되고,
+    폴백이 없으면 파일 꼬리를 **통째로 삼켜** 진짜 호출줄이 사라진다(= 고아 과대).
+    """
+    src = '<p>면적 /* 가격</p>\napiClient.get("/api/v1/real-consumption");'
+    kept = _strip_js_comments(src)
+    # 폴백이 살아 있으면 `/*` 이후는 전부 공백 → 호출줄도 사라진다. 그것이 **현재 계약**이다.
+    assert len(kept) == len(src), "길이 보존이 깨졌다"
+    assert "real-consumption" not in kept, (
+        "닫히지 않은 블록주석 폴백이 사라졌다 — 파일 꼬리 처리가 정의되지 않는다"
+    )
+    # 대조군 — 정상적으로 닫힌 블록주석은 그 뒤 코드를 살려야 한다.
+    ok = _strip_js_comments('/* c */ apiClient.get("/api/v1/real-consumption");')
+    assert "real-consumption" in ok, "닫힌 블록주석 뒤 코드까지 삼켰다"
+
+
+def test_중첩_템플릿_표현식도_동적_세그먼트로_본다():
+    """★변이 감사 생존 — `_DYN_EXPR` 의 중첩 허용 분기가 **한 번도 안 태워졌다**.
+
+    오늘 분류에는 영향이 없지만(중첩 없이도 13건 동일) 프론트에 중첩 템플릿 표현식이
+    **105건 실재**하므로 도달 가능한 분기다 → 지우지 않고 잠근다.
+    """
+    blob = 'fetch(`${base}/api/v1/thing/${flag ? `${a}` : b}`);'
+    assert is_dynamically_reachable("/api/v1/thing/literal", blob), "중첩 표현식을 못 봤다"
+
+
 def test_동적세그먼트와_진짜고아가_다른_칸으로_간다():
     """★결함① 잠금 — **두 모집단이 갈라져야** 잠금이다. 같은 칸이면 배선을 끊어도 초록이다."""
     dynamic_route = "/api/v1/market/report/pdf"   # 프론트가 `${fmt}` 로 부르는 자리
@@ -144,8 +192,14 @@ def test_실제_저장소에서도_세_칸으로_갈린다(route: str, expected:
     conf, und = {f for f, _m, _p in confirmed}, {f for f, _m, _p in undecided}
 
     # 공허 진리 가드 — 세 칸이 모두 유의미한 크기여야 아래 판정이 의미를 가진다.
+    # ★스캐너 사망 탐지용 하한 — 부채를 갚아 정당하게 내려가면 이 숫자를 낮춰라.
     assert len(conf) > 50, "확정 고아가 비정상적으로 적다 — 스캐너가 죽었을 가능성"
     assert len(und) > 5, "판정 불가가 비정상적으로 적다 — 동적 분류기가 죽었을 가능성"
 
     actual = "orphan" if route in conf else "undecided" if route in und else "consumed"
-    assert actual == expected, f"{route} 가 {expected} 가 아니라 {actual} 로 분류됐다"
+    assert actual == expected, (
+        f"{route} 가 {expected} 가 아니라 {actual} 로 분류됐다.\n"
+        "→ 이것이 **의도된 변화**라면(배선했거나 라우트를 지웠다면) 결함이 아니다. "
+        "`orphan_routes_baseline.txt`·`orphan_routes_undecided.txt` 와 이 파라미터를 "
+        "**함께 갱신하고 사유를 커밋에 남겨라**. 부채를 갚는 것은 벌할 일이 아니다."
+    )
