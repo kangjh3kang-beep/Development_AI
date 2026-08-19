@@ -230,6 +230,7 @@ def calc_effective_far(base: dict, zone_type: str, land_area: float = 0) -> dict
             # 형제 미러 — 용도지역 미확인 조기반환에도 같은 키를 낸다(소비처 분기 단순화).
             "conditional_ceiling": None,
             "plan_limit_unknown": None,   # 형제 미러(용도지역 미확인 조기반환)
+            "ordinance_conditional": None,
             "far_basis": "zone_unmatched",
             "far_basis_detail": {
                 "법정범위": None,
@@ -438,6 +439,15 @@ def calc_effective_far(base: dict, zone_type: str, land_area: float = 0) -> dict
     #      **열릴 수 있는 상한만** 계산하고 실효값은 바꾸지 않는다(적용 요건 미확인 — 무날조).
     from app.services.zoning.conditional_legal_ceiling import resolve_conditional_ceiling
 
+    # ── 조례 조건부 값 매칭 — 기본값 외에 부지 조건이 여는 값이 있는지.
+    from app.services.zoning.ordinance_conditional import match_site_conditions
+
+    _cond_limits = (ordinance or {}).get("conditional_limits")
+    ordinance_conditional = (
+        match_site_conditions(_cond_limits, base.get("special_districts"))
+        if _cond_limits else None
+    )
+
     conditional_ceiling = resolve_conditional_ceiling(
         zone_type, base.get("special_districts")
     )
@@ -597,6 +607,10 @@ def calc_effective_far(base: dict, zone_type: str, land_area: float = 0) -> dict
         "conditional_ceiling": conditional_ceiling,
         # ★계획 상한 미확보 신호 — 해당 없으면 None(키는 항상 존재).
         "plan_limit_unknown": plan_limit_unknown,
+        # ★조례 조건부 값 × 부지 조건 매칭 — 조례는 `용도지역 × 조건 → 값들`이다.
+        #   적용하지 않는다(`applied: False`): 부지 designation 으로 판정되는 조건만
+        #   matched 로 내고, 건축물 용도·연혁 조건은 판정불가로 분리한다.
+        "ordinance_conditional": ordinance_conditional,
         "far_basis": far_basis,
         "far_basis_detail": far_basis_detail,
         "ordinance_confirmed": ordinance_confirmed,
