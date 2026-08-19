@@ -102,10 +102,29 @@ def test_duplicate_designations_are_listed_once():
 def test_reason_states_what_is_missing():
     """★`reason` 도 화면에 나가는 문장이다 — 무엇이 없는지 말해야 다음 행동이 나온다."""
     plu = _calc("자연녹지지역", [DU])["plan_limit_unknown"]
-    assert "건폐율·용적률을 직접 정하는 구역" in plu["reason"]
-    assert "수치를 확보하지 못했습니다" in plu["reason"]
+    assert "직접 정하는 구역" in plu["reason"]
+    assert "내용을 확보하지 못했습니다" in plu["reason"]
     # note 도 '왜 아래 수치를 믿으면 안 되는지'를 담는다.
     assert "반영하지 못한" in plu["note"]
+
+
+def test_the_plan_governs_uses_not_only_numbers():
+    """★★계획은 **수치만이 아니라 허용용도까지** 정한다 — 그것을 말해야 한다.
+
+    근거(법제처 원문): 국토계획법 **제52조제1항제4호** 지구단위계획은 "건축물의 **용도제한**,
+    건폐율 또는 용적률, 높이의 최고한도 또는 최저한도"를 정한다.
+    제75조의3제1항제2호 성장관리계획도 "건축물의 용도제한, 건폐율 또는 용적률".
+
+    ★왜 중요한가: 수치에만 경고를 붙이면 정작 더 비싼 오답 — **불허 용도를 추천**하는 것 —
+      이 아무 표시 없이 나간다(사용자 신고: 고시상 단독주택 불허인데 357세대 추천).
+    """
+    plu = _calc("자연녹지지역", [DU])["plan_limit_unknown"]
+    assert "건축물 용도제한" in plu["governs"]
+    assert "건폐율" in plu["governs"] and "용적률" in plu["governs"]
+    assert "허용용도" in plu["note"]
+    assert "허용용도로도 단정하지 마십시오" in plu["note"]
+    # 무엇을 확인해야 하는지에 **용도**가 들어 있어야 다음 행동이 나온다.
+    assert any("허용용도" in r for r in plu["requires"])
 
 
 def test_signal_disappears_when_the_plan_number_is_actually_known():

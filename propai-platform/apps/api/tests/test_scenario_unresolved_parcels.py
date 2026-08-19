@@ -446,3 +446,64 @@ def test_supplied_rows_skips_rows_without_address():
         [{"area_sqm": 100.0}, {"address": "  ", "area_sqm": 200.0}, {"address": "나", "area_sqm": 300.0}]
     )
     assert list(got) == ["나"]
+
+
+# ── 계획 상한·허용용도 미확보가 **추천 표면까지** 닿는가 ──────────────────────────
+#   ★종전 `_collect` 는 `calc_effective_far` 산출에서 `effective_far_pct` **한 값만** 읽었다.
+#     그래서 계획구역 필지인데도 개발방식·세대수 추천이 아무 경고 없이 나갔다(소비처 기아).
+#     사용자 신고가 정확히 그 형태다 — 고시상 단독주택 불허인데 357세대 추천.
+
+DU = "지구단위계획구역"
+_PLAN_UNKNOWN = {
+    "districts": [DU],
+    "applied": False,
+    "reason": "…",
+    "governs": ["건폐율", "용적률", "건축물 용도제한", "높이"],
+    "requires": ["결정고시의 허용용도 확인"],
+    "note": "계획이 정한 한도와 허용용도가 우선합니다",
+}
+
+
+def test_plan_unknown_reaches_the_recommendation_surface(sim):
+    """★필지에 실린 신호가 **부지 산출물**까지 올라온다 — 안 올라오면 화면이 모른다."""
+    row = {**RESOLVED, "plan_limit_unknown": _PLAN_UNKNOWN}
+    site = _run(sim, [row])["site"]
+
+    assert site["plan_limit_unknown"] is not None, "추천 표면에 신호가 닿지 않는다(소비처 기아)"
+    assert site["plan_limit_unknown"]["districts"] == [DU]
+    assert "건축물 용도제한" in site["plan_limit_unknown"]["governs"]
+
+
+def test_no_signal_when_no_parcel_is_in_a_plan_zone(sim):
+    """대조군(음성) — 아무 필지도 계획구역이 아니면 신호가 **꺼진다**."""
+    site = _run(sim, [RESOLVED, UNRESOLVED])["site"]
+    assert site["plan_limit_unknown"] is None
+    # 공허 진리 가드 — 산출 자체는 살아 있어야 한다.
+    assert site["total_area_sqm"] is not None
+
+
+def test_one_plan_parcel_flags_the_whole_site(sim):
+    """★다필지에서 **한 필지만** 계획구역이어도 부지 단위로 고지한다(보수측).
+
+    그 필지를 빼고 사업이 성립하지 않는 한, 부지 전체의 제안이 미검증이다.
+    """
+    plain = {**RESOLVED, "address": "평범한 필지"}
+    planned = {**RESOLVED, "address": "계획구역 필지", "plan_limit_unknown": _PLAN_UNKNOWN}
+    site = _run(sim, [plain, planned])["site"]
+
+    assert site["plan_limit_unknown"] is not None
+    assert site["plan_limit_unknown"]["parcel_count"] == 1     # 2필지 중 1필지
+    assert site["parcel_count"] == 2
+
+
+def test_blocked_path_mirrors_the_plan_signal(sim):
+    """형제 미러 — 특이부지 차단 경로 산출물에도 같은 키가 있어야 한다."""
+    blocked = {
+        **RESOLVED,
+        "special_districts": ["개발제한구역"],
+        "land_category": "임야",
+        "plan_limit_unknown": _PLAN_UNKNOWN,
+    }
+    out = _run(sim, [blocked, UNRESOLVED])
+    assert out.get("special_parcel_gate"), "차단 경로를 타지 않았다 — 미러가 검증되지 않았다"
+    assert out["site"]["plan_limit_unknown"] is not None
