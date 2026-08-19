@@ -84,13 +84,49 @@ def test_platform_own_guard_flags_nothing(analyzer, base):
 
 @pytest.mark.parametrize("base", BASES)
 def test_each_candidate_is_internally_coherent(analyzer, base):
-    """후보 항목도 각자 **자기 용도지역**의 범위만 담는다."""
+    """후보 항목도 각자 **자기 용도지역**의 범위만 담는다(상·하한 둘 다).
+
+    ★`target_zone_candidates` **존재**를 먼저 단언한다 — 없으면 아래 순회가 0회 돌아
+      공허하게 통과한다(변이로 실증: 그 키를 지워도 초록이었다).
+    """
     for s in _scenarios(analyzer, base):
-        for c in s.get("target_zone_candidates") or []:
+        cands = s.get("target_zone_candidates")
+        assert cands, f"{base}/{s['path_key']}: 후보 목록이 비었다 — 순회가 공허해진다"
+        assert len(cands) == len(UPZONE_TARGETS[base]), "후보 수가 상수와 어긋난다"
+        for c in cands:
             legal = legal_limits_for(c["target_zone"])
-            if not legal or c["expected_far_pct_high"] is None:
-                continue
-            assert c["expected_far_pct_high"] <= legal["max_far_pct"]
+            assert legal, f"후보 {c['target_zone']} 법정범위 미상"
+            hi, lo = c["expected_far_pct_high"], c["expected_far_pct_low"]
+            assert hi is not None and lo is not None
+            assert lo <= hi
+            assert hi <= legal["max_far_pct"]
+            # ★하한도 그 용도지역 법정 하한과 정합해야 한다(상한만 보면 하한이 무잠금).
+            assert lo >= legal["min_far_pct"]
+
+
+@pytest.mark.parametrize("base", BASES)
+def test_target_zone_max_names_the_last_candidate(analyzer, base):
+    """`target_zone_max` 가 **가장 높은 후보**를 가리킨다 — 화면이 상한 라벨로 쓴다."""
+    for s in _scenarios(analyzer, base):
+        cands = s["target_zone_candidates"]
+        assert s["target_zone_max"] == cands[-1]["target_zone"]
+        assert s["target_zone_max"] in UPZONE_TARGETS[base]
+
+
+@pytest.mark.parametrize("base", BASES)
+def test_upside_triple_is_internally_consistent(analyzer, base):
+    """★상향 여지 3필드(값·용도지역·출처)가 **같은 후보**를 가리킨다.
+
+    라벨만 맞고 출처가 다른 후보 것이면 사용자가 근거를 잘못 따라간다.
+    """
+    for s in _scenarios(analyzer, base):
+        hi, zone, src = (s["upside_far_pct_high"], s["upside_far_zone"],
+                         s["upside_far_source"])
+        assert hi is not None and zone and src, f"{base}/{s['path_key']}: upside 3필드 결측"
+        match = [c for c in s["target_zone_candidates"] if c["target_zone"] == zone]
+        assert match, f"{zone} 가 후보에 없다"
+        assert match[0]["expected_far_pct_high"] == hi
+        assert match[0]["expected_far_source"] == src
 
 
 def test_upside_is_preserved_and_labelled(analyzer):
