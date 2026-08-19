@@ -175,6 +175,39 @@ if [ "$RUNNING_ID" != "$APP_BUILD_ID" ]; then
 fi
 echo "  OK 실행 컨테이너 = $RUNNING_ID"
 
+# ★VERIFY-SOURCE — **떠 있는 컨테이너의 소스가 호스트 소스와 같은가**(Caddy 전환 전).
+#   VERIFY-BUILD 는 *"어느 커밋을 빌드했는가"* 를 답하지만, **빌드가 실은 다른 것을 실었는지**는
+#   말하지 않는다. 빌드 캐시가 옛 레이어를 재사용하면 `APP_BUILD_ID` 만 새로 박히고 소스는
+#   낡을 수 있다 — 그러면 VERIFY-BUILD 는 OK 인데 서비스는 옛 코드다.
+#   ★2026-08-19 실측 계기: 168 라이브의 `ordinance_service.py` 가 **미머지 브랜치 HEAD** 와
+#     같고 `origin/main` 과 달랐다(핫패치·전수 대조에서 782 중 1건). 그 층을 여기서 닫는다.
+#   ★★이 검사가 막는 것과 못 막는 것을 분명히 한다:
+#     막는다   — 빌드 컨텍스트/캐시 때문에 **갓 빌드한 컨테이너가 소스와 다른** 경우
+#     못 막는다 — 배포가 끝난 **뒤** 컨테이너 안을 직접 고치는 핫패치(주기 감시의 몫)
+echo "== VERIFY-SOURCE(전환 전 · 컨테이너 소스 vs 호스트 소스) =="
+_SRC_C=$(mktemp); _SRC_H=$(mktemp)
+# ★md5sum 출력을 **파일명 기준으로 정렬**한다. find 순서는 두 환경에서 다를 수 있고,
+#   정렬하지 않으면 내용이 같아도 전부 불일치로 읽힌다(첫 판 실측: 위양성 110건).
+sudo docker exec "$NAME" sh -c 'cd /app && find apps/api/app -name "*.py" -not -path "*/__pycache__/*" -exec md5sum {} +' 2>/dev/null | sort -k2 > "$_SRC_C"
+find apps/api/app -name "*.py" -not -path "*/__pycache__/*" -exec md5sum {} + 2>/dev/null | sort -k2 > "$_SRC_H"
+_CN=$(wc -l < "$_SRC_C"); _HN=$(wc -l < "$_SRC_H")
+echo "  [대조군] 파일 수  컨테이너=$_CN  호스트=$_HN"
+# ★대조군이 필수인 이유: 경로를 틀리면 `md5sum` 이 빈 목록을 내고도 **파이프 종료코드가 0** 이라
+#   "드리프트 없음"으로 읽힌다. 목록이 비었는지를 **먼저** 단언한다.
+if [ "$_CN" -eq 0 ] || [ "$_HN" -eq 0 ]; then
+  echo "!! 소스 목록을 읽지 못했다(컨테이너=$_CN 호스트=$_HN) — 경로/권한 확인. 전환 중단."
+  sudo docker rm -f "$NAME"; exit 1
+fi
+_DRIFT=$(diff "$_SRC_C" "$_SRC_H" | grep -c '^<' || true)
+_DRIFT=$(printf '%s' "$_DRIFT" | tr -d '[:space:]')
+if [ "${_DRIFT:-0}" -ne 0 ] || [ "$_CN" -ne "$_HN" ]; then
+  echo "!! 컨테이너 소스가 호스트 소스와 다르다(불일치 ${_DRIFT} · 파일수 $_CN/$_HN) — 전환 중단"
+  diff "$_SRC_C" "$_SRC_H" | grep '^[<>]' | head -10
+  echo "   ※갓 빌드한 컨테이너는 원리적으로 0 이어야 한다. 0 이 아니면 빌드가 다른 것을 실었다."
+  sudo docker rm -f "$NAME"; exit 1
+fi
+echo "  OK 소스 일치 ($_CN 파일)"
+
 # ★field_audit 활성 게이트(insight-loop 2026-07-30) — Caddy 전환 전에 신규 컨테이너를 검사한다.
 #   #497 진단 엔드포인트로 자가검증 레이어의 무성(silent) 회귀를 배포 시점에 차단(fail-closed).
 #   introspect 전용이라 비용·부작용 0. 실패 시 신앱만 제거하고 기존 앱을 유지 → 무중단.

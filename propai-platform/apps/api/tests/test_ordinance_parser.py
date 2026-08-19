@@ -111,9 +111,17 @@ _FAR_HIGH_JUNGSIM_XML = (
     _FAR_HIGH_COMMA_XML.replace("일반상업지역", "중심상업지역").replace("1,300", "1,500")
 )
 
-# 준주거지역 1 300퍼센트(★공백 구분자 — 쉼표뿐 아니라 공백 천단위도 잡아야 함)
+# 중심상업지역 1 300퍼센트(★공백 구분자 — 쉼표뿐 아니라 공백 천단위도 잡아야 함)
+# ★2026-08-19 교정 — 종전엔 `.replace("일반상업지역","준주거지역")` 이었다. 이름만 바꾸고
+#   **상업 수치(건폐 80·용적 1300)를 그대로** 들고 가서, 준주거 법정(70/500)을 넘는
+#   **법적으로 불가능한 표본**이 됐다. `enforce_national_ceiling` 이 그것을 옳게 기각해
+#   파서가 `None` 을 내면서 이 테스트가 실패했다 — 파서 결함이 아니라 픽스처 결함이다.
+#   이 픽스처의 의도는 **공백 천단위 파싱**이지 특정 용도지역이 아니므로(사용처도 아래
+#   테스트 한 곳뿐이다), 그 값이 합법인 **중심상업지역**(90/1500)으로 옮긴다.
+#   ★일반화: 값이 용도지역에 종속되는 도메인에서 **이름만 바꾼 파생 픽스처**는 그 값이
+#     새 용도지역에서 가능한지 검사하지 않는다 — 새로 생긴 S계층 가드가 그것을 드러냈다.
 _FAR_HIGH_SPACE_XML = (
-    _FAR_HIGH_COMMA_XML.replace("일반상업지역", "준주거지역").replace("1,300", "1 300")
+    _FAR_HIGH_COMMA_XML.replace("일반상업지역", "중심상업지역").replace("1,300", "1 300")
 )
 
 # ★절단(truncation) 시뮬레이션: 상업지역이 300%로 파싱된 상황(pre-fix가 만들던 값).
@@ -298,9 +306,9 @@ def test_far_1500_comma_separator_central_commercial(service):
     assert r["far"] == 1500, "천 단위 구분자 절단 파싱(1,500→500) 회귀"
 
 
-def test_far_1300_space_separator_junjugeo(service):
-    """준주거지역 '1 300퍼센트'(공백 구분자) → far=1300 (pre-fix는 300으로 절단 → 실패)."""
-    r = service._parse_bcr_far_from_text(_FAR_HIGH_SPACE_XML, "준주거지역", "테스트시")
+def test_far_1300_space_separator_jungsim(service):
+    """중심상업지역 '1 300퍼센트'(공백 구분자) → far=1300 (pre-fix는 300으로 절단 → 실패)."""
+    r = service._parse_bcr_far_from_text(_FAR_HIGH_SPACE_XML, "중심상업지역", "테스트시")
     assert r is not None
     assert r["far"] == 1300, "공백 천 단위 구분자 절단 파싱(1 300→300) 회귀"
 
@@ -381,3 +389,40 @@ class TestProvenanceWiring:
         assert prov["missing_sections"] == ["건폐율"]
         # 단서 주의문이 disclaimer에 전달되어야 한다(정직 표기).
         assert "단서" in prov["disclaimer"]
+
+
+# ── 섹션 판별자 — **공허한 찾음은 막고 정상 섹션은 통과** (2026-08-19) ────────────────
+#   `_locate_section` 은 조문/별표를 못 찾으면 느슨한 폴백으로 `건폐율`·`용적률` 단어를
+#   집는다. 그 폴백이 조제목("경관지구에서의 **건폐율과** 용적률")에 걸려 **5글자**를
+#   섹션이라 반환하고 호출부가 `found_bcr_section=True` 로 보고한 사고가 있었다.
+#   그것을 막으려 넣은 "용도지역 2개 미만이면 기각" 가드는 **위양성**이었다 —
+#   용도지역이 하나만 규정된 정상 섹션까지 기각해 파서가 통째로 `None` 을 냈다.
+#   ★판별자는 "용도지역 ≥1 **그리고** 퍼센트 값 존재"다. 아래는 그 양방향 락이다.
+
+_ONE_ZONE_SECTION = (
+    "제55조(용도지역안에서의 건폐율) 용도지역안에서의 건폐율은 다음과 같다. "
+    "일반상업지역 : 80퍼센트"
+)
+
+
+def test_single_zone_section_is_accepted(service):
+    """★위양성 방지 — 용도지역이 **하나뿐**이어도 값이 있으면 정상 섹션이다."""
+    section, _ = service._locate_section(_ONE_ZONE_SECTION, "건폐율")
+    assert section is not None, "용도지역 1개짜리 정상 섹션을 기각한다(가드 위양성)"
+    assert "일반상업지역" in section
+
+
+def test_vacuous_find_is_still_rejected(service):
+    """★원래 막으려던 것은 계속 막는다 — 값도 용도지역도 없는 조제목 조각."""
+    assert service._locate_section("경관지구에서의 건폐율과 용적률", "건폐율") == (None, False)
+
+
+def test_zone_mention_without_any_value_is_rejected(service):
+    """★값이 없으면 기각 — 상호참조 인용은 섹션이 아니다(값 0개가 날카로운 판별자)."""
+    cross_ref = "제34조 …제45조 일반상업지역에서의 건폐율을 초과하는 경우에는 …"
+    assert service._locate_section(cross_ref, "건폐율") == (None, False)
+
+
+def test_value_without_any_canonical_zone_is_rejected(service):
+    """★반대편 — 값만 있고 표준 용도지역명이 없으면 섹션이 아니다."""
+    assert service._locate_section("건폐율은 80퍼센트로 한다.", "건폐율") == (None, False)
