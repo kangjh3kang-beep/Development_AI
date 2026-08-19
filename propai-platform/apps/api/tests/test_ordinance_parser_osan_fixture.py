@@ -100,18 +100,28 @@ class TestGoldenValues:
         assert r is not None, "파싱이 통째로 실패했다"
         assert r["far"] == 100, f"제51조① 자연녹지 용적률 100%와 다르다: {r['far']}"
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "3단계 미구현 — 파서가 `용도지역 → 값 하나` 모델이라 조건부 완화값(제46/50조 30%)을 "
-            "집는다. S계층 가드가 법정 20% 초과로 **기각**해 현재 None. 기본항(제45조① 나열형) "
-            "우선 추출이 들어가면 이 xfail 이 XPASS 로 뒤집혀 시끄럽게 알린다."
-        ),
-    )
     def test_건폐율_기본값은_20퍼센트다(self, svc, xml):
+        """★3단계(기본항 우선 추출)로 통과하게 됐다 — `xfail(strict=True)` 가 XPASS 로
+        뒤집혀 시끄럽게 알렸다(조용히 지나가지 않았다)."""
         r = svc._parse_bcr_far_from_text(xml, "자연녹지지역", "오산시")
         assert r is not None
         assert r["bcr"] == 20, f"제45조①16호 자연녹지 건폐율 20%와 다르다: {r['bcr']}"
+
+    def test_조건부_완화값을_버리지_않는다(self, svc, xml):
+        """★기본값만 남기고 완화값을 버리면, 이 부지처럼 **성장관리권역**인 경우
+        실제 적용값(제50조 30%)을 영영 알 수 없다. 조건과 함께 보관한다."""
+        import re as _re
+        full = " ".join(_re.findall(r"CDATA\[(.*?)\]\]>", xml, _re.DOTALL))
+        zones = svc._extract_zone_limits_structured(full)["zones"]
+        entry = zones.get("자연녹지지역") or {}
+        assert entry.get("bcr") == 20, "기본값이 기본항에서 나와야 한다"
+        assert entry.get("value_basis") == "base_item", "값의 출처가 기본항임을 표시해야 한다"
+        cond = entry.get("conditional") or []
+        assert cond, "조건부 완화값이 전부 버려졌다 — 성장관리권역 판정이 불가능해진다"
+        assert any(c["value"] == 30 for c in cond), (
+            f"제46/50조 30% 완화값이 수집되지 않았다: {[c['value'] for c in cond]}"
+        )
+        assert all(c.get("context") for c in cond), "조건부 값에 근거 맥락이 없으면 쓸 수 없다"
 
     def test_법정초과값은_화면에_나가지_않는다(self, svc, xml):
         """3단계 전이라도 **틀린 값이 나가는 것**만은 막혀 있어야 한다(S계층 가드)."""

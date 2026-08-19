@@ -100,7 +100,15 @@ async def main() -> int:
             targets = targets[: args.limit]
             print(f"※ 표본 {len(targets)}곳으로 제한 — **전수 아님**(보고 시 명시할 것)")
 
+        # ★광역자치단체(도·특별자치도)는 시·군에 위임하는 구조라 조례에 직접 수치가 없을 수
+        #   있다. 기초와 같은 통에 넣으면 **파서 결함이 아닌 것이 실패로 집계**되어 진척이
+        #   왜곡된다(실측: 잔여 실패 12건이 전부 광역이었다). 분모를 갈라서 센다.
+        def is_gwangyeok(name: str) -> bool:
+            return bool(re.search(r"(?:^|\s)(\S*(?:도|특별자치도))\s*도시계획", name)) and \
+                not re.search(r"(?:시|군|구)\s*도시계획", name)
+
         tally: dict[str, Counter] = {z: Counter() for z in zones}
+        tally_gw: dict[str, Counter] = {z: Counter() for z in zones}
         failures: list[str] = []
         for idx, (oid, name) in enumerate(targets, 1):
             try:
@@ -116,22 +124,30 @@ async def main() -> int:
                     tally[z]["fetch_error"] += 1
                 failures.append(f"{name}: fetch {type(e).__name__}")
                 continue
+            gw = is_gwangyeok(name)
             for z in zones:
                 verdict = classify(svc, xml, z)
-                tally[z][verdict] += 1
-                if verdict in ("no_section", "rejected"):
+                (tally_gw if gw else tally)[z][verdict] += 1
+                # 광역의 no_section 은 위임구조일 수 있어 파서 실패로 세지 않는다(별도 집계).
+                if verdict == "rejected" or (verdict == "no_section" and not gw):
                     failures.append(f"{name} / {z}: {verdict}")
             if idx % 10 == 0:
                 print(f"  … {idx}/{len(targets)}", flush=True)
 
-    print("\n=== 커버리지 ===")
-    for z in zones:
-        c = tally[z]
-        tot = sum(c.values())
-        ok = c["ok"]
-        print(f"[{z}] 대상 {tot} | ok {ok} ({ok / tot * 100:.1f}%) | "
-              f"rejected {c['rejected']} | no_value {c['no_value']} | "
-              f"no_section {c['no_section']} | fetch_error {c['fetch_error']}")
+    def _report(title: str, t: dict[str, Counter]) -> None:
+        print(f"\n=== {title} ===")
+        for z in zones:
+            c = t[z]
+            tot = sum(c.values())
+            if not tot:
+                print(f"[{z}] 대상 0 — 표본에 없음")
+                continue
+            print(f"[{z}] 대상 {tot} | ok {c['ok']} ({c['ok'] / tot * 100:.1f}%) | "
+                  f"rejected {c['rejected']} | no_value {c['no_value']} | "
+                  f"no_section {c['no_section']} | fetch_error {c['fetch_error']}")
+
+    _report("커버리지 — 기초자치단체(시·군·구)", tally)
+    _report("커버리지 — 광역자치단체(도) ※위임구조라 no_section 이 정상일 수 있음", tally_gw)
     print("\n=== 실패 표본(앞 25) ===")
     for f in failures[:25]:
         print("  -", f)

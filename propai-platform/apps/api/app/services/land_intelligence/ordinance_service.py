@@ -915,11 +915,36 @@ class OrdinanceService:
         for kind, section in (("bcr", bcr_section), ("far", far_section)):
             if not section:
                 continue
+            # ★★1순위: **기본항(번호 나열형)** — `16. 자연녹지지역: 20퍼센트 이하`.
+            #   조례는 제45조①/제51조① 에서 용도지역을 번호로 나열해 기본값을 정하고,
+            #   그 뒤에 완화·특례 조항이 이어진다(제46조 용도지구 30% · 제50조 성장관리 30% ·
+            #   주유소/유원지 30% …). 종전 파서는 `용도지역 → 값 하나` 모델이라 우선순위가
+            #   없어 **아무 조건부 값이나 이겼다**(실측: 오산시 자연녹지 20% 대신 30%).
+            #   전국 표본 30곳에서 자연녹지 ok 6.7% 였던 근본이 이것이다.
+            #   번호 접두(`\d+.`)는 기본항의 강한 신호이므로 이것을 먼저 훑는다.
+            base_items = self._extract_base_items(section)
+            for zone_name, val in base_items.items():
+                slot = zones.setdefault(zone_name, {})
+                slot[kind] = val
+                slot.setdefault("evidence_span", f"{zone_name}: {val}퍼센트 이하(기본항 나열)")
+                slot["value_basis"] = "base_item"
+
             for zone_name, frag, caveat_hdr in self._iter_zone_fragments(section):
                 val, caveat_ctx = self._extract_pct_near(frag)
                 if val is None:
                     continue
                 slot = zones.setdefault(zone_name, {})
+                # ★기본항이 이미 잡혔으면 **덮어쓰지 않는다** — 조각 스캔이 집는 것은 대개
+                #   완화·특례값이다. 버리지도 않는다: 조건과 함께 conditional 로 보관해
+                #   부지 조건(성장관리권역·용도지구 지정 등)과 매칭할 수 있게 한다.
+                #   ※실측: 이 부지는 성장관리권역이라 제50조 30% 가 **실제 적용값일 수 있다.**
+                if slot.get("value_basis") == "base_item" and slot.get(kind) is not None:
+                    if val != slot.get(kind):
+                        slot.setdefault("conditional", []).append({
+                            "kind": kind, "value": val,
+                            "context": self._normalize_ws(frag)[:120],
+                        })
+                    continue
                 slot[kind] = val
                 # 근거 스니펫(용도별) — 처음 잡힌 것을 대표로.
                 slot.setdefault("evidence_span", self._normalize_ws(frag)[:120])
@@ -934,6 +959,29 @@ class OrdinanceService:
             "bcr_full_header": bcr_full,
             "far_full_header": far_full,
         }
+
+    def _extract_base_items(self, section: str) -> dict[str, int]:
+        """조문 **기본항의 번호 나열형**에서만 값을 뽑는다 — `16. 자연녹지지역: 20퍼센트 이하`.
+
+        ★왜 번호를 요구하나: 같은 조례에 같은 용도지역이 여러 번 나오고(오산시 자연녹지 9회),
+          값도 여러 개다. 번호 접두는 **기본항 나열**의 강한 신호라, 완화·특례 조항과 갈린다.
+          번호 없이 훑으면 우선순위가 없어 아무 값이나 이긴다(그 결함을 이 함수가 고친다).
+
+        ★날조 방지: 값이 없으면 넣지 않는다. 관대하게 넓히면 완화값이 다시 섞인다.
+        """
+        out: dict[str, int] = {}
+        for zone in sorted(self._CANONICAL_ZONES, key=len, reverse=True):
+            if zone in out:
+                continue
+            # `NN. <용도지역>[(세분)] : NN퍼센트` — 콜론/전각콜론, 공백 변형 허용.
+            m = re.search(
+                r"(?<![\d])\d{1,2}\s*\.\s*" + re.escape(zone)
+                + r"(?:\s*\([^)]{0,20}\))?\s*[:：]\s*(\d{1,4})\s*퍼센트",
+                section,
+            )
+            if m:
+                out[zone] = int(m.group(1))
+        return out
 
     def _iter_zone_fragments(self, section: str):
         """조문/별표 구간을 용도지역 단위 조각으로 쪼개 (용도지역명, 값조각, 단서헤더) 산출.
