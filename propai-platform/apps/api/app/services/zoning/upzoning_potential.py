@@ -267,6 +267,28 @@ class UpzoningPotentialAnalyzer:
             low_far, high_far, far_source = _target_far_pct(
                 target_zone, sigungu, ordinance_far_resolver
             )
+            # ★★범위 복원 — 종전엔 후보를 **하나만** 고르고 끝나, 상·하한이 같은 숫자가 됐다.
+            #   화면엔 "예상 상한 150.0~150.0%" 로 찍혔고, 개발사는 그것을 **"그 위는 안 된다"**
+            #   로 읽는다. 실제로는 `UPZONE_TARGETS["자연녹지지역"]` 에 제2종일반주거지역이
+            #   index 1 로 **이미 들어 있었다**(2026-08-19 사용자 지적 — 도시개발법으로 2종
+            #   상향이 가능한데 어떤 경로도 150% 를 넘지 못했다).
+            #   모델의 **보수성이 사실로 표시되던 것**이 결함의 본체다. 후보 전체를 훑어
+            #   범위로 낸다: 하한=보수 1단계, 상한=최대 후보.
+            cands: list[dict] = []
+            for tz in targets:
+                c_low, c_high, c_src = _target_far_pct(tz, sigungu, ordinance_far_resolver)
+                cands.append({
+                    "target_zone": tz,
+                    "expected_far_pct_low": round(c_low) if c_low is not None else None,
+                    "expected_far_pct_high": round(c_high) if c_high is not None else None,
+                    "expected_far_source": c_src,
+                })
+            _highs = [c["expected_far_pct_high"] for c in cands
+                      if c["expected_far_pct_high"] is not None]
+            # 상향 여지의 상한(최대 후보). ★하한은 최상위에서 쓰지 않는다 — 최상위 low/high 는
+            #   `target_zone` 한 곳에 대해 내부 정합해야 하고, 후보 합집합의 하한을 섞으면
+            #   다시 라벨과 값이 어긋난다(후보별 하한은 `target_zone_candidates` 에 있다).
+            range_high = max(_highs) if _highs else None
             feasibility, reason, conditions, blocked_reasons = self._grade(
                 pkey, path, area, near_station, near_station_m,
                 adjacency_contiguous, parcel_count, key, blockers,
@@ -275,9 +297,38 @@ class UpzoningPotentialAnalyzer:
                 "path": path["label"],
                 "path_key": pkey,
                 "target_zone": target_zone,
+                # ★★2026-08-19 교정 — 라벨과 값은 **같은 용도지역**을 가리켜야 한다.
+                #   직전 판은 상·하한을 **후보 전체의 합집합**(low=최소후보·high=최대후보)에서
+                #   냈다. 그런데 `target_zone` 은 여전히 대표 후보 하나였다. 결과:
+                #     target=제2종일반주거지역(법정 150~250)  ·  high=300  ← **법정상한 초과**
+                #     source='지자체 도시계획조례(목표지역)'  ·  high=200  ← **조례값 150 초과**
+                #   플랫폼 자신의 `check_against_legal` 이 '법정한도초과 high' 로 판정한다.
+                #   이 저장소가 "자연녹지 200%" 사고 이후 막아 온 **날조 클래스**다 —
+                #   출처를 붙인 채 그 출처를 넘는 값은 근거가 아니라 거짓 근거다.
+                #   ★그러므로 최상위 3필드는 **대표 후보 하나에 대해 내부 정합**하게 낸다
+                #     (`_target_far_pct` 가 이미 `min(조례, 법정)` 을 하고 있다 — 합집합
+                #      덮어쓰기가 그 min 을 무력화하고 있었을 뿐이다).
                 "expected_far_pct_low": round(low_far) if low_far is not None else None,
                 "expected_far_pct_high": round(high_far) if high_far is not None else None,
                 "expected_far_source": far_source,
+                # 후보별 상세 — 각 항목은 **자기 용도지역의 범위**만 담는다(내부 정합).
+                "target_zone_candidates": cands,
+                "target_zone_max": (cands[-1]["target_zone"] if cands else None),
+                # ★상향 여지는 **지우지 않는다** — 다만 그 값이 어느 용도지역의 것인지
+                #   라벨과 함께 낸다. 종전엔 이 숫자가 `expected_far_pct_high` 로 올라가
+                #   `target_zone` 라벨과 어긋났다(위 주석). 소비처(화면)는 이 쌍을 읽어
+                #   "최대 제3종일반주거지역 상향 시 300%" 처럼 **용도지역을 밝혀** 표시한다.
+                "upside_far_pct_high": range_high,
+                "upside_far_zone": (
+                    next((c["target_zone"] for c in reversed(cands)
+                          if c["expected_far_pct_high"] == range_high), None)
+                    if range_high is not None else None
+                ),
+                "upside_far_source": (
+                    next((c["expected_far_source"] for c in reversed(cands)
+                          if c["expected_far_pct_high"] == range_high), None)
+                    if range_high is not None else None
+                ),
                 "conditions": conditions,
                 "feasibility": feasibility,
                 "feasibility_reason": reason,
