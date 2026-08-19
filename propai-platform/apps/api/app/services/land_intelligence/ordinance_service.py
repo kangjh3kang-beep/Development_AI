@@ -874,7 +874,14 @@ class OrdinanceService:
         #   진단하는 사람이 **파서가 아니라 조례를 의심**하게 된다(실제로 그렇게 8개월을 보냈다).
         #   섹션이라면 최소한 표준 용도지역명을 **2개 이상** 담고 있어야 한다(1개는 조제목 인용
         #   같은 우연한 언급일 수 있다).
-        if sum(1 for z in self._CANONICAL_ZONES if z in section) < 2:
+        #   ★2026-08-19 교정 — 판별자를 "용도지역 2개 이상"에서 **"용도지역 ≥1 그리고
+        #     퍼센트 값 존재"** 로 바꾼다. 종전 기준은 **위양성**이었다: 용도지역이 하나만
+        #     규정된 정상 섹션(단일 용도지역 조문·최소 픽스처)을 통째로 기각해 파서가
+        #     `None` 을 냈다(테스트 7건이 그것으로 죽었다 — 가드의 위양성도 결함이다).
+        #     원래 막으려던 사례("건폐율과 " 5글자)의 결정적 특징은 *용도지역이 적다*가
+        #     아니라 **값이 0개**라는 것이다 — 그쪽이 날카로운 판별자다.
+        if not (any(z in section for z in self._CANONICAL_ZONES)
+                and _KR_PCT_RE.search(section)):
             return None, False
         return section, is_full_header
 

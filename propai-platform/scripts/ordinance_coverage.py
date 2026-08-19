@@ -63,7 +63,11 @@ async def list_ordinances(client: httpx.AsyncClient, max_pages: int = 5) -> list
         ids = re.findall(r"<자치법규ID>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</자치법규ID>", r.text)
         if not names:
             break
-        out += [(i, n) for i, n in zip(ids, names)
+        # ★strict=True — `names`·`ids` 는 **같은 XML 응답에 대한 별개 findall 2회**라
+        #   레코드마다 1:1 이어야 정상이다. 한 레코드에서 한쪽 필드가 빠지면 길이가 어긋난 채
+        #   `zip` 이 조용히 잘라 **ID↔이름이 통째로 밀린다**(= 엉뚱한 조례 ID 를 그 이름에 붙임).
+        #   그 상태의 결과는 이미 틀렸으므로 **죽는 편이 옳다**.
+        out += [(i, n) for i, n in zip(ids, names, strict=True)
                 if re.fullmatch(r".+\s?도시계획\s?조례", n)]
     # 중복 제거(개정 이력으로 같은 이름이 여러 번 나올 수 있다) — 이름 기준 첫 항목만.
     seen: set[str] = set()
