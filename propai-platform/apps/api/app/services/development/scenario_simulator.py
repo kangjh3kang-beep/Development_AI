@@ -251,7 +251,7 @@ class DevelopmentScenarioSimulator:
     async def simulate(
         self,
         address: str,
-        parcels: list[str] | None = None,
+        parcels: list[str] | list[dict[str, Any]] | None = None,
         site: dict[str, Any] | None = None,
         use_llm: bool = True,
     ) -> dict[str, Any]:
@@ -259,8 +259,29 @@ class DevelopmentScenarioSimulator:
         addrs = self._merge(address, parcels)
         multi = len(addrs) >= 2
 
+        # ★호출자가 이미 아는 값(면적·용도지역)을 받아 둔다 — `ParcelsIn` 정규화를 거친
+        #   dict 행이면 `area_sqm`·`zone_type` 이 실려 온다. 이 값들은 우리 API 가 이미 준
+        #   것이라 새 진실원천이 아니다(재조회 불필요).
+        supplied = self._supplied_rows(parcels)
+
         # 부지 정보 수집(단일/다필지)
         enriched, subway_m = await self._collect(addrs, site)
+
+        # ── 조회로 못 채운 칸만 호출자 값으로 메운다(**덮어쓰기 금지**) ──────────────
+        # ★진실원천 우선순위: 토지대장/VWorld 실측 > 호출자 제공값. 실측이 있으면 그대로 두고,
+        #   **비어 있을 때만** 메운다. 반대로 하면 클라이언트 입력이 실측을 이겨 면적을
+        #   부풀릴 수 있다(공개 엔드포인트라 더 그렇다).
+        for row in enriched:
+            src = supplied.get((row.get("address") or "").strip())
+            if not src:
+                continue
+            if row.get("area") is None and src.get("area_sqm") is not None:
+                row["area"] = src["area_sqm"]
+                row["area_source"] = "caller_supplied"
+            if not row.get("zone") and src.get("zone_type"):
+                row["zone"] = src["zone_type"]
+                row["zone_type"] = src["zone_type"]
+                row["zone_source"] = "caller_supplied"
 
         # ── 미해석 필지 정직화 ────────────────────────────────────────────────
         # ★실측(2026-08-19): 주소가 해석되지 않으면 `analyze_by_address` 가
@@ -568,12 +589,48 @@ class DevelopmentScenarioSimulator:
 
     # ── 부지 수집 ──
     @staticmethod
-    def _merge(address: str, parcels: list[str] | None) -> list[str]:
+    def _merge(address: str, parcels: list[str] | list[dict[str, Any]] | None) -> list[str]:
+        """주소 목록으로 수렴. ★dict 행(ParcelsIn 정규화 결과)도 받는다 — 종전처럼
+        `str.strip()` 을 바로 부르면 dict 가 오는 순간 AttributeError 다."""
         out: list[str] = []
-        for a in [address, *(parcels or [])]:
+        for item in [address, *(parcels or [])]:
+            if isinstance(item, dict):
+                a = item.get("address")
+            elif isinstance(item, str) or item is None:
+                a = item
+            else:
+                # 그 외 타입(int 등)은 **드롭**한다 — `str(item)` 으로 승격하면 존재하지 않는
+                # 주소가 필지로 진입한다(무날조). `normalize_parcels` 와 동일 정책.
+                continue
             a = (a or "").strip()
             if a and a not in out:
                 out.append(a)
+        return out
+
+    @staticmethod
+    def _supplied_rows(
+        parcels: list[str] | list[dict[str, Any]] | None,
+    ) -> dict[str, dict[str, Any]]:
+        """호출자가 준 dict 행 → {주소: {area_sqm, zone_type}}. str 행은 줄 게 없으므로 제외."""
+        out: dict[str, dict[str, Any]] = {}
+        for item in parcels or []:
+            if not isinstance(item, dict):
+                continue
+            addr = (item.get("address") or "").strip()
+            if not addr:
+                continue
+            area = item.get("area_sqm")
+            if area is None:
+                area = item.get("areaSqm")
+            try:
+                area = float(area) if area is not None else None
+            except (TypeError, ValueError):
+                area = None
+            # 0·음수 면적은 값이 아니다(0을 채우면 미해석과 구분이 사라진다).
+            out[addr] = {
+                "area_sqm": area if (area or 0) > 0 else None,
+                "zone_type": item.get("zone_type") or item.get("zoneCode"),
+            }
         return out
 
     async def _collect(self, addrs: list[str], site: dict) -> tuple[list[dict], float | None]:

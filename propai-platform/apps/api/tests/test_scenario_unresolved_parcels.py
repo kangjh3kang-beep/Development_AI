@@ -69,10 +69,15 @@ UNRESOLVED = {
 
 
 def _run(sim: DevelopmentScenarioSimulator, rows: list[dict]) -> dict:
-    """`_collect` 만 대역으로 두고 simulate 전체를 실제 실행한다."""
+    """`_collect` 만 대역으로 두고 simulate 전체를 실제 실행한다.
+
+    ★행은 **복사본**으로 넘긴다 — `simulate` 은 `enriched` 행을 제자리 수정하므로(호출자
+      제공값 메우기) 모듈 레벨 픽스처를 그대로 주면 **다음 테스트가 오염**된다.
+      (단독 실행은 통과하고 스위트에서만 깨지는 형태로 실제 적발했다.)
+    """
 
     async def fake_collect(addrs, site):  # noqa: ANN001 — 대역
-        return list(rows), None
+        return [dict(r) for r in rows], None
 
     sim._collect = fake_collect  # type: ignore[method-assign]
     addrs = [r["address"] for r in rows]
@@ -269,8 +274,77 @@ def test_primary_zone_falls_back_to_site_when_no_parcel_zone(sim):
     rows = [{**UNRESOLVED, "zone": None, "zone_type": "", "zone_source": None}]
 
     async def fake_collect(addrs, site):  # noqa: ANN001
-        return list(rows), None
+        return [dict(r) for r in rows], None
 
     sim._collect = fake_collect  # type: ignore[method-assign]
     out = asyncio.run(sim.simulate(rows[0]["address"], site={"zone_type": "일반상업지역"}, use_llm=False))
     assert out["site"]["primary_zone"] == "일반상업지역"
+
+
+# ── 계약 확장: 호출자가 아는 면적을 받아 **재파생 실패를 메운다** ────────────────────
+#   ★진실원천 우선순위 락 — 실측(토지대장/VWorld)이 있으면 그대로 두고, **빈 칸만** 메운다.
+#     반대로 하면 공개 엔드포인트에서 클라이언트 입력이 실측을 이겨 면적을 부풀릴 수 있다.
+
+
+def _run_with(sim, rows: list[dict], parcels):
+    async def fake_collect(addrs, site):  # noqa: ANN001
+        return [dict(r) for r in rows], None   # ★복사본(위 _run 주석 참조)
+
+    sim._collect = fake_collect  # type: ignore[method-assign]
+    return asyncio.run(
+        sim.simulate(rows[0]["address"], parcels=parcels, site={}, use_llm=False)
+    )
+
+
+def test_caller_supplied_area_fills_the_unresolved_gap(sim):
+    """미해석 필지의 면적을 호출자 값으로 메운다 — 이것이 86,755㎡가 사라지던 자리다."""
+    out = _run_with(
+        sim,
+        [RESOLVED, UNRESOLVED],
+        [
+            {"address": RESOLVED["address"]},
+            {"address": UNRESOLVED["address"], "area_sqm": 74446.0},
+        ],
+    )
+    site = out["site"]
+    assert site["total_area_sqm"] == pytest.approx(12309.0 + 74446.0)
+    # 메워졌으므로 더 이상 '미해석'이 아니다 — 다만 pnu 는 여전히 없다(실측 아님)는 점에서
+    # `unresolved_parcels` 는 그대로 보고한다(호출자 값이 조회를 대체하지는 않는다).
+    assert [u["address"] for u in site["unresolved_parcels"]] == [UNRESOLVED["address"]]
+
+
+def test_caller_supplied_area_never_overrides_measured(sim):
+    """★실측을 덮지 않는다 — 호출자가 과장된 면적을 보내도 조회값이 이긴다."""
+    out = _run_with(
+        sim,
+        [RESOLVED],
+        [{"address": RESOLVED["address"], "area_sqm": 999999.0}],
+    )
+    assert out["site"]["total_area_sqm"] == pytest.approx(12309.0)
+
+
+@pytest.mark.parametrize("bad", [0, -5, "abc", None])
+def test_caller_supplied_area_rejects_non_values(sim, bad):
+    """0·음수·비수치는 값이 아니다 — 채우면 '미해석'과 구분이 사라진다."""
+    out = _run_with(
+        sim,
+        [UNRESOLVED],
+        [{"address": UNRESOLVED["address"], "area_sqm": bad}],
+    )
+    assert out["site"]["total_area_sqm"] is None
+    assert out["site"]["area_is_partial"] is True
+
+
+def test_string_parcels_still_work(sim):
+    """★무회귀 — 기존 호출자(주소 배열)는 그대로 동작해야 한다."""
+    out = _run_with(sim, [RESOLVED, UNRESOLVED], [UNRESOLVED["address"]])
+    assert out["site"]["parcel_count"] == 2
+    assert out["site"]["total_area_sqm"] == pytest.approx(12309.0)
+
+
+def test_merge_accepts_dict_rows_without_crashing():
+    """`_merge` 가 dict 행에 `.strip()` 을 부르면 AttributeError 다 — 그 회귀를 잠근다."""
+    got = DevelopmentScenarioSimulator._merge(
+        "대표주소", [{"address": " 두번째 "}, "세번째", {"address": ""}, 42]
+    )
+    assert got == ["대표주소", "두번째", "세번째"]
