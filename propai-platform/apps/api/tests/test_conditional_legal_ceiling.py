@@ -172,3 +172,58 @@ def test_effective_values_are_untouched_by_the_ceiling():
     assert opened["effective_far_pct"] == closed["effective_far_pct"]
     # 그리고 그 값은 여전히 **법정 자연녹지 상한**(20%)이다 — 30 으로 새지 않았다.
     assert opened["effective_bcr_pct"] == 20
+
+
+# ── 변이감사(49 변이) 생존 13건 트리아지 — 진짜 구멍 4종을 닫는다 ────────────────────
+
+
+def test_legal_basis_names_the_right_paragraph_per_kind():
+    """★조문 인용을 **종류별로** 결속한다.
+
+    종전 단언은 `any("제75조의3" in b)` 라, 두 문자열 중 하나가 망가져도 나머지가 통과시켰다
+    (변이 생존으로 적발). 사용자는 이 문자열을 근거로 조문을 찾아간다 — 틀리면 못 찾는다.
+    """
+    both = resolve_conditional_ceiling("계획관리지역", [PLAN_ZONE])["legal_basis"]
+    assert any("제75조의3제2항" in b and "건폐율" in b for b in both)
+    assert any("제75조의3제3항" in b and "용적률" in b for b in both)
+
+    # 녹지는 용적률 완화가 없으므로 **제3항이 실려서는 안 된다**(음성 단언).
+    green = resolve_conditional_ceiling("자연녹지지역", [PLAN_ZONE])["legal_basis"]
+    assert any("제75조의3제2항" in b for b in green)
+    assert not any("제75조의3제3항" in b for b in green)
+
+
+def test_result_carries_the_zone_it_was_resolved_for():
+    """어떤 용도지역 기준으로 열렸는지 산출물이 말한다 — 다필지에서 섞이면 추적 불가."""
+    assert resolve_conditional_ceiling("계획관리지역", [PLAN_ZONE])["zone_type"] == "계획관리지역"
+    assert resolve_conditional_ceiling("자연녹지지역", [PLAN_ZONE])["zone_type"] == "자연녹지지역"
+
+
+def test_note_states_the_number_and_refuses_to_claim_application():
+    """★설명문이 **수치를 담되 적용을 주장하지 않는다**.
+
+    이 문장은 화면에 그대로 나간다. "30%까지 열릴 수 있다"가 "30%다"로 바뀌면 그 순간
+    근거 없는 단정이 된다 — 문구도 검증 대상이다(CLAUDE.md 규율 C.10).
+    """
+    note = resolve_conditional_ceiling("자연녹지지역", [PLAN_ZONE])["note"]
+    assert "30" in note and "자연녹지지역" in note
+    assert "성장관리계획" in note          # 무엇을 더 확인해야 하는지
+    assert "적용값으로 쓰지 않습니다" in note
+
+
+def test_zone_unmatched_early_return_still_carries_the_key():
+    """★형제 미러 — 용도지역 매칭 실패 조기반환에도 키가 있어야 한다.
+
+    이 경로는 별도 return 문이라, 본 경로에만 키를 넣으면 소비처가 여기서 KeyError 를 만난다.
+    """
+    from app.services.land_intelligence.far_tier_service import calc_effective_far
+
+    out = calc_effective_far(
+        {"zone_limits": {}, "special_districts": [PLAN_ZONE], "local_ordinance": {}},
+        "존재하지않는용도지역",
+        1000.0,
+    )
+    # 공허 진리 가드 — 실제로 미매칭 경로를 탔는가.
+    assert out.get("far_basis") == "zone_unmatched", "미매칭 경로를 타지 않았다"
+    assert "conditional_ceiling" in out
+    assert out["conditional_ceiling"] is None
