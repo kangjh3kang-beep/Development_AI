@@ -84,6 +84,19 @@ _URL_END = ("`", "?", '"', "'")
 _MIN_PATH_LEN = 3
 
 
+def _forward(i: int, end: int) -> int:
+    """커서를 **반드시 앞으로** 옮긴다.
+
+    ★올바른 코드에서는 항상 `end > i` 라 이 함수는 `end` 를 그대로 돌려준다(=무동작).
+      그런데도 두는 이유: 이 스캐너는 손수 만든 상태 기계라, `end` 계산이 한 줄만 어긋나도
+      커서가 **뒤로** 가 무한루프가 된다. 실측(2026-08-20 변이 감사) — 폴백 한 줄을 지웠더니
+      `end = -1` 이 되어 스캔이 영원히 돌았고, 저장소 변이 도구는 `subprocess.run` 에
+      타임아웃이 없어 **감사 전체가 멎었다**. 행(hang)은 "아직 도는 중"과 구별되지 않는다.
+      → 여기서 전진을 강제해 그런 버그가 **조용한 행이 아니라 시끄러운 오답**으로 드러나게 한다.
+    """
+    return end if end > i else i + 1
+
+
 def _strip_js_comments(src: str) -> str:
     """JS/TS 주석을 **길이·줄 수를 보존한 채**(공백으로) 지운다.
 
@@ -141,7 +154,7 @@ def _strip_js_comments(src: str) -> str:
             end = n if end == -1 else end
             for k in range(i, end):
                 out[k] = " "
-            i = end
+            i = _forward(i, end)
             continue
         if ch == "/" and src[i + 1 : i + 2] == "*":
             close = src.find("*/", i + 2)
@@ -149,7 +162,7 @@ def _strip_js_comments(src: str) -> str:
             for k in range(i, end):
                 if out[k] != "\n":  # 줄 수를 보존한다.
                     out[k] = " "
-            i = end
+            i = _forward(i, end)
             continue
         i += 1
     return "".join(out)

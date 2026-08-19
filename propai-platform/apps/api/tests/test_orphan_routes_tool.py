@@ -75,6 +75,30 @@ def test_문자열_안의_슬래시슬래시는_주석이_아니다():
     assert len(kept) == len(_BLOB), "길이 보존(공백 치환)이 깨졌다 — 오프셋 기반 후속 검사가 어긋난다"
 
 
+def test_템플릿_표현식_안의_주석도_지운다():
+    """★변이 감사(2026-08-20)가 **생존**으로 짚은 구멍 — 템플릿 표현식 추적을 끊어도 초록이었다.
+
+    `${...}` 안은 다시 **코드 문맥**이다. 그 추적을 끊으면 스캐너가 백틱 안에 갇혀
+    표현식 속 주석을 못 지우고, 거기 적힌 경로가 "소비"로 세어진다(결함② 재발 경로).
+    """
+    src = 'const s = `${/* /api/v1/hidden-in-template */ ""}`;'
+    kept = _strip_js_comments(src)
+    assert "/api/v1/hidden-in-template" not in kept, "템플릿 표현식 안의 주석을 못 지웠다"
+    # 대조군 — 표현식 밖의 진짜 경로는 살아 있어야 한다(다 지워서 통과하면 잠금이 아니다).
+    assert "/api/v1/kept" in _strip_js_comments('const s = `${x}/api/v1/kept`;')
+
+
+def test_파일이_줄주석으로_끝나도_지운다():
+    """★변이 감사(2026-08-20) 생존 — 개행 없이 끝나는 줄 주석을 픽스처가 한 번도 안 만들었다.
+
+    `src.find("\n", i)` 가 -1 을 돌려주는 경로다. 이 폴백이 없으면 주석이 안 지워진다
+    (그리고 커서가 뒤로 가 무한루프가 된다 — 그래서 이 케이스는 변이 시 **행**으로 죽는다).
+    """
+    kept = _strip_js_comments('run(); // /api/v1/tail-comment-no-newline')
+    assert "/api/v1/tail-comment-no-newline" not in kept, "개행 없이 끝나는 줄 주석을 못 지웠다"
+    assert "run();" in kept, "주석 아닌 코드까지 삼켰다"
+
+
 def test_동적세그먼트와_진짜고아가_다른_칸으로_간다():
     """★결함① 잠금 — **두 모집단이 갈라져야** 잠금이다. 같은 칸이면 배선을 끊어도 초록이다."""
     dynamic_route = "/api/v1/market/report/pdf"   # 프론트가 `${fmt}` 로 부르는 자리
