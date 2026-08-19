@@ -15,7 +15,13 @@
   ok            파서가 값을 냈고 법정범위 안
   rejected      법정초과로 S계층 가드가 기각(= 파서 오독이 잡힌 것 — 화면엔 안 나간다)
   no_value      섹션은 찾았으나 해당 용도지역 값 없음
-  no_section    섹션 자체를 못 찾음(표기변형 미대응 가능성)
+  no_section    섹션을 못 찾음 — **파서 결함**(표기변형 미대응 등)
+  not_applicable 그 조례가 애초에 그 항목을 정하지 않음 — **정상**(광역 위임구조 등)
+
+★no_section 과 not_applicable 을 가르는 것이 이 하네스의 핵심이다. 뭉뚱그리면
+  "고칠 것"과 "고칠 게 없는 것"이 같은 통에 들어가 진척이 왜곡된다.
+  실측(경기도 조례 id 2023945): **'건폐율' 단어 자체가 0회**, '자연녹지지역' 0회, '위임' 8회 —
+  파서가 못 찾은 게 아니라 **조례에 없다.** 판별자: 본문에 그 단어가 아예 없으면 not_applicable.
 
 사용: python3 scripts/ordinance_coverage.py [--limit N] [--zone 용도지역]
 """
@@ -75,6 +81,16 @@ def classify(svc: OrdinanceService, xml: str, zone: str) -> str:
     if res is None:
         import re as _re
         full = " ".join(_re.findall(r"CDATA\[(.*?)\]\]>", xml, _re.DOTALL))
+        # ★파서 결함과 '애초에 없음'을 가른다. 조례 본문에 '건폐율'·'용적률'이 **한 번도**
+        #   나오지 않으면 그 조례는 그것을 정하지 않는 것이다(광역 위임구조 실측 확인).
+        #   못 찾은 게 아니라 없는 것을 실패로 세면 고칠 게 없는 것이 진척을 가린다.
+        # ★판별자 교정(1차 시도 실패 기록): 처음엔 `"건폐율" not in full and "용적률" not in full`
+        #   로 걸었는데 경기도 조례는 건폐율 0회지만 **용적률 3회**라 AND 가 성립하지 않아
+        #   n/a 가 0건이었다. 원인은 판정이 (zone, kind) 인데 조건을 조례 전체로 본 것.
+        #   더 정확한 신호는 **요청 용도지역명 자체의 부재**다 — 경기도 조례에 `자연녹지지역`
+        #   은 **0회**(오산시는 9회). 그 조례가 그 용도지역을 아예 규율하지 않는다는 뜻이다.
+        if zone not in full:
+            return "not_applicable"
         st = svc._extract_zone_limits_structured(full)
         return "no_section" if not st["zones"] else "no_value"
     missing = res.get("missing_sections") or []
@@ -144,7 +160,8 @@ async def main() -> int:
                 continue
             print(f"[{z}] 대상 {tot} | ok {c['ok']} ({c['ok'] / tot * 100:.1f}%) | "
                   f"rejected {c['rejected']} | no_value {c['no_value']} | "
-                  f"no_section {c['no_section']} | fetch_error {c['fetch_error']}")
+                  f"no_section {c['no_section']} | n/a {c['not_applicable']} | "
+                  f"fetch_error {c['fetch_error']}")
 
     _report("커버리지 — 기초자치단체(시·군·구)", tally)
     _report("커버리지 — 광역자치단체(도) ※위임구조라 no_section 이 정상일 수 있음", tally_gw)
