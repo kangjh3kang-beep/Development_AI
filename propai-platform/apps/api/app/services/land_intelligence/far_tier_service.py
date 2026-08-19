@@ -229,6 +229,7 @@ def calc_effective_far(base: dict, zone_type: str, land_area: float = 0) -> dict
             "effective_far_pct": None,
             # 형제 미러 — 용도지역 미확인 조기반환에도 같은 키를 낸다(소비처 분기 단순화).
             "conditional_ceiling": None,
+            "plan_limit_unknown": None,   # 형제 미러(용도지역 미확인 조기반환)
             "far_basis": "zone_unmatched",
             "far_basis_detail": {
                 "법정범위": None,
@@ -316,6 +317,47 @@ def calc_effective_far(base: dict, zone_type: str, land_area: float = 0) -> dict
     if plan_far_ceiling is not None:
         effective_far = max(effective_far, float(plan_far_ceiling))
         far_basis = "도시·군관리계획/지구단위계획 상한용적률(최우선 적용)"
+
+    # ── ★계획 상한이 **있어야 하는데 수치가 없는** 경우를 말한다 ───────────────────
+    # 【실측 2026-08-19】위 3계층("최우선 적용")은 `plan_far_pct`·`상한용적률` 같은 키를
+    #   페이로드에서 찾는데, **그 키를 넣는 생산자가 코드베이스 전역에 0건**이다
+    #   (주소 키워드 휴리스틱이 내는 키는 `bonus_far` 로 `_PLAN_FAR_KEYS` 에 없다).
+    #   즉 이 계층은 실데이터로 **한 번도 발화한 적이 없다** — 소비처만 있고 생산자 0.
+    # 【그래서 무엇이 문제였나】필지가 실제로 지구단위계획구역인데도 화면은 조례/법정값을
+    #   **그것이 지배 한도인 양** 보여 준다(사용자 신고: 자연녹지 80% 표시 vs 실제 계획 200%).
+    # 【무날조 처방】수치를 지어내지 않는다. VWorld 지구단위계획 레이어는 고시코드·조서번호·
+    #   면적을 줄 뿐 용적률을 주지 않는다. 대신 **"지배 한도가 따로 있고 우리는 그 수치를
+    #   모른다"** 를 명시적으로 낸다 — 침묵보다 정직하고, 침묵이 곧 오독의 원인이었다.
+    plan_limit_unknown = None
+    if plan_far_ceiling is None:
+        from app.services.zoning.district_regime import is_detailed_urban_plan
+
+        _rows = base.get("special_districts")
+        _named = [
+            d for d in (_rows if isinstance(_rows, (list, tuple)) else [])
+            if is_detailed_urban_plan(d)
+        ]
+        if _named:
+            def _label(d: object) -> str:
+                return str(d.get("district_name") or d.get("name") or "") if isinstance(d, dict) else str(d)
+
+            _labels = list(dict.fromkeys(_label(d) for d in _named if _label(d)))
+            plan_limit_unknown = {
+                "districts": _labels,
+                "applied": False,
+                "reason": (
+                    "이 필지는 계획이 건폐율·용적률을 직접 정하는 구역에 속하지만, "
+                    "그 계획이 정한 수치를 확보하지 못했습니다."
+                ),
+                "requires": [
+                    "결정고시(지구단위계획 등) 본문·조서에서 상한용적률·건폐율 확인",
+                ],
+                "note": (
+                    f"{' · '.join(_labels)} — 계획이 정한 한도가 조례·법정값보다 **우선**합니다. "
+                    "아래 수치는 그 계획을 반영하지 못한 조례·법정 기준값이므로 "
+                    "고시 확인 전까지는 상한으로 단정하지 마십시오."
+                ),
+            }
 
     # 4) 인센티브 완화율(근거 있을 때만) — 상한용적률 cap.
     if basis_present and relaxation_ratio is not None:
@@ -437,6 +479,10 @@ def calc_effective_far(base: dict, zone_type: str, land_area: float = 0) -> dict
     region_name = f"{sido} {sigungu}".strip() or "해당 지자체"
 
     annotations: list[str] = []
+    # ★계획 상한 미확보 고지를 **가장 앞에** 놓는다 — 아래 수치들이 그 계획을 반영하지
+    #   못했다는 사실을 먼저 읽어야 뒤 문장을 오독하지 않는다.
+    if plan_limit_unknown:
+        annotations.append(plan_limit_unknown["note"])
     annotations.append(
         f"국토계획법 시행령에 따른 {zone_type}의 법정 건폐율 상한은 {national_bcr}%, "
         f"법정 용적률 상한은 {national_far}%입니다."
@@ -540,6 +586,8 @@ def calc_effective_far(base: dict, zone_type: str, land_area: float = 0) -> dict
         #   우리가 확인할 수 없어, 올리면 근거 없는 숫자를 만들어 내는 것이 된다.
         #   해당 없으면 None(키는 항상 존재 — 소비처가 `in` 으로 분기하지 않게).
         "conditional_ceiling": conditional_ceiling,
+        # ★계획 상한 미확보 신호 — 해당 없으면 None(키는 항상 존재).
+        "plan_limit_unknown": plan_limit_unknown,
         "far_basis": far_basis,
         "far_basis_detail": far_basis_detail,
         "ordinance_confirmed": ordinance_confirmed,
