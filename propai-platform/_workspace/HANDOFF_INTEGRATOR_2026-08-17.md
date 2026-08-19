@@ -61,8 +61,21 @@ ssh -i ~/.oci.key ubuntu@168.110.125.89 \
 ssh -i ~/.oci.key ubuntu@158.179.174.207 \
   'cd ~/Development_AI && setsid bash propai-platform/scripts/safe-deploy.sh web main </dev/null >/tmp/deploy158.log 2>&1 &'
 
-# 진행 확인
-ssh -i ~/.oci.key ubuntu@158.179.174.207 'cat /tmp/deploy_status.txt; pgrep -c -f safe-deploy'
+# 진행 확인 — ★프로세스를 세지 말고 **상태파일의 전이**로 판정한다
+#   상태값: PREFLIGHT SYNC DEPENDENCIES BUILD RECREATE NGINX VERIFY DONE / FAIL WARN ABORT
+ssh -i ~/.oci.key ubuntu@158.179.174.207 'cat /tmp/deploy_status.txt'
+
+#   ★`pgrep -f safe-deploy` 를 쓰지 마라 — **자기매칭 함정**이다(CLAUDE.md 의 덫 표).
+#     그 패턴 문자열이 **이 명령을 나른 ssh 원격 명령줄에** 들어 있어 스스로 매칭한다.
+#     2026-08-19 실측: 배포가 `DONE` 인데도 결과가 `1` 이었다(실제 프로세스는 0).
+#     즉 **영원히 0 이 되지 않아** 끝난 배포를 무한정 기다리게 된다(실제로 4분 헛돌았다).
+#     프로세스를 꼭 봐야 하면 대괄호로 자기를 비껴간다:
+ssh -i ~/.oci.key ubuntu@158.179.174.207 'ps -ef | grep -c "[s]afe-deploy.sh"'
+
+#   ★멈춤 판별은 상태문자열이 아니라 **로그 갱신 + CPU** 로 한다
+#     (`BUILD` 는 몇 분씩 머문다 — 상태만 보면 hang 과 구분되지 않는다):
+ssh -i ~/.oci.key ubuntu@158.179.174.207 \
+  'echo "경과 $(( $(date +%s) - $(stat -c %Y /tmp/deploy.log) ))초"; tail -3 /tmp/deploy.log; docker stats --no-stream --format "{{.Name}} {{.CPUPerc}}" | head -3'
 ```
 
 ### ★스크립트 자체가 바뀐 배포 — **선갱신을 먼저**
