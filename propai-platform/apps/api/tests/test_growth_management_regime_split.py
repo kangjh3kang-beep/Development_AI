@@ -209,3 +209,61 @@ def test_norm_extracts_the_name_from_dict_designations(key):
     assert is_metro_regime({key: "성장관리권역"}) is True
     assert is_detailed_urban_plan({key: "성장관리권역"}) is False
     assert is_detailed_urban_plan({key: "지구단위계획구역"}) is True
+
+
+# ── ★양성 대조군 확보(2026-08-19 라이브 실측) ─────────────────────────────────────
+#   앞선 커밋 시점에는 국토계획법 성장관리계획구역의 **VWorld 실제 표기를 한 번도 못 봤다**.
+#   판별자의 그 방향은 "우리가 쓰는 표기 가정" 위에 있었고, 그 사실을 PR 에 정직하게 적었다.
+#   이후 VWorld NED `getLandUseAttr` 로 실제 지정 필지를 찾아 **가정을 사실로 바꿨다**.
+#
+#   · 경기 화성시 정남면 문학리 1 (생산관리지역)
+#       → ['성장관리권역', '성장관리권역', '성장관리계획구역', '성장관리권역']
+#       ★★**한 필지가 두 제도를 동시에** 갖는다 — 수도권이면서 성장관리계획구역이다.
+#         부분일치 판정이었다면 이 필지에서 두 제도가 완전히 뒤섞인다.
+#   · 충남 아산시 음봉면 산동리 1 (계획관리지역) → ['성장관리계획구역']
+#       충남은 수도권 밖이라 권역이 없다 — 계획구역만 단독으로 나타나는 대조.
+
+HWASEONG_REAL_DISTRICTS: tuple[str, ...] = (
+    "성장관리권역",
+    "성장관리권역",
+    "성장관리계획구역",
+    "성장관리권역",
+)
+ASAN_REAL_DISTRICTS: tuple[str, ...] = ("성장관리계획구역",)
+
+
+def test_vworld_actually_spells_it_seongjang_gwanri_gyehoek_guyeok():
+    """★가정이 아니라 실측 — VWorld 가 국계법 구역을 `성장관리계획구역` 으로 표기한다."""
+    assert GROWTH_PLAN_ZONE in HWASEONG_REAL_DISTRICTS
+    assert GROWTH_PLAN_ZONE in ASAN_REAL_DISTRICTS
+
+
+def test_one_parcel_carrying_both_regimes_is_split_correctly():
+    """★★같은 필지의 두 designation 이 **서로 다른 제도**로 갈린다(실측 화성시).
+
+    부분일치였다면 이 필지에서 수도권 권역이 지구단위계획으로 분류되고, 동시에 존재하는
+    진짜 완화근거와 뒤섞여 **어느 쪽이 건폐율을 정하는지 알 수 없게** 된다.
+    """
+    metro = [d for d in HWASEONG_REAL_DISTRICTS if is_metro_regime(d)]
+    plan = [d for d in HWASEONG_REAL_DISTRICTS if is_growth_management_plan(d)]
+
+    # 공허 진리 가드 — 양쪽이 실제로 존재해야 '갈렸다'가 의미를 갖는다.
+    assert metro and plan, "한쪽이 비면 분리 검증이 공허하다"
+    assert set(metro) == {METRO_REGIME}
+    assert set(plan) == {GROWTH_PLAN_ZONE}
+    assert not (set(metro) & set(plan))          # 교집합 0
+
+    # 세부 도시관리계획으로 올라가는 것은 **계획구역뿐**이다.
+    assert [d for d in HWASEONG_REAL_DISTRICTS if is_detailed_urban_plan(d)] == [GROWTH_PLAN_ZONE]
+
+
+def test_each_real_designation_gets_its_own_law():
+    """실측 designation 이 각자 옳은 근거법을 문다 — 화성(둘 다)·아산(계획구역만)."""
+    res = legal_refs_for_districts(list(HWASEONG_REAL_DISTRICTS))
+    assert res["by_district"][METRO_REGIME] == ["metro_growth_management"]
+    assert res["by_district"][GROWTH_PLAN_ZONE] == ["growth_management_zone"]
+
+    asan = legal_refs_for_districts(list(ASAN_REAL_DISTRICTS))
+    assert asan["by_district"][GROWTH_PLAN_ZONE] == ["growth_management_zone"]
+    # 수도권 밖 필지에 수도권정비계획법이 붙으면 안 된다.
+    assert "metro_growth_management" not in {r.get("key") for r in asan["refs"]}
