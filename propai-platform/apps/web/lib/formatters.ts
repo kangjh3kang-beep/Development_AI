@@ -241,3 +241,66 @@ export function formatYm(ym?: string | null): string {
   if (!m) return String(ym);
   return `${m[1].slice(2)}.${m[2]}`;
 }
+
+/**
+ * 종상향 잠재 용적률 범위(백엔드 `potential_far_range`) — 표기 SSOT.
+ *
+ * ★왜 이 함수가 필요한가(실측 결함):
+ *   대표 목표 용도지역 선정이 보수적이라 여러 종상향 경로가 **같은 목표**를 가리키면
+ *   `min_pct`와 `max_pct`가 같아진다(자연녹지 서울 실측: 150·150). 그때 화면이
+ *   `예상 상한 150.0~150.0%`라고 적으면 개발사는 **"그 위는 안 된다"**로 읽는다.
+ *   실제 의미는 "우리가 한 경로만 봤다"인데 그 한정이 화면 어디에도 없었다.
+ *   그래서 **범위가 붕괴하면 범위인 척하지 않는다**를 한 곳에서 결정한다.
+ *
+ * ★판정은 백엔드 계약(`is_collapsed`)이 1순위다. 프론트가 `min===max`를 혼자 눈치채는 것은
+ *   계약이 아니라 우연이라, 값이 우연히 같아진 경우와 구조적으로 같은 경우를 못 가른다.
+ *   계약 필드가 **없는 구(舊) 캐시 페이로드**일 때만 동값 폴백으로 "범위인 척"만 막는다
+ *   (고지 문구는 절대 만들어내지 않는다 — 그건 근거를 아는 백엔드만 만든다).
+ */
+export type UpzoningFarRange = {
+  min_pct?: number | null;
+  max_pct?: number | null;
+  note?: string | null;
+  /** 상·하한이 같은 한 값 — '범위'가 아님(백엔드 판정). */
+  is_collapsed?: boolean | null;
+  /** 붕괴 시 왜 한 값인지 + 이 값이 상향 최댓값이 아님을 밝히는 정직 고지(백엔드 생성). */
+  honest_disclosure?: string | null;
+} | null | undefined;
+
+export type UpzoningFarRangeDisplay = {
+  /** 화면에 그대로 쓰는 문자열. 미확보는 "미확보", 붕괴는 범위 표기를 쓰지 않는다. */
+  text: string;
+  /** 범위가 붕괴했는가(범위 미산출). */
+  collapsed: boolean;
+  /** 백엔드가 실어보낸 정직 고지(없으면 null — 프론트가 지어내지 않는다). */
+  disclosure: string | null;
+};
+
+export function formatUpzoningFarRange(
+  range: UpzoningFarRange, digits = 1,
+): UpzoningFarRangeDisplay {
+  const lo = range && typeof range === "object" ? range.min_pct : null;
+  const hi = range && typeof range === "object" ? range.max_pct : null;
+  const loOk = typeof lo === "number" && Number.isFinite(lo);
+  const hiOk = typeof hi === "number" && Number.isFinite(hi);
+  if (!loOk || !hiOk) {
+    return { text: "미확보", collapsed: false, disclosure: null };
+  }
+  const contract = range?.is_collapsed;
+  // 계약 우선 — 계약이 없을 때만(구 페이로드) 동값 폴백.
+  const collapsed = typeof contract === "boolean" ? contract : lo === hi;
+  const disclosure =
+    typeof range?.honest_disclosure === "string" && range.honest_disclosure.trim()
+      ? range.honest_disclosure.trim()
+      : null;
+  if (collapsed) {
+    // 범위 기호(~)를 쓰지 않는다 — 한 값임을 그대로 적고, '단일 경로 기준'을 붙여
+    // 이 숫자가 상한(최댓값)이 아니라는 것을 표기 자체가 말하게 한다.
+    return {
+      text: `${formatPercent(hi, digits)} · 단일 경로 기준(범위 미산출)`,
+      collapsed: true,
+      disclosure,
+    };
+  }
+  return { text: formatPercentRange(lo, hi, digits), collapsed: false, disclosure };
+}

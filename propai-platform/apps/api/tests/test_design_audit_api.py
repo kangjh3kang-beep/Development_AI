@@ -1643,3 +1643,53 @@ class TestDeliberationSurfaceGate:
         data = self._run_audit(client, monkeypatch, shadow_enabled=False, surface_enabled=True)
         assert data["deliberation_result"]["engine_verdict"] == "pass"
         assert captured.get("force_engine_call") is True
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ★설계감사 S4(인센티브) — 종상향 범위가 붕괴하면 '상한'이라고 부르지 않는다
+#
+# 형제 결함: 화면 3곳을 고쳐도 감사 리포트가 계속 "종상향 예상 상한 150%"라고 쓰면
+#   같은 오독(그 위는 안 된다)이 리포트에 남는다. 고친 자리의 형제를 함께 스윕한 락.
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestUpzoningRangeCollapseHonestyInAudit:
+    """붕괴/비붕괴 **두 모집단**이 감사 finding 에서 실제로 다른 문구를 낸다."""
+
+    @staticmethod
+    def _limit_text(base: dict, zone_type: str) -> str:
+        import asyncio
+
+        from app.services.design_audit.design_audit_orchestrator import DesignAuditOrchestrator
+
+        orch = DesignAuditOrchestrator()
+        out = asyncio.run(orch._run_incentives(
+            {"land_area_sqm": 20000},
+            zone_type,
+            "서울특별시 강남구",
+            base,
+            {"far_pct": 100},           # limits 存 → skipped 경로로 빠지지 않는다
+        ))
+        findings = out.get("findings") or []
+        assert findings, "공허 진리 가드 — finding 이 0건이면 아래 단언은 아무것도 안 본다"
+        limit = findings[0].get("limit") or ""
+        assert limit, "공허 진리 가드 — limit 이 비면 문구 비교가 무의미하다"
+        return limit
+
+    def test_collapsed_range_is_not_called_a_ceiling(self):
+        # 자연녹지: 3경로가 모두 제1종일반주거를 가리켜 범위 붕괴(실측).
+        text = self._limit_text({"local_ordinance": {"sigungu": "서울특별시 강남구"}}, "자연녹지지역")
+        assert "단일 경로 기준" in text
+        assert "종상향 예상 상한" not in text, f"붕괴인데 '상한'이라 부른다: {text}"
+
+    def test_real_range_still_called_a_ceiling(self):
+        # ★대조군 — 역세권 2종일반은 진짜 범위(준주거 500 vs 3종일반 300)다.
+        #   여기까지 '단일 경로 기준'이 붙으면 검사기가 항상 참이 되어 무의미해진다.
+        text = self._limit_text(
+            {
+                "local_ordinance": {"sigungu": "서울특별시 강남구"},
+                "infrastructure": {"nearest_subway": {"distance_m": 300}},
+            },
+            "제2종일반주거지역",
+        )
+        assert "종상향 예상 상한" in text, f"진짜 범위인데 상한 표기가 사라졌다: {text}"
+        assert "단일 경로 기준" not in text

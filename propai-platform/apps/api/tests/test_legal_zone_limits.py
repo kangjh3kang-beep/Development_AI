@@ -667,7 +667,20 @@ def test_verifier_upzoning_expected_far_not_flagged_current():
                     "marker": "potential_upzoning_scenario",
                 }
             ],
-            "potential_far_range": {"min_pct": 250, "max_pct": 250},
+            # ★이 픽스처의 min==max 는 '정상 범위'가 아니라 **범위 붕괴 상태**다(실제 산출과 동형).
+            #   그대로 두는 이유: 이 테스트가 보는 것은 검증기가 잠재 페이로드를 현행으로
+            #   오적발하지 않는가이지 붕괴 여부가 아니다. 다만 붕괴가 '정상'으로 오독되지
+            #   않도록 실계약(is_collapsed·honest_disclosure)을 함께 실어 형태를 맞춘다 —
+            #   고지 문구에 든 숫자(250%)까지 검증기가 무시하는지도 이 픽스처가 태운다.
+            "potential_far_range": {
+                "min_pct": 250,
+                "max_pct": 250,
+                "is_collapsed": True,
+                "honest_disclosure": (
+                    "검토한 경로 1건의 예상 용적률 상한이 모두 250%로 같아 범위가 산출되지 "
+                    "않았습니다. 250%는 상향 가능한 최댓값이 아니라 본 분석이 검토한 경로의 예상치입니다."
+                ),
+            },
             "marker": "potential_upzoning_scenario",
         },
     }
@@ -783,3 +796,117 @@ def test_should_apply_structural_cap_false_when_cap_not_lower():
     assert should_apply_structural_cap(80.0, 80.0, plan_relaxed=False) is False
     assert should_apply_structural_cap(None, 100.0, plan_relaxed=False) is False
     assert should_apply_structural_cap(80.0, None, plan_relaxed=False) is False
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ★범위 붕괴 정직표기 — "범위가 붕괴하면 범위인 척하지 않는다"
+#
+# 결함(실측): _pick_target 이 역세권 2경로를 빼면 항상 targets[0] 이라, 한 용도지역의
+#   모든 경로가 같은 목표를 가리킨다 → min_pct == max_pct 가 **구조적으로 보장**된다.
+#   그런데 화면·서술문은 그것을 `약 150~150%` 라고 적었다. 개발사는 "그 위는 안 된다"로
+#   읽지만 실제 의미는 "우리가 한 경로만 봤다"이다.
+#
+# ★이 락이 태우는 것: 붕괴 **사실**과 **정직 고지**가 계약으로 나가는가. 대표후보를 무엇으로
+#   볼 것인가(보수적 1단계 vs 최대 도달)는 제품 판단이라 여기서 잠그지 않는다 — 숫자 무변경.
+# ══════════════════════════════════════════════════════════════════════════════
+
+# 두 모집단을 실제로 가르는 입력. 붕괴군/비붕괴군이 **다른 결과**를 내야 배선 변이가 죽는다.
+_COLLAPSED_INPUT = dict(zone_type="자연녹지지역", land_area_sqm=20000)        # 3경로 → 모두 제1종일반
+_RANGED_INPUT = dict(zone_type="제2종일반주거지역", land_area_sqm=20000,
+                     near_station=True, near_station_m=300)                  # 역세권 준주거 + 3종일반
+
+
+def _range_of(**kwargs):
+    return UpzoningPotentialAnalyzer().analyze(**kwargs)
+
+
+def test_upzoning_two_populations_actually_split():
+    """★전제 확인 — 붕괴군과 비붕괴군이 실재하고 서로 다른 결과를 낸다.
+
+    이 단언이 깨지면(둘이 같은 값) 아래 락들은 배선을 끊어도 통과한다.
+    """
+    collapsed = _range_of(**_COLLAPSED_INPUT)["potential_far_range"]
+    ranged = _range_of(**_RANGED_INPUT)["potential_far_range"]
+    # 공허 진리 가드 — 대상이 0이면 아래 비교는 무의미하다.
+    assert collapsed is not None and ranged is not None
+    assert collapsed["scenario_count"] >= 2 and ranged["scenario_count"] >= 2
+
+    assert collapsed["min_pct"] == collapsed["max_pct"], "붕괴군은 상·하한이 같아야 한다(오늘의 현실)"
+    assert ranged["min_pct"] < ranged["max_pct"], "비붕괴군은 진짜 범위여야 한다"
+    # 두 모집단이 실제로 갈린다 — 판정도, 고지 유무도 다르다.
+    assert collapsed["is_collapsed"] is True
+    assert ranged["is_collapsed"] is False
+    assert bool(collapsed["honest_disclosure"]) != bool(ranged["honest_disclosure"])
+
+
+def test_upzoning_collapsed_range_must_carry_honest_disclosure():
+    """붕괴하면 정직 고지가 **반드시 함께** 나간다 — 소비처가 붕괴를 눈치로 알게 두지 않는다."""
+    fr = _range_of(**_COLLAPSED_INPUT)["potential_far_range"]
+    assert fr["is_collapsed"] is True
+    d = fr["honest_disclosure"]
+    assert d, "붕괴 시 고지 없음 = 화면이 '150~150%'를 범위로 말하게 된다"
+    # 고지는 '이 값이 최댓값이 아니다'를 말해야 한다(숫자를 늘리는 게 아니라 한정을 말한다).
+    assert "최댓값이 아니라" in d
+    assert "범위가 산출되지 않았습니다" in d
+    # 비붕괴군은 고지가 없다(대조군 — 고지가 항상 붙으면 이 단언은 공허해진다).
+    assert _range_of(**_RANGED_INPUT)["potential_far_range"]["honest_disclosure"] is None
+
+
+def test_upzoning_collapsed_discloses_unconsidered_targets():
+    """사용자 신고의 본체 — '자연녹지도 2종일반이 가능한데 150%가 상한으로 나온다'.
+
+    숫자는 그대로 두되, 매핑돼 있으나 **이번 산출에 반영되지 않은** 상향 후보를 밝힌다.
+    (반영 여부는 UPZONE_TARGETS 에서 파생하므로 카탈로그가 늘면 자동으로 감시망에 들어온다.)
+    """
+    from app.services.zoning.upzoning_potential import UPZONE_TARGETS
+
+    fr = _range_of(**_COLLAPSED_INPUT)["potential_far_range"]
+    mapped = UPZONE_TARGETS["자연녹지지역"]
+    assert len(mapped) >= 2, "이 락의 전제 — 후보가 2개 이상이어야 '미반영 후보'가 존재한다"
+    assert fr["considered_target_zones"] == ["제1종일반주거지역"]
+    assert fr["unconsidered_target_zones"] == ["제2종일반주거지역"]
+    assert "제2종일반주거지역" in fr["honest_disclosure"]
+    # 숫자는 건드리지 않았다 — 없는 상향 여지를 만들어내지 않는다.
+    assert fr["max_pct"] == 200
+
+
+def test_upzoning_summary_never_narrates_x_to_x():
+    """서술문(summary)도 함께 고쳤는가 — 화면만 고치고 문장이 '150~150%'면 오독이 남는다."""
+    collapsed = _range_of(**_COLLAPSED_INPUT)
+    fr = collapsed["potential_far_range"]
+    forged = f"{fr['min_pct']:.0f}~{fr['max_pct']:.0f}%"          # 예: "200~200%"
+    assert forged not in collapsed["summary"], f"서술문이 여전히 {forged} 라고 말한다"
+    assert "범위가 산출되지 않았습니다" in collapsed["summary"]
+
+    # ★대조군 — 검사기가 살아 있음을 증명한다(비붕괴군은 진짜 범위를 그대로 말해야 한다).
+    ranged = _range_of(**_RANGED_INPUT)
+    rr = ranged["potential_far_range"]
+    assert f"{rr['min_pct']:.0f}~{rr['max_pct']:.0f}%" in ranged["summary"]
+
+
+def test_upzoning_every_collapsing_zone_is_disclosed():
+    """전수·파생 락 — 매핑된 **모든** 용도지역을 태워, 붕괴한 것은 빠짐없이 고지를 단다.
+
+    사람이 센 목록을 쓰면 그 목록이 곧 상한이 된다(새 용도지역이 감시망 밖). UPZONE_TARGETS
+    에서 파생시켜 카탈로그가 늘면 자동으로 따라오게 한다.
+    """
+    from app.services.zoning.upzoning_potential import UPZONE_TARGETS
+
+    assert len(UPZONE_TARGETS) >= 5, "공허 진리 가드 — 대상이 비면 아래 루프는 아무것도 안 본다"
+    collapsed_zones, ranged_zones = [], []
+    for zone in UPZONE_TARGETS:
+        fr = _range_of(zone_type=zone, land_area_sqm=20000,
+                       near_station=True, near_station_m=300)["potential_far_range"]
+        if fr is None:
+            continue
+        if fr["is_collapsed"]:
+            collapsed_zones.append(zone)
+            assert fr["honest_disclosure"], f"{zone}: 붕괴했는데 고지가 없다"
+            assert fr["min_pct"] == fr["max_pct"]
+        else:
+            ranged_zones.append(zone)
+            assert fr["honest_disclosure"] is None, f"{zone}: 붕괴 아닌데 고지가 붙었다"
+            assert fr["min_pct"] < fr["max_pct"]
+    # 두 모집단이 모두 실재해야 이 루프가 무언가를 가른다(한쪽이 0이면 공허한 그린).
+    assert len(collapsed_zones) >= 3, f"붕괴군이 비었다: {collapsed_zones}"
+    assert len(ranged_zones) >= 1, f"비붕괴군이 비었다: {ranged_zones}"

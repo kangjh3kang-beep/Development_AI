@@ -300,7 +300,7 @@ class UpzoningPotentialAnalyzer:
         scenarios.sort(key=lambda s: (rank.get(s["feasibility"], 3),
                                       -(s.get("expected_far_pct_high") or 0)))
 
-        far_range = self._potential_range(scenarios)
+        far_range = self._potential_range(scenarios, key, targets)
         return {
             "current_zone": key or zone_type,
             "scenarios": scenarios,
@@ -455,18 +455,85 @@ class UpzoningPotentialAnalyzer:
         return base
 
     @staticmethod
-    def _potential_range(scenarios: list[dict]) -> dict[str, Any] | None:
-        highs = [s["expected_far_pct_high"] for s in scenarios
-                 if s.get("expected_far_pct_high") and s["feasibility"] in ("상", "중")]
-        if not highs:
-            highs = [s["expected_far_pct_high"] for s in scenarios if s.get("expected_far_pct_high")]
-        if not highs:
+    def _potential_range(
+        scenarios: list[dict],
+        zone: str = "",
+        mapped_targets: list[str] | None = None,
+    ) -> dict[str, Any] | None:
+        """시나리오들의 예상 용적률 상한을 모아 '범위'를 낸다.
+
+        ★이 함수가 내는 값은 **범위가 아닐 수 있다.** 대표 목표 용도지역 선정(_pick_target)이
+          보수적이라 여러 경로가 같은 목표를 가리키면 min_pct 와 max_pct 가 **같은 값**이 된다
+          (실측: 자연녹지·계획관리·준공업 등은 항상 붕괴). 그때 화면이 `150~150%` 라고 적으면
+          개발사는 "그 위는 안 된다"로 읽지만, 실제 의미는 "우리가 한 경로만 봤다"이다.
+          그래서 붕괴 사실(is_collapsed)과 그 사유(honest_disclosure)를 **계약으로** 실어보낸다.
+          소비처가 min==max 를 스스로 눈치채게 두면 그것은 계약이 아니라 우연이다.
+
+        Args:
+            scenarios: analyze()가 만든 시나리오 목록.
+            zone: 현행 용도지역명(고지 문구에 사용).
+            mapped_targets: 이 용도지역에 매핑된 상향 후보 전체(UPZONE_TARGETS).
+                이번 산출에 **반영되지 않은** 후보를 정직하게 밝히는 데 쓴다(값은 만들지 않음).
+        """
+        graded = [s for s in scenarios
+                  if s.get("expected_far_pct_high") and s["feasibility"] in ("상", "중")]
+        if not graded:
+            graded = [s for s in scenarios if s.get("expected_far_pct_high")]
+        if not graded:
             return None
-        return {
-            "min_pct": min(highs),
-            "max_pct": max(highs),
+
+        highs = [s["expected_far_pct_high"] for s in graded]
+        lo, hi = min(highs), max(highs)
+        collapsed = lo == hi
+
+        # 이번 산출에 실제로 반영된 목표 용도지역(입력 순서 유지·중복 제거).
+        considered: list[str] = []
+        for s in graded:
+            tz = s.get("target_zone")
+            if tz and tz not in considered:
+                considered.append(tz)
+        # 매핑은 돼 있으나 반영되지 않은 상향 후보 — 여기서 파생하므로 카탈로그가 늘면 자동 반영.
+        unconsidered = [t for t in (mapped_targets or []) if t not in considered]
+
+        out: dict[str, Any] = {
+            "min_pct": lo,
+            "max_pct": hi,
+            "is_collapsed": collapsed,
+            "scenario_count": len(graded),
+            "considered_target_zones": considered,
+            "unconsidered_target_zones": unconsidered,
+            "honest_disclosure": None,
             "note": "가능성 상/중 시나리오의 예상 용적률 상한 범위(예상치·목표지역 기준).",
         }
+        if not collapsed:
+            return out
+
+        # ── 붕괴 — '범위'라고 부르지 않고, 왜 한 값인지 밝힌다 ──
+        out["note"] = "가능성 상/중 시나리오의 예상 용적률 상한 — 단일 값(범위 미산출)."
+        head = (
+            f"검토한 경로 {len(graded)}건의 예상 용적률 상한이 모두 {hi:.0f}%로 같아 "
+            f"범위가 산출되지 않았습니다. {hi:.0f}%는 상향 가능한 최댓값이 아니라 "
+            f"본 분석이 검토한 경로의 예상치입니다."
+        )
+        if len(considered) == 1 and unconsidered:
+            tail = (
+                f" 경로들이 모두 같은 목표 용도지역('{considered[0]}')을 가리켰고, "
+                f"매핑된 상향 후보 중 {', '.join(unconsidered)}은(는) 이번 산출에 "
+                f"반영되지 않았습니다 — 그 단계의 상향 여지는 미산출이며 별도 확인이 필요합니다."
+            )
+        elif len(considered) == 1:
+            tail = (
+                f" 현행 '{zone or '해당 용도지역'}'에 매핑된 상향 후보가 "
+                f"'{considered[0]}' 하나뿐이라 비교할 다른 목표가 없었습니다 — "
+                f"그보다 높은 단계의 상향 여지는 미산출이며 별도 확인이 필요합니다."
+            )
+        else:
+            tail = (
+                f" 목표 용도지역은 서로 달랐으나({', '.join(considered)}) 예상 상한이 "
+                f"모두 같았습니다 — 목표지역 조례 상한이 같은 값에서 걸린 결과입니다."
+            )
+        out["honest_disclosure"] = head + tail
+        return out
 
     @staticmethod
     def _summary(zone: str, scenarios: list[dict], far_range: dict | None, blockers: list[str]) -> str:
@@ -477,9 +544,21 @@ class UpzoningPotentialAnalyzer:
             f"현행 '{zone}'에서 종상향/종변경 잠재 시나리오 {len(scenarios)}건을 예상치로 검토했습니다(실현 보장 아님)."
         ]
         if far_range:
-            parts.append(
-                f"가능성 상/중 경로 기준 예상 용적률 상한은 약 {far_range['min_pct']:.0f}~{far_range['max_pct']:.0f}%입니다."
-            )
+            # ★붕괴(min==max) 시 "약 150~150%"는 '그 위는 없다'로 읽힌다 — 범위인 척하지 않고,
+            #   왜 한 값인지(honest_disclosure)를 서술문에도 그대로 싣는다. 화면만 고치고
+            #   문장이 계속 "150~150%"라고 말하면 같은 오독이 남는다.
+            if far_range.get("is_collapsed"):
+                parts.append(
+                    far_range.get("honest_disclosure")
+                    or (
+                        f"가능성 상/중 경로 기준 예상 용적률 상한은 약 {far_range['max_pct']:.0f}% "
+                        "한 값으로만 산출됐습니다(범위 미산출)."
+                    )
+                )
+            else:
+                parts.append(
+                    f"가능성 상/중 경로 기준 예상 용적률 상한은 약 {far_range['min_pct']:.0f}~{far_range['max_pct']:.0f}%입니다."
+                )
         parts.append(
             f"가장 유력한 경로는 '{top['path']}'(목표 {top['target_zone']}, 가능성 {top['feasibility']})입니다."
         )

@@ -1,7 +1,9 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { formatPercent, formatPercentDelta } from "@/lib/formatters"; // 비율 표기 SSOT
+import {
+  formatPercent, formatPercentDelta, formatUpzoningFarRange, type UpzoningFarRange,
+} from "@/lib/formatters"; // 비율 표기 SSOT
 import { useParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import { motion, AnimatePresence } from "framer-motion";
@@ -10,6 +12,7 @@ import { ModuleCommandStrip } from "@/components/layout/ModuleCommandStrip";
 import { NextStageCta } from "@/components/projects/NextStageCta";
 import { LandIntelligencePanel } from "@/components/projects/LandIntelligencePanel";
 import { DevelopmentScenarioCard } from "@/components/common/DevelopmentScenarioCard";
+import { UpzoningFarRangeNotice, UpzoningFarRangeValue } from "@/components/common/UpzoningFarRange";
 import { LandProfileCard } from "@/components/projects/LandProfileCard";
 import { UtilizationMaximizerCard } from "@/components/projects/UtilizationMaximizerCard";
 import { UpzoningScenarioList } from "@/components/projects/UpzoningScenarioList";
@@ -143,7 +146,8 @@ type UpzoningScenario = {
   is_estimate?: boolean;
 };
 
-type PotentialFarRange = { min_pct?: number | null; max_pct?: number | null; note?: string } | null;
+// 백엔드 potential_far_range 계약 — 붕괴 판정(is_collapsed)·정직 고지(honest_disclosure)까지 포함.
+type PotentialFarRange = UpzoningFarRange;
 
 type UpzoningData = {
   current_zone?: string;
@@ -223,6 +227,8 @@ function L3EnhancedCards({
   const upzoning = l3Data?.upzoning;
   const upScenarios = upzoning?.scenarios ?? l3Data?.upzoning_scenarios ?? [];
   const potentialRange = upzoning?.potential_far_range ?? l3Data?.potential_far_range ?? null;
+  // 종상향 범위 표기(붕괴 판정·정직 고지) — 형제 화면과 같은 표기 SSOT를 쓴다.
+  const upFarRange = formatUpzoningFarRange(potentialRange);
   const upInterp = l3Data?.upzoning_interpretation;
   const grave = l3Data?.grave_registry;
 
@@ -381,14 +387,25 @@ function L3EnhancedCards({
             </div>
             <div className="rounded-xl border border-dashed border-purple-500/40 bg-purple-500/5 p-4">
               <p className="text-[8px] font-black text-purple-400/70 uppercase tracking-wider mb-1">잠재 (예상치 · 미확정)</p>
+              {/* ★상·하한이 같으면 `예상 용적률 150.0% ~ 150.0%`가 찍혔다 — 범위가 아닌데
+                  범위처럼 보여 "그 위는 안 된다"로 읽힌다. 붕괴 판정·고지는 백엔드 계약에서
+                  오고, 표기는 formatUpzoningFarRange 한 곳에서 결정한다(형제 화면과 동일 문구). */}
               <p className="text-sm font-black text-purple-400">
-                {potentialRange?.min_pct != null && potentialRange?.max_pct != null
-                  ? `예상 용적률 ${pct(potentialRange.min_pct)} ~ ${pct(potentialRange.max_pct)}`
-                  : "잠재 시나리오 검토"}
+                {upFarRange.text === "미확보" ? (
+                  "잠재 시나리오 검토"
+                ) : (
+                  <>
+                    예상 용적률 <UpzoningFarRangeValue range={potentialRange} />
+                  </>
+                )}
               </p>
               {potentialRange?.note && (
                 <p className="text-[10px] font-bold text-[var(--text-secondary)] mt-0.5">{potentialRange.note}</p>
               )}
+              <UpzoningFarRangeNotice
+                range={potentialRange}
+                className="text-[10px] font-bold leading-relaxed text-[var(--text-secondary)] mt-1"
+              />
             </div>
           </div>
 

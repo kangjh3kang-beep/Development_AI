@@ -273,6 +273,9 @@ export function ProjectAnalysisSummary({ locale }: { locale?: string }) {
 
   // 종상향 잠재(현행과 분리해 표기) — 잠재 상한 + 최상 가능성 등급(있을 때만).
   const upFarHigh = site?.upzoningPotentialFarHigh ?? null;
+  // ★범위가 붕괴했으면(경로들이 모두 같은 목표를 가리킴) 이 숫자는 '도달 가능한 최댓값'이
+  //   아니라 '검토한 단일 경로의 예상치'다. 라벨·근거를 그렇게 바꾼다(숫자는 그대로).
+  const upFarCollapsed = site?.upzoningFarRangeCollapsed === true;
   const upFeasTop = site?.upzoningFeasibilityTop ?? null;
 
   // 특이부지(학교용지·GB·맹지 등) — 있을 때만 정직고지 섹션 노출.
@@ -458,9 +461,13 @@ export function ProjectAnalysisSummary({ locale }: { locale?: string }) {
             accent
           />
           <DataField
-            label="종상향 잠재 상한(용적)"
+            label={upFarCollapsed ? "종상향 잠재(용적·단일 경로)" : "종상향 잠재 상한(용적)"}
             value={pctOrNull(upFarHigh)}
-            evidence="지구단위·역세권 등 종상향 시 도달 가능한 잠재 용적률 상단 — 현행과 분리 표기"
+            evidence={
+              upFarCollapsed
+                ? "검토한 종상향 경로가 모두 같은 목표 용도지역을 가리켜 범위가 산출되지 않았습니다 — 이 값은 도달 가능한 최댓값이 아니라 단일 경로의 예상치입니다(그 위 단계는 미산출·별도 확인 필요)."
+                : "지구단위·역세권 등 종상향 시 도달 가능한 잠재 용적률 상단 — 현행과 분리 표기"
+            }
           />
           <DataField
             label="종상향 최상 가능성"
