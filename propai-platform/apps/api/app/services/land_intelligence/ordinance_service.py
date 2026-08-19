@@ -981,13 +981,25 @@ class OrdinanceService:
             if zone in out:
                 continue
             # `NN. <용도지역>[(세분)] : NN퍼센트` — 콜론/전각콜론, 공백 변형 허용.
-            m = re.search(
-                r"(?<![\d])\d{1,2}\s*\.\s*" + re.escape(zone)
-                + r"(?:\s*\([^)]{0,20}\))?\s*[:：]\s*(\d{1,4})\s*퍼센트",
-                section,
-            )
+            # ★값 표기가 두 갈래다(2026-08-19 실측):
+            #   · 퍼센트형  — 오산시 "16. 자연녹지지역: 20퍼센트 이하"
+            #   · **분수형** — 전주시 "1. 제1종전용주거지역：100분의 40" (한국 법령 표준 표기)
+            #   분수형을 몰라서 전주시는 기본항 추출이 통째로 실패했고, 폴백이 "100분의 20"의
+            #   **앞 100** 을 집어 법정 20% 초과로 기각됐다(원인을 '섹션 경계'로 오진했었다 —
+            #   실측하니 섹션은 32,132→34,988 로 정확했다).
+            head = (r"(?<![\d])\d{1,2}\s*\.\s*" + re.escape(zone)
+                    + r"(?:\s*\([^)]{0,20}\))?\s*[:：]\s*")
+            m = re.search(head + r"(\d{1,4})\s*퍼센트", section)
             if m:
                 out[zone] = int(m.group(1))
+                continue
+            # 분수형 `100분의 40` — 분모는 보통 100 이지만 그대로 읽어 비율로 환산한다
+            # (분모를 100 으로 가정하면 `1000분의 15` 같은 표기에서 조용히 10배 틀린다).
+            m = re.search(head + r"(\d{1,5})\s*분의\s*(\d{1,5})", section)
+            if m:
+                denom, numer = int(m.group(1)), int(m.group(2))
+                if denom:
+                    out[zone] = round(numer * 100 / denom)
         return out
 
     def _iter_zone_fragments(self, section: str):
