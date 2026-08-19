@@ -162,3 +162,115 @@ def test_blocked_path_mirror_carries_the_same_keys(sim):
         assert key in site, f"차단 경로 site 페이로드에 {key} 누락(형제 미러 스윕 실패)"
     assert site["resolved_parcel_count"] == 1
     assert site["area_is_partial"] is True
+
+
+# ── ★변이감사가 드러낸 것: 위 테스트는 `_collect` 를 통째로 대역했다 ────────────────
+#   그래서 **`zone_source` 를 실제로 만들어 넣는 층**(`_collect.one()`)은 한 번도 실행되지
+#   않았고, 그 줄을 지워도 초록이었다(CLAUDE.md 검증규율 §3 — "스텁이 실제 층을 우회").
+#   아래는 대역을 **외부 경계**(VWorld/조례/건축물대장/토지정보)로 내려, `_collect` 본체가
+#   진짜로 돌게 한다.
+
+
+class _FakeZoning:
+    """`AutoZoningService` 대역 — 해석 성공/실패 두 모집단을 실제로 만들어 낸다."""
+
+    async def analyze_by_address(self, a: str) -> dict:
+        if "산 66" in a:
+            return {
+                "pnu": "4137011000200660001",
+                "zone_type": "자연녹지지역",
+                "zone_source": "vworld_ned",      # ← 조회된 값
+                "zone_limits": {"max_far_pct": 100},
+                "land_area_sqm": 12309.0,
+                "land_category": "전",
+                "special_districts": [],
+                "coordinates": {},
+            }
+        return {
+            "pnu": None,
+            "zone_type": "제2종일반주거지역",
+            "zone_source": "keyword_inference",   # ← 주소에서 **추론한** 값
+            "zone_limits": {},
+            "land_area_sqm": None,
+            "land_category": "",
+            "special_districts": [],
+            "coordinates": {},
+        }
+
+
+@pytest.fixture
+def isolated_collect(monkeypatch):
+    """`_collect` 본체는 실행하되 외부 IO 만 끊는다(네트워크 0)."""
+    import app.services.external_api.building_registry_service as breg_mod
+    import app.services.external_api.vworld_service as vworld_mod
+    import app.services.land_intelligence.land_info_service as lis_mod
+    import app.services.land_intelligence.ordinance_service as ord_mod
+    import app.services.zoning.auto_zoning_service as az_mod
+
+    monkeypatch.setattr(az_mod, "AutoZoningService", _FakeZoning)
+
+    async def _boom(*a, **k):  # 외부 조회는 전부 실패시킨다 — 코드의 graceful 경로를 태운다
+        raise RuntimeError("외부 조회 차단(테스트)")
+
+    for mod, cls, meths in (
+        (vworld_mod, "VWorldService", ("get_land_info", "get_parcel_by_point")),
+        (ord_mod, "OrdinanceService", ("get_ordinance_limits",)),
+        (lis_mod, "LandInfoService", ("collect_comprehensive",)),
+    ):
+        for m in meths:
+            if hasattr(getattr(mod, cls), m):
+                monkeypatch.setattr(getattr(mod, cls), m, _boom, raising=False)
+    for m in dir(breg_mod.BuildingRegistryService):
+        if m.startswith("get_"):
+            monkeypatch.setattr(breg_mod.BuildingRegistryService, m, _boom, raising=False)
+    return None
+
+
+def test_collect_itself_carries_zone_source(sim, isolated_collect):
+    """★`_collect` **본체**가 `zone_source` 를 싣는다 — 이 층을 대역하면 잠기지 않는다."""
+    rows, _ = asyncio.run(
+        sim._collect(
+            ["경기도 오산시 내삼미동 산 66", "경기도 오산시 내삼미동 1"], {}
+        )
+    )
+    by_addr = {r["address"]: r for r in rows}
+
+    measured = by_addr["경기도 오산시 내삼미동 산 66"]
+    inferred = by_addr["경기도 오산시 내삼미동 1"]
+
+    # 전제 — 두 행이 실제로 갈렸는가(같으면 아래 단언이 공허해진다).
+    assert measured["area"] == pytest.approx(12309.0)
+    assert inferred["area"] is None
+
+    # ★본 단언: 출처가 하류로 전달된다.
+    assert measured["zone_source"] == "vworld_ned"
+    assert inferred["zone_source"] == "keyword_inference"
+
+
+def test_collect_exception_row_keeps_the_contract(sim, monkeypatch):
+    """조회가 통째로 터져도 행 계약(`zone_source` 포함)이 유지된다 — 하류 KeyError 방지."""
+    import app.services.zoning.auto_zoning_service as az_mod
+
+    class _Explode:
+        async def analyze_by_address(self, a: str) -> dict:
+            raise RuntimeError("전면 실패")
+
+    monkeypatch.setattr(az_mod, "AutoZoningService", _Explode)
+    rows, _ = asyncio.run(sim._collect(["아무 주소"], {}))
+
+    assert rows and rows[0]["address"] == "아무 주소"
+    assert "zone_source" in rows[0], "예외 경로가 계약 키를 빠뜨렸다"
+    assert rows[0]["zone_source"] is None
+    assert rows[0]["area"] is None
+
+
+def test_primary_zone_falls_back_to_site_when_no_parcel_zone(sim):
+    """용도지역이 한 필지도 없으면 호출자가 준 `site.zone_type` 으로 폴백한다."""
+    rows = [{**UNRESOLVED, "zone": None, "zone_type": "", "zone_source": None}]
+
+    async def fake_collect(addrs, site):  # noqa: ANN001
+        return list(rows), None
+
+    sim._collect = fake_collect  # type: ignore[method-assign]
+    out = asyncio.run(sim.simulate(rows[0]["address"], site={"zone_type": "일반상업지역"}, use_llm=False))
+    assert out["site"]["primary_zone"] == "일반상업지역"

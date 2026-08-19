@@ -193,12 +193,19 @@ def test_growth_management_aliases_all_map(alias):
 
 
 @pytest.mark.parametrize("key", ["district_name", "name"])
-def test_discriminators_accept_dict_designations(key):
-    """VWorld designation 은 dict 로도 흐른다 — dict 분기가 죽으면 판별이 통째로 무력화된다.
+def test_norm_extracts_the_name_from_dict_designations(key):
+    """VWorld designation 은 dict 로도 흐른다 — 이름을 **꺼내는지**를 직접 본다.
 
-    (dict 를 못 읽으면 `str(dict)` 가 되어 `성장관리권역` 이 통짜 문자열 안에 남고,
-     `is_metro_regime` 이 참이 되어 **모든** designation 이 권역으로 오판될 수 있다.)
+    ★이 테스트의 앞 판(2026-08-19)은 **공허했다**: `_norm` 의 dict 분기를 꺼도
+      `str(dict)` = `"{'district_name': '성장관리권역'}"` 안에 이름이 그대로 남아
+      부분일치 판정이 전부 통과했다(변이 생존으로 적발). 그래서 하류 불리언이 아니라
+      **정규화 산출물 자체**를 단언한다 — 이것이 그 분기를 실제로 잠근다.
     """
+    from app.services.zoning.district_regime import _norm
+
+    assert _norm({key: "성장관리권역"}) == "성장관리권역"
+    assert _norm({key: "지구단위 계획구역"}) == "지구단위계획구역"   # 공백 정규화도 함께
+    # 하류 판정도 유지(계약 회귀 방지).
     assert is_metro_regime({key: "성장관리권역"}) is True
     assert is_detailed_urban_plan({key: "성장관리권역"}) is False
     assert is_detailed_urban_plan({key: "지구단위계획구역"}) is True
