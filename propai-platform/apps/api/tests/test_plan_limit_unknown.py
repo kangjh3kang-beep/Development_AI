@@ -125,6 +125,9 @@ def test_the_plan_governs_uses_not_only_numbers():
     assert "허용용도로도 단정하지 마십시오" in plu["note"]
     # 무엇을 확인해야 하는지에 **용도**가 들어 있어야 다음 행동이 나온다.
     assert any("허용용도" in r for r in plu["requires"])
+    # ★두 항목을 **각각** 잠근다 — `any()` 하나로 묶으면 한쪽이 죽어도 통과한다(변이 생존).
+    assert any("상한용적률·건폐율 확인" in r for r in plu["requires"])
+    assert len(plu["requires"]) == 2
 
 
 def test_signal_disappears_when_the_plan_number_is_actually_known():

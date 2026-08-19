@@ -507,3 +507,72 @@ def test_blocked_path_mirrors_the_plan_signal(sim):
     out = _run(sim, [blocked, UNRESOLVED])
     assert out.get("special_parcel_gate"), "차단 경로를 타지 않았다 — 미러가 검증되지 않았다"
     assert out["site"]["plan_limit_unknown"] is not None
+
+
+# ── ★또 같은 함정: 위 전파 테스트도 `_collect` 를 통째로 대역했다 ──────────────────
+#   그래서 **신호를 실제로 읽어 싣는 줄**(`_collect` 안 `plan_unknown = eff.get(...)`)이
+#   한 번도 실행되지 않았고, 그 줄을 지워도 초록이었다(변이 생존). 이 저장소에서 같은
+#   형태를 이 세션에만 **세 번** 겪었다 — 대역은 항상 **외부 경계**로 내린다.
+
+
+class _FakePlanZoning:
+    """계획구역 designation 을 실은 조회 결과를 낸다(외부 경계 대역)."""
+
+    async def analyze_by_address(self, a: str) -> dict:
+        return {
+            "pnu": "4137011000200660001",
+            "zone_type": "자연녹지지역",
+            "zone_source": "vworld_ned",
+            "zone_limits": {"max_far_pct": 100},
+            "land_area_sqm": 1000.0,
+            "land_category": "전",
+            # ★여기가 요점 — 실측 designation 이 계획구역을 포함한다.
+            "special_districts": ["지구단위계획구역", "도시지역"],
+            "coordinates": {},
+        }
+
+
+def test_collect_itself_reads_and_carries_the_plan_signal(sim, monkeypatch, isolated_collect):
+    """★`_collect` **본체**가 `calc_effective_far` 의 신호를 읽어 행에 싣는다.
+
+    이 층을 대역하면 잠기지 않는다 — 전파가 끊겨도 화면만 보고는 알 수 없다.
+    """
+    import app.services.zoning.auto_zoning_service as az_mod
+
+    monkeypatch.setattr(az_mod, "AutoZoningService", _FakePlanZoning)
+    rows, _ = asyncio.run(sim._collect(["계획구역 안 필지"], {}))
+
+    plu = rows[0].get("plan_limit_unknown")
+    assert plu is not None, "_collect 가 계획 신호를 읽지 않는다(전파 끊김)"
+    assert plu["districts"] == ["지구단위계획구역"]
+    assert "건축물 용도제한" in plu["governs"]
+
+
+def test_collect_row_keeps_the_key_when_the_far_engine_explodes(sim, monkeypatch, isolated_collect):
+    """실효산정이 통째로 터져도 행 계약이 유지된다(초기화 누락 시 NameError)."""
+    import app.services.development.scenario_simulator as sim_mod
+    import app.services.zoning.auto_zoning_service as az_mod
+
+    monkeypatch.setattr(az_mod, "AutoZoningService", _FakePlanZoning)
+
+    def _boom_far(*a, **k):
+        raise RuntimeError("실효산정 실패")
+
+    monkeypatch.setattr(sim_mod, "calc_effective_far", _boom_far, raising=False)
+    import app.services.land_intelligence.far_tier_service as ft_mod
+
+    monkeypatch.setattr(ft_mod, "calc_effective_far", _boom_far)
+
+    rows, _ = asyncio.run(sim._collect(["계획구역 안 필지"], {}))
+    assert rows and "plan_limit_unknown" in rows[0]
+    assert rows[0]["plan_limit_unknown"] is None
+
+
+def test_aggregate_merges_districts_across_parcels(sim):
+    """★다필지에서 **서로 다른 계획구역**이 합쳐진다 — 첫 필지 값만 쓰면 나머지가 사라진다."""
+    a = {**RESOLVED, "address": "A", "plan_limit_unknown": {**_PLAN_UNKNOWN, "districts": ["지구단위계획구역"]}}
+    b = {**RESOLVED, "address": "B", "plan_limit_unknown": {**_PLAN_UNKNOWN, "districts": ["성장관리계획구역"]}}
+    site = _run(sim, [a, b])["site"]
+
+    assert site["plan_limit_unknown"]["districts"] == ["지구단위계획구역", "성장관리계획구역"]
+    assert site["plan_limit_unknown"]["parcel_count"] == 2
