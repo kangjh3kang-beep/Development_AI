@@ -141,6 +141,19 @@ describe("배선 — 세 화면이 공용 표면을 실제로 거친다", () => 
     });
   });
 
+  it("ComprehensiveAnalysisPanel — 상향 여지 숫자에 반드시 용도지역 라벨이 붙는다", () => {
+    // ★#700 이 세운 계약: 숫자와 용도지역은 **한 쌍**이다. 라벨 없이 upside 숫자만 올리면
+    //   그 값은 target_zone 의 법정한도를 넘는 '위법값'으로 읽힌다(#700 이 봉합한 날조 클래스).
+    //   이 패널은 공용 UpzoningScenarioList 를 쓰지 않고 자체 목록을 그리므로 별도로 잠근다
+    //   (렌더 락은 이 패널이 apiClient·store 를 세워야 해서 불가 — 소스 불변식으로 대체).
+    assertWiredThrough({
+      file: "components/analysis/ComprehensiveAnalysisPanel.tsx",
+      scope: /upside_far_pct_high/,
+      mustContain: /upside_far_zone|expected_far_pct_high/,
+      minMatches: 2,
+    });
+  });
+
   it.each(SCREENS)("%s — 범위 문자열을 스스로 만들지 않는다", (file) => {
     // 종상향 범위를 만지는 모든 줄이 직접 보간(`${min}~${max}`)·formatPercentRange·
     // min===max 자체판정을 쓰지 않는다. 하나라도 되살아나면 그 화면만 다시 거짓 범위를 찍는다.

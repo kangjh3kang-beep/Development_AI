@@ -550,11 +550,34 @@ class UpzoningPotentialAnalyzer:
         #   둔갑했다(실측 3케이스: 1종일반→3종일반300하 · 2종일반→준주거500하 · 준주거→일반상업1300하).
         #   확정된 부정 판정을 '열린 가능성'으로 격상시키는 낙관 과표시라, 이 PR 이 고치겠다고
         #   선언한 결함 클래스 그 자체다. 두 축을 갈라 각각의 사실을 말한다.
-        produced: list[str] = []          # 시나리오가 실제로 산출된 목표(가능성 등급 무관)
+        produced: list[str] = []          # 산출된 값이 실제로 실린 목표(가능성 등급 무관)
+        upside_zones: list[str] = []      # 대표 목표보다 높은 상향 후보(#700 upside 축)
+        upside_far: dict[str, float] = {}  # 그 후보의 예상 용적률 — 문장에 값을 직접 싣는다
         for s in scenarios:
             tz = s.get("target_zone")
             if tz and tz not in produced:
                 produced.append(tz)
+            # ★#700(머지됨) 이후 — 대표 목표 외의 후보도 `target_zone_candidates` 에 **각자의
+            #   용적률과 함께 실린다**. 그 값은 화면(UpzoningScenarioList)이 "최대 〈지역〉
+            #   상향 시 N%" 로 렌더한다. 그러므로 그 목표를 "미산출"이라 말하면 **같은 카드에서
+            #   목록과 고지가 싸운다**(실측 3케이스: 자연녹지→2종일반 250 · 제1종전용→1종일반
+            #   200 · 준공업→근린상업 900).
+            #   ★후보 전체를 무조건 넣지 않는다 — `expected_far_pct_high` 가 None 인 후보는
+            #     `_target_far_pct` 가 법정한도를 못 찾은 것이라 **정말 아무 값도 산출되지
+            #     않았다**(source='미상'). 그것까지 '산출됨'으로 치면 미산출 고지가 영영 죽는다.
+            for c in (s.get("target_zone_candidates") or []):
+                ctz = c.get("target_zone")
+                if ctz and c.get("expected_far_pct_high") is not None and ctz not in produced:
+                    produced.append(ctz)
+            # 화면이 실제로 그 줄을 그리는 조건과 **같은 조건**으로 모은다(추정 금지 —
+            # UpzoningScenarioList 는 upside_high > expected_high 일 때만 렌더한다).
+            uz, uh = s.get("upside_far_zone"), s.get("upside_far_pct_high")
+            if uz and uh is not None and uh > (s.get("expected_far_pct_high") or 0):
+                prev = upside_far.get(uz)
+                if prev is None or uh > prev:
+                    upside_far[uz] = uh
+                if uz not in upside_zones:
+                    upside_zones.append(uz)
         # ① 미산출 — 매핑은 돼 있는데 시나리오 자체가 없다(진짜 "확인 필요").
         #    `mapped_targets`(UPZONE_TARGETS)에서 파생하므로 카탈로그가 늘면 자동 반영된다.
         unconsidered = [t for t in (mapped_targets or []) if t not in produced]
@@ -581,6 +604,12 @@ class UpzoningPotentialAnalyzer:
                 "expected_far_pct_high": s.get("expected_far_pct_high"),
                 "feasibility": s.get("feasibility"),
             })
+        # ★세 축은 **배타**여야 한다 — 한 용도지역에 두 문장이 붙으면 고지가 자기 말을 겹쳐 쓴다.
+        #   실측: 2종일반 비역세권의 준주거는 upside(최대 500% 렌더)이면서 동시에 '하' 제외
+        #   대상이었다. 둘 다 참이지만, 더 구체적인 쪽('하'로 평가 + 값 + 목록 참조)만 남긴다.
+        _excluded_zones = {e["target_zone"] for e in excluded}
+        upside_zones = [z for z in upside_zones
+                        if z not in considered and z not in _excluded_zones]
 
         out: dict[str, Any] = {
             "min_pct": lo,
@@ -589,6 +618,8 @@ class UpzoningPotentialAnalyzer:
             "scenario_count": len(graded),
             "considered_target_zones": considered,
             "unconsidered_target_zones": unconsidered,
+            # 화면에 "최대 〈지역〉 상향 시 N%" 로 이미 보이는 목표(#700 축) — 미산출이 아니다.
+            "upside_target_zones": upside_zones,
             # 평가 결과 '하'로 범위에서 빠진 목표 — "미산출"과 섞어 쓰지 않는다.
             "excluded_by_feasibility": excluded,
             "honest_disclosure": None,
@@ -618,6 +649,21 @@ class UpzoningPotentialAnalyzer:
                 f" 목표 용도지역은 서로 달랐으나({', '.join(considered)}) 예상 상한이 "
                 f"모두 같았습니다 — 목표지역 조례 상한이 같은 값에서 걸린 결과입니다."
             )
+        if upside_zones:
+            # ★모순을 침묵으로 덮지 않고 **적극적으로 해소**한다 — #700 이 산출해 화면이 보여주는
+            #   값을 고지가 직접 말한다("미산출"이 아니라 "함께 산출됐고 값은 이것").
+            #   ★"별도 표시됩니다"처럼 **화면 동작을 단언하지 않는다**: 소비처마다 목록 렌더가
+            #     다르다(site-analysis·설계감사는 UpzoningScenarioList 로 그 줄을 그리지만,
+            #     종합분석 패널은 자체 목록이고 AutoRecommendPanel 은 목록 자체가 없다).
+            #     백엔드가 보증할 수 없는 것을 단정하면 그 문장이 화면마다 참·거짓이 갈린다.
+            listed_up = ", ".join(
+                f"'{z}'(예상 {upside_far[z]:.0f}%)" if z in upside_far else f"'{z}'"
+                for z in upside_zones
+            )
+            clauses.append(
+                f" 더 높은 상향 후보 {listed_up}도 함께 산출됐습니다 — 범위 산출에는 대표 목표만"
+                f" 반영했으며, 실제 도달 용적률은 상향 단계에 따라 달라집니다."
+            )
         if excluded:
             # ★"미산출"이라 말하지 않는다. 이건 평가를 마친 **부정 판정**이고, 같은 카드의
             #   시나리오 목록에 등급·사유와 함께 이미 렌더된다(목록과 고지가 싸우면 안 된다).
@@ -631,11 +677,22 @@ class UpzoningPotentialAnalyzer:
                 f"(미산출이 아니라 평가 결과입니다 — 사유는 아래 시나리오 목록 참조)."
             )
         if unconsidered:
+            # ★#700 머지 후 이 절은 **현 카탈로그의 라이브 경로에서 도달 불가**다(실측 2026-08-20:
+            #   전수 20케이스 unconsidered 0건 · 매핑된 전 목표가 법정 max_far_pct 를 보유해
+            #   `target_zone_candidates` 에 값이 실린다). 남기는 이유는 둘이다 —
+            #   ①법정한도를 못 찾는 목표가 카탈로그에 추가되면 즉시 발화한다(그때 "미산출"이 참).
+            #   ②`_potential_range` 는 #700 이전 형상(candidates 없음)의 페이로드도 받는다.
+            #   그래서 이 절의 변이는 라이브 픽스처로는 죽지 않는다(설명된 생존) — 대신 아래
+            #   테스트가 `_potential_range` 를 직접 태워 두 형상을 가른다.
             clauses.append(
                 f" 매핑된 상향 후보 중 {', '.join(unconsidered)}은(는) 이번 산출에 "
                 f"반영되지 않았습니다 — 그 단계의 상향 여지는 미산출이며 별도 확인이 필요합니다."
             )
-        if not excluded and not unconsidered and len(considered) == 1:
+        # ★조건을 **실제 매핑 개수**에 결속한다. 종전엔 "excluded·unconsidered 가 비었으면"
+        #   이라고만 봤는데, #700 이후 후보가 2개여도 둘 다 산출되면 그 조건이 참이 되어
+        #   "후보가 하나뿐"이라는 **거짓**이 나온다(자연녹지는 후보 2개다).
+        if (not excluded and not unconsidered and not upside_zones
+                and len(considered) == 1 and len(mapped_targets or []) <= 1):
             clauses.append(
                 f" 현행 '{zone or '해당 용도지역'}'에 매핑된 상향 후보가 "
                 f"'{considered[0]}' 하나뿐이라 비교할 다른 목표가 없었습니다 — "

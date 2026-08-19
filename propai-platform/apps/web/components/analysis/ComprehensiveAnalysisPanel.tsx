@@ -888,6 +888,14 @@ export function ComprehensiveAnalysisPanel() {
                     · {s.path} → {s.target_zone}
                     {s.expected_far_pct_high != null ? ` (예상 ${formatPercent(s.expected_far_pct_high)})` : ""}
                     {s.feasibility ? ` · 가능성 ${s.feasibility}` : ""}
+                    {/* ★#700 의 upside 축을 이 화면에도 올린다 — 공용 UpzoningScenarioList 를
+                        쓰는 화면(부지분석·설계감사)에만 있고 여기엔 없어서, "어떤 경로도 상한을
+                        못 넘는다"는 오독이 이 패널에만 남아 있었다. 조건은 그 공용 컴포넌트와
+                        **같은 조건**을 쓴다(숫자와 용도지역은 한 쌍 — 라벨 없이 숫자만 올리면 위법값). */}
+                    {s.upside_far_pct_high != null && s.upside_far_zone
+                      && s.upside_far_pct_high > (s.expected_far_pct_high ?? 0)
+                      ? ` · 최대 ${s.upside_far_zone} 상향 시 ${formatPercent(s.upside_far_pct_high)}`
+                      : ""}
                     {/* ★신규(additive) blocked_reasons — 비연접 등으로 구역 성립이 불확실한 사유(정직 표기). */}
                     {Array.isArray(s.blocked_reasons) && s.blocked_reasons.length > 0
                       ? ` · ${(s.blocked_reasons as string[]).join(" · ")}`

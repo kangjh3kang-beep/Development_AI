@@ -852,20 +852,34 @@ def test_upzoning_collapsed_range_must_carry_honest_disclosure():
     assert _range_of(**_RANGED_INPUT)["potential_far_range"]["honest_disclosure"] is None
 
 
-def test_upzoning_collapsed_discloses_unconsidered_targets():
+def test_upzoning_collapsed_points_at_upside_not_unmeasured():
     """사용자 신고의 본체 — '자연녹지도 2종일반이 가능한데 150%가 상한으로 나온다'.
 
-    숫자는 그대로 두되, 매핑돼 있으나 **이번 산출에 반영되지 않은** 상향 후보를 밝힌다.
-    (반영 여부는 UPZONE_TARGETS 에서 파생하므로 카탈로그가 늘면 자동으로 감시망에 들어온다.)
+    ★#700 머지 후 정정: 제2종일반주거지역은 이제 `target_zone_candidates` 에 값이 실리고
+      화면이 "최대 제2종일반주거지역 상향 시 250%" 로 **이미 보여준다**. 그러므로 고지가
+      그것을 "미산출"이라 말하면 같은 카드에서 목록과 싸운다 — 고지는 그 줄을 **가리켜야** 한다.
     """
     from app.services.zoning.upzoning_potential import UPZONE_TARGETS
 
-    fr = _range_of(**_COLLAPSED_INPUT)["potential_far_range"]
+    r = _range_of(**_COLLAPSED_INPUT)
+    fr = r["potential_far_range"]
     mapped = UPZONE_TARGETS["자연녹지지역"]
-    assert len(mapped) >= 2, "이 락의 전제 — 후보가 2개 이상이어야 '미반영 후보'가 존재한다"
+    assert len(mapped) >= 2, "이 락의 전제 — 후보가 2개 이상이어야 upside 축이 생긴다"
     assert fr["considered_target_zones"] == ["제1종일반주거지역"]
-    assert fr["unconsidered_target_zones"] == ["제2종일반주거지역"]
-    assert "제2종일반주거지역" in fr["honest_disclosure"]
+
+    # 화면이 그 줄을 그리는 조건과 **같은 조건**으로 존재를 먼저 확인한다(공허 진리 가드).
+    top = r["scenarios"][0]
+    assert top["upside_far_zone"] == "제2종일반주거지역"
+    assert top["upside_far_pct_high"] == 250 > top["expected_far_pct_high"]
+
+    assert fr["upside_target_zones"] == ["제2종일반주거지역"]
+    assert fr["unconsidered_target_zones"] == [], "화면이 보여주는 값을 '미산출'이라 말한다"
+    d = fr["honest_disclosure"]
+    # ★고지가 **값을 직접** 말한다 — "다른 화면에 표시된다" 같은 화면 동작 단언은
+    #   소비처마다 참·거짓이 갈리므로 쓰지 않는다(종합분석 패널은 자체 목록이다).
+    assert "더 높은 상향 후보 '제2종일반주거지역'(예상 250%)도 함께 산출됐습니다" in d
+    assert "별도 표시됩니다" not in d
+    assert "미산출" not in d, f"목록이 250%를 보여주는데 고지가 미산출이라 말한다: {d}"
     # 숫자는 건드리지 않았다 — 없는 상향 여지를 만들어내지 않는다.
     assert fr["max_pct"] == 200
 
@@ -948,10 +962,10 @@ def test_upzoning_single_mapped_candidate_says_so():
     d = fr["honest_disclosure"]
     assert "하나뿐이라 비교할 다른 목표가 없었습니다" in d
     assert "미산출이며 별도 확인이 필요합니다" in d
-    # ★대조군 — 미반영 후보가 있는 쪽(자연녹지)은 **다른 사유**를 말해야 한다.
+    # ★대조군 — 후보가 2개인 쪽(자연녹지)은 **다른 사유**를 말해야 한다.
     other = _range_of(**_COLLAPSED_INPUT)["potential_far_range"]["honest_disclosure"]
-    assert "하나뿐이라" not in other
-    assert "이번 산출에 반영되지 않았습니다" in other
+    assert "하나뿐이라" not in other, "후보 2개인데 '하나뿐'이라 말한다"
+    assert "더 높은 상향 후보" in other
 
 
 def test_upzoning_disclosure_states_count_value_and_target():
@@ -994,17 +1008,16 @@ def test_upzoning_graded_low_target_is_not_called_unmeasured():
     assert [(e["target_zone"], e["expected_far_pct_high"], e["feasibility"])
             for e in fr["excluded_by_feasibility"]] == [("준주거지역", 500, "하")]
 
-    # ── 모집단 ② 진짜 미산출(자연녹지 — 2종일반은 시나리오 자체가 없다) ──
+    # ── 모집단 ② upside 축(자연녹지 — 2종일반은 대표 목표가 아니지만 값은 실린다) ──
     nat = _range_of(**_COLLAPSED_INPUT)["potential_far_range"]
     produced = {s["target_zone"] for s in _range_of(**_COLLAPSED_INPUT)["scenarios"]}
-    assert "제2종일반주거지역" not in produced, "전제 붕괴 — 2종일반 시나리오가 생겼다"
-    assert nat["unconsidered_target_zones"] == ["제2종일반주거지역"]
+    assert "제2종일반주거지역" not in produced, "전제 붕괴 — 2종일반이 대표 목표가 됐다"
+    assert nat["upside_target_zones"] == ["제2종일반주거지역"]
     assert nat["excluded_by_feasibility"] == []
-    assert "미산출이며 별도 확인이 필요합니다" in nat["honest_disclosure"]
 
     # ★두 모집단이 **다른 문장**을 쓴다 — 같은 문장이면 두 축을 가른 의미가 없다.
     assert "평가 결과입니다" not in nat["honest_disclosure"]
-    assert "매핑된 상향 후보 중" not in d
+    assert "더 높은 상향 후보" not in d
 
 
 def test_upzoning_no_forged_unmeasured_claim_anywhere():
@@ -1038,3 +1051,119 @@ def test_upzoning_scenario_count_counts_graded_not_all():
     assert fr["scenario_count"] == 3, "범위 산출에 쓴 것은 상/중 3건"
     assert "검토한 경로 3건" in fr["honest_disclosure"]
     assert "검토한 경로 5건" not in fr["honest_disclosure"]
+
+
+# ── ★#700 통합 락 — 화면이 이미 보여주는 목표를 "미산출"이라 말하지 않는다 ──
+#
+# 배경: #700(머지됨)이 대표 목표 외의 후보를 `target_zone_candidates` 에 값과 함께 싣고,
+#   화면은 "최대 〈지역〉 상향 시 N%" 로 렌더한다. 그런데 이 PR 의 고지는 그 목표를
+#   "미산출·별도 확인 필요"라 말했다 — **텍스트 충돌이 0이라 조용히 머지되는** 모순이었다.
+#   실측 3케이스: 자연녹지→2종일반 250 · 제1종전용→1종일반 200 · 준공업→근린상업 900.
+
+def _range_from(scenarios, zone, mapped):
+    return UpzoningPotentialAnalyzer._potential_range(scenarios, zone, mapped)
+
+
+def _synth(target, high, feas="상", candidates=None, upside=None):
+    s = {"target_zone": target, "expected_far_pct_high": high, "feasibility": feas}
+    if candidates is not None:
+        s["target_zone_candidates"] = candidates
+    if upside is not None:
+        s["upside_far_zone"], s["upside_far_pct_high"] = upside
+    return s
+
+
+def test_upzoning_candidate_with_value_is_not_called_unmeasured():
+    """★두 모집단 — `target_zone_candidates` 유무가 **다른 결과**를 낸다.
+
+    같은 결과면 이 배선(#700 필드 참조)을 통째로 끊어도 통과한다.
+    """
+    MAPPED = ["제1종일반주거지역", "제2종일반주거지역"]
+    CANDS = [
+        {"target_zone": "제1종일반주거지역", "expected_far_pct_high": 200},
+        {"target_zone": "제2종일반주거지역", "expected_far_pct_high": 250},
+    ]
+
+    # ① #700 형상 — 후보에 값이 실리고 화면이 그 값을 렌더한다 → '미산출' 아님.
+    with_c = _range_from(
+        [_synth("제1종일반주거지역", 200, candidates=CANDS, upside=("제2종일반주거지역", 250))],
+        "자연녹지지역", MAPPED,
+    )
+    assert with_c["is_collapsed"] is True          # 공허 진리 가드
+    assert with_c["unconsidered_target_zones"] == []
+    assert with_c["upside_target_zones"] == ["제2종일반주거지역"]
+    assert "미산출" not in with_c["honest_disclosure"]
+
+    # ② #700 이전 형상(후보 없음) — 정말 아무 값도 없다 → '미산출'이 참이다.
+    without_c = _range_from([_synth("제1종일반주거지역", 200)], "자연녹지지역", MAPPED)
+    assert without_c["unconsidered_target_zones"] == ["제2종일반주거지역"]
+    assert without_c["upside_target_zones"] == []
+    assert "미산출이며 별도 확인이 필요합니다" in without_c["honest_disclosure"]
+
+    # ★두 모집단이 실제로 갈린다.
+    assert with_c["honest_disclosure"] != without_c["honest_disclosure"]
+
+    # ③ 후보는 있는데 **값이 None** — `_target_far_pct` 가 법정한도를 못 찾은 경우.
+    #    값이 없으면 화면에 아무것도 안 뜨므로 '미산출'이 여전히 참이다(무조건 포함 금지).
+    null_c = _range_from(
+        [_synth("제1종일반주거지역", 200, candidates=[
+            {"target_zone": "제1종일반주거지역", "expected_far_pct_high": 200},
+            {"target_zone": "제2종일반주거지역", "expected_far_pct_high": None},
+        ])],
+        "자연녹지지역", MAPPED,
+    )
+    assert null_c["unconsidered_target_zones"] == ["제2종일반주거지역"]
+
+
+def test_upzoning_rendered_upside_never_labelled_unmeasured():
+    """전수 파생 — 화면이 upside 줄을 그리는 **모든** 케이스에서 그 목표가 미산출이 아니다.
+
+    화면 조건(`upside_high > expected_high`)을 여기서도 그대로 쓴다(추정 금지).
+    """
+    from app.services.zoning.upzoning_potential import UPZONE_TARGETS
+
+    rendered = 0
+    for zone in UPZONE_TARGETS:
+        for near in (False, True):
+            r = _range_of(zone_type=zone, land_area_sqm=20000, near_station=near,
+                          near_station_m=300 if near else None)
+            fr = r["potential_far_range"]
+            if fr is None:
+                continue
+            for sc in r["scenarios"]:
+                uz, uh = sc.get("upside_far_zone"), sc.get("upside_far_pct_high")
+                if not uz or uh is None or uh <= (sc.get("expected_far_pct_high") or 0):
+                    continue
+                rendered += 1
+                assert uz not in fr["unconsidered_target_zones"], \
+                    f"{zone}(역세권={near}): 화면이 '{uz} 상향 시 {uh}%'를 보여주는데 미산출이라 말한다"
+    assert rendered >= 3, f"공허 진리 가드 — upside 줄이 실제로 그려지는 케이스 {rendered}건"
+
+
+def test_upzoning_three_axes_are_mutually_exclusive():
+    """한 용도지역이 두 축에 동시에 실리지 않는다(고지가 자기 말을 겹쳐 쓰지 않는다).
+
+    실측 계기: 2종일반 비역세권의 준주거는 upside(500% 렌더)이면서 '하' 제외 대상이었다.
+    """
+    from app.services.zoning.upzoning_potential import UPZONE_TARGETS
+
+    overlaps = 0
+    for zone in UPZONE_TARGETS:
+        for near in (False, True):
+            fr = _range_of(zone_type=zone, land_area_sqm=20000, near_station=near,
+                           near_station_m=300 if near else None)["potential_far_range"]
+            if fr is None:
+                continue
+            axes = [
+                set(fr["considered_target_zones"]),
+                set(fr["unconsidered_target_zones"]),
+                set(fr["upside_target_zones"]),
+                {e["target_zone"] for e in fr["excluded_by_feasibility"]},
+            ]
+            overlaps += sum(len(a & b) for i, a in enumerate(axes) for b in axes[i + 1:])
+    assert overlaps == 0, f"축 간 중복 {overlaps}건 — 한 지역에 두 문장이 붙는다"
+    # 대조군 — 검사기가 살아 있는가(중복을 실제로 셀 수 있는가).
+    probe = _range_of(zone_type="제2종일반주거지역", land_area_sqm=20000,
+                      near_station=False)["potential_far_range"]
+    assert {e["target_zone"] for e in probe["excluded_by_feasibility"]} == {"준주거지역"}
+    assert probe["upside_target_zones"] == [], "배타 필터가 없으면 여기 준주거가 남는다"
