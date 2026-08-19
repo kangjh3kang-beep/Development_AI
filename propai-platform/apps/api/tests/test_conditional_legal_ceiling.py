@@ -1,0 +1,174 @@
+"""조건부 법정 상한(법 제75조의3) — **열되 적용하지 않는다** 배선 락.
+
+【무엇을 푸는가】
+`far_tier_service` 는 실효 한도를 `min(법정상한, 조례값)` 으로 낸다. 조례가 정한 완화값
+(자연녹지 건폐율 30%)을 정확히 파싱해도 법정상한 20% 에 되깎여 **화면에 도달하지 못한다**.
+국토계획법 제75조의3제2항은 그 상한 자체를 성장관리계획구역에서 열어 둔다.
+
+【★그런데 자동 적용하면 안 된다】
+완화 성립 요건은 셋인데(①구역 지정 ②성장관리계획 본문이 건폐율을 정할 것 ③조례 비율)
+**②의 원천이 우리에게 없다**. 그래서 이 계층은 **가능 상한만** 내고 실효값은 그대로 둔다.
+이 파일이 잠그는 것의 절반은 "무엇을 하지 **않는가**"다.
+
+【그라운드 트루스 — 법제처 DRF 원문(2026-08-19)】
+· 제75조의3제2항 1호 계획관리지역 50% / 2호 생산관리·농림 및 대통령령 녹지지역 30%
+· 시행령: "대통령령으로 정하는 녹지지역" = 자연녹지지역·생산녹지지역
+· 제75조의3제3항: 구역 내 **계획관리지역**만 용적률 125%
+【designation 그라운드 트루스 — VWorld NED 실조회】
+· 화성시 정남면 문학리 1(생산관리지역) → 성장관리권역×3 + **성장관리계획구역**
+· 아산시 음봉면 산동리 1(계획관리지역) → **성장관리계획구역**
+"""
+
+import pytest
+
+from app.services.zoning.conditional_legal_ceiling import (
+    GROWTH_MGMT_BCR_CEILING,
+    GROWTH_MGMT_FAR_CEILING,
+    resolve_conditional_ceiling,
+)
+
+PLAN_ZONE = "성장관리계획구역"        # 국토계획법 — 완화 근거
+METRO_REGIME = "성장관리권역"         # 수도권정비계획법 — 완화 근거 **아님**
+
+# 라이브 실측 designation(화성시) — 두 제도가 한 필지에 공존한다.
+HWASEONG_REAL = ["성장관리권역", "성장관리권역", "성장관리계획구역", "성장관리권역"]
+
+
+def test_premise_the_two_names_are_both_present_in_real_data():
+    """전제 — 실측 목록에 두 이름이 **모두** 있어야 아래 분리 단언이 공허하지 않다."""
+    assert PLAN_ZONE in HWASEONG_REAL
+    assert METRO_REGIME in HWASEONG_REAL
+
+
+@pytest.mark.parametrize(
+    ("zone", "bcr", "far"),
+    [
+        ("계획관리지역", 50, 125),   # 제2항1호 + 제3항
+        ("생산관리지역", 30, None),  # 제2항2호
+        ("농림지역", 30, None),      # 제2항2호
+        ("자연녹지지역", 30, None),  # 제2항2호(시행령)
+        ("생산녹지지역", 30, None),  # 제2항2호(시행령)
+    ],
+)
+def test_ceilings_match_the_statute(zone, bcr, far):
+    """★법정 수치를 조문과 결속한다 — 대역만 보면 상수가 장식이 된다(회귀망 규율 A.5)."""
+    got = resolve_conditional_ceiling(zone, [PLAN_ZONE])
+    assert got is not None
+    assert got["bcr_ceiling_pct"] == bcr
+    assert got["far_ceiling_pct"] == far
+    # 상수 테이블과도 결속(코드 안에서 두 곳이 갈리면 즉시 실패).
+    assert GROWTH_MGMT_BCR_CEILING.get(zone) == bcr
+    assert GROWTH_MGMT_FAR_CEILING.get(zone) == far
+
+
+def test_far_relaxation_is_planning_management_only():
+    """★용적률 완화는 **계획관리지역 한정**이다(제3항) — 녹지에 붙이면 과대허용."""
+    assert resolve_conditional_ceiling("자연녹지지역", [PLAN_ZONE])["far_ceiling_pct"] is None
+    assert resolve_conditional_ceiling("계획관리지역", [PLAN_ZONE])["far_ceiling_pct"] == 125
+
+
+def test_metro_regime_alone_opens_nothing():
+    """★★수도권 `성장관리권역` 만으로는 **아무것도 열리지 않는다**.
+
+    이 한 줄이 이 캠페인의 원래 오진을 막는다 — 그대로 갔으면 경기 성장관리권역 전역에
+    근거 없는 건폐율 +10%p 가 붙었다.
+    """
+    assert resolve_conditional_ceiling("자연녹지지역", [METRO_REGIME]) is None
+    assert resolve_conditional_ceiling("계획관리지역", [METRO_REGIME, "도시지역"]) is None
+
+
+def test_real_parcel_with_both_regimes_opens_via_the_plan_zone_only():
+    """실측 화성시 필지 — 두 이름이 섞여 있어도 **계획구역 때문에만** 열린다."""
+    got = resolve_conditional_ceiling("생산관리지역", HWASEONG_REAL)
+    assert got is not None and got["bcr_ceiling_pct"] == 30
+    assert got["condition"] == PLAN_ZONE
+
+    # 대조군: 같은 목록에서 계획구역만 빼면 **닫힌다**(열린 이유가 계획구역임을 증명).
+    without = [d for d in HWASEONG_REAL if d != PLAN_ZONE]
+    assert without, "대조군이 비면 이 단언이 공허하다"
+    assert resolve_conditional_ceiling("생산관리지역", without) is None
+
+
+@pytest.mark.parametrize("zone", ["제2종일반주거지역", "일반상업지역", "보전녹지지역", "보전관리지역"])
+def test_ineligible_zones_stay_closed_even_inside_the_plan_zone(zone):
+    """구역 안이어도 **완화 대상 용도지역이 아니면** 열리지 않는다(제2항 각 호 한정).
+
+    ★보전녹지·보전관리는 시행령이 지목한 녹지지역이 **아니다** — 넣으면 과대허용이다.
+    """
+    assert resolve_conditional_ceiling(zone, [PLAN_ZONE]) is None
+
+
+@pytest.mark.parametrize("districts", [None, [], ["도시지역"], "성장관리계획구역"])
+def test_no_districts_no_ceiling(districts):
+    """designation 이 없거나 문자열 통짜면 열지 않는다(str 을 순회해 글자 단위로 읽지 않는다)."""
+    assert resolve_conditional_ceiling("계획관리지역", districts) is None
+
+
+def test_dict_designations_are_accepted():
+    """VWorld designation 은 dict 로도 흐른다 — 판별자 공용 정규화를 그대로 탄다."""
+    got = resolve_conditional_ceiling("계획관리지역", [{"district_name": PLAN_ZONE}])
+    assert got is not None and got["bcr_ceiling_pct"] == 50
+
+
+def test_result_declares_itself_not_applied():
+    """★계약 — 이 값은 **가능 상한**이지 적용값이 아니다. 소비처가 오독하면 날조가 된다."""
+    got = resolve_conditional_ceiling("계획관리지역", [PLAN_ZONE])
+    assert got["applied"] is False
+    # 우리가 확인할 수 없는 요건을 **명시**한다(모르는 것을 모른다고 적는다).
+    assert any("성장관리계획 본문" in r for r in got["requires"])
+    assert any("조례" in r for r in got["requires"])
+    assert any("제75조의3" in b for b in got["legal_basis"])
+
+
+def test_missing_zone_type_is_closed():
+    assert resolve_conditional_ceiling(None, [PLAN_ZONE]) is None
+    assert resolve_conditional_ceiling("  ", [PLAN_ZONE]) is None
+
+
+# ── 소비처 락 — `calc_effective_far` 가 실제로 이 값을 내고, **실효값은 그대로**인가 ────
+#   ★순수함수만 테스트하면 "정의만 하고 소비처 0"이 된다(이 저장소의 반복 결함).
+
+
+def _calc(zone: str, districts):
+    from app.services.land_intelligence.far_tier_service import calc_effective_far
+
+    return calc_effective_far(
+        {"zone_limits": {}, "special_districts": districts, "local_ordinance": {}},
+        zone,
+        1000.0,
+    )
+
+
+def test_far_tier_emits_the_conditional_ceiling():
+    """소비처가 값을 낸다 — 순수함수만 맞고 배선이 없으면 화면엔 아무것도 안 간다."""
+    out = _calc("자연녹지지역", [PLAN_ZONE])
+    cc = out.get("conditional_ceiling")
+    assert cc is not None, "far_tier_service 가 conditional_ceiling 을 싣지 않는다(배선 끊김)"
+    assert cc["bcr_ceiling_pct"] == 30
+    assert cc["applied"] is False
+
+
+def test_far_tier_key_exists_even_when_closed():
+    """★해당 없을 때도 **키는 있다**(None) — 소비처가 `in` 으로 분기하지 않게."""
+    out = _calc("자연녹지지역", [METRO_REGIME])
+    assert "conditional_ceiling" in out
+    assert out["conditional_ceiling"] is None
+
+
+def test_effective_values_are_untouched_by_the_ceiling():
+    """★★무회귀의 핵심 — 상한을 열어도 **실효값은 바뀌지 않는다**.
+
+    적용 요건(성장관리계획 본문)을 확인할 수 없으므로 올리면 날조다. 이 단언이 깨지면
+    누군가 '가능 상한'을 실효값으로 승격시킨 것이다.
+    """
+    opened = _calc("자연녹지지역", [PLAN_ZONE])
+    closed = _calc("자연녹지지역", [METRO_REGIME])
+
+    # 공허 진리 가드 — 한쪽은 실제로 열려 있어야 비교가 의미를 갖는다.
+    assert opened["conditional_ceiling"] is not None
+    assert closed["conditional_ceiling"] is None
+
+    assert opened["effective_bcr_pct"] == closed["effective_bcr_pct"]
+    assert opened["effective_far_pct"] == closed["effective_far_pct"]
+    # 그리고 그 값은 여전히 **법정 자연녹지 상한**(20%)이다 — 30 으로 새지 않았다.
+    assert opened["effective_bcr_pct"] == 20
