@@ -716,8 +716,16 @@ export function ComprehensiveAnalysisPanel() {
 
       {/* 다필지(2필지↑) 통합 개발방식 분석 — 검색·엑셀로 등록 시 자동 노출.
           ★W2-d: 종합분석과 함께 자동 실행(파이프라인 편입). */}
+      {/* ★parcelRows 를 함께 넘긴다 — 이 패널은 이미 면적을 갖고 있는데(위 /analysis/comprehensive
+          전송용) 시나리오 카드에는 주소만 줘서, 백엔드가 면적을 재파생하다 미해석 필지를
+          0㎡로 떨어뜨렸다(2026-08-19 실측). 같은 값을 두 소비처가 나눠 쓴다. */}
       {parcels.length > 1 && (
-        <DevelopmentScenarioCard address={address} parcels={parcels} autoRunToken={pipelineRunToken} />
+        <DevelopmentScenarioCard
+          address={address}
+          parcels={parcels}
+          parcelRows={parcelRows}
+          autoRunToken={pipelineRunToken}
+        />
       )}
 
       {error && (

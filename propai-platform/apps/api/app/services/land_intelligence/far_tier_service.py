@@ -227,6 +227,8 @@ def calc_effective_far(base: dict, zone_type: str, land_area: float = 0) -> dict
             "ordinance_far_pct": None,
             "effective_bcr_pct": None,
             "effective_far_pct": None,
+            # 형제 미러 — 용도지역 미확인 조기반환에도 같은 키를 낸다(소비처 분기 단순화).
+            "conditional_ceiling": None,
             "far_basis": "zone_unmatched",
             "far_basis_detail": {
                 "법정범위": None,
@@ -379,6 +381,16 @@ def calc_effective_far(base: dict, zone_type: str, land_area: float = 0) -> dict
         )
 
     # ── far_basis 상세 메타: 산정 계층·데이터출처를 그라운딩/검증기가 활용하도록 동봉.
+    # ── 조건부 법정 상한 산정 — 부지 조건이 법정상한 자체를 열 수 있다(법 제75조의3).
+    #    ★`min(national, ordinance)` 는 조례 완화값을 법정상한으로 되깎으므로, 조건부 상한이
+    #      없으면 조례를 아무리 정확히 파싱해도 화면에 도달하지 못한다. 다만 여기서는
+    #      **열릴 수 있는 상한만** 계산하고 실효값은 바꾸지 않는다(적용 요건 미확인 — 무날조).
+    from app.services.zoning.conditional_legal_ceiling import resolve_conditional_ceiling
+
+    conditional_ceiling = resolve_conditional_ceiling(
+        zone_type, base.get("special_districts")
+    )
+
     far_basis_detail: dict[str, Any] = {
         "법정범위": {
             "min_far_pct": legal_min_far if legal_min_far is not None else national_far,
@@ -523,6 +535,11 @@ def calc_effective_far(base: dict, zone_type: str, land_area: float = 0) -> dict
         "ordinance_far_pct": ordinance_far_pct_out,
         "effective_bcr_pct": effective_bcr,
         "effective_far_pct": effective_far,
+        # ★조건부 법정 상한(법 제75조의3제2항·제3항) — **가능 상한**이지 적용값이 아니다.
+        #   실효값(effective_*)은 건드리지 않는다: 완화 성립 요건 셋 중 '성장관리계획 본문'을
+        #   우리가 확인할 수 없어, 올리면 근거 없는 숫자를 만들어 내는 것이 된다.
+        #   해당 없으면 None(키는 항상 존재 — 소비처가 `in` 으로 분기하지 않게).
+        "conditional_ceiling": conditional_ceiling,
         "far_basis": far_basis,
         "far_basis_detail": far_basis_detail,
         "ordinance_confirmed": ordinance_confirmed,
