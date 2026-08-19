@@ -11,6 +11,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle } from "lucide-react";
 
 import { SatongMultiMap, type SatongMarketLayerState } from "@/components/map/SatongMultiMap";
+import { SATONG_POPUP_YIELD } from "@/lib/satong-map-z";
 import { KakaoRoadview } from "@/components/map/KakaoRoadview";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 import { MARKET_RENT_TYPES, MARKET_TRADE_TYPES, resolveMapCenter } from "@/lib/satong-map-layers";
@@ -249,6 +250,13 @@ export function NearbyTransactionsMap({
     setFallbackCenter(null);
     setFallbackFailed(false);
     setShowRoadview(false);
+    // ★분양 결과도 반드시 비운다 — 안 비우면 **직전 주소의 분양 단지가 새 주소 화면에 남는다**.
+    //   위 조회 가드가 `presale === null` 일 때만 재조회하므로, 한 번 채워지면 주소가 바뀌어도
+    //   다시는 조회되지 않았다(런타임 실측: A→B 전환 시 /presale/nearby 호출 1회, 마커·배지 모두
+    //   A 의 것). 이 컴포넌트는 `key` 없이 마운트가 유지되는 소비처가 있어 실제로 재현된다
+    //   (MarketInsightsWorkspaceClient · SiteAnalysisDetail).
+    setPresale(null);
+    setPresaleLoading(false);
   }, [address, pnu]);
   useEffect(() => {
     // payload 가 왔는데 center 가 유효하면 폴백 불필요.
@@ -458,8 +466,24 @@ export function NearbyTransactionsMap({
           focusTarget={focusTarget}
         />
 
+        {/* ★양보 계약 — **시각만 양보**한다(흐려지되 계속 막는다).
+            겹침은 실재한다: `fetchData` 는 `setLoading(true)` 만 하고 payload 를 비우지 않아
+            **이전 마커와 열린 팝업이 그대로 살아 있고**, 재조회 타임아웃이 90초라 그동안
+            이 스크림이 팝업을 덮는다(반경 칩 500m/1km/3km · '분양 겹쳐보기' 토글로 재현).
+            그건 #676 이 고치려던 바로 그 증상이다.
+            ★종전엔 면제였다. "차단이 목적이라 감쇄하면 클릭이 되살아난다"는 이유였는데,
+              그건 계약이 opacity 와 pointer-events 를 **한 규칙에 묶어** 이분법만 준 탓이다.
+              `passive-visual` 을 만들어 끊었다 — 흐려져서 팝업이 읽히고, 클릭은 계속 막힌다.
+            ★대가(정직) — 두 가지다. ①스크림 안의 "수집 중…" 문구도 함께 흐려진다.
+              ②`pointer-events` 는 그대로 두므로 **팝업을 읽을 수는 있어도 만질 수는 없다** —
+              팝업의 닫기 버튼·링크도 재조회가 끝날 때까지(최대 90초) 눌리지 않는다.
+              종전(불투명 스크림이 팝업을 완전히 가림)보다 나아진 것이지 겹침이 사라진 것은
+              아니다. 둘 다 팝업이 열려 있는 동안만이고, 조회가 끝나면 스크림 자체가 사라진다. */}
         {(loading || presaleLoading) && (
-          <div className="absolute inset-0 z-[400] flex items-center justify-center rounded-xl bg-black/40 backdrop-blur-sm">
+          <div
+            {...{ [SATONG_POPUP_YIELD.passiveAttr]: SATONG_POPUP_YIELD.passiveVisualValue }}
+            className="absolute inset-0 z-[400] flex items-center justify-center rounded-xl bg-black/40 backdrop-blur-sm"
+          >
             <div className="flex items-center gap-2 text-sm font-bold text-white">
               <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
               {presaleLoading ? "분양 단지 수집·지오코딩 중…" : "주변 실거래 수집·지오코딩 중…"}
@@ -467,8 +491,17 @@ export function NearbyTransactionsMap({
           </div>
         )}
 
+        {/* ★양보 계약 — **면제**(SATONG_POPUP_YIELD.exemptReasons: blocking-error).
+            ① 안에 '다시 시도' 버튼이 있어 pointer-events:none 을 걸면 복구 수단이 죽는다.
+            ② 오류 경로는 위 `catch` 에서 `setPayload(null)` 이라 마커가 지워지고 팝업도 닫힌다
+               — 애초에 팝업과 공존하지 않는다(코드 판독. 라이브 재확인은 안 했다).
+            시각만 양보(`passive-visual`)로 낮추지 않는 이유는 ①이다(흐린 오류 패널의 버튼을
+            누르게 만드는 것보다, 팝업과 공존하지 않는다는 ②에 기대는 편이 낫다). */}
         {error && !loading && (
-          <div className="absolute inset-0 z-[400] flex flex-col items-center justify-center gap-2 rounded-xl bg-[var(--surface-muted)]">
+          <div
+            {...{ [SATONG_POPUP_YIELD.exemptAttr]: "blocking-error" }}
+            className="absolute inset-0 z-[400] flex flex-col items-center justify-center gap-2 rounded-xl bg-[var(--surface-muted)]"
+          >
             <p className="text-sm text-[var(--text-secondary)]">지도 표시 실패: {error}</p>
             <button
               type="button"
@@ -480,27 +513,49 @@ export function NearbyTransactionsMap({
           </div>
         )}
 
+        {/* ★양보 계약 — 사용자가 연 것이 아닌 **상시 고지 리본**이라 팝업을 읽는 동안 물러난다.
+            ★정직: 지금 이 배너와 팝업이 함께 뜨는 경로는 **찾지 못했다**. 조건 `!focusTarget`
+              은 실거래 마커 렌더의 조기반환 조건과 같고(center 미확보), 분양 조회도 center 가
+              없으면 시작 자체를 안 한다. 그래도 양보 표시를 둔다 — 조건 하나만 바뀌어도
+              되살아나는 자리이고, 물러나서 잃는 것이 없기 때문이다(비용 0의 예방).
+            (종전 주석은 "직전 주소에서 남은 분양 마커" 경로를 근거로 댔는데, 그건 이 커밋이
+             고친 **버그**였다. 버그를 근거로 삼은 주석은 버그가 사라지면 거짓이 된다.) */}
         {payload && !loading && !focusTarget && fallbackFailed && (
-          <div className="absolute top-3 left-1/2 z-[400] flex max-w-[92%] -translate-x-1/2 items-center gap-2 rounded-xl border border-[var(--status-warning)]/40 bg-[color-mix(in_srgb,var(--status-warning)_15%,transparent)] px-4 py-2 text-center text-xs font-bold text-[var(--status-warning)] backdrop-blur">
+          <div
+            {...{ [SATONG_POPUP_YIELD.passiveAttr]: SATONG_POPUP_YIELD.passiveValue }}
+            className="absolute top-3 left-1/2 z-[400] flex max-w-[92%] -translate-x-1/2 items-center gap-2 rounded-xl border border-[var(--status-warning)]/40 bg-[color-mix(in_srgb,var(--status-warning)_15%,transparent)] px-4 py-2 text-center text-xs font-bold text-[var(--status-warning)] backdrop-blur">
             <AlertTriangle className="size-4 shrink-0" aria-hidden />
             위치 확인 불가 — 선택 위치의 좌표를 확인하지 못해 지도가 기본 위치로 표시 중입니다. 아래 실거래 목록·건수는 정상 조회 결과입니다.
           </div>
         )}
 
+        {/* ★양보 계약 — 상시 고지 리본. 하단 중앙이라 아래쪽 마커의 팝업과 정면으로 겹친다.
+            (실거래 마커는 fetch_failed 면 안 그려지지만 분양 마커는 독립 이펙트라 뜬다.) */}
         {payload && !loading && payload.fetch_failed && (
-          <div className="absolute bottom-3 left-1/2 z-[400] flex max-w-[92%] -translate-x-1/2 items-center gap-2 rounded-xl border border-[var(--status-warning)]/40 bg-[color-mix(in_srgb,var(--status-warning)_15%,transparent)] px-4 py-2 text-center text-xs font-bold text-[var(--status-warning)] backdrop-blur">
+          <div
+            {...{ [SATONG_POPUP_YIELD.passiveAttr]: SATONG_POPUP_YIELD.passiveValue }}
+            className="absolute bottom-3 left-1/2 z-[400] flex max-w-[92%] -translate-x-1/2 items-center gap-2 rounded-xl border border-[var(--status-warning)]/40 bg-[color-mix(in_srgb,var(--status-warning)_15%,transparent)] px-4 py-2 text-center text-xs font-bold text-[var(--status-warning)] backdrop-blur">
             <AlertTriangle className="size-4 shrink-0" aria-hidden /> {payload.note || "국토부 실거래 공공데이터가 일시적으로 응답하지 않습니다. 거래가 없는 것이 아니라 조회 실패입니다."}
           </div>
         )}
 
         {payload && !loading && !payload.fetch_failed && activeCategory && activeCategory.groups?.length === 0 && (
-          <div className="absolute bottom-3 left-1/2 z-[400] -translate-x-1/2 rounded-full bg-black/60 px-4 py-1.5 text-xs font-bold text-white">
+          <div
+            /* ★양보 계약 — 상시 고지 pill. 선택 유형에 거래가 없어도 중심 마커·분양 마커의
+               팝업은 열리므로 하단 중앙에서 겹칠 수 있다. */
+            {...{ [SATONG_POPUP_YIELD.passiveAttr]: SATONG_POPUP_YIELD.passiveValue }}
+            className="absolute bottom-3 left-1/2 z-[400] -translate-x-1/2 rounded-full bg-black/60 px-4 py-1.5 text-xs font-bold text-white"
+          >
             해당 유형 최근 거래 없음
           </div>
         )}
 
         {showPresale && !presaleLoading && presale && presale.length === 0 && (
-          <div className="absolute bottom-12 left-1/2 z-[400] -translate-x-1/2 rounded-full bg-[#f59e0b]/80 px-4 py-1.5 text-xs font-bold text-white">
+          <div
+            /* ★양보 계약 — 상시 고지 pill. 실거래 마커 팝업과 하단에서 겹칠 수 있다. */
+            {...{ [SATONG_POPUP_YIELD.passiveAttr]: SATONG_POPUP_YIELD.passiveValue }}
+            className="absolute bottom-12 left-1/2 z-[400] -translate-x-1/2 rounded-full bg-[#f59e0b]/80 px-4 py-1.5 text-xs font-bold text-white"
+          >
             반경 내 분양 단지 없음 또는 청약홈 연동 필요
           </div>
         )}

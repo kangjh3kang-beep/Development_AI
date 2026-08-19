@@ -54,6 +54,12 @@ type Scenario = {
 type SimResult = {
   site: {
     multi?: boolean; parcel_count?: number; primary_zone?: string;
+    // ★총면적의 '분모' — 몇 필지 중 몇 필지가 실측인지. 미해석 필지는 0㎡로 합산되므로
+    //   이 값 없이 total_area_sqm 만 보면 "원래 작은 부지"로 오독된다(2026-08-19 실측 결함).
+    resolved_parcel_count?: number;
+    unresolved_parcels?: { address?: string; reason?: string }[];
+    area_is_partial?: boolean;
+    primary_zone_is_inferred?: boolean;
     total_area_sqm?: number | null; near_station?: boolean; near_station_m?: number | null;
     integration_feasible?: boolean;
     adjacency?: { contiguous: boolean | null; components: number | null; note: string };
@@ -102,15 +108,25 @@ const APP_STYLE: Record<string, string> = {
 export function DevelopmentScenarioCard({
   address,
   parcels,
+  parcelRows,
   className = "",
   autoRunToken,
 }: {
   address?: string;
   parcels?: string[];
+  /** ★필지 상세(면적·용도지역 보유). 주면 백엔드가 면적을 재파생하지 않는다 —
+   *  주소 해석 실패로 면적이 0㎡가 되던 결함의 근원 봉합(`ParcelsIn` 공용 계약). */
+  parcelRows?: { address: string; area_sqm?: number | null; zone_type?: string | null }[];
   className?: string;
   autoRunToken?: number;
 }) {
   const list = useMemo(() => (parcels || []).map((s) => s.trim()).filter(Boolean), [parcels]);
+  // 상세가 있으면 그것을, 없으면 주소 배열을 보낸다(백엔드 `ParcelsIn` 이 양 shape 를 받는다).
+  const payloadParcels = useMemo(() => {
+    const rows = (parcelRows || []).filter((r) => r?.address?.trim());
+    if (rows.length > 1) return rows;
+    return list.length > 1 ? list : undefined;
+  }, [parcelRows, list]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<SimResult | null>(null);
@@ -138,7 +154,7 @@ export function DevelopmentScenarioCard({
     setLoading(true); setError(""); setResult(null);
     try {
       const r = await apiClient.post<SimResult>("/development-methods/scenarios", {
-        body: { address: target, parcels: list.length > 1 ? list : undefined, use_llm: useLlm },
+        body: { address: target, parcels: payloadParcels, use_llm: useLlm },
         useMock: false, timeoutMs: 150000,
       });
       setResult(r);
@@ -148,7 +164,7 @@ export function DevelopmentScenarioCard({
     } finally {
       setLoading(false);
     }
-  }, [address, list, cacheKey, useLlm]);
+  }, [address, list, payloadParcels, cacheKey, useLlm]);
 
   // ★파이프라인 편입(W2-d): 종합분석 시작 시 부모가 토큰을 올리면 시나리오 분석을 자동 실행한다.
   //   버튼은 그대로 남긴다(옵션 변경 후 재실행은 사용자 통제).
@@ -180,7 +196,24 @@ export function DevelopmentScenarioCard({
           {/* 부지 요약 + 인접성 */}
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <span className="rounded-lg bg-[var(--accent-soft)] px-2 py-0.5 font-bold text-[var(--accent-strong)]">{site.primary_zone || "용도미상"}</span>
+            {/* ★용도지역이 조회값이 아니라 주소에서 추론한 값이면 단정하지 않는다(무날조 표기). */}
+            {site.primary_zone_is_inferred && (
+              <span className="inline-flex items-center gap-1 rounded-lg border border-[var(--status-warning)]/30 px-2 py-0.5 font-bold text-[var(--status-warning)]">
+                <HelpCircle className="size-3.5" aria-hidden />용도지역 추론값(미조회)
+              </span>
+            )}
             {site.total_area_sqm != null && <span className="text-[var(--text-secondary)]">{site.total_area_sqm.toLocaleString()}㎡</span>}
+            {/* ★총면적의 분모 — 미해석 필지는 0㎡로 합산되므로, 몇 필지가 빠졌는지 같이 말한다.
+                이것이 없으면 "면적이 작아 개발방식이 불가"라는 결론만 보이고 이유가 안 보인다. */}
+            {site.area_is_partial && (
+              <span
+                className="inline-flex items-center gap-1 rounded-lg border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 px-2 py-0.5 font-bold text-[var(--status-warning)]"
+                title={(site.unresolved_parcels || []).map((u) => `${u.address ?? ""} — ${u.reason ?? ""}`).join("\n")}
+              >
+                <AlertTriangle className="size-3.5" aria-hidden />
+                면적 부분집계 — {site.parcel_count ?? 0}필지 중 {site.resolved_parcel_count ?? 0}필지만 조회됨
+              </span>
+            )}
             {site.near_station != null && <span className="text-[var(--text-secondary)]">역세권 {site.near_station ? "○" : "✕"}{site.near_station_m != null ? ` (${site.near_station_m}m)` : ""}</span>}
             {site.multi && adj && (
               <span className={`inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 font-bold ${adj.contiguous === true ? "border-[var(--status-success)]/30 text-[var(--status-success)]" : adj.contiguous === false ? "border-[var(--status-error)]/30 text-[var(--status-error)]" : "border-[var(--status-warning)]/30 text-[var(--status-warning)]"}`}>

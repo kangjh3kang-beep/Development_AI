@@ -14,6 +14,7 @@ from app.core.database import get_db
 from app.services.land_intelligence.parcel_normalize import ParcelsIn
 from apps.api.app.services.land_intelligence.land_info_service import LandInfoService
 from apps.api.app.services.zoning.auto_zoning_service import AutoZoningService
+from apps.api.app.utils.pnu import jibun_from_pnu, parcel_display_address
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -894,7 +895,16 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
             "_coords": coords if (coords and coords.get("lat") and coords.get("lon")) else None,
             "_area_sqm": area_sqm,
             "pnu": pnu,
-            "address": address,
+            # ★입력 주소를 그대로 되돌려주면 동 단위 입력이 동 단위로 나가, 소비처(토지조서·
+            #   사통맵 라벨)에서 **모든 필지가 같은 글자**가 된다(2026-08-18 사용자 신고: 77필지
+            #   전부 "경기도 오산시 내삼미동"). 지번을 붙일 정보(PNU)는 바로 위에서 해석했다.
+            "address": parcel_display_address(address, pnu),
+            # 지번 단독 필드 — 소비처가 주소 파싱 없이 쓰도록(엑셀·PDF 열).
+            "jibun": jibun_from_pnu(pnu),
+            # ★입력 주소 원본을 남긴다 — 프론트 boundary 병합(healParcelPnu)은 pnu 미확보
+            #   씨드를 **주소로** 찾는다. address 를 보강하면 그 키가 어긋나 치유가 끊긴다
+            #   (표시를 고치다 배선을 끊는 형태). 매칭은 이 원본으로, 표시는 address 로.
+            "input_address": address,
             "area_sqm": round(area_sqm, 1),
             # 면적 교차검증 결과(출처·신뢰도·메모) — 프론트가 검증배지로 표기.
             "area_source": area_source,
@@ -2111,7 +2121,10 @@ async def parcel_at_point(req: ParcelAtPointRequest):
             bcr, far = ZONE_LIMITS[key]["max_bcr"], ZONE_LIMITS[key]["max_far"]
     return {
         "found": True, "pnu": pnu,
-        "address": pp.get("address") or "", "jibun": pp.get("address") or "",
+        # ★종전: jibun 에 address 를 **그대로 복제**해 지번 칸이 동 단위 주소였다.
+        #   소비처는 "jibun 이 있으니 지번이 있다"고 읽어 보강 기회를 잃는다.
+        "address": parcel_display_address(pp.get("address"), pnu),
+        "jibun": jibun_from_pnu(pnu) or "",
         "bcode": pnu[:10], "area_sqm": area_sqm, "zone_type": zone_type, "jimok": jimok,
         "bcr_pct": bcr, "far_pct": far, "geometry": pp.get("geometry"),
         "official_price_per_sqm": official_price_per_sqm,

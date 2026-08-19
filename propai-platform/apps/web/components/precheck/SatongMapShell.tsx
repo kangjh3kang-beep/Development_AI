@@ -2261,7 +2261,9 @@ export function SatongMapShell({
   //   종전엔 지도 내부 dead-end → 검색 등록 필지가 면적 0으로 통합분석에서 침묵 탈락했다.
   //   빈 필드만 채우고(사용자·원천값 우선), 변화가 없으면 setState를 건너뛰어 재조회 루프를 끊는다.
   const handleBoundaryEnriched = useCallback(
-    (features: Array<{ pnu?: string | null; address?: string; areaSqm?: number | null;
+    (features: Array<{ pnu?: string | null; address?: string;
+      /** 입력 주소 원본 — address 는 지번이 붙어 보강되므로 씨드 매칭은 이 값으로 한다. */
+      inputAddress?: string | null; areaSqm?: number | null;
       zoneType?: string | null; jimok?: string | null; lat?: number | null; lon?: number | null;
       officialPricePerSqm?: number | null; builtYear?: number | null;
       buildingAgeYears?: number | null; ageStatus?: string | null;
@@ -2299,6 +2301,9 @@ export function SatongMapShell({
         const byKey = new Map<string, (typeof features)[number]>();
         for (const f of features) {
           if (f.pnu) byKey.set(String(f.pnu), f);
+          // ★표시 주소는 지번이 붙어 보강되므로 씨드(동 단위)와 어긋난다 — **입력 원본**으로도
+          //   건다. 둘 다 걸어야 보강 전/후 응답 모두에서 치유가 끊기지 않는다.
+          if (f.inputAddress) byKey.set(f.inputAddress.trim(), f);
           if (f.address) byKey.set(f.address.trim(), f);
         }
         const next = prev.map((p) => {
