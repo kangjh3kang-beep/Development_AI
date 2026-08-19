@@ -556,6 +556,27 @@ export const PRIMARY_ROUTE_REGISTRY: RouteRegistryItem[] = [
     prefetch: false,
     apiDependencies: ["/settings/lists"],
   },
+  // AI 학습 사례 승인(2026-08-19) — 자가학습 few-shot 은 candidate 로만 쌓이고 사람이 승인해야
+  //   active 가 된다. 그런데 그 승인 API 를 부르는 화면이 없어 학습 환류가 영원히 비어 있었다.
+  //   이 항목이 그 문이다(총괄관리자 전용). 소비 API 는 아래 apiDependencies 그대로.
+  {
+    id: "learning-approval",
+    label: "AI 학습 사례 승인",
+    sectionId: "admin",
+    order: 50,
+    path: "/settings/learning",
+    iconKey: "sre",
+    status: "live",
+    scope: "admin",
+    lifecyclePhase: "admin",
+    adminOnly: true,
+    prefetch: false,
+    apiDependencies: [
+      "/growth/learning/candidates",
+      "/growth/learning/promote",
+      "/growth/learning/dataset",
+    ],
+  },
 
   // ── 마이페이지(SaaS 계정 셀프서비스, 2026-07-17) — 코인·결제·사용내역·프로필·개인정보 ──
   //    스펙=docs/design/MYPAGE_SAAS_SPEC_2026-07-17.md. 계정 보안(/account)은 기존 검증
