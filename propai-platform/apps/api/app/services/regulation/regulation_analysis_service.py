@@ -14,11 +14,16 @@ from typing import Any
 import structlog
 
 from app.services.regulation.protection_zone_severity import severity_for, severity_rank
+from app.services.zoning.district_regime import is_detailed_urban_plan
 
 logger = structlog.get_logger(__name__)
 
 # 적용규제 영향도 분류(district name 키워드)
 _HIGH = ["토지거래", "개발제한", "군사시설", "비행안전", "문화재", "정화구역", "상수원", "수변구역"]
+# ★여기의 "성장관리"는 **의도된 부분일치**다 — 바로 옆 "과밀억제"와 함께 수도권정비계획법
+#   3권역의 영향도(중)를 매기려는 자리이고, 국토계획법 성장관리계획구역도 같은 '중'이라
+#   두 제도가 같은 값을 낸다. 규제계층 분류(:아래 is_detailed_urban_plan)와 달리 여기서는
+#   갈라도 결과가 같으므로 그대로 둔다. 갈라야 하는 자리는 district_regime 을 쓸 것.
 _MID = ["과밀억제", "지구단위", "재정비촉진", "정비구역", "고도지구", "방화지구", "경관지구",
         "최고높이", "리모델링", "역세권", "성장관리", "지구단위계획구역"]
 
@@ -451,8 +456,12 @@ class RegulationAnalysisService:
             {"name": "도시·군기본계획 / 도시·군관리계획", "ref": "-",
              "desc": "용도지역·기반시설·도시계획시설 등 상위 공간계획"},
         ]
+        # ★판별은 공용 SSOT(district_regime)로만 한다 — 부분일치 `"성장관리" in name` 은
+        #   수도권정비계획법 **성장관리권역**(제6조제1항제2호·제8조 행위제한)을 국토계획법
+        #   **성장관리계획구역**(제75조의2 완화근거)으로 오인해, 경기 성장관리권역 필지 전역에
+        #   *"지구단위계획 등 세부 도시관리계획"* 이라는 틀린 설명을 붙였다(2026-08-19 라이브 실측).
         for d in districts:
-            if any(k in d["name"] for k in ["지구단위", "재정비촉진", "정비구역", "도시개발", "성장관리"]):
+            if is_detailed_urban_plan(d["name"]):
                 plans.append({"name": d["name"], "ref": d.get("code", ""),
                               "desc": "지구단위계획 등 세부 도시관리계획(별도 지침 적용)"})
 
@@ -522,11 +531,10 @@ class RegulationAnalysisService:
         - 부착 중 예외가 나도 원본 계층은 그대로 둔다(graceful).
         """
         zone_known = bool(zone_type and str(zone_type).strip())
+        # ★같은 판별자 재사용 — 여기서 True 가 되면 국토계획법 제52조(지구단위계획) 조문이
+        #   그 계층에 부착된다. 수도권 성장관리권역에 지구단위계획 조문을 붙이던 결함을 봉합.
         has_du_plan = any(
-            isinstance(it, dict) and any(
-                k in str(it.get("name", ""))
-                for k in ("지구단위", "재정비촉진", "정비구역", "도시개발", "성장관리")
-            )
+            isinstance(it, dict) and is_detailed_urban_plan(it.get("name", ""))
             for lv in hierarchy
             if lv.get("level") == "도시·군계획 / 지구단위계획"
             for it in (lv.get("items") or [])
