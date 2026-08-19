@@ -274,6 +274,11 @@ def backend_routes() -> dict[str, tuple[str, str]]:
             # 라우터 자체 prefix 가 없으면 main.py 의 마운트 접두사를 쓴다(모듈명으로 매칭).
             pfx = pref.group(1) if pref else mounts.get(os.path.splitext(f)[0], "")
             spans = _py_comment_string_spans(src)
+            # ★무잠금·도달 불가(2026-08-20 변이 감사에서 이 3줄이 생존): 저장소의 백엔드 .py
+            #   **전부가 토큰화에 성공**하므로(실패 0건) 이 폴백은 실행되지 않는다. 그래서
+            #   변이가 안 죽는다 — 진짜 구멍이 아니라 도달 불가다. 픽스처로 만들려면 저장소에
+            #   깨진 .py 를 넣어야 해서 하지 않았다. 대신 `_py_comment_string_spans` 가
+            #   None 을 돌려주는 층은 `test_토큰화_실패시_None_을_돌려준다` 로 직접 잠갔다.
             if spans is None:
                 print(f"★{os.path.relpath(p, API_DIR)} 토큰화 실패 — 주석/독스트링 배제 없이 셌다",
                       file=sys.stderr)

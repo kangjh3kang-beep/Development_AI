@@ -23,6 +23,7 @@ _SCRIPTS = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "
 sys.path.insert(0, _SCRIPTS)
 
 from orphan_routes import (  # type: ignore[import-not-found]  # noqa: E402
+    _py_comment_string_spans,
     _strip_js_comments,
     backend_routes,
     classify,
@@ -117,6 +118,18 @@ def test_파이썬_주석과_독스트링_속_라우트는_세지_않는다():
 
     # 대조군 — 진짜 라우트는 여전히 잡혀야 한다(다 배제해서 통과하면 잠금이 아니다).
     assert "/api/v1/market/report/pdf" in routes, "실제 라우트까지 배제됐다 — 마스킹이 과하다"
+
+
+def test_토큰화_실패시_None_을_돌려준다():
+    """★변이 감사 생존 보강 — 폴백 **판단층**을 직접 잠근다.
+
+    호출부의 `if spans is None:` 가지는 저장소 .py 가 전부 토큰화에 성공해(실패 0건)
+    도달 불가라 변이가 살아남는다. 최소한 "None 을 돌려준다"는 계약은 여기서 잠근다.
+    """
+    assert _py_comment_string_spans("def f(:\n    pass\n") is None, "깨진 소스인데 None 이 아니다"
+    # 대조군 — 정상 소스는 범위를 돌려줘야 한다(항상 None 이면 마스킹이 통째로 죽는다).
+    spans = _py_comment_string_spans('# c\nx = "s"\n')
+    assert spans and len(spans) >= 2, f"정상 소스에서 주석·문자열 범위를 못 찾았다: {spans}"
 
 
 def test_블록주석이_닫히지_않고_끝나도_지운다():
