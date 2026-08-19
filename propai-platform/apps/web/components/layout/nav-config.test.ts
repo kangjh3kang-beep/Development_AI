@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { PRIMARY_ROUTE_REGISTRY } from "@/lib/navigation/route-registry";
 import {
   buildPrimaryNav,
   isHrefActive,
@@ -50,7 +51,15 @@ describe("buildPrimaryNav", () => {
     // ★사람이 센 목록(길이 4)을 쓰지 않는다 — 관리자 화면이 하나 늘 때마다 이 줄이 깨졌고,
     //   그 목록이 곧 상한이 되어 새 항목이 감시망 밖으로 밀려난다(CLAUDE.md §A.4).
     //   불변식은 "관리자 항목은 전부 프리페치하지 않는다"이므로 그것을 파생형으로 잠근다.
-    expect(adminItems.length, "관리자 항목이 0개 — 아래 단언이 공허해진다").toBeGreaterThanOrEqual(4);
+    // ★★개수도 **레지스트리에서 파생**한다(2026-08-19 적대리뷰): 손으로 적은 하한(>=4)은
+    //   실제(5)보다 낮아 항목이 하나 사라져도 통과했다. 하한이 아니라 **일치**를 본다.
+    const expectedAdmin = PRIMARY_ROUTE_REGISTRY.filter(
+      (item) => item.sectionId === "admin" && item.status !== "hidden" && !item.parentId,
+    );
+    expect(expectedAdmin.length, "관리자 항목이 0개 — 아래 단언이 공허해진다").toBeGreaterThan(0);
+    expect(adminItems.map((item) => item.id).sort()).toEqual(
+      expectedAdmin.map((item) => item.id).sort(),
+    );
     expect(adminItems.filter((item) => item.prefetch !== false)).toEqual([]);
   });
 

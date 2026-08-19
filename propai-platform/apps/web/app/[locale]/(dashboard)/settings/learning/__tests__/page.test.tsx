@@ -43,7 +43,10 @@ describe("/settings/learning 페이지", () => {
     // ★패널이 빠지면 이 호출이 사라진다 — 껍데기만 남은 화면을 잡는다.
     await waitFor(() =>
       expect(
-        getMock.mock.calls.some((c) => String(c[0]).includes("/growth/learning/candidates")),
+        // ★경로는 정확히 본다 — 부분문자열이면 `/candidatesX` 접미 오타가 통과한다(404).
+        getMock.mock.calls.some(
+          (c) => String(c[0]).split("?")[0] === "/growth/learning/candidates",
+        ),
       ).toBe(true),
     );
   });

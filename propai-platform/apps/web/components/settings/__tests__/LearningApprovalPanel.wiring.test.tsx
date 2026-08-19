@@ -86,9 +86,27 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-/** GET 호출 중 후보목록 경로만 추린다. */
+/** 호출 URL 에서 쿼리스트링을 뗀 **경로 세그먼트**만 남긴다. */
+function pathOf(call: unknown[]): string {
+  return String(call[0]).split("?")[0];
+}
+
+/**
+ * GET 호출 중 후보목록 경로만 추린다.
+ *
+ * ★`includes` 가 아니라 **정확 일치**다(2026-08-19 적대리뷰 M1b). 부분문자열로 보면
+ *   `/candidates` → `/candidatesX` 같은 **접미 오타**가 그대로 통과한다(리뷰어 실측:
+ *   34/34 SURVIVED). 프로덕션에서는 404 다. 정확 일치로 두면 접미 오타 시 이 목록이
+ *   비고, 이 함수를 쓰는 모든 케이스가 한꺼번에 빨강이 된다(파생 잠금).
+ */
 function candidateCalls() {
-  return getMock.mock.calls.filter((c) => String(c[0]).includes("/growth/learning/candidates"));
+  return getMock.mock.calls.filter((c) => pathOf(c) === "/growth/learning/candidates");
+}
+
+/** 호출 URL 의 쿼리 파라미터를 **파싱해서** 본다(부분문자열 대조 금지 — 값이 접두인 다른
+ *  파라미터에 걸리거나 접미 오타를 놓친다). */
+function qOf(call: unknown[]): URLSearchParams {
+  return new URLSearchParams(String(call[0] ?? "").split("?")[1]);
 }
 
 describe("AI 학습 사례 승인 화면 배선", () => {
@@ -96,8 +114,9 @@ describe("AI 학습 사례 승인 화면 배선", () => {
     render(<LearningApprovalPanel />);
     await waitFor(() => expect(candidateCalls().length).toBeGreaterThan(0));
     const url = String(candidateCalls()[0][0]);
-    expect(url).toContain("/growth/learning/candidates");
-    expect(url).toContain("status=candidate");
+    // 경로는 **정확히** — 접미 오타(/candidatesX)는 프로덕션 404 다.
+    expect(url.split("?")[0]).toBe("/growth/learning/candidates");
+    expect(new URLSearchParams(url.split("?")[1]).get("status")).toBe("candidate");
   });
 
   it("승인 버튼이 그 항목의 id 로 promote 를 부른다(한 번에 한 건)", async () => {
@@ -115,7 +134,12 @@ describe("AI 학습 사례 승인 화면 배선", () => {
 
     await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
     expect(postMock.mock.calls[0][0]).toBe("/growth/learning/promote");
-    expect(postMock.mock.calls[0][1].body).toEqual({ example_id: "ex-cand-1", status: "active" });
+    expect(postMock.mock.calls[0][1].body).toEqual({
+      example_id: "ex-cand-1",
+      status: "active",
+      // 권리가 확인된 행이므로 인수 없이 승인된다(대조군은 아래 권리 게이트 케이스).
+      acknowledge_unverified_rights: false,
+    });
 
     // ★한 번 눌러 한 건만 처리한다 — 목록 전체가 함께 승인되면 사람 승인이 아니다.
     expect(postMock).toHaveBeenCalledTimes(1);
@@ -130,7 +154,11 @@ describe("AI 학습 사례 승인 화면 배선", () => {
     await user.click(within(rows[1]).getByRole("button", { name: "거부" }));
 
     await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
-    expect(postMock.mock.calls[0][1].body).toEqual({ example_id: "ex-cand-2", status: "rejected" });
+    expect(postMock.mock.calls[0][1].body).toEqual({
+      example_id: "ex-cand-2",
+      status: "rejected",
+      acknowledge_unverified_rights: false, // 거부는 권리와 무관하다
+    });
   });
 
   it("일괄/전체 승인 경로가 없다 — 승인·거부 버튼은 항목 수만큼만 존재한다", async () => {
@@ -155,6 +183,105 @@ describe("AI 학습 사례 승인 화면 배선", () => {
     expect(within(rows[1]).getByText(/학습 사용 권리가 확인되지 않은 자료/)).toBeTruthy();
     // 권리 확인된 행에는 경고가 없다(위양성 가드 — 대조군).
     expect(within(rows[0]).queryByText(/학습 사용 권리가 확인되지 않은 자료/)).toBeNull();
+  });
+
+  /* ---------------------------------------------------------------- */
+  /*  학습권리 게이트 (2026-08-19 적대리뷰 HIGH)                        */
+  /*  ★두 모집단이 **다른 UI 상태**를 낸다: 권리 확인된 행은 곧바로     */
+  /*    승인 가능, 미확인 행은 인수 체크 전까지 승인 불가.              */
+  /* ---------------------------------------------------------------- */
+
+  it("권리 미확인 행은 확인 체크 전에는 승인할 수 없다", async () => {
+    render(<LearningApprovalPanel />);
+    const rows = await screen.findAllByRole("listitem");
+    expect(rows.length).toBe(2); // 전제
+
+    // 권리 확인된 행(대조군) — 처음부터 승인 가능하고 인수 체크 자체가 없다.
+    expect(within(rows[0]).getByRole("button", { name: "승인" })).toHaveProperty(
+      "disabled",
+      false,
+    );
+    expect(within(rows[0]).queryByRole("checkbox")).toBeNull();
+
+    // 권리 미확인 행 — 승인 잠김. 거부는 안전한 방향이라 열려 있어야 한다.
+    expect(within(rows[1]).getByRole("button", { name: "승인" })).toHaveProperty(
+      "disabled",
+      true,
+    );
+    expect(within(rows[1]).getByRole("button", { name: "거부" })).toHaveProperty(
+      "disabled",
+      false,
+    );
+  });
+
+  it("확인 책임을 인수하면 승인이 열리고 그 사실을 서버로 보낸다", async () => {
+    const user = userEvent.setup();
+    postMock.mockResolvedValue({
+      example_id: "ex-cand-2",
+      status: "active",
+      rights_acknowledged: true,
+    });
+    render(<LearningApprovalPanel />);
+    const rows = await screen.findAllByRole("listitem");
+
+    await user.click(within(rows[1]).getByRole("checkbox"));
+
+    const approve = within(rows[1]).getByRole("button", { name: "승인" });
+    expect(approve).toHaveProperty("disabled", false);
+    await user.click(approve);
+
+    await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
+    expect(postMock.mock.calls[0][1].body).toEqual({
+      example_id: "ex-cand-2",
+      status: "active",
+      acknowledge_unverified_rights: true, // ★서버가 이 값 없이는 409 로 거부한다
+    });
+    // 인수 사실을 화면에도 남긴다(조용히 넘어가면 관리자가 무엇을 했는지 모른다).
+    await waitFor(() =>
+      expect(screen.getByRole("status").textContent).toMatch(/확인 책임을 인수/),
+    );
+  });
+
+  it("인수 체크를 되돌리면 승인이 다시 잠긴다", async () => {
+    const user = userEvent.setup();
+    render(<LearningApprovalPanel />);
+    const rows = await screen.findAllByRole("listitem");
+    const box = within(rows[1]).getByRole("checkbox");
+
+    await user.click(box);
+    expect(within(rows[1]).getByRole("button", { name: "승인" })).toHaveProperty(
+      "disabled",
+      false,
+    );
+    await user.click(box);
+    expect(within(rows[1]).getByRole("button", { name: "승인" })).toHaveProperty(
+      "disabled",
+      true,
+    );
+  });
+
+  it("한 행을 인수해도 다른 행은 잠긴 채로 남는다(행 단위 문턱)", async () => {
+    const user = userEvent.setup();
+    getMock.mockResolvedValue(
+      listPayload([
+        { ...CANDIDATES[1], id: "ex-a", content_hash: "h-a" },
+        { ...CANDIDATES[1], id: "ex-b", content_hash: "h-b" },
+      ]),
+    );
+    render(<LearningApprovalPanel />);
+    const rows = await screen.findAllByRole("listitem");
+    expect(rows.length).toBe(2);
+
+    await user.click(within(rows[0]).getByRole("checkbox"));
+    expect(within(rows[0]).getByRole("button", { name: "승인" })).toHaveProperty(
+      "disabled",
+      false,
+    );
+    // ★인수가 화면 전체에 번지면 그건 일괄 승인이다 — 행 단위여야 한다.
+    expect(within(rows[1]).getByRole("button", { name: "승인" })).toHaveProperty(
+      "disabled",
+      true,
+    );
   });
 
   it("어느 테넌트에 주입될지 화면에 보인다", async () => {
@@ -188,7 +315,7 @@ describe("AI 학습 사례 승인 화면 배선", () => {
 
     await waitFor(() =>
       expect(
-        getMock.mock.calls.some((c) => String(c[0]).includes("/growth/learning/dataset")),
+        getMock.mock.calls.some((c) => pathOf(c) === "/growth/learning/dataset"),
       ).toBe(true),
     );
     expect(createObjectURL).toHaveBeenCalled();
@@ -198,9 +325,9 @@ describe("AI 학습 사례 승인 화면 배선", () => {
   it("페이지 크기·시작 위치를 요청에 실어 보낸다", async () => {
     render(<LearningApprovalPanel />);
     await waitFor(() => expect(candidateCalls().length).toBeGreaterThan(0));
-    const url = String(candidateCalls()[0][0]);
-    expect(url).toContain("limit=20");
-    expect(url).toContain("offset=0");
+    const q = new URLSearchParams(String(candidateCalls()[0][0]).split("?")[1]);
+    expect(q.get("limit")).toBe("20");
+    expect(q.get("offset")).toBe("0");
   });
 
   it("다음 페이지로 이동하면 offset 을 올려 다시 부른다", async () => {
@@ -215,7 +342,7 @@ describe("AI 학습 사례 승인 화면 배선", () => {
     await user.click(next);
 
     await waitFor(() =>
-      expect(candidateCalls().some((c) => String(c[0]).includes("offset=20"))).toBe(true),
+      expect(candidateCalls().some((c) => qOf(c).get("offset") === "20")).toBe(true),
     );
   });
 
@@ -227,13 +354,13 @@ describe("AI 학습 사례 승인 화면 배선", () => {
 
     await user.click(screen.getByRole("button", { name: "다음" }));
     await waitFor(() =>
-      expect(candidateCalls().some((c) => String(c[0]).includes("offset=20"))).toBe(true),
+      expect(candidateCalls().some((c) => qOf(c).get("offset") === "20")).toBe(true),
     );
     const afterNext = candidateCalls().length;
 
     await user.click(screen.getByRole("button", { name: "이전" }));
     await waitFor(() => expect(candidateCalls().length).toBeGreaterThan(afterNext));
-    expect(String(candidateCalls().at(-1)?.[0])).toContain("offset=0");
+    expect(qOf(candidateCalls().at(-1) ?? []).get("offset")).toBe("0");
   });
 
   it("마지막 페이지에서는 다음으로 더 갈 수 없다", async () => {
@@ -260,7 +387,7 @@ describe("AI 학습 사례 승인 화면 배선", () => {
     );
     await user.click(screen.getByRole("button", { name: "사용 중" }));
     await waitFor(() =>
-      expect(candidateCalls().some((c) => String(c[0]).includes("status=active"))).toBe(true),
+      expect(candidateCalls().some((c) => qOf(c).get("status") === "active")).toBe(true),
     );
     const rows = await screen.findAllByRole("listitem");
     expect(within(rows[0]).getByText("사용 중")).toBeTruthy();
@@ -287,7 +414,7 @@ describe("AI 학습 사례 승인 화면 배선", () => {
     await user.type(input, "avm");
     expect(input.value).toBe("avm"); // 제어 입력 — 입력값이 화면에 남아야 한다
     await waitFor(() =>
-      expect(candidateCalls().some((c) => String(c[0]).includes("service=avm"))).toBe(true),
+      expect(candidateCalls().some((c) => qOf(c).get("service") === "avm")).toBe(true),
     );
   });
 
@@ -318,6 +445,17 @@ describe("AI 학습 사례 승인 화면 배선", () => {
     await waitFor(() => expect(postMock).toHaveBeenCalled());
     expect(postMock.mock.calls[0][1].useMock).toBe(false);
   });
+
+  /* ---------------------------------------------------------------- */
+  /*  부채 — 산문이 아니라 초록 안에 보이게 남긴다(CLAUDE.md C.13)      */
+  /* ---------------------------------------------------------------- */
+
+  it.todo("거부됨 탭의 목록 렌더(배지·빈 상태 문구)를 검사한다 — 현재 회귀망 밖");
+  it.todo(
+    "학습권리 레지스트리가 learning_examples 키공간으로 시딩되면 주입 지점" +
+      "(base_interpreter._load_fewshot)에도 게이트를 걸고 여기서 검사한다",
+  );
+  it.todo("다운로드 파일명·MIME 계약(learning_dataset_active.jsonl / x-ndjson)을 검사한다");
 
   it("후보가 0건이면 목업 대신 정직하게 비어 있다고 적는다", async () => {
     getMock.mockResolvedValue(listPayload([]));

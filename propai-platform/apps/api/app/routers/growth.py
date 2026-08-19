@@ -790,11 +790,19 @@ class PromoteRequest(BaseModel):
 
     example_id: str = Field(..., description="learning_examples.id")
     status: str = Field(default="active", description="active(승인) | rejected(거부)")
+    # ★학습권리가 확인되지 않은 자산을 승인하려면 이 값을 명시해야 한다(기본 거부).
+    #   "몰랐다"로 활성화되는 것을 막고, 켠 사람이 감사에 남게 한다.
+    acknowledge_unverified_rights: bool = Field(
+        default=False,
+        description="학습권리 미확인 자산임을 알고도 승인한다(출처·이용조건 확인 책임 인수)",
+    )
 
 
 class PromoteResult(BaseModel):
     example_id: str
     status: str
+    # 권리 미확인인데 사람이 책임을 인수해 통과시킨 건인지(화면이 그대로 표기).
+    rights_acknowledged: bool = False
 
 
 @router.post("/learning/promote", response_model=PromoteResult)
@@ -807,6 +815,22 @@ async def promote_learning_example(
 
     ★few-shot 활성화는 이 경로(관리자 사람)로만 — 자동 활성 절대 금지.
     candidate 상태만 전이 허용(이미 처리된 건 재전이 금지).
+
+    ★★학습권리 게이트(2026-08-19 적대리뷰 HIGH). **실측하고 적는다**:
+      · `base_interpreter._load_fewshot` 은 `status='active'` 만 보고 자산권리를 **전혀 보지
+        않는다**(그 파일의 asset_rights/train_allowed 참조 0건 — 대조군 learning_loop 20건).
+      · `build_dataset_jsonl` 의 `enforce_asset_rights` 는 `GROWTH_ENFORCE_TRAIN_RIGHTS`
+        기본 OFF 이고, 그건 **학습셋 다운로드** 경로지 **프롬프트 주입** 경로가 아니다.
+      → 즉 주입 경로에는 권리 게이트가 없다. 그래서 **여기서** 막는다.
+      불변식: status='active' 인 행은 (권리 확인됨) **또는** (사람이 미확인임을 알고
+      명시적으로 책임을 인수했고 그 사실이 감사에 남았다) 중 하나다.
+
+      ▶왜 '무조건 거부'가 아닌가(실측 근거): 학습예시의 권리를 레지스트리에 넣는 경로가
+        **오늘 0건**이다. `upsert_asset_rights_batch` 의 유일한 실사용처는
+        `design_ingest/aihub_seed_service.py` 이고 그건 **도면 파일 해시** 키공간이다.
+        learning_examples 의 content_hash 는 `analysis_ledger` 해시라 **서로 다른 키공간**이다.
+        무조건 거부하면 오늘 승인 가능한 후보가 0이 되어, 이 PR 이 여는 문이 곧 벽이 된다
+        (= 지금 고치는 결함과 같은 형태). 그래서 '기본 거부 + 명시적 인수'로 간다.
     """
     from sqlalchemy import text
 
@@ -815,6 +839,30 @@ async def promote_learning_example(
         raise HTTPException(
             status_code=400, detail="status 는 active 또는 rejected 여야 합니다."
         )
+
+    rights_acknowledged = False
+    if body.status == "active":
+        # 승인(=프롬프트 주입 허용)일 때만 검사한다. 거부는 안전한 방향이라 권리와 무관.
+        from app.services.security.asset_rights import get_asset_right, is_train_allowed
+
+        target = (await db.execute(text(
+            "SELECT content_hash, tenant_id FROM learning_examples WHERE id = :id"
+        ), {"id": body.example_id})).fetchone()
+        if target is None:
+            raise HTTPException(status_code=404, detail="학습 예시를 찾을 수 없습니다.")
+        right = await get_asset_right(db, target[0] or "", target[1])
+        if not is_train_allowed(right):
+            if not body.acknowledge_unverified_rights:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "학습 사용 권리가 확인되지 않은 자산입니다"
+                        f"(권리 {getattr(right, 'scope', None) or '미등록'}). "
+                        "출처·이용조건을 확인한 뒤 acknowledge_unverified_rights 로 "
+                        "명시적으로 승인하세요."
+                    ),
+                )
+            rights_acknowledged = True
 
     row = (await db.execute(text(
         "UPDATE learning_examples SET status = :st "
@@ -840,9 +888,13 @@ async def promote_learning_example(
         await audit_admin_action(
             actor_id=user_id, actor_role="super_admin",
             action=f"growth.learn.promote.{body.status}", target=body.example_id,
-            detail={"status": body.status},
+            # ★권리 미확인인데 사람이 밀어붙인 건은 감사에 반드시 남는다(책임 추적).
+            detail={"status": body.status, "rights_acknowledged": rights_acknowledged},
         )
     except Exception:  # noqa: BLE001
         pass
 
-    return PromoteResult(example_id=str(row[0]), status=str(row[1]))
+    return PromoteResult(
+        example_id=str(row[0]), status=str(row[1]),
+        rights_acknowledged=rights_acknowledged,
+    )

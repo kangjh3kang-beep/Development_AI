@@ -59,10 +59,12 @@ class _Result:
         return self._rows
 
     def first(self):
-        return self._one
+        # ★rows 만 준 경우에도 실제 DB 처럼 첫 행을 돌려준다(안 그러면 fetchone 경로가
+        #   항상 None 이 되어 '없는 행'으로 오인되고, 그 오인이 테스트를 거짓 빨강/초록으로 만든다).
+        return self._one if self._one is not None else (self._rows[0] if self._rows else None)
 
     def fetchone(self):
-        return self._one
+        return self.first()
 
     def scalar(self):
         return self._scalar
@@ -112,6 +114,8 @@ class _FakeDB:
             rows = [r for r in rows if r.get("service") == p["svc"]]
         if "tenant_id = :tid" in sql and p.get("tid"):
             rows = [r for r in rows if r.get("tenant_id") == p["tid"]]
+        if "WHERE id = :id" in sql and p.get("id"):
+            rows = [r for r in rows if r.get("id") == p["id"]]
         # created_at DESC 정렬(문자열 비교 — 픽스처가 정렬 가능한 값을 쓴다).
         if "ORDER BY created_at DESC" in sql:
             rows.sort(key=lambda r: str(r.get("created_at") or ""), reverse=True)
@@ -140,6 +144,20 @@ class _FakeDB:
                     out.append((key[0], key[1], r["scope"], r["train"],
                                 r["export"], r["source"], r["note"], {}))
             return _Result(rows=out)
+        if "FROM asset_rights" in sql:  # 단건 조회(get_asset_right — 승인 지점 권리 게이트)
+            self.rights_selects += 1
+            r = self.rights.get((p["k"], p["t"]))
+            if r is None:
+                return _Result(one=None)
+            return _Result(one=(r["scope"], r["train"], r["export"],
+                                r["source"], r["note"], {}))
+        if sql.strip().startswith("UPDATE learning_examples"):
+            # `WHERE id = :id AND status = 'candidate'` — candidate 만 전이(재전이 금지).
+            for r in self.examples:
+                if r.get("id") == p.get("id") and r.get("status") == "candidate":
+                    r["status"] = p["st"]
+                    return _Result(one=(r["id"], r["status"]))
+            return _Result(one=None)
         if "COUNT(*) FROM learning_examples" in sql:
             return _Result(scalar=len(self._filter(sql, p)))
         if "FROM learning_examples" in sql:
@@ -581,3 +599,138 @@ def test_엔드포인트_기본값이_승인대기_목록이다():
     assert params["tenant_id"].default.default is None
     assert params["limit"].default.default == 50
     assert params["offset"].default.default == 0
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# 8) 승인 지점 학습권리 게이트 (2026-08-19 적대리뷰 HIGH)
+# ════════════════════════════════════════════════════════════════════════════
+# 【왜 여기서 막는가 — 실측】
+#   · base_interpreter._load_fewshot 은 status='active' 만 보고 권리를 전혀 보지 않는다.
+#   · build_dataset_jsonl 의 enforce_asset_rights 는 **학습셋 다운로드** 경로이고 기본 OFF 다.
+#   → 주입 경로에 권리 게이트가 없다. 그래서 active 로 가는 **유일한 문**에서 막는다.
+# 【픽스처가 두 모집단을 가른다】
+#   hash-cand(train_ok 등록) 와 hash-cand-2(미등록) 가 **다른 HTTP 결과**를 낸다 —
+#   200 vs 409. 같은 결과를 내면 게이트 배선을 끊어도 통과한다.
+
+
+async def _call_promote(monkeypatch, db, **body_kw):
+    """총괄관리자 통과 상태로 promote 를 직접 호출한다. (결과, 감사기록) 반환."""
+    import app.core.audit as audit_mod
+    from app.routers import growth as g
+
+    async def _admin(_request, _db):
+        return "admin-1"
+
+    audits: list[dict] = []
+
+    async def _audit(**payload):
+        audits.append(payload)
+
+    monkeypatch.setattr(g, "_require_admin", _admin)
+    monkeypatch.setattr(audit_mod, "audit_admin_action", _audit)
+
+    body = g.PromoteRequest(**body_kw)
+    res = await g.promote_learning_example(body=body, request=_FakeRequest(), db=db)
+    return res, audits
+
+
+async def _seed_rights(db, *, asset_key, tenant_id, train_allowed):
+    await ar.upsert_asset_rights_batch(db, [
+        ar.AssetRight(asset_key=asset_key, tenant_id=tenant_id,
+                      scope="train_ok" if train_allowed else "internal_only",
+                      train_allowed=train_allowed, source="test"),
+    ])
+
+
+async def test_권리_확인된_후보는_그냥_승인된다(monkeypatch):
+    db = _db()
+    await _seed_rights(db, asset_key="hash-cand", tenant_id="tenant-A", train_allowed=True)
+
+    res, audits = await _call_promote(monkeypatch, db, example_id="ex-cand-1", status="active")
+
+    assert res.status == "active"
+    assert res.rights_acknowledged is False  # 인수 없이 통과 = 권리가 실제로 확인됐다
+    assert audits[0]["detail"] == {"status": "active", "rights_acknowledged": False}
+
+
+async def test_권리_미확인_후보는_승인이_거부된다(monkeypatch):
+    """★핵심 — '승인만으로 권리 없는 예시가 프롬프트에 들어가는' 경로를 닫는다."""
+    from fastapi import HTTPException
+
+    db = _db()  # hash-cand-2 는 레지스트리 미등록 = 권리 불명
+
+    with pytest.raises(HTTPException) as ei:
+        await _call_promote(monkeypatch, db, example_id="ex-cand-2", status="active")
+
+    assert ei.value.status_code == 409
+    assert "학습 사용 권리가 확인되지 않은" in str(ei.value.detail)
+    # ★상태가 바뀌지 않았다 — 거부가 실제로 쓰기를 막았는지까지 본다(문구만 보면 공허하다).
+    still = await ll.list_examples(db, statuses=("candidate",), service="permit")
+    assert [it["id"] for it in still["items"]] == ["ex-cand-2"]
+
+
+async def test_명시_거부된_권리도_승인이_거부된다(monkeypatch):
+    """미등록(불명)뿐 아니라 train_allowed=False 로 **명시 거부**된 것도 막힌다."""
+    from fastapi import HTTPException
+
+    db = _db()
+    await _seed_rights(db, asset_key="hash-cand", tenant_id="tenant-A", train_allowed=False)
+
+    with pytest.raises(HTTPException) as ei:
+        await _call_promote(monkeypatch, db, example_id="ex-cand-1", status="active")
+    assert ei.value.status_code == 409
+
+
+async def test_사람이_책임을_인수하면_승인되고_감사에_남는다(monkeypatch):
+    """문을 완전히 닫지는 않는다 — 다만 '몰랐다'로는 못 켠다(인수 사실이 감사에 남는다)."""
+    db = _db()
+
+    res, audits = await _call_promote(
+        monkeypatch, db, example_id="ex-cand-2", status="active",
+        acknowledge_unverified_rights=True,
+    )
+
+    assert res.status == "active"
+    assert res.rights_acknowledged is True
+    assert audits[0]["action"] == "growth.learn.promote.active"
+    assert audits[0]["detail"]["rights_acknowledged"] is True
+
+
+async def test_거부는_권리와_무관하게_항상_가능하다(monkeypatch):
+    """거부는 안전한 방향이다 — 권리 게이트가 '치우기'를 막으면 후보가 쌓이기만 한다."""
+    db = _db()
+    res, audits = await _call_promote(
+        monkeypatch, db, example_id="ex-cand-2", status="rejected",
+    )
+    assert res.status == "rejected"
+    assert res.rights_acknowledged is False
+    assert audits[0]["detail"]["rights_acknowledged"] is False
+
+
+async def test_인수해도_이미_처리된_건은_재전이되지_않는다(monkeypatch):
+    """권리 게이트를 통과해도 candidate 만 전이한다(기존 계약 무회귀)."""
+    from fastapi import HTTPException
+
+    db = _db()
+    with pytest.raises(HTTPException) as ei:
+        await _call_promote(monkeypatch, db, example_id="ex-active-1", status="active",
+                            acknowledge_unverified_rights=True)
+    assert ei.value.status_code == 409
+    assert "이미 처리된" in str(ei.value.detail)
+
+
+async def test_없는_예시는_404(monkeypatch):
+    from fastapi import HTTPException
+
+    db = _db()
+    with pytest.raises(HTTPException) as ei:
+        await _call_promote(monkeypatch, db, example_id="없는id", status="active")
+    assert ei.value.status_code == 404
+
+
+def test_권리_인수_기본값은_거짓이다():
+    """★기본이 True 면 게이트가 장식이 된다 — 기본값을 직접 잠근다."""
+    from app.routers.growth import PromoteRequest
+
+    assert PromoteRequest(example_id="x").acknowledge_unverified_rights is False
+    assert PromoteRequest(example_id="x").status == "active"

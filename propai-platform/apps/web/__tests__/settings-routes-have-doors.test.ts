@@ -15,14 +15,22 @@
  * **파생**하므로 앞으로 추가되는 관리자 화면이 자동으로 이 검사망에 들어온다.
  *
  * 【범위를 왜 /settings 로 좁혔나 — 정직하게】
- * 이 저장소의 관리자 콘솔이 `/settings/*` 아래에 산다(실측). 다른 영역은 라우트 그룹·
- * 동적 세그먼트 때문에 경로→파일 매핑이 1:1 이 아니라, 넓히면 **위양성으로 정상 코드를
- * 막는다**(이 저장소가 두 번 겪은 형태). 그래서 매핑이 확실한 범위만 잠근다.
+ * 이 저장소의 관리자 콘솔이 `/settings/*` 아래에 산다(실측). 다른 영역은 동적 세그먼트
+ * (`[id]`) 때문에 레지스트리 경로와 파일 경로가 1:1 이 아니라, 넓히면 **위양성으로 정상
+ * 코드를 막는다**(이 저장소가 두 번 겪은 형태). 그래서 매핑이 확실한 범위만 잠근다.
  * ★확인 못한 것: `/settings` 밖의 라우트는 여기서 검사하지 않는다.
+ *
+ * 【위양성을 구조적으로 없앤 방법 — 문자열 조립이 아니라 탐색(2026-08-19 적대리뷰)】
+ * 처음엔 `app/[locale]/(dashboard)<path>/page.tsx` 로 **경로를 조립**해 존재를 봤다.
+ * 그러면 `/settings` **안쪽**에 Next 라우트 그룹을 쓰는 순간(`settings/(gated)/x/page.tsx`
+ * — URL 은 동일) 정상 코드가 빨강이 되고, `page.js`/`page.jsx` 도 못 본다.
+ * 가드의 위양성도 결함이다(CLAUDE.md A.6). 그래서 지금은 **파일 트리를 걸어** 각
+ * `page.*` 의 **URL 경로**를 계산한다 — 라우트 그룹 `(...)`·비공개 폴더 `_x`·병렬 슬롯
+ * `@x` 를 Next 규칙대로 접고, 확장자도 전부 인정한다.
  */
 
-import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -36,20 +44,53 @@ const APP_DIR = "app/[locale]/(dashboard)";
 
 const settingsRoutes = PRIMARY_ROUTE_REGISTRY.filter((r) => r.path?.startsWith("/settings"));
 
+const PAGE_FILE = /^page\.(tsx|ts|jsx|js|mjs)$/;
+
+/**
+ * `app/[locale]/(dashboard)` 아래 모든 `page.*` 의 **URL 경로**를 모은다.
+ * Next 규칙: `(그룹)` 은 URL 에서 사라지고, `_비공개` 폴더와 `@슬롯` 은 라우트가 아니다.
+ */
+function discoverPageUrlPaths(root: string): Set<string> {
+  const found = new Set<string>();
+  const walk = (dir: string, url: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        const name = entry.name;
+        if (name.startsWith("_") || name.startsWith("@") || name === "node_modules") continue;
+        const isGroup = name.startsWith("(") && name.endsWith(")");
+        walk(join(dir, name), isGroup ? url : `${url}/${name}`);
+      } else if (PAGE_FILE.test(entry.name)) {
+        found.add(url || "/");
+      }
+    }
+  };
+  walk(root, "");
+  return found;
+}
+
+const PAGE_URLS = discoverPageUrlPaths(resolve(WEB, APP_DIR));
+
 describe("관리자 설정 라우트는 실제 페이지를 갖는다", () => {
-  it("전제 — 검사 대상이 실제로 있다(공허 진리 방지)", () => {
+  it("전제 — 검사 대상과 탐색 결과가 실제로 있다(공허 진리 방지)", () => {
     expect(settingsRoutes.length).toBeGreaterThanOrEqual(5);
+    // 탐색기가 죽으면 PAGE_URLS 가 비고 아래 단언이 전부 빨강이 된다 — 여기서 먼저 말한다.
+    expect(PAGE_URLS.size, "페이지 탐색 결과가 비었다 — 탐색기가 죽었다").toBeGreaterThan(20);
+    expect(existsSync(resolve(WEB, APP_DIR))).toBe(true);
   });
 
   it.each(settingsRoutes.map((r) => [r.id, r.path] as const))(
-    "%s(%s) — page.tsx 가 존재한다",
+    "%s(%s) — 그 URL 로 열리는 page 파일이 실재한다",
     (_id, path) => {
-      const file = resolve(WEB, `${APP_DIR}${path}/page.tsx`);
-      expect(existsSync(file), `${path} 를 레지스트리가 선언했는데 페이지 파일이 없다: ${file}`).toBe(
-        true,
-      );
+      expect(
+        PAGE_URLS.has(path as string),
+        `${path} 를 레지스트리가 선언했는데 그 URL 의 page 파일이 없다`,
+      ).toBe(true);
     },
   );
+
+  it("대조군 — 없는 경로는 탐색 결과에도 없다(검사기 생존)", () => {
+    expect(PAGE_URLS.has("/settings/__없는화면__")).toBe(false);
+  });
 });
 
 describe("AI 학습 사례 승인 — 승인 게이트의 문이 선언대로 있다", () => {
@@ -84,8 +125,20 @@ describe("AI 학습 사례 승인 — 승인 게이트의 문이 선언대로 �
     const deps = route?.apiDependencies ?? [];
     expect(deps.length, "apiDependencies 가 비었다 — 검사가 공허해진다").toBe(3);
     for (const dep of deps) {
-      expect(stripped.includes(dep), `${dep} 를 부르는 코드가 패널에 없다`).toBe(true);
+      // ★부분문자열이 아니라 **경로 끝을 앵커**한다(적대리뷰 M1b). `includes` 로 보면
+      //   `/candidates` → `/candidatesX` 접미 오타가 통과한다 — 프로덕션에서는 404 다.
+      //   경로 뒤에 올 수 있는 것은 `?`·따옴표·백틱 등 비식별자 문자뿐이다.
+      const anchored = new RegExp(
+        `${dep.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z0-9_-])`,
+      );
+      expect(anchored.test(stripped), `${dep} 를 부르는 코드가 패널에 없다`).toBe(true);
     }
+  });
+
+  it("대조군 — 접미가 붙은 경로는 앵커 검사를 통과하지 못한다(검사기 생존)", () => {
+    const anchored = new RegExp("/growth/learning/candidates(?![A-Za-z0-9_-])");
+    expect(anchored.test('apiClient.get("/growth/learning/candidates?x=1")')).toBe(true);
+    expect(anchored.test('apiClient.get("/growth/learning/candidatesX?x=1")')).toBe(false);
   });
 
   it("대조군 — 주석 스트립이 실제로 동작한다(검사기 생존 증명)", () => {

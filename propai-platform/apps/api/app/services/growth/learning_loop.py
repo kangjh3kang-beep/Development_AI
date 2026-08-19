@@ -338,13 +338,23 @@ async def list_examples(db, *, statuses: tuple[str, ...] = ("candidate",),
     학습셋 생성이 아니라 **사람이 눈으로 보고 판단하는 화면**을 위한 조회다. 그래서
     build_dataset_jsonl 과 달리 id·status·created_at·tenant_id 를 함께 준다.
 
-    ★자산권리(asset_rights)로 **거르지 않는다 — 표시하되 표시만 한다.**
+    ★자산권리(asset_rights)로 **거르지 않는다 — 표시한다.**
       근거: 이 목록은 "학습셋 생성"이 아니라 "사람 검토"다. 권리 미확인 항목을 조용히 빼면
       관리자 화면에는 "후보가 없다"로 보이고(실제로는 있는데), 그러면 사람이 판단할 기회
       자체가 사라진다 — 이 결함이 고치려는 것("사람이 승인해야 도는데 사람에게 문이 없다")과
       똑같은 형태가 된다. 대신 행마다 train_allowed/rights_scope 를 실어 보내 화면이
-      "권리 미확인"을 눈에 보이게 표시한다. 실제 학습 차단은 build_dataset_jsonl 의
-      enforce_asset_rights 게이트가 그대로 담당한다(차단 지점은 그대로, 표시만 추가).
+      "권리 미확인"을 눈에 보이게 표시한다.
+
+    ★★정정(2026-08-19 적대리뷰 HIGH) — 여기 원래 "실제 학습 차단은 build_dataset_jsonl 의
+      enforce_asset_rights 가 담당한다"고 적혀 있었다. **거짓 면역이었다.** 실측:
+        · build_dataset_jsonl 의 게이트는 **학습셋 다운로드** 경로에만 걸리고,
+          프롬프트 주입 경로(base_interpreter._load_fewshot)와는 무관하다.
+        · 그 게이트는 GROWTH_ENFORCE_TRAIN_RIGHTS 로 켜지며 **기본 OFF** 다.
+        · _load_fewshot 은 status='active' 만 보고 권리를 **전혀 보지 않는다**
+          (그 파일의 asset_rights/train_allowed 참조 0건 — 대조군 이 파일 20건).
+      → 즉 "표시만 해도 승인 뒤가 안전하다"는 전제가 틀렸다. 실제 차단은 **승인 지점**
+        (routers/growth.py promote)이 담당하도록 옮겼다: 권리 미확인 자산은 기본 거부이고,
+        사람이 acknowledge_unverified_rights 로 책임을 인수해야만 active 가 된다(감사 기록).
 
     반환: {"items": [...], "total", "statuses", "service", "tenant_id", "limit", "offset"}.
           items 원소 키: id·service·analysis_type·status·tenant_id·content_hash·
