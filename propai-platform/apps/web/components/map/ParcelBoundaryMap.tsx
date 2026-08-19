@@ -13,6 +13,7 @@ import { apiClient, ApiClientError } from "@/lib/api-client";
 import { normalizeZoning } from "@/lib/kr-building-regulations";
 import { SatongMultiMap } from "@/components/map/SatongMultiMap";
 import type { SatongMapFeature, SatongMapLayerState } from "@/lib/satong-map-layers";
+import { SATONG_POPUP_YIELD } from "@/lib/satong-map-z";
 
 type Feature = {
   pnu: string;
@@ -328,8 +329,18 @@ export function ParcelBoundaryMap({
           highlightFeatureAddress={highlight}
         />
         {/* 로딩/빈결과 오버레이 — 무한 '불러오는 중' 방지 */}
+        {/* ★양보 계약 — **시각만 양보**(`passive-visual`): 흐려지되 계속 막는다.
+            전면(inset-0) 차단형이라 클릭까지 통과시키면 조회 중인 지도가 조작 가능해진다.
+            ★겹침 가능성은 낮다고 본다: 이 화면은 onFeatureClick 을 넘기므로 지도가
+              **필지 상세 팝업**을 걸지 않는다(featureDetailOwnedByParent 상호배제).
+              ★단, `popupopen` 은 **모든 팝업**에 발화하므로 "팝업을 아예 안 건다"는 과장이다 —
+              막은 것은 필지 상세 한 종류뿐이다. 다른 종류(실거래·분양·경매)는 이 화면이
+              해당 prop 을 안 넘겨 안 그려지지만, 라이브로 재보지는 않았다. */}
         {(loading || (!loading && !error && (!data || !data.features?.length))) && (
-          <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-[var(--surface-soft)]/70 text-xs text-[var(--text-hint)]">
+          <div
+            {...{ [SATONG_POPUP_YIELD.passiveAttr]: SATONG_POPUP_YIELD.passiveVisualValue }}
+            className="absolute inset-0 flex items-center justify-center rounded-xl bg-[var(--surface-soft)]/70 text-xs text-[var(--text-hint)]"
+          >
             {loading
               ? "지적도 경계 불러오는 중…"
               : "필지 경계를 찾지 못했습니다 (지번 정확도·VWorld 지적도 미제공 가능). 주소를 확인하세요."}

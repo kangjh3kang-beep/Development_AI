@@ -10,6 +10,7 @@ import { useRouter } from "next/navigation";
 import { LockKeyhole } from "lucide-react";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 import { storeSiteToken } from "@/lib/salesApi";
+import { DISMISS_Z, useDismissible } from "@/lib/satong-dismiss";
 import type { Locale } from "@/i18n/config";
 
 export interface EnterResponse {
@@ -47,6 +48,11 @@ export default function SiteEnterModal({ locale, siteId, siteName, open, onClose
       setTimeout(() => inputRef.current?.focus(), 50);
     }
   }, [open, siteId]);
+
+  // ESC 로 닫기 — 열려 있는 동안만 등록한다(닫힌 모달이 ESC 를 가로채지 않게).
+  // ★비밀번호를 입력하던 중 ESC 를 누르면 입력은 사라진다. 이 모달은 열릴 때마다 입력을
+  //   초기화하므로(위 effect) 종전에도 보존되지 않던 값이고, 새로 잃는 것은 없다.
+  useDismissible(DISMISS_Z.appModal, open, onClose);
 
   if (!open) return null;
 

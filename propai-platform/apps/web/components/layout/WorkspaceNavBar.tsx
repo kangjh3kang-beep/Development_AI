@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { fetchAuthMeRole, fetchIsAdmin } from "@/lib/use-is-admin";
+import { DISMISS_Z, useDismissible } from "@/lib/satong-dismiss";
 import {
   type NavNode,
   type NavSection,
@@ -97,19 +98,26 @@ export function WorkspaceNavBar({ sections }: { sections: NavSection[] }) {
         setOpenSectionId(null);
       }
     };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        clearCloseTimer();
-        setOpenSectionId(null);
-      }
-    };
     document.addEventListener("mousedown", closeOnOutside);
-    document.addEventListener("keydown", closeOnEscape);
     return () => {
       document.removeEventListener("mousedown", closeOnOutside);
-      document.removeEventListener("keydown", closeOnEscape);
     };
   }, [clearCloseTimer]);
+
+  // ESC 로 플라이아웃 닫기 — **자체 `document` 리스너에서 조정기로 이관**(2026-08-18 R2).
+  //
+  // ★종전 결함(실측): 이 리스너는 (ㄱ)`document` 에 걸려 조정기(`window`)보다 **먼저** 발화하고
+  //   (ㄴ)**열림 여부를 검사하지 않았다.** 이 네비는 `DashboardChromeGate` 가 본문과 같은 셸에
+  //   두므로 대시보드 전 페이지 위에 있다 — 아래 `onFocus` 로 포커스만으로도 플라이아웃이
+  //   열리는데, 그 상태에서 모달을 열고 ESC 를 한 번 누르면 **모달과 플라이아웃이 함께**
+  //   닫혔다(재현: ESC 1회 → 모달 닫힘 1 · 플라이아웃 닫힘 1).
+  //   조정기가 부르는 `preventDefault` 는 **나중에** 실행되므로 이걸 막지 못한다.
+  // ★칸은 모달보다 아래(`navSheet`)다 — 모달이 열려 있으면 모달이 먼저 닫히고, 그다음 ESC 가
+  //   이 플라이아웃을 닫는다.
+  useDismissible(DISMISS_Z.navSheet, openSectionId != null, () => {
+    clearCloseTimer();
+    setOpenSectionId(null);
+  });
 
   const activeSections = useMemo(
     () => new Set(activeSectionIds(sections, pathname)),
