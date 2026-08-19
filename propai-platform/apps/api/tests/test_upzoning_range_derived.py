@@ -94,7 +94,9 @@ def test_후보_상세가_전부_실린다(zone: str):
         assert sc.get("target_zone_max") == UPZONE_TARGETS[zone][-1]
         # ★후보별 출처가 없으면 화면이 "법정범위인가 조례인가"를 말할 수 없다 —
         #   숫자만 있고 출처가 없는 표시는 이 저장소가 금지하는 형태다.
-        for c, tz in zip(cands, UPZONE_TARGETS[zone]):
+        # ★`strict=True` — 후보 수와 타깃 수가 어긋나면 **조용히 짧은 쪽에서 잘리지 않고** 죽는다.
+        #   잘리면 검사하지 못한 후보가 생겨 "전수 확인"이 거짓이 된다(CI ruff B905).
+        for c, tz in zip(cands, UPZONE_TARGETS[zone], strict=True):
             assert c.get("expected_far_source") == _target_far_pct(tz, None, None)[2], (
                 f"{zone}/{tz}: 후보 용적률 출처가 비거나 어긋난다"
             )
