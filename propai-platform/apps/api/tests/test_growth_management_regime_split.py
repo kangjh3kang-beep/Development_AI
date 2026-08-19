@@ -156,3 +156,49 @@ def test_two_regimes_never_share_a_law_key():
     )
     assert a and b, "한쪽이 비면 교집합 0이 공허하게 참이 된다"
     assert not (a & b)
+
+
+# ── 변이감사(2026-08-19)가 드러낸 무잠금 3건을 닫는다 ──────────────────────────
+#   생존 변이: 자연보전권역 법령행 · 성장관리 별칭 문자열 · `_norm` 의 dict 분기.
+#   "생존이 곧 결함은 아니다"지만 이 셋은 **설명할 수 없는 생존**이었다(진짜 구멍).
+
+
+@pytest.mark.parametrize(
+    ("name", "expect_key", "expect_article"),
+    [
+        ("과밀억제권역", "metro_overconcentration", "제7조"),
+        ("성장관리권역", "metro_growth_management", "제8조"),
+        ("자연보전권역", "metro_nature_conservation", "제9조"),
+    ],
+)
+def test_each_metro_regime_maps_to_its_own_article(name, expect_key, expect_article):
+    """수도권 3권역이 **각자 다른 조문**을 문다 — 한 조문으로 뭉개지면 근거가 틀린다."""
+    res = legal_refs_for_districts([name])
+    assert res["by_district"].get(name) == [expect_key]
+    ref = next(r for r in res["refs"] if r.get("key") == expect_key)
+    assert ref["law_name"] == "수도권정비계획법"
+    assert ref["article"] == expect_article
+
+
+@pytest.mark.parametrize("alias", ["성장관리계획구역", "성장관리계획", "성장관리방안"])
+def test_growth_management_aliases_all_map(alias):
+    """구 명칭 `성장관리방안`(2021 개정 전)도 국계법 제75조의2로 붙어야 한다.
+
+    조례 본문은 아직 구 명칭을 쓴다(오산시 제50조 실측) — 별칭이 끊기면 그 조문을 못 찾는다.
+    """
+    assert is_growth_management_plan(alias) is True
+    assert legal_refs_for_districts([alias])["by_district"].get(alias) == [
+        "growth_management_zone"
+    ]
+
+
+@pytest.mark.parametrize("key", ["district_name", "name"])
+def test_discriminators_accept_dict_designations(key):
+    """VWorld designation 은 dict 로도 흐른다 — dict 분기가 죽으면 판별이 통째로 무력화된다.
+
+    (dict 를 못 읽으면 `str(dict)` 가 되어 `성장관리권역` 이 통짜 문자열 안에 남고,
+     `is_metro_regime` 이 참이 되어 **모든** designation 이 권역으로 오판될 수 있다.)
+    """
+    assert is_metro_regime({key: "성장관리권역"}) is True
+    assert is_detailed_urban_plan({key: "성장관리권역"}) is False
+    assert is_detailed_urban_plan({key: "지구단위계획구역"}) is True
