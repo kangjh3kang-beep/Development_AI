@@ -299,6 +299,21 @@ class DevelopmentScenarioSimulator:
             if not p.get("pnu") or p.get("area") is None
         ]
         resolved = [p for p in enriched if p.get("pnu") and p.get("area") is not None]
+
+        # ── 계획 상한·허용용도 미확보 집계(다필지) ─────────────────────────────────
+        # 한 필지라도 계획구역이면 부지 전체의 제안이 미검증이다(분할 개발이 아니면
+        # 그 필지를 빼고 사업이 성립하지 않는다) — 보수측으로 부지 단위 고지한다.
+        _plan_rows = [p.get("plan_limit_unknown") for p in enriched if p.get("plan_limit_unknown")]
+        plan_unknown_agg = None
+        if _plan_rows:
+            _districts = list(dict.fromkeys(
+                d for row in _plan_rows for d in (row.get("districts") or [])
+            ))
+            plan_unknown_agg = {
+                **_plan_rows[0],
+                "districts": _districts,
+                "parcel_count": len(_plan_rows),
+            }
         total_area = sum(p.get("area") or 0 for p in enriched)
         # ★용적률 출처: 실효(현행·조례 반영)를 시나리오 기준으로 사용(결함A 교정).
         #   법정상한은 라벨 구분용으로 별도 보관.
@@ -429,6 +444,7 @@ class DevelopmentScenarioSimulator:
                     "resolved_parcel_count": len(resolved),
                     "unresolved_parcels": unresolved,
                     "area_is_partial": bool(unresolved),
+                    "plan_limit_unknown": plan_unknown_agg,   # 형제 미러
                     "primary_zone": primary_zone, "zones": zones,
                     "primary_zone_is_inferred": bool(primary_zone) and not zones_measured,
                     "special_parcel_gate": special_gate,
@@ -480,6 +496,10 @@ class DevelopmentScenarioSimulator:
             "resolved_parcel_count": len(resolved),
             "unresolved_parcels": unresolved,
             "area_is_partial": bool(unresolved),
+            # ★계획이 한도·**허용용도**를 정하는 구역인데 그 내용을 못 구했다면, 아래 개발방식·
+            #   세대수 제안은 전부 미검증이다. 수치 경고만 달고 용도 추천을 그대로 내보내면
+            #   더 비싼 오답(불허 용도 추천)이 조용히 나간다.
+            "plan_limit_unknown": plan_unknown_agg,
             "primary_zone": primary_zone, "zones": zones,
             # 대표 용도지역이 조회값인지 추론값인지 — 추론값이면 화면이 단정하면 안 된다.
             "primary_zone_is_inferred": bool(primary_zone) and not zones_measured,
@@ -664,6 +684,7 @@ class DevelopmentScenarioSimulator:
                 #   법정상한만 쓰던 결함A 교정. 조회 실패/미산정 시 법정상한으로 폴백(회귀0).
                 zone_type = r.get("zone_type") or ""
                 far = far_legal
+                plan_unknown = None
                 if zone_type:
                     # ★조례 실효 반영 — local_ordinance가 비면 calc_effective_far가 법정값을 반환하므로,
                     #   OrdinanceService로 조례 한도를 조회해 주입(permits/parcels-info와 동일 — 서울 제1종 150 등 실효).
@@ -684,6 +705,10 @@ class DevelopmentScenarioSimulator:
                         eff_far = eff.get("effective_far_pct")
                         if eff_far is not None and eff_far > 0:
                             far = float(eff_far)
+                        # ★계획 상한·허용용도 미확보 신호를 필지에 싣는다 — 종전엔 이 함수의
+                        #   산출에서 `effective_far_pct` **한 값만** 읽어, 계획구역 필지인데도
+                        #   개발방식·용도 추천이 아무 경고 없이 나갔다(소비처 기아).
+                        plan_unknown = eff.get("plan_limit_unknown")
                     except Exception:  # noqa: BLE001
                         pass
                 pnu = r.get("pnu")
@@ -733,7 +758,9 @@ class DevelopmentScenarioSimulator:
                         # 접도 미확보 → None(맹지 오탐 방지). orchestrator._enrich_context와 동일 정책.
                         "road_contact": None, "road_width_m": None,
                         # 게이트는 zone_type 키로 읽으므로 동봉(zone과 동일값).
-                        "zone_type": r.get("zone_type") or ""}
+                        "zone_type": r.get("zone_type") or "",
+                        # 계획(지구단위·성장관리 등)이 한도·용도를 정하는데 그 내용을 못 구한 경우.
+                        "plan_limit_unknown": plan_unknown}
             except Exception:  # noqa: BLE001
                 return {"address": a, "zone": None, "zone_source": None,
                         "area": None, "max_far": None,
