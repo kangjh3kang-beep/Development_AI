@@ -261,13 +261,40 @@ class DevelopmentScenarioSimulator:
 
         # 부지 정보 수집(단일/다필지)
         enriched, subway_m = await self._collect(addrs, site)
+
+        # ── 미해석 필지 정직화 ────────────────────────────────────────────────
+        # ★실측(2026-08-19): 주소가 해석되지 않으면 `analyze_by_address` 가
+        #   `pnu=None · land_area_sqm=None · zone_source='keyword_inference'` 를 낸다.
+        #   종전 `sum(p.get("area") or 0)` 은 그 필지를 **조용히 0㎡** 로 더해, 다필지 부지의
+        #   총면적이 실제보다 작게 나오고 면적 게이트가 개발방식을 대량 '불가' 로 막았다.
+        #   합계 자체는 바뀌지 않는다(미해석은 지금도 0을 더한다) — **몇 개가 빠졌는지를
+        #   드러내는 것**이 이 블록의 전부다. 조용한 축소가 조용한 오답을 만든다.
+        unresolved = [
+            {"address": p.get("address"), "reason": (
+                "용도지역 추론값(주소 미해석 — 조회 실패)"
+                if p.get("zone_source") == "keyword_inference" else "필지 조회 실패"
+            )}
+            for p in enriched
+            if not p.get("pnu") or p.get("area") is None
+        ]
+        resolved = [p for p in enriched if p.get("pnu") and p.get("area") is not None]
         total_area = sum(p.get("area") or 0 for p in enriched)
         # ★용적률 출처: 실효(현행·조례 반영)를 시나리오 기준으로 사용(결함A 교정).
         #   법정상한은 라벨 구분용으로 별도 보관.
         far_effective = self._blended_far(enriched, "max_far")
         far_legal = self._blended_far(enriched, "max_far_legal")
+        # ★실측 용도지역을 추론값보다 앞세운다 — 종전 `zones[0]` 은 **첫 필지**를 쓰므로,
+        #   1번 필지 주소만 해석에 실패해도 **지어낸 용도지역이 부지 전체의 기준**이 됐다.
+        #   (면적가중 우세용도까지 가는 것은 별건 — 여기서는 '날조가 실측을 이기는' 역전만 막는다.)
+        zones_measured = [
+            p.get("zone") for p in enriched
+            if p.get("zone") and p.get("zone_source") != "keyword_inference"
+        ]
         zones = [p.get("zone") for p in enriched if p.get("zone")]
-        primary_zone = zones[0] if zones else (site.get("zone_type") or "")
+        primary_zone = (
+            zones_measured[0] if zones_measured
+            else (zones[0] if zones else (site.get("zone_type") or ""))
+        )
         near_station = (subway_m is not None and subway_m <= 500) or any(
             "역세권" in (p.get("zone") or "") for p in enriched
         )
@@ -376,7 +403,13 @@ class DevelopmentScenarioSimulator:
                     "address": address, "region": self._region(address),
                     "multi": multi, "parcel_count": len(addrs),
                     "total_area_sqm": round(total_area, 1) if total_area else None,
+                    # ★형제 미러 — 아래 정상경로 ctx 와 **같은 정직 키**를 낸다. 차단 경로에서
+                    #   빠지면 정작 "왜 막혔나"를 설명해야 할 화면에서 신호가 사라진다.
+                    "resolved_parcel_count": len(resolved),
+                    "unresolved_parcels": unresolved,
+                    "area_is_partial": bool(unresolved),
                     "primary_zone": primary_zone, "zones": zones,
+                    "primary_zone_is_inferred": bool(primary_zone) and not zones_measured,
                     "special_parcel_gate": special_gate,
                     "dev_act_permit_gate": dev_act_gate,
                 },
@@ -420,7 +453,15 @@ class DevelopmentScenarioSimulator:
             "address": address, "region": self._region(address),
             "multi": multi, "parcel_count": len(addrs),
             "total_area_sqm": round(total_area, 1) if total_area else None,
+            # ★총면적의 **분모**를 함께 낸다 — `total_area_sqm` 만 보면 미해석 필지가 0으로
+            #   섞여 있어도 "이 부지는 원래 작다"로 읽힌다(면적 게이트가 개발방식을 막은 이유를
+            #   화면이 설명할 수 없었다). 몇 개 중 몇 개가 실측인지를 같이 낸다.
+            "resolved_parcel_count": len(resolved),
+            "unresolved_parcels": unresolved,
+            "area_is_partial": bool(unresolved),
             "primary_zone": primary_zone, "zones": zones,
+            # 대표 용도지역이 조회값인지 추론값인지 — 추론값이면 화면이 단정하면 안 된다.
+            "primary_zone_is_inferred": bool(primary_zone) and not zones_measured,
             # ★시나리오 산정 기준 = 실효 용적률(현행·조례 반영). 법정상한은 라벨 구분용으로 병기.
             "far_effective_blended": far_effective,
             "far_legal_blended": far_legal,
@@ -617,6 +658,10 @@ class DevelopmentScenarioSimulator:
                 except Exception:  # noqa: BLE001
                     pass
                 return {"address": a, "zone": r.get("zone_type"),
+                        # ★zone_source 동봉 — `keyword_inference` 는 주소 문자열에서 **추론한**
+                        #   용도지역이지 조회된 값이 아니다. 이 키가 없으면 하류에서 지어낸 값과
+                        #   실측값을 구분할 수 없다(실측: 미해석 주소가 '제2종일반주거지역'을 냈다).
+                        "zone_source": r.get("zone_source"),
                         "area": r.get("land_area_sqm"),
                         "max_far": far,            # 실효 용적률(현행·조례 반영) — 시나리오 산정 기준
                         "max_far_legal": far_legal,  # 법정상한(라벨 구분용)
@@ -633,7 +678,8 @@ class DevelopmentScenarioSimulator:
                         # 게이트는 zone_type 키로 읽으므로 동봉(zone과 동일값).
                         "zone_type": r.get("zone_type") or ""}
             except Exception:  # noqa: BLE001
-                return {"address": a, "zone": None, "area": None, "max_far": None,
+                return {"address": a, "zone": None, "zone_source": None,
+                        "area": None, "max_far": None,
                         "max_far_legal": None, "geometry": None,
                         "land_category": "", "special_districts": [], "zone_limits": {},
                         "official_price_per_sqm": None, "road_contact": None,
