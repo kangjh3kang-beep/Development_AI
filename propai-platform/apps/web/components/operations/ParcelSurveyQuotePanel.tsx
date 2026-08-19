@@ -30,6 +30,7 @@ import Link from "next/link";
 import { AlertTriangle, Calculator, Layers, Loader2, ListPlus, Trash2 } from "lucide-react";
 import { Card, CardContent } from "@propai/ui";
 import { apiClient } from "@/lib/api-client";
+import { ParcelPurchaseStrategyPanel } from "./ParcelPurchaseStrategyPanel";
 import { parcelDedupKey, parcelDisplayAddress } from "@/lib/pnu";
 import { withCommas } from "@/lib/formatters";
 import { MarkdownLite } from "@/components/common/MarkdownLite";
@@ -225,6 +226,19 @@ export function ParcelSurveyQuotePanel({ locale }: { locale: Locale }) {
   const q = quote?.quote;
   const preview = quote?.preview;
 
+  // ★P2 매입전략은 **이 패널의 선택을 그대로 받는 후속 단계**다(계획서 §6: 신규 화면 0개).
+  //   견적(P0·무과금)에서 비용을 확인한 뒤 진입하며, 실행은 그 패널이 확인을 한 번 더 받는다.
+  const strategyParcels = useMemo(
+    () =>
+      selectedRows.map((r) => ({
+        address: r.address,
+        pnu: r.pnu ?? null,
+        hasBuilding: r.hasBuilding ?? null,
+        geometry: r.geometry,
+      })),
+    [selectedRows],
+  );
+
   return (
     <div className="grid grid-cols-1 gap-6 min-w-0">
       <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
@@ -408,6 +422,9 @@ export function ParcelSurveyQuotePanel({ locale }: { locale: Locale }) {
           </CardContent>
         </Card>
       )}
+
+      {/* ★P2 매입전략 — 견적 뒤에 온다(순서가 곧 안내다: 비용을 본 뒤 유료 실행) */}
+      <ParcelPurchaseStrategyPanel parcels={strategyParcels} />
 
       <Link href={`/${locale}/registry-analysis`} className="text-[11px] font-semibold text-[var(--accent-strong)] hover:underline">
         ← 등기부등본 열람으로 돌아가기

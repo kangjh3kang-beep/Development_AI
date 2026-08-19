@@ -10,6 +10,7 @@ import { useMemo } from "react";
 
 import { SatongMultiMap } from "@/components/map/SatongMultiMap";
 import { resolveMapCenter, type SatongMapFeature, type SatongMapLayerState } from "@/lib/satong-map-layers";
+import { SATONG_POPUP_YIELD } from "@/lib/satong-map-z";
 import type { ZoningSignal } from "./types";
 
 const LEVEL_COLOR: Record<string, string> = {
@@ -106,7 +107,13 @@ export function ZoningSignalMap({
         featureStatusLabels={statusLabels}
       />
       {mapFeatures.length === 0 && (
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 m-2 rounded-lg bg-[var(--surface-soft)]/85 px-3 py-2 text-[11px] text-[var(--text-hint)]">
+        <div
+          /* ★상세정보팝업 양보 계약(SATONG_POPUP_YIELD) — 지도의 **형제**로 놓인 하단 리본이라
+             (지도 컨테이너가 isolation:isolate 라) 팝업 위에 그려진다. z 로는 못 이기므로
+             팝업이 열려 있는 동안만 물러난다. 상시 고지 문구라 물러나도 잃는 것이 없다. */
+          {...{ [SATONG_POPUP_YIELD.passiveAttr]: SATONG_POPUP_YIELD.passiveValue }}
+          className="pointer-events-none absolute inset-x-0 bottom-0 m-2 rounded-lg bg-[var(--surface-soft)]/85 px-3 py-2 text-[11px] text-[var(--text-hint)]"
+        >
           구획 데이터(geojson)가 없어 위치 개요만 표시합니다. 아래 시그널 카드의 필지 목록을 확인하세요.
         </div>
       )}

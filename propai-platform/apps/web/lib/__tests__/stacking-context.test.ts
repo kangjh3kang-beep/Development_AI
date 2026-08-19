@@ -146,7 +146,13 @@ it.todo("flex/grid 아이템의 z-index — 부모 display 를 함께 봐야 판
 
 // 수작업 CSS(`.glass`·`.cc-panel`·`.leaflet-container`)와 인라인 style·framer-motion 의
 // 인라인 transform 은 클래스 토큰으로 원리적으로 못 본다 — 브라우저 페인트 순서로만 잡힌다.
-it.todo("수작업 CSS·인라인 style 층 — e2e 페인트 순서 판정으로 덮는다");
+// ★2026-08-18 — 이 위임은 **수신됐다.** 종전에는 여기서 e2e 로 넘겼는데 그 e2e 가 받지
+//   않아 위임이 공중에 떠 있었다(저장소 전체에서 `elementFromPoint` 를 실제로 호출하는 곳은
+//   `e2e/popover-layer.spec.ts` 한 곳뿐이었고 대상은 주소 팝오버 vs z-[600] 헤더였다).
+//   그 공백에서 `.leaflet-pane` 평탄화가 지도 내부 사다리를 죽인 채 초록이 유지됐다.
+//   → `e2e/satong-pane-ladder.spec.ts` 가 실브라우저에서 **계산된 pane z 와 페인트 순서**를
+//     잰다(음성 대조군 포함). jsdom 은 CSS 계단을 재현하지 않아 여기서는 못 한다.
+it.todo("수작업 CSS·인라인 style 층 — e2e/satong-pane-ladder.spec.ts 가 수신함(지도 층)");
 
 describe("클리핑 판정", () => {
   it.each([

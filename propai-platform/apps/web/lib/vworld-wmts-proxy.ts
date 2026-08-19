@@ -5,7 +5,7 @@ import {
   shouldAttempt,
 } from "@/lib/vworld-circuit-breaker";
 import { classifyVWorldXmlException, extractVWorldXmlExceptionDetail, isVWorldKeyFault } from "@/lib/vworld-xml-exception";
-import { RELAY_BREAKER_KEY, relayViaApi, shouldProbeDirect, vworldApiFallbackOrigin } from "@/lib/vworld-wms-proxy";
+import { RELAY_BREAKER_KEY, degradedTile, relayViaApi, shouldProbeDirect, vworldApiFallbackOrigin } from "@/lib/vworld-wms-proxy";
 
 const VWORLD_WMTS_BASE = "https://api.vworld.kr/req/wmts/1.0.0";
 // ★tiletype 정본(2026-07-17 라이브 채증 — 상류 InvalidParameterValue 본문이 유효값을 직접
@@ -254,15 +254,8 @@ export async function proxyVWorldWmts(params: VWorldWmtsParams): Promise<Respons
     }
 
     // [MAP-006] 네트워크 예외도 JSON 오류 본문으로 반환(평문 금지).
-    return new Response(
-      JSON.stringify({ error: `VWorld WMTS proxy failed: ${String(error)}`, status: 502 }),
-      {
-        status: 502,
-        headers: {
-          "Content-Type": "application/json; charset=utf-8",
-          "Cache-Control": "no-store",
-        },
-      },
-    );
+    // ★형제 스윕(2026-08-18) — WMS 와 동일 계약: 오리진 없음도 **정직 강등**으로 통일한다.
+    //   근거·설계는 `vworld-wms-proxy.ts` 의 `degradedTile` 독스트링 한 곳에만 둔다.
+    return degradedTile("no-relay-origin:vworld-wmts-proxy");
   }
 }

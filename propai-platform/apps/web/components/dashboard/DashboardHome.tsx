@@ -42,6 +42,21 @@ const creationProducts: CreationProduct[] = [
     tone: "coral",
   },
   {
+    // ★부지종합분석 보고서 — 사용자 요청(2026-08-18)으로 생성허브에 노출한다.
+    //   종전엔 라우트(`/analysis`)만 있고 **생성허브 카드가 없어 진입 경로가 없었다**
+    //   (랜딩 패널 5종·대시보드 5종 어디에도 없었다 — 화면은 살아 있는데 아무도 못 찾는 상태).
+    //   ★`routeId` 는 라우트 레지스트리의 실재 id 다(`comprehensive-analysis` → `/analysis`).
+    //     없는 것을 광고하지 않는다 — 그 불변식은 ReportPanelSection.parity 가 잠근다.
+    title: "종합 부지분석",
+    routeId: "comprehensive-analysis",
+    icon: Layers3,
+    intent: "한 부지를 규제·권리·사업성·인허가 축으로 한 번에 훑어 종합 보고서로 묶습니다.",
+    inputs: "지번 주소(단일·다필지)",
+    result: "용도지역·규제, 권리관계, 개략 사업성, 인허가 경로 종합",
+    time: "약 3~5분",
+    tone: "sky",
+  },
+  {
     title: "법규검토서",
     routeId: "regulations",
     icon: Scale,

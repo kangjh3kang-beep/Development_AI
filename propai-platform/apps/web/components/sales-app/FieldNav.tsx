@@ -14,6 +14,7 @@
 import { useEffect } from "react";
 import { LayoutGrid, X } from "lucide-react";
 import { BOTTOM_NAV_KEYS, MENU_GROUPS, type SalesTabDef } from "@/components/sales-app/roleConfig";
+import { DISMISS_Z, useDismissible } from "@/lib/satong-dismiss";
 
 export function FieldBottomNav({
   tabs,
@@ -95,15 +96,15 @@ export function FieldMenuSheet({
     };
   }, [open]);
 
-  // ESC 닫기(WAI-ARIA 다이얼로그 패턴) + sm(640px) 이상 확장 시 자동 닫기 —
-  // 시트가 sm:hidden 으로 CSS 만 숨으면 body 잠금이 해제 불가로 남던 R1 지적 반영
-  // (태블릿 회전·반응형 토글·폴더블 확장 시 스크롤 먹통 방지).
+  // ESC 닫기 — **자체 window 리스너에서 조정기로 이관**(2026-08-18).
+  // 이 시트 위로 모달(현장 진입 등)이 열릴 수 있고, 종전에는 ESC 한 번에 둘 다 닫혔다.
+  // 시트는 모달보다 아래 칸(`navSheet`)이라 모달이 먼저 닫히고, 다음 ESC 가 시트를 닫는다.
+  useDismissible(DISMISS_Z.navSheet, open, onClose);
+
+  // sm(640px) 이상 확장 시 자동 닫기 — 시트가 sm:hidden 으로 CSS 만 숨으면 body 잠금이
+  // 해제 불가로 남던 R1 지적 반영(태블릿 회전·반응형 토글·폴더블 확장 시 스크롤 먹통 방지).
   useEffect(() => {
     if (!open || typeof window === "undefined") return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
     // matchMedia 는 일부 테스트 환경(jsdom)에 없을 수 있어 존재 시에만 바인드.
     const mq = typeof window.matchMedia === "function" ? window.matchMedia("(min-width: 640px)") : null;
     const onMq = () => {
@@ -112,7 +113,6 @@ export function FieldMenuSheet({
     if (mq?.matches) onClose(); // 열림 시점에 이미 sm+ 면 즉시 닫기.
     mq?.addEventListener("change", onMq);
     return () => {
-      window.removeEventListener("keydown", onKey);
       mq?.removeEventListener("change", onMq);
     };
   }, [open, onClose]);

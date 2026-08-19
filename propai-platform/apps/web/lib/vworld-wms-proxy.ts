@@ -41,9 +41,29 @@ import { classifyVWorldXmlException, extractVWorldXmlExceptionDetail, isVWorldKe
  *    null 을 반환해 항공영상이 아예 렌더되지 않았다 — 배관이 있는데 값이 없어 생긴 결함.)
  *
  *   ★남는 사실: VWorld 키는 실효 기준 **하나**다(관리자 등록키 = 158 web 의 VWORLD_API_KEY,
- *   sha256[:12] 873a35b67f8a). 그러나 그 하나는 **서버 전용으로만 쓰이고 브라우저엔 없다.**
- *   → 별도 공개키 발급도, 노출 사유의 긴급 폐기도 **필요 없다**. 이 주석을 근거로
- *     "키가 유출됐다"고 쓰지 마라 — 유출 근거는 번들 실측이며, 그 결과는 0 건이다.
+ *   sha256[:12] 873a35b67f8a).
+ *
+ *   ★★2026-08-18 정밀화 — 종전 이 자리에 *"그 하나는 **서버 전용으로만 쓰이고** 브라우저엔
+ *   없다 → 별도 공개키 발급도 **필요 없다**"* 라고 썼는데 **반대 방향으로 과잉정정**이었다.
+ *   사실은 **층마다 다르다**(통합자 독립 재측정으로 교차확인):
+ *
+ *     저장소 `.env`              스테일 · 어디서도 실효값이 아니다
+ *     ★런타임 env(158 web)       `VWORLD_API_KEY` 와 `NEXT_PUBLIC_VWORLD_API_KEY` 가
+ *                                **같은 값**이다(둘 다 36자 · 873a35b67f8a) ← 여기가 취약
+ *     빌드 산출물(정적 청크)     키 **없음** = 유출 없음(빌드 시 빈 값이 넘어갔다)
+ *
+ *   → 즉 **"2계약 붕괴"는 설정 층에서 사실**이고, **브라우저 유출로 이어지지 않았을 뿐**이다.
+ *     "서버 전용으로만 쓰인다"는 부정확하다 — 같은 값이 **공개 이름(`NEXT_PUBLIC_*`)으로도
+ *     런타임에 설정돼 있다.** 값이 같으므로 **어느 경로로든 하나가 노출되면 둘 다 노출**된다.
+ *
+ *   ★#684 가 없앤 것은 **build-arg 경로**다(Dockerfile ARG/ENV · compose build arg).
+ *     **158 런타임 env 의 `NEXT_PUBLIC_VWORLD_API_KEY` 는 여전히 설정돼 있다**(실측 36자,
+ *     `.env` 의 `env_file` 경유). 클라이언트가 그 값을 읽지 않으므로 지금은 무해하지만,
+ *     **설정 층 중복은 남아 있다.**
+ *   → 남은 조치(운영 판단): ①VWorld 콘솔에서 **키 2개 분리 발급** ②158 `.env` 에서
+ *     `NEXT_PUBLIC_VWORLD_API_KEY` 제거(소비처 0). 긴급하지는 않다 — **유출은 없었다.**
+ *   ※이 주석을 근거로 "키가 유출됐다"고 쓰지 마라(유출 근거는 번들 실측 = 0 건).
+ *     동시에 "두 키가 다르다"고도 쓰지 마라(런타임 실측 = 같다). **둘 다 사실이다.**
  *
  * WMTS 프록시(vworld-wmts-proxy.ts)와 동일한 오류 계약을 따른다:
  *   · 4xx/5xx  → 503 JSON({error,status}) (무음 회색타일 금지)
@@ -158,8 +178,19 @@ export async function relayViaApi(
     //   ※"VWorld 에 IP 차단 해제를 요청한다"는 **2026-07-29 에 이미 기각된 오진**이다
     //     (VWorld 에 IP 등록 기능 자체가 없다). 그 선택지를 되살리지 마라.
     //   → 관측된 사실만 말하고, 어느 경로가 끊겼는지 proxyTag 로 식별 가능하게 남긴다.
-    // ★음성 캐시를 붙인다 — no-store 로 돌려주면 팬할 때마다 전 타일이 168 을 때린다.
-    return jsonError(`VWorld api relay unreachable (${proxyTag})`, 503, NEGATIVE_CACHE_SEC);
+    // ★★2026-08-18 강등 — 회색 지도 대신 **투명타일 + 강등 헤더**.
+    //   실장애(2026-08-16 17:58~17:59)에서 사용자는 이유 없이 회색 지도를 봤다. 근본은
+    //   릴레이 목적지(168)의 **상류가 2분간 죽은 것**이었고(그쪽 5xx 183건, 배포 없이 회복)
+    //   릴레이로는 우회할 대상이 없다 — 그때 할 수 있는 최선은 **정직하게 알리는 것**이다.
+    //
+    //   ★그런데 투명타일만 주면 `tileerror` 가 안 떠서 **배너조차 안 뜨는 무음 강등**이 된다.
+    //     이 저장소가 세운 "무음 회색타일 금지" 계약을 반대편으로 깨는 것이다.
+    //     그래서 강등 사유를 **헤더로 실어** 진단 프로브(fetch — 헤더를 읽을 수 있다)가
+    //     배너를 띄우게 한다. `<img>` 는 헤더를 못 읽지만 지도는 안 회색이 되고,
+    //     프로브는 강등을 정확히 본다 — 둘 다 만족한다.
+    //   ★`X-VWorld-Breaker` 와 **다른 헤더**를 쓴다: 차단기 열림(상류 보호)과
+    //     릴레이 도달 불가(대안 없음)는 사용자에게 다른 사실이다.
+    return degradedTile(`relay-unreachable:${proxyTag}`);
   }
 }
 
@@ -236,6 +267,44 @@ function transparentTile(): Response {
   return new Response(TRANSPARENT_PNG, {
     status: 200,
     headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=3600" },
+  });
+}
+
+/**
+ * 강등 사유를 실은 헤더 이름 — 진단 프로브가 이걸 보고 정직 배너를 띄운다.
+ * ★`<img>` 는 헤더를 못 읽는다. 그래서 지도는 회색이 되지 않고(투명타일),
+ *   헤더를 읽을 수 있는 **fetch 프로브**만 강등을 본다. 둘의 역할이 다르다.
+ */
+export const VWORLD_DEGRADED_HEADER = "X-VWorld-Degraded";
+
+/**
+ * 정직 강등 — 타일 자리는 **투명**으로 비우고, 강등 사실은 **헤더로 관측 가능**하게 남긴다.
+ *
+ * ★왜 503 JSON 이 아닌가: 503 이면 Leaflet 이 tileerror 로만 처리해 **지도 전체가 회색**이 된다.
+ *   2026-08-16 실장애에서 사용자가 본 것이 그것이고, 이유를 알 수 없었다.
+ * ★왜 그냥 투명타일이 아닌가: 그러면 `tileerror` 가 안 떠서 **배너조차 안 뜨는 무음 강등**이 된다.
+ *   이 저장소의 "무음 회색타일 금지" 계약을 반대편으로 깨는 것이다.
+ *   → 투명타일 **+ 헤더**. 지도는 살고, 강등은 숨지 않는다.
+ * ★음성 캐시를 짧게 붙인다 — 강등 상태에서 팬/줌하면 전 타일이 재요청되는 폭주를 끊되,
+ *   회복이 지연되지 않을 만큼만 잡는다.
+ */
+export function degradedTile(reason: string): Response {
+  // ★★관측점 상실을 상쇄한다(통합자 지적 2026-08-18).
+  //   강등을 200 으로 주면 **nginx 접근로그에서 사라진다** — 2026-08-16 실사용 장애가
+  //   보였던 이유가 정확히 "5xx 라서 로그에 남았다" 였다. UX(회색지도 제거)를 택한 대가로
+  //   그 관측점을 잃는다. 그래서 **서버 로그에 안정된 표식**을 남긴다:
+  //   `[vworld-degraded]` 는 grep 앵커이고 reason 이 어느 경로인지 말한다.
+  //   ※이것은 nginx 로그의 완전한 대체가 아니다(집계·시계열이 아니다). 지속 관측은
+  //     api 쪽 `platform_events` 나 접근로그 설정이 담당해야 하며 그쪽은 이 PR 범위 밖이다.
+  //     여기 적어 두는 이유는 **대가를 치렀다는 사실을 지우지 않기 위해서**다.
+  console.warn(`[vworld-degraded] ${reason}`);
+  return new Response(TRANSPARENT_PNG, {
+    status: 200,
+    headers: {
+      "Content-Type": "image/png",
+      "Cache-Control": `public, max-age=${NEGATIVE_CACHE_SEC}`,
+      [VWORLD_DEGRADED_HEADER]: reason,
+    },
   });
 }
 
@@ -417,6 +486,10 @@ export async function proxyVWorldWms(incoming: URLSearchParams): Promise<Respons
         RELAY_BREAKER_KEY,
       );
     }
-    return jsonError(`VWorld WMS proxy failed: ${String(error)}`, 502);
+    // ★릴레이 오리진조차 없다 = 대안이 아예 없다. 그래도 **사용자에게는 회색 지도가 아니라
+    //   정직 강등**을 준다(위 degradedTile 독스트링 참조). 운영자용 시끄러움은 바로 위
+    //   `console.warn/error` 가 담당한다 — 화면을 회색으로 만드는 것이 관측성이 아니다.
+    //   ★사유를 구분해 남긴다: 오리진 미설정은 **설정 결함**이라 처방이 다르다.
+    return degradedTile("no-relay-origin:vworld-wms-proxy");
   }
 }

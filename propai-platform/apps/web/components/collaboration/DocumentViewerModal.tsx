@@ -10,6 +10,7 @@
 import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
+import { DISMISS_Z, useDismissible } from "@/lib/satong-dismiss";
 import type { CollabDocument } from "@/store/use-collaboration-store";
 import { CadDocViewer } from "./CadDocViewer";
 
@@ -38,6 +39,11 @@ export function DocumentViewerModal({
   // 포털은 클라이언트에서만 — SSR 단계엔 `document` 가 없다(ConfirmDeleteModal 과 같은 관례).
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
+
+  // ESC 로 닫기 — 조정기가 **열린 표면 중 가장 위 하나만** 닫는다.
+  // ★이 뷰어 안에서 삭제 확인창(ConfirmDeleteModal)이 열릴 수 있다. 그때 ESC 는 확인창만
+  //   닫아야 하므로 확인창은 `nestedOverModal`, 이 뷰어는 `appModal` 로 등록한다.
+  useDismissible(DISMISS_Z.appModal, Boolean(doc) && mounted, onClose);
 
   if (!doc || !mounted) return null;
   const url = doc.file_url ?? "";
