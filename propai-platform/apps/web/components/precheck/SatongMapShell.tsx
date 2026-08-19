@@ -1,7 +1,8 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { SATONG_POPUP_YIELD } from "@/lib/satong-map-z";
+import { registerDismissible } from "@/lib/satong-dismiss";
+import { SATONG_POPUP_YIELD, SATONG_UI_Z } from "@/lib/satong-map-z";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
@@ -2260,7 +2261,9 @@ export function SatongMapShell({
   //   종전엔 지도 내부 dead-end → 검색 등록 필지가 면적 0으로 통합분석에서 침묵 탈락했다.
   //   빈 필드만 채우고(사용자·원천값 우선), 변화가 없으면 setState를 건너뛰어 재조회 루프를 끊는다.
   const handleBoundaryEnriched = useCallback(
-    (features: Array<{ pnu?: string | null; address?: string; areaSqm?: number | null;
+    (features: Array<{ pnu?: string | null; address?: string;
+      /** 입력 주소 원본 — address 는 지번이 붙어 보강되므로 씨드 매칭은 이 값으로 한다. */
+      inputAddress?: string | null; areaSqm?: number | null;
       zoneType?: string | null; jimok?: string | null; lat?: number | null; lon?: number | null;
       officialPricePerSqm?: number | null; builtYear?: number | null;
       buildingAgeYears?: number | null; ageStatus?: string | null;
@@ -2298,6 +2301,9 @@ export function SatongMapShell({
         const byKey = new Map<string, (typeof features)[number]>();
         for (const f of features) {
           if (f.pnu) byKey.set(String(f.pnu), f);
+          // ★표시 주소는 지번이 붙어 보강되므로 씨드(동 단위)와 어긋난다 — **입력 원본**으로도
+          //   건다. 둘 다 걸어야 보강 전/후 응답 모두에서 치유가 끊기지 않는다.
+          if (f.inputAddress) byKey.set(f.inputAddress.trim(), f);
           if (f.address) byKey.set(f.address.trim(), f);
         }
         const next = prev.map((p) => {
@@ -2564,18 +2570,19 @@ export function SatongMapShell({
 
   useEffect(() => {
     if (!activeLayerId) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") closeLayerPanel();
-    };
+    // ★ESC 는 **조정기**를 거친다(lib/satong-dismiss) — 종전에는 이 리스너가 지도의
+    //   clickMenu ESC 와 같은 keydown 에 함께 발화해 **한 번에 둘이 닫혔다**(라이브 실측).
+    //   이제 z(SSOT rung)가 가장 큰 표면 하나만 닫힌다. 외부 포인터다운은 대상 판정이
+    //   표면마다 달라 일반화하지 않고 여기 그대로 둔다.
+    const unregister = registerDismissible(SATONG_UI_Z.railPopover, closeLayerPanel);
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as Node;
       if (popoverRef.current?.contains(target) || railRef.current?.contains(target)) return;
       closeLayerPanel();
     };
-    window.addEventListener("keydown", onKeyDown);
     window.addEventListener("pointerdown", onPointerDown);
     return () => {
-      window.removeEventListener("keydown", onKeyDown);
+      unregister();
       window.removeEventListener("pointerdown", onPointerDown);
     };
   }, [activeLayerId, closeLayerPanel]);
@@ -2584,18 +2591,19 @@ export function SatongMapShell({
   // 뜨는 형제 UI라 닫힘 규칙이 다르면 사용자가 두 규칙을 학습해야 한다(일관성).
   useEffect(() => {
     if (!basemapOpen) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") closeBasemapPanel();
-    };
+    // ★ESC 는 **조정기**를 거친다(lib/satong-dismiss) — 종전에는 이 리스너가 지도의
+    //   clickMenu ESC 와 같은 keydown 에 함께 발화해 **한 번에 둘이 닫혔다**(라이브 실측).
+    //   이제 z(SSOT rung)가 가장 큰 표면 하나만 닫힌다. 외부 포인터다운은 대상 판정이
+    //   표면마다 달라 일반화하지 않고 여기 그대로 둔다.
+    const unregister = registerDismissible(SATONG_UI_Z.railPopover, closeBasemapPanel);
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as Node;
       if (basemapPopoverRef.current?.contains(target) || railRef.current?.contains(target)) return;
       closeBasemapPanel();
     };
-    window.addEventListener("keydown", onKeyDown);
     window.addEventListener("pointerdown", onPointerDown);
     return () => {
-      window.removeEventListener("keydown", onKeyDown);
+      unregister();
       window.removeEventListener("pointerdown", onPointerDown);
     };
   }, [basemapOpen, closeBasemapPanel]);
@@ -2742,7 +2750,10 @@ export function SatongMapShell({
            wrapperClass("relative"))에 `pointer-events-none`이 하나도 없기 때문이다.
            그래서 `none`을 **직접** 건다. 인터랙티브 자식이 생기면 그 자식에만 `auto`. */
         {...{ [SATONG_POPUP_YIELD.passiveAttr]: SATONG_POPUP_YIELD.passiveValue }}
-        className="pointer-events-none absolute left-4 top-4 z-[380] flex flex-wrap items-center gap-2"
+        /* ★z 는 SSOT 상수를 **인라인 스타일**로 흘려보낸다 — Tailwind v4 는 런타임 문자열
+           클래스(`z-[${값}]`)를 생성하지 못한다(satong-map-z.ts 사용 규칙). */
+        style={{ zIndex: SATONG_UI_Z.badgeRow }}
+        className="pointer-events-none absolute left-4 top-4 flex flex-wrap items-center gap-2"
       >
         {/* ★UX A3: 비인터랙티브 배지(허위 어포던스 제거) — 이전엔 <button>이었으나 onClick이
             event.stopPropagation() 뿐이라 클릭 가능해 보이는데 아무 동작도 없었다. */}
@@ -2820,7 +2831,11 @@ export function SatongMapShell({
         //   가용고 내 세로 스크롤로 전 버튼 도달을 보장한다(hover 확장은 폭만 넓히는
         //   보조 어포던스로 격하 — 가시성 자체는 더 이상 hover에 의존하지 않는다).
         {...{ [SATONG_POPUP_YIELD.passiveAttr]: SATONG_POPUP_YIELD.passiveValue }}
-        className={`group absolute right-4 top-20 z-[420] rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--glass-bg)] p-2 shadow-[var(--shadow-lg)] backdrop-blur-[var(--glass-blur)] transition-all duration-300 ease-in-out ${
+        /* ★종전 `z-[420]` 은 `SATONG_UI_Z.tileFailure` 와 **동률**이었다. 화면 결과(스크림이
+           레일 위)는 옳았지만 그건 DOM 순서에서 나온 **우연**이었다 — 셸의 JSX 순서를 바꾸는
+           리팩토링 하나로 조용히 뒤집힌다. 이제 `layerRail`(415)로 **값이 순서를 선언**한다. */
+        style={{ zIndex: SATONG_UI_Z.layerRail }}
+        className={`group absolute right-4 top-20 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--glass-bg)] p-2 shadow-[var(--shadow-lg)] backdrop-blur-[var(--glass-blur)] transition-all duration-300 ease-in-out ${
           railPinned
             ? "grid w-32 auto-rows-min grid-cols-2 gap-2 h-auto max-h-[calc(100%-120px)] supports-[height:100dvh]:max-h-[min(calc(100%-120px),calc(100dvh-176px))] overflow-y-auto"
             : "flex w-16 flex-col gap-2 h-auto max-h-[calc(100%-120px)] supports-[height:100dvh]:max-h-[min(calc(100%-120px),calc(100dvh-176px))] overflow-y-auto"

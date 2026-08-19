@@ -1,3 +1,16 @@
+/**
+ * ★★이 파일의 pane 관련 단언은 **같은 모듈 리터럴끼리의 항등식**이다 — 런타임을 보증하지 않는다.
+ *
+ * 2026-08-17 까지 아래 "팝업 최상위 사슬" 테스트는 **초록이면서 런타임은 정반대**였다:
+ * `globals.css` 의 `.leaflet-pane { z-index:1 !important }` 가 pane 을 전부 1 로 눌러
+ * 페인트 순서가 DOM 순서로 떨어졌고, 그 순서에서 **label pane 이 팝업 위**였다
+ * (라이브 실측: `.leaflet-popup-pane` 계산 z = 1 · DOM 순서 … popup < proxy < label).
+ * 공허한 락을 넘어 **거짓을 보증하는 락**이었다.
+ *
+ * → 효과를 보증하는 것은 `lib/__tests__/satong-pane-ladder.test.ts`(CSS 불변식)이고,
+ *   최종 판정은 `elementFromPoint` 를 쓰는 e2e 다(CLAUDE.md §회귀망 D.18).
+ *   여기 단언들은 **상수를 손댈 때 순서가 흐트러지는 것**만 막는 용도로 읽어라.
+ */
 import { describe, expect, it } from "vitest";
 
 import { LEAFLET_PANE_Z, SATONG_PANE_Z, SATONG_UI_Z } from "./satong-map-z";
@@ -23,12 +36,12 @@ describe("satong-map-z — z-index 계약", () => {
     expect(SATONG_UI_Z.clickMenu).toBeLessThan(SATONG_UI_Z.confirmCard);
   });
 
-  it("labelPane 은 폴리곤(overlay=400)과 마커(600) 사이 — 라벨이 폴리곤 위·마커 흐름 아래", () => {
+  it("[상수 항등식] labelPane 은 폴리곤(overlay=400)과 마커(600) 사이 — ★런타임 보증은 satong-pane-ladder.test.ts", () => {
     expect(SATONG_PANE_Z.label).toBeGreaterThan(LEAFLET_PANE_Z.overlay);
     expect(SATONG_PANE_Z.label).toBeLessThan(LEAFLET_PANE_Z.marker);
   });
 
-  it("★팝업 최상위 사슬(2026-07-17 겹침 신고): overlay < label < marker < tooltip < popup — 지명 타일·상시 라벨이 팝업을 가리면 안 된다", () => {
+  it("[상수 항등식] 팝업 최상위 사슬 overlay < label < marker < tooltip < popup — ★2026-08-17 까지 런타임은 정반대였다(satong-pane-ladder.test.ts 참조)", () => {
     expect(LEAFLET_PANE_Z.overlay).toBeLessThan(SATONG_PANE_Z.label);
     expect(SATONG_PANE_Z.label).toBeLessThan(LEAFLET_PANE_Z.marker);
     expect(LEAFLET_PANE_Z.marker).toBeLessThan(LEAFLET_PANE_Z.tooltip);

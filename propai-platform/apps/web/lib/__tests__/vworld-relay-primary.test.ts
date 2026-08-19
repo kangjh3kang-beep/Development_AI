@@ -163,21 +163,46 @@ describe("★릴레이 링크도 차단기가 보호한다 (죽은 코드 방지
   });
 });
 
-describe("릴레이 실패는 폭주하지 않는다 (음성 캐시)", () => {
-  it("★릴레이가 끊기면 no-store 가 아니라 짧은 음성 캐시를 준다", async () => {
+describe("릴레이가 끊기면 **정직하게 강등**한다 (회색 지도 금지 · 무음 금지)", () => {
+  it("★투명타일 200 + 강등 헤더 + 음성 캐시", async () => {
     installFetch({ relayThrows: true });
-    const { proxyVWorldWms, __resetDirectProbeForTest } = await import("@/lib/vworld-wms-proxy");
+    const { proxyVWorldWms, VWORLD_DEGRADED_HEADER, __resetDirectProbeForTest } = await import(
+      "@/lib/vworld-wms-proxy"
+    );
     __resetDirectProbeForTest();
-    await proxyVWorldWms(wmsParams()); // 탐색 소진
+    await proxyVWorldWms(wmsParams()); // 회복 탐색 소진
 
     const resp = await proxyVWorldWms(wmsParams());
     const cc = resp.headers.get("cache-control") ?? "";
 
-    expect(resp.status).toBe(503);
-    // no-store 면 팬/줌마다 전 타일이 168 을 때린다 — 그 구조가 실장애였다.
-    expect(cc, `릴레이 실패가 no-store 다 — 폭주 구조가 그대로다 (cc=${cc})`).not.toContain(
-      "no-store",
-    );
+    // (1) 회색 지도 금지 — 503 이면 Leaflet 이 지도 전체를 회색으로 만든다.
+    expect(resp.status, "503 이면 지도가 회색이 된다(2026-08-16 실장애의 사용자 경험)").toBe(200);
+    expect(resp.headers.get("content-type")).toContain("image/png");
+    // (2) 무음 금지 — 강등 사실이 헤더로 관측 가능해야 한다.
+    expect(
+      resp.headers.get(VWORLD_DEGRADED_HEADER),
+      "강등 헤더가 없다 — 투명타일만 주면 배너가 뜰 수 없어 **무음 강등**이 된다",
+    ).toContain("relay-unreachable");
+    // (3) 폭주 금지 — no-store 면 팬/줌마다 전 타일이 재요청된다.
+    expect(cc, `강등 응답이 no-store 다 — 폭주 구조가 그대로다 (cc=${cc})`).not.toContain("no-store");
     expect(cc).toMatch(/max-age=\d+/);
+  });
+
+  it("대조군: 릴레이가 살아 있으면 강등 헤더가 **없다**", async () => {
+    // ★두 모집단이 갈려야 잠금이 성립한다 — 정상 타일도 200 image/png 라
+    //   상태·타입만 보면 강등과 구분되지 않는다. 헤더 유무가 유일한 판별자다.
+    installFetch({ relayStatus: 200 });
+    const { proxyVWorldWms, VWORLD_DEGRADED_HEADER, __resetDirectProbeForTest } = await import(
+      "@/lib/vworld-wms-proxy"
+    );
+    __resetDirectProbeForTest();
+    await proxyVWorldWms(wmsParams());
+
+    const resp = await proxyVWorldWms(wmsParams());
+    expect(resp.status).toBe(200);
+    expect(
+      resp.headers.get(VWORLD_DEGRADED_HEADER),
+      "정상인데 강등 헤더가 붙었다 — 위양성이면 배너가 항상 뜬다",
+    ).toBeNull();
   });
 });

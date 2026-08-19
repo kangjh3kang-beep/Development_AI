@@ -54,6 +54,15 @@ _X_HEADER = re.compile(r"""["'](X-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*)["']""")
 # 우리 API 로 나가는 요청을 만드는 파일만 본다 — 3자 요청·응답 헤더 구성(예: VWorld 프록시가
 # 돌려주는 `X-VWorld-Breaker`)을 위양성으로 신고하면 정상 코드를 막는다(CLAUDE.md A6).
 _OUR_API_FUNNEL = re.compile(r"\bapiClient\b|\bsalesApi\b|\bgetRequestUrl\b|\bapiFetch\b")
+# `resp.headers.get("X-…")` — 응답을 **읽는** 자리. 여기서만 보이면 요청 헤더가 아니다.
+_HEADER_READ = re.compile(r"""\.headers\.get\(\s*["'](X-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*)["']""")
+
+
+def _sent_somewhere(src: str, key: str) -> bool:
+    """그 키가 **읽기 이외의 자리**에도 등장하는가(= 실제로 보낼 가능성이 있는가)."""
+    total = len(re.findall(rf"""["']{re.escape(key)}["']""", src))
+    reads = len(re.findall(rf"""\.headers\.get\(\s*["']{re.escape(key)}["']""", src))
+    return total > reads
 
 
 def _strip_comments(src: str) -> str:
@@ -87,7 +96,17 @@ def _derive_frontend_request_headers() -> dict[str, set[str]]:
         for m in _HEADERS_OBJ.finditer(src):
             for key in _QUOTED_KEY.findall(_balanced_block(src, m.end() - 1)):
                 found.setdefault(key, set()).add(rel)
+        # ★응답에서 **읽기만** 하는 헤더는 요청 헤더가 아니다 — 프리플라이트와 무관하다.
+        #   이 추출기는 위 주석(54~56줄)에서 그 위양성 클래스를 이미 지목했지만
+        #   메커니즘이 가르지 못했다: `resp.headers.get("X-…")` 도 문자열이라 잡혔다.
+        #   실증 2026-08-18: `X-VWorld-Degraded`(타일 강등 사유)는 **동일 출처** 응답에서
+        #   읽기만 하는데 "프리플라이트 400" 으로 신고돼 정상 코드를 막았다(CLAUDE.md A6).
+        #   → `.headers.get("X-…")` 위치에서만 등장하는 키는 제외한다. 보내기도 하는 헤더는
+        #     다른 자리(headers 객체 리터럴 등)에도 나타나므로 계속 잡힌다.
+        read_only = set(_HEADER_READ.findall(src))
         for key in _X_HEADER.findall(src):
+            if key in read_only and not _sent_somewhere(src, key):
+                continue
             found.setdefault(key, set()).add(rel)
     return found
 

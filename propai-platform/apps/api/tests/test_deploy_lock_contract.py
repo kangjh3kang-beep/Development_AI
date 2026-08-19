@@ -236,3 +236,208 @@ def test_두_배포_스크립트의_가드는_서로_반대여야_한다() -> No
     assert len({neg for _, neg in senses}) == 2, (
         "두 스크립트의 가드 방향이 같다 — 배타 잠금이 성립하지 않는다"
     )
+
+
+# ── 백엔드 빌드 식별자 · 배포 검증 (2026-08-17 추가) ────────────────────────
+#
+# 왜 있나 (실사고):
+#     배포 후 확인을 **호스트 파일시스템의 소스**로 했다. 그 경로는 `git reset --hard` 로
+#     늘 최신이라 **무엇을 배포하든 통과**한다. 그래서 `#630`·`#653`·`#662` 가 반영된 줄
+#     알았으나 **실서비스 컨테이너 안은 전부 0** 이었다.
+#
+#     프론트는 `#658` 이후 **sw 끝 sha** 로 배포 커밋을 읽을 수 있었는데 백엔드에는 그 수단이
+#     없었다 — 그 **비대칭**이 오보의 구조적 원인이다. 이제 이미지가 `APP_BUILD_ID` 를 들고
+#     있고, 배포 스크립트가 **실행 컨테이너에 직접 물어** 대조한다(Caddy 전환 **전**).
+
+DOCKERFILE_ORACLE = Path(__file__).resolve().parents[3] / "Dockerfile.oracle"
+
+
+def test_백엔드_이미지는_빌드식별자를_들고_있다() -> None:
+    """`Dockerfile.oracle` 이 `APP_BUILD_ID` 를 받아 런타임 ENV 로 박는다."""
+    assert DOCKERFILE_ORACLE.exists(), f"{DOCKERFILE_ORACLE} 없음 — 경로가 바뀌었으면 이 테스트도 고칠 것"
+    lines = _executable_lines(DOCKERFILE_ORACLE)
+    assert len(lines) > 15, f"실행 라인이 {len(lines)}줄뿐 — 대상을 못 읽었다"
+
+    assert any(re.match(r"ARG\s+APP_BUILD_ID", ln) for ln in lines), (
+        "Dockerfile.oracle 에 `ARG APP_BUILD_ID` 가 없다 — 이미지가 어느 커밋인지 말할 수 없다"
+    )
+    assert any(re.match(r"ENV\s+APP_BUILD_ID=", ln) for ln in lines), (
+        "`ENV APP_BUILD_ID=` 가 없다 — build-arg 는 런타임에 남지 않으므로 "
+        "`docker exec … printenv` 로 되읽을 수 없다"
+    )
+    # ★빈 값으로 조용히 나가면 검증이 "무엇이 떴는지 모른다"로 되돌아간다.
+    assert any('-z "${APP_BUILD_ID}"' in ln for ln in lines), (
+        "APP_BUILD_ID 가 비었을 때 빌드를 죽이는 fail-closed 검사가 없다"
+    )
+
+
+def test_배포는_실행컨테이너에_직접_물어_대조한다() -> None:
+    """`docker exec … printenv APP_BUILD_ID` 로 **떠 있는 것**을 확인한다.
+
+    ★소스·저장소 상태를 근거로 쓰면 안 된다 — 그게 이 사고의 원인이었다.
+    """
+    lines = _executable_lines(ZERO_DOWNTIME)
+    verify = [ln for ln in lines if "printenv APP_BUILD_ID" in ln]
+    assert verify, (
+        "deploy-zero-downtime.sh 가 실행 컨테이너에 APP_BUILD_ID 를 묻지 않는다. "
+        "호스트 소스 grep 은 `git reset --hard` 때문에 무엇을 배포하든 통과한다."
+    )
+    assert any("docker exec" in ln for ln in verify), (
+        "printenv 를 **컨테이너 안에서** 실행해야 한다(`docker exec`)"
+    )
+    assert any('--build-arg' in ln and "APP_BUILD_ID" in ln for ln in lines), (
+        "빌드에 `--build-arg APP_BUILD_ID` 를 넘기지 않는다 — 이미지에 값이 안 박힌다"
+    )
+
+
+def test_이미지_정리는_dangling_한정이어야_한다() -> None:
+    """``docker image prune`` 에 ``-a`` 를 붙이면 **롤백 자산이 사라진다**.
+
+    ★`-a` 는 참조되지 않는 **태그 이미지까지** 지운다 → `propai-api:prev` 소멸.
+      그러면 이 스크립트의 자동 롤백이 **조용히 무효**가 되고, 실패한 배포를 되돌릴 수단이
+      없어진 뒤에야 드러난다. dangling 한정은 태그 있는 이미지를 건드리지 않는다.
+    """
+    # ★prune 을 **실행하는** 줄만 본다. `safe-deploy.sh` 에는
+    #   `pgrep -f "docker system prune|builder prune"` 처럼 **진행 중인지 감지**하는 줄이 있는데,
+    #   그것을 위반으로 신고하면 정상 코드를 막는다(첫 판에서 실제로 그렇게 빨개졌다 —
+    #   이 저장소가 반복해서 데인 "가드의 위양성도 결함이다").
+    executed = 0
+    for script in (ZERO_DOWNTIME, SAFE_DEPLOY):
+        for ln in _executable_lines(script):
+            if not re.search(r"(?:^|[|&;]\s*)(?:sudo\s+)?docker\s+\w+\s+prune\b", ln):
+                continue
+            if re.search(r"\b(pgrep|pkill|ps)\b", ln):
+                continue  # 감지·조회 줄은 대상이 아니다
+            executed += 1
+            assert not re.search(r"prune\b[^|]*\s(-\w*a\w*|--all)\b", ln), (
+                f"{script.name}: prune 에 -a/--all 이 붙어 있다 → {ln}\n"
+                "롤백 자산(propai-api:prev)과 베이스 이미지가 삭제된다. dangling 한정으로 둘 것."
+            )
+            assert "system prune" not in ln, (
+                f"{script.name}: `docker system prune` 은 빌드 캐시·네트워크까지 건드린다"
+                "(과거 빌드를 죽인 사고). `docker image prune -f` 만 쓸 것."
+            )
+
+    # ★공허한 초록 방지: prune 실행 줄이 0개면 위 단언은 한 번도 돌지 않는다.
+    #   이 PR 이 `deploy-zero-downtime.sh` 에 dangling 정리를 넣었으므로 최소 1개여야 한다.
+    assert executed >= 1, (
+        "prune 실행 줄을 하나도 찾지 못했다 — 정리가 사라졌거나 패턴이 대상을 놓쳤다. "
+        "둘 다 이 테스트가 잡아야 할 상태다."
+    )
+
+
+def test_빌드식별자는_의존성설치_뒤에_있어야_한다() -> None:
+    """``ARG APP_BUILD_ID`` 가 설치 **앞**에 오면 매 배포가 의존성을 재빌드한다.
+
+    ``ARG`` 값이 바뀌면 **그 이후 모든 레이어의 캐시가 무효화**된다. `APP_BUILD_ID` 는 커밋마다
+    바뀌므로, 설치 앞에 두면 `apt-get`·`pip install`(2.4GB 이미지의 대부분)이 매번 다시 돌고
+    **dangling 축적도 함께 커진다**.
+
+    ★`Dockerfile.web` 이 `pnpm install` **뒤**에 두는 것과 같은 이유다 — 그 위치가 **계약**이고
+      우연이 아니라는 것을 여기서 잠근다(2026-08-17 통합자 리뷰에서 제기된 리스크).
+    """
+    lines = DOCKERFILE_ORACLE.read_text(encoding="utf-8").splitlines()
+
+    def first(pattern: str) -> int:
+        for i, ln in enumerate(lines):
+            if re.match(pattern, ln.strip()):
+                return i
+        return -1
+
+    pip = first(r"RUN pip install")
+    apt = first(r"RUN apt-get")
+    arg = first(r"ARG APP_BUILD_ID")
+
+    # ★공허한 초록 방지: 세 앵커가 모두 실제로 있어야 비교가 의미를 갖는다.
+    assert pip >= 0, "`RUN pip install` 을 못 찾았다 — Dockerfile 구조가 바뀌었으면 이 테스트도 고칠 것"
+    assert apt >= 0, "`RUN apt-get` 을 못 찾았다"
+    assert arg >= 0, "`ARG APP_BUILD_ID` 가 없다"
+
+    assert arg > pip, (
+        f"ARG APP_BUILD_ID({arg + 1}줄)가 `RUN pip install`({pip + 1}줄) **앞**에 있다. "
+        "커밋마다 값이 바뀌므로 의존성 설치 캐시가 매 배포 무효화된다 — 설치 뒤로 옮길 것."
+    )
+    assert arg > apt, (
+        f"ARG APP_BUILD_ID({arg + 1}줄)가 `RUN apt-get`({apt + 1}줄) **앞**에 있다."
+    )
+
+
+# ── 배포 자산이 **실행 가능한 상태인가** (2026-08-17 추가) ──────────────────
+#
+# 왜 있나 (실사고 — 이 락 자체의 구멍이었다):
+#     머지 충돌이 `deploy-zero-downtime.sh` 에 `<<<<<<<`/`>>>>>>>` 마커를 남겼는데
+#     **위의 모든 계약 테스트가 그대로 통과했다**(13 passed). 마커가 남은 스크립트는
+#     실행하면 문법 오류로 죽는다 — 즉 락이 "가드가 있는가"만 보고
+#     **"이 파일이 실행될 수 있는가"** 를 보지 않았다.
+#
+#     ★배포 자산은 그 자체가 실행물이다. 내용 계약을 아무리 잠가도
+#       **파일이 깨져 있으면 배포가 시작조차 못 한다** — 그게 더 큰 사고다.
+
+_SHELL_ASSETS = [SAFE_DEPLOY, ROLLBACK_WEB, ZERO_DOWNTIME]
+
+
+@pytest.mark.parametrize("script", _SHELL_ASSETS, ids=lambda p: p.name)
+def test_배포_스크립트에_머지충돌_마커가_없다(script: Path) -> None:
+    """`<<<<<<<`·`=======`·`>>>>>>>` 가 남으면 실행 즉시 문법 오류로 죽는다."""
+    raw = script.read_text(encoding="utf-8")
+    assert len(raw) > 500, f"{script.name}: 내용이 너무 짧다({len(raw)}자) — 대상을 못 읽었다"
+    offenders = [
+        f"{i}: {ln[:40]}"
+        for i, ln in enumerate(raw.splitlines(), 1)
+        if ln.startswith(("<<<<<<<", ">>>>>>>")) or ln.rstrip() == "======="
+    ]
+    assert not offenders, f"{script.name}: 머지 충돌 마커가 남아 있다 → {offenders}"
+
+
+@pytest.mark.parametrize("script", _SHELL_ASSETS, ids=lambda p: p.name)
+def test_배포_스크립트가_문법적으로_유효하다(script: Path) -> None:
+    """``bash -n`` 으로 파싱된다 — 배포 자산은 그 자체가 실행물이다.
+
+    ★내용 계약(가드 존재·종료코드·prune 옵션)을 다 잠가도 **파일이 깨져 있으면**
+      배포가 시작조차 못 한다. 실제로 충돌 마커가 남은 채 위 13개 테스트가 통과했다.
+    """
+    import shutil
+    import subprocess
+
+    bash = shutil.which("bash")
+    assert bash, "bash 를 찾을 수 없다 — 이 검사는 bash 가 있는 환경을 전제한다"
+    proc = subprocess.run(  # noqa: S603
+        [bash, "-n", str(script)], capture_output=True, text=True, timeout=30
+    )
+    assert proc.returncode == 0, (
+        f"{script.name}: bash -n 실패(exit {proc.returncode})\n{proc.stderr.strip()[:500]}"
+    )
+
+
+def test_빌드가_캐시를_썼는지_로그에_남긴다() -> None:
+    """빌드 출력을 통째로 버리면 **느려졌을 때 원인을 못 가린다**.
+
+    2026-08-18 첫 VERIFY-BUILD 배포가 **699초**(기준선 39초의 18배)였는데,
+    빌드 줄이 `docker build … | tail -2` 라 `Using cache` 가 버려져
+    *첫 적용 비용인지* / *dangling prune 의 간접 영향인지* 를 **사후에 가릴 수 없었다**.
+
+    ★관측은 가장 먼저 사라지는 코드다(당장 아무것도 안 하므로). 그래서 잠근다.
+    """
+    lines = _executable_lines(ZERO_DOWNTIME)
+
+    build = [ln for ln in lines if "docker build" in ln]
+    assert build, "docker build 줄을 찾지 못했다 — 스크립트 구조가 바뀌었으면 이 테스트도 고칠 것"
+
+    # ★출력을 파이프로 흘려 버리면 캐시 정보가 남지 않는다.
+    piped_away = [ln for ln in build if re.search(r"docker build[^|]*\|\s*(tail|head)\b", ln)]
+    assert not piped_away, (
+        f"docker build 출력을 곧바로 tail/head 로 버린다 → {piped_away}. "
+        "파일로 받아 캐시 히트를 센 뒤 요약만 출력할 것."
+    )
+
+    assert any("CACHE_HITS" in ln for ln in lines), (
+        "빌드 캐시 히트를 세지 않는다 — 배포가 느려져도 원인을 가릴 수 없다"
+    )
+    # ★`grep -c` 는 매칭 0 에서 exit 1 이고(pipefail+set -e 아래 배포 중단),
+    #   결과에 개행이 섞이면 정수 비교가 깨진다. 둘 다 방어했는지 확인한다.
+    cache_line = next(ln for ln in lines if ln.startswith("CACHE_HITS="))
+    assert "|| true" in cache_line, f"grep -c 실패(매칭 0)를 흡수하지 않는다 → {cache_line}"
+    assert "tr -d" in cache_line, (
+        f"grep -c 결과를 한 줄로 정규화하지 않는다 → {cache_line}. "
+        "개행이 섞이면 `[: integer expression expected` 가 난다(2026-08-18 실측)."
+    )

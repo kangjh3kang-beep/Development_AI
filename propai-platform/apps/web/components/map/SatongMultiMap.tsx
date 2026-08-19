@@ -54,7 +54,11 @@ import {
   clearLayoutOverlay,
   renderLayoutOverlay,
 } from "@/lib/satong-layout-overlay";
+import { registerDismissible } from "@/lib/satong-dismiss";
 import { SATONG_PANE_Z, SATONG_POPUP_YIELD, SATONG_UI_Z } from "@/lib/satong-map-z";
+
+/** 측정 해제는 **표면이 아니다** — 열린 표면이 하나도 없을 때만 ESC 차례가 오도록 최하위. */
+const MEASURE_DISMISS_Z = -1;
 import { clampClickMenuPosition, findFeatureAtPoint, shortJibunLabel } from "@/lib/satong-click-menu";
 import {
   formatAreaSqm,
@@ -174,6 +178,8 @@ export interface SatongMultiMapProps {
 type BoundaryFeature = {
   pnu: string;
   address: string;
+  /** 입력 주소 원본 — address 는 지번이 붙어 보강된다(매칭용 키). */
+  input_address?: string | null;
   area_sqm?: number | null;
   zone_type?: string | null;
   zone_type_2?: string | null;
@@ -822,6 +828,7 @@ function boundaryFeatureToMapFeature(feature: BoundaryFeature): SatongMapFeature
     id: feature.pnu || feature.address,
     pnu: feature.pnu ?? null,
     address: feature.address || feature.pnu || "필지",
+    inputAddress: feature.input_address ?? null,
     lat: typeof feature.lat === "number" ? feature.lat : null,
     lon: typeof feature.lon === "number" ? feature.lon : null,
     areaSqm: feature.area_sqm ?? null,
@@ -1131,6 +1138,22 @@ export function SatongMultiMap({
         `&width=64&height=64&crs=EPSG:3857&bbox=14134000,4518000,14136000,4520000&_ts=${Date.now()}`;
       const resp = await fetch(probe, { cache: "no-store" });
       const contentType = resp.headers.get("content-type") || "";
+      // ★★강등 판정은 "200 + image/" **앞에** 둔다(2026-08-18).
+      //   정직 강등은 회색 지도를 피하려고 **투명타일(200 image/png)** 을 준다 —
+      //   아래 정상 분기가 먼저 걸리면 프로브가 강등을 **"정상"으로 오진**한다(거짓 초록).
+      //   그래서 강등 헤더를 가장 먼저 본다. `<img>` 는 헤더를 못 읽지만 이 프로브는 읽는다.
+      // ★헤더명은 `lib/vworld-wms-proxy.ts` 의 `VWORLD_DEGRADED_HEADER` 가 정본이다.
+      //   여기서 **import 하지 않고 리터럴을 쓴다** — 그 모듈은 서버 전용(Buffer·process.env)이라
+      //   클라이언트 컴포넌트가 import 하면 번들로 끌려온다.
+      //   대신 두 곳이 어긋나지 않게 `lib/__tests__/degraded-header-parity.test.ts` 가 묶는다.
+      const degraded = resp.headers.get("X-VWorld-Degraded");
+      if (degraded) {
+        // ★관측된 사실만 말한다 — 복구 방법을 안내하지 않는다(#677: 없는 복구 경로 금지).
+        //   실장애(2026-08-16)의 원인은 릴레이 목적지의 **상류가 2분간 죽은 것**이었고
+        //   사용자가 할 수 있는 조치는 없었다. "다시 시도하세요" 는 거짓 안내가 된다.
+        setCadastreTileNote("지도 타일 서버에 일시적으로 닿지 않습니다 — 필지·오버레이는 그대로 표시됩니다");
+        return;
+      }
       if (resp.ok && contentType.startsWith("image/")) {
         setCadastreTileNote("지적 프록시 정상 — 지도를 이동/새로고침해도 안 보이면 줌·영역을 확인하세요");
         return;
@@ -2360,17 +2383,25 @@ export function SatongMultiMap({
   }, [mapReady, measureOn]);
 
   // ESC 단계적 해제 — ①팝오버 닫기 → ②측정 종료 → ③측정 결과 지우기.
+  //
+  // ★2026-08-17 — **조정기를 거친다**(lib/satong-dismiss). 종전에는 이 리스너가 셸의
+  //   레일·베이스맵 팝오버 ESC 와 같은 keydown 에 조율 없이 함께 발화해, 사용자가 한 번
+  //   눌렀는데 **둘이 사라졌다**(라이브 실측: clickMenu 470 + role=dialog 430 동시 개방 →
+  //   ESC 1회에 둘 다 닫힘). 이제 z(SSOT rung)가 가장 큰 표면 하나만 닫힌다.
+  // ★단계 ②③(측정)은 **표면이 아니다** — 아주 낮은 z 로 등록해 "열린 표면이 없을 때만"
+  //   차례가 오게 한다. 종전 우선순위(①→②→③)가 그대로 보존된다.
   useEffect(() => {
-    if (!clickMenu && !measureOn && measurePoints.length === 0) return;
-    const onKey = (ev: KeyboardEvent) => {
-      if (ev.key !== "Escape") return;
-      if (clickMenu) { setClickMenu(null); return; }
+    if (!clickMenu) return;
+    return registerDismissible(SATONG_UI_Z.clickMenu, () => setClickMenu(null));
+  }, [clickMenu]);
+
+  useEffect(() => {
+    if (!measureOn && measurePoints.length === 0) return;
+    return registerDismissible(MEASURE_DISMISS_Z, () => {
       if (measureOn) { setMeasureOn(false); return; }
       setMeasurePoints([]);
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [clickMenu, measureOn, measurePoints.length]);
+    });
+  }, [measureOn, measurePoints.length]);
 
   // 클릭 지점의 오버레이 피처(용도지역·공시지가·노후도 색면) — 팝오버 헤더 정보(레이캐스팅).
   const clickMenuFeature = useMemo(() => {
@@ -2865,6 +2896,23 @@ export function SatongMultiMap({
           ? "flex flex-col gap-2"
           : "flex flex-col gap-2 rounded-xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-3"
       }
+      /* ★상세정보팝업 양보 계약(SATONG_POPUP_YIELD)의 **트리거**. 사용자 신고 "팝업이 가려진다".
+         Leaflet 팝업은 격리된 .leaflet-container 안이라 **z 로는 크롬을 못 이긴다**
+         (라이브 실측: popup pane 계산 z = 1, 컨테이너 isolate/0). 그래서 팝업이 열리면
+         수동적 크롬이 물러난다. 감쇄 규칙은 globals.css 한 곳에만 둔다.
+
+         ★왜 지도 래퍼가 아니라 **여기(컴포넌트 루트)** 인가 — 2026-08-18.
+         종전엔 아래 `wrapperClass("relative")` 래퍼에 붙였다. 그러면 CSS 자손 선택자가
+         래퍼 **안**의 크롬만 닿는다. 실제로 이 지도를 쓰는 화면들은 지도의 **형제**로
+         오버레이를 얹는다(실측: NearbyTransactionsMap 6개 · ZoningSignalMap 1개 ·
+         ParcelBoundaryMap 1개). 형제는 자손 선택자에 **원리적으로** 안 걸려 계약 밖이었다.
+         트리거를 루트로 올리면 globals.css 의 형제 결합자(`~`)가 그 형제들에 닿는다.
+         래퍼 안쪽 크롬은 여전히 루트의 자손이라 **기존 동작은 그대로**다.
+
+         ★값을 "true"/"false" 로 **항상** 렌더한다(종전엔 닫힘일 때 속성 자체가 없었다).
+         속성이 없으면 "루트에 트리거가 붙는다"는 사실을 테스트가 관측할 수 없다.
+         CSS 는 `="true"` 만 매치하므로 "false" 는 화면에 영향이 없다. */
+      {...{ [SATONG_POPUP_YIELD.wrapperAttr]: detailPopupOpen ? "true" : "false" }}
     >
       {/* 안내 메시지 */}
       {chrome === "default" && !readOnly && (
@@ -2893,11 +2941,6 @@ export function SatongMultiMap({
       <div
         ref={wrapperRef}
         className={wrapperClass("relative")}
-        /* ★상세정보팝업 양보 계약(SATONG_POPUP_YIELD) — 사용자 신고 "팝업이 가려진다".
-           Leaflet 팝업은 격리된 .leaflet-container 안이라 **z 로는 크롬을 못 이긴다**
-           (라이브 실측: popup pane 계산 z = 1, 컨테이너 isolate/0). 그래서 팝업이 열리면
-           수동적 크롬이 물러난다. 감쇄 규칙은 globals.css 한 곳에만 둔다. */
-        {...{ [SATONG_POPUP_YIELD.wrapperAttr]: detailPopupOpen ? "true" : undefined }}
       >
         {/* 줌 컨트롤은 좌하단(디자인컴프) — 상단 칩바 겹침 CSS 불필요. ping은 마커 애니메이션용. */}
         <style jsx global>{`

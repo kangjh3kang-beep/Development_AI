@@ -19,6 +19,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Building2, ChevronDown, ChevronRight, Plus } from "lucide-react";
 import { salesApi } from "@/lib/salesApi";
 import { ApiClientError } from "@/lib/api-client";
+import { DISMISS_Z, useDismissible } from "@/lib/satong-dismiss";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import {
   NODE_TYPE_LABEL, ROLE_LABEL, nodeTypeOptions, nodeTypeLabel, orgRank, addableChildTypes,
@@ -185,6 +186,32 @@ export default function OrgTree({ siteCode }: { siteCode: string }) {
   // ★UX 감사(2026-07-23) 지적 반영: 모바일에서 최악이던 브라우저 prompt() 대신 인라인 배정 시트
   //   (이메일 입력 폼)로 교체 — 결과/오류도 시트 안에 표시한다.
   const [assign, setAssign] = useState<{ nodeId: string; name: string; email: string; err: string | null; busy: boolean } | null>(null);
+  // ESC 로 시트 닫기.
+  // ★정정(R2) — 초판 주석은 "두 시트는 `fixed inset-0` 이라 동시에 열릴 수 없다"고 단정했다.
+  //   그건 **마우스 기준으로만** 참이다: 시트가 열려 있어도 뒤쪽 트리의 '배정' 버튼은
+  //   `inert`/`hidden` 이 아니라 **Tab 으로 도달해 Enter 로 누를 수 있다**(포커스 트랩은 이번
+  //   범위 밖이라 아직 없다). 실제로 둘이 함께 열리면 같은 칸에서는 **먼저 등록된 쪽**,
+  //   즉 화면 아래에 있는 액션시트가 닫히고 위에 보이는 배정 시트가 남는다(R2 실측).
+  //   그건 이 조정기가 없애려던 등록 순서 의존 그 자체다.
+  // → 두 가지를 함께 건다: ①배정 시트는 JSX 상 액션시트보다 뒤(= 위에 그려짐)이므로 한 칸 위로
+  //   등록해 **보이는 것이 먼저 닫히게** 하고, ②애초에 함께 열리지 않도록 여는 쪽에서 상대를
+  //   닫는다(아래 openSheet/openAssign).
+  useDismissible(DISMISS_Z.appModal, sheet != null, () => setSheet(null));
+  useDismissible(DISMISS_Z.nestedOverModal, assign != null, () => setAssign(null));
+
+  /**
+   * 시트를 여는 **유일한 통로** — 여는 쪽에서 상대를 닫아 두 시트가 겹치지 않게 한다.
+   * (키보드로 뒤쪽 버튼에 도달할 수 있으므로 "화면을 덮으니 못 누른다"에 기대지 않는다.)
+   */
+  const openSheet = (next: { node: Node; mode: "actions" | "add" | "move" }) => {
+    setAssign(null);
+    setSheet(next);
+  };
+  const openAssign = (next: { nodeId: string; name: string; email: string; err: string | null; busy: boolean }) => {
+    setSheet(null);
+    setAssign(next);
+  };
+
   const submitAssign = async () => {
     if (!assign || !assign.email.trim()) return;
     setAssign({ ...assign, busy: true, err: null });
@@ -271,7 +298,7 @@ export default function OrgTree({ siteCode }: { siteCode: string }) {
               {open ? <ChevronDown className="size-4" aria-hidden /> : <ChevronRight className="size-4" aria-hidden />}
             </button>
           ) : <span className="size-9 shrink-0" />}
-          <button onClick={() => { setRootAdd(false); setNewType(""); setName(""); setSheet({ node: n, mode: "actions" }); }}
+          <button onClick={() => { setRootAdd(false); setNewType(""); setName(""); openSheet({ node: n, mode: "actions" }); }}
             className="flex min-h-11 min-w-0 flex-1 items-center gap-2 text-left">
             <span className="shrink-0 rounded bg-[var(--surface-strong)] px-1.5 py-0.5 text-xs font-semibold text-[var(--accent-strong)]">{LABEL[n.node_type] ?? n.node_type}</span>
             <span className="truncate text-sm font-semibold text-[var(--text-primary)]">{n.display_name ?? "-"}</span>
@@ -341,7 +368,7 @@ export default function OrgTree({ siteCode }: { siteCode: string }) {
                       {r.assigned ? (
                         <button onClick={() => unassignUser(r.node_id)} className="rounded border border-[var(--line)] px-1.5 py-0.5 text-[9px] text-[var(--text-tertiary)]" title="배정 해제">해제</button>
                       ) : (
-                        <button onClick={() => setAssign({ nodeId: r.node_id, name: r.name, email: "", err: null, busy: false })} className="rounded border border-[var(--accent-strong)] px-1.5 py-0.5 text-[9px] font-bold text-[var(--accent-strong)] opacity-100">배정</button>
+                        <button onClick={() => openAssign({ nodeId: r.node_id, name: r.name, email: "", err: null, busy: false })} className="rounded border border-[var(--accent-strong)] px-1.5 py-0.5 text-[9px] font-bold text-[var(--accent-strong)] opacity-100">배정</button>
                       )}
                     </td>
                     <td className="text-right text-[var(--text-primary)]">{r.contracts}</td>

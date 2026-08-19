@@ -103,7 +103,14 @@ describe("침묵 데드존 — 표시 전용 오버레이가 지도 클릭을 �
     expect(() =>
       assertWiredThrough({
         file: "components/precheck/SatongMapShell.tsx",
-        scope: /className="pointer-events-none absolute left-4 top-4 z-\[380\]/,
+        // ★2026-08-17 — 스코프에서 `pointer-events-none` 과 `z-[380]` 을 **뺐다.**
+        //   ①`z-[380]` 은 SSOT rung(`SATONG_UI_Z.badgeRow`)으로 옮겨 더 이상 클래스에 없다.
+        //   ②종전 스코프는 `pointer-events-none` 을 **포함**했고 `mustContain` 도 같은 값이라
+        //     "스코프가 단언을 함의"하는 형태였다. 탐지 자체는 `minMatches` 가 떠받쳤지만
+        //     (속성을 지우면 스코프가 안 맞아 매치 0 → 실패), **실패 메시지가 원인을 오도**했다
+        //     — "스코프가 어긋났다"(요소가 옮겨짐)와 "속성이 사라졌다"(데드존 복원)는 **처방이 다르다.**
+        //   → 이제 스코프는 **슬롯 정체성만**(좌상단 칩바 레이아웃) 잡고, 단언은 속성이 한다.
+        scope: /className="[^"]*absolute left-4 top-4 flex flex-wrap items-center gap-2"/,
         mustContain: "pointer-events-none",
         minMatches: 1,
       }),
