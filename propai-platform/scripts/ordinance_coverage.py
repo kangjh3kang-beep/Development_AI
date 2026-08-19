@@ -158,9 +158,15 @@ async def main() -> int:
             if not tot:
                 print(f"[{z}] 대상 0 — 표본에 없음")
                 continue
-            print(f"[{z}] 대상 {tot} | ok {c['ok']} ({c['ok'] / tot * 100:.1f}%) | "
+            # ★분모에서 n/a 를 뺀다 — "그 조례가 규율하지 않음"은 **파서가 못한 게 아니다.**
+            #   전수(150곳)에서 이걸 안 뺐다가 자연녹지 67.4% 로 읽어 표본 30곳(96.2%)과
+            #   어긋나 보였다. 실제 파서 성공률은 95.0% 로 표본과 일치한다 —
+            #   **표본이 틀린 게 아니라 내 지표가 틀렸다.**
+            den = tot - c["not_applicable"]
+            rate = f"{c['ok'] / den * 100:.1f}%" if den else "n/a"
+            print(f"[{z}] 대상 {tot} | 파서분모 {den} | ok {c['ok']} ({rate}) | "
                   f"rejected {c['rejected']} | no_value {c['no_value']} | "
-                  f"no_section {c['no_section']} | n/a {c['not_applicable']} | "
+                  f"no_section {c['no_section']} | n/a {c['not_applicable']}(분모제외) | "
                   f"fetch_error {c['fetch_error']}")
 
     _report("커버리지 — 기초자치단체(시·군·구)", tally)
