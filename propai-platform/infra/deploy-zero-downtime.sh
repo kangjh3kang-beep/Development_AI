@@ -86,7 +86,18 @@ OLD_IMG_ID=$(sudo docker image inspect propai-api:latest --format {{.Id}} 2>/dev
 #   → 원인을 모르는 채 prune 위치를 바꾸는 것은 추측이므로, **먼저 관측을 남기고**
 #     다음 배포의 캐시 히트 수로 판별한다.
 BUILD_LOG=$(mktemp)
-sudo docker build -f Dockerfile.oracle --build-arg "APP_BUILD_ID=$APP_BUILD_ID" -t propai-api:latest . > "$BUILD_LOG" 2>&1
+echo "빌드 로그: $BUILD_LOG"   # ★실패해도 위치를 알 수 있게 **미리** 찍는다
+# ★`if !` 로 감싼다 — `set -e` 는 조건문 안의 명령에는 적용되지 않으므로,
+#   빌드가 죽어도 아래 진단을 **찍고 나서** 우리가 원하는 코드로 종료할 수 있다.
+#   ★★2026-08-19 회귀 자백: `#699` 가 출력을 파일로 돌리면서 **빌드 실패 시 화면 출력이 0줄**이
+#     됐다(종전 `| tail -2` 는 에러 2줄이라도 찍고 죽었다). 관측을 넣으려다 **진단을 더 나쁘게**
+#     만든 것이다 — 성공 경로만 보고 실패 경로를 안 봤다.
+if ! sudo docker build -f Dockerfile.oracle --build-arg "APP_BUILD_ID=$APP_BUILD_ID" -t propai-api:latest . > "$BUILD_LOG" 2>&1; then
+  echo "!! 빌드 실패 — 마지막 40줄:"
+  tail -40 "$BUILD_LOG"
+  echo "(전체 로그: $BUILD_LOG)"
+  exit 1
+fi
 tail -2 "$BUILD_LOG"
 # ★`grep -c` 는 매칭 0 이면 exit 1 이라 pipefail+set -e 아래서 배포를 죽인다 → `|| true`.
 #   그리고 결과를 **정수로 쓸 때 개행이 섞이면** `[: integer expression expected` 가 난다
