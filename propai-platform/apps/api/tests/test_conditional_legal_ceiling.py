@@ -206,9 +206,17 @@ def test_note_states_the_number_and_refuses_to_claim_application():
     근거 없는 단정이 된다 — 문구도 검증 대상이다(CLAUDE.md 규율 C.10).
     """
     note = resolve_conditional_ceiling("자연녹지지역", [PLAN_ZONE])["note"]
-    assert "30" in note and "자연녹지지역" in note
-    assert "성장관리계획" in note          # 무엇을 더 확인해야 하는지
+    assert "건폐율 상한이 30%" in note and "자연녹지지역" in note
+    # ★"무엇을 더 확인해야 하는가"를 통째로 잠근다 — 종전엔 `"성장관리계획" in note` 였는데
+    #   앞 문장의 '성장관리계획구역'이 그 부분문자열을 이미 갖고 있어 **공허했다**(변이 생존).
+    assert "성장관리계획 본문과 조례가 정하므로" in note
     assert "적용값으로 쓰지 않습니다" in note
+    # 녹지는 용적률이 안 열리므로 그 문구가 **없어야** 한다(음성 단언).
+    assert "용적률 상한" not in note
+
+    # 계획관리는 둘 다 열리므로 두 수치가 모두 실린다(조립식이 죽은 분기 없이 처리).
+    both = resolve_conditional_ceiling("계획관리지역", [PLAN_ZONE])["note"]
+    assert "건폐율 상한이 50%" in both and "용적률 상한이 125%" in both
 
 
 def test_zone_unmatched_early_return_still_carries_the_key():
