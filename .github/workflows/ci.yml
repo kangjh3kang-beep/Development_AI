@@ -17,6 +17,7 @@ jobs:
   changes:
     name: Detect changes
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       pull-requests: read
     outputs:
@@ -50,6 +51,13 @@ jobs:
     needs: changes
     if: needs.changes.outputs.platform == 'true'
     runs-on: ubuntu-latest
+    # ★상한이 없으면 멈춘 job 이 GitHub 기본 **6시간**까지 간다.
+    #   2026-08-18 실사고: `Install GDAL native libraries` 가 **5시간 50분** 매달렸고
+    #   그동안 `Run unit tests` 는 시작조차 못 했다. 관측자는 `in_progress` 를
+    #   "진행 중"으로 읽었지만, **근본은 오독이 아니라 워크플로에 상한이 없다는 것**이다.
+    #   40분 = 그 단계의 관측 성공 최대치(986초 = 16.4분)의 2배 초과.
+    #   정상 실행을 죽이지 않으면서(성공 13건 실측 38~986초) hang 은 빠르게 실패시킨다.
+    timeout-minutes: 40
     defaults:
       run:
         working-directory: propai-platform
@@ -150,6 +158,9 @@ jobs:
     needs: changes
     if: needs.changes.outputs.platform == 'true'
     runs-on: ubuntu-latest
+    # ★상한은 **모든 job 에 건다** — 걸린 곳만 걸면 안 건 곳이 다음 6시간을 만든다.
+    #   (CLAUDE.md §D-19 "경계를 걸면 양방향으로" 의 job 판.)
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -210,6 +221,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.platform == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 

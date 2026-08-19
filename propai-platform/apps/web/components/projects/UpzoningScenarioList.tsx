@@ -28,6 +28,11 @@ export interface UpzoningScenarioView {
   expected_far_pct_low?: number | null;
   expected_far_pct_high?: number | null;
   expected_far_source?: string;
+  /** ★상향 여지 — **어느 용도지역까지 갔을 때**의 값인지 라벨과 한 쌍이다.
+   *  종전엔 이 숫자가 `expected_far_pct_high` 로 올라와 `target_zone` 라벨과 어긋났고
+   *  (2종이라 써 놓고 3종 상한 300%), 그 상태가 법정상한 초과로 화면에 나갔다. */
+  upside_far_pct_high?: number | null;
+  upside_far_zone?: string | null;
   conditions?: string[];
   feasibility?: string;
   feasibility_reason?: string;
@@ -108,6 +113,16 @@ function ScenarioCard({ sc }: { sc: UpzoningScenarioView }) {
         <p className="text-[11px] font-bold text-[var(--text-secondary)] mb-1">
           예상 용적률 {sc.expected_far_pct_low != null ? pct(sc.expected_far_pct_low) : ""}{sc.expected_far_pct_high != null ? ` ~ ${pct(sc.expected_far_pct_high)}` : ""}
           {sc.expected_far_source ? ` (${sc.expected_far_source})` : ""}
+        </p>
+      )}
+      {/* ★상향 여지 — 대표 목표보다 더 높은 후보가 있으면 **그 용도지역을 밝혀** 보인다.
+          이 줄이 없으면 "어떤 경로도 상한을 못 넘는다"는 오독이 되살아난다(#700 의 발단).
+          반대로 라벨 없이 숫자만 올리면 위법값이 된다 — 숫자와 용도지역은 한 쌍이다. */}
+      {sc.upside_far_pct_high != null && sc.upside_far_zone
+        && sc.upside_far_pct_high > (sc.expected_far_pct_high ?? 0) && (
+        <p className="text-[11px] font-bold text-[var(--accent-strong)] mb-1">
+          최대 {sc.upside_far_zone} 상향 시 {pct(sc.upside_far_pct_high)}
+          <span className="font-medium text-[var(--text-tertiary)]"> — 상향 단계에 따라 달라집니다</span>
         </p>
       )}
       {sc.feasibility_reason && (

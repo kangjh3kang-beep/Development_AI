@@ -62,8 +62,31 @@ echo "APP_BUILD_ID = $APP_BUILD_ID"
 #     2026-08-17 실측 — 삭제 전 보존대상(실행중 5 + 태그 4)과 dangling 목록의 **교집합 0**.
 #   ★과거 `docker system prune -af` 가 빌드를 죽인 사고가 있어 이 스크립트는 prune 을 피해 왔다.
 #     그 사고의 원인은 **`-af`(all+force)** 였지 dangling 정리가 아니다.
-echo "== dangling 이미지 정리(★-a 금지 — prev 롤백 자산 보호) =="
-sudo docker image prune -f 2>&1 | tail -1 || true
+#
+#   ★★2026-08-19 — **`--filter until=24h` 가 필수다. 없으면 매 배포가 빌드 캐시를 통째로 날린다.**
+#     이 스크립트는 **레거시 빌더**로 빌드한다(로그 `Step N/20`·`Successfully built`,
+#     BuildKit `#N` 줄 0). 레거시 빌더의 캐시는 **중간 이미지 그 자체**이고,
+#     `docker image prune -f` 는 태그된 이미지의 조상인 그 중간 이미지까지 지운다.
+#
+#     실측(168 실서버, prune 전후 대조):
+#       [전] docker history propai-api:latest  실제ID 20 / <missing>  9
+#            docker images -f dangling=true    →  2        ← ★필터가 보여주는 것
+#            sudo docker image prune -f        →  487.6MB 회수
+#       [후] docker history propai-api:latest  실제ID  1 / <missing> 28   ← 19개 삭제
+#
+#     ★**조회 도구가 보여주는 집합(2)과 이 명령이 지우는 집합(19)이 다르다.**
+#       그래서 "dangling 은 2개뿐이니 안전하다"는 판단이 두 번 틀렸다.
+#
+#     결과: `빌드 캐시 재사용 = 0 / 20` 이 2회 연속(빌드 287초·279초).
+#     독립 대조군: **158 은 이 prune 이 없고 같은 레거시 빌더인데 `Using cache` 6줄**이다.
+#       같은 빌더 · 유일한 차이가 prune 유무 · 결과가 6 대 0.
+#
+#     `until=24h` 는 **하루 지난 것만** 회수한다 → 직전 빌드 캐시는 살고 축적은 잡힌다.
+#     중간 이미지 1세대의 실비용은 실측 **487.6MB**(디스크 97G 중 여유 73G)라 감당된다.
+#   ★"prune 을 빌드 **직후**로 옮긴다"는 틀린 처방이다 — 방금 만든 중간 이미지를 지워
+#     다음 빌드가 다시 0 이 된다. 문제는 **위치가 아니라 대상 범위**다.
+echo "== dangling 이미지 정리(★-a 금지 · ★until=24h — 직전 빌드 캐시 보호) =="
+sudo docker image prune -f --filter "until=24h" 2>&1 | tail -1 || true
 
 # ★롤백 경로 확보(insight-loop 2026-07-29 / 2026-07-30 보정): 빌드 후 이미지 ID를 비교해
 #   **내용이 실제로 바뀐 경우에만** 직전 이미지를 prev 로 승계한다.
@@ -79,12 +102,16 @@ OLD_IMG_ID=$(sudo docker image inspect propai-api:latest --format {{.Id}} 2>/dev
 #   2026-08-18 첫 VERIFY-BUILD 배포가 **699초**(기준선 39초의 18배)였는데, 로그가
 #   `| tail -2` 라 `Using cache` 줄이 버려져 **사후에 가릴 방법이 없었다**:
 #     ①첫 적용 비용(ARG 레이어 신설 + 소스 변경)인지
-#     ②위 dangling prune 의 **간접 영향**인지(지운 이미지가 참조하던 레이어가 사라져
-#       캐시 재사용이 깨졌을 수 있다 — 빌드 캐시 엔트리가 남아도 레이어가 없으면 못 쓴다)
-#   ★`image prune -f` 가 빌드 캐시를 직접 지우는 것은 **아니다**(그건 `builder prune`).
-#     배포 후 `docker system df` 에 Build Cache 50개·6.374GB 가 남아 있음을 실측했다.
-#   → 원인을 모르는 채 prune 위치를 바꾸는 것은 추측이므로, **먼저 관측을 남기고**
-#     다음 배포의 캐시 히트 수로 판별한다.
+#     ②위 dangling prune 의 영향인지
+#
+#   ★★2026-08-19 — **판별 끝. ②가 맞았다.** 그리고 아래 옛 주석은 **근거가 틀렸었다**:
+#       (옛) "`image prune -f` 가 빌드 캐시를 직접 지우는 것은 아니다(그건 `builder prune`).
+#             `docker system df` 에 Build Cache 50개·6.374GB 가 남아 있음을 실측했다."
+#     그 6.374GB 는 **BuildKit 캐시**이고 이 빌드는 **레거시 빌더**라 애초에 무관한 지표였다
+#     (`docker system df` 상 그 Build Cache 는 **ACTIVE 0** — 아무도 안 쓴다).
+#     레거시 빌더의 캐시는 **중간 이미지**이고 `image prune -f` 가 그것을 지운다(위 66줄 참조).
+#   ★교훈: **결론이 우연히 맞아도 근거가 틀리면 코드에 남아 다음 사람의 판단을 망친다.**
+#     그래서 틀린 문장을 지우지 않고 "옛"으로 표시해 남긴다 — 같은 오판의 재발을 막는다.
 BUILD_LOG=$(mktemp)
 echo "빌드 로그: $BUILD_LOG"   # ★실패해도 위치를 알 수 있게 **미리** 찍는다
 # ★`if !` 로 감싼다 — `set -e` 는 조건문 안의 명령에는 적용되지 않으므로,
@@ -147,6 +174,39 @@ if [ "$RUNNING_ID" != "$APP_BUILD_ID" ]; then
   exit 1
 fi
 echo "  OK 실행 컨테이너 = $RUNNING_ID"
+
+# ★VERIFY-SOURCE — **떠 있는 컨테이너의 소스가 호스트 소스와 같은가**(Caddy 전환 전).
+#   VERIFY-BUILD 는 *"어느 커밋을 빌드했는가"* 를 답하지만, **빌드가 실은 다른 것을 실었는지**는
+#   말하지 않는다. 빌드 캐시가 옛 레이어를 재사용하면 `APP_BUILD_ID` 만 새로 박히고 소스는
+#   낡을 수 있다 — 그러면 VERIFY-BUILD 는 OK 인데 서비스는 옛 코드다.
+#   ★2026-08-19 실측 계기: 168 라이브의 `ordinance_service.py` 가 **미머지 브랜치 HEAD** 와
+#     같고 `origin/main` 과 달랐다(핫패치·전수 대조에서 782 중 1건). 그 층을 여기서 닫는다.
+#   ★★이 검사가 막는 것과 못 막는 것을 분명히 한다:
+#     막는다   — 빌드 컨텍스트/캐시 때문에 **갓 빌드한 컨테이너가 소스와 다른** 경우
+#     못 막는다 — 배포가 끝난 **뒤** 컨테이너 안을 직접 고치는 핫패치(주기 감시의 몫)
+echo "== VERIFY-SOURCE(전환 전 · 컨테이너 소스 vs 호스트 소스) =="
+_SRC_C=$(mktemp); _SRC_H=$(mktemp)
+# ★md5sum 출력을 **파일명 기준으로 정렬**한다. find 순서는 두 환경에서 다를 수 있고,
+#   정렬하지 않으면 내용이 같아도 전부 불일치로 읽힌다(첫 판 실측: 위양성 110건).
+sudo docker exec "$NAME" sh -c 'cd /app && find apps/api/app -name "*.py" -not -path "*/__pycache__/*" -exec md5sum {} +' 2>/dev/null | sort -k2 > "$_SRC_C"
+find apps/api/app -name "*.py" -not -path "*/__pycache__/*" -exec md5sum {} + 2>/dev/null | sort -k2 > "$_SRC_H"
+_CN=$(wc -l < "$_SRC_C"); _HN=$(wc -l < "$_SRC_H")
+echo "  [대조군] 파일 수  컨테이너=$_CN  호스트=$_HN"
+# ★대조군이 필수인 이유: 경로를 틀리면 `md5sum` 이 빈 목록을 내고도 **파이프 종료코드가 0** 이라
+#   "드리프트 없음"으로 읽힌다. 목록이 비었는지를 **먼저** 단언한다.
+if [ "$_CN" -eq 0 ] || [ "$_HN" -eq 0 ]; then
+  echo "!! 소스 목록을 읽지 못했다(컨테이너=$_CN 호스트=$_HN) — 경로/권한 확인. 전환 중단."
+  sudo docker rm -f "$NAME"; exit 1
+fi
+_DRIFT=$(diff "$_SRC_C" "$_SRC_H" | grep -c '^<' || true)
+_DRIFT=$(printf '%s' "$_DRIFT" | tr -d '[:space:]')
+if [ "${_DRIFT:-0}" -ne 0 ] || [ "$_CN" -ne "$_HN" ]; then
+  echo "!! 컨테이너 소스가 호스트 소스와 다르다(불일치 ${_DRIFT} · 파일수 $_CN/$_HN) — 전환 중단"
+  diff "$_SRC_C" "$_SRC_H" | grep '^[<>]' | head -10
+  echo "   ※갓 빌드한 컨테이너는 원리적으로 0 이어야 한다. 0 이 아니면 빌드가 다른 것을 실었다."
+  sudo docker rm -f "$NAME"; exit 1
+fi
+echo "  OK 소스 일치 ($_CN 파일)"
 
 # ★field_audit 활성 게이트(insight-loop 2026-07-30) — Caddy 전환 전에 신규 컨테이너를 검사한다.
 #   #497 진단 엔드포인트로 자가검증 레이어의 무성(silent) 회귀를 배포 시점에 차단(fail-closed).
