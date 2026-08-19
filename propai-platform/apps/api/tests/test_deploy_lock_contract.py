@@ -441,3 +441,38 @@ def test_빌드가_캐시를_썼는지_로그에_남긴다() -> None:
         f"grep -c 결과를 한 줄로 정규화하지 않는다 → {cache_line}. "
         "개행이 섞이면 `[: integer expression expected` 가 난다(2026-08-18 실측)."
     )
+
+
+def test_빌드_실패시_로그를_노출한다() -> None:
+    """빌드가 죽었을 때 **화면에 아무것도 안 나오면** 원인을 찾을 수 없다.
+
+    ★2026-08-19 회귀(자백): `#699` 가 캐시 히트를 세려고 빌드 출력을 파일로 돌리면서
+      **실패 시 출력이 0줄**이 됐다(종전 `| tail -2` 는 에러 2줄이라도 찍고 죽었다).
+      `mktemp` 경로도 실패 전에 안 찍혀 **로그 위치조차** 알 수 없었다.
+      관측을 넣으려다 진단을 더 나쁘게 만든 것이다 — **성공 경로만 보고 실패 경로를 안 봤다.**
+
+    그래서 세 가지를 잠근다: ①로그 경로를 미리 알린다 ②빌드 실패를 감지한다
+    ③실패 시 로그 꼬리를 노출한다.
+    """
+    lines = _executable_lines(ZERO_DOWNTIME)
+
+    build = [i for i, ln in enumerate(lines) if "docker build" in ln]
+    assert build, "docker build 줄을 찾지 못했다"
+    bi = build[0]
+
+    # ① 로그 경로를 빌드 **전에** 알린다 — 실패해도 어디를 볼지 알 수 있어야 한다.
+    before = lines[:bi]
+    assert any("BUILD_LOG" in ln and ln.startswith("echo") for ln in before), (
+        "빌드 전에 로그 경로를 출력하지 않는다 — 실패하면 로그 위치조차 모른다"
+    )
+
+    # ② 실패를 감지한다(`if !` 로 감싸거나 종료코드를 검사한다).
+    assert lines[bi].startswith("if ! ") or any(
+        "BUILD_LOG" in ln and "tail -40" in ln for ln in lines[bi : bi + 8]
+    ), "빌드 실패를 감지·처리하지 않는다 — set -e 로 조용히 죽으면 화면에 아무것도 안 남는다"
+
+    # ③ 실패 시 로그 꼬리를 노출한다.
+    tail_lines = [ln for ln in lines[bi : bi + 8] if re.search(r"tail -\d+ \"\$BUILD_LOG\"", ln)]
+    assert any("40" in ln for ln in tail_lines), (
+        "실패 시 로그 꼬리(tail -40)를 노출하지 않는다 — 성공 시의 tail -2 만으로는 원인을 못 본다"
+    )
