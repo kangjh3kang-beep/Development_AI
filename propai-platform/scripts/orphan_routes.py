@@ -57,6 +57,11 @@
   · **문자열 리터럴은 배제하지 않는다.** 이 도구의 신호가 **전부 문자열 리터럴 안에**
     살기 때문이다(`apiClient.get("/market/report")`). 배제하면 도구가 통째로 죽는다.
     따라서 "죽은 상수에 남은 경로"는 여전히 소비로 세어진다.
+  · **`tokenize` 오프셋이 폼피드(`\x0c`)·`\x0b`·유니코드 줄바꿈에서 어긋난다.**
+    `splitlines(keepends=True)` 는 그 문자에서 줄을 자르는데 `tokenize` 는 안 자르기 때문에
+    줄 오프셋 표가 밀린다(실증: 주석이 15번지인데 (7,10)으로 보고). 그러면 마스킹이 엉뚱한
+    구간에 걸린다. ★저장소 노출은 **0건**이다(백엔드 `.py` 전수 중 해당 문자 포함 0개).
+    방향(유령이 새는 쪽인지 진짜가 지워지는 쪽인지)은 **확정하지 않았다** — 노출이 0이라 안 팠다.
   · **import 경로·Next 페이지 경로를 "API 소비"로 센다.** 짧은 경로일수록 심하다 —
     실측(2026-08-20, 전수 분류) `/cost` 는 경계를 통과한 매칭 **52건 중 25건이
     `@/components/cost/…` import·`/{locale}/analytics/cost` 링크**이고 27건만 진짜
@@ -137,7 +142,7 @@ def _strip_js_comments(src: str) -> str:
         (예: `/[\'"]/`)나 JSX 아포스트로피(`It's`)를 문자열 시작으로 오인하면, 스캐너가
         문자열 상태에 갇혀 **그 뒤 구간의 주석을 통째로 못 지운다** = 결함② 재발 방향이다.
         **실측(2026-08-20, 663 프론트 파일)**: 배제 실패 **10개 파일** ·
-        놓친 줄주석 **127줄** · 다중행 문자열 구간 **4,600줄 / 177,002줄 = 2.60%**
+        놓친 줄주석 **127줄** · 따옴표 desync 이후 파일 끝까지 **4,600줄 / 177,002줄 = 2.60%**
         (SatongMultiMap · MarketInsightsWorkspaceClient · vworld-xml-exception ·
          MarkdownLite · source-invariant · ProjectPresaleMap 등).
         → **이 배제는 완전하지 않다.** 단정하지 마라.
@@ -354,13 +359,23 @@ def is_dynamically_reachable(full: str, blob: str) -> bool:
 
 
 @functools.lru_cache(maxsize=1)
-def classify() -> tuple[list[tuple[str, str, str]], list[tuple[str, str, str]]]:
+def classify() -> tuple[tuple[tuple[str, str, str], ...], tuple[tuple[str, str, str], ...]]:
     """(확정 고아, 판정 불가) 를 돌려준다. 나머지는 확정 소비다.
 
     ★캐시하는 이유: 한 번 호출에 저장소를 **전수 스캔**한다(백엔드 .py + 프론트 .ts/.tsx).
       테스트 1회가 `orphans()`·`undecided_routes()`·파라미터화로 7회 호출해 ≈38초였다.
       한 프로세스 안에서 소스는 안 바뀌므로 안전하다 — 소스를 바꿔가며 재분류하고 싶으면
       `classify.cache_clear()` 를 부르라(변이 검증은 프로세스를 새로 띄우므로 무관하다).
+
+    ★★**캐시가 살아 있는 동안 아래 `apiClient` 대조군은 발화하지 않는다.**
+      `API_DIR`/`WEB_DIR` 를 바꿔 가며 두 트리를 비교하는 감사(리뷰 레인이 실제로 한다)에서
+      **낡은 수치를 원본으로 보고**하게 된다 — 이 도구가 고치려는 "낡은 워크트리를 읽어 133"과
+      **같은 형태**다. 경로·소스를 바꿨으면 **반드시 `classify.cache_clear()`** 를 부르라.
+      (실증 2026-08-20: `WEB_DIR="/tmp/__nonexistent__"` 로 바꿔도 예외 없이 123 을 돌려주고,
+       `cache_clear()` 후에야 SystemExit 이 난다.)
+
+    ★반환은 **튜플**이다 — 종전에는 캐시가 쥔 리스트를 그대로 돌려줘서 호출자의
+      `.append()`/`.sort()` 한 줄이 **전역 캐시를 조용히 오염**시켰다(실증: 123 → 124).
     """
     routes = backend_routes()
     blob = frontend_blob()
@@ -374,7 +389,7 @@ def classify() -> tuple[list[tuple[str, str, str]], list[tuple[str, str, str]]]:
         if is_consumed(f, blob):
             continue
         (undecided if is_dynamically_reachable(f, blob) else confirmed).append((f, m, p))
-    return confirmed, undecided
+    return tuple(confirmed), tuple(undecided)
 
 
 def orphans() -> list[tuple[str, str, str]]:
@@ -383,12 +398,12 @@ def orphans() -> list[tuple[str, str, str]]:
     ★2026-08-20 이전에는 판정 불가 13건이 여기 섞여 있었다 — 그것이 보드에 올라간
       결함 후보 목록의 위양성이 됐다.
     """
-    return classify()[0]
+    return list(classify()[0])  # ★사본 — 호출자가 캐시를 훼손하지 못하게
 
 
 def undecided_routes() -> list[tuple[str, str, str]]:
     """**판정 불가(동적 세그먼트)**. 고아로도 소비로도 세지 않고 눈에 보이게 남긴다."""
-    return classify()[1]
+    return list(classify()[1])  # ★사본 — 호출자가 캐시를 훼손하지 못하게
 
 
 if __name__ == "__main__":

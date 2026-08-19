@@ -22,6 +22,7 @@ import pytest
 _SCRIPTS = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "scripts"))
 sys.path.insert(0, _SCRIPTS)
 
+import orphan_routes  # type: ignore[import-not-found]  # noqa: E402
 from orphan_routes import (  # type: ignore[import-not-found]  # noqa: E402
     _py_comment_string_spans,
     _strip_js_comments,
@@ -130,6 +131,73 @@ def test_토큰화_실패시_None_을_돌려준다():
     # 대조군 — 정상 소스는 범위를 돌려줘야 한다(항상 None 이면 마스킹이 통째로 죽는다).
     spans = _py_comment_string_spans('# c\nx = "s"\n')
     assert spans and len(spans) >= 2, f"정상 소스에서 주석·문자열 범위를 못 찾았다: {spans}"
+
+
+def test_호출자가_캐시를_오염시키지_못한다():
+    """★`classify()` 는 lru_cache 다 — 캐시가 쥔 리스트를 그대로 돌려주면 호출자의
+    `.append()`/`.sort()` 한 줄이 **전역 분류 결과를 조용히 바꾼다**(실증: 123 → 124).
+
+    오늘 훼손하는 호출자는 없지만, 그래서 더더욱 잠가 둔다 — 미래의 한 줄이 기준선·래칫을
+    통째로 거짓말하게 만든다.
+    """
+    first = orphan_routes.orphans()
+    n = len(first)
+    assert n > 50, "확정 고아가 비정상적으로 적다 — 아래 비교가 공허해진다"
+
+    first.append(("/api/v1/__contamination__", "get", "fake.py"))
+    assert len(orphan_routes.orphans()) == n, "호출자의 변경이 캐시로 새어 들어갔다(사본 반환 아님)"
+
+    # 판정 불가 쪽도 같은 계약이어야 한다(한쪽만 막으면 반대쪽으로 샌다).
+    und = orphan_routes.undecided_routes()
+    m = len(und)
+    und.append(("/api/v1/__contamination2__", "get", "fake.py"))
+    assert len(orphan_routes.undecided_routes()) == m, "판정 불가가 사본이 아니다"
+
+
+def test_세그먼트_경계는_숫자와_밑줄도_경계로_본다():
+    """★적대리뷰가 **손수** 넣은 변이로 생존한 층 — `_SEG_CHAR` 는 오른쪽 경계 **계약**이다.
+
+    `[A-Za-z-]` 로 좁히면 `/api/v1/user` 가 `/api/v1/user2` 에 걸려 "소비"로 세어진다
+    (= 진짜 고아가 숨는 방향). 줄 단위 변이 도구는 문자클래스 멤버 제거를 만들지 못해
+    57변이 안에서는 드러나지 않았다.
+    """
+    assert not is_consumed("/api/v1/user", 'apiClient.get("/api/v1/user2");'), "숫자가 경계에서 빠졌다"
+    assert not is_consumed("/api/v1/user", 'apiClient.get("/api/v1/user_profile");'), "밑줄이 경계에서 빠졌다"
+    # 대조군 — 진짜 경로는 여전히 잡아야 한다(전부 막아버리면 도구가 죽는다).
+    assert is_consumed("/api/v1/user", 'apiClient.get("/api/v1/user");')
+
+
+def test_동적_세그먼트_종료는_백틱만이_아니다():
+    """★손수 변이 생존 층 — `_URL_END` 는 동적 세그먼트 종료 **계약**이다.
+
+    백틱 하나로 줄이면 쿼리스트링이 붙은 호출을 못 봐서 **판정 불가가 확정 고아로** 새어
+    나간다(= 없는 결함을 만드는 방향).
+    """
+    assert is_dynamically_reachable("/api/v1/thing/x", 'fetch(`/api/v1/thing/${id}?q=1`);'), (
+        "`?`(쿼리 시작)로 끝나는 동적 세그먼트를 못 봤다"
+    )
+    # 대조군 — 뒤에 경로가 더 붙으면 여전히 인정하지 않는다.
+    assert not is_dynamically_reachable("/api/v1/thing/x", 'fetch(`/api/v1/thing/${id}/more`);')
+
+
+def test_조회기_사망_대조군이_실제로_발화한다():
+    """★손수 변이 생존 층 — 이 도구가 **선언한 안전 대조군**이 진짜 도는지 태운다.
+
+    ★캐시 때문에 두 번째 호출부터는 발화하지 않는다. 그래서 `cache_clear()` 를 부른다 —
+      이 테스트 자체가 `classify()` 독스트링이 경고하는 캐시 함정의 **실증**이다.
+    """
+    orphan_routes.classify.cache_clear()
+    original = orphan_routes.WEB_DIR
+    try:
+        orphan_routes.WEB_DIR = "/tmp/__orphan_routes_nonexistent__"
+        with pytest.raises(SystemExit, match="조회기 사망"):
+            orphan_routes.classify()
+    finally:
+        orphan_routes.WEB_DIR = original
+        orphan_routes.classify.cache_clear()
+
+    # 대조군 — 원복 후에는 정상 분류가 돌아와야 한다(테스트가 전역을 망가뜨리지 않았음).
+    assert len(orphan_routes.classify()[0]) > 50
 
 
 def test_블록주석이_닫히지_않고_끝나도_지운다():
