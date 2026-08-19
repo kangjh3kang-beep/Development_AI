@@ -211,6 +211,8 @@ def test_note_states_the_number_and_refuses_to_claim_application():
     #   앞 문장의 '성장관리계획구역'이 그 부분문자열을 이미 갖고 있어 **공허했다**(변이 생존).
     assert "성장관리계획 본문과 조례가 정하므로" in note
     assert "적용값으로 쓰지 않습니다" in note
+    # 이 완화가 **무엇을 제치는지**도 문구가 말한다 — 사용자가 근거를 찾아갈 수 있어야 한다.
+    assert "제77조제1항" in note and "제78조제1항" in note
     # 녹지는 용적률이 안 열리므로 그 문구가 **없어야** 한다(음성 단언).
     assert "용적률 상한" not in note
 
