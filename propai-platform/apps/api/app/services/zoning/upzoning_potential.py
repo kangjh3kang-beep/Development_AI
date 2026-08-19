@@ -528,6 +528,10 @@ class UpzoningPotentialAnalyzer:
                 f"그보다 높은 단계의 상향 여지는 미산출이며 별도 확인이 필요합니다."
             )
         else:
+            # ★현 카탈로그에서는 도달 불가다(2026-08-19 실측 — UPZONE_TARGETS 전수를 돌려도
+            #   '목표는 다른데 예상 상한만 같은' 조합이 나오지 않는다). 목표지역 조례가 두
+            #   용도지역에 같은 상한을 주면 발화하므로 방어로 남긴다 — 그래서 이 가지의
+            #   문구 변이는 어떤 테스트도 죽이지 못한다(설명된 생존).
             tail = (
                 f" 목표 용도지역은 서로 달랐으나({', '.join(considered)}) 예상 상한이 "
                 f"모두 같았습니다 — 목표지역 조례 상한이 같은 값에서 걸린 결과입니다."
@@ -550,6 +554,10 @@ class UpzoningPotentialAnalyzer:
             if far_range.get("is_collapsed"):
                 parts.append(
                     far_range.get("honest_disclosure")
+                    # ★`or` 뒤는 **도달 불가 방어**다 — _potential_range 는 붕괴 시 항상
+                    #   honest_disclosure 를 채운다. 그래서 이 문자열의 변이는 죽지 않는다
+                    #   (설명된 생존). 남기는 이유: 외부에서 만든 far_range 가 들어와도
+                    #   서술문이 값을 통째로 빠뜨리지 않게 하기 위함.
                     or (
                         f"가능성 상/중 경로 기준 예상 용적률 상한은 약 {far_range['max_pct']:.0f}% "
                         "한 값으로만 산출됐습니다(범위 미산출)."

@@ -910,3 +910,58 @@ def test_upzoning_every_collapsing_zone_is_disclosed():
     # 두 모집단이 모두 실재해야 이 루프가 무언가를 가른다(한쪽이 0이면 공허한 그린).
     assert len(collapsed_zones) >= 3, f"붕괴군이 비었다: {collapsed_zones}"
     assert len(ranged_zones) >= 1, f"비붕괴군이 비었다: {ranged_zones}"
+
+
+# ── ★변이 검증(scripts/mutate_changed.py)이 드러낸 생존을 닫는다 ──
+
+def test_upzoning_range_uses_only_feasible_scenarios():
+    """범위는 가능성 '상/중'만 모은다 — 이 필터가 죽으면 '하' 경로가 범위를 부풀린다.
+
+    ★두 모집단을 가르는 입력: 2종일반 **비역세권**은 역세권 경로(준주거 500)가 '하'로
+      떨어져 제외되므로 300 한 값으로 붕괴한다. 필터가 무력화되면 500이 섞여 300~500이
+      되어 붕괴가 풀린다 — 즉 이 케이스가 필터의 생사를 그대로 드러낸다.
+      (역세권 입력만 쓰면 어느 쪽이든 상/중이라 필터를 태우지 못한다.)
+    """
+    off_station = _range_of(zone_type="제2종일반주거지역", land_area_sqm=20000, near_station=False)
+    fr = off_station["potential_far_range"]
+    scen = off_station["scenarios"]
+    # 공허 진리 가드 — '하' 경로가 실제로 존재해야 이 락이 무언가를 가른다.
+    assert any(s["feasibility"] == "하" and s["expected_far_pct_high"] == 500 for s in scen), \
+        "전제 붕괴 — 제외돼야 할 '하' 고용적 경로가 없다"
+    assert fr["is_collapsed"] is True
+    assert fr["max_pct"] == 300, "가능성 '하'(역세권 준주거 500)가 범위에 섞였다"
+    assert "준주거지역" not in fr["considered_target_zones"]
+
+
+def test_upzoning_single_mapped_candidate_says_so():
+    """상향 후보가 **하나뿐**이라 붕괴한 경우 — '미반영 후보' 문구와 다른 사유를 말한다.
+
+    (변이 검증에서 `elif len(considered) == 1:` 가지가 통째로 무잠금이었다.)
+    """
+    from app.services.zoning.upzoning_potential import UPZONE_TARGETS
+
+    assert UPZONE_TARGETS["제3종일반주거지역"] == ["준주거지역"], "이 락의 전제 — 후보가 1개"
+    fr = _range_of(zone_type="제3종일반주거지역", land_area_sqm=20000,
+                   near_station=True, near_station_m=300)["potential_far_range"]
+    assert fr["is_collapsed"] is True
+    assert fr["unconsidered_target_zones"] == []
+    d = fr["honest_disclosure"]
+    assert "하나뿐이라 비교할 다른 목표가 없었습니다" in d
+    assert "미산출이며 별도 확인이 필요합니다" in d
+    # ★대조군 — 미반영 후보가 있는 쪽(자연녹지)은 **다른 사유**를 말해야 한다.
+    other = _range_of(**_COLLAPSED_INPUT)["potential_far_range"]["honest_disclosure"]
+    assert "하나뿐이라" not in other
+    assert "이번 산출에 반영되지 않았습니다" in other
+
+
+def test_upzoning_disclosure_states_count_value_and_target():
+    """고지 문장이 '몇 건이 · 얼마로 · 어느 목표로' 모였는지 전부 말한다.
+
+    (문구 변이가 대량 생존했다 — 단언이 문장의 일부만 봤기 때문이다.)
+    """
+    fr = _range_of(**_COLLAPSED_INPUT)["potential_far_range"]
+    d = fr["honest_disclosure"]
+    assert f"검토한 경로 {fr['scenario_count']}건" in d          # 몇 건이
+    assert f"모두 {fr['max_pct']:.0f}%로 같아" in d               # 얼마로
+    assert f"'{fr['considered_target_zones'][0]}'" in d           # 어느 목표로
+    assert "본 분석이 검토한 경로의 예상치입니다" in d

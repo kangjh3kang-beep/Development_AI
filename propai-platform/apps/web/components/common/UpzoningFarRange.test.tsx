@@ -16,6 +16,7 @@ import { describe, expect, it } from "vitest";
 
 import { formatUpzoningFarRange, type UpzoningFarRange } from "@/lib/formatters";
 import { assertWiredThrough } from "@/lib/source-invariant";
+import { mapUpzoning } from "@/lib/zoning-ssot";
 
 import { UpzoningFarRangeNotice, UpzoningFarRangeValue } from "./UpzoningFarRange";
 
@@ -134,4 +135,36 @@ describe("배선 — 세 화면이 공용 표면을 실제로 거친다", () => 
       minMatches: 2,
     });
   });
+});
+
+describe("mapUpzoning — 붕괴 신호가 store 까지 도달한다", () => {
+  // (변이 검증에서 zoning-ssot 의 is_collapsed 추출이 무잠금이었다 — 이 신호가 끊기면
+  //  ProjectAnalysisSummary 가 단일 경로 예상치를 계속 "도달 가능한 상한"이라 부른다.)
+  it("두 모집단이 store 패치에서도 갈린다", () => {
+    const collapsed = mapUpzoning({ upzoning: { potential_far_range: COLLAPSED } });
+    const ranged = mapUpzoning({ upzoning: { potential_far_range: RANGED } });
+    expect(collapsed.upzoningFarRangeCollapsed).toBe(true);
+    expect(ranged.upzoningFarRangeCollapsed).toBe(false);
+    // 숫자(상한)는 두 경로 모두 그대로 실린다 — 신호만 추가된 것이다.
+    expect(collapsed.upzoningPotentialFarHigh).toBe(150);
+    expect(ranged.upzoningPotentialFarHigh).toBe(500);
+  });
+
+  it("계약 필드가 없으면 null 로 남긴다(false 로 단정하지 않는다)", () => {
+    // false 로 채우면 "확인 결과 붕괴 아님"이 되어, 미확보를 사실로 둔갑시킨다.
+    const legacy = mapUpzoning({ upzoning: { potential_far_range: { min_pct: 150, max_pct: 150 } } });
+    expect(legacy.upzoningFarRangeCollapsed).toBeNull();
+  });
+
+  it("종상향 미확보면 붕괴 신호도 명시적 null(직전 부지 잔류 차단)", () => {
+    expect(mapUpzoning(null).upzoningFarRangeCollapsed).toBeNull();
+  });
+});
+
+describe("아직 잠기지 않은 것(부채 — 초록 안에 보이게 남긴다)", () => {
+  // ProjectAnalysisSummary 의 "종상향 잠재(용적·단일 경로)" 라벨·근거 교체는 store 전체와
+  // apiClient 를 세워야 렌더된다. 현재는 pnpm type-check 만이 그 배선을 지킨다.
+  it.todo("ProjectAnalysisSummary — 붕괴 시 라벨·근거가 '단일 경로'로 바뀌는지 렌더로 확인");
+  // AutoRecommendPanel 문장의 조사 분기("…이며" vs "…까지 가능하며")도 같은 이유로 미잠금.
+  it.todo("AutoRecommendPanel — 붕괴 시 '까지 가능하며'가 '이며'로 바뀌는지 렌더로 확인");
 });
