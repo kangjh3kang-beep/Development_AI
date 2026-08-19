@@ -126,6 +126,9 @@ def test_designated_district_is_not_asserted(parsed):
         ("방화지구에서의 건폐율의 완화", "fire_district", "site", "relax"),
         ("그 밖에 용도지구·구역 등의 건폐율", "designated_district", "site", "relax"),
         ("생산녹지지역 등에서 기존 공장의 건폐율 완화", "existing_factory", "use", "relax"),
+        # ★규칙표의 모든 항목을 태운다 — 실제 오산 조례에 경관지구 조건부 값이 없어
+        #   이 항목이 한 번도 실행되지 않았다(변이 생존으로 적발).
+        ("경관지구에서의 건폐율", "landscape_district", "site", "relax"),
         ("용도지역에서의 건폐율", "unclassified", "unknown", "relax"),
     ],
 )
