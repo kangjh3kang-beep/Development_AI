@@ -244,3 +244,63 @@ def test_effective_values_are_untouched_by_the_match(parsed):
 
     assert matched["effective_bcr_pct"] == none_["effective_bcr_pct"] == 20
     assert matched["effective_far_pct"] == none_["effective_far_pct"]
+
+
+# ── 변이감사(45 변이) 생존 9건 트리아지 — 전부 진짜 무잠금이었다 ────────────────────
+#   실제 오산 픽스처에 방화지구·경관지구 조건부 값이 **없어서** 그 분기가 한 번도
+#   실행되지 않았다. 픽스처가 없는 분기는 합성 입력으로라도 태운다(안 그러면 죽은 코드다).
+
+
+def _cond(key: str, kind: str = "site", value: int = 80, direction: str = "relax") -> dict:
+    return {"kind": "bcr", "value": value, "condition_key": key,
+            "condition_kind": kind, "direction": direction,
+            "article": "제48조", "article_title": "테스트"}
+
+
+@pytest.mark.parametrize(
+    ("key", "district", "other"),
+    [
+        ("fire_district", "방화지구", "일반상업지역"),
+        ("landscape_district", "경관지구", "일반상업지역"),
+        ("growth_management_plan", PLAN_ZONE, METRO_REGIME),
+    ],
+)
+def test_each_site_condition_matches_only_its_own_district(key, district, other):
+    """★부지 조건 분기를 **각각** 태운다 — 하나로 묶으면 나머지 분기가 죽은 코드가 된다.
+
+    양성(그 지구가 있으면 매칭)과 음성(다른 지구만 있으면 미매칭)을 쌍으로 본다.
+    """
+    item = _cond(key)
+    assert match_site_conditions([item], [district])["matched"] == [item]
+    m = match_site_conditions([item], [other])
+    assert m["matched"] == []
+    assert m["unmatched_site"] == [item], "미해당은 '판정불가'가 아니라 '해당 없음'이다"
+
+
+def test_designated_district_never_matches_even_with_that_district():
+    """★'그 밖에 용도지구·구역 등'은 그 지구가 있어도 **충족 단정 금지**(보수측).
+
+    조문 본문의 나열(취락지구 40%·개발진흥지구 30%·수산자원보호구역 30%…)에서 어느
+    항목이 이 필지에 걸리는지 신뢰성 있게 가를 수 없기 때문이다.
+    """
+    item = _cond("designated_district")
+    assert match_site_conditions([item], ["취락지구", "개발진흥지구"])["matched"] == []
+
+
+def test_use_condition_reason_is_specific():
+    """판정불가 사유가 **무엇을 해야 하는지** 말한다(문구도 화면에 나간다)."""
+    m = match_site_conditions([_cond("existing_factory", kind="use")], [PLAN_ZONE])
+    assert m["undecidable"] and "설계가 정해져야" in m["undecidable"][0]["why"]
+
+
+@pytest.mark.parametrize("junk", [None, "문자열", 42, ["중첩리스트"]])
+def test_non_dict_items_are_dropped(junk):
+    """★dict 아닌 항목은 조용히 버린다 — `str` 을 dict 처럼 읽으면 AttributeError 로 죽는다."""
+    m = match_site_conditions([junk, _cond("growth_management_plan")], [PLAN_ZONE])
+    assert len(m["matched"]) == 1
+
+
+def test_unknown_condition_key_is_not_matched():
+    """분류되지 않은 조건(`unclassified`)은 부지 조건이 아니므로 매칭되지 않는다."""
+    m = match_site_conditions([_cond("unclassified", kind="unknown")], [PLAN_ZONE])
+    assert m["matched"] == [] and m["undecidable"]
