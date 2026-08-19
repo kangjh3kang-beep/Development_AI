@@ -774,10 +774,12 @@ async def list_learning_candidates(
     return LearningCandidateList(
         items=[LearningCandidateOut(**it) for it in res.get("items", [])],
         total=int(res.get("total", 0)),
-        # `[status]` 폴백은 **도달해도 같은 값**이다: 위 400 게이트를 지난 status 는 어휘에
-        #   있는 값이고, list_examples 는 그런 값을 그대로 정규화해 돌려준다. 방어용으로만 둔다
-        #   (변이가 이 줄에서 살아남는 이유 — 구멍이 아니라 등가 폴백이다).
-        statuses=list(res.get("statuses", [status])),
+        # ★폴백을 없앴다(2026-08-19 변이 재분류): `res.get("statuses", [status])` 의 기본값은
+        #   400 게이트를 지난 뒤에는 **항상 같은 값**이라 도달 불가였고, 그 때문에 키 이름을
+        #   바꾸는 변이가 조용히 살아남았다(설명 가능한 생존이지만 배선 문자열이라 다음 사람이
+        #   진짜 구멍과 구분하기 어렵다). list_examples 는 실패 경로에서도 "statuses" 를 반드시
+        #   채워 돌려주므로 직접 읽는다 — 키가 어긋나면 즉시 터져서 드러난다.
+        statuses=list(res["statuses"]),
         service=service,
         tenant_id=tenant_id,
         limit=int(res.get("limit", limit)),
