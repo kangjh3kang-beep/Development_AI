@@ -348,3 +348,101 @@ def test_merge_accepts_dict_rows_without_crashing():
         "대표주소", [{"address": " 두번째 "}, "세번째", {"address": ""}, 42]
     )
     assert got == ["대표주소", "두번째", "세번째"]
+
+
+# ── 변이감사(2026-08-19, 3스위트 동시)가 드러낸 채움 경로 무잠금 8건을 닫는다 ─────────
+#   생존: `area_source` · zone 채움 분기 3줄 · 빈 주소 스킵 · `areaSqm` 별칭 · `zoneCode` 별칭.
+#   전부 **이번 커밋에서 새로 만든 줄**이라 설명 가능한 생존이 아니다(진짜 구멍).
+
+
+def test_filled_values_carry_their_provenance(sim):
+    """채운 값은 **출처를 남긴다** — 나중에 '이 면적 어디서 왔나'를 답할 수 있어야 한다."""
+    rows_seen: list[dict] = []
+
+    async def fake_collect(addrs, site):  # noqa: ANN001
+        out = [dict(UNRESOLVED)]
+        rows_seen.extend(out)
+        return out, None
+
+    sim._collect = fake_collect  # type: ignore[method-assign]
+    asyncio.run(
+        sim.simulate(
+            UNRESOLVED["address"],
+            parcels=[{"address": UNRESOLVED["address"], "area_sqm": 500.0}],
+            site={},
+            use_llm=False,
+        )
+    )
+    assert rows_seen[0]["area"] == pytest.approx(500.0)
+    assert rows_seen[0]["area_source"] == "caller_supplied"
+
+
+def test_zone_is_filled_only_when_empty_and_marked(sim):
+    """용도지역도 **빈 칸일 때만** 채우고 출처를 남긴다."""
+    blank_zone = {**UNRESOLVED, "zone": None, "zone_type": "", "zone_source": None}
+    rows_seen: list[dict] = []
+
+    async def fake_collect(addrs, site):  # noqa: ANN001
+        out = [dict(blank_zone)]
+        rows_seen.extend(out)
+        return out, None
+
+    sim._collect = fake_collect  # type: ignore[method-assign]
+    out = asyncio.run(
+        sim.simulate(
+            blank_zone["address"],
+            parcels=[{"address": blank_zone["address"], "zone_type": "일반상업지역"}],
+            site={},
+            use_llm=False,
+        )
+    )
+    assert rows_seen[0]["zone"] == "일반상업지역"
+    assert rows_seen[0]["zone_type"] == "일반상업지역"      # 하류 게이트가 읽는 키도 동기화
+    assert rows_seen[0]["zone_source"] == "caller_supplied"
+    assert out["site"]["primary_zone"] == "일반상업지역"
+
+
+def test_existing_zone_is_not_overwritten_by_caller(sim):
+    """★대조군 — 이미 용도지역이 있으면 호출자 값이 **이기지 못한다**."""
+    rows_seen: list[dict] = []
+
+    async def fake_collect(addrs, site):  # noqa: ANN001
+        out = [dict(RESOLVED)]
+        rows_seen.extend(out)
+        return out, None
+
+    sim._collect = fake_collect  # type: ignore[method-assign]
+    asyncio.run(
+        sim.simulate(
+            RESOLVED["address"],
+            parcels=[{"address": RESOLVED["address"], "zone_type": "중심상업지역"}],
+            site={},
+            use_llm=False,
+        )
+    )
+    assert rows_seen[0]["zone"] == RESOLVED["zone"]
+    assert rows_seen[0]["zone_source"] == "vworld_ned"
+
+
+@pytest.mark.parametrize(
+    ("row", "expect_area", "expect_zone"),
+    [
+        # camelCase 별칭 — 프론트가 그대로 보내는 표기(ParcelRow.areaSqm/zoneCode).
+        ({"address": "가", "areaSqm": 700.0, "zoneCode": "준주거지역"}, 700.0, "준주거지역"),
+        # snake 정본이 있으면 그것을 쓴다.
+        ({"address": "가", "area_sqm": 800.0, "zone_type": "일반상업지역"}, 800.0, "일반상업지역"),
+    ],
+)
+def test_supplied_rows_accepts_both_key_spellings(row, expect_area, expect_zone):
+    """★두 표기를 모두 읽는다 — 한쪽만 읽으면 프론트 값이 조용히 버려진다."""
+    got = DevelopmentScenarioSimulator._supplied_rows([row])["가"]
+    assert got["area_sqm"] == pytest.approx(expect_area)
+    assert got["zone_type"] == expect_zone
+
+
+def test_supplied_rows_skips_rows_without_address():
+    """주소 없는 행은 키가 없어 매칭 불가 — 담지 않는다(빈 키로 담으면 엉뚱한 행에 붙는다)."""
+    got = DevelopmentScenarioSimulator._supplied_rows(
+        [{"area_sqm": 100.0}, {"address": "  ", "area_sqm": 200.0}, {"address": "나", "area_sqm": 300.0}]
+    )
+    assert list(got) == ["나"]
