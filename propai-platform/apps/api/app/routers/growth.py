@@ -621,6 +621,9 @@ async def rollback_growth_setting(
 # ════════════════════════════════════════════════════════════════════════════
 # 자가학습 L3 — 데이터셋 다운로드 · few-shot 후보 승인 (Phase 5, 관리자, 설계 §6.4)
 # ════════════════════════════════════════════════════════════════════════════
+# GET  /learning/candidates   : 후보 목록(id 포함) — 사람이 무엇을 승인할지 고를 수 있게.
+#                               ★이게 없으면 promote 가 요구하는 example_id 를 알 길이 없어
+#                                 "사람 승인 게이트"에 문이 없다(2026-08-19 결함).
 # GET  /learning/dataset      : (input_summary, good_output) 페어 JSONL 다운로드.
 #                               ★생성/다운로드까지만 — 파인튜닝 잡 트리거 절대 없음.
 # POST /learning/promote      : learning_example candidate → active (사람 승인) + 감사.
@@ -628,6 +631,8 @@ async def rollback_growth_setting(
 # 모두 super_admin(tier) 전용.
 
 _PROMOTE_STATUSES = {"active", "rejected"}
+# 후보 목록에서 조회 가능한 status(learning_loop._VALID_STATUSES 와 같은 어휘).
+_LEARNING_LIST_STATUSES = {"candidate", "active", "rejected"}
 
 
 @router.get("/learning/dataset", response_class=PlainTextResponse)
@@ -683,16 +688,123 @@ async def learning_dataset(
     )
 
 
+class LearningCandidateOut(BaseModel):
+    """few-shot 후보 1건(관리자 검토용). ★`id` 가 곧 promote 의 `example_id` 다."""
+
+    id: str
+    service: str | None = None
+    analysis_type: str | None = None
+    status: str
+    tenant_id: str | None = None
+    content_hash: str | None = None
+    input_summary: str = ""
+    input_summary_truncated: bool = False
+    good_output: str = ""
+    good_output_truncated: bool = False
+    created_at: str | None = None
+    # 자산권리 표시(거르기 아님) — False 면 화면이 "권리 미확인"을 눈에 보이게 띄운다.
+    train_allowed: bool = False
+    rights_scope: str | None = None
+
+
+class LearningCandidateList(BaseModel):
+    items: list[LearningCandidateOut]
+    total: int
+    statuses: list[str]
+    service: str | None = None
+    tenant_id: str | None = None
+    limit: int
+    offset: int
+
+
+@router.get("/learning/candidates", response_model=LearningCandidateList)
+async def list_learning_candidates(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    service: str | None = Query(default=None, description="service 필터(미지정=전체)"),
+    status: str = Query(default="candidate", description="candidate(기본) | active | rejected"),
+    tenant_id: str | None = Query(default=None, description="테넌트 필터(미지정=전체)"),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> LearningCandidateList:
+    """few-shot 후보 목록(관리자 검토용) — 승인 화면이 이 목록으로 promote 대상을 지목한다.
+
+    ★왜 필요했나: promote 는 `example_id` 를 요구하는데, 그때까지 learning_examples 를 읽는
+      유일한 경로(build_dataset_jsonl)가 id 를 안 돌려줬다. 화면을 만들어도 무엇을 승인할지
+      지목할 수가 없었다 = 사람 승인 게이트에 문이 없었다.
+
+    ★테넌트 범위: 기본 전체다(테넌트로 자동 축소하지 않는다). 근거 —
+      ① 이 엔드포인트의 문지기 `_require_admin` 은 users.tier='super_admin' = **플랫폼 총괄
+         관리자**이고, 같은 문지기를 쓰는 promote 도 테넌트 조건 없이 id 로 전이한다.
+         목록만 좁히면 다른 테넌트의 후보는 **보이지도 승인되지도 않아** 그 테넌트에서는
+         few-shot 이 영영 비는, 지금 고치는 결함이 그대로 남는다.
+      ② 대신 행마다 tenant_id 를 실어 보낸다 — 승인 시 그 예시가 **어느 테넌트의 프롬프트에**
+         주입될지(base_interpreter._load_fewshot 은 tenant_id 로 스코핑한다) 화면에서 보이게.
+      ③ 특정 테넌트만 보려면 `tenant_id` 쿼리로 **명시적으로** 좁힌다(조용히 숨기지 않는다).
+      본문은 적재 시점에 이미 PII 마스킹(learning_loop._summarize_payload → mask_pii)된 요약이다.
+    """
+    from app.services.growth import learning_loop
+
+    user_id = await _require_admin(request, db)
+    if status not in _LEARNING_LIST_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail="status 는 candidate, active, rejected 중 하나여야 합니다.",
+        )
+
+    res = await learning_loop.list_examples(
+        db, statuses=(status,), service=service, tenant_id=tenant_id,
+        limit=limit, offset=offset,
+    )
+
+    # 감사: 누가 어떤 후보 묶음을 열람했는지(승인 이력과 짝이 되게 — promote 도 감사를 남긴다).
+    try:
+        from app.core.audit import audit_admin_action
+
+        await audit_admin_action(
+            actor_id=user_id, actor_role="super_admin",
+            action="growth.learn.candidates_list",
+            target=f"{service or 'all'}@{status}",
+            detail={"count": len(res.get("items", [])), "total": res.get("total", 0),
+                    "tenant_id": tenant_id},
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+    return LearningCandidateList(
+        items=[LearningCandidateOut(**it) for it in res.get("items", [])],
+        total=int(res.get("total", 0)),
+        # ★폴백을 없앴다(2026-08-19 변이 재분류): `res.get("statuses", [status])` 의 기본값은
+        #   400 게이트를 지난 뒤에는 **항상 같은 값**이라 도달 불가였고, 그 때문에 키 이름을
+        #   바꾸는 변이가 조용히 살아남았다(설명 가능한 생존이지만 배선 문자열이라 다음 사람이
+        #   진짜 구멍과 구분하기 어렵다). list_examples 는 실패 경로에서도 "statuses" 를 반드시
+        #   채워 돌려주므로 직접 읽는다 — 키가 어긋나면 즉시 터져서 드러난다.
+        statuses=list(res["statuses"]),
+        service=service,
+        tenant_id=tenant_id,
+        limit=int(res.get("limit", limit)),
+        offset=int(res.get("offset", offset)),
+    )
+
+
 class PromoteRequest(BaseModel):
     """few-shot 후보 승인/거부 요청(프론트 계약)."""
 
     example_id: str = Field(..., description="learning_examples.id")
     status: str = Field(default="active", description="active(승인) | rejected(거부)")
+    # ★학습권리가 확인되지 않은 자산을 승인하려면 이 값을 명시해야 한다(기본 거부).
+    #   "몰랐다"로 활성화되는 것을 막고, 켠 사람이 감사에 남게 한다.
+    acknowledge_unverified_rights: bool = Field(
+        default=False,
+        description="학습권리 미확인 자산임을 알고도 승인한다(출처·이용조건 확인 책임 인수)",
+    )
 
 
 class PromoteResult(BaseModel):
     example_id: str
     status: str
+    # 권리 미확인인데 사람이 책임을 인수해 통과시킨 건인지(화면이 그대로 표기).
+    rights_acknowledged: bool = False
 
 
 @router.post("/learning/promote", response_model=PromoteResult)
@@ -705,6 +817,22 @@ async def promote_learning_example(
 
     ★few-shot 활성화는 이 경로(관리자 사람)로만 — 자동 활성 절대 금지.
     candidate 상태만 전이 허용(이미 처리된 건 재전이 금지).
+
+    ★★학습권리 게이트(2026-08-19 적대리뷰 HIGH). **실측하고 적는다**:
+      · `base_interpreter._load_fewshot` 은 `status='active'` 만 보고 자산권리를 **전혀 보지
+        않는다**(그 파일의 asset_rights/train_allowed 참조 0건 — 대조군 learning_loop 20건).
+      · `build_dataset_jsonl` 의 `enforce_asset_rights` 는 `GROWTH_ENFORCE_TRAIN_RIGHTS`
+        기본 OFF 이고, 그건 **학습셋 다운로드** 경로지 **프롬프트 주입** 경로가 아니다.
+      → 즉 주입 경로에는 권리 게이트가 없다. 그래서 **여기서** 막는다.
+      불변식: status='active' 인 행은 (권리 확인됨) **또는** (사람이 미확인임을 알고
+      명시적으로 책임을 인수했고 그 사실이 감사에 남았다) 중 하나다.
+
+      ▶왜 '무조건 거부'가 아닌가(실측 근거): 학습예시의 권리를 레지스트리에 넣는 경로가
+        **오늘 0건**이다. `upsert_asset_rights_batch` 의 유일한 실사용처는
+        `design_ingest/aihub_seed_service.py` 이고 그건 **도면 파일 해시** 키공간이다.
+        learning_examples 의 content_hash 는 `analysis_ledger` 해시라 **서로 다른 키공간**이다.
+        무조건 거부하면 오늘 승인 가능한 후보가 0이 되어, 이 PR 이 여는 문이 곧 벽이 된다
+        (= 지금 고치는 결함과 같은 형태). 그래서 '기본 거부 + 명시적 인수'로 간다.
     """
     from sqlalchemy import text
 
@@ -713,6 +841,30 @@ async def promote_learning_example(
         raise HTTPException(
             status_code=400, detail="status 는 active 또는 rejected 여야 합니다."
         )
+
+    rights_acknowledged = False
+    if body.status == "active":
+        # 승인(=프롬프트 주입 허용)일 때만 검사한다. 거부는 안전한 방향이라 권리와 무관.
+        from app.services.security.asset_rights import get_asset_right, is_train_allowed
+
+        target = (await db.execute(text(
+            "SELECT content_hash, tenant_id FROM learning_examples WHERE id = :id"
+        ), {"id": body.example_id})).fetchone()
+        if target is None:
+            raise HTTPException(status_code=404, detail="학습 예시를 찾을 수 없습니다.")
+        right = await get_asset_right(db, target[0] or "", target[1])
+        if not is_train_allowed(right):
+            if not body.acknowledge_unverified_rights:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "학습 사용 권리가 확인되지 않은 자산입니다"
+                        f"(권리 {getattr(right, 'scope', None) or '미등록'}). "
+                        "출처·이용조건을 확인한 뒤 acknowledge_unverified_rights 로 "
+                        "명시적으로 승인하세요."
+                    ),
+                )
+            rights_acknowledged = True
 
     row = (await db.execute(text(
         "UPDATE learning_examples SET status = :st "
@@ -738,9 +890,13 @@ async def promote_learning_example(
         await audit_admin_action(
             actor_id=user_id, actor_role="super_admin",
             action=f"growth.learn.promote.{body.status}", target=body.example_id,
-            detail={"status": body.status},
+            # ★권리 미확인인데 사람이 밀어붙인 건은 감사에 반드시 남는다(책임 추적).
+            detail={"status": body.status, "rights_acknowledged": rights_acknowledged},
         )
     except Exception:  # noqa: BLE001
         pass
 
-    return PromoteResult(example_id=str(row[0]), status=str(row[1]))
+    return PromoteResult(
+        example_id=str(row[0]), status=str(row[1]),
+        rights_acknowledged=rights_acknowledged,
+    )

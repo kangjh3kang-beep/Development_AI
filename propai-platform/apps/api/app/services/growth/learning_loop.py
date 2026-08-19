@@ -19,10 +19,12 @@
    (service, content_hash) 멱등(중복 등록 차단).
 2) build_dataset_jsonl: learning_examples(기본 active, 옵션 candidate) 의
    (input_summary, good_output) 페어를 JSONL 문자열로 생성(생성만, 잡 트리거 안 함).
-3) compute_down_rates: service별 down율(ai_feedback down% + verify fail%) → 개선대상 식별.
+3) list_examples: 사람이 승인/거부를 판단할 수 있게 후보를 **id 와 함께** 목록으로 준다.
+   (build_dataset_jsonl 은 학습셋 계약이라 id 를 안 준다 — 그래서 승인 화면용 조회는 별도다.)
+4) compute_down_rates: service별 down율(ai_feedback down% + verify fail%) → 개선대상 식별.
 
 순수 함수(DB·LLM 무의존)는 단위검증 가능하게 분리:
-  _summarize_payload / _to_jsonl_line / _down_rate.
+  _summarize_payload / _to_jsonl_line / _down_rate / _preview.
 best-effort: 어떤 예외도 호출경로(주간 배치)를 죽이지 않는다.
 """
 
@@ -47,6 +49,14 @@ DOWN_RATE_TARGET_PCT = 30.0
 DOWN_RATE_MIN_SAMPLES = 10
 
 _VALID_STATUSES = {"candidate", "active", "rejected"}
+
+# 승인 화면(관리자)에 내려보내는 본문 미리보기 최대 길이.
+# 왜 자르나: 적재본은 최대 2000자(SUMMARY_MAX_CHARS)라 한 페이지 50건이면 응답이 200KB 까지
+# 커진다. 표에서 훑어보는 용도라 앞부분만 보여주고, 잘렸다는 사실을 함께 알려준다
+# (자른 것을 숨기면 관리자가 "이게 전부"라고 오독한다).
+CANDIDATE_PREVIEW_MAX_CHARS = 600
+# 후보 목록 1회 조회 상한(응답 크기·DB 부하 가드).
+LIST_MAX_LIMIT = 200
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -74,6 +84,18 @@ def _summarize_payload(payload: Any, *, max_chars: int = SUMMARY_MAX_CHARS) -> s
     if len(text) > max_chars:
         text = text[:max_chars] + "…"
     return text
+
+
+def _preview(value: Any, *, max_chars: int = CANDIDATE_PREVIEW_MAX_CHARS) -> tuple[str, bool]:
+    """긴 본문을 미리보기용으로 자른다. 반환 (자른 문자열, 잘렸는지 여부).
+
+    ★"잘렸는지"를 같이 돌려주는 게 핵심이다 — 화면이 이 값을 표시해야 관리자가
+    "본문이 여기까지"라고 오독하지 않는다. max_chars 가 0 이하면 자르지 않는다.
+    """
+    text = "" if value is None else str(value)
+    if max_chars is None or max_chars <= 0 or len(text) <= max_chars:
+        return text, False
+    return text[:max_chars], True
 
 
 def _to_jsonl_line(input_summary: str, good_output: str) -> str:
@@ -296,6 +318,139 @@ async def build_dataset_jsonl(db, *, service: str | None = None,
 
 
 # ════════════════════════════════════════════════════════════════════════════
+# 후보 검토 목록 — 사람이 승인/거부를 판단할 수 있게 **id 와 함께** 돌려준다
+# ════════════════════════════════════════════════════════════════════════════
+# 왜 별도 함수인가(2026-08-19 결함):
+#   few-shot 활성화는 사람 승인(promote)으로만 가능한데, promote 는 `example_id` 를 요구한다.
+#   그런데 그때까지 learning_examples 를 읽는 유일한 경로였던 build_dataset_jsonl 은
+#   (input_summary, good_output) 페어만 내놓고 **id 를 안 돌려줬다**. 즉 관리자가 화면을
+#   가져도 "무엇을 승인할지" 지목할 수가 없었다 = 게이트에 문이 없었다.
+#   → build_dataset_jsonl 은 학습셋 계약이라 손대지 않고(계약 불변), 검토용 조회를 여기 따로 둔다.
+
+
+async def list_examples(db, *, statuses: tuple[str, ...] = ("candidate",),
+                        service: str | None = None,
+                        tenant_id: str | None = None,
+                        limit: int = 50, offset: int = 0,
+                        preview_chars: int = CANDIDATE_PREVIEW_MAX_CHARS) -> dict[str, Any]:
+    """learning_examples 를 검토용 목록으로 조회한다(기본 status='candidate').
+
+    학습셋 생성이 아니라 **사람이 눈으로 보고 판단하는 화면**을 위한 조회다. 그래서
+    build_dataset_jsonl 과 달리 id·status·created_at·tenant_id 를 함께 준다.
+
+    ★자산권리(asset_rights)로 **거르지 않는다 — 표시한다.**
+      근거: 이 목록은 "학습셋 생성"이 아니라 "사람 검토"다. 권리 미확인 항목을 조용히 빼면
+      관리자 화면에는 "후보가 없다"로 보이고(실제로는 있는데), 그러면 사람이 판단할 기회
+      자체가 사라진다 — 이 결함이 고치려는 것("사람이 승인해야 도는데 사람에게 문이 없다")과
+      똑같은 형태가 된다. 대신 행마다 train_allowed/rights_scope 를 실어 보내 화면이
+      "권리 미확인"을 눈에 보이게 표시한다.
+
+    ★★정정(2026-08-19 적대리뷰 HIGH) — 여기 원래 "실제 학습 차단은 build_dataset_jsonl 의
+      enforce_asset_rights 가 담당한다"고 적혀 있었다. **거짓 면역이었다.** 실측:
+        · build_dataset_jsonl 의 게이트는 **학습셋 다운로드** 경로에만 걸리고,
+          프롬프트 주입 경로(base_interpreter._load_fewshot)와는 무관하다.
+        · 그 게이트는 GROWTH_ENFORCE_TRAIN_RIGHTS 로 켜지며 **기본 OFF** 다.
+        · _load_fewshot 은 status='active' 만 보고 권리를 **전혀 보지 않는다**
+          (그 파일의 asset_rights/train_allowed 참조 0건 — 대조군 이 파일 20건).
+      → 즉 "표시만 해도 승인 뒤가 안전하다"는 전제가 틀렸다. 실제 차단은 **승인 지점**
+        (routers/growth.py promote)이 담당하도록 옮겼다: 권리 미확인 자산은 기본 거부이고,
+        사람이 acknowledge_unverified_rights 로 책임을 인수해야만 active 가 된다(감사 기록).
+
+    반환: {"items": [...], "total", "statuses", "service", "tenant_id", "limit", "offset"}.
+          items 원소 키: id·service·analysis_type·status·tenant_id·content_hash·
+          input_summary·good_output(미리보기)·*_truncated·created_at·train_allowed·rights_scope.
+    best-effort: 실패해도 예외를 올리지 않고 빈 목록을 돌려준다(화면이 죽지 않게).
+    """
+    from sqlalchemy import text
+
+    # ★이중 가드(의도적): 인자 기본값이 무엇이든, 어휘에 없는 값은 걸러진 뒤 빈 튜플이 되고
+    #   `or ("candidate",)` 가 다시 candidate 로 되돌린다. 그래서 시그니처 기본값만 바꾸는
+    #   변이는 죽지 않는다 — 그건 구멍이 아니라 두 겹으로 막았다는 뜻이다.
+    valid = tuple(s for s in statuses if s in _VALID_STATUSES) or ("candidate",)
+    lim = max(1, min(int(limit or 50), LIST_MAX_LIMIT))
+    off = max(0, int(offset or 0))
+
+    placeholders = ",".join(f":st{i}" for i in range(len(valid)))
+    params: dict[str, Any] = {f"st{i}": s for i, s in enumerate(valid)}
+    where = [f"status IN ({placeholders})"]
+    if service:
+        where.append("service = :svc")
+        params["svc"] = service
+    if tenant_id:
+        where.append("tenant_id = :tid")
+        params["tid"] = tenant_id
+    where_sql = " AND ".join(where)
+
+    out: dict[str, Any] = {
+        "items": [], "total": 0, "statuses": list(valid),
+        "service": service, "tenant_id": tenant_id, "limit": lim, "offset": off,
+    }
+
+    try:
+        total = (await db.execute(text(
+            f"SELECT COUNT(*) FROM learning_examples WHERE {where_sql}"
+        ), params)).scalar()
+        out["total"] = int(total or 0)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("L3 후보 건수 조회 실패: %s", str(e)[:160])
+
+    try:
+        params_page = dict(params)
+        params_page["lim"] = lim
+        params_page["off"] = off
+        rows = (await db.execute(text(
+            "SELECT id, service, analysis_type, status, tenant_id, content_hash, "
+            "       input_summary, good_output, created_at "
+            "FROM learning_examples "
+            f"WHERE {where_sql} ORDER BY created_at DESC LIMIT :lim OFFSET :off"
+        ), params_page)).fetchall()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("L3 후보 목록 조회 실패: %s", str(e)[:160])
+        return out
+
+    # 권리 조회는 **표시용**이다(거르기용 아님). 실패하면 전건 '권리 미확인'으로 보이며,
+    # 그건 정직한 표시다(모르는 것을 안다고 말하지 않는다).
+    rights: dict[Any, Any] = {}
+    try:
+        from app.services.security.asset_rights import get_asset_rights_batch
+
+        keys = [(r[5], r[4]) for r in rows if r[5]]
+        if keys:
+            rights = await get_asset_rights_batch(db, keys)
+    except Exception as e:  # noqa: BLE001
+        logger.debug("L3 후보 권리 조회 생략: %s", str(e)[:120])
+
+    items: list[dict[str, Any]] = []
+    for r in rows:
+        content_hash, ex_tenant = r[5], r[4]
+        right = rights.get((content_hash, ex_tenant)) if content_hash else None
+        isum, isum_cut = _preview(r[6], max_chars=preview_chars)
+        gout, gout_cut = _preview(r[7], max_chars=preview_chars)
+        created = r[8]
+        items.append({
+            "id": str(r[0]),
+            "service": r[1],
+            "analysis_type": r[2],
+            "status": r[3],
+            "tenant_id": ex_tenant,
+            "content_hash": content_hash,
+            "input_summary": isum,
+            "input_summary_truncated": isum_cut,
+            "good_output": gout,
+            "good_output_truncated": gout_cut,
+            "created_at": created.isoformat() if hasattr(created, "isoformat") else (
+                str(created) if created else None
+            ),
+            # 권리 미확인(레지스트리 미등록·조회실패)이면 False/None — 화면이 경고를 띄운다.
+            "train_allowed": bool(getattr(right, "train_allowed", False)),
+            "rights_scope": getattr(right, "scope", None),
+        })
+
+    out["items"] = items
+    return out
+
+
+# ════════════════════════════════════════════════════════════════════════════
 # service별 down율 산출 — 개선대상 service 식별(improvement_agent 가 소비)
 # ════════════════════════════════════════════════════════════════════════════
 
@@ -402,10 +557,12 @@ __all__ = [
     "run_learning_cycle",
     "curate_few_shot",
     "build_dataset_jsonl",
+    "list_examples",
     "compute_down_rates",
     # 순수 함수(단위검증 공개).
-    "_summarize_payload", "_to_jsonl_line", "_down_rate",
+    "_summarize_payload", "_to_jsonl_line", "_down_rate", "_preview",
     # 상수.
     "MAX_CURATE_PER_RUN", "SUMMARY_MAX_CHARS",
     "DOWN_RATE_TARGET_PCT", "DOWN_RATE_MIN_SAMPLES",
+    "CANDIDATE_PREVIEW_MAX_CHARS", "LIST_MAX_LIMIT",
 ]

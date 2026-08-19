@@ -117,8 +117,6 @@
 /data-integrity/refresh/{source_name}
 /data-integrity/status
 /g2b/sync
-/growth/learning/dataset
-/growth/learning/promote
 /growth/settings
 /growth/settings/{key}/rollback
 /registry/cleanup
