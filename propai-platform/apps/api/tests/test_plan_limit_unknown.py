@@ -86,10 +86,26 @@ def test_growth_management_plan_zone_does_trigger_it():
     assert out["plan_limit_unknown"]["districts"] == ["성장관리계획구역"]
 
 
-def test_dict_designations_and_dedup():
-    """designation 은 dict 로도 흐르고, 같은 이름이 여러 번 와도 한 번만 나열한다."""
+@pytest.mark.parametrize("key", ["district_name", "name"])
+def test_dict_designations_are_labelled_by_each_key(key):
+    """★두 키를 **각각** 확인한다 — 섞어 쓰면 한쪽이 죽어도 다른 쪽이 통과시킨다(변이 생존)."""
+    out = _calc("자연녹지지역", [{key: DU}])
+    assert out["plan_limit_unknown"]["districts"] == [DU]
+
+
+def test_duplicate_designations_are_listed_once():
+    """같은 이름이 여러 번 와도 한 번만 나열한다(VWorld 가 중복 반환한다)."""
     out = _calc("자연녹지지역", [{"district_name": DU}, {"name": DU}, DU])
     assert out["plan_limit_unknown"]["districts"] == [DU]
+
+
+def test_reason_states_what_is_missing():
+    """★`reason` 도 화면에 나가는 문장이다 — 무엇이 없는지 말해야 다음 행동이 나온다."""
+    plu = _calc("자연녹지지역", [DU])["plan_limit_unknown"]
+    assert "건폐율·용적률을 직접 정하는 구역" in plu["reason"]
+    assert "수치를 확보하지 못했습니다" in plu["reason"]
+    # note 도 '왜 아래 수치를 믿으면 안 되는지'를 담는다.
+    assert "반영하지 못한" in plu["note"]
 
 
 def test_signal_disappears_when_the_plan_number_is_actually_known():
