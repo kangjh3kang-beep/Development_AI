@@ -642,6 +642,21 @@ class OrdinanceService:
             return "도시계획" in name and "조례" in name and "규칙" not in name
 
         region = (region_name or "").strip()
+        # ★★①-0 **정확일치 최우선**(2026-08-19 실측 교정).
+        #   종전 ①은 `region in name` **부분일치**라 아래가 모두 통과하고 **목록 첫 항목이 이겼다**:
+        #     · "울산광역시" ⊂ "울산광역시 **남구** 도시계획조례"  ← 자치구 조례를 받아옴
+        #     · "창원시"   ⊂ "창원시 **도시계획변경 공공기여협상 운영에 관한** 조례"
+        #   둘 다 `_is_city_plan_ordinance`("도시계획"+"조례"+규칙아님)도 통과한다.
+        #   그래서 정작 목록에 있던 `울산광역시 도시계획 조례`(2151262)·`창원시 도시계획
+        #   조례`(2123044)를 놓쳤고, 받아온 본문이 짧아 **"응답 길이 이상"으로 오진**했었다.
+        #   ★오산시가 잘 됐던 건 목록이 1건이라 **운**이었다 — 다건이면 아무거나 이긴다.
+        if region:
+            exact = re.compile(r"^\s*" + re.escape(region) + r"\s*도시\s?계획\s?조례\s*$")
+            for npos, name in names:
+                if exact.match(name):
+                    oid = _id_after(npos)
+                    if oid:
+                        return oid
         # ① region_name까지 일치하는 '도시계획 조례'를 최우선(인접 동명이역 오조회 차단).
         if region:
             for npos, name in names:
