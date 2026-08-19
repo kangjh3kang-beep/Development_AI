@@ -252,6 +252,45 @@ NATIONAL_LIMITS: dict[str, dict[str, float]] = {
 
 # ── 전국 주요 시·군·구 조례 캐시 (API 실패 시 폴백) ──
 # 출처: 각 지자체 도시계획조례 (2025~2026 기준)
+def enforce_national_ceiling(
+    zone_type: str, bcr: float | None, far: float | None
+) -> tuple[float | None, float | None, list[str]]:
+    """조례 **기본값**이 법정상한을 넘으면 **채택하지 않는다**(S계층 불변식).
+
+    【왜 필요한가 — 2026-08-19 실측】조례 파서를 고쳤더니 오산시 자연녹지 건폐율이
+    `30%` 로 나왔다(신뢰도 0.95). **원문 기본값은 제45조①16호 "20퍼센트 이하"** 이고,
+    30% 는 같은 조례 안의 **조건부 완화값**(제50조 성장관리방안 수립지역 등)이었다.
+    자연녹지 30% 는 국계법 시행령 상한 20% 를 **넘는 불가능한 기본값**인데, 값이
+    그럴듯해서 그대로 화면까지 갔다 — **None 보다 위험한 형태**다.
+
+    ★조례는 국계법 §77·78에 따라 **법정범위 안에서** 정한다. 따라서 기본값이 법정을
+    넘으면 그것은 조례가 이상한 게 아니라 **우리 파싱이 틀린 것**이다. 이 함수가 그
+    한 줄을 잡는다 — 사람이 원문을 눈으로 대조하지 않아도 된다.
+
+    ★**클램프하지 않고 기각한다.** 법정값으로 깎아 내리면 출처 없는 그럴듯한 숫자가
+    생겨(날조) 다음 사람이 그것을 조례값으로 읽는다. 모르는 것은 비워 둔다.
+
+    ※ 완화·특례 조항값(제50조 등)은 법정을 넘을 수 있으므로 이 가드를 **기본값에만**
+      적용한다. 조건부 값은 근거조문과 함께 별도 보관한다(conditional).
+    """
+    violations: list[str] = []
+    nat = NATIONAL_LIMITS.get(zone_type) or {}
+    for key, val in (("bcr", bcr), ("far", far)):
+        ceiling = nat.get(key)
+        if val is None or ceiling is None:
+            continue
+        if val > ceiling:
+            violations.append(
+                f"{zone_type} {key} 조례값 {val} > 법정상한 {ceiling} — "
+                f"조건부 완화값 오추출 의심(기본값 기각)"
+            )
+            if key == "bcr":
+                bcr = None
+            else:
+                far = None
+    return bcr, far, violations
+
+
 ORDINANCE_CACHE: dict[str, dict[str, dict[str, float]]] = {
     # ── 서울특별시 ──
     "서울특별시": {
@@ -603,6 +642,21 @@ class OrdinanceService:
             return "도시계획" in name and "조례" in name and "규칙" not in name
 
         region = (region_name or "").strip()
+        # ★★①-0 **정확일치 최우선**(2026-08-19 실측 교정).
+        #   종전 ①은 `region in name` **부분일치**라 아래가 모두 통과하고 **목록 첫 항목이 이겼다**:
+        #     · "울산광역시" ⊂ "울산광역시 **남구** 도시계획조례"  ← 자치구 조례를 받아옴
+        #     · "창원시"   ⊂ "창원시 **도시계획변경 공공기여협상 운영에 관한** 조례"
+        #   둘 다 `_is_city_plan_ordinance`("도시계획"+"조례"+규칙아님)도 통과한다.
+        #   그래서 정작 목록에 있던 `울산광역시 도시계획 조례`(2151262)·`창원시 도시계획
+        #   조례`(2123044)를 놓쳤고, 받아온 본문이 짧아 **"응답 길이 이상"으로 오진**했었다.
+        #   ★오산시가 잘 됐던 건 목록이 1건이라 **운**이었다 — 다건이면 아무거나 이긴다.
+        if region:
+            exact = re.compile(r"^\s*" + re.escape(region) + r"\s*도시\s?계획\s?조례\s*$")
+            for npos, name in names:
+                if exact.match(name):
+                    oid = _id_after(npos)
+                    if oid:
+                        return oid
         # ① region_name까지 일치하는 '도시계획 조례'를 최우선(인접 동명이역 오조회 차단).
         if region:
             for npos, name in names:
@@ -661,8 +715,14 @@ class OrdinanceService:
         bcr = entry.get("bcr") if entry else None
         far = entry.get("far") if entry else None
 
+        # ★S계층 불변식 — 조례 기본값은 법정상한을 넘을 수 없다(국계법 §77·78: 법정범위 안에서
+        #   조례로 정함). 넘었다면 조건부 완화값을 잘못 집은 것이므로 **기각**한다(클램프 금지).
+        bcr, far, ceiling_violations = enforce_national_ceiling(zone_type, bcr, far)
+
         # 3) '정직 신호' 집계 — 무엇을 못 찾았는지, 신뢰도는 얼마인지.
         missing_sections: list[str] = []
+        # 법정초과로 기각된 항목은 '못 찾음'과 구분해 사유를 남긴다(조용한 소실 금지).
+        missing_sections.extend(ceiling_violations)
         if not structured["found_bcr_section"]:
             missing_sections.append("건폐율")
         if not structured["found_far_section"]:
@@ -680,6 +740,11 @@ class OrdinanceService:
         #         느슨한 폴백 매칭에 기댔으면 낮게. 단서/경과조치 맥락이면 더 감점.
         #         ★고밀 용도지역(상업·준주거)이 FAR<500이면 절단/오독 강한 신호 → 감점.
         parse_confidence = self._compute_parse_confidence(structured, entry, matched_key)
+        # ★법정초과로 기각된 항목이 있으면 그 파싱은 **증명된 오독**이다 — 나머지 값도
+        #   같은 조각에서 나왔으므로 신뢰도를 강등한다. 기각해 놓고 0.95를 보고하면
+        #   "값은 비었는데 신뢰도는 높다"는 모순이 화면에 나간다.
+        if ceiling_violations:
+            parse_confidence = min(parse_confidence, 0.3)
         caveat = entry.get("caveat") if entry else None
         # ★FIX2 방어: 고밀 존(상업·준주거) FAR<500이면 천 단위 절단 의심을 caveat로 명시
         #   (신뢰도는 이미 _compute_parse_confidence에서 강등됨 → recheck 자동 권장).
@@ -747,8 +812,26 @@ class OrdinanceService:
 
         # 헤더 매칭: '용도지역' + (선택)공백 + '안에서의' + … + 건폐율/용적률.
         # (사이에 '의 최대한도' 같은 수식어가 끼어도 되도록 헤더~kind 사이를 관대하게 허용)
-        header_re = r"용도지역\s*안에서의\s*(?:[^.]{0,20}?)?" + kind
-        header = re.search(header_re, norm)
+        # ★2026-08-19 실측 교정 — '안'은 지자체마다 없다.
+        #   국계법 시행령 제84·85조 제목이 "용도지역**안**에서의 건폐율/용적률"이라 그 표기를
+        #   필수로 걸었는데, **오산시 조례는 "용도지역에서의 건폐율"**(제45조)로 '안'이 없다.
+        #   그래서 정식 헤더가 안 잡히고 아래 폴백이 조제목 "경관지구에서의 건폐율과 용적률"을
+        #   집어 **5글자짜리 섹션**을 반환했다 → 용도지역 0개 → 조례값 없음 → 법정상한(최대치)
+        #   낙관 폴백. 수원시도 동일하게 None 이었으므로 **오산시만의 문제가 아니다.**
+        #   조례는 국계법 §77·78이 "조례로 정한다"고 명령하므로 **반드시 존재한다** —
+        #   "조례 미확보"는 부지 특성이 아니라 이 파서의 구멍이었다.
+        # ★2026-08-19 2차 확장 — `용도지역`과 `에서의` 사이에 **삽입어**가 온다.
+        #   실측: 삼척시 제33조 **"용도지역·지구 등에서의 건폐율"**(·지구 등) /
+        #        오산시 제45조 "용도지역에서의"(없음) / 전주시 제45조 "용도지역안에서의"(안).
+        #   `(?:안|별|의)?` 로 열거하면 새 변형마다 또 막힌다 — **길이 제한 와일드카드**로
+        #   흡수하되, 문장을 건너뛰지 않도록 마침표·닫는괄호는 배제한다(과탐 방지).
+        header_re = r"용도지역[^.()]{0,12}?에서의\s*(?:[^.]{0,20}?)?" + kind
+        # ★★조제목 우선 앵커 — 맨 문구로 찾으면 **상호참조**가 먼저 걸린다.
+        #   실측(오산시): 제34조 본문의 "…제45조 **용도지역에서의 건폐율**을 초과하는 경우에는
+        #   제45조에 따른다" 라는 **인용문**이 첫 매치가 되어, 정작 값이 실린 제45조를 놓쳤다.
+        #   조례는 조제목을 `제NN조(용도지역에서의 건폐율)` 로 쓰므로 그 형태를 먼저 찾는다.
+        title_re = r"제\s*\d+\s*조\s*\(\s*" + header_re + r"[^)]{0,20}\)"
+        header = re.search(title_re, norm) or re.search(header_re, norm)
         is_full_header = header is not None
         if not header:
             # 헤더가 없더라도 '건폐율은/용적률은 … 별표'식 직접 언급을 폴백 탐색(느슨).
@@ -772,13 +855,34 @@ class OrdinanceService:
         # ★섹션 끝 경계: 헤더 이후에서 '반대 항목의 정식 헤더'가 다시 나오거나, 별표 '정의'
         #   블록([별표 N] — 대괄호로 시작)이 나오면 그 앞에서 끊는다(값이 뒤섞이는 것 방지).
         #   단순 '별표 N과 같다' 참조 문구(대괄호 없음)로는 끊지 않는다.
-        other_hdr = re.search(r"용도지역\s*안에서의\s*(?:[^.]{0,20}?)?" + other, tail)
+        # ★시작 헤더와 **같은 표기변형**을 쓴다 — 한쪽만 '안'을 요구하면 경계를 못 잡아
+        #   반대 항목 값이 섞여 들어온다(비대칭 정규식은 조용히 오염을 만든다).
+        # 시작 헤더와 **같은 표기 관용도**를 쓴다 — 비대칭이면 경계를 못 잡아 반대 항목
+        # 값이 섞인다(실측: 전주시 건폐율 섹션이 용적률 나열 100을 집어 rejected 됐다).
+        _other_re = r"용도지역[^.()]{0,12}?에서의\s*(?:[^.]{0,20}?)?" + other
+        other_hdr = (re.search(r"제\s*\d+\s*조\s*\(\s*" + _other_re, tail)
+                     or re.search(_other_re, tail))
         byeolpyo_def = re.search(r"\[\s*별표\s*\d+", tail)
         # 폴백(헤더 없음)일 때는 값 오염을 줄이려 반대 단어도 경계로 인정.
         loose_other = re.search(other, tail) if not is_full_header else None
         bounds = [b.start() for b in (other_hdr, byeolpyo_def, loose_other) if b]
         window = min(bounds) if bounds else 2500
         section = norm[start:header.end() + window]
+        # ★★공허한 '찾음' 차단 — 실측(오산시)에서 이 함수가 **5글자**("건폐율과 ")를 반환하고
+        #   호출부는 `found_bcr_section=True` 로 보고했다. 조문 제목 "경관지구에서의 건폐율과
+        #   용적률"에 폴백이 걸린 결과다. 값이 0개인데 "찾았다"고 말하면 신뢰도 산출이 오염되고,
+        #   진단하는 사람이 **파서가 아니라 조례를 의심**하게 된다(실제로 그렇게 8개월을 보냈다).
+        #   섹션이라면 최소한 표준 용도지역명을 **2개 이상** 담고 있어야 한다(1개는 조제목 인용
+        #   같은 우연한 언급일 수 있다).
+        #   ★2026-08-19 교정 — 판별자를 "용도지역 2개 이상"에서 **"용도지역 ≥1 그리고
+        #     퍼센트 값 존재"** 로 바꾼다. 종전 기준은 **위양성**이었다: 용도지역이 하나만
+        #     규정된 정상 섹션(단일 용도지역 조문·최소 픽스처)을 통째로 기각해 파서가
+        #     `None` 을 냈다(테스트 7건이 그것으로 죽었다 — 가드의 위양성도 결함이다).
+        #     원래 막으려던 사례("건폐율과 " 5글자)의 결정적 특징은 *용도지역이 적다*가
+        #     아니라 **값이 0개**라는 것이다 — 그쪽이 날카로운 판별자다.
+        if not (any(z in section for z in self._CANONICAL_ZONES)
+                and _KR_PCT_RE.search(section)):
+            return None, False
         return section, is_full_header
 
     def _locate_byeolpyo(self, norm_text: str, number: str) -> str | None:
@@ -840,11 +944,36 @@ class OrdinanceService:
         for kind, section in (("bcr", bcr_section), ("far", far_section)):
             if not section:
                 continue
+            # ★★1순위: **기본항(번호 나열형)** — `16. 자연녹지지역: 20퍼센트 이하`.
+            #   조례는 제45조①/제51조① 에서 용도지역을 번호로 나열해 기본값을 정하고,
+            #   그 뒤에 완화·특례 조항이 이어진다(제46조 용도지구 30% · 제50조 성장관리 30% ·
+            #   주유소/유원지 30% …). 종전 파서는 `용도지역 → 값 하나` 모델이라 우선순위가
+            #   없어 **아무 조건부 값이나 이겼다**(실측: 오산시 자연녹지 20% 대신 30%).
+            #   전국 표본 30곳에서 자연녹지 ok 6.7% 였던 근본이 이것이다.
+            #   번호 접두(`\d+.`)는 기본항의 강한 신호이므로 이것을 먼저 훑는다.
+            base_items = self._extract_base_items(section)
+            for zone_name, val in base_items.items():
+                slot = zones.setdefault(zone_name, {})
+                slot[kind] = val
+                slot.setdefault("evidence_span", f"{zone_name}: {val}퍼센트 이하(기본항 나열)")
+                slot["value_basis"] = "base_item"
+
             for zone_name, frag, caveat_hdr in self._iter_zone_fragments(section):
                 val, caveat_ctx = self._extract_pct_near(frag)
                 if val is None:
                     continue
                 slot = zones.setdefault(zone_name, {})
+                # ★기본항이 이미 잡혔으면 **덮어쓰지 않는다** — 조각 스캔이 집는 것은 대개
+                #   완화·특례값이다. 버리지도 않는다: 조건과 함께 conditional 로 보관해
+                #   부지 조건(성장관리권역·용도지구 지정 등)과 매칭할 수 있게 한다.
+                #   ※실측: 이 부지는 성장관리권역이라 제50조 30% 가 **실제 적용값일 수 있다.**
+                if slot.get("value_basis") == "base_item" and slot.get(kind) is not None:
+                    if val != slot.get(kind):
+                        slot.setdefault("conditional", []).append({
+                            "kind": kind, "value": val,
+                            "context": self._normalize_ws(frag)[:120],
+                        })
+                    continue
                 slot[kind] = val
                 # 근거 스니펫(용도별) — 처음 잡힌 것을 대표로.
                 slot.setdefault("evidence_span", self._normalize_ws(frag)[:120])
@@ -859,6 +988,41 @@ class OrdinanceService:
             "bcr_full_header": bcr_full,
             "far_full_header": far_full,
         }
+
+    def _extract_base_items(self, section: str) -> dict[str, int]:
+        """조문 **기본항의 번호 나열형**에서만 값을 뽑는다 — `16. 자연녹지지역: 20퍼센트 이하`.
+
+        ★왜 번호를 요구하나: 같은 조례에 같은 용도지역이 여러 번 나오고(오산시 자연녹지 9회),
+          값도 여러 개다. 번호 접두는 **기본항 나열**의 강한 신호라, 완화·특례 조항과 갈린다.
+          번호 없이 훑으면 우선순위가 없어 아무 값이나 이긴다(그 결함을 이 함수가 고친다).
+
+        ★날조 방지: 값이 없으면 넣지 않는다. 관대하게 넓히면 완화값이 다시 섞인다.
+        """
+        out: dict[str, int] = {}
+        for zone in sorted(self._CANONICAL_ZONES, key=len, reverse=True):
+            if zone in out:
+                continue
+            # `NN. <용도지역>[(세분)] : NN퍼센트` — 콜론/전각콜론, 공백 변형 허용.
+            # ★값 표기가 두 갈래다(2026-08-19 실측):
+            #   · 퍼센트형  — 오산시 "16. 자연녹지지역: 20퍼센트 이하"
+            #   · **분수형** — 전주시 "1. 제1종전용주거지역：100분의 40" (한국 법령 표준 표기)
+            #   분수형을 몰라서 전주시는 기본항 추출이 통째로 실패했고, 폴백이 "100분의 20"의
+            #   **앞 100** 을 집어 법정 20% 초과로 기각됐다(원인을 '섹션 경계'로 오진했었다 —
+            #   실측하니 섹션은 32,132→34,988 로 정확했다).
+            head = (r"(?<![\d])\d{1,2}\s*\.\s*" + re.escape(zone)
+                    + r"(?:\s*\([^)]{0,20}\))?\s*[:：]\s*")
+            m = re.search(head + r"(\d{1,4})\s*퍼센트", section)
+            if m:
+                out[zone] = int(m.group(1))
+                continue
+            # 분수형 `100분의 40` — 분모는 보통 100 이지만 그대로 읽어 비율로 환산한다
+            # (분모를 100 으로 가정하면 `1000분의 15` 같은 표기에서 조용히 10배 틀린다).
+            m = re.search(head + r"(\d{1,5})\s*분의\s*(\d{1,5})", section)
+            if m:
+                denom, numer = int(m.group(1)), int(m.group(2))
+                if denom:
+                    out[zone] = round(numer * 100 / denom)
+        return out
 
     def _iter_zone_fragments(self, section: str):
         """조문/별표 구간을 용도지역 단위 조각으로 쪼개 (용도지역명, 값조각, 단서헤더) 산출.
