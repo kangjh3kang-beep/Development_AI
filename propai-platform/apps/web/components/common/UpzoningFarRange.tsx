@@ -18,7 +18,7 @@
 
 import { formatUpzoningFarRange, type UpzoningFarRange } from "@/lib/formatters";
 
-/** 값 표기 — 붕괴 시 범위 기호(~)를 쓰지 않고 "단일 경로 기준"을 함께 적는다. */
+/** 값 표기 — 붕괴 시 범위 기호(~)를 쓰지 않고 "단일 값(범위 미산출)"을 함께 적는다. */
 export function UpzoningFarRangeValue({
   range, className,
 }: { range: UpzoningFarRange; className?: string }) {

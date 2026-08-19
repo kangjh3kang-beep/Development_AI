@@ -1678,12 +1678,13 @@ class TestUpzoningRangeCollapseHonestyInAudit:
     def test_collapsed_range_is_not_called_a_ceiling(self):
         # 자연녹지: 3경로가 모두 제1종일반주거를 가리켜 범위 붕괴(실측).
         text = self._limit_text({"local_ordinance": {"sigungu": "서울특별시 강남구"}}, "자연녹지지역")
-        assert "단일 경로 기준" in text
+        assert "단일 값·범위 미산출" in text
+        assert "단일 경로" not in text, "붕괴 사유는 '경로가 하나'가 아니라 '목표가 하나'다"
         assert "종상향 예상 상한" not in text, f"붕괴인데 '상한'이라 부른다: {text}"
 
     def test_real_range_still_called_a_ceiling(self):
         # ★대조군 — 역세권 2종일반은 진짜 범위(준주거 500 vs 3종일반 300)다.
-        #   여기까지 '단일 경로 기준'이 붙으면 검사기가 항상 참이 되어 무의미해진다.
+        #   여기까지 '단일 값' 표기가 붙으면 검사기가 항상 참이 되어 무의미해진다.
         text = self._limit_text(
             {
                 "local_ordinance": {"sigungu": "서울특별시 강남구"},
@@ -1692,4 +1693,4 @@ class TestUpzoningRangeCollapseHonestyInAudit:
             "제2종일반주거지역",
         )
         assert "종상향 예상 상한" in text, f"진짜 범위인데 상한 표기가 사라졌다: {text}"
-        assert "단일 경로 기준" not in text
+        assert "단일 값" not in text

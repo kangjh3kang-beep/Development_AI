@@ -492,8 +492,34 @@ class UpzoningPotentialAnalyzer:
             tz = s.get("target_zone")
             if tz and tz not in considered:
                 considered.append(tz)
-        # 매핑은 돼 있으나 반영되지 않은 상향 후보 — 여기서 파생하므로 카탈로그가 늘면 자동 반영.
-        unconsidered = [t for t in (mapped_targets or []) if t not in considered]
+
+        # ★R1 교정 — "평가해서 '하'로 판정했다"와 "아예 산출하지 않았다"는 **다른 말**이다.
+        #   종전에는 미반영 후보를 `graded`(상/중만) 기준으로 뺐다. 그래서 시나리오가 실제로
+        #   산출됐고 화면 목록에도 렌더되는 '하' 경로의 목표까지 "미산출 — 별도 확인 필요"로
+        #   둔갑했다(실측 3케이스: 1종일반→3종일반300하 · 2종일반→준주거500하 · 준주거→일반상업1300하).
+        #   확정된 부정 판정을 '열린 가능성'으로 격상시키는 낙관 과표시라, 이 PR 이 고치겠다고
+        #   선언한 결함 클래스 그 자체다. 두 축을 갈라 각각의 사실을 말한다.
+        produced: list[str] = []          # 시나리오가 실제로 산출된 목표(가능성 등급 무관)
+        for s in scenarios:
+            tz = s.get("target_zone")
+            if tz and tz not in produced:
+                produced.append(tz)
+        # ① 미산출 — 매핑은 돼 있는데 시나리오 자체가 없다(진짜 "확인 필요").
+        #    `mapped_targets`(UPZONE_TARGETS)에서 파생하므로 카탈로그가 늘면 자동 반영된다.
+        unconsidered = [t for t in (mapped_targets or []) if t not in produced]
+        # ② 평가 후 제외 — 산출은 됐으나 가능성 '하'라 범위에서 빠졌다(부정 판정이지 미산출이 아니다).
+        excluded: list[dict[str, Any]] = []
+        seen_excluded: set[str] = set()
+        for s in scenarios:
+            tz = s.get("target_zone")
+            if not tz or tz in considered or tz in seen_excluded:
+                continue
+            seen_excluded.add(tz)
+            excluded.append({
+                "target_zone": tz,
+                "expected_far_pct_high": s.get("expected_far_pct_high"),
+                "feasibility": s.get("feasibility"),
+            })
 
         out: dict[str, Any] = {
             "min_pct": lo,
@@ -502,6 +528,8 @@ class UpzoningPotentialAnalyzer:
             "scenario_count": len(graded),
             "considered_target_zones": considered,
             "unconsidered_target_zones": unconsidered,
+            # 평가 결과 '하'로 범위에서 빠진 목표 — "미산출"과 섞어 쓰지 않는다.
+            "excluded_by_feasibility": excluded,
             "honest_disclosure": None,
             "note": "가능성 상/중 시나리오의 예상 용적률 상한 범위(예상치·목표지역 기준).",
         }
@@ -515,28 +543,44 @@ class UpzoningPotentialAnalyzer:
             f"범위가 산출되지 않았습니다. {hi:.0f}%는 상향 가능한 최댓값이 아니라 "
             f"본 분석이 검토한 경로의 예상치입니다."
         )
-        if len(considered) == 1 and unconsidered:
-            tail = (
-                f" 경로들이 모두 같은 목표 용도지역('{considered[0]}')을 가리켰고, "
-                f"매핑된 상향 후보 중 {', '.join(unconsidered)}은(는) 이번 산출에 "
-                f"반영되지 않았습니다 — 그 단계의 상향 여지는 미산출이며 별도 확인이 필요합니다."
-            )
-        elif len(considered) == 1:
-            tail = (
-                f" 현행 '{zone or '해당 용도지역'}'에 매핑된 상향 후보가 "
-                f"'{considered[0]}' 하나뿐이라 비교할 다른 목표가 없었습니다 — "
-                f"그보다 높은 단계의 상향 여지는 미산출이며 별도 확인이 필요합니다."
-            )
+        # ★사유는 **절(clause) 조립**이다 — 한 가지에 몰아 쓰면 "미산출"과 "평가 결과 하"가
+        #   다시 섞인다. 각 절은 자기가 아는 사실만 말한다.
+        clauses: list[str] = []
+        if len(considered) == 1:
+            clauses.append(f" 검토한 경로가 모두 같은 목표 용도지역('{considered[0]}')을 가리켰습니다.")
         else:
             # ★현 카탈로그에서는 도달 불가다(2026-08-19 실측 — UPZONE_TARGETS 전수를 돌려도
             #   '목표는 다른데 예상 상한만 같은' 조합이 나오지 않는다). 목표지역 조례가 두
             #   용도지역에 같은 상한을 주면 발화하므로 방어로 남긴다 — 그래서 이 가지의
             #   문구 변이는 어떤 테스트도 죽이지 못한다(설명된 생존).
-            tail = (
+            clauses.append(
                 f" 목표 용도지역은 서로 달랐으나({', '.join(considered)}) 예상 상한이 "
                 f"모두 같았습니다 — 목표지역 조례 상한이 같은 값에서 걸린 결과입니다."
             )
-        out["honest_disclosure"] = head + tail
+        if excluded:
+            # ★"미산출"이라 말하지 않는다. 이건 평가를 마친 **부정 판정**이고, 같은 카드의
+            #   시나리오 목록에 등급·사유와 함께 이미 렌더된다(목록과 고지가 싸우면 안 된다).
+            listed = ", ".join(
+                f"'{e['target_zone']}'(예상 {e['expected_far_pct_high']:.0f}%)"
+                if e.get("expected_far_pct_high") is not None else f"'{e['target_zone']}'"
+                for e in excluded
+            )
+            clauses.append(
+                f" {listed}은(는) 가능성 '하'로 평가되어 범위 산출에서 제외됐습니다"
+                f"(미산출이 아니라 평가 결과입니다 — 사유는 아래 시나리오 목록 참조)."
+            )
+        if unconsidered:
+            clauses.append(
+                f" 매핑된 상향 후보 중 {', '.join(unconsidered)}은(는) 이번 산출에 "
+                f"반영되지 않았습니다 — 그 단계의 상향 여지는 미산출이며 별도 확인이 필요합니다."
+            )
+        if not excluded and not unconsidered and len(considered) == 1:
+            clauses.append(
+                f" 현행 '{zone or '해당 용도지역'}'에 매핑된 상향 후보가 "
+                f"'{considered[0]}' 하나뿐이라 비교할 다른 목표가 없었습니다 — "
+                f"그보다 높은 단계의 상향 여지는 미산출이며 별도 확인이 필요합니다."
+            )
+        out["honest_disclosure"] = head + "".join(clauses)
         return out
 
     @staticmethod

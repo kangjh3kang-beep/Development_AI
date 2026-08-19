@@ -965,3 +965,76 @@ def test_upzoning_disclosure_states_count_value_and_target():
     assert f"모두 {fr['max_pct']:.0f}%로 같아" in d               # 얼마로
     assert f"'{fr['considered_target_zones'][0]}'" in d           # 어느 목표로
     assert "본 분석이 검토한 경로의 예상치입니다" in d
+
+
+# ── ★R1 교정 락 — "평가 결과 '하'"를 "미산출"이라 말하지 않는다 ──
+
+def test_upzoning_graded_low_target_is_not_called_unmeasured():
+    """산출됐으나 '하'로 평가된 목표를 '미산출·확인 필요'로 격상하지 않는다.
+
+    배경(적대리뷰 실증): 미반영 후보를 `graded`(상/중) 기준으로 빼면, 화면 목록에
+    *"준주거 500%, 가능성 하, 사유: 역세권 입지 아님"* 으로 이미 렌더되는 목표가 고지에서는
+    *"미산출 — 별도 확인 필요"* 가 되어 **같은 카드 안에서 정면 모순**이었다.
+    확정된 부정 판정을 열린 가능성으로 격상시키는 낙관 과표시다.
+    """
+    # ── 모집단 ① 평가 후 제외(2종일반 비역세권 — 준주거 500이 '하') ──
+    off = _range_of(zone_type="제2종일반주거지역", land_area_sqm=20000, near_station=False)
+    fr = off["potential_far_range"]
+    # 공허 진리 가드 — '하'로 떨어진 준주거 시나리오가 실제로 산출·렌더되는가.
+    low = [s for s in off["scenarios"] if s["target_zone"] == "준주거지역"]
+    assert low and all(s["feasibility"] == "하" for s in low), "전제 붕괴 — '하' 준주거 경로가 없다"
+
+    assert "준주거지역" not in fr["unconsidered_target_zones"], \
+        "산출된 목표를 '미산출'이라 말한다(확정 부정 판정 → 열린 가능성 격상)"
+    assert fr["unconsidered_target_zones"] == []
+    d = fr["honest_disclosure"]
+    assert "'준주거지역'(예상 500%)은(는) 가능성 '하'로 평가되어 범위 산출에서 제외됐습니다" in d
+    assert "미산출이 아니라 평가 결과입니다" in d
+    # 별도 축으로도 계약에 실린다(프론트가 배지로 쓸 수 있게).
+    assert [(e["target_zone"], e["expected_far_pct_high"], e["feasibility"])
+            for e in fr["excluded_by_feasibility"]] == [("준주거지역", 500, "하")]
+
+    # ── 모집단 ② 진짜 미산출(자연녹지 — 2종일반은 시나리오 자체가 없다) ──
+    nat = _range_of(**_COLLAPSED_INPUT)["potential_far_range"]
+    produced = {s["target_zone"] for s in _range_of(**_COLLAPSED_INPUT)["scenarios"]}
+    assert "제2종일반주거지역" not in produced, "전제 붕괴 — 2종일반 시나리오가 생겼다"
+    assert nat["unconsidered_target_zones"] == ["제2종일반주거지역"]
+    assert nat["excluded_by_feasibility"] == []
+    assert "미산출이며 별도 확인이 필요합니다" in nat["honest_disclosure"]
+
+    # ★두 모집단이 **다른 문장**을 쓴다 — 같은 문장이면 두 축을 가른 의미가 없다.
+    assert "평가 결과입니다" not in nat["honest_disclosure"]
+    assert "매핑된 상향 후보 중" not in d
+
+
+def test_upzoning_no_forged_unmeasured_claim_anywhere():
+    """전수 파생 — 어떤 입력에서도 '산출된 목표'가 unconsidered(미산출)에 들어가지 않는다."""
+    from app.services.zoning.upzoning_potential import UPZONE_TARGETS
+
+    checked = 0
+    for zone in UPZONE_TARGETS:
+        for near in (False, True):
+            r = _range_of(zone_type=zone, land_area_sqm=20000, near_station=near,
+                          near_station_m=300 if near else None)
+            fr = r["potential_far_range"]
+            if fr is None:
+                continue
+            checked += 1
+            produced = {s["target_zone"] for s in r["scenarios"]}
+            forged = [t for t in fr["unconsidered_target_zones"] if t in produced]
+            assert not forged, f"{zone}(역세권={near}): 산출된 {forged}를 '미산출'이라 말한다"
+    assert checked >= 10, f"공허 진리 가드 — 검사한 케이스 {checked}건"
+
+
+def test_upzoning_scenario_count_counts_graded_not_all():
+    """`scenario_count`·고지의 '검토한 경로 N건'은 **범위 산출에 쓴** 경로 수다.
+
+    (변이 검증 실증: 유일 픽스처였던 자연녹지는 graded==scenarios==3 이라
+     `len(graded)`→`len(scenarios)` 변이가 살아남았다. 둘이 갈리는 입력에 **독립 기대값**으로 건다.)
+    """
+    off = _range_of(zone_type="제2종일반주거지역", land_area_sqm=20000, near_station=False)
+    fr = off["potential_far_range"]
+    assert len(off["scenarios"]) == 5, "전제 — 전체 경로는 5건(역세권 2건 포함)"
+    assert fr["scenario_count"] == 3, "범위 산출에 쓴 것은 상/중 3건"
+    assert "검토한 경로 3건" in fr["honest_disclosure"]
+    assert "검토한 경로 5건" not in fr["honest_disclosure"]

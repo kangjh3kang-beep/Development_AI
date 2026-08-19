@@ -102,8 +102,20 @@ export interface LandStageB {
   scenarios: LandUpzoningScenario[];
   /** 종합 최상 가능성 등급(시나리오 중 best, 없으면 null). */
   topFeasibility: LandFeasibility | null;
-  /** 잠재 최대 용적률(%) — 시나리오 중 최고(없으면 null). */
+  /**
+   * 잠재 최대 용적률(%) — **가능성 '상/중'** 시나리오 중 최고(없으면 null).
+   *
+   * ★'하'를 포함하지 않는 이유: 백엔드 `_potential_range` 가 범위를 만들 때 쓰는 규칙과
+   *   같아야 한다. 종전에는 전 시나리오를 `Math.max` 로 집계해, 2종일반 비역세권에서
+   *   이 카드가 `~500%`(가능성 '하'인 역세권 준주거)를 찍고 바로 위 카드는 `300%` 를
+   *   찍는 **한 화면 모순**이 났다(실측). 규칙을 하나로 맞춰 모순을 없앤다.
+   */
   potentialFarHigh: number | null;
+  /**
+   * 그 값이 '범위'가 아니라 **한 값**인가(백엔드 potential_far_range.is_collapsed).
+   * 미확보면 null — false 로 채우면 "확인 결과 붕괴 아님"으로 둔갑한다.
+   */
+  farRangeCollapsed: boolean | null;
   /** 예상치 고지(미확정·전제). */
   disclaimer: string;
 }
@@ -206,11 +218,16 @@ function buildStageB(site: SiteAnalysisData): LandStageB {
   let topFeasibility: LandFeasibility | null = null;
   let bestRank = Number.POSITIVE_INFINITY;
   let potentialFarHigh: number | null = null;
+  let sawFeasible = false;
   for (const s of scenarios) {
     if (s.feasibility != null && FEASIBILITY_RANK[s.feasibility] < bestRank) {
       bestRank = FEASIBILITY_RANK[s.feasibility];
       topFeasibility = s.feasibility;
     }
+    // ★'하'는 집계에서 뺀다 — 백엔드가 범위를 만들 때 쓰는 규칙(상/중)과 같게 맞춘다.
+    //   등급 미상(null)은 배제하지 않는다(집계값 폴백 시나리오가 등급 없이 올 수 있다).
+    if (s.feasibility === "하") continue;
+    if (s.feasibility != null) sawFeasible = true;
     if (s.potentialFarHigh != null) {
       potentialFarHigh =
         potentialFarHigh == null
@@ -218,8 +235,17 @@ function buildStageB(site: SiteAnalysisData): LandStageB {
           : Math.max(potentialFarHigh, s.potentialFarHigh);
     }
   }
+  // 전량 '하'면 상/중 집계가 비므로, 값을 지어내지 않고 null 로 둔다(카드가 표기를 생략한다).
+  if (!sawFeasible && potentialFarHigh == null) potentialFarHigh = null;
 
-  return { scenarios, topFeasibility, potentialFarHigh, disclaimer: UPZONING_DISCLAIMER };
+  return {
+    scenarios,
+    topFeasibility,
+    potentialFarHigh,
+    farRangeCollapsed:
+      typeof site.upzoningFarRangeCollapsed === "boolean" ? site.upzoningFarRangeCollapsed : null,
+    disclaimer: UPZONING_DISCLAIMER,
+  };
 }
 
 /** UpzoningScenarioData(SSOT) → LandUpzoningScenario(표시형). */

@@ -1166,7 +1166,7 @@ class DesignAuditOrchestrator:
             #   숫자는 그대로 두고 한정만 밝힌다(형제 화면 3곳과 같은 규율).
             if potential_range.get("is_collapsed"):
                 limit_parts.append(
-                    f"종상향 예상 {potential_high:g}%(예상치·단일 경로 기준·범위 미산출)"
+                    f"종상향 예상 {potential_high:g}%(예상치·단일 값·범위 미산출)"
                 )
             else:
                 limit_parts.append(f"종상향 예상 상한 {potential_high:g}%(예상치)")

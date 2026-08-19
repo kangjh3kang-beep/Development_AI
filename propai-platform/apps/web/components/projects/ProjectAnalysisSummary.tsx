@@ -461,11 +461,11 @@ export function ProjectAnalysisSummary({ locale }: { locale?: string }) {
             accent
           />
           <DataField
-            label={upFarCollapsed ? "종상향 잠재(용적·단일 경로)" : "종상향 잠재 상한(용적)"}
+            label={upFarCollapsed ? "종상향 잠재(용적·단일 값)" : "종상향 잠재 상한(용적)"}
             value={pctOrNull(upFarHigh)}
             evidence={
               upFarCollapsed
-                ? "검토한 종상향 경로가 모두 같은 목표 용도지역을 가리켜 범위가 산출되지 않았습니다 — 이 값은 도달 가능한 최댓값이 아니라 단일 경로의 예상치입니다(그 위 단계는 미산출·별도 확인 필요)."
+                ? "상·하한이 한 값으로 모여 범위가 산출되지 않았습니다 — 이 값은 도달 가능한 최댓값이 아니라 본 분석이 검토한 경로의 예상치입니다(붕괴 사유·미반영 후보는 부지분석 종상향 카드의 정직 고지 참조)."
                 : "지구단위·역세권 등 종상향 시 도달 가능한 잠재 용적률 상단 — 현행과 분리 표기"
             }
           />
