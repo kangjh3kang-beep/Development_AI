@@ -476,3 +476,53 @@ def test_빌드_실패시_로그를_노출한다() -> None:
     assert any("40" in ln for ln in tail_lines), (
         "실패 시 로그 꼬리(tail -40)를 노출하지 않는다 — 성공 시의 tail -2 만으로는 원인을 못 본다"
     )
+
+
+def test_전환_전에_컨테이너_소스와_호스트_소스를_대조한다() -> None:
+    """VERIFY-BUILD 는 *"어느 커밋을 빌드했는가"* 만 답한다.
+
+    빌드 캐시가 옛 레이어를 재사용하면 ``APP_BUILD_ID`` 만 새로 박히고 **소스는 낡을 수 있다**
+    — 그러면 VERIFY-BUILD 는 OK 인데 서비스는 옛 코드다. 그 층을 VERIFY-SOURCE 가 닫는다.
+
+    ★2026-08-19 실측 계기: 168 라이브의 `ordinance_service.py` 가 **미머지 브랜치 HEAD** 와
+      같고 `origin/main` 과 달랐다(전수 대조 782 중 1건).
+    """
+    lines = _executable_lines(ZERO_DOWNTIME)
+
+    # ① 컨테이너 안과 호스트 양쪽에서 해시를 뜬다.
+    in_container = [ln for ln in lines if "docker exec" in ln and "md5sum" in ln]
+    assert in_container, (
+        "컨테이너 안에서 소스 해시를 뜨지 않는다 — 호스트만 보면 `git reset --hard` 때문에 "
+        "무엇을 배포하든 통과한다"
+    )
+    on_host = [ln for ln in lines if "md5sum" in ln and "docker exec" not in ln]
+    assert on_host, "호스트 소스 해시를 뜨지 않는다 — 비교 대상이 없다"
+
+    # ② 정렬 없이 비교하면 내용이 같아도 전부 불일치가 된다(첫 판 위양성 110건).
+    assert all("sort -k2" in ln for ln in in_container + on_host), (
+        "md5sum 출력을 파일명 기준(`sort -k2`)으로 정렬하지 않는다 — "
+        "find 순서 차이만으로 전부 불일치가 된다"
+    )
+
+    # ③ ★대조군: 목록이 비었는지 먼저 단언해야 한다.
+    #    경로를 틀리면 빈 목록이 나오는데 파이프 종료코드는 0 이라 "드리프트 없음"으로 읽힌다.
+    guard = [ln for ln in lines if re.search(r'\[\s+"\$_CN"\s+-eq\s+0\s+\]', ln)]
+    assert guard, (
+        "소스 목록이 비었는지 검사하지 않는다 — 경로 오류가 '드리프트 없음'으로 읽힌다"
+    )
+
+    # ④ 불일치면 전환하지 않고 신앱을 제거한다(fail-closed).
+    #    ★fail-closed 는 `if` 블록 **안**에 있지 판정 줄에 있지 않다 — 블록으로 잘라 본다
+    #    (첫 판에서 판정 줄만 보고 단언했다가 빨개졌다: 검사가 코드 구조를 표현하지 못했다).
+    assert any("_DRIFT" in ln for ln in lines), "드리프트 판정 변수를 쓰지 않는다"
+    start = next(i for i, ln in enumerate(lines) if ln.startswith("if [") and "_DRIFT" in ln)
+    end = start
+    while end < len(lines) and lines[end] != "fi":
+        end += 1
+    guard_block = lines[start : end + 1]
+    assert any("rm -f" in ln for ln in guard_block), (
+        "드리프트 감지 시 신앱을 제거하지 않는다 — 잘못된 컨테이너가 남는다"
+    )
+    assert any("exit 1" in ln for ln in guard_block), (
+        "드리프트 감지 시 배포를 중단하지 않는다(fail-closed 아님)"
+    )
