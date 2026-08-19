@@ -86,6 +86,23 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+/**
+ * promote 응답을 **붙잡아 둔다**(요청이 비행 중인 상태를 실제로 만든다).
+ * 반환 배열의 n번째를 호출하면 n번째 POST 가 그때 끝난다.
+ * ★가드(in-flight 잠금)는 "요청이 아직 안 끝났을 때"만 관찰 가능하다 — 즉시 resolve 하는
+ *   목으로는 그 상태를 만들 수 없어 검사가 공허해진다.
+ */
+function holdPromoteResponses(): Array<() => void> {
+  const release: Array<() => void> = [];
+  postMock.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        release.push(() => resolve({ example_id: "x", status: "active" }));
+      }),
+  );
+  return release;
+}
+
 /** 호출 URL 에서 쿼리스트링을 뗀 **경로 세그먼트**만 남긴다. */
 function pathOf(call: unknown[]): string {
   return String(call[0]).split("?")[0];
@@ -495,6 +512,74 @@ describe("AI 학습 사례 승인 화면 배선", () => {
   });
 
   /* ---------------------------------------------------------------- */
+  /*  in-flight 가드 — "요청이 몇 번 나가는가"를 정하는 코드도 배선이다  */
+  /*  (2026-08-19 F3). `busy` Set 은 내가 R2 에서 직접 바꾼 배선인데     */
+  /*  잠금이 0건이었다 — 지우면 POST 가 1회→3회가 되는데도 전부 초록.   */
+  /* ---------------------------------------------------------------- */
+
+  it("승인 버튼을 연타해도 요청은 한 번만 나간다", async () => {
+    const user = userEvent.setup();
+    const release = holdPromoteResponses();
+    render(<LearningApprovalPanel />);
+    const rows = await screen.findAllByRole("listitem");
+    expect(rows.length).toBeGreaterThan(0); // 전제
+
+    const btn = within(rows[0]).getByRole("button", { name: "승인" });
+    expect(btn).toHaveProperty("disabled", false); // 클릭 전 대조군
+
+    await user.click(btn);
+    // 응답을 붙잡아 뒀으므로 여전히 비행 중 — 이때 버튼이 잠겨 있어야 한다.
+    expect(btn).toHaveProperty("disabled", true);
+    expect(btn.textContent).toContain("처리 중");
+
+    await user.click(btn);
+    await user.click(btn);
+    expect(postMock).toHaveBeenCalledTimes(1); // ★연타 3회 → 요청 1회
+
+    release[0]();
+    await waitFor(() => expect(btn).toHaveProperty("disabled", false));
+  });
+
+  it("한 행의 처리가 끝나도 아직 처리 중인 다른 행은 잠긴 채로 남는다", async () => {
+    // ★이 케이스가 busyId(화면당 한 칸)와 busy Set(행 단위)을 **가른다**:
+    //   단일 문자열이면 A 의 finally 가 가드를 통째로 풀어 **B 가 비행 중인데 열린다**.
+    const user = userEvent.setup();
+    getMock.mockResolvedValue(
+      listPayload([
+        { ...CANDIDATES[0], id: "ex-a", content_hash: "h-a" },
+        { ...CANDIDATES[0], id: "ex-b", content_hash: "h-b" },
+      ]),
+    );
+    const release = holdPromoteResponses();
+    render(<LearningApprovalPanel />);
+    let rows = await screen.findAllByRole("listitem");
+    expect(rows.length).toBe(2); // 전제
+
+    const a = within(rows[0]).getByRole("button", { name: "승인" });
+    const b = within(rows[1]).getByRole("button", { name: "승인" });
+    await user.click(a);
+    await user.click(b);
+    expect(postMock).toHaveBeenCalledTimes(2);
+    expect(a).toHaveProperty("disabled", true);
+    expect(b).toHaveProperty("disabled", true);
+
+    release[0]!(); // A 만 끝난다
+    rows = await screen.findAllByRole("listitem");
+    await waitFor(() =>
+      expect(within(rows[0]).getByRole("button", { name: "승인" })).toHaveProperty(
+        "disabled",
+        false,
+      ),
+    );
+
+    // ★B 는 아직 비행 중이므로 잠긴 채여야 한다(행 단위 가드).
+    const bAfter = within(rows[1]).getByRole("button", { name: /승인|처리 중/ });
+    expect(bAfter).toHaveProperty("disabled", true);
+    await user.click(bAfter);
+    expect(postMock).toHaveBeenCalledTimes(2); // 중복 요청 없음
+  });
+
+  /* ---------------------------------------------------------------- */
   /*  부채 — 산문이 아니라 초록 안에 보이게 남긴다(CLAUDE.md C.13)      */
   /* ---------------------------------------------------------------- */
 
@@ -503,6 +588,15 @@ describe("AI 학습 사례 승인 화면 배선", () => {
       "(base_interpreter._load_fewshot)에도 게이트를 걸고 여기서 검사한다",
   );
   it.todo("다운로드 파일명·MIME 계약(learning_dataset_active.jsonl / x-ndjson)을 검사한다");
+  it.todo(
+    "후속(이 PR 밖): 프로덕션 learning_examples 의 기존 status='active' 행을 실측한다 — " +
+      "있으면 권리 인수 이력을 소급 기록해야 한다(INSERT 는 'candidate' 하드코딩이고 " +
+      "UPDATE 는 promote 하나뿐이라 0건일 것으로 보이나 미측정)",
+  );
+  it.todo(
+    "후속(이 PR 밖): orphan_routes.py 의 is_consumed 가 주석·문자열에 뚫린다 — " +
+      "이 화면은 doors 테스트로 자체 보완했으나 도구 자체가 전역 약점이다(별건)",
+  );
 
   it("후보가 0건이면 목업 대신 정직하게 비어 있다고 적는다", async () => {
     getMock.mockResolvedValue(listPayload([]));
