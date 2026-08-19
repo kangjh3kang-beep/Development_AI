@@ -514,6 +514,16 @@ class UpzoningPotentialAnalyzer:
             tz = s.get("target_zone")
             if not tz or tz in considered or tz in seen_excluded:
                 continue
+            # ★등급을 **확인하고** 담는다. 종전엔 "considered 에 없다"만 보고 담으면서 문구는
+            #   가능성 '하'를 하드코딩했다. graded 에서 빠지는 길은 두 가지다 —
+            #   ①가능성 '하'  ②expected_far_pct_high 가 falsy(0/None). ②로 빠진 상/중 경로가
+            #   "'하'로 평가되어"라 표기되고 "(예상 0%)"까지 노출된다(주입으로 실증).
+            #   ★현 프로덕션 배선에서는 ②가 **도달 불가**다: 조례 resolver
+            #   (far_tier_service `if z and z.get("far")`)가 0 을 걸러 None 을 주고, 매핑된
+            #   전 목표 용도지역이 법정 max_far_pct 를 보유한다. 그래서 이 가드의 변이는
+            #   어떤 테스트도 죽이지 못한다(설명된 생존 — 잠재 결함에 대한 선제 가드).
+            if s.get("feasibility") != "하":
+                continue
             seen_excluded.add(tz)
             excluded.append({
                 "target_zone": tz,

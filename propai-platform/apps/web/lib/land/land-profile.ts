@@ -218,16 +218,19 @@ function buildStageB(site: SiteAnalysisData): LandStageB {
   let topFeasibility: LandFeasibility | null = null;
   let bestRank = Number.POSITIVE_INFINITY;
   let potentialFarHigh: number | null = null;
-  let sawFeasible = false;
+  // 전량 '하'일 때만 쓰는 폴백 집계 — 백엔드 `_potential_range` 가 하는 것과 **똑같이** 한다.
+  let allHigh: number | null = null;
   for (const s of scenarios) {
     if (s.feasibility != null && FEASIBILITY_RANK[s.feasibility] < bestRank) {
       bestRank = FEASIBILITY_RANK[s.feasibility];
       topFeasibility = s.feasibility;
     }
-    // ★'하'는 집계에서 뺀다 — 백엔드가 범위를 만들 때 쓰는 규칙(상/중)과 같게 맞춘다.
+    if (s.potentialFarHigh != null) {
+      allHigh = allHigh == null ? s.potentialFarHigh : Math.max(allHigh, s.potentialFarHigh);
+    }
+    // ★'하'는 집계에서 뺀다 — 백엔드가 범위를 만들 때 쓰는 규칙과 같게 맞춘다.
     //   등급 미상(null)은 배제하지 않는다(집계값 폴백 시나리오가 등급 없이 올 수 있다).
     if (s.feasibility === "하") continue;
-    if (s.feasibility != null) sawFeasible = true;
     if (s.potentialFarHigh != null) {
       potentialFarHigh =
         potentialFarHigh == null
@@ -235,8 +238,10 @@ function buildStageB(site: SiteAnalysisData): LandStageB {
           : Math.max(potentialFarHigh, s.potentialFarHigh);
     }
   }
-  // 전량 '하'면 상/중 집계가 비므로, 값을 지어내지 않고 null 로 둔다(카드가 표기를 생략한다).
-  if (!sawFeasible && potentialFarHigh == null) potentialFarHigh = null;
+  // ★백엔드도 상/중이 **0건이면 전체로 폴백**한다(`_potential_range` 의 두 번째 graded).
+  //   그 폴백을 여기서 빼면 전량 '하' 부지에서 상단 카드는 범위를 말하는데 이 칩만
+  //   침묵해, "규칙을 같게 맞췄다"는 위 주석이 거짓이 된다. 같은 규칙 = 폴백까지 같은 규칙.
+  if (potentialFarHigh == null) potentialFarHigh = allHigh;
 
   return {
     scenarios,

@@ -273,8 +273,9 @@ export function ProjectAnalysisSummary({ locale }: { locale?: string }) {
 
   // 종상향 잠재(현행과 분리해 표기) — 잠재 상한 + 최상 가능성 등급(있을 때만).
   const upFarHigh = site?.upzoningPotentialFarHigh ?? null;
-  // ★범위가 붕괴했으면(경로들이 모두 같은 목표를 가리킴) 이 숫자는 '도달 가능한 최댓값'이
-  //   아니라 '검토한 단일 경로의 예상치'다. 라벨·근거를 그렇게 바꾼다(숫자는 그대로).
+  // ★범위가 붕괴했으면(상·하한이 한 값) 이 숫자는 '도달 가능한 최댓값'이 아니라
+  //   '검토한 경로들의 예상치가 한 값으로 모인 것'이다. 라벨·근거를 그렇게 바꾼다(숫자는 그대로).
+  //   ("단일 경로"라 쓰지 않는다 — 경로는 여럿이고 목표 용도지역이 하나인 것이 붕괴 사유다.)
   const upFarCollapsed = site?.upzoningFarRangeCollapsed === true;
   const upFeasTop = site?.upzoningFeasibilityTop ?? null;
 

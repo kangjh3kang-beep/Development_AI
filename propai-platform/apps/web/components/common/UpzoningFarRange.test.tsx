@@ -233,6 +233,22 @@ describe("buildLandProfile — 집계 규칙이 백엔드 범위 규칙과 같�
     expect(p.stageB.topFeasibility).toBe("상");
   });
 
+  it("전량 '하'면 백엔드처럼 전체로 폴백한다(칩만 침묵하면 상단 카드와 어긋난다)", () => {
+    // 백엔드 `_potential_range` 는 상/중이 0건이면 전체 시나리오로 폴백해 범위를 낸다.
+    // 그 폴백을 프론트가 빼면 상단 카드는 값을 말하는데 이 칩만 침묵한다 — 규칙이 어긋난다.
+    const p = buildLandProfile({
+      address: "서울특별시 강남구 역삼동 737",
+      zoneCode: "제2종일반주거지역",
+      upzoningScenarios: [
+        { label: "역세권활성화", targetZone: "준주거지역", feasibility: "하", expectedFarHighPct: 500 },
+        { label: "정비사업", targetZone: "제3종일반주거지역", feasibility: "하", expectedFarHighPct: 300 },
+      ],
+    } as never)!;
+    expect(p.stageB.scenarios).toHaveLength(2);            // 공허 진리 가드
+    expect(p.stageB.topFeasibility).toBe("하");
+    expect(p.stageB.potentialFarHigh).toBe(500);           // ★null 이 아니다(폴백 발화)
+  });
+
   it("붕괴 신호를 store 에서 그대로 나른다(미확보는 null)", () => {
     const on = buildLandProfile({ ...{ address: "A", zoneCode: "자연녹지지역" }, upzoningFarRangeCollapsed: true } as never)!;
     const off = buildLandProfile({ ...{ address: "A", zoneCode: "자연녹지지역" }, upzoningFarRangeCollapsed: false } as never)!;
