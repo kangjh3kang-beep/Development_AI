@@ -1,11 +1,25 @@
+# 확정 고아 — 백엔드에 있으나 프론트 **실행 소스**에 리터럴 소비처가 0인 라우트.
+#
+# 【2026-08-20 수치 변동 사유 — "누가 몰래 줄였나"를 의심하지 않게 적어 둔다】
+# 131 → 124. 줄었지만 **약화가 아니라 정정**이다. 내역:
+#   -13  판정 불가로 **이동**(삭제 아님) → `orphan_routes_undecided.txt` 에 그대로 있다.
+#        프론트가 마지막 세그먼트를 동적으로 넣는 자리라 정규식으로 확정할 수 없다.
+#        실증: `MarketInsightsWorkspaceClient.tsx:777` 이
+#        ``fetch(`${marketApiBase()}/market/report/${fmt}`)`` 로 pdf/docx/pptx 를 실제로 부른다.
+#    +6  **주석 배제**로 새로 드러난 진짜 고아(전수 손수 확인 — 전부 실행줄 0건):
+#          /api/v1/avm/estimate          "탁상감정으로 교체"라고 적힌 줄 주석에만 있었다
+#          /api/v1/finance/monte-carlo   "거짓 heroHint 정정"이라는 JSX 주석에만 있었다
+#          /api/v1/zoning/special-parcels  줄 주석에만 있었다
+#          /basis/{run_id}, /basis/{run_id}/approve  주석의 `claim/basis` 에 걸려 있었다
+#          /api/v1/design-audit/run      실행줄엔 `/design-audit/run-upload/…` 뿐(다른 라우트)
+#
+# `#` 로 시작하는 줄과 빈 줄은 래칫이 무시한다. 배선·삭제로 부채를 갚으면 여기서 지워라.
 /access/assess
 /admin-only
 /api/v1/admin/sales-rls/apply
 /api/v1/admin/sales-rls/rollback
 /api/v1/admin/sales-rls/status
 /api/v1/admin/secrets/backups/{backup_id}/restore
-/api/v1/admin/secrets/image-health
-/api/v1/admin/secrets/llm-health
 /api/v1/agents/domain/multi-analysis
 /api/v1/agents/domain/run
 /api/v1/agents/orchestrate
@@ -25,31 +39,26 @@
 /api/v1/auction/listings/{listing_id}
 /api/v1/auction/opportunities
 /api/v1/auction/sync
+/api/v1/avm/estimate
 /api/v1/billing/admin/orders/{order_id}/confirm
 /api/v1/billing/admin/set-tier
 /api/v1/billing/quote
 /api/v1/bim/analyze
-/api/v1/blockchain/escrow/direct-pay
-/api/v1/blockchain/escrow/dispute
-/api/v1/blockchain/escrow/fund
-/api/v1/blockchain/escrow/refund
-/api/v1/blockchain/escrow/release
-/api/v1/blockchain/escrow/resolve
 /api/v1/boq-auto/master/items
 /api/v1/building-compliance/auto-correct
 /api/v1/compliance/screening
 /api/v1/contractors/register
-/api/v1/cost/admin/ingest-public-prices
 /api/v1/cost-intelligence/material-prices/refresh
+/api/v1/cost/admin/ingest-public-prices
 /api/v1/dashboard/activity/recent
 /api/v1/dashboard/portfolio/timeline
 /api/v1/deliberation/analyze/async
 /api/v1/deliberation/analyze/task/{run_id}
 /api/v1/deliberation/scenario-matrix
-/api/v1/design/bim/analyze
+/api/v1/design-audit/run
 /api/v1/design-gen/seed/aihub
 /api/v1/design-gen/seed/aihub/list
-/api/v1/design-references/from-design
+/api/v1/design/bim/analyze
 /api/v1/design/report/stream
 /api/v1/development-methods/evaluate
 /api/v1/drawing/calculate-area
@@ -61,6 +70,7 @@
 /api/v1/esg/lcc/calculate
 /api/v1/esign/request
 /api/v1/external/parcel/merge
+/api/v1/finance/monte-carlo
 /api/v1/gresb/benchmarks
 /api/v1/kdx/metrics
 /api/v1/kdx/webhook
@@ -74,9 +84,6 @@
 /api/v1/lifecycle/supervision/evm
 /api/v1/market-ai/ask
 /api/v1/market-ai/tools
-/api/v1/market/report/docx
-/api/v1/market/report/pdf
-/api/v1/market/report/pptx
 /api/v1/mass-templates/collect
 /api/v1/mass-templates/collect-region
 /api/v1/notifications/alimtalk
@@ -84,8 +91,8 @@
 /api/v1/permits/compliance-check
 /api/v1/permits/submissions/{submission_id}/status
 /api/v1/portals/market-data/{region_code}
-/api/v1/portals/{portal_id}/post
 /api/v1/portals/post-all
+/api/v1/portals/{portal_id}/post
 /api/v1/rates/history
 /api/v1/rates/refresh
 /api/v1/regulation/check
@@ -96,7 +103,6 @@
 /api/v1/sre/dashboard
 /api/v1/system/integration/status
 /api/v1/tax/calculate
-/api/v1/underwriting/history
 /api/v1/webhooks
 /api/v1/webhooks/{webhook_id}
 /api/v1/webhooks/{webhook_id}/deliveries
@@ -105,12 +111,15 @@
 /api/v1/webrtc/sessions/active
 /api/v1/webrtc/sessions/ice-candidate
 /api/v1/webrtc/sessions/offer
+/api/v1/zoning/special-parcels
 /api/v2/collaboration/invites/{token}/accept
 /api/v2/feasibility/finalize
 /api/v2/feasibility/optimize
 /api/v2/pipeline/report/pdf-from-ledger
 /bank-report/sections
 /basis/assess
+/basis/{run_id}
+/basis/{run_id}/approve
 /c2r/ping
 /data-integrity/field-audit-status
 /data-integrity/freshness/{source_name}
