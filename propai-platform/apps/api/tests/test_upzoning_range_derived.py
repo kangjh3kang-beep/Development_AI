@@ -47,8 +47,21 @@ def test_전제_다후보_용도지역이_실제로_존재한다():
 
 
 @pytest.mark.parametrize("zone", MULTI)
-def test_상한은_최대후보에서_나온다(zone: str):
-    """상한이 **첫 후보**에 묶여 있으면 실패한다 — 그게 종전 결함이다."""
+def test_상향여지는_최대후보에서_나온다(zone: str):
+    """상향 여지가 **첫 후보**에 묶여 있으면 실패한다 — 그게 종전 결함이다.
+
+    ★2026-08-19 필드 이동 — 이 단언은 원래 `expected_far_pct_high`(최상위 상한)에
+      걸려 있었다. 그런데 그렇게 하면 **라벨과 값이 어긋난다**: `target_zone` 은
+      경로별 대표 후보 하나(예: 정비사업→제2종일반주거지역, 법정 150~250)인데
+      최상위 상한은 최대 후보(3종) 값 **300** 을 실어, *선언한 용도지역의 법정상한을
+      넘는 값*이 화면에 나갔다. 조례 출처일 때는 더 나빴다 —
+      `source='지자체 도시계획조례'` 인데 값이 **조례값 150 을 넘는 200** 이었다
+      (출처를 붙인 채 그 출처를 넘는 값 = 거짓 근거).
+
+    ★**의도는 그대로 지킨다.** "후보 하나로 좁혀 범위가 소멸했다"는 결함은 여전히
+      금지된다 — 다만 그 최대값은 **자기 용도지역 라벨을 달고**(`upside_far_zone`)
+      `upside_far_pct_high` 로 나온다. 값을 지운 게 아니라 **라벨을 붙인 것**이다.
+    """
     highs = [h for h in (_target_far_pct(t, None, None)[1] for t in UPZONE_TARGETS[zone]) if h]
     if not highs:
         pytest.skip(f"{zone}: 후보 용적률 미확보(법정범위 없음)")
@@ -58,10 +71,32 @@ def test_상한은_최대후보에서_나온다(zone: str):
     scs = _scenarios(zone)
     assert scs, f"{zone}: 시나리오가 0건 — 대상이 없어 통과하는 공허한 초록"
     for sc in scs:
-        got = sc.get("expected_far_pct_high")
+        got = sc.get("upside_far_pct_high")
         assert got == expected_max, (
-            f"{zone}/{sc.get('path_key')}: 상한 {got} != 최대후보 {expected_max} "
+            f"{zone}/{sc.get('path_key')}: 상향여지 {got} != 최대후보 {expected_max} "
             f"(첫 후보 상한={first_high}) — 후보 하나로 좁혀 범위가 소멸했다"
+        )
+        # ★그 값이 **어느 용도지역의 것인지** 함께 나와야 한다. 라벨 없는 숫자는
+        #   그 자체로 위법값이 될 수 있다(이 필드 이동의 이유).
+        assert sc.get("upside_far_zone"), f"{zone}/{sc.get('path_key')}: 상향여지 라벨 없음"
+
+
+@pytest.mark.parametrize("zone", MULTI)
+def test_최상위_상한은_선언한_용도지역_안에_있다(zone: str):
+    """★위 단언의 짝 — 최상위 상한은 **`target_zone` 의 법정범위**를 넘지 않는다.
+
+    이 두 단언이 함께 있어야 한다. 위만 있으면 "최대값을 어딘가에 실으면 통과"라
+    라벨 불일치가 되살아나고, 아래만 있으면 "보수적으로 좁혀도 통과"라 종전 결함이
+    되살아난다. **범위는 넓히되 라벨과 값은 같은 용도지역을 가리킨다.**
+    """
+    from apps.api.app.services.zoning.legal_zone_limits import legal_limits_for
+
+    for sc in _scenarios(zone):
+        legal = legal_limits_for(sc["target_zone"])
+        assert legal, f"{zone}/{sc['path_key']}: target_zone 법정범위 미상"
+        assert sc["expected_far_pct_high"] <= legal["max_far_pct"], (
+            f"{zone}/{sc['path_key']}: target={sc['target_zone']} 상한 "
+            f"{sc['expected_far_pct_high']} > 법정 {legal['max_far_pct']} — 라벨·값 불일치"
         )
 
 
@@ -119,11 +154,17 @@ def test_대조군_단일후보는_최대가_곧_첫후보다(zone: str):
 
 
 def test_자연녹지는_제2종까지_도달한다():
-    """사용자 신고의 정면 재현 — 도시개발법 경로가 1종에 갇히지 않는다."""
+    """사용자 신고의 정면 재현 — 도시개발법 경로가 1종에 갇히지 않는다.
+
+    ★필드는 `upside_far_pct_high` 다(위 참조). 화면은 "최대 제2종일반주거지역 상향 시
+      250%" 로 그 값을 **용도지역과 함께** 보인다 — 숫자만 최상위에 올리면 라벨이
+      1종인 채 2종 값을 말하게 된다.
+    """
     scs = _scenarios("자연녹지지역")
     assert scs, "자연녹지 시나리오 0건"
     two = _target_far_pct("제2종일반주거지역", None, None)[1]
-    assert any(sc["expected_far_pct_high"] == round(two) for sc in scs), (
+    assert any(sc.get("upside_far_pct_high") == round(two) for sc in scs), (
         f"어느 경로도 제2종({two}%)에 도달하지 못한다 — 150% 천장이 그대로다"
     )
+    assert any(sc.get("upside_far_zone") == "제2종일반주거지역" for sc in scs)
     assert any(sc.get("target_zone_max") == "제2종일반주거지역" for sc in scs)
