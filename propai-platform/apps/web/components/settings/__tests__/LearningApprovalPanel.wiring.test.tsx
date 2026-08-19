@@ -284,6 +284,54 @@ describe("AI 학습 사례 승인 화면 배선", () => {
     );
   });
 
+  /* ---------------------------------------------------------------- */
+  /*  상태값 배선 — 변이 재분류에서 나온 진짜 구멍(2026-08-19)          */
+  /*  ★탭의 `key` 는 표시 문구가 아니라 **백엔드로 가는 상태값**이다.   */
+  /*    문구로 뭉뚱그렸더니 `candidate`/`rejected` 를 바꾸는 변이가      */
+  /*    살아남았다(그 탭을 누르면 서버가 400 을 낸다).                  */
+  /* ---------------------------------------------------------------- */
+
+  it("모든 상태 탭이 백엔드 어휘 그대로 요청한다", async () => {
+    const user = userEvent.setup();
+    render(<LearningApprovalPanel />);
+    await screen.findAllByRole("listitem");
+
+    // ★사람이 센 탭 목록을 쓰지 않는다 — 렌더된 탭 버튼에서 **파생**한다.
+    //   비교 대상은 백엔드 어휘(learning_loop._VALID_STATUSES)라 컴포넌트와 독립이다.
+    const tabButtons = screen
+      .getAllByRole("button")
+      .filter((b) => b.getAttribute("aria-pressed") !== null);
+    expect(tabButtons.length, "상태 탭이 0개 — 검사가 공허하다").toBe(3);
+
+    for (const btn of tabButtons) await user.click(btn);
+
+    const asked = new Set(candidateCalls().map((c) => qOf(c).get("status")));
+    expect(asked).toEqual(new Set(["candidate", "active", "rejected"]));
+  });
+
+  it("거부됨 목록도 렌더하고 그 상태로 표시한다", async () => {
+    getMock.mockResolvedValue(
+      listPayload([{ ...CANDIDATES[0], id: "ex-rej", status: "rejected" }]),
+    );
+    render(<LearningApprovalPanel />);
+    const rows = await screen.findAllByRole("listitem");
+    expect(rows.length).toBe(1); // 전제
+
+    const badge = within(rows[0]).getByText("거부됨");
+    // 상태별 색 분기가 실제로 갈리는지 — 토큰 이름으로 본다(색 리터럴 아님).
+    expect(badge.className).toContain("status-error");
+    // 이미 처리된 건이라 승인/거부 버튼이 없다.
+    expect(within(rows[0]).queryByRole("button", { name: "승인" })).toBeNull();
+    expect(within(rows[0]).queryByRole("button", { name: "거부" })).toBeNull();
+  });
+
+  it("대조군 — 승인 대기 배지는 거부됨과 다른 토큰을 쓴다", async () => {
+    render(<LearningApprovalPanel />);
+    const rows = await screen.findAllByRole("listitem");
+    const badge = within(rows[0]).getByText("승인 대기");
+    expect(badge.className).not.toContain("status-error");
+  });
+
   it("어느 테넌트에 주입될지 화면에 보인다", async () => {
     render(<LearningApprovalPanel />);
     const rows = await screen.findAllByRole("listitem");
@@ -450,7 +498,6 @@ describe("AI 학습 사례 승인 화면 배선", () => {
   /*  부채 — 산문이 아니라 초록 안에 보이게 남긴다(CLAUDE.md C.13)      */
   /* ---------------------------------------------------------------- */
 
-  it.todo("거부됨 탭의 목록 렌더(배지·빈 상태 문구)를 검사한다 — 현재 회귀망 밖");
   it.todo(
     "학습권리 레지스트리가 learning_examples 키공간으로 시딩되면 주입 지점" +
       "(base_interpreter._load_fewshot)에도 게이트를 걸고 여기서 검사한다",
