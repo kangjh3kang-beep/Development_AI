@@ -75,15 +75,19 @@ def _requirements_files() -> list[pathlib.Path]:
     return sorted(_API_ROOT.glob("requirements*.txt"))
 
 
-def _dockerfile_requirement_sources(text: str) -> list[str]:
-    """`COPY <src…> <dst>` 에서 **출발지**만 뽑는다.
+def _dockerfile_copy_pairs(text: str) -> list[tuple[str, str]]:
+    """`COPY <src…> <dst>` 를 **(출발지, 도착지)** 쌍으로 뽑는다.
 
-    ★처음 쓴 정규식은 도착지(`./requirements.txt`)를 잡아 검사망 밖 파일을 통과시켰다
-      (변이 실측 SURVIVED). *"프로덕션이 쓰는 파일을 본다"* 고 선언한 검사가 **엉뚱한 파일**을
-      보고 있었던 것 — 이 테스트가 막으려던 사고와 같은 형태다.
-      → 플래그(`--chown=` 등)를 걷어내고 **마지막 토큰(도착지)을 뺀 나머지**를 출발지로 본다.
+    ★**역할은 도착지가 말하고, 검사 대상은 출발지다.**
+      처음엔 출발지 **이름**에 `requirement` 가 들어있는지로 걸렀는데, 그러면
+      `COPY apps/api/reqs-prod.txt ./requirements.txt` 처럼 **이름만 바꾼 경우가 그대로 빠져나간다**
+      (변이 실측 SURVIVED — 이 PR 안에서 같은 오류를 세 번째로 재현했다).
+      이름이 아니라 **그 파일이 이미지 안에서 무엇이 되는가**(도착지)로 판정한다.
+
+    ★그리고 처음 정규식은 아예 **도착지를 출발지로 오인**했다(첫 변이 SURVIVED).
+      플래그(`--chown=` 등)를 걷어내고 마지막 토큰만 도착지로 본다.
     """
-    srcs: list[str] = []
+    pairs: list[tuple[str, str]] = []
     for line in text.splitlines():
         l = line.strip()
         if not l.upper().startswith("COPY "):
@@ -91,17 +95,10 @@ def _dockerfile_requirement_sources(text: str) -> list[str]:
         toks = [t for t in l.split()[1:] if not t.startswith("--")]
         if len(toks) < 2:
             continue
+        dst = toks[-1]
         for src in toks[:-1]:
-            base = src.rsplit("/", 1)[-1]
-            if base.endswith(".txt"):
-                srcs.append(base)
-    return srcs
-
-
-def test_전제_requirements_파일을_실제로_찾는다() -> None:
-    """★공허한 초록 방지 — 0건이면 아래 단언이 전부 자동 통과한다."""
-    files = _requirements_files()
-    assert len(files) >= 2, f"requirements 를 {len(files)}건만 찾았다 — 탐색이 죽었다: {files}"
+            pairs.append((src.rsplit("/", 1)[-1], dst.rsplit("/", 1)[-1]))
+    return pairs
 
 
 def _dockerfiles() -> list[pathlib.Path]:
@@ -134,45 +131,43 @@ def test_전제_Dockerfile_을_실제로_찾는다() -> None:
 def test_모든_이미지가_설치하는_requirements_가_검사망에_있다() -> None:
     """★**어떤 이미지든** 설치하는 requirements 는 검사망 안이어야 한다.
 
-    Dockerfile 에서 파생시킨다 — 새 requirements 를 만들어 **어느 Dockerfile이든** 그것을
-    가리키면, 그 파일이 `requirements*.txt` 패턴을 벗어나는 순간 실패한다.
+    판정 기준은 **도착지의 역할**이다 — 이미지 안에서 `requirements*.txt` 가 되는 파일이면,
+    그 **출발지**가 검사망에 있어야 한다. 출발지 이름이 무엇이든 상관없다.
+    새 requirements 를 만들어 어느 Dockerfile 이든 그것을 가리키면,
+    그 파일이 `requirements*.txt` 패턴을 벗어나는 순간 실패한다 —
     **검사망 밖으로 나가는 것 자체가 실패**다.
-
-    ★`Dockerfile.oracle` 만 보던 종전 판은 이 파일이 고치는 사고를 그대로 재현할 수 있었다:
-      다른 이미지가 다른 requirements 를 쓰면 아무도 안 본다.
     """
     검사망 = {p.name for p in _requirements_files()}
-    검사한_도커파일 = 0
+    검사한_쌍 = 0
     위반: list[str] = []
     for df in _dockerfiles():
-        srcs = [
-            n
-            for n in _dockerfile_requirement_sources(df.read_text(encoding="utf-8"))
-            if "requirement" in n.lower()
-        ]
-        if not srcs:
-            continue
-        검사한_도커파일 += 1
-        for name in srcs:
-            if name not in 검사망:
-                위반.append(f"{df.name} → {name}")
-    # ★공허 진리 가드 — requirements 를 COPY 하는 Dockerfile 이 0건이면 "위반 0"은 무의미하다.
-    assert 검사한_도커파일 >= 1, (
-        "requirements 를 COPY 하는 Dockerfile 이 한 건도 안 잡혔다 — 추출기나 탐색이 죽었다. "
-        f"찾은 Dockerfile={[p.name for p in _dockerfiles()]}"
+        for src, dst in _dockerfile_copy_pairs(df.read_text(encoding="utf-8")):
+            # 역할 판정: 이미지 안에서 requirements 가 되는가
+            if not (dst.startswith("requirements") and dst.endswith(".txt")):
+                continue
+            검사한_쌍 += 1
+            if src not in 검사망:
+                위반.append(f"{df.name}: {src} → {dst}")
+    # ★공허 진리 가드 — 그런 COPY 가 0건이면 "위반 0"은 무의미하다.
+    assert 검사한_쌍 >= 1, (
+        "requirements 로 설치되는 COPY 가 한 건도 안 잡혔다 — 추출기나 탐색이 죽었다. "
+        f"Dockerfile={[p.name for p in _dockerfiles()]}"
     )
     assert not 위반, (
-        "배포 이미지가 설치하는 requirements 가 검사망 밖이다 — 취약 의존성이 들어와도 "
-        f"아무도 못 잡는다.\n  {위반}\n  검사망={sorted(검사망)}"
+        "배포 이미지가 설치하는 파일이 검사망 밖이다 — 취약 의존성이 들어와도 아무도 못 잡는다.\n"
+        f"  {위반}\n  검사망={sorted(검사망)}"
     )
 
 
-def test_출발지_추출기가_도착지에_속지_않는다() -> None:
+def test_추출기_대조군_출발지와_도착지를_바르게_가른다() -> None:
     """★추출기의 자체 대조군 — 잡아야 할 것과 통과시켜야 할 것을 **둘 다** 단언한다."""
-    got = _dockerfile_requirement_sources("COPY --chown=x:y apps/api/reqs-prod.txt ./requirements.txt")
-    assert got == ["reqs-prod.txt"], f"도착지를 출발지로 오인한다: {got!r}"
-    got2 = _dockerfile_requirement_sources("COPY --chown=x:y apps/api/requirements.oracle.txt ./requirements.txt")
-    assert got2 == ["requirements.oracle.txt"], f"정상 표기를 못 뽑는다: {got2!r}"
+    assert _dockerfile_copy_pairs("COPY --chown=x:y apps/api/reqs-prod.txt ./requirements.txt") == [
+        ("reqs-prod.txt", "requirements.txt")
+    ], "도착지를 출발지로 오인하거나 이름으로 걸러낸다"
+    assert _dockerfile_copy_pairs("COPY --chown=x:y apps/api/requirements.oracle.txt ./requirements.txt") == [
+        ("requirements.oracle.txt", "requirements.txt")
+    ], "정상 표기를 못 뽑는다"
+    assert _dockerfile_copy_pairs("COPY . .") == [(".", ".")], "일반 COPY 를 잘못 다룬다"
 
 
 def test_PyJWT_가_requirements_에_다시_들어오지_않는다() -> None:
