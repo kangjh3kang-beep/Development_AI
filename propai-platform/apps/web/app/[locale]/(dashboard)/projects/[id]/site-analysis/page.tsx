@@ -1,7 +1,9 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { formatPercent, formatPercentDelta } from "@/lib/formatters"; // 비율 표기 SSOT
+import {
+  formatPercent, formatPercentDelta, formatUpzoningFarRange, type UpzoningFarRange,
+} from "@/lib/formatters"; // 비율 표기 SSOT
 import { useParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import { motion, AnimatePresence } from "framer-motion";
@@ -10,6 +12,7 @@ import { ModuleCommandStrip } from "@/components/layout/ModuleCommandStrip";
 import { NextStageCta } from "@/components/projects/NextStageCta";
 import { LandIntelligencePanel } from "@/components/projects/LandIntelligencePanel";
 import { DevelopmentScenarioCard } from "@/components/common/DevelopmentScenarioCard";
+import { UpzoningFarRangeNotice, UpzoningFarRangeValue } from "@/components/common/UpzoningFarRange";
 import { LandProfileCard } from "@/components/projects/LandProfileCard";
 import { UtilizationMaximizerCard } from "@/components/projects/UtilizationMaximizerCard";
 import { UpzoningScenarioList } from "@/components/projects/UpzoningScenarioList";
@@ -115,6 +118,32 @@ type FarBasisDetail = {
   조례확인필요?: boolean;
 };
 
+/** 조건이 충족되면 열릴 수 있는 값 — **적용값이 아니다**(`applied: false`).
+ *  아는 것(법정·조례 기본값)과 모르는 것(조건 충족 여부)을 섞지 않기 위해 별도 계약이다. */
+type ConditionalCeiling = {
+  condition?: string | null;
+  zone_type?: string | null;
+  bcr_ceiling_pct?: number | null;
+  far_ceiling_pct?: number | null;
+  applied?: boolean;
+  note?: string | null;
+  requires?: string[] | null;
+};
+type OrdinanceConditionalItem = {
+  kind?: string | null;          // "bcr" | "far"
+  value?: number | null;
+  article?: string | null;
+  article_title?: string | null;
+  condition_key?: string | null;
+  why?: string | null;
+};
+type OrdinanceConditional = {
+  matched?: OrdinanceConditionalItem[] | null;
+  unmatched_site?: OrdinanceConditionalItem[] | null;
+  undecidable?: OrdinanceConditionalItem[] | null;
+  applied?: boolean;
+};
+
 type EffectiveFarData = {
   effective_far_pct?: number | null;
   effective_bcr_pct?: number | null;
@@ -123,6 +152,10 @@ type EffectiveFarData = {
   ordinance_confirmed?: boolean;
   legal_min_far_pct?: number | null;
   legal_max_far_pct?: number | null;
+  /** 법 제75조의3 조건부 법정상한(성장관리계획구역 등) — 가능 상한. */
+  conditional_ceiling?: ConditionalCeiling | null;
+  /** 조례 조건부 값 × 부지 조건 매칭 — 후보. */
+  ordinance_conditional?: OrdinanceConditional | null;
 };
 
 // 종상향/종변경 잠재 시나리오(예상치 — 현행과 분리)
@@ -143,7 +176,8 @@ type UpzoningScenario = {
   is_estimate?: boolean;
 };
 
-type PotentialFarRange = { min_pct?: number | null; max_pct?: number | null; note?: string } | null;
+// 백엔드 potential_far_range 계약 — 붕괴 판정(is_collapsed)·정직 고지(honest_disclosure)까지 포함.
+type PotentialFarRange = UpzoningFarRange;
 
 type UpzoningData = {
   current_zone?: string;
@@ -204,7 +238,10 @@ function formatPriceKr(amount10k: number | null | undefined): string {
 // 종상향 시나리오 근거법령 렌더(verified 딥링크·죽은 링크 금지)는 공용 UpzoningScenarioList로 이관.
 
 // ── L3 Enhanced Cards Component ──
-function L3EnhancedCards({
+// ★export 이유: 이 안의 실효용적률 계층·조건부 후보 블록은 **조건부 렌더**라
+//   소스 검사로는 잠기지 않는다(주석처리+임포트유지 변이에 뚫린다 — 이 저장소 실측 2회).
+//   렌더 결과를 보려면 컴포넌트에 닿아야 하므로 이름을 내보낸다(페이지 default export 무변경).
+export function L3EnhancedCards({
   l3Data,
   siteAnalysis,
 }: {
@@ -223,6 +260,8 @@ function L3EnhancedCards({
   const upzoning = l3Data?.upzoning;
   const upScenarios = upzoning?.scenarios ?? l3Data?.upzoning_scenarios ?? [];
   const potentialRange = upzoning?.potential_far_range ?? l3Data?.potential_far_range ?? null;
+  // 종상향 범위 표기(붕괴 판정·정직 고지) — 형제 화면과 같은 표기 SSOT를 쓴다.
+  const upFarRange = formatUpzoningFarRange(potentialRange);
   const upInterp = l3Data?.upzoning_interpretation;
   const grave = l3Data?.grave_registry;
 
@@ -245,6 +284,9 @@ function L3EnhancedCards({
   const pct = (v: number | null | undefined): string => formatPercent(v);
   // far_basis_detail에서 zone_limits로 폴백한 법정/조례 추출(데이터·호출 무변경, 표시만)
   const fbd = effFar?.far_basis_detail;
+  // 조건부 후보 — 위 ①~④ 계층(적용값)과 **분리해서** 렌더한다(아래 주석 참조).
+  const condCeiling = effFar?.conditional_ceiling ?? null;
+  const ordCond = effFar?.ordinance_conditional ?? null;
   const legalMin = fbd?.법정범위?.min_far_pct ?? effFar?.legal_min_far_pct ?? null;
   const legalMax =
     fbd?.법정범위?.max_far_pct ??
@@ -344,6 +386,39 @@ function L3EnhancedCards({
               <p className="text-[10px] font-bold text-[var(--text-secondary)] sm:text-right max-w-md">근거: {farFinalBasis}</p>
             )}
           </div>
+          {/* ★조건부 완화 후보 — **계층 카드로 넣지 않는다**. 위 ①~④는 '적용된 값'이고
+              이것은 '조건이 충족되면 열릴 수 있는 값'이라, 같은 줄에 놓으면 적용값으로 읽힌다.
+              조례는 `용도지역 → 값 하나`가 아니라 `용도지역 × 조건 → 값들`이다(오산시
+              자연녹지 = 6개 조). 그 값을 숨기면 사용자가 완화 여지를 영영 모르고,
+              적용값처럼 보이면 근거 없는 단정이 된다 — 그래서 **보이되 적용하지 않는다**. */}
+          {(condCeiling || (ordCond?.matched?.length ?? 0) > 0 || (ordCond?.undecidable?.length ?? 0) > 0) && (
+            <div className="mt-4 rounded-xl border border-dashed border-[var(--status-warning)]/40 bg-[var(--status-warning)]/5 p-4">
+              <p className="text-[10px] font-black text-[var(--status-warning)] mb-2">
+                조건부 완화 후보 — <span className="underline">적용값이 아닙니다</span>
+              </p>
+              {condCeiling && (
+                <p className="text-[11px] font-bold text-[var(--text-secondary)] mb-1.5">
+                  {condCeiling.note}
+                </p>
+              )}
+              {(ordCond?.matched ?? []).map((m, i) => (
+                <p key={`m${i}`} className="text-[11px] font-bold text-[var(--text-secondary)] mb-1">
+                  조례 {m.article}
+                  {m.article_title ? `(${m.article_title})` : ""} —{" "}
+                  {m.kind === "bcr" ? "건폐율" : "용적률"} {m.value}%
+                  <span className="font-medium text-[var(--text-tertiary)]">
+                    {" "}· 이 부지가 해당 조건에 속합니다(고시·계획 본문 확인 필요)
+                  </span>
+                </p>
+              ))}
+              {(ordCond?.undecidable?.length ?? 0) > 0 && (
+                <p className="text-[10px] text-[var(--text-tertiary)] mt-1.5">
+                  판정 보류 {ordCond?.undecidable?.length}건 — 건축물 용도·연혁 등 설계가 정해져야
+                  판정되는 조건입니다(예: {ordCond?.undecidable?.[0]?.article}).
+                </p>
+              )}
+            </div>
+          )}
           {farSources && farSources.length > 0 && (
             <p className="mt-2 text-[9px] text-[var(--text-hint)]">데이터 출처: {farSources.join(" · ")}</p>
           )}
@@ -381,14 +456,25 @@ function L3EnhancedCards({
             </div>
             <div className="rounded-xl border border-dashed border-purple-500/40 bg-purple-500/5 p-4">
               <p className="text-[8px] font-black text-purple-400/70 uppercase tracking-wider mb-1">잠재 (예상치 · 미확정)</p>
+              {/* ★상·하한이 같으면 `예상 용적률 150.0% ~ 150.0%`가 찍혔다 — 범위가 아닌데
+                  범위처럼 보여 "그 위는 안 된다"로 읽힌다. 붕괴 판정·고지는 백엔드 계약에서
+                  오고, 표기는 formatUpzoningFarRange 한 곳에서 결정한다(형제 화면과 동일 문구). */}
               <p className="text-sm font-black text-purple-400">
-                {potentialRange?.min_pct != null && potentialRange?.max_pct != null
-                  ? `예상 용적률 ${pct(potentialRange.min_pct)} ~ ${pct(potentialRange.max_pct)}`
-                  : "잠재 시나리오 검토"}
+                {upFarRange.text === "미확보" ? (
+                  "잠재 시나리오 검토"
+                ) : (
+                  <>
+                    예상 용적률 <UpzoningFarRangeValue range={potentialRange} />
+                  </>
+                )}
               </p>
               {potentialRange?.note && (
                 <p className="text-[10px] font-bold text-[var(--text-secondary)] mt-0.5">{potentialRange.note}</p>
               )}
+              <UpzoningFarRangeNotice
+                range={potentialRange}
+                className="text-[10px] font-bold leading-relaxed text-[var(--text-secondary)] mt-1"
+              />
             </div>
           </div>
 

@@ -139,6 +139,10 @@ interface SiteAnalysisData {
   dominantZoneCode?: string | null;     // 통합 대표(우세) 용도지역(dominant_zone)
 
   upzoningPotentialFarHigh?: number | null;  // 종상향 잠재 상한 용적률(%) (potential_far_range 상단)
+  // ★그 '상한'이 실은 한 값뿐인가(potential_far_range.is_collapsed). 붕괴면 이 숫자는
+  //   '도달 가능한 최댓값'이 아니라 '검토한 경로들의 예상치가 한 값으로 모인 것'이다
+  //   — 라벨이 그렇게 말해야 한다. ("단일 경로"라 쓰지 않는다: 경로는 여럿이고 목표가 하나다.)
+  upzoningFarRangeCollapsed?: boolean | null;
   upzoningFeasibilityTop?: string | null;    // 최상 가능성 등급('상'/'중'/'하') — 없으면 null
   // 종상향 per-scenario 상세(미래 토지특성 SSOT) — comprehensive 산출 보존(additive·옵셔널).
   // 미확보(단일 analyze 경로 등) 시 부재/null → buildLandProfile이 집계값으로 폴백(무목업).

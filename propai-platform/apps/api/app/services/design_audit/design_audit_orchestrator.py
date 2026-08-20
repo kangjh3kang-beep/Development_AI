@@ -1161,7 +1161,15 @@ class DesignAuditOrchestrator:
         if donation_max is not None:
             limit_parts.append(f"기부채납 시 최대 {donation_max:g}%")
         if potential_high is not None:
-            limit_parts.append(f"종상향 예상 상한 {potential_high:g}%(예상치)")
+            # ★범위가 붕괴했으면(검토한 경로가 모두 같은 목표를 가리킴) 이 숫자는 '상한'이 아니다.
+            #   '상한'이라고 적으면 감사 리포트가 "그 위는 안 된다"를 사실로 진술하게 된다.
+            #   숫자는 그대로 두고 한정만 밝힌다(형제 화면 3곳과 같은 규율).
+            if potential_range.get("is_collapsed"):
+                limit_parts.append(
+                    f"종상향 예상 {potential_high:g}%(예상치·단일 값·범위 미산출)"
+                )
+            else:
+                limit_parts.append(f"종상향 예상 상한 {potential_high:g}%(예상치)")
 
         finding = make_finding(
             "far_incentive_potential", "incentives", STATUS_INFO,
