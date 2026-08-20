@@ -175,3 +175,52 @@ describe("조례 수치 미확보 사유(별표 HWP 첨부)", () => {
     expect(screen.getAllByTestId("ordinance-attachment-only").length).toBe(1);
   });
 });
+
+/**
+ * ★나열형 조문(제46조 '그 밖에 용도지구·구역 등')은 **항목마다 값이 다르다**
+ * (오산 실측: 취락 40 · 개발진흥 30 · 수산자원 30 · 자연공원 60 · 산업단지 80).
+ * 그래서 화면은 **어느 지정으로 매칭됐는지** 밝혀야 한다 — 안 밝히면 사용자가
+ * 왜 이 수치인지 확인할 길이 없다.
+ */
+describe("나열형 조건 — 매칭 근거 지구 표시", () => {
+  const base = (extra: Record<string, unknown>) => ({
+    ...BASE_EFF,
+    ordinance_conditional: {
+      applied: false,
+      matched: [{
+        kind: "bcr", value: 40, article: "제46조",
+        article_title: "그 밖에 용도지구·구역 등의 건폐율", ...extra,
+      }],
+      undecidable: [],
+    },
+  });
+
+  it("★근거가 된 부지 지정명이 보인다", () => {
+    renderWith(base({ matched_district: "자연취락지구", matched_option: "취락지구" }));
+    const line = screen.getByText(/제46조/);
+    expect(line.textContent).toContain("자연취락지구");
+    expect(line.textContent).toContain("40%");
+  });
+
+  it("★조례 항목명이 부지 지정명과 다르면 함께 밝힌다(상위 범주 ↔ 하위 유형)", () => {
+    renderWith(base({ matched_district: "자연취락지구", matched_option: "취락지구" }));
+    // 조례는 '취락지구'라 적었고 부지는 '자연취락지구'다 — 둘 다 보여야 대조가 된다.
+    expect(screen.getByText(/제46조/).textContent).toContain("취락지구' 항목");
+  });
+
+  it("이름이 같으면 괄호를 중복해 붙이지 않는다", () => {
+    renderWith(base({ matched_district: "자연공원", matched_option: "자연공원", value: 60 }));
+    const t = screen.getByText(/제46조/).textContent ?? "";
+    expect(t).toContain("자연공원");
+    expect(t).not.toContain("'자연공원' 항목");
+  });
+
+  it("★대조군(음성) — 근거 지구가 없으면 그 문구를 만들지 않는다", () => {
+    renderWith(base({}));
+    const t = screen.getByText(/제46조/).textContent ?? "";
+    // ★양성 짝 — 같은 실행에서 근거가 있으면 실제로 나온다(렌더가 죽은 게 아니다).
+    expect(t).not.toContain("근거: 이 부지가");
+    renderWith(base({ matched_district: "자연공원" }));
+    expect(screen.getAllByText(/제46조/).some((e) => (e.textContent ?? "").includes("근거: 이 부지가"))).toBe(true);
+  });
+});
