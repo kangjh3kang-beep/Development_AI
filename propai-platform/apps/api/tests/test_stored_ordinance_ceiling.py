@@ -26,10 +26,7 @@
 import asyncio
 import json
 
-import pytest
-
 from app.services.land_intelligence import ordinance_service as M
-
 
 # ── 두 모집단 — **다른 판정**을 받아야 한다(같으면 판별을 끊어도 초록) ──────────────
 _VIOLATING = {
