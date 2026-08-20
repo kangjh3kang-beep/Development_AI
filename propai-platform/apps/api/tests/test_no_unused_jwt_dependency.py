@@ -104,23 +104,67 @@ def test_전제_requirements_파일을_실제로_찾는다() -> None:
     assert len(files) >= 2, f"requirements 를 {len(files)}건만 찾았다 — 탐색이 죽었다: {files}"
 
 
-def test_프로덕션이_쓰는_requirements_가_검사망에_있다() -> None:
-    """★**배포 이미지가 실제로 설치하는 파일**이 검사망에 있어야 한다.
+def _dockerfiles() -> list[pathlib.Path]:
+    """★저장소의 **모든 Dockerfile** — 하나만 보면 이 테스트가 막으려는 결함을 스스로 갖는다.
 
-    Dockerfile 에서 파생시킨다 — 새 requirements 를 만들어 Dockerfile 이 그것을 가리키면,
-    그 파일이 `requirements*.txt` 패턴을 벗어나는 순간 실패한다. **검사망 밖으로 나가는 것
-    자체가 실패**다.
+    2026-08-21 실측: Dockerfile 이 **7개**이고 그중 **4개**가 requirements 를 COPY 하는데
+    **두 파일로 갈린다** — `Dockerfile.oracle`→`requirements.oracle.txt`(프로덕션 API·워커·
+    flower·beat 가 모두 이 이미지를 쓴다) / 나머지 3개→`requirements.txt`.
+    처음 쓴 이 테스트는 `Dockerfile.oracle` **하나만** 봤다 — 고치려던 결함(한 파일만 보는
+    검사)과 같은 형태였다.
     """
-    dockerfile = _API_ROOT.parents[1] / "Dockerfile.oracle"
-    assert dockerfile.exists(), f"{dockerfile} 가 없다 — 배포 정본이 사라졌거나 경로가 바뀌었다"
-    srcs = _dockerfile_requirement_sources(dockerfile.read_text(encoding="utf-8"))
-    assert srcs, "Dockerfile.oracle 에서 .txt COPY 를 못 찾았다 — 보증 범위를 알 수 없으므로 실패."
+    root = _API_ROOT.parents[1]
+    out = [
+        p
+        for p in root.rglob("Dockerfile*")
+        if p.is_file() and "node_modules" not in str(p) and not p.name.endswith((".md", ".txt"))
+    ]
+    return sorted(out)
+
+
+def test_전제_Dockerfile_을_실제로_찾는다() -> None:
+    """★공허한 초록 방지 — 0건이면 아래 단언이 자동 통과한다."""
+    names = {p.name for p in _dockerfiles()}
+    assert "Dockerfile.oracle" in names, (
+        f"배포 정본 Dockerfile.oracle 을 못 찾았다 — 탐색이 죽었거나 경로가 바뀌었다: {sorted(names)}"
+    )
+    assert len(_dockerfiles()) >= 3, f"Dockerfile 을 {len(_dockerfiles())}건만 찾았다 — 탐색이 죽었다"
+
+
+def test_모든_이미지가_설치하는_requirements_가_검사망에_있다() -> None:
+    """★**어떤 이미지든** 설치하는 requirements 는 검사망 안이어야 한다.
+
+    Dockerfile 에서 파생시킨다 — 새 requirements 를 만들어 **어느 Dockerfile이든** 그것을
+    가리키면, 그 파일이 `requirements*.txt` 패턴을 벗어나는 순간 실패한다.
+    **검사망 밖으로 나가는 것 자체가 실패**다.
+
+    ★`Dockerfile.oracle` 만 보던 종전 판은 이 파일이 고치는 사고를 그대로 재현할 수 있었다:
+      다른 이미지가 다른 requirements 를 쓰면 아무도 안 본다.
+    """
     검사망 = {p.name for p in _requirements_files()}
-    for name in srcs:
-        assert name in 검사망, (
-            f"배포 이미지가 설치하는 {name!r} 이 검사망 밖이다 — 취약 의존성이 들어와도 "
-            f"아무도 못 잡는다. 검사망={sorted(검사망)}"
-        )
+    검사한_도커파일 = 0
+    위반: list[str] = []
+    for df in _dockerfiles():
+        srcs = [
+            n
+            for n in _dockerfile_requirement_sources(df.read_text(encoding="utf-8"))
+            if "requirement" in n.lower()
+        ]
+        if not srcs:
+            continue
+        검사한_도커파일 += 1
+        for name in srcs:
+            if name not in 검사망:
+                위반.append(f"{df.name} → {name}")
+    # ★공허 진리 가드 — requirements 를 COPY 하는 Dockerfile 이 0건이면 "위반 0"은 무의미하다.
+    assert 검사한_도커파일 >= 1, (
+        "requirements 를 COPY 하는 Dockerfile 이 한 건도 안 잡혔다 — 추출기나 탐색이 죽었다. "
+        f"찾은 Dockerfile={[p.name for p in _dockerfiles()]}"
+    )
+    assert not 위반, (
+        "배포 이미지가 설치하는 requirements 가 검사망 밖이다 — 취약 의존성이 들어와도 "
+        f"아무도 못 잡는다.\n  {위반}\n  검사망={sorted(검사망)}"
+    )
 
 
 def test_출발지_추출기가_도착지에_속지_않는다() -> None:
