@@ -319,3 +319,32 @@ describe("joinAddressJibun — 소재지·지번 분리 양식 결합", () => {
     expect(addressHasJibun("경기도 오산시 내삼미동")).toBe(false);
   });
 });
+
+// 적대리뷰 최종 MEDIUM — `○가` 법정동 + 한자리 본번에서 **지번이 버려졌다**.
+// `!addr.includes(jb)` 는 부분문자열이라 `을지로1가` 안의 `1` 을 "이미 있다" 로 오판했다.
+describe("joinAddressJibun — 동 이름에 숫자가 있어도 지번을 버리지 않는다", () => {
+  it("★`○가` 법정동 + 한자리 본번(실증 케이스)", () => {
+    expect(joinAddressJibun("서울특별시 중구 을지로1가", "1")).toBe("서울특별시 중구 을지로1가 1");
+    expect(joinAddressJibun("서울특별시 중구 충무로2가", "2")).toBe("서울특별시 중구 충무로2가 2");
+    expect(joinAddressJibun("서울특별시 종로구 종로3가", "3")).toBe("서울특별시 종로구 종로3가 3");
+  });
+
+  it("★위양성 대조군 — 중복 방지는 그대로다(두 결과가 갈려야 의미가 있다)", () => {
+    // 주소가 이미 지번으로 끝나면 붙이지 않는다.
+    expect(joinAddressJibun("경기도 오산시 내삼미동 114-1", "114-1")).toBe("경기도 오산시 내삼미동 114-1");
+    // PNU/지번이 어긋나도 모순 라벨을 만들지 않는다(주소 우선).
+    expect(joinAddressJibun("경기도 오산시 내삼미동 114-1", "467-1")).toBe("경기도 오산시 내삼미동 114-1");
+    // 산 지번도 동일.
+    expect(joinAddressJibun("경상북도 포항시 남구 대보리 산1-1", "산1-1")).toBe("경상북도 포항시 남구 대보리 산1-1");
+  });
+
+  it("★결합 결과가 세 모집단에서 갈린다(전부 같으면 규칙을 바꿔도 통과한다)", () => {
+    const a = joinAddressJibun("서울특별시 중구 을지로1가", "1");        // 결합됨
+    const b = joinAddressJibun("경기도 오산시 내삼미동 114-1", "114-1"); // 결합 안 함(중복)
+    const c = joinAddressJibun("경기도 오산시 내삼미동", null);          // 지번 없음
+    expect(addressHasJibun(a)).toBe(true);
+    expect(addressHasJibun(b)).toBe(true);
+    expect(addressHasJibun(c)).toBe(false);
+    expect(new Set([a, b, c]).size).toBe(3);
+  });
+});

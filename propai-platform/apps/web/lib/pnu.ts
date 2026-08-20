@@ -216,6 +216,22 @@ export function parcelShortLabel(
  *   이 함수를 공용으로 뽑는 이유다(구현 두 벌 금지).
  *
  * 없는 값을 지어내지 않는다 — 지번이 없으면 주소를 그대로 돌려준다.
+ *
+ * ## 중복 판정은 **부분문자열이 아니라 `addressHasJibun`** 이다
+ *
+ * 처음엔 `!addr.includes(jb)` 였다. 그런데 법정동 이름에 숫자가 들어가는 `○가` 계열
+ * (`을지로1가`·`충무로2가`·`종로3가`·`대청동1가` …)에서 **본번이 한 자리면 그 숫자가
+ * 동 이름 안에 이미 있다**고 오판해 지번을 버린다:
+ *
+ *     joinAddressJibun("서울특별시 중구 을지로1가", "1")  →  "…을지로1가"   ← 지번 소실
+ *
+ * 즉 **이 PR 이 없애려는 바로 그 증상**이 형제 모집단에 그대로 남는다.
+ * 판정을 `addressHasJibun`(주소가 **지번으로 끝나는가**)으로 바꾸면 `을지로1가` 는
+ * 마지막 토큰이 지번 토큰이 아니므로 정상 결합된다. 중복 방지·모순 라벨 방지는 그대로다
+ * (`… 114-1` + `114-1` → 그대로, `… 114-1` + `467-1` → 그대로).
+ *
+ * ★이 PR 이 내내 말한 "구현이 두 벌이면 한쪽만 고쳐진다" 를 **자기 자신에게** 적용한 수정이다 —
+ *   `parcelDisplayAddress` 는 이미 `addressHasJibun` 을 쓰는데 여기만 별도 규칙이었다.
  */
 export function joinAddressJibun(
   address: string | null | undefined,
@@ -224,6 +240,6 @@ export function joinAddressJibun(
 ): string {
   const addr = (address || "").trim();
   const jb = (jibun || "").trim();
-  if (jb && addr && !addr.includes(jb)) return `${addr} ${jb}`;
+  if (jb && addr && !addressHasJibun(addr)) return `${addr} ${jb}`;
   return addr || jb || fallback;
 }
