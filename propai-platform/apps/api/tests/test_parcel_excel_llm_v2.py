@@ -522,6 +522,85 @@ def test_llm_sheet_reselect_reread_failure_is_reported(monkeypatch):
     assert "확인이 필요합니다" in hit[0], f"확인을 권해야 한다: {hit[0]}"
 
 
+def _merge_edge_case_xlsx() -> bytes:
+    """경계 가드를 태우는 픽스처 — 제목행 병합·빈 좌상단·표 밖으로 넘친 병합.
+
+    현실의 토지조서에 흔한 형태다(제목을 세로로 합치거나, 표 오른쪽 여백까지 병합).
+    제목 2행을 둬서 머리글이 3행이 되게 한다 → 제목 병합의 행 번호가 표 기준으로 **음수**가 된다.
+    """
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "토지조서"
+    ws.append(["토지조서"])                    # 1행: 제목
+    ws.append(["작성일: 2026-01-01"])          # 2행: 부제
+    ws.append(["소재지(주소)", "지번", "비고", "소유구분", "메모", "여백"])  # 3행: 머리글
+    ws.append(["서울특별시 동작구 상도동", "210-453", "", "김철수", "", "끝"])
+    ws.append(["", "", "", "이영희", "", ""])
+    ws.merge_cells("A4:A5")   # 정상(데이터 행 안)
+    ws.merge_cells("B4:B5")   # 정상
+    ws.merge_cells("C1:C2")   # ★제목 영역만 병합 → 표 기준 행번호가 전부 음수
+    ws.merge_cells("E4:E5")   # ★좌상단이 빈칸 → 채울 값이 없다
+    ws.merge_cells("F4:H5")   # ★표 오른쪽 밖(G·H)까지 넘침 → 열 범위초과
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def test_merge_fill_respects_table_boundaries():
+    """★경계 가드 — 지우면 음수 인덱스가 뒤에서부터 감기거나 표 밖을 짚어 터진다.
+
+    상·하한은 한 쌍이다(한쪽만 걸면 반대쪽이 무제한). 행·열 양방향과 '빈 좌상단'을 함께 본다.
+    """
+    import pandas as pd
+
+    raw = _merge_edge_case_xlsx()
+    df0 = pd.read_excel(io.BytesIO(raw), dtype=str, engine="openpyxl", header=None)
+    hdr = pes._detect_header_row(df0)
+    # 전제(공허한 참 방지): 머리글이 3행(0-based 2)으로 잡혀야 제목 병합이 '음수 행'이 된다.
+    assert hdr == 2, f"제목 2행 뒤가 머리글이어야 이 픽스처가 경계를 태운다: hdr={hdr}"
+
+    df = df0.iloc[hdr + 1:].reset_index(drop=True)
+    df.columns = [str(v) for v in df0.iloc[hdr].tolist()]
+    ncols_before, nrows_before = df.shape[1], df.shape[0]
+
+    filled, note = pes._expand_merged_cells(raw, df, header_row=hdr)
+
+    # ★가드를 지우면 표 밖을 짚어 예외가 나고, 예외는 사유 문구로 새어 나온다 —
+    #   정상 파일에서 사유가 생기면 그 자체가 경계 위반의 신호다.
+    assert note is None, f"정상 파일인데 사유가 생김(경계 위반 의심): {note}"
+
+    # 전제: 정상 병합은 실제로 채워져야 한다 — 안 채워지면 아래 단언들이 무의미하다.
+    assert str(filled.iat[1, 1]) == "210-453", "데이터 행 안의 병합은 채워져야 한다"
+
+    # ① 빈 좌상단(E4:E5): 채울 값이 없으면 아무것도 넣지 않는다("None"·"nan" 날조 금지).
+    for r in range(len(filled)):
+        assert str(filled.iat[r, 4]).strip().lower() in ("", "nan"), (
+            f"빈 병합에 가짜 글자가 들어갔다: {filled.iat[r, 4]!r}"
+        )
+    # ② 표 밖으로 넘친 병합(F4:H5): 열/행이 늘거나 옆 열을 덮으면 안 된다.
+    assert filled.shape == (nrows_before, ncols_before), "병합이 표 밖으로 넘쳤다고 표가 커지면 안 된다"
+    assert str(filled.iat[1, 3]) == "이영희", "옆 열(소유구분)이 병합값으로 덮이면 안 된다"
+
+
+def test_partial_recovery_reports_how_many_were_lost():
+    """원문 복원이 **일부만** 되면 몇 곳을 못 읽었는지 말해야 한다(모르면 말하지 않는다)."""
+    out = _parse_x(_break_full_workbook_read(_merge_edge_case_xlsx()), "부분복원.xlsx")
+    assert not out.get("error"), "표 자체는 읽혀야 함(전제)"
+
+    # 전제: 복원 가능한 병합(A4:A5·B4:B5)은 실제로 복원돼야 '부분복원' 상황이 성립한다.
+    assert [p.get("jibun") for p in out["parcels"]] == ["210-453", "210-453"], (
+        f"복원 가능한 지번은 원문에서 살아야 한다: {[p.get('jibun') for p in out['parcels']]}"
+    )
+    fail = [w for w in _warns(out) if "병합 셀 복원 실패" in w]
+    assert fail, f"일부 복원 실패를 알려야 한다: {_warns(out)}"
+    # ★개수를 실제로 센다 — 셀 수 있을 때는 말하고, 못 세면 말하지 않는다(위 대조 테스트).
+    assert "1곳" in fail[0], f"못 읽은 병합 수를 말해야 한다: {fail[0]}"
+    # ★어느 칸인지 모르면서 '지번 칸을 못 읽었다'고 단정하지 않는다 — 실제로 지번은 복원됐다.
+    assert "지번·소재지 칸" not in fail[0], f"측정하지 않은 것을 단정함: {fail[0]}"
+
+
 # ── ⑧ CSV cp949 인코딩 폴백 ───────────────────────────────────────────
 def test_csv_cp949_encoding_fallback():
     csv_text = ("소재지(주소),지번,PNU(필지고유번호·19자리)\n"

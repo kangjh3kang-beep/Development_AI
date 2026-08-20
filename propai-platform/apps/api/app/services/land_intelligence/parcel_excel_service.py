@@ -231,15 +231,19 @@ def _expand_merged_cells(raw: bytes, df: Any, header_row: int = 0) -> tuple[Any,
     def _fill(min_row: int, min_col: int, max_row: int, max_col: int, top: Any) -> None:
         """병합범위의 좌상단 값을 그 범위의 빈칸에 채운다(기존 값은 절대 덮지 않는다)."""
         if top is None or str(top).strip() == "" or str(top).strip().lower() == "nan":
+            # ★좌상단이 빈 병합은 채울 값이 없다. 이 가드를 지우면 빈 칸에 "None"·"nan" 같은
+            #   가짜 글자가 들어가 지번인 척하게 된다(없는 값을 지어내는 것과 같다).
             return
         for r in range(min_row, max_row + 1):
             df_row = r - base
             if df_row < 0 or df_row >= nrows:
-                continue  # 헤더/제목 병합·범위초과는 무시
+                # ★헤더/제목까지 걸친 병합·범위초과는 건너뛴다. 이 가드를 지우면 df_row 가 음수가
+                #   되어 파이썬 인덱스가 **뒤에서부터 감겨** 표 맨 끝 행을 엉뚱한 값으로 덮는다.
+                continue
             for c in range(min_col, max_col + 1):
                 df_col = c - 1  # 엑셀 1열(A)=df 0열
                 if df_col < 0 or df_col >= ncols:
-                    continue
+                    continue  # 열 방향도 같은 이유(음수 인덱스 되감기) — 상·하한을 한 쌍으로 건다
                 cur = df.iat[df_row, df_col]
                 # 빈칸(NaN·""·"nan")만 채우고 기존 값은 보존.
                 if cur is None or str(cur).strip() == "" or str(cur).strip().lower() == "nan":
@@ -309,8 +313,8 @@ def _expand_merged_cells_fallback(
     # (폴백 자체가 실패하면 병합이 몇 곳인지조차 모른다 — 모르는 수를 지어내지 않는다).
     scope = f" {missed}곳" if missed else ""
     return df, (
-        f"병합 셀 복원 실패({type(err).__name__}: {str(err)[:80]}) — 여러 행에 걸쳐 세로로 병합된 "
-        f"지번·소재지 칸{scope}을 읽지 못했습니다. 그 병합 칸에 걸린 행은 지번이 빈칸으로 남아 "
+        f"병합 셀 복원 실패({type(err).__name__}: {str(err)[:80]}) — 여러 행에 걸쳐 병합된 "
+        f"칸{scope}을 읽지 못했습니다. 그 병합 칸에 걸린 행은 지번이 빈칸으로 남아 "
         "소재지(동)만 남거나 목록에서 빠질 수 있습니다. 엑셀에서 병합을 해제하고 행마다 "
         "지번을 직접 적어 다시 올려 주세요."
     )
