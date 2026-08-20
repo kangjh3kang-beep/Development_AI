@@ -113,4 +113,49 @@ describe("토지조서 지번 칸 — 세 모집단", () => {
 
     expect(jibunCells()).toEqual([`${DONG} 999-9`]);
   });
+
+  it("★재시드 병합: 기존 행에 **PNU 가 채워진다**(등기·대지지분 조회의 정체성)", () => {
+    // 행 1 < 필지 2 → 재시드가 돈다(loadFromProject 의 existing 병합 경로).
+    const stale: LandRow = {
+      id: "r1", jibun: DONG, pnu: null, owner: "김소유", share: "", area_sqm: 100,
+      owner_type: "사유지", expected_price: null, purchase_price: null, contracted: false,
+      land_use_consent: false, district_consent: false, operator_consent: false, pdf_url: null,
+    };
+    useLandScheduleStore.setState({ byProject: { [PID]: [stale] } });
+    seedProject([
+      { pnu: PNU_B, address: DONG, areaSqm: 100, landCategory: "임야", ownerType: "" },
+      { pnu: PNU_A, address: DONG, areaSqm: 200, landCategory: "임야", ownerType: "" },
+    ]);
+
+    render(<LandScheduleClient locale="ko" />);
+
+    const rows = useLandScheduleStore.getState().byProject[PID] ?? [];
+    expect(rows).toHaveLength(2); // 공허 진리 가드: 재시드가 실제로 돌았다
+    // 기존 행(사용자 입력 보존)에 PNU 가 실렸다 — 이 줄이 빠지면 등기가 대표 PNU 로 떨어진다.
+    const kept = rows.find((r) => r.owner === "김소유");
+    expect(kept).toBeDefined();
+    expect(kept!.pnu).toBe(PNU_B);
+  });
+
+  it("★같은 동 필지가 **한 행에 몰려 같은 id 로 복제**되지 않는다(치유가 엉뚱한 행을 덮어쓴다)", () => {
+    const stale: LandRow = {
+      id: "r1", jibun: DONG, pnu: null, owner: "김소유", share: "", area_sqm: 100,
+      owner_type: "사유지", expected_price: null, purchase_price: null, contracted: false,
+      land_use_consent: false, district_consent: false, operator_consent: false, pdf_url: null,
+    };
+    useLandScheduleStore.setState({ byProject: { [PID]: [stale] } });
+    seedProject([
+      { pnu: PNU_B, address: DONG, areaSqm: 100, landCategory: "임야", ownerType: "" },
+      { pnu: PNU_A, address: DONG, areaSqm: 200, landCategory: "임야", ownerType: "" },
+    ]);
+
+    render(<LandScheduleClient locale="ko" />);
+
+    const rows = useLandScheduleStore.getState().byProject[PID] ?? [];
+    expect(rows).toHaveLength(2); // 공허 진리 가드: 재시드가 실제로 돌았다
+    expect(new Set(rows.map((r) => r.id)).size).toBe(2); // ★id 중복 없음
+    // 두 행이 **서로 다른 필지**로 치유됐다(한 행에 몰렸으면 둘이 같아진다).
+    expect(new Set(rows.map((r) => r.jibun)).size).toBe(2);
+    expect(jibunCells()).toEqual([`${DONG} 114-1`, `${DONG} 467-1`]);
+  });
 });

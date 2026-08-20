@@ -201,15 +201,23 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
     const parcels = siteAnalysis?.parcels;
     
     if (parcels && parcels.length) {
+      // ★한 행이 **여러 필지에 중복 매칭**되지 않게 소비한 행을 표시한다(2026-08-20).
+      //   같은 동의 필지는 주소가 전부 같아, 주소 폴백 매칭이 77필지 전부를 **첫 행 하나**에
+      //   물린다 → 결과 배열의 모든 행이 **같은 id** 를 갖는다(React key 충돌 + id 로 행을
+      //   찾는 갱신이 엉뚱한 행을 덮어쓴다 — 아래 지번 치유 이펙트가 실제로 그렇게 깨졌다).
+      const usedRowIds = new Set<string>();
       const merged = parcels.map((p) => {
         // ★PNU 우선 매칭은 그대로. 주소 폴백은 **옛 라벨(주소만)과 새 라벨(주소+지번)** 을
         //   둘 다 인식해야 한다 — 안 그러면 기존 행이 안 잡혀 사용자가 입력한 소유자·매입가가
         //   새 행으로 갈아치워진다(무음 손실).
         const newLabel = parcelDisplayAddress(p.address, p.pnu).trim();
         const existing = currentRows.find(
-          (r) => (p.pnu && r.pnu === p.pnu) || r.jibun.trim() === p.address.trim() || r.jibun.trim() === newLabel,
+          (r) =>
+            !usedRowIds.has(r.id) &&
+            ((p.pnu && r.pnu === p.pnu) || r.jibun.trim() === p.address.trim() || r.jibun.trim() === newLabel),
         );
         if (existing) {
+          usedRowIds.add(existing.id);
           // ★PNU 는 여기서 채운다(등기·대지지분 조회의 정체성). **지번 라벨 치유는 여기 없다** —
           //   이 병합은 재시드(`rows.length < parcelCount`)일 때만 돌아서, 실제 신고 상태
           //   (행 77 · 필지 77)에서는 **호출되지 않는다**. 치유는 재시드 게이트와 독립된

@@ -7,7 +7,7 @@
  *
  * 세 모집단을 한 목록에 넣고 **서로 다른 3개 라벨** + **미해석 1건 고지**를 못박는다.
  */
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SatongMapShell } from "@/components/precheck/SatongMapShell";
@@ -33,6 +33,9 @@ vi.mock("next/dynamic", () => ({
 }));
 
 // 네트워크 차단(SatongMapShell.parcelSeed 선례) — 경계·POI 등 모든 조회는 영구 pending.
+/** `/zoning/parcel-at-point` 로 나간 좌표들 — 좌표 앵커 치유가 **실제로 요청했는지** 본다. */
+const pointCalls: Array<{ lat?: number; lon?: number }> = [];
+
 vi.mock("@/lib/api-client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api-client")>();
   const pending = () => new Promise<never>(() => {});
@@ -40,7 +43,16 @@ vi.mock("@/lib/api-client", async (importOriginal) => {
     ...actual,
     apiClient: {
       ...actual.apiClient,
-      request: vi.fn(pending), get: vi.fn(pending), post: vi.fn(pending),
+      request: vi.fn(pending), get: vi.fn(pending),
+      post: vi.fn((path: string, opts?: { body?: { lat?: number; lon?: number } }) => {
+        if (path !== "/zoning/parcel-at-point") return pending();
+        pointCalls.push(opts?.body ?? {});
+        return Promise.resolve({
+          found: true,
+          pnu: "4137011000101140001",
+          address: "경기도 오산시 내삼미동 114-1",
+        });
+      }),
       put: vi.fn(pending), patch: vi.fn(pending), delete: vi.fn(pending),
       getV2: vi.fn(pending), postV2: vi.fn(pending), putV2: vi.fn(pending), deleteV2: vi.fn(pending),
     },
@@ -77,5 +89,45 @@ describe("SatongMapShell 선택 필지 목록 — 라벨 배선", () => {
 
     // (C) 한 건만 정직 고지 — (A)(B)에까지 붙으면 위양성(정상 데이터를 의심하게 만든다).
     expect(screen.getAllByTestId("parcel-jibun-unresolved")).toHaveLength(1);
+  });
+});
+
+/**
+ * ★좌표 앵커 자가치유의 **배선** 락(순수 모듈 테스트로는 안 잡히는 층).
+ *
+ * `lib/parcel-jibun-heal` 이 옳아도 셸이 그걸 부르지 않으면 화면은 그대로다 —
+ * 이 결함이 다섯 번 살아남은 방식이 정확히 그것이다.
+ */
+describe("SatongMapShell 좌표 앵커 지번 자가치유 — 배선", () => {
+  beforeEach(() => {
+    window.sessionStorage.clear();
+    pointCalls.length = 0;
+  });
+
+  it("★PNU 없고 **좌표만** 있는 필지는 parcel-at-point 로 해석돼 지번이 화면에 나온다", async () => {
+    writeSatongMapSelection(
+      [{ id: "c", pnu: null, address: DONG, lat: 37.1789, lon: 127.0611, source: "excel" }],
+      null,
+    );
+    render(<SatongMapShell locale="ko" />);
+
+    // 치유 전: 지번이 없어 미해석으로 고지된다(공허 진리 가드 — 출발 상태를 확인).
+    expect(screen.getByTestId("parcel-jibun-unresolved")).toBeInTheDocument();
+
+    await waitFor(() =>
+      expect(screen.getByTestId("parcel-jibun-text")).toHaveTextContent("내삼미동 114-1"),
+    );
+    expect(pointCalls).toEqual([{ lat: 37.1789, lon: 127.0611 }]);
+    expect(screen.queryByTestId("parcel-jibun-unresolved")).toBeNull();
+  });
+
+  it("★앵커가 **동 단위 주소뿐**이면 요청 자체가 나가지 않는다(임의 필지 수렴 금지)", async () => {
+    writeSatongMapSelection([{ id: "c", pnu: null, address: DONG, source: "excel" }], null);
+    render(<SatongMapShell locale="ko" />);
+
+    // 대조군: 위 테스트가 같은 셸에서 요청을 실제로 만든다 — "0건" 이 배선 부재가 아님을 보증.
+    await waitFor(() => expect(screen.getByTestId("parcel-jibun-unresolved")).toBeInTheDocument());
+    expect(pointCalls).toEqual([]);
+    expect(screen.getByTestId("parcel-jibun-text")).toHaveTextContent("오산시 내삼미동");
   });
 });
