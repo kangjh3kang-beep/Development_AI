@@ -533,14 +533,16 @@ def _merge_edge_case_xlsx() -> bytes:
     wb = Workbook()
     ws = wb.active
     ws.title = "토지조서"
-    ws.append(["토지조서"])                    # 1행: 제목
-    ws.append(["작성일: 2026-01-01"])          # 2행: 부제
+    ws.append(["토지조서", "", "관리번호 A-1"])   # 1행: 제목(C열에 값이 있어야 행 경계를 태운다)
+    ws.append(["작성일: 2026-01-01"])           # 2행: 부제
     ws.append(["소재지(주소)", "지번", "비고", "소유구분", "메모", "여백"])  # 3행: 머리글
     ws.append(["서울특별시 동작구 상도동", "210-453", "", "김철수", "", "끝"])
     ws.append(["", "", "", "이영희", "", ""])
     ws.merge_cells("A4:A5")   # 정상(데이터 행 안)
     ws.merge_cells("B4:B5")   # 정상
-    ws.merge_cells("C1:C2")   # ★제목 영역만 병합 → 표 기준 행번호가 전부 음수
+    # ★제목 영역만 병합 → 표 기준 행번호가 전부 음수. 좌상단(C1)에 값을 둬야 '빈 좌상단'
+    #   가드에서 먼저 빠져나가지 않고 **행 경계 가드가 실제로 실행**된다.
+    ws.merge_cells("C1:C2")
     ws.merge_cells("E4:E5")   # ★좌상단이 빈칸 → 채울 값이 없다
     ws.merge_cells("F4:H5")   # ★표 오른쪽 밖(G·H)까지 넘침 → 열 범위초과
     buf = io.BytesIO()
@@ -564,6 +566,9 @@ def test_merge_fill_respects_table_boundaries():
     df = df0.iloc[hdr + 1:].reset_index(drop=True)
     df.columns = [str(v) for v in df0.iloc[hdr].tolist()]
     ncols_before, nrows_before = df.shape[1], df.shape[0]
+
+    # 전제(가드 우회 방지): 제목 병합의 좌상단에 값이 있어야 행 경계 가드가 실행된다.
+    assert str(df0.iat[0, 2]).strip() not in ("", "nan"), "제목 병합 좌상단이 비면 경계를 못 태운다"
 
     filled, note = pes._expand_merged_cells(raw, df, header_row=hdr)
 

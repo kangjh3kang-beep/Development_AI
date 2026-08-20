@@ -201,6 +201,8 @@ def _merged_ranges_from_zip(raw: bytes) -> list[str]:
     with zipfile.ZipFile(io.BytesIO(raw)) as z:
         names = [n for n in z.namelist() if re.match(r"xl/worksheets/sheet\d+\.xml$", n)]
         if not names:
+            # ★이중 가드(변이로 지워도 테스트가 안 죽는다 — 사실을 적어 둔다): 워크시트 XML 이
+            #   아예 없는 xlsx 는 그 앞의 pd.read_excel 이 먼저 죽어 여기까지 오지 못한다.
             return []
         xml = z.read(sorted(names)[0])
     return [m.decode() for m in re.findall(rb'<mergeCell[^>]*\bref="([^"]+)"', xml)]
@@ -284,6 +286,8 @@ def _expand_merged_cells_fallback(
 
         refs = _merged_ranges_from_zip(raw)
     except Exception as e2:  # noqa: BLE001
+        # ★관측용 로그(변이로 문구를 바꿔도 테스트가 안 죽는다 — 사용자 결과에 닿지 않는다).
+        #   사용자에게 가는 정직 표기는 아래 반환 문구가 담당한다.
         logger.warning("excel_merged_zip_fallback_failed", error=str(e2)[:120])
         refs = None
 
@@ -297,7 +301,11 @@ def _expand_merged_cells_fallback(
             min_col, min_row, max_col, max_row = range_boundaries(ref)
             top_row, top_col = min_row - base, min_col - 1
             if not (0 <= top_row < nrows and 0 <= top_col < ncols):
-                missed += 1  # 좌상단이 표 밖(제목행 병합 등) — 값을 가져올 데가 없다
+                # 좌상단이 표 밖(제목행 병합 등) — 값을 가져올 데가 없다.
+                # ★이중 가드: 이 검사를 지워도 아래 except 가 같은 예외를 받아 missed 를 똑같이
+                #   올리므로 결과가 변하지 않는다(그래서 변이가 살아남는다). 그래도 남기는 이유는
+                #   '예상되는 정상 상황'을 예외로 처리하지 않기 위해서다.
+                missed += 1
                 continue
             fill(min_row, min_col, max_row, max_col, df.iat[top_row, top_col])
             filled += 1
