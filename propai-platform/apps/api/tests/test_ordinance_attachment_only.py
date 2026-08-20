@@ -68,6 +68,10 @@ def test_attachment_only_is_reported_as_such(svc):
     assert any("별표 첨부파일" in m for m in r["missing_sections"])
     # ★틀린 사유를 말하지 않는다.
     assert not any("요청 용도지역" in m for m in r["missing_sections"])
+    # 반환 계약의 나머지 필드도 소비처가 쓴다(조례명은 화면 인용에 나간다).
+    assert r["ordinance_name"] == "울산광역시 도시계획 조례"
+    assert r["last_updated"] is None
+    assert r["conditional_limits"] == []
 
 
 def test_fallback_path_is_unchanged(svc):
@@ -140,6 +144,8 @@ def test_consumer_carries_the_attachment_reason(monkeypatch):
     note = r.get("ordinance_attachment_only")
     assert note is not None, "get_ordinance_limits 가 첨부 사유를 싣지 않는다(배선 끊김)"
     assert "별표 첨부파일" in note["reason"]
+    # ★사유의 **후반절**이 핵심이다 — 진단자가 무엇을 의심하면 **안 되는지** 말한다.
+    assert "조례가 없거나 용도지역이 빠진 것이 아닙니다" in note["reason"]
     assert "flDownload.do" in (note["attachment_url"] or ""), "원문 링크 없음 — 다음 행동 불가"
     assert note["ordinance_name"] == "울산광역시 도시계획 조례"
     assert any("별표 원문" in x for x in note["requires"])
@@ -149,7 +155,9 @@ def test_consumer_disclaimer_says_the_real_reason(monkeypatch):
     """★화면에 나가는 disclaimer 가 **조례 미보유**가 아니라 **첨부 때문**이라 말한다."""
     r = _run_limits(monkeypatch, _API_ATTACHMENT)
     disc = (r.get("provenance") or {}).get("disclaimer") or ""
-    assert "첨부파일" in disc, f"disclaimer 가 진짜 사유를 말하지 않는다: {disc}"
+    # ★문구 전체를 잠근다 — 일부만 보면 나머지 절이 망가져도 통과한다(변이 생존).
+    assert "조례 별표가 첨부파일(HWP)로만 제공되어 수치를 읽지 못했습니다" in disc
+    assert "별표 원문 확인 필요" in disc, f"다음 행동이 빠졌다: {disc}"
     assert "조례 미보유" not in disc, "틀린 사유가 남아 있다"
 
 
@@ -166,4 +174,7 @@ def test_consumer_untouched_when_not_attachment(monkeypatch):
     # 공허 진리 가드 — 산출 자체는 살아 있어야 한다.
     assert r.get("effective_bcr") is not None
     assert r.get("ordinance_attachment_only") is None
-    assert "첨부파일" not in ((r.get("provenance") or {}).get("disclaimer") or "")
+    disc = (r.get("provenance") or {}).get("disclaimer") or ""
+    assert "첨부파일" not in disc
+    # ★음성 대조군도 **옳은 문구**를 요구한다 — "틀린 게 없다"만 보면 그 문구가 망가져도 통과한다.
+    assert "해당 지자체 조례 미보유 — 법정상한 적용" in disc
