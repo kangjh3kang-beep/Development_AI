@@ -26,12 +26,24 @@ import { describe, expect, it } from "vitest";
 const ROOTS = ["components", "app", "lib"];
 const ENDPOINT = "parse-parcels";
 
+/**
+ * ★테스트 파일은 **화면이 아니다** — 소비처에서 제외한다.
+ *
+ * 실측(2026-08-21): `#719` 가 `components/precheck/__tests__/SatongMapShell.excelJibun.test.tsx`
+ * 를 추가하자 이 검사가 그것을 **세 번째 업로더로 집어** 빨강이 났다. 테스트 파일은
+ * 엔드포인트 문자열을 스텁 분기에 쓰므로 `callsEndpoint` 에 걸리지만, 거기에 경고를 렌더할
+ * 화면은 없다. 위양성도 결함이다 — 정상 코드를 막으면 다음 사람은 검사를 끈다.
+ */
+const TEST_FILE = /(^|[\\/])__tests__[\\/]|\.(test|spec)\.tsx?$/;
+
 function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
     if (name === "node_modules" || name.startsWith(".")) continue;
     const full = join(dir, name);
-    if (statSync(full).isDirectory()) walk(full, out);
-    else if (/\.tsx?$/.test(name)) out.push(full);
+    if (statSync(full).isDirectory()) {
+      if (name === "__tests__") continue;
+      walk(full, out);
+    } else if (/\.tsx?$/.test(name) && !TEST_FILE.test(full)) out.push(full);
   }
   return out;
 }
@@ -82,8 +94,18 @@ describe("parse-parcels 업로드 경고의 화면 도달성", () => {
   it("호출처가 실제로 존재한다(공허한 참 방지)", () => {
     // ★이 하한이 없으면 "위반 0"이 참인 이유가 "대상 0개"일 수 있다.
     //   실측(2026-08-21): SatongMapShell · GlobalAddressSearch 두 곳.
-    //   lib/satong-map-layers.ts 는 주석에서만 언급하므로 구문 검사에서 정상 탈락한다.
-    expect(callers.map((c) => c.file).sort()).toHaveLength(2);
+    //   lib/satong-map-layers.ts·lib/pnu.ts 는 주석에서만 언급하므로 구문 검사에서 정상 탈락한다.
+    //
+    // ★**정확한 개수로 잠그지 않는다.** 이 파일 머리글이 스스로 *"사람이 센 목록 = 상한 금지"*
+    //   라고 적어 놓고 `toHaveLength(2)` 로 상한을 걸어, **새 업로더가 생기면 무조건 빨강**이
+    //   됐다(실측: #719 의 테스트 파일 1개로 발화). 그래서 **알려진 화면 2곳이 반드시 들어 있다**
+    //   (공허한 참 방지) + **새 업로더는 자동으로 아래 전수검사에 들어온다**로 바꾼다.
+    //   개수 상한이 아니라 **하한과 포함**이 이 검사가 원하던 것이다.
+    const files = callers.map((c) => c.file).sort();
+    expect(files).toContain("components/precheck/SatongMapShell.tsx");
+    expect(files).toContain("components/common/GlobalAddressSearch.tsx");
+    // 테스트 파일이 소비처로 새어 들어오지 않는다(위양성 재발 방지).
+    expect(files.filter((f) => /__tests__|\.(test|spec)\.tsx?$/.test(f))).toEqual([]);
   });
 
   it.each(callers.map((c) => c.file))("%s 는 경고를 화면에 펼친다", (file) => {
