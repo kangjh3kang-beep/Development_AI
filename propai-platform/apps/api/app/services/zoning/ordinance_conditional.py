@@ -86,6 +86,8 @@ def extract_article_body(section: str, pos: int) -> str:
       말없이 빠뜨리고 *"이 부지는 해당 없음"* 이라는 **거짓 음성**을 낸다 —
       지금의 보수적 기각보다 나쁘다. 그래서 창이 아니라 **본문**을 본다.
     """
+    # ※변이 생존(설명 가능): 이 줄을 지워도 아래 경로가 빈 문자열을 낸다(**이중 가드**) —
+    #   `starts=[]` → `begin=0` → `end=0` → `body=""`. 조기반환은 의도를 적어 두는 쪽이다.
     if not section:
         return ""
     starts = [m.start() for m in _ARTICLE_RE.finditer(section)]
@@ -139,6 +141,8 @@ def parse_district_options(body: str) -> list[dict[str, Any]]:
             zone_scope = zm.group(1)
         name = _LAW_CITE_RE.sub("", raw).strip(" ·ㆍ,")
         name = _ZONE_SCOPE_RE.sub("", name).strip(" ·ㆍ,")
+        # ※변이 생존(설명 가능): 실조례에서 2자 미만 항목명이 관측된 적이 없어 **도달 불가**다.
+        #   정규식이 느슨해지거나 이상한 조례가 들어올 때를 위한 방어로 남긴다(락 추가 안 함).
         if len(name) < 2:
             continue
         out.append({
@@ -231,6 +235,8 @@ def _match_district_options(item: dict[str, Any], names: list[str]) -> dict[str,
     zone = item.get("zone_type") or None
     for opt in options:
         name = (opt.get("name") or "").strip()
+        # ※변이 생존(설명 가능): 실조례 항목명은 전부 3자 이상이라 **도달 불가**다.
+        #   짧은 이름은 `name in n` 부분일치가 과하게 넓어지므로(예: 2자면 오탐) 방어로 둔다.
         if len(name) < 3:
             continue
         # ★부분일치 금지 규율(#703)의 올바른 방향: **조례가 적은 구역명 전체**가 부지 지정명
