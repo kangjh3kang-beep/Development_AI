@@ -224,6 +224,16 @@ type GeocodeResponse = {
   reason?: string | null;
 };
 
+/**
+ * `/zoning/parse-parcels` 응답 1행.
+ *
+ * ★`lat`/`lon` 을 **일부러 받지 않는다**(2026-08-20 백엔드 실측). 백엔드 `_geocode_fill` 은
+ *   `p["lat"]/p["lon"]` 을 박은 **뒤에** "번지 없이 동·읍·면 단위" 가드로 `p["pnu"]` 를 보류한다.
+ *   즉 해석에 실패한 행일수록 **동 대표지점 좌표**가 실려 오고, 같은 동 77행이면 77개가
+ *   전부 같은 좌표다. 그걸 받아 좌표 치유를 돌리면 77행이 전부 같은 필지로 해석된다.
+ *   PNU 로 이미 복구되므로 좌표를 들일 이유도 없다 — 안 받는 것이 방어다.
+ *   (2차 방어선은 `lib/parcel-jibun-heal` 의 "좌표 공유 필지 제외".)
+ */
 type ParsedParcel = {
   address?: string | null;
   jibun?: string | null;

@@ -209,3 +209,55 @@ describe("SatongMapShell 좌표 치유 — 왕복 중 목록이 바뀌면 쓰지
     expect(screen.getByTestId("parcel-jibun-text")).not.toHaveTextContent("114-1");
   });
 });
+
+/**
+ * ★★사용자 신고 프로젝트 **그대로** 재현 — "복구 불가" 오판을 막는 락.
+ *
+ * 리뷰 1차에서 "좌표 앵커가 없어 복구 불가, 화면은 '지번 미확인' 77개가 된다" 고 판정했고
+ * 나도 그대로 보고했다. **사용자가 반증했다**: 스크린샷의 77행은 면적이 **전부 다르고**
+ * `지목 답` · `용도지역 자연녹지지역` 을 갖고 있다.
+ *
+ * 백엔드 코드로 확정한 증거 사슬(2026-08-20):
+ *   ① `_detect_columns` 의 역할 집합에 **용도지역이 없다** → 엑셀에서 올 수 없다.
+ *   ② 응답 조립 시 `"zone_type": None` 으로 시작한다.
+ *   ③ 용도지역을 채우는 **유일한** 곳은 `_enrich_fill` 이고 대상 필터가
+ *      `if p.get("pnu") and …` — **PNU 없이는 실행되지 않는다.**
+ *   ④ 그 PNU 는 `_pnu_from_bcode(bcode, jibun)` 로 만들어지며 **지번 숫자가 필수**다.
+ *   ⑤ `get_land_characteristics(p["pnu"])` 는 **필지별** 조회다 — 면적이 전부 다른 것이 그 증거
+ *      (동 대표점 폴백이면 같은 값이 반복된다. C2-2 주석이 그 증상을 적고 있다).
+ *
+ * → 그 프로젝트의 필지들은 **진짜 PNU 를 갖고 있다**. 주소만 동 단위일 뿐이다.
+ *   즉 배포만으로 지번이 복구된다 — 사용자는 아무것도 다시 하지 않아도 된다.
+ */
+describe("사용자 신고 재현 — PNU 보유 + 동 단위 주소(용도지역이 그 증거)", () => {
+  beforeEach(() => {
+    window.sessionStorage.clear();
+    pointCalls.length = 0;
+  });
+
+  it("★77필지가 서로 다른 지번으로 복구되고, '지번 미확인' 은 **한 건도** 없다", () => {
+    // 실제 저장 모습: 주소는 동 단위, PNU 는 진짜, 용도지역·지목·면적은 NED 보강분.
+    writeSatongMapSelection(
+      Array.from({ length: 77 }, (_, i) => ({
+        id: `store-${i}-${DONG}`,
+        address: DONG,
+        pnu: `41370110001${String(1000 + i).padStart(4, "0")}0000`,
+        areaSqm: 53 + i,
+        zoneType: "자연녹지지역",
+        jimok: "답",
+        source: "excel" as const,
+      })),
+      null,
+    );
+    render(<SatongMapShell locale="ko" />);
+
+    const labels = screen.getAllByTestId("parcel-jibun-text");
+    expect(labels).toHaveLength(77); // 공허 진리 가드
+    // ★77개가 서로 다르다 — 신고 증상("전부 오산시 내삼미동")의 정반대.
+    expect(new Set(labels.map((el) => el.textContent)).size).toBe(77);
+    // ★"복구 불가" 판정이 맞았다면 여기 77개가 떴어야 한다. 0개다.
+    expect(screen.queryAllByTestId("parcel-jibun-unresolved")).toHaveLength(0);
+    // 좌표가 없어도 좌표 치유를 부를 필요가 없다(PNU 로 이미 해석된다).
+    expect(pointCalls).toEqual([]);
+  });
+});
