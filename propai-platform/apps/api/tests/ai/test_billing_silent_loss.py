@@ -51,6 +51,11 @@ async def test_과금_쓰기_실패는_경고로_드러난다():
     assert kw["service"] == "probe"
     assert kw["input_tokens"] == 100 and kw["output_tokens"] == 50
     assert "RuntimeError" in kw["err"]
+    # ★문구도 잠근다 — 변이검증에서 이 문자열 변경이 **생존**했다. 문구가 무의미해지면
+    #   로그를 읽는 사람이 사유를 못 가른다(래퍼 실패와 구분되지 않는다).
+    msg = warn.call_args.args[0]
+    assert "과금" in msg and "실패" in msg, f"싱크 경고 문구가 사유를 말하지 않는다: {msg!r}"
+    assert "추출" not in msg, "래퍼(추출 실패) 문구와 구분되지 않는다"
     # ★개인식별 최소화 — uid 는 싣지 않는다.
     assert "uid" not in kw and "user_id" not in kw
 
@@ -91,6 +96,9 @@ def test_동기_판본도_과금_생략을_드러낸다():
     with patch.object(bi.logger, "warning") as warn:
         bi.record_llm_response_billing_sync(_Llm(), _Resp({"input_tokens": 1}), service="probe")
     assert warn.call_count == 1, "동기 호출처의 과금 누락이 조용히 사라졌다"
+    # ★문구 잠금 — 변이검증 생존 건. 동기 경로임이 문구에서 드러나야 추적이 된다.
+    msg = warn.call_args.args[0]
+    assert "과금" in msg and "동기" in msg, f"동기 판본 경고가 경로를 말하지 않는다: {msg!r}"
 
 
 @pytest.mark.asyncio
@@ -123,3 +131,31 @@ async def test_엑셀_LLM_은_공용_계측기를_통과한다():
     assert called is True, "LLM 을 태우지 못했다 — 이 단언이 없으면 아래가 공허해진다"
     assert billed.await_count == 1, "공용 계측기를 우회했다(손수 복제 회귀)"
     assert billed.await_args.kwargs["service"] == "parcel_excel_structure_detect"
+
+
+@pytest.mark.asyncio
+async def test_엑셀_행재질의도_공용_계측기를_통과한다():
+    """★형제 미러 — 첫 호출부만 잠갔더니 **두 번째가 변이에서 생존**했다.
+
+    `_llm_analyze_structure` 와 `_llm_reverify_row` 는 각각 LLM 을 태우고 각각 과금한다.
+    한쪽만 잠그면 다른 쪽이 손수 복제로 되돌아가도 초록이다(고친 자리의 형제를 반드시 쓸어라).
+    """
+    from app.services.land_intelligence import parcel_excel_service as pes
+
+    class _StubLlm:
+        model = "claude-opus-5"
+        async def ainvoke(self, _msgs):
+            return type("R", (), {
+                "content": '{"jibun":"741"}',
+                "usage_metadata": {"input_tokens": 5, "output_tokens": 2},
+            })()
+
+    with patch("app.services.ai.llm_provider.get_llm", return_value=_StubLlm()), \
+         patch("app.services.ai.base_interpreter.record_llm_response_billing") as billed:
+        _vals, called = await pes._llm_reverify_row(
+            raw_cells={"소재지": "오산시 내삼미동 741"}, issues=["jibun 없음"],
+        )
+
+    assert called is True, "LLM 을 태우지 못했다 — 이 단언이 없으면 아래가 공허해진다"
+    assert billed.await_count == 1, "공용 계측기를 우회했다(손수 복제 회귀)"
+    assert billed.await_args.kwargs["service"] == "parcel_excel_row_reverify"
