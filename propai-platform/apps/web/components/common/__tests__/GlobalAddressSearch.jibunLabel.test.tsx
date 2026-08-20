@@ -60,4 +60,18 @@ describe("인테이크 목록 지번 표시", () => {
     // 동 단위 주소만 있는 행(=지번 소실)이 **하나도 없어야** 한다.
     expect(screen.queryAllByText(동)).toHaveLength(0);
   });
+
+  // ────────────────────────────────────────────────────────────────────────
+  // ★부채를 초록 안에 보이게 남긴다(커밋 메시지에만 적으면 드러나지 않는다).
+  //
+  // 이번 스윕에서 `preferredEntryAddress` 로 치환했지만 **렌더 락이 없는** 표면들이다.
+  // 변이검증에서 이 줄들을 지워도 초록이었다(생존 5건) — 방어가 있는 것이 아니라
+  // **아직 안 잠근 것**이다. 각 화면의 렌더 경로를 세우는 비용이 커서 다음으로 미룬다.
+  // 미루는 근거: 사용자가 신고한 표면(인테이크 목록)은 위에서 실제 렌더로 잠갔고,
+  // 아래는 같은 공용 함수를 쓰므로 **SSOT 회귀는 위 테스트가 먼저 잡는다**(이중 노출 아님).
+  it.todo("BulkParcelBatchPanel — 반경검색 중심 주소에 지번이 붙는다");
+  it.todo("GlobalAddressSearch — 지도 feature address 에 지번이 붙는다");
+  it.todo("GlobalAddressSearch — 대지지분 모달 제목에 지번이 붙는다");
+  it.todo("ProjectPipelinePanel — 파이프라인 payload addresses 에 지번이 붙는다");
+  it.todo("ProjectPipelinePanel — '선택된 필지' 표시에 지번이 붙는다");
 });
