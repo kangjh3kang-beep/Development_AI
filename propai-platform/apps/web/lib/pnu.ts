@@ -152,8 +152,11 @@ export function addressHasJibun(address: string | null | undefined): boolean {
   //   결국 PNU 를 영영 못 얻는다(#694 가 고치려던 증상의 재발). 라이브 확인:
   //   `…736-19 (역삼동)` → parcel-boundaries ok(188㎡·일반상업), `…114-1번지` → geocode ok.
   //   `114-1(대)` 처럼 공백 없이 붙는 표기도 같이 처리하려고 반복 제거한다.
+  //   ★반복 횟수를 **유한하게** 묶는다. `for(;;)` 로 두면 `text` 갱신이 한 줄만 빠져도
+  //   (사람 실수든 변이든) 조건이 영원히 참이라 **무한 루프**가 된다 — 실제로 변이 검증이
+  //   그 한 줄로 두 번 매달렸다. 괄호절이 4겹 넘게 붙는 주소는 없다.
   let text = (address || "").trim();
-  for (;;) {
+  for (let round = 0; round < 4 && text; round += 1) {
     const stripped = text.replace(/\s*\([^()]*\)\s*$/, "").trim();
     if (stripped === text) break;
     text = stripped;
