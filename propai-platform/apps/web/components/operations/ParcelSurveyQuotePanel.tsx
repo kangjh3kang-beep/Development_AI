@@ -199,7 +199,10 @@ export function ParcelSurveyQuotePanel({ locale }: { locale: Locale }) {
     setError("");
     const body = {
       parcels: selectedRows.map((r) => ({
-        address: r.address,
+        // ★형제 누락 봉합 — 이 `address` 는 등기 조회 키다(`/registry/survey/quote`).
+        //   지번 없는 동 단위 주소는 등기조회를 깨뜨린다(2026-08-18 실측).
+        //   파생 지번은 바로 아래 함께 보내는 그 PNU 에서 나오므로 모순될 수 없다.
+        address: parcelDisplayAddress(r.address, r.pnu),
         ...(r.pnu ? { pnu: r.pnu } : {}),
         ...(r.hasBuilding != null ? { has_building: r.hasBuilding } : {}),
         ...(r.geometry ? { geometry: r.geometry } : {}),

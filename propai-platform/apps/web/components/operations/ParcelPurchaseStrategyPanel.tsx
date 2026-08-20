@@ -24,6 +24,7 @@ import { Card, CardContent } from "@propai/ui";
 
 import { apiClient } from "@/lib/api-client";
 import { idempotencyHeaders } from "@/lib/idempotency";
+import { parcelDisplayAddress } from "@/lib/pnu";
 
 /** 백엔드 `MAX_STRATEGY_PARCELS`(= `MAX_BULK_ITEMS`) 와 같은 값. 초과 시 상류가 422 로 거부한다. */
 export const MAX_STRATEGY_PARCELS = 100;
@@ -110,7 +111,12 @@ export function ParcelPurchaseStrategyPanel({ parcels }: { parcels: StrategyParc
       const body = {
         scheme,
         parcels: parcels.map((p) => ({
-          address: p.address,
+          // ★형제 누락 봉합(2026-08-21) — 같은 화면의 `ParcelSurveyQuotePanel` 은 이미
+          //   `parcelDisplayAddress` 를 쓰는데 여기만 원본을 보내고 있었다.
+          //   이 `address` 는 등기 조회 키로도 쓰인다(`routers/registry.py`) —
+          //   **지번 없는 동 단위 주소는 등기조회를 깨뜨린다**(2026-08-18 실측 결함).
+          //   ★파생 지번은 **바로 아래 함께 보내는 그 PNU** 에서 나오므로 둘이 모순될 수 없다.
+          address: parcelDisplayAddress(p.address, p.pnu),
           ...(p.pnu ? { pnu: p.pnu } : {}),
           ...(p.hasBuilding != null ? { has_building: p.hasBuilding } : {}),
           ...(p.geometry ? { geometry: p.geometry } : {}),
