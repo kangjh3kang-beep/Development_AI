@@ -202,6 +202,20 @@ describe("jibunHealAnchor — 대표점이 자기 폴리곤 밖이면 쓰지 않
     expect(healed.map((h) => h.index)).toEqual([1]); // 볼록(index 1)만 치유
   });
 
+  it("★MultiPolygon 경계도 링을 읽는다(못 읽으면 그 필지는 조용히 치유에서 빠진다)", () => {
+    // 분할된 필지는 MultiPolygon 으로 온다. 이 분기가 죽으면 rings=[] 라 anchor 가 null 이 되고
+    // **아무 오류 없이** 치유 대상에서 사라진다 — 조용한 기능 소실이라 락이 필요하다.
+    const multi = {
+      type: "MultiPolygon",
+      coordinates: [[[
+        [127.060, 37.170], [127.062, 37.170], [127.062, 37.172], [127.060, 37.172], [127.060, 37.170],
+      ]]],
+    };
+    const anchor = jibunHealAnchor({ pnu: null, address: "경기도 오산시 내삼미동", geometry: multi });
+    expect(anchor).not.toBeNull();
+    expect(anchor!.lat).toBeCloseTo(37.171, 4);
+  });
+
   it("경계 형식을 못 읽으면 쓰지 않는다(모르면 안 쓴다)", () => {
     expect(jibunHealAnchor({ pnu: null, address: "동단위", geometry: { type: "Point", coordinates: [1, 2] } })).toBeNull();
     expect(jibunHealAnchor({ pnu: null, address: "동단위", geometry: null })).toBeNull();

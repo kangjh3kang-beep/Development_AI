@@ -144,7 +144,9 @@ export function countJibunHealTargets(parcels: HealableParcel[]): number {
   return collectJibunHealTargets(parcels).length;
 }
 
-/** 좌표 → 필지 해석기(호출부가 `/zoning/parcel-at-point` 를 주입한다 — 이 모듈은 순수). */
+/** 좌표 → 필지 해석기(호출부가 `/zoning/parcel-at-point` 를 주입한다 — 이 모듈은 순수).
+ *  ※ 이 별칭의 **타입 시그니처 줄**을 지우는 변이는 런타임 동작이 없어 테스트로 잡히지 않는다
+ *    (컴파일 단계에서만 의미가 있다 — type-check 가 그 층의 게이트다). */
 export type ParcelPointResolver = (
   point: { lat: number; lon: number },
 ) => Promise<{ pnu?: string | null; address?: string | null } | null>;
