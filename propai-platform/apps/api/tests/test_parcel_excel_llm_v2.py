@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import re
 
 import pytest
 
@@ -418,6 +419,7 @@ def test_merged_expand_reports_failure_when_source_recovery_also_fails(monkeypat
     assert "빈칸" in msg, f"②무엇을 잃는지: {msg}"
     assert "병합을 해제" in msg, f"③무엇을 해야 하는지: {msg}"
     assert "직접 적어" in msg, f"③실행지시: {msg}"
+    assert "확인해 주세요" in msg, f"①먼저 확인을 권해야 한다: {msg}"
     # ★모르는 수를 지어내지 않는다 — 병합이 몇 곳인지 못 셌으면 개수를 말하지 않는다.
     assert "0곳" not in msg, f"셀 수 없는데 개수를 지어냄: {msg}"
 
@@ -726,6 +728,99 @@ def test_unresolvable_first_sheet_fails_loudly_not_silently():
 
     with pytest.raises(ValueError):
         pes._merged_ranges_from_zip(broken.getvalue())
+
+
+def _rewrite_part(raw: bytes, part: str, data: bytes) -> bytes:
+    """xlsx(zip) 안의 한 파트만 갈아끼운다(테스트용)."""
+    import zipfile
+
+    zin = zipfile.ZipFile(io.BytesIO(raw))
+    out = io.BytesIO()
+    replaced = False
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zo:
+        for item in zin.infolist():
+            body = zin.read(item.filename)
+            if item.filename == part:
+                body, replaced = data, True
+            zo.writestr(item.filename, body)
+    assert replaced, f"교체 대상 파트가 없다: {part}"
+    return out.getvalue()
+
+
+def test_first_sheet_resolution_handles_both_target_forms():
+    """관계의 Target 이 절대(`/xl/...`)든 상대(`./worksheets/...`)든 같은 시트를 짚어야 한다.
+
+    ★엑셀 파일 형식은 둘 다 허용한다. 실측하니 openpyxl 이 저장한 파일은 **절대경로**였는데,
+    다른 도구는 상대경로로 쓴다(이 PR 의 대상이 바로 '비Office 도구가 내보낸 엑셀'이다).
+    경로 정규화를 빼면 `./` 가 낀 상대경로에서 시트를 못 찾아, 병합이 멀쩡히 있는 파일이
+    '복원 불가' 경고를 받는다(정상 파일을 막는 위양성).
+    """
+    import zipfile
+
+    raw = _merged_two_owner_xlsx()
+    with zipfile.ZipFile(io.BytesIO(raw)) as z:
+        rels = z.read("xl/_rels/workbook.xml.rels")
+    # 전제(주입 성공 확인): 원본은 절대경로 형태다 — 여기가 바뀌면 아래 치환이 헛돈다.
+    assert b'Target="/xl/worksheets/sheet1.xml"' in rels, f"원본 Target 형태가 바뀌었다: {rels!r}"
+
+    for label, target in (
+        ("절대", b'Target="/xl/worksheets/sheet1.xml"'),
+        ("상대", b'Target="worksheets/sheet1.xml"'),
+        ("상대(./)", b'Target="./worksheets/sheet1.xml"'),
+    ):
+        blob = _rewrite_part(
+            raw, "xl/_rels/workbook.xml.rels",
+            rels.replace(b'Target="/xl/worksheets/sheet1.xml"', target),
+        )
+        with zipfile.ZipFile(io.BytesIO(blob)) as z:
+            assert pes._first_worksheet_part(z) == "xl/worksheets/sheet1.xml", f"{label} 형태 해석 실패"
+        assert sorted(pes._merged_ranges_from_zip(blob)) == ["A2:A3", "B2:B3"], f"{label} 형태"
+
+
+def test_first_sheet_resolution_fails_loudly_on_each_broken_link():
+    """해석의 각 고리가 끊겼을 때 **조용히 '병합 없음'이라 답하지 않는다**.
+
+    고리는 셋이다 — ①workbook 의 시트 목록 ②그 시트의 r:id ③rels 의 Target.
+    빈 목록을 돌려주면 호출측이 "잃은 값이 없다"로 읽어 경고 없이 넘어가므로 예외를 낸다.
+
+    ★정직하게 적어 두는 한계: 실측 결과 이 셋은 모두 **pandas 도 함께 죽인다**(openpyxl 이 같은
+    관계를 타고 시트를 찾기 때문). 따라서 실제 업로드에서는 병합 복원 경로에 닿기 전에 정직한
+    error 로 끝난다 — 이 가드들은 **심층 방어**이고, 여기서 잠그는 것은 "빈 목록이 아니라
+    예외를 낸다"는 계약이다(그 계약이 깨지면 훗날 도달 가능해졌을 때 침묵이 된다).
+    """
+    import zipfile
+
+    raw = _merged_two_owner_xlsx()
+    with zipfile.ZipFile(io.BytesIO(raw)) as z:
+        wb_xml = z.read("xl/workbook.xml")
+        rels = z.read("xl/_rels/workbook.xml.rels")
+
+    variants = {
+        # ① 시트 목록이 없다
+        "시트목록": _rewrite_part(raw, "xl/workbook.xml",
+                              re.sub(rb"<sheets>.*?</sheets>", b"", wb_xml, flags=re.S)),
+        # ② 첫 시트에 r:id 가 없다 — 가드가 없으면 None 을 그대로 써서 AttributeError 로 샌다
+        "r:id": _rewrite_part(raw, "xl/workbook.xml",
+                              re.sub(rb'\s\w+:id="[^"]+"', b"", wb_xml, count=1)),
+        # ③ 관계는 있는데 Target 이 없다
+        "Target": _rewrite_part(raw, "xl/_rels/workbook.xml.rels",
+                                re.sub(rb'\sTarget="[^"]+"', b"", rels)),
+    }
+    # 전제(주입 성공 확인): 셋 다 원본과 실제로 달라야 한다.
+    for label, blob in variants.items():
+        assert blob != raw, f"{label} 변형이 주입되지 않았다"
+
+    for label, blob in variants.items():
+        # ★빈 목록(=잃은 값 없음)이 아니라 예외. 이것이 이 테스트가 잠그는 계약이다.
+        with pytest.raises(ValueError):
+            pes._merged_ranges_from_zip(blob)
+        # ★끝단에서도 침묵이면 안 된다 — 여기서는 표를 못 읽어 정직한 error 로 끝난다.
+        out = _parse_x(_break_full_workbook_read(blob), f"{label}끊김.xlsx")
+        assert out.get("error"), f"{label}: 아무 말 없이 넘어갔다: {out}"
+        assert out.get("parcels") == [], f"{label}: 못 읽었는데 필지가 나왔다: {out.get('parcels')}"
+
+
+
 
 
 # ── ⑧ CSV cp949 인코딩 폴백 ───────────────────────────────────────────
