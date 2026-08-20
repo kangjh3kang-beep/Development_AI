@@ -49,10 +49,36 @@ jobs:
       #   이 PR 은 **버전만 핀**한다 — 실패 자체는 별건이고 소유 세션 판단이 필요하다
       #   (후보: `--no-deps` 로 핀된 버전만 감사 · gdal 을 audit 대상에서 제외 · 시스템 libgdal 설치).
       #   핀은 그 진단을 **재현 가능**하게 만든다(버전이 매번 달라지면 원인 분리가 안 된다).
+      # ★★2026-08-20 — 위 진단(#655)의 처방을 **집는다**. 진단은 4일 전에 끝나 있었고
+      #   후보 3개까지 적혀 있었으나 "별건·소유 세션 판단"으로 남아 아무도 집지 않았다.
+      #   그 사이 이 잡은 계속 빨갰고, **CVE 감사는 계속 부재**했다.
+      #   → 후보 중 **gdal 제외**를 골랐다. 실측으로 그것 하나만 빼면 스캔이 정상 동작한다
+      #     (2026-08-20 로컬 실측: 158건 / 26개 패키지 검출).
+      #   · `--no-deps` 는 **전 항목이 `==` 로 핀되어야** 하는데 4개가 범위 지정이라 불가
+      #     (arq · prometheus-client · gdal · bcrypt — 런타임 매니페스트를 이 PR 에서 바꾸지 않는다)
+      #   · 시스템 `libgdal-dev` 설치는 GDAL 빌드가 **매우 느려**(이 저장소 실측 38~986초, 26배 편차)
+      #     매 실행에 얹기엔 비싸다
       - name: Scan Python dependencies
         run: |
+          set -euo pipefail
           pip install -c propai-platform/apps/api/requirements-dev.txt pip-audit
-          pip-audit --strict --desc -r propai-platform/apps/api/requirements.txt
+
+          # ★gdal 만 제외한다. 숨기지 않는다 — 이 스캔은 gdal 자체 CVE 를 **보지 못한다**.
+          grep -v '^gdal' propai-platform/apps/api/requirements.txt > /tmp/req.audit.txt
+          echo "::notice::gdal 은 이 스캔에서 제외됨(네이티브 빌드 gdal-config 요구). gdal CVE 는 별도 감시가 필요하다"
+
+          # 취약점이 있어도 여기서 죽이지 않는다 — 판정은 아래 베이스라인 게이트가 한다.
+          pip-audit --desc -r /tmp/req.audit.txt -f json -o /tmp/audit.json || true
+
+          python3 .github/scripts/pip_audit_gate.py /tmp/audit.json .github/security/pip-audit-baseline.json
+
+      - name: Upload audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pip-audit-report
+          path: /tmp/audit.json
+          if-no-files-found: warn
 
   gitleaks:
     name: Gitleaks (Secret Detection)
