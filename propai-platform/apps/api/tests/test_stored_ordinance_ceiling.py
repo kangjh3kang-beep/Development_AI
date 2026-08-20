@@ -162,3 +162,29 @@ def test_static_cache_never_exceeds_national_ceiling():
                 )
     # ★공허 진리 가드 — "위반 0"이 참인 이유가 "대상이 0개"이면 무의미하다.
     assert checked >= 100, f"검사 대상이 너무 적다({checked}) — 캐시 파생이 끊겼다"
+
+
+def test_rejection_is_logged_with_jurisdiction_and_reason(monkeypatch, caplog):
+    """★기각을 **관할·용도지역·사유와 함께** 남긴다 — 운영자가 영향 지자체를 찾는 경로다.
+
+    변이감사(2026-08-21)에서 이 로그 문자열만 생존했다. 로그는 '있으면 좋은 것'이 아니라
+    이 수정의 **관측 수단**이다: 기각이 조용하면 값이 왜 바뀌었는지 아무도 설명하지 못한다.
+    """
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger=M.logger.name):
+        assert _load(monkeypatch, _VIOLATING) is None
+    msgs = [r.getMessage() for r in caplog.records]
+    assert any("법정상한 초과" in m for m in msgs), f"기각 사유가 로그에 없다: {msgs}"
+    hit = next(m for m in msgs if "법정상한 초과" in m)
+    assert "의정부시" in hit and "자연녹지지역" in hit, f"관할/용도지역이 없다: {hit}"
+    assert "ordinance_bcr" in hit and "40" in hit, f"어떤 값이 문제인지 없다: {hit}"
+
+
+def test_clean_row_is_not_logged_as_rejected(monkeypatch, caplog):
+    """★대조군(음성) — 정상 행은 기각 로그를 남기지 않는다(로그 위양성 방지)."""
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger=M.logger.name):
+        assert _load(monkeypatch, _CLEAN) is not None
+    assert not any("법정상한 초과" in r.getMessage() for r in caplog.records)

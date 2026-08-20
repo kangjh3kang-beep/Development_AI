@@ -185,6 +185,11 @@ def _stored_violates_national_ceiling(payload: dict, zone_type: str) -> list[str
             continue
         for field in (f"ordinance_{key}", f"effective_{key}"):
             val = payload.get(field)
+            # ★이 None 검사는 **이중 가드**다 — 지워도 아래 `float(None)` 이 TypeError 를
+            #   내고 except 가 같은 `continue` 로 받는다(2026-08-21 손수 변이: `if False:`
+            #   주입 시 9 passed = 생존, 주입은 해당 라인을 직접 눈으로 확인).
+            #   변이 점수를 부풀리지 않으려고 적어 둔다 — 의도된 도달 불가 방어다.
+            #   (남겨 두는 이유: None 은 '값 없음'이라 예외 경로보다 정상 흐름이 옳다.)
             if val is None:
                 continue
             try:
