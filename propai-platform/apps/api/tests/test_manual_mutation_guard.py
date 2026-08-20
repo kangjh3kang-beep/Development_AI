@@ -123,3 +123,19 @@ def test_CLAUDE_md_가_선언한_종료코드와_구현이_일치한다() -> Non
     assert "exit 10" in doc and "exit 11" in doc, (
         "CLAUDE.md 가 종료코드를 선언하지 않는다 — 실패를 어떻게 읽을지 알 수 없다"
     )
+
+
+def test_파이프가_있으면_경고한다(sandbox) -> None:
+    """★이 저장소가 반복해서 데인 함정 — `cmd | tail` 은 **끝 명령의 종료코드**를 준다.
+
+    그러면 테스트가 실패해도 rc=0 이라 이 하네스가 **CAUGHT 를 SURVIVED 로 보고**한다.
+    실제로 이 도구의 **첫 실사용에서 그 일이 났다**(2026-08-21) — 도구는 정확했고 호출이 틀렸다.
+    도구가 호출자의 셸 문자열을 다 알 수는 없으니 **보이면 시끄럽게 경고**한다.
+    """
+    root, _ = sandbox
+    r = _run(root, "target.txt", "s|alpha|ALPHA|", "bash", "-c", "false | tail -1")
+    합본 = r.stdout + r.stderr
+    assert "파이프" in 합본, f"파이프 경고가 없다: {합본}"
+    # ★음성 대조군 — 파이프가 없으면 경고하지 않아야 한다(위양성 방지).
+    r2 = _run(root, "target.txt", "s|alpha|ALPHA|", "true")
+    assert "파이프" not in (r2.stdout + r2.stderr), "파이프가 없는데 경고한다(위양성)"
