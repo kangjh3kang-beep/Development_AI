@@ -69,7 +69,11 @@ matplotlib==3.9.2  # 구획도 PNG export(parcel_boundary_export.export_png) —
 
 # Security
 bcrypt>=4.0.0,<5.0.0
-PyJWT==2.9.0
+# ★PyJWT 제거 — 실행코드가 쓰지 않는데 CVE 12건을 물고 있었다(#720).
+#   #720 은 `requirements.txt` 에서만 지웠는데 **프로덕션이 쓰는 파일은 이 파일**이다
+#   (`Dockerfile.oracle:20` → `COPY apps/api/requirements.oracle.txt ./requirements.txt`).
+#   그래서 배포 후에도 라이브 컨테이너에 `PyJWT 2.9.0` 이 그대로 있었다(2026-08-21 실측).
+#   JWT 는 `python-jose` 를 쓴다(아래) — 그 사실은 테스트가 잠근다.
 cryptography==43.0.3
 python-jose[cryptography]==3.3.0
 passlib==1.7.4
