@@ -686,6 +686,8 @@ function parsedParcelToSelection(parcel: ParsedParcel, index: number): SatongPar
 
 function mapParcelToSelection(parcel: ParcelAtPointResult): SatongParcel {
   // 지도 클릭도 같은 결합 규칙을 쓴다(형제 스윕 — 한쪽만 고치면 다시 갈린다).
+  // ※ 폴백 문자열("지도 선택 필지")은 지도 클릭 응답이 주소·지번·PNU 를 **전부** 못 준 경우만
+  //   쓰인다. 엑셀 경로의 같은 폴백은 excelJibun 테스트가 잠근다(행이 조용히 사라지는 것 차단).
   const address = joinAddressJibun(parcel.address, parcel.jibun, parcel.pnu || "지도 선택 필지");
   return {
     id: parcel.pnu || normalizeKey(address),

@@ -40,6 +40,9 @@ const parsed = {
     // PNU 도 지번도 못 얻은 행 2건 — 주소가 완전히 같다(#672 의 "77 → 1" 이 나던 조건).
     { address: "경기도 오산시 내삼미동", jibun: null, pnu: null, area_sqm: 100, status: "ambiguous" },
     { address: "경기도 오산시 내삼미동", jibun: null, pnu: null, area_sqm: 200, status: "ambiguous" },
+    // 주소·지번·PNU 가 모두 빈 행 — 폴백 라벨이 없으면 `readSatongMapSelection` 의
+    // "주소 비어있으면 제외" 필터에 걸려 **행이 조용히 사라진다**(무음 손실).
+    { address: null, jibun: null, pnu: null, area_sqm: 12, status: "failed" },
   ],
 };
 
@@ -78,7 +81,7 @@ describe("엑셀 업로드 — 소재지/지번 분리 양식", () => {
     const { container } = render(<SatongMapShell locale="ko" />);
     await uploadExcel(container);
 
-    await waitFor(() => expect(screen.getAllByTestId("parcel-jibun-text")).toHaveLength(4));
+    await waitFor(() => expect(screen.getAllByTestId("parcel-jibun-text")).toHaveLength(5));
     const texts = screen.getAllByTestId("parcel-jibun-text").map((el) => el.textContent);
     expect(texts).toContain("내삼미동 467-1"); // PNU 로도, 결합으로도 나온다
     // ★PNU 가 없는 행은 **결합만이** 지번을 살린다 — 여기가 이 수정의 진짜 잠금.
@@ -89,19 +92,23 @@ describe("엑셀 업로드 — 소재지/지번 분리 양식", () => {
     const { container } = render(<SatongMapShell locale="ko" />);
     await uploadExcel(container);
 
-    await waitFor(() => expect(screen.getAllByTestId("parcel-jibun-text")).toHaveLength(4));
-    // 4행 중 지번을 확보한 2행(PNU 보유 1 + 지번만 1)은 배지가 없고, 나머지 2행만 붙는다.
-    expect(screen.getAllByTestId("parcel-jibun-unresolved")).toHaveLength(2);
+    await waitFor(() => expect(screen.getAllByTestId("parcel-jibun-text")).toHaveLength(5));
+    // 5행 중 지번을 확보한 2행(PNU 보유 1 + 지번만 1)은 배지가 없고, 나머지 3행에 붙는다.
+    expect(screen.getAllByTestId("parcel-jibun-unresolved")).toHaveLength(3);
   });
 
   it("★주소가 완전히 같고 PNU 도 없는 행이 **1건으로 접히지 않는다**(#672 원증상)", async () => {
     const { container } = render(<SatongMapShell locale="ko" />);
     await uploadExcel(container);
 
-    await waitFor(() => expect(screen.getAllByTestId("parcel-jibun-text")).toHaveLength(4));
+    await waitFor(() => expect(screen.getAllByTestId("parcel-jibun-text")).toHaveLength(5));
     // 영속까지 확인 — 화면만 4건이고 세션에 1건이면 재진입에서 사라진다.
-    expect(readSatongMapSelection()?.parcels).toHaveLength(4);
-    // 해석된 2건과 미해석 2건이 **다른 처분**을 받는다(전부 같으면 배선을 끊어도 통과한다).
-    expect(screen.getAllByTestId("parcel-jibun-unresolved")).toHaveLength(2);
+    expect(readSatongMapSelection()?.parcels).toHaveLength(5);
+    // 해석된 2건과 미해석 3건이 **다른 처분**을 받는다(전부 같으면 배선을 끊어도 통과한다).
+    expect(screen.getAllByTestId("parcel-jibun-unresolved")).toHaveLength(3);
+    // ★주소·지번·PNU 가 모두 빈 행도 **사라지지 않는다**. 폴백 라벨이 없으면 주소가 빈 문자열이
+    //   되고 `readSatongMapSelection` 의 "주소 비어있으면 제외" 필터가 그 행을 조용히 버린다.
+    //   (화면 라벨은 뒤 두 토큰으로 줄어드므로 영속된 원본 주소로 확인한다.)
+    expect(readSatongMapSelection()?.parcels.map((p) => p.address)).toContain("엑셀 등록 필지");
   });
 });
