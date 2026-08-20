@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  collectJibunHealTargets,
   countJibunHealTargets,
   healParcelJibunByPoint,
   jibunHealAnchor,
@@ -204,5 +205,56 @@ describe("jibunHealAnchor — 대표점이 자기 폴리곤 밖이면 쓰지 않
   it("경계 형식을 못 읽으면 쓰지 않는다(모르면 안 쓴다)", () => {
     expect(jibunHealAnchor({ pnu: null, address: "동단위", geometry: { type: "Point", coordinates: [1, 2] } })).toBeNull();
     expect(jibunHealAnchor({ pnu: null, address: "동단위", geometry: null })).toBeNull();
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// 백엔드 실측(2026-08-20, parcel_excel_service): 동 단위 주소 행은
+//   `p["lat"]/p["lon"]` 을 **먼저 박고** 그 뒤 "번지 없이 동·읍·면 단위" 가드로 `p["pnu"]` 를
+//   보류한다 → **PNU 는 비었는데 좌표는 77행이 전부 동 대표지점**일 수 있다.
+// 그 좌표로 해석하면 77행이 전부 같은 필지를 받는다 — 이 모듈이 없애겠다 선언한 그 오답.
+// ★서로 다른 필지가 같은 좌표를 가질 수 없다 → 겹치면 **파생 좌표**이므로 쓰지 않는다.
+// ────────────────────────────────────────────────────────────────────────────
+describe("좌표를 공유하는 필지는 좌표로 해석하지 않는다", () => {
+  const SHARED = { lat: 37.17603283713923, lon: 127.06444331120568 }; // 실측 동 대표지점
+
+  it("★같은 좌표를 가진 77행은 **한 건도** 대상이 아니다", () => {
+    const parcels: HealableParcel[] = Array.from({ length: 77 }, () => ({
+      pnu: null, address: "경기도 오산시 내삼미동", ...SHARED,
+    }));
+    // 공허 진리 가드: 좌표가 없어서 0인 게 아니다 — 앵커 자체는 전부 산출된다.
+    expect(parcels.every((p) => jibunHealAnchor(p) !== null)).toBe(true);
+    expect(countJibunHealTargets(parcels)).toBe(0);
+  });
+
+  it("★대조군: 좌표가 서로 다르면 전부 대상이다(두 모집단이 갈린다)", () => {
+    const parcels: HealableParcel[] = Array.from({ length: 77 }, (_, i) => ({
+      pnu: null, address: "경기도 오산시 내삼미동", lat: 37.17 + i / 10000, lon: 127.06,
+    }));
+    expect(countJibunHealTargets(parcels)).toBe(77);
+  });
+
+  it("★공유 좌표 행만 빠지고 고유 좌표 행은 남는다(전부 버리지 않는다)", () => {
+    const parcels: HealableParcel[] = [
+      { pnu: null, address: "동단위", ...SHARED },
+      { pnu: null, address: "동단위", ...SHARED },
+      { pnu: null, address: "동단위", lat: 37.9, lon: 127.9 },
+    ];
+    expect(collectJibunHealTargets(parcels).map((t) => t.index)).toEqual([2]);
+  });
+
+  it("★공유 좌표로는 **요청이 나가지 않는다**(대조군: 고유 좌표는 나간다)", async () => {
+    const resolve = vi.fn(async () => ({ pnu: "4137011000101140001", address: "내삼미동 114-1" }));
+    const healed = await healParcelJibunByPoint(
+      [
+        { pnu: null, address: "동단위", ...SHARED },
+        { pnu: null, address: "동단위", ...SHARED },
+        { pnu: null, address: "동단위", lat: 37.9, lon: 127.9 },
+      ],
+      resolve,
+    );
+    expect(resolve).toHaveBeenCalledTimes(1);
+    expect(resolve).toHaveBeenCalledWith({ lat: 37.9, lon: 127.9 });
+    expect(healed.map((h) => h.index)).toEqual([2]);
   });
 });

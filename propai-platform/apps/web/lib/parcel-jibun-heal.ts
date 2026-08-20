@@ -104,12 +104,44 @@ function geometryToLatLonRings(geometry: unknown): Array<Array<[number, number]>
 }
 
 /**
+ * 치유 대상 목록 — **좌표를 공유하는 필지는 전부 제외한다.**
+ *
+ * ## 왜 (2026-08-20 백엔드 실측)
+ *
+ * `parcel_excel_service` 의 지오코딩은 동 단위 주소 행에 대해
+ * **`lat`/`lon` 을 먼저 박고 그 뒤에** "번지 없이 동·읍·면 단위만 입력" 가드로 `pnu` 를
+ * 보류한다(`p["lat"]=…` → C2-2 `status="ambiguous"; return` → `p["pnu"]=gp` 미도달).
+ * 즉 **PNU 는 정직하게 비었는데 좌표는 77행이 전부 동 대표지점**일 수 있다.
+ *
+ * 그 좌표로 `parcel-at-point` 를 때리면 77행이 **전부 같은 필지(114-1)** 를 받는다 —
+ * 이 모듈이 없애겠다고 선언한 바로 그 "조용한 오답" 이다. 지금은 엑셀 유입부가 좌표를
+ * 싣지 않아 도달하지 않지만, 그건 **우연한 보호**다(한 줄만 추가되면 뚫린다).
+ *
+ * 판정은 단순하고 확실하다: **서로 다른 필지가 같은 좌표를 가질 수 없다.**
+ * 좌표가 겹치면 그건 필지 좌표가 아니라 **파생·대표 좌표**이므로 정체성 해석에 쓰지 않는다.
+ */
+export function collectJibunHealTargets(
+  parcels: HealableParcel[],
+): Array<{ index: number; point: { lat: number; lon: number } }> {
+  const found: Array<{ index: number; point: { lat: number; lon: number } }> = [];
+  const seen = new Map<string, number>();
+  parcels.forEach((parcel, index) => {
+    const point = jibunHealAnchor(parcel);
+    if (!point) return;
+    const key = `${point.lat},${point.lon}`;
+    seen.set(key, (seen.get(key) ?? 0) + 1);
+    found.push({ index, point });
+  });
+  return found.filter((t) => (seen.get(`${t.point.lat},${t.point.lon}`) ?? 0) === 1);
+}
+
+/**
  * 치유 대상 **건수**. 이펙트 의존성은 rows 전체가 아니라 이 수를 써야 한다 —
  * 배열 identity 를 의존성으로 두면 치유 결과가 배열을 갱신하고 그게 다시 이펙트를 깨우는
  * 무한 루프가 된다(치유가 성공하면 이 수는 줄어들어 루프가 자연히 멈춘다).
  */
 export function countJibunHealTargets(parcels: HealableParcel[]): number {
-  return parcels.reduce((n, parcel) => (jibunHealAnchor(parcel) ? n + 1 : n), 0);
+  return collectJibunHealTargets(parcels).length;
 }
 
 /** 좌표 → 필지 해석기(호출부가 `/zoning/parcel-at-point` 를 주입한다 — 이 모듈은 순수). */
@@ -127,11 +159,9 @@ export async function healParcelJibunByPoint(
   options?: { limit?: number; isCancelled?: () => boolean },
 ): Promise<HealedJibun[]> {
   const limit = Math.max(1, options?.limit ?? 4);
-  const targets: Array<{ index: number; point: { lat: number; lon: number } }> = [];
-  parcels.forEach((parcel, index) => {
-    const point = jibunHealAnchor(parcel);
-    if (point) targets.push({ index, point });
-  });
+  // ★대상 선별은 countJibunHealTargets 와 **같은 함수**를 쓴다 — 두 벌이면 이펙트가 세는 수와
+  //   실제로 쏘는 수가 갈려, 줄지 않는 카운트로 무한 재실행이 된다.
+  const targets = collectJibunHealTargets(parcels);
   if (targets.length === 0) return [];
 
   const healed: HealedJibun[] = [];
