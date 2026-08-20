@@ -265,6 +265,9 @@ def test_다른_경로의_앞토막에_걸리지_않는다():
         ("/api/v1/avm/estimate", "orphan"),           # ②의 실증 사례(주석에만 있었다)
         ("/api/v1/finance/monte-carlo", "orphan"),    # ②의 실증 사례(JSX 주석에만 있었다)
         ("/api/v1/land-price/estimate", "consumed"),  # 대조군 — 정상 소비
+        # 메서드 게이트(2026-08-21) 실증 — 같은 부모의 동적 호출이 있어도 메서드가 갈린다.
+        ("/api/v1/blockchain/escrow/fund", "orphan"),      # POST 라우트 ↔ GET 호출
+        ("/api/v1/underwriting/history", "undecided"),     # 메서드 판독 불가 → 남긴다
     ],
 )
 def test_실제_저장소에서도_세_칸으로_갈린다(route: str, expected: str):
@@ -275,7 +278,8 @@ def test_실제_저장소에서도_세_칸으로_갈린다(route: str, expected:
     # 공허 진리 가드 — 세 칸이 모두 유의미한 크기여야 아래 판정이 의미를 가진다.
     # ★스캐너 사망 탐지용 하한 — 부채를 갚아 정당하게 내려가면 이 숫자를 낮춰라.
     assert len(conf) > 50, "확정 고아가 비정상적으로 적다 — 스캐너가 죽었을 가능성"
-    assert len(und) > 5, "판정 불가가 비정상적으로 적다 — 동적 분류기가 죽었을 가능성"
+    # ★2026-08-21: 13 → 4(메서드 게이트로 9건이 확정 고아로 결론남). 위 주석의 지시대로 낮춘다.
+    assert len(und) > 2, "판정 불가가 비정상적으로 적다 — 동적 분류기가 죽었을 가능성"
 
     actual = "orphan" if route in conf else "undecided" if route in und else "consumed"
     assert actual == expected, (
