@@ -137,6 +137,15 @@ type OrdinanceConditionalItem = {
   condition_key?: string | null;
   why?: string | null;
 };
+/** 조례 별표가 **HWP 첨부로만** 제공돼 수치를 읽지 못한 경우 — 사유와 원문 링크.
+ *  ★값이 아니라 **사유**다. 이게 없으면 화면은 "조례 확인 필요"라고만 말하고,
+ *  사용자는 조례가 없거나 용도지역이 틀렸다고 의심한다(실측: 울산·창원). */
+type OrdinanceAttachmentOnly = {
+  reason?: string | null;
+  attachment_url?: string | null;
+  ordinance_name?: string | null;
+  requires?: string[] | null;
+};
 type OrdinanceConditional = {
   matched?: OrdinanceConditionalItem[] | null;
   unmatched_site?: OrdinanceConditionalItem[] | null;
@@ -156,6 +165,8 @@ type EffectiveFarData = {
   conditional_ceiling?: ConditionalCeiling | null;
   /** 조례 조건부 값 × 부지 조건 매칭 — 후보. */
   ordinance_conditional?: OrdinanceConditional | null;
+  /** 조례 별표가 첨부(HWP)뿐이라 수치 미확보 — 사유·원문 링크. */
+  ordinance_attachment_only?: OrdinanceAttachmentOnly | null;
 };
 
 // 종상향/종변경 잠재 시나리오(예상치 — 현행과 분리)
@@ -287,6 +298,7 @@ export function L3EnhancedCards({
   // 조건부 후보 — 위 ①~④ 계층(적용값)과 **분리해서** 렌더한다(아래 주석 참조).
   const condCeiling = effFar?.conditional_ceiling ?? null;
   const ordCond = effFar?.ordinance_conditional ?? null;
+  const ordAttach = effFar?.ordinance_attachment_only ?? null;
   const legalMin = fbd?.법정범위?.min_far_pct ?? effFar?.legal_min_far_pct ?? null;
   const legalMax =
     fbd?.법정범위?.max_far_pct ??
@@ -386,6 +398,47 @@ export function L3EnhancedCards({
               <p className="text-[10px] font-bold text-[var(--text-secondary)] sm:text-right max-w-md">근거: {farFinalBasis}</p>
             )}
           </div>
+          {/* ★조례 수치 미확보의 **사유** — 값이 아니라 사유를 낸다.
+              종전엔 ② 조례 적용이 "확인 필요"라고만 말했다. 그러면 사용자는 *조례가 없거나
+              용도지역이 틀렸다*고 의심한다 — 실제 원인은 **우리가 그 별표(HWP 첨부)를 읽지
+              못한다**이고, 사용자가 할 수 있는 다음 행동(원문 열람)도 완전히 다르다.
+              백엔드(#718)는 이 사유를 만들어 놓고도 **소비처가 0**이라 화면에 닿지 못했다.
+              ★조건부 완화 후보 박스와 **분리한다**: 저건 "열릴 수 있는 값"이고 이건
+              "왜 값을 모르는가"다 — 같은 박스에 놓으면 후보값처럼 읽힌다. */}
+          {ordAttach && (
+            <div
+              data-testid="ordinance-attachment-only"
+              className="mt-4 rounded-xl border border-[var(--accent-strong)]/30 bg-[var(--accent-soft)] p-4"
+            >
+              <p className="text-[10px] font-black text-[var(--accent-strong)] mb-2">
+                조례 수치 미확보 — <span className="underline">별표가 첨부파일(HWP)입니다</span>
+              </p>
+              {ordAttach.reason && (
+                <p className="text-[11px] font-bold leading-relaxed text-[var(--text-secondary)]">
+                  {ordAttach.reason.replace(/\*\*/g, "")}
+                </p>
+              )}
+              <p className="mt-1.5 text-[10px] font-bold text-[var(--text-tertiary)]">
+                위 ② 조례 적용이 비어 있고 최종값이 법정상한인 것은 <span className="font-black">이 사유 때문</span>입니다
+                — 조례가 없거나 용도지역이 틀린 것이 아닙니다.
+              </p>
+              {(ordAttach.requires ?? []).map((rq, i) => (
+                <p key={`rq${i}`} className="mt-1 text-[10px] text-[var(--text-tertiary)]">
+                  · {rq}
+                </p>
+              ))}
+              {ordAttach.attachment_url && (
+                <a
+                  href={ordAttach.attachment_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-2.5 inline-flex items-center gap-1 rounded-lg border border-[var(--accent-strong)]/40 px-2.5 py-1.5 text-[10px] font-black text-[var(--accent-strong)] transition-colors hover:bg-[var(--accent-strong)]/10"
+                >
+                  별표 원문 열기{ordAttach.ordinance_name ? ` — ${ordAttach.ordinance_name}` : ""} ↗
+                </a>
+              )}
+            </div>
+          )}
           {/* ★조건부 완화 후보 — **계층 카드로 넣지 않는다**. 위 ①~④는 '적용된 값'이고
               이것은 '조건이 충족되면 열릴 수 있는 값'이라, 같은 줄에 놓으면 적용값으로 읽힌다.
               조례는 `용도지역 → 값 하나`가 아니라 `용도지역 × 조건 → 값들`이다(오산시
