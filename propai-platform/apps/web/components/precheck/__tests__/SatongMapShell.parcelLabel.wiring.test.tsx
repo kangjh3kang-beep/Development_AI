@@ -119,6 +119,12 @@ describe("SatongMapShell 좌표 앵커 지번 자가치유 — 배선", () => {
     );
     expect(pointCalls).toEqual([{ lat: 37.1789, lon: 127.0611 }]);
     expect(screen.queryByTestId("parcel-jibun-unresolved")).toBeNull();
+
+    // ★라벨만 보면 **두 경로 중 하나만** 살아 있어도 초록이다(주소로도, PNU 로도 같은 지번이
+    //   나온다). 그래서 둘을 따로 못박는다 — 카드 title 이 주소와 PNU 를 함께 싣는다.
+    expect(
+      screen.getByTitle(/경기도 오산시 내삼미동 114-1 · PNU 4137011000101140001/),
+    ).toBeInTheDocument();
   });
 
   it("★앵커가 **동 단위 주소뿐**이면 요청 자체가 나가지 않는다(임의 필지 수렴 금지)", async () => {

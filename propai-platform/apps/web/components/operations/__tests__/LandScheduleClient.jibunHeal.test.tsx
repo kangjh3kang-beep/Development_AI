@@ -158,4 +158,28 @@ describe("토지조서 지번 칸 — 세 모집단", () => {
     expect(new Set(rows.map((r) => r.jibun)).size).toBe(2);
     expect(jibunCells()).toEqual([`${DONG} 114-1`, `${DONG} 467-1`]);
   });
+
+  it("★이미 치유된 라벨의 행에도 PNU 가 채워진다(라벨 치유 이펙트가 안 도는 유일한 경로)", () => {
+    // 라벨은 이미 `… 114-1` 이라 staleJibunFixes 는 이 행을 건드리지 않는다.
+    // 그때 PNU 를 채우는 곳은 병합의 그 한 줄뿐이다 — 빠지면 등기가 대표 PNU 로 떨어진다.
+    const healedLabelNoPnu: LandRow = {
+      id: "r1", jibun: `${DONG} 114-1`, pnu: null, owner: "김소유", share: "", area_sqm: 100,
+      owner_type: "사유지", expected_price: null, purchase_price: null, contracted: false,
+      land_use_consent: false, district_consent: false, operator_consent: false, pdf_url: null,
+    };
+    useLandScheduleStore.setState({ byProject: { [PID]: [healedLabelNoPnu] } });
+    seedProject([
+      { pnu: PNU_B, address: DONG, areaSqm: 100, landCategory: "임야", ownerType: "" },
+      { pnu: PNU_A, address: DONG, areaSqm: 200, landCategory: "임야", ownerType: "" },
+    ]);
+
+    render(<LandScheduleClient locale="ko" />);
+
+    const rows = useLandScheduleStore.getState().byProject[PID] ?? [];
+    expect(rows).toHaveLength(2); // 공허 진리 가드: 재시드가 실제로 돌았다
+    const kept = rows.find((r) => r.owner === "김소유");
+    expect(kept).toBeDefined();
+    expect(kept!.jibun).toBe(`${DONG} 114-1`); // 라벨은 그대로(치유 이펙트 미발화 확인)
+    expect(kept!.pnu).toBe(PNU_B);             // ★PNU 만 병합이 채웠다
+  });
 });
