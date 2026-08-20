@@ -105,6 +105,12 @@ describe("조건부 완화 후보 표시", () => {
  * 그래서 화면은 "조례 확인 필요"라고만 말했고, 사용자는 *조례가 없거나 용도지역이 틀렸다*고
  * 의심하게 된다 — **틀린 사유는 틀린 처방을 부른다**.
  */
+/* ★변이감사 잔존 생존군의 정체(2026-08-21 · 17건 중 13→12건) — 점수 부풀리기 방지를 위해 적는다.
+ *  전부 **`className` 문자열과 주석**이다. 변이도구는 *따옴표 문자열*을 바꾸는데, JSX 텍스트는
+ *  문자열 리터럴이 아니라 이 줄들에서 실제로 바뀌는 건 Tailwind 클래스뿐이다
+ *  (반증: 그 줄들의 JSX 텍스트는 아래 단언들이 이미 잠그고 있어, 텍스트가 바뀌었다면 죽었어야 한다).
+ *  스타일 회귀는 이 스위트의 사정거리 밖이다 — **동작을 바꾸는 생존은 남기지 않았다**
+ *  (`target="_blank"` 1건이 그 부류였고, 위에서 락을 추가해 죽였다). */
 describe("조례 수치 미확보 사유(별표 HWP 첨부)", () => {
   const ATTACH = {
     reason:
@@ -135,7 +141,20 @@ describe("조례 수치 미확보 사유(별표 HWP 첨부)", () => {
     renderWith({ ...BASE_EFF, ordinance_confirmed: false, ordinance_attachment_only: ATTACH });
     const link = screen.getByRole("link", { name: /별표 원문 열기/ });
     expect(link.getAttribute("href")).toBe(ATTACH.attachment_url);
+    // ★변이감사(2026-08-21)가 잡았다: `rel` 만 잠갔더니 `target="_blank"` 삭제가 **생존**했다.
+    //   target 이 빠지면 원문이 **같은 탭에서 열려 분석 화면이 날아간다** — 스타일이 아니라
+    //   동작이다. `rel` 은 그 target 의 보안 짝이라 **한 쌍으로** 잠근다.
+    expect(link.getAttribute("target")).toBe("_blank");
     expect(link.getAttribute("rel")).toContain("noopener");
+  });
+
+  it("★무엇을 의심하면 안 되는지 말한다 — 이 고지의 존재 이유", () => {
+    renderWith({ ...BASE_EFF, ordinance_confirmed: false, ordinance_attachment_only: ATTACH });
+    const box = screen.getByTestId("ordinance-attachment-only");
+    // 최종값이 법정상한인 **이유**를 화면이 직접 잇는다. 이 문장이 없으면 사용자는
+    // "조례가 없다"·"용도지역이 틀렸다"로 오진한다(#718 이 백엔드에서 고친 바로 그 결함).
+    expect(box.textContent).toContain("최종값이 법정상한인 것은");
+    expect(box.textContent).toContain("조례가 없거나 용도지역이 틀린 것이 아닙니다");
   });
 
   it("★★후보값으로 읽히지 않는다 — '적용값이 아닙니다' 박스와 분리된다", () => {
