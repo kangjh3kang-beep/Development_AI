@@ -89,7 +89,7 @@ import {
   resolveVWorldBaseLayer,
 } from "@/lib/satong-map-layers";
 import { buildSelectionGeoJson, buildSelectionKml, kakaoRoadviewUrl } from "@/lib/satong-export";
-import { normalizePnu } from "@/lib/pnu";
+import { joinAddressJibun, normalizePnu } from "@/lib/pnu";
 import { countJibunHealTargets, healParcelJibunByPoint } from "@/lib/parcel-jibun-heal";
 import { ParcelJibunLabel } from "@/components/precheck/ParcelJibunLabel";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
@@ -555,8 +555,26 @@ function normalizeKey(value: string): string {
   return value.trim().replace(/\s+/g, " ");
 }
 
-function parcelKey(parcel: Pick<SatongParcel, "address" | "pnu">): string {
-  return parcel.pnu || normalizeKey(parcel.address);
+/**
+ * 선택목록 병합(addParcels) 의 **필지 정체성 키**.
+ *
+ * ★★2026-08-20 CRITICAL — `pnu || address` 만으로는 **77필지가 1필지로 지워진다.**
+ *   신고 프로젝트는 77필지의 **주소가 전부 같다**(`경기도 오산시 내삼미동`). 종전에는 PNU 칸에
+ *   들어앉은 서로 다른 **가짜값**이 우연히 유일성을 제공하고 있었다 — 그 가짜를 정화하는 순간
+ *   유일성이 사라져 `new Map(prev.map(p => [parcelKey(p), p]))` 가 77개를 한 키로 접고,
+ *   `syncParcelsToStores` 가 그 1건을 **영속**한다(지도에서 필지 하나만 클릭해도 발화).
+ *
+ *   그래서 PNU 가 없으면 **필지별 유일 id** 로 떨어진다. 복원 id 는 `store-${index}-${address}`
+ *   라 필지마다 다르고, 삽입 경로 id 는 `pnu || normalizeKey(address)` 라 기존 중복제거 계약이
+ *   그대로 유지된다(같은 주소를 두 번 담으면 여전히 1건 — 무회귀).
+ *
+ * ★저장소 기준선과 같은 처방이다: `ParcelSurveyQuotePanel` 이 PNU 없는 필지에
+ *   `project-idx:${i}:${address}` 를 붙여 같은 함정을 이미 풀어 놨다.
+ */
+function parcelKey(parcel: Pick<SatongParcel, "address" | "pnu" | "id">): string {
+  // ★구현은 `dominantConstraintKey`(satong-map-selection) 한 곳이다 — 선택목록 병합과 뷰 캐시가
+  //   **같은 정체성 규칙**을 써야 한다(두 벌이면 한쪽만 고쳐진다. 이 PR 이 반복해서 만난 함정).
+  return dominantConstraintKey(parcel);
 }
 
 /**
@@ -636,10 +654,16 @@ function parseGeocodeToParcel(
   };
 }
 
-function parsedParcelToSelection(parcel: ParsedParcel): SatongParcel {
-  const address = parcel.address || parcel.jibun || parcel.pnu || "엑셀 등록 필지";
+function parsedParcelToSelection(parcel: ParsedParcel, index: number): SatongParcel {
+  // ★`address || jibun` 이 아니라 **결합**이다(joinAddressJibun 주석 = 이 결함의 진짜 상류).
+  //   소재지·지번이 분리된 엑셀 양식에서 `||` 는 지번을 평가조차 하지 않아 통째로 버렸다.
+  const address = joinAddressJibun(parcel.address, parcel.jibun, parcel.pnu || "엑셀 등록 필지");
   return {
-    id: parcel.pnu || normalizeKey(address),
+    // ★PNU 도 지번도 없어 주소가 동 단위뿐이면 **행 번호**로 구분한다. 안 그러면 같은 동
+    //   77행이 한 키로 접혀 목록에 1건만 남는다(#672 가 신고된 바로 그 증상).
+    //   대가: 같은 엑셀을 두 번 올리면 행이 중복된다 — **보이고 지울 수 있는** 문제이고
+    //   조용히 사라지는 것보다 낫다(저장소 기준선 ParcelSurveyQuotePanel 과 같은 처방).
+    id: parcel.pnu || `excel-${index}-${normalizeKey(address)}`,
     address,
     pnu: parcel.pnu ?? null,
     areaSqm: parcel.area_sqm ?? null,
@@ -651,7 +675,8 @@ function parsedParcelToSelection(parcel: ParsedParcel): SatongParcel {
 }
 
 function mapParcelToSelection(parcel: ParcelAtPointResult): SatongParcel {
-  const address = parcel.address || parcel.jibun || parcel.pnu || "지도 선택 필지";
+  // 지도 클릭도 같은 결합 규칙을 쓴다(형제 스윕 — 한쪽만 고치면 다시 갈린다).
+  const address = joinAddressJibun(parcel.address, parcel.jibun, parcel.pnu || "지도 선택 필지");
   return {
     id: parcel.pnu || normalizeKey(address),
     address,
@@ -1877,6 +1902,10 @@ export function SatongMapShell({
       setSelectedParcels((prev) => {
         // 스냅샷 이후 목록이 바뀌었으면(추가·삭제) 인덱스가 어긋나므로 폐기한다 —
         // 다음 렌더에서 미해석 건수가 그대로라 이펙트가 다시 돈다(무날조: 틀린 행에 안 쓴다).
+        // ★이 줄은 **의도된 이중 가드(조기 탈출)** 다 — 정확성은 아래
+        //   `parcel !== snapshot[index]` 참조 동등성이 단독으로 보장한다(길이가 달라져 인덱스가
+        //   밀리면 그 비교가 반드시 어긋난다). 그래서 이 줄만 지우는 변이는 **생존이 정상**이고,
+        //   락은 아래 줄에 걸려 있다(변이 점수 부풀리기 방지 — 사실을 여기 적는다).
         if (prev.length !== snapshot.length) return prev;
         const next = prev.map((parcel, index) => {
           const hit = healed.find((h) => h.index === index);
@@ -2080,7 +2109,7 @@ export function SatongMapShell({
         //   호환을 위해 기본 포함 — 무회귀). 필터 로직은 그대로 두되(향후 방어), 실제로는
         //   백엔드 계약상 아래 filter가 걸러내는 행은 사실상 없다.
         const injectable = allParcels.filter((p) => p.injectable !== false);
-        const parcels = injectable.map(parsedParcelToSelection);
+        const parcels = injectable.map((p, i) => parsedParcelToSelection(p, i));
         addParcels(parcels);
         setUploadStatus("idle");
         setUploadParcels(allParcels);
@@ -3737,7 +3766,7 @@ export function SatongMapShell({
                           key={`${p.address ?? p.jibun ?? p.pnu ?? "row"}-${i}`}
                           className="rounded-lg bg-[var(--status-warning)]/10 px-2 py-1.5 text-[11px] font-semibold text-[var(--status-warning)]"
                         >
-                          {p.address || p.jibun || p.pnu || `행 ${i + 1}`} —{" "}
+                          {joinAddressJibun(p.address, p.jibun, p.pnu || `행 ${i + 1}`)} —{" "}
                           {(p.verification_reasons ?? []).join(" · ") || "확인 필요"}
                         </li>
                       ))}

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  dominantConstraintKey,
   readSatongMapSelection,
   satongSelectionAddresses,
   satongSelectionToParcelRows,
@@ -280,5 +281,61 @@ describe("PNU 오염 차단 — 저장(write)과 복원(read) 양쪽", () => {
     expect(restored[2].pnu).toBeNull();
     // (B)와 (C)는 pnu 가 같지만 **주소가 갈린다** — 지번 보유 여부가 두 집합의 실제 차이다.
     expect(restored[1].address).not.toBe(restored[2].address);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// 적대리뷰 CRITICAL 연쇄 — 뷰 캐시 키도 `pnu || address` 라 **같은 동 필지가 한 칸에 몰린다**.
+// 경사도·배치 캐시는 이 키로 **쓰고 또 읽는다**(자기 왕복) → 한 필지의 결과가 나머지 76필지에
+// 교차 표시된다. 가짜 PNU 가 우연히 제공하던 유일성을 정화하면서 드러난 자리다.
+// ────────────────────────────────────────────────────────────────────────────
+describe("dominantConstraintKey — 같은 동 필지를 한 칸에 몰지 않는다", () => {
+  const DONG = "경기도 오산시 내삼미동";
+
+  it("★주소가 같고 PNU 가 없는 두 필지는 **다른 키**를 갖는다(경사도·배치 교차오염 차단)", () => {
+    const a = dominantConstraintKey({ id: `store-0-${DONG}`, pnu: null, address: DONG });
+    const b = dominantConstraintKey({ id: `store-1-${DONG}`, pnu: null, address: DONG });
+    expect(a).not.toBe(b);
+  });
+
+  it("진짜 PNU 가 있으면 **PNU 가 키다** — 서버가 쓰는 키(경계 응답)와 대칭 유지", () => {
+    const pnu = "4137011000104670001";
+    // 조회 측(클라이언트 id 보유)과 저장 측(서버 응답, id 없음)이 같은 키를 낸다.
+    expect(dominantConstraintKey({ id: "store-0-x", pnu, address: DONG })).toBe(pnu);
+    expect(dominantConstraintKey({ pnu, address: DONG })).toBe(pnu);
+  });
+
+  it("★두 모집단이 다른 결과다 — PNU 있는 쪽은 수렴(대칭), 없는 쪽은 분리", () => {
+    const pnu = "4137011000104670001";
+    const withPnu = new Set([
+      dominantConstraintKey({ id: "a", pnu, address: DONG }),
+      dominantConstraintKey({ id: "b", pnu, address: DONG }),
+    ]);
+    const withoutPnu = new Set([
+      dominantConstraintKey({ id: "a", pnu: null, address: DONG }),
+      dominantConstraintKey({ id: "b", pnu: null, address: DONG }),
+    ]);
+    expect(withPnu.size).toBe(1);
+    expect(withoutPnu.size).toBe(2);
+  });
+
+  it("id 도 PNU 도 없으면 주소로 떨어진다(하위호환 — 서버 응답 shape)", () => {
+    expect(dominantConstraintKey({ pnu: null, address: `  ${DONG}  ` })).toBe(DONG);
+  });
+
+  it("★주소에 **지번이 있으면** 주소가 키다 — 서버(경계 응답)와 대칭을 지킨다", () => {
+    // 서버는 id 를 모르고, 지번 주소로 조회한 필지는 pnu: null 로 돌아올 수 있다.
+    // 이때 id 로 떨어지면 저장(주소 키)과 조회(id 키)가 갈려 배너가 조용히 사라진다.
+    const addr = "경상북도 포항시 남구 호미곶면 대보리 산1-1";
+    expect(dominantConstraintKey({ id: "P-noPnu", pnu: null, address: addr })).toBe(addr);
+    expect(dominantConstraintKey({ id: "B-noPnu", pnu: null, address: addr })).toBe(addr);
+  });
+
+  it("★세 갈래가 **서로 다른 규칙**을 탄다(하나로 뭉뚱그리면 한쪽이 깨진다)", () => {
+    const pnu = "4137011000104670001";
+    const jibunAddr = "경기도 오산시 내삼미동 114-1";
+    expect(dominantConstraintKey({ id: "x", pnu, address: DONG })).toBe(pnu);         // ① PNU
+    expect(dominantConstraintKey({ id: "x", pnu: null, address: jibunAddr })).toBe(jibunAddr); // ② 주소
+    expect(dominantConstraintKey({ id: "x", pnu: null, address: DONG })).toBe("x");   // ③ id
   });
 });

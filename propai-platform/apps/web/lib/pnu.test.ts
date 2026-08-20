@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   addressHasJibun,
+  isJibunToken,
+  joinAddressJibun,
   isValidPnu,
   jibunFromPnu,
   normalizePnu,
@@ -227,5 +229,93 @@ describe("parcelDisplayAddress — 주소가 이미 지번으로 끝나면 덧�
     // `… 114-1 467-1` 은 어느 쪽이 맞는지 화면이 말하지 못한다 — 주소를 그대로 둔다.
     expect(parcelDisplayAddress("경기도 오산시 내삼미동 114-1", "4137011000104670001"))
       .toBe("경기도 오산시 내삼미동 114-1");
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// 적대리뷰 HIGH — `addressHasJibun` 이 저장소 기존 기준선(`(번지)?` 인정)보다 **좁았다**.
+// 좁으면 지번이 **있는데도** 지오코딩·경계보강에서 제외돼 PNU 를 영영 못 얻는다(순수 회귀).
+// ★비대칭: 좁게 잡은 쪽이 비싸다. 넓게 잡아 도로명(`테헤란로 152`)이 참이 돼도 라이브
+//   geocode 가 `pnu: None` 을 줘 날조가 새지 않는다.
+// ────────────────────────────────────────────────────────────────────────────
+describe("addressHasJibun — 실무 표기 5종 위음성 회귀", () => {
+  const NEGATIVES_THAT_MUST_PASS = [
+    "경기도 오산시 내삼미동 114-1번지",
+    "경기도 오산시 내삼미동 114번지",
+    "서울특별시 강남구 역삼동 736-19 (역삼동)",
+    "서울특별시 강남구 테헤란로 152 (역삼동, 강남파이낸스센터)",
+    "경기도 오산시 내삼미동 114-1(대)",
+  ];
+
+  it("★다섯 표기 모두 '지번 있음' 이다(하나라도 거짓이면 그 필지는 PNU 를 못 얻는다)", () => {
+    expect(NEGATIVES_THAT_MUST_PASS).toHaveLength(5); // 공허 진리 가드
+    for (const addr of NEGATIVES_THAT_MUST_PASS) {
+      expect(addressHasJibun(addr), addr).toBe(true);
+    }
+  });
+
+  it("★대조군: 동 단위·건물 동호수는 여전히 거짓이어야 한다(가드가 전부 참이면 무의미)", () => {
+    for (const addr of [
+      "경기도 오산시 내삼미동",
+      "경기도 오산시 내삼미동 (오산)",
+      "서울특별시 강남구 역삼동 101동",
+      "",
+    ]) {
+      expect(addressHasJibun(addr), addr).toBe(false);
+    }
+  });
+
+  it("★기존 SSOT(useProjectContextStore.extractAddressTokens)와 **같은 규칙**을 쓴다", () => {
+    // 두 곳이 각자 답하던 시절 어긋난 지점이 정확히 `(번지)` 였다.
+    expect(isJibunToken("114-1번지")).toBe(true);
+    expect(isJibunToken("산12-3")).toBe(true);
+    expect(isJibunToken("101동")).toBe(false);
+  });
+});
+
+describe("parcelDisplayAddress — 괄호 병기 주소에 지번을 중복 출력하지 않는다", () => {
+  it("★`… 736-19 (역삼동)` 에 PNU 지번을 덧붙이지 않는다(후속 지적 회귀 고정)", () => {
+    const addr = "서울특별시 강남구 역삼동 736-19 (역삼동)";
+    expect(parcelDisplayAddress(addr, "1168010100107360019")).toBe(addr);
+    // 축약 라벨에도 지번이 살아 있다(잘려서 동 이름만 남지 않는다).
+    expect(parcelShortLabel(addr, "1168010100107360019")).toContain("736-19");
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// ★★이번 결함의 **진짜 상류**(2026-08-20 조사) — 엑셀 소재지/지번 분리 양식.
+// 라이브 실측: `소재지=경기도 오산시 내삼미동` + `지번=467-1` →
+//   백엔드는 `address="경기도 오산시 내삼미동"` · `jibun="467-1"` · `pnu=413…0001` 로
+//   **정직하게 나눠** 준다. 프론트 유입부가 `address || jibun` 로 받아 지번을 통째로 버렸다.
+// 같은 결합은 GlobalAddressSearch 가 2026-06-17 에 이미 갖고 있었는데, 13일 뒤 생긴
+// 사통맵 유입부가 그 목록에 없어 결함을 재도입했다 — 그래서 구현을 여기 한 곳으로 모은다.
+// ────────────────────────────────────────────────────────────────────────────
+describe("joinAddressJibun — 소재지·지번 분리 양식 결합", () => {
+  it("★분리형이면 결합한다(이 한 줄이 없어 77필지의 지번이 증발했다)", () => {
+    expect(joinAddressJibun("경기도 오산시 내삼미동", "467-1"))
+      .toBe("경기도 오산시 내삼미동 467-1");
+  });
+
+  it("결합형(이미 지번 포함)은 중복 붙이지 않는다", () => {
+    expect(joinAddressJibun("경기도 오산시 내삼미동 467-1", "467-1"))
+      .toBe("경기도 오산시 내삼미동 467-1");
+  });
+
+  it("★지번이 없으면 지어내지 않는다 — 주소를 그대로 둔다(무날조)", () => {
+    expect(joinAddressJibun("경기도 오산시 내삼미동", null)).toBe("경기도 오산시 내삼미동");
+    expect(joinAddressJibun("경기도 오산시 내삼미동", "")).toBe("경기도 오산시 내삼미동");
+  });
+
+  it("주소가 없으면 지번만, 둘 다 없으면 폴백", () => {
+    expect(joinAddressJibun(null, "467-1")).toBe("467-1");
+    expect(joinAddressJibun(null, null, "엑셀 등록 필지")).toBe("엑셀 등록 필지");
+    expect(joinAddressJibun(null, null)).toBe("");
+  });
+
+  it("★결합 결과는 addressHasJibun 을 통과한다 — 상류·하류가 같은 판정을 공유한다", () => {
+    const joined = joinAddressJibun("경기도 오산시 내삼미동", "467-1");
+    expect(addressHasJibun(joined)).toBe(true);
+    // 대조군: 결합하지 않았다면(구 동작) 미해석으로 남는다 — 두 결과가 갈린다.
+    expect(addressHasJibun("경기도 오산시 내삼미동")).toBe(false);
   });
 });

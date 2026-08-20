@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { isJibunToken } from "@/lib/pnu";
 import { persist } from "zustand/middleware";
 import { createDebouncedStorage } from "@/lib/debounced-storage";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
@@ -831,7 +832,9 @@ function extractAddressTokens(
       if (norm.length < 2) continue;
       dong.push(norm);
       const next = words[i + 1];
-      if (bunji == null && next && /^산?\d+(-\d+)?(번지)?$/.test(next)) {
+      // ★지번 토큰 판정은 lib/pnu.isJibunToken 한 곳 — 종전엔 이 정규식과 addressHasJibun 이
+      //   각자 답해 `(번지)` 인정 여부가 어긋나 있었다(구현 두 벌 금지).
+      if (bunji == null && next && isJibunToken(next)) {
         bunji = next.replace(/번지$/, "").replace(/^산/, "");
       }
       continue;

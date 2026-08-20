@@ -60,7 +60,7 @@ import { SATONG_PANE_Z, SATONG_POPUP_YIELD, SATONG_UI_Z } from "@/lib/satong-map
 /** 측정 해제는 **표면이 아니다** — 열린 표면이 하나도 없을 때만 ESC 차례가 오도록 최하위. */
 const MEASURE_DISMISS_Z = -1;
 import { clampClickMenuPosition, findFeatureAtPoint } from "@/lib/satong-click-menu";
-import { addressHasJibun, normalizePnu, parcelDisplayAddress, parcelShortLabel } from "@/lib/pnu";
+import { addressHasJibun, joinAddressJibun, normalizePnu, parcelDisplayAddress, parcelShortLabel } from "@/lib/pnu";
 import {
   formatAreaSqm,
   formatDistance,
@@ -801,7 +801,8 @@ function escapeHtml(value: string | number | null | undefined): string {
 }
 
 function pointResultToFeature(parcel: ParcelAtPointResult): SatongMapFeature {
-  const address = parcel.address || parcel.jibun || parcel.pnu || "지도 선택 필지";
+  // 형제 스윕 — 소재지·지번 분리 응답을 결합한다(`||` 는 지번을 통째로 버린다. lib/pnu 주석).
+  const address = joinAddressJibun(parcel.address, parcel.jibun, parcel.pnu || "지도 선택 필지");
   return {
     id: parcel.pnu || address,
     pnu: parcel.pnu ?? null,
@@ -3487,8 +3488,8 @@ export function SatongMultiMap({
               {/* 필지 요약 정보 */}
               <div className="mb-2 space-y-0.5">
                 <p className="text-[12px] font-bold text-[var(--text-primary)] leading-snug">
-                  {/* 주소 또는 PNU 표시 */}
-                  {pending.address || pending.jibun || pending.pnu}
+                  {/* 주소+지번 결합 표시(`||` 는 분리 응답의 지번을 버린다 — lib/pnu 주석) */}
+                  {joinAddressJibun(pending.address, pending.jibun, pending.pnu || "")}
                 </p>
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-[var(--text-secondary)]">
                   {/* 면적(㎡·평) */}

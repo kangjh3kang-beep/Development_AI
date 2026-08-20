@@ -2,7 +2,7 @@
 
 import type { SiteAnalysisData } from "@/store/useProjectContextStore";
 import type { ParcelRow } from "@/lib/parcel-rows";
-import { normalizePnu } from "@/lib/pnu";
+import { addressHasJibun, normalizePnu } from "@/lib/pnu";
 
 export const SATONG_MAP_SELECTION_KEY = "satong_map_selection";
 
@@ -34,11 +34,30 @@ const SATONG_VIEW_CACHE_MAX = 200;
  * 절대 맞지 않는다. 저장 시엔 id 없는 shape를 넘겨 사실상 `pnu || address`였으므로, pnu 미확보
  * 필지(엑셀·지오코딩 시드, id="P-xxx")는 조회 키가 id로 잡혀 캐시 미스 → 배너 미표시가 됐다.
  * 여기서 id를 배제한 단일 규칙만 노출해 비대칭을 구조적으로 막는다.
+ *
+ * ★★2026-08-20 재교정 — `pnu || address` 는 **같은 동의 필지를 한 칸에 몰아넣는다.**
+ *   신고 프로젝트는 77필지의 주소가 전부 같아, 한 필지의 **경사도·배치 결과가 나머지 76필지에
+ *   교차 표시**된다(경사도·배치 캐시는 이 키로 **쓰고 또 읽는다** — 자기 왕복이라 오염이 곧
+ *   오답이다).
+ *
+ *   ★그렇다고 무조건 id 로 떨어지면 **위 비대칭이 되살아난다**: 서버(경계 응답)는 id 를 모르고,
+ *   지번이 붙은 주소로 조회한 필지는 `pnu: null` 로 돌아올 수 있다 — 그러면 저장은 주소 키,
+ *   조회는 id 키가 되어 배너가 사라진다(실제로 기존 회귀 테스트가 이걸 잡았다).
+ *
+ *   그래서 **주소가 필지를 특정하는지**로 가른다 — 이 PR 전체가 쓰는 그 판정(addressHasJibun):
+ *     ① 진짜 PNU 보유        → PNU (서버와 대칭)
+ *     ② 주소에 지번 보유      → 주소 (서버와 대칭 — 서버도 이 주소로 조회했다)
+ *     ③ 동 단위 주소뿐        → **필지별 id** (주소가 필지를 특정하지 못하므로 몰면 안 된다)
+ *   ③은 애초에 서버로 보내지도 않으므로(resolvable 필터) 캐시 미스일 뿐이고,
+ *   **이웃 필지의 규제를 보여주는 것보다 미스가 옳다**(무날조).
  */
 export function dominantConstraintKey(
-  feature: { pnu?: string | null; address?: string | null },
+  feature: { pnu?: string | null; address?: string | null; id?: string | null },
 ): string {
-  return feature.pnu || (feature.address || "").trim().replace(/\s+/g, " ");
+  if (feature.pnu) return feature.pnu;
+  const addr = (feature.address || "").trim().replace(/\s+/g, " ");
+  if (addressHasJibun(addr)) return addr;
+  return feature.id || addr;
 }
 
 /** 뷰 캐시 공용 필지 키 — 지배 제약·경사도가 **같은 규칙**을 써야 한 필지가 한 키로 모인다. */

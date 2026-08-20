@@ -182,4 +182,51 @@ describe("토지조서 지번 칸 — 세 모집단", () => {
     expect(kept!.jibun).toBe(`${DONG} 114-1`); // 라벨은 그대로(치유 이펙트 미발화 확인)
     expect(kept!.pnu).toBe(PNU_B);             // ★PNU 만 병합이 채웠다
   });
+
+  // ── 적대리뷰 HIGH: 자가치유 **가드**가 무잠금이었다 ──────────────────────────
+  //  최후 방어인 "라벨이 시드 원본과 같은가" 는 신고 프로젝트에서 **공허하다**(77개 주소가
+  //  전부 같아 어느 필지와 짝지어도 통과). 즉 아래 두 가드가 **유일한 잠금**이다.
+
+  it("★행 수와 필지 수가 다르면 **아무 행도 건드리지 않는다**(인덱스 대응이 성립하지 않는다)", () => {
+    // 사용자가 행을 1개 더 만든 상태(77↔78). 가드가 없으면 모든 행이 **이웃 필지**의 지번으로 밀린다.
+    const rows: LandRow[] = [0, 1, 2].map((i) => ({
+      id: `r${i}`, jibun: DONG, pnu: null, owner: "", share: "", area_sqm: 100,
+      owner_type: "", expected_price: null, purchase_price: null, contracted: false,
+      land_use_consent: false, district_consent: false, operator_consent: false, pdf_url: null,
+    }));
+    useLandScheduleStore.setState({ byProject: { [PID]: rows } });
+    seedProject([
+      { pnu: PNU_B, address: DONG, areaSqm: 100, landCategory: "임야", ownerType: "" },
+      { pnu: PNU_A, address: DONG, areaSqm: 200, landCategory: "임야", ownerType: "" },
+    ]);
+
+    render(<LandScheduleClient locale="ko" />);
+
+    const cells = jibunCells();
+    expect(cells).toHaveLength(3); // 공허 진리 가드: 재시드가 행을 갈아엎지 않았다
+    expect(cells).toEqual([DONG, DONG, DONG]); // ★한 행도 밀리지 않았다
+    expect(screen.getAllByTestId("land-row-jibun-unresolved")).toHaveLength(3);
+  });
+
+  it("★세대행(집합건물 호실)은 필지 지번으로 덮이지 않는다", () => {
+    const parent: LandRow = {
+      id: "r0", jibun: DONG, pnu: null, owner: "", share: "", area_sqm: 100,
+      owner_type: "", expected_price: null, purchase_price: null, contracted: false,
+      land_use_consent: false, district_consent: false, operator_consent: false, pdf_url: null,
+    };
+    const unit: LandRow = { ...parent, id: "r1", parent_id: "r0", unit_label: "101동 1502호" };
+    useLandScheduleStore.setState({ byProject: { [PID]: [parent, unit] } });
+    seedProject([
+      { pnu: PNU_B, address: DONG, areaSqm: 100, landCategory: "임야", ownerType: "" },
+      { pnu: PNU_A, address: DONG, areaSqm: 200, landCategory: "임야", ownerType: "" },
+    ]);
+
+    render(<LandScheduleClient locale="ko" />);
+
+    const cells = jibunCells();
+    expect(cells).toHaveLength(2); // 공허 진리 가드
+    // ★두 행이 **다른 처분**을 받아야 한다 — 같으면 parent_id 가드를 지워도 통과한다.
+    expect(cells[0]).toBe(`${DONG} 114-1`); // 필지 행: 치유됨
+    expect(cells[1]).toBe(DONG);            // 세대 행: 그대로(필지가 아니다)
+  });
 });

@@ -145,3 +145,64 @@ describe("healParcelJibunByPoint — 세 모집단이 **다른 결과**를 낸�
     expect(resolve).toHaveBeenCalledTimes(1);
   });
 });
+
+// ────────────────────────────────────────────────────────────────────────────
+// 적대리뷰 HIGH — 대표점이 **날조를 만든다**.
+// `geometryRepresentativePoint` 는 **경계상자 중심**이라 오목·부정형 필지에서는 폴리곤 **밖**에
+// 떨어진다. 밖의 점으로 parcel-at-point 를 때리면 **이웃 필지**의 PNU·주소가 오고, 치유가
+// 그걸 채택해 영속한다 — 이 모듈이 없애겠다 선언한 "조용한 오답" 그 자체.
+// ★두 모집단(볼록 / 오목)이 **다른 결과**를 내야 한다. 같으면 가드를 지워도 통과한다.
+// ────────────────────────────────────────────────────────────────────────────
+describe("jibunHealAnchor — 대표점이 자기 폴리곤 밖이면 쓰지 않는다", () => {
+  /** 볼록(사각형) — 경계상자 중심이 안에 있다. */
+  const convex = {
+    type: "Polygon",
+    coordinates: [[
+      [127.060, 37.170], [127.062, 37.170], [127.062, 37.172], [127.060, 37.172], [127.060, 37.170],
+    ]],
+  };
+  /** 오목(U자) — 경계상자 중심이 **홈 안**, 즉 폴리곤 **밖**에 떨어진다. */
+  const concave = {
+    type: "Polygon",
+    coordinates: [[
+      [127.060, 37.170], [127.063, 37.170], [127.063, 37.173], [127.062, 37.173],
+      [127.062, 37.171], [127.061, 37.171], [127.061, 37.173], [127.060, 37.173],
+      [127.060, 37.170],
+    ]],
+  };
+
+  it("볼록 필지 — 대표점이 안이므로 해석한다", () => {
+    const anchor = jibunHealAnchor({ pnu: null, address: "경기도 오산시 내삼미동", geometry: convex });
+    expect(anchor).not.toBeNull();
+    expect(anchor!.lat).toBeCloseTo(37.171, 4);
+    expect(anchor!.lon).toBeCloseTo(127.061, 4);
+  });
+
+  it("★오목 필지 — 대표점이 밖이므로 **해석하지 않는다**(이웃 필지 PNU 채택 차단)", () => {
+    expect(jibunHealAnchor({ pnu: null, address: "경기도 오산시 내삼미동", geometry: concave })).toBeNull();
+  });
+
+  it("★두 모집단이 다른 결과다 — 같으면 가드를 지워도 통과한다", () => {
+    const a = jibunHealAnchor({ pnu: null, address: "동단위", geometry: convex });
+    const b = jibunHealAnchor({ pnu: null, address: "동단위", geometry: concave });
+    expect(a).not.toBeNull();
+    expect(b).toBeNull();
+  });
+
+  it("★오목 필지는 **요청 자체가 나가지 않는다**(대조군: 볼록은 나간다)", async () => {
+    const resolve = vi.fn(async () => ({ pnu: "4137011000104400000", address: "이웃 필지 440" }));
+    const parcels: HealableParcel[] = [
+      { pnu: null, address: "동단위", geometry: concave },
+      { pnu: null, address: "동단위", geometry: convex },
+    ];
+    expect(countJibunHealTargets(parcels)).toBe(1); // 공허 진리 가드
+    const healed = await healParcelJibunByPoint(parcels, resolve);
+    expect(resolve).toHaveBeenCalledTimes(1);
+    expect(healed.map((h) => h.index)).toEqual([1]); // 볼록(index 1)만 치유
+  });
+
+  it("경계 형식을 못 읽으면 쓰지 않는다(모르면 안 쓴다)", () => {
+    expect(jibunHealAnchor({ pnu: null, address: "동단위", geometry: { type: "Point", coordinates: [1, 2] } })).toBeNull();
+    expect(jibunHealAnchor({ pnu: null, address: "동단위", geometry: null })).toBeNull();
+  });
+});

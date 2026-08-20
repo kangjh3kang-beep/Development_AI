@@ -7,14 +7,28 @@
  *   ① 진짜 PNU 보유            → 치유 불필요(`parcelDisplayAddress` 가 지번을 파생한다)
  *   ② 주소에 지번 보유         → 치유 불필요(이미 필지를 특정한다)
  *   ③ 좌표(lat/lon) 보유       → 좌표로 해석한다
- *   ④ 경계(geometry)만 보유    → 대표점을 **일시 계산**해 해석한다
+ *   ④ 경계(geometry)만 보유    → 대표점을 **일시 계산**해 해석한다.
  *                                ★그 대표점을 **영속하지 않는다** — 근사좌표가 "좌표미상"
  *                                  분기를 전역에서 우회한다(SatongMultiMap.tsx 의
  *                                  boundaryFeatureToMapFeature 주석과 같은 규약).
+ *                                ★★그리고 그 대표점이 **자기 폴리곤 안에 있을 때만** 쓴다 —
+ *                                  `geometryRepresentativePoint` 는 **경계상자 중심**이라
+ *                                  오목·부정형 필지(서버가 `terrain:"부정형"` 으로 표기하는
+ *                                  그 필지들)에서는 **폴리곤 밖**에 떨어진다. 밖의 점으로
+ *                                  parcel-at-point 를 때리면 **이웃 필지의 PNU·주소**가 오고,
+ *                                  치유가 그걸 채택해 영속한다 — 이 모듈이 없애겠다고 선언한
+ *                                  "조용한 오답" 그 자체다. 밖이면 **해석하지 않는다**.
  *   ⑤ 앵커가 **주소뿐이고 동 단위** → ★해석하지 않는다.
  *                                라이브 실측(2026-08-20): 동 단위 주소는 서버가 임의의 한
  *                                필지(`114-1`)로 수렴시킨다. 같은 동 77필지에 그걸 쓰면
  *                                77행이 전부 같은 오답이 된다 — 지오코딩으로 채우지 않는다.
+ *
+ * ## 면적 대조를 **일부러 안 넣은 이유**(위양성도 결함이다)
+ *
+ * "응답 면적을 보유분과 대조해 불일치면 미채택" 도 검토했으나 **기각**했다. 보유 면적은 엑셀
+ * 입력값인 경우가 많고 그건 비권위다 — 라이브 실측에서 입력 330㎡ 가 공부상 53㎡ 로 정상
+ * 보정되며 `area_warning` 이 붙었다. 면적이 크게 다른 것은 **정상 동작**이므로, 그걸 오답
+ * 신호로 쓰면 **맞는 치유를 막는다**. 정확한 판정자는 위 ④의 "대표점이 자기 폴리곤 안인가" 다.
  *
  * ## 왜 동시성 상한이 필요한가
  *
@@ -24,6 +38,7 @@
 
 import { addressHasJibun, normalizePnu } from "@/lib/pnu";
 import { geometryRepresentativePoint } from "@/lib/satong-map-layers";
+import { pointInLeafletRings } from "@/lib/satong-click-menu";
 
 export type HealableParcel = {
   pnu?: string | null;
@@ -54,8 +69,38 @@ export function jibunHealAnchor(
   ) {
     return { lat: parcel.lat, lon: parcel.lon };
   }
-  // ④ 경계 대표점(일시 계산 — 영속 금지)
-  return geometryRepresentativePoint(parcel.geometry);
+  // ④ 경계 대표점(일시 계산 — 영속 금지). **자기 폴리곤 안일 때만** 쓴다.
+  const point = geometryRepresentativePoint(parcel.geometry);
+  if (!point) return null;
+  const rings = geometryToLatLonRings(parcel.geometry);
+  // 링을 못 읽으면(형식 밖) 판정할 수 없다 → 쓰지 않는다(모르면 안 쓴다).
+  if (rings.length === 0) return null;
+  return pointInLeafletRings(point.lat, point.lon, rings) ? point : null;
+}
+
+/** GeoJSON Polygon/MultiPolygon → Leaflet 링([lat, lon] 쌍 배열들). GeoJSON 은 [lon, lat] 순서. */
+function geometryToLatLonRings(geometry: unknown): Array<Array<[number, number]>> {
+  const geo = geometry as { type?: string; coordinates?: unknown } | null | undefined;
+  if (!geo?.type || !Array.isArray(geo.coordinates)) return [];
+  const rings: Array<Array<[number, number]>> = [];
+  const eatRing = (ring: unknown) => {
+    if (!Array.isArray(ring)) return;
+    const pts: Array<[number, number]> = [];
+    for (const pt of ring) {
+      if (!Array.isArray(pt) || pt.length < 2) continue;
+      const [lon, lat] = pt as [number, number];
+      if (Number.isFinite(lon) && Number.isFinite(lat)) pts.push([lat, lon]);
+    }
+    if (pts.length >= 3) rings.push(pts);
+  };
+  if (geo.type === "Polygon") {
+    (geo.coordinates as unknown[]).forEach(eatRing);
+  } else if (geo.type === "MultiPolygon") {
+    (geo.coordinates as unknown[]).forEach((poly) => {
+      if (Array.isArray(poly)) poly.forEach(eatRing);
+    });
+  }
+  return rings;
 }
 
 /**

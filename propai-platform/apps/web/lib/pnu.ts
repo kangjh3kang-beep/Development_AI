@@ -109,6 +109,18 @@ export function normalizePnu(value: string | null | undefined): string | null {
 }
 
 /**
+ * 한 토큰이 **지번(번지) 표기**인가 — `123` · `123-4` · `산12-3` · `114-1번지`.
+ *
+ * ★이 저장소의 **단일 판정**이다. 종전엔 같은 질문을 두 곳이 각자 답했고 규칙이 어긋나 있었다:
+ *   `store/useProjectContextStore.extractAddressTokens` 는 `(번지)?` 를 인정했는데
+ *   `addressHasJibun` 은 빼먹어, `…114-1번지` 를 **지번 없음**으로 오판했다.
+ *   구현이 두 벌이면 한쪽만 고쳐진다 — 그래서 `extractAddressTokens` 가 이 함수를 쓴다.
+ */
+export function isJibunToken(token: string | null | undefined): boolean {
+  return /^산?\d+(-\d+)?(번지)?$/.test((token || "").trim());
+}
+
+/**
  * 주소 문자열이 **필지를 특정할 수 있는가**(끝에 번지/지번이 붙어 있는가).
  *
  * ★이 판정이 없으면 **날조가 일어난다.** 라이브 실측(2026-08-20):
@@ -134,9 +146,20 @@ export function normalizePnu(value: string | null | undefined): string | null {
  *            여기까지 막으면 정상 워크플로우를 깨는 **위양성**이다.
  */
 export function addressHasJibun(address: string | null | undefined): boolean {
-  const tokens = (address || "").trim().split(/\s+/).filter(Boolean);
-  const last = tokens[tokens.length - 1] ?? "";
-  return /^산?\d+(-\d+)?$/.test(last);
+  // ★후행 괄호절을 걷어내고 본다. `서울특별시 강남구 역삼동 736-19 (역삼동)` 처럼 **도로명주소
+  //   표준 표기**(법정동·건물명 병기)는 등기·건축물대장에서 복사해 붙이면 일상적으로 들어온다.
+  //   이걸 못 보면 지번이 **있는데도** "미확인" 으로 몰려 지오코딩·경계보강에서 제외되고,
+  //   결국 PNU 를 영영 못 얻는다(#694 가 고치려던 증상의 재발). 라이브 확인:
+  //   `…736-19 (역삼동)` → parcel-boundaries ok(188㎡·일반상업), `…114-1번지` → geocode ok.
+  //   `114-1(대)` 처럼 공백 없이 붙는 표기도 같이 처리하려고 반복 제거한다.
+  let text = (address || "").trim();
+  for (;;) {
+    const stripped = text.replace(/\s*\([^()]*\)\s*$/, "").trim();
+    if (stripped === text) break;
+    text = stripped;
+  }
+  const tokens = text.split(/\s+/).filter(Boolean);
+  return isJibunToken(tokens[tokens.length - 1]);
 }
 
 /**
@@ -167,4 +190,37 @@ export function parcelShortLabel(
   const tokens = full.split(/\s+/).filter(Boolean);
   if (tokens.length === 0) return fallback;
   return tokens.slice(-2).join(" ");
+}
+
+/**
+ * **소재지(동)와 지번(번지)이 분리된 양식**을 하나의 완전한 지번주소로 결합한다.
+ *
+ * ## 왜 여기 있나 (2026-08-20 — 이번 결함의 **진짜 상류**)
+ *
+ * 엑셀 토지조서는 `소재지 | 지번` 을 **다른 칸**에 쓰는 양식이 흔하다. 백엔드
+ * `/zoning/parse-parcels` 는 그 원본을 정직하게 나눠 돌려준다(라이브 실측 2026-08-20:
+ * `소재지=경기도 오산시 내삼미동` + `지번=467-1` → `address="경기도 오산시 내삼미동"` ·
+ * `jibun="467-1"` · `pnu="4137011000104670001"`).
+ *
+ * 그런데 사통맵의 엑셀 유입부가 `parcel.address || parcel.jibun` 로 받았다 — `||` 라서
+ * **소재지가 있으면 지번은 평가조차 되지 않는다.** `467-1` 은 화면에 닿기도 전에 증발했고,
+ * 저장 타입(`SatongSelectionParcel`·`ParcelData`)에 지번 칸이 아예 없어 되살릴 수도 없었다.
+ * 그게 "77행이 전부 동 이름" 의 발원지다.
+ *
+ * ★이 결합은 **이미 이 저장소에 있었다** — `GlobalAddressSearch` 가 2026-06-17(`daa76bc0`)에
+ *   같은 버그를 고치며 만들었다. 그런데 13일 뒤 새로 생긴 사통맵 유입부가 **그 목록에 없어서**
+ *   같은 결함을 그대로 재도입했다. 사람이 센 형제 목록이 상한이었다는 증거이자,
+ *   이 함수를 공용으로 뽑는 이유다(구현 두 벌 금지).
+ *
+ * 없는 값을 지어내지 않는다 — 지번이 없으면 주소를 그대로 돌려준다.
+ */
+export function joinAddressJibun(
+  address: string | null | undefined,
+  jibun: string | null | undefined,
+  fallback = "",
+): string {
+  const addr = (address || "").trim();
+  const jb = (jibun || "").trim();
+  if (jb && addr && !addr.includes(jb)) return `${addr} ${jb}`;
+  return addr || jb || fallback;
 }
