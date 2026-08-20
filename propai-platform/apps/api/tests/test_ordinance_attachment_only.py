@@ -93,3 +93,77 @@ def test_zone_absent_from_inline_table_still_says_zone_missing(svc):
     """
     r = svc._parse_bcr_far_from_text(_INLINE_XML, "일반상업지역", "테스트시")
     assert r is None, "본문형 조례에서 용도지역 미발견은 종전대로 None(폴백)"
+
+
+# ── ★소비처 락 — `get_ordinance_limits` 가 실제로 사유를 싣는가 ─────────────────────
+#   변이감사가 드러냈다: 위 테스트는 파서(`_parse_bcr_far_from_text`)만 태워서,
+#   **배선(get_ordinance_limits)이 통째로 무잠금**이었다(생존 9건이 전부 그 구간).
+#   이 캠페인이 내내 고쳐 온 "정의만 하고 소비처 0"을 여기서 재발시키지 않는다.
+
+import asyncio
+
+_API_ATTACHMENT = {
+    "bcr": None, "far": None,
+    "ordinance_name": "울산광역시 도시계획 조례",
+    "last_updated": None,
+    "parse_confidence": 0.0,
+    "missing_sections": ["별표 첨부파일(HWP)로만 제공 — 본문에 수치 없음"],
+    "caveat": None, "evidence_span": None, "conditional_limits": [],
+    "attachment_only": True,
+    "attachment_url": "http://www.law.go.kr/flDownload.do?gubun=ELIS&flSeq=163373187",
+}
+
+
+def _run_limits(monkeypatch, api_result, *, cache_hit=None):
+    """외부 경계(법제처 API·DB·정적캐시)만 끊고 `get_ordinance_limits` 본체를 실행한다."""
+    import app.services.land_intelligence.ordinance_service as mod
+
+    svc = mod.OrdinanceService()
+
+    async def fake_api(*a, **k):
+        return api_result
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(mod.OrdinanceService, "_fetch_from_moleg_api", fake_api)
+    monkeypatch.setattr(mod, "_load_stored", noop)
+    monkeypatch.setattr(mod, "_save_resolution", noop)
+    monkeypatch.setattr(mod.OrdinanceService, "_lookup_cache", lambda self, *a, **k: cache_hit)
+    return asyncio.run(svc.get_ordinance_limits("울산광역시 남구 삼산동 1", "자연녹지지역"))
+
+
+def test_consumer_carries_the_attachment_reason(monkeypatch):
+    """★소비처가 사유·링크를 싣는다 — 배선이 끊기면 화면은 원인을 영영 모른다."""
+    r = _run_limits(monkeypatch, _API_ATTACHMENT)
+
+    note = r.get("ordinance_attachment_only")
+    assert note is not None, "get_ordinance_limits 가 첨부 사유를 싣지 않는다(배선 끊김)"
+    assert "별표 첨부파일" in note["reason"]
+    assert "flDownload.do" in (note["attachment_url"] or ""), "원문 링크 없음 — 다음 행동 불가"
+    assert note["ordinance_name"] == "울산광역시 도시계획 조례"
+    assert any("별표 원문" in x for x in note["requires"])
+
+
+def test_consumer_disclaimer_says_the_real_reason(monkeypatch):
+    """★화면에 나가는 disclaimer 가 **조례 미보유**가 아니라 **첨부 때문**이라 말한다."""
+    r = _run_limits(monkeypatch, _API_ATTACHMENT)
+    disc = (r.get("provenance") or {}).get("disclaimer") or ""
+    assert "첨부파일" in disc, f"disclaimer 가 진짜 사유를 말하지 않는다: {disc}"
+    assert "조례 미보유" not in disc, "틀린 사유가 남아 있다"
+
+
+def test_consumer_mirrors_into_the_cache_branch(monkeypatch):
+    """형제 미러 — 정적캐시가 있는 지자체에서도 같은 사유가 실린다."""
+    r = _run_limits(monkeypatch, _API_ATTACHMENT, cache_hit={"bcr": 20, "far": 100})
+    assert r["source"] == "지자체 조례(정적캐시)"
+    assert r.get("ordinance_attachment_only") is not None
+
+
+def test_consumer_untouched_when_not_attachment(monkeypatch):
+    """★대조군(음성) — 첨부가 아니면 키가 붙지 않는다(가드 위양성 방지)."""
+    r = _run_limits(monkeypatch, None)
+    # 공허 진리 가드 — 산출 자체는 살아 있어야 한다.
+    assert r.get("effective_bcr") is not None
+    assert r.get("ordinance_attachment_only") is None
+    assert "첨부파일" not in ((r.get("provenance") or {}).get("disclaimer") or "")
