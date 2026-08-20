@@ -540,13 +540,16 @@ def _merge_edge_case_xlsx() -> bytes:
     ws.append(["소재지(주소)", "지번", "비고", "소유구분", "메모", "여백"])  # 3행: 머리글
     ws.append(["서울특별시 동작구 상도동", "210-453", "", "김철수", "", "끝"])
     ws.append(["", "", "", "이영희", "", ""])
-    ws.merge_cells("A4:A5")   # 정상(데이터 행 안)
-    ws.merge_cells("B4:B5")   # 정상
+    # ★데이터 행을 3개로 둔다. 행이 2개뿐이면 음수 인덱스가 범위를 벗어나 예외가 나서,
+    #   '조용히 뒤에서부터 감기는' 진짜 위험이 드러나지 않는다(변이 생존으로 확인했다).
+    ws.append(["", "", "", "박민수", "", ""])
+    ws.merge_cells("A4:A6")   # 정상(데이터 행 안)
+    ws.merge_cells("B4:B6")   # 정상
     # ★제목 영역만 병합 → 표 기준 행번호가 전부 음수. 좌상단(C1)에 값을 둬야 '빈 좌상단'
     #   가드에서 먼저 빠져나가지 않고 **행 경계 가드가 실제로 실행**된다.
     ws.merge_cells("C1:C2")
-    ws.merge_cells("E4:E5")   # ★좌상단이 빈칸 → 채울 값이 없다
-    ws.merge_cells("F4:H5")   # ★표 오른쪽 밖(G·H)까지 넘침 → 열 범위초과
+    ws.merge_cells("E4:E6")   # ★좌상단이 빈칸 → 채울 값이 없다
+    ws.merge_cells("F4:H6")   # ★표 오른쪽 밖(G·H)까지 넘침 → 열 범위초과
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
@@ -596,8 +599,8 @@ def test_partial_recovery_reports_how_many_were_lost():
     out = _parse_x(_break_full_workbook_read(_merge_edge_case_xlsx()), "부분복원.xlsx")
     assert not out.get("error"), "표 자체는 읽혀야 함(전제)"
 
-    # 전제: 복원 가능한 병합(A4:A5·B4:B5)은 실제로 복원돼야 '부분복원' 상황이 성립한다.
-    assert [p.get("jibun") for p in out["parcels"]] == ["210-453", "210-453"], (
+    # 전제: 복원 가능한 병합(A4:A6·B4:B6)은 실제로 복원돼야 '부분복원' 상황이 성립한다.
+    assert [p.get("jibun") for p in out["parcels"]] == ["210-453"] * 3, (
         f"복원 가능한 지번은 원문에서 살아야 한다: {[p.get('jibun') for p in out['parcels']]}"
     )
     fail = [w for w in _warns(out) if "병합 셀 복원 실패" in w]
