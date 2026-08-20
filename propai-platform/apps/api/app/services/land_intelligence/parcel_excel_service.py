@@ -189,7 +189,7 @@ def _to_float(v: Any) -> float | None:
         return None
 
 
-def _expand_merged_cells(raw: bytes, df: Any, header_row: int = 0) -> Any:
+def _expand_merged_cells(raw: bytes, df: Any, header_row: int = 0) -> tuple[Any, str | None]:
     """엑셀 병합 셀의 좌상단 값을 병합범위 전체 셀에 채운다(forward-fill).
 
     토지조서 엑셀은 한 필지(지번)에 소유자가 여럿이면 여러 행을 두고 지번·소재지 칸을
@@ -199,6 +199,14 @@ def _expand_merged_cells(raw: bytes, df: Any, header_row: int = 0) -> Any:
     openpyxl로 병합범위를 읽어 좌상단 값을 같은 범위의 모든 데이터 셀(빈칸)에 채운다.
 
     header_row(0-based)는 머리글 행 위치. 데이터 첫 행은 엑셀 (header_row+2)행 = df index 0.
+
+    반환: (값을 채운 df, 실패사유 문구 또는 None).
+    ★실패를 조용히 삼키지 않는다 — 복원이 실패하면 병합된 지번이 빈칸으로 남아 그 행이
+    소재지(동)만 남거나 목록에서 통째로 사라지는데, 예전에는 로그만 남기고 사용자에게는
+    아무 말도 하지 않았다(화면에는 동 이름만 남고 아무도 그 사실을 몰랐다). 이 파서가 이미
+    지키는 '무음 제외 금지' 규율(집계행을 뺐으면 warnings에 남긴다)을 병합 복원 실패에도
+    똑같이 적용한다 — 호출측이 이 문구를 warnings에 실어 사용자가 지번 누락을 알아챈다.
+    ★없는 지번을 추측해 채우지는 않는다(모르는 값을 지어내는 것이 더 나쁜 결함이다).
     """
     try:
         from openpyxl import load_workbook
@@ -226,7 +234,13 @@ def _expand_merged_cells(raw: bytes, df: Any, header_row: int = 0) -> Any:
                         df.iat[df_row, df_col] = str(top)
     except Exception as e:  # noqa: BLE001
         logger.warning("excel_merged_expand_failed", error=str(e)[:120])
-    return df
+        return df, (
+            f"병합 셀 복원 실패({type(e).__name__}: {str(e)[:80]}) — 여러 행에 걸쳐 세로로 병합된 "
+            "지번·소재지 칸을 읽지 못했습니다. 그 병합 칸에 걸린 행은 지번이 빈칸으로 남아 "
+            "소재지(동)만 남거나 목록에서 빠질 수 있습니다. 엑셀에서 병합을 해제하고 행마다 "
+            "지번을 직접 적어 다시 올려 주세요."
+        )
+    return df, None
 
 
 _LLM_ROLES = {
@@ -582,18 +596,22 @@ class ParcelExcelService:
                          for i, v in enumerate(df0_.iloc[hdr_].tolist())]
             return d, [str(h) for h in d.columns]
 
+        structure_notes: list[str] = []
         hdr = _detect_header_row(df0)
         df, headers = _rebuild(df0, hdr)
         if not is_csv:
             # ★병합 셀 forward-fill — 한 지번을 여러 행에 '병합'한 토지조서에서 병합
             #   연속행의 지번이 소실(NaN)돼 보완필요로 빠지던 근본버그를 차단(지번 기준 복원).
-            df = _expand_merged_cells(raw, df, header_row=hdr)
+            #   ★복원이 실패하면 조용히 넘어가지 않고 사유를 warnings에 실어 사용자에게 알린다
+            #   (실패하면 지번이 빈칸으로 남아 그 행이 동 이름만 남거나 사라진다).
+            df, merge_note = _expand_merged_cells(raw, df, header_row=hdr)
+            if merge_note:
+                structure_notes.append(merge_note)
             headers = [str(h) for h in df.columns]
         df = df.fillna("")
         cols = _detect_columns(headers)
         engine = "rule"
         llm_used = False
-        structure_notes: list[str] = []
 
         def _valid_ratio(frame: Any, colmap: dict) -> float:
             keys = [colmap.get(r) for r in ("address", "pnu", "bcode") if colmap.get(r)]
@@ -637,8 +655,13 @@ class ParcelExcelService:
                         current_sheet = chosen_sheet
                         structure_notes.append(f"LLM이 '{chosen_sheet}' 시트를 토지조서 데이터로 재선택")
                         sheet_changed = True
-                    except Exception:  # noqa: BLE001
-                        pass
+                    except Exception as _e:  # noqa: BLE001
+                        # ★실패를 삼키면 '다른 시트에 진짜 데이터가 있다'는 판단을 못 쓴 채
+                        #   원래 시트 결과를 그대로 내보내면서 사용자는 이유를 모른다.
+                        structure_notes.append(
+                            f"'{chosen_sheet}' 시트를 다시 읽지 못해 '{current_sheet or '첫'}' 시트 "
+                            f"기준으로 분석했습니다({str(_e)[:60]}) — 결과 확인이 필요합니다."
+                        )
 
                 # 2) 전치(세로형) 판정 — 결정론 전치(행↔열 swap) 후 재파싱.
                 if struct.get("is_transposed") is True:
