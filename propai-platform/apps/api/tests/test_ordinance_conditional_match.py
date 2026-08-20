@@ -110,12 +110,58 @@ def test_use_based_conditions_are_undecidable(parsed):
         assert x.get("why"), "판정 불가 사유가 없다 — 사용자가 다음 행동을 못 정한다"
 
 
-def test_designated_district_is_not_asserted(parsed):
-    """★'그 밖에 용도지구·구역 등'(제46조)은 어느 지구인지 못 가르므로 **충족 단정 금지**."""
+def test_designated_district_resolves_to_the_items_own_value(parsed):
+    """★'그 밖에 용도지구·구역 등'(제46조) — **항목별 값**으로 판정한다.
+
+    【이 테스트는 종전 계약을 바꾼다 — 전제가 무너졌기 때문이다】
+    종전 이름은 `test_designated_district_is_not_asserted` 였고, 근거는
+    *"어느 지구인지 못 가르므로 충족 단정 금지"* 였다. 그 전제는 **조각(`context`)만
+    볼 때** 참이었다 — 120자 창이라 나열 항목이 안 보였다.
+    이제 **조문 본문 전체**를 읽어 항목을 가른다(2026-08-21). 그래서 단정할 수 있다.
+
+    ★그리고 이 변경은 **보수화이기도 하다**: 종전엔 조각이 집은 값 하나(30)가 조 전체를
+    대표해, 취락지구 부지에 **30%(실제 40%)** 가 나갈 수 있었다. 지금은 그 부지의
+    항목값 40% 를 낸다 — 매칭을 넓힌 것이 아니라 **틀린 수치를 없앤 것**이다.
+    """
     m = match_site_conditions(parsed["conditional_limits"], [PLAN_ZONE, "취락지구"])
-    assert all(x["condition_key"] != "designated_district" for x in m["matched"])
-    # ★양성 짝 — 같은 호출에서 **다른 조건은 매칭된다**(matched 가 통째로 비어서 참이 된 게 아니다).
+    dd = [x for x in m["matched"] if x["condition_key"] == "designated_district"]
+    assert dd, "제46조가 매칭되지 않았다 — 나열 파싱이 끊겼다"
+    assert dd[0]["value"] == 40, (
+        f"조각 값이 그대로 나왔다({dd[0]['value']}) — 취락지구 부지에 틀린 수치"
+    )
+    assert dd[0]["matched_option"] == "취락지구"
+    # ★양성 짝 — 같은 호출에서 **다른 조건도** 매칭된다(제46조만 특별대우가 아니다).
     assert any(x["condition_key"] == "growth_management_plan" for x in m["matched"])
+
+
+def test_designated_district_is_not_asserted_without_the_enumeration(parsed):
+    """★대조군 — 나열을 못 읽으면 **여전히 충족 단정 금지**(종전 보수성 유지).
+
+    나열 파싱이 깨지는 조례가 있을 수 있다. 그때 조용히 조각 값으로 매칭하면
+    **틀린 수치**가 나간다 — 그 경우는 판정 보류여야 한다.
+    """
+    stripped = [
+        {**c, "district_options": []} if c.get("condition_key") == "designated_district" else c
+        for c in parsed["conditional_limits"]
+    ]
+    m = match_site_conditions(stripped, [PLAN_ZONE, "취락지구"])
+    assert all(x["condition_key"] != "designated_district" for x in m["matched"])
+    dd = [x for x in m["undecidable"] if x["condition_key"] == "designated_district"]
+    assert dd and "읽지 못함" in dd[0]["why"]
+    # ★양성 짝 — matched 가 통째로 비어서 참이 된 게 아니다.
+    assert any(x["condition_key"] == "growth_management_plan" for x in m["matched"])
+
+
+def test_designated_district_value_differs_by_site(parsed):
+    """★두 모집단 — 같은 조문인데 **다른 부지가 다른 값**을 받는다(핵심 불변식)."""
+    def val(district):
+        m = match_site_conditions(parsed["conditional_limits"], [district])
+        dd = [x for x in m["matched"] if x["condition_key"] == "designated_district"]
+        return dd[0]["value"] if dd else None
+
+    chwirak, park = val("취락지구"), val("자연공원")
+    assert chwirak == 40 and park == 60, f"취락={chwirak} 자연공원={park}"
+    assert chwirak != park, "값이 갈리지 않으면 항목별 판정을 끊어도 결과가 같다"
 
 
 # ── 분류기 자체(순수함수) ──────────────────────────────────────────────────────

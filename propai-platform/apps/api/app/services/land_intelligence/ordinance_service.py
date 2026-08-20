@@ -1112,11 +1112,25 @@ class OrdinanceService:
                     if val != slot.get(kind):
                         from app.services.zoning.ordinance_conditional import (
                             classify_article,
+                            extract_article_body,
                             find_article,
+                            parse_district_options,
                         )
 
                         art = find_article(section, _anchor_pos) or {}
                         ckey, ckind, cdir = classify_article(art.get("article_title"))
+                        # ★조 본문의 **나열 항목**을 함께 싣는다(`그 밖에 용도지구·구역 등`).
+                        #   그 조는 `조건 하나 → 값 하나` 가 아니라 **`구역마다 값이 다르다`**
+                        #   (오산 제46조 실측: 취락 40 · 개발진흥 30 · 수산자원 30 ·
+                        #    자연공원 60 · 산업단지 80). 그런데 위 조각 스캐너는 그중
+                        #   **하나(30)** 만 집어 조 전체를 대표하게 만든다 — 취락지구 부지에
+                        #   30% 를 보여 주는 것은 **틀린 수치**다.
+                        #   ★그리고 조각(`context`)은 용도지역명 뒤에서 잘린 **120자 창**이라
+                        #     앞뒤 항목이 보이지 않는다 — 창으로 매칭하면 안 보이는 항목을
+                        #     말없이 빠뜨리고 **거짓 '해당 없음'** 을 낸다. 그래서 **본문**을 쓴다.
+                        options = parse_district_options(
+                            extract_article_body(section, _anchor_pos)
+                        ) if ckey == "designated_district" else []
                         slot.setdefault("conditional", []).append({
                             "kind": kind, "value": val,
                             "context": self._normalize_ws(frag)[:120],
@@ -1125,6 +1139,12 @@ class OrdinanceService:
                             "condition_key": ckey,
                             "condition_kind": ckind,
                             "direction": cdir,
+                            # ★어느 용도지역 맥락에서 뽑힌 값인지 — 나열 항목이 용도지역을
+                            #   한정하는 경우(`개발진흥지구: 자연녹지지역에 지정된 경우 30%`)
+                            #   이것이 없으면 그 한정을 **검사할 수 없다**(항상 통과해 버린다).
+                            "zone_type": zone_name,
+                            # 해당 없으면 [] — 키는 항상 존재(소비처가 `in` 으로 분기하지 않게).
+                            "district_options": options,
                         })
                     continue
                 slot[kind] = val

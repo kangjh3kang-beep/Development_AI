@@ -36,7 +36,11 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from app.services.zoning.district_regime import _norm, is_growth_management_plan
+from app.services.zoning.district_regime import (
+    METRO_REGIME_NAMES,
+    _norm,
+    is_growth_management_plan,
+)
 
 # 조제목 → 조건 종류. **부지 designation 으로 판별 가능한 것**과 그렇지 않은 것을 가른다.
 #   site  = 부지가 그 구역/지구에 속하는가로 판정(우리가 측정 가능)
@@ -65,6 +69,85 @@ def find_article(section: str, pos: int) -> dict[str, Any] | None:
     if not last:
         return None
     return {"article": f"제{last.group(1)}조", "article_title": last.group(2).strip()}
+
+
+def extract_article_body(section: str, pos: int) -> str:
+    """`pos` 가 속한 조문의 **본문 전체**(다음 조문 헤더 직전까지)를 돌려준다.
+
+    ★왜 필요한가 — 조각(`context`)으로는 원리적으로 불가능하다(2026-08-21 실측).
+      `context` 는 용도지역명 **뒤**에서 잘려 시작하는 **120자 고정 창**이라
+      **앞뒤가 모두 잘린다**. 오산시 제46조 실측:
+
+          context  → "…에 지정된 경우 30퍼센트 이하 3. 수산자원보호구역: 30퍼센트 이하 4. …따른"
+          본문전체 → "1. 취락지구: 40 / 2. 개발진흥지구: (자연녹지) 30 / 3. 수산자원보호구역: 30
+                      / 4. 자연공원: 60 / 5. 산업단지 등: 80"
+
+      즉 **1·2번과 5번이 창 밖에 있다.** 이 창으로 매칭을 넓히면 보이지 않는 항목을
+      말없이 빠뜨리고 *"이 부지는 해당 없음"* 이라는 **거짓 음성**을 낸다 —
+      지금의 보수적 기각보다 나쁘다. 그래서 창이 아니라 **본문**을 본다.
+    """
+    if not section:
+        return ""
+    starts = [m.start() for m in _ARTICLE_RE.finditer(section)]
+    begin = 0
+    for st in starts:
+        if st <= pos:
+            begin = st
+        else:
+            break
+    end = next((st for st in starts if st > begin), len(section))
+    body = section[begin:end]
+    # ★법제처 XML 원문이라 조문 끝에 CDATA/태그 꼬리가 붙는다(실측: `]]></조내용><조 …`).
+    #   나열 파싱 전에 잘라 내지 않으면 태그 안의 숫자가 항목처럼 읽힌다.
+    cut = body.find("]]>")
+    if cut != -1:
+        body = body[:cut]
+    return body
+
+
+# 나열 항목: `1. 취락지구: 40퍼센트 이하` · `4. 「자연공원법」에 따른 자연공원: 60퍼센트 이하`
+#   ★항목명 상한은 넉넉해야 한다 — 오산 제46조 5호는 근거법 인용이 길어 **100자를 넘는다**
+#     (`공업지역에 있는 「산업입지…」 제2조제8호가목부터 …준산업단지`). 80자로 자르면
+#     **80% 항목이 통째로 사라진다**(실측으로 적발).
+_ENUM_RE = re.compile(
+    r"(?:^|\s)(\d{1,2})\.\s*([^:：\n]{2,160}?)\s*[:：]\s*([^0-9]{0,40}?)(\d{1,3})\s*퍼센트"
+)
+# ★개정 주기(`〈개정 2025. 2. 28〉`)를 먼저 걷어낸다 — 그 안의 `2. 28` 이 나열 번호로 읽혀
+#   1호를 `'28〉 1. 취락지구'` 로 오염시켰다(실측으로 적발). 날짜는 항목이 아니다.
+_AMEND_NOTE_RE = re.compile(r"[〈<]\s*(?:개정|신설|전문개정|본조신설)[^〉>]{0,40}[〉>]")
+# 항목명에서 근거법 인용(「…」)과 수식어를 걷어내 **구역 이름**만 남긴다.
+_LAW_CITE_RE = re.compile(r"「[^」]{1,60}」(?:\s*제[\d조항호가-힣]+)*(?:에\s*따른)?\s*")
+# 항목 안에 붙는 용도지역 한정("자연녹지지역에 지정된 경우")
+_ZONE_SCOPE_RE = re.compile(r"([가-힣]{2,10}지역)에\s*지정된\s*경우")
+
+
+def parse_district_options(body: str) -> list[dict[str, Any]]:
+    """조문 본문의 `N. 구역명: X퍼센트` 나열을 (구역명, 값, 용도지역한정) 로 뜯는다.
+
+    ★값은 **항목마다 다르다**(오산 제46조: 취락 40 · 개발진흥 30 · 수산자원 30 ·
+      자연공원 60 · 산업단지 80). 종전에는 조각 스캐너가 집은 **하나**(30)가
+      조 전체를 대표했다 — 취락지구 부지에 30% 를 보여 주는 것은 **틀린 수치**다.
+    """
+    out: list[dict[str, Any]] = []
+    body = _AMEND_NOTE_RE.sub(" ", body or "")
+    for m in _ENUM_RE.finditer(body):
+        raw = m.group(2).strip()
+        prefix = m.group(3) or ""
+        zone_scope = None
+        zm = _ZONE_SCOPE_RE.search(prefix) or _ZONE_SCOPE_RE.search(raw)
+        if zm:
+            zone_scope = zm.group(1)
+        name = _LAW_CITE_RE.sub("", raw).strip(" ·ㆍ,")
+        name = _ZONE_SCOPE_RE.sub("", name).strip(" ·ㆍ,")
+        if len(name) < 2:
+            continue
+        out.append({
+            "no": int(m.group(1)),
+            "name": name,
+            "value": int(m.group(4)),
+            "zone_scope": zone_scope,
+        })
+    return out
 
 
 def classify_article(article_title: str | None) -> tuple[str, str, str]:
@@ -115,12 +198,75 @@ def match_site_conditions(
                 "why": "건축물 용도·연혁 조건 — 설계가 정해져야 판정 가능",
             })
             continue
+        if key == "designated_district":
+            # ★이 조는 **나열형**이라 항목마다 값이 다르다 — 조각이 집은 `item["value"]` 하나로
+            #   판정하면 틀린 수치를 낸다. 나열을 실제로 읽었을 때만 판정한다.
+            resolved = _match_district_options(item, names)
+            out[resolved.pop("_bucket")].append(resolved["row"])
+            continue
         if _site_condition_holds(key, item, names, has_growth_plan):
             out["matched"].append(item)
         else:
             out["unmatched_site"].append(item)
 
     return {**out, "applied": False}
+
+
+def _match_district_options(item: dict[str, Any], names: list[str]) -> dict[str, Any]:
+    """`그 밖에 용도지구·구역 등` — 나열 항목 × 부지 designation.
+
+    세 갈래로만 답한다(**모르는 것을 아는 척하지 않는다**):
+
+    · 나열을 못 읽었다      → `undecidable` (종전과 같은 보수적 기각, **사유를 명시**)
+    · 읽었고 맞는 항목 있다  → `matched` — **그 항목의 값**과 이름을 싣는다(조각 값 아님)
+    · 읽었고 맞는 항목 없다  → `unmatched_site` — 이제 **전체 목록을 봤으므로** 신뢰할 수 있다
+    """
+    options = item.get("district_options") or []
+    if not options:
+        return {"_bucket": "undecidable", "row": {
+            **item,
+            "why": "조문 나열 항목을 읽지 못함 — 어느 지구·구역인지 가릴 수 없어 판정 보류",
+        }}
+
+    zone = item.get("zone_type") or None
+    for opt in options:
+        name = (opt.get("name") or "").strip()
+        if len(name) < 3:
+            continue
+        # ★부분일치 금지 규율(#703)의 올바른 방향: **조례가 적은 구역명 전체**가 부지 지정명
+        #   안에 나타나야 한다(`취락지구` ⊂ `자연취락지구` = 하위유형이므로 참).
+        #   반대 방향(부지명 조각이 조례명에 포함)은 **금지** — `성장관리` 처럼 서로 다른 제도가
+        #   접두를 공유할 때 엉뚱한 제도를 집는다.
+        hit = next((n for n in names if name in n), None)
+        if not hit:
+            continue
+        # ★수도권정비계획법 권역은 국계법 용도지구·구역이 아니다 — 공용 SSOT 로 배제한다.
+        if any(m in hit for m in METRO_REGIME_NAMES):
+            continue
+        # 항목이 용도지역을 한정하면(`자연녹지지역에 지정된 경우`) 그 지역일 때만 성립.
+        scope = opt.get("zone_scope")
+        if scope and zone and scope != zone:
+            continue
+        return {"_bucket": "matched", "row": {
+            **item,
+            # ★조각이 집은 값이 아니라 **이 항목의 값**으로 덮는다.
+            "value": opt.get("value"),
+            "matched_district": hit,
+            "matched_option": name,
+            "why": f"부지가 '{hit}' 로 지정됨 — 조문 {opt.get('no')}호",
+        }}
+
+    return {"_bucket": "unmatched_site", "row": {
+        **item,
+        # ★조각이 집었던 값을 지운다. 이 부지에는 **어느 항목도 해당하지 않는다**고 판정한
+        #   마당에 그 값을 달고 다니면, 나중 소비처가 그것을 이 부지의 값으로 읽는다
+        #   (조각 값 30 은 애초에 나열 중 아무 항목이나 하나였다).
+        "value": None,
+        "why": (
+            f"조문 나열 {len(options)}개 항목 중 이 부지의 지정과 맞는 것이 없음"
+            f"({', '.join((o.get('name') or '')[:12] for o in options[:5])})"
+        ),
+    }}
 
 
 def _site_condition_holds(
@@ -137,12 +283,8 @@ def _site_condition_holds(
         return any("방화지구" in n for n in names)
     if key == "landscape_district":
         return any("경관지구" in n for n in names)
-    if key == "designated_district":
-        # 조제목이 '그 밖에 용도지구·구역 등' 이라 어느 지구인지 조문 본문의 나열에 달렸다.
-        # 나열 항목을 우리가 신뢰성 있게 못 가르므로 **충족으로 단정하지 않는다**(보수측).
-        # ※변이감사 메모: 이 분기를 지워도 아래 최종 `return False` 가 같은 결과를 낸다
-        #   (**이중 경로**). 그럼에도 남기는 이유는 *"판정 못 해서 False"* 와
-        #   *"규칙에 없어서 False"* 가 다른 사실이기 때문이다 — 나중에 나열 항목을
-        #   가를 수 있게 되면 고칠 자리가 여기임을 명시한다. 락을 더 걸지 않는다.
-        return False
+    # ★`designated_district` 는 여기 오지 않는다 — 나열형이라 `_match_district_options` 가
+    #   **항목별 값**으로 판정한다(이 함수는 값이 하나인 조건만 다룬다).
+    #   종전 주석이 *"나중에 나열 항목을 가를 수 있게 되면 고칠 자리가 여기"* 라고 적어 뒀는데,
+    #   실제로 가를 수 있게 되니 **고칠 자리는 여기가 아니었다**(값이 조건마다 달라서).
     return False
