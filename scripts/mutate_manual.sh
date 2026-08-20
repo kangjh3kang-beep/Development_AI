@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+# 손으로 고른 변이(semantic mutation)를 **안전하게** 돌린다.
+#
+# ★왜 이 스크립트가 필요한가 (2026-08-21 실사고)
+#   `scripts/mutate_changed.py` 는 diff 에서 **기계적으로** 변이를 뽑고, 스냅샷 복원이라 안전하다.
+#   그런데 배선·계약처럼 **의미를 아는 사람만 만들 수 있는 변이**는 손으로 넣게 된다
+#   (예: "Dockerfile 이 다른 파일을 가리키게" · "가드를 화이트리스트에서 블랙리스트로").
+#   그 손 경로에는 **안전장치가 하나도 없었고**, 실제로 사고가 났다:
+#
+#     · 미커밋 상태에서 `git checkout -- <파일>` 로 변이를 되돌리다 **내 편집을 통째로 날렸다**
+#       (테스트 13 passed → 10 passed. CLAUDE.md §B7 이 명시한 그 함정을 알면서 밟았다)
+#     · `grep -c` 로 주입을 확인하다 **동명의 다른 줄**을 세어 주입 실패를 못 봤다(§B8)
+#
+#   규율이 문서에만 있으면 지켜지지 않는다. **안전한 길을 더 쉽게** 만들어야 한다.
+#
+# 사용법:
+#   scripts/mutate_manual.sh <파일> <sed표현식> <테스트명령…>
+#
+# 예:
+#   scripts/mutate_manual.sh propai-platform/Dockerfile.oracle \
+#     's|requirements.oracle.txt|reqs-prod.txt|' \
+#     python3 -m pytest tests/test_no_unused_jwt_dependency.py -q
+#
+# 이 스크립트가 강제하는 것:
+#   ①§B7 — 대상 파일에 **미커밋 변경이 있으면 거부**한다(커밋 먼저).
+#   ②§B8 — 변이가 **실제로 주입됐는지** 파일 내용 비교로 확인한다(`grep -c` 를 안 믿는다).
+#   ③원복은 **git 이 아니라 스냅샷**에서 한다 — git 은 내 다른 편집까지 되돌린다.
+#   ④원복 후 **바이트 동일**을 단언한다. 다르면 시끄럽게 실패한다.
+set -euo pipefail
+
+if [ "$#" -lt 3 ]; then
+  echo "사용법: $0 <파일> <sed표현식> <테스트명령…>" >&2
+  exit 64
+fi
+
+FILE="$1"; SED_EXPR="$2"; shift 2
+
+[ -f "$FILE" ] || { echo "★대상 파일이 없다: $FILE" >&2; exit 65; }
+
+# ── ①§B7 커밋 먼저 ──────────────────────────────────────────────────────────
+#   미커밋 변경이 있으면 거부한다. 스냅샷 복원이라 원리적으로는 안전하지만,
+#   **변이 결과 자체가 오염**된다 — 내 미커밋 편집이 섞인 상태를 재는 것이기 때문이다.
+if ! git diff --quiet -- "$FILE" || ! git diff --cached --quiet -- "$FILE"; then
+  echo "★중단: '$FILE' 에 미커밋 변경이 있다(CLAUDE.md §B7)." >&2
+  echo "  변이 결과가 오염된다 — **커밋 먼저** 하고 다시 실행할 것." >&2
+  git --no-pager diff --stat -- "$FILE" | sed 's/^/    /' >&2
+  exit 10
+fi
+
+SNAP="$(mktemp)"
+cp "$FILE" "$SNAP"
+
+# ── ③원복은 git 이 아니라 스냅샷에서 · ④바이트 동일 단언 ────────────────────
+restore() {
+  cp "$SNAP" "$FILE"
+  if ! cmp -s "$SNAP" "$FILE"; then
+    echo "★★원복 실패 — '$FILE' 이 스냅샷과 다르다. 손으로 확인할 것: $SNAP" >&2
+    exit 70
+  fi
+  rm -f "$SNAP"
+}
+trap restore EXIT   # 중간에 끊겨도 반드시 원복(Ctrl-C·오류 포함)
+
+# ── ②§B8 주입 확인 — grep 이 아니라 내용 비교 ────────────────────────────────
+sed -i "$SED_EXPR" "$FILE"
+if cmp -s "$SNAP" "$FILE"; then
+  echo "★중단: 변이가 **주입되지 않았다**(파일 내용 무변화 · CLAUDE.md §B8)." >&2
+  echo "  sed 표현식이 대상을 못 찾았다. 이 상태로 테스트를 돌리면 '통과'가 무의미하다." >&2
+  echo "  표현식: $SED_EXPR" >&2
+  exit 11
+fi
+echo "== 주입 확인(내용이 실제로 바뀜) =="
+git --no-pager diff --no-index --stat "$SNAP" "$FILE" 2>/dev/null | tail -1 | sed 's/^/  /' || true
+
+# ── 테스트 실행 ─────────────────────────────────────────────────────────────
+echo "== 변이 상태에서 테스트 =="
+set +e
+"$@"
+RC=$?
+set -e
+
+if [ "$RC" -eq 0 ]; then
+  echo "SURVIVED — 변이를 넣었는데 테스트가 통과했다. 그 자리는 잠겨 있지 않다."
+else
+  echo "CAUGHT — 변이가 잡혔다(rc=$RC)."
+fi
+
+# trap 이 원복한다. 원복 결과는 아래에서 다시 확인한다.
+restore
+trap - EXIT
+if ! git diff --quiet -- "$FILE"; then
+  echo "★★원복 후에도 작업트리가 더럽다: $FILE" >&2
+  exit 71
+fi
+echo "== 원복 확인(작업트리 깨끗) =="
+exit "$RC"
