@@ -584,12 +584,19 @@ def test_merge_fill_respects_table_boundaries():
     # 전제: 정상 병합은 실제로 채워져야 한다 — 안 채워지면 아래 단언들이 무의미하다.
     assert str(filled.iat[1, 1]) == "210-453", "데이터 행 안의 병합은 채워져야 한다"
 
-    # ① 빈 좌상단(E4:E5): 채울 값이 없으면 아무것도 넣지 않는다("None"·"nan" 날조 금지).
+    # ① 제목 영역만의 병합(C1:C2): 표 안으로 한 칸도 넘어오지 않으므로 **아무것도 채우면 안 된다**.
+    #    ★가드를 지우면 음수 인덱스가 뒤에서부터 감겨 제목값("관리번호 A-1")이 비고 칸에
+    #    조용히 들어앉는다 — 예외도 안 나고 경고도 없는 날조다.
+    for r in range(len(filled)):
+        assert str(filled.iat[r, 2]).strip().lower() in ("", "nan"), (
+            f"제목 영역 병합값이 표 안으로 샜다(음수 인덱스 되감기): {filled.iat[r, 2]!r}"
+        )
+    # ② 빈 좌상단(E4:E6): 채울 값이 없으면 아무것도 넣지 않는다("None"·"nan" 날조 금지).
     for r in range(len(filled)):
         assert str(filled.iat[r, 4]).strip().lower() in ("", "nan"), (
             f"빈 병합에 가짜 글자가 들어갔다: {filled.iat[r, 4]!r}"
         )
-    # ② 표 밖으로 넘친 병합(F4:H5): 열/행이 늘거나 옆 열을 덮으면 안 된다.
+    # ③ 표 밖으로 넘친 병합(F4:H6): 열/행이 늘거나 옆 열을 덮으면 안 된다.
     assert filled.shape == (nrows_before, ncols_before), "병합이 표 밖으로 넘쳤다고 표가 커지면 안 된다"
     assert str(filled.iat[1, 3]) == "이영희", "옆 열(소유구분)이 병합값으로 덮이면 안 된다"
 
