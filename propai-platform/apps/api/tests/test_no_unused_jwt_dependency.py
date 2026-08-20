@@ -63,16 +63,90 @@ def _imports_toplevel_jwt(tree: ast.AST) -> bool:
     return False
 
 
+def _requirements_files() -> list[pathlib.Path]:
+    """★목록형이 아니라 **파생형** — `requirements*.txt` 를 전부 찾는다.
+
+    2026-08-21 실측 사고: 이 테스트가 `requirements.txt` **한 파일만** 봤고, `#720` 도 그
+    파일에서만 PyJWT 를 지웠다. 그런데 **프로덕션이 쓰는 파일은 다른 것**이다 —
+    `Dockerfile.oracle:20` 이 `apps/api/requirements.oracle.txt` 를 복사한다.
+    그래서 CI 는 초록이었고 **라이브 컨테이너엔 `PyJWT 2.9.0` 이 그대로 있었다**
+    (배포 후 `pip show PyJWT` 실측). **처방이 환자에게 닿지 않았다.**
+    """
+    return sorted(_API_ROOT.glob("requirements*.txt"))
+
+
+def _dockerfile_requirement_sources(text: str) -> list[str]:
+    """`COPY <src…> <dst>` 에서 **출발지**만 뽑는다.
+
+    ★처음 쓴 정규식은 도착지(`./requirements.txt`)를 잡아 검사망 밖 파일을 통과시켰다
+      (변이 실측 SURVIVED). *"프로덕션이 쓰는 파일을 본다"* 고 선언한 검사가 **엉뚱한 파일**을
+      보고 있었던 것 — 이 테스트가 막으려던 사고와 같은 형태다.
+      → 플래그(`--chown=` 등)를 걷어내고 **마지막 토큰(도착지)을 뺀 나머지**를 출발지로 본다.
+    """
+    srcs: list[str] = []
+    for line in text.splitlines():
+        l = line.strip()
+        if not l.upper().startswith("COPY "):
+            continue
+        toks = [t for t in l.split()[1:] if not t.startswith("--")]
+        if len(toks) < 2:
+            continue
+        for src in toks[:-1]:
+            base = src.rsplit("/", 1)[-1]
+            if base.endswith(".txt"):
+                srcs.append(base)
+    return srcs
+
+
+def test_전제_requirements_파일을_실제로_찾는다() -> None:
+    """★공허한 초록 방지 — 0건이면 아래 단언이 전부 자동 통과한다."""
+    files = _requirements_files()
+    assert len(files) >= 2, f"requirements 를 {len(files)}건만 찾았다 — 탐색이 죽었다: {files}"
+
+
+def test_프로덕션이_쓰는_requirements_가_검사망에_있다() -> None:
+    """★**배포 이미지가 실제로 설치하는 파일**이 검사망에 있어야 한다.
+
+    Dockerfile 에서 파생시킨다 — 새 requirements 를 만들어 Dockerfile 이 그것을 가리키면,
+    그 파일이 `requirements*.txt` 패턴을 벗어나는 순간 실패한다. **검사망 밖으로 나가는 것
+    자체가 실패**다.
+    """
+    dockerfile = _API_ROOT.parents[1] / "Dockerfile.oracle"
+    assert dockerfile.exists(), f"{dockerfile} 가 없다 — 배포 정본이 사라졌거나 경로가 바뀌었다"
+    srcs = _dockerfile_requirement_sources(dockerfile.read_text(encoding="utf-8"))
+    assert srcs, "Dockerfile.oracle 에서 .txt COPY 를 못 찾았다 — 보증 범위를 알 수 없으므로 실패."
+    검사망 = {p.name for p in _requirements_files()}
+    for name in srcs:
+        assert name in 검사망, (
+            f"배포 이미지가 설치하는 {name!r} 이 검사망 밖이다 — 취약 의존성이 들어와도 "
+            f"아무도 못 잡는다. 검사망={sorted(검사망)}"
+        )
+
+
+def test_출발지_추출기가_도착지에_속지_않는다() -> None:
+    """★추출기의 자체 대조군 — 잡아야 할 것과 통과시켜야 할 것을 **둘 다** 단언한다."""
+    got = _dockerfile_requirement_sources("COPY --chown=x:y apps/api/reqs-prod.txt ./requirements.txt")
+    assert got == ["reqs-prod.txt"], f"도착지를 출발지로 오인한다: {got!r}"
+    got2 = _dockerfile_requirement_sources("COPY --chown=x:y apps/api/requirements.oracle.txt ./requirements.txt")
+    assert got2 == ["requirements.oracle.txt"], f"정상 표기를 못 뽑는다: {got2!r}"
+
+
 def test_PyJWT_가_requirements_에_다시_들어오지_않는다() -> None:
-    req = (_API_ROOT / "requirements.txt").read_text(encoding="utf-8")
-    선언 = [
-        l.strip()
-        for l in req.splitlines()
-        if l.strip() and not l.strip().startswith("#") and l.strip().lower().startswith("pyjwt")
-    ]
-    assert not 선언, (
+    위반: list[str] = []
+    검사한_파일 = 0
+    for path in _requirements_files():
+        검사한_파일 += 1
+        for line in path.read_text(encoding="utf-8").splitlines():
+            l = line.strip()
+            if not l or l.startswith("#"):
+                continue
+            if l.lower().startswith("pyjwt"):
+                위반.append(f"{path.name}: {l}")
+    # ★공허 진리 가드 — 한 파일도 안 읽었으면 "위반 0" 은 부재의 증거가 아니다.
+    assert 검사한_파일 >= 2, f"requirements 를 {검사한_파일}건만 읽었다 — 탐색이 죽었다"
+    assert not 위반, (
         "쓰지 않는 PyJWT 가 requirements 에 다시 들어왔다 — CVE 12건이 함께 돌아온다. "
-        f"인증은 python-jose 를 쓴다: {선언!r}"
+        f"인증은 python-jose 를 쓴다: {위반!r}"
     )
 
 
