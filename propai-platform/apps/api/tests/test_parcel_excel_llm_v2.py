@@ -606,6 +606,128 @@ def test_partial_recovery_reports_how_many_were_lost():
     assert "지번·소재지 칸" not in fail[0], f"측정하지 않은 것을 단정함: {fail[0]}"
 
 
+def _two_sheet_reordered_xlsx() -> bytes:
+    """★반례 픽스처 — 파일 이름 순서와 시트 순서가 **어긋난** 워크북.
+
+    표지가 `sheet1.xml`, 토지조서가 `sheet2.xml` 로 저장되지만, `workbook.xml` 의 `<sheet>`
+    나열 순서만 뒤집어 **첫 시트를 토지조서**로 만든다. 엑셀 파일 형식에서 파일 이름과 시트
+    순서는 무관하므로 이런 파일은 정상이다(비Office 도구가 내보내면 실제로 나온다).
+    그리고 토지조서 쪽에만 서식 손상을 심어 원문 복원 경로를 태운다.
+    """
+    import re as _re
+    import zipfile
+
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    cover = wb.active
+    cover.title = "표지"
+    cover.append(["프로젝트", "", "", ""])
+    cover.append(["담당", "홍길동", "", ""])
+    cover.append(["", "", "", ""])
+    cover.merge_cells("D2:E3")          # 표지에만 있는 병합 — 여기가 새면 날조가 된다
+    land = wb.create_sheet("토지조서")
+    land.append(["소재지(주소)", "지번", "비고", "소유구분"])
+    land.append(["서울특별시 동작구 상도동", "210-453", "", "김철수"])
+    land.append(["", "", "", "이영희"])
+    land.merge_cells("A2:A3")
+    land.merge_cells("B2:B3")
+    land.merge_cells("C2:C3")
+    buf = io.BytesIO()
+    wb.save(buf)
+
+    zin = zipfile.ZipFile(io.BytesIO(buf.getvalue()))
+    out = io.BytesIO()
+    flipped = corrupted = False
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zo:
+        for item in zin.infolist():
+            data = zin.read(item.filename)
+            if item.filename == "xl/workbook.xml":
+                tags = _re.findall(rb"<sheet [^>]*/>", data)
+                assert len(tags) == 2, f"시트 태그 2개여야 함: {tags}"
+                data = data.replace(tags[0] + tags[1], tags[1] + tags[0])
+                flipped = True
+            if item.filename.endswith("sheet2.xml"):
+                new_data = data.replace(b'<c r="A1"', b'<c s="9999" r="A1"', 1)
+                corrupted = new_data != data
+                data = new_data
+            zo.writestr(item.filename, data)
+    assert flipped and corrupted, "픽스처 주입이 실제로 됐는지 확인(주입 실패 오독 방지)"
+    return out.getvalue()
+
+
+def test_zip_fallback_reads_the_same_sheet_pandas_read():
+    """★시트를 **추측하지 않는다** — 표를 읽은 시트와 병합을 읽은 시트가 같아야 한다.
+
+    파일 이름 순서로 첫 시트를 고르면, 표는 `토지조서`에서 읽고 병합은 `표지`에서 읽는 어긋남이
+    생긴다. 그러면 세 가지가 한꺼번에 일어난다 — ①원문에 없던 값이 다른 칸에 복사되고(날조)
+    ②진짜 병합이 적용 안 돼 행이 탈락하며 ③그런데도 "원문에서 직접 복원했습니다"라고
+    **거짓 보고**한다(침묵보다 나쁘다).
+    """
+    import pandas as pd
+
+    raw = _two_sheet_reordered_xlsx()
+
+    # 전제(반례 성립 확인): 파일 이름 순서와 실제 첫 시트가 어긋나야 이 테스트가 의미를 갖는다.
+    assert pd.ExcelFile(io.BytesIO(raw), engine="openpyxl").sheet_names[0] == "토지조서", (
+        "첫 시트가 토지조서여야 반례가 성립한다"
+    )
+    import zipfile
+    with zipfile.ZipFile(io.BytesIO(raw)) as z:
+        part = pes._first_worksheet_part(z)
+    assert part == "xl/worksheets/sheet2.xml", (
+        f"첫 시트는 파일 이름이 sheet2.xml 이다(이름 순서로 고르면 sheet1.xml 을 집는다): {part}"
+    )
+
+    # ★병합범위는 토지조서 것이어야 한다 — 표지의 D2:E3 가 섞이면 날조가 시작된다.
+    refs = pes._merged_ranges_from_zip(raw)
+    assert sorted(refs) == ["A2:A3", "B2:B3", "C2:C3"], f"다른 시트의 병합을 집었다: {refs}"
+    assert "D2:E3" not in refs, "표지(다른 시트)의 병합이 새어 들어왔다"
+
+    out = _parse_x(raw, "시트순서뒤집힘.xlsx")
+    assert not out.get("error")
+    # ① 행 탈락 0 — 진짜 병합이 적용돼 둘째 행이 산다.
+    assert [p.get("jibun") for p in out["parcels"]] == ["210-453", "210-453"], (
+        f"병합 복원이 어긋나 행이 탈락했다: {[p.get('jibun') for p in out['parcels']]}"
+    )
+    # ② 날조 0 — 원문에 없던 값이 다른 칸에 복사되면 안 된다(비고 칸은 비어 있어야 한다).
+    for p in out["parcels"]:
+        assert not p.get("label"), f"원문에 없던 값이 만들어졌다: {p.get('label')!r}"
+    # ③ 보고가 참이어야 한다 — 실제로 복원됐으니 '복원했습니다'가 맞다.
+    assert [w for w in _warns(out) if "원문에서 직접 복원" in w], _warns(out)
+
+
+def test_single_sheet_control_still_resolves_first_sheet():
+    """대조군 — 단일 시트에서도 같은 해석 경로가 정답을 낸다(반례만 통과하는 잠금 방지)."""
+    import zipfile
+
+    raw = _merged_two_owner_xlsx()
+    with zipfile.ZipFile(io.BytesIO(raw)) as z:
+        assert pes._first_worksheet_part(z) == "xl/worksheets/sheet1.xml"
+    assert sorted(pes._merged_ranges_from_zip(raw)) == ["A2:A3", "B2:B3"]
+
+
+def test_unresolvable_first_sheet_fails_loudly_not_silently():
+    """★첫 시트를 해석 못 하면 '병합 없음'이라 답하면 안 된다 — 그게 곧 침묵이다.
+
+    빈 목록을 돌려주면 호출측이 "잃은 값이 없다"로 읽어 경고 없이 넘어간다. 그래서 예외를
+    내고, 호출측은 정직한 실패 경고로 바꾼다.
+    """
+    import zipfile
+
+    raw = _merged_two_owner_xlsx()
+    broken = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(raw)) as zin, zipfile.ZipFile(broken, "w") as zo:
+        for item in zin.infolist():
+            data = zin.read(item.filename)
+            if item.filename == "xl/_rels/workbook.xml.rels":
+                data = b'<?xml version="1.0"?><Relationships/>'  # 관계를 지운다
+            zo.writestr(item.filename, data)
+
+    with pytest.raises(ValueError):
+        pes._merged_ranges_from_zip(broken.getvalue())
+
+
 # ── ⑧ CSV cp949 인코딩 폴백 ───────────────────────────────────────────
 def test_csv_cp949_encoding_fallback():
     csv_text = ("소재지(주소),지번,PNU(필지고유번호·19자리)\n"

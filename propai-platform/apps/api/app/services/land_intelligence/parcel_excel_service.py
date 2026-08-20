@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import posixpath
 import re
 from collections import Counter
 from typing import Any
@@ -189,22 +190,59 @@ def _to_float(v: Any) -> float | None:
         return None
 
 
+def _first_worksheet_part(z: Any) -> str:
+    """워크북이 **첫 번째로 나열한 시트**의 실제 XML 경로를 원문에서 해석한다.
+
+    ★파일 이름(`sheet1.xml`)으로 고르면 안 된다. 엑셀 파일 형식(OOXML)에서 **파일 이름과 시트
+    순서는 아무 관계가 없다** — 순서는 `xl/workbook.xml` 의 `<sheet>` 나열 순서이고, 그 시트가
+    어느 파일인지는 `r:id` 를 `xl/_rels/workbook.xml.rels` 에서 찾아야 알 수 있다.
+    pandas·openpyxl 도 그렇게 첫 시트를 정한다. 여기서 파일 이름으로 **추측하면** 표를 읽은
+    시트와 병합범위를 읽은 시트가 어긋나, 엉뚱한 시트의 병합을 적용해 **원문에 없던 값을 만들어
+    낸다**(실측: 비고 칸에 소유자 이름이 복사됐다). 이 파일이 내건 '추측하지 않는다'는 원칙은
+    이 함수 자신에게도 적용된다.
+
+    해석에 실패하면 **빈 값을 돌려주지 않고 예외를 낸다** — "병합이 없다"고 잘못 답하면 그게
+    바로 침묵이기 때문이다(호출측이 정직한 실패 경고로 처리한다).
+    """
+    wb_xml = z.read("xl/workbook.xml")
+    m = re.search(rb"<sheet\b[^>]*>", wb_xml)
+    if not m:
+        raise ValueError("workbook.xml 에 시트 목록이 없다")
+    # `sheetId` 와 헷갈리지 않게: 네임스페이스 접두사(r:) 뒤의 id 속성만 집는다.
+    rid_m = re.search(rb'\b\w+:id="([^"]+)"', m.group(0))
+    if not rid_m:
+        raise ValueError("첫 시트에 r:id 가 없다")
+    rid = rid_m.group(1)
+
+    rels = z.read("xl/_rels/workbook.xml.rels")
+    for rel in re.findall(rb"<Relationship\b[^>]*>", rels):
+        if re.search(rb'\bId="' + re.escape(rid) + rb'"', rel) is None:
+            continue
+        tgt_m = re.search(rb'\bTarget="([^"]+)"', rel)
+        if not tgt_m:
+            break
+        target = tgt_m.group(1).decode()
+        # Target 은 xl/ 기준 상대경로("worksheets/sheet2.xml") 또는 절대("/xl/worksheets/...").
+        path = target[1:] if target.startswith("/") else f"xl/{target}"
+        path = posixpath.normpath(path)
+        if path in z.namelist():
+            return path
+        break
+    raise ValueError(f"첫 시트({rid!r})의 실제 파일을 찾지 못했다")
+
+
 def _merged_ranges_from_zip(raw: bytes) -> list[str]:
-    """xlsx(zip) 안 첫 워크시트 XML에서 병합범위(mergeCell ref)만 직접 읽는다.
+    """xlsx(zip) 안 **첫 워크시트** XML에서 병합범위(mergeCell ref)만 직접 읽는다.
 
     ★openpyxl '전체읽기'가 서식표 같은 다른 부분 때문에 죽어도, 병합범위 자체는 시트 XML에
     멀쩡히 적혀 있다. 그래서 전체읽기가 실패해도 '어디가 병합인지'는 원문에서 알아낼 수 있다
     — 이것이 '지번을 추측해 채우는 것'과 결정적으로 다른 점이다(추측이 아니라 원문 복원).
+    ★단, **어느 시트인지도 추측하면 안 된다** — `_first_worksheet_part` 참조.
     """
     import zipfile
 
     with zipfile.ZipFile(io.BytesIO(raw)) as z:
-        names = [n for n in z.namelist() if re.match(r"xl/worksheets/sheet\d+\.xml$", n)]
-        if not names:
-            # ★이중 가드(변이로 지워도 테스트가 안 죽는다 — 사실을 적어 둔다): 워크시트 XML 이
-            #   아예 없는 xlsx 는 그 앞의 pd.read_excel 이 먼저 죽어 여기까지 오지 못한다.
-            return []
-        xml = z.read(sorted(names)[0])
+        xml = z.read(_first_worksheet_part(z))
     return [m.decode() for m in re.findall(rb'<mergeCell[^>]*\bref="([^"]+)"', xml)]
 
 
@@ -302,9 +340,10 @@ def _expand_merged_cells_fallback(
             top_row, top_col = min_row - base, min_col - 1
             if not (0 <= top_row < nrows and 0 <= top_col < ncols):
                 # 좌상단이 표 밖(제목행 병합 등) — 값을 가져올 데가 없다.
-                # ★이중 가드: 이 검사를 지워도 아래 except 가 같은 예외를 받아 missed 를 똑같이
-                #   올리므로 결과가 변하지 않는다(그래서 변이가 살아남는다). 그래도 남기는 이유는
-                #   '예상되는 정상 상황'을 예외로 처리하지 않기 위해서다.
+                # ★이 검사를 지우면 표 행수가 적을 때만 예외가 나고(그래서 변이가 살아남는다),
+                #   **행수가 3 이상이면 예외 없이 음수 인덱스가 뒤에서부터 감겨** 엉뚱한 칸의 값을
+                #   읽어다 채우고 그것을 '복원 성공'으로 계수한다 — 조용한 날조다. 즉 이 검사는
+                #   아래 except 의 중복이 아니라, except 가 잡지 못하는 경우의 **유일한 방어선**이다.
                 missed += 1
                 continue
             fill(min_row, min_col, max_row, max_col, df.iat[top_row, top_col])
@@ -322,9 +361,9 @@ def _expand_merged_cells_fallback(
     scope = f" {missed}곳" if missed else ""
     return df, (
         f"병합 셀 복원 실패({type(err).__name__}: {str(err)[:80]}) — 여러 행에 걸쳐 병합된 "
-        f"칸{scope}을 읽지 못했습니다. 그 병합 칸에 걸린 행은 지번이 빈칸으로 남아 "
-        "소재지(동)만 남거나 목록에서 빠질 수 있습니다. 엑셀에서 병합을 해제하고 행마다 "
-        "지번을 직접 적어 다시 올려 주세요."
+        f"칸{scope}을 읽지 못했습니다. 그 칸의 값이 빈칸으로 남았을 수 있으니 지번·소재지가 "
+        "제대로 채워졌는지 확인해 주세요(지번이 비면 그 행은 소재지만 남거나 목록에서 빠집니다). "
+        "빈칸이 있으면 엑셀에서 병합을 해제하고 행마다 지번을 직접 적어 다시 올려 주세요."
     )
 
 
