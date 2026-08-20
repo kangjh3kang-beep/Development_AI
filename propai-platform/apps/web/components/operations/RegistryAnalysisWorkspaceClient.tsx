@@ -18,7 +18,7 @@ import { analyzeRegistry } from "@/lib/registry-analyze";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { useLandScheduleStore, type LandRow } from "@/store/useLandScheduleStore";
-import { parcelDisplayAddress } from "@/lib/pnu";
+import { addressHasJibun, parcelDisplayAddress, parcelJibunResolved } from "@/lib/pnu";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import type { Locale } from "@/i18n/config";
 
@@ -177,9 +177,17 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
   //   ★새로 만들지 않는다 — `POST /zoning/geocode` 가 이미 `pnu` 를 돌려준다(백엔드 무변경).
   //   ★없는 값을 지어내지 않는다: 해석 실패는 **그대로 둔다**(주소만 남는다). 추측 PNU 는
   //     엉뚱한 필지의 등기를 조회하게 만들어 조용한 오답이 된다 — 실패가 낫다.
+  //
+  //   ★★2026-08-20 봉합 — 위 문단이 선언한 무날조가 **코드에는 없었다**.
+  //     `/zoning/geocode` 는 **동 단위 주소에도 found:true 와 PNU 를 준다**(라이브 실측:
+  //     `{"query":"경기도 오산시 내삼미동"}` → `pnu 4137011000101140001`, 즉 114-1 필지).
+  //     실제 신고 프로젝트는 77행이 전부 `경기도 오산시 내삼미동` 이었다 —
+  //     즉 이 이펙트는 **77행 전부에 같은 남의 필지 PNU 를 박고**, 그 PNU 로 등기까지 조회했다.
+  //     라벨이 전부 같은 것보다 **훨씬 나쁜 조용한 오답**이다.
+  //     그래서 **번지가 있는 주소만** 해석한다(addressHasJibun — 판정은 lib/pnu 한 곳).
   useEffect(() => {
     if (!projectId) return;
-    const targets = rows.filter((r) => !r.pnu && r.jibun.trim());
+    const targets = rows.filter((r) => !r.pnu && addressHasJibun(r.jibun));
     if (targets.length === 0) return;
     let cancelled = false;
     (async () => {
@@ -219,7 +227,7 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
     };
     // ★rows 전체를 의존성에 넣으면 갱신→재실행 루프가 된다. 미보유 건수만 본다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, rows.filter((r) => !r.pnu).length]);
+  }, [projectId, rows.filter((r) => !r.pnu && addressHasJibun(r.jibun)).length]);
 
   // ★다필지 일괄 분석(순차 — CODEF 과부하 방지). 필지별 결과를 누적 보관(마지막 1건만 남던 부정합 해소).
   const analyzeAll = useCallback(async () => {
@@ -343,7 +351,21 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
             <div className="mt-3 space-y-1.5">
               {rows.map((r) => (
                 <div key={r.id} className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-3 py-2">
-                  <span className="min-w-[160px] flex-1 truncate text-xs font-semibold text-[var(--text-primary)]" title={r.jibun}>{r.jibun || "(지번 미입력)"}</span>
+                  <span className="flex min-w-[160px] flex-1 items-center gap-1 text-xs font-semibold text-[var(--text-primary)]" title={r.jibun}>
+                    <span data-testid="registry-row-jibun" className="min-w-0 truncate">{r.jibun || "(지번 미입력)"}</span>
+                    {/* ★정직 표기(무날조) — 번지가 없으면 필지를 특정할 수 없고, 그 상태로
+                        지오코딩하면 같은 동의 모든 행이 남의 필지 등기를 조회한다(라이브 실측).
+                        그래서 채우지 않고 사실을 말한다. 판정은 lib/pnu 한 곳. */}
+                    {!!r.jibun.trim() && !parcelJibunResolved({ address: r.jibun, pnu: r.pnu }) && (
+                      <span
+                        data-testid="registry-row-jibun-unresolved"
+                        className="shrink-0 rounded-full bg-[var(--status-warning)]/15 px-1.5 py-0.5 text-[10px] font-bold text-[var(--status-warning)]"
+                        title="번지가 없어 필지를 특정할 수 없습니다. 지번(번지)을 입력하세요 — 이대로는 등기를 조회하지 않습니다."
+                      >
+                        지번 미확인
+                      </span>
+                    )}
+                  </span>
                   {r.owner && <span className="truncate text-[11px] text-[var(--text-secondary)]">소유 {r.owner}{r.share ? ` · ${r.share}` : ""}</span>}
                   {r.area_sqm != null && <span className="text-[11px] text-[var(--text-tertiary)]">{Math.round(r.area_sqm).toLocaleString()}㎡</span>}
                   <button onClick={() => { setAddr(r.jibun); void run(r.jibun, r.id, r); }} disabled={!r.jibun.trim() || busyId === r.id}
