@@ -489,6 +489,12 @@ class OrdinanceService:
             result["ordinance_name"] = api_result.get("ordinance_name")
             result["last_updated"] = api_result.get("last_updated")
             result["legal_basis"] = f"{jurisdiction} 도시계획 조례"
+            # ★조건부 값 전파 — 조례는 `용도지역 → 값 하나` 가 아니라
+            #   **`용도지역 × 조건 → 값들`** 이다(오산시 자연녹지 = 6개 조에 값이 다르다).
+            #   기본값만 내보내면 부지가 실제로 충족하는 완화 조건이 화면에 영원히 못 닿는다.
+            #   ※적용은 하지 않는다 — 소비처가 부지 designation 과 매칭해 **후보로** 낸다
+            #     (`ordinance_conditional.match_site_conditions`, `applied: False`).
+            result["conditional_limits"] = api_result.get("conditional_limits") or []
             # ★파서의 정직 신호(parse_confidence/missing_sections/caveat)를 provenance에 반영한다.
             #   깔끔히 파싱되면 0.95 유지, 느슨한 매칭이면 파서 신뢰도로 하향해 '확정'으로
             #   호도하지 않는다(낮으면 recheck 권장). 소비자가 안 읽어도 무해한 additive 필드.
@@ -769,6 +775,10 @@ class OrdinanceService:
             "missing_sections": missing_sections,
             "caveat": caveat,
             "evidence_span": entry.get("evidence_span") if entry else None,
+            # ★조건부 값 전파 — 종전엔 `_extract_zone_limits_structured` 안에서 만들어 놓고
+            #   이 반환 계약에 **키 자체가 없어** 함수 밖으로 나가지 못했다("소비처 0"보다
+            #   한 단계 이른 상태). 조제목·분류를 달아 내보낸다.
+            "conditional_limits": (entry.get("conditional") or []) if entry else [],
         }
 
     # ──────────────────────────────────────────────────────────────────────
@@ -958,7 +968,7 @@ class OrdinanceService:
                 slot.setdefault("evidence_span", f"{zone_name}: {val}퍼센트 이하(기본항 나열)")
                 slot["value_basis"] = "base_item"
 
-            for zone_name, frag, caveat_hdr in self._iter_zone_fragments(section):
+            for zone_name, frag, caveat_hdr, _anchor_pos in self._iter_zone_fragments(section):
                 val, caveat_ctx = self._extract_pct_near(frag)
                 if val is None:
                     continue
@@ -969,9 +979,21 @@ class OrdinanceService:
                 #   ※실측: 이 부지는 성장관리권역이라 제50조 30% 가 **실제 적용값일 수 있다.**
                 if slot.get("value_basis") == "base_item" and slot.get(kind) is not None:
                     if val != slot.get(kind):
+                        from app.services.zoning.ordinance_conditional import (
+                            classify_article,
+                            find_article,
+                        )
+
+                        art = find_article(section, _anchor_pos) or {}
+                        ckey, ckind, cdir = classify_article(art.get("article_title"))
                         slot.setdefault("conditional", []).append({
                             "kind": kind, "value": val,
                             "context": self._normalize_ws(frag)[:120],
+                            # ★조건의 정체는 조제목에 있다(조각에는 없다).
+                            **art,
+                            "condition_key": ckey,
+                            "condition_kind": ckind,
+                            "direction": cdir,
                         })
                     continue
                 slot[kind] = val
@@ -1051,7 +1073,9 @@ class OrdinanceService:
             # 값 조각 앞 20자에 단서 키워드가 있으면 헤더 단서로 표시.
             head_ctx = section[max(0, m.start() - 20):m.start()]
             caveat_hdr = any(k in head_ctx for k in ("다만", "경과조치"))
-            yield zone_name, frag, caveat_hdr
+            # ★앵커 위치도 함께 낸다 — 조건부 값이 **어느 조문**의 것인지는 조각 안이 아니라
+            #   그 **앞의 조제목**에 있다(조각은 용도지역명 뒤에서 잘려 "에서는 …"로 시작한다).
+            yield zone_name, frag, caveat_hdr, m.start()
 
     def _match_requested_zone(
         self, zone_type: str, zones: dict[str, dict[str, Any]]

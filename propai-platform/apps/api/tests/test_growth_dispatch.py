@@ -192,6 +192,22 @@ def test_동기_컨텍스트가_전역_엔진을_파기하지_않는다(monkeypa
     )
 
 
+async def _닫힘락_전용_코루틴() -> None:
+    """★이 락 **전용** 코루틴. 이름을 고유하게 둔 이유는 아래 락이 경고를
+    **자기 것인지 이름으로 가려내기** 때문이다. 이 파일의 다른 테스트가 쓰는
+    `_work` 를 재사용하면 남의 것과 이름이 겹쳐 다시 못 가린다."""
+    return None
+
+
+def _닫힘락_내_경고만(caught: list) -> list:
+    """`caught` 에서 **이 락이 만든 코루틴**의 미-await 경고만 골라낸다."""
+    return [
+        w
+        for w in caught
+        if "never awaited" in str(w.message) and "_닫힘락_전용_코루틴" in str(w.message)
+    ]
+
+
 def test_건너뛴_코루틴을_닫아_미await_경고를_남기지_않는다() -> None:
     """★적재를 건너뛰기만 하고 코루틴을 **버리면** 파이썬이 GC 시점에
     `coroutine ... was never awaited` 를 찍고 그 코루틴의 자원도 늦게 반납된다.
@@ -199,22 +215,107 @@ def test_건너뛴_코루틴을_닫아_미await_경고를_남기지_않는다() 
     ★이 락은 **도구가 만들지 못한 변이**를 막는다: `scripts/mutate_changed.py` 는 이 파일에서
       로그 문자열 3건만 변이했고 `coro.close()` 는 건드리지 않았다. 직접 주입해 보니
       **SURVIVED**(경고만 4→6으로 늘고 아무 케이스도 실패하지 않았다) — 그래서 여기 잠근다.
+
+    ★★2026-08-20 — **이 락이 CI 에서 무작위로 빨개졌다**(#714·#712 가 이걸로 막혔다).
+      원인은 이 락이 잠그려는 결함이 아니라 **락 자신**이었다: `gc.collect()` 는 이 테스트가
+      만든 코루틴만 수거하지 않는다. **다른 테스트가 남긴 쓰레기까지 같이 수거**하고,
+      그때 나온 경고가 이 창(`catch_warnings`)에 함께 잡혔다. CI 가 실제로 잡은 것은
+      `AsyncMockMixin._execute_mock_call` — 이 테스트는 `AsyncMock` 을 **쓰지도 않는다**.
+      병렬 실행(`-n auto`)에서 이웃이 누가 되느냐에 따라 발화 여부가 갈렸다.
+      → 처방은 두 겹이다. ①창에 들어가기 **전에** 한 번 수거해 남의 쓰레기를 창 밖에서
+      털어내고, ②남은 경고도 **이름으로 자기 것만** 고른다.
     """
     import gc
     import warnings
 
-    async def _work() -> None:
-        return None
+    # ① 남의 쓰레기를 **창 밖에서** 턴다. 이걸 안 하면 아래 `gc.collect()` 가
+    #    이웃 테스트의 미수거 코루틴을 주워 이 락이 남의 일로 실패한다.
+    #    ★변이 실측(2026-08-20): 이 줄을 지워도 **세 케이스 모두 통과한다(SURVIVED)**.
+    #      ②의 이름 필터가 이미 남의 것을 걸러내기 때문이다 — 즉 **의도된 이중 가드**이지
+    #      무잠금이 아니다. 필터 쪽이 무너졌을 때를 대비한 두 번째 겹으로 남긴다.
+    gc.collect()
 
-    coro = _work()
+    coro = _닫힘락_전용_코루틴()
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         growth_dispatch.fire_and_forget(coro, label="동기호출3")
         del coro
         gc.collect()  # 참조가 끊긴 코루틴을 즉시 수거해 경고를 결정론적으로 만든다
 
-    never_awaited = [w for w in caught if "never awaited" in str(w.message)]
+    never_awaited = _닫힘락_내_경고만(caught)
     assert not never_awaited, (
         "건너뛴 코루틴을 닫지 않았다 — 미-await 경고가 남고 자원 반납이 늦어진다: "
         f"{[str(w.message) for w in never_awaited]}"
+    )
+
+
+def test_닫힘락의_경고필터가_살아있다_양성대조군() -> None:
+    """★위 락은 경고를 **이름으로 좁혀** 본다. 좁히다 보면 *아무것도 못 잡는 필터*가
+    되기 쉽고, 그러면 `coro.close()` 를 지워도 초록인 **공허한 락**이 된다.
+
+    그래서 여기서 **일부러 닫지 않은 코루틴**을 버려 필터가 그것을 잡는지 확인한다.
+    이 케이스가 깨지면 위 락은 무효다 — 위 락의 초록을 믿기 전에 이걸 본다.
+    """
+    import gc
+    import warnings
+
+    gc.collect()  # 위와 같은 이유로 남의 쓰레기를 먼저 턴다
+
+    with warnings.catch_warnings(record=True) as control:
+        warnings.simplefilter("always")
+        버려진_코루틴 = _닫힘락_전용_코루틴()  # ★close() 하지 않고 버린다
+        del 버려진_코루틴
+        gc.collect()
+
+    assert _닫힘락_내_경고만(control), (
+        "양성 대조군이 비었다 — 필터가 **자기 코루틴조차** 못 잡는다. "
+        "즉 위 닫힘 락은 무엇을 지워도 초록인 공허한 락이다"
+    )
+
+
+def test_이웃이_남긴_쓰레기로는_닫힘락이_깨지지_않는다() -> None:
+    """★이 락이 CI 에서 **무작위로 빨개진 그 상황**을 재현해서 잠근다(#714·#712 가 막혔다).
+
+    재현의 핵심은 *어떻게 남의 쓰레기를 GC 시점까지 살려 두느냐* 다.
+    `AsyncMock()` 을 그냥 버리면 **참조계수로 즉시** 수거되어 경고가 남의 테스트 안에서
+    터지고 끝난다(1차 재현이 이래서 실패했다 — 원본 단언조차 통과했다).
+    **순환 참조에 가두면** 참조계수로 죽지 않아 **GC 사이클까지 살아남고**, 그 뒤
+    `gc.collect()` 를 부르는 쪽이 남의 쓰레기를 뒤집어쓴다. 그게 CI 에서 벌어진 일이다.
+
+    ★대조 실증(2026-08-20): 이 순서에서 **필터 없는 원본 단언은 FAILED**
+      (`coroutine 'AsyncMockMixin._execute_mock_call' was never awaited` — CI 와 같은 메시지),
+      **이름으로 좁힌 지금 필터는 PASSED**.
+    """
+    import gc
+    import warnings
+    from unittest.mock import AsyncMock
+
+    # ── 이웃이 남기는 쓰레기를 만든다(순환에 가둬 GC 사이클까지 살린다) ──
+    mock = AsyncMock()
+    남의_코루틴 = mock()  # ★await 하지 않는다
+    순환: dict = {}
+    순환["self"] = 순환
+    순환["coro"] = 남의_코루틴
+    del mock, 남의_코루틴, 순환  # 바깥 참조만 끊는다 — 수거는 GC 로 미뤄진다
+
+    # ── 닫힘락과 **같은 절차**를 밟는다 ──
+    coro = _닫힘락_전용_코루틴()
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        growth_dispatch.fire_and_forget(coro, label="이웃쓰레기재현")
+        del coro
+        gc.collect()  # ★여기서 남의 쓰레기도 함께 수거된다
+
+    남의_것 = [w for w in caught if "AsyncMock" in str(w.message)]
+    내_것 = _닫힘락_내_경고만(caught)
+
+    # 전제 확인 — 남의 쓰레기가 실제로 이 창에 잡혔어야 재현이 성립한다.
+    # (안 잡혔다면 이 케이스는 아무것도 검증하지 않는 **공허한 초록**이다)
+    assert 남의_것, (
+        "재현 실패 — 남의 쓰레기가 이 창에 잡히지 않았다. 순환 참조가 깨졌거나 "
+        "GC 동작이 바뀌었다. 이 상태의 초록은 아무것도 보증하지 않는다"
+    )
+    assert not 내_것, (
+        "남의 쓰레기를 자기 것으로 주웠다 — 필터가 이름을 확인하지 않는다: "
+        f"{[str(w.message) for w in 내_것]}"
     )
