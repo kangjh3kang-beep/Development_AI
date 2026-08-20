@@ -139,11 +139,75 @@ def test_zone_scope_limit_is_enforced(options):
 
 
 def test_metro_regime_name_is_not_matched(options):
-    """★#703 규율 — 수도권정비계획법 권역은 국계법 용도지구·구역이 아니다."""
+    """★#703 규율 — 수도권정비계획법 권역은 국계법 용도지구·구역이 아니다(실데이터 경로)."""
     bucket, _ = _run("자연녹지지역", ["성장관리권역"], options)
     assert bucket == "unmatched_site"
     # ★양성 짝 — 같은 실행에서 진짜 지구는 매칭된다(매칭이 통째로 죽은 게 아님).
     assert _run("자연녹지지역", ["자연취락지구"], options)[0] == "matched"
+
+
+def test_metro_regime_guard_actually_fires_when_reachable():
+    """★★위 테스트는 **공허했다** — 변이감사가 잡았다.
+
+    실조례의 항목명(`취락지구`·`자연공원`…) 중 어느 것도 `성장관리권역` 의 부분문자열이
+    아니라서, 위 테스트에서는 이름 매칭(`hit`)이 **이미 None** 이었다. 즉 권역 배제 가드는
+    **한 번도 실행되지 않고** 테스트가 통과했다(`METRO_REGIME_NAMES` 분기를 무력화해도 생존).
+
+    그래서 **가드가 도달 가능한 입력**을 합성해 가드 자체를 태운다. 실데이터로는 이 가드가
+    도달 불가일 수 있으나(관측 범위 내에서 그렇다), 도달하면 **반드시 배제해야** 한다 —
+    그것이 #703(경기 전역 건폐율 +10%p 직전 차단)이 남긴 규율이다.
+    """
+    # 조례가 `성장관리` 로 시작하는 항목을 적었다고 가정 → 이름 매칭이 **성립한다**.
+    synthetic = [{"no": 1, "name": "성장관리", "value": 99, "zone_scope": None}]
+
+    # ① 전제 — 가드가 없다면 이 입력은 매칭된다(부분문자열이 실제로 성립함을 확인).
+    assert "성장관리" in "성장관리권역"
+
+    # ② 수도권 권역은 **배제**된다.
+    assert _run("자연녹지지역", ["성장관리권역"], synthetic)[0] == "unmatched_site"
+
+    # ③ ★양성 짝 — 같은 항목명이라도 권역이 아닌 지정이면 **매칭된다**.
+    #    이게 없으면 매칭이 통째로 죽어도 ②가 통과한다.
+    bucket, row = _run("자연녹지지역", ["성장관리계획구역"], synthetic)
+    assert bucket == "matched" and row["value"] == 99
+
+
+def test_article_body_picks_the_article_containing_pos():
+    """★여러 조문이 있을 때 **`pos` 가 속한 조문**을 고른다(가장 가까운 앞선 조).
+
+    변이감사: 조문이 하나뿐인 픽스처만 쓰면 `begin` 초기화·`st <= pos` 비교를 지워도
+    결과가 같아 **생존**한다. 조문 두 개를 두고 각각을 짚어야 그 줄이 잠긴다.
+    """
+    two = (
+        "제46조(그 밖에 용도지구·구역 등의 건폐율) 1. 취락지구: 40퍼센트 이하 "
+        "제48조(방화지구에서의 건폐율의 완화) 1. 방화지구: 90퍼센트 이하 "
+    )
+    first = extract_article_body(two, two.index("취락지구"))
+    second = extract_article_body(two, two.index("방화지구: 90"))
+    assert "제46조" in first and "제48조" not in first
+    assert "제48조" in second and "제46조" not in second
+    # 그리고 각 조문에서 뽑히는 값이 실제로 다르다(전제 — 같으면 구분이 무의미).
+    assert parse_district_options(first)[0]["value"] == 40
+    assert parse_district_options(second)[0]["value"] == 90
+
+
+def test_article_body_before_any_header_is_empty_not_crash():
+    """★조문 헤더가 없는 텍스트에서도 죽지 않는다 — 빈 문자열/헤더 없음 방어."""
+    assert extract_article_body("", 0) == ""
+    # 헤더가 전혀 없으면 본문을 통째로 돌려주되 예외를 내지 않는다.
+    assert extract_article_body("헤더 없는 본문 1. 취락지구: 40퍼센트", 5) != ""
+
+
+def test_zone_scope_inside_the_item_name_is_stripped():
+    """★용도지역 한정이 **항목명 안**에 붙어도 이름에서 걷어낸다.
+
+    실측 원문은 한정구가 값 앞(`: 자연녹지지역에 지정된 경우 30퍼센트`)에 오지만,
+    조례마다 표기가 달라 이름 쪽에 붙는 형태도 있다. 걷어내지 않으면 지정명과 매칭되지 않는다.
+    """
+    body = "제46조(그 밖에 용도지구·구역 등) 1. 개발진흥지구 자연녹지지역에 지정된 경우: 30퍼센트 이하"
+    opt = parse_district_options(body)[0]
+    assert opt["name"] == "개발진흥지구", f"한정구가 이름에 남았다: {opt['name']!r}"
+    assert opt["zone_scope"] == "자연녹지지역"
 
 
 def test_unmatched_clears_the_stale_fragment_value(options):
