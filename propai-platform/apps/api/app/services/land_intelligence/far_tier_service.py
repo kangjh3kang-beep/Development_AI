@@ -231,6 +231,7 @@ def calc_effective_far(base: dict, zone_type: str, land_area: float = 0) -> dict
             "conditional_ceiling": None,
             "plan_limit_unknown": None,   # 형제 미러(용도지역 미확인 조기반환)
             "ordinance_conditional": None,
+            "ordinance_attachment_only": None,   # 형제 미러(용도지역 미확인 조기반환)
             "far_basis": "zone_unmatched",
             "far_basis_detail": {
                 "법정범위": None,
@@ -448,6 +449,15 @@ def calc_effective_far(base: dict, zone_type: str, land_area: float = 0) -> dict
         if _cond_limits else None
     )
 
+    # ── 조례 별표가 **HWP 첨부로만** 제공돼 수치를 읽지 못한 경우의 사유·원문 링크(#718).
+    #    ★ordinance_service 는 이 사유를 만들어 놓고도 **소비처가 0**이었다 — 화면은
+    #      "조례 확인 필요"라고만 말하고, 사용자는 *조례가 없거나 용도지역이 틀렸다*고
+    #      의심한다. 실제 원인은 *우리가 그 첨부를 못 읽는다*이고, 사용자가 할 수 있는
+    #      다음 행동(별표 원문 열람)도 완전히 다르다 — **틀린 사유는 틀린 처방을 부른다**.
+    #    ★값은 싣지 않는다: bcr/far 는 None 그대로라 폴백 경로가 바뀌지 않는다(무회귀).
+    #      아는 것(법정상한)과 모르는 것(조례 수치)을 섞지 않는다 — 이 계약의 단일 원칙.
+    ordinance_attachment_only = (ordinance or {}).get("ordinance_attachment_only")
+
     conditional_ceiling = resolve_conditional_ceiling(
         zone_type, base.get("special_districts")
     )
@@ -611,6 +621,9 @@ def calc_effective_far(base: dict, zone_type: str, land_area: float = 0) -> dict
         #   적용하지 않는다(`applied: False`): 부지 designation 으로 판정되는 조건만
         #   matched 로 내고, 건축물 용도·연혁 조건은 판정불가로 분리한다.
         "ordinance_conditional": ordinance_conditional,
+        # ★조례 별표가 첨부(HWP)뿐이라 수치 미확보 — 사유·원문 링크. 해당 없으면 None
+        #   (키는 항상 존재 — 소비처가 `in` 으로 분기하지 않게, 형제 계약과 동일).
+        "ordinance_attachment_only": ordinance_attachment_only,
         "far_basis": far_basis,
         "far_basis_detail": far_basis_detail,
         "ordinance_confirmed": ordinance_confirmed,
