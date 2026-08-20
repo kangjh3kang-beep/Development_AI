@@ -75,6 +75,9 @@ def test_metro_regime_alone_opens_nothing():
     """
     assert resolve_conditional_ceiling("자연녹지지역", [METRO_REGIME]) is None
     assert resolve_conditional_ceiling("계획관리지역", [METRO_REGIME, "도시지역"]) is None
+    # ★양성 짝 — 같은 실행에서 이 함수가 **열 수 있다**는 것을 증명한다. 없으면 함수가
+    #   항상 None 을 내도 이 테스트가 통과한다(부재 단언은 그 자체로 잠금이 아니다).
+    assert resolve_conditional_ceiling("자연녹지지역", [PLAN_ZONE]) is not None
 
 
 def test_real_parcel_with_both_regimes_opens_via_the_plan_zone_only():
@@ -96,12 +99,16 @@ def test_ineligible_zones_stay_closed_even_inside_the_plan_zone(zone):
     ★보전녹지·보전관리는 시행령이 지목한 녹지지역이 **아니다** — 넣으면 과대허용이다.
     """
     assert resolve_conditional_ceiling(zone, [PLAN_ZONE]) is None
+    # ★양성 짝 — 같은 구역·같은 호출로 **열리는 용도지역**이 있어야 "이 zone 이라서 닫혔다"가 참이다.
+    assert resolve_conditional_ceiling("계획관리지역", [PLAN_ZONE]) is not None
 
 
 @pytest.mark.parametrize("districts", [None, [], ["도시지역"], "성장관리계획구역"])
 def test_no_districts_no_ceiling(districts):
     """designation 이 없거나 문자열 통짜면 열지 않는다(str 을 순회해 글자 단위로 읽지 않는다)."""
     assert resolve_conditional_ceiling("계획관리지역", districts) is None
+    # ★양성 짝 — 같은 zone 에 **리스트로** 주면 열린다(닫힌 이유가 designation 형태임을 증명).
+    assert resolve_conditional_ceiling("계획관리지역", [PLAN_ZONE]) is not None
 
 
 def test_dict_designations_are_accepted():
@@ -123,6 +130,8 @@ def test_result_declares_itself_not_applied():
 def test_missing_zone_type_is_closed():
     assert resolve_conditional_ceiling(None, [PLAN_ZONE]) is None
     assert resolve_conditional_ceiling("  ", [PLAN_ZONE]) is None
+    # ★양성 짝 — 같은 designation 으로 유효 zone 은 열린다(닫힌 이유가 zone 부재임을 증명).
+    assert resolve_conditional_ceiling("계획관리지역", [PLAN_ZONE]) is not None
 
 
 # ── 소비처 락 — `calc_effective_far` 가 실제로 이 값을 내고, **실효값은 그대로**인가 ────

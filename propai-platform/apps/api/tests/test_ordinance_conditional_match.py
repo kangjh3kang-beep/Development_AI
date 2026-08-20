@@ -114,6 +114,8 @@ def test_designated_district_is_not_asserted(parsed):
     """★'그 밖에 용도지구·구역 등'(제46조)은 어느 지구인지 못 가르므로 **충족 단정 금지**."""
     m = match_site_conditions(parsed["conditional_limits"], [PLAN_ZONE, "취락지구"])
     assert all(x["condition_key"] != "designated_district" for x in m["matched"])
+    # ★양성 짝 — 같은 호출에서 **다른 조건은 매칭된다**(matched 가 통째로 비어서 참이 된 게 아니다).
+    assert any(x["condition_key"] == "growth_management_plan" for x in m["matched"])
 
 
 # ── 분류기 자체(순수함수) ──────────────────────────────────────────────────────
@@ -167,12 +169,16 @@ def test_find_article_picks_the_nearest_preceding_heading():
 
 def test_find_article_returns_none_without_heading():
     assert find_article("자연녹지지역 20퍼센트", 5) is None
+    # ★양성 짝 — 조제목이 있으면 찾는다(없으면 이 함수가 항상 None 이어도 통과한다).
+    assert find_article("제45조(용도지역에서의 건폐율) 자연녹지지역 20퍼센트", 30) is not None
 
 
 @pytest.mark.parametrize("districts", [None, [], "성장관리계획구역"])
 def test_absent_or_scalar_districts_match_nothing(parsed, districts):
     """designation 이 없거나 문자열 통짜면 매칭 0(글자 단위 순회 금지)."""
     assert match_site_conditions(parsed["conditional_limits"], districts)["matched"] == []
+    # ★양성 짝 — 같은 조건부 값을 **리스트로** 주면 매칭된다(닫힌 이유가 형태임을 증명).
+    assert match_site_conditions(parsed["conditional_limits"], [PLAN_ZONE])["matched"]
 
 
 def test_fixture_really_contains_the_strengthening_article():
@@ -288,6 +294,10 @@ def test_designated_district_never_matches_even_with_that_district():
     """
     item = _cond("designated_district")
     assert match_site_conditions([item], ["취락지구", "개발진흥지구"])["matched"] == []
+    # ★양성 짝 — **같은 designation 목록**으로 다른 부지조건은 매칭된다. 없으면 매처가
+    #   통째로 고장 나 항상 빈 결과를 내도 이 테스트가 통과한다.
+    other = _cond("growth_management_plan")
+    assert match_site_conditions([other], ["취락지구", PLAN_ZONE])["matched"] == [other]
 
 
 def test_use_condition_reason_is_specific():
@@ -306,4 +316,7 @@ def test_non_dict_items_are_dropped(junk):
 def test_unknown_condition_key_is_not_matched():
     """분류되지 않은 조건(`unclassified`)은 부지 조건이 아니므로 매칭되지 않는다."""
     m = match_site_conditions([_cond("unclassified", kind="unknown")], [PLAN_ZONE])
-    assert m["matched"] == [] and m["undecidable"]
+    # ★복합 assert 를 나눈다 — 붙여 쓰면 어느 절이 깨졌는지 실패 메시지가 말해 주지 않고,
+    #   부재/양성 짝을 기계적으로 감사할 수도 없다(감사기가 한 줄을 통째로 음성으로 읽는다).
+    assert m["matched"] == []
+    assert m["undecidable"], "분류 불가가 판정불가로도 안 잡히면 값이 조용히 사라진다"

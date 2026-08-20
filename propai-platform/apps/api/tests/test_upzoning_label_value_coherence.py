@@ -169,5 +169,12 @@ def test_ordinance_labelled_value_never_exceeds_the_ordinance(analyzer):
 
 def test_no_ordinance_no_ordinance_label(analyzer):
     """대조군 — resolver 없으면 출처가 조례라고 말하지 않는다(라벨의 위양성 방지)."""
-    for s in _scenarios(analyzer, "자연녹지지역"):
+    scs = _scenarios(analyzer, "자연녹지지역")
+    # ★공허 진리 가드 — 시나리오가 0건이면 아래 단언이 대상 없이 참이 된다.
+    assert scs, "자연녹지 시나리오 0건 — 검증 대상이 없다"
+    for s in scs:
         assert "조례" not in (s["expected_far_source"] or "") or "확인 필요" in s["expected_far_source"]
+    # ★양성 짝 — resolver 를 주면 **조례 출처가 실제로 붙는다**(안 붙는 이유가 resolver 부재임을 증명).
+    with_ord = _scenarios(analyzer, "자연녹지지역", sigungu="서울특별시",
+                          ordinance_far_resolver=lambda sg, z: 150.0)
+    assert any("조례" in (x["expected_far_source"] or "") for x in with_ord)

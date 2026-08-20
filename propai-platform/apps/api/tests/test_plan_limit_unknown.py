@@ -77,6 +77,8 @@ def test_metro_regime_does_not_trigger_it():
     경기 성장관리권역 전역에 "지배 한도가 따로 있다"는 틀린 고지가 붙는다.
     """
     assert _calc("자연녹지지역", [METRO_REGIME])["plan_limit_unknown"] is None
+    # ★양성 짝 — 같은 실행에서 **발화할 수 있다**는 것을 증명한다(없으면 항상 None 이어도 통과).
+    assert _calc("자연녹지지역", [DU])["plan_limit_unknown"] is not None
 
 
 def test_growth_management_plan_zone_does_trigger_it():
@@ -167,3 +169,5 @@ def test_zone_unmatched_early_return_carries_the_key():
 def test_absent_or_scalar_districts_are_safe(districts):
     """designation 이 없거나 문자열 통짜면 신호를 내지 않는다(글자 단위 순회 금지)."""
     assert _calc("자연녹지지역", districts)["plan_limit_unknown"] is None
+    # ★양성 짝 — 같은 zone 에 리스트로 주면 발화한다(닫힌 이유가 designation 형태임을 증명).
+    assert _calc("자연녹지지역", [DU])["plan_limit_unknown"] is not None

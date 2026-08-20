@@ -97,6 +97,10 @@ def test_zone_absent_from_inline_table_still_says_zone_missing(svc):
     """
     r = svc._parse_bcr_far_from_text(_INLINE_XML, "일반상업지역", "테스트시")
     assert r is None, "본문형 조례에서 용도지역 미발견은 종전대로 None(폴백)"
+    # ★양성 짝 — **같은 픽스처**로 존재하는 용도지역은 값이 나온다. 없으면 파서가 통째로
+    #   고장 나 항상 None 을 내도 이 테스트가 통과한다(부재 단언은 그 자체로 잠금이 아니다).
+    ok = svc._parse_bcr_far_from_text(_INLINE_XML, "자연녹지지역", "테스트시")
+    assert ok is not None and ok["bcr"] == 20
 
 
 # ── ★소비처 락 — `get_ordinance_limits` 가 실제로 사유를 싣는가 ─────────────────────
