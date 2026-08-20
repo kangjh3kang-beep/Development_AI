@@ -372,8 +372,13 @@ def test_merged_expand_failure_is_reported_not_silent():
     # ★모집단 B(실패): 사용자 응답에 사유가 떠야 한다(로그만 남기는 침묵 금지).
     merge_warn = [w for w in bad_warn if "병합 셀 복원 실패" in w]
     assert merge_warn, f"병합 복원 실패를 사용자에게 알려야 한다(현재 warnings={bad_warn})"
-    assert "지번" in merge_warn[0], "무엇이 사라지는지(지번)를 말해야 한다"
-    assert "병합을 해제" in merge_warn[0], "사용자가 무엇을 해야 하는지를 말해야 한다"
+    # 문구는 세 가지를 다 말해야 한다 — ①무슨 일이 났는지 ②무엇을 잃는지 ③무엇을 하면 되는지.
+    #   ★세 절을 각각 결속한다. "지번" 하나만 보면 문구의 여러 줄이 그 단어를 나눠 갖고 있어
+    #   한 줄을 지워도 통과한다(실제로 변이 생존으로 드러났다).
+    msg = merge_warn[0]
+    assert "빈칸" in msg, f"②무엇을 잃는지(지번이 빈칸으로 남음)를 말해야 한다: {msg}"
+    assert "병합을 해제" in msg, f"③무엇을 해야 하는지(병합 해제)를 말해야 한다: {msg}"
+    assert "직접 적어" in msg, f"③행마다 직접 적으라는 실행지시가 있어야 한다: {msg}"
 
     # ★두 모집단이 '다른 결과'를 내야 한다 — 같은 결과면 배선을 끊어도 통과한다.
     bad_jibun = [p.get("jibun") for p in bad["parcels"]]

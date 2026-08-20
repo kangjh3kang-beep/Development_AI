@@ -658,6 +658,10 @@ class ParcelExcelService:
                     except Exception as _e:  # noqa: BLE001
                         # ★실패를 삼키면 '다른 시트에 진짜 데이터가 있다'는 판단을 못 쓴 채
                         #   원래 시트 결과를 그대로 내보내면서 사용자는 이유를 모른다.
+                        # ★부채(무잠금): 이 분기는 '미리보기(openpyxl)에는 있는데 pandas 로는
+                        #   못 읽는 시트' 가 있어야 발화하는데 두 경로가 같은 openpyxl 을 쓴다 —
+                        #   실패 입력을 만들지 못해 테스트로 잠그지 못했다(고쳤으나 미검증).
+                        #   tests/test_parcel_excel_llm_v2.py 의 동명 skip 테스트에 남겨 뒀다.
                         structure_notes.append(
                             f"'{chosen_sheet}' 시트를 다시 읽지 못해 '{current_sheet or '첫'}' 시트 "
                             f"기준으로 분석했습니다({str(_e)[:60]}) — 결과 확인이 필요합니다."
