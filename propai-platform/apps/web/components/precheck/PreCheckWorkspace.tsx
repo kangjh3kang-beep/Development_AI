@@ -12,6 +12,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { preferredEntryAddress } from "@/lib/parcel-rows";
 import dynamic from "next/dynamic";
 import { useParams, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
@@ -98,12 +99,12 @@ export function PreCheckWorkspace() {
   function handleAddressChange(entries: AddressEntry[]) {
     // 다필지: 등록된 전 필지 주소 목록 갱신(엑셀 업로드/다중 검색)
     const all = entries
-      .map((e) => e.jibunAddress || e.fullAddress || e.roadAddress)
+      .map((e) => preferredEntryAddress(e))
       .filter(Boolean);
     setParcels(all);
     const entry = entries[0];
     if (!entry) return;
-    const picked = entry.jibunAddress || entry.fullAddress || entry.roadAddress;
+    const picked = preferredEntryAddress(entry);
     if (picked) setAddress(picked);
     // 면적: 검색이 토지특성에서 가져온 값이 있고, 사용자가 직접 입력한 적 없을 때만 자동 채움
     if (entry.areaSqm != null && entry.areaSqm > 0 && areaSource !== "user") {

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, type FormEvent } from "react";
+import { preferredEntryAddress } from "@/lib/parcel-rows";
 import { useQuery } from "@tanstack/react-query";
 import { Button, Card, CardContent, CardTitle, Input } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
@@ -874,7 +875,7 @@ export function ProjectSiteAnalysisWorkspaceClient({
                 <GlobalAddressSearch
                   onChange={(entries) => {
                     if (entries.length > 0) {
-                      setForm((current) => ({ ...current, address: entries[0].jibunAddress || entries[0].fullAddress }));
+                      setForm((current) => ({ ...current, address: preferredEntryAddress(entries[0]) }));
                     }
                   }}
                   placeholder={labels.addressLabel}
