@@ -59,7 +59,8 @@ import { SATONG_PANE_Z, SATONG_POPUP_YIELD, SATONG_UI_Z } from "@/lib/satong-map
 
 /** 측정 해제는 **표면이 아니다** — 열린 표면이 하나도 없을 때만 ESC 차례가 오도록 최하위. */
 const MEASURE_DISMISS_Z = -1;
-import { clampClickMenuPosition, findFeatureAtPoint, shortJibunLabel } from "@/lib/satong-click-menu";
+import { clampClickMenuPosition, findFeatureAtPoint } from "@/lib/satong-click-menu";
+import { addressHasJibun, joinAddressJibun, normalizePnu, parcelDisplayAddress, parcelShortLabel } from "@/lib/pnu";
 import {
   formatAreaSqm,
   formatDistance,
@@ -800,7 +801,8 @@ function escapeHtml(value: string | number | null | undefined): string {
 }
 
 function pointResultToFeature(parcel: ParcelAtPointResult): SatongMapFeature {
-  const address = parcel.address || parcel.jibun || parcel.pnu || "지도 선택 필지";
+  // 형제 스윕 — 소재지·지번 분리 응답을 결합한다(`||` 는 지번을 통째로 버린다. lib/pnu 주석).
+  const address = joinAddressJibun(parcel.address, parcel.jibun, parcel.pnu || "지도 선택 필지");
   return {
     id: parcel.pnu || address,
     pnu: parcel.pnu ?? null,
@@ -854,7 +856,7 @@ function featurePopupHtml(feature: SatongMapFeature, statusLabel?: string): stri
   return [
     `<div style="padding:10px 12px;font-size:12px;line-height:1.6;min-width:200px;">`,
     feature.zoneType ? `<div style="margin-bottom:6px;"><span style="background:#0e7490;color:#fff;padding:3px 8px;border-radius:6px;font-weight:900;font-size:11.5px;letter-spacing:-0.2px;">용도지역: ${escapeHtml(feature.zoneType)}</span></div>` : "",
-    `<b>${escapeHtml(feature.address || feature.pnu || "필지")}</b>${statusLabel ? ` <span style="color:#0e7490">[${escapeHtml(statusLabel)}]</span>` : ""}`,
+    `<b>${escapeHtml(parcelDisplayAddress(feature.address, feature.pnu) || feature.pnu || "필지")}</b>${statusLabel ? ` <span style="color:#0e7490">[${escapeHtml(statusLabel)}]</span>` : ""}`,
     feature.areaSqm ? `<br/>면적: ${Math.round(feature.areaSqm).toLocaleString()}㎡ (${toP(feature.areaSqm)}평)` : "",
     feature.jimok ? `<br/>지목: ${escapeHtml(feature.jimok)}` : "",
     feature.officialPricePerSqm ? `<br/>공시지가: ${escapeHtml(priceManPyeong(feature.officialPricePerSqm))}` : "",
@@ -1372,16 +1374,31 @@ export function SatongMultiMap({
       onBoundaryStatusChangeRef.current?.("ready");
       return;
     }
+    // ★경계 조회에 **필지를 특정할 수 있는 것만** 보낸다(2026-08-20 라이브 실측 근거).
+    //   ① 가짜 PNU(주소 합성문자열)를 그대로 보내면 서버가 그걸 echo 하고
+    //      area 0 · zone null · geometry null · age_status "lookup_failed" 로 **보강이 죽는다**.
+    //   ② PNU 없이 **동 단위 주소**만 보내면 서버가 임의의 한 필지(예: 114-1)로 **수렴**시킨다 —
+    //      같은 동 77필지가 전부 그 한 필지로 보강되는 **조용한 오답**(라벨이 같은 것보다 나쁘다).
+    //   그래서 진짜 PNU 가 있거나 주소에 지번이 붙은 필지만 요청한다. 나머지는 보강하지 않고
+    //   정직하게 미해석으로 둔다(무날조). 좌표를 가진 필지는 상위(Shell)의 좌표 기반
+    //   자가치유(/zoning/parcel-at-point)가 따로 해석한다.
+    const resolvable = selectedParcels
+      .map((parcel) => ({ pnu: normalizePnu(parcel.pnu), address: parcel.address }))
+      .filter((parcel) => !!parcel.pnu || addressHasJibun(parcel.address));
+    if (resolvable.length === 0) {
+      // 요청할 대상이 없다 — 선택은 그대로 두고 "더 받아올 게 없음" 으로 종료(무한 로딩 금지).
+      setBoundaryFeatures(mergeSatongMapFeatures(selectedParcels));
+      setBoundaryStatus("ready");
+      onBoundaryStatusChangeRef.current?.("ready");
+      return;
+    }
     let alive = true;
     setBoundaryStatus("loading");
     onBoundaryStatusChangeRef.current?.("loading");
     apiClient
       .post<BoundaryResponse>("/zoning/parcel-boundaries", {
         body: {
-          parcels: selectedParcels.map((parcel) => ({
-            pnu: parcel.pnu,
-            address: parcel.address,
-          })),
+          parcels: resolvable,
         },
         useMock: false,
         timeoutMs: 45000,
@@ -2302,7 +2319,9 @@ export function SatongMultiMap({
       points.forEach(({ feature, point }) => {
         bindSatongLabel(
           makeAnchor(point.lat, point.lon),
-          shortJibunLabel(feature.address, feature.pnu || "필지"),
+          // ★PNU 로 지번을 파생한 **뒤** 줄인다 — 먼저 줄이면 동 단위 주소에서 지번을 붙일
+          //   자리가 사라져 같은 동의 필지가 지도에서 전부 같은 라벨이 된다.
+          parcelShortLabel(feature.address, feature.pnu, feature.pnu || "필지"),
           { permanent: true, offsetY: 2 },
         );
       });
@@ -3082,7 +3101,7 @@ export function SatongMultiMap({
                 </p>
                 {clickMenuFeature?.address && (
                   <p className="mt-0.5 truncate text-[13px] font-semibold text-[var(--text-primary)]">
-                    {shortJibunLabel(clickMenuFeature.address)}
+                    {parcelShortLabel(clickMenuFeature.address, clickMenuFeature.pnu)}
                   </p>
                 )}
                 {subInfo.length > 0 && (
@@ -3469,8 +3488,8 @@ export function SatongMultiMap({
               {/* 필지 요약 정보 */}
               <div className="mb-2 space-y-0.5">
                 <p className="text-[12px] font-bold text-[var(--text-primary)] leading-snug">
-                  {/* 주소 또는 PNU 표시 */}
-                  {pending.address || pending.jibun || pending.pnu}
+                  {/* 주소+지번 결합 표시(`||` 는 분리 응답의 지번을 버린다 — lib/pnu 주석) */}
+                  {joinAddressJibun(pending.address, pending.jibun, pending.pnu || "")}
                 </p>
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-[var(--text-secondary)]">
                   {/* 면적(㎡·평) */}

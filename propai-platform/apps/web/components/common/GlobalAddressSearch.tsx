@@ -19,6 +19,7 @@ import { AlertTriangle, Building2, CheckCircle2, FileSpreadsheet, Landmark, Laye
 import { KakaoAddressSearch, type KakaoAddressResult } from "@/components/ui/KakaoAddressSearch";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient, apiV1BaseUrl } from "@/lib/api-client";
+import { joinAddressJibun } from "@/lib/pnu";
 import { scheduleSnapshotSync } from "@/lib/projectSync";
 import { preferredEntryAddress } from "@/lib/parcel-rows";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
@@ -1070,9 +1071,11 @@ export function GlobalAddressSearch({
         .map((p) => {
           // ★소재지(동)와 지번(번지)이 분리된 양식이면 결합해 '완전한 지번주소'를 fullAddress로.
           //   (이게 누락돼 동 단위 주소만 들어가 부지분석·구획도가 동 대표필지로 수렴하던 근본버그.)
+          //   ★2026-08-20: 구현을 `joinAddressJibun`(lib/pnu)으로 옮겼다 — 여기만 고쳐져 있고
+          //   13일 뒤 생긴 사통맵 유입부가 같은 결함을 재도입했다(구현 두 벌 금지).
           const addr = (p.address || "").trim();
           const jb = (p.jibun || "").trim();
-          const full = (jb && addr && !addr.includes(jb)) ? `${addr} ${jb}` : (addr || jb || p.pnu || "");
+          const full = joinAddressJibun(addr, jb, p.pnu || "");
           return ({
           __uid: newUid(),
           fullAddress: full,
