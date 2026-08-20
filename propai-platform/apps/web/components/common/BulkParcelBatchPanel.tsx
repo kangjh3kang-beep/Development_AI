@@ -11,6 +11,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { preferredEntryAddress } from "@/lib/parcel-rows";
 import dynamic from "next/dynamic";
 import { AlertTriangle, CheckCircle2, Clock, Map, Puzzle } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
@@ -164,7 +165,7 @@ export function BulkParcelBatchPanel({ className = "" }: { className?: string })
             writeToContext={false}
             disabled={loading}
             placeholder="구역 중심 주소를 검색하세요"
-            onChange={(entries) => setCenterAddr(entries.length > 0 ? (entries[0].jibunAddress || entries[0].fullAddress) : "")}
+            onChange={(entries) => setCenterAddr(entries.length > 0 ? preferredEntryAddress(entries[0]) : "")}
           />
           <div className="flex items-center gap-2">
             <span className="text-[11px] font-bold text-[var(--text-tertiary)]">반경</span>

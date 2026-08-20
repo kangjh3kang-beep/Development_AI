@@ -9,22 +9,49 @@
  *          farLegalPct/bcrLegalPct(법정상한 — 보조).
  */
 import type { AddressEntry } from "@/components/common/GlobalAddressSearch";
+import { parcelDisplayAddress } from "@/lib/pnu";
 
 /**
- * 필지 대표 주소 정규화(공용) — 지오코딩 성공률↑.
+ * 필지 대표 주소 정규화(공용) — 지오코딩 성공률↑ + **PNU 로 지번 파생**.
  *
  * jibunAddress 가 법정동 빠진 바레 번지("56-1"·"211-443", 엑셀 소재지·지번 분리 양식)일 때
  * fullAddress("용인시 수지구 신봉동 56-1")가 그 번지를 포함하고 더 길면 fullAddress 를 쓴다.
  * (검색분 도로명 fullAddress 는 지번을 포함하지 않으므로 이 경우 jibunAddress 유지.)
  * ★기존 `jibunAddress || fullAddress || roadAddress` 산재 로직을 대체하는 단일 규칙.
+ *
+ * ## ★★2026-08-21 — 지번 표시의 **세 번째 구현**이었다(사용자 재신고)
+ *
+ * `/ko/permits` 좌측 목록 77행이 전부 `"경기도 오산시 내삼미동"`(동 단위)으로만 보였다.
+ * 같은 데이터가 메인 대시보드에서는 `"내삼미동 467-1"` 로 **정상 표시**됐다 —
+ * 면적(53·684·876·843㎡)이 양쪽에서 같은 순서로 일치해 **같은 필지**임이 확증됐다.
+ * 즉 데이터는 **진짜 PNU 를 갖고 있었고**, 갈린 것은 **표시 구현**이었다:
+ *
+ *   · 대시보드 계열 → `parcelDisplayAddress(address, pnu)`  … PNU 로 지번 파생 ○
+ *   · 사통맵 계열   → `joinAddressJibun(addr, jibun, …)`     … 결합 ○
+ *   · **이 함수**   → `pnu` 를 **매개변수로 받지도 않았다**   … 파생 ✗
+ *
+ * `#719` 는 유입부의 `||` 를 고치면서 주석에 *"구현 두 벌 금지"* 라고 적었는데,
+ * 정작 **세 번째 구현이 이 파일에 있었다.** 그래서 표시층 수정이 여섯 번 반복된 것이다 —
+ * 매번 **자기가 보고 있던 표면**만 고쳤기 때문이다.
+ *
+ * → `pnu` 를 받아 `parcelDisplayAddress` 에 위임한다. 파생 규칙은 `lib/pnu.ts` 한 곳에만 둔다
+ *   (주소에 이미 지번이 있으면 그대로 두는 판정도 그쪽이 갖고 있다 — 이중 부착 없음).
  */
 export function preferredEntryAddress(
-  e: { jibunAddress?: string | null; fullAddress?: string | null; roadAddress?: string | null },
+  e: {
+    jibunAddress?: string | null;
+    fullAddress?: string | null;
+    roadAddress?: string | null;
+    pnu?: string | null;
+  },
 ): string {
   const jb = (e.jibunAddress || "").trim();
   const full = (e.fullAddress || "").trim();
-  if (full && jb && full.includes(jb) && full.length > jb.length) return full;
-  return jb || full || (e.roadAddress || "").trim();
+  const base = (full && jb && full.includes(jb) && full.length > jb.length)
+    ? full
+    : (jb || full || (e.roadAddress || "").trim());
+  // ★PNU 가 있으면 지번을 파생한다. 주소가 이미 필지를 특정하면 그대로 둔다(파생 규칙 SSOT).
+  return parcelDisplayAddress(base, e.pnu ?? null);
 }
 
 export interface ParcelRow {

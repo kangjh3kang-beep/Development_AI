@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { preferredEntryAddress } from "@/lib/parcel-rows";
 import { motion, AnimatePresence } from "framer-motion";
 import { AlertTriangle } from "lucide-react";
 import { GlobalAddressSearch, type AddressEntry } from "@/components/common/GlobalAddressSearch";
@@ -157,7 +158,7 @@ export function SiteInitiator({ onInitiate, loading }: SiteInitiatorProps) {
                 <GlobalAddressSearch
                   onChange={(entries) => {
                     if (entries.length > 0) {
-                      setAddress(entries[0].fullAddress);
+                      setAddress(preferredEntryAddress(entries[0]));
                     }
                   }}
                   placeholder="주소를 검색하세요 (클릭하면 검색창이 열립니다)"

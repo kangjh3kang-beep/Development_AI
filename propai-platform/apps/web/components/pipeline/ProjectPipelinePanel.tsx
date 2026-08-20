@@ -17,6 +17,7 @@ import { PipelineResultDetail } from "./PipelineResultDetail";
 import { ProjectCompareView } from "./ProjectCompareView";
 import { SiteAnalysisDetail } from "./SiteAnalysisDetail";
 import { writePreCheckHandoff } from "@/components/precheck/handoff";
+import { preferredEntryAddress } from "@/lib/parcel-rows";
 
 // 대시보드(비프로젝트) 체험 모드에서 노출/실행 가능한 단계 — 부지분석 + 약식 수지만.
 // 나머지(설계·공사비·세무·ESG·보고서)는 잠금 → 프로젝트 생성 시 제공(구독 전환 관문).
@@ -674,7 +675,7 @@ export function ProjectPipelinePanel({
         address: addr,
         completedAt: new Date().toISOString(),
         result,
-        addresses: allAddresses.length > 0 ? allAddresses.map((a) => a.fullAddress) : [addr],
+        addresses: allAddresses.length > 0 ? allAddresses.map((a) => preferredEntryAddress(a)) : [addr],
         // ★대시보드(quick)는 projectId 태깅 금지 — store에 묻은 stale projectId로 태깅돼
         //  무태깅 필터에서 본인 이력이 전부 숨겨지던 근본원인 차단. 프로젝트 모드만 태깅.
         projectId: projectMode ? (projectId || undefined) : undefined,
@@ -746,7 +747,7 @@ export function ProjectPipelinePanel({
     setAllAddresses(entries);
     if (entries.length > 0) {
       // 대표 주소 설정 (첫 번째 필지)
-      setAddress(entries[0]!.fullAddress);
+      setAddress(preferredEntryAddress(entries[0]!));
     } else {
       setAddress("");
     }
@@ -1090,7 +1091,7 @@ export function ProjectPipelinePanel({
           </svg>
           진행 단계으로 돌아가기
         </button>
-        <PipelineResultDetail result={lastResult} onRerun={handleRerun} addresses={allAddresses.map((a) => a.fullAddress)} />
+        <PipelineResultDetail result={lastResult} onRerun={handleRerun} addresses={allAddresses.map((a) => preferredEntryAddress(a))} />
       </div>
     );
   }
@@ -1182,7 +1183,7 @@ export function ProjectPipelinePanel({
                 <p>선택된 주소: <span className="text-[var(--accent-strong)]">{address}</span></p>
               ) : (
                 // 대량 필지: 전체 주소를 콤마로 나열하지 않고 대표 + "외 N필지"로 간결 표기(가독성).
-                <p>선택된 필지: <span className="text-[var(--accent-strong)]">{allAddresses.length}개</span> — {(allAddresses[0]?.jibunAddress || allAddresses[0]?.fullAddress || address)}{allAddresses.length > 1 ? ` 외 ${allAddresses.length - 1}필지` : ""}</p>
+                <p>선택된 필지: <span className="text-[var(--accent-strong)]">{allAddresses.length}개</span> — {(allAddresses[0] ? preferredEntryAddress(allAddresses[0]) : address)}{allAddresses.length > 1 ? ` 외 ${allAddresses.length - 1}필지` : ""}</p>
               )}
             </div>
           )}
@@ -1409,7 +1410,7 @@ export function ProjectPipelinePanel({
                     <p className="text-xs text-red-400 mb-2">{stage.error}</p>
                   )}
                   {stage.stage === "site_analysis" ? (
-                    <SiteAnalysisDetail data={stage.data} parcels={allAddresses.map((a) => a.fullAddress)} />
+                    <SiteAnalysisDetail data={stage.data} parcels={allAddresses.map((a) => preferredEntryAddress(a))} />
                   ) : (
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                       {Object.entries(stage.data)
