@@ -303,33 +303,31 @@ def test_merged_cells_forward_fill():
     assert all(p.get("co_owner") for p in out["parcels"]), "같은 PNU 공유지분(병합 복원)으로 표시돼야 함"
 
 
-# ── ⑦-b 병합 복원 '실패' — 침묵 금지(사용자 응답 warnings 에 사유가 떠야 한다) ─────
-def _merged_two_owner_xlsx() -> bytes:
-    """지번·소재지·PNU 를 두 행에 세로 병합하고 소유자만 다른, 실제 토지조서 형태."""
+# ── ⑦-b 병합 복원이 안 되는 엑셀 — 원문 복원 + 침묵 금지 + 위양성 금지 ─────
+def _merged_two_owner_xlsx(merged: bool = True) -> bytes:
+    """지번·소재지를 두 행에 세로 병합한(또는 안 한) 실제 토지조서 형태."""
     from openpyxl import Workbook
 
     wb = Workbook()
     ws = wb.active
     ws.title = "토지조서"
-    ws.append(["소재지(주소)", "지번", "PNU(필지고유번호·19자리)", "소유구분"])
-    ws.append(["서울특별시 동작구 상도동", "210-453", "1159010300102100453", "김철수"])
-    ws.append(["", "", "", "이영희"])
-    ws.merge_cells("A2:A3")
-    ws.merge_cells("B2:B3")
-    ws.merge_cells("C2:C3")
+    ws.append(["소재지(주소)", "지번", "소유구분"])
+    ws.append(["서울특별시 동작구 상도동", "210-453", "김철수"])
+    ws.append(["", "", "이영희"] if merged else ["서울특별시 동작구 상도동", "210-454", "이영희"])
+    if merged:
+        ws.merge_cells("A2:A3")
+        ws.merge_cells("B2:B3")
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
 
 
-def _break_full_workbook_read(raw: bytes) -> bytes:
-    """★모킹이 아닌 '진짜 실패 입력' 을 만든다.
+def _break_full_workbook_read(raw: bytes, part: str = "sheet1.xml") -> bytes:
+    """★모킹이 아닌 '진짜 손상 입력' — 셀에 styles.xml 에 없는 서식번호(s="9999")를 심는다.
 
-    셀 하나에 styles.xml 에 없는 서식번호(s="9999")를 심는다. 엑셀을 표로만 읽는 pandas 경로
-    (openpyxl read_only)는 서식을 찾아보지 않아 그대로 통과하지만, 병합범위를 읽으려면 반드시
-    필요한 '전체 읽기'(read_only=False)는 그 번호를 서식표에서 찾다가 IndexError 로 죽는다.
-    엑셀을 마이크로소프트 오피스가 아닌 도구로 내보내면 실제로 나오는 형태다 —
-    그래서 표는 읽히는데 병합만 복원 못 하는, 이 결함이 사는 바로 그 창이 열린다.
+    엑셀을 표로만 읽는 pandas 경로(openpyxl read_only)는 서식을 찾아보지 않아 통과하지만,
+    병합범위를 얻으려면 필요한 '전체 읽기'(read_only=False)는 그 번호를 서식표에서 찾다가
+    IndexError 로 죽는다. 오피스가 아닌 도구로 내보낸 엑셀에서 실제로 나오는 형태다.
     """
     import zipfile
 
@@ -338,55 +336,116 @@ def _break_full_workbook_read(raw: bytes) -> bytes:
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zo:
         for item in zin.infolist():
             data = zin.read(item.filename)
-            if item.filename.endswith("sheet1.xml"):
+            if item.filename.endswith(part):
                 data = data.replace(b'<c r="A1"', b'<c s="9999" r="A1"', 1)
             zo.writestr(item.filename, data)
     return out.getvalue()
 
 
-def test_merged_expand_failure_is_reported_not_silent():
-    """병합 복원 성공/실패는 '다른 결과'를 내야 한다 — 지번 유무 + warnings 유무 둘 다."""
-    ok_raw = _merged_two_owner_xlsx()
-    bad_raw = _break_full_workbook_read(ok_raw)
-    assert ok_raw != bad_raw, "실패 입력이 실제로 달라야 한다(주입 성공 확인)"
+def _parse_x(raw: bytes, name: str = "t.xlsx") -> dict:
+    return asyncio.run(pes.ParcelExcelService().parse(raw, name, use_llm=False))
 
-    # 전제① 두 입력 모두 '파일 읽기'까지는 성공해야 두 모집단 비교가 성립한다.
-    #   (실패 입력이 통째로 못 읽히는 파일이면 이 테스트는 병합 복원을 태우지 않는다.)
-    ok = asyncio.run(pes.ParcelExcelService().parse(ok_raw, "병합.xlsx", use_llm=False))
-    bad = asyncio.run(pes.ParcelExcelService().parse(bad_raw, "병합_전체읽기실패.xlsx", use_llm=False))
+
+def _warns(out: dict) -> list[str]:
+    return out.get("verification_report", {}).get("warnings", [])
+
+
+def test_merged_expand_failure_recovers_from_source_and_reports():
+    """전체읽기가 죽어도 병합범위는 원문(zip XML)에 있다 → 지번을 복원하고 그 사실을 알린다."""
+    ok = _parse_x(_merged_two_owner_xlsx(), "병합.xlsx")
+    bad = _parse_x(_break_full_workbook_read(_merged_two_owner_xlsx()), "병합_손상.xlsx")
+
+    # 전제(공허한 참 방지): 두 입력 모두 읽혀야 두 모집단 비교가 성립한다.
     assert not ok.get("error"), f"정상 입력이 읽혀야 함: {ok.get('error')}"
-    assert not bad.get("error"), f"실패 입력도 표 자체는 읽혀야 함(안 읽히면 다른 결함): {bad.get('error')}"
+    assert not bad.get("error"), f"손상 입력도 표 자체는 읽혀야 함: {bad.get('error')}"
 
-    # 전제② 성공 모집단에서 병합 복원이 실제로 일어나야 한다(복원 대상 0이면 잠금이 공허하다).
+    # 전제: 성공 모집단에서 병합 복원이 실제로 일어나야 한다(복원 대상 0이면 잠금이 공허).
     ok_jibun = [p.get("jibun") for p in ok["parcels"]]
-    assert len(ok_jibun) == 2 and ok_jibun[0] == ok_jibun[1] == "210-453", (
-        f"성공 모집단에서 병합된 지번이 두 행 모두에 복원돼야 함: {ok_jibun}"
-    )
+    assert ok_jibun == ["210-453", "210-453"], f"병합된 지번이 두 행 모두에 복원돼야 함: {ok_jibun}"
 
-    ok_warn = ok["verification_report"]["warnings"]
-    bad_warn = bad["verification_report"]["warnings"]
-
-    # ★모집단 A(성공): 병합 경고가 없어야 한다 — 늘 경고하면 경고가 무의미해진다.
-    assert not [w for w in ok_warn if "병합 셀 복원 실패" in w], f"성공인데 경고가 뜸: {ok_warn}"
-
-    # ★모집단 B(실패): 사용자 응답에 사유가 떠야 한다(로그만 남기는 침묵 금지).
-    merge_warn = [w for w in bad_warn if "병합 셀 복원 실패" in w]
-    assert merge_warn, f"병합 복원 실패를 사용자에게 알려야 한다(현재 warnings={bad_warn})"
-    # 문구는 세 가지를 다 말해야 한다 — ①무슨 일이 났는지 ②무엇을 잃는지 ③무엇을 하면 되는지.
-    #   ★세 절을 각각 결속한다. "지번" 하나만 보면 문구의 여러 줄이 그 단어를 나눠 갖고 있어
-    #   한 줄을 지워도 통과한다(실제로 변이 생존으로 드러났다).
-    msg = merge_warn[0]
-    assert "빈칸" in msg, f"②무엇을 잃는지(지번이 빈칸으로 남음)를 말해야 한다: {msg}"
-    assert "병합을 해제" in msg, f"③무엇을 해야 하는지(병합 해제)를 말해야 한다: {msg}"
-    assert "직접 적어" in msg, f"③행마다 직접 적으라는 실행지시가 있어야 한다: {msg}"
-
-    # ★두 모집단이 '다른 결과'를 내야 한다 — 같은 결과면 배선을 끊어도 통과한다.
+    # ★핵심: 손상 파일에서도 '원문 복원'으로 지번이 살아야 한다(행 탈락 0).
+    #   사용자에게 "엑셀을 고쳐 오라"고 떠넘기지 않는다 — 복원 가능한 것은 복원한다.
     bad_jibun = [p.get("jibun") for p in bad["parcels"]]
-    assert bad_jibun != ok_jibun, (
-        f"복원 실패인데 성공과 지번 결과가 같다 — 픽스처가 두 모집단을 가르지 못한 것: {bad_jibun}"
+    assert bad_jibun == ok_jibun, f"원문에서 복원했어야 함(떠넘기기 금지): {bad_jibun}"
+
+    # ★두 모집단이 '다른 결과'를 낸다 — 경고 유무. 같으면 배선을 끊어도 통과한다.
+    assert not _warns(ok), f"정상 파일엔 경고가 없어야 함: {_warns(ok)}"
+    note = [w for w in _warns(bad) if "원문에서 직접 복원" in w]
+    assert note, f"복원 사실을 알려야 한다(침묵 금지): {_warns(bad)}"
+    assert "확인해 주세요" in note[0], f"확인을 권해야 한다: {note[0]}"
+    # ★복원됐는데 '실패'라고 말하면 거짓말이다.
+    assert not [w for w in _warns(bad) if "복원 실패" in w], f"복원했는데 실패라 함: {_warns(bad)}"
+
+
+def test_no_merged_cells_never_warns_about_merges():
+    """★위양성 대조군 — 병합이 0개인 파일에 '병합을 해제하라'고 하면 안 된다.
+
+    같은 손상을 넣어도 병합이 없으면 잃은 값이 없다. 이 대조군이 없으면 '없는 병합을 풀라'는
+    엉뚱한 지시가 멀쩡한 파일에까지 뜨는 것을 못 잡는다(가드의 위양성도 결함이다).
+    """
+    plain = _parse_x(_merged_two_owner_xlsx(merged=False), "병합없음.xlsx")
+    plain_bad = _parse_x(_break_full_workbook_read(_merged_two_owner_xlsx(merged=False)),
+                         "병합없음_손상.xlsx")
+
+    # 전제: 두 입력 모두 데이터가 온전해야 '경고 0'이 의미를 갖는다(공허한 참 방지).
+    for label, out in (("정상", plain), ("손상", plain_bad)):
+        assert not out.get("error"), f"{label} 입력이 읽혀야 함"
+        assert [p.get("jibun") for p in out["parcels"]] == ["210-453", "210-454"], (
+            f"{label}: 병합이 없으므로 데이터가 100% 온전해야 함"
+        )
+    assert not [w for w in _warns(plain_bad) if "병합" in w], (
+        f"병합이 0개인데 병합 경고가 떴다(위양성): {_warns(plain_bad)}"
     )
-    # ★없는 지번을 지어내지 않았는지 — 복원 실패면 병합 아래 행의 지번은 살아나면 안 된다.
-    assert bad_jibun.count("210-453") < 2, f"복원 실패인데 지번이 채워졌다(날조 의심): {bad_jibun}"
+
+
+def test_merged_expand_reports_failure_when_source_recovery_also_fails(monkeypatch):
+    """원문 복원마저 실패하면 그때는 정직하게 '복원 실패'를 말해야 한다.
+
+    ★진짜 손상 입력으로는 이 갈래를 못 만든다(병합범위 XML 이 깨지면 pandas 도 같이 죽어
+    파일 자체가 안 읽힌다 — 실측). 그래서 이 한 갈래만 폴백 함수를 막아 태운다.
+    """
+    def _boom(_raw):
+        raise RuntimeError("zip 폴백 불가")
+
+    monkeypatch.setattr(pes, "_merged_ranges_from_zip", _boom)
+    bad = _parse_x(_break_full_workbook_read(_merged_two_owner_xlsx()), "복원불가.xlsx")
+    assert not bad.get("error")
+    fail = [w for w in _warns(bad) if "병합 셀 복원 실패" in w]
+    assert fail, f"복원 실패를 알려야 한다: {_warns(bad)}"
+    msg = fail[0]
+    # 문구는 세 절을 다 말해야 한다 — 한 단어만 보면 여러 줄이 그 단어를 나눠 갖고 있어
+    # 어느 한 줄을 지워도 통과한다(실제로 변이 생존으로 드러났다).
+    assert "빈칸" in msg, f"②무엇을 잃는지: {msg}"
+    assert "병합을 해제" in msg, f"③무엇을 해야 하는지: {msg}"
+    assert "직접 적어" in msg, f"③실행지시: {msg}"
+    # ★모르는 수를 지어내지 않는다 — 병합이 몇 곳인지 못 셌으면 개수를 말하지 않는다.
+    assert "0곳" not in msg, f"셀 수 없는데 개수를 지어냄: {msg}"
+
+
+def test_early_missing_column_return_still_carries_warnings():
+    """★파서에서 가장 조용한 경로 — 필수 컬럼 부재 조기 반환이 사유를 버리면 안 된다.
+
+    이 경로는 verification_report 자체가 없어서, 여기서 structure_notes 를 버리면 사용자는
+    '필수 컬럼을 찾지 못했습니다'라는 **틀린 사유**만 받는다(진짜 원인은 따로 있는데).
+    """
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "토지조서"
+    ws.append(["항목", "값", "비고"])          # 소재지·PNU·법정동코드 어느 것도 없다
+    ws.append(["연면적", "1000", ""])
+    ws.append(["", "", "메모"])
+    ws.merge_cells("A2:A3")
+    buf = io.BytesIO()
+    wb.save(buf)
+    out = _parse_x(_break_full_workbook_read(buf.getvalue()), "컬럼없음_손상.xlsx")
+
+    assert out.get("error"), "필수 컬럼이 없으므로 error 여야 함(전제)"
+    assert "warnings" in out, "조기 반환도 warnings 키를 실어야 한다(현재 침묵)"
+    assert any("병합" in w or "복원" in w for w in out["warnings"]), (
+        f"진짜 사유(병합/서식을 못 읽음)가 사용자에게 닿아야 한다: {out.get('warnings')}"
+    )
 
 
 def test_expand_merged_cells_returns_no_note_on_success():
@@ -401,19 +460,66 @@ def test_expand_merged_cells_returns_no_note_on_success():
     assert note is None, f"성공인데 사유가 생김: {note}"
     assert str(filled.iat[1, 1]) == "210-453", "성공 경로가 실제로 병합을 채워야 한다(공허 방지)"
 
-    _, bad_note = pes._expand_merged_cells(_break_full_workbook_read(raw), df, header_row=0)
-    assert bad_note and "병합 셀 복원 실패" in bad_note, f"실패인데 사유가 없음: {bad_note}"
 
+def test_llm_sheet_reselect_reread_failure_is_reported(monkeypatch):
+    """LLM 이 고른 시트를 다시 읽지 못하면 그 사실을 알려야 한다(조용히 옛 시트 결과 금지).
 
-@pytest.mark.skip(reason="부채(무잠금): 형제 침묵 봉합은 했으나 실패 입력을 못 만들어 미검증")
-def test_llm_sheet_reselect_reread_failure_is_reported():
-    """★부채를 초록 안에 보이게 남긴다 — 고쳤지만 잠그지는 못한 자리.
-
-    LLM 이 고른 시트로 다시 읽기가 실패하면 조용히 원래 시트 결과를 내보내던 자리(parse 안
-    '시트 재선택')에 사유 표기를 넣었다. 그러나 그 분기는 '시트 미리보기(openpyxl)에는 있는데
-    pandas 로는 못 읽는 시트' 가 있어야 발화하는데, 두 경로가 같은 openpyxl 을 쓰므로 그런
-    입력을 만들지 못했다. 그래서 이 수정은 '무잠금'(고쳤으나 검증 안 됨)이지 '미수정'이 아니다.
+    ★이 분기가 발화하는 이유는 두 경로가 '읽는 양'이 다르기 때문이다 —
+    미리보기(_sheet_previews_xlsx)는 15행에서 끊고(max_rows) pd.read_excel 은 전 행을 읽는다.
+    그래서 16행 이후가 깨진 시트는 **미리보기는 되는데 본문은 못 읽는** 상태가 된다.
+    (병합 건의 'read_only vs 전체읽기' 비대칭과 같은 종류의 결함이다 — 예전 skip 사유
+    "두 경로가 같은 openpyxl 을 쓰므로 실패 입력을 만들 수 없다"는 **틀렸다**.)
     """
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "표지"
+    ws.append(["프로젝트 개요"])
+    ws.append(["작성일자: 2026-01-01"])
+    s2 = wb.create_sheet("필지목록")
+    s2.append(["소재지(주소)", "지번", "면적(㎡)"])
+    for i in range(1, 26):  # 26행 — 미리보기 캡(15행) 훨씬 뒤까지
+        s2.append(["서울특별시 동작구 상도동", f"210-{400 + i}", 100 + i])
+    buf = io.BytesIO()
+    wb.save(buf)
+
+    import zipfile
+
+    zin = zipfile.ZipFile(io.BytesIO(buf.getvalue()))
+    out_buf = io.BytesIO()
+    injected = False
+    with zipfile.ZipFile(out_buf, "w", zipfile.ZIP_DEFLATED) as zo:
+        for item in zin.infolist():
+            data = zin.read(item.filename)
+            if item.filename.endswith("sheet2.xml"):
+                new_data = data.replace(b"<v>125</v>", b"<v>NOT_A_NUMBER</v>", 1)
+                injected = new_data != data
+                data = new_data
+            zo.writestr(item.filename, data)
+    raw = out_buf.getvalue()
+    assert injected, "손상 주입이 실제로 됐는지 먼저 확인(주입 실패를 생존으로 오독 방지)"
+
+    # 전제(공허한 참 방지): 미리보기는 되고 본문 읽기는 실패해야 이 분기가 열린다.
+    previews = pes._sheet_previews_xlsx(raw)
+    assert "필지목록" in previews, "미리보기에 시트가 보여야 LLM 이 그 시트를 고를 수 있다"
+    import pandas as pd
+    reread_failed = False
+    try:
+        pd.read_excel(io.BytesIO(raw), dtype=str, engine="openpyxl", header=None,
+                      sheet_name="필지목록")
+    except Exception:  # noqa: BLE001 — 예외 '종류'가 아니라 '본문을 못 읽는다'는 사실이 전제다
+        reread_failed = True
+    assert reread_failed, "본문 읽기가 실패해야 이 분기가 열린다(전제)"
+
+    _patch_llm(monkeypatch, lambda _h: json.dumps({"sheet_name": "필지목록"}, ensure_ascii=False))
+    out = asyncio.run(pes.ParcelExcelService().parse(raw, "시트재선택실패.xlsx", use_llm=True))
+
+    notes = out.get("verification_report", {}).get("warnings", []) or out.get("warnings", [])
+    hit = [w for w in notes if "다시 읽지 못해" in w]
+    assert hit, f"시트를 다시 읽지 못한 사실을 알려야 한다(침묵 금지): {notes}"
+    assert "필지목록" in hit[0], f"어느 시트인지 말해야 한다: {hit[0]}"
+    assert "확인이 필요합니다" in hit[0], f"확인을 권해야 한다: {hit[0]}"
 
 
 # ── ⑧ CSV cp949 인코딩 폴백 ───────────────────────────────────────────
