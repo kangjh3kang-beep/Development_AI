@@ -2,6 +2,7 @@
 
 import type { SiteAnalysisData } from "@/store/useProjectContextStore";
 import type { ParcelRow } from "@/lib/parcel-rows";
+import { normalizePnu } from "@/lib/pnu";
 
 export const SATONG_MAP_SELECTION_KEY = "satong_map_selection";
 
@@ -241,10 +242,17 @@ export function siteAnalysisParcelsToSelection(
       // 필지별 좌표 우선(옵션B). 첫 필지에 한해 좌표 부재 시 대표점 폴백(옵션A).
       const lat = parcel.lat ?? (index === 0 ? fallbackCoord?.lat ?? null : null);
       const lon = parcel.lon ?? (index === 0 ? fallbackCoord?.lon ?? null : null);
+      // ★영속된 **가짜 PNU** 를 읽는 순간 버린다(자가치유). 과거 selectionToSiteAnalysisPatch 가
+      //   `pnu || id` 로 저장해, PNU 칸에 주소 합성문자열이 들어앉은 프로젝트가 이미 존재한다.
+      //   그 값을 그대로 실어 나르면 ①지번 파생이 무동작 ②경계응답의 진짜 PNU 승격이 차단
+      //   ③경계 요청에 실려 나가 보강 전체가 죽는다(lib/pnu normalizePnu 주석의 라이브 실측).
+      //   ★id 도 가짜 PNU 를 쓰면 안 된다 — 같은 동의 77필지가 **전부 같은 id** 가 돼
+      //   React key 충돌·필지 제거 오작동이 난다(index 기반 합성 id 는 필지별로 다르다).
+      const pnu = normalizePnu(parcel.pnu);
       return {
-        id: parcel.pnu || `store-${index}-${parcel.address}`,
+        id: pnu || `store-${index}-${parcel.address}`,
         address: (parcel.address ?? "").trim(),
-        pnu: parcel.pnu ?? null,
+        pnu,
         lat,
         lon,
         areaSqm: parcel.areaSqm ?? null,
@@ -319,7 +327,7 @@ export function selectionToSiteAnalysisPatch(
 
   return {
     address: first.address,
-    pnu: first.pnu ?? null,
+    pnu: normalizePnu(first.pnu),
     coordinates:
       first.lat != null && first.lon != null
         ? { lat: first.lat, lon: first.lon }
@@ -332,7 +340,11 @@ export function selectionToSiteAnalysisPatch(
     repLandAreaSqm: first.areaSqm ?? null,
     parcelCount: parcels.length,
     parcels: parcels.map((parcel) => ({
-      pnu: parcel.pnu || parcel.id,
+      // ★★여기가 6번 재발한 "77행이 전부 동 이름" 의 발원지였다.
+      //   `parcel.id` 는 PNU 미확보 시 **주소를 정규화한 합성값**이라, PNU 칸에 주소가 들어갔다.
+      //   PNU 가 아닌 것은 PNU 칸에 넣지 않는다 — 미확보는 빈 문자열(기존 소비처가 `p.pnu ||`
+      //   폴백으로 이미 취급하는 '미확보' 표기와 동일). 없는 값을 지어내지 않는다(무날조).
+      pnu: normalizePnu(parcel.pnu) ?? "",
       address: parcel.address,
       areaSqm: parcel.areaSqm ?? 0,
       landCategory: parcel.jimok || "미확인",

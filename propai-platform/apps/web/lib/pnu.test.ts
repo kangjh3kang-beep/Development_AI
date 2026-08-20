@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { isValidPnu, jibunFromPnu, parcelDedupKey, parcelDisplayAddress } from "./pnu";
+import {
+  addressHasJibun,
+  isValidPnu,
+  jibunFromPnu,
+  normalizePnu,
+  parcelDedupKey,
+  parcelDisplayAddress,
+  parcelJibunResolved,
+  parcelShortLabel,
+} from "./pnu";
 
 describe("jibunFromPnu", () => {
   it("일반 지번 본번-부번을 파싱한다", () => {
@@ -104,5 +113,119 @@ describe("프로젝트 불러오기 — PNU 가 없는 필지의 잔여 접힘",
     const a = projectKey({ pnu: "4148025329101230004", address: "x" }, 0);
     const b = projectKey({ pnu: "4148025329101230004", address: "y" }, 9);
     expect(a).toBe(b);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// 2026-08-20 — "77행이 전부 동 이름" 6번째 재발. 세 모집단을 **다른 결과**로 가른다.
+//
+//   (A) 진짜 PNU 보유            → 지번이 붙는다
+//   (B) 주소에 지번 보유(PNU 없음) → 주소 그대로 쓴다(이미 특정 가능)
+//   (C) 앵커 없음(동 단위 주소)    → 지어내지 않고 "미해석" 으로 남는다
+//
+// ★셋이 같은 결과를 내면 배선을 끊어도 통과한다 — 그래서 서로 **다름**을 못박는다.
+// ────────────────────────────────────────────────────────────────────────────
+
+describe("normalizePnu — PNU 칸에 PNU 가 아닌 것이 들어오면 '없음'", () => {
+  it("19자리 숫자만 통과한다", () => {
+    expect(normalizePnu("4137011000104670001")).toBe("4137011000104670001");
+    expect(normalizePnu("  4137011000104670001  ")).toBe("4137011000104670001");
+  });
+
+  it("★실제 프로덕션 오염값(주소가 PNU 칸에 들어앉음)을 걷어낸다", () => {
+    // selectionToSiteAnalysisPatch 의 `pnu: parcel.pnu || parcel.id` 가 만든 값.
+    expect(normalizePnu("경기도 오산시 내삼미동")).toBeNull();
+    expect(normalizePnu("store-0-경기도 오산시 내삼미동")).toBeNull();
+    expect(normalizePnu("P-abc123")).toBeNull();
+    expect(normalizePnu("")).toBeNull();
+    expect(normalizePnu(null)).toBeNull();
+    expect(normalizePnu(undefined)).toBeNull();
+  });
+});
+
+describe("addressHasJibun — 동 단위 주소를 필지 식별자로 쓰지 않기 위한 판정", () => {
+  it("번지가 붙어야 참", () => {
+    expect(addressHasJibun("경기도 오산시 내삼미동 114-1")).toBe(true);
+    expect(addressHasJibun("경기도 오산시 내삼미동 467")).toBe(true);
+    expect(addressHasJibun("경기도 오산시 내삼미동 산12-3")).toBe(true);
+  });
+
+  it("★동·읍·면 단위만이면 거짓 — 이걸 참으로 보면 77필지가 임의의 한 필지로 수렴한다", () => {
+    expect(addressHasJibun("경기도 오산시 내삼미동")).toBe(false);
+    expect(addressHasJibun("")).toBe(false);
+    expect(addressHasJibun(null)).toBe(false);
+  });
+});
+
+describe("parcelShortLabel — 축약 SSOT(줄이기 **전에** PNU 로 지번을 파생한다)", () => {
+  // 구 shortJibunLabel(lib/satong-click-menu) 케이스 이관 — 축약 자체의 계약은 유지된다.
+  it("전체 주소 → 동+지번 2토큰", () => {
+    expect(parcelShortLabel("경기도 용인시 수지구 신봉동 56-16")).toBe("신봉동 56-16");
+  });
+
+  it("2토큰 이하 주소는 그대로, 빈 값은 폴백", () => {
+    expect(parcelShortLabel("신봉동 886")).toBe("신봉동 886");
+    expect(parcelShortLabel("886")).toBe("886");
+    expect(parcelShortLabel("")).toBe("필지");
+    expect(parcelShortLabel(null)).toBe("필지");
+    expect(parcelShortLabel(undefined, null, "선택지")).toBe("선택지");
+  });
+
+  it("★세 모집단이 **서로 다른** 라벨을 낸다(같으면 배선을 끊어도 통과한다)", () => {
+    const a = parcelShortLabel("경기도 오산시 내삼미동", "4137011000104670001"); // (A)
+    const b = parcelShortLabel("경기도 오산시 내삼미동 114-1", null);            // (B)
+    const c = parcelShortLabel("경기도 오산시 내삼미동", null);                  // (C)
+    expect(a).toBe("내삼미동 467-1");
+    expect(b).toBe("내삼미동 114-1");
+    // ★이 문자열이 사용자 스크린샷에 77번 찍힌 바로 그 글자다(지번이 없으니 구분 불가).
+    expect(c).toBe("오산시 내삼미동");
+    expect(new Set([a, b, c]).size).toBe(3);
+  });
+
+  it("★가짜 PNU(주소 문자열)는 지번을 만들지 못한다 — 조용히 (C)로 떨어진다", () => {
+    expect(parcelShortLabel("경기도 오산시 내삼미동", "경기도 오산시 내삼미동"))
+      .toBe(parcelShortLabel("경기도 오산시 내삼미동", null));
+  });
+
+  it("★같은 동 77필지가 서로 **다른** 라벨이 된다(실제 신고: 77행이 전부 같은 글자)", () => {
+    const labels = new Set(
+      Array.from({ length: 77 }, (_, i) =>
+        parcelShortLabel(
+          "경기도 오산시 내삼미동",
+          `41370110001${String(1000 + i).padStart(4, "0")}0000`,
+        ),
+      ),
+    );
+    expect(labels.size).toBe(77);
+  });
+});
+
+describe("parcelJibunResolved — '지번 미확인' 을 말해야 하는가", () => {
+  it("(A) PNU 보유 → 해석됨", () => {
+    expect(parcelJibunResolved({ address: "경기도 오산시 내삼미동", pnu: "4137011000104670001" })).toBe(true);
+  });
+
+  it("(B) 주소에 지번 보유 → 해석됨", () => {
+    expect(parcelJibunResolved({ address: "경기도 오산시 내삼미동 114-1", pnu: null })).toBe(true);
+  });
+
+  it("★(C) 앵커 없음 → 미해석(화면이 그 사실을 말해야 한다)", () => {
+    expect(parcelJibunResolved({ address: "경기도 오산시 내삼미동", pnu: null })).toBe(false);
+    // 가짜 PNU 가 '해석됨' 으로 오인되면 안 된다 — 그게 6번 재발의 정체다.
+    expect(parcelJibunResolved({ address: "경기도 오산시 내삼미동", pnu: "경기도 오산시 내삼미동" })).toBe(false);
+  });
+});
+
+describe("parcelDisplayAddress — 주소가 이미 지번으로 끝나면 덧붙이지 않는다", () => {
+  it("★'산1-1' 처럼 접두가 붙은 지번도 중복 표기하지 않는다(정규식이 못 보던 자리)", () => {
+    // 종전: `(^|\s)1-1(\s|$)` 이 '산1-1' 의 '1-1' 을 못 봐 `… 산1-1 1-1` 을 만들었다.
+    expect(parcelDisplayAddress("경상북도 포항시 남구 호미곶면 대보리 산1-1", "4711025029000010001"))
+      .toBe("경상북도 포항시 남구 호미곶면 대보리 산1-1");
+  });
+
+  it("★PNU 가 다른 지번을 가리켜도 **모순되는 라벨**을 만들지 않는다", () => {
+    // `… 114-1 467-1` 은 어느 쪽이 맞는지 화면이 말하지 못한다 — 주소를 그대로 둔다.
+    expect(parcelDisplayAddress("경기도 오산시 내삼미동 114-1", "4137011000104670001"))
+      .toBe("경기도 오산시 내삼미동 114-1");
   });
 });

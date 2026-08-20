@@ -89,6 +89,9 @@ import {
   resolveVWorldBaseLayer,
 } from "@/lib/satong-map-layers";
 import { buildSelectionGeoJson, buildSelectionKml, kakaoRoadviewUrl } from "@/lib/satong-export";
+import { normalizePnu } from "@/lib/pnu";
+import { countJibunHealTargets, healParcelJibunByPoint } from "@/lib/parcel-jibun-heal";
+import { ParcelJibunLabel } from "@/components/precheck/ParcelJibunLabel";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { useProjectStore } from "@/store/useProjectStore";
 import { restoreSnapshot } from "@/lib/projectSync";
@@ -574,7 +577,11 @@ export function healParcelPnu(
   existingPnu: string | null | undefined,
   boundaryPnu: string | null | undefined,
 ): string | null {
-  return existingPnu || boundaryPnu || null;
+  // ★2026-08-20 보강: "기존이 있으면 보존" 의 **기존**은 **진짜 PNU** 여야 한다.
+  //   과거 저장분에는 PNU 칸에 주소 합성문자열이 들어앉아 있어(satong-map-selection 주석 참조),
+  //   그 가짜가 "기존 값" 으로 인정돼 경계응답의 **진짜 PNU 승격을 영구히 막았다**.
+  //   그래서 양쪽 모두 normalizePnu 를 통과시킨다 — 진짜끼리는 기존 우선(무날조 유지).
+  return normalizePnu(existingPnu) || normalizePnu(boundaryPnu) || null;
 }
 
 
@@ -1838,6 +1845,57 @@ export function SatongMapShell({
     },
     [syncParcelsToStores],
   );
+
+  // ── 지번 자가치유(좌표 앵커) ────────────────────────────────────────────────
+  //  PNU 도 없고 주소에 지번도 없는 필지를, **좌표가 있을 때만** /zoning/parcel-at-point 로
+  //  해석해 진짜 PNU·주소를 채운다. 규칙·무날조 경계는 lib/parcel-jibun-heal 주석 참조.
+  //  ★의존성은 selectedParcels 배열이 아니라 **미해석 건수**다 — 배열을 의존성에 두면
+  //    치유가 배열을 갱신 → 이펙트 재발화 → 무한 루프가 된다. 건수는 치유 성공만큼 줄어든다.
+  const healTargetCount = countJibunHealTargets(selectedParcels);
+  const selectedParcelsRef = useRef(selectedParcels);
+  selectedParcelsRef.current = selectedParcels;
+  const syncParcelsToStoresRef = useRef(syncParcelsToStores);
+  syncParcelsToStoresRef.current = syncParcelsToStores;
+  useEffect(() => {
+    if (healTargetCount === 0) return;
+    let cancelled = false;
+    void (async () => {
+      const snapshot = selectedParcelsRef.current;
+      const healed = await healParcelJibunByPoint(
+        snapshot,
+        async (point) => {
+          const result = await apiClient.post<ParcelAtPointResult>("/zoning/parcel-at-point", {
+            body: { lat: point.lat, lon: point.lon },
+            useMock: false,
+            timeoutMs: 20000,
+          });
+          return result?.found === false ? null : result;
+        },
+        { limit: 4, isCancelled: () => cancelled },
+      );
+      if (cancelled || healed.length === 0) return;
+      setSelectedParcels((prev) => {
+        // 스냅샷 이후 목록이 바뀌었으면(추가·삭제) 인덱스가 어긋나므로 폐기한다 —
+        // 다음 렌더에서 미해석 건수가 그대로라 이펙트가 다시 돈다(무날조: 틀린 행에 안 쓴다).
+        if (prev.length !== snapshot.length) return prev;
+        const next = prev.map((parcel, index) => {
+          const hit = healed.find((h) => h.index === index);
+          if (!hit || parcel !== snapshot[index]) return parcel;
+          return {
+            ...parcel,
+            pnu: hit.pnu,
+            // 서버가 지번 붙은 주소를 주면 채택한다(없으면 기존 주소 유지 — 무날조).
+            address: hit.address?.trim() || parcel.address,
+          };
+        });
+        syncParcelsToStoresRef.current(next);
+        return next;
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [healTargetCount]);
 
   // ★R2(관심사 분리): "확정 선택(selectedParcels) 정리"와 "지도 staged 폴리곤 정리"를 분리한다.
   //   staged(지도에 찍었지만 [완료] 안 누른 임시 클릭)는 아직 확정 선택이 아니라 소유권 개념이
@@ -3132,8 +3190,8 @@ export function SatongMapShell({
               <span className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--on-surface-muted)]">
                 Parcel
               </span>
-              <h3 className="mt-1 truncate text-lg font-black text-[var(--text-primary)]">
-                {detailFeature.address?.split(/\s+/).slice(-2).join(" ") || detailFeature.address || "필지"}
+              <h3 className="mt-1 flex text-lg font-black text-[var(--text-primary)]">
+                <ParcelJibunLabel address={detailFeature.address} pnu={detailFeature.pnu} />
               </h3>
               <p className="truncate text-xs font-semibold text-[var(--text-hint)]">{detailFeature.address}</p>
             </div>
@@ -3823,8 +3881,10 @@ export function SatongMapShell({
                     title={`${parcel.address}${parcel.pnu ? ` · PNU ${parcel.pnu}` : ""} — 클릭: 상세 정보`}
                   >
                     <div className="flex items-center justify-between gap-2">
-                      <p className="min-w-0 truncate text-[13px] font-black text-[var(--text-primary)]">
-                        {parcel.address?.split(/\s+/).slice(-2).join(" ") || parcel.address}
+                      {/* ★인라인 축약(`slice(-2)`)을 걷어낸다 — 먼저 줄이면 동 단위 주소에서
+                          지번을 붙일 자리가 사라져 77행이 전부 같은 글자가 됐다(신고 화면 ①). */}
+                      <p className="min-w-0 flex-1 text-[13px] font-black text-[var(--text-primary)]">
+                        <ParcelJibunLabel address={parcel.address} pnu={parcel.pnu} fallback={parcel.address} />
                       </p>
                       <span className="shrink-0 font-mono text-[11px] font-bold text-[var(--text-secondary)]">
                         {formatArea(parcel.areaSqm, 0)}
