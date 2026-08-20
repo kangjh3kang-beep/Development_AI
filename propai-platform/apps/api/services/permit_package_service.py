@@ -10,6 +10,8 @@ from __future__ import annotations
 import io
 import os
 import re
+import tempfile
+from pathlib import Path
 import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
@@ -267,7 +269,9 @@ class PermitPackageService:
 
         # 파일 경로에 들어갈 project_id 는 경로조작('../') 차단을 위해 안전문자만 남긴다.
         safe_id = re.sub(r"[^0-9A-Za-z가-힣_-]", "_", str(project_id))[:64] or "package"
-        final_path = f"/tmp/permit_{safe_id}.pdf"
+        # ★`/tmp` 고정 문자열을 쓰지 않는다 — 고정 경로는 다른 프로세스가 미리
+        #   심볼릭 링크를 걸어 둘 수 있고, TMPDIR 로 위치를 옮길 수도 없다.
+        final_path = str(Path(tempfile.gettempdir()) / f"permit_{safe_id}.pdf")
         pdf_path: str | None
         try:
             # 반환하는 경로가 실존 파일이 되도록 실제로 기록한다(빈 약속 금지).
