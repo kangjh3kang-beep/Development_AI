@@ -82,14 +82,41 @@ def test_보안스캔이_배포되는_매니페스트를_감사한다() -> None:
 
 def test_게이트가_필수_감사대상을_요구한다() -> None:
     """★워크플로에서 `prod=` 를 지우기만 해도 초록이 되면 위 락들이 무력해진다.
-    게이트 스크립트가 **필수 라벨**을 강제하는지 확인한다(변이로 실증된 구멍이다).
+
+    ★★이 케이스의 첫 판은 소스에 `REQUIRED_LABELS` **글자가 있는지**만 봤다.
+      변이(`REQUIRED_LABELS = set()`)가 **그대로 통과했다** — 존재만 보고 **내용을
+      보지 않는** 락이었다. 이 저장소가 반복해 데인 *"소스 검사는 뚫린다"* 그대로다.
+      → 그래서 **게이트를 진짜 실행**한다. `prod=` 없이 부르면 **0이 아닌 종료코드**가
+        나와야 하고, 정상 호출은 **0**이어야 한다(대조군).
     """
+    import json
+    import subprocess
+    import sys
+    import tempfile
+
     gate = _REPO / ".github" / "scripts" / "pip_audit_gate.py"
     assert gate.exists(), f"게이트 스크립트가 없다: {gate}"
-    src = gate.read_text(encoding="utf-8")
-    assert "REQUIRED_LABELS" in src, (
-        "게이트에 필수 라벨 강제가 없다 — `prod=` 인자를 빼기만 해도 통과해 버린다"
-    )
-    # 주석이 아니라 **실행되는 줄**에 있어야 한다.
-    실행줄 = [l for l in src.splitlines() if "REQUIRED_LABELS" in l and not l.lstrip().startswith("#")]
-    assert 실행줄, "REQUIRED_LABELS 가 주석에만 있다 — 실행되지 않는 방어는 방어가 아니다"
+
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        # MIN_DEPS 하한을 넘기는 최소 픽스처(취약점은 0건).
+        fake = {"dependencies": [{"name": f"pkg{i}", "version": "1.0.0", "vulns": []} for i in range(60)]}
+        audit = tmp / "audit.json"
+        audit.write_text(json.dumps(fake), encoding="utf-8")
+        baseline = tmp / "baseline.json"
+        baseline.write_text(json.dumps({"acknowledged": []}), encoding="utf-8")
+
+        def run(*specs: str) -> int:
+            return subprocess.run(
+                [sys.executable, str(gate), str(baseline), *specs],
+                capture_output=True, text=True,
+            ).returncode
+
+        # ★대조군 먼저 — 정상 호출이 0이 아니면 아래 단언은 아무것도 뜻하지 않는다.
+        assert run(f"prod={audit}", f"dev={audit}") == 0, (
+            "정상 호출(prod+dev)이 실패했다 — 이 케이스는 게이트를 검증하지 못한다"
+        )
+        assert run(f"dev={audit}") != 0, (
+            "**prod 를 빼도 게이트가 통과했다** — 배포되는 매니페스트를 감사하지 않아도 "
+            "초록이 된다는 뜻이다. 필수 라벨 강제가 사라졌다"
+        )
