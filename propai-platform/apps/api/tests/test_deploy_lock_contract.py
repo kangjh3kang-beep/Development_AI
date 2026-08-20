@@ -526,3 +526,54 @@ def test_전환_전에_컨테이너_소스와_호스트_소스를_대조한다()
     assert any("exit 1" in ln for ln in guard_block), (
         "드리프트 감지 시 배포를 중단하지 않는다(fail-closed 아님)"
     )
+
+
+# ── 배포 워크플로가 **어느 서버용인지** (2026-08-20 추가) ────────────────────
+#
+# 왜 있나:
+#     `.github/workflows/deploy-cloudflare.yml` 은 `scripts/safe-deploy.sh` 를 실행한다.
+#     그 스크립트는 **158(프론트) 전용**이고, 백엔드(168)는 `infra/deploy-zero-downtime.sh` 다.
+#     그런데 워크플로 어디에도 그 사실이 적혀 있지 않았다(서버 언급 0건).
+#     → `ORACLE_SSH_HOST` 에 168 을 넣으면 45분 타임아웃까지 간 뒤에야 `exit 10` 으로 막힌다.
+#       "자동배포를 켰다"가 실제로는 **158 만** 켠 것이라는 사실도 드러나지 않는다.
+
+WORKFLOW = Path(__file__).resolve().parents[4] / ".github" / "workflows" / "deploy-cloudflare.yml"
+
+
+def _workflow_text() -> str:
+    assert WORKFLOW.is_file(), f"배포 워크플로가 없다: {WORKFLOW}"
+    raw = WORKFLOW.read_text(encoding="utf-8")
+    assert len(raw) > 1000, f"내용이 너무 짧다({len(raw)}자) — 대상을 못 읽었다"
+    return raw
+
+
+def test_배포_워크플로는_대상_서버를_밝힌다() -> None:
+    """`safe-deploy.sh` 를 실행한다면 **프론트 전용**임이 문서에 있어야 한다."""
+    raw = _workflow_text()
+    assert "safe-deploy.sh" in raw, (
+        "이 테스트는 워크플로가 safe-deploy.sh 를 쓴다는 전제 위에 있다 — "
+        "배포 경로가 바뀌었으면 이 테스트도 고칠 것"
+    )
+    assert "deploy-zero-downtime.sh" in raw, (
+        "백엔드 정본(infra/deploy-zero-downtime.sh)이 어디에도 언급되지 않는다. "
+        "이 워크플로가 158 전용이라는 사실과 168 의 대안을 함께 적어야 "
+        "'자동배포 부활'이 158 만이라는 것이 드러난다."
+    )
+
+
+def test_배포_워크플로는_대상_서버_역할을_배포_전에_확인한다() -> None:
+    """잘못된 호스트를 **45분 타임아웃 전에** 잡는다.
+
+    ★판별 근거는 `safe-deploy.sh` 의 역할 가드와 **같아야** 한다(`~/caddy/Caddyfile`).
+      두 곳이 다른 근거를 쓰면 한쪽만 고쳐져 조용히 갈린다.
+    """
+    raw = _workflow_text()
+    assert "caddy/Caddyfile" in raw, (
+        "배포 전 서버 역할 확인이 없다 — 168 을 물리면 배포를 한참 돌린 뒤에야 exit 10 으로 막힌다"
+    )
+
+    # ★가드와 같은 근거를 쓰는지 대조한다(대조군: 가드 쪽에 그 문자열이 실재해야 성립).
+    guard = " ".join(_executable_lines(SAFE_DEPLOY))
+    assert "caddy/Caddyfile" in guard, (
+        "safe-deploy.sh 의 역할 가드가 사라졌다 — 워크플로 preflight 의 전제가 무너진다"
+    )
