@@ -136,6 +136,10 @@ type OrdinanceConditionalItem = {
   article_title?: string | null;
   condition_key?: string | null;
   why?: string | null;
+  /** '그 밖에 용도지구·구역 등' 은 나열형이라 **항목마다 값이 다르다**.
+   *  어느 항목으로 매칭됐는지 밝히지 않으면 사용자가 근거를 확인할 수 없다. */
+  matched_district?: string | null;   // 부지의 실제 지정명(예: 자연취락지구)
+  matched_option?: string | null;     // 조례가 적은 항목명(예: 취락지구)
 };
 /** 조례 별표가 **HWP 첨부로만** 제공돼 수치를 읽지 못한 경우 — 사유와 원문 링크.
  *  ★값이 아니라 **사유**다. 이게 없으면 화면은 "조례 확인 필요"라고만 말하고,
@@ -459,6 +463,17 @@ export function L3EnhancedCards({
                   조례 {m.article}
                   {m.article_title ? `(${m.article_title})` : ""} —{" "}
                   {m.kind === "bcr" ? "건폐율" : "용적률"} {m.value}%
+                  {/* ★어느 지정으로 매칭됐는지 밝힌다. 이 조문은 나열형이라 **항목마다 값이
+                      다르다**(오산 제46조: 취락 40 · 자연공원 60 · 산업단지 80). 항목을 안
+                      밝히면 사용자가 왜 이 수치인지 확인할 길이 없다. */}
+                  {m.matched_district && (
+                    <span className="font-medium text-[var(--text-tertiary)]">
+                      {" "}· 근거: 이 부지가 <span className="font-black text-[var(--text-secondary)]">{m.matched_district}</span>
+                      {m.matched_option && m.matched_option !== m.matched_district
+                        ? `(조례 '${m.matched_option}' 항목)`
+                        : ""}
+                    </span>
+                  )}
                   <span className="font-medium text-[var(--text-tertiary)]">
                     {" "}· 이 부지가 해당 조건에 속합니다(고시·계획 본문 확인 필요)
                   </span>
