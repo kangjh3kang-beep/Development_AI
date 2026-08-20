@@ -33,8 +33,14 @@
 #   +6  /blockchain/escrow/{fund,release,dispute,resolve,refund,direct-pay}
 #       전부 **POST** 인데 프론트의 동적 호출은 `apiClient.get<OnChainEscrowResponse>(` **GET**
 #       하나뿐이다(ProjectBlockchainWorkspaceClient.tsx:320). 화면은 **생성·조회만** 하고
-#       에스크로 **생명주기 전체(입금·해제·분쟁·중재·환불·직접지급)에 진입점이 없다.**
-#       → 정당한 내부용이 아니라 **UI 부재**다. 부채로 남긴다.
+#       에스크로 생명주기(입금·해제·분쟁·중재·환불·직접지급)에 진입점이 없다.
+#       ★★2026-08-21 정정 — 처음 이것을 "제품 결함"으로 적었다가 **근거를 재서 낮춘다.**
+#         `services/blockchain_service.py` 는 **Polygon Amoy 테스트넷** 구현이고, 프론트 카피도
+#         *"Once contract ABI and deployment metadata are fixed, real-time escrow state can be
+#         connected here"* · *"tokenized capital raising are not connected yet"* 로 **예비 영역**
+#         임을 명시한다. 즉 **미완성 모듈의 정상 상태**이지 사용자에게 깨진 기능이 아니다.
+#         (라우터는 main.py:791 에 등록돼 라이브 401 로 응답하므로 "죽은 라우트"도 아니다.)
+#         → 갚을 부채로 남기되 **심각도는 '모듈 미완성'** 이다. 배선 전에 모듈 단계부터 정하라.
 #   +1  /design-references/from-design  **POST**. 프론트 동적 호출은 `apiClient.delete(`/…/${id}`)`
 #       와 `${id}/geometry`·`${id}/assemble`(꼬리 세그먼트 있음)뿐이라 이 경로에 닿지 않는다.
 #   +2  /admin/secrets/{image-health,llm-health}  **GET** 인데 그 부모의 동적 호출은 PUT·DELETE 다.
