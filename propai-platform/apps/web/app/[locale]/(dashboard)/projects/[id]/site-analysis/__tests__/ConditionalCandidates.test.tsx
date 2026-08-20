@@ -95,3 +95,64 @@ describe("조건부 완화 후보 표시", () => {
     expect(screen.queryByText(/적용값이 아닙니다/)).toBeNull();
   });
 });
+
+/**
+ * ★조례 수치 미확보의 **사유** — 값이 아니라 사유를 낸다(#718 프론트 착지).
+ *
+ * 【배경】울산·창원 도시계획 조례는 건폐율·용적률 별표를 **HWP 첨부로만** 제공한다.
+ * 백엔드는 그 사유·원문 링크를 만들었지만 **화면 계약에 키가 없어 소비처가 0**이었다
+ * (2026-08-21 라이브 실측: 두 지자체 응답에 사유는 있고 화면엔 없다).
+ * 그래서 화면은 "조례 확인 필요"라고만 말했고, 사용자는 *조례가 없거나 용도지역이 틀렸다*고
+ * 의심하게 된다 — **틀린 사유는 틀린 처방을 부른다**.
+ */
+describe("조례 수치 미확보 사유(별표 HWP 첨부)", () => {
+  const ATTACH = {
+    reason:
+      "울산광역시 도시계획 조례는 건폐율·용적률 표를 **별표 첨부파일(HWP)** 로만 제공해 " +
+      "본문에서 수치를 읽을 수 없습니다(조례가 없거나 용도지역이 빠진 것이 아닙니다).",
+    attachment_url: "http://www.law.go.kr/flDownload.do?gubun=ELIS&flSeq=163373187",
+    ordinance_name: "울산광역시 도시계획 조례",
+    requires: ["별표 원문(HWP) 열람으로 해당 용도지역 건폐율·용적률 확인"],
+  };
+
+  it("★사유가 보인다 — 백엔드가 만든 것이 화면에 닿는다", () => {
+    renderWith({ ...BASE_EFF, ordinance_confirmed: false, ordinance_attachment_only: ATTACH });
+    const box = screen.getByTestId("ordinance-attachment-only");
+    expect(box.textContent).toContain("별표가 첨부파일(HWP)입니다");
+    // ★사유의 후반절 — 무엇을 의심하면 **안 되는지**가 이 고지의 핵심이다.
+    expect(box.textContent).toContain("조례가 없거나 용도지역이 빠진 것이 아닙니다");
+  });
+
+  it("★마크다운 별표(**)가 날것으로 노출되지 않는다", () => {
+    renderWith({ ...BASE_EFF, ordinance_confirmed: false, ordinance_attachment_only: ATTACH });
+    const box = screen.getByTestId("ordinance-attachment-only");
+    // 공허 진리 가드 — 원문에 정말 `**` 가 있었는가(없으면 이 단언은 무의미).
+    expect(ATTACH.reason).toContain("**");
+    expect(box.textContent).not.toContain("**");
+  });
+
+  it("★다음 행동을 준다 — 별표 원문 링크가 실제 href 로 걸린다", () => {
+    renderWith({ ...BASE_EFF, ordinance_confirmed: false, ordinance_attachment_only: ATTACH });
+    const link = screen.getByRole("link", { name: /별표 원문 열기/ });
+    expect(link.getAttribute("href")).toBe(ATTACH.attachment_url);
+    expect(link.getAttribute("rel")).toContain("noopener");
+  });
+
+  it("★★후보값으로 읽히지 않는다 — '적용값이 아닙니다' 박스와 분리된다", () => {
+    renderWith({ ...BASE_EFF, ordinance_confirmed: false, ordinance_attachment_only: ATTACH });
+    // 조건부 후보가 **없는데도** 사유는 떠야 한다(두 블록이 서로 다른 게이트다).
+    expect(screen.queryByText(/적용값이 아닙니다/)).toBeNull();
+    expect(screen.getByTestId("ordinance-attachment-only")).toBeTruthy();
+  });
+
+  it("★대조군(음성) — 정상 조례에서는 뜨지 않는다(위양성 방지)", () => {
+    renderWith(BASE_EFF);
+    // 공허 진리 가드 — 카드 자체는 렌더됐는가(0건이 '조회 실패'가 아님을 보인다).
+    expect(screen.getByText(/최종 실효 용적률/)).toBeTruthy();
+    // ★양성 짝 — **같은 실행에서** 반대 결과가 나올 수 있음을 함께 단언한다.
+    //   이게 없으면 렌더가 통째로 고장 나도 이 부재 단언은 초록이다.
+    expect(screen.queryByTestId("ordinance-attachment-only")).toBeNull();
+    renderWith({ ...BASE_EFF, ordinance_attachment_only: ATTACH });
+    expect(screen.getAllByTestId("ordinance-attachment-only").length).toBe(1);
+  });
+});
