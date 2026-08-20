@@ -22,7 +22,12 @@ import type {
 } from "@/store/useProjectContextStore";
 
 // 응답 타입은 느슨하게(필요한 키만 옵셔널 정의). 모든 키가 옵셔널 — 구버전/부분 응답 무손상.
-type FarRange = { min_pct?: number | null; max_pct?: number | null } | null | undefined;
+type FarRange = {
+  min_pct?: number | null;
+  max_pct?: number | null;
+  // 상·하한이 같은 한 값(범위 미산출) — 백엔드 potential_far_range 계약.
+  is_collapsed?: boolean | null;
+} | null | undefined;
 
 type EffectiveFar = {
   national_far_pct?: number | null;
@@ -173,6 +178,7 @@ export function mapUpzoning(resp: unknown): Partial<SiteAnalysisData> {
   const patch: Partial<SiteAnalysisData> = {};
   if (resp == null || typeof resp !== "object") {
     patch.upzoningPotentialFarHigh = null;
+    patch.upzoningFarRangeCollapsed = null;
     patch.upzoningFeasibilityTop = null;
     patch.upzoningScenarios = null;
     return patch;
@@ -183,6 +189,12 @@ export function mapUpzoning(resp: unknown): Partial<SiteAnalysisData> {
   const range = r.upzoning?.potential_far_range ?? r.potential_far_range;
   patch.upzoningPotentialFarHigh =
     range != null && typeof range === "object" ? (num(range.max_pct) ?? null) : null;
+  // ★그 상한이 '한 값뿐'인지도 같이 나른다 — 이 신호가 없으면 화면이 단일 경로 예상치를
+  //   "도달 가능한 최댓값"으로 단정하게 된다(범위 붕괴 정직표기).
+  patch.upzoningFarRangeCollapsed =
+    range != null && typeof range === "object" && typeof range.is_collapsed === "boolean"
+      ? range.is_collapsed
+      : null;
 
   // 최상 가능성 등급 — upzoning.scenarios 우선, 동봉된 upzoning_scenarios 폴백. 없으면 null.
   patch.upzoningFeasibilityTop =
@@ -281,6 +293,7 @@ export function guardMultiParcelRich(
   delete out.farBasis;
   // 단일유래 종상향 — 통합 면적 기준 integrated.upzoning이 진실원천(대표필지 과소판정 차단).
   delete out.upzoningPotentialFarHigh;
+  delete out.upzoningFarRangeCollapsed;
   delete out.upzoningFeasibilityTop;
   delete out.upzoningScenarios;
   // 단일유래 접도 도로폭 — 대표 1필지의 도로접면이라 통합부지 접도와 무관(시니어 심의 접도 CSP 오염 차단).

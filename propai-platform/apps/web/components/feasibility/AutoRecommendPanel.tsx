@@ -15,11 +15,13 @@ import { useParams, useRouter } from "next/navigation";
 import { TiltCard } from "@/components/ui/TiltCard";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
+import { formatUpzoningFarRange, type UpzoningFarRange } from "@/lib/formatters"; // 종상향 범위 계약(표기는 UpzoningFarRange 공용 컴포넌트)
 import { parcelAddressList } from "@/lib/parcel-rows";
 import { useFeasibilityV2Store } from "@/store/use-feasibility-v2-store";
 import { apiClient } from "@/lib/api-client";
 import { GlobalAddressSearch } from "@/components/common/GlobalAddressSearch";
 import { DevelopmentScenarioCard } from "@/components/common/DevelopmentScenarioCard";
+import { UpzoningFarRangeNotice, UpzoningFarRangeValue } from "@/components/common/UpzoningFarRange";
 import { NumberInput } from "@/components/common/NumberInput";
 import { BusinessModelRefineModal } from "./BusinessModelRefineModal";
 
@@ -91,7 +93,9 @@ interface AutoRecommendApiResponse {
   // ★P1 미래속성(종상향 잠재) — 현행 추천에 더해 종상향 시 잠재 용적률(예상치·확정 아님).
   upzoning_potential?: {
     current_far_pct?: number;
-    potential_far_range?: { min_pct?: number | null; max_pct?: number | null; note?: string } | null;
+    // ★붕괴 계약(is_collapsed·honest_disclosure)까지 받는다 — 이 필드가 없으면
+    //   프론트는 min===max를 혼자 추측할 수밖에 없고, 그건 계약이 아니라 우연이다.
+    potential_far_range?: UpzoningFarRange;
     scenarios?: Record<string, unknown>[] | null;
     summary?: string | null;
     disclaimer?: string | null;
@@ -287,6 +291,8 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
   const [disclosures, setDisclosures] = useState<string[]>([]);
   // ★100% 완성: 종상향 시 추천 사업방식(IntegratedRecommender 2축 랭킹의 종상향 후보) — 실랭킹 반영.
   const [upzoningRanked, setUpzoningRanked] = useState<OptimalRankedCandidate[]>([]);
+  // 종상향 범위 붕괴 판정(문장 조사 선택용) — 표기 자체는 UpzoningFarRange 공용 컴포넌트가 한다.
+  const upFarRange = formatUpzoningFarRange(upzoning?.potential_far_range);
   const [showFullTable, setShowFullTable] = useState(false);
 
   // Modal state
@@ -784,12 +790,20 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
             현행 실효 용적률 <b className="text-[var(--text-primary)]">{upzoning.current_far_pct}%</b> 기준 추천입니다.
             종상향(역세권·지구단위 등) 시 잠재 용적률은{" "}
             <b className="text-[var(--status-warning)]">
-              {upzoning.potential_far_range.min_pct === upzoning.potential_far_range.max_pct
-                ? `${upzoning.potential_far_range.max_pct}%`
-                : `${upzoning.potential_far_range.min_pct}~${upzoning.potential_far_range.max_pct}%`}
+              <UpzoningFarRangeValue range={upzoning.potential_far_range} />
             </b>
-            까지 가능하며, 이 경우 더 고밀·고수익 건축유형이 추천될 수 있습니다.
+            {/* ★붕괴면 "…까지 가능하며"가 거짓이 된다 — 그 값은 도달 상한이 아니라 한 경로의
+                예상치다. 조사(助詞)까지 판정에 맞춘다(문장이 숫자보다 오래 기억된다). */}
+            {upFarRange.collapsed
+              ? "이며, 이 경우 더 고밀·고수익 건축유형이 추천될 수 있습니다."
+              : "까지 가능하며, 이 경우 더 고밀·고수익 건축유형이 추천될 수 있습니다."}
           </p>
+          {/* ★붕괴(상·하한 동값) 시 백엔드가 실어보낸 정직 고지 — "이 값이 상향 최댓값"이라는
+              오독을 막는다. 프론트가 문구를 지어내지 않는다(근거를 아는 쪽만 만든다). */}
+          <UpzoningFarRangeNotice
+            range={upzoning.potential_far_range}
+            className="mt-1.5 text-xs leading-relaxed text-[var(--status-warning)]"
+          />
           {upzoning.summary && (
             <p className="mt-1.5 text-xs leading-relaxed text-[var(--text-tertiary)]">{upzoning.summary}</p>
           )}
