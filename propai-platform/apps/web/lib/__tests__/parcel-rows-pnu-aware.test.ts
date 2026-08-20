@@ -18,7 +18,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { entriesToParcelRows, preferredEntryAddress } from "@/lib/parcel-rows";
+import { entriesToParcelRows, parcelDataToRows, preferredEntryAddress } from "@/lib/parcel-rows";
 
 const 동 = "경기도 오산시 내삼미동";
 const 진짜PNU = "4137010900100380000"; // → 지번 38
@@ -63,5 +63,22 @@ describe("★백엔드로 나가는 payload 도 함께 낫는다", () => {
     expect(rows.map((r) => r.address)).toEqual([`${동} 38`, `${동} 38-1`]);
     // 공허한 참 방지 — 두 행이 실제로 **서로 다른** 값이어야 배선이 살아 있다.
     expect(new Set(rows.map((r) => r.address)).size).toBe(2);
+  });
+});
+
+describe("★형제 빌더도 함께 낫는다 — 같은 파일 안에서 하나만 고치는 것을 막는다", () => {
+  it("parcelDataToRows(store 경유) 의 address 도 지번을 담는다", () => {
+    const rows = parcelDataToRows([
+      { address: 동, pnu: 진짜PNU, areaSqm: 53 },
+      { address: 동, pnu: "4137010900104670001", areaSqm: 684 },
+    ]);
+    expect(rows.map((r) => r.address)).toEqual([`${동} 38`, `${동} 467-1`]);
+    // 공허한 참 방지 — 두 행이 실제로 갈려야 배선이 살아 있다.
+    expect(new Set(rows.map((r) => r.address)).size).toBe(2);
+  });
+
+  it("★대조군 — PNU 가 없으면 그대로다(무날조)", () => {
+    const rows = parcelDataToRows([{ address: 동, areaSqm: 53 }]);
+    expect(rows[0].address).toBe(동);
   });
 });

@@ -107,7 +107,10 @@ export function parcelDataToRows(
   return parcels
     .filter((p) => (p.areaSqm ?? 0) > 0)
     .map((p) => ({
-      address: p.address || "",
+      // ★형제 누락 봉합(2026-08-21) — 위 `entriesToParcelRows` 만 PNU 인지로 고치고
+      //   **같은 파일의 이 빌더를 놓쳤다**. 이쪽은 store 경유(피커 숨김 화면)의 통합분석
+      //   payload 를 만든다 — 여기서 지번이 빠지면 백엔드가 같은 동의 필지를 구분하지 못한다.
+      address: parcelDisplayAddress(p.address, p.pnu ?? null),
       area_sqm: p.areaSqm ?? null,
       // store 필지가 용도지역을 보유하면 면적가중 우세용도 산정에 사용(없으면 null=면적만 통합).
       zone_type: p.zoneCode ?? null,
