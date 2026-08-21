@@ -313,3 +313,55 @@ async def gosi_coverage_for_region(
     }
     _CACHE[ck] = (_time.time(), result)
     return result
+
+
+def bbox_from_geometry(geometry: Any, *, pad_deg: float = 0.06) -> str | None:
+    """필지 지오메트리 → 주변을 덮는 `BOX(minx,miny,maxx,maxy)`.
+
+    ★왜 필지 하나가 아니라 주변인가 — 우리가 찾는 것은 **이 시군구의 최근 고시**이지
+      이 필지에 걸친 구역이 아니다. 필지 폴리곤만 쓰면 교차하는 구역만 보게 되어
+      "이 시군구가 최근 고시를 반영했는가"를 물을 수 없다.
+    ★BOX 는 시군구 경계를 넘는다 — 그래서 소비처가 반드시 `signgu_se` 로 다시 거른다
+      (실측: 오산 BOX 68건이 3개 시군구 혼재).
+    """
+    xs: list[float] = []
+    ys: list[float] = []
+
+    def walk(node: Any) -> None:
+        if isinstance(node, (list, tuple)):
+            if len(node) == 2 and all(isinstance(v, (int, float)) for v in node):
+                xs.append(float(node[0]))
+                ys.append(float(node[1]))
+                return
+            for child in node:
+                walk(child)
+
+    walk((geometry or {}).get("coordinates") if isinstance(geometry, dict) else None)
+    if not xs or not ys:
+        return None
+    return (
+        f"BOX({min(xs) - pad_deg:.6f},{min(ys) - pad_deg:.6f},"
+        f"{max(xs) + pad_deg:.6f},{max(ys) + pad_deg:.6f})"
+    )
+
+
+async def gosi_coverage_for_pnu(pnu: str, *, sigungu_name: str | None = None) -> dict[str, Any]:
+    """PNU 하나로 결손 탐지 — 시군구코드·BOX 를 **백엔드가 스스로 구한다**.
+
+    ★화면이 좌표를 갖고 있지 않다(`SiteAnalysisData` 는 `zoneCode·address·pnu` 뿐이다).
+      좌표를 요구하는 계약을 만들면 훅이 **한 번도 실행되지 않는다** — 이 저장소가 반복해서
+      데인 "정의만 하고 소비처 0"이 된다. 그래서 PNU 만 받는다.
+    """
+    from app.services.external_api.vworld_service import VWorldService
+
+    sgg = (pnu or "")[:5]
+    if len(sgg) != 5:
+        return {"sigungu_code": sgg, "complete": False, "notice": None,
+                "error": "pnu_invalid"}
+    feature = await VWorldService().get_parcel_by_pnu(pnu)
+    bbox = bbox_from_geometry((feature or {}).get("geometry"))
+    if not bbox:
+        # 필지 지오메트리를 못 얻으면 대조 상대를 만들 수 없다 — 아무것도 단정하지 않는다.
+        return {"sigungu_code": sgg, "complete": False, "notice": None,
+                "error": "parcel_geometry_unavailable"}
+    return await gosi_coverage_for_region(sgg, bbox, sigungu_name=sigungu_name)

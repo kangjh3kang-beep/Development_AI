@@ -224,3 +224,70 @@ describe("나열형 조건 — 매칭 근거 지구 표시", () => {
     expect(screen.getAllByText(/제46조/).some((e) => (e.textContent ?? "").includes("근거: 이 부지가"))).toBe(true);
   });
 });
+
+/**
+ * ★고시 결손 고지 — 화면이 "지구단위계획 없음"을 **사실처럼** 말하던 자리.
+ * 실제 사고: 오산 내삼미동은 지구단위계획구역 신규 결정고시(2025-12-23 제2025-274호)가
+ * 우리 데이터에 없어 자연녹지 법정 80%가 지배 한도인 양 표시됐다.
+ */
+describe("고시 결손 고지", () => {
+  const NOTICE = {
+    reason:
+      "오산시 최근 지구단위계획구역 결정고시 중 **우리 데이터에서 확인되지 않는 것**이 있습니다: " +
+      "2025-12-23 경기도 오산시 고시 제2025-274호.",
+    items: [{ date: "2025-12-23", gosino: "경기도 오산시 고시 제2025-274호", title: "[신규] 오산(내삼미3구역) …" }],
+    window_start: "20240821",
+    list_url: "https://www.eum.go.kr/web/gs/gv/gvGosiList.jsp?selSggCd=41370",
+    applied: false,
+  };
+  const withGosi = (g: unknown) =>
+    render(
+      <L3EnhancedCards l3Data={{ effective_far: BASE_EFF } as never} siteAnalysis={null} gosiCoverage={g as never} />
+    );
+
+  it("★결손 고시를 지목한다", () => {
+    withGosi(NOTICE);
+    const box = screen.getByTestId("gosi-coverage-notice");
+    expect(box.textContent).toContain("제2025-274호");
+    expect(box.textContent).toContain("2025-12-23");
+  });
+
+  it("★★'틀렸다'가 아니라 '확인되지 않는다'라고 말한다 — 대조는 휴리스틱이다", () => {
+    withGosi(NOTICE);
+    const t = screen.getByTestId("gosi-coverage-notice").textContent ?? "";
+    expect(t).toContain("확인되지 않는");
+    expect(t).not.toContain("틀렸");
+    expect(t).not.toContain("오류");
+  });
+
+  it("★확인 범위를 밝힌다 — 범위 밖은 확인하지 않았다고 말한다", () => {
+    withGosi(NOTICE);
+    const t = screen.getByTestId("gosi-coverage-notice").textContent ?? "";
+    expect(t).toContain("2024-08-21 이후");
+    expect(t).toContain("범위 밖은 확인하지 않았습니다");
+  });
+
+  it("★다음 행동 — 토지이음 원문 링크가 새 탭으로 열린다", () => {
+    withGosi(NOTICE);
+    const link = screen.getByRole("link", { name: /토지이음에서 고시 원문 확인/ });
+    expect(link.getAttribute("href")).toBe(NOTICE.list_url);
+    expect(link.getAttribute("target")).toBe("_blank");
+    expect(link.getAttribute("rel")).toContain("noopener");
+  });
+
+  it("★마크다운 별표가 날것으로 노출되지 않는다", () => {
+    withGosi(NOTICE);
+    expect(NOTICE.reason).toContain("**");
+    expect(screen.getByTestId("gosi-coverage-notice").textContent).not.toContain("**");
+  });
+
+  it("★대조군(음성) — 결손이 없으면(null) 뜨지 않는다", () => {
+    withGosi(null);
+    // 공허 진리 가드 — 카드 자체는 렌더됐는가.
+    expect(screen.getByText(/최종 실효 용적률/)).toBeTruthy();
+    expect(screen.queryByTestId("gosi-coverage-notice")).toBeNull();
+    // ★양성 짝 — 같은 실행에서 고지가 있으면 실제로 뜬다.
+    withGosi(NOTICE);
+    expect(screen.getAllByTestId("gosi-coverage-notice").length).toBe(1);
+  });
+});

@@ -212,8 +212,7 @@ async def gosi_search(
 # ── 고시 결손 탐지(우리 데이터가 모르는 최근 지구단위계획 결정고시) ──
 @router.get("/gosi/coverage", summary="최근 지구단위계획 결정고시 중 우리 데이터에 없는 것")
 async def gosi_coverage(
-    sigungu_code: str,
-    bbox: str,
+    pnu: str,
     current_user: CurrentUser = Depends(RequirePermission("regulation", "read")),
 ) -> dict:
     """토지이음 고시목록 × VWorld 실재 대조 → **결손을 지목**한다.
@@ -222,10 +221,12 @@ async def gosi_coverage(
       제2025-274호 미반영으로 자연녹지 80%를 지배 한도인 양 답함).
     ★조회가 무겁다(실측 2~16초) — 분석 인라인이 아니라 **화면이 지연 호출**하고,
       시군구 단위로 캐시한다(신선도는 하루 단위로 바뀌지 않는다).
+    ★입력은 **PNU 하나**다. 화면(`SiteAnalysisData`)이 좌표를 갖고 있지 않아서,
+      좌표를 요구하면 이 엔드포인트는 **한 번도 호출되지 않는다**(소비처 0).
     ★결손이 없거나 목록을 전건 확보하지 못하면 `notice: null` — 아무것도 단정하지 않는다.
     """
-    from app.services.legal.gosi_coverage_service import gosi_coverage_for_region
-    return await gosi_coverage_for_region(sigungu_code, bbox)
+    from app.services.legal.gosi_coverage_service import gosi_coverage_for_pnu
+    return await gosi_coverage_for_pnu(pnu)
 
 
 # ── LLM 관련법령 탐색 + 정본 교차검증 ──

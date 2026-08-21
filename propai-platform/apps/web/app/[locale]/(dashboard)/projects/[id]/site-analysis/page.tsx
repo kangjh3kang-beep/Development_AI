@@ -256,10 +256,54 @@ function formatPriceKr(amount10k: number | null | undefined): string {
 // ★export 이유: 이 안의 실효용적률 계층·조건부 후보 블록은 **조건부 렌더**라
 //   소스 검사로는 잠기지 않는다(주석처리+임포트유지 변이에 뚫린다 — 이 저장소 실측 2회).
 //   렌더 결과를 보려면 컴포넌트에 닿아야 하므로 이름을 내보낸다(페이지 default export 무변경).
+/** 고시 결손 고지 — 우리 데이터가 모르는 **최근 지구단위계획구역 결정고시**.
+ *  ★값이 아니라 **확인 요청**이다. 대조는 휴리스틱이라 "틀렸다"고 말하지 않는다.
+ *  결손이 없거나 목록을 전건 확보하지 못하면 백엔드가 `null` 을 낸다(단정 금지). */
+export type GosiCoverageNotice = {
+  reason?: string | null;
+  items?: { date?: string | null; gosino?: string | null; title?: string | null }[] | null;
+  window_start?: string | null;
+  list_url?: string | null;
+  applied?: boolean;
+};
+
+
+/** 고시 결손 고지를 **지연 로드**한다.
+ *  ★분석 인라인이 아니다: 라이브 실측 지연이 2~16초라(시군구별 고시목록 전건 페이징)
+ *    본 분석을 붙잡으면 안 된다. 화면이 그린 뒤 따로 불러 붙인다.
+ *  ★실패하면 **조용히 아무것도 안 붙인다** — 이 고지는 "확인 요청"이라 없다고 해서
+ *    사용자가 잘못된 값을 보는 것이 아니다(있으면 더 나은 것이지 없으면 틀린 것이 아니다). */
+function useGosiCoverage(pnu?: string | null) {
+  const [notice, setNotice] = useState<GosiCoverageNotice | null>(null);
+  useEffect(() => {
+    const code = (pnu || "").trim();
+    // ★PNU 하나만 필요하다. 좌표를 요구했다면 이 훅은 **한 번도 실행되지 않았을 것**이다
+    //   — `SiteAnalysisData` 에는 zoneCode·address·pnu 뿐이고 lat/lon 이 없다(실측).
+    if (code.length < 5) return;
+    let alive = true;
+    apiClient
+      .get<{ notice?: GosiCoverageNotice | null }>(
+        `/api/v1/regulation/gosi/coverage?pnu=${encodeURIComponent(code)}`
+      )
+      .then((r) => {
+        if (alive) setNotice(r?.notice ?? null);
+      })
+      .catch(() => {
+        /* 조용히 무시 — 위 주석 참조 */
+      });
+    return () => {
+      alive = false;
+    };
+  }, [pnu]);
+  return notice;
+}
+
 export function L3EnhancedCards({
   l3Data,
   siteAnalysis,
+  gosiCoverage = null,
 }: {
+  gosiCoverage?: GosiCoverageNotice | null;
   l3Data: L3SiteData | null;
   siteAnalysis: SiteAnalysisData | null;
 }) {
@@ -402,6 +446,48 @@ export function L3EnhancedCards({
               <p className="text-[10px] font-bold text-[var(--text-secondary)] sm:text-right max-w-md">근거: {farFinalBasis}</p>
             )}
           </div>
+          {/* ★고시 결손 — 화면이 "지구단위계획 없음"을 **사실처럼** 말하던 자리.
+              조회가 성공했다고 해서 답이 최신인 것은 아니다: 실제로 오산 내삼미동은
+              지구단위계획구역 신규 결정고시(2025-12-23)가 우리 데이터에 없어
+              자연녹지 법정 80%가 지배 한도인 양 표시됐다.
+              ★"틀렸다"가 아니라 **"확인되지 않는다"** 라고 말한다 — 대조는 휴리스틱이고,
+              사용자가 할 수 있는 다음 행동(원문 확인)을 주는 것이 목적이다. */}
+          {gosiCoverage?.reason && (
+            <div
+              data-testid="gosi-coverage-notice"
+              className="mt-4 rounded-xl border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/5 p-4"
+            >
+              <p className="text-[10px] font-black text-[var(--status-warning)] mb-2">
+                최근 고시 확인 필요 — <span className="underline">우리 데이터에서 확인되지 않는 고시가 있습니다</span>
+              </p>
+              <p className="text-[11px] font-bold leading-relaxed text-[var(--text-secondary)]">
+                {gosiCoverage.reason.replace(/\*\*/g, "")}
+              </p>
+              {(gosiCoverage.items ?? []).slice(0, 3).map((it, i) => (
+                <p key={`gc${i}`} className="mt-1 text-[10px] text-[var(--text-tertiary)]">
+                  · {it.date} {it.gosino}
+                  {it.title ? ` — ${it.title}` : ""}
+                </p>
+              ))}
+              {gosiCoverage.window_start && (
+                <p className="mt-1.5 text-[9px] text-[var(--text-hint)]">
+                  확인 범위: {gosiCoverage.window_start.slice(0, 4)}-
+                  {gosiCoverage.window_start.slice(4, 6)}-{gosiCoverage.window_start.slice(6, 8)} 이후 고시
+                  {" "}· 이 범위 밖은 확인하지 않았습니다
+                </p>
+              )}
+              {gosiCoverage.list_url && (
+                <a
+                  href={gosiCoverage.list_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-2.5 inline-flex items-center gap-1 rounded-lg border border-[var(--status-warning)]/40 px-2.5 py-1.5 text-[10px] font-black text-[var(--status-warning)] transition-colors hover:bg-[var(--status-warning)]/10"
+                >
+                  토지이음에서 고시 원문 확인 ↗
+                </a>
+              )}
+            </div>
+          )}
           {/* ★조례 수치 미확보의 **사유** — 값이 아니라 사유를 낸다.
               종전엔 ② 조례 적용이 "확인 필요"라고만 말했다. 그러면 사용자는 *조례가 없거나
               용도지역이 틀렸다*고 의심한다 — 실제 원인은 **우리가 그 별표(HWP 첨부)를 읽지
@@ -876,6 +962,8 @@ export default function SiteAnalysisPage() {
   // 사용자 명시 액션(새 분석/분석 시작) 추적 — 컨텍스트 자동진입이 사용자 의도를 덮어쓰지 않게 한다.
   const [userInitiated, setUserInitiated] = useState(false);
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
+  // ★지연 로드(본 분석을 붙잡지 않는다 — 실측 2~16초)
+  const gosiCoverage = useGosiCoverage(siteAnalysis?.pnu);
   const ctxProjectId = useProjectContextStore((s) => s.projectId);
   const updateSiteAnalysis = useProjectContextStore((s) => s.updateSiteAnalysis);
   // 분석캐시(영속·프로젝트별) 조회/저장 — comprehensive(L3) 결과를 재진입 시 복원하는 안전경로.
@@ -1428,7 +1516,7 @@ export default function SiteAnalysisPage() {
             )}
 
             {/* ── L3 Enhanced Cards: 실거래가, 건축물대장, 인프라 ── */}
-            <L3EnhancedCards l3Data={l3Data} siteAnalysis={siteAnalysis} />
+            <L3EnhancedCards l3Data={l3Data} siteAnalysis={siteAnalysis} gosiCoverage={gosiCoverage} />
 
             {/* ── 주변 실거래가(지도) — 반경원·매매/전월세·유형필터·마커 상세 ── */}
             {siteData.address && (
