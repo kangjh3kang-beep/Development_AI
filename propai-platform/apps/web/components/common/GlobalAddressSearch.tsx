@@ -1021,7 +1021,7 @@ export function GlobalAddressSearch({
   const selectedSatongFeatures = useMemo(() => {
     return addresses.map((a) => ({
       id: a.__uid || a.pnu || a.fullAddress || a.jibunAddress || "parcel",
-      address: a.fullAddress || a.jibunAddress || a.roadAddress || "필지",
+      address: preferredEntryAddress(a) || "필지",
       pnu: a.pnu ?? null,
       areaSqm: a.areaSqm ?? null,
       zoneType: a.zoneCode ?? null,
@@ -1615,7 +1615,7 @@ export function GlobalAddressSearch({
       {/* 공동주택(빌라) 호실·세대 대지지분 모달 — 검색/등록한 필지에서 바로 호실 분석/반영 */}
       {shareParcel && (
         <LandShareModal
-          jibun={shareParcel.jibunAddress || shareParcel.fullAddress}
+          jibun={preferredEntryAddress(shareParcel)}
           pnu={shareParcel.pnu}
           onClose={() => setShareParcel(null)}
           onApplyArea={() => { /* 검색 컨텍스트에선 행 면적 갱신 불필요(토지조서에서 반영) */ }}

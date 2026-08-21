@@ -175,3 +175,217 @@ describe("조례 수치 미확보 사유(별표 HWP 첨부)", () => {
     expect(screen.getAllByTestId("ordinance-attachment-only").length).toBe(1);
   });
 });
+
+/**
+ * ★나열형 조문(제46조 '그 밖에 용도지구·구역 등')은 **항목마다 값이 다르다**
+ * (오산 실측: 취락 40 · 개발진흥 30 · 수산자원 30 · 자연공원 60 · 산업단지 80).
+ * 그래서 화면은 **어느 지정으로 매칭됐는지** 밝혀야 한다 — 안 밝히면 사용자가
+ * 왜 이 수치인지 확인할 길이 없다.
+ */
+describe("나열형 조건 — 매칭 근거 지구 표시", () => {
+  const base = (extra: Record<string, unknown>) => ({
+    ...BASE_EFF,
+    ordinance_conditional: {
+      applied: false,
+      matched: [{
+        kind: "bcr", value: 40, article: "제46조",
+        article_title: "그 밖에 용도지구·구역 등의 건폐율", ...extra,
+      }],
+      undecidable: [],
+    },
+  });
+
+  it("★근거가 된 부지 지정명이 보인다", () => {
+    renderWith(base({ matched_district: "자연취락지구", matched_option: "취락지구" }));
+    const line = screen.getByText(/제46조/);
+    expect(line.textContent).toContain("자연취락지구");
+    expect(line.textContent).toContain("40%");
+  });
+
+  it("★조례 항목명이 부지 지정명과 다르면 함께 밝힌다(상위 범주 ↔ 하위 유형)", () => {
+    renderWith(base({ matched_district: "자연취락지구", matched_option: "취락지구" }));
+    // 조례는 '취락지구'라 적었고 부지는 '자연취락지구'다 — 둘 다 보여야 대조가 된다.
+    expect(screen.getByText(/제46조/).textContent).toContain("취락지구' 항목");
+  });
+
+  it("이름이 같으면 괄호를 중복해 붙이지 않는다", () => {
+    renderWith(base({ matched_district: "자연공원", matched_option: "자연공원", value: 60 }));
+    const t = screen.getByText(/제46조/).textContent ?? "";
+    expect(t).toContain("자연공원");
+    expect(t).not.toContain("'자연공원' 항목");
+  });
+
+  it("★대조군(음성) — 근거 지구가 없으면 그 문구를 만들지 않는다", () => {
+    renderWith(base({}));
+    const t = screen.getByText(/제46조/).textContent ?? "";
+    // ★양성 짝 — 같은 실행에서 근거가 있으면 실제로 나온다(렌더가 죽은 게 아니다).
+    expect(t).not.toContain("근거: 이 부지가");
+    renderWith(base({ matched_district: "자연공원" }));
+    expect(screen.getAllByText(/제46조/).some((e) => (e.textContent ?? "").includes("근거: 이 부지가"))).toBe(true);
+  });
+});
+
+/**
+ * ★고시 결손 고지 — 화면이 "지구단위계획 없음"을 **사실처럼** 말하던 자리.
+ * 실제 사고: 오산 내삼미동은 지구단위계획구역 신규 결정고시(2025-12-23 제2025-274호)가
+ * 우리 데이터에 없어 자연녹지 법정 80%가 지배 한도인 양 표시됐다.
+ */
+describe("고시 결손 고지", () => {
+  const NOTICE = {
+    reason:
+      "오산시 최근 지구단위계획구역 결정고시 중 **우리 데이터에서 확인되지 않는 것**이 있습니다: " +
+      "2025-12-23 경기도 오산시 고시 제2025-274호.",
+    items: [{ date: "2025-12-23", gosino: "경기도 오산시 고시 제2025-274호", title: "[신규] 오산(내삼미3구역) …" }],
+    window_start: "20240821",
+    list_url: "https://www.eum.go.kr/web/gs/gv/gvGosiList.jsp?selSggCd=41370",
+    applied: false,
+  };
+  const withGosi = (g: unknown) =>
+    render(
+      <L3EnhancedCards l3Data={{ effective_far: BASE_EFF } as never} siteAnalysis={null} gosiCoverage={g as never} />
+    );
+
+  it("★결손 고시를 지목한다", () => {
+    withGosi(NOTICE);
+    const box = screen.getByTestId("gosi-coverage-notice");
+    expect(box.textContent).toContain("제2025-274호");
+    expect(box.textContent).toContain("2025-12-23");
+  });
+
+  it("★★'틀렸다'가 아니라 '확인되지 않는다'라고 말한다 — 대조는 휴리스틱이다", () => {
+    withGosi(NOTICE);
+    const t = screen.getByTestId("gosi-coverage-notice").textContent ?? "";
+    expect(t).toContain("확인되지 않는");
+    expect(t).not.toContain("틀렸");
+    expect(t).not.toContain("오류");
+  });
+
+  it("★확인 범위를 밝힌다 — 범위 밖은 확인하지 않았다고 말한다", () => {
+    withGosi(NOTICE);
+    const t = screen.getByTestId("gosi-coverage-notice").textContent ?? "";
+    expect(t).toContain("2024-08-21 이후");
+    expect(t).toContain("범위 밖은 확인하지 않았습니다");
+  });
+
+  it("★다음 행동 — 토지이음 원문 링크가 새 탭으로 열린다", () => {
+    withGosi(NOTICE);
+    const link = screen.getByRole("link", { name: /토지이음에서 고시 원문 확인/ });
+    expect(link.getAttribute("href")).toBe(NOTICE.list_url);
+    expect(link.getAttribute("target")).toBe("_blank");
+    expect(link.getAttribute("rel")).toContain("noopener");
+  });
+
+  it("★마크다운 별표가 날것으로 노출되지 않는다", () => {
+    withGosi(NOTICE);
+    expect(NOTICE.reason).toContain("**");
+    expect(screen.getByTestId("gosi-coverage-notice").textContent).not.toContain("**");
+  });
+
+  it("★대조군(음성) — 결손이 없으면(null) 뜨지 않는다", () => {
+    withGosi(null);
+    // 공허 진리 가드 — 카드 자체는 렌더됐는가.
+    expect(screen.getByText(/최종 실효 용적률/)).toBeTruthy();
+    expect(screen.queryByTestId("gosi-coverage-notice")).toBeNull();
+    // ★양성 짝 — 같은 실행에서 고지가 있으면 실제로 뜬다.
+    withGosi(NOTICE);
+    expect(screen.getAllByTestId("gosi-coverage-notice").length).toBe(1);
+  });
+});
+
+/**
+ * ★다중 구역(P4) — 필지는 흔히 여러 지구에 걸친다(실측: designation 8~20건).
+ * 백엔드가 맞는 것을 전부 내므로 화면도 전부 보이고, **어느 것이 우선하는지 모른다**는
+ * 사실을 밝혀야 한다(용도지구 경합 우선순위는 법·조례 소관이다).
+ */
+describe("다중 구역 겹침 표시", () => {
+  const two = {
+    ...BASE_EFF,
+    ordinance_conditional: {
+      applied: false,
+      matched: [
+        { kind: "bcr", value: 40, article: "제46조", matched_district: "자연취락지구", matched_option: "취락지구", overlap_count: 2 },
+        { kind: "bcr", value: 60, article: "제46조", matched_district: "자연공원", matched_option: "자연공원", overlap_count: 2 },
+      ],
+      undecidable: [],
+    },
+  };
+
+  it("★겹친 지구를 **둘 다** 각자의 값으로 보여준다", () => {
+    renderWith(two);
+    const lines = screen.getAllByText(/제46조/);
+    const all = lines.map((l) => l.textContent ?? "").join(" | ");
+    expect(all).toContain("40%");
+    expect(all).toContain("60%");
+    expect(all).toContain("자연취락지구");
+    expect(all).toContain("자연공원");
+    // ★값이 서로 달라야 이 검사가 의미 있다(같으면 하나가 없어도 통과한다).
+    expect(lines.length).toBe(2);
+  });
+
+  it("★★어느 것이 우선하는지 **모른다**고 말한다", () => {
+    renderWith(two);
+    const all = screen.getAllByText(/제46조/).map((l) => l.textContent ?? "").join(" ");
+    expect(all).toContain("2개 지구에 걸칩니다");
+    expect(all).toContain("확인이 필요합니다");
+    // 그리고 여전히 적용값이 아니다.
+    expect(screen.getByText(/적용값이 아닙니다/)).toBeTruthy();
+  });
+
+  it("★대조군(음성) — 하나만 맞으면 겹침 문구를 만들지 않는다", () => {
+    renderWith({
+      ...BASE_EFF,
+      ordinance_conditional: {
+        applied: false,
+        matched: [{ kind: "bcr", value: 40, article: "제46조", matched_district: "자연취락지구", matched_option: "취락지구", overlap_count: 1 }],
+        undecidable: [],
+      },
+    });
+    expect(screen.getByText(/제46조/).textContent).not.toContain("걸칩니다");
+    // ★양성 짝 — 같은 실행에서 겹치면 실제로 뜬다.
+    renderWith(two);
+    expect(screen.getAllByText(/제46조/).some((l) => (l.textContent ?? "").includes("걸칩니다"))).toBe(true);
+  });
+
+  it("overlap_count 가 없어도(구 백엔드) 깨지지 않는다", () => {
+    renderWith({
+      ...BASE_EFF,
+      ordinance_conditional: {
+        applied: false,
+        matched: [{ kind: "bcr", value: 40, article: "제46조", matched_district: "자연취락지구" }],
+        undecidable: [],
+      },
+    });
+    expect(screen.getByText(/제46조/).textContent).not.toContain("걸칩니다");
+  });
+});
+
+/** ★고시 원문 수치(P5) — 후보로만 보이고, 없으면 아예 안 나온다. */
+describe("고시 원문에서 읽은 수치", () => {
+  const base = {
+    reason: "오산시 최근 지구단위계획구역 결정고시 중 확인되지 않는 것이 있습니다.",
+    items: [{ date: "2025-12-23", gosino: "제2025-274호" }],
+    window_start: "20240821",
+    list_url: "https://www.eum.go.kr/x",
+  };
+  const withG = (g: unknown) =>
+    render(<L3EnhancedCards l3Data={{ effective_far: BASE_EFF } as never} siteAnalysis={null} gosiCoverage={g as never} />);
+
+  it("★수치를 '후보'로 보여준다", () => {
+    withG({ ...base, limits_note: "고시 원문에서 읽은 값(후보): 용적률 200% · 180% — 한 구역 안에서도 획지마다 값이 다릅니다. 이 부지에 어느 값이 걸리는지는 조서·도면으로 확인하십시오." });
+    const t = screen.getByTestId("gosi-limits-note").textContent ?? "";
+    expect(t).toContain("후보");
+    expect(t).toContain("200%");
+    expect(t).toContain("획지마다");
+    expect(t).toContain("확인하십시오");
+  });
+
+  it("★★대조군(음성) — 수치를 못 읽었으면 그 줄이 아예 없다", () => {
+    withG(base);
+    // 공허 진리 가드 — 고지 자체는 떴는가.
+    expect(screen.getByTestId("gosi-coverage-notice")).toBeTruthy();
+    expect(screen.queryByTestId("gosi-limits-note")).toBeNull();
+    // ★양성 짝 — 같은 실행에서 수치가 있으면 실제로 뜬다.
+    withG({ ...base, limits_note: "고시 원문에서 읽은 값(후보): 용적률 200%" });
+    expect(screen.getAllByTestId("gosi-limits-note").length).toBe(1);
+  });
+});
