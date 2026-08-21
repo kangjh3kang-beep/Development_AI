@@ -1948,10 +1948,31 @@ export function SiteAnalysisDetail({ data, hideInterpretation = false, parcels }
                 <div className="space-y-1">
                   {landUseRegs.map((reg, i) => {
                     const r = obj(reg);
+                    // ★저촉 상태(포함/저촉/접함)를 함께 보인다 — 이름만 보이면 **제약의 크기를
+                    //   알 수 없다.** 2026-08-20 라이브 실측(오산 내삼미동 741): 규제구역 11건에
+                    //   상태가 3종이었다 — 포함 7 · 접함 3 · 저촉 1. 그런데 화면은 11건 모두를
+                    //   같은 경고 점으로 나열해, 단지 **접함**인 공원·보전녹지가 필지를 **포함**하는
+                    //   도로구역과 구분되지 않았다. 개발자에게 그 차이는 사업 성립 여부를 가른다.
+                    //   백엔드는 `conflict_status` 를 계속 내보내고 있었고 **화면만 버리고 있었다**.
+                    const conflict = s(r.conflict_status || r.conflictStatus);
+                    // 접함 = 필지 밖(제약 아님) → 경고를 낮춘다. 포함·저촉은 실제 제약이다.
+                    //   ★모르는 값은 낮추지 않는다 — 새 상태값이 생겨도 경고가 조용히 사라지면 안 된다.
+                    const isAdjacent = conflict === "접함";
                     return (
                       <div key={i} className="flex items-center gap-2 text-[11px]">
-                        <span className="sa-dot sa-dot--warning shrink-0" style={{ width: "0.375rem", height: "0.375rem" }} />
+                        <span
+                          className={`sa-dot ${isAdjacent ? "sa-dot--muted" : "sa-dot--warning"} shrink-0`}
+                          style={{ width: "0.375rem", height: "0.375rem" }}
+                        />
                         <span className="text-[var(--text-primary)]">{s(r.district_name || r.districtName || r.name || reg)}</span>
+                        {conflict && (
+                          <span
+                            className={isAdjacent ? "text-[var(--text-hint)]" : "text-[var(--status-warning)]"}
+                            title="필지와 규제구역의 관계 — 포함(구역 안) · 저촉(일부 걸침) · 접함(경계 인접)"
+                          >
+                            {conflict}
+                          </span>
+                        )}
                       </div>
                     );
                   })}
