@@ -176,11 +176,24 @@ describe("적응형 반경 — 조용히 넓히지 않는다(2026-08-21)", () =>
   const scan = (file: string) =>
     __stripCommentsForScan(readFileSync(resolve(process.cwd(), file), "utf-8"), file);
 
-  it("지도 요청이 적응형 반경을 켠다 — 끄면 1km 고정으로 되돌아간다", () => {
+  it("지도 요청이 **공용 헬퍼**로 반경을 조립한다 — 인라인으로 되돌리면 계약이 갈라진다", () => {
     const src = scan("components/precheck/SatongMapShell.tsx");
     // 공허한 참 방지 — nearby-map 요청 자체가 있어야 이 단언이 의미를 가진다.
     expect(src).toContain("/zoning/nearby-map");
-    expect(src).toContain("auto_expand_radius: true");
+    // ★2026-08-22 갱신: 인라인 `auto_expand_radius: true` 를 공용 `marketRadiusRequest` 로
+    //   옮겼다(수동 선택 시 확대를 꺼야 하는데, 그 판단이 호출부마다 흩어지면 또 여러 벌이 된다).
+    //   행위 자체는 `lib/__tests__/market-radius.test.ts` 가 두 모집단으로 잠근다.
+    expect(src).toContain("marketRadiusRequest(marketRadiusM)");
+    // 인라인 하드코딩으로 되돌아가지 않았는지 — 되돌아가면 수동 선택이 무시된다.
+    expect(src).not.toContain("auto_expand_radius: true");
+  });
+
+  it("★반경 칩이 실제로 렌더되고 선택을 상류로 올린다(형제 패리티)", () => {
+    const src = scan("components/map/SatongMultiMap.tsx");
+    expect(src).toContain("MARKET_RADIUS_CHOICES");
+    const i = src.indexOf("MARKET_RADIUS_CHOICES.map");
+    expect(i, "선택지가 상수로만 있고 렌더되지 않는다").toBeGreaterThan(-1);
+    expect(src.slice(i, i + 600)).toContain("onMarketRadiusChange(");
   });
 
   it("배너가 확대 사실을 고지한다 — 확대만 하고 말하지 않으면 오도가 된다", () => {
