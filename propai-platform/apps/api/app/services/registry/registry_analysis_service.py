@@ -10,6 +10,8 @@ from typing import Any
 
 import structlog
 
+from app.services.ai.llm_failure import failure_reason as _failure_reason
+
 logger = structlog.get_logger(__name__)
 
 # 등기 분석 결과 캐시(모듈) — CODEF 발급은 느리고(약 40~50s) 유료라 동일 필지 재분석을
@@ -291,7 +293,6 @@ class RegistryAnalysisService:
                 "note": "공부상 소유구분·토지특성(소유자 성명·지분은 등기부 분석 결과 참조)",
             }
         except Exception as e:  # noqa: BLE001
-            from app.services.ai.llm_failure import failure_reason as _failure_reason
             logger.warning("토지정보 조회 실패", err=str(e)[:80])
             return None
 
