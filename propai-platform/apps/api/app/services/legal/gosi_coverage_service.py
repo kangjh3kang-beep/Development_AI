@@ -44,6 +44,7 @@ import re
 from datetime import date as _date
 from datetime import timedelta as _timedelta
 from typing import Any
+from urllib.parse import quote as _quote
 
 import httpx
 import structlog
@@ -95,7 +96,10 @@ def parse_gosi_rows(page_html: str) -> list[dict[str, str]]:
         date = cells[0][1]
         if not _DATE_RE.fullmatch(date):
             continue
+        seq_m = re.search(r"gvGosiDet\.jsp\?seq=(\d+)", tr)
         out.append({
+            # ★상세(첨부 PDF)로 가려면 seq 가 필요하다 — 목록에서만 얻을 수 있다.
+            "seq": seq_m.group(1) if seq_m else "",
             "date": date,
             "gosino": (cells[1][0] or cells[1][1] or "").strip(),
             # 제목 본문은 `[신규]`/`[변경]` 구분 접두를 갖고 있어 **본문을 우선**한다
@@ -230,6 +234,10 @@ def build_coverage_notice(
             f"원문으로 확인하십시오 — 지구단위계획은 용적률·건폐율·용도를 직접 정합니다."
         ),
         "items": uncovered,
+        # ★고시 원문에서 읽은 수치가 있으면 함께 낸다 — **적용값이 아니라 후보**다.
+        #   한 구역 안에 획지별로 값이 다르므로(실측: 양산2구역 200%·180%) 어느 것이 이 부지에
+        #   걸리는지는 우리가 정하지 않는다. 그래서 개수와 함께 '확인 필요'를 말한다.
+        "limits_note": _limits_note(uncovered[0].get("limits")) if uncovered else None,
         "checked_count": checked,
         # ★확인한 범위를 명시한다 — 없으면 확인하지 않은 기간까지 확인한 것처럼 읽힌다.
         "window_start": window_start,
@@ -305,6 +313,13 @@ async def gosi_coverage_for_region(
     if not known:
         complete = False
     uncovered = find_uncovered(rows, known)
+    # ★가장 최근 결손 1건에 한해 고시 원문 수치를 읽어 본다(P5).
+    #   전건에 하면 PDF 를 여러 개 받아 느려진다(첨부 3~4MB) — 사용자가 먼저 볼 것 하나만.
+    #   ★실패해도 조용히 넘어간다: 수치는 **있으면 더 나은 것**이지 없다고 틀린 값이 나가지 않는다.
+    if uncovered and uncovered[0].get("seq"):
+        limits = await fetch_gosi_limits(uncovered[0]["seq"])
+        if limits.get("available"):
+            uncovered[0]["limits"] = limits
     result = {
         "sigungu_code": sigungu_code,
         "checked_count": len(rows),
@@ -371,3 +386,135 @@ async def gosi_coverage_for_pnu(pnu: str, *, sigungu_name: str | None = None) ->
         return {"sigungu_code": sgg, "complete": False, "notice": None,
                 "error": "parcel_geometry_unavailable"}
     return await gosi_coverage_for_region(sgg, bbox, sigungu_name=sigungu_name)
+
+
+# ── 고시 원문에서 **수치 후보**를 읽는다(P5) ──────────────────────────────────────
+#   【인계서 전제를 반증했다】여러 세션 인계서가 P5 를 *"조서 숫자(사용자 입력 전제라
+#   제품 결정 사안)"* 로 못 박아 두었다. 실측하니 **기계로 읽힌다**:
+#   오산 지구단위계획 고시 6건 중 **5건에서 텍스트 추출 성공**(1건만 이미지 스캔)이고,
+#   내삼미1구역 `용적률 80%` · 원동7구역 `용적률 200%` · 양산2구역 `200%·180%` 가 나왔다.
+#   ★사고 당시 사용자가 신고한 "실제 계획 200%"와 원동7구역 값이 일치한다.
+#
+#   【다운로드 열쇠 — 이것 때문에 막혀 있었다】토지이음 첨부는 `/web/FileDownload.do` 에
+#   **POST** 하는데, 사이트가 EUC-KR 이라 **폼 바디를 EUC-KR 로 인코딩**해야 한다.
+#   UTF-8 로 보내면 세션·헤더가 다 맞아도 `alert('첨부파일이 없습니다.')` 만 돌아온다.
+#
+#   【★무엇을 주장하지 않는가】읽은 수치를 **적용하지 않는다**. 지구단위계획은 한 구역 안에서
+#   **획지·가구마다 값이 다르다**(양산2구역에서 200%와 180%가 함께 나왔다). 어느 값이 이
+#   필지에 걸리는지는 조서·도면을 봐야 알 수 있고 우리는 그 매칭을 하지 않는다.
+#   그래서 **후보로만** 내고 "이 부지에 적용되는지 확인 필요"를 함께 낸다.
+
+_PDF_MAGIC = b"%PDF"
+_DOWNLOAD_URL = "https://www.eum.go.kr/web/FileDownload.do"
+_DETAIL_URL = "https://www.eum.go.kr/web/gs/gv/gvGosiDet.jsp"
+_DOWNLOAD_ARG_RE = re.compile(r"javascript:download\('([^']+)'\s*,\s*'([^']+)'\)")
+# `용적률 ∘ 200%` · `용적률 ⦁80%` — 원문에 불릿/공백이 섞인다(실측).
+_FAR_RE = re.compile(r"용적률[^0-9]{0,60}?(\d{2,4})\s*(?:퍼센트|%)")
+_BCR_RE = re.compile(r"건폐율[^0-9]{0,60}?(\d{1,3})\s*(?:퍼센트|%)")
+# 텍스트 PDF 판정 하한 — 스캔본은 실측 7~13자였다(여백·머리글 정도만 잡힌다).
+_MIN_TEXT_CHARS = 500
+
+
+def parse_far_bcr_candidates(text: str) -> dict[str, list[int]]:
+    """고시 본문 텍스트 → 용적률·건폐율 **후보 전부**(중복 제거, 등장 순서 유지).
+
+    ★하나만 고르지 않는다 — 한 구역 안에 값이 여럿이다(실측: 양산2구역 200%·180%).
+      P4 에서 배운 것과 같다: 순서가 의미를 뜻하지 않으므로 임의 선택은 오답이 된다.
+    """
+    def _uniq(pat: re.Pattern[str], lo: int, hi: int) -> list[int]:
+        out: list[int] = []
+        for m in pat.finditer(text or ""):
+            v = int(m.group(1))
+            if lo <= v <= hi and v not in out:
+                out.append(v)
+        return out
+
+    return {
+        # 법정 최대(중심상업 1500%)를 넘는 값은 오독이다 — 범위로 거른다.
+        "far_pct": _uniq(_FAR_RE, 20, 1500),
+        "bcr_pct": _uniq(_BCR_RE, 5, 90),
+    }
+
+
+async def fetch_gosi_limits(seq: str, *, client: httpx.AsyncClient | None = None) -> dict[str, Any]:
+    """고시 상세(`seq`) → 첨부 PDF → 용적률·건폐율 **후보**. 실패·스캔이면 정직하게 빈 결과.
+
+    반환: `{"available", "far_pct", "bcr_pct", "source_file", "text_chars", "reason"}`
+      · `available=False` 면 **아무 수치도 주장하지 않는다**(스캔본·다운로드 실패·첨부 없음).
+    """
+    owns = client is None
+    c = client or httpx.AsyncClient(timeout=90.0, headers=_UA, follow_redirects=True)
+    try:
+        det = await c.get(_DETAIL_URL, params={"seq": seq})
+        det.raise_for_status()
+        page = det.content.decode("euc-kr", "replace")
+        pdfs = [f for _u, f in _DOWNLOAD_ARG_RE.findall(page) if f.lower().endswith(".pdf")]
+        if not pdfs:
+            return {"available": False, "reason": "pdf_attachment_absent",
+                    "far_pct": [], "bcr_pct": []}
+
+        best: tuple[int, str, str] | None = None   # (텍스트 길이, 텍스트, 파일명)
+        for path in pdfs[:3]:
+            # ★EUC-KR 폼 인코딩이 필수다(위 주석 참조) — UTF-8 이면 '첨부파일이 없습니다'.
+            body = f"file={_quote(path, encoding='euc-kr')}&gosi=Y&seq={seq}".encode()
+            resp = await c.post(
+                _DOWNLOAD_URL, content=body,
+                headers={"Content-Type": "application/x-www-form-urlencoded",
+                         "Referer": str(det.url)},
+            )
+            if resp.content[:4] != _PDF_MAGIC:
+                continue
+            try:
+                import fitz  # PyMuPDF — 프로덕션 이미지에 설치되어 있음(실측 1.24.10)
+                doc = fitz.open(stream=resp.content, filetype="pdf")
+                text = "\n".join(p.get_text() for p in doc)
+                doc.close()
+            except Exception as e:  # noqa: BLE001 — PDF 파손·라이브러리 부재는 침묵하지 않는다
+                logger.warning("고시 PDF 텍스트 추출 실패: seq=%s (%s)", seq, e)
+                continue
+            if best is None or len(text) > best[0]:
+                best = (len(text), text, path.rsplit("/", 1)[-1])
+
+        if best is None:
+            return {"available": False, "reason": "download_failed", "far_pct": [], "bcr_pct": []}
+        chars, text, fname = best
+        if chars < _MIN_TEXT_CHARS:
+            # ★스캔본 — 이미지라 읽을 것이 없다(실측 7~13자). OCR 은 하지 않는다.
+            #   여기서 빈 후보를 "수치 없음"으로 내면 **없는 것과 못 읽은 것이 뭉개진다**.
+            return {"available": False, "reason": "scanned_image", "source_file": fname,
+                    "text_chars": chars, "far_pct": [], "bcr_pct": []}
+        cands = parse_far_bcr_candidates(text)
+        return {
+            "available": bool(cands["far_pct"] or cands["bcr_pct"]),
+            "reason": None if (cands["far_pct"] or cands["bcr_pct"]) else "no_numbers_in_text",
+            "source_file": fname, "text_chars": chars, **cands,
+        }
+    except Exception as e:  # noqa: BLE001
+        logger.warning("고시 수치 추출 실패: seq=%s (%s)", seq, e)
+        return {"available": False, "reason": "error", "far_pct": [], "bcr_pct": []}
+    finally:
+        if owns:
+            await c.aclose()
+
+
+def _limits_note(limits: Any) -> str | None:
+    """읽은 수치를 **후보로만** 말하는 한 문장. 없으면 None(단정 금지)."""
+    if not isinstance(limits, dict) or not limits.get("available"):
+        return None
+    far = limits.get("far_pct") or []
+    bcr = limits.get("bcr_pct") or []
+    parts: list[str] = []
+    if far:
+        parts.append("용적률 " + " · ".join(f"{v}%" for v in far))
+    if bcr:
+        parts.append("건폐율 " + " · ".join(f"{v}%" for v in bcr))
+    if not parts:
+        return None
+    multi = len(far) > 1 or len(bcr) > 1
+    tail = (
+        " — 한 구역 안에서도 획지마다 값이 다릅니다. 이 부지에 어느 값이 걸리는지는 "
+        "조서·도면으로 확인하십시오."
+        if multi else
+        " — 이 값이 이 부지에 적용되는지는 조서·도면으로 확인하십시오."
+    )
+    return f"고시 원문에서 읽은 값(후보): {' / '.join(parts)}{tail}"

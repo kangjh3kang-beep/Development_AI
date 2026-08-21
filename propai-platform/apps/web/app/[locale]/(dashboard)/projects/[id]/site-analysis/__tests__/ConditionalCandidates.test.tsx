@@ -356,5 +356,33 @@ describe("다중 구역 겹침 표시", () => {
       },
     });
     expect(screen.getByText(/제46조/).textContent).not.toContain("걸칩니다");
+/** ★고시 원문 수치(P5) — 후보로만 보이고, 없으면 아예 안 나온다. */
+describe("고시 원문에서 읽은 수치", () => {
+  const base = {
+    reason: "오산시 최근 지구단위계획구역 결정고시 중 확인되지 않는 것이 있습니다.",
+    items: [{ date: "2025-12-23", gosino: "제2025-274호" }],
+    window_start: "20240821",
+    list_url: "https://www.eum.go.kr/x",
+  };
+  const withG = (g: unknown) =>
+    render(<L3EnhancedCards l3Data={{ effective_far: BASE_EFF } as never} siteAnalysis={null} gosiCoverage={g as never} />);
+
+  it("★수치를 '후보'로 보여준다", () => {
+    withG({ ...base, limits_note: "고시 원문에서 읽은 값(후보): 용적률 200% · 180% — 한 구역 안에서도 획지마다 값이 다릅니다. 이 부지에 어느 값이 걸리는지는 조서·도면으로 확인하십시오." });
+    const t = screen.getByTestId("gosi-limits-note").textContent ?? "";
+    expect(t).toContain("후보");
+    expect(t).toContain("200%");
+    expect(t).toContain("획지마다");
+    expect(t).toContain("확인하십시오");
+  });
+
+  it("★★대조군(음성) — 수치를 못 읽었으면 그 줄이 아예 없다", () => {
+    withG(base);
+    // 공허 진리 가드 — 고지 자체는 떴는가.
+    expect(screen.getByTestId("gosi-coverage-notice")).toBeTruthy();
+    expect(screen.queryByTestId("gosi-limits-note")).toBeNull();
+    // ★양성 짝 — 같은 실행에서 수치가 있으면 실제로 뜬다.
+    withG({ ...base, limits_note: "고시 원문에서 읽은 값(후보): 용적률 200%" });
+    expect(screen.getAllByTestId("gosi-limits-note").length).toBe(1);
   });
 });

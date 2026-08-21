@@ -376,3 +376,82 @@ def test_ntfc_date_extraction(ntfc, expected):
 
     m = NTFC_DATE_RE.search(ntfc)
     assert (m.group(0) if m else None) == expected
+
+
+# ── ★고시 원문 수치(P5) — 인계서가 "사용자 입력 전제"라 못 박은 전제를 반증했다 ──────
+#   실측(2026-08-21, 오산 지구단위계획 고시): 6건 중 **5건에서 텍스트 추출 성공**,
+#   원동7구역 `용적률 200%`(사고 당시 사용자가 신고한 "실제 계획 200%"와 일치) ·
+#   양산2구역 `200%·180%`. 다운로드 열쇠는 **EUC-KR 폼 인코딩**이었다.
+#   ★그러나 정작 사고 고시(내삼미3구역)는 첨부가 스캔본+도면뿐이라 **수치를 못 뽑는다** —
+#     그래서 이 기능은 "있으면 더 나은 것"이지 항상 되는 것이 아니다.
+
+def test_parses_multiple_far_candidates():
+    """★값을 **하나로 고르지 않는다** — 한 구역 안에 여럿이다(실측: 양산2구역 200%·180%).
+
+    P4 에서 배운 것과 같다: 순서가 의미를 뜻하지 않으므로 임의 선택은 오답이 된다.
+    """
+    from app.services.legal.gosi_coverage_service import parse_far_bcr_candidates
+
+    text = "가. 용적률 ∘200% 이하\n나. 용적률 ∘180% 이하\n다. 건폐율 ⦁ 60% 이하"
+    out = parse_far_bcr_candidates(text)
+    assert out["far_pct"] == [200, 180], out
+    assert out["bcr_pct"] == [60], out
+
+
+def test_far_candidates_reject_out_of_range():
+    """★법정 최대(중심상업 1500%)를 넘는 값은 오독이다 — 범위로 거른다."""
+    from app.services.legal.gosi_coverage_service import parse_far_bcr_candidates
+
+    out = parse_far_bcr_candidates("용적률 9999% · 용적률 200% · 건폐율 300%")
+    assert out["far_pct"] == [200], out
+    assert out["bcr_pct"] == [], out
+    # ★양성 짝 — 범위 안 값은 실제로 통과한다(필터가 전부를 죽인 게 아니다).
+    assert parse_far_bcr_candidates("건폐율 60%")["bcr_pct"] == [60]
+
+
+def test_limits_note_says_candidate_not_applied():
+    """★'적용값'이라 말하지 않는다 — 후보이고 확인이 필요하다."""
+    from app.services.legal.gosi_coverage_service import _limits_note
+
+    n = _limits_note({"available": True, "far_pct": [200, 180], "bcr_pct": [60]})
+    assert n and "후보" in n
+    assert "200%" in n and "180%" in n
+    # 값이 여럿이면 **획지마다 다르다**는 사실을 말한다.
+    assert "획지마다 값이 다릅니다" in n, n
+    assert "확인하십시오" in n
+
+
+def test_limits_note_single_value_does_not_claim_multiple():
+    """★대조군 — 값이 하나면 '획지마다 다르다' 문구를 만들지 않는다(위양성 방지)."""
+    from app.services.legal.gosi_coverage_service import _limits_note
+
+    n = _limits_note({"available": True, "far_pct": [200], "bcr_pct": []})
+    assert n and "200%" in n
+    assert "획지마다" not in n
+    # ★양성 짝 — 여럿이면 실제로 붙는다.
+    assert "획지마다" in (_limits_note({"available": True, "far_pct": [200, 180], "bcr_pct": []}) or "")
+
+
+def test_limits_note_is_silent_when_unavailable():
+    """★★스캔본·추출 실패면 **아무 수치도 말하지 않는다**.
+
+    라이브 실측: 내삼미2구역은 경기도보 **스캔본**(텍스트 13자)이고,
+    사고 고시 내삼미3구역은 첨부가 **지형도면**뿐이라 수치가 없다.
+    여기서 빈 후보를 '수치 없음'으로 내면 **없는 것과 못 읽은 것이 뭉개진다**.
+    """
+    from app.services.legal.gosi_coverage_service import _limits_note
+
+    assert _limits_note(None) is None
+    assert _limits_note({"available": False, "reason": "scanned_image", "far_pct": [], "bcr_pct": []}) is None
+    assert _limits_note({"available": True, "far_pct": [], "bcr_pct": []}) is None
+    # ★양성 짝 — 있으면 실제로 낸다.
+    assert _limits_note({"available": True, "far_pct": [200], "bcr_pct": []}) is not None
+
+
+def test_list_parser_captures_seq_for_detail_lookup():
+    """★목록에서 `seq` 를 실어야 상세(첨부 PDF)로 갈 수 있다 — 없으면 P5 가 죽는다."""
+    from app.services.legal.gosi_coverage_service import parse_gosi_rows
+
+    rows = parse_gosi_rows(_REAL_HTML)
+    assert all(r["seq"] for r in rows), [r["seq"] for r in rows]
+    assert rows[0]["seq"] == "1"
