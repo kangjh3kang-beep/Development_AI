@@ -259,6 +259,10 @@ export type SatongMarketCategory = {
 export type SatongMarketPayload = {
   center: { lat: number | null; lon: number | null; address?: string } | null;
   radius_m?: number;
+  /** 요청 반경(에코). `radius_m` 이 확대된 유효 반경일 수 있어 원본을 따로 받는다. */
+  radius_requested_m?: number;
+  /** 반경이 자동 확대됐는가 — **조용히 넓히지 않는다**는 계약. */
+  radius_expanded?: boolean;
   categories?: Record<string, SatongMarketCategory>;
   fetch_failed?: boolean;
   note?: string;
@@ -2624,6 +2628,16 @@ export function SatongMultiMap({
       cutParts.push("반경 필터 미적용(전체 표시 중)");
     } else if ((marketPayload.radius_filtered_out_count ?? 0) > 0) {
       cutParts.push(`반경밖 ${marketPayload.radius_filtered_out_count}건 제외`);
+    }
+    // ★확대했으면 **반드시 말한다.** 조용히 넓히면 사용자는 10km 떨어진 거래를 '주변'으로
+    //   읽는다 — 그건 이 결함을 고치면서 더 나쁜 오도를 만드는 것이다.
+    //   요청값과 유효값을 **둘 다** 보여, 무엇이 바뀌었는지 화면만 보고 알 수 있게 한다.
+    if (marketPayload.radius_expanded && marketPayload.radius_m) {
+      const reqKm = ((marketPayload.radius_requested_m ?? 1000) / 1000).toFixed(
+        (marketPayload.radius_requested_m ?? 1000) % 1000 === 0 ? 0 : 1,
+      );
+      const effKm = (marketPayload.radius_m / 1000).toFixed(marketPayload.radius_m % 1000 === 0 ? 0 : 1);
+      cutParts.unshift(`반경 ${reqKm}km 내 거래가 적어 ${effKm}km 로 넓혀 표시`);
     }
     if (cappedTotal > 0) {
       cutParts.push(`유형별 상한초과 ${cappedTotal}건 생략`);
