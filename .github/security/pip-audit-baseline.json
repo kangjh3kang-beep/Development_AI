@@ -1,15 +1,18 @@
 {
   "_설명": "pip-audit 베이스라인 — **부채 목록**이지 면죄부가 아니다. 줄여 나가야 한다.",
   "_생성": "2026-08-20 · Security Scan 이 10주+ 한 번도 돌지 않아 누적된 것을 한 번에 인정한 것",
+  "_대상": "requirements.txt(개발·CI) 와 requirements.oracle.txt(★배포되는 것) **둘 다**. 첫 판은 txt 만 봤는데 Dockerfile.oracle 이 설치하는 것은 oracle 쪽이라 감사 대상이 배포 대상이 아니었다.",
   "_규칙": "여기 없는 취약점이 나오면 CI 가 실패한다. 추가할 때는 감수 사유를 PR 에 적어라.",
-  "_해소하면": "게이트가 '해소됐다'고 알린다 — 그때 이 목록에서 지워라",
-  "감사된_의존성_수": 250,
-  "건수": 163,
-  "패키지별": {
+  "_해소하면": "게이트가 '더 이상 나오지 않는다'고 알린다 — 그때 이 목록에서 지워라",
+  "_우선순위": "prod(oracle) 에 있는 것이 먼저다. dev 에만 있는 것은 배포 이미지에 없다.",
+  "건수": {
+    "합집합": 163,
+    "prod": 108,
+    "dev": 163
+  },
+  "prod_패키지별": {
     "aiohttp": 36,
-    "mlflow": 34,
     "pillow": 24,
-    "torch": 22,
     "pyjwt": 12,
     "starlette": 9,
     "python-multipart": 7,
@@ -22,15 +25,11 @@
     "langgraph-checkpoint": 3,
     "langchain": 2,
     "langchain-openai": 2,
-    "geopandas": 2,
-    "lxml": 2,
     "langgraph-sdk": 2,
     "lightgbm": 1,
     "langchain-community": 1,
-    "python-dotenv": 1,
-    "pytest": 1,
     "langchain-anthropic": 1,
-    "pyarrow": 1,
+    "python-dotenv": 1,
     "ecdsa": 1
   },
   "acknowledged": [
