@@ -1252,6 +1252,10 @@ class NearbyMapRequest(BaseModel):
     jibun_address: str | None = None
     radius_m: int = 1000
     months: int = 3
+    # ★적응형 반경(opt-in) — 지도만 켠다. 켜면 반경 내 렌더 가능 마커가 임계 미만일 때
+    #   **이미 확보된 좌표만으로** 사다리(1/3/5/10km)를 걸어 유효 반경을 넓힌다(추가 호출 0).
+    #   탁상감정·AVM·시세 경로는 끄고 둔다 — 표본 반경을 조용히 바꾸면 그쪽 고지 문구가 거짓이 된다.
+    auto_expand_radius: bool = False
 
 
 @router.post("/nearby-map")
@@ -1316,6 +1320,7 @@ async def nearby_transactions_map(req: NearbyMapRequest):
         address=req.address, lawd_cd=lawd_cd,
         months=req.months, radius_m=req.radius_m, sigungu_hint=sigungu_hint,
         center_hint=center_hint,
+        auto_expand_radius=req.auto_expand_radius,
     )
 
 

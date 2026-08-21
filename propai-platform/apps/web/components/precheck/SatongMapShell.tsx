@@ -1434,6 +1434,11 @@ export function SatongMapShell({
             pnu: marketAnchorPnu || undefined,
             radius_m: 1000,
             months: 3,
+            // ★적응형 반경 — 1km 는 도시 밀집지 기준이라 지방 필지에서 지도가 텅 빈다.
+            //   라이브 실측(제천 모산동 123-1): 1km 렌더가능 **2**개 / 3km 40 / 10km **118**.
+            //   반경 밖 그룹도 백엔드가 **이미 좌표를 구해 놓고 버리던 것**이라 확대 비용 0.
+            //   ★지도만 켠다 — 탁상감정·AVM·시세는 표본 반경이 바뀌면 고지 문구가 거짓이 된다.
+            auto_expand_radius: true,
           },
           useMock: false,
           timeoutMs: 90000,
