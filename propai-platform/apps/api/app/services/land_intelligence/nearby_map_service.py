@@ -784,6 +784,10 @@ class NearbyMapService:
                 in_radius = []
                 for grp in resolved:
                     dist_km = PostGISHelper.st_distance(center_lat, center_lon, grp["lat"], grp["lon"])
+                    # ★거리를 **버리지 않는다** — 이미 계산해 놓고 판정에만 쓰고 폐기했다.
+                    #   분양(presale) 그룹은 이미 `distance_m` 을 싣고 화면이 "1.2km" 로 쓴다
+                    #   (같은 응답 안의 선례). 실거래만 안 싣고 있었다.
+                    grp["distance_m"] = round(dist_km * 1000.0)
                     if dist_km * 1000.0 <= radius_m:
                         in_radius.append(grp)
                 filtered_out += len(resolved) - len(in_radius)
@@ -799,8 +803,24 @@ class NearbyMapService:
             #   토지 매매(동 폴백이 흔하고 건수도 크다)가 정확히 이 순서에 노출된다.
             #   (리뷰어 실측: 반경 안 지번 그룹 5개가 있는데 located_count=0)
             _precise_first = {"parcel": 0, "building": 0}
+            # ★★2026-08-22 — 정렬 2순위를 **거리**로 바꾼다(종전: 거래건수만).
+            #
+            # 왜: 캡(_MAX_GROUPS_PER_CAT)이 물 때 **무엇이 남는가**를 이 키가 정한다.
+            # 종전 `-count` 는 이 파일이 스스로 적어 둔 대로 *"거래 많은 단지 쪽으로 편향"* 된다 —
+            # 실측(강남 1km): 6개 카테고리가 전부 28개로 잘린다. 그때 남는 28은 **대형 단지**이고,
+            # 개발자가 보려는 **인근 소규모 필지·토지 거래가 밀려난다.**
+            # 지도의 목적은 "이 부지 **주변**"이므로 남길 기준은 **가까움**이어야 한다.
+            #
+            # ★계산 표본에는 영향이 없다 — `D-2 전환` 으로 `_in_radius_groups`(AVM·탁상감정)는
+            #   **캡 이전 전량**이고, 정렬은 집합이 아니라 **순서**만 바꾼다. 금액 불변이다.
+            # ★거리 미상(반경 미적용 등)은 뒤로 보낸다 — 없는 값을 0 으로 취급하면
+            #   좌표 없는 그룹이 "가장 가깝다"가 되어 정반대로 오염된다(무날조).
             resolved.sort(
-                key=lambda x: (_precise_first.get(x.get("coord_precision"), 1), -x["count"])
+                key=lambda x: (
+                    _precise_first.get(x.get("coord_precision"), 1),
+                    x.get("distance_m") if x.get("distance_m") is not None else float("inf"),
+                    -x["count"],
+                )
             )
             capped = resolved[:_MAX_GROUPS_PER_CAT]
             # ★절단 정직 고지: 캡(28)에 걸려 응답에서 빠진 그룹 수를 카테고리별로 센다.
