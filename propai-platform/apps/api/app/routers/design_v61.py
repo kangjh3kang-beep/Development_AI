@@ -1962,7 +1962,8 @@ async def get_bim_glb_get(
 
     import hashlib
 
-    etag = '"' + hashlib.sha1(glb).hexdigest()[:16] + '"'  # noqa: S324 — 캐시 검증용(비보안)
+    # ★보안 해시가 아니다 — HTTP **ETag**(캐시 검증자)다. 아래 인자로 그 사실을 선언한다.
+    etag = '"' + hashlib.sha1(glb, usedforsecurity=False).hexdigest()[:16] + '"'  # noqa: S324 — 캐시 검증용(비보안)
     return Response(
         content=glb,
         media_type="model/gltf-binary",
