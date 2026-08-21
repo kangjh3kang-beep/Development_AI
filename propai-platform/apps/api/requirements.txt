@@ -1,7 +1,7 @@
 # FastAPI Core
 fastapi==0.115.0
 uvicorn[standard]==0.32.0
-python-multipart==0.0.12
+python-multipart==0.0.31  # CVE 7건 해소(0.0.12→0.0.31). fastapi 요구는 >=0.0.7 이라 안전
 httpx==0.27.2
 aiohttp==3.10.10
 
@@ -78,12 +78,12 @@ fpdf2==2.8.1
 # Security
 bcrypt>=4.0.0,<5.0.0  # passlib 호환성: bcrypt 5.x와 충돌
 cryptography==43.0.3
-python-jose[cryptography]==3.3.0
+python-jose[cryptography]==3.4.0  # ★3.4.0 미만 금지 — 3.3.0 에 **알고리즘 혼동**(OpenSSH ECDSA 키, PYSEC-2024-232)이 있다
 
 # HTTP / Utils
 pydantic[email]==2.9.2
 pydantic-settings==2.6.1
-python-dotenv==1.0.1
+python-dotenv==1.2.2  # CVE 1건 해소(1.0.1→1.2.2)
 tenacity==9.0.0
 structlog==24.4.0
 pytz==2024.2
