@@ -714,7 +714,21 @@ class OnbidClient:
         단건(dict)일 수 있으므로 방어적으로 리스트화한다.
         """
         import json as _json
-        import xml.etree.ElementTree as ET
+
+        # ★표준 `xml.etree` 를 쓰지 않는다. 여기 들어오는 것은 **외부 API 응답**이다.
+        #   실측(2026-08-20 · CPython 3.10):
+        #     · XXE(파일 읽기) → `undefined entity` 로 **거부됨**
+        #     · SSRF(외부 URL)  → **거부됨**
+        #     · **billion laughs(엔티티 폭탄) → 확장됨**(3단계로 1000자, 늘리면 기하급수)
+        #   즉 표준 파서는 XXE 는 막아도 **엔티티 폭탄은 못 막는다** — 작은 응답이
+        #   큰 메모리로 부풀어 죽일 수 있어 크기 제한으로도 안 막힌다.
+        #   `defusedxml` 은 같은 페이로드를 `EntitiesForbidden` 으로 거부하고,
+        #   정상 응답의 `find`/`iter` 동작은 그대로다(실측 확인).
+        # ★N817 예외 근거(실측): ruff 는 `xml.etree.ElementTree as ET` 는 **통과**시키고
+        #   `defusedxml.ElementTree as ET` 만 잡는다(표준 라이브러리 관례만 예외 처리).
+        #   defusedxml 은 xml.etree 의 **드롭인 대체재**이므로 같은 별칭이 옳고,
+        #   별칭을 바꾸면 아래 호출부를 전부 건드려 교체 표면만 넓어진다.
+        import defusedxml.ElementTree as ET  # noqa: N817
 
         text = (text or "").strip()
         if not text:
