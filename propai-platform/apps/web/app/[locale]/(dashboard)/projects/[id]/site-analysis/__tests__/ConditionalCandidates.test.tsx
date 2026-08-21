@@ -291,3 +291,70 @@ describe("고시 결손 고지", () => {
     expect(screen.getAllByTestId("gosi-coverage-notice").length).toBe(1);
   });
 });
+
+/**
+ * ★다중 구역(P4) — 필지는 흔히 여러 지구에 걸친다(실측: designation 8~20건).
+ * 백엔드가 맞는 것을 전부 내므로 화면도 전부 보이고, **어느 것이 우선하는지 모른다**는
+ * 사실을 밝혀야 한다(용도지구 경합 우선순위는 법·조례 소관이다).
+ */
+describe("다중 구역 겹침 표시", () => {
+  const two = {
+    ...BASE_EFF,
+    ordinance_conditional: {
+      applied: false,
+      matched: [
+        { kind: "bcr", value: 40, article: "제46조", matched_district: "자연취락지구", matched_option: "취락지구", overlap_count: 2 },
+        { kind: "bcr", value: 60, article: "제46조", matched_district: "자연공원", matched_option: "자연공원", overlap_count: 2 },
+      ],
+      undecidable: [],
+    },
+  };
+
+  it("★겹친 지구를 **둘 다** 각자의 값으로 보여준다", () => {
+    renderWith(two);
+    const lines = screen.getAllByText(/제46조/);
+    const all = lines.map((l) => l.textContent ?? "").join(" | ");
+    expect(all).toContain("40%");
+    expect(all).toContain("60%");
+    expect(all).toContain("자연취락지구");
+    expect(all).toContain("자연공원");
+    // ★값이 서로 달라야 이 검사가 의미 있다(같으면 하나가 없어도 통과한다).
+    expect(lines.length).toBe(2);
+  });
+
+  it("★★어느 것이 우선하는지 **모른다**고 말한다", () => {
+    renderWith(two);
+    const all = screen.getAllByText(/제46조/).map((l) => l.textContent ?? "").join(" ");
+    expect(all).toContain("2개 지구에 걸칩니다");
+    expect(all).toContain("확인이 필요합니다");
+    // 그리고 여전히 적용값이 아니다.
+    expect(screen.getByText(/적용값이 아닙니다/)).toBeTruthy();
+  });
+
+  it("★대조군(음성) — 하나만 맞으면 겹침 문구를 만들지 않는다", () => {
+    renderWith({
+      ...BASE_EFF,
+      ordinance_conditional: {
+        applied: false,
+        matched: [{ kind: "bcr", value: 40, article: "제46조", matched_district: "자연취락지구", matched_option: "취락지구", overlap_count: 1 }],
+        undecidable: [],
+      },
+    });
+    expect(screen.getByText(/제46조/).textContent).not.toContain("걸칩니다");
+    // ★양성 짝 — 같은 실행에서 겹치면 실제로 뜬다.
+    renderWith(two);
+    expect(screen.getAllByText(/제46조/).some((l) => (l.textContent ?? "").includes("걸칩니다"))).toBe(true);
+  });
+
+  it("overlap_count 가 없어도(구 백엔드) 깨지지 않는다", () => {
+    renderWith({
+      ...BASE_EFF,
+      ordinance_conditional: {
+        applied: false,
+        matched: [{ kind: "bcr", value: 40, article: "제46조", matched_district: "자연취락지구" }],
+        undecidable: [],
+      },
+    });
+    expect(screen.getByText(/제46조/).textContent).not.toContain("걸칩니다");
+  });
+});

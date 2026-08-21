@@ -205,8 +205,10 @@ def match_site_conditions(
         if key == "designated_district":
             # ★이 조는 **나열형**이라 항목마다 값이 다르다 — 조각이 집은 `item["value"]` 하나로
             #   판정하면 틀린 수치를 낸다. 나열을 실제로 읽었을 때만 판정한다.
+            # ★★부지는 **여러 지구에 동시에 속한다**(실측: 필지당 designation 8~20건).
+            #   첫 매칭에서 멈추면 나머지가 조용히 사라진다 — 맞는 것을 **전부** 낸다.
             resolved = _match_district_options(item, names)
-            out[resolved.pop("_bucket")].append(resolved["row"])
+            out[resolved["_bucket"]].extend(resolved["rows"])
             continue
         if _site_condition_holds(key, item, names, has_growth_plan):
             out["matched"].append(item)
@@ -217,32 +219,41 @@ def match_site_conditions(
 
 
 def _match_district_options(item: dict[str, Any], names: list[str]) -> dict[str, Any]:
-    """`그 밖에 용도지구·구역 등` — 나열 항목 × 부지 designation.
+    """`그 밖에 용도지구·구역 등` — 나열 항목 × 부지 designation. 맞는 것을 **전부** 낸다.
 
     세 갈래로만 답한다(**모르는 것을 아는 척하지 않는다**):
 
     · 나열을 못 읽었다      → `undecidable` (종전과 같은 보수적 기각, **사유를 명시**)
-    · 읽었고 맞는 항목 있다  → `matched` — **그 항목의 값**과 이름을 싣는다(조각 값 아님)
+    · 읽었고 맞는 항목 있다  → `matched` — **맞는 항목 전부**를 각자의 값과 함께(조각 값 아님)
     · 읽었고 맞는 항목 없다  → `unmatched_site` — 이제 **전체 목록을 봤으므로** 신뢰할 수 있다
+
+    ★★왜 전부인가 — 첫 매칭에서 멈추면 **임의로 하나를 고르는 것**이 된다.
+      필지는 흔히 designation 을 8~20건 갖고(실측: 오산 내삼미동 20건), 하필 이 조문은
+      **항목 순서가 값과 무관**하다(오산 제46조: 40·30·30·60·80). 실증한 결함:
+      취락지구(40%)+자연공원(60%) 부지에서 **자연공원 60%가 사라졌다**(입력 순서와 무관 —
+      순회가 부지 지정이 아니라 조문 번호 순이므로).
+    ★겹칠 때 **어느 것이 적용되는지는 우리가 정하지 않는다** — 용도지구 경합의 우선순위는
+      법·조례가 정하고 우리는 그 판단 근거를 갖고 있지 않다. 전부 후보로 내고 겹침을 알린다
+      (`applied: False` 는 그대로 — 보이되 적용하지 않는다).
     """
     options = item.get("district_options") or []
     if not options:
-        return {"_bucket": "undecidable", "row": {
+        return {"_bucket": "undecidable", "rows": [{
             **item,
             "why": "조문 나열 항목을 읽지 못함 — 어느 지구·구역인지 가릴 수 없어 판정 보류",
-        }}
+        }]}
 
     zone = item.get("zone_type") or None
+    hits: list[dict[str, Any]] = []
     for opt in options:
         name = (opt.get("name") or "").strip()
         # ※변이 생존(설명 가능): 실조례 항목명은 전부 3자 이상이라 **도달 불가**다.
-        #   짧은 이름은 `name in n` 부분일치가 과하게 넓어지므로(예: 2자면 오탐) 방어로 둔다.
+        #   짧은 이름은 `name in n` 부분일치가 과하게 넓어지므로 방어로 둔다.
         if len(name) < 3:
             continue
         # ★부분일치 금지 규율(#703)의 올바른 방향: **조례가 적은 구역명 전체**가 부지 지정명
         #   안에 나타나야 한다(`취락지구` ⊂ `자연취락지구` = 하위유형이므로 참).
-        #   반대 방향(부지명 조각이 조례명에 포함)은 **금지** — `성장관리` 처럼 서로 다른 제도가
-        #   접두를 공유할 때 엉뚱한 제도를 집는다.
+        #   반대 방향은 금지 — 서로 다른 제도가 접두를 공유할 때 엉뚱한 제도를 집는다.
         hit = next((n for n in names if name in n), None)
         if not hit:
             continue
@@ -253,26 +264,43 @@ def _match_district_options(item: dict[str, Any], names: list[str]) -> dict[str,
         scope = opt.get("zone_scope")
         if scope and zone and scope != zone:
             continue
-        return {"_bucket": "matched", "row": {
+        hits.append((opt, hit))
+
+    if not hits:
+        return {"_bucket": "unmatched_site", "rows": [{
+            **item,
+            # ★조각이 집었던 값을 지운다 — 해당 없다고 판정한 마당에 그 값을 달고 다니면
+            #   나중 소비처가 그것을 이 부지의 값으로 읽는다.
+            "value": None,
+            "why": (
+                f"조문 나열 {len(options)}개 항목 중 이 부지의 지정과 맞는 것이 없음"
+                f"({', '.join((o.get('name') or '')[:12] for o in options[:5])})"
+            ),
+        }]}
+
+    overlap = len(hits)
+    rows: list[dict[str, Any]] = []
+    for opt, hit in hits:
+        why = f"부지가 '{hit}' 로 지정됨 — 조문 {opt.get('no')}호"
+        if overlap > 1:
+            # ★겹침을 **숨기지 않는다**. 값이 서로 다르면 사용자가 그 사실을 알아야 한다.
+            others = " · ".join(
+                f"{o.get('name')} {o.get('value')}%" for o, _h in hits if o is not opt
+            )
+            why += (
+                f" · ★이 부지는 {overlap}개 지구에 걸친다(함께: {others}) — "
+                "경합 시 우선순위는 확인 필요"
+            )
+        rows.append({
             **item,
             # ★조각이 집은 값이 아니라 **이 항목의 값**으로 덮는다.
             "value": opt.get("value"),
             "matched_district": hit,
-            "matched_option": name,
-            "why": f"부지가 '{hit}' 로 지정됨 — 조문 {opt.get('no')}호",
-        }}
-
-    return {"_bucket": "unmatched_site", "row": {
-        **item,
-        # ★조각이 집었던 값을 지운다. 이 부지에는 **어느 항목도 해당하지 않는다**고 판정한
-        #   마당에 그 값을 달고 다니면, 나중 소비처가 그것을 이 부지의 값으로 읽는다
-        #   (조각 값 30 은 애초에 나열 중 아무 항목이나 하나였다).
-        "value": None,
-        "why": (
-            f"조문 나열 {len(options)}개 항목 중 이 부지의 지정과 맞는 것이 없음"
-            f"({', '.join((o.get('name') or '')[:12] for o in options[:5])})"
-        ),
-    }}
+            "matched_option": opt.get("name"),
+            "overlap_count": overlap,
+            "why": why,
+        })
+    return {"_bucket": "matched", "rows": rows}
 
 
 def _site_condition_holds(
