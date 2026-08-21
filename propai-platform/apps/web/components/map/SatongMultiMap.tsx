@@ -3461,6 +3461,10 @@ export function SatongMultiMap({
                         **그 값이 그대로 적용**된다(고른 값과 적용값이 달라지면 컨트롤이 거짓말이 된다). */}
                   {onMarketRadiusChange && (
                     <div className="mb-2">
+                      {/* ★변이검증 생존 정직 고지: 아래 className·key 등 **표현 계층**은
+                          잠그지 않는다. Tailwind 클래스 문자열을 단언하면 정상적인 스타일
+                          변경이 전부 빨강이 되고(가드의 위양성도 결함), 잠금 가치보다 비용이 크다.
+                          잠근 것은 **행위**다 — 선택지 렌더·핸들러 호출·프롭 배선·기본값·type="button". */}
                       <p className="mb-1 text-[10px] font-black text-[var(--text-secondary)]">조회 반경</p>
                       <div className="flex flex-wrap gap-1">
                         {MARKET_RADIUS_CHOICES.map((r) => {

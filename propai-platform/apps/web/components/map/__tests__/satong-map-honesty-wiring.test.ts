@@ -193,7 +193,26 @@ describe("적응형 반경 — 조용히 넓히지 않는다(2026-08-21)", () =>
     expect(src).toContain("MARKET_RADIUS_CHOICES");
     const i = src.indexOf("MARKET_RADIUS_CHOICES.map");
     expect(i, "선택지가 상수로만 있고 렌더되지 않는다").toBeGreaterThan(-1);
-    expect(src.slice(i, i + 600)).toContain("onMarketRadiusChange(");
+    const block = src.slice(i, i + 700);
+    expect(block).toContain("onMarketRadiusChange(");
+    // ★폼 안에 놓였을 때 제출을 유발하지 않는다(변이 생존으로 드러난 자리).
+    expect(block).toContain('type="button"');
+  });
+
+  it("★프롭 배선 — Shell 이 칩 상태·핸들러를 Map 에 실제로 넘긴다", () => {
+    // ★변이검증에서 이 두 줄을 지워도 초록이었다. 지우면 `onMarketRadiusChange` 가
+    //   undefined 라 **칩이 아예 렌더되지 않고**(블록이 통째로 숨는다) 선택이 요청에
+    //   도달하지 못한다 — 컨트롤을 만들어 놓고 배선을 빼먹는 그 형태다.
+    const src = scan("components/precheck/SatongMapShell.tsx");
+    expect(src).toContain("marketRadiusM={marketRadiusM}");
+    expect(src).toContain("onMarketRadiusChange={setMarketRadiusM}");
+  });
+
+  it("★기본값이 자동(null)이다 — 지우면 '자동' 칩이 활성 표시되지 않는다", () => {
+    // `marketRadiusM = null` 기본값이 없으면 undefined 가 되고, 자동 칩의 value(null)와
+    // `===` 비교가 실패해 **아무 칩도 선택돼 보이지 않는다**(변이 생존으로 드러난 자리).
+    const src = scan("components/map/SatongMultiMap.tsx");
+    expect(src).toContain("marketRadiusM = null,");
   });
 
   it("배너가 확대 사실을 고지한다 — 확대만 하고 말하지 않으면 오도가 된다", () => {
