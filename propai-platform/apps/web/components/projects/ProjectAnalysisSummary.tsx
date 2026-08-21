@@ -31,6 +31,7 @@ import { DataField } from "@/components/projects/DataField";
 import { StagePreview } from "@/components/projects/StagePreview";
 import { formatAnalysisValue } from "@/lib/formatters";
 import { AnalysisVerificationPanel } from "@/components/common/AnalysisVerificationPanel";
+import { upzoningPotentialLabel } from "@/lib/formatters";
 
 // 다필지 통합분석 응답(부분) — 요약 표시에 필요한 필드만(읽기 소비). 전부 옵셔널(부분응답 가드).
 type IntegratedSummary = {
@@ -462,7 +463,7 @@ export function ProjectAnalysisSummary({ locale }: { locale?: string }) {
             accent
           />
           <DataField
-            label={upFarCollapsed ? "종상향 잠재(용적·단일 값)" : "종상향 잠재 상한(용적)"}
+            label={upzoningPotentialLabel(upFarCollapsed)}
             value={pctOrNull(upFarHigh)}
             evidence={
               upFarCollapsed

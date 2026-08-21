@@ -25,6 +25,7 @@ import { UpzoningFarRangeNotice, UpzoningFarRangeValue } from "@/components/comm
 import { NumberInput } from "@/components/common/NumberInput";
 import { BusinessModelRefineModal } from "./BusinessModelRefineModal";
 import { preferredEntryAddress } from "@/lib/parcel-rows";
+import { upzoningReachClause } from "@/lib/formatters";
 
 /* ── Types ── */
 
@@ -795,9 +796,7 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
             </b>
             {/* ★붕괴면 "…까지 가능하며"가 거짓이 된다 — 그 값은 도달 상한이 아니라 한 경로의
                 예상치다. 조사(助詞)까지 판정에 맞춘다(문장이 숫자보다 오래 기억된다). */}
-            {upFarRange.collapsed
-              ? "이며, 이 경우 더 고밀·고수익 건축유형이 추천될 수 있습니다."
-              : "까지 가능하며, 이 경우 더 고밀·고수익 건축유형이 추천될 수 있습니다."}
+            {upzoningReachClause(upFarRange.collapsed)}
           </p>
           {/* ★붕괴(상·하한 동값) 시 백엔드가 실어보낸 정직 고지 — "이 값이 상향 최댓값"이라는
               오독을 막는다. 프론트가 문구를 지어내지 않는다(근거를 아는 쪽만 만든다). */}
