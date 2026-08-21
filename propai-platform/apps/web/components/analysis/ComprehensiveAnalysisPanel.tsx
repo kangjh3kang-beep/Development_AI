@@ -8,6 +8,7 @@ const SatongMapShellDynamic = dynamic(
   { ssr: false },
 );
 import { DevelopmentScenarioCard } from "@/components/common/DevelopmentScenarioCard";
+import { UpzoningFarRangeNotice, UpzoningFarRangeValue } from "@/components/common/UpzoningFarRange";
 import { SiteInfraPoiCard } from "@/components/site/SiteInfraPoiCard";
 import { SeniorVerdictCard, type SeniorConsultation } from "@/components/analysis/SeniorVerdictCard";
 import { BuildableOptionsCard } from "@/components/analysis/BuildableOptionsCard";
@@ -22,7 +23,10 @@ import type { ParcelRow } from "@/lib/parcel-rows";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient } from "@/lib/api-client";
-import { formatArea, formatPercent, formatPercentDelta, formatPercentRange } from "@/lib/formatters"; // 면적 표기 SSOT(UX A2) — 로컬 중복 formatArea 대체
+import {
+  formatArea, formatPercent, formatPercentDelta, formatUpzoningFarRange,
+  type UpzoningFarRange,
+} from "@/lib/formatters"; // 면적·비율 표기 SSOT(UX A2) — 로컬 중복 formatArea 대체
 import { fieldMeta, formatFieldValue, formatDelta } from "@/lib/analysis-field-labels"; // 필드 라벨·단위 SSOT(원시 키 노출 근절)
 import { fetchInterpretation } from "@/lib/interpretation-job"; // 해석 제출·폴링 공용(형제 소비처와 공유)
 import {
@@ -857,10 +861,25 @@ export function ComprehensiveAnalysisPanel() {
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-sm font-bold text-[var(--text-primary)]">종상향 잠재 시나리오</span>
                 <span className="text-[10px] text-[var(--text-secondary)]">★예상치 — 현행 실효 용적률과 분리</span>
+                {/* ★범위가 붕괴하면(min===max) 범위인 척하지 않는다.
+                    실측: 자연녹지 서울은 세 경로가 모두 같은 목표(제1종일반주거)를 가리켜
+                    `예상 상한 150.0~150.0%`가 찍혔다 — 개발사는 이것을 "그 위는 안 된다"로
+                    읽지만, 실제 의미는 "우리가 한 경로만 봤다"이다. 판정과 고지 문구는
+                    백엔드 계약(is_collapsed·honest_disclosure)에서 오고, 표기는
+                    formatUpzoningFarRange 한 곳에서 결정한다(형제 화면과 같은 문구). */}
                 {result.potential_far_range ? (
-                  <span className="text-xs font-semibold text-[var(--accent-strong)]">
-                    예상 상한 {formatPercentRange(result.potential_far_range.min_pct, result.potential_far_range.max_pct)}
-                  </span>
+                  <>
+                    <span className="text-xs font-semibold text-[var(--accent-strong)]">
+                      {formatUpzoningFarRange(result.potential_far_range as UpzoningFarRange).collapsed
+                        ? "예상"
+                        : "예상 상한"}{" "}
+                      <UpzoningFarRangeValue range={result.potential_far_range as UpzoningFarRange} />
+                    </span>
+                    <UpzoningFarRangeNotice
+                      range={result.potential_far_range as UpzoningFarRange}
+                      className="w-full text-[11px] leading-relaxed text-[var(--text-secondary)]"
+                    />
+                  </>
                 ) : null}
               </div>
               <ul className="mt-2 space-y-1">
@@ -869,6 +888,14 @@ export function ComprehensiveAnalysisPanel() {
                     · {s.path} → {s.target_zone}
                     {s.expected_far_pct_high != null ? ` (예상 ${formatPercent(s.expected_far_pct_high)})` : ""}
                     {s.feasibility ? ` · 가능성 ${s.feasibility}` : ""}
+                    {/* ★#700 의 upside 축을 이 화면에도 올린다 — 공용 UpzoningScenarioList 를
+                        쓰는 화면(부지분석·설계감사)에만 있고 여기엔 없어서, "어떤 경로도 상한을
+                        못 넘는다"는 오독이 이 패널에만 남아 있었다. 조건은 그 공용 컴포넌트와
+                        **같은 조건**을 쓴다(숫자와 용도지역은 한 쌍 — 라벨 없이 숫자만 올리면 위법값). */}
+                    {s.upside_far_pct_high != null && s.upside_far_zone
+                      && s.upside_far_pct_high > (s.expected_far_pct_high ?? 0)
+                      ? ` · 최대 ${s.upside_far_zone} 상향 시 ${formatPercent(s.upside_far_pct_high)}`
+                      : ""}
                     {/* ★신규(additive) blocked_reasons — 비연접 등으로 구역 성립이 불확실한 사유(정직 표기). */}
                     {Array.isArray(s.blocked_reasons) && s.blocked_reasons.length > 0
                       ? ` · ${(s.blocked_reasons as string[]).join(" · ")}`

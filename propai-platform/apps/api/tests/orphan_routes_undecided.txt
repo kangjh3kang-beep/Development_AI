@@ -1,0 +1,30 @@
+# 판정 불가(동적 세그먼트) — 고아로도 소비로도 **세지 않는다**. 눈에 보이게 남긴 목록이다.
+#
+# 프론트에 ``<부모경로>/${...}`` 형태의 **마지막 세그먼트 동적 호출**이 있어서,
+# 이 리터럴 라우트가 그 호출로 실제 불리는지 정규식으로는 확정할 수 없다.
+# 조용히 "소비"로 넘기면 진짜 고아가 숨고, 고아로 세면 없는 결함을 만든다.
+#
+# 【2026-08-20 표본 확인 — 이 13건은 서로 다른 결말을 가진다. 자동 판정 금지의 근거다】
+#   · /market/report/{pdf,docx,pptx} → **진짜 소비**. `fmt: "pdf"|"pptx"|"docx"` 유니온이다
+#     (MarketInsightsWorkspaceClient.tsx:777).
+#   · 나머지 10건 → 동적 호출이 **같은 부모의 path-param 라우트로 이미 설명된다**
+#     (`/blockchain/escrow/{on_chain_escrow_id}` · `/admin/secrets/{name}` ·
+#      `/design-references/{ref_id}` · `/underwriting/{project_id}`).
+#     즉 프론트가 넣는 값은 **ID** 이지 `fund`/`image-health` 같은 리터럴이 아니다
+#     → 진짜 고아일 **가능성이 높다**. 다만 라우트 순서·변수 경유 호출을 배제하지 못해
+#       도구는 확정하지 않는다. 사람이 호출부를 열어 결론지어라.
+#
+# 결론이 나면 이 파일에서 지우고 확정 고아 기준선으로 옮기거나(고아), 배선 확인 후 지워라(소비).
+/api/v1/admin/secrets/image-health
+/api/v1/admin/secrets/llm-health
+/api/v1/blockchain/escrow/direct-pay
+/api/v1/blockchain/escrow/dispute
+/api/v1/blockchain/escrow/fund
+/api/v1/blockchain/escrow/refund
+/api/v1/blockchain/escrow/release
+/api/v1/blockchain/escrow/resolve
+/api/v1/design-references/from-design
+/api/v1/market/report/docx
+/api/v1/market/report/pdf
+/api/v1/market/report/pptx
+/api/v1/underwriting/history

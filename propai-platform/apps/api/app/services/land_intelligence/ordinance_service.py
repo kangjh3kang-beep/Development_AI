@@ -517,6 +517,23 @@ class OrdinanceService:
             await _save_resolution(result, jurisdiction, zone_type)
             return result
 
+        # ★★별표가 첨부파일(HWP)로만 제공되는 조례 — 폴백은 그대로 타되 **사유와 링크**를 남긴다.
+        #   이 값이 없으면 화면은 "조례를 확인하지 못해 법정상한 잠정 적용"이라고만 말하고,
+        #   진단자는 **조례나 용도지역**을 의심한다. 실제 원인은 *우리가 그 첨부를 못 읽는다*이고
+        #   사용자가 할 수 있는 다음 행동(원문 열람)도 다르다(2026-08-20 실측: 울산·창원).
+        attachment_notice = None
+        if api_result and api_result.get("attachment_only"):
+            attachment_notice = {
+                "reason": (
+                    f"{jurisdiction} 도시계획 조례는 건폐율·용적률 표를 **별표 첨부파일(HWP)** 로만 "
+                    "제공해 본문에서 수치를 읽을 수 없습니다(조례가 없거나 용도지역이 빠진 것이 "
+                    "아닙니다)."
+                ),
+                "attachment_url": api_result.get("attachment_url"),
+                "ordinance_name": api_result.get("ordinance_name"),
+                "requires": ["별표 원문(HWP) 열람으로 해당 용도지역 건폐율·용적률 확인"],
+            }
+
         # 2차: 정적 캐시 조회 (전국 주요 시군구 조례 데이터)
         cache_result = self._lookup_cache(sido or "", sigungu, zone_type)
         if cache_result:
@@ -527,6 +544,8 @@ class OrdinanceService:
             result["effective_bcr"] = min(national_bcr, c_bcr)
             result["effective_far"] = min(national_far, c_far)
             result["source"] = "지자체 조례(정적캐시)"
+            if attachment_notice:
+                result["ordinance_attachment_only"] = attachment_notice
             result["legal_basis"] = f"{jurisdiction} 도시계획 조례"
             _attach_provenance(result, confidence=0.80, recheck=True,
                                disclaimer="정적 캐시(2025~2026 기준) — 조례 개정 가능, '재분석'으로 실시간 재확인 권장.")
@@ -540,8 +559,19 @@ class OrdinanceService:
             sido, sigungu, zone_type, national_bcr, national_far,
         )
         result["source"] = "법정상한"
-        _attach_provenance(result, confidence=0.60, recheck=True,
-                           disclaimer="해당 지자체 조례 미보유 — 법정상한 적용. 실제 조례 확인 필요.")
+        # ★형제 미러 — 정적캐시 분기와 같은 사유를 여기에도 싣는다. 캐시 미보유 지자체가
+        #   첨부만 제공하는 경우가 실제로 이 경로다(울산·창원은 정적캐시에 없다).
+        if attachment_notice:
+            result["ordinance_attachment_only"] = attachment_notice
+        _attach_provenance(
+            result, confidence=0.60, recheck=True,
+            disclaimer=(
+                "조례 별표가 첨부파일(HWP)로만 제공되어 수치를 읽지 못했습니다 — "
+                "법정상한 잠정 적용. 별표 원문 확인 필요."
+                if attachment_notice else
+                "해당 지자체 조례 미보유 — 법정상한 적용. 실제 조례 확인 필요."
+            ),
+        )
         # ★저장 금지(cross-tenant 오염 방지): statutory(법정상한)는 '조례 미확보'를 뜻하는
         #   미확정값이다. 이를 전역 캐시(sigungu, zone_type)에 저장하면 같은 시군구의 다른
         #   테넌트/프로젝트가 이 미확정값을 재사용(cross-tenant 오염)하게 되어, 실제 조례가
@@ -733,13 +763,58 @@ class OrdinanceService:
             missing_sections.append("건폐율")
         if not structured["found_far_section"]:
             missing_sections.append("용적률")
+        # ★★별표가 **첨부파일로만** 제공되는 조례를 따로 가른다(2026-08-20 실측).
+        #   울산광역시·창원시 조례는 건폐율·용적률 표를 별표로 분리하고, 그 별표를 `.hwp`
+        #   첨부로만 준다. 법제처 XML 본문에는 **제목과 다운로드 URL만** 들어 있다:
+        #       "[별표 24] 건폐율 및 용적률(제46조 관련) hwp http://www.law.go.kr/flDownload.do?…"
+        #   그래서 섹션은 정상적으로 찾히고(`full_header=True`) 값만 0개다.
+        #   ★이것을 '요청 용도지역 없음'으로 보고하면 **진단자가 조례나 용도지역을 의심**한다 —
+        #     실제 원인은 **우리가 그 파일을 읽지 못한다**는 것이고, 처방이 완전히 다르다.
+        #     (표본 12곳 실측: 첨부만 2 · 정상 10 — 잔여 파서 실패 전체가 이 한 원인이었다.)
+        attachment_url = None
+        if bcr is None and far is None:
+            #   `_locate_section` 은 순수함수라 다시 불러도 부작용이 없다(섹션 텍스트는
+            #   `_extract_zone_limits_structured` 의 지역변수라 여기서 직접 얻는다).
+            for _kind in ("건폐율", "용적률"):
+                _sec, _ = self._locate_section(full_text, _kind)
+                if not _sec:
+                    continue
+                m_url = re.search(r"https?://\S*flDownload\.do\S*", _sec)
+                if m_url:
+                    attachment_url = m_url.group(0)
+                    break
+
         if entry is None or (bcr is None and far is None):
             # 조례에 값이 있어도 '요청 용도지역'이 표에 없으면 절대 만들어내지 않는다.
-            missing_sections.append("요청 용도지역")
+            # ★단 원인이 '별표 첨부'라면 그렇게 말한다(틀린 사유는 틀린 처방을 부른다).
+            missing_sections.append(
+                "별표 첨부파일(HWP)로만 제공 — 본문에 수치 없음"
+                if attachment_url else "요청 용도지역"
+            )
 
         if bcr is None and far is None:
-            # 요청 용도지역 값을 전혀 못 찾음 → None 반환(호출부는 정적캐시→법정상한으로 폴백).
+            # 요청 용도지역 값을 전혀 못 찾음 → 호출부는 정적캐시→법정상한으로 폴백한다.
             # ★날조 금지: 여기서 값을 채우지 않는다(정직 폴백이 기존 올바른 동작).
+            if attachment_url:
+                # ★폴백 경로는 **그대로**(`bcr`/`far` 가 None 이라 호출부 `if` 가 False) —
+                #   사유와 링크만 additive 로 실어 보낸다. 사용자가 원문을 직접 확인할 수 있다.
+                return {
+                    "bcr": None, "far": None,
+                    "ordinance_name": (
+                        ordin_name_match.group(1)
+                        if (ordin_name_match := re.search(r"<자치법규명>.*?CDATA\[([^\]]+)\]", xml_text))
+                        else f"{region_name} 도시계획 조례"
+                    ),
+                    "last_updated": None,
+                    "parse_confidence": 0.0,
+                    "missing_sections": missing_sections,
+                    "caveat": None,
+                    "evidence_span": None,
+                    "conditional_limits": [],
+                    # ── 추가(additive) — 소비처가 안 읽어도 무해 ──
+                    "attachment_only": True,
+                    "attachment_url": attachment_url,
+                }
             return None
 
         # 신뢰도: 조문 헤더를 정식으로 찾고(용도지역 안에서의 …) 표에서 명시 매칭했으면 높게,
