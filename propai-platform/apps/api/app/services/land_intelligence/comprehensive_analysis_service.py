@@ -13,7 +13,6 @@ from typing import Any
 import structlog
 
 from app.services.data_validation.price_stats import robust_price_stats
-from app.services.zoning.development_feasibility_validator import MAX_FLOORS
 from app.services.external_api.poi_dedup import dedup_school_cluster
 from app.services.feasibility.permit_validator import (
     DEVELOPMENT_TYPE_NAMES,
@@ -23,6 +22,7 @@ from app.services.feasibility.permit_validator import (
 )
 from app.services.land_intelligence import far_tier_service
 from app.services.land_intelligence.land_info_service import LandInfoService
+from app.services.zoning.development_feasibility_validator import MAX_FLOORS
 
 logger = structlog.get_logger()
 
