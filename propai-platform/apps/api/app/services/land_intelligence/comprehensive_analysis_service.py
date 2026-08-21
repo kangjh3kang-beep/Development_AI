@@ -13,6 +13,7 @@ from typing import Any
 import structlog
 
 from app.services.data_validation.price_stats import robust_price_stats
+from app.services.zoning.development_feasibility_validator import MAX_FLOORS
 from app.services.external_api.poi_dedup import dedup_school_cluster
 from app.services.feasibility.permit_validator import (
     DEVELOPMENT_TYPE_NAMES,
@@ -1237,11 +1238,36 @@ class ComprehensiveAnalysisService:
             typical_far = TYPICAL_FAR.get(dev_type, 250)
 
             applied_far = min(effective_far, typical_far)
-            total_gfa = land_area * (applied_far / 100)
+            building_area = land_area * (effective_bcr / 100)
+
+            # ── 층수를 **제약 안에서** 계획한다 ──────────────────────────────
+            # ★2026-08-21 사용자 화면 검증에서 드러난 결함:
+            #   종전에는 층수를 `연면적 ÷ 건축면적` 으로 **역산만** 하고, 유형별 층수 상한
+            #   (`MAX_FLOORS`)은 **사후 검증**에서만 봤다. 그래서 자연녹지(건폐 20%·용적 80%)
+            #   에서 4층이 계획되고, 단독·전원주택 상한 3층에 걸려 **전 유형이 부적합**으로
+            #   떨어졌다 — **시스템이 스스로 규칙 위반 계획을 세우고 자기 규칙으로 탈락**시킨 것이다.
+            #
+            #   더 나쁜 것은 그때도 **연면적은 4층 기준 그대로** 표시됐다는 점이다.
+            #   세대수·주차·공사비가 전부 실현 불가능한 값 위에서 계산됐다.
+            #
+            #   → 상한이 있으면 **그 안에서 계획**하고, 층수가 깎이면 **연면적도 함께 내린다**.
+            _gfa_by_far = land_area * (applied_far / 100)
+            _floors_by_far = max(1, round(_gfa_by_far / building_area)) if building_area > 0 else 1
+
+            _max_floors = MAX_FLOORS.get(dev_type)
+            floor_count = min(_floors_by_far, _max_floors) if _max_floors else _floors_by_far
+            floor_count = max(1, floor_count)
+
+            # 층수가 깎였으면 연면적은 `건축면적 × 층수` 로 제한된다(용적률도 따라 내려간다).
+            floor_capped = floor_count < _floors_by_far
+            total_gfa = min(_gfa_by_far, building_area * floor_count) if building_area > 0 else _gfa_by_far
+            if floor_capped and land_area > 0:
+                # 표시용 용적률을 실제 계획에 맞춘다 — 여기서 갱신하지 않으면 화면의
+                # 용적률과 연면적이 서로 다른 계획을 가리킨다(같은 화면 안의 모순).
+                applied_far = total_gfa / land_area * 100
+
             supply_area_per_unit = avg_exclusive / exclusive_ratio
             unit_count = max(1, int(total_gfa / supply_area_per_unit)) if supply_area_per_unit > 0 else 1
-            building_area = land_area * (effective_bcr / 100)
-            floor_count = max(1, round(total_gfa / building_area)) if building_area > 0 else 1
 
             parking = self._calc_parking(dev_type, unit_count, total_gfa)
             construction_cost = CONSTRUCTION_COST_PER_SQM.get(dev_type, 2_400_000)
@@ -1266,6 +1292,10 @@ class ComprehensiveAnalysisService:
                 "unit_count": unit_count,
                 "building_area_sqm": round(building_area, 1),
                 "floor_count": floor_count,
+                # ★층수 상한에 걸려 계획이 축소됐는지 — 화면이 "왜 용적률을 다 못 쓰는가"를
+                #   설명할 수 있어야 한다. 이 값이 없으면 축소가 조용히 일어난다.
+                "floor_capped": floor_capped,
+                "floors_by_far": _floors_by_far,
                 "parking_count": parking,
                 "construction_cost_per_sqm": construction_cost,
                 "estimated_construction_cost_won": int(total_gfa * construction_cost),
