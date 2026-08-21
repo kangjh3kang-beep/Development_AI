@@ -1,0 +1,115 @@
+"""`special_districts` 는 **주소 문자열 휴리스틱**이라 사실상 항상 비어 있었다 (원 인계서 P2).
+
+【무엇이 죽어 있었나 — 2026-08-21 라이브 실측】
+종전 생산자는 `AutoZoningService._detect_special_districts(zone_type, address)` 하나였고,
+주소나 용도지역명에 **"지구단위" 라는 글자**가 있어야 채워진다. 실제 주소엔 없다.
+
+    오산 수청동 569  : get_land_use_plan **20건** · status=ok → special_districts **0건**
+    오산 내삼미동 741: get_land_use_plan **11건** · status=ok → special_districts **0건**
+
+【그래서 조례 캠페인 계약 셋이 통째로 발화 불가였다】
+`special_districts` 는 셋의 **공통 입력**이다:
+  · `plan_limit_unknown`(#705) · `conditional_ceiling`(#704) · `ordinance_conditional`(#711)
+입력이 비면 셋 다 화면 경로에서 한 번도 발화하지 못한다.
+
+【수정 후 라이브】
+    수청동 569  : 20건 → `plan_limit_unknown` **발화** ['지구단위계획구역']
+    내삼미동 741: 11건 → 발화 **없음**(지구단위 아님 — 음성 대조군)
+    ★실효값은 전후 동일(300/50 · 80/20) — 무회귀
+    ★두 필지 모두 `성장관리권역` 을 갖지만 `conditional_ceiling` 은 발화하지 않는다
+      (#703 판별자가 실데이터를 처음 만나 정확히 배제 — 수도권 권역 ≠ 성장관리계획구역)
+"""
+
+from app.services.land_intelligence import far_tier_service
+from app.services.zoning.district_regime import (
+    is_detailed_urban_plan,
+    is_growth_management_plan,
+)
+
+# ── 라이브 실측 designation 최소 재현(모양 그대로 — 소비처는 district_name 을 읽는다) ──
+_REAL_SUCHEONG = [   # 수청동 569: 지구단위계획구역 포함
+    {"district_name": "비행안전제2구역(전술)"}, {"district_name": "공익용산지"},
+    {"district_name": "성장관리권역"},          # ★수도권정비계획법 — 완화 근거 아님(#703)
+    {"district_name": "제3종일반주거지역"}, {"district_name": "토지거래계약에관한허가구역"},
+    {"district_name": "지구단위계획구역"},
+]
+_REAL_NAESAMMI = [   # 내삼미동 741: 지구단위 없음(음성 모집단)
+    {"district_name": "비행안전제2구역(전술)"}, {"district_name": "공익용산지"},
+    {"district_name": "성장관리권역"}, {"district_name": "도로구역"},
+    {"district_name": "교통광장"}, {"district_name": "토지거래계약에관한허가구역"},
+]
+
+
+def test_premise_two_populations_actually_differ():
+    """전제 — 한쪽에만 지구단위계획구역이 있어야 이 파일의 검증이 성립한다(공허 방지)."""
+    assert any(is_detailed_urban_plan(d) for d in _REAL_SUCHEONG)
+    assert not any(is_detailed_urban_plan(d) for d in _REAL_NAESAMMI)
+    # ★그리고 **둘 다** 성장관리권역을 갖는다 — 아래 #703 검증이 공허하지 않다.
+    assert any(d["district_name"] == "성장관리권역" for d in _REAL_SUCHEONG)
+    assert any(d["district_name"] == "성장관리권역" for d in _REAL_NAESAMMI)
+
+
+def _calc(districts):
+    return far_tier_service.calc_effective_far(
+        {"local_ordinance": {"source": "법제처API", "effective_bcr": 50, "effective_far": 300},
+         "zone_limits": {"max_bcr_pct": 50, "max_far_pct": 300},
+         "special_districts": districts},
+        "제3종일반주거지역", 1000.0,
+    )
+
+
+def test_real_designations_make_plan_limit_unknown_fire():
+    """★★실측 designation 이 들어오면 #705 가 **발화한다** — 종전엔 입력이 비어 불가능했다."""
+    out = _calc(_REAL_SUCHEONG)
+    plu = out["plan_limit_unknown"]
+    assert plu is not None, "지구단위계획구역이 있는데 고지가 안 나온다"
+    assert plu["districts"] == ["지구단위계획구역"]
+    # 계획이 지배하는 범위 — 수치만이 아니다(용도 추천도 미검증이라는 것이 이 고지의 핵심).
+    assert "건축물 용도제한" in plu["governs"]
+    assert plu["applied"] is False
+
+
+def test_non_district_parcel_stays_silent():
+    """★음성 대조군 — designation 이 11건 있어도 지구단위가 아니면 발화하지 않는다.
+
+    '무엇이든 넣으면 울리는' 고지가 되면 경보가 배경이 된다.
+    """
+    assert _calc(_REAL_NAESAMMI)["plan_limit_unknown"] is None
+    # ★양성 짝 — 같은 실행에서 지구단위 모집단은 발화한다.
+    assert _calc(_REAL_SUCHEONG)["plan_limit_unknown"] is not None
+
+
+def test_metro_regime_does_not_open_conditional_ceiling():
+    """★★#703 규율이 **실데이터에서** 유지된다 — 두 필지 모두 `성장관리권역` 을 갖는다.
+
+    이 판별자는 종전까지 실데이터를 본 적이 없다(입력이 항상 비어 있었으므로).
+    부분일치로 읽었다면 경기 전역에 건폐율 +10%p 가 붙는다.
+    """
+    for districts in (_REAL_SUCHEONG, _REAL_NAESAMMI):
+        assert _calc(districts)["conditional_ceiling"] is None
+    # ★양성 짝 — 진짜 성장관리계획구역이면 열린다(판별자가 통째로 죽은 게 아니다).
+    opened = far_tier_service.calc_effective_far(
+        {"local_ordinance": {"source": "법제처API", "effective_bcr": 20, "effective_far": 100},
+         "zone_limits": {"max_bcr_pct": 20, "max_far_pct": 100},
+         "special_districts": [{"district_name": "성장관리계획구역"}]},
+        "자연녹지지역", 1000.0,
+    )
+    assert opened["conditional_ceiling"] is not None
+    assert is_growth_management_plan({"district_name": "성장관리계획구역"})
+    assert not is_growth_management_plan({"district_name": "성장관리권역"})
+
+
+def test_effective_values_are_unchanged_by_the_fix():
+    """★★무회귀 — designation 이 실려도 **실효값은 그대로다**.
+
+    이 수정은 '모른다는 사실'을 흐르게 할 뿐 수치를 건드리지 않는다
+    (라이브 전후 300/50 · 80/20 동일).
+    """
+    empty = _calc([])
+    filled = _calc(_REAL_SUCHEONG)
+    assert filled["effective_far_pct"] == empty["effective_far_pct"]
+    assert filled["effective_bcr_pct"] == empty["effective_bcr_pct"]
+    # 공허 진리 가드 — 값 자체가 None 이면 위 비교가 무의미하다.
+    assert empty["effective_far_pct"] is not None
+    # 그런데 **고지는 달라야** 한다(같으면 이 수정이 아무것도 안 한 것이다).
+    assert (filled["plan_limit_unknown"] is not None) != (empty["plan_limit_unknown"] is not None)
