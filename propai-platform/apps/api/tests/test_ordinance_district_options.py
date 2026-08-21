@@ -217,6 +217,9 @@ def test_unmatched_clears_the_stale_fragment_value(options):
     assert row["value"] is None, "해당 없는데 30% 가 붙어 있다"
     # 그리고 **왜** 해당 없는지 — 전체 목록을 봤다는 사실이 근거다.
     assert "5개 항목" in row["why"]
+    # ★무엇과 대조했는지 **항목명을 보여준다** — 개수만 있으면 사용자가 확인할 수 없다
+    #   (변이감사가 이 미리보기가 무잠금임을 적발했다).
+    assert "취락지구" in row["why"] and "수산자원보호구역" in row["why"], row["why"]
 
 
 def test_unreadable_enumeration_stays_conservative():
