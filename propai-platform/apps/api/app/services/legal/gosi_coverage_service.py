@@ -51,6 +51,8 @@ import structlog
 logger = structlog.get_logger(__name__)
 
 EUM_LIST_URL = "https://www.eum.go.kr/web/gs/gv/gvGosiList.jsp"
+# ※변이 생존(설명 가능): UA 는 **라이브에서만** 의미가 있다(정부 사이트가 기본 UA 를 거를 수
+#   있다). MockTransport 로는 잠글 수 없고, 잠근다면 그건 목을 검사하는 것이지 동작이 아니다.
 _UA = {"User-Agent": "Mozilla/5.0 (compatible; PropAI/1.0; +https://4t8t.net)"}
 
 # 한 페이지 50건.
@@ -152,6 +154,8 @@ async def fetch_recent_gosi(
         logger.warning("토지이음 고시목록 조회 실패: sgg=%s (%s)", sigungu_code, e)
         return rows, False
     finally:
+        # ※변이 생존(설명 가능): 호출부가 준 클라이언트를 닫으면 안 된다는 소유권 규약이다.
+        #   자원 위생이라 관측 가능한 동작 차이가 없다(닫아도 테스트는 통과한다).
         if owns:
             await c.aclose()
     return rows, complete
@@ -171,6 +175,8 @@ async def fetch_recent_gosi_adaptive(
     """
     end = _date.fromisoformat(f"{end_yyyymmdd[:4]}-{end_yyyymmdd[4:6]}-{end_yyyymmdd[6:]}")
     for m in (months, months // 2, months // 4, 6, 3):
+        # ※변이 생존(설명 가능): `months//4` 가 0이 되는 아주 짧은 창에서만 도달한다.
+        #   기본값(24)에서는 도달 불가 — 방어로 남긴다.
         if m < 1:
             continue
         start = end - _timedelta(days=int(m * 30.44))

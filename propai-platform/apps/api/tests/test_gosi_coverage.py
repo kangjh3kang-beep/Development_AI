@@ -312,3 +312,67 @@ def test_adaptive_gives_up_honestly(monkeypatch):
     monkeypatch.setattr(M, "fetch_recent_gosi", always_incomplete)
     rows, complete, window_start = asyncio.run(M.fetch_recent_gosi_adaptive("41370", "20260821"))
     assert rows == [] and complete is False and window_start == ""
+
+
+def test_query_params_are_actually_sent():
+    """★★어느 시군구·어느 기간을 물었는지 **실제로 보내는지** 잠근다.
+
+    변이감사가 잡았다: `selSggCd`/`startdt` 를 지워도 통과했다 — MockTransport 가 파라미터를
+    안 보기 때문이다. 이게 틀리면 **다른 시군구의 고시를 조용히 조회**하고, 결과는 그럴듯하다
+    (이 저장소가 반복해 데인 '조용히 틀린 값' 형태).
+    """
+    from app.services.legal.gosi_coverage_service import _PAGE_SIZE, fetch_recent_gosi
+
+    seen: dict[str, str] = {}
+
+    def handler(request: _httpx.Request) -> _httpx.Response:
+        seen.update(dict(request.url.params))
+        return _httpx.Response(200, content=_page_html(2).encode("euc-kr", "replace"))
+
+    c = _httpx.AsyncClient(transport=_httpx.MockTransport(handler))
+    asyncio.run(fetch_recent_gosi("41370", "20250101", "20260101", client=c))
+    assert seen.get("selSggCd") == "41370", seen
+    assert seen.get("startdt") == "20250101" and seen.get("enddt") == "20260101", seen
+    assert seen.get("listSize") == str(_PAGE_SIZE)
+
+
+def test_empty_page_terminates_as_complete():
+    """빈 페이지를 만나면 **전건확보로 종료**한다(무한 루프·상한 소진 방지)."""
+    from app.services.legal.gosi_coverage_service import fetch_recent_gosi
+
+    c = _client_serving([_page_html(50), "<table></table>"])
+    rows, complete = asyncio.run(fetch_recent_gosi("41370", "20250101", "20260101", client=c))
+    assert complete is True and len(rows) == 50
+
+
+def test_non_date_rows_are_rejected():
+    """★첫 칸이 날짜가 아닌 행(헤더·안내문 등)은 버린다 — 안 버리면 쓰레기가 고시로 샌다."""
+    from app.services.legal.gosi_coverage_service import parse_gosi_rows
+
+    junk = """<table><tbody><tr>
+      <td class="mb">등록된 고시가 없습니다</td><td title="x">x</td>
+      <td class="left"><a title='t'>t</a></td><td title="기관">기관</td></tr></tbody></table>"""
+    assert parse_gosi_rows(junk) == []
+    # ★양성 짝 — 같은 파서가 정상 행은 실제로 읽는다(파서가 죽은 게 아니다).
+    assert len(parse_gosi_rows(_page_html(3))) == 3
+
+
+@pytest.mark.parametrize(
+    ("ntfc", "expected"),
+    [
+        ("41370NTC202512230001", "20251223"),
+        ("41110NTC201105160042", "20110516"),
+        ("41370NTC000000000270", None),      # 파손값(실측: 화성에 존재)
+        ("", None),
+    ],
+)
+def test_ntfc_date_extraction(ntfc, expected):
+    """VWorld 관리코드에서 대조 키를 뽑는다.
+
+    ★이 8자리를 '고시일'이라 부르지 않는다 — VWorld 공식 속성표에 날짜 필드가 없고
+      이것은 결정고시**관리코드**다. 여기서는 **대조 키**로만 쓴다.
+    """
+    from app.services.legal.gosi_coverage_service import NTFC_DATE_RE
+
+    m = NTFC_DATE_RE.search(ntfc)
+    assert (m.group(0) if m else None) == expected
