@@ -217,6 +217,9 @@ def test_unmatched_clears_the_stale_fragment_value(options):
     assert row["value"] is None, "해당 없는데 30% 가 붙어 있다"
     # 그리고 **왜** 해당 없는지 — 전체 목록을 봤다는 사실이 근거다.
     assert "5개 항목" in row["why"]
+    # ★무엇과 대조했는지 **항목명을 보여준다** — 개수만 있으면 사용자가 확인할 수 없다
+    #   (변이감사가 이 미리보기가 무잠금임을 적발했다).
+    assert "취락지구" in row["why"] and "수산자원보호구역" in row["why"], row["why"]
 
 
 def test_unreadable_enumeration_stays_conservative():
@@ -231,3 +234,83 @@ def test_unreadable_enumeration_stays_conservative():
     bucket, row = _run("자연녹지지역", ["자연취락지구"], [])
     assert bucket == "undecidable"
     assert "읽지 못함" in row["why"]
+
+
+# ── ★다중 구역(P4) — 부지는 여러 지구에 동시에 속한다 ────────────────────────────
+#   【실측 2026-08-21】VWorld `get_land_use_plan` 로 재니 필지당 designation 이
+#   오산 내삼미동 **20건** · 동탄 9건 · 포항 8건이다. 겹침은 예외가 아니라 **기본값**이다.
+#   종전 코드는 **첫 매칭에서 return** 해 나머지를 조용히 버렸다. 하필 이 조문은
+#   **항목 순서가 값과 무관**해서(오산: 40·30·30·60·80) 임의로 하나를 고르는 셈이었다.
+
+
+def test_all_overlapping_districts_are_reported(options):
+    """★★겹치면 **전부** 낸다 — 종전엔 첫 매칭만 내고 나머지가 사라졌다.
+
+    이 테스트는 **구 코드에서 반드시 실패한다**(취락지구 하나만 나왔다).
+    """
+    bucket, _ = _run("자연녹지지역", ["자연취락지구", "자연공원"], options)
+    assert bucket == "matched"
+    r = match_site_conditions([_item("자연녹지지역", options)], ["자연취락지구", "자연공원"])
+    got = {(x["matched_option"], x["value"]) for x in r["matched"]}
+    assert got == {("취락지구", 40), ("자연공원", 60)}, got
+    # ★값이 서로 달라야 이 테스트가 의미 있다(같으면 하나를 버려도 티가 안 난다).
+    assert len({v for _n, v in got}) == 2
+
+
+def test_overlap_count_and_note_disclose_the_conflict(options):
+    """★겹침을 **숨기지 않는다** — 개수와 함께 걸린 값들을 사유에 적는다.
+
+    어느 것이 적용되는지는 우리가 정하지 않는다(용도지구 경합 우선순위는 법·조례 소관).
+    그래서 '확인 필요'라고 말하고 `applied: False` 를 유지한다.
+    """
+    r = match_site_conditions([_item("자연녹지지역", options)], ["자연취락지구", "자연공원"])
+    assert all(x["overlap_count"] == 2 for x in r["matched"])
+    why = r["matched"][0]["why"]
+    assert "2개 지구에 걸친다" in why
+    assert "자연공원 60%" in why, why
+    assert "우선순위는 확인 필요" in why
+    assert r["applied"] is False, "겹침을 알리되 적용하지는 않는다"
+
+
+def test_single_match_does_not_claim_overlap(options):
+    """★대조군 — 하나만 맞으면 겹침 문구를 만들지 않는다(위양성 방지)."""
+    r = match_site_conditions([_item("자연녹지지역", options)], ["자연취락지구"])
+    assert len(r["matched"]) == 1
+    assert r["matched"][0]["overlap_count"] == 1
+    assert "걸친다" not in r["matched"][0]["why"]
+    # ★양성 짝 — 같은 실행에서 겹치면 실제로 문구가 붙는다.
+    r2 = match_site_conditions([_item("자연녹지지역", options)], ["자연취락지구", "자연공원"])
+    assert "걸친다" in r2["matched"][0]["why"]
+
+
+def test_zone_scope_still_filters_within_overlap(options):
+    """★겹침 안에서도 용도지역 한정은 유지된다 — 전부 낸다고 아무거나 내는 게 아니다."""
+    # 개발진흥지구는 자연녹지 한정. 계획관리지역 부지에서는 **빠져야** 한다.
+    r = match_site_conditions(
+        [_item("계획관리지역", options)], ["자연취락지구", "개발진흥지구"]
+    )
+    got = {x["matched_option"] for x in r["matched"]}
+    assert got == {"취락지구"}, got
+    # ★양성 짝 — 자연녹지에서는 둘 다 나온다.
+    r2 = match_site_conditions(
+        [_item("자연녹지지역", options)], ["자연취락지구", "개발진흥지구"]
+    )
+    assert {x["matched_option"] for x in r2["matched"]} == {"취락지구", "개발진흥지구"}
+
+
+def test_metro_regime_excluded_even_when_others_match(options):
+    """★#703 규율은 겹침 상황에서도 유지된다 — 권역은 섞여 들어오지 않는다."""
+    synthetic = [
+        {"no": 1, "name": "취락지구", "value": 40, "zone_scope": None},
+        {"no": 2, "name": "성장관리", "value": 99, "zone_scope": None},
+    ]
+    r = match_site_conditions(
+        [_item("자연녹지지역", synthetic)], ["자연취락지구", "성장관리권역"]
+    )
+    got = {x["matched_option"] for x in r["matched"]}
+    assert got == {"취락지구"}, got
+    # ★양성 짝 — 권역이 아닌 지정이면 같은 항목이 매칭된다.
+    r2 = match_site_conditions(
+        [_item("자연녹지지역", synthetic)], ["자연취락지구", "성장관리계획구역"]
+    )
+    assert {x["matched_option"] for x in r2["matched"]} == {"취락지구", "성장관리"}
