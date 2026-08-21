@@ -203,3 +203,112 @@ def test_no_gap_means_no_notice(monkeypatch, rows):
     out = _run(monkeypatch, rows=rows, complete=True, known={"20240229", "20251223"})
     assert out["notice"] is None
     assert out["known_date_count"] == 2
+
+
+# ── ★페이징 층 — **HTTP(외부 경계)만** 대역하고 본체를 태운다 ──────────────────────
+#   변이감사가 잡았다: 위 진입점 테스트가 `fetch_recent_gosi_adaptive` 를 **통째로 대역**해
+#   페이징·창축소 층이 **무잠금**이었다(생존 20건이 전부 그 구간).
+#   이 저장소가 반복해 데인 형태다 — 대역은 항상 외부 경계로 내린다.
+#   ★그리고 하필 이 층이 **절단 함정**이 사는 곳이다(잘린 목록으로 "결손 없음"을 말하면
+#     안심시키는 방향으로 틀린다 — 실측으로 두 번 겪었다).
+
+import httpx as _httpx
+
+
+def _page_html(n_rows: int, start_day: int = 1) -> str:
+    body = "".join(
+        f"""<tr class="center"><td class="mb">2026-01-{(start_day + i) % 28 + 1:02d}</td>
+        <td class="left mb" title="경기도 오산시 고시 제2026-{start_day + i}호">x</td>
+        <td class="left"><a title='t'>[변경] 도시관리계획 결정</a></td>
+        <td class="left mb" title="기관">기관</td></tr>"""
+        for i in range(n_rows)
+    )
+    return f"<table><tbody>{body}</tbody></table>"
+
+
+def _client_serving(pages: list[str], *, fail: bool = False) -> _httpx.AsyncClient:
+    """`pageNo` 에 따라 정해진 페이지를 돌려주는 가짜 전송층(외부 경계만 대역)."""
+    calls: list[int] = []
+
+    def handler(request: _httpx.Request) -> _httpx.Response:
+        if fail:
+            raise _httpx.ConnectError("boom")
+        page = int(dict(request.url.params).get("pageNo", "1"))
+        calls.append(page)
+        html_text = pages[page - 1] if page <= len(pages) else "<table></table>"
+        return _httpx.Response(200, content=html_text.encode("euc-kr", "replace"))
+
+    c = _httpx.AsyncClient(transport=_httpx.MockTransport(handler))
+    c._calls = calls  # type: ignore[attr-defined]
+    return c
+
+
+def test_pagination_collects_every_page():
+    """★2페이지에 걸친 목록을 **전건** 모은다(마지막이 50 미만이면 종료)."""
+    from app.services.legal.gosi_coverage_service import fetch_recent_gosi
+
+    c = _client_serving([_page_html(50), _page_html(7, start_day=60)])
+    rows, complete = asyncio.run(fetch_recent_gosi("41370", "20250101", "20260101", client=c))
+    assert complete is True
+    assert len(rows) == 57, len(rows)
+    assert c._calls == [1, 2]  # type: ignore[attr-defined]
+
+
+def test_hitting_the_page_cap_is_reported_incomplete():
+    """★★상한에 걸리면 **전건확보 실패**로 보고한다 — 잘린 목록으로 안심시키지 않는다."""
+    from app.services.legal.gosi_coverage_service import _MAX_PAGES, fetch_recent_gosi
+
+    c = _client_serving([_page_html(50) for _ in range(_MAX_PAGES + 3)])
+    rows, complete = asyncio.run(fetch_recent_gosi("41370", "20250101", "20260101", client=c))
+    assert complete is False, "상한 도달인데 전건확보라고 보고했다"
+    assert len(rows) == 50 * _MAX_PAGES
+    # ★양성 짝 — 같은 경로가 짧은 목록에서는 **전건확보 True** 를 낸다.
+    c2 = _client_serving([_page_html(3)])
+    assert asyncio.run(fetch_recent_gosi("41370", "20250101", "20260101", client=c2))[1] is True
+
+
+def test_network_failure_is_reported_incomplete():
+    """조회 실패는 **침묵하지 않고** 불완전으로 표기한다(예외를 삼켜 빈 목록을 내지 않는다)."""
+    from app.services.legal.gosi_coverage_service import fetch_recent_gosi
+
+    rows, complete = asyncio.run(
+        fetch_recent_gosi("41370", "20250101", "20260101", client=_client_serving([], fail=True))
+    )
+    assert complete is False and rows == []
+
+
+def test_adaptive_window_narrows_until_complete(monkeypatch):
+    """★창 축소 — 넓은 창이 상한에 걸리면 **좁혀서 전건을 확보**한다.
+
+    실측: 화성시가 2.5년 창 600건으로 상한에 걸려 **통째로 침묵**했다. 좁히면 탐지 범위만
+    줄고 거짓 주장은 생기지 않는다(우리는 "결손 없음"을 말하지 않는다).
+    """
+    import app.services.legal.gosi_coverage_service as M
+
+    seen: list[str] = []
+
+    async def fake_fetch(sgg, start, end, *, client=None):
+        seen.append(start)
+        # 첫(가장 넓은) 창만 상한에 걸린 것으로, 그 다음부터는 전건확보.
+        return ([{"date": "2026-01-01"}], len(seen) > 1)
+
+    monkeypatch.setattr(M, "fetch_recent_gosi", fake_fetch)
+    rows, complete, window_start = asyncio.run(
+        M.fetch_recent_gosi_adaptive("41370", "20260821")
+    )
+    assert complete is True
+    assert len(seen) >= 2, "좁히지 않고 포기했다"
+    # ★좁아진 창이 **실제로 더 늦게 시작**해야 한다(같으면 축소가 일어나지 않은 것).
+    assert window_start > seen[0], (window_start, seen)
+
+
+def test_adaptive_gives_up_honestly(monkeypatch):
+    """모든 창이 불완전이면 **빈 결과 + 전건확보 False** — 여기서 결손을 말할 수 없다."""
+    import app.services.legal.gosi_coverage_service as M
+
+    async def always_incomplete(sgg, start, end, *, client=None):
+        return ([{"date": "2026-01-01"}], False)
+
+    monkeypatch.setattr(M, "fetch_recent_gosi", always_incomplete)
+    rows, complete, window_start = asyncio.run(M.fetch_recent_gosi_adaptive("41370", "20260821"))
+    assert rows == [] and complete is False and window_start == ""
