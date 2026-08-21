@@ -183,3 +183,66 @@ async def test_fetch_items_no_key_unavailable():
     assert res["items"] == []
     assert res["total"] == 0
     assert "미설정" in res["reason"]
+
+
+# ──────────────────────────────────────────────────────────────────
+# XML 파서 강화 (2026-08-20 · Bandit B314)
+# ──────────────────────────────────────────────────────────────────
+
+
+# ★엔티티가 **마크업으로** 확장되는지를 결과로 드러내는 페이로드.
+#   확장되면 응답에 **없던 item 이 목록에 생긴다** — 단순 DoS 가 아니라 **데이터 위조**다.
+_엔티티_주입 = (
+    '<?xml version="1.0"?>'
+    '<!DOCTYPE response [<!ENTITY inj "<item><PLNM_NO>BOOM</PLNM_NO></item>">]>'
+    "<response><header><resultCode>00</resultCode></header>"
+    "<body><items>&inj;</items></body></response>"
+)
+
+_정상_XML = (
+    "<response><header><resultCode>00</resultCode></header>"
+    "<body><items>"
+    "<item><PLNM_NO>1</PLNM_NO></item>"
+    "<item><PLNM_NO>2</PLNM_NO></item>"
+    "</items></body></response>"
+)
+
+
+def test_외부_XML응답_파서가_엔티티_주입을_거부한다() -> None:
+    """★온비드 응답은 **외부 입력**이다. 표준 `xml.etree` 로 파싱하면 위험하다.
+
+    실측(CPython 3.10)으로 표준 파서의 **실제 면역 범위**를 확인했다 —
+    *"면역을 거짓 주장하지 마라"* 는 규율대로 추측하지 않고 재 봤다.
+
+    | 공격 | 표준 `xml.etree` | `defusedxml` |
+    |---|---|---|
+    | XXE(파일 읽기) | `undefined entity` 로 **거부** | 거부 |
+    | SSRF(외부 URL) | **거부** | 거부 |
+    | billion laughs(엔티티 폭탄) | **확장됨**(3단계 1000자) | `EntitiesForbidden` |
+    | **엔티티 → 마크업 주입** | **확장됨 — 없던 item 이 생긴다** | `EntitiesForbidden` |
+
+    표준 파서는 XXE 는 막아도 **엔티티 확장은 막지 않는다**. 마지막 줄이 특히 나쁘다:
+    응답에 **없던 매물이 목록에 들어온다**(DoS 가 아니라 **데이터 위조**).
+
+    ★이 락의 첫 판은 `items == []` 만 봤는데 **변이가 통과했다** — 폭탄이든 아니든
+      `items` 는 어차피 비어서 단언이 **원리적으로 위반 불가**였다(공허한 참).
+      그래서 **확장 여부가 결과에 드러나는** 페이로드로 바꿨다: 확장되면 `BOOM` 이
+      목록에 나타나므로, 표준 파서로 되돌리는 순간 이 락이 깨진다.
+    """
+    items, _reason = OnbidClient._extract_items(_엔티티_주입)
+    주입된 = [str(it) for it in items if "BOOM" in str(it)]
+    assert not 주입된, (
+        "엔티티가 확장되어 **응답에 없던 항목이 생겼다** — 파서가 defused 가 아니다: "
+        f"{주입된!r}"
+    )
+
+
+def test_정상_XML응답은_그대로_파싱된다_대조군() -> None:
+    """★위 락은 *무엇이든 거부하는 파서*라도 초록이 된다 — 그러면 **기능이 죽은 것을
+    보안이라고 부르게 된다**. 그래서 정상 응답이 실제로 파싱되는지 함께 본다.
+
+    이 대조군이 깨지면 위 락의 초록은 아무 의미가 없다.
+    """
+    items, reason = OnbidClient._extract_items(_정상_XML)
+    assert reason is None, f"정상 응답인데 오류로 판정했다: {reason}"
+    assert len(items) == 2, f"항목 2개가 나와야 한다 — 실제 {len(items)}개: {items!r}"
