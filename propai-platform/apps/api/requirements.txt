@@ -77,7 +77,6 @@ fpdf2==2.8.1
 
 # Security
 bcrypt>=4.0.0,<5.0.0  # passlib 호환성: bcrypt 5.x와 충돌
-PyJWT==2.9.0
 cryptography==43.0.3
 python-jose[cryptography]==3.4.0  # ★3.4.0 미만 금지 — 3.3.0 에 **알고리즘 혼동**(OpenSSH ECDSA 키, PYSEC-2024-232)이 있다
 

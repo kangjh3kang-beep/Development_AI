@@ -166,6 +166,41 @@ async def _ensure_ord_table(db) -> None:
     _ORD_READY = True
 
 
+def _stored_violates_national_ceiling(payload: dict, zone_type: str) -> list[str]:
+    """저장본이 법정상한을 넘는지 — 넘는 항목의 사유 목록(넘지 않으면 빈 목록).
+
+    ★`enforce_national_ceiling` 과 **같은 불변식**이되 대상이 다르다: 저 함수는 *파싱 직후*
+    값을 보고, 이 함수는 *이미 저장된 payload* 를 본다. 가드가 생기기 전에 저장된 행이
+    가드를 우회해 살아남는 자리를 막는다.
+
+    ★`ordinance_*` 와 `effective_*` 를 **둘 다** 본다. 실효값은 `min(법정, 조례)` 로 이미
+    깎여 정상인데 조례값만 초과인 경우가 실제 다수다(라이브 6행 중 6행) — 그런데
+    화면 "② 조례 적용" 칸은 **조례값을 그대로 표시**하므로, 실효값만 보면 놓친다.
+    """
+    nat = NATIONAL_LIMITS.get(zone_type) or {}
+    out: list[str] = []
+    for key in ("bcr", "far"):
+        ceiling = nat.get(key)
+        if ceiling is None:
+            continue
+        for field in (f"ordinance_{key}", f"effective_{key}"):
+            val = payload.get(field)
+            # ★이 None 검사는 **이중 가드**다 — 지워도 아래 `float(None)` 이 TypeError 를
+            #   내고 except 가 같은 `continue` 로 받는다(2026-08-21 손수 변이: `if False:`
+            #   주입 시 9 passed = 생존, 주입은 해당 라인을 직접 눈으로 확인).
+            #   변이 점수를 부풀리지 않으려고 적어 둔다 — 의도된 도달 불가 방어다.
+            #   (남겨 두는 이유: None 은 '값 없음'이라 예외 경로보다 정상 흐름이 옳다.)
+            if val is None:
+                continue
+            try:
+                num = float(val)
+            except (TypeError, ValueError):
+                continue
+            if num > float(ceiling):
+                out.append(f"{field} {num:g} > 법정상한 {float(ceiling):g}")
+    return out
+
+
 async def _load_stored(sigungu: str | None, zone_type: str) -> dict | None:
     """저장된 조례 해석을 재사용(있으면). 자동만료 없음 — 사용자 재분석 전까지 유지."""
     if not sigungu:
@@ -183,6 +218,27 @@ async def _load_stored(sigungu: str | None, zone_type: str) -> dict | None:
                 #   (source="법정상한")은 cross-tenant 오염원이므로 재사용하지 않는다. None 을
                 #   반환해 조회 파이프라인(법제처API→정적캐시→법정상한)이 다시 실행되도록 한다.
                 if payload.get("source") == "법정상한":
+                    return None
+                # ★★법정상한 재검증 — **저장본은 가드를 통과한 적이 없을 수 있다**.
+                #   `enforce_national_ceiling`(2026-08-19, #700·#703)은 파싱 경로에만 걸려
+                #   있었고, 이 0차 저장본 경로는 **가드보다 위에서 곧장 return** 한다.
+                #   그래서 가드가 생기기 **전에 저장된 행**은 오늘도 그대로 화면에 나간다.
+                #   라이브 실측(2026-08-21, 저장 62행): **6행이 법정상한 초과**
+                #   — 포항시 제2종일반주거 `far 500`(법정 250)·`bcr 70`(60),
+                #     의정부·평택 자연녹지 `bcr 40`(20), 포항 자연녹지 `bcr 30`(20),
+                #     원주·포항 계획관리 `bcr 50`(40). 전부 2026-07-22~08-12 저장분이다.
+                #   ★조례는 국계법 §77·78에 따라 **법정범위 안에서** 정한다 — 초과값은
+                #     조례가 이상한 게 아니라 **우리 파싱이 틀린 것**이다(가드의 원 논거).
+                #   ★깎지 않고 **행을 기각**한다. 클램프하면 출처 없는 숫자가 생겨(날조)
+                #     다음 사람이 그것을 조례값으로 읽는다 — 가드와 같은 처분이다.
+                #     None 을 반환하면 조회 파이프라인(법제처API→정적캐시→법정상한)이
+                #     다시 돌아 **옳은 값으로 자가치유**된다(실측: 의정부 자연녹지 40→20).
+                _bad = _stored_violates_national_ceiling(payload, zone_type)
+                if _bad:
+                    logger.warning(
+                        "저장된 조례 해석 기각(법정상한 초과) — %s %s: %s",
+                        sigungu, zone_type, "; ".join(_bad),
+                    )
                     return None
                 prov = payload.setdefault("provenance", {})
                 prov["reused"] = True  # 저장본 재사용 표시
@@ -1056,11 +1112,25 @@ class OrdinanceService:
                     if val != slot.get(kind):
                         from app.services.zoning.ordinance_conditional import (
                             classify_article,
+                            extract_article_body,
                             find_article,
+                            parse_district_options,
                         )
 
                         art = find_article(section, _anchor_pos) or {}
                         ckey, ckind, cdir = classify_article(art.get("article_title"))
+                        # ★조 본문의 **나열 항목**을 함께 싣는다(`그 밖에 용도지구·구역 등`).
+                        #   그 조는 `조건 하나 → 값 하나` 가 아니라 **`구역마다 값이 다르다`**
+                        #   (오산 제46조 실측: 취락 40 · 개발진흥 30 · 수산자원 30 ·
+                        #    자연공원 60 · 산업단지 80). 그런데 위 조각 스캐너는 그중
+                        #   **하나(30)** 만 집어 조 전체를 대표하게 만든다 — 취락지구 부지에
+                        #   30% 를 보여 주는 것은 **틀린 수치**다.
+                        #   ★그리고 조각(`context`)은 용도지역명 뒤에서 잘린 **120자 창**이라
+                        #     앞뒤 항목이 보이지 않는다 — 창으로 매칭하면 안 보이는 항목을
+                        #     말없이 빠뜨리고 **거짓 '해당 없음'** 을 낸다. 그래서 **본문**을 쓴다.
+                        options = parse_district_options(
+                            extract_article_body(section, _anchor_pos)
+                        ) if ckey == "designated_district" else []
                         slot.setdefault("conditional", []).append({
                             "kind": kind, "value": val,
                             "context": self._normalize_ws(frag)[:120],
@@ -1069,6 +1139,12 @@ class OrdinanceService:
                             "condition_key": ckey,
                             "condition_kind": ckind,
                             "direction": cdir,
+                            # ★어느 용도지역 맥락에서 뽑힌 값인지 — 나열 항목이 용도지역을
+                            #   한정하는 경우(`개발진흥지구: 자연녹지지역에 지정된 경우 30%`)
+                            #   이것이 없으면 그 한정을 **검사할 수 없다**(항상 통과해 버린다).
+                            "zone_type": zone_name,
+                            # 해당 없으면 [] — 키는 항상 존재(소비처가 `in` 으로 분기하지 않게).
+                            "district_options": options,
                         })
                     continue
                 slot[kind] = val

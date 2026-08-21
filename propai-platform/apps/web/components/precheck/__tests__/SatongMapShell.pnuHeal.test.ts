@@ -66,3 +66,23 @@ describe("★HIGH 근치 통합 검증 — healParcelPnu 적용 전/후 선택 S
     }
   });
 });
+
+// 2026-08-20 — 승격을 막던 것이 "없는 pnu" 가 아니라 **가짜 pnu** 였다.
+describe("healParcelPnu — 가짜 PNU 는 '기존 값' 으로 인정하지 않는다", () => {
+  const DONG = "경기도 오산시 내삼미동";
+  const REAL = "4137011000104670001";
+
+  it("★PNU 칸에 주소가 들어앉아 있으면 경계응답의 진짜 PNU 로 승격한다", () => {
+    // 종전: `existingPnu || boundaryPnu` → 주소 문자열이 truthy 라 진짜 PNU 를 영원히 버렸다.
+    expect(healParcelPnu(DONG, REAL)).toBe(REAL);
+    expect(healParcelPnu("store-0-경기도 오산시 내삼미동", REAL)).toBe(REAL);
+  });
+
+  it("경계응답이 가짜를 줘도 채택하지 않는다(무날조)", () => {
+    expect(healParcelPnu(null, DONG)).toBeNull();
+  });
+
+  it("진짜끼리는 기존 우선(무회귀 — 위 스위트 계약 유지)", () => {
+    expect(healParcelPnu(REAL, "1111010100100560016")).toBe(REAL);
+  });
+});

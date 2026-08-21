@@ -49,6 +49,16 @@ import { WorkspaceNavBar } from "@/components/layout/WorkspaceNavBar";
 import { DISMISS_Z, __dismissibleSnapshot } from "@/lib/satong-dismiss";
 import { __stripCommentsForScan } from "@/lib/source-invariant";
 
+// ── 저장소 전수 스캔 테스트의 시간 상한 ──────────────────────────────────────
+//  이 파일은 `it` 안에서 저장소의 **모든 소스 파일(약 941개)** 을 다시 읽는다. 그래서 실행
+//  시간이 **검증 대상의 성질이 아니라 그때의 CPU 경합**에 좌우된다 — 전체 스위트를 돌리면
+//  워커가 붙는 만큼 느려져 기본 10초를 넘고, 단독 실행은 항상 통과한다(실측: 실패는 전부
+//  `Test timed out in 10000ms` 이고 비타임아웃 실패는 0건). CI 는 더 느릴 수 있다.
+//  ★10초는 **정확성 경계가 아니라 벽시계**다. 늘려도 잡아내는 결함은 그대로다.
+//  ★근본 처방은 941파일 읽기를 모듈 스코프로 호이스팅하는 것이고, 별건으로 남겼다.
+vi.setConfig({ testTimeout: 60_000 });
+
+
 // 네비의 역할 판별은 이 계약과 무관 — 영구 pending 으로 고정(기존 WorkspaceNavBar.test.tsx 관례).
 vi.mock("@/lib/use-is-admin", () => ({
   fetchAuthMeRole: vi.fn(() => new Promise<string>(() => {})),

@@ -4,7 +4,6 @@ import {
   clampClickMenuPosition,
   findFeatureAtPoint,
   pointInLeafletRings,
-  shortJibunLabel,
 } from "./satong-click-menu";
 
 const CONTAINER = { width: 800, height: 600 };
@@ -32,18 +31,6 @@ describe("clampClickMenuPosition", () => {
   });
 });
 
-describe("shortJibunLabel", () => {
-  it("전체 주소 → 동+지번 2토큰", () => {
-    expect(shortJibunLabel("경기도 용인시 수지구 신봉동 56-16")).toBe("신봉동 56-16");
-  });
-  it("2토큰 이하 주소는 그대로, 빈 값은 폴백", () => {
-    expect(shortJibunLabel("신봉동 886")).toBe("신봉동 886");
-    expect(shortJibunLabel("886")).toBe("886");
-    expect(shortJibunLabel("")).toBe("필지");
-    expect(shortJibunLabel(null)).toBe("필지");
-    expect(shortJibunLabel(undefined, "선택지")).toBe("선택지");
-  });
-});
 
 describe("pointInLeafletRings / findFeatureAtPoint", () => {
   // 단순 사각 링(lat 37.30~37.31, lon 127.08~127.09)

@@ -89,6 +89,9 @@ import {
   resolveVWorldBaseLayer,
 } from "@/lib/satong-map-layers";
 import { buildSelectionGeoJson, buildSelectionKml, kakaoRoadviewUrl } from "@/lib/satong-export";
+import { joinAddressJibun, normalizePnu } from "@/lib/pnu";
+import { countJibunHealTargets, healParcelJibunByPoint } from "@/lib/parcel-jibun-heal";
+import { ParcelJibunLabel } from "@/components/precheck/ParcelJibunLabel";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { useProjectStore } from "@/store/useProjectStore";
 import { restoreSnapshot } from "@/lib/projectSync";
@@ -221,6 +224,16 @@ type GeocodeResponse = {
   reason?: string | null;
 };
 
+/**
+ * `/zoning/parse-parcels` 응답 1행.
+ *
+ * ★`lat`/`lon` 을 **일부러 받지 않는다**(2026-08-20 백엔드 실측). 백엔드 `_geocode_fill` 은
+ *   `p["lat"]/p["lon"]` 을 박은 **뒤에** "번지 없이 동·읍·면 단위" 가드로 `p["pnu"]` 를 보류한다.
+ *   즉 해석에 실패한 행일수록 **동 대표지점 좌표**가 실려 오고, 같은 동 77행이면 77개가
+ *   전부 같은 좌표다. 그걸 받아 좌표 치유를 돌리면 77행이 전부 같은 필지로 해석된다.
+ *   PNU 로 이미 복구되므로 좌표를 들일 이유도 없다 — 안 받는 것이 방어다.
+ *   (2차 방어선은 `lib/parcel-jibun-heal` 의 "좌표 공유 필지 제외".)
+ */
 type ParsedParcel = {
   address?: string | null;
   jibun?: string | null;
@@ -552,8 +565,26 @@ function normalizeKey(value: string): string {
   return value.trim().replace(/\s+/g, " ");
 }
 
-function parcelKey(parcel: Pick<SatongParcel, "address" | "pnu">): string {
-  return parcel.pnu || normalizeKey(parcel.address);
+/**
+ * 선택목록 병합(addParcels) 의 **필지 정체성 키**.
+ *
+ * ★★2026-08-20 CRITICAL — `pnu || address` 만으로는 **77필지가 1필지로 지워진다.**
+ *   신고 프로젝트는 77필지의 **주소가 전부 같다**(`경기도 오산시 내삼미동`). 종전에는 PNU 칸에
+ *   들어앉은 서로 다른 **가짜값**이 우연히 유일성을 제공하고 있었다 — 그 가짜를 정화하는 순간
+ *   유일성이 사라져 `new Map(prev.map(p => [parcelKey(p), p]))` 가 77개를 한 키로 접고,
+ *   `syncParcelsToStores` 가 그 1건을 **영속**한다(지도에서 필지 하나만 클릭해도 발화).
+ *
+ *   그래서 PNU 가 없으면 **필지별 유일 id** 로 떨어진다. 복원 id 는 `store-${index}-${address}`
+ *   라 필지마다 다르고, 삽입 경로 id 는 `pnu || normalizeKey(address)` 라 기존 중복제거 계약이
+ *   그대로 유지된다(같은 주소를 두 번 담으면 여전히 1건 — 무회귀).
+ *
+ * ★저장소 기준선과 같은 처방이다: `ParcelSurveyQuotePanel` 이 PNU 없는 필지에
+ *   `project-idx:${i}:${address}` 를 붙여 같은 함정을 이미 풀어 놨다.
+ */
+function parcelKey(parcel: Pick<SatongParcel, "address" | "pnu" | "id">): string {
+  // ★구현은 `dominantConstraintKey`(satong-map-selection) 한 곳이다 — 선택목록 병합과 뷰 캐시가
+  //   **같은 정체성 규칙**을 써야 한다(두 벌이면 한쪽만 고쳐진다. 이 PR 이 반복해서 만난 함정).
+  return dominantConstraintKey(parcel);
 }
 
 /**
@@ -574,7 +605,11 @@ export function healParcelPnu(
   existingPnu: string | null | undefined,
   boundaryPnu: string | null | undefined,
 ): string | null {
-  return existingPnu || boundaryPnu || null;
+  // ★2026-08-20 보강: "기존이 있으면 보존" 의 **기존**은 **진짜 PNU** 여야 한다.
+  //   과거 저장분에는 PNU 칸에 주소 합성문자열이 들어앉아 있어(satong-map-selection 주석 참조),
+  //   그 가짜가 "기존 값" 으로 인정돼 경계응답의 **진짜 PNU 승격을 영구히 막았다**.
+  //   그래서 양쪽 모두 normalizePnu 를 통과시킨다 — 진짜끼리는 기존 우선(무날조 유지).
+  return normalizePnu(existingPnu) || normalizePnu(boundaryPnu) || null;
 }
 
 
@@ -629,10 +664,16 @@ function parseGeocodeToParcel(
   };
 }
 
-function parsedParcelToSelection(parcel: ParsedParcel): SatongParcel {
-  const address = parcel.address || parcel.jibun || parcel.pnu || "엑셀 등록 필지";
+function parsedParcelToSelection(parcel: ParsedParcel, index: number): SatongParcel {
+  // ★`address || jibun` 이 아니라 **결합**이다(joinAddressJibun 주석 = 이 결함의 진짜 상류).
+  //   소재지·지번이 분리된 엑셀 양식에서 `||` 는 지번을 평가조차 하지 않아 통째로 버렸다.
+  const address = joinAddressJibun(parcel.address, parcel.jibun, parcel.pnu || "엑셀 등록 필지");
   return {
-    id: parcel.pnu || normalizeKey(address),
+    // ★PNU 도 지번도 없어 주소가 동 단위뿐이면 **행 번호**로 구분한다. 안 그러면 같은 동
+    //   77행이 한 키로 접혀 목록에 1건만 남는다(#672 가 신고된 바로 그 증상).
+    //   대가: 같은 엑셀을 두 번 올리면 행이 중복된다 — **보이고 지울 수 있는** 문제이고
+    //   조용히 사라지는 것보다 낫다(저장소 기준선 ParcelSurveyQuotePanel 과 같은 처방).
+    id: parcel.pnu || `excel-${index}-${normalizeKey(address)}`,
     address,
     pnu: parcel.pnu ?? null,
     areaSqm: parcel.area_sqm ?? null,
@@ -644,7 +685,10 @@ function parsedParcelToSelection(parcel: ParsedParcel): SatongParcel {
 }
 
 function mapParcelToSelection(parcel: ParcelAtPointResult): SatongParcel {
-  const address = parcel.address || parcel.jibun || parcel.pnu || "지도 선택 필지";
+  // 지도 클릭도 같은 결합 규칙을 쓴다(형제 스윕 — 한쪽만 고치면 다시 갈린다).
+  // ※ 폴백 문자열("지도 선택 필지")은 지도 클릭 응답이 주소·지번·PNU 를 **전부** 못 준 경우만
+  //   쓰인다. 엑셀 경로의 같은 폴백은 excelJibun 테스트가 잠근다(행이 조용히 사라지는 것 차단).
+  const address = joinAddressJibun(parcel.address, parcel.jibun, parcel.pnu || "지도 선택 필지");
   return {
     id: parcel.pnu || normalizeKey(address),
     address,
@@ -1390,6 +1434,11 @@ export function SatongMapShell({
             pnu: marketAnchorPnu || undefined,
             radius_m: 1000,
             months: 3,
+            // ★적응형 반경 — 1km 는 도시 밀집지 기준이라 지방 필지에서 지도가 텅 빈다.
+            //   라이브 실측(제천 모산동 123-1): 1km 렌더가능 **2**개 / 3km 40 / 10km **118**.
+            //   반경 밖 그룹도 백엔드가 **이미 좌표를 구해 놓고 버리던 것**이라 확대 비용 0.
+            //   ★지도만 켠다 — 탁상감정·AVM·시세는 표본 반경이 바뀌면 고지 문구가 거짓이 된다.
+            auto_expand_radius: true,
           },
           useMock: false,
           timeoutMs: 90000,
@@ -1839,6 +1888,61 @@ export function SatongMapShell({
     [syncParcelsToStores],
   );
 
+  // ── 지번 자가치유(좌표 앵커) ────────────────────────────────────────────────
+  //  PNU 도 없고 주소에 지번도 없는 필지를, **좌표가 있을 때만** /zoning/parcel-at-point 로
+  //  해석해 진짜 PNU·주소를 채운다. 규칙·무날조 경계는 lib/parcel-jibun-heal 주석 참조.
+  //  ★의존성은 selectedParcels 배열이 아니라 **미해석 건수**다 — 배열을 의존성에 두면
+  //    치유가 배열을 갱신 → 이펙트 재발화 → 무한 루프가 된다. 건수는 치유 성공만큼 줄어든다.
+  const healTargetCount = countJibunHealTargets(selectedParcels);
+  const selectedParcelsRef = useRef(selectedParcels);
+  selectedParcelsRef.current = selectedParcels;
+  const syncParcelsToStoresRef = useRef(syncParcelsToStores);
+  syncParcelsToStoresRef.current = syncParcelsToStores;
+  useEffect(() => {
+    if (healTargetCount === 0) return;
+    let cancelled = false;
+    void (async () => {
+      const snapshot = selectedParcelsRef.current;
+      const healed = await healParcelJibunByPoint(
+        snapshot,
+        async (point) => {
+          const result = await apiClient.post<ParcelAtPointResult>("/zoning/parcel-at-point", {
+            body: { lat: point.lat, lon: point.lon },
+            useMock: false,
+            timeoutMs: 20000,
+          });
+          return result?.found === false ? null : result;
+        },
+        { limit: 4, isCancelled: () => cancelled },
+      );
+      if (cancelled || healed.length === 0) return;
+      setSelectedParcels((prev) => {
+        // 스냅샷 이후 목록이 바뀌었으면(추가·삭제) 인덱스가 어긋나므로 폐기한다 —
+        // 다음 렌더에서 미해석 건수가 그대로라 이펙트가 다시 돈다(무날조: 틀린 행에 안 쓴다).
+        // ★이 줄은 **의도된 이중 가드(조기 탈출)** 다 — 정확성은 아래
+        //   `parcel !== snapshot[index]` 참조 동등성이 단독으로 보장한다(길이가 달라져 인덱스가
+        //   밀리면 그 비교가 반드시 어긋난다). 그래서 이 줄만 지우는 변이는 **생존이 정상**이고,
+        //   락은 아래 줄에 걸려 있다(변이 점수 부풀리기 방지 — 사실을 여기 적는다).
+        if (prev.length !== snapshot.length) return prev;
+        const next = prev.map((parcel, index) => {
+          const hit = healed.find((h) => h.index === index);
+          if (!hit || parcel !== snapshot[index]) return parcel;
+          return {
+            ...parcel,
+            pnu: hit.pnu,
+            // 서버가 지번 붙은 주소를 주면 채택한다(없으면 기존 주소 유지 — 무날조).
+            address: hit.address?.trim() || parcel.address,
+          };
+        });
+        syncParcelsToStoresRef.current(next);
+        return next;
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [healTargetCount]);
+
   // ★R2(관심사 분리): "확정 선택(selectedParcels) 정리"와 "지도 staged 폴리곤 정리"를 분리한다.
   //   staged(지도에 찍었지만 [완료] 안 누른 임시 클릭)는 아직 확정 선택이 아니라 소유권 개념이
   //   없다 — 프로젝트 문맥이 바뀌면 누구 선택이든 상관없이 항상 청소해도 안전하다. 반면
@@ -2022,7 +2126,7 @@ export function SatongMapShell({
         //   호환을 위해 기본 포함 — 무회귀). 필터 로직은 그대로 두되(향후 방어), 실제로는
         //   백엔드 계약상 아래 filter가 걸러내는 행은 사실상 없다.
         const injectable = allParcels.filter((p) => p.injectable !== false);
-        const parcels = injectable.map(parsedParcelToSelection);
+        const parcels = injectable.map((p, i) => parsedParcelToSelection(p, i));
         addParcels(parcels);
         setUploadStatus("idle");
         setUploadParcels(allParcels);
@@ -3132,8 +3236,8 @@ export function SatongMapShell({
               <span className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--on-surface-muted)]">
                 Parcel
               </span>
-              <h3 className="mt-1 truncate text-lg font-black text-[var(--text-primary)]">
-                {detailFeature.address?.split(/\s+/).slice(-2).join(" ") || detailFeature.address || "필지"}
+              <h3 className="mt-1 flex text-lg font-black text-[var(--text-primary)]">
+                <ParcelJibunLabel address={detailFeature.address} pnu={detailFeature.pnu} />
               </h3>
               <p className="truncate text-xs font-semibold text-[var(--text-hint)]">{detailFeature.address}</p>
             </div>
@@ -3679,7 +3783,7 @@ export function SatongMapShell({
                           key={`${p.address ?? p.jibun ?? p.pnu ?? "row"}-${i}`}
                           className="rounded-lg bg-[var(--status-warning)]/10 px-2 py-1.5 text-[11px] font-semibold text-[var(--status-warning)]"
                         >
-                          {p.address || p.jibun || p.pnu || `행 ${i + 1}`} —{" "}
+                          {joinAddressJibun(p.address, p.jibun, p.pnu || `행 ${i + 1}`)} —{" "}
                           {(p.verification_reasons ?? []).join(" · ") || "확인 필요"}
                         </li>
                       ))}
@@ -3823,8 +3927,10 @@ export function SatongMapShell({
                     title={`${parcel.address}${parcel.pnu ? ` · PNU ${parcel.pnu}` : ""} — 클릭: 상세 정보`}
                   >
                     <div className="flex items-center justify-between gap-2">
-                      <p className="min-w-0 truncate text-[13px] font-black text-[var(--text-primary)]">
-                        {parcel.address?.split(/\s+/).slice(-2).join(" ") || parcel.address}
+                      {/* ★인라인 축약(`slice(-2)`)을 걷어낸다 — 먼저 줄이면 동 단위 주소에서
+                          지번을 붙일 자리가 사라져 77행이 전부 같은 글자가 됐다(신고 화면 ①). */}
+                      <p className="min-w-0 flex-1 text-[13px] font-black text-[var(--text-primary)]">
+                        <ParcelJibunLabel address={parcel.address} pnu={parcel.pnu} fallback={parcel.address} />
                       </p>
                       <span className="shrink-0 font-mono text-[11px] font-bold text-[var(--text-secondary)]">
                         {formatArea(parcel.areaSqm, 0)}

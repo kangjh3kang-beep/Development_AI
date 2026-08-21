@@ -2,6 +2,7 @@
 
 import type { SiteAnalysisData } from "@/store/useProjectContextStore";
 import type { ParcelRow } from "@/lib/parcel-rows";
+import { addressHasJibun, normalizePnu } from "@/lib/pnu";
 
 export const SATONG_MAP_SELECTION_KEY = "satong_map_selection";
 
@@ -33,11 +34,30 @@ const SATONG_VIEW_CACHE_MAX = 200;
  * 절대 맞지 않는다. 저장 시엔 id 없는 shape를 넘겨 사실상 `pnu || address`였으므로, pnu 미확보
  * 필지(엑셀·지오코딩 시드, id="P-xxx")는 조회 키가 id로 잡혀 캐시 미스 → 배너 미표시가 됐다.
  * 여기서 id를 배제한 단일 규칙만 노출해 비대칭을 구조적으로 막는다.
+ *
+ * ★★2026-08-20 재교정 — `pnu || address` 는 **같은 동의 필지를 한 칸에 몰아넣는다.**
+ *   신고 프로젝트는 77필지의 주소가 전부 같아, 한 필지의 **경사도·배치 결과가 나머지 76필지에
+ *   교차 표시**된다(경사도·배치 캐시는 이 키로 **쓰고 또 읽는다** — 자기 왕복이라 오염이 곧
+ *   오답이다).
+ *
+ *   ★그렇다고 무조건 id 로 떨어지면 **위 비대칭이 되살아난다**: 서버(경계 응답)는 id 를 모르고,
+ *   지번이 붙은 주소로 조회한 필지는 `pnu: null` 로 돌아올 수 있다 — 그러면 저장은 주소 키,
+ *   조회는 id 키가 되어 배너가 사라진다(실제로 기존 회귀 테스트가 이걸 잡았다).
+ *
+ *   그래서 **주소가 필지를 특정하는지**로 가른다 — 이 PR 전체가 쓰는 그 판정(addressHasJibun):
+ *     ① 진짜 PNU 보유        → PNU (서버와 대칭)
+ *     ② 주소에 지번 보유      → 주소 (서버와 대칭 — 서버도 이 주소로 조회했다)
+ *     ③ 동 단위 주소뿐        → **필지별 id** (주소가 필지를 특정하지 못하므로 몰면 안 된다)
+ *   ③은 애초에 서버로 보내지도 않으므로(resolvable 필터) 캐시 미스일 뿐이고,
+ *   **이웃 필지의 규제를 보여주는 것보다 미스가 옳다**(무날조).
  */
 export function dominantConstraintKey(
-  feature: { pnu?: string | null; address?: string | null },
+  feature: { pnu?: string | null; address?: string | null; id?: string | null },
 ): string {
-  return feature.pnu || (feature.address || "").trim().replace(/\s+/g, " ");
+  if (feature.pnu) return feature.pnu;
+  const addr = (feature.address || "").trim().replace(/\s+/g, " ");
+  if (addressHasJibun(addr)) return addr;
+  return feature.id || addr;
 }
 
 /** 뷰 캐시 공용 필지 키 — 지배 제약·경사도가 **같은 규칙**을 써야 한 필지가 한 키로 모인다. */
@@ -241,10 +261,17 @@ export function siteAnalysisParcelsToSelection(
       // 필지별 좌표 우선(옵션B). 첫 필지에 한해 좌표 부재 시 대표점 폴백(옵션A).
       const lat = parcel.lat ?? (index === 0 ? fallbackCoord?.lat ?? null : null);
       const lon = parcel.lon ?? (index === 0 ? fallbackCoord?.lon ?? null : null);
+      // ★영속된 **가짜 PNU** 를 읽는 순간 버린다(자가치유). 과거 selectionToSiteAnalysisPatch 가
+      //   `pnu || id` 로 저장해, PNU 칸에 주소 합성문자열이 들어앉은 프로젝트가 이미 존재한다.
+      //   그 값을 그대로 실어 나르면 ①지번 파생이 무동작 ②경계응답의 진짜 PNU 승격이 차단
+      //   ③경계 요청에 실려 나가 보강 전체가 죽는다(lib/pnu normalizePnu 주석의 라이브 실측).
+      //   ★id 도 가짜 PNU 를 쓰면 안 된다 — 같은 동의 77필지가 **전부 같은 id** 가 돼
+      //   React key 충돌·필지 제거 오작동이 난다(index 기반 합성 id 는 필지별로 다르다).
+      const pnu = normalizePnu(parcel.pnu);
       return {
-        id: parcel.pnu || `store-${index}-${parcel.address}`,
+        id: pnu || `store-${index}-${parcel.address}`,
         address: (parcel.address ?? "").trim(),
-        pnu: parcel.pnu ?? null,
+        pnu,
         lat,
         lon,
         areaSqm: parcel.areaSqm ?? null,
@@ -319,7 +346,7 @@ export function selectionToSiteAnalysisPatch(
 
   return {
     address: first.address,
-    pnu: first.pnu ?? null,
+    pnu: normalizePnu(first.pnu),
     coordinates:
       first.lat != null && first.lon != null
         ? { lat: first.lat, lon: first.lon }
@@ -332,7 +359,11 @@ export function selectionToSiteAnalysisPatch(
     repLandAreaSqm: first.areaSqm ?? null,
     parcelCount: parcels.length,
     parcels: parcels.map((parcel) => ({
-      pnu: parcel.pnu || parcel.id,
+      // ★★여기가 6번 재발한 "77행이 전부 동 이름" 의 발원지였다.
+      //   `parcel.id` 는 PNU 미확보 시 **주소를 정규화한 합성값**이라, PNU 칸에 주소가 들어갔다.
+      //   PNU 가 아닌 것은 PNU 칸에 넣지 않는다 — 미확보는 빈 문자열(기존 소비처가 `p.pnu ||`
+      //   폴백으로 이미 취급하는 '미확보' 표기와 동일). 없는 값을 지어내지 않는다(무날조).
+      pnu: normalizePnu(parcel.pnu) ?? "",
       address: parcel.address,
       areaSqm: parcel.areaSqm ?? 0,
       landCategory: parcel.jimok || "미확인",
