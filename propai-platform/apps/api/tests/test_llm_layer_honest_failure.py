@@ -96,13 +96,27 @@ async def test_두번째_호출부터는_처음부터_temperature_없이_간다(
 
 @pytest.mark.asyncio
 async def test_temperature_와_무관한_오류는_삼키지_않는다() -> None:
-    """★감지가 넓으면 진짜 장애가 다시 조용해진다 — 그게 이 사고의 근본이었다."""
+    """★감지가 넓으면 진짜 장애가 다시 조용해진다 — 그게 이 사고의 근본이었다.
+
+    ★★이 케이스의 첫 판은 **예외 타입만** 봤다. 그래서 감지를 `return True` 로 넓히는
+      변이가 **통과했다** — 재시도해도 같은 예외가 다시 나므로 타입만으로는 구분이 안 된다.
+      → **재시도를 시도했는지(객체를 다시 만들었는지)** 를 세어야 잡힌다.
+    """
+    built: list[_FakeChat] = []
+
     def build(temp):
-        return _FakeChat(temperature=temp, other_error=True)
+        c = _FakeChat(temperature=temp, other_error=True)
+        built.append(c)
+        return c
 
     chat = _TemperatureAwareChat(build, 0.3, "fake-model")
     with pytest.raises(RuntimeError, match="network unreachable"):
         await chat.ainvoke("hi")
+
+    assert len(built) == 1, (
+        "temperature 와 무관한 오류인데 재시도했다 — 감지 조건이 너무 넓다. "
+        f"만들어진 객체 {len(built)}개(기대 1개)"
+    )
 
 
 @pytest.mark.asyncio
