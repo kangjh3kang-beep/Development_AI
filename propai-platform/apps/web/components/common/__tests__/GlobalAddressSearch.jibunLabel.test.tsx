@@ -8,11 +8,15 @@
  *   프로젝트 하이드레이션(`siteAnalysis.parcels` → `fullAddress: p.address` + `pnu`).
  *   순수 함수만 잠그면 소비처가 원시 필드로 되돌아가도 초록이다(정의만 하고 소비처 0).
  */
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { GlobalAddressSearch } from "@/components/common/GlobalAddressSearch";
+import { __stripCommentsForScan } from "@/lib/source-invariant";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 
 vi.mock("@/components/common/MapShell", () => ({
@@ -62,16 +66,70 @@ describe("인테이크 목록 지번 표시", () => {
   });
 
   // ────────────────────────────────────────────────────────────────────────
-  // ★부채를 초록 안에 보이게 남긴다(커밋 메시지에만 적으면 드러나지 않는다).
+  // ★부채 상환(2026-08-22) — 종전 `it.todo` 5건을 **실제 잠금**으로 바꿨다.
   //
-  // 이번 스윕에서 `preferredEntryAddress` 로 치환했지만 **렌더 락이 없는** 표면들이다.
-  // 변이검증에서 이 줄들을 지워도 초록이었다(생존 5건) — 방어가 있는 것이 아니라
-  // **아직 안 잠근 것**이다. 각 화면의 렌더 경로를 세우는 비용이 커서 다음으로 미룬다.
-  // 미루는 근거: 사용자가 신고한 표면(인테이크 목록)은 위에서 실제 렌더로 잠갔고,
-  // 아래는 같은 공용 함수를 쓰므로 **SSOT 회귀는 위 테스트가 먼저 잡는다**(이중 노출 아님).
-  it.todo("BulkParcelBatchPanel — 반경검색 중심 주소에 지번이 붙는다");
-  it.todo("GlobalAddressSearch — 지도 feature address 에 지번이 붙는다");
-  it.todo("GlobalAddressSearch — 대지지분 모달 제목에 지번이 붙는다");
-  it.todo("ProjectPipelinePanel — 파이프라인 payload addresses 에 지번이 붙는다");
-  it.todo("ProjectPipelinePanel — '선택된 필지' 표시에 지번이 붙는다");
+  // 종전 주석은 "각 화면의 렌더 경로를 세우는 비용이 커서 다음으로 미룬다"였다.
+  // 상환하면서 **무엇을 잠갔는지 정직하게 적는다**:
+  //   · 신고 표면(인테이크 목록)은 **위의 실제 렌더**로 잠겨 있다(변경 없음).
+  //   · 아래 5곳은 **소스 불변식**이다 — 런타임 증명이 아니라 *"이 표면이 공용 함수를
+  //     계속 쓰는가"* 를 본다. 그게 이 부채가 막으려던 회귀(원시 필드로 되돌아감)의 실체다.
+  //   · 주석·문자열 변이에는 뚫리지 않는다(`__stripCommentsForScan` 경유).
+  //
+  // ★왜 파생(전수) 가드로 만들지 않았나 — 실측했고 **기각**했다.
+  //   `X.jibunAddress || X.fullAddress` 형태를 전면 금지하면 정당한 용례가 걸린다:
+  //   `GlobalAddressSearch:530`(parse-parcels 원본 전달 — 백엔드가 소재지·지번을 나눠 받는다)
+  //   `:656`(지번 해석 로직) · `lib/parcel-rows.ts:48`(SSOT 자신).
+  //   **가드의 위양성도 결함**이라 목록형을 택했다 — 대신 아래 대조군이 목록의 공허함을 막는다.
+  // ────────────────────────────────────────────────────────────────────────
+  const scanned = (file: string) =>
+    __stripCommentsForScan(readFileSync(resolve(process.cwd(), file), "utf-8"), file);
+
+  /**
+   * ★**import 줄을 뺀** 소스 — 이 가드가 실제로 뚫린 자리다.
+   *
+   * 처음엔 `expect(src).toContain("preferredEntryAddress")` 였는데, 변이검증에서
+   * **호출을 전부 원시 필드로 되돌려도 초록**이었다. `import { preferredEntryAddress }` 줄이
+   * 남아 있어 문자열이 계속 매치됐기 때문이다 — CLAUDE.md 가 *"이 저장소를 두 번 관통했다"* 고
+   * 적은 **"주석처리 + 임포트 유지"** 변이를 내 가드에서 그대로 재현한 것이다.
+   * → import 줄을 걷어내고 **호출 형태**(`이름(`)를 본다.
+   */
+  const scannedWithoutImports = (file: string) =>
+    scanned(file)
+      .split("\n")
+      .filter((l) => !/^\s*import\b/.test(l))
+      .join("\n");
+
+  const HELPER_SURFACES: ReadonlyArray<[file: string, what: string]> = [
+    ["components/common/BulkParcelBatchPanel.tsx", "반경검색 중심 주소"],
+    ["components/pipeline/ProjectPipelinePanel.tsx", "파이프라인 payload·선택 필지 표시"],
+    ["components/precheck/PreCheckWorkspace.tsx", "사전검토 주소 수집"],
+    ["components/feasibility/AutoRecommendPanel.tsx", "자동추천 필지 목록"],
+    ["components/projects/ProjectSiteAnalysisWorkspaceClient.tsx", "부지분석 주소 자동채움"],
+    ["components/projects/SiteInitiator.tsx", "프로젝트 착수 주소"],
+    ["app/[locale]/(dashboard)/projects/new/page.tsx", "신규 프로젝트 위치"],
+  ];
+
+  it.each(HELPER_SURFACES)("%s — %s 가 공용 표시함수를 **호출**한다", (file) => {
+    // ★임포트만 남은 상태를 통과시키지 않는다(위 주석의 그 변이).
+    expect(scannedWithoutImports(file)).toContain("preferredEntryAddress(");
+  });
+
+  it("GlobalAddressSearch — 지도 feature·대지지분 모달이 원시 필드로 되돌아가지 않았다", () => {
+    const src = scannedWithoutImports("components/common/GlobalAddressSearch.tsx");
+    // ①양성 — 두 자리 모두 공용 함수를 쓴다.
+    expect(src).toContain('address: preferredEntryAddress(a) || "필지"');
+    expect(src).toContain("jibun={preferredEntryAddress(shareParcel)}");
+    // ②음성 — 되돌아간 형태가 없다(부재 단언은 위 양성과 **같은 실행**에서만 의미가 있다).
+    expect(src).not.toContain("a.fullAddress || a.jibunAddress || a.roadAddress");
+    expect(src).not.toContain("shareParcel.jibunAddress || shareParcel.fullAddress");
+  });
+
+  it("★대조군 — 목록이 실제 파일을 가리킨다(오타·이동으로 공허해지지 않는다)", () => {
+    // 사람이 센 목록의 최대 위험은 **파일이 사라졌는데 검사만 남는 것**이다.
+    for (const [file] of HELPER_SURFACES) {
+      expect(existsSync(resolve(process.cwd(), file)), `${file} 가 없다 — 목록이 낡았다`).toBe(true);
+    }
+    // 그리고 그 파일들이 실제로 AddressEntry 소비처여야 이 검사가 의미를 가진다.
+    expect(HELPER_SURFACES.length).toBeGreaterThanOrEqual(7);
+  });
 });

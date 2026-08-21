@@ -1,6 +1,8 @@
 import secrets
+import tempfile
 import warnings
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings
@@ -15,7 +17,10 @@ class Settings(BaseSettings):
                          validation_alias=AliasChoices("ENVIRONMENT", "APP_ENV"))
     APP_SECRET_KEY: str = ""
     APP_DEBUG: bool = True
-    APP_HOST: str = "0.0.0.0"
+    # ★컨테이너 안에서는 모든 인터페이스에 바인딩해야 바깥에서 닿는다(127.0.0.1 이면
+    #   포트 매핑이 있어도 연결이 안 된다). 노출 범위는 **컨테이너 포트 매핑과
+    #   방화벽**이 정하지 이 값이 정하지 않는다. 그래서 여기서는 의도된 값이다.
+    APP_HOST: str = "0.0.0.0"  # nosec B104 — 컨테이너 바인딩(위 주석 참조)
     APP_PORT: int = 8000
 
     DATABASE_URL: str = "postgresql+asyncpg://propai_user:propai_pass_dev@localhost:5432/propai_db"
@@ -126,9 +131,12 @@ class Settings(BaseSettings):
     MLFLOW_TRACKING_URI: str = "http://mlflow:5000"
 
     # v61 BIM/공사비/도면 경로
-    BIM_IFC_UPLOAD_PATH: str = "/tmp/propai/ifc"
-    EXCEL_TEMPLATE_PATH: str = "/tmp/propai/templates"
-    DRAWING_EXPORT_PATH: str = "/tmp/propai/drawings"
+    # ★`/tmp` 를 문자열로 박지 않는다 — 플랫폼마다 임시 디렉터리가 다르고(윈도우·일부
+    #   컨테이너), 무엇보다 **고정 경로는 다른 프로세스가 미리 심볼릭 링크를 걸어 둘 수
+    #   있다**. `gettempdir()` 는 TMPDIR 환경변수를 존중해 운영에서 위치를 바꿀 수 있게 한다.
+    BIM_IFC_UPLOAD_PATH: str = str(Path(tempfile.gettempdir()) / "propai" / "ifc")
+    EXCEL_TEMPLATE_PATH: str = str(Path(tempfile.gettempdir()) / "propai" / "templates")
+    DRAWING_EXPORT_PATH: str = str(Path(tempfile.gettempdir()) / "propai" / "drawings")
     CODIL_API_BASE: str = "https://www.codil.or.kr/api"
 
     # 공개 API 베이스(프론트가 직접 호출하는 절대 오리진). 설정 시 디지털트윈 항공

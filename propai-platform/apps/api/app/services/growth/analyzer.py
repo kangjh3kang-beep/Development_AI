@@ -139,7 +139,8 @@ def normalize_stack(raw: str | None, route: str | None, status: int | None) -> s
     base = _RE_WS.sub(" ", base).strip().lower()
     # 메시지가 비면 route+status 만으로 군집(엔드포인트 단위 오류).
     key = f"{base}|{route or ''}|{status if status is not None else ''}"
-    return hashlib.sha1(key.encode("utf-8")).hexdigest()[:12]
+    # ★보안 해시가 아니다 — 12자로 잘라 쓰는 **집계 캐시키**다(충돌해도 통계가 합쳐질 뿐).
+    return hashlib.sha1(key.encode("utf-8"), usedforsecurity=False).hexdigest()[:12]
 
 
 def _classify_error_count(count: int) -> str | None:
