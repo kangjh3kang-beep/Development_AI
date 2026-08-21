@@ -369,8 +369,22 @@ async def _record_llm_billing(
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
             )
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as e:  # noqa: BLE001
+        # ★여기가 **돈이 사라지는 지점**이다 — LLM 호출 비용은 이미 발생했는데
+        #   청구·계측이 실패했다. 종전에는 `pass` 뿐이라 **실패가 일어났다는 사실 자체를
+        #   아무도 알 수 없었다**(이 파일에 logger 가 있는데도 쓰지 않았다).
+        #   그래서 "손실이 있었나?"에 영원히 답할 수 없었다 — 관측 불가가 곧 결함이다.
+        # ★로깅은 손실을 **막지 못한다**(탐지 ≠ 교정). 다만 알 수 없던 것을 셀 수 있게 만든다.
+        #   재시도·아웃박스는 이 다음 결정이고, 그 결정에는 이 로그가 낳는 수치가 필요하다.
+        # ★uid 는 싣지 않는다(개인식별 최소화). 귀속에 필요한 것은 service·model 이다.
+        logger.warning(
+            "LLM 과금 기록 실패 — 비용은 발생했으나 청구·계측에 남지 않았다",
+            service=service or "llm",
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            err=f"{type(e).__name__}: {str(e)[:160]}",
+        )
 
 
 async def record_llm_response_billing(llm, response, service: str | None = None) -> None:
@@ -385,8 +399,15 @@ async def record_llm_response_billing(llm, response, service: str | None = None)
         output_tokens = int(meta.get("output_tokens", 0) or 0) if isinstance(meta, dict) else 0
         model = getattr(llm, "model", "") or getattr(llm, "model_name", "") or ""
         await _record_llm_billing(model, input_tokens, output_tokens, service=service)
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as e:  # noqa: BLE001
+        # ★싱크(`_record_llm_billing`)는 예외를 밖으로 내보내지 않으므로, 여기 걸리는 것은
+        #   **토큰 추출 단계**의 실패다(usage_metadata 형태가 예상과 다름 등). 결과는 같다 —
+        #   호출은 했는데 과금이 0건이다. 싱크와 **다른 사유**이므로 문구를 갈라 둔다.
+        logger.warning(
+            "LLM 사용량 추출 실패 — 과금 위임 전에 끊겼다",
+            service=service or "llm",
+            err=f"{type(e).__name__}: {str(e)[:160]}",
+        )
 
 
 def record_llm_response_billing_sync(llm, response, service: str | None = None) -> None:
@@ -400,9 +421,14 @@ def record_llm_response_billing_sync(llm, response, service: str | None = None) 
 
         loop = asyncio.get_running_loop()
         loop.create_task(record_llm_response_billing(llm, response, service=service))
-    except Exception:  # noqa: BLE001
-        # 실행 중 루프 없음(RuntimeError) 등 — 계측 생략(본기능 회귀 0)
-        pass
+    except Exception as e:  # noqa: BLE001
+        # 실행 중 루프 없음(RuntimeError) 등 — 본기능 회귀는 0 이지만 **과금은 생략된다.**
+        # 조용히 넘기면 "동기 호출처의 과금 누락"이 영원히 안 보인다.
+        logger.warning(
+            "LLM 과금 예약 실패 — 동기 호출처의 사용량이 기록되지 않았다",
+            service=service or "llm",
+            err=f"{type(e).__name__}: {str(e)[:160]}",
+        )
 
 
 class BaseInterpreter:
