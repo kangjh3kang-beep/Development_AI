@@ -169,3 +169,79 @@ async def test_좌표미확보는_넓혀도_살아나지_않는다():
     for n in ("마스킹0", "마스킹1"):
         g = next(x for x in result["categories"]["apt_trade"]["groups"] if x["name"] == n)
         assert g.get("lat") is None                   # 다만 지도에는 찍을 수 없다
+
+
+@pytest.mark.asyncio
+async def test_어느_반경도_임계를_못넘기면_가장_넓은_후보를_쓴다():
+    """★변이 생존으로 드러난 미검증 경로 — 임계 미달 폴백.
+
+    지방 필지에서는 10km 를 걸어도 임계(10)에 못 미칠 수 있다. 그때 요청 반경을 그대로 쓰면
+    **빈 지도**가 된다. 가장 넓은 후보를 쓰되 확대 사실을 싣는다(고지는 프론트가 한다).
+    """
+    nm._BUILD_CACHE.clear()
+    # 1km 안 1개 + 약 8km 지점 3개 → 어떤 사다리 값도 임계 10 을 못 넘긴다.
+    rows, gmap = _fixture(near_n=1, far_n=3, far_lat_delta=0.072)  # 0.072 ≈ 8.0km
+    result = await _build(rows, gmap).build(
+        address="서울 강남구 역삼동 1-0", lawd_cd="11680", months=1,
+        radius_m=1000, center_hint=_CENTER, auto_expand_radius=True,
+    )
+
+    assert result["radius_expanded"] is True
+    assert result["radius_m"] == 10000, "임계 미달인데 요청 반경에 머물러 빈 지도가 된다"
+    assert len([n for n in _names(result) if n.startswith("원거리")]) == 3
+
+
+@pytest.mark.asyncio
+async def test_좌표가_하나도_없으면_넓히지_않는다():
+    """★넓힐 이유가 없을 때 넓히지 않는다 — 마스킹 전용 지역에서 라벨만 커지는 것을 막는다."""
+    nm._BUILD_CACHE.clear()
+    rows = [_row("마스킹0", "3-0"), _row("마스킹1", "3-1")]
+    result = await _build(rows, {}).build(
+        address="서울 강남구 역삼동 1-0", lawd_cd="11680", months=1,
+        radius_m=1000, center_hint=_CENTER, auto_expand_radius=True,
+    )
+    assert result["radius_expanded"] is False
+    assert result["radius_m"] == 1000
+    assert result["coords_unresolved_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_라우터가_플래그를_실제로_넘긴다():
+    """★배선 락 — 서비스만 잠그면 **라우터가 안 넘겨도** 초록이다(정의만 하고 소비처 0).
+
+    변이검증에서 라우터 두 줄(스키마 필드·전달 인자)을 지워도 통과했다. 그래서 엔드포인트
+    함수를 **실제로 태워** 플래그가 서비스까지 도달하는지 본다.
+    """
+    from apps.api.routers import auto_zoning as az
+
+    captured: dict = {}
+
+    class _CapturingService:
+        async def build(self, **kwargs):
+            captured.update(kwargs)
+            return {"center": {"lat": 37.5, "lon": 127.0}, "categories": {}}
+
+    orig = nm.NearbyMapService
+    nm.NearbyMapService = lambda *a, **k: _CapturingService()  # type: ignore[assignment]
+    try:
+        req = az.NearbyMapRequest(
+            address="서울 강남구 역삼동 1-0", pnu="1168010100100010000",
+            radius_m=1000, months=1, auto_expand_radius=True,
+        )
+        await az.nearby_transactions_map(req)
+    finally:
+        nm.NearbyMapService = orig  # type: ignore[assignment]
+
+    assert captured.get("auto_expand_radius") is True, "라우터가 플래그를 서비스에 넘기지 않았다"
+
+    # ★대조군 — 기본값은 꺼짐이어야 한다(기존 소비처 무영향).
+    captured.clear()
+    nm.NearbyMapService = lambda *a, **k: _CapturingService()  # type: ignore[assignment]
+    try:
+        req2 = az.NearbyMapRequest(
+            address="서울 강남구 역삼동 1-0", pnu="1168010100100010000", radius_m=1000, months=1,
+        )
+        await az.nearby_transactions_map(req2)
+    finally:
+        nm.NearbyMapService = orig  # type: ignore[assignment]
+    assert captured.get("auto_expand_radius") is False, "기본값이 켜져 있다 — 기존 경로 오염"
