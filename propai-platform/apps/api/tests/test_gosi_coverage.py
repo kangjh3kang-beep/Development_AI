@@ -376,3 +376,262 @@ def test_ntfc_date_extraction(ntfc, expected):
 
     m = NTFC_DATE_RE.search(ntfc)
     assert (m.group(0) if m else None) == expected
+
+
+# ── ★고시 원문 수치(P5) — 인계서가 "사용자 입력 전제"라 못 박은 전제를 반증했다 ──────
+#   실측(2026-08-21, 오산 지구단위계획 고시): 6건 중 **5건에서 텍스트 추출 성공**,
+#   원동7구역 `용적률 200%`(사고 당시 사용자가 신고한 "실제 계획 200%"와 일치) ·
+#   양산2구역 `200%·180%`. 다운로드 열쇠는 **EUC-KR 폼 인코딩**이었다.
+#   ★그러나 정작 사고 고시(내삼미3구역)는 첨부가 스캔본+도면뿐이라 **수치를 못 뽑는다** —
+#     그래서 이 기능은 "있으면 더 나은 것"이지 항상 되는 것이 아니다.
+
+def test_parses_multiple_far_candidates():
+    """★값을 **하나로 고르지 않는다** — 한 구역 안에 여럿이다(실측: 양산2구역 200%·180%).
+
+    P4 에서 배운 것과 같다: 순서가 의미를 뜻하지 않으므로 임의 선택은 오답이 된다.
+    """
+    from app.services.legal.gosi_coverage_service import parse_far_bcr_candidates
+
+    text = "가. 용적률 ∘200% 이하\n나. 용적률 ∘180% 이하\n다. 건폐율 ⦁ 60% 이하"
+    out = parse_far_bcr_candidates(text)
+    assert out["far_pct"] == [200, 180], out
+    assert out["bcr_pct"] == [60], out
+
+
+def test_far_candidates_reject_out_of_range():
+    """★법정 최대(중심상업 1500%)를 넘는 값은 오독이다 — 범위로 거른다."""
+    from app.services.legal.gosi_coverage_service import parse_far_bcr_candidates
+
+    out = parse_far_bcr_candidates("용적률 9999% · 용적률 200% · 건폐율 300%")
+    assert out["far_pct"] == [200], out
+    assert out["bcr_pct"] == [], out
+    # ★양성 짝 — 범위 안 값은 실제로 통과한다(필터가 전부를 죽인 게 아니다).
+    assert parse_far_bcr_candidates("건폐율 60%")["bcr_pct"] == [60]
+
+
+def test_limits_note_says_candidate_not_applied():
+    """★'적용값'이라 말하지 않는다 — 후보이고 확인이 필요하다."""
+    from app.services.legal.gosi_coverage_service import _limits_note
+
+    n = _limits_note({"available": True, "far_pct": [200, 180], "bcr_pct": [60]})
+    assert n and "후보" in n
+    assert "200%" in n and "180%" in n
+    # 값이 여럿이면 **획지마다 다르다**는 사실을 말한다.
+    assert "획지마다 값이 다릅니다" in n, n
+    assert "확인하십시오" in n
+
+
+def test_limits_note_single_value_does_not_claim_multiple():
+    """★대조군 — 값이 하나면 '획지마다 다르다' 문구를 만들지 않는다(위양성 방지)."""
+    from app.services.legal.gosi_coverage_service import _limits_note
+
+    n = _limits_note({"available": True, "far_pct": [200], "bcr_pct": []})
+    assert n and "200%" in n
+    assert "획지마다" not in n
+    # ★양성 짝 — 여럿이면 실제로 붙는다.
+    assert "획지마다" in (_limits_note({"available": True, "far_pct": [200, 180], "bcr_pct": []}) or "")
+
+
+def test_limits_note_is_silent_when_unavailable():
+    """★★스캔본·추출 실패면 **아무 수치도 말하지 않는다**.
+
+    라이브 실측: 내삼미2구역은 경기도보 **스캔본**(텍스트 13자)이고,
+    사고 고시 내삼미3구역은 첨부가 **지형도면**뿐이라 수치가 없다.
+    여기서 빈 후보를 '수치 없음'으로 내면 **없는 것과 못 읽은 것이 뭉개진다**.
+    """
+    from app.services.legal.gosi_coverage_service import _limits_note
+
+    assert _limits_note(None) is None
+    assert _limits_note({"available": False, "reason": "scanned_image", "far_pct": [], "bcr_pct": []}) is None
+    assert _limits_note({"available": True, "far_pct": [], "bcr_pct": []}) is None
+    # ★양성 짝 — 있으면 실제로 낸다.
+    assert _limits_note({"available": True, "far_pct": [200], "bcr_pct": []}) is not None
+
+
+def test_list_parser_captures_seq_for_detail_lookup():
+    """★목록에서 `seq` 를 실어야 상세(첨부 PDF)로 갈 수 있다 — 없으면 P5 가 죽는다."""
+    from app.services.legal.gosi_coverage_service import parse_gosi_rows
+
+    rows = parse_gosi_rows(_REAL_HTML)
+    assert all(r["seq"] for r in rows), [r["seq"] for r in rows]
+    assert rows[0]["seq"] == "1"
+
+
+# ── ★`fetch_gosi_limits` 오케스트레이션 — HTTP·PDF(외부 경계)만 대역하고 본체를 태운다 ──
+#   변이감사가 잡았다: 순수 함수만 테스트해서 **다운로드·선택·판정이 통째로 무잠금**이었다.
+#   이 세션에서 **세 번째** 같은 실수다.
+
+_DET_HTML = """<html><body>
+ <a href="javascript:download('/web/FileDownload.do', '/2025/12/23/620000/625885/고시문(원동7구역).pdf')">고시문</a>
+ <a href="javascript:download('/web/FileDownload.do', '/2025/12/23/620000/625885/지형도면.jpg')">도면</a>
+</body></html>"""
+
+
+def _limits_client(pdf_bodies: dict[str, bytes], *, det: str = _DET_HTML):
+    """상세는 HTML, 다운로드는 지정한 바이트를 돌려주는 가짜 전송층."""
+    posts: list[dict[str, str]] = []
+
+    def handler(request: _httpx.Request) -> _httpx.Response:
+        if "gvGosiDet" in str(request.url):
+            return _httpx.Response(200, content=det.encode("euc-kr", "replace"))
+        raw = request.content.decode("euc-kr", "replace")
+        posts.append({"raw": raw})
+        for name, body in pdf_bodies.items():
+            if name in raw:
+                return _httpx.Response(200, content=body)
+        return _httpx.Response(200, content="<script>alert('첨부파일이 없습니다.');</script>".encode("euc-kr"))
+
+    c = _httpx.AsyncClient(transport=_httpx.MockTransport(handler))
+    c._posts = posts  # type: ignore[attr-defined]
+    return c
+
+
+def test_download_body_is_euckr_encoded(monkeypatch):
+    """★★EUC-KR 폼 인코딩 — **이 기능의 열쇠다**.
+
+    UTF-8 로 보내면 세션·쿠키·Referer 가 다 맞아도 `alert('첨부파일이 없습니다.')` 만 온다.
+    실측으로 이것 하나 때문에 막혀 있었다. 지워도 조용히 '수치 없음'이 되므로 반드시 잠근다.
+    """
+    import app.services.legal.gosi_coverage_service as M
+
+    # ★본문 길이가 `_MIN_TEXT_CHARS` 를 넘어야 '스캔본'으로 분류되지 않는다
+    #   (짧은 스텁을 썼다가 이 가드에 걸렸다 — 가드가 제대로 작동한다는 방증).
+    monkeypatch.setattr(M, "_pdf_text",
+                        lambda content, seq="": "용적률 ∘200% 이하\n" + "본문 " * 300)
+    # '고시문' 의 EUC-KR 퍼센트 인코딩 — UTF-8 이었다면 이 키가 안 맞는다.
+    c = _limits_client({"%B0%ED%BD%C3%B9%AE": b"%PDF-fake"})
+    out = asyncio.run(M.fetch_gosi_limits("625885", client=c))
+    assert out["available"] is True, out
+    assert out["far_pct"] == [200]
+    raw = c._posts[0]["raw"]  # type: ignore[attr-defined]
+    # ★UTF-8 이었다면 '고시문' 이 %EA%B3%A0... 로 나간다.
+    assert "%EA%B3%A0" not in raw, f"UTF-8 로 인코딩됐다: {raw[:80]}"
+    assert "gosi=Y" in raw and "seq=625885" in raw
+
+
+def test_scanned_pdf_reports_scanned_image(monkeypatch):
+    """★스캔본은 **수치를 주장하지 않는다**(실측: 경기도보 스캔 텍스트 13자)."""
+    import app.services.legal.gosi_coverage_service as M
+
+    monkeypatch.setattr(M, "_pdf_text", lambda content, seq="": "  \n 1 \n")
+    out = asyncio.run(M.fetch_gosi_limits("1", client=_limits_client({".pdf": b"%PDF-x"})))
+    assert out["available"] is False and out["reason"] == "scanned_image"
+    assert out["far_pct"] == [] and out["bcr_pct"] == []
+
+
+def test_text_without_numbers_is_distinguished_from_scan(monkeypatch):
+    """★'못 읽었다'와 '수치가 없다'를 **가른다** — 뭉개면 진단이 불가능해진다.
+
+    실측: 사고 고시(내삼미3구역)는 첨부가 지형도면뿐이라 텍스트는 6,345자인데 수치가 없다.
+    """
+    import app.services.legal.gosi_coverage_service as M
+
+    monkeypatch.setattr(M, "_pdf_text", lambda content, seq="": "지형도면 " * 400)
+    out = asyncio.run(M.fetch_gosi_limits("1", client=_limits_client({".pdf": b"%PDF-x"})))
+    assert out["available"] is False and out["reason"] == "no_numbers_in_text"
+    # ★양성 짝 — 같은 경로가 수치 있는 텍스트에서는 available=True 를 낸다.
+    monkeypatch.setattr(M, "_pdf_text", lambda content, seq="": "용적률 200%" + " x" * 400)
+    assert asyncio.run(M.fetch_gosi_limits("1", client=_limits_client({".pdf": b"%PDF-x"})))["available"] is True
+
+
+def test_non_pdf_attachment_is_skipped(monkeypatch):
+    """`.jpg` 첨부는 대상이 아니다 — PDF 만 받는다(불필요한 대용량 다운로드 방지)."""
+    import app.services.legal.gosi_coverage_service as M
+
+    det = """<a href="javascript:download('/web/FileDownload.do', '/x/도면.jpg')">도면</a>"""
+    out = asyncio.run(M.fetch_gosi_limits("1", client=_limits_client({}, det=det)))
+    assert out["available"] is False and out["reason"] == "pdf_attachment_absent"
+
+
+def test_download_failure_is_reported(monkeypatch):
+    """다운로드가 PDF 를 못 주면 **정직하게 실패**로 낸다(빈 수치를 '없음'으로 내지 않는다)."""
+    import app.services.legal.gosi_coverage_service as M
+
+    out = asyncio.run(M.fetch_gosi_limits("1", client=_limits_client({})))  # 항상 alert HTML
+    assert out["available"] is False and out["reason"] == "download_failed"
+
+
+def test_picks_the_pdf_with_most_text(monkeypatch):
+    """★첨부가 여럿이면 **텍스트가 가장 많은 것**을 고른다(스캔본 대신 고시문)."""
+    import app.services.legal.gosi_coverage_service as M
+
+    det = ("""<a href="javascript:download('/web/FileDownload.do', '/x/scan.pdf')">a</a>"""
+           """<a href="javascript:download('/web/FileDownload.do', '/x/real.pdf')">b</a>""")
+    texts = {"scan": "짧다", "real": "용적률 200% 이하 " + "본문 " * 300}
+    monkeypatch.setattr(M, "_pdf_text",
+                        lambda content, seq="": texts["scan" if content == b"%PDF-s" else "real"])
+    c = _limits_client({"scan.pdf": b"%PDF-s", "real.pdf": b"%PDF-r"}, det=det)
+    out = asyncio.run(M.fetch_gosi_limits("1", client=c))
+    assert out["available"] is True and out["far_pct"] == [200]
+    assert out["source_file"] == "real.pdf", out
+
+
+# ── ★수치가 **고지까지 흐르는가**(소비처 배선) ─────────────────────────────────────
+#   변이가 잡았다: 진입점 테스트가 `limits` 를 한 번도 태우지 않아 배선이 무잠금이었다.
+#   이 저장소의 반복 결함('정의만 하고 소비처 0')이 여기서 재발할 뻔했다.
+
+def _run_with_limits(monkeypatch, *, rows, known, limits):
+    import app.services.legal.gosi_coverage_service as M
+
+    async def fake_fetch(sgg, end, **kw):
+        return rows, True, "20240821"
+
+    async def fake_known(sgg, bbox):
+        return known
+
+    async def fake_limits(seq, **kw):
+        return limits
+
+    monkeypatch.setattr(M, "fetch_recent_gosi_adaptive", fake_fetch)
+    monkeypatch.setattr(M, "_vworld_known_dates", fake_known)
+    monkeypatch.setattr(M, "fetch_gosi_limits", fake_limits)
+    M._CACHE.clear()
+    return asyncio.run(M.gosi_coverage_for_region("41370", "BOX(1,2,3,4)", sigungu_name="오산시"))
+
+
+def test_limits_reach_the_notice(monkeypatch, rows):
+    """★읽은 수치가 **화면 계약까지** 도달한다 — 배선이 끊기면 사용자는 영영 못 본다."""
+    out = _run_with_limits(
+        monkeypatch, rows=rows, known={"20240229"},
+        limits={"available": True, "far_pct": [200], "bcr_pct": [60]},
+    )
+    assert out["notice"] is not None
+    assert out["notice"]["limits_note"], "수치가 고지에 실리지 않았다(배선 끊김)"
+    assert "200%" in out["notice"]["limits_note"]
+    assert "후보" in out["notice"]["limits_note"]
+
+
+def test_unavailable_limits_leave_the_notice_intact(monkeypatch, rows):
+    """★수치를 못 읽어도 **결손 고지 자체는 나간다** — 수치는 부가물이지 전제가 아니다.
+
+    실측: 정작 사고 고시(내삼미3구역)가 이 경우다(첨부가 스캔본+도면뿐).
+    여기서 고지까지 사라지면 P3 가 퇴행한다.
+    """
+    out = _run_with_limits(
+        monkeypatch, rows=rows, known={"20240229"},
+        limits={"available": False, "reason": "scanned_image", "far_pct": [], "bcr_pct": []},
+    )
+    assert out["notice"] is not None, "수치가 없다고 결손 고지까지 사라졌다"
+    assert out["notice"]["limits_note"] is None
+    assert "제2025-274호" in out["notice"]["reason"]
+    # ★양성 짝 — 같은 실행에서 수치가 있으면 실려 나간다.
+    ok = _run_with_limits(monkeypatch, rows=rows, known={"20240229"},
+                          limits={"available": True, "far_pct": [200], "bcr_pct": []})
+    assert ok["notice"]["limits_note"] is not None
+
+
+def test_limits_not_fetched_when_no_gap(monkeypatch, rows):
+    """★결손이 없으면 PDF 를 받지 않는다 — 불필요한 3~4MB 다운로드 금지."""
+    import app.services.legal.gosi_coverage_service as M
+
+    called: list[str] = []
+
+    async def spy(seq, **kw):
+        called.append(seq)
+        return {"available": False, "far_pct": [], "bcr_pct": []}
+
+    monkeypatch.setattr(M, "fetch_gosi_limits", spy)
+    out = _run_with_limits(monkeypatch, rows=rows, known={"20240229", "20251223"},
+                           limits={"available": False, "far_pct": [], "bcr_pct": []})
+    assert out["notice"] is None
+    assert called == [], f"결손이 없는데 PDF 를 받았다: {called}"

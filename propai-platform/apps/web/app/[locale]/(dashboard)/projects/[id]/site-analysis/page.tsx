@@ -268,6 +268,9 @@ export type GosiCoverageNotice = {
   window_start?: string | null;
   list_url?: string | null;
   applied?: boolean;
+  /** 고시 원문 PDF 에서 읽은 용적률·건폐율 **후보**. 적용값이 아니다 —
+   *  한 구역 안에서도 획지마다 값이 다르다(실측: 양산2구역 200%·180%). */
+  limits_note?: string | null;
 };
 
 
@@ -472,6 +475,17 @@ export function L3EnhancedCards({
                   {it.title ? ` — ${it.title}` : ""}
                 </p>
               ))}
+              {/* ★고시 원문에서 읽은 수치 — **후보**다. 여러 세션 인계서가 이 항목을
+                  "사용자 입력 전제"로 못 박아 뒀지만 실측하니 기계로 읽힌다(6건 중 5건).
+                  다만 스캔본·도면뿐인 고시는 못 읽으므로 **있을 때만** 나온다. */}
+              {gosiCoverage.limits_note && (
+                <p
+                  data-testid="gosi-limits-note"
+                  className="mt-2 rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] px-2.5 py-2 text-[10px] font-bold leading-relaxed text-[var(--text-secondary)]"
+                >
+                  {gosiCoverage.limits_note}
+                </p>
+              )}
               {gosiCoverage.window_start && (
                 <p className="mt-1.5 text-[9px] text-[var(--text-hint)]">
                   확인 범위: {gosiCoverage.window_start.slice(0, 4)}-
