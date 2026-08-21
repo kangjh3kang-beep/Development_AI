@@ -113,3 +113,79 @@ def test_effective_values_are_unchanged_by_the_fix():
     assert empty["effective_far_pct"] is not None
     # 그런데 **고지는 달라야** 한다(같으면 이 수정이 아무것도 안 한 것이다).
     assert (filled["plan_limit_unknown"] is not None) != (empty["plan_limit_unknown"] is not None)
+
+
+# ── ★배선 층 — `collect_comprehensive` 본체를 태운다(외부 경계만 대역) ─────────────
+#   변이감사가 잡았다: 위 테스트들은 순수함수(`calc_effective_far`)만 태워서
+#   **실제 대입 지점이 무잠금**이었다(변이 4/4 생존). 이 세션에서 네 번째 같은 실수다.
+
+import asyncio
+
+
+def _svc_with(monkeypatch, *, land_use, zoning_districts=None):
+    """외부 경계(AutoZoning·VWorld 조회)만 끊고 `collect_comprehensive` 본체를 실행한다."""
+    from app.services.land_intelligence.land_info_service import LandInfoService
+
+    svc = LandInfoService()
+
+    async def fake_zoning(address):
+        return {
+            "pnu": "4137010800105690000", "coordinates": {"lat": 37.1, "lon": 127.0},
+            "zone_type": "제3종일반주거지역", "zone_source": "vworld_ned",
+            "zone_limits": {"max_bcr_pct": 50, "max_far_pct": 300},
+            # ★종전 생산자(주소 키워드 휴리스틱)의 산출 — 기본은 빈 목록이다.
+            "special_districts": zoning_districts if zoning_districts is not None else [],
+            "warnings": [], "land_area_sqm": 1000.0,
+        }
+
+    async def fake_lup(pnu):
+        return land_use
+
+    async def none_(*a, **k):
+        return None
+
+    monkeypatch.setattr(svc.zoning, "analyze_by_address", fake_zoning)
+    monkeypatch.setattr(svc, "_fetch_land_use_plan", fake_lup)
+    for m in ("_fetch_land_register", "_fetch_official_price", "_fetch_building_info",
+              "_fetch_land_characteristics"):
+        monkeypatch.setattr(svc, m, none_)
+    return svc
+
+
+def test_wiring_puts_real_designations_into_special_districts(monkeypatch):
+    """★★실제 대입 지점 — 실측 designation 이 `special_districts` 로 들어간다.
+
+    이 테스트는 **구 코드에서 반드시 실패한다**(0건이었다).
+    """
+    svc = _svc_with(monkeypatch, land_use=_REAL_SUCHEONG)
+    r = asyncio.run(svc.collect_comprehensive("경기도 오산시 수청동 569"))
+    sd = r.get("special_districts") or []
+    assert len(sd) == len(_REAL_SUCHEONG), f"{len(sd)}건 — 실측이 안 실렸다"
+    assert any((d.get("district_name") == "지구단위계획구역") for d in sd)
+    assert r["special_districts_source"] == "vworld_ned_land_use"
+
+
+def test_wiring_keeps_heuristic_when_no_real_data(monkeypatch):
+    """★무회귀 — 실조회가 없으면 **종전 휴리스틱 값을 유지**한다(덮어쓰지 않는다)."""
+    legacy = [{"name": "지구단위계획구역", "bonus_far": 300}]
+    svc = _svc_with(monkeypatch, land_use=None, zoning_districts=legacy)
+    r = asyncio.run(svc.collect_comprehensive("경기도 오산시 지구단위 어딘가"))
+    assert r.get("special_districts") == legacy
+    assert r["special_districts_source"] == "keyword_inference"
+    # ★양성 짝 — 같은 실행에서 실조회가 있으면 실측으로 덮인다.
+    svc2 = _svc_with(monkeypatch, land_use=_REAL_SUCHEONG, zoning_districts=legacy)
+    r2 = asyncio.run(svc2.collect_comprehensive("x"))
+    assert r2["special_districts_source"] == "vworld_ned_land_use"
+    assert len(r2["special_districts"]) == len(_REAL_SUCHEONG)
+
+
+def test_wiring_reaches_plan_limit_unknown_end_to_end(monkeypatch):
+    """★★종단 — 배선이 실제로 #705 발화까지 도달한다(대입만 하고 안 흐르면 소용없다)."""
+    svc = _svc_with(monkeypatch, land_use=_REAL_SUCHEONG)
+    r = asyncio.run(svc.collect_comprehensive("경기도 오산시 수청동 569"))
+    plu = (r.get("effective_far") or {}).get("plan_limit_unknown")
+    assert plu is not None and plu["districts"] == ["지구단위계획구역"]
+    # ★음성 대조군 — 지구단위 없는 필지는 종단에서도 조용하다.
+    svc2 = _svc_with(monkeypatch, land_use=_REAL_NAESAMMI)
+    r2 = asyncio.run(svc2.collect_comprehensive("경기도 오산시 내삼미동 741"))
+    assert (r2.get("effective_far") or {}).get("plan_limit_unknown") is None
