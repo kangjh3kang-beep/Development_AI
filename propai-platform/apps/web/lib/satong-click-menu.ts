@@ -2,8 +2,10 @@
  * 사통맵 지도 클릭 팝오버(단일 팝오버 계약 — 디자인컴프) 순수 로직.
  *
  * 지도 클릭 시 그 지점에 액션 메뉴(필지 선택·정보 / 거리재기 / 닫기)를 1개만 띄운다.
- * 여기는 Leaflet/DOM 비의존 순수 계산만 둔다 — 팝오버 위치 클램프·지점 오버레이 판정·
- * 지번 축약 — 렌더는 SatongMultiMap 이 담당한다.
+ * 여기는 Leaflet/DOM 비의존 순수 계산만 둔다 — 팝오버 위치 클램프·지점 오버레이 판정 —
+ * 렌더는 SatongMultiMap 이 담당한다.
+ * ★지번 축약은 여기 없다 — `parcelShortLabel`(lib/pnu) 로 옮겼다. PNU 로 지번을 파생한 뒤
+ *   줄여야 하는데 이 모듈은 PNU 를 모른다(축약 구현이 두 벌이면 한쪽만 고쳐진다).
  */
 
 export interface ClickMenuPosition {
@@ -30,13 +32,6 @@ export function clampClickMenuPosition(
       ? below
       : Math.max(margin, flipped);
   return { left, top };
-}
-
-/** 전체 주소 → 짧은 지번 라벨("용인시 수지구 신봉동 56-16" → "신봉동 56-16"). */
-export function shortJibunLabel(address: string | null | undefined, fallback = "필지"): string {
-  const tokens = (address ?? "").trim().split(/\s+/).filter(Boolean);
-  if (tokens.length === 0) return fallback;
-  return tokens.slice(-2).join(" ");
 }
 
 /** Leaflet 링(latlng 쌍 배열들)에 대한 점 포함 판정 — 짝홀(even-odd) 레이캐스팅. */

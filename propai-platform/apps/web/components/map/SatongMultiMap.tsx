@@ -59,7 +59,8 @@ import { SATONG_PANE_Z, SATONG_POPUP_YIELD, SATONG_UI_Z } from "@/lib/satong-map
 
 /** 측정 해제는 **표면이 아니다** — 열린 표면이 하나도 없을 때만 ESC 차례가 오도록 최하위. */
 const MEASURE_DISMISS_Z = -1;
-import { clampClickMenuPosition, findFeatureAtPoint, shortJibunLabel } from "@/lib/satong-click-menu";
+import { clampClickMenuPosition, findFeatureAtPoint } from "@/lib/satong-click-menu";
+import { addressHasJibun, joinAddressJibun, normalizePnu, parcelDisplayAddress, parcelShortLabel } from "@/lib/pnu";
 import {
   formatAreaSqm,
   formatDistance,
@@ -236,6 +237,16 @@ export type SatongMarketGroup = {
   build_year?: number;
   jimok?: string;
   land_use?: string;
+  /**
+   * ★백엔드가 **보내고 있었는데 타입에 없어서** 프론트가 쓸 수 없던 필드.
+   *
+   * `located`(정밀 좌표) · `approximate`(동 대표점) · `unlocated`(좌표 미확보).
+   * 백엔드 주석이 명시하듯 소비처가 `lat is null` 로 **추론**하게 두면 전부 오염된다 —
+   * 계약으로 받는다. 특히 `unlocated` 는 국토부 지번 마스킹분이라 지도에 못 찍지만
+   * **거래 내용은 살아 있다**(목록으로 낸다).
+   * ★같은 형태의 결함이 이미 있었다(2026-08-13 `sample_basis` 선언 누락 TS2345).
+   */
+  location_status?: "located" | "approximate" | "unlocated";
   deals?: SatongMarketDeal[];
 };
 
@@ -258,6 +269,10 @@ export type SatongMarketCategory = {
 export type SatongMarketPayload = {
   center: { lat: number | null; lon: number | null; address?: string } | null;
   radius_m?: number;
+  /** 요청 반경(에코). `radius_m` 이 확대된 유효 반경일 수 있어 원본을 따로 받는다. */
+  radius_requested_m?: number;
+  /** 반경이 자동 확대됐는가 — **조용히 넓히지 않는다**는 계약. */
+  radius_expanded?: boolean;
   categories?: Record<string, SatongMarketCategory>;
   fetch_failed?: boolean;
   note?: string;
@@ -569,6 +584,45 @@ export function buildMaskedSampleReason(payload: SatongMarketPayload): string {
 }
 
 /** 채움 색상으로 같은 필지를 칠하는 레이어들 — **그리는 순서**대로 나열한다(뒤가 앞을 덮는다). */
+export type UnlocatedMarketRow = {
+  key: string; label: string; count: number; avg: number | null; type: string;
+};
+
+/**
+ * ★지도에 **못 찍는** 실거래를 목록용으로 모은다 — 응답에 있는데 화면에 없던 것.
+ *
+ * 국토부가 단독·토지·상업 지번을 `2**` 로 가려 보내면 좌표를 찍을 수 없다(원천 한계).
+ * 백엔드는 그것을 **버리지 않고** `location_status:"unlocated"` 로 보존해 왔는데
+ * (`반경 밖으로 단정하지 않는다 — 무날조`), 지도는 **건수만** 표시하고 내용을 버렸다.
+ * 실측(제천 모산동 123-1·10km): 56그룹 **476건** — 그중 토지매매만 **362건**이다.
+ * 토지 개발자에게 가장 중요한 데이터가 100% 보이지 않았다(또 하나의 "소비처 0").
+ *
+ * ★좌표를 **지어내지 않는다.** 동 대표점으로 찍으면 같은 동 필지가 한 점에 몰려
+ *   "위치가 확인된 거래"로 오독된다 — 그래서 지도가 아니라 **목록**으로 낸다.
+ * ★`approximate`(동 대표점)는 **포함하지 않는다** — 그건 이미 지도에 찍혀 있다.
+ */
+export function collectUnlocatedMarketGroups(
+  payload: SatongMarketPayload | null | undefined,
+): UnlocatedMarketRow[] {
+  const out: UnlocatedMarketRow[] = [];
+  for (const [type, cat] of Object.entries(payload?.categories ?? {})) {
+    for (const g of cat?.groups ?? []) {
+      if (g?.location_status !== "unlocated") continue;
+      out.push({
+        key: `${type}:${g.name ?? ""}:${g.jibun ?? ""}`,
+        label: [g.dong, g.jibun].filter(Boolean).join(" ") || g.name || "(주소 미상)",
+        count: g.count ?? 0,
+        avg: typeof g.avg_price_10k === "number" ? g.avg_price_10k : null,
+        type,
+      });
+    }
+  }
+  return out.sort((a, b) => b.count - a.count);
+}
+
+/** 위치 미확인 목록 표시 상한 — 초과분은 **건수를 명시**하고 생략한다(무음 절단 금지). */
+const UNLOCATED_LIST_LIMIT = 12;
+
 const CHOROPLETH_PAINT_ORDER = ["용도지역", "공시지가", "개발여력", "노후도"] as const;
 
 /**
@@ -800,7 +854,8 @@ function escapeHtml(value: string | number | null | undefined): string {
 }
 
 function pointResultToFeature(parcel: ParcelAtPointResult): SatongMapFeature {
-  const address = parcel.address || parcel.jibun || parcel.pnu || "지도 선택 필지";
+  // 형제 스윕 — 소재지·지번 분리 응답을 결합한다(`||` 는 지번을 통째로 버린다. lib/pnu 주석).
+  const address = joinAddressJibun(parcel.address, parcel.jibun, parcel.pnu || "지도 선택 필지");
   return {
     id: parcel.pnu || address,
     pnu: parcel.pnu ?? null,
@@ -854,7 +909,7 @@ function featurePopupHtml(feature: SatongMapFeature, statusLabel?: string): stri
   return [
     `<div style="padding:10px 12px;font-size:12px;line-height:1.6;min-width:200px;">`,
     feature.zoneType ? `<div style="margin-bottom:6px;"><span style="background:#0e7490;color:#fff;padding:3px 8px;border-radius:6px;font-weight:900;font-size:11.5px;letter-spacing:-0.2px;">용도지역: ${escapeHtml(feature.zoneType)}</span></div>` : "",
-    `<b>${escapeHtml(feature.address || feature.pnu || "필지")}</b>${statusLabel ? ` <span style="color:#0e7490">[${escapeHtml(statusLabel)}]</span>` : ""}`,
+    `<b>${escapeHtml(parcelDisplayAddress(feature.address, feature.pnu) || feature.pnu || "필지")}</b>${statusLabel ? ` <span style="color:#0e7490">[${escapeHtml(statusLabel)}]</span>` : ""}`,
     feature.areaSqm ? `<br/>면적: ${Math.round(feature.areaSqm).toLocaleString()}㎡ (${toP(feature.areaSqm)}평)` : "",
     feature.jimok ? `<br/>지목: ${escapeHtml(feature.jimok)}` : "",
     feature.officialPricePerSqm ? `<br/>공시지가: ${escapeHtml(priceManPyeong(feature.officialPricePerSqm))}` : "",
@@ -1372,16 +1427,31 @@ export function SatongMultiMap({
       onBoundaryStatusChangeRef.current?.("ready");
       return;
     }
+    // ★경계 조회에 **필지를 특정할 수 있는 것만** 보낸다(2026-08-20 라이브 실측 근거).
+    //   ① 가짜 PNU(주소 합성문자열)를 그대로 보내면 서버가 그걸 echo 하고
+    //      area 0 · zone null · geometry null · age_status "lookup_failed" 로 **보강이 죽는다**.
+    //   ② PNU 없이 **동 단위 주소**만 보내면 서버가 임의의 한 필지(예: 114-1)로 **수렴**시킨다 —
+    //      같은 동 77필지가 전부 그 한 필지로 보강되는 **조용한 오답**(라벨이 같은 것보다 나쁘다).
+    //   그래서 진짜 PNU 가 있거나 주소에 지번이 붙은 필지만 요청한다. 나머지는 보강하지 않고
+    //   정직하게 미해석으로 둔다(무날조). 좌표를 가진 필지는 상위(Shell)의 좌표 기반
+    //   자가치유(/zoning/parcel-at-point)가 따로 해석한다.
+    const resolvable = selectedParcels
+      .map((parcel) => ({ pnu: normalizePnu(parcel.pnu), address: parcel.address }))
+      .filter((parcel) => !!parcel.pnu || addressHasJibun(parcel.address));
+    if (resolvable.length === 0) {
+      // 요청할 대상이 없다 — 선택은 그대로 두고 "더 받아올 게 없음" 으로 종료(무한 로딩 금지).
+      setBoundaryFeatures(mergeSatongMapFeatures(selectedParcels));
+      setBoundaryStatus("ready");
+      onBoundaryStatusChangeRef.current?.("ready");
+      return;
+    }
     let alive = true;
     setBoundaryStatus("loading");
     onBoundaryStatusChangeRef.current?.("loading");
     apiClient
       .post<BoundaryResponse>("/zoning/parcel-boundaries", {
         body: {
-          parcels: selectedParcels.map((parcel) => ({
-            pnu: parcel.pnu,
-            address: parcel.address,
-          })),
+          parcels: resolvable,
         },
         useMock: false,
         timeoutMs: 45000,
@@ -2302,7 +2372,9 @@ export function SatongMultiMap({
       points.forEach(({ feature, point }) => {
         bindSatongLabel(
           makeAnchor(point.lat, point.lon),
-          shortJibunLabel(feature.address, feature.pnu || "필지"),
+          // ★PNU 로 지번을 파생한 **뒤** 줄인다 — 먼저 줄이면 동 단위 주소에서 지번을 붙일
+          //   자리가 사라져 같은 동의 필지가 지도에서 전부 같은 라벨이 된다.
+          parcelShortLabel(feature.address, feature.pnu, feature.pnu || "필지"),
           { permanent: true, offsetY: 2 },
         );
       });
@@ -2421,6 +2493,20 @@ export function SatongMultiMap({
   //   그린다(POI 이펙트와 동형 — SatongMultiMap:2185-2226 패턴 이식). 종전엔 marketLayer.type
   //   단일값만 받아 `${type}_${kind}` 카테고리 1개만 소비하고 나머지 9종을 버렸다.
   const marketTypes = marketLayer?.types ?? EMPTY_MARKET_TYPES;
+
+  /**
+   * ★지도에 **못 찍는** 실거래를 목록으로 되살린다 — 응답에 있는데 화면에 없던 것.
+   *
+   * 국토부가 단독·토지·상업 지번을 `2**` 로 가려 보내면 좌표를 찍을 수 없다(원천 한계).
+   * 백엔드는 그것을 **버리지 않고** `location_status:"unlocated"` 로 보존해 왔는데
+   * (`반경 밖으로 단정하지 않는다 — 무날조`), 지도는 **건수만** 표시하고 내용을 버렸다.
+   * 실측(제천 모산동 123-1·10km): 56그룹 **476건** — 그중 토지매매만 **362건**이다.
+   * 토지 개발자에게 가장 중요한 데이터가 100% 보이지 않았다(또 하나의 "소비처 0").
+   *
+   * ★좌표를 **지어내지 않는다.** 동 대표점으로 찍으면 같은 동 필지가 한 점에 몰려
+   *   "위치가 확인된 거래"로 오독된다 — 그래서 지도가 아니라 **목록**으로 낸다.
+   */
+  const unlocatedMarketGroups = useMemo(() => collectUnlocatedMarketGroups(marketPayload), [marketPayload]);
   const showPresale = !!marketLayer?.showPresale;
   const presaleItems = marketLayer?.presaleItems ?? null;
   const showAuction = !!marketLayer?.showAuction;
@@ -2605,6 +2691,16 @@ export function SatongMultiMap({
       cutParts.push("반경 필터 미적용(전체 표시 중)");
     } else if ((marketPayload.radius_filtered_out_count ?? 0) > 0) {
       cutParts.push(`반경밖 ${marketPayload.radius_filtered_out_count}건 제외`);
+    }
+    // ★확대했으면 **반드시 말한다.** 조용히 넓히면 사용자는 10km 떨어진 거래를 '주변'으로
+    //   읽는다 — 그건 이 결함을 고치면서 더 나쁜 오도를 만드는 것이다.
+    //   요청값과 유효값을 **둘 다** 보여, 무엇이 바뀌었는지 화면만 보고 알 수 있게 한다.
+    if (marketPayload.radius_expanded && marketPayload.radius_m) {
+      const reqKm = ((marketPayload.radius_requested_m ?? 1000) / 1000).toFixed(
+        (marketPayload.radius_requested_m ?? 1000) % 1000 === 0 ? 0 : 1,
+      );
+      const effKm = (marketPayload.radius_m / 1000).toFixed(marketPayload.radius_m % 1000 === 0 ? 0 : 1);
+      cutParts.unshift(`반경 ${reqKm}km 내 거래가 적어 ${effKm}km 로 넓혀 표시`);
     }
     if (cappedTotal > 0) {
       cutParts.push(`유형별 상한초과 ${cappedTotal}건 생략`);
@@ -3082,7 +3178,7 @@ export function SatongMultiMap({
                 </p>
                 {clickMenuFeature?.address && (
                   <p className="mt-0.5 truncate text-[13px] font-semibold text-[var(--text-primary)]">
-                    {shortJibunLabel(clickMenuFeature.address)}
+                    {parcelShortLabel(clickMenuFeature.address, clickMenuFeature.pnu)}
                   </p>
                 )}
                 {subInfo.length > 0 && (
@@ -3350,6 +3446,34 @@ export function SatongMultiMap({
                       </div>
                     ))}
                   </div>
+                  {/* ★지도에 못 찍는 실거래 — 버리지 않고 목록으로 낸다(좌표는 지어내지 않는다). */}
+                  {unlocatedMarketGroups.length > 0 && (
+                    <div className="mt-2 border-t border-[var(--line)] pt-2">
+                      <p className="text-[10.5px] font-black text-[var(--text-primary)]">
+                        위치 미확인 {unlocatedMarketGroups.reduce((n, g) => n + g.count, 0)}건
+                      </p>
+                      <p className="mt-0.5 text-[10px] font-semibold leading-snug text-[var(--text-tertiary)]">
+                        국토부가 지번을 가려(예: 2**) 제공해 지도에 찍을 수 없습니다 — 거래 내용은 아래에 있습니다.
+                      </p>
+                      <ul className="mt-1 flex max-h-40 flex-col gap-0.5 overflow-y-auto text-[10px]">
+                        {unlocatedMarketGroups.slice(0, UNLOCATED_LIST_LIMIT).map((g) => (
+                          <li key={g.key} className="flex items-center gap-1.5 text-[var(--text-secondary)]">
+                            <span className="truncate font-semibold text-[var(--text-primary)]">{g.label}</span>
+                            <span className="ml-auto shrink-0">{g.count}건</span>
+                            {g.avg != null && (
+                              <span className="shrink-0 tabular-nums">{Math.round(g.avg).toLocaleString()}만</span>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                      {/* ★절단을 조용히 하지 않는다 — 목록 상한에 걸린 그룹 수를 명시한다. */}
+                      {unlocatedMarketGroups.length > UNLOCATED_LIST_LIMIT && (
+                        <p className="mt-1 text-[10px] font-semibold text-[var(--text-tertiary)]">
+                          외 {unlocatedMarketGroups.length - UNLOCATED_LIST_LIMIT}개 그룹 생략(목록 상한)
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
               ) : (
                 <button
@@ -3469,8 +3593,8 @@ export function SatongMultiMap({
               {/* 필지 요약 정보 */}
               <div className="mb-2 space-y-0.5">
                 <p className="text-[12px] font-bold text-[var(--text-primary)] leading-snug">
-                  {/* 주소 또는 PNU 표시 */}
-                  {pending.address || pending.jibun || pending.pnu}
+                  {/* 주소+지번 결합 표시(`||` 는 분리 응답의 지번을 버린다 — lib/pnu 주석) */}
+                  {joinAddressJibun(pending.address, pending.jibun, pending.pnu || "")}
                 </p>
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-[var(--text-secondary)]">
                   {/* 면적(㎡·평) */}

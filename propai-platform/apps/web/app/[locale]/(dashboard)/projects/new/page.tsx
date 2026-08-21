@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { preferredEntryAddress } from "@/lib/parcel-rows";
 import { useParams, useRouter } from "next/navigation";
 import { useProjectStore } from "@/store/useProjectStore";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
@@ -64,7 +65,7 @@ export default function NewProjectPage() {
   // PNU·용도지역·면적·조례 등 부지분석 데이터를 store(siteAnalysis)에 자동 저장한다.
   const handleAddressChange = (entries: AddressEntry[]) => {
     if (entries.length > 0) {
-      setLocation(entries[0].fullAddress);
+      setLocation(preferredEntryAddress(entries[0]));
     } else {
       setLocation("");
     }
