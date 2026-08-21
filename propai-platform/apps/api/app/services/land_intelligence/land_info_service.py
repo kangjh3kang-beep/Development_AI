@@ -356,6 +356,9 @@ class LandInfoService:
             #   필지에서 **키 자체가 빠지고** 소비처가 "확인 완료"로 낙관 폴백한다(R3 MEDIUM).
             #   "조회를 시도조차 못 했다"는 미확인이지 "규제 없음"이 아니다.
             "land_use_plan_status": "unavailable",
+            # ★`special_districts` 가 실측인지 키워드 추론인지 — 소비처가 구분할 수 있게.
+            #   실조회 전엔 추론값이므로 기본을 그렇게 표기한다(뭉개지 않는다).
+            "special_districts_source": "keyword_inference",
             "local_ordinance": None,
             "nearby_transactions": None,
             "infrastructure": None,
@@ -489,6 +492,29 @@ class LandInfoService:
                     result["zone_limits"] = self._zone_limits_for(district_zone)
                     result["zone_source"] = "vworld_ned_land_use"
                     result["warnings"] = _strip_zone_inference_warning(result.get("warnings"))
+                # ★★`special_districts` 를 **실측 designation 으로 채운다**(원 인계서 P2).
+                #   【무엇이 틀렸나 — 2026-08-21 실측】종전 값은 `AutoZoningService.
+                #   _detect_special_districts(zone_type, address)` 가 만든 **문자열 키워드
+                #   휴리스틱**이다: 주소나 용도지역명에 "지구단위" 라는 **글자**가 있어야 채워진다.
+                #   실제 주소에 그런 글자는 없으므로 사실상 **항상 빈 목록**이었다.
+                #
+                #   【그래서 무엇이 죽어 있었나 — 캠페인 계약 셋이 통째로】
+                #   `special_districts` 는 조례 캠페인 세 계층의 **공통 입력**이다:
+                #     · `plan_limit_unknown`(#705) — 계획이 한도·용도를 정하는데 수치 미확보 고지
+                #     · `conditional_ceiling`(#704) — 법 §75의3 조건부 법정상한
+                #     · `ordinance_conditional`(#711) — 조례 조건부 값 × 부지 조건 매칭
+                #   입력이 항상 비어 있으니 셋 다 화면 경로에서 **한 번도 발화하지 못했다**.
+                #   실측: 오산 수청동 569(PNU 4137010800105690000)는 VWorld 가
+                #   `지구단위계획구역` 을 **2건** 주는데 `collect_comprehensive` 는 0건을 냈다.
+                #
+                #   ★`land_use`(VWorld NED 실조회 결과)가 바로 여기 있다 — 같은 함수 안에서
+                #   `land_use_plan.districts` 로 이미 싣고 있었다. 소비처만 연결하면 된다.
+                #   ★행 모양을 바꾸지 않고 그대로 넘긴다: 소비처는 전부 `district_regime._norm`
+                #   (`district_name` → `name` 순)으로 읽으므로 원본 dict 가 그대로 통한다.
+                #   ★실조회가 있을 때만 덮는다 — 없으면 종전 휴리스틱 값을 유지해 무회귀.
+                result["special_districts"] = list(land_use)
+                result["special_districts_source"] = "vworld_ned_land_use"
+
                 lup_zone = result.get("zone_type") or district_zone
                 result["land_use_plan"] = {
                     "zone_type": lup_zone,
