@@ -191,7 +191,7 @@ describe("AnalysisDiffTable", () => {
     ]);
   });
 
-  it("site_analysis — comprehensive_analysis 원장 요약 필드를 렌더한다(실효 용적률 결측 시 상향 상한 폴백)", () => {
+  it("site_analysis — comprehensive_analysis 원장 요약 필드를 렌더한다(실효 용적률 결측 시 상향 잠재 폴백)", () => {
     render(
       <AnalysisDiffTable
         analysisType="site_analysis"
@@ -245,11 +245,11 @@ describe("AnalysisDiffTable", () => {
     expect(screen.getByText("용도지역")).toBeInTheDocument();
     expect(screen.getByText("대지면적")).toBeInTheDocument();
     expect(screen.getByText("입지등급")).toBeInTheDocument();
-    // 실효 용적률이 old/new 모두 결측 → "실효 용적률" 행은 "—", 상향 상한 폴백 행이 추가된다.
+    // 실효 용적률이 old/new 모두 결측 → "실효 용적률" 행은 "—", 상향 잠재 폴백 행이 추가된다.
     expect(screen.getByText("실효 용적률")).toBeInTheDocument();
-    // "상향 상한" 라벨은 두 번 등장한다 — ①실효 결측 시 붙는 폴백 행, ②상향 상한 자체의 주 필드 행.
+    // "상향 잠재(범위 상단)" 라벨은 두 번 등장한다 — ①실효 결측 시 붙는 폴백 행, ②상향 잠재 자체의 주 필드 행.
     // 두 행 모두 같은 키(potential_far_range.max_pct)를 읽으므로 값도 동일하게 두 번씩 렌더된다.
-    expect(screen.getAllByText("상향 상한").length).toBe(2);
+    expect(screen.getAllByText("상향 잠재(범위 상단)").length).toBe(2);
     expect(screen.getAllByText("80.0%").length).toBe(2);
     expect(screen.getAllByText("100.0%").length).toBe(2);
   });
@@ -272,9 +272,9 @@ describe("AnalysisDiffTable", () => {
     );
     expect(screen.getByText("180.0%")).toBeInTheDocument();
     expect(screen.getByText("190.0%")).toBeInTheDocument();
-    // 실효값이 있으므로 폴백 행은 추가되지 않는다 — "상향 상한" 라벨은 그 자체의 주 필드 행(4번째
+    // 실효값이 있으므로 폴백 행은 추가되지 않는다 — "상향 잠재(범위 상단)" 라벨은 그 자체의 주 필드 행(4번째
     // 정의) 1개만 남는다(값은 potential_far_range 미전달이라 "—").
-    expect(screen.getAllByText("상향 상한").length).toBe(1);
+    expect(screen.getAllByText("상향 잠재(범위 상단)").length).toBe(1);
   });
 
   it("precheck — /precheck/instant 원장 요약 필드를 렌더하고 결측은 '—'로 표기한다", () => {
