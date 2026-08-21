@@ -153,6 +153,20 @@ type OrdinanceAttachmentOnly = {
   ordinance_name?: string | null;
   requires?: string[] | null;
 };
+/** 계획이 한도·**용도**를 정하는 구역인데 그 계획 내용을 확보하지 못했다(#705).
+ *  ★셋 중 **가장 비싼 경고**다 — 수치만이 아니라 **용도 추천도 미검증**이라고 말한다.
+ *    백엔드 주석: *"수치에만 경고를 붙이면 정작 더 비싼 오답(불허 용도 추천)이 그대로 나간다."*
+ *  ★2026-08-21 까지 이 계약은 화면 소비처가 **0** 이었다. 게다가 생산자(`special_districts`)가
+ *    주소 문자열 휴리스틱이라 **발화 자체가 불가능**했다(#742 에서 실측값 배선으로 수정). */
+type PlanLimitUnknown = {
+  districts?: string[] | null;
+  applied?: boolean;
+  reason?: string | null;
+  /** 계획이 지배하는 범위 — 건폐율·용적률만이 아니라 **건축물 용도제한·높이**까지. */
+  governs?: string[] | null;
+  requires?: string[] | null;
+  note?: string | null;
+};
 type OrdinanceConditional = {
   matched?: OrdinanceConditionalItem[] | null;
   unmatched_site?: OrdinanceConditionalItem[] | null;
@@ -174,6 +188,8 @@ type EffectiveFarData = {
   ordinance_conditional?: OrdinanceConditional | null;
   /** 조례 별표가 첨부(HWP)뿐이라 수치 미확보 — 사유·원문 링크. */
   ordinance_attachment_only?: OrdinanceAttachmentOnly | null;
+  /** 계획이 한도·용도를 정하는 구역인데 계획 내용 미확보(#705). */
+  plan_limit_unknown?: PlanLimitUnknown | null;
 };
 
 // 종상향/종변경 잠재 시나리오(예상치 — 현행과 분리)
@@ -353,6 +369,7 @@ export function L3EnhancedCards({
   const condCeiling = effFar?.conditional_ceiling ?? null;
   const ordCond = effFar?.ordinance_conditional ?? null;
   const ordAttach = effFar?.ordinance_attachment_only ?? null;
+  const planUnknown = effFar?.plan_limit_unknown ?? null;
   const legalMin = fbd?.법정범위?.min_far_pct ?? effFar?.legal_min_far_pct ?? null;
   const legalMax =
     fbd?.법정범위?.max_far_pct ??
@@ -452,6 +469,50 @@ export function L3EnhancedCards({
               <p className="text-[10px] font-bold text-[var(--text-secondary)] sm:text-right max-w-md">근거: {farFinalBasis}</p>
             )}
           </div>
+          {/* ★★계획이 지배하는 구역인데 그 계획을 못 읽었다(#705) — **가장 비싼 경고**.
+              위 ①~④ 계층과 아래 수치·개발방식·**용도 제안**이 전부 그 계획을 반영하지
+              못한 조례·법정 기준값이라는 사실을 말한다. 수치에만 경고를 붙이면 정작 더
+              비싼 오답(**불허 용도 추천**)이 그대로 나간다 — 그래서 `governs` 를 함께 보인다.
+              ★이 계약은 2026-08-21 까지 화면 소비처가 0이었고, 생산자(`special_districts`)가
+              주소 문자열 휴리스틱이라 발화 자체가 불가능했다(#742 에서 실측 배선으로 수정). */}
+          {planUnknown && (planUnknown.districts?.length ?? 0) > 0 && (
+            <div
+              data-testid="plan-limit-unknown"
+              className="mt-4 rounded-xl border-2 border-[var(--status-warning)]/50 bg-[var(--status-warning)]/10 p-4"
+            >
+              <p className="text-[10px] font-black text-[var(--status-warning)] mb-2">
+                {planUnknown.districts?.join(" · ")} — <span className="underline">이 계획이 아래 값보다 우선합니다</span>
+              </p>
+              {planUnknown.reason && (
+                <p className="text-[11px] font-bold leading-relaxed text-[var(--text-secondary)]">
+                  {planUnknown.reason.replace(/\*\*/g, "")}
+                </p>
+              )}
+              {(planUnknown.governs?.length ?? 0) > 0 && (
+                <p className="mt-2 text-[10px] font-bold text-[var(--text-secondary)]">
+                  이 계획이 정하는 것:{" "}
+                  {planUnknown.governs?.map((g) => (
+                    <span
+                      key={g}
+                      className="mr-1 inline-block rounded border border-[var(--status-warning)]/40 px-1.5 py-0.5 text-[9px] font-black text-[var(--status-warning)]"
+                    >
+                      {g}
+                    </span>
+                  ))}
+                </p>
+              )}
+              {/* ★용도까지 미검증이라는 것이 이 고지의 핵심 — 수치 경고만 남기면 안 된다. */}
+              <p className="mt-2 text-[10px] font-black text-[var(--status-warning)]">
+                아래 수치와 개발방식·용도 제안은 이 계획을 반영하지 못했습니다 — 고시 확인 전까지
+                상한으로도, 허용용도로도 단정하지 마십시오.
+              </p>
+              {(planUnknown.requires ?? []).map((rq, i) => (
+                <p key={`pr${i}`} className="mt-1 text-[10px] text-[var(--text-tertiary)]">
+                  · {rq.replace(/\*\*/g, "")}
+                </p>
+              ))}
+            </div>
+          )}
           {/* ★고시 결손 — 화면이 "지구단위계획 없음"을 **사실처럼** 말하던 자리.
               조회가 성공했다고 해서 답이 최신인 것은 아니다: 실제로 오산 내삼미동은
               지구단위계획구역 신규 결정고시(2025-12-23)가 우리 데이터에 없어

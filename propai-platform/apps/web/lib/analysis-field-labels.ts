@@ -41,7 +41,7 @@ const FIELD_LABELS: Record<string, FieldMeta> = {
   "effective_far.effective_bcr_pct": { label: "실효 건폐율", unit: "%", decimals: 1 },
   "effective_far.legal_far_pct": { label: "법정 용적률", unit: "%", decimals: 1 },
   "potential_far_range.min_pct": { label: "상향 가능 용적률(하한)", unit: "%", decimals: 1 },
-  "potential_far_range.max_pct": { label: "상향 가능 용적률(상한)", unit: "%", decimals: 1 },
+  "potential_far_range.max_pct": { label: "상향 잠재 용적률(범위 상단)", unit: "%", decimals: 1 },
 
   // 입지
   "location.education.school_count": { label: "반경 내 학교", unit: "곳" },

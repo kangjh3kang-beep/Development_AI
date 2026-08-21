@@ -308,3 +308,29 @@ export function formatUpzoningFarRange(
   }
   return { text: formatPercentRange(lo, hi, digits), collapsed: false, disclosure };
 }
+
+// ── 종상향 "범위 붕괴" 문구 SSOT ────────────────────────────────────────────
+//
+// ★왜 여기로 모으나: `#709` 가 붕괴 **판정**은 `formatUpzoningFarRange` 로 모았는데,
+//   그 판정을 받아 쓰는 **문구**는 표면마다 인라인 삼항으로 흩어져 있었다
+//   (`ProjectAnalysisSummary` 라벨 · `AutoRecommendPanel` 조사). 같은 규칙이 두 벌이면
+//   한쪽만 고쳐지고 다른 쪽이 남는다 — 이 저장소가 지번 표시에서 **세 벌**까지 갔던 그 경로다.
+//
+// ★문구의 요지: 붕괴값은 **도달 가능한 상한이 아니라 한 경로의 예상치**다.
+//   "상한"·"까지"는 도달 가능성을 함의하므로 붕괴 시 쓰면 거짓이 된다.
+
+/** 종상향 잠재 용적 라벨 — 붕괴면 "상한"이라고 부르지 않는다. */
+export function upzoningPotentialLabel(collapsed: boolean): string {
+  return collapsed ? "종상향 잠재(용적·단일 값)" : "종상향 잠재 상한(용적)";
+}
+
+/**
+ * 종상향 문장의 **조사 분기** — 붕괴면 "까지 가능하며"가 거짓이 된다.
+ * (문장이 숫자보다 오래 기억된다 — 조사까지 판정에 맞춘다.)
+ */
+export function upzoningReachClause(collapsed: boolean): string {
+  return collapsed
+    ? "이며, 이 경우 더 고밀·고수익 건축유형이 추천될 수 있습니다."
+    : "까지 가능하며, 이 경우 더 고밀·고수익 건축유형이 추천될 수 있습니다.";
+}
+
