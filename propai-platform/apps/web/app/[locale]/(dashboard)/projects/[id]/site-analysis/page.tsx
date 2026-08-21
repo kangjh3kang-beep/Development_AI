@@ -140,6 +140,9 @@ type OrdinanceConditionalItem = {
    *  어느 항목으로 매칭됐는지 밝히지 않으면 사용자가 근거를 확인할 수 없다. */
   matched_district?: string | null;   // 부지의 실제 지정명(예: 자연취락지구)
   matched_option?: string | null;     // 조례가 적은 항목명(예: 취락지구)
+  /** 이 부지가 걸친 지구 수. 2 이상이면 **어느 것이 적용되는지 우리가 정하지 않았다**
+   *  — 용도지구 경합 우선순위는 법·조례 소관이다. 화면은 그 사실을 밝힌다. */
+  overlap_count?: number | null;
 };
 /** 조례 별표가 **HWP 첨부로만** 제공돼 수치를 읽지 못한 경우 — 사유와 원문 링크.
  *  ★값이 아니라 **사유**다. 이게 없으면 화면은 "조례 확인 필요"라고만 말하고,
@@ -558,6 +561,13 @@ export function L3EnhancedCards({
                       {m.matched_option && m.matched_option !== m.matched_district
                         ? `(조례 '${m.matched_option}' 항목)`
                         : ""}
+                    </span>
+                  )}
+                  {/* ★겹침을 숨기지 않는다 — 필지는 흔히 여러 지구에 걸친다(실측 8~20건).
+                      어느 것이 적용되는지는 법·조례 소관이라 **우리가 정하지 않는다**. */}
+                  {(m.overlap_count ?? 1) > 1 && (
+                    <span className="font-black text-[var(--status-warning)]">
+                      {" "}· 이 부지는 {m.overlap_count}개 지구에 걸칩니다 — 어느 것이 우선하는지는 확인이 필요합니다
                     </span>
                   )}
                   <span className="font-medium text-[var(--text-tertiary)]">
