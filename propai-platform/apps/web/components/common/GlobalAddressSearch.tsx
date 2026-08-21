@@ -1038,7 +1038,7 @@ export function GlobalAddressSearch({
   // ── 다필지 엑셀 업로드 — 토지조서 양식 업로드 → 필지 추출(주소만 적어도 PNU·면적·용도 자동보강) ──
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
-  const [uploadInfo, setUploadInfo] = useState<{ note: string; registry?: string; verify?: string } | null>(null);
+  const [uploadInfo, setUploadInfo] = useState<{ note: string; registry?: string; verify?: string; warnings?: string[] } | null>(null);
   // ★use_llm 옵트인(T1) — 기존 동작 보존을 위해 기본 true(비표준 양식 자동 LLM 보조 유지).
   const [useLlm, setUseLlm] = useState(true);
 
@@ -1054,9 +1054,13 @@ export function GlobalAddressSearch({
           consent_land?: boolean | null; consent_district?: boolean | null;
           consent_operator?: boolean | null }>;
         note?: string; error?: string; registry_guidance?: { message?: string };
-        verification_report?: { counts?: { verified?: number; corrected?: number; needs_review?: number; excluded?: number } | null } | null;
+        verification_report?: { counts?: { verified?: number; corrected?: number; needs_review?: number; excluded?: number } | null;
+          warnings?: string[] | null } | null;
+        warnings?: string[] | null;
       }>("/zoning/parse-parcels", { body: fd, useMock: false, timeoutMs: 120000 });
-      if (res.error) { setUploadInfo({ note: res.error }); return; }
+      // ★error 여도 warnings 를 함께 보여준다 — 백엔드의 조기 실패 반환은 '필수 컬럼을 찾지
+      //   못했습니다' 같은 표면 사유만 담고, 진짜 원인(시트·병합을 못 읽음)은 warnings 에 있다.
+      if (res.error) { setUploadInfo({ note: res.error, warnings: (res.verification_report?.warnings ?? res.warnings ?? undefined) || undefined }); return; }
       // parse-parcels가 이미 채운 면적·용도지역·지목·공시지가를 보존(이전엔 areaSqm만 받고 폐기).
       // ★H3: injectable=False는 백엔드에서 표에서 완전히 제외된 행(합계/집계)에만 쓴다 —
       //   verified/corrected/needs_review는 모두 반영해 반영 후 2차 조회(/zoning/parcels-info)의
@@ -1120,12 +1124,17 @@ export function GlobalAddressSearch({
       onChange?.(merged);
       // 중복(같은 필지 다중행)을 정리했으면 안내에 표기 — 사용자가 '왜 줄었지' 혼란 방지.
       const dupNote = dupRemoved > 0 ? ` · 동일 필지 ${dupRemoved}행 통합(공유지분 등은 토지조서에서 관리)` : "";
-      // ★검증 리포트 간이 요약(카운트만 — 상세 사유·보정내역은 토지조서 화면의 전체 패널에서 확인).
+      // ★검증 리포트 간이 요약(카운트).
+      //   ★예전 주석은 "상세 사유는 토지조서 화면에서 확인"이라 안내했는데 그 화면에는
+      //   verification_report 소비가 아예 없다 — 존재하지 않는 회수 경로를 약속하는 오도였다
+      //   (같은 잘못을 SatongMapShell 이 이미 겪고 고쳤다). 그래서 경고를 여기서 직접 보여준다.
       const vc = res.verification_report?.counts;
       const verify = vc
         ? `검증: 확인 ${vc.verified ?? 0} · 보정 ${vc.corrected ?? 0} · 확인필요 ${vc.needs_review ?? 0} · 제외 ${vc.excluded ?? 0}`
         : undefined;
-      setUploadInfo({ note: (res.note || `${uniqEntries.length}필지 등록`) + dupNote, registry: res.registry_guidance?.message, verify });
+      // 병합셀 복원 실패처럼 '조용히 지번이 빠지는' 사유는 이 경고에만 실려 온다 — 버리면 침묵이다.
+      const warnings = (res.verification_report?.warnings ?? res.warnings ?? undefined) || undefined;
+      setUploadInfo({ note: (res.note || `${uniqEntries.length}필지 등록`) + dupNote, registry: res.registry_guidance?.message, verify, warnings });
       // 건폐율/용적률·집합건물(빌라) 여부 보강 — parse-parcels엔 없는 항목을 일괄 채운다.
       // ★재업로드 시 자기치유 재시도 카운터 초기화 — 직전 업로드에서 2회 소진한 필지도 다시 보강 시도(무한 아님).
       enrichTries.current.clear();
@@ -1468,6 +1477,15 @@ export function GlobalAddressSearch({
                     <p className="flex items-start gap-1"><MapPin className="mt-0.5 size-3 shrink-0" aria-hidden /><span>{uploadInfo.note}</span></p>
                     {uploadInfo.verify && <p className="mt-1 text-[11px] font-semibold text-[var(--text-secondary)]">{uploadInfo.verify}</p>}
                     {uploadInfo.registry && <p className="mt-1 flex items-start gap-1 font-semibold text-amber-500"><Landmark className="mt-0.5 size-3 shrink-0" aria-hidden /><span>{uploadInfo.registry}</span></p>}
+                    {/* ★업로드 경고(병합셀 복원 실패 등) — 절단하지 않고 유계 스크롤로 전량 노출한다
+                        (SatongMapShell 의 warnings 목록과 같은 관용구: 밀림은 유계, 전체 도달성 보존). */}
+                    {(uploadInfo.warnings?.length ?? 0) > 0 && (
+                      <ul className="mt-1 max-h-[120px] space-y-1 overflow-y-auto">
+                        {(uploadInfo.warnings ?? []).map((w, i) => (
+                          <li key={i} className="text-[11px] font-semibold text-[var(--status-error)]">{w}</li>
+                        ))}
+                      </ul>
+                    )}
                   </div>
                 )}
                 <KakaoAddressSearch open={kakaoOpen} onOpenChange={setKakaoOpen} onSelect={handleAddressSelect} disabled={disabled} />
