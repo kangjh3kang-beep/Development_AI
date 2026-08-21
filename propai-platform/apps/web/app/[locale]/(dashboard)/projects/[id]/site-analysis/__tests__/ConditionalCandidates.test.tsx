@@ -389,3 +389,65 @@ describe("고시 원문에서 읽은 수치", () => {
     expect(screen.getAllByTestId("gosi-limits-note").length).toBe(1);
   });
 });
+
+/**
+ * ★★계획 한도 미확보(#705) — 세 계층 중 **가장 비싼 경고**인데 화면 소비처가 **0**이었다.
+ *
+ * 백엔드 주석이 직접 적어 두었다: *"수치에만 경고를 붙이면 정작 더 비싼 오답
+ * (불허 용도 추천)이 그대로 나간다."* 그래서 `governs`(건폐율·용적률·**건축물 용도제한**·높이)를
+ * 함께 보이고, 용도 제안까지 미검증이라고 말해야 한다.
+ *
+ * ★게다가 생산자(`special_districts`)가 주소 문자열 휴리스틱이라 **발화 자체가 불가능**했다
+ *   (#742 에서 VWorld 실측 designation 배선으로 수정). 그래서 이 렌더는 이제야 의미가 있다.
+ */
+describe("계획 한도 미확보 고지", () => {
+  const PLU = {
+    districts: ["지구단위계획구역"],
+    applied: false,
+    reason: "이 필지는 계획이 건폐율·용적률**과 건축물 용도**를 직접 정하는 구역에 속하지만, 그 계획이 정한 내용을 확보하지 못했습니다.",
+    governs: ["건폐율", "용적률", "건축물 용도제한", "높이"],
+    requires: ["결정고시(지구단위계획 등) 본문·조서에서 상한용적률·건폐율 확인"],
+  };
+
+  it("★구역명과 '우선한다'는 사실을 말한다", () => {
+    renderWith({ ...BASE_EFF, plan_limit_unknown: PLU });
+    const box = screen.getByTestId("plan-limit-unknown");
+    expect(box.textContent).toContain("지구단위계획구역");
+    expect(box.textContent).toContain("이 계획이 아래 값보다 우선합니다");
+  });
+
+  it("★★용도까지 미검증이라고 말한다 — 이 고지의 존재 이유", () => {
+    renderWith({ ...BASE_EFF, plan_limit_unknown: PLU });
+    const box = screen.getByTestId("plan-limit-unknown");
+    // 수치만이 아니라 **용도**가 핵심이다.
+    expect(box.textContent).toContain("건축물 용도제한");
+    expect(box.textContent).toContain("용도 제안은 이 계획을 반영하지 못했습니다");
+    expect(box.textContent).toContain("허용용도로도 단정하지 마십시오");
+  });
+
+  it("★마크다운 별표가 날것으로 노출되지 않는다", () => {
+    renderWith({ ...BASE_EFF, plan_limit_unknown: PLU });
+    expect(PLU.reason).toContain("**");
+    expect(screen.getByTestId("plan-limit-unknown").textContent).not.toContain("**");
+  });
+
+  it("★적용값이 아니다 — 실효값 표시는 그대로 남는다", () => {
+    renderWith({ ...BASE_EFF, plan_limit_unknown: PLU });
+    expect(screen.getByTestId("plan-limit-unknown")).toBeTruthy();
+    // 경고가 붙어도 아래 수치는 계속 보인다(숨기면 사용자가 아무 값도 못 본다).
+    expect(screen.getByText(/최종 실효 용적률/)).toBeTruthy();
+  });
+
+  it("★대조군(음성) — 계약이 없거나 구역이 비면 뜨지 않는다", () => {
+    renderWith(BASE_EFF);
+    // 공허 진리 가드 — 카드 자체는 렌더됐는가.
+    expect(screen.getByText(/최종 실효 용적률/)).toBeTruthy();
+    expect(screen.queryByTestId("plan-limit-unknown")).toBeNull();
+    // districts 가 빈 배열이면 발화하지 않는다(백엔드가 그런 모양을 낼 수 있다).
+    renderWith({ ...BASE_EFF, plan_limit_unknown: { ...PLU, districts: [] } });
+    expect(screen.queryByTestId("plan-limit-unknown")).toBeNull();
+    // ★양성 짝 — 같은 실행에서 구역이 있으면 실제로 뜬다.
+    renderWith({ ...BASE_EFF, plan_limit_unknown: PLU });
+    expect(screen.getAllByTestId("plan-limit-unknown").length).toBe(1);
+  });
+});
