@@ -209,6 +209,25 @@ async def gosi_search(
     return await GosiSearchService().search_content(q, max_results=max(1, min(max_results, 5)))
 
 
+# ── 고시 결손 탐지(우리 데이터가 모르는 최근 지구단위계획 결정고시) ──
+@router.get("/gosi/coverage", summary="최근 지구단위계획 결정고시 중 우리 데이터에 없는 것")
+async def gosi_coverage(
+    sigungu_code: str,
+    bbox: str,
+    current_user: CurrentUser = Depends(RequirePermission("regulation", "read")),
+) -> dict:
+    """토지이음 고시목록 × VWorld 실재 대조 → **결손을 지목**한다.
+
+    ★화면이 "지구단위계획 없음"을 사실처럼 보여 주던 자리를 메운다(실제 사고: 오산 내삼미동
+      제2025-274호 미반영으로 자연녹지 80%를 지배 한도인 양 답함).
+    ★조회가 무겁다(실측 2~16초) — 분석 인라인이 아니라 **화면이 지연 호출**하고,
+      시군구 단위로 캐시한다(신선도는 하루 단위로 바뀌지 않는다).
+    ★결손이 없거나 목록을 전건 확보하지 못하면 `notice: null` — 아무것도 단정하지 않는다.
+    """
+    from app.services.legal.gosi_coverage_service import gosi_coverage_for_region
+    return await gosi_coverage_for_region(sigungu_code, bbox)
+
+
 # ── LLM 관련법령 탐색 + 정본 교차검증 ──
 class LegalDiscoverRequest(BaseModel):
     """부지/개발 맥락(용도지역·지목·개발방식·시설유형·특이사항·시군구 등)."""
