@@ -47,6 +47,20 @@ _RENT_TYPES = [
     ("officetel", "오피스텔"),
 ]
 
+# ── 적응형 반경(opt-in) ──────────────────────────────────────────────────────
+# 왜 필요한가(쉬운 설명): 반경 1km 는 **도시 밀집지 기준**이다. 지방·농촌 필지에서는 그 안에
+# 거래가 거의 없어 지도가 텅 빈다. 라이브 실측(2026-08-21 제천 모산동 123-1):
+#   반경 1km → 렌더 가능 마커 **2**개 · 3km → 40 · 10km → **118**
+#   (좌표미확보 56 은 국토부 지번 마스킹이라 **모든 반경에서 동일** — 반경과 무관한 원천한계)
+# 즉 사용자가 본 "실거래가 안 나온다"의 지배 원인은 원천 데이터가 아니라 **우리 기본값**이었다.
+#
+# ★확대 비용은 0 이다 — 이 서비스는 `지오코딩 → 반경필터 → 캡` 순서라, 반경 밖 그룹도
+#   **이미 좌표를 다 구해 놓고** 버린다. 사다리를 걷는 것은 손에 쥔 데이터에 대한 재판정뿐이다.
+# ★opt-in 이다 — 지도만 켠다. 탁상감정·AVM·시세 경로의 표본 반경을 조용히 바꾸면
+#   "반경 N 안에서 위치가 확인된" 이라는 기존 문구가 거짓이 된다.
+_RADIUS_LADDER_M = (1000, 3000, 5000, 10000)
+_AUTO_EXPAND_MIN_MARKERS = 10  # 이 수를 넘기는 **가장 좁은** 반경을 고른다(과확대 방지)
+
 _MAX_GROUPS_PER_CAT = 28  # 카테고리별 마커 상한(건물 수) — 지오코딩 부하·페이로드 축소(40→28)
 # 지오코딩 '사전 컷' 상한 — 반경 필터가 캡(28)보다 먼저 돌게 되면서(순서: 지오코딩→필터→캡)
 # 지오코딩 대상이 시군구 전체로 커지는 것을 막는 콜드로드 안전판. 최종 캡(28)보다 충분히 넓게.
@@ -445,6 +459,7 @@ class NearbyMapService:
         center_hint: dict[str, float] | None = None,
         target_land_use: str = "",
         target_jimok: str = "",
+        auto_expand_radius: bool = False,
     ) -> dict[str, Any]:
         # center_hint: 라우터가 PNU/좌표 확보 과정(주소 지오코딩·point→parcel)에서 이미 얻은
         #   중심좌표. 여기서 다시 주소 지오코딩이 실패해도 이 힌트로 center를 채워, 지도가
@@ -461,7 +476,9 @@ class NearbyMapService:
         has_hint = bool(hint_lat and hint_lon)
 
         # 0) 결과 캐시 조회 — 동일 조건 재조회는 즉시 반환(수 초 → 수 ms)
-        cache_key = ((address or "").strip(), f"{lawd_cd}", months, radius_m)
+        cache_key = ((address or "").strip(), f"{lawd_cd}", months, radius_m, auto_expand_radius)
+        # ★auto_expand_radius 를 키에 넣는다 — 같은 주소·반경이라도 확대 여부에 따라
+        #   결과가 다르다. 빼면 지도가 다른 소비처의 좁은 결과를 그대로 받는다.
         hit = _BUILD_CACHE.get(cache_key)
         if hit and (time.monotonic() - hit[0]) < _BUILD_CACHE_TTL:
             cached = hit[1]
@@ -703,6 +720,35 @@ class NearbyMapService:
         # 실제 필터링은 하지 않는다 — 그 사실을 radius_applied=False 로 정직 표기한다.
         radius_applied = bool(center_lat and center_lon and radius_m)
 
+        # 4-b) ★적응형 반경 — **이미 확보된 좌표만으로** 사다리를 걸어 유효 반경을 정한다.
+        #      추가 지오코딩·추가 외부호출 0(아래 루프가 쓸 `coords` 를 그대로 읽는다).
+        #      고르는 규칙: 임계(_AUTO_EXPAND_MIN_MARKERS)를 넘기는 **가장 좁은** 반경.
+        #      어느 반경도 임계를 못 넘기면 **가장 넓은 후보**를 쓴다(빈 지도보다 낫다) —
+        #      다만 확대 사실·유효 반경을 응답에 실어 화면이 **반드시 고지**하게 한다.
+        radius_requested_m = radius_m
+        radius_expanded = False
+        if auto_expand_radius and radius_applied:
+            _dists_m: list[float] = []
+            for _cat in categories.values():
+                for _grp in _cat["groups"]:
+                    _c = coords.get(_grp.get("_query"))
+                    if not _c:
+                        continue  # 좌표미확보 = 원천한계. 반경을 넓혀도 살아나지 않는다.
+                    _dists_m.append(
+                        PostGISHelper.st_distance(center_lat, center_lon, _c["lat"], _c["lon"]) * 1000.0
+                    )
+            _candidates = [radius_m] + [r for r in _RADIUS_LADDER_M if r > radius_m]
+            _chosen = None
+            for _cand in _candidates:
+                if sum(1 for d in _dists_m if d <= _cand) >= _AUTO_EXPAND_MIN_MARKERS:
+                    _chosen = _cand
+                    break
+            if _chosen is None and _dists_m:
+                _chosen = _candidates[-1]
+            if _chosen is not None and _chosen != radius_m:
+                radius_m = _chosen
+                radius_expanded = True
+
         # 5) 좌표 주입 + 반경 필터(★실구현 — 종전엔 radius_m 을 필터에 전혀 쓰지 않고
         #    result["radius_m"]에 요청값을 에코만 해 라벨이 거짓이었다) + 좌표 미확보 그룹 보존
         #    (반경 밖으로 단정하지 않는다 — 무날조) + 상한(_MAX_GROUPS_PER_CAT)은 반경 필터
@@ -935,7 +981,11 @@ class NearbyMapService:
 
         result: dict[str, Any] = {
             "center": center or {"lat": None, "lon": None, "address": address},
+            # ★확대가 일어났으면 여기 값은 **실제로 필터에 쓴** 반경이다(요청값 에코 아님).
+            #   화면의 원·라벨이 실제 필터와 어긋나지 않게 하려면 이 값이어야 한다.
             "radius_m": radius_m,
+            "radius_requested_m": radius_requested_m,
+            "radius_expanded": radius_expanded,
             # ★프론트 라벨 연동용 additive 필드 — 반경 필터가 실제로 적용됐는지와 그 전/후 카운트.
             "radius_applied": radius_applied,
             "groups_evaluated_count": groups_evaluated,
