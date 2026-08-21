@@ -208,3 +208,32 @@ describe("적응형 반경 — 조용히 넓히지 않는다(2026-08-21)", () =>
     }
   });
 });
+
+describe("위치 미확인 실거래 — 목록 배선(2026-08-21)", () => {
+  const scan = (file: string) =>
+    __stripCommentsForScan(readFileSync(resolve(process.cwd(), file), "utf-8"), file);
+
+  it("범례 팝오버가 수집 함수를 **실제로 소비**한다(순수함수만 있으면 소비처 0이다)", () => {
+    const src = scan("components/map/SatongMultiMap.tsx");
+    expect(src).toContain("collectUnlocatedMarketGroups(marketPayload)");
+    // 모으기만 하고 안 그리면 화면은 그대로다 — 렌더까지 확인한다.
+    const i = src.indexOf("unlocatedMarketGroups.length > 0");
+    expect(i, "수집만 하고 렌더 분기가 없다").toBeGreaterThan(-1);
+    expect(src.slice(i, i + 1400)).toContain("위치 미확인");
+  });
+
+  it("★사유를 말한다 — 왜 지도에 없는지 설명 없이 목록만 두지 않는다", () => {
+    const src = scan("components/map/SatongMultiMap.tsx");
+    const i = src.indexOf("unlocatedMarketGroups.length > 0");
+    expect(src.slice(i, i + 1400)).toContain("지번을 가려");
+  });
+
+  it("★절단을 조용히 하지 않는다 — 목록 상한 초과분을 건수로 고지한다", () => {
+    const src = scan("components/map/SatongMultiMap.tsx");
+    const i = src.indexOf("unlocatedMarketGroups.length > 0");
+    const block = src.slice(i, i + 1800);
+    expect(block).toContain("UNLOCATED_LIST_LIMIT");
+    expect(block).toContain("생략");
+  });
+});
+

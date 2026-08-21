@@ -237,6 +237,16 @@ export type SatongMarketGroup = {
   build_year?: number;
   jimok?: string;
   land_use?: string;
+  /**
+   * ★백엔드가 **보내고 있었는데 타입에 없어서** 프론트가 쓸 수 없던 필드.
+   *
+   * `located`(정밀 좌표) · `approximate`(동 대표점) · `unlocated`(좌표 미확보).
+   * 백엔드 주석이 명시하듯 소비처가 `lat is null` 로 **추론**하게 두면 전부 오염된다 —
+   * 계약으로 받는다. 특히 `unlocated` 는 국토부 지번 마스킹분이라 지도에 못 찍지만
+   * **거래 내용은 살아 있다**(목록으로 낸다).
+   * ★같은 형태의 결함이 이미 있었다(2026-08-13 `sample_basis` 선언 누락 TS2345).
+   */
+  location_status?: "located" | "approximate" | "unlocated";
   deals?: SatongMarketDeal[];
 };
 
@@ -574,6 +584,45 @@ export function buildMaskedSampleReason(payload: SatongMarketPayload): string {
 }
 
 /** 채움 색상으로 같은 필지를 칠하는 레이어들 — **그리는 순서**대로 나열한다(뒤가 앞을 덮는다). */
+export type UnlocatedMarketRow = {
+  key: string; label: string; count: number; avg: number | null; type: string;
+};
+
+/**
+ * ★지도에 **못 찍는** 실거래를 목록용으로 모은다 — 응답에 있는데 화면에 없던 것.
+ *
+ * 국토부가 단독·토지·상업 지번을 `2**` 로 가려 보내면 좌표를 찍을 수 없다(원천 한계).
+ * 백엔드는 그것을 **버리지 않고** `location_status:"unlocated"` 로 보존해 왔는데
+ * (`반경 밖으로 단정하지 않는다 — 무날조`), 지도는 **건수만** 표시하고 내용을 버렸다.
+ * 실측(제천 모산동 123-1·10km): 56그룹 **476건** — 그중 토지매매만 **362건**이다.
+ * 토지 개발자에게 가장 중요한 데이터가 100% 보이지 않았다(또 하나의 "소비처 0").
+ *
+ * ★좌표를 **지어내지 않는다.** 동 대표점으로 찍으면 같은 동 필지가 한 점에 몰려
+ *   "위치가 확인된 거래"로 오독된다 — 그래서 지도가 아니라 **목록**으로 낸다.
+ * ★`approximate`(동 대표점)는 **포함하지 않는다** — 그건 이미 지도에 찍혀 있다.
+ */
+export function collectUnlocatedMarketGroups(
+  payload: SatongMarketPayload | null | undefined,
+): UnlocatedMarketRow[] {
+  const out: UnlocatedMarketRow[] = [];
+  for (const [type, cat] of Object.entries(payload?.categories ?? {})) {
+    for (const g of cat?.groups ?? []) {
+      if (g?.location_status !== "unlocated") continue;
+      out.push({
+        key: `${type}:${g.name ?? ""}:${g.jibun ?? ""}`,
+        label: [g.dong, g.jibun].filter(Boolean).join(" ") || g.name || "(주소 미상)",
+        count: g.count ?? 0,
+        avg: typeof g.avg_price_10k === "number" ? g.avg_price_10k : null,
+        type,
+      });
+    }
+  }
+  return out.sort((a, b) => b.count - a.count);
+}
+
+/** 위치 미확인 목록 표시 상한 — 초과분은 **건수를 명시**하고 생략한다(무음 절단 금지). */
+const UNLOCATED_LIST_LIMIT = 12;
+
 const CHOROPLETH_PAINT_ORDER = ["용도지역", "공시지가", "개발여력", "노후도"] as const;
 
 /**
@@ -2444,6 +2493,20 @@ export function SatongMultiMap({
   //   그린다(POI 이펙트와 동형 — SatongMultiMap:2185-2226 패턴 이식). 종전엔 marketLayer.type
   //   단일값만 받아 `${type}_${kind}` 카테고리 1개만 소비하고 나머지 9종을 버렸다.
   const marketTypes = marketLayer?.types ?? EMPTY_MARKET_TYPES;
+
+  /**
+   * ★지도에 **못 찍는** 실거래를 목록으로 되살린다 — 응답에 있는데 화면에 없던 것.
+   *
+   * 국토부가 단독·토지·상업 지번을 `2**` 로 가려 보내면 좌표를 찍을 수 없다(원천 한계).
+   * 백엔드는 그것을 **버리지 않고** `location_status:"unlocated"` 로 보존해 왔는데
+   * (`반경 밖으로 단정하지 않는다 — 무날조`), 지도는 **건수만** 표시하고 내용을 버렸다.
+   * 실측(제천 모산동 123-1·10km): 56그룹 **476건** — 그중 토지매매만 **362건**이다.
+   * 토지 개발자에게 가장 중요한 데이터가 100% 보이지 않았다(또 하나의 "소비처 0").
+   *
+   * ★좌표를 **지어내지 않는다.** 동 대표점으로 찍으면 같은 동 필지가 한 점에 몰려
+   *   "위치가 확인된 거래"로 오독된다 — 그래서 지도가 아니라 **목록**으로 낸다.
+   */
+  const unlocatedMarketGroups = useMemo(() => collectUnlocatedMarketGroups(marketPayload), [marketPayload]);
   const showPresale = !!marketLayer?.showPresale;
   const presaleItems = marketLayer?.presaleItems ?? null;
   const showAuction = !!marketLayer?.showAuction;
@@ -3383,6 +3446,34 @@ export function SatongMultiMap({
                       </div>
                     ))}
                   </div>
+                  {/* ★지도에 못 찍는 실거래 — 버리지 않고 목록으로 낸다(좌표는 지어내지 않는다). */}
+                  {unlocatedMarketGroups.length > 0 && (
+                    <div className="mt-2 border-t border-[var(--line)] pt-2">
+                      <p className="text-[10.5px] font-black text-[var(--text-primary)]">
+                        위치 미확인 {unlocatedMarketGroups.reduce((n, g) => n + g.count, 0)}건
+                      </p>
+                      <p className="mt-0.5 text-[10px] font-semibold leading-snug text-[var(--text-tertiary)]">
+                        국토부가 지번을 가려(예: 2**) 제공해 지도에 찍을 수 없습니다 — 거래 내용은 아래에 있습니다.
+                      </p>
+                      <ul className="mt-1 flex max-h-40 flex-col gap-0.5 overflow-y-auto text-[10px]">
+                        {unlocatedMarketGroups.slice(0, UNLOCATED_LIST_LIMIT).map((g) => (
+                          <li key={g.key} className="flex items-center gap-1.5 text-[var(--text-secondary)]">
+                            <span className="truncate font-semibold text-[var(--text-primary)]">{g.label}</span>
+                            <span className="ml-auto shrink-0">{g.count}건</span>
+                            {g.avg != null && (
+                              <span className="shrink-0 tabular-nums">{Math.round(g.avg).toLocaleString()}만</span>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                      {/* ★절단을 조용히 하지 않는다 — 목록 상한에 걸린 그룹 수를 명시한다. */}
+                      {unlocatedMarketGroups.length > UNLOCATED_LIST_LIMIT && (
+                        <p className="mt-1 text-[10px] font-semibold text-[var(--text-tertiary)]">
+                          외 {unlocatedMarketGroups.length - UNLOCATED_LIST_LIMIT}개 그룹 생략(목록 상한)
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
               ) : (
                 <button
