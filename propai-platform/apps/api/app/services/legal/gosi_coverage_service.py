@@ -482,9 +482,13 @@ async def fetch_gosi_limits(seq: str, *, client: httpx.AsyncClient | None = None
                 headers={"Content-Type": "application/x-www-form-urlencoded",
                          "Referer": str(det.url)},
             )
+            # ※변이 생존(설명 가능): 이 검사를 지워도 아래 `_pdf_text` 가 HTML 을 열지 못해
+            #   None 을 내고 같은 `continue` 로 닫힌다(**이중 가드**). 실패 사유를 여기서
+            #   조기에 가르는 편이 읽기 쉬워 남긴다.
             if resp.content[:4] != _PDF_MAGIC:
                 continue
             text = _pdf_text(resp.content, seq=seq)
+            # ※변이 생존(설명 가능): 위 PDF 매직 검사와 **이중 가드**다(둘 다 같은 continue).
             if text is None:
                 continue
             if best is None or len(text) > best[0]:

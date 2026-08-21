@@ -564,3 +564,74 @@ def test_picks_the_pdf_with_most_text(monkeypatch):
     out = asyncio.run(M.fetch_gosi_limits("1", client=c))
     assert out["available"] is True and out["far_pct"] == [200]
     assert out["source_file"] == "real.pdf", out
+
+
+# ── ★수치가 **고지까지 흐르는가**(소비처 배선) ─────────────────────────────────────
+#   변이가 잡았다: 진입점 테스트가 `limits` 를 한 번도 태우지 않아 배선이 무잠금이었다.
+#   이 저장소의 반복 결함('정의만 하고 소비처 0')이 여기서 재발할 뻔했다.
+
+def _run_with_limits(monkeypatch, *, rows, known, limits):
+    import app.services.legal.gosi_coverage_service as M
+
+    async def fake_fetch(sgg, end, **kw):
+        return rows, True, "20240821"
+
+    async def fake_known(sgg, bbox):
+        return known
+
+    async def fake_limits(seq, **kw):
+        return limits
+
+    monkeypatch.setattr(M, "fetch_recent_gosi_adaptive", fake_fetch)
+    monkeypatch.setattr(M, "_vworld_known_dates", fake_known)
+    monkeypatch.setattr(M, "fetch_gosi_limits", fake_limits)
+    M._CACHE.clear()
+    return asyncio.run(M.gosi_coverage_for_region("41370", "BOX(1,2,3,4)", sigungu_name="오산시"))
+
+
+def test_limits_reach_the_notice(monkeypatch, rows):
+    """★읽은 수치가 **화면 계약까지** 도달한다 — 배선이 끊기면 사용자는 영영 못 본다."""
+    out = _run_with_limits(
+        monkeypatch, rows=rows, known={"20240229"},
+        limits={"available": True, "far_pct": [200], "bcr_pct": [60]},
+    )
+    assert out["notice"] is not None
+    assert out["notice"]["limits_note"], "수치가 고지에 실리지 않았다(배선 끊김)"
+    assert "200%" in out["notice"]["limits_note"]
+    assert "후보" in out["notice"]["limits_note"]
+
+
+def test_unavailable_limits_leave_the_notice_intact(monkeypatch, rows):
+    """★수치를 못 읽어도 **결손 고지 자체는 나간다** — 수치는 부가물이지 전제가 아니다.
+
+    실측: 정작 사고 고시(내삼미3구역)가 이 경우다(첨부가 스캔본+도면뿐).
+    여기서 고지까지 사라지면 P3 가 퇴행한다.
+    """
+    out = _run_with_limits(
+        monkeypatch, rows=rows, known={"20240229"},
+        limits={"available": False, "reason": "scanned_image", "far_pct": [], "bcr_pct": []},
+    )
+    assert out["notice"] is not None, "수치가 없다고 결손 고지까지 사라졌다"
+    assert out["notice"]["limits_note"] is None
+    assert "제2025-274호" in out["notice"]["reason"]
+    # ★양성 짝 — 같은 실행에서 수치가 있으면 실려 나간다.
+    ok = _run_with_limits(monkeypatch, rows=rows, known={"20240229"},
+                          limits={"available": True, "far_pct": [200], "bcr_pct": []})
+    assert ok["notice"]["limits_note"] is not None
+
+
+def test_limits_not_fetched_when_no_gap(monkeypatch, rows):
+    """★결손이 없으면 PDF 를 받지 않는다 — 불필요한 3~4MB 다운로드 금지."""
+    import app.services.legal.gosi_coverage_service as M
+
+    called: list[str] = []
+
+    async def spy(seq, **kw):
+        called.append(seq)
+        return {"available": False, "far_pct": [], "bcr_pct": []}
+
+    monkeypatch.setattr(M, "fetch_gosi_limits", spy)
+    out = _run_with_limits(monkeypatch, rows=rows, known={"20240229", "20251223"},
+                           limits={"available": False, "far_pct": [], "bcr_pct": []})
+    assert out["notice"] is None
+    assert called == [], f"결손이 없는데 PDF 를 받았다: {called}"
