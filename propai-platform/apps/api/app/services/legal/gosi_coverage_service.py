@@ -436,6 +436,26 @@ def parse_far_bcr_candidates(text: str) -> dict[str, list[int]]:
     }
 
 
+def _pdf_text(content: bytes, *, seq: str = "") -> str | None:
+    """PDF 바이트 → 텍스트. 실패하면 None(**침묵하지 않고 경고를 남긴다**).
+
+    ★모듈 수준으로 뺀 이유: 테스트가 **외부 경계만** 대역할 수 있게 하기 위해서다.
+      함수 안에 `import fitz` 가 박혀 있으면 오케스트레이션 층(다운로드·선택·판정)이
+      통째로 무잠금이 된다 — 이 세션에서 같은 실수를 이미 두 번 했다.
+    ★`PyMuPDF` 는 `requirements.oracle.txt` 에 **명시적으로** 선언돼 있어야 한다
+      (실측: 프로덕션에 있으나 `Required-by` 가 비어 재빌드 시 사라질 수 있었다).
+    """
+    try:
+        import fitz  # PyMuPDF
+        doc = fitz.open(stream=content, filetype="pdf")
+        text = "\n".join(page.get_text() for page in doc)
+        doc.close()
+        return text
+    except Exception as e:  # noqa: BLE001 — PDF 파손·라이브러리 부재
+        logger.warning("고시 PDF 텍스트 추출 실패: seq=%s (%s)", seq, e)
+        return None
+
+
 async def fetch_gosi_limits(seq: str, *, client: httpx.AsyncClient | None = None) -> dict[str, Any]:
     """고시 상세(`seq`) → 첨부 PDF → 용적률·건폐율 **후보**. 실패·스캔이면 정직하게 빈 결과.
 
@@ -464,13 +484,8 @@ async def fetch_gosi_limits(seq: str, *, client: httpx.AsyncClient | None = None
             )
             if resp.content[:4] != _PDF_MAGIC:
                 continue
-            try:
-                import fitz  # PyMuPDF — 프로덕션 이미지에 설치되어 있음(실측 1.24.10)
-                doc = fitz.open(stream=resp.content, filetype="pdf")
-                text = "\n".join(p.get_text() for p in doc)
-                doc.close()
-            except Exception as e:  # noqa: BLE001 — PDF 파손·라이브러리 부재는 침묵하지 않는다
-                logger.warning("고시 PDF 텍스트 추출 실패: seq=%s (%s)", seq, e)
+            text = _pdf_text(resp.content, seq=seq)
+            if text is None:
                 continue
             if best is None or len(text) > best[0]:
                 best = (len(text), text, path.rsplit("/", 1)[-1])

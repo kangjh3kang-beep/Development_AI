@@ -455,3 +455,112 @@ def test_list_parser_captures_seq_for_detail_lookup():
     rows = parse_gosi_rows(_REAL_HTML)
     assert all(r["seq"] for r in rows), [r["seq"] for r in rows]
     assert rows[0]["seq"] == "1"
+
+
+# ── ★`fetch_gosi_limits` 오케스트레이션 — HTTP·PDF(외부 경계)만 대역하고 본체를 태운다 ──
+#   변이감사가 잡았다: 순수 함수만 테스트해서 **다운로드·선택·판정이 통째로 무잠금**이었다.
+#   이 세션에서 **세 번째** 같은 실수다.
+
+_DET_HTML = """<html><body>
+ <a href="javascript:download('/web/FileDownload.do', '/2025/12/23/620000/625885/고시문(원동7구역).pdf')">고시문</a>
+ <a href="javascript:download('/web/FileDownload.do', '/2025/12/23/620000/625885/지형도면.jpg')">도면</a>
+</body></html>"""
+
+
+def _limits_client(pdf_bodies: dict[str, bytes], *, det: str = _DET_HTML):
+    """상세는 HTML, 다운로드는 지정한 바이트를 돌려주는 가짜 전송층."""
+    posts: list[dict[str, str]] = []
+
+    def handler(request: _httpx.Request) -> _httpx.Response:
+        if "gvGosiDet" in str(request.url):
+            return _httpx.Response(200, content=det.encode("euc-kr", "replace"))
+        raw = request.content.decode("euc-kr", "replace")
+        posts.append({"raw": raw})
+        for name, body in pdf_bodies.items():
+            if name in raw:
+                return _httpx.Response(200, content=body)
+        return _httpx.Response(200, content="<script>alert('첨부파일이 없습니다.');</script>".encode("euc-kr"))
+
+    c = _httpx.AsyncClient(transport=_httpx.MockTransport(handler))
+    c._posts = posts  # type: ignore[attr-defined]
+    return c
+
+
+def test_download_body_is_euckr_encoded(monkeypatch):
+    """★★EUC-KR 폼 인코딩 — **이 기능의 열쇠다**.
+
+    UTF-8 로 보내면 세션·쿠키·Referer 가 다 맞아도 `alert('첨부파일이 없습니다.')` 만 온다.
+    실측으로 이것 하나 때문에 막혀 있었다. 지워도 조용히 '수치 없음'이 되므로 반드시 잠근다.
+    """
+    import app.services.legal.gosi_coverage_service as M
+
+    # ★본문 길이가 `_MIN_TEXT_CHARS` 를 넘어야 '스캔본'으로 분류되지 않는다
+    #   (짧은 스텁을 썼다가 이 가드에 걸렸다 — 가드가 제대로 작동한다는 방증).
+    monkeypatch.setattr(M, "_pdf_text",
+                        lambda content, seq="": "용적률 ∘200% 이하\n" + "본문 " * 300)
+    # '고시문' 의 EUC-KR 퍼센트 인코딩 — UTF-8 이었다면 이 키가 안 맞는다.
+    c = _limits_client({"%B0%ED%BD%C3%B9%AE": b"%PDF-fake"})
+    out = asyncio.run(M.fetch_gosi_limits("625885", client=c))
+    assert out["available"] is True, out
+    assert out["far_pct"] == [200]
+    raw = c._posts[0]["raw"]  # type: ignore[attr-defined]
+    # ★UTF-8 이었다면 '고시문' 이 %EA%B3%A0... 로 나간다.
+    assert "%EA%B3%A0" not in raw, f"UTF-8 로 인코딩됐다: {raw[:80]}"
+    assert "gosi=Y" in raw and "seq=625885" in raw
+
+
+def test_scanned_pdf_reports_scanned_image(monkeypatch):
+    """★스캔본은 **수치를 주장하지 않는다**(실측: 경기도보 스캔 텍스트 13자)."""
+    import app.services.legal.gosi_coverage_service as M
+
+    monkeypatch.setattr(M, "_pdf_text", lambda content, seq="": "  \n 1 \n")
+    out = asyncio.run(M.fetch_gosi_limits("1", client=_limits_client({".pdf": b"%PDF-x"})))
+    assert out["available"] is False and out["reason"] == "scanned_image"
+    assert out["far_pct"] == [] and out["bcr_pct"] == []
+
+
+def test_text_without_numbers_is_distinguished_from_scan(monkeypatch):
+    """★'못 읽었다'와 '수치가 없다'를 **가른다** — 뭉개면 진단이 불가능해진다.
+
+    실측: 사고 고시(내삼미3구역)는 첨부가 지형도면뿐이라 텍스트는 6,345자인데 수치가 없다.
+    """
+    import app.services.legal.gosi_coverage_service as M
+
+    monkeypatch.setattr(M, "_pdf_text", lambda content, seq="": "지형도면 " * 400)
+    out = asyncio.run(M.fetch_gosi_limits("1", client=_limits_client({".pdf": b"%PDF-x"})))
+    assert out["available"] is False and out["reason"] == "no_numbers_in_text"
+    # ★양성 짝 — 같은 경로가 수치 있는 텍스트에서는 available=True 를 낸다.
+    monkeypatch.setattr(M, "_pdf_text", lambda content, seq="": "용적률 200%" + " x" * 400)
+    assert asyncio.run(M.fetch_gosi_limits("1", client=_limits_client({".pdf": b"%PDF-x"})))["available"] is True
+
+
+def test_non_pdf_attachment_is_skipped(monkeypatch):
+    """`.jpg` 첨부는 대상이 아니다 — PDF 만 받는다(불필요한 대용량 다운로드 방지)."""
+    import app.services.legal.gosi_coverage_service as M
+
+    det = """<a href="javascript:download('/web/FileDownload.do', '/x/도면.jpg')">도면</a>"""
+    out = asyncio.run(M.fetch_gosi_limits("1", client=_limits_client({}, det=det)))
+    assert out["available"] is False and out["reason"] == "pdf_attachment_absent"
+
+
+def test_download_failure_is_reported(monkeypatch):
+    """다운로드가 PDF 를 못 주면 **정직하게 실패**로 낸다(빈 수치를 '없음'으로 내지 않는다)."""
+    import app.services.legal.gosi_coverage_service as M
+
+    out = asyncio.run(M.fetch_gosi_limits("1", client=_limits_client({})))  # 항상 alert HTML
+    assert out["available"] is False and out["reason"] == "download_failed"
+
+
+def test_picks_the_pdf_with_most_text(monkeypatch):
+    """★첨부가 여럿이면 **텍스트가 가장 많은 것**을 고른다(스캔본 대신 고시문)."""
+    import app.services.legal.gosi_coverage_service as M
+
+    det = ("""<a href="javascript:download('/web/FileDownload.do', '/x/scan.pdf')">a</a>"""
+           """<a href="javascript:download('/web/FileDownload.do', '/x/real.pdf')">b</a>""")
+    texts = {"scan": "짧다", "real": "용적률 200% 이하 " + "본문 " * 300}
+    monkeypatch.setattr(M, "_pdf_text",
+                        lambda content, seq="": texts["scan" if content == b"%PDF-s" else "real"])
+    c = _limits_client({"scan.pdf": b"%PDF-s", "real.pdf": b"%PDF-r"}, det=det)
+    out = asyncio.run(M.fetch_gosi_limits("1", client=c))
+    assert out["available"] is True and out["far_pct"] == [200]
+    assert out["source_file"] == "real.pdf", out
