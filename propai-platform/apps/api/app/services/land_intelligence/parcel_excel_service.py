@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import posixpath
 import re
 from collections import Counter
 from typing import Any
@@ -189,7 +190,66 @@ def _to_float(v: Any) -> float | None:
         return None
 
 
-def _expand_merged_cells(raw: bytes, df: Any, header_row: int = 0) -> Any:
+def _first_worksheet_part(z: Any) -> str:
+    """워크북이 **첫 번째로 나열한 시트**의 실제 XML 경로를 원문에서 해석한다.
+
+    ★파일 이름(`sheet1.xml`)으로 고르면 안 된다. 엑셀 파일 형식(OOXML)에서 **파일 이름과 시트
+    순서는 아무 관계가 없다** — 순서는 `xl/workbook.xml` 의 `<sheet>` 나열 순서이고, 그 시트가
+    어느 파일인지는 `r:id` 를 `xl/_rels/workbook.xml.rels` 에서 찾아야 알 수 있다.
+    pandas·openpyxl 도 그렇게 첫 시트를 정한다. 여기서 파일 이름으로 **추측하면** 표를 읽은
+    시트와 병합범위를 읽은 시트가 어긋나, 엉뚱한 시트의 병합을 적용해 **원문에 없던 값을 만들어
+    낸다**(실측: 비고 칸에 소유자 이름이 복사됐다). 이 파일이 내건 '추측하지 않는다'는 원칙은
+    이 함수 자신에게도 적용된다.
+
+    해석에 실패하면 **빈 값을 돌려주지 않고 예외를 낸다** — "병합이 없다"고 잘못 답하면 그게
+    바로 침묵이기 때문이다(호출측이 정직한 실패 경고로 처리한다).
+    """
+    # ★아래 raise 의 **문구**는 개발자용이다(변이로 바꿔도 테스트가 안 죽는다 — 사실을 적어 둔다).
+    #   이 예외는 호출측이 받아 로그로만 남기고, 사용자에게는 별도의 정직한 경고 문구가 나간다.
+    #   여기서 잠그는 계약은 문구가 아니라 "빈 목록이 아니라 예외를 낸다"는 것이다.
+    wb_xml = z.read("xl/workbook.xml")
+    m = re.search(rb"<sheet\b[^>]*>", wb_xml)
+    if not m:
+        raise ValueError("workbook.xml 에 시트 목록이 없다")
+    # `sheetId` 와 헷갈리지 않게: 네임스페이스 접두사(r:) 뒤의 id 속성만 집는다.
+    rid_m = re.search(rb'\b\w+:id="([^"]+)"', m.group(0))
+    if not rid_m:
+        raise ValueError("첫 시트에 r:id 가 없다")
+    rid = rid_m.group(1)
+
+    rels = z.read("xl/_rels/workbook.xml.rels")
+    for rel in re.findall(rb"<Relationship\b[^>]*>", rels):
+        if re.search(rb'\bId="' + re.escape(rid) + rb'"', rel) is None:
+            continue
+        tgt_m = re.search(rb'\bTarget="([^"]+)"', rel)
+        if not tgt_m:
+            break
+        target = tgt_m.group(1).decode()
+        # Target 은 xl/ 기준 상대경로("worksheets/sheet2.xml") 또는 절대("/xl/worksheets/...").
+        path = target[1:] if target.startswith("/") else f"xl/{target}"
+        path = posixpath.normpath(path)
+        if path in z.namelist():
+            return path
+        break
+    raise ValueError(f"첫 시트({rid!r})의 실제 파일을 찾지 못했다")
+
+
+def _merged_ranges_from_zip(raw: bytes) -> list[str]:
+    """xlsx(zip) 안 **첫 워크시트** XML에서 병합범위(mergeCell ref)만 직접 읽는다.
+
+    ★openpyxl '전체읽기'가 서식표 같은 다른 부분 때문에 죽어도, 병합범위 자체는 시트 XML에
+    멀쩡히 적혀 있다. 그래서 전체읽기가 실패해도 '어디가 병합인지'는 원문에서 알아낼 수 있다
+    — 이것이 '지번을 추측해 채우는 것'과 결정적으로 다른 점이다(추측이 아니라 원문 복원).
+    ★단, **어느 시트인지도 추측하면 안 된다** — `_first_worksheet_part` 참조.
+    """
+    import zipfile
+
+    with zipfile.ZipFile(io.BytesIO(raw)) as z:
+        xml = z.read(_first_worksheet_part(z))
+    return [m.decode() for m in re.findall(rb'<mergeCell[^>]*\bref="([^"]+)"', xml)]
+
+
+def _expand_merged_cells(raw: bytes, df: Any, header_row: int = 0) -> tuple[Any, str | None]:
     """엑셀 병합 셀의 좌상단 값을 병합범위 전체 셀에 채운다(forward-fill).
 
     토지조서 엑셀은 한 필지(지번)에 소유자가 여럿이면 여러 행을 두고 지번·소재지 칸을
@@ -199,34 +259,115 @@ def _expand_merged_cells(raw: bytes, df: Any, header_row: int = 0) -> Any:
     openpyxl로 병합범위를 읽어 좌상단 값을 같은 범위의 모든 데이터 셀(빈칸)에 채운다.
 
     header_row(0-based)는 머리글 행 위치. 데이터 첫 행은 엑셀 (header_row+2)행 = df index 0.
+
+    반환: (값을 채운 df, 실패사유 문구 또는 None).
+    ★실패를 조용히 삼키지 않는다 — 복원이 실패하면 병합된 지번이 빈칸으로 남아 그 행이
+    소재지(동)만 남거나 목록에서 통째로 사라지는데, 예전에는 로그만 남기고 사용자에게는
+    아무 말도 하지 않았다(화면에는 동 이름만 남고 아무도 그 사실을 몰랐다). 이 파서가 이미
+    지키는 '무음 제외 금지' 규율(집계행을 뺐으면 warnings에 남긴다)을 병합 복원 실패에도
+    똑같이 적용한다 — 호출측이 이 문구를 warnings에 실어 사용자가 지번 누락을 알아챈다.
+    ★없는 지번을 추측해 채우지는 않는다(모르는 값을 지어내는 것이 더 나쁜 결함이다).
     """
+    nrows, ncols = len(df), df.shape[1]
+    base = header_row + 2  # 엑셀(1-based) 데이터 첫 행 → df index 0
+
+    def _fill(min_row: int, min_col: int, max_row: int, max_col: int, top: Any) -> None:
+        """병합범위의 좌상단 값을 그 범위의 빈칸에 채운다(기존 값은 절대 덮지 않는다)."""
+        if top is None or str(top).strip() == "" or str(top).strip().lower() == "nan":
+            # ★좌상단이 빈 병합은 채울 값이 없다. 이 가드를 지우면 빈 칸에 "None"·"nan" 같은
+            #   가짜 글자가 들어가 지번인 척하게 된다(없는 값을 지어내는 것과 같다).
+            return
+        for r in range(min_row, max_row + 1):
+            df_row = r - base
+            if df_row < 0 or df_row >= nrows:
+                # ★헤더/제목까지 걸친 병합·범위초과는 건너뛴다. 이 가드를 지우면 df_row 가 음수가
+                #   되어 파이썬 인덱스가 **뒤에서부터 감겨** 표 맨 끝 행을 엉뚱한 값으로 덮는다.
+                continue
+            for c in range(min_col, max_col + 1):
+                df_col = c - 1  # 엑셀 1열(A)=df 0열
+                if df_col < 0 or df_col >= ncols:
+                    continue  # 열 방향도 같은 이유(음수 인덱스 되감기) — 상·하한을 한 쌍으로 건다
+                cur = df.iat[df_row, df_col]
+                # 빈칸(NaN·""·"nan")만 채우고 기존 값은 보존.
+                if cur is None or str(cur).strip() == "" or str(cur).strip().lower() == "nan":
+                    df.iat[df_row, df_col] = str(top)
+
     try:
         from openpyxl import load_workbook
 
         # read_only=False 여야 merged_cells.ranges가 채워진다. data_only=True=캐시값(수식 대비).
         wb = load_workbook(io.BytesIO(raw), data_only=True, read_only=False)
         ws = wb.worksheets[0]
-        nrows, ncols = len(df), df.shape[1]
-        base = header_row + 2  # 엑셀(1-based) 데이터 첫 행 → df index 0
         for rng in list(ws.merged_cells.ranges):
-            top = ws.cell(row=rng.min_row, column=rng.min_col).value
-            if top is None or str(top).strip() == "":
-                continue
-            for r in range(rng.min_row, rng.max_row + 1):
-                df_row = r - base
-                if df_row < 0 or df_row >= nrows:
-                    continue  # 헤더/제목 병합·범위초과는 무시
-                for c in range(rng.min_col, rng.max_col + 1):
-                    df_col = c - 1  # 엑셀 1열(A)=df 0열
-                    if df_col < 0 or df_col >= ncols:
-                        continue
-                    cur = df.iat[df_row, df_col]
-                    # 빈칸(NaN·""·"nan")만 채우고 기존 값은 보존.
-                    if cur is None or str(cur).strip() == "" or str(cur).strip().lower() == "nan":
-                        df.iat[df_row, df_col] = str(top)
+            _fill(rng.min_row, rng.min_col, rng.max_row, rng.max_col,
+                  ws.cell(row=rng.min_row, column=rng.min_col).value)
     except Exception as e:  # noqa: BLE001
         logger.warning("excel_merged_expand_failed", error=str(e)[:120])
-    return df
+        return _expand_merged_cells_fallback(raw, df, base, nrows, ncols, _fill, e)
+    return df, None
+
+
+def _expand_merged_cells_fallback(
+    raw: bytes, df: Any, base: int, nrows: int, ncols: int, fill: Any, err: Exception,
+) -> tuple[Any, str | None]:
+    """엑셀 '전체읽기'가 죽었을 때의 2차 복원 — 병합범위를 zip 안 XML에서 직접 읽어 채운다.
+
+    ★왜 필요한가: 전체읽기는 서식표·차트 같은 곁가지 때문에도 죽는데, 그때 표(pandas)는 멀쩡히
+    읽힌다. 예전에는 여기서 그냥 포기해 병합된 지번이 사라졌고, 그다음 판(이 함수 직전 커밋)은
+    사용자에게 "엑셀에서 병합을 풀어 다시 올려라"고 떠넘겼다. 그러나 병합범위도 좌상단 값도
+    **원문에 그대로 있다** — 떠넘길 이유가 없다. 추측해서 지어내는 것과는 다르다.
+
+    반환 문구 3갈래:
+      · 병합이 아예 없는 파일  → None(경고 없음). ★없는 병합을 풀라고 하면 위양성이다.
+      · 원문에서 전부 복원     → 정보성 안내(실패 아님).
+      · 일부라도 복원 실패     → 지번이 빠질 수 있다는 경고(사용자 확인 필요).
+    """
+    try:
+        from openpyxl.utils.cell import range_boundaries
+
+        refs = _merged_ranges_from_zip(raw)
+    except Exception as e2:  # noqa: BLE001
+        # ★관측용 로그(변이로 문구를 바꿔도 테스트가 안 죽는다 — 사용자 결과에 닿지 않는다).
+        #   사용자에게 가는 정직 표기는 아래 반환 문구가 담당한다.
+        logger.warning("excel_merged_zip_fallback_failed", error=str(e2)[:120])
+        refs = None
+
+    if refs is not None and not refs:
+        # 병합이 0개 = 이 파일에서 병합 때문에 잃은 값이 없다 → 경고하지 않는다.
+        return df, None
+
+    filled = missed = 0
+    for ref in refs or []:
+        try:
+            min_col, min_row, max_col, max_row = range_boundaries(ref)
+            top_row, top_col = min_row - base, min_col - 1
+            if not (0 <= top_row < nrows and 0 <= top_col < ncols):
+                # 좌상단이 표 밖(제목행 병합 등) — 값을 가져올 데가 없다.
+                # ★이 검사를 지우면 표 행수가 적을 때만 예외가 나고(그래서 변이가 살아남는다),
+                #   **행수가 3 이상이면 예외 없이 음수 인덱스가 뒤에서부터 감겨** 엉뚱한 칸의 값을
+                #   읽어다 채우고 그것을 '복원 성공'으로 계수한다 — 조용한 날조다. 즉 이 검사는
+                #   아래 except 의 중복이 아니라, except 가 잡지 못하는 경우의 **유일한 방어선**이다.
+                missed += 1
+                continue
+            fill(min_row, min_col, max_row, max_col, df.iat[top_row, top_col])
+            filled += 1
+        except Exception:  # noqa: BLE001
+            missed += 1
+
+    if refs and missed == 0:
+        return df, (
+            f"엑셀 서식을 읽지 못해({type(err).__name__}) 병합된 칸을 원문에서 직접 복원했습니다"
+            f"(병합 {filled}곳). 지번·소재지가 제대로 채워졌는지 한 번 확인해 주세요."
+        )
+    # 여기까지 왔으면 일부(또는 전부) 복원 실패 — 몇 곳인지 셀 수 있을 때만 개수를 말한다
+    # (폴백 자체가 실패하면 병합이 몇 곳인지조차 모른다 — 모르는 수를 지어내지 않는다).
+    scope = f" {missed}곳" if missed else ""
+    return df, (
+        f"병합 셀 복원 실패({type(err).__name__}: {str(err)[:80]}) — 여러 행에 걸쳐 병합된 "
+        f"칸{scope}을 읽지 못했습니다. 그 칸의 값이 빈칸으로 남았을 수 있으니 지번·소재지가 "
+        "제대로 채워졌는지 확인해 주세요(지번이 비면 그 행은 소재지만 남거나 목록에서 빠집니다). "
+        "빈칸이 있으면 엑셀에서 병합을 해제하고 행마다 지번을 직접 적어 다시 올려 주세요."
+    )
 
 
 _LLM_ROLES = {
@@ -580,18 +721,22 @@ class ParcelExcelService:
                          for i, v in enumerate(df0_.iloc[hdr_].tolist())]
             return d, [str(h) for h in d.columns]
 
+        structure_notes: list[str] = []
         hdr = _detect_header_row(df0)
         df, headers = _rebuild(df0, hdr)
         if not is_csv:
             # ★병합 셀 forward-fill — 한 지번을 여러 행에 '병합'한 토지조서에서 병합
             #   연속행의 지번이 소실(NaN)돼 보완필요로 빠지던 근본버그를 차단(지번 기준 복원).
-            df = _expand_merged_cells(raw, df, header_row=hdr)
+            #   ★복원이 실패하면 조용히 넘어가지 않고 사유를 warnings에 실어 사용자에게 알린다
+            #   (실패하면 지번이 빈칸으로 남아 그 행이 동 이름만 남거나 사라진다).
+            df, merge_note = _expand_merged_cells(raw, df, header_row=hdr)
+            if merge_note:
+                structure_notes.append(merge_note)
             headers = [str(h) for h in df.columns]
         df = df.fillna("")
         cols = _detect_columns(headers)
         engine = "rule"
         llm_used = False
-        structure_notes: list[str] = []
 
         def _valid_ratio(frame: Any, colmap: dict) -> float:
             keys = [colmap.get(r) for r in ("address", "pnu", "bcode") if colmap.get(r)]
@@ -635,8 +780,17 @@ class ParcelExcelService:
                         current_sheet = chosen_sheet
                         structure_notes.append(f"LLM이 '{chosen_sheet}' 시트를 토지조서 데이터로 재선택")
                         sheet_changed = True
-                    except Exception:  # noqa: BLE001
-                        pass
+                    except Exception as _e:  # noqa: BLE001
+                        # ★실패를 삼키면 '다른 시트에 진짜 데이터가 있다'는 판단을 못 쓴 채
+                        #   원래 시트 결과를 그대로 내보내면서 사용자는 이유를 모른다.
+                        # ★이 분기는 실제로 발화한다 — 두 경로가 같은 openpyxl 을 쓰지만 '읽는
+                        #   양'이 다르다. 미리보기(_sheet_previews_xlsx)는 15행에서 끊고
+                        #   pd.read_excel 은 전 행을 읽으므로, 16행 이후가 깨진 시트는
+                        #   '미리보기는 되는데 본문은 못 읽는' 상태가 된다(테스트로 잠금).
+                        structure_notes.append(
+                            f"'{chosen_sheet}' 시트를 다시 읽지 못해 '{current_sheet or '첫'}' 시트 "
+                            f"기준으로 분석했습니다({str(_e)[:60]}) — 결과 확인이 필요합니다."
+                        )
 
                 # 2) 전치(세로형) 판정 — 결정론 전치(행↔열 swap) 후 재파싱.
                 if struct.get("is_transposed") is True:
@@ -717,6 +871,10 @@ class ParcelExcelService:
             return {
                 "error": "필수 컬럼을 찾지 못했습니다 — 최소 [소재지(주소)] 또는 [PNU] 또는 [법정동코드]가 필요합니다. 표준 양식을 내려받아 작성하거나, 헤더에 '소재지/지번/면적' 등을 명시해 주세요.",
                 "detected_columns": cols, "headers": headers, "parcels": [],
+                # ★여기서 structure_notes 를 버리면 사용자는 '틀린 사유'를 받는다 — 진짜 원인이
+                #   시트/병합을 못 읽은 것인데도 "필수 컬럼을 찾지 못했습니다"만 보게 된다.
+                #   이 조기 반환이 파서에서 가장 조용한 경로다(verification_report 자체가 없다).
+                "warnings": structure_notes,
             }
 
         rows = df.to_dict("records")[:_MAX_ROWS]
