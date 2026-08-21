@@ -24,6 +24,7 @@ import { DevelopmentScenarioCard } from "@/components/common/DevelopmentScenario
 import { UpzoningFarRangeNotice, UpzoningFarRangeValue } from "@/components/common/UpzoningFarRange";
 import { NumberInput } from "@/components/common/NumberInput";
 import { BusinessModelRefineModal } from "./BusinessModelRefineModal";
+import { preferredEntryAddress } from "@/lib/parcel-rows";
 
 /* ── Types ── */
 
@@ -535,7 +536,7 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
                 writeToContext={false}
                 onChange={(entries) => {
                   if (entries.length > 0) {
-                    const next = entries[0].jibunAddress || entries[0].fullAddress;
+                    const next = preferredEntryAddress(entries[0]);
                     // 새 주소 입력 시 이전 추천결과 무효화(stale 표시 방지 — SSOT 정합).
                     if (next && next !== address) {
                       setTopModels([]); setAllModels([]); setAiInterpretation(null); setError(null);
@@ -547,7 +548,7 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
                       if (matchedRegion) setRegion(matchedRegion);
                     }
                   }
-                  setParcels(entries.map((e) => e.jibunAddress || e.fullAddress || e.roadAddress).filter(Boolean));
+                  setParcels(entries.map((e) => preferredEntryAddress(e)).filter(Boolean));
                 }}
                 placeholder="주소 검색 · 다필지는 엑셀로 일괄 등록"
               />

@@ -97,6 +97,10 @@ def test_zone_absent_from_inline_table_still_says_zone_missing(svc):
     """
     r = svc._parse_bcr_far_from_text(_INLINE_XML, "일반상업지역", "테스트시")
     assert r is None, "본문형 조례에서 용도지역 미발견은 종전대로 None(폴백)"
+    # ★양성 짝 — **같은 픽스처**로 존재하는 용도지역은 값이 나온다. 없으면 파서가 통째로
+    #   고장 나 항상 None 을 내도 이 테스트가 통과한다(부재 단언은 그 자체로 잠금이 아니다).
+    ok = svc._parse_bcr_far_from_text(_INLINE_XML, "자연녹지지역", "테스트시")
+    assert ok is not None and ok["bcr"] == 20
 
 
 # ── ★소비처 락 — `get_ordinance_limits` 가 실제로 사유를 싣는가 ─────────────────────
@@ -178,3 +182,92 @@ def test_consumer_untouched_when_not_attachment(monkeypatch):
     assert "첨부파일" not in disc
     # ★음성 대조군도 **옳은 문구**를 요구한다 — "틀린 게 없다"만 보면 그 문구가 망가져도 통과한다.
     assert "해당 지자체 조례 미보유 — 법정상한 적용" in disc
+
+
+# ── ★화면 배선 락 — `calc_effective_far` 가 사유를 화면 계약까지 나르는가 ────────────
+#   【이 구간이 왜 필요한가】위 테스트들은 `get_ordinance_limits` 까지만 잠갔다. 그런데
+#   화면(site-analysis)이 읽는 것은 `effective_far`(= `calc_effective_far` 반환)이고,
+#   그 계약에는 이 키가 **없었다** — 즉 사유는 만들어졌지만 **소비처가 0**이라 화면에
+#   영원히 닿지 못했다(2026-08-21 실측: 울산·창원 라이브 응답에 사유는 있으나 화면 무).
+#   이 캠페인이 내내 고쳐 온 결함 클래스를 캠페인 자신이 재발시킨 자리다.
+
+def _calc(ordinance: dict | None) -> dict:
+    """외부 경계 없음 — 순수함수 `calc_effective_far` 를 그대로 태운다."""
+    from app.services.land_intelligence import far_tier_service
+
+    base = {
+        "local_ordinance": ordinance,
+        "zone_limits": {"max_bcr_pct": 20, "max_far_pct": 100},
+        "special_districts": None,
+    }
+    return far_tier_service.calc_effective_far(base, "자연녹지지역", 1000.0)
+
+
+# ★두 모집단은 **다른 판정**을 받아야 한다 — 같은 값이면 배선을 끊어도 차이가 0이다.
+_ORD_ATTACHMENT = {
+    "source": "법정상한",
+    "sido": "울산광역시", "sigungu": "울주군",
+    "effective_bcr": 20, "effective_far": 100,
+    "ordinance_attachment_only": {
+        "reason": "울산광역시 도시계획 조례는 … 별표 첨부파일(HWP) 로만 제공해 …",
+        "attachment_url": "http://www.law.go.kr/flDownload.do?gubun=ELIS&flSeq=163373187",
+        "ordinance_name": "울산광역시 도시계획 조례",
+        "requires": ["별표 원문(HWP) 열람으로 해당 용도지역 건폐율·용적률 확인"],
+    },
+}
+_ORD_NORMAL = {
+    "source": "법제처API",
+    "sido": "경기도", "sigungu": "오산시",
+    "effective_bcr": 20, "effective_far": 100,
+    "ordinance_confirmed": True,
+}
+
+
+def test_premise_two_ordinance_fixtures_actually_differ():
+    """전제 — 한쪽에만 사유가 있어야 배선 락이 성립한다(공허 방지)."""
+    assert "ordinance_attachment_only" in _ORD_ATTACHMENT
+    assert "ordinance_attachment_only" not in _ORD_NORMAL
+
+
+def test_screen_contract_carries_the_attachment_reason():
+    """★화면 계약(`effective_far`)이 사유·링크를 나른다 — 끊기면 화면은 원인을 모른다."""
+    out = _calc(_ORD_ATTACHMENT)
+    assert "ordinance_attachment_only" in out, "계약에 키가 없다(소비처 0 재발)"
+    note = out["ordinance_attachment_only"]
+    assert note is not None, "far_tier_service 가 사유를 싣지 않는다(배선 끊김)"
+    assert "flDownload.do" in (note.get("attachment_url") or "")
+    assert note.get("ordinance_name") == "울산광역시 도시계획 조례"
+
+
+def test_screen_contract_absent_for_normal_ordinance():
+    """★대조군(음성) — 정상 조례는 키가 존재하되 None(형제 계약과 같은 모양)."""
+    out = _calc(_ORD_NORMAL)
+    # ★양성 짝 — 같은 실행에서 **반대 결과가 나올 수 있음**을 함께 단언한다.
+    #   이게 없으면 `calc_effective_far` 가 통째로 고장 나 항상 None 을 내도 통과한다.
+    assert _calc(_ORD_ATTACHMENT)["ordinance_attachment_only"] is not None
+    assert "ordinance_attachment_only" in out
+    assert out["ordinance_attachment_only"] is None
+
+
+def test_attachment_notice_does_not_move_the_effective_value():
+    """★★무회귀 — 사유는 **값을 바꾸지 않는다**. 아는 것과 모르는 것을 섞지 않는다."""
+    attached = _calc(_ORD_ATTACHMENT)
+    normal = _calc(_ORD_NORMAL)
+    # 두 경로의 실효값이 동일해야 한다(사유 부착이 산식에 개입하지 않았다).
+    assert attached["effective_far_pct"] == normal["effective_far_pct"]
+    assert attached["effective_bcr_pct"] == normal["effective_bcr_pct"]
+    # 공허 진리 가드 — 값 자체가 None 이면 위 비교는 무의미하다.
+    assert attached["effective_far_pct"] is not None
+
+
+def test_zone_unmatched_early_return_mirrors_the_key():
+    """형제 미러 — 용도지역 미확인 조기반환도 같은 키를 낸다(소비처 분기 단순화)."""
+    from app.services.land_intelligence import far_tier_service
+
+    out = far_tier_service.calc_effective_far(
+        {"local_ordinance": _ORD_ATTACHMENT, "zone_limits": {}}, "개발제한구역", 0.0
+    )
+    # 공허 진리 가드 — 정말 조기반환 경로를 탔는가.
+    assert out["far_basis"] == "zone_unmatched"
+    assert "ordinance_attachment_only" in out
+    assert out["ordinance_attachment_only"] is None
