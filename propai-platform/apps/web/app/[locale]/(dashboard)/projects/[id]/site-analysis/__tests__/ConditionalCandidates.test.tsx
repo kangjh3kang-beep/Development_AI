@@ -356,6 +356,9 @@ describe("다중 구역 겹침 표시", () => {
       },
     });
     expect(screen.getByText(/제46조/).textContent).not.toContain("걸칩니다");
+  });
+});
+
 /** ★고시 원문 수치(P5) — 후보로만 보이고, 없으면 아예 안 나온다. */
 describe("고시 원문에서 읽은 수치", () => {
   const base = {
