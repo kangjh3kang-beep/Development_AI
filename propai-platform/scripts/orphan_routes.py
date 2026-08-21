@@ -104,6 +104,23 @@ _DYN_EXPR = r"\$\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}"
 # 동적 세그먼트가 **경로의 끝**임을 뜻하는 문자(템플릿 종료 · 쿼리 시작 · 문자열 종료).
 _URL_END = ("`", "?", '"', "'")
 
+# ── 호출부 HTTP 메서드 판독 ────────────────────────────────────────────────
+# 왜 필요한가(쉬운 설명): `` `/blockchain/escrow/${id}` `` 를 **GET** 으로 부르는 화면은
+# **POST** 라우트인 `/blockchain/escrow/fund` 를 부를 수 없다. 메서드를 안 보면 이 둘이
+# 구분되지 않아 진짜 고아 9건이 "판정 불가"에 숨었다(2026-08-21 실측).
+# ★게이트는 **한 방향으로만** 쓴다 — 메서드를 **확실히 읽었고 다를 때만** 그 호출부가
+#   이 라우트를 설명하지 않는다고 본다. 못 읽으면 종전대로 판정 불가로 남긴다
+#   (모르는 것을 안다고 하지 않는다).
+_CALL_METHOD_BEFORE = re.compile(
+    r"\.(get|post|put|patch|delete)\s*(?:<[^;{}]*?>)?\s*\(\s*$", re.IGNORECASE
+)
+# fetch 는 URL 이 **먼저** 오고 메서드가 뒤 옵션에 온다 → 앞뒤를 따로 본다.
+_FETCH_BEFORE = re.compile(r"\bfetch\s*\(")
+_FETCH_METHOD_AFTER = re.compile(r"""method\s*:\s*["'](\w+)["']""")
+# 호출부 판독 창(문자). 좁으면 못 읽고(→ 판정 불가 유지) 넓으면 남의 호출을 줍는다.
+_METHOD_LOOKBEHIND = 200
+_METHOD_LOOKAHEAD = 300
+
 # 후보 경로의 최소 길이. `/avm`(4자) 같은 짧은 실경로를 살리려고 3 으로 낮췄다.
 # ★이 완화는 **오른쪽 경계 검사와 한 쌍**이다 — 경계 없이 낮추면 짧은 경로가
 #   다른 경로의 앞토막에 무차별로 걸린다.
@@ -336,7 +353,31 @@ def is_consumed(full: str, blob: str) -> bool:
     return False
 
 
-def is_dynamically_reachable(full: str, blob: str) -> bool:
+def call_method_at(blob: str, start: int, end: int) -> str | None:
+    """그 동적 호출부가 쓰는 HTTP 메서드. **읽어내지 못하면 None**(모른다고 말한다).
+
+    두 형태를 읽는다.
+      · `apiClient.get<T>(` / `.post(` / `.put(` / `.delete(` — URL **앞**에 메서드가 있다.
+      · `fetch(` — URL **뒤** 옵션의 `method: "POST"` 에 있다.
+    ★fetch 에 method 가 없으면 브라우저 기본은 GET 이지만 **None 을 돌려준다** —
+      옵션 객체를 다른 곳에서 조립할 수 있어, 추정으로 진짜 고아를 만들지 않는다.
+    ★`endpoint={`/underwriting/${id}`}` 처럼 **프롭으로 넘기는** 호출은 메서드가 그 자리에
+      없다 → None. 이 경우 라우트는 판정 불가로 **남는다**(정직한 미결).
+    """
+    pre = blob[max(0, start - _METHOD_LOOKBEHIND) : start]
+    # 템플릿 시작 백틱·따옴표·공백을 걷어내야 `.get(` 이 끝에 닿는다.
+    trimmed = pre.rstrip("`'\" \t\r\n")
+    m = _CALL_METHOD_BEFORE.search(trimmed)
+    if m:
+        return m.group(1).lower()
+    if _FETCH_BEFORE.search(pre):
+        after = _FETCH_METHOD_AFTER.search(blob[end : end + _METHOD_LOOKAHEAD])
+        if after:
+            return after.group(1).lower()
+    return None
+
+
+def is_dynamically_reachable(full: str, blob: str, method: str | None = None) -> bool:
     """마지막 세그먼트를 **동적으로** 넣는 호출이 프론트에 있는가(→ 판정 불가).
 
     ★"소비"가 아니다. `` `/blockchain/escrow/${id}` `` 는 **escrow ID** 를 넣는 호출이지
@@ -353,8 +394,13 @@ def is_dynamically_reachable(full: str, blob: str) -> bool:
         if len(parent) <= _MIN_PATH_LEN or "{" in last:
             continue
         for m in re.finditer(re.escape(parent) + "/" + _DYN_EXPR, blob):
-            if (blob[m.end() : m.end() + 1] or "`") in _URL_END:
-                return True
+            if (blob[m.end() : m.end() + 1] or "`") not in _URL_END:
+                continue
+            # ★메서드 게이트 — 확실히 읽었고 다를 때만 "이 호출부는 이 라우트가 아니다".
+            called = call_method_at(blob, m.start(), m.end())
+            if method and called and called != method.lower():
+                continue
+            return True
     return False
 
 
@@ -388,7 +434,7 @@ def classify() -> tuple[tuple[tuple[str, str, str], ...], tuple[tuple[str, str, 
     for f, (m, p) in sorted(routes.items()):
         if is_consumed(f, blob):
             continue
-        (undecided if is_dynamically_reachable(f, blob) else confirmed).append((f, m, p))
+        (undecided if is_dynamically_reachable(f, blob, m) else confirmed).append((f, m, p))
     return tuple(confirmed), tuple(undecided)
 
 

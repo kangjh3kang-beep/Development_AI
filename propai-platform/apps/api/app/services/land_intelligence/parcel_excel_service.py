@@ -372,16 +372,15 @@ async def _llm_analyze_structure(
         return {}, False
 
     # ★LLM 토큰 사용량을 표준 계측 경로(_record_llm_billing→llm_usage_log)에 best-effort 기록.
-    try:
-        usage = getattr(resp, "usage_metadata", None) or {}
-        in_tok = int(usage.get("input_tokens", 0) or 0)
-        out_tok = int(usage.get("output_tokens", 0) or 0)
-        if in_tok or out_tok:
-            from app.services.ai.base_interpreter import _record_llm_billing
-            model = getattr(llm, "model", None) or getattr(llm, "model_name", "") or "unknown"
-            await _record_llm_billing(str(model), in_tok, out_tok, service="parcel_excel_structure_detect")
-    except Exception:  # noqa: BLE001
-        pass
+    # ★공용 계측기를 쓴다 — 종전에는 이 두 곳만 usage_metadata 추출을 **손수 복제**했다
+    #   (플랫폼 전체에서 유일). 복제본은 자기만의 `except: pass` 를 하나 더 얹고 있었는데,
+    #   싱크(`_record_llm_billing`)가 애초에 예외를 밖으로 내보내지 않으므로 그 바깥 except 는
+    #   **과금 실패를 잡을 수조차 없었다** — 고쳐도 환자에게 닿지 않는 처방이었다.
+    #   공용 헬퍼로 치환하면 실패 로깅이 한 곳에서 따라온다(모델 폴백 `""`↔`"unknown"` 은
+    #   미등재 단가로 수렴해 청구액이 동일함을 실측 확인 — 행위 불변).
+    from app.services.ai.base_interpreter import record_llm_response_billing
+
+    await record_llm_response_billing(llm, resp, service="parcel_excel_structure_detect")
 
     if len(_STRUCT_CACHE) > 256:  # 장수명 워커 무한증가 방지(상한 초과 시 비움)
         _STRUCT_CACHE.clear()
@@ -434,16 +433,15 @@ async def _llm_reverify_row(raw_cells: dict[str, str], issues: list[str]) -> tup
         logger.warning("엑셀 LLM 행 재질의 실패: %s", str(e)[:160])
         return {}, False
 
-    try:
-        usage = getattr(resp, "usage_metadata", None) or {}
-        in_tok = int(usage.get("input_tokens", 0) or 0)
-        out_tok = int(usage.get("output_tokens", 0) or 0)
-        if in_tok or out_tok:
-            from app.services.ai.base_interpreter import _record_llm_billing
-            model = getattr(llm, "model", None) or getattr(llm, "model_name", "") or "unknown"
-            await _record_llm_billing(str(model), in_tok, out_tok, service="parcel_excel_row_reverify")
-    except Exception:  # noqa: BLE001
-        pass
+    # ★공용 계측기를 쓴다 — 종전에는 이 두 곳만 usage_metadata 추출을 **손수 복제**했다
+    #   (플랫폼 전체에서 유일). 복제본은 자기만의 `except: pass` 를 하나 더 얹고 있었는데,
+    #   싱크(`_record_llm_billing`)가 애초에 예외를 밖으로 내보내지 않으므로 그 바깥 except 는
+    #   **과금 실패를 잡을 수조차 없었다** — 고쳐도 환자에게 닿지 않는 처방이었다.
+    #   공용 헬퍼로 치환하면 실패 로깅이 한 곳에서 따라온다(모델 폴백 `""`↔`"unknown"` 은
+    #   미등재 단가로 수렴해 청구액이 동일함을 실측 확인 — 행위 불변).
+    from app.services.ai.base_interpreter import record_llm_response_billing
+
+    await record_llm_response_billing(llm, resp, service="parcel_excel_row_reverify")
 
     # ★M1: 환각 차단 강화 — ①여러 셀을 이어붙인 haystack이 아니라 '어느 한 개별 셀'의 값 안에
     #   실제로 등장할 때만 채택(다른 셀 파편이 이어붙어 우연히 매치되는 것 차단). ②역할별 형식

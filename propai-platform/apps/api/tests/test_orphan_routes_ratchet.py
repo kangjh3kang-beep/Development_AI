@@ -73,7 +73,9 @@ def test_판정불가가_양방향으로_잠긴다():
 
     # ★공허한 초록 방지 — 분류기가 죽어 전부 빈 집합이면 두 차집합이 모두 참이 된다.
     # ★파손 탐지용 하한 — 정당하게 결론이 나 줄어들면 이 숫자를 낮춰라.
-    assert len(baseline) > 5, "판정 불가 기준선이 비었다 — 파일이 깨졌는지 확인하라"
+    # ★2026-08-21: 13 → 4. 메서드 게이트로 9건이 **정당하게 결론나** 내려갔으므로 하한을 낮춘다
+    #   (이 하한은 파일 파손 탐지용이지 부채 목표가 아니다 — 위 주석의 지시를 그대로 따른 것).
+    assert len(baseline) > 2, "판정 불가 기준선이 비었다 — 파일이 깨졌는지 확인하라"
     assert len(current) > 0, "판정 불가가 0건 — 동적 세그먼트 분류기가 죽었을 가능성이 높다"
 
     added = sorted(current - baseline)
@@ -105,3 +107,106 @@ def test_기준선이_줄면_알려준다():
         "배선이 끝난 라우트가 기준선에 남아 있다 — 기준선에서 지워라(다시 고아가 되는 것을 막는다):\n"
         + "\n".join(f"  {r}" for r in removed)
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 메서드 게이트 잠금 — 2026-08-21
+#
+# ★왜 두 모집단을 다 단언하나: "9건이 판정 불가에 **없다**"만 쓰면 분류기가 죽어 전부 빈
+#   집합이 돼도 참이 된다(부재 단언은 그 자체로 잠금이 아니다). 그래서 같은 실행에서
+#   **① 그것들이 확정 고아에 실제로 있다** 와 **② 메서드가 일치하는 것들은 여전히 판정
+#   불가로 남는다** 를 함께 단언한다. 게이트가 통째로 빠지면 ①이, 게이트가 과하게 먹으면
+#   ②가 깨진다 — 어느 방향으로 틀어져도 하나가 죽는다.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# 메서드가 **어긋나** 확정 고아로 내려온 것들(라우트 메서드 ≠ 프론트 동적 호출 메서드).
+_METHOD_MISMATCH_ORPHANS = (
+    "/api/v1/blockchain/escrow/fund",         # POST 라우트 ↔ GET 호출
+    "/api/v1/blockchain/escrow/release",
+    "/api/v1/blockchain/escrow/dispute",
+    "/api/v1/blockchain/escrow/resolve",
+    "/api/v1/blockchain/escrow/refund",
+    "/api/v1/blockchain/escrow/direct-pay",
+    "/api/v1/design-references/from-design",  # POST 라우트 ↔ DELETE 호출
+    "/api/v1/admin/secrets/image-health",     # GET 라우트  ↔ PUT/DELETE 호출
+    "/api/v1/admin/secrets/llm-health",
+)
+
+# 메서드가 **일치**해 판정 불가로 남아야 하는 것(대조군). 게이트가 과하면 여기가 깨진다.
+_METHOD_MATCH_UNDECIDED = (
+    "/api/v1/market/report/pdf",   # POST 라우트 ↔ fetch(..., {method:"POST"})
+    "/api/v1/market/report/docx",
+    "/api/v1/market/report/pptx",
+)
+
+
+def test_메서드가_어긋나면_판정불가가_아니라_확정고아다():
+    from orphan_routes import orphans, undecided_routes  # type: ignore[import-not-found]
+
+    orphan_set = {f for f, _m, _p in orphans()}
+    undecided_set = {f for f, _m, _p in undecided_routes()}
+
+    # 공허 진리 가드 — 조회기가 살아 있는지 먼저 본다.
+    assert len(orphan_set) > 50, "확정 고아가 비정상적으로 적다 — 조회기 확인"
+    assert undecided_set, "판정 불가가 0건 — 동적 세그먼트 분류기가 죽었다"
+
+    for route in _METHOD_MISMATCH_ORPHANS:
+        # ①있어야 할 곳에 **있다**(양성) — 이것이 없으면 부재 단언이 공허해진다.
+        assert route in orphan_set, f"{route} 가 확정 고아가 아니다 — 메서드 게이트가 빠졌나"
+        # ②없어야 할 곳에 **없다**(음성)
+        assert route not in undecided_set, f"{route} 가 아직 판정 불가다"
+
+
+def test_메서드가_일치하면_판정불가로_남는다():
+    """★대조군 — 게이트가 '전부 고아'로 쓸어버리지 않는지 본다.
+
+    이 셋은 라우트도 POST 이고 호출부도 `method:"POST"` 라 **정말로 불릴 수 있다**.
+    게이트가 메서드를 안 보고 무조건 배제하면 여기가 깨진다.
+    """
+    from orphan_routes import orphans, undecided_routes  # type: ignore[import-not-found]
+
+    orphan_set = {f for f, _m, _p in orphans()}
+    undecided_set = {f for f, _m, _p in undecided_routes()}
+
+    for route in _METHOD_MATCH_UNDECIDED:
+        assert route in undecided_set, f"{route} 가 판정 불가에서 사라졌다 — 게이트가 과하다"
+        assert route not in orphan_set, f"{route} 를 고아로 셌다 — 없는 결함을 만든다"
+
+
+def test_메서드를_못읽으면_판정불가로_남긴다():
+    """★모르는 것을 안다고 하지 않는다 — 프롭으로 경로만 넘기는 호출은 메서드가 없다.
+
+    `endpoint={`/underwriting/${projectId}`}` 에는 메서드가 그 자리에 없다. 도구가
+    추정으로 GET/POST 를 고르면 **없는 결함을 만들거나 진짜 고아를 숨긴다**.
+    """
+    from orphan_routes import undecided_routes  # type: ignore[import-not-found]
+
+    undecided_set = {f for f, _m, _p in undecided_routes()}
+    assert "/api/v1/underwriting/history" in undecided_set, (
+        "메서드를 읽을 수 없는 호출부인데 결론을 내 버렸다 — 게이트는 한 방향이어야 한다"
+    )
+
+
+def test_call_method_at_이_실제_호출부를_읽는다():
+    """★게이트가 **실행되는 입력**인지 확인한다 — 판독기가 늘 None 이면 게이트는 죽은 코드다.
+
+    (판독기가 항상 None 을 돌려줘도 위 두 래칫은 '판정 불가 유지'로 통과할 수 있다.
+     그래서 판독기 자체를 직접 태운다.)
+    """
+    import orphan_routes as _o  # type: ignore[import-not-found]
+
+    blob = "await apiClient.get<OnChainEscrowResponse>(\n  `/blockchain/escrow/${id}`,"
+    start = blob.index("/blockchain/escrow/${id}")
+    end = start + len("/blockchain/escrow/${id}")
+    assert _o.call_method_at(blob, start, end) == "get"
+
+    fetch_blob = 'fetch(`${base}/market/report/${fmt}`, {\n  method: "POST",\n})'
+    s2 = fetch_blob.index("/market/report/${fmt}")
+    e2 = s2 + len("/market/report/${fmt}")
+    assert _o.call_method_at(fetch_blob, s2, e2) == "post"
+
+    # 프롭 전달 — 메서드가 그 자리에 없다 → None(추정 금지)
+    prop_blob = "endpoint={`/underwriting/${projectId}`}"
+    s3 = prop_blob.index("/underwriting/${projectId}")
+    e3 = s3 + len("/underwriting/${projectId}")
+    assert _o.call_method_at(prop_blob, s3, e3) is None
