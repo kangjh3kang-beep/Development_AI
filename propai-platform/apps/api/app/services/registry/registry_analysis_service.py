@@ -291,6 +291,7 @@ class RegistryAnalysisService:
                 "note": "공부상 소유구분·토지특성(소유자 성명·지분은 등기부 분석 결과 참조)",
             }
         except Exception as e:  # noqa: BLE001
+            from app.services.ai.llm_failure import failure_reason as _failure_reason
             logger.warning("토지정보 조회 실패", err=str(e)[:80])
             return None
 
@@ -477,6 +478,9 @@ class RegistryAnalysisService:
                 "ownership": {}, "provisional_registration": {"exists": None},
                 "seizure": [], "mortgage": [], "other_rights": [],
                 "right_to_demand_sale": {"possible": "판단보류", "reason": "등기 내용 확인 필요"},
-                "rights_analysis": "AI 권리분석은 일시적으로 제공되지 않습니다. 등기부 내용을 확인하세요.",
+                # ★"일시적"이라고 단정하지 않는다 — 그 표기가 결정론적 영구 실패를
+                #   일시 장애로 위장해 오래 숨긴 전례가 있다(2026-08-21 LLM 계층 사망).
+                "rights_analysis": "AI 권리분석을 생성하지 못했습니다. 등기부 내용을 직접 확인하세요.",
+                "failure_reason": _failure_reason(e),
                 "risks": [], "safety_grade": "주의", "summary": "분석 불가",
             }

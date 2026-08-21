@@ -427,7 +427,9 @@ class ExpertPanelService:
     def _fallback(roster, degraded_reason: str | None = None) -> dict[str, Any]:
         consensus = ExpertPanelService._DEGRADED_MSG.get(
             degraded_reason or "",
-            "전문가 패널 분석은 일시적으로 제공되지 않습니다. 잠시 후 다시 시도하세요.",
+            # ★"잠시 후 다시 시도하세요"는 **재시도로 풀린다는 단정**이다. 실제로는 모델 API 변경 같은
+            #   영구 실패가 이 문구 뒤에 숨어 있었다(2026-08-21 LLM 계층 사망).
+            "전문가 패널 분석을 생성하지 못했습니다.",
         )
         return {
             "generated": False,
