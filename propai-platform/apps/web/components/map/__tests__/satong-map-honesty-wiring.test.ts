@@ -20,7 +20,7 @@ import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { assertWiredThrough } from "@/lib/source-invariant";
+import { __stripCommentsForScan, assertWiredThrough } from "@/lib/source-invariant";
 
 /** apps/web 기준 상대 경로의 소스를 줄 배열로 읽는다(불변식용). */
 function sourceLines(file: string): string[] {
@@ -162,5 +162,49 @@ describe("VWorld 줌 하한 — 지도·타일 양쪽에 걸려 있다", () => {
         minMatches: 2, // 지도 옵션 1 + 타일 레이어 1 — 한쪽만 있으면 하한이 새어나간다
       }),
     ).not.toThrow();
+  });
+});
+
+describe("적응형 반경 — 조용히 넓히지 않는다(2026-08-21)", () => {
+  // ★이 PR 이 스스로 선언한 원칙이 **코드로 잠기지 않으면** 다음 사람이 배너만 지운다.
+  //   그러면 사용자는 10km 떨어진 거래를 '주변'으로 읽는다 — 결함을 고치면서 더 나쁜
+  //   오도를 만드는 것이다. 그래서 요청 배선과 고지 배선을 **둘 다** 잠근다.
+  //
+  // ★한계를 밝힌다(이 파일 머리글과 동일): **소스 수준 검사**이지 런타임 증명이 아니다.
+  //   배너가 실제 화면에 뜨는지는 배포 후 사람이 확인해야 한다. 다만 `__stripCommentsForScan`
+  //   으로 주석을 걷어낸 뒤 보므로 **주석처리 변이에는 뚫리지 않는다**.
+  const scan = (file: string) =>
+    __stripCommentsForScan(readFileSync(resolve(process.cwd(), file), "utf-8"), file);
+
+  it("지도 요청이 적응형 반경을 켠다 — 끄면 1km 고정으로 되돌아간다", () => {
+    const src = scan("components/precheck/SatongMapShell.tsx");
+    // 공허한 참 방지 — nearby-map 요청 자체가 있어야 이 단언이 의미를 가진다.
+    expect(src).toContain("/zoning/nearby-map");
+    expect(src).toContain("auto_expand_radius: true");
+  });
+
+  it("배너가 확대 사실을 고지한다 — 확대만 하고 말하지 않으면 오도가 된다", () => {
+    const src = scan("components/map/SatongMultiMap.tsx");
+    // ★타입 **선언**이 아니라 **소비**에 앵커한다 — 첫 매치를 잡으면 `radius_expanded?: boolean`
+    //   선언줄에 걸려, 필드를 선언만 하고 아무도 안 쓰는 상태에서도 초록이 된다
+    //   (이 저장소가 반복해 데인 "정의만 하고 소비처 0" 그 형태다).
+    const i = src.indexOf("marketPayload.radius_expanded");
+    expect(i, "확대 고지 분기가 사라졌다(선언만 남고 소비가 없다)").toBeGreaterThan(-1);
+    const block = src.slice(i, i + 800);
+    // 고지가 실제로 **배너 목록에 들어가야** 화면에 뜬다(변수만 읽고 버리면 무의미).
+    expect(block).toContain("cutParts");
+    // 요청값·유효값을 **둘 다** 보여야 무엇이 바뀌었는지 화면만으로 판별된다.
+    expect(block).toContain("radius_requested_m");
+    expect(block).toContain("radius_m");
+  });
+
+  it("★대조군 — 적응형은 지도만 켠다(탁상감정·시세 경로 오염 금지)", () => {
+    // 사통맵 외의 nearby-map 소비처가 플래그를 켜면 그쪽 '반경 N 안' 고지가 거짓이 된다.
+    for (const f of [
+      "components/map/NearbyTransactionsMap.tsx",
+      "components/market/ConversationalMarketPanel.tsx",
+    ]) {
+      expect(scan(f), `${f} 가 적응형을 켰다`).not.toContain("auto_expand_radius");
+    }
   });
 });
