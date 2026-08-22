@@ -96,6 +96,7 @@ import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { useProjectStore } from "@/store/useProjectStore";
 import { restoreSnapshot } from "@/lib/projectSync";
 import { createProjectFromParcels } from "@/lib/satong-project-create";
+import { marketRadiusRequest } from "@/lib/market/market-radius";
 import {
   SATONG_PARCEL_SLOPE_KEY,
   SATONG_SITE_LAYOUT_KEY,
@@ -1407,6 +1408,15 @@ export function SatongMapShell({
   //   렌더(마커·반경·팝업)는 SatongMultiMap에 완비 — 여기서는 데이터만 주입한다.
   //   실패는 fetch_failed로 정직 전달(지도에 "조회 실패" 노트), 무선택·레이어 OFF는 null(마커 제거).
   const [marketPayload, setMarketPayload] = useState<SatongMarketPayload | null>(null);
+  /**
+   * 실거래 반경 — `null` 이면 **자동**(1km 로 조회 후 희소하면 백엔드가 넓힌다).
+   *
+   * ★형제 패리티: `NearbyTransactionsMap` 은 500m/1km/3km 선택을 이미 갖고 있는데
+   *   사통맵만 하드코딩이었다(2026-08-21 실측 — 그 비대칭이 "실거래가 안 보인다"의 절반).
+   * ★**수동 선택은 자동확대를 끈다.** 사용자가 1km 를 고른 뒤에도 서버가 3km 로 넓히면
+   *   그 컨트롤은 거짓말이 된다 — 고른 값이 곧 적용값이어야 한다.
+   */
+  const [marketRadiusM, setMarketRadiusM] = useState<number | null>(null);
   const marketEnabled = enabledLayers.has("transactions");
   //   ★의존성은 원시값(pnu·address)으로 — 선택목록 참조가 바뀌어도 anchor가 같으면 재조회 안 함
   //     (#178 교훈: 참조 churn이 이펙트 무한/중복 실행을 유발).
@@ -1432,13 +1442,8 @@ export function SatongMapShell({
           body: {
             address: marketAnchorAddress || undefined,
             pnu: marketAnchorPnu || undefined,
-            radius_m: 1000,
+            ...marketRadiusRequest(marketRadiusM),
             months: 3,
-            // ★적응형 반경 — 1km 는 도시 밀집지 기준이라 지방 필지에서 지도가 텅 빈다.
-            //   라이브 실측(제천 모산동 123-1): 1km 렌더가능 **2**개 / 3km 40 / 10km **118**.
-            //   반경 밖 그룹도 백엔드가 **이미 좌표를 구해 놓고 버리던 것**이라 확대 비용 0.
-            //   ★지도만 켠다 — 탁상감정·AVM·시세는 표본 반경이 바뀌면 고지 문구가 거짓이 된다.
-            auto_expand_radius: true,
           },
           useMock: false,
           timeoutMs: 90000,
@@ -1466,7 +1471,7 @@ export function SatongMapShell({
     return () => {
       cancelled = true;
     };
-  }, [marketEnabled, marketAnchorPnu, marketAnchorAddress]);
+  }, [marketEnabled, marketAnchorPnu, marketAnchorAddress, marketRadiusM]);
 
   // ── 교통·편의 POI 레이어 배선: 레이어 ON + 선택필지 있으면 주변 POI(/site-score/poi-infra) 조회 ──
   //   렌더(카테고리 색상 마커·팝업)는 SatongMultiMap에 구현 — 여기서는 데이터만 주입.
@@ -3986,6 +3991,8 @@ export function SatongMapShell({
                 selectedParcels={selectedMapFeatures}
                 layerState={mapLayerState}
                 marketPayload={marketEnabled ? marketPayload : null}
+                marketRadiusM={marketRadiusM}
+                onMarketRadiusChange={setMarketRadiusM}
                 // ★무목업: 종전 가상 분양단지/경매물건(Math.random) 목업을 실데이터 state로 대체.
                 // 분양=/presale/nearby(청약홈)·경매=/auction/search+geocode(온비드) — 위 이펙트에서 조회.
                 // (계산은 marketLayerValue로 컴포넌트 상단에서 훅 규칙에 맞게 끌어올려짐 — UX 트랙 B4.)

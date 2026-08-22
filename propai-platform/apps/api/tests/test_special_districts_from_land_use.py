@@ -189,3 +189,41 @@ def test_wiring_reaches_plan_limit_unknown_end_to_end(monkeypatch):
     svc2 = _svc_with(monkeypatch, land_use=_REAL_NAESAMMI)
     r2 = asyncio.run(svc2.collect_comprehensive("경기도 오산시 내삼미동 741"))
     assert (r2.get("effective_far") or {}).get("plan_limit_unknown") is None
+
+
+def test_rows_carry_both_name_keys(monkeypatch):
+    """★★행이 `district_name` 과 `name` 을 **둘 다** 갖는다 — 소비처가 두 키를 쓴다.
+
+    #742 직후 전역 스윕에서 적발: 프론트 일부가 `name` **만** 읽는다.
+        LandIntelligencePanel:666  specialDistricts.map(d => d.name)   ← 폴백 없음
+        SiteAnalysisDetail:1989    obj(d).name || d                    ← 객체가 그대로 출력
+    종전 휴리스틱 행이 `{name, bonus_far}` 모양이라 그렇게 굳어 있었다.
+    두 키를 다 실으면 **어느 소비처가 어느 키를 읽는지 감사할 필요가 없다**.
+    """
+    svc = _svc_with(monkeypatch, land_use=_REAL_SUCHEONG)
+    r = asyncio.run(svc.collect_comprehensive("경기도 오산시 수청동 569"))
+    sd = r["special_districts"]
+    assert sd, "행이 비었다 — 아래 단언이 공허해진다"
+    for d in sd:
+        assert d.get("name"), f"name 이 없다: {d}"
+        assert d.get("district_name"), f"district_name 이 사라졌다: {d}"
+        assert d["name"] == d["district_name"]
+    # ★프론트가 하던 것을 그대로 재현 — `undefined` 나 `[object Object]` 가 나오면 안 된다.
+    joined = ", ".join(str(d.get("name")) for d in sd)
+    assert "None" not in joined and "undefined" not in joined, joined
+    assert "지구단위계획구역" in joined
+
+
+def test_original_rows_are_not_mutated(monkeypatch):
+    """★원본 designation 리스트를 **건드리지 않는다**(같은 객체를 다른 소비처도 쓴다).
+
+    `land_use_plan.districts` 는 같은 리스트를 싣는다 — 원본을 변형하면 그쪽까지 바뀐다.
+    """
+    src = [dict(d) for d in _REAL_SUCHEONG]
+    before = [dict(d) for d in src]
+    svc = _svc_with(monkeypatch, land_use=src)
+    asyncio.run(svc.collect_comprehensive("x"))
+    assert src == before, "원본 행이 변형됐다"
+    # ★양성 짝 — 그래도 결과 행에는 name 이 붙어 있다(복사가 실제로 일어났다).
+    r = asyncio.run(_svc_with(monkeypatch, land_use=src).collect_comprehensive("x"))
+    assert all(d.get("name") for d in r["special_districts"])
