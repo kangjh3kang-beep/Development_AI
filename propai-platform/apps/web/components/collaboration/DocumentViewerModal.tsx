@@ -8,9 +8,10 @@
  */
 
 import dynamic from "next/dynamic";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { DISMISS_Z, useDismissible } from "@/lib/satong-dismiss";
+import { useModalFocus } from "@/hooks/useModalFocus";
 import type { CollabDocument } from "@/store/use-collaboration-store";
 import { CadDocViewer } from "./CadDocViewer";
 
@@ -45,6 +46,15 @@ export function DocumentViewerModal({
   //   닫아야 하므로 확인창은 `nestedOverModal`, 이 뷰어는 `appModal` 로 등록한다.
   useDismissible(DISMISS_Z.appModal, Boolean(doc) && mounted, onClose);
 
+  // ★포커스 생명주기 — 미룬 사유였던 *"iframe 포커스 정책"* 은 **실측으로 기각**했다:
+  //   이 뷰어엔 `<iframe>` 이 **0개**다(이미지=<img>, PDF=react-pdf, DXF=CAD 뷰어 — 전부 캔버스/DOM).
+  //   내부 스크롤 컨테이너는 포커스 대상이 아니라 트랩에 영향이 없다.
+  //   ★남은 진짜 제약은 **트랩 중첩**이다 — 훅은 `useDismissible` 과 달리 z 조정이 없어
+  //     포커스 배선된 모달 안에 또 배선된 모달이 열리면 두 트랩이 겹친다.
+  //     현재 이 서브트리엔 `ConfirmDeleteModal` 이 없다(실측). 아래 계약 테스트가 그 침범을 막는다.
+  const bodyRef = useRef<HTMLDivElement>(null);
+  useModalFocus(bodyRef, Boolean(doc) && mounted);
+
   if (!doc || !mounted) return null;
   const url = doc.file_url ?? "";
   const name = doc.original_filename;
@@ -72,6 +82,7 @@ export function DocumentViewerModal({
       onClick={onClose}
     >
       <div
+        ref={bodyRef}
         className="relative flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--surface)] shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
