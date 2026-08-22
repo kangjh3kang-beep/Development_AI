@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from app.services.legal.legal_limit import LegalLimit
+
 import re
 from dataclasses import asdict, dataclass
 from enum import StrEnum
@@ -63,8 +65,37 @@ ROAD_REQUIREMENT: dict[str, dict[str, float]] = {
     "M13": {"road_width": 4, "frontage": 2},
 }
 
-MAX_FLOORS: dict[str, int | None] = {
-    "M10": 3, "M11": 3, "M12": 4, "M13": None,
+# ── 유형별 층수 상한 — **근거 없이는 등재하지 않는다** ────────────────────────
+# ★2026-08-23 교정. 종전 값: {"M10": 3, "M11": 3, "M12": 4, "M13": None}.
+#   `M10`(단독주택)·`M11`(전원주택)에 **3층**이 근거 없이 박혀 있었고, 그것이 자연녹지
+#   부지(건폐 20%·4층)에서 단독주택 계획을 4층→3층으로 깎아 용적률을 80%→60%로 내렸다.
+#   건축법 시행령 별표1 제1호를 보면 **3개 층 이하는 다중주택(나목)·다가구주택(다목)** 이고,
+#   **단독주택(가목)에는 유형 자체의 층수 제한이 없다** — 값이 틀렸다.
+#   (용도지역 층수 제한 — 자연녹지 4층 등 — 은 실효 용적률이 이미 담당한다.)
+#
+# ★★"등재되지 않음"과 "제한 없음"은 **다르다**.
+#     · 등재 + value=None → 법이 제한하지 않는다(근거 있음)
+#     · **미등재**        → 근거를 확인하지 못했다 → 제약을 적용하지 않되 **그 사실을 드러낸다**
+#   근거 미확인을 조용히 "제한 없음"으로 두면, 종전과 반대 방향의 같은 잘못이 된다.
+MAX_FLOORS: dict[str, LegalLimit] = {
+    "M10": LegalLimit(
+        None,
+        law="건축법 시행령 별표1 제1호 가목",
+        note="단독주택 — 유형 자체 층수 제한 없음(3개 층 이하는 다중·다가구주택에 한함)",
+    ),
+    "M11": LegalLimit(
+        None,
+        law="건축법 시행령 별표1 제1호 가목",
+        note="전원주택은 법정 용어가 아닌 단독주택의 일종 — M10 과 같은 근거",
+    ),
+    "M12": LegalLimit(
+        4,
+        law="건축법 시행령 별표1 제2호 나목",
+        note="타운하우스를 연립주택으로 본 값 — 4개 층 이하",
+    ),
+    # ★M13(도시형생활주택)은 **등재하지 않는다**: 주택법상 유형(원룸형·단지형연립·단지형다세대)
+    #   마다 층수 규율이 달라 단일 상한을 확정할 수 없다. 근거를 확정하기 전에는 값을 만들지
+    #   않는다 — 종전 `None`(=제한 없음)은 확정된 사실이 아니라 **미확인의 위장**이었다.
 }
 
 BUILDING_TYPE_MAP: dict[str, str] = {
@@ -179,12 +210,25 @@ def _check_setback(zone_type: str, land_area: float, effective_bcr: float) -> Co
     return ConditionCheck("건축선후퇴", "conditional", f"후퇴 {setback}m 적용 시 건축면적 제한 — 배치 검토 필요")
 
 def _check_floors(dev_type: str, zone_type: str, calculated_floors: int) -> ConditionCheck:
-    max_f = MAX_FLOORS.get(dev_type)
-    if max_f and calculated_floors > max_f:
+    limit = MAX_FLOORS.get(dev_type)
+    if limit is None:
+        # ★미등재 = 근거 미확인. 제약을 **적용하지 않되 침묵하지도 않는다**
+        #   (조용히 통과시키면 "제한 없음"과 구분되지 않는다).
+        return ConditionCheck(
+            "층수제한", "unknown",
+            f"계획 {calculated_floors}층 — 이 유형({dev_type})의 층수 상한 근거 미확인",
+        )
+    if not limit.unlimited and calculated_floors > int(limit.value):
         return ConditionCheck(
             "층수제한", "fail",
-            f"계획 {calculated_floors}층 > 상한 {max_f}층 ({dev_type})",
+            f"계획 {calculated_floors}층 > 상한 {limit.value:g}층 ({limit.law})",
             is_blocking=True,
+        )
+    if limit.unlimited:
+        # 법이 이 유형을 제한하지 않는다 — 근거와 함께 통과시킨다(용도지역 제한은 별도 축).
+        return ConditionCheck(
+            "층수제한", "pass",
+            f"계획 {calculated_floors}층 — 유형 층수 제한 없음({limit.law})",
         )
 
     from app.services.permit.building_code_rules import ZONE_DEFAULTS
