@@ -7,8 +7,10 @@
  * 삭제 버튼이 활성화된다. 되돌릴 수 없는 삭제(프로젝트 등)에 사용.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+
+import { useModalFocus } from "@/hooks/useModalFocus";
 import { AlertTriangle, Check } from "lucide-react";
 
 import { DISMISS_Z, useDismissible } from "@/lib/satong-dismiss";
@@ -34,6 +36,14 @@ export function ConfirmDeleteModal({
   onCancel,
 }: ConfirmDeleteModalProps) {
   const [input, setInput] = useState("");
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  // ★모달 포커스 생명주기(초기 포커스·트랩·복귀). ESC 는 별개 계약(registerDismissible)이라
+  //   여기서 다루지 않는다 — 두 곳에서 처리하면 한 번 눌러 둘이 닫힌다(#697 이 겪은 결함).
+  // ★훅은 **early return 앞**에 둔다. 아래 `if (!open) return null` 뒤에 두면 조건부 호출이
+  //   되어 렌더마다 훅 순서가 달라진다(react-hooks/rules-of-hooks 가 잡아 줬다).
+  //   대신 `open` 을 그대로 넘겨 닫힘 상태에서는 훅이 스스로 아무것도 하지 않게 한다.
+  useModalFocus(dialogRef, open);
   const [copied, setCopied] = useState(false);
 
   // 열릴 때마다 입력 초기화
@@ -85,6 +95,8 @@ export function ConfirmDeleteModal({
       aria-modal="true"
     >
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         className="w-full max-w-md rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-6 shadow-[var(--shadow-2xl)]"
         onClick={(e) => e.stopPropagation()}
       >
