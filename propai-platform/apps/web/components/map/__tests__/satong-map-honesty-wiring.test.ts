@@ -237,3 +237,30 @@ describe("위치 미확인 실거래 — 목록 배선(2026-08-21)", () => {
   });
 });
 
+describe("거리 1급시민화 — 표시 캡은 가까운 순으로 남긴다(2026-08-22)", () => {
+  const scan = (file: string) =>
+    __stripCommentsForScan(readFileSync(resolve(process.cwd(), file), "utf-8"), file);
+
+  it("팝업이 거리를 **실제로 렌더**한다 — 정렬 근거를 사용자가 볼 수 있어야 한다", () => {
+    const src = scan("components/map/SatongMultiMap.tsx");
+    // ①양성: 거리 줄을 만들고
+    expect(src).toContain("group.distance_m");
+    const i = src.indexOf("const distLine");
+    expect(i, "거리 줄 조립부가 없다").toBeGreaterThan(-1);
+    expect(src.slice(i, i + 500)).toContain("선택 필지에서");
+    // ②★소비: 팝업 배열에 **실제로 끼워졌는지**(만들고 안 쓰면 화면은 그대로다).
+    const j = src.indexOf("perSqmLine,");
+    expect(j).toBeGreaterThan(-1);
+    expect(src.slice(j, j + 120)).toContain("distLine,");
+  });
+
+  it("★대조군 — 1km 미만은 m, 이상은 km 로 쓴다(자릿수 오독 방지)", () => {
+    const src = scan("components/map/SatongMultiMap.tsx");
+    const i = src.indexOf("const distLine");
+    const block = src.slice(i, i + 500);
+    expect(block).toContain("distance_m >= 1000");
+    expect(block).toContain("km");
+    expect(block).toContain("m`");
+  });
+});
+

@@ -73,10 +73,10 @@ export const DIFF_FIELD_MAP: Record<DiffAnalysisType, DiffFieldDef[]> = {
       label: "실효 용적률",
       unit: "%",
       fmt: "percent",
-      fallback: { key: "potential_far_range.max_pct", label: "상향 상한" },
+      fallback: { key: "potential_far_range.max_pct", label: "상향 잠재(범위 상단)" },
     },
     { key: "land_area_sqm", label: "대지면적", unit: "㎡", fmt: "number" },
-    { key: "potential_far_range.max_pct", label: "상향 상한", unit: "%", fmt: "percent" },
+    { key: "potential_far_range.max_pct", label: "상향 잠재(범위 상단)", unit: "%", fmt: "percent" },
     { key: "location.grade", label: "입지등급", fmt: "text" },
   ],
   // ★POST /precheck/instant 원장 write-back 요약 필드와 1:1(routers/precheck.py).
