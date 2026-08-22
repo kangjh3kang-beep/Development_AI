@@ -1,10 +1,14 @@
-"""공사비 엔진 테스트 — 직접/간접 공사비 + 물가보정."""
+"""공사비 엔진 테스트 — 직접/간접 공사비.
+
+★물가보정(`apply_cost_index`) 테스트는 2026-08-22 에 함수와 함께 제거했다 —
+  KOSIS 실측 시점보정(`unit_price_repository._maybe_escalate`)으로 대체됐고
+  프로덕션 소비처가 0이었다(테스트만 그 함수를 살려 두고 있었다).
+"""
 
 import pytest
 
 from app.services.feasibility.construction_cost_engine import (
     DEFAULT_DIRECT_COST_PER_SQM,
-    apply_cost_index,
     calculate_direct_cost,
     calculate_indirect_cost,
     calculate_total_construction_cost,
@@ -25,23 +29,6 @@ class TestUnitConversion:
         original = 34.0
         converted = sqm_to_pyeong(pyeong_to_sqm(original))
         assert converted == pytest.approx(original, abs=0.1)
-
-
-class TestCostIndex:
-    def test_same_year(self):
-        result = apply_cost_index(1_000_000, base_year=2025, target_year=2025)
-        assert result["index_factor"] == 1.0
-        assert result["adjusted_cost_won"] == 1_000_000
-
-    def test_one_year_increase(self):
-        result = apply_cost_index(1_000_000, base_year=2025, target_year=2026, annual_increase_rate=0.03)
-        assert result["index_factor"] == pytest.approx(1.03, abs=0.001)
-        assert result["adjusted_cost_won"] == 1_030_000
-
-    def test_three_year_compound(self):
-        result = apply_cost_index(1_000_000, base_year=2023, target_year=2026, annual_increase_rate=0.05)
-        expected = int(1_000_000 * (1.05 ** 3))
-        assert result["adjusted_cost_won"] == expected
 
 
 class TestDirectCost:
