@@ -12,7 +12,13 @@
  *     주석을 벗긴 소스에서 확인한다 — 이 저장소가 두 번 뚫린 자리다).
  */
 import { render, screen } from "@testing-library/react";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { describe, expect, it } from "vitest";
+
+import { upzoningPotentialLabel, upzoningReachClause } from "@/lib/formatters";
+import { __stripCommentsForScan } from "@/lib/source-invariant";
 
 import { formatUpzoningFarRange, type UpzoningFarRange } from "@/lib/formatters";
 import { assertWiredThrough } from "@/lib/source-invariant";
@@ -272,14 +278,60 @@ describe("buildLandProfile — 집계 규칙이 백엔드 범위 규칙과 같�
   });
 });
 
-describe("아직 잠기지 않은 것(부채 — 초록 안에 보이게 남긴다)", () => {
-  // ProjectAnalysisSummary 의 "종상향 잠재(용적·단일 값)" 라벨·근거 교체는 store 전체와
-  // apiClient(useEffect 내 /zoning/integrated-analysis)를 세워야 렌더된다.
-  // 현재는 pnpm type-check 만이 그 배선을 지킨다.
-  it.todo("ProjectAnalysisSummary — 붕괴 시 라벨·근거가 '단일 값'으로 바뀌는지 렌더로 확인");
-  // AutoRecommendPanel 문장의 조사 분기("…이며" vs "…까지 가능하며")도 같은 이유로 미잠금.
-  it.todo("AutoRecommendPanel — 붕괴 시 '까지 가능하며'가 '이며'로 바뀌는지 렌더로 확인");
-  // LOW-6(적대리뷰) — AnalysisDiffTable:76,79 / analysis-field-labels:44 의 "상한" 라벨.
-  // 버전 간 스칼라 diff 라 거짓 범위는 안 만들지만 라벨은 여전히 도달 상한을 함의한다.
-  it.todo("AnalysisDiffTable — '상향 상한' 라벨이 붕괴 시 오도하지 않는지");
+describe("부채 상환(2026-08-22) — 문구를 SSOT 로 모으고 배선을 잠근다", () => {
+  // 종전 `it.todo` 3건은 *"store 전체와 apiClient 를 세워야 렌더된다"* 를 이유로 미뤄져
+  // 있었다. 상환하면서 **처방을 바꿨다** — 무거운 렌더 하네스를 세우는 대신,
+  // 표면마다 인라인 삼항으로 흩어져 있던 **문구 분기를 공용 함수로 모았다.**
+  //
+  // ★그게 더 강한 잠금인 이유: 렌더 테스트는 "그 화면이 지금 맞게 그린다"만 보지만,
+  //   SSOT + 배선락은 **두 표면이 같은 규칙을 쓴다**까지 본다. 오늘 지번 표시가 **세 벌**로
+  //   갈려 일곱 번 재발한 것이 바로 "표면마다 각자 분기"였다.
+  //
+  // ★한계를 밝힌다: 배선 확인은 **소스 수준**이다(주석은 걷어낸다). 실제 픽셀은 배포 후 사람이 본다.
+
+  it("★라벨 SSOT — 붕괴면 '상한'이라고 부르지 않는다", () => {
+    expect(upzoningPotentialLabel(true)).toBe("종상향 잠재(용적·단일 값)");
+    expect(upzoningPotentialLabel(false)).toBe("종상향 잠재 상한(용적)");
+    // 붕괴 라벨은 도달 가능성을 함의하면 안 된다(문구가 숫자보다 오래 기억된다).
+    expect(upzoningPotentialLabel(true)).not.toContain("상한");
+    // ★대조군 — 비붕괴는 여전히 '상한'이어야 한다(둘 다 같아지면 분기가 죽은 것이다).
+    expect(upzoningPotentialLabel(false)).toContain("상한");
+  });
+
+  it("★조사 SSOT — 붕괴면 '까지 가능하며'가 거짓이므로 '이며'로 바뀐다", () => {
+    expect(upzoningReachClause(true)).toMatch(/^이며,/);
+    expect(upzoningReachClause(false)).toMatch(/^까지 가능하며,/);
+    expect(upzoningReachClause(true)).not.toContain("까지 가능");
+    // 두 문구의 **뒷부분은 같아야** 한다 — 분기는 조사에만 있다(내용이 갈리면 다른 결함이다).
+    const tail = "이 경우 더 고밀·고수익 건축유형이 추천될 수 있습니다.";
+    expect(upzoningReachClause(true)).toContain(tail);
+    expect(upzoningReachClause(false)).toContain(tail);
+  });
+
+  it("★배선 — 두 표면이 인라인 삼항으로 되돌아가지 않았다", () => {
+    const scan = (f: string) =>
+      __stripCommentsForScan(readFileSync(resolve(process.cwd(), f), "utf-8"), f);
+    const summary = scan("components/projects/ProjectAnalysisSummary.tsx");
+    const panel = scan("components/feasibility/AutoRecommendPanel.tsx");
+    // ①양성 — 공용 함수를 **호출**한다(임포트만 남는 회귀를 막는다).
+    expect(summary).toContain("upzoningPotentialLabel(");
+    expect(panel).toContain("upzoningReachClause(");
+    // ②음성 — 인라인 문구가 되살아나지 않았다(같은 실행에서 양성과 함께 본다).
+    expect(summary).not.toContain('"종상향 잠재 상한(용적)"');
+    expect(panel).not.toContain('"까지 가능하며');
+  });
+
+  it("★AnalysisDiffTable — 라벨이 **도달 상한을 함의하지 않는다**", () => {
+    // 이 표는 원장 스냅샷의 **스칼라 버전 diff** 라 붕괴 여부를 알 수 없다
+    // (그래서 분기할 수 없다). 분기 대신 **주장하지 않는 이름**으로 바꾼 것이 처방이다.
+    const scan = (f: string) =>
+      __stripCommentsForScan(readFileSync(resolve(process.cwd(), f), "utf-8"), f);
+    const diff = scan("components/common/AnalysisDiffTable.tsx");
+    const labels = scan("lib/analysis-field-labels.ts");
+    expect(diff).toContain("상향 잠재(범위 상단)");
+    expect(diff).not.toContain('label: "상향 상한"');
+    expect(labels).toContain("상향 잠재 용적률(범위 상단)");
+    expect(labels).not.toContain("상향 가능 용적률(상한)");
+  });
 });
+

@@ -122,6 +122,10 @@ export interface SatongMultiMapProps {
   readOnly?: boolean;
   /** 주변 실거래/분양 등 시장 데이터 마커를 같은 엔진 위에 표시한다. */
   marketPayload?: SatongMarketPayload | null;
+  /** 실거래 반경(수동). `null` = 자동(희소하면 백엔드가 넓힌다). */
+  marketRadiusM?: number | null;
+  /** 반경 칩 선택 — `null` 을 주면 자동으로 되돌린다. */
+  onMarketRadiusChange?: (m: number | null) => void;
   marketLayer?: SatongMarketLayerState;
   /** 교통·편의 POI(지하철·학교·상권·공원·병원) 마커 — /site-score/poi-infra 응답. */
   poiPayload?: SatongPoiPayload | null;
@@ -247,6 +251,12 @@ export type SatongMarketGroup = {
    * ★같은 형태의 결함이 이미 있었다(2026-08-13 `sample_basis` 선언 누락 TS2345).
    */
   location_status?: "located" | "approximate" | "unlocated";
+  /**
+   * 중심(선택 필지)으로부터의 거리(m). 백엔드가 **이미 계산해 놓고 버리던** 값이다
+   * (분양 그룹은 처음부터 싣고 있었다 — 같은 응답 안의 선례).
+   * ★거리가 표시 캡의 정렬 1순위가 됐으므로(가까운 순으로 남긴다) 화면도 그 근거를 보여야 한다.
+   */
+  distance_m?: number | null;
   deals?: SatongMarketDeal[];
 };
 
@@ -620,6 +630,20 @@ export function collectUnlocatedMarketGroups(
   return out.sort((a, b) => b.count - a.count);
 }
 
+/**
+ * 반경 선택지 — `null` 은 **자동**(희소하면 백엔드가 사다리로 넓힌다).
+ *
+ * ★지방 필지 실측에서 3km 로도 부족했다(제천 모산동: 3km 40개 / 10km 118개) —
+ *   형제(`NearbyTransactionsMap`)의 500m/1km/3km 보다 위쪽을 넓게 잡는다.
+ */
+const MARKET_RADIUS_CHOICES: ReadonlyArray<{ label: string; value: number | null }> = [
+  { label: "자동", value: null },
+  { label: "1km", value: 1000 },
+  { label: "3km", value: 3000 },
+  { label: "5km", value: 5000 },
+  { label: "10km", value: 10000 },
+];
+
 /** 위치 미확인 목록 표시 상한 — 초과분은 **건수를 명시**하고 생략한다(무음 절단 금지). */
 const UNLOCATED_LIST_LIMIT = 12;
 
@@ -967,6 +991,16 @@ function marketPopupHtml(group: SatongMarketGroup, kind: "trade" | "rent"): stri
   const perSqmLine = perSqmMan
     ? `<div style="font-size:11px;color:#475569;">㎡당 ${perSqmMan.toLocaleString()}만원</div>`
     : "";
+  // ★거리 표기 — 표시 캡이 **가까운 순**으로 남기므로, 사용자가 그 근거를 볼 수 있어야 한다.
+  //   "반경 안/밖" 이분법 대신 실제 거리를 주면 사용자가 스스로 유효성을 판단한다.
+  const distLine =
+    typeof group.distance_m === "number"
+      ? `<div style="font-size:11px;color:#475569;">선택 필지에서 ${
+          group.distance_m >= 1000
+            ? `${Math.round(group.distance_m / 100) / 10}km`
+            : `${group.distance_m}m`
+        }</div>`
+      : "";
   const rangeLine =
     kind === "trade" && (group.min_price_10k || group.max_price_10k)
       ? `<div style="font-size:11px;color:#475569;">최저 ${won(group.min_price_10k)} ~ 최고 ${won(group.max_price_10k)}${group.excluded_outliers ? ` · 이상치 ${group.excluded_outliers}건 제외` : ""}</div>`
@@ -995,6 +1029,7 @@ function marketPopupHtml(group: SatongMarketGroup, kind: "trade" | "rent"): stri
     attrLine ? `<div style="color:#64748b;font-size:11px;">${attrLine}</div>` : "",
     `<div style="margin:6px 0;color:#0f172a;">${escapeHtml(priceLine)}</div>`,
     perSqmLine,
+    distLine,
     rangeLine,
     dealRows,
     `</div>`,
@@ -1099,6 +1134,8 @@ export function SatongMultiMap({
   bottomDockSlot,
   topRightSlot,
   marketPayload = null,
+  marketRadiusM = null,
+  onMarketRadiusChange,
   marketLayer,
   poiPayload = null,
   developmentPayload = null,
@@ -3436,6 +3473,43 @@ export function SatongMultiMap({
                     <span className="inline-flex items-center gap-1"><Home className="size-3" aria-hidden />실거래 유형</span>
                     <span aria-hidden>▾</span>
                   </button>
+                  {/* ★반경 선택(형제 패리티) — `NearbyTransactionsMap` 은 이미 갖고 있었다.
+                      ★"자동"은 1km 로 조회 후 희소하면 백엔드가 넓히는 모드이고, 값을 고르면
+                        **그 값이 그대로 적용**된다(고른 값과 적용값이 달라지면 컨트롤이 거짓말이 된다). */}
+                  {onMarketRadiusChange && (
+                    <div className="mb-2">
+                      {/* ★변이검증 생존 정직 고지: 아래 className·key 등 **표현 계층**은
+                          잠그지 않는다. Tailwind 클래스 문자열을 단언하면 정상적인 스타일
+                          변경이 전부 빨강이 되고(가드의 위양성도 결함), 잠금 가치보다 비용이 크다.
+                          잠근 것은 **행위**다 — 선택지 렌더·핸들러 호출·프롭 배선·기본값·type="button". */}
+                      <p className="mb-1 text-[10px] font-black text-[var(--text-secondary)]">조회 반경</p>
+                      <div className="flex flex-wrap gap-1">
+                        {MARKET_RADIUS_CHOICES.map((r) => {
+                          const active = marketRadiusM === r.value;
+                          return (
+                            <button
+                              key={r.label}
+                              type="button"
+                              onClick={() => onMarketRadiusChange(r.value)}
+                              aria-pressed={active}
+                              className={`rounded-full px-2 py-0.5 text-[10px] font-bold transition-colors ${
+                                active
+                                  ? "bg-[var(--accent-strong)] text-white"
+                                  : "bg-[var(--surface-muted)] text-[var(--text-secondary)]"
+                              }`}
+                            >
+                              {r.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {marketRadiusM == null && (
+                        <p className="mt-1 text-[10px] font-semibold text-[var(--text-tertiary)]">
+                          자동 — 1km 내 거래가 적으면 넓혀서 보여줍니다.
+                        </p>
+                      )}
+                    </div>
+                  )}
                   <div className="flex flex-col gap-1 text-[10.5px]">
                     {marketTypes.map((type) => (
                       <div key={type} className="flex items-center gap-1.5 font-semibold text-[var(--text-primary)]">

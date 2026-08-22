@@ -176,11 +176,43 @@ describe("적응형 반경 — 조용히 넓히지 않는다(2026-08-21)", () =>
   const scan = (file: string) =>
     __stripCommentsForScan(readFileSync(resolve(process.cwd(), file), "utf-8"), file);
 
-  it("지도 요청이 적응형 반경을 켠다 — 끄면 1km 고정으로 되돌아간다", () => {
+  it("지도 요청이 **공용 헬퍼**로 반경을 조립한다 — 인라인으로 되돌리면 계약이 갈라진다", () => {
     const src = scan("components/precheck/SatongMapShell.tsx");
     // 공허한 참 방지 — nearby-map 요청 자체가 있어야 이 단언이 의미를 가진다.
     expect(src).toContain("/zoning/nearby-map");
-    expect(src).toContain("auto_expand_radius: true");
+    // ★2026-08-22 갱신: 인라인 `auto_expand_radius: true` 를 공용 `marketRadiusRequest` 로
+    //   옮겼다(수동 선택 시 확대를 꺼야 하는데, 그 판단이 호출부마다 흩어지면 또 여러 벌이 된다).
+    //   행위 자체는 `lib/__tests__/market-radius.test.ts` 가 두 모집단으로 잠근다.
+    expect(src).toContain("marketRadiusRequest(marketRadiusM)");
+    // 인라인 하드코딩으로 되돌아가지 않았는지 — 되돌아가면 수동 선택이 무시된다.
+    expect(src).not.toContain("auto_expand_radius: true");
+  });
+
+  it("★반경 칩이 실제로 렌더되고 선택을 상류로 올린다(형제 패리티)", () => {
+    const src = scan("components/map/SatongMultiMap.tsx");
+    expect(src).toContain("MARKET_RADIUS_CHOICES");
+    const i = src.indexOf("MARKET_RADIUS_CHOICES.map");
+    expect(i, "선택지가 상수로만 있고 렌더되지 않는다").toBeGreaterThan(-1);
+    const block = src.slice(i, i + 700);
+    expect(block).toContain("onMarketRadiusChange(");
+    // ★폼 안에 놓였을 때 제출을 유발하지 않는다(변이 생존으로 드러난 자리).
+    expect(block).toContain('type="button"');
+  });
+
+  it("★프롭 배선 — Shell 이 칩 상태·핸들러를 Map 에 실제로 넘긴다", () => {
+    // ★변이검증에서 이 두 줄을 지워도 초록이었다. 지우면 `onMarketRadiusChange` 가
+    //   undefined 라 **칩이 아예 렌더되지 않고**(블록이 통째로 숨는다) 선택이 요청에
+    //   도달하지 못한다 — 컨트롤을 만들어 놓고 배선을 빼먹는 그 형태다.
+    const src = scan("components/precheck/SatongMapShell.tsx");
+    expect(src).toContain("marketRadiusM={marketRadiusM}");
+    expect(src).toContain("onMarketRadiusChange={setMarketRadiusM}");
+  });
+
+  it("★기본값이 자동(null)이다 — 지우면 '자동' 칩이 활성 표시되지 않는다", () => {
+    // `marketRadiusM = null` 기본값이 없으면 undefined 가 되고, 자동 칩의 value(null)와
+    // `===` 비교가 실패해 **아무 칩도 선택돼 보이지 않는다**(변이 생존으로 드러난 자리).
+    const src = scan("components/map/SatongMultiMap.tsx");
+    expect(src).toContain("marketRadiusM = null,");
   });
 
   it("배너가 확대 사실을 고지한다 — 확대만 하고 말하지 않으면 오도가 된다", () => {
@@ -234,6 +266,33 @@ describe("위치 미확인 실거래 — 목록 배선(2026-08-21)", () => {
     const block = src.slice(i, i + 1800);
     expect(block).toContain("UNLOCATED_LIST_LIMIT");
     expect(block).toContain("생략");
+  });
+});
+
+describe("거리 1급시민화 — 표시 캡은 가까운 순으로 남긴다(2026-08-22)", () => {
+  const scan = (file: string) =>
+    __stripCommentsForScan(readFileSync(resolve(process.cwd(), file), "utf-8"), file);
+
+  it("팝업이 거리를 **실제로 렌더**한다 — 정렬 근거를 사용자가 볼 수 있어야 한다", () => {
+    const src = scan("components/map/SatongMultiMap.tsx");
+    // ①양성: 거리 줄을 만들고
+    expect(src).toContain("group.distance_m");
+    const i = src.indexOf("const distLine");
+    expect(i, "거리 줄 조립부가 없다").toBeGreaterThan(-1);
+    expect(src.slice(i, i + 500)).toContain("선택 필지에서");
+    // ②★소비: 팝업 배열에 **실제로 끼워졌는지**(만들고 안 쓰면 화면은 그대로다).
+    const j = src.indexOf("perSqmLine,");
+    expect(j).toBeGreaterThan(-1);
+    expect(src.slice(j, j + 120)).toContain("distLine,");
+  });
+
+  it("★대조군 — 1km 미만은 m, 이상은 km 로 쓴다(자릿수 오독 방지)", () => {
+    const src = scan("components/map/SatongMultiMap.tsx");
+    const i = src.indexOf("const distLine");
+    const block = src.slice(i, i + 500);
+    expect(block).toContain("distance_m >= 1000");
+    expect(block).toContain("km");
+    expect(block).toContain("m`");
   });
 });
 
