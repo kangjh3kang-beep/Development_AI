@@ -6,12 +6,12 @@
 
 from __future__ import annotations
 
-from app.services.legal.legal_limit import LegalLimit
-
 import re
 from dataclasses import asdict, dataclass
 from enum import StrEnum
 from typing import Any
+
+from app.services.legal.legal_limit import LegalLimit
 
 # ── 적합성 판정 ──
 
