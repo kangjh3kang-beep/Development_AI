@@ -88,6 +88,8 @@ describe("공시지가 기준연도 표시", () => {
     });
 
     expect(await screen.findByText(/공시지가 \(2026년 · 원\/m²\)/)).toBeInTheDocument();
+    // ★값도 잠근다 — 라벨만 보면 **값 렌더가 통째로 사라져도** 통과한다(변이 생존으로 적발).
+    expect(screen.getByText("137.7만원")).toBeInTheDocument();
   });
 
   it("B) 연도를 모르면 붙이지 않는다(지어내지 않는다)", async () => {
@@ -102,6 +104,7 @@ describe("공시지가 기준연도 표시", () => {
 
     // 값 자체는 보여야 한다(전제 가드 — 대상이 없어서 통과하는 걸 막는다)
     expect(await screen.findByText("공시지가 (원/m²)")).toBeInTheDocument();
+    expect(screen.getByText("138.9만원")).toBeInTheDocument();   // 값 렌더 잠금(두 모집단이 다른 값)
     expect(screen.queryByText(/공시지가 \(\d{4}년/)).not.toBeInTheDocument();
   });
 });
