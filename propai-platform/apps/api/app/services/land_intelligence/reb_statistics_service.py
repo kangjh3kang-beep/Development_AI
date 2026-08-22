@@ -135,14 +135,21 @@ async def land_price_trend(address: str = "") -> dict[str, Any] | None:
     return t or None
 
 
-async def get_market_stats(address: str = "") -> dict[str, Any]:
+async def get_market_stats(address: str = "", base_year: int | None = None) -> dict[str, Any]:
     """지역 부동산 시장 통계 묶음(시점수정·cap rate·전환율) — 모세혈관 주입용 단일 출처.
 
     각 항목은 R-ONE 실데이터 가용 시 채택, 아니면 None(호출측이 근사 폴백).
     """
     from app.services.land_intelligence.land_price_index import time_adjust_factor_async
 
-    land_ta = await time_adjust_factor_async(address)
+    # ★시점수정 기준연도는 호출자가 정한다(2026-08-22).
+    #   종전엔 base_year 를 안 넘겨 기본값 2025 에 의존했다. 유일한 소비처인
+    #   desk_appraisal 은 **공시연도(2026)** 기준으로 따로 시점수정하고 있어,
+    #   같은 함수 안에서 두 시점수정이 **서로 다른 기준연도**를 쓰고 있었다.
+    #   land_time_adjust 는 아직 소비처가 없지만(응답 '출처 투명화'용), 값이 실려 나가는 한
+    #   틀린 기준으로 두면 나중에 쓰는 쪽이 그대로 오독한다.
+    land_ta = await time_adjust_factor_async(address, base_year) if base_year is not None \
+        else await time_adjust_factor_async(address)
     housing = await housing_time_adjust(address)
     cap = await commercial_cap_rate(address)
     jeonse = await jeonse_conversion_rate(address)
