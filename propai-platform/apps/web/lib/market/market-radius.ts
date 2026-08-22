@@ -33,3 +33,44 @@ export function marketRadiusRequest(
     auto_expand_radius: !manual,
   };
 }
+
+/**
+ * 반경 컨트롤을 **보여야 하는가**.
+ *
+ * ## 왜 순수 함수인가
+ *
+ * 종전 게이트는 `marketPayload && !marketPayload.fetch_failed && marketTypes.length > 0`
+ * 이었고, 반경 칩이 그 **안**에 있었다. 그래서 조회가 실패하면 칩도 함께 사라졌다.
+ * 반경은 조회를 **다시 시키는** 수단이라 실패했을 때야말로 있어야 하고, 게다가 고른
+ * 반경은 부모 상태로 **그대로 남아** 같은 반경으로 계속 실패한다 —
+ * **새로고침 말고는 빠져나갈 길이 없었다.**
+ *
+ * ★이 판정을 JSX 안에 인라인으로 두면 **아무 테스트도 태울 수 없다.** 지도 오버레이는
+ *   Leaflet 이 실제로 뜬 뒤에야 그려져서 jsdom 렌더로 닿지 않기 때문이다(그래서 이 지도의
+ *   기존 계약 테스트들이 전부 소스 검사다). 판정만 밖으로 꺼내면 **직접** 검증할 수 있다.
+ */
+export function shouldShowRadiusControl(opts: {
+  /** 켜진 실거래 레이어 유형 수(= 사용자가 레이어를 켰는가). */
+  marketTypeCount: number;
+  /** 반경 변경 핸들러가 있는가(없으면 눌러도 아무 일이 없다). */
+  hasRadiusHandler: boolean;
+}): boolean {
+  // ★응답(payload)을 보지 않는다 — 그것이 이 함수의 요점이다.
+  return opts.marketTypeCount > 0 && opts.hasRadiusHandler;
+}
+
+/**
+ * 응답이 있어야 뜻이 있는 것(유형별 건수·위치 미확인 목록)을 보여야 하는가.
+ *
+ * 반경 컨트롤과 **다른 조건**이다 — 이 둘을 한 게이트로 묶은 것이 결함의 원인이었다.
+ */
+export function shouldShowMarketDetails(payload: { fetch_failed?: boolean } | null | undefined): boolean {
+  return Boolean(payload) && !payload?.fetch_failed;
+}
+
+/** 조회 실패를 사용자에게 알려야 하는가(침묵 금지). */
+export function shouldShowFetchFailureNotice(
+  payload: { fetch_failed?: boolean } | null | undefined,
+): boolean {
+  return Boolean(payload?.fetch_failed);
+}
