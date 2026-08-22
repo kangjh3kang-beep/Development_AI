@@ -658,12 +658,62 @@ describe("★HIGH-1 회귀: 데스크톱 네비 플라이아웃", () => {
   });
 });
 
-describe("모달 접근성 — 다음 단계(미구현 부채)", () => {
-  // ★부채는 커밋 메시지가 아니라 여기 남긴다 — 초록 안에 보여야 다음 사람이 안다.
-  //   착수 시점 실측: 포커스 트랩·초기 포커스·포커스 복귀는 13개 표면 **전부 0/13**.
-  //   ★R2 에서 확인된 결과이기도 하다 — OrgTree 의 두 시트가 키보드로 함께 열릴 수 있는 이유가
-  //     바로 트랩 부재다(지금은 상호배타로 막아 뒀지만 근본 처방은 트랩이다).
-  it.todo("모든 모달이 열릴 때 내부 첫 요소로 포커스를 옮긴다(초기 포커스)");
-  it.todo("모든 모달이 Tab/Shift+Tab 을 모달 안에 가둔다(포커스 트랩)");
-  it.todo("모달이 닫히면 열기 전 눌렀던 요소로 포커스가 돌아간다(포커스 복귀)");
+describe("모달 접근성 — 포커스 생명주기(2026-08-22 부분 상환)", () => {
+  // 종전엔 `it.todo` 3건(초기 포커스·트랩·복귀)이 **뭉뚱그려** 있었다.
+  // 착수 시점 실측은 **13표면 전부 0/13** 이었고, 미룬 이유는 *"폼 표면 회귀 위험"* 이었다.
+  //
+  // ★상환하면서 **근본 결함 하나를 찾았다**: `trapFocus`(hooks/useAccessibility)는 **이미
+  //   있었는데 소비처가 0** 이었고, 그 안의 가시성 판정이 `offsetParent !== null` 이었다.
+  //   **`position: fixed` 요소는 사양상 offsetParent 가 null** 이다(MDN) — 모달은 대부분
+  //   fixed 이므로 이 함수는 **정확히 자기 사용처에서 0개**를 돌려줬다. 그러면 trapFocus 는
+  //   `preventDefault()` 만 하고 끝나 **Tab 이 순환이 아니라 죽는다.** jsdom 만의 문제가 아니다.
+  //   → 판정을 `disabled`·`hidden`·`aria-hidden` 으로 바꿨다(fixed 무관·관측 가능).
+  //
+  // ★그리고 훅이 **저자의 `autoFocus` 를 빼앗지 않게** 했다 — 이미 모달 안에 포커스가 있으면
+  //   건드리지 않는다. (ConfirmDeleteModal 은 확인 입력창이 autoFocus 다. 첫 포커스 요소인
+  //   "복사" 버튼으로 옮기는 것은 개선이 아니라 **회귀**다.)
+  //
+  // ★부채를 **뭉뚱그리지 않는다** — 아래 맵이 표면별 사유를 들고 있고, 래칫이 그 맵을 감시한다.
+
+  /** 포커스 생명주기가 **배선된** 표면(소스에서 훅 호출로 판정). */
+  const FOCUS_WIRED = ["components/common/ConfirmDeleteModal.tsx"] as const;
+
+  /** 아직 배선하지 않은 표면 — **사유를 적는다**(빈 사유는 아래 래칫이 막는다). */
+  const FOCUS_UNWIRED: Record<string, string> = {
+    "components/desk/ConsentModal.tsx": "동의 흐름 — 체크박스 순서가 포커스 이동에 민감해 별도 검토 필요",
+    "components/sales-app/FieldNav.tsx": "네비 시트 — 모달이 아니라 드로어라 트랩 범위 정의가 다르다",
+    "components/sales-app/SiteEnterModal.tsx": "폼 표면 — 입력 다수, autoFocus 유무 확인 후 배선",
+    "components/sales-app/SitePasswordModal.tsx": "폼 표면 — 비밀번호 입력 autoFocus 와 충돌 여부 확인 필요",
+    "components/collaboration/DocumentViewerModal.tsx": "뷰어 — 내부 스크롤/iframe 포커스 정책 별도",
+    "components/sales/CustomerCardDrawer.tsx": "드로어 — 모달과 트랩 규약이 다르다",
+    "components/g2b/G2BBidDetailModal.tsx": "상세 모달 — 탭 컨트롤 다수, 순서 검토 후",
+    "components/orchestration/InputResolveModal.tsx": "입력 해석 모달 — 동적 필드 수 변동",
+  };
+
+  it("★배선된 표면은 훅을 **호출**한다(임포트만 남는 회귀 방지)", () => {
+    for (const f of FOCUS_WIRED) {
+      const code = executable(join(WEB_ROOT, f));
+      expect(code, `${f} 가 useModalFocus 를 호출하지 않는다`).toContain("useModalFocus(");
+    }
+  });
+
+  it("★미배선 사유가 비어 있지 않다 — 부채를 뭉뚱그리지 않는다", () => {
+    const entries = Object.entries(FOCUS_UNWIRED);
+    expect(entries.length, "미배선 맵이 비었다 — 전부 배선됐다면 이 래칫을 지워라").toBeGreaterThan(0);
+    for (const [f, reason] of entries) {
+      expect(reason.length, `${f} 의 사유가 너무 짧다`).toBeGreaterThan(15);
+    }
+  });
+
+  it("★죽은 부채를 남기지 않는다 — 맵의 파일이 실제로 모달 표면이어야 한다", () => {
+    const surfaces = new Set(collectSurfaces().map((s) => s.file));
+    for (const f of Object.keys(FOCUS_UNWIRED)) {
+      expect(surfaces.has(f), `${f} 는 더는 모달 표면이 아니다 — FOCUS_UNWIRED 에서 지워라`).toBe(true);
+    }
+    // ★배선된 표면이 미배선 맵에 남아 있으면 안 된다(양쪽에 있으면 래칫이 거짓말한다).
+    for (const f of FOCUS_WIRED) {
+      expect(FOCUS_UNWIRED[f], `${f} 는 배선됐는데 미배선 맵에 남아 있다`).toBeUndefined();
+    }
+  });
 });
+
