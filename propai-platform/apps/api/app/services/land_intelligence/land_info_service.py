@@ -820,7 +820,9 @@ class LandInfoService:
     async def _fetch_official_price(self, pnu: str) -> dict[str, Any] | None:
         """개별공시지가 조회 (VWORLD NED)."""
         try:
-            return await self.vworld.get_individual_land_price(pnu, year=2025)
+            # ★기준연도 하드코딩 제거(2026-08-22) — 최신 공시연도를 서비스가 해석한다.
+            #   종전 year=2025 는 VWorld 가 2026년치를 주는데도 옛 값을 쓰게 했다.
+            return await self.vworld.get_individual_land_price(pnu)
         except Exception as e:
             logger.warning("공시지가 조회 실패: %s (%s)", pnu, str(e))
             return None
