@@ -1486,10 +1486,18 @@ class ComprehensiveAnalysisService:
                 "개별공시지가가 조회되지 않았습니다. 토지대장 미등록 또는 비과세 필지일 수 있습니다."
             )
 
+        # ★공시지가의 **기준연도**를 값과 함께 싣는다(2026-08-22).
+        #   기준연도가 화면에 없어서, `year=2025` 하드코딩으로 1년 낡은 공시지가가
+        #   나가는 동안 아무도 눈치채지 못했다(#753). 값만 보이면 낡음이 보이지 않는다.
+        #   ★폴백(land_register)으로 받은 값은 연도를 모른다 → None(화면에서 미표시).
+        #     모르는 연도를 지어내면 "최신"이라는 거짓 신호가 된다.
+        official_price_year = latest.get("year") if latest.get("price_per_sqm") else None
+
         return {
             "official_price_per_sqm": price_per_sqm,
             "official_price_per_pyeong": int(price_per_sqm * 3.305785),
             "total_official_value_won": int(price_per_sqm * land_area),
+            "official_price_year": official_price_year,
             "estimated_market_per_sqm": estimated_market,
             "estimated_market_per_pyeong": int(estimated_market * 3.305785),
             "total_estimated_value_won": int(estimated_market * land_area),
