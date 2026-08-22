@@ -90,3 +90,64 @@ describe("지번 파생 단일 출처", () => {
     ].join("\n")).toEqual([]);
   });
 });
+
+/**
+ * ★#733 의 **마지막 우회로** — PNU 를 손으로 잘라 지번을 만드는 것.
+ *
+ * `#733` 은 파생 원시함수 `jibunFromPnu` 를 `lib/pnu.ts` 안으로 가뒀다. 그런데 그 함수를
+ * **부르지 않고도** 지번을 만들 수 있다 — PNU 문자열을 직접 자르면 된다:
+ *
+ *   `pnu.slice(11, 15)`  = 본번   ·  `pnu.slice(15, 19)`  = 부번
+ *
+ * 그렇게 만든 코드는 `jibunFromPnu` 를 언급하지 않으므로 #733 래칫을 **그대로 통과**한다.
+ * 그리고 그건 **네 번째 구현**과 정확히 같은 것이다 — 게다가 `산` 접두(`pnu[10] === "2"`)를
+ * 빼먹기 쉬워, 산림 필지에서 조용히 틀린 지번을 만든다.
+ *
+ * ★소스 문자열이 아니라 **구문(AST)** 으로 본다(주석·문자열 면역).
+ */
+describe("PNU 손수 슬라이싱 금지 — #733 의 우회로를 막는다", () => {
+  /** PNU 의 **지번 자리**(10~19)를 자르는 호출인가. 시군구·법정동 자리(0~10)는 무관하다. */
+  function slicesJibunDigits(src: string, file: string): boolean {
+    const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true);
+    let hit = false;
+    const visit = (n: ts.Node) => {
+      if (hit) return;
+      if (
+        ts.isCallExpression(n) &&
+        ts.isPropertyAccessExpression(n.expression) &&
+        ["slice", "substring", "substr"].includes(n.expression.name.text)
+      ) {
+        const first = n.arguments[0];
+        if (first && ts.isNumericLiteral(first) && Number(first.text) >= 10) {
+          hit = true;
+          return;
+        }
+      }
+      ts.forEachChild(n, visit);
+    };
+    ts.forEachChild(sf, visit);
+    return hit;
+  }
+
+  it("대조군 — 정당한 소유자는 실제로 그 슬라이싱을 **쓰고 있다**", () => {
+    // 소유자마저 안 쓰면 구현이 바뀐 것이고, 아래 위반검사는 공허해진다.
+    const owner = files.find((f) => f.rel === OWNER || f.rel.endsWith(sep + OWNER));
+    expect(owner).toBeDefined();
+    expect(slicesJibunDigits(owner!.src, owner!.rel)).toBe(true);
+  });
+
+  it(`${OWNER} 밖에서 PNU 지번 자리를 직접 자르지 않는다`, () => {
+    const violators = files
+      .filter((f) => !(f.rel === OWNER || f.rel.endsWith(sep + OWNER)))
+      .filter((f) => slicesJibunDigits(f.src, f.rel))
+      .map((f) => f.rel);
+
+    expect(violators, [
+      "PNU 를 손으로 잘라 지번을 만드는 코드가 lib/pnu.ts 밖에 생겼다.",
+      "이것은 jibunFromPnu 를 부르지 않으므로 #733 래칫을 그대로 통과한다 — 네 번째 구현이다.",
+      "게다가 `산` 접두(pnu[10] === '2')를 빼먹기 쉬워 산림 필지에서 **조용히 틀린 지번**이 나온다.",
+      "지번이 필요하면 jibunFromPnu 를, 라벨이 필요하면 parcelDisplayAddress 를 쓰라.",
+    ].join("\n")).toEqual([]);
+  });
+});
+
