@@ -752,11 +752,49 @@ describe("모달 접근성 — 포커스 생명주기(2026-08-22 부분 상환)"
   );
 
   it("전제: 배선된 표면이 **전부** 런타임 표에 있다 — 없으면 아래 표가 공허하다", () => {
+    // ★하한 가드가 **먼저** 와야 한다(2026-08-22 R2 추가). 종전엔 이게 없어서
+    //   `FOCUS_WIRED` 를 `[]` 로 만들면 아래 `describe.each` 가 **스위트 0개**가 되고
+    //   위 `toBe` 도 `0 === 0` 으로 통과해 **런타임 락 20건이 통째로 사라져도 초록**이었다.
+    //   같은 파일 ESC 블록은 이미 이렇게 막고 있었는데(`RUNTIME_CASES.length >= 9`)
+    //   새 블록에만 빠져 있었다 — 선언한 원칙을 자기 새 코드에 안 쓴 형태(§D.16).
+    expect(
+      FOCUS_WIRED.length,
+      "배선 표면이 비었다 — 이 describe 가 공허하다",
+    ).toBeGreaterThanOrEqual(4);
+
     const covered = WIRED_RUNTIME.map((c) => c.file);
     for (const f of FOCUS_WIRED) {
       expect(covered, `${f} 가 런타임 표에 없어 소스 검사로만 잠긴다`).toContain(f);
     }
     expect(WIRED_RUNTIME.length).toBe(FOCUS_WIRED.length);
+
+    // ★닫힘 픽스처가 없으면 음성대조가 **소리 없이 사라진다**(아래 `if (c.closed)`).
+    for (const c of WIRED_RUNTIME) {
+      expect(c.closed, `${c.file} 에 닫힘 픽스처가 없어 음성대조가 실행되지 않는다`).toBeTypeOf(
+        "function",
+      );
+    }
+  });
+
+  it("★★트랩 대상이 백드롭이 아니라 **대화상자 본체**다 — 결과가 같아 대상을 직접 봐야 한다", () => {
+    // `#750` 은 *"ref 를 백드롭에 달아도 통과하는 것을 막는다"* 고 선언했지만 **막지 못했다.**
+    // 실측(2026-08-22): ref 를 백드롭으로 옮겨도 76건 전부 초록. 우리 모달은 전부
+    // `백드롭 > 본체` 구조이고 백드롭의 유일한 요소 자식이 본체라 **포커스 목록이 동일**하다.
+    // → 결과로 구분이 안 되면 **대상을 관측**한다(`useModalFocus` 가 다는 `data-modal-focus`).
+    for (const c of WIRED_RUNTIME) {
+      const view = render(c.open(noop));
+      const backdrop = dialogEl();
+      expect(
+        backdrop.hasAttribute("data-modal-focus"),
+        `${c.file}: ref 가 **백드롭**에 달렸다 — 트랩 범위가 대화상자보다 넓다`,
+      ).toBe(false);
+      // ★양성 짝 — "백드롭이 아니다"만으로는 훅이 아예 안 돌아도 참이 된다.
+      expect(
+        backdrop.querySelector("[data-modal-focus]"),
+        `${c.file}: 트랩된 컨테이너가 없다 — 훅이 돌지 않았다`,
+      ).not.toBeNull();
+      view.unmount();
+    }
   });
 
   describe.each(WIRED_RUNTIME)("포커스 런타임 — $label", (c) => {
@@ -828,18 +866,32 @@ describe("모달 접근성 — 포커스 생명주기(2026-08-22 부분 상환)"
     // `useDismissible` 은 `DISMISS_Z` 로 **가장 위 하나만** 고르지만, `useModalFocus` 에는
     // 그런 조정이 없다. 두 트랩이 같은 keydown 에 각자 다른 컨테이너로 포커스를 옮기면
     // Tab 이 두 모달 사이를 튄다. 지금은 침범이 0건이고(실측), 이 래칫이 그 상태를 지킨다.
+    // ★바늘을 `FOCUS_WIRED` 에서 **파생**시킨다(2026-08-22 R2). 종전엔 `"<ConfirmDeleteModal"`
+    //   **하나로 고정**돼 있었는데, 정작 같은 커밋이 배선 표면을 1→4 로 늘렸다. 목록형이라
+    //   새로 배선된 모달끼리 중첩되면 래칫이 못 본다(§A.4 목록형 금지).
+    const nameOf = (f: string) => "<" + f.split("/").pop()!.replace(/\.tsx$/, "");
+    const wiredNames = FOCUS_WIRED.map(nameOf);
+
     const offenders: string[] = [];
     for (const f of FOCUS_WIRED) {
       const code = executable(join(WEB_ROOT, f));
-      if (code.includes("<ConfirmDeleteModal")) offenders.push(f);
+      for (const n of wiredNames) {
+        if (n !== nameOf(f) && code.includes(n)) offenders.push(`${f} ⊃ ${n}`);
+      }
     }
     expect(
       offenders,
-      "포커스 배선 모달 안에 또 다른 배선 모달(ConfirmDeleteModal)이 있다 — 트랩이 겹친다",
+      "포커스 배선 모달 안에 또 다른 배선 모달이 있다 — z 조정이 없어 두 트랩이 겹친다",
     ).toEqual([]);
 
-    // ★양성 대조 — 검사기 자체가 살아 있는지. 이 문자열이 있으면 반드시 잡혀야 한다.
-    expect("<ConfirmDeleteModal open={x} />".includes("<ConfirmDeleteModal")).toBe(true);
+    // ★양성 대조 — **같은 파이프라인**을 태워야 의미가 있다.
+    //   종전엔 `"<ConfirmDeleteModal…".includes("<ConfirmDeleteModal")` 이었는데, 그건
+    //   자바스크립트의 `String.includes` 를 검증할 뿐 `executable()`·경로 조립·주석 스트리퍼를
+    //   **하나도 태우지 않는다**(항진명제). `executable()` 이 전부 빈 문자열을 돌려줘도 통과했다.
+    expect(
+      executable(join(WEB_ROOT, "components/projects/ProjectsOverviewClient.tsx")),
+      "검사기가 죽었다 — 실제로 ConfirmDeleteModal 을 렌더하는 파일에서도 못 찾는다",
+    ).toContain("<ConfirmDeleteModal");
   });
 });
 

@@ -66,6 +66,23 @@ export function trapFocus(
   const lastElement = focusableElements[focusableElements.length - 1];
   const currentElement = document.activeElement;
 
+  // ★포커스가 **컨테이너 밖**에 있으면 되돌린다(2026-08-22 추가).
+  //
+  //   종전엔 이 가지가 없어서, 현재 요소가 첫째도 마지막도 아니면 `preventDefault` 도
+  //   이동도 하지 않고 **네이티브 Tab 이 그대로 나갔다.** 그러면 트랩이 뚫린다.
+  //
+  //   포커스가 컨테이너 밖으로 나가는 건 예외 상황이 아니라 **평범한 조작**이다:
+  //     · 모달 안의 **글자를 마우스로 클릭**하면(버튼이 아닌 곳) 포커스가 `<body>` 로 간다
+  //     · 포커스를 갖고 있던 요소가 **조건부 렌더로 사라지면**(예: 저장 성공 후 입력창이
+  //       사라지고 "닫기"만 남는 화면) 그 순간 `activeElement` 가 `<body>` 가 된다
+  //   그 뒤 Tab 한 번이면 배경 페이지로 빠져나갔다 — 계약이 *"가둔다"* 라고 말하는데
+  //   실제로는 안 가두고 있었다.
+  if (!container.contains(currentElement)) {
+    event.preventDefault();
+    (event.shiftKey ? lastElement : firstElement).focus();
+    return;
+  }
+
   if (event.shiftKey && currentElement === firstElement) {
     event.preventDefault();
     lastElement.focus();
