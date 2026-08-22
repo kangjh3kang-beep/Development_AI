@@ -60,6 +60,39 @@ def _wgs84_area_to_sqm(area_deg2: float, center_lat: float) -> float:
     return area_deg2 * lat_m * lon_m
 
 
+# ── 공시지가·토지특성 **기준연도 해석 SSOT** (2026-08-22) ─────────────────────
+#   종전엔 `year: int = 2025` 가 박혀 있어, VWorld 가 2026년치를 주는데도 우리는
+#   2025년치만 썼다(라이브 실측: 2026 = 1,377,000원/㎡ · lastUpdt 2026-05-21).
+#   공시지가는 취득세·재산세·AVM·수지 토지비의 기준이라 해가 갈수록 악화되는 결함이었다.
+#
+#   ★"그냥 올해를 쓰면 된다"는 틀렸다 — 개별공시지가 결정·공시는 매년 5월 말이라
+#     **연초 1~5월엔 당해연도 데이터가 없다**(실측: 2027·2028 은 None).
+#     그래서 현재연도부터 **내림차순 폴백**한다.
+LAND_PRICE_MAX_LOOKBACK = 3  # 역행 상한 — 없는 필지에서 무한 외부호출을 막는다
+
+
+def _current_year() -> int:
+    """현재 연도. ★테스트 대역 지점(시간 의존을 여기 한 곳에 가둔다)."""
+    from datetime import date
+
+    return date.today().year
+
+
+async def _first_year_with_data(fetch, year: int | None):
+    """year 가 명시되면 그대로, None 이면 현재연도부터 내려가며 최초 유효연도를 쓴다.
+
+    fetch(y) 는 해당 연도 결과(dict) 또는 None 을 반환하는 코루틴 함수.
+    """
+    if year is not None:
+        return await fetch(year)
+    base = _current_year()
+    for y in range(base, base - LAND_PRICE_MAX_LOOKBACK - 1, -1):
+        result = await fetch(y)
+        if result:
+            return result
+    return None
+
+
 class VWorldService:
     """VWORLD API (국토지리정보원) 연동 서비스"""
     BASE_URL = settings.VWORLD_BASE_URL
@@ -637,11 +670,18 @@ class VWorldService:
     # ── VWORLD NED API (공시지가, 토지이용계획) ──
     NED_BASE_URL = "https://api.vworld.kr/ned/data"
 
-    async def get_individual_land_price(self, pnu: str, year: int = 2025) -> dict | None:
+    async def get_individual_land_price(self, pnu: str, year: int | None = None) -> dict | None:
         """PNU 기반 개별공시지가 조회.
 
+        year 미지정이면 **최신 공시연도**를 자동 해석한다(연초 공시 전이면 전년도로 폴백).
         반환: { pnu, year, price_per_sqm, land_code, land_name, ... }
         """
+        return await _first_year_with_data(
+            lambda y: self._individual_land_price_for_year(pnu, y), year,
+        )
+
+    async def _individual_land_price_for_year(self, pnu: str, year: int) -> dict | None:
+        """단일 연도 조회(연도 폴백은 호출자가 담당)."""
         if not settings.VWORLD_API_KEY:
             return None
         try:
@@ -675,13 +715,22 @@ class VWorldService:
             logger.error("개별공시지가 조회 실패: %s (%s)", pnu, str(e))
             return None
 
-    async def get_land_characteristics(self, pnu: str, year: int = 2025) -> dict | None:
+    async def get_land_characteristics(self, pnu: str, year: int | None = None) -> dict | None:
         """PNU 기반 토지특성정보 조회 (NED getLandCharacteristics).
 
         면적·지목·용도지역(1·2)·이용상황·도로접면·지형·공시지가를 한 번에 반환.
         기존 get_land_info(지적도 LP_PA_CBND_BUBUN)가 면적 0을 주는 필지를 보완하고,
         주소 키워드 감지로 누락되던 용도지역(prposArea1Nm)을 정확히 채운다.
+
+        ★개별공시지가와 **같은 기준연도 결함**을 갖고 있었다(year=2025 하드코딩) —
+          이 응답의 공시지가도 옛 연도로 나갔다. 연도 해석을 공용 규칙으로 통일한다.
         """
+        return await _first_year_with_data(
+            lambda y: self._land_characteristics_for_year(pnu, y), year,
+        )
+
+    async def _land_characteristics_for_year(self, pnu: str, year: int) -> dict | None:
+        """단일 연도 조회(연도 폴백은 호출자가 담당)."""
         if not settings.VWORLD_API_KEY:
             return None
         try:
