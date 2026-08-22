@@ -15,7 +15,7 @@
  * 색상 토큰만 사용(하드코딩 금지).
  */
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { DISMISS_Z, useDismissible } from "@/lib/satong-dismiss";
 import { NODES } from "@/lib/orchestration/node-registry";
 import type {
@@ -25,6 +25,7 @@ import type {
 } from "@/lib/orchestration/types";
 import type { ResolveInputsResult } from "@/store/useOrchestrationStore";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { useModalFocus } from "@/hooks/useModalFocus";
 
 const BY_ID: Record<NodeId, AnalysisNode> = Object.fromEntries(
   NODES.map((n) => [n.id, n]),
@@ -72,12 +73,18 @@ export function InputResolveModal({
   onAutoRunUpstream,
   onManualSubmit,
 }: InputResolveModalProps) {
+  const bodyRef = useRef<HTMLDivElement>(null);
   const node = BY_ID[nodeId];
   const { ready, missing, autoCandidates } = resolution;
   const [manual, setManual] = useState<Record<string, string>>({});
 
   // ESC 로 닫기 — 화면 층위(z-[800])와 같은 칸으로 해제 순서를 등록한다.
   useDismissible(DISMISS_Z.appModal, Boolean(node), onClose);
+
+  // ★포커스 생명주기 — 열림 판정은 ESC 계약과 **같은 식**(`Boolean(node)`)을 쓴다.
+  //   미룬 사유였던 *"동적 필드 수"* 는 문제가 아니다: 훅이 **DOM 순서의 첫 포커스 가능
+  //   요소**를 고르므로 미해결 입력이 몇 개든 일관된다.
+  useModalFocus(bodyRef, Boolean(node));
 
   if (!node) return null;
 
@@ -110,6 +117,7 @@ export function InputResolveModal({
       onClick={onClose}
     >
       <div
+        ref={bodyRef}
         className="w-full max-w-md rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-5 shadow-[var(--shadow-lg)]"
         onClick={(e) => e.stopPropagation()}
       >
