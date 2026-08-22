@@ -1231,7 +1231,17 @@ export function ComprehensiveAnalysisPanel() {
             {/* Section 3: 토지 주변시세 */}
             <SectionCard title="3. 토지 주변시세" icon={Wallet} defaultOpen={openFor("land-price", false)}>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                <Field label="공시지가 (원/m²)" value={formatManWon(landPrices.official_price_per_sqm / 10000)} />
+                {/* ★공시지가는 **기준연도와 한 쌍**으로 보여준다(2026-08-22).
+                    연도가 화면에 없어서 `year=2025` 하드코딩으로 1년 낡은 값이 나가는 동안
+                    아무도 눈치채지 못했다(#753). 값만 보이면 낡음이 보이지 않는다.
+                    ★연도를 모르는 경로(land_register 폴백)면 **붙이지 않는다** —
+                      모르는 연도를 지어내면 "최신"이라는 거짓 신호가 된다. */}
+                <Field
+                  label={landPrices.official_price_year
+                    ? `공시지가 (${landPrices.official_price_year}년 · 원/m²)`
+                    : "공시지가 (원/m²)"}
+                  value={formatManWon(landPrices.official_price_per_sqm / 10000)}
+                />
                 <Field label="공시지가 총액" value={formatWon(landPrices.total_official_value_won)} />
                 <Field label="추정 시세 (원/m²)" value={formatManWon(landPrices.estimated_market_per_sqm / 10000)} />
                 <Field label="추정 시세 총액" value={formatWon(landPrices.total_estimated_value_won)} />
