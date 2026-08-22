@@ -347,7 +347,9 @@ async def desk_appraisal(
     market_stats: dict[str, Any] = {}
     try:
         from app.services.land_intelligence.reb_statistics_service import get_market_stats
-        market_stats = await get_market_stats(address)
+        # ★위 시점수정(ta)과 **같은 기준연도**를 넘긴다 — 한 함수 안에서 두 기준이 갈리면
+        #   응답에 실린 두 값이 서로 모순된다.
+        market_stats = await get_market_stats(address, base_year=base_year)
         if cap_rate is None and (market_stats.get("cap_rate") or {}).get("cap_rate"):
             cap_resolved = market_stats["cap_rate"]["cap_rate"]
             cap_source = "R-ONE"

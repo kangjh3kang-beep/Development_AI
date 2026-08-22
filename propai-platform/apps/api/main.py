@@ -543,6 +543,51 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         except Exception:  # noqa: BLE001
             pass
 
+    async def _growth_due_map(sched) -> dict[str, bool]:
+        """잡별로 "지금 돌려야 하는가"를 DB 워터마크로 판정한다.
+
+        ★읽기·쓰기·판정은 전부 `schedule.compute_due` 에 있다. 여기는 **세션을 열어 넘기는
+          것만** 한다 — 로직이 이 클로저 안에 있으면 **아무 테스트도 그것을 못 태운다**
+          (실측: 변이 검증에서 그 15줄이 통째로 생존했다).
+
+        ★DB 를 못 읽으면 **경고를 남긴다.** 종전 스케줄러는 문제가 생겨도 조용히 넘어가서
+          "돌고 있는데 아무 일도 안 일어남"과 "정상"이 구분되지 않았다.
+        """
+        from datetime import UTC, datetime
+
+        from app.services.growth import schema_guard
+        from apps.api.database.session import AsyncSessionLocal
+
+        try:
+            async with AsyncSessionLocal() as _s:
+                return await sched.compute_due(_s, schema_guard, datetime.now(UTC))
+        except Exception as e:  # noqa: BLE001
+            # ★조용히 넘어가지 않는다 — 이러면 엔진 전면 정지가 정상과 같은 모양이 된다.
+            logger.warning("growth 스케줄 판정 실패(이번 틱 건너뜀): %s", str(e)[:160])
+            return {}
+
+    async def _growth_mark_run(job_name: str) -> None:
+        """잡을 **실제로 돌린 뒤** 워터마크를 갱신한다.
+
+        ★실행 전이 아니라 후에 적는다. 먼저 적으면 도중에 죽었을 때 "돌았다"고 남아
+          다음 주기까지 건너뛴다.
+        """
+        from datetime import UTC, datetime
+
+        from app.services.growth import schedule as _sched
+        from app.services.growth import schema_guard
+        from apps.api.database.session import AsyncSessionLocal
+
+        try:
+            async with AsyncSessionLocal() as _s:
+                await schema_guard.set_setting(
+                    _s, _sched.watermark_key(job_name),
+                    datetime.now(UTC).isoformat(), updated_by="growth-scheduler",
+                )
+        except Exception as e:  # noqa: BLE001
+            # 여기서 실패하면 그 잡이 다음 틱에 또 돈다(멈추는 것보다는 낫다). 다만 조용히 두지 않는다.
+            logger.warning("growth 워터마크 기록 실패(%s): %s", job_name, str(e)[:160])
+
     async def _growth_run_locked(job_name: str, coro_factory) -> None:
         """advisory lock 획득 시에만 async 코어를 1회 실행한다(잡 단위 격리).
 
@@ -555,11 +600,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             async with AsyncSessionLocal() as _s:
                 got = await _growth_try_lock(_s, key)
                 if not got:
-                    logger.debug("growth 스케줄러 skip(다른 워커 보유): %s", job_name)
+                    # ★종전엔 debug 라 운영 로그에 안 남았다. 그런데 이 분기는 두 가지를
+                    #   **같은 모양으로** 삼킨다 — ①다른 워커가 들고 있다(정상)
+                    #   ②lock 조회 자체가 실패했다(`_growth_try_lock` 의 except → False).
+                    #   ②면 전 잡이 무기한 건너뛰는데 아무도 모른다. info 로 올려 최소한
+                    #   흔적을 남긴다(진짜 구분은 별건 — `_growth_try_lock` 이 예외를 알려야 한다).
+                    logger.info("growth 스케줄러 skip(lock 미획득): %s", job_name)
                     return
                 try:
                     res = await coro_factory()
                     logger.info("growth 인프로세스 잡 완료", job=job_name, result=str(res)[:200])
+                    # ★실행에 성공했을 때만 워터마크를 옮긴다(실패하면 다음 틱에 재시도).
+                    await _growth_mark_run(job_name)
                 finally:
                     await _growth_unlock(_s, key)
         except Exception as e:  # noqa: BLE001 — 한 잡 실패가 다른 잡·앱을 깨지 않게.
@@ -576,14 +628,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         await _asyncio.sleep(120)  # 부팅 안정화 후 시작(flush 루프보다 늦게).
 
-        tick = 0  # 60초 단위 카운터.
+        # ★종전엔 `tick` 이라는 **인메모리 카운터**로 주기를 셌다. 그 변수는 컨테이너가
+        #   새로 뜨면 0으로 돌아가고 **밀린 잡을 따라잡지도 못했다.** 이 저장소는 배포마다
+        #   컨테이너를 새로 만들기 때문에, `learn`(7일)·`improve`(24h)는 그만큼 연속으로
+        #   살아 있어야 발화하는 셈이었다 — 즉 **사실상 한 번도 못 돌았을 가능성이 높다.**
+        #   그런데 스케줄러는 돌고 로그도 남아 겉보기엔 정상이라 아무도 몰랐다.
+        #   → 마지막 실행 시각을 DB(`platform_settings`)에 적고 **경과 시간**으로 판정한다.
+        #     재시작을 넘고, 밀렸으면 다음 틱에 바로 따라잡는다.
+        from app.services.growth import schedule as _growth_sched
+
         while True:
             try:
-                run_analyze = (tick % 60 == 0)   # 매시(60분).
-                run_heal = (tick % 10 == 0)      # 10분.
-                run_correct = (tick % 15 == 0)   # 15분.
-                run_learn = (tick % 10080 == 0 and tick > 0)  # 주간(7일=10080분).
-                run_improve = (tick % 1440 == 0 and tick > 0)  # 일배치(24h=1440분) — L2 개선제안.
+                due = await _growth_due_map(_growth_sched)
+                run_analyze = due.get("analyze", False)
+                run_heal = due.get("heal", False)
+                run_correct = due.get("correct", False)
+                run_learn = due.get("learn", False)
+                run_improve = due.get("improve", False)
 
                 # 순서 보장: analyze 를 먼저 끝낸 뒤 heal/correct 가 최신 인사이트를 본다.
                 if run_analyze:
@@ -610,7 +671,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     await _growth_run_locked("improve", growth_tasks._improve_async)
             except Exception as e:  # noqa: BLE001 — 루프 자체는 절대 죽지 않게.
                 logger.warning("growth 스케줄러 틱 오류: %s", str(e)[:160])
-            tick += 1
             await _asyncio.sleep(60)  # 1분 틱.
 
     if _os.getenv("GROWTH_INPROCESS_SCHED", "1") != "0":

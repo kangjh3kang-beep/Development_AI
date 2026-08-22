@@ -59,33 +59,16 @@ def sqm_to_pyeong(area_sqm: float) -> float:
     return round(area_sqm / PYEONG_TO_SQM, 2)
 
 
-def apply_cost_index(
-    base_cost_won: int,
-    base_year: int = 2025,
-    target_year: int = 2026,
-    annual_increase_rate: float = 0.03,
-) -> dict[str, Any]:
-    """건설물가지수 보정.
-
-    Args:
-        base_cost_won: 기준연도 공사비 (원)
-        base_year: 기준연도
-        target_year: 적용연도
-        annual_increase_rate: 연간 물가상승률
-
-    Returns:
-        {'base_cost_won', 'index_factor', 'adjusted_cost_won'}
-    """
-    years_diff = target_year - base_year
-    factor = (1 + annual_increase_rate) ** years_diff
-    adjusted = int(base_cost_won * factor)
-
-    return {
-        "base_cost_won": base_cost_won,
-        "index_factor": round(factor, 6),
-        "adjusted_cost_won": adjusted,
-    }
-
+# ── `apply_cost_index` 제거(2026-08-22) ────────────────────────────────────────
+#   연 3% **가정치**로 (1+r)^(target-base) 를 곱하던 물가보정 함수였다.
+#   ★프로덕션 소비처 **0**(정의1 + 테스트3 + 기획문서1) — 대조군 `calculate_direct_cost`
+#     는 다른 파일 1곳에서 잡히므로 검사기 자체는 살아 있었다.
+#   ★죽은 이유는 **배선 누락이 아니라 대체**다:
+#     `unit_price_repository._maybe_escalate` 가 **KOSIS 건설공사비지수 실측**
+#     (`cost_index_service.escalation_factor`)으로 시점보정하고, 실패 시 무날조로
+#     원본 단가를 반환한다. 가정 3% 보다 정확하므로 되살릴 이유가 없다.
+#   ※ `cost_index_factor` 파라미터는 **남긴다** — 민감도 분석이 공사비 배수로 실제 사용한다
+#     (`precheck_service` 가 params 에 주입). 기본 경로에서는 1.0(보정 없음)이 정상이다.
 
 def calculate_direct_cost(
     *,

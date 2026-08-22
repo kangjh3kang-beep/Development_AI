@@ -24,6 +24,7 @@ import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useMapFullscreen } from "@/hooks/useMapFullscreen";
 import type { Locale } from "@/i18n/config";
+import { loadLeaflet } from "@/lib/leaflet-loader";
 
 declare global {
   interface Window {
@@ -153,28 +154,6 @@ function extractErrorMessage(error: unknown) {
 }
 
 // ---- Leaflet CDN 동적로드 (NearbyTransactionsMap과 동일 패턴, 새 의존성 0) ----
-let leafletLoading: Promise<void> | null = null;
-function loadLeaflet(): Promise<void> {
-  if (typeof window === "undefined") return Promise.reject(new Error("no window"));
-  if (window.L) return Promise.resolve();
-  if (leafletLoading) return leafletLoading;
-  leafletLoading = new Promise((resolve, reject) => {
-    if (!document.querySelector('link[data-leaflet]')) {
-      const css = document.createElement("link");
-      css.rel = "stylesheet";
-      css.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
-      css.setAttribute("data-leaflet", "1");
-      document.head.appendChild(css);
-    }
-    const script = document.createElement("script");
-    script.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
-    script.async = true;
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error("Leaflet 로드 실패"));
-    document.head.appendChild(script);
-  });
-  return leafletLoading;
-}
 
 export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale; canUseLiveApi: boolean }) {
   const queryClient = useQueryClient();
