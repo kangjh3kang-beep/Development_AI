@@ -8,6 +8,10 @@
  *   그래서 ①특성칩이 4개 이상이면 **통째로 사라지고** ②경고 원문 31자가 **30자로 잘렸다**.
  *   keyword_inference 때 pnu·면적이 null 이라 칩이 적어 **우연히** 보이던 것뿐이다.
  *
+ * ★변이 생존 중 className 계열 5건은 **의도된 미잠금**이다 — 이 테스트의 계약은
+ *   "경고 원문이 전량·무절단으로 보인다"이지 **스타일이 아니다**. CSS 문자열까지 잠그면
+ *   정상 리스타일을 위반으로 신고한다(CLAUDE.md 회귀망 규율 A6 위양성).
+ *
  * ★픽스처는 두 모집단을 가른다(CLAUDE.md 검증규율 2):
  *   A) 경고 있음 + 특성 4개  → 종전 패딩 경로라면 **드롭**된다. 배너는 반드시 보여야 한다.
  *   B) 경고 없음             → 배너가 없어야 한다(음성 대조군 — 공허한 초록 차단).
@@ -89,6 +93,9 @@ describe("용도지역 경고 렌더 배선", () => {
     await expectFourCharacteristicChips();
     // 경고는 **절단 없이** 전체가 보여야 한다(종전엔 30자로 잘렸다).
     expect(await screen.findByText(INFERENCE_WARNING)).toBeInTheDocument();
+    // ★testid 를 **양성에서** 잠근다 — 이게 없으면 testid 가 바뀌어도 음성 대조군(B)의
+    //   queryByTestId 는 '없음'으로 통과해 **공허한 진리**가 된다(변이 생존으로 적발).
+    expect(screen.getByTestId("zoning-warnings")).toBeInTheDocument();
   });
 
   it("B) 경고가 없으면 배너도 없다(음성 대조군)", async () => {
