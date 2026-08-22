@@ -24,7 +24,70 @@ from __future__ import annotations
 
 from typing import Any
 
+import structlog
+
+logger = structlog.get_logger(__name__)
+
 # ── 등록된 프로바이더 목록 ──
+class _TemperatureAwareChat:
+    """`temperature` 를 거부하는 모델을 **런타임에 감지**해 그 인자 없이 재시도하는 얇은 래퍼.
+
+    ★왜 래퍼인가 — 모델별 지원 여부를 표로 들고 있으면 **그 표가 곧 상한**이 된다.
+      이 저장소는 이미 같은 자리에서 한 번 데였다(`llm_provider.py` 주석:
+      *"구 claude-sonnet-4-20250514/opus-4-20250514는 퇴역 → 전 인터프리터 빈결과 유발"*).
+      모델은 계속 바뀌므로 **실패를 보고 배우는** 쪽이 표보다 오래 산다.
+
+    ★감지 조건은 좁게 둔다 — 400 계열 + 메시지에 `temperature`. 그 외 오류는 **그대로 올린다**
+      (모든 실패를 삼키면 진짜 장애가 다시 조용해진다).
+    ★재시도는 **한 번만**. 두 번째도 실패하면 원래 예외를 올린다.
+    """
+
+    __slots__ = ("_build", "_temperature", "_model_id", "_inner", "_dropped")
+
+    def __init__(self, build: Any, temperature: float | None, model_id: str) -> None:
+        self._build = build
+        self._temperature = temperature
+        self._model_id = model_id
+        self._dropped = False
+        self._inner = build(temperature)
+
+    # 내부 객체의 속성(bind_tools·with_structured_output·model_name 등)을 그대로 위임한다.
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+    @staticmethod
+    def _is_temperature_rejection(exc: Exception) -> bool:
+        msg = str(exc)
+        return "temperature" in msg and ("400" in msg or "invalid_request_error" in msg)
+
+    def _drop_temperature(self) -> None:
+        """이 인스턴스에서 temperature 를 영구히 뺀다(같은 객체 재사용 시 재실패 방지)."""
+        self._inner = self._build(None)
+        self._dropped = True
+        logger.info(
+            "모델이 temperature 를 거부해 해당 인자 없이 재시도한다",
+            model=self._model_id,
+        )
+
+    async def ainvoke(self, *args: Any, **kwargs: Any) -> Any:
+        try:
+            return await self._inner.ainvoke(*args, **kwargs)
+        except Exception as exc:
+            if self._dropped or not self._is_temperature_rejection(exc):
+                raise
+            self._drop_temperature()
+            return await self._inner.ainvoke(*args, **kwargs)
+
+    def invoke(self, *args: Any, **kwargs: Any) -> Any:
+        try:
+            return self._inner.invoke(*args, **kwargs)
+        except Exception as exc:
+            if self._dropped or not self._is_temperature_rejection(exc):
+                raise
+            self._drop_temperature()
+            return self._inner.invoke(*args, **kwargs)
+
+
 PROVIDERS: dict[str, dict[str, Any]] = {
     "anthropic": {
         "name": "Anthropic Claude",
@@ -156,13 +219,26 @@ def get_llm(
     if provider == "anthropic":
         from langchain_anthropic import ChatAnthropic
 
-        return ChatAnthropic(
-            model=model_id,
-            anthropic_api_key=api_key,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            timeout=timeout,
-        )
+        def _build(temp: float | None) -> Any:
+            kw: dict[str, Any] = {
+                "model": model_id,
+                "anthropic_api_key": api_key,
+                "max_tokens": max_tokens,
+                "timeout": timeout,
+            }
+            if temp is not None:
+                kw["temperature"] = temp
+            return ChatAnthropic(**kw)
+
+        # ★신세대 모델은 `temperature` 를 **거부**한다(400 invalid_request_error).
+        #   2026-08-21 라이브 실측:
+        #     claude-opus-5 / sonnet-5 / opus-4-8 → temp 지정 시 **FAIL**, 미지정 시 OK
+        #     claude-sonnet-4-6 / haiku-4-5      → temp 지정해도 OK
+        #   이 정책은 **모델 목록 API 가 알려주지 않는다**. 그래서 목록을 하드코딩하지 않고
+        #   **호출 실패를 보고 판단**한다(목록형은 그 목록이 곧 상한이 된다).
+        #   이 감지가 없던 동안 사용자가 프리미엄 모델을 고를수록 모든 해석이 죽었고,
+        #   폴백이 "일시적으로 미제공"이라고만 말해 **아무도 몰랐다**.
+        return _TemperatureAwareChat(_build, temperature, model_id)
     elif provider == "openai":
         from langchain_openai import ChatOpenAI
 
