@@ -6,6 +6,8 @@ import logging
 import re
 from typing import Any
 
+import structlog
+
 from ..external_api.vworld_service import VWorldService
 
 logger = logging.getLogger(__name__)
@@ -130,6 +132,29 @@ def build_zone_limits(zone_key: str, limits: dict) -> dict:
     return payload
 
 
+def _log_zone_source(result: dict, address: str) -> None:
+    """용도지역 출처를 구조화 로그로 남긴다 — keyword_inference 빈도를 재기 위한 계측.
+
+    ★왜 있나: 이 값이 어디에도 로깅되지 않아 *"VWorld 실패로 용도지역을 지어낸 응답이
+    몇 건 나갔나"* 를 원리적으로 잴 수 없었다(2026-08-22 실측 — 라이브 grep 0건은
+    부재가 아니라 계측 부재였다). 성공 경로도 남겨야 **분모**를 알 수 있다.
+
+    지어낸 경우(keyword_inference)는 warning, 실조회는 info 로 낸다.
+    """
+    zone_source = result.get("zone_source")
+    inferred = zone_source == "keyword_inference"
+    log = structlog.get_logger(__name__)
+    (log.warning if inferred else log.info)(
+        "용도지역 출처 계측",
+        zone_source=zone_source,
+        inferred=inferred,
+        # 지어낸 값이 무엇이었는지 남겨야 원인 추적이 된다(지어내기는 주소 문자열에서 나온다).
+        zone_type=result.get("zone_type"),
+        has_pnu=bool(result.get("pnu")),
+        address=address,
+    )
+
+
 class AutoZoningService:
     def __init__(self):
         self.vworld = VWorldService()
@@ -180,6 +205,7 @@ class AutoZoningService:
             result["special_districts"] = self._detect_special_districts(
                 str(result.get("zone_type") or ""), address
             )
+            _log_zone_source(result, address)
             return result
 
         # Step 2: PNU -> 필지 정보 (면적, 지목, 용도지역)
@@ -255,6 +281,7 @@ class AutoZoningService:
             result.get("zone_type", ""), address
         )
 
+        _log_zone_source(result, address)
         return result
 
     def _normalize_zone_name(self, raw_zone: str) -> str:

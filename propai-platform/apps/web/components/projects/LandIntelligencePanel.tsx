@@ -659,7 +659,6 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
     // Fill up to 4 items with special district info
     // (백엔드 부분응답·404 프로젝트에서 배열 필드가 누락될 수 있어 무가드 .length 크래시 방지)
     const specialDistricts = zoningData.special_districts ?? [];
-    const zoningWarnings = zoningData.warnings ?? [];
     if (chars.length < 4 && specialDistricts.length > 0) {
       chars.push({
         label: "특별구역",
@@ -667,14 +666,12 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
         status: "warning",
       });
     }
-    // Pad with warnings from zoning data
-    if (chars.length < 4 && zoningWarnings.length > 0) {
-      chars.push({
-        label: "주의사항",
-        value: zoningWarnings[0].slice(0, 30),
-        status: "danger",
-      });
-    }
+    // ★경고(warnings)를 여기서 '특성칩 패딩'으로 쓰던 코드를 제거했다(2026-08-22).
+    //   종전: if (chars.length < 4 && warnings.length > 0) → warnings[0].slice(0, 30)
+    //   ①칩이 4개면 경고가 통째로 사라지고 ②원문이 30자에서 잘리고 ③aiData.characteristics가
+    //   있으면 이 배열 자체가 버려졌다. 실측상 "용도지역이 주소 키워드 추론값입니다"는
+    //   pnu·면적이 null이라 칩이 적을 때만 **우연히** 보이던 상태였다.
+    //   경고는 아래 '용도지역 데이터 경고' 배너가 전담한다(조건부·절단 없음).
     return chars.length > 0 ? chars : null;
   }, [zoningData]);
 
@@ -1386,6 +1383,27 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
                 <p className="text-xs text-[var(--status-warning)] font-medium flex items-center gap-1.5">
                   <Icons.AlertCircle />{zoningError}
                 </p>
+              </div>
+            )}
+
+            {/* 용도지역 데이터 경고 — 백엔드 warnings 원문 전량(절단·조건부 없음).
+                ★keyword_inference(주소 키워드 추론값)처럼 **수치의 신뢰도를 바꾸는** 고지가
+                여기로 온다. 특성칩 파이프라인(aiData 우선·slice(0,4))과 독립이어야 한다. */}
+            {(zoningData?.warnings?.length ?? 0) > 0 && (
+              <div
+                data-testid="zoning-warnings"
+                className="mt-3 rounded-xl bg-[var(--status-warning)]/10 border border-[var(--status-warning)]/20 p-3"
+              >
+                <p className="text-[9px] font-black text-[var(--status-warning)] mb-1.5 uppercase tracking-widest flex items-center gap-1.5">
+                  <Icons.AlertCircle />용도지역 데이터 경고 · {zoningData?.warnings?.length}건
+                </p>
+                <ul className="space-y-1">
+                  {(zoningData?.warnings ?? []).map((w, i) => (
+                    <li key={i} className="text-xs text-[var(--status-warning)] font-medium break-keep">
+                      {w}
+                    </li>
+                  ))}
+                </ul>
               </div>
             )}
 
