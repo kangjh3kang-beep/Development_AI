@@ -76,6 +76,68 @@ describe("useModalFocus", () => {
     expect(document.activeElement).toBe(opener);
   });
 
+  it("★두 번째로 열면 **그때 누른 요소**로 돌아온다 — 복귀 대상 리셋(무잠금이었다)", () => {
+    // `restoreRef.current = null` 리셋(useModalFocus)이 잠겨 있지 않았다. 그 줄이 없으면
+    // **처음 열 때 누른 버튼**이 영원히 복귀 대상으로 박힌다.
+    // 실사용 재현: 목록에서 A의 삭제 → 취소 → B의 삭제 → 취소 → **포커스가 A로 간다.**
+    function TwoOpeners() {
+      const [open, setOpen] = useState(false);
+      const ref = useRef<HTMLDivElement>(null);
+      useModalFocus(ref, open);
+      return (
+        <div>
+          <button type="button" data-testid="openA" onClick={() => setOpen(true)}>A</button>
+          <button type="button" data-testid="openB" onClick={() => setOpen(true)}>B</button>
+          {open && (
+            <div ref={ref} role="dialog" tabIndex={-1}>
+              <button type="button" data-testid="close" onClick={() => setOpen(false)}>닫기</button>
+            </div>
+          )}
+        </div>
+      );
+    }
+    render(<TwoOpeners />);
+    const a = screen.getByTestId("openA");
+    const b = screen.getByTestId("openB");
+
+    a.focus();
+    fireEvent.click(a);
+    fireEvent.click(screen.getByTestId("close"));
+    expect(document.activeElement, "첫 번째 복귀부터 틀렸다(픽스처 전제)").toBe(a);
+
+    b.focus();
+    fireEvent.click(b);
+    fireEvent.click(screen.getByTestId("close"));
+    expect(
+      document.activeElement,
+      "두 번째로 열었는데 **첫 번째** 버튼으로 돌아갔다 — 복귀 대상이 리셋되지 않는다",
+    ).toBe(b);
+  });
+
+  it("★★컨테이너 **밖**에 포커스가 있어도 Tab 이 모달을 탈출하지 않는다", () => {
+    // 모달 안의 글자를 마우스로 클릭하거나, 포커스를 갖던 요소가 조건부 렌더로 사라지면
+    // `activeElement` 가 `<body>` 가 된다. 종전 `trapFocus` 는 현재 요소가 첫째도 마지막도
+    // 아니면 **아무것도 하지 않아** 네이티브 Tab 이 그대로 배경으로 나갔다.
+    render(<Harness />);
+    (document.activeElement as HTMLElement | null)?.blur();
+    expect(document.activeElement, "픽스처 전제: 포커스가 밖으로 나가 있어야 한다").toBe(
+      document.body,
+    );
+
+    fireEvent.keyDown(document, { key: "Tab" });
+    expect(
+      document.activeElement,
+      "포커스가 밖에 있을 때 Tab 이 모달로 회수되지 않는다 — 트랩이 뚫린다",
+    ).toBe(screen.getByTestId("first"));
+  });
+
+  it("★역방향도 회수한다 — 경계는 한 쌍이다(§D.19)", () => {
+    render(<Harness />);
+    (document.activeElement as HTMLElement | null)?.blur();
+    fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
+    expect(document.activeElement, "Shift+Tab 회수가 없다").toBe(screen.getByTestId("close"));
+  });
+
   it("★★근본 회귀 — `position: fixed` 컨테이너에서도 트랩이 동작한다", () => {
     // 종전 `getFocusableElements` 는 가시성을 `offsetParent !== null` 로 봤는데,
     // **fixed 요소는 사양상 offsetParent 가 null** 이다(MDN). 모달은 대부분 fixed 이므로

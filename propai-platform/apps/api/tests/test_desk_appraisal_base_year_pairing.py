@@ -78,3 +78,34 @@ async def test_두_연도가_실제로_다른_시점수정을_낸다(monkeypatch
     assert r25["time_adjust"] > r26["time_adjust"], (
         f"두 기준연도가 같은 계수를 낸다 — 판별력 없음: {r25['time_adjust']} vs {r26['time_adjust']}"
     )
+
+
+# ── 시점수정 기준연도 일관성 (2026-08-22, dead-code 정리 후속) ──────────────
+
+
+@pytest.mark.asyncio
+async def test_시장통계_시점수정도_같은_기준연도를_받는다(monkeypatch):
+    """★한 함수 안에서 시점수정이 **두 번** 일어나는데 기준이 갈리면 응답이 자기모순이다.
+
+    `desk_appraisal` 은 공시연도(2026)로 `time_adjust_factor_async` 를 부르면서,
+    `get_market_stats(address)` 는 base_year 없이 불러 **기본값 2025** 를 쓰고 있었다.
+    `land_time_adjust` 는 아직 소비처가 없지만(응답 '출처 투명화'용) 값이 실려 나가는 한
+    틀린 기준으로 두면 나중에 쓰는 쪽이 그대로 오독한다.
+    """
+    seen: dict[str, object] = {}
+
+    async def _spy_market_stats(address="", base_year=None):
+        seen["base_year"] = base_year
+        return {}
+
+    import app.services.land_intelligence.reb_statistics_service as reb
+
+    monkeypatch.setattr(reb, "get_market_stats", _spy_market_stats)
+
+    r = await _run(monkeypatch, 2026, 1377000)
+
+    assert r["base_year"] == 2026
+    # ★배선 잠금: 공시연도가 시장통계 쪽으로 **실제로 전달**되는지(기본값 의존 금지).
+    assert seen.get("base_year") == 2026, (
+        f"get_market_stats 가 기준연도를 못 받았다: {seen.get('base_year')}"
+    )
