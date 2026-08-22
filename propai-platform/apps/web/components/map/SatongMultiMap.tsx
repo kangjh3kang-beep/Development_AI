@@ -69,6 +69,7 @@ import {
   type MeasurePoint,
 } from "@/lib/satong-measure";
 import { useMapFullscreen } from "@/hooks/useMapFullscreen";
+import { loadLeaflet } from "@/lib/leaflet-loader";
 
 declare global {
   interface Window {
@@ -466,28 +467,6 @@ export type SatongMarketLayerState = {
 };
 
 /** Leaflet CDN 단일 로딩 (AuctionItemsMap과 동일 패턴) */
-let leafletLoading: Promise<void> | null = null;
-function loadLeaflet(): Promise<void> {
-  if (typeof window === "undefined") return Promise.reject(new Error("no window"));
-  if (window.L) return Promise.resolve();
-  if (leafletLoading) return leafletLoading;
-  leafletLoading = new Promise((resolve, reject) => {
-    if (!document.querySelector("link[data-leaflet]")) {
-      const css = document.createElement("link");
-      css.rel = "stylesheet";
-      css.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
-      css.setAttribute("data-leaflet", "1");
-      document.head.appendChild(css);
-    }
-    const script = document.createElement("script");
-    script.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
-    script.async = true;
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error("Leaflet 로드 실패"));
-    document.head.appendChild(script);
-  });
-  return leafletLoading;
-}
 
 /** buildOverlayNotes 입력 — 오버레이 이펙트에서 집계한 레이어별 표시 상태. */
 export interface OverlayNoteCounts {
@@ -1877,6 +1856,11 @@ export function SatongMultiMap({
         });
       })
       .catch(() => {
+        // ★언마운트 뒤에는 상태를 건드리지 않는다. 같은 파일 :1486 은 이미 이렇게 하는데
+        //   여기만 빠져 있었다(형제 누락). 종전엔 CDN <script> 가 jsdom 에서 load/error 를
+        //   **영원히 안 내보내** 이 가지가 한 번도 실행되지 않아 드러나지 않았다 —
+        //   번들 import 로 바꾸자 즉시 터졌다("소비처 0"이 아니라 "검증된 적 없음"이었다).
+        if (!alive) return;
         setStatus("error");
         setStatusMsg("지도 로딩에 실패했습니다.");
       });
@@ -1895,7 +1879,6 @@ export function SatongMultiMap({
       setMapReady(false);
       // staged 레이어 맵도 초기화(지도가 사라지면 참조 불필요)
       stagedLayers.clear();
-      leafletLoading = null; // 다음 마운트에서 재로딩 가능하도록 초기화
     };
   }, [queryParcel, readOnly]);
 
