@@ -132,7 +132,7 @@ async def desk_appraisal(
     official_price_per_sqm: float | None = None,
     comparable_avg_per_sqm: float | None = None,   # 거래사례 평균단가(주변 토지 실거래)
     time_adjust: float | None = None,                # 시점수정(미지정 시 지가변동률로 산정)
-    base_year: int = 2025,
+    base_year: int | None = None,   # 미지정 시 **실제 공시연도**에서 유도(아래 주석)
     building_gfa_sqm: float | None = None,           # 건물 연면적(주면 토지+건물 복합 추정)
     building_structure: str | None = None,           # 구조(RC/SRC/철골/조적/목조)
     building_year_built: int | None = None,          # 준공연도(감가상각)
@@ -322,6 +322,16 @@ async def desk_appraisal(
 
     op = float(op)
     area_f = float(area) if area else None
+
+    # ★공시지가 **값**과 시점수정 **기준연도**는 한 쌍이다(2026-08-22).
+    #   시점수정은 `공시기준일(base_year-01-01) → 가격시점` 경과연수로 계산되므로,
+    #   공시지가를 어느 연도에서 가져왔는지와 **반드시 일치**해야 한다.
+    #   종전엔 base_year=2025 가 박혀 있었다. 같은 PR 에서 NED 기준연도 하드코딩을 걷어내
+    #   공시지가가 2026년치로 올라가는데 이걸 두면 경과연수가 **1년 과다** 계산돼
+    #   토지가액이 조용히 부푼다(연 지가변동률 2~3% → 400억 부지면 8~12억).
+    if base_year is None:
+        from app.services.external_api.vworld_service import _current_year
+        base_year = subject.get("official_price_year") or _current_year()
 
     # 시점수정: 미지정 시 R-ONE 지가변동률 실데이터(가용 시)→근사 폴백
     from app.services.land_intelligence.land_price_index import time_adjust_factor_async
