@@ -743,7 +743,8 @@ def calc_upzoning(
             "current_zone": zone_type,
             "scenarios": [],
             "potential_far_range": None,
-            "summary": "종상향 잠재력 분석을 일시적으로 산출하지 못했습니다.",
+            # ★"일시적"이라고 단정하지 않는다 — 재시도로 풀릴지 우리는 모른다.
+            "summary": "종상향 잠재력을 산출하지 못했습니다.",
             "disclaimer": "예상치 미산출",
         }
 

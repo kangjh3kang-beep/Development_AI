@@ -43,11 +43,34 @@ def test_fallback_carries_degraded_reason_and_message():
 
 
 def test_fallback_without_reason_is_backward_compatible():
-    """사유 없는 폴백은 기존 일반 메시지(하위호환·무회귀)."""
+    """사유 없는 폴백도 **거짓 단정 없이** 실패를 알린다.
+
+    ★2026-08-21 정정: 종전 이 케이스는 `"일시적으로 제공되지 않습니다"` 라는 **문구 자체**를
+      계약으로 잠갔다. 그런데 그 문구가 **거짓**이었다 — 라이브에서 확인된 실패는
+      `temperature` 400(모델이 그 인자를 거부)과 스키마 불일치처럼 **매번 나는 영구 실패**였고,
+      "일시적"이라는 단정이 그것을 일시 장애로 위장해 **오래 숨겼다**.
+
+      이 파일이 원래 하려던 일(WP-R4 *침묵 폴백 제거*)과 같은 방향이다 —
+      사유는 전달하면서 **문구만 거짓으로 남아 있었다**. 그 마지막 조각을 맞춘다.
+
+      → 잠그는 대상을 **문구 문자열**에서 **성질**로 바꾼다:
+        ①실패했음을 알리고 ②재시도로 풀린다고 **단정하지 않는다**.
+    """
     fb = ExpertPanelService._fallback(_ROSTER)
     assert fb["generated"] is False
     assert fb["degraded_reason"] is None
-    assert "일시적으로 제공되지 않습니다" in fb["consensus"]
+
+    consensus = fb["consensus"]
+    # ① 실패 사실은 전달해야 한다(침묵 금지 — 이 파일의 원래 목적).
+    assert "못했습니다" in consensus or "실패" in consensus, (
+        f"폴백이 실패 사실을 알리지 않는다: {consensus!r}"
+    )
+    # ② 재시도로 풀린다는 **단정**은 금지한다.
+    for 거짓단정 in ("일시적", "잠시 후 다시 시도"):
+        assert 거짓단정 not in consensus, (
+            f"재시도로 풀린다고 단정하는 표현이 남아 있다({거짓단정!r}) — "
+            f"영구 실패를 일시 장애로 위장한다: {consensus!r}"
+        )
 
 
 def _mock_llm(content: str, stop_reason: str | None = None):

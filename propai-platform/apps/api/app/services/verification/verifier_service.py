@@ -211,10 +211,11 @@ class VerifierService:
                 "verdict": _fb_verdict,
                 "grounded_score": None,
                 "issues": pre,
+                # ★"일시적"이라고 단정하지 않는다(위 헬퍼 docstring 참조) — 사유는 아래 필드로 싣는다.
                 "summary": (
-                    "AI 검증은 일시적으로 제공되지 않습니다. 규칙기반 사전검사 + 결정론 재계산만 적용되었습니다."
+                    "AI 검증을 생성하지 못했습니다. 규칙기반 사전검사 + 결정론 재계산만 적용되었습니다."
                     if calc["total"] else
-                    "AI 검증은 일시적으로 제공되지 않습니다. 규칙기반 사전검사만 적용되었습니다."
+                    "AI 검증을 생성하지 못했습니다. 규칙기반 사전검사만 적용되었습니다."
                 ),
                 "calc_checks": calc["checks"],
                 "calc_pass_rate": calc["pass_rate"],
