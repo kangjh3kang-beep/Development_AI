@@ -62,6 +62,15 @@ export function useModalFocus(ref: RefObject<HTMLElement | null>, open: boolean)
       (firstFocusable(container) ?? container).focus?.();
     }
 
+    // ★훅이 **실제로 어느 요소를 가뒀는지** 표시한다(2026-08-22 추가).
+    //
+    //   이게 없으면 잠금이 성립하지 않는다. `#750` 은 *"ref 를 백드롭에 달아도 통과하는 것을
+    //   막는다"* 고 선언했지만 **막지 못했다**(실측: ref 를 백드롭으로 옮겨도 76건 전부 초록).
+    //   이유는 우리 모달이 전부 `백드롭 > 본체` 구조이고 백드롭의 유일한 요소 자식이 본체라,
+    //   `focusables(백드롭) === focusables(본체)` 여서 **결과로는 구분이 안 되기 때문**이다.
+    //   → 결과가 같으면 **대상 자체를 관측 가능**하게 만들어야 한다.
+    container.setAttribute("data-modal-focus", "1");
+
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== "Tab") return;
       const el = ref.current;
@@ -72,6 +81,7 @@ export function useModalFocus(ref: RefObject<HTMLElement | null>, open: boolean)
 
     return () => {
       document.removeEventListener("keydown", onKeyDown, true);
+      container.removeAttribute("data-modal-focus");
       // ★사라진 요소로 돌려보내지 않는다(언마운트된 버튼 등) — 그러면 포커스가 body 로 튄다.
       if (restoreTo && document.contains(restoreTo)) restoreTo.focus?.();
     };
