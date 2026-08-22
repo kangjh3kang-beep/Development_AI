@@ -1574,13 +1574,19 @@ class ProjectPipeline:
             for item in design_matrix_result.items
             if item.field in _design_fallback_labels and item.status == DataStatus.MISSING.value
         ]
-        land_area = site.land_area_sqm or 500.0
-        bcr = site.max_bcr or 60.0
-        far = site.max_far or 200.0
+        # ★무날조 — 면적·한도를 **지어내지 않는다**. 종전에는 미확인 부지에
+        #   `면적 500㎡ · 건폐 60% · 용적 200%` 를 발명해 건축개요 전체가 허구 위에 섰다.
+        #   (같은 클래스가 far_tier_service·ordinance_service 에도 있었다 — 전역 스윕.)
+        land_area = site.land_area_sqm
+        bcr = site.max_bcr
+        far = site.max_far
 
         # 건축 개요 자동 산출 (사용자 오버라이드가 자동 산출값보다 우선)
-        building_area = land_area * (bcr / 100)
-        total_gfa = land_area * (far / 100)
+        # ★면적·한도 중 하나라도 미확인이면 **산출하지 않는다**(위 무날조 처방의 짝).
+        #   값을 지어내면 연면적·층수·주차가 전부 허구 위에 서고, 화면은 확정치처럼 보여 준다.
+        _geom_known = land_area is not None and bcr is not None and far is not None
+        building_area = (land_area * (bcr / 100)) if _geom_known else 0.0
+        total_gfa = (land_area * (far / 100)) if _geom_known else 0.0
         _gfa_ov = self._maybe_float(overrides.get("total_gfa_sqm"))
         if _gfa_ov is not None and _gfa_ov > 0:
             total_gfa = _gfa_ov
