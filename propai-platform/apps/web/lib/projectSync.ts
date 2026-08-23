@@ -12,7 +12,9 @@ import {
   useProjectContextStore,
   addressTokenMismatch,
   purifyPollutedSnapshot,
+  type SiteAnalysisData,
 } from "@/store/useProjectContextStore";
+import { healPhantomAreaAggregates } from "@/lib/site-analysis-invariants";
 import { useLandScheduleStore } from "@/store/useLandScheduleStore";
 import {
   SATONG_DOMINANT_CONSTRAINT_KEY,
@@ -379,9 +381,15 @@ export function applyRemoteSnapshot(
   }
 
   useProjectContextStore.setState({
-    siteAnalysis: (preserveLocalSiteAnalysis
-      ? ctx.siteAnalysis
-      : (effective.siteAnalysis ?? null)) as never,
+    // ★자가치유(2026-08-23): 이 경로는 store 액션(updateSiteAnalysis)을 **우회해**
+    //   setState 로 직접 쓰므로, 거기 건 불변식이 여기엔 걸리지 않는다. 서버에 이미
+    //   고착된 오염본(필지 0건인데 면적 집계만 생존)이 그대로 들어오지 않게 같은
+    //   헬퍼를 여기서도 태운다 — 진입점이 둘이면 방어도 둘이어야 한다.
+    siteAnalysis: healPhantomAreaAggregates(
+      (preserveLocalSiteAnalysis
+        ? ctx.siteAnalysis
+        : (effective.siteAnalysis ?? null)) as Partial<SiteAnalysisData> | null,
+    ) as never,
     designData: (effective.designData ?? null) as never,
     feasibilityData: (effective.feasibilityData ?? null) as never,
     costData: (effective.costData ?? null) as never,
