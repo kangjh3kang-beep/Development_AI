@@ -84,14 +84,14 @@ describe("MAP-001 buildOverlayNotes — 지적 레이어 무자료 정직 표기
 describe("WP-M3 노후도 무자료 사유 세분화", () => {
   it("buildAgeGapDetail — 0건 사유는 생략, 있는 것만 '·'로 잇는다", () => {
     expect(buildAgeGapDetail({ ageNoBuilding: 3, ageLookupFailed: 9, ageSkippedBulk: 41 })).toBe(
-      "나대지 3·조회실패 9·대량생략 41",
+      "나대지추정 3·조회실패 9·대량생략 41",
     );
-    expect(buildAgeGapDetail({ ageNoBuilding: 2 })).toBe("나대지 2");
+    expect(buildAgeGapDetail({ ageNoBuilding: 2 })).toBe("나대지추정 2");
     expect(buildAgeGapDetail({ ageLookupFailed: 5 })).toBe("조회실패 5");
     expect(buildAgeGapDetail({})).toBe("");
   });
 
-  it("노후도 0건 + 사유가 있으면 '노후도 무자료(나대지 N·조회실패 M)'로 고지한다", () => {
+  it("노후도 0건 + 사유가 있으면 '노후도 무자료(나대지추정 N·조회실패 M)'로 고지한다", () => {
     const note = buildOverlayNotes({
       showCadastre: false,
       cadastreCount: 0,
@@ -105,7 +105,7 @@ describe("WP-M3 노후도 무자료 사유 세분화", () => {
       ageNoBuilding: 3,
       ageLookupFailed: 9,
     });
-    expect(note).toBe("노후도 무자료(나대지 3·조회실패 9)");
+    expect(note).toBe("노후도 무자료(나대지추정 3·조회실패 9)");
   });
 
   it("노후도 0건이고 사유도 미지정(구 호출부)이면 종전과 동일하게 단일 '노후도 무자료'", () => {
