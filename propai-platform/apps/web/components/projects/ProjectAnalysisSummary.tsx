@@ -355,6 +355,18 @@ export function ProjectAnalysisSummary({ locale }: { locale?: string }) {
               )}
             </span>
           )}
+          {/* ★정밀도 배지(#770) — 사업성 등급 **왼쪽**에 둔다.
+              이 수지가 개략치(E)면 등급 F 도 개략이다. 종전에는 설계가 "분석 전"인데
+              `총사업비 4,157.7억 · 등급 F` 가 확정치처럼 보여 사용자가 "분석 전인데 왜
+              숫자가 있나"로 읽었다. 값을 지우지 않고 **등급을 붙인다**. */}
+          {feas?.grade && feas?.precision === "E" ? (
+            <span
+              title={feas.precisionBasis || "설계 산출물 없이 부지 정보만으로 추정한 개략치입니다"}
+              className="rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-800 dark:bg-amber-900/40 dark:text-amber-200"
+            >
+              개략(추정) — 설계 미반영
+            </span>
+          ) : null}
           {feas?.grade ? (
             <span
               title="투자 수익률과 사업성 등급(투입 대비 남는 비율)"
