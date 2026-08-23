@@ -37,6 +37,10 @@
  *
  * ■ 변이 후 남은 생존 — 의도적 비잠금(점수 부풀리기 방지)
  *   · 내가 쓴 **주석 문자열** 2건 — 동작에 영향이 없다.
+ *   · `accent: "var(--data-accent)"` — **하위호환 경로**다. 이 패널에서 `Stat ... accent` 는
+ *     이제 현금흐름 섹션의 IRR 한 곳뿐이고(그 자리는 부호가 아니라 **강조**가 맞는 의미다),
+ *     그 섹션은 `cashflow` 데이터가 있어야 렌더된다. 값–라벨 정합과 무관해 잠그지 않는다.
+ *   · `muted: undefined` 삭제 — **등가 변이**다. 키가 없어도 조회 결과는 `undefined` 로 같다.
  */
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
