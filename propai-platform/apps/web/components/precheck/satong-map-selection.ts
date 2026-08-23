@@ -132,6 +132,10 @@ export type SatongSelectionParcel = {
    *  ★런타임 전용(ageStatus 선례) — 프로젝트 스토어 왕복(selectionToSiteAnalysisPatch)에는
    *  싣지 않으며 재진입 시 경계 재보강이 self-heal한다. */
   effectiveFarPct?: number | null;
+  /** 법정 용적률(%)·실효 산출 근거 계층 — 실효값이 '왜 그 값인지'를 화면이 말하기 위한 재료.
+   *  ★런타임 전용(effectiveFarPct 선례와 동일) — 스토어 왕복에는 싣지 않는다. */
+  legalFarPct?: number | null;
+  farBasis?: string | null;
   effectiveBcrPct?: number | null;
   currentFarPct?: number | null;
   geometry?: unknown;
@@ -352,7 +356,15 @@ export function selectionToSiteAnalysisPatch(
         ? { lat: first.lat, lon: first.lon }
         : null,
     zoneCode: first.zoneType ?? null,
-    dominantZoneCode: first.zoneType ?? null,
+    // ★혼재면 **비운다**(2026-08-24) — 종전엔 `first.zoneType` 을 그대로 넣고 이름을
+    //   "dominant"(우세)라 불렀다. 실측 사례에서 그 값은 면적 우세와 **반대**였다
+    //   (자연녹지 4,576㎡·79% vs 보전관리 1,205㎡·21% 인데 보전관리를 표시).
+    //   ★여기서 진짜 우세를 재계산하지 않는다 — 산식은 서버(`_aggregate_integrated_zoning`)
+    //     하나뿐이고, 그것은 면적합산 max 에 더해 동률(±5%)·규제성격 상이까지 본다.
+    //     선택 시점엔 그 판정이 없으므로 **모른다고 두는 것이 정직하다**.
+    //   ★소비처 무회귀: `design-ssot`·`zoning-ssot` 는 `dominantZoneCode ?? zoneCode` 로 읽으므로
+    //     null 이면 `zoneCode`(=대표=first) 로 폴백한다 — **값은 종전과 같고, 거짓 주장만 사라진다**.
+    dominantZoneCode: zoneSet.size > 1 ? null : (first.zoneType ?? null),
     zoneMixed: zoneSet.size > 1,
     landAreaSqm: effectiveArea,
     landAreaSqmTotal: effectiveArea,
@@ -379,5 +391,44 @@ export function selectionToSiteAnalysisPatch(
     })),
     dataSource: "satong-map-shell",
     fetchedAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * 위 `selectionToSiteAnalysisPatch` 의 **짝** — 선택이 비었을 때 되돌릴 패치.
+ *
+ * 왜 필요한가(쉬운 설명):
+ * 위 함수는 "고른 필지들"에서 면적 합계·필지 수·용도지역 혼합 여부 같은 값을 **계산해서**
+ * 적어 둔다. 그런데 사용자가 필지를 전부 지우면 종전에는 목록(`parcels`)과 개수
+ * (`parcelCount`)만 0 으로 만들고 **면적 합계는 그대로 남겼다**. 그러면 화면이
+ * "필지 0건"이라고 말하면서 동시에 "대지면적 164,823㎡"를 보여 준다 — 있지도 않은
+ * 부지 면적이 설계·수지로 흘러가 연면적·공사비·총사업비를 통째로 부풀린다.
+ *
+ * ★라이브 실측(2026-08-23) — 프로젝트 `1dad85f0` "모산동 123-1 외 6필지":
+ *     `parcelCount=0 · parcels=[]` 인데 `landAreaSqm=landAreaSqmTotal=164823`,
+ *     `repLandAreaSqm=3836` (대표필지의 **43배**가 유령으로 남아 있었다).
+ *   같은 형상이 스냅샷 54건 중 2건. 둘 다 `dataSource='satong-map-shell'`.
+ *
+ * ★비우지 **않는** 것과 그 근거 — "선택이 없어도 참인가"에 답할 수 있는 값만 남긴다:
+ *   · `address`/`pnu`/`coordinates` : 프로젝트가 가리키는 대표 지점. 선택과 무관하게 유효하고,
+ *     `SatongMapShell` 의 `hasTarget` 판정이 이 보존에 의존한다(지우면 입력 UI 가 되살아난다).
+ *   · `zoneCode`/`dominantZoneCode` : 그 대표 지점의 용도지역(면적가중이 아니라 대표값).
+ *   · `dataSource`/`fetchedAt` : 이 SSOT 를 누가 언제 썼는지의 출처 — 지우면 추적이 끊긴다.
+ *
+ * ★무목업: 없는 값을 0 으로 만들지 않고 `null` 로 둔다. 0 은 "면적이 0㎡"라는 **거짓 사실**이
+ *   되어 나눗셈·비율 계산을 조용히 오염시킨다. 소비처는 `null` 을 "미확보"로 정직하게 분기한다.
+ *
+ * ★이 함수와 위 쓰기 함수의 **대칭**은 테스트가 파생형으로 잠근다
+ *   (`SatongMapShell.clearSymmetry.test.tsx` C) — 쓰기에 필드가 늘면 그 테스트가 실패하며
+ *   "지울 것인가 남길 것인가"를 강제로 묻는다. 사람이 센 목록이 상한이 되지 않게 하기 위함이다.
+ */
+export function emptySelectionSiteAnalysisPatch(): Partial<SiteAnalysisData> {
+  return {
+    parcels: [],
+    parcelCount: 0,
+    landAreaSqm: null,
+    landAreaSqmTotal: null,
+    repLandAreaSqm: null,
+    zoneMixed: false,
   };
 }

@@ -75,6 +75,17 @@ export function useModalFocus(ref: RefObject<HTMLElement | null>, open: boolean)
       if (e.key !== "Tab") return;
       const el = ref.current;
       if (!el) return;
+      // ★**중첩 트랩에는 양보한다**(2026-08-23 추가 — `AuctionWorkspace` 라이트박스에서 드러났다).
+      //
+      //   모달 안에서 또 하나가 열리는 표면이 있다(상세 모달 > 사진 확대 라이트박스).
+      //   안쪽이 **내 DOM 안에** 렌더되면 내 `focusables` 는 안쪽 것까지 포함하므로,
+      //   안쪽의 마지막 요소가 우연히 내 마지막이 아닐 때만 우연히 동작한다 —
+      //   즉 **레이아웃에 따라 뚫린다**. 우연에 기대지 않고 소유권을 명시한다.
+      //
+      //   ESC 계약은 이미 z 사다리(`DISMISS_Z.nestedOverModal`)로 같은 문제를 풀었다.
+      //   포커스 계약에는 그 개념이 없어 **비대칭**이었다 — 여기서 맞춘다.
+      const inner = el.querySelector<HTMLElement>("[data-modal-focus]");
+      if (inner && inner !== el && inner.contains(document.activeElement)) return;
       trapFocus(el, e);
     };
     document.addEventListener("keydown", onKeyDown, true);
@@ -86,4 +97,26 @@ export function useModalFocus(ref: RefObject<HTMLElement | null>, open: boolean)
       if (restoreTo && document.contains(restoreTo)) restoreTo.focus?.();
     };
   }, [ref, open]);
+}
+
+/**
+ * **마운트 자체가 열림**인 표면용 — `useModalFocus(ref, true)` 의 대칭 래퍼.
+ *
+ * ## 왜 필요한가
+ *
+ * 이 저장소의 모달은 두 가지 방식으로 열린다:
+ *
+ *     open prop 방식   : 부모가 항상 렌더하고 `open` 으로 켠다  → `useModalFocus(ref, open)`
+ *     마운트=열림 방식 : 부모가 열 때만 렌더한다               → **넣을 `open` 인자가 없다**
+ *
+ * ESC 계약은 이 둘을 **이미 갈라 놓았다**(`useDismissible` 11곳 / `useDismissibleWhileMounted`
+ * 5곳). 그런데 포커스 계약에는 앞의 것만 있었다 — 그 **비대칭**이 5표면이 미배선으로 남은
+ * 진짜 이유였다(*"드로어라 규약이 다르다"* 같은 표면별 사유가 아니라).
+ *
+ * ★`useModalFocus(ref, true)` 를 호출부마다 손으로 쓰지 않는 이유: 계약 테스트가
+ *   *"열림 인자에 상수 리터럴을 쓰지 않는다"* 를 검사한다(열림 검사 누락과 구분되지 않기
+ *   때문). 여기 한 곳에서만 `true` 를 쓰고, 호출부는 **의도를 이름으로** 말한다.
+ */
+export function useModalFocusWhileMounted(ref: RefObject<HTMLElement | null>): void {
+  useModalFocus(ref, true);
 }

@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { DISMISS_Z, useDismissibleWhileMounted } from "@/lib/satong-dismiss";
 import { motion, AnimatePresence } from "framer-motion";
 import { Brain, Paperclip } from "lucide-react";
 import { apiClient, ApiClientError } from "@/lib/api-client";
+import { useModalFocusWhileMounted } from "@/hooks/useModalFocus";
 
 /* ──────────────────────────────────────────────────────────────
    나라장터(G2B) 입찰공고 상세 모달
@@ -120,6 +121,7 @@ export function G2BBidDetailModal({
   /** 하단 CTA → 기존 AI 정밀분석 모달 오픈 */
   onAnalyze: (bidId: string, bidName: string) => void;
 }) {
+  const bodyRef = useRef<HTMLDivElement>(null);
   const [detail, setDetail] = useState<G2BBidDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -161,6 +163,10 @@ export function G2BBidDetailModal({
   // 조율 없이 둘 다 닫혔다. 이제 조정기가 **열린 표면 중 가장 위 하나만** 닫는다.
   useDismissibleWhileMounted(DISMISS_Z.appModal, onClose);
 
+  // ★포커스 생명주기 — 미룬 사유였던 *"탭 컨트롤 다수"* 는 **거짓**이었다(이 파일에 탭이 0개).
+  //   실제로는 439줄 상세 표면이라 앞 라운드 범위를 넘겼을 뿐이다.
+  useModalFocusWhileMounted(bodyRef);
+
   return (
     <AnimatePresence>
       <motion.div
@@ -172,6 +178,7 @@ export function G2BBidDetailModal({
         aria-label={`입찰공고 상세 ${title}`}
       >
         <motion.div
+          ref={bodyRef}
           initial={{ scale: 0.96, y: 24 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.96, y: 24 }}
           transition={{ type: "spring", stiffness: 320, damping: 30 }}
           className="cc-bracketed relative flex w-full max-w-3xl flex-col max-h-[90vh] overflow-hidden rounded-[var(--radius-md)] border-2 border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-2xl ring-1 ring-black/40"

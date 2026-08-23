@@ -1254,8 +1254,16 @@ class ComprehensiveAnalysisService:
             _gfa_by_far = land_area * (applied_far / 100)
             _floors_by_far = max(1, round(_gfa_by_far / building_area)) if building_area > 0 else 1
 
-            _max_floors = MAX_FLOORS.get(dev_type)
-            floor_count = min(_floors_by_far, _max_floors) if _max_floors else _floors_by_far
+            # ★`MAX_FLOORS` 는 이제 **근거를 동반한 값**(LegalLimit)이다.
+            #   · 미등재            → 근거 미확인 → 깎지 않는다(조용히 제한하지 않는다)
+            #   · 등재 + unlimited  → 법이 제한하지 않는다(근거 있음) → 깎지 않는다
+            #   · 등재 + 값 있음    → 그 값으로 캡
+            #   종전에는 근거 없는 `3` 이 단독주택 계획을 4층→3층으로 깎아 용적률을
+            #   80%→60%로 내렸다. 근거를 확인하니 그 3층은 **다가구·다중주택 기준**이었다.
+            _limit = MAX_FLOORS.get(dev_type)
+            _cap = None if (_limit is None or _limit.unlimited) else int(_limit.value)
+            _cap_law = _limit.law if (_limit is not None and not _limit.unlimited) else None
+            floor_count = min(_floors_by_far, _cap) if _cap else _floors_by_far
             floor_count = max(1, floor_count)
 
             # 층수가 깎였으면 연면적은 `건축면적 × 층수` 로 제한된다(용적률도 따라 내려간다).
@@ -1296,6 +1304,9 @@ class ComprehensiveAnalysisService:
                 #   설명할 수 있어야 한다. 이 값이 없으면 축소가 조용히 일어난다.
                 "floor_capped": floor_capped,
                 "floors_by_far": _floors_by_far,
+                # ★제약이 계획을 깎았다면 **그 제약의 근거**를 함께 보낸다.
+                #   근거 없는 제약이 조용히 용적률을 내리는 일을 막는다(2026-08-23).
+                "floor_cap_law": _cap_law,
                 "parking_count": parking,
                 "construction_cost_per_sqm": construction_cost,
                 "estimated_construction_cost_won": int(total_gfa * construction_cost),
@@ -1882,6 +1893,38 @@ class ComprehensiveAnalysisService:
 # 다필지 통합 컨텍스트 — 플랫폼 공용 진입점(SSOT)
 # ────────────────────────────────────────────
 
+#: 다필지 축약 관측의 **구별된** event_type (2026-08-23 · 사용자 신고 대응).
+#  ★F4a: severity·recommended_action 을 담지 않는다(자동 변이 루프가 조치신호로 읽는다).
+MULTIPARCEL_COLLAPSE_EVENT = "multiparcel_collapse_observation"
+
+
+def _record_multiparcel_collapse(input_count: int, usable_count: int, missing_count: int) -> None:
+    """다필지 입력이 **몇 필지로 축약됐는지** 영속 관측한다.
+
+    ★왜(사용자 신고 2026-08-23): *"다필지를 넣었는데 단필지만 분석된다"* 가 반복 신고됐는데
+      **빈도도 사유도 잴 수 없었다**. 특히 전 필지 면적 미확보 경로(`if not items: return None`)
+      는 로그조차 없는 **완전 침묵**이었다 — `_area_missing` 을 이미 계산해 놓고 버렸다.
+    ★성공(축약 없음)도 남긴다 — 그래야 **분모**를 알고 "몇 건 중 몇 건"을 센다.
+    ★단일필지 입력은 축약이 아니다(위양성 방지) — 원래 통합 대상이 아니다.
+    """
+    collapsed = input_count > 1 and usable_count < input_count
+    try:
+        from app.services.growth import capture_service
+
+        capture_service.record_event(MULTIPARCEL_COLLAPSE_EVENT, {
+            "surface": "api",
+            "service": "integrated_context",
+            "payload": {
+                "collapsed": collapsed,
+                "input_count": input_count,
+                "usable_count": usable_count,
+                "missing_count": missing_count,
+            },
+        })
+    except Exception:  # noqa: BLE001 — 관측이 분석을 깨뜨리면 안 된다.
+        pass
+
+
 async def build_integrated_context(parcels: list[dict[str, Any]] | None) -> dict[str, Any] | None:
     """필지목록(면적·용도지역 보유) → 면적가중 통합 용도/실효한도/GFA 집계.
 
@@ -1929,7 +1972,15 @@ async def build_integrated_context(parcels: list[dict[str, Any]] | None) -> dict
         for q in _normalized
         if not ((q.get("area_sqm") or 0) > 0) and (q.get("pnu") or q.get("address"))
     ]
+    # ★침묵 금지(2026-08-23): 입력이 몇 필지였고 몇 필지가 살아남았는지를 **항상** 남긴다.
+    #   종전엔 아래 `return None` 에 로그조차 없어, 다필지 입력이 통째로 사라져도 흔적이 없었다.
+    _record_multiparcel_collapse(len(_normalized), len(items), len(_area_missing))
     if not items:
+        if _normalized:
+            logger.warning(
+                "다필지 통합 불가 — 전 필지 면적 미확보(단일 경로로 폴백)",
+                input_count=len(_normalized), missing_count=len(_area_missing),
+            )
         return None
     try:
         from app.services.zoning.special_parcel import _aggregate_integrated_zoning

@@ -33,6 +33,7 @@ from app.services.land_intelligence.comprehensive_analysis_service import (
     build_integrated_context,
 )
 from app.services.land_intelligence.desk_appraisal_service import desk_appraisal
+from app.services.quality.precision import PrecisionGrade
 from app.services.tax.project_charges import compute_developer_stage_charges, parse_bool_flag
 
 logger = logging.getLogger(__name__)
@@ -440,9 +441,20 @@ async def build_rough_scenario(
     # ── GFA·분양가능면적(전용률/분양률 반영) ──
     gfa_sqm = None
     saleable_pyeong = None
+    # ★정밀도 등급(2026-08-23) — 이 GFA 는 **설계 산출물이 아니다**.
+    #   `대지면적 × 실효용적률` 로 얻은 **개략치(E)** 이고, 하류(공사비·분양수입·수지)는
+    #   이 값을 입력으로 쓰므로 **그 결과들도 개략치**다(등급은 상류 최저를 따른다).
+    #   화면이 이 사실을 모르면 "설계 분석 전"인데 "총사업비 4,157.7억·등급 F"가 나란히
+    #   놓이고, 사용자는 개략치를 확정치로 읽는다(2026-08-23 사용자 검증에서 적발).
+    gfa_precision: PrecisionGrade | None = None
+    gfa_precision_basis = ""
     if land_area and effective_far:
         gfa_sqm = round(land_area * effective_far / 100.0, 1)
         saleable_pyeong = round(gfa_sqm * _GFA_TO_SALEABLE_RATIO / _PYEONG_SQM, 1)
+        gfa_precision = PrecisionGrade.ESTIMATED
+        gfa_precision_basis = (
+            f"대지면적 {land_area:,.0f}㎡ × 실효용적률 {effective_far:g}% — 설계 미반영(개략)"
+        )
     else:
         degraded.append("면적 또는 실효용적률 미확보 — GFA/공사비/분양수입 산출 불가.")
 
@@ -776,6 +788,12 @@ async def build_rough_scenario(
         "return_kpi": return_kpi_block,
         "overrides_applied": applied,
         "degraded_notes": degraded,
+        # ★정밀도 등급 — 이 산출물 전체가 **무엇으로 만들어졌는지**를 화면에 알린다.
+        #   `E`(개략)면 "설계 미반영"이라는 뜻이고, 하류 수지·등급도 같은 등급이다.
+        #   화면은 이 값 없이 숫자를 확정치처럼 보여 주면 안 된다.
+        "precision": (gfa_precision.value if gfa_precision else None),
+        "precision_label": (gfa_precision.label_ko if gfa_precision else "정밀도 미표기"),
+        "precision_basis": gfa_precision_basis,
         # ★A-3/G8(additive) — 법정초과 경량 가드 검출 시만 채워짐(빈 배열=검출 없음, 기존 키 불변).
         "integrity_warnings": integrity_warnings,
     }

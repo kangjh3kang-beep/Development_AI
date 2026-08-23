@@ -48,6 +48,16 @@ _KR_PCT_RE = re.compile(
 )
 
 
+def _min_known(*values: float | None) -> float | None:
+    """확인된 값들 중 최솟값. **하나도 확인되지 않으면 None**(임의값 발명 금지).
+
+    ★종전 `min(a, b)` 는 a 가 None 이면 TypeError 였고, 그것을 피하려고 `or 60` 같은
+      기본값을 두면 법정 한도를 지어내게 된다. 그 두 선택지 사이의 정답은 **정직한 None** 이다.
+    """
+    known = [float(v) for v in values if v is not None]
+    return min(known) if known else None
+
+
 def _parse_kr_percent(text: str) -> int | None:
     """한국어 조례 퍼센트 표기(천 단위 구분자 허용)를 정수로 파싱한다.
 
@@ -513,8 +523,14 @@ class OrdinanceService:
 
         # 법정 상한
         national = NATIONAL_LIMITS.get(zone_type, {})
-        national_bcr: float = float(national.get("bcr") or 60)
-        national_far: float = float(national.get("far") or 250)
+        # ★무날조 — 용도지역이 법정 테이블에 없으면 **지어내지 않는다**.
+        #   종전 `or 60`/`or 250` 은 미등재 용도지역(용도구역·지목이 잘못 들어온 경우 포함)에
+        #   제2종일반주거급 한도를 발명해, 자연녹지(20/100) 같은 저밀 지역을 2~3배로 부풀렸다.
+        #   같은 사고가 far_tier_service 주석에 이미 기록돼 있다(블렌드 139.6% 오염).
+        _nb = national.get("bcr")
+        _nf = national.get("far")
+        national_bcr: float | None = float(_nb) if _nb is not None else None
+        national_far: float | None = float(_nf) if _nf is not None else None
 
         result = {
             "sido": sido,
@@ -539,8 +555,9 @@ class OrdinanceService:
             ord_far = api_result["far"]
             result["ordinance_bcr"] = ord_bcr
             result["ordinance_far"] = ord_far
-            result["effective_bcr"] = min(national_bcr, ord_bcr) if ord_bcr else national_bcr
-            result["effective_far"] = min(national_far, ord_far) if ord_far else national_far
+            # ★None-safe — 법정값이 미확인이면 조례값만으로, 둘 다 없으면 None(발명 금지).
+            result["effective_bcr"] = _min_known(national_bcr, ord_bcr)
+            result["effective_far"] = _min_known(national_far, ord_far)
             result["source"] = "법제처API"
             result["ordinance_name"] = api_result.get("ordinance_name")
             result["last_updated"] = api_result.get("last_updated")
@@ -597,8 +614,9 @@ class OrdinanceService:
             c_far = cache_result["far"]
             result["ordinance_bcr"] = c_bcr
             result["ordinance_far"] = c_far
-            result["effective_bcr"] = min(national_bcr, c_bcr)
-            result["effective_far"] = min(national_far, c_far)
+            # ★None-safe(정적캐시 경로) — 법정값 미확인 시 TypeError 대신 정직 처리.
+            result["effective_bcr"] = _min_known(national_bcr, c_bcr)
+            result["effective_far"] = _min_known(national_far, c_far)
             result["source"] = "지자체 조례(정적캐시)"
             if attachment_notice:
                 result["ordinance_attachment_only"] = attachment_notice

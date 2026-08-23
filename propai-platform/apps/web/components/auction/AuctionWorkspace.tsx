@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { AuctionItemsMap, type AuctionMapItem } from "@/components/auction/AuctionItemsMap";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
@@ -9,6 +9,7 @@ import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryEr
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { AuctionMonitorPanel } from "@/components/auction/AuctionMonitorPanel";
 import { ApiClientError, apiClient, resolveApiOrigin } from "@/lib/api-client";
+import { useModalFocus, useModalFocusWhileMounted } from "@/hooks/useModalFocus";
 import { analyzeRegistry } from "@/lib/registry-analyze";
 import { DISMISS_Z, useDismissible, useDismissibleWhileMounted } from "@/lib/satong-dismiss";
 import { writePreCheckHandoff } from "@/components/precheck/handoff";
@@ -1021,7 +1022,17 @@ function safeNumber(value: unknown): number | null {
   return value;
 }
 
-function DetailModal({
+/**
+ * 물건 상세 모달 — **`export` 하는 이유는 렌더 경로 때문이다**(2026-08-23).
+ *
+ * 이 표면은 `FOCUS_UNWIRED` 에 *"단독 렌더에 목록 조회·지도 목이 필요하다"* 는 사유로
+ * 남아 있었다. **그 사유는 거짓이었다** — 이 컴포넌트가 받는 것은 `item`·`locale`·`onClose`
+ * 뿐이고, 자체 상세조회는 `enabled: canFetchDetail` 로 꺼진다(키가 없는 item 을 주면 그만).
+ * 워크스페이스도, 목록도, 지도도 필요 없다. **막고 있던 것은 `export` 하나였다.**
+ *
+ * ★부채 사유를 물려받아 믿지 말고 재라 — 이 저장소가 반복해 데인 형태다.
+ */
+export function DetailModal({
   item,
   locale,
   onClose,
@@ -1094,6 +1105,16 @@ function DetailModal({
   const mainImage = galleryImages[safeImgIdx] ?? null;
   // 이미지 확대(라이트박스) 열림 여부 — 메인 사진을 누르면 전체화면으로 크게 본다.
   const [zoomOpen, setZoomOpen] = useState(false);
+
+  // ── 포커스 생명주기 ────────────────────────────────────────────────────────
+  //  상세 모달은 **마운트 자체가 열림**이다(부모가 `selected` 일 때만 렌더한다) → WhileMounted.
+  //  라이트박스는 `zoomOpen` 이라는 **열림 인자**가 있다 → 인자를 받는 쪽.
+  //  ★두 트랩은 겹친다(라이트박스가 상세 모달 **안에** 렌더된다). 훅의 중첩 양보 규칙이
+  //    안쪽에 소유권을 주며, 그 동작은 이 파일의 전용 스펙이 실제 Tab 으로 태운다.
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const zoomRef = useRef<HTMLDivElement | null>(null);
+  useModalFocusWhileMounted(bodyRef);
+  useModalFocus(zoomRef, zoomOpen);
   const prevBids = Array.isArray(detail?.prev_bids) ? detail!.prev_bids! : [];
 
   // 상세 모달을 ESC 로 닫기 — **종전에는 ESC 가 아무 일도 하지 않았다**(배경 클릭·✕ 뿐이었다).
@@ -1267,7 +1288,9 @@ function DetailModal({
       aria-modal="true"
       onClick={onClose}
     >
+      {/* ★ref 는 백드롭이 아니라 **대화상자 본체**에 단다(백드롭에 달면 트랩 범위가 배경까지 된다). */}
       <div
+        ref={bodyRef}
         className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-3xl border border-[var(--line-strong)] bg-[var(--surface-strong)] p-6 shadow-[var(--shadow-2xl)]"
         onClick={(e) => e.stopPropagation()}
       >
@@ -1363,6 +1386,7 @@ function DetailModal({
             배경/✕ 클릭·Esc로 닫고, 사진이 여러 장이면 ‹ › 또는 ←/→ 로 넘긴다. */}
         {zoomOpen && mainImage ? (
           <div
+            ref={zoomRef}
             className="fixed inset-0 z-[800] flex items-center justify-center bg-black/90 p-4"
             role="dialog"
             aria-modal="true"
