@@ -85,6 +85,11 @@ export type SatongMapFeature = {
   ageStatus?: string | null;
   /** WS-D 개발여력 — 실효 용적률(%, 7계층 min·서버 산정). 미산정 None(무날조). */
   effectiveFarPct?: number | null;
+  /** 법정 용적률(%)·실효 산출 **근거 계층** — 실효값이 "왜 그 값인지"를 화면이 말하기 위한 재료.
+   *  ★값을 바꾸지 않는다. 사용자 신고 "실효 60% 가 이상하다" 는 값이 아니라 **근거 부재**였다
+   *  (법정 80% 를 제천시 조례가 60% 로 깎은 정확한 값이었다). */
+  legalFarPct?: number | null;
+  farBasis?: string | null;
   /** WS-D 개발여력 — 현황 용적률(%, 전동 연면적합/대지면적·서버 산정). 나대지=0·미상 None. */
   currentFarPct?: number | null;
   /** I7 규제요약 — 실효 건폐율(%, calc_effective_far 동일 계층·서버 산정). 미산정 None. */
