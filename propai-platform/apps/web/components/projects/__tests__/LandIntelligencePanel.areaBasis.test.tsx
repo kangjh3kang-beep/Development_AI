@@ -18,6 +18,13 @@ import { useProjectContextStore } from "@/store/useProjectContextStore";
  *   잠그지 못한다. 실제로 변이 검증에서 `landAreaSqm: resolvedArea.valueSqm ?? …` 줄을
  *   지워도 순수 테스트는 전부 초록이었다(배선 무잠금). 그래서 **렌더 결과**를 본다.
  *
+ * ■ 변이 검증 후 남은 생존 — **의도적 비잠금**이므로 여기 적어 둔다(점수 부풀리기 방지)
+ *   · `className="…"` 문자열 변경(4건) — 색상·간격은 잠그지 않는다(디자인 변경마다 빨강이 되면
+ *     아무도 게이트를 안 본다). 값·기준·라벨 **문구**는 위 단언들이 잠근다.
+ *   · `status: charArea >= 200 ? "safe" : "warning"` — 칩 **색상**만 정한다(값 아님).
+ *   · `LandAreaBasis` 유니언 멤버 문자열 — 타입 층이라 `tsc --noEmit` 이 잡는다(CI 게이트).
+ *   · `site-analysis/page.tsx` 2줄 — 아래 `it.todo` 로 부채를 명시했다(무잠금 ≠ 미수정).
+ *
  * ■ 대조군
  *   단일필지 상태를 함께 태운다. "무엇이든 잡는" 판별기와 "아무것도 안 잡는" 판별기는
  *   둘 다 초록이 되므로, 두 모집단이 **서로 다른 화면**을 내는지 확인해야 락이 성립한다.
