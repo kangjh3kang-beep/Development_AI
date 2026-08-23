@@ -233,6 +233,18 @@ interface FeasibilityData {
   totalRevenueWon: number | null;
   profitRatePct: number | null;
   grade: string | null;
+  // ★정밀도 등급(2026-08-23 · #770) — 이 수지가 **무엇으로 만들어졌는지**.
+  //   "E"=개략(대지면적×실효용적률로 GFA 를 추정 — 설계 미반영) · "D"=설계기반 · "V"=확인됨.
+  //   undefined = 미표기(구 스냅샷 또는 백엔드가 안 보낸 경우).
+  //
+  //   왜 필요한가: 화면에 `설계 "분석 전"` · `공사비 "분석 전"` 인데
+  //   `총사업비 4,157.7억 · 등급 F` 가 나란히 있었다. 계산은 정직한 **개략치**인데
+  //   화면이 확정치와 똑같이 보여 줘서 사용자가 "분석 전인데 왜 숫자가 있나"로 읽었다.
+  //   값을 지우는 게 아니라 **등급을 붙여** 그 혼란을 끊는다.
+  //   optional·하위호환(persist round-trip 보존·기존 소비처 무영향).
+  precision?: "E" | "D" | "V" | null;
+  precisionLabel?: string | null;
+  precisionBasis?: string | null;
   // 투자수익성(ROI 뷰) 정합용 — 옵셔널·하위호환. reader 무영향, persist round-trip 보존.
   // equityWon: 자기자본 절대액(원). 사용자/에디터 직접입력 우선, 없으면 총사업비×equityRatioPct 자동산출.
   equityWon?: number | null;
