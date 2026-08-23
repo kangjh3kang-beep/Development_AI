@@ -187,6 +187,34 @@ function NestedHarness({ inner }: { inner: boolean }) {
 }
 
 describe("useModalFocus — 중첩 트랩", () => {
+  it("★★바깥이 **한 번도 포커스를 만지지 않는다** — 결과가 같아도 경로가 다르다", () => {
+    // ★이 케이스가 없으면 양보 규칙이 **잠기지 않는다**(변이로 실증: 규칙을 지워도 초록).
+    //   이유는 안쪽 훅의 *"포커스가 컨테이너 밖이면 회수한다"* 분기가 결과를 **되돌려 놓기**
+    //   때문이다 — 양보가 없으면 바깥이 먼저 `o-first` 로 옮기고, 안쪽이 그걸 다시 끌어온다.
+    //   최종 위치는 같지만 그 사이에 **배경 요소가 focus 를 받는다**(onFocus 핸들러 발화·
+    //   스크린리더 낭독·`:focus-visible` 깜빡임). 결과가 아니라 **경로**를 본다.
+    render(<NestedHarness inner />);
+    const oFirst = screen.getByTestId("o-first");
+    const oMid = screen.getByTestId("o-mid");
+    let touched = 0;
+    const spy = () => { touched += 1; };
+    oFirst.addEventListener("focus", spy);
+    oMid.addEventListener("focus", spy);
+
+    screen.getByTestId("i-last").focus();
+    fireEvent.keyDown(document, { key: "Tab" });
+
+    expect(
+      touched,
+      "안쪽에 갇혀 있는데 배경 모달 요소가 포커스를 받았다 — 바깥 트랩이 끼어들었다",
+    ).toBe(0);
+    // ★공허 진리 방지 — 스파이가 아예 안 붙는 구현에서도 0 이다. 대상이 살아 있는지 본다.
+    oFirst.focus();
+    expect(touched, "스파이가 발화하지 않는다 — 이 케이스는 아무것도 안 본다").toBe(1);
+    oFirst.removeEventListener("focus", spy);
+    oMid.removeEventListener("focus", spy);
+  });
+
   it("★안쪽이 열리면 **안쪽**이 소유권을 갖는다 — 최악 배치에서도 바깥이 가로채지 않는다", () => {
     render(<NestedHarness inner />);
     const iLast = screen.getByTestId("i-last");
