@@ -11,9 +11,10 @@
  */
 
 import { Clock, Footprints, type LucideIcon, Mail, MessageCircle, PenLine, Shuffle } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { salesApi } from "@/lib/salesApi";
 import { DISMISS_Z, useDismissibleWhileMounted } from "@/lib/satong-dismiss";
+import { useModalFocusWhileMounted } from "@/hooks/useModalFocus";
 
 export interface HistoryItem {
   id?: string;
@@ -104,8 +105,17 @@ export default function CustomerCardDrawer({
   onClose: () => void;
   onChanged?: () => void;
 }) {
+  const bodyRef = useRef<HTMLDivElement>(null);
   // ESC 로 닫기 — 부모(CrmPanel)가 **열 때만 마운트**한다(열림 플래그가 따로 없다).
   useDismissibleWhileMounted(DISMISS_Z.appModal, onClose);
+  // ★포커스 생명주기 — 트랩 범위는 **대화상자 본체**다(백드롭이 아니다).
+  //
+  //   미룬 사유는 *"백드롭 딤이 포커스 가능한 닫기 버튼이라 본체에만 트랩을 걸면 그 버튼이
+  //   트랩 밖이 된다"* 였다. 재보니 **본체 안에도 닫기 버튼이 있어서** 키보드 사용자는
+  //   닫을 수단을 잃지 않는다(그리고 ESC 는 별도 계약이 이미 받는다).
+  //   딤 버튼은 마우스 편의용이므로 트랩 밖에 두는 편이 오히려 낫다 —
+  //   트랩 안에 넣으면 Tab 순환에 "화면 전체를 덮는 보이지 않는 버튼"이 끼어든다.
+  useModalFocusWhileMounted(bodyRef);
 
   const api = salesApi(siteCode);
   const [items, setItems] = useState<HistoryItem[]>([]);
@@ -214,7 +224,10 @@ export default function CustomerCardDrawer({
         onClick={onClose}
         className="absolute inset-0 bg-black/50 backdrop-blur-[1px]"
       />
-      <div className="relative flex h-full w-full max-w-md flex-col overflow-y-auto border-l border-[var(--line)] bg-[var(--surface)] p-4 shadow-[var(--shadow-lg)] sm:p-5">
+      <div
+        ref={bodyRef}
+        className="relative flex h-full w-full max-w-md flex-col overflow-y-auto border-l border-[var(--line)] bg-[var(--surface)] p-4 shadow-[var(--shadow-lg)] sm:p-5"
+      >
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-base font-black text-[var(--text-primary)]">
             {customerName || "고객"} <span className="text-xs font-normal text-[var(--text-tertiary)]">상세</span>

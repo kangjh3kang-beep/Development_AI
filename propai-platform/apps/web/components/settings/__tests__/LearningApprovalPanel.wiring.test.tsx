@@ -587,7 +587,78 @@ describe("AI 학습 사례 승인 화면 배선", () => {
     "학습권리 레지스트리가 learning_examples 키공간으로 시딩되면 주입 지점" +
       "(base_interpreter._load_fewshot)에도 게이트를 걸고 여기서 검사한다",
   );
-  it.todo("다운로드 파일명·MIME 계약(learning_dataset_active.jsonl / x-ndjson)을 검사한다");
+  /* ---------------------------------------------------------------- */
+  /*  다운로드 계약 — 부채 상환(2026-08-23)                            */
+  /* ---------------------------------------------------------------- */
+
+  it("★내려받기는 **파일명·MIME 계약**을 지킨다 — 확장자가 틀리면 학습 도구가 못 읽는다", async () => {
+    // 이 파일은 사람이 받아서 **학습 파이프라인에 넣는** 산출물이다. 확장자(.jsonl)나
+    // MIME(x-ndjson)이 바뀌면 받는 쪽이 조용히 실패한다 — 화면은 "내려받았습니다"라고 말한다.
+    const user = userEvent.setup();
+    let blobType: string | null = null;
+    // ★jsdom 에는 `URL.createObjectURL` 이 **없다**(spyOn 이 "does not exist" 로 실패한다).
+    //   이 파일의 기존 관례대로 `stubGlobal` 로 갈아끼운다.
+    const createObjectURL = vi.fn((blob: Blob) => {
+      blobType = blob.type;
+      return "blob:stub";
+    });
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal("URL", { ...URL, createObjectURL, revokeObjectURL });
+
+    let downloadName: string | null = null;
+    const click = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(function (this: HTMLAnchorElement) {
+        downloadName = this.download;
+      });
+
+    getMock.mockImplementation((path: string) =>
+      String(path).includes("/growth/learning/dataset")
+        ? Promise.resolve({ message: '{"a":1}\n{"b":2}\n' })
+        : Promise.resolve(listPayload()),
+    );
+
+    try {
+      render(<LearningApprovalPanel />);
+      await user.click(await screen.findByRole("button", { name: /승인된 학습셋 내려받기/ }));
+
+      // ★전제 — 다운로드 경로가 실제로 발화했는지 먼저 본다(공허한 참 방지).
+      await waitFor(() => expect(createObjectURL).toHaveBeenCalledTimes(1));
+      expect(click, "앵커 클릭이 없다 — 다운로드가 시작되지 않았다").toHaveBeenCalledTimes(1);
+
+      expect(downloadName, "파일명 계약이 깨졌다").toBe("learning_dataset_active.jsonl");
+      expect(blobType, "MIME 계약이 깨졌다 — 받는 쪽이 조용히 실패한다").toBe(
+        "application/x-ndjson",
+      );
+      // 누수 방지 — 만든 URL 은 반드시 회수한다.
+      expect(revokeObjectURL, "objectURL 을 회수하지 않는다(메모리 누수)").toHaveBeenCalledWith(
+        "blob:stub",
+      );
+    } finally {
+      click.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("★음성대조 — 승인된 사례가 없으면 **빈 파일임을 말한다**(받아 놓고 모르면 안 된다)", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal("URL", { ...URL, createObjectURL: vi.fn(() => "blob:stub"), revokeObjectURL: vi.fn() });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    getMock.mockImplementation((path: string) =>
+      String(path).includes("/growth/learning/dataset")
+        ? Promise.resolve({ message: "" })
+        : Promise.resolve(listPayload()),
+    );
+    try {
+      render(<LearningApprovalPanel />);
+      await user.click(await screen.findByRole("button", { name: /승인된 학습셋 내려받기/ }));
+      expect(await screen.findByText(/파일이 비어 있습니다/)).toBeInTheDocument();
+    } finally {
+      click.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it.todo(
     "후속(이 PR 밖): 프로덕션 learning_examples 의 기존 status='active' 행을 실측한다 — " +
       "있으면 권리 인수 이력을 소급 기록해야 한다(INSERT 는 'candidate' 하드코딩이고 " +
