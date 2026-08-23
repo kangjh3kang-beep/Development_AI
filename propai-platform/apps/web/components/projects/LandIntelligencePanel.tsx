@@ -877,8 +877,8 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
     heightLimit: zoningData?.zone_limits?.max_height_m ?? localResult?.heightLimit,
     officialPricePerSqm: zoningData?.official_price_per_sqm ?? null,
     // ★면적 기준 SSOT(R1) — zoningData 는 /zoning/comprehensive 의 **대표 1필지** 응답이다.
-    //   다필지 부지에서 이 값을 그대로 쓰면 화면이 3,836㎡(대표)를 보여 주는데 같은 프로젝트의
-    //   사업개요는 164,823㎡(7필지 통합)를 보여 준다 — 사용자가 어느 숫자도 믿을 수 없게 된다.
+    //   다필지 부지에서 이 값을 그대로 쓰면 이 패널은 대표필지 면적을, 통합 경로를 쓰는 다른
+    //   패널(사업개요·건축가능범위)은 통합면적을 보여 준다 — 같은 이름으로 다른 값이 나온다.
     //   store SSOT 를 우선 쓰고, store 에 면적이 아예 없을 때만 API 대표값으로 폴백한다.
     landAreaSqm: resolvedArea.valueSqm ?? zoningData?.land_area_sqm ?? null,
   };
@@ -1683,8 +1683,8 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
                         ({analysis.landAreaSqm.toLocaleString()}m² 기준)
                         {/* ★다필지 통합면적에 **대표필지 공시지가**를 곱한 개략치다. 필지마다 공시지가가
                             다르므로 정확한 합산이 아니다 — 그 사실을 숨기지 않는다(정밀도 위장 금지).
-                            종전엔 이 줄이 대표필지 면적(3,836㎡)으로 계산돼 통합 부지 가액을
-                            수십 배 과소표시했다. 면적을 통합으로 바로잡되 근사임을 함께 밝힌다. */}
+                            종전엔 이 줄이 **대표필지 면적**으로 계산돼, 통합 부지 가액을 통합면적 대비
+                            대표면적 비율만큼 과소표시했다. 면적을 통합으로 바로잡되 근사임을 밝힌다. */}
                         {resolvedArea.basis === "integrated" && (
                           <span className="block text-[var(--status-warning)]">
                             개략치 — 대표필지 공시지가를 통합면적에 곱한 값입니다(필지별 공시지가 합산 아님)
