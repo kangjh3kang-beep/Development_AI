@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { isJibunToken } from "@/lib/pnu";
 import { persist } from "zustand/middleware";
 import { createDebouncedStorage } from "@/lib/debounced-storage";
+import { healPhantomAreaAggregates } from "@/lib/site-analysis-invariants";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { resolveEquityWon, DEFAULT_EQUITY_RATIO_PCT } from "@/lib/finance/leverage";
 import type { DecisionBrief } from "@/components/projects/decision-brief-types";
@@ -1246,7 +1247,11 @@ export const useProjectContextStore = create<ProjectContextState>()(
             if (Object.keys(guarded).length === 0) return {};
             patch = guarded;
           }
-          const mergedSiteAnalysis = {
+          // ★자가치유(2026-08-23): 필지 목록이 없는데 그 목록에서 파생된 면적 집계만 남은
+          //   상태는 구성상 있을 수 없다 — 있으면 유령이다. 정상 경로에서는 아무것도 하지
+          //   않고 **같은 참조를 그대로 돌려주므로**(리렌더 연쇄 없음) 여기 둬도 비용이 없다.
+          //   근본(쓰기/지우기 비대칭)은 satong-map-selection 에서 고쳤고, 이건 두 번째 방어선.
+          const mergedSiteAnalysis = healPhantomAreaAggregates({
             ...(state.siteAnalysis ?? {
               estimatedValue: null,
               landAreaSqm: null,
@@ -1255,7 +1260,7 @@ export const useProjectContextStore = create<ProjectContextState>()(
               pnu: null,
             }),
             ...patch,
-          } as SiteAnalysisData;
+          }) as SiteAnalysisData;
           const next: Partial<ProjectContextState> = {
             siteAnalysis: mergedSiteAnalysis,
             updatedAt: stampedAt(state, "siteAnalysis"),
