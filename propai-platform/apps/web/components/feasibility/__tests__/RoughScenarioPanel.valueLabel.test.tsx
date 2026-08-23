@@ -31,6 +31,12 @@
  * 4. 손실인 순이익을 **강조색으로 그리지 않는다**
  * 5. 판정 근거가 없으면 **아무 색도 말도 붙이지 않는다**(모르면 모른다)
  * 6. 대조군 — 충족/미달이 **서로 다른 화면**을 낸다(같으면 락이 공허하다)
+ * 7. ★**실제 칠해지는 색**까지 본다 — `data-tone` 만 잠그면 색 매핑을 통째로 바꿔도 초록이다
+ *    (변이 검증에서 `negative: "var(--status-error)"` 삭제가 살아남았다). 여기서 색은
+ *    장식이 아니라 **의미**다 — 손실을 성과의 색으로 칠하는 것이 바로 이 PR 이 고치는 결함이다.
+ *
+ * ■ 변이 후 남은 생존 — 의도적 비잠금(점수 부풀리기 방지)
+ *   · 내가 쓴 **주석 문자열** 2건 — 동작에 영향이 없다.
  */
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -137,6 +143,12 @@ describe("값–라벨 정합 — 목표를 성과처럼 그리지 않는다", (
     const net = statValue("실제 순이익")!;
     expect(net.textContent).toContain("손실");
     expect(net.getAttribute("data-tone")).toBe("negative");
+
+    // ★실제 칠해지는 색까지 본다 — tone 만 잠그면 색 매핑을 바꿔도 초록이다.
+    expect(target.style.color).toContain("--status-error");
+    expect(net.style.color).toContain("--status-error");
+    // ★종전 동작(무조건 강조색)으로 되돌리면 죽는다.
+    expect(net.style.color).not.toContain("--data-accent");
   });
 
   it("★대조군 — 충족·이익이면 같은 자리가 '충족'과 성과의 색으로 바뀐다", async () => {
@@ -150,6 +162,22 @@ describe("값–라벨 정합 — 목표를 성과처럼 그리지 않는다", (
     const net = statValue("실제 순이익")!;
     expect(net.textContent).not.toContain("손실");
     expect(net.getAttribute("data-tone")).toBe("positive");
+
+    expect(target.style.color).toContain("--status-success");
+    expect(net.style.color).toContain("--status-success");
+  });
+
+  it("★성과의 색과 손실의 색은 **서로 달라야** 한다(같은 색이면 구분이 없다)", async () => {
+    await renderWith(scenario({ revenue: 1_000_000_000, netProfit: -1_500_000_000 }));
+    const lossColor = statValue("실제 순이익")!.style.color;
+    // 같은 컴포넌트를 새로 렌더해 반대 상태를 만든다.
+    document.body.innerHTML = "";
+    postV2Mock.mockReset();
+    await renderWith(scenario({ revenue: 5_000_000_000, netProfit: 1_200_000_000 }));
+    const gainColor = statValue("실제 순이익")!.style.color;
+    expect(lossColor).not.toBe("");
+    expect(gainColor).not.toBe("");
+    expect(lossColor).not.toBe(gainColor);
   });
 
   it("★판정 근거가 없으면 아무 말도 색도 붙이지 않는다(모르면 모른다)", async () => {
@@ -159,6 +187,8 @@ describe("값–라벨 정합 — 목표를 성과처럼 그리지 않는다", (
     expect(target.textContent).not.toContain("충족");
     expect(target.textContent).not.toContain("미달");
     expect(target.getAttribute("data-tone")).toBe("muted");
+    // ★판정이 없으면 색도 없다 — 없는 판정을 색으로 말하지 않는다.
+    expect(target.style.color).toBe("");
   });
 
   it("★사업성 요약의 순이익도 손실이면 강조색을 쓰지 않는다(형제 표면 스윕)", async () => {
