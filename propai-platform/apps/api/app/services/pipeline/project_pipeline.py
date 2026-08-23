@@ -1574,19 +1574,27 @@ class ProjectPipeline:
             for item in design_matrix_result.items
             if item.field in _design_fallback_labels and item.status == DataStatus.MISSING.value
         ]
-        # ★무날조 — 면적·한도를 **지어내지 않는다**. 종전에는 미확인 부지에
-        #   `면적 500㎡ · 건폐 60% · 용적 200%` 를 발명해 건축개요 전체가 허구 위에 섰다.
-        #   (같은 클래스가 far_tier_service·ordinance_service 에도 있었다 — 전역 스윕.)
-        land_area = site.land_area_sqm
-        bcr = site.max_bcr
-        far = site.max_far
+        # ★★2026-08-23 — 이 자리는 **되돌린 것**이다. 처음엔 `or 500/60/200` 을
+        #   far_tier_service·ordinance_service 와 같은 **A형 날조**로 보고 제거했는데,
+        #   테스트가 그것을 잡았다(`test_required_data.py` 2건).
+        #
+        #   확인해 보니 여기는 **성격이 다르다** — 이 폴백은 `W3-8 계약`에 따라
+        #   `assumed_fields=["land_area_sqm(500㎡ 가정)", …]` 와 `data_quality="assumed_defaults"`
+        #   로 **가정임을 명시**하고, 하류(`trust_guard`)가 그 표기를 보고 판단을 유보한다.
+        #   즉 **값을 지어내되 지어냈다고 말하는** 구조다.
+        #
+        #   하드코딩 3분류로 보면:
+        #     · A형 날조 = 근거 없이 발명하고 **확정치처럼 보여 준다** → 제거(far_tier·ordinance)
+        #     · **B형 전제 = 값을 쓰되 가정임을 표기하고 하류가 그것을 소비한다 → 유지(여기)**
+        #   제거하면 `assumed_fields` 가 비고 연면적이 0 이 되어, **정직 표기 체계 자체가
+        #   무력화**된다. 그것이 이 되돌림의 이유다.
+        land_area = site.land_area_sqm or 500.0
+        bcr = site.max_bcr or 60.0
+        far = site.max_far or 200.0
 
         # 건축 개요 자동 산출 (사용자 오버라이드가 자동 산출값보다 우선)
-        # ★면적·한도 중 하나라도 미확인이면 **산출하지 않는다**(위 무날조 처방의 짝).
-        #   값을 지어내면 연면적·층수·주차가 전부 허구 위에 서고, 화면은 확정치처럼 보여 준다.
-        _geom_known = land_area is not None and bcr is not None and far is not None
-        building_area = (land_area * (bcr / 100)) if _geom_known else 0.0
-        total_gfa = (land_area * (far / 100)) if _geom_known else 0.0
+        building_area = land_area * (bcr / 100)
+        total_gfa = land_area * (far / 100)
         _gfa_ov = self._maybe_float(overrides.get("total_gfa_sqm"))
         if _gfa_ov is not None and _gfa_ov > 0:
             total_gfa = _gfa_ov

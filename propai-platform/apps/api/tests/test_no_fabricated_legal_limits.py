@@ -64,6 +64,31 @@ def _fabricates(node: ast.AST) -> bool:
     return False
 
 
+# ★가정을 **표기하는** 코드는 발명이 아니다(하드코딩 3분류의 B형).
+#   `assumed_fields=["land_area_sqm(500㎡ 가정)"]` · `data_quality="assumed_defaults"` 처럼
+#   값을 쓰되 **지어냈다고 말하고** 하류가 그 표기를 소비하는 구조는 유지 대상이다.
+#   ★이 구분이 없던 첫 판은 `project_pipeline._run_design`(W3-8 계약)을 A형으로 오인해
+#     제거했고, 그 결과 **정직 표기 체계 자체를 무력화**했다(테스트 2건이 잡았다).
+_HONEST_MARKERS = ("assumed_fields", "assumed_defaults", "가정")
+
+
+def _declares_assumption(fn: ast.AST) -> bool:
+    """이 함수가 **가정임을 표기**하는가 — 문자열 리터럴에서 찾는다."""
+    for sub in ast.walk(fn):
+        if isinstance(sub, ast.Constant) and isinstance(sub.value, str):
+            if any(m in sub.value for m in _HONEST_MARKERS):
+                return True
+    return False
+
+
+def _rel(p: pathlib.Path) -> str:
+    """저장소 밖 경로(테스트용 임시 파일)에서도 죽지 않게 — 상대화는 표시용일 뿐이다."""
+    try:
+        return str(p.relative_to(_API))
+    except ValueError:
+        return str(p)
+
+
 def _scan(root: pathlib.Path) -> list[str]:
     out: list[str] = []
     for p in root.rglob("*.py"):
@@ -73,9 +98,19 @@ def _scan(root: pathlib.Path) -> list[str]:
             tree = ast.parse(p.read_text(encoding="utf-8"))
         except SyntaxError:
             continue
-        for node in ast.walk(tree):
+        # 함수 단위로 본다 — 가정 표기는 그 함수 안에 있어야 의미가 있다.
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if _declares_assumption(fn):
+                continue          # B형 — 값을 쓰되 가정임을 말한다
+            for node in ast.walk(fn):
+                if isinstance(node, (ast.Assign, ast.AnnAssign)) and _is_limit_context(node) and _fabricates(node):
+                    out.append(f"{_rel(p)}:{node.lineno}")
+        # 모듈 최상위(함수 밖) 대입도 본다 — 여기엔 가정 표기가 붙을 자리가 없다.
+        for node in tree.body:
             if isinstance(node, (ast.Assign, ast.AnnAssign)) and _is_limit_context(node) and _fabricates(node):
-                out.append(f"{p.relative_to(_API)}:{node.lineno}")
+                out.append(f"{_rel(p)}:{node.lineno}")
     return out
 
 
@@ -114,3 +149,50 @@ def test_판별기가_발명과_정직전파를_가른다(src: str, 위반이어
         for n in ast.walk(tree)
     )
     assert hit is 위반이어야, f"판별 오류: {src!r} → {hit}"
+
+
+@pytest.mark.parametrize(
+    ("src", "위반이어야"),
+    [
+        # ★A형 — 가정 표기 없이 발명한다
+        (
+            "def f(site):\n"
+            "    far = site.max_far or 200\n"
+            "    return far\n",
+            True,
+        ),
+        # ★B형 — 값을 쓰되 **가정임을 말한다**(하류가 그 표기를 소비한다)
+        (
+            "def f(site):\n"
+            "    far = site.max_far or 200\n"
+            "    return {'far': far, 'assumed_fields': ['max_far(200% 가정)'],\n"
+            "            'data_quality': 'assumed_defaults'}\n",
+            False,
+        ),
+        # ★가정 표기가 **다른 함수**에 있으면 이 함수는 여전히 A형이다
+        (
+            "def g():\n"
+            "    return {'assumed_fields': ['x(가정)']}\n"
+            "def f(site):\n"
+            "    bcr = site.max_bcr or 60\n"
+            "    return bcr\n",
+            True,
+        ),
+    ],
+)
+def test_판별기가_A형과_B형을_가른다(src: str, 위반이어야: bool) -> None:
+    """★이 구분이 없으면 판별기는 둘 중 하나로 망가진다.
+
+    · 구분 없이 전부 잡으면 → **정직 표기 체계(W3-8)까지 제거**하게 된다(실제로 그랬다)
+    · 구분 없이 전부 통과시키면 → 발명이 그대로 남는다
+
+    그래서 세 번째 케이스가 중요하다: 가정 표기가 **다른 함수**에 있으면
+    이 함수는 여전히 발명이다(파일 전체를 보면 안 된다).
+    """
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        (root / "probe.py").write_text(src, encoding="utf-8")
+        hits = _scan(root)
+    assert bool(hits) is 위반이어야, f"판별 오류: hits={hits} · src={src!r}"
