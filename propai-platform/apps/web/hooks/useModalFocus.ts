@@ -75,6 +75,17 @@ export function useModalFocus(ref: RefObject<HTMLElement | null>, open: boolean)
       if (e.key !== "Tab") return;
       const el = ref.current;
       if (!el) return;
+      // ★**중첩 트랩에는 양보한다**(2026-08-23 추가 — `AuctionWorkspace` 라이트박스에서 드러났다).
+      //
+      //   모달 안에서 또 하나가 열리는 표면이 있다(상세 모달 > 사진 확대 라이트박스).
+      //   안쪽이 **내 DOM 안에** 렌더되면 내 `focusables` 는 안쪽 것까지 포함하므로,
+      //   안쪽의 마지막 요소가 우연히 내 마지막이 아닐 때만 우연히 동작한다 —
+      //   즉 **레이아웃에 따라 뚫린다**. 우연에 기대지 않고 소유권을 명시한다.
+      //
+      //   ESC 계약은 이미 z 사다리(`DISMISS_Z.nestedOverModal`)로 같은 문제를 풀었다.
+      //   포커스 계약에는 그 개념이 없어 **비대칭**이었다 — 여기서 맞춘다.
+      const inner = el.querySelector<HTMLElement>("[data-modal-focus]");
+      if (inner && inner !== el && inner.contains(document.activeElement)) return;
       trapFocus(el, e);
     };
     document.addEventListener("keydown", onKeyDown, true);
