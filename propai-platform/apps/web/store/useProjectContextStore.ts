@@ -602,6 +602,21 @@ export interface ProjectContextState {
   // 라이프사이클 단계 id(LIFECYCLE_STAGES 11종)별 "실데이터 존재" 판정(무목업·읽기전용).
   // true=실데이터 있음(완료 표시), false=없음, undefined=전용 데이터 없는 단계(배지 미표시).
   // 진행레일/파이프라인이 completedStages가 비어도 실데이터 기준으로 완료를 표시하도록 단일소비.
+  /**
+   * ★단계 완료 등급 SSOT — "이 단계가 끝났는가"에 답하는 **단 하나의 판정**.
+   *
+   * 왜 3등급인가(쉬운 설명):
+   * 종전엔 답이 예/아니오 둘뿐이라, 주소만 입력한 부지가 **"부지분석 완료"** 로 셈해졌다.
+   * 그건 이 캠페인이 고치는 '정밀도 위장'과 같은 병이다 — **아직 아무 수치도 없는데
+   * 끝난 것처럼 보인다.** 그렇다고 "미완료"로만 두면 사용자가 한 일이 사라진다.
+   * 그래서 `partial`(진행 중)을 두어 **한 일은 인정하되 끝났다고 말하지 않는다**.
+   *
+   *   done    — 그 단계의 **수치**가 확보됐다(다음 단계가 이 값을 받아 쓸 수 있다)
+   *   partial — 시작은 했으나 수치가 없다(예: 주소만 있고 면적 미확보)
+   *   none    — 아무것도 없다
+   *   undefined — 이 단계는 store 로 판정하지 않는다(report·operations) → 배지 미표시
+   */
+  stageCompletion: (stageId: string) => StageCompletion | undefined;
   stageHasData: (stageId: string) => boolean | undefined;
 }
 
@@ -625,6 +640,9 @@ export interface FeasibilityCompleteness {
    수지 투입(부지/설계/공사비/금융)에 더해 감사 지적 단계(법규/ESG/인허가)까지 포함해
    프로젝트 전주기 완성도를 산출한다. 무목업: 각 단계 done은 해당 store 데이터(또는
    완료 단계 기록) 유무로만 판정. 가중치 균등(7단계, 각 1/7) → 완료 비율(%). */
+/** 단계 완료 등급 — 예/아니오 둘로는 "주소만 있는 부지"를 정직하게 말할 수 없다. */
+export type StageCompletion = "done" | "partial" | "none";
+
 export type ProjectCompletenessKey =
   | "site"
   | "design"
@@ -1723,89 +1741,86 @@ export const useProjectContextStore = create<ProjectContextState>()(
       },
 
       projectCompleteness: () => {
-        const s = get();
-        // 무목업: 각 단계 done은 실데이터(또는 완료 단계 기록)로만 판정.
-        const siteDone = !!(
-          s.siteAnalysis?.landAreaSqm && s.siteAnalysis.landAreaSqm > 0
-        );
-        const siteAddressOnly = !siteDone && !!s.siteAnalysis?.address;
-        const designDone = !!(
-          s.designData?.totalGfaSqm && s.designData.totalGfaSqm > 0
-        );
-        const costDone = !!(
-          s.costData?.totalConstructionCostWon &&
-          s.costData.totalConstructionCostWon > 0
-        );
-        // 법규: 적합판정 또는 법령허브 산출(한도/근거)이 채워졌는가(Fix #1 — 환류 단선 해소).
-        const complianceDone = complianceHasData(s.complianceData);
-        // 금융: finance 단계가 산출(updatedAt stamp)되었는가. 별도 데이터 필드가
-        // 없으므로 staleness 타임스탬프를 done 신호로 사용(무목업: 실제 산출 시에만 stamp).
-        const financeDone = !!s.updatedAt.finance;
-        // ESG: 탄소 산출 결과가 채워졌는가.
-        const esgDone = !!(
-          s.esgData &&
-          ((s.esgData.totalCarbonPerSqm ?? 0) > 0 ||
-            (s.esgData.embodiedCarbonKg ?? 0) > 0)
-        );
-        // 인허가: 전용 데이터 필드가 없어 완료 단계 기록으로 판정(무목업).
-        const permitDone = s.completedStages.includes("permit");
-
-        const stages: ProjectCompletenessStage[] = [
-          { key: "site", label: "부지", done: siteDone, partial: siteAddressOnly },
-          { key: "design", label: "설계", done: designDone },
-          { key: "cost", label: "공사비", done: costDone },
-          { key: "compliance", label: "법규", done: complianceDone },
-          { key: "finance", label: "금융", done: financeDone },
-          { key: "esg", label: "ESG", done: esgDone },
-          { key: "permit", label: "인허가", done: permitDone },
+        // ★단일 판정에서 파생한다 — 종전엔 여기서 done 조건을 **다시 한 번 손으로 썼고**,
+        //   그 사본이 stageHasData 와 어긋나 같은 화면이 같은 단계를 두고 반대로 말했다.
+        //   완성도 7단계는 라이프사이클 11단계의 **부분집합**이며(라벨은 짧게), 이 표가
+        //   유일한 대응이다. 판정 자체는 stageCompletion 한 곳에만 있다.
+        const c = get().stageCompletion;
+        const KEY_TO_STAGE: Array<[ProjectCompletenessKey, string, string]> = [
+          ["site", "site-analysis", "부지"],
+          ["design", "design", "설계"],
+          ["cost", "construction", "공사비"],
+          ["compliance", "legal", "법규"],
+          ["finance", "finance", "금융"],
+          ["esg", "esg", "ESG"],
+          ["permit", "permit", "인허가"],
         ];
+        const stages: ProjectCompletenessStage[] = KEY_TO_STAGE.map(
+          ([key, stageId, label]) => {
+            const grade = c(stageId);
+            return { key, label, done: grade === "done", partial: grade === "partial" };
+          },
+        );
         const total = stages.length;
         const doneCount = stages.filter((st) => st.done).length;
         const pct = total > 0 ? Math.round((doneCount / total) * 100) : 0;
         return { stages, doneCount, total, pct };
       },
 
-      stageHasData: (stageId) => {
+      stageCompletion: (stageId) => {
         const s = get();
-        // 라이프사이클 단계 id(LIFECYCLE_STAGES)별 실데이터 유무를 store 값만으로 판정.
-        // 매핑 없는 종합·운영 단계(report/operations)는 undefined(배지 미표시).
         switch (stageId) {
-          case "site-analysis":
-            return !!(
-              (s.siteAnalysis?.landAreaSqm && s.siteAnalysis.landAreaSqm > 0) ||
-              s.siteAnalysis?.address ||
-              s.siteAnalysis?.zoneCode
-            );
+          case "site-analysis": {
+            // ★면적은 effectiveLandAreaSqm(SSOT) — raw landAreaSqm 금지.
+            //   다필지에서 통합면적만 확보된 상태를 raw 로 읽으면 "면적 없음"이 되어
+            //   이미 확보된 부지가 미완료로 셈해진다(면적 SSOT 규칙은 store 안에서도 같다).
+            const area = effectiveLandAreaSqm(s.siteAnalysis);
+            if (area != null && area > 0) return "done";
+            // 주소·용도지역만 있는 상태 — 시작은 했으나 **하류가 쓸 수치가 없다**.
+            //   이걸 done 으로 세면 "부지분석 완료"인데 설계·수지가 못 도는 모순이 생긴다.
+            if (s.siteAnalysis?.address || s.siteAnalysis?.zoneCode) return "partial";
+            return "none";
+          }
           case "legal":
-            return complianceHasData(s.complianceData);
+            return complianceHasData(s.complianceData) ? "done" : "none";
           case "design":
           case "bim":
-            return !!(s.designData?.totalGfaSqm && s.designData.totalGfaSqm > 0);
+            return s.designData?.totalGfaSqm && s.designData.totalGfaSqm > 0 ? "done" : "none";
           case "construction":
-            return !!(
-              s.costData?.totalConstructionCostWon &&
+            return s.costData?.totalConstructionCostWon &&
               s.costData.totalConstructionCostWon > 0
-            );
+              ? "done"
+              : "none";
           case "feasibility":
-            return !!(
-              s.feasibilityData?.totalRevenueWon &&
+            return s.feasibilityData?.totalRevenueWon &&
               s.feasibilityData.totalRevenueWon > 0
-            );
+              ? "done"
+              : "none";
           case "finance":
-            return !!s.updatedAt.finance;
+            // 별도 데이터 필드가 없어 산출 타임스탬프를 done 신호로 쓴다(무목업: 실제 산출 시에만 stamp).
+            return s.updatedAt.finance ? "done" : "none";
           case "esg":
-            return !!(
-              s.esgData &&
+            return s.esgData &&
               ((s.esgData.totalCarbonPerSqm ?? 0) > 0 ||
                 (s.esgData.embodiedCarbonKg ?? 0) > 0)
-            );
+              ? "done"
+              : "none";
           // permit: 전용 데이터 필드가 없어 완료 단계 기록으로만 판정(무목업).
           case "permit":
-            return s.completedStages.includes("permit");
+            return s.completedStages.includes("permit") ? "done" : "none";
           // report/operations 등 종합·운영 단계는 배지 미표시(undefined).
           default:
             return undefined;
         }
+      },
+
+      /**
+       * 단계에 **데이터가 있는가**(완료 여부가 아니다). 이름 그대로의 뜻으로만 쓴다 —
+       * 이걸 '완료'로 읽은 것이 위 두 화면이 갈린 원인이었다. 완료 판정은 `stageCompletion`.
+       */
+      stageHasData: (stageId) => {
+        const c = get().stageCompletion(stageId);
+        return c === undefined ? undefined : c !== "none";
       },
     }),
     {
