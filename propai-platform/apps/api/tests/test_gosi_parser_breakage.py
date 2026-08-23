@@ -118,11 +118,8 @@ async def test_F_이미_행을_읽었으면_빈_다음페이지는_파손이_아
     1페이지 50건(꽉 참) → 2페이지 빈 페이지는 **페이징 끝**이지 파손이 아니다.
     이미 행을 읽었다는 것 자체가 **파서가 작동한 증거**다.
     """
-    pages = [_ROWS_PAGE.replace("<tbody>", "<tbody>" + (
-        '<tr><td>2026-01-0%d</td><td title="t">t</td><td>[신규] 지구단위계획구역</td>'
-        '<td>과</td><td><a href="/web/gs/gv/gvGosiDet.jsp?seq=9%d">상세</a></td></tr>' % (1, 1)
-    )), "<html><body><div>빈 페이지·빈상태 신호 없음</div></body></html>"]
-    seq = iter(pages)
+    # 1p: 행이 있는 정상 페이지 / 2p: 빈 페이지(빈상태 신호도 없음 = 파손과 같은 모양)
+    seq = iter([_ROWS_PAGE, "<html><body><div>빈 페이지·빈상태 신호 없음</div></body></html>"])
 
     class _Resp:
         def __init__(self, html): self.content = html.encode("euc-kr", "replace")
