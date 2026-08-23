@@ -54,6 +54,47 @@ for (const route of routes) {
  *   아래 순서는 **실측**이다(2026-08-13 `/en/login`):
  *     Skip to content → email → password → Run login → 비밀번호 찾기 → 소셜 3 → 신규 테넌트 링크
  */
+/**
+ * ★2026-08-23 — **이 감사는 모달을 한 번도 열지 않는다.**
+ *
+ * 위 라우트 4개를 axe 로 훑지만, 정작 접근성에서 가장 위험한 표면인 **모달**
+ * (포커스 트랩·`aria-modal`·ESC·복귀)은 **e2e 전체에서 0건** 태워지고 있다
+ * (`grep 'aria-modal|role="dialog"|data-modal-focus' e2e/*.spec.ts` = 0).
+ *
+ * ## 왜 아직 못 하나 — 추측이 아니라 실측이다
+ *
+ * 실브라우저에서 배선된 모달에 **닿는 경로를 찾지 못했다**(2026-08-23, 3회 탐색):
+ *   · `/en/projects`                      → 프로젝트 카드 **0개**(하네스가 목록을 주지 않는다)
+ *                                            → `ConfirmDeleteModal` 을 열 수 없다
+ *   · `/en/projects/{id}/contracts`        → 모달 진입점 없음(액션 버튼뿐)
+ *   · `AI 어시스턴트 열기`                 → `role="dialog"` 0 · `aria-modal` 0 → 모달이 아니다
+ *
+ * ## 열리면 무엇을 잠글지 (선행 작업이 끝나면 이 자리)
+ *
+ * ① 열었을 때 포커스가 대화상자 **안**으로 들어오는가
+ * ② 마지막 요소에서 `Tab` 이 첫 요소로 **도는가**(그리고 `Shift+Tab` 역방향)
+ * ③ 닫으면 **열기 전 요소**로 돌아오는가
+ *
+ * ★②는 **jsdom 으로는 대신할 수 없는 축**이다. `useModalFocus.test.tsx` 는
+ *   *"`position: fixed` 요소는 사양상 `offsetParent` 가 null 이라 jsdom 만의 문제가 아니다"*
+ *   라고 **주장**하는데, 그 명제를 **실브라우저로 검증한 테스트가 저장소에 없다.**
+ *   (배포 검증에서도 같은 공백이 확인됐다 — 통합자가 *"키보드 Tab 순환이 실제로 도는지는
+ *   라이브에서 태우지 못했다"* 고 정직하게 남겼다.)
+ *
+ * ## 선행 조건
+ *
+ * `release-harness` 가 **프로젝트 목록**을 주면 `/en/projects` 에서 삭제 버튼 →
+ * `ConfirmDeleteModal` 로 닿는다. 하네스는 공용 파일이라 다른 스펙에 영향이 가므로
+ * **별건으로 분리**한다. 그때 `[data-modal-focus]`(훅이 실제로 가둔 컨테이너 표식)를
+ * 앵커로 쓰면 트랩 범위를 정확히 잴 수 있다.
+ */
+test.fixme(
+  "modal focus trap holds in a real browser (needs a harness route that opens one)",
+  async () => {
+    // 진입 경로가 생기면 위 ①②③ 을 여기서 태운다.
+  },
+);
+
 test("keyboard navigation reaches the live login controls in order", async ({
   page,
 }) => {
