@@ -17,6 +17,7 @@ import { apiClient, ApiClientError } from "@/lib/api-client";
 import { MARKET_RENT_TYPES, MARKET_TRADE_TYPES, resolveMapCenter } from "@/lib/satong-map-layers";
 import { selectLocatedGroups } from "@/lib/market/comparable-sample";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { marketRadiusRequest } from "@/lib/market/market-radius";
 
 type Deal = {
   price_10k_won?: number;
@@ -181,7 +182,13 @@ export function NearbyTransactionsMap({
     setError("");
     try {
       const res = await apiClient.post<NearbyMapPayload>("/zoning/nearby-map", {
-        body: { address, pnu, radius_m: radiusM, months: 3 },
+        // ★요청 조립을 **공용 함수**로 통일한다(2026-08-23). 종전엔 여기서 손으로
+        //   `radius_m` 만 실었고, 형제(사통맵)는 `marketRadiusRequest` 를 썼다 — 같은
+        //   엔드포인트에 **조립이 두 벌**이었다.
+        //   ★지금은 동작이 같다(이 화면의 반경은 항상 숫자라 수동 모드이고, 백엔드
+        //     `auto_expand_radius` 기본값도 False 다). 그래서 이건 **동작 변경이 아니라
+        //     발산 차단**이다 — 자동확대 정책이 바뀌는 날 두 화면이 갈리지 않는다.
+        body: { address, pnu, ...marketRadiusRequest(radiusM), months: 3 },
         useMock: false,
         timeoutMs: 90000,
       });
