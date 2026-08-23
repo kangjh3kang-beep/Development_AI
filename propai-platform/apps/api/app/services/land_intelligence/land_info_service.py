@@ -512,7 +512,19 @@ class LandInfoService:
                 #   ★행 모양을 바꾸지 않고 그대로 넘긴다: 소비처는 전부 `district_regime._norm`
                 #   (`district_name` → `name` 순)으로 읽으므로 원본 dict 가 그대로 통한다.
                 #   ★실조회가 있을 때만 덮는다 — 없으면 종전 휴리스틱 값을 유지해 무회귀.
-                result["special_districts"] = list(land_use)
+                #   ★★행 모양 호환 — 소비처가 **두 가지 키**를 쓴다(#742 직후 전역 스윕에서 적발).
+                #     · 백엔드·`district_regime._norm` 계열: `district_name` → `name` 순으로 읽음(안전)
+                #     · 그러나 **프론트 일부는 `name` 만** 읽는다:
+                #         `LandIntelligencePanel:666  specialDistricts.map(d => d.name)`  ← 폴백 없음
+                #         `SiteAnalysisDetail:1989    obj(d).name || d`                    ← 객체가 그대로 출력
+                #       종전 휴리스틱 행이 `{name, bonus_far}` 모양이라 그렇게 굳어 있었다.
+                #     14개 소비처를 감사해 "아무도 name 을 안 읽는다"를 증명하는 것보다
+                #     **두 키를 다 싣는 편이 안전하다** — 원본은 건드리지 않고 복사해서 채운다.
+                result["special_districts"] = [
+                    ({**d, "name": d.get("name") or d.get("district_name")}
+                     if isinstance(d, dict) else d)
+                    for d in land_use
+                ]
                 result["special_districts_source"] = "vworld_ned_land_use"
 
                 lup_zone = result.get("zone_type") or district_zone
@@ -808,7 +820,9 @@ class LandInfoService:
     async def _fetch_official_price(self, pnu: str) -> dict[str, Any] | None:
         """개별공시지가 조회 (VWORLD NED)."""
         try:
-            return await self.vworld.get_individual_land_price(pnu, year=2025)
+            # ★기준연도 하드코딩 제거(2026-08-22) — 최신 공시연도를 서비스가 해석한다.
+            #   종전 year=2025 는 VWorld 가 2026년치를 주는데도 옛 값을 쓰게 했다.
+            return await self.vworld.get_individual_land_price(pnu)
         except Exception as e:
             logger.warning("공시지가 조회 실패: %s (%s)", pnu, str(e))
             return None

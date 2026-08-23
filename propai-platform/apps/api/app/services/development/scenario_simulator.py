@@ -1515,9 +1515,24 @@ class DevelopmentScenarioSimulator:
             await record_llm_response_billing(llm, resp, service="scenario")
             from app.services.ai.llm_json import parse_llm_json
             data = parse_llm_json(resp.content if hasattr(resp, "content") else str(resp))
+            # ★`parse_llm_json` 은 dict **또는 list** 를 준다(반환 타입이 Any 다).
+            #   종전 코드는 dict 를 가정하고 곧장 `data["generated"]` 를 대입해,
+            #   모델이 배열을 주면 `list indices must be integers or slices, not str` 로 죽었다.
+            #   2026-08-21 라이브 로그에 그 메시지가 그대로 있었다 — 화면에는 "일시적"이라고만
+            #   보여 **영구 실패가 일시 장애로 위장**됐다.
+            if not isinstance(data, dict):
+                raise TypeError(
+                    f"LLM 이 JSON 객체가 아닌 {type(data).__name__} 를 반환했다(스키마 불일치)"
+                )
             data["generated"] = True
             return data
         except Exception as e:  # noqa: BLE001
-            logger.warning("개발 시나리오 LLM 실패, 폴백", err=str(e)[:100])
-            return {"generated": False, "summary": "규칙기반 시나리오를 참고하세요. AI 종합은 일시적으로 미제공.",
+            # ★실패 사유를 **화면까지** 들고 간다. 종전에는 "일시적으로 미제공"이라고만 적어
+            #   결정론적 영구 실패(모델이 temperature 를 거부 · 스키마 불일치)를 일시 장애로
+            #   위장했고, 그래서 아무도 오래 몰랐다. 조용한 폴백이 이 장애를 숨긴 주범이다.
+            reason = f"{type(e).__name__}: {str(e)[:160]}"
+            logger.warning("개발 시나리오 LLM 실패, 폴백", err=reason)
+            return {"generated": False,
+                    "summary": "AI 종합을 생성하지 못했습니다 — 아래 규칙기반 시나리오로 답합니다.",
+                    "failure_reason": reason,
                     "best_scheme": None, "why": "", "alternatives": [], "cautions": []}

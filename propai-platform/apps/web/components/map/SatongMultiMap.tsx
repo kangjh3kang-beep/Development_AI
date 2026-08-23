@@ -69,6 +69,12 @@ import {
   type MeasurePoint,
 } from "@/lib/satong-measure";
 import { useMapFullscreen } from "@/hooks/useMapFullscreen";
+import { loadLeaflet } from "@/lib/leaflet-loader";
+import {
+  shouldShowFetchFailureNotice,
+  shouldShowMarketDetails,
+  shouldShowRadiusControl,
+} from "@/lib/market/market-radius";
 
 declare global {
   interface Window {
@@ -122,6 +128,10 @@ export interface SatongMultiMapProps {
   readOnly?: boolean;
   /** 주변 실거래/분양 등 시장 데이터 마커를 같은 엔진 위에 표시한다. */
   marketPayload?: SatongMarketPayload | null;
+  /** 실거래 반경(수동). `null` = 자동(희소하면 백엔드가 넓힌다). */
+  marketRadiusM?: number | null;
+  /** 반경 칩 선택 — `null` 을 주면 자동으로 되돌린다. */
+  onMarketRadiusChange?: (m: number | null) => void;
   marketLayer?: SatongMarketLayerState;
   /** 교통·편의 POI(지하철·학교·상권·공원·병원) 마커 — /site-score/poi-infra 응답. */
   poiPayload?: SatongPoiPayload | null;
@@ -462,28 +472,6 @@ export type SatongMarketLayerState = {
 };
 
 /** Leaflet CDN 단일 로딩 (AuctionItemsMap과 동일 패턴) */
-let leafletLoading: Promise<void> | null = null;
-function loadLeaflet(): Promise<void> {
-  if (typeof window === "undefined") return Promise.reject(new Error("no window"));
-  if (window.L) return Promise.resolve();
-  if (leafletLoading) return leafletLoading;
-  leafletLoading = new Promise((resolve, reject) => {
-    if (!document.querySelector("link[data-leaflet]")) {
-      const css = document.createElement("link");
-      css.rel = "stylesheet";
-      css.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
-      css.setAttribute("data-leaflet", "1");
-      document.head.appendChild(css);
-    }
-    const script = document.createElement("script");
-    script.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
-    script.async = true;
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error("Leaflet 로드 실패"));
-    document.head.appendChild(script);
-  });
-  return leafletLoading;
-}
 
 /** buildOverlayNotes 입력 — 오버레이 이펙트에서 집계한 레이어별 표시 상태. */
 export interface OverlayNoteCounts {
@@ -625,6 +613,20 @@ export function collectUnlocatedMarketGroups(
   }
   return out.sort((a, b) => b.count - a.count);
 }
+
+/**
+ * 반경 선택지 — `null` 은 **자동**(희소하면 백엔드가 사다리로 넓힌다).
+ *
+ * ★지방 필지 실측에서 3km 로도 부족했다(제천 모산동: 3km 40개 / 10km 118개) —
+ *   형제(`NearbyTransactionsMap`)의 500m/1km/3km 보다 위쪽을 넓게 잡는다.
+ */
+const MARKET_RADIUS_CHOICES: ReadonlyArray<{ label: string; value: number | null }> = [
+  { label: "자동", value: null },
+  { label: "1km", value: 1000 },
+  { label: "3km", value: 3000 },
+  { label: "5km", value: 5000 },
+  { label: "10km", value: 10000 },
+];
 
 /** 위치 미확인 목록 표시 상한 — 초과분은 **건수를 명시**하고 생략한다(무음 절단 금지). */
 const UNLOCATED_LIST_LIMIT = 12;
@@ -1116,6 +1118,8 @@ export function SatongMultiMap({
   bottomDockSlot,
   topRightSlot,
   marketPayload = null,
+  marketRadiusM = null,
+  onMarketRadiusChange,
   marketLayer,
   poiPayload = null,
   developmentPayload = null,
@@ -1857,6 +1861,11 @@ export function SatongMultiMap({
         });
       })
       .catch(() => {
+        // ★언마운트 뒤에는 상태를 건드리지 않는다. 같은 파일 :1486 은 이미 이렇게 하는데
+        //   여기만 빠져 있었다(형제 누락). 종전엔 CDN <script> 가 jsdom 에서 load/error 를
+        //   **영원히 안 내보내** 이 가지가 한 번도 실행되지 않아 드러나지 않았다 —
+        //   번들 import 로 바꾸자 즉시 터졌다("소비처 0"이 아니라 "검증된 적 없음"이었다).
+        if (!alive) return;
         setStatus("error");
         setStatusMsg("지도 로딩에 실패했습니다.");
       });
@@ -1875,7 +1884,6 @@ export function SatongMultiMap({
       setMapReady(false);
       // staged 레이어 맵도 초기화(지도가 사라지면 참조 불필요)
       stagedLayers.clear();
-      leafletLoading = null; // 다음 마운트에서 재로딩 가능하도록 초기화
     };
   }, [queryParcel, readOnly]);
 
@@ -3441,7 +3449,15 @@ export function SatongMultiMap({
             {/* 실거래 유형 범례(P1) — 노후도 범례와 동일한 접기/펼침 + 무자료 정직 패턴 재사용.
                 ★유형 다중 표시(P0)로 마커 색상이 6종까지 섞일 수 있어, 색상 SSOT
                 (MARKET_TYPE_COLORS/MARKET_TYPE_LABELS)로 유형별 표시 건수를 범례화한다. */}
-            {marketPayload && !marketPayload.fetch_failed && marketTypes.length > 0 && (
+            {/* ★게이트는 **레이어가 켜졌는가**만 본다(2026-08-23).
+                종전엔 `marketPayload && !fetch_failed` 였는데, 그러면 **조회가 실패한 순간
+                이 블록이 통째로 사라지고 그 안의 반경 선택도 같이 사라졌다.**
+                반경은 조회를 **다시 시키는** 수단이라, 실패했을 때야말로 남아 있어야 한다.
+                게다가 고른 반경(`marketRadiusM`)은 부모 상태로 **그대로 남아** 같은 반경으로
+                계속 재조회 → 같은 실패 → **새로고침 말고는 빠져나갈 길이 없었다.**
+                유형 목록·위치미확인처럼 **응답이 있어야 뜻이 있는 것**만 안쪽에서 가린다. */}
+            {(shouldShowRadiusControl({ marketTypeCount: marketTypes.length, hasRadiusHandler: Boolean(onMarketRadiusChange) })
+              || shouldShowMarketDetails(marketPayload)) && marketTypes.length > 0 && (
               marketLegendOpen ? (
                 <div className="pointer-events-auto w-fit min-w-[155px] max-w-[240px] rounded-xl border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] p-2.5 shadow-lg backdrop-blur">
                   <button
@@ -3453,8 +3469,50 @@ export function SatongMultiMap({
                     <span className="inline-flex items-center gap-1"><Home className="size-3" aria-hidden />실거래 유형</span>
                     <span aria-hidden>▾</span>
                   </button>
+                  {/* ★반경 선택(형제 패리티) — `NearbyTransactionsMap` 은 이미 갖고 있었다.
+                      ★"자동"은 1km 로 조회 후 희소하면 백엔드가 넓히는 모드이고, 값을 고르면
+                        **그 값이 그대로 적용**된다(고른 값과 적용값이 달라지면 컨트롤이 거짓말이 된다). */}
+                  {shouldShowRadiusControl({ marketTypeCount: marketTypes.length, hasRadiusHandler: Boolean(onMarketRadiusChange) }) && onMarketRadiusChange && (
+                    <div className="mb-2">
+                      {/* ★변이검증 생존 정직 고지: 아래 className·key 등 **표현 계층**은
+                          잠그지 않는다. Tailwind 클래스 문자열을 단언하면 정상적인 스타일
+                          변경이 전부 빨강이 되고(가드의 위양성도 결함), 잠금 가치보다 비용이 크다.
+                          잠근 것은 **행위**다 — 선택지 렌더·핸들러 호출·프롭 배선·기본값·type="button". */}
+                      <p className="mb-1 text-[10px] font-black text-[var(--text-secondary)]">조회 반경</p>
+                      <div className="flex flex-wrap gap-1">
+                        {MARKET_RADIUS_CHOICES.map((r) => {
+                          const active = marketRadiusM === r.value;
+                          return (
+                            <button
+                              key={r.label}
+                              type="button"
+                              onClick={() => onMarketRadiusChange(r.value)}
+                              aria-pressed={active}
+                              className={`rounded-full px-2 py-0.5 text-[10px] font-bold transition-colors ${
+                                active
+                                  ? "bg-[var(--accent-strong)] text-white"
+                                  : "bg-[var(--surface-muted)] text-[var(--text-secondary)]"
+                              }`}
+                            >
+                              {r.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {marketRadiusM == null && (
+                        <p className="mt-1 text-[10px] font-semibold text-[var(--text-tertiary)]">
+                          자동 — 1km 내 거래가 적으면 넓혀서 보여줍니다.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  {shouldShowFetchFailureNotice(marketPayload) && (
+                    <p className="mb-2 rounded-lg bg-[color:color-mix(in_srgb,var(--status-error)_10%,transparent)] px-2 py-1.5 text-[10px] font-semibold leading-snug text-[var(--status-error)]">
+                      실거래를 불러오지 못했습니다. 반경을 좁히면 성공할 수 있습니다.
+                    </p>
+                  )}
                   <div className="flex flex-col gap-1 text-[10.5px]">
-                    {marketTypes.map((type) => (
+                    {shouldShowMarketDetails(marketPayload) && marketTypes.map((type) => (
                       <div key={type} className="flex items-center gap-1.5 font-semibold text-[var(--text-primary)]">
                         <span className="h-3 w-3 rounded-full border border-black/10 shadow-xs" style={{ backgroundColor: MARKET_TYPE_COLORS[type] || "#2563eb" }} />
                         <span>{MARKET_TYPE_LABELS[type] || type}</span>
@@ -3464,7 +3522,7 @@ export function SatongMultiMap({
                     ))}
                   </div>
                   {/* ★지도에 못 찍는 실거래 — 버리지 않고 목록으로 낸다(좌표는 지어내지 않는다). */}
-                  {unlocatedMarketGroups.length > 0 && (
+                  {shouldShowMarketDetails(marketPayload) && unlocatedMarketGroups.length > 0 && (
                     <div className="mt-2 border-t border-[var(--line)] pt-2">
                       <p className="text-[10.5px] font-black text-[var(--text-primary)]">
                         위치 미확인 {unlocatedMarketGroups.reduce((n, g) => n + g.count, 0)}건

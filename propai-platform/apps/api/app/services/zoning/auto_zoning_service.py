@@ -6,6 +6,8 @@ import logging
 import re
 from typing import Any
 
+import structlog
+
 from ..external_api.vworld_service import VWorldService
 
 logger = logging.getLogger(__name__)
@@ -130,6 +132,64 @@ def build_zone_limits(zone_key: str, limits: dict) -> dict:
     return payload
 
 
+#: 용도지역 출처 관측의 **구별된** event_type (2026-08-23).
+#  ★F4a 거버넌스: 이 플랫폼엔 인간 개입 없는 자동 변이 루프가 있다 —
+#    verify_result → analyzer._analyze_quality_drop → down_pct
+#    → growth.feature_flags 가 llm_narrative 를 **자동 비활성화**.
+#  관측을 그 신호에 흘리면 "용도지역 출처"라는 correctness 관측이 **서술기능을 끄는**
+#  카테고리 오류가 된다. field_audit_observation 선례대로 구별된 타입으로만 emit 하고,
+#  severity·recommended_action 을 담지 않아 조치신호로 소비될 수 없게 한다.
+ZONE_SOURCE_OBSERVATION_EVENT = "zone_source_observation"
+
+
+def _log_zone_source(result: dict, address: str) -> None:
+    """용도지역 출처를 구조화 로그로 남긴다 — keyword_inference 빈도를 재기 위한 계측.
+
+    ★왜 있나: 이 값이 어디에도 로깅되지 않아 *"VWorld 실패로 용도지역을 지어낸 응답이
+    몇 건 나갔나"* 를 원리적으로 잴 수 없었다(2026-08-22 실측 — 라이브 grep 0건은
+    부재가 아니라 계측 부재였다). 성공 경로도 남겨야 **분모**를 알 수 있다.
+
+    지어낸 경우(keyword_inference)는 warning, 실조회는 info 로 낸다.
+    """
+    zone_source = result.get("zone_source")
+    inferred = zone_source == "keyword_inference"
+    log = structlog.get_logger(__name__)
+    (log.warning if inferred else log.info)(
+        "용도지역 출처 계측",
+        zone_source=zone_source,
+        inferred=inferred,
+        # 지어낸 값이 무엇이었는지 남겨야 원인 추적이 된다(지어내기는 주소 문자열에서 나온다).
+        zone_type=result.get("zone_type"),
+        has_pnu=bool(result.get("pnu")),
+        address=address,
+    )
+
+    # ── 영속 관측(platform_events) ────────────────────────────────────────────
+    # ★structlog 만으로는 **빈도를 잴 수 없다**: docker logs 는 배포마다 컨테이너가
+    #   바뀌면 사라지고(json-file 드라이버), 이 저장소는 하루에도 여러 번 배포한다.
+    #   실측(2026-08-23) — 계측을 넣은 다음 날 읽어 보니 **총 1건**(25분치 창)이었다.
+    #   platform_events 는 살아 있다(api_call 169,326건 · 최신 당일).
+    # ★주소는 담지 않는다 — 개인정보 성격이고, 선례(field_audit)도 차원 힌트만 담는다.
+    # ★지연 import: 성장 모듈이 없는 환경에서도 분석 경로가 죽지 않아야 한다
+    #   (growth_telemetry 와 동일 관례). 수집 실패는 절대 호출경로로 전파하지 않는다.
+    try:
+        from app.services.growth import capture_service
+
+        capture_service.record_event(ZONE_SOURCE_OBSERVATION_EVENT, {
+            "surface": "api",
+            "service": "auto_zoning",
+            "payload": {
+                "zone_source": zone_source,
+                "inferred": inferred,
+                "has_pnu": bool(result.get("pnu")),
+                # 차원 힌트(값 아님) — 지어낸 용도지역이 무엇이었는지 상관분석용.
+                "zone_type": result.get("zone_type"),
+            },
+        })
+    except Exception:  # noqa: BLE001 — 관측이 분석을 깨뜨리면 안 된다.
+        pass
+
+
 class AutoZoningService:
     def __init__(self):
         self.vworld = VWorldService()
@@ -180,6 +240,7 @@ class AutoZoningService:
             result["special_districts"] = self._detect_special_districts(
                 str(result.get("zone_type") or ""), address
             )
+            _log_zone_source(result, address)
             return result
 
         # Step 2: PNU -> 필지 정보 (면적, 지목, 용도지역)
@@ -255,6 +316,7 @@ class AutoZoningService:
             result.get("zone_type", ""), address
         )
 
+        _log_zone_source(result, address)
         return result
 
     def _normalize_zone_name(self, raw_zone: str) -> str:
