@@ -105,6 +105,14 @@ describe("LandIntelligencePanel — 면적 기준 렌더 배선", () => {
     const body = document.body.textContent ?? "";
     expect(body).toContain(TOTAL_AREA.toLocaleString());
     expect(body).not.toContain(`${REP_AREA.toLocaleString()}m²`);
+
+    // ★이 패널에서 면적을 보여 주는 **셋째** 지점 — 특성표의 '면적' 행.
+    //   요약줄·토지가액만 고치고 여기를 놓쳤던 것이 이번 라운드의 실제 누출이다.
+    //   음성 단언("3,836 이 없다")만으로는 이 행을 **통째로 지워도** 통과하므로 양성으로 못박는다.
+    expect(
+      screen.getByText(`${TOTAL_AREA.toLocaleString()}m² (통합 7필지)`),
+      "특성표 '면적' 행이 통합면적·기준과 함께 렌더되지 않았다",
+    ).toBeTruthy();
   });
 
   it("★추정 토지가액이 **통합면적**으로 계산되고 개략치임을 고지한다(43배 과소표시 회귀 락)", () => {
@@ -135,6 +143,8 @@ describe("LandIntelligencePanel — 면적 기준 렌더 배선", () => {
     expect(line!.textContent).not.toContain("개략치");
     // 단일필지 면적은 대표값 그대로가 맞다.
     expect(line!.textContent).toContain(REP_AREA.toLocaleString());
+    // 특성표도 군더더기 없이 값만 — 단일필지에 "(통합 N필지)"가 붙으면 거짓 라벨이다.
+    expect(screen.getByText(`${REP_AREA.toLocaleString()}m²`)).toBeTruthy();
   });
 
   it("★다필지인데 통합면적 미확보 — 값은 대표면적이되 '대표필지 1곳'임을 고지한다", () => {
@@ -145,6 +155,8 @@ describe("LandIntelligencePanel — 면적 기준 렌더 배선", () => {
     expect(badge).not.toBeNull();
     expect(badge!.getAttribute("data-area-basis")).toBe("representative");
     expect(badge!.textContent).toContain("대표필지 1곳의 면적");
+    // 특성표도 강등 상태를 라벨로 말한다(통합인 척하지 않는다).
+    expect(screen.getByText(`${REP_AREA.toLocaleString()}m² (대표필지)`)).toBeTruthy();
   });
 });
 
