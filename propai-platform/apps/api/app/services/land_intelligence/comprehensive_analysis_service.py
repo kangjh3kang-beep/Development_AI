@@ -1254,8 +1254,16 @@ class ComprehensiveAnalysisService:
             _gfa_by_far = land_area * (applied_far / 100)
             _floors_by_far = max(1, round(_gfa_by_far / building_area)) if building_area > 0 else 1
 
-            _max_floors = MAX_FLOORS.get(dev_type)
-            floor_count = min(_floors_by_far, _max_floors) if _max_floors else _floors_by_far
+            # ★`MAX_FLOORS` 는 이제 **근거를 동반한 값**(LegalLimit)이다.
+            #   · 미등재            → 근거 미확인 → 깎지 않는다(조용히 제한하지 않는다)
+            #   · 등재 + unlimited  → 법이 제한하지 않는다(근거 있음) → 깎지 않는다
+            #   · 등재 + 값 있음    → 그 값으로 캡
+            #   종전에는 근거 없는 `3` 이 단독주택 계획을 4층→3층으로 깎아 용적률을
+            #   80%→60%로 내렸다. 근거를 확인하니 그 3층은 **다가구·다중주택 기준**이었다.
+            _limit = MAX_FLOORS.get(dev_type)
+            _cap = None if (_limit is None or _limit.unlimited) else int(_limit.value)
+            _cap_law = _limit.law if (_limit is not None and not _limit.unlimited) else None
+            floor_count = min(_floors_by_far, _cap) if _cap else _floors_by_far
             floor_count = max(1, floor_count)
 
             # 층수가 깎였으면 연면적은 `건축면적 × 층수` 로 제한된다(용적률도 따라 내려간다).
@@ -1296,6 +1304,9 @@ class ComprehensiveAnalysisService:
                 #   설명할 수 있어야 한다. 이 값이 없으면 축소가 조용히 일어난다.
                 "floor_capped": floor_capped,
                 "floors_by_far": _floors_by_far,
+                # ★제약이 계획을 깎았다면 **그 제약의 근거**를 함께 보낸다.
+                #   근거 없는 제약이 조용히 용적률을 내리는 일을 막는다(2026-08-23).
+                "floor_cap_law": _cap_law,
                 "parking_count": parking,
                 "construction_cost_per_sqm": construction_cost,
                 "estimated_construction_cost_won": int(total_gfa * construction_cost),
