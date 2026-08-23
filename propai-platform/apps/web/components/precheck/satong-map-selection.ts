@@ -132,6 +132,10 @@ export type SatongSelectionParcel = {
    *  ★런타임 전용(ageStatus 선례) — 프로젝트 스토어 왕복(selectionToSiteAnalysisPatch)에는
    *  싣지 않으며 재진입 시 경계 재보강이 self-heal한다. */
   effectiveFarPct?: number | null;
+  /** 법정 용적률(%)·실효 산출 근거 계층 — 실효값이 '왜 그 값인지'를 화면이 말하기 위한 재료.
+   *  ★런타임 전용(effectiveFarPct 선례와 동일) — 스토어 왕복에는 싣지 않는다. */
+  legalFarPct?: number | null;
+  farBasis?: string | null;
   effectiveBcrPct?: number | null;
   currentFarPct?: number | null;
   geometry?: unknown;

@@ -1142,6 +1142,17 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
         # I7 패널 규제요약 — 실효 건폐율도 동일 규약으로 공개(미산정 None 무날조).
         if _f.get("_bcr_eff") is not None:
             _f["effective_bcr_pct"] = _f["_bcr_eff"]
+        # ★법정 한도와 **근거 계층**도 같은 규약으로 공개한다(2026-08-23 · 사용자 신고).
+        #   종전엔 실효값만 나가서, 보전관리지역 필지에 "실효 용적률 60%" 만 보이고
+        #   그것이 **법정 80% 를 제천시 조례가 60% 로 깎은 값**이라는 사실이 어디에도 없었다.
+        #   → 사용자는 값이 틀렸다고 신고했지만 값은 정확했다. 틀린 것은 **근거의 부재**다.
+        #   ★값을 바꾸지 않는다 — 이미 맞는 값에 **왜 그 값인지**를 붙일 뿐이다.
+        if _f.get("_far_legal") is not None:
+            _f["legal_far_pct"] = _f["_far_legal"]
+        if _f.get("_bcr_legal") is not None:
+            _f["legal_bcr_pct"] = _f["_bcr_legal"]
+        if _f.get("_far_basis"):
+            _f["far_basis"] = _f["_far_basis"]
         # ★W1 지배 제약 — 필지 상세 배너용 공개 필드로 승격. 제약이 없으면 헬퍼가 None을
         #   돌려주므로 키는 항상 실리되 값이 None이다(프론트는 None이면 배너 미렌더 —
         #   빈 배너 금지). 아래 "_" 스트립보다 먼저 승격해야 값이 살아남는다.

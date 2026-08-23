@@ -1351,6 +1351,10 @@ export function SatongMapShell({
         ageStatus: parcel.ageStatus,
         effectiveFarPct: parcel.effectiveFarPct,
         effectiveBcrPct: parcel.effectiveBcrPct,
+        // ★실효값과 **함께** 실어야 화면이 "왜 그 값인지"를 말할 수 있다 — 여기를 빠뜨리면
+        //   타입·병합은 맞는데 팝오버에만 값이 안 와서 소비처가 조용히 0 이 된다(RED 로 적발).
+        legalFarPct: parcel.legalFarPct,
+        farBasis: parcel.farBasis,
         currentFarPct: parcel.currentFarPct,
         geometry: parcel.geometry,
         source: parcel.source,
@@ -2395,6 +2399,7 @@ export function SatongMapShell({
       officialPricePerSqm?: number | null; builtYear?: number | null;
       buildingAgeYears?: number | null; ageStatus?: string | null;
       effectiveFarPct?: number | null; effectiveBcrPct?: number | null;
+      legalFarPct?: number | null; farBasis?: string | null;
       currentFarPct?: number | null; geometry?: unknown;
       dominantConstraint?: DominantConstraint | null }>,
     ) => {
@@ -2413,6 +2418,24 @@ export function SatongMapShell({
       //   (필지 담고 바로 카드 클릭 → 경계 왕복 최대 45s). ref 갱신은 렌더를 유발하지 않으므로
       //   종전엔 사용자가 패널을 닫고 다시 열 때까지 영구히 배너를 못 봤다. 열린 필지와 키가
       //   같으면 즉시 합류한다(값이 이미 있으면 스킵 — 불필요한 재렌더·churn 방지).
+      // ★같은 이유로 **규제 근거(법정·근거계층)도** 열린 패널에 합류시킨다(2026-08-23).
+      //   위 주석이 지배 제약에 대해 적은 사실("패널이 열린 채로 응답이 온다")은 이 값에도
+      //   그대로 성립한다 — 그런데 종전엔 지배 제약만 합류시켜, 실효값 아래 근거가
+      //   **패널을 닫았다 다시 열기 전까지** 안 떴다(테스트가 그 공백을 잡았다).
+      setDetailFeature((current) => {
+        if (!current || (current.legalFarPct != null && current.farBasis)) return current;
+        const hit = features.find(
+          (f) =>
+            dominantConstraintKey({ pnu: f.pnu ?? null, address: f.address ?? "" }) ===
+            dominantConstraintKey(current),
+        );
+        if (!hit || (hit.legalFarPct == null && !hit.farBasis)) return current;
+        return {
+          ...current,
+          legalFarPct: current.legalFarPct ?? hit.legalFarPct ?? null,
+          farBasis: current.farBasis ?? hit.farBasis ?? null,
+        };
+      });
       setDetailFeature((current) => {
         if (!current || current.dominantConstraint) return current;
         const hit = features.find(
@@ -2455,6 +2478,8 @@ export function SatongMapShell({
             ageStatus: p.ageStatus ?? f.ageStatus ?? null,
             // I7/WS-D — 서버 산정치 역전파(선택 SSOT까지 — orphan handoff 방지).
             effectiveFarPct: p.effectiveFarPct ?? f.effectiveFarPct ?? null,
+            legalFarPct: p.legalFarPct ?? f.legalFarPct ?? null,
+            farBasis: p.farBasis ?? f.farBasis ?? null,
             effectiveBcrPct: p.effectiveBcrPct ?? f.effectiveBcrPct ?? null,
             currentFarPct: p.currentFarPct ?? f.currentFarPct ?? null,
             geometry: p.geometry ?? f.geometry ?? null,
@@ -3309,7 +3334,12 @@ export function SatongMapShell({
                 {detailFeature.buildingAgeYears != null
                   ? `${detailFeature.buildingAgeYears}년${detailFeature.builtYear ? ` (준공 ${detailFeature.builtYear})` : ""}`
                   : detailFeature.ageStatus === "no_building"
-                    ? "나대지·건물 없음"
+                    // ★단정하지 않는다(2026-08-23) — 백엔드는 이 상태를 "나대지 **추정**"으로
+                    //   분류하고, 같은 근거(`lookup_state=="no_data"`)에서 연면적은 보수적으로
+                    //   `None`(=현황 용적률 "미확보")으로 둔다. 화면만 "건물 없음"이라 단정하면
+                    //   한 화면이 같은 사실을 두고 **확신과 모름을 동시에** 말한다.
+                    //   집합건물 대지권 비대표지번·대장 미등재·생성지연에서도 무자료가 나온다.
+                    ? "나대지 추정(건축물대장 무자료)"
                     : detailFeature.ageStatus === "no_approval_date"
                       ? "사용승인일 미기재(연식 미상)" // ★R1: 백엔드 4번째 상태 — 나대지와 구분(정직)
                       : detailFeature.ageStatus === "lookup_failed"
@@ -3336,6 +3366,20 @@ export function SatongMapShell({
                   <p className="font-mono font-bold text-[var(--text-primary)]">
                     {formatPercent(detailFeature.effectiveFarPct)}
                   </p>
+                  {/* ★근거 병기(2026-08-23 · 사용자 신고) — 종전엔 실효값만 보여, 보전관리지역에
+                      "60%" 만 뜨고 그것이 **법정 80% 를 조례가 깎은 값**이라는 사실이 없었다.
+                      사용자는 값이 틀렸다고 신고했지만 값은 정확했다 — 없던 것은 **근거**다.
+                      법정값이 실효와 같으면 병기하지 않는다(같은 수를 두 번 보여 주지 않는다). */}
+                  {detailFeature.legalFarPct != null
+                    && detailFeature.legalFarPct !== detailFeature.effectiveFarPct && (
+                    <p
+                      data-testid="far-basis-note"
+                      className="mt-0.5 text-[9px] font-semibold leading-tight text-[var(--text-hint)]"
+                    >
+                      법정 {formatPercent(detailFeature.legalFarPct)}
+                      {detailFeature.farBasis ? ` · ${detailFeature.farBasis}` : ""}
+                    </p>
+                  )}
                 </div>
                 <div>
                   <p className="text-[10px] font-bold text-[var(--text-hint)]">실효 건폐율</p>
