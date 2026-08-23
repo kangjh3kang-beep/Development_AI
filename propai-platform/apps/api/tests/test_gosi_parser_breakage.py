@@ -135,3 +135,65 @@ async def test_F_이미_행을_읽었으면_빈_다음페이지는_파손이_아
     rows, complete = await g.fetch_recent_gosi("41370", "20240101", "20260823", client=_Client())
     assert len(rows) >= 1, "전제: 1페이지에서 행을 읽어야 한다"
     assert complete is True, "이미 읽은 행이 있으면 빈 다음 페이지는 정상 종료다"
+
+
+# ── 파서 건강 **영속 관측** (2026-08-23) ────────────────────────────────────
+#   ★#764 와 같은 패턴을 반복하지 않는다: 감지 로직만 보고 emit 을 안 보면
+#     관측이 통째로 사라져도 초록이다(1차 변이에서 실제로 전부 생존했다).
+
+
+@pytest.fixture
+def observed(monkeypatch):
+    events: list[tuple[str, dict]] = []
+    from app.services.growth import capture_service
+
+    monkeypatch.setattr(capture_service, "record_event",
+                        lambda et, props=None: events.append((et, props or {})))
+    return events
+
+
+def _client_of(html: str):
+    class _Resp:
+        content = html.encode("euc-kr", "replace")
+
+        def raise_for_status(self): return None
+
+    class _Client:
+        async def get(self, url, params=None): return _Resp()
+        async def aclose(self): return None
+
+    return _Client()
+
+
+@pytest.mark.asyncio
+async def test_G_파손이면_broken_True_로_영속_관측한다(observed):
+    await g.fetch_recent_gosi("41370", "20240101", "20260823", client=_client_of(_BROKEN_PAGE))
+
+    obs = [e for e in observed if e[0] == g.GOSI_PARSER_OBSERVATION_EVENT]
+    assert obs, "파손을 관측하지 않으면 '언제부터 깨졌나'를 영영 못 잰다"
+    et, props = obs[0]
+    assert et == "gosi_parser_observation"          # 프로덕션 조회 키
+    assert props["service"] == "gosi_coverage"      # analyzer 가 COALESCE(route,service) 로 읽는다
+    assert props["surface"] == "api"
+    assert props["payload"]["broken"] is True
+    assert props["payload"]["sigungu_code"] == "41370"
+
+
+@pytest.mark.asyncio
+async def test_H_정상이면_broken_False_로_남는다_분모(observed):
+    """★성공 경로가 없으면 '몇 번 중 몇 번 깨졌나'를 못 센다 — 분모가 사라진다."""
+    await g.fetch_recent_gosi("41370", "19900101", "19900102", client=_client_of(_EMPTY_PAGE))
+
+    obs = [e for e in observed if e[0] == g.GOSI_PARSER_OBSERVATION_EVENT]
+    assert obs
+    assert obs[0][1]["payload"]["broken"] is False   # ★G와 갈리는 지점
+
+
+@pytest.mark.asyncio
+async def test_I_F4a_자동토글_신호를_만들지_않는다(observed):
+    await g.fetch_recent_gosi("41370", "20240101", "20260823", client=_client_of(_BROKEN_PAGE))
+
+    for event_type, props in observed:
+        assert event_type != "verify_result"
+        assert "severity" not in props
+        assert "recommended_action" not in props
