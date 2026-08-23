@@ -272,6 +272,24 @@ def _classify_latency(p95: float, baseline_p95: float) -> str | None:
     return None
 
 
+#: baseline 을 읽어 올 insight_type 들.
+#  ★`latency_regression` 을 반드시 포함한다 — 2026-08-23 이전 데이터(2,059건)가 그 타입이라
+#    빼면 baseline 이 0 이 되어 `_classify_latency` 가 **영원히 None**(회귀 미탐지)이 된다.
+LATENCY_BASELINE_SOURCE_TYPES = ("latency_regression", "latency_baseline")
+
+
+def insight_type_for_latency(sev: str | None) -> str:
+    """회귀면 `latency_regression`, 아니면 `latency_baseline`.
+
+    ★왜 나누나(2026-08-23 실측): baseline 저장소로 insights 테이블을 재사용한 탓에
+      **회귀가 없어도** 매 배치마다 모든 route 에 행이 쌓였다 — `latency_regression`
+      2,059건 중 최신 6건이 전부 `p95_ms == baseline_p95`(회귀 아님)였고,
+      `status=open` 2,248건이 실제 조치 대상(critical 57 + warn 352)을 가렸다.
+      **"사람이 볼 것"과 "기계가 참조할 것"을 타입으로 가른다.**
+    """
+    return "latency_regression" if sev else "latency_baseline"
+
+
 def _severity_rank(sev: str | None) -> int:
     """정렬용 severity 가중치(critical 최상위)."""
     return {"critical": 3, "warn": 2, "info": 1}.get(sev or "", 0)
@@ -538,10 +556,11 @@ async def _analyze_latency_regression(db, w0, w1) -> list[dict[str, Any]]:
         "  metrics_json->>'key' AS k, "
         "  (metrics_json->>'baseline_p95')::float AS bp95 "
         "FROM platform_insights "
-        "WHERE insight_type='latency_regression' "
+        "WHERE insight_type = ANY(:types) "
         "  AND created_at >= :since "
         "ORDER BY metrics_json->>'key', created_at DESC"
-    ), {"since": w1 - timedelta(days=LATENCY_BASELINE_DAYS)})).fetchall()
+    ), {"since": w1 - timedelta(days=LATENCY_BASELINE_DAYS),
+        "types": list(LATENCY_BASELINE_SOURCE_TYPES)})).fetchall()
     baselines = {r[0]: float(r[1] or 0.0) for r in base_rows}
 
     out: list[dict[str, Any]] = []
@@ -553,7 +572,9 @@ async def _analyze_latency_regression(db, w0, w1) -> list[dict[str, Any]]:
         sev = _classify_latency(p95, baseline_p95)
         # baseline 없으면(첫 관측) 정보성 baseline 적재만(트리거 없음).
         out.append({
-            "insight_type": "latency_regression",
+            # ★회귀가 아니면 `latency_baseline` — 사람이 보는 인사이트 목록을 오염시키지 않는다.
+            #   (baseline 조회는 LATENCY_BASELINE_SOURCE_TYPES 로 두 타입을 모두 읽는다.)
+            "insight_type": insight_type_for_latency(sev),
             "severity": sev or "info",
             "tenant_id": None,
             "recommended_action": "heal" if sev else "none",
