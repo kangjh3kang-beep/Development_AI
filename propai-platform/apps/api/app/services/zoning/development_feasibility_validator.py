@@ -58,7 +58,9 @@ class FeasibilityResult:
 _LOT_PRACTICE = "플랫폼 실무기준 — 사업유형별 권장 최소 사업규모(법정 최소대지면적 아님)"
 
 MIN_LOT_AREA: dict[str, PracticeLimit] = {
-    code: PracticeLimit(v, source=_LOT_PRACTICE, note=f"{code} 권장 최소 사업규모")
+    # ★`note` 는 두지 않는다 — 판정 문구는 `basis` 만 싣기 때문에 아무도 읽지 않는다.
+    #   읽히지 않는 데이터를 두면 "있으니 검증됐다"는 착시만 남는다(소비처 0).
+    code: PracticeLimit(v, source=_LOT_PRACTICE)
     for code, v in {
         "M01": 5000, "M02": 5000, "M03": 3000, "M04": 3000, "M05": 1000,
         "M06": 660, "M07": 1000, "M08": 300, "M09": 1000, "M10": 90,
@@ -177,6 +179,9 @@ def _check_lot_area(dev_type: str, land_area: float) -> ConditionCheck:
             f"{land_area:.0f}m² — 이 유형({dev_type})의 최소 사업규모 기준 미확인",
         )
     if limit.unlimited:
+        # ★현재 표에는 `value=None` 항목이 없어 **도달하지 않는다**(변이가 생존하는 이유).
+        #   그래도 남기는 이유: "이 유형에는 규모 기준을 두지 않는다"를 표에 적을 길이
+        #   있어야, 다음 사람이 그 뜻으로 항목을 지우지 않는다(미등재=미확인과 구분).
         return ConditionCheck("대지면적", "pass", f"{land_area:.0f}m² — 기준 없음({limit.basis})")
     min_area = float(limit.value)
     if land_area >= min_area:

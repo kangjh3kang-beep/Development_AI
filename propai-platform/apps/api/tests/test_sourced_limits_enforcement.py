@@ -199,7 +199,11 @@ def test_출처_누락_오류가_무엇을_요구하는지_말한다() -> None:
     """★오류 메시지는 다음 사람이 읽는 유일한 안내다 — 비어 있으면 규율이 전달되지 않는다."""
     with pytest.raises(MissingLegalBasisError) as e:
         PracticeLimit(5000, source="")
-    assert "출처" in str(e.value)
+    msg = str(e.value)
+    # ★두 절반을 각각 본다 — 한쪽만 보면 같은 낱말이 다른 줄에 있어 변이가 빠져나간다(실증).
+    assert "출처가 없다" in msg, msg          # 무엇이 잘못됐나
+    assert "어디서 온 값" in msg, msg          # 무엇을 하라는 건가
+    assert "5000" in msg, msg                 # 어느 값인가
 
 
 def test_법정접도_단서의_존재가_고지된다() -> None:
