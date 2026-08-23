@@ -32,6 +32,13 @@ vi.mock("next/navigation", () => ({
  * ■ 계약
  *   판정은 `store.stageCompletion` **하나**에서만 나온다(done/partial/none).
  *   두 화면은 분모가 다를 뿐(11 vs 7) **같은 단계에 같은 등급**을 준다.
+ *
+ * ■ 변이 검증 후 남은 생존 — **의도적 비잠금**이므로 여기 적어 둔다(점수 부풀리기 방지)
+ *   · `className="…"` 문자열 3건(레일 partial 스타일·주소배지) — 색상·간격은 잠그지 않는다.
+ *     상태·문구·분모는 위 단언들이 잠근다.
+ *   · `stageCompletion: (stageId: string) => …` 인터페이스 선언 — 타입 층이라
+ *     `tsc --noEmit` 이 잡는다(CI 게이트).
+ *   · 주석 문자열 1건 — 동작에 영향이 없다.
  */
 
 const ADDRESS = "충청남도 천안시 동남구 모산동 123-1";
