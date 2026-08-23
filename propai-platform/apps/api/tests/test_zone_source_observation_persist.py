@@ -73,10 +73,18 @@ async def test_A_지어낸_경로가_영속_관측으로_남는다(captured):
 
     obs = [e for e in captured if e[0] == azs.ZONE_SOURCE_OBSERVATION_EVENT]
     assert obs, "영속 관측이 emit 되지 않았다 — docker logs 만으로는 빈도를 못 잰다"
-    payload = obs[0][1]["payload"]
+    event_type, props = obs[0]
+    # ★상수값 자체를 잠근다 — 프로덕션 조회 키다(이름이 바뀌면 대시보드·쿼리가 조용히 빈다).
+    assert event_type == "zone_source_observation"
+    # ★analyzer 가 COALESCE(route, service) 로 **실제 읽는** 컬럼이다 — 빠지면 집계에서 샌다.
+    assert props["service"] == "auto_zoning"
+    assert props["surface"] == "api"
+    payload = props["payload"]
     assert payload["zone_source"] == "keyword_inference"
     assert payload["inferred"] is True
     assert payload["has_pnu"] is False
+    # ★주석이 "상관분석용"이라 **선언한** 필드를 실제로 잠근다(선언만 하면 지워져도 초록이다).
+    assert payload["zone_type"] == "제2종일반주거지역"
 
 
 @pytest.mark.asyncio
