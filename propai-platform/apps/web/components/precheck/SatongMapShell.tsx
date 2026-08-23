@@ -116,6 +116,7 @@ import {
   deriveProjectNameFromParcels,
   selectionMismatchesProject,
 } from "./satong-project-connect";
+import { classifySelection, selectionIntegrityNotice } from "@/lib/selection-integrity";
 
 // ★UX 트랙 D3(지도 높이 반응형 — 진단G 실측): 종전 고정 720px는 모바일에서 지도가
 //   화면 대부분을 점유했다. clamp(하한, 선호값, 상한) — 60dvh를 선호하되 satong-map-z.ts
@@ -792,6 +793,16 @@ export function SatongMapShell({
   const [searchStatus, setSearchStatus] = useState<"idle" | "loading" | "error">("idle");
   const [searchError, setSearchError] = useState("");
   const [selectedParcels, setSelectedParcels] = useState<SatongParcel[]>([]);
+
+  // ★선택 무결성(2026-08-23 · 사용자 신고 후속) — "이게 하나의 개발 부지인가".
+  //   합계 면적을 "통합 대지면적"이라 부르기 전에 그 전제를 검사한다. 실측으로 15.86km
+  //   떨어진 6필지가 "통합 5,781㎡"로 묶여 있었고, 소유자명(`◀ 전성결`)이 주소 칸에
+  //   들어온 프로젝트도 있었다. ★막지 않고 고지한다 — 원거리 묶음은 후보지 비교라는
+  //   정당한 워크플로우일 수 있다(290km 건이 그렇게 보인다).
+  const integrityNotice = useMemo(
+    () => selectionIntegrityNotice(classifySelection(selectedParcels)),
+    [selectedParcels],
+  );
   const [uploadStatus, setUploadStatus] = useState<"idle" | "loading" | "error">("idle");
   const [uploadNote, setUploadNote] = useState("");
   // ★UX 트랙 C4(사용자 지적): 다필지 엑셀 업로드는 최대 180초가 걸릴 수 있는데 종전엔
@@ -3488,6 +3499,26 @@ export function SatongMapShell({
           </span>
         </div>
       </div>
+
+      {/* ★선택 무결성 고지 — 합계를 "통합 대지면적"이라 부르기 전에 전제를 말한다.
+          정상이면 아무것도 그리지 않는다(고지 남발은 무시로 이어진다). */}
+      {integrityNotice && (
+        <div
+          data-testid="selection-integrity-notice"
+          role="status"
+          className={`mt-3 flex items-start gap-2 rounded-[var(--r-card)] border px-3 py-2.5 text-xs font-semibold leading-5 ${
+            integrityNotice.tone === "bad"
+              ? "border-[var(--status-error)]/30 bg-[var(--status-error)]/10 text-[var(--status-error)]"
+              : "border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 text-[var(--status-warning)]"
+          }`}
+        >
+          <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
+          <span>
+            <b className="font-black">{integrityNotice.title}</b>
+            <span className="ml-1 font-semibold">{integrityNotice.detail}</span>
+          </span>
+        </div>
+      )}
 
       <div className="grid min-w-0 gap-4 xl:grid-cols-[380px_minmax(0,1fr)]">
         {/* ★모바일 IA P0(2026-08-05) — 종전 D2(모바일 지도우선)의 `order-2/order-1`을 철회한다.
