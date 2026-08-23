@@ -9,6 +9,7 @@ import { apiClient } from "@/lib/api-client";
 import { idempotencyHeaders } from "@/lib/idempotency";
 import { getCachedAnalysis, setCachedAnalysis, TTL_30D, TTL_7D, TTL_3D } from "@/lib/analysis-fetch-cache";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { resolveLandArea, landAreaBasisNote } from "@/lib/site-area";
 import {
   developabilityText,
   resolveFarPct,
@@ -809,6 +810,10 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
     return items;
   }, [integratedData?.integrated, integratedData?.parcel_count, ssotParcels?.length]);
 
+  // ── 면적 기준(basis) 해석 — 값과 함께 "무엇을 근거로 한 면적인지"를 얻는다(lib/site-area SSOT). ──
+  const resolvedArea = useMemo(() => resolveLandArea(siteAnalysis), [siteAnalysis]);
+  const areaBasisNote = useMemo(() => landAreaBasisNote(siteAnalysis), [siteAnalysis]);
+
   const analysis = {
     zoning: {
       current: zoningData?.zone_type || aiData?.zoning?.current || localResult?.zoningName || "용도지역 분석 대기",
@@ -858,7 +863,11 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
       zoningData?.zone_limits?.max_far_pct ?? null,
     heightLimit: zoningData?.zone_limits?.max_height_m ?? localResult?.heightLimit,
     officialPricePerSqm: zoningData?.official_price_per_sqm ?? null,
-    landAreaSqm: zoningData?.land_area_sqm ?? null,
+    // ★면적 기준 SSOT(R1) — zoningData 는 /zoning/comprehensive 의 **대표 1필지** 응답이다.
+    //   다필지 부지에서 이 값을 그대로 쓰면 화면이 3,836㎡(대표)를 보여 주는데 같은 프로젝트의
+    //   사업개요는 164,823㎡(7필지 통합)를 보여 준다 — 사용자가 어느 숫자도 믿을 수 없게 된다.
+    //   store SSOT 를 우선 쓰고, store 에 면적이 아예 없을 때만 API 대표값으로 폴백한다.
+    landAreaSqm: resolvedArea.valueSqm ?? zoningData?.land_area_sqm ?? null,
   };
 
   // ── 특이부지 게이트 — API 응답 우선, 없으면 store(specialParcel) 폴백. is_special일 때만 카드 렌더. ──
@@ -1562,6 +1571,11 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
                 <p className="text-[10px] text-[var(--status-success)] mt-1 font-bold">
                   {analysis.zoning.current} · 건폐율 {analysis.buildingCoverageMax}%{analysis.isEffectiveBcr ? "(실효)" : "(법정상한)"} · 용적률 {analysis.floorAreaRatioMax}%{analysis.isEffectiveFar ? "(실효)" : "(법정상한)"}
                   {analysis.landAreaSqm != null && ` · ${analysis.landAreaSqm.toLocaleString()}m²`}
+                  {areaBasisNote && (
+                    <span data-area-basis={resolvedArea.basis} className="text-[var(--text-hint)]">
+                      {" "}({areaBasisNote})
+                    </span>
+                  )}
                   {specialParcel && <span className="inline-flex items-center gap-1 text-[var(--status-warning)]"> · <AlertTriangle className="size-3" aria-hidden />특이부지</span>}
                 </p>
               )}
@@ -1651,9 +1665,18 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
                       <span className="text-sm text-[var(--text-secondary)]">원/m²</span>
                     </div>
                     {analysis.landAreaSqm != null && (
-                      <p className="text-[10px] text-[var(--text-hint)]">
+                      <p className="text-[10px] text-[var(--text-hint)]" data-land-value-basis={resolvedArea.basis}>
                         추정 토지가액: {(analysis.officialPricePerSqm * analysis.landAreaSqm).toLocaleString()}원
                         ({analysis.landAreaSqm.toLocaleString()}m² 기준)
+                        {/* ★다필지 통합면적에 **대표필지 공시지가**를 곱한 개략치다. 필지마다 공시지가가
+                            다르므로 정확한 합산이 아니다 — 그 사실을 숨기지 않는다(정밀도 위장 금지).
+                            종전엔 이 줄이 대표필지 면적(3,836㎡)으로 계산돼 통합 부지 가액을
+                            수십 배 과소표시했다. 면적을 통합으로 바로잡되 근사임을 함께 밝힌다. */}
+                        {resolvedArea.basis === "integrated" && (
+                          <span className="block text-[var(--status-warning)]">
+                            개략치 — 대표필지 공시지가를 통합면적에 곱한 값입니다(필지별 공시지가 합산 아님)
+                          </span>
+                        )}
                       </p>
                     )}
                   </div>

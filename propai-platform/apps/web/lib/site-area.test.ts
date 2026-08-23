@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { effectiveLandAreaSqm, blendedFarPct } from "./site-area";
+import {
+  effectiveLandAreaSqm,
+  blendedFarPct,
+  resolveLandArea,
+  resolveParcelCount,
+  isMultiParcel,
+  hasParcelRows,
+  landAreaBasisNote,
+} from "./site-area";
 import type { SiteAnalysisData } from "@/store/useProjectContextStore";
 
 // 테스트는 헬퍼가 읽는 필드(landAreaSqm/landAreaSqmTotal/parcelCount)만 의미가 있다.
@@ -120,5 +128,141 @@ describe("blendedFarPct — 유효 용적률 상한(다필지=면적가중평균
       }),
     );
     expect(v).toBe(250); // 대표 폴백
+  });
+});
+
+
+/**
+ * ★기준 SSOT 계약(R1) — 두 모집단이 **갈린 상태**를 픽스처로 만든다.
+ *
+ * 왜 이렇게 쓰는가: 이 저장소에서 반복된 실패는 "픽스처가 두 모집단을 안 가르는" 것이었다.
+ * parcelCount 와 parcels.length 가 **같은 값**인 픽스처만 쓰면, 판정 배선을 끊어도 결과가
+ * 같아서 테스트가 초록으로 남는다. 아래는 전부 **둘이 다른** 상태다.
+ *
+ * 근거(실측): PR #772·#773 이 라이브에서 확인한 상태 — 라이프사이클 헤더는 parcelCount 로
+ * "7필지"라 하고 본문·우측 패널은 parcels 가 비어 "단일 필지입니다"라고 단언했으며,
+ * 구획도는 대표필지 3,836㎡ 를, 사업개요는 통합 164,823㎡ 를 보여 줬다.
+ */
+describe("기준 SSOT — 필지 수·면적 기준(basis)", () => {
+  const TOTAL = 164823;
+  const REP = 3836;
+
+  it("[A] parcelCount=7 · parcels=[] — 목록이 비어도 다필지로 보고 통합면적을 쓴다", () => {
+    const r = resolveLandArea(sa({ parcelCount: 7, parcels: [], landAreaSqm: REP, landAreaSqmTotal: TOTAL }));
+    expect(r.valueSqm).toBe(TOTAL);
+    expect(r.basis).toBe("integrated");
+    expect(r.parcelCount).toBe(7);
+    // ★두 모집단이 갈렸다는 사실 자체가 화면에 전달돼야 한다(침묵 금지).
+    expect(r.populationsDisagree).toBe(true);
+  });
+
+  it("[B] parcelCount 부재 · parcels 7개 — 목록만 있어도 다필지다(종전엔 대표 3,836㎡ 로 축약됐다)", () => {
+    const r = resolveLandArea(
+      sa({ parcels: [parcel("1R", 23546, 0), parcel("1R", 23546, 1), parcel("1R", 23546, 2),
+           parcel("1R", 23546, 3), parcel("1R", 23546, 4), parcel("1R", 23546, 5), parcel("1R", 23546, 6)],
+           landAreaSqm: REP, landAreaSqmTotal: TOTAL }),
+    );
+    // ★이 한 줄이 회귀 락이다 — 판정을 parcelCount 단독으로 되돌리면 REP(3836)이 나와 죽는다.
+    expect(r.valueSqm).toBe(TOTAL);
+    expect(r.basis).toBe("integrated");
+    expect(r.parcelCount).toBe(7);
+    // 한쪽이 아직 없는 것은 '불일치'가 아니라 '미완' — 거짓 경고를 내지 않는다.
+    expect(r.populationsDisagree).toBe(false);
+  });
+
+  it("다필지인데 통합면적 미확보 — 값은 대표면적이되 강등을 basis 로 고지한다(무회귀·무침묵)", () => {
+    const r = resolveLandArea(sa({ parcelCount: 7, parcels: [], landAreaSqm: REP, landAreaSqmTotal: null }));
+    expect(r.valueSqm).toBe(REP); // 값은 그대로(하류 무회귀)
+    expect(r.basis).toBe("representative"); // 그러나 '대표필지 면적'임을 말한다
+  });
+
+  it("단일필지 — basis=single, 통합 라벨을 붙이지 않는다", () => {
+    const r = resolveLandArea(sa({ parcelCount: 1, parcels: [parcel("1R", REP)], landAreaSqm: REP }));
+    expect(r.basis).toBe("single");
+    expect(r.parcelCount).toBe(1);
+    expect(r.populationsDisagree).toBe(false);
+  });
+
+  it("면적 미확보 — 0 으로 채우지 않는다(무날조)", () => {
+    const r = resolveLandArea(sa({ parcelCount: 3, parcels: [], landAreaSqm: null, landAreaSqmTotal: null }));
+    expect(r.valueSqm).toBeNull();
+    expect(r.basis).toBe("none");
+  });
+
+  it("선택 해제(parcelCount=0 · parcels=[]) — 단일로 보고 통합면적 잔류값을 되살리지 않는다", () => {
+    const r = resolveLandArea(sa({ parcelCount: 0, parcels: [], landAreaSqm: REP, landAreaSqmTotal: TOTAL }));
+    expect(r.parcelCount).toBe(0);
+    expect(r.valueSqm).toBe(REP);
+    expect(r.basis).toBe("single");
+  });
+
+  it("★두 질문은 서로 다른 답을 낸다 — 사실 판정(isMultiParcel) vs 목록 보유(hasParcelRows)", () => {
+    const headerOnly = sa({ parcelCount: 7, parcels: [], landAreaSqm: REP, landAreaSqmTotal: TOTAL });
+    // 부지는 다필지다 — 목록이 아직 안 왔다고 "단일 필지입니다"라고 단언하면 안 된다(#773).
+    expect(isMultiParcel(headerOnly)).toBe(true);
+    // 그러나 필지별 행을 보내야 하는 경로는 아직 보낼 것이 없다.
+    expect(hasParcelRows(headerOnly)).toBe(false);
+    // 이 픽스처에서 두 판정이 같은 값이면 락이 공허해진다 — 다름을 명시적으로 못박는다.
+    expect(isMultiParcel(headerOnly)).not.toBe(hasParcelRows(headerOnly));
+  });
+
+  it("blendedFarPct 는 목록 보유(hasParcelRows)를 따른다 — 빈 배열로 가중평균을 시도하지 않는다", () => {
+    // parcelCount=7 이지만 목록이 없으므로 가중 불가 → 대표 용도지역 상한(1R=200)으로 정직 폴백.
+    expect(blendedFarPct(sa({ parcelCount: 7, parcels: [], zoneCode: "1R" }))).toBe(200);
+  });
+
+  it("resolveParcelCount — 두 모집단 중 큰 쪽을 믿는다(축약 방향의 피해가 더 크다)", () => {
+    expect(resolveParcelCount(sa({ parcelCount: 7, parcels: [] }))).toBe(7);
+    expect(resolveParcelCount(sa({ parcels: [parcel("1R", 1), parcel("1R", 1)] }))).toBe(2);
+    expect(resolveParcelCount(sa({}))).toBe(0);
+    expect(resolveParcelCount(null)).toBe(0);
+  });
+});
+
+describe("landAreaBasisNote — 기준 고지문(화면 문구 SSOT)", () => {
+  const TOTAL = 164823;
+  const REP = 3836;
+
+  it("통합면적 — 몇 필지 기준인지 말한다", () => {
+    const note = landAreaBasisNote(
+      sa({ parcelCount: 2, parcels: [parcel("1R", 100, 0), parcel("1R", 200, 1)],
+           landAreaSqm: REP, landAreaSqmTotal: TOTAL }),
+    );
+    expect(note).toBe("통합 2필지 기준");
+  });
+
+  it("★필지 수는 세는데 목록이 없다 — 그 사실을 덧붙인다(#773 의 '단일 필지입니다' 단언 재발 방지)", () => {
+    const note = landAreaBasisNote(
+      sa({ parcelCount: 7, parcels: [], landAreaSqm: REP, landAreaSqmTotal: TOTAL }),
+    );
+    expect(note).toContain("통합 7필지 기준");
+    expect(note).toContain("필지 목록은 아직 수신되지 않아");
+  });
+
+  it("★다필지인데 통합면적 미확보 — '대표필지 1곳의 면적'임을 명시한다(침묵 금지)", () => {
+    const note = landAreaBasisNote(
+      sa({ parcelCount: 7, parcels: [], landAreaSqm: REP, landAreaSqmTotal: null }),
+    );
+    expect(note).toContain("대표필지 1곳의 면적");
+    expect(note).toContain("7필지 통합면적은 아직 확보되지 않았습니다");
+  });
+
+  it("단일필지 — 군더더기를 붙이지 않는다(null)", () => {
+    expect(landAreaBasisNote(sa({ parcelCount: 1, landAreaSqm: REP }))).toBeNull();
+  });
+
+  it("면적 미확보 — 고지문 없음(없는 값에 라벨을 붙이지 않는다)", () => {
+    expect(landAreaBasisNote(sa({ parcelCount: 7, parcels: [], landAreaSqm: null }))).toBeNull();
+    expect(landAreaBasisNote(null)).toBeNull();
+  });
+
+  it("★대조군 — 단일필지와 다필지가 **다른 문구**를 낸다(어느 상태든 같은 문구면 락이 공허하다)", () => {
+    const single = landAreaBasisNote(sa({ parcelCount: 1, landAreaSqm: REP }));
+    const multi = landAreaBasisNote(
+      sa({ parcelCount: 2, parcels: [parcel("1R", 1, 0), parcel("1R", 2, 1)],
+           landAreaSqm: REP, landAreaSqmTotal: TOTAL }),
+    );
+    const degraded = landAreaBasisNote(sa({ parcelCount: 2, parcels: [], landAreaSqm: REP }));
+    expect(new Set([single, multi, degraded]).size).toBe(3);
   });
 });

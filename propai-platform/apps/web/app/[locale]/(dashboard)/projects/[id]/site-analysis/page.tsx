@@ -24,7 +24,12 @@ import { TerrainAnalysisPanel } from "@/components/terrain/TerrainAnalysisPanel"
 import { EnvironmentAnalysisPanel } from "@/components/environment/EnvironmentAnalysisPanel";
 import { isValidLocale, type Locale } from "@/i18n/config";
 import { isMockMode } from "@/lib/runtime-mode";
-import { effectiveLandAreaSqm } from "@/lib/site-area";
+import {
+  effectiveLandAreaSqm,
+  resolveLandArea,
+  hasParcelRows,
+  landAreaBasisNote,
+} from "@/lib/site-area";
 import { useDictionary } from "@/hooks/use-dictionary";
 import { apiClient } from "@/lib/api-client";
 import { idempotencyHeaders } from "@/lib/idempotency";
@@ -1063,13 +1068,43 @@ export default function SiteAnalysisPage() {
   //   parcelCount>1 이고 실제 필지목록(parcels)이 2개 이상일 때만 '다필지'로 본다.
   //   (단일/유효<2는 통합 개발방식 카드를 띄우지 않는다 — 단일필지엔 미표시.)
   const ssotParcels = siteAnalysis?.parcels ?? null;
-  const isMultiParcel =
-    (siteAnalysis?.parcelCount ?? 1) > 1 && (ssotParcels?.length ?? 0) > 1;
+  // ★판정 SSOT(R1): 여기서 필요한 것은 "다필지인가"가 아니라 **"필지별 행을 손에 쥐고 있는가"**다
+  //   (아래 scenarioParcels 가 필지 주소목록을 실제로 꺼내 쓴다). lib/site-area 의 hasParcelRows 로
+  //   일원화한다 — 종전의 손수 조건식은 같은 질문을 파일마다 다르게 물어 온 8벌 중 하나였다.
+  const isMultiParcel = hasParcelRows(siteAnalysis);
   // 개발방식 시뮬 카드에 넘길 필지 주소목록(string[]) — 통합SSOT(siteAnalysis.parcels)의
   //   각 필지 지번주소를 그대로 사용한다(대표 1필지 아님). 빈 주소는 거른다(가짜값 방지).
   const scenarioParcels = useMemo(
     () => (isMultiParcel && ssotParcels ? ssotParcels.map((p) => p.address).filter(Boolean) : []),
     [isMultiParcel, ssotParcels],
+  );
+
+  // ── 면적 기준(basis) 해석 — 값만이 아니라 "무엇을 근거로 한 면적인지"를 함께 얻는다(R1 기준 SSOT). ──
+  //   왜: 같은 화면이 구획도에선 대표필지 3,836㎡ 를, 사업개요에선 통합 164,823㎡ 를 똑같이
+  //   "대지면적"이라 부르며 보여 줘 사용자가 어느 숫자도 믿을 수 없었다. 값에 기준을 붙여 그 차이를
+  //   숨기지 않고 말한다(값을 지우는 게 아니라 등급을 붙이는 이 캠페인의 원칙과 같다).
+  //   store 에 siteAnalysis 가 아직 없는 찰나에는 로컬 시드 면적을 같은 리졸버에 통과시켜
+  //   **우회 경로를 만들지 않는다**(raw 를 화면이 직접 읽으면 SSOT 가 다시 갈린다).
+  const areaResolved = useMemo(
+    () =>
+      resolveLandArea(
+        siteAnalysis ?? {
+          landAreaSqm: siteData?.landAreaSqm ? Number(siteData.landAreaSqm) : null,
+        },
+      ),
+    [siteAnalysis, siteData?.landAreaSqm],
+  );
+  // 기준 고지문은 공용함수(landAreaBasisNote)에서 파생한다 — 문구를 화면마다 손으로 쓰면
+  //   한 화면만 고치고 형제 화면이 옛 문구로 남는다. 필지 수는 세는데 목록이 없는 상태
+  //   (#773 이 고친 "등록 7필지인데 단일 필지라고 단언"과 같은 형태)도 그 함수가 고지한다.
+  const areaBasisNote = useMemo(
+    () =>
+      landAreaBasisNote(
+        siteAnalysis ?? {
+          landAreaSqm: siteData?.landAreaSqm ? Number(siteData.landAreaSqm) : null,
+        },
+      ),
+    [siteAnalysis, siteData?.landAreaSqm],
   );
 
   // 주소 단일화: 바인딩 완료 후 컨텍스트에 주소가 있으면 재입력 없이 결과로 자동진입하고
@@ -1524,8 +1559,19 @@ export default function SiteAnalysisPage() {
                     {siteData.zoneType && (
                       <p className="text-sm font-bold text-[var(--accent-strong)]">
                         {siteData.zoneType}
-                        {siteData.landAreaSqm && ` · ${Number(siteData.landAreaSqm).toLocaleString()}m²`}
+                        {/* ★면적은 기준 SSOT(resolveLandArea)로만 읽는다 — 로컬 siteData.landAreaSqm 을
+                            직접 읽으면 '새 분석'이 실은 대표 1필지 면적을 통합면적인 양 보여 준다. */}
+                        {areaResolved.valueSqm != null &&
+                          ` · ${areaResolved.valueSqm.toLocaleString()}m²`}
                         {siteData.landCategory && ` · ${siteData.landCategory}`}
+                      </p>
+                    )}
+                    {areaBasisNote && (
+                      <p
+                        data-area-basis={areaResolved.basis}
+                        className="text-xs font-semibold text-[var(--text-secondary)]"
+                      >
+                        {areaBasisNote}
                       </p>
                     )}
                   </div>
@@ -1631,7 +1677,7 @@ export default function SiteAnalysisPage() {
               projectId={id}
               address={siteData.address}
               pnu={siteData.pnu}
-              areaSqm={siteData.landAreaSqm ? Number(siteData.landAreaSqm) : undefined}
+              areaSqm={areaResolved.valueSqm ?? undefined}
             />
           </motion.div>
         )}
