@@ -507,15 +507,15 @@ const RUNTIME_CASES: RuntimeCase[] = [
  * 소스 파생 락은 이 파일들도 그대로 덮는다. 여기 없는 것은 "런타임까지" 태운다는 뜻이다.
  */
 const RUNTIME_UNCOVERED: Record<string, string> = {
+  "components/sales/OrgTree.tsx":
+    "이 표 대신 전용 스펙(`components/sales/__tests__/OrgTree.focusTrap.test.tsx`)이 렌더 경로를 " +
+    "직접 만들어 트랩을 태운다 — 조직 목이 필요해 공용 표에 넣기보다 그쪽이 정확하다.",
   "components/onboarding/OnboardingWizard.tsx":
     "자체 `visible` 상태를 localStorage 로 결정해 스스로 연다 — 부모가 주는 열림 인자가 없어 " +
     "밖에서 '열린 상태'를 만들 수 없다. 저장소 목을 세우면 가능하니 별도 rung 으로 남긴다.",
   "components/auction/AuctionWorkspace.tsx":
     "상세 모달·라이트박스는 파일 안의 비-export 컴포넌트(DetailModal)라 단독 렌더가 불가하다. " +
     "워크스페이스 전체를 띄우려면 목록 조회·지도까지 목이 필요해 이 계약의 범위를 넘는다.",
-  "components/sales/OrgTree.tsx":
-    "마운트 즉시 /org/tree·/org/context 를 조회하고 그 응답으로 트리를 그려야 시트를 열 수 있다. " +
-    "시트를 여는 경로까지 재현하려면 조직 픽스처가 필요해 별도 rung 으로 미룬다.",
 };
 
 describe("모달 ESC 해제 계약 — 런타임 표", () => {
@@ -728,6 +728,11 @@ describe("모달 접근성 — 포커스 생명주기(2026-08-22 부분 상환)"
     "components/operations/DeskAppraisalModal.tsx",
     "components/operations/LandShareModal.tsx",
     "components/onboarding/OnboardingWizard.tsx",
+    // ── 2026-08-23 R5 — **렌더 경로를 먼저 만든 뒤** 배선했다 ──
+    //   `OrgTree` 는 마운트 즉시 /org/tree·/org/context 를 조회해야 시트에 닿는다.
+    //   목을 세워 여는 경로를 만들고(`OrgTree.focusTrap.test.tsx`) 그 위에 트랩을 잠갔다.
+    //   순서를 뒤집었으면 **런타임으로 못 태우는 배선**이 됐을 것이다.
+    "components/sales/OrgTree.tsx",
   ] as const;
 
   /**
@@ -745,8 +750,6 @@ describe("모달 접근성 — 포커스 생명주기(2026-08-22 부분 상환)"
     //   → 먼저 **렌더 가능한 경로**를 만든 뒤 배선한다. 순서를 바꾸면 잠기지 않는 배선이 된다.
     "components/auction/AuctionWorkspace.tsx":
       "1,839줄 워크스페이스 안의 비-export 상세모달·라이트박스(aria-modal 2곳). 단독 렌더에 목록 조회·지도 목이 필요해, 렌더 경로부터 만든 뒤 배선한다",
-    "components/sales/OrgTree.tsx":
-      "마운트 즉시 /org/tree·/org/context 를 조회해야 시트가 열린다(aria-modal 2곳). 조직 픽스처를 세운 뒤 배선한다",
   };
 
   /**
