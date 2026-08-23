@@ -710,17 +710,23 @@ async def _run_designer(db: AsyncSession, spec: PersonaSpec, ctx: dict[str, Any]
                 UnitMixInput,
                 UnitMixOptimizer,
             )
-            far = mass.get("far_pct") or 250
-            bcr = mass.get("bcr_pct") or 60
+            # ★무날조 — 매스 결과에 한도가 없으면 **지어내지 않는다**(아래에서 산출 skip).
+            far = mass.get("far_pct")
+            bcr = mass.get("bcr_pct")
             la = float(land_area or 0)
-            total_gfa = (la * float(far) / 100) if la > 0 else 0.0
+            # 한도(용적·건폐)가 확인되지 않으면 연면적을 만들 수 없다 — 발명 대신 보류.
+            _limits_known = far is not None and bcr is not None
+            total_gfa = (la * float(far) / 100) if (la > 0 and _limits_known) else 0.0
             if total_gfa > 0:
                 unit_mix = UnitMixOptimizer().optimize(UnitMixInput(
                     total_gfa_sqm=total_gfa, max_far_pct=float(far), max_bcr_pct=float(bcr),
                     land_area_sqm=la, region=str(ctx.get("region") or "서울"),
                 ))
             else:
-                honesty.append("연면적(GFA) 미산출(대지면적 필요) — 유닛믹스 최적화 보류(무목업).")
+                honesty.append(
+                    "연면적(GFA) 미산출 — 유닛믹스 최적화 보류(무목업). "
+                    + ("용적률·건폐율 한도 미확인" if not _limits_known else "대지면적 필요")
+                )
         except Exception as e:  # noqa: BLE001
             logger.warning("유닛믹스 최적화 실패", err=str(e)[:100])
 

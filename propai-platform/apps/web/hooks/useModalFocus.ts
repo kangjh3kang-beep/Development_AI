@@ -62,6 +62,15 @@ export function useModalFocus(ref: RefObject<HTMLElement | null>, open: boolean)
       (firstFocusable(container) ?? container).focus?.();
     }
 
+    // ★훅이 **실제로 어느 요소를 가뒀는지** 표시한다(2026-08-22 추가).
+    //
+    //   이게 없으면 잠금이 성립하지 않는다. `#750` 은 *"ref 를 백드롭에 달아도 통과하는 것을
+    //   막는다"* 고 선언했지만 **막지 못했다**(실측: ref 를 백드롭으로 옮겨도 76건 전부 초록).
+    //   이유는 우리 모달이 전부 `백드롭 > 본체` 구조이고 백드롭의 유일한 요소 자식이 본체라,
+    //   `focusables(백드롭) === focusables(본체)` 여서 **결과로는 구분이 안 되기 때문**이다.
+    //   → 결과가 같으면 **대상 자체를 관측 가능**하게 만들어야 한다.
+    container.setAttribute("data-modal-focus", "1");
+
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== "Tab") return;
       const el = ref.current;
@@ -72,8 +81,31 @@ export function useModalFocus(ref: RefObject<HTMLElement | null>, open: boolean)
 
     return () => {
       document.removeEventListener("keydown", onKeyDown, true);
+      container.removeAttribute("data-modal-focus");
       // ★사라진 요소로 돌려보내지 않는다(언마운트된 버튼 등) — 그러면 포커스가 body 로 튄다.
       if (restoreTo && document.contains(restoreTo)) restoreTo.focus?.();
     };
   }, [ref, open]);
+}
+
+/**
+ * **마운트 자체가 열림**인 표면용 — `useModalFocus(ref, true)` 의 대칭 래퍼.
+ *
+ * ## 왜 필요한가
+ *
+ * 이 저장소의 모달은 두 가지 방식으로 열린다:
+ *
+ *     open prop 방식   : 부모가 항상 렌더하고 `open` 으로 켠다  → `useModalFocus(ref, open)`
+ *     마운트=열림 방식 : 부모가 열 때만 렌더한다               → **넣을 `open` 인자가 없다**
+ *
+ * ESC 계약은 이 둘을 **이미 갈라 놓았다**(`useDismissible` 11곳 / `useDismissibleWhileMounted`
+ * 5곳). 그런데 포커스 계약에는 앞의 것만 있었다 — 그 **비대칭**이 5표면이 미배선으로 남은
+ * 진짜 이유였다(*"드로어라 규약이 다르다"* 같은 표면별 사유가 아니라).
+ *
+ * ★`useModalFocus(ref, true)` 를 호출부마다 손으로 쓰지 않는 이유: 계약 테스트가
+ *   *"열림 인자에 상수 리터럴을 쓰지 않는다"* 를 검사한다(열림 검사 누락과 구분되지 않기
+ *   때문). 여기 한 곳에서만 `true` 를 쓰고, 호출부는 **의도를 이름으로** 말한다.
+ */
+export function useModalFocusWhileMounted(ref: RefObject<HTMLElement | null>): void {
+  useModalFocus(ref, true);
 }

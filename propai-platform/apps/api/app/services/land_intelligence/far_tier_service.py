@@ -219,7 +219,14 @@ def calc_effective_far(base: dict, zone_type: str, land_area: float = 0) -> dict
     #   제외하고 warning을 남기는 구조라 여기서 None만 정직 반환하면 전파는 안전하다.
     zl_bcr_present = bool(zone_limits.get("max_bcr_pct") or zone_limits.get("bcr"))
     zl_far_present = bool(zone_limits.get("max_far_pct") or zone_limits.get("far"))
-    if legal_bcr is None and legal_far is None and not zl_bcr_present and not zl_far_present:
+    # ★★2026-08-22 — 이 가드는 **전부 결측**일 때만 걸렸다(`and` 4개). 그래서 **부분 결측**,
+    #   예컨대 건폐는 확인됐는데 용적만 미확인인 경우에는 그대로 통과해 아래에서
+    #   `or 200`(용적)·`or 60`(건폐)이 값을 **지어냈다**. 위 주석이 경고한 그 사고
+    #   (자연녹지 20/100 에 200/60 을 발명 → 블렌드 139.6% 오염)가 **절반만 막혀 있었다**.
+    #   → 축(건폐/용적)마다 **독립으로** 판정한다. 한 축이라도 근거가 없으면 발명하지 않는다.
+    bcr_unknown = legal_bcr is None and not zl_bcr_present
+    far_unknown = legal_far is None and not zl_far_present
+    if bcr_unknown or far_unknown:
         return {
             "national_bcr_pct": None,
             "national_far_pct": None,
@@ -238,7 +245,15 @@ def calc_effective_far(base: dict, zone_type: str, land_area: float = 0) -> dict
                 "조례값": None,
                 "계획상한": None,
                 "인센티브": None,
-                "최종근거": "용도지역 미확인(법정 상한 매칭 실패) — 임의값 미생성(정직)",
+                "최종근거": (
+                    "용도지역 미확인(법정 상한 매칭 실패) — 임의값 미생성(정직)"
+                    if (bcr_unknown and far_unknown)
+                    else (
+                        "건폐율 상한 미확인 — 임의값 미생성(정직)"
+                        if bcr_unknown
+                        else "용적률 상한 미확인 — 임의값 미생성(정직)"
+                    )
+                ),
                 "데이터출처": [],
                 "조례확인필요": True,
             },
@@ -273,17 +288,18 @@ def calc_effective_far(base: dict, zone_type: str, land_area: float = 0) -> dict
     # (이전: 업스트림 zone_limits.max_*_pct를 먼저 신뢰 → 라벨과 불일치한 값(예: 일반상업지역에
     #  제1종주거값 60/200)이 그대로 표시되고 실효=min(200,800)=200으로 오염되는 버그.
     #  법정값은 용도지역명으로 결정되는 고정 상한이므로, 라벨에서 도출한 legal_*가 진실의 단일원천.)
+    # ★여기 도달했다면 위 가드가 **두 축 모두 근거 있음**을 보장한다.
+    #   따라서 종전의 `or 60` · `or 200` 최종 폴백은 **도달 불가**이며, 남겨 두면
+    #   가드가 약해질 때 조용히 되살아나 법정값을 발명한다. 제거한다.
     national_bcr = float(
         legal_bcr
         or zone_limits.get("max_bcr_pct")
         or zone_limits.get("bcr")
-        or 60
     )
     national_far = float(
         legal_far
         or zone_limits.get("max_far_pct")
         or zone_limits.get("far")
-        or 200
     )
     ordinance_bcr = float(ordinance.get("effective_bcr") or ordinance.get("ordinance_bcr") or national_bcr)
     ordinance_far = float(ordinance.get("effective_far") or ordinance.get("ordinance_far") or national_far)
@@ -727,7 +743,8 @@ def calc_upzoning(
             "current_zone": zone_type,
             "scenarios": [],
             "potential_far_range": None,
-            "summary": "종상향 잠재력 분석을 일시적으로 산출하지 못했습니다.",
+            # ★"일시적"이라고 단정하지 않는다 — 재시도로 풀릴지 우리는 모른다.
+            "summary": "종상향 잠재력을 산출하지 못했습니다.",
             "disclaimer": "예상치 미산출",
         }
 

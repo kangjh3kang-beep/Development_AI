@@ -676,25 +676,85 @@ describe("모달 접근성 — 포커스 생명주기(2026-08-22 부분 상환)"
   // ★부채를 **뭉뚱그리지 않는다** — 아래 맵이 표면별 사유를 들고 있고, 래칫이 그 맵을 감시한다.
 
   /** 포커스 생명주기가 **배선된** 표면(소스에서 훅 호출로 판정). */
-  const FOCUS_WIRED = ["components/common/ConfirmDeleteModal.tsx"] as const;
+  const FOCUS_WIRED = [
+    "components/common/ConfirmDeleteModal.tsx",
+    // ── 2026-08-22 R1 상환 — 미룬 **사유를 먼저 실측**해 기각한 3표면 ──
+    //   세 건 모두 미룬 근거가 *가설*이었고, 재보니 사실이 아니었다.
+    "components/sales-app/SiteEnterModal.tsx",
+    "components/sales-app/SitePasswordModal.tsx",
+    "components/collaboration/DocumentViewerModal.tsx",
+    // ── 2026-08-23 R2 — **계약 비대칭**이 진짜 원인이었다 ──
+    //   ESC 계약은 `useDismissible`(open prop) / `useDismissibleWhileMounted`(마운트=열림)
+    //   **두 변종**인데 포커스 계약은 앞의 것만 있었다. 아래 셋 중 둘이 마운트=열림이라
+    //   넣을 `open` 인자가 없었던 것이지, 표면별 사정이 달랐던 게 아니다.
+    "components/desk/ConsentModal.tsx",
+    "components/g2b/G2BBidDetailModal.tsx",
+    "components/orchestration/InputResolveModal.tsx",
+  ] as const;
 
   /** 아직 배선하지 않은 표면 — **사유를 적는다**(빈 사유는 아래 래칫이 막는다). */
   const FOCUS_UNWIRED: Record<string, string> = {
-    "components/desk/ConsentModal.tsx": "동의 흐름 — 체크박스 순서가 포커스 이동에 민감해 별도 검토 필요",
-    "components/sales-app/FieldNav.tsx": "네비 시트 — 모달이 아니라 드로어라 트랩 범위 정의가 다르다",
-    "components/sales-app/SiteEnterModal.tsx": "폼 표면 — 입력 다수, autoFocus 유무 확인 후 배선",
-    "components/sales-app/SitePasswordModal.tsx": "폼 표면 — 비밀번호 입력 autoFocus 와 충돌 여부 확인 필요",
-    "components/collaboration/DocumentViewerModal.tsx": "뷰어 — 내부 스크롤/iframe 포커스 정책 별도",
-    "components/sales/CustomerCardDrawer.tsx": "드로어 — 모달과 트랩 규약이 다르다",
-    "components/g2b/G2BBidDetailModal.tsx": "상세 모달 — 탭 컨트롤 다수, 순서 검토 후",
-    "components/orchestration/InputResolveModal.tsx": "입력 해석 모달 — 동적 필드 수 변동",
+    // ★남은 둘은 **드로어**다. 실측해 보니 진짜 제약이 하나 있다 — 백드롭 안에 **본체의
+    //   형제로** 포커스 가능한 닫기 버튼이 있어(`CustomerCardDrawer.tsx:211`), 본체에만
+    //   트랩을 걸면 그 버튼이 트랩 **밖**이 된다. 트랩 범위를 어디로 잡을지 정한 뒤 배선한다.
+    //   (종전 사유였던 *"드로어라 규약이 다르다"* 는 근거가 아니었다 — 둘 다 이미
+    //    `role=dialog`/`aria-modal` 을 선언하므로 ARIA 상 트랩 대상이 맞다.)
+    "components/sales/CustomerCardDrawer.tsx":
+      "우측 드로어 — 백드롭 딤이 **포커스 가능한 닫기 버튼**이고 본체의 형제라, 본체에만 트랩을 걸면 그 버튼이 트랩 밖이 된다. 범위(본체만 vs 백드롭 포함)를 정한 뒤 배선",
+    "components/sales-app/FieldNav.tsx":
+      "하단 네비 시트 — 항목을 누르면 **라우팅으로 언마운트**된다. 복귀 대상이 사라지는 경로라 훅의 `document.contains` 방어에만 기대도 되는지 확인 후 배선",
   };
+
+  /**
+   * 마운트 자체가 열림인 표면 — `open` 인자가 없어 `useModalFocusWhileMounted` 를 쓴다.
+   * ★이 목록이 **닫힘 픽스처 면제**의 근거다(닫힌 상태가 원리적으로 존재하지 않는다).
+   */
+  /**
+   * 닫힘 픽스처를 만들 수 **없는** 표면 — 사유를 적는다(빈 사유는 아래 래칫이 막는다).
+   *
+   * ★"음성대조가 없다"를 조용히 넘기지 않기 위한 맵이다. 게으름과 **원리적 불가**를
+   *   구분해서 적어야 다음 사람이 재시도할지 말지 안다.
+   */
+  const CLOSED_FIXTURE_EXEMPT: Record<string, string> = {
+    "components/desk/ConsentModal.tsx":
+      "마운트 자체가 열림 — 부모가 열 때만 렌더하므로 닫힌 상태가 존재하지 않는다",
+    "components/g2b/G2BBidDetailModal.tsx":
+      "마운트 자체가 열림 — 부모가 상세를 고른 순간에만 렌더하므로 닫힌 상태가 존재하지 않는다",
+    "components/orchestration/InputResolveModal.tsx":
+      "★타입이 막는다 — `nodeId` 가 `NodeId` 유니온이라 **존재하지 않는 노드를 줄 수 없고**, 유효한 id 는 항상 노드를 찾아 열린다. 억지 캐스팅으로 타입이 막는 상태를 만들지 않는다(그건 실사용에 없는 경로다)",
+  };
+
+  const FOCUS_WIRED_WHILE_MOUNTED: readonly string[] = [
+    // ★실측으로 확정한 목록이다. `ConfirmDeleteModal` 은 `useDismissible(z, open, …)` 을 쓰는
+    //   **open prop 방식**이라 여기 들어가지 않는다(처음에 넣었다가 이 계약이 잡아냈다).
+    "components/desk/ConsentModal.tsx",
+    "components/g2b/G2BBidDetailModal.tsx",
+  ];
 
   it("★배선된 표면은 훅을 **호출**한다(임포트만 남는 회귀 방지)", () => {
     for (const f of FOCUS_WIRED) {
       const code = executable(join(WEB_ROOT, f));
-      expect(code, `${f} 가 useModalFocus 를 호출하지 않는다`).toContain("useModalFocus(");
+      // ★두 변종 중 하나를 **호출**해야 한다. `useModalFocus(` 만 보면
+      //   `useModalFocusWhileMounted(` 를 쓰는 표면이 미배선으로 오판된다(실측).
+      const called =
+        code.includes("useModalFocus(") || code.includes("useModalFocusWhileMounted(");
+      expect(called, `${f} 가 포커스 훅을 호출하지 않는다`).toBe(true);
     }
+  });
+
+  it("★`WhileMounted` 표면은 실제로 그 변종을 쓴다 — 상수 리터럴 `true` 우회 금지", () => {
+    for (const f of FOCUS_WIRED_WHILE_MOUNTED) {
+      const code = executable(join(WEB_ROOT, f));
+      expect(code, `${f} 가 WhileMounted 변종을 쓰지 않는다`).toContain(
+        "useModalFocusWhileMounted(",
+      );
+      // 열림 인자에 상수를 박는 우회(= 열림 검사 누락과 구분 불가)를 막는다.
+      expect(code, `${f} 가 open 인자에 상수 리터럴을 박았다`).not.toContain(
+        "useModalFocus(bodyRef, true)",
+      );
+    }
+    // ★양성 대조 — 목록이 비면 위 루프가 통째로 사라진다.
+    expect(FOCUS_WIRED_WHILE_MOUNTED.length).toBeGreaterThanOrEqual(2);
   });
 
   it("★미배선 사유가 비어 있지 않다 — 부채를 뭉뚱그리지 않는다", () => {
@@ -714,6 +774,183 @@ describe("모달 접근성 — 포커스 생명주기(2026-08-22 부분 상환)"
     for (const f of FOCUS_WIRED) {
       expect(FOCUS_UNWIRED[f], `${f} 는 배선됐는데 미배선 맵에 남아 있다`).toBeUndefined();
     }
+  });
+
+  // ── ★런타임 잠금 ──────────────────────────────────────────────────────────
+  //  위의 `useModalFocus(` 소스 검사만으로는 **배선을 죽이는 변이가 통과**한다
+  //  (ESC 계약이 R2 에서 실증한 것과 같은 구멍: 인자를 `false` 로 바꾸거나 ref 를 백드롭에
+  //  달아도 호출 문자열은 그대로다). 그래서 실제로 렌더해 **포커스가 어디 있는지**를 태운다.
+
+  const focusablesIn = (root: HTMLElement): HTMLElement[] =>
+    Array.from(
+      root.querySelectorAll<HTMLElement>(
+        'a[href], button, textarea, input, select, [tabindex]:not([tabindex="-1"])',
+      ),
+    ).filter((el) => !el.hasAttribute("disabled") && el.getAttribute("aria-hidden") !== "true");
+
+  const dialogEl = (): HTMLElement => {
+    // ★포털 표면(DocumentViewerModal)은 render 컨테이너 밖에 그려지므로 document 에서 찾는다.
+    const el = document.body.querySelector<HTMLElement>('[role="dialog"]');
+    if (!el) throw new Error("role=dialog 를 못 찾았다 — 표면이 안 열렸다(공허한 초록 방지)");
+    return el;
+  };
+
+  const WIRED_RUNTIME = RUNTIME_CASES.filter((c) =>
+    (FOCUS_WIRED as readonly string[]).includes(c.file),
+  );
+
+  it("전제: 배선된 표면이 **전부** 런타임 표에 있다 — 없으면 아래 표가 공허하다", () => {
+    // ★하한 가드가 **먼저** 와야 한다(2026-08-22 R2 추가). 종전엔 이게 없어서
+    //   `FOCUS_WIRED` 를 `[]` 로 만들면 아래 `describe.each` 가 **스위트 0개**가 되고
+    //   위 `toBe` 도 `0 === 0` 으로 통과해 **런타임 락 20건이 통째로 사라져도 초록**이었다.
+    //   같은 파일 ESC 블록은 이미 이렇게 막고 있었는데(`RUNTIME_CASES.length >= 9`)
+    //   새 블록에만 빠져 있었다 — 선언한 원칙을 자기 새 코드에 안 쓴 형태(§D.16).
+    expect(
+      FOCUS_WIRED.length,
+      "배선 표면이 비었다 — 이 describe 가 공허하다",
+    ).toBeGreaterThanOrEqual(4);
+
+    const covered = WIRED_RUNTIME.map((c) => c.file);
+    for (const f of FOCUS_WIRED) {
+      expect(covered, `${f} 가 런타임 표에 없어 소스 검사로만 잠긴다`).toContain(f);
+    }
+    expect(WIRED_RUNTIME.length).toBe(FOCUS_WIRED.length);
+
+    // ★닫힘 픽스처가 없으면 음성대조가 **소리 없이 사라진다**(아래 `if (c.closed)`).
+    //   단 **마운트 자체가 열림**인 표면은 닫힌 상태가 원리적으로 없다(부모가 렌더를 안 한다)
+    //   — 면제하되 **그 사실을 목록으로 못박아** 아무 표면이나 빠져나가지 못하게 한다.
+    for (const c of WIRED_RUNTIME) {
+      if (CLOSED_FIXTURE_EXEMPT[c.file]) continue;
+      expect(c.closed, `${c.file} 에 닫힘 픽스처가 없어 음성대조가 실행되지 않는다`).toBeTypeOf(
+        "function",
+      );
+    }
+    // ★면제 목록이 실제 배선 표면과 어긋나면 다음 사람이 오독한다(죽은 면제 방지).
+    for (const f of FOCUS_WIRED_WHILE_MOUNTED) {
+      expect(FOCUS_WIRED as readonly string[], `${f} 는 배선 목록에 없다`).toContain(f);
+    }
+    for (const [f, reason] of Object.entries(CLOSED_FIXTURE_EXEMPT)) {
+      expect(FOCUS_WIRED as readonly string[], `${f} 는 배선 목록에 없다`).toContain(f);
+      expect(reason.length, `${f} 의 면제 사유가 너무 짧다`).toBeGreaterThan(20);
+    }
+  });
+
+  it("★★트랩 대상이 백드롭이 아니라 **대화상자 본체**다 — 결과가 같아 대상을 직접 봐야 한다", () => {
+    // `#750` 은 *"ref 를 백드롭에 달아도 통과하는 것을 막는다"* 고 선언했지만 **막지 못했다.**
+    // 실측(2026-08-22): ref 를 백드롭으로 옮겨도 76건 전부 초록. 우리 모달은 전부
+    // `백드롭 > 본체` 구조이고 백드롭의 유일한 요소 자식이 본체라 **포커스 목록이 동일**하다.
+    // → 결과로 구분이 안 되면 **대상을 관측**한다(`useModalFocus` 가 다는 `data-modal-focus`).
+    for (const c of WIRED_RUNTIME) {
+      const view = render(c.open(noop));
+      const backdrop = dialogEl();
+      expect(
+        backdrop.hasAttribute("data-modal-focus"),
+        `${c.file}: ref 가 **백드롭**에 달렸다 — 트랩 범위가 대화상자보다 넓다`,
+      ).toBe(false);
+      // ★양성 짝 — "백드롭이 아니다"만으로는 훅이 아예 안 돌아도 참이 된다.
+      expect(
+        backdrop.querySelector("[data-modal-focus]"),
+        `${c.file}: 트랩된 컨테이너가 없다 — 훅이 돌지 않았다`,
+      ).not.toBeNull();
+      view.unmount();
+    }
+  });
+
+  describe.each(WIRED_RUNTIME)("포커스 런타임 — $label", (c) => {
+    it("★열리면 포커스가 대화상자 **안**으로 들어온다", () => {
+      const view = render(c.open(noop));
+      const dialog = dialogEl();
+      expect(
+        focusablesIn(dialog).length,
+        `${c.file} 에 포커스 가능 요소가 0개 — 트랩 단언이 공허해진다`,
+      ).toBeGreaterThan(0);
+      expect(
+        dialog.contains(document.activeElement),
+        `${c.file} 를 열었는데 포커스가 대화상자 밖(${document.activeElement?.nodeName})에 있다`,
+      ).toBe(true);
+      view.unmount();
+    });
+
+    it("★마지막 요소에서 Tab 하면 첫 요소로 **돈다**(트랩)", () => {
+      const view = render(c.open(noop));
+      const items = focusablesIn(dialogEl());
+      items[items.length - 1].focus();
+      fireEvent.keyDown(document, { key: "Tab" });
+      expect(
+        document.activeElement,
+        `${c.file} 에서 Tab 이 모달 밖으로 샌다 — ref 가 백드롭에 달렸거나 훅이 죽었다`,
+      ).toBe(items[0]);
+      view.unmount();
+    });
+
+    it("★Shift+Tab 은 첫 요소에서 마지막으로 돈다(역방향)", () => {
+      const view = render(c.open(noop));
+      const items = focusablesIn(dialogEl());
+      items[0].focus();
+      fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
+      expect(document.activeElement, `${c.file} 역방향 트랩이 없다`).toBe(items[items.length - 1]);
+      view.unmount();
+    });
+
+    it("★음성대조 — Tab 이 아닌 키는 포커스를 옮기지 않는다(판별력)", () => {
+      const view = render(c.open(noop));
+      const items = focusablesIn(dialogEl());
+      const probe = items[Math.min(1, items.length - 1)];
+      probe.focus();
+      fireEvent.keyDown(document, { key: "Enter" });
+      fireEvent.keyDown(document, { key: "a" });
+      expect(document.activeElement, `${c.file} 가 아무 키에나 포커스를 옮긴다`).toBe(probe);
+      view.unmount();
+    });
+
+    // ★부재 단언은 짝이 있어야 잠금이다 — 위 "열리면 들어온다"(양성)와 같은 실행 축에서
+    //   "닫혀 있으면 안 훔친다"(음성)를 함께 단언한다.
+    if (c.closed) {
+      it("★음성대조 — 닫혀 있으면 포커스를 **훔치지 않는다**", () => {
+        const outside = document.createElement("button");
+        document.body.appendChild(outside);
+        outside.focus();
+        const view = render(c.closed!());
+        expect(
+          document.activeElement,
+          `${c.file} 가 닫힌 채로 포커스를 가져갔다`,
+        ).toBe(outside);
+        view.unmount();
+        outside.remove();
+      });
+    }
+  });
+
+  it("★트랩 중첩 금지 — 배선된 모달이 또 다른 배선 모달을 품으면 두 트랩이 겹친다", () => {
+    // `useDismissible` 은 `DISMISS_Z` 로 **가장 위 하나만** 고르지만, `useModalFocus` 에는
+    // 그런 조정이 없다. 두 트랩이 같은 keydown 에 각자 다른 컨테이너로 포커스를 옮기면
+    // Tab 이 두 모달 사이를 튄다. 지금은 침범이 0건이고(실측), 이 래칫이 그 상태를 지킨다.
+    // ★바늘을 `FOCUS_WIRED` 에서 **파생**시킨다(2026-08-22 R2). 종전엔 `"<ConfirmDeleteModal"`
+    //   **하나로 고정**돼 있었는데, 정작 같은 커밋이 배선 표면을 1→4 로 늘렸다. 목록형이라
+    //   새로 배선된 모달끼리 중첩되면 래칫이 못 본다(§A.4 목록형 금지).
+    const nameOf = (f: string) => "<" + f.split("/").pop()!.replace(/\.tsx$/, "");
+    const wiredNames = FOCUS_WIRED.map(nameOf);
+
+    const offenders: string[] = [];
+    for (const f of FOCUS_WIRED) {
+      const code = executable(join(WEB_ROOT, f));
+      for (const n of wiredNames) {
+        if (n !== nameOf(f) && code.includes(n)) offenders.push(`${f} ⊃ ${n}`);
+      }
+    }
+    expect(
+      offenders,
+      "포커스 배선 모달 안에 또 다른 배선 모달이 있다 — z 조정이 없어 두 트랩이 겹친다",
+    ).toEqual([]);
+
+    // ★양성 대조 — **같은 파이프라인**을 태워야 의미가 있다.
+    //   종전엔 `"<ConfirmDeleteModal…".includes("<ConfirmDeleteModal")` 이었는데, 그건
+    //   자바스크립트의 `String.includes` 를 검증할 뿐 `executable()`·경로 조립·주석 스트리퍼를
+    //   **하나도 태우지 않는다**(항진명제). `executable()` 이 전부 빈 문자열을 돌려줘도 통과했다.
+    expect(
+      executable(join(WEB_ROOT, "components/projects/ProjectsOverviewClient.tsx")),
+      "검사기가 죽었다 — 실제로 ConfirmDeleteModal 을 렌더하는 파일에서도 못 찾는다",
+    ).toContain("<ConfirmDeleteModal");
   });
 });
 

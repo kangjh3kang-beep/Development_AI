@@ -22,6 +22,7 @@ from app.services.feasibility.permit_validator import (
 )
 from app.services.land_intelligence import far_tier_service
 from app.services.land_intelligence.land_info_service import LandInfoService
+from app.services.zoning.development_feasibility_validator import MAX_FLOORS
 
 logger = structlog.get_logger()
 
@@ -1237,11 +1238,44 @@ class ComprehensiveAnalysisService:
             typical_far = TYPICAL_FAR.get(dev_type, 250)
 
             applied_far = min(effective_far, typical_far)
-            total_gfa = land_area * (applied_far / 100)
+            building_area = land_area * (effective_bcr / 100)
+
+            # ── 층수를 **제약 안에서** 계획한다 ──────────────────────────────
+            # ★2026-08-21 사용자 화면 검증에서 드러난 결함:
+            #   종전에는 층수를 `연면적 ÷ 건축면적` 으로 **역산만** 하고, 유형별 층수 상한
+            #   (`MAX_FLOORS`)은 **사후 검증**에서만 봤다. 그래서 자연녹지(건폐 20%·용적 80%)
+            #   에서 4층이 계획되고, 단독·전원주택 상한 3층에 걸려 **전 유형이 부적합**으로
+            #   떨어졌다 — **시스템이 스스로 규칙 위반 계획을 세우고 자기 규칙으로 탈락**시킨 것이다.
+            #
+            #   더 나쁜 것은 그때도 **연면적은 4층 기준 그대로** 표시됐다는 점이다.
+            #   세대수·주차·공사비가 전부 실현 불가능한 값 위에서 계산됐다.
+            #
+            #   → 상한이 있으면 **그 안에서 계획**하고, 층수가 깎이면 **연면적도 함께 내린다**.
+            _gfa_by_far = land_area * (applied_far / 100)
+            _floors_by_far = max(1, round(_gfa_by_far / building_area)) if building_area > 0 else 1
+
+            # ★`MAX_FLOORS` 는 이제 **근거를 동반한 값**(LegalLimit)이다.
+            #   · 미등재            → 근거 미확인 → 깎지 않는다(조용히 제한하지 않는다)
+            #   · 등재 + unlimited  → 법이 제한하지 않는다(근거 있음) → 깎지 않는다
+            #   · 등재 + 값 있음    → 그 값으로 캡
+            #   종전에는 근거 없는 `3` 이 단독주택 계획을 4층→3층으로 깎아 용적률을
+            #   80%→60%로 내렸다. 근거를 확인하니 그 3층은 **다가구·다중주택 기준**이었다.
+            _limit = MAX_FLOORS.get(dev_type)
+            _cap = None if (_limit is None or _limit.unlimited) else int(_limit.value)
+            _cap_law = _limit.law if (_limit is not None and not _limit.unlimited) else None
+            floor_count = min(_floors_by_far, _cap) if _cap else _floors_by_far
+            floor_count = max(1, floor_count)
+
+            # 층수가 깎였으면 연면적은 `건축면적 × 층수` 로 제한된다(용적률도 따라 내려간다).
+            floor_capped = floor_count < _floors_by_far
+            total_gfa = min(_gfa_by_far, building_area * floor_count) if building_area > 0 else _gfa_by_far
+            if floor_capped and land_area > 0:
+                # 표시용 용적률을 실제 계획에 맞춘다 — 여기서 갱신하지 않으면 화면의
+                # 용적률과 연면적이 서로 다른 계획을 가리킨다(같은 화면 안의 모순).
+                applied_far = total_gfa / land_area * 100
+
             supply_area_per_unit = avg_exclusive / exclusive_ratio
             unit_count = max(1, int(total_gfa / supply_area_per_unit)) if supply_area_per_unit > 0 else 1
-            building_area = land_area * (effective_bcr / 100)
-            floor_count = max(1, round(total_gfa / building_area)) if building_area > 0 else 1
 
             parking = self._calc_parking(dev_type, unit_count, total_gfa)
             construction_cost = CONSTRUCTION_COST_PER_SQM.get(dev_type, 2_400_000)
@@ -1266,6 +1300,13 @@ class ComprehensiveAnalysisService:
                 "unit_count": unit_count,
                 "building_area_sqm": round(building_area, 1),
                 "floor_count": floor_count,
+                # ★층수 상한에 걸려 계획이 축소됐는지 — 화면이 "왜 용적률을 다 못 쓰는가"를
+                #   설명할 수 있어야 한다. 이 값이 없으면 축소가 조용히 일어난다.
+                "floor_capped": floor_capped,
+                "floors_by_far": _floors_by_far,
+                # ★제약이 계획을 깎았다면 **그 제약의 근거**를 함께 보낸다.
+                #   근거 없는 제약이 조용히 용적률을 내리는 일을 막는다(2026-08-23).
+                "floor_cap_law": _cap_law,
                 "parking_count": parking,
                 "construction_cost_per_sqm": construction_cost,
                 "estimated_construction_cost_won": int(total_gfa * construction_cost),
@@ -1456,10 +1497,18 @@ class ComprehensiveAnalysisService:
                 "개별공시지가가 조회되지 않았습니다. 토지대장 미등록 또는 비과세 필지일 수 있습니다."
             )
 
+        # ★공시지가의 **기준연도**를 값과 함께 싣는다(2026-08-22).
+        #   기준연도가 화면에 없어서, `year=2025` 하드코딩으로 1년 낡은 공시지가가
+        #   나가는 동안 아무도 눈치채지 못했다(#753). 값만 보이면 낡음이 보이지 않는다.
+        #   ★폴백(land_register)으로 받은 값은 연도를 모른다 → None(화면에서 미표시).
+        #     모르는 연도를 지어내면 "최신"이라는 거짓 신호가 된다.
+        official_price_year = latest.get("year") if latest.get("price_per_sqm") else None
+
         return {
             "official_price_per_sqm": price_per_sqm,
             "official_price_per_pyeong": int(price_per_sqm * 3.305785),
             "total_official_value_won": int(price_per_sqm * land_area),
+            "official_price_year": official_price_year,
             "estimated_market_per_sqm": estimated_market,
             "estimated_market_per_pyeong": int(estimated_market * 3.305785),
             "total_estimated_value_won": int(estimated_market * land_area),

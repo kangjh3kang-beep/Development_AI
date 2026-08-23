@@ -10,6 +10,8 @@ from typing import Any
 
 import structlog
 
+from app.services.ai.llm_failure import failure_reason as _failure_reason
+
 logger = structlog.get_logger(__name__)
 
 # 등기 분석 결과 캐시(모듈) — CODEF 발급은 느리고(약 40~50s) 유료라 동일 필지 재분석을
@@ -477,6 +479,9 @@ class RegistryAnalysisService:
                 "ownership": {}, "provisional_registration": {"exists": None},
                 "seizure": [], "mortgage": [], "other_rights": [],
                 "right_to_demand_sale": {"possible": "판단보류", "reason": "등기 내용 확인 필요"},
-                "rights_analysis": "AI 권리분석은 일시적으로 제공되지 않습니다. 등기부 내용을 확인하세요.",
+                # ★"일시적"이라고 단정하지 않는다 — 그 표기가 결정론적 영구 실패를
+                #   일시 장애로 위장해 오래 숨긴 전례가 있다(2026-08-21 LLM 계층 사망).
+                "rights_analysis": "AI 권리분석을 생성하지 못했습니다. 등기부 내용을 직접 확인하세요.",
+                "failure_reason": _failure_reason(e),
                 "risks": [], "safety_grade": "주의", "summary": "분석 불가",
             }

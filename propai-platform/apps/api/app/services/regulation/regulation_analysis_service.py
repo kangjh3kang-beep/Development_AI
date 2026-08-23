@@ -729,7 +729,8 @@ class RegulationAnalysisService:
         return {
             "generated": False,
             "fallback_reason": reason,
-            "summary": f"{zone or '미상'} 기준 적용 규제를 계층별로 정리했습니다. AI 통합 해석은 일시적으로 제공되지 않습니다.",
+            # ★"일시적"이라고 단정하지 않는다 — 그 표기가 영구 실패를 일시 장애로 위장한다.
+            "summary": f"{zone or '미상'} 기준 적용 규제를 계층별로 정리했습니다. AI 통합 해석은 생성하지 못했습니다.",
             "key_constraints": [d["name"] for d in districts if d["impact"] == "상"][:4],
             "dev_impact": "용도지역 허용용도와 조례 강화 한도, 중첩 규제를 우선 확인하세요.",
             "strategies": ["지구단위계획·조례 확인", "영향도 높은 규제 사전 협의"],
