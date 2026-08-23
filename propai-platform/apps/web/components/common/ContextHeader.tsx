@@ -28,6 +28,7 @@
 
 import { useState } from "react";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { classifySelection } from "@/lib/selection-integrity";
 import {
   deriveContextHeaderData,
   deriveSitePipelineSteps,
@@ -134,6 +135,16 @@ export function ContextHeader({
   const projectId = useProjectContextStore((s) => s.projectId);
   const projectName = useProjectContextStore((s) => s.projectName);
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
+
+  // ★헤더가 "통합 N필지"라고 **단정**하던 것을 멈춘다(2026-08-24 · 라이브 화면에서 발견).
+  //   선택 화면 배너는 이미 "하나의 개발 부지가 아닙니다(최대 290km)"라고 고지하는데,
+  //   바로 위 헤더는 같은 순간 "대지면적 162,033㎡ · 통합 3필지"라고 말했다 —
+  //   **한 화면이 자기모순**이다. 사용자는 위쪽(헤더)을 먼저 읽는다.
+  //   ★판정은 선택 화면과 **같은 판별자**를 쓴다(산식 복제 금지 — 두 표면이 갈리면 그게 결함이다).
+  const selectionVerdict = classifySelection(
+    (siteAnalysis as { parcels?: Array<{ address?: string | null; lat?: number | null; lon?: number | null }> } | null)
+      ?.parcels ?? null,
+  ).verdict;
   // 설계 산출(designData) — 부지분석에 용도지역이 없을 때 설계 폼이 쓴 용도지역으로 폴백하기 위해 구독.
   const designData = useProjectContextStore((s) => s.designData);
   const [showEvidence, setShowEvidence] = useState(false);
@@ -210,7 +221,14 @@ export function ContextHeader({
         <ContextChip
           label="대지면적"
           value={area}
-          badge={data.isMultiParcel ? `통합 ${data.parcelCount}필지` : null}
+          // ★하나의 부지가 아니면 "통합"이라 부르지 않는다 — 합계임을 밝힌다.
+          badge={
+            data.isMultiParcel
+              ? selectionVerdict === "single_site"
+                ? `통합 ${data.parcelCount}필지`
+                : `${data.parcelCount}필지 합계 · 통합 부지 아님`
+              : null
+          }
         />
 
         {/* 근거 토글 — 근거 항목이 있을 때만 노출(무목업: 근거 없으면 버튼 자체 미표시) */}
