@@ -939,11 +939,37 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
     )
 
     features: list[dict] = []
+    # ★탈락을 침묵시키지 않는다(2026-08-23) — `#772` 가 build_integrated_context 에서 봉합한
+    #   같은 침묵이 이 형제 함수에 남아 있었다(규율 §6 "고친 자리의 형제·미러를 스윕한다" 미이행분).
+    #   종전 `if not isinstance(r, dict): continue` 는 **두 경로**를 함께 삼켰다:
+    #     ① `_resolve_one` 의 `return None` — PNU 를 끝내 못 찾은 필지
+    #     ② `return_exceptions=True` 가 담아 온 예외
+    #   입력 N 개를 넣었는데 출력이 M 개여도 **어디로 갔는지 알 방법이 없었다** — 그래서
+    #   "필지를 넣었는데 구획도에 안 나온다"는 신고가 오면 탈락인지 다른 원인인지 가릴 수 없었다.
+    #   ★계약은 안 바꾼다: `features` 의 의미는 그대로이고, 계수를 **추가**만 한다(소비처 무회귀).
+    dropped: list[dict] = []
     total_area = 0.0
     lat_sum = lon_sum = 0.0
     coord_n = 0
-    for r in results:
+    # ★zip 이 성립하는 근거: asyncio.gather 는 **입력 순서대로** 결과를 돌려준다(완료 순서가
+    #   아니다). 그래서 items[i] 와 results[i] 가 같은 필지다 — 탈락한 입력을 특정할 수 있다.
+    #   ★`strict=True` 가 필요하다: 길이가 어긋나면 zip 은 **조용히 짧은 쪽에서 끊는다** —
+    #     그러면 탈락을 세려고 만든 이 루프가 정작 **탈락을 침묵**시킨다(고치려던 것과 같은 결함).
+    #     asyncio.gather 는 입력 수만큼 돌려주므로 이 불변식은 구성상 성립하고, 깨지면 그때는
+    #     조용한 오답보다 시끄러운 실패가 낫다.
+    for it, r in zip(items, results, strict=True):
         if not isinstance(r, dict):
+            _addr = str(it.get("address") or it.get("jibun_address") or "").strip()
+            if isinstance(r, BaseException):
+                _reason, _detail = "lookup_error", type(r).__name__
+            else:
+                # `_resolve_one` 이 None 을 돌려준 유일한 경로 = PNU 미확보(지오코딩·점조회 모두 실패)
+                _reason, _detail = "pnu_unresolved", None
+            dropped.append({"address": _addr, "pnu": it.get("pnu"), "reason": _reason, "detail": _detail})
+            logger.warning(
+                "[parcel-boundaries] 필지 탈락 — address=%s pnu=%s reason=%s detail=%s",
+                _addr or "(주소없음)", it.get("pnu"), _reason, _detail,
+            )
             continue
         coords = r.pop("_coords", None)
         area_sqm = r.pop("_area_sqm", 0.0)
@@ -1133,6 +1159,13 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
         "center": center,
         "total_area_sqm": round(total_area, 1),
         "parcel_count": len(features),
+        # ★입력 대비 결과를 **응답이 스스로 말한다**(2026-08-23). 종전에는 `parcel_count`(=해석
+        #   성공 수)만 있어서, 6 을 넣고 5 가 나와도 화면은 "5필지"라고만 했다 — 사용자에게는
+        #   "필지가 사라졌다"로 보이고, 우리에게는 **빈도도 사유도 없는** 침묵이었다.
+        #   `dropped` 가 비어 있으면 정상이다(빈 배열은 "탈락 없음"이라는 **양성 정보**다).
+        "requested_count": len(items),
+        "resolved_count": len(features),
+        "dropped": dropped,
         "integrated_analysis": integrated_analysis,  # ★다필지 종합분석(속성·형질 차이+통합지표)
         "adjacency": adjacency,
         "neighbors": neighbors,            # A+D: 주변 필지·도로(연회색/도로색) 벡터 지적도
