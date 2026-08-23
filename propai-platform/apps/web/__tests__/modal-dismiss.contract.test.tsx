@@ -683,30 +683,78 @@ describe("모달 접근성 — 포커스 생명주기(2026-08-22 부분 상환)"
     "components/sales-app/SiteEnterModal.tsx",
     "components/sales-app/SitePasswordModal.tsx",
     "components/collaboration/DocumentViewerModal.tsx",
+    // ── 2026-08-23 R2 — **계약 비대칭**이 진짜 원인이었다 ──
+    //   ESC 계약은 `useDismissible`(open prop) / `useDismissibleWhileMounted`(마운트=열림)
+    //   **두 변종**인데 포커스 계약은 앞의 것만 있었다. 아래 셋 중 둘이 마운트=열림이라
+    //   넣을 `open` 인자가 없었던 것이지, 표면별 사정이 달랐던 게 아니다.
+    "components/desk/ConsentModal.tsx",
+    "components/g2b/G2BBidDetailModal.tsx",
+    "components/orchestration/InputResolveModal.tsx",
   ] as const;
 
   /** 아직 배선하지 않은 표면 — **사유를 적는다**(빈 사유는 아래 래칫이 막는다). */
   const FOCUS_UNWIRED: Record<string, string> = {
-    // ★사유는 **실측**이어야 한다 — 2026-08-22 R1 에서 옛 사유 5건 중 3건이 거짓으로 드러났다
-    //   (`autoFocus 충돌` ×2 = 그 파일에 autoFocus 가 0개, `iframe 정책` = iframe 0개).
-    //   물려받은 *판단*을 재보지 않고 쓰면 부채가 영원히 미뤄진다. 아래는 재본 사유다.
-    "components/desk/ConsentModal.tsx":
-      "동의 체크박스가 tpl.consents 를 map 하는 **동적 개수**라 첫 포커스 대상이 데이터에 따라 변한다 — 법정 동의 흐름이라 표면 확인 후 배선",
-    "components/sales-app/FieldNav.tsx":
-      "네비 시트 — role=dialog/aria-modal 을 이미 선언하므로 트랩 대상이 맞다. 다만 하단탭 네비게이션이라 **닫힌 뒤 복귀 대상**(누른 탭 vs 원래 화면) 정책을 먼저 정해야 한다",
+    // ★남은 둘은 **드로어**다. 실측해 보니 진짜 제약이 하나 있다 — 백드롭 안에 **본체의
+    //   형제로** 포커스 가능한 닫기 버튼이 있어(`CustomerCardDrawer.tsx:211`), 본체에만
+    //   트랩을 걸면 그 버튼이 트랩 **밖**이 된다. 트랩 범위를 어디로 잡을지 정한 뒤 배선한다.
+    //   (종전 사유였던 *"드로어라 규약이 다르다"* 는 근거가 아니었다 — 둘 다 이미
+    //    `role=dialog`/`aria-modal` 을 선언하므로 ARIA 상 트랩 대상이 맞다.)
     "components/sales/CustomerCardDrawer.tsx":
-      "우측 드로어(role=dialog/aria-modal 선언함) — 383줄로 내부 상호작용이 많아 첫 포커스 대상 선정에 표면 확인이 필요하다",
-    "components/g2b/G2BBidDetailModal.tsx":
-      "옛 사유(‘탭 컨트롤 다수’)는 **거짓**이다 — 이 파일에 탭이 0개다(실측). 남은 이유는 439줄 상세 표면이라 R1 범위를 넘긴 것뿐이며, 다음 라운드 **1순위**다",
-    "components/orchestration/InputResolveModal.tsx":
-      "미해결 입력을 map 으로 그리는 **동적 필드 수**라 첫 포커스 대상이 실행마다 달라진다 — 대상 선정 규칙을 정한 뒤 배선",
+      "우측 드로어 — 백드롭 딤이 **포커스 가능한 닫기 버튼**이고 본체의 형제라, 본체에만 트랩을 걸면 그 버튼이 트랩 밖이 된다. 범위(본체만 vs 백드롭 포함)를 정한 뒤 배선",
+    "components/sales-app/FieldNav.tsx":
+      "하단 네비 시트 — 항목을 누르면 **라우팅으로 언마운트**된다. 복귀 대상이 사라지는 경로라 훅의 `document.contains` 방어에만 기대도 되는지 확인 후 배선",
   };
+
+  /**
+   * 마운트 자체가 열림인 표면 — `open` 인자가 없어 `useModalFocusWhileMounted` 를 쓴다.
+   * ★이 목록이 **닫힘 픽스처 면제**의 근거다(닫힌 상태가 원리적으로 존재하지 않는다).
+   */
+  /**
+   * 닫힘 픽스처를 만들 수 **없는** 표면 — 사유를 적는다(빈 사유는 아래 래칫이 막는다).
+   *
+   * ★"음성대조가 없다"를 조용히 넘기지 않기 위한 맵이다. 게으름과 **원리적 불가**를
+   *   구분해서 적어야 다음 사람이 재시도할지 말지 안다.
+   */
+  const CLOSED_FIXTURE_EXEMPT: Record<string, string> = {
+    "components/desk/ConsentModal.tsx":
+      "마운트 자체가 열림 — 부모가 열 때만 렌더하므로 닫힌 상태가 존재하지 않는다",
+    "components/g2b/G2BBidDetailModal.tsx":
+      "마운트 자체가 열림 — 부모가 상세를 고른 순간에만 렌더하므로 닫힌 상태가 존재하지 않는다",
+    "components/orchestration/InputResolveModal.tsx":
+      "★타입이 막는다 — `nodeId` 가 `NodeId` 유니온이라 **존재하지 않는 노드를 줄 수 없고**, 유효한 id 는 항상 노드를 찾아 열린다. 억지 캐스팅으로 타입이 막는 상태를 만들지 않는다(그건 실사용에 없는 경로다)",
+  };
+
+  const FOCUS_WIRED_WHILE_MOUNTED: readonly string[] = [
+    // ★실측으로 확정한 목록이다. `ConfirmDeleteModal` 은 `useDismissible(z, open, …)` 을 쓰는
+    //   **open prop 방식**이라 여기 들어가지 않는다(처음에 넣었다가 이 계약이 잡아냈다).
+    "components/desk/ConsentModal.tsx",
+    "components/g2b/G2BBidDetailModal.tsx",
+  ];
 
   it("★배선된 표면은 훅을 **호출**한다(임포트만 남는 회귀 방지)", () => {
     for (const f of FOCUS_WIRED) {
       const code = executable(join(WEB_ROOT, f));
-      expect(code, `${f} 가 useModalFocus 를 호출하지 않는다`).toContain("useModalFocus(");
+      // ★두 변종 중 하나를 **호출**해야 한다. `useModalFocus(` 만 보면
+      //   `useModalFocusWhileMounted(` 를 쓰는 표면이 미배선으로 오판된다(실측).
+      const called =
+        code.includes("useModalFocus(") || code.includes("useModalFocusWhileMounted(");
+      expect(called, `${f} 가 포커스 훅을 호출하지 않는다`).toBe(true);
     }
+  });
+
+  it("★`WhileMounted` 표면은 실제로 그 변종을 쓴다 — 상수 리터럴 `true` 우회 금지", () => {
+    for (const f of FOCUS_WIRED_WHILE_MOUNTED) {
+      const code = executable(join(WEB_ROOT, f));
+      expect(code, `${f} 가 WhileMounted 변종을 쓰지 않는다`).toContain(
+        "useModalFocusWhileMounted(",
+      );
+      // 열림 인자에 상수를 박는 우회(= 열림 검사 누락과 구분 불가)를 막는다.
+      expect(code, `${f} 가 open 인자에 상수 리터럴을 박았다`).not.toContain(
+        "useModalFocus(bodyRef, true)",
+      );
+    }
+    // ★양성 대조 — 목록이 비면 위 루프가 통째로 사라진다.
+    expect(FOCUS_WIRED_WHILE_MOUNTED.length).toBeGreaterThanOrEqual(2);
   });
 
   it("★미배선 사유가 비어 있지 않다 — 부채를 뭉뚱그리지 않는다", () => {
@@ -769,10 +817,21 @@ describe("모달 접근성 — 포커스 생명주기(2026-08-22 부분 상환)"
     expect(WIRED_RUNTIME.length).toBe(FOCUS_WIRED.length);
 
     // ★닫힘 픽스처가 없으면 음성대조가 **소리 없이 사라진다**(아래 `if (c.closed)`).
+    //   단 **마운트 자체가 열림**인 표면은 닫힌 상태가 원리적으로 없다(부모가 렌더를 안 한다)
+    //   — 면제하되 **그 사실을 목록으로 못박아** 아무 표면이나 빠져나가지 못하게 한다.
     for (const c of WIRED_RUNTIME) {
+      if (CLOSED_FIXTURE_EXEMPT[c.file]) continue;
       expect(c.closed, `${c.file} 에 닫힘 픽스처가 없어 음성대조가 실행되지 않는다`).toBeTypeOf(
         "function",
       );
+    }
+    // ★면제 목록이 실제 배선 표면과 어긋나면 다음 사람이 오독한다(죽은 면제 방지).
+    for (const f of FOCUS_WIRED_WHILE_MOUNTED) {
+      expect(FOCUS_WIRED as readonly string[], `${f} 는 배선 목록에 없다`).toContain(f);
+    }
+    for (const [f, reason] of Object.entries(CLOSED_FIXTURE_EXEMPT)) {
+      expect(FOCUS_WIRED as readonly string[], `${f} 는 배선 목록에 없다`).toContain(f);
+      expect(reason.length, `${f} 의 면제 사유가 너무 짧다`).toBeGreaterThan(20);
     }
   });
 
