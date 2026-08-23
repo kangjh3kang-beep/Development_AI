@@ -227,3 +227,131 @@ async def test_대조군_등급이_없는_응답에는_정밀도_줄이_붙지_�
     out = await rough_feasibility.ainvoke({"address": "주소"})
     assert "등급: F" in out
     assert "[정밀도]" not in out
+
+
+# ── 5) 보고서 본문 세부 — 근거·입력별 등급이 실제로 렌더된다 ────────────────
+def test_보고서_고지가_근거와_입력별_등급을_함께_보여준다() -> None:
+    """★합성 결과만 보여 주면 **무엇 때문에 낮아졌는지**를 읽는 사람이 알 수 없다.
+
+    변이 검증에서 `근거:`·`입력별 정밀도:` 줄을 지워도 살아남았다 — 픽스처에 그 값을
+    넣어 두고도 **단언하지 않았기 때문**이다. 넣은 값은 반드시 확인한다.
+    """
+    s = _scenario("E", "개략(추정)", basis="대지면적 × 실효용적률 — 설계 미반영(개략)")
+    s["precision_inputs"] = {"gfa": "E", "land_cost": "V", "sale_price": None}
+    text = _exec_text(s)
+    assert "근거: 대지면적 × 실효용적률 — 설계 미반영(개략)" in text
+    assert "입력별 정밀도:" in text
+    assert "연면적 개략(추정)" in text
+    assert "토지비 확인됨" in text
+    # ★None 은 "미표기"로 **말한다** — 빈칸으로 두면 읽는 사람이 확인된 것으로 오해한다.
+    assert "분양단가 미표기" in text
+
+
+# ── 6) 보고서 JSON 경계 — 구조화 소비처도 등급 없이 숫자만 받지 않는다 ──────
+@pytest.mark.asyncio
+async def test_보고서_JSON에_정밀도_블록이_동봉된다() -> None:
+    """★프론트·다른 보고서가 이 JSON 을 먹는다. 여기서 등급이 빠지면
+    같은 수치가 화면에선 '개략', 보고서에선 확정으로 읽힌다."""
+    from app.services.feasibility.rough_scenario_report import (
+        generate_rough_scenario_report,
+    )
+
+    s = _scenario("E", "개략(추정)")
+    j = await generate_rough_scenario_report(s, use_llm=False, format="json")
+    assert isinstance(j, dict)
+    # 전제 가드 — 보고서가 실제로 만들어졌는지 먼저 확인(대상 0개 통과 방지).
+    assert j.get("summary"), "보고서 JSON 이 비었다 — 공허한 초록"
+    assert j["precision"]["grade"] == "E"
+    assert j["precision"]["label"] == "개략(추정)"
+    assert j["precision"]["inputs"]["gfa"] == "E"
+
+
+# ── 7) ★페이로드 배선 — 개략수지 응답이 실제로 등급을 싣는가(끝까지 태운다) ──
+def _stub_orchestrator(monkeypatch, *, far: float | None, price_source: str):
+    """`build_rough_scenario` 를 네트워크 없이 완주시키는 최소 스텁.
+
+    ★소스 grep 으로 "precision 키가 있다"를 확인하면 **주석·문자열에 뚫린다**.
+    실제로 함수를 태워 **반환 dict** 를 본다.
+    """
+    import app.services.feasibility.rough_feasibility_orchestrator as orch
+    from app.services.feasibility.modules.base_module import ModuleInput
+
+    land_area = 1000.0
+    gfa = land_area * (far or 200.0) / 100.0
+    rec = {
+        "development_type": "M06",
+        "type_name": "일반분양",
+        "feasibility": {"total_cost_won": 1, "total_revenue_won": 1, "net_profit_won": 0},
+        "unit_summary": {"total_gfa_sqm": gfa, "total_households": 1, "avg_area_pyeong": 34.0},
+        "input_used": ModuleInput(
+            development_type="M06", total_land_area_sqm=land_area,
+            official_price_per_sqm=3_000_000, price_multiplier=1.1,
+            total_gfa_sqm=gfa, total_households=1, avg_sale_price_per_pyeong=15_000_000,
+            avg_area_pyeong=34.0, sale_ratio=0.95, equity_won=10_000_000_000,
+        ),
+        "composite_score": 80.0,
+    }
+
+    async def _fake_integrated(parcels):
+        return None
+
+    async def _fake_auto(**_kw):
+        return {
+            "address": "정밀도-QA", "zone_type": "제1종일반주거지역",
+            "land_area_sqm": land_area, "effective_far_pct": far,
+            "recommendations": [rec], "all_results": [rec],
+            "land_price_reliable": True, "area_reliable": True, "scenario_status": "actual",
+        }
+
+    async def _fake_desk(**kw):
+        return {"ok": True, "appraised_price_per_sqm": 5_000_000,
+                "appraised_total_won": int(5_000_000 * (kw.get("area_sqm") or 0)),
+                "evidence": None, "source": "NED 토지특성", "confidence": 0.8}
+
+    async def _fake_price(*, db, site_id, dev_type, region, address):
+        return 40_000_000, price_source, "테스트 분양단가", None
+
+    def _fake_ratios(input_used):
+        return 0.08, 0.04, None
+
+    monkeypatch.setattr(orch, "build_integrated_context", _fake_integrated)
+    monkeypatch.setattr(orch, "_auto_recommend", _fake_auto)
+    monkeypatch.setattr(orch, "desk_appraisal", _fake_desk)
+    monkeypatch.setattr(orch, "_resolve_sale_price_per_pyeong", _fake_price)
+    monkeypatch.setattr(orch, "_engine_cost_ratios", _fake_ratios)
+    return orch
+
+
+@pytest.mark.asyncio
+async def test_개략수지_응답이_합성_등급을_싣는다(monkeypatch) -> None:
+    """연면적 개략(E) + 분양단가 지역시세표(추정=E) → 응답 전체가 개략(E)."""
+    orch = _stub_orchestrator(
+        monkeypatch, far=200.0, price_source="지역 시세 테이블(sigungu·추정·비실거래)")
+    out = await orch.build_rough_scenario(address="정밀도-QA")
+
+    assert out["inputs"]["gfa_sqm"] is not None, "GFA 미산출 — 검사 대상이 없는 초록"
+    assert out["precision"] == "E"
+    assert out["precision_label"] == "개략(추정)"
+    assert out["precision_inputs"]["gfa"] == "E"
+    assert out["precision_inputs"]["land_cost"] == "V"
+    # ★지역 시세표는 실거래가 아니다 — source 의 '추정' 표식으로 판정한다.
+    assert out["precision_inputs"]["sale_price"] == "E"
+
+
+@pytest.mark.asyncio
+async def test_연면적을_못_구하면_응답_등급도_미표기다(monkeypatch) -> None:
+    """★대조군 — 같은 경로가 **다른 답**을 내야 배선이 잠긴다.
+
+    실효용적률 미확보 → GFA 미산출 → 등급 미상 → 응답 전체가 `None`.
+    낙관적으로 E 를 채우면 이 단언이 죽는다.
+    """
+    orch = _stub_orchestrator(monkeypatch, far=None, price_source="주변 실거래(MOLIT)")
+    out = await orch.build_rough_scenario(address="정밀도-QA")
+
+    assert out["inputs"]["gfa_sqm"] is None, "GFA 가 산출됐다 — 대조군 전제가 무너졌다"
+    assert out["precision"] is None
+    assert out["precision_label"] == "정밀도 미표기"
+    assert "연면적" in out["precision_basis"]
+    assert out["precision_inputs"]["gfa"] is None
+    # 분양단가는 실거래라 확인됨 — **한 입력이 모른다고 나머지를 지우지 않는다**.
+    assert out["precision_inputs"]["sale_price"] == "V"
