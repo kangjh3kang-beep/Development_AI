@@ -40,11 +40,19 @@ type Feature = {
 };
 type Adjacency = { contiguous: boolean | null; components: number | null; note: string };
 type Neighbor = { pnu: string; jimok: string; is_road: boolean; geometry: any };
+/** 해석되지 못하고 탈락한 입력 필지 — 서버가 사유와 함께 돌려준다(침묵 금지). */
+type DroppedParcel = { address: string; pnu?: string | null; reason: string; detail?: string | null };
+
 type Boundaries = {
   features: Feature[];
   center: { lat: number; lon: number } | null;
   total_area_sqm: number;
   parcel_count: number;
+  // ★입력 대비 결과 — `parcel_count`(=해석 성공 수)만 보면 6 을 넣고 5 가 나와도 "5필지"로만
+  //   보인다. 사용자에겐 "필지가 사라졌다"인데 화면은 아무 말도 안 했다.
+  requested_count?: number;
+  resolved_count?: number;
+  dropped?: DroppedParcel[];
   adjacency?: Adjacency;
   neighbors?: Neighbor[];       // A+D: 주변 필지·도로(벡터 지적도)
   merged_geometry?: any;        // B: 통합개발 외곽선
@@ -228,6 +236,29 @@ export function ParcelBoundaryMap({
           </div>
         );
       })()}
+      {/* ★탈락 고지 — 넣은 필지가 결과에 없으면 그 사실을 말한다(2026-08-23).
+          `dropped` 가 빈 배열이면 아무것도 그리지 않는다(정상은 조용한 게 맞다). */}
+      {data && (data.dropped?.length ?? 0) > 0 && (
+        <div
+          data-testid="parcel-drop-notice"
+          role="status"
+          className="mb-2 flex items-start gap-2 rounded-lg border border-[var(--status-error)]/30 bg-[var(--status-error)]/10 px-3 py-2 text-[11px] font-semibold text-[var(--status-error)]"
+        >
+          <Scissors className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+          <span>
+            <b className="font-black">
+              {data.requested_count ?? "?"}필지 중 {data.dropped!.length}필지를 찾지 못했습니다
+            </b>
+            <span className="ml-1 font-semibold">
+              — {data.dropped!.slice(0, 3).map((d) => d.address || "(주소없음)").join(" · ")}
+              {data.dropped!.length > 3 ? " 외" : ""}
+              {". 아래 구획도·합계 면적은 "}
+              {data.resolved_count ?? data.parcel_count}필지 기준입니다. 지번을 확인하고 다시 지정하세요.
+            </span>
+          </span>
+        </div>
+      )}
+
       {/* 다필지 인접성(통합개발 가능 여부) */}
       {data && data.parcel_count >= 2 && data.adjacency && (
         <div className={`mb-2 inline-flex flex-wrap items-baseline gap-1 rounded-lg border px-3 py-2 text-[11px] font-semibold ${
