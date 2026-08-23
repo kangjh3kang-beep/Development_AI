@@ -272,6 +272,39 @@ export function ProjectAnalysisSummary({ locale }: { locale?: string }) {
     ? "조례·도시계획 확정값 승격 전 잠정 적용 — 국가 법정상한을 시드로 사용"
     : site?.farBasis || ord?.legalBasis || null;
 
+  // ── 건축계획 정직 고지 (라이브 실측 2026-08-24) ──────────────────────────
+  //
+  // ★무엇이 있었나: 이 화면 한 페이지 안에 두 기준이 동시에 있었다(역삼동 736 실측).
+  //     건축계획      용적률 1,300% · 건폐율 80% · 65층 · 연면적 1,911,962㎡
+  //     건축 가능 범위 실효  158.2% · 건폐 25.7% · 7~8층 · 연면적   256,336㎡
+  //   **연면적 7.5배 차이**인데 건축계획 블록엔 아무 고지도 없었다.
+  //
+  // ★그런데 데이터는 이미 알고 있었다 — 저장된 `designData.farIsEffective === false` 가
+  //   "이 용적률은 실효가 아니라 법정상한 폴백"이라고 말한다. `DesignStudio` 와 `MetricBar` 는
+  //   그 신호를 이미 정직하게 표시하는데(각각 "법정상한 …"·"법정상한 기준" 배지)
+  //   **이 형제 표면만 빠져 있었다.** 새 신호를 만들지 않고 **같은 신호를 여기서도 읽는다.**
+  //
+  // ★왜 값 옆에 적는가: 이 페이지의 공사비·수지 카드는 스스로 "입력 근거: **설계 연면적** 활용"
+  //   이라고 적어 둔다. 즉 이 연면적이 곧 총사업비의 입력이다. 고지가 다른 블록에 있으면
+  //   읽히지 않는다 — **고지는 결함 옆에 있어야 한다.**
+  const designFarIsLegalFallback = design?.far != null && design?.farIsEffective === false;
+  // 건축가능 연면적(실효 기준) — 다필지면 서버 통합분석 산출, 아니면 실효용적률 × 유효면적.
+  //   둘 다 없으면 null: **비교 근거가 없으면 초과라고 말하지 않는다**(없는 판정을 만들지 않는다).
+  const buildableGfa = (() => {
+    const integ = integrated?.integrated?.integrated_gfa_sqm;
+    if (typeof integ === "number" && integ > 0) return { value: Math.round(integ), basis: "다필지 통합분석" };
+    const area = effectiveLandAreaSqm(site);
+    if (area != null && area > 0 && effFar != null && effFar > 0) {
+      return { value: Math.round((area * effFar) / 100), basis: `실효 용적률 ${effFar}%` };
+    }
+    return null;
+  })();
+  const designGfa = design?.totalGfaSqm ?? null;
+  const gfaOverRatio =
+    designGfa != null && buildableGfa != null && designGfa > buildableGfa.value
+      ? designGfa / buildableGfa.value
+      : null;
+
   // 종상향 잠재(현행과 분리해 표기) — 잠재 상한 + 최상 가능성 등급(있을 때만).
   const upFarHigh = site?.upzoningPotentialFarHigh ?? null;
   // ★범위가 붕괴했으면(상·하한이 한 값) 이 숫자는 '도달 가능한 최댓값'이 아니라
@@ -535,10 +568,50 @@ export function ProjectAnalysisSummary({ locale }: { locale?: string }) {
         {hasDesign ? (
           <Section title="건축계획">
             <DataField label="건축유형" value={design?.buildingType} />
-            <DataField label="연면적" value={numOrNull(design?.totalGfaSqm, " ㎡")} />
+            {/* ★한도 초과를 **값 옆에서** 말한다 — 이 연면적이 곧 공사비·수지의 입력이다. */}
+            <DataField
+              label="연면적"
+              value={
+                designGfa == null
+                  ? null
+                  : `${designGfa.toLocaleString()} ㎡${
+                      gfaOverRatio != null
+                        ? ` · 건축가능 ${buildableGfa!.value.toLocaleString()}㎡ 초과(${gfaOverRatio.toFixed(1)}배)`
+                        : ""
+                    }`
+              }
+              evidence={
+                gfaOverRatio != null
+                  ? `건축가능 연면적 ${buildableGfa!.value.toLocaleString()}㎡ 는 ${buildableGfa!.basis} 기준입니다. ` +
+                    `이 설계 연면적은 그 한도를 넘습니다 — 아래 공사비·수지는 이 연면적을 입력으로 쓰므로 금액도 함께 과대해집니다.`
+                  : null
+              }
+            />
             <DataField label="층수" value={numOrNull(design?.floorCount, "층")} />
-            <DataField label="건폐율" value={pctOrNull(design?.bcr)} />
-            <DataField label="용적률" value={pctOrNull(design?.far)} />
+            {/* 건폐율은 저장된 실효 플래그가 없다 — 지어내지 않고 **두 값을 비교**해서만 말한다. */}
+            <DataField
+              label="건폐율"
+              value={
+                design?.bcr == null
+                  ? null
+                  : `${design.bcr}%${effBcr != null && design.bcr > effBcr ? ` · 실효 ${effBcr}% 초과` : ""}`
+              }
+            />
+            {/* ★designData 가 이미 싣고 있는 farIsEffective 를 여기서도 읽는다(형제 표면 정합). */}
+            <DataField
+              label="용적률"
+              value={
+                design?.far == null
+                  ? null
+                  : `${design.far}%${designFarIsLegalFallback ? " · 법정상한 기준(실효 아님)" : ""}`
+              }
+              evidence={
+                designFarIsLegalFallback && effFar != null
+                  ? `이 부지의 실효 용적률은 ${effFar}% 입니다(조례·다필지 반영). ` +
+                    `실효 한도를 확보하지 못해 법정상한으로 산출된 설계값이므로 확정 계획으로 읽지 마십시오.`
+                  : null
+              }
+            />
             {/* 평형 구성(unitTypes) — StagePreview 약속 항목과 산출을 정합(있을 때만 표시). */}
             <DataField label="평형 구성" value={design?.unitTypes?.length ? design.unitTypes.join(" · ") : null} />
           </Section>
