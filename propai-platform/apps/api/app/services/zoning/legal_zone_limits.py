@@ -17,6 +17,8 @@ from typing import Any
 
 import structlog
 
+from app.services.legal.legal_limit import LegalLimit
+
 # 데이터 원본(SSOT). auto_zoning_service.ZONE_LIMITS를 단일 출처로 사용.
 from app.services.zoning.auto_zoning_service import ZONE_LIMITS
 
@@ -59,28 +61,39 @@ FLOOR_CAP_BASIS: dict[str, str] = {
 }
 
 # 미수록 용도지역은 max를 min으로 간주(범위정보 없음 → 단일상한).
-ZONE_FAR_MIN: dict[str, int] = {
-    "제1종전용주거지역": 50,
-    "제2종전용주거지역": 100,
-    "제1종일반주거지역": 100,
-    "제2종일반주거지역": 150,
-    "제3종일반주거지역": 200,
-    "준주거지역": 200,
-    "중심상업지역": 400,
-    "일반상업지역": 300,
-    "근린상업지역": 200,
-    "유통상업지역": 200,
-    "전용공업지역": 150,
-    "일반공업지역": 200,
-    "준공업지역": 200,
-    "보전녹지지역": 50,
-    "생산녹지지역": 50,
-    "자연녹지지역": 50,
-    "보전관리지역": 50,
-    "생산관리지역": 50,
-    "계획관리지역": 50,
-    "농림지역": 50,
-    "자연환경보전지역": 50,
+#
+# ★2026-08-24 — 근거를 **값과 함께** 들려 보낸다. 종전에는 값이 원시 숫자였고 근거
+#   (국토계획법 시행령 제85조 — 용적률 범위)는 **위 주석**에만 있었다. 주석은 지워져도
+#   아무 테스트가 울지 않으므로, 값이 바뀌었는데 근거는 옛 조문을 가리키는 상태가
+#   조용히 성립한다(`MAX_FLOORS` 가 정확히 그렇게 틀렸다).
+#   ★공개 출력(`min_far_pct`)은 **숫자 그대로** 유지한다 — 소비처 계약 불변.
+_FAR_MIN_LAW = "국토의 계획 및 이용에 관한 법률 시행령 제85조(용도지역 안에서의 용적률) — 범위의 하한"
+
+ZONE_FAR_MIN: dict[str, LegalLimit] = {
+    zone: LegalLimit(v, law=_FAR_MIN_LAW)
+    for zone, v in {
+        "제1종전용주거지역": 50,
+        "제2종전용주거지역": 100,
+        "제1종일반주거지역": 100,
+        "제2종일반주거지역": 150,
+        "제3종일반주거지역": 200,
+        "준주거지역": 200,
+        "중심상업지역": 400,
+        "일반상업지역": 300,
+        "근린상업지역": 200,
+        "유통상업지역": 200,
+        "전용공업지역": 150,
+        "일반공업지역": 200,
+        "준공업지역": 200,
+        "보전녹지지역": 50,
+        "생산녹지지역": 50,
+        "자연녹지지역": 50,
+        "보전관리지역": 50,
+        "생산관리지역": 50,
+        "계획관리지역": 50,
+        "농림지역": 50,
+        "자연환경보전지역": 50,
+    }.items()
 }
 
 # ── 인센티브(완화) 근거 신호 ──
@@ -168,7 +181,9 @@ def legal_limits_for(zone_type: str | None) -> dict[str, Any] | None:
     if not limits:
         return None
     max_far = limits.get("max_far")
-    min_far = ZONE_FAR_MIN.get(key, max_far)
+    # ★공개 출력은 숫자 그대로 — 근거는 값이 들고 있고, 출력 계약은 바뀌지 않는다.
+    _min_limit = ZONE_FAR_MIN.get(key)
+    min_far = _min_limit.value if _min_limit is not None else max_far
     return {
         "zone_type": key,
         "max_bcr_pct": limits.get("max_bcr"),
