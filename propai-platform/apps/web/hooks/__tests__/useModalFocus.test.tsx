@@ -155,3 +155,72 @@ describe("useModalFocus", () => {
   });
 });
 
+
+// ── ★중첩 트랩 (2026-08-23 · `AuctionWorkspace` 라이트박스에서 드러났다) ──────────
+//
+//  모달 안에서 또 하나가 열리는 표면이 있다(상세 모달 > 사진 확대 라이트박스).
+//  안쪽이 **바깥 DOM 안에** 렌더되면 바깥의 `focusables` 는 안쪽 것까지 포함한다.
+//
+//  ★그래서 안쪽 마지막이 **바깥 마지막이 아닐 때만 우연히 동작한다** — 즉 레이아웃이
+//    바뀌면 뚫린다. 실제로 `AuctionWorkspace` 전용 스펙만으로는 이 규칙을 지워도 초록이었다
+//    (변이가 잡았다: 안쪽 뒤에 포커스 가능 요소가 더 있어 바깥이 경계에 닿지 않았다).
+//    → **최악 배치**(안쪽 마지막 = 바깥 마지막)를 여기서 결정론적으로 태운다.
+
+function NestedHarness({ inner }: { inner: boolean }) {
+  const outerRef = useRef<HTMLDivElement>(null);
+  const innerRef = useRef<HTMLDivElement>(null);
+  useModalFocus(outerRef, true);
+  useModalFocus(innerRef, inner);
+  return (
+    <div ref={outerRef} role="dialog" tabIndex={-1}>
+      <button type="button" data-testid="o-first">바깥 첫</button>
+      <button type="button" data-testid="o-mid">바깥 중간</button>
+      {/* ★안쪽을 **맨 뒤**에 둔다 — 안쪽 마지막이 곧 바깥 마지막이 되는 최악 배치다. */}
+      {inner && (
+        <div ref={innerRef} role="dialog" aria-label="안쪽" tabIndex={-1}>
+          <button type="button" data-testid="i-first">안쪽 첫</button>
+          <button type="button" data-testid="i-last">안쪽 끝</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+describe("useModalFocus — 중첩 트랩", () => {
+  it("★안쪽이 열리면 **안쪽**이 소유권을 갖는다 — 최악 배치에서도 바깥이 가로채지 않는다", () => {
+    render(<NestedHarness inner />);
+    const iLast = screen.getByTestId("i-last");
+    iLast.focus();
+    fireEvent.keyDown(document, { key: "Tab" });
+    // 양보가 없으면 바깥이 "마지막 → 첫"으로 돌려 `o-first` 가 된다.
+    expect(
+      document.activeElement,
+      "안쪽 마지막에서 Tab 이 바깥 첫 요소로 갔다 — 중첩 양보가 죽었다",
+    ).toBe(screen.getByTestId("i-first"));
+  });
+
+  it("★대조군 — 안쪽이 없으면 바깥이 정상적으로 가둔다(양보가 바깥을 죽이지 않는다)", () => {
+    render(<NestedHarness inner={false} />);
+    const oMid = screen.getByTestId("o-mid");
+    oMid.focus();
+    fireEvent.keyDown(document, { key: "Tab" });
+    expect(
+      document.activeElement,
+      "안쪽이 없는데 바깥 트랩이 돌지 않았다 — 양보 규칙이 바깥을 통째로 껐다",
+    ).toBe(screen.getByTestId("o-first"));
+  });
+
+  it("★포커스가 바깥으로 새면 **안쪽이 회수한다** — 양보가 회수까지 끄지 않는다", () => {
+    // ★처음엔 *"포커스가 바깥에 있으면 소유권도 바깥"* 이라고 적었다가 **실측에 반증됐다**.
+    //   안쪽이 열려 있는 동안에는 그것이 최상위 모달이므로, 밖으로 샌 포커스는 **회수**하는
+    //   것이 옳다(모달 의미론). 양보 규칙은 *"안쪽에 포커스가 있을 때 바깥이 끼어들지 않는다"*
+    //   는 뜻이지, *"안쪽이 회수를 포기한다"* 는 뜻이 아니다 — 두 조건을 갈라 둔다.
+    render(<NestedHarness inner />);
+    screen.getByTestId("o-mid").focus();
+    fireEvent.keyDown(document, { key: "Tab" });
+    expect(
+      document.activeElement,
+      "라이트박스가 열려 있는데 포커스가 뒤쪽 모달에 남았다",
+    ).toBe(screen.getByTestId("i-first"));
+  });
+});
