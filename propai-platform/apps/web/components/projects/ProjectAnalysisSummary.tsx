@@ -245,13 +245,28 @@ export function ProjectAnalysisSummary({ locale }: { locale?: string }) {
       : null;
 
   // 용도지역 표시값 — 통합 확보 시 dominant_zone(혼재 표기) 우선, 아니면 단일 degrade.
-  const zoneRowValue = integrated?.dominant_zone
-    ? (integrated.dominant_basis === "mixed_review_required" || site?.zoneMixed
-        ? `${integrated.dominant_zone} 외 (혼재·분리검토)`
-        : integrated.dominant_zone)
-    : site?.zoneCode
-      ? (site?.zoneMixed ? `${site.zoneCode} 외 (혼합지)` : site.zoneCode)
-      : null;
+  //
+  // ★라이브 실측(2026-08-24): 화면에 **`mixed_review_required` 외 (혼재·분리검토)** 가 떴다.
+  //   내부 센티널 문자열이 용도지역 이름 자리에 그대로 나온 것이다. 원인은 **검사한 필드가
+  //   달랐다**는 것 — 백엔드는 센티널을 `dominant_zone` **값**에 넣는데(#787 이 확립한
+  //   "임의 단일화 거부" 신호) 프론트는 `dominant_basis` 만 봤다:
+  //       API 실측:  dominant_zone="mixed_review_required" · dominant_basis="area_weighted"
+  //   그래서 첫 조건이 false 가 되고, 마침 `site.zoneMixed` 가 true 라 뒷말만 붙어
+  //   **우연히** 혼재 표기가 됐다. zoneMixed 가 false 였다면 센티널이 **맨몸으로** 나온다.
+  //
+  // ★센티널일 때 대표 필지 용도지역으로 대체하지 않는다 — 그것이 #787 이 방금 고친
+  //   "대표를 우세라 부르는" 결함이다. **이름을 짓지 않고 판정하지 않았다고 말한다.**
+  const MIXED_SENTINEL = "mixed_review_required";
+  const dominantZone = integrated?.dominant_zone ?? null;
+  const dominantIsMixedSentinel =
+    dominantZone === MIXED_SENTINEL || integrated?.dominant_basis === MIXED_SENTINEL;
+  const zoneRowValue = dominantIsMixedSentinel
+    ? "혼재(분리검토 필요) — 단일 용도지역으로 판정하지 않았습니다"
+    : dominantZone
+      ? (site?.zoneMixed ? `${dominantZone} 외 (혼재·분리검토)` : dominantZone)
+      : site?.zoneCode
+        ? (site?.zoneMixed ? `${site.zoneCode} 외 (혼합지)` : site.zoneCode)
+        : null;
 
   // ── 부지분석 풍성 데이터(SSOT rich 필드) — 첫 페이지 주력 노출 ──
   // 법정 상한(국가법 최대치)·실효 한도(조례 반영)·종상향 잠재 상한·최상 가능성 등급.

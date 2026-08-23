@@ -38,6 +38,12 @@ vi.mock("@/components/projects/SolarPlacementCard", () => ({ SolarPlacementCard:
 vi.mock("@/components/common/DevelopmentScenarioCard", () => ({ DevelopmentScenarioCard: () => null }));
 vi.mock("@/components/common/AnalysisVerificationPanel", () => ({ AnalysisVerificationPanel: () => null }));
 vi.mock("@/components/projects/ParcelExportButton", () => ({ ParcelExportButton: () => null }));
+// 분석 캐시는 테스트 간 오염원이다 — 항상 미스로 두고 저장은 무시한다.
+vi.mock("@/lib/analysis-fetch-cache", () => ({
+  TTL_30D: 1, TTL_7D: 1, TTL_3D: 1,
+  getCachedAnalysis: () => null,
+  setCachedAnalysis: () => {},
+}));
 
 const { postMock, getMock } = vi.hoisted(() => ({ postMock: vi.fn(), getMock: vi.fn() }));
 vi.mock("@/lib/api-client", async (importOriginal) => {
@@ -56,7 +62,16 @@ const LIVE = {
   area: 162_033,
 };
 
-function seed(design: Record<string, unknown>, opts: { effFar?: number | null; effBcr?: number | null } = {}) {
+/** 통합분석 응답을 제어한다(라이브 실측 형상 재현용). */
+function mockIntegrated(payload: Record<string, unknown>) {
+  postMock.mockImplementation((path: string) =>
+    String(path).includes("/zoning/integrated-analysis")
+      ? Promise.resolve(payload)
+      : Promise.reject(new Error("no network in test")),
+  );
+}
+
+function seed(design: Record<string, unknown>, opts: { effFar?: number | null; effBcr?: number | null; zoneMixed?: boolean } = {}) {
   act(() => {
     useProjectContextStore.setState({
       projectId: "p1",
@@ -65,9 +80,16 @@ function seed(design: Record<string, unknown>, opts: { effFar?: number | null; e
         landAreaSqm: LIVE.area,
         landAreaSqmTotal: LIVE.area,
         parcelCount: 3,
+        // 통합분석 호출은 `parcelCount > 1 && parcels.length > 1` 에 게이트돼 있다.
+        parcels: [
+          { pnu: "1168010100107360000", address: "역삼동 736", areaSqm: 100_000, landCategory: "대", ownerType: "미확인", zoneCode: "일반상업지역" },
+          { pnu: "1168010100107360001", address: "역삼동 736-1", areaSqm: 40_000, landCategory: "대", ownerType: "미확인", zoneCode: "일반상업지역" },
+          { pnu: "1168010100107360002", address: "역삼동 736-2", areaSqm: 22_033, landCategory: "대", ownerType: "미확인", zoneCode: "제3종일반주거지역" },
+        ],
         zoneCode: "일반상업지역",
         effectiveFarPct: opts.effFar === undefined ? LIVE.effFar : opts.effFar,
         effectiveBcrPct: opts.effBcr === undefined ? LIVE.effBcr : opts.effBcr,
+        zoneMixed: opts.zoneMixed ?? true,
       },
       designData: design,
       costData: null, feasibilityData: null, esgData: null, complianceData: null,
@@ -144,5 +166,66 @@ describe("건축계획 블록 — 한도 초과와 기준을 값 옆에서 말�
     render(<ProjectAnalysisSummary locale="ko" />);
     await waitFor(() => expect(fieldValue("건폐율")).not.toBeNull());
     expect(fieldValue("건폐율")).toContain("실효 25.7% 초과");
+  });
+});
+
+
+/**
+ * 센티널 유출 락 — **내부 코드가 용도지역 이름 자리에 나왔다**(라이브 실측 2026-08-24).
+ *
+ *     화면:   용도지역   `mixed_review_required` 외 (혼재·분리검토)
+ *     API:    dominant_zone="mixed_review_required" · dominant_basis="area_weighted"
+ *
+ * 프론트는 **`dominant_basis`** 만 센티널인지 봤는데 백엔드는 **`dominant_zone` 값**에 넣는다
+ * (#787 이 확립한 "임의 단일화 거부" 신호). 검사한 필드가 달랐다.
+ * 마침 `zoneMixed` 가 true 라 뒷말만 붙어 **우연히** 혼재 표기가 됐을 뿐,
+ * `zoneMixed` 가 false 였다면 센티널이 **맨몸으로** 나온다.
+ *
+ * ★센티널일 때 대표 필지 용도지역으로 대체하지 않는다 — 그것이 #787 이 방금 고친
+ *   "대표를 우세라 부르는" 결함이다. **이름을 짓지 않고 판정하지 않았다고 말한다.**
+ */
+describe("용도지역 — 내부 센티널이 화면에 새지 않는다", () => {
+  async function renderWithZone(payload: Record<string, unknown>, zoneMixed: boolean) {
+    mockIntegrated(payload);
+    seed({ totalGfaSqm: 200_000, far: LIVE.effFar, farIsEffective: true }, { zoneMixed });
+    render(<ProjectAnalysisSummary locale="ko" />);
+    await waitFor(() => expect(fieldValue("용도지역")).not.toBeNull());
+    return fieldValue("용도지역")!;
+  }
+
+  it("★라이브 재현 — dominant_zone 이 센티널이면 그 문자열을 화면에 쓰지 않는다", async () => {
+    const v = await renderWithZone(
+      { parcel_count: 3, dominant_zone: "mixed_review_required", dominant_basis: "area_weighted" },
+      true,
+    );
+    expect(v).not.toContain("mixed_review_required");
+    expect(v).toContain("혼재");
+    expect(v).toContain("판정하지 않았습니다");
+  });
+
+  it("★zoneMixed=false 여도 센티널이 맨몸으로 나오지 않는다(우연에 기대지 않는다)", async () => {
+    const v = await renderWithZone(
+      { parcel_count: 3, dominant_zone: "mixed_review_required", dominant_basis: "area_weighted" },
+      false,
+    );
+    expect(v).not.toContain("mixed_review_required");
+    expect(v).toContain("혼재");
+  });
+
+  it("★대조군 — 진짜 용도지역이 오면 그대로 보여 준다(무엇이든 가리는 처리가 아니다)", async () => {
+    const v = await renderWithZone(
+      { parcel_count: 3, dominant_zone: "자연녹지지역", dominant_basis: "area_weighted" },
+      false,
+    );
+    expect(v).toBe("자연녹지지역");
+  });
+
+  it("★센티널일 때 대표 용도지역으로 **대체하지 않는다**(#787 이 고친 결함 재발 방지)", async () => {
+    const v = await renderWithZone(
+      { parcel_count: 3, dominant_zone: "mixed_review_required", dominant_basis: "area_weighted" },
+      true,
+    );
+    // store 의 대표 zoneCode 는 "일반상업지역" 이다 — 그 이름을 빌려 쓰면 안 된다.
+    expect(v).not.toContain("일반상업지역");
   });
 });
