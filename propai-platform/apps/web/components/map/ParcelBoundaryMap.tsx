@@ -62,6 +62,11 @@ type Boundaries = {
     total_area_pyeong?: number | null;
     zone_types?: string[];
     zone_mixed?: boolean;
+    /** 면적합산 max 로 산출한 **우세** 용도지역. 동률(±5%)이나 규제성격 상이면
+     *  `"mixed_review_required"` — 서버가 **임의 단일화를 거부한** 신호다(값이 아니라 판정 보류). */
+    dominant_zone?: string | null;
+    dominant_basis?: string | null;
+    zone_mix?: Array<{ zone: string; area_sqm: number; share_pct?: number | null }> | null;
     effective_bcr_pct?: number | null;
     effective_far_pct?: number | null;
     total_gfa_sqm?: number | null;
@@ -284,6 +289,25 @@ export function ParcelBoundaryMap({
             {data.integrated_analysis.effective_far_pct != null && <span>실질 용적률 <b className="text-[var(--text-primary)]">{data.integrated_analysis.effective_far_pct}%</b></span>}
             {data.integrated_analysis.total_gfa_sqm != null && <span>가능 연면적 <b className="text-[var(--text-primary)]">{Math.round(data.integrated_analysis.total_gfa_sqm).toLocaleString()}㎡</b></span>}
             {data.integrated_analysis.zone_mixed && <span className="inline-flex items-center gap-1 text-[var(--status-warning)]"><AlertTriangle className="size-3.5 shrink-0" aria-hidden /> 용도지역 혼재({data.integrated_analysis.zone_types?.join("·")})</span>}
+            {/* ★우세 용도지역 — 서버가 **면적합산 max** 로 판정한 값(2026-08-24). 종전엔 화면 어디에도
+                이 값이 없었고, 스토어의 `dominantZoneCode` 는 이름과 달리 **첫 필지 값**이었다
+                (실측 사례에서 면적 우세와 **반대**를 가리켰다). 산식은 서버 하나뿐이다 — 여기서
+                재계산하지 않는다. `mixed_review_required` 는 **값이 아니라 판정 보류**이므로
+                그렇게 표기한다(임의로 한 지역을 고르지 않는다). */}
+            {data.integrated_analysis.dominant_zone === "mixed_review_required" ? (
+              <span data-testid="dominant-zone" className="inline-flex items-center gap-1 text-[var(--status-warning)]">
+                <HelpCircle className="size-3.5 shrink-0" aria-hidden /> 우세 용도지역 판정 보류(면적 동률·규제성격 상이)
+              </span>
+            ) : data.integrated_analysis.dominant_zone ? (
+              <span data-testid="dominant-zone">
+                우세 용도지역 <b className="text-[var(--text-primary)]">{data.integrated_analysis.dominant_zone}</b>
+                {(() => {
+                  const mix = data.integrated_analysis?.zone_mix ?? null;
+                  const hit = mix?.find((m) => m.zone === data.integrated_analysis?.dominant_zone);
+                  return hit?.share_pct != null ? ` (면적 ${hit.share_pct}%)` : "";
+                })()}
+              </span>
+            ) : null}
           </div>
           {data.integrated_analysis.development_methods && data.integrated_analysis.development_methods.length > 0 && (
             <p className="mt-1.5 text-[11px] text-[var(--text-secondary)]">
