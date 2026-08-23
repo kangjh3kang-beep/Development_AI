@@ -43,6 +43,8 @@ import { FieldMenuSheet } from "@/components/sales-app/FieldNav";
 import SiteEnterModal from "@/components/sales-app/SiteEnterModal";
 import SitePasswordModal from "@/components/sales-app/SitePasswordModal";
 import CustomerCardDrawer from "@/components/sales/CustomerCardDrawer";
+import { DeskAppraisalModal } from "@/components/operations/DeskAppraisalModal";
+import { LandShareModal } from "@/components/operations/LandShareModal";
 import { visibleTabs } from "@/components/sales-app/roleConfig";
 import { buildPrimaryNav } from "@/components/layout/nav-config";
 import { WorkspaceNavBar } from "@/components/layout/WorkspaceNavBar";
@@ -104,7 +106,15 @@ const WHILE_MOUNTED_ARGS = /\buseDismissibleWhileMounted\s*\(\s*([^,]+?)\s*,/g;
  * 면제 — **왜 구멍이 아닌지**를 여기 적는다. 사유 없이 이름만 넣지 않는다.
  * (비어 있다 = 모든 모달 표면이 배선됐다.)
  */
-const EXEMPT: Record<string, string> = {};
+const EXEMPT: Record<string, string> = {
+  // ★2026-08-23 — ARIA 를 붙이자 이 표면이 처음으로 ESC 계약에 **수집됐다**(종전엔 선언이
+  //   없어 계약 밖이었다). 그런데 ESC 를 닫기로 연결하면 안 된다:
+  //   이 위저드는 `onClose` 가 없고 "건너뛰기"가 곧 `handleComplete`(다시 안 뜸)라,
+  //   **실수로 ESC 를 한 번 누른 사용자가 온보딩을 영영 못 보게** 된다.
+  //   접근성 문제가 아니라 **제품 결정**이므로 여기서 정하지 않고 사유와 함께 면제한다.
+  "components/onboarding/OnboardingWizard.tsx":
+    "ESC 를 닫기로 연결하면 '건너뛰기=완료'와 같아져 실수 한 번에 온보딩을 영영 못 본다 — 되돌릴 수 있는 닫기 경로를 먼저 정해야 하는 제품 결정",
+};
 
 /**
  * 한 파일 안의 여러 `aria-modal="true"` 가 **같은 하나의 표면**일 때(예: 같은 모달을 두 갈래로
@@ -476,6 +486,20 @@ const RUNTIME_CASES: RuntimeCase[] = [
       />
     ),
   },
+  {
+    file: "components/operations/DeskAppraisalModal.tsx",
+    label: "탁상감정",
+    z: DISMISS_Z.appModal,
+    open: (close) => (
+      <DeskAppraisalModal jibun="테스트동 1-1" areaSqm={500} onClose={close} onApply={noop} />
+    ),
+  },
+  {
+    file: "components/operations/LandShareModal.tsx",
+    label: "대지지분",
+    z: DISMISS_Z.appModal,
+    open: (close) => <LandShareModal jibun="테스트동 1-1" pnu={null} onClose={close} onApplyArea={noop} />,
+  },
 ];
 
 /**
@@ -483,6 +507,9 @@ const RUNTIME_CASES: RuntimeCase[] = [
  * 소스 파생 락은 이 파일들도 그대로 덮는다. 여기 없는 것은 "런타임까지" 태운다는 뜻이다.
  */
 const RUNTIME_UNCOVERED: Record<string, string> = {
+  "components/onboarding/OnboardingWizard.tsx":
+    "자체 `visible` 상태를 localStorage 로 결정해 스스로 연다 — 부모가 주는 열림 인자가 없어 " +
+    "밖에서 '열린 상태'를 만들 수 없다. 저장소 목을 세우면 가능하니 별도 rung 으로 남긴다.",
   "components/auction/AuctionWorkspace.tsx":
     "상세 모달·라이트박스는 파일 안의 비-export 컴포넌트(DetailModal)라 단독 렌더가 불가하다. " +
     "워크스페이스 전체를 띄우려면 목록 조회·지도까지 목이 필요해 이 계약의 범위를 넘는다.",
@@ -695,6 +722,12 @@ describe("모달 접근성 — 포커스 생명주기(2026-08-22 부분 상환)"
     //   ②"라우팅 언마운트로 복귀 대상이 사라진다" → 훅이 `document.contains` 로 이미 막는다
     "components/sales/CustomerCardDrawer.tsx",
     "components/sales-app/FieldNav.tsx",
+    // ── 2026-08-23 R4 — **ARIA 선언 누락으로 계약을 통째로 빠져나가던 표면 3종** ──
+    //   화면 전체를 덮고 모달 칸 z 를 쓰면서 `aria-modal` 만 없어, ESC·포커스 계약이
+    //   수집조차 못 했다. layer-ladder 의 **z 기반 수집 계약**이 이들을 처음 드러냈다.
+    "components/operations/DeskAppraisalModal.tsx",
+    "components/operations/LandShareModal.tsx",
+    "components/onboarding/OnboardingWizard.tsx",
   ] as const;
 
   /**
@@ -733,6 +766,12 @@ describe("모달 접근성 — 포커스 생명주기(2026-08-22 부분 상환)"
       "마운트 자체가 열림 — 부모가 상세를 고른 순간에만 렌더하므로 닫힌 상태가 존재하지 않는다",
     "components/sales/CustomerCardDrawer.tsx":
       "마운트 자체가 열림 — 부모가 고객을 고른 순간에만 렌더하므로 닫힌 상태가 존재하지 않는다",
+    "components/operations/DeskAppraisalModal.tsx":
+      "마운트 자체가 열림 — 부모가 감정 버튼을 누른 순간에만 렌더하므로 닫힌 상태가 존재하지 않는다",
+    "components/operations/LandShareModal.tsx":
+      "마운트 자체가 열림 — 부모가 대지지분 조회를 연 순간에만 렌더하므로 닫힌 상태가 존재하지 않는다",
+    "components/onboarding/OnboardingWizard.tsx":
+      "자체 `visible` 상태로 스스로 열고 닫는다 — 부모가 주는 열림 인자가 없어 닫힌 픽스처를 밖에서 만들 수 없다",
     "components/orchestration/InputResolveModal.tsx":
       "★타입이 막는다 — `nodeId` 가 `NodeId` 유니온이라 **존재하지 않는 노드를 줄 수 없고**, 유효한 id 는 항상 노드를 찾아 열린다. 억지 캐스팅으로 타입이 막는 상태를 만들지 않는다(그건 실사용에 없는 경로다)",
   };
@@ -743,6 +782,9 @@ describe("모달 접근성 — 포커스 생명주기(2026-08-22 부분 상환)"
     "components/desk/ConsentModal.tsx",
     "components/g2b/G2BBidDetailModal.tsx",
     "components/sales/CustomerCardDrawer.tsx",
+    "components/operations/DeskAppraisalModal.tsx",
+    "components/operations/LandShareModal.tsx",
+    "components/onboarding/OnboardingWizard.tsx",
   ];
 
   it("★배선된 표면은 훅을 **호출**한다(임포트만 남는 회귀 방지)", () => {
@@ -860,9 +902,16 @@ describe("모달 접근성 — 포커스 생명주기(2026-08-22 부분 상환)"
 
     const covered = WIRED_RUNTIME.map((c) => c.file);
     for (const f of FOCUS_WIRED) {
+      // ★런타임 표에 못 넣는 표면은 **사유가 적혀 있어야** 넘어간다(조용한 면제 금지).
+      if (RUNTIME_UNCOVERED[f]) {
+        expect(RUNTIME_UNCOVERED[f].length, `${f} 의 런타임 면제 사유가 너무 짧다`).toBeGreaterThan(30);
+        continue;
+      }
       expect(covered, `${f} 가 런타임 표에 없어 소스 검사로만 잠긴다`).toContain(f);
     }
-    expect(WIRED_RUNTIME.length).toBe(FOCUS_WIRED.length);
+    // ★런타임 면제된 표면만큼 차이가 난다 — 그 수를 **명시적으로** 뺀다(조용한 불일치 금지).
+    const runtimeExempt = FOCUS_WIRED.filter((f) => RUNTIME_UNCOVERED[f]).length;
+    expect(WIRED_RUNTIME.length).toBe(FOCUS_WIRED.length - runtimeExempt);
 
     // ★닫힘 픽스처가 없으면 음성대조가 **소리 없이 사라진다**(아래 `if (c.closed)`).
     //   단 **마운트 자체가 열림**인 표면은 닫힌 상태가 원리적으로 없다(부모가 렌더를 안 한다)

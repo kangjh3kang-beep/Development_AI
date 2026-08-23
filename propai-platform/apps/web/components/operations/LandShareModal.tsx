@@ -10,10 +10,12 @@
  * 무목업: 전유부 무자료=토지/단독으로 정직 분기(is_aggregate=false).
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, Building2, CheckCircle2 } from "lucide-react";
 import { apiV1BaseUrl } from "@/lib/api-client";
 import { PYEONG_SQM } from "@/lib/formatters";
+import { useModalFocusWhileMounted } from "@/hooks/useModalFocus";
+import { DISMISS_Z, useDismissibleWhileMounted } from "@/lib/satong-dismiss";
 
 const py = (sqm: number | null | undefined) =>
   sqm == null ? "—" : `${(sqm / PYEONG_SQM).toLocaleString(undefined, { maximumFractionDigits: 2 })}평`;
@@ -51,6 +53,15 @@ export function LandShareModal({
   /** 세대별로 토지조서에 펼쳐 반영(부모 필지 보존·하단에 세대행 중첩 배열) — 실별 대지지분·전유면적을 행으로 기록 */
   onExpandUnits?: (units: LandShareUnit[], buildingName: string) => void;
 }) {
+  const bodyRef = useRef<HTMLDivElement>(null);
+  // ★이 표면은 **세 계약을 통째로 빠져나가고 있었다**(2026-08-23 발견).
+  //   화면 전체를 덮는 `fixed inset-0` + 모달 칸 `z-[800]` 인데 `role="dialog"`·`aria-modal`
+  //   을 **선언하지 않아서**, ESC 계약(`#697`)과 포커스 계약(`#749~`)이 표면을 모을 때 쓰는
+  //   기준(`aria-modal="true"`)에 **안 걸렸다.** 즉 선언을 빠뜨리는 것이 곧 계약 회피였다.
+  //   결과: 스크린리더에 모달로 안 읽히고, **ESC 로 닫히지 않고**, Tab 이 배경으로 샜다.
+  useDismissibleWhileMounted(DISMISS_Z.appModal, onClose);
+  useModalFocusWhileMounted(bodyRef);
+
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<Result | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -78,8 +89,9 @@ export function LandShareModal({
   }, [jibun, pnu]);
 
   return (
-    <div className="fixed inset-0 z-[800] flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+    <div role="dialog" aria-modal="true" className="fixed inset-0 z-[800] flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
       <div
+        ref={bodyRef}
         className="max-h-[88vh] w-full max-w-3xl overflow-y-auto rounded-[var(--radius-2xl)] border border-[var(--line)] bg-[var(--surface)] p-6 shadow-[var(--shadow-lg)]"
         onClick={(e) => e.stopPropagation()}
       >
