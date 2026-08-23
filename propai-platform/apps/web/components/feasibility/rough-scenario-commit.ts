@@ -19,6 +19,11 @@ import type { FeasibilityData } from "@/store/useProjectContextStore";
  *  않고, 이 파일이 실제로 읽는 필드만 구조적으로 다시 선언한다(테스트·재사용 용이). */
 export interface RoughScenarioLike {
   project_id?: string | null;
+  // ★정밀도 등급(#770) — 백엔드 `build_rough_scenario` 가 **최상위**에 싣는다
+  //   (`summary` 안이 아니다 — orchestrator 의 반환 dict 에서 `summary` 와 형제다).
+  precision?: string | null;
+  precision_label?: string | null;
+  precision_basis?: string | null;
   summary?: {
     total_cost_won?: number | null;
     total_revenue_won?: number | null;
@@ -87,6 +92,33 @@ export function roughResultToFeasibilityPatch(
 
   const grade = result.summary?.grade;
   if (typeof grade === "string" && grade.trim()) patch.grade = grade;
+
+  // ★정밀도 등급 — **생성 경로에서도** 옮긴다(2026-08-24).
+  //
+  //   `#770`(백엔드)이 등급을 산출하고 `#771`(프론트)이 배지를 붙였는데, 라이브에서
+  //   배지가 **뜨지 않았다**(사용자 계정으로 '개략수지 생성'을 실제로 실행해 확인:
+  //   `등급 F` 는 생기는데 스토어에 `precision` 키 자체가 없었다).
+  //
+  //   원인은 `feasibilityData` 의 **쓰기 경로가 둘**이라는 것이다:
+  //     · `projects/[id]/page.tsx` — 프로젝트 레코드 **하이드레이션**  → `#771` 이 배선함
+  //     · 이 매퍼            — 사용자가 실제로 누르는 **생성** 경로 → **누락**
+  //   짝이 반만 착지한 게 아니라 **양쪽 다 착지했는데 경로가 갈려** 안 보이는 형태였다.
+  //
+  //   ★등급 문자열을 검증한다: 스토어 타입이 `"E"|"D"|"V"|null` 이라 모르는 값을 넣으면
+  //     소비처(배지 조건 `precision === "E"`)가 판정할 수 없는 상태가 된다.
+  //     모르면 **키를 만들지 않는다** — 화면은 "정밀도 미표기"로 정직하게 남는다.
+  const precision = result.precision;
+  if (precision === "E" || precision === "D" || precision === "V") patch.precision = precision;
+
+  const precisionLabel = result.precision_label;
+  if (typeof precisionLabel === "string" && precisionLabel.trim()) {
+    patch.precisionLabel = precisionLabel;
+  }
+
+  const precisionBasis = result.precision_basis;
+  if (typeof precisionBasis === "string" && precisionBasis.trim()) {
+    patch.precisionBasis = precisionBasis;
+  }
 
   // 수익률(%) — cashflow 요약(정밀 산출)이 우선, 없으면 총수입·순이익으로 산술파생
   //   (백엔드가 준 실데이터끼리의 산술이므로 무날조 위반 아님). 둘 다 없으면 생략.
