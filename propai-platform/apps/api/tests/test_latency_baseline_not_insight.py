@@ -55,3 +55,66 @@ def test_D_판정_경계_무회귀():
     assert az._classify_latency(150.0, 100.0) is None          # 정확히 1.5배 → 아님
     assert az._classify_latency(150.1, 100.0) == "warn"
     assert az._classify_latency(100.0, 0.0) is None            # baseline 없음(첫 배치)
+
+
+# ── 배선 층 (2026-08-23) ────────────────────────────────────────────────────
+#   ★1차 변이에서 **생존 3건이 전부 배선**이었다(SQL 의 ANY(:types), 그리고
+#     insight_type_for_latency 의 실제 사용처). 순수 함수만 잠그면 초록이 일찍 나오고
+#     배선은 안 태운 채 끝난다 — 인계서가 경고한 바로 그 패턴이다.
+
+import pytest  # noqa: E402
+
+
+class _FakeResult:
+    def __init__(self, rows): self._rows = rows
+    def fetchall(self): return self._rows
+
+
+class _FakeDB:
+    """platform_events / platform_insights 두 쿼리를 구분해 답하는 대역."""
+
+    def __init__(self, event_rows, baseline_rows):
+        self.queries: list[tuple[str, dict]] = []
+        self._ev, self._bl = event_rows, baseline_rows
+
+    async def execute(self, stmt, params=None):
+        sql = str(stmt)
+        self.queries.append((sql, params or {}))
+        return _FakeResult(self._ev if "platform_events" in sql else self._bl)
+
+
+async def _run(p95_vals, baseline):
+    from datetime import UTC, datetime
+    db = _FakeDB([("/api/v1/x", v) for v in p95_vals],
+                 [("/api/v1/x", baseline)] if baseline else [])
+    w1 = datetime(2026, 8, 23, tzinfo=UTC)
+    w0 = datetime(2026, 8, 22, tzinfo=UTC)
+    out = await az._analyze_latency_regression(db, w0, w1)
+    return out, db
+
+
+@pytest.mark.asyncio
+async def test_E_배선_회귀아니면_baseline_타입으로_생성된다():
+    out, _ = await _run([100.0] * 25, baseline=100.0)   # 1.5배 미만 → 회귀 아님
+    assert len(out) == 1, "전제: 샘플 25개면 인사이트가 생성된다"
+    assert out[0]["insight_type"] == "latency_baseline"
+    assert out[0]["recommended_action"] == "none"
+
+
+@pytest.mark.asyncio
+async def test_F_배선_회귀면_regression_타입으로_생성된다():
+    out, _ = await _run([300.0] * 25, baseline=100.0)   # 3배 → 회귀
+    assert out[0]["insight_type"] == "latency_regression"   # ★E와 갈리는 지점
+    assert out[0]["severity"] == "warn"
+    assert out[0]["recommended_action"] == "heal"
+
+
+@pytest.mark.asyncio
+async def test_G_배선_baseline_조회가_두_타입을_모두_넘긴다():
+    """★체인 유지의 실제 배선 — SQL 파라미터에 두 타입이 실려야 한다."""
+    _, db = await _run([100.0] * 25, baseline=100.0)
+    ins_q = [(s, p) for s, p in db.queries if "platform_insights" in s]
+    assert ins_q, "baseline 조회 자체가 없다"
+    sql, params = ins_q[0]
+    assert "ANY(:types)" in sql, "단일 타입으로 조회하면 기존 2,059건 체인이 끊긴다"
+    assert set(params.get("types") or []) == {"latency_regression", "latency_baseline"}
