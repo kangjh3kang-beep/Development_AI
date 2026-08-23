@@ -33,7 +33,7 @@ from app.services.land_intelligence.comprehensive_analysis_service import (
     build_integrated_context,
 )
 from app.services.land_intelligence.desk_appraisal_service import desk_appraisal
-from app.services.quality.precision import PrecisionGrade
+from app.services.quality.precision import PrecisionGrade, lowest
 from app.services.tax.project_charges import compute_developer_stage_charges, parse_bool_flag
 
 logger = logging.getLogger(__name__)
@@ -276,6 +276,87 @@ def _null_block(kind: str) -> dict[str, Any]:
         return {"total_won": None, "construction_stage_won": None, "sale_stage_won": None,
                 "buyer_borne_total_won": None, "items": None, "basis": None, "source": None}
     return {}
+
+
+
+def compose_scenario_precision(
+    *,
+    gfa_precision: PrecisionGrade | None,
+    gfa_basis: str,
+    land_total: int | None,
+    land_price_reliable: bool,
+    price_pp: int | None,
+    price_source: str | None,
+) -> tuple[PrecisionGrade | None, str, dict[str, str | None]]:
+    """개략수지 세 입력의 정밀도를 **합성**한다 — "하류는 상류 최저를 따른다".
+
+    왜 합성인가(쉬운 설명):
+    이 수지는 세 입력으로 만들어진다 — 연면적(GFA)·토지비·분양단가. 종전엔 **GFA 하나**의
+    등급만 페이로드에 실었다. 그래서 토지비가 가정치이거나 분양단가가 아예 미확보여도
+    화면은 그대로 "개략(추정)"이라고만 말했다.
+    **등급을 올릴 수 있는 것은 더 나은 입력뿐이지 더 나은 계산이 아니다.**
+
+    ★None(=등급을 모름)은 0 이나 E 로 채우지 않는다. 하나라도 모르면 결과도 모른다 —
+      낙관적으로 채우는 순간 그것이 정밀도 위장의 시작이다(`quality/precision.lowest` 의 규칙).
+      정보가 줄지 않는 이유: 무엇 때문에 낮아졌는지는 반환하는 `inputs` 와 호출부의
+      `degraded_notes` 가 그대로 말한다.
+
+    ★왜 대형 async 함수 밖으로 뺐나: 안에 두면 **잠글 수가 없다**(네트워크 호출이 얽혀 있어
+      테스트가 이 분기를 태우지 못한다). 순수 함수로 두면 계약 테스트가 직접 태운다.
+
+    Returns:
+        (합성 등급, 근거 문구, 입력별 등급 dict). 등급이 None 이면 근거는 **어느 입력을
+        모르는지** 이름으로 말한다(모른다는 사실도 정보다).
+    """
+    # 토지비: 공시지가·탁상감정 **조회값**으로 만들었으면 확인됨(V), 가정치 폴백이면 개략(E).
+    land_precision: PrecisionGrade | None = (
+        None
+        if land_total is None
+        else PrecisionGrade.VERIFIED
+        if land_price_reliable
+        else PrecisionGrade.ESTIMATED
+    )
+    # 분양단가: 실거래(MOLIT)·사용자 지정은 확인됨(V). 지역 시세표는 **실거래가 아니라서**
+    #   source 문자열에 '추정' 이 박혀 있고(_resolve_sale_price_per_pyeong 이 그렇게 만든다) 개략(E).
+    price_precision: PrecisionGrade | None = (
+        None
+        if price_pp is None or price_source == "unavailable"
+        else PrecisionGrade.ESTIMATED
+        if "추정" in str(price_source or "")
+        else PrecisionGrade.VERIFIED
+    )
+    composed = lowest(gfa_precision, land_precision, price_precision)
+
+    if composed is None:
+        unknown = [
+            name
+            for name, g in (
+                ("연면적", gfa_precision),
+                ("토지비", land_precision),
+                ("분양단가", price_precision),
+            )
+            if g is None
+        ]
+        basis = (
+            f"{'·'.join(unknown)} 등급 미확보 — 산출물 전체의 정밀도를 판정할 수 없습니다"
+            if unknown
+            else "정밀도 판정 불가"
+        )
+    elif composed is gfa_precision and gfa_basis:
+        basis = gfa_basis
+    elif land_precision is PrecisionGrade.ESTIMATED:
+        basis = "토지비 가정치 기준(개략) — 공시지가·탁상감정 미확보"
+    elif price_precision is PrecisionGrade.ESTIMATED:
+        basis = "분양단가 지역 시세표 추정 기준(개략) — 주변 실거래 미확보"
+    else:
+        basis = gfa_basis or "입력 최저 등급을 따름"
+
+    inputs: dict[str, str | None] = {
+        "gfa": gfa_precision.value if gfa_precision else None,
+        "land_cost": land_precision.value if land_precision else None,
+        "sale_price": price_precision.value if price_precision else None,
+    }
+    return composed, basis, inputs
 
 
 async def build_rough_scenario(
@@ -758,6 +839,15 @@ async def build_rough_scenario(
         )
         degraded.insert(0, f"[잠정·선행절차 전제] {_tnote}")
 
+    payload_precision, payload_precision_basis, precision_inputs = compose_scenario_precision(
+        gfa_precision=gfa_precision,
+        gfa_basis=gfa_precision_basis,
+        land_total=land_total,
+        land_price_reliable=land_price_reliable,
+        price_pp=price_pp,
+        price_source=price_source,
+    )
+
     return {
         "address": address,
         "project_id": project_id,
@@ -791,9 +881,16 @@ async def build_rough_scenario(
         # ★정밀도 등급 — 이 산출물 전체가 **무엇으로 만들어졌는지**를 화면에 알린다.
         #   `E`(개략)면 "설계 미반영"이라는 뜻이고, 하류 수지·등급도 같은 등급이다.
         #   화면은 이 값 없이 숫자를 확정치처럼 보여 주면 안 된다.
-        "precision": (gfa_precision.value if gfa_precision else None),
-        "precision_label": (gfa_precision.label_ko if gfa_precision else "정밀도 미표기"),
-        "precision_basis": gfa_precision_basis,
+        #   ★종전엔 **GFA 등급 하나**로만 판정했다 — 토지비가 가정치이거나 분양단가가 미확보여도
+        #     페이로드는 그대로 "개략(E)"이라 말했다. 이제 세 입력의 **최저**를 따른다(lowest).
+        "precision": (payload_precision.value if payload_precision else None),
+        "precision_label": (
+            payload_precision.label_ko if payload_precision else "정밀도 미표기"
+        ),
+        "precision_basis": payload_precision_basis,
+        # ★입력별 등급(additive) — 합성 결과만 주면 "무엇 때문에 낮아졌는지"를 화면이 말할 수 없다.
+        #   None 은 "그 입력의 등급을 모른다"는 뜻이며 0/추정으로 채우지 않는다.
+        "precision_inputs": precision_inputs,
         # ★A-3/G8(additive) — 법정초과 경량 가드 검출 시만 채워짐(빈 배열=검출 없음, 기존 키 불변).
         "integrity_warnings": integrity_warnings,
     }

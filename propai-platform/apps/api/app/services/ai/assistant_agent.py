@@ -268,6 +268,25 @@ async def rough_feasibility(address: str, dev_type: str | None = None) -> str:
         lines.append(f"등급: {summary['grade']}")
     if r.get("scenario_status") == "tentative":
         lines.append("[주의] 선행절차(접도 확보 등)를 전제한 잠정치 — 확정치가 아닙니다.")
+    # ★정밀도 등급을 **LLM 에게 반드시 넘긴다**(R1-b).
+    #
+    #   왜 중요한가: 이 도구의 반환값은 곧바로 LLM 의 입력이 되고, LLM 은 받은 숫자를
+    #   매끄러운 문장으로 만든다. 등급 없이 총사업비·순이익·등급만 넘기면
+    #   *"등급 F 이나 831.5억의 개발이익이 예상되며…"* 같은 문장이 나온다 —
+    #   **전제가 갈린 채 종합을 얹으면 거짓말이 더 설득력 있어진다.**
+    #   개략수지 페이로드는 등급을 싣고 있었는데(#770) 이 경계에서 **소실**됐다.
+    #   지시문까지 함께 넣는 이유: 등급만 주면 LLM 이 그것을 언급하지 않고 넘어갈 수 있다.
+    _prec_label = r.get("precision_label")
+    if _prec_label:
+        _basis = str(r.get("precision_basis") or "").strip()
+        _line = f"[정밀도] {_prec_label}"
+        if _basis:
+            _line += f" — {_basis}"
+        if r.get("precision") == "E":
+            _line += " ※ 설계 미반영 개략치다. 확정치처럼 답하지 말고 이 사실을 답변에 반드시 밝혀라."
+        elif r.get("precision") is None:
+            _line += " ※ 정밀도를 판정할 수 없다. 확정치처럼 답하지 말고 이 사실을 답변에 반드시 밝혀라."
+        lines.append(_line)
     degraded = r.get("degraded_notes") or []
     if degraded:
         lines.append("참고: " + "; ".join(str(x) for x in degraded[:3]))
