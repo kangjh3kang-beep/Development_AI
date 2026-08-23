@@ -11,7 +11,7 @@ from dataclasses import asdict, dataclass
 from enum import StrEnum
 from typing import Any
 
-from app.services.legal.legal_limit import LegalLimit
+from app.services.legal.legal_limit import LegalLimit, PracticeLimit
 
 # ── 적합성 판정 ──
 
@@ -46,23 +46,62 @@ class FeasibilityResult:
 
 # ── 법적 기준 상수 ──
 
-MIN_LOT_AREA: dict[str, float] = {
-    "M01": 5000, "M02": 5000, "M03": 3000, "M04": 3000, "M05": 1000,
-    "M06": 660, "M07": 1000, "M08": 300, "M09": 1000, "M10": 90,
-    "M11": 200, "M12": 330, "M13": 150, "M14": 1000, "M15": 3000,
+# ── 최소 대지면적 — **법정이 아니다** ─────────────────────────────────────────
+# ★2026-08-23 교정. 종전에는 원시 숫자 15개였고, 미달하면 `부적합`(blocking) 이었다.
+#   라이브 실측: 4,000㎡ 아파트 부지가 `4000m² < 5000m² (최소) — 면적 부족` 으로 **부적합**.
+#   그 5,000㎡ 의 근거를 코드가 대지 못한다 — `MAX_FLOORS`={"M10":3} 과 **같은 결함**이다.
+#
+# 법정 최소 대지면적은 **용도지역** 기준이지 개발유형 기준이 아니다
+# (건축법 §57·시행령 §80 대지의 분할 제한 — 주거 60㎡·상업 150㎡·공업 150㎡·녹지 200㎡,
+#  그 위에 조례가 얹힌다). 아래 값들은 그 축이 아니라 **사업 규모 감각**이다.
+#   → `PracticeLimit` 로 둬서 **조건부까지만** 내게 한다(부적합을 낼 자격이 없다).
+_LOT_PRACTICE = "플랫폼 실무기준 — 사업유형별 권장 최소 사업규모(법정 최소대지면적 아님)"
+
+MIN_LOT_AREA: dict[str, PracticeLimit] = {
+    code: PracticeLimit(v, source=_LOT_PRACTICE, note=f"{code} 권장 최소 사업규모")
+    for code, v in {
+        "M01": 5000, "M02": 5000, "M03": 3000, "M04": 3000, "M05": 1000,
+        "M06": 660, "M07": 1000, "M08": 300, "M09": 1000, "M10": 90,
+        "M11": 200, "M12": 330, "M13": 150, "M14": 1000, "M15": 3000,
+    }.items()
 }
 
-ROAD_REQUIREMENT: dict[str, dict[str, float]] = {
-    "M01": {"road_width": 6, "frontage": 4},
-    "M02": {"road_width": 6, "frontage": 4},
-    "M06": {"road_width": 6, "frontage": 4},
-    "M07": {"road_width": 8, "frontage": 6},
-    "M08": {"road_width": 6, "frontage": 4},
-    "M09": {"road_width": 8, "frontage": 6},
-    "M10": {"road_width": 4, "frontage": 2},
-    "M11": {"road_width": 4, "frontage": 2},
-    "M12": {"road_width": 4, "frontage": 2},
-    "M13": {"road_width": 4, "frontage": 2},
+# ── 접도 — **법정과 실무를 가른다** ───────────────────────────────────────────
+# ★법정 접도 규정은 **개발유형이 아니라 연면적**을 키로 삼는다. 종전 표는 키 자체가 틀렸고,
+#   그래서 표에 없는 유형(M03·M04·M05·M14·M15)은 접도 1m 라도 **"접도 제한 없음" 통과**였다
+#   (라이브 실측: M03 도로폭 3m·접도 1m → `pass`). 미등재가 면죄부가 됐다.
+ROAD_FRONTAGE_STATUTE = LegalLimit(
+    2,
+    law="건축법 §44①",
+    note="건축물의 대지는 2m 이상이 도로에 접해야 한다(같은 항 단서의 예외 있음)",
+)
+
+#: 건축법 시행령 §28② 가 강화 규정을 적용하는 연면적 문턱(㎡).
+ROAD_STRICT_GFA_THRESHOLD_SQM = 2000
+
+ROAD_STRICT_STATUTE: dict[str, LegalLimit] = {
+    "road_width": LegalLimit(
+        6, law="건축법 시행령 §28②", note="연면적 합계 2,000㎡ 이상 — 너비 6m 이상 도로"
+    ),
+    "frontage": LegalLimit(
+        4, law="건축법 시행령 §28②", note="연면적 합계 2,000㎡ 이상 — 4m 이상 접도"
+    ),
+}
+
+# 아래는 위 법정선을 **넘어서는** 사업 실무 권장치다(진입·공사차량·분양성).
+# 법정이 아니므로 미달해도 `조건부` 까지만 낸다.
+_ROAD_PRACTICE = "플랫폼 실무기준 — 사업유형별 권장 진입도로(법정 접도기준 아님)"
+
+ROAD_REQUIREMENT: dict[str, dict[str, PracticeLimit]] = {
+    code: {
+        "road_width": PracticeLimit(w, source=_ROAD_PRACTICE, note=f"{code} 권장 도로폭"),
+        "frontage": PracticeLimit(f, source=_ROAD_PRACTICE, note=f"{code} 권장 접도면"),
+    }
+    for code, (w, f) in {
+        "M01": (6, 4), "M02": (6, 4), "M06": (6, 4), "M07": (8, 6),
+        "M08": (6, 4), "M09": (8, 6), "M10": (4, 2), "M11": (4, 2),
+        "M12": (4, 2), "M13": (4, 2),
+    }.items()
 }
 
 # ── 유형별 층수 상한 — **근거 없이는 등재하지 않는다** ────────────────────────
@@ -123,31 +162,80 @@ UNDERGROUND_RATIO = 0.70     # 대지면적의 약 70%를 지하주차장으로 
 # ── 검증 함수 ──
 
 def _check_lot_area(dev_type: str, land_area: float) -> ConditionCheck:
-    min_area = MIN_LOT_AREA.get(dev_type, 0)
-    if min_area <= 0:
-        return ConditionCheck("대지면적", "pass", "면적 제한 없음")
+    """대지면적 — **실무 권장치 미달은 부적합이 아니다**.
+
+    ★2026-08-23 교정. 종전에는 근거 없는 숫자에 미달하면 `부적합`(blocking) 이라
+    개발유형이 화면에서 통째로 탈락했다(행 `opacity-50`). 법정 최소대지면적은
+    **용도지역** 기준이므로(건축법 §57·시행령 §80 및 조례) 이 표로는 위법을 단정할 수 없다.
+    """
+    limit = MIN_LOT_AREA.get(dev_type)
+    if limit is None:
+        # ★미등재 = 기준 미확인. `MAX_FLOORS` 가 배운 것 — 조용히 통과시키면 "제한 없음"과
+        #   구분되지 않는다.
+        return ConditionCheck(
+            "대지면적", "unknown",
+            f"{land_area:.0f}m² — 이 유형({dev_type})의 최소 사업규모 기준 미확인",
+        )
+    if limit.unlimited:
+        return ConditionCheck("대지면적", "pass", f"{land_area:.0f}m² — 기준 없음({limit.basis})")
+    min_area = float(limit.value)
     if land_area >= min_area:
-        return ConditionCheck("대지면적", "pass", f"{land_area:.0f}m² >= {min_area:.0f}m² (최소)")
+        return ConditionCheck("대지면적", "pass", f"{land_area:.0f}m² >= {min_area:.0f}m² (권장 최소)")
+    # ★법정이 아니므로 blocking 하지 않는다 — 사업성 경고이지 위법 판정이 아니다.
     return ConditionCheck(
-        "대지면적", "fail",
-        f"{land_area:.0f}m² < {min_area:.0f}m² (최소) — 면적 부족",
-        is_blocking=True,
+        "대지면적", "conditional",
+        f"{land_area:.0f}m² < {min_area:.0f}m² (권장 최소) — 사업규모 부족 검토 필요"
+        f" · {limit.basis}",
     )
 
-def _check_road(dev_type: str, road_width: float | None, road_frontage: float | None) -> ConditionCheck:
-    req = ROAD_REQUIREMENT.get(dev_type)
-    if not req:
-        return ConditionCheck("접도", "pass", "접도 제한 없음")
+def _check_road(
+    dev_type: str,
+    road_width: float | None,
+    road_frontage: float | None,
+    total_gfa: float = 0,
+) -> ConditionCheck:
+    """접도 — **법정선을 먼저 보고, 실무 권장치는 조건부로 본다**.
+
+    ★2026-08-23 교정. 종전에는 개발유형 표에 없으면 `"접도 제한 없음"` 으로 **통과**시켰다.
+    법정 접도 규정은 유형이 아니라 **연면적**을 키로 삼으므로(건축법 §44①·시행령 §28②)
+    표의 부재가 곧 규제의 부재가 아니다 — 라이브에서 M03 이 접도 1m 로 통과하고 있었다.
+    """
     if road_width is None and road_frontage is None:
         return ConditionCheck("접도", "unknown", "접도 데이터 미확인 — 현장 확인 필요")
 
-    issues = []
-    if road_width is not None and road_width < req["road_width"]:
-        issues.append(f"도로폭 {road_width}m < {req['road_width']}m")
-    if road_frontage is not None and road_frontage < req["frontage"]:
-        issues.append(f"접도면 {road_frontage}m < {req['frontage']}m")
-    if issues:
-        return ConditionCheck("접도", "fail", " / ".join(issues), is_blocking=True)
+    # ① 법정선 — 위반은 **위법**이므로 부적합을 낼 자격이 있다.
+    strict = total_gfa >= ROAD_STRICT_GFA_THRESHOLD_SQM
+    violations: list[str] = []
+    if strict:
+        w_lim, f_lim = ROAD_STRICT_STATUTE["road_width"], ROAD_STRICT_STATUTE["frontage"]
+        if road_width is not None and road_width < float(w_lim.value):
+            violations.append(f"도로폭 {road_width}m < {w_lim.value:g}m ({w_lim.law})")
+        if road_frontage is not None and road_frontage < float(f_lim.value):
+            violations.append(f"접도면 {road_frontage}m < {f_lim.value:g}m ({f_lim.law})")
+    base = ROAD_FRONTAGE_STATUTE
+    if road_frontage is not None and road_frontage < float(base.value):
+        violations.append(f"접도면 {road_frontage}m < {base.value:g}m ({base.law})")
+    if violations:
+        return ConditionCheck("접도", "fail", " / ".join(violations), is_blocking=True)
+
+    # ② 실무 권장치 — 미달해도 위법이 아니므로 `조건부` 까지만.
+    req = ROAD_REQUIREMENT.get(dev_type)
+    if req is None:
+        return ConditionCheck(
+            "접도", "pass",
+            f"도로폭 {road_width}m, 접도면 {road_frontage}m — 법정 접도기준 충족"
+            f"({base.law}) · 이 유형({dev_type})의 실무 권장치는 미등재",
+        )
+    shortfalls = []
+    if road_width is not None and road_width < float(req["road_width"].value):
+        shortfalls.append(f"도로폭 {road_width}m < 권장 {req['road_width'].value:g}m")
+    if road_frontage is not None and road_frontage < float(req["frontage"].value):
+        shortfalls.append(f"접도면 {road_frontage}m < 권장 {req['frontage'].value:g}m")
+    if shortfalls:
+        return ConditionCheck(
+            "접도", "conditional",
+            " / ".join(shortfalls) + f" — 법정선({base.law})은 충족 · {req['road_width'].basis}",
+        )
     return ConditionCheck("접도", "pass", f"도로폭 {road_width}m, 접도면 적합")
 
 def _check_parking(dev_type: str, unit_count: int, total_gfa: float, land_area: float) -> ConditionCheck:
@@ -290,7 +378,7 @@ def validate_development_feasibility(
 
     checks = [
         _check_lot_area(dev_type, land_area),
-        _check_road(dev_type, road_width, road_frontage),
+        _check_road(dev_type, road_width, road_frontage, total_gfa),
         _check_parking(dev_type, unit_count, total_gfa, land_area),
         _check_daylighting(dev_type, zone_type, floor_count, total_gfa ** 0.5 if total_gfa else 0),
         _check_setback(zone_type, land_area, effective_bcr),
@@ -316,7 +404,9 @@ def validate_development_feasibility(
         recommendations.append("북측 인접건물 현황 현장 확인 필요")
     if any(c.rule == "접도" and c.status == "unknown" for c in checks):
         recommendations.append("접도 현황 현장 확인 필요")
-    if land_area < MIN_LOT_AREA.get(dev_type, 0) * 1.2 and not has_fail:
+    _lot = MIN_LOT_AREA.get(dev_type)
+    _lot_min = float(_lot.value) if _lot is not None and not _lot.unlimited else 0.0
+    if _lot_min > 0 and land_area < _lot_min * 1.2 and not has_fail:
         recommendations.append("최소 면적 근접 — 인접 필지 합필 검토")
 
     return FeasibilityResult(
