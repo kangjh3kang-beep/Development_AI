@@ -1574,6 +1574,20 @@ class ProjectPipeline:
             for item in design_matrix_result.items
             if item.field in _design_fallback_labels and item.status == DataStatus.MISSING.value
         ]
+        # ★★2026-08-23 — 이 자리는 **되돌린 것**이다. 처음엔 `or 500/60/200` 을
+        #   far_tier_service·ordinance_service 와 같은 **A형 날조**로 보고 제거했는데,
+        #   테스트가 그것을 잡았다(`test_required_data.py` 2건).
+        #
+        #   확인해 보니 여기는 **성격이 다르다** — 이 폴백은 `W3-8 계약`에 따라
+        #   `assumed_fields=["land_area_sqm(500㎡ 가정)", …]` 와 `data_quality="assumed_defaults"`
+        #   로 **가정임을 명시**하고, 하류(`trust_guard`)가 그 표기를 보고 판단을 유보한다.
+        #   즉 **값을 지어내되 지어냈다고 말하는** 구조다.
+        #
+        #   하드코딩 3분류로 보면:
+        #     · A형 날조 = 근거 없이 발명하고 **확정치처럼 보여 준다** → 제거(far_tier·ordinance)
+        #     · **B형 전제 = 값을 쓰되 가정임을 표기하고 하류가 그것을 소비한다 → 유지(여기)**
+        #   제거하면 `assumed_fields` 가 비고 연면적이 0 이 되어, **정직 표기 체계 자체가
+        #   무력화**된다. 그것이 이 되돌림의 이유다.
         land_area = site.land_area_sqm or 500.0
         bcr = site.max_bcr or 60.0
         far = site.max_far or 200.0
