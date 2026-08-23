@@ -13,6 +13,9 @@
  *   `parcelCount`(=7)를 **알면서도** "단일 필지"라고 단언하니 **거짓 표시**다.
  *   사용자는 "왜 다필지를 넣었는데 단필지로 나오지?"만 남는다.
  *
+ * ★className(스타일) 변이 생존은 **의도된 미잠금**이다 — 계약은 "거짓 단언을 멈추고
+ *   불일치를 고지한다"이지 색상·여백이 아니다(잠그면 정상 리스타일이 위반이 된다).
+ *
  * ★처방: 두 신호가 어긋나면 그 사실을 말한다(고치는 방법까지). 침묵·거짓단언 금지.
  */
 import { render, screen } from "@testing-library/react";
@@ -41,6 +44,9 @@ describe("등록 필지 수 ↔ 필지 목록 불일치", () => {
     render(<Page />);
 
     expect(screen.getByText(MISMATCH_RE)).toBeInTheDocument();
+    // ★testid 를 **양성에서** 잠근다(#755 에서 같은 걸 놓쳤다) — 안 잠그면 testid 가 바뀌어도
+    //   아래 음성 단언들이 '없음'으로 통과해 공허해진다.
+    expect(screen.getByTestId("parcel-count-mismatch")).toBeInTheDocument();
     // ★거짓 단언이 사라져야 한다 — 이게 사용자가 본 그 문장이다.
     expect(screen.queryByText("단일 필지입니다.")).not.toBeInTheDocument();
   });
