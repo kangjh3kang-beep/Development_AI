@@ -74,14 +74,21 @@ def test_강제력이_타입으로_갈린다() -> None:
 
 def test_최소대지면적_표의_모든_항목이_근거를_갖는다() -> None:
     # ★공허 진리 방지 — 표가 비면 '위반 0'은 아무 의미가 없다.
-    assert len(MIN_LOT_AREA) >= 10, f"표가 {len(MIN_LOT_AREA)}개뿐이다 — 검증 대상이 없다"
+    # ★★대역(`>= 10`)이 아니라 **실제 집합**에 결속한다. 변이 검증에서 한 줄(5항)을 지워도
+    #   `>= 10` 이 여전히 참이라 생존했다 — 하한이 실제 개수와 같으면 잠금이 아니다.
+    assert set(MIN_LOT_AREA) == {f"M{n:02d}" for n in range(1, 16)}, (
+        f"표의 구성이 바뀌었다: {sorted(MIN_LOT_AREA)} — 유형을 더하거나 뺐다면 이 케이스를 갱신하라"
+    )
     for code, limit in MIN_LOT_AREA.items():
         assert isinstance(limit, PracticeLimit), f"{code}: 원시 숫자가 다시 들어왔다 — {limit!r}"
         assert limit.basis.strip(), f"{code}: 출처가 비었다"
 
 
 def test_접도_실무표의_모든_항목이_근거를_갖는다() -> None:
-    assert len(ROAD_REQUIREMENT) >= 8, f"표가 {len(ROAD_REQUIREMENT)}개뿐이다"
+    # ★위와 같은 이유로 실제 집합에 결속한다(한 줄 삭제가 대역 하한을 빠져나갔다).
+    assert set(ROAD_REQUIREMENT) == {
+        "M01", "M02", "M06", "M07", "M08", "M09", "M10", "M11", "M12", "M13",
+    }, f"표의 구성이 바뀌었다: {sorted(ROAD_REQUIREMENT)}"
     for code, req in ROAD_REQUIREMENT.items():
         for key in ("road_width", "frontage"):
             limit = req[key]
@@ -169,3 +176,82 @@ def test_접도_데이터_미확인은_그대로_unknown() -> None:
     """회귀 방지 — 데이터가 없을 때 법정 판정을 지어내지 않는다."""
     c = _check_road("M01", road_width=None, road_frontage=None, total_gfa=8000)
     assert c.status == "unknown"
+
+
+# ── 5. 변이 검증이 드러낸 구멍 (2026-08-23 · 생존 17건 트리아지) ─────────────
+#
+# 아래는 **설명할 수 없는 생존**을 잠근 것이다. 변이 도구가 지운·바꾼 자리마다
+# "그래도 초록"이면 그 줄은 아무도 안 보고 있다는 뜻이다.
+
+
+def test_실무기준_문자열_표현이_출처를_드러낸다() -> None:
+    """★`LegalLimit.__str__` 은 잠겨 있는데 `PracticeLimit.__str__` 은 아니었다(비대칭).
+
+    화면·로그가 이 문자열을 그대로 싣는다 — 출처가 빠지면 관행값이 법정값처럼 읽힌다.
+    """
+    got = str(PracticeLimit(4, source="플랫폼 실무기준", note="권장 도로폭"))
+    assert "4" in got and "플랫폼 실무기준" in got and "권장 도로폭" in got, got
+    # 값이 없을 때는 '제한 없음'(법정 표현)이 아니라 '기준 없음'이어야 한다.
+    assert "기준 없음" in str(PracticeLimit(None, source="플랫폼 실무기준"))
+
+
+def test_출처_누락_오류가_무엇을_요구하는지_말한다() -> None:
+    """★오류 메시지는 다음 사람이 읽는 유일한 안내다 — 비어 있으면 규율이 전달되지 않는다."""
+    with pytest.raises(MissingLegalBasisError) as e:
+        PracticeLimit(5000, source="")
+    assert "출처" in str(e.value)
+
+
+def test_법정접도_단서의_존재가_고지된다() -> None:
+    """★건축법 §44① 에는 단서(예외)가 있다. 그 사실을 지우면 화면이 단정적으로 거짓말한다."""
+    assert "단서" in ROAD_FRONTAGE_STATUTE.note, ROAD_FRONTAGE_STATUTE.note
+
+
+def test_실무_권장_접도_미달이_법정이_아님을_밝힌다() -> None:
+    """★값과 라벨은 한 쌍 — `조건부` 로 낮췄어도 이유가 안 보이면 사용자는 위법으로 읽는다."""
+    c = _check_road("M10", road_width=3, road_frontage=2, total_gfa=300)
+    assert "법정" in c.detail and "아님" in c.detail, c.detail
+
+
+def test_권장최소_미달_사유에_기준값과_성격이_함께_실린다() -> None:
+    c = _check_lot_area("M01", 4000)
+    assert "권장 최소" in c.detail, c.detail
+    assert "5000" in c.detail, "미달 기준값이 사라졌다 — 사용자가 얼마나 모자란지 알 수 없다"
+
+
+def test_대지면적_통과_사유가_비지_않는다() -> None:
+    """★통과 경로의 설명은 아무도 안 본다 — 그래서 비어도 초록이었다(변이 생존 2건)."""
+    ok = _check_lot_area("M01", 6000)
+    assert ok.status == "pass"
+    assert "6000" in ok.detail and "5000" in ok.detail, ok.detail
+
+
+def test_규범표는_전부_근거를_지닌_타입이다_전수() -> None:
+    """★목록형이 아니라 **전수형** — 이 모듈에 새 규범 표가 생기면 자동으로 감시망에 든다.
+
+    `SourcedLimit`(= `LegalLimit | PracticeLimit`)을 **실제로 소비**하는 유일한 자리이기도 하다.
+    선언만 하고 아무도 안 읽으면 그것이 이 저장소가 반복해 데인 '소비처 0' 이다.
+    """
+    import typing
+
+    from app.services.legal.legal_limit import SourcedLimit
+    from app.services.zoning import development_feasibility_validator as V
+
+    allowed = typing.get_args(SourcedLimit)
+    assert set(allowed) == {LegalLimit, PracticeLimit}
+
+    # 규범 판정에 쓰이는 표 — 값이 숫자면 반드시 근거를 지닌 타입이어야 한다.
+    tables = {"MIN_LOT_AREA": V.MIN_LOT_AREA, "MAX_FLOORS": V.MAX_FLOORS}
+    checked = 0
+    for name, table in tables.items():
+        assert table, f"{name} 이 비었다 — 공허한 초록"
+        for code, limit in table.items():
+            assert isinstance(limit, allowed), f"{name}[{code}]: 원시 값이 들어왔다 — {limit!r}"
+            assert limit.basis.strip(), f"{name}[{code}]: 근거가 비었다"
+            checked += 1
+    for code, req in V.ROAD_REQUIREMENT.items():
+        for key, limit in req.items():
+            assert isinstance(limit, allowed), f"ROAD_REQUIREMENT[{code}][{key}]: {limit!r}"
+            checked += 1
+    # ★공허 진리 가드 — 대상 수가 무너지면 '위반 0'은 아무 뜻이 없다.
+    assert checked >= 35, f"검사 대상이 {checked}개뿐이다"
