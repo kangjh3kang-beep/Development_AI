@@ -355,3 +355,73 @@ async def test_연면적을_못_구하면_응답_등급도_미표기다(monkeypa
     assert out["precision_inputs"]["gfa"] is None
     # 분양단가는 실거래라 확인됨 — **한 입력이 모른다고 나머지를 지우지 않는다**.
     assert out["precision_inputs"]["sale_price"] == "V"
+
+
+# ── 8) 변이가 드러낸 **미검사 분기**들 ──────────────────────────────────────
+@pytest.mark.asyncio
+async def test_AI비서_등급_미표기일_때도_지시를_넘긴다(monkeypatch) -> None:
+    """★E 경로만 잠그고 None 경로를 방치했더니 그 분기가 변이에서 살아남았다.
+
+    등급을 **판정할 수 없을 때**야말로 LLM 이 확정치처럼 말하기 쉽다.
+    """
+    import app.services.feasibility.rough_feasibility_orchestrator as orch
+    from app.services.ai.assistant_agent import rough_feasibility
+
+    async def _fake(**_kw):
+        return {
+            "scenario_status": "actual",
+            "inputs": {"dev_type_name": "공동주택"},
+            "summary": {"total_cost_won": 1, "grade": "F"},
+            "degraded_notes": [],
+            "precision": None,
+            "precision_label": "정밀도 미표기",
+            "precision_basis": "연면적 등급 미확보 — 산출물 전체의 정밀도를 판정할 수 없습니다",
+        }
+
+    monkeypatch.setattr(orch, "build_rough_scenario", _fake)
+    out = await rough_feasibility.ainvoke({"address": "주소"})
+    assert "[정밀도] 정밀도 미표기" in out
+    # 근거도 함께 넘어가야 한다(무엇을 모르는지 LLM 이 말할 수 있어야 한다).
+    assert "연면적 등급 미확보" in out
+    assert "정밀도를 판정할 수 없다" in out
+    assert "확정치처럼 답하지 말고" in out
+
+
+def test_분양단가가_구속조건이면_그_사유가_근거에_남는다() -> None:
+    """★입력별 등급만 확인하고 **근거 문구**를 방치했더니 그 분기가 변이에서 살아남았다."""
+    grade, basis, _inputs = _compose(
+        gfa_precision=V, gfa_basis="",
+        price_source="지역 시세 테이블(national_default·추정·비실거래)",
+    )
+    assert grade is E
+    assert "분양단가" in basis and "실거래 미확보" in basis
+
+
+def test_모든_입력이_확인됨이면_등급도_확인됨이다() -> None:
+    """★상향 경로 — 개략 입력이 하나도 없으면 결과는 V 다.
+
+    이 경로가 없으면 "무조건 E 로 떨어뜨리는" 판별기여도 초록이 된다.
+    """
+    grade, basis, inputs = _compose(gfa_precision=V, gfa_basis="")
+    assert grade is V
+    assert inputs == {"gfa": "V", "land_cost": "V", "sale_price": "V"}
+    assert basis  # 빈 문구를 남기지 않는다
+
+
+def test_보고서_고지가_확인됨_등급도_말한다() -> None:
+    """★E·None 만 잠그고 일반 경로(V/D)를 방치했더니 그 분기가 변이에서 살아남았다."""
+    text = _exec_text(_scenario("V", "확인됨"))
+    assert "정밀도 고지" in text
+    assert "확인됨" in text
+
+
+@pytest.mark.asyncio
+async def test_보고서_JSON_정밀도_블록이_근거까지_담는다() -> None:
+    """★블록 존재만 보고 `basis` 를 방치했더니 그 줄이 변이에서 살아남았다."""
+    from app.services.feasibility.rough_scenario_report import (
+        generate_rough_scenario_report,
+    )
+
+    s = _scenario("E", "개략(추정)", basis="대지면적 × 실효용적률 — 설계 미반영(개략)")
+    j = await generate_rough_scenario_report(s, use_llm=False, format="json")
+    assert j["precision"]["basis"] == "대지면적 × 실효용적률 — 설계 미반영(개략)"

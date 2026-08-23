@@ -340,6 +340,9 @@ def compose_scenario_precision(
         basis = (
             f"{'·'.join(unknown)} 등급 미확보 — 산출물 전체의 정밀도를 판정할 수 없습니다"
             if unknown
+            # ★도달 불가 방어 — composed is None 이면 반드시 unknown 이 비어 있지 않다
+            #   (lowest 는 입력에 None 이 있을 때만 None 을 돌려준다). 변이 검증에서 이 줄이
+            #   생존하는 것은 정상이며, 그 사실을 여기 적어 둔다(점수 부풀리기 방지).
             else "정밀도 판정 불가"
         )
     elif composed is gfa_precision and gfa_basis:
