@@ -152,6 +152,13 @@ export default function MultiParcelPage() {
   }, [ssotParcels, site?.address]);
 
   const isMulti = mapAddresses.length >= 2;
+  // ★등록 필지 수(parcelCount)와 필지 목록(parcels)이 어긋나는 상태를 잡는다(2026-08-23).
+  //   라이프사이클 헤더는 parcelCount 로 "외 N필지"를 말하는데, 이 화면은 parcels 배열만 보고
+  //   목록이 비면 대표 주소 1개로 폴백한다 — 그 상태에서 "단일 필지입니다"라고 단언하면
+  //   **거짓 표시**다(사용자 신고: "다필지를 넣었는데 단필지만 분석된다").
+  //   두 신호가 어긋나면 단언하지 말고 **그 사실과 고치는 방법**을 말한다.
+  const registeredCount = site?.parcelCount ?? null;
+  const countMismatch = (registeredCount ?? 0) > 1 && !isMulti;
   const key = mapAddresses.join("||");
   const proj = (p: string) => `/${locale}/projects/${id}/${p}`;
 
@@ -299,8 +306,25 @@ export default function MultiParcelPage() {
             )}
           </div>
 
+          {/* ★등록 N필지인데 목록이 비었다 — "단일 필지"라고 단언하지 않는다(거짓 표시 방지) */}
+          {countMismatch && (
+            <div
+              data-testid="parcel-count-mismatch"
+              className="rounded-2xl border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 p-4 text-xs leading-relaxed text-[var(--text-secondary)]"
+            >
+              <p className="font-bold text-[var(--status-warning)]">
+                이 프로젝트는 {registeredCount}필지로 등록됐으나 필지 목록을 불러오지 못했습니다.
+              </p>
+              <p className="mt-1">
+                그래서 아래 구획도·집계는 <b>대표 1필지 기준</b>입니다 — 통합분석(면적가중 건폐·용적,
+                통합 GFA, 인접성)은 실행되지 않았습니다. 위 “필지 선택/변경”에서 필지를 다시 지정하면
+                통합분석이 실행됩니다.
+              </p>
+            </div>
+          )}
+
           {/* 단일 필지 — 통합분석 미적용 정직고지 */}
-          {!isMulti && (
+          {!isMulti && !countMismatch && (
             <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-4 text-xs leading-relaxed text-[var(--text-secondary)]">
               <p className="font-bold text-[var(--text-primary)]">단일 필지입니다.</p>
               <p className="mt-1">통합분석(면적가중 건폐·용적, 통합 GFA, 인접성)은 <b>2개 이상</b>의 필지를 선택했을 때 실행됩니다.

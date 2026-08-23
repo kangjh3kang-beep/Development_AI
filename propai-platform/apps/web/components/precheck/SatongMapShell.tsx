@@ -105,6 +105,7 @@ import {
   readSatongViewCache,
   writeSatongViewCache,
   readSatongMapSelection,
+  emptySelectionSiteAnalysisPatch,
   selectionToSiteAnalysisPatch,
   siteAnalysisToSelection,
   writeDominantConstraintCache,
@@ -1823,7 +1824,13 @@ export function SatongMapShell({
         //   빈 patch를 merge하지 않는다 — updateSiteAnalysis는 null일 때 기본 빈 객체와
         //   merge하므로, 여기서 그냥 호출하면 null→"내용 없는 빈 객체"로 부활시켜 다른 화면의
         //   "분석 없음" 판정을 오염시킨다.
-        updateSiteAnalysis({ parcels: [], parcelCount: 0 }, { source: "user" });
+        // ★파생 집계까지 함께 되돌린다(2026-08-23 · 사용자 신고 근본). 종전에는 여기서
+        //   `parcels`·`parcelCount` 두 개만 0 으로 만들어, 그 목록에서 계산된 면적 합계
+        //   (`landAreaSqm`/`landAreaSqmTotal`/`repLandAreaSqm`)와 `zoneMixed` 가 **유령으로
+        //   살아남았다** — 화면이 "단일 필지입니다"라면서 동시에 통합면적 164,823㎡ 를 보이고,
+        //   그 유령 면적이 설계·수지로 흘러 총사업비를 부풀렸다(라이브 실측 2건).
+        //   되돌림 값은 쓰기 함수와 같은 모듈에 두어 **한 곳만 고치면 대칭이 유지**되게 한다.
+        updateSiteAnalysis(emptySelectionSiteAnalysisPatch(), { source: "user" });
       }
       saveSelectionForOutputs(parcels);
     },
