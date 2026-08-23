@@ -104,8 +104,8 @@ def test_자연녹지_단독주택이_4층_계획을_통과한다() -> None:
     from app.services.zoning.development_feasibility_validator import _check_floors
 
     c = _check_floors("M10", "자연녹지지역", 4)
-    assert c.status != "fail", f"단독주택 4층이 다시 막혔다: {c.message}"
-    assert "제한 없음" in c.message or "별표1" in c.message
+    assert c.status != "fail", f"단독주택 4층이 다시 막혔다: {c.detail}"
+    assert "제한 없음" in c.detail or "별표1" in c.detail
 
 
 def test_등재된_상한은_여전히_작동한다_대조군() -> None:
@@ -113,5 +113,5 @@ def test_등재된_상한은_여전히_작동한다_대조군() -> None:
     from app.services.zoning.development_feasibility_validator import _check_floors
 
     c = _check_floors("M12", "제2종일반주거지역", 6)   # 상한 4층
-    assert c.status == "fail", f"M12 6층이 통과했다 — 제약이 죽었다: {c.message}"
-    assert "별표1" in c.message, "실패 사유에 근거(법령)가 없다"
+    assert c.status == "fail", f"M12 6층이 통과했다 — 제약이 죽었다: {c.detail}"
+    assert "별표1" in c.detail, "실패 사유에 근거(법령)가 없다"
