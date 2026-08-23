@@ -412,9 +412,64 @@ describe("앱 전역 층위 사다리", () => {
     "★수집 밖 경계: 비리터럴 className·`top-full` 아닌 위치 관용구·`packages/ui/dropdown.tsx`(cn 비리터럴)",
   );
 
+  it("★★z 를 **모달 칸으로 올린 표면**은 ARIA 로도 모달이어야 한다 — 선언 누락이 계약 회피였다", () => {
+    // ## 이 계약이 없으면 무슨 일이 생기나 (2026-08-23 실측)
+    //
+    // ESC 계약(`#697`)과 포커스 계약(`#749~`)은 표면을 모을 때 **`aria-modal="true"`** 를 쓴다.
+    // 그래서 화면 전체를 덮고 모달 칸 z 를 쓰면서도 **그 선언만 빠뜨리면 두 계약을 통째로
+    // 빠져나간다.** 즉 *"선언을 안 하는 것"* 이 가장 쉬운 계약 회피였다.
+    //
+    // 실제로 셋이 그렇게 새어 있었다 — `DeskAppraisalModal`·`LandShareModal` 은 백드롭
+    // 클릭으로 닫히는 전형적 모달인데 **ESC 로 안 닫히고** Tab 이 배경으로 샜고,
+    // 스크린리더에는 모달로 읽히지도 않았다.
+    //
+    // ★그래서 수집 기준을 **시각적 사실**(화면 전체를 덮는가 + 모달 칸 z 인가)로 바꾼다.
+    //   ARIA 선언은 그 사실의 **결과**여야지, 계약에 걸릴지 말지를 정하는 **입구**이면 안 된다.
+    const files: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        if (e.name === "node_modules" || e.name === "__tests__") continue;
+        const full = join(dir, e.name);
+        if (e.isDirectory()) walk(full);
+        else if (/\.tsx$/.test(e.name)) files.push(full);
+      }
+    };
+    walk(join(WEB_ROOT, "components"));
+    walk(join(WEB_ROOT, "app"));
+
+    const modalZ = SATONG_CONTENT_Z.appModal;
+    const overlays: string[] = [];
+    const offenders: string[] = [];
+    for (const f of files) {
+      const raw = readFileSync(f, "utf-8");
+      if (!raw.includes("fixed inset-0")) continue; // 값싼 사전 필터
+      const src = stripCommentsForScan(raw, f);
+      // 화면 전체를 덮으면서 **모달 칸 z** 를 쓰는 className 리터럴.
+      const hit = new RegExp(
+        `className="[^"]*\\bfixed inset-0\\b[^"]*\\bz-\\[${modalZ}\\][^"]*"`,
+      ).test(src);
+      if (!hit) continue;
+      const rel = f.replace(`${WEB_ROOT}/`, "");
+      overlays.push(rel);
+      if (!src.includes('aria-modal="true"')) offenders.push(rel);
+    }
+
+    // ★공허 진리 가드 — 대상을 못 모으면 "위반 0"이 저절로 참이 된다.
+    expect(
+      overlays.length,
+      `모달 칸(z-[${modalZ}]) 전체덮기 표면을 하나도 못 찾았다 — 스캐너·상수가 깨졌다`,
+    ).toBeGreaterThan(0);
+
+    expect(
+      offenders,
+      `화면 전체를 덮고 모달 칸(z-[${modalZ}])을 쓰면서 aria-modal 을 선언하지 않는다 — ` +
+        "ESC·포커스 계약이 이 표면을 **수집조차 못 한다**(스크린리더에도 모달로 안 읽힌다)",
+    ).toEqual([]);
+  });
+
   it.todo(
-    "★z 승격의 짝: InputResolveModal 포커스 트랩·ESC 부재 — 모달(800)이 네비 플라이아웃(700) 위로 가며 " +
-      "포커스가 보이지 않게 된다(WCAG 2.4.11)",
+    "★남은 회피 경로: 비리터럴 className(cn()·삼항)으로 조립한 전체덮기 오버레이는 위 수집에 " +
+      "안 잡힌다 — `top-full` 계약과 같은 한계이고, 근본 처방은 오버레이 공용 컴포넌트다",
   );
 
   it("★모바일 네비는 앱 헤더 안에 렌더돼 계약 밖이다 — 그 전제가 유지되는지 확인", () => {
