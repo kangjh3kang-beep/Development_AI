@@ -23,6 +23,19 @@
 3. 보고서 Executive Summary 가 **등급 배지 바로 옆**에서 정밀도를 고지한다
 4. AI 비서 도구 출력이 등급 + **"확정치처럼 답하지 말라"는 지시**를 함께 넘긴다
 5. 대조군 — 상태가 다르면 **결과도 달라야** 한다(어느 입력이든 같은 답이면 락이 공허하다)
+
+## 변이 검증 후 남은 생존 — **설명 가능**하므로 여기 적어 둔다(점수 부풀리기 방지)
+
+  · `elif r.get("precision") is None:` 의 키 문자열 변경 — **등가 변이**다.
+    키를 바꾸면 `.get` 이 `None` 을 돌려주고 `is None` 이 참이 되어 **같은 분기**를 탄다.
+  · `else "정밀도 판정 불가"` — **도달 불가 방어**(코드에도 적어 뒀다).
+    `lowest` 는 입력에 `None` 이 있을 때만 `None` 을 돌려주므로 `unknown` 이 반드시 비지 않는다.
+  · `elif composed is gfa_precision and gfa_basis:` 조건 무력화 — 어느 쪽으로 가도
+    **유효한 근거 문구**가 나온다(연면적도 구속조건이므로 그 근거가 틀리지 않다).
+  · 보고서 고지문의 긴 문자열 일부 변경 — 단언이 그 문장의 **핵심 구절**을 보므로
+    다른 부분을 바꾼 변이는 살아남는다. 문장 전체를 못박으면 문구 다듬기마다 빨강이 된다.
+
+변이 **95 kill / 6 생존**(초판 62/44 → 이 파일의 락을 보강한 결과).
 """
 
 from __future__ import annotations
@@ -405,7 +418,8 @@ def test_모든_입력이_확인됨이면_등급도_확인됨이다() -> None:
     grade, basis, inputs = _compose(gfa_precision=V, gfa_basis="")
     assert grade is V
     assert inputs == {"gfa": "V", "land_cost": "V", "sale_price": "V"}
-    assert basis  # 빈 문구를 남기지 않는다
+    # ★"비어 있지 않다"만 보면 문구를 아무거나 바꿔도 통과한다(변이 생존). 문구를 못박는다.
+    assert basis == "입력 최저 등급을 따름"
 
 
 def test_보고서_고지가_확인됨_등급도_말한다() -> None:
