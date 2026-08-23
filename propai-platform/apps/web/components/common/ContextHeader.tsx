@@ -78,7 +78,11 @@ function ContextChip({
 }
 
 /** 용도지역·면적 근거 트레이스를 store SSOT에서 구성(있을 때만·무목업). */
-function buildEvidenceItems(
+/** ★export 하는 이유: 근거 문구는 사용자가 "근거 보기" 로 확인하는 자리라 **거짓이면 근거
+ *  없음보다 나쁘다**. 그런데 변이로 확인하니 이 문구가 **무잠금**이었다 — 거짓 문구
+ *  ("다필지 통합 우세 용도지역(dominant)")로 되돌려도 전부 초록이었다.
+ *  컴포넌트를 띄우지 않고 순수 함수로 잠글 수 있게 공개한다. */
+export function buildEvidenceItems(
   data: ContextHeaderData,
   farBasis: string | null,
 ): EvidenceItem[] {
@@ -87,7 +91,13 @@ function buildEvidenceItems(
     items.push({
       label: "용도지역",
       value: data.zoneLabel,
-      basis: data.isMultiParcel ? "다필지 통합 우세 용도지역(dominant)" : "부지분석 확정 용도지역",
+      // ★거짓 근거를 걷어낸다(2026-08-24) — "우세(dominant)" 라고 적었지만 이 값의 출처는
+      //   `dominantZoneCode ?? zoneCode` 이고 둘 다 **대표(첫) 필지** 값이었다. 근거 트레이스는
+      //   사용자가 "근거 보기" 를 눌러 확인하는 자리다 — **거짓 근거는 근거 없음보다 나쁘다**.
+      //   진짜 우세 용도지역은 서버가 면적합산으로 판정하며 구획도 통합 종합분석에 표시된다.
+      basis: data.isMultiParcel
+        ? "다필지 대표(첫) 필지 용도지역 — 면적 우세 용도지역은 구획도 '통합 종합분석' 참조"
+        : "부지분석 확정 용도지역",
     });
   }
   const area = areaText(data.landAreaSqm);
