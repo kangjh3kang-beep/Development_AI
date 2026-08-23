@@ -34,6 +34,10 @@ A2 = {"address": "경기도 오산시 내삼미동 741", "area_sqm": 1015.0, "zo
 NO_AREA = {"address": "경기도 오산시 내삼미동 741"}
 
 
+#   ※로그(문구·인자·`if _normalized:` 가드) 변이 생존은 **의도된 미잠금**이다 —
+#     사람이 읽는 진단 메시지이지 계약이 아니다. 계약은 위 영속 관측(payload)이다.
+
+
 @pytest.fixture
 def observed(monkeypatch):
     events: list[tuple[str, dict]] = []
@@ -56,7 +60,13 @@ async def test_C_전필지_면적미확보는_침묵하지_않는다(observed):
 
     obs = _collapse(observed)
     assert obs, "입력이 다필지였는데 통합 불가 — 그 사실이 어디에도 안 남았다"
-    payload = obs[0][1]["payload"]
+    event_type, props = obs[0]
+    # ★상수값 = 프로덕션 조회 키(바뀌면 대시보드·쿼리가 조용히 빈다)
+    assert event_type == "multiparcel_collapse_observation"
+    # ★analyzer 가 COALESCE(route, service) 로 **실제 읽는** 컬럼이다
+    assert props["service"] == "integrated_context"
+    assert props["surface"] == "api"
+    payload = props["payload"]
     assert payload["input_count"] == 2
     assert payload["usable_count"] == 0
     assert payload["missing_count"] == 2
