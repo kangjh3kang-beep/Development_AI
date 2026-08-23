@@ -121,7 +121,7 @@ export function ProjectHealthBoard({ locale }: { locale: string }) {
             </p>
             {/* ★분모가 무엇인지 밝힌다 — 같은 화면의 라이프사이클 레일은 **11단계** 여정
                 진행률이고 이 카드는 **7단계** 분석 수치 확보율이다. 둘 다 "진행/완성도"라고만
-                적혀 있어 사용자가 두 숫자를 모순으로 읽었다(18% vs 14%). 판정 자체는
+                적혀 있어 두 숫자가 모순처럼 읽힌다. 판정 자체는
                 store 의 stageCompletion 하나로 통일했으므로 이제 **분모만** 다르다. */}
             <p className="mt-1 text-xs text-[var(--text-secondary)]">
               라이프사이클 11단계 중 <strong>수치가 필요한 {total}단계</strong> 기준입니다 —
