@@ -311,6 +311,12 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
   const updateSiteAnalysis = useProjectContextStore((s) => s.updateSiteAnalysis);
 
+  // ── 면적 기준(basis) 해석 — 값과 함께 "무엇을 근거로 한 면적인지"를 얻는다(lib/site-area SSOT). ──
+  //   ★이 패널 안에서 면적을 보여 주는 곳이 셋(요약줄·특성표·토지가액)인데 전부 대표 1필지
+  //     응답을 읽고 있었다. 파생을 최상단에 두어 **세 곳이 같은 값·같은 기준**을 쓰게 한다.
+  const resolvedArea = useMemo(() => resolveLandArea(siteAnalysis), [siteAnalysis]);
+  const areaBasisNote = useMemo(() => landAreaBasisNote(siteAnalysis), [siteAnalysis]);
+
   // ── Zoning API state ──
   const [zoningData, setZoningData] = useState<ZoningAnalysisResponse | null>(null);
   const [zoningLoading, setZoningLoading] = useState(false);
@@ -641,11 +647,20 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
     if (zoningData.zone_type) {
       chars.push({ label: "용도지역", value: zoningData.zone_type, status: "safe" });
     }
-    if (zoningData.land_area_sqm != null) {
+    // ★면적 기준 SSOT(R1) — zoningData 는 대표 1필지 응답이다. 다필지에서 이 표만 대표면적을
+    //   보여 주면 같은 패널의 요약줄(통합)과 갈린다. 값·기준을 리졸버 하나에서 가져온다.
+    const charArea = resolvedArea.valueSqm ?? zoningData.land_area_sqm;
+    if (charArea != null) {
+      const basisSuffix =
+        resolvedArea.basis === "integrated"
+          ? ` (통합 ${resolvedArea.parcelCount}필지)`
+          : resolvedArea.basis === "representative"
+            ? " (대표필지)"
+            : "";
       chars.push({
         label: "면적",
-        value: `${zoningData.land_area_sqm.toLocaleString()}m²`,
-        status: zoningData.land_area_sqm >= 200 ? "safe" : "warning",
+        value: `${charArea.toLocaleString()}m²${basisSuffix}`,
+        status: charArea >= 200 ? "safe" : "warning",
       });
     }
     if (zoningData.zone_limits?.max_height_m != null) {
@@ -674,7 +689,9 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
     //   pnu·면적이 null이라 칩이 적을 때만 **우연히** 보이던 상태였다.
     //   경고는 아래 '용도지역 데이터 경고' 배너가 전담한다(조건부·절단 없음).
     return chars.length > 0 ? chars : null;
-  }, [zoningData]);
+    // resolvedArea 는 면적 행의 값·기준을 결정하므로 의존에 포함한다(누락 시 다필지 보강이
+    //   끝나도 표가 옛 대표면적으로 고착된다 — 종전 결함의 재발 경로).
+  }, [zoningData, resolvedArea]);
 
   // Determine data source for scenarios
   // 각 시나리오에 tentative(선행절차 전제 잠정)·tentativeReason을 전파해, 렌더에서 확신 % 대신
@@ -809,10 +826,6 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
     }
     return items;
   }, [integratedData?.integrated, integratedData?.parcel_count, ssotParcels?.length]);
-
-  // ── 면적 기준(basis) 해석 — 값과 함께 "무엇을 근거로 한 면적인지"를 얻는다(lib/site-area SSOT). ──
-  const resolvedArea = useMemo(() => resolveLandArea(siteAnalysis), [siteAnalysis]);
-  const areaBasisNote = useMemo(() => landAreaBasisNote(siteAnalysis), [siteAnalysis]);
 
   const analysis = {
     zoning: {
