@@ -160,7 +160,13 @@ export default function ProjectDetailPage() {
         });
       }
       const feas = r.summary?.feasibility;
-      if (feas) st.updateFeasibilityData({ totalCostWon: feas.total_cost_won ?? null, totalRevenueWon: feas.total_revenue_won ?? null, profitRatePct: feas.profit_rate_pct ?? null, grade: feas.grade ?? null });
+      if (feas) st.updateFeasibilityData({ totalCostWon: feas.total_cost_won ?? null, totalRevenueWon: feas.total_revenue_won ?? null, profitRatePct: feas.profit_rate_pct ?? null, grade: feas.grade ?? null,
+          // ★정밀도 등급 승계(#770) — 백엔드가 개략치(E)라고 알려 주면 화면도 그렇게 말한다.
+          //   이 값이 없으면 화면은 "정밀도 미표기"로 드러내고 확정치처럼 렌더하지 않는다.
+          precision: feas.precision ?? null,
+          precisionLabel: feas.precision_label ?? null,
+          precisionBasis: feas.precision_basis ?? null,
+        });
       const esg = r.summary?.esg_carbon;
       if (esg) st.updateEsgData({ embodiedCarbonKg: esg.embodied_carbon_kg ?? null, operationalCarbonKg: esg.operational_carbon_kg ?? null, totalCarbonPerSqm: esg.total_carbon_per_sqm ?? null });
       return !!(site || basic || design || feas || esg);
