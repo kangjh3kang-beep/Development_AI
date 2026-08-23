@@ -137,6 +137,8 @@ async def test_F_이미_행을_읽었으면_빈_다음페이지는_파손이_아
     assert complete is True, "이미 읽은 행이 있으면 빈 다음 페이지는 정상 종료다"
 
 
+#   ※로그 문자열 변이 생존은 **의도된 미잠금**이다 — 사람이 읽는 진단 메시지이지
+#     계약이 아니다(문구를 잠그면 정상적인 문구 개선이 위반으로 신고된다).
 # ── 파서 건강 **영속 관측** (2026-08-23) ────────────────────────────────────
 #   ★#764 와 같은 패턴을 반복하지 않는다: 감지 로직만 보고 emit 을 안 보면
 #     관측이 통째로 사라져도 초록이다(1차 변이에서 실제로 전부 생존했다).
@@ -177,6 +179,8 @@ async def test_G_파손이면_broken_True_로_영속_관측한다(observed):
     assert props["surface"] == "api"
     assert props["payload"]["broken"] is True
     assert props["payload"]["sigungu_code"] == "41370"
+    # ★진단 지표를 잠근다 — 파손 시 "페이지가 어떻게 달랐나"를 재는 값이다.
+    assert props["payload"]["page_len"] > 0, "파손 페이지 크기를 안 남기면 원인 추적이 끊긴다"
 
 
 @pytest.mark.asyncio
@@ -187,6 +191,8 @@ async def test_H_정상이면_broken_False_로_남는다_분모(observed):
     obs = [e for e in observed if e[0] == g.GOSI_PARSER_OBSERVATION_EVENT]
     assert obs
     assert obs[0][1]["payload"]["broken"] is False   # ★G와 갈리는 지점
+    # ★건강 지표 — 정상 경로에서 몇 건을 읽었는지가 분모의 실체다.
+    assert obs[0][1]["payload"]["row_count"] == 0, "진짜 0건 조회의 row_count"
 
 
 @pytest.mark.asyncio
