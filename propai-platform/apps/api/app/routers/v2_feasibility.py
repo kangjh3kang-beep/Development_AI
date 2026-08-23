@@ -658,7 +658,9 @@ async def baseline_feasibility(req: FeasibilityBaselineRequest):
     # BCR로 층수 가정(far/bcr 비율)
     ordinance_bcr = zone_limits.get("ordinance_bcr_pct") or 0
     legal_bcr = zone_limits.get("max_bcr_pct") or 0
-    applied_bcr = float(ordinance_bcr or legal_bcr or 60)
+    # ★무날조 — 조례·법정 어느 쪽도 없으면 0 으로 두고, 아래 `if applied_bcr else 0` 가
+    #   층수 추정을 **미산출(0)** 로 정직 처리한다. 종전 `or 60` 은 근거 없는 층수를 만들었다.
+    applied_bcr = float(ordinance_bcr or legal_bcr or 0)
     est_floors = max(1, round(applied_far / applied_bcr)) if applied_bcr else 0
     assumptions["estimated_floors"] = est_floors
     assumptions["applied_bcr_pct"] = round(applied_bcr, 1)
