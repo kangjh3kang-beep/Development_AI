@@ -356,7 +356,15 @@ export function selectionToSiteAnalysisPatch(
         ? { lat: first.lat, lon: first.lon }
         : null,
     zoneCode: first.zoneType ?? null,
-    dominantZoneCode: first.zoneType ?? null,
+    // ★혼재면 **비운다**(2026-08-24) — 종전엔 `first.zoneType` 을 그대로 넣고 이름을
+    //   "dominant"(우세)라 불렀다. 실측 사례에서 그 값은 면적 우세와 **반대**였다
+    //   (자연녹지 4,576㎡·79% vs 보전관리 1,205㎡·21% 인데 보전관리를 표시).
+    //   ★여기서 진짜 우세를 재계산하지 않는다 — 산식은 서버(`_aggregate_integrated_zoning`)
+    //     하나뿐이고, 그것은 면적합산 max 에 더해 동률(±5%)·규제성격 상이까지 본다.
+    //     선택 시점엔 그 판정이 없으므로 **모른다고 두는 것이 정직하다**.
+    //   ★소비처 무회귀: `design-ssot`·`zoning-ssot` 는 `dominantZoneCode ?? zoneCode` 로 읽으므로
+    //     null 이면 `zoneCode`(=대표=first) 로 폴백한다 — **값은 종전과 같고, 거짓 주장만 사라진다**.
+    dominantZoneCode: zoneSet.size > 1 ? null : (first.zoneType ?? null),
     zoneMixed: zoneSet.size > 1,
     landAreaSqm: effectiveArea,
     landAreaSqmTotal: effectiveArea,

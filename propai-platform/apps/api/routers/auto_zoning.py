@@ -1115,6 +1115,16 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
             "total_area_pyeong": round(total_area / 3.305785, 1),
             "zone_types": zone_set,
             "zone_mixed": len(zone_set) > 1,        # ★용도지역 혼재 여부(종합분석 핵심)
+            # ★우세 용도지역을 **보낸다**(2026-08-24). `_aggregate_integrated_zoning` 이 이미
+            #   면적합산 max 로 산출하고(동률 ±5% 또는 규제성격 상이면 "mixed_review_required"),
+            #   이 엔드포인트만 그것을 응답에 안 실었다 — **계산해 놓고 안 보내는** 형태다
+            #   (`_far_legal` 과 같은 계열). 프론트는 그동안 `first.zoneType` 을 "dominant" 라
+            #   불렀는데, 실측 사례에서 그 값이 **면적 우세와 반대**였다
+            #   (자연녹지 4,576㎡·79% vs 보전관리 1,205㎡·21% 인데 보전관리를 표시).
+            #   ★프론트가 재계산하지 않는다 — 산식은 여기 하나뿐이다(로직 복제 금지).
+            "dominant_zone": _agg.get("dominant_zone"),
+            "dominant_basis": _agg.get("dominant_basis"),
+            "zone_mix": _agg.get("zone_mix"),
             "jimoks": jimok_set,
             "official_price_min": min(pvals) if pvals else None,
             "official_price_max": max(pvals) if pvals else None,
