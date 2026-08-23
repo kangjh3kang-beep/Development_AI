@@ -11,10 +11,11 @@
  * 라벨·아이콘·게이팅 전부 roleConfig SSOT 소비(재정의 0).
  */
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { LayoutGrid, X } from "lucide-react";
 import { BOTTOM_NAV_KEYS, MENU_GROUPS, type SalesTabDef } from "@/components/sales-app/roleConfig";
 import { DISMISS_Z, useDismissible } from "@/lib/satong-dismiss";
+import { useModalFocus } from "@/hooks/useModalFocus";
 
 export function FieldBottomNav({
   tabs,
@@ -86,6 +87,7 @@ export function FieldMenuSheet({
   onNavigate: (tab: string) => void;
   onClose: () => void;
 }) {
+  const bodyRef = useRef<HTMLDivElement>(null);
   // 열림 동안 배경 스크롤 잠금(모바일 시트 표준 UX).
   useEffect(() => {
     if (!open || typeof document === "undefined") return;
@@ -100,6 +102,14 @@ export function FieldMenuSheet({
   // 이 시트 위로 모달(현장 진입 등)이 열릴 수 있고, 종전에는 ESC 한 번에 둘 다 닫혔다.
   // 시트는 모달보다 아래 칸(`navSheet`)이라 모달이 먼저 닫히고, 다음 ESC 가 시트를 닫는다.
   useDismissible(DISMISS_Z.navSheet, open, onClose);
+
+  // ★포커스 생명주기 — 트랩 범위는 **시트 본체**다(백드롭 딤 버튼은 밖).
+  //   미룬 사유 둘을 재봤다:
+  //   ① *"딤이 포커스 가능해 본체 트랩이면 닫을 수단이 없다"* → **본체 안에 닫기(X) 버튼이
+  //      있다**. 게다가 딤을 트랩 안에 넣으면 Tab 순환에 화면 전체를 덮는 버튼이 끼어든다.
+  //   ② *"항목을 누르면 라우팅으로 언마운트돼 복귀 대상이 사라진다"* → 훅이 이미
+  //      `document.contains(restoreTo)` 로 막는다(사라진 요소로 되돌리지 않는다).
+  useModalFocus(bodyRef, open);
 
   // sm(640px) 이상 확장 시 자동 닫기 — 시트가 sm:hidden 으로 CSS 만 숨으면 body 잠금이
   // 해제 불가로 남던 R1 지적 반영(태블릿 회전·반응형 토글·폴더블 확장 시 스크롤 먹통 방지).
@@ -138,7 +148,10 @@ export function FieldMenuSheet({
         onClick={onClose}
         className="absolute inset-0 bg-black/50"
       />
-      <div className="relative max-h-[80vh] overflow-y-auto rounded-t-2xl border-t border-[var(--line)] bg-[var(--background)] p-4 pb-[calc(env(safe-area-inset-bottom)+16px)] shadow-2xl">
+      <div
+        ref={bodyRef}
+        className="relative max-h-[80vh] overflow-y-auto rounded-t-2xl border-t border-[var(--line)] bg-[var(--background)] p-4 pb-[calc(env(safe-area-inset-bottom)+16px)] shadow-2xl"
+      >
         <div className="mb-3 flex items-center justify-between">
           <div>
             <span className="cc-label">MENU</span>
