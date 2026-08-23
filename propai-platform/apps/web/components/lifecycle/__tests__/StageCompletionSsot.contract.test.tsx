@@ -1,8 +1,17 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { LifecycleProgressRail } from "@/components/lifecycle/LifecycleProgressRail";
 import { ProjectHealthBoard } from "@/components/projects/ProjectHealthBoard";
+import { ProjectAddressBar } from "@/components/projects/ProjectAddressBar";
+import { ProjectLifecyclePipeline } from "@/components/projects/ProjectLifecyclePipeline";
 import { useProjectContextStore, LIFECYCLE_STAGES } from "@/store/useProjectContextStore";
+
+// 라우터 훅 — 이 테스트의 대상은 판정 배선이라 경로는 고정값으로 충분하다.
+vi.mock("next/navigation", () => ({
+  useParams: () => ({ locale: "ko", id: "p1" }),
+  usePathname: () => "/ko/projects/p1",
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), prefetch: vi.fn() }),
+}));
 
 /**
  * 단계 완료 판정 SSOT 계약 — **같은 화면이 같은 단계를 두고 반대로 말하지 않는다**.
@@ -109,5 +118,83 @@ describe("단계 완료 판정 SSOT — 두 화면이 갈리지 않는다", () =
     const section = screen.getByLabelText("프로젝트 완성도 헬스보드");
     expect(section.textContent).toContain("수치가 필요한 7단계");
     expect(section.textContent).toContain("여정 진행률과 분모가 다릅니다");
+  });
+});
+
+/**
+ * ★키 매핑표(완성도 7키 → 라이프사이클 단계) 락.
+ *
+ * 변이 검증에서 `["cost", "construction", "공사비"]` 의 문자열을 바꿔도 **아무도 죽지 않았다**.
+ * 나는 `site` 만 단언하고 나머지 여섯을 방치했다 — 표가 장식이 되어 있었다.
+ * 각 단계의 데이터를 **그 단계만** 채우고, 대응하는 키 **하나만** done 이 되는지 본다
+ * (매핑이 어긋나면 엉뚱한 키가 켜지거나 아무 키도 안 켜져 죽는다).
+ */
+describe("완성도 7키 ↔ 라이프사이클 단계 매핑표", () => {
+  function reset() {
+    useProjectContextStore.setState({
+      siteAnalysis: null, designData: null, costData: null, complianceData: null,
+      esgData: null, completedStages: [], updatedAt: {},
+    } as never);
+    useProjectContextStore.getState().setProject("p1", "모산동", "active");
+  }
+
+  const CASES: Array<[string, () => void]> = [
+    ["site", () => useProjectContextStore.getState().updateSiteAnalysis({ address: "주소", landAreaSqm: 100 } as never)],
+    ["design", () => useProjectContextStore.setState({ designData: { totalGfaSqm: 1000 } } as never)],
+    ["cost", () => useProjectContextStore.setState({ costData: { totalConstructionCostWon: 1 } } as never)],
+    ["compliance", () => useProjectContextStore.setState({ complianceData: { farCompliant: true } } as never)],
+    ["finance", () => useProjectContextStore.getState().markFinanceUpdated()],
+    ["esg", () => useProjectContextStore.setState({ esgData: { totalCarbonPerSqm: 1 } } as never)],
+    ["permit", () => useProjectContextStore.setState({ completedStages: ["permit"] } as never)],
+  ];
+
+  it.each(CASES)("%s 키는 그 단계의 데이터로만 켜진다(오매핑 시 죽는다)", (key, seed) => {
+    reset();
+    seed();
+    const done = useProjectContextStore
+      .getState()
+      .projectCompleteness()
+      .stages.filter((st) => st.done)
+      .map((st) => st.key);
+    expect(done).toEqual([key]);
+  });
+});
+
+describe("남은 두 표면의 렌더 배선", () => {
+  function seedAddressOnlyLocal() {
+    useProjectContextStore.setState({ siteAnalysis: null, completedStages: [] } as never);
+    const ctx = useProjectContextStore.getState();
+    ctx.setProject("p1", "모산동", "active");
+    ctx.updateSiteAnalysis({ address: "충청남도 천안시 동남구 모산동 123-1" } as never);
+  }
+
+  it("★주소 배지가 분모를 함께 말한다 — 벌거벗은 %는 레일과 모순처럼 읽힌다", () => {
+    seedAddressOnlyLocal();
+    render(<ProjectAddressBar />);
+    const chip = screen.getByText(/분석 완성도/);
+    expect(chip.textContent).toContain("0/7");
+    // 툴팁(분모 설명)이 지워지면 사용자는 다시 두 숫자를 모순으로 읽는다.
+    expect(chip.getAttribute("title") ?? "").toContain("라이프사이클 진행률과 분모가 다릅니다");
+  });
+
+  it("★파이프라인은 진행중(partial) 단계를 **완료가 아니라 현재**로 표시한다", () => {
+    seedAddressOnlyLocal();
+    const { container } = render(<ProjectLifecyclePipeline locale="ko" projectId="p1" />);
+    // 전제 가드 — 부지분석 노드가 실제로 렌더돼야 아래 단언이 의미를 갖는다.
+    const node = container.querySelector('[data-stage-id="site-analysis"]');
+    expect(node, "부지분석 노드가 렌더되지 않았다").not.toBeNull();
+    // ★주소만 있는 부지는 **완료가 아니다**(종전엔 completed 였다) — 현재 단계로 안내한다.
+    expect(node!.getAttribute("data-stage-status")).toBe("current");
+    expect(node!.getAttribute("data-stage-status")).not.toBe("completed");
+  });
+
+  it("★대조군 — 면적이 확보되면 같은 노드가 completed 로 바뀐다(두 상태가 달라야 락이 성립)", () => {
+    useProjectContextStore.setState({ siteAnalysis: null, completedStages: [] } as never);
+    const ctx = useProjectContextStore.getState();
+    ctx.setProject("p1", "모산동", "active");
+    ctx.updateSiteAnalysis({ address: "충청남도 천안시 동남구 모산동 123-1", landAreaSqm: 3836 } as never);
+    const { container } = render(<ProjectLifecyclePipeline locale="ko" projectId="p1" />);
+    const node = container.querySelector('[data-stage-id="site-analysis"]');
+    expect(node!.getAttribute("data-stage-status")).toBe("completed");
   });
 });

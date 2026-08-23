@@ -167,6 +167,11 @@ function StageNode({
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.05, duration: 0.3 }}
       className={`${baseClasses} ${statusClasses[status]}`}
+      /* 관측점 — 단계 상태를 **DOM 에서 검사 가능**하게 남긴다. 색상 클래스로 상태를 판별하면
+         디자인이 바뀔 때마다 테스트가 깨지고, 그렇다고 안 잠그면 판정 배선이 무잠금이 된다
+         (실측: `partial → current` 배선이 변이에서 생존했다). */
+      data-stage-id={stage.id}
+      data-stage-status={status}
     >
       {/* Pulsing ring for current stage */}
       {status === "current" && (
