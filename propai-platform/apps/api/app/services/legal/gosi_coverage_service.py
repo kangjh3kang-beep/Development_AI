@@ -78,6 +78,26 @@ _DATE_RE = re.compile(r"20\d{2}-\d{2}-\d{2}")
 NTFC_DATE_RE = re.compile(r"(20\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])")
 
 
+# 토지이음이 **빈 결과에 내는 명시적 신호**(라이브 실측 2026-08-23):
+#   <tr><td colspan="4">조회된 데이터가 없습니다.</td></tr>
+# ★이 신호가 파서 파손과 진짜 0건을 가른다. 종전엔 `파싱 0건 → complete=True` 라
+#   **HTML 구조가 바뀌어도 "전건 확보"** 로 판정돼, 결손 탐지가 조용히 0이 됐다.
+_EMPTY_STATE_RE = re.compile(r"조회된\s*데이터가\s*없습니다")
+
+#: 파서 건강 관측의 **구별된** event_type.
+#  ★F4a: severity·recommended_action 을 담지 않는다(자동 변이 루프가 조치신호로 읽는다).
+GOSI_PARSER_OBSERVATION_EVENT = "gosi_parser_observation"
+
+
+def looks_like_empty_result(page_html: str) -> bool:
+    """항목 0건이 **진짜 0건**인지(파서 파손이 아닌지) 판별한다.
+
+    ★위양성 방향이 안전하다: 문구가 바뀌면 `complete=False`(침묵)가 되지
+      "결손 없음"(거짓 안심)이 되지 않는다 — 이 서비스의 설계 철학과 같은 방향이다.
+    """
+    return bool(_EMPTY_STATE_RE.search(page_html or ""))
+
+
 def _text(fragment: str) -> str:
     return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html.unescape(fragment))).strip()
 
@@ -146,8 +166,21 @@ async def fetch_recent_gosi(
                 "enddt": end_yyyymmdd, "listSize": str(_PAGE_SIZE), "pageNo": str(page),
             })
             resp.raise_for_status()
-            got = parse_gosi_rows(resp.content.decode("euc-kr", "replace"))
+            page_html = resp.content.decode("euc-kr", "replace")
+            got = parse_gosi_rows(page_html)
             if not got:
+                # ★0건이 '진짜 없음'인지 '파서 파손'인지 가른다.
+                #   ①이미 읽은 행이 있으면 **파서는 작동한 증거**다 — 페이징 끝일 뿐이다.
+                #     (기존 회귀망이 이 위양성을 잡아 줬다: 1p 50건 → 2p 빈 페이지 시나리오)
+                #   ②첫 페이지부터 0건인데 빈 상태 신호도 없으면 **HTML 구조가 바뀐 것**으로 본다.
+                #     그대로 complete=True 로 두면 결손 탐지가 조용히 0이 된다(거짓 안심).
+                if not rows and not looks_like_empty_result(page_html):
+                    logger.warning(
+                        "토지이음 목록 파싱 0건인데 빈 상태 신호가 없다 — 파서 파손 의심: "
+                        "sgg=%s page=%s len=%s", sigungu_code, page, len(page_html),
+                    )
+                    _record_parser_observation(sigungu_code, broken=True, page_len=len(page_html))
+                    return rows, False
                 complete = True
                 break
             rows.extend(got)
@@ -162,7 +195,34 @@ async def fetch_recent_gosi(
         #   자원 위생이라 관측 가능한 동작 차이가 없다(닫아도 테스트는 통과한다).
         if owns:
             await c.aclose()
+    _record_parser_observation(sigungu_code, broken=False, row_count=len(rows))
     return rows, complete
+
+
+def _record_parser_observation(
+    sigungu_code: str, *, broken: bool, row_count: int = 0, page_len: int = 0,
+) -> None:
+    """파서 건강을 **영속** 관측한다(platform_events).
+
+    ★structlog 만으로는 빈도를 잴 수 없다 — docker logs 는 배포마다 사라진다
+      (2026-08-23 실측: 계측을 넣은 다음 날 읽으니 25분치 1건이었다).
+    ★성공 경로도 남긴다 — 그래야 **분모**를 알고 "언제부터 깨졌나"를 잴 수 있다.
+    """
+    try:
+        from app.services.growth import capture_service
+
+        capture_service.record_event(GOSI_PARSER_OBSERVATION_EVENT, {
+            "surface": "api",
+            "service": "gosi_coverage",
+            "payload": {
+                "broken": broken,
+                "sigungu_code": sigungu_code,
+                "row_count": row_count,
+                "page_len": page_len,
+            },
+        })
+    except Exception:  # noqa: BLE001 — 관측이 탐지를 깨뜨리면 안 된다.
+        pass
 
 
 async def fetch_recent_gosi_adaptive(
