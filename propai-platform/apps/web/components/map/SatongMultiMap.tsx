@@ -447,6 +447,16 @@ export function haversineKm(
 }
 
 /** 좌표를 가진 선택 필지들의 **최대 이격**(km). 좌표가 2개 미만이면 `null`(미상 ≠ 0). */
+/** 이격을 보고 **어느 안내를 쓸지 고르는 판단** — 순수 함수로 꺼내 둔다.
+ *  ★왜: 처음엔 이 판단이 effect 안 삼항식이었는데, 변이 검증에서 그 분기를 통째로 없애도
+ *    테스트가 **전부 초록**이었다(재료만 잠그고 판단은 안 잠근 상태). 판단을 함수로 꺼내면
+ *    런타임 테스트가 그것을 직접 태울 수 있다. */
+export function cadastreHintFor(spreadKm: number | null): string {
+  return spreadKm != null && spreadKm > CADASTRE_VIEW_WIDTH_KM
+    ? cadastreSpreadHint(spreadKm)
+    : CADASTRE_ZOOM_HINT;
+}
+
 export function selectionSpreadKm(
   points: ReadonlyArray<{ lat?: number | null; lon?: number | null }>,
 ): number | null {
@@ -2195,11 +2205,7 @@ export function SatongMultiMap({
       // ★원인이 **선택 이격**이면 일반 안내는 막다른 안내가 된다(확대해도 전체를 못 본다).
       //   판정은 줌이 아니라 선택 자체의 이격으로 한다 — 줌만 보면 사용자가 손으로 축소한
       //   경우와 구분하지 못해 원인이 아닌 안내를 하게 된다.
-      const spread = selectionSpreadKm(overlayFeaturesRef.current ?? []);
-      const hint =
-        spread != null && spread > CADASTRE_VIEW_WIDTH_KM
-          ? cadastreSpreadHint(spread)
-          : CADASTRE_ZOOM_HINT;
+      const hint = cadastreHintFor(selectionSpreadKm(overlayFeaturesRef.current ?? []));
       // ★두 안내를 **한 줄에서** 판정한다 — 자기 안내 목록이 여러 줄로 흩어지면 배선 락이
       //   첫 줄만 보고 나머지를 놓친다(실제로 그렇게 통과했다).
       const isOwnHint = (v: string) => v === CADASTRE_ZOOM_HINT || v.startsWith(SPREAD_HINT_PREFIX);

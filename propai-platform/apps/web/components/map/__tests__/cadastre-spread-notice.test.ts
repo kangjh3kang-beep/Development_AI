@@ -18,10 +18,15 @@
  */
 import { describe, expect, it } from "vitest";
 
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+import { assertWiredThrough } from "@/lib/source-invariant";
 import {
   CADASTRE_MIN_ZOOM,
   CADASTRE_VIEW_WIDTH_KM,
   CADASTRE_ZOOM_HINT,
+  cadastreHintFor,
   cadastreSpreadHint,
   haversineKm,
   selectionSpreadKm,
@@ -89,5 +94,35 @@ describe("이격 안내 문구", () => {
     expect(CADASTRE_MIN_ZOOM).toBe(17);
     expect(CADASTRE_VIEW_WIDTH_KM).toBeGreaterThan(0);
     expect(CADASTRE_VIEW_WIDTH_KM).toBeLessThan(2);
+  });
+});
+
+describe("★판단과 배선 — 재료만 잠그면 분기를 통째로 없애도 초록이다", () => {
+  const FILE = "components/map/SatongMultiMap.tsx";
+
+  it("★이격이 임계를 넘으면 이격 안내를 **고른다**(판단 자체를 태운다)", () => {
+    expect(cadastreHintFor(15.94)).toMatch(/개별로 확대/);
+    expect(cadastreHintFor(15.94)).not.toBe(CADASTRE_ZOOM_HINT);
+  });
+
+  it("[양성 대조군] 가까우면 일반 안내를 고른다 — 분기가 한쪽으로 굳지 않았다", () => {
+    expect(cadastreHintFor(0.2)).toBe(CADASTRE_ZOOM_HINT);
+  });
+
+  it("★이격 미상(좌표 부족)이면 일반 안내 — 모르는 것을 '멀다'고 말하지 않는다", () => {
+    expect(cadastreHintFor(null)).toBe(CADASTRE_ZOOM_HINT);
+  });
+
+  it("★안내 선택이 실제로 **배선돼 있다** — 순수 함수만 있고 아무도 안 부르면 화면은 그대로다", () => {
+    expect(() =>
+      assertWiredThrough({
+        file: FILE,
+        scope: /const hint = cadastreHintFor/,
+        mustContain: "selectionSpreadKm",
+        minMatches: 1,
+      }),
+    ).not.toThrow();
+    // 공허 진리 방지 — 대상 파일이 실재하고 충분히 크다.
+    expect(readFileSync(resolve(process.cwd(), FILE), "utf-8").length).toBeGreaterThan(1000);
   });
 });
