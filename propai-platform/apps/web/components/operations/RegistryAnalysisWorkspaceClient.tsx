@@ -21,6 +21,7 @@ import { RegistryRightsReportButton } from "@/components/operations/RegistryRigh
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { useLandScheduleStore, type LandRow } from "@/store/useLandScheduleStore";
+import { useRegistryAnalysisStore } from "@/store/useRegistryAnalysisStore";
 import { addressHasJibun, parcelDisplayAddress, parcelJibunResolved } from "@/lib/pnu";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import type { Locale } from "@/i18n/config";
@@ -89,6 +90,10 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
   // ★다필지 일괄 결과(필지별 누적) — 단일 result만 덮어써 마지막 1건만 보이던 부정합 해소.
   const [batchResults, setBatchResults] = useState<{ jibun: string; rowId: string; result: Result | null }[] | null>(null);
   const [newJibun, setNewJibun] = useState("");
+  // ★분석 결과를 영속화한다 — 종전엔 화면 상태에만 있어 새로고침·딥링크 진입이면 사라졌다.
+  const savedAnalyses = useRegistryAnalysisStore((s) => s.byProject[projectId || "_default"]);
+  const saveAnalysis = useRegistryAnalysisStore((s) => s.upsert);
+  const dropAnalysis = useRegistryAnalysisStore((s) => s.remove);
 
   const run = useCallback(async (overrideAddr?: string, rowId?: string, row?: LandRow): Promise<Result | null> => {
     // 특정 필지 분석(overrideAddr 존재 = 일괄/행별)인지, 대표 단일 분석(인자 없음)인지 구분.
@@ -135,6 +140,16 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
         if (ot) patch.owner_type = ot;
         if (r.fetched?.pdf_url) patch.pdf_url = r.fetched.pdf_url;
         if (Object.keys(patch).length) updateRow(projectId, rowId, patch);
+        // ★개별 `분석` 도 목록에 쌓는다. 종전엔 **전체 분석만** 쌓아, 한 필지씩 돌린
+        //   사용자에게는 필지별 권리분석 리스트가 끝내 나타나지 않았다(사용자 신고).
+        saveAnalysis(projectId, { jibun: target, rowId, result: r as unknown as Record<string, unknown> });
+        setBatchResults((prev) => {
+          const row = { jibun: target, rowId, result: r };
+          const cur = prev ?? [];
+          const at = cur.findIndex((x) => x.rowId === rowId);
+          if (at >= 0) { const next = [...cur]; next[at] = row; return next; }
+          return [...cur, row];
+        });
       }
       return r;
     } catch (e) {
@@ -144,7 +159,7 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
       if (rowId) setBusyId(null); else setLoading(false);
       setProgress("");
     }
-  }, [addr, text, siteAnalysis, realty, dong, ho, projectId, updateRow]);
+  }, [addr, text, siteAnalysis, realty, dong, ho, projectId, updateRow, saveAnalysis]);
 
   // 프로젝트 선택 시 필지 목록이 비어있으면 부지분석 필지로 시드(토지조서와 동일 규칙)
   useEffect(() => {
@@ -251,6 +266,25 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
     const first = acc.find(isAnalyzed);
     if (first?.result) setResult(first.result);
   }, [rows, run]);
+
+  // ★새로고침·딥링크 진입 시 **저장된 분석 결과로 목록을 복원**한다.
+  //   종전엔 이 목록이 화면 상태에만 있어, `?addr=` 로 들어오면(토지조서 → 등기분석)
+  //   단건 조회만 돌고 필지별 리스트가 **아예 나타나지 않았다**(사용자 신고 2026-08-24).
+  //   복원은 **로컬 저장분**에서만 한다 — 서버 캐시를 무과금으로 조회하는 통로를 열면
+  //   임의 주소로 소유자 정보를 수확할 수 있게 된다(그 통로는 만들지 않았다).
+  const restored = useRef(false);
+  useEffect(() => {
+    if (restored.current) return;
+    if (!savedAnalyses || savedAnalyses.length === 0) return;
+    restored.current = true;
+    setBatchResults(
+      savedAnalyses.map((a) => ({
+        jibun: a.jibun,
+        rowId: a.rowId,
+        result: (a.result as Result | null) ?? null,
+      })),
+    );
+  }, [savedAnalyses]);
 
   // 토지조서 등에서 ?addr= 로 진입 시 자동 프리필 + 1회 실행
   const autoRan = useRef(false);
@@ -391,7 +425,15 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
                     <a href={r.pdf_url} target="_blank" rel="noopener noreferrer"
                       className="rounded-lg border border-[var(--accent-strong)]/40 px-2.5 py-1 text-[11px] font-bold text-[var(--accent-strong)]">PDF ↓</a>
                   )}
-                  <button onClick={() => removeRow(projectId, r.id)} title="지번 삭제" className="text-[var(--status-error)]">✕</button>
+                  <button
+                    onClick={() => {
+                      // 행을 지우면 그 분석 결과도 함께 지운다 — 안 지우면 목록에 **없는 필지**가
+                      // 유령으로 남고, 복원 때 되살아난다.
+                      removeRow(projectId, r.id);
+                      dropAnalysis(projectId, r.id);
+                      setBatchResults((prev) => (prev ? prev.filter((x) => x.rowId !== r.id) : prev));
+                    }}
+                    title="지번 삭제" className="text-[var(--status-error)]">✕</button>
                 </div>
               ))}
             </div>
