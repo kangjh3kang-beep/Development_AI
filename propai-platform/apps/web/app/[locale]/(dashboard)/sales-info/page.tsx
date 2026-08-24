@@ -10,9 +10,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { AlertTriangle } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
+import { fetchAllProjects } from "@/lib/projects-fetch";
 import { ProjectPresaleMap, type PresaleMarker } from "@/components/presale/ProjectPresaleMap";
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
 
 type Item = {
   house_manage_no: string; pblanc_no: string; name: string; address: string;
@@ -313,8 +313,9 @@ function MonitorTab({ onOpenDetail }: { onOpenDetail: (it: any) => void }) {
   const [mapLoading, setMapLoading] = useState(false);
 
   useEffect(() => {
-    apiClient.get<{ items?: ProjectSummary[] } | ProjectSummary[]>("/projects?page=1&page_size=50", { useMock: false })
-      .then((r: any) => setProjects(r.items || r.data || (Array.isArray(r) ? r : [])))
+    // ★page_size=50 고정도 51번째부터 같은 결함이다 — 페이지 순회 SSOT 경유.
+    fetchAllProjects<ProjectSummary>((path) => apiClient.get<unknown>(path, { useMock: false }))
+      .then((r) => setProjects(r.items))
       .catch(() => { /* 비로그인/없음 */ });
   }, []);
 
