@@ -92,3 +92,26 @@ def sample_monte_carlo_params():
         "expected_revenue_krw": 70_000_000_000,
         "construction_period_months": 36,
     }
+
+
+@pytest.fixture(autouse=True)
+def _isolate_registry_source_cache():
+    """등기 **발급 원본 캐시**를 테스트마다 비운다.
+
+    ★왜 필요한가: 이 캐시는 필지(주소·구분·동/호)만으로 키를 만든다 — 프로덕션에서는 옳다
+      (같은 필지는 같은 등기부다). 그런데 테스트는 **같은 주소에 서로 다른 프로바이더 동작**을
+      스텁한다(이미지 PDF · 텍스트 제공 · 발급 실패…). 캐시가 남아 있으면 앞 테스트가 심은
+      발급본이 뒤 테스트에 재사용돼, 실제로 `origin` 이 `hyphen` 대신 `hyphen+pdf` 로 나오고
+      "이미지 PDF 는 가짜 안전등급을 만들지 않는다"가 무너졌다(2026-08-24 실측 3건).
+
+    ★캐시를 지우는 것이지 **끄는 것이 아니다** — 재사용 동작 자체는 전용 테스트
+      (`test_registry_no_reissue_on_llm_failure.py`)가 그대로 태운다.
+    """
+    try:
+        from app.services.registry import registry_analysis_service as _svc
+    except Exception:  # noqa: BLE001 — 이 모듈이 없는 환경에서는 할 일이 없다
+        yield
+        return
+    _svc._SOURCE_CACHE.clear()
+    yield
+    _svc._SOURCE_CACHE.clear()

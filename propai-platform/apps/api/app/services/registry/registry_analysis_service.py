@@ -86,9 +86,68 @@ async def _db_cache_put(key: str, result: dict[str, Any]) -> None:
                 "VALUES (:k, CAST(:v AS jsonb), now()) "
                 "ON CONFLICT (key) DO UPDATE SET result = EXCLUDED.result, created_at = now()"),
                 {"k": key, "v": _json.dumps(result, ensure_ascii=False, default=str)})
+            # ★만료행을 **물리적으로** 지운다. 종전엔 TTL 을 읽기에서만 걸어, 읽히지 않는
+            #   등기부 사본(소유자명·발급 PDF 서명 URL)이 이 표에 **무기한** 쌓였다.
+            #   `app/core/charge_idempotency.py` 가 경고한 "30일 TTL 삭제를 우회하는 사본"과
+            #   같은 형태다 — 캐시를 늘리면서 그 결함을 함께 남기지 않는다.
+            await db.execute(
+                text("DELETE FROM registry_analysis_cache "
+                     "WHERE created_at < now() - make_interval(secs => :ttl)"),
+                {"ttl": _ANALYZE_DB_TTL})
             await db.commit()
     except Exception as e:  # noqa: BLE001
         logger.warning("등기분석 DB캐시 저장 실패", err=str(e)[:80])
+
+
+# ── 발급 원본 캐시 — **돈이 들어간 산출물**을 분석 성공/실패와 분리해 보관 ──────────────
+#
+# ★왜 필요한가(2026-08-24 실측). 분석 캐시는 `_cache_success` 로 **성공만** 저장한다. LLM 이
+#   실패하면 캐시 미스가 되고, 다음 시도는 `RegistryService.get_one()` 을 **다시** 부른다.
+#   그 층에는 캐시가 없다(실측: `registry_service.py` 에 cache 참조 0건). 즉 등기부가
+#   **다시 발급되고 민원캐시가 다시 차감된다** — 사용자에게는 1,200원을 안 받는데
+#   (`analysis_charged` 가 막는다) **선불 잔액은 탄다.**
+#
+#   `app/core/charge_idempotency.py` 는 자기 근거로 *"읽기는 기존 캐시가 흡수하므로 외부
+#   발급이 다시 나가지도 않는다"* 고 적어 두었다. **실패 경로에서 그 전제가 깨진다.**
+#   여기서 그 전제를 참으로 만든다.
+#
+# ★무엇을 보관하나: 발급이 **성공한 경우**(reg.status=="ok") 그 산출물 — 본문 텍스트·출처·
+#   `fetched` 메타(PDF 서명 URL 포함). 발급이 실패한 경우는 보관하지 않는다(받은 것이 없으므로
+#   재시도가 다시 발급하는 것이 옳다).
+#
+# ★★영속하지 않는다 — **인메모리 전용(6시간)**. 이유는 둘이고, 둘 다 캐시 적중률보다 무겁다:
+#   ① **개인정보**: 여기 담기는 것은 등기부 **본문 전문**(소유자·근저당권자 등)이다.
+#      `charge_idempotency.py` 가 이미 경고했다 — *"저장 대상이 등기부 전문이고 만료도
+#      프루닝도 없어 30일 TTL 삭제를 우회하는 사본이 무기한 쌓인다"*. 그 결함을 캐시를
+#      늘리면서 새로 만들지 않는다. 기존 표가 보관하는 것은 **파생물**(`land`·`ai`)이지
+#      본문이 아니다 — 그 선을 넘지 않는다.
+#   ② **신선도**: 등기부는 시점 문서다. 6시간은 7일보다 안전하다.
+#   ★정직한 한계: 워커가 여러 개면 재사용은 **프로세스 단위**다. 다른 워커로 간 요청은
+#     다시 발급한다 — 반복 조회의 낭비는 거의 사라지지만 0은 아니다.
+#
+# ★신선도 비교(참고): 성공 분석은 인메모리 6시간 / DB 7일로 이미 캐시된다. 등기부는 변하지만, 이
+#   플랫폼은 이미 성공한 분석을 7일간 캐시로 돌려주고 있다 — 실패 건만 매번 새로 발급하던
+#   것이 오히려 비대칭이었다. 새 신선도 위험을 만드는 게 아니라 **기존 정책에 맞추는** 것이다.
+#   그래도 재사용 사실과 발급 시각은 응답에 실어 화면이 말할 수 있게 한다.
+#
+# ★굳어붙지 않게: 발급본이 쓸모없었던 경우(이미지 PDF 등)도 재사용되므로, 호출측이
+#   `force_reissue=True` 로 **명시적으로** 새 발급을 요청할 수 있다(돈이 드는 행위라 기본 아님).
+_SOURCE_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+
+
+def _source_key(cache_key: str) -> str:
+    return f"src|{cache_key}"
+
+
+async def _source_cache_get(key: str) -> dict[str, Any] | None:
+    hit = _SOURCE_CACHE.get(key)
+    if hit and (time.time() - hit[0]) < _ANALYZE_TTL:
+        return hit[1]
+    return None
+
+
+async def _source_cache_put(key: str, payload: dict[str, Any]) -> None:
+    _SOURCE_CACHE[key] = (time.time(), payload)
 
 
 async def peek_analyze_cache(
@@ -305,13 +364,22 @@ class RegistryAnalysisService:
         dong: str | None = None,
         ho: str | None = None,
         land_hint: dict[str, Any] | None = None,
+        force_reissue: bool = False,
     ) -> dict[str, Any]:
+        """등기부를 조회·해석한다.
+
+        Args:
+            force_reissue: True 면 **모든 캐시를 건너뛰고 새로 발급**한다. 돈이 드는 행위라
+                기본값은 False — 호출측이 명시적으로 요청할 때만 켠다. 발급본이 쓸모없었던
+                경우(이미지 PDF 등)에 갇히지 않기 위한 탈출구다.
+        """
         import asyncio
 
         # 캐시 조회(직접 입력 텍스트는 매번 다를 수 있어 캐시 제외) — 정규화 키 + DB 영속 공유
         cache_key = None
         if not (registry_text and registry_text.strip()):
             cache_key = _cache_key(address, pnu, realty_type, dong, ho)
+        if cache_key and not force_reissue:
             hit = _ANALYZE_CACHE.get(cache_key)
             if hit and (time.time() - hit[0]) < _ANALYZE_TTL and _cache_success(hit[1]):
                 return {**hit[1], "cached": True}
@@ -344,17 +412,35 @@ class RegistryAnalysisService:
             source = registry_text.strip()[:8000]
             origin = "manual"
         else:
-            # CODEF 등 연동 조회 시도 — 토지정보 조회와 병렬 실행(독립적, 지연 단축)
-            from app.services.registry.registry_service import RegistryService
+            # ★★이미 발급받은 등기부가 있으면 **다시 발급하지 않는다.**
+            #   발급은 민원캐시(선불 잔액)를 차감하는데, 분석 캐시는 성공만 저장하므로
+            #   LLM 이 실패한 필지는 볼 때마다 재발급돼 돈이 샜다(2026-08-24 실측).
+            #   여기서 재사용하면 재시도는 **해석만** 다시 한다(자가치유는 그대로 유지).
+            src_key = _source_key(cache_key) if cache_key else None
+            reused = await _source_cache_get(src_key) if (src_key and not force_reissue) else None
+            if reused:
+                land = await _resolve_land()
+                source = reused.get("source") or ""
+                origin = reused.get("origin")
+                thin_summary = bool(reused.get("thin_summary"))
+                fetched_meta = dict(reused.get("fetched") or {})
+                # 재사용 사실과 발급 시각을 **응답에 싣는다** — 화면이 "언제 발급분인지"를
+                #   말할 수 있어야 한다. 조용히 옛 등기부를 보여 주면 그게 곧 거짓이 된다.
+                fetched_meta["reused_issue"] = True
+                fetched_meta["issued_at"] = reused.get("issued_at")
+                reg = None
+            else:
+                # CODEF 등 연동 조회 시도 — 토지정보 조회와 병렬 실행(독립적, 지연 단축)
+                from app.services.registry.registry_service import RegistryService
 
-            land, reg = await asyncio.gather(
-                _resolve_land(),
-                RegistryService().get_one(
-                    pnu=pnu, address=address, realty_type=realty_type, dong=dong, ho=ho
-                ),
-            )
-            st = reg.get("status")
-            if st == "ok":
+                land, reg = await asyncio.gather(
+                    _resolve_land(),
+                    RegistryService().get_one(
+                        pnu=pnu, address=address, realty_type=realty_type, dong=dong, ho=ho
+                    ),
+                )
+            st = reg.get("status") if reg is not None else "ok"
+            if st == "ok" and reg is not None:
                 # apick 등은 추출 텍스트(registry_text)를 직접 제공 → 그대로 LLM 분석.
                 # CODEF는 구조화 JSON → _registry_text_from_codef로 텍스트 구성.
                 if reg.get("registry_text"):
@@ -403,7 +489,21 @@ class RegistryAnalysisService:
                     "realty_gubun": reg.get("realty_gubun"),
                     "select_note": reg.get("select_note"),
                 }
-            else:
+                # ★★발급이 성공했다 = **돈이 나갔다**. 해석이 뒤에서 실패하더라도 이 산출물은
+                #   보관한다 — 그래야 재시도가 재발급하지 않는다(민원캐시 재차감 차단).
+                #   발급이 실패한 경우는 여기 오지 않으므로 보관되지 않는다(받은 게 없으니
+                #   재시도가 새로 발급하는 것이 옳다).
+                if src_key:
+                    import datetime as _dt
+
+                    await _source_cache_put(src_key, {
+                        "source": source,
+                        "origin": origin,
+                        "thin_summary": thin_summary,
+                        "fetched": fetched_meta,
+                        "issued_at": _dt.datetime.now(_dt.UTC).isoformat(timespec="seconds"),
+                    })
+            elif reg is not None:
                 # 등기부 데이터 미확보 — 토지정보는 제공 + 직접 입력 유도
                 return {
                     "status": st or "not_available",

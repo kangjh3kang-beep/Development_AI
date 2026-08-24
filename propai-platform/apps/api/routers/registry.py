@@ -379,6 +379,9 @@ class RegistryAnalyzeRequest(BaseModel):
     ho: str | None = None             # 집합건물 호
     # 부지분석에서 이미 확보한 토지정보(전달 시 백엔드 재조회 생략 → 지연 단축)
     land_hint: dict[str, Any] | None = None
+    # ★이미 발급받은 등기부가 있으면 재사용하는 것이 기본이다(발급은 민원캐시를 차감한다).
+    #   True 면 캐시를 건너뛰고 **새로 발급**한다 — 돈이 드는 행위라 호출측이 명시할 때만.
+    force_reissue: bool = False
 
 
 @router.post("/analyze", summary="부동산 등기정보 권리분석(법무사·변호사 AI)")
@@ -400,7 +403,7 @@ async def registry_analyze(
         result = await RegistryAnalysisService().analyze(
             address=req.address, pnu=req.pnu, registry_text=req.registry_text,
             realty_type=req.realty_type, dong=req.dong, ho=req.ho,
-            land_hint=req.land_hint,
+            land_hint=req.land_hint, force_reissue=req.force_reissue,
         )
         # 서비스 사용료: 등기부등본 권리분석 1건 1,200원(LLM 과금 별개, best-effort).
         # ★분석이 실제로 나온 경우만 청구한다 — 종전에는 결과를 **보지도 않고** 청구해
@@ -420,7 +423,9 @@ async def registry_analyze_submit(
     캐시 적중 시 즉시 결과 반환(작업 생략). 진행은 GET /analyze/jobs/{id}로 폴링."""
     from app.services.registry.registry_analysis_service import peek_analyze_cache
 
-    cached = await peek_analyze_cache(
+    # ★재발급을 명시 요청했으면 캐시를 보지 않는다 — 보면 옛 결과가 즉시 반환돼
+    #   "새로 발급"이 조용히 무시된다(요청과 결과가 어긋나는 침묵 실패).
+    cached = None if req.force_reissue else await peek_analyze_cache(
         address=req.address, pnu=req.pnu, realty_type=req.realty_type,
         dong=req.dong, ho=req.ho, registry_text=req.registry_text,
     )
@@ -440,6 +445,7 @@ async def registry_analyze_submit(
     params = dict(
         address=req.address, pnu=req.pnu, registry_text=req.registry_text,
         realty_type=req.realty_type, dong=req.dong, ho=req.ho, land_hint=req.land_hint,
+        force_reissue=req.force_reissue,
     )
     # ★태스크 강참조 보관(GC 유실 방지 — design_audit 과 동일 공용 헬퍼).
     from app.services.common.bg_tasks import create_tracked_task

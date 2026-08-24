@@ -28,10 +28,26 @@ export type RegistryBatchRowItem = BatchOutcome & {
   result?:
     | (BatchOutcome["result"] & {
         ai?: { generated?: boolean; failure_reason?: string; safety_grade?: string; summary?: string } | null;
-        fetched?: { select_note?: string | null } | null;
+        fetched?: {
+          select_note?: string | null;
+          /** 발급된 등기부 PDF 의 서명 URL(서버 보관·30일). 권리분석 실패와 **무관하게** 존재한다. */
+          pdf_url?: string | null;
+          /** 이미 발급받은 등기부를 재사용했는가(재발급 과금 없음). */
+          reused_issue?: boolean;
+          /** 그 등기부를 언제 발급했는가(ISO). 재사용 시 화면이 시점을 말할 수 있어야 한다. */
+          issued_at?: string | null;
+        } | null;
       })
     | null;
 };
+
+/** ISO 시각 → `YYYY-MM-DD`. 파싱 실패하면 **원문을 그대로** 둔다(지어내지 않는다). */
+function issuedDay(iso?: string | null): string | null {
+  const s = (iso || "").trim();
+  if (!s) return null;
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? s : d.toISOString().slice(0, 10);
+}
 
 export function RegistryBatchRow({
   item,
@@ -47,6 +63,12 @@ export function RegistryBatchRow({
   const analyzed = isAnalyzed(item);
   const grade = analyzed ? item.result?.ai?.safety_grade : undefined;
   const selectNote = item.result?.fetched?.select_note;
+  // ★등기부 PDF 는 **권리분석이 실패해도 발급돼 있다.** 종전엔 이 행에 링크가 없어,
+  //   돈을 내고 받은 문서를 사용자가 열어 볼 방법이 목록에 없었다(상세를 눌러야 했다).
+  const pdfUrl = (item.result?.fetched?.pdf_url || "").trim();
+  const reusedDay = item.result?.fetched?.reused_issue
+    ? issuedDay(item.result?.fetched?.issued_at)
+    : null;
 
   return (
     <div className="flex flex-wrap items-center gap-2 text-[11px]" data-testid="batch-row">
@@ -99,6 +121,30 @@ export function RegistryBatchRow({
           <AlertTriangle className="size-3" aria-hidden />
           물건 확인 필요
         </span>
+      )}
+
+      {/* 이미 발급받은 등기부는 다시 발급하지 않는다 — 언제 발급분인지 밝힌다.
+          조용히 옛 등기부를 보여 주면 그 자체가 거짓이 된다(등기는 변한다). */}
+      {reusedDay && (
+        <span
+          data-testid="row-reused"
+          title={`이미 발급받은 등기부를 재사용했습니다(재발급 과금 없음) — ${reusedDay} 발급분`}
+          className="rounded-full border border-[var(--line)] px-2 py-0.5 text-[var(--text-hint)]"
+        >
+          {reusedDay} 발급분
+        </span>
+      )}
+
+      {pdfUrl && (
+        <a
+          href={pdfUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          data-testid="row-pdf"
+          className="rounded-md bg-[var(--accent-strong)] px-2 py-0.5 font-bold text-white"
+        >
+          PDF ↗
+        </a>
       )}
 
       {item.result && (

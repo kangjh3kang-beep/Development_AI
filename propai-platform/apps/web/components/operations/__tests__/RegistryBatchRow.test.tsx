@@ -118,6 +118,43 @@ describe("일괄 등기분석 행 — 렌더", () => {
     expect(위험).toContain("status-error");
   });
 
+  it("★★권리분석이 실패해도 **발급된 PDF 는 연결한다** — 돈 내고 받은 문서다", () => {
+    render(
+      <RegistryBatchRow
+        item={{ ...폴백, result: { ...폴백.result!, fetched: { pdf_url: "https://x/y.pdf" } } }}
+      />,
+    );
+    const a = screen.getByTestId("row-pdf") as HTMLAnchorElement;
+    expect(a.getAttribute("href")).toBe("https://x/y.pdf");
+    // 사유는 여전히 보인다 — PDF 링크가 실패 사실을 덮으면 안 된다.
+    expect(screen.getByTestId("row-reason").textContent).toContain("JSONDecodeError");
+  });
+
+  it("대조군 — PDF 가 없으면 링크를 만들지 않는다(죽은 링크를 그리지 않는다)", () => {
+    render(<RegistryBatchRow item={폴백} />);
+    expect(screen.queryByTestId("row-pdf")).toBeNull();
+  });
+
+  it("★재사용한 등기부는 **언제 발급분인지** 말한다(조용히 옛 등기부를 보여 주지 않는다)", () => {
+    render(
+      <RegistryBatchRow
+        item={{
+          ...성공,
+          result: {
+            ...성공.result!,
+            fetched: { reused_issue: true, issued_at: "2026-08-20T01:02:03+00:00" },
+          },
+        }}
+      />,
+    );
+    expect(screen.getByTestId("row-reused").textContent).toContain("2026-08-20");
+  });
+
+  it("대조군 — 새로 발급한 건에는 재사용 표기를 붙이지 않는다", () => {
+    render(<RegistryBatchRow item={성공} />);
+    expect(screen.queryByTestId("row-reused")).toBeNull();
+  });
+
   it("다른 물건을 조회했을 수 있다는 고지는 행에서도 보인다", () => {
     render(
       <RegistryBatchRow
