@@ -227,7 +227,21 @@ export function failureAction(b: BatchOutcome): FailureAction {
   return "retry";
 }
 
-/** 조치의 사람 읽는 이름과 안내. `canRetry` 가 참인 것만 화면이 버튼으로 만든다. */
+/**
+ * 조치의 사람 읽는 이름과 안내. `canRetry` 가 참인 것만 화면이 버튼으로 만든다.
+ *
+ * ★변이 감사 메모(설명 가능한 생존 — 2026-08-24, kill 23 / 생존 13):
+ *   아래 `label`·`hint` 문자열 변경은 대부분 **생존한다**. 그것을 구멍으로 보지 않는다 —
+ *   이 문구들은 **계약이 아니라 표현**이라, 단언을 걸면 문구를 다듬을 때마다 깨지는
+ *   취약한 락이 된다(점수만 오르고 잠기는 것은 없다).
+ *
+ *   **예외는 하나** — `reinterpret.hint` 다. 그 문구가 "무과금"이라고 단정하면 **거짓이 된다**
+ *   (발급 재사용은 프로세스 단위·6시간이라 보장이 아니다). 거짓이 될 수 있는 문구는
+ *   표현이 아니라 계약이므로 그것만 테스트가 잠근다
+ *   (`registry-failure-actions.test.ts` — "남아 있으면" 포함 · "무과금" 금지).
+ *
+ *   반대로 `canRetry` 는 **동작을 정하는 값**이라 전부 잠겨 있다(kill).
+ */
 export const FAILURE_ACTION_INFO: Record<
   FailureAction,
   { label: string; hint: string; canRetry: boolean }

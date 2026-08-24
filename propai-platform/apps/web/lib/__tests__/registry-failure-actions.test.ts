@@ -116,3 +116,35 @@ describe("groupFailures — 조치별로 묶는다", () => {
     expect(groupFailures([성공])).toEqual([]);
   });
 });
+
+describe("배선 — 화면이 실제로 이 패널을 쓰고 재시도를 넘긴다", () => {
+  const read = async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const { __stripCommentsForScan } = await import("@/lib/source-invariant");
+    const rel = "components/operations/RegistryAnalysisWorkspaceClient.tsx";
+    return __stripCommentsForScan(fs.readFileSync(path.resolve(__dirname, "../..", rel), "utf8"), rel);
+  };
+
+  it("전제: 대상 파일을 읽었고 일괄 결과 블록이 있다(공허한 초록 방지)", async () => {
+    const src = await read();
+    expect(src.length).toBeGreaterThan(1000);
+    expect(src).toMatch(/batchResults/);
+  });
+
+  it("★패널을 실제로 그린다", async () => {
+    expect(await read()).toMatch(/<RegistryFailureActions\b/);
+  });
+
+  it("★★재시도를 실제로 넘긴다 — 이 한 줄이 빠지면 버튼이 아예 안 나온다", async () => {
+    // 변이 감사에서 이 줄(`onRetry={…}`) 삭제가 **생존**했다. 패널은 잠겼는데
+    // 페이지가 그것을 연결하는 부분이 무잠금이었다.
+    expect(await read()).toMatch(/onRetry=\{/);
+  });
+
+  it("★재시도가 **행 id로 그 행을 되찾는다**(지번만으로 돌리면 대표값이 섞인다)", async () => {
+    const src = await read();
+    expect(src).toMatch(/rows\.find\(/);
+    expect(src).toMatch(/b\.rowId/);
+  });
+});
