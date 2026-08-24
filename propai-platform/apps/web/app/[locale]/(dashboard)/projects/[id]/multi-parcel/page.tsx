@@ -20,6 +20,10 @@ import {
 import { dynamicMap } from "@/components/common/MapShell";
 import type { ParcelBoundaryMap as ParcelBoundaryMapType } from "@/components/map/ParcelBoundaryMap";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import {
+  resolveRegistrationEvidence,
+  shouldSuppressSingleParcelClaim,
+} from "@/lib/multiparcel-registration-evidence";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { apiClient } from "@/lib/api-client";
 import { PYEONG_SQM } from "@/lib/formatters";
@@ -128,6 +132,9 @@ export default function MultiParcelPage() {
   const locale = (params?.locale as string) || "ko";
   const id = params?.id as string;
   const site = useProjectContextStore((s) => s.siteAnalysis);
+  // ★활성 슬라이스가 0 으로 무너져도 **영속 스냅샷은 살아 있다**(라이브 실측: 활성 0 · 스냅샷 2).
+  //   읽기만 한다 — 하이드레이션 근본은 스토어 쪽(#779·#781) 영역이다.
+  const snapSite = useProjectContextStore((s) => (id ? s.snapshots[id]?.siteAnalysis ?? null : null));
   const ssotParcels = site?.parcels ?? null;
   const effArea = effectiveLandAreaSqm(site);
 
@@ -157,8 +164,12 @@ export default function MultiParcelPage() {
   //   목록이 비면 대표 주소 1개로 폴백한다 — 그 상태에서 "단일 필지입니다"라고 단언하면
   //   **거짓 표시**다(사용자 신고: "다필지를 넣었는데 단필지만 분석된다").
   //   두 신호가 어긋나면 단언하지 말고 **그 사실과 고치는 방법**을 말한다.
-  const registeredCount = site?.parcelCount ?? null;
-  const countMismatch = (registeredCount ?? 0) > 1 && !isMulti;
+  //   ★2026-08-24 — 처음엔 **활성 슬라이스의 `parcelCount` 만** 봤는데, 그 필드가 바로
+  //   결함이 무너뜨리는 값이라 **라이브에서 한 번도 발화하지 않았다**(수용시험 실패).
+  //   붕괴를 견디는 증거(영속 스냅샷)를 함께 본다 — 헬퍼에 근거와 실측을 적어 두었다.
+  const evidence = resolveRegistrationEvidence(site, snapSite);
+  const registeredCount = evidence.registeredCount;
+  const countMismatch = shouldSuppressSingleParcelClaim(evidence, isMulti);
   const key = mapAddresses.join("||");
   const proj = (p: string) => `/${locale}/projects/${id}/${p}`;
 
