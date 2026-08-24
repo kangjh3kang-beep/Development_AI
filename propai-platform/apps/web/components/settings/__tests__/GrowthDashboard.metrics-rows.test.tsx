@@ -116,10 +116,28 @@ describe("★계약 — 인사이트 카드가 지표를 실제로 낸다", () =
     expect(container.textContent).not.toContain("사유 분포");
   });
 
-  it("★improvement_proposal 이 사람 승인 필요를 말한다 — 자동 반영이 아님이 안전 정보다", () => {
+  it("★improvement_proposal 이 **payload 에서 온** 값을 낸다 — 상수 행이 공허함을 가리지 못하게", () => {
+    // ★변이로 발견한 구멍(2026-08-25): 이 분기에는 무조건 push 되는 상수 행
+    //   (`반영: 사람 승인 필요`)이 있어서, payload 키를 **전부 못 읽어도**
+    //   "행이 최소 한 줄"은 참이 된다. 실제로 `m.confidence` 를 깨는 변이가 **생존했다.**
+    //   그래서 여기서는 **payload 에서 파생된 값**을 각각 못 박는다.
     render(<InsightMetrics insight={ins("improvement_proposal", REAL_PAYLOADS.improvement_proposal)} />);
+    expect(screen.getByText("신뢰도")).toBeTruthy();
+    expect(screen.getByText("62.0%")).toBeTruthy();        // confidence 0.62
+    expect(screen.getByText("영향 파일")).toBeTruthy();
+    expect(screen.getByText("2개")).toBeTruthy();           // affected_files 길이
+    expect(screen.getByText("PR 상태")).toBeTruthy();
+    expect(screen.getByText("draft_only")).toBeTruthy();    // pr_status
+    // 안전 정보(자동 머지 없음)도 함께 — 이것만으로는 위 구멍을 못 막으므로 마지막에 둔다.
     expect(screen.getByText(/사람 승인 필요/)).toBeTruthy();
-    expect(screen.getByText("2개")).toBeTruthy();     // affected_files 길이
+  });
+
+  it("★prompt_candidate 도 payload 에서 온 값을 낸다 — 두 타입은 payload 가 다르다", () => {
+    // 한 분기로 묶여 있던 시절 `m.target` 을 읽어 **둘 다** 대상을 못 그렸다.
+    render(<InsightMetrics insight={ins("prompt_candidate", REAL_PAYLOADS.prompt_candidate)} />);
+    expect(screen.getByText("후보")).toBeTruthy();
+    expect(screen.getByText("v3")).toBeTruthy();            // candidate_label
+    expect(screen.getByText("71.0%")).toBeTruthy();         // confidence 0.71
   });
 
   it.todo(
