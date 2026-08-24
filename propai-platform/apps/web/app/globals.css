@@ -58,25 +58,9 @@
   box-sizing: border-box;
 }
 
-html {
-  scroll-behavior: smooth;
-  background-color: var(--background);
-}
 
-body {
-  min-height: 100vh;
-  background-color: var(--background);
-  background-image: none;
-  background-attachment: fixed;
-  color: var(--text-primary);
-  font-family: var(--font-sans), "Noto Sans KR", "Pretendard", system-ui, sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  text-rendering: optimizeLegibility;
-  font-feature-settings: "ss01", "ss02", "cv01";
-  line-height: 1.6;
-  letter-spacing: 0;
-}
+
+
 
 /* ── Fix Placeholder Contrast ── */
 ::placeholder {
@@ -124,10 +108,7 @@ a[aria-disabled="true"],
 /* ── CTA 버튼 라벨 줄바꿈 방지(가독성) ──
    버튼/역할버튼의 텍스트 라벨이 좁은 컨테이너에서 두 줄로 깨지는 것을 방지.
    (블록 자식을 가진 버튼·카드형 버튼은 inline 텍스트가 없어 영향 없음 → 안전) */
-button,
-[role="button"] {
-  white-space: nowrap;
-}
+
 
 /* ── 클릭 가능 컨트롤 손모양 커서 ──
    Tailwind preflight가 button 기본 cursor:pointer 를 제거해 전역에서 화살표로 보여
@@ -142,15 +123,13 @@ summary {
 }
 
 /* ── Typography Hierarchy ── */
-h1, h2, h3, h4, h5, h6 { font-family: var(--font-display), "Pretendard", sans-serif; }
-h1 { font-weight: 700; letter-spacing: 0; line-height: 1.1; }
-h2 { font-weight: 600; letter-spacing: 0; line-height: 1.2; }
-h3 { font-weight: 600; letter-spacing: 0; line-height: 1.25; }
-h4, h5, h6 { font-weight: 500; letter-spacing: 0; line-height: 1.3; }
 
-p {
-  line-height: 1.7;
-}
+
+
+
+
+
+
 
 /* ── Interactive Elements ── */
 :focus-visible {
@@ -184,12 +163,7 @@ p {
   }
 }
 
-button,
-input,
-select,
-textarea {
-  font: inherit;
-}
+
 
 /* ── Custom Scrollbar ── */
 ::-webkit-scrollbar {
@@ -1716,4 +1690,63 @@ textarea {
   :where(.dark) .text-white\/30 { color: rgba(255, 255, 255, 0.68); }
   :where(.dark) .text-white\/40 { color: rgba(255, 255, 255, 0.76); }
   :where(.dark) .text-white\/50 { color: rgba(255, 255, 255, 0.82); }
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   ★요소 기본값은 **반드시 @layer base 안에** 둔다 (2026-08-24 라이브 실측 후 이동).
+
+   Tailwind v4(`@import "tailwindcss"`)는 유틸리티를 `@layer utilities` 에 넣는다.
+   CSS 캐스케이드 레이어 규칙상 **언레이어드 선언은 어떤 레이어보다 우선**하므로,
+   `@layer` 밖의 요소 규칙은 **모든 유틸리티를 이긴다**(특이도와 무관하다).
+
+   ★라이브 브라우저 실측(4t8t.net · getComputedStyle):
+       <h1 class="font-medium">  기대 500 → **700**      (유틸리티 무시)
+       <h2 class="font-normal">  기대 400 → **600**      (무시)
+       <p  class="leading-none"> 기대 16px → **27.2px**  (무시)
+       <button class="text-xs">  기대 12px → **16px**    (무시)
+       <div class="font-medium"> 기대 500 → 500          ← **대조군: 정상**
+     대조군이 정상이라 '유틸리티 전반의 문제'가 아니라 **언레이어드 규칙이 있는 요소 한정**이다.
+     실측 영향: 헤딩 380 · <p> 417 · 버튼 47 곳의 유틸리티가 조용히 무시되고 있었다.
+
+   ★종전에 `a { color: inherit }` 만 이 문제로 base 로 옮겼는데(위 주석 참조)
+     **형제 규칙들을 스윕하지 않아** 같은 결함이 그대로 남아 있었다(규율 §6).
+     구조 불변식은 `app/__tests__/globals-css-layering.test.ts` 가 잠근다.
+   ────────────────────────────────────────────────────────────────────────── */
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    background-color: var(--background);
+  }
+  body {
+    min-height: 100vh;
+    background-color: var(--background);
+    background-image: none;
+    background-attachment: fixed;
+    color: var(--text-primary);
+    font-family: var(--font-sans), "Noto Sans KR", "Pretendard", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    font-feature-settings: "ss01", "ss02", "cv01";
+    line-height: 1.6;
+    letter-spacing: 0;
+  }
+  button,
+  [role="button"] {
+    white-space: nowrap;
+  }
+  h1, h2, h3, h4, h5, h6 { font-family: var(--font-display), "Pretendard", sans-serif; }
+  h1 { font-weight: 700; letter-spacing: 0; line-height: 1.1; }
+  h2 { font-weight: 600; letter-spacing: 0; line-height: 1.2; }
+  h3 { font-weight: 600; letter-spacing: 0; line-height: 1.25; }
+  h4, h5, h6 { font-weight: 500; letter-spacing: 0; line-height: 1.3; }
+  p {
+    line-height: 1.7;
+  }
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+  }
 }
