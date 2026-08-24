@@ -19,6 +19,8 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
+from app.services.common.exc_detail import exc_detail  # noqa: E402 — 진단 문자열 공용화
+
 
 def _host() -> str:
     return (os.getenv("HYPHEN_API_HOST") or "https://api.hyphen.im").rstrip("/")
@@ -124,9 +126,18 @@ async def probe_api_access(force: bool = False) -> dict[str, Any]:
                 else:
                     out = {"access": "ok", "checked": True, "message": "하이픈 등기 API 호출 권한 확인됨"}
     except Exception as e:  # noqa: BLE001
-        logger.warning("하이픈 권한 점검 예외", err=str(e)[:120])
+        # ★사유를 버리지 않는다(라이브 실측 2026-08-24).
+        #   프로덕션 응답이 정확히 `"하이픈 연결 실패: "` 였다 — 사유가 **빈 문자열**이었다.
+        #   `httpx.ConnectTimeout()`·`ReadTimeout()` 같은 타임아웃 계열은 `str(e)` 가 비어서,
+        #   그대로 쓰면 **무엇이 막혔는지 알 수 없게 된다**.
+        #   예외 **클래스명**이 기전을 가른다 — 이 한 조각이 진단을 통째로 좌우한다:
+        #     ConnectTimeout / ConnectError → TCP 단계 차단(방화벽·보안목록·경로)
+        #     ReadTimeout                   → 연결은 됐으나 응답 없음(상대 WAF 드롭 등)
+        #     HTTPStatusError               → 벤더가 오류를 **응답**한 것(계약·인증·한도)
+        detail = exc_detail(e)
+        logger.warning("하이픈 권한 점검 예외", err=detail[:160])
         out = {"access": "unreachable", "checked": True,
-               "message": f"하이픈 연결 실패: {str(e)[:80]}"}
+               "message": f"하이픈 연결 실패: {detail[:120]}"}
 
     _ACCESS_CACHE["v"] = (now, dict(out))
     return out
@@ -313,8 +324,8 @@ async def _search_single_address(
             "raw": data,
         }
     except Exception as e:  # noqa: BLE001
-        logger.warning("하이픈 간편주소검색 예외", err=str(e)[:120])
-        return {"ok": False, "status": "error", "items": [], "message": str(e)[:200]}
+        logger.warning("하이픈 간편주소검색 예외", err=exc_detail(e, limit=120))
+        return {"ok": False, "status": "error", "items": [], "message": exc_detail(e, limit=200)}
 
 
 async def search_by_simple_address(
@@ -406,8 +417,8 @@ async def search_by_unique_no(unique_no: str) -> dict[str, Any]:
         ]
         return {"ok": True, "status": "ok", "items": items, "raw": data}
     except Exception as e:  # noqa: BLE001
-        logger.warning("하이픈 고유번호검색 예외", err=str(e)[:120])
-        return {"ok": False, "status": "error", "items": [], "message": str(e)[:200]}
+        logger.warning("하이픈 고유번호검색 예외", err=exc_detail(e, limit=120))
+        return {"ok": False, "status": "error", "items": [], "message": exc_detail(e, limit=200)}
 
 
 # ── 등기부 열람 응답 파서 ──────────────────────────────────────────────────
@@ -653,8 +664,8 @@ async def fetch_realty_registry(
             "message": "하이픈 부동산 등기부 열람 성공",
         }
     except Exception as e:  # noqa: BLE001
-        logger.warning("하이픈 등기부 열람 예외", err=str(e)[:160])
-        return {"ok": False, "status": "error", "message": str(e)[:200]}
+        logger.warning("하이픈 등기부 열람 예외", err=exc_detail(e, limit=160))
+        return {"ok": False, "status": "error", "message": exc_detail(e, limit=200)}
 
 
 async def fetch_registry_by_address(
