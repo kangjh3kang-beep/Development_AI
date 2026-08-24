@@ -221,3 +221,68 @@ describe("roughResultToFeasibilityPatch", () => {
     expect(patch!.profitRatePct as number).toBeLessThan(0);
   });
 });
+
+// ── ★정밀도 등급 — 생성 경로 배선 (2026-08-24) ─────────────────────────────
+//
+//  라이브 수용시험에서 잡았다: `#770`(백엔드 산출) + `#771`(프론트 배지)이 **둘 다
+//  머지·배포**됐는데 화면에 배지가 뜨지 않았다. 사용자 계정으로 '개략수지 생성'을
+//  실제로 눌러 확인한 결과 `등급 F` 는 생기는데 스토어에 `precision` 키가 **없었다**.
+//
+//  `feasibilityData` 의 쓰기 경로가 둘인데(하이드레이션 / 생성) 하나만 배선돼 있었다.
+
+describe("roughResultToFeasibilityPatch — 정밀도 등급(#770)", () => {
+  it("★생성 경로에서 precision 3필드를 옮긴다 — 배지가 뜨는 조건", () => {
+    const patch = roughResultToFeasibilityPatch(
+      fullResult({
+        precision: "E",
+        precision_label: "개략(추정)",
+        precision_basis: "설계 산출물 없이 부지 정보만으로 추정",
+      }),
+    );
+    expect(patch).not.toBeNull();
+    // 배지 조건은 `grade && precision === "E"` 다 — **두 값이 같이** 있어야 한다.
+    expect(patch?.grade, "grade 가 빠지면 배지 조건 앞부분이 무너진다").toBe("B");
+    expect(patch?.precision).toBe("E");
+    expect(patch?.precisionLabel).toBe("개략(추정)");
+    expect(patch?.precisionBasis).toContain("설계 산출물 없이");
+  });
+
+  it("★대조군 — 백엔드가 안 주면 키를 만들지 않는다(구 응답 하위호환)", () => {
+    // ★위 케이스는 *무엇이든 채워 넣는* 구현에서도 초록이다. 반대 방향을 함께 본다.
+    const patch = roughResultToFeasibilityPatch(fullResult());
+    expect(patch).not.toBeNull();
+    expect(patch?.grade, "전제: 다른 필드는 정상 매핑된다").toBe("B");
+    expect("precision" in (patch ?? {}), "미제공인데 키를 만들었다 — 기존 SSOT 를 덮는다").toBe(false);
+    expect("precisionLabel" in (patch ?? {})).toBe(false);
+    expect("precisionBasis" in (patch ?? {})).toBe(false);
+  });
+
+  it("★모르는 등급은 넣지 않는다 — 소비처가 판정할 수 없는 값을 만들지 않는다", () => {
+    for (const bad of ["X", "e", "", "  ", "EE"]) {
+      const patch = roughResultToFeasibilityPatch(fullResult({ precision: bad }));
+      expect("precision" in (patch ?? {}), `precision="${bad}" 가 통과했다`).toBe(false);
+    }
+    // 정상 3등급은 전부 통과한다(과잉 차단 방지).
+    for (const ok of ["E", "D", "V"] as const) {
+      const patch = roughResultToFeasibilityPatch(fullResult({ precision: ok }));
+      expect(patch?.precision, `precision="${ok}" 가 막혔다 — 위양성`).toBe(ok);
+    }
+  });
+
+  it("★라벨·근거는 빈 문자열이면 생략한다(빈 값으로 덮지 않는다)", () => {
+    const patch = roughResultToFeasibilityPatch(
+      fullResult({ precision: "E", precision_label: "   ", precision_basis: "" }),
+    );
+    expect(patch?.precision).toBe("E");
+    expect("precisionLabel" in (patch ?? {})).toBe(false);
+    expect("precisionBasis" in (patch ?? {})).toBe(false);
+  });
+
+  it("★★precision 은 최상위다 — summary 안에 넣어도 주워 오지 않는다(형태 결속)", () => {
+    // 백엔드 orchestrator 는 `summary` 와 **형제**로 싣는다. 그 위치가 바뀌면 여기서 갈린다.
+    const patch = roughResultToFeasibilityPatch(
+      fullResult({ summary: { grade: "B", precision: "E" } as never }),
+    );
+    expect("precision" in (patch ?? {}), "summary 안의 값을 최상위로 착각해 읽었다").toBe(false);
+  });
+});

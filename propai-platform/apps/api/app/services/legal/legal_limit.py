@@ -69,6 +69,93 @@ class LegalLimit:
         """이 유형에 해당 제약이 **없는가**(값이 None)."""
         return self.value is None
 
+    @property
+    def basis(self) -> str:
+        """근거 문자열 — `PracticeLimit.basis` 와 같은 이름으로 읽히게 한다."""
+        return self.law
+
+    @property
+    def enforceable(self) -> bool:
+        """★법정 근거가 있으므로 **부적합(위법)을 단정할 자격이 있다**."""
+        return True
+
     def __str__(self) -> str:
         v = "제한 없음" if self.unlimited else f"{self.value:g}"
         return f"{v} ({self.law})" if not self.note else f"{v} ({self.law} — {self.note})"
+
+
+# ── 법정이 아닌 기준 — **출처는 필요하되, 부적합을 단정할 수는 없다** ────────────
+#
+# ★2026-08-23 (형제 스윕). `MAX_FLOORS` 를 고치면서 **같은 파일의 형제 두 표**를
+#   그대로 뒀다는 것이 드러났다 — `MIN_LOT_AREA`·`ROAD_REQUIREMENT`.
+#   둘 다 원시 숫자였고, 둘 다 `is_blocking=True` 로 **개발유형을 화면에서 죽인다**.
+#
+#   라이브 실측(2026-08-23, 168 컨테이너):
+#     · 4,000㎡ 아파트 부지 → **"부적합"** · blocking `4000m² < 5000m² (최소) — 면적 부족`
+#       그 5,000㎡ 가 어느 법에서 왔는지 **아무도 댈 수 없다**.
+#     · M03 도로폭 3m·접도 1m → **"접도 제한 없음" 통과** — 건축법 §44① 의 2m 에도 못 미치는데.
+#
+#   ★두 증상은 **한 뿌리의 양면**이다: 표에 있으면 근거 없이 죽이고, 표에 없으면
+#   근거 없이 살린다. `MAX_FLOORS` 가 이미 배운 것 — **미등재는 "제한 없음"이 아니다.**
+#
+# ## 왜 `LegalLimit` 로 통일하지 않는가
+#
+# 통일하려면 저 숫자들에 조문을 **붙여야** 하는데, 붙일 조문이 없다. 없는 근거를 지어내는 것은
+# 이 축이 막으려던 바로 그 잘못이다. 그래서 **강제력이 다른 두 종류**로 가른다:
+#
+#   · `LegalLimit`    — 법령·조문. 위반은 **위법** → `부적합`(blocking) 을 낼 자격이 있다
+#   · `PracticeLimit` — 실무·사업 기준. 위반은 **불리할 뿐 위법이 아니다** → `조건부` 까지만
+#   · **미등재**       — 근거 미확인 → `unknown`(침묵도, 통과도 아니다)
+
+
+@dataclass(frozen=True, slots=True)
+class PracticeLimit:
+    """법정이 아닌 실무 기준 하나 — 값 + 출처.
+
+    `LegalLimit` 과 **모양은 같고 강제력만 다르다**(`enforceable=False`).
+    소비처가 타입을 보고 판정 강도를 정하게 해서, "관행값이 법처럼 계획을 죽이는"
+    일이 구조적으로 불가능하게 한다.
+
+    Args:
+        value: 기준 값. `None` 은 "이 유형에는 이 기준을 두지 않는다".
+        source: 출처(실무 관행·사업 기준·내부 정책). 비면 생성 실패.
+        note: 사람이 읽는 보충 설명(선택).
+
+    Raises:
+        MissingLegalBasisError: `source` 가 비었을 때.
+    """
+
+    value: float | int | None
+    source: str
+    note: str = ""
+
+    def __post_init__(self) -> None:
+        if not (self.source or "").strip():
+            raise MissingLegalBasisError(
+                f"실무 기준에 출처가 없다(value={self.value!r}). "
+                "어디서 온 값인지 적어라 — 출처 없는 값은 판정에 낄 자격이 없다."
+            )
+
+    @property
+    def unlimited(self) -> bool:
+        """이 유형에 해당 기준이 **없는가**(값이 None)."""
+        return self.value is None
+
+    @property
+    def basis(self) -> str:
+        """근거 문자열 — `LegalLimit.basis` 와 같은 이름으로 읽히게 한다."""
+        return self.source
+
+    @property
+    def enforceable(self) -> bool:
+        """★핵심 — 실무 기준은 **부적합을 단정할 수 없다**."""
+        return False
+
+    def __str__(self) -> str:
+        v = "기준 없음" if self.unlimited else f"{self.value:g}"
+        body = f"{v} ({self.source}"
+        return f"{body} — {self.note})" if self.note else f"{body})"
+
+
+#: 값 + 근거를 함께 지니는 제약 — 소비처는 `enforceable` 로 판정 강도를 가른다.
+SourcedLimit = LegalLimit | PracticeLimit
