@@ -25,6 +25,7 @@ import { resolveFarPct, resolveBcrPct } from "@/lib/zoning-ssot";
 import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
 import { LegalRefChip } from "@/components/common/LegalRefChip";
 import { NumberInput } from "@/components/common/NumberInput";
+import { formatDominantZone } from "@/lib/zoning/dominant-zone";
 
 // WebGL/three 번들을 초기 로드에서 분리 — SSR 회피, 지연 마운트로 메인스레드 점유 방지.
 const ProposalMassPreview = dynamic(
@@ -1285,7 +1286,7 @@ export function DesignGenPanel({ projectId }: Props) {
                   <Map className="size-3.5" aria-hidden />다필지 통합: {result.multi_parcel.aggregation.parcel_count}개 필지 · 통합면적 {(result.multi_parcel.aggregation.total_area_sqm || 0).toLocaleString()}㎡
                 </div>
                 <div className="mt-0.5 text-[var(--text-secondary)]">
-                  대표 용도지역 {result.multi_parcel.aggregation.dominant_zone || "—"} · 면적가중 용적률(실효) {result.multi_parcel.aggregation.blended_far_eff_pct ?? "—"}% · 통합 연면적 {(result.multi_parcel.aggregation.integrated_gfa_sqm || 0).toLocaleString()}㎡
+                  대표 용도지역 {formatDominantZone(result.multi_parcel.aggregation.dominant_zone, { fallback: "—", mixedLabel: "혼재(분리검토 필요)" }).label} · 면적가중 용적률(실효) {result.multi_parcel.aggregation.blended_far_eff_pct ?? "—"}% · 통합 연면적 {(result.multi_parcel.aggregation.integrated_gfa_sqm || 0).toLocaleString()}㎡
                 </div>
                 {result.multi_parcel.aggregation.far_basis_note && (
                   <div className="mt-0.5 text-[var(--text-tertiary)]">{result.multi_parcel.aggregation.far_basis_note}</div>
