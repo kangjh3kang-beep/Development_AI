@@ -136,8 +136,11 @@ def test_생성_엔드포인트가_lookup_replay_conflict_save_를_모두_배선
     """★네 지점이 모두 있어야 계약이 성립한다 — 하나만 빠져도 조용히 중복이 생기거나 422 가 샌다."""
     for needle in (
         "idempotency.lookup(",
-        "is_idempotency_conflict(look)",
-        "resolve_idempotent_replay(look)",
+        # ★**호출부**를 본다 — 함수 이름만 찾으면 `def is_idempotency_conflict(look)` 라는
+        #   **정의 줄**이 조건을 대신 충족시킨다. 실제로 그렇게 변이가 살아남았다
+        #   (핸들러에서 `replay = None` 으로 배선을 끊었는데 초록이었다).
+        "if is_idempotency_conflict(look):",
+        "replay = resolve_idempotent_replay(look)",
         "idempotency.save(",
     ):
         assert needle in _src, f"멱등 배선 누락: {needle}"
