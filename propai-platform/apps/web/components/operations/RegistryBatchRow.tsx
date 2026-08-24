@@ -13,9 +13,11 @@
  * 유일한 판정자다. 화면과 집계가 서로 다른 기준으로 말하지 않게 하기 위함이다.
  */
 
+import { useEffect, useState } from "react";
 import { AlertTriangle } from "lucide-react";
 
 import { isAnalyzed, rowReason, type BatchOutcome } from "@/lib/registry-analyze";
+import { isSignedUrlExpired, signedUrlExpiryDay } from "@/lib/signed-url";
 
 /** 안전성 등급 배지 색. 알 수 없는 등급은 중립색으로 — 임의로 위험/안전에 몰지 않는다. */
 const GRADE_CLASS: Record<string, string> = {
@@ -66,6 +68,18 @@ export function RegistryBatchRow({
   // ★등기부 PDF 는 **권리분석이 실패해도 발급돼 있다.** 종전엔 이 행에 링크가 없어,
   //   돈을 내고 받은 문서를 사용자가 열어 볼 방법이 목록에 없었다(상세를 눌러야 했다).
   const pdfUrl = (item.result?.fetched?.pdf_url || "").trim();
+  // ★만료를 **누르기 전에** 안다. 서명 URL 의 토큰(JWT)에 `exp` 가 들어 있어 요청 없이 읽힌다.
+  //   종전엔 만료된 링크도 살아 있는 것과 똑같이 그려, 누르면 JSON 오류 덩어리가 열렸다
+  //   (라이브 실측: 저장 79건 중 표본 3건에서 2건 만료).
+  //   ★못 읽으면 만료로 몰지 않는다 — 살아 있는 링크를 죽은 것으로 만들지 않는다.
+  // ★시계는 **렌더 중에 읽지 않는다**(React 19 순수성 — 린터가 잡았다).
+  //   마운트 후 한 번 읽고, 그 전까지는 `null` 이라 **만료로 몰지 않는다** —
+  //   첫 페인트에 살아 있는 링크를 죽은 것으로 그리는 것보다 그쪽이 안전하다
+  //   (이 모듈의 원칙과 같다: 모르면 감추지 않는다).
+  const [nowMs, setNowMs] = useState<number | null>(null);
+  useEffect(() => setNowMs(Date.now()), []);
+  const pdfExpired = pdfUrl && nowMs !== null ? isSignedUrlExpired(pdfUrl, nowMs) : false;
+  const pdfExpiryDay = pdfUrl ? signedUrlExpiryDay(pdfUrl) : null;
   const reusedDay = item.result?.fetched?.reused_issue
     ? issuedDay(item.result?.fetched?.issued_at)
     : null;
@@ -135,7 +149,7 @@ export function RegistryBatchRow({
         </span>
       )}
 
-      {pdfUrl && (
+      {pdfUrl && !pdfExpired && (
         <a
           href={pdfUrl}
           target="_blank"
@@ -145,6 +159,17 @@ export function RegistryBatchRow({
         >
           PDF ↗
         </a>
+      )}
+
+      {pdfUrl && pdfExpired && (
+        /* 죽은 링크를 살아 있는 것처럼 그리지 않는다. 대신 **왜 못 쓰는지**를 말한다. */
+        <span
+          data-testid="row-pdf-expired"
+          title={`발급 링크가 ${pdfExpiryDay ?? "이전"}에 만료되었습니다 — 다시 발급해야 받을 수 있습니다`}
+          className="rounded-md border border-[var(--line-strong)] px-2 py-0.5 text-[var(--text-hint)]"
+        >
+          PDF 만료{pdfExpiryDay ? ` · ${pdfExpiryDay}` : ""}
+        </span>
       )}
 
       {item.result && (
