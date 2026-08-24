@@ -381,6 +381,9 @@ async def test_분석_라우트가_분석없는_결과에_과금하지_않는다
         dong = None
         ho = None
         land_hint = None
+        # ★스텁도 계약이다 — 실제 요청 모델에 필드가 늘면 여기도 따라와야 한다.
+        #   좁은 스텁은 "그 필드를 쓰는 코드가 테스트에서만 터지는" 형태를 만든다.
+        force_reissue = False
 
     _Svc.result = {"status": "not_available", "ai": None}
     out = await rr.registry_analyze(_http_req(), _Req(), current_user=_U())
