@@ -406,53 +406,83 @@ async def desk_appraisal(
             ),
         }
 
-    # ── 3) 다법인 교차검증 모사(5개 법인: 그밖의요인 ±5%·거래사례 가중 ±10% 변동) ──
-    import random as _random
-    seed = abs(hash((pnu or address or "") + str(int(op)))) % (2**31)
-    rnd = _random.Random(seed)
-    firm_vals: list[int] = []
-    for _ in range(5):
-        of_i = other_factor * (1 + rnd.uniform(-0.05, 0.05))
-        pub_i = op * time_adjust * road_f * area_fac * shape_f * of_i
+    # ── 3) 결정적 민감도 봉투 — **난수 없음** ──
+    # ★★라이브 실측 결함(2026-08-25) — 여기엔 원래 `random.Random(seed)` 가 있었고
+    #   `seed = abs(hash(문자열)) % 2**31` 였다. CPython 은 `PYTHONHASHSEED` 미설정 시
+    #   str `hash()` 를 **프로세스마다 솔팅**하는데, 프로덕션 168 컨테이너의
+    #   `PYTHONHASHSEED` 는 **빈 값**이었다(실측). 결과:
+    #     · 같은 필지의 채택단가가 **재시작마다 최대 5.66% 이동**(원문 소스를 실제
+    #       hash 시드 40개로 태워 실측). 라이브 논현동 1-1 1,000㎡ = 62.6억 → **약 3.5억원**
+    #     · `rough_feasibility_orchestrator:813` 이 이 값을 **수지 토지비**로 쓴다
+    #   ★한 프로세스 안에서는 완벽히 결정적이라(라이브 8/8 동일) 반복 호출 테스트는 전부
+    #     초록이었다. 그래서 `tests/test_desk_appraisal_determinism.py` 는 **서로 다른
+    #     PYTHONHASHSEED 하위프로세스**에서 잰다.
+    #
+    # 이제 난수 대신 **가정 격자**를 결정적으로 편다. 보여 주는 값의 뜻이 달라졌다 —
+    # "5개 법인이 따로 평가했다"가 아니라 **"가정을 흔들면 이만큼 움직인다"**(민감도)이다.
+    _OF_STEPS = (-0.05, 0.0, 0.05)      # 그밖의요인 가정 폭
+    _W_STEPS = (0.5, 0.6, 0.7)          # 공시지가 경로 가중(거래사례가 있을 때만 의미)
+
+    def _scenario_value(of_delta: float, w: float) -> int:
+        pub_i = op * time_adjust * road_f * area_fac * shape_f * (other_factor * (1 + of_delta))
         if cmp_unit_price > 0:
-            w = 0.6 + rnd.uniform(-0.1, 0.1)
-            firm_vals.append(int(pub_i * w + cmp_unit_price * (1 - w)))
-        else:
-            firm_vals.append(int(pub_i))
-    firm_mean = sum(firm_vals) / len(firm_vals)
-    firm_std = (sum((v - firm_mean) ** 2 for v in firm_vals) / len(firm_vals)) ** 0.5
-    cv = firm_std / firm_mean if firm_mean else 0
+            return int(pub_i * w + cmp_unit_price * (1 - w))
+        return int(pub_i)
+
+    if cmp_unit_price > 0:
+        _grid = [(of, w) for of in _OF_STEPS for w in _W_STEPS]
+    else:
+        _grid = [(of, 0.6) for of in _OF_STEPS]   # 가중은 무의미 — 축을 늘리지 않는다
+    scenario_vals = sorted({_scenario_value(of, w) for of, w in _grid})
+    # ★채택가는 **중심 가정**의 값이다(난수 평균이 아니다).
+    central_unit = _scenario_value(0.0, 0.6)
+    band_mean = sum(scenario_vals) / len(scenario_vals)
+    band_std = (sum((v - band_mean) ** 2 for v in scenario_vals) / len(scenario_vals)) ** 0.5
+    cv = band_std / band_mean if band_mean else 0
     cross_check = {
-        "firms": sorted(firm_vals),
-        "mean": int(firm_mean),
-        "std": int(firm_std),
+        "firms": scenario_vals,   # ★부채: 키 이름이 아직 `firms` 다(소비처 6파일) — PLAN §5
+        "mean": int(band_mean),
+        "std": int(band_std),
         "cv_pct": round(cv * 100, 1),
-        "min": min(firm_vals), "max": max(firm_vals),
-        # ★★라이브 적발(2026-08-06) — 거래사례를 **하나도 안 썼는데** "실거래 가중 분포"라고
-        #   말했다. 위 루프를 보면 `cmp_unit_price > 0` 일 때만 가중을 섞고, 아니면
-        #   `pub_i`(공시지가 경로) 단독이다. 그런데 문구는 무조건이었다.
-        #   ★같은 함수의 `weight_note` 는 **이미 조건부로 정확**했다("실거래 확보 시 정밀도↑")
-        #   — 저자가 그 구분을 알고 있었는데 이 두 문구만 따라오지 않은 것이다(한 곳만 고침).
-        #   ★라이브 자기모순 실측: 한 응답 안에서 weight_note 는 "실거래 확보 시 정밀도↑"
-        #   (=아직 없다)라고 하면서 이 note 는 "실거래 가중 분포"라고 했다.
+        "min": min(scenario_vals), "max": max(scenario_vals),
         "note": (
-            "복수 시나리오(보정계수·실거래 가중 분포) 교차검증. 편차(CV)가 낮을수록 추정 안정성↑."
+            "가정 민감도 — 그밖의요인 ±5%·실거래 가중 0.3~0.5 를 편 결정적 범위입니다. "
+            "독립된 평가 주체의 교차검증이 아니라 같은 산식의 가정 변동입니다."
             if cmp_unit_price > 0 else
-            "복수 시나리오(보정계수 변동) 교차검증 — 실거래 사례를 확보하지 못해 공시지가 "
-            "기준 경로만 비교했습니다. 편차(CV)가 낮을수록 추정 안정성↑."
+            "가정 민감도 — 그밖의요인 ±5% 를 편 결정적 범위입니다. 거래사례를 확보하지 못해 "
+            "공시지가 기준 경로 하나만 계산했으며, 이는 **교차검증이 아닙니다**."
         ),
     }
 
-    # 채택가 = 교차검증 평균. 신뢰도 = 1 - CV(법인간 편차 작을수록↑).
-    appraised_unit = int(firm_mean)
-    confidence = round(max(0.4, 1 - cv * 3), 2)  # CV 0%→1.0, ~20%→0.4
+    # ── 채택가·신뢰도 ──
+    # ★★종전엔 `confidence = max(0.4, 1 - cv*3)` 였다. 그 `cv` 는 **자기가 주입한 난수**의
+    #   변동계수라, 데이터 구성이 완전히 달라져도 0.83~0.94 안에 머무는 반면(실측)
+    #   **같은 구성에서 프로세스만 바뀌면 0.78~0.98** 로 더 크게 흔들렸다 — 잡음 > 신호.
+    #   이제 신뢰도는 **독립 추정이 2개일 때만**, 그 둘의 **실제 불일치**에서 나온다.
+    appraised_unit = central_unit
+    pub_central = int(op * time_adjust * road_f * area_fac * shape_f * other_factor)
+    if cmp_unit_price > 0 and pub_central > 0:
+        _gap = abs(pub_central - cmp_unit_price) / max(pub_central, cmp_unit_price)
+        confidence: float | None = round(max(0.4, 1 - _gap), 2)
+        confidence_basis = (
+            f"독립 추정 2개(공시지가기준법 {pub_central:,}원/㎡ · 거래사례비교법 "
+            f"{int(cmp_unit_price):,}원/㎡)의 불일치 {_gap * 100:.1f}% → 신뢰도 = 1 − 불일치(하한 0.4)"
+        )
+    else:
+        # ★정답이 '값'이 아니라 '보류'일 수 있다 — 독립 추정 1개는 교차검증이 아니다.
+        confidence = None
+        confidence_basis = (
+            "단일 경로(공시지가기준법)만 산출돼 신뢰도를 보류합니다 — 독립 추정이 1개면 "
+            "교차검증이 아닙니다. 주변 거래사례를 확보하면 두 방법의 불일치로 산출합니다."
+        )
     weight_note = (
-        "공시지가 기준 + 실거래 비교 결합 후 복수 시나리오 교차검증 평균 채택"
+        "공시지가 기준 + 실거래 비교 결합(중심 가정) 채택"
         if method_cmp else
-        "공시지가 기준 + 복수 시나리오 교차검증 평균 채택(실거래 확보 시 정밀도↑)"
+        "공시지가 기준(중심 가정) 채택 — 실거래 확보 시 교차검증 가능"
     )
     appraised_total = int(appraised_unit * area_f) if area_f else None
-    margin = int(appraised_unit * (1 - confidence))  # 신뢰구간(±)
+    # ★± 범위는 **결정적 가정 봉투**에서 나온다(종전엔 주입 잡음에서 나왔다).
+    range_low, range_high = min(scenario_vals), max(scenario_vals)
 
     # ── 토지+건물 복합 추정(건물 입력 시): 토지가치 + 원가법 건물가치 ──
     building = _building_value(building_gfa_sqm, building_structure, building_year_built, base_year + 1)
@@ -506,14 +536,10 @@ async def desk_appraisal(
                 "basis": method_cmp["rationale"],
             })
         ev_items.append({
-            "label": "교차검증 신뢰도",
-            "value": confidence,
-            # ★위 note 와 같은 결함 — 근거 표기도 안 쓴 것을 썼다고 말하면 안 된다.
-            "basis": (
-                f"복수 시나리오({'보정계수·실거래 가중' if cmp_unit_price > 0 else '보정계수'} 분포) "
-                f"교차검증 CV {cross_check['cv_pct']}% → 신뢰도 = 1 − CV×3(하한 0.4)"
-                + ("" if cmp_unit_price > 0 else " · 실거래 사례 미확보")
-            ),
+            "label": "교차검증 신뢰도" if confidence is not None else "신뢰도(보류)",
+            "value": confidence if confidence is not None else "산출 보류",
+            # ★근거는 **신뢰도를 실제로 만든 것**을 말한다(종전엔 주입 잡음의 CV 였다).
+            "basis": confidence_basis,
         })
         if building:
             ev_items.append({
@@ -549,7 +575,9 @@ async def desk_appraisal(
         "complex_note": complex_note,
         "area_sqm": round(area_f, 1) if area_f else None,
         "confidence": confidence,
-        "range_per_sqm": {"low": appraised_unit - margin, "high": appraised_unit + margin},
+        "range_per_sqm": {"low": range_low, "high": range_high},
+        # ★신뢰도를 보류했으면 **사유**를 말한다(무언 보류 금지).
+        "confidence_basis": confidence_basis,
         "cross_check": cross_check,
         "irregularity": irregularity,
         "methods": [m for m in (method_pub, method_cmp) if m],
