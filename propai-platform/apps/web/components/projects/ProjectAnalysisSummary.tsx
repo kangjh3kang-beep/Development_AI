@@ -409,6 +409,10 @@ export function ProjectAnalysisSummary({ locale }: { locale?: string }) {
               숫자가 있나"로 읽었다. 값을 지우지 않고 **등급을 붙인다**. */}
           {feas?.grade && feas?.precision === "E" ? (
             <span
+              // ★배포·수용시험 확증용 앵커 — 렌더 문구와 `title`(툴팁)이 **다른 문자열**이라
+              //   둘을 혼동해 오판할 뻔한 사고가 있었다. DOM 속성값은 최소화에도 살아남고
+              //   주석일 수 없어 지표로 가장 튼튼하다.
+              data-testid="precision-badge"
               title={feas.precisionBasis || "설계 산출물 없이 부지 정보만으로 추정한 개략치입니다"}
               className="rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-800 dark:bg-amber-900/40 dark:text-amber-200"
             >
