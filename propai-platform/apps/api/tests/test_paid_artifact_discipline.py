@@ -91,3 +91,43 @@ class TestFailureCarriesItsReason:
         assert '"generated": False' in src or "'generated': False" in src
         # 성공 판정은 그 전용 필드로만 한다(존재 검사 금지).
         assert 'ai.get("generated")' in src, "성공 판정이 전용 필드를 쓰지 않는다"
+
+
+class TestGuidelineNamesLiveFiles:
+    """★지침이 **죽은 파일을 가리키지 않는다**.
+
+    CLAUDE.md 의 「유료·비가역 산출물 규율」 표는 각 얼굴마다 '기계 강제' 파일을 지목한다.
+    그 파일이 사라지거나 이름이 바뀌면 **지침은 남고 강제는 사라진다** — 다음 사람은
+    표를 보고 "이미 잠겨 있다"고 오독한다. 문서와 강제를 같이 묶는다.
+
+    ★선례: 문서에 적은 프로브를 실제로 실행해 잠그는 `test_sw_cache_name_derivation_contract`.
+    """
+
+    _CLAUDE = Path(__file__).resolve().parents[4] / "CLAUDE.md"
+    _REQUIRED = [
+        "propai-platform/apps/api/tests/test_paid_artifact_discipline.py",
+        "propai-platform/apps/api/tests/test_llm_observability_pairing.py",
+        "propai-platform/apps/web/lib/__tests__/registry-analysis-persistence.test.ts",
+        "propai-platform/apps/web/lib/__tests__/registry-batch-summary.test.ts",
+        "propai-platform/apps/web/__tests__/test-runner-collects-every-test.contract.test.ts",
+    ]
+
+    def test_전제_지침_문서를_찾았다(self):
+        assert self._CLAUDE.exists(), f"CLAUDE.md 를 못 찾았다: {self._CLAUDE}"
+        txt = self._CLAUDE.read_text(encoding="utf-8")
+        assert "유료·비가역 산출물 규율" in txt, "지침 절이 사라졌다 — 강제만 남고 규범이 없다"
+        assert "수집·판정 규율" in txt
+
+    def test_핵심_지침이_지목한_강제_파일이_전부_실재한다(self):
+        repo = Path(__file__).resolve().parents[4]
+        missing = [p for p in self._REQUIRED if not (repo / p).exists()]
+        assert not missing, (
+            "지침이 가리키는 강제 파일이 없다(문서는 '잠겨 있다'고 말하는데 실제로는 아니다): "
+            + ", ".join(missing)
+        )
+
+    def test_강제_파일이_껍데기가_아니다(self):
+        """존재만으로는 부족하다 — 내용이 비면 '있는데 아무것도 안 하는' 상태다."""
+        repo = Path(__file__).resolve().parents[4]
+        thin = [p for p in self._REQUIRED if len((repo / p).read_text(encoding="utf-8")) < 800]
+        assert not thin, f"강제 파일이 사실상 비어 있다: {thin}"
