@@ -55,6 +55,46 @@ type ProjectState = {
   updateProject: (id: string, updates: Partial<Project>) => void;
 };
 
+/**
+ * **서버 생성이 진행 중인 로컬 프로젝트 id** — 중복 생성 경합 차단.
+ *
+ * ## 무엇이 있었나(실측)
+ *
+ * 두 생성 경로 모두 이 순서다:
+ *
+ *     addProject(...)            → **비UUID** 로컬 레코드가 생긴다(주소 포함)
+ *     await POST /projects       → ★이 창 동안 레코드는 "고아"로 보인다
+ *     updateProject(id → UUID)   → 비로소 UUID 가 된다
+ *
+ * 그런데 `syncFromBackend` 는 *"비UUID 이고 주소가 백엔드 목록에 없으면 고아"* 로 보고
+ * **POST 로 다시 만든다.** 그 동기화는 마운트마다 여러 화면에서 발화한다 —
+ * `await` 창에 겹치면 **같은 프로젝트가 두 번 생성된다.**
+ * 실물: 이름·주소·필지수(77)가 완전히 같은 **중복 프로젝트 2건**이 프로덕션에 있다.
+ *
+ * ★주소 문자열 중복제거로는 못 막는다 — 그 창에서는 백엔드 목록에 **아직 없기 때문**이다.
+ *
+ * ## 범위(정직 표기)
+ *
+ * 이 레지스트리는 **같은 탭** 안에서만 유효하다. 다른 탭·기기에서 동시에 같은 프로젝트를
+ * 만드는 경우는 **서버측 멱등키**가 있어야 막는다(별건).
+ */
+const _creatingLocalIds = new Set<string>();
+
+/** 서버 생성 시작을 알린다 — 이 id 는 그동안 "고아"로 취급되지 않는다. */
+export function markProjectCreating(localId: string): void {
+  if (localId) _creatingLocalIds.add(localId);
+}
+
+/** 성공·실패 **양쪽 모두** 호출한다. 실패한 건은 다시 고아가 되어 다음 동기화가 재시도한다. */
+export function unmarkProjectCreating(localId: string): void {
+  if (localId) _creatingLocalIds.delete(localId);
+}
+
+/** 테스트·진단용 — 현재 인플라이트 개수. */
+export function _creatingCount(): number {
+  return _creatingLocalIds.size;
+}
+
 export const useProjectStore = create<ProjectState>()(
   persist(
     (set, get) => ({
@@ -104,7 +144,8 @@ export const useProjectStore = create<ProjectState>()(
           const orphans: Project[] = [];
           for (const p of get().projects) {
             const a = p.address.trim();
-            if (!_isUuid(p.id) && a && !seen.has(a)) {
+            // ★서버 생성이 진행 중이면 고아가 아니다 — 지금 POST 하면 같은 프로젝트가 두 번 생긴다.
+            if (!_isUuid(p.id) && a && !seen.has(a) && !_creatingLocalIds.has(p.id)) {
               seen.add(a);
               orphans.push(p);
             }
