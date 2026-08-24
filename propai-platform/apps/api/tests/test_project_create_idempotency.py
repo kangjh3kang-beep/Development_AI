@@ -66,6 +66,62 @@ def test_주소_미상은_빈문자로_접힌다_None_날조_금지():
     assert _fingerprint(_Body(address=None)) == {"address": ""}
 
 
+# ── 판단: 재생/충돌 ─────────────────────────────────────────────────────────
+class _Stored:
+    def __init__(self, body):
+        self._body = body
+
+    def to_response(self):
+        return self._body  # 실제 Response 대신 대역(판단만 태운다)
+
+
+class _Look:
+    def __init__(self, state, stored=None):
+        self.state = state
+        self.stored = stored
+
+
+def _replay(look):
+    from apps.api.routers.projects import resolve_idempotent_replay
+
+    return resolve_idempotent_replay(look)
+
+
+def test_저장된_응답이_있으면_재생한다_중복생성_차단():
+    """★이 분기가 중복 생성을 막는 자리다.
+
+    이전 판(핸들러 안 `if` 두 줄)에서는 `if replay is not None:` 을 `if False:` 로 바꿔도
+    **테스트가 전부 초록이었다** — 소스 검사가 `.to_response()` 라는 문자열만 봤기 때문이다.
+    """
+    from app.core import idempotency
+
+    assert _replay(_Look(idempotency.STATE_REPLAY, _Stored("첫 응답"))) == "첫 응답"
+
+
+def test_처음_보는_키는_정상_실행으로_떨어진다_양성대조군():
+    """[양성 대조군] 항상 재생하는 함수가 아니다 — 그러면 프로젝트를 아예 못 만든다."""
+    from app.core import idempotency
+
+    assert _replay(_Look(idempotency.STATE_MISS)) is None
+
+
+def test_본문이_없는_저장은_재생하지_않는다():
+    """대형이라 본문을 저장하지 못한 경우 — 빈 응답을 재생하면 클라이언트가 id 를 못 받는다."""
+    from app.core import idempotency
+
+    assert _replay(_Look(idempotency.STATE_REPLAY, _Stored(None))) is None
+    assert _replay(_Look(idempotency.STATE_REPLAY, None)) is None
+
+
+def test_충돌_판정이_replay_와_갈린다():
+    from app.core import idempotency
+    from apps.api.routers.projects import is_idempotency_conflict
+
+    assert is_idempotency_conflict(_Look(idempotency.STATE_CONFLICT)) is True
+    assert is_idempotency_conflict(_Look(idempotency.STATE_REPLAY)) is False
+    assert is_idempotency_conflict(_Look(idempotency.STATE_MISS)) is False
+
+
 # ── 배선: 라우터가 표준 통로를 실제로 거치는가 ──────────────────────────────
 @pytest.fixture(scope="module")
 def _src() -> str:
@@ -80,10 +136,9 @@ def test_생성_엔드포인트가_lookup_replay_conflict_save_를_모두_배선
     """★네 지점이 모두 있어야 계약이 성립한다 — 하나만 빠져도 조용히 중복이 생기거나 422 가 샌다."""
     for needle in (
         "idempotency.lookup(",
-        "idempotency.STATE_CONFLICT",
-        "idempotency.STATE_REPLAY",
+        "is_idempotency_conflict(look)",
+        "resolve_idempotent_replay(look)",
         "idempotency.save(",
-        ".to_response()",
     ):
         assert needle in _src, f"멱등 배선 누락: {needle}"
 

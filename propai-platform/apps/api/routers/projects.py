@@ -56,6 +56,26 @@ def create_request_fingerprint(body: ProjectCreateRequest) -> dict[str, str]:
     """
     return {"address": body.address or ""}
 
+
+def is_idempotency_conflict(look) -> bool:
+    """같은 키인데 다른 요청인가 — 422 로 거부할 상황."""
+    return look.state == idempotency.STATE_CONFLICT
+
+
+def resolve_idempotent_replay(look):
+    """★재생 **판단** — 저장된 응답이 있으면 그것을 돌려주고(재실행 0), 없으면 `None`(정상 실행).
+
+    왜 함수로 꺼내는가: 이 판단을 핸들러 안 `if` 두 줄로 두었더니 **변이가 살아남았다** —
+    `if replay is not None:` 을 `if False:` 로 바꿔도 테스트가 전부 초록이었다(소스 검사가
+    `.to_response()` 라는 **문자열만** 봤기 때문). 중복 생성을 막는 바로 그 분기가 무잠금이었다.
+
+    본문이 없는 저장(대형이라 미저장)은 `None` 을 돌려 **정상 실행으로 떨어뜨린다** —
+    빈 응답을 재생하면 클라이언트가 프로젝트 id 를 못 받는다.
+    """
+    if look.state != idempotency.STATE_REPLAY or look.stored is None:
+        return None
+    return look.stored.to_response()
+
 # 유효한 상태 전환 맵
 _VALID_TRANSITIONS: dict[str, list[str]] = {
     "draft": ["planning", "archived"],
@@ -223,15 +243,14 @@ async def create_project(
             endpoint=_EP_CREATE_PROJECT,
             request_hash=request_hash,
         )
-        if look.state == idempotency.STATE_CONFLICT:
+        if is_idempotency_conflict(look):
             raise HTTPException(
                 status_code=422,
                 detail="같은 Idempotency-Key 가 다른 요청에 재사용되었습니다.",
             )
-        if look.state == idempotency.STATE_REPLAY and look.stored is not None:
-            replay = look.stored.to_response()
-            if replay is not None:
-                return replay  # 처음 응답 그대로 재생 — 두 번째 프로젝트를 만들지 않는다
+        replay = resolve_idempotent_replay(look)
+        if replay is not None:
+            return replay  # 처음 응답 그대로 재생 — 두 번째 프로젝트를 만들지 않는다
 
     project = Project(
         tenant_id=current_user.tenant_id,
