@@ -140,19 +140,33 @@ describe("지적도 저배율 계약", () => {
 
   it("★안내가 진짜 오류 노트를 덮지 않는다", () => {
     // 상류 502 로 뜬 진짜 오류를 줌 변화가 지워 버리면 장애가 보이지 않게 된다.
+    // ★2026-08-24 계약 확장 — 이 파일의 자체 안내가 **둘**이 됐다(일반 + 이격 전용).
+    //   종전 락은 `prev !== CADASTRE_ZOOM_HINT` 라는 **한 문구만** 기대했다. 그대로 두면
+    //   "자기 안내인지"를 두 문구로 판정하는 코드가 위반으로 잡혀, 락이 **개선을 막는다**.
+    //   그래서 판정자(`isOwnHint`)에 결속시킨다 — 의도(자기 안내일 때만 갈아끼운다)는 그대로다.
     expect(() =>
       assertWiredThrough({
         file: FILE,
         scope: /if \(below\) return prev/,
-        mustContain: "prev !== CADASTRE_ZOOM_HINT",
+        mustContain: "isOwnHint(prev)",
         minMatches: 1,
       }),
     ).not.toThrow();
     expect(() =>
       assertWiredThrough({
         file: FILE,
-        scope: /return prev === CADASTRE_ZOOM_HINT/,
+        scope: /return isOwnHint\(prev\)/,
         mustContain: '""',
+        minMatches: 1,
+      }),
+    ).not.toThrow();
+    // ★판정자가 **두 안내를 모두** 자기 것으로 인정해야 한다 — 하나만 인정하면 나머지 하나가
+    //   진짜 오류 노트처럼 취급돼 영영 안 지워진다(반대 방향 결함).
+    expect(() =>
+      assertWiredThrough({
+        file: FILE,
+        scope: /const isOwnHint =/,
+        mustContain: "CADASTRE_ZOOM_HINT",
         minMatches: 1,
       }),
     ).not.toThrow();
