@@ -60,6 +60,9 @@ const WIPE_EXEMPT: Record<string, string> = {
   propai_refresh_token: "인증 토큰 — 계정 격리 와이프가 아니라 로그아웃·갱신 경로가 수명을 관리한다",
   propai_data_owner: "격리 판정자 자신 — 이걸 지우면 다음 로드에서 소유자 비교가 불가능해진다",
   "propai_pipeline_history__": "계정별 격리 키 — 키 자체가 갈려 있어 와이프가 불필요하고, 지우면 본인 이력이 사라진다(그들이 고친 결함의 재발)",
+  // ★#817(다른 세션)이 세션키 커버리지 락에서 **인프라 키로 판정**했다 — 그 판정을 받아
+  //   미분류에서 옮긴다. 같은 것을 두 번 조사하지 않는다.
+  propai_growth_session: "성장엔진 세션 식별자 — 계정 데이터가 아니라 인프라 키다(#817 이 세션키 락에서 과잉 와이프 대조군으로 고정)",
 };
 
 /**
@@ -76,7 +79,7 @@ const UNTRIAGED_KEYS = [
   "propai-orchestration", "propai-project-tools-expanded", "propai-pwa-test",
   "propai-report-",
   "propai_ai_insight_", "propai_buildcost_", "propai_cad_help_seen",
-  "propai_growth_session", "propai_guest_analysis_count", "propai_legal_discovery_",
+  "propai_guest_analysis_count", "propai_legal_discovery_",
   "propai_onboarding_completed", "propai_ref_code", "propai_reg_digest_",
   "propai_visitor_ref",
 ] as const;
