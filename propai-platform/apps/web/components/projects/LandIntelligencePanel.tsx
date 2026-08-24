@@ -1,5 +1,6 @@
 "use client";
 
+import { IntegrityWarnings, type IntegrityWarning } from "@/components/ui/IntegrityWarnings";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { AlertTriangle } from "lucide-react";
@@ -146,6 +147,9 @@ type IntegratedAnalysisResponse = {
     [key: string]: unknown;
   }> | null;
   warnings?: string[] | null;
+  // ★법정초과 가드 결과(additive) — 백엔드가 `warnings` **바로 옆 줄**에 싣는데
+  //   프론트 타입에 없어 소비할 수 없었다(그래서 렌더도 0이었다).
+  integrity_warnings?: IntegrityWarning[] | null;
 };
 
 type TransactionItem = {
@@ -1203,6 +1207,12 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
                           </ul>
                         </div>
                       )}
+
+                      {/* ★법정초과 가드(integrity_warnings) — `warnings` **바로 옆 줄**에 실려 오는데
+                          렌더가 없어 검출돼도 화면에 안 나왔다(2026-08-24 실측: 프론트 소비처 0).
+                          가드가 신뢰도를 강등하며 붙이는 문구가 *"integrity_warnings 참조"* 라
+                          **화면에 없는 것을 참조하라**고 말하고 있었다. */}
+                      <IntegrityWarnings items={integratedData.integrity_warnings} />
 
                       {/* 필지별 상세(per_parcel) — 통합 산출근거 추적용. 토글(기본 접힘). 실효(법정)·특이·상태 정직표기. */}
                       {(integratedData.per_parcel?.length ?? 0) > 0 && (
