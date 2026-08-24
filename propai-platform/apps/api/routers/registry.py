@@ -1023,3 +1023,67 @@ async def parcel_purchase_strategy(
         logger.debug("성장루프 적재 스킵(분류 무손상)", exc_info=True)
 
     return {"survey": survey, "strategy": strategy}
+
+
+# ── 권리분석 보고서 다운로드(PDF/PPTX/DOCX) ─────────────────────────────────
+class RightsReportItem(BaseModel):
+    """일괄 분석 결과 한 건. `result` 는 `/registry/analyze` 응답을 그대로 담는다."""
+
+    jibun: str = Field("", description="지번(사람이 읽는 식별자)")
+    result: dict[str, Any] | None = Field(None, description="analyze() 응답 원형")
+
+
+class RightsReportRequest(BaseModel):
+    items: list[RightsReportItem] = Field(default_factory=list)
+    project_address: str | None = None
+    format: str = Field("pdf", description="pdf | pptx | docx")
+
+
+# 한 번에 묶을 수 있는 필지 수 상한. 넘으면 **자르지 않고 거부**한다 —
+# 조용히 자르면 "전 필지 보고서"라는 이름으로 일부만 담긴 문서가 나간다.
+_RIGHTS_REPORT_MAX = 300
+
+
+@router.post("/rights-report", summary="등기 권리분석 보고서 다운로드(PDF/PPTX/DOCX)")
+async def registry_rights_report(
+    req: RightsReportRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """다필지 일괄 등기분석 결과를 **정본 보고서 엔진**으로 렌더해 내려보낸다.
+
+    ★새로 조회하지 않는다. 호출측이 **이미 받은** 분석 결과를 형식화할 뿐이라 발급 과금이
+    발생하지 않고, 새로 열리는 데이터 접근 권한도 없다(서식화 전용).
+
+    ★미분석 필지를 빼지 않는다 — 어댑터가 §미분석 섹션으로 드러낸다. 빼면 보고서가
+    "N필지 전부 안전"이라고 말하게 되고, 그건 없는 안전을 만드는 것이다.
+    """
+    import datetime as _dt
+
+    if not req.items:
+        raise HTTPException(status_code=400, detail="보고서로 만들 분석 결과가 없습니다.")
+    if len(req.items) > _RIGHTS_REPORT_MAX:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"한 번에 {_RIGHTS_REPORT_MAX}필지까지 가능합니다(요청 {len(req.items)}필지). "
+                "나눠서 내려받으세요 — 조용히 잘라 일부만 담긴 보고서를 만들지 않습니다."
+            ),
+        )
+
+    from app.services.report.render import build_report_model_from_registry_rights, render_report
+
+    model = build_report_model_from_registry_rights(
+        [it.model_dump() for it in req.items],
+        project_address=req.project_address,
+        generated_at=_dt.datetime.now().strftime("%Y-%m-%d %H:%M"),
+    )
+    data, media_type, ext = render_report(model, req.format)
+    logger.info(
+        "권리분석 보고서 생성 user=%s 필지=%d fmt=%s bytes=%d",
+        getattr(current_user, "id", None), len(req.items), ext, len(data),
+    )
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="propai_rights_report.{ext}"'},
+    )

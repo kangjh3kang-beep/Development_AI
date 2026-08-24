@@ -17,6 +17,7 @@ import { DataSourceNotice } from "@/components/ui/DataSourceNotice";
 import { analyzeRegistry, isAnalyzed, summarizeBatch } from "@/lib/registry-analyze";
 import { RegistryBatchRow } from "@/components/operations/RegistryBatchRow";
 import { RegistryPdfBundleButton } from "@/components/operations/RegistryPdfBundleButton";
+import { RegistryRightsReportButton } from "@/components/operations/RegistryRightsReportButton";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { useLandScheduleStore, type LandRow } from "@/store/useLandScheduleStore";
@@ -429,6 +430,12 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
                 {batchResults.map((b, i) => (
                   <RegistryBatchRow key={i} item={b} onDetail={() => setResult(b.result)} />
                 ))}
+                {/* 일괄분석이 끝난 결과를 정본 보고서 엔진으로 문서화한다(재조회·재과금 없음). */}
+                <RegistryRightsReportButton
+                  className="mt-2 border-t border-[var(--line)] pt-2"
+                  items={batchResults}
+                  projectAddress={siteAnalysis?.address ?? null}
+                />
               </div>
             )}
             <div className="mt-3 flex flex-wrap items-center gap-2">
