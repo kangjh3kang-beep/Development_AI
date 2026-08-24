@@ -33,7 +33,9 @@ describe("DigitalTwinControlTowerWorkspaceClient", () => {
     });
 
     vi.mocked(apiClient.get).mockImplementation(async (path: string) => {
-      if (path === "/projects?page=1&page_size=20") {
+      // ★스텁은 **계약**에 맞춘다 — 리터럴 URL 로 묶으면 page_size 를 바꾸는 순간
+      //   구현이 아니라 **스텁이** 터진다(실제로 그랬다). 목록 엔드포인트면 응답한다.
+      if (path.startsWith("/projects?")) {
         return {
           items: [{ id: "project-ops-01", name: "Songdo Ops Tower", total_area_sqm: 4800 }],
           page: 1,
@@ -98,7 +100,9 @@ describe("DigitalTwinControlTowerWorkspaceClient", () => {
     });
 
     vi.mocked(apiClient.get).mockImplementation(async (path: string) => {
-      if (path === "/projects?page=1&page_size=20") {
+      // ★스텁은 **계약**에 맞춘다 — 리터럴 URL 로 묶으면 page_size 를 바꾸는 순간
+      //   구현이 아니라 **스텁이** 터진다(실제로 그랬다). 목록 엔드포인트면 응답한다.
+      if (path.startsWith("/projects?")) {
         return {
           items: [{ id: "project-ops-02", name: "Busan Ready Hub", total_area_sqm: 3600 }],
           page: 1,
