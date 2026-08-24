@@ -39,6 +39,7 @@ import { regionFromAddress } from "@/lib/region";
 import { ProjectSwitcher } from "@/components/common/ProjectSwitcher";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { roughResultToFeasibilityPatch } from "@/components/feasibility/rough-scenario-commit";
+import { IntegrityWarnings, type IntegrityWarning } from "@/components/ui/IntegrityWarnings";
 import { DataSourceNotice } from "@/components/ui/DataSourceNotice";
 import { AnalysisHistoryCard } from "@/components/common/AnalysisHistoryCard";
 import { optionsSummary } from "@/lib/use-analysis-history";
@@ -142,6 +143,9 @@ interface RoughScenarioResult {
   cashflow: { monthly_rows: RsCashflowRow[]; summary: RsCashflowSummary } | null;
   overrides_applied: string[];
   degraded_notes: string[];
+  // ★법정초과 가드 결과(additive · rough_feasibility_orchestrator:798) — 타입에 없어
+  //   소비가 불가능했다(2026-08-24). `degraded_notes` 와 **다른 배열**이다.
+  integrity_warnings?: IntegrityWarning[] | null;
   special_parcel?: { honest_disclosure?: string | null } | null;
 }
 
@@ -576,6 +580,9 @@ function RoughScenarioPanelInner({ projectId }: { projectId?: string }) {
       {result && (
         <>
           {/* ── degraded 정직표기(무목업) ── */}
+          {/* ★법정초과 가드 — degraded_notes(값을 못 구한 축) 와 성격이 다르다.
+              이쪽은 "값은 나왔는데 법정상한을 넘고 완화근거가 없다"는 신호다. */}
+          <IntegrityWarnings items={result.integrity_warnings} className="mb-2" />
           {result.degraded_notes.length > 0 && (
             <section className="rounded-xl border border-[color-mix(in_srgb,var(--status-warning)_36%,transparent)] bg-[color-mix(in_srgb,var(--status-warning)_10%,transparent)] p-4">
               <p className="mb-1.5 flex items-center gap-1.5 text-xs font-bold text-[var(--status-warning)]">
