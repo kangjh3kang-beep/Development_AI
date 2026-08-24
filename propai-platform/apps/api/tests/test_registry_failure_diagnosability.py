@@ -25,6 +25,20 @@
 1. 예외 사유가 비어도 **클래스명**은 남는다(`ConnectTimeout` vs `ReadTimeout` 이 기전을 가른다)
 2. 프로바이더가 사유를 안 주면 **무엇이라도** 남긴다(빈 문자열·`error` 한 단어 금지)
 3. `has_pdf=False` 를 **"PDF 가 이미지 형식이라서"** 라고 사용자 탓하지 않는다
+4. 잔액(민원캐시) 부족은 **사용자가 고칠 수 있는 부류**로 따로 말한다(+ 오분류 금지)
+5. 도달성 응답이 **빈 사유로 끝나지 않는다**(프로덕션 증상 그 자체)
+
+## 변이 후 남은 생존 — **의도적 비잠금**이므로 적어 둔다(점수 부풀리기 방지)
+
+이 커밋은 `str(e)` → `exc_detail(e)` 를 registry 패키지 **4파일에 기계적으로 스윕**했다.
+그중 **로그 호출부**(`logger.warning(..., err=exc_detail(e, ...))`)가 대다수이고, 그것들을
+개별로 태우려면 프로바이더 오류 경로를 전부 모킹해야 한다 — **사용자 표면이 아니고**,
+잘못돼도 로그 한 줄의 품질 문제다.
+
+대신 **사용자에게 실제로 나가는 두 표면**을 잠갔다:
+  · `probe_api_access` 응답 메시지(= `/registry/status` 의 `hyphen_access_message`)
+    ← 프로덕션에서 `"하이픈 연결 실패: "` 로 나갔던 **바로 그 필드**
+  · `registry_service` 의 attempts 메시지 조립(= 사용자가 본 `"hyphen: error"`)
 """
 
 from __future__ import annotations
@@ -198,3 +212,57 @@ def test_소스가_잔액상태를_별도_status로_싣는다() -> None:
            / "app/services/registry/registry_service.py").read_text(encoding="utf-8")
     assert '"balance_shortage"' in src, "잔액 부족 전용 status 가 없다"
     assert "is_balance_shortage(" in src, "판별기가 실제로 호출되지 않는다"
+
+
+# ── ⑤ ★프로덕션 증상 그 자체 — 도달성 응답이 빈 사유로 끝나지 않는다 ──────
+#
+# 실제로 사용자에게 나간 것: {"hyphen_access":"unreachable",
+#                            "hyphen_access_message":"하이픈 연결 실패: "}
+# 이 한 줄 때문에 *네트워크 차단인지·벤더 장애인지·잔액인지* 를 **판별할 수 없었고**,
+# 조사자(나)는 실제로 잘못된 방향(WAF/차단)으로 한참 샜다.
+@pytest.mark.asyncio
+async def test_도달성_응답이_빈_사유로_끝나지_않는다(monkeypatch) -> None:
+    import app.services.registry.hyphen_client as hc
+
+    monkeypatch.setattr(hc, "hyphen_ready", lambda: True)
+    monkeypatch.setattr(hc, "hyphen_hkey", lambda: "k")
+    monkeypatch.setattr(hc, "hyphen_user_id", lambda: "u")
+    hc._ACCESS_CACHE.clear()  # 5분 캐시가 이전 결과를 돌려주면 검사가 공허해진다
+
+    class _Client:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def post(self, *a, **k):
+            raise httpx.ConnectTimeout("")   # ★str(e) == "" — 라이브에서 난 그 형태
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda *a, **k: _Client())
+    out = await hc.probe_api_access(force=True)
+
+    assert out["access"] == "unreachable"
+    msg = out["message"]
+    # ★종전엔 정확히 "하이픈 연결 실패: " 로 끝났다 — 되돌리면 이 단언이 죽는다.
+    assert not msg.rstrip().endswith(":"), f"사유가 비었다: {msg!r}"
+    assert "ConnectTimeout" in msg, f"기전을 가를 클래스명이 없다: {msg!r}"
+    hc._ACCESS_CACHE.clear()
+
+
+@pytest.mark.asyncio
+async def test_대조군_사유가_있는_예외는_그_사유를_싣는다(monkeypatch) -> None:
+    """★'무조건 클래스명만' 넣는 처리면 벤더가 준 진짜 사유를 덮는다."""
+    import app.services.registry.hyphen_client as hc
+
+    monkeypatch.setattr(hc, "hyphen_ready", lambda: True)
+    monkeypatch.setattr(hc, "hyphen_hkey", lambda: "k")
+    monkeypatch.setattr(hc, "hyphen_user_id", lambda: "u")
+    hc._ACCESS_CACHE.clear()
+
+    class _Client:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def post(self, *a, **k):
+            raise httpx.ReadTimeout("서버 응답 없음")
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda *a, **k: _Client())
+    out = await hc.probe_api_access(force=True)
+    assert "ReadTimeout" in out["message"] and "서버 응답 없음" in out["message"]
+    hc._ACCESS_CACHE.clear()
