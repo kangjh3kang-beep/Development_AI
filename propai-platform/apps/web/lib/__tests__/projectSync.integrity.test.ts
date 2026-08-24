@@ -103,6 +103,33 @@ describe("WP-D 무결성 가드 — 서버 쓰기 경로 전수", () => {
     expect(putCalls(`/projects/${PROJECT_ID}`)).toHaveLength(1);
   });
 
+  it("★정화된 상태(siteAnalysis 없음)에서는 가드가 열린다 — 자가치유 뒤 동기화가 영구 정지하면 안 된다", async () => {
+    // #779 계열 자가치유가 오염 스냅샷을 비우면 비교 대상이 사라진다. 그때 계속 막으면
+    //   계정 전체 동기화가 영영 멈춘다 — 비교 불능은 위반이 아니다(fail-open)를 못박는다.
+    useProjectStore.setState({
+      projects: [{ id: PROJECT_ID, name: "테스트", address: "서울특별시 동작구 상도동 123" }],
+    } as never);
+    useProjectContextStore.setState({ projectId: PROJECT_ID, siteAnalysis: null } as never);
+
+    await syncUp();
+
+    expect(putCalls("/store/projects")).toHaveLength(1);
+  });
+
+  it("프로젝트 레코드에 주소가 없으면 가드가 열린다 — 한쪽만으로는 오염을 판정할 수 없다", async () => {
+    useProjectStore.setState({
+      projects: [{ id: PROJECT_ID, name: "테스트", address: "" }],
+    } as never);
+    useProjectContextStore.setState({
+      projectId: PROJECT_ID,
+      siteAnalysis: { address: "경기도 용인시 처인구 고기동 45" },
+    } as never);
+
+    await syncUp();
+
+    expect(putCalls("/store/projects")).toHaveLength(1);
+  });
+
   // 부채 — 스냅샷 경로는 번지까지 엄격한 판별자를 쓴다(기존 동작 유지). 인접 필지를 추가해
   //   대표 주소의 번지가 바뀌면 그 프로젝트의 analysis_snapshot 영속이 멈출 수 있다.
   //   차단 범위가 프로젝트 하나라 스토어 blob 만큼 위험하지는 않으나, 엄격도가 옳은지는
