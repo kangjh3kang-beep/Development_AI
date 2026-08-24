@@ -109,3 +109,29 @@ def classify_failure(exc: BaseException) -> str:
         if any(n in text for n in needles):
             return reason
     return "other"
+
+
+# ── 재시도가 의미 있는 실패 / 없는 실패 ───────────────────────────────────────
+#
+# ★왜 가르나(2026-08-25). 실패한 분석은 캐시하지 않는다 — LLM 이나 프로바이더가 회복하면
+#   다음 시도에 성공해야 하기 때문이다(자가치유). 그런데 그 설계는 **결정론적 실패**에서
+#   대가를 치른다: 같은 문서가 같은 이유로 계속 실패하는데 **볼 때마다 LLM 을 다시 산다.**
+#   등기 재발급 누수와 **같은 얼굴**이고, 축만 다르다(벤더 발급 → LLM 토큰).
+#
+# ★보수적으로 가른다 — **모르면 일시 실패로 본다.** 결정론으로 잘못 분류하면 회복을 막지만,
+#   일시로 잘못 분류하면 돈만 조금 더 쓴다. 두 오류의 대가가 다르므로 안전한 쪽으로 기운다.
+_DETERMINISTIC = frozenset({
+    "parse",           # 잘린/비-JSON 응답 — 같은 입력이면 같은 결과
+    "shape",           # 파싱은 됐는데 구조가 계약과 다름
+    "bad_request",     # 요청 자체가 거부됨(모델·파라미터)
+    "content_filter",  # 정책 거부 — 같은 본문이면 반복된다
+})
+
+
+def is_retry_worthwhile(reason: str) -> bool:
+    """이 사유는 **다시 시도할 가치가 있는가**(=일시적일 수 있는가).
+
+    `timeout`·`rate_limit`·`overloaded`·`network` 는 회복된다. `auth` 도 그렇다
+    (키 교체·잔액 충전으로 풀린다). `other` 는 **모르는 것**이라 재시도 쪽에 둔다.
+    """
+    return reason not in _DETERMINISTIC
