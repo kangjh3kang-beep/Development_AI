@@ -23,6 +23,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { roughResultToFeasibilityPatch } from "@/components/feasibility/rough-scenario-commit";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import type { FeasibilityData } from "@/store/useProjectContextStore";
 
 describe("grade ↔ precision 짝 계약", () => {
   beforeEach(() => {
@@ -74,6 +75,22 @@ describe("grade ↔ precision 짝 계약", () => {
     expect(patch?.grade).toBe("F");
     expect("precision" in (patch ?? {}), "키를 생략하면 merge 패치라 이전 E 가 잔존한다").toBe(true);
     expect(patch?.precision).toBeNull();
+  });
+
+  it("★계약 타입 자체를 잠근다 — 유니온이 느슨해지면 tsc 가 실패한다", () => {
+    // ★왜 이 형태인가: 변이 검증에서 `FeasibilityPatch` 를 `Partial<FeasibilityData>` 로
+    //   되돌리는 변이가 **생존**했다(tsc 0 오류). 계약을 만들어 놓고 그 계약에 결속시키지
+    //   않으면 상수가 장식이 된다. `@ts-expect-error` 는 **오류가 사라지면 그 지시자가
+    //   '미사용'(TS2578)이 되어** 타입 검사를 빨갛게 만든다 — 양방향 락이다.
+    //   ※vitest 는 타입을 보지 않는다. 이 락은 CI 의 `type-check` 단계가 태운다.
+    const st = useProjectContextStore.getState();
+
+    // @ts-expect-error grade 만 쓰면 precision 이 빠진다 — 계약이 이걸 막아야 한다(리터럴 경로)
+    st.updateFeasibilityData({ grade: "F" });
+
+    const viaMapper: Partial<FeasibilityData> = { grade: "A" };
+    // @ts-expect-error 매퍼 경유(변수 대입)도 막아야 한다 — 이 형태가 검출기 셋을 통과했던 것이다
+    st.updateFeasibilityData(viaMapper);
   });
 
   it("[양성 대조군] 등급이 없으면 정밀도 키를 만들지 않는다(기존 SSOT 보존)", () => {
