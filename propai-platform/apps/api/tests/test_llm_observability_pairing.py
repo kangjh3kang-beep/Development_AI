@@ -209,7 +209,40 @@ async def test_대조군_성공은_ok_true_로_적재된다():
 
     rows = [r for r in gcap._QUEUE if r.get("event_type") == "llm_call"]
     assert rows, "성공 호출이 분모로 적재되지 않는다"
-    assert (rows[-1].get("payload") or {}).get("ok") is True
+    pl = rows[-1].get("payload") or {}
+    assert pl.get("ok") is True
     assert rows[-1].get("service") == "registry"
+    # ★성공/실패 페이로드가 **실제로 다른 모양**이어야 한다. 같으면 분기를 없애도 초록이라
+    #   "성공만 토큰을 싣는다"는 계약이 무잠금으로 남는다(변이 생존으로 실측했다).
+    assert pl.get("input_tokens") == 10
+    assert pl.get("output_tokens") == 20
+    assert "error" not in pl, "성공 이벤트에 error 가 실렸다 — 실패와 구별되지 않는다"
+
+    gcap._QUEUE.clear()
+
+
+@pytest.mark.asyncio
+async def test_성공과_실패_이벤트는_모양이_다르다(monkeypatch):
+    """대조군의 대조군 — 두 경로가 같은 페이로드를 만들면 분기 자체가 장식이다."""
+    from app.services.ai.base_interpreter import record_llm_failure, record_llm_response_billing
+    from app.services.growth import capture_service as gcap
+
+    gcap._QUEUE.clear()
+
+    class _Resp:
+        usage_metadata = {"input_tokens": 3, "output_tokens": 4}
+
+    class _LLM:
+        model = "claude-x"
+
+    await record_llm_response_billing(_LLM(), _Resp(), service="svc")
+    record_llm_failure("svc", RuntimeError("깨짐"))
+
+    # `_QUEUE` 는 deque 라 슬라이스가 안 된다(실측 TypeError) — list 로 받는다.
+    ok_pl, fail_pl = (r.get("payload") or {} for r in list(gcap._QUEUE)[-2:])
+    assert ok_pl != fail_pl
+    assert ok_pl.get("ok") is True and fail_pl.get("ok") is False
+    assert "input_tokens" in ok_pl and "input_tokens" not in fail_pl
+    assert "error" in fail_pl and "error" not in ok_pl
 
     gcap._QUEUE.clear()
