@@ -1901,35 +1901,38 @@ async def integrated_analysis(req: IntegratedAnalysisRequest):
                 # ── zone_basis: 위임이 **실제로 쓴 기준**을 그대로 싣는다(하드코딩 라벨 금지).
                 site["zone_basis"] = top3.get("zone_basis") or "single"
 
-                # ★★계약 가드 — 한 응답 안에서 용도지역이 갈리면 **조용히 내보내지 않는다.**
-                #   실측(2026-08-24): `dominant_zone=제2종일반주거` 인데 `top3.zone_type=자연녹지`
-                #   (far 250 vs 100)로 수지가 계산돼 나갔다. 사용자에겐 "단독주택밖에 안 되고 전부 적자"
-                #   로 보였다 — 디벨로퍼·금융이 **멀쩡한 부지를 접을 수 있는** 크기의 결함이다.
-                #   ★값을 몰래 고치지 않는다. 불일치를 **말한다**(무목업·정직 원칙).
-                _t3_zone = top3.get("zone_type")
-                if (
-                    dominant_zone
-                    and dominant_zone != "mixed_review_required"
-                    and _t3_zone
-                    and _t3_zone != dominant_zone
-                ):
-                    _msg = (
-                        f"통합 우세 용도지역({dominant_zone})과 시나리오 계산 기준"
-                        f"({_t3_zone})이 다릅니다 — 아래 개발규모·수익성은 "
-                        f"{_t3_zone} 기준이며 이 부지의 우세 용도와 일치하지 않습니다. "
-                        f"용도지역별 분리 검토가 필요합니다(확정 아님)."
-                    )
-                    warnings.append(_msg)
-                    # ★`integrity_warnings` 는 아래(집계 이후)에서 만들어진다 — 여기서 참조하면
-                    #   NameError 다. 전용 리스트에 모아 두고 생성 직후 합류시킨다.
-                    zone_mismatch_warnings.append(_msg)
+                # ★★전제 감사 — **변형관계 레지스트리**로 일임한다(2026-08-24).
+                #   종전엔 여기에 용도지역 불일치 **하나만** 손으로 박아 뒀다. 그러면 다음
+                #   불일치(면적 출처·필지수 보존…)는 또 손으로 박아야 하고, 결국 빠진다 —
+                #   이 저장소가 반복한 *"사람이 센 목록이 곧 상한이 된다"*(§A-4).
+                #   → `premise_audit` 레지스트리에 관계를 등록하면 **호출부 수정 없이** 감시망에 든다.
+                #   ★값을 고치지 않는다. 위반은 **말한다**(고지 + status 강등).
+                from app.services.zoning import premise_audit
+
+                _audit_ctx = {
+                    "dominant_zone": dominant_zone,
+                    "zone_mix": integrated_zoning.get("zone_mix"),
+                    "per_parcel": enriched,
+                    "integrated": {"total_area_sqm": total_area},
+                    "scenario": {"top3": top3},
+                    "_request_parcel_count": len(enriched),
+                }
+                _audit = premise_audit.audit(_audit_ctx)
+                scenario["premise_audit"] = {
+                    "checked": _audit["checked"],
+                    "registered": _audit["registered"],
+                    "violations": _audit["violations"],
+                }
+                if _audit["violations"]:
+                    for _v in _audit["violations"]:
+                        _msg = f"[{_v['title']}] {_v['detail']}"
+                        warnings.append(_msg)
+                        zone_mismatch_warnings.append(_msg)
                     scenario["status"] = "tentative"
-                    scenario["disclosure"] = (scenario.get("disclosure") or "") + " " + _msg
-                    scenario["zone_mismatch"] = {
-                        "dominant_zone": dominant_zone,
-                        "scenario_zone": _t3_zone,
-                        "scenario_zone_basis": top3.get("zone_basis"),
-                    }
+                    scenario["disclosure"] = (
+                        (scenario.get("disclosure") or "")
+                        + " " + " ".join(v["detail"] for v in _audit["violations"])
+                    )
             scenario["site"] = site
             scenario["top3"] = top3
         except Exception as e:  # noqa: BLE001 — 위임 실패는 시나리오 degrade(정직), 통합집계는 유지.

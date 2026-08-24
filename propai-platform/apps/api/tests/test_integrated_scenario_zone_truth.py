@@ -86,27 +86,28 @@ def test_B_zone_basis_를_하드코딩하지_않는다():
 
 
 def test_C_전제감사_용도지역_불일치를_조용히_내보내지_않는다():
-    """★★이 저장소에 없던 층 — **입력 전제 감사**의 첫 사례.
+    """★★이 저장소에 없던 층 — **입력 전제 감사**.
 
     시니어 자문은 산출물이 말이 되는지만 본다. 입력이 틀리면 산출물은 정합한 채로 틀린다.
-    한 응답 안에서 `dominant_zone` 과 `top3.zone_type` 이 갈리면 **말해야 한다.**
+
+    ★**구현이 레지스트리로 승격됐다**(2026-08-24). 종전엔 여기 용도지역 불일치 **하나만**
+      손으로 박혀 있었다 — 그러면 다음 불일치는 또 손으로 박아야 하고 결국 빠진다
+      (*"사람이 센 목록이 곧 상한이 된다"* §A-4).
+      관계별 판정은 `test_premise_audit_registry.py` 가, 배선은 아래가 잠근다.
 
     ★값을 몰래 고치지 않는다 — 고지한다(무목업·정직 원칙).
-      자동 교정은 어느 쪽이 옳은지 단정하는 것이고, 그 단정이 틀리면 더 조용한 결함이 된다.
     """
     src = _router_src()
-    # 불일치 판정이 실행되는 줄에 있는가.
-    assert '_t3_zone != dominant_zone' in src, "용도지역 불일치 판정이 없다"
+    assert "premise_audit.audit(" in src, "전제 감사를 호출하지 않는다"
     # 발견을 **사용자에게 닿는 세 경로**로 모두 보내는가(하나만 있으면 화면이 놓친다).
     for sink, why in (
         ("warnings.append(_msg)", "응답 warnings"),
         ("zone_mismatch_warnings.append(_msg)", "integrity_warnings 합류"),
-        ('scenario["zone_mismatch"]', "기계가 읽는 구조화 필드"),
+        ('scenario["premise_audit"]', "기계가 읽는 구조화 필드"),
     ):
-        assert sink in src, f"불일치를 {why} 로 내보내지 않는다 — 발견이 사람에게 닿지 않는다"
-    # 확정으로 표시하지 않는다.
+        assert sink in src, f"위반을 {why} 로 내보내지 않는다 — 발견이 사람에게 닿지 않는다"
     assert 'scenario["status"] = "tentative"' in src, (
-        "불일치인데 status 를 강등하지 않는다 — 잠정치가 확정으로 읽힌다"
+        "위반인데 status 를 강등하지 않는다 — 잠정치가 확정으로 읽힌다"
     )
 
 
