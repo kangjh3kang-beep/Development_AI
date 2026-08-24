@@ -293,7 +293,10 @@ export function ProjectsOverviewClient({
         open={deleteTarget !== null}
         name={deleteTarget?.name ?? ""}
         title="프로젝트 삭제"
-        description="삭제 시 백엔드에서도 제거되며 복구할 수 없습니다. 아래 프로젝트명을 그대로 입력해야 삭제됩니다."
+        // ★문구를 사실과 맞춘다 — 백엔드는 `is_deleted` 플래그만 세우는 **소프트 삭제**라
+        //   "백엔드에서도 제거되며"는 거짓이었다. 화면에서 되돌릴 수 없는 것은 사실이므로
+        //   그 부분은 유지하고, 서버 기록이 남는다는 사실을 숨기지 않는다.
+        description="삭제하면 목록에서 사라지고 이 브라우저의 분석 데이터(스냅샷·토지조서)도 함께 정리됩니다. 화면에서는 되돌릴 수 없습니다(서버 기록은 보관됩니다). 아래 프로젝트명을 그대로 입력해야 삭제됩니다."
         onCancel={() => setDeleteTarget(null)}
         onConfirm={() => {
           if (deleteTarget) {
