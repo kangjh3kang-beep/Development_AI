@@ -76,7 +76,14 @@ export function ProjectContextBinder({ projectId }: { projectId: string }) {
         // ★U1: address 포함 — 스냅샷 복원이 address 없는 siteAnalysis로 덮어도 meta.address로
         //   보강해 통합분석 게이트(hasContext=address||pnu)가 막히지 않게 한다.
         const site = useProjectContextStore.getState().siteAnalysis;
-        const patch = buildSiteMetaPatch(site, meta);
+        // ★저장된 분석이 있었는지를 넘긴다 — 면적 보강이 자가치유를 되돌리지 않게 한다.
+        //   (스냅샷이 없으면 갓 만든 프로젝트이므로 종전대로 레코드 면적으로 시드한다.)
+        const storedSite = (
+          meta.analysis_snapshot as { siteAnalysis?: unknown } | null | undefined
+        )?.siteAnalysis;
+        const patch = buildSiteMetaPatch(site, meta, {
+          hasStoredAnalysis: !!storedSite,
+        });
         if (Object.keys(patch).length > 0) {
           useProjectContextStore.getState().updateSiteAnalysis(patch);
         }

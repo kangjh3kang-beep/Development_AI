@@ -7,6 +7,8 @@
  */
 
 import { apiClient } from "@/lib/api-client";
+import { AUDIT_JOB_STORAGE_KEY } from "@/components/design-audit/DesignAuditWorkspace";
+import { MARKET_REPORT_JOB_STORAGE_KEY } from "@/lib/market-report-job";
 import { useProjectStore } from "@/store/useProjectStore";
 import {
   useProjectContextStore,
@@ -16,6 +18,7 @@ import {
   type SiteAnalysisData,
 } from "@/store/useProjectContextStore";
 import { healPhantomAreaAggregates } from "@/lib/site-analysis-invariants";
+import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { looksLikeAddress } from "@/lib/selection-integrity";
 import { useLandScheduleStore } from "@/store/useLandScheduleStore";
 import {
@@ -125,7 +128,14 @@ export function clearAllProjectData(): void {
         k === SATONG_SITE_LAYOUT_KEY ||
         // ★W4 매스 시드 인계 — 뷰 캐시가 아니라 **인계 페이로드**지만 위험은 같거나 더 크다:
         //   남으면 이전 계정이 고른 배치안 층수가 다음 계정의 설계 시드로 들어간다.
-        k === SATONG_MASS_SEED_KEY
+        k === SATONG_MASS_SEED_KEY ||
+        // ★2026-08-24 실측 누락 2건 — **진행 잡 페이로드**가 남아 이전 계정이 분석한
+        //   **부지 주소**(`{jobId, startedAt, address}`)가 다음 계정 화면으로 복원될 수 있었다.
+        //   W1~W4 주석이 *"새 키는 만드는 즉시 이 목록에 등재한다"* 를 **네 번** 반복했는데도
+        //   또 빠졌다 — 산문이 아니라 **파생형 락**으로 잠근다
+        //   (`projectSync.wipeCoverage.test.ts`).
+        k === MARKET_REPORT_JOB_STORAGE_KEY ||
+        k === AUDIT_JOB_STORAGE_KEY
       ) {
         try { window.sessionStorage.removeItem(k); } catch { /* noop */ }
       }
@@ -350,9 +360,27 @@ export async function pushSnapshot(): Promise<void> {
     console.warn(`[projectSync] 스냅샷 푸시 보류(SSOT 오염 의심): ${violation}`);
     return;
   }
+  // ★프로젝트 레코드의 대지면적을 **같은 PUT 에 함께** 실어 보낸다.
+  //
+  //   왜: `projects.total_area_sqm` 은 **생성 시 1회 기록되고 그 뒤 갱신 경로가 없었다.**
+  //   필지를 고쳐도 레코드는 생성 시점에 얼어붙어, 같은 부지의 면적을 화면이 두 값으로
+  //   말했다(실측: 레코드 5,781 vs 스냅샷 필지합 5,881 · 프로덕션 20건 중 7건이 갈림).
+  //
+  //   ★산식을 서버에 복제하지 않는다 — 유효면적 판정(다필지 통합 우선·강등 처리)은
+  //     `effectiveLandAreaSqm` 한 곳에만 산다. 그 값을 **이미 가진 쪽**이 보낸다.
+  //   ★의미는 **대지면적**이다(생성 경로 둘 + `building_compliance_service._get_site_area`
+  //     독스트링이 일치). 추측이 아니라 소비처로 확인했다.
+  //   ★값이 없으면 **키를 만들지 않는다** — 미확보를 0/null 로 덮어써 레코드를 지우지 않는다.
+  const landAreaSqm = effectiveLandAreaSqm(
+    useProjectContextStore.getState().siteAnalysis as never,
+  );
+  const areaPatch =
+    typeof landAreaSqm === "number" && Number.isFinite(landAreaSqm) && landAreaSqm > 0
+      ? { total_area_sqm: landAreaSqm }
+      : {};
   try {
     await apiClient.put(`/projects/${pid}`, {
-      body: { analysis_snapshot: snap },
+      body: { analysis_snapshot: snap, ...areaPatch },
       useMock: false,
       timeoutMs: 30000,
     });

@@ -3,7 +3,10 @@
 import { useState } from "react";
 import { preferredEntryAddress } from "@/lib/parcel-rows";
 import { useParams, useRouter } from "next/navigation";
-import { useProjectStore } from "@/store/useProjectStore";
+import {
+  markProjectCreating,
+  unmarkProjectCreating, useProjectStore
+} from "@/store/useProjectStore";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm, isParcelSetConsistent } from "@/lib/site-area";
 import dynamic from "next/dynamic";
@@ -117,6 +120,9 @@ export default function NewProjectPage() {
 
     // 백엔드 영속화: 실제 projects row 생성 → 파이프라인 메타데이터(GET /projects/{id}) 로드 가능.
     // 부지분석 면적을 시드로 전달(점진 강화의 출발점). best-effort — 실패해도 로컬 ID로 진행.
+    // ★중복 생성 경합 차단(satong 경로와 동일) — 이 await 창에서 syncFromBackend 가 뜨면
+    //   방금 만든 비UUID 로컬 레코드를 "고아"로 보고 같은 프로젝트를 다시 POST 한다.
+    markProjectCreating(projectId);
     let backendId = "";
     try {
       const areaNum = effectiveLandAreaSqm(currentSiteAnalysis) ?? 0;
@@ -127,6 +133,9 @@ export default function NewProjectPage() {
       backendId = res?.id || "";
     } catch (err) {
       console.error("백엔드 프로젝트 생성 경고(로컬로 진행):", err);
+    } finally {
+      // 성공·실패 양쪽 모두 해제 — 실패 건은 다시 고아가 되어 다음 동기화가 재시도한다.
+      unmarkProjectCreating(projectId);
     }
     const targetId = backendId || projectId || `tmp-${Date.now()}`;
 
