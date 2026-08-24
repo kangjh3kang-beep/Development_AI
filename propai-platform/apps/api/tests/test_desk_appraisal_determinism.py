@@ -139,3 +139,38 @@ def test_appraisal_source_has_no_random_number_generator() -> None:
                 "신뢰도가 '자기가 주입한 잡음'에서 나온다"),
         where=str(_SERVICE),
     )
+
+
+def test_confidence_actually_tracks_the_two_methods_disagreement() -> None:
+    """신뢰도가 **상수가 아니라** 두 독립 추정의 불일치를 실제로 따라가야 한다.
+
+    ★위 `test_confidence_contract_splits_two_populations` 는 "이중 경로면 숫자가 있다"만
+    본다 — 그래서 `confidence = 0.9` 같은 **상수로 바꿔도 통과**한다(변이 생존 지점).
+    여기서는 **불일치가 큰 쪽이 더 낮은 신뢰도**를 내는지 본다.
+    """
+    near = _run("1", comparable_avg_per_sqm=15_500_000)   # 공시지가 경로와 가까움
+    far = _run("1", comparable_avg_per_sqm=60_000_000)    # 크게 어긋남
+    assert near["confidence"] is not None and far["confidence"] is not None, (
+        "두 경로 다 신뢰도가 있어야 대조가 성립한다"
+    )
+    assert far["confidence"] < near["confidence"], (
+        "두 방법이 크게 어긋나는데 신뢰도가 낮아지지 않는다 — 신뢰도가 증거를 안 따라간다.\n"
+        f"  가까움={near['confidence']} 어긋남={far['confidence']}"
+    )
+
+
+def test_assumption_band_is_non_degenerate_and_contains_adopted_value() -> None:
+    """가정 봉투가 **폭을 가져야** 하고 채택가를 품어야 한다.
+
+    ★가정 폭을 0 으로 접어도(`_OF_STEPS` 를 전부 0.0 으로) 결정성 테스트는 **여전히 초록**
+    이다(결정적이긴 하니까). 그러면 화면의 ± 범위가 한 점으로 붕괴한다 — 그건 "범위 없음"을
+    "범위"라고 말하는 것이다. 상한·하한은 한 쌍이다(§19).
+    """
+    for label, extra in (("단일", {}), ("이중", {"comparable_avg_per_sqm": 18_000_000})):
+        r = _run("1", **extra)
+        lo, hi = r["range"]["low"], r["range"]["high"]
+        assert lo < hi, f"[{label}] 가정 범위가 한 점으로 붕괴했다: low={lo} high={hi}"
+        assert lo <= r["unit"] <= hi, (
+            f"[{label}] 채택가가 자기 가정 범위 밖이다: unit={r['unit']} range=({lo},{hi})"
+        )
+        assert len(r["scenarios"]) >= 3, f"[{label}] 시나리오가 {len(r['scenarios'])}개뿐"
