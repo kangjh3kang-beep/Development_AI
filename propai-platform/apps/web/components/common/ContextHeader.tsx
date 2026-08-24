@@ -32,6 +32,7 @@ import { classifySelection } from "@/lib/selection-integrity";
 import {
   deriveContextHeaderData,
   deriveSitePipelineSteps,
+  withAsOf,
   type ContextHeaderData,
 } from "@/lib/context-header";
 import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
@@ -96,9 +97,14 @@ export function buildEvidenceItems(
       //   `dominantZoneCode ?? zoneCode` 이고 둘 다 **대표(첫) 필지** 값이었다. 근거 트레이스는
       //   사용자가 "근거 보기" 를 눌러 확인하는 자리다 — **거짓 근거는 근거 없음보다 나쁘다**.
       //   진짜 우세 용도지역은 서버가 면적합산으로 판정하며 구획도 통합 종합분석에 표시된다.
-      basis: data.isMultiParcel
-        ? "다필지 대표(첫) 필지 용도지역 — 면적 우세 용도지역은 구획도 '통합 종합분석' 참조"
-        : "부지분석 확정 용도지역",
+      // ★근거에 **기준 시각**을 덧붙인다 — 이 값이 언제 확정된 것인지 말하지 않으면
+      //   사용자는 낡은 저장본을 현재 사실로 읽는다(2026-08-24 라이브 증상).
+      basis: withAsOf(
+        data.isMultiParcel
+          ? "다필지 대표(첫) 필지 용도지역 — 면적 우세 용도지역은 구획도 '통합 종합분석' 참조"
+          : "부지분석 확정 용도지역",
+        data.fetchedAt,
+      ),
     });
   }
   const area = areaText(data.landAreaSqm);
@@ -109,12 +115,14 @@ export function buildEvidenceItems(
       // ★단정하지 않는다 — SSOT 가 준 basis 를 그대로 말한다.
       //   `representative` 는 **다필지인데 통합면적을 아직 못 구해 대표 1필지 면적을 쓰는**
       //   상태다. 이걸 "N필지 합계"라고 부르면 거짓 근거가 된다(실물: 33필지에 543㎡).
-      basis:
+      basis: withAsOf(
         data.landAreaBasis === "integrated"
           ? `다필지 통합면적(유효필지 ${data.parcelCount ?? "?"}필지 합계)`
           : data.landAreaBasis === "representative"
             ? `★대표 1필지 면적 — 통합면적 미확보(선택 ${data.parcelCount ?? "?"}필지 전체 합계가 아닙니다)`
             : "단일필지 대지면적",
+        data.fetchedAt,
+      ),
     });
   }
   if (farBasis && data.zoneLabel) {

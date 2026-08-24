@@ -472,7 +472,7 @@ async def _llm_analyze_structure(
     except Exception:  # noqa: BLE001
         return {}, False
     try:
-        llm = get_llm(timeout=45, max_tokens=800)
+        llm = get_llm(service="parcel_excel_structure_detect", timeout=45, max_tokens=800)
     except Exception:  # noqa: BLE001
         logger.info("엑셀 LLM 구조분석 생략 — 사용가능 LLM 키 없음(규칙기반 폴백)")
         return {}, False
@@ -549,7 +549,7 @@ async def _llm_reverify_row(raw_cells: dict[str, str], issues: list[str]) -> tup
     except Exception:  # noqa: BLE001
         return {}, False
     try:
-        llm = get_llm(timeout=30, max_tokens=300)
+        llm = get_llm(service="parcel_excel_row_reverify", timeout=30, max_tokens=300)
     except Exception:  # noqa: BLE001
         return {}, False
     import json as _json
