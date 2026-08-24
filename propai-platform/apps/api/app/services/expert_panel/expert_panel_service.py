@@ -331,7 +331,7 @@ class ExpertPanelService:
             roster_str = "\n".join(f"- {r['role']} ({r['lens']})" for r in roster)
             user = _PANEL_TMPL.format(subject=subject, address=address or "대상지",
                                       context=ctx, roster=roster_str)
-            llm = get_llm(timeout=90, max_tokens=8000)
+            llm = get_llm(service="expert_panel", timeout=90, max_tokens=8000)
             resp = await llm.ainvoke(
                 [SystemMessage(content=_PANEL_SYSTEM + GROUNDING_RULE), HumanMessage(content=user)]
             )
@@ -371,7 +371,7 @@ class ExpertPanelService:
             async def one_expert(r: dict) -> dict[str, Any]:
                 user = _EXPERT_TMPL.format(role=r["role"], lens=r["lens"],
                                            subject=subject, address=address or "대상지", context=ctx)
-                llm = get_llm(timeout=60, max_tokens=900)
+                llm = get_llm(service="expert_panel", timeout=60, max_tokens=900)
                 resp = await llm.ainvoke(
                     [SystemMessage(content=_EXPERT_SYSTEM + GROUNDING_RULE), HumanMessage(content=user)]
                 )
@@ -395,7 +395,7 @@ class ExpertPanelService:
                 f"우려: {', '.join(e.get('concerns') or [])})" for e in experts
             )
             synth_user = _SYNTH_TMPL.format(subject=subject, address=address or "대상지", opinions=opinions)
-            llm = get_llm(timeout=70, max_tokens=2000)
+            llm = get_llm(service="expert_panel", timeout=70, max_tokens=2000)
             resp = await llm.ainvoke(
                 [SystemMessage(content=_SYNTH_SYSTEM + GROUNDING_RULE), HumanMessage(content=synth_user)]
             )

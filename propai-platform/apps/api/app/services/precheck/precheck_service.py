@@ -847,7 +847,7 @@ async def _llm_one_liner(
 
         from app.services.ai.llm_provider import get_llm
 
-        llm = get_llm()
+        llm = get_llm(service="precheck", )
         system = SystemMessage(content=(
             "너는 부동산 개발 인허가 사전검토 전문가다. 사실에 근거해 1문장(80자 이내)으로만 "
             "핵심 결론을 한국어로 답하라. 수치 추정·과장 금지."

@@ -25,6 +25,7 @@ import { MarkdownLite } from "@/components/common/MarkdownLite";
 import { UnitMixSimulatorPanel } from "@/components/design/UnitMixSimulatorPanel";
 import { LiveProFormaStrip, type LiveProFormaDesign } from "@/components/design/LiveProFormaStrip";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { usePaidRenderStore } from "@/store/usePaidRenderStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { apiClient, ApiClientError, apiV1BaseUrl } from "@/lib/api-client";
 import { idempotencyHeaders } from "@/lib/idempotency";
@@ -785,6 +786,10 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
   const [renderImage, setRenderImage] = useState<string | null>(null); // 결과 이미지(data URL 또는 원격 URL)
   const [renderMsg, setRenderMsg] = useState<string | null>(null);
   const [renderCharged, setRenderCharged] = useState<number | null>(null);
+  // ★유료 렌더(건당 3,000원)를 **영속**한다. 종전엔 `useState` 에만 있어 새로고침 한 번에
+  //   사라졌다 — 등기 권리분석 리스트와 같은 얼굴이다(CLAUDE.md 「유료·비가역 산출물 규율」).
+  const savedRenders = usePaidRenderStore((s) => s.byProject[projectId || "_default"]);
+  const addRender = usePaidRenderStore((s) => s.add);
   // 렌더 요청 in-flight 여부 — 모달을 닫아도 뷰포트 버튼 스피너로 진행 상태를 계속 표시.
   const [renderBusy, setRenderBusy] = useState(false);
   // 이 기능 1회 소요 코인(비전문가용 안내). 실제 청구는 백엔드가 charged로 회신.
@@ -1601,6 +1606,14 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
         }
         setRenderImage(img);
         setRenderCharged(typeof resp.charged === "number" ? resp.charged : null);
+        // 돈이 나간 산출물이므로 화면 상태와 **동시에** 보관한다(새로고침 복원용).
+        addRender(projectId, {
+          id: `${Date.now()}`,
+          imageUrl: resp.image_url ?? null,
+          imageBase64: resp.image_base64 ?? null,
+          chargedKrw: typeof resp.charged === "number" ? resp.charged : null,
+          label: renderStyle ?? null,
+        });
         setRenderMsg(resp.message || null);
         setRenderPhase("result");
       } catch (err) {
@@ -2682,6 +2695,40 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
                           <>결제하고 렌더 ({RENDER_COST_COIN}코인)</>
                         )}
                       </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* ── 1-b) 지난 렌더(영속) — 돈이 나간 산출물이 새로고침에 사라지지 않게 ── */}
+                {renderPhase !== "loading" && !renderImage && savedRenders && savedRenders.length > 0 && (
+                  <div className="space-y-2" data-testid="saved-renders">
+                    <p className="text-xs font-bold text-[var(--text-secondary)]">
+                      지난 AI 렌더 {savedRenders.length}건 — 이 브라우저에 보관된 결과입니다
+                    </p>
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                      {[...savedRenders].reverse().map((r) => {
+                        const src = r.imageUrl
+                          || (r.imageBase64
+                            ? (r.imageBase64.startsWith("data:") ? r.imageBase64 : `data:image/png;base64,${r.imageBase64}`)
+                            : null);
+                        return (
+                          <div key={r.id} className="rounded-xl border border-[var(--line)] p-1.5 text-[10px]">
+                            {src ? (
+                              /* eslint-disable-next-line @next/next/no-img-element */
+                              <img src={src} alt="지난 AI 렌더" className="w-full rounded-lg" />
+                            ) : (
+                              /* ★조용히 빼지 않는다 — 무엇을 왜 못 보관했는지 말한다. */
+                              <p className="p-2 text-[var(--text-hint)]" data-testid="saved-render-omitted">
+                                이미지가 커서 보관하지 못했습니다(결과 자체는 다운로드하셨어야 합니다)
+                              </p>
+                            )}
+                            <p className="mt-1 text-[var(--text-hint)]">
+                              {r.at.slice(0, 10)}
+                              {r.chargedKrw != null && ` · ${r.chargedKrw}코인`}
+                            </p>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 )}

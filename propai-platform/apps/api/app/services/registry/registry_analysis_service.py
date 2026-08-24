@@ -10,6 +10,7 @@ from typing import Any
 
 import structlog
 
+from app.services.ai.llm_failure import classify_failure as _classify_failure
 from app.services.ai.llm_failure import failure_reason as _failure_reason
 
 logger = structlog.get_logger(__name__)
@@ -148,6 +149,36 @@ async def _source_cache_get(key: str) -> dict[str, Any] | None:
 
 async def _source_cache_put(key: str, payload: dict[str, Any]) -> None:
     _SOURCE_CACHE[key] = (time.time(), payload)
+
+
+# ── 결정론적 실패 기억 — **같은 실패를 다시 사지 않는다** ──────────────────────
+#
+# ★왜(2026-08-25). 실패한 분석은 캐시하지 않는다(자가치유). 그런데 **결정론적** 실패는
+#   회복되지 않으므로, 그 설계가 "볼 때마다 LLM 을 다시 사는" 결과를 낳는다 —
+#   등기 재발급 누수와 **같은 얼굴**이고 축만 다르다(벤더 발급 → LLM 토큰).
+#   실측 사례: 긴 등기부의 응답 절단(`parse`)은 같은 본문이면 매번 같은 자리에서 실패한다.
+#
+# ★일시 실패는 **절대 기억하지 않는다**(타임아웃·과부하·잔액). 그걸 기억하면 회복을 막는다.
+#   `llm_failure.is_retry_worthwhile` 이 그 판정의 단일 출처다.
+#
+# ★TTL 을 짧게(30분) 둔다 — 근본을 고쳐 배포해도 사용자가 오래 갇히지 않게. 그래도 갇히면
+#   `force_reissue=True` 가 모든 기억을 건너뛴다.
+_FAILURE_TTL = 30 * 60.0
+_FAILURE_MEMO: dict[str, tuple[float, dict[str, Any]]] = {}
+
+
+def _failure_memo_get(key: str) -> dict[str, Any] | None:
+    hit = _FAILURE_MEMO.get(key)
+    if not hit:
+        return None
+    if (time.time() - hit[0]) >= _FAILURE_TTL:
+        _FAILURE_MEMO.pop(key, None)
+        return None
+    return hit[1]
+
+
+def _failure_memo_put(key: str, ai: dict[str, Any]) -> None:
+    _FAILURE_MEMO[key] = (time.time(), ai)
 
 
 async def peek_analyze_cache(
@@ -529,7 +560,21 @@ class RegistryAnalysisService:
                                 if thin_summary else "분석할 등기부 내용이 없습니다."),
                     "ai": None}
 
-        ai = await self._llm(address, source)
+        # ★같은 문서가 같은 이유로 계속 실패한다면 **다시 사지 않는다**(LLM 토큰).
+        #   기억은 결정론적 실패에만 남으므로, 일시 실패는 여기 걸리지 않고 그대로 재시도된다.
+        memo = _failure_memo_get(cache_key) if (cache_key and not force_reissue) else None
+        if memo is not None:
+            # ★시도하지 않았음을 **밝힌다.** 안 하고 한 척하면 그 자체가 거짓이다.
+            ai = {**memo, "remembered_failure": True}
+        else:
+            ai = await self._llm(address, source)
+            if cache_key and not ai.get("generated"):
+                from app.services.ai.llm_failure import is_retry_worthwhile
+
+                # 분류는 폴백이 실어 보낸 것을 **그대로** 쓴다(문자열에서 다시 캐지 않는다).
+                cls = str(ai.get("failure_class") or "other")
+                if not is_retry_worthwhile(cls):
+                    _failure_memo_put(cache_key, ai)
         # 등기 기반 소유형태(공동/단독)·소유자목록을 공부 카드(land)에 보강
         deriv = _derive_ownership(ai)
         if deriv:
@@ -577,6 +622,11 @@ class RegistryAnalysisService:
             # ★진단성: 타입명 + 응답 head를 남겨 '잘린 JSON/비-JSON/LLM오류'를 구분 가능하게.
             logger.warning("등기 권리분석 LLM 실패, 폴백",
                            err=f"{type(e).__name__}: {str(e)[:100]}", raw_head=(raw or "")[:180])
+            # ★성장루프 **분자**: 이 실패가 집계되지 않아, 등기 권리분석이 통째로 죽어도
+            #   `fallback_rate` 인사이트가 한 번도 뜨지 않았다(2026-08-24 실장애 — 사용자가
+            #   화면을 보고 알려 줄 때까지 아무도 몰랐다). 성공(분모)은 위 과금 헬퍼가 남긴다.
+            from app.services.ai.base_interpreter import record_llm_failure
+            record_llm_failure("registry", e)
             return {
                 "generated": False,
                 "ownership": {}, "provisional_registration": {"exists": None},
@@ -586,5 +636,9 @@ class RegistryAnalysisService:
                 #   일시 장애로 위장해 오래 숨긴 전례가 있다(2026-08-21 LLM 계층 사망).
                 "rights_analysis": "AI 권리분석을 생성하지 못했습니다. 등기부 내용을 직접 확인하세요.",
                 "failure_reason": _failure_reason(e),
+                # ★분류는 **실제 예외가 있는 이 자리**에서 한다. 나중에 문자열만 보고 다시
+                #   분류하면 타입이 지워져(`Exception("JSONDecodeError: …")`) 메시지에
+                #   타입명이 우연히 들어 있어야만 맞는다 — 운에 기대는 판정이 된다.
+                "failure_class": _classify_failure(e),
                 "risks": [], "safety_grade": "주의", "summary": "분석 불가",
             }
