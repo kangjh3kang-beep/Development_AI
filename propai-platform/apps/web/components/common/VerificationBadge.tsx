@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, ShieldCheck, XCircle, type LucideIcon } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import { FeedbackWidget } from "@/components/growth/FeedbackWidget";
+import { verificationCacheKey } from "@/lib/verification-cache-key";
 
 function hashStr(s: string): string {
   let h = 0;
@@ -71,7 +72,7 @@ export function VerificationBadge({
   const [open, setOpen] = useState(false);
 
   const cacheKey = useMemo(() => {
-    try { return `propai_verify_${analysisType}_${hashStr(JSON.stringify(context || {}))}`; }
+    try { return verificationCacheKey(analysisType, hashStr(JSON.stringify(context || {}))); }
     catch { return ""; }
   }, [analysisType, context]);
 

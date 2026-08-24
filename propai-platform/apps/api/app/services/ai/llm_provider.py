@@ -166,9 +166,75 @@ def get_available_providers() -> list[dict[str, Any]]:
     return available
 
 
+def _observe(llm: Any, service: str | None) -> Any:
+    """`service` 가 주어졌을 때만 감싼다 — 안 주면 종전과 **바이트 동일**한 객체를 돌려준다."""
+    return _ObservedChat(llm, service) if service else llm
+
+
+def observe_llm(llm: Any, service: str) -> Any:
+    """**직접 만든 LLM**에 실패 계측을 붙인다(`get_llm` 을 안 거치는 모듈용).
+
+    일부 서비스는 `ChatOpenAI(...)` 를 직접 만들거나 자체 빌더를 쓴다. 그런 모듈은
+    `get_llm(service=…)` 로 옵트인할 수 없어 관측 사각으로 남는다. 한 줄로 붙일 수 있게
+    같은 래퍼를 공개한다 — `except` 블록을 손대지 않아도 된다.
+
+    ★`service` 이름은 그 모듈이 `record_llm_response_billing` 에 넘기는 것과 **반드시 같아야**
+      한다(분모·분자가 같은 버킷에 떨어져야 한다). `tests/test_llm_observability_pairing.py` 가 강제한다.
+    """
+    return _ObservedChat(llm, service)
+
+
+class _ObservedChat:
+    """LLM 을 감싸 **실패만** 성장루프에 남긴다(=`fallback_rate` 의 분자).
+
+    ## 왜 팩토리에서 감싸나
+
+    `llm_call` 이벤트는 오래도록 `BaseInterpreter` 안에서만 기록됐다. 그 밖에서
+    `llm.ainvoke` 를 직접 부르는 서비스가 **21개**라 분모가 0이었고, 등기 권리분석이
+    통째로 죽어도 인사이트가 한 번도 뜨지 않았다(2026-08-24 실장애).
+
+    분모는 `record_llm_response_billing`(성공 시 호출)이 채웠지만 **분자**는 서비스마다
+    `except` 안에 손으로 배선해야 했다 — 17개 모듈이 미배선으로 남았고, 그 상태에서
+    분모만 흐르면 그 서비스는 **폴백률 0%** 로 읽힌다(침묵보다 나쁜 거짓 초록).
+
+    그래서 **호출 지점이 아니라 팩토리**에서 감싼다. 서비스는 `get_llm(service="X")`
+    한 줄만 더하면 실패가 자동으로 집계된다.
+
+    ## 이중계상을 피하는 방법
+
+    · **성공은 기록하지 않는다** — 분모는 이미 과금 헬퍼가 남긴다.
+    · `BaseInterpreter` 는 `service` 를 넘기지 않으므로 **감싸이지 않는다**
+      (그 클래스는 성공·실패를 스스로 기록한다).
+
+    ## 이름은 반드시 분모와 같아야 한다
+
+    `fallback_rate` SQL 은 `service` 로 GROUP BY 한다. 분자와 분모의 이름이 갈리면
+    **서로 다른 버킷에 떨어져** 한쪽은 100%, 다른 쪽은 0% 가 된다 — 안 하느니 못하다.
+    `tests/test_llm_observability_pairing.py` 가 그 동일성을 강제한다.
+    """
+
+    def __init__(self, inner: Any, service: str) -> None:
+        self._inner = inner
+        self._service = service
+
+    def __getattr__(self, name: str) -> Any:
+        # 나머지 속성(model·bind 등)은 그대로 위임한다 — 관측이 계약을 바꾸지 않는다.
+        return getattr(self._inner, name)
+
+    async def ainvoke(self, *args: Any, **kwargs: Any) -> Any:
+        try:
+            return await self._inner.ainvoke(*args, **kwargs)
+        except BaseException as e:
+            from app.services.ai.base_interpreter import record_llm_failure
+
+            record_llm_failure(self._service, e)
+            raise
+
+
 def get_llm(
     provider: str = "anthropic",
     model: str | None = None,
+    service: str | None = None,
     **kwargs: Any,
 ) -> Any:
     """지정된 프로바이더/모델로 LLM 인스턴스를 생성.
@@ -238,26 +304,26 @@ def get_llm(
         #   **호출 실패를 보고 판단**한다(목록형은 그 목록이 곧 상한이 된다).
         #   이 감지가 없던 동안 사용자가 프리미엄 모델을 고를수록 모든 해석이 죽었고,
         #   폴백이 "일시적으로 미제공"이라고만 말해 **아무도 몰랐다**.
-        return _TemperatureAwareChat(_build, temperature, model_id)
+        return _observe(_TemperatureAwareChat(_build, temperature, model_id), service)
     elif provider == "openai":
         from langchain_openai import ChatOpenAI
 
-        return ChatOpenAI(
+        return _observe(ChatOpenAI(
             model=model_id,
             api_key=api_key,
             temperature=temperature,
             max_tokens=max_tokens,
             timeout=timeout,
-        )
+        ), service)
     elif provider == "google":
         from langchain_google_genai import ChatGoogleGenerativeAI
 
-        return ChatGoogleGenerativeAI(
+        return _observe(ChatGoogleGenerativeAI(
             model=model_id,
             google_api_key=api_key,
             temperature=temperature,
             max_output_tokens=max_tokens,
             timeout=timeout,
-        )
+        ), service)
     else:
         raise ValueError(f"Unsupported provider: {provider}")

@@ -19,6 +19,7 @@ import {
 } from "@/store/useProjectContextStore";
 import { healPhantomAreaAggregates } from "@/lib/site-analysis-invariants";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
+import { VERIFY_CACHE_PREFIX } from "@/lib/verification-cache-key";
 import { looksLikeAddress } from "@/lib/selection-integrity";
 import { useLandScheduleStore } from "@/store/useLandScheduleStore";
 import {
@@ -50,14 +51,21 @@ const PROJECT_PERSIST_KEYS = [
   "propai-land-schedule",     // useLandScheduleStore
   "propai-project-storage",   // useProjectStore
   "propai-system-storage",    // useSystemStore (LLM provider·입력 API키 등 민감)
-  "propai_pipeline_history",  // 파이프라인 분석이력(프로젝트 상세)
+  // ★레거시 전용 — 지금 쓰는 키는 `propai_pipeline_history__<userId>`(계정별 격리)이고
+  //   그건 **의도적으로 지우지 않는다**(ProjectPipelinePanel: 키가 격리돼 있어 와이프 없이도
+  //   본인 이력이 보존되고 삭제는 본인만 영향). 이 항목은 격리 이전의 **공유키 잔재**만 걷는다.
+  //   ★접두로 바꾸지 마라 — 그 순간 계정별 이력까지 지워져 그들이 고친 결함이 되살아난다.
+  "propai_pipeline_history",
   "propai_precheck_handoff",  // PreCheck 분석결과 전달(localStorage일 수도)
 ];
 // 주소+컨텍스트 해시로 만들어지는 동적 캐시 키(개수 가변) — 접두사 패턴으로 일괄 제거.
 const PROJECT_PERSIST_PREFIXES = [
   "propai_panel_",        // 전문가 패널 분석결과(9유형)
   "propai_scenario_",     // 개발 시나리오 시뮬레이션
-  "propai_verification_", // 검증 배지 캐시
+  // ★정본 상수를 쓴다 — 종전엔 실재하지 않는 접두를 손으로 적어 뒀는데 실제 키는
+  //   `propai_verify_` 여서 이 스윕이 **한 번도 매치된 적이 없었다**(계정 전환 시 이전 계정의
+  //   검증 캐시 잔존). 만드는 쪽과 지우는 쪽이 같은 상수를 본다.
+  VERIFY_CACHE_PREFIX,
 ];
 
 /** JWT 페이로드에서 사용자 식별자(sub/user_id)를 디코드. 실패 시 null. */

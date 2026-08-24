@@ -285,6 +285,29 @@ interface FeasibilityData {
   totalHouseholds?: number | null;
 }
 
+/** `grade` 와 `precision` 은 **같이 오거나 같이 없다**(판별 유니온).
+ *
+ *  왜 타입으로 묶는가 — `updateFeasibilityData` 는 **merge 패치**라 빠뜨린 키가 남는다.
+ *  `precision` 을 **비우는 writer 가 전수 0** 이었으므로, 개략수지(E) 뒤에 정밀 수지로
+ *  재계산하면 새 `grade` 만 갱신되고 `precision` 은 `"E"` 로 남아 배지
+ *  `개략(추정) — 설계 미반영` 이 **설계 반영된 결과 위에 거짓으로** 뜬다.
+ *  (`#794` 가 고친 "배지가 안 뜬다"의 **반대 방향**이다.)
+ *
+ *  ★목록·소스 스캔이 아니라 타입인 이유: 이 저장소의 스윕·파생형 수집기·조건부 타입이
+ *    차례로 **`patch.grade = …` 매퍼 형태**를 놓쳤다(하루 세 번). 판별 유니온은 리터럴도
+ *    매퍼 대입도 컴파일 타임에 막으므로 **표현 형태에 의존하지 않는다** — 새 writer 도 자동으로 걸린다.
+ *
+ *  ★`precision: null` 은 회피가 아니라 **정직한 답**이다: 그 산출 엔진이 정밀도를 계산하지
+ *    않으면 화면은 "정밀도 미표기"로 남아야 하고, 그게 백엔드 자신의 폴백 라벨과 같다.
+ *    반대로 모르는 값에 `"E"` 를 붙이면 이 축이 자살한다. */
+type FeasibilityPatchBase = Omit<Partial<FeasibilityData>, "grade" | "precision">;
+export type FeasibilityPatch =
+  | (FeasibilityPatchBase & { grade?: never; precision?: never })
+  | (FeasibilityPatchBase & {
+      grade: string | null;
+      precision: "E" | "D" | "V" | null;
+    });
+
 // 공사비 분석 결과(건축개요 기반) — 수지·사업성과 단일 데이터원으로 연동.
 interface CostData {
   totalConstructionCostWon: number | null;
@@ -531,7 +554,7 @@ export interface ProjectContextState {
   ) => void;
   // merge 패치 — 부분 writer(UnitMix/AutoRecommend)가 기존 totalCostWon 등을 보존하도록
   // 기존 feasibilityData 위에 병합한다. 전체 객체를 넘기던 기존 호출도 동일하게 동작.
-  updateFeasibilityData: (data: Partial<FeasibilityData>) => void;
+  updateFeasibilityData: (data: FeasibilityPatch) => void;
   // (Phase C-1) 추천 개발방식 코드(M01~M15)만 feasibilityData.developmentType에 부분패치.
   // ★updateFeasibilityData와 달리 updatedAt.feasibility를 stamp하지 않는다 —
   //  파생(recommend) 노드가 수지 staleness를 오염시켜 수지 노드가 영영 skipped-fresh되는

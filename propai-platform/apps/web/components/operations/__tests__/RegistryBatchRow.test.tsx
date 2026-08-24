@@ -155,6 +155,39 @@ describe("일괄 등기분석 행 — 렌더", () => {
     expect(screen.queryByTestId("row-reused")).toBeNull();
   });
 
+  it("★★만료된 PDF 링크를 **살아 있는 것처럼 그리지 않는다**", () => {
+    // 라이브 실측: 저장 79건 중 표본 3건에서 2건이 이미 만료였는데 화면은 `PDF ↗` 를
+    // 똑같이 그렸다 — 누르면 JSON 오류 덩어리가 열린다.
+    const b64 = (o: unknown) =>
+      Buffer.from(JSON.stringify(o)).toString("base64")
+        .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    const expired = `https://x/a.pdf?token=${b64({ alg: "HS256" })}.${b64({ exp: 1 })}.s`;
+    render(
+      <RegistryBatchRow item={{ ...성공, result: { ...성공.result!, fetched: { pdf_url: expired } } }} />,
+    );
+    expect(screen.queryByTestId("row-pdf"), "죽은 링크를 살아 있는 것처럼 그렸다").toBeNull();
+    expect(screen.getByTestId("row-pdf-expired").textContent).toContain("PDF 만료");
+  });
+
+  it("★대조군 — 아직 남은 링크는 그대로 누를 수 있다", () => {
+    const b64 = (o: unknown) =>
+      Buffer.from(JSON.stringify(o)).toString("base64")
+        .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    const alive = `https://x/a.pdf?token=${b64({ alg: "HS256" })}.${b64({ exp: 4102444800 })}.s`;
+    render(
+      <RegistryBatchRow item={{ ...성공, result: { ...성공.result!, fetched: { pdf_url: alive } } }} />,
+    );
+    expect(screen.getByTestId("row-pdf")).toBeTruthy();
+    expect(screen.queryByTestId("row-pdf-expired")).toBeNull();
+  });
+
+  it("★만료를 **못 읽는** 링크는 감추지 않는다(살아 있는 링크를 죽이지 않는다)", () => {
+    render(
+      <RegistryBatchRow item={{ ...성공, result: { ...성공.result!, fetched: { pdf_url: "https://x/plain.pdf" } } }} />,
+    );
+    expect(screen.getByTestId("row-pdf")).toBeTruthy();
+  });
+
   it("다른 물건을 조회했을 수 있다는 고지는 행에서도 보인다", () => {
     render(
       <RegistryBatchRow
