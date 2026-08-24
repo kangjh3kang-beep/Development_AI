@@ -389,7 +389,8 @@ async def _record_llm_billing(
 
 def _record_llm_call_event(service: str | None, *, ok: bool,
                            input_tokens: int = 0, output_tokens: int = 0,
-                           error: str | None = None) -> None:
+                           error: str | None = None, reason: str | None = None,
+                           error_type: str | None = None) -> None:
     """성장루프에 `llm_call` 한 줄. 논블로킹·예외 안전(관측이 본기능을 막지 않는다)."""
     try:
         from app.services.growth import capture_service as _gcap
@@ -399,6 +400,12 @@ def _record_llm_call_event(service: str | None, *, ok: bool,
             payload.update({"input_tokens": input_tokens, "output_tokens": output_tokens})
         else:
             payload["error"] = (error or "")[:120]
+            # ★집계용 사유 라벨 + **예외 타입 원본**. 라벨만 남기면 분류표가 낡았을 때
+            #   새 실패 유형이 `other` 안에 조용히 묻힌다 — 타입을 함께 실어 그 안에서도 셀 수 있게 한다.
+            if reason:
+                payload["reason"] = reason
+            if error_type:
+                payload["error_type"] = error_type
         _gcap.record_event(
             "llm_call",
             # ★`severity` 는 **이 지표의 계약이 아니다**(변이 생존 1건의 설명).
@@ -424,7 +431,14 @@ def record_llm_failure(service: str, exc: BaseException) -> None:
     ★`BaseInterpreter` 밖에서 `llm.ainvoke` 를 직접 부르는 서비스용이다. 그 안에서 도는
       인터프리터는 자체 계측이 이미 있다(이 함수를 부르면 이중계상이 된다).
     """
-    _record_llm_call_event(service, ok=False, error=f"{type(exc).__name__}: {exc}")
+    from app.services.ai.llm_failure import classify_failure
+
+    _record_llm_call_event(
+        service, ok=False,
+        error=f"{type(exc).__name__}: {exc}",
+        reason=classify_failure(exc),
+        error_type=type(exc).__name__,
+    )
 
 
 async def record_llm_response_billing(llm, response, service: str | None = None) -> None:
