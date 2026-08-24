@@ -11,10 +11,9 @@ from typing import Any
 import structlog
 
 from app.services.ai.llm_failure import failure_reason as _failure_reason
+from app.services.common.exc_detail import exc_detail
 
 logger = structlog.get_logger(__name__)
-
-from app.services.common.exc_detail import exc_detail  # noqa: E402 — 진단 문자열 공용화
 
 # 등기 분석 결과 캐시(모듈) — CODEF 발급은 느리고(약 40~50s) 유료라 동일 필지 재분석을
 # 즉시 응답하고 비용을 절약한다. 키=(pnu|address, realty_type, dong, ho). TTL 6시간.

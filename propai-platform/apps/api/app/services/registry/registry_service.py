@@ -16,13 +16,13 @@ from typing import Any
 
 import structlog
 
-logger = structlog.get_logger(__name__)
-
-from app.services.common.exc_detail import (  # noqa: E402 — 진단 문자열 공용화
+from app.services.common.exc_detail import (
     balance_shortage_notice,
     exc_detail,
     is_balance_shortage,
 )
+
+logger = structlog.get_logger(__name__)
 
 
 def _config() -> dict[str, str]:

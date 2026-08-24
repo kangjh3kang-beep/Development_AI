@@ -22,9 +22,9 @@ from typing import Any
 
 import structlog
 
-logger = structlog.get_logger(__name__)
+from app.services.common.exc_detail import exc_detail
 
-from app.services.common.exc_detail import exc_detail  # noqa: E402 — 진단 문자열 공용화
+logger = structlog.get_logger(__name__)
 
 def _host() -> str:
     """틸코 호스트 — 운영=api.tilko.net(기본), 데모=dev.tilko.net. TILKO_API_HOST로 무중단 전환."""
