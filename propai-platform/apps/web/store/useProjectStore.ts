@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { apiClient } from '@/lib/api-client';
+import { fetchAllProjects, selectOrphans } from "@/lib/projects-fetch";
 import { projectCreateHeaders } from "@/lib/project-create-key";
 import { createDebouncedStorage } from '@/lib/debounced-storage';
 import { purgeProjectLocalData } from "@/lib/project-lifecycle";
@@ -140,24 +141,27 @@ export const useProjectStore = create<ProjectState>()(
         if (get().syncing) return;
         set({ syncing: true });
         try {
-          const res = await apiClient.get<{ items?: BackendProject[] }>("/projects", {
-            useMock: false,
-            timeoutMs: 30000,
-          });
-          const backend = (res.items || []).map(_mapBackend);
+          // ★페이지를 끝까지 걷는다. 종전엔 파라미터 없이 한 번만 불러 **최신 20건**만 받고
+          //   그것으로 로컬 목록을 통째로 교체했다(서버 기본 page_size=20).
+          //   프로덕션 실측(2026-08-25): total=24 · has_next=true → 오래된 4건이 사라졌다.
+          const fetched = await fetchAllProjects<BackendProject>((path) =>
+            apiClient.get<unknown>(path, { useMock: false, timeoutMs: 30000 }),
+          );
+          const backend = fetched.items.map(_mapBackend);
+          const listComplete = !fetched.truncated;
           // 주소 기준 중복제거(백엔드 + 로컬 누적 중복) — 동일 주소 중복 마이그레이션 방지
           const seen = new Set(
             backend.map((p) => p.address.trim()).filter(Boolean),
           );
-          const orphans: Project[] = [];
-          for (const p of get().projects) {
-            const a = p.address.trim();
-            // ★서버 생성이 진행 중이면 고아가 아니다 — 지금 POST 하면 같은 프로젝트가 두 번 생긴다.
-            if (!_isUuid(p.id) && a && !seen.has(a) && !_creatingLocalIds.has(p.id)) {
-              seen.add(a);
-              orphans.push(p);
-            }
-          }
+          // ★고아 판정은 순수 함수로 꺼냈다 — 루프 안에 두면 어떤 테스트도 그 **판단**을
+          //   직접 태우지 못한다(재료만 잠그면 분기를 통째로 지워도 초록이 된다).
+          //   목록이 불완전하면 판정 자체를 하지 않는다: 잘려서 안 보일 뿐인 프로젝트를
+          //   "백엔드에 없다"고 오판하면 같은 프로젝트를 **다시 만든다**.
+          const orphans = selectOrphans(get().projects, seen, {
+            listComplete,
+            isUuid: _isUuid,
+            inFlight: _creatingLocalIds,
+          });
           const migrated: Project[] = [];
           for (const o of orphans) {
             try {
@@ -180,7 +184,16 @@ export const useProjectStore = create<ProjectState>()(
               migrated.push(o); // 실패 시 로컬 유지(다음 동기화에 재시도)
             }
           }
-          set({ projects: [...backend, ...migrated] });
+          if (listComplete) {
+            set({ projects: [...backend, ...migrated] });
+          } else {
+            // ★상한에 걸려 전체를 못 받았다 — **모르는 것을 지우지 않는다.**
+            //   백엔드가 준 것으로 덮되, 그 목록에 없는 로컬 레코드는 "삭제됐다"고 단정할 수
+            //   없으므로 남긴다(이 결함의 증상이 정확히 "있는 것이 사라진다"였다).
+            const backendIds = new Set(backend.map((p) => p.id));
+            const keptLocal = get().projects.filter((p) => !backendIds.has(p.id));
+            set({ projects: [...backend, ...keptLocal] });
+          }
         } catch {
           // 오프라인/실패 — 기존 로컬 목록 유지
         } finally {
