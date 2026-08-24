@@ -8,6 +8,7 @@ import { Button, Card, CardContent, CardTitle, Input, Select } from "@propai/ui"
 import { NumberInput } from "@/components/common/NumberInput";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { ApiClientError, apiClient } from "@/lib/api-client";
+import { fetchAllProjects } from "@/lib/projects-fetch";
 import {
   maintenanceAnomalyInitialValues,
   buildMaintenanceAnomalyBody,
@@ -142,10 +143,19 @@ export function DigitalTwinControlTowerWorkspaceClient({
   const projectsQuery = useQuery({
     queryKey: ["projects", "digital-twin-control-tower"],
     enabled: canUseLiveApi,
-    queryFn: () =>
-      apiClient.get<PaginatedResponse<ProjectSummary>>("/projects?page=1&page_size=20", {
-        useMock: false,
-      }),
+    // ★page_size=20 고정은 21번째부터를 **선택 목록에서 지운다**(서버 total 은 그보다 크다).
+    //   페이지 순회 SSOT 를 경유해 전 페이지를 모은다.
+    queryFn: async (): Promise<PaginatedResponse<ProjectSummary>> => {
+      const all = await fetchAllProjects<ProjectSummary>((path) =>
+        apiClient.get<unknown>(path, { useMock: false }),
+      );
+      return {
+        items: all.items,
+        page: 1,
+        page_size: all.items.length,
+        has_next: all.truncated,
+      };
+    },
   });
 
   useEffect(() => {
