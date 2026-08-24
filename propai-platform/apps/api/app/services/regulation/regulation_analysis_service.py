@@ -672,7 +672,7 @@ class RegulationAnalysisService:
             #   과금은 전액 발생하므로 여유 캡이 비용상으로도 이득이다.
             #   timeout 90: 실측 생성속도(~64tok/s)로 상한 근접 생성 시 60s 초과 소지 —
             #   절단 실패가 타임아웃 실패로 라벨만 바뀌지 않게 expert_panel(90s) 관례 정합.
-            llm = get_llm(timeout=90, max_tokens=4096)
+            llm = get_llm(service="regulation", timeout=90, max_tokens=4096)
         except Exception as e:  # noqa: BLE001 — 키 미설정·모델 구성 오류 등
             logger.warning("규제 LLM 초기화 실패, 폴백", err=f"{type(e).__name__}: {str(e)[:100]}")
             return self._llm_fallback(zone, districts, "provider")

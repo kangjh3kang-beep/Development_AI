@@ -198,7 +198,7 @@ class LegalDiscoveryService:
             from app.services.ai.llm_provider import get_llm
 
             ctx = json.dumps(context, ensure_ascii=False, indent=2)
-            llm = get_llm(timeout=60, max_tokens=2000)
+            llm = get_llm(service="legal_discovery", timeout=60, max_tokens=2000)
             resp = await llm.ainvoke([
                 SystemMessage(content=_SYSTEM + GROUNDING_RULE),
                 HumanMessage(content=_TMPL.format(context=ctx)),
