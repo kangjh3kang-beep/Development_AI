@@ -60,7 +60,9 @@ def test_파서가_살아있다_열을_실제로_뽑는다():
     sel, ins, ph = _select_columns(), _insert_columns(), _insert_placeholders()
     assert len(sel) >= 12, f"SELECT 열을 못 뽑았다: {sel}"
     assert len(ins) >= 14, f"INSERT 열을 못 뽑았다: {ins}"
+    assert len(ph) >= 14, f"플레이스홀더를 못 뽑았다: {ph}"
     assert "code" in sel and "estimate_id" in ins
+    assert all(x.startswith(":") for x in ph), f"플레이스홀더 형태가 아니다: {ph}"
 
 
 # ── 계약: 값과 기준이 **함께** 오간다 ───────────────────────────────────────
