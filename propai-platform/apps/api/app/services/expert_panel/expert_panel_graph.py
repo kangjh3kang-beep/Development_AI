@@ -101,7 +101,7 @@ async def _experts_node(state: PanelState) -> dict[str, Any]:
         user = _EXPERT_DEEP_TMPL.format(role=r["role"], lens=r["lens"],
                                         subject=state["subject"], address=state.get("address") or "대상지",
                                         context=state["ctx"])
-        llm = get_llm(timeout=60, max_tokens=1000)
+        llm = get_llm(service="expert_panel", timeout=60, max_tokens=1000)
         resp = await llm.ainvoke([SystemMessage(content=_EXPERT_SYSTEM + GROUNDING_RULE), HumanMessage(content=user)])
         # 계측: BaseInterpreter 밖 직접 호출도 동일하게 토큰·과금 기록(best-effort)
         from app.services.ai.base_interpreter import record_llm_response_billing
@@ -131,7 +131,7 @@ async def _verify_node(state: PanelState) -> dict[str, Any]:
         for e in experts
     )
     user = _VERIFY_TMPL.format(context=state["ctx"], claims=claims)
-    llm = get_llm(timeout=60, max_tokens=1200)
+    llm = get_llm(service="expert_panel", timeout=60, max_tokens=1200)
     try:
         resp = await llm.ainvoke([SystemMessage(content=_VERIFY_SYSTEM), HumanMessage(content=user)])
         from app.services.ai.base_interpreter import record_llm_response_billing
@@ -164,7 +164,7 @@ async def _synth_node(state: PanelState) -> dict[str, Any]:
     user = _SYNTH_TMPL.format(subject=state["subject"], address=state.get("address") or "대상지",
                              opinions=opinions, verify_notes=report.get("notes", ""),
                              confidence=report.get("overall_confidence"))
-    llm = get_llm(timeout=70, max_tokens=2000)
+    llm = get_llm(service="expert_panel", timeout=70, max_tokens=2000)
     synth: dict[str, Any] = {}
     try:
         resp = await llm.ainvoke([SystemMessage(content=_SYNTH_SYSTEM + GROUNDING_RULE), HumanMessage(content=user)])

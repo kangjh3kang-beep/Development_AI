@@ -496,12 +496,34 @@ async def _analyze_fallback_rate(db, w0, w1) -> list[dict[str, Any]]:
         "GROUP BY service"
     ), {"w0": w0, "w1": w1})).fetchall()
 
+    # ★사유 분포 — 같은 창에서 (service, reason) 로 센다.
+    #   왜 새 인사이트 타입을 만들지 않았나: **비율과 사유는 같은 자리에 있어야** 판단이 된다.
+    #   "80.77% 폴백"만으로는 절단인지 타임아웃인지 스키마 위반인지 모르고, 그 셋은 처방이 다르다.
+    #   타입을 늘리면 카탈로그·대시보드가 따라와야 하는데 얻는 것이 없다.
+    #   ★`reason` 이 없는 옛 이벤트는 `unlabeled` 로 센다 — 0으로 감추면 분포가 거짓이 된다.
+    reason_rows = (await db.execute(text(
+        "SELECT service, COALESCE(NULLIF(payload->>'reason',''), 'unlabeled') AS reason, "
+        "  COUNT(*) AS n "
+        "FROM platform_events "
+        "WHERE created_at >= :w0 AND created_at < :w1 AND service IS NOT NULL "
+        "  AND (event_type='fallback' "
+        "       OR (event_type='llm_call' AND payload->>'ok'='false')) "
+        "GROUP BY service, reason"
+    ), {"w0": w0, "w1": w1})).fetchall()
+
+    by_service: dict[str, dict[str, int]] = {}
+    for svc, reason, n in reason_rows:
+        by_service.setdefault(svc, {})[str(reason)] = int(n or 0)
+
     out: list[dict[str, Any]] = []
     for r in rows:
         service, fb, calls = r[0], int(r[1] or 0), int(r[2] or 0)
         sev, pct = _classify_fallback(fb, calls)
         if sev is None:
             continue
+        reasons = dict(sorted(by_service.get(service, {}).items(),
+                              key=lambda kv: (-kv[1], kv[0])))
+        top = next(iter(reasons), None)
         out.append({
             "insight_type": "fallback_rate",
             "severity": sev,
@@ -510,6 +532,8 @@ async def _analyze_fallback_rate(db, w0, w1) -> list[dict[str, Any]]:
             "metrics_json": {
                 "service": service, "fallback": fb,
                 "llm_call": calls, "fallback_pct": pct,
+                # 사유별 건수(많은 순) + 최다 사유. 개선 착수 지점을 이 두 값이 정한다.
+                "reasons": reasons, "top_reason": top,
             },
         })
     return out
@@ -760,7 +784,7 @@ def _llm_narrative(ins: dict[str, Any]) -> str | None:
     try:
         from app.services.ai.llm_provider import get_llm
 
-        llm = get_llm(timeout=20, max_tokens=200)
+        llm = get_llm(service="growth_analyze", timeout=20, max_tokens=200)
         prompt = (
             "다음 플랫폼 운영 인사이트를 한국어 2문장으로 요약하고 권고조치를 덧붙여라. "
             "과장 금지, 지표 근거만.\n"
