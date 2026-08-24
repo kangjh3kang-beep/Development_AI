@@ -38,6 +38,11 @@ function seed(recordAddress: string, analysisAddress: string) {
 const putCalls = (path: string) =>
   vi.mocked(apiClient.put).mock.calls.filter((c) => String(c[0]).includes(path));
 
+/** 보류 경고 문구 전체(앞뒤 잔재까지) — 개발자가 로그만 보고 "어느 경로가·무엇 때문에"
+    막혔는지 알 수 있어야 가드가 진단 가능하다. */
+const warnText = (warn: ReturnType<typeof vi.spyOn>) =>
+  warn.mock.calls.map((c) => String(c[0])).join("\n");
+
 describe("WP-D 무결성 가드 — 서버 쓰기 경로 전수", () => {
   beforeEach(() => {
     window.localStorage.clear();
@@ -56,11 +61,18 @@ describe("WP-D 무결성 가드 — 서버 쓰기 경로 전수", () => {
   });
 
   it("★교차오염(다른 지역)이면 /store/projects 푸시를 보류한다", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     seed("서울특별시 동작구 상도동 123", "경기도 용인시 처인구 고기동 45");
 
     await syncUp();
 
     expect(putCalls("/store/projects")).toHaveLength(0);
+    // 진단 가능성 락 — 두 주소를 모두 말하고, 어느 경로가 막혔는지 사유로 구분된다.
+    const text = warnText(warn);
+    expect(text).toContain("서울특별시 동작구 상도동 123");
+    expect(text).toContain("경기도 용인시 처인구 고기동 45");
+    expect(text).toContain("지역 불일치");
+    warn.mockRestore();
   });
 
   it("★같은 지역·다른 번지(인접 필지 추가)는 보류하지 않는다 — 스토어 blob 은 차단 범위가 계정 전체다", async () => {
@@ -72,11 +84,15 @@ describe("WP-D 무결성 가드 — 서버 쓰기 경로 전수", () => {
   });
 
   it("스냅샷 경로도 여전히 교차오염을 보류한다(기존 가드 회귀 없음)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     seed("서울특별시 동작구 상도동 123", "경기도 용인시 처인구 고기동 45");
 
     await pushSnapshot();
 
     expect(putCalls(`/projects/${PROJECT_ID}`)).toHaveLength(0);
+    // ★두 경로의 사유가 서로 구분돼야 한다 — 같은 문구면 로그로 경로를 못 가른다.
+    expect(warnText(warn)).toContain("핵심 토큰 불일치");
+    warn.mockRestore();
   });
 
   it("[양성 대조군] 스냅샷 경로는 주소가 일치하면 실제로 푸시한다", async () => {
