@@ -9,6 +9,7 @@ import { apiClient } from "@/lib/api-client";
 import { idempotencyHeaders } from "@/lib/idempotency";
 import { getCachedAnalysis, setCachedAnalysis, TTL_30D, TTL_7D, TTL_3D } from "@/lib/analysis-fetch-cache";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { resolveLandArea, landAreaBasisNote } from "@/lib/site-area";
 import {
   developabilityText,
   resolveFarPct,
@@ -309,6 +310,12 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
   // ── Project context store ──
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
   const updateSiteAnalysis = useProjectContextStore((s) => s.updateSiteAnalysis);
+
+  // ── 면적 기준(basis) 해석 — 값과 함께 "무엇을 근거로 한 면적인지"를 얻는다(lib/site-area SSOT). ──
+  //   ★이 패널 안에서 면적을 보여 주는 곳이 셋(요약줄·특성표·토지가액)인데 전부 대표 1필지
+  //     응답을 읽고 있었다. 파생을 최상단에 두어 **세 곳이 같은 값·같은 기준**을 쓰게 한다.
+  const resolvedArea = useMemo(() => resolveLandArea(siteAnalysis), [siteAnalysis]);
+  const areaBasisNote = useMemo(() => landAreaBasisNote(siteAnalysis), [siteAnalysis]);
 
   // ── Zoning API state ──
   const [zoningData, setZoningData] = useState<ZoningAnalysisResponse | null>(null);
@@ -640,11 +647,20 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
     if (zoningData.zone_type) {
       chars.push({ label: "용도지역", value: zoningData.zone_type, status: "safe" });
     }
-    if (zoningData.land_area_sqm != null) {
+    // ★면적 기준 SSOT(R1) — zoningData 는 대표 1필지 응답이다. 다필지에서 이 표만 대표면적을
+    //   보여 주면 같은 패널의 요약줄(통합)과 갈린다. 값·기준을 리졸버 하나에서 가져온다.
+    const charArea = resolvedArea.valueSqm ?? zoningData.land_area_sqm;
+    if (charArea != null) {
+      const basisSuffix =
+        resolvedArea.basis === "integrated"
+          ? ` (통합 ${resolvedArea.parcelCount}필지)`
+          : resolvedArea.basis === "representative"
+            ? " (대표필지)"
+            : "";
       chars.push({
         label: "면적",
-        value: `${zoningData.land_area_sqm.toLocaleString()}m²`,
-        status: zoningData.land_area_sqm >= 200 ? "safe" : "warning",
+        value: `${charArea.toLocaleString()}m²${basisSuffix}`,
+        status: charArea >= 200 ? "safe" : "warning",
       });
     }
     if (zoningData.zone_limits?.max_height_m != null) {
@@ -673,7 +689,9 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
     //   pnu·면적이 null이라 칩이 적을 때만 **우연히** 보이던 상태였다.
     //   경고는 아래 '용도지역 데이터 경고' 배너가 전담한다(조건부·절단 없음).
     return chars.length > 0 ? chars : null;
-  }, [zoningData]);
+    // resolvedArea 는 면적 행의 값·기준을 결정하므로 의존에 포함한다(누락 시 다필지 보강이
+    //   끝나도 표가 옛 대표면적으로 고착된다 — 종전 결함의 재발 경로).
+  }, [zoningData, resolvedArea]);
 
   // Determine data source for scenarios
   // 각 시나리오에 tentative(선행절차 전제 잠정)·tentativeReason을 전파해, 렌더에서 확신 % 대신
@@ -858,7 +876,11 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
       zoningData?.zone_limits?.max_far_pct ?? null,
     heightLimit: zoningData?.zone_limits?.max_height_m ?? localResult?.heightLimit,
     officialPricePerSqm: zoningData?.official_price_per_sqm ?? null,
-    landAreaSqm: zoningData?.land_area_sqm ?? null,
+    // ★면적 기준 SSOT(R1) — zoningData 는 /zoning/comprehensive 의 **대표 1필지** 응답이다.
+    //   다필지 부지에서 이 값을 그대로 쓰면 이 패널은 대표필지 면적을, 통합 경로를 쓰는 다른
+    //   패널(사업개요·건축가능범위)은 통합면적을 보여 준다 — 같은 이름으로 다른 값이 나온다.
+    //   store SSOT 를 우선 쓰고, store 에 면적이 아예 없을 때만 API 대표값으로 폴백한다.
+    landAreaSqm: resolvedArea.valueSqm ?? zoningData?.land_area_sqm ?? null,
   };
 
   // ── 특이부지 게이트 — API 응답 우선, 없으면 store(specialParcel) 폴백. is_special일 때만 카드 렌더. ──
@@ -1562,6 +1584,11 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
                 <p className="text-[10px] text-[var(--status-success)] mt-1 font-bold">
                   {analysis.zoning.current} · 건폐율 {analysis.buildingCoverageMax}%{analysis.isEffectiveBcr ? "(실효)" : "(법정상한)"} · 용적률 {analysis.floorAreaRatioMax}%{analysis.isEffectiveFar ? "(실효)" : "(법정상한)"}
                   {analysis.landAreaSqm != null && ` · ${analysis.landAreaSqm.toLocaleString()}m²`}
+                  {areaBasisNote && (
+                    <span data-area-basis={resolvedArea.basis} className="text-[var(--text-hint)]">
+                      {" "}({areaBasisNote})
+                    </span>
+                  )}
                   {specialParcel && <span className="inline-flex items-center gap-1 text-[var(--status-warning)]"> · <AlertTriangle className="size-3" aria-hidden />특이부지</span>}
                 </p>
               )}
@@ -1651,9 +1678,18 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
                       <span className="text-sm text-[var(--text-secondary)]">원/m²</span>
                     </div>
                     {analysis.landAreaSqm != null && (
-                      <p className="text-[10px] text-[var(--text-hint)]">
+                      <p className="text-[10px] text-[var(--text-hint)]" data-land-value-basis={resolvedArea.basis}>
                         추정 토지가액: {(analysis.officialPricePerSqm * analysis.landAreaSqm).toLocaleString()}원
                         ({analysis.landAreaSqm.toLocaleString()}m² 기준)
+                        {/* ★다필지 통합면적에 **대표필지 공시지가**를 곱한 개략치다. 필지마다 공시지가가
+                            다르므로 정확한 합산이 아니다 — 그 사실을 숨기지 않는다(정밀도 위장 금지).
+                            종전엔 이 줄이 **대표필지 면적**으로 계산돼, 통합 부지 가액을 통합면적 대비
+                            대표면적 비율만큼 과소표시했다. 면적을 통합으로 바로잡되 근사임을 밝힌다. */}
+                        {resolvedArea.basis === "integrated" && (
+                          <span className="block text-[var(--status-warning)]">
+                            개략치 — 대표필지 공시지가를 통합면적에 곱한 값입니다(필지별 공시지가 합산 아님)
+                          </span>
+                        )}
                       </p>
                     )}
                   </div>
