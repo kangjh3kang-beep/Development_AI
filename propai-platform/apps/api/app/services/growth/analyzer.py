@@ -56,6 +56,13 @@ QUALITY_DOWN_PCT = 20.0
 QUALITY_FAIL_PCT = 15.0
 QUALITY_MIN_SAMPLES = 5  # 표본이 너무 작으면 판정 보류.
 
+# selection_contamination: 선택 오염 관측 빈도 임계(윈도우 내 건수).
+# ★`malformed`(주소 칸에 소유자명 등 — 데이터가 깨짐)는 1건도 사람이 봐야 한다.
+#   `multi_region`(원거리 혼합)은 **후보지 비교라는 정당한 워크플로우일 수 있어**
+#   빈도가 쌓일 때만 알린다 — 이 캠페인의 핵심 결정이 "막지 말고 고지한다"였다.
+CONTAM_MALFORMED_WARN_COUNT = 1
+CONTAM_MULTI_REGION_INFO_COUNT = 3
+
 # latency_regression: 직전 baseline 대비 배수.
 LATENCY_REGRESSION_FACTOR = 1.5
 LATENCY_MIN_SAMPLES = 20
@@ -71,6 +78,8 @@ _LLM_NARRATIVE_MAX_CALLS = 3
 _TUNABLE_THRESHOLDS: dict[str, float] = {
     "fallback_warn_pct": FALLBACK_WARN_PCT,
     "fallback_crit_pct": FALLBACK_CRIT_PCT,
+    "contam_malformed_warn_count": CONTAM_MALFORMED_WARN_COUNT,
+    "contam_multi_region_info_count": CONTAM_MULTI_REGION_INFO_COUNT,
 }
 
 # 배치 시작 시 캐시에 미리 채울 동적설정 키(임계 + 피처토글).
@@ -207,6 +216,34 @@ def _cluster_verify_issues(
     return out
 
 
+def _classify_contamination(verdict: str, count: int) -> str | None:
+    """선택 오염 관측 빈도 → severity. 임계 미만이면 None(인사이트 미발행).
+
+    ★**`multi_region` 은 절대 `warn` 이상으로 올라가지 않는다.** 이 캠페인이 실측으로
+      내린 결정이 *"막지 말고 고지한다"* 였다 — 원거리 필지 묶음은 **후보지 비교**라는
+      정당한 워크플로우일 수 있다(라이브 290km 건이 그렇게 보인다). 여기서 severity 를
+      올리면 자가치유 루프가 정상 사용을 "고칠" 대상으로 오인할 길이 열린다.
+      정상 사용을 결함으로 세는 지표는 **지표가 아니라 소음**이다.
+
+    ★`malformed` 은 다르다 — 주소 칸에 소유자명(`◀ 전성결`)이 들어온 것은 **데이터가
+      깨진 것**이라 1건도 사람이 봐야 한다.
+    """
+    if verdict == "malformed":
+        if count >= _effective_threshold(
+            "contam_malformed_warn_count", CONTAM_MALFORMED_WARN_COUNT
+        ):
+            return "warn"
+        return None
+    if verdict == "multi_region":
+        if count >= _effective_threshold(
+            "contam_multi_region_info_count", CONTAM_MULTI_REGION_INFO_COUNT
+        ):
+            return "info"
+        return None
+    # 모르는 verdict 는 판정하지 않는다(수집 엔드포인트는 익명 허용 — 임의 값이 올 수 있다).
+    return None
+
+
 def _classify_fallback(fallback: int, total_calls: int) -> tuple[str | None, float]:
     """폴백률(%) 산출 + severity. 분모 부족 시 (None, pct).
 
@@ -316,6 +353,7 @@ async def analyze_window(
         insights.extend(await _analyze_error_cluster(db, window_start, window_end))
         insights.extend(await _analyze_recurring_verify_errors(db, window_start, window_end))
         insights.extend(await _analyze_fallback_rate(db, window_start, window_end))
+        insights.extend(await _analyze_selection_contamination(db, window_start, window_end))
         insights.extend(await _analyze_quality_drop(db, window_start, window_end))
         insights.extend(await _analyze_latency_regression(db, window_start, window_end))
     except Exception as e:  # noqa: BLE001 — 스캔 실패는 배치를 죽이지 않는다.
@@ -477,6 +515,69 @@ async def _analyze_fallback_rate(db, w0, w1) -> list[dict[str, Any]]:
     return out
 
 
+# 선택 오염 집계 SQL — 모듈 상수로 둬서 테스트가 **런타임 문자열**을 검사할 수 있게 한다.
+# ★파이썬 이스케이프가 한 번 더 먹으면 정규식이 조용히 안 맞고, 그러면 숫자꼴 판정이
+#   전부 거짓이 되어 `max_spread_km` 이 **항상 NULL** 이 된다(빈 지표인데 초록).
+_CONTAM_SQL = (
+    "SELECT payload->>'verdict' AS verdict, COUNT(*) AS n, "
+    # 숫자꼴만 캐스팅 — 수집 엔드포인트가 익명 허용이라 임의 문자열이 올 수 있다.
+    r"  MAX(CASE WHEN payload->>'spread_km' ~ '^[0-9]+(\.[0-9]+)?$' "
+    "           THEN (payload->>'spread_km')::numeric END) AS max_spread, "
+    "  SUM(CASE WHEN payload->>'malformed_rows' ~ '^[0-9]+$' "
+    "           THEN (payload->>'malformed_rows')::int ELSE 0 END) AS malformed_rows "
+    "FROM platform_events "
+    "WHERE event_type='selection_contamination_observation' "
+    "  AND created_at >= :w0 AND created_at < :w1 "
+    # 아는 verdict 만 — 임의 값이 카디널리티를 늘리지 못하게 한다.
+    "  AND payload->>'verdict' IN ('multi_region','malformed') "
+    "GROUP BY 1"
+)
+
+
+async def _analyze_selection_contamination(db, w0, w1) -> list[dict[str, Any]]:
+    """선택 오염 관측(`selection_contamination_observation`)을 verdict 별로 집계한다.
+
+    이 이벤트는 프론트(`lib/growth/selection-contamination.ts`)가 다필지 선택이
+    "하나의 개발 부지"가 아닐 때 보낸다. 화면은 이미 고지하고 있었지만 **빈도는
+    아무도 몰랐다** — 빈도를 모르면 "이미 오염된 프로젝트를 정리할지"를 근거 없이
+    결정하게 된다. 여기서 그 빈도를 사람이 보는 인사이트로 만든다.
+
+    ★**숫자 캐스팅을 방어적으로 한다.** 수집 엔드포인트(`POST /growth/events`)는
+      **익명 허용**이라 `spread_km` 에 숫자가 아닌 값이 들어올 수 있다. 그대로
+      `::numeric` 하면 예외가 나고, `analyze_window` 의 광역 except 가 그것을 삼켜
+      **그 윈도우의 인사이트가 전부 사라진다**(내 지표가 남의 지표를 죽인다).
+      숫자꼴일 때만 캐스팅한다.
+    """
+    from sqlalchemy import text
+
+    rows = (await db.execute(
+        text(_CONTAM_SQL), {"w0": w0, "w1": w1}
+    )).fetchall()
+
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        verdict, n = r[0], int(r[1] or 0)
+        sev = _classify_contamination(verdict, n)
+        if sev is None:
+            continue
+        out.append({
+            "insight_type": "selection_contamination",
+            "severity": sev,
+            "tenant_id": None,
+            # ★**자동조치 금지** — 원거리 묶음은 정당할 수 있고, 깨진 행은 소유자 정보가
+            #   유실될 수 있어 임의 삭제가 금지돼 있다. 사람이 본다.
+            "recommended_action": "none",
+            "metrics_json": {
+                "verdict": verdict,
+                "count": n,
+                # 좌표가 없으면 **미상이지 0이 아니다**(무좌표 프로젝트가 실재한다).
+                "max_spread_km": float(r[2]) if r[2] is not None else None,
+                "malformed_rows": int(r[3] or 0),
+            },
+        })
+    return out
+
+
 async def _analyze_quality_drop(db, w0, w1) -> list[dict[str, Any]]:
     """service별 verify_result(fail/warn) + ai_feedback(down) 결합 품질저하 인사이트."""
     from sqlalchemy import text
@@ -608,6 +709,17 @@ def _rule_narrative(ins: dict[str, Any]) -> str:
     if t == "fallback_rate":
         return (f"[{sev}] {m.get('service')} 폴백률 {m.get('fallback_pct')}% "
                 f"(폴백 {m.get('fallback')}/{m.get('llm_call')}콜).")
+    if t == "selection_contamination":
+        v = m.get("verdict")
+        if v == "malformed":
+            return (f"[{sev}] 선택 목록에 **주소가 아닌 값**이 들어온 관측 {m.get('count')}건 "
+                    f"(문제 행 누적 {m.get('malformed_rows')}행) — 엑셀 소유자 칸이 주소로 "
+                    f"읽혔을 수 있습니다. 통합 면적·용도지역 판정을 신뢰할 수 없습니다.")
+        spread = m.get("max_spread_km")
+        where = f"최대 {spread}km 떨어짐" if spread is not None else "거리 미상(좌표 없음)"
+        return (f"[{sev}] 서로 다른 지역이 한 선택에 묶인 관측 {m.get('count')}건({where}) — "
+                f"**후보지 비교라면 정상입니다.** 통합 대지면적으로 계산되지 않도록 "
+                f"화면이 고지하고 있는지만 확인하세요.")
     if t == "quality_drop":
         return (f"[{sev}] {m.get('service')} 품질저하 — verify fail "
                 f"{m.get('fail_pct')}%/warn {m.get('warn_pct')}%, "
