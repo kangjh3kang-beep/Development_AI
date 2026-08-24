@@ -507,6 +507,9 @@ const RUNTIME_CASES: RuntimeCase[] = [
  * 소스 파생 락은 이 파일들도 그대로 덮는다. 여기 없는 것은 "런타임까지" 태운다는 뜻이다.
  */
 const RUNTIME_UNCOVERED: Record<string, string> = {
+  "components/sales/OrgTree.tsx":
+    "이 표 대신 전용 스펙(`components/sales/__tests__/OrgTree.focusTrap.test.tsx`)이 렌더 경로를 " +
+    "직접 만들어 트랩을 태운다 — 조직 목이 필요해 공용 표에 넣기보다 그쪽이 정확하다.",
   "components/onboarding/OnboardingWizard.tsx":
     "자체 `visible` 상태를 localStorage 로 결정해 스스로 연다 — 부모가 주는 열림 인자가 없어 " +
     "밖에서 '열린 상태'를 만들 수 없다. 저장소 목을 세우면 가능하니 별도 rung 으로 남긴다.",
@@ -514,9 +517,6 @@ const RUNTIME_UNCOVERED: Record<string, string> = {
     "이 표 대신 전용 스펙(`components/auction/__tests__/AuctionWorkspace.focusTrap.test.tsx`)이 " +
     "렌더 경로를 직접 만들어 트랩을 태운다 — 트랩이 둘 겹치는 표면이라 공용 표보다 그쪽이 정확하다. " +
     "★종전 사유(『목록 조회·지도 목이 필요』)는 실측으로 기각됐다: 필요한 목은 상세 응답 하나였다.",
-  "components/sales/OrgTree.tsx":
-    "마운트 즉시 /org/tree·/org/context 를 조회하고 그 응답으로 트리를 그려야 시트를 열 수 있다. " +
-    "시트를 여는 경로까지 재현하려면 조직 픽스처가 필요해 별도 rung 으로 미룬다.",
 };
 
 describe("모달 ESC 해제 계약 — 런타임 표", () => {
@@ -729,6 +729,11 @@ describe("모달 접근성 — 포커스 생명주기(2026-08-22 부분 상환)"
     "components/operations/DeskAppraisalModal.tsx",
     "components/operations/LandShareModal.tsx",
     "components/onboarding/OnboardingWizard.tsx",
+    // ── 2026-08-23 R5 — **렌더 경로를 먼저 만든 뒤** 배선했다 ──
+    //   `OrgTree` 는 마운트 즉시 /org/tree·/org/context 를 조회해야 시트에 닿는다.
+    //   목을 세워 여는 경로를 만들고(`OrgTree.focusTrap.test.tsx`) 그 위에 트랩을 잠갔다.
+    //   순서를 뒤집었으면 **런타임으로 못 태우는 배선**이 됐을 것이다.
+    "components/sales/OrgTree.tsx",
     // ── 2026-08-23 R6 — **부채 사유를 재보니 가리킨 대상이 틀렸다** ──
     //   *"단독 렌더에 목록 조회·지도 목이 필요"* 라 적혀 있었으나, `DetailModal` 이 받는 것은
     //   `item`·`locale`·`onClose` 뿐이다. 실제로 필요한 목은 **상세 응답 하나**였고
@@ -745,12 +750,14 @@ describe("모달 접근성 — 포커스 생명주기(2026-08-22 부분 상환)"
    *   사유와 함께 여기 등재하게 된다.
    */
   const FOCUS_UNWIRED: Record<string, string> = {
-    // ★2026-08-23 R6 — `AuctionWorkspace` 를 상환하며 **적힌 사유가 실제보다 컸음**이 드러났다.
-    //   *"목록 조회·지도 목이 필요"* 라 적혀 있었으나 실제로 필요한 목은 **상세 응답 하나**였다.
-    //   사유를 물려받아 믿으면 부채가 실제보다 비싸 보이고, 비싸 보이는 부채는 영원히 미뤄진다.
-    //   → 남은 항목의 사유도 **착수 전에 재라.**
-    "components/sales/OrgTree.tsx":
-      "마운트 즉시 /org/tree·/org/context 를 조회해야 시트가 열린다(aria-modal 2곳). 조직 픽스처를 세운 뒤 배선한다",
+    // ★2026-08-24 — **비었다.** 마지막 두 건이 각각 다른 PR 로 상환되며 만난 자리다.
+    //   `AuctionWorkspace`(#780) · `OrgTree`(이 PR) 둘 다 **적힌 사유가 실제보다 컸다** —
+    //   전자는 *"목록 조회·지도 목이 필요"* 였으나 실제로는 상세 응답 하나였고,
+    //   후자는 조직 목 하나로 시트에 닿았다. 사유를 물려받아 믿으면 부채가 실제보다
+    //   비싸 보이고, **비싸 보이는 부채는 영원히 미뤄진다** — 착수 전에 재라.
+    //
+    //   ★맵이 비어도 공허한 초록이 아니다: 아래 "덮이지 않은 표면 0" 계약이 **양성 방향**으로
+    //   감시하고, `surfaces.length > 8` 가드가 스캐너 사망을 함께 본다.
   };
 
   /**
