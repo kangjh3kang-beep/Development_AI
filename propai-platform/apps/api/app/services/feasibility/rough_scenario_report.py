@@ -401,6 +401,27 @@ def _cashflow_blocks(scenario: dict[str, Any]) -> list[Any]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# 값–라벨 정합 (R2)
+# ─────────────────────────────────────────────────────────────────────────────
+def _margin_is_met(scenario: dict[str, Any]) -> bool | None:
+    """목표 마진이 **실제로 달성됐는가** — 실제 분양수입이 목표매출에 닿았는지로만 판정한다.
+
+    ★`developer_profit_won`(총사업비 × 마진율) 자체로는 달성 여부를 알 수 없다 —
+      그 값은 매출을 보지 않으므로 **언제나 양수**다. 그래서 그 숫자만 크게 보여 주면
+      순이익이 마이너스인 사업도 성과처럼 읽힌다.
+
+    판정 근거가 없으면 `None` — 모르는 것을 "충족"으로도 "미달"로도 말하지 않는다(무목업).
+    """
+    summ = scenario.get("summary") or {}
+    margin = scenario.get("margin") or {}
+    rev = summ.get("total_revenue_won")
+    target = margin.get("target_revenue_won")
+    if not isinstance(rev, (int, float)) or not isinstance(target, (int, float)):
+        return None
+    return rev >= target
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # ④ 정본 ReportModel 조립(전문 사업성 IM 목차)
 # ─────────────────────────────────────────────────────────────────────────────
 def build_rough_scenario_report_model(
@@ -516,10 +537,20 @@ def build_rough_scenario_report_model(
     feas_rows: list[tuple[str, Any]] = [
         (_FEAS_ROW_LABELS.get(k, k), v) for k, v in feas_content.items()
     ]
+    # ★값–라벨 정합(R2): `developer_profit_won` 은 `총사업비 × 마진율` 이라 **매출을 전혀
+    #   보지 않는다** — 구조상 언제나 양수다. 그것을 "개발이익"이라 부르면, 순이익이 마이너스인
+    #   사업의 보고서에서도 성과처럼 읽힌다.
+    #   ★이 저장소는 같은 개념을 다른 곳에서 *"개발이익 = 분양수입 − 총투입원가"* 로 정의한다
+    #   (`ai/feasibility_interpreter` 프롬프트). 한 저장소가 같은 이름을 두 뜻으로 쓰면
+    #   읽는 사람이 어느 쪽도 믿을 수 없다. 값은 지우지 않고 **이름을 목표로 바로잡는다.**
+    _margin_met = _margin_is_met(scenario)
     feas_rows += [
-        ("개발이익(마진, 원)", margin.get("developer_profit_won")),
+        ("목표 개발이익(총사업비 × 마진율, 원)", margin.get("developer_profit_won")),
         ("마진율(총사업비 대비, %)", margin.get("rate_pct")),
         ("목표매출(역산, 원)", margin.get("target_revenue_won")),
+        # 목표 옆에 **실제**를 둔다 — 종전엔 순이익이 다른 표에 있어 대조가 안 됐다.
+        ("실제 순이익(원)", summ.get("net_profit_won")),
+        ("마진 충족여부", "충족" if _margin_met else ("미달" if _margin_met is False else None)),
     ]
     feas_blocks: list[Any] = [KVTableBlock(rows=feas_rows)]
     if any(cost_bd.get(k) is not None for k in ("land_won", "construction_won", "finance_won", "other_won")):
