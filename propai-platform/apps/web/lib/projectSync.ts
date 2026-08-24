@@ -16,6 +16,7 @@ import {
   type SiteAnalysisData,
 } from "@/store/useProjectContextStore";
 import { healPhantomAreaAggregates } from "@/lib/site-analysis-invariants";
+import { looksLikeAddress } from "@/lib/selection-integrity";
 import { useLandScheduleStore } from "@/store/useLandScheduleStore";
 import {
   SATONG_DOMINANT_CONSTRAINT_KEY,
@@ -206,6 +207,15 @@ function integrityViolation(
   const snapAddress = (
     snap.siteAnalysis as { address?: unknown } | null | undefined
   )?.address;
+  // ★주소 형태 검사 — 지역 비교만으로는 **주소가 아닌 값**을 못 잡는다.
+  //   `addressRegionMismatch` 는 토큰 추출에 실패하면 보수적으로 '일치'를 반환하므로,
+  //   엑셀 소유자 컬럼이 주소로 읽힌 값(실측: "◀ 전성결") 앞에서 침묵한다.
+  //   `selection-integrity` 가 세 신호를 쓰는 이유가 이것이다 — 여기서도 ①에만 기대지 않는다.
+  //   ★프로젝트 레코드 주소가 없어도 판정한다: 깨진 값은 비교 대상이 없어도 깨진 값이다.
+  //   ★위양성 실측: 프로덕션 20건의 주소 값 40개 중 비주소 판정은 **1건**(그 손상 건)뿐이었다.
+  if (typeof snapAddress === "string" && snapAddress.trim() && !looksLikeAddress(snapAddress)) {
+    return `분석 주소("${snapAddress}")가 주소 형태가 아니다 — 데이터 손상`;
+  }
   if (
     recordAddress &&
     typeof snapAddress === "string" &&
