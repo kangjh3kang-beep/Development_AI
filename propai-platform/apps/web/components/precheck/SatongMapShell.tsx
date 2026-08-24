@@ -117,6 +117,10 @@ import {
   selectionMismatchesProject,
 } from "./satong-project-connect";
 import { classifySelection, selectionIntegrityNotice } from "@/lib/selection-integrity";
+import {
+  selectionContaminationKey,
+  trackSelectionContamination,
+} from "@/lib/growth/selection-contamination";
 
 // ★UX 트랙 D3(지도 높이 반응형 — 진단G 실측): 종전 고정 720px는 모바일에서 지도가
 //   화면 대부분을 점유했다. clamp(하한, 선호값, 상한) — 60dvh를 선호하되 satong-map-z.ts
@@ -799,10 +803,27 @@ export function SatongMapShell({
   //   떨어진 6필지가 "통합 5,781㎡"로 묶여 있었고, 소유자명(`◀ 전성결`)이 주소 칸에
   //   들어온 프로젝트도 있었다. ★막지 않고 고지한다 — 원거리 묶음은 후보지 비교라는
   //   정당한 워크플로우일 수 있다(290km 건이 그렇게 보인다).
-  const integrityNotice = useMemo(
-    () => selectionIntegrityNotice(classifySelection(selectedParcels)),
+  const selectionIntegrity = useMemo(
+    () => classifySelection(selectedParcels),
     [selectedParcels],
   );
+  const integrityNotice = useMemo(
+    () => selectionIntegrityNotice(selectionIntegrity),
+    [selectionIntegrity],
+  );
+  // ★관측(2026-08-24) — 고지는 위에서 하지만 **빈도는 아무도 몰랐다.**
+  //   빈도를 모르면 "이미 오염된 프로젝트를 정리할지"를 근거 없이 결정하게 된다.
+  //   ★렌더 중이 아니라 effect 에서 보낸다(적재는 부작용이다). 같은 오염을 재렌더마다
+  //     다시 세지 않도록 판정 서명으로 1회만 보낸다 — 필지가 바뀌어 판정이 달라지면
+  //     그건 **새 사실**이므로 다시 보낸다.
+  const contaminationSentKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    const key = selectionContaminationKey(selectionIntegrity);
+    if (contaminationSentKeyRef.current === key) return;
+    contaminationSentKeyRef.current = key;
+    // route 는 null 로 넘긴다 — collector 가 `window.location` 에서 채운다(SSOT 한 곳).
+    trackSelectionContamination(selectionIntegrity, null);
+  }, [selectionIntegrity]);
   const [uploadStatus, setUploadStatus] = useState<"idle" | "loading" | "error">("idle");
   const [uploadNote, setUploadNote] = useState("");
   // ★UX 트랙 C4(사용자 지적): 다필지 엑셀 업로드는 최대 180초가 걸릴 수 있는데 종전엔
@@ -2598,7 +2619,39 @@ export function SatongMapShell({
         //   드롭다운 전환 시 원 버그리포트 증상이 재현된다. 구 payload(필드 부재)는 undefined
         //   → null(사용자 소유, 안전측)로 취급.
         selectionOwnerProjectIdRef.current = stored.ownerProjectId ?? null;
-        commitParcelsToContext(stored.parcels); // sessionStorage 경로는 기존대로 SSOT 동기화
+        // ★★교차 프로젝트 오염 차단(2026-08-24 · 사용자 스크린샷) ──────────────────
+        //
+        //   증상: 한 화면에서 연결 프로젝트는 "오산시 내삼미동 외 76필지"(헤더 통합 77필지·
+        //   86,755㎡)인데 선택 필지는 **모산동 123-1 외 6필지**였다. 두 프로젝트가 겹쳐 보였다.
+        //
+        //   기전: 위 `restorable` 은 `hasConnectedProject` 만 본다 — **미러의 소유 프로젝트가
+        //   지금 연결된 프로젝트인지 묻지 않는다.** 그래서 남의 선택이 복원되고, 그대로
+        //   `commitParcelsToContext` 로 **현재 프로젝트에 써 넣어졌다**(화면 오염 → 데이터 오염).
+        //
+        //   ★A→B **전환** 이펙트는 이 오염을 정확히 막는다(선택·미러 즉시 무효화).
+        //     그런데 그 이펙트는 `isFirstRun` 이면 반환한다 — **다른 페이지에서 프로젝트를
+        //     바꾼 뒤 이 화면으로 오면 "전환"이 아니라 "첫 실행"** 이라 아무것도 안 지운다.
+        //     전환은 잠겼고 **신규 마운트가 안 잠겨** 있었다(계약 비대칭).
+        //
+        //   처방: 필지 **추가** 경로가 이미 쓰는 **같은 산식**(`selectionMismatchesProject` —
+        //   지역 단위 비교, 번지 차이 무시)으로 대조한다. 산식을 새로 만들지 않는다.
+        //   ★**막지 않고 고지한다** — 원거리 묶음이 후보지 비교라는 정당한 워크플로우일 수
+        //     있다는 기존 결정을 따른다. 선택은 화면에 남기되 **프로젝트에는 커밋하지 않는다.**
+        //     소유권도 사용자로 돌려, 이후 드롭다운 전환이 이 선택을 지우지 않게 한다.
+        const restoredProjectAddress =
+          projects.find((p) => p.id === projectId)?.address || storeSiteAnalysis?.address;
+        const foreignToProject =
+          !!projectId &&
+          selectionMismatchesProject(restoredProjectAddress, stored.parcels[0]?.address);
+        if (foreignToProject) {
+          selectionOwnerProjectIdRef.current = null; // 이 선택의 소유자는 프로젝트가 아니다
+          setConnectNotice(
+            "이전에 고른 필지가 연결 프로젝트와 다른 지역이라 프로젝트에 반영하지 않았습니다. " +
+              "이대로 쓰려면 '새 프로젝트로 등록'을, 프로젝트 필지를 보려면 선택을 비우세요.",
+          );
+        } else {
+          commitParcelsToContext(stored.parcels); // sessionStorage 경로는 기존대로 SSOT 동기화
+        }
         const focused = stored.parcels.find((parcel) => parcel.lat != null && parcel.lon != null);
         if (focused?.lat != null && focused.lon != null) {
           setFocusTarget({ lat: focused.lat, lon: focused.lon, label: focused.address });
