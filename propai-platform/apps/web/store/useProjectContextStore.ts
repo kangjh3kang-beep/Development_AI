@@ -1130,7 +1130,27 @@ export const useProjectContextStore = create<ProjectContextState>()(
           : prev.snapshots;
         // 대상 프로젝트의 이전 분석이 있으면 복원, 없으면 초기화.
         // 구 hydrated 스냅샷 shape 호환을 위해 모든 필드에 ?? 폴백을 둔다.
-        const snap = snapshots[id];
+        const rawSnap = snapshots[id];
+        // ★전환 분기 오염 가드 — 같은 함수의 **같은 id 재바인딩 분기에는 이 검사가 있는데**
+        //   실제 프로젝트 전환에는 없었다(형제 비대칭). 그래서 `snapshots[id]` 에 다른 지역의
+        //   분석이 실려 있으면 전환하는 순간 **무검사로 복원**돼, 헤더가 "프로젝트 A · 주소 B"
+        //   처럼 갈린 상태를 그대로 그렸다(사용자 신고 화면의 기전).
+        //   ★판별자는 **지역 단위**(`addressRegionMismatch`)를 쓴다 — 번지까지 엄격하게 보면
+        //     "인접 필지를 추가해 대표 번지가 바뀐" 정상 작업의 캐시까지 날려 사용자가 한 분석을
+        //     잃는다. 막으려는 것은 **다른 지역**이 실려 오는 것이다.
+        //   ★산식·정화는 복제하지 않는다 — 기존 `purifyPollutedSnapshot` 을 그대로 태운다.
+        const snapSiteAddress = (
+          (rawSnap?.siteAnalysis as { address?: unknown } | null | undefined)?.address
+        );
+        const snapPolluted =
+          !!address &&
+          typeof snapSiteAddress === "string" &&
+          addressRegionMismatch(address, snapSiteAddress);
+        const snap = snapPolluted
+          ? (purifyPollutedSnapshot(
+              rawSnap as unknown as Record<string, unknown>,
+            ) as unknown as typeof rawSnap)
+          : rawSnap;
         const seededSite: SiteAnalysisData | null = address
           ? {
               estimatedValue: null,

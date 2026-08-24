@@ -19,6 +19,53 @@ import structlog
 logger = structlog.get_logger(__name__)
 
 
+# ── 발급 재사용 캐시 — **유료 길목 하나**에 둔다 ────────────────────────────────
+#
+# ★왜 여기인가(2026-08-24). 등기부 발급은 민원캐시(선불 잔액)를 차감한다. 그런데 이 층에는
+#   캐시가 전혀 없었고(실측: 이 파일에 cache 참조 0건), 위층 분석 캐시는 **성공한 분석만**
+#   저장한다. 그래서 ①해석이 실패한 필지 ②`/registry/bulk` 재실행 이 **매번 재발급**됐다.
+#   위층에서만 고치면 `bulk` 이 남는다 — 저장소 정책대로 **한 곳을 고쳐 전역이 따라오게** 한다.
+#
+# ★신선도·개인정보: 인메모리 전용, TTL 6시간, 항목 수 상한. 등기부 본문·PDF 는 **영속화하지
+#   않는다**(`charge_idempotency.py` 가 경고한 "무기한 쌓이는 등기부 사본"을 만들지 않기 위함).
+#   등기는 시점 문서라 짧은 창이 안전하다.
+#
+# ★탈출구: `force_reissue=True` 면 캐시를 건너뛴다. 발급본이 쓸모없었던 경우(이미지 PDF 등)에
+#   갇히지 않아야 한다 — 돈이 드는 행위라 호출측이 명시할 때만.
+_ISSUE_TTL_S = 6 * 3600.0
+_ISSUE_MAX = 200                      # PDF(base64)를 들고 있으므로 개수를 묶는다
+_ISSUE_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+
+
+def _issue_key(pnu, address, unique_no, realty_type, dong, ho) -> str:
+    """같은 물건이면 같은 키. 구분·동·호가 다르면 **다른 물건**이므로 키도 달라야 한다."""
+    base = " ".join((address or "").split()).strip() or (pnu or "") or (unique_no or "")
+    return f"{base}|{realty_type or '2'}|{dong or ''}|{ho or ''}"
+
+
+def _issue_cache_get(key: str) -> dict[str, Any] | None:
+    hit = _ISSUE_CACHE.get(key)
+    if not hit:
+        return None
+    import time as _t
+
+    if (_t.time() - hit[0]) >= _ISSUE_TTL_S:
+        _ISSUE_CACHE.pop(key, None)
+        return None
+    return hit[1]
+
+
+def _issue_cache_put(key: str, value: dict[str, Any]) -> None:
+    import time as _t
+
+    # 상한 초과 시 가장 오래된 항목부터 버린다(무한 성장 방지).
+    if len(_ISSUE_CACHE) >= _ISSUE_MAX:
+        for k in sorted(_ISSUE_CACHE, key=lambda k: _ISSUE_CACHE[k][0])[: max(1, _ISSUE_MAX // 10)]:
+            _ISSUE_CACHE.pop(k, None)
+    _ISSUE_CACHE[key] = (_t.time(), value)
+
+
+
 def _config() -> dict[str, str]:
     return {
         "url": (os.getenv("REGISTRY_API_URL") or "").strip(),
@@ -118,6 +165,48 @@ class RegistryService:
         realty_type: str | None = None,
         dong: str | None = None,
         ho: str | None = None,
+        force_reissue: bool = False,
+    ) -> dict[str, Any]:
+        """발급 **재사용 래퍼** — 실제 조회는 `_issue_uncached`.
+
+        ★래퍼로 감싼 이유: 실제 조회 함수에는 반환 지점이 열 곳이 넘는다. 각 지점에 캐시
+          저장을 손으로 붙이면 **반드시 하나를 빠뜨린다**(그 하나가 곧 재과금 경로가 된다).
+          들어오고 나가는 길을 하나로 만들어 구조적으로 못 빠뜨리게 한다.
+
+        ★`pdf_input` 경로는 사용자가 올린 파일을 파싱할 뿐 **무과금**이라 캐시를 태우지 않는다.
+        ★성공한 발급만 보관한다 — 실패는 받은 것이 없으므로 재시도가 새로 발급하는 것이 옳다.
+        """
+        if pdf_input:
+            return await self._issue_uncached(
+                pnu=pnu, address=address, unique_no=unique_no, pdf_input=pdf_input,
+                realty_type=realty_type, dong=dong, ho=ho,
+            )
+
+        key = _issue_key(pnu, address, unique_no, realty_type, dong, ho)
+        if not force_reissue:
+            hit = _issue_cache_get(key)
+            if hit is not None:
+                # 재사용 사실을 숨기지 않는다 — 위층·화면이 그 사실을 말할 수 있어야 한다.
+                logger.info("등기부 발급 재사용(무과금)", key=key[:60])
+                return {**hit, "reused_issue": True}
+
+        out = await self._issue_uncached(
+            pnu=pnu, address=address, unique_no=unique_no, pdf_input=None,
+            realty_type=realty_type, dong=dong, ho=ho,
+        )
+        if isinstance(out, dict) and out.get("status") == "ok":
+            _issue_cache_put(key, out)
+        return out
+
+    async def _issue_uncached(
+        self,
+        pnu: str | None = None,
+        address: str | None = None,
+        unique_no: str | None = None,
+        pdf_input: bytes | str | None = None,
+        realty_type: str | None = None,
+        dong: str | None = None,
+        ho: str | None = None,
     ) -> dict[str, Any]:
         """단건 등기부 조회/발급/파싱.
 
@@ -133,6 +222,7 @@ class RegistryService:
         item = {"pnu": pnu, "address": address, "unique_no": unique_no}
 
         # 3순위 (우선): 직접 전달된 PDF 파싱 처리
+        # ★이 경로는 **무과금**(사용자가 올린 파일)이라 재사용 캐시를 태우지 않는다.
         if pdf_input:
             from app.services.registry.registry_pdf_parser import parse_registry_pdf
 
