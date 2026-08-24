@@ -118,3 +118,76 @@ class Test배선:
         assert re.search(r'"address_resolution"\s*:', src), (
             "해상도를 응답에 싣지 않으면 소비처가 '이 주소를 믿어도 되는지' 알 수 없다"
         )
+
+
+class Test시군구걸침:
+    """★D8 전역 스윕이 드러낸 **인접 결함** — 조례를 첫 필지 것으로 조용히 정한다.
+
+    스윕은 `auto_zoning.py:1964`(`up_addr`)를 같은 패턴으로 집었는데, 재보니 **D8 결함은
+    아니었다** — 그 값은 `_extract_sigungu` 로만 가고 시군구는 동보다 **거친** 단위라
+    동 단위 주소로도 같은 답('오산시')을 준다(실측). **위양성이다.**
+
+    그런데 같은 자리에서 **다른 진짜 결함**이 나왔다: `next(...)` 가 **첫 필지**의 시군구를
+    뽑아 **전체 조례**에 쓴다. 필지가 시군구를 걸치면 나머지 필지에 **틀린 조례**가 적용된다.
+
+    ★실측(같은 용도지역·면적, 시군구만 변경 — `far_tier_service.calc_upzoning`):
+        오산시 250%  ·  **성남시 280%**  ·  강남구 250%  ·  미확보 300%(법정 폴백=과대)
+    → **30%p 격차**. 숫자가 틀렸다기보다 **"누구의 조례인지"를 말하지 않는 것**이 결함이다.
+    """
+
+    def test_시군구가_갈리면_사실을_말한다(self) -> None:
+        from apps.api.app.utils.pnu import sigungu_spread
+        spread = sigungu_spread([
+            {"address": "경기도 오산시 내삼미동 467-1"},
+            {"address": "경기도 성남시 분당구 정자동 1-1"},
+        ])
+        assert spread["count"] == 2, spread
+        assert spread["mixed"] is True
+        assert spread["disclosure"], "걸침을 감지했는데 고지 문구가 없다"
+        assert "오산시" in spread["disclosure"] and "성남시" in spread["disclosure"], (
+            f"어느 시군구들인지 말하지 않는다: {spread['disclosure']}"
+        )
+
+    def test_단일_시군구면_고지하지_않는다(self) -> None:
+        """★특이도 — 정상 케이스에 경고를 붙이면 그것도 결함이다."""
+        spread = sigungu_spread_of([
+            {"address": "경기도 오산시 내삼미동 467-1"},
+            {"address": "경기도 오산시 내삼미동 468"},
+        ])
+        assert spread["count"] == 1 and spread["mixed"] is False
+        assert not spread["disclosure"], f"단일 시군구인데 경고를 낸다: {spread}"
+
+    def test_두_모집단이_갈린다(self) -> None:
+        single = sigungu_spread_of([{"address": "경기도 오산시 내삼미동 467-1"}])
+        multi = sigungu_spread_of([
+            {"address": "경기도 오산시 내삼미동 467-1"},
+            {"address": "서울특별시 강남구 논현동 1-1"},
+        ])
+        assert single["mixed"] != multi["mixed"], "걸침 유무가 같은 값을 낸다"
+
+    def test_주소_없으면_세지_않는다(self) -> None:
+        s = sigungu_spread_of([{"address": ""}, {"address": None}])
+        assert s["count"] == 0 and s["mixed"] is False and not s["disclosure"]
+
+    def test_배선_종상향이_걸침_고지를_싣는다(self) -> None:
+        """★배선 락 — 순수 함수만 잠그면 호출부가 안 써도 초록이다(이 세션 실증)."""
+        import sys
+        from pathlib import Path as _P
+        sys.path.insert(0, str(_P(__file__).resolve().parents[3] / "tests"))
+        from _scan_guard import code_lines, read  # noqa: PLC0415
+
+        src = code_lines(read(
+            _P(__file__).resolve().parents[1] / "routers" / "auto_zoning.py",
+            must_exist_reason="auto_zoning 라우터가 사라졌다"))
+        assert "calc_upzoning" in src, "대상 파일이 틀렸다(조회기 사망 대조군)"
+        assert re.search(r"up_spread\s*=\s*sigungu_spread\(", src), (
+            "종상향이 시군구 걸침을 재지 않는다 — 첫 필지 조례가 전체에 조용히 적용된다"
+        )
+        assert re.search(r'upzoning\["sigungu_disclosure"\]', src), (
+            "걸침을 감지하고도 응답에 고지하지 않는다(무언 적용)"
+        )
+
+
+def sigungu_spread_of(parcels):
+    from apps.api.app.utils.pnu import sigungu_spread
+    return sigungu_spread(parcels)

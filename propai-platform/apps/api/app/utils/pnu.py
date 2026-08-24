@@ -92,3 +92,51 @@ def pick_representative_parcel(parcels: list[dict] | None) -> dict | None:
         if address_resolution(p.get("address"), p.get("pnu")) == RESOLUTION_JIBUN:
             return p
     return next((p for p in items if (p.get("address") or "").strip()), None)
+
+
+# ── 시군구 걸침 ─────────────────────────────────────────────────────────────
+# ★D8 전역 스윕이 드러낸 **인접 결함**(2026-08-25). 스윕은 `auto_zoning.py:1964` 를 D8 과
+#   같은 패턴으로 집었지만 재보니 **D8 결함은 아니었다** — `_extract_sigungu` 는 동 단위
+#   주소로도 같은 답('오산시')을 준다(실측). **위양성이었다.**
+#
+#   그런데 같은 자리에서 **다른 진짜 결함**이 나왔다: 조례 시군구를 **첫 필지**에서 뽑아
+#   전체에 쓴다. 필지가 시군구를 걸치면 나머지에 **틀린 조례**가 적용된다.
+#
+#   실측(같은 용도지역·면적, 시군구만 변경 — `far_tier_service.calc_upzoning`):
+#       오산시 250%  ·  성남시 280%  ·  강남구 250%  ·  미확보 300%(법정 폴백=과대)
+#   → **30%p 격차**. 숫자를 몰래 고르는 것이 아니라 **"누구의 조례인지"를 말하게** 한다.
+
+_SIGUNGU_RE = re.compile(r"([가-힣]+(?:특별시|광역시|특별자치시|특별자치도|도))?\s*"
+                         r"([가-힣]+(?:시|군|구))")
+
+
+def _sigungu_of(address: str | None) -> str | None:
+    addr = (address or "").strip()
+    if not addr:
+        return None
+    m = _SIGUNGU_RE.search(addr)
+    return m.group(2) if m else None
+
+
+def sigungu_spread(parcels: list[dict] | None) -> dict:
+    """필지들이 **몇 개 시군구에 걸쳐 있는지**와 고지 문구.
+
+    반환 `disclosure` 는 **걸쳐 있을 때만** 채운다 — 정상 케이스에 경고를 붙이면
+    그것도 결함이다(가드의 위양성).
+    """
+    names: list[str] = []
+    for p in (parcels or []):
+        if not isinstance(p, dict):
+            continue
+        sg = _sigungu_of(p.get("address"))
+        if sg and sg not in names:
+            names.append(sg)
+    mixed = len(names) > 1
+    disclosure = ""
+    if mixed:
+        disclosure = (
+            f"필지가 {len(names)}개 시군구({' · '.join(names)})에 걸쳐 있습니다. "
+            f"조례 기준 용적률은 대표 시군구 '{names[0]}' 것을 적용했으므로, "
+            "다른 시군구 필지에는 실제와 다를 수 있습니다(시군구별 개별 검토 필요)."
+        )
+    return {"count": len(names), "names": names, "mixed": mixed, "disclosure": disclosure}

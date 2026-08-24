@@ -19,6 +19,7 @@ from apps.api.app.utils.pnu import (
     jibun_from_pnu,
     parcel_display_address,
     pick_representative_parcel,
+    sigungu_spread,
 )
 
 logger = logging.getLogger(__name__)
@@ -1986,6 +1987,12 @@ async def integrated_analysis(req: IntegratedAnalysisRequest):
             # 시군구: 대표(첫 유효주소) 필지 주소로 도출(조례 용적률 resolver 입력).
             up_addr = next((p.get("address") for p in enriched if p.get("address")), "")
             up_sigungu = _extract_sigungu({"address": up_addr})
+            # ★D8 전역 스윕이 드러낸 인접 결함(2026-08-25) — 조례 시군구를 **첫 필지**에서
+            #   뽑아 전체에 쓴다. 필지가 시군구를 걸치면 나머지에 **틀린 조례**가 적용된다.
+            #   실측(같은 용도지역·면적, 시군구만 변경): 오산시 250% · 성남시 280% ·
+            #   강남구 250% · 미확보 300%(법정 폴백=과대) → **30%p 격차**.
+            #   ★숫자를 몰래 고르지 않는다 — **누구의 조례인지 말한다**(걸칠 때만).
+            up_spread = sigungu_spread(enriched)
             # 통합 special_districts 집계(규제/특수구역 → 종상향 제약). 필지별 합집합(중복 제거).
             agg_sd: list = []
             for p in enriched:
@@ -2010,6 +2017,14 @@ async def integrated_analysis(req: IntegratedAnalysisRequest):
             if isinstance(upzoning, dict):
                 upzoning_scenarios = upzoning.get("scenarios", []) or []
                 potential_far_range = upzoning.get("potential_far_range")
+                # 걸쳐 있을 때만 고지한다(정상 케이스에 경고를 붙이면 그것도 결함이다).
+                upzoning["sigungu_basis"] = {
+                    "applied": up_sigungu,
+                    "spread_count": up_spread["count"],
+                    "spread_names": up_spread["names"],
+                }
+                if up_spread["disclosure"]:
+                    upzoning["sigungu_disclosure"] = up_spread["disclosure"]
         except Exception as e:  # noqa: BLE001 — 종상향 산출 실패는 통합집계를 손상하지 않는다(정직 null).
             logger.warning("통합 종상향(upzoning) 산출 실패: %s", str(e)[:160])
             upzoning = {}
