@@ -1893,6 +1893,38 @@ class ComprehensiveAnalysisService:
 # 다필지 통합 컨텍스트 — 플랫폼 공용 진입점(SSOT)
 # ────────────────────────────────────────────
 
+#: 다필지 축약 관측의 **구별된** event_type (2026-08-23 · 사용자 신고 대응).
+#  ★F4a: severity·recommended_action 을 담지 않는다(자동 변이 루프가 조치신호로 읽는다).
+MULTIPARCEL_COLLAPSE_EVENT = "multiparcel_collapse_observation"
+
+
+def _record_multiparcel_collapse(input_count: int, usable_count: int, missing_count: int) -> None:
+    """다필지 입력이 **몇 필지로 축약됐는지** 영속 관측한다.
+
+    ★왜(사용자 신고 2026-08-23): *"다필지를 넣었는데 단필지만 분석된다"* 가 반복 신고됐는데
+      **빈도도 사유도 잴 수 없었다**. 특히 전 필지 면적 미확보 경로(`if not items: return None`)
+      는 로그조차 없는 **완전 침묵**이었다 — `_area_missing` 을 이미 계산해 놓고 버렸다.
+    ★성공(축약 없음)도 남긴다 — 그래야 **분모**를 알고 "몇 건 중 몇 건"을 센다.
+    ★단일필지 입력은 축약이 아니다(위양성 방지) — 원래 통합 대상이 아니다.
+    """
+    collapsed = input_count > 1 and usable_count < input_count
+    try:
+        from app.services.growth import capture_service
+
+        capture_service.record_event(MULTIPARCEL_COLLAPSE_EVENT, {
+            "surface": "api",
+            "service": "integrated_context",
+            "payload": {
+                "collapsed": collapsed,
+                "input_count": input_count,
+                "usable_count": usable_count,
+                "missing_count": missing_count,
+            },
+        })
+    except Exception:  # noqa: BLE001 — 관측이 분석을 깨뜨리면 안 된다.
+        pass
+
+
 async def build_integrated_context(parcels: list[dict[str, Any]] | None) -> dict[str, Any] | None:
     """필지목록(면적·용도지역 보유) → 면적가중 통합 용도/실효한도/GFA 집계.
 
@@ -1940,7 +1972,15 @@ async def build_integrated_context(parcels: list[dict[str, Any]] | None) -> dict
         for q in _normalized
         if not ((q.get("area_sqm") or 0) > 0) and (q.get("pnu") or q.get("address"))
     ]
+    # ★침묵 금지(2026-08-23): 입력이 몇 필지였고 몇 필지가 살아남았는지를 **항상** 남긴다.
+    #   종전엔 아래 `return None` 에 로그조차 없어, 다필지 입력이 통째로 사라져도 흔적이 없었다.
+    _record_multiparcel_collapse(len(_normalized), len(items), len(_area_missing))
     if not items:
+        if _normalized:
+            logger.warning(
+                "다필지 통합 불가 — 전 필지 면적 미확보(단일 경로로 폴백)",
+                input_count=len(_normalized), missing_count=len(_area_missing),
+            )
         return None
     try:
         from app.services.zoning.special_parcel import _aggregate_integrated_zoning

@@ -202,6 +202,9 @@ type BoundaryFeature = {
   age_status?: string | null;
   /** WS-D 개발여력 — 서버 산정 실효/현황 용적률(%). 미상 None. */
   effective_far_pct?: number | null;
+  /** 법정 한도·근거 계층 — 실효값이 '왜 그 값인지'를 화면이 말하기 위한 재료(2026-08-23). */
+  legal_far_pct?: number | null;
+  far_basis?: string | null;
   current_far_pct?: number | null;
   effective_bcr_pct?: number | null;
   total_floor_area_sqm?: number | null;
@@ -498,7 +501,12 @@ export interface OverlayNoteCounts {
   ageSkippedBulk?: number;
 }
 
-/** 노후도 무자료 사유 세분 문구(공용) — "나대지 3·미준공 2·조회실패 9·대량생략 41". 사유 0건이면 "". */
+/** 노후도 무자료 사유 세분 문구(공용) — "나대지추정 3·미준공 2·조회실패 9·대량생략 41". 사유 0건이면 "".
+ *  ★"나대지"가 아니라 "나대지**추정**"이다(2026-08-23) — 백엔드가 이 상태(`no_building`)를
+ *    분류하는 근거는 건축물대장 **무자료**이고, 같은 근거에서 연면적은 보수적으로 `None` 으로
+ *    둔다(집합건물 대지권 비대표지번·대장 미등재·생성지연에서도 무자료가 나온다).
+ *    한 시스템이 같은 사실을 두고 여기서는 단정하고 저기서는 모른다고 하면 안 된다
+ *    — 필지 상세 팝오버도 "나대지 추정(건축물대장 무자료)" 으로 함께 맞췄다. */
 export function buildAgeGapDetail(counts: {
   ageNoBuilding?: number;
   ageNoApprovalDate?: number;
@@ -506,7 +514,7 @@ export function buildAgeGapDetail(counts: {
   ageSkippedBulk?: number;
 }): string {
   const parts: string[] = [];
-  if (counts.ageNoBuilding) parts.push(`나대지 ${counts.ageNoBuilding}`);
+  if (counts.ageNoBuilding) parts.push(`나대지추정 ${counts.ageNoBuilding}`);
   if (counts.ageNoApprovalDate) parts.push(`미준공 ${counts.ageNoApprovalDate}`);
   if (counts.ageLookupFailed) parts.push(`조회실패 ${counts.ageLookupFailed}`);
   if (counts.ageSkippedBulk) parts.push(`대량생략 ${counts.ageSkippedBulk}`);
@@ -881,7 +889,11 @@ function pointResultToFeature(parcel: ParcelAtPointResult): SatongMapFeature {
   };
 }
 
-function boundaryFeatureToMapFeature(feature: BoundaryFeature): SatongMapFeature {
+/** 경계 응답(snake_case) → 런타임 필드(camelCase) 변환 — **서버 값이 화면으로 들어오는 유일한 문**.
+ *  ★export 하는 이유: 이 매핑이 실서버 경로인데 종전에는 **아무 테스트도 태우지 않았다**
+ *    (변이로 확인: 필드 매핑 줄을 지워도 전부 초록이었다). 컴포넌트를 통째로 띄우지 않고
+ *    순수 함수로 잠글 수 있게 공개한다 — 한 줄이 빠지면 그 값은 화면에 **영영 안 온다**. */
+export function boundaryFeatureToMapFeature(feature: BoundaryFeature): SatongMapFeature {
   // 좌표는 서버가 준 값만 통과시킨다(현재 /zoning/parcel-boundaries는 per-feature 좌표 없음).
   // ★대표점(경계상자 중심) 파생좌표는 여기서 만들지 않는다 — 만들면 역전파(onBoundaryEnriched)를
   //   타고 프로젝트 SSOT(/analysis·산출물)의 정본 필지좌표로 영속돼, 근사좌표가 "좌표미상" 분기를
@@ -903,6 +915,8 @@ function boundaryFeatureToMapFeature(feature: BoundaryFeature): SatongMapFeature
     buildingAgeYears: feature.building_age_years ?? null,
     ageStatus: feature.age_status ?? null,
     effectiveFarPct: feature.effective_far_pct ?? null,
+    legalFarPct: feature.legal_far_pct ?? null,
+    farBasis: feature.far_basis ?? null,
     currentFarPct: feature.current_far_pct ?? null,
     effectiveBcrPct: feature.effective_bcr_pct ?? null,
     // ★W1 지배 제약 — 여기가 데이터 유입점(경계 응답만 이 값을 가진다). 이 한 줄이 빠지면

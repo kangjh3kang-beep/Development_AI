@@ -40,11 +40,19 @@ type Feature = {
 };
 type Adjacency = { contiguous: boolean | null; components: number | null; note: string };
 type Neighbor = { pnu: string; jimok: string; is_road: boolean; geometry: any };
+/** 해석되지 못하고 탈락한 입력 필지 — 서버가 사유와 함께 돌려준다(침묵 금지). */
+type DroppedParcel = { address: string; pnu?: string | null; reason: string; detail?: string | null };
+
 type Boundaries = {
   features: Feature[];
   center: { lat: number; lon: number } | null;
   total_area_sqm: number;
   parcel_count: number;
+  // ★입력 대비 결과 — `parcel_count`(=해석 성공 수)만 보면 6 을 넣고 5 가 나와도 "5필지"로만
+  //   보인다. 사용자에겐 "필지가 사라졌다"인데 화면은 아무 말도 안 했다.
+  requested_count?: number;
+  resolved_count?: number;
+  dropped?: DroppedParcel[];
   adjacency?: Adjacency;
   neighbors?: Neighbor[];       // A+D: 주변 필지·도로(벡터 지적도)
   merged_geometry?: any;        // B: 통합개발 외곽선
@@ -54,6 +62,11 @@ type Boundaries = {
     total_area_pyeong?: number | null;
     zone_types?: string[];
     zone_mixed?: boolean;
+    /** 면적합산 max 로 산출한 **우세** 용도지역. 동률(±5%)이나 규제성격 상이면
+     *  `"mixed_review_required"` — 서버가 **임의 단일화를 거부한** 신호다(값이 아니라 판정 보류). */
+    dominant_zone?: string | null;
+    dominant_basis?: string | null;
+    zone_mix?: Array<{ zone: string; area_sqm: number; share_pct?: number | null }> | null;
     effective_bcr_pct?: number | null;
     effective_far_pct?: number | null;
     total_gfa_sqm?: number | null;
@@ -228,6 +241,29 @@ export function ParcelBoundaryMap({
           </div>
         );
       })()}
+      {/* ★탈락 고지 — 넣은 필지가 결과에 없으면 그 사실을 말한다(2026-08-23).
+          `dropped` 가 빈 배열이면 아무것도 그리지 않는다(정상은 조용한 게 맞다). */}
+      {data && (data.dropped?.length ?? 0) > 0 && (
+        <div
+          data-testid="parcel-drop-notice"
+          role="status"
+          className="mb-2 flex items-start gap-2 rounded-lg border border-[var(--status-error)]/30 bg-[var(--status-error)]/10 px-3 py-2 text-[11px] font-semibold text-[var(--status-error)]"
+        >
+          <Scissors className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+          <span>
+            <b className="font-black">
+              {data.requested_count ?? "?"}필지 중 {data.dropped!.length}필지를 찾지 못했습니다
+            </b>
+            <span className="ml-1 font-semibold">
+              — {data.dropped!.slice(0, 3).map((d) => d.address || "(주소없음)").join(" · ")}
+              {data.dropped!.length > 3 ? " 외" : ""}
+              {". 아래 구획도·합계 면적은 "}
+              {data.resolved_count ?? data.parcel_count}필지 기준입니다. 지번을 확인하고 다시 지정하세요.
+            </span>
+          </span>
+        </div>
+      )}
+
       {/* 다필지 인접성(통합개발 가능 여부) */}
       {data && data.parcel_count >= 2 && data.adjacency && (
         <div className={`mb-2 inline-flex flex-wrap items-baseline gap-1 rounded-lg border px-3 py-2 text-[11px] font-semibold ${
@@ -253,6 +289,25 @@ export function ParcelBoundaryMap({
             {data.integrated_analysis.effective_far_pct != null && <span>실질 용적률 <b className="text-[var(--text-primary)]">{data.integrated_analysis.effective_far_pct}%</b></span>}
             {data.integrated_analysis.total_gfa_sqm != null && <span>가능 연면적 <b className="text-[var(--text-primary)]">{Math.round(data.integrated_analysis.total_gfa_sqm).toLocaleString()}㎡</b></span>}
             {data.integrated_analysis.zone_mixed && <span className="inline-flex items-center gap-1 text-[var(--status-warning)]"><AlertTriangle className="size-3.5 shrink-0" aria-hidden /> 용도지역 혼재({data.integrated_analysis.zone_types?.join("·")})</span>}
+            {/* ★우세 용도지역 — 서버가 **면적합산 max** 로 판정한 값(2026-08-24). 종전엔 화면 어디에도
+                이 값이 없었고, 스토어의 `dominantZoneCode` 는 이름과 달리 **첫 필지 값**이었다
+                (실측 사례에서 면적 우세와 **반대**를 가리켰다). 산식은 서버 하나뿐이다 — 여기서
+                재계산하지 않는다. `mixed_review_required` 는 **값이 아니라 판정 보류**이므로
+                그렇게 표기한다(임의로 한 지역을 고르지 않는다). */}
+            {data.integrated_analysis.dominant_zone === "mixed_review_required" ? (
+              <span data-testid="dominant-zone" className="inline-flex items-center gap-1 text-[var(--status-warning)]">
+                <HelpCircle className="size-3.5 shrink-0" aria-hidden /> 우세 용도지역 판정 보류(면적 동률·규제성격 상이)
+              </span>
+            ) : data.integrated_analysis.dominant_zone ? (
+              <span data-testid="dominant-zone">
+                우세 용도지역 <b className="text-[var(--text-primary)]">{data.integrated_analysis.dominant_zone}</b>
+                {(() => {
+                  const mix = data.integrated_analysis?.zone_mix ?? null;
+                  const hit = mix?.find((m) => m.zone === data.integrated_analysis?.dominant_zone);
+                  return hit?.share_pct != null ? ` (면적 ${hit.share_pct}%)` : "";
+                })()}
+              </span>
+            ) : null}
           </div>
           {data.integrated_analysis.development_methods && data.integrated_analysis.development_methods.length > 0 && (
             <p className="mt-1.5 text-[11px] text-[var(--text-secondary)]">

@@ -414,7 +414,16 @@ export function resolveBcrPct(site: ResolvableSite): number | undefined {
   return resolveBcrWithBasis(site)?.value;
 }
 
-// 대표(우세) 용도지역 — 통합 dominant_zone 우선, 없으면 단일 zoneCode. 미확보 시 null.
+// 대표 용도지역 — `dominantZoneCode` 가 있으면 그것, 없으면 `zoneCode`. 미확보 시 null.
+//
+// ★이름이 "dominant" 지만 **면적 우세를 보증하지 않는다**(2026-08-24 정정). 종전에는
+//   `dominantZoneCode` 자체가 선택 시점에 **첫 필지 값**으로 채워져 있어, 이 함수가
+//   돌려주는 값이 면적 우세와 **반대**인 경우가 실재했다(자연녹지 79% vs 보전관리 21%
+//   인데 보전관리를 반환). 지금은 혼재 선택이 그 필드를 **비우므로** 이 함수는 혼재에서
+//   `zoneCode`(=대표 필지)를 돌려준다 — **대표값이라는 사실은 참이다**.
+//   ★진짜 면적 우세는 서버 `_aggregate_integrated_zoning.dominant_zone` 뿐이고,
+//     그것은 동률(±5%)·규제성격 상이면 "mixed_review_required" 로 **판정을 보류**한다.
+//     이 함수는 그 판정을 대신하지 않는다.
 export function resolveDominantZone(site: ResolvableSite): string | null {
   if (!site) return null;
   return str(site.dominantZoneCode) ?? str(site.zoneCode);

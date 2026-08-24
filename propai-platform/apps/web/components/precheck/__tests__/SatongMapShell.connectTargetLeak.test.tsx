@@ -498,3 +498,107 @@ describe("SatongMapShell 세션 미러 소유권 영속(R2b HIGH — PROBE_P3, �
     ).not.toBeInTheDocument();
   });
 });
+
+// ── ★교차 프로젝트 하이드레이션 (2026-08-24 · 사용자 스크린샷) ──────────────────
+//
+//  사용자 화면: 연결 프로젝트는 **"오산시 내삼미동 외 76필지"**(헤더 통합 77필지·86,755㎡)인데
+//  선택 필지는 **모산동 123-1 외 6필지**였다. 두 프로젝트가 한 화면에 겹쳐 보였다.
+//
+//  ★기전: 하이드레이션의 `restorable` 은 `hasConnectedProject` 만 본다 — **미러의 소유
+//    프로젝트가 지금 연결된 프로젝트인지 묻지 않는다.** 남의 선택이 복원되고, 그대로
+//    `commitParcelsToContext` 로 **현재 프로젝트에 써 넣어졌다**(화면 오염 → 데이터 오염).
+//
+//  ★★A→B **전환** 이펙트는 이걸 정확히 막는데, `isFirstRun` 이면 반환한다. 즉 다른
+//    페이지에서 프로젝트를 바꾼 뒤 이 화면으로 오면 **"전환"이 아니라 "첫 실행"** 이라
+//    아무것도 안 지운다. **전환은 잠겼고 신규 마운트가 안 잠겨** 있었다(계약 비대칭).
+//
+//  ★위 PROBE_P3-A/B 는 미러에 소유권을 심지만 **항상 같은 프로젝트로** 마운트한다 —
+//    `미러 소유자 ≠ 연결 프로젝트` 조합이 이 스위트에 **한 번도 없었다**. 여기서 만든다.
+describe("SatongMapShell 하이드레이션 — 미러 소유자 ≠ 연결 프로젝트(교차 오염)", () => {
+  beforeEach(() => {
+    capturedMapPropsRef.current = null;
+    window.sessionStorage.clear();
+    act(() => {
+      useProjectStore.setState({
+        projects: [makeProject({ id: "proj-A", name: "오산시 내삼미동 외 76필지", address: "경기도 오산시 내삼미동" })],
+        syncing: false,
+      });
+    });
+  });
+
+  afterEach(() => {
+    window.sessionStorage.clear();
+    act(() => {
+      useProjectStore.setState({ projects: [], syncing: false });
+      useProjectContextStore.setState({
+        projectId: null, projectName: "", projectStatus: "", siteAnalysis: null,
+      });
+    });
+  });
+
+  /** 연결 프로젝트 A(내삼미동)에, 다른 프로젝트 B(모산동)의 선택이 미러에 남아 있는 상태. */
+  function mountWithForeignMirror() {
+    writeSatongMapSelection(
+      [{ id: "b-1", address: "경기도 화성시 모산동 123-1", source: "map" }],
+      "proj-B", // ★소유자는 **다른** 프로젝트다
+    );
+    act(() => {
+      useProjectContextStore.setState({
+        projectId: "proj-A",
+        projectName: "오산시 내삼미동 외 76필지",
+        projectStatus: "draft",
+        siteAnalysis: makeSite({ address: "경기도 오산시 내삼미동" }),
+      });
+    });
+    return render(<SatongMapShell locale="ko" />);
+  }
+
+  it("★남의 선택을 **현재 프로젝트에 커밋하지 않는다** — 화면 오염이 데이터 오염이 되던 지점", () => {
+    mountWithForeignMirror();
+    // 전제: 미러 경로로 하이드레이션은 됐다(선택 자체는 파괴하지 않는다 — 사용자 작업 보존).
+    expect(screen.getByText(/필지 선택 1건/)).toBeInTheDocument();
+    // ★핵심: 연결 프로젝트 A 의 siteAnalysis 가 B 의 필지로 덮이지 않아야 한다.
+    const site = useProjectContextStore.getState().siteAnalysis;
+    expect(site?.address, "A 의 주소가 B 로 덮였다 — 교차 오염이 데이터까지 갔다").toBe(
+      "경기도 오산시 내삼미동",
+    );
+    expect(
+      (site?.parcels ?? []).some((x) => String((x as { address?: string })?.address ?? "").includes("모산동")),
+      "B 의 필지가 A 의 프로젝트 컨텍스트에 커밋됐다",
+    ).toBe(false);
+  });
+
+  it("★무음이 아니다 — 왜 반영하지 않았는지와 빠져나갈 길을 말한다", () => {
+    mountWithForeignMirror();
+    const notice = screen.getByText(/연결 프로젝트와 다른 지역이라 프로젝트에 반영하지 않았습니다/);
+    expect(notice).toBeInTheDocument();
+    expect(notice.textContent, "빠져나갈 길을 안 준다").toMatch(/새 프로젝트로 등록/);
+  });
+
+  it("★대조군 — 같은 지역이면 종전대로 커밋한다(가드가 정상 경로를 막지 않는다)", () => {
+    // ★두 모집단이 **다른 결과**를 내야 잠금이다. 지역만 바꾼다(다른 조건은 동일).
+    writeSatongMapSelection(
+      [{ id: "a-1", address: "경기도 오산시 내삼미동 465-1", source: "map" }],
+      "proj-B", // 소유자는 여전히 다른 프로젝트지만 **지역이 같다** → 정상 워크플로우
+    );
+    act(() => {
+      useProjectContextStore.setState({
+        projectId: "proj-A",
+        projectName: "오산시 내삼미동 외 76필지",
+        projectStatus: "draft",
+        siteAnalysis: makeSite({ address: "경기도 오산시 내삼미동" }),
+      });
+    });
+    render(<SatongMapShell locale="ko" />);
+    expect(screen.getByText(/필지 선택 1건/)).toBeInTheDocument();
+    expect(
+      screen.queryByText(/연결 프로젝트와 다른 지역이라/),
+      "같은 지역인데 오염이라고 고지했다 — 위양성",
+    ).toBeNull();
+    const site = useProjectContextStore.getState().siteAnalysis;
+    expect(
+      (site?.parcels ?? []).length,
+      "같은 지역 선택이 커밋되지 않았다 — 가드가 정상 경로를 막았다",
+    ).toBeGreaterThan(0);
+  });
+});

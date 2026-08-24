@@ -507,15 +507,16 @@ const RUNTIME_CASES: RuntimeCase[] = [
  * 소스 파생 락은 이 파일들도 그대로 덮는다. 여기 없는 것은 "런타임까지" 태운다는 뜻이다.
  */
 const RUNTIME_UNCOVERED: Record<string, string> = {
+  "components/sales/OrgTree.tsx":
+    "이 표 대신 전용 스펙(`components/sales/__tests__/OrgTree.focusTrap.test.tsx`)이 렌더 경로를 " +
+    "직접 만들어 트랩을 태운다 — 조직 목이 필요해 공용 표에 넣기보다 그쪽이 정확하다.",
   "components/onboarding/OnboardingWizard.tsx":
     "자체 `visible` 상태를 localStorage 로 결정해 스스로 연다 — 부모가 주는 열림 인자가 없어 " +
     "밖에서 '열린 상태'를 만들 수 없다. 저장소 목을 세우면 가능하니 별도 rung 으로 남긴다.",
   "components/auction/AuctionWorkspace.tsx":
-    "상세 모달·라이트박스는 파일 안의 비-export 컴포넌트(DetailModal)라 단독 렌더가 불가하다. " +
-    "워크스페이스 전체를 띄우려면 목록 조회·지도까지 목이 필요해 이 계약의 범위를 넘는다.",
-  "components/sales/OrgTree.tsx":
-    "마운트 즉시 /org/tree·/org/context 를 조회하고 그 응답으로 트리를 그려야 시트를 열 수 있다. " +
-    "시트를 여는 경로까지 재현하려면 조직 픽스처가 필요해 별도 rung 으로 미룬다.",
+    "이 표 대신 전용 스펙(`components/auction/__tests__/AuctionWorkspace.focusTrap.test.tsx`)이 " +
+    "렌더 경로를 직접 만들어 트랩을 태운다 — 트랩이 둘 겹치는 표면이라 공용 표보다 그쪽이 정확하다. " +
+    "★종전 사유(『목록 조회·지도 목이 필요』)는 실측으로 기각됐다: 필요한 목은 상세 응답 하나였다.",
 };
 
 describe("모달 ESC 해제 계약 — 런타임 표", () => {
@@ -728,25 +729,35 @@ describe("모달 접근성 — 포커스 생명주기(2026-08-22 부분 상환)"
     "components/operations/DeskAppraisalModal.tsx",
     "components/operations/LandShareModal.tsx",
     "components/onboarding/OnboardingWizard.tsx",
+    // ── 2026-08-23 R5 — **렌더 경로를 먼저 만든 뒤** 배선했다 ──
+    //   `OrgTree` 는 마운트 즉시 /org/tree·/org/context 를 조회해야 시트에 닿는다.
+    //   목을 세워 여는 경로를 만들고(`OrgTree.focusTrap.test.tsx`) 그 위에 트랩을 잠갔다.
+    //   순서를 뒤집었으면 **런타임으로 못 태우는 배선**이 됐을 것이다.
+    "components/sales/OrgTree.tsx",
+    // ── 2026-08-23 R6 — **부채 사유를 재보니 가리킨 대상이 틀렸다** ──
+    //   *"단독 렌더에 목록 조회·지도 목이 필요"* 라 적혀 있었으나, `DetailModal` 이 받는 것은
+    //   `item`·`locale`·`onClose` 뿐이다. 실제로 필요한 목은 **상세 응답 하나**였고
+    //   (사진이 `/auction/detail` 에서 온다) 막고 있던 것은 **`export` 하나**였다.
+    //   ★이 표면은 트랩이 **둘 겹친다**(라이트박스가 상세 모달 안에 렌더된다) —
+    //     그래서 훅에 **중첩 양보** 규칙을 넣고, 전용 스펙이 실제 Tab 으로 태운다.
+    "components/auction/AuctionWorkspace.tsx",
   ] as const;
 
   /**
-   * 아직 배선하지 않은 표면 — **2건 남았다**(렌더 경로가 없어 배선을 뒤로 미룬 것).
+   * 아직 배선하지 않은 표면 — **1건 남았다**(`OrgTree` 는 별건 PR 이 상환 중이다).
    *
    * ★새 모달 표면이 생기면 아래 "덮이지 않은 표면 0" 계약이 먼저 실패하고, 그때 배선하거나
    *   사유와 함께 여기 등재하게 된다.
    */
   const FOCUS_UNWIRED: Record<string, string> = {
-    // ★2026-08-23 R3 — **계약 구멍을 고치자 이 둘이 새로 드러났다.**
-    //   종전 계약이 `RUNTIME_UNCOVERED`(단독 렌더 불가 = **테스트 방법**의 면제)를
-    //   포커스 면제로도 써버려 통째로 안 보였다. 두 파일 모두 모달이 **파일 안쪽**에 있어
-    //   배선은 가능하지만, 이 저장소는 **런타임으로 태울 수 없는 배선**을 좋아하지 않는다
-    //   (소스 검사만 남으면 주석 처리·인자 바꿔치기 변이에 뚫린다).
-    //   → 먼저 **렌더 가능한 경로**를 만든 뒤 배선한다. 순서를 바꾸면 잠기지 않는 배선이 된다.
-    "components/auction/AuctionWorkspace.tsx":
-      "1,839줄 워크스페이스 안의 비-export 상세모달·라이트박스(aria-modal 2곳). 단독 렌더에 목록 조회·지도 목이 필요해, 렌더 경로부터 만든 뒤 배선한다",
-    "components/sales/OrgTree.tsx":
-      "마운트 즉시 /org/tree·/org/context 를 조회해야 시트가 열린다(aria-modal 2곳). 조직 픽스처를 세운 뒤 배선한다",
+    // ★2026-08-24 — **비었다.** 마지막 두 건이 각각 다른 PR 로 상환되며 만난 자리다.
+    //   `AuctionWorkspace`(#780) · `OrgTree`(이 PR) 둘 다 **적힌 사유가 실제보다 컸다** —
+    //   전자는 *"목록 조회·지도 목이 필요"* 였으나 실제로는 상세 응답 하나였고,
+    //   후자는 조직 목 하나로 시트에 닿았다. 사유를 물려받아 믿으면 부채가 실제보다
+    //   비싸 보이고, **비싸 보이는 부채는 영원히 미뤄진다** — 착수 전에 재라.
+    //
+    //   ★맵이 비어도 공허한 초록이 아니다: 아래 "덮이지 않은 표면 0" 계약이 **양성 방향**으로
+    //   감시하고, `surfaces.length > 8` 가드가 스캐너 사망을 함께 본다.
   };
 
   /**
@@ -785,6 +796,9 @@ describe("모달 접근성 — 포커스 생명주기(2026-08-22 부분 상환)"
     "components/operations/DeskAppraisalModal.tsx",
     "components/operations/LandShareModal.tsx",
     "components/onboarding/OnboardingWizard.tsx",
+    // 상세 모달은 부모가 `selected` 일 때만 렌더한다 — 넣을 `open` 인자가 없다.
+    // (같은 파일의 라이트박스는 `zoomOpen` 이 있어 인자를 받는 변종을 쓴다.)
+    "components/auction/AuctionWorkspace.tsx",
   ];
 
   it("★배선된 표면은 훅을 **호출**한다(임포트만 남는 회귀 방지)", () => {

@@ -11,8 +11,11 @@ import { useProjectStore } from "@/store/useProjectStore";
 import {
   useProjectContextStore,
   addressTokenMismatch,
+  addressRegionMismatch,
   purifyPollutedSnapshot,
+  type SiteAnalysisData,
 } from "@/store/useProjectContextStore";
+import { healPhantomAreaAggregates } from "@/lib/site-analysis-invariants";
 import { useLandScheduleStore } from "@/store/useLandScheduleStore";
 import {
   SATONG_DOMINANT_CONSTRAINT_KEY,
@@ -190,10 +193,14 @@ function projectRecordAddress(projectId: string): string | null {
   }
 }
 
-/** 무결성 위반 시 사유 문자열, 정상이면 null. */
-function snapshotIntegrityViolation(
+/** 무결성 위반 시 사유 문자열, 정상이면 null.
+    ★판별자를 인자로 받는다 — 산식을 복제하지 않고, 차단 범위에 맞는 엄격도만 갈아 끼운다.
+      (판별자 선택 근거는 아래 두 소비처 주석에 각각 적었다.) */
+function integrityViolation(
   projectId: string,
   snap: Record<string, unknown>,
+  mismatch: (a: string | null | undefined, b: string | null | undefined) => boolean,
+  scopeLabel: string,
 ): string | null {
   const recordAddress = projectRecordAddress(projectId);
   const snapAddress = (
@@ -202,11 +209,32 @@ function snapshotIntegrityViolation(
   if (
     recordAddress &&
     typeof snapAddress === "string" &&
-    addressTokenMismatch(recordAddress, snapAddress)
+    mismatch(recordAddress, snapAddress)
   ) {
-    return `프로젝트 주소("${recordAddress}") ↔ 분석 주소("${snapAddress}") 핵심 토큰 불일치`;
+    return `프로젝트 주소("${recordAddress}") ↔ 분석 주소("${snapAddress}") ${scopeLabel}`;
   }
   return null;
+}
+
+/** 스냅샷 컬럼(/projects/{id}.analysis_snapshot) 푸시용 — 차단 범위가 그 프로젝트 하나라
+    번지까지 엄격한 판별자를 쓴다(기존 동작 불변). */
+function snapshotIntegrityViolation(
+  projectId: string,
+  snap: Record<string, unknown>,
+): string | null {
+  return integrityViolation(projectId, snap, addressTokenMismatch, "핵심 토큰 불일치");
+}
+
+/** 스토어 blob(/store/projects) 푸시용 — ★번지가 아니라 지역 단위로만 본다.
+    차단 범위가 프로젝트 목록·토지조서·전 프로젝트 스냅샷까지 통째이므로, 번지까지 엄격한
+    판별자를 쓰면 "지도에서 인접 필지를 추가한다"는 정상 워크플로우가 계정 전체의 동기화를
+    멈춘다(useProjectContextStore 가 addressRegionMismatch 를 둔 이유와 같은 판단).
+    막으려는 것은 교차오염 — 다른 지역의 선택이 이 프로젝트에 실려 나가는 것이다. */
+function storeIntegrityViolation(
+  projectId: string,
+  snap: Record<string, unknown>,
+): string | null {
+  return integrityViolation(projectId, snap, addressRegionMismatch, "지역 불일치");
 }
 
 // 최초 서버 pull 완료 전에는 push 금지(빈 로컬상태로 서버를 덮어쓰는 사고 방지)
@@ -379,9 +407,15 @@ export function applyRemoteSnapshot(
   }
 
   useProjectContextStore.setState({
-    siteAnalysis: (preserveLocalSiteAnalysis
-      ? ctx.siteAnalysis
-      : (effective.siteAnalysis ?? null)) as never,
+    // ★자가치유(2026-08-23): 이 경로는 store 액션(updateSiteAnalysis)을 **우회해**
+    //   setState 로 직접 쓰므로, 거기 건 불변식이 여기엔 걸리지 않는다. 서버에 이미
+    //   고착된 오염본(필지 0건인데 면적 집계만 생존)이 그대로 들어오지 않게 같은
+    //   헬퍼를 여기서도 태운다 — 진입점이 둘이면 방어도 둘이어야 한다.
+    siteAnalysis: healPhantomAreaAggregates(
+      (preserveLocalSiteAnalysis
+        ? ctx.siteAnalysis
+        : (effective.siteAnalysis ?? null)) as Partial<SiteAnalysisData> | null,
+    ) as never,
     designData: (effective.designData ?? null) as never,
     feasibilityData: (effective.feasibilityData ?? null) as never,
     costData: (effective.costData ?? null) as never,
@@ -427,6 +461,21 @@ export async function restoreSnapshot(projectId: string): Promise<void> {
 
 export async function syncUp(): Promise<void> {
   if (!isLoggedIn()) return;
+  // ★WP-D 무결성 가드 — 서버 쓰기 경로는 둘인데 가드는 하나에만 걸려 있었다.
+  //   ProjectSyncProvider 의 한 구독 콜백이 scheduleSyncUp 과 scheduleSnapshotSync 를 함께
+  //   부른다. 스냅샷 경로만 막으면, 같은 오염 siteAnalysis 가 1.5초 뒤 이 경로로
+  //   /store/projects 에 실려 나가고(CTX_KEYS 에 siteAnalysis 포함),
+  //   syncDown 이 localPid === remotePid 분기에서 그대로 로컬에 되돌린다.
+  //   ★키를 빼는 부분 푸시가 아니라 전체 보류인 이유: PUT /store/projects 는 blob 을 통째로
+  //     치환한다(routers/user_store.py — data = EXCLUDED.data). 키를 빼면 서버에 남아 있던
+  //     정상본까지 지워져 자가치유의 출처가 사라진다. 보류는 마지막 정상본을 남긴다.
+  //   영구 차단이 아니다 — 정화·재분석으로 주소가 맞으면 다음 변경에서 다시 푸시된다.
+  const pid = useProjectContextStore.getState().projectId;
+  const violation = pid ? storeIntegrityViolation(pid, currentSnapshot()) : null;
+  if (violation) {
+    console.warn(`[projectSync] 스토어 푸시 보류(SSOT 오염 의심): ${violation}`);
+    return;
+  }
   try {
     const ps = useProjectStore.getState();
     const cs = useProjectContextStore.getState() as unknown as Record<string, unknown>;
