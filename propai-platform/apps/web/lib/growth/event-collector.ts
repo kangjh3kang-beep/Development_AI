@@ -32,7 +32,14 @@ export type GrowthEventType =
   | "llm_call"
   | "verify_result"
   | "fallback"
-  | "heal_action";
+  | "heal_action"
+  // ★선택 오염 관측(2026-08-24) — "고지는 하는데 빈도를 못 잰다"를 푼다.
+  //   화면은 이미 "하나의 개발 부지가 아닙니다"를 고지하지만, 그 일이 **얼마나 자주**
+  //   일어나는지는 아무도 몰랐다. 빈도를 모르면 데이터 정리의 우선순위를 정할 수 없다.
+  //   ★이 항목은 백엔드 `growth.py:_ALLOWED_TYPES` 와 **같은 커밋에서** 추가해야 한다 —
+  //     한쪽만 추가하면 서버가 조용히 `rejected` 로 버리고 화면·테스트는 초록이다.
+  //     그 침묵을 `lib/growth/__tests__/event-type-whitelist.parity.test.ts` 가 잠근다.
+  | "selection_contamination_observation";
 
 export type GrowthSeverity = "info" | "warn" | "error" | "critical";
 
