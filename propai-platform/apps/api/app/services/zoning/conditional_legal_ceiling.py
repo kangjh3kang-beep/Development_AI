@@ -38,24 +38,33 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.services.legal.legal_limit import LegalLimit
 from app.services.zoning.district_regime import is_growth_management_plan
-
-# 법 제75조의3제2항 각 호 — 성장관리계획구역에서 완화 가능한 **건폐율 상한**.
-GROWTH_MGMT_BCR_CEILING: dict[str, int] = {
-    "계획관리지역": 50,      # 제1호
-    "생산관리지역": 30,      # 제2호
-    "농림지역": 30,          # 제2호
-    "자연녹지지역": 30,      # 제2호(시행령이 정한 녹지지역)
-    "생산녹지지역": 30,      # 제2호(시행령이 정한 녹지지역)
-}
-
-# 법 제75조의3제3항 — **계획관리지역에 한해** 용적률 완화.
-GROWTH_MGMT_FAR_CEILING: dict[str, int] = {
-    "계획관리지역": 125,
-}
 
 _LEGAL_BASIS_BCR = "국토의 계획 및 이용에 관한 법률 제75조의3제2항(성장관리계획구역 건폐율 완화)"
 _LEGAL_BASIS_FAR = "국토의 계획 및 이용에 관한 법률 제75조의3제3항(성장관리계획구역 용적률 완화)"
+
+# ── 근거를 **값과 함께** 들려 보낸다 (2026-08-24) ────────────────────────────
+# ★종전에는 값이 원시 숫자였고 근거는 **이웃 상수**(`_LEGAL_BASIS_*`)에 따로 살았다.
+#   둘이 따로 살면 **한쪽만 바뀌어도 아무 테스트가 울지 않는다** — 값이 바뀌었는데 근거는
+#   옛 조문을 가리키거나, 조문이 개정됐는데 값이 그대로인 상태가 조용히 성립한다.
+#   `MAX_FLOORS` 가 정확히 그렇게 틀렸다(근거 없는 3층이 계획을 깎았다).
+#   → `LegalLimit` 로 감싸 **근거 없이는 생성 자체가 불가능**하게 한다.
+#   ★공개 출력(`bcr_ceiling_pct` 등)은 **숫자 그대로** 유지한다 — 소비처 계약 불변.
+
+# 법 제75조의3제2항 각 호 — 성장관리계획구역에서 완화 가능한 **건폐율 상한**.
+GROWTH_MGMT_BCR_CEILING: dict[str, LegalLimit] = {
+    "계획관리지역": LegalLimit(50, law=_LEGAL_BASIS_BCR, note="제1호"),
+    "생산관리지역": LegalLimit(30, law=_LEGAL_BASIS_BCR, note="제2호"),
+    "농림지역": LegalLimit(30, law=_LEGAL_BASIS_BCR, note="제2호"),
+    "자연녹지지역": LegalLimit(30, law=_LEGAL_BASIS_BCR, note="제2호(시행령이 정한 녹지지역)"),
+    "생산녹지지역": LegalLimit(30, law=_LEGAL_BASIS_BCR, note="제2호(시행령이 정한 녹지지역)"),
+}
+
+# 법 제75조의3제3항 — **계획관리지역에 한해** 용적률 완화.
+GROWTH_MGMT_FAR_CEILING: dict[str, LegalLimit] = {
+    "계획관리지역": LegalLimit(125, law=_LEGAL_BASIS_FAR),
+}
 
 
 def resolve_conditional_ceiling(
@@ -85,13 +94,18 @@ def resolve_conditional_ceiling(
     if not any(is_growth_management_plan(d) for d in rows):
         return None
 
-    bcr = GROWTH_MGMT_BCR_CEILING.get(zone)
-    far = GROWTH_MGMT_FAR_CEILING.get(zone)
-    if bcr is None and far is None:
+    bcr_limit = GROWTH_MGMT_BCR_CEILING.get(zone)
+    far_limit = GROWTH_MGMT_FAR_CEILING.get(zone)
+    if bcr_limit is None and far_limit is None:
         # 구역 안이어도 **완화 대상 용도지역이 아니면** 열리지 않는다(법 제2항 각 호 한정).
         return None
 
-    basis = [b for b, v in ((_LEGAL_BASIS_BCR, bcr), (_LEGAL_BASIS_FAR, far)) if v is not None]
+    # ★공개 출력은 숫자 그대로 — 소비처 계약을 바꾸지 않는다.
+    bcr = bcr_limit.value if bcr_limit is not None else None
+    far = far_limit.value if far_limit is not None else None
+    # ★근거를 **값에서 파생**시킨다. 종전엔 모듈 상수를 손으로 짝지어, 표가 바뀌어도
+    #   근거는 그대로 붙는 구조였다(값과 근거가 갈릴 수 있었다).
+    basis = [lim.law for lim in (bcr_limit, far_limit) if lim is not None]
     return {
         "condition": "성장관리계획구역",
         "zone_type": zone,
