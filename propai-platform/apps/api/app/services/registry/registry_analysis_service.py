@@ -577,6 +577,11 @@ class RegistryAnalysisService:
             # ★진단성: 타입명 + 응답 head를 남겨 '잘린 JSON/비-JSON/LLM오류'를 구분 가능하게.
             logger.warning("등기 권리분석 LLM 실패, 폴백",
                            err=f"{type(e).__name__}: {str(e)[:100]}", raw_head=(raw or "")[:180])
+            # ★성장루프 **분자**: 이 실패가 집계되지 않아, 등기 권리분석이 통째로 죽어도
+            #   `fallback_rate` 인사이트가 한 번도 뜨지 않았다(2026-08-24 실장애 — 사용자가
+            #   화면을 보고 알려 줄 때까지 아무도 몰랐다). 성공(분모)은 위 과금 헬퍼가 남긴다.
+            from app.services.ai.base_interpreter import record_llm_failure
+            record_llm_failure("registry", e)
             return {
                 "generated": False,
                 "ownership": {}, "provisional_registration": {"exists": None},
