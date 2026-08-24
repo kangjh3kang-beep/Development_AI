@@ -15,11 +15,12 @@
  *   ④ 이동도 액션시트에서 — 행마다 붙던 '이동…' 셀렉트 제거(시각 소음 제거).
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Building2, ChevronDown, ChevronRight, Plus } from "lucide-react";
 import { salesApi } from "@/lib/salesApi";
 import { ApiClientError } from "@/lib/api-client";
 import { DISMISS_Z, useDismissible } from "@/lib/satong-dismiss";
+import { useModalFocus } from "@/hooks/useModalFocus";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import {
   NODE_TYPE_LABEL, ROLE_LABEL, nodeTypeOptions, nodeTypeLabel, orgRank, addableChildTypes,
@@ -72,6 +73,8 @@ const fcls = "rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] 
 
 export default function OrgTree({ siteCode }: { siteCode: string }) {
   const api = salesApi(siteCode);
+  const sheetBodyRef = useRef<HTMLDivElement>(null);
+  const assignBodyRef = useRef<HTMLDivElement>(null);
   const [nodes, setNodes] = useState<Node[]>([]);
   const [ctx, setCtx] = useState<OrgCtx | null>(null);
   const [busy, setBusy] = useState(false);
@@ -198,6 +201,14 @@ export default function OrgTree({ siteCode }: { siteCode: string }) {
   //   닫는다(아래 openSheet/openAssign).
   useDismissible(DISMISS_Z.appModal, sheet != null, () => setSheet(null));
   useDismissible(DISMISS_Z.nestedOverModal, assign != null, () => setAssign(null));
+
+  // ★포커스 생명주기 — ESC 와 같은 열림 판정을 쓴다(두 계약이 어긋나면 한쪽만 도는 시트가 생긴다).
+  //   두 시트는 `openSheet`/`openAssign` 이 상대를 먼저 닫아 **서로 배타적**이므로
+  //   트랩이 겹칠 일이 없다(중첩 조정이 필요 없는 이유).
+  //   ★배선보다 **렌더 경로**를 먼저 만들었다 — 런타임으로 못 태우는 배선은 소스 검사만 남아
+  //     주석 처리·인자 바꿔치기 변이에 뚫린다(`OrgTree.focusTrap.test.tsx`).
+  useModalFocus(sheetBodyRef, sheet != null);
+  useModalFocus(assignBodyRef, assign != null);
 
   /**
    * 시트를 여는 **유일한 통로** — 여는 쪽에서 상대를 닫아 두 시트가 겹치지 않게 한다.
@@ -451,6 +462,7 @@ export default function OrgTree({ siteCode }: { siteCode: string }) {
       {sheet && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm sm:items-center" onClick={() => setSheet(null)}>
           <div className="w-full rounded-t-2xl border border-[var(--line)] bg-[var(--surface)] p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-[var(--shadow-lg)] sm:mx-4 sm:max-w-md sm:rounded-2xl sm:pb-4"
+            ref={sheetBodyRef}
             onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
             <div className="mb-3 flex items-center justify-between">
               <h3 className="flex items-center gap-2 font-black text-[var(--text-primary)]">
@@ -503,6 +515,7 @@ export default function OrgTree({ siteCode }: { siteCode: string }) {
       {assign && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm sm:items-center" onClick={() => setAssign(null)}>
           <div className="w-full rounded-t-2xl border border-[var(--line)] bg-[var(--surface)] p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-[var(--shadow-lg)] sm:mx-4 sm:max-w-md sm:rounded-2xl sm:pb-4"
+            ref={assignBodyRef}
             onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
             <div className="mb-3 flex items-center justify-between">
               <h3 className="font-black text-[var(--text-primary)]">인원 배정 — {assign.name}</h3>

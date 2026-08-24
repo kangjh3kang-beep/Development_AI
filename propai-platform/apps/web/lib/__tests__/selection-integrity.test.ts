@@ -128,7 +128,7 @@ describe("고지 문구 — 사실 + 무엇이 무효인가 + 복구 방법", ()
     expect(n).not.toBeNull();
     expect(n.tone).toBe("warn");
     expect(n.title).toContain("하나의 개발 부지가 아닙니다");
-    expect(n.detail).toContain("통합 대지면적이 아니며");
+    expect(n.detail).toContain("합계 면적은 보여 주지만 통합 대지면적이 아니며");
     expect(n.detail).toMatch(/최대 15\.\d+km/); // 실측 거리가 문구에 실려야 한다
     // ★복구 방법 문장 전체를 잠근다 — "후보지 비교면 그대로 둬도 된다"가 이 고지의 핵심이다
     //   (차단이 아니라 고지라는 정책이 문구에 실려 있다). 변이 생존분.
@@ -143,6 +143,21 @@ describe("고지 문구 — 사실 + 무엇이 무효인가 + 복구 방법", ()
     expect(n.detail).toContain("소유자");
     // ★복구 방법 문장도 잠근다 — 이것이 없으면 사용자는 무엇을 해야 할지 모른다(변이 생존분).
     expect(n.detail).toContain("해당 행을 지우고 지번을 다시 지정하세요");
+  });
+
+  it("★고지 문구에 **마크다운 잔재가 없다** — 화면은 평문을 그대로 그린다", () => {
+    // ★라이브에서 발견한 내 결함: `**통합 대지면적이 아니며**` 로 써서 화면에 **별표가 글자로**
+    //   나갔다. 종전 단언은 `toContain("통합 대지면적이 아니며")` 라 **별표를 피해서** 통과했다
+    //   — 부분 문자열 단언은 그 앞뒤 마크업 잔재를 못 본다.
+    //   그래서 부분이 아니라 **문구 전체**를 마크다운 문자로 훑는다(파생형 — 새 문구가 생겨도 걸린다).
+    for (const sample of [MIXED_SAME_CITY, MIXED_FAR, MALFORMED]) {
+      const n2 = selectionIntegrityNotice(classifySelection(sample));
+      expect(n2, "고지가 있어야 이 검사가 공허하지 않다").not.toBeNull();
+      for (const text of [n2!.title, n2!.detail]) {
+        expect(text, `마크다운 강조가 평문으로 새어나갔다: ${text}`).not.toMatch(/\*\*/);
+        expect(text, `마크다운 기울임/코드가 새어나갔다: ${text}`).not.toMatch(/[_`~]{2}|<\/?[a-z]/i);
+      }
+    }
   });
 
   it("★정상이면 고지하지 않는다 — 남발은 무시로 이어진다", () => {
