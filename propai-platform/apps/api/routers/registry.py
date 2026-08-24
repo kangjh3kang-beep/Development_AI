@@ -1039,15 +1039,22 @@ class RightsReportItem(BaseModel):
     result: dict[str, Any] | None = Field(None, description="analyze() 응답 원형")
 
 
-class RightsReportRequest(BaseModel):
-    items: list[RightsReportItem] = Field(default_factory=list)
-    project_address: str | None = None
-    format: str = Field("pdf", description="pdf | pptx | docx")
-
-
-# 한 번에 묶을 수 있는 필지 수 상한. 넘으면 **자르지 않고 거부**한다 —
+# 한 번에 묶을 수 있는 필지 수 — **제품 상한**. 넘으면 **자르지 않고 거부**한다.
 # 조용히 자르면 "전 필지 보고서"라는 이름으로 일부만 담긴 문서가 나간다.
 _RIGHTS_REPORT_MAX = 300
+
+# 파싱 단계 **안전 상한**(제품 상한과 다른 일을 한다). 제품 상한은 사람에게 "나눠서 받으세요"
+# 라고 말하기 위한 것이고, 이쪽은 그 메시지에 닿기도 전에 **거대한 본문으로 서버를 태우는 것**을
+# 막는다(리스트 필드는 모델 단계에서 상한을 갖는다 — 이 저장소의 계약이며 파생형 가드가 강제한다).
+# 두 값이 같으면 한 층이 장식이 되므로 일부러 벌려 둔다: 301~1000 → 사람이 읽는 400,
+# 1000 초과 → 파싱 단계에서 422.
+_RIGHTS_REPORT_HARD_MAX = 1000
+
+
+class RightsReportRequest(BaseModel):
+    items: list[RightsReportItem] = Field(default_factory=list, max_length=_RIGHTS_REPORT_HARD_MAX)
+    project_address: str | None = None
+    format: str = Field("pdf", description="pdf | pptx | docx")
 
 
 @router.post("/rights-report", summary="등기 권리분석 보고서 다운로드(PDF/PPTX/DOCX)")
