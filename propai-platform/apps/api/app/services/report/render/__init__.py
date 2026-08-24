@@ -66,6 +66,7 @@ __all__ = [
     "build_report_model_from_cost_estimation",
     "build_report_model_from_regulation",
     "build_report_model_from_market",
+    "build_report_model_from_registry_rights",
 ]
 
 
@@ -111,6 +112,17 @@ def build_report_model_from_land(data: dict) -> ReportModel:
     from .land_adapter import build_report_model_from_land as _build
 
     return _build(data)
+
+
+def build_report_model_from_registry_rights(items: list, **kwargs) -> ReportModel:
+    """다필지 등기 권리분석 결과 → 정본 ReportModel(어댑터).
+
+    새 PDF 경로를 만들지 않고 이 엔진을 태운다 — 표지·정직 채움도·승인등급·미검증 단정
+    경고가 전부 따라온다. 미분석 필지는 **숨기지 않고 §미분석 섹션**으로 드러난다.
+    """
+    from .registry_rights_adapter import build_report_model_from_registry_rights as _build
+
+    return _build(items, **kwargs)
 
 
 def build_report_model_from_appraisal(data: dict, **kwargs) -> ReportModel:
