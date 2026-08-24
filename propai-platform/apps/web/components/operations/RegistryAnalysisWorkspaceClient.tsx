@@ -14,7 +14,10 @@ import Link from "next/link";
 import { Card, CardContent } from "@propai/ui";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { DataSourceNotice } from "@/components/ui/DataSourceNotice";
-import { analyzeRegistry } from "@/lib/registry-analyze";
+import { analyzeRegistry, isAnalyzed, summarizeBatch } from "@/lib/registry-analyze";
+import { RegistryBatchRow } from "@/components/operations/RegistryBatchRow";
+import { RegistryPdfBundleButton } from "@/components/operations/RegistryPdfBundleButton";
+import { RegistryRightsReportButton } from "@/components/operations/RegistryRightsReportButton";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { useLandScheduleStore, type LandRow } from "@/store/useLandScheduleStore";
@@ -43,6 +46,8 @@ type AI = {
   acquired_extinguished?: string;
   right_to_demand_sale?: { possible?: string; reason?: string };
   rights_analysis?: string;
+  /** LLM 권리분석이 실패한 **이유**. `generated:false` 일 때만 채워진다(백엔드 llm_failure.py). */
+  failure_reason?: string;
   risks?: string[];
   safety_grade?: string;
   summary?: string;
@@ -241,7 +246,9 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
       setBatchResults([...acc]);
     }
     // 종료 후 첫 성공(권리분석 ai) 필지를 상세로 고정(데스크 시세추정과 동일 UX — 마지막 1건이 남던 비대칭 해소).
-    const first = acc.find((x) => x.result?.ai);
+    // ★"첫 성공 건"은 **분석이 나온 것**이어야 한다 — `ai` 존재로 고르면 폴백 건(분석 불가)을
+    //   대표로 집어 상세 패널이 빈 권리분석을 연다.
+    const first = acc.find(isAnalyzed);
     if (first?.result) setResult(first.result);
   }, [rows, run]);
 
@@ -346,6 +353,14 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
                   className="rounded-xl bg-[var(--accent-strong)] px-3.5 py-1.5 text-xs font-black text-white hover:opacity-90 disabled:opacity-50">
                   {busyId ? "분석 중…" : (<span className="inline-flex items-center gap-1.5"><Scale className="size-4" aria-hidden />전체 분석</span>)}
                 </button>
+                {/* 발급된 등기부 PDF 를 한 번에 받는다 — 종전엔 행마다 `PDF ↗` 를 눌러야 했다.
+                    소스는 **영속되는 필지 행**이라 새로고침 뒤에도 받을 수 있다. */}
+                <RegistryPdfBundleButton
+                  sources={rows.map((r) => ({
+                    jibun: r.jibun || "",
+                    pdfUrl: r.pdf_url,
+                  }))}
+                />
               </div>
             </div>
             <div className="mt-3 space-y-1.5">
@@ -383,35 +398,44 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
             {/* ★일괄 권리분석 결과(필지별 누적) — 마지막 1건만 보이던 부정합 해소. '상세'로 전체 분석 표시 */}
             {batchResults && batchResults.length > 0 && (
               <div className="mt-3 space-y-1.5 rounded-xl border border-[var(--line)] bg-[var(--surface-soft)]/40 p-3">
-                <p className="text-[11px] font-bold text-[var(--text-secondary)]">
-                  일괄 권리분석 결과 ({batchResults.filter((b) => b.result?.ai).length}/{batchResults.length})
-                </p>
-                {batchResults.map((b, i) => {
-                  const grade = b.result?.ai?.safety_grade;
+                {(() => {
+                  // ★개수만 보여 주면 "시스템이 고장났나" 로 읽고 기다리게 된다(2026-08-24 실장애).
+                  //   실패 **사유**가 응답에 들어 있는데 화면이 버리고 있었다 —
+                  //   사용자가 원인을 알아야 스스로 조치한다(충전이면 충전, 주소 오류면 수정).
+                  const sum = summarizeBatch(batchResults);
                   return (
-                    <div key={i} className="flex flex-wrap items-center gap-2 text-[11px]">
-                      <span className="min-w-[150px] flex-1 truncate font-semibold text-[var(--text-primary)]" title={b.jibun}>{b.jibun}</span>
-                      {grade ? (
-                        <span className={`rounded-full border px-2 py-0.5 font-bold ${GRADE[grade] || "border-[var(--line-strong)] text-[var(--text-secondary)]"}`}>안전성 {grade}</span>
-                      ) : (
-                        <span className="text-[var(--text-hint)]">{b.result?.status === "ok" ? "분석" : b.result?.message ? "미확보" : "실패"}</span>
+                    <>
+                      <p className="text-[11px] font-bold text-[var(--text-secondary)]">
+                        일괄 권리분석 결과 (성공 {sum.ok} / {sum.total})
+                        {sum.failed > 0 && (
+                          <span className="ml-1 text-[var(--status-error)]">· 실패 {sum.failed}</span>
+                        )}
+                      </p>
+                      {sum.topReason && (
+                        <p
+                          data-testid="batch-top-reason"
+                          className="rounded-lg border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 px-2 py-1.5 text-[11px] font-semibold text-[var(--status-warning)]"
+                        >
+                          가장 많은 실패 사유 ({sum.reasons[0].count}건) — {sum.topReason}
+                          {sum.reasons.length > 1 && (
+                            <span className="ml-1 font-normal text-[var(--text-secondary)]">
+                              (그 외 {sum.reasons.length - 1}종)
+                            </span>
+                          )}
+                        </p>
                       )}
-                      {b.result?.ai?.summary && <span className="hidden max-w-[40%] truncate text-[var(--text-secondary)] sm:inline">{b.result.ai.summary}</span>}
-                      {/* 요청과 다른 물건을 조회했을 수 있다는 고지는 목록 행에서도 보여야 한다 —
-                          '상세'를 눌러야만 보이면 일괄 분석에서 조용히 묻힌다. */}
-                      {b.result?.fetched?.select_note && (
-                        <span title={b.result.fetched.select_note}
-                          className="inline-flex items-center gap-1 rounded-full border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 px-2 py-0.5 font-bold text-[var(--status-warning)]">
-                          <AlertTriangle className="size-3" aria-hidden />물건 확인 필요
-                        </span>
-                      )}
-                      {b.result && (
-                        <button onClick={() => setResult(b.result)}
-                          className="rounded-lg bg-[var(--surface-strong)] px-2 py-0.5 font-bold text-[var(--accent-strong)]">상세</button>
-                      )}
-                    </div>
+                    </>
                   );
-                })}
+                })()}
+                {batchResults.map((b, i) => (
+                  <RegistryBatchRow key={i} item={b} onDetail={() => setResult(b.result)} />
+                ))}
+                {/* 일괄분석이 끝난 결과를 정본 보고서 엔진으로 문서화한다(재조회·재과금 없음). */}
+                <RegistryRightsReportButton
+                  className="mt-2 border-t border-[var(--line)] pt-2"
+                  items={batchResults}
+                  projectAddress={siteAnalysis?.address ?? null}
+                />
               </div>
             )}
             <div className="mt-3 flex flex-wrap items-center gap-2">
