@@ -136,6 +136,51 @@ function str(v: unknown): string | null {
 function pct(v: number | null): string {
   return v === null ? "-" : `${(v <= 1 ? v * 100 : v).toFixed(1)}%`;
 }
+/**
+ * LLM 실패 **사유 코드 → 한글**.
+ *
+ * 원천은 백엔드 `app/services/ai/llm_failure.py` 의 `classify_failure` 가 내는 값이고,
+ * `unlabeled` 은 `analyzer.py` 가 **사유가 안 실린 이벤트**에 붙이는 값이다.
+ * 갈리면 `GrowthDashboard.catalog.test.ts` 의 사유 라벨 축이 잡는다 — 라벨이 없으면
+ * #808 과 **같은 얼굴**(영문 raw 노출)이 된다.
+ *
+ * ★모르는 코드는 **감추지 않고 원문 그대로** 보여준다. 숨기면 분포 합이 틀어지고,
+ *   "새 실패 유형이 생겼다"는 가장 중요한 신호가 조용히 사라진다.
+ */
+const REASON_LABELS: Record<string, string> = {
+  timeout: "타임아웃",
+  parse: "응답 파싱 실패",
+  shape: "구조 불일치",
+  network: "네트워크",
+  rate_limit: "호출 한도",
+  overloaded: "공급자 과부하",
+  auth: "인증·잔액",
+  content_filter: "정책 거부",
+  bad_request: "요청 거부",
+  other: "그 외",
+  // ★"미분류"는 그 자체가 결함 신호다 — 쓰기 경로가 사유를 안 싣고 있다는 뜻이라,
+  //   감추거나 0으로 뭉개면 "사유가 도착했다"는 착시가 생긴다.
+  unlabeled: "사유 미분류(계측 누락)",
+};
+
+function reasonLabel(code: string): string {
+  return REASON_LABELS[code] ?? code;
+}
+
+/** `{timeout: 12, parse: 6}` → `"타임아웃 12 · 응답 파싱 실패 6"`(많은 순 · 상위 N + 나머지 종수). */
+function fmtReasons(v: unknown, top = 4): string | null {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  const pairs = Object.entries(v as Record<string, unknown>)
+    .map(([k, n]) => [k, typeof n === "number" && Number.isFinite(n) ? n : 0] as const)
+    .filter(([, n]) => n > 0)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  if (pairs.length === 0) return null;
+  const head = pairs.slice(0, top).map(([k, n]) => `${reasonLabel(k)} ${n.toLocaleString("ko-KR")}`);
+  // ★잘라낸 몫을 **말한다** — 안 적으면 상위 N 종이 전부인 줄로 읽는다(묵시적 상한 금지).
+  const rest = pairs.length - head.length;
+  return rest > 0 ? `${head.join(" · ")} 외 ${rest}종` : head.join(" · ");
+}
+
 function fmtDate(iso: string | null): string {
   if (!iso) return "-";
   const d = new Date(iso);
@@ -146,7 +191,14 @@ function fmtDate(iso: string | null): string {
 /*  insight_type 별 metrics_json 렌더 (필드 없으면 graceful)            */
 /* ------------------------------------------------------------------ */
 
-function InsightMetrics({ insight }: { insight: GrowthInsight }) {
+/**
+ * ★테스트를 위해 내보낸다(소비처는 이 파일 안뿐).
+ *
+ * 왜: 이 함수의 실패 형태는 **"case 는 있는데 rows 가 비어 `null` 을 반환"** 이라,
+ * 소스에서 `case "x":` 존재만 검사하면 **초록으로 통과한다**(실제로 `improvement_proposal`
+ * 이 그 상태였다 — 2026-08-25). 렌더 결과를 봐야만 잡힌다(규율 §A-1·A-3).
+ */
+export function InsightMetrics({ insight }: { insight: GrowthInsight }) {
   const m = insight.metrics_json ?? {};
   const rows: { label: string; value: string }[] = [];
 
@@ -159,6 +211,15 @@ function InsightMetrics({ insight }: { insight: GrowthInsight }) {
       if (service) rows.push({ label: "서비스", value: service });
       if (rate !== null) rows.push({ label: "폴백률", value: pct(rate) });
       if (total !== null) rows.push({ label: "호출 수", value: total.toLocaleString("ko-KR") });
+      // ★이 두 줄이 이 카드의 **존재 이유**다. "폴백률 80.77%" 만으로는 절단인지 스키마
+      //   위반인지 인증·잔액인지 모르고, 그 셋은 처방이 전혀 다르다.
+      //   ★`fallback`·`signature` 등 다른 백엔드 키를 여기 더하지 않은 것은 의도다 —
+      //     `_rule_narrative`(analyzer.py)가 이미 산문으로 말하고 그 문장은 이 카드 바로
+      //     아래에 렌더된다(:1040). 같은 값을 두 번 적으면 카드만 길어진다.
+      const top = str(m.top_reason);
+      if (top) rows.push({ label: "최다 사유", value: reasonLabel(top) });
+      const dist = fmtReasons(m.reasons);
+      if (dist) rows.push({ label: "사유 분포", value: dist });
       break;
     }
     case "error_cluster": {
@@ -254,12 +315,33 @@ function InsightMetrics({ insight }: { insight: GrowthInsight }) {
       rows.push({ label: "상태", value: "자동치유 무효 — 사람 점검 필요" });
       break;
     }
-    case "improvement_proposal":
+    case "improvement_proposal": {
+      // ★실측 결함(2026-08-25): 이 분기는 `m.service`·`m.target` 을 읽는데 백엔드 payload
+      //   (`growth/improvement_agent.py:192`)에는 **둘 다 없다** — source_insight_id /
+      //   requires_approval / auto_merge / confidence / affected_files / proposal / pr_status.
+      //   그래서 rows 가 빈 채로 `null` 이 반환돼 **지표가 한 줄도 안 떴다**.
+      //   기존 카탈로그 락은 `case` 의 **존재**만 봐서 이 상태가 초록이었다.
+      const conf = num(m.confidence);
+      const files = Array.isArray(m.affected_files) ? m.affected_files.length : null;
+      const prStatus = str(m.pr_status);
+      if (conf !== null) rows.push({ label: "신뢰도", value: pct(conf) });
+      if (files !== null) rows.push({ label: "영향 파일", value: `${files.toLocaleString("ko-KR")}개` });
+      if (prStatus) rows.push({ label: "PR 상태", value: prStatus });
+      // ★자동 머지가 **꺼져 있다**는 사실이 이 카드의 안전 정보다 — 사람 승인 없이는
+      //   아무것도 반영되지 않는다는 것을 화면이 말해야 한다.
+      rows.push({ label: "반영", value: "사람 승인 필요(자동 머지 없음)" });
+      break;
+    }
     case "prompt_candidate": {
+      // 백엔드 키(improvement_agent.py:410): service / candidate_label / confidence /
+      //                                     requires_approval / auto_adopt / proposal.
       const service = str(m.service);
-      const target = str(m.target ?? m.key);
+      const label = str(m.candidate_label ?? m.target ?? m.key);
+      const conf = num(m.confidence);
       if (service) rows.push({ label: "서비스", value: service });
-      if (target) rows.push({ label: "대상", value: target });
+      if (label) rows.push({ label: "후보", value: label });
+      if (conf !== null) rows.push({ label: "신뢰도", value: pct(conf) });
+      rows.push({ label: "반영", value: "사람 승인 필요(자동 채택 없음)" });
       break;
     }
     default:
