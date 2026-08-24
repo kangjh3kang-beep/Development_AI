@@ -14,7 +14,12 @@ from app.core.database import get_db
 from app.services.land_intelligence.parcel_normalize import ParcelsIn
 from apps.api.app.services.land_intelligence.land_info_service import LandInfoService
 from apps.api.app.services.zoning.auto_zoning_service import AutoZoningService
-from apps.api.app.utils.pnu import jibun_from_pnu, parcel_display_address
+from apps.api.app.utils.pnu import (
+    address_resolution,
+    jibun_from_pnu,
+    parcel_display_address,
+    pick_representative_parcel,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -1870,7 +1875,23 @@ async def integrated_analysis(req: IntegratedAnalysisRequest):
             #        라벨도 **거짓**이었다 — 대표(첫) 필지조차 제2종일반주거였다.
             #   → `parcels=enriched` 를 넘겨 위임이 **우리가 이미 보강한 실제 용도지역**을 쓰게 한다.
             #     통합면적(land_area_sqm 스칼라)은 그대로 우선하므로 면적 경로는 무변경이다.
-            rep_addr = next((p.get("address") for p in enriched if p.get("address")), "")
+            # ★D8(2026-08-24 화면감사) — 종전엔 **첫 필지**의 주소를 그대로 집었다. 그 값이
+            #   번지 없는 동 단위("경기도 오산시 내삼미동")면 아래 `region` 추출과 위임 내부
+            #   지오코딩이 **엉뚱한 필지**를 집는다. 실제로 그 탓에 `zone_basis` 라벨까지
+            #   거짓이 됐다(위 주석 ②).
+            #   ★없는 걸 새로 만든 게 아니다 — `parcel_display_address` 는 **이미 있었고
+            #     같은 파일 :901 · :2240 이 쓰고 있었다.** 여기만 raw 였다(§29 불일치).
+            rep_parcel = pick_representative_parcel(enriched)
+            rep_addr = (
+                parcel_display_address(rep_parcel.get("address"), rep_parcel.get("pnu"))
+                if rep_parcel else ""
+            )
+            # ★해상도를 **값과 함께** 싣는다 — "주소가 없다"와 "있는데 지오코딩하기엔 거칠다"는
+            #   다른 상태이고, 후자는 조회가 **성공하고 틀린 값**을 주므로 더 위험하다.
+            rep_resolution = address_resolution(
+                rep_parcel.get("address") if rep_parcel else None,
+                rep_parcel.get("pnu") if rep_parcel else None,
+            )
             # 시군구 미추출 시 ""(주소 시도 추론에 양보) — "서울" 폴백은 지방 부지 분양가를 서울가로 과대.
             region = _extract_sigungu({"address": rep_addr}) or ""
             site = {
@@ -1881,6 +1902,8 @@ async def integrated_analysis(req: IntegratedAnalysisRequest):
                 # zone_basis 는 **위임이 실제로 쓴 기준**으로 아래에서 덮어쓴다(하드코딩 라벨 금지 —
                 # 종전 'representative_parcel' 은 실계산과 달라 거짓 라벨이었다).
                 "zone_basis": None,
+                # ★대표 주소를 **믿어도 되는지**를 소비처가 알 수 있게 함께 싣는다.
+                "address_resolution": rep_resolution,
             }
             kwargs: dict = {
                 "address": rep_addr,
