@@ -401,6 +401,12 @@ def _record_llm_call_event(service: str | None, *, ok: bool,
             payload["error"] = (error or "")[:120]
         _gcap.record_event(
             "llm_call",
+            # ★`severity` 는 **이 지표의 계약이 아니다**(변이 생존 1건의 설명).
+            #   `fallback_rate` SQL 은 `event_type`·`payload->>'ok'`·`service` 만 읽는다
+            #   (growth/analyzer.py 실측). 그래서 이 문자열에 점수용 단언을 붙이지 않는다 —
+            #   붙이면 표현을 다듬을 때마다 깨지는 취약한 락이 된다.
+            #   ★확인 범위: growth analyzer 의 fallback_rate 경로. 다른 소비처가 생기면
+            #     그때 그 소비처가 계약을 선언하고 잠근다.
             {"surface": "api", "service": service or "llm",
              "severity": "info" if ok else "error", "payload": payload},
         )
