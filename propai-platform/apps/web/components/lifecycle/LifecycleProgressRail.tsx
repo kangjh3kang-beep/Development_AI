@@ -24,7 +24,10 @@ import {
 import { resolveStageLabel } from "@/lib/navigation/nav-i18n";
 import { StageIcon } from "@/components/common/StageIcon";
 
-type StageStatus = "completed" | "current" | "next" | "pending";
+// ★"진행중(partial)" 을 별도 상태로 둔다 — 종전엔 주소만 입력한 부지가 **completed** 로
+//   셈해져 "부지분석 완료"인데 설계·수지가 못 도는 모순이 화면에 그대로 나왔다.
+//   한 일은 인정하되(pending 아님) 끝났다고 말하지 않는다(completed 아님).
+type StageStatus = "completed" | "partial" | "current" | "next" | "pending";
 
 const STATUS_NODE: Record<StageStatus, string> = {
   completed:
@@ -33,6 +36,8 @@ const STATUS_NODE: Record<StageStatus, string> = {
     "bg-[var(--accent-strong)]/15 text-[var(--accent-strong)] ring-2 ring-[var(--accent-strong)]/40 shadow-[var(--shadow-glow)]",
   next:
     "bg-[var(--surface-muted)] text-[var(--text-secondary)] border border-dashed border-[var(--accent-strong)]/40 hover:text-[var(--accent-strong)]",
+  partial:
+    "bg-[var(--surface-muted)] text-[var(--text-secondary)] border border-dashed border-[var(--line-strong)]",
   pending: "bg-[var(--surface-muted)] text-[var(--text-hint)] opacity-60",
 };
 
@@ -58,7 +63,9 @@ export function LifecycleProgressRail({
   // 진행도·완료 판정의 단일 소비원(SSOT) — store의 데이터유무 판정 선택자.
   // markStageComplete를 일관 호출하지 않는 모듈 탓에 completedStages가 비어 "0/11 고정"되던
   // 버그를 해소: 실데이터가 채워진 단계(부지분석 등)를 완료로 일관 표시한다.
-  const stageHasData = useProjectContextStore((s) => s.stageHasData);
+  // ★완료 판정 SSOT — `stageHasData`("데이터가 있는가")를 완료로 읽던 것이 헬스보드와
+  //   갈린 원인이었다. 완료는 `stageCompletion`("끝났는가") 하나로만 판정한다.
+  const stageCompletion = useProjectContextStore((s) => s.stageCompletion);
   // ★진행도는 **persist 저장소(localStorage)** 에서 파생된다 — 서버엔 그 저장소가 없다.
   //   재수화 전에 그대로 쓰면 서버 `0` / 클라 `1` 로 **하이드레이션 불일치**가 나고,
   //   React 가 이 서브트리를 버리고 다시 그리며 uncaught error 를 던진다(2026-08-13 실측).
@@ -73,14 +80,20 @@ export function LifecycleProgressRail({
   if (!projectId) return null;
 
   const nextStage = hydrated ? getNextRecommendedStage() : undefined;
-  // 완료 판정 = 완료 단계 기록(completedStages) OR 실데이터 존재(stageHasData).
+  // 완료 = 사용자가 완료 표시했거나(completedStages) **수치가 확보**됐다(stageCompletion==="done").
   const isDone = (id: LifecycleStage) =>
-    hydrated && (completedStages.includes(id) || stageHasData(id) === true);
+    hydrated && (completedStages.includes(id) || stageCompletion(id) === "done");
+  // 진행중 = 시작은 했으나 수치가 없다(예: 주소만 있고 면적 미확보). 완료로 세지 않는다.
+  const isPartial = (id: LifecycleStage) =>
+    hydrated && !isDone(id) && stageCompletion(id) === "partial";
   const completedCount = LIFECYCLE_STAGES.filter((id) => isDone(id)).length;
+  const partialCount = LIFECYCLE_STAGES.filter((id) => isPartial(id)).length;
+  // ★진행률의 분자는 **완료만** 센다. 진행중을 섞으면 다시 "끝난 것처럼" 보인다.
   const pct = Math.round((completedCount / LIFECYCLE_STAGES.length) * 100);
 
   function statusOf(id: LifecycleStage): StageStatus {
     if (isDone(id)) return "completed";
+    if (isPartial(id)) return "partial";
     if (hydrated && currentStage === id) return "current";
     if (nextStage === id) return "next";
     return "pending";
@@ -103,7 +116,9 @@ export function LifecycleProgressRail({
           )}
         </div>
         <span className="shrink-0 rounded-full border border-[var(--line)] bg-[var(--surface-muted)] px-3 py-1 text-[11px] font-bold text-[var(--text-secondary)]">
-          {hydrated ? `${completedCount}/${LIFECYCLE_STAGES.length} · ${pct}%` : `—/${LIFECYCLE_STAGES.length}`}
+          {hydrated
+            ? `완료 ${completedCount}/${LIFECYCLE_STAGES.length} · ${pct}%${partialCount > 0 ? ` · 진행중 ${partialCount}` : ""}`
+            : `—/${LIFECYCLE_STAGES.length}`}
         </span>
       </header>
 
