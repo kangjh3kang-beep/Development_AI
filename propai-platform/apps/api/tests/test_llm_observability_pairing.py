@@ -31,7 +31,47 @@ from pathlib import Path
 APP = Path(__file__).resolve().parents[1] / "app"
 
 _DENOM = {"record_llm_response_billing", "record_llm_response_billing_sync"}
+# 분자는 두 형태를 인정한다:
+#  ① 서비스가 자기 `except` 에서 직접 남긴다(`record_llm_failure`/`record_fallback`)
+#  ② **팩토리에서 감싼다** — `get_llm(service="X")` 면 `ainvoke` 실패가 자동으로 집계된다.
+#     ②가 생긴 이유: ①을 17개 모듈에 손으로 배선하는 것은 그 자체가 결함의 냄새였다.
 _NUMER = {"record_llm_failure", "record_fallback"}
+
+
+def _service_names(src: str) -> tuple[set[str], set[str]]:
+    """(분모가 쓰는 service 이름, 분자가 쓰는 service 이름) — 리터럴만 모은다.
+
+    ★왜 이름을 대조하나: `fallback_rate` SQL 은 `service` 로 **GROUP BY** 한다. 분자와
+      분모의 이름이 갈리면 서로 **다른 버킷**에 떨어져 한쪽은 100%, 다른 쪽은 0% 가 된다 —
+      계측이 있는데 **틀린 답**을 주므로 안 하느니 못하다.
+    """
+    denom: set[str] = set()
+    numer: set[str] = set()
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return denom, numer
+    for n in ast.walk(tree):
+        if not isinstance(n, ast.Call):
+            continue
+        fn = n.func.attr if isinstance(n.func, ast.Attribute) else getattr(n.func, "id", "")
+        lit = {k.arg: k.value.value for k in n.keywords
+               if isinstance(k.value, ast.Constant) and isinstance(k.value.value, str)}
+        if fn in _DENOM and "service" in lit:
+            denom.add(lit["service"])
+        if fn == "get_llm" and "service" in lit:
+            numer.add(lit["service"])
+        if fn == "record_llm_failure" and n.args and isinstance(n.args[0], ast.Constant):
+            numer.add(n.args[0].value)
+    return denom, numer
+
+
+def _has_numerator(names: set[str], src: str) -> bool:
+    """분자가 어떤 형태로든 배선됐는가."""
+    if names & _NUMER:
+        return True
+    _, numer = _service_names(src)
+    return bool(numer)
 
 
 def _identifiers(src: str) -> set[str]:
@@ -63,23 +103,22 @@ def _identifiers(src: str) -> set[str]:
 #   각 서비스의 **실패 경로**는 그 서비스의 폴백 규약을 아는 사람이 배선해야 한다.
 #   배선하는 PR 에서 **이 목록에서 지운다**(면제를 남기면 락이 skip 이라 무잠금이다).
 _EXEMPT: dict[str, str] = {
-    "services/verification/verifier_service.py": "★부채 — 실패 경로 미배선",
-    "services/design_ingest/vision_parser.py": "★부채 — 실패 경로 미배선",
-    "services/legal/alris_service.py": "★부채 — 실패 경로 미배선",
-    "services/legal/legal_discovery_service.py": "★부채 — 실패 경로 미배선",
-    "services/land_intelligence/parcel_excel_service.py": "★부채 — 실패 경로 미배선",
-    "services/permit/permit_analysis_service.py": "★부채 — 실패 경로 미배선",
-    "services/market/conversational_market_ai.py": "★부채 — 실패 경로 미배선",
-    "services/ai_services/bid_interpreter.py": "★부채 — 실패 경로 미배선",
-    "services/ai/assistant_agent.py": "★부채 — 실패 경로 미배선",
-    "services/market/market_report_service.py": "★부채 — 실패 경로 미배선",
-    "services/growth/improvement_agent.py": "★부채 — 실패 경로 미배선",
-    "services/regulation/regulation_analysis_service.py": "★부채 — 실패 경로 미배선",
-    "services/growth/analyzer.py": "★부채 — 실패 경로 미배선",
-    "services/development/scenario_simulator.py": "★부채 — 실패 경로 미배선",
-    "services/expert_panel/expert_panel_graph.py": "★부채 — 실패 경로 미배선",
-    "services/expert_panel/expert_panel_service.py": "★부채 — 실패 경로 미배선",
-    "services/precheck/precheck_service.py": "★부채 — 실패 경로 미배선",
+    # ★2026-08-24 — 17건에서 **6건으로 줄었다**. 남은 것은 사유가 서로 다르다(뭉뚱그리지 않는다).
+    #
+    # ㉠ `get_llm` 을 부르지 않는다 — LLM 을 다른 경로로 얻으므로 팩토리 래핑이 안 닿는다.
+    #    실패 배선은 그 획득 경로를 아는 사람이 해야 한다.
+    "services/legal/alris_service.py": "★부채 ㉠ — get_llm 호출 0(획득 경로가 다름)",
+    "services/ai_services/bid_interpreter.py": "★부채 ㉠ — get_llm 호출 0(획득 경로가 다름)",
+    #
+    # ㉡ 분모의 `service` 가 **리터럴이 아니다**(변수·동적). 이름을 못 읽으니 분자에 같은
+    #    이름을 넣어 줄 수 없다 — 이름이 갈리면 계측이 **틀린 답**을 준다(안 하느니 못하다).
+    "services/ai/assistant_agent.py": "★부채 ㉡ — 분모 service 가 리터럴이 아님",
+    "services/growth/improvement_agent.py": "★부채 ㉡ — 분모 service 가 리터럴이 아님",
+    "services/growth/analyzer.py": "★부채 ㉡ — 분모 service 가 리터럴이 아님",
+    #
+    # ㉢ 한 모듈이 **두 서비스 이름**을 쓴다(`parcel_excel_structure_detect` /
+    #    `parcel_excel_row_reverify`). 호출별로 다른 이름을 붙여야 해 일괄 배선이 안 된다.
+    "services/land_intelligence/parcel_excel_service.py": "★부채 ㉢ — 한 모듈에 service 이름 2종",
 }
 
 
@@ -96,6 +135,13 @@ def _modules_recording_denominator() -> dict[str, set[str]]:
         if names & _DENOM:
             out[str(f.relative_to(APP))] = names
     return out
+
+
+def _sources() -> dict[str, str]:
+    return {
+        m: (APP / m).read_text(encoding="utf-8")
+        for m in _modules_recording_denominator()
+    }
 
 
 def test_전제_분모_호출자를_실제로_찾는다():
@@ -118,9 +164,10 @@ def test_전제_면제에는_사유가_있다():
 
 def test_핵심_분모를_배선했으면_분자도_배선한다():
     """분모만 있는 모듈은 폴백률 **0%** 로 읽힌다 — 침묵보다 나쁜 거짓 초록이다."""
+    srcs = _sources()
     violations = [
         m for m, names in _modules_recording_denominator().items()
-        if m not in _EXEMPT and not (names & _NUMER)
+        if m not in _EXEMPT and not _has_numerator(names, srcs[m])
     ]
     assert not violations, (
         "LLM 실패를 성장루프에 남기지 않는 모듈(폴백률이 거짓 0%가 된다): " + ", ".join(sorted(violations))
@@ -142,9 +189,10 @@ def test_전제_모든_면제가_실제로_필요하다():
     (초판이 손으로 만든 목록이었고, AST 판정으로 바꾸자 실제 모집단이 달라졌다.)
     """
     denom = _modules_recording_denominator()
+    srcs = _sources()
     unnecessary = [
         m for m in _EXEMPT
-        if m not in denom or (denom[m] & _NUMER)
+        if m not in denom or _has_numerator(denom[m], srcs[m])
     ]
     assert not unnecessary, (
         "면제가 필요 없는 모듈(분모를 안 쓰거나 이미 분자를 배선함) — 목록에서 지워라: "
@@ -246,3 +294,39 @@ async def test_성공과_실패_이벤트는_모양이_다르다(monkeypatch):
     assert "error" in fail_pl and "error" not in ok_pl
 
     gcap._QUEUE.clear()
+
+
+def test_핵심_분자와_분모가_같은_service_이름을_쓴다():
+    """★이름이 갈리면 계측이 **틀린 답**을 준다 — 없느니만 못하다.
+
+    `fallback_rate` SQL 은 `service` 로 GROUP BY 한다. 분모가 `"market_report"`,
+    분자가 `"market"` 이면 두 버킷으로 갈려 한쪽은 **0%**, 다른 쪽은 **100%** 가 된다.
+    배선했다는 사실이 오히려 거짓 신호를 만든다.
+    """
+    bad: list[str] = []
+    for m, src in _sources().items():
+        if m in _EXEMPT:
+            continue
+        denom, numer = _service_names(src)
+        if denom and numer and not (denom & numer):
+            bad.append(f"{m}(분모={sorted(denom)} vs 분자={sorted(numer)})")
+    assert not bad, "분자·분모의 service 이름이 어긋난다(지표가 두 버킷으로 갈린다): " + ", ".join(bad)
+
+
+def test_전제_이름_대조가_실제로_쌍을_보고_있다():
+    """공허한 초록 방지 — 쌍이 하나도 없으면 위 검사는 저절로 참이다."""
+    pairs = [
+        m for m, src in _sources().items()
+        if m not in _EXEMPT and all(_service_names(src))
+    ]
+    assert len(pairs) >= 8, f"분자·분모 쌍을 가진 모듈이 너무 적다(수집이 깨졌다): {sorted(pairs)}"
+
+
+def test_대조군_이름이_어긋나면_실제로_잡힌다():
+    """판정기가 살아 있는지 — 합성 소스로 태운다(실제 파일을 건드리지 않는다)."""
+    same = 'record_llm_response_billing(l, r, service="x")\nget_llm(service="x")\n'
+    diff = 'record_llm_response_billing(l, r, service="x")\nget_llm(service="y")\n'
+    d1, n1 = _service_names(same)
+    d2, n2 = _service_names(diff)
+    assert d1 & n1, "같은 이름인데 쌍으로 못 읽는다"
+    assert not (d2 & n2), "다른 이름인데 어긋남을 못 잡는다"
