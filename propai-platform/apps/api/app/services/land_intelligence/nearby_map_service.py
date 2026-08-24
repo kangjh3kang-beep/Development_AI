@@ -23,6 +23,9 @@ import structlog
 from app.core.db_utils import PostGISHelper
 from app.services.data_validation.deal_date import parse_deal_date
 from app.services.data_validation.price_stats import robust_price_stats
+from app.services.land_intelligence.sample_attenuation import (
+    build_sample_attenuation,
+)
 from app.services.market.comparable_sample import is_masked_jibun as _is_masked_jibun
 from app.services.market.land_dong_stats import dong_land_stats
 from apps.api.config import get_settings
@@ -1075,6 +1078,12 @@ class NearbyMapService:
             #     돈에 더 가까운 쪽이 미계측으로 남는다(리뷰 A-2).
             "display_cap_impact": display_cap_impact,
         }
+
+        # ★D9 — 감쇠 사슬을 **한 줄로**. 위 키들에 사유가 다 들어 있었지만 여섯 군데에
+        #   흩어져 있어 사용자가 조립할 수 없었다(라이브: 원본 2,350곳 → 표시 209곳인데
+        #   화면은 209 만 말했다). 재계산은 하지 않는다 — 이미 조립된 값을 엮기만 한다.
+        #   판단을 **순수 함수로 꺼내** 두었으므로 이 줄은 배선이고, 락은 따로 있다.
+        result["sample_attenuation"] = build_sample_attenuation(result)
 
         # ★정직 표기: 공공데이터 조회 실패와 "거래 0건(실제 없음)"을 구분한다.
         #   - 전건 실패 = 국토부 실거래 API 무응답/서킷OPEN → data_source=unavailable(빈 표시는 거짓).
