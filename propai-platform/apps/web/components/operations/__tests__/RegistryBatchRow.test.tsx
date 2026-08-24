@@ -13,7 +13,7 @@
  * 담아 오는데 화면이 그것을 **존재만으로** 칠했기 때문이다 — 아무것도 판정하지 않은 건에
  * 판정 배지가 붙었고, 진짜 사유(`ai.failure_reason`)는 화면에 한 번도 나온 적이 없다.
  */
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { RegistryBatchRow, type RegistryBatchRowItem } from "../RegistryBatchRow";
@@ -93,6 +93,29 @@ describe("일괄 등기분석 행 — 렌더", () => {
   it("응답 자체가 없으면 요청 실패라고 말한다(사유 없음과 구분)", () => {
     render(<RegistryBatchRow item={{ jibun: "x", result: null }} />);
     expect(screen.getByTestId("row-reason").textContent).toContain("요청 실패");
+  });
+
+  it("★'상세'가 콜백을 부른다 — 버튼이 그려지기만 하고 배선이 끊긴 적이 있다", () => {
+    let called = 0;
+    render(<RegistryBatchRow item={성공} onDetail={() => { called += 1; }} />);
+    fireEvent.click(screen.getByRole("button", { name: "상세" }));
+    expect(called).toBe(1);
+  });
+
+  it("★등급별로 **다른 색**을 칠한다(세 등급이 같은 색이면 배지가 정보가 아니다)", () => {
+    const cls = (grade: string) => {
+      const { unmount, container } = render(
+        <RegistryBatchRow
+          item={{ jibun: "x", result: { status: "ok", ai: { generated: true, safety_grade: grade } } }}
+        />,
+      );
+      const c = container.querySelector('[data-testid="row-grade"]')!.className;
+      unmount();
+      return c;
+    };
+    const [안전, 주의, 위험] = ["안전", "주의", "위험"].map(cls);
+    expect(new Set([안전, 주의, 위험]).size, "등급 색이 겹친다").toBe(3);
+    expect(위험).toContain("status-error");
   });
 
   it("다른 물건을 조회했을 수 있다는 고지는 행에서도 보인다", () => {
