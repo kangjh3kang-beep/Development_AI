@@ -38,7 +38,7 @@ describe("자기자본 SSOT — equityIsManual 게이트 회귀", () => {
     expect(useProjectContextStore.getState().feasibilityData?.equityWon).toBe(3_000_000_000);
 
     // 2) 재실행 경로 — totalCostWon만 전달, equityWon 키 자체를 omit(ProjectPipelinePanel 패턴).
-    s.updateFeasibilityData({ totalCostWon: 20_000_000_000, totalRevenueWon: null, profitRatePct: null, grade: null });
+    s.updateFeasibilityData({ totalCostWon: 20_000_000_000, totalRevenueWon: null, profitRatePct: null, grade: null, precision: null });
 
     // 3) 옛 cost(100억)에 앵커되지 않고 새 cost(200억)×동일 30%로 재산출돼야 한다.
     const after = useProjectContextStore.getState().feasibilityData;
@@ -53,14 +53,14 @@ describe("자기자본 SSOT — equityIsManual 게이트 회귀", () => {
       totalCostWon: 10_000_000_000,
       totalRevenueWon: null,
       profitRatePct: null,
-      grade: null,
+      grade: null, precision: null,
       equityWon: 3_500_000_000,
       equityIsManual: true,
     });
     expect(useProjectContextStore.getState().feasibilityData?.equityWon).toBe(3_500_000_000);
 
     // cost가 바뀌어도(equityWon 키 omit) 수동 입력값은 보존돼야 한다.
-    s.updateFeasibilityData({ totalCostWon: 20_000_000_000, totalRevenueWon: null, profitRatePct: null, grade: null });
+    s.updateFeasibilityData({ totalCostWon: 20_000_000_000, totalRevenueWon: null, profitRatePct: null, grade: null, precision: null });
     const after = useProjectContextStore.getState().feasibilityData;
     expect(after?.equityWon).toBe(3_500_000_000);
   });
@@ -72,7 +72,7 @@ describe("자기자본 SSOT — equityIsManual 게이트 회귀", () => {
       totalCostWon: 10_000_000_000,
       totalRevenueWon: null,
       profitRatePct: null,
-      grade: null,
+      grade: null, precision: null,
       equityWon: 3_500_000_000,
       equityIsManual: true,
     });
@@ -81,7 +81,7 @@ describe("자기자본 SSOT — equityIsManual 게이트 회귀", () => {
       totalCostWon: 10_000_000_000,
       totalRevenueWon: null,
       profitRatePct: null,
-      grade: null,
+      grade: null, precision: null,
       equityWon: undefined,
       equityIsManual: false,
     });
@@ -98,7 +98,7 @@ describe("자기자본 SSOT — equityIsManual 게이트 회귀", () => {
       totalCostWon: 10_000_000_000,
       totalRevenueWon: null,
       profitRatePct: null,
-      grade: null,
+      grade: null, precision: null,
       equityWon: 3_500_000_000,
       equityIsManual: true,
     });
@@ -110,7 +110,7 @@ describe("자기자본 SSOT — equityIsManual 게이트 회귀", () => {
     expect(afterRatio?.equityIsManual).toBe(false);
 
     // 이후 cost가 바뀌면(재실행) 새 비율 20%로 계속 추종해야 한다(앵커링 없음).
-    s.updateFeasibilityData({ totalCostWon: 30_000_000_000, totalRevenueWon: null, profitRatePct: null, grade: null });
+    s.updateFeasibilityData({ totalCostWon: 30_000_000_000, totalRevenueWon: null, profitRatePct: null, grade: null, precision: null });
     expect(useProjectContextStore.getState().feasibilityData?.equityWon).toBe(6_000_000_000);
   });
 });

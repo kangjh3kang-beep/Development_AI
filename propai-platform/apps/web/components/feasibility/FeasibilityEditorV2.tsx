@@ -73,6 +73,11 @@ export function FeasibilityEditorV2({ projectId }: Props) {
       totalRevenueWon: result.total_revenue_won ?? null,
       profitRatePct: result.profit_rate_pct ?? null,
       grade: result.grade ?? null,
+      // ★정밀도는 **모른다고 명시**한다 — 이 산출 엔진은 정밀도 등급을 계산하지 않는다
+      //   (백엔드 실측: 해당 서비스에 precision 산출 0건). 생략하면 merge 패치라
+      //   직전 개략수지의 `"E"` 가 남아 배지 `개략(추정) — 설계 미반영` 이 이 결과 위에
+      //   **거짓으로** 뜬다. `null` 이면 화면은 "정밀도 미표기"로 정직하게 남는다.
+      precision: null,
       // 투자수익성(ROI 뷰, analytics/investment) 정합용 — A를 단일 진실원으로.
       roiPct: result.roi_pct ?? null,
       npvWon: result.npv_won ?? null,
