@@ -117,6 +117,10 @@ import {
   selectionMismatchesProject,
 } from "./satong-project-connect";
 import { classifySelection, selectionIntegrityNotice } from "@/lib/selection-integrity";
+import {
+  selectionContaminationKey,
+  trackSelectionContamination,
+} from "@/lib/growth/selection-contamination";
 
 // ★UX 트랙 D3(지도 높이 반응형 — 진단G 실측): 종전 고정 720px는 모바일에서 지도가
 //   화면 대부분을 점유했다. clamp(하한, 선호값, 상한) — 60dvh를 선호하되 satong-map-z.ts
@@ -799,10 +803,27 @@ export function SatongMapShell({
   //   떨어진 6필지가 "통합 5,781㎡"로 묶여 있었고, 소유자명(`◀ 전성결`)이 주소 칸에
   //   들어온 프로젝트도 있었다. ★막지 않고 고지한다 — 원거리 묶음은 후보지 비교라는
   //   정당한 워크플로우일 수 있다(290km 건이 그렇게 보인다).
-  const integrityNotice = useMemo(
-    () => selectionIntegrityNotice(classifySelection(selectedParcels)),
+  const selectionIntegrity = useMemo(
+    () => classifySelection(selectedParcels),
     [selectedParcels],
   );
+  const integrityNotice = useMemo(
+    () => selectionIntegrityNotice(selectionIntegrity),
+    [selectionIntegrity],
+  );
+  // ★관측(2026-08-24) — 고지는 위에서 하지만 **빈도는 아무도 몰랐다.**
+  //   빈도를 모르면 "이미 오염된 프로젝트를 정리할지"를 근거 없이 결정하게 된다.
+  //   ★렌더 중이 아니라 effect 에서 보낸다(적재는 부작용이다). 같은 오염을 재렌더마다
+  //     다시 세지 않도록 판정 서명으로 1회만 보낸다 — 필지가 바뀌어 판정이 달라지면
+  //     그건 **새 사실**이므로 다시 보낸다.
+  const contaminationSentKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    const key = selectionContaminationKey(selectionIntegrity);
+    if (contaminationSentKeyRef.current === key) return;
+    contaminationSentKeyRef.current = key;
+    // route 는 null 로 넘긴다 — collector 가 `window.location` 에서 채운다(SSOT 한 곳).
+    trackSelectionContamination(selectionIntegrity, null);
+  }, [selectionIntegrity]);
   const [uploadStatus, setUploadStatus] = useState<"idle" | "loading" | "error">("idle");
   const [uploadNote, setUploadNote] = useState("");
   // ★UX 트랙 C4(사용자 지적): 다필지 엑셀 업로드는 최대 180초가 걸릴 수 있는데 종전엔

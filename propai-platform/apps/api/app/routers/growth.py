@@ -27,10 +27,16 @@ router = APIRouter(prefix="/growth", tags=["자가성장 텔레메트리"])
 # 프론트가 임의로 큰 배열을 보내지 못하게 1회 배치 상한.
 _MAX_BATCH = 100
 
+# ★프론트 유니온(`apps/web/lib/growth/event-collector.ts:GrowthEventType`)과 **1:1 이어야 한다.**
+#   한쪽에만 있는 타입은 여기서 조용히 `rejected` 로 버려진다 — 프론트는 논블로킹이라
+#   오류를 못 보고, 테스트도 초록이다(계측이 죽어 있는데 아무도 모른다).
+#   그 침묵을 `apps/web/lib/growth/__tests__/event-type-whitelist.parity.test.ts` 가 잠근다.
 _ALLOWED_TYPES = {
     "page_view", "click", "funnel_step", "api_call", "api_error", "js_error",
     "promise_rejection", "web_vital", "llm_call", "verify_result", "fallback",
     "heal_action",
+    # 선택 오염 관측(2026-08-24) — 다필지 선택이 "하나의 개발 부지"가 아닌 빈도.
+    "selection_contamination_observation",
 }
 
 
