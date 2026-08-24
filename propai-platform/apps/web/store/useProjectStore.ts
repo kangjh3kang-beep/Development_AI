@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { apiClient } from '@/lib/api-client';
 import { createDebouncedStorage } from '@/lib/debounced-storage';
+import { purgeProjectLocalData } from "@/lib/project-lifecycle";
 
 type ProjectStatus = 'draft' | 'planning' | 'design' | 'permit' | 'construction' | 'completed' | 'archived';
 
@@ -135,6 +136,11 @@ export const useProjectStore = create<ProjectState>()(
       },
       deleteProject: async (id) => {
         set((state) => ({ projects: state.projects.filter((p) => p.id !== id) }));
+        // ★생명주기 트리거 — 목록에서 지우는 것만으로는 프로젝트가 사라지지 않는다.
+        //   분석 스냅샷(snapshots[id])·토지조서(byProject[id])·활성 컨텍스트가 남고,
+        //   그중 snapshots 는 CTX_KEYS 라 **매 syncUp 마다 서버로 재업로드**된다 →
+        //   다음 syncDown 이 다시 내려 준다(삭제가 동기화로 되돌려진다).
+        purgeProjectLocalData(id);
         if (_isUuid(id)) {
           try {
             await apiClient.delete(`/projects/${id}`, { useMock: false, timeoutMs: 30000 });
