@@ -21,6 +21,14 @@ import { SatongMapShell } from "@/components/precheck/SatongMapShell";
 import { useProjectContextStore, type SiteAnalysisData } from "@/store/useProjectContextStore";
 import { useProjectStore, type Project } from "@/store/useProjectStore";
 
+// ★계측 통로를 목으로 가로챈다 — 테스트가 실제 네트워크를 태우지 않도록.
+//   `trackEvent` 만 갈아 끼우고 나머지(타입·상수)는 원본을 쓴다.
+const trackEventMock = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/growth/event-collector", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/growth/event-collector")>()),
+  trackEvent: trackEventMock,
+}));
+
 vi.mock("next/navigation", () => ({
   useParams: () => ({ locale: "ko" }),
   usePathname: () => "/ko/precheck",
@@ -143,10 +151,38 @@ describe("★배선 — 선택 무결성 고지가 실제 화면에 뜬다", () 
     expect(notice.textContent).toContain("소유자");
   });
 
-  // ★부채 — 초록 안에 보이게 남긴다(커밋 메시지에만 적으면 드러나지 않는다).
-  //   고지는 이 PR 이 하지만 **빈도는 아직 못 잰다**: 프론트에 클라이언트 계측 헬퍼가
-  //   없어(실측: lib/** 에 recordEvent/captureEvent 계열 0건) 이벤트를 보낼 통로가 없다.
-  //   통로가 생기면 `selection_contamination_observation`(verdict·spreadKm·groups·malformed)
-  //   을 붙이고, 상수·service·surface 를 여기서 함께 잠근다(3회 반복한 실수).
-  it.todo("선택 오염이 selection_contamination_observation 으로 적재된다(계측 통로 신설 후)");
+  // ★부채 상환(2026-08-24) — 위 `it.todo` 를 실제 잠금으로 바꾼다.
+  //   ★그리고 그 부채의 **사유가 거짓이었다**: *"프론트에 클라이언트 계측 헬퍼가 없다
+  //     (실측: lib/** 에 recordEvent/captureEvent 계열 0건)"* 라고 적혀 있었는데,
+  //     `lib/growth/event-collector.ts` 의 `trackEvent` 가 **이미 있었고** `api-client` 에
+  //     배선까지 돼 있었다. 틀린 이름으로만 찾은 것이다 — **"0건은 부재가 아니다."**
+  //     부채 메모의 *사유*는 *사실*보다 빨리 낡는다. 물려받기 전에 다시 재라.
+  it("D) ★관측 — 오염이면 selection_contamination_observation 이 적재된다", () => {
+    trackEventMock.mockClear();
+    seed(MIXED);
+    render(<SatongMapShell locale="ko" />);
+    expect(screen.getByText(/필지 선택 3건/)).toBeInTheDocument(); // 대상 존재 가드
+
+    const calls = trackEventMock.mock.calls.filter(
+      ([type]) => type === "selection_contamination_observation",
+    );
+    expect(calls.length, "관측이 한 건도 적재되지 않았다").toBe(1);
+    const [, props] = calls[0];
+    expect(props.service).toBe("precheck.selection-integrity");
+    expect(props.payload).toMatchObject({ verdict: "multi_region", region_groups: 2 });
+    // 실측 거리가 그대로 실린다(화면 문구와 같은 사실을 계측도 본다).
+    expect(props.payload.spread_km).toBeGreaterThan(15);
+  });
+
+  it("★E) 위양성 방지 — 정상 선택은 관측을 적재하지 않는다(대조군)", () => {
+    trackEventMock.mockClear();
+    seed(NORMAL);
+    render(<SatongMapShell locale="ko" />);
+    expect(screen.getByText(/필지 선택 3건/)).toBeInTheDocument();
+    expect(
+      trackEventMock.mock.calls.filter(
+        ([type]) => type === "selection_contamination_observation",
+      ),
+    ).toHaveLength(0);
+  });
 });
