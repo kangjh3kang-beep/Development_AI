@@ -100,6 +100,22 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
     const isPerParcel = typeof overrideAddr === "string";
     const target = (isPerParcel ? overrideAddr : addr) || siteAnalysis?.address || "";
     if (!target && !text.trim()) { setError("주소를 선택하거나 등기부 내용을 입력하세요."); return null; }
+    // ★★번지 없는 주소로 **유료 발급을 시도하지 않는다.**
+    //   라이브 실측(2026-08-24): 대상 주소가 `경기도 오산시 내삼미동`(동 단위)인 채로 조회가
+    //   나가 하이픈 `[C0000-002] 조회 실패` · 틸코 `HTTP 500` 이 떴다. 등기부는 **필지 단위**
+    //   문서라 동 이름만으로는 특정할 수 없다 — 실패가 예정된 호출이고, 사용자에게는
+    //   "잠시 후 다시 시도" 라는 **틀린 안내**가 간다(다시 시도해도 영원히 실패한다).
+    //   PNU 가 있으면 그것으로 특정되므로 통과시킨다(판정은 lib/pnu 한 곳).
+    const hasParcelId = Boolean(
+      (isPerParcel ? row?.pnu : siteAnalysis?.pnu) || addressHasJibun(target),
+    );
+    if (!hasParcelId && !text.trim()) {
+      setError(
+        `"${target}" 에는 번지가 없어 등기부를 특정할 수 없습니다 — 등기부는 필지 단위 문서입니다. ` +
+        "지번(예: 내삼미동 448-2)까지 입력하거나, 아래 필지 목록에서 개별 [분석]을 눌러 주세요.",
+      );
+      return null;
+    }
     if (rowId) setBusyId(rowId); else setLoading(true);
     setError(""); setResult(null); setProgress("");
     try {

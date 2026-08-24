@@ -122,3 +122,35 @@ describe("배선 — 화면이 실제로 저장·복원한다", () => {
     expect(await read()).toMatch(/dropAnalysis\s*\(/);
   });
 });
+
+describe("번지 없는 주소는 유료 발급으로 나가지 않는다", () => {
+  const read = async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const { __stripCommentsForScan } = await import("@/lib/source-invariant");
+    const rel = "components/operations/RegistryAnalysisWorkspaceClient.tsx";
+    return __stripCommentsForScan(fs.readFileSync(path.resolve(__dirname, "../..", rel), "utf8"), rel);
+  };
+
+  it("★필지 식별자(PNU 또는 지번)를 확인한 뒤에만 조회한다", async () => {
+    const src = await read();
+    // 종전엔 `addressHasJibun` 이 **PNU 보강에만** 쓰였고 유료 호출은 막지 않았다.
+    expect(src).toMatch(/hasParcelId/);
+    expect(src).toMatch(/addressHasJibun\(target\)/);
+  });
+
+  it("★막을 때 **무엇이 없는지와 다음 행동**을 말한다(‘잠시 후 재시도’는 틀린 안내다)", async () => {
+    const src = await read();
+    expect(src).toContain("번지가 없어");
+    expect(src).toContain("필지 단위");
+  });
+});
+
+describe("addressHasJibun — 게이트가 무엇을 통과시키나", () => {
+  it("★동 단위 주소는 막고, 지번이 있으면 통과시킨다(대조군)", async () => {
+    const { addressHasJibun } = await import("@/lib/pnu");
+    expect(addressHasJibun("경기도 오산시 내삼미동"), "동 단위인데 통과했다").toBe(false);
+    expect(addressHasJibun("경기도 오산시 내삼미동 448-2")).toBe(true);
+    expect(addressHasJibun("경기도 오산시 내삼미동 467-1 (내삼미동)")).toBe(true);
+  });
+});
