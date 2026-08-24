@@ -20,7 +20,7 @@ import type {
   SiteAnalysisData,
   ProjectContextState,
 } from "@/store/useProjectContextStore";
-import { effectiveLandAreaSqm } from "@/lib/site-area";
+import { effectiveLandAreaSqm, resolveLandArea } from "@/lib/site-area";
 import { resolveDominantZone } from "@/lib/zoning-ssot";
 import { normalizeZoning } from "@/lib/kr-building-regulations";
 import type { PipelineStep } from "@/components/common/AnalysisPipelineStepbar";
@@ -49,8 +49,20 @@ export interface ContextHeaderData {
   zoneLabel: string | null;
   /** 용도지역 출처: "site"=부지분석 확정, "design"=설계 폼 직접 입력(폴백), null=미확보. */
   zoneSource: "site" | "design" | null;
-  /** 유효 대지면적(㎡·다필지면 통합면적) — 미확보 시 null. */
+  /** 유효 대지면적(㎡) — 미확보 시 null. ★"다필지면 통합면적"이 **항상 참은 아니다**: 아래 basis 참조. */
   landAreaSqm: number | null;
+  /**
+   * 위 면적이 **무엇으로 만들어졌는가** — SSOT(`resolveLandArea`)가 이미 계산해 두는 값인데
+   * 헤더가 여태 **버리고 있었다.**
+   *
+   * ★왜 중요한가: 다필지인데 통합면적을 아직 못 구하면 SSOT 는 **대표 1필지 면적**을 돌려주고
+   *   `basis="representative"` 로 강등을 사실대로 알린다. 그런데 헤더는 `isMultiParcel` 만 보고
+   *   *"다필지 통합면적(유효필지 N필지 합계)"* 라고 **단정**했다 — 33필지 프로젝트에 대표
+   *   1필지 면적(543㎡)을 띄우면서 "N필지 합계"라고 말한 실물이 프로덕션에 있다.
+   *   이 파일이 바로 옆 용도지역 항목에서 *"거짓 근거는 근거 없음보다 나쁘다"* 라고 적어 두고,
+   *   면적 축에서 같은 잘못을 하고 있었다.
+   */
+  landAreaBasis: ReturnType<typeof resolveLandArea>["basis"];
   /** 유효 필지 수(다필지 판정용). 단일/미확보면 1 또는 null. */
   parcelCount: number | null;
   /** 다필지 통합 여부(parcelCount >= 2). */
@@ -102,6 +114,8 @@ export function deriveContextHeaderData(ctx: ContextHeaderInput): ContextHeaderD
       ? "design"
       : null;
   const landAreaSqm = effectiveLandAreaSqm(sa);
+  // ★값과 **그 값이 무엇인지**를 함께 들고 나온다(SSOT 가 이미 계산한 것을 버리지 않는다).
+  const landAreaBasis = resolveLandArea(sa).basis;
   const hasContext = !!(ctx.projectId || address || projectName);
 
   return {
@@ -112,6 +126,7 @@ export function deriveContextHeaderData(ctx: ContextHeaderInput): ContextHeaderD
     zoneLabel,
     zoneSource,
     landAreaSqm,
+    landAreaBasis,
     parcelCount,
     isMultiParcel,
   };

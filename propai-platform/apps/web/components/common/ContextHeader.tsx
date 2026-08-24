@@ -106,9 +106,15 @@ export function buildEvidenceItems(
     items.push({
       label: "대지면적",
       value: area,
-      basis: data.isMultiParcel
-        ? `다필지 통합면적(유효필지 ${data.parcelCount ?? "?"}필지 합계)`
-        : "단일필지 대지면적",
+      // ★단정하지 않는다 — SSOT 가 준 basis 를 그대로 말한다.
+      //   `representative` 는 **다필지인데 통합면적을 아직 못 구해 대표 1필지 면적을 쓰는**
+      //   상태다. 이걸 "N필지 합계"라고 부르면 거짓 근거가 된다(실물: 33필지에 543㎡).
+      basis:
+        data.landAreaBasis === "integrated"
+          ? `다필지 통합면적(유효필지 ${data.parcelCount ?? "?"}필지 합계)`
+          : data.landAreaBasis === "representative"
+            ? `★대표 1필지 면적 — 통합면적 미확보(선택 ${data.parcelCount ?? "?"}필지 전체 합계가 아닙니다)`
+            : "단일필지 대지면적",
     });
   }
   if (farBasis && data.zoneLabel) {
