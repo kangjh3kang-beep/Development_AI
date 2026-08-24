@@ -14,7 +14,7 @@ import Link from "next/link";
 import { Card, CardContent } from "@propai/ui";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { DataSourceNotice } from "@/components/ui/DataSourceNotice";
-import { analyzeRegistry, summarizeBatch } from "@/lib/registry-analyze";
+import { analyzeRegistry, isAnalyzed, rowReason, summarizeBatch } from "@/lib/registry-analyze";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { useLandScheduleStore, type LandRow } from "@/store/useLandScheduleStore";
@@ -43,6 +43,8 @@ type AI = {
   acquired_extinguished?: string;
   right_to_demand_sale?: { possible?: string; reason?: string };
   rights_analysis?: string;
+  /** LLM 권리분석이 실패한 **이유**. `generated:false` 일 때만 채워진다(백엔드 llm_failure.py). */
+  failure_reason?: string;
   risks?: string[];
   safety_grade?: string;
   summary?: string;
@@ -241,7 +243,9 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
       setBatchResults([...acc]);
     }
     // 종료 후 첫 성공(권리분석 ai) 필지를 상세로 고정(데스크 시세추정과 동일 UX — 마지막 1건이 남던 비대칭 해소).
-    const first = acc.find((x) => x.result?.ai);
+    // ★"첫 성공 건"은 **분석이 나온 것**이어야 한다 — `ai` 존재로 고르면 폴백 건(분석 불가)을
+    //   대표로 집어 상세 패널이 빈 권리분석을 연다.
+    const first = acc.find(isAnalyzed);
     if (first?.result) setResult(first.result);
   }, [rows, run]);
 
@@ -413,7 +417,12 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
                   );
                 })()}
                 {batchResults.map((b, i) => {
-                  const grade = b.result?.ai?.safety_grade;
+                  // ★등급은 **분석이 실제로 나온 건에만** 칠한다. LLM 폴백도 `safety_grade:"주의"`를
+                  //   담아 오므로 존재 여부로 칠하면 **아무것도 판정하지 않은 건이 "안전성 주의"로**
+                  //   보인다(라이브 2026-08-24 오산 내삼미동 448-2·347-8 — PDF 는 발급됐다).
+                  //   그건 없는 판정을 지어내는 것이고, 동시에 진짜 사유를 덮는다.
+                  const analyzed = isAnalyzed(b);
+                  const grade = analyzed ? b.result?.ai?.safety_grade : undefined;
                   return (
                     <div key={i} className="flex flex-wrap items-center gap-2 text-[11px]">
                       <span className="min-w-[150px] flex-1 truncate font-semibold text-[var(--text-primary)]" title={b.jibun}>{b.jibun}</span>
@@ -422,16 +431,17 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
                       ) : (
                         <span
                           className="max-w-[55%] truncate text-[var(--text-hint)]"
-                          title={b.result?.message || undefined}
+                          data-testid="row-reason"
+                          title={rowReason(b)}
                         >
                           {/* ★사유를 **보여 준다** — 종전엔 `message` 를 존재 여부로만 써서
-                              "미확보"/"실패" 두 글자로 뭉갰다(사유는 응답에 있었다). */}
-                          {b.result?.status === "ok"
-                            ? "분석"
-                            : b.result?.message || (b.result ? "미확보" : "실패")}
+                              "미확보"/"실패" 두 글자로 뭉갰다(사유는 응답에 있었다).
+                              등기는 받았는데 권리분석만 실패한 건은 `ai.failure_reason` 에
+                              사유가 실려 온다 — 그것까지 읽는다. */}
+                          {rowReason(b)}
                         </span>
                       )}
-                      {b.result?.ai?.summary && <span className="hidden max-w-[40%] truncate text-[var(--text-secondary)] sm:inline">{b.result.ai.summary}</span>}
+                      {analyzed && b.result?.ai?.summary && <span className="hidden max-w-[40%] truncate text-[var(--text-secondary)] sm:inline">{b.result.ai.summary}</span>}
                       {/* 요청과 다른 물건을 조회했을 수 있다는 고지는 목록 행에서도 보여야 한다 —
                           '상세'를 눌러야만 보이면 일괄 분석에서 조용히 묻힌다. */}
                       {b.result?.fetched?.select_note && (

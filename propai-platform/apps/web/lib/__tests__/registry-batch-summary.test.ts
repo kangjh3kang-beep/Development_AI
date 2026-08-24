@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { summarizeBatch, type BatchOutcome } from "@/lib/registry-analyze";
+import { isAnalyzed, rowReason, summarizeBatch, type BatchOutcome } from "@/lib/registry-analyze";
 
 /**
  * 일괄 등기분석이 **왜 멈췄는지** 말하게 하는 계약 — 실장애에서 나왔다(2026-08-24).
@@ -18,7 +18,7 @@ import { summarizeBatch, type BatchOutcome } from "@/lib/registry-analyze";
  *   개수만 보여 주면 "시스템이 고장났나" 로 읽고 **기다리게 된다** — 그게 이번 장애의 시간이었다.
  */
 
-const ok = (jibun: string): BatchOutcome => ({ jibun, result: { status: "ok", ai: { x: 1 } } });
+const ok = (jibun: string): BatchOutcome => ({ jibun, result: { status: "ok", ai: { generated: true } } });
 const fail = (jibun: string, message?: string, status = "empty"): BatchOutcome => ({
   jibun,
   result: { status, ...(message ? { message } : {}) },
@@ -40,14 +40,16 @@ describe("summarizeBatch — 왜 멈췄는지 한 줄로 말한다", () => {
     expect(s.reasons).toHaveLength(2);
   });
 
-  it("★`status:\"ok\"` 만 보고 성공이라 하지 않는다 — 권리분석(ai)이 있어야 성공이다", () => {
-    // 등기 본문을 못 얻으면 `status:"empty"` 인데, 캐시·응답 형태에 따라 ok 가 섞일 수 있다.
+  it("★`status:\"ok\"` 도 `ai` 의 **존재**도 성공이 아니다 — `ai.generated` 만 성공이다", () => {
+    // ★이 케이스는 처음에 `ai: {}` 를 성공으로 셌다. 그 픽스처가 **옛 계약을 굳혀** 두는 바람에
+    //   폴백(`generated:false`)이 성공으로 잡히는 실장애를 잠그지 못했다(2026-08-24 448-2).
     const s = summarizeBatch([
-      { jibun: "a", result: { status: "ok" } },            // ai 없음 → 실패로 센다
-      { jibun: "b", result: { status: "ok", ai: {} } },     // ai 있음(빈 객체도 산출물) → 성공
+      { jibun: "a", result: { status: "ok" } },                        // ai 없음 → 실패
+      { jibun: "b", result: { status: "ok", ai: {} } },                // ai 있으나 미생성 → 실패
+      { jibun: "c", result: { status: "ok", ai: { generated: true } } }, // 생성됨 → 성공
     ]);
     expect(s.ok).toBe(1);
-    expect(s.failed).toBe(1);
+    expect(s.failed).toBe(2);
   });
 
   it("★사유가 없으면 **없다고** 센다 — 지어내지 않는다", () => {
@@ -106,6 +108,75 @@ describe("summarizeBatch — 왜 멈췄는지 한 줄로 말한다", () => {
  *   변이에 뚫리지 않게 한다(이 저장소가 2회 데인 형태).
  *   ★렌더 경로 자체는 아직 무잠금이며 아래 `it.todo` 로 부채를 남긴다.
  */
+/**
+ * ★2026-08-24 2차 실장애 — **발급은 됐는데 권리분석만 실패한 건**.
+ *
+ * 오산 내삼미동 448-2·347-8 은 PDF 가 **정상 발급**됐다(`status:"ok"`). 그런데 화면은
+ * "안전성 주의 · 분석 불가"라고 말했다. 그 두 문구는 백엔드 `_llm()` **폴백에서만** 나온다
+ * (본문 미확보 경로는 `ai:null` 이라 등급 자체가 없다) — 즉 실패한 층은 **LLM 권리분석**이다.
+ *
+ * 두 결함이 겹쳤다:
+ *  1. 폴백도 `ai` 를 dict 로 돌려주므로 **`ai` 존재로 성공을 세면 실패가 성공으로 잡힌다.**
+ *  2. 폴백은 `ai.failure_reason` 에 **사유를 실어 보내는데** 화면이 한 곳도 읽지 않았다.
+ *
+ * 아래 픽스처는 그 두 모집단(성공/폴백)이 **실제로 다른 값**을 내게 만든다 —
+ * 차가 0인 픽스처는 배선을 끊어도 통과하므로 잠금이 아니다.
+ */
+describe("발급은 됐는데 권리분석만 실패한 건(ai.generated=false)", () => {
+  const 성공: BatchOutcome = {
+    jibun: "내삼미동 357-2",
+    result: { status: "ok", ai: { generated: true } },
+  };
+  const 폴백: BatchOutcome = {
+    jibun: "내삼미동 448-2",
+    result: {
+      status: "ok",
+      ai: { generated: false, failure_reason: "JSONDecodeError: Unterminated string starting at" },
+    },
+  };
+
+  it("★`ai` 가 있어도 `generated` 가 아니면 성공이 아니다", () => {
+    expect(isAnalyzed(성공)).toBe(true);
+    expect(isAnalyzed(폴백)).toBe(false);
+  });
+
+  it("★성공 집계가 두 모집단을 가른다 — 1/2 이지 2/2 가 아니다", () => {
+    const sum = summarizeBatch([성공, 폴백]);
+    expect(sum.total).toBe(2);
+    expect(sum.ok).toBe(1);
+    expect(sum.failed).toBe(1);
+  });
+
+  it("★사유는 `ai.failure_reason` 에서 온다 — '분석 불가' 네 글자로 뭉개지 않는다", () => {
+    const r = rowReason(폴백);
+    expect(r).toContain("JSONDecodeError");
+    // 성공 건과 **다른 문자열**이어야 한다(둘이 같으면 배선을 끊어도 통과한다).
+    expect(r).not.toBe(rowReason(성공));
+  });
+
+  it("★대표 사유가 LLM 실패 사유를 집는다", () => {
+    const sum = summarizeBatch([성공, 폴백, { ...폴백, jibun: "내삼미동 347-8" }]);
+    expect(sum.topReason).toContain("JSONDecodeError");
+    expect(sum.reasons[0].count).toBe(2);
+  });
+
+  it("★발급 실패(message)와 권리분석 실패(failure_reason)는 **다른 사유로** 집계된다", () => {
+    const 발급실패: BatchOutcome = {
+      jibun: "내삼미동 100-1",
+      result: { status: "error", message: "하이픈 민원캐시 잔액이 부족합니다" },
+    };
+    const sum = summarizeBatch([폴백, 발급실패]);
+    expect(sum.failed).toBe(2);
+    expect(sum.reasons).toHaveLength(2);
+  });
+
+  it("사유가 하나도 없으면 **지어내지 않고** 그 사실을 말한다", () => {
+    const 무사유: BatchOutcome = { jibun: "x", result: { status: "ok", ai: { generated: false } } };
+    expect(rowReason(무사유)).toContain("사유 미제공");
+    expect(rowReason({ jibun: "y", result: null })).toContain("요청 실패");
+  });
+});
+
 describe("배선 — 화면이 요약을 실제로 소비한다", () => {
   const readExecutable = async () => {
     const fs = await import("node:fs");
@@ -127,10 +198,16 @@ describe("배선 — 화면이 요약을 실제로 소비한다", () => {
     expect(src).toContain("batch-top-reason");
   });
 
-  it("★행별 사유를 존재 여부가 아니라 **값으로** 쓴다", async () => {
+  it("★행별 사유를 공용 함수로 쓴다(행과 요약이 같은 사유를 말하게)", async () => {
     const src = await readExecutable();
-    // 종전: `b.result?.message ? "미확보" : "실패"` — 값을 버리는 형태.
-    expect(src).toMatch(/b\.result\?\.message \|\|/);
+    expect(src).toMatch(/rowReason\s*\(/);
+  });
+
+  it("★등급은 분석이 나온 건에만 칠한다 — 폴백도 safety_grade 를 담아 온다", async () => {
+    const src = await readExecutable();
+    // `ai.safety_grade` 를 **무조건** 읽으면 '분석 불가' 건이 "안전성 주의"로 보인다.
+    expect(src).toMatch(/isAnalyzed\s*\(/);
+    expect(src).not.toMatch(/const grade = b\.result\?\.ai\?\.safety_grade/);
   });
 
   it.todo("렌더 경로 락 — 실패 섞인 일괄 결과를 그려 대표 사유 문구가 DOM 에 뜨는지(무잠금 부채)");
