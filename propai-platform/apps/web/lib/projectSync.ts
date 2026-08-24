@@ -7,6 +7,8 @@
  */
 
 import { apiClient } from "@/lib/api-client";
+import { AUDIT_JOB_STORAGE_KEY } from "@/components/design-audit/DesignAuditWorkspace";
+import { MARKET_REPORT_JOB_STORAGE_KEY } from "@/lib/market-report-job";
 import { useProjectStore } from "@/store/useProjectStore";
 import {
   useProjectContextStore,
@@ -126,7 +128,14 @@ export function clearAllProjectData(): void {
         k === SATONG_SITE_LAYOUT_KEY ||
         // ★W4 매스 시드 인계 — 뷰 캐시가 아니라 **인계 페이로드**지만 위험은 같거나 더 크다:
         //   남으면 이전 계정이 고른 배치안 층수가 다음 계정의 설계 시드로 들어간다.
-        k === SATONG_MASS_SEED_KEY
+        k === SATONG_MASS_SEED_KEY ||
+        // ★2026-08-24 실측 누락 2건 — **진행 잡 페이로드**가 남아 이전 계정이 분석한
+        //   **부지 주소**(`{jobId, startedAt, address}`)가 다음 계정 화면으로 복원될 수 있었다.
+        //   W1~W4 주석이 *"새 키는 만드는 즉시 이 목록에 등재한다"* 를 **네 번** 반복했는데도
+        //   또 빠졌다 — 산문이 아니라 **파생형 락**으로 잠근다
+        //   (`projectSync.wipeCoverage.test.ts`).
+        k === MARKET_REPORT_JOB_STORAGE_KEY ||
+        k === AUDIT_JOB_STORAGE_KEY
       ) {
         try { window.sessionStorage.removeItem(k); } catch { /* noop */ }
       }
