@@ -196,3 +196,46 @@ def test_M_윈도우_경계와_이벤트타입이_SQL에_묶여_있다():
     """★대상이 틀리면 위 판정 전부가 공허하다."""
     assert "event_type='selection_contamination_observation'" in az._CONTAM_SQL
     assert ":w0" in az._CONTAM_SQL and ":w1" in az._CONTAM_SQL
+
+
+# ── 튜너블 결속 층 — 등록한 **그 키**를 판정이 실제로 읽는가 ────────────────
+def test_N_판정이_등록된_키를_실제로_읽는다_이름이_갈리면_잡는다():
+    """★변이 생존 2건을 메우는 락.
+
+    `_effective_threshold("<이름>", 기본값)` 의 **이름 문자열**을 바꿔도 판정 결과는
+    안 바뀐다 — 캐시에 그 키가 없으면 모듈상수 기본값으로 조용히 폴백하기 때문이다.
+    그래서 문자열 변이가 **생존**했다. 그런데 이름이 `_TUNABLE_THRESHOLDS` 의 키와
+    갈리면 실제 피해가 있다: L1 자동보정은 `threshold.contam_*` 로 **쓰는데**
+    판정은 `threshold.<오타>` 를 **읽어** — 보정값이 영원히 소비되지 않는다
+    (이 저장소가 반복한 *"정의만 하고 소비처 0"*).
+
+    여기서는 **등록된 키로 캐시를 채우고** 판정이 그 값을 따라 움직이는지 본다.
+    이름이 갈리는 순간 이 테스트가 죽는다.
+    """
+    from app.services.growth import dynamic_config
+
+    dynamic_config.reset_cache()
+    try:
+        # 기준선 — 기본 임계에서는 2건이면 아직 알리지 않는다.
+        assert az._classify_contamination("multi_region", 2) is None
+
+        # ★손으로 문자열을 적지 않는다 — `_TUNABLE_THRESHOLDS` 에서 **파생**시킨다.
+        #   그래야 판정과 등록표가 같은 이름을 쓰는지 진짜로 대조된다.
+        key = "contam_multi_region_info_count"
+        assert key in az._TUNABLE_THRESHOLDS          # 전제(공허 진리 방지)
+        dynamic_config._put(f"threshold.{key}", "global", 2)
+
+        assert az._classify_contamination("multi_region", 2) == "info", (
+            "L1 자동보정 값이 판정에 반영되지 않았다 — 판정이 읽는 이름과 "
+            "_TUNABLE_THRESHOLDS 의 키가 갈렸다(보정값 소비처 0)"
+        )
+
+        # malformed 쪽도 같은 방식으로 결속돼 있는지 확인(두 이름 모두 변이 생존이었다).
+        mkey = "contam_malformed_warn_count"
+        assert mkey in az._TUNABLE_THRESHOLDS
+        dynamic_config._put(f"threshold.{mkey}", "global", 99)
+        assert az._classify_contamination("malformed", 1) is None, (
+            "malformed 임계가 자동보정을 따라가지 않는다 — 이름이 갈렸다"
+        )
+    finally:
+        dynamic_config.reset_cache()

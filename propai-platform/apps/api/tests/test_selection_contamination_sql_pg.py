@@ -21,6 +21,7 @@
 """
 from __future__ import annotations
 
+import contextlib
 import os
 import uuid
 
@@ -56,8 +57,33 @@ async def db():
         pytest.skip(f"로컬에 Postgres 없음(스킵): {e}")
     sm = async_sessionmaker(engine, expire_on_commit=False)
     async with sm() as s:
-        yield s
+        try:
+            yield s
+        finally:
+            # ★정리는 **teardown 에서 무조건** 한다. 종전엔 테스트 본문 끝에 뒀더니
+            #   단언이 실패한 순간(변이 검증 중) DELETE 에 도달하지 못해 **잔재 153건**이
+            #   쌓였고, 그 뒤 코드를 원복하고도 테스트가 계속 빨갰다 — 내 검증이 자기
+            #   증거를 오염시킨 것이다. 실패해도 지워야 다음 실행이 깨끗하다.
+            with contextlib.suppress(Exception):
+                await s.rollback()
+                await s.execute(
+                    text("DELETE FROM platform_events WHERE service LIKE 'pgtest.%'")
+                )
+                await s.commit()
     await engine.dispose()
+
+
+def _isolated_window(tag: int):
+    """이 테스트만의 **먼 과거** 윈도우.
+
+    ★`_CONTAM_SQL` 에는 service 필터가 없다(프로덕션은 전 테넌트를 집계해야 하니 옳다).
+      그래서 `now-1h` 같은 창을 쓰면 **다른 테스트·다른 세션이 남긴 행**이 같은 창에 들어와
+      건수 단언이 흔들린다. 실제로 그렇게 깨졌다. 창 자체를 격리한다.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    base = datetime(2001, 1, 1, tzinfo=UTC) + timedelta(days=tag)
+    return base, base + timedelta(hours=1)
 
 
 async def _seed(db, rows: list[dict]) -> str:
@@ -76,13 +102,12 @@ async def _seed(db, rows: list[dict]) -> str:
 
 
 async def test_A_오염_SQL_이_실제_Postgres_에서_실행되고_집계가_맞다(db):
-    from datetime import UTC, datetime, timedelta
+    from datetime import timedelta
 
-    w1 = datetime.now(UTC)
-    w0 = w1 - timedelta(hours=1)
+    w0, w1 = _isolated_window(11)
     ts = w0 + timedelta(minutes=5)
 
-    marker = await _seed(db, [
+    _marker = await _seed(db, [
         {"payload": '{"verdict":"multi_region","spread_km":15.94,"region_groups":2,"malformed_rows":0}', "ts": ts},
         {"payload": '{"verdict":"multi_region","spread_km":290.33,"region_groups":3,"malformed_rows":0}', "ts": ts},
         {"payload": '{"verdict":"multi_region","spread_km":null,"region_groups":2,"malformed_rows":0}', "ts": ts},
@@ -96,7 +121,7 @@ async def test_A_오염_SQL_이_실제_Postgres_에서_실행되고_집계가_�
     ])
 
     rows = (await db.execute(text(
-        az._CONTAM_SQL + " -- marker:" + marker
+        az._CONTAM_SQL
     ), {"w0": w0, "w1": w1})).fetchall()
     agg = {r[0]: r for r in rows}
 
@@ -119,8 +144,6 @@ async def test_A_오염_SQL_이_실제_Postgres_에서_실행되고_집계가_�
     # 모르는 verdict 는 아예 군이 만들어지지 않는다.
     assert "single_site" not in agg
 
-    await db.execute(text("DELETE FROM platform_events WHERE service = :m"), {"m": marker})
-    await db.commit()
 
 
 async def test_B_독성_payload_만_있어도_예외가_나지_않는다(db):
@@ -129,11 +152,10 @@ async def test_B_독성_payload_만_있어도_예외가_나지_않는다(db):
     그 예외는 프로덕션에서 `analyze_window` 의 광역 except 에 삼켜져
     **그 윈도우의 모든 인사이트**를 조용히 없앤다.
     """
-    from datetime import UTC, datetime, timedelta
+    from datetime import timedelta
 
-    w1 = datetime.now(UTC)
-    w0 = w1 - timedelta(hours=1)
-    marker = await _seed(db, [
+    w0, w1 = _isolated_window(22)
+    _marker = await _seed(db, [
         {"payload": '{"verdict":"multi_region","spread_km":"DROP TABLE","malformed_rows":"NaN"}',
          "ts": w0 + timedelta(minutes=1)},
         {"payload": '{"verdict":"malformed","spread_km":"-","malformed_rows":"-"}',
@@ -147,5 +169,3 @@ async def test_B_독성_payload_만_있어도_예외가_나지_않는다(db):
     assert agg["multi_region"][2] is None, "숫자가 아니면 **미상**으로 남아야 한다"
     assert int(agg["malformed"][3]) == 0, "숫자가 아닌 행수는 0 으로 센다"
 
-    await db.execute(text("DELETE FROM platform_events WHERE service = :m"), {"m": marker})
-    await db.commit()
