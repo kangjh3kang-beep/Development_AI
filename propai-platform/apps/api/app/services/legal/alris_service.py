@@ -29,7 +29,14 @@ class ALRISService:
         # ChatOpenAI/OpenAIEmbeddings는 생성자에서 키 부재 시 OpenAIError를 던지므로,
         # llm_provider.get_llm과 동일하게 키가 있을 때만 클라이언트를 만든다(무키 환경 안전).
         if ChatOpenAI is not None and settings.OPENAI_API_KEY:
-            self.llm = ChatOpenAI(model=settings.OPENAI_MODEL, api_key=settings.OPENAI_API_KEY, temperature=0.0)
+            # ★실패 계측을 붙인다 — 이 모듈은 `get_llm` 을 안 거쳐 관측 사각이었다.
+            #   이름은 아래 `record_llm_response_billing(..., service="alris")` 와 **같아야** 한다.
+            from app.services.ai.llm_provider import observe_llm
+            self.llm = observe_llm(
+                ChatOpenAI(model=settings.OPENAI_MODEL, api_key=settings.OPENAI_API_KEY,
+                           temperature=0.0),
+                "alris",
+            )
             self.embeddings = OpenAIEmbeddings(api_key=settings.OPENAI_API_KEY)
         else:
             self.llm = None

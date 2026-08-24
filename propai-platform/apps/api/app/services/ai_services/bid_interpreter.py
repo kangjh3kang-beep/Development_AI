@@ -125,7 +125,10 @@ class BidInterpreter:
         """
         model_id = self._resolve_model(model_tier)
         try:
-            llm = self._build_llm(model_id)
+            # ★자체 빌더라 `get_llm` 옵트인이 안 닿는다 — 여기서 실패 계측을 붙인다.
+            #   이름은 이 모듈의 과금 계측(service="bid")과 **같아야** 한다.
+            from app.services.ai.llm_provider import observe_llm
+            llm = observe_llm(self._build_llm(model_id), "bid")
         except Exception as e:
             logger.warning("입찰 AI 해석 LLM 초기화 실패: %s", str(e)[:120])
             return None

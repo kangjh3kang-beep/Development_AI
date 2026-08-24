@@ -387,6 +387,60 @@ async def _record_llm_billing(
         )
 
 
+def _record_llm_call_event(service: str | None, *, ok: bool,
+                           input_tokens: int = 0, output_tokens: int = 0,
+                           error: str | None = None, reason: str | None = None,
+                           error_type: str | None = None) -> None:
+    """성장루프에 `llm_call` 한 줄. 논블로킹·예외 안전(관측이 본기능을 막지 않는다)."""
+    try:
+        from app.services.growth import capture_service as _gcap
+
+        payload: dict[str, Any] = {"ok": ok}
+        if ok:
+            payload.update({"input_tokens": input_tokens, "output_tokens": output_tokens})
+        else:
+            payload["error"] = (error or "")[:120]
+            # ★집계용 사유 라벨 + **예외 타입 원본**. 라벨만 남기면 분류표가 낡았을 때
+            #   새 실패 유형이 `other` 안에 조용히 묻힌다 — 타입을 함께 실어 그 안에서도 셀 수 있게 한다.
+            if reason:
+                payload["reason"] = reason
+            if error_type:
+                payload["error_type"] = error_type
+        _gcap.record_event(
+            "llm_call",
+            # ★`severity` 는 **이 지표의 계약이 아니다**(변이 생존 1건의 설명).
+            #   `fallback_rate` SQL 은 `event_type`·`payload->>'ok'`·`service` 만 읽는다
+            #   (growth/analyzer.py 실측). 그래서 이 문자열에 점수용 단언을 붙이지 않는다 —
+            #   붙이면 표현을 다듬을 때마다 깨지는 취약한 락이 된다.
+            #   ★확인 범위: growth analyzer 의 fallback_rate 경로. 다른 소비처가 생기면
+            #     그때 그 소비처가 계약을 선언하고 잠근다.
+            {"surface": "api", "service": service or "llm",
+             "severity": "info" if ok else "error", "payload": payload},
+        )
+    except Exception:  # noqa: BLE001 — 관측 실패가 호출경로를 깨뜨리지 않는다
+        pass
+
+
+def record_llm_failure(service: str, exc: BaseException) -> None:
+    """LLM 호출·해석이 **실패**했음을 성장루프에 남긴다 — `fallback_rate` 의 **분자**.
+
+    ★`record_llm_response_billing`(분모)과 **한 쌍**이다. 분모만 배선하면 그 서비스는
+      폴백률 **0%** 로 보여, 실제로는 전부 실패하는 서비스가 초록으로 읽힌다.
+      한쪽만 배선한 모듈은 `tests/test_llm_observability_pairing.py` 가 잡는다.
+
+    ★`BaseInterpreter` 밖에서 `llm.ainvoke` 를 직접 부르는 서비스용이다. 그 안에서 도는
+      인터프리터는 자체 계측이 이미 있다(이 함수를 부르면 이중계상이 된다).
+    """
+    from app.services.ai.llm_failure import classify_failure
+
+    _record_llm_call_event(
+        service, ok=False,
+        error=f"{type(exc).__name__}: {exc}",
+        reason=classify_failure(exc),
+        error_type=type(exc).__name__,
+    )
+
+
 async def record_llm_response_billing(llm, response, service: str | None = None) -> None:
     """BaseInterpreter 밖에서 llm.ainvoke()를 직접 호출한 서비스도 동일하게 계측·과금한다.
 
@@ -399,6 +453,15 @@ async def record_llm_response_billing(llm, response, service: str | None = None)
         output_tokens = int(meta.get("output_tokens", 0) or 0) if isinstance(meta, dict) else 0
         model = getattr(llm, "model", "") or getattr(llm, "model_name", "") or ""
         await _record_llm_billing(model, input_tokens, output_tokens, service=service)
+        # ★성장루프 **분모**: `fallback_rate` 는 `llm_call` 수를 분모로 쓴다
+        #   (`growth/analyzer.py`). 그런데 그 이벤트는 `BaseInterpreter` **안에서만** 기록돼
+        #   왔고, 이 헬퍼를 쓰는 18개 서비스(등기·규제·시장·인허가…)는 분모가 0이라
+        #   `FALLBACK_MIN_CALLS=10` 에 걸려 **인사이트가 영원히 뜨지 않았다**.
+        #   그래서 등기 권리분석이 통째로 죽어도 성장루프는 아무 말도 못 했다(2026-08-24 실장애).
+        #   ★분자(`record_llm_failure`)를 같이 배선하지 않으면 그 서비스는 **거짓 0%** 로 읽힌다 —
+        #     `tests/test_llm_observability_pairing.py` 가 그 짝을 강제한다.
+        _record_llm_call_event(service, ok=True, input_tokens=input_tokens,
+                               output_tokens=output_tokens)
     except Exception as e:  # noqa: BLE001
         # ★싱크(`_record_llm_billing`)는 예외를 밖으로 내보내지 않으므로, 여기 걸리는 것은
         #   **토큰 추출 단계**의 실패다(usage_metadata 형태가 예상과 다름 등). 결과는 같다 —
