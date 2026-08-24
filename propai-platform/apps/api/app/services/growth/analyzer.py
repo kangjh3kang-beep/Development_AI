@@ -784,7 +784,7 @@ def _llm_narrative(ins: dict[str, Any]) -> str | None:
     try:
         from app.services.ai.llm_provider import get_llm
 
-        llm = get_llm(timeout=20, max_tokens=200)
+        llm = get_llm(service="growth_analyze", timeout=20, max_tokens=200)
         prompt = (
             "다음 플랫폼 운영 인사이트를 한국어 2문장으로 요약하고 권고조치를 덧붙여라. "
             "과장 금지, 지표 근거만.\n"

@@ -171,6 +171,19 @@ def _observe(llm: Any, service: str | None) -> Any:
     return _ObservedChat(llm, service) if service else llm
 
 
+def observe_llm(llm: Any, service: str) -> Any:
+    """**직접 만든 LLM**에 실패 계측을 붙인다(`get_llm` 을 안 거치는 모듈용).
+
+    일부 서비스는 `ChatOpenAI(...)` 를 직접 만들거나 자체 빌더를 쓴다. 그런 모듈은
+    `get_llm(service=…)` 로 옵트인할 수 없어 관측 사각으로 남는다. 한 줄로 붙일 수 있게
+    같은 래퍼를 공개한다 — `except` 블록을 손대지 않아도 된다.
+
+    ★`service` 이름은 그 모듈이 `record_llm_response_billing` 에 넘기는 것과 **반드시 같아야**
+      한다(분모·분자가 같은 버킷에 떨어져야 한다). `tests/test_llm_observability_pairing.py` 가 강제한다.
+    """
+    return _ObservedChat(llm, service)
+
+
 class _ObservedChat:
     """LLM 을 감싸 **실패만** 성장루프에 남긴다(=`fallback_rate` 의 분자).
 

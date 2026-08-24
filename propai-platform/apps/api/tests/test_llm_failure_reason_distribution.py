@@ -41,10 +41,10 @@ class TestClassifier:
         assert classify_failure(exc) == expected
 
     def test_핵심_모르는_유형은_other_지만_숨지_않는다(self):
-        class 처음보는오류(Exception):
-            pass
+        class BrandNewProviderError(Exception):
+            """분류표에 없는 새 예외 — 이런 것이 생겨도 묻히면 안 된다."""
 
-        exc = 처음보는오류("무언가 새로운 실패")
+        exc = BrandNewProviderError("무언가 새로운 실패")
         assert classify_failure(exc) == "other"
         # ★`other` 로 묶여도 **예외 타입은 별도로 실린다** — 분류표가 낡아도 새 유형을 셀 수 있다.
         from app.services.ai.base_interpreter import record_llm_failure
@@ -54,7 +54,7 @@ class TestClassifier:
         record_llm_failure("svc", exc)
         pl = list(gcap._QUEUE)[-1].get("payload") or {}
         assert pl.get("reason") == "other"
-        assert pl.get("error_type") == "처음보는오류", "예외 타입이 안 실렸다 — other 안이 깜깜해진다"
+        assert pl.get("error_type") == "BrandNewProviderError", "예외 타입이 안 실렸다 — other 안이 깜깜해진다"
         gcap._QUEUE.clear()
 
     def test_대조군_서로_다른_예외는_서로_다른_라벨이_된다(self):

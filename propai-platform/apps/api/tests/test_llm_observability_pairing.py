@@ -61,17 +61,40 @@ def _service_names(src: str) -> tuple[set[str], set[str]]:
             denom.add(lit["service"])
         if fn == "get_llm" and "service" in lit:
             numer.add(lit["service"])
+        # `observe_llm(llm, "이름")` — `get_llm` 을 안 거치는 모듈의 옵트인(두 번째 위치인자).
+        if fn == "observe_llm" and len(n.args) >= 2 and isinstance(n.args[1], ast.Constant):
+            numer.add(n.args[1].value)
         if fn == "record_llm_failure" and n.args and isinstance(n.args[0], ast.Constant):
             numer.add(n.args[0].value)
     return denom, numer
 
 
 def _has_numerator(names: set[str], src: str) -> bool:
-    """분자가 어떤 형태로든 배선됐는가."""
+    """분자가 **어떤 형태로든 배선됐는가**(이름을 읽을 수 있는지는 별개 질문이다).
+
+    인정하는 형태 셋: ①`record_llm_failure`/`record_fallback` 직접 호출
+    ②`get_llm(service=…)` 팩토리 옵트인 ③`observe_llm(llm, …)` 직접 생성 모듈용.
+
+    ★이름이 **변수**여도 배선은 배선이다(`assistant_agent` 는 `service` 파라미터를 그대로
+      넘긴다 — 런타임에는 `"ai_assistant"` 다). 배선 여부와 이름 동일성을 한 판정으로 묶으면
+      *"배선했는데 위반"* 이라는 거짓 신고가 난다 — 실제로 냈고, 그래서 갈랐다.
+      이름을 못 읽는 모듈은 **이름 대조에서 조용히 빠진다**(읽을 수 없는 것을 대조할 수 없다).
+    """
     if names & _NUMER:
         return True
-    _, numer = _service_names(src)
-    return bool(numer)
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return False
+    for n in ast.walk(tree):
+        if not isinstance(n, ast.Call):
+            continue
+        fn = n.func.attr if isinstance(n.func, ast.Attribute) else getattr(n.func, "id", "")
+        if fn == "get_llm" and any(k.arg == "service" for k in n.keywords):
+            return True
+        if fn == "observe_llm" and len(n.args) >= 2:
+            return True
+    return False
 
 
 def _identifiers(src: str) -> set[str]:
@@ -103,22 +126,18 @@ def _identifiers(src: str) -> set[str]:
 #   각 서비스의 **실패 경로**는 그 서비스의 폴백 규약을 아는 사람이 배선해야 한다.
 #   배선하는 PR 에서 **이 목록에서 지운다**(면제를 남기면 락이 skip 이라 무잠금이다).
 _EXEMPT: dict[str, str] = {
-    # ★2026-08-24 — 17건에서 **6건으로 줄었다**. 남은 것은 사유가 서로 다르다(뭉뚱그리지 않는다).
+    # ★2026-08-24 — **비었다.** 17건 → 6건 → 0건.
+    #   마지막 6건은 부류가 달라 처방도 달랐다:
+    #     ㉠ `get_llm` 을 안 거치는 모듈(직접 `ChatOpenAI` 생성 · 자체 빌더)
+    #        → `observe_llm(llm, "이름")` 공개 헬퍼로 한 줄 배선(`except` 수술 불필요)
+    #     ㉡ "service 가 리터럴이 아님"으로 분류했던 3건 중 **2건은 오분류**였다 —
+    #        내 추출기가 `record_llm_response_billing_sync`(동기 변종)를 안 봤다.
+    #        실제로는 `growth_analyze`·`growth_improve` 리터럴이었다.
+    #        나머지 1건은 파라미터(`service: str = "ai_assistant"`)라 그 변수를 그대로 넘겼다.
+    #     ㉢ 한 모듈에 이름 2종 → **호출별로** 다른 이름을 붙였다.
     #
-    # ㉠ `get_llm` 을 부르지 않는다 — LLM 을 다른 경로로 얻으므로 팩토리 래핑이 안 닿는다.
-    #    실패 배선은 그 획득 경로를 아는 사람이 해야 한다.
-    "services/legal/alris_service.py": "★부채 ㉠ — get_llm 호출 0(획득 경로가 다름)",
-    "services/ai_services/bid_interpreter.py": "★부채 ㉠ — get_llm 호출 0(획득 경로가 다름)",
-    #
-    # ㉡ 분모의 `service` 가 **리터럴이 아니다**(변수·동적). 이름을 못 읽으니 분자에 같은
-    #    이름을 넣어 줄 수 없다 — 이름이 갈리면 계측이 **틀린 답**을 준다(안 하느니 못하다).
-    "services/ai/assistant_agent.py": "★부채 ㉡ — 분모 service 가 리터럴이 아님",
-    "services/growth/improvement_agent.py": "★부채 ㉡ — 분모 service 가 리터럴이 아님",
-    "services/growth/analyzer.py": "★부채 ㉡ — 분모 service 가 리터럴이 아님",
-    #
-    # ㉢ 한 모듈이 **두 서비스 이름**을 쓴다(`parcel_excel_structure_detect` /
-    #    `parcel_excel_row_reverify`). 호출별로 다른 이름을 붙여야 해 일괄 배선이 안 된다.
-    "services/land_intelligence/parcel_excel_service.py": "★부채 ㉢ — 한 모듈에 service 이름 2종",
+    #   ★비어 있다고 이 목록을 지우지 마라. 새 모듈이 분모만 배선하면 여기 올려야 하고,
+    #     사유 없이 올리는 것은 아래 테스트가 막는다.
 }
 
 
@@ -330,3 +349,18 @@ def test_대조군_이름이_어긋나면_실제로_잡힌다():
     d2, n2 = _service_names(diff)
     assert d1 & n1, "같은 이름인데 쌍으로 못 읽는다"
     assert not (d2 & n2), "다른 이름인데 어긋남을 못 잡는다"
+
+
+def test_핵심_면제가_비어_있다():
+    """★관측 사각 0 — 17건 → 6건 → 0건.
+
+    비어 있음 자체가 계약이다. 새 모듈이 분모만 배선하면 위 검사가 잡고, 그때 여기 올리려면
+    사유를 적어야 한다(`test_전제_면제에는_사유가_있다`).
+    """
+    assert _EXEMPT == {}, f"관측 사각이 다시 생겼다: {sorted(_EXEMPT)}"
+
+
+def test_전제_모듈_수가_줄지_않았다():
+    """공허한 초록 방지 — 분모를 배선한 모듈이 사라져서 '면제 0'이 된 것이 아님을 확인한다."""
+    n = len(_modules_recording_denominator())
+    assert n >= 18, f"분모 배선 모듈이 {n}개뿐이다 — 수집이 깨졌거나 배선이 사라졌다"
