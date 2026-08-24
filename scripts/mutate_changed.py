@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import platform
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -215,6 +216,10 @@ def _is_front(test: str) -> bool:
     return test.endswith((".ts", ".tsx"))
 
 
+# 마지막 실패 실행의 출력(진단용). 기준선이 깨졌을 때 **왜인지** 보여 주기 위해 남긴다.
+_LAST_FAILURE: str = ""
+
+
 def _run(tests: list[str], cwd: Path) -> bool:
     """테스트가 **통과**하면 True(= 변이 생존).
 
@@ -222,6 +227,7 @@ def _run(tests: list[str], cwd: Path) -> bool:
     종전엔 pytest 만 돌려 **프론트가 통째로 검증에서 빠졌다**(실제로 그 상태로
     "전수 감사·생존 0"을 선언했다).
     """
+    global _LAST_FAILURE
     front = [t for t in tests if _is_front(t)]
     back = [t for t in tests if not _is_front(t)]
 
@@ -231,6 +237,7 @@ def _run(tests: list[str], cwd: Path) -> bool:
             capture_output=True, text=True, cwd=cwd,
         )
         if r.returncode != 0:
+            _LAST_FAILURE = (r.stdout or "") + (r.stderr or "")
             return False
 
     if front:
@@ -241,9 +248,46 @@ def _run(tests: list[str], cwd: Path) -> bool:
             capture_output=True, text=True, cwd=web,
         )
         if r.returncode != 0:
+            _LAST_FAILURE = (r.stdout or "") + (r.stderr or "")
             return False
 
     return True
+
+
+def _diagnose_baseline() -> str:
+    """기준선이 왜 깨졌는지 한 문단.
+
+    ★이 함수가 있는 이유(2026-08-24 실측): 종전 메시지는 *"기준선이 이미 실패한다"* 뿐이라
+      **코드가 깨진 것으로 오독**된다. 실제 원인은 **인터프리터**였다 —
+      `python3 scripts/mutate_changed.py` 로 부르면 `sys.executable` 이 시스템 파이썬(3.10)이
+      되고, 앱이 쓰는 `datetime.UTC`(3.11+)에서 임포트가 죽는다. 같은 함정으로 이 도구를
+      **두 번 포기했다**. 진단 불가는 그 자체로 장애다.
+    """
+    tail = "\n".join([ln for ln in _LAST_FAILURE.splitlines() if ln.strip()][-12:])
+    hint = ""
+    low = _LAST_FAILURE
+    if "ImportError" in low or "SyntaxError" in low or "ModuleNotFoundError" in low:
+        need = _required_python()
+        hint = (
+            f"\n★인터프리터를 의심하라. 지금 이 도구는 **{platform.python_version()}** 로 테스트를 돌린다"
+            f"{f'(프로젝트 요구: {need})' if need else ''}.\n"
+            "  프로젝트 venv 로 다시 실행하라:\n"
+            "    <venv>/bin/python scripts/mutate_changed.py --tests <경로>\n"
+            "  (`python3 scripts/…` 로 부르면 시스템 파이썬이 잡혀 앱 임포트가 깨진다)"
+        )
+    return (tail + hint) if (tail or hint) else "(출력 없음)"
+
+
+def _required_python() -> str:
+    """`pyproject.toml` 의 requires-python — 없으면 빈 문자열."""
+    for name in ("propai-platform/apps/api/pyproject.toml", "pyproject.toml"):
+        f = Path(name)
+        if not f.exists():
+            continue
+        m = re.search(r'requires-python\s*=\s*"([^"]+)"', f.read_text(encoding="utf-8"))
+        if m:
+            return m.group(1)
+    return ""
 
 
 def main() -> int:
@@ -367,6 +411,8 @@ def main() -> int:
     # ★기준선 먼저 — 변이 전에 통과하지 않으면 결과가 무의미하다.
     if not _run(rel_tests, cwd):
         print("★기준선이 이미 실패한다 — 변이 결과를 신뢰할 수 없다. 먼저 고쳐라.")
+        print("── 왜 실패했나 ──────────────────────────────────────────────")
+        print(_diagnose_baseline())
         return 2
 
     survived: list[Mutation] = []

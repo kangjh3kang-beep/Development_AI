@@ -7,7 +7,7 @@
 - langgraph 미사용. langchain-anthropic `bind_tools` + 수동 ReAct 루프(버전스큐·의존성 회피).
 - 읽기 도구만(무료·비가역 아님) → 자동 실행. 쓰기/과금 도구는 후속(Phase B, 확인게이트).
 - 이벤트(delta/tool_start/tool_end)를 yield → 라우터가 기존 SSE {"delta": ...}로 합성(프론트 무변경).
-- 도구 결과만 근거로 답하고, 실패 시 정직 고지(무목업 원칙). 모델ID는 get_llm() 한 곳만.
+- 도구 결과만 근거로 답하고, 실패 시 정직 고지(무목업 원칙). 모델ID는 get_llm(service=service, ) 한 곳만.
 """
 
 from __future__ import annotations
@@ -471,7 +471,7 @@ async def run_agent_events(msgs: list, *, service: str = "ai_assistant") -> Asyn
     """
     from app.services.ai.llm_provider import get_llm
 
-    base_llm = get_llm(timeout=60.0)
+    base_llm = get_llm(service=service, timeout=60.0)
     if not hasattr(base_llm, "bind_tools"):
         raise AgentUnavailableError("LLM이 bind_tools를 지원하지 않습니다.")
 

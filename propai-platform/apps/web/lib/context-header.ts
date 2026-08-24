@@ -63,6 +63,8 @@ export interface ContextHeaderData {
    *   면적 축에서 같은 잘못을 하고 있었다.
    */
   landAreaBasis: ReturnType<typeof resolveLandArea>["basis"];
+  /** 이 값들이 확정된 시각(ISO). 미확보면 null — **가짜 시각을 만들지 않는다**. */
+  fetchedAt: string | null;
   /** 유효 필지 수(다필지 판정용). 단일/미확보면 1 또는 null. */
   parcelCount: number | null;
   /** 다필지 통합 여부(parcelCount >= 2). */
@@ -92,6 +94,21 @@ export function zoneDisplayLabel(zoneCode: string | null | undefined): string | 
  * - 용도지역: resolveDominantZone(통합 dominant > 단일 zoneCode) 후 표시 라벨 정규화.
  * - hasContext: 프로젝트 선택 또는 주소 확보 중 하나라도 있으면 true(무목업 안내 분기).
  */
+/**
+ * 근거 문자열에 **기준 시각**을 덧붙인다 — `"…근거 (2026-08-24 기준)"`.
+ *
+ * ★새 UI 를 만들지 않는다: 이미 있는 근거 표면을 재사용한다(레이아웃 위험 0).
+ * ★**임의 임계(며칠이면 낡음)를 두지 않는다** — 낡음 판정은 사람이 한다. 시스템은 **사실만** 말한다.
+ * ★값이 없으면 **아무것도 덧붙이지 않는다**(무목업 — 가짜 시각 금지).
+ */
+export function withAsOf(basis: string, fetchedAt: string | null | undefined): string {
+  if (!basis || !fetchedAt) return basis;
+  const d = new Date(fetchedAt);
+  if (Number.isNaN(d.getTime())) return basis;   // 파싱 실패도 무목업 — 원문 유지
+  const ymd = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return `${basis} (${ymd} 기준)`;
+}
+
 export function deriveContextHeaderData(ctx: ContextHeaderInput): ContextHeaderData {
   const sa = ctx.siteAnalysis;
   const address = str(sa?.address);
@@ -129,6 +146,12 @@ export function deriveContextHeaderData(ctx: ContextHeaderInput): ContextHeaderD
     landAreaBasis,
     parcelCount,
     isMultiParcel,
+    // ★기준 시각(as-of) — 이 값들이 **언제** 확정된 것인지 화면이 말할 수 있게 한다.
+    //   라이브 실측(2026-08-24): 헤더가 저장 스냅샷의 `자연녹지지역` 을 단정하는 동안
+    //   같은 페이지의 용도별 구성은 서버 판정으로 **제2종일반주거 91%** 를 보여 주고 있었다.
+    //   값이 **틀린 것**은 전제 감사(#813)가 잡는다 — 여기서 고치는 것은
+    //   **언제 것인지 말하지 않는 것**이다(둘은 다른 결함이다).
+    fetchedAt: typeof sa?.fetchedAt === "string" ? sa.fetchedAt : null,
   };
 }
 

@@ -196,7 +196,7 @@ class ConversationalMarketAI:
 
             from app.services.ai.llm_provider import get_llm
 
-            llm = get_llm(timeout=30, max_tokens=1200)
+            llm = get_llm(service="market_ai", timeout=30, max_tokens=1200)
         except Exception as e:
             logger.info("LLM 사용 불가 — 템플릿 분석 폴백: %s", str(e)[:80])
             return None

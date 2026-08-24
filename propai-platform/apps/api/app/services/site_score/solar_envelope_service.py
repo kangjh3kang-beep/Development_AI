@@ -321,9 +321,11 @@ def compute_buildable_envelope(
         return {
             "applies_north_light": False,
             "zone": zone, "bcr_pct": round(bcr * 100, 1),
-            "far_pct": round(far * 100, 1),                       # 법정 용적률 상한
+            # ★"법정"이라 단정하지 않는다 — 호출자가 `far_limit_pct`(실효)를 넘기면 이 값은
+            #   법정 상한이 아니라 **적용 한도**다. 라벨링은 라우터가 요청 유무로 가른다.
+            "far_pct": round(far * 100, 1),                       # 적용 용적률(법정 또는 호출자 실효)
             "realistic_far_pct": round(realistic_far * 100, 1),   # 현실 용적률(층수제한 반영)
-            "far_gfa_sqm": round(far_gfa),                        # 법정 상한 연면적
+            "far_gfa_sqm": round(far_gfa),                        # 적용 용적률 기준 허용 연면적
             "envelope_gfa_sqm": round(realistic_gfa),
             "effective_gfa_sqm": round(realistic_gfa),            # ★연동 소비처가 쓰는 현실 연면적
             "binding": binding,

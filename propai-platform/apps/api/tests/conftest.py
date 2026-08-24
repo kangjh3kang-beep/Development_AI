@@ -119,6 +119,9 @@ def _isolate_registry_source_cache():
 
     def _clear() -> None:
         _svc._SOURCE_CACHE.clear()
+        # ★결정론 실패 기억도 비운다 — 남으면 뒤 테스트가 "LLM 을 안 불렀다"를 보고
+        #   앞 테스트의 기억을 자기 결과로 오독한다(#46 과 같은 클래스).
+        _svc._FAILURE_MEMO.clear()
         # ★발급 캐시(유료 길목)도 함께 비운다. 여기를 빼면 같은 누수가 **한 층 아래에서**
         #   그대로 재발한다 — 실제로 위층만 비웠을 때 3건이 계속 빨갰다.
         if _rsvc is not None:

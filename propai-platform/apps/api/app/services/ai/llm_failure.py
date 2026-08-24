@@ -52,3 +52,86 @@ def honest_llm_fallback(
         "summary": f"{what}을(를) 생성하지 못했습니다{tail}",
         "failure_reason": failure_reason(exc),
     }
+
+
+# ── 실패 사유 분류 — "왜 실패했나"를 **집계 가능한 단위**로 ────────────────────────
+#
+# ★왜 필요한가(2026-08-24 설계). 지금 우리가 아는 것은 *"폴백률 80.77%"* 뿐이다. 그 안에
+#   절단·타임아웃·스키마 위반이 섞여 있는데, 처방은 셋이 완전히 다르다.
+#   **원인을 모르고 고치면 그 수정이 다음 조사의 잡음이 된다** — 그래서 개선보다 분포가 먼저다.
+#
+# ★분류표가 **새 실패 유형을 숨기지 못하게** 한다. 어느 것에도 안 맞으면 `other` 로 두되
+#   `error_type`(예외 클래스명)을 **항상 함께** 싣는다. 그러면 `other` 안에서도 타입별로
+#   셀 수 있어, 분류표가 낡아도 새 유형이 조용히 묻히지 않는다(목록형이 상한이 되는 것을 막는다).
+_REASON_BY_TYPE = {
+    "TimeoutError": "timeout",
+    "ReadTimeout": "timeout",
+    "ConnectTimeout": "timeout",
+    "JSONDecodeError": "parse",
+    "ConnectError": "network",
+    "ConnectionError": "network",
+    "RemoteProtocolError": "network",
+    "KeyError": "shape",
+    "IndexError": "shape",
+    "AttributeError": "shape",
+    "TypeError": "shape",
+}
+
+# 메시지로만 갈리는 것들(프로바이더가 예외 타입을 뭉뚱그려 던지는 경우가 많다).
+# 앞에서부터 먼저 맞는 것을 쓴다 — 순서가 곧 우선순위다.
+_REASON_BY_TEXT: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("rate_limit", ("rate limit", "rate_limit", "too many requests", "429")),
+    ("overloaded", ("overloaded", "529", "capacity")),
+    # ★실제 문구로 맞춘다 — Anthropic 은 `invalid x-api-key`(하이픈)를 쓴다.
+    #   "api key" 만 넣었다가 그 실문구를 놓쳤다(테스트가 잡았다).
+    ("auth", ("api key", "api_key", "api-key", "unauthorized", "authentication",
+              "permission", "credit balance", "quota", "401", "403")),
+    ("timeout", ("timeout", "timed out", "deadline")),
+    ("content_filter", ("content filter", "content_filter", "safety", "refus")),
+    ("parse", ("expecting value", "unterminated", "invalid json", "json")),
+    ("bad_request", ("invalid_request", "400", "bad request")),
+    ("network", ("connection", "dns", "ssl", "socket")),
+)
+
+
+def classify_failure(exc: BaseException) -> str:
+    """예외 → **집계 가능한 사유 라벨**. 모르면 `other`(그때도 `error_type` 은 남는다).
+
+    타입을 먼저 보고, 그다음 메시지를 본다. 메시지 매칭은 소문자 부분일치라
+    프로바이더가 문구를 바꿔도 큰 범주는 유지된다.
+    """
+    name = type(exc).__name__
+    by_type = _REASON_BY_TYPE.get(name)
+    if by_type:
+        return by_type
+    text = str(exc).lower()
+    for reason, needles in _REASON_BY_TEXT:
+        if any(n in text for n in needles):
+            return reason
+    return "other"
+
+
+# ── 재시도가 의미 있는 실패 / 없는 실패 ───────────────────────────────────────
+#
+# ★왜 가르나(2026-08-25). 실패한 분석은 캐시하지 않는다 — LLM 이나 프로바이더가 회복하면
+#   다음 시도에 성공해야 하기 때문이다(자가치유). 그런데 그 설계는 **결정론적 실패**에서
+#   대가를 치른다: 같은 문서가 같은 이유로 계속 실패하는데 **볼 때마다 LLM 을 다시 산다.**
+#   등기 재발급 누수와 **같은 얼굴**이고, 축만 다르다(벤더 발급 → LLM 토큰).
+#
+# ★보수적으로 가른다 — **모르면 일시 실패로 본다.** 결정론으로 잘못 분류하면 회복을 막지만,
+#   일시로 잘못 분류하면 돈만 조금 더 쓴다. 두 오류의 대가가 다르므로 안전한 쪽으로 기운다.
+_DETERMINISTIC = frozenset({
+    "parse",           # 잘린/비-JSON 응답 — 같은 입력이면 같은 결과
+    "shape",           # 파싱은 됐는데 구조가 계약과 다름
+    "bad_request",     # 요청 자체가 거부됨(모델·파라미터)
+    "content_filter",  # 정책 거부 — 같은 본문이면 반복된다
+})
+
+
+def is_retry_worthwhile(reason: str) -> bool:
+    """이 사유는 **다시 시도할 가치가 있는가**(=일시적일 수 있는가).
+
+    `timeout`·`rate_limit`·`overloaded`·`network` 는 회복된다. `auth` 도 그렇다
+    (키 교체·잔액 충전으로 풀린다). `other` 는 **모르는 것**이라 재시도 쪽에 둔다.
+    """
+    return reason not in _DETERMINISTIC

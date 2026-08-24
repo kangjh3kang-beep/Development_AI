@@ -15,6 +15,7 @@
  * 반복해서 데인 형태다. 그래서 이 모듈은 건마다 **왜 빠졌는지**를 분류해 돌려준다.
  */
 
+import { isSignedUrlExpired } from "@/lib/signed-url";
 import { buildZip, safeFileName, uniqueName, type ZipEntry } from "@/lib/zip";
 
 export type PdfSource = {
@@ -73,11 +74,12 @@ export type FetchLike = (url: string) => Promise<{
  */
 export async function buildRegistryPdfBundle(
   sources: readonly PdfSource[],
-  opts?: { fetchImpl?: FetchLike },
+  opts?: { fetchImpl?: FetchLike; nowMs?: number },
 ): Promise<BundleResult> {
   const doFetch: FetchLike =
     opts?.fetchImpl ?? ((url) => fetch(url) as unknown as ReturnType<FetchLike>);
 
+  const now = opts?.nowMs ?? Date.now();
   const items: BundleItem[] = [];
   const entries: ZipEntry[] = [];
   const taken = new Set<string>();
@@ -89,6 +91,18 @@ export async function buildRegistryPdfBundle(
 
     if (!url) {
       items.push({ jibun: label, status: "no_pdf", detail: "발급된 등기부 PDF 가 없습니다" });
+      continue;
+    }
+
+    // ★만료는 **받아 보기 전에** 안다(토큰의 `exp`). 77필지면 헛요청 수십 건을 아끼고,
+    //   무엇보다 "느리게 실패"가 아니라 즉시 사유가 된다.
+    //   ★못 읽으면 만료로 몰지 않는다 — 그때는 종전대로 받아 보고 응답으로 판정한다.
+    if (isSignedUrlExpired(url, now)) {
+      items.push({
+        jibun: label,
+        status: "expired",
+        detail: "발급 링크가 만료되었습니다(발급 후 30일) — 다시 발급해야 받을 수 있습니다",
+      });
       continue;
     }
 

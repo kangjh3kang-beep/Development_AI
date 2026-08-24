@@ -1508,7 +1508,7 @@ class DevelopmentScenarioSimulator:
                    "## 출력 JSON\n{\"summary\":\"종합 판단 3~4문장\",\"best_scheme\":\"추천 사업방식\","
                    "\"why\":\"추천 이유 2~3문장\",\"alternatives\":[\"차선책 1~2개\"],"
                    "\"cautions\":[\"주의사항 1~3개\"]}")
-            llm = get_llm(timeout=60, max_tokens=1500)
+            llm = get_llm(service="scenario", timeout=60, max_tokens=1500)
             resp = await llm.ainvoke([SystemMessage(content=sys), HumanMessage(content=usr)])
             # 계측: BaseInterpreter 밖 직접 호출도 동일하게 토큰·과금 기록(best-effort)
             from app.services.ai.base_interpreter import record_llm_response_billing
