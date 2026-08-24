@@ -1,5 +1,6 @@
 "use client";
 
+import { IntegrityWarnings } from "@/components/ui/IntegrityWarnings";
 import { useState, useCallback, useEffect, useMemo, Fragment, type ReactNode } from "react";
 import { BarChart3, Construction, ExternalLink, Home, Map, MapPin, Tag, TrendingUp, Wallet, type LucideIcon } from "lucide-react";
 import dynamic from "next/dynamic";
@@ -791,6 +792,11 @@ export function ComprehensiveAnalysisPanel() {
               )}
             </div>
           )}
+
+          {/* ★법정초과 가드(integrity_warnings) — 위 `warnings` 배너와 **다른 배열**이다.
+              백엔드가 실효 건폐·용적·층수의 법정초과를 검출해 실어 보내는데 렌더가 없었다
+              (2026-08-24 실측: 프론트 소비처 0). 값은 그대로 두고 사실만 알린다(무날조). */}
+          <IntegrityWarnings items={result.integrity_warnings as never} className="mt-3" />
 
           {/* 시니어 전문가 자문 verdict(심의·도시계획·법무) — 백엔드 senior_consultation 소비 */}
           <SeniorVerdictCard
