@@ -14,7 +14,7 @@ import Link from "next/link";
 import { Card, CardContent } from "@propai/ui";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { DataSourceNotice } from "@/components/ui/DataSourceNotice";
-import { analyzeRegistry } from "@/lib/registry-analyze";
+import { analyzeRegistry, summarizeBatch } from "@/lib/registry-analyze";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { useLandScheduleStore, type LandRow } from "@/store/useLandScheduleStore";
@@ -383,9 +383,35 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
             {/* ★일괄 권리분석 결과(필지별 누적) — 마지막 1건만 보이던 부정합 해소. '상세'로 전체 분석 표시 */}
             {batchResults && batchResults.length > 0 && (
               <div className="mt-3 space-y-1.5 rounded-xl border border-[var(--line)] bg-[var(--surface-soft)]/40 p-3">
-                <p className="text-[11px] font-bold text-[var(--text-secondary)]">
-                  일괄 권리분석 결과 ({batchResults.filter((b) => b.result?.ai).length}/{batchResults.length})
-                </p>
+                {(() => {
+                  // ★개수만 보여 주면 "시스템이 고장났나" 로 읽고 기다리게 된다(2026-08-24 실장애).
+                  //   실패 **사유**가 응답에 들어 있는데 화면이 버리고 있었다 —
+                  //   사용자가 원인을 알아야 스스로 조치한다(충전이면 충전, 주소 오류면 수정).
+                  const sum = summarizeBatch(batchResults);
+                  return (
+                    <>
+                      <p className="text-[11px] font-bold text-[var(--text-secondary)]">
+                        일괄 권리분석 결과 (성공 {sum.ok} / {sum.total})
+                        {sum.failed > 0 && (
+                          <span className="ml-1 text-[var(--status-error)]">· 실패 {sum.failed}</span>
+                        )}
+                      </p>
+                      {sum.topReason && (
+                        <p
+                          data-testid="batch-top-reason"
+                          className="rounded-lg border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 px-2 py-1.5 text-[11px] font-semibold text-[var(--status-warning)]"
+                        >
+                          가장 많은 실패 사유 ({sum.reasons[0].count}건) — {sum.topReason}
+                          {sum.reasons.length > 1 && (
+                            <span className="ml-1 font-normal text-[var(--text-secondary)]">
+                              (그 외 {sum.reasons.length - 1}종)
+                            </span>
+                          )}
+                        </p>
+                      )}
+                    </>
+                  );
+                })()}
                 {batchResults.map((b, i) => {
                   const grade = b.result?.ai?.safety_grade;
                   return (
@@ -394,7 +420,16 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
                       {grade ? (
                         <span className={`rounded-full border px-2 py-0.5 font-bold ${GRADE[grade] || "border-[var(--line-strong)] text-[var(--text-secondary)]"}`}>안전성 {grade}</span>
                       ) : (
-                        <span className="text-[var(--text-hint)]">{b.result?.status === "ok" ? "분석" : b.result?.message ? "미확보" : "실패"}</span>
+                        <span
+                          className="max-w-[55%] truncate text-[var(--text-hint)]"
+                          title={b.result?.message || undefined}
+                        >
+                          {/* ★사유를 **보여 준다** — 종전엔 `message` 를 존재 여부로만 써서
+                              "미확보"/"실패" 두 글자로 뭉갰다(사유는 응답에 있었다). */}
+                          {b.result?.status === "ok"
+                            ? "분석"
+                            : b.result?.message || (b.result ? "미확보" : "실패")}
+                        </span>
                       )}
                       {b.result?.ai?.summary && <span className="hidden max-w-[40%] truncate text-[var(--text-secondary)] sm:inline">{b.result.ai.summary}</span>}
                       {/* 요청과 다른 물건을 조회했을 수 있다는 고지는 목록 행에서도 보여야 한다 —
