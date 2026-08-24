@@ -23,6 +23,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { apiClient } from "@/lib/api-client";
 import {
+  __resetProjectCreating,
   _creatingCount,
   markProjectCreating,
   unmarkProjectCreating,
@@ -52,7 +53,7 @@ describe("생성 중 동기화 경합 — 같은 프로젝트를 두 번 만들�
     vi.mocked(apiClient.post).mockReset();
     vi.mocked(apiClient.post).mockResolvedValue({ id: "uuid-1", address: ADDR } as never);
     useProjectStore.setState({ projects: [], syncing: false } as never);
-    while (_creatingCount() > 0) unmarkProjectCreating("");
+    __resetProjectCreating();
   });
 
   it("★서버 생성 진행 중이면 동기화가 그 레코드를 다시 만들지 않는다", async () => {

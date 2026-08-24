@@ -95,6 +95,13 @@ export function _creatingCount(): number {
   return _creatingLocalIds.size;
 }
 
+/** 테스트 전용 초기화. ★개별 해제를 루프로 흉내 내지 마라 — 빈 id 는 no-op 이라
+ *  `while(count>0) unmark("")` 같은 정리는 **테스트가 실패했을 때만 무한루프**가 된다
+ *  (변이 검증이 필요한 바로 그 순간에 하네스가 멈춘다 — 실제로 겪었다). */
+export function __resetProjectCreating(): void {
+  _creatingLocalIds.clear();
+}
+
 export const useProjectStore = create<ProjectState>()(
   persist(
     (set, get) => ({
