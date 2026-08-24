@@ -5,6 +5,8 @@
  * - B: POST /api/v1/precheck/zoning-signals
  */
 
+import type { IntegrityWarning } from "@/components/ui/IntegrityWarnings";
+
 export type PreCheckSignal = "pass" | "warn" | "fail";
 
 export type PreCheckRuleName =
@@ -111,6 +113,9 @@ export interface InstantPreCheckResponse {
   summary: PreCheckSummary;
   elapsed_ms: number;
   sources: string[];
+  // ★법정초과 가드 결과(additive · precheck_service.py:836) — 타입에 없어서 **소비 자체가
+  //   불가능**했다(2026-08-24). 백엔드는 계속 보내고 있었다.
+  integrity_warnings?: IntegrityWarning[] | null;
   // 빈/오류 경로(ok:false)에서 백엔드가 사유 전달
   message?: string | null;
   // ── 신뢰 레이어(옵셔널 — 구버전 백엔드와 호환) ──
