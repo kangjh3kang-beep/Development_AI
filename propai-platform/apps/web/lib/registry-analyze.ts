@@ -98,6 +98,12 @@ export type BatchOutcome = {
     message?: string;
     ai?: { generated?: boolean; failure_reason?: string } | null;
   } | null;
+  /**
+   * 이 결과가 나온 **필지 행**의 id. 재시도가 그 행(지번·PNU·면적)을 되찾는 데 쓴다 —
+   * 지번만으로 다시 조회하면 그 행의 PNU·면적이 빠져 **대표값이 섞인다**(이 저장소가
+   * 반복해 데인 결함). 목록 표시에는 필요 없어 선택 필드다.
+   */
+  rowId?: string;
 };
 
 /**
@@ -174,4 +180,126 @@ export function summarizeBatch(items: readonly BatchOutcome[]): BatchSummary {
     .map(([reason, count]) => ({ reason, count }))
     .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason));
   return { ok, total, failed: total - ok, reasons, topReason: reasons[0]?.reason ?? null };
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * 실패를 **작업 목록**으로 — 예외 계층 제품화
+ *
+ * 성공률이 같아도 "분석 불가"는 막다른 길이고, "12건이 이 사유로 안 됐습니다 — 이렇게 하면
+ * 됩니다"는 작업 목록이다. 100% 가 구조상 불가능한 세계에서 완성도를 가르는 것은 이쪽이다.
+ *
+ * ★조치를 **지어내지 않는다.** 아래 분류는 전부 우리가 실제로 받는 응답에서만 도출하고,
+ *   각 조치는 화면에 실재하는 통로를 가리킨다(재시도 버튼 · 직접 입력란 · 지번 칸 · 충전).
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** 실패 건에 대해 사용자가 **실제로 할 수 있는** 다음 행동. */
+export type FailureAction =
+  /** 등기는 확보됐고 해석(LLM)만 실패 — 재발급 없이 해석만 다시 시도한다. */
+  | "reinterpret"
+  /** 등기 본문을 못 얻었다(이미지 PDF 등) — 등기부 내용을 직접 입력하면 분석된다. */
+  | "enter_manually"
+  /** 주소에 번지가 없다 — 지번을 채우면 조회할 수 있다. */
+  | "fix_jibun"
+  /** 공급자 선불 잔액이 부족하다 — 충전해야 발급된다. */
+  | "recharge"
+  /** 요청 자체가 실패했다(네트워크·시간초과) — 다시 시도한다. */
+  | "retry"
+  /** 사유를 못 받았다 — 지어내지 않고 그대로 말한다. */
+  | "unknown";
+
+const _JIBUN = /번지|지번/;
+const _BALANCE = /잔액|잔고|충전|민원캐시|캐시가 부족|포인트/;
+const _BODY = /본문|이미지 형식|직접 입력|갑구/;
+
+/**
+ * 이 실패에 대해 **무엇을 할 수 있는가**. `rowReason` 과 같은 입력을 보되 판정 축이 다르다
+ * (그쪽은 "왜", 이쪽은 "그래서 뭘").
+ */
+export function failureAction(b: BatchOutcome): FailureAction {
+  if (isAnalyzed(b)) return "unknown"; // 성공 건은 조치 대상이 아니다(호출측이 걸러 온다)
+  if (!b.result) return "retry";
+  if ((b.result.ai?.failure_reason || "").trim()) return "reinterpret";
+  const msg = (b.result.message || "").trim();
+  if (!msg) return "unknown";
+  if (_BALANCE.test(msg)) return "recharge";
+  if (_JIBUN.test(msg)) return "fix_jibun";
+  if (_BODY.test(msg) || b.result.status === "empty") return "enter_manually";
+  return "retry";
+}
+
+/** 조치의 사람 읽는 이름과 안내. `canRetry` 가 참인 것만 화면이 버튼으로 만든다. */
+export const FAILURE_ACTION_INFO: Record<
+  FailureAction,
+  { label: string; hint: string; canRetry: boolean }
+> = {
+  reinterpret: {
+    label: "해석 다시 시도",
+    // ★"무과금"이라고 **단정하지 않는다.** 발급 재사용은 프로세스 단위·6시간이라
+    //   보장이 아니다 — 보장할 수 없는 것을 보장으로 말하면 그게 곧 거짓이 된다.
+    hint: "등기부는 이미 받았습니다. 최근 발급분이 남아 있으면 다시 발급하지 않고 해석만 다시 합니다.",
+    canRetry: true,
+  },
+  enter_manually: {
+    label: "등기부 내용 직접 입력",
+    hint: "발급 PDF가 이미지라 본문을 읽지 못했습니다. 위 ‘등기부등본 내용 직접 입력’에 붙여 넣으면 분석됩니다.",
+    canRetry: false,
+  },
+  fix_jibun: {
+    label: "지번 채우기",
+    hint: "등기부는 필지 단위 문서입니다. 목록에서 그 행의 주소에 번지(예: 448-2)까지 넣어 주세요.",
+    canRetry: false,
+  },
+  recharge: {
+    label: "공급자 잔액 충전",
+    hint: "발급 공급자의 선불 잔액이 부족합니다. 충전 후 다시 시도하면 발급됩니다.",
+    canRetry: false,
+  },
+  retry: {
+    label: "다시 시도",
+    hint: "요청이 도중에 끊겼습니다. 다시 시도해 주세요(발급이 안 됐다면 발급 비용이 듭니다).",
+    canRetry: true,
+  },
+  unknown: {
+    label: "사유 확인 필요",
+    hint: "공급자가 실패 사유를 주지 않았습니다. 반복되면 관리자에게 이 지번을 알려 주세요.",
+    canRetry: true,
+  },
+};
+
+export type FailureGroup = {
+  action: FailureAction;
+  /** 이 묶음의 대표 사유(가장 많은 것). */
+  reason: string;
+  count: number;
+  /** 재시도 대상 행 — 화면이 이 목록으로 일괄 재시도한다. */
+  items: BatchOutcome[];
+};
+
+/**
+ * 실패 건을 **조치별로** 묶는다(많은 순). 성공 건은 들어오지 않는다.
+ *
+ * ★사유가 아니라 **조치**로 묶는 이유: 사용자가 하는 일은 사유마다가 아니라 조치마다 같다.
+ *   사유별로 늘어놓으면 12줄이 되지만 조치로 묶으면 보통 2~3덩어리다.
+ */
+export function groupFailures(items: readonly BatchOutcome[]): FailureGroup[] {
+  const buckets = new Map<FailureAction, BatchOutcome[]>();
+  for (const b of items) {
+    if (isAnalyzed(b)) continue;
+    const a = failureAction(b);
+    const cur = buckets.get(a);
+    if (cur) cur.push(b);
+    else buckets.set(a, [b]);
+  }
+  return [...buckets.entries()]
+    .map(([action, group]) => {
+      // 대표 사유 = 그 묶음에서 가장 많은 정규화 사유.
+      const counts = new Map<string, number>();
+      for (const g of group) {
+        const r = normalizeReason(rowReason(g));
+        counts.set(r, (counts.get(r) ?? 0) + 1);
+      }
+      const reason = [...counts.entries()].sort((x, y) => y[1] - x[1])[0][0];
+      return { action, reason, count: group.length, items: group };
+    })
+    .sort((a, b) => b.count - a.count || a.action.localeCompare(b.action));
 }

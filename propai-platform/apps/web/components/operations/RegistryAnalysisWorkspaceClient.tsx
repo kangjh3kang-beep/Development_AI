@@ -18,6 +18,7 @@ import { analyzeRegistry, isAnalyzed, summarizeBatch } from "@/lib/registry-anal
 import { RegistryBatchRow } from "@/components/operations/RegistryBatchRow";
 import { RegistryPdfBundleButton } from "@/components/operations/RegistryPdfBundleButton";
 import { RegistryRightsReportButton } from "@/components/operations/RegistryRightsReportButton";
+import { RegistryFailureActions } from "@/components/operations/RegistryFailureActions";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { useLandScheduleStore, type LandRow } from "@/store/useLandScheduleStore";
@@ -488,6 +489,21 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
                 {batchResults.map((b, i) => (
                   <RegistryBatchRow key={i} item={b} onDetail={() => setResult(b.result)} />
                 ))}
+                {/* ★실패를 막다른 길이 아니라 **작업 목록**으로 — 사유별로 다음 조치가 다르다.
+                    100% 가 구조상 불가능한 세계에서 완성도를 가르는 것이 이쪽이다. */}
+                <RegistryFailureActions
+                  className="mt-2 border-t border-[var(--line)] pt-2"
+                  items={batchResults}
+                  onRetry={async (group) => {
+                    // 같은 행을 순차로 다시 돈다(동시 호출은 공급자 과부하를 만든다 —
+                    // `analyzeAll` 이 순차인 것과 같은 이유).
+                    for (const b of group) {
+                      const row = rows.find((r) => r.id === b.rowId);
+                      if (row) await run(row.jibun, row.id, row);
+                    }
+                  }}
+                />
+
                 {/* 일괄분석이 끝난 결과를 정본 보고서 엔진으로 문서화한다(재조회·재과금 없음). */}
                 <RegistryRightsReportButton
                   className="mt-2 border-t border-[var(--line)] pt-2"
