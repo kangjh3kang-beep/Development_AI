@@ -57,8 +57,17 @@ def test_ceilings_match_the_statute(zone, bcr, far):
     assert got["bcr_ceiling_pct"] == bcr
     assert got["far_ceiling_pct"] == far
     # 상수 테이블과도 결속(코드 안에서 두 곳이 갈리면 즉시 실패).
-    assert GROWTH_MGMT_BCR_CEILING.get(zone) == bcr
-    assert GROWTH_MGMT_FAR_CEILING.get(zone) == far
+    # ★2026-08-24 — 표가 `LegalLimit` 로 바뀌었다. **공개 출력은 숫자 그대로**이고,
+    #   표 쪽은 `.value` 로 본다(값 무변경을 이 두 줄이 함께 증명한다).
+    _b = GROWTH_MGMT_BCR_CEILING.get(zone)
+    _f = GROWTH_MGMT_FAR_CEILING.get(zone)
+    assert (_b.value if _b is not None else None) == bcr
+    assert (_f.value if _f is not None else None) == far
+    # ★근거가 값과 함께 다니는지 — 감싸기가 형식만이 아님을 본다.
+    if _b is not None:
+        assert "제75조의3제2항" in _b.law, f"건폐율 상한의 조문이 사라졌다: {_b.law}"
+    if _f is not None:
+        assert "제75조의3제3항" in _f.law, f"용적률 상한의 조문이 사라졌다: {_f.law}"
 
 
 def test_far_relaxation_is_planning_management_only():

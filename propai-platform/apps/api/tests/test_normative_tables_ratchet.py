@@ -106,17 +106,11 @@ def collect_raw_normative_tables() -> dict[str, int]:
 # ★상환 방법: 값을 `LegalLimit`(법정) 또는 `PracticeLimit`(실무)로 감싸고 여기서 지운다.
 #   그러면 수집기가 더는 잡지 않는다(구조적으로 모집단에서 빠진다).
 NORMATIVE_DEBT: dict[str, str] = {
-    "app/services/zoning/legal_zone_limits.py::ZONE_FAR_MIN": (
-        "근거는 **주석**에 있다(국토계획법 시행령 제85조 — 용적률 범위의 하한). "
-        "주석은 지워져도 아무 테스트가 울지 않으므로 타입으로 옮겨야 한다"
-    ),
-    "app/services/zoning/conditional_legal_ceiling.py::GROWTH_MGMT_BCR_CEILING": (
-        "근거는 **이웃 상수** `_LEGAL_BASIS_BCR`(법 제75조의3제2항)에 있다. "
-        "값과 근거가 따로 살아 한쪽만 바뀔 수 있다"
-    ),
-    "app/services/zoning/conditional_legal_ceiling.py::GROWTH_MGMT_FAR_CEILING": (
-        "근거는 **이웃 상수** `_LEGAL_BASIS_FAR`(법 제75조의3제3항)에 있다 — 위와 같은 이유"
-    ),
+    # ★2026-08-24 상환 3건 — 근거가 **주석·이웃 상수**에 살던 표를 타입으로 옮겼다.
+    #   `ZONE_FAR_MIN`(시행령 §85) · `GROWTH_MGMT_BCR_CEILING`·`GROWTH_MGMT_FAR_CEILING`
+    #   (법 §75의3제2·3항). 감싸는 순간 수집기가 더는 잡지 않아 **여기서 자동으로 빠진다**.
+    #   ★상환 순서는 "조문이 이미 확인된 것" 우선이다 — 확인 안 된 값에 조문을 붙이는 것은
+    #     이 축이 막으려던 날조 그 자체다(그런 항목은 사유를 그대로 두고 남겼다).
     "app/services/zoning/far_incentive_calculator.py::NATIONAL_FAR_LIMITS": (
         "용도지역별 법정 용적률 상한. 조문 근거 미확인 — **확인 전에는 감싸지 않는다**"
         "(없는 근거를 지어내는 것이 이 축이 막으려던 잘못이다)"
@@ -181,16 +175,25 @@ def test_수집기가_타입_적용을_실제로_가른다_대조군() -> None:
     """★양성·음성 대조군 — 위 세 락은 *아무것도 수집하지 않는* 구현에서도 초록이다.
 
     이미 상환된 표(`MAX_FLOORS`·`MIN_LOT_AREA`·`ROAD_REQUIREMENT`)가 **수집되지 않고**,
-    아직 원시인 표(`ZONE_FAR_MIN`)는 **수집되는지** 함께 본다.
+    아직 원시인 표(`NATIONAL_FAR_LIMITS`)는 **수집되는지** 함께 본다.
     두 모집단이 다른 값을 내야 이 수집기가 잠금 노릇을 한다.
     """
     found = collect_raw_normative_tables()
     validator = "app/services/zoning/development_feasibility_validator.py"
-    for name in ("MAX_FLOORS", "MIN_LOT_AREA", "ROAD_REQUIREMENT"):
-        assert f"{validator}::{name}" not in found, (
+    repaid = [f"{validator}::{n}" for n in ("MAX_FLOORS", "MIN_LOT_AREA", "ROAD_REQUIREMENT")]
+    repaid += [
+        "app/services/zoning/legal_zone_limits.py::ZONE_FAR_MIN",
+        "app/services/zoning/conditional_legal_ceiling.py::GROWTH_MGMT_BCR_CEILING",
+        "app/services/zoning/conditional_legal_ceiling.py::GROWTH_MGMT_FAR_CEILING",
+    ]
+    for name in repaid:
+        assert name not in found, (
             f"{name} 은 근거를 지닌 타입으로 감쌌는데도 수집됐다 — 수집기가 타입을 못 가른다"
         )
-    assert "app/services/zoning/legal_zone_limits.py::ZONE_FAR_MIN" in found, (
+    # ★대조군은 **아직 원시인 표**여야 한다. `ZONE_FAR_MIN` 을 상환하며 이 자리가 죽었고
+    #   (상환하면 수집되지 않으므로) 다른 원시 표로 갈아 끼웠다 — 대조군이 상환과 함께
+    #   조용히 무력해지는 것을 여기서 잡았다.
+    assert "app/services/zoning/far_incentive_calculator.py::NATIONAL_FAR_LIMITS" in found, (
         "아직 원시인 표가 수집되지 않았다 — 수집기가 아무것도 안 잡고 있다(공허한 초록)"
     )
 
