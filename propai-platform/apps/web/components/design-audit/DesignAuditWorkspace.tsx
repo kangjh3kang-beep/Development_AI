@@ -83,7 +83,13 @@ function formatElapsed(totalSec: number): string {
    신규 job_id를 그 자리에서 발급하는 이 화면에는 맞지 않아(백엔드 design_audit.py 잡 엔드포인트
    주석 참조), 등기 권리분석과 동일한 제출+폴링 패턴을 그대로 재사용한다. */
 
-const AUDIT_JOB_STORAGE_KEY = "propai:design-audit:active-job";
+/**
+ * 설계감사 진행 잡 세션키.
+ * ★`export` 하는 이유(계정 격리): 이 상수가 컴포넌트 안에 숨어 있어
+ *   `clearAllProjectData` 와이프 목록에서 **구조적으로 누락**됐다(2026-08-24 실측).
+ *   와이프 목록이 정본 상수를 재사용하려면 밖에서 보여야 한다(하드코딩 금지).
+ */
+export const AUDIT_JOB_STORAGE_KEY = "propai:design-audit:active-job";
 
 type AuditJobSubmitResp = { job_id: string | null; status: string };
 type AuditJobStatusResp = { status: string; result?: DesignAuditReport; error?: string };
