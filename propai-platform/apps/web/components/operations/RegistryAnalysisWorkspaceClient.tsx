@@ -16,6 +16,7 @@ import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { DataSourceNotice } from "@/components/ui/DataSourceNotice";
 import { analyzeRegistry, isAnalyzed, summarizeBatch } from "@/lib/registry-analyze";
 import { RegistryBatchRow } from "@/components/operations/RegistryBatchRow";
+import { RegistryPdfBundleButton } from "@/components/operations/RegistryPdfBundleButton";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { useLandScheduleStore, type LandRow } from "@/store/useLandScheduleStore";
@@ -351,6 +352,14 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
                   className="rounded-xl bg-[var(--accent-strong)] px-3.5 py-1.5 text-xs font-black text-white hover:opacity-90 disabled:opacity-50">
                   {busyId ? "분석 중…" : (<span className="inline-flex items-center gap-1.5"><Scale className="size-4" aria-hidden />전체 분석</span>)}
                 </button>
+                {/* 발급된 등기부 PDF 를 한 번에 받는다 — 종전엔 행마다 `PDF ↗` 를 눌러야 했다.
+                    소스는 **영속되는 필지 행**이라 새로고침 뒤에도 받을 수 있다. */}
+                <RegistryPdfBundleButton
+                  sources={rows.map((r) => ({
+                    jibun: r.jibun || "",
+                    pdfUrl: r.pdf_url,
+                  }))}
+                />
               </div>
             </div>
             <div className="mt-3 space-y-1.5">
