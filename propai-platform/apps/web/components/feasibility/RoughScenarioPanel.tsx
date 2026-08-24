@@ -490,6 +490,22 @@ function RoughScenarioPanelInner({ projectId }: { projectId?: string }) {
   }, [address, buildBody, buildOverrides, projectId, ctxProjectId]);
 
   const inp = result?.inputs;
+
+  // ── 값–라벨 정합(R2) 파생 ─────────────────────────────────────────────────
+  // ★`margin.developer_profit_won` 은 `총사업비 × 마진율` 이라 **매출을 보지 않는다** —
+  //   구조상 언제나 양수다. 그것이 달성됐는지는 **실제 분양수입이 목표매출에 닿았는지**로만
+  //   판정할 수 있다. 판정 근거가 없으면(둘 중 하나라도 null) `null` — 모르면 모른다고 둔다.
+  const marginMet: boolean | null =
+    result?.summary.total_revenue_won != null && result?.margin.target_revenue_won != null
+      ? result.summary.total_revenue_won >= result.margin.target_revenue_won
+      : null;
+  // 순이익은 **부호**가 곧 좋고 나쁨이다. 미확보면 색을 입히지 않는다(없는 판정을 색으로 말하지 않는다).
+  const netTone: StatTone =
+    result?.summary.net_profit_won == null
+      ? "muted"
+      : result.summary.net_profit_won < 0
+        ? "negative"
+        : "positive";
   const cf = result?.cashflow;
 
   // 히스토리 변동감지 시그니처 파트 — 백엔드 계약과 동일 순서: [address, pnu||"", parcelCount, useLlm, options요약].
@@ -666,19 +682,39 @@ function RoughScenarioPanelInner({ projectId }: { projectId?: string }) {
                 </span>
               </div>
               <div className="mt-3 sa-di-stats">
-                <Stat label="개발이익(마진)" text={eok(result.margin.developer_profit_won)} accent />
+                {/* ★값–라벨 정합(R2): 이 값은 `총사업비 × 마진율` 이라 **매출을 전혀 보지 않는다**
+                    — 구조상 언제나 양수다. 그래서 "개발이익"이라 부르며 강조색으로 그리면,
+                    순이익이 마이너스인 사업에서도 **성과처럼** 읽힌다.
+                    ★이 저장소는 같은 개념을 다른 곳에서 *"개발이익 = 분양수입 − 총투입원가"* 로
+                    정의한다(`feasibility_interpreter` 프롬프트). 이름을 **목표**로 바로잡아
+                    그 정의와 충돌하지 않게 한다. 값은 지우지 않는다 — 라벨을 고친다. */}
+                <Stat
+                  label={`목표 개발이익(마진 ${pctStr(result.margin.rate_pct, 0) ?? "—"})`}
+                  text={
+                    result.margin.developer_profit_won == null
+                      ? null
+                      : `${eok(result.margin.developer_profit_won)}${
+                          marginMet == null ? "" : marginMet ? " · 충족" : " · 미달"
+                        }`
+                  }
+                  // ★색만으로 전달하지 않는다 — 위 text 에 '충족/미달' 이라는 **말**을 함께 담았다.
+                  //   달성하지 못한 목표를 성과의 색으로 그리지 않는다.
+                  tone={marginMet == null ? "muted" : marginMet ? "positive" : "negative"}
+                />
                 <Stat label="목표매출(역산)" text={eok(result.margin.target_revenue_won)} />
                 <Stat label="예상 분양수입" text={eok(result.summary.total_revenue_won)} />
+                {/* ★목표(위)와 **실제**(아래)를 같은 카드에 둔다 — 종전엔 순이익이 다른 섹션에
+                    있어 "목표 831억"과 "순이익 −2,936억"이 한눈에 대조되지 않았다. */}
                 <Stat
-                  label="마진 충족여부"
+                  label="실제 순이익"
                   text={
-                    result.summary.total_revenue_won != null &&
-                    result.margin.target_revenue_won != null
-                      ? result.summary.total_revenue_won >= result.margin.target_revenue_won
-                        ? "충족"
-                        : "미달"
-                      : null
+                    result.summary.net_profit_won == null
+                      ? null
+                      : `${eok(result.summary.net_profit_won)}${
+                          result.summary.net_profit_won < 0 ? " · 손실" : ""
+                        }`
                   }
+                  tone={netTone}
                 />
               </div>
             </div>
@@ -705,7 +741,19 @@ function RoughScenarioPanelInner({ projectId }: { projectId?: string }) {
               <div className="mt-3 sa-di-stats">
                 <Stat label="총사업비" text={eok(result.summary.total_cost_won)} />
                 <Stat label="총수입" text={eok(result.summary.total_revenue_won)} />
-                <Stat label="순이익" text={eok(result.summary.net_profit_won)} accent />
+                {/* ★손실을 강조색으로 그리지 않는다(값–라벨 정합) — 부호로 색을 정하고
+                    '손실' 이라는 말을 함께 쓴다. 같은 파일의 월별 현금흐름이 이미 쓰는 관례다. */}
+                <Stat
+                  label="순이익"
+                  text={
+                    result.summary.net_profit_won == null
+                      ? null
+                      : `${eok(result.summary.net_profit_won)}${
+                          result.summary.net_profit_won < 0 ? " · 손실" : ""
+                        }`
+                  }
+                  tone={netTone}
+                />
                 <Stat label="ROI" text={pctStr(result.summary.roi_pct)} />
               </div>
               <div className="mt-3 sa-di-stats">
@@ -968,13 +1016,47 @@ function Tile({
   );
 }
 
-function Stat({ label, text, accent }: { label: string; text: string | null; accent?: boolean }) {
+/**
+ * 지표 한 칸.
+ *
+ * ★`tone` 이 필요한 이유(값–라벨 정합):
+ * 종전엔 헤드라인 지표에 `accent` 를 **무조건** 걸었다. 그래서 순이익이 **−2,936억(손실)** 이어도
+ * 강조색으로 그려졌다 — 사용자는 색을 **좋고 나쁨**으로 읽는데, 코드는 그것을 **중요함**으로
+ * 썼다. 같은 파일 안에 이미 부호별 색상 선례가 있었는데(월별 현금흐름의 `net < 0`)
+ * 헤드라인만 예외였다.
+ *
+ * ★색만으로 심각도를 전달하지 않는다 — 호출부가 `text` 에 **말**(손실·미달)을 함께 담는다.
+ */
+type StatTone = "accent" | "positive" | "negative" | "muted";
+
+const TONE_COLOR: Record<StatTone, string | undefined> = {
+  accent: "var(--data-accent)",
+  positive: "var(--status-success)",
+  negative: "var(--status-error)",
+  muted: undefined,
+};
+
+function Stat({
+  label,
+  text,
+  accent,
+  tone,
+}: {
+  label: string;
+  text: string | null;
+  /** 하위호환 — 기존 호출부는 그대로 둔다(무회귀). `tone` 이 있으면 그쪽이 우선. */
+  accent?: boolean;
+  tone?: StatTone;
+}) {
+  const resolved: StatTone | null = tone ?? (accent ? "accent" : null);
+  const color = resolved ? TONE_COLOR[resolved] : undefined;
   return (
     <div className="sa-di-stat">
       <span className="sa-di-stat__label">{label}</span>
       <span
         className="sa-di-stat__value"
-        style={accent && text != null ? { color: "var(--data-accent)" } : undefined}
+        data-tone={resolved ?? undefined}
+        style={color && text != null ? { color } : undefined}
       >
         <Val text={text} />
       </span>
