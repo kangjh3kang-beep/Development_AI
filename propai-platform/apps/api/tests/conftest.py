@@ -112,6 +112,18 @@ def _isolate_registry_source_cache():
     except Exception:  # noqa: BLE001 — 이 모듈이 없는 환경에서는 할 일이 없다
         yield
         return
-    _svc._SOURCE_CACHE.clear()
+    try:
+        from app.services.registry import registry_service as _rsvc
+    except Exception:  # noqa: BLE001
+        _rsvc = None
+
+    def _clear() -> None:
+        _svc._SOURCE_CACHE.clear()
+        # ★발급 캐시(유료 길목)도 함께 비운다. 여기를 빼면 같은 누수가 **한 층 아래에서**
+        #   그대로 재발한다 — 실제로 위층만 비웠을 때 3건이 계속 빨갰다.
+        if _rsvc is not None:
+            _rsvc._ISSUE_CACHE.clear()
+
+    _clear()
     yield
-    _svc._SOURCE_CACHE.clear()
+    _clear()

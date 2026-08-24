@@ -22,6 +22,7 @@ import pytest
 import pytest_asyncio
 
 from app.services.registry import registry_analysis_service as svc
+from app.services.registry import registry_service as rsvc
 
 
 @pytest_asyncio.fixture
@@ -57,10 +58,12 @@ def _clean_caches(monkeypatch):
     """프로세스 전역 캐시를 매 테스트마다 비운다(다른 테스트의 잔재가 결과를 뒤집는다)."""
     svc._ANALYZE_CACHE.clear()
     svc._SOURCE_CACHE.clear()
+    rsvc._ISSUE_CACHE.clear()
     # DB 캐시는 이 테스트 환경에 없다 — 조회/저장이 예외를 삼키고 None 을 준다(무영향).
     yield
     svc._ANALYZE_CACHE.clear()
     svc._SOURCE_CACHE.clear()
+    rsvc._ISSUE_CACHE.clear()
 
 
 class _Counter:
@@ -214,3 +217,81 @@ class TestNoReissue:
         assert len(calls) == 2
         assert r1["status"] == "error"
         assert "잔액" in (r1.get("message") or "")
+
+
+@pytest.mark.asyncio
+class TestIssuanceLayerReuse:
+    """★유료 길목(`RegistryService.get_one`) 자체의 재사용 — 형제 스윕에서 나왔다.
+
+    위층(분석 서비스)에만 재사용을 넣으면 **`/registry/bulk` 가 남는다**. 그 경로는 필지마다
+    `get_one` 을 그대로 부르고 캐시가 없어, 일괄 조회를 두 번 누르면 두 번 과금된다
+    (`registry_service.bulk` 실측). 그래서 길목 하나에 넣어 모든 호출부가 따라오게 했다.
+    """
+
+    @pytest.fixture
+    def counted(self, monkeypatch):
+        calls: list[dict] = []
+
+        async def _fake(self, **kw):
+            calls.append(kw)
+            return {"status": "ok", "registry_text": "【갑구】소유자 홍길동", "origin": "hyphen"}
+
+        monkeypatch.setattr(rsvc.RegistryService, "_issue_uncached", _fake, raising=True)
+        return calls
+
+    async def test_전제_발급기가_불린다(self, counted, addr):
+        await rsvc.RegistryService().get_one(address=addr)
+        assert len(counted) == 1
+
+    async def test_핵심_같은_물건은_두_번_발급하지_않는다(self, counted, addr):
+        s = rsvc.RegistryService()
+        await s.get_one(address=addr)
+        second = await s.get_one(address=addr)
+        assert len(counted) == 1, f"발급이 {len(counted)}번 나갔다 — 민원캐시가 두 번 차감된다"
+        assert second["reused_issue"] is True
+
+    async def test_핵심_bulk_재실행이_재발급하지_않는다(self, counted, addr):
+        s = rsvc.RegistryService()
+        items = [{"address": f"{addr} {i}"} for i in range(3)]
+        await s.bulk(items)
+        await s.bulk(items)
+        assert len(counted) == 3, f"일괄 조회 2회에 발급이 {len(counted)}번 나갔다(3이어야 한다)"
+
+    async def test_동_호가_다르면_다른_물건이다(self, counted, addr):
+        s = rsvc.RegistryService()
+        await s.get_one(address=addr, realty_type="1", dong="101", ho="101")
+        await s.get_one(address=addr, realty_type="1", dong="101", ho="102")
+        assert len(counted) == 2
+
+    async def test_force_reissue_는_새로_발급한다(self, counted, addr):
+        s = rsvc.RegistryService()
+        await s.get_one(address=addr)
+        await s.get_one(address=addr, force_reissue=True)
+        assert len(counted) == 2
+
+    async def test_발급_실패는_보관하지_않는다(self, monkeypatch, addr):
+        calls: list[dict] = []
+
+        async def _fail(self, **kw):
+            calls.append(kw)
+            return {"status": "error", "message": "민원캐시 잔액이 부족합니다"}
+
+        monkeypatch.setattr(rsvc.RegistryService, "_issue_uncached", _fail, raising=True)
+        s = rsvc.RegistryService()
+        await s.get_one(address=addr)
+        await s.get_one(address=addr)
+        assert len(calls) == 2
+
+    async def test_업로드_PDF_경로는_캐시를_타지_않는다(self, monkeypatch, addr):
+        """사용자가 올린 파일은 **무과금**이다 — 캐시로 묶으면 다른 파일이 옛 결과를 받는다."""
+        calls: list[dict] = []
+
+        async def _fake(self, **kw):
+            calls.append(kw)
+            return {"status": "ok", "registry_text": "업로드본"}
+
+        monkeypatch.setattr(rsvc.RegistryService, "_issue_uncached", _fake, raising=True)
+        s = rsvc.RegistryService()
+        await s.get_one(address=addr, pdf_input=b"%PDF-1")
+        await s.get_one(address=addr, pdf_input=b"%PDF-2")
+        assert len(calls) == 2

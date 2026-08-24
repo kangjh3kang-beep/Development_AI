@@ -436,7 +436,10 @@ class RegistryAnalysisService:
                 land, reg = await asyncio.gather(
                     _resolve_land(),
                     RegistryService().get_one(
-                        pnu=pnu, address=address, realty_type=realty_type, dong=dong, ho=ho
+                        pnu=pnu, address=address, realty_type=realty_type, dong=dong, ho=ho,
+                        # ★아래 층에도 전달한다 — 위 캐시만 건너뛰면 발급 캐시가 그대로
+                        #   옛 등기부를 돌려줘 "새로 발급"이 조용히 무시된다.
+                        force_reissue=force_reissue,
                     ),
                 )
             st = reg.get("status") if reg is not None else "ok"
