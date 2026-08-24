@@ -198,17 +198,18 @@ describe("배선 — 화면이 요약을 실제로 소비한다", () => {
     expect(src).toContain("batch-top-reason");
   });
 
-  it("★행별 사유를 공용 함수로 쓴다(행과 요약이 같은 사유를 말하게)", async () => {
+  it("★행을 전용 컴포넌트로 그린다 — 그 컴포넌트가 사유·등급 락을 갖는다", async () => {
+    // 행은 `RegistryBatchRow` 로 분리했고 그 렌더 락은
+    // components/operations/__tests__/RegistryBatchRow.test.tsx 에 있다.
+    // 여기서는 **화면이 그 컴포넌트를 실제로 쓰는지**만 잠근다(임포트만 남기면 죽는다).
     const src = await readExecutable();
-    expect(src).toMatch(/rowReason\s*\(/);
+    expect(src).toMatch(/<RegistryBatchRow\b/);
   });
 
-  it("★등급은 분석이 나온 건에만 칠한다 — 폴백도 safety_grade 를 담아 온다", async () => {
+  it("★행 판정을 화면이 스스로 다시 하지 않는다(판정자는 lib 하나)", async () => {
     const src = await readExecutable();
-    // `ai.safety_grade` 를 **무조건** 읽으면 '분석 불가' 건이 "안전성 주의"로 보인다.
-    expect(src).toMatch(/isAnalyzed\s*\(/);
-    expect(src).not.toMatch(/const grade = b\.result\?\.ai\?\.safety_grade/);
+    // 종전: `const grade = b.result?.ai?.safety_grade` — 폴백의 "주의"까지 칠했다.
+    expect(src).not.toMatch(/ai\?\.safety_grade/);
   });
 
-  it.todo("렌더 경로 락 — 실패 섞인 일괄 결과를 그려 대표 사유 문구가 DOM 에 뜨는지(무잠금 부채)");
 });

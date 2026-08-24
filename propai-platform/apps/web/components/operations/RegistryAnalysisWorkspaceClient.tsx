@@ -14,7 +14,8 @@ import Link from "next/link";
 import { Card, CardContent } from "@propai/ui";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { DataSourceNotice } from "@/components/ui/DataSourceNotice";
-import { analyzeRegistry, isAnalyzed, rowReason, summarizeBatch } from "@/lib/registry-analyze";
+import { analyzeRegistry, isAnalyzed, summarizeBatch } from "@/lib/registry-analyze";
+import { RegistryBatchRow } from "@/components/operations/RegistryBatchRow";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { useLandScheduleStore, type LandRow } from "@/store/useLandScheduleStore";
@@ -416,47 +417,9 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
                     </>
                   );
                 })()}
-                {batchResults.map((b, i) => {
-                  // ★등급은 **분석이 실제로 나온 건에만** 칠한다. LLM 폴백도 `safety_grade:"주의"`를
-                  //   담아 오므로 존재 여부로 칠하면 **아무것도 판정하지 않은 건이 "안전성 주의"로**
-                  //   보인다(라이브 2026-08-24 오산 내삼미동 448-2·347-8 — PDF 는 발급됐다).
-                  //   그건 없는 판정을 지어내는 것이고, 동시에 진짜 사유를 덮는다.
-                  const analyzed = isAnalyzed(b);
-                  const grade = analyzed ? b.result?.ai?.safety_grade : undefined;
-                  return (
-                    <div key={i} className="flex flex-wrap items-center gap-2 text-[11px]">
-                      <span className="min-w-[150px] flex-1 truncate font-semibold text-[var(--text-primary)]" title={b.jibun}>{b.jibun}</span>
-                      {grade ? (
-                        <span className={`rounded-full border px-2 py-0.5 font-bold ${GRADE[grade] || "border-[var(--line-strong)] text-[var(--text-secondary)]"}`}>안전성 {grade}</span>
-                      ) : (
-                        <span
-                          className="max-w-[55%] truncate text-[var(--text-hint)]"
-                          data-testid="row-reason"
-                          title={rowReason(b)}
-                        >
-                          {/* ★사유를 **보여 준다** — 종전엔 `message` 를 존재 여부로만 써서
-                              "미확보"/"실패" 두 글자로 뭉갰다(사유는 응답에 있었다).
-                              등기는 받았는데 권리분석만 실패한 건은 `ai.failure_reason` 에
-                              사유가 실려 온다 — 그것까지 읽는다. */}
-                          {rowReason(b)}
-                        </span>
-                      )}
-                      {analyzed && b.result?.ai?.summary && <span className="hidden max-w-[40%] truncate text-[var(--text-secondary)] sm:inline">{b.result.ai.summary}</span>}
-                      {/* 요청과 다른 물건을 조회했을 수 있다는 고지는 목록 행에서도 보여야 한다 —
-                          '상세'를 눌러야만 보이면 일괄 분석에서 조용히 묻힌다. */}
-                      {b.result?.fetched?.select_note && (
-                        <span title={b.result.fetched.select_note}
-                          className="inline-flex items-center gap-1 rounded-full border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 px-2 py-0.5 font-bold text-[var(--status-warning)]">
-                          <AlertTriangle className="size-3" aria-hidden />물건 확인 필요
-                        </span>
-                      )}
-                      {b.result && (
-                        <button onClick={() => setResult(b.result)}
-                          className="rounded-lg bg-[var(--surface-strong)] px-2 py-0.5 font-bold text-[var(--accent-strong)]">상세</button>
-                      )}
-                    </div>
-                  );
-                })}
+                {batchResults.map((b, i) => (
+                  <RegistryBatchRow key={i} item={b} onDetail={() => setResult(b.result)} />
+                ))}
               </div>
             )}
             <div className="mt-3 flex flex-wrap items-center gap-2">
