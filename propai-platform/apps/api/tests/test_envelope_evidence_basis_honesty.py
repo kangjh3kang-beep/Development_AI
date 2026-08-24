@@ -82,6 +82,14 @@ async def test_실효한도를_넘기면_법정이라_부르지_않는다() -> N
     assert far is not None
     assert "실효" in far["basis"], f"용적률 근거가 실효임을 말하지 않는다: {far}"
     assert "legal_ref_key" not in far
+    # ★근거는 **산식과 값**을 함께 말해야 한다 — 문구만 보면 응답에서 far_pct 가
+    #   사라져도(`—` 로 떨어져도) 이 단언이 통과한다(변이 생존으로 드러났다).
+    assert "적용 용적률" in far["basis"]
+    assert "158.2" in far["basis"], f"적용 용적률 값이 근거에 없다: {far}"
+    assert body.get("far_pct") == 158.2, f"응답이 적용 용적률을 싣지 않는다: {body.get('far_pct')}"
+    # 허용 연면적도 실제 수치여야 한다(0㎡ 로 떨어지면 근거가 무의미하다).
+    assert body.get("far_gfa_sqm"), "far_gfa_sqm 이 비었다"
+    assert "㎡" in str(far["value"]) and str(far["value"]) != "0㎡"
 
 
 @pytest.mark.asyncio
@@ -103,6 +111,10 @@ async def test_대조군_한도를_안_넘기면_종전대로_법정이라_부�
     assert far is not None
     assert far.get("legal_ref_key") == "far_limit"
     assert "법정 용적률" in far["basis"]
+    # 대조군에서도 값이 실려야 한다 — 일반상업 법정 용적률 1300%.
+    assert body.get("far_pct") == 1300.0, f"법정 경로인데 far_pct 가 {body.get('far_pct')}"
+    assert "1300" in far["basis"]
+    assert body.get("far_gfa_sqm"), "far_gfa_sqm 이 비었다"
 
 
 @pytest.mark.asyncio
