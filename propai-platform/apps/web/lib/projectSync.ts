@@ -7,6 +7,8 @@
  */
 
 import { apiClient } from "@/lib/api-client";
+import { AUDIT_JOB_STORAGE_KEY } from "@/components/design-audit/DesignAuditWorkspace";
+import { MARKET_REPORT_JOB_STORAGE_KEY } from "@/lib/market-report-job";
 import { useProjectStore } from "@/store/useProjectStore";
 import {
   useProjectContextStore,
@@ -16,6 +18,9 @@ import {
   type SiteAnalysisData,
 } from "@/store/useProjectContextStore";
 import { healPhantomAreaAggregates } from "@/lib/site-analysis-invariants";
+import { effectiveLandAreaSqm } from "@/lib/site-area";
+import { VERIFY_CACHE_PREFIX } from "@/lib/verification-cache-key";
+import { looksLikeAddress } from "@/lib/selection-integrity";
 import { useLandScheduleStore } from "@/store/useLandScheduleStore";
 import {
   SATONG_DOMINANT_CONSTRAINT_KEY,
@@ -46,14 +51,21 @@ const PROJECT_PERSIST_KEYS = [
   "propai-land-schedule",     // useLandScheduleStore
   "propai-project-storage",   // useProjectStore
   "propai-system-storage",    // useSystemStore (LLM provider·입력 API키 등 민감)
-  "propai_pipeline_history",  // 파이프라인 분석이력(프로젝트 상세)
+  // ★레거시 전용 — 지금 쓰는 키는 `propai_pipeline_history__<userId>`(계정별 격리)이고
+  //   그건 **의도적으로 지우지 않는다**(ProjectPipelinePanel: 키가 격리돼 있어 와이프 없이도
+  //   본인 이력이 보존되고 삭제는 본인만 영향). 이 항목은 격리 이전의 **공유키 잔재**만 걷는다.
+  //   ★접두로 바꾸지 마라 — 그 순간 계정별 이력까지 지워져 그들이 고친 결함이 되살아난다.
+  "propai_pipeline_history",
   "propai_precheck_handoff",  // PreCheck 분석결과 전달(localStorage일 수도)
 ];
 // 주소+컨텍스트 해시로 만들어지는 동적 캐시 키(개수 가변) — 접두사 패턴으로 일괄 제거.
 const PROJECT_PERSIST_PREFIXES = [
   "propai_panel_",        // 전문가 패널 분석결과(9유형)
   "propai_scenario_",     // 개발 시나리오 시뮬레이션
-  "propai_verification_", // 검증 배지 캐시
+  // ★정본 상수를 쓴다 — 종전엔 실재하지 않는 접두를 손으로 적어 뒀는데 실제 키는
+  //   `propai_verify_` 여서 이 스윕이 **한 번도 매치된 적이 없었다**(계정 전환 시 이전 계정의
+  //   검증 캐시 잔존). 만드는 쪽과 지우는 쪽이 같은 상수를 본다.
+  VERIFY_CACHE_PREFIX,
 ];
 
 /** JWT 페이로드에서 사용자 식별자(sub/user_id)를 디코드. 실패 시 null. */
@@ -124,7 +136,14 @@ export function clearAllProjectData(): void {
         k === SATONG_SITE_LAYOUT_KEY ||
         // ★W4 매스 시드 인계 — 뷰 캐시가 아니라 **인계 페이로드**지만 위험은 같거나 더 크다:
         //   남으면 이전 계정이 고른 배치안 층수가 다음 계정의 설계 시드로 들어간다.
-        k === SATONG_MASS_SEED_KEY
+        k === SATONG_MASS_SEED_KEY ||
+        // ★2026-08-24 실측 누락 2건 — **진행 잡 페이로드**가 남아 이전 계정이 분석한
+        //   **부지 주소**(`{jobId, startedAt, address}`)가 다음 계정 화면으로 복원될 수 있었다.
+        //   W1~W4 주석이 *"새 키는 만드는 즉시 이 목록에 등재한다"* 를 **네 번** 반복했는데도
+        //   또 빠졌다 — 산문이 아니라 **파생형 락**으로 잠근다
+        //   (`projectSync.wipeCoverage.test.ts`).
+        k === MARKET_REPORT_JOB_STORAGE_KEY ||
+        k === AUDIT_JOB_STORAGE_KEY
       ) {
         try { window.sessionStorage.removeItem(k); } catch { /* noop */ }
       }
@@ -206,6 +225,15 @@ function integrityViolation(
   const snapAddress = (
     snap.siteAnalysis as { address?: unknown } | null | undefined
   )?.address;
+  // ★주소 형태 검사 — 지역 비교만으로는 **주소가 아닌 값**을 못 잡는다.
+  //   `addressRegionMismatch` 는 토큰 추출에 실패하면 보수적으로 '일치'를 반환하므로,
+  //   엑셀 소유자 컬럼이 주소로 읽힌 값(실측: "◀ 전성결") 앞에서 침묵한다.
+  //   `selection-integrity` 가 세 신호를 쓰는 이유가 이것이다 — 여기서도 ①에만 기대지 않는다.
+  //   ★프로젝트 레코드 주소가 없어도 판정한다: 깨진 값은 비교 대상이 없어도 깨진 값이다.
+  //   ★위양성 실측: 프로덕션 20건의 주소 값 40개 중 비주소 판정은 **1건**(그 손상 건)뿐이었다.
+  if (typeof snapAddress === "string" && snapAddress.trim() && !looksLikeAddress(snapAddress)) {
+    return `분석 주소("${snapAddress}")가 주소 형태가 아니다 — 데이터 손상`;
+  }
   if (
     recordAddress &&
     typeof snapAddress === "string" &&
@@ -340,9 +368,27 @@ export async function pushSnapshot(): Promise<void> {
     console.warn(`[projectSync] 스냅샷 푸시 보류(SSOT 오염 의심): ${violation}`);
     return;
   }
+  // ★프로젝트 레코드의 대지면적을 **같은 PUT 에 함께** 실어 보낸다.
+  //
+  //   왜: `projects.total_area_sqm` 은 **생성 시 1회 기록되고 그 뒤 갱신 경로가 없었다.**
+  //   필지를 고쳐도 레코드는 생성 시점에 얼어붙어, 같은 부지의 면적을 화면이 두 값으로
+  //   말했다(실측: 레코드 5,781 vs 스냅샷 필지합 5,881 · 프로덕션 20건 중 7건이 갈림).
+  //
+  //   ★산식을 서버에 복제하지 않는다 — 유효면적 판정(다필지 통합 우선·강등 처리)은
+  //     `effectiveLandAreaSqm` 한 곳에만 산다. 그 값을 **이미 가진 쪽**이 보낸다.
+  //   ★의미는 **대지면적**이다(생성 경로 둘 + `building_compliance_service._get_site_area`
+  //     독스트링이 일치). 추측이 아니라 소비처로 확인했다.
+  //   ★값이 없으면 **키를 만들지 않는다** — 미확보를 0/null 로 덮어써 레코드를 지우지 않는다.
+  const landAreaSqm = effectiveLandAreaSqm(
+    useProjectContextStore.getState().siteAnalysis as never,
+  );
+  const areaPatch =
+    typeof landAreaSqm === "number" && Number.isFinite(landAreaSqm) && landAreaSqm > 0
+      ? { total_area_sqm: landAreaSqm }
+      : {};
   try {
     await apiClient.put(`/projects/${pid}`, {
-      body: { analysis_snapshot: snap },
+      body: { analysis_snapshot: snap, ...areaPatch },
       useMock: false,
       timeoutMs: 30000,
     });

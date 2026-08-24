@@ -14,10 +14,15 @@ import Link from "next/link";
 import { Card, CardContent } from "@propai/ui";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { DataSourceNotice } from "@/components/ui/DataSourceNotice";
-import { analyzeRegistry } from "@/lib/registry-analyze";
+import { analyzeRegistry, isAnalyzed, summarizeBatch } from "@/lib/registry-analyze";
+import { RegistryBatchRow } from "@/components/operations/RegistryBatchRow";
+import { RegistryPdfBundleButton } from "@/components/operations/RegistryPdfBundleButton";
+import { RegistryRightsReportButton } from "@/components/operations/RegistryRightsReportButton";
+import { RegistryFailureActions } from "@/components/operations/RegistryFailureActions";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { useLandScheduleStore, type LandRow } from "@/store/useLandScheduleStore";
+import { useRegistryAnalysisStore } from "@/store/useRegistryAnalysisStore";
 import { addressHasJibun, parcelDisplayAddress, parcelJibunResolved } from "@/lib/pnu";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import type { Locale } from "@/i18n/config";
@@ -43,6 +48,8 @@ type AI = {
   acquired_extinguished?: string;
   right_to_demand_sale?: { possible?: string; reason?: string };
   rights_analysis?: string;
+  /** LLM 권리분석이 실패한 **이유**. `generated:false` 일 때만 채워진다(백엔드 llm_failure.py). */
+  failure_reason?: string;
   risks?: string[];
   safety_grade?: string;
   summary?: string;
@@ -84,12 +91,32 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
   // ★다필지 일괄 결과(필지별 누적) — 단일 result만 덮어써 마지막 1건만 보이던 부정합 해소.
   const [batchResults, setBatchResults] = useState<{ jibun: string; rowId: string; result: Result | null }[] | null>(null);
   const [newJibun, setNewJibun] = useState("");
+  // ★분석 결과를 영속화한다 — 종전엔 화면 상태에만 있어 새로고침·딥링크 진입이면 사라졌다.
+  const savedAnalyses = useRegistryAnalysisStore((s) => s.byProject[projectId || "_default"]);
+  const saveAnalysis = useRegistryAnalysisStore((s) => s.upsert);
+  const dropAnalysis = useRegistryAnalysisStore((s) => s.remove);
 
   const run = useCallback(async (overrideAddr?: string, rowId?: string, row?: LandRow): Promise<Result | null> => {
     // 특정 필지 분석(overrideAddr 존재 = 일괄/행별)인지, 대표 단일 분석(인자 없음)인지 구분.
     const isPerParcel = typeof overrideAddr === "string";
     const target = (isPerParcel ? overrideAddr : addr) || siteAnalysis?.address || "";
     if (!target && !text.trim()) { setError("주소를 선택하거나 등기부 내용을 입력하세요."); return null; }
+    // ★★번지 없는 주소로 **유료 발급을 시도하지 않는다.**
+    //   라이브 실측(2026-08-24): 대상 주소가 `경기도 오산시 내삼미동`(동 단위)인 채로 조회가
+    //   나가 하이픈 `[C0000-002] 조회 실패` · 틸코 `HTTP 500` 이 떴다. 등기부는 **필지 단위**
+    //   문서라 동 이름만으로는 특정할 수 없다 — 실패가 예정된 호출이고, 사용자에게는
+    //   "잠시 후 다시 시도" 라는 **틀린 안내**가 간다(다시 시도해도 영원히 실패한다).
+    //   PNU 가 있으면 그것으로 특정되므로 통과시킨다(판정은 lib/pnu 한 곳).
+    const hasParcelId = Boolean(
+      (isPerParcel ? row?.pnu : siteAnalysis?.pnu) || addressHasJibun(target),
+    );
+    if (!hasParcelId && !text.trim()) {
+      setError(
+        `"${target}" 에는 번지가 없어 등기부를 특정할 수 없습니다 — 등기부는 필지 단위 문서입니다. ` +
+        "지번(예: 내삼미동 448-2)까지 입력하거나, 아래 필지 목록에서 개별 [분석]을 눌러 주세요.",
+      );
+      return null;
+    }
     if (rowId) setBusyId(rowId); else setLoading(true);
     setError(""); setResult(null); setProgress("");
     try {
@@ -130,6 +157,16 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
         if (ot) patch.owner_type = ot;
         if (r.fetched?.pdf_url) patch.pdf_url = r.fetched.pdf_url;
         if (Object.keys(patch).length) updateRow(projectId, rowId, patch);
+        // ★개별 `분석` 도 목록에 쌓는다. 종전엔 **전체 분석만** 쌓아, 한 필지씩 돌린
+        //   사용자에게는 필지별 권리분석 리스트가 끝내 나타나지 않았다(사용자 신고).
+        saveAnalysis(projectId, { jibun: target, rowId, result: r as unknown as Record<string, unknown> });
+        setBatchResults((prev) => {
+          const row = { jibun: target, rowId, result: r };
+          const cur = prev ?? [];
+          const at = cur.findIndex((x) => x.rowId === rowId);
+          if (at >= 0) { const next = [...cur]; next[at] = row; return next; }
+          return [...cur, row];
+        });
       }
       return r;
     } catch (e) {
@@ -139,7 +176,7 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
       if (rowId) setBusyId(null); else setLoading(false);
       setProgress("");
     }
-  }, [addr, text, siteAnalysis, realty, dong, ho, projectId, updateRow]);
+  }, [addr, text, siteAnalysis, realty, dong, ho, projectId, updateRow, saveAnalysis]);
 
   // 프로젝트 선택 시 필지 목록이 비어있으면 부지분석 필지로 시드(토지조서와 동일 규칙)
   useEffect(() => {
@@ -241,9 +278,30 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
       setBatchResults([...acc]);
     }
     // 종료 후 첫 성공(권리분석 ai) 필지를 상세로 고정(데스크 시세추정과 동일 UX — 마지막 1건이 남던 비대칭 해소).
-    const first = acc.find((x) => x.result?.ai);
+    // ★"첫 성공 건"은 **분석이 나온 것**이어야 한다 — `ai` 존재로 고르면 폴백 건(분석 불가)을
+    //   대표로 집어 상세 패널이 빈 권리분석을 연다.
+    const first = acc.find(isAnalyzed);
     if (first?.result) setResult(first.result);
   }, [rows, run]);
+
+  // ★새로고침·딥링크 진입 시 **저장된 분석 결과로 목록을 복원**한다.
+  //   종전엔 이 목록이 화면 상태에만 있어, `?addr=` 로 들어오면(토지조서 → 등기분석)
+  //   단건 조회만 돌고 필지별 리스트가 **아예 나타나지 않았다**(사용자 신고 2026-08-24).
+  //   복원은 **로컬 저장분**에서만 한다 — 서버 캐시를 무과금으로 조회하는 통로를 열면
+  //   임의 주소로 소유자 정보를 수확할 수 있게 된다(그 통로는 만들지 않았다).
+  const restored = useRef(false);
+  useEffect(() => {
+    if (restored.current) return;
+    if (!savedAnalyses || savedAnalyses.length === 0) return;
+    restored.current = true;
+    setBatchResults(
+      savedAnalyses.map((a) => ({
+        jibun: a.jibun,
+        rowId: a.rowId,
+        result: (a.result as Result | null) ?? null,
+      })),
+    );
+  }, [savedAnalyses]);
 
   // 토지조서 등에서 ?addr= 로 진입 시 자동 프리필 + 1회 실행
   const autoRan = useRef(false);
@@ -346,6 +404,14 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
                   className="rounded-xl bg-[var(--accent-strong)] px-3.5 py-1.5 text-xs font-black text-white hover:opacity-90 disabled:opacity-50">
                   {busyId ? "분석 중…" : (<span className="inline-flex items-center gap-1.5"><Scale className="size-4" aria-hidden />전체 분석</span>)}
                 </button>
+                {/* 발급된 등기부 PDF 를 한 번에 받는다 — 종전엔 행마다 `PDF ↗` 를 눌러야 했다.
+                    소스는 **영속되는 필지 행**이라 새로고침 뒤에도 받을 수 있다. */}
+                <RegistryPdfBundleButton
+                  sources={rows.map((r) => ({
+                    jibun: r.jibun || "",
+                    pdfUrl: r.pdf_url,
+                  }))}
+                />
               </div>
             </div>
             <div className="mt-3 space-y-1.5">
@@ -376,42 +442,74 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
                     <a href={r.pdf_url} target="_blank" rel="noopener noreferrer"
                       className="rounded-lg border border-[var(--accent-strong)]/40 px-2.5 py-1 text-[11px] font-bold text-[var(--accent-strong)]">PDF ↓</a>
                   )}
-                  <button onClick={() => removeRow(projectId, r.id)} title="지번 삭제" className="text-[var(--status-error)]">✕</button>
+                  <button
+                    onClick={() => {
+                      // 행을 지우면 그 분석 결과도 함께 지운다 — 안 지우면 목록에 **없는 필지**가
+                      // 유령으로 남고, 복원 때 되살아난다.
+                      removeRow(projectId, r.id);
+                      dropAnalysis(projectId, r.id);
+                      setBatchResults((prev) => (prev ? prev.filter((x) => x.rowId !== r.id) : prev));
+                    }}
+                    title="지번 삭제" className="text-[var(--status-error)]">✕</button>
                 </div>
               ))}
             </div>
             {/* ★일괄 권리분석 결과(필지별 누적) — 마지막 1건만 보이던 부정합 해소. '상세'로 전체 분석 표시 */}
             {batchResults && batchResults.length > 0 && (
               <div className="mt-3 space-y-1.5 rounded-xl border border-[var(--line)] bg-[var(--surface-soft)]/40 p-3">
-                <p className="text-[11px] font-bold text-[var(--text-secondary)]">
-                  일괄 권리분석 결과 ({batchResults.filter((b) => b.result?.ai).length}/{batchResults.length})
-                </p>
-                {batchResults.map((b, i) => {
-                  const grade = b.result?.ai?.safety_grade;
+                {(() => {
+                  // ★개수만 보여 주면 "시스템이 고장났나" 로 읽고 기다리게 된다(2026-08-24 실장애).
+                  //   실패 **사유**가 응답에 들어 있는데 화면이 버리고 있었다 —
+                  //   사용자가 원인을 알아야 스스로 조치한다(충전이면 충전, 주소 오류면 수정).
+                  const sum = summarizeBatch(batchResults);
                   return (
-                    <div key={i} className="flex flex-wrap items-center gap-2 text-[11px]">
-                      <span className="min-w-[150px] flex-1 truncate font-semibold text-[var(--text-primary)]" title={b.jibun}>{b.jibun}</span>
-                      {grade ? (
-                        <span className={`rounded-full border px-2 py-0.5 font-bold ${GRADE[grade] || "border-[var(--line-strong)] text-[var(--text-secondary)]"}`}>안전성 {grade}</span>
-                      ) : (
-                        <span className="text-[var(--text-hint)]">{b.result?.status === "ok" ? "분석" : b.result?.message ? "미확보" : "실패"}</span>
+                    <>
+                      <p className="text-[11px] font-bold text-[var(--text-secondary)]">
+                        일괄 권리분석 결과 (성공 {sum.ok} / {sum.total})
+                        {sum.failed > 0 && (
+                          <span className="ml-1 text-[var(--status-error)]">· 실패 {sum.failed}</span>
+                        )}
+                      </p>
+                      {sum.topReason && (
+                        <p
+                          data-testid="batch-top-reason"
+                          className="rounded-lg border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 px-2 py-1.5 text-[11px] font-semibold text-[var(--status-warning)]"
+                        >
+                          가장 많은 실패 사유 ({sum.reasons[0].count}건) — {sum.topReason}
+                          {sum.reasons.length > 1 && (
+                            <span className="ml-1 font-normal text-[var(--text-secondary)]">
+                              (그 외 {sum.reasons.length - 1}종)
+                            </span>
+                          )}
+                        </p>
                       )}
-                      {b.result?.ai?.summary && <span className="hidden max-w-[40%] truncate text-[var(--text-secondary)] sm:inline">{b.result.ai.summary}</span>}
-                      {/* 요청과 다른 물건을 조회했을 수 있다는 고지는 목록 행에서도 보여야 한다 —
-                          '상세'를 눌러야만 보이면 일괄 분석에서 조용히 묻힌다. */}
-                      {b.result?.fetched?.select_note && (
-                        <span title={b.result.fetched.select_note}
-                          className="inline-flex items-center gap-1 rounded-full border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 px-2 py-0.5 font-bold text-[var(--status-warning)]">
-                          <AlertTriangle className="size-3" aria-hidden />물건 확인 필요
-                        </span>
-                      )}
-                      {b.result && (
-                        <button onClick={() => setResult(b.result)}
-                          className="rounded-lg bg-[var(--surface-strong)] px-2 py-0.5 font-bold text-[var(--accent-strong)]">상세</button>
-                      )}
-                    </div>
+                    </>
                   );
-                })}
+                })()}
+                {batchResults.map((b, i) => (
+                  <RegistryBatchRow key={i} item={b} onDetail={() => setResult(b.result)} />
+                ))}
+                {/* ★실패를 막다른 길이 아니라 **작업 목록**으로 — 사유별로 다음 조치가 다르다.
+                    100% 가 구조상 불가능한 세계에서 완성도를 가르는 것이 이쪽이다. */}
+                <RegistryFailureActions
+                  className="mt-2 border-t border-[var(--line)] pt-2"
+                  items={batchResults}
+                  onRetry={async (group) => {
+                    // 같은 행을 순차로 다시 돈다(동시 호출은 공급자 과부하를 만든다 —
+                    // `analyzeAll` 이 순차인 것과 같은 이유).
+                    for (const b of group) {
+                      const row = rows.find((r) => r.id === b.rowId);
+                      if (row) await run(row.jibun, row.id, row);
+                    }
+                  }}
+                />
+
+                {/* 일괄분석이 끝난 결과를 정본 보고서 엔진으로 문서화한다(재조회·재과금 없음). */}
+                <RegistryRightsReportButton
+                  className="mt-2 border-t border-[var(--line)] pt-2"
+                  items={batchResults}
+                  projectAddress={siteAnalysis?.address ?? null}
+                />
               </div>
             )}
             <div className="mt-3 flex flex-wrap items-center gap-2">

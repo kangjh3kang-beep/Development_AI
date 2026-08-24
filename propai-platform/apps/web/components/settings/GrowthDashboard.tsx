@@ -28,14 +28,29 @@ type InsightSeverity = "info" | "warn" | "critical";
 
 // 백엔드 enum 후보값(growth.py). 미래 신규 타입 대비해 string 도 수용한다.
 type InsightStatus = "open" | "acknowledged" | "dismissed" | "acted" | (string & {});
+/**
+ * ★백엔드 카탈로그(`apps/api/app/services/growth/insight_types.py`)와 **1:1**.
+ *
+ * 종전엔 이 목록이 7종이었는데 백엔드는 **11종**을 내보내고 있었고, 그 7종 중
+ * `funnel`·`usage_pattern`·`churn_risk` **3종은 백엔드가 한 번도 안 내보내는 유령**이었다.
+ * 결과: **7종이 라벨 없이 raw 문자열**로 떴다 — 그중 `heal_escalation` 은
+ * *"자동치유가 반복 발화했는데 효과가 없다 · 사람 점검 필요"* 라는 **critical** 이다.
+ * (규율 §A-4 — 사람이 센 목록이 곧 상한이 된다. 실제로 목록 7 vs 실제 11.)
+ *
+ * 두 목록이 다시 갈라지면 `GrowthDashboard.catalog.test.ts` 가 잡는다.
+ */
 type InsightType =
   | "error_cluster"
   | "fallback_rate"
   | "quality_drop"
+  | "recurring_verify_error"
   | "latency_regression"
-  | "funnel"
-  | "usage_pattern"
-  | "churn_risk"
+  | "latency_baseline"
+  | "selection_contamination"
+  | "stale_reanalysis"
+  | "heal_escalation"
+  | "improvement_proposal"
+  | "prompt_candidate"
   | (string & {});
 
 type GrowthInsight = {
@@ -62,11 +77,22 @@ const TYPE_LABELS: Record<string, string> = {
   error_cluster: "오류 군집",
   fallback_rate: "폴백률",
   quality_drop: "품질 저하",
+  recurring_verify_error: "검증오류 재발",
   latency_regression: "지연 회귀(p95)",
-  funnel: "퍼널 이탈",
-  usage_pattern: "사용 패턴",
-  churn_risk: "이탈 위험",
+  latency_baseline: "지연 기준선(기록)",
+  selection_contamination: "선택 오염 관측",
+  stale_reanalysis: "재분석 제안",
+  heal_escalation: "자동치유 무효(사람 점검)",
+  improvement_proposal: "개선 제안",
+  prompt_candidate: "프롬프트 후보",
 };
+
+/**
+ * **조치 대상이 아닌** 타입 — "확인 필요"로 세면 진짜 신호가 묻힌다.
+ * ★`latency_baseline` 은 회귀가 **아닌** 기록이다(2026-08-23 에 2,059건이 쌓여
+ *   실제 조치 대상 critical 57 + warn 352 를 가렸다).
+ */
+const NON_ACTIONABLE_TYPES = new Set(["latency_baseline"]);
 
 const STATUS_LABELS: Record<string, string> = {
   open: "확인 필요",
@@ -164,25 +190,76 @@ function InsightMetrics({ insight }: { insight: GrowthInsight }) {
       if (baseline !== null) rows.push({ label: "기준선", value: `${Math.round(baseline).toLocaleString("ko-KR")}ms` });
       break;
     }
-    case "funnel": {
-      const step = str(m.step);
-      const dropoff = num(m.dropoff_rate ?? m.dropoff);
-      if (step) rows.push({ label: "단계", value: step });
-      if (dropoff !== null) rows.push({ label: "이탈률", value: pct(dropoff) });
-      break;
-    }
-    case "usage_pattern": {
-      const pattern = str(m.pattern ?? m.label);
+    case "recurring_verify_error": {
+      // 백엔드 키(analyzer.py): service / issue_type / per_hour / count / high_count.
+      const service = str(m.service);
+      const issue = str(m.issue_type);
+      const perHour = num(m.per_hour);
       const count = num(m.count);
-      if (pattern) rows.push({ label: "패턴", value: pattern });
-      if (count !== null) rows.push({ label: "빈도", value: count.toLocaleString("ko-KR") });
+      if (service) rows.push({ label: "서비스", value: service });
+      if (issue) rows.push({ label: "오류 유형", value: issue });
+      if (perHour !== null) rows.push({ label: "시간당", value: `${perHour.toLocaleString("ko-KR")}건` });
+      if (count !== null) rows.push({ label: "총 검출", value: count.toLocaleString("ko-KR") });
       break;
     }
-    case "churn_risk": {
-      const risk = num(m.risk_score ?? m.score);
-      const segment = str(m.segment);
-      if (segment) rows.push({ label: "세그먼트", value: segment });
-      if (risk !== null) rows.push({ label: "위험도", value: pct(risk) });
+    case "latency_baseline": {
+      // ★회귀가 아닌 **기록**이다 — 조치 대상이 아니라는 것이 이 화면의 핵심 정보다.
+      const key = str(m.key ?? m.route);
+      const p95 = num(m.p95_ms ?? m.p95);
+      if (key) rows.push({ label: "경로", value: key });
+      if (p95 !== null) rows.push({ label: "p95 지연", value: `${Math.round(p95).toLocaleString("ko-KR")}ms` });
+      rows.push({ label: "성격", value: "회귀 아님(기준선 기록)" });
+      break;
+    }
+    case "selection_contamination": {
+      // 백엔드 키(analyzer.py): verdict / count / max_spread_km / malformed_rows.
+      const verdict = str(m.verdict);
+      const count = num(m.count);
+      const spread = num(m.max_spread_km);
+      const malformed = num(m.malformed_rows);
+      if (verdict) {
+        rows.push({
+          label: "판정",
+          value: verdict === "malformed" ? "주소 아닌 값 혼입" : "서로 다른 지역 혼합",
+        });
+      }
+      if (count !== null) rows.push({ label: "관측", value: `${count.toLocaleString("ko-KR")}건` });
+      // ★좌표가 없으면 **미상**이다 — 0km 로 쓰면 "붙어 있다"는 거짓이 된다.
+      rows.push({
+        label: "최대 이격",
+        value: spread !== null ? `${spread.toLocaleString("ko-KR")}km` : "미상(좌표 없음)",
+      });
+      if (malformed !== null && malformed > 0) {
+        rows.push({ label: "문제 행", value: `${malformed.toLocaleString("ko-KR")}행` });
+      }
+      if (verdict === "multi_region") {
+        // ★캠페인 결정: 원거리 묶음은 **후보지 비교라는 정당한 사용**일 수 있다.
+        rows.push({ label: "참고", value: "후보지 비교면 정상" });
+      }
+      break;
+    }
+    case "stale_reanalysis": {
+      const service = str(m.service);
+      const reason = str(m.kind ?? m.reason);
+      if (service) rows.push({ label: "서비스", value: service });
+      if (reason) rows.push({ label: "사유", value: reason });
+      break;
+    }
+    case "heal_escalation": {
+      // 백엔드 키(healing_rules._escalate): action_type / trigger_key / reason.
+      const action = str(m.action_type);
+      const trigger = str(m.trigger_key);
+      if (action) rows.push({ label: "조치 유형", value: action });
+      if (trigger) rows.push({ label: "트리거", value: trigger });
+      rows.push({ label: "상태", value: "자동치유 무효 — 사람 점검 필요" });
+      break;
+    }
+    case "improvement_proposal":
+    case "prompt_candidate": {
+      const service = str(m.service);
+      const target = str(m.target ?? m.key);
+      if (service) rows.push({ label: "서비스", value: service });
+      if (target) rows.push({ label: "대상", value: target });
       break;
     }
     default:
@@ -665,7 +742,13 @@ export function GrowthDashboard() {
   }
 
   /* ---- 파생 통계 ---- */
-  const openInsights = insights.filter((it) => it.status === "open");
+  // ★"확인 필요" 집계에서 **조치 대상이 아닌 타입은 뺀다.**
+  //   2026-08-23 실측: `latency_regression` 2,059건 중 최신 6건이 전부 회귀가 아니었고
+  //   `status=open` 2,248건이 실제 조치 대상(critical 57 + warn 352)을 **가렸다**.
+  //   지금은 회귀가 아닌 것이 `latency_baseline` 으로 분리되므로, 그것을 세지 않는다.
+  const openInsights = insights.filter(
+    (it) => it.status === "open" && !NON_ACTIONABLE_TYPES.has(it.insight_type),
+  );
   const severityCounts: Record<InsightSeverity, number> = { critical: 0, warn: 0, info: 0 };
   for (const it of openInsights) {
     if (it.severity === "critical" || it.severity === "warn" || it.severity === "info") {

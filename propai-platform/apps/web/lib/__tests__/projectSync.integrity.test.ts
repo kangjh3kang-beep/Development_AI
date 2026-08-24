@@ -130,6 +130,29 @@ describe("WP-D 무결성 가드 — 서버 쓰기 경로 전수", () => {
     expect(putCalls("/store/projects")).toHaveLength(1);
   });
 
+  it("★주소가 아닌 값(엑셀 소유자 컬럼 오인식)은 두 경로 모두 보류한다 — 지역 비교는 이걸 못 잡는다", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    // 실측 손상 데이터의 형태: 프로젝트는 상도동인데 분석 주소가 소유자 이름이다.
+    seed("서울특별시 동작구 상도동 210-453", "◀ 전성결");
+
+    await syncUp();
+    await pushSnapshot();
+
+    expect(putCalls("/store/projects")).toHaveLength(0);
+    expect(putCalls(`/projects/${PROJECT_ID}`)).toHaveLength(0);
+    expect(warnText(warn)).toContain("주소 형태가 아니다");
+    warn.mockRestore();
+  });
+
+  it("[양성 대조군] 시도 접두 없는 정상 주소는 보류하지 않는다 — 형태 검사가 정상 표기를 막으면 안 된다", async () => {
+    // 실측 프로덕션 표기: "용인시 수지구 신봉동 56-16"(광역시도 접두 없음)·"경기도 오산시 내삼미동"(번지 없음)
+    seed("용인시 수지구 신봉동 56-16", "용인시 수지구 신봉동 56-16");
+
+    await syncUp();
+
+    expect(putCalls("/store/projects")).toHaveLength(1);
+  });
+
   // 부채 — 스냅샷 경로는 번지까지 엄격한 판별자를 쓴다(기존 동작 유지). 인접 필지를 추가해
   //   대표 주소의 번지가 바뀌면 그 프로젝트의 analysis_snapshot 영속이 멈출 수 있다.
   //   차단 범위가 프로젝트 하나라 스토어 blob 만큼 위험하지는 않으나, 엄격도가 옳은지는

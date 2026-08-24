@@ -6,6 +6,7 @@ import { Card, CardContent } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { ApiClientError, apiClient } from "@/lib/api-client";
+import { fetchAllProjects } from "@/lib/projects-fetch";
 import { FacilityReservationSection } from "@/components/operations/FacilityReservationSection";
 import type { Locale } from "@/i18n/config";
 
@@ -166,8 +167,14 @@ export function TenantWorkspaceClient({
   const projectsQuery = useQuery({
     queryKey: ["projects", "tenant-workspace"],
     enabled: canUseLiveApi,
-    queryFn: () =>
-      apiClient.get<ProjectResponse[]>("/projects", { useMock: false }),
+    // ★페이지 순회 SSOT 경유 — 종전엔 파라미터 없이 불러 **최신 20건**만 셌다
+    //   (서버 기본 page_size=20). 테넌트 지표가 조용히 20 에서 멈춘다.
+    queryFn: async () =>
+      (
+        await fetchAllProjects<ProjectResponse>((path) =>
+          apiClient.get<unknown>(path, { useMock: false }),
+        )
+      ).items,
   });
 
   // GET /projects 는 PaginatedResponse({ items, total, ... }) 를 반환한다.

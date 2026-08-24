@@ -145,7 +145,7 @@ async def _llm_proposal(insight: dict[str, Any], source_path: str | None,
     try:
         from app.services.ai.llm_provider import get_llm
 
-        llm = get_llm(timeout=40, max_tokens=1500)
+        llm = get_llm(service="growth_improve", timeout=40, max_tokens=1500)
         ctx = {
             "insight_type": insight.get("insight_type"),
             "severity": insight.get("severity"),
@@ -347,7 +347,7 @@ async def _llm_prompt_candidate(service: str, samples: dict[str, Any]) -> dict[s
     try:
         from app.services.ai.llm_provider import get_llm
 
-        llm = get_llm(timeout=40, max_tokens=1200)
+        llm = get_llm(service="growth_improve", timeout=40, max_tokens=1200)
         prompt = (
             "너는 LLM 프롬프트 엔지니어다. 아래 service 의 분석 출력이 사용자 교정·검증 "
             "실패로 품질이 낮다. 실패 표본을 근거로 **프롬프트 개선안 후보**를 작성하라. "

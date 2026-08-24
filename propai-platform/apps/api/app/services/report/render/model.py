@@ -70,13 +70,45 @@ class DataTableBlock:
     kind: Literal["table"] = "table"
 
 
+def _validate_signal(value: str | None) -> str | None:
+    """KPI 신호색을 **hex 로 정규화**한다.
+
+    ★2026-08-24 실사고: 독스트링이 `signal='safe'|'warn'|'danger'` 라고 안내해 새 어댑터가
+      그대로 이름을 넣었다. PDF 렌더러는 이 값을 reportlab 색 파서에 그대로 넘기므로
+      `ValueError: invalid literal for int() with base 10: 'warn'` 로 **다운로드가 500 으로 죽는다.**
+      docx 는 색을 안 써서 조용히 통과한다 — **어댑터 단위 테스트로는 절대 안 잡힌다.**
+      그래서 판정을 이 계약 지점 하나로 모은다(어댑터마다 외우게 두지 않는다).
+    """
+    if value is None:
+        return None
+    v = str(value).strip()
+    if not v:
+        return None
+    from .tokens import SIGNAL
+
+    if v in SIGNAL:                 # 'safe'|'warn'|'danger' → 관용적으로 받아 hex 로 바꾼다
+        return SIGNAL[v]
+    if v.startswith("#"):
+        return v
+    raise ValueError(
+        f"KPITile.signal 은 tokens.SIGNAL 키({'|'.join(SIGNAL)}) 또는 '#rrggbb' 여야 합니다: {value!r}"
+    )
+
+
 @dataclass
 class KPITile:
-    """KPI 타일 1개. signal='safe'|'warn'|'danger'|None(임계 대비 색)."""
+    """KPI 타일 1개.
+
+    signal: `'safe'|'warn'|'danger'` 또는 `'#rrggbb'` 또는 None(색 없음).
+            이름을 주면 생성 시점에 **hex 로 정규화**된다 — 렌더러에는 언제나 hex 가 간다.
+    """
     label: str
     value: str
     basis: str | None = None       # 예: 'LTV 65% ≤ 70% 기준'
-    signal: str | None = None      # tokens.SIGNAL 값(hex) 또는 None
+    signal: str | None = None
+
+    def __post_init__(self) -> None:
+        self.signal = _validate_signal(self.signal)
 
 
 @dataclass
