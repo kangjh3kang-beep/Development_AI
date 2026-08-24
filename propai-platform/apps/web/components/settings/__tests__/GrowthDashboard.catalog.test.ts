@@ -63,6 +63,60 @@ function frontendLabels(): Set<string> {
   return out;
 }
 
+
+/** `type InsightType = | "a" | "b" ...` 의 리터럴(문장 끝 `;` 까지 — 고정 길이 아님). */
+function frontendUnion(): Set<string> {
+  const src = readFileSync(DASHBOARD, "utf-8");
+  const start = src.indexOf("type InsightType");
+  expect(start, "InsightType 선언을 찾지 못했다").toBeGreaterThanOrEqual(0);
+  const end = src.indexOf(";", start);
+  expect(end).toBeGreaterThan(start);
+  const out = new Set<string>();
+  for (const m of src.slice(start, end).matchAll(/"([a-z_]+)"/g)) out.add(m[1]);
+  return out;
+}
+
+/** metrics 렌더러 `switch` 안의 `case "<type>":` 라벨. */
+function metricsCases(): Set<string> {
+  const src = readFileSync(DASHBOARD, "utf-8");
+  const start = src.indexOf("function InsightMetrics");
+  expect(start, "InsightMetrics 를 찾지 못했다").toBeGreaterThanOrEqual(0);
+  // 다음 최상위 함수 전까지.
+  const nextFn = src.indexOf("\nfunction ", start + 1);
+  const body = src.slice(start, nextFn > 0 ? nextFn : undefined)
+    .split("\n")
+    .map((ln) => ln.replace(/(^|\s)\/\/.*$/, "$1"))
+    .join("\n");
+  const out = new Set<string>();
+  for (const m of body.matchAll(/case\s+"([a-z_]+)"\s*:/g)) out.add(m[1]);
+  return out;
+}
+
+/** 파이썬 카탈로그의 `NON_ACTIONABLE` 집합. */
+function backendNonActionable(): Set<string> {
+  const src = readFileSync(CATALOG, "utf-8");
+  const i = src.indexOf("NON_ACTIONABLE");
+  expect(i, "NON_ACTIONABLE 선언을 찾지 못했다").toBeGreaterThanOrEqual(0);
+  const open = src.indexOf("frozenset({", i);
+  const close = src.indexOf("})", open);
+  expect(close).toBeGreaterThan(open);
+  const out = new Set<string>();
+  for (const m of src.slice(open, close).matchAll(/"([a-z_]+)"/g)) out.add(m[1]);
+  return out;
+}
+
+/** 화면의 `NON_ACTIONABLE_TYPES` Set 리터럴. */
+function frontendNonActionable(): Set<string> {
+  const src = readFileSync(DASHBOARD, "utf-8");
+  const i = src.indexOf("const NON_ACTIONABLE_TYPES");
+  expect(i, "NON_ACTIONABLE_TYPES 선언을 찾지 못했다").toBeGreaterThanOrEqual(0);
+  const open = src.indexOf("[", i);
+  const close = src.indexOf("]", open);
+  const out = new Set<string>();
+  for (const m of src.slice(open, close).matchAll(/"([a-z_]+)"/g)) out.add(m[1]);
+  return out;
+}
+
 describe("★계약 — 인사이트 타입 라벨이 백엔드 카탈로그를 덮는다", () => {
   it("양쪽 추출이 비어 있지 않다(공허한 초록 방지)", () => {
     // ★이 가드가 단언 **앞에** 있어야 한다 — 파서가 깨져 둘 다 빈 집합이면
@@ -104,5 +158,40 @@ describe("★계약 — 인사이트 타입 라벨이 백엔드 카탈로그를 
       live.some((ln) => ln.includes("NON_ACTIONABLE_TYPES.has(") && ln.includes("!")),
       "제외(부정)로 쓰이지 않는다 — 포함으로 쓰면 의미가 뒤집힌다",
     ).toBe(true);
+  });
+
+  it("★TS 유니온도 카탈로그와 일치한다 — `(string & {})` 때문에 tsc 는 못 잡는다", () => {
+    // 유니온에 `| (string & {})` 가 있어 **어떤 문자열이든 대입 가능**하다.
+    // 즉 리터럴을 오타 내도 `tsc` 가 통과시킨다 — 그 유니온은 잠그지 않으면 **순수 장식**이다.
+    const union = frontendUnion();
+    expect(union.size).toBeGreaterThanOrEqual(10);          // 공허한 초록 방지
+    expect([...backendCatalog()].filter((t) => !union.has(t)).sort()).toEqual([]);
+    expect([...union].filter((t) => !backendCatalog().has(t)).sort()).toEqual([]);
+  });
+
+  it("★모든 타입이 metrics 렌더러에 case 를 가진다 — 없으면 지표가 한 줄도 안 뜬다", () => {
+    // `switch` 에 case 가 없으면 `rows.length === 0` → **null 반환**(조용히 빈 화면).
+    // 라벨만 잠그면 이 구멍이 남는다 — 실제로 `heal_escalation` 이 그 상태였다.
+    const cases = metricsCases();
+    expect(cases.size).toBeGreaterThanOrEqual(10);          // 공허한 초록 방지
+    const missing = [...backendCatalog()].filter((t) => !cases.has(t)).sort();
+    expect(missing, `metrics 렌더러가 없는 타입(지표가 안 뜬다): ${missing.join(", ")}`).toEqual([]);
+  });
+
+  it("★조치 대상 아님 목록이 백엔드 카탈로그와 일치한다", () => {
+    // 백엔드에 `NON_ACTIONABLE` 을 두고 화면이 자기 목록을 따로 쓰면 **소비처 0**이 된다.
+    const back = backendNonActionable();
+    const front = frontendNonActionable();
+    expect(back.size).toBeGreaterThan(0);
+    expect([...front].sort()).toEqual([...back].sort());
+  });
+
+  it("의미를 지는 라벨 문구는 잠근다(그 외 문안은 의도적 미잠금)", () => {
+    // ★디자인 문안 전체를 얼리면 정상 개선을 막는다. 다만 **성격을 말하는** 두 개는
+    //   그 문구가 곧 정보다 — 지워지면 사용자가 조치 대상으로 오해한다.
+    const src = readFileSync(DASHBOARD, "utf-8");
+    expect(src).toContain("회귀 아님");            // latency_baseline 이 조치 대상이 아님
+    expect(src).toContain("후보지 비교면 정상");    // multi_region 이 결함이 아닐 수 있음
+    expect(src).toContain("사람 점검");            // heal_escalation 이 사람을 부름
   });
 });
