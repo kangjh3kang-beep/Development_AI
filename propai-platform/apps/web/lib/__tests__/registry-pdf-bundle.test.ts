@@ -151,3 +151,50 @@ describe("describeBundle — 빠진 건을 반드시 말한다", () => {
     expect(s).not.toContain("제외");
   });
 });
+
+describe("만료는 받아 보기 전에 안다", () => {
+  const EXP = 1784775871;
+  const signed = (exp: number) => {
+    const b64 = (o: unknown) =>
+      Buffer.from(JSON.stringify(o)).toString("base64")
+        .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    return `https://x.supabase.co/storage/v1/object/sign/b/a.pdf?token=${b64({ alg: "HS256" })}.${b64({ exp })}.s`;
+  };
+
+  it("★★만료된 링크는 **요청조차 하지 않는다**(77필지면 헛요청 수십 건)", async () => {
+    const calls: string[] = [];
+    const spy: FetchLike = async (u) => {
+      calls.push(u);
+      throw new Error("여기 오면 안 된다");
+    };
+    const r = await buildRegistryPdfBundle([{ jibun: "가", pdfUrl: signed(EXP) }], {
+      fetchImpl: spy,
+      nowMs: (EXP + 1) * 1000,
+    });
+    expect(calls, "만료된 링크로 요청이 나갔다").toEqual([]);
+    expect(r.items[0].status).toBe("expired");
+    expect(r.items[0].detail).toContain("만료");
+  });
+
+  it("★대조군 — 아직 남은 링크는 정상적으로 받는다(사전판정이 산 링크를 죽이지 않는다)", async () => {
+    const r = await buildRegistryPdfBundle([{ jibun: "가", pdfUrl: signed(EXP) }], {
+      fetchImpl: fakeFetch({ [signed(EXP)]: { status: 200, data: "PDF" } }),
+      nowMs: (EXP - 86400) * 1000,
+    });
+    expect(r.items[0].status).toBe("included");
+    expect(r.included).toBe(1);
+  });
+
+  it("★만료를 **못 읽는** 링크는 종전대로 받아 보고 응답으로 판정한다", async () => {
+    const calls: string[] = [];
+    const r = await buildRegistryPdfBundle([{ jibun: "가", pdfUrl: "https://x/plain.pdf" }], {
+      fetchImpl: async (u) => {
+        calls.push(u);
+        return { ok: true, status: 200, text: async () => "", arrayBuffer: async () => pdf("A") };
+      },
+      nowMs: Date.now(),
+    });
+    expect(calls, "읽지 못한다고 건너뛰면 살아 있는 링크를 죽인다").toHaveLength(1);
+    expect(r.items[0].status).toBe("included");
+  });
+});
