@@ -84,3 +84,38 @@ def test_returns_none_without_basis() -> None:
     assert build_sample_attenuation({}) is None
     assert build_sample_attenuation({"categories": {}}) is None
     assert build_sample_attenuation("nope") is None  # type: ignore[arg-type]
+
+
+def test_service_actually_attaches_the_chain_to_its_response() -> None:
+    """배선 락 — 순수 함수만 잠그면 **서비스가 안 실어도 초록**이다.
+
+    ★변이 실증: `result["sample_attenuation"] = None` 로 바꿔도 위 6건과 프론트 5건이
+      **전부 통과**했다(층이 다르다). 그래서 배선을 따로 잠근다.
+    ★소스 검사는 **주석·문자열을 걷어내고** 실행되는 줄만 본다(#586 계보 — 주석처리
+      변이에 뚫린 전례가 있다).
+    """
+    import sys
+    from pathlib import Path as _P
+
+    sys.path.insert(0, str(_P(__file__).resolve().parents[3] / "tests"))
+    from _scan_guard import code_lines, read, scan  # noqa: PLC0415
+
+    svc = (_P(__file__).resolve().parents[1]
+           / "app" / "services" / "land_intelligence" / "nearby_map_service.py")
+    src = code_lines(read(svc, must_exist_reason="nearby_map 서비스가 사라졌다"))
+
+    r = scan(
+        src,
+        pattern=r'result\["sample_attenuation"\]\s*=\s*build_sample_attenuation\(',
+        # 대조군: 이 파일에 반드시 있는 것 — 0건이면 경로·정규식이 틀린 것이다
+        positive_control=r'"display_cap_impact":',
+        where=str(svc),
+    )
+    assert r.hits, (
+        "서비스가 감쇠 사슬을 응답에 싣지 않는다 — 순수 함수는 있는데 **소비처가 0**이다.\n"
+        f"  (양성대조 {r.positive_hits}건 — 검사기는 살아 있다)"
+    )
+    # 임포트도 실행 줄에 있어야 한다(주석만 남기고 배선을 지우는 변이 차단)
+    assert "from app.services.land_intelligence.sample_attenuation import" in src, (
+        "헬퍼 임포트가 실행 줄에 없다"
+    )
