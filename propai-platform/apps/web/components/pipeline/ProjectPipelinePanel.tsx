@@ -639,6 +639,11 @@ export function ProjectPipelinePanel({
           totalRevenueWon: (feas.total_revenue_won as number) ?? null,
           profitRatePct: (feas.profit_rate_pct as number) ?? null,
           grade: (feas.grade as string) ?? null,
+              // ★정밀도는 **모른다고 명시**한다 — 이 산출 엔진은 정밀도 등급을 계산하지 않는다
+          //   (백엔드 실측: 해당 서비스에 precision 산출 0건). 생략하면 merge 패치라
+          //   직전 개략수지의 `"E"` 가 남아 배지 `개략(추정) — 설계 미반영` 이 이 결과 위에
+          //   **거짓으로** 뜬다. `null` 이면 화면은 "정밀도 미표기"로 정직하게 남는다.
+          precision: null,
         });
         markStageComplete("feasibility");
       }
