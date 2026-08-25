@@ -14,9 +14,10 @@ import Link from "next/link";
 import { Card, CardContent } from "@propai/ui";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { DataSourceNotice } from "@/components/ui/DataSourceNotice";
-import { analyzeRegistry, isAnalyzed, summarizeBatch } from "@/lib/registry-analyze";
+import { analyzeRegistry, FREE_REQUERY_DAYS, isAnalyzed, summarizeBatch } from "@/lib/registry-analyze";
 import { RegistryBatchRow } from "@/components/operations/RegistryBatchRow";
 import { RegistryPdfBundleButton } from "@/components/operations/RegistryPdfBundleButton";
+import { ParcelAuctionWatchBadge } from "@/components/operations/ParcelAuctionWatchBadge";
 import { RegistryRightsReportButton } from "@/components/operations/RegistryRightsReportButton";
 import { RegistryFailureActions } from "@/components/operations/RegistryFailureActions";
 import { apiClient } from "@/lib/api-client";
@@ -330,7 +331,7 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
               <h1 className="text-lg font-black text-[var(--text-primary)]">등기부등본 열람·분석</h1>
               <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
                 법무사·변호사 AI가 등기부등본을 분석해 소유정보·소유기간·매입금액·지분·가등기·압류·근저당·매도청구 가능여부를 제공합니다.
-                <span className="ml-1 font-bold text-[var(--accent-strong)]">발급·열람 건당 1,200원 · 권리분석(AI) 건당 2,000원 (동일 물건 재조회 무료).</span>
+                <span className="ml-1 font-bold text-[var(--accent-strong)]">발급·열람 건당 1,200원 · 권리분석(AI) 건당 2,000원 (성공한 분석은 {FREE_REQUERY_DAYS}일 이내 재조회 무료 — 그 뒤나 실패했던 건은 다시 청구됩니다).</span>
               </p>
             </div>
           </div>
@@ -392,7 +393,14 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
         <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
           <CardContent className="p-5">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="inline-flex items-center gap-1.5 text-sm font-black text-[var(--accent-strong)]"><Receipt className="size-4" aria-hidden />프로젝트 필지 ({rows.length}) — 단일/다필지 일괄 분석</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="inline-flex items-center gap-1.5 text-sm font-black text-[var(--accent-strong)]"><Receipt className="size-4" aria-hidden />프로젝트 필지 ({rows.length}) — 단일/다필지 일괄 분석</p>
+                {/* ★경·공매를 **필지 문맥**에 놓는다(사용자 신고 2026-08-25 "연동이 안 된다").
+                    실제로는 `/auction/watchlist` 가 호출마다 토지조서 필지를 자동 등록하고
+                    감시가 돌고 있었는데, 결과가 전용 페이지에만 있어 여기서는 **보이지 않았다**.
+                    지도의 `공·경매` 레이어도 기본 꺼짐이라 발견되지 않는다. */}
+                <ParcelAuctionWatchBadge projectId={projectId} parcelCount={rows.length} locale={locale} />
+              </div>
               <div className="flex items-center gap-2">
                 {/* 전체 분석은 필지당 건당 과금(발급+분석)이다 — 다필지를 그대로 돌리기 전에
                     무과금 견적·선별 화면으로 먼저 보내는 가벼운 유도(로직 변경 없음). */}
@@ -454,6 +462,39 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
                 </div>
               ))}
             </div>
+            {/* ★분석 흔적은 있는데 **결과 저장분이 없는** 상태를 말한다.
+                왜 필요한가(2026-08-25 사용자 신고): 화면에 소유자·PDF 가 보이는데
+                권리분석 보고서 버튼이 없다 — 사용자는 "보고서 기능이 없다"고 읽는다.
+                실제로는 있고, `batchResults` 가 비어 그 블록이 통째로 안 열린 것이다.
+                결과 보관(`useRegistryAnalysisStore`)은 최근에 추가돼 **그 이전 분석은
+                저장된 적이 없다.** 소유자·PDF 는 토지조서 행에 따로 영속돼 남아 있어
+                "분석은 됐는데 결과만 없는" 비대칭이 생긴다.
+                ★비용을 조건 없이 "무료"라 말하지 않는다 — 캐시(7일·성공분)에 걸리면
+                재청구가 없지만, 만료됐거나 그때 실패했던 필지는 다시 청구된다. */}
+            {rows.length > 0
+              && (!batchResults || batchResults.length === 0)
+              && rows.some((r) => r.owner || r.pdf_url) && (
+              <div
+                data-testid="registry-prior-analysis-notice"
+                className="mt-3 rounded-xl border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 p-3 text-[11px] leading-relaxed text-[var(--text-secondary)]"
+              >
+                <p className="font-bold text-[var(--status-warning)]">
+                  이전 분석 결과가 이 화면에 저장돼 있지 않습니다
+                </p>
+                <p className="mt-1">
+                  아래 목록의 소유자·PDF 는 남아 있지만, 권리분석 <b>결과 본문</b>은 보관되지
+                  않았습니다 — 결과 보관 기능이 최근에 추가되어 그 이전 분석은 저장 대상이
+                  아니었습니다. 그래서 <b>권리분석 보고서</b> 버튼도 나타나지 않습니다.
+                </p>
+                <p className="mt-1">
+                  <b>[전체 분석]</b> 을 다시 실행하면 이후로는 새로고침해도 유지되고 보고서를
+                  받을 수 있습니다. 비용은 <b>{FREE_REQUERY_DAYS}일 이내에 성공했던 필지는
+                  재청구되지 않고</b>, 그보다 오래됐거나 그때 실패했던 필지는 다시 발급·분석되어
+                  청구됩니다.
+                </p>
+              </div>
+            )}
+
             {/* ★일괄 권리분석 결과(필지별 누적) — 마지막 1건만 보이던 부정합 해소. '상세'로 전체 분석 표시 */}
             {batchResults && batchResults.length > 0 && (
               <div className="mt-3 space-y-1.5 rounded-xl border border-[var(--line)] bg-[var(--surface-soft)]/40 p-3">
