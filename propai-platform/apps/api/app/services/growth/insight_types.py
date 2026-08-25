@@ -61,4 +61,50 @@ INSIGHT_TYPES: frozenset[str] = _ANALYZER | _HEALING | _IMPROVEMENT
 #:  · `selection_contamination` + `info` : 원거리 혼합은 **후보지 비교라는 정당한 사용**일 수 있다
 NON_ACTIONABLE: frozenset[str] = frozenset({"latency_baseline"})
 
+
+# ── 표시명(한국어) — **백엔드 SSOT** ────────────────────────────────────────
+#
+# ★왜 백엔드에 두나(2026-08-25 라이브 실측). 백엔드가 **사용자에게 보이는 산문**을 조립하는데
+#   표시명을 몰라서, 폴백이 **영문 enum 을 그대로 끼워** 내보내고 있었다:
+#
+#     improvement_agent.py: f"critical 인사이트({itype}) — 사람 진단 필요."
+#     analyzer.py         : f"[{sev}] {t}"
+#
+#   라이브 「성장 분석」 화면에서 *"critical 인사이트(recurring_verify_error) — 사람 진단 필요."*
+#   가 실제로 관측됐다(동료 세션 제보 · 본 세션에서 소스로 확증).
+#
+# ★왜 프론트 표만으로는 못 고치나: 그 문구는 **백엔드가 만들어 저장**한다(`narrative`·
+#   `diagnosis`). 프론트는 그것을 그대로 렌더할 뿐이라, 프론트에 라벨이 아무리 많아도
+#   백엔드가 조립한 산문 안의 raw enum 은 손댈 수 없다.
+#
+# ★`#808` 이 세운 것은 **타입 목록** SSOT 였고 **표시명은 아니었다.** 여기서 그 축을 채운다.
+#   프론트 `GrowthDashboard.tsx` 의 `TYPE_LABELS` 는 이제 이 표에서 **파생**돼야 하고,
+#   두 표가 갈리면 `tests/unit/test_insight_label_ssot.py` 가 잡는다.
+INSIGHT_LABELS: dict[str, str] = {
+    "error_cluster": "오류 군집",
+    "fallback_rate": "폴백률",
+    "quality_drop": "품질 저하",
+    "recurring_verify_error": "검증오류 재발",
+    "latency_regression": "지연 회귀(p95)",
+    "latency_baseline": "지연 기준선(기록)",
+    "selection_contamination": "선택 오염 관측",
+    "stale_reanalysis": "재분석 제안",
+    "heal_escalation": "자동치유 무효(사람 점검)",
+    "improvement_proposal": "개선 제안",
+    "prompt_candidate": "프롬프트 후보",
+}
+
+
+def insight_label(insight_type: str | None) -> str:
+    """타입 → 한국어 표시명. **모르면 감추지 않고 원문 그대로** 돌려준다.
+
+    ★raw 를 숨기려고 "알 수 없음" 같은 것으로 바꾸지 않는다 — 그러면 *"새 타입이 생겼다"* 는
+      가장 중요한 신호가 사라지고, 대신 **어느 타입인지 모르는 문장**이 남는다.
+      카탈로그에 있는 타입은 계약 테스트가 라벨을 강제하므로, 여기로 떨어지는 것은
+      **카탈로그 밖의 새 타입**뿐이다.
+    """
+    if not insight_type:
+        return "알 수 없는 인사이트"
+    return INSIGHT_LABELS.get(insight_type, insight_type)
+
 __all__ = ["INSIGHT_TYPES", "NON_ACTIONABLE"]
