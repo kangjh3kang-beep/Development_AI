@@ -1013,7 +1013,16 @@ export function ProjectSiteAnalysisWorkspaceClient({
                   />
                   <MetricTile
                     label={labels.avmConfidenceLabel}
-                    value={Number.isFinite(avmResult.confidence) ? formatPercent(avmResult.confidence) : "—"}
+                    // ★신뢰도는 보류될 수 있다(독립 추정 1개 = 교차검증 아님). `Number.isFinite`
+                    //   만으로는 타입이 좁혀지지 않아 tsc 가 이 소비처를 짚어 줬다 — 손으로 센
+                    //   소비처 목록에는 **없던** 네 번째 자리다.
+                    value={
+                      avmResult.confidence == null
+                        ? "산출 보류"
+                        : Number.isFinite(avmResult.confidence)
+                          ? formatPercent(avmResult.confidence)
+                          : "—"
+                    }
                   />
                   <MetricTile
                     label={labels.avmRangeLabel}

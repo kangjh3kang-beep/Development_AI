@@ -40,7 +40,20 @@ function apiV2Base(): string {
   return "/api/proxy/v2";
 }
 
-function Gauge({ value }: { value: number }) {
+function Gauge({ value, basis }: { value: number | null; basis?: string | null }) {
+  // ★신뢰도는 **보류될 수 있다**(독립 추정이 1개면 교차검증이 아니다 —
+  //   `PLAN_appraisal_nondeterminism_2026-08-25.md` §P-3). 종전 타입은 `number` 였고
+  //   `Math.round(null * 100)` 은 **0** 이라, 보류를 **"신뢰도 0%"**(=최악)로 그렸다.
+  if (value == null) {
+    return (
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="rounded-full bg-[var(--surface-strong)] px-2 py-0.5 text-[11px] font-bold text-[var(--text-tertiary)]">
+          산출 보류
+        </span>
+        {basis ? <span className="text-[11px] text-[var(--text-secondary)]">{basis}</span> : null}
+      </div>
+    );
+  }
   const pct = Math.round(value * 100);
   const color = pct >= 80 ? "#10b981" : pct >= 60 ? "#3b82f6" : pct >= 45 ? "#f59e0b" : "#ef4444";
   return (
@@ -323,7 +336,7 @@ export function DeskAppraisalReportClient({ locale }: { locale: Locale }) {
                           <>
                             <td className="cc-num px-2.5 py-2 text-right font-bold text-[var(--accent-strong)]">{eok(b.res.appraised_total_won)}</td>
                             <td className="cc-num px-2.5 py-2 text-right text-[var(--text-secondary)]">{b.res.appraised_price_per_sqm.toLocaleString()}</td>
-                            <td className="cc-num px-2.5 py-2 text-right text-[var(--text-secondary)]">{Math.round(b.res.confidence * 100)}%</td>
+                            <td className="cc-num px-2.5 py-2 text-right text-[var(--text-secondary)]">{b.res.confidence == null ? "보류" : `${Math.round(b.res.confidence * 100)}%`}</td>
                           </>
                         ) : (
                           <td colSpan={3} className="px-2.5 py-2 text-right text-[var(--status-warning)]">{b.err || "추정 실패"}</td>
@@ -382,11 +395,11 @@ export function DeskAppraisalReportClient({ locale }: { locale: Locale }) {
                   <span className="cc-num text-3xl font-[1000] text-[var(--accent-strong)]">{eok(res.appraised_total_won)}</span>
                 </div>
                 <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                  단가 {res.appraised_price_per_sqm.toLocaleString()}원/㎡ · 신뢰구간 {won(res.range_per_sqm.low)} ~ {won(res.range_per_sqm.high)}/㎡
+                  단가 {res.appraised_price_per_sqm.toLocaleString()}원/㎡ · 가정 범위 {won(res.range_per_sqm.low)} ~ {won(res.range_per_sqm.high)}/㎡
                 </p>
                 <div className="mt-3 flex items-center gap-3">
                   <span className="text-[11px] font-bold text-[var(--text-tertiary)]">신뢰도</span>
-                  <div className="flex-1"><Gauge value={res.confidence} /></div>
+                  <div className="flex-1"><Gauge value={res.confidence} basis={res.confidence_basis} /></div>
                 </div>
                 {(res.complex_total_won || res.income_total_won) && (
                   <p className="mt-2 text-[11px] text-[var(--text-secondary)]">

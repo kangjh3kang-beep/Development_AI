@@ -490,12 +490,13 @@ def test_cross_check_note_does_not_claim_unused_comparables() -> None:
 
     b_wo, b_w = _basis(without), _basis(with_cmp)
     assert b_wo and b_w, "신뢰도 근거가 비었다 — 아래 검사가 공허해진다"
-    assert "실거래 가중" not in b_wo, f"근거 표기가 안 쓴 것을 썼다고 말한다: {b_wo}"
-    assert "실거래 가중" in b_w, f"근거 표기가 쓴 것을 빠뜨렸다: {b_w}"
-    # ★전수 감사 적발 — 부분 문자열만 보면 나머지 문구가 깨져도 통과한다.
-    #   CV 값은 입력에 따라 달라지므로 **꼬리 문장**을 고정한다.
-    assert b_wo.endswith("→ 신뢰도 = 1 − CV×3(하한 0.4) · 실거래 사례 미확보"), b_wo
-    assert b_w.endswith("→ 신뢰도 = 1 − CV×3(하한 0.4)"), b_w
+    # ★2026-08-25 계약 변경 — 신뢰도가 **주입 잡음의 CV** 에서 **두 독립 추정의 실제
+    #   불일치**로 바뀌었다(`PLAN_appraisal_nondeterminism_2026-08-25.md`). 규율은 그대로다:
+    #   안 쓴 방법을 썼다고 말하면 안 되고, 꼬리를 고정해 부분 변이를 막는다.
+    assert "거래사례비교법" not in b_wo, f"근거 표기가 안 쓴 방법을 썼다고 말한다: {b_wo}"
+    assert "거래사례비교법" in b_w, f"근거 표기가 쓴 방법을 빠뜨렸다: {b_w}"
+    assert b_wo.endswith("주변 거래사례를 확보하면 두 방법의 불일치로 산출합니다."), b_wo
+    assert b_w.endswith("→ 신뢰도 = 1 − 불일치(하한 0.4)"), b_w
 
     # ★같은 응답 안에서 두 문구가 서로 모순되지 않아야 한다(라이브에서 실제로 모순이었다).
     wn = without.get("weight_note") or ""
@@ -726,12 +727,15 @@ def test_cross_check_wording_is_locked_by_literal() -> None:
     note_wo = (without.get("cross_check") or {}).get("note") or ""
     note_w = (with_cmp.get("cross_check") or {}).get("note") or ""
 
+    # ★2026-08-25 문구 갱신 — 종전 문구는 난수 5회를 "교차검증"이라 불렀다. 이제 산출이
+    #   **결정적 가정 격자**이므로 문장도 "가정 민감도"라고 말한다(`PLAN_appraisal_…` §3).
     assert note_wo == (
-        "복수 시나리오(보정계수 변동) 교차검증 — 실거래 사례를 확보하지 못해 공시지가 "
-        "기준 경로만 비교했습니다. 편차(CV)가 낮을수록 추정 안정성↑."
+        "가정 민감도 — 그밖의요인 ±5% 를 편 결정적 범위입니다. 거래사례를 확보하지 못해 "
+        "공시지가 기준 경로 하나만 계산했으며, 이는 **교차검증이 아닙니다**."
     ), note_wo
     assert note_w == (
-        "복수 시나리오(보정계수·실거래 가중 분포) 교차검증. 편차(CV)가 낮을수록 추정 안정성↑."
+        "가정 민감도 — 그밖의요인 ±5%·실거래 가중 0.3~0.5 를 편 결정적 범위입니다. "
+        "독립된 평가 주체의 교차검증이 아니라 같은 산식의 가정 변동입니다."
     ), note_w
 
 
