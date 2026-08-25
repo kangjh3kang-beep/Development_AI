@@ -117,6 +117,29 @@ case "$OLD" in
   *) DEAD=1; echo "   ★상태 조회 실패 — 부활 여부를 **모른다**(정상 아님)." ;;
 esac
 
+echo "── ④-2 디스크 추세 (★단일 값이 아니라 **직전 대비 감소폭**)"
+# ★2026-08-25 실패에서 배운 것: 여유가 79G→76→65→61→58→54G 로 줄고 있었는데
+#   매 주기 df 를 찍으면서도 **추세로 보지 않았다**. 값은 있었고 판단이 없었다.
+#   빌드 실패(`failed to export layer: CreateDiff`)로 드러났고, 정리 후 재시도는 성공했다.
+HIST="${TMPDIR:-/tmp}/propai_disk_history.tsv"
+for host in 158.179.174.207 168.110.125.89; do
+  free=$($K ubuntu@$host 'df -BG / | tail -1 | awk "{print \$4}" | tr -d G' 2>/dev/null)
+  pct=$($K ubuntu@$host 'df -h / | tail -1 | awk "{print \$5}"' 2>/dev/null)
+  if [ -z "$free" ]; then echo "   ★$host 디스크 조회 실패 — 추세를 **모른다**"; DEAD=1; continue; fi
+  prev=$(grep -E "^$host	" "$HIST" 2>/dev/null | tail -1 | cut -f3)
+  printf '%s\t%s\t%s\n' "$host" "$(date +%s)" "$free" >> "$HIST"
+  if [ -z "$prev" ]; then
+    printf "   %-16s %s (%sG 여유)  — 이전 기록 없음(다음 실행부터 추세 판정)\n" "$host" "$pct" "$free"
+  else
+    d=$((prev - free))
+    msg=""
+    [ "$free" -lt 30 ] && { msg="★★여유 ${free}G — 빌드 실패 임계(54G에서 실패한 전례)"; VIOL=1; }
+    [ -z "$msg" ] && [ "$d" -ge 15 ] && { msg="★직전 대비 ${d}G 감소 — 추세 경보"; VIOL=1; }
+    [ -z "$msg" ] && msg="직전 대비 $([ "$d" -ge 0 ] && echo "-${d}" || echo "+$((-d))")G"
+    printf "   %-16s %s (%sG 여유)  %s\n" "$host" "$pct" "$free" "$msg"
+  fi
+done
+
 echo "── ⑤ 열린 PR (라벨은 분 단위로 바뀐다 — 이건 스냅샷)"
 gh pr list --state open --limit 20 --json number,mergeStateStatus,autoMergeRequest,headRefName \
  --jq '.[] | "   #\(.number) \(.mergeStateStatus) AM=\(if .autoMergeRequest then "ON" else "off" end) \(.headRefName)"' 2>/dev/null | head -14
