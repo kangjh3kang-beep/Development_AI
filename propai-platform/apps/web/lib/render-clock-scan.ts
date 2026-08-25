@@ -79,6 +79,11 @@ function renderPhase(node: ts.Node, sf: ts.SourceFile): ClockPhase | null {
       const p = cur.parent;
       if (p && ts.isCallExpression(p) && p.arguments.includes(cur as ts.Expression)) {
         const callee = p.expression.getText();
+        // ★변이 생존을 코드에 적어 둔다(점수 부풀리기 방지): 이 줄을 무력화해도 테스트는 통과한다.
+        //   `useEffect` 류는 아래 폴백("그 밖의 콜백 → null")이 **같은 답**을 주기 때문이다 —
+        //   즉 여기는 **이중 가드**이고 그 생존은 구멍이 아니다.
+        //   그럼에도 이 목록을 남기는 이유: 폴백이 나중에 "콜백도 잡는다"로 바뀌면 이 줄이 유일한
+        //   방어가 된다. `useMemo` 를 여기서 뺀 것이 그 목록에 실질을 준다(아래 RENDER_HOOK).
         if (DEFERRED.test(callee)) return null;
         if (RENDER_HOOK.test(callee)) return "component-body";
         if (ARRAY_CB.test(callee)) return "array-callback";
@@ -111,4 +116,27 @@ export function scanRenderClocks(file: string, source: string): ClockHit[] {
   };
   visit(sf);
   return out;
+}
+
+/**
+ * ★래칫 **판정** — 스캔 결과 중 등재부에 없는 파일들.
+ *
+ * 순수 함수로 꺼내 둔 이유: 테스트에서 이 판정을 `scanAll()` 결과로만 태우면
+ * **현재 미등재가 0건이라 단언이 공허한 참**이 된다(변이 검증에서 실제로 생존했다 —
+ * `unlisted` 를 빈 배열로 갈아 끼워도 통과했다). 합성 입력으로 **판정 자체**를 태운다.
+ */
+export function unlistedFiles(
+  hits: ReadonlyArray<Pick<ClockHit, "file">>,
+  ratchet: Readonly<Record<string, string>>,
+): string[] {
+  return [...new Set(hits.map((h) => h.file).filter((f) => !(f in ratchet)))].sort();
+}
+
+/** 래칫에 적혀 있는데 소스에서 사라진 항목 — 목록이 낡지 않게 한다. */
+export function staleRatchetEntries(
+  hits: ReadonlyArray<Pick<ClockHit, "file">>,
+  ratchet: Readonly<Record<string, string>>,
+): string[] {
+  const present = new Set(hits.map((h) => h.file));
+  return Object.keys(ratchet).filter((f) => !present.has(f)).sort();
 }

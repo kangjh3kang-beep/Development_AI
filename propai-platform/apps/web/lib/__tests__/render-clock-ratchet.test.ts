@@ -23,7 +23,12 @@ import { join, relative } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { scanRenderClocks, type ClockHit } from "@/lib/render-clock-scan";
+import {
+  scanRenderClocks,
+  staleRatchetEntries,
+  unlistedFiles,
+  type ClockHit,
+} from "@/lib/render-clock-scan";
 
 const WEB_ROOT = join(__dirname, "..", "..");
 const SKIP = new Set(["node_modules", ".next", "dist", "coverage", "e2e", "__tests__"]);
@@ -95,10 +100,22 @@ describe("렌더 중 비결정 시각 호출 — 비성장 래칫", () => {
     expect(eff, "useEffect 는 렌더 이후라 잡으면 위양성").toHaveLength(0);
   });
 
-  it("★새 자리가 생기면 실패한다 — 래칫은 늘어나지 않는다", () => {
-    const unlisted = hits.map((h) => h.file).filter((f) => !(f in RATCHET));
+  it("★★판정 자체를 태운다 — 합성 입력으로 갈린다(실제 미등재가 0건이라 공허한 참이 된다)", () => {
+    // 변이 검증에서 이 단언이 **생존**했다: 실제 미등재가 0건이라 무엇을 넣어도 [] 였다.
+    const listed = Object.keys(RATCHET)[0];
+    expect(unlistedFiles([{ file: listed }], RATCHET), "등재된 파일을 미등재로 신고했다").toEqual([]);
     expect(
-      [...new Set(unlisted)].sort(),
+      unlistedFiles([{ file: "components/새로운/Thing.tsx" }], RATCHET),
+      "미등재 파일을 못 잡는다 — 래칫이 무의미하다",
+    ).toEqual(["components/새로운/Thing.tsx"]);
+    // 죽은 항목 판정도 같은 방식으로 갈라 둔다.
+    expect(staleRatchetEntries([{ file: listed }], RATCHET).length).toBeGreaterThan(0);
+    expect(staleRatchetEntries(Object.keys(RATCHET).map((f) => ({ file: f })), RATCHET)).toEqual([]);
+  });
+
+  it("★새 자리가 생기면 실패한다 — 래칫은 늘어나지 않는다", () => {
+    expect(
+      unlistedFiles(hits, RATCHET),
       "렌더 중 new Date()/Date.now() 를 새로 만들었다.\n" +
         "→ 값을 **데이터에서 파생**하거나(라벨이 약속하는 그 시각), 마운트 후로 옮겨라.\n" +
         "  그대로 두면 ①라벨이 거짓을 말하고 ②하이드레이션 불일치(React #418)가 난다.",
@@ -106,8 +123,7 @@ describe("렌더 중 비결정 시각 호출 — 비성장 래칫", () => {
   });
 
   it("★죽은 래칫 항목도 실패시킨다 — 고친 자리가 목록에 남으면 목록이 낡는다", () => {
-    const present = new Set(hits.map((h) => h.file));
-    const stale = Object.keys(RATCHET).filter((f) => !present.has(f));
+    const stale = staleRatchetEntries(hits, RATCHET);
     expect(stale, `래칫에 있는데 소스에서 사라졌다(고쳤으면 목록에서 지워라): ${stale.join(", ")}`).toEqual([]);
   });
 
