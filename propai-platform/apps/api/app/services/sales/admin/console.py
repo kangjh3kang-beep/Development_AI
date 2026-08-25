@@ -7,6 +7,8 @@
 """
 from __future__ import annotations
 
+from apps.api.app.utils.withheld import INSUFFICIENT_COVERAGE, withheld
+
 import asyncio
 import contextlib
 import logging
@@ -310,7 +312,21 @@ def _reconcile(revenue_signed: int, scheduled_total: int, installment_paid: int,
             })
             return {"balanced": False, "discrepancies": discrepancies, "tolerance": tol}
         # 서명매출도 0 → 독립 출처 부재로 판정 보류(미탐지를 '정합'으로 위장 금지).
-        return {"balanced": None, "discrepancies": [], "tolerance": tol}
+        # ★2026-08-26 — 보류에 **사유 코드**를 붙인다(#832 보류값 계약).
+        #   라이브 실측: 현장 13곳 중 **11곳이 이 갈래**였는데, 롤업은 `reconcile_failed_count:0`
+        #   만 노출해 관리자 화면이 **"정합 실패 0"으로 깨끗해 보였다.** 소비처는 `is False` 로
+        #   옳게 비교하고 있었지만(실패와 보류를 갈랐지만) **보류를 버렸다.**
+        #   값은 바꾸지 않는다 — 세지 않던 것을 세게 한다.
+        return {
+            "discrepancies": [], "tolerance": tol,
+            **withheld(
+                INSUFFICIENT_COVERAGE,
+                "분납 약정표와 SIGNED 계약총액이 모두 비어 있어 **독립 대사를 수행하지 못했습니다** "
+                "— 정합이 확인된 것이 아니라 확인할 근거가 없는 상태입니다. "
+                "약정표를 생성하거나 계약을 SIGNED 로 확정하면 대사가 가능합니다.",
+                field="balanced",
+            ),
+        }
     delta_sc = scheduled_total - revenue_signed
     # ① 약정총액 vs 계약총액(SIGNED) — 반올림 잔차(±tol)는 흡수, 그 이상만 불일치로 본다.
     if abs(delta_sc) > tol:
