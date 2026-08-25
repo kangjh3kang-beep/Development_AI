@@ -59,8 +59,21 @@
 
 ## 6. 검증 못한 것 (정직)
 
-- **좌표 미확보 그룹이 어느 경로로 표시에 들어가는지** 소스에서 끝까지 못 짚었다.
-  `resolved = in_radius` 뒤 캡까지 읽었으나 미확보가 합류하는 지점을 특정하지 못했다.
-  **관측(표시>반경안·`located=0`인데 `shown>0`)은 확실하고, 경로는 미규명**이다.
+- ~~좌표 미확보 합류 경로 미규명~~ → **2026-08-25 규명 완료.**
+  `nearby_map_service.py:860` — **`cat["groups"] = capped + unresolved`**. 설계상 명시적으로
+  합류하며 `location_status="unlocated"` 라벨까지 붙인다(:858). 761행 주석이 그 의도를
+  *"좌표 미확보로 반경 판정 자체가 불가능했던 그룹 수(**보존**)"* 라고 적어 두었다.
+
+  ★그래서 교정 모델이 **우연이 아니라 소스와 일치**한다:
+
+      shown        = capped + unresolved
+      capped       = in_radius − cap
+      in_radius    = evaluated − filtered
+      source − precut = evaluated + unresolved
+      ⇒ source − precut − filtered − cap = capped + unresolved = shown   ∎
+
+  **두 라이브 표본에서 맞았을 뿐 아니라 산식으로도 항등이다.**
+  ★내가 처음에 못 찾은 이유: `resolved = in_radius` 로 재대입되는 줄(:795)에서 멈추고
+  **77줄 아래의 재결합**(:860)까지 안 읽었다 — *코드 끝까지 안 읽고 단정*의 재발이다.
 - 라이브 표본 **2곳**이다. 세 번째 형상(예: `radius_applied=false`)은 미측정.
 - `capped_group_count` 가 모든 카테고리에 항상 실리는지는 두 표본에서만 확인했다.
