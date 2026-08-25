@@ -136,7 +136,12 @@ def _rule_diagnosis(insight: dict[str, Any]) -> str:
     if itype == "heal_escalation":
         return (f"자동치유 무효 에스컬레이션({m.get('action_type')}/{m.get('trigger_key')}) — "
                 f"근본원인 수동 점검 필요(반복 조치로 해소 안 됨).")
-    return f"critical 인사이트({itype}) — 사람 진단 필요."
+    # ★표시명을 쓴다 — 종전엔 `{itype}` 를 그대로 끼워 사용자 화면에 영문 enum 이
+    #   나갔다(라이브 실측: *"critical 인사이트(recurring_verify_error) — 사람 진단 필요."*).
+    #   명시 분기는 2종뿐인데 카탈로그는 11종이라 **9종이 이 폴백으로 샜다.**
+    from app.services.growth.insight_types import insight_label
+
+    return f"critical 인사이트({insight_label(itype)}) — 사람 진단 필요."
 
 
 async def _llm_proposal(insight: dict[str, Any], source_path: str | None,
