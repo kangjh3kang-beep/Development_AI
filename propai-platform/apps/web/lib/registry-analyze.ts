@@ -11,6 +11,22 @@
 
 import { apiClient } from "@/lib/api-client";
 
+/**
+ * **무과금 재조회가 보장되는 기간(일).**
+ *
+ * 백엔드 `app/services/registry/registry_analysis_service.py` 의 `_ANALYZE_DB_TTL`
+ * (= `7 * 24 * 3600`)과 **같은 값**이어야 한다. 이 상수는 화면 문구가 인용한다.
+ *
+ * ★왜 상수로 두나(2026-08-25): 화면이 *"동일 물건 재조회 무료"* 라고 **조건 없이**
+ * 말하고 있었다. 그런데 무과금은 **성공한 분석이 캐시에 살아 있는 동안만** 참이다 —
+ * 캐시가 만료되거나(7일) 그때 **실패했던** 건은 다시 발급·분석되어 청구될 수 있다
+ * (`_cache_success` 가 성공만 저장한다 · 같은 파일 §발급 원본 캐시 주석).
+ * 기간 없는 "무료"는 8일째에 **거짓이 된다.**
+ *
+ * 두 값이 갈리면 `lib/__tests__/registry-free-requery-parity.test.ts` 가 잡는다.
+ */
+export const FREE_REQUERY_DAYS = 7;
+
 export type RegistryAnalyzeBody = Record<string, unknown>;
 
 type SubmitResp = { job_id: string | null; status: string; result?: unknown };
