@@ -38,6 +38,7 @@ import {
   mapMultiParcelReportResponse,
   type MultiParcelReportResponse,
 } from "@/lib/multi-parcel-report";
+import { formatDominantZone } from "@/lib/zoning/dominant-zone";
 
 const ParcelBoundaryMap = dynamicMap<React.ComponentProps<typeof ParcelBoundaryMapType>>(
   () => import("@/components/map/ParcelBoundaryMap"),
@@ -359,7 +360,7 @@ export default function MultiParcelPage() {
                 <div className="grid grid-cols-2 gap-2">
                   <Metric label="통합 대지면적" value={integ?.total_area_sqm != null ? `${num(integ.total_area_sqm)}㎡` : "—"}
                     sub={integ?.total_area_sqm != null ? `${num(integ.total_area_sqm / PYEONG_SQM)}평` : undefined} />
-                  <Metric label="대표 용도지역" value={data.dominant_zone || "혼재/미상"}
+                  <Metric label="대표 용도지역" value={formatDominantZone(data.dominant_zone, { fallback: "혼재/미상", mixedLabel: "혼재(분리검토 필요)" }).label}
                     sub={data.zone_mix && data.zone_mix.length >= 2 ? `혼재 ${data.zone_mix.length}종` : undefined} />
                   <Metric label="면적가중 건폐율" value={pct(integ?.blended_bcr_eff_pct)}
                     sub={integ?.blended_bcr_legal_pct != null ? `법정 ${integ.blended_bcr_legal_pct}%` : undefined} />
