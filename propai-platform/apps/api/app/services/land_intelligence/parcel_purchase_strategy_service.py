@@ -44,6 +44,8 @@ import re
 from fractions import Fraction
 from typing import Any, NamedTuple
 
+from apps.api.app.utils.withheld import SOURCE_UNAVAILABLE
+
 # 보유기간(10년) 요건이 존재하는 유일한 법령 계열 — 정책표(MAGDO_RULES) SSOT 를 그대로 쓴다.
 # ★여기서 "주택법" 문자열을 다시 적으면 정책표와 갈라진다(전역 값은 한 곳에서만 산다).
 try:  # pragma: no cover — 정책표 임포트 실패 시에도 모듈이 살아 있어야 한다
@@ -823,6 +825,8 @@ def build_strategy(
                 "action_reason": card.get("message") or "권리분석 결과가 없어 판정할 수 없습니다.",
                 "priority_label": PRIORITY_UNDECIDED_LABEL,
                 "sell_claim_judgment": None,
+                # 권리분석 카드 자체가 없는 갈래 — 값도 사유도 상류에 없다.
+                "sell_claim_judgment_absent": SOURCE_UNAVAILABLE,
                 "governing_act": governing_act,
                 "instrument": instrument,
                 "in_exclusion_set": in_excl,
@@ -867,6 +871,9 @@ def build_strategy(
                 "inheritance": owner.get("inheritance"),
                 "inheritance_aggregated": owner.get("inheritance_aggregated"),
                 "sell_claim_judgment": judgment,
+                # ★사유 **코드**도 함께 나른다 — 상류가 붙여도 중간이 안 옮기면
+                #   최종 표면에서 사라진다(이 저장소가 반복해 겪은 orphan handoff).
+                "sell_claim_judgment_absent": owner.get("sell_claim_judgment_absent"),
                 "sell_claim_reason": owner.get("sell_claim_reason"),
                 "evidence": owner.get("evidence"),
                 "governing_act": governing_act,

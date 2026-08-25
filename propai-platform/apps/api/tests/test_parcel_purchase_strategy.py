@@ -29,6 +29,7 @@ import app.services.registry.registry_analysis_service as ras
 from app.services.land_intelligence import parcel_purchase_strategy_service as ps
 from app.services.land_intelligence import parcel_rights_survey_service as prs
 from app.services.zoning.parcel_graph import build_parcel_graph
+from apps.api.app.utils.withheld import NOT_APPLICABLE
 
 # 사업방식 — 두 모집단(보유기간 요건 있음/없음)을 가르는 축.
 HOUSING_SCHEME = "지구단위계획 연계"          # 주택법 §22 — 보유기간 10년 요건 있음
@@ -661,7 +662,8 @@ async def test_같은_필지가_사업방식에_따라_다른_행을_낸다(monk
 
     # ① 판정이 다르다 — 보유기간 요건은 주택법 계열에만 있다.
     assert h["sell_claim_judgment"] == "불가(장기보유 추정)"
-    assert c["sell_claim_judgment"] == prs._JUDGMENT_OUT_OF_SCOPE
+    assert c["sell_claim_judgment"] is None
+    assert c["sell_claim_judgment_absent"] == NOT_APPLICABLE
     assert h["sell_claim_judgment"] != c["sell_claim_judgment"]
 
     # ② 액션도 다르다 — 확보율 95% 미만 + 장기보유면 강제수단이 없다(협의매수).
