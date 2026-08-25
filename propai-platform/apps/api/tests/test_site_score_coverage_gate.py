@@ -62,6 +62,14 @@ def test_grade_is_issued_at_or_above_floor() -> None:
         f"발행했는데 근거가 보류라고 말한다: {r['grade_basis']}"
     )
     assert str(r["covered"]) in r["grade_basis"], "근거가 커버리지를 말하지 않는다"
+    # ★변이 실증(2026-08-25) — 근거 문자열의 **꼬리만 지워도** 위 단언들은 통과했다
+    #   (앞 절반에 커버리지가 있어서). 근거는 **자기가 설명하는 값**을 말해야 한다.
+    assert r["grade"] in r["grade_basis"], (
+        f"근거가 **어떤 등급인지**를 말하지 않는다 — 설명 대상이 빠졌다: {r['grade_basis']}"
+    )
+    assert str(r["score"]) in r["grade_basis"], (
+        f"근거가 **점수**를 말하지 않는다 — 등급이 어디서 왔는지 알 수 없다: {r['grade_basis']}"
+    )
 
 
 def test_two_populations_actually_differ() -> None:
