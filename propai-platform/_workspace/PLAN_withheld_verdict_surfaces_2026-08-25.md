@@ -41,7 +41,7 @@
 
 ## 2. 처방
 
-- **D6**: `GRADE_COVERAGE_FLOOR = 3` 신설. 미달이면 `grade=None` + `grade_withheld_reason`
+- **D6**: `GRADE_COVERAGE_FLOOR = 3` 신설. 미달이면 `grade=None` + `grade_basis`(2026-08-25 관용 정렬 — 종전 `_withheld_reason`)
   (몇 개/무엇을 확보했는지 명시). **점수는 참고값으로 남긴다.**
   ★지표 0개 경로와 **같은 키 모양**을 내게 통일 — 갈리면 소비처가 한쪽만 처리한다.
 - **D7**: `lib/zoning/dominant-zone.ts` 공용 헬퍼(`formatDominantZone`·`MIXED_REVIEW_SENTINEL`).
