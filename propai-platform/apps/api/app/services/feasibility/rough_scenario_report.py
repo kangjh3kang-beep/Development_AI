@@ -424,6 +424,53 @@ def _margin_is_met(scenario: dict[str, Any]) -> bool | None:
 # ─────────────────────────────────────────────────────────────────────────────
 # ④ 정본 ReportModel 조립(전문 사업성 IM 목차)
 # ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# 정밀도 고지 (R1-b) — 개략수지 페이로드의 등급을 보고서까지 나른다
+# ─────────────────────────────────────────────────────────────────────────────
+def _precision_block(scenario: dict[str, Any]) -> NarrativeBlock | None:
+    """개략수지의 정밀도 등급을 **읽는 사람의 말**로 옮긴 고지 블록(없으면 None).
+
+    ★값을 지우지 않는다 — 등급을 붙인다. 이 캠페인의 처방이 "할루시네이션 제거"가 아니라
+      "정밀도 위장 제거"인 이유다. 숫자는 정직하게 계산됐고, 문제는 그 숫자가 **무엇으로
+      만들어졌는지** 말하지 않은 것이었다.
+
+    ★등급이 `None`(미표기)이어도 **침묵하지 않는다** — "판정할 수 없다"는 것도 정보다.
+      침묵하면 읽는 사람은 확정치로 읽는다.
+    """
+    label = scenario.get("precision_label")
+    basis = str(scenario.get("precision_basis") or "").strip()
+    if not label:
+        return None
+    grade = scenario.get("precision")
+    if grade == "E":
+        head = (
+            "이 보고서의 수치는 **개략(추정)** 입니다 — 설계 산출물이 아직 없어 "
+            "부지 정보만으로 추정한 값이며, 확정 판단의 근거가 될 수 없습니다."
+        )
+    elif grade is None:
+        head = (
+            "이 보고서의 수치는 **정밀도를 판정할 수 없습니다** — 입력 중 등급을 확인하지 "
+            "못한 것이 있습니다. 확정치로 읽지 마십시오."
+        )
+    else:
+        head = f"이 보고서의 수치 정밀도: **{label}**."
+    paragraphs = [head]
+    if basis:
+        paragraphs.append(f"근거: {basis}")
+    # 입력별 등급이 있으면 무엇이 낮은지 그대로 보여 준다(합성 결과만으로는 알 수 없다).
+    inputs = scenario.get("precision_inputs")
+    if isinstance(inputs, dict) and inputs:
+        _ko = {"gfa": "연면적", "land_cost": "토지비", "sale_price": "분양단가"}
+        _lab = {"E": "개략(추정)", "D": "설계기반", "V": "확인됨", None: "미표기"}
+        parts = [
+            f"{_ko.get(k, k)} {_lab.get(v, str(v))}"
+            for k, v in inputs.items()
+        ]
+        if parts:
+            paragraphs.append("입력별 정밀도: " + " · ".join(parts))
+    return NarrativeBlock(title="정밀도 고지", paragraphs=paragraphs)
+
+
 def build_rough_scenario_report_model(
     scenario: dict[str, Any],
     *,
@@ -469,6 +516,16 @@ def build_rough_scenario_report_model(
     if grade:
         exec_blocks.append(GradeBadgeBlock(
             grade=_GRADE_TO_BADGE.get(grade.upper(), "normal"), label=f"사업성 등급 {grade}"))
+    # ★정밀도 고지 — **등급 배지 바로 다음**에 둔다(R1-b).
+    #
+    #   왜 여기인가: 이 보고서의 부제는 "은행/투자자 제출용" 이고, 첫 화면이 "사업성 등급 F" 다.
+    #   그 등급이 **설계 산출물 없이 대지면적×실효용적률로 만든 개략치**에서 나왔다는 사실이
+    #   같은 자리에 없으면, 읽는 사람은 확정 판정으로 받아들인다.
+    #   개략수지 페이로드는 이미 등급을 싣고 있었는데(#770) **보고서 경계에서 소실**됐다 —
+    #   고친 자리의 형제를 스윕하지 않으면 정직 표기 체계가 한 화면에서만 산다.
+    _prec_block = _precision_block(scenario)
+    if _prec_block is not None:
+        exec_blocks.append(_prec_block)
     tiles = _decision_tiles(summ)
     if tiles:
         exec_blocks.append(KPITileBlock(tiles=tiles))
@@ -657,6 +714,14 @@ def _model_to_json(
         "senior_consultation": consultation,
         "summary": scenario.get("summary"),
         "degraded_notes": scenario.get("degraded_notes") or [],
+        # ★정밀도 등급 — 구조화 소비처(프론트·다른 보고서)도 등급 없이 숫자만 받지 않게 한다.
+        #   종전엔 이 경계에서 등급이 소실돼, 같은 수치가 화면에선 "개략" 보고서에선 확정으로 읽혔다.
+        "precision": {
+            "grade": scenario.get("precision"),
+            "label": scenario.get("precision_label"),
+            "basis": scenario.get("precision_basis"),
+            "inputs": scenario.get("precision_inputs"),
+        },
         # ★정직 플래그: AI 시니어 서술 포함 여부·사유를 숨기지 않는다.
         "honesty": {"use_llm": use_llm, "ai_included": ai_included, "ai_note": ai_note},
         # ★W1-C(R2): JSON은 게이트를 절대 차단하지 않되(위 docstring), 발견된 위반/경고는
