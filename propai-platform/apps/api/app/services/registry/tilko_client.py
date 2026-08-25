@@ -22,6 +22,8 @@ from typing import Any
 
 import structlog
 
+from app.services.common.exc_detail import exc_detail
+
 logger = structlog.get_logger(__name__)
 
 def _host() -> str:
@@ -83,7 +85,7 @@ async def get_public_key() -> str | None:
             data = r.json()
         return (data or {}).get("PublicKey") or (data or {}).get("publicKey")
     except Exception as e:  # noqa: BLE001
-        logger.warning("틸코 공개키 조회 실패", err=str(e)[:140])
+        logger.warning("틸코 공개키 조회 실패", err=exc_detail(e, limit=140))
         return None
 
 
@@ -173,8 +175,8 @@ async def search_unique_no(address: str, page: str = "1") -> dict[str, Any]:
         return {"ok": True, "status": "ok", "items": items, "total": total,
                 "point_balance": data.get("PointBalance")}
     except Exception as e:  # noqa: BLE001
-        logger.warning("틸코 주소검색 실패", err=str(e)[:120])
-        return {"ok": False, "status": "error", "items": [], "message": str(e)[:200]}
+        logger.warning("틸코 주소검색 실패", err=exc_detail(e, limit=120))
+        return {"ok": False, "status": "error", "items": [], "message": exc_detail(e, limit=200)}
 
 
 async def fetch_realty_registry(
@@ -248,5 +250,5 @@ async def fetch_realty_registry(
             "message": data.get("Message"),
         }
     except Exception as e:  # noqa: BLE001
-        logger.warning("틸코 등기 조회 예외", err=str(e)[:160])
-        return {"ok": False, "status": "error", "message": str(e)[:200]}
+        logger.warning("틸코 등기 조회 예외", err=exc_detail(e, limit=160))
+        return {"ok": False, "status": "error", "message": exc_detail(e, limit=200)}

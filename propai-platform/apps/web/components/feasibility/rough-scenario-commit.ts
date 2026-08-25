@@ -12,7 +12,7 @@
 // 총사업비×비율로 자동 재파생하므로, 여기서 값을 세팅하면 그 자동재파생을 방해한다
 // (equityIsManual=true로 오인돼 옛 값에 앵커링되는 함정 — FeasibilityEditorV2 정답 기준선 참고).
 
-import type { FeasibilityData } from "@/store/useProjectContextStore";
+import type { FeasibilityData, FeasibilityPatch } from "@/store/useProjectContextStore";
 
 /** RoughScenarioPanel의 RoughScenarioResult 중 매핑에 필요한 최소 구조(백엔드 응답 부분집합).
  *  RoughScenarioPanel.tsx의 private interface(RsSummary·RsRevenue·RsInputs 등)를 import하지
@@ -71,8 +71,9 @@ function positiveIntOrNull(v: unknown): number | null {
  *  의미있는 값이 하나도 없으면 null을 반환해 호출측이 stamp(updatedAt.feasibility)를 아끼게 한다. */
 export function roughResultToFeasibilityPatch(
   result: RoughScenarioLike | null | undefined,
-): Partial<FeasibilityData> | null {
+): FeasibilityPatch | null {
   if (!result) return null;
+  // ★내부 조립은 느슨한 형태로 하고, 반환 직전에 grade↔precision 짝을 세운다(아래 참조).
   const patch: Partial<FeasibilityData> = {};
 
   // ★L1: 총사업비·총수입은 양수일 때만 커밋한다(0·음수 degraded 값이 STEP2 게이트를
@@ -147,5 +148,18 @@ export function roughResultToFeasibilityPatch(
   const totalHouseholds = positiveIntOrNull(result.inputs?.total_households);
   if (totalHouseholds != null) patch.totalHouseholds = totalHouseholds;
 
-  return Object.keys(patch).length > 0 ? patch : null;
+  if (Object.keys(patch).length === 0) return null;
+
+  // ★grade↔precision 짝 세우기 — 스토어 계약(FeasibilityPatch)이 둘을 함께 요구한다.
+  //   `grade` 가 없으면 정밀도도 건드리지 않는다(기존 SSOT 보존).
+  //   `grade` 가 있는데 백엔드가 정밀도를 안 줬으면 **`null` 로 명시**한다 — 그래야 이전
+  //   개략치(E)의 배지가 새 등급 위에 **거짓으로 남지 않는다**(merge 패치라 생략하면 남는다).
+  if (!("grade" in patch)) {
+    return patch as FeasibilityPatch;
+  }
+  return {
+    ...patch,
+    grade: patch.grade ?? null,
+    precision: patch.precision ?? null,
+  } as FeasibilityPatch;
 }

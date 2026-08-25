@@ -59,6 +59,18 @@ export type NearbyMapPayload = {
   radius_applied?: boolean;
   /** 반경 밖으로 걸러진 그룹 수. 옵셔널(배선 진행 중) — 있을 때만 라벨에 부연. */
   radius_filtered_out_count?: number;
+  /** ★표본 감쇠 사슬 — 원본 몇 곳이 어디서 깎여 화면의 N 이 됐는지(백엔드 SSOT).
+   *  종전엔 이 라벨이 `radius_filtered_out_count` **하나만** 말했는데, 라이브 실측에서
+   *  그건 306곳이고 **정작 가장 큰 사전컷 1,761곳은 아무 데도 없었다**. */
+  sample_attenuation?: {
+    source_group_count: number;
+    shown_group_count: number;
+    dropped_total: number;
+    dropped_pct: number;
+    headline: string;
+    reconciles: boolean;
+    stages: { key: string; label: string; dropped: number; reason: string }[];
+  } | null;
   lawd_cd: string;
   months: string[];
   categories: Record<string, Category>;
@@ -351,11 +363,23 @@ export function NearbyTransactionsMap({
           <p className="mt-0.5 text-[11px] text-[var(--text-hint)]">
             {payload?.center?.address || address} 중심 · 반경 {radiusLabel}
             {radiusNotApplied ? "(미적용 — 좌표 미확보)" : ""} · 최근 {payload?.months?.length || 3}개월
-            {typeof payload?.radius_filtered_out_count === "number" && payload.radius_filtered_out_count > 0
-              ? ` · 반경 초과 ${payload.radius_filtered_out_count.toLocaleString()}곳 제외`
-              : ""}
             {" · 마커 클릭 시 상세"}
           </p>
+          {/* ★D9 — 감쇠 사슬을 한 줄로. 종전엔 반경 초과 한 갈래만 말해, 실측에서
+              **가장 크게 깎인 사전컷(1,761곳)** 이 화면 어디에도 없었다. */}
+          {payload?.sample_attenuation && payload.sample_attenuation.dropped_total > 0 ? (
+            <p
+              className="mt-1 text-[11px] text-[var(--text-secondary)]"
+              title={payload.sample_attenuation.stages
+                .filter((st) => st.dropped > 0)
+                .map((st) => `${st.label} ${st.dropped.toLocaleString()}곳 — ${st.reason}`)
+                .join("\n")}
+              data-testid="sample-attenuation-headline"
+            >
+              {payload.sample_attenuation.headline}
+              {!payload.sample_attenuation.reconciles ? " (계기 불일치 — 사슬은 참고용)" : ""}
+            </p>
+          ) : null}
         </div>
 
         <div className="flex flex-wrap items-center gap-2">

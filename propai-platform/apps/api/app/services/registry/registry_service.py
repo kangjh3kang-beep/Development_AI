@@ -16,6 +16,12 @@ from typing import Any
 
 import structlog
 
+from app.services.common.exc_detail import (
+    balance_shortage_notice,
+    exc_detail,
+    is_balance_shortage,
+)
+
 logger = structlog.get_logger(__name__)
 
 
@@ -278,10 +284,29 @@ class RegistryService:
                     return {**item, **h_res}
 
                 logger.warning("하이픈 등기 조회 실패, 2순위 Tilko 폴백 시도", err=h_res.get("message"))
+                # ★사유가 비면 **무엇이라도** 남긴다(라이브 실측 2026-08-24).
+                #   프로덕션이 사용자에게 `"hyphen: error"` 만 돌려주고 있었다 —
+                #   `status` 도 `message` 도 비어 위 `or "error"` 만 남은 것이다.
+                #   그 한 단어로는 **네트워크 차단·벤더 장애·민원캐시(선불) 잔액 소진·자격 문제**를
+                #   전혀 가를 수 없다. 등기 발급은 `/in0004000948`(민원캐시 **차감**)이라
+                #   *"수십 건 성공 후 갑자기 중단"* 이면 잔액 소진이 유력한데, 사유를 버리면
+                #   그 확인조차 못 한다.
+                #   벤더가 준 코드(errCd)·원문(raw)이 있으면 그것을 싣고, 아무것도 없으면
+                #   **응답에 무엇이 들어 있었는지**라도 남긴다(빈 문자열 금지).
+                _hmsg = h_res.get("message") or h_res.get("err_msg") or h_res.get("errMsg")
+                _hcode = h_res.get("err_code") or h_res.get("errCd")
+                if not _hmsg:
+                    _keys = ",".join(sorted(k for k in h_res if k != "raw")) or "(빈 응답)"
+                    _hmsg = f"사유 미제공 — 응답 키: {_keys}"
+                _hdetail = f"[{_hcode}] {_hmsg}" if _hcode else _hmsg
+                # ★잔액 부족은 **사용자가 직접 해결할 수 있는** 유일한 부류다(충전하면 끝).
+                #   다른 장애와 뭉개면 복구 가능한 문제가 복구 불가처럼 보인다(2026-08-24 실장애).
+                _shortage = is_balance_shortage(_hmsg, _hcode)
                 attempts.append({
                     "provider": "hyphen",
-                    "status": h_res.get("status") or "error",
-                    "message": h_res.get("message"),
+                    "status": "balance_shortage" if _shortage else (h_res.get("status") or "error"),
+                    "message": (balance_shortage_notice("하이픈", _hdetail)
+                                if _shortage else _hdetail),
                 })
             else:
                 logger.warning("하이픈 자격증명 거부(forbidden), 2순위 Tilko 폴백 시도", msg=probe.get("message"))
@@ -388,14 +413,14 @@ class RegistryService:
                     "raw": data,
                 }
             except Exception as e:  # noqa: BLE001
-                logger.warning("커스텀 등기부 API 조회 실패", err=str(e)[:120])
+                logger.warning("커스텀 등기부 API 조회 실패", err=exc_detail(e, limit=120))
                 # ★로그에만 남기면 사용자에게 도달하지 않는다 — 이 PR 이 고치려던 결함
                 #   그 자체(사유가 응답에 안 실려 "미설정 또는 장애" 로 뭉개짐)가
                 #   커스텀 경로에 **그대로 남아 있었다**. 세 프로바이더를 같은 규칙으로 싣는다.
                 attempts.append({
                     "provider": "custom",
                     "status": "provider_error",
-                    "message": str(e)[:200],
+                    "message": exc_detail(e, limit=200),
                 })
 
         # ★"미설정" 과 "조회 실패" 를 구분한다. 종전에는 둘 다 `not_configured` 로 뭉개

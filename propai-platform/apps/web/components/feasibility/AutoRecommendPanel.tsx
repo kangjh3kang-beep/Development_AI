@@ -421,6 +421,10 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
         totalRevenueWon: selectedModel.total_revenue_won,
         profitRatePct: selectedModel.profit_rate_pct,
         grade: selectedModel.grade,
+        // ★정밀도는 **모른다고 명시**한다 — Top3 추천 시뮬레이션은 정밀도 등급을
+        //   계산하지 않는다(백엔드 실측: precision 산출 0건). 생략하면 merge 패치라
+        //   직전 개략수지의 `"E"` 가 남아 배지가 이 결과 위에 **거짓으로** 뜬다.
+        precision: null,
       });
 
       // ── 선택한 건축개요를 설계 스토어에 저장 → 설계 스튜디오(CAD/BIM)가 동일 개요로 생성(정합) ──
