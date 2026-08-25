@@ -390,7 +390,8 @@ async def _record_llm_billing(
 def _record_llm_call_event(service: str | None, *, ok: bool,
                            input_tokens: int = 0, output_tokens: int = 0,
                            error: str | None = None, reason: str | None = None,
-                           error_type: str | None = None) -> None:
+                           error_type: str | None = None,
+                           latency_ms: int | None = None) -> None:
     """성장루프에 `llm_call` 한 줄. 논블로킹·예외 안전(관측이 본기능을 막지 않는다)."""
     try:
         from app.services.growth import capture_service as _gcap
@@ -414,8 +415,13 @@ def _record_llm_call_event(service: str | None, *, ok: bool,
             #   붙이면 표현을 다듬을 때마다 깨지는 취약한 락이 된다.
             #   ★확인 범위: growth analyzer 의 fallback_rate 경로. 다른 소비처가 생기면
             #     그때 그 소비처가 계약을 선언하고 잠근다.
+            # ★`latency_ms` 는 **다른 지표의 계약**이다 — analyzer 의 latency_regression·
+            #   latency_baseline 이 `llm_call` 의 이 컬럼을 읽는다. 인라인 쓰기를 이 헬퍼로
+            #   합류시키면서 빠뜨리면 그 두 인사이트가 조용히 굶는다(합류가 만든 회귀).
             {"surface": "api", "service": service or "llm",
-             "severity": "info" if ok else "error", "payload": payload},
+             "severity": "info" if ok else "error",
+             **({"latency_ms": latency_ms} if latency_ms is not None else {}),
+             "payload": payload},
         )
     except Exception:  # noqa: BLE001 — 관측 실패가 호출경로를 깨뜨리지 않는다
         pass
@@ -839,17 +845,31 @@ class BaseInterpreter:
         except Exception as e:  # noqa: BLE001
             logger.warning("인터프리터 LLM 호출 실패", interp=self.name, error=str(e)[:120])
             # 자가성장 텔레메트리: 호출 실패도 품질 신호로 1줄 기록(예외 안전).
+            #
+            # ★2026-08-25 — 여기를 **공용 통로로 합류**시켰다. 이유(라이브 실측):
+            #   `_analyze_fallback_rate` 는 사유를 `payload->>'reason'` 에서만 읽고, 없으면
+            #   `unlabeled` 로 센다. 이 자리는 그 키를 **한 번도 넣지 않았다** — 그래서 사유
+            #   분포를 붙여도 여기서 나온 실패는 전부 미분류가 된다.
+            #   그것이 사소하지 않은 이유: 라이브에서 폴백률이 잡히는 서비스가
+            #   `site_analysis`·`feasibility`·`market` **셋뿐인데 셋 다 BaseInterpreter
+            #   서브클래스**다(2026-08-25 /growth/insights 실측 — 각각 100%·100%·40%).
+            #   즉 이 한 줄이 **관측되는 폴백 전량**의 사유를 결정한다.
+            #
+            # ★왜 `record_llm_failure()` 가 아니라 헬퍼 직행인가: 그 함수는 BaseInterpreter
+            #   **밖**에서 `llm.ainvoke` 를 직접 부르는 서비스용이라, 여기서 부르면 같은 실패가
+            #   두 줄이 되어 분모·분자가 함께 부풀어 폴백률이 왜곡된다(이중계상).
+            #   `_get_llm()` 이 `service=` 를 넘기지 않아 `_ObservedChat` 도 이 경로를 감싸지
+            #   않는다(llm_provider.py 의 주석이 그렇게 선언한다) — 그래서 이 자리 말고는
+            #   사유를 넣을 곳이 없다.
             try:
-                from app.services.growth import capture_service as _gcap
-                _gcap.record_event(
-                    "llm_call",
-                    {
-                        "surface": "api",
-                        "service": self.name,
-                        "severity": "error",
-                        "latency_ms": int((time.monotonic() - _t0) * 1000),
-                        "payload": {"ok": False, "error": str(e)[:120]},
-                    },
+                from app.services.ai.llm_failure import classify_failure
+
+                _record_llm_call_event(
+                    self.name, ok=False,
+                    error=str(e)[:120],
+                    reason=classify_failure(e),
+                    error_type=type(e).__name__,
+                    latency_ms=int((time.monotonic() - _t0) * 1000),
                 )
             except Exception:  # noqa: BLE001
                 pass
