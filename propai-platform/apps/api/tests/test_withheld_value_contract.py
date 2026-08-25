@@ -164,3 +164,50 @@ class Test문구키관용:
                      "sell_claim_judgment_absent": AWAITING_INPUT}
         assert validate_withheld_pair(
             w, "sell_claim_judgment", text_field="sell_claim_reason") == []
+
+
+class Test커버리지원장:
+    """★"완성도"를 **파일 수로 세지 않는다** — 그 분모가 틀렸다(§계획서 §1).
+
+    문구(`판정 보류`)로 뽑은 16파일에는 **생산자·주석·소비자**가 섞여 있었다.
+    여기서는 **측정 가능한 것만** 센다: 배선된 생산자 / 알려진 생산자.
+    """
+
+    #: 실측으로 확인한 **생산자**(응답에 보류값을 싣는 곳). 주석·소비자는 제외한다.
+    #: ★이 목록이 늘어나면 아래 비율이 자동으로 떨어진다 — 부채가 초록 안에서 보인다.
+    KNOWN_PRODUCERS = {
+        "site_score_service.py": True,               # grade_basis (#825·#831)
+        "parcel_rights_survey_service.py": True,     # sell_claim_judgment_absent
+        "parcel_purchase_strategy_service.py": True, # 중간 전파
+        "suggest.py": True,                          # suggested_price_absent
+        "ordinance_conditional.py": True,            # decision_absent
+        "console.py": False,       # ★부채 — sales/admin. None 반환이나 사유 키가 없다
+        "decision_brief_service.py": False,          # ★부채 — reasons[] 목록형이라 사상 필요
+    }
+
+    def test_배선된_생산자가_실제로_계약을_쓴다(self) -> None:
+        """선언한 것이 **실제로 코드에 있는지** 본다(선언과 산출물 일치 §24)."""
+        root = Path(__file__).resolve().parents[1] / "app"
+        wired = {n for n, ok in self.KNOWN_PRODUCERS.items() if ok}
+        found = set()
+        for p in root.rglob("*.py"):
+            if p.name in wired and re.search(r"_absent|withheld\(|_basis", p.read_text(encoding="utf-8")):
+                found.add(p.name)
+        assert found == wired, (
+            f"배선했다고 선언했는데 코드에 없다: {wired - found} / "
+            f"목록에 없는데 배선됨: {found - wired}"
+        )
+
+    def test_커버리지를_정직하게_보고한다(self) -> None:
+        """★분수로 남긴다 — 100%를 주장하지 않는다.
+
+        미배선분은 **사유와 함께** 목록에 남아 있어야 한다(부채를 초록 안에서 보이게).
+        """
+        total = len(self.KNOWN_PRODUCERS)
+        wired = sum(self.KNOWN_PRODUCERS.values())
+        assert total >= 7, "생산자 모집단이 줄었다 — 목록이 낡았는지 확인하라"
+        assert wired >= 5, f"배선 생산자가 {wired}/{total} 로 줄었다(회귀)"
+        # ★미배선이 0 이 되면 이 단언이 실패한다 → 그때 이 테스트를 지우고 전수 락으로 승격하라.
+        assert wired < total, (
+            "모든 생산자가 배선됐다 — 이제 목록형을 버리고 **파생형 전수 락**으로 승격하라"
+        )
