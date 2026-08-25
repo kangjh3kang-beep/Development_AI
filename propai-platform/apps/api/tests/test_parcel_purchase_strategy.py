@@ -974,7 +974,11 @@ def test_엔드포인트는_사업방식_없이는_판정하지_않는다(monkey
     rows = resp.json()["strategy"]["rows"]
     assert len(rows) == 2
     assert {r["action"] for r in rows} == {ps.ACTION_UNDECIDED}
-    assert all(r["sell_claim_judgment"] == prs._JUDGMENT_OUT_OF_SCOPE for r in rows)
+    # ★보류값 계약 — 판정 자리엔 **판정만**. 사유는 코드로 온다.
+    assert all(r["sell_claim_judgment"] is None for r in rows), (
+        "판정 자리에 판정이 아닌 문자열이 들어 있다"
+    )
+    assert all(r["sell_claim_judgment_absent"] == NOT_APPLICABLE for r in rows)
 
 
 # ══ 6-b) ★★라우터 배선 락 — 변이 감사에서 41개 중 22개가 생존한 자리 ═══════
@@ -1282,10 +1286,13 @@ def test_도시개발사업_note에서_매도청구에_준함을_걷어냈다() 
 
 def test_out_of_scope_사유가_주택법_전용_요건임을_밝힌다() -> None:
     """★사유 문구가 **법적 설명**이다 — 사용자는 이 문장을 보고 왜 판정이 없는지 이해한다."""
-    assert prs._JUDGMENT_OUT_OF_SCOPE == "판정 불가(해당 사업방식 기준 없음)"
-
     consent = prs._judge_owner(
         _owner("소유자", "전부", "2005-03-02", "매매"), None, None, CONSENT_SCHEME
+    )
+    # ★상수 리터럴 대신 **계약**을 본다 — 문구는 다듬어도 계약은 안 바뀐다.
+    assert consent["sell_claim_judgment"] is None
+    assert consent["sell_claim_judgment_absent"] == NOT_APPLICABLE, (
+        "해당 사업방식에 기준이 없는 것은 **자료 부족이 아니라 not_applicable** 이다"
     )
     reason = consent["sell_claim_reason"]
     assert "도정법" in reason, reason
