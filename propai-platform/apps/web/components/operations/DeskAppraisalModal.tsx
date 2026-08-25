@@ -31,7 +31,11 @@ type Result = {
   ok: boolean; message?: string;
   appraised_price_per_sqm: number; appraised_total_won: number | null; area_sqm: number | null;
   official_price_per_sqm?: number; pnu?: string | null;
-  confidence: number; range_per_sqm: { low: number; high: number };
+  /** ★독립 추정 1개면 `null`(보류). 종전 `number` 타입 탓에 `Math.round(null*100)`=0 이
+   *  되어 보류가 **"신뢰도 0%"**(최악)로 그려졌다. */
+  confidence: number | null;
+  confidence_basis?: string | null;
+  range_per_sqm: { low: number; high: number };
   cross_check?: { firms: number[]; mean: number; cv_pct: number; min: number; max: number; note: string };
   irregularity?: number | null; methods: Method[]; weight_note: string;
   comparable_skipped_reason?: string | null;
@@ -41,7 +45,20 @@ type Result = {
   complex_note?: string | null; disclaimer: string;
 };
 
-function Gauge({ value }: { value: number }) {
+function Gauge({ value, basis }: { value: number | null; basis?: string | null }) {
+  // ★신뢰도는 **보류될 수 있다**(독립 추정이 1개면 교차검증이 아니다 —
+  //   `PLAN_appraisal_nondeterminism_2026-08-25.md` §P-3). 종전 타입은 `number` 였고
+  //   `Math.round(null * 100)` 은 **0** 이라, 보류를 **"신뢰도 0%"**(=최악)로 그렸다.
+  if (value == null) {
+    return (
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="rounded-full bg-[var(--surface-strong)] px-2 py-0.5 text-[11px] font-bold text-[var(--text-tertiary)]">
+          산출 보류
+        </span>
+        {basis ? <span className="text-[11px] text-[var(--text-secondary)]">{basis}</span> : null}
+      </div>
+    );
+  }
   const pct = Math.round(value * 100);
   const color = pct >= 80 ? "#10b981" : pct >= 60 ? "#3b82f6" : pct >= 45 ? "#f59e0b" : "#ef4444";
   return (
@@ -177,7 +194,7 @@ export function DeskAppraisalModal({
                 <span className="text-2xl font-[1000] text-[var(--accent-strong)]">{eok(res.appraised_total_won)}</span>
               </div>
               <p className="mt-0.5 text-xs text-[var(--text-secondary)]">{res.appraised_price_per_sqm?.toLocaleString()}원/㎡ · 범위 {res.range_per_sqm?.low?.toLocaleString()}~{res.range_per_sqm?.high?.toLocaleString()}</p>
-              <div className="mt-2"><Gauge value={res.confidence} /></div>
+              <div className="mt-2"><Gauge value={res.confidence} basis={res.confidence_basis} /></div>
             </div>
 
             {/* 방법별 */}

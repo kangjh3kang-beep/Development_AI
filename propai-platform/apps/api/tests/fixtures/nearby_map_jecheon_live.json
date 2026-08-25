@@ -1,0 +1,163 @@
+{
+ "radius_m": 1000,
+ "geocode_precut_count": 0,
+ "groups_evaluated_count": 182,
+ "coords_unresolved_count": 56,
+ "radius_filtered_out_count": 180,
+ "categories": {
+  "apt_trade": {
+   "label": "아파트 매매",
+   "groups": [],
+   "capped_group_count": 0,
+   "precut": {
+    "groups_before": 62,
+    "groups_cut": 0
+   }
+  },
+  "villa_trade": {
+   "label": "연립다세대 매매",
+   "groups": [
+    {}
+   ],
+   "capped_group_count": 0,
+   "precut": {
+    "groups_before": 20,
+    "groups_cut": 0
+   }
+  },
+  "house_trade": {
+   "label": "단독다가구 매매",
+   "groups": [
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {}
+   ],
+   "capped_group_count": 0,
+   "precut": {
+    "groups_before": 19,
+    "groups_cut": 0
+   }
+  },
+  "officetel_trade": {
+   "label": "오피스텔 매매",
+   "groups": [],
+   "capped_group_count": 0,
+   "precut": {
+    "groups_before": 2,
+    "groups_cut": 0
+   }
+  },
+  "land_trade": {
+   "label": "토지 매매",
+   "groups": [
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {}
+   ],
+   "capped_group_count": 0,
+   "precut": {
+    "groups_before": 28,
+    "groups_cut": 0
+   }
+  },
+  "commercial_trade": {
+   "label": "상업업무용 매매",
+   "groups": [
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {}
+   ],
+   "capped_group_count": 0,
+   "precut": {
+    "groups_before": 13,
+    "groups_cut": 0
+   }
+  },
+  "apt_rent": {
+   "label": "아파트 전월세",
+   "groups": [],
+   "capped_group_count": 0,
+   "precut": {
+    "groups_before": 54,
+    "groups_cut": 0
+   }
+  },
+  "villa_rent": {
+   "label": "연립다세대 전월세",
+   "groups": [],
+   "capped_group_count": 0,
+   "precut": {
+    "groups_before": 16,
+    "groups_cut": 0
+   }
+  },
+  "house_rent": {
+   "label": "단독다가구 전월세",
+   "groups": [
+    {}
+   ],
+   "capped_group_count": 0,
+   "precut": {
+    "groups_before": 22,
+    "groups_cut": 0
+   }
+  },
+  "officetel_rent": {
+   "label": "오피스텔 전월세",
+   "groups": [],
+   "capped_group_count": 0,
+   "precut": {
+    "groups_before": 2,
+    "groups_cut": 0
+   }
+  }
+ },
+ "_provenance": "라이브 실측 2026-08-25 · POST /api/v1/zoning/nearby-map · 충청북도 제천시 모산동 123-1 · radius_m=1000 — 합성 아님. ★이 표본이 현행 검산을 깨뜨렸다(shown 58 > 반경안 2)."
+}
