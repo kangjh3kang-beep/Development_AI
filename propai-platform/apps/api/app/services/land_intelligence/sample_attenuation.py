@@ -73,19 +73,47 @@ def build_sample_attenuation(payload: dict[str, Any]) -> dict[str, Any] | None:
     if source <= 0:
         return None
 
+    # ★★2026-08-25 교정 — 라이브 검증이 **내 검산이 공허했음**을 드러냈다.
+    #
+    #   종전 모델: shown = (evaluated − filtered) − display_cap  이고
+    #             display_cap = max(0, (evaluated − filtered) − shown)  ← **잔차**
+    #   잔차로 정의하면 `reconciles` 가 **구성상 항상 참**이 된다(잔차가 음수가 될 때만 깨진다).
+    #   즉 자기검산이 **모델 오류를 흡수**하고 있었다 — 내가 경고하던 바로 그 함정이다.
+    #
+    #   실측이 그것을 깼다(제천 모산동 123-1):
+    #       source 238 · precut 0 · evaluated 182 · unresolved 56 · filtered 180 · shown **58**
+    #       반경 안 = 182 − 180 = **2** 인데 표시가 **58** — 잔차가 음수라 검산이 붕괴했다.
+    #   원인: **좌표 미확보 그룹이 버려지지 않고 표시 경로에 들어간다**
+    #       (카테고리 실측: house_trade `located=0` 인데 `shown=19` · land_trade `shown=28`).
+    #   → `unresolved` 는 **차감이 아니라 참고**다. 그리고 표시 상한은 **실제 카운터**
+    #     (`capped_group_count`)를 쓴다.
+    #
+    #   두 모집단으로 검증했다(한쪽만 맞는 모델은 모델이 아니다):
+    #       역삼동736  현행 일치(우연 — 잔차가 흡수) · 교정 **일치**
+    #       제천 모산동 현행 **불일치** · 교정 **일치**
+    #   ★역삼동에서 총합은 우연히 같았지만 **귀속이 틀렸다**(잔차cap 37 = 실제cap 73 − 미확보 36)
+    #     — 표시 상한으로 깎인 36곳을 "좌표 미확보"라고 말하고 있었다.
     in_radius = evaluated - filtered
-    display_capped = max(0, in_radius - shown)
+    display_capped = sum(
+        _int(c.get("capped_group_count")) for c in cats.values() if isinstance(c, dict)
+    )
 
     stages = [
         {"key": "precut", "label": "지오코딩 사전컷", "dropped": precut,
          "reason": "카테고리당 지오코딩 예산 상한 — 좌표 조회 자체를 시도하지 않았습니다"},
-        {"key": "unlocated", "label": "좌표 미확보", "dropped": unresolved,
-         "reason": "지오코딩 실패(국토부 지번 마스킹 포함) — 반경 판정이 불가능했습니다"},
         {"key": "radius", "label": "반경 밖", "dropped": filtered,
          "reason": f"요청 반경 {_int(payload.get('radius_m'))}m 밖"},
         {"key": "display_cap", "label": "표시 상한 절단", "dropped": display_capped,
          "reason": "지도 표시 상한 — 계산에는 쓰였으나 화면에는 그리지 않았습니다"},
     ]
+    # ★차감이 **아니다** — 좌표를 못 얻어 반경 판정을 못 했을 뿐, 표시에는 남는다.
+    #   차감으로 세면 "제외됐다"는 거짓이 되고 사슬도 깨진다(위 실측).
+    unlocated_note = None
+    if unresolved > 0:
+        unlocated_note = (
+            f"이 중 {unresolved:,}곳은 좌표를 확보하지 못해 **반경 판정을 하지 못했습니다**"
+            "(국토부 지번 마스킹 등). 제외된 것이 아니라 거리로 거르지 못한 채 표시됩니다."
+        )
 
     # ★검산: 원본 − 각 단계 = 표시. 어긋나면 **맞추지 말고 신고**한다.
     accounted = source - sum(s["dropped"] for s in stages)
@@ -102,6 +130,9 @@ def build_sample_attenuation(payload: dict[str, Any]) -> dict[str, Any] | None:
 
     out: dict[str, Any] = {
         "unit": "group",   # ★질의 단위 카운터와 섞지 말 것
+        "unlocated_group_count": unresolved,
+        "unlocated_note": unlocated_note,
+        "in_radius_group_count": in_radius,
         "source_group_count": source,
         "shown_group_count": shown,
         "dropped_total": dropped_total,
