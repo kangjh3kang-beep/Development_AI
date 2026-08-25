@@ -1,17 +1,33 @@
 #!/usr/bin/env bash
 # 번들 전수 수집: eager 청크 → 그 안의 static/chunks/ 문자열까지 추적(next/dynamic 지연 청크)
 set -u
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO="$(cd "$SELF_DIR/../../.." && pwd)"
 OUT="$1"; shift
 rm -rf "$OUT"; mkdir -p "$OUT"
 BASE=https://4t8t.net
-# ★상세/동적 라우트를 반드시 포함한다 — 목록 라우트만 훑으면 그쪽 청크를 못 본다.
-#   실측: /ko/projects/<id> 에 목록 라우트에 없는 청크가 3개 있었고, 그 때문에
-#   "정밀도 미표기" 지표가 0 으로 나와 미배포로 오보할 뻔했다(이 저장소 7회 오판 지점).
-ROUTES=("/ko" "/ko/precheck" "/ko/analysis" "/ko/projects" "/ko/projects/new"
-        "/ko/projects/probe-id" "/ko/projects/probe-id/site-analysis"
-        "/ko/projects/probe-id/feasibility" "/ko/projects/probe-id/design"
-        "/ko/design-audit" "/ko/registry-analysis" "/ko/regulations" "/ko/permits"
-        "/ko/settings" "/ko/analytics/investment" "/ko/design-studio")
+# ★ROUTES 를 **손으로 세지 않는다** — app 디렉토리에서 파생한다.
+#   실측: 목록형으로 뒀다가 **세 번** 오판했다(precision · 혼재/미상 · …). 손으로 센 목록은
+#   곧 상한이 되고, 새 라우트가 생기면 그 청크는 영원히 안 모인다.
+#   ★동적 세그먼트([id] 등)는 프로브용 더미 값으로 치환한다 — 서버는 셸을 그려 주므로
+#     존재하지 않는 id 여도 그 라우트의 청크 목록은 나온다.
+APP_DIR="$REPO/propai-platform/apps/web/app/[locale]/(dashboard)"
+if [ -d "$APP_DIR" ]; then
+  mapfile -t ROUTES < <(
+    find "$APP_DIR" -name 'page.tsx' -printf '%P\n' 2>/dev/null \
+      | sed 's|/page.tsx$||; s|^page.tsx$||' \
+      | sed 's|\[[^]]*\]|probe-id|g' \
+      | sed 's|^|/ko/|; s|/ko/$|/ko|' \
+      | sort -u
+  )
+fi
+if [ "${#ROUTES[@]}" -lt 5 ]; then
+  # ★파생이 실패하면 **조용히 적게 모으지 않는다** — 시끄럽게 알린다.
+  echo "★라우트 파생 실패(${#ROUTES[@]}개) — app 디렉토리 경로를 확인하라: $APP_DIR" >&2
+  echo "  (수집 범위가 좁으면 지표 0 이 '미배포'로 오보된다 — 이 저장소가 3회 겪은 함정)" >&2
+  [ "${#ROUTES[@]}" -eq 0 ] && exit 3
+fi
+echo "라우트 ${#ROUTES[@]}개(파생형 — app/**/page.tsx 에서 추출)"
 : > "$OUT/urls.txt"
 for r in "${ROUTES[@]}"; do
   curl -s "$BASE$r" | grep -oE '/_next/static/chunks/[A-Za-z0-9._/-]+\.js' >> "$OUT/urls.txt"
