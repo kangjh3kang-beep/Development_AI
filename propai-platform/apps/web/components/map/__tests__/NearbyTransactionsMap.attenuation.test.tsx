@@ -91,3 +91,26 @@ describe("감쇠 사슬 렌더", () => {
     expect(screen.queryByTestId("sample-attenuation-headline")).toBeNull();
   });
 });
+
+describe("좌표 미확보 참고줄", () => {
+  beforeEach(() => postMock.mockReset());
+  afterEach(() => vi.resetModules());
+
+  it("미확보를 **제외가 아니라 참고**로 그린다", async () => {
+    await renderWith({
+      ...ATTENUATION,
+      unlocated_group_count: 56,
+      unlocated_note:
+        "이 중 56곳은 좌표를 확보하지 못해 **반경 판정을 하지 못했습니다**. 제외된 것이 아니라 거리로 거르지 못한 채 표시됩니다.",
+    });
+    const el = await screen.findByTestId("sample-attenuation-headline");
+    expect(el.textContent).toContain("제외된 것이 아니라");
+    expect(el.textContent).not.toContain("**");   // 마크다운 별표가 화면에 새지 않는다
+  });
+
+  it("참고줄이 없으면 만들지 않는다(특이도)", async () => {
+    await renderWith(ATTENUATION);
+    const el = await screen.findByTestId("sample-attenuation-headline");
+    expect(el.textContent).not.toContain("제외된 것이 아니라");
+  });
+});
