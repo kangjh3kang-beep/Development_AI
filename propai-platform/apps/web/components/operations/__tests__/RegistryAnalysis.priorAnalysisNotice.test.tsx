@@ -16,7 +16,11 @@
  * ★이 파일이 잠그는 것: 그 상태에서 **침묵하지 않는다.** 무엇이 없고, 어떻게 하면 되고,
  *   그때 **돈이 드는지**를 말한다. 침묵이 곧 거짓 신호였다.
  */
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
+// ★`RegistryAnalysisWorkspaceClient` 는 이제 `ParcelAuctionWatchBadge`(useQuery)를
+//   렌더한다 — 프로바이더가 필요하다. 손으로 감싸지 말고 **공용 헬퍼**를 쓴다(§29).
+import { renderWithQueryClient as render } from "@/test/render-with-query-client";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { RegistryAnalysisWorkspaceClient } from "@/components/operations/RegistryAnalysisWorkspaceClient";
