@@ -25,7 +25,6 @@ import re
 from pathlib import Path
 
 import pytest
-
 from apps.api.app.services.growth.insight_types import (
     INSIGHT_LABELS,
     INSIGHT_TYPES,
