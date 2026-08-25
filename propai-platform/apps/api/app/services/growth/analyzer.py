@@ -758,7 +758,12 @@ def _rule_narrative(ins: dict[str, Any]) -> str:
     if t == "latency_regression":
         return (f"[{sev}] {m.get('key')} p95 {m.get('p95_ms')}ms "
                 f"(이전 baseline {m.get('prev_baseline_p95')}ms, 표본 {m.get('samples')}).")
-    return f"[{sev}] {t}"
+    # ★분기가 없는 타입의 기본 narrative. 종전엔 `{t}` 가 **영문 enum 그대로** 나갔다
+    #   (예: `[info] improvement_proposal`). 분기 없는 타입일수록 이 문장이 유일한 설명이라
+    #   여기서 raw 가 새면 그 카드는 **아무 말도 하지 않는 것과 같다.**
+    from app.services.growth.insight_types import insight_label
+
+    return f"[{sev}] {insight_label(t)}"
 
 
 def _llm_enabled() -> bool:

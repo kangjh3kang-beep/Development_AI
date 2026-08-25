@@ -92,6 +92,49 @@ function metricsCases(): Set<string> {
   return out;
 }
 
+/** 백엔드 `INSIGHT_LABELS` 의 **키→한글값** 을 뽑는다(선언 블록만 · 주석 배제). */
+function backendLabels(): Record<string, string> {
+  const src = readFileSync(CATALOG, "utf-8");
+  const i = src.indexOf("INSIGHT_LABELS");
+  expect(i, "INSIGHT_LABELS 선언을 찾지 못했다 — 파서가 낡았다").toBeGreaterThanOrEqual(0);
+  const open = src.indexOf("{", i);
+  let depth = 0;
+  let close = -1;
+  for (let j = open; j < src.length; j += 1) {
+    if (src[j] === "{") depth += 1;
+    else if (src[j] === "}") { depth -= 1; if (depth === 0) { close = j; break; } }
+  }
+  expect(close, "INSIGHT_LABELS 블록의 끝을 찾지 못했다").toBeGreaterThan(open);
+  const body = src.slice(open, close)
+    .split("\n")
+    .map((ln) => ln.replace(/(^|\s)#.*$/, "$1"))
+    .join("\n");
+  const out: Record<string, string> = {};
+  for (const m of body.matchAll(/"([a-z_]+)"\s*:\s*"([^"]+)"/g)) out[m[1]] = m[2];
+  return out;
+}
+
+/** 화면 `TYPE_LABELS` 의 **키→값**. */
+function frontendLabelPairs(): Record<string, string> {
+  const src = readFileSync(DASHBOARD, "utf-8");
+  const start = src.indexOf("const TYPE_LABELS");
+  expect(start, "TYPE_LABELS 선언을 찾지 못했다").toBeGreaterThanOrEqual(0);
+  const open = src.indexOf("{", start);
+  let depth = 0;
+  let close = -1;
+  for (let j = open; j < src.length; j += 1) {
+    if (src[j] === "{") depth += 1;
+    else if (src[j] === "}") { depth -= 1; if (depth === 0) { close = j; break; } }
+  }
+  const body = src.slice(open, close)
+    .split("\n")
+    .map((ln) => ln.replace(/(^|\s)\/\/.*$/, "$1"))
+    .join("\n");
+  const out: Record<string, string> = {};
+  for (const m of body.matchAll(/^\s*([a-z_]+)\s*:\s*"([^"]+)"/gm)) out[m[1]] = m[2];
+  return out;
+}
+
 /** 파이썬 카탈로그의 `NON_ACTIONABLE` 집합. */
 function backendNonActionable(): Set<string> {
   const src = readFileSync(CATALOG, "utf-8");
@@ -184,6 +227,22 @@ describe("★계약 — 인사이트 타입 라벨이 백엔드 카탈로그를 
     const front = frontendNonActionable();
     expect(back.size).toBeGreaterThan(0);
     expect([...front].sort()).toEqual([...back].sort());
+  });
+
+  it("★표시명이 **백엔드 SSOT 와 같다** — 백엔드도 사용자 산문을 조립한다", () => {
+    // ★왜 값까지 보나(2026-08-25 라이브 실측): 백엔드가 `narrative`·`diagnosis` 를 **만들어
+    //   저장**하는데 표시명을 몰라 영문 enum 을 그대로 끼웠다
+    //   (*"critical 인사이트(recurring_verify_error) — 사람 진단 필요."*).
+    //   프론트에 라벨이 아무리 많아도 그 문장은 못 고친다 — 표시명이 **백엔드 SSOT** 여야 한다.
+    //   `#808` 이 세운 것은 **타입 목록** SSOT 였고 표시명은 아니었다.
+    const back = backendLabels();
+    const front = frontendLabelPairs();
+    // 공허 진리 가드 — 추출이 비면 아래 비교가 통과한다.
+    expect(Object.keys(back).length, "백엔드 라벨 추출이 비었다").toBeGreaterThanOrEqual(10);
+    expect(Object.keys(front).length, "프론트 라벨 추출이 비었다").toBeGreaterThanOrEqual(10);
+    expect(Object.keys(front).sort()).toEqual(Object.keys(back).sort());
+    // ★키만 맞추면 값이 갈려도 통과한다 — 사용자는 **값**을 읽는다.
+    expect(front).toEqual(back);
   });
 
   it("의미를 지는 라벨 문구는 잠근다(그 외 문안은 의도적 미잠금)", () => {
