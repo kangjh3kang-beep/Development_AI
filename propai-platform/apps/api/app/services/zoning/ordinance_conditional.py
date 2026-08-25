@@ -41,6 +41,7 @@ from app.services.zoning.district_regime import (
     _norm,
     is_growth_management_plan,
 )
+from apps.api.app.utils.withheld import SOURCE_UNAVAILABLE
 
 # 조제목 → 조건 종류. **부지 designation 으로 판별 가능한 것**과 그렇지 않은 것을 가른다.
 #   site  = 부지가 그 구역/지구에 속하는가로 판정(우리가 측정 가능)
@@ -238,9 +239,12 @@ def _match_district_options(item: dict[str, Any], names: list[str]) -> dict[str,
     """
     options = item.get("district_options") or []
     if not options:
+        # ★`_bucket="undecidable"` 도 자체 어휘였다 — 닫힌 코드를 병기한다.
+        #   조문을 못 읽은 것이므로 **원천 문제**(사용자가 할 수 있는 게 없다).
         return {"_bucket": "undecidable", "rows": [{
             **item,
             "why": "조문 나열 항목을 읽지 못함 — 어느 지구·구역인지 가릴 수 없어 판정 보류",
+            "decision_absent": SOURCE_UNAVAILABLE,
         }]}
 
     zone = item.get("zone_type") or None
