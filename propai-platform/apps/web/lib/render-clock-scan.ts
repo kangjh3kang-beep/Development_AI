@@ -1,0 +1,104 @@
+/**
+ * 렌더 중 실행되는 **비결정 시각 호출** 탐지 — AST 기반.
+ *
+ * ## 무엇을 막는가
+ *
+ * 컴포넌트 본문에서 `new Date()` / `Date.now()` 를 부르고 그 값을 화면에 그리면 **두 가지**가 생긴다:
+ *  1. **거짓 근거** — 라벨이 *"마지막 업데이트"* 라고 말하는데 값은 **화면을 그린 순간**이다.
+ *  2. **하이드레이션 불일치**(React #418) — 서버 렌더 시각 ≠ 클라이언트 하이드레이트 시각이라
+ *     같은 자리의 텍스트가 갈린다.
+ *
+ * ★로컬 프로덕션 빌드 변이로 확정했다(2026-08-25): `ProjectsOverviewClient` 의 그 한 줄만
+ *   상수로 고정하니 `/ko/projects` 의 #418 이 **1 → 0**, 같은 배치의 양성 대조군 2 라우트는 1 유지.
+ *   ★그리고 이 결함은 **저장 상태와 무관**하다 — localStorage 가 비어 있어도 재현된다
+ *   (persist 파생 조건부 렌더가 원인인 다른 라우트와 **다른 축**이다).
+ *
+ * ## ★왜 정규식이 아니라 AST 인가
+ *
+ * 정규식 스윕(`^  const … = … new Date()`)은 **2칸 대입문만** 본다. 실측으로 그 방식은
+ * 같은 형태 **3건을 놓쳤다**(`DeskAppraisalReportClient` · `TaxPanel` · `SreDashboardClient`).
+ * 또 *"들여쓰기 2칸 = 컴포넌트 본문"* 은 **모듈 스코프 함수 본문**과 구별되지 않아 위양성을 낸다.
+ * 여기서는 감싸는 함수 경계를 AST 로 올라가며 **콜백·핸들러·effect 를 제외**한다.
+ *
+ * ## 판정 한계(정직 표기)
+ *
+ * - `함수본문` 은 **판정 불가**로 둔다. 그 함수가 JSX 에서 불리면 렌더 중이지만, 간접 호출까지
+ *   추적하지 않는다. 이 락은 그 부류를 **잠그지 않는다**(위양성으로 정상 코드를 막지 않기 위해).
+ * - 그러므로 이 스캐너의 결과는 **하한**이다. 0건이 "없음"을 뜻하지 않는다.
+ */
+import ts from "typescript";
+
+export type ClockPhase =
+  /** 컴포넌트 본문(JSX 를 반환하는 함수) — 렌더 중 확정 */
+  | "component-body"
+  /** 배열 콜백(map/filter/…) — 렌더 중 확정(JSX 조립 경로) */
+  | "array-callback";
+
+export interface ClockHit {
+  file: string;
+  line: number;
+  kind: "new Date()" | "Date.now()";
+  phase: ClockPhase;
+}
+
+function clockKind(n: ts.Node): ClockHit["kind"] | null {
+  if (
+    ts.isNewExpression(n) &&
+    n.expression.getText() === "Date" &&
+    (!n.arguments || n.arguments.length === 0)
+  ) {
+    return "new Date()";
+  }
+  if (ts.isCallExpression(n) && n.expression.getText() === "Date.now") return "Date.now()";
+  return null;
+}
+
+/** 인자로 넘겨지는 콜백의 호출자 이름 — 렌더 중이 아닌 부류를 가려낸다. */
+const DEFERRED = /^(useEffect|useLayoutEffect|useCallback|useMemo|setTimeout|setInterval|requestAnimationFrame|queueMicrotask)$/;
+const ARRAY_CB = /\.(map|filter|forEach|reduce|sort|find|some|every)$/;
+
+/** 렌더 중 실행이 **확정**되는 경우만 phase 를 돌려준다. 판정 불가·비렌더는 null. */
+function renderPhase(node: ts.Node, sf: ts.SourceFile): ClockPhase | null {
+  let cur: ts.Node | undefined = node.parent;
+  while (cur) {
+    if (
+      ts.isFunctionDeclaration(cur) ||
+      ts.isFunctionExpression(cur) ||
+      ts.isArrowFunction(cur) ||
+      ts.isMethodDeclaration(cur)
+    ) {
+      const p = cur.parent;
+      if (p && ts.isCallExpression(p) && p.arguments.includes(cur as ts.Expression)) {
+        const callee = p.expression.getText();
+        if (DEFERRED.test(callee)) return null;
+        if (ARRAY_CB.test(callee)) return "array-callback";
+        return null; // 그 밖의 콜백(핸들러 등)
+      }
+      // onClick={() => …} 같은 JSX 속성 안의 함수는 이벤트 시점이라 렌더 중이 아니다.
+      if (p && (ts.isJsxAttribute(p) || ts.isJsxExpression(p))) return null;
+      const txt = cur.getText(sf);
+      const returnsJsx = /return\s*\(?\s*</.test(txt) || /=>\s*\(?\s*</.test(txt);
+      return returnsJsx ? "component-body" : null; // 판정 불가는 잠그지 않는다
+    }
+    cur = cur.parent;
+  }
+  return null; // 모듈 스코프
+}
+
+/** 한 파일에서 렌더 중 시각 호출을 모은다. */
+export function scanRenderClocks(file: string, source: string): ClockHit[] {
+  const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const out: ClockHit[] = [];
+  const visit = (n: ts.Node): void => {
+    const kind = clockKind(n);
+    if (kind) {
+      const phase = renderPhase(n, sf);
+      if (phase) {
+        out.push({ file, line: sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1, kind, phase });
+      }
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return out;
+}
