@@ -82,7 +82,25 @@ export function ProjectsOverviewClient({
     nextAction: "부지분석 이어가기",
     modules: ["design", "finance", "report"],
   }));
-  const projectsData = { projects: cards, total: cards.length, updatedAt: new Date().toISOString() };
+  /**
+   * ★"마지막 업데이트"는 **데이터의 시각**이지 렌더 시각이 아니다.
+   *
+   * 종전엔 `new Date().toISOString()` 이었다 — 즉 라벨은 *"마지막 업데이트"* 라고 말하면서
+   * **화면을 그린 순간**을 보여 줬다. 값이 라벨의 약속과 다르다(거짓 근거).
+   *
+   * 그리고 그것은 **하이드레이션 불일치**를 만든다: 서버가 그린 시각과 클라이언트가
+   * 하이드레이트한 시각이 다르므로 같은 자리의 텍스트가 갈린다(React #418).
+   * ★로컬 프로덕션 빌드에서 변이로 확정했다 — 이 한 줄만 상수로 고정하니
+   *   `/ko/projects` 의 #418 이 1→0 이 되고, 같은 배치의 다른 라우트(양성 대조군)는 1을 유지했다.
+   * ★이 결함은 저장 상태와 무관하다 — localStorage 가 비어 있어도 재현된다.
+   *
+   * 이제 목록에서 **가장 최근 시각**을 파생한다. 없으면 `null` — 없는 것을 지어내지 않는다.
+   */
+  const latestUpdatedAt = cards.reduce<string | null>(
+    (acc, c) => (c.updatedAt && (acc === null || c.updatedAt > acc) ? c.updatedAt : acc),
+    null,
+  );
+  const projectsData = { projects: cards, total: cards.length, updatedAt: latestUpdatedAt };
   const hasProjects = cards.length > 0;
   const isLoading = syncing && !hasProjects;
   const isError = false;
@@ -124,7 +142,7 @@ export function ProjectsOverviewClient({
             <span className="cc-live"><i />{syncing ? "SYNCING" : "LIVE"}</span>
           </div>
         </div>
-        {projectsData && (
+        {projectsData.updatedAt && (
           <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">
             {labels.lastUpdatedLabel}:{" "}
             <span className="cc-num text-[var(--text-secondary)]">{formatDate(locale, projectsData.updatedAt)}</span>
