@@ -7,8 +7,6 @@
 """
 from __future__ import annotations
 
-from apps.api.app.utils.withheld import INSUFFICIENT_COVERAGE, withheld
-
 import asyncio
 import contextlib
 import logging
@@ -19,6 +17,8 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from apps.api.app.utils.withheld import INSUFFICIENT_COVERAGE, withheld
 
 logger = logging.getLogger(__name__)
 
@@ -253,6 +253,31 @@ async def _scalar(db: AsyncSession, sql: str, **p) -> int:
         # 실오류는 은폐 금지 — 분류 로깅 후 호출자에게 전파.
         logger.error("_scalar DB오류(전파): sql=%s err=%s", sql[:120], str(e)[:200])
         raise
+
+
+def tally_reconciliation(reconciliations: list[dict[str, Any]] | None) -> dict[str, int]:
+    """현장별 대사 결과를 **세 갈래로** 집계한다 — 순수 함수(DB 무관·단위테스트 대상).
+
+    ★왜 함수로 꺼냈나: 종전엔 이 판정이 롤업 루프 안에 인라인이라 **소스 검사로만** 잠글 수
+      있었고, 증가문을 `pass` 로 바꾸는 변이가 **생존**했다(문자열은 그대로 있으니까).
+      판단을 꺼내면 **행동으로** 잠긴다.
+
+    ★`failed`(불일치)와 `withheld`(대사 불가)는 **다른 축**이다.
+      섞으면 미탐지가 '정합'으로 위장된다 — 라이브에서 13곳 중 11곳이 withheld 였는데
+      화면엔 `failed=0` 만 보였다.
+    """
+    failed = withheld_n = ok = 0
+    for r in (reconciliations or []):
+        if not isinstance(r, dict):
+            continue
+        b = r.get("balanced")
+        if b is False:
+            failed += 1
+        elif b is None:
+            withheld_n += 1
+        else:
+            ok += 1
+    return {"failed": failed, "withheld": withheld_n, "ok": ok}
 
 
 def _reconcile(revenue_signed: int, scheduled_total: int, installment_paid: int,

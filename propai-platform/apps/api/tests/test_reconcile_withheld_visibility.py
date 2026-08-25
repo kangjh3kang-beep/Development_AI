@@ -59,14 +59,42 @@ class Test보류사유:
 class Test롤업집계:
     """★보류를 **세어서 노출**한다 — 실패 수만 노출하면 보류가 '정합'에 섞인다."""
 
-    def test_롤업이_보류를_실패와_나란히_센다(self) -> None:
+    def test_세_갈래를_실제로_센다(self) -> None:
+        """★**행동**으로 잠근다 — 소스 문자열 검사는 뚫렸다(변이 실증).
+
+        종전 락은 `"reconcile_withheld_count" in src` 였는데, 증가문을 `pass` 로 바꾸는
+        변이가 **생존**했다(변수 선언과 응답 키에 문자열이 그대로 남으니까).
+        판단을 순수 함수로 꺼내 **결과를 단언**한다.
+        """
+        from apps.api.app.services.sales.admin.console import tally_reconciliation
+
+        t = tally_reconciliation([
+            {"balanced": None}, {"balanced": None}, {"balanced": None},
+            {"balanced": False},
+            {"balanced": True}, {"balanced": True},
+        ])
+        assert t == {"failed": 1, "withheld": 3, "ok": 2}, t
+
+    def test_보류를_실패나_정합에_섞지_않는다(self) -> None:
+        """★세 축이 **서로 넘어가지 않는다** — 하나만 있어도 나머지는 0이어야 한다."""
+        from apps.api.app.services.sales.admin.console import tally_reconciliation
+
+        only_withheld = tally_reconciliation([{"balanced": None}] * 5)
+        assert only_withheld == {"failed": 0, "withheld": 5, "ok": 0}, (
+            f"보류가 실패나 정합으로 샜다: {only_withheld}"
+        )
+        assert tally_reconciliation([]) == {"failed": 0, "withheld": 0, "ok": 0}
+        # 라이브 실측 형상(13곳 = 보류 11 + 정합 2)을 그대로 태운다
+        live = tally_reconciliation([{"balanced": None}] * 11 + [{"balanced": True}] * 2)
+        assert live == {"failed": 0, "withheld": 11, "ok": 2}, live
+
+    def test_롤업이_그_순수함수를_실제로_쓴다(self) -> None:
+        """배선 락 — 순수 함수만 잠그면 **호출부가 안 써도 초록**이다."""
         import inspect
 
         from apps.api.app.api.endpoints.sales import views
 
         src = inspect.getsource(views)
         assert "reconcile_failed_count" in src, "대상 파일이 틀렸다(조회기 사망 대조군)"
-        assert "reconcile_withheld_count" in src, (
-            "보류를 세지 않는다 — 관리자는 '실패 0'만 보고 **대사 불가 N곳**을 모른다"
-        )
-        assert 'is None' in src, "보류 판정(is None)이 명시 비교로 되어 있지 않다"
+        assert "tally_reconciliation(" in src, "롤업이 집계 함수를 호출하지 않는다"
+        assert "reconcile_withheld_count" in src, "보류 수를 응답에 싣지 않는다"
