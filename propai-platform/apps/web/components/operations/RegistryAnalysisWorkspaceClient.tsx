@@ -17,6 +17,7 @@ import { DataSourceNotice } from "@/components/ui/DataSourceNotice";
 import { analyzeRegistry, FREE_REQUERY_DAYS, isAnalyzed, summarizeBatch } from "@/lib/registry-analyze";
 import { RegistryBatchRow } from "@/components/operations/RegistryBatchRow";
 import { RegistryPdfBundleButton } from "@/components/operations/RegistryPdfBundleButton";
+import { ParcelAuctionWatchBadge } from "@/components/operations/ParcelAuctionWatchBadge";
 import { RegistryRightsReportButton } from "@/components/operations/RegistryRightsReportButton";
 import { RegistryFailureActions } from "@/components/operations/RegistryFailureActions";
 import { apiClient } from "@/lib/api-client";
@@ -392,7 +393,14 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
         <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
           <CardContent className="p-5">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="inline-flex items-center gap-1.5 text-sm font-black text-[var(--accent-strong)]"><Receipt className="size-4" aria-hidden />프로젝트 필지 ({rows.length}) — 단일/다필지 일괄 분석</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="inline-flex items-center gap-1.5 text-sm font-black text-[var(--accent-strong)]"><Receipt className="size-4" aria-hidden />프로젝트 필지 ({rows.length}) — 단일/다필지 일괄 분석</p>
+                {/* ★경·공매를 **필지 문맥**에 놓는다(사용자 신고 2026-08-25 "연동이 안 된다").
+                    실제로는 `/auction/watchlist` 가 호출마다 토지조서 필지를 자동 등록하고
+                    감시가 돌고 있었는데, 결과가 전용 페이지에만 있어 여기서는 **보이지 않았다**.
+                    지도의 `공·경매` 레이어도 기본 꺼짐이라 발견되지 않는다. */}
+                <ParcelAuctionWatchBadge projectId={projectId} parcelCount={rows.length} locale={locale} />
+              </div>
               <div className="flex items-center gap-2">
                 {/* 전체 분석은 필지당 건당 과금(발급+분석)이다 — 다필지를 그대로 돌리기 전에
                     무과금 견적·선별 화면으로 먼저 보내는 가벼운 유도(로직 변경 없음). */}
