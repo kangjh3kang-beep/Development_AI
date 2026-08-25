@@ -9,6 +9,7 @@ import {
 } from "@/store/useProjectStore";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm, isParcelSetConsistent } from "@/lib/site-area";
+import { projectCreateHeaders } from "@/lib/project-create-key";
 import dynamic from "next/dynamic";
 import type { AddressEntry } from "@/components/common/GlobalAddressSearch";
 // ★성능: 무거운 주소검색/이미지업로드 폼을 dynamic으로 분리해 page 청크를 줄인다.
@@ -128,6 +129,8 @@ export default function NewProjectPage() {
       const areaNum = effectiveLandAreaSqm(currentSiteAnalysis) ?? 0;
       const res = await apiClient.post<{ id: string }>("/projects", {
         body: { name, address: location || undefined, ...(areaNum > 0 ? { total_area_sqm: areaNum } : {}) },
+        // ★한 생성 시도 = 한 키(로컬 프로젝트 id). 재전송은 서버가 재생한다.
+        headers: projectCreateHeaders(projectId),
         useMock: false,
       });
       backendId = res?.id || "";
