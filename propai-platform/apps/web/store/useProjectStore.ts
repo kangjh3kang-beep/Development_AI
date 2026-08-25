@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { apiClient } from '@/lib/api-client';
 import { fetchAllProjects, selectOrphans } from "@/lib/projects-fetch";
+import { projectCreateHeaders } from "@/lib/project-create-key";
 import { createDebouncedStorage } from '@/lib/debounced-storage';
 import { purgeProjectLocalData } from "@/lib/project-lifecycle";
 
@@ -171,6 +172,10 @@ export const useProjectStore = create<ProjectState>()(
                   address: o.address || undefined,
                   ...(areaNum > 0 ? { total_area_sqm: areaNum } : {}),
                 },
+                // ★최초 생성과 **같은 키**(로컬 id)다 — 이 재전송이 서버에서 재생으로 처리돼
+                //   같은 프로젝트가 두 번 만들어지지 않는다. 클라이언트 가드가 못 닿는
+                //   다른 탭·기기까지 이 한 줄이 덮는다.
+                headers: projectCreateHeaders(o.id),
                 useMock: false,
                 timeoutMs: 30000,
               });

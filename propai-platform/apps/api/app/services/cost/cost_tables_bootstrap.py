@@ -156,6 +156,15 @@ _DDL_COST_ESTIMATE_ITEM = (
     "  sort_order int DEFAULT 0"
     ")"
 )
+# ★값은 저장하면서 **그 값이 무엇인지는 안 저장했다** — `market_unit_price` 는 KCCI
+#   **결정론 시뮬레이션**(실시세 API 아님)인데 그 사실이 저장/복원에서 소실됐다.
+#   `boq_builder` 는 `market_unit_price_source` 를 정직하게 만들어 내보내는데 여기서 버려졌다.
+#   기존 배포 테이블에도 멱등 보강(nullable — 기존 행 무영향, 신규 행부터 채움).
+#   선례: 바로 위 `_DDL_MATERIAL_SOURCE_URL`·`_DDL_BIM_QUANTITIES_TENANT` 와 같은 형태다.
+_DDL_COST_ESTIMATE_ITEM_MARKET_SRC = (
+    "ALTER TABLE cost_estimate_item ADD COLUMN IF NOT EXISTS market_unit_price_source varchar(50)"
+)
+
 _DDL_COST_ESTIMATE_ITEM_IDX = (
     "CREATE INDEX IF NOT EXISTS idx_cost_estimate_item_estimate "
     "ON cost_estimate_item(estimate_id, sort_order)"
@@ -167,7 +176,7 @@ _ALL_DDL = (
     _DDL_BIM_QUANTITIES, _DDL_BIM_QUANTITIES_TENANT,
     _DDL_PROGRESS_BILLINGS,
     _DDL_COST_ESTIMATE, _DDL_COST_ESTIMATE_IDX,
-    _DDL_COST_ESTIMATE_ITEM, _DDL_COST_ESTIMATE_ITEM_IDX,
+    _DDL_COST_ESTIMATE_ITEM, _DDL_COST_ESTIMATE_ITEM_MARKET_SRC, _DDL_COST_ESTIMATE_ITEM_IDX,
 )
 
 _ENSURED = False  # 프로세스 내 1회 보장(중복 DDL 방지 — 멱등하지만 호출 절감)
