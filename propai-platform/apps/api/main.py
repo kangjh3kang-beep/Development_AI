@@ -594,8 +594,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         coro_factory(session) -> awaitable. 한 세션 안에서 lock→실행→unlock 을 묶어
         다른 워커와 상호배제. 어떤 예외도 스케줄러를 죽이지 않는다(잡별 try/except).
         """
-        from apps.api.database.session import AsyncSessionLocal
         from app.services.growth import stale_build_guard
+        from apps.api.database.session import AsyncSessionLocal
 
         # ★낡은 스택 차단(2026-08-25) — advisory lock 은 **동시 실행만** 막는다.
         #   스케줄은 platform_settings 워터마크로 정해지는데 두 스택이 그것을 공유하므로,
