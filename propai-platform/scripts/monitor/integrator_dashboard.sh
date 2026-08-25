@@ -40,10 +40,30 @@ API=$($K ubuntu@168.110.125.89 'for c in $(docker ps --filter name=propai-api- -
 
 echo "── ① 배포 수렴 (판정 = 런타임 값 일치, 커밋 수 아님)"
 printf "   origin/main %s │ 158 web %s │ 168 api %s\n" "$MAIN" "${SWPUB:-★조회실패}" "${API:-★조회실패}"
-w=$(echo "$SWPUB" | grep -c "$MAIN"); a=$(echo "$API" | grep -c "$MAIN")
-if [ "$w" -ge 1 ] && [ "$a" -ge 1 ]; then echo "   ✅ 양쪽 수렴"
-elif [ "$a" -ge 1 ]; then echo "   ⏳ 168 만 최신 (158 빌드 중이거나 미배포)"
-else echo "   ⏳ 미수렴"; fi
+# ★판정은 sha 일치가 아니라 **런타임 델타**로 한다.
+#   api 만 바뀐 주기에는 web 을 굽지 않는 것이 **정답**인데(sw 재채번 = 전 사용자
+#   앱셸 캐시 무효화), sha 만 비교하면 그 정상 상태를 매번 "미수렴"으로 신고한다.
+#   ★가드의 위양성도 결함이다 — 정상 운영을 실패로 찍으면 곧 무시당한다.
+WSHA=$(echo "$SWPUB" | grep -oE '[0-9a-f]{8}$')
+ASHA=$(echo "$API"   | grep -oE '[0-9a-f]{8}$')
+runtime_delta() {  # $1=배포된 sha, $2..=경로들 → 런타임 변경 파일 수
+  local base="$1"; shift
+  [ -z "$base" ] && { echo "?"; return; }
+  git diff --name-only "$base..origin/main" -- "$@" 2>/dev/null \
+    | grep -vcE '(__tests__|\.test\.|\.spec\.|vitest\.config|/tests/|test_)'
+}
+WD=$(runtime_delta "$WSHA" propai-platform/apps/web/ propai-platform/packages/)
+AD=$(runtime_delta "$ASHA" propai-platform/apps/api/ propai-platform/apps/worker/)
+CD=$(git diff --name-only "${ASHA:-HEAD}..origin/main" 2>/dev/null | grep -cE 'Dockerfile|docker-compose|requirements.*\.txt')
+printf "   런타임 델타 — web %s파일 · api %s파일 · 컨테이너입력 %s파일\n" "$WD" "$AD" "$CD"
+if [ "$WD" = "?" ] || [ "$AD" = "?" ]; then
+  echo "   ★배포 sha 조회 실패 — 수렴 여부를 **모른다**."; DEAD=1
+elif [ "$WD" -eq 0 ] && [ "$AD" -eq 0 ] && [ "$CD" -eq 0 ]; then
+  echo "   ✅ 수렴 — 굽지 않아도 되는 상태(sha 가 달라도 런타임은 최신)"
+else
+  [ "$AD" -gt 0 ] || [ "$CD" -gt 0 ] && echo "   ⏳ **168 먼저** 구울 것(api 계약이 화면보다 앞서야 한다)"
+  [ "$WD" -gt 0 ] && echo "   ⏳ 158 굽기 필요"
+fi
 
 echo "── ② 라이브 표면 (음성 대조군 포함)"
 for r in /ko /ko/projects /ko/settings /sw.js; do
@@ -76,6 +96,15 @@ else
   else
     echo "   불가능 행: 정지 이후 ${post}건 / 정지 이전 ${pre}건   [대조군 latency_regression 24h ${ctrl}건 = 술어 생존]"
     echo "   엔진 생존: 정지 이후 인사이트 ${live}건 기록"
+    # ★★"이 단언이 참이 되는 다른 경로" — post=0 은 **그 서명을 가진** 생산자가 없다는 뜻뿐이다.
+    #   다른 빌드의 잔재 스택은 이 검사를 그냥 통과한다. 생산자 표식으로 직접 센다.
+    BUILDS=$(echo "$G" | sed -n 's/.*builds=//p')
+    NB=$(echo "$BUILDS" | tr ',' '\n' | grep -c '=')
+    echo "   생산자 빌드: $BUILDS"
+    case "$BUILDS" in
+      *"(표식없음)"*) echo "   ★표식 미배포(PR #826 미머지) — **빌드 기반 판별은 아직 불가**. 위 0 은 '그 서명이 없다'까지만 말한다." ;;
+      *) [ "${NB:-1}" -gt 1 ] && { VIOL=1; echo "   ★★생산자 빌드가 ${NB}종 — 잔재 스택이 또 있다."; } ;;
+    esac
     [ "${post:-0}" -gt 0 ] && { VIOL=1; echo "   ★★재발 — 낡은 생산자가 또 있다. 기각한 가설(워커 옛이미지·severity UPDATE·다른 INSERT 경로)은 재생성 말 것."; }
   fi
 fi

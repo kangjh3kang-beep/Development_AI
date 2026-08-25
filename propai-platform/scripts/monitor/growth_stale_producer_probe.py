@@ -27,7 +27,18 @@ async def main():
         alive = (await s.execute(text(
             "select count(*) from platform_insights where created_at >= :cut"),
             {"cut": STOP})).scalar()
-        print("PROBE now=%s ctrl_type_total=%s impossible_post=%s impossible_pre=%s engine_alive=%s"
-              % (now.strftime("%Y-%m-%d %H:%M"), ctrl, post, pre, alive))
+        # ④ ★★"이 단언이 참이 되는 다른 경로" 를 닫는다.
+        #   `impossible_post=0` 은 **그 서명(latency_regression+info)을 가진 생산자**가
+        #   없다는 뜻일 뿐이다. **다른 빌드**의 잔재 스택은 이 검사를 그냥 통과한다.
+        #   → 생산자 표식(PR #826)이 붙으면 **빌드 종류 수**로 직접 센다.
+        #     표식이 아직 없으면(전부 null) 그 사실을 **명시**한다 — 0 을 청결로 읽지 않게.
+        builds = (await s.execute(text(
+            "select coalesce(metrics_json->>'producer_build_id', '(표식없음)') AS b, count(*) "
+            "from platform_insights where created_at >= :cut group by 1 order by 2 desc"),
+            {"cut": STOP})).all()
+        bs = ",".join("%s=%s" % (b, c) for b, c in builds) or "(행없음)"
+        print("PROBE now=%s ctrl_type_total=%s impossible_post=%s impossible_pre=%s "
+              "engine_alive=%s builds=%s"
+              % (now.strftime("%Y-%m-%d %H:%M"), ctrl, post, pre, alive, bs))
 
 asyncio.run(main())
