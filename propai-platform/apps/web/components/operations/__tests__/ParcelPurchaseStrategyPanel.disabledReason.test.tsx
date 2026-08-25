@@ -33,9 +33,11 @@ vi.mock("@/lib/api-client", async (importOriginal) => {
 });
 
 function parcels(n: number): StrategyParcelInput[] {
+  // ★계약을 좁혀 잡지 않는다 — 스텁이 실제 타입보다 좁으면 그 필드를 쓰는 코드가
+  //   테스트에서만 통과한다(규율 §33). 필수 필드를 전부 채운다.
   return Array.from({ length: n }, (_, i) => ({
-    jibun: `경기도 오산시 내삼미동 ${i + 1}`,
-  })) as StrategyParcelInput[];
+    address: `경기도 오산시 내삼미동 ${i + 1}`,
+  }));
 }
 
 const START = "매입전략 분석 시작";
