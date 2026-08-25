@@ -54,7 +54,16 @@ function clockKind(n: ts.Node): ClockHit["kind"] | null {
 }
 
 /** 인자로 넘겨지는 콜백의 호출자 이름 — 렌더 중이 아닌 부류를 가려낸다. */
-const DEFERRED = /^(useEffect|useLayoutEffect|useCallback|useMemo|setTimeout|setInterval|requestAnimationFrame|queueMicrotask)$/;
+/**
+ * **렌더 이후**에 실행되는 콜백의 호출자 — 여기 안의 시각 호출은 하이드레이션과 무관하다.
+ *
+ * ★`useMemo` 는 **일부러 빼 놓았다.** 그것은 **렌더 중 실행**되므로 서버와 클라이언트가
+ *   각각 부르고, 결과가 화면에 닿으면 똑같이 불일치를 만든다. `useCallback` 은 함수를 만들 뿐
+ *   본문을 실행하지 않으므로 여기 남는다.
+ */
+const DEFERRED = /^(useEffect|useLayoutEffect|useCallback|setTimeout|setInterval|requestAnimationFrame|queueMicrotask)$/;
+/** 렌더 중 실행되는 훅 콜백 — `useMemo` 는 렌더 단계다. */
+const RENDER_HOOK = /^useMemo$/;
 const ARRAY_CB = /\.(map|filter|forEach|reduce|sort|find|some|every)$/;
 
 /** 렌더 중 실행이 **확정**되는 경우만 phase 를 돌려준다. 판정 불가·비렌더는 null. */
@@ -71,6 +80,7 @@ function renderPhase(node: ts.Node, sf: ts.SourceFile): ClockPhase | null {
       if (p && ts.isCallExpression(p) && p.arguments.includes(cur as ts.Expression)) {
         const callee = p.expression.getText();
         if (DEFERRED.test(callee)) return null;
+        if (RENDER_HOOK.test(callee)) return "component-body";
         if (ARRAY_CB.test(callee)) return "array-callback";
         return null; // 그 밖의 콜백(핸들러 등)
       }

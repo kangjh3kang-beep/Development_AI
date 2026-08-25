@@ -85,6 +85,16 @@ describe("렌더 중 비결정 시각 호출 — 비성장 래칫", () => {
     expect(ok).toHaveLength(0);
   });
 
+  it("★`useMemo` 는 **렌더 중**이라 잡는다 — `useEffect` 와 갈려야 DEFERRED 목록이 장식이 아니다", () => {
+    // 변이 검증에서 DEFERRED 를 무력화해도 통과했다 — 폴백("그 밖의 콜백")이 같은 답을 줬기 때문.
+    // 두 훅이 **다른 답**을 내야 그 목록이 실제로 판정에 쓰인다.
+    const memo = scanRenderClocks("m.tsx", 'export function C(){ const t = useMemo(() => new Date(), []); return (<p>{String(t)}</p>); }');
+    const eff = scanRenderClocks("e.tsx", 'export function C(){ useEffect(() => { const t = new Date(); }, []); return (<p>x</p>); }');
+    expect(memo, "useMemo 는 렌더 중이므로 잡아야 한다").toHaveLength(1);
+    expect(memo[0].phase).toBe("component-body");
+    expect(eff, "useEffect 는 렌더 이후라 잡으면 위양성").toHaveLength(0);
+  });
+
   it("★새 자리가 생기면 실패한다 — 래칫은 늘어나지 않는다", () => {
     const unlisted = hits.map((h) => h.file).filter((f) => !(f in RATCHET));
     expect(
