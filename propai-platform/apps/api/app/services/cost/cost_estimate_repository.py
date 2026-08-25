@@ -52,8 +52,9 @@ async def save_estimate(
             ins = text(
                 "INSERT INTO cost_estimate_item"
                 "(estimate_id, code, name, work_type, quantity, unit, unit_price, amount,"
-                " price_source, price_basis_year, qto_source, market_unit_price, actual_unit_price, sort_order)"
-                " VALUES (:eid,:code,:name,:wt,:qty,:unit,:up,:amt,:ps,:pby,:qs,:mup,:aup,:so)")
+                " price_source, price_basis_year, qto_source, market_unit_price,"
+                " market_unit_price_source, actual_unit_price, sort_order)"
+                " VALUES (:eid,:code,:name,:wt,:qty,:unit,:up,:amt,:ps,:pby,:qs,:mup,:mups,:aup,:so)")
             for idx, it in enumerate(items):
                 await db.execute(ins, {
                     "eid": estimate_id, "code": it.get("code"), "name": it.get("name"),
@@ -61,7 +62,11 @@ async def save_estimate(
                     "up": it.get("unit_price", 0), "amt": it.get("amount", 0),
                     "ps": it.get("price_source"), "pby": it.get("price_basis_year"),
                     "qs": it.get("qto_source"),
-                    "mup": it.get("market_unit_price"), "aup": it.get("actual_unit_price"),
+                    "mup": it.get("market_unit_price"),
+                    # ★값과 **그 값이 무엇인지**를 함께 저장한다. 종전엔 값만 남아,
+                    #   저장된 적산을 복원하면 그것이 시뮬레이션이라는 사실이 사라졌다.
+                    "mups": it.get("market_unit_price_source"),
+                    "aup": it.get("actual_unit_price"),
                     "so": idx,
                 })
             await db.commit()
@@ -89,7 +94,8 @@ async def get_estimate(estimate_id: str) -> dict[str, Any] | None:
                 return None
             items = (await db.execute(text(
                 "SELECT code, name, work_type, quantity, unit, unit_price, amount,"
-                " price_source, price_basis_year, qto_source, market_unit_price, actual_unit_price"
+                " price_source, price_basis_year, qto_source, market_unit_price,"
+                " market_unit_price_source, actual_unit_price"
                 " FROM cost_estimate_item WHERE estimate_id = :eid ORDER BY sort_order"),
                 {"eid": estimate_id})).all()
             return {
@@ -103,7 +109,9 @@ async def get_estimate(estimate_id: str) -> dict[str, Any] | None:
                     "unit_price": float(r[5] or 0), "amount": float(r[6] or 0),
                     "price_source": r[7], "price_basis_year": r[8], "qto_source": r[9],
                     "market_unit_price": float(r[10]) if r[10] is not None else None,
-                    "actual_unit_price": float(r[11]) if r[11] is not None else None,
+                    # 값 옆에 기준을 되돌려 준다(무날조: 옛 행은 None 그대로 — 모른다고 말한다).
+                    "market_unit_price_source": r[11],
+                    "actual_unit_price": float(r[12]) if r[12] is not None else None,
                 } for r in items],
             }
     except Exception as e:  # noqa: BLE001

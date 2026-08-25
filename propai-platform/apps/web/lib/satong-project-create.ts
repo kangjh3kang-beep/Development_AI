@@ -1,6 +1,7 @@
 "use client";
 
 import { apiClient } from "@/lib/api-client";
+import { projectCreateHeaders } from "@/lib/project-create-key";
 import {
   markProjectCreating,
   unmarkProjectCreating,
@@ -51,6 +52,9 @@ export async function createProjectFromParcels(
         address,
         ...(areaSqm > 0 ? { total_area_sqm: areaSqm } : {}),
       },
+      // ★한 생성 시도 = 한 키. 재전송(동기화가 고아로 오판해 다시 보내는 경우)은 같은 키라
+      //   서버가 처음 응답을 재생한다 — 다른 탭·기기에서도 두 번 만들어지지 않는다.
+      headers: projectCreateHeaders(localId),
       useMock: false,
     });
     backendId = res?.id || "";
