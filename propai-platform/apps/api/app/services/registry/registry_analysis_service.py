@@ -12,6 +12,7 @@ import structlog
 
 from app.services.ai.llm_failure import classify_failure as _classify_failure
 from app.services.ai.llm_failure import failure_reason as _failure_reason
+from app.services.common.exc_detail import exc_detail
 
 logger = structlog.get_logger(__name__)
 
@@ -69,7 +70,7 @@ async def _db_cache_get(key: str) -> dict[str, Any] | None:
             if row and row[0] and (time.time() - float(row[1] or 0)) < _ANALYZE_DB_TTL:
                 return row[0]
     except Exception as e:  # noqa: BLE001
-        logger.warning("등기분석 DB캐시 조회 실패", err=str(e)[:80])
+        logger.warning("등기분석 DB캐시 조회 실패", err=exc_detail(e, limit=80))
     return None
 
 
@@ -97,7 +98,7 @@ async def _db_cache_put(key: str, result: dict[str, Any]) -> None:
                 {"ttl": _ANALYZE_DB_TTL})
             await db.commit()
     except Exception as e:  # noqa: BLE001
-        logger.warning("등기분석 DB캐시 저장 실패", err=str(e)[:80])
+        logger.warning("등기분석 DB캐시 저장 실패", err=exc_detail(e, limit=80))
 
 
 # ── 발급 원본 캐시 — **돈이 들어간 산출물**을 분석 성공/실패와 분리해 보관 ──────────────
@@ -383,7 +384,7 @@ class RegistryAnalysisService:
                 "note": "공부상 소유구분·토지특성(소유자 성명·지분은 등기부 분석 결과 참조)",
             }
         except Exception as e:  # noqa: BLE001
-            logger.warning("토지정보 조회 실패", err=str(e)[:80])
+            logger.warning("토지정보 조회 실패", err=exc_detail(e, limit=80))
             return None
 
     async def analyze(
@@ -513,7 +514,7 @@ class RegistryAnalysisService:
                         up = await upload_registry_pdf(pdf_bytes, ttl_days=30)
                         pdf_url = up.get("url")
                     except Exception as e:  # noqa: BLE001
-                        logger.warning("등기부 PDF 처리 실패", err=str(e)[:80])
+                        logger.warning("등기부 PDF 처리 실패", err=exc_detail(e, limit=80))
                 fetched_meta = {
                     "owner": reg.get("owner"), "registry_office": reg.get("registry_office"),
                     "doc_title": reg.get("doc_title"), "has_pdf": reg.get("has_pdf"),
@@ -552,12 +553,26 @@ class RegistryAnalysisService:
         if not source or thin_summary:
             # ★머리말(소유자 요약)만 확보된 상태로 권리분석을 돌리면 근저당·압류가 '기재 없음'이
             #   되어 거짓 '안전' 등급이 나오고 캐시에 박힌다. 분석하지 않고 정직하게 반환한다.
+            # ★원인을 **데이터가 말하는 대로** 고른다(라이브 실측 2026-08-24).
+            #   종전엔 `thin_summary` 면 무조건 *"발급 PDF가 이미지 형식이면 텍스트 추출이
+            #   되지 않습니다"* 라고 안내했다. 그런데 같은 응답이 `has_pdf=False` 인 경우가 있다 —
+            #   **PDF 가 아예 없는데** 사용자에게 *"당신 PDF 형식 탓"* 이라 말하고 직접 입력을
+            #   시킨 것이다. 발급 자체가 안 된 것과, 발급은 됐는데 텍스트가 안 뽑히는 것은
+            #   **원인도 처방도 다르다**(전자는 기다리거나 관리자 확인, 후자는 직접 입력).
+            _has_pdf = bool((fetched_meta or {}).get("has_pdf"))
+            if not thin_summary:
+                _msg = "분석할 등기부 내용이 없습니다."
+            elif _has_pdf:
+                _msg = ("등기부 본문(갑구·을구)을 확보하지 못했습니다. "
+                        "발급 PDF가 이미지 형식이면 텍스트 추출이 되지 않습니다 — "
+                        "등기부등본 내용을 직접 입력하시면 분석해 드립니다.")
+            else:
+                _msg = ("등기부가 **발급되지 않았습니다**(PDF 없음) — 소유자 요약만 확보돼 "
+                        "권리분석(근저당·압류 등)을 할 수 없습니다. 등기 발급 연동 상태를 "
+                        "관리자에게 확인하시거나, 등기부등본 내용을 직접 입력하시면 분석해 드립니다.")
             return {"status": "empty", "origin": origin, "land": land,
                     "fetched": fetched_meta,
-                    "message": ("등기부 본문(갑구·을구)을 확보하지 못했습니다. "
-                                "발급 PDF가 이미지 형식이면 텍스트 추출이 되지 않습니다 — "
-                                "등기부등본 내용을 직접 입력하시면 분석해 드립니다."
-                                if thin_summary else "분석할 등기부 내용이 없습니다."),
+                    "message": _msg,
                     "ai": None}
 
         # ★같은 문서가 같은 이유로 계속 실패한다면 **다시 사지 않는다**(LLM 토큰).
@@ -621,7 +636,7 @@ class RegistryAnalysisService:
         except Exception as e:  # noqa: BLE001
             # ★진단성: 타입명 + 응답 head를 남겨 '잘린 JSON/비-JSON/LLM오류'를 구분 가능하게.
             logger.warning("등기 권리분석 LLM 실패, 폴백",
-                           err=f"{type(e).__name__}: {str(e)[:100]}", raw_head=(raw or "")[:180])
+                           err=f"{type(e).__name__}: {exc_detail(e, limit=100)}", raw_head=(raw or "")[:180])
             # ★성장루프 **분자**: 이 실패가 집계되지 않아, 등기 권리분석이 통째로 죽어도
             #   `fallback_rate` 인사이트가 한 번도 뜨지 않았다(2026-08-24 실장애 — 사용자가
             #   화면을 보고 알려 줄 때까지 아무도 몰랐다). 성공(분모)은 위 과금 헬퍼가 남긴다.
