@@ -216,3 +216,49 @@ def test_a_reader_exists_for_the_new_tables():
     assert grep("persist_scope", "apps/api"), "★양성 대조군 0건 — 조회기가 죽었다(cwd 확인)"
     hits = grep("realtx_trades", "apps/api/app/routers", "apps/api/routers", "apps/web")
     assert hits, "새 테이블을 읽는 표면이 없다"
+
+
+# ══════════════════════════════════════════════════════════════
+# 5. 변이가 생존한 두 자리 — 픽스처가 **모집단을 안 갈랐기 때문**이었다
+# ══════════════════════════════════════════════════════════════
+
+@pytest.mark.asyncio
+async def test_baseline_flag_suppresses_even_when_rows_already_exist():
+    """★`before is None` 만으로는 부족하다 — 행은 있는데 scan_state 가 없는 상태가 있다.
+
+    (배포 중단·롤백·상태행 소실). 그때 `baseline_done` 가드가 없으면 **전건이 정정으로**
+    보고된다. 첫 스캔만 태우는 픽스처로는 이 자리가 안 잠긴다(변이 M1 이 생존했다).
+    """
+    db = _FakeRealtxDb()
+    await _run(db, [dict(_BASE)])                 # 행을 만들고
+    db.scan_state.clear()                         # ★상태행만 잃는다
+    res = await _run(db, [{**_BASE, "cancel_type": "O"}])
+    assert res["baseline"] is True
+    assert res["corrections"] == [], "상태행이 없다는 이유로 전건이 정정으로 보고됐다"
+    assert db.corrections == []
+
+
+@pytest.mark.asyncio
+async def test_previous_snapshot_is_scoped_by_prop_type():
+    """★같은 시군구·월에 유형이 둘이면, 스코프를 안 나눈 조회는 **남의 행을 자기 것으로** 본다.
+
+    한 유형만 쓰는 픽스처로는 안 잠긴다(변이 M7 이 생존했다).
+    """
+    land = dict(_BASE)
+    apt = {**_BASE, "prop_type": "apt", "building_name": "오산센트럴푸르지오", "floor": 16}
+
+    db = _FakeRealtxDb()
+    await rs.persist_scope(db, lawd_cd=LAWD, deal_ym=YM, prop_type="land", records=[land])
+    await rs.persist_scope(db, lawd_cd=LAWD, deal_ym=YM, prop_type="apt", records=[apt])
+    assert len(db.trades) == 2
+
+    # apt 스코프를 다시 처리 — land 행은 이 스코프의 previous 에 들어오면 안 된다.
+    res = await rs.persist_scope(
+        db, lawd_cd=LAWD, deal_ym=YM, prop_type="apt",
+        records=[{**apt, "registered_date": "26.08.20"}],
+    )
+    fields = {c["field"] for c in res["corrections"]}
+    assert fields == {"registered_date"}, res["corrections"]
+    # ★대조군: land 행은 건드려지지 않았다(스코프 분리 증명)
+    land_rows = [v for v in db.trades.values() if v["prop_type"] == "land"]
+    assert len(land_rows) == 1 and land_rows[0]["registered_date"] == ""
