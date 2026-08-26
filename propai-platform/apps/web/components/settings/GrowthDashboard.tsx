@@ -853,6 +853,10 @@ export function GrowthDashboard() {
   //   ★폴백은 종전 방식(페이지 집계)이다. 서버가 값을 안 주는 구버전 응답에서도 화면이 죽지
   //     않게 하되, **그 경우 값이 과소일 수 있다**는 것을 여기 적어 둔다.
   const serverCounts = actionableCounts;
+  // ★집계의 **출처**를 값과 함께 들고 다닌다 — 화면이 그것을 말해야 하기 때문이다(아래 고지).
+  //   `serverCounts` 가 `{}` 인 경우는 **서버가 세었는데 조치 대상이 0** 인 것이라 서버 출처다
+  //   (JS 에서 `{}` 는 truthy — 그래서 이 분기가 그대로 맞다).
+  const countsFromServer = Boolean(serverCounts);
   const severityCounts: Record<InsightSeverity, number> = { critical: 0, warn: 0, info: 0 };
   if (serverCounts) {
     severityCounts.critical = serverCounts.critical ?? 0;
@@ -933,6 +937,21 @@ export function GrowthDashboard() {
           </div>
         ))}
       </div>
+
+      {/* ★집계 출처 고지 — **폴백이 스스로 말한다**.
+          【왜】서버가 `actionable_counts` 를 안 보내면(구버전 API·롤백) 이 카드는 조용히
+          **현재 목록에서 센 값**으로 되돌아간다. 그건 `limit` 만큼만 센 것이라 실제보다 적다
+          — 라이브 실측 기준으로 warn 이 498 이 아니라 104 로 보인다(약 79% 과소).
+          그런데 **화면은 정상일 때와 똑같이 생겼다**: 사용자도 조사자도 구별할 수 없다.
+          【★활성 결함이 아니다】현재 서버는 그 키를 **항상** 싣는다(`growth.py` 응답 모델의
+          `default_factory=dict` + 구성 지점 1곳). 트리거는 **API 롤백**이다 — 잠복에 대한 예방이다.
+          【관용】새 UI 를 만들지 않는다. 아래 목록의 절단 고지와 **같은 형태**를 쓴다
+          (형제를 안 보고 새로 만드는 것이 이 저장소가 반복해 데인 자리다). */}
+      {!countsFromServer && (
+        <p className="text-xs text-[var(--text-hint)]">
+          이 집계는 서버가 아니라 <b>현재 목록</b>에서 셌습니다 — 목록에 없는 항목이 빠져 실제보다 적을 수 있습니다.
+        </p>
+      )}
 
       {/* 데이터 미축적 — 정직 표기(목업 금지) */}
       {!hasAny && (
