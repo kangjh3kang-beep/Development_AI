@@ -34,7 +34,10 @@ from app.services.land_intelligence.comprehensive_analysis_service import (
 )
 from app.services.land_intelligence.desk_appraisal_service import desk_appraisal
 from app.services.quality.precision import PrecisionGrade, lowest
-from app.services.tax.project_charges import compute_developer_stage_charges, parse_bool_flag
+from app.services.tax.project_charges import (
+    compute_developer_stage_charges,
+    parse_tristate_flag,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -794,7 +797,12 @@ async def build_rough_scenario(
                 #   (unit_standards SSOT)을 직접 전달한다. (D1 이후 avg_area_pyeong도 전용평
                 #   규약이지만, rough는 input_used 의존 없이 SSOT 직접 사용이 정본)
                 avg_area_sqm=_service._get_type_avg_unit_area(dev_type_final) or 85.0,
-                in_infra_charge_zone=parse_bool_flag(overrides.get("in_infra_charge_zone")),
+                # ★3상태 파서(2026-08-26 · #865 가 놓친 **네 번째 층**). `parse_bool_flag` 는
+                #   **미조회(None)를 미지정(False)으로 뭉개** 화면에 *"기반시설부담구역 미지정"*
+                #   이라는 **없는 관측 주장**을 냈다. #865 가 엔진·통합·모듈 세 층을 고쳤는데
+                #   **이 호출부가 남아** 라이브에서 그대로였다 — **라이브 프로브가 아니었으면
+                #   「고쳤다」로 남았을 것**이다.
+                in_infra_charge_zone=parse_tristate_flag(overrides.get("in_infra_charge_zone")),
             )
             charges_total = int(charges_result["total_won"])
             _compact = compact_charge_items(charges_result)
