@@ -45,6 +45,7 @@ import pytest
 from app.services.feasibility.legacy_ledger import build_legacy_ledger
 from app.services.feasibility.rough_feasibility_orchestrator import compact_charge_items
 from app.services.feasibility.rough_scenario_report import build_rough_scenario_report_model
+from app.services.tax.charge_base_units import base_units_for
 from app.services.tax.project_charges import (
     charge_item_unavailable,
     compute_developer_stage_charges,
@@ -157,27 +158,86 @@ def _charge_rows(led: dict[str, Any]) -> dict[str, dict[str, Any]]:
             if str(i["key"]).startswith("charge_")}
 
 
-def test_ledger_does_not_load_qty_for_unsurveyed_but_does_for_confirmed_zero():
-    """**두 모집단이 갈리는가** — 같은 실행에서 한쪽은 비고 다른 쪽은 실린다.
+def test_engine_measured_values_survive_and_only_sentinels_are_dropped():
+    """★**파티션형 대조군** — 존재 검사가 아니라 **행마다** 기대를 파생시킨다.
 
-    픽스처가 두 모집단을 가르지 않으면 배선을 끊어도 결과가 같다.
+    ★**첫 구현은 존재 검사였고, 그래서 위양성을 놓쳤다**(독립 적대 리뷰가 잡았다):
+
+        loaded = [k for k, v in rows.items() if v["qty"] is not None]
+        assert loaded, "수량이 실린 행이 하나도 없다"     # ← *어느* 행이 살아야 하는지 안 묻는다
+
+    이 형태는 *"한 행이라도 살아 있나"* 만 묻는다. 실제로 첫 게이트는 `unavailable` 이면
+    **항목 전체**를 지웠고, 그래서 **관측된 과표까지** 사라졌다 — B01 의 연면적 6,572㎡,
+    B03/B04 의 세대수 64. 미측정인 것은 **단가(표준건축비·조례단가)뿐**인데 말이다.
+    그런데 위 단언은 다른 행이 살아 있어서 **초록이었다.**
+
+    > **"하나라도 살아 있나"는 과잉 억제를 원리적으로 탐지할 수 없다.**
+    > 모집단을 **엔진에서 파생**시켜 **행마다** 기대를 만들어라.
     """
+    for zone in (None, False):
+        res = _engine(in_infra_charge_zone=zone)
+        rows = _charge_rows(_ledger_from_engine(in_infra_charge_zone=zone))
+        engine = {str(it.get("code") or ""): it for it in _all_items(res)
+                  if it.get("borne_by", "developer") == "developer"}
+
+        assert len(engine) >= 8, f"모집단 {len(engine)}건 — 엔진이 이 경로를 안 태운다"
+        checked_kept = checked_dropped = 0
+
+        for code, item in engine.items():
+            row = rows.get(f"charge_{code.lower()}")
+            # ★건너뛰는 유일한 이유는 **단위표에 없는 코드**다(그 행은 원래 수량을 안 싣는다).
+            #   ★첫 구현은 `row["qty_unit"] is None` 으로 걸렀는데, 그것은 **게이트가 방금
+            #     비운 행**이라 정작 검사할 대상(C07)을 통째로 건너뛰었다 — 검사가 스스로를
+            #     공허하게 만들었고 `checked_dropped == 0` 하한이 그것을 잡았다.
+            #     **판정 대상을 「결과」로 거르면 안 된다 — 「입력」(단위표)에서 파생시켜라.**
+            if row is None or base_units_for(code)[0] is None:
+                continue
+            measured = _num_or_none(item.get("base_won"))
+            degraded = _honestly_degraded(item)
+            # 센티널 = 강등 항목이 쓴 0/결측. 그것만 사라져야 한다.
+            is_sentinel = degraded and not measured
+            if is_sentinel:
+                assert row["qty"] is None, (
+                    f"{code}: 미조회의 **센티널 0** 을 수량으로 실었다 — 없는 관측 주장"
+                )
+                checked_dropped += 1
+            elif measured:
+                assert row["qty"] == measured, (
+                    f"{code}: 엔진이 과표 {measured} 를 **측정**했는데 원장이 {row['qty']!r} — "
+                    "강등이라는 이유로 관측값까지 지웠다(위양성)"
+                )
+                checked_kept += 1
+
+        # 공허 방지 — 두 방향이 **각각** 실제로 검사됐는가.
+        assert checked_kept >= 3, f"보존 검사 {checked_kept}건 — 대조군이 빈약하다"
+        if zone is None:
+            assert checked_dropped >= 1, "센티널 제거가 한 건도 검사되지 않았다"
+
+
+def _num_or_none(v: Any) -> float | None:
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return f if f else None
+
+
+def test_unsurveyed_sentinel_row_shows_no_calculation():
+    """C07(과표·요율이 **둘 다** 0 센티널)은 산출내역이 통째로 비어야 한다."""
     rows = _charge_rows(_ledger_from_engine(in_infra_charge_zone=None))
+    c07 = rows["charge_c07"]
+    assert c07["qty"] is None and c07["unit_price"] is None, "센티널을 관측처럼 실었다"
+    assert c07["qty_unit"] is None and c07["unit_price_unit"] is None
 
-    unsurveyed = [k for k, v in rows.items()
-                  if str(v.get("note") or "").startswith("신뢰도 unavailable")]
-    assert unsurveyed, "미조회 행이 0건 — 이 검사는 아무것도 말하지 않는다"
-    for key in unsurveyed:
-        assert rows[key]["qty"] is None, f"{key}: 미조회인데 수량을 관측처럼 실었다"
-        assert rows[key]["unit_price"] is None, f"{key}: 미조회인데 단가를 실었다"
-        assert rows[key]["qty_unit"] is None and rows[key]["unit_price_unit"] is None
-
-    # ★대조군 — 강등이 아닌 행은 **반드시 수량이 실려야** 한다. 이게 없으면
-    #   "전부 비우는" 구현이 위 단언을 통과한다.
-    loaded = [k for k, v in rows.items() if v["qty"] is not None]
-    assert loaded, "수량이 실린 행이 하나도 없다 — 게이트가 과잉 적용됐다(위양성)"
-    for key in loaded:
-        assert not str(rows[key].get("note") or "").startswith("신뢰도 unavailable")
+    # ★대조군 — 조회했고 해당 없음이면(확정) 같은 행이 **다르게** 나와야 판별력이 있다…
+    #   가 아니다: `sale_stage_engine` 은 두 분기에 **같은 센티널**(base 0·rate 0)을 쓴다.
+    #   그래서 확정 분기는 여전히 `0㎡ × 0 원/㎡` 를 그린다 — **이 PR 이 안 고친 부분**이고
+    #   §Known 에 적었다. 여기서는 그 사실을 **초록 안에 드러내** 다음 사람이 보게 한다.
+    surveyed = _charge_rows(_ledger_from_engine(in_infra_charge_zone=False))["charge_c07"]
+    assert surveyed["qty"] == 0.0, (
+        "확정 분기가 더 이상 센티널 0 을 싣지 않는다 — 엔진이 바뀌었거나 축이 넓어졌다. "
+        "그렇다면 이 테스트와 §Known 을 함께 갱신하라(부채가 해소된 것이면 좋은 신호다)."
+    )
 
 
 def test_unsurveyed_row_still_carries_its_reason():
@@ -211,6 +271,43 @@ def test_the_gate_changes_notation_but_never_the_money():
 
 
 # ── ④ 커버리지 — 두 모집단이 다른 값을 내는가 ────────────────────────────────
+# ★**실엔진 절대 하한** — 기존 래칫(`test_legacy_ledger.py::_QTY_PCT_FLOOR`)은 **손수 만든
+#   8행 픽스처**에 걸려 있어 `unavailable` 케이스를 한 번도 안 태운다. 그래서 실엔진 경로의
+#   커버리지가 **떨어져도 초록**이었다(독립 적대 리뷰 지적). 상대 단언(`cov_u < cov_s`)도
+#   절대 하락은 못 잡는다 — 둘이 **같이** 내려가면 부등호는 유지된다.
+#   ★하한은 **게이트가 만지는 모집단**(부담금 행)에서만 뜬다. 처음엔 전체 `coverage.qty_pct`
+#     에 90 을 걸었는데, 그 픽스처는 토지비·공사비·분양수입이 비어 있어 **66.7%** 였다 —
+#     내가 잰 것(라이브 전체 95.5%)과 말하려는 것(부담금 게이트)이 **다른 모집단**이었다.
+_CHARGE_QTY_DROPPED_MAX = 1      # 실측: 미조회에서 빠지는 부담금 행은 **C07 하나**뿐
+
+
+def test_the_gate_drops_exactly_one_charge_row_and_no_more():
+    """게이트가 부담금 행을 **몇 개나** 비우는가 — 절대 상한을 건다.
+
+    ★상대 단언(`cov_u < cov_s`)은 **동반 하락을 못 잡는다**(둘이 같이 내려가면 부등호 유지).
+      그리고 기존 래칫(`test_legacy_ledger.py::_QTY_PCT_FLOOR`)은 **손수 만든 픽스처**에
+      걸려 있어 `unavailable` 경로를 한 번도 안 태운다(독립 적대 리뷰 지적).
+
+    ★**첫 구현이 이 상한을 넘겼다**: 항목 전체를 지워 **3행**(B03·B04·C07)이 비었고,
+      그중 둘은 과표가 **관측값**(세대수 64)이었다. 칸 단위로 좁히자 **1행**이 됐다.
+      이 수를 올리려면 **그 행의 과표가 왜 관측이 아닌지**를 여기에 적어라.
+    """
+    for zone, expected_dropped in ((None, _CHARGE_QTY_DROPPED_MAX), (False, 0)):
+        rows = _charge_rows(_ledger_from_engine(in_infra_charge_zone=zone))
+        applicable = [k for k in rows if base_units_for(k.replace("charge_", "").upper())[0]]
+        assert len(applicable) >= 8, f"모집단 {len(applicable)}행 — 공허하다"
+        dropped = [k for k in applicable if rows[k]["qty"] is None]
+        assert len(dropped) <= expected_dropped, (
+            f"zone={zone}: 수량이 빠진 부담금 행 {len(dropped)}개({dropped}) — "
+            "게이트가 관측된 과표까지 지우고 있나?"
+        )
+        if zone is None:
+            assert dropped == ["charge_c07"], f"빠진 행이 C07 이 아니다: {dropped}"
+
+    # 근거는 어느 방향으로도 100% — 근거 못 대는 행은 애초에 만들지 않는다.
+    assert _ledger_from_engine(in_infra_charge_zone=None)["coverage"]["basis_pct"] == 100.0
+
+
 def test_coverage_reports_honestly_and_the_two_populations_differ():
     """미조회가 있으면 커버리지가 **내려가야** 한다. 100% 를 유지하면 지표가 거짓말이다."""
     cov_u = _ledger_from_engine(in_infra_charge_zone=None)["coverage"]
@@ -248,24 +345,70 @@ def _report_ledger_table(*, in_infra_charge_zone: bool | None):
     pytest.fail("인쇄본에 원장 표가 없다 — 가장 필요한 자리에서 빠졌다")
 
 
-def test_printed_ledger_has_a_note_column_and_carries_the_reason():
-    """인쇄본 표에 **비고 열**이 있고 미조회 사유가 **셀 안에** 있는가.
+_LEDGER_TABLE_COLS = 6   # ★열 수는 계약이다 — 아래 테스트가 이유를 설명한다.
 
-    ★소스 grep 이 아니라 모델을 빌드해서 본다 — 이 저장소는 소스 검사가
-      주석처리+임포트유지 변이에 뚫린 전례가 있다.
+
+def test_printed_ledger_carries_the_reason_without_adding_a_column():
+    """인쇄본이 사유를 싣되 **열을 늘리지 않는가**.
+
+    ★**7번째 열로 넣었다가 되돌렸다**(독립 적대 리뷰가 실측으로 잡았다).
+      `DataTableBlock` 에는 `col_widths` 가 없어 열이 하나 늘면 폭이 **균등 재분배**된다:
+
+          금액 칸  50.3pt → **31.8pt**   ·  `9,541,093,804` 가 **세 줄로 쪼개짐**
+          표 높이  1022pt → 1470pt
+
+      **인쇄본을 고치려던 변경이 인쇄본의 금액 열을 무너뜨렸다.** 재무 원장에서 가장
+      중요한 열이다. → 사유는 「근거」 칸에 합치고 **열 수를 못 박는다**(폭 회귀가
+      원리적으로 불가능해진다). CLAUDE.md §D19 — 경계는 양방향으로.
     """
     table = _report_ledger_table(in_infra_charge_zone=None)
-    assert "비고" in table.headers, f"인쇄본에 비고 열이 없다: {table.headers}"
+    assert len(table.headers) == _LEDGER_TABLE_COLS, (
+        f"원장 표가 {len(table.headers)}열이다 — 열을 늘리면 금액 칸이 좁아져 숫자가 쪼개진다. "
+        "사유·비고는 「근거」 칸에 합쳐라."
+    )
     assert all(len(r) == len(table.headers) for r in table.rows), "열 수와 행 길이가 어긋난다"
 
-    note_col = table.headers.index("비고")
+    basis_col = table.headers.index("근거·비고")
     calc_col = table.headers.index("산출내역(수량 × 단가)")
     c07 = [r for r in table.rows if "기반시설부담금" == str(r[1])]
     assert c07, "인쇄본에 기반시설부담금 행이 없다"
     assert c07[0][calc_col] is None, "인쇄본이 미조회에 「0㎡ × 0 원/㎡」를 그렸다"
-    assert "미조회" in str(c07[0][note_col]), (
-        f"인쇄본이 사유를 안 싣는다: {c07[0][note_col]!r} — 제출본에서 사유가 사라진다"
+    assert "미조회" in str(c07[0][basis_col]), (
+        f"인쇄본이 사유를 안 싣는다: {c07[0][basis_col]!r} — 제출본에서 사유가 사라진다"
     )
+    # ★마크다운 강조는 인쇄본에서 걷어낸다 — PDF 는 `**미조회**` 를 별표째 찍는다.
+    assert "**" not in str(c07[0][basis_col]), (
+        f"인쇄본에 마크다운 별표가 그대로 나간다: {c07[0][basis_col]!r}"
+    )
+
+
+def test_the_report_actually_renders_to_pdf():
+    """★**모델이 아니라 바이너리까지 태운다.**
+
+    이 저장소는 *"docx 는 조용히 통과 · PDF 는 500 으로 죽는다 — 어댑터 단위 테스트로는
+    절대 안 잡힌다"* 는 전례를 `render/model.py:76-80` 에 적어 두었다. 모델 빌드는
+    소스 grep 보다 낫지만 **렌더는 여전히 무잠금**이다.
+    """
+    from app.services.report.render.engine import render_report
+
+    res = _engine(in_infra_charge_zone=None)
+    items = compact_charge_items(res)
+    developer_sum = sum(int(i["amount_won"] or 0) for i in items
+                        if i.get("borne_by", "developer") == "developer")
+    sc: dict[str, Any] = {
+        "address": "울산광역시 동구 화정동 637-11",
+        "charges": {"total_won": developer_sum, "items": items,
+                    "basis": "B+C 단계", "source": "통합 세금엔진"},
+        "cost_breakdown": {"charges_won": developer_sum},
+        "degraded_notes": res["unavailable_notes"],
+    }
+    sc["legacy_ledger"] = build_legacy_ledger(sc)
+    model = build_rough_scenario_report_model(sc)
+
+    data, media_type, ext = render_report(model, "pdf")
+    assert data[:4] == b"%PDF", f"PDF 매직바이트가 아니다: {data[:8]!r}"
+    assert len(data) > 5_000, f"PDF 가 {len(data)}B — 내용이 비었을 수 있다"
+    assert ext == "pdf"
 
 
 def test_printed_ledger_keeps_calc_for_healthy_rows():

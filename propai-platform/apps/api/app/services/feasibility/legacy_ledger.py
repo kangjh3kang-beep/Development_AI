@@ -236,7 +236,23 @@ def _charge_items(charges: dict[str, Any] | None) -> list[dict[str, Any]]:
         #
         #   ★판정은 **엔진 옆 공용 판정자**를 쓴다(`charge_item_unavailable`). 여기서 다시
         #     구현하면 표기 관례가 하나 더 생길 때 두 소비처가 **조용히 갈린다**.
+        #
+        #   ★★**항목 전체가 아니라 「칸」 단위로 판정한다**(독립 적대 리뷰가 잡았다).
+        #     첫 구현은 `unavailable` 이면 수량·단가를 **둘 다** 지웠는데, 미측정인 것은
+        #     대개 **한 칸뿐**이다:
+        #       · B03/B04 — 조례 **단가** 미등록. 과표(`base_won`)는 **세대수 64 = 관측값**
+        #       · B01     — 표준건축비 미고시. 과표는 **연면적 6,572㎡ = 관측값**
+        #       · C07     — 부담구역 **지정 여부** 미조회. 과표·요율 **둘 다** 0 센티널
+        #     즉 항목 단위로 지우면 **관측된 과표까지 지우는 위양성**이 된다.
+        #
+        #   ★거짓 관측을 만드는 것은 `confidence` 가 아니라 **측정되지 않은 0(센티널)** 이다.
+        #     엔진은 미상인 칸을 이미 `None` 으로 준다(B03/B04 의 `rate`) — 그건 `_item` 이
+        #     원래 안 싣는다. 문제는 C07 처럼 **미상인데 `0` 을 쓴** 칸이다. `0` 은 유효한
+        #     금액이라 「관측된 0」과 구별되지 않는다.
         unavailable = charge_item_unavailable(it)
+        # 미조회 **이면서** 값이 0/결측인 칸 = 센티널. 관측된 값은 미조회여도 싣는다.
+        qty_sentinel = unavailable and not _num(it.get("base_won"))
+        rate_sentinel = unavailable and not _num(it.get("rate"))
         # 강등 항목은 **금액이 아니라 사유**가 본문이다 — 0원과 구별되게 note 에 싣는다.
         note = None
         if conf and conf != "confirmed":
@@ -249,10 +265,10 @@ def _charge_items(charges: dict[str, Any] | None) -> list[dict[str, Any]]:
                 str(it.get("name") or code or "부담금"),
                 it.get("amount_won"),
                 # ★단위를 모르면 **수량·단가를 아예 싣지 않는다**(거짓 라벨보다 공백이 낫다).
-                #   미조회(`unavailable`)도 **같은 이유로** 싣지 않는다 — 위 주석 참조.
-                qty=it.get("base_won") if (qty_unit and not unavailable) else None,
+                #   미조회의 **센티널 0** 도 같은 이유로 싣지 않는다 — 위 주석 참조.
+                qty=it.get("base_won") if (qty_unit and not qty_sentinel) else None,
                 qty_unit=qty_unit,
-                unit_price=it.get("rate") if (rate_unit and not unavailable) else None,
+                unit_price=it.get("rate") if (rate_unit and not rate_sentinel) else None,
                 unit_price_unit=rate_unit,
                 basis=(f"{code} — 통합 세금엔진(공사·분양 단계): 과표 × 요율" if code else None),
                 structural_basis="부담금 = 과표 × 요율(단계별 세금엔진 산출)",

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import re
 from datetime import datetime
 from typing import Any
 
@@ -471,6 +472,27 @@ def _precision_block(scenario: dict[str, Any]) -> NarrativeBlock | None:
     return NarrativeBlock(title="정밀도 고지", paragraphs=paragraphs)
 
 
+def _merge_basis_note(basis: Any, note: Any) -> str | None:
+    """근거 + 사유를 **한 칸**으로 합친다. 마크다운 강조는 **인쇄본에서 걷어낸다**.
+
+    ★열을 늘리지 않는 이유: `DataTableBlock` 에 `col_widths` 가 없어 열이 하나 늘면
+      전 열이 균등 재분배되고, 실측으로 **금액 칸이 50.3pt → 31.8pt** 가 되어 금액이
+      세 줄로 쪼개졌다(독립 적대 리뷰 발견). 인쇄본을 고치려다 인쇄본을 깰 뻔했다.
+
+    ★`**미조회**` 의 별표를 걷는 이유: 응답 `reason` 은 화면(마크다운 렌더)을 겨냥해
+      쓰여 있는데, PDF 는 그것을 **별표째** 찍는다. 매체가 다르면 표기도 다르다.
+    """
+    parts = [str(x).strip() for x in (basis, note) if x]
+    if not parts:
+        return None
+    return _strip_md_emphasis(" · ".join(parts))
+
+
+def _strip_md_emphasis(text: str) -> str:
+    """`**강조**` → `강조`. 인쇄본 전용(화면은 마크다운을 실제로 렌더한다)."""
+    return re.sub(r"\*{1,3}(.+?)\*{1,3}", r"\1", text)
+
+
 def build_rough_scenario_report_model(
     scenario: dict[str, Any],
     *,
@@ -654,23 +676,27 @@ def build_rough_scenario_report_model(
                     it.get("amount_won"),
                     it.get("share_pct"),
                     calc,
-                    it.get("basis"),
-                    # ★비고 — **화면에는 있고 인쇄본에는 없던 열**(2026-08-27 실측).
+                    # ★사유를 **「근거」 칸에 합친다 — 열을 늘리지 않는다.**
                     #   `note` 는 「신뢰도 unavailable — …미조회…」 처럼 **그 행이 왜 공란인지**를
-                    #   말하는 유일한 자리다. 화면(`LegacyLedgerTable.tsx`)은 렌더하는데
-                    #   여기엔 열 자체가 없어서, **제출용 PDF 에서만 사유가 통째로 사라졌다.**
-                    #   ★인쇄본은 회의 탁자에 올라가고 화면보다 오래 남는다 — 매체를 **각각**
-                    #     잠근다(오류 #110 의 재발: 표시층을 고치며 화면만 봤다).
-                    it.get("note"),
+                    #   말하는 유일한 자리이고, 화면(`LegacyLedgerTable.tsx`)은 렌더하는데
+                    #   인쇄본에는 없어서 **제출용 PDF 에서만 사유가 통째로 사라졌다.**
+                    #
+                    #   ★★**7번째 열로 넣었다가 되돌렸다**(독립 적대 리뷰가 잡았다).
+                    #     `DataTableBlock` 에는 `col_widths` 가 없어 열을 늘리면 폭이 **균등
+                    #     재분배**된다 — 실측: 금액 칸 50.3pt → **31.8pt** 로 좁아져
+                    #     `9,541,093,804` 가 **세 줄로 쪼개졌다**(표 높이 1022 → 1470pt).
+                    #     **인쇄본을 고치려던 변경이 인쇄본의 금액 열을 무너뜨렸다.**
+                    #     → 열 수를 유지하면 폭 회귀가 **원리적으로 불가능**하다.
+                    _merge_basis_note(it.get("basis"), it.get("note")),
                 ])
             if g.get("subtotal_won") is not None:
                 ledger_rows.append([
                     f"{sec.get('label')} · {g.get('label')}", "소계",
-                    g.get("subtotal_won"), g.get("share_pct"), None, None, None,
+                    g.get("subtotal_won"), g.get("share_pct"), None, None,
                 ])
     if ledger_rows:
         feas_blocks.append(DataTableBlock(
-            headers=["구분", "항목", "금액(원)", "구성비(%)", "산출내역(수량 × 단가)", "근거", "비고"],
+            headers=["구분", "항목", "금액(원)", "구성비(%)", "산출내역(수량 × 단가)", "근거·비고"],
             rows=ledger_rows, numeric_cols=[2, 3],
             title="간략 수지 원장 (실무 양식 — 수량 × 단가 · 근거)"))
         # ★검산 결과도 함께 — 표만 싣고 「이 합계가 맞는지」를 빼면 읽는 사람이 확인할 길이 없다.
