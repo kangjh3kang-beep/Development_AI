@@ -103,7 +103,7 @@ export function AIAssistant() {
   const pathname = usePathname();
   const [isOpen, setIsOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
-  
+
   const isAdmin = useIsAdmin();
 
   // 비서는 백엔드(api.4t8t.net/api/v1/ai/*)를 직접 호출한다 — Next /api/ai/*는 A1 nginx가 백엔드로
@@ -226,7 +226,7 @@ export function AIAssistant() {
   // 컨텍스트 인지형 초기 메시지 설정 (클라이언트 전용)
   useEffect(() => {
     let initialText = "안녕하세요! 사통팔땅 AI 비서입니다. 무엇을 도와드릴까요?";
-    
+
     if (pathname.includes("/sre")) {
       initialText = "SRE 관제 모드 활성화. 시스템 가용성과 빌드 품질 데이터를 분석할 수 있습니다. 어떤 지표가 궁금하신가요?";
     } else if (pathname.includes("/projects/")) {
@@ -238,7 +238,7 @@ export function AIAssistant() {
     }
 
     // 화면(도메인) 진입 시 초기 인사로 리셋 — 의도된 동작.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+
     setMessages([{ id: 'initial', role: "assistant", content: initialText }]);
   }, [pathname]);
 
@@ -296,7 +296,7 @@ export function AIAssistant() {
             className="group relative mb-6 w-80 sm:w-96 overflow-hidden rounded-[var(--radius-xl)] border border-[var(--line-strong)] bg-[var(--surface)] shadow-[var(--shadow-2xl)]"
           >
             <div className="absolute -left-10 -top-10 h-32 w-32 rounded-full bg-[var(--accent-strong)]/20 blur-[40px] animate-pulse" />
-            
+
             <div className="relative bg-gradient-to-br from-[var(--accent-strong)] to-[#085d73] p-6 text-white shadow-lg overflow-hidden">
               {/* 외부 CDN 텍스처 제거 — 로컬 CSS 도트 패턴으로 대체(외부 네트워크 의존 0, currentColor라 다크모드 자동 대응) */}
               <div
@@ -410,7 +410,7 @@ export function AIAssistant() {
                   </div>
                 </div>
               )}
-              
+
               {!input && (messages?.length ?? 0) <= 1 && connected && (
                 <div className="mt-2 flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
                     {getSuggestedTags().map(tag => (
@@ -480,7 +480,7 @@ export function AIAssistant() {
           aria-hidden
         />
         {isOpen ? <Icons.X /> : <Icons.Sparkles />}
-        
+
         {!isOpen && (
             <div className={`absolute -top-1 -right-1 flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-black ring-4 ring-[var(--background)] ${connected ? 'bg-[var(--accent-strong)]' : 'bg-red-500'}`}>
                 <span className="h-2 w-2 rounded-full bg-white animate-ping" />

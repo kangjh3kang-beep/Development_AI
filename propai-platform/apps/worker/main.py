@@ -169,6 +169,16 @@ async def g2b_sync_public_prices(ctx: dict[str, Any]) -> dict[str, Any]:
     return await sync_public_material_prices(ctx)
 
 
+async def realtx_sync(ctx: dict[str, Any]) -> dict[str, Any]:
+    """실거래 2층 — **파생된** 시군구만 수집·저장하고 정정을 탐지한다.
+
+    ★`etl_public_data` 의 하드코딩 시군구 8개는 실사용 필지의 **1.0%(4/394)** 만 덮는다
+      (2026-08-26 라이브 실측). 모집단은 `user_project_store` 에서 파생한다.
+    """
+    from app.tasks.realtx_sync_task import sync_realtx_trades
+    return await sync_realtx_trades(ctx)
+
+
 async def dispatch_outbox(ctx: dict[str, Any]) -> dict[str, Any]:
     """전역 아웃박스(outbox_event) 미발행 이벤트를 at-least-once 발행한다(P15 A4)."""
     from app.tasks.outbox_dispatch_task import run_outbox_dispatch_until_empty
@@ -194,6 +204,7 @@ class WorkerSettings:
         g2b_rebuild_stats,
         g2b_sync_public_prices,
         dispatch_outbox,
+        realtx_sync,
     ]
 
     cron_jobs = [
@@ -218,6 +229,10 @@ class WorkerSettings:
         # 전역 아웃박스 디스패처 — 매 분 미발행 이벤트 발행(at-least-once). arq/Redis 미배포
         # 환경(운영 Micro)에서는 API 인프로세스 루프(main.py)가 같은 코어를 호출한다(중복 안전).
         cron(dispatch_outbox, minute=set(range(0, 60))),
+        # 매일 19:10 UTC(= KST 04:10): 실거래 2층 수집.
+        # ★MOLIT 키를 **G2B 와 공유**하므로(라이브 해시 일치 실측 2026-08-26) 짝수시 정각의
+        #   g2b_sync_bids · 20:30 조달청 · 21:00 낙찰 갱신과 **겹치지 않는 시각**을 고른다.
+        cron(realtx_sync, hour=19, minute=10),
     ]
 
     on_startup = startup

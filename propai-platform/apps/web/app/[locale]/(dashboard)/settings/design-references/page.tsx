@@ -10,7 +10,6 @@ import { useCallback, useEffect, useState } from "react";
 import { apiClient } from "@/lib/api-client";
 import { sanitizeSvgMarkup } from "@/components/cad/ReferenceAssemblyCard";
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
 
 type Ref = {
   id: string; title: string; building_use: string | null; zone_code: string | null;

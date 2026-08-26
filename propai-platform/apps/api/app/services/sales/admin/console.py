@@ -280,32 +280,38 @@ def tally_reconciliation(reconciliations: list[dict[str, Any]] | None) -> dict[s
     return {"failed": failed, "withheld": withheld_n, "ok": ok}
 
 
+#: 조립부가 **자기 이름으로 따로 싣는** 키 — 승계 대상에서 뺀다.
+#: ★이 목록만 손으로 적고 **나머지는 전부 흘린다**(화이트리스트의 반대).
+#:   화이트리스트로 두면 **새 사유 키가 조용히 사라진다** — 그게 바로 이 PR 이 고치는 결함이다.
+_RECONCILE_ASSEMBLY_OWNED = ("discrepancies", "tolerance")
+
+
 def reconciliation_public_fields(rec: dict[str, Any] | None) -> dict[str, Any]:
     """대사 결과에서 **응답에 실을 판정 필드**를 고른다 — 순수 함수(단위테스트 대상).
 
-    ★왜 함수로 꺼냈나 (2026-08-26 라이브 실측):
-      `site_management_detail` 이 응답 `reconciliation` 을 **키를 손으로 골라** 조립하면서
-      `balanced`·`discrepancies`·`tolerance` 만 복사하고, `#838` 이 `_reconcile` 에 실은
-      **보류 사유(`balanced_basis`·`balanced_absent`)를 조립 지점에서 버렸다.**
-      즉 사유는 계산됐지만 **응답에 한 번도 실린 적이 없다.**
+    ★왜 이 함수가 필요한가 (2026-08-26 라이브 실측):
+      응답 조립부가 `reconciliation` 을 **키를 손으로 골라** 만들면서 `balanced`·
+      `discrepancies`·`tolerance` 만 복사하고, 보류 사유(`balanced_basis`·`balanced_absent`)를
+      **조립 지점에서 버렸다.** 사유는 계산됐지만 **응답에 실린 적이 없다.**
+      라이브 보류 11곳 **전부**가 그 상태였고, 저장소 검증기가 '무언 보류' 위반으로 신고한다.
 
-      라이브(`propai-v002789-3f46fa47` · admin 테넌트): 보류 **11곳 전부**가 사유를 붙이는
-      갈래(`scheduled_total==0` ∧ `revenue_signed==0`)를 타는데 `balanced_absent` 가 **없었다.**
-      저장소 자기 검증기 `validate_withheld_pair` 가 이 형상을 **'무언 보류' 위반**으로 신고한다.
+    ★**보수적 화이트리스트를 쓰지 않는다.** 사유 키 이름을 여기에 열거하면 **다음에 추가되는
+      사유 키가 똑같이 사라진다**(계약은 `text_field` 로 **접두가 다른** 사유 키도 허용한다 —
+      실측 선례: 값 `sell_claim_judgment` ↔ 사유 `sell_claim_reason`).
+      그래서 **조립부가 자기 이름으로 싣는 키만 빼고 나머지는 전부 흘린다.**
 
-    ★`#838` 의 테스트가 못 잡은 이유: **순수 함수(`_reconcile`)만 태우고 조립을 안 태웠다.**
-      그래서 이 함수를 꺼내 **조립 자체를 행동으로** 잠근다.
+    ★`balanced` 가 **입력에 없으면 아무것도 만들지 않는다**(`{}` 반환).
+      없는 판정을 발명하면 **입력엔 없던 '무언 보류'를 이 함수가 만들어 낸다.**
 
-    ★`_absent` 는 **값이 None 일 때만** 실린다 — 값이 있는데 사유 코드가 남으면
-      `validate_withheld_pair` 가 **'거짓 보류'** 로 신고한다(양방향 계약).
+    ★값이 있는데 사유가 따라오면 **떼어낸다** — `validate_withheld_pair` 가 그 조합을
+      **'거짓 보류'** 로 신고한다(양방향 계약).
     """
-    r = rec or {}
-    out: dict[str, Any] = {"balanced": r.get("balanced")}
-    if r.get("balanced") is None:
-        for k in ("balanced_basis", "balanced_reason", "balanced_absent"):
-            v = r.get(k)
-            if v:
-                out[k] = v
+    r = rec if isinstance(rec, dict) else {}
+    if "balanced" not in r:
+        return {}
+    out = {k: v for k, v in r.items() if k not in _RECONCILE_ASSEMBLY_OWNED}
+    if out.get("balanced") is not None:
+        return {"balanced": out["balanced"]}
     return out
 
 

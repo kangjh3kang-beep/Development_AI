@@ -274,12 +274,25 @@ def draft_warning_notice(warning_count: int, font: str):
     return Paragraph(f"<b>{_esc(text)}</b>", pstyle)
 
 
-def footer_callback(meta):
-    """모든 페이지 하단에 페이지번호·기밀·문서ID·작성일·승인등급. reportlab onPage 콜백."""
+def footer_callback(meta, font: str | None = None):
+    """모든 페이지 하단에 페이지번호·기밀·문서ID·작성일·승인등급. reportlab onPage 콜백.
+
+    ★`font` 는 **한글이 그려지는 폰트**여야 한다(`register_font()` 반환값).
+      종전엔 `T.FONT_FALLBACK`(= `Helvetica`, 라틴·숫자 전용)으로 그렸는데,
+      꼬리말 내용은 **한글**이다 — `BRANDING`("사통팔땅 · AI 부동산 인텔리전스") ·
+      `CONFIDENTIAL_LABEL`("대외비 (CONFIDENTIAL)") · `APPROVAL_LABEL`("내부 초안 …").
+      그 결과 **모든 PDF 보고서의 꼬리말이 두부(□)로 나갔다.**
+
+    ★라이브 실측(2026-08-26 · 실거래 보고서 6쪽): 추출 텍스트에 `■` **114개**,
+      전부 머리말/꼬리말 줄. **본문 한글 1,949자는 정상**이었다 —
+      즉 **본문만 보면 정상으로 보이고**, 바이트가 나오는 것과 읽을 만한 것은 다르다.
+
+    ★`font=None` 이면 종전대로 폴백한다(호출부 미갱신 시 무회귀).
+    """
 
     def _draw(canvas, doc):
         canvas.saveState()
-        canvas.setFont(T.FONT_FALLBACK, 7.5)
+        canvas.setFont(font or T.FONT_FALLBACK, 7.5)
         canvas.setFillColor(_c(T.MUTED))
         from reportlab.lib.units import mm
 

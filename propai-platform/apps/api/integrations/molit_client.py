@@ -494,11 +494,13 @@ class MolitClient(BaseAPIClient):
                     "seller_type": str(g("slerGbn", "매도자", "")).strip(),
                 })
             # (Fix #2·감사 HIGH) 수집 검증 게이트 — 정의만 돼 있고 소비처 0건이던 TransactionRecord
-            # 스키마를 실수집 경로에 배선. 가격<=0·면적(0~1000)·층(-5~120) 위반행을 드롭한다
+            # 스키마를 실수집 경로에 배선. 가격<=0·**유형별 면적상한**·층(-5~120) 위반행을 드롭한다
+            # (★면적상한은 유형별이다 — 아파트 1000㎡ / 토지는 절대상한만. 종전 일괄 1000㎡ 는
+            #  라이브 실측에서 **정상 토지거래의 60%(68/114)를 드롭**했다).
             # (무목업: 가짜 생성 없이 드롭만, 드롭 사실은 로그로 관측).
             from app.services.data_validation.validator import validate_transactions
 
-            validated, vreport = validate_transactions(result)
+            validated, vreport = validate_transactions(result, prop_type=prop_type)
             if vreport["dropped"]:
                 logger.warning(
                     "실거래 스키마 검증 드롭",
