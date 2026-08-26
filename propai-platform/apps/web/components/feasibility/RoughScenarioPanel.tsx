@@ -43,6 +43,7 @@ import { IntegrityWarnings, type IntegrityWarning } from "@/components/ui/Integr
 import { DataSourceNotice } from "@/components/ui/DataSourceNotice";
 import { AnalysisHistoryCard } from "@/components/common/AnalysisHistoryCard";
 import { optionsSummary } from "@/lib/use-analysis-history";
+import LegacyLedgerTable, { type LegacyLedger } from "./LegacyLedgerTable";
 
 /** Nexus label-caps(DESIGN.md B2) — 인풋 상단 소형 라벨. Space Grotesk 대문자 트래킹. */
 const labelCapsCls =
@@ -147,6 +148,10 @@ interface RoughScenarioResult {
   //   소비가 불가능했다(2026-08-24). `degraded_notes` 와 **다른 배열**이다.
   integrity_warnings?: IntegrityWarning[] | null;
   special_parcel?: { honest_disclosure?: string | null } | null;
+  // ★간략 수지 원장(additive · legacy_ledger.py) — 축별 합계만으로는 실무 수지표가 읽히지
+  //   않아, 행마다 「수량 × 단가 = 금액」과 근거를 붙이고 검산 결과를 함께 싣는다.
+  //   ★타입에 안 넣으면 **소비가 불가능하다** — 바로 위 integrity_warnings 가 그 전례다.
+  legacy_ledger?: LegacyLedger | null;
 }
 
 /* ── 표기 헬퍼 — 값 없으면 null 반환(호출부가 '데이터 없음' 정직표기) ── */
@@ -777,6 +782,13 @@ function RoughScenarioPanelInner({ projectId }: { projectId?: string }) {
                 <DataRow label="제경비(기타)" text={eok(result.cost_breakdown.other_won)} />
                 <DataRow label="부담금(공사·분양단계)" text={eok(result.cost_breakdown.charges_won)} />
               </div>
+              {/* ★위 5줄은 축별 합계다. 아래 원장은 **행마다 「수량 × 단가 = 금액」과 근거**를
+                  붙이고, 맨 아래에서 **합계가 맞는지 스스로 확인한 결과**를 보인다. */}
+              {result.legacy_ledger && (
+                <div className="mt-4">
+                  <LegacyLedgerTable ledger={result.legacy_ledger} />
+                </div>
+              )}
             </div>
           </section>
 
