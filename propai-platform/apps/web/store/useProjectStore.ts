@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { apiClient } from '@/lib/api-client';
 import { fetchAllProjects, selectOrphans } from "@/lib/projects-fetch";
+import { migratePaidArtifacts } from "@/lib/paid-artifact-migration";
 import { projectCreateHeaders } from "@/lib/project-create-key";
 import { createDebouncedStorage } from '@/lib/debounced-storage';
 import { purgeProjectLocalData } from "@/lib/project-lifecycle";
@@ -184,6 +185,16 @@ export const useProjectStore = create<ProjectState>()(
               migrated.push(o); // 실패 시 로컬 유지(다음 동기화에 재시도)
             }
           }
+          // ★유료 산출물 승계 — 목록을 **끝까지 받은 이 자리**가 유일하게 옳은 시점이다.
+          //   귀속 규칙이 "이 사용자가 볼 수 있는 프로젝트 id" 를 재료로 쓰는데, 그 목록은
+          //   여기서야 확정된다. 절단이면 판단이 **미룸**으로 떨어져 다음 동기화에 다시 온다
+          //   (불완전한 목록으로 귀속하면 오래된 프로젝트의 유료 렌더가 전부 남의 것이 된다).
+          try {
+            migratePaidArtifacts({
+              visibleProjectIds: new Set(backend.map((p) => p.id)),
+              truncated: !listComplete,
+            });
+          } catch { /* 승계 실패는 조용히 넘긴다 — 레거시 원본은 그대로라 다음에 다시 시도된다 */ }
           if (listComplete) {
             set({ projects: [...backend, ...migrated] });
           } else {
