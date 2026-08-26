@@ -20,7 +20,6 @@ import type { DemographicProfile, DataSource, UnitMixRecommendation } from "./ma
 import { DataSourceBadge } from "./DataSourceBadge";
 import { formatManwon as formatMan } from "@/lib/formatters";
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
 
 // 연령 키 → 한국어 라벨(백엔드 mock/실데이터 키와 통일).
 const AGE_LABELS: Record<string, string> = {
