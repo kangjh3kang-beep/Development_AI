@@ -142,6 +142,10 @@ function Field({ label, value }: { label: string; value: string | number }) {
 export const RISK_LEVEL_STYLE: Record<string, string> = {
   "낮음": "bg-[var(--status-success)]/20 text-[var(--status-success)]",
   "보통": "bg-[var(--status-warning)]/20 text-[var(--status-warning)]",
+  // ★색 **값**은 계약이 아니다 — 계약은 "낮음/폴백과 **구별된다**"이다.
+  //   그래서 이 문자열을 다른 색으로 바꾸는 변이는 **의도적으로 생존**한다
+  //   (mutate_changed.py 3건 중 1건 생존 · 2026-08-27). 색을 못 박으면 디자인
+  //   토큰을 바꿀 때마다 깨지는 취약한 락이 된다. 구별성은 RiskLevelStyle.test.tsx 가 잠근다.
   "중간": "bg-amber-500/20 text-amber-400",
   "높음": "bg-orange-500/20 text-orange-400",
   "극히 높음": "bg-[var(--status-error)]/20 text-[var(--status-error)]",
