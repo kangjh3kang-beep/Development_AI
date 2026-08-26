@@ -101,6 +101,7 @@ export function ModuleInputForm() {
     put("total_gfa_sqm", gfa, gfa > 0);
     put("official_price_per_sqm", seed.officialPricePerSqm ?? 0, seed.officialPricePerSqm != null);
     put("sido_name", seed.sidoName ?? "", seed.sidoName != null);
+    put("sigungu_name", seed.sigunguName ?? "", seed.sigunguName != null);
     if (Object.keys(patch).length > 0) setInput(patch);
     // editedFields는 의도적으로 의존성에서 제외(최신값을 클로저로 참조, 자동시드 무한루프 방지).
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -129,6 +130,7 @@ export function ModuleInputForm() {
     const seed = siteDerivedFeasibilityFields(siteAnalysis);
     if (seed.totalLandAreaSqm != null) patch.total_land_area_sqm = seed.totalLandAreaSqm;
     if (seed.sidoName != null) patch.sido_name = seed.sidoName;
+    if (seed.sigunguName != null) patch.sigungu_name = seed.sigunguName;
     if (seed.officialPricePerSqm != null) patch.official_price_per_sqm = seed.officialPricePerSqm;
     setInput(patch);
   }, [siteAnalysis, setInput]);

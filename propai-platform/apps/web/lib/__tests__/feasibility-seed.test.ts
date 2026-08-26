@@ -66,6 +66,36 @@ describe("시드 산출 — 합성 입력", () => {
     expect(siteDerivedFeasibilityFields(site({ address: "   " })).sidoName).toBeNull();
     expect(siteDerivedFeasibilityFields(site({ address: "경기도 성남시" })).sidoName).toBe("경기도");
   });
+
+  // ── 시군구 — **이 필드가 없으면 상하수도 원인자부담금이 조용히 사라진다** ──
+  //   백엔드 B03(수도법 §71)·B04(하수도법 §61)는 `sigungu_name` 으로 시군구 조례 단가표를
+  //   조회한다. 빈 문자열이면 `unavailable` 로 강등돼 합계에서 빠지는데, 화면엔
+  //   「미등록 지역」처럼 보인다 — 실제로는 **우리가 안 보낸 것**이다.
+  it("★★둘째 토큰이 시군구명 — 값을 못 박는다(존재검사로는 `= \"\"` 가 살아남는다)", () => {
+    const r = siteDerivedFeasibilityFields(
+      site({ address: "울산광역시 동구 화정동 637-11" }),
+    );
+    expect(r.sidoName).toBe("울산광역시");
+    expect(r.sigunguName).toBe("동구");
+  });
+
+  it("★두 모집단이 갈린다 — 토큰 2개 이상이면 시군구가 나오고, 1개면 null 이다", () => {
+    // 이 두 줄이 **같은 값**을 내면 시군구 배선을 끊어도 통과한다.
+    const many = siteDerivedFeasibilityFields(site({ address: "경기도 성남시 분당구" }));
+    const one = siteDerivedFeasibilityFields(site({ address: "세종특별자치시" }));
+    expect(many.sigunguName).toBe("성남시");
+    expect(one.sigunguName).toBeNull();
+    expect(many.sigunguName).not.toBe(one.sigunguName);
+    // 시도는 **둘 다** 나와야 한다 — 시군구가 없다고 시도까지 잃으면 B01 판정이 죽는다.
+    expect(one.sidoName).toBe("세종특별자치시");
+  });
+
+  it("★연속 공백·탭에도 토큰이 밀리지 않는다 — 형제와 같은 `/\\s+/` 규칙", () => {
+    // 종전 `split(" ")` 는 빈 토큰을 만들어 `sido_name=""` 를 보냈다(형제가 옳았다).
+    const r = siteDerivedFeasibilityFields(site({ address: "  부산광역시   해운대구\t우동 " }));
+    expect(r.sidoName).toBe("부산광역시");
+    expect(r.sigunguName).toBe("해운대구");
+  });
 });
 
 // ── 축 ② 배선 — 세 경로가 **공용 산출처**를 쓰는가 ──────────────────────

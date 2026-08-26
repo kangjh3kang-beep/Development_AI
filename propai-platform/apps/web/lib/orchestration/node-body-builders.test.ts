@@ -239,6 +239,25 @@ describe("buildNodeBody — 노드별 평면 body 매핑", () => {
     const { body } = buildNodeBody("feasibility", ctx, "p1");
     expect(body.official_price_per_sqm).toBe(3_000_000);
     expect(body.sido_name).toBe("울산광역시");
+    // ★시군구 — B03·B04(상하수도 원인자부담금)가 이 값으로 시군구 조례 단가표를 조회한다.
+    //   안 보내면 백엔드가 `unavailable` 로 강등해 **합계에서 빠지는데**, 화면엔
+    //   「미등록 지역」처럼 보인다. 값을 못 박는다.
+    expect(body.sigungu_name).toBe("동구");
+  });
+
+  it("★음성 대조군 — 시군구가 없는 주소면 **키 자체를 안 싣는다**(빈 문자열로 날조하지 않는다)", () => {
+    const ctx: NodeBodyContext = {
+      siteAnalysis: multiSite({
+        address: "세종특별자치시",
+        officialPrices: [{ pricePerSqm: 1_000_000 }],
+      } as Partial<SiteAnalysisData>),
+      designData: design(),
+    };
+    const { body } = buildNodeBody("feasibility", ctx, "p1");
+    expect(body.sigungu_name).toBeUndefined();
+    // ★두 모집단이 갈린다 — 시도는 실리고 시군구만 빠진다. 둘이 같이 움직이면
+    //   시군구 배선을 끊어도 시도 단언이 대신 초록을 만든다.
+    expect(body.sido_name).toBe("세종특별자치시");
   });
 
   it("★음성 대조군 — 공시지가가 없으면 **키 자체를 안 싣는다**(0 으로 날조하지 않는다)", () => {

@@ -281,6 +281,8 @@ export function buildNodeBody(
         const seed = siteDerivedFeasibilityFields(site);
         if (seed.officialPricePerSqm != null) body.official_price_per_sqm = seed.officialPricePerSqm;
         if (seed.sidoName != null) body.sido_name = seed.sidoName;
+        // ★B03·B04(상하수도 원인자부담금)가 읽는 시군구 조례 키. 안 보내면 조용히 unavailable.
+        if (seed.sigunguName != null) body.sigungu_name = seed.sigunguName;
       }
       // (Phase C-2) ★분양수입 폐루프: 매출단가·세대수·세대(전용)면적을 채워 수지가 실거래 기반으로 계산되게 한다.
       //  ★D1 규약(2026-07-16 갱신): avg_area_pyeong = '전용면적 평'(전 생산처 통일). 백엔드

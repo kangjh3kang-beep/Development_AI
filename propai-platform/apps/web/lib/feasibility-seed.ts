@@ -44,8 +44,23 @@ export type SiteDerivedFeasibilityFields = {
    *   값 변경이 한 커밋에 섞인다 → `__tests__/feasibility-seed.test.ts` 에 `it.todo` 로 남긴다.
    */
   officialPricePerSqm: number | null;
-  /** 시도명. 주소 첫 토큰(형제와 동일 규칙). */
+  /** 시도명. 주소 **첫** 토큰(형제와 동일 규칙). */
   sidoName: string | null;
+  /**
+   * 시군구명. 주소 **둘째** 토큰(형제와 동일 규칙).
+   *
+   * ★**이 필드가 없으면 상하수도 원인자부담금이 조용히 사라진다.**
+   *   백엔드 `utility_stage_engine` 의 B03(수도법 §71)·B04(하수도법 §61)는
+   *   `sigungu_name` 으로 **시군구 조례 단가표**를 조회한다. 빈 문자열이면 조회가 실패해
+   *   `confidence="unavailable"` 로 강등되고 **합계에서 빠진다** — 화면엔 「미등록 지역」처럼
+   *   보이지만 실제로는 **우리가 안 보낸 것**이다.
+   *
+   * ★**알려진 한계(형제와 동일 — 미측정)**: 세종특별자치시처럼 시군구 계층이 없는 광역은
+   *   둘째 토큰이 읍면동(`"한솔동"`)이라 조례 조회에 실패한다. 실패해도 값을 지어내지 않고
+   *   `unavailable` 로 남으므로 **과대·과소 계상은 아니다**. 정정하려면 시도별 계층표가
+   *   필요하고 그건 배선이 아니라 **데이터 작업**이라 이 커밋의 범위 밖이다.
+   */
+  sigunguName: string | null;
 };
 
 /** 양수만 통과. `NaN`·음수·0 은 **미확보**로 본다(0 은 "공시지가 0원"이 아니라 "모름"이다). */
@@ -63,11 +78,15 @@ export function siteDerivedFeasibilityFields(
   site: SiteAnalysisData | null | undefined,
 ): SiteDerivedFeasibilityFields {
   const addr = typeof site?.address === "string" ? site.address.trim() : "";
-  const sido = addr ? (addr.split(" ")[0] || "") : "";
+  // ★형제(`InvestmentAnalyticsWorkspaceClient.tsx`)와 **같은** 분리 규칙 — `/\s+/` + 빈 토큰 제거.
+  //   종전 이 파일은 `split(" ")` 였다: 연속 공백·탭이 있으면 빈 토큰이 첫 자리에 와
+  //   `sido_name=""` 가 됐다. 형제가 옳았고 여기가 부분집합이었다.
+  const parts = addr ? addr.split(/\s+/).filter(Boolean) : [];
   return {
     totalLandAreaSqm: positive(effectiveLandAreaSqm(site)),
     officialPricePerSqm: positive(site?.officialPrices?.[0]?.pricePerSqm),
-    sidoName: sido || null,
+    sidoName: parts[0] || null,
+    sigunguName: parts[1] || null,
   };
 }
 
@@ -81,4 +100,5 @@ export const SITE_DERIVED_REQUEST_FIELDS = [
   "total_land_area_sqm",
   "official_price_per_sqm",
   "sido_name",
+  "sigungu_name",
 ] as const;
