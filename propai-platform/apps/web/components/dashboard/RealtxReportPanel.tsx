@@ -16,7 +16,7 @@
  *   유일한 출처라 **클라이언트가 서버로 보낸다.**
  */
 
-import { AlertTriangle, FileSearch, Loader2 } from "lucide-react";
+import { AlertTriangle, Download, FileSearch, Loader2 } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 
 import { apiClient } from "@/lib/api-client";
@@ -53,11 +53,47 @@ type Fetch =
 const won = (man?: number) =>
   man == null ? "—" : man >= 10_000 ? `${(man / 10_000).toFixed(1)}억` : `${man.toLocaleString()}만`;
 
+/** 보고서 파일을 받는다 — `apiClient` 는 JSON 전용이라 **raw fetch + Bearer** 를 쓴다
+ *  (저장소 관례: `DecisionBriefPanel`·`ReportDownloadMenu`·`RegistryRightsReportButton` 동일). */
+async function downloadReport(
+  parcels: unknown[], fmt: "pdf" | "pptx" | "docx",
+): Promise<void> {
+  const { apiBaseUrl } = apiClient.getRuntimeConfig();
+  const token = typeof window !== "undefined"
+    ? localStorage.getItem("propai_access_token") ?? "" : "";
+  const res = await fetch(`${apiBaseUrl}/market/realtx-report/download?format=${fmt}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify({ parcels, months: 6, prop_type: "land" }),
+  });
+  if (!res.ok) {
+    // ★상태코드를 분류해 **정직한 사유**를 말한다(형제 관례) — 침묵 금지.
+    const detail = res.status === 404
+      ? "보고서 엔드포인트가 아직 배포되지 않았습니다(deploy-pending)."
+      : res.status === 401 || res.status === 403
+        ? "보고서를 받으려면 로그인 또는 권한이 필요합니다."
+        : res.status === 429
+          ? "요청이 많아 잠시 후 다시 시도해야 합니다."
+          : `보고서 생성에 실패했습니다 (HTTP ${res.status}).`;
+    throw new Error(detail);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `realtx_report.${fmt}`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 export function RealtxReportPanel() {
   const projects = useProjectStore((s) => s.projects);
   const byProject = useLandScheduleStore((s) => s.byProject);
   const [pid, setPid] = useState<string>("");
   const [fetchState, setFetch] = useState<Fetch>({ s: "idle" });
+  const [dl, setDl] = useState<{ s: "idle" | "busy" } | { s: "error"; m: string }>({ s: "idle" });
 
   // ★필지를 **가진** 프로젝트만 고르게 한다 — 빈 프로젝트를 골라 "0건"을 보는 것은
   //   사용자에게 *"거래가 없다"* 는 거짓 인상을 준다(실제로는 조회 대상이 없는 것).
@@ -86,6 +122,23 @@ export function RealtxReportPanel() {
       setFetch({ s: "error", message: e instanceof Error ? e.message : "조회 실패" });
     }
   }, [pid, rows]);
+
+  const save = useCallback(async (fmt: "pdf" | "pptx" | "docx") => {
+    if (rows.length === 0) return;
+    setDl({ s: "busy" });
+    try {
+      await downloadReport(
+        rows.map((r) => ({
+          pnu: r.pnu ?? null, jibun: r.jibun, area_sqm: r.area_sqm,
+          zone_code: r.zone_code, owner_type: r.owner_type,
+        })),
+        fmt,
+      );
+      setDl({ s: "idle" });
+    } catch (e) {
+      setDl({ s: "error", m: e instanceof Error ? e.message : "보고서 생성 실패" });
+    }
+  }, [rows]);
 
   return (
     <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-4">
@@ -129,7 +182,29 @@ export function RealtxReportPanel() {
         </p>
       )}
 
-      {fetchState.s === "ready" && <ReportView data={fetchState.data} />}
+      {fetchState.s === "ready" && (
+        <>
+          <ReportView data={fetchState.data} />
+          {/* ★보고서 저장 — 화면과 **같은 값**을 정본 통로(render/)로 문서화한다. */}
+          <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[var(--line)] pt-3">
+            <span className="text-[10px] text-[var(--text-tertiary)]">보고서 저장</span>
+            {(["pdf", "pptx", "docx"] as const).map((f) => (
+              <button
+                key={f}
+                onClick={() => save(f)}
+                disabled={dl.s === "busy"}
+                className="inline-flex items-center gap-1 rounded-lg border border-[var(--line)] px-2 py-1 text-[11px] font-bold text-[var(--accent-strong)] disabled:opacity-40"
+              >
+                {dl.s === "busy" ? <Loader2 className="size-3 animate-spin" aria-hidden /> : <Download className="size-3" aria-hidden />}
+                {f.toUpperCase()}
+              </button>
+            ))}
+            {dl.s === "error" && (
+              <span className="text-[11px] text-[var(--status-error)]">{dl.m}</span>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }
