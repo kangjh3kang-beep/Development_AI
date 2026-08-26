@@ -274,3 +274,82 @@ def test_printed_ledger_keeps_calc_for_healthy_rows():
     calc_col = table.headers.index("산출내역(수량 × 단가)")
     with_calc = [r for r in table.rows if r[calc_col]]
     assert with_calc, "산출내역이 있는 행이 0건 — 게이트가 과잉 적용됐다"
+
+
+# ── ⑥ 변이 생존 처리 — 남은 구멍을 락으로, 이중가드는 사유를 코드에 ──────────────
+def test_the_judge_recognises_each_convention_in_isolation():
+    """판정자가 표기 관례 **셋을 각각 단독으로** 인식하는가 (계약 테스트).
+
+    ★**왜 합성 항목인가.** 실엔진에서는 `amount_computable is False` 가 **항상**
+      `confidence="unavailable"` 과 함께 나온다(`utility_stage_engine.py:86` — 금액이
+      `None` 이면 `get_metro_transport_charge` 가 이미 `confidence` 를 강등해 둔다).
+      그래서 실엔진만 태우면 그 분기는 **이중 가드**라 변이가 생존한다
+      (`scripts/mutate_changed.py` 실측 — `project_charges.py:73` SURVIVED).
+
+      실엔진 픽스처를 **발명해서** 그 조합을 만들면 *"프로덕션에서 안 도는 코드가 초록"* 이
+      된다(#97 의 반대 얼굴). 대신 **판정자의 선언된 계약**을 직접 태운다 — 이 함수는
+      *"관례 3종을 한 자리에서 판정한다"* 고 선언하므로, 그 선언 자체가 검사 대상이다.
+
+    ★단독 인식이 필요한 실제 이유: 새 엔진이 셋 중 **하나만** 쓰는 날이 온다.
+      C07 이 정확히 그랬다 — 형제와 다른 자리 하나만 써서 수집기를 통과해 버렸다.
+    """
+    assert charge_item_unavailable({"detail": {"confidence": "unavailable"}}), "관례1 미인식"
+    assert charge_item_unavailable({"confidence": "unavailable"}), "관례2(C07 계열) 미인식"
+    assert charge_item_unavailable({"detail": {"amount_computable": False}}), "관례3 미인식"
+
+    # 음성 대조군 — 이것들이 True 면 판정자가 "항상 강등"이라 답하는 것이다.
+    assert not charge_item_unavailable({}), "빈 항목을 강등으로 판정"
+    assert not charge_item_unavailable({"detail": {"confidence": "regional"}}), "regional 을 강등으로"
+    assert not charge_item_unavailable({"confidence": "confirmed"}), "confirmed 를 강등으로"
+    assert not charge_item_unavailable({"detail": {"amount_computable": True}}), "산출 가능을 강등으로"
+    assert not charge_item_unavailable("문자열이 들어와도 터지지 않는다")  # type: ignore[arg-type]
+
+
+def test_printed_ledger_keeps_subtotal_rows():
+    """인쇄본에 **소계 행**이 남아 있는가.
+
+    ★비고 열을 더하면서 소계 행에도 `None` 패딩을 하나 더 넣었다 — 그 행의 폭이나 라벨이
+      깨져도 아무 락이 없었다(변이 SURVIVED). 실무 수지표에서 **소계는 읽는 사람이
+      가장 먼저 보는 줄**이라 장식이 아니다.
+    """
+    table = _report_ledger_table(in_infra_charge_zone=None)
+    label_col, amount_col = table.headers.index("항목"), table.headers.index("금액(원)")
+    calc_col = table.headers.index("산출내역(수량 × 단가)")
+
+    subtotals = [r for r in table.rows if str(r[label_col]) == "소계"]
+    assert subtotals, "인쇄본에 소계 행이 없다 — 실무 양식이 아니다"
+    for row in subtotals:
+        assert len(row) == len(table.headers), f"소계 행 폭이 어긋난다: {len(row)}"
+        assert row[amount_col] is not None, "소계인데 금액이 비었다"
+        assert row[calc_col] is None, "소계에 산출내역이 붙었다 — 소계는 수량×단가가 없다"
+
+
+@pytest.mark.parametrize("prose_line", [
+    "수량·단가가 공란인 행은 「비고」에 사유가 있습니다",
+    "**미조회(잠정)** 와",
+])
+def test_the_reader_facing_prose_is_deliberately_not_asserted(prose_line: str):
+    """★**이 테스트는 산문을 단언하지 않는다** — 왜 그런지를 기록하는 자리다.
+
+    변이 도구가 `rough_scenario_report.py:695-696`(커버리지 안내 문구)의 문자열 변경을
+    **SURVIVED** 로 보고했다. 그것을 초록으로 만들려면 문구를 그대로 단언해야 하는데,
+    **문구는 계약이 아니라 표현**이라 다듬을 때마다 깨지는 **취약한 락**이 된다
+    (CLAUDE.md §G30 — *"산문까지 단언하지 마라. 왜 이 생존이 구멍이 아닌지를 적어라"*).
+
+    **구멍이 아닌 이유**: 이 문구가 사라져도 **사용자가 손해를 보지 않는다.** 사유는
+    문구가 아니라 **「비고」 열의 실제 셀 값**으로 전달되고, 그것은 위
+    `test_printed_ledger_has_a_note_column_and_carries_the_reason` 이 잠근다.
+    문구는 그 셀을 **설명**할 뿐이다.
+
+    ★그래서 여기서는 **문구가 존재한다는 사실만** 확인한다(문안이 아니라 자리).
+      이 단언은 파일이 통째로 사라지면 실패하고, 문구를 다듬으면 실패하지 않는다.
+    """
+    import inspect
+
+    from app.services.feasibility import rough_scenario_report
+
+    src = inspect.getsource(rough_scenario_report)
+    assert prose_line in src, (
+        f"안내 문구가 사라졌다: {prose_line!r} — 「비고」 셀은 잠겨 있으나 "
+        "읽는 사람에게 두 종류의 공란을 구별해 주는 설명이 없어진다"
+    )
