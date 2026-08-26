@@ -14,6 +14,7 @@
 import { useEffect } from "react";
 import { GlobalAddressSearch, type AddressEntry } from "@/components/common/GlobalAddressSearch";
 import { parcelAddressList, preferredEntryAddress } from "@/lib/parcel-rows";
+import { useHydrated } from "@/hooks/useHydrated";
 import { useProjectStore } from "@/store/useProjectStore";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 
@@ -70,6 +71,7 @@ export function ProjectAddressInput({
   single = false,
 }: ProjectAddressInputProps) {
   void _multi; // 호환용(무시) — 항상 다필지 UI
+  const hydrated = useHydrated();
   const projects = useProjectStore((s) => s.projects);
   const snapshots = useProjectContextStore((s) => s.snapshots);
   const setProject = useProjectContextStore((s) => s.setProject);
@@ -163,7 +165,15 @@ export function ProjectAddressInput({
         <span className="text-xs font-bold uppercase tracking-widest text-[var(--text-tertiary)]">
           {label}
         </span>
-        {!hideProjectPicker && pickerProjects.length > 0 && (
+        {/* ★재수화 이후에만 그린다 — `pickerProjects` 는 `localStorage`(zustand persist)에서
+            파생되므로 **서버는 항상 빈 배열**이다. 그대로 조건에 쓰면 서버는 이 노드를 안 그리고
+            브라우저는 그려 **하이드레이션 불일치**(React #418)가 난다.
+            ★로컬 프로덕션 빌드 변이로 확정했다(2026-08-25): 이 조건을 무력화하면 `/ko/regulations`
+              의 #418 이 1→0 이 되고, 같은 배치의 다른 라우트(양성 대조군)는 1 을 유지했다.
+            ★사용자 가시 동작은 바뀌지 않는다 — 서버 HTML 에는 애초에 이 노드가 없었고,
+              사용자가 보는 것은 재수화 이후 화면이다. 그래서 제품 결정이 아니라 렌더 시점 교정이다.
+            전례: `hooks/useHydrated` 독스트링의 2026-08-13 `LifecycleProgressRail` 사고와 같은 형태. */}
+        {hydrated && !hideProjectPicker && pickerProjects.length > 0 && (
           <div className="flex max-w-[60%] items-center gap-2">
             {pickerLabel && (
               <span className="shrink-0 text-[11px] font-bold text-[var(--text-tertiary)]">{pickerLabel}</span>
