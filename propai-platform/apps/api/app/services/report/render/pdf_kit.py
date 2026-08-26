@@ -275,11 +275,27 @@ def draft_warning_notice(warning_count: int, font: str):
 
 
 def footer_callback(meta):
-    """모든 페이지 하단에 페이지번호·기밀·문서ID·작성일·승인등급. reportlab onPage 콜백."""
+    """모든 페이지 하단에 페이지번호·기밀·문서ID·작성일·승인등급. reportlab onPage 콜백.
+
+    ★2026-08-26 — 여기서 **한글이 전 페이지·전 보고서에서 네모로 렌더되고 있었다.**
+      `T.FONT_FALLBACK`(Helvetica)로 `setFont` 해 놓고 그리는 문자열은
+      `T.BRANDING`("사통팔땅 · AI 부동산 인텔리전스") · `T.CONFIDENTIAL_LABEL`("대외비") ·
+      `T.APPROVAL_LABEL`("내부 초안") 로 **전부 한글**이었다. Helvetica 에 한글 글리프는 없다.
+
+      발견 경위: `#853` 착지 후 **라이브 API 가 준 PDF 7페이지를 추출**해 보니 본문 한글
+      1,971자는 정상인데 꼬리글만 네모였다(추출 아티팩트가 아니다 — 같은 추출기다).
+
+      이 콜백은 **공용 헬퍼**라 `render_report` 정본 통로를 쓰는 보고서 **13개 파일**이
+      전부 이 꼬리글을 쓴다. 한 곳을 고치면 전역이 따라온다.
+
+      `register_font()` 는 CID 등록에 실패하면 스스로 라틴으로 폴백하므로 여기서
+      다시 폴백을 적을 필요가 없다(폴백 로직 이중화 금지).
+    """
+    footer_font = register_font()
 
     def _draw(canvas, doc):
         canvas.saveState()
-        canvas.setFont(T.FONT_FALLBACK, 7.5)
+        canvas.setFont(footer_font, 7.5)
         canvas.setFillColor(_c(T.MUTED))
         from reportlab.lib.units import mm
 
