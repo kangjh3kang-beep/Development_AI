@@ -57,15 +57,22 @@ function scanAll(): ClockHit[] {
  */
 const RATCHET: Record<string, string> = {
   "components/operations/DeskAppraisalReportClient.tsx":
-    "감정 보고서의 발행 시각 — '언제 발행됐는가'를 서버가 실어 보내야 정확하다(스키마 판단 필요)",
+    "141행 `today.current` → 385행 `작성일 {today.current}` 로 **화면에 표시**된다. " +
+    "판단: 감정 보고서의 **작성일 기준**이 사용자 로컬 날짜인가 서버/발행 기준일인가",
   "components/sales/DeveloperProjection.tsx":
-    "급여 광고 섹션의 '이번 달' 기준 — 회계 기준월이 달력월과 같은지 확인이 필요하다",
+    "401행 `thisMonth`(YYYY-MM) → 급여 조회 월 `useState` **초깃값**. " +
+    "판단: 기본 조회월이 **달력월**인가 회계 기준월인가",
   "components/sales/TaxPanel.tsx":
-    "세금 계산의 기준 연도 — 과세 기준일을 무엇으로 볼지는 세무 판단이다",
+    "17행 `period`(YYYY-MM) → 세금계산서 **조회 기간 기본값**(과세 산식이 아니다). " +
+    "판단: 기본 기간이 **이번 달**인가 직전 신고기간인가",
   "components/sales-app/SocialPanel.tsx":
-    "방송 화면의 주야 분기 — 사용자 로컬 시각으로 갈라야 하므로 마운트 후 판정이 맞다(UX 판단)",
+    "986행 `hour >= 21 || hour < 8` → 야간 안내 분기. **사용자 로컬 시각 기준이 맞다** — " +
+    "판단은 거의 없고 **마운트 후 판정**으로 옮기면 된다(서버는 서버 시간대라 갈린다)",
   "components/sre/SreDashboardClient.tsx":
-    "SRE 대시보드의 상대시간 표시 — 실시간 갱신이 의도라 마운트 후 타이머로 옮겨야 한다",
+    "★**제품 판단이 아니라 결함이다.** `logs` 는 `string[]` 로 **시각을 담지 않는데**(58행) " +
+    "137행이 줄마다 `new Date().toLocaleTimeString()` 를 찍는다 → 모든 로그가 **같은 현재 시각**을 " +
+    "보이고 리렌더마다 **과거 로그의 시각이 바뀐다**. 그 값은 로그가 난 시각이 아니다(거짓 정보). " +
+    "판단: **로그에 시각을 실을 것인가**(데이터 형태 변경) 아니면 **시각 표시를 뺄 것인가**",
 };
 
 describe("렌더 중 비결정 시각 호출 — 비성장 래칫", () => {
@@ -132,6 +139,15 @@ describe("렌더 중 비결정 시각 호출 — 비성장 래칫", () => {
     expect(hits.map((h) => h.file)).not.toContain("components/projects/ProjectsOverviewClient.tsx");
     expect(RATCHET).not.toHaveProperty("components/projects/ProjectsOverviewClient.tsx");
   });
+
+  /**
+   * ★부채를 **초록 안에 드러낸다**(커밋 메시지에만 적으면 안 드러난다 · 회귀망 규율 D13).
+   *
+   * `SreDashboardClient` 는 제품 판단이 아니라 **결함**이다 — 로그가 시각을 담지 않는데
+   * 화면이 렌더 시각을 찍어, 모든 줄이 같은 시각을 보이고 리렌더마다 과거 로그의 시각이 바뀐다.
+   * 고치려면 `logs` 가 `string[]` → `{at, message}[]` 가 돼야 한다(데이터 형태 변경).
+   */
+  it.todo("SRE 로그가 **자기 발생 시각**을 표시한다(현재는 렌더 시각을 찍는다 — logs 에 시각을 실어야 한다)");
 
   it("★'마지막 업데이트'는 데이터에서 파생한다 — 렌더 시각이 아니다", () => {
     const src = readFileSync(join(WEB_ROOT, "components/projects/ProjectsOverviewClient.tsx"), "utf8");
