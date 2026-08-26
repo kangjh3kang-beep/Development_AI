@@ -19,9 +19,39 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-#: 되돌아볼 개월 수 — 정정(해제·등기일자)은 **신고 후 수개월 뒤**에도 붙는다.
-#: `rgstDate` 는 라이브 실측 30.2% 만 기재돼 있어, 짧게 잡으면 나머지가 영영 안 채워진다.
-DEFAULT_LOOKBACK_MONTHS = 3
+#: **최근 창** — 매일 본다. 해제(`cdealType`)를 잡는 구간이다.
+#:
+#: ★해제는 **1개월부터 평평하다**(라이브 실측 2026-08-26 · 41465 apt · 노출별 해제율
+#:   1개월 2.9% · 2개월 2.3% · 3개월 2.6% · 5개월 2.1% · 7개월 2.5%). 즉 해제는
+#:   빨리 드러나므로 최근 3개월을 매일 보는 것으로 충분하다.
+RECENT_MONTHS = 3
+
+#: **꼬리 창** — 주 1회 본다. 등기일자(`rgstDate`)를 잡는 구간이다.
+#:
+#: ★★2026-08-27 — 종전 `DEFAULT_LOOKBACK_MONTHS = 3` 은 **등기의 절반을 구조적으로
+#:   못 봤다.** 같은 시군구를 **노출 기간별로** 재니 기재율이 **시간의 함수**였다:
+#:
+#:       노출     1개월   2개월   3개월   5개월   7개월
+#:       등기     5.4%   24.3%  **54.1%**  96.1%  97.4%
+#:
+#:   계약→등기 간격은 **완전 관측된 달**(202601 · 7개월 노출 · 표본 629)에서
+#:   중앙 **72일** · p90 **103** · p95 **109** · 최대 **150**, **90일 초과가 23.5%** 다.
+#:
+#: ★**그리고 절단된 표본은 확신에 찬 오답을 준다.** 노출 1개월 달로 같은 지표를 재면
+#:   *"90일 초과 0건(0.0%)"* 이 나온다. 우리가 저장한 3개월치만 봐도 같은 0% 가 나온다 —
+#:   **창 자체가 관측을 자르기 때문**이다. 완전 관측된 옛 달을 따로 태우고서야 보였다.
+#:   ★인계서의 *"등기 약 30% 기재"* 도 같은 이유로 무의미하다(나이를 안 밝힌 혼합 모집단).
+#:
+#: ★**이 상한(7)도 절단이다** — 5개월 96.1% → 7개월 97.4% 로 완만하지만 10·12개월은
+#:   재지 않았다. 더 늘릴 근거가 생기면 늘려야 하고, **줄이면 등기를 다시 놓친다**.
+TAIL_MONTHS = 7
+
+#: 꼬리를 도는 요일(0=월). 매일 돌 필요가 없다 — 그 구간은 하루 단위로 변하지 않는다.
+#: 쿼터 계산(실측 기준): 최근 36 스코프/일 + 꼬리 48 스코프/주 = 주간 평균 **약 43/일**.
+TAIL_WEEKDAY = 2  # 수요일
+
+#: 유형 — 토지는 지번이 100% 마스킹이지만 **법정동 단위 집계는 유효**하다(`#851` 실측).
+DEFAULT_PROP_TYPES = ("apt", "land")
 
 #: 유형 — 토지는 지번이 100% 마스킹이지만 **법정동 단위 집계는 유효**하다(`#851` 실측).
 DEFAULT_PROP_TYPES = ("apt", "land")
@@ -36,6 +66,21 @@ def recent_months(now: datetime, months: int) -> list[str]:
     return out
 
 
+def months_for(now: datetime) -> tuple[list[str], bool]:
+    """이번 실행이 볼 `YYYYMM` 목록과 **꼬리를 포함했는지**.
+
+    ★두 신호의 **시간상수가 다르다** — 해제는 1개월부터 평평하고(매일 봐야 잡는다),
+      등기는 5개월에야 포화한다(매일 볼 필요가 없다). 하나의 창으로 둘을 덮으면
+      등기에 맞춘 창이 **매일 불필요한 요청**을 내고, 해제에 맞춘 창이 **등기를 놓친다**.
+
+    Returns:
+        `(월 목록, 꼬리 포함 여부)` — `now` 만으로 결정된다(랜덤·전역상태 0).
+    """
+    include_tail = now.weekday() == TAIL_WEEKDAY
+    span = TAIL_MONTHS if include_tail else RECENT_MONTHS
+    return recent_months(now, span), include_tail
+
+
 async def sync_realtx_trades(ctx: dict[str, Any]) -> dict[str, Any]:
     """파생된 시군구 × 최근 N개월 × 유형을 수집·저장하고 정정을 탐지한다."""
     from app.services.land_intelligence.realtx_store import (
@@ -45,7 +90,7 @@ async def sync_realtx_trades(ctx: dict[str, Any]) -> dict[str, Any]:
     from apps.api.database.session import AsyncSessionLocal
     from apps.api.integrations.molit_client import MolitClient
 
-    months = recent_months(datetime.now(tz=UTC), DEFAULT_LOOKBACK_MONTHS)
+    months, tail_included = months_for(datetime.now(tz=UTC))
 
     async with AsyncSessionLocal() as db:
         # ★★2026-08-26 독립 리뷰 적발 — 종전엔 여기서 예외를 잡아 dict 로 돌려줬다.
@@ -58,6 +103,9 @@ async def sync_realtx_trades(ctx: dict[str, Any]) -> dict[str, Any]:
         client = MolitClient()
         stats: dict[str, Any] = {
             "targets": len(targets), "months": len(months),
+            # ★꼬리를 돌았는지 **결과에 남긴다** — 안 남기면 "오늘 등기를 봤나"를
+            #   로그만 보고는 알 수 없고, 주간 실행이 조용히 멈춰도 드러나지 않는다.
+            "tail_included": tail_included,
             # ★`submitted` 로 이름을 바꿨다 — 종전 `stored` 는 **투입 레코드 수**이지
             #   저장된 행 수가 아니다(멱등 upsert 라 기존 행 갱신이 섞인다).
             "submitted": 0, "corrections": 0,
@@ -99,8 +147,9 @@ async def sync_realtx_trades(ctx: dict[str, Any]) -> dict[str, Any]:
 
     stats["status"] = "ok" if not stats["persist_errors"] else "partial"
     logger.info(
-        "실거래 2층 수집 %s 시군구=%d 월=%d 투입=%d 정정=%d 조회실패=%d 저장실패=%d",
-        stats["status"], stats["targets"], stats["months"], stats["submitted"],
+        "실거래 2층 수집 %s 시군구=%d 월=%d(꼬리=%s) 투입=%d 정정=%d 조회실패=%d 저장실패=%d",
+        stats["status"], stats["targets"], stats["months"],
+        "포함" if tail_included else "제외", stats["submitted"],
         stats["corrections"], len(stats["fetch_errors"]), len(stats["persist_errors"]),
     )
     return stats
