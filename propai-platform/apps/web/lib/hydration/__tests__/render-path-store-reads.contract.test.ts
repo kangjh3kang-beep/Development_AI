@@ -85,8 +85,12 @@ const RATCHET: Record<string, number> = {
   //   못한다는 것을 같은 세션에서 실측했다. 그러므로 "0건" 은 부재의 근거가 아니다.
   "components/auth/AuthWorkspaceClient.tsx:hasStoredRefreshToken": 2,
   "components/cost/BoqAutoWorkspace.tsx:getFieldProvenance": 2,
+  // ★`isStale` 은 `if (!result || result.is_baseline) return false;` 뒤다 — `result` 는 **비-persist**
+  //   스토어(`use-feasibility-v2-store`)의 값이라 서버/클라 초기값이 같고, 하이드레이션 렌더에서는
+  //   그 조기 반환에 걸려 **도달하지 않는다**(2026-08-27 실측).
+  //   ★형제 `feasibilityCompleteness` 는 이 목록에서 **빠졌다** — 게이트가 없어 실제로 #418 을 냈고
+  //     셀렉터+순수 판정으로 고쳤다(라이브 귀속: 무개변 1 / 그 블록만 서버에서 일치시키면 0 / 무관 개변 1).
   "components/feasibility/FeasibilityEditorV2.tsx:isStale": 1,
-  "components/feasibility/FeasibilityEditorV2.tsx:feasibilityCompleteness": 1,
   // ★독립 리뷰가 찾아낸 자리 — 초판 검출기의 사각(모듈 헬퍼 + `.map` 콜백)에 숨어 있었다.
   //   `hasRealSlotValue(r)` 의 결과가 `✓`/`–` 와 조건부 문구를 가른다.
   "components/orchestration/InputResolveModal.tsx:hasRealSlotValue": 1,
@@ -181,5 +185,7 @@ describe("렌더 경로 라이브 저장소 읽기 — 파생형 계약", () => 
 
   it("★고친 자리는 래칫에 없다 — 되돌리면 '새로 생김' 으로 잡힌다", () => {
     expect(Object.keys(RATCHET).some((k) => k.startsWith("components/common/GlobalAddressSearch.tsx"))).toBe(false);
+    // 2026-08-27 — 라이브에서 #418 이 **실제로 났던** 자리. 스토어 메서드 호출을 되살리면 여기 걸린다.
+    expect(Object.keys(RATCHET)).not.toContain("components/feasibility/FeasibilityEditorV2.tsx:feasibilityCompleteness");
   });
 });
