@@ -280,6 +280,35 @@ def tally_reconciliation(reconciliations: list[dict[str, Any]] | None) -> dict[s
     return {"failed": failed, "withheld": withheld_n, "ok": ok}
 
 
+def reconciliation_public_fields(rec: dict[str, Any] | None) -> dict[str, Any]:
+    """대사 결과에서 **응답에 실을 판정 필드**를 고른다 — 순수 함수(단위테스트 대상).
+
+    ★왜 함수로 꺼냈나 (2026-08-26 라이브 실측):
+      `site_management_detail` 이 응답 `reconciliation` 을 **키를 손으로 골라** 조립하면서
+      `balanced`·`discrepancies`·`tolerance` 만 복사하고, `#838` 이 `_reconcile` 에 실은
+      **보류 사유(`balanced_basis`·`balanced_absent`)를 조립 지점에서 버렸다.**
+      즉 사유는 계산됐지만 **응답에 한 번도 실린 적이 없다.**
+
+      라이브(`propai-v002789-3f46fa47` · admin 테넌트): 보류 **11곳 전부**가 사유를 붙이는
+      갈래(`scheduled_total==0` ∧ `revenue_signed==0`)를 타는데 `balanced_absent` 가 **없었다.**
+      저장소 자기 검증기 `validate_withheld_pair` 가 이 형상을 **'무언 보류' 위반**으로 신고한다.
+
+    ★`#838` 의 테스트가 못 잡은 이유: **순수 함수(`_reconcile`)만 태우고 조립을 안 태웠다.**
+      그래서 이 함수를 꺼내 **조립 자체를 행동으로** 잠근다.
+
+    ★`_absent` 는 **값이 None 일 때만** 실린다 — 값이 있는데 사유 코드가 남으면
+      `validate_withheld_pair` 가 **'거짓 보류'** 로 신고한다(양방향 계약).
+    """
+    r = rec or {}
+    out: dict[str, Any] = {"balanced": r.get("balanced")}
+    if r.get("balanced") is None:
+        for k in ("balanced_basis", "balanced_reason", "balanced_absent"):
+            v = r.get(k)
+            if v:
+                out[k] = v
+    return out
+
+
 def _reconcile(revenue_signed: int, scheduled_total: int, installment_paid: int,
                installment_count: int, ratio_invalid_count: int) -> dict[str, Any]:
     """독립 대사(실불일치 탐지) — 순수 로직(DB 무관, 단위테스트 대상).
@@ -518,7 +547,6 @@ async def site_management_detail(db: AsyncSession, site_id) -> dict[str, Any]:
     #     분납표 미생성(scheduled_total==0)이면 balanced=None('N/A', 거짓안심 금지).
     rec = _reconcile(revenue_signed, scheduled_total, installment_paid,
                      installment_count, ratio_invalid_count)
-    reconcile_ok = rec["balanced"]
     discrepancies = rec["discrepancies"]
     schedule_present = scheduled_total > 0
     by_type_list = [{"type": t, "label": _ENTRY_TYPES.get(t, t), "amount": a} for t, a in sorted(cost.items())]
@@ -598,7 +626,9 @@ async def site_management_detail(db: AsyncSession, site_id) -> dict[str, Any]:
             "ratio_invalid_count": ratio_invalid_count,
             "tolerance": rec["tolerance"],
             "schedule_present": schedule_present,
-            "balanced": reconcile_ok,
+            # ★판정 필드는 **손으로 고르지 않는다** — 사유 키까지 승계한다.
+            #   종전엔 balanced 값 하나만 복사해 보류 사유가 여기서 사라졌다.
+            **reconciliation_public_fields(rec),
             "discrepancies": discrepancies,
             "note": ("독립 대사(자기참조 항등식 아님): 분납 약정표(scheduled_total)를 "
                      "SIGNED 계약총액(revenue_signed)·실수납(installment_paid)과 대조해 실불일치를 탐지. "
