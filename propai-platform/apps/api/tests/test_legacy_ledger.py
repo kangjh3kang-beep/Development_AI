@@ -54,9 +54,25 @@ def _scenario() -> dict:
         "land_cost": {"total_won": 60_000_000_000, "per_sqm_won": 12_000_000,
                       "basis": "탁상감정 적정단가 × 면적 + 취득세 등", "evidence": None,
                       "source": "desk_appraisal"},
-        "construction_cost": {"total_won": 180_000_000_000, "unit_per_sqm_won": 4_000_000,
+        # ★단가는 **직접단가**다(`cc["direct"]["unit_cost_per_sqm"]`). 종전 픽스처는
+        #   `45,000㎡ × 4,000,000 = 180억`(=총액)이라 **현실과 달랐고**, 그래서
+        #   `수량 × 단가 = 금액` 단언이 통과했다 — **라이브에서는 재현되지 않았다**
+        #   (실측: `6,573㎡ × 2.4e6 = 157.7억` vs 금액 `181.4억`).
+        #   분해 후에는 직접 행이 **직접단가 × 연면적 = 직접공사비**로 정확히 맞는다.
+        "construction_cost": {"total_won": 180_000_000_000, "unit_per_sqm_won": 3_000_000,
                               "basis": "국토부 기본형건축비 SSOT + 간접비 15%",
-                              "source": "construction_cost_engine"},
+                              "source": "construction_cost_engine",
+                              # ★직접/간접 분해 — 엔진이 total = direct + indirect 로 합산한다.
+                              "direct_won": 135_000_000_000,   # 45,000㎡ × 3,000,000
+                              "indirect": {
+                                  "total_won": 45_000_000_000,
+                                  "items": {"design_fee_won": 5_400_000_000,
+                                            "supervision_fee_won": 4_050_000_000,
+                                            "contingency_won": 10_800_000_000,
+                                            "general_expense_won": 24_750_000_000},
+                                  "ratios": {"design_fee": 0.04, "supervision_fee": 0.03,
+                                             "contingency": 0.08, "general_expense": 0.05},
+                                  "base_won": 135_000_000_000}},
         "revenue": {"total_won": 300_000_000_000, "sale_price_per_pyeong": 30_000_000,
                     "saleable_area_pyeong": 10_000.0,
                     "basis": "실거래 × 분양가능면적", "source": "molit"},
@@ -196,6 +212,8 @@ def test_qty_and_unit_price_reproduce_the_amount():
     """★수량 × 단가 ≈ 금액 — 장식이 아니라 **실제 재료**임을 확인한다."""
     led = build_legacy_ledger(_scenario())
     by_key = {i["key"]: i for s in led["sections"] for g in s["groups"] for i in g["items"]}
+    # ★`construction_direct` 는 **분해 후 직접공사비**다 — 직접단가 × 연면적으로 정확히 맞는다.
+    #   분해 전(한 행)일 때는 단가가 직접단가인데 금액이 총액이라 **원리적으로 안 맞았다**.
     for key in ("sale_revenue", "land_acquisition", "construction_direct"):
         it = by_key[key]
         assert it["qty"] and it["unit_price"], f"{key}: 수량·단가가 비었다"
@@ -607,3 +625,74 @@ def test_qty_label_is_absent_when_qty_is():
     by = {i["key"]: i for s in build_legacy_ledger({})["sections"]
           for g in s["groups"] for i in g["items"]}
     assert all(i["qty"] is None and i["qty_label"] is None for i in by.values())
+
+
+# ── 축 ⑫ 공사비 **분해** — 추가가 아니라 쪼갬(2026-08-26) ─────────────────────
+#   ★`construction_cost_engine` 은 이미 `{design_fee_won, supervision_fee_won, contingency_won,
+#     general_expense_won}` 를 **비율과 함께** 돌려주는데, 오케스트레이터가 총액과 ㎡단가
+#     **두 숫자만** 남겼다. 원장이 「설계비·감리비·예비비」를 못 그린 이유가
+#     *"엔진에 없어서"* 가 아니라 **경계에서 버려서**였다(형태 ① — 계산해 놓고 안 실어 보냄).
+def test_construction_splits_into_direct_and_indirect():
+    """★직접 + 간접 4항목으로 쪼개진다 — 실무 양식 이름으로."""
+    by = {i["key"]: i for s in build_legacy_ledger(_scenario())["sections"]
+          for g in s["groups"] for i in g["items"]}
+    assert by["construction_direct"]["label"] == "직접공사비(본체)"
+    for key, label in (("construction_design_fee", "설 계 비"),
+                       ("construction_supervision_fee", "감 리 비"),
+                       ("construction_contingency", "예비비"),
+                       ("construction_general_expense", "일반관리비")):
+        assert key in by, f"{label} 행이 없다"
+        assert by[key]["label"] == label, f"{key}: 엔진 키가 그대로 화면에 나갔다"
+
+
+def test_split_does_not_change_the_total():
+    """★★**분해지 추가가 아니다** — 쪼개도 지출 합계가 변하지 않는다(검산이 확인한다).
+
+    이 단언이 없으면 분해가 **이중계상**을 만들어도 초록이다.
+    """
+    led = build_legacy_ledger(_scenario())
+    g = next(g for s in led["sections"] for g in s["groups"] if g["key"] == "construction")
+    rows = [i["amount_won"] for i in g["items"]]
+    assert g["subtotal_won"] == sum(rows)
+    assert g["subtotal_won"] == 180_000_000_000, "공사비 소계가 엔진 총액과 달라졌다(이중계상)"
+    assert {c["key"]: c["verdict"] for c in led["checks"]}["cost_total"] == "OK"
+
+
+def test_indirect_rows_carry_rate_and_reproduce_the_amount():
+    """★간접비 각 행이 **직접공사비 × 요율 = 금액**을 재현한다(표기가 장식이 아니다)."""
+    by = {i["key"]: i for s in build_legacy_ledger(_scenario())["sections"]
+          for g in s["groups"] for i in g["items"]}
+    for key, rate in (("construction_design_fee", 0.04), ("construction_supervision_fee", 0.03)):
+        it = by[key]
+        assert it["unit_price"] == rate and it["qty"] == 135_000_000_000
+        assert it["qty_unit"] == "원" and it["qty_label"] == "직접공사비"
+        assert abs(it["qty"] * it["unit_price"] - it["amount_won"]) < 1_000
+
+
+def test_two_populations_split_vs_unsplit():
+    """★★분해가 없으면 **종전대로 한 행** — 무회귀(구버전 응답·강등 시나리오).
+
+    두 경우가 같은 행 수를 내면 분기를 지워도 통과한다.
+    """
+    import copy
+    no_split = copy.deepcopy(_scenario())
+    no_split["construction_cost"].pop("direct_won")
+    no_split["construction_cost"].pop("indirect")
+    split_g = next(g for s in build_legacy_ledger(_scenario())["sections"]
+                   for g in s["groups"] if g["key"] == "construction")
+    plain_g = next(g for s in build_legacy_ledger(no_split)["sections"]
+                   for g in s["groups"] if g["key"] == "construction")
+    assert len(split_g["items"]) == 5
+    assert len(plain_g["items"]) == 1, "분해가 없는데 쪼갰다"
+    # ★합계는 **둘 다 같아야** 한다 — 분해가 값을 바꾸면 안 된다.
+    assert split_g["subtotal_won"] == plain_g["subtotal_won"]
+
+
+def test_unknown_indirect_key_is_not_dropped():
+    """★표에 없는 간접비 항목도 **버리지 않는다** — 새 항목이 조용히 사라지지 않게."""
+    import copy
+    sc = copy.deepcopy(_scenario())
+    sc["construction_cost"]["indirect"]["items"]["새로운항목_won"] = 1_000_000
+    keys = [i["key"] for s in build_legacy_ledger(sc)["sections"]
+            for g in s["groups"] for i in g["items"]]
+    assert any("새로운항목" in k for k in keys), "모르는 간접비 항목을 버렸다"

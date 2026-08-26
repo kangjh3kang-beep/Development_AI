@@ -684,6 +684,21 @@ async def build_rough_scenario(
             constr_block = {
                 "total_won": constr_total,
                 "unit_per_sqm_won": int(cc["direct"]["unit_cost_per_sqm"]),
+                # ★2026-08-26 — 직접/간접 **분해를 버리지 않는다**(additive).
+                #   `construction_cost_engine` 은 이미 `{design_fee_won, supervision_fee_won,
+                #   contingency_won, general_expense_won}` 를 **비율과 함께** 돌려주는데
+                #   종전엔 총액과 ㎡단가 **두 숫자만** 남겼다. 원장이 「설계비·감리비·예비비」를
+                #   못 그린 이유가 *"엔진에 없어서"* 가 아니라 **여기서 버려서**였다.
+                #   ★**분해지 추가가 아니다** — 엔진이 `total = direct + indirect` 로 합산하므로
+                #     원장이 쪼개도 **합계가 변하지 않는다**(검산이 그것을 확인한다).
+                "direct_won": int(cc["direct"]["total_direct_cost_won"]),
+                "indirect": {
+                    "total_won": int(cc["indirect"]["total_indirect_cost_won"]),
+                    "items": {k: int(v) for k, v in cc["indirect"].items()
+                              if k.endswith("_won") and k != "total_indirect_cost_won"},
+                    "ratios": dict(cc["indirect"].get("ratios") or {}),
+                    "base_won": int(cc["direct"]["total_direct_cost_won"]),
+                },
                 "basis": c_basis, "source": c_source,
             }
         except Exception as e:  # noqa: BLE001 — 공사비 산출 실패는 정직 null
