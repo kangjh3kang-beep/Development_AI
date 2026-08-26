@@ -68,10 +68,16 @@ class _FakeRealtxDb:
             return _Res([(True,)] if self.scan_state.get(k) else [])
         if sql.startswith("SELECT trade_key"):
             cols = re.search(r"SELECT trade_key, (.+?) FROM", sql).group(1).split(", ")
+            # ★WHERE 절을 **SQL 에서 파생**한다 — 하드코딩하면 스텁이 검증 대상 층을
+            #   우회해, 조회 스코프를 지우는 변이가 조용히 생존한다(실제로 생존했다).
+            where = sql.split("WHERE", 1)[1] if "WHERE" in sql else ""
+            filters = [(c, b) for c, b in
+                       (("lawd_cd", "l"), ("deal_ym", "y"), ("prop_type", "p"))
+                       if f"{c} = :{b}" in where]
+            assert filters, "★WHERE 절을 하나도 못 읽었다 — 파서 의심(공허한 참 방지)"
             out = []
             for key, row in self.trades.items():
-                if (row["lawd_cd"], row["deal_ym"], row["prop_type"]) == (
-                        params["l"], params["y"], params["p"]):
+                if all(row[c] == params[b] for c, b in filters):
                     out.append((key, *[row.get(c) for c in cols]))
             return _Res(out)
         if sql.startswith("INSERT INTO realtx_trades"):
@@ -262,3 +268,21 @@ async def test_previous_snapshot_is_scoped_by_prop_type():
     # ★대조군: land 행은 건드려지지 않았다(스코프 분리 증명)
     land_rows = [v for v in db.trades.values() if v["prop_type"] == "land"]
     assert len(land_rows) == 1 and land_rows[0]["registered_date"] == ""
+
+
+@pytest.mark.asyncio
+async def test_correction_still_detected_when_record_carries_its_own_prop_type():
+    """★저장은 레코드 값, 조회는 스코프 인자 — 둘이 다르면 정정이 **영구 0건**이 된다.
+
+    오늘 `_parse_trade_items` 는 항상 스코프와 같은 값을 넣어 도달 불가하지만,
+    `upsert_params` 가 `record.get("prop_type") or prop_type` 이라는 **폴백을 굳이 두고 있어**
+    비대칭이 잠복한다. 조회를 키 기반으로 넓히면 그 잠복이 사라진다.
+    """
+    rec = {**_BASE, "prop_type": "토지"}          # ★스코프 인자('land')와 다른 값
+    db = _FakeRealtxDb()
+    await rs.persist_scope(db, lawd_cd=LAWD, deal_ym=YM, prop_type="land", records=[rec])
+    res = await rs.persist_scope(
+        db, lawd_cd=LAWD, deal_ym=YM, prop_type="land",
+        records=[{**rec, "cancel_type": "O"}],
+    )
+    assert [c["kind"] for c in res["corrections"]] == ["cancelled"], res["corrections"]

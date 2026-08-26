@@ -429,9 +429,15 @@ async def persist_scope(
         for row in (await db.execute(
             text(
                 "SELECT trade_key, " + ", ".join(_MUTABLE_FIELDS) + " FROM realtx_trades "
-                "WHERE lawd_cd = :l AND deal_ym = :y AND prop_type = :p"
+                # ★`prop_type` 으로 좁히지 않는다 — 조회는 **키로** 하고 키는 이미
+                #   `prop_type` 을 담는다(`_KEY_FIELDS`). 좁히면 오히려 **비대칭 결함**이
+                #   생긴다: 저장 컬럼은 `record["prop_type"]`(레코드 값)에서 오는데
+                #   조회는 스코프 인자로 걸어, 둘이 다른 날 `previous` 가 자기 행을 못 찾아
+                #   **정정 탐지가 영구 0건**이 된다(2026-08-26 독립 리뷰 지적).
+                #   여기서 넓게 읽어도 lookup 은 키로 하므로 남의 행이 섞이지 않는다.
+                "WHERE lawd_cd = :l AND deal_ym = :y"
             ),
-            {"l": lawd_cd, "y": deal_ym, "p": prop_type},
+            {"l": lawd_cd, "y": deal_ym},
         )).fetchall()
     }
 
