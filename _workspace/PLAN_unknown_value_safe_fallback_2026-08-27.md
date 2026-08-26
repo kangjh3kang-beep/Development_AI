@@ -113,3 +113,60 @@
 `scripts/mutate_changed.py --base $(git merge-base origin/main HEAD)` 로 base 를 **명시**해
 돌린다(`development-ai-cf` 실측: 기본 base 가 움직이는 `origin/main` 이라 **남이 머지한
 파일까지** 변이 대상이 된다).
+
+---
+
+## 6. 독립 적대 리뷰 라운드 (계획 게이트 §C — 자기승인 금지)
+
+훅(`review-gate`)이 PR 생성을 막았다. 전역 지침 *"Never self-approve in the same active
+context"* 대로 `code-reviewer` 에 **반증을 임무로** 주고 돌렸다("옳은지 확인하라"가 아니라
+"틀린 곳을 찾아라"). 결과: **공격 가설 6개 중 5개는 죽었고, 1개가 살아남아 실증됐다.**
+
+### ★P1 — 배선 락이 **렌더**만 잠그고 **유도**는 무잠금이었다 (실증)
+
+    const SAFE_FALLBACK = CHARACTERISTIC_STATUS_COLORS.safe;
+    const st = { cls: CHARACTERISTIC_STATUS_COLORS[c.status] || SAFE_FALLBACK, unknown: false };
+    → 23 passed. **SURVIVED.**
+
+`assertWiredThrough` 는 **줄 단위**다. 내 scope 가 JSX 렌더 줄이라 `st.cls` 가 **쓰였는가**만
+봤고, `st` 가 **어디서 왔는지**는 락 밖이었다. 배지 쪽은 scope 가 대입줄이라 잠겨 있었다 —
+**두 락의 축이 달랐고 나는 그걸 못 봤다.** 내 변이 6개가 전부 그 축을 비껴갔다.
+→ 유도 락 + 색 표 임포트 금지 락을 추가했고, **M7·M8 로 CAUGHT 를 확인**했다.
+
+### 리뷰가 죽인(반증한) 가설 — 내 주장이 살아남은 것
+
+`verdict` 자유 JSON · 미지 status 초록 · **무회귀**(비-LLM 생산자 전수: `zoningCharacteristics`·
+`inferLandCharacteristics`·`_fb_verdict` 가 전부 표 안 값만 낸다) · scope 가 mustContain 을
+함의하지 않음(M2/M3 이 실제로 빨개짐) · 대소문자 복원의 위험(두 표에 충돌 키 없음) ·
+디자인 토큰 정의(`:root`·`.dark` 양쪽 존재) · 판정 11건 독립 재판정 **전부 참**.
+
+### 리뷰가 잡은 나머지 (전부 반영)
+
+| 지적 | 실측 | 반영 |
+|---|---|---|
+| 래칫 넓은 토큰이 **정상 코드를 신고**할 수 있다 | `stateMachine`·`levelsByFloor`·`severalRenderers`·`upgradeSteps`·`realEstateMap` FLAGGED | 세그먼트 **정확일치**로 교체 + 그 5개를 특이도 프로브로 박제 |
+| 가드 메시지의 실측값이 **틀렸다** | 수집기 모집단 **699**(1,063 은 어느 모집단과도 불일치) | 699 로 교정 |
+| **죽은 면제**를 허용한다 | §G-2 36 위반 | 비-`transient` 면제가 사라지면 실패(M9 CAUGHT) |
+| **진짜 결함**을 초록으로 면제 | `Record` 안 문자열은 출력에 안 보인다 | `it.todo` 로 초록 안에 드러냄 |
+| 처방 범위 ≠ 결함 범위 | 같은 파일 4줄 위 `{ value:"—", status:"safe" }` ×3 = **초록 3칸** | 교정(이 PR 이 선언한 원칙에 스스로 걸린 자리) |
+| 별칭 상수 폴백은 래칫이 **원리적으로** 못 본다 | `unitStatus.ts:56` 에 그 관용구 실재 | 코드에 한계로 명기 + **배선 락이 그것을 막는다** |
+| 미지 칩 대비 AA 미달 | 라이트 **3.18:1** | `--text-secondary` **6.76:1** 로 |
+| 비문자열 원값을 버린다 | `raw=3` → `key:null` | `key:"3"` 로(선언과 일치) |
+
+### 이 라운드에서 **내가 새로 만든 위양성**
+
+유도 락의 scope `/const st = /` 가 같은 파일 927행 `const st = siteAnalysis?.specialParcel;`
+를 물어 **정상 코드를 위반으로 신고**했다(첫 실행에서 적발). 변수명을 `statusChip` 으로
+고유화해 해소. ★**가드를 만드는 순간 그 가드가 이 함정의 새 서식지가 된다.**
+
+## 7. §3 갱신 — 여전히 검증하지 못한 것
+
+- **라이브 이탈 빈도는 미측정**(구조적 가능성만 실측).
+- **두 컴포넌트를 렌더해서 확인하지 않았다** — 판단을 순수 함수로 꺼내 행위를 태우고
+  호출부는 배선 락으로 잡았다. *"화면에서 실제로 회색으로 보인다"* 는 **미검증**.
+- **래칫의 CI 비용**: 콜드 7.4초 / 웜 4.1초(699파일을 TS 파서에 태운다). 허용 가능하다고
+  **판단**했으나 CI 총시간에 미치는 영향은 **재지 않았다**. 또한 apps/web 의 어느 파일이든
+  파스 오류가 나면 이 테스트가 **무관하게 죽는다**(결합도 — 미해소).
+- **동료 `-0b` 가 이관 제안한 `DominantConstraintBanner` 의 5등급→3색 문제는 안 잡았다.**
+  그것은 **폴백 축이 아니라 구별성 축**이고(default 는 이미 중립), 범위를 넓히면 이 PR 의
+  계약이 흐려진다 → 별건으로 남긴다.
