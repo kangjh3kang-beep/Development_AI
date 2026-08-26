@@ -32,6 +32,8 @@ import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from app.utils.withheld import INSUFFICIENT_COVERAGE, withheld
+
 logger = logging.getLogger(__name__)
 
 # ── 임계값(설계 §5.1 초기값, 향후 L1 자동보정 대상) ───────────────────────────
@@ -299,19 +301,54 @@ def _classify_fallback(fallback: int, total_calls: int) -> tuple[str | None, flo
 
 def _classify_quality(
     fail: int, warn: int, verify_total: int, down: int, feedback_total: int
-) -> tuple[str | None, dict[str, float]]:
+) -> tuple[str | None, dict[str, Any]]:
     """verify fail 비율 + feedback down 비율 결합 → severity.
 
     down>20% 또는 fail>15% → warn. 표본 부족(둘 다 MIN 미만)이면 None.
-    반환 metrics 에 fail_pct/warn_pct/down_pct 를 담는다.
-    """
-    fail_pct = round(100.0 * fail / verify_total, 2) if verify_total else 0.0
-    warn_pct = round(100.0 * warn / verify_total, 2) if verify_total else 0.0
-    down_pct = round(100.0 * down / feedback_total, 2) if feedback_total else 0.0
-    metrics = {"fail_pct": fail_pct, "warn_pct": warn_pct, "down_pct": down_pct}
 
+    ## ★한 번도 재지 않은 축을 **0.0 으로 발행하지 않는다** (2026-08-26 독립 리뷰 적발)
+
+    종전엔 `if verify_total else 0.0` 이라 **verify 표본이 0건인데 `fail_pct=0.0`** 이
+    나갔다. 그 행은 `severity='warn'` 으로 **실제 발행돼 화면까지 간다**:
+
+        _classify_quality(fail=1, warn=0, verify_total=5, down=0, feedback_total=0)
+          → ('warn', {'fail_pct': 20.0, 'warn_pct': 0.0, 'down_pct': **0.0**})
+            ★feedback 을 한 번도 안 쟀는데 "down 0%" 라고 말한다
+
+    *"재 보니 0%"* 와 *"잴 표본이 없었다"* 는 **다른 사실**이다. 저장소 표준 보류 계약
+    (`utils/withheld.py` · 닫힌 어휘 `INSUFFICIENT_COVERAGE`)으로 값을 `None` 으로 두고
+    **사유를 함께 싣는다** — 그래야 `tests/test_withheld_value_contract.py` 의 파생형
+    전역 스윕이 이 생산자도 자동으로 센다.
+
+    ★소비처 안전(실측): `feature_flags.py:480` 이 `float(m.get("down_pct") or 0.0)` 로
+      읽으므로 `None` 이 와도 죽지 않고, **미측정이 비활성 트리거가 되지 않는** 쪽으로
+      의미가 정확해진다.
+    """
     enough_verify = verify_total >= QUALITY_MIN_SAMPLES
     enough_feedback = feedback_total >= QUALITY_MIN_SAMPLES
+
+    metrics: dict[str, Any] = {}
+    if enough_verify:
+        metrics["fail_pct"] = round(100.0 * fail / verify_total, 2)
+        metrics["warn_pct"] = round(100.0 * warn / verify_total, 2)
+    else:
+        _why = (f"판정 보류 — verify 표본 {verify_total}건으로 최소 "
+                f"{QUALITY_MIN_SAMPLES}건에 미달합니다(미측정이며 0% 가 아닙니다).")
+        metrics.update(withheld(INSUFFICIENT_COVERAGE, _why, field="fail_pct"))
+        metrics.update(withheld(INSUFFICIENT_COVERAGE, _why, field="warn_pct"))
+    if enough_feedback:
+        metrics["down_pct"] = round(100.0 * down / feedback_total, 2)
+    else:
+        metrics.update(withheld(
+            INSUFFICIENT_COVERAGE,
+            f"판정 보류 — feedback 표본 {feedback_total}건으로 최소 "
+            f"{QUALITY_MIN_SAMPLES}건에 미달합니다(미측정이며 0% 가 아닙니다).",
+            field="down_pct",
+        ))
+
+    fail_pct = metrics.get("fail_pct") or 0.0
+    down_pct = metrics.get("down_pct") or 0.0
+
     if not enough_verify and not enough_feedback:
         return None, metrics
 
