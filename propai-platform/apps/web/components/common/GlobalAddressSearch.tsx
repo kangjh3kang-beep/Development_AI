@@ -14,7 +14,7 @@
  * - Progressive Disclosure (Jakob Nielsen, 1995)
  */
 
-import { useCallback, useMemo, useRef, useState, type ComponentProps } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
 import { AlertTriangle, Building2, CheckCircle2, FileSpreadsheet, Landmark, Layers3, Map as MapIcon, MapPin, Search } from "lucide-react";
 import { KakaoAddressSearch, type KakaoAddressResult } from "@/components/ui/KakaoAddressSearch";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
@@ -51,6 +51,62 @@ let _uidSeq = 0;
 function newUid(): string {
   _uidSeq += 1;
   return `p${_uidSeq}_${Math.floor(Math.random() * 1e6)}`;
+}
+
+/**
+ * 인테이크 초기 목록 산출 — **순수 함수**(스토어를 스스로 읽지 않는다).
+ *
+ * ★왜 함수로 뽑았나(2026-08-26 · React #418 근본수정):
+ *   이 로직이 `useState` 지연 초기값 안에서 `useProjectContextStore.getState()` 를 직접 불렀다.
+ *   `getState()` 는 **라이브 상태**라 zustand v5 가 `useSyncExternalStore` 의 **서버 스냅샷**으로
+ *   넘기는 `getInitialState()` 를 **우회한다.** 그래서 서버는 `[]`(=배지 "대기"), 클라이언트 첫
+ *   렌더는 persist 재수화 뒤 값(=배지 "77필지")을 그려 **텍스트 하이드레이션 불일치**가 났다
+ *   (라이브 실측: `/ko/regulations`·`/ko/permits` 각 1건 · 로컬 dev 재현 diff 에 `+77필지 / -대기`).
+ *
+ * ★그래서 **입력을 인자로 뺐다** — 같은 함수에 `parcels: undefined` 를 주면 서버가 계산한 것과
+ *   **구성상 같은 값**이 나온다. 손으로 베낀 "서버와 같은 값"은 다음 편집에서 갈린다.
+ */
+export function buildInitialAddressEntries(opts: {
+  parcels: ReadonlyArray<{ address?: string | null; pnu?: unknown; areaSqm?: unknown; zoneCode?: string | null }> | null | undefined;
+  initialAddress?: string;
+  writeToContext: boolean;
+  single: boolean;
+}): AddressEntry[] {
+  const { parcels, initialAddress, writeToContext, single } = opts;
+  // ★프로젝트 로드 시 다필지 하이드레이션 — 컨텍스트에 등록된 전 필지로 시작한다.
+  //   이게 없으면 프로젝트(예: 5필지)를 골라도 initialAddress(대표주소 1개)로만 시작해
+  //   인테이크 목록·지도 staged 가 1필지처럼 보이고("면적 보강 대기"·"완료(0필지 등록)"),
+  //   실제 등록된 나머지 필지의 면적·용도가 화면에 반영되지 않는다.
+  //   store 를 SSOT 로 쓰는 모드(writeToContext)일 때만 — 로컬 검색 모드는 결과 누출 방지 위해 제외.
+  //   single 모드도 제외 — 단일 입력 계약(예: 반경검색 중심점 1개)에 다필지를 주입하면 계약 위반.
+  if (writeToContext && !single) {
+    if (Array.isArray(parcels) && parcels.length >= 2) {
+      return parcels
+        .filter((p) => p && (p.address || p.pnu))
+        .map((p) => {
+          const pnu = typeof p.pnu === "string" ? p.pnu : "";
+          return {
+            __uid: newUid(),
+            fullAddress: p.address || "",
+            jibunAddress: p.address || "",
+            roadAddress: "",
+            sido: "",
+            sigungu: "",
+            bname: "",
+            zonecode: "",
+            // PNU 앞 10자리 = 법정동 코드(있으면 유도, 없으면 빈값).
+            bcode: pnu.length >= 10 ? pnu.slice(0, 10) : "",
+            pnu: pnu || undefined,
+            areaSqm: typeof p.areaSqm === "number" && p.areaSqm > 0 ? p.areaSqm : undefined,
+            zoneCode: p.zoneCode ?? undefined,
+          } as AddressEntry;
+        });
+    }
+  }
+  if (initialAddress) {
+    return [{ __uid: newUid(), fullAddress: initialAddress, jibunAddress: "", roadAddress: "", sido: "", sigungu: "", bname: "", zonecode: "", bcode: "" }];
+  }
+  return [];
 }
 
 // 특이부지(개발 부적합·후순위 대상) 판정 — 다필지에서 '대표' 필지를 고를 때 입력 순서가 아니라
@@ -175,45 +231,31 @@ export function GlobalAddressSearch({
   writeToContext = true,
   onAnalyzed,
 }: GlobalAddressSearchProps) {
-  const [addresses, setAddresses] = useState<AddressEntry[]>(() => {
-    // ★프로젝트 로드 시 다필지 하이드레이션 — 컨텍스트에 등록된 전 필지로 시작한다.
-    //   이게 없으면 프로젝트(예: 5필지)를 골라도 initialAddress(대표주소 1개)로만 시작해
-    //   인테이크 목록·지도 staged 가 1필지처럼 보이고("면적 보강 대기"·"완료(0필지 등록)"),
-    //   실제 등록된 나머지 필지의 면적·용도가 화면에 반영되지 않는다.
-    //   store 를 SSOT 로 쓰는 모드(writeToContext)일 때만 — 로컬 검색 모드는 결과 누출 방지 위해 제외.
-    //   single 모드도 제외 — 단일 입력 계약(예: 반경검색 중심점 1개)에 다필지를 주입하면 계약 위반.
-    //   (single 소비자는 전부 writeToContext=false 와 쌍으로 쓰는 게 관례다 — 탐색용 보조면의
-    //    검색이 활성 프로젝트 SSOT 를 덮지 않게. 그래도 계약은 여기서 코드로 고정한다.)
-    if (writeToContext && !single) {
-      const parcels = useProjectContextStore.getState().siteAnalysis?.parcels;
-      if (Array.isArray(parcels) && parcels.length >= 2) {
-        return parcels
-          .filter((p) => p && (p.address || p.pnu))
-          .map((p) => {
-            const pnu = typeof p.pnu === "string" ? p.pnu : "";
-            return {
-              __uid: newUid(),
-              fullAddress: p.address || "",
-              jibunAddress: p.address || "",
-              roadAddress: "",
-              sido: "",
-              sigungu: "",
-              bname: "",
-              zonecode: "",
-              // PNU 앞 10자리 = 법정동 코드(있으면 유도, 없으면 빈값).
-              bcode: pnu.length >= 10 ? pnu.slice(0, 10) : "",
-              pnu: pnu || undefined,
-              areaSqm: typeof p.areaSqm === "number" && p.areaSqm > 0 ? p.areaSqm : undefined,
-              zoneCode: p.zoneCode ?? undefined,
-            } as AddressEntry;
-          });
-      }
-    }
-    if (initialAddress) {
-      return [{ __uid: newUid(), fullAddress: initialAddress, jibunAddress: "", roadAddress: "", sido: "", sigungu: "", bname: "", zonecode: "", bcode: "" }];
-    }
-    return [];
-  });
+  // ★초기값은 **서버가 계산할 수 있는 것만**으로 만든다 — persist(localStorage)는 서버에 없다.
+  //   여기서 `useProjectContextStore.getState()`(라이브 상태)를 읽으면 서버는 `[]`, 브라우저 첫
+  //   렌더는 재수화된 필지 목록을 그려 **텍스트 하이드레이션 불일치**가 난다
+  //   (라이브 실측 2026-08-26: `/ko/regulations`·`/ko/permits` 각 1건 · React #418 `args[]=text`.
+  //    로컬 dev 재현 diff 가 이 컴포넌트의 요약 배지를 지목했다 — `+77필지 / -대기`).
+  //   ★상태 자체를 서버와 맞춘다(렌더만 가리지 않는다) — 그래야 `selectedSatongFeatures` 처럼
+  //     `addresses` 에서 파생되는 **다른 소비처까지** 한꺼번에 안전해진다.
+  const [addresses, setAddresses] = useState<AddressEntry[]>(() =>
+    buildInitialAddressEntries({ parcels: undefined, initialAddress, writeToContext, single }),
+  );
+
+  // ★재수화 이후 1회 — 컨텍스트에 등록된 다필지를 시드한다(기능 보존: 프로젝트를 고르면 전 필지로 시작).
+  //   렌더가 아니라 이펙트에서 읽으므로 서버/클라 첫 렌더는 같은 것을 그린다.
+  //   사용자가 이미 목록을 만들었으면(2건 이상) 덮지 않는다.
+  useEffect(() => {
+    const seeded = buildInitialAddressEntries({
+      parcels: useProjectContextStore.getState().siteAnalysis?.parcels,
+      initialAddress,
+      writeToContext,
+      single,
+    });
+    if (seeded.length >= 2) setAddresses((prev) => (prev.length >= 2 ? prev : seeded));
+    // 마운트 1회만 — 이후의 스토어 변화는 기존 경로(선택·검색·복원)가 처리한다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [isSearching, setIsSearching] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   // 다음(Daum) 팝업 외부제어 — 통합검색에서 '건물명·아파트로 찾기' 보조링크로만 연다.
