@@ -27,6 +27,10 @@ import {
 } from "@/components/projects/SpecialParcelLegalPrelim";
 import { UseLlmToggle } from "@/components/common/UseLlmToggle";
 import type { BackendLegalRef } from "@/lib/evidence/adaptEvidence";
+import {
+  resolveCharacteristicStatus,
+  UNKNOWN_CHARACTERISTIC_LABEL,
+} from "@/lib/land-characteristic-status";
 
 // ── Icons ──
 const Icons = {
@@ -262,11 +266,6 @@ interface LandIntelligencePanelProps {
 }
 
 // ── Status badge colors ──
-const statusColors: Record<string, string> = {
-  safe: "text-[var(--status-success)] bg-[var(--status-success)]/10 border-[var(--status-success)]/20",
-  warning: "text-[var(--status-warning)] bg-[var(--status-warning)]/10 border-[var(--status-warning)]/20",
-  danger: "text-red-400 bg-red-500/10 border-red-500/20",
-};
 
 // ── Bottom Tab Pages ──
 type BottomTab = "pnu" | "price" | "transaction" | "gis";
@@ -1398,12 +1397,21 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
                   </div>
                 ) : (
                   <div className="grid grid-cols-2 gap-2">
-                    {analysis.characteristics.slice(0, 4).map((c, i) => (
-                      <div key={i} className={`flex flex-col gap-1 rounded-lg border p-2 ${statusColors[c.status] || statusColors.safe}`}>
-                        <span className="text-[9px] font-black uppercase tracking-tighter opacity-80">{c.label}</span>
-                        <span className="text-xs font-bold">{c.value}</span>
-                      </div>
-                    ))}
+                    {analysis.characteristics.slice(0, 4).map((c, i) => {
+                      // ★미지 status 를 safe(초록)로 접지 않는다 — 생산자가 검증 0의 LLM JSON 이라
+                      //   표에 실재하는 danger 가 초록으로 가려졌다. 이 칩은 색 단독 신호이므로
+                      //   중립색만으로는 부족하고 글자로도 「모른다」를 말한다.
+                      const st = resolveCharacteristicStatus(c.status);
+                      return (
+                        <div key={i} className={`flex flex-col gap-1 rounded-lg border p-2 ${st.cls}`}>
+                          <span className="text-[9px] font-black uppercase tracking-tighter opacity-80">{c.label}</span>
+                          <span className="text-xs font-bold">{c.value}</span>
+                          {st.unknown && (
+                            <span className="text-[9px] font-medium opacity-90">{UNKNOWN_CHARACTERISTIC_LABEL}</span>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
