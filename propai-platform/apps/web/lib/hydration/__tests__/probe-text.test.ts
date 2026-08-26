@@ -11,7 +11,6 @@
  */
 import { describe, expect, it } from "vitest";
 
-// @ts-expect-error — .mjs 순수부(타입 선언 없음). 런타임 계약만 잠근다.
 import { countHydration, samePath, pickMutableText } from "@/lib/hydration/probe-text.mjs";
 
 describe("countHydration — 두 모드가 공유하는 계수 경로", () => {
