@@ -69,6 +69,19 @@ describe("relevantErrors — 계수와 진단 표시가 **같은 필터**를 쓴
     expect(relevantErrors(잡음)).toEqual([]);
   });
 
+  it("★★잡음이면서 하이드레이션 서명을 가진 줄 — 이것이 없으면 정합 단언이 공허하다", () => {
+    /**
+     * ★이 케이스는 **변이 SURVIVED 를 보고 추가했다**: `countHydration` 이 `relevantErrors` 를
+     *   건너뛰고 직접 필터해도 기존 픽스처는 전부 초록이었다(두 필터가 **겹치지 않아서**).
+     *   실제 위험은 정확히 이 겹침이다 — 수집기 생존 신호(`PROBE_ALIVE`)를 **일부러 던진 에러**로
+     *   내보내므로, 그 문구가 하이드레이션 서명과 같은 줄에 실릴 수 있고 그러면
+     *   **대조군이 자기를 하이드레이션 오류로 오계수**한다(0 이어야 할 음성 대조군이 1 이 된다).
+     */
+    const 겹침 = ["[pageerror] PROBE_ALIVE — Text content does not match server-rendered HTML."];
+    expect(relevantErrors(겹침)).toEqual([]);   // 잡음이므로 걷힌다
+    expect(countHydration(겹침)).toBe(0);        // ★걷힌 뒤에 세므로 0
+  });
+
   it("★countHydration 은 relevantErrors 를 통과한 것만 센다(두 함수의 정합)", () => {
     const 입력 = [...잡음, ...진짜];
     // 기대값을 손으로 쓰지 않고 **다른 경로로 파생**한다 — 손 계산은 두 함수가 어긋나도 맞을 수 있다.
