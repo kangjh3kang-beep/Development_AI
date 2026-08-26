@@ -20,20 +20,54 @@ import inspect
 
 import pytest
 
-pypdf = pytest.importorskip("pypdf", reason="PDF 본문 검증에 필요")
-
-from app.services.report.render.engine import render_report  # noqa: E402
-from app.services.report.render.model import (  # noqa: E402
+from app.services.report.render.engine import render_report
+from app.services.report.render.model import (
     NarrativeBlock,
     ReportMeta,
     ReportModel,
     Section,
 )
 
+#: ★**두부(글리프 부재) 후보 — 한 종류가 아니다.**
+#:
+#:   2026-08-26 실측: 같은 PDF 를 두 사람이 쟀는데 **0 과 32** 로 갈렸다.
+#:   한쪽이 `□ / U+FFFD / ☐` 만 세고 **`■`(U+25A0)를 안 셌기** 때문이다.
+#:   reportlab 이 `Helvetica` 로 한글을 만나면 **`■`** 를 낸다 — 그러나 렌더러·폰트·뷰어에 따라
+#:   다른 글자가 나온다. **하나만 고르면 0 이 나오고, 그 0 을 부재로 읽게 된다.**
+#:   ★`■` 를 고른 것도 근거가 아니라 **우연**이었다 — 그래서 목록으로 박는다.
+TOFU_GLYPHS = ("■", "□", "\ufffd", "☐", "▪", "▫", "◻", "◼")
+
+
+def tofu_counts(text: str) -> dict[str, int]:
+    """텍스트에 나타난 두부 글자를 **후보 전체**로 센다(0 인 것은 제외).
+
+    ★반환이 빈 dict 여야 "두부 없음"이다. `text.count("■") == 0` 만 보면 **다른 글자로 나온
+      두부를 놓친다** — 그것이 위 실측의 정확한 실패 형태다.
+    """
+    return {g: text.count(g) for g in TOFU_GLYPHS if text.count(g)}
+
 
 def _pdf_text(model: ReportModel) -> str:
+    """PDF 를 렌더해 텍스트를 추출한다.
+
+    ★`importorskip` 을 **여기 안에** 둔다 — 모듈 레벨에 두면 `pypdf` 가 없을 때
+      **파일 전체가 skip** 되고, `ast`/`inspect` 만 쓰는 **배선 락까지 함께 꺼진다.**
+
+    ★2026-08-26 실측(동료 세션이 CI 로그로 적발): `pypdf` 가 의존성에 없어
+      CI 에서 이 파일 **3건이 전부 skip** 됐다. `Backend (pytest)` 는
+      `10648 passed, 85 skipped` 로 **초록**이었고 그 85 안에 들어 있었다.
+      → *"모든 PDF 꼬리말이 두부"* 를 고친 PR 이 **그 회귀를 막는 그물을 꺼 놓은 채**
+      들어갈 뻔했다. 다음에 누가 `font=` 를 떼도 CI 는 초록이었을 것이다.
+      ★**내 로컬이 초록이었던 이유는 내가 검증하려고 `pypdf` 를 손수 설치했기 때문**이다
+      — 같은 명령이라도 **환경이 다르면 다른 게이트**다(§32).
+
+    지금은 `requirements.txt`·`requirements.oracle.txt` 에 `pypdf` 를 넣어 CI 에서도 돈다.
+    이 함수 안의 `importorskip` 은 **그것이 다시 빠졌을 때의 2중 방어**다 —
+    내용 락만 skip 되고 **배선 락은 계속 산다.**
+    """
     from io import BytesIO
 
+    pypdf = pytest.importorskip("pypdf", reason="PDF 본문 검증에 필요")
     data, _, _ = render_report(model, "pdf")
     r = pypdf.PdfReader(BytesIO(data))
     return "\n".join((p.extract_text() or "") for p in r.pages)
@@ -50,7 +84,8 @@ class Test꼬리말한글:
     def test_꼬리말_한글이_두부로_나가지_않는다(self) -> None:
         """★탐지 — 이 PR 이 고친 결함 그 자체."""
         t = _pdf_text(_model())
-        assert "■" not in t and "□" not in t, "꼬리말이 두부로 렌더됐다"
+        found = tofu_counts(t)
+        assert not found, f"꼬리말이 두부로 렌더됐다: {found}"
 
     def test_꼬리말_한글이_실제로_추출된다(self) -> None:
         """두부가 없는 것만으로는 부족하다 — **그 글자가 있어야** 한다.
@@ -66,6 +101,22 @@ class Test꼬리말한글:
     def test_본문_한글도_함께_확인한다(self) -> None:
         """본문이 깨졌는데 꼬리말만 보고 통과하지 않게(반대 방향)."""
         assert "본문 한글입니다" in _pdf_text(_model())
+
+
+class Test두부프로브:
+    """★프로브 자신을 잠근다 — **아무것도 못 세는 헬퍼**면 위 단언이 공허해진다."""
+
+    def test_후보를_실제로_센다(self) -> None:
+        assert tofu_counts("정상 텍스트") == {}
+        assert tofu_counts("아■야") == {"■": 1}
+        # ★한 글자만 보면 놓치는 경우 — 이 테스트의 존재 이유
+        assert tofu_counts("아□야") == {"□": 1}, "■ 이외의 두부를 놓친다"
+        assert tofu_counts("\ufffd") == {"\ufffd": 1}
+
+    def test_후보_목록이_비어있지_않다(self) -> None:
+        """목록이 비면 `tofu_counts` 가 **항상 {} 를 반환**해 모든 검사가 통과한다."""
+        assert len(TOFU_GLYPHS) >= 4
+        assert "■" in TOFU_GLYPHS, "실측으로 확인된 글자가 목록에 없다"
 
 
 class Test배선:
