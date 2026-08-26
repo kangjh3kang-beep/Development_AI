@@ -8,6 +8,7 @@ import { Construction, Landmark, Map, Search, Trophy } from "lucide-react";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { AuctionMonitorPanel } from "@/components/auction/AuctionMonitorPanel";
+import { FREE_REQUERY_DAYS } from "@/lib/registry-analyze";
 import { ApiClientError, apiClient, resolveApiOrigin } from "@/lib/api-client";
 import { useModalFocus, useModalFocusWhileMounted } from "@/hooks/useModalFocus";
 import { analyzeRegistry } from "@/lib/registry-analyze";
@@ -1621,7 +1622,7 @@ export function DetailModal({
                 말소기준권리·인수권리·근저당·압류·가등기를 AI(법무사·변호사 관점)가 분석합니다.
               </p>
               <p className="mt-0.5 text-[11px] font-bold text-[var(--accent-strong)]">
-                권리분석 건당 2,000원 (동일 물건 재조회는 무료)
+                권리분석 건당 2,000원 (성공한 분석은 {FREE_REQUERY_DAYS}일 이내 재조회 무료)
               </p>
             </div>
             <div className="flex shrink-0 gap-2">
