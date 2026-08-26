@@ -22,6 +22,10 @@ import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { VERIFY_CACHE_PREFIX } from "@/lib/verification-cache-key";
 import { looksLikeAddress } from "@/lib/selection-integrity";
 import { useLandScheduleStore } from "@/store/useLandScheduleStore";
+import { useDevelopmentPlanStore } from "@/store/useDevelopmentPlanStore";
+import { usePaidRenderStore } from "@/store/usePaidRenderStore";
+import { useRegistryAnalysisStore } from "@/store/useRegistryAnalysisStore";
+import { currentUserId, decodeTokenUser } from "@/lib/account-scope";
 import {
   SATONG_DOMINANT_CONSTRAINT_KEY,
   SATONG_MAP_SELECTION_KEY,
@@ -68,26 +72,10 @@ const PROJECT_PERSIST_PREFIXES = [
   VERIFY_CACHE_PREFIX,
 ];
 
-/** JWT 페이로드에서 사용자 식별자(sub/user_id)를 디코드. 실패 시 null. */
-function decodeTokenUser(token: string | null): string | null {
-  if (!token) return null;
-  try {
-    const seg = token.split(".")[1];
-    if (!seg) return null;
-    const json = atob(seg.replace(/-/g, "+").replace(/_/g, "/"));
-    const payload = JSON.parse(json) as Record<string, unknown>;
-    const uid = payload.sub ?? payload.user_id ?? payload.uid;
-    return uid ? String(uid) : null;
-  } catch {
-    return null;
-  }
-}
-
-/** 현재 로그인 사용자 식별자(localStorage 키 분리용). 비로그인이면 "guest". */
-export function currentUserId(): string {
-  if (typeof window === "undefined") return "guest";
-  return decodeTokenUser(window.localStorage.getItem("propai_access_token")) || "guest";
-}
+// ★`currentUserId`/`decodeTokenUser` 는 `lib/account-scope.ts` 로 옮겼다 — 유료 산출물
+//   스토어가 계정별 키를 만들 때 이 함수를 쓰는데, 여기 두면 스토어→projectSync→스토어
+//   **순환 임포트**가 된다. 기존 소비처를 위해 이름은 그대로 재수출한다.
+export { currentUserId, decodeTokenUser };
 
 /** 모든 프로젝트/분석 로컬 데이터를 완전 초기화(메모리 store + localStorage). 토큰은 건드리지 않음. */
 export function clearAllProjectData(): void {
@@ -103,6 +91,20 @@ export function clearAllProjectData(): void {
   } catch { /* noop */ }
   try { useProjectStore.setState({ projects: [] } as never); } catch { /* noop */ }
   try { useLandScheduleStore.setState({ byProject: {} } as never); } catch { /* noop */ }
+  // ★유료 산출물(렌더 3,000원/건 · 등기 권리분석 1,200원/필지)은 **키를 지우지 않는다** —
+  //   지우면 사용자가 이미 낸 돈이 사라진다. 대신 계정별 키(`<base>__<uid>`)로 갈라 두고,
+  //   전환 시에는 **메모리 상태만** 비운 뒤 새 계정 키에서 다시 하이드레이션한다.
+  //   이 호출이 없으면 화면에는 **이전 계정의 유료 산출물이 그대로 남는다**(격리 구멍).
+  //   ★순서가 계약이다: 먼저 비우고(=이전 계정 잔재 제거) 그다음 rehydrate(=본인 것 복원).
+  //     디바운스 저장소가 같은 키의 대기 쓰기를 **덮어쓰므로** 마지막 값(본인 것)이 남는다.
+  //   ★두 스토어를 배열로 묶어 돌리지 않는다 — 유니온 타입이 되어 `setState` 시그니처가
+  //     서로 호환되지 않는다(tsc 가 잡았다). 각각 명시한다.
+  try { usePaidRenderStore.setState({ byProject: {} } as never); } catch { /* noop */ }
+  try { void usePaidRenderStore.persist?.rehydrate(); } catch { /* noop */ }
+  try { useRegistryAnalysisStore.setState({ byProject: {} } as never); } catch { /* noop */ }
+  try { void useRegistryAnalysisStore.persist?.rehydrate(); } catch { /* noop */ }
+  try { useDevelopmentPlanStore.setState({ byProject: {} } as never); } catch { /* noop */ }
+  try { void useDevelopmentPlanStore.persist?.rehydrate(); } catch { /* noop */ }
   pulled = false; // 빈 상태가 서버로 syncUp되지 않도록(scheduleSyncUp이 pulled=false면 무시)
   for (const k of PROJECT_PERSIST_KEYS) {
     try { window.localStorage.removeItem(k); } catch { /* noop */ }
