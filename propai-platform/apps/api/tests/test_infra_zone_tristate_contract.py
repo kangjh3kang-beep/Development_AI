@@ -115,3 +115,51 @@ def test_end_to_end_through_project_charges():
     assert unk[0] == sur[0] == 0 and yes[0] > 0
     assert unk[1] != sur[1], "상위 경유에서 3상태가 다시 뭉개졌다"
     assert "미조회" in unk[1]
+
+
+# ── 축 ③ **호출부** — 정의부만 훑는 락은 뚫린다(2026-08-26 라이브 실증) ────────────
+#   ★#865 는 엔진·통합·모듈 **세 층의 정의**를 3상태로 고쳤고, 위의 `_gate_params()` 락이
+#     그것을 지켰다. 그런데 **네 번째 층은 호출부**였다 —
+#     `rough_feasibility_orchestrator.py` 가 `parse_bool_flag(...)` 로 넘겨
+#     **미조회를 미지정으로 뭉갠 채** 라이브에 나갔다.
+#   ★락이 초록이었고 **라이브 프로브만이** 잡았다. 정의부 스캔은 **넘기는 값**을 안 본다.
+def _call_sites() -> list[tuple[str, str]]:
+    """`in_infra_charge_zone=` 로 **넘기는** 줄을 저장소에서 **파생형으로** 모은다.
+
+    손 목록이면 다음에 생기는 다섯 번째 호출부가 조용히 빠진다.
+    """
+    import pathlib
+    import re
+
+    root = pathlib.Path(__file__).resolve().parents[1] / "app"
+    out: list[tuple[str, str]] = []
+    for f in root.rglob("*.py"):
+        for line in f.read_text(encoding="utf-8").splitlines():
+            if re.search(r"in_infra_charge_zone\s*=", line) and "def " not in line:
+                out.append((str(f.relative_to(root)), line.strip()))
+    return out
+
+
+def test_call_sites_probe_is_alive():
+    """★전제 — 호출부를 실제로 찾았다(0건이 초록이 되지 않게)."""
+    sites = _call_sites()
+    assert len(sites) >= 2, f"호출부를 못 찾았다 — 조회기가 죽었다: {sites}"
+
+
+def test_no_call_site_collapses_the_tristate_with_bool_parser():
+    """★★어느 호출부도 **`parse_bool_flag` 로 뭉개지 않는다**.
+
+    `parse_bool_flag` 는 `None`(미조회)을 `False`(조회했고 미지정)로 바꾼다. 그러면
+    화면에 *"기반시설부담구역 미지정"* 이라는 **없는 관측 주장**이 나간다(증거 규율 §1).
+    """
+    bad = [f"{f}: {line}" for f, line in _call_sites() if "parse_bool_flag" in line]
+    assert not bad, (
+        "미조회를 미지정으로 뭉개는 호출부:\n" + "\n".join(bad)
+        + "\n→ parse_tristate_flag 를 쓰십시오."
+    )
+
+
+def test_at_least_one_call_site_uses_the_tristate_parser():
+    """★대조군 — *"아무도 안 쓴다"* 가 위 검사를 공허하게 만들지 않게."""
+    good = [f for f, line in _call_sites() if "parse_tristate_flag" in line]
+    assert good, "3상태 파서를 쓰는 호출부가 하나도 없다 — 위 검사가 공허하다"
