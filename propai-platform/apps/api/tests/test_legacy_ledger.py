@@ -25,6 +25,7 @@ from app.services.feasibility.legacy_ledger import (
 )
 from app.services.feasibility.rough_feasibility_orchestrator import (
     _null_block,
+    build_cost_ratio_basis,
     compact_charge_items,
 )
 
@@ -528,3 +529,31 @@ def test_no_ratio_basis_means_no_fabricated_qty():
           for g in s["groups"] for i in g["items"]}["finance_cost"]
     assert it["qty"] is None and it["unit_price"] is None
     assert it["amount_won"] == 12_000_000_000
+
+
+# ── 축 ⑩ 상류 — **오케스트레이터가 실제로 실어 보내는가** ─────────────────────
+#   ★변이 실증: 이 축이 없을 때 `"ratio_basis": None` 변이가 **SURVIVED** 했다.
+#     원장 픽스처가 그 dict 를 **이미 갖고** 있어서 상류를 한 번도 안 태웠기 때문이다 —
+#     이 세션에서 **다섯 번째** 같은 형태다(테스트가 스스로 생산자).
+def test_cost_ratio_basis_carries_source_and_rates():
+    """★엔진 추출과 표준 폴백이 **다른 `source`** 를 낸다(두 모집단)."""
+    eng = build_cost_ratio_basis(240_000_000_000, 0.05, 0.033, None)
+    fb = build_cost_ratio_basis(240_000_000_000, 0.08, 0.04, "엔진 비율 추출 실패 — 표준 폴백")
+    assert eng["source"] == "engine" and fb["source"] == "fallback"
+    assert eng["source"] != fb["source"], "출처가 상수다 — 배선을 끊어도 통과한다"
+    assert eng["base_won"] == 240_000_000_000 and eng["finance_rate"] == 0.05
+    assert fb["note"], "폴백인데 사유가 없다 — 사용자가 참고용임을 알 길이 없다"
+    assert eng["note"] is None
+
+
+def test_cost_ratio_basis_feeds_the_ledger_end_to_end():
+    """★★상류 산출을 **그대로** 원장에 먹여 「수량 × 단가」가 재현되는지 본다(픽스처 아님)."""
+    rb = build_cost_ratio_basis(240_000_000_000, 0.05, 0.0333, None)
+    led = build_legacy_ledger({"cost_breakdown": {
+        "finance_won": 12_000_000_000, "other_won": 7_992_000_000, "ratio_basis": rb}})
+    by = {i["key"]: i for s in led["sections"] for g in s["groups"] for i in g["items"]}
+    fin = by["finance_cost"]
+    assert fin["qty"] == 240_000_000_000, "상류가 과표를 흘렸다"
+    assert fin["unit_price"] == 0.05, "상류가 비율을 흘렸다"
+    assert abs(fin["qty"] * fin["unit_price"] - fin["amount_won"]) < 1_000
+    assert fin["basis_kind"] == "data", "엔진 추출인데 구조 폴백으로 표기됐다"

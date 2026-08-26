@@ -263,6 +263,32 @@ def _num(value: Any) -> float | None:
         return None
 
 
+def build_cost_ratio_basis(
+    base_won: float, finance_rate: float, other_rate: float, ratio_note: str | None
+) -> dict[str, Any]:
+    """금융비·제경비의 **과표·비율·출처** — 원장이 「수량 × 단가」를 재현하는 재료.
+
+    이 두 축은 `(토지비 + 공사비) × 비율` 이다. 즉 **수량 × 단가가 원래 있었다.**
+    종전엔 합계만 실어 보내서 원장이 *"개략 단계에서는 항목 단위 내역을 산출하지 않는다"* 고
+    적었는데 — **부재가 아니라 안 실어 보낸 것**이었다.
+
+    ★`source` 를 함께 싣는다. 비율이 **엔진 추출**인지 **표준 폴백**인지는 사용자가 알아야 한다
+      (폴백이면 그 숫자는 참고용이다). 표시층이 둘을 같게 그리면 폴백이 실측처럼 읽힌다.
+
+    ★모듈 레벨 함수인 이유: 인라인 dict 리터럴이면 **직접 태울 수 없어** 이 배선이 무잠금이
+      된다(변이 실증 — `"ratio_basis": None` 으로 바꿔도 아무 테스트도 빨개지지 않았다).
+      **호출할 수 없는 코드는 잠글 수 없다** — 이 저장소에서 같은 형태를 다섯 번 밟았다.
+    """
+    return {
+        "base_won": base_won,
+        "base_label": "토지비 + 공사비",
+        "finance_rate": finance_rate,
+        "other_rate": other_rate,
+        "source": "fallback" if ratio_note else "engine",
+        "note": ratio_note,
+    }
+
+
 def compact_charge_items(charges_result: dict[str, Any]) -> list[dict[str, Any]]:
     """부담금 결과 → 응답용 항목 목록. **과표·요율·사유를 버리지 않는다.**
 
@@ -704,14 +730,7 @@ async def build_rough_scenario(
         #   종전엔 합계만 실어 보내서 원장이 *"개략 단계에서는 항목 단위 내역을 산출하지
         #   않는다"* 고 적었는데, **부재가 아니라 안 실어 보낸 것**이었다.
         #   비율 출처(엔진 추출 vs 표준 폴백)까지 함께 싣는다 — 폴백이면 사용자가 알아야 한다.
-        cost_ratio_basis = {
-            "base_won": base_sum,
-            "base_label": "토지비 + 공사비",
-            "finance_rate": fin_ratio,
-            "other_rate": oth_ratio,
-            "source": "fallback" if ratio_note else "engine",
-            "note": ratio_note,
-        }
+        cost_ratio_basis = build_cost_ratio_basis(base_sum, fin_ratio, oth_ratio, ratio_note)
 
     # ── 6b) 부담금(B공사+C분양 단계, 시행사 부담) — ★상시-0 봉합 ──
     # 종전에는 total_tax_cost_won=0으로 학교용지·광역교통·상하수도·HUG 보증수수료 등
