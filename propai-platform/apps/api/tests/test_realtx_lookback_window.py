@@ -118,3 +118,65 @@ def test_window_crosses_the_year_boundary():
     months, _ = T.months_for(datetime(2026, 1, 15, tzinfo=UTC))
     assert months[0] == "202601"
     assert "202512" in months, months
+
+
+# ══════════════════════════════════════════════════════════════
+# 4. ★꼬리는 **등기를 보고하는 유형만** — 저장분 전수 실측이 근거
+# ══════════════════════════════════════════════════════════════
+#
+#   유형    행      등기            해제
+#   apt   4,110    737(17.9%)      79(1.9%)
+#   land    788      **0(0.0%)**   49(6.2%)   ← 6개 시군구 전부 0
+#
+# 대조군으로 같은 조회에서 apt 는 나온다(노출별 28.6%·12.8%·3.8%) — **조회기가 죽은 것이
+# 아니라 원천이 안 준다.** 꼬리는 오직 등기를 잡으려고 있으므로 land 를 넣으면 순수 낭비다.
+
+
+def test_tail_excludes_types_that_never_report_registration():
+    """★`land` 를 꼬리에 넣으면 **잡을 것이 없는 요청**을 매주 낸다."""
+    assert "land" not in T.TAIL_PROP_TYPES, (
+        "토지는 등기를 0% 보고한다(저장분 788행 전수 · 6개 시군구 전부 0) — 꼬리에 넣지 않는다"
+    )
+    assert "apt" in T.TAIL_PROP_TYPES, "등기를 보고하는 유형이 꼬리에서 빠지면 꼬리가 무의미하다"
+
+
+def test_tail_types_are_a_subset_of_all_types():
+    """대조군 — 꼬리에만 있고 평상시엔 없는 유형이 생기면 그건 오타다."""
+    assert set(T.TAIL_PROP_TYPES) <= set(T.DEFAULT_PROP_TYPES)
+
+
+def test_recent_months_still_fetch_every_type():
+    """★최근 창에서는 land 를 빼면 안 된다 — 토지의 신호(해제 6.2%)가 거기 있다."""
+    now = _at(26)
+    recent = T.recent_months(now, T.RECENT_MONTHS)
+    for ym in recent:
+        assert T.prop_types_for(ym, recent) == T.DEFAULT_PROP_TYPES, ym
+
+
+def test_tail_months_fetch_only_tail_types():
+    now = _at(26)
+    months, tail = T.months_for(now)
+    recent = T.recent_months(now, T.RECENT_MONTHS)
+    assert tail
+    tail_only = [m for m in months if m not in recent]
+    assert tail_only, "꼬리 달이 하나도 없다 — 이 단언이 공허하다"
+    for ym in tail_only:
+        assert T.prop_types_for(ym, recent) == T.TAIL_PROP_TYPES, ym
+
+
+def test_scope_count_stays_within_the_measured_quota_budget():
+    """★쿼터는 실측 기준으로 계산했다 — 스코프가 조용히 늘면 여기서 걸린다.
+
+    실측: 최근 36 스코프 = 103.58초(6 시군구 × 3월 × 2유형).
+    꼬리일은 60 스코프(= 36 + 6 시군구 × 4월 × 1유형)여야 한다.
+    """
+    now = _at(26)
+    months, tail = T.months_for(now)
+    recent = T.recent_months(now, T.RECENT_MONTHS)
+    per_region = sum(len(T.prop_types_for(m, recent)) for m in months)
+    assert tail and per_region == 10, per_region        # 3월×2 + 4월×1
+    weekday_months, _ = T.months_for(_at(27))
+    per_region_weekday = sum(len(T.prop_types_for(m, T.recent_months(_at(27), T.RECENT_MONTHS)))
+                             for m in weekday_months)
+    assert per_region_weekday == 6, per_region_weekday  # 3월×2
+    assert per_region > per_region_weekday              # ★두 모집단이 갈린다

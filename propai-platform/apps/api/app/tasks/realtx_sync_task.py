@@ -53,8 +53,23 @@ TAIL_WEEKDAY = 2  # 수요일
 #: 유형 — 토지는 지번이 100% 마스킹이지만 **법정동 단위 집계는 유효**하다(`#851` 실측).
 DEFAULT_PROP_TYPES = ("apt", "land")
 
-#: 유형 — 토지는 지번이 100% 마스킹이지만 **법정동 단위 집계는 유효**하다(`#851` 실측).
-DEFAULT_PROP_TYPES = ("apt", "land")
+#: **꼬리 창을 도는 유형** — 등기를 **실제로 보고하는** 유형만.
+#:
+#: ★★꼬리 창은 오직 등기(`rgstDate`)를 잡으려고 존재한다. 그런데 **MOLIT 토지 API 는
+#:   등기일자를 아예 주지 않는다.** 저장분 **전수** 실측(2026-08-26 · 4,898행):
+#:
+#:       유형    행      등기            해제
+#:       apt   4,110    737(17.9%)      79(1.9%)
+#:       land    788      **0(0.0%)**   49(6.2%)   ← 6개 시군구 **전부 0**
+#:
+#:   대조군으로 같은 조회에서 apt 는 나온다(노출별 28.6% · 12.8% · 3.8%). 즉 **조회기가
+#:   죽은 것이 아니라 원천이 안 준다.**
+#:   → 토지를 꼬리에 넣으면 **잡을 것이 없는 요청을 매주 24회** 낸다(순수 쿼터 낭비).
+#:   ★토지의 신호는 **해제**이고(6.2% = apt 의 3배) 해제는 1개월부터 평평하므로
+#:     **최근 3개월 창으로 충분**하다.
+#:
+#: ★이 값을 바꾸려면 **먼저 재라** — 원천이 토지 등기를 주기 시작하면 늘려야 한다.
+TAIL_PROP_TYPES = ("apt",)
 
 
 def recent_months(now: datetime, months: int) -> list[str]:
@@ -64,6 +79,14 @@ def recent_months(now: datetime, months: int) -> list[str]:
         out.append(cursor.strftime("%Y%m"))
         cursor = cursor.replace(day=1) - timedelta(days=1)
     return out
+
+
+def prop_types_for(deal_ym: str, recent: list[str]) -> tuple[str, ...]:
+    """이 달에 어떤 유형을 조회할 것인가.
+
+    최근 창은 전 유형, **꼬리 구간은 등기를 보고하는 유형만**(`TAIL_PROP_TYPES`).
+    """
+    return DEFAULT_PROP_TYPES if deal_ym in recent else TAIL_PROP_TYPES
 
 
 def months_for(now: datetime) -> tuple[list[str], bool]:
@@ -90,7 +113,9 @@ async def sync_realtx_trades(ctx: dict[str, Any]) -> dict[str, Any]:
     from apps.api.database.session import AsyncSessionLocal
     from apps.api.integrations.molit_client import MolitClient
 
-    months, tail_included = months_for(datetime.now(tz=UTC))
+    _now = datetime.now(tz=UTC)
+    months, tail_included = months_for(_now)
+    recent = recent_months(_now, RECENT_MONTHS)
 
     async with AsyncSessionLocal() as db:
         # ★★2026-08-26 독립 리뷰 적발 — 종전엔 여기서 예외를 잡아 dict 로 돌려줬다.
@@ -114,7 +139,7 @@ async def sync_realtx_trades(ctx: dict[str, Any]) -> dict[str, Any]:
         try:
             for lawd_cd in targets:
                 for deal_ym in months:
-                    for prop_type in DEFAULT_PROP_TYPES:
+                    for prop_type in prop_types_for(deal_ym, recent):
                         try:
                             records = await client.get_transactions(lawd_cd, deal_ym, prop_type=prop_type)
                         except Exception as exc:  # noqa: BLE001 — 사유를 실어 계속한다
