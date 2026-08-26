@@ -88,8 +88,14 @@ def test_recent_window_is_short_enough_to_stay_daily():
 
 
 def test_recent_window_covers_the_flat_cancel_signal():
-    """해제는 1개월부터 평평하므로 최근 창은 **1개월 이상**이면 된다(하한만 건다)."""
-    assert T.RECENT_MONTHS >= 1
+    """★종전 단언(`>= 1`)은 **공허했다** — `recent_months` 가 `max(1, months)` 라
+    `RECENT_MONTHS = 0` 이어도 창은 1개월이 나온다(2026-08-27 리뷰 L1).
+
+    해제는 1개월부터 평평하지만(2.9·2.3·2.6·2.1·2.5%), **신규 거래의 지연 신고**를
+    덮으려면 여러 달이 필요하다 — 실측 표본에서 202607 조회에 202605 거래가 섞여 있었다.
+    값을 못 박고 사유를 적는다.
+    """
+    assert T.RECENT_MONTHS == 3, "최근 창을 바꾸려면 지연 신고 분포를 먼저 재라"
 
 
 # ══════════════════════════════════════════════════════════════
@@ -174,11 +180,15 @@ def test_scope_count_stays_within_the_measured_quota_budget():
     months, tail = T.months_for(now)
     recent = T.recent_months(now, T.RECENT_MONTHS)
     per_region = sum(len(T.prop_types_for(m, recent)) for m in months)
-    assert tail and per_region == 10, per_region        # 3월×2 + 4월×1
+    # ★기대값을 **상수에서 파생**한다 — 리터럴로 못 박으면 문서가 권하는 정당한
+    #   변경(TAIL_MONTHS 를 늘리는 것)이 테스트에서 죽는다(2026-08-27 리뷰 M5 · 위양성).
+    expect_tail = (T.RECENT_MONTHS * len(T.DEFAULT_PROP_TYPES)
+                   + (T.TAIL_MONTHS - T.RECENT_MONTHS) * len(T.TAIL_PROP_TYPES))
+    assert tail and per_region == expect_tail, (per_region, expect_tail)
     weekday_months, _ = T.months_for(_at(27))
     per_region_weekday = sum(len(T.prop_types_for(m, T.recent_months(_at(27), T.RECENT_MONTHS)))
                              for m in weekday_months)
-    assert per_region_weekday == 6, per_region_weekday  # 3월×2
+    assert per_region_weekday == T.RECENT_MONTHS * len(T.DEFAULT_PROP_TYPES)
     assert per_region > per_region_weekday              # ★두 모집단이 갈린다
 
 
@@ -299,3 +309,57 @@ async def test_scope_count_matches_the_quota_arithmetic(monkeypatch):
     assert len(wed) == regions * per_region, (len(wed), per_region)
     assert len(thu) == regions * T.RECENT_MONTHS * len(T.DEFAULT_PROP_TYPES)
     assert len(wed) > len(thu)                    # ★두 모집단이 갈린다
+
+
+# ══════════════════════════════════════════════════════════════
+# 6. ★상수 결속 — 캐시 절벽과 실패 신호 (리뷰 H3 · M3)
+# ══════════════════════════════════════════════════════════════
+
+def test_tail_stays_below_the_cache_ttl_cliff():
+    """★`TAIL_MONTHS` 를 늘리면 **캐시가 주간 갱신을 삼킨다** — 그런데 성공처럼 보인다.
+
+    실측(2026-08-27):
+
+        TAIL_MONTHS=7 → 최고령 경과 6 → TTL **24h**  (주간 조회 168h > TTL · 정상)
+        TAIL_MONTHS=8 → 최고령 경과 7 → TTL **720h** (★주간 조회가 캐시에 삼켜진다)
+
+    그때 `submitted` 는 정상적으로 올라가므로 로그만으로는 안 드러난다.
+    """
+    from apps.api.integrations.molit_client import _RECENT_MONTHS_SHORT_TTL
+
+    oldest_elapsed = T.TAIL_MONTHS - 1          # 최신 달이 경과 0
+    assert oldest_elapsed <= _RECENT_MONTHS_SHORT_TTL, (
+        f"꼬리 {T.TAIL_MONTHS}개월의 최고령 달은 경과 {oldest_elapsed} 로 "
+        f"_RECENT_MONTHS_SHORT_TTL({_RECENT_MONTHS_SHORT_TTL})을 넘는다 → TTL 30일이 되어 "
+        "주간 조회가 캐시에 삼켜진다. 꼬리를 늘리려면 그 상수를 함께 올려라."
+    )
+
+
+def test_the_cliff_lock_is_not_vacuous():
+    """★대조군 — 절벽이 실재하는지 실제 함수로 확인한다(상수 비교만으로는 공허하다)."""
+    from datetime import datetime
+
+    from apps.api.integrations.molit_client import _deal_ymd_ttl
+
+    ref = datetime(2026, 8, 26, tzinfo=UTC)
+    safe = T.recent_months(ref, T.TAIL_MONTHS)[-1]
+    over = T.recent_months(ref, T.TAIL_MONTHS + 1)[-1]
+    week = 168 * 3600
+    assert _deal_ymd_ttl(safe, now=ref) <= week, "현재 꼬리가 이미 절벽 위다"
+    assert _deal_ymd_ttl(over, now=ref) > week, "★절벽이 없다 — 이 락이 공허하다"
+
+
+def test_fetch_errors_are_not_reported_as_ok():
+    """★종전엔 전 스코프가 429 로 실패해도 `status="ok"` 였다(리뷰 M3)."""
+    import ast
+    import inspect
+    import textwrap
+
+    fn = ast.parse(textwrap.dedent(inspect.getsource(T.sync_realtx_trades))).body[0]
+    names = {n.value for n in ast.walk(fn)
+             if isinstance(n, ast.Constant) and isinstance(n.value, str)}
+    assert "partial" in names and "ok" in names, "상태 어휘를 못 찾았다 — 조회기 의심"
+    # `status` 대입식이 fetch_errors 를 참조하는지 구조로 본다.
+    src = inspect.getsource(T.sync_realtx_trades)
+    tail = src[src.index('stats["status"]'):]
+    assert "fetch_errors" in tail[:400], "status 판정이 fetch_errors 를 안 본다"

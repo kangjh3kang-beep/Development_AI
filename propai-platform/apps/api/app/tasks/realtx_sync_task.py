@@ -43,12 +43,27 @@ RECENT_MONTHS = 3
 #:   ★인계서의 *"등기 약 30% 기재"* 도 같은 이유로 무의미하다(나이를 안 밝힌 혼합 모집단).
 #:
 #: ★**이 상한(7)도 절단이다** — 5개월 96.1% → 7개월 97.4% 로 완만하지만 10·12개월은
-#:   재지 않았다. 더 늘릴 근거가 생기면 늘려야 하고, **줄이면 등기를 다시 놓친다**.
+#:   재지 않았다. **줄이면 등기를 다시 놓친다.**
+#:
+#: ★★**늘리려면 캐시 TTL 을 함께 올려야 한다**(2026-08-27 독립 리뷰 H3 · 실측):
+#:   molit_client._deal_ymd_ttl 은 경과 개월이 _RECENT_MONTHS_SHORT_TTL(=6)을 넘으면
+#:   TTL 을 **30일**로 준다. TAIL_MONTHS=7 의 최고령 달은 경과 **6** 이라 아슬하게 24시간이다.
+#:
+#:       TAIL_MONTHS=7 → 최고령 경과 6 → TTL **24h**  (주간 조회 168h > TTL · 정상)
+#:       TAIL_MONTHS=8 → 최고령 경과 7 → TTL **720h** (★주간 조회가 캐시에 삼켜진다)
+#:
+#:   그때 submitted 는 정상적으로 올라가므로 **성공처럼 보인다.**
+#:   → test_tail_stays_below_the_cache_ttl_cliff 가 이 결합을 잠근다.
 TAIL_MONTHS = 7
 
 #: 꼬리를 도는 요일(0=월). 매일 돌 필요가 없다 — 그 구간은 하루 단위로 변하지 않는다.
-#: 쿼터 계산(실측 기준): 최근 36 스코프/일 + 꼬리 48 스코프/주 = 주간 평균 **약 43/일**.
-TAIL_WEEKDAY = 2  # 수요일
+#:
+#: ★쿼터(실측 기준 · TAIL_PROP_TYPES 반영 후): 최근 **36 스코프/일** + 꼬리 **24 스코프/주**
+#:   = 주간 평균 (6×36 + 60)/7 ≈ **39.4/일**(현행 36 대비 **+9.5%**).
+#:   ※이 수치는 test_scope_count_matches_the_quota_arithmetic 이 **호출 인자 수로** 잠근다.
+#: ★**UTC 기준**이다 — 크론이 19:10 UTC 이므로 실제 실행은 **KST 목요일 04:10** 이다.
+#:   로그를 KST 로 보면 *"목요일에 꼬리가 돈다"* 로 보인다(형제 크론들은 KST 를 병기한다).
+TAIL_WEEKDAY = 2  # UTC 수요일(= KST 목요일 04:10 실행)
 
 #: 유형 — 토지는 지번이 100% 마스킹이지만 **법정동 단위 집계는 유효**하다(`#851` 실측).
 DEFAULT_PROP_TYPES = ("apt", "land")
@@ -62,8 +77,16 @@ DEFAULT_PROP_TYPES = ("apt", "land")
 #:       apt   4,110    737(17.9%)      79(1.9%)
 #:       land    788      **0(0.0%)**   49(6.2%)   ← 6개 시군구 **전부 0**
 #:
-#:   대조군으로 같은 조회에서 apt 는 나온다(노출별 28.6% · 12.8% · 3.8%). 즉 **조회기가
-#:   죽은 것이 아니라 원천이 안 준다.**
+#:   대조군으로 같은 조회에서 apt 는 나오고(노출별 28.6% · 12.8% · 3.8%), 파서는
+#:   molit_client.py:492 에서 **유형 분기 없이** rgstDate 를 읽는다 →
+#:   *"파서가 토지에서 그 필드를 안 읽는다"* 는 대안 가설은 **기각**된다.
+#:
+#: ★**표기 구분**(증거 규율 §1): *"MOLIT 이 안 준다"* 는 **추론**이다. 관측은
+#:   *"토지 응답 788행에서 registered_date 가 0건"* 까지다. 표본은 **3개월 창이라 우측
+#:   절단**돼 있다(같은 창의 apt 는 17.9% 이므로 0/788 은 통계적으로 결정적이지만,
+#:   **원천 응답 원문의 키 목록은 확인하지 않았다**).
+#:   ★같은 조회에서 buyer_type·seller_type 도 **land 0 / apt 433** 이라(실측)
+#:     엔드포인트 차이라는 해석이 가장 그럴듯하다 — 그러나 그것도 **추론**이다.
 #:   → 토지를 꼬리에 넣으면 **잡을 것이 없는 요청을 매주 24회** 낸다(순수 쿼터 낭비).
 #:   ★토지의 신호는 **해제**이고(6.2% = apt 의 3배) 해제는 1개월부터 평평하므로
 #:     **최근 3개월 창으로 충분**하다.
@@ -128,8 +151,12 @@ async def sync_realtx_trades(ctx: dict[str, Any]) -> dict[str, Any]:
         client = MolitClient()
         stats: dict[str, Any] = {
             "targets": len(targets), "months": len(months),
-            # ★꼬리를 돌았는지 **결과에 남긴다** — 안 남기면 "오늘 등기를 봤나"를
-            #   로그만 보고는 알 수 없고, 주간 실행이 조용히 멈춰도 드러나지 않는다.
+            # 꼬리를 돌았는지 결과에 남긴다 — **사후 grep** 을 가능하게 한다.
+            # ★★과대주장 정정(2026-08-27 리뷰 M1): 이것만으로는 *"주간 실행이 조용히
+            #   멈추는 것"* 이 **드러나지 않는다.** 이 파일이 위에서 스스로 실측했듯
+            #   **arq job result 를 읽는 코드가 0건**이고 이 필드의 소비처도 **0** 이다.
+            #   ★부채: 진짜로 드러나게 하려면 realtx_scan_state 에 마지막 꼬리 실행
+            #     시각을 남기고 *"8일 이상 낡음"* 을 판정하는 소비처가 필요하다(별건).
             "tail_included": tail_included,
             # ★`submitted` 로 이름을 바꿨다 — 종전 `stored` 는 **투입 레코드 수**이지
             #   저장된 행 수가 아니다(멱등 upsert 라 기존 행 갱신이 섞인다).
@@ -137,8 +164,14 @@ async def sync_realtx_trades(ctx: dict[str, Any]) -> dict[str, Any]:
             "fetch_errors": [], "persist_errors": [],
         }
         try:
-            for lawd_cd in targets:
-                for deal_ym in months:
+            # ★★루프는 **월-major** 다(2026-08-27 리뷰 H2). 시군구-major 로 돌면 쿼터가
+            #   소진될 때 **뒤쪽 시군구가 최근 3개월(해제 신호)까지 통째로** 잃는다.
+            #   targets 가 정렬돼 있어 **매주 같은 시군구**가 희생된다 — 이 파일이 저장
+            #   실패에 대해 이미 적어 둔 *"항상 같은 뒷부분이라 계통적 손실"* 의 조회 판이다.
+            #   월-major 면 어디서 끊겨도 **모든 시군구의 최근 달이 먼저 확보**된다
+            #   (months 는 최신 → 과거 순).
+            for deal_ym in months:
+                for lawd_cd in targets:
                     for prop_type in prop_types_for(deal_ym, recent):
                         try:
                             records = await client.get_transactions(lawd_cd, deal_ym, prop_type=prop_type)
@@ -170,7 +203,11 @@ async def sync_realtx_trades(ctx: dict[str, Any]) -> dict[str, Any]:
         finally:
             await client.close()
 
-    stats["status"] = "ok" if not stats["persist_errors"] else "partial"
+    # ★fetch_errors 도 본다(2026-08-27 리뷰 M3) — 종전엔 전 스코프가 429 로 실패해도
+    #   status="ok" 였다. 꼬리일은 스코프가 67% 늘어 그 발화 확률이 올라간다.
+    stats["status"] = (
+        "ok" if not (stats["persist_errors"] or stats["fetch_errors"]) else "partial"
+    )
     logger.info(
         "실거래 2층 수집 %s 시군구=%d 월=%d(꼬리=%s) 투입=%d 정정=%d 조회실패=%d 저장실패=%d",
         stats["status"], stats["targets"], stats["months"],
