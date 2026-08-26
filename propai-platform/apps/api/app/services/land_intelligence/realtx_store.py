@@ -20,7 +20,7 @@
 필지에서 **파생**한다. 새 프로젝트·새 지역이 자동으로 감시망에 들어오고, 아무도 안 쓰는
 지역은 태우지 않는다(쿼터가 곧 제약이다 — 아래).
 
-★**파생이 0건이면 조용히 넘어가지 않고 죽는다**(`RealtxTargetsEmpty`). 프론트 스토어 형상이
+★**파생이 0건이면 조용히 넘어가지 않고 죽는다**(`RealtxTargetsEmptyError`). 프론트 스토어 형상이
   바뀌면 파생이 소리 없이 0건이 될 수 있는데, 그때 *"수집할 것이 없었다"* 로 읽히면
   **수집이 죽은 채 초록**이 된다.
 
@@ -182,14 +182,47 @@ def assign_ordinals(records: list[dict[str, Any]], lawd_cd: str, deal_ym: str) -
     해제됐다"가 쌍둥이 중 다른 쪽에 붙을 수 있다). 원천이 순서를 보장하는지는 **미측정**이다.
     그래도 **29% 를 버리는 것보다는 낫다** — 버리면 그 거래는 아예 없던 일이 된다.
     """
-    seen: dict[str, int] = {}
-    out: list[str] = []
-    for record in records:
-        base = trade_key(record, lawd_cd, deal_ym, 0)
-        ordinal = seen.get(base, 0)
-        seen[base] = ordinal + 1
-        out.append(base if ordinal == 0 else trade_key(record, lawd_cd, deal_ym, ordinal))
+    # ★★2026-08-26 독립 리뷰 적발 — 종전엔 순번이 **응답 순서**에 결속했다.
+    #   그러면 원천이 쌍둥이를 다른 순서로 주는 날 **정정이 다른 거래에 귀속된다.**
+    #   내 종전 주석은 *"불변 필드가 같으니 데이터 자체는 안 틀린다"* 고 했는데 **거짓**이다 —
+    #   이 층의 유일한 산출물이 정정 원장이고, 귀속이 틀리면 **원장이 거짓**이다.
+    #
+    #   → 순번을 **가변 필드 지문**으로 정렬해 결정적으로 만든다. 같은 쌍둥이 집합이면
+    #     응답 순서와 무관하게 같은 순번을 받는다.
+    #   ★가변 필드까지 완전히 같은 쌍둥이는 **원리적으로 구별 불가**하다. 그때 개별 귀속은
+    #     의미가 없고 *"쌍둥이 3건 중 1건이 해제됐다"* 는 집계만 참이다 —
+    #     그래서 정정 행에 `twin_group_size` 를 실어 **소비처가 개별 귀속을 신뢰하지 않게** 한다.
+    groups: dict[str, list[int]] = {}
+    for i, record in enumerate(records):
+        groups.setdefault(trade_key(record, lawd_cd, deal_ym, 0), []).append(i)
+
+    out: list[str] = [""] * len(records)
+    for base, idxs in groups.items():
+        if len(idxs) == 1:
+            out[idxs[0]] = base
+            continue
+        # 가변 필드 지문으로 정렬 → 응답 순서가 바뀌어도 같은 순번.
+        ordered = sorted(idxs, key=lambda i: _mutable_fingerprint(records[i]))
+        for ordinal, i in enumerate(ordered):
+            out[i] = base if ordinal == 0 else trade_key(records[i], lawd_cd, deal_ym, ordinal)
     return out
+
+
+def _mutable_fingerprint(record: dict[str, Any]) -> tuple[str, ...]:
+    """가변 필드만으로 만든 정렬 열쇠 — 쌍둥이 순번을 **응답 순서에서 떼어낸다**."""
+    return tuple(
+        ("" if record.get(f) is None else str(record.get(f)).strip())
+        for f in _MUTABLE_FIELDS
+    )
+
+
+def twin_group_sizes(records: list[dict[str, Any]], lawd_cd: str, deal_ym: str) -> list[int]:
+    """각 레코드가 속한 **쌍둥이 집합의 크기**. 1 이면 개별 귀속이 신뢰 가능하다."""
+    counts: dict[str, int] = {}
+    bases = [trade_key(r, lawd_cd, deal_ym, 0) for r in records]
+    for b in bases:
+        counts[b] = counts.get(b, 0) + 1
+    return [counts[b] for b in bases]
 
 
 def diff_mutable(previous: dict[str, Any], current: dict[str, Any]) -> list[dict[str, str]]:
@@ -251,6 +284,9 @@ CREATE TABLE IF NOT EXISTS realtx_corrections (
     field        text,
     old_value    text,
     new_value    text,
+    -- ★이 정정이 속한 쌍둥이 집합의 크기. 1 이 아니면 **개별 귀속은 의미가 없다**
+    --   (원천이 마스킹한 지번 때문에 구별 불가) — 집계로만 읽어야 한다.
+    twin_group_size integer NOT NULL DEFAULT 1,
     detected_at  timestamptz NOT NULL DEFAULT now()
 )
 """
@@ -290,6 +326,10 @@ async def _ensure_schema(db: Any, force: bool = False) -> None:
         await db.execute(text(ddl))
     for index_sql in _INDEXES:
         await db.execute(text(index_sql))
+    # 이미 배포된 테이블 방어(design_run_store 선례 동형).
+    await db.execute(text(
+        "ALTER TABLE realtx_corrections "
+        "ADD COLUMN IF NOT EXISTS twin_group_size integer NOT NULL DEFAULT 1"))
     await db.commit()
     _SCHEMA_READY = True
 
@@ -369,7 +409,10 @@ async def persist_scope(
       첫 실행에 전건이 "정정"으로 보고된다(`presale_monitor_service` 선례).
 
     Returns:
-        `{"stored": int, "corrections": list, "baseline": bool}`
+        `{"submitted": int, "corrections": list, "baseline": bool}`
+
+    ★`submitted` 는 **투입 레코드 수**다(저장된 행 수가 아니다 — 멱등 upsert 라
+      기존 행 갱신이 섞인다). 이름이 사실을 과대표현하지 않게 바꿨다.
     """
     from sqlalchemy import text
 
@@ -382,13 +425,19 @@ async def persist_scope(
     is_baseline = not (state and state[0])
 
     previous = {
-        row[0]: dict(zip(_MUTABLE_FIELDS, row[1:], strict=False))
+        row[0]: dict(zip(_MUTABLE_FIELDS, row[1:], strict=True))
         for row in (await db.execute(
             text(
                 "SELECT trade_key, " + ", ".join(_MUTABLE_FIELDS) + " FROM realtx_trades "
-                "WHERE lawd_cd = :l AND deal_ym = :y AND prop_type = :p"
+                # ★`prop_type` 으로 좁히지 않는다 — 조회는 **키로** 하고 키는 이미
+                #   `prop_type` 을 담는다(`_KEY_FIELDS`). 좁히면 오히려 **비대칭 결함**이
+                #   생긴다: 저장 컬럼은 `record["prop_type"]`(레코드 값)에서 오는데
+                #   조회는 스코프 인자로 걸어, 둘이 다른 날 `previous` 가 자기 행을 못 찾아
+                #   **정정 탐지가 영구 0건**이 된다(2026-08-26 독립 리뷰 지적).
+                #   여기서 넓게 읽어도 lookup 은 키로 하므로 남의 행이 섞이지 않는다.
+                "WHERE lawd_cd = :l AND deal_ym = :y"
             ),
-            {"l": lawd_cd, "y": deal_ym, "p": prop_type},
+            {"l": lawd_cd, "y": deal_ym},
         )).fetchall()
     }
 
@@ -396,22 +445,26 @@ async def persist_scope(
     # ★쌍둥이(불변 필드가 완전히 같은 행)에 순번을 붙인다 — 안 붙이면 라이브 실측 기준
     #   평균 4%·최악 29% 가 upsert 로 **조용히 덮어써진다**.
     keys = assign_ordinals(records, lawd_cd, deal_ym)
-    for record, key_id in zip(records, keys, strict=True):
+    # ★쌍둥이 집합 크기 — 1 이 아니면 **개별 귀속을 신뢰하면 안 된다**(정정 행에 실어 보낸다).
+    sizes = twin_group_sizes(records, lawd_cd, deal_ym)
+    for record, key_id, twin_size in zip(records, keys, sizes, strict=True):
         await db.execute(text(_UPSERT_SQL), upsert_params(record, key_id, lawd_cd, deal_ym, prop_type))
 
         before = previous.get(key_id)
         if before is None or is_baseline:
             continue
         for change in diff_mutable(before, record):
-            corrections.append({"trade_key": key_id, **change})
+            corrections.append({"trade_key": key_id, "twin_group_size": twin_size, **change})
             await db.execute(
                 text(
                     "INSERT INTO realtx_corrections "
-                    "(trade_key, lawd_cd, deal_ym, kind, field, old_value, new_value) "
-                    "VALUES (:t, :l, :y, :k, :f, :o, :n)"
+                    "(trade_key, lawd_cd, deal_ym, kind, field, old_value, new_value, "
+                    " twin_group_size) "
+                    "VALUES (:t, :l, :y, :k, :f, :o, :n, :g)"
                 ),
                 {"t": key_id, "l": lawd_cd, "y": deal_ym, "k": change["kind"],
-                 "f": change["field"], "o": change["old"], "n": change["new"]},
+                 "f": change["field"], "o": change["old"], "n": change["new"],
+                 "g": twin_size},
             )
 
     await db.execute(
@@ -423,4 +476,4 @@ async def persist_scope(
         {"k": key},
     )
     await db.commit()
-    return {"stored": len(records), "corrections": corrections, "baseline": is_baseline}
+    return {"submitted": len(records), "corrections": corrections, "baseline": is_baseline}
