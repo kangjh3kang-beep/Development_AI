@@ -78,13 +78,25 @@ git --no-pager diff --no-index --stat "$SNAP" "$FILE" 2>/dev/null | tail -1 | se
 #   ★실제로 이 도구의 **첫 실사용에서 그 일이 났다**(2026-08-21): 테스트는 `1 failed` 인데
 #     `| tail -1` 때문에 SURVIVED 로 찍혔다. 도구는 정확했고 **호출이 틀렸다.**
 #   도구가 호출자의 셸 문자열까지 알 수는 없으니, 보이면 **시끄럽게 경고**한다.
-case " $* " in
-  *"|"*)
-    echo "★경고: 테스트 명령에 파이프(|)가 있다. 파이프는 **끝 명령의 종료코드**를 준다 —" >&2
-    echo "  테스트가 실패해도 rc=0 이 되어 CAUGHT 가 SURVIVED 로 보고된다." >&2
-    echo "  파이프를 빼거나 'set -o pipefail' 을 명령 안에 넣을 것." >&2
-    ;;
-esac
+#
+# ★★2026-08-27 정정 — **경고만으로는 못 막았다.** 종전엔 위 사실을 알면서도
+#   `stderr` 로 세 줄 찍고 **오염된 `RC` 로 판정을 그대로 발행**했다. 즉 도구가
+#   *"이 값은 못 믿는다"* 를 알면서 **그 값으로 SURVIVED/CAUGHT 를 찍었다.**
+#   다음 사람은 경고가 아니라 **마지막 줄**을 읽는다(동료 세션 실측: 실제로 오보를 읽었다).
+#   **경고는 산문이고 판정이 산출물이다** — 이 저장소 §검증규율 9 가 도구 안에서 재발했다.
+#   → 파이프가 보이면 **판정을 발행하지 않는다.** `판정 불가(무효)` + 비정상 종료(12).
+#
+# ★차단하되 길을 준다(이 저장소 관행 — `REVIEW_EXEMPT` 동형):
+#   · 명령에 `set -o pipefail` 이 있으면 `RC` 를 신뢰할 수 있으므로 **정상 판정**한다.
+#   · 인자 안의 **리터럴 `|`**(예: `-k 'a|b'` 정규식)는 파이프가 아니다 — 위양성도 결함이므로
+#     `MUTATE_ALLOW_PIPE="사유"` 로 통과시키되 **사유를 출력에 남긴다.**
+PIPE_SEEN=0
+case " $* " in *"|"*) PIPE_SEEN=1 ;; esac
+case " $* " in *"pipefail"*) PIPE_SEEN=0 ;; esac   # 호출자가 이미 막았다
+if [ "$PIPE_SEEN" -eq 1 ] && [ -n "${MUTATE_ALLOW_PIPE:-}" ]; then
+  echo "== 파이프 예외: ${MUTATE_ALLOW_PIPE} (호출자가 리터럴이라고 선언) =="
+  PIPE_SEEN=0
+fi
 
 # ── 테스트 실행 ─────────────────────────────────────────────────────────────
 echo "== 변이 상태에서 테스트 =="
@@ -93,7 +105,17 @@ set +e
 RC=$?
 set -e
 
-if [ "$RC" -eq 0 ]; then
+if [ "$PIPE_SEEN" -eq 1 ]; then
+  # ★판정을 발행하지 않는다 — 못 믿는 값으로 SURVIVED/CAUGHT 를 찍으면 그것이 증거로 인용된다.
+  echo "판정 불가(무효) — 테스트 명령에 파이프(|)가 있어 rc=$RC 를 신뢰할 수 없다."
+  echo "  파이프는 **끝 명령의 종료코드**를 준다: 테스트가 실패해도 rc=0 이 되어"
+  echo "  CAUGHT 가 SURVIVED 로 보고된다(이 도구의 첫 실사용에서 실제로 났다 · 2026-08-21)."
+  echo "  다음 중 하나를 하라:"
+  echo "    · 파이프를 빼라(권장)"
+  echo "    · 명령 안에 'set -o pipefail' 을 넣어라"
+  echo "    · 리터럴 '|' 라면  MUTATE_ALLOW_PIPE=\"사유\" 로 다시 실행하라"
+  PIPE_INVALID=1
+elif [ "$RC" -eq 0 ]; then
   echo "SURVIVED — 변이를 넣었는데 테스트가 통과했다. 그 자리는 잠겨 있지 않다."
 else
   echo "CAUGHT — 변이가 잡혔다(rc=$RC)."
@@ -107,4 +129,10 @@ if ! git diff --quiet -- "$FILE"; then
   exit 71
 fi
 echo "== 원복 확인(작업트리 깨끗) =="
+
+# ★판정 불가는 **성공도 실패도 아니다.** 오염된 RC 를 그대로 돌려주면 호출 스크립트가
+#   그것을 CAUGHT/SURVIVED 로 해석한다 — 이 도구가 막으려는 그 일이다.
+if [ "${PIPE_INVALID:-0}" -eq 1 ]; then
+  exit 12
+fi
 exit "$RC"

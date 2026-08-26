@@ -105,4 +105,15 @@
 | `lib/hydration/__tests__/render-path-store-reads.contract.test.ts` | **전수·파생형**: ①모집단(>600파일 + **명시 대조군 5파일**) ②탐지(양성 **11형태**) ③특이도(음성 **6형태**) ④**비성장 래칫**(파일→호출자→**건수**까지) + **증가·죽은 면제 모두 실패** ⑤고친 자리는 래칫에 없음(되돌리면 "새로 생김"으로 잡힌다) |
 | `e2e/support/hydration-probe.mjs` | 다음 사람이 **같은 방법으로 다시 잴 수 있게** (대조군 2종 내장) |
 
-전부 **필수 CI**(vitest)에서 돈다 — `#850` 의 잠금이 나이틀리 e2e 였던 것과 다르다.
+★**정정(2026-08-27 · 독립 리뷰 F7)**: 초판은 여기에 *"전부 **필수 CI**(vitest)에서 돈다"* 라고 적었는데
+**마지막 행(`e2e/support/hydration-probe.mjs`)에 대해서는 거짓**이었다 — `vitest.config.ts` 가
+`e2e/**` 를 수집에서 제외하므로 **어떤 러너도 그 파일을 태우지 않는다.** 잠금표에 실으면서
+"전부 CI"라고 쓴 것은 §C-11(면역을 거짓 주장하지 마라) 위반이다.
+
+정확히는:
+- 앞 세 행(`zustand-server-snapshot` · `GlobalAddressSearch.hydration` · `render-path-store-reads`)
+  → **필수 CI(vitest)에서 돈다.** `#850` 의 잠금이 나이틀리 e2e 였던 것과 다르다.
+- `e2e/support/hydration-probe.mjs` → **사람이 명령을 쳐야 도는 진단 도구**다. CI 게이트가 아니다.
+  그 판정 순수부(`countHydration`·`samePath`·`pickMutableText`)는 `lib/hydration/probe-text.mjs` 로
+  분리해 `lib/hydration/__tests__/probe-text.test.ts` 가 **필수 CI 에서** 잠근다(후속 PR).
+  브라우저를 태우는 부분은 여전히 **무잠금**이며, 그 사실을 여기 남긴다.
