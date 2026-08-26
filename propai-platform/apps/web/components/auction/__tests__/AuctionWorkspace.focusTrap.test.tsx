@@ -96,7 +96,7 @@ describe("경공매 상세 모달 — 렌더 경로", () => {
     renderModal();
     // ★전제 — 열기 전엔 하나뿐이어야 한다(공허한 초록 방지).
     expect(document.body.querySelectorAll('[aria-modal="true"]').length).toBe(1);
-     
+
     fireEvent.click(await screen.findByRole("button", { name: "사진 확대해서 보기" }));
     await waitFor(() =>
       expect(

@@ -1,4 +1,9 @@
 {
+  "_meta": {
+    "lintedFileFloor": 954,
+    "lintedFilesAtCapture": 1060,
+    "note": "린트가 대상을 잃으면(ignore 오설정·config 범프) 경고가 0 이 되어 '깨끗함'처럼 보인다. 그 0 을 통과로 세지 않기 위한 하한이다."
+  },
   "app/[locale]/(dashboard)/guide/page.tsx": 2,
   "app/[locale]/(dashboard)/projects/[id]/multi-parcel/page.tsx": 1,
   "app/[locale]/(dashboard)/projects/[id]/operations/page.tsx": 1,

@@ -217,8 +217,36 @@ jobs:
       #   **"Unused eslint-disable directive" 31**(= 죽은 면제). 게이트가 없어 계속 쌓였다.
       # ★그 미사용 import 가 단순 노이즈가 아니다 — **`import` 를 소비처로 착각하게 만드는 재료**다.
       #   실제로 2026-08-26 에 그 함정에 걸려 소비처 수를 틀리게 세고 PR 에 적었다.
-      # ★`if: always()` 를 쓰지 않는다 — 위 스텝이 **에러**로 죽었으면 리포트가 불완전할 수 있고,
-      #   그때는 래칫 결과가 아니라 **에러 자체**가 보여야 한다.
+      # ★★`-o` 는 stdout 을 **완전히 비운다**(실측: 에러가 있어도 stdout 0바이트 · EXIT=1).
+      #   그래서 이 렌더 스텝이 **없으면** Lint 실패 시 "어느 파일·어느 규칙"이 로그 어디에도
+      #   안 남는다. 초판 주석은 *"에러 자체가 보여야 한다"* 고 적어 놓고 정확히 그것을 없앴다
+      #   (독립 리뷰 F2 · CLAUDE.md §C-11 "면역을 거짓 주장하지 마라").
+      #   ★`if: always()` — Lint 가 **에러로 죽었을 때야말로** 이게 보여야 한다.
+      #   ★eslint 를 재실행하지 않는다 — 이미 나온 JSON 을 사람이 읽는 형태로 옮길 뿐이다.
+      - name: Lint report (사람이 읽는 형태)
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json, pathlib
+          p = pathlib.Path("/tmp/eslint-report.json")
+          if not p.is_file() or p.stat().st_size == 0:
+              print("★eslint 리포트가 없다 — Lint 스텝이 리포트를 남기기 전에 죽었다")
+              raise SystemExit(0)
+          data = json.loads(p.read_text(encoding="utf-8"))
+          rows = [(r["filePath"], m) for r in data for m in r.get("messages", [])]
+          err = [x for x in rows if x[1].get("severity") == 2]
+          print(f"린트 파일 {len(data)} · 메시지 {len(rows)} · 에러 {len(err)}")
+          for path, m in (err or rows)[:120]:
+              rel = path.split("/apps/web/", 1)[-1]
+              kind = "error" if m.get("severity") == 2 else "warn"
+              print(f"  {kind:5} {rel}:{m.get('line')}:{m.get('column')}  "
+                    f"{m.get('ruleId')}  {str(m.get('message'))[:100]}")
+          if len(err or rows) > 120:
+              print(f"  … 외 {len(err or rows) - 120}건")
+          PY
+
+      # ★위 Lint 스텝이 **에러**로 죽으면 이 스텝은 안 돈다(`if:` 없음) — 그게 맞다.
+      #   그때 필요한 것은 래칫 판정이 아니라 **에러 자체**이고, 그건 위 렌더 스텝이 보여 준다.
       - name: Lint ratchet (경고가 늘지 않았는가)
         run: python3 scripts/ci/lint_ratchet.py /tmp/eslint-report.json propai-platform/apps/web/lint-ratchet.json
 

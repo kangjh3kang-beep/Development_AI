@@ -12,7 +12,6 @@ import { CheckCircle2, Hourglass, Mail, type LucideIcon } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import { BillingMeter } from "@/components/billing/BillingMeter";
 
- 
 
 type Member = {
   user_id: string; email: string; name?: string; status: string; role: string;

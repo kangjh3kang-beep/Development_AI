@@ -7,7 +7,6 @@
  *   SDK가 동작한다(미등록 시 지도 미표시). 좌표계는 WGS84(위경도) — 변환 불필요.
  */
 
- 
 
 let kakaoLoading: Promise<void> | null = null;
 

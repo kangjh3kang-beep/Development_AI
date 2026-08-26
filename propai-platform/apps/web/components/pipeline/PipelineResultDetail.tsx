@@ -529,7 +529,7 @@ export function PipelineResultDetail({ result, onRerun, addresses }: PipelineRes
       });
     }
     // 마운트 1회 — store 액션 정체성은 안정적이라 의존성 비포함(시드 복원은 진입 시 1회만).
-     
+
   }, []);
 
   const hasOverrides = Object.keys(overrides).length > 0;

@@ -14,7 +14,6 @@ import { loadKakaoMap, geoJsonToKakaoRings } from "@/lib/kakao-map";
 import { KakaoMapControls } from "@/components/map/KakaoMapControls";
 import { useMapFullscreen } from "@/hooks/useMapFullscreen";
 
- 
 
 type DensityFeature = {
   adm_cd: string;

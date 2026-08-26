@@ -15,7 +15,7 @@ import { apiClient } from "@/lib/api-client";
 import { useMapFullscreen } from "@/hooks/useMapFullscreen";
 import { loadLeaflet } from "@/lib/leaflet-loader";
 
- 
+
 declare global {
   interface Window {
     L: any;
