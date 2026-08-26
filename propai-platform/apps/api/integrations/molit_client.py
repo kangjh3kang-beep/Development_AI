@@ -464,6 +464,34 @@ class MolitClient(BaseAPIClient):
                     #   ★여기서는 **읽어서 보존만** 한다(무날조) — 제외·가중은 소비처 판단이고,
                     #   무엇이 섞여 있는지 말할 수 있는 것이 먼저다.
                     "share_dealing_type": str(g("shareDealingType", "거래구분", "")).strip(),
+                    # ── 계약 상태·소유권 (2026-08-26) ────────────────────────────
+                    # ★같은 결함이 이 파일에서 두 번째다. `molit_client.py:56` 주석은
+                    #   캐시 TTL 근거로 **`cdealType` 을 이미 언급**하고 있었다
+                    #   (*"변할 수 있는 것은 지연 신고와 계약 해제 반영(cdealType)"*).
+                    #   **알면서 파싱하지 않았다** — 위 `share_dealing_type` 과 같은 얼굴이다.
+                    #
+                    # ★라이브 원문 실측(강남·용인수지·서울중구 × 3개월 **3,482건**):
+                    #     cdealType  공백 3,414 · **'O' 68건(1.95%)**
+                    #     dealingGbn 중개거래 3,381 · 직거래 101
+                    #     rgstDate   공백 2,430 · 있음 1,052(30.2%)
+                    #     buyerGbn   개인 3,475 · 법인 7
+                    # ★해제 건 평균이 정상 대비 **+11.5%**(고가 편향). 전체 평균 왜곡은
+                    #   **+0.22%** 로 작지만 — 과장하지 않는다 — **개별 표시가 거짓**이고
+                    #   소표본(AVM·탁상감정 반경 표본)에서 증폭된다.
+                    #
+                    # ★★정상 건은 `' '`(**스페이스**)다. `strip()` 없이 truthy 로 보면
+                    #   **전건이 해제**가 된다.
+                    #
+                    # ★원칙은 형제 그대로 — **읽어서 보존만 한다(무날조).**
+                    #   해제 건도 **행을 버리지 않는다**; 제외·가중은 **소비처 판단**이다.
+                    "cancel_type": str(g("cdealType", "해제여부", "")).strip(),
+                    "cancel_date": str(g("cdealDay", "해제사유발생일", "")).strip(),
+                    "is_cancelled": bool(str(g("cdealType", "해제여부", "")).strip()),
+                    "dealing_type": str(g("dealingGbn", "거래유형", "")).strip(),
+                    # 3층(소유권 추적) 재료 — **별도 등기 API 없이 같은 응답**에 있다.
+                    "registered_date": str(g("rgstDate", "등기일자", "")).strip(),
+                    "buyer_type": str(g("buyerGbn", "매수자", "")).strip(),
+                    "seller_type": str(g("slerGbn", "매도자", "")).strip(),
                 })
             # (Fix #2·감사 HIGH) 수집 검증 게이트 — 정의만 돼 있고 소비처 0건이던 TransactionRecord
             # 스키마를 실수집 경로에 배선. 가격<=0·면적(0~1000)·층(-5~120) 위반행을 드롭한다
