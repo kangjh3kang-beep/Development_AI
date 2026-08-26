@@ -208,8 +208,21 @@ jobs:
         run: pnpm lint
         working-directory: propai-platform/apps/web
 
+      # ★이 필수 게이트가 **최근 진짜 결함을 잡은 적이 0회**였다(2026-08-26 실측).
+      #   최근 ci.yml 실패 7건 중 **6건이 이 잡**이고, 그 6건을 **원문으로 전부 열어** 보니
+      #   완전히 동일했다 — Test Files 전량 passed · Tests 전량 passed · **실패 0** ·
+      #   Errors 1 = `[vitest-worker]: Timeout calling "onTaskUpdate"`. 즉 100% 위양성이었다.
+      #   (run 32916207501 · 32916195162 · 32915342730 · 32913111495 · 32799830343 · 32808868737)
+      # ★위험은 재실행 **비용**이 아니라 **반사**다 — "또 그 플레이크겠지"로 재실행하는 습관이
+      #   생기면 **진짜 실패도 같은 반사에 묻힌다.** 그래서 게이트를 약화시키지 않고
+      #   판정을 사람의 눈이 아니라 스크립트에 둔다: 관측된 서명(요약 존재 + failed 0 +
+      #   타임아웃)이 **전부** 맞을 때만 1회 재시도하고, 그 외에는 즉시 빨강이다.
+      # ★판정 계약은 propai-platform/tests/test_ci_vitest_flake_classifier.py 가 잠근다
+      #   (진짜 실패와 그 타임아웃이 **같은 실행에** 난 경우를 대조군으로 둔다 — 그게 유일한 실질 위험).
+      # ★미측정: **왜** RPC 가 타임아웃되는지는 재지 않았다(vitest 3.2.4 는 이 타임아웃을
+      #   설정으로 노출하지 않는다). 이 스텝은 게이트 신뢰도 회복이 목적이고 근본은 별건이다.
       - name: Unit tests
-        run: pnpm test:run
+        run: bash "$GITHUB_WORKSPACE/scripts/ci/vitest_with_flake_retry.sh"
         working-directory: propai-platform/apps/web
 
   # ★next build 게이트 — 정적 프리렌더(Suspense 경계)·React Compiler 결함은 tsc/eslint를
