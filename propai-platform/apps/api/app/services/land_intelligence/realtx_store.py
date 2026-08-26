@@ -145,13 +145,51 @@ async def derive_scan_targets(db: Any) -> set[str]:
 # 2. 멱등키
 # ══════════════════════════════════════════════════════════════════════
 
-def trade_key(record: dict[str, Any], lawd_cd: str, deal_ym: str) -> str:
-    """거래 1건의 **결정적** 식별자. 같은 입력 → 같은 키(uuid/now/random 0)."""
+def trade_key(record: dict[str, Any], lawd_cd: str, deal_ym: str, ordinal: int = 0) -> str:
+    """거래 1건의 **결정적** 식별자. 같은 입력 → 같은 키(uuid/now/random 0).
+
+    `ordinal` 은 **불변 필드가 완전히 같은 쌍둥이**를 가르는 순번이다(아래 참조).
+    """
     parts = [lawd_cd, deal_ym] + [
         ("" if record.get(f) is None else str(record.get(f)).strip())
         for f in _KEY_FIELDS
-    ]
+    ] + [str(ordinal)]
     return "rtx_" + hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()[:32]
+
+
+def assign_ordinals(records: list[dict[str, Any]], lawd_cd: str, deal_ym: str) -> list[str]:
+    """스코프 안에서 **키가 겹치는 쌍둥이**에 순번을 붙여 유일한 키 목록을 만든다.
+
+    ## ★왜 필요한가 — 라이브 실측(2026-08-26, 활성 컨테이너)
+
+    MOLIT 은 거래 고유 ID 를 주지 않는다. 그런데 **토지 지번은 100% 마스킹**(`1**`)이라
+    서로 다른 필지가 같은 문자열이 되고, 면적·금액·일자까지 같으면 **구별이 사라진다.**
+
+        스코프                 행    고유키   소실
+        41370/202607 land     114     81    **33 (29%)**
+        41370/202607 apt      433    430      3
+        47111/202606 land      57     56      1
+        ─────────────────────────────────────────
+        4스코프 합계         1,284  1,232   **52 (4.0%)**
+
+    순번 없이 upsert 하면 **평균 4%·최악 29% 가 조용히 덮어써진다.** 아파트도 같은 단지·
+    같은 층·같은 면적·같은 금액·같은 날이면 **다른 호실**인데 구별이 안 된다.
+
+    ## ★이 처방의 한계 (같이 적는다)
+
+    순번은 **응답 순서**에 결속한다. 원천이 쌍둥이의 순서를 바꾸면 두 행의 **정정 귀속이
+    서로 뒤바뀔 수 있다**(불변 필드는 같으므로 데이터 자체는 안 틀리지만, "이 거래가
+    해제됐다"가 쌍둥이 중 다른 쪽에 붙을 수 있다). 원천이 순서를 보장하는지는 **미측정**이다.
+    그래도 **29% 를 버리는 것보다는 낫다** — 버리면 그 거래는 아예 없던 일이 된다.
+    """
+    seen: dict[str, int] = {}
+    out: list[str] = []
+    for record in records:
+        base = trade_key(record, lawd_cd, deal_ym, 0)
+        ordinal = seen.get(base, 0)
+        seen[base] = ordinal + 1
+        out.append(base if ordinal == 0 else trade_key(record, lawd_cd, deal_ym, ordinal))
+    return out
 
 
 def diff_mutable(previous: dict[str, Any], current: dict[str, Any]) -> list[dict[str, str]]:
@@ -355,8 +393,10 @@ async def persist_scope(
     }
 
     corrections: list[dict[str, Any]] = []
-    for record in records:
-        key_id = trade_key(record, lawd_cd, deal_ym)
+    # ★쌍둥이(불변 필드가 완전히 같은 행)에 순번을 붙인다 — 안 붙이면 라이브 실측 기준
+    #   평균 4%·최악 29% 가 upsert 로 **조용히 덮어써진다**.
+    keys = assign_ordinals(records, lawd_cd, deal_ym)
+    for record, key_id in zip(records, keys, strict=True):
         await db.execute(text(_UPSERT_SQL), upsert_params(record, key_id, lawd_cd, deal_ym, prop_type))
 
         before = previous.get(key_id)

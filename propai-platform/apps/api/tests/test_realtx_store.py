@@ -210,3 +210,55 @@ def test_upsert_params_strip_text_but_preserve_numbers():
     assert params["dong"] == "대보리"
     assert params["area_m2"] == 330.0          # 수치는 문자열로 바꾸지 않는다
     assert params["cancel_type"] == ""          # ' ' → '' (해제 오판 차단)
+
+
+# ══════════════════════════════════════════════════════════════════
+# 6. ★쌍둥이 소실 — 이 락이 **없어서** 라이브 실측으로 잡았다
+# ══════════════════════════════════════════════════════════════════
+#
+# 라이브 실측 2026-08-26 (활성 컨테이너 · MOLIT 4스코프 1,284행):
+#   41370/202607 land  114행 → 고유키 81  = **33건(29%) 소실**
+#   합계               1,284행 → 1,232    = **52건(4.0%) 소실**
+# 마스킹 지번('1**')이 서로 다른 필지를 뭉개고, 아파트도 같은 단지·층·면적·금액·날짜면
+# **다른 호실**인데 구별이 사라진다. 순번이 없으면 upsert 가 조용히 덮어쓴다.
+
+_TWIN = {
+    "prop_type": "land", "dong": "외삼미동", "jibun": "1**", "area_m2": 1718.0,
+    "floor": 0, "price_10k_won": 105737, "deal_date": "2026년 7월 13일",
+    "building_name": "", "cancel_type": " ", "cancel_date": "",
+    "registered_date": "", "dealing_type": "중개거래",
+    "buyer_type": "개인", "seller_type": "개인",
+}
+
+
+def test_identical_twins_get_distinct_keys():
+    """★불변 필드가 완전히 같은 3건이 **3개의 키**를 받아야 한다(라이브에서 실제로 나온 모양)."""
+    keys = rs.assign_ordinals([dict(_TWIN) for _ in range(3)], "41370", "202607")
+    assert len(set(keys)) == 3, keys
+
+
+def test_no_row_is_lost_for_a_scope_with_many_twins():
+    """전수 보존 — 행 수와 고유키 수가 같아야 한다."""
+    records = [dict(_TWIN) for _ in range(33)] + [{**_TWIN, "price_10k_won": 999}]
+    keys = rs.assign_ordinals(records, "41370", "202607")
+    assert len(keys) == len(records) == len(set(keys))
+
+
+def test_ordinals_are_stable_across_repeated_fetches():
+    """★멱등 — 같은 응답을 두 번 처리해도 **같은 키 목록**이라야 행이 늘지 않는다."""
+    records = [dict(_TWIN), dict(_TWIN), {**_TWIN, "floor": 1}]
+    assert rs.assign_ordinals(records, "41370", "202607") == \
+           rs.assign_ordinals(records, "41370", "202607")
+
+
+def test_first_twin_keeps_the_plain_key_so_existing_rows_survive():
+    """순번 0 은 종전 키와 **같아야** 이미 저장된 행이 고아가 되지 않는다."""
+    keys = rs.assign_ordinals([dict(_TWIN)], "41370", "202607")
+    assert keys == [rs.trade_key(_TWIN, "41370", "202607")]
+
+
+def test_distinct_records_are_not_merged_by_the_ordinal_scheme():
+    """대조군 — 순번이 **서로 다른 거래를 합쳐 버리지는** 않는다."""
+    a, b = dict(_TWIN), {**_TWIN, "area_m2": 999.0}
+    keys = rs.assign_ordinals([a, b], "41370", "202607")
+    assert keys[0] != keys[1]
