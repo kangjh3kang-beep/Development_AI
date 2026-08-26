@@ -263,6 +263,39 @@ def _num(value: Any) -> float | None:
         return None
 
 
+def construction_breakdown(cc: dict[str, Any]) -> dict[str, Any]:
+    """공사비 **직접/간접 분해** — 원장이 「설계비·감리비」를 그리는 재료.
+
+    `construction_cost_engine` 은 이미 `{design_fee_won, supervision_fee_won, contingency_won,
+    general_expense_won}` 를 **비율과 함께** 돌려주는데, 종전엔 총액과 ㎡단가 **두 숫자만**
+    남겼다. 원장이 그 행들을 못 그린 이유가 *"엔진에 없어서"* 가 아니라 **여기서 버려서**였다.
+
+    ★**분해지 추가가 아니다** — 엔진이 `total = direct + indirect` 로 합산하므로 쪼개도
+      **합계가 변하지 않는다**(원장 검산이 그것을 확인한다).
+
+    ★**엔진이 주는 항목을 골라내지 않는다** — `_won` 으로 끝나는 키를 **전부** 옮긴다.
+      새 간접비가 생기면 라벨은 없어도 **행은 나온다**(조용히 사라지지 않게).
+
+    ★모듈 레벨 함수인 이유: 인라인 dict 리터럴이면 **직접 태울 수 없어** 이 배선이 무잠금이
+      된다(변이 실증 — 이 저장소에서 **세 번째** 같은 자리다: `_compact` · `ratio_basis` · 이것).
+    """
+    direct = cc.get("direct") or {}
+    indirect = cc.get("indirect") or {}
+    direct_won = direct.get("total_direct_cost_won")
+    if direct_won is None or not indirect:
+        return {}   # 분해가 없으면 **키를 만들지 않는다** — 소비처가 종전대로 한 행을 그린다
+    return {
+        "direct_won": int(direct_won),
+        "indirect": {
+            "total_won": int(indirect.get("total_indirect_cost_won") or 0),
+            "items": {k: int(v) for k, v in indirect.items()
+                      if k.endswith("_won") and k != "total_indirect_cost_won"},
+            "ratios": dict(indirect.get("ratios") or {}),
+            "base_won": int(direct_won),
+        },
+    }
+
+
 def build_cost_ratio_basis(
     base_won: float, finance_rate: float, other_rate: float, ratio_note: str | None
 ) -> dict[str, Any]:
@@ -691,14 +724,7 @@ async def build_rough_scenario(
                 #   못 그린 이유가 *"엔진에 없어서"* 가 아니라 **여기서 버려서**였다.
                 #   ★**분해지 추가가 아니다** — 엔진이 `total = direct + indirect` 로 합산하므로
                 #     원장이 쪼개도 **합계가 변하지 않는다**(검산이 그것을 확인한다).
-                "direct_won": int(cc["direct"]["total_direct_cost_won"]),
-                "indirect": {
-                    "total_won": int(cc["indirect"]["total_indirect_cost_won"]),
-                    "items": {k: int(v) for k, v in cc["indirect"].items()
-                              if k.endswith("_won") and k != "total_indirect_cost_won"},
-                    "ratios": dict(cc["indirect"].get("ratios") or {}),
-                    "base_won": int(cc["direct"]["total_direct_cost_won"]),
-                },
+                **construction_breakdown(cc),
                 "basis": c_basis, "source": c_source,
             }
         except Exception as e:  # noqa: BLE001 — 공사비 산출 실패는 정직 null

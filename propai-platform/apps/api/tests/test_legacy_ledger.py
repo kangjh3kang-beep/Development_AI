@@ -27,6 +27,7 @@ from app.services.feasibility.rough_feasibility_orchestrator import (
     _null_block,
     build_cost_ratio_basis,
     compact_charge_items,
+    construction_breakdown,
 )
 
 
@@ -696,3 +697,62 @@ def test_unknown_indirect_key_is_not_dropped():
     keys = [i["key"] for s in build_legacy_ledger(sc)["sections"]
             for g in s["groups"] for i in g["items"]]
     assert any("새로운항목" in k for k in keys), "모르는 간접비 항목을 버렸다"
+
+
+def test_construction_breakdown_projects_the_engine_shape():
+    """★★상류가 **엔진 산출을 그대로** 옮긴다 — 픽스처가 아니라 엔진 모양으로 태운다.
+
+    ★변이 실증: 이 축이 없을 때 `"direct_won": None` 변이가 **SURVIVED** 했다.
+      원장 픽스처가 분해를 **이미 갖고** 있어 상류를 한 번도 안 태웠기 때문이다 —
+      이 세션 **일곱 번째** 같은 형태이고, 원인은 **세 번 연속** 인라인 dict 리터럴이다.
+    """
+    cc = {
+        "direct": {"total_direct_cost_won": 135_000_000_000, "unit_cost_per_sqm": 3_000_000},
+        "indirect": {"design_fee_won": 5_400_000_000, "supervision_fee_won": 4_050_000_000,
+                     "total_indirect_cost_won": 9_450_000_000,
+                     "ratios": {"design_fee": 0.04, "supervision_fee": 0.03}},
+        "total_construction_cost_won": 144_450_000_000,
+    }
+    out = construction_breakdown(cc)
+    assert out["direct_won"] == 135_000_000_000
+    assert out["indirect"]["base_won"] == 135_000_000_000, "요율의 과표가 직접공사비가 아니다"
+    assert set(out["indirect"]["items"]) == {"design_fee_won", "supervision_fee_won"}
+    assert "total_indirect_cost_won" not in out["indirect"]["items"], "합계를 항목으로 실었다"
+    assert out["indirect"]["ratios"]["design_fee"] == 0.04
+
+
+def test_construction_breakdown_returns_nothing_when_absent():
+    """★분해가 없으면 **키를 만들지 않는다** — 소비처가 종전대로 한 행을 그린다(무회귀).
+
+    ★두 모집단 — 있음/없음이 **다른 결과**를 내야 한다(항상 dict 를 만드는 구현 배제).
+    """
+    assert construction_breakdown({}) == {}
+    assert construction_breakdown({"direct": {"unit_cost_per_sqm": 1}}) == {}
+    assert construction_breakdown({"direct": {"total_direct_cost_won": 1}}) == {}, "간접이 없는데 만들었다"
+
+
+def test_construction_breakdown_keeps_unknown_items():
+    """★엔진이 새 간접비를 내면 **골라내지 않고 옮긴다**(조용히 사라지지 않게)."""
+    out = construction_breakdown({
+        "direct": {"total_direct_cost_won": 100},
+        "indirect": {"design_fee_won": 4, "미래항목_won": 7, "total_indirect_cost_won": 11},
+    })
+    assert "미래항목_won" in out["indirect"]["items"], "모르는 항목을 버렸다"
+
+
+def test_breakdown_feeds_the_ledger_end_to_end():
+    """★★상류 산출을 **그대로** 원장에 먹여 행이 나오는지 본다(픽스처 아님)."""
+    cc = {
+        "direct": {"total_direct_cost_won": 135_000_000_000, "unit_cost_per_sqm": 3_000_000},
+        "indirect": {"design_fee_won": 5_400_000_000, "total_indirect_cost_won": 5_400_000_000,
+                     "ratios": {"design_fee": 0.04}},
+    }
+    led = build_legacy_ledger({
+        "inputs": {"gfa_sqm": 45_000.0},
+        "construction_cost": {"total_won": 140_400_000_000, "unit_per_sqm_won": 3_000_000,
+                              "basis": "국토부", "source": "engine", **construction_breakdown(cc)},
+    })
+    by = {i["key"]: i for s in led["sections"] for g in s["groups"] for i in g["items"]}
+    assert by["construction_direct"]["amount_won"] == 135_000_000_000, "상류가 직접비를 흘렸다"
+    assert by["construction_design_fee"]["label"] == "설 계 비"
+    assert by["construction_design_fee"]["unit_price"] == 0.04, "상류가 요율을 흘렸다"
