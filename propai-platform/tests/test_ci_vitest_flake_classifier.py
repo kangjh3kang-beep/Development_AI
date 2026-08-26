@@ -44,6 +44,14 @@ REAL_FILES_ONLY = (
     f"{_RPC}\n Test Files  1 failed | 338 passed (339)\n      Tests  3091 passed (3091)\n"
 )
 CRASH_NO_SUMMARY = "Error: Cannot find module 'x'\nELIFECYCLE Command failed with exit code 1.\n"
+# ★"0 failed" 는 **실패 0건**이다 — REAL 이 아니다.
+#   술어를 `[0-9]+ failed` 로 쓰면 이것이 REAL 로 잡혀 FLAKE 분기가 **영영 안 타면서 초록**이 된다.
+#   현재 vitest 는 0 을 생략해 미발현이지만, 선언한 의도(failed >= 1)와 구현이 갈리면
+#   그 자체가 결함이다(동료 세션 지적 → 실측으로 REAL 나오는 것 확인 후 교정).
+_SUMMARY_ZERO_FAILED = (
+    " Test Files  339 passed (339)\n      Tests  0 failed | 3091 passed (3091)"
+)
+ZERO_FAILED_LOG = f"{_RPC}\n{_SUMMARY_ZERO_FAILED}\n"
 # ★가장 위험한 형태 — **요약은 없는데 타임아웃 서명은 있다**(부분 실행 후 크래시).
 #   서명만 보면 FLAKE 로 읽히지만, 요약이 없으니 **무엇이 돌았는지 자체를 모른다.**
 #   이 픽스처가 없어서 "요약 부재" 가드가 무잠금이었다(변이 M2 가 SURVIVED 로 짚었다) —
@@ -81,6 +89,14 @@ def test_fixtures_actually_differ_where_it_matters() -> None:
 # ── ①-b 탐지 ─────────────────────────────────────────────────────────────────
 def test_known_flake_is_flake(tmp_path: Path) -> None:
     assert _classify(FLAKE_LOG, tmp_path) == "FLAKE"
+
+
+def test_zero_failed_is_not_a_real_failure(tmp_path: Path) -> None:
+    """★`0 failed` 를 REAL 로 읽으면 FLAKE 분기가 조용히 도달 불가가 된다."""
+    assert _classify(ZERO_FAILED_LOG, tmp_path) == "FLAKE"
+    # 대조군: 같은 형식에서 1 이면 REAL 이어야 한다(술어가 숫자를 실제로 본다는 증명).
+    one = ZERO_FAILED_LOG.replace("0 failed | 3091 passed", "1 failed | 3090 passed")
+    assert _classify(one, tmp_path) == "REAL"
 
 
 def test_real_github_actions_format_is_still_flake(tmp_path: Path) -> None:

@@ -53,8 +53,13 @@ if [ -z "$files_line" ] || [ -z "$tests_line" ]; then
   echo "UNKNOWN"; exit 0
 fi
 
-# ② 어느 요약에든 failed 가 있으면 **진짜 실패**다.
-if printf '%s\n%s\n' "$files_line" "$tests_line" | grep -qE '[0-9]+ failed'; then
+# ② 어느 요약에든 **1 이상의** failed 가 있으면 진짜 실패다.
+#  ★`[0-9]+ failed` 로 쓰면 `Tests 0 failed | 3091 passed`(= 실패 0건)를 REAL 로 읽는다.
+#    선언한 의도는 **failed >= 1** 인데 구현이 "숫자 아무거나"였다 — 둘은 다른 술어다.
+#    안전한 방향(재시도 안 함)이라 **위험하진 않지만 조용하다**: 그 형태가 나오는 순간
+#    FLAKE 분기가 **영영 안 타면서 초록**이 된다(아무것도 안 하는 장치).
+#    현재 vitest 는 0 을 생략하므로 미발현이나, **술어를 의도에 맞춘다**(동료 세션 지적).
+if printf '%s\n%s\n' "$files_line" "$tests_line" | grep -qE '[1-9][0-9]* failed'; then
   echo "REAL"; exit 0
 fi
 
