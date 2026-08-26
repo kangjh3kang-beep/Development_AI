@@ -142,6 +142,42 @@ function str(v: unknown): string | null {
 function pct(v: number | null): string {
   return v === null ? "-" : `${(v <= 1 ? v * 100 : v).toFixed(1)}%`;
 }
+
+/**
+ * 판정 커버리지(`metrics_json.analysis_coverage`) → 화면 문구.
+ *
+ * ★왜 필요한가(라이브 실측 2026-08-27): 조치 탐지기들이 **조용한 이유**가
+ * *"문제가 없어서"* 가 아니라 *"판정할 표본이 하한에 못 미쳐서"* 인 경우가 있다 —
+ * `fallback_rate judged=0/2 (하한 10)`. 그 사실은 **데이터에는 있었고 화면에는 없었다.**
+ * 운영자가 open 3,188건을 보면서 **폴백 탐지가 지금 눈이 멀었다**는 것을 알 수 없었다.
+ *
+ * ★문구 설계: `judged=7/23` 을 **"7건이 옳다"로 읽히게 하지 않는다.**
+ *   커버리지는 *"몇 축을 판정했는가"* 이지 *"판정이 맞는가"* 가 아니다
+ *   (볼트 2026-08-26: 커버리지가 거짓 행에 `judged` 도장을 찍어 **개선이 결함을 강화**한 전례).
+ *   그래서 **모수와 하한을 함께** 적고, `judged=0` 은 **「판정 불가」로 명시**한다.
+ */
+export function coverageRows(cov: unknown): { label: string; value: string }[] {
+  if (!cov || typeof cov !== "object" || Array.isArray(cov)) return [];
+  const out: { label: string; value: string }[] = [];
+  for (const [axis, raw] of Object.entries(cov as Record<string, unknown>)) {
+    if (!raw || typeof raw !== "object") continue;
+    const v = raw as Record<string, unknown>;
+    const judged = num(v.judged);
+    const total = num(v.total);
+    const floor = num(v.floor);
+    if (judged === null || total === null) continue;
+    const floorTxt = floor === null ? "" : ` · 하한 ${floor}`;
+    // ★두 모집단을 문구로 가른다 — 판정 불가와 부분 판정은 다른 상태다.
+    const value =
+      total === 0
+        ? `대상 없음${floorTxt}`
+        : judged === 0
+          ? `판정 불가 — 0/${total} 표본 부족${floorTxt}`
+          : `${judged}/${total} 축 판정${floorTxt}`;
+    out.push({ label: axis, value });
+  }
+  return out;
+}
 /**
  * LLM 실패 **사유 코드 → 한글**.
  *
@@ -267,6 +303,10 @@ export function InsightMetrics({ insight }: { insight: GrowthInsight }) {
       if (issue) rows.push({ label: "오류 유형", value: issue });
       if (perHour !== null) rows.push({ label: "시간당", value: `${perHour.toLocaleString("ko-KR")}건` });
       if (count !== null) rows.push({ label: "총 검출", value: count.toLocaleString("ko-KR") });
+      // ★주석이 계약으로 열거한 5키 중 high_count 만 그려지지 않았다(2026-08-27 실측).
+      //   '계산오류 18건 중 심각 18건' 처럼 **심각 비중이 그 항목의 무게**인데 화면에 없었다.
+      const high = num(m.high_count);
+      if (high !== null) rows.push({ label: "그중 심각", value: high.toLocaleString("ko-KR") });
       break;
     }
     case "latency_baseline": {
@@ -353,6 +393,12 @@ export function InsightMetrics({ insight }: { insight: GrowthInsight }) {
     default:
       break;
   }
+
+  // ★타입별 switch **밖**에서 붙인다 — analyzer 가 커버리지를 **전 타입에** 박은 이유가
+  //   "타입별 손수 분기는 새 타입을 자동으로 누락시킨다"(analyzer.py:468~479)이기 때문이다.
+  //   그 방어를 소비 쪽에서 무너뜨리지 않으려면 여기도 타입을 몰라야 한다.
+  const covRows = coverageRows((m as Record<string, unknown>).analysis_coverage);
+  for (const r of covRows) rows.push({ label: `판정 ${r.label}`, value: r.value });
 
   if (rows.length === 0) return null;
   return (
