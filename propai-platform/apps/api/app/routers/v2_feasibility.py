@@ -44,6 +44,7 @@ from app.services.auth.auth_service import get_current_user, get_current_user_op
 from app.services.feasibility.ai_optimizer import optimize_slsqp
 from app.services.feasibility.ai_recommendation import diagnose
 from app.services.feasibility.feasibility_service_v2 import FeasibilityServiceV2
+from app.services.feasibility.legacy_ledger import build_legacy_ledger
 from app.services.feasibility.modules.base_module import ModuleInput
 from app.services.feasibility.monte_carlo_engine import MCVariable, run_monte_carlo
 from app.services.feasibility.rough_feasibility_orchestrator import build_rough_scenario
@@ -1267,6 +1268,18 @@ async def rough_scenario(
             scenario = attach_ledger_hash(scenario, wb)
         except Exception:  # noqa: BLE001 — 원장 적재 실패해도 개략수지 결과 무손상
             pass
+
+    # ── 간략 수지 원장(실무 양식) — additive ───────────────────────────────
+    #   축별 합계만으로는 실무 수지표가 읽히지 않는다. 한 행마다 「수량 × 단가 = 금액」과
+    #   「왜 이 값인가」를 붙이고, 맨 아래에 **합계가 맞는지 스스로 확인한 결과**를 싣는다.
+    #   ★계산을 다시 하지 않는다 — 위에서 만든 `scenario` 를 배열만 하고,
+    #     배열하면서 **독립 합산**해 엔진 합계와 대조한다(그 대조가 검산이다).
+    #   실패해도 개략수지 본체는 무손상(원장 적재와 같은 규율).
+    try:
+        scenario["legacy_ledger"] = build_legacy_ledger(scenario)
+    except Exception:  # noqa: BLE001 — 표시층 실패가 산출을 죽이지 않는다
+        logger.warning("간략 수지 원장 생성 실패 — 본체는 그대로 반환", exc_info=True)
+        scenario["legacy_ledger"] = None
 
     return scenario
 

@@ -15,7 +15,7 @@ import { apiClient } from "@/lib/api-client";
 import { useMapFullscreen } from "@/hooks/useMapFullscreen";
 import { loadLeaflet } from "@/lib/leaflet-loader";
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+
 declare global {
   interface Window {
     L: any;

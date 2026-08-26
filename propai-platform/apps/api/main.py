@@ -594,7 +594,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         coro_factory(session) -> awaitable. 한 세션 안에서 lock→실행→unlock 을 묶어
         다른 워커와 상호배제. 어떤 예외도 스케줄러를 죽이지 않는다(잡별 try/except).
         """
+        from app.services.growth import stale_build_guard
         from apps.api.database.session import AsyncSessionLocal
+
+        # ★낡은 스택 차단(2026-08-25) — advisory lock 은 **동시 실행만** 막는다.
+        #   스케줄은 platform_settings 워터마크로 정해지는데 두 스택이 그것을 공유하므로,
+        #   잔재 스택이 먼저 도착하면 **정상적으로 락을 얻어** 옛 코드로 돌고 워터마크를 옮긴다.
+        #   상호배제는 성공했고 틀린 쪽이 이겼다. 그래서 락 **앞**에 빌드 게이트를 둔다.
+        #   ★모든 잡(analyze/heal/correct/learn/improve)이 이 함수를 지나므로 길목은 여기 하나다.
+        allowed, why = stale_build_guard.growth_writes_allowed()
+        if not allowed:
+            # ★무언 거부 금지 — 거부는 "엔진 정지"와 "정상"을 같은 모양으로 만든다.
+            logger.warning("growth 잡 거부(낡은 스택 판단): job=%s 사유=%s", job_name, why)
+            return
+
         key = _GROWTH_LOCK_KEYS[job_name]
         try:
             async with AsyncSessionLocal() as _s:

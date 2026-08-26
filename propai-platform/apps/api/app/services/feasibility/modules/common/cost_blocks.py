@@ -9,7 +9,7 @@ from app.services.feasibility.finance_cost_engine import calculate_total_finance
 from app.services.feasibility.land_cost_engine import calculate_total_land_cost
 from app.services.feasibility.modules.base_module import ModuleInput
 from app.services.tax.integrated_tax_engine import calculate_all_taxes
-from app.services.tax.project_charges import parse_bool_flag
+from app.services.tax.project_charges import parse_tristate_flag
 
 # ★W3-1(수익 KPI 감사·GAP_v4 P10): 종전 함수 본문에 무명 리터럴로 박혀 있던 "표준 LTV 70%"를
 #   명명 상수로 추출(값은 무변경 — 자동추정 산식 무회귀, test_quickwins_accuracy.py 등 고정 회귀).
@@ -187,5 +187,7 @@ def compute_taxes(
         #   곧 '전용 ㎡'로 C01의 국민주택규모(전용 85㎡) 면세 판정에 정확히 대응한다.
         #   (통일 전에는 공급/전용 분열로 환산 시 이중 축소 → 날조 면세 위험이 있었음)
         avg_area_sqm=inp.avg_area_pyeong * 3.305785 if inp.avg_area_pyeong else 85.0,
-        in_infra_charge_zone=parse_bool_flag(inp.params.get("in_infra_charge_zone")),
+        # ★3상태 파서 — 키가 없으면 `None`(미조회)이다. `parse_bool_flag` 는 그것을 `False`
+        #   (=「조회했고 미지정」)로 뭉개 화면에 **없는 관측 주장**을 냈다.
+        in_infra_charge_zone=parse_tristate_flag(inp.params.get("in_infra_charge_zone")),
     )

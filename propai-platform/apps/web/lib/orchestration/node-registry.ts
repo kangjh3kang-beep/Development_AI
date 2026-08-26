@@ -418,7 +418,13 @@ export const NODES: AnalysisNode[] = [
         slot: "siteAnalysis",
         readyCheck: hasSite,
         resolution: ["ssot", "upstream-suggest"],
-        provenanceGuarded: false, // feasibility는 ProvenanceModule 밖
+        // ★2026-08-26 정정 — 종전 사유 *"feasibility는 ProvenanceModule 밖"* 은 **거짓이 됐다**
+        //   (편입 완료). 그런데 이 플래그는 **노드 산출**이 아니라 **입력 슬롯**(siteAnalysis)에
+        //   걸려 있고, 그 슬롯 모듈은 **원래부터 안**이었다 — 즉 라벨이 **이 PR 이전에도 어긋나
+        //   있었을 가능성**이 크다. 어느 의미가 원래 의도였는지는 **재보지 않았다(미측정)**.
+        //   그래서 값을 바꾸지 않고 **사유만 정직하게** 고친다 — 값을 바꾸면 화면 고지가
+        //   (`InputResolveModal`) 근거 없이 달라진다.
+        provenanceGuarded: false, // ★사유 재확인 필요(위 주석) — 값은 보수적으로 유지
       },
       {
         slot: "designData",

@@ -219,13 +219,25 @@ describe("배선 락 — 유료 산출물 스토어는 계정 스코프를 우�
     for (const f of STORES) {
       // ★주석은 공용 헬퍼로 걷는다 — 손으로 짜면 JSX/블록 주석에 뚫린다.
       const src = __stripCommentsForScan(readFileSync(join(WEB_ROOT, f), "utf8"), f);
-      expect(src, `${f}: 계정 스코프 저장소를 안 쓴다`).toContain("createAccountScopedStorage");
+      // ★임포트 존재만 보면 안 된다 — `storage: undefined` 로 바꿔도 임포트는 남아 통과한다
+      //   (적대 리뷰가 실측한 생존 변이). 잠가야 할 것은 **`persist(` 옵션의 `storage:` 값**이다.
+      expect(
+        src,
+        `${f}: persist 의 storage 옵션이 계정 스코프 저장소가 아니다 — 임포트만 남기고 배선을 바꾸면 격리가 통째로 우회된다`,
+      ).toMatch(/storage:\s*createAccountScopedStorage\s*</);
       expect(
         src,
         `${f}: 스코프 없는 createDebouncedStorage 를 직접 쓴다 — 계정 격리가 우회된다`,
       ).not.toContain("createDebouncedStorage");
     }
   });
+
+  // ★부채를 초록 안에서 보이게 남긴다(커밋 메시지에만 적으면 안 드러난다 · 규율 C-13).
+  //   `migratePaidArtifacts` 가 승계 사유를 돌려주는데 **호출부가 버린다** — `defer` 일 때
+  //   레거시의 유료 산출물이 화면에 안 보이면서 이유도 없다(데이터는 안 사라진다).
+  //   통로가 둘 다 범위를 넘는다: 성장루프 이벤트는 백엔드 화이트리스트와 **같은 커밋** 필요 ·
+  //   사용자 고지는 **제품 판단**. 잡을 때 이 todo 를 실제 케이스로 바꾼다.
+  it.todo("승계 사유(defer/noop)가 화면이나 계측 중 한 곳에는 도달한다");
 
   it("★음성 대조군 — 스코프가 **필요 없는** 스토어는 종전 저장소를 그대로 쓴다(무차별 치환 배제)", () => {
     // 와이프 목록에 든 스토어는 계정 전환 때 지워지므로 계정별 키가 필요 없다.
@@ -243,16 +255,54 @@ describe("배선 락 — 유료 산출물 스토어는 계정 스코프를 우�
       readFileSync(join(WEB_ROOT, "lib/projectSync.ts"), "utf8"),
       "lib/projectSync.ts",
     );
-    const wipe = src.slice(src.indexOf("export function clearAllProjectData"));
-    expect(wipe.length, "clearAllProjectData 를 못 찾았다 — 검사가 죽었다").toBeGreaterThan(200);
-    for (const store of ["usePaidRenderStore", "useRegistryAnalysisStore", "useDevelopmentPlanStore"]) {
+    // ★창에 **끝 경계**를 준다. 종전엔 `slice(indexOf(...))` 라 **파일 끝까지**(19,723자) 먹어
+    //   `ensureDataOwner`·`syncDown` 이 전부 창 안이었고, 호출을 뒤쪽 아무 함수로 옮겨도
+    //   락이 초록이었다(적대 리뷰 실측). CLAUDE.md 「파서 창이 인접 표를 침범」의 재발이다.
+    const start = src.indexOf("export function clearAllProjectData");
+    expect(start, "clearAllProjectData 를 못 찾았다 — 검사가 죽었다").toBeGreaterThan(-1);
+    const rest = src.slice(start + 1);
+    const endRel = rest.search(/\nexport (?:async )?function |\n(?:async )?function /);
+    const wipe = endRel === -1 ? rest : rest.slice(0, endRel);
+    expect(wipe.length, "창이 비정상적으로 작다 — 경계 정규식이 즉시 매치했다").toBeGreaterThan(200);
+    // ★창이 함수 밖으로 새지 않는지 대조군으로 확인한다(공허/과대 둘 다 막는다).
+    expect(wipe, "창이 다음 함수까지 먹었다 — 끝 경계가 안 걸렸다").not.toContain(
+      "export function ensureDataOwner",
+    );
+    const STORES3 = ["usePaidRenderStore", "useRegistryAnalysisStore", "useDevelopmentPlanStore"];
+
+    // ★계약이 바뀌었다(2026-08-26 회귀 봉합). 리셋은 **쓰기 정지 창 안**에서 하고,
+    //   복원은 여기가 아니라 `syncAccountScopedStores()` 가 한다.
+    expect(
+      wipe,
+      "리셋이 쓰기 정지 창 밖에 있다 — persist 가 **빈 값을 계정 키에 기록**해 유료 산출물이 지워진다",
+    ).toContain("withWritesSuspended(");
+    for (const store of STORES3) {
       expect(wipe, `${store}: 계정 전환 시 메모리 상태를 안 비운다`).toContain(
         `${store}.setState`,
       );
-      expect(wipe, `${store}: 비우기만 하고 본인 것을 복원하지 않는다`).toContain(
+      // ★여기서 복원하면 **로그아웃 경로에서 이전 계정 것을 되살린다.** 복원은 다른 함수 몫이다.
+      expect(
+        wipe,
+        `${store}: clearAllProjectData 안에서 복원하면 로그아웃이 이전 계정 데이터를 되살린다`,
+      ).not.toContain(`${store}.persist?.rehydrate()`);
+    }
+
+    // ★복원은 **소유자 일치와 무관하게** 도는 자리에 있어야 한다(`guest` 스코프 고착 경로).
+    const sIdx = src.indexOf("export function syncAccountScopedStores");
+    expect(sIdx, "syncAccountScopedStores 가 없다 — 복원 경로가 통째로 사라졌다").toBeGreaterThan(-1);
+    const sRest = src.slice(sIdx + 1);
+    const sEnd = sRest.search(/\nexport (?:async )?function |\n(?:async )?function /);
+    const syncFn = sEnd === -1 ? sRest : sRest.slice(0, sEnd);
+    for (const store of STORES3) {
+      expect(syncFn, `${store}: 계정이 바뀌어도 복원하지 않는다`).toContain(
         `${store}.persist?.rehydrate()`,
       );
     }
+    const owner = src.slice(src.indexOf("export function ensureDataOwner"));
+    expect(
+      owner,
+      "ensureDataOwner 가 스코프를 안 맞춘다 — 세션 만료 후 재로그인에서 쓰기가 무성으로 사라진다",
+    ).toContain("syncAccountScopedStores()");
   });
 
   it("★레거시 공유키를 **지우지 않는다** — 와이프 목록에 넣으면 사용자가 낸 돈이 사라진다", () => {
