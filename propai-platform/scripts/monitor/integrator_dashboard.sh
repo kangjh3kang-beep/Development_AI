@@ -36,7 +36,16 @@ git fetch origin main -q 2>/dev/null
 MAIN=$(git rev-parse --short origin/main)
 SW=$($K ubuntu@158.179.174.207 'curl -s --max-time 10 http://localhost/sw.js | grep -m1 "^const CACHE_NAME"' 2>/dev/null | grep -oE 'propai-v[0-9]+-[0-9a-f]+')
 SWPUB=$(curl -s --max-time 12 https://4t8t.net/sw.js | grep -m1 '^const CACHE_NAME' | grep -oE 'propai-v[0-9]+-[0-9a-f]+')
-API=$($K ubuntu@168.110.125.89 'for c in $(docker ps --filter name=propai-api- --format "{{.Names}}"); do docker exec $c printenv APP_BUILD_ID 2>/dev/null; done | head -1' 2>/dev/null)
+# ★활성 스택 판정 — **caddy 가 실제로 서비스하는 것**을 본다.
+#   종전엔 `docker ps ... | head -1` 이었는데, 블루그린 전환 중에는 두 컨테이너가 동시에
+#   살아 있어 **정렬상 앞선 유휴 스택**을 집는다. 실측(2026-08-26): head -1 이 8000(유휴·구버전)을
+#   집었고 caddy 활성은 8001(신버전)이었다 — 그 오독으로 한 세션이 **이미 배포된 PR 을
+#   "미배포"로 읽고 주기를 중복 CLAIM** 했다. 그리고 같은 날 활성 포트가 8001→8000→8001 로
+#   두 번 뒤집혔다(우연히 맞는 회차가 섞이면 더 위험하다).
+#   ★주석 배제 + `reverse_proxy` 앵커 + **유일성**까지 본다. 비면 **반드시 죽어야** 한다 —
+#     빈 값이면 `docker exec propai-api- …` 라는 **문법상 유효한 다른 명령**이 된다(조용한 오답).
+ACTIVE_SNIPPET='PORTS=$(grep -vE "^[[:space:]]*#" $HOME/caddy/Caddyfile | grep -oE "reverse_proxy[[:space:]]+localhost:80[0-9]+" | grep -oE "80[0-9]+" | sort -u); [ "$(printf %s "$PORTS" | grep -c .)" -eq 1 ] || exit 3; C=propai-api-$PORTS'
+API=$($K ubuntu@168.110.125.89 "$ACTIVE_SNIPPET"'; docker exec $C printenv APP_BUILD_ID 2>/dev/null' 2>/dev/null)
 
 echo "── ① 배포 수렴 (판정 = 런타임 값 일치, 커밋 수 아님)"
 printf "   origin/main %s │ 158 web %s │ 168 api %s\n" "$MAIN" "${SWPUB:-★조회실패}" "${API:-★조회실패}"
@@ -81,7 +90,7 @@ if ! scp -i "$HOME/.oci.key" -o StrictHostKeyChecking=no -o ConnectTimeout=15 "$
      echo "   ★프로브 전송 실패 — 아래 숫자는 **컨테이너에 남은 옛 사본**의 결과일 수 있다."
      DEAD=1
    fi
-G=$($K ubuntu@168.110.125.89 'c=$(docker ps --filter name=propai-api- --format "{{.Names}}"|head -1); docker cp /tmp/growth_probe.py $c:/tmp/ >/dev/null 2>&1 && docker exec $c python /tmp/growth_probe.py' 2>&1 | grep -m1 '^PROBE ')
+G=$($K ubuntu@168.110.125.89 "$ACTIVE_SNIPPET"'; docker cp /tmp/growth_probe.py $C:/tmp/ >/dev/null 2>&1 && docker exec $C python /tmp/growth_probe.py' 2>&1 | grep -m1 '^PROBE ')
 if [ -z "$G" ]; then
   echo "   ★프로브 실패 — 이 절은 '이상 없음'이 **아니다**. 컨테이너 교체/DB/구문을 확인하라."
   DEAD=1
@@ -99,11 +108,41 @@ else
     # ★★"이 단언이 참이 되는 다른 경로" — post=0 은 **그 서명을 가진** 생산자가 없다는 뜻뿐이다.
     #   다른 빌드의 잔재 스택은 이 검사를 그냥 통과한다. 생산자 표식으로 직접 센다.
     BUILDS=$(echo "$G" | sed -n 's/.*builds=//p')
-    NB=$(echo "$BUILDS" | tr ',' '\n' | grep -c '=')
+    # ★★**무표식 행과 표식 있는 빌드를 갈라서 센다.**
+    #   종전엔 `NB` 가 둘을 함께 세고, 아래 case 가 `(표식없음)` 이 **하나라도 있으면**
+    #   첫 분기로 빠져 **위반 검사(NB>1)가 도달 불가**였다. 즉 표식 배포 직후처럼
+    #   옛 무표식 행이 남아 있는 동안에는 **진짜 잔재 스택이 있어도 조용했다.**
+    #   실측 2026-08-26: `(표식없음)=242,propai-v002797-881b0b50=26` 에서 NB=2 인데
+    #   위반 검사가 건너뛰어졌다(이번엔 무해했지만 그것은 운이다).
+    MARKED=$(echo "$BUILDS" | tr ',' '\n' | grep '=' | grep -v '(표식없음)')
+    NB=$(printf '%s' "$MARKED" | grep -c '=')            # ★표식 있는 빌드만 센다
+    UNMARKED=$(echo "$BUILDS" | tr ',' '\n' | grep -c '(표식없음)')
     echo "   생산자 빌드: $BUILDS"
-    case "$BUILDS" in
-      *"(표식없음)"*) echo "   ★표식 미배포(PR #826 미머지) — **빌드 기반 판별은 아직 불가**. 위 0 은 '그 서명이 없다'까지만 말한다." ;;
-      *) [ "${NB:-1}" -gt 1 ] && { VIOL=1; echo "   ★★생산자 빌드가 ${NB}종 — 잔재 스택이 또 있다."; } ;;
+    # ★★표식이 없을 때 **이유를 셋으로 가른다** — 종전엔 *"PR #826 미머지"* 하나로 찍었는데,
+    #   #826 이 머지·배포된 뒤에도 그 문구가 나와 **능동적으로 거짓**이 됐다(2026-08-26 실측).
+    #   머지·배포·데이터반영은 **다른 사건**이다. 한 단어로 부르면 다음 사람이 엉뚱한 곳을 판다
+    #   (실제로 나는 `(표식없음)` 을 보고 머지 여부부터 확인하러 갔다).
+    # ★판정은 **표식 있는 빌드**로 한다. 무표식은 "표식 이전 생성분"이라 별도로 말한다.
+    case "$MARKED" in
+      "")
+        MARK=$($K ubuntu@168.110.125.89 "$ACTIVE_SNIPPET"'; docker exec -w /app/apps/api $C python -c "from app.services.growth import stale_build_guard as g; print(g.running_build_id() or \"\")" 2>/dev/null' 2>/dev/null)
+        MRC=$?
+        if [ "$MRC" -ne 0 ]; then
+          echo "   ★표식 프로브 실패 — **배포 여부를 모른다**(이 줄은 '미배포'가 아니다). 활성 스택/모듈 확인 필요."
+          DEAD=1
+        elif [ -z "$MARK" ]; then
+          echo "   ★표식 **미배포** — 실행 중인 빌드에 생산자 표식이 없다. 빌드 기반 판별 불가."
+        else
+          echo "   표식은 **배포됨**($MARK) — 다만 **그 이후 생성분이 아직 없다**(analyze 배치는 매시 :05)."
+          echo "   → 이 줄은 '미배포'가 아니라 '대기'다. 다음 배치 뒤 다시 보라."
+        fi ;;
+      *)
+        [ "${UNMARKED:-0}" -gt 0 ] && echo "   (무표식 행이 함께 있음 — **표식 배포 이전 생성분**이다. 판정에서 제외한다.)"
+        if [ "${NB:-1}" -gt 1 ]; then
+          VIOL=1; echo "   ★★표식 있는 생산자 빌드가 ${NB}종 — 잔재 스택이 또 있다: $(printf '%s' "$MARKED" | tr '\n' ' ')"
+        else
+          echo "   ✅ 표식 있는 생산자 빌드 **1종** — 잔재 스택 없음(추론이 아니라 조회로 확인)."
+        fi ;;
     esac
     [ "${post:-0}" -gt 0 ] && { VIOL=1; echo "   ★★재발 — 낡은 생산자가 또 있다. 기각한 가설(워커 옛이미지·severity UPDATE·다른 INSERT 경로)은 재생성 말 것."; }
   fi
