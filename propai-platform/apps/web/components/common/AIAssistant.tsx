@@ -238,7 +238,7 @@ export function AIAssistant() {
     }
 
     // 화면(도메인) 진입 시 초기 인사로 리셋 — 의도된 동작.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+     
     setMessages([{ id: 'initial', role: "assistant", content: initialText }]);
   }, [pathname]);
 

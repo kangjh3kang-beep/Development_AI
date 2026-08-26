@@ -20,7 +20,7 @@ export function resolveNextPath(raw: string | null | undefined, locale: string):
   if (!raw) return fallback;
   if (!raw.startsWith("/") || raw.startsWith("//")) return fallback;
   // 제어문자(C0 전역+DEL)·백슬래시 변종 거부 — URL 파서의 사전 제거/정규화를 악용한 우회 차단.
-  // eslint-disable-next-line no-control-regex
+   
   if (/[\u0000-\u001F\u007F\\]/.test(raw)) return fallback;
   // 로그인/가입 화면으로의 복귀는 무의미(로그인 후 다시 로그인 화면 착지) → 홈으로.
   if (raw.startsWith(`/${locale}/login`) || raw.startsWith(`/${locale}/register`)) return fallback;
