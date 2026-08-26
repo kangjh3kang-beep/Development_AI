@@ -4,10 +4,10 @@
 
 `comprehensive_analysis_service._research_dev_plans` 는 `risk_level` 을
 `protection_zone_severity.SEVERITY_ORDER` 사다리에서 고른다(5종). 화면
-(`ComprehensiveAnalysisPanel.RISK_LEVEL_STYLE`)은 그것을 **손으로 적은 표**로 색에 옮긴다.
+(`ComprehensiveAnalysisPanel.RISK_LEVEL_TONE`)은 그것을 **손으로 적은 표**로 색에 옮긴다.
 
 실측(2026-08-27, `origin/main` 5a79f510): 사다리 **5종** vs 표 **4종** — `"중간"` 이 빠져 있었고
-폴백이 `RISK_LEVEL_STYLE["낮음"]`(= `--status-success`, 초록)이었다. 그래서
+폴백이 `RISK_LEVEL_TONE["낮음"]`(= `--status-success`, 초록)이었다. 그래서
 **제한보호구역 필지의 `중간` 리스크가 `낮음` 과 똑같은 초록 배지**로 칠해졌다.
 배지 텍스트는 `종합 리스크 중간` 으로 옳았고 **색만 안전을 말했다** — 조용한 오표기다.
 
@@ -36,10 +36,13 @@ _API = Path(__file__).resolve().parents[1]
 _WEB = _API.parents[0] / "web"
 
 _SEVERITY_SSOT = _API / "app" / "services" / "regulation" / "protection_zone_severity.py"
-_PANEL = _WEB / "components" / "analysis" / "ComprehensiveAnalysisPanel.tsx"
+_PANEL = _WEB / "lib" / "risk-level-style.ts"
+_CONSUMER = _WEB / "components" / "analysis" / "ComprehensiveAnalysisPanel.tsx"
 
 # 표 리터럴의 키만 뽑는다. 값(클래스 문자열)은 보지 않는다 — 문안은 계약이 아니다.
 _KEY = re.compile(r'^\s*"([^"]+)"\s*:', re.M)
+# 등급 → 톤 매핑의 **값**(톤 이름). 두 등급이 같은 톤이면 화면에서 구별 불가다.
+_KV = re.compile(r'^\s*"([^"]+)"\s*:\s*"([a-z]+)"\s*,', re.M)
 
 # ★주석 3종을 모두 걷는다. 처음엔 `//`·`/*` 만 걷었다가 **JSX 주석 `{/* … */}` 에 뚫려**
 #   검사기가 주석 줄을 배지 렌더 줄로 집었다(이 테스트를 처음 돌렸을 때 실제로 그랬다).
@@ -49,9 +52,9 @@ _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.S)
 _LINE_COMMENT = re.compile(r"(?<![:\w])//[^\n]*")
 
 
-def _code_lines() -> list[str]:
+def _code_lines(path: Path | None = None) -> list[str]:
     """실행되는 줄만. 주석(줄·블록·JSX)을 제거한 뒤 줄로 나눈다."""
-    src = _PANEL.read_text(encoding="utf-8")
+    src = (path or _PANEL).read_text(encoding="utf-8")
     # 줄 수를 보존하도록 주석은 개행만 남기고 지운다(줄 인덱스가 원본과 어긋나지 않게).
     def _blank(m: re.Match[str]) -> str:
         return "\n" * m.group(0).count("\n")
@@ -95,21 +98,24 @@ def _ladder() -> tuple[str, ...]:
 
 
 def _table_keys() -> tuple[str, ...]:
-    """RISK_LEVEL_STYLE 리터럴 **블록 안**의 키만 센다.
+    """RISK_LEVEL_TONE 리터럴 **블록 안**의 키만 센다.
 
     ★블록 경계로 자르지 않으면 파일 전체의 모든 `"키":` 줄을 세게 된다
     (2026-08-25 실측: 같은 실수로 11을 31로 보고했다).
     """
-    src = _PANEL.read_text(encoding="utf-8")
-    start = src.find("export const RISK_LEVEL_STYLE")
+    # ★주석을 먼저 걷는다. 종전엔 원문을 그대로 봐서 `/* … */` 안으로 등급 행을
+    #   옮기는 변이가 **생존**했다(적대 리뷰 M-E · 2026-08-27). `_code_lines` 를
+    #   만들어 놓고 키 추출에는 안 쓴 것이 원인이다 — 도구가 있는데 안 쓴 자리.
+    src = "\n".join(_code_lines())
+    start = src.find("export const RISK_LEVEL_TONE")
     end = src.find("};", start) if start >= 0 else -1
     if start < 0 or end < 0:
         raise ScannerDeadError(
-            f"{_PANEL.name} 에서 RISK_LEVEL_STYLE 블록을 못 찾았다 — 선언이 바뀌었다(위반 아님)."
+            f"{_PANEL.name} 에서 RISK_LEVEL_TONE 블록을 못 찾았다 — 선언이 바뀌었다(위반 아님)."
         )
     keys = tuple(_KEY.findall(src[start:end]))
     if not keys:
-        raise ScannerDeadError("RISK_LEVEL_STYLE 블록은 찾았는데 키가 0개다 — 키 정규식이 죽었다.")
+        raise ScannerDeadError("RISK_LEVEL_TONE 블록은 찾았는데 키가 0개다 — 키 정규식이 죽었다.")
     return keys
 
 
@@ -136,7 +142,7 @@ def test_every_produced_severity_has_a_badge_color() -> None:
     assert not missing, (
         f"리스크 사다리 {list(ladder)} 중 화면 배지 표에 없는 등급: {missing}. "
         "표에 없으면 폴백으로 흘러가 **실제 위험이 다른 색으로** 보인다. "
-        f"{_PANEL.name} 의 RISK_LEVEL_STYLE 에 추가하라."
+        f"{_PANEL.name} 의 RISK_LEVEL_TONE 에 추가하라."
     )
 
 
@@ -153,11 +159,11 @@ def test_badge_table_has_no_phantom_grade() -> None:
 def test_unknown_grade_does_not_fall_back_to_a_safe_color() -> None:
     """★미지 등급이 **안전색**으로 떨어지지 않는지 — 이 결함의 심장이다.
 
-    표에 없는 등급의 폴백이 `RISK_LEVEL_STYLE["낮음"]`(success 초록)이면,
+    표에 없는 등급의 폴백이 `RISK_LEVEL_TONE["낮음"]`(success 초록)이면,
     새 등급이 생기는 순간 그것이 **조용히 '안전'으로 분류**된다.
     """
     code = "\n".join(_code_lines())
-    assert 'RISK_LEVEL_STYLE["낮음"]' not in code, (
+    assert 'RISK_LEVEL_TONE["낮음"]' not in code, (
         "미지 등급의 폴백이 '낮음'(안전색)이다 — 모르는 값을 낮추지 마라. "
         "중립 스타일로 폴백하라(riskLevelStyle)."
     )
@@ -169,10 +175,12 @@ def test_unknown_grade_does_not_fall_back_to_a_safe_color() -> None:
 def test_the_badge_line_is_wired_to_the_helper() -> None:
     """★배선 — 헬퍼가 **있는 것**과 배지가 **그것을 태우는 것**은 다른 명제다.
 
-    함수 안에만 변이를 넣으면 전부 CAUGHT 인데 호출부 한 줄을 되돌리면 무잠금이 된다.
-    그래서 결함이 살던 자리(배지 렌더 줄)를 직접 본다.
+    ★창을 **줄 수가 아니라 구조**로 잡는다. 종전엔 `lines[idx-3:idx+1]` 고정이라
+    **공백 3줄만 넣어도 빨개졌다**(적대 리뷰 M-F — 위양성). Prettier 실행이나
+    className 변수 추출 같은 **정상 리팩터가 필수 CI 를 거짓 메시지로** 빨갛게 만든다.
+    이제 배지 텍스트가 든 JSX 요소의 **여는 태그까지 거슬러 올라가** 그 안을 본다.
     """
-    lines = _code_lines()
+    lines = _code_lines(_CONSUMER)
     hits = [i for i, ln in enumerate(lines) if "종합 리스크 {" in ln]
     assert hits, (
         "배지 렌더 줄('종합 리스크 {…}')을 못 찾았다 — 조회기가 죽었거나 UI 가 바뀌었다. "
@@ -180,13 +188,71 @@ def test_the_badge_line_is_wired_to_the_helper() -> None:
     )
     assert len(hits) == 1, f"배지 렌더 줄이 {len(hits)}곳이다 — 창 판정이 모호해진다: {hits}"
 
-    # 배지 span(className 계산)은 라벨 줄 **바로 위**에 있다.
+    # 텍스트 줄에서 **여는 `<span`** 까지 거슬러 올라간다(공백·줄바꿈에 무관).
     idx = hits[0]
-    window = "\n".join(lines[max(0, idx - 3) : idx + 1])
-    assert "riskLevelStyle(" in window, (
-        "종합 리스크 배지가 riskLevelStyle 을 태우지 않는다 — 헬퍼는 있는데 배선이 끊겼다.\n"
-        f"검사한 창:\n{window}"
+    open_at = None
+    for k in range(idx, max(-1, idx - 60), -1):
+        if "<span" in lines[k]:
+            open_at = k
+            break
+    assert open_at is not None, (
+        f"배지 텍스트({idx + 1}행) 위 60줄 안에서 여는 <span> 을 못 찾았다 — "
+        "마크업이 크게 바뀌었다. 위반이 아니라 이 검사가 낡은 것일 수 있다."
     )
+    element = "\n".join(lines[open_at : idx + 1])
+    assert "riskLevelStyle(" in element, (
+        "종합 리스크 배지 요소가 riskLevelStyle 을 태우지 않는다 — "
+        "헬퍼는 있는데 배선이 끊겼다.\n"
+        f"검사한 요소({open_at + 1}~{idx + 1}행):\n{element}"
+    )
+
+
+def test_each_grade_gets_a_distinct_tone() -> None:
+    """★CRITICAL 락 — **두 등급이 같은 톤이면 화면에서 구별할 수 없다.**
+
+    적대 리뷰(2026-08-27)가 `"중간"` 의 색을 초록으로 바꾸는 변이로 **락 14개를 전부
+    통과**시켰다. 원인은 계약이 **색 문자열의 철자**로만 단언돼 있었던 것 —
+    같은 초록을 다른 철자로 쓰면 전부 통과했다. 이제 표의 값이 **닫힌 톤 이름**이라
+    같은 톤이면 여기서 죽는다.
+    """
+    src = "\n".join(_code_lines())
+    start = src.find("export const RISK_LEVEL_TONE")
+    end = src.find("};", start) if start >= 0 else -1
+    if start < 0 or end < 0:
+        raise ScannerDeadError("RISK_LEVEL_TONE 블록을 못 찾았다(위반 아님).")
+    pairs = _KV.findall(src[start:end])
+    if not pairs:
+        raise ScannerDeadError("등급→톤 쌍을 하나도 못 읽었다 — 표기가 바뀌었다(위반 아님).")
+
+    tones = [t for _g, t in pairs]
+    dup = sorted({t for t in tones if tones.count(t) > 1})
+    assert not dup, (
+        f"두 등급 이상이 같은 톤을 쓴다: {dup} (표: {pairs}). "
+        "사다리가 가른 등급을 화면이 못 가른다."
+    )
+    assert len(pairs) == len(_ladder()), (
+        f"등급→톤 쌍 {len(pairs)}개 vs 사다리 {len(_ladder())}종 — 개수가 어긋난다."
+    )
+
+
+def test_tone_palette_has_no_duplicate_color() -> None:
+    """★톤 이름이 달라도 **값이 같으면** 구별성은 여전히 0이다.
+
+    위 테스트는 *"등급마다 다른 톤 이름"* 을 잠근다. 이 테스트는 그 톤 이름들이
+    **실제로 다른 클래스 문자열**인지를 잠근다 — 둘을 나눠야 「이름만 다른 같은 색」이
+    빠져나가지 못한다.
+    """
+    src = "\n".join(_code_lines())
+    start = src.find("const RISK_TONE = {")
+    end = src.find("} as const;", start) if start >= 0 else -1
+    if start < 0 or end < 0:
+        raise ScannerDeadError("RISK_TONE 팔레트를 못 찾았다(위반 아님).")
+    body = src[start:end]
+    values = re.findall(r'^\s*[a-z]+:\s*"([^"]+)"', body, re.M)
+    if len(values) < 5:
+        raise ScannerDeadError(f"톤 값을 {len(values)}개만 읽었다 — 표기가 바뀌었다(위반 아님).")
+    dup = sorted({v for v in values if values.count(v) > 1})
+    assert not dup, f"서로 다른 톤이 **같은 클래스 문자열**을 쓴다: {dup}"
 
 
 @pytest.mark.parametrize("grade", ["중간"])

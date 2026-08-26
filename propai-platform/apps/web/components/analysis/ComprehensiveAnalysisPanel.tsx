@@ -23,6 +23,7 @@ import { optionsSummary } from "@/lib/use-analysis-history";
 import type { ParcelRow } from "@/lib/parcel-rows";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { riskLevelStyle } from "@/lib/risk-level-style";
 import { apiClient } from "@/lib/api-client";
 import {
   formatArea, formatPercent, formatPercentDelta, formatUpzoningFarRange,
@@ -134,32 +135,10 @@ function Field({ label, value }: { label: string; value: string | number }) {
   );
 }
 
-// 개발계획 종합 리스크 등급 → 배지 색(comprehensive_analysis_service._research_dev_plans 산출).
-// ★키 집합의 SSOT 는 백엔드 사다리 protection_zone_severity.SEVERITY_ORDER(5종)다.
-//   손으로 적은 이 목록이 사다리보다 짧으면 빠진 등급이 폴백으로 흘러간다 — 실제로
-//   "중간"(제한보호구역)이 빠져 있었고 폴백이 "낮음"이라 **초록(안전색)으로 칠해졌다.**
-//   tests/test_risk_level_label_parity.py 가 사다리를 파싱해 이 표를 강제한다.
-export const RISK_LEVEL_STYLE: Record<string, string> = {
-  "낮음": "bg-[var(--status-success)]/20 text-[var(--status-success)]",
-  "보통": "bg-[var(--status-warning)]/20 text-[var(--status-warning)]",
-  // ★색 **값**은 계약이 아니다 — 계약은 "낮음/폴백과 **구별된다**"이다.
-  //   그래서 이 문자열을 다른 색으로 바꾸는 변이는 **의도적으로 생존**한다
-  //   (mutate_changed.py 3건 중 1건 생존 · 2026-08-27). 색을 못 박으면 디자인
-  //   토큰을 바꿀 때마다 깨지는 취약한 락이 된다. 구별성은 RiskLevelStyle.test.tsx 가 잠근다.
-  "중간": "bg-amber-500/20 text-amber-400",
-  "높음": "bg-orange-500/20 text-orange-400",
-  "극히 높음": "bg-[var(--status-error)]/20 text-[var(--status-error)]",
-};
-
-// 표에 없는 등급은 **중립**으로 둔다 — 안전색(낮음)으로 떨어뜨리지 않는다.
-// ★블랙리스트("낮음이 아니면…")가 아니라 **표에 있는 것만** 색을 준다: 미지의 새 등급이
-//   생겨도 조용히 "안전"으로 분류되지 않는다(2026-08-20 #712 규제구역 판정과 같은 규율).
-const RISK_LEVEL_UNKNOWN_STYLE = "bg-[var(--surface-strong)] text-[var(--text-tertiary)]";
-
-/** 리스크 등급 → 배지 클래스. 미지 등급은 중립(안전색 금지). */
-export function riskLevelStyle(level: string | null | undefined): string {
-  return RISK_LEVEL_STYLE[(level ?? "").trim()] ?? RISK_LEVEL_UNKNOWN_STYLE;
-}
+// 개발계획 종합 리스크 등급 → 배지 색은 **lib/risk-level-style** 로 옮겼다.
+//   ★1,500줄 클라이언트 패널 안에 두면 순수 함수 테스트가 next/dynamic·지도 셸까지
+//     통째로 임포트해, 계약과 무관한 이유로 락이 죽는다(적대 리뷰 지적 · 2026-08-27).
+//   표 키의 SSOT 는 백엔드 SEVERITY_ORDER 이고 파생형 락이 강제한다.
 
 // ★SEVERITY_CARD_STYLE(심각도→카드색) 제거(2026-08-01): 값 변화의 상대폭으로 경고색을 칠하면
 //   입력 변경(필지 재선택)까지 빨간 HIGH가 되는 라이브 오표기가 재발한다. 카드색은 이제
