@@ -584,3 +584,29 @@ async def realtx_report_download(
         iter([data]), media_type=media_type,
         headers={"Content-Disposition": f'attachment; filename="realtx_report.{ext}"'},
     )
+
+
+@router.get(
+    "/realtx-layer2/status",
+    summary="실거래 2층(저장·정정탐지) 관측 상태",
+)
+async def realtx_layer2_status(
+    current_user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """2층이 **살아 있는지**, 무엇을 봤는지 — 저장분을 처음으로 **읽는** 통로.
+
+    ★**LLM 미사용**(읽기 전용 집계) → 과금 게이트 없음. 형제(`/realtx-report`)와 같다.
+
+    ★왜 필요한가: `#855`·`#860`·`#884` 가 2층을 만들었고 프로덕션에 수천 행이 쌓였는데
+      **읽는 코드가 0건**이었다(실측 2026-08-27). 수집이 조용히 멈춰도, 정정이 쏟아져도
+      아무도 몰랐다. `#884` 가 스스로 부채로 적어 둔 *"8일 이상 낡음을 판정하는 소비처"* 다.
+
+    ★응답의 `detection.state` 를 먼저 보라 — `corrections.total = 0` 은 **두 가지 뜻**이
+      있고(`미시험` vs `관측됨_정정없음`) 이 필드가 그것을 가른다. 섞어 읽으면
+      **정상을 장애로**, 혹은 **죽은 탐지를 정상으로** 판정하게 된다.
+    """
+    from app.services.land_intelligence.realtx_layer2_status import build_layer2_status
+    from apps.api.database.session import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as db:
+        return await build_layer2_status(db)
