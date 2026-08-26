@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { apiClient } from "@/lib/api-client";
 import type { Locale } from "@/i18n/config";
 import { MyPageShell, formatKrw } from "./MyPageShell";
+import { llmServiceLabel } from "@/lib/llm-service-labels";
 
 type TokenUsage = {
   scope: string;
@@ -17,13 +18,6 @@ type TokenUsage = {
 const PERIODS = [7, 30, 90] as const;
 
 /** 서비스 키 → 통상어 라벨(미등록 키는 원문 표기 — 무날조). */
-const SERVICE_LABELS: Record<string, string> = {
-  market: "시장 분석",
-  land: "토지 분석",
-  design: "설계 지원",
-  assistant: "AI 비서",
-  report: "보고서 생성",
-};
 
 export function UsageClient({ locale }: { locale: Locale }) {
   const [days, setDays] = useState<number>(30);
@@ -140,7 +134,7 @@ export function UsageClient({ locale }: { locale: Locale }) {
               {(usage?.by_service ?? []).slice(0, 6).map((s) => (
                 <li key={s.service} className="flex items-center justify-between text-sm">
                   <span className="text-[var(--text-primary)]">
-                    {SERVICE_LABELS[s.service] ?? s.service}
+                    {llmServiceLabel(s.service)}
                   </span>
                   <span className="font-semibold text-[var(--text-primary)]">
                     {formatKrw(s.cost_krw)}
