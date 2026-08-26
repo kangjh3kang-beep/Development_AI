@@ -227,10 +227,18 @@ class TestHonestyMachineryIntegration:
             total_gfa_sqm=10_000.0, total_households=64,
         )
         item = self._b01_item(out)
-        # 표준건축비는 여전히 미주입이므로 **금액은 0**이지만, 이제 그 사유가
-        # 「대도시권 아님」이 아니라 「표준건축비 미설정」이어야 한다.
-        assert item["detail"].get("source") != "not_metro_area"
-        assert "표준건축비" in (item["detail"].get("reason") or "")
+        # ★**산문으로 판정하지 않는다** — 2026-08-27 실사고(오류 #124).
+        #   처음엔 `"표준건축비" in reason` 으로 걸었는데, **미해석 분기의 안내문에도**
+        #   *"대도시권이면 '표준건축비 × 부과율 …'이 부과된다"* 라고 내가 써 놓아서
+        #   **두 분기 모두 참**이었다 — 배선을 끊는 변이(M4)가 그대로 **생존**했다.
+        #   내가 방금 쓴 문구가 내 단언의 **공허한 참**을 만든 것이다.
+        #   → 판정은 **구조 필드**로 한다(파서형).
+        assert item["detail"].get("sido_basis") == SIDO_BASIS_ADDRESS, (
+            "주소가 초크포인트까지 **실제로 전달**되어야 시군구가 치유된다 — "
+            "체인 어디서든 address 가 끊기면 여기서 죽는다"
+        )
+        assert item["detail"].get("applicable") is True
+        assert item["detail"].get("surveyed") is not False, "치유됐으면 미조회가 아니다"
 
 
 @pytest.mark.xfail(
@@ -244,3 +252,83 @@ class TestHonestyMachineryIntegration:
 )
 def test_orchestrator_dead_path_remeasured():
     raise AssertionError("미재측정 — 초록 안에 부채를 드러내 둔다")
+
+
+class TestWiringIsLocked:
+    """★배선 락 — **함수만 잠그면 배선은 무잠금**이다.
+
+    이 파일 첫 판에서 변이 3종(`M3`·`M4`·`M5`)이 **전부 생존**했다. 함수 단위 락 34건이
+    초록인 채로 **주소 전달을 끊어도**, **precheck 축 교정을 되돌려도** 아무도 안 죽었다.
+    (`scripts/mutate_manual.sh` 로 실측 — 손 판단이 아니라 도구가 짚었다)
+
+    ★**판정은 파서로 한다(`ast`), 정규식이 아니다.** 소스 문자열 검사는 주석·독스트링에
+      뚫린다 — 그리고 이 PR 자체가 그 함정을 밟았다(오류 #124: **내가 쓴 안내문**이
+      `"표준건축비" in reason` 을 **두 분기 모두 참**으로 만들어 M4 를 살렸다).
+
+    ★이 락들은 **호출 인자의 존재**를 본다. 진짜 경로를 태우는 락
+      (`TestHonestyMachineryIntegration`)이 우선이고, 여기는 그것이 닿지 못하는
+      상위 배선(오케스트레이터·precheck)을 덮는 **보완**이다.
+    """
+
+    @staticmethod
+    def _kwarg_of_call(path: str, func_name: str, kwarg: str):
+        """`func_name(...)` 호출에서 `kwarg=` 로 넘긴 **인자 노드**들을 모은다(AST)."""
+        import ast
+        import pathlib
+
+        tree = ast.parse(pathlib.Path(path).read_text(encoding="utf-8"))
+        found = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            fn = node.func
+            name = getattr(fn, "attr", None) or getattr(fn, "id", None)
+            if name != func_name:
+                continue
+            for kw in node.keywords:
+                if kw.arg == kwarg:
+                    found.append(kw.value)
+        return found
+
+    def test_orchestrator_passes_real_address_not_a_literal(self):
+        """M3 — 오케스트레이터가 `compute_developer_stage_charges` 에 **주소를 넘기는가**.
+
+        ★한쪽만 걸지 않는다: *"`address` 키가 있다"* 만 보면 `address=""` 로 되돌리는
+          변이가 통과한다. **리터럴이 아니라 이름(변수)** 이어야 한다고 단언한다.
+        """
+        import ast
+
+        path = "app/services/feasibility/rough_feasibility_orchestrator.py"
+        args = self._kwarg_of_call(path, "compute_developer_stage_charges", "address")
+        assert args, "★배선 없음 — 주소를 안 넘기면 시군구 자가치유가 죽는다"
+        assert any(isinstance(a, ast.Name) for a in args), (
+            "address 가 리터럴(예: \"\")이면 배선이 끊긴 것과 같다"
+        )
+
+    def test_project_charges_forwards_address_downstream(self):
+        """M4 의 소스측 짝 — `calculate_all_utility_stage` 로도 **변수**가 흘러야 한다."""
+        import ast
+
+        path = "app/services/tax/project_charges.py"
+        args = self._kwarg_of_call(path, "calculate_all_utility_stage", "address")
+        assert args, "★체인 중간에서 주소가 끊긴다"
+        assert any(isinstance(a, ast.Name) for a in args)
+
+    def test_precheck_does_not_put_sigungu_into_sido(self):
+        """M5 — `sido_name=` 에 **시군구 변수를 직결**하지 않는다.
+
+        두 모집단: `sido_name` 은 **해석기 호출**이어야 하고(Call), `sigungu_name` 은
+        **시군구 변수**여야 한다(Name). 한쪽만 보면 둘을 맞바꾼 구현이 통과한다.
+        """
+        import ast
+
+        path = "app/services/precheck/precheck_service.py"
+        sido = self._kwarg_of_call(path, "ModuleInput", "sido_name")
+        sigungu = self._kwarg_of_call(path, "ModuleInput", "sigungu_name")
+        assert sido and sigungu, "★대조군 사망 — ModuleInput 호출을 못 찾았다(파서 점검)"
+        assert all(isinstance(a, ast.Call) for a in sido), (
+            "sido_name 은 주소 해석기의 **반환값**이어야 한다 — 시군구 변수 직결 금지"
+        )
+        assert any(isinstance(a, ast.Name) for a in sigungu), (
+            "sigungu_name 이 비어 있으면 축이 여전히 붕괴한 것이다"
+        )

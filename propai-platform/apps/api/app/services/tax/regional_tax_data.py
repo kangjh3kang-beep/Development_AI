@@ -478,6 +478,10 @@ def get_metro_transport_charge(
     if not scb or gfa_sqm <= 0:
         return {
             "amount_won": None, "applicable": True, "confidence": "unavailable", "rate": rate,
+            # ★출처는 **값이 있을 때도** 말한다(PROV-O) — 모든 분기가 `sido_basis` 를 싣는다.
+            #   한 분기만 빠뜨리면 소비처가 "왜 없지" 를 되물을 수 없고, 배선 락도 그 분기를
+            #   통과하지 못한다(실제로 이 누락을 구조 단언이 잡아냈다).
+            "sido_basis": sido_basis,
             "formula": "표준건축비 × 부과율 × 건축연면적 − 공제",
             "reason": ("표준건축비 미설정(광특법 시행령 §16조의2 준용 「공공건설임대주택 "
                        "표준건축비」 고시 — 층수·면적 구간표) — 환경변수 "
