@@ -70,6 +70,7 @@ def calculate_b01_metro_transport(
     exclusive_area_sqm: float | None = None,
     standard_build_cost_won_per_sqm: int | None = None,
     total_households: int = 0,  # 하위호환(미사용 — 실산식은 연면적 기반)
+    address: str = "",
 ) -> dict[str, Any]:
     """B01 광역교통시설부담금 = 표준건축비 × 부과율 × 건축연면적(대도시권광역교통관리법 §7의2).
 
@@ -80,6 +81,8 @@ def calculate_b01_metro_transport(
         sido_name=sido_name, gfa_sqm=total_gfa_sqm, building_type=building_type,
         exclusive_area_sqm=exclusive_area_sqm,
         standard_build_cost_won_per_sqm=standard_build_cost_won_per_sqm,
+        # ★주소를 넘겨야 시도 미상일 때 자가치유된다(호출부가 시군구를 넘겨도).
+        address=address,
     )
     amt = result.get("amount_won")
     detail = {k: v for k, v in result.items() if k != "amount_won"}
@@ -253,6 +256,7 @@ def calculate_all_utility_stage(
     total_sale_amount_won: int = 0,
     total_gfa_sqm: float = 0,
     building_type: str = "apartment",
+    address: str = "",
 ) -> dict[str, Any]:
     """B01~B08 공사단계 전체 일괄 계산.
 
@@ -263,6 +267,7 @@ def calculate_all_utility_stage(
         calculate_b01_metro_transport(
             sido_name=sido_name, sigungu_name=sigungu_name,
             total_gfa_sqm=total_gfa_sqm, building_type=building_type,
+            address=address,
         ),
         calculate_b02_school_site(
             total_sale_amount_won=total_sale_amount_won,

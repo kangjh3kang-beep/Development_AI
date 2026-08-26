@@ -236,6 +236,18 @@ async def _extract_sigungu_from_address(
         return None
 
 
+def _sido_short_or_empty(address: str | None) -> str:
+    """주소에서 시·도 축약키를 해석 — 실패하면 **빈 문자열**(추측 금지).
+
+    부담금 테이블(`METRO_AREA_SIDO`·상하수도 단가표)과 **같은 해석기**를 쓴다. 여기서
+    자체 정규식을 새로 쓰면 두 축이 다시 갈린다(§29 — 있는 것을 안 쓰는 것이 문제였다).
+    """
+    from app.services.tax.regional_tax_data import resolve_sido_for_charges
+
+    short, _basis = resolve_sido_for_charges(address=str(address or ""))
+    return short
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 신뢰 레이어(additive) 조립 헬퍼 — inputs/data_quality/legal_refs/evidence/feasibility_band
 # 원칙: 새 계산/조닝/검증 엔진 0개. 기존 함수 rewire + 데이터 매핑만. URL은 레지스트리만.
@@ -932,8 +944,13 @@ async def _build_band_module_input(
         official_price_per_sqm=official_price_per_sqm,
         price_multiplier=1.1,
         building_type=svc._get_building_type(best_code),
-        sido_name=region,
-        sigungu_name="",
+        # ★축 교정 — `region` 은 `_extract_sigungu_from_address` 가 낸 **시군구**다
+        #   ("동구"·"강남구"). 종전에는 그것을 `sido_name` 에 직결하고 `sigungu_name` 은
+        #   빈 채로 뒀다 = **두 칸이 모두 틀렸다.** 시군구를 시도로 읽은 B01 광역교통은
+        #   울산(대도시권)을 "동구 — 대도시권 아님"으로 판정해 침묵 미부과했다.
+        #   시·도는 주소에서 **공용 해석기**로 뽑는다(못 뽑으면 빈 문자열 — 지어내지 않는다).
+        sido_name=_sido_short_or_empty(address),
+        sigungu_name=region,
         project_months=svc._get_type_project_months(best_code),
         discount_rate=0.08,
     )

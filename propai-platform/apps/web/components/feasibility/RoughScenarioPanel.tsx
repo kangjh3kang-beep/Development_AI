@@ -35,7 +35,6 @@ import { apiClient, resolveApiOrigin } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { parcelDataToRows, shouldSendParcels } from "@/lib/parcel-rows";
-import { regionFromAddress } from "@/lib/region";
 import { ProjectSwitcher } from "@/components/common/ProjectSwitcher";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { roughResultToFeasibilityPatch } from "@/components/feasibility/rough-scenario-commit";
@@ -380,9 +379,15 @@ function RoughScenarioPanelInner({ projectId }: { projectId?: string }) {
       address: address.trim(),
       ...(shouldSendParcels(parcelRows) ? { parcels: parcelRows } : {}),
       project_id: projectId || ctxProjectId || undefined,
-      // region: 시군구는 주소로 정밀 매칭되므로 여기선 폴백 힌트만 — 미도출 시 "" 로
-      //  '서울' 기본값이 지방 부지를 과대평가하지 않게 한다(백엔드 주소 시도추론에 위임).
-      region: regionFromAddress(address) ?? "",
+      // ★region 은 백엔드 계약상 **시도명**이다(schemas/feasibility_v2.py: "시도명 …
+      //   빈값=주소 시도 추론에 양보"). 종전에는 여기서 `regionFromAddress()` 로 뽑은
+      //   **시군구**("동구")를 보냈다 — 축이 다르다.
+      //   그 값이 B01 광역교통시설부담금의 대도시권 판정까지 흘러가, 울산(대도시권)이
+      //   "동구 — 대도시권 아님"으로 **침묵 미부과**됐다(2026-08-27 라이브 3모집단 대조군).
+      //   ★`regionFromAddress` 자체는 고치지 않는다 — 그것은 매스 백본(mass_templates)
+      //     조회키로 **시군구가 정답**이고 백엔드 region_util.py 와 SSOT 결속이다.
+      //   시·도는 백엔드가 주소에서 해석한다(부담금·분양가 양쪽 모두). 여기선 보내지 않는다.
+      region: "",
       ...(equityWon ? { equity_won: equityWon } : {}),
       ...(overrides && Object.keys(overrides).length > 0 ? { overrides } : {}),
     }),

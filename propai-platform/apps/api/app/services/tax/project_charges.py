@@ -152,6 +152,8 @@ def compute_developer_stage_charges(
     # ★3상태 — `None`(미조회) / `False`(조회했고 아님) / `True`(맞음).
     #   종전 `bool = False` 는 **미조회를 미지정으로 뭉개** 화면에 없는 관측 주장을 냈다.
     in_infra_charge_zone: bool | None = None,
+    # ★B01 시도 해석 자가치유용 — 호출부가 시·도가 아닌 값을 넘겨도 주소로 복구한다.
+    address: str = "",
 ) -> dict[str, Any]:
     """B(공사)+C(분양) 단계 시행사 부담금 일괄 계산 — 개략수지 총사업비 계상용.
 
@@ -170,6 +172,7 @@ def compute_developer_stage_charges(
         total_sale_amount_won=max(0, total_sale_amount_won),
         total_gfa_sqm=max(0.0, total_gfa_sqm),
         building_type=building_type,
+        address=address,
     )
     sale = calculate_all_sale_stage(
         total_sale_amount_won=max(0, total_sale_amount_won),
