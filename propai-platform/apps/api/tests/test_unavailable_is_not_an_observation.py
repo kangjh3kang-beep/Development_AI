@@ -370,7 +370,7 @@ def test_printed_ledger_carries_the_reason_without_adding_a_column():
 
     basis_col = table.headers.index("근거·비고")
     calc_col = table.headers.index("산출내역(수량 × 단가)")
-    c07 = [r for r in table.rows if "기반시설부담금" == str(r[1])]
+    c07 = [r for r in table.rows if str(r[1]) == "기반시설부담금"]
     assert c07, "인쇄본에 기반시설부담금 행이 없다"
     assert c07[0][calc_col] is None, "인쇄본이 미조회에 「0㎡ × 0 원/㎡」를 그렸다"
     assert "미조회" in str(c07[0][basis_col]), (
