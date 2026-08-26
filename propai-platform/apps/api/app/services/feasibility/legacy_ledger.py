@@ -94,6 +94,7 @@ def _item(
     basis: str | None = None,
     structural_basis: str | None = None,
     note: str | None = None,
+    qty_label: str | None = None,
     qty_applicable: bool = True,
 ) -> dict[str, Any]:
     """원장 한 행. **없는 것은 None** — 0 으로 만들지 않는다."""
@@ -102,7 +103,12 @@ def _item(
         "label": label,
         "amount_won": _num(amount_won),
         "qty": _num(qty),
+        # ★**단위와 라벨은 다르다.** 라이브 실측(2026-08-26)에서 이 둘을 섞어
+        #   **`19,027,218,768토지비 + 공사비 × 0.06737`** 이라는 글자가 화면에 나갔다 —
+        #   숫자에 라벨이 단위처럼 붙었다. 단위는 `원`·`㎡`·`세대` 처럼 **수를 세는 말**이고,
+        #   라벨은 *"무엇의 수량인가"*(토지비+공사비)라 **다른 자리에 있어야 한다.**
         "qty_unit": qty_unit if _num(qty) is not None else None,
+        "qty_label": qty_label if _num(qty) is not None else None,
         "unit_price": _num(unit_price),
         "unit_price_unit": unit_price_unit if _num(unit_price) is not None else None,
         # ★근거는 **항상** 있다. 엔진이 데이터 근거(`basis`)를 못 주면 그 행이 **무엇인지**를
@@ -312,7 +318,8 @@ def build_legacy_ledger(scenario: dict[str, Any] | None) -> dict[str, Any]:
             "금융비용(브릿지·PF·중도금)",
             breakdown.get("finance_won"),
             qty=rb_base,
-            qty_unit=rb.get("base_label") or ("원" if rb_base is not None else None),
+            qty_unit="원" if rb_base is not None else None,
+            qty_label=rb.get("base_label"),
             unit_price=rb.get("finance_rate"),
             unit_price_unit="비율",
             basis=("금융비용 = (토지비 + 공사비) × 엔진 추출 비율" if rb_src == "engine" else None),
@@ -326,7 +333,8 @@ def build_legacy_ledger(scenario: dict[str, Any] | None) -> dict[str, Any]:
             "일반사업비·제경비",
             breakdown.get("other_won"),
             qty=rb_base,
-            qty_unit=rb.get("base_label") or ("원" if rb_base is not None else None),
+            qty_unit="원" if rb_base is not None else None,
+            qty_label=rb.get("base_label"),
             unit_price=rb.get("other_rate"),
             unit_price_unit="비율",
             basis=("제경비 = (토지비 + 공사비) × 엔진 추출 비율" if rb_src == "engine" else None),

@@ -633,8 +633,10 @@ def build_rough_scenario_report_model(
         for g in sec.get("groups") or []:
             for it in g.get("items") or []:
                 qty, price = it.get("qty"), it.get("unit_price")
+                # ★라벨은 괄호로 떼어 놓는다 — 단위 자리에 넣으면 숫자에 문장이 달라붙는다.
+                _lbl = f"({it['qty_label']}) " if it.get("qty_label") else ""
                 calc = (
-                    f"{qty:,.0f}{it.get('qty_unit') or ''} × {price:,.4g}"
+                    f"{_lbl}{qty:,.0f}{it.get('qty_unit') or ''} × {price:,.4g}"
                     f"{(' ' + it['unit_price_unit']) if it.get('unit_price_unit') else ''}"
                     if qty is not None and price is not None else None
                 )
