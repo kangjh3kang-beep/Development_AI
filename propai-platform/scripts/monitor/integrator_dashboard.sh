@@ -144,6 +144,30 @@ echo "── ⑤ 열린 PR (라벨은 분 단위로 바뀐다 — 이건 스냅�
 gh pr list --state open --limit 20 --json number,mergeStateStatus,autoMergeRequest,headRefName \
  --jq '.[] | "   #\(.number) \(.mergeStateStatus) AM=\(if .autoMergeRequest then "ON" else "off" end) \(.headRefName)"' 2>/dev/null | head -14
 
+echo "── ⑤-2 ★미처리 배포 요청 (보드는 다른 세션이 읽는 **유일한 지속 채널**)"
+# ★2026-08-26 실측: SESSION-F 가 "배포 요청 — 168 필요" 를 올렸는데, 나는 ①수렴 줄만 보고
+#   사용자에게 "대기 상태, 배포할 것 없음" 이라고 답했다. 약 30분 지연됐다.
+#   인계서에 *"쓰기만 하고 읽지 마라"* · *"NOTE 줄에 배포요청이 숨는다"* 가 **적혀 있었다.**
+#   → 산문으로 남기지 않고 계기판이 직접 찾게 한다. 요청이 있는데 런타임 델타가 남아 있으면 **위반**.
+BOARD2="$(git rev-parse --git-common-dir 2>/dev/null)/coordination/BOARD.md"
+if [ ! -f "$BOARD2" ]; then
+  echo "   ★보드를 못 읽음 — 배포 요청 유무를 **모른다**"; DEAD=1
+else
+  REQ=$(grep -oE '^- \[NOTE\][^|]*(배포 요청|→ 통합자)[^|]{0,90}' "$BOARD2" | tail -3)
+  if [ -z "$REQ" ]; then
+    echo "   미처리 배포 요청 없음 (대조군: 보드 $(wc -l < "$BOARD2")줄 읽힘)"
+  else
+    echo "$REQ" | sed 's/^/   /' | cut -c1-150
+    # 요청이 있는데 아직 구울 것이 남아 있으면 미처리로 본다
+    if [ "${WD:-0}" != "0" ] || [ "${AD:-0}" != "0" ] || [ "${CD:-0}" != "0" ]; then
+      echo "   ★★미처리 — 위 요청이 있는데 **런타임 델타가 남아 있다**(web ${WD} · api ${AD})"
+      VIOL=1
+    else
+      echo "   → 런타임 델타 0 이므로 위 요청은 **처리됨**으로 본다"
+    fi
+  fi
+fi
+
 echo "── ⑥ 보드 최신 3항목"
 # ★워크트리에서 .git 은 **파일**(gitdir 포인터)이다 — 보드는 공용 git 디렉토리에 있다.
 #   종전엔 여기서 "Not a directory" 가 나고 이 절이 **조용히 비었다**(이 저장소는 워크트리가 규약이다).
