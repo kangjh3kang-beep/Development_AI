@@ -17,6 +17,8 @@
 
 from __future__ import annotations
 
+from app.services.feasibility.legacy_ledger import build_legacy_ledger
+from app.services.feasibility.rough_feasibility_orchestrator import compact_charge_items
 from app.services.tax.charge_base_units import CHARGE_BASE_UNITS, base_units_for
 from app.services.tax.sale_stage_engine import calculate_all_sale_stage
 from app.services.tax.utility_stage_engine import calculate_all_utility_stage
@@ -97,3 +99,57 @@ def test_unknown_code_returns_none_not_a_guess():
     assert base_units_for(None) == (None, None)
     # 대조군 — 아는 코드는 값을 준다(전부 None 을 돌려주는 구현이 통과하지 않게).
     assert base_units_for("B03") == ("세대", "원/세대")
+
+
+# ── 실엔진 → 압축 → 원장 **한 줄로 태운다** ───────────────────────────────────
+#   ★적대 리뷰 중5: `confidence` 를 압축이 **최상위**에서 읽어 프로덕션에서 **항상 None** 이었다
+#     (엔진 16종 전수: 최상위 non-None 0/16 · 실제로는 전부 `detail` 안). 강등 표기가 한 번도
+#     발화하지 않았는데 **테스트는 초록**이었다 — 픽스처가 최상위에 그 필드를 **발명**했기
+#     때문이다. 「테스트가 생산자」의 다른 얼굴이다.
+#   → 픽스처를 쓰지 않고 **실엔진 산출**을 그대로 먹인다. 계약을 발명할 수 없다.
+def _real_charges_result() -> dict:
+    kw = dict(total_sale_amount_won=100_000_000_000, total_units=300, total_gfa_sqm=45_000)
+    return {
+        "construction": calculate_all_utility_stage(
+            sido_name="서울특별시", sigungu_name="강남구",
+            total_sale_amount_won=kw["total_sale_amount_won"],
+            total_households=kw["total_units"], total_gfa_sqm=kw["total_gfa_sqm"],
+        ),
+        "sale": calculate_all_sale_stage(**kw),
+    }
+
+
+def test_confidence_survives_the_real_engine_shape():
+    """★★강등 신뢰도가 **실엔진에서** 압축을 통과한다 — 픽스처가 아니라 엔진이 준 모양으로."""
+    raw = _real_charges_result()
+    engine_conf = {
+        it["code"]: (it.get("detail") or {}).get("confidence") or it.get("confidence")
+        for stage in (raw["construction"], raw["sale"]) for it in stage["items"]
+    }
+    have = {c: v for c, v in engine_conf.items() if v}
+    assert have, "엔진이 신뢰도를 하나도 안 준다 — 검사 전제가 깨졌다(조회기 사망)"
+
+    compacted = {i["code"]: i for i in compact_charge_items(raw)}
+    lost = sorted(c for c, v in have.items() if compacted[c]["confidence"] != v)
+    assert not lost, (
+        f"압축이 신뢰도를 흘렸다: {lost} — 엔진은 `detail` 안에 싣는다"
+        f"(형제 project_charges.py 가 처음부터 그렇게 읽는다)"
+    )
+
+
+def test_degraded_reason_reaches_the_ledger_row():
+    """★강등 사유가 **원장 행의 비고까지** 닿는다 — 사유를 버리면 진단 불가가 장애가 된다."""
+    raw = _real_charges_result()
+    items = compact_charge_items(raw)
+    degraded = [i for i in items if i.get("confidence") and i["confidence"] != "confirmed"]
+    assert degraded, "강등 항목이 하나도 없다 — 이 검사가 태울 대상이 없다(공허한 초록)"
+
+    led = build_legacy_ledger({"charges": {"total_won": 0, "items": items}})
+    rows = {i["key"]: i for s in led["sections"] for g in s["groups"] for i in g["items"]}
+    for d in degraded:
+        row = rows.get(f"charge_{d['code'].lower()}")
+        if row is None:      # 수분양자 부담분은 원장에 안 실린다(설계)
+            continue
+        assert row["note"] and "신뢰도" in row["note"], (
+            f"{d['code']}: 강등 신뢰도가 화면 비고에 안 실렸다 — 사용자가 원인을 물을 곳이 없다"
+        )
