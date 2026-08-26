@@ -265,8 +265,6 @@ interface LandIntelligencePanelProps {
   data: Record<string, string | undefined>;
 }
 
-// ── Status badge colors ──
-
 // ── Bottom Tab Pages ──
 type BottomTab = "pnu" | "price" | "transaction" | "gis";
 
@@ -842,10 +840,13 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
       value: c.value,
       status: c.status as "safe" | "warning" | "danger",
     })) || zoningCharacteristics || localResult?.characteristics || [
-      { label: "경사도", value: "—", status: "safe" as const },
-      { label: "접도 상태", value: "—", status: "safe" as const },
-      { label: "지형", value: "—", status: "safe" as const },
-      { label: "높이 제한", value: "—", status: "warning" as const },
+      // ★값이 "—"(모름)인데 status 를 safe 로 주면 **초록 3칸**이 된다 — 이 PR 이 선언한
+      //   「모름을 그 타입의 유효값으로 표현하지 않는다」에 스스로 걸리던 자리다.
+      //   표에 없는 status 이므로 중립 + "확인 불가"로 렌더된다.
+      { label: "경사도", value: "—", status: "unknown" as const },
+      { label: "접도 상태", value: "—", status: "unknown" as const },
+      { label: "지형", value: "—", status: "unknown" as const },
+      { label: "높이 제한", value: "—", status: "unknown" as const },
     ],
     summary: aiData?.summary || localResult?.summary || null,
     // ── 용적/건폐 한도: 실효 우선(법정상한을 실효처럼 표시하던 결함 교정) ──
@@ -1401,12 +1402,12 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
                       // ★미지 status 를 safe(초록)로 접지 않는다 — 생산자가 검증 0의 LLM JSON 이라
                       //   표에 실재하는 danger 가 초록으로 가려졌다. 이 칩은 색 단독 신호이므로
                       //   중립색만으로는 부족하고 글자로도 「모른다」를 말한다.
-                      const st = resolveCharacteristicStatus(c.status);
+                      const statusChip = resolveCharacteristicStatus(c.status);
                       return (
-                        <div key={i} className={`flex flex-col gap-1 rounded-lg border p-2 ${st.cls}`}>
+                        <div key={i} className={`flex flex-col gap-1 rounded-lg border p-2 ${statusChip.cls}`}>
                           <span className="text-[9px] font-black uppercase tracking-tighter opacity-80">{c.label}</span>
                           <span className="text-xs font-bold">{c.value}</span>
-                          {st.unknown && (
+                          {statusChip.unknown && (
                             <span className="text-[9px] font-medium opacity-90">{UNKNOWN_CHARACTERISTIC_LABEL}</span>
                           )}
                         </div>

@@ -41,7 +41,10 @@ export function resolveKnown<T>(
   table: Readonly<Record<string, T>>,
   raw: unknown,
 ): Resolved<T> {
-  const text = typeof raw === "string" ? raw.trim() : "";
+  // ★비문자열도 원값을 버리지 않는다 — 이 파일이 「진단 불가는 그 자체로 장애다」라고
+  //   써 놓고 raw=3 일 때 key 를 null 로 버리면 그 선언과 어긋난다.
+  const text =
+    typeof raw === "string" ? raw.trim() : raw == null ? "" : String(raw).trim();
   if (text === "") return { known: false, value: null, key: null };
 
   if (Object.prototype.hasOwnProperty.call(table, text)) {
@@ -66,5 +69,7 @@ export function resolveKnown<T>(
  */
 export function shortenUnknownKey(key: string | null, max = 24): string | null {
   if (!key) return null;
-  return key.length <= max ? key : `${key.slice(0, max)}…`;
+  if (key.length <= max) return key;
+  // 코드유닛으로 자르면 서로게이트 페어(이모지)가 깨진다 — 코드포인트로 자른다.
+  return `${[...key].slice(0, max).join("")}…`;
 }

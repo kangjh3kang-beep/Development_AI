@@ -25,8 +25,13 @@ export const CHARACTERISTIC_STATUS_COLORS: Record<string, string> = {
 };
 
 /** 미지 status 의 표기 — 중립 회색. ★`safe`(초록)로 접던 자리다. */
+/**
+ * ★대비: `--text-tertiary` 는 라이트에서 3.18:1 로 AA(4.5:1) 미달이다(9px 글자라
+ *   AA-large 요건에도 못 든다). 이 수정의 명분이 「색을 못 보는 사용자」인 만큼
+ *   본문 대비를 쓴다 — `--text-secondary` = #555B6E on #FFFFFF **6.76:1**(토큰 주석 실측).
+ */
 export const UNKNOWN_CHARACTERISTIC_CLS =
-  "text-[var(--text-tertiary)] bg-[var(--surface-strong)] border-[var(--line-strong)]";
+  "text-[var(--text-secondary)] bg-[var(--surface-strong)] border-[var(--line-strong)]";
 
 /** 색을 못 보는 사용자에게도 「모른다」가 전달되게 하는 글자. */
 export const UNKNOWN_CHARACTERISTIC_LABEL = "확인 불가";

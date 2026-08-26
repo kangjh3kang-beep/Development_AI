@@ -65,12 +65,18 @@ describe("resolveKnown — 미지값을 표의 어떤 값으로도 접지 않는
     }
   });
 
-  it("빈 값·비문자열은 미지이며 key 가 null 이다", () => {
-    for (const empty of ["", "   ", null, undefined, 3, {}]) {
+  it("빈 값·null·undefined 는 미지이며 key 가 null 이다", () => {
+    for (const empty of ["", "   ", null, undefined]) {
       const r = resolveKnown(TABLE, empty);
       expect(r.known).toBe(false);
       expect(r.key).toBeNull();
     }
+  });
+
+  it("★비문자열도 미지이되 **원값을 버리지 않는다**(진단 불가는 그 자체로 장애다)", () => {
+    // 종전엔 key 를 null 로 버려서 배지가 "판정 불명"만 띄웠다 — 무엇이 왔는지 알 수 없었다.
+    expect(resolveKnown(TABLE, 3)).toMatchObject({ known: false, value: null, key: "3" });
+    expect(resolveKnown(TABLE, true)).toMatchObject({ known: false, key: "true" });
   });
 
   it("프로토타입 키를 표의 값으로 오인하지 않는다", () => {
@@ -104,9 +110,10 @@ describe("필지 특성 칩 — 미지 status 가 safe(초록)로 떨어지지 �
     }
   });
 
-  it("미지 표기가 성공 토큰을 쓰지 않는다(중립이어야 한다)", () => {
-    expect(UNKNOWN_CHARACTERISTIC_CLS).not.toContain("--status-success");
-    expect(UNKNOWN_CHARACTERISTIC_CLS).not.toContain("--status-error");
+  it("미지 표기가 **어떤 상태 토큰도** 쓰지 않는다(중립이어야 한다)", () => {
+    // 특정 토큰 2개만 배제하면 --status-info 로 바꿔도 통과한다 — 전 계열을 배제한다.
+    expect(UNKNOWN_CHARACTERISTIC_CLS).not.toMatch(/--status-/);
+    expect(UNKNOWN_CHARACTERISTIC_CLS).not.toMatch(/\b(?:red|green|emerald|rose)-\d/);
   });
 
   it("danger 가 미지에 가려지지 않는다 — 두 표기가 서로 다르다", () => {
@@ -152,15 +159,45 @@ describe("AI 검증 배지 — 미지 판정이 warn 으로 강등되지 않는�
 });
 
 describe("배선 락 — 호출부를 되돌리면 빨개진다", () => {
-  it("필지 특성 칩이 공용 판정을 경유한다", () => {
+  it("필지 특성 칩이 공용 판정 결과를 **렌더한다**", () => {
     assertWiredThrough({
       file: "components/projects/LandIntelligencePanel.tsx",
       // scope 는 레이아웃 클래스로 고른다 — mustContain 을 함의하지 않게(공허한 참 방지).
       scope: /className=\{`flex flex-col gap-1 rounded-lg border p-2/,
-      mustContain: "st.cls",
+      mustContain: "statusChip.cls",
       mustNotContain: /statusColors/,
       minMatches: 1,
     });
+  });
+
+  /**
+   * ★이 케이스가 없어서 결함이 **락 23건 전부 초록인 채 복원 가능**했다.
+   *
+   * 위 락은 `assertWiredThrough` 가 **줄 단위**라 "st.cls 가 쓰였는가"만 본다 —
+   * `st` 가 **어디서 왔는지**는 그 락 밖이다. 독립 적대 리뷰가 실제로 뚫었다:
+   *
+   *   const SAFE_FALLBACK = CHARACTERISTIC_STATUS_COLORS.safe;
+   *   const statusChip = { cls: CHARACTERISTIC_STATUS_COLORS[c.status] || SAFE_FALLBACK, unknown: false };
+   *   → 23 passed. SURVIVED.
+   *
+   * 변이를 **함수 안에만** 넣으면 전부 CAUGHT 인데 **배선은 무잠금**이던 그 자리다.
+   */
+  it("★필지 특성 칩이 공용 판정을 **유도한다**(별칭 상수로 되돌리면 빨개진다)", () => {
+    assertWiredThrough({
+      file: "components/projects/LandIntelligencePanel.tsx",
+      scope: /const statusChip = /,
+      mustContain: "resolveCharacteristicStatus",
+      mustNotContain: /CHARACTERISTIC_STATUS_COLORS\s*\[/,
+      minMatches: 1,
+    });
+  });
+
+  it("★패널이 색 표를 직접 들여오지 않는다(우회 경로 차단)", () => {
+    const src = __stripCommentsForScan(
+      readFileSync(join(WEB_ROOT, "components/projects/LandIntelligencePanel.tsx"), "utf-8"),
+      "components/projects/LandIntelligencePanel.tsx",
+    );
+    expect(src).not.toContain("CHARACTERISTIC_STATUS_COLORS");
   });
 
   it("검증 배지가 공용 판정을 경유한다", () => {
@@ -212,37 +249,61 @@ const FALLBACK_SHAPE =
  *   (`APP_STYLE`·`LAYER_FILL` 등)는 **이 래칫이 못 본다.** 그 자리들은 2026-08-27 에
  *   손으로 판정했고(전부 오탐) 아래 목록에 남겨 둔다 — 이름이 바뀌면 자동으로 걸린다.
  */
-const STATUS_TABLE_NAME =
-  /status|severity|level|risk|verdict|confidence|grade|state|health|priority|sev/i;
+const STATUS_SEGMENTS = new Set([
+  "status", "severity", "risk", "verdict", "confidence", "grade", "level",
+]);
+
+/**
+ * 식별자를 **세그먼트로 갈라 정확일치**시킨다. 부분일치로 하면 정상 코드를 위반으로
+ * 신고한다 — 독립 리뷰 실측 위양성: `stateMachine`·`levelsByFloor`·`severalRenderers`·
+ * `upgradeSteps`·`realEstateMap`(부동산 저장소에서 특히 위험). **가드의 위양성도 결함이다.**
+ */
+function isStatusTable(name: string): boolean {
+  return name
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .split(/[^A-Za-z0-9]+/)
+    .filter(Boolean)
+    .some((seg) => STATUS_SEGMENTS.has(seg.toLowerCase()));
+}
 
 /**
  * 판정이 끝난 자리 — **각 항목에 사유가 있어야 한다**(사유 없는 면제는 부채를 숨긴다).
  * 여기 없는 새 항목이 나타나면 실패한다. 항목이 **사라지는 것**은 허용한다(다른 세션이
  * 같은 결함을 고치는 중이라 머지 순서에 따라 줄어들 수 있다).
  */
-const ADJUDICATED: Record<string, string> = {
+type Adjudication = {
+  readonly reason: string;
+  /** 다른 세션이 고치는 중이라 **사라질 수 있는** 항목. 그 외에는 사라지면 실패한다. */
+  readonly transient?: true;
+};
+
+const ADJUDICATED: Record<string, Adjudication> = {
   "components/analysis/ComprehensiveAnalysisPanel.tsx":
-    "진짜 결함(RISK_LEVEL_STYLE ?? \"낮음\"). 동료 세션이 fix/risk-level-label-parity 에서 수정 중 — 머지되면 이 항목은 사라진다.",
+    {
+      transient: true,
+      reason:
+        "★진짜 결함(RISK_LEVEL_STYLE ?? \"낮음\"). 동료 세션 PR #877 에서 수정 중 — 머지되면 이 항목이 사라지므로 transient 다. 이 저장소에서 유일하게 「고쳐야 하는데 면제된」 항목이라 아래 it.todo 로도 초록 안에 드러낸다.",
+    },
   "components/analysis/FieldAuditNotice.tsx":
-    "오탐(도달 불가). 백엔드 field_audit/contracts.py 가 pydantic Literal[\"P0\",\"P1\",\"P2\"] + extra=\"forbid\" 로 닫혀 있다(대입 리터럴 전수 P2×4·P1×3·P0×1, 이탈 0).",
+    { reason: "오탐(도달 불가). 백엔드 field_audit/contracts.py 가 pydantic Literal[\"P0\",\"P1\",\"P2\"] + extra=\"forbid\" 로 닫혀 있다(대입 리터럴 전수 P2×4·P1×3·P0×1, 이탈 0)." },
   "components/feasibility/AIRecommendationPanel.tsx":
-    "오탐(도달 불가). 생산자 ai_recommendation.py 가 critical/warning/info 3개로 닫혀 있고 프론트 표와 정확히 일치한다. ★부채: 백엔드에 severity 가 추가되면 info(가장 약함)로 접히므로 그때 재판정할 것.",
+    { reason: "오탐(도달 불가). 생산자 ai_recommendation.py 가 critical/warning/info 3개로 닫혀 있고 프론트 표와 정확히 일치한다. ★부채: 백엔드에 severity 가 추가되면 info(가장 약함)로 접히므로 그때 재판정할 것." },
   "components/feasibility/AutoRecommendPanel.tsx":
-    "오탐. GRADE_COLORS ?? .C 는 A~F 의 **중간**(amber)이라 안심 방향이 아니다. 다만 미지를 C 로 단정하는 것은 별개 성격의 부정확이다.",
+    { reason: "오탐. GRADE_COLORS ?? .C 는 A~F 의 **중간**(amber)이라 안심 방향이 아니다. 다만 미지를 C 로 단정하는 것은 별개 성격의 부정확이다." },
   "components/feasibility/LegacyLedgerTable.tsx":
-    "★정답 패턴. VERDICT_STYLE ?? .UNKNOWN 이고 UNKNOWN 은 \"판정 불가\" + 중립색이다. 소스 주석에 「판정 불가를 초록으로 그리지 않는다」고 명시돼 있다 — 이 파일이 이 저장소의 본보기다.",
+    { reason: "★정답 패턴. VERDICT_STYLE ?? .UNKNOWN 이고 UNKNOWN 은 \"판정 불가\" + 중립색이다. 소스 주석에 「판정 불가를 초록으로 그리지 않는다」고 명시돼 있다 — 이 파일이 이 저장소의 본보기다." },
   "components/map/SatongMultiMap.tsx":
-    "오탐 2건. PRESALE_STATUS_COLORS ?? \"미정\" 은 정직한 미상 표기이고, AUCTION_STATUS_COLORS ?? \"진행\" 은 #ef4444 빨강이라 안심 방향이 아니다.",
+    { reason: "오탐 2건. PRESALE_STATUS_COLORS ?? \"미정\" 은 정직한 미상 표기이고, AUCTION_STATUS_COLORS ?? \"진행\" 은 #ef4444 빨강이라 안심 방향이 아니다." },
   "components/orchestration/PersonaPanel.tsx":
-    "오탐. STATUS_BADGE ?? .partial 은 \"일부 미확보\" + --text-tertiary 중립 회색으로, 오히려 정직한 방향이다.",
+    { reason: "오탐. STATUS_BADGE ?? .partial 은 \"일부 미확보\" + --text-tertiary 중립 회색으로, 오히려 정직한 방향이다." },
   "components/precheck/PreCheckWorkspace.tsx":
-    "오탐. LEVEL_CHIP.low 는 위험도가 아니라 **신호 강도 약함**이고 색이 중립 회색이다(high=--status-success 초록).",
+    { reason: "오탐. LEVEL_CHIP.low 는 위험도가 아니라 **신호 강도 약함**이고 색이 중립 회색이다(high=--status-success 초록)." },
   "components/precheck/ZoningSignalMap.tsx":
-    "오탐. LEVEL_COLOR.low = #64748b 회색 중립. 위 항목과 같은 이유.",
+    { reason: "오탐. LEVEL_COLOR.low = #64748b 회색 중립. 위 항목과 같은 이유." },
   "components/projects/DomainSummaryCard.tsx":
-    "오탐. CONFIDENCE_META.low = { label:\"신뢰도 낮음\", token:\"--status-error\" } — 빨강이라 안심 방향이 아니다.",
+    { reason: "오탐. CONFIDENCE_META.low = { label:\"신뢰도 낮음\", token:\"--status-error\" } — 빨강이라 안심 방향이 아니다." },
   "components/sales-app/FieldHome.tsx":
-    "오탐(도달 불가). 생산자 sales/views.py:216 이 grade = \"A\" if score>=60 else \"B\" if score>=30 else \"C\" 로 A/B/C 에 닫혀 있고 GRADE_CLASS 와 정확히 일치한다.",
+    { reason: "오탐(도달 불가). 생산자 sales/views.py:216 이 grade = \"A\" if score>=60 else \"B\" if score>=30 else \"C\" 로 A/B/C 에 닫혀 있고 GRADE_CLASS 와 정확히 일치한다." },
 };
 
 describe("파생형 래칫 — 새 안심 폴백이 들어오면 실패한다", () => {
@@ -254,7 +315,7 @@ describe("파생형 래칫 — 새 안심 폴백이 들어오면 실패한다", 
     FALLBACK_SHAPE.lastIndex = 0;
     let m: RegExpExecArray | null;
     while ((m = FALLBACK_SHAPE.exec(src)) !== null) {
-      if (STATUS_TABLE_NAME.test(m[1])) hits.push(m[1]);
+      if (isStatusTable(m[1])) hits.push(m[1]);
     }
     return hits;
   }
@@ -262,7 +323,7 @@ describe("파생형 래칫 — 새 안심 폴백이 들어오면 실패한다", 
   it("[조회기 생존] 스캔이 실제로 파일을 읽었다", () => {
     if (files.length < 500) {
       throw new ScannerDeadError(
-        `수집 ${files.length}건 — apps/web 규모(실측 1,063)에 못 미친다. 수집기가 죽었다.`,
+        `수집 ${files.length}건 — 이 수집기 모집단(테스트 제외 .ts/.tsx) 실측 **699** 에 못 미친다. 수집기가 죽었다.`,
       );
     }
     expect(files.length).toBeGreaterThan(500);
@@ -285,16 +346,32 @@ describe("파생형 래칫 — 새 안심 폴백이 들어오면 실패한다", 
     expect(statusFallbacksIn("const y = a[k] ?? b.safe;")).toEqual([]);
     expect(statusFallbacksIn("const t = byGroup[g] ?? byGroup.fallbackRows;")).toEqual([]);
     expect(statusFallbacksIn("const c = cache[key] ?? cache.miss;")).toEqual([]);
+    // ★독립 리뷰가 실측한 위양성들 — 부분일치로 좁히면 이 정상 코드들이 빨개진다.
+    for (const legit of [
+      "const a = stateMachine[ev] ?? stateMachine.idle;",
+      "const b = levelsByFloor[i] ?? levelsByFloor.ground;",
+      "const c = severalRenderers[k] ?? severalRenderers.plain;",
+      "const d = upgradeSteps[v] ?? upgradeSteps.first;",
+      "const e = realEstateMap[k] ?? realEstateMap.def;",
+    ]) {
+      expect(statusFallbacksIn(legit), `정상 코드를 위반으로 신고했다: ${legit}`).toEqual([]);
+    }
   });
 
-  it("★판정되지 않은 새 안심 폴백이 없다", () => {
-    const found: string[] = [];
+  /** 안심 폴백을 가진 파일(상대경로)을 전수로 모은다. */
+  function scanFound(): string[] {
+    const hits: string[] = [];
     for (const full of files) {
       const src = __stripCommentsForScan(readFileSync(full, "utf-8"), full);
       if (statusFallbacksIn(src).length > 0) {
-        found.push(relative(WEB_ROOT, full).replace(/\\/g, "/"));
+        hits.push(relative(WEB_ROOT, full).replace(/\\/g, "/"));
       }
     }
+    return hits;
+  }
+
+  it("★판정되지 않은 새 안심 폴백이 없다", () => {
+    const found = scanFound();
     if (found.length === 0) {
       throw new ScannerDeadError(
         "발견 0건 — 판정된 자리가 아직 남아 있어야 한다(오탐으로 남긴 것들). 스캔이 죽었다.",
@@ -315,8 +392,26 @@ describe("파생형 래칫 — 새 안심 폴백이 들어오면 실패한다", 
   });
 
   it("면제에는 전부 사유가 적혀 있다", () => {
-    for (const [file, reason] of Object.entries(ADJUDICATED)) {
-      expect(reason.length, `${file} 의 사유가 비었다`).toBeGreaterThan(20);
+    for (const [file, adj] of Object.entries(ADJUDICATED)) {
+      expect(adj.reason.length, `${file} 의 사유가 비었다`).toBeGreaterThan(20);
     }
   });
+
+  /**
+   * ★죽은 면제도 실패시킨다(CLAUDE.md §G-2 36). 고쳐졌는데 면제가 남으면 다음 사람이
+   * "여긴 판정 끝났다"고 읽고 지나간다 — 면제는 초록 안에 숨는 부채다.
+   * `transient` 만 예외다(다른 세션이 고치는 중이라 머지 순서로 사라질 수 있다).
+   */
+  it("★죽은 면제가 없다 — 고쳐진 자리의 면제는 지운다", () => {
+    const found = new Set(scanFound());
+    const dead = Object.entries(ADJUDICATED)
+      .filter(([f, adj]) => !adj.transient && !found.has(f))
+      .map(([f]) => f);
+    expect(dead, `이미 고쳐졌거나 사라진 면제(지워야 한다):\n${dead.join("\n")}`).toEqual([]);
+  });
+
+  it.todo(
+    "★부채: ComprehensiveAnalysisPanel 의 RISK_LEVEL_STYLE ?? \"낮음\" 은 **진짜 결함**인데 " +
+      "지금 면제로 초록 안에 있다 — 동료 PR #877 머지 후 이 면제를 지우고 이 todo 를 닫는다.",
+  );
 });
