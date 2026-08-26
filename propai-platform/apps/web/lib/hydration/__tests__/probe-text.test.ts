@@ -84,3 +84,26 @@ describe("pickMutableText — 개변 대상은 **파생**한다(목록은 곧 �
     expect(pickMutableText(html)?.context).toContain("class=\"wrap\"");
   });
 });
+
+/**
+ * ★**사각을 초록 안에 드러낸다**(동료 세션 제안 · 저장소 §B-13).
+ *   PR 본문에만 적으면 머지되는 순간 아무도 안 읽는다. `it.todo` 는 러너가 매번 인쇄한다.
+ */
+describe("★프로브의 알려진 사각 — 부채를 초록 안에 남긴다", () => {
+  it.todo(
+    "필터가 `#418`·`Hydration failed`·`Text content` 만 본다 — **#423/#425 계열은 안 잡는다.** " +
+      "control 은 자기가 이미 잡는 것만 태우므로 **이 사각을 스스로 드러내지 못한다**",
+  );
+  it.todo(
+    "개변 텍스트가 `suppressHydrationWarning` 서브트리나 **Suspense 경계 안쪽**에 떨어졌을 때도 " +
+      "같은 서명이 나는지 — **미측정**",
+  );
+  it.todo(
+    "서비스워커의 `navigationNetworkFirst`(캐시 폴백) 경로를 control 이 **안 태운다** — " +
+      "*\"SW 캐시가 준 옛 HTML + 새 JS\"* 라는 실제 불일치 원인 하나가 사정권 밖이다",
+  );
+  it.todo(
+    "브라우저를 태우는 부분(로그인·내비·가로채기)은 여전히 **무잠금**이다 — " +
+      "여기서 잠근 것은 판정 **순수부**뿐이다",
+  );
+});
