@@ -484,6 +484,11 @@ def _merge_basis_note(basis: Any, note: Any) -> str | None:
     """
     parts = [str(x).strip() for x in (basis, note) if x]
     if not parts:
+        # ★**도달 불가 방어**(변이 SURVIVED — 점수 부풀리기 방지를 위해 사유를 적는다).
+        #   원장은 **근거 없는 행을 아예 만들지 않는다**(`legacy_ledger._item` 이 `basis`
+        #   또는 `structural_basis` 중 하나를 항상 채우고, `coverage.basis_pct == 100%`
+        #   락이 그것을 보증한다). 소계 행은 이 함수를 타지 않고 `None` 을 직접 넣는다.
+        #   그래도 남겨 두는 이유: 이 함수가 다른 표에 재사용될 때 `""` 셀을 만들지 않기 위함.
         return None
     return _strip_md_emphasis(" · ".join(parts))
 
