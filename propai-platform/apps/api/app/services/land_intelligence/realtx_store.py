@@ -59,7 +59,8 @@ import hashlib
 import json
 import logging
 import re
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +84,7 @@ assert not (set(_KEY_FIELDS) & set(_MUTABLE_FIELDS)), (
 )
 
 
-class RealtxTargetsEmpty(RuntimeError):
+class RealtxTargetsEmptyError(RuntimeError):
     """수집 대상 파생이 **0건** — 조용한 0건 금지(스토어 형상 변경 등)."""
 
 
@@ -132,7 +133,7 @@ async def derive_scan_targets(db: Any) -> set[str]:
         targets |= lawd_codes_from_store_blob(blob)
 
     if not targets:
-        raise RealtxTargetsEmpty(
+        raise RealtxTargetsEmptyError(
             f"수집 대상 시군구 0건 — user_project_store {len(rows)}행에서 landSchedule PNU 를 "
             "하나도 못 찾았다. 스토어 형상 변경을 의심하라(조용한 0건 금지)."
         )
@@ -309,7 +310,7 @@ async def persist_scope(
     is_baseline = not (state and state[0])
 
     previous = {
-        row[0]: dict(zip(_MUTABLE_FIELDS, row[1:]))
+        row[0]: dict(zip(_MUTABLE_FIELDS, row[1:], strict=False))
         for row in (await db.execute(
             text(
                 "SELECT trade_key, " + ", ".join(_MUTABLE_FIELDS) + " FROM realtx_trades "

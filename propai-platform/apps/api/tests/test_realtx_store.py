@@ -72,7 +72,7 @@ async def test_empty_derivation_raises_loudly_never_silently_zero():
                 def fetchall(): return [(STORE_WITHOUT_PARCELS,)]
             return _R()
 
-    with pytest.raises(rs.RealtxTargetsEmpty):
+    with pytest.raises(rs.RealtxTargetsEmptyError):
         await rs.derive_scan_targets(_Db())
 
 

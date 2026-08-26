@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -38,20 +38,20 @@ def recent_months(now: datetime, months: int) -> list[str]:
 
 async def sync_realtx_trades(ctx: dict[str, Any]) -> dict[str, Any]:
     """파생된 시군구 × 최근 N개월 × 유형을 수집·저장하고 정정을 탐지한다."""
-    from apps.api.database.session import AsyncSessionLocal
-    from apps.api.integrations.molit_client import MolitClient
     from app.services.land_intelligence.realtx_store import (
-        RealtxTargetsEmpty,
+        RealtxTargetsEmptyError,
         derive_scan_targets,
         persist_scope,
     )
+    from apps.api.database.session import AsyncSessionLocal
+    from apps.api.integrations.molit_client import MolitClient
 
-    months = recent_months(datetime.now(tz=timezone.utc), DEFAULT_LOOKBACK_MONTHS)
+    months = recent_months(datetime.now(tz=UTC), DEFAULT_LOOKBACK_MONTHS)
 
     async with AsyncSessionLocal() as db:
         try:
             targets = sorted(await derive_scan_targets(db))
-        except RealtxTargetsEmpty as exc:
+        except RealtxTargetsEmptyError as exc:
             # ★조용한 0건 금지 — 스킵이 아니라 **사유를 실은 실패**로 보고한다.
             logger.error("실거래 수집 대상 파생 실패: %s", exc)
             return {"status": "failed", "reason": "targets_empty", "note": str(exc)}
