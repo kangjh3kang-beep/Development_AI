@@ -358,10 +358,18 @@ def test_sibling_surface_shares_the_same_judgment() -> None:
     """
     code = "\n".join(_code_lines(_BANNER))
     assert "riskLevelTextClass" in code, (
-        "배너가 공용 판정(riskLevelTextClass)을 안 쓴다 — 로컬 switch 로 되돌아갔다면 "
+        "배너가 공용 판정(riskLevelTextClass)을 안 쓴다 — 로컬 판정으로 되돌아갔다면 "
         "같은 등급이 배지와 다른 색이 된다."
     )
-    # ★되살아난 로컬 판정을 잡는다. 주석은 이미 제거된 상태다.
-    assert 'case "중간"' not in code, (
-        "배너에 등급별 로컬 분기가 되살아났다 — 판정이 두 곳이 되면 갈라진다."
+
+    # ★**이름이 나오는 것**과 **로컬 판정이 없는 것**은 다른 명제다.
+    #   처음엔 `'case "중간"' not in code` 로 잠갔는데, 삼항으로 되돌리는 변이가
+    #   **생존**했다(`severity === "중간" ? … : …`) — `case` 라는 **표기 하나**만 봤기 때문이다.
+    #   이 세션이 내내 적은 그 형태를, 그것을 막으려는 락에서 재현했다.
+    #   → 표기가 아니라 **구조**로 잠근다: 배너는 등급 이름을 **아예 몰라야 한다.**
+    leaked = [g for g in _ladder() if f'"{g}"' in code or f"'{g}'" in code]
+    assert not leaked, (
+        f"배너 실행 코드에 등급 리터럴이 있다: {leaked}. "
+        "배너는 등급 이름을 몰라야 한다 — 판정은 lib/risk-level-style 한 곳이다. "
+        "(switch·삼항·객체표 어느 표기든 여기서 걸린다)"
     )
