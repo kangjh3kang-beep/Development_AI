@@ -46,7 +46,14 @@ from app.services.feasibility.legacy_ledger import build_legacy_ledger
 from app.services.feasibility.rough_feasibility_orchestrator import compact_charge_items
 from app.services.feasibility.rough_scenario_report import build_rough_scenario_report_model
 from app.services.tax.charge_base_units import base_units_for
+from app.utils.withheld import (
+    ABSENT_REASONS,
+    AWAITING_INPUT,
+    SOURCE_UNAVAILABLE,
+    validate_withheld_pair,
+)
 from app.services.tax.project_charges import (
+    charge_absent_reason,
     charge_item_unavailable,
     compute_developer_stage_charges,
 )
@@ -499,3 +506,91 @@ def test_the_reader_facing_prose_is_deliberately_not_asserted(prose_line: str):
         f"안내 문구가 사라졌다: {prose_line!r} — 「비고」 셀은 잠겨 있으나 "
         "읽는 사람에게 두 종류의 공란을 구별해 주는 설명이 없어진다"
     )
+
+
+# ── ⑦ 표준 「보류값」 계약 편입 (app/utils/withheld.py) ──────────────────────
+def test_withheld_cells_carry_a_closed_vocabulary_code():
+    """보류한 칸이 **닫힌 어휘 코드**를 함께 싣는가 — 산문만으로는 기계가 셀 수 없다.
+
+    ★**이 계약을 새로 만들지 않았다.** `app/utils/withheld.py` 가 이미 표준이고, 그 모듈이
+      만들어진 이유가 정확히 이것이다 — 부재 사유가 **다섯 갈래 어휘**로 흩어져 있어
+      *"셀 수 없고, 셀 수 없으면 새 표면이 생겨도 감시망에 들지 않는다"*.
+      내 첫 구현은 값을 `None` 으로 비우고 `note` 에 산문만 남겨 **그 표준의 부분집합**이었다
+      (§G29 — 없는 것을 만드는 것과 **있는 것을 안 쓴 것**은 처방이 다르다).
+
+    ★그리고 이 계약이 실제로 값을 하는 지점: **두 사유를 가른다.**
+      · `awaiting_input`     — 미조회. **사용자가 확인하면 값이 생긴다**
+      · `source_unavailable` — 원천 부재. **사용자가 뭘 해도 안 생긴다**
+      종전에는 둘 다 `confidence="unavailable"` 한 낱말이라 화면이 *"무엇을 하라"* 를
+      말할 수 없었다.
+    """
+    rows = _charge_rows(_ledger_from_engine(in_infra_charge_zone=None))
+    withheld_cells = [(k, r) for k, r in rows.items()
+                      if r["qty_absent"] or r["unit_price_absent"]]
+    assert withheld_cells, "보류 코드가 붙은 행이 0건 — 이 검사는 아무것도 말하지 않는다"
+
+    for key, row in withheld_cells:
+        for field in ("qty", "unit_price"):
+            code = row[f"{field}_absent"]
+            if code is None:
+                continue
+            assert code in ABSENT_REASONS, f"{key}.{field}: 닫힌 어휘 밖 코드 {code!r}"
+            assert row[field] is None, (
+                f"{key}.{field}: 값이 있는데 보류 코드가 남아 있다 — 거짓 보류"
+            )
+            assert row["note"], f"{key}: 코드는 있는데 사람이 읽을 사유가 없다(무언 보류)"
+
+
+def test_withheld_pair_contract_holds_for_every_withheld_cell():
+    """★표준의 **자체 검증기**로 잠근다 — 내가 다시 구현하지 않는다.
+
+    `validate_withheld_pair` 는 **네 방향**을 본다(무언 보류 · 거짓 보류 · 어휘 밖 코드 ·
+    값 자리 센티널). 내가 그중 몇 개만 골라 단언하면 나머지 방향이 무제한이 된다(§D19).
+    """
+    rows = _charge_rows(_ledger_from_engine(in_infra_charge_zone=None))
+    checked = 0
+    violations: list[str] = []
+    for key, row in rows.items():
+        for field in ("qty", "unit_price"):
+            # 내 게이트가 보류한 칸만 본다 — 엔진이 애초에 안 낸 값까지 요구하면
+            # 이 PR 범위 밖의 전 행을 끌어들인다(§Known 에 적었다).
+            if not row[f"{field}_absent"]:
+                continue
+            checked += 1
+            payload = {field: row[field], f"{field}_absent": row[f"{field}_absent"],
+                       f"{field}_reason": row["note"]}
+            violations += [f"{key}: {v}" for v in validate_withheld_pair(payload, field)]
+    assert checked >= 2, f"검증한 칸 {checked}개 — 공허하다"
+    assert not violations, f"보류 계약 위반: {violations}"
+
+
+def test_the_two_absent_reasons_are_actually_distinguished():
+    """**미조회**와 **원천 부재**가 다른 코드로 나오는가 — 안 갈리면 코드가 장식이다.
+
+    ★한 코드만 쓰면 `confidence="unavailable"` 한 낱말과 **정보량이 같다.**
+      갈리는지를 **같은 실행에서** 본다.
+    """
+    # ── ① 실엔진에서 **미조회 경로**가 실제로 그 코드를 낸다 ──────────────────
+    rows = _charge_rows(_ledger_from_engine(in_infra_charge_zone=None))
+    codes = {r["qty_absent"] for r in rows.values() if r["qty_absent"]}
+    codes |= {r["unit_price_absent"] for r in rows.values() if r["unit_price_absent"]}
+    assert AWAITING_INPUT in codes, (
+        f"미조회(C07 부담구역)가 awaiting_input 으로 안 나온다: {codes} — "
+        "compact 가 detail.surveyed 를 버리면 이 판별이 죽는다"
+    )
+
+    # ── ② 두 사유가 **갈리는지**는 판정자 층에서 본다 ─────────────────────────
+    #   ★이 로컬 엔진 픽스처에는 조례 미등록(B03/B04)이 **없다** — 그 지자체는 단가가
+    #     등록돼 있어 `regional` 로 나온다. 라이브(울산 동구)에서는 두 코드가 **다 나온다**
+    #     (실측 2026-08-27: degraded_notes 에 상수도·하수도).
+    #   ★그래서 실엔진 모집단에 `source_unavailable` 을 요구하면 **환경에 따라 깨지는
+    #     취약한 락**이 된다. 갈림 자체는 판정자를 직접 태워 잠근다.
+    assert charge_absent_reason(
+        {"confidence": "unavailable", "detail": {"surveyed": False}}
+    ) == AWAITING_INPUT, "미조회를 awaiting_input 으로 안 가른다"
+    assert charge_absent_reason(
+        {"detail": {"confidence": "unavailable"}}
+    ) == SOURCE_UNAVAILABLE, "원천 부재를 source_unavailable 로 안 가른다"
+    # 음성 대조군 — 강등이 아니면 코드가 **없어야** 한다(있으면 거짓 보류).
+    assert charge_absent_reason({"detail": {"confidence": "regional"}}) is None
+    assert charge_absent_reason({}) is None

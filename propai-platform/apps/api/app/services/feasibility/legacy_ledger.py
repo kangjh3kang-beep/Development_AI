@@ -52,7 +52,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.services.tax.charge_base_units import base_units_for
-from app.services.tax.project_charges import charge_item_unavailable
+from app.services.tax.project_charges import charge_absent_reason, charge_item_unavailable
 
 __all__ = [
     "build_legacy_ledger",
@@ -128,6 +128,8 @@ def _item(
     note: str | None = None,
     qty_label: str | None = None,
     qty_applicable: bool = True,
+    qty_absent: str | None = None,
+    unit_price_absent: str | None = None,
 ) -> dict[str, Any]:
     """원장 한 행. **없는 것은 None** — 0 으로 만들지 않는다."""
     return {
@@ -154,6 +156,10 @@ def _item(
         #   커버리지 분모를 이 값으로 좁힌다 — 안 그러면 **정직한 행을 추가할수록 %가 내려가**
         #   래칫이 *"수량 없는 행은 만들지 마라"* 는 **역인센티브**를 준다(적대 리뷰 중7).
         "qty_applicable": qty_applicable,
+        # ★보류 사유 코드(`app/utils/withheld.py` 닫힌 어휘). **값이 None 일 때만** 붙는다 —
+        #   값이 있는데 코드가 남으면 「거짓 보류」이고, `validate_withheld_pair` 가 그것도 잡는다.
+        "qty_absent": qty_absent if _num(qty) is None else None,
+        "unit_price_absent": unit_price_absent if _num(unit_price) is None else None,
         # 원본 대조용 자리 — 대조할 "원본"을 사용자가 올리기 전까지는 전부 False.
         # ★필드를 미리 두는 이유: 나중에 추가하면 소비처가 옵셔널 처리를 안 해 깨진다.
         "added": False,
@@ -253,6 +259,16 @@ def _charge_items(charges: dict[str, Any] | None) -> list[dict[str, Any]]:
         # 미조회 **이면서** 값이 0/결측인 칸 = 센티널. 관측된 값은 미조회여도 싣는다.
         qty_sentinel = unavailable and not _num(it.get("base_won"))
         rate_sentinel = unavailable and not _num(it.get("rate"))
+        # ★**보류 사유를 닫힌 어휘 코드로** 함께 싣는다(`app/utils/withheld.py` 표준 계약).
+        #   산문(`note`)만 두면 **기계가 셀 수 없고**, 셀 수 없으면 새 표면이 생겨도
+        #   감시망에 들지 않는다 — 그 모듈이 만들어진 이유가 그것이다.
+        #   ★이 계약을 **새로 만들지 않았다**: 이미 있는 통로를 쓴다(§G29 — 없는 것을
+        #     만드는 것과 있는 것을 안 쓴 것은 처방이 다르다).
+        #   ★`compact_charge_items` 가 **원자료가 살아 있는 자리에서** 이미 계산해 싣는다.
+        #     여기서 다시 계산하면 `detail` 이 없어 `AWAITING_INPUT` 을 가릴 수 없다 —
+        #     그래서 실어 온 값을 **우선**하고, 없을 때만(직접 stage items 를 넘기는 경로)
+        #     계산한다. **판정 로직은 한 곳뿐**이다(양쪽 다 `charge_absent_reason`).
+        absent = it.get("absent") or charge_absent_reason(it)
         # 강등 항목은 **금액이 아니라 사유**가 본문이다 — 0원과 구별되게 note 에 싣는다.
         note = None
         if conf and conf != "confirmed":
@@ -269,6 +285,8 @@ def _charge_items(charges: dict[str, Any] | None) -> list[dict[str, Any]]:
                 qty=it.get("base_won") if (qty_unit and not qty_sentinel) else None,
                 qty_unit=qty_unit,
                 unit_price=it.get("rate") if (rate_unit and not rate_sentinel) else None,
+                qty_absent=absent if (qty_unit and qty_sentinel) else None,
+                unit_price_absent=absent if (rate_unit and rate_sentinel) else None,
                 unit_price_unit=rate_unit,
                 basis=(f"{code} — 통합 세금엔진(공사·분양 단계): 과표 × 요율" if code else None),
                 structural_basis="부담금 = 과표 × 요율(단계별 세금엔진 산출)",

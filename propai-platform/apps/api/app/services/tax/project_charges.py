@@ -19,6 +19,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.utils.withheld import AWAITING_INPUT, SOURCE_UNAVAILABLE
+
 from app.services.tax.sale_stage_engine import calculate_all_sale_stage
 from app.services.tax.utility_stage_engine import calculate_all_utility_stage
 
@@ -73,6 +75,33 @@ def charge_item_unavailable(item: dict[str, Any]) -> bool:
     if detail.get("amount_computable") is False:
         return True
     return "unavailable" in (detail.get("confidence"), item.get("confidence"))
+
+
+def charge_absent_reason(item: dict[str, Any]) -> str | None:
+    """강등 항목의 **보류 사유를 닫힌 어휘 코드로** 돌려준다(`app/utils/withheld.py` 계약).
+
+    ★**왜 산문만으로 부족한가** — 그 모듈이 이미 답해 두었다:
+      *"산문은 셀 수 없다. 셀 수 없으면 새 표면이 생겨도 감시망에 들지 않는다."*
+      실제로 이 저장소는 부재 사유가 **다섯 갈래 어휘**로 흩어져 있었고, 그것을 하나로
+      모으려고 `ABSENT_REASONS` 닫힌 어휘를 만들었다. 부담금도 그 통로를 탄다.
+
+    ★**두 사유를 가른다** — 이것이 이 계약을 쓰는 진짜 이유다:
+      · `AWAITING_INPUT`     — **미조회**. 사용자가 확인해 주면 값이 생긴다(C07 부담구역)
+      · `SOURCE_UNAVAILABLE` — **원천 부재**. 사용자가 뭘 해도 안 생긴다(조례 미등록·미고시)
+      종전에는 둘 다 `confidence="unavailable"` 한 낱말이었고, 화면은 **무엇을 하라는지**
+      말할 수 없었다. 코드가 다르면 **처방도 다르게** 안내할 수 있다.
+
+    ★`NOT_APPLICABLE`(해당 없음)은 **여기서 내지 않는다** — 그 경우 엔진은 강등이 아니라
+      확정 0 을 내므로 이 함수에 도달하지 않는다. 다만 현재 `sale_stage_engine` 이
+      **두 분기에 같은 센티널**을 써서 확정 쪽도 `0㎡ × 0원/㎡` 로 그려진다(별건 부채).
+    """
+    if not charge_item_unavailable(item):
+        return None
+    detail = item.get("detail") if isinstance(item.get("detail"), dict) else {}
+    # `surveyed is False` = 조회 자체를 안 했다(엔진이 명시). 사용자 확인으로 해소된다.
+    if detail.get("surveyed") is False:
+        return AWAITING_INPUT
+    return SOURCE_UNAVAILABLE
 
 
 def _collect_unavailable_notes(stage: dict[str, Any]) -> list[str]:
