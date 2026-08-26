@@ -655,15 +655,22 @@ def build_rough_scenario_report_model(
                     it.get("share_pct"),
                     calc,
                     it.get("basis"),
+                    # ★비고 — **화면에는 있고 인쇄본에는 없던 열**(2026-08-27 실측).
+                    #   `note` 는 「신뢰도 unavailable — …미조회…」 처럼 **그 행이 왜 공란인지**를
+                    #   말하는 유일한 자리다. 화면(`LegacyLedgerTable.tsx`)은 렌더하는데
+                    #   여기엔 열 자체가 없어서, **제출용 PDF 에서만 사유가 통째로 사라졌다.**
+                    #   ★인쇄본은 회의 탁자에 올라가고 화면보다 오래 남는다 — 매체를 **각각**
+                    #     잠근다(오류 #110 의 재발: 표시층을 고치며 화면만 봤다).
+                    it.get("note"),
                 ])
             if g.get("subtotal_won") is not None:
                 ledger_rows.append([
                     f"{sec.get('label')} · {g.get('label')}", "소계",
-                    g.get("subtotal_won"), g.get("share_pct"), None, None,
+                    g.get("subtotal_won"), g.get("share_pct"), None, None, None,
                 ])
     if ledger_rows:
         feas_blocks.append(DataTableBlock(
-            headers=["구분", "항목", "금액(원)", "구성비(%)", "산출내역(수량 × 단가)", "근거"],
+            headers=["구분", "항목", "금액(원)", "구성비(%)", "산출내역(수량 × 단가)", "근거", "비고"],
             rows=ledger_rows, numeric_cols=[2, 3],
             title="간략 수지 원장 (실무 양식 — 수량 × 단가 · 근거)"))
         # ★검산 결과도 함께 — 표만 싣고 「이 합계가 맞는지」를 빼면 읽는 사람이 확인할 길이 없다.
@@ -685,6 +692,8 @@ def build_rough_scenario_report_model(
                 f"{cov.get('qty_applicable_items')}행 기준 — 수량 {cov.get('qty_pct')}% · "
                 f"단가 {cov.get('unit_price_pct')}% · 근거 {cov.get('basis_pct')}%(전 행 기준).",
                 "산출 근거가 없는 항목은 0원이 아니라 공란으로 표기합니다(값을 지어내지 않음). "
+                "수량·단가가 공란인 행은 「비고」에 사유가 있습니다 — **미조회(잠정)** 와 "
+                "**조회했고 해당 없음(확정 0원)** 은 다릅니다. "
                 "이 원장은 산출 엔진을 참조만 하며, 위 「합계 전파 점검」은 원장이 엔진 값을 "
                 "옮기다 흘렸는지만 봅니다 — 엔진 값 자체의 정오는 보지 않습니다.",
             ]))

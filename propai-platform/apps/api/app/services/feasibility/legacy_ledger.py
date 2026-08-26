@@ -52,6 +52,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.services.tax.charge_base_units import base_units_for
+from app.services.tax.project_charges import charge_item_unavailable
 
 __all__ = [
     "build_legacy_ledger",
@@ -220,6 +221,22 @@ def _charge_items(charges: dict[str, Any] | None) -> list[dict[str, Any]]:
         qty_unit, rate_unit = base_units_for(code)
         reason = it.get("reason")
         conf = it.get("confidence")
+        # ★**미조회는 관측이 아니다.** 산출 불가(정직 강등) 항목은 과표·요율이 「0 이라고
+        #   측정된 값」이 아니라 **아직 재지 않은 값**이다. 그것을 수량·단가 자리에 실으면
+        #   표가 `0㎡ × 0 원/㎡` 라고 **없는 관측을 주장**한다 — 라이브 실측으로 확인했다
+        #   (2026-08-27 C07 · 제출용 PDF 까지 그대로 나갔다).
+        #
+        #   ★이 모듈은 **같은 처방을 이미 쓰고 있다** — 바로 아래 `qty_unit` 게이트가
+        #     *"단위를 모르면 수량·단가를 아예 싣지 않는다(거짓 라벨보다 공백이 낫다)"* 다.
+        #     결함은 **처방이 없어서가 아니라 적용 축이 좁아서** 났다(CLAUDE.md §D20).
+        #
+        #   ★**금액은 건드리지 않는다**(0 유지). 표기 수정과 값 변경을 한 커밋에 섞지 않는다 —
+        #     `_group` 이 `None` 부분합을 총계 `None` 으로 전파하므로 금액을 비우면
+        #     **세전이익까지 무너진다.** 검산 4종이 그 불변을 보증한다.
+        #
+        #   ★판정은 **엔진 옆 공용 판정자**를 쓴다(`charge_item_unavailable`). 여기서 다시
+        #     구현하면 표기 관례가 하나 더 생길 때 두 소비처가 **조용히 갈린다**.
+        unavailable = charge_item_unavailable(it)
         # 강등 항목은 **금액이 아니라 사유**가 본문이다 — 0원과 구별되게 note 에 싣는다.
         note = None
         if conf and conf != "confirmed":
@@ -232,9 +249,10 @@ def _charge_items(charges: dict[str, Any] | None) -> list[dict[str, Any]]:
                 str(it.get("name") or code or "부담금"),
                 it.get("amount_won"),
                 # ★단위를 모르면 **수량·단가를 아예 싣지 않는다**(거짓 라벨보다 공백이 낫다).
-                qty=it.get("base_won") if qty_unit else None,
+                #   미조회(`unavailable`)도 **같은 이유로** 싣지 않는다 — 위 주석 참조.
+                qty=it.get("base_won") if (qty_unit and not unavailable) else None,
                 qty_unit=qty_unit,
-                unit_price=it.get("rate") if rate_unit else None,
+                unit_price=it.get("rate") if (rate_unit and not unavailable) else None,
                 unit_price_unit=rate_unit,
                 basis=(f"{code} — 통합 세금엔진(공사·분양 단계): 과표 × 요율" if code else None),
                 structural_basis="부담금 = 과표 × 요율(단계별 세금엔진 산출)",
