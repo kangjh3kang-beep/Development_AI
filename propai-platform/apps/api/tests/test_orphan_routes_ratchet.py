@@ -24,6 +24,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 
 # tests/ → apps/api/tests 기준으로 propai-platform/scripts 를 찾는다(3단계 상위).
@@ -58,11 +59,12 @@ def _rows(path: str) -> list[tuple[str, str, str]]:
       형식 검사가 잡는다. 여기서 관대하면 사유 없는 줄이 다시 스며든다.
     """
     out: list[tuple[str, str, str]] = []
-    with open(path, encoding="utf-8") as f:
+    with open(path, encoding="utf-8-sig") as f:  # ★BOM 은 strip() 이 못 지운다
         for ln in f:
             if not ln.strip() or ln.lstrip().startswith("#"):
                 continue
-            parts = [c.strip() for c in ln.rstrip("\n").split("\t")]
+            # ★`maxsplit=2` — 사유 안의 탭 뒤가 **무성 소실**되지 않게 한다(적대 리뷰 지적).
+            parts = [c.strip() for c in ln.rstrip("\n").split("\t", 2)]
             route = parts[0]
             kind = parts[1] if len(parts) > 1 else ""
             reason = parts[2] if len(parts) > 2 else ""
@@ -87,14 +89,27 @@ def validate_rows(rows: list[tuple[str, str, str]]) -> list[str]:
         if kind not in _KINDS:
             out.append(f"{route}: 닫힌 어휘 밖의 종류 '{kind}' — 쓸 수 있는 것 {sorted(_KINDS)}")
             continue
-        if kind != _UNCLASSIFIED and len(reason) < 20:
-            out.append(f"{route} [{kind}]: 종류는 바꿨는데 사유가 비었거나 너무 짧다 — 파일:줄 로 근거를 적어라")
+        if kind != _UNCLASSIFIED and not _EVIDENCE_RE.search(reason):
+            out.append(
+                f"{route} [{kind}]: 사유에 **파일:줄** 근거가 없다 — 무엇을 보고 그렇게 판단했는지 적어라"
+            )
     return out
 
 
-def check_unclassified_ceiling(n: int, ceiling: int, slack: int = 25) -> list[str]:
+#: 근거는 **`파일:줄`** 이어야 한다. 길이만 보면 `"x"*20` 이 "근거"로 통과한다(실측).
+#: 위반 문구가 *"파일:줄 로 근거를 적어라"* 라고 **지시**하므로, 그 주장 자체를 강제한다
+#: (CLAUDE.md §G30 — 동작 주장은 그 자체가 검증 대상이다).
+_EVIDENCE_RE = re.compile(r"[\w/.-]+\.(?:py|tsx?|ts|txt|md):\d+")
+
+
+def check_unclassified_ceiling(n: int, ceiling: int, slack: int = 0) -> list[str]:
     """미분류 수를 **양방향**으로 본다 — 넘치면 새 미분류가 든 것이고,
-    한참 낮으면 **죽은 상한**이라 그만큼 다시 늘 여지가 남는다."""
+    한참 낮으면 **죽은 상한**이라 그만큼 다시 늘 여지가 남는다.
+
+    ★`slack` 기본이 **0** 이다. 종전 25 는 *"25건까지는 상한을 안 내려도 조용하다"* 는 뜻이라
+      **정확히 25칸의 무성 통로**를 남겼다 — 누가 1건을 분류해 `n` 이 내려가면, 그 뒤 사유 없는
+      신규 고아가 그 칸으로 들어와도 상한에 안 걸린다(적대 리뷰 실측).
+      분류할 때마다 상수를 내리게 하는 것이 이 상한의 **목적**이다."""
     out: list[str] = []
     if n > ceiling:
         out.append(f"미분류 {n} 건이 상한 {ceiling} 을 넘었다 — 사유 없이 새 항목을 들였다")
@@ -334,19 +349,44 @@ def test_판정기가_각_위반을_실제로_지목한다():
     # 탭이 없어 종류가 비었다
     assert any("종류 컬럼이 없다" in v for v in validate_rows([("/x", "", "")]))
     # 닫힌 어휘 밖
-    assert any("닫힌 어휘 밖" in v for v in validate_rows([("/x", "probably-fine", "충분히 긴 사유를 적었다고 치자")]))
-    # 분류했는데 사유가 얇다
-    assert any("사유가 비었거나" in v for v in validate_rows([("/x", "debt", "짧음")]))
+    assert any("닫힌 어휘 밖" in v for v in validate_rows([("/x", "probably-fine", "근거(routers/x.py:1)")]))
+    # ★분류했는데 **파일:줄 근거가 없다** — 길이만으로는 못 잡는다
+    assert any("파일:줄" in v for v in validate_rows([("/x", "debt", "짧음")]))
+    assert any("파일:줄" in v for v in validate_rows([("/x", "debt", "x" * 40)])), (
+        "길이만 채운 사유가 통과한다 — 근거 검사가 길이 검사로 퇴화했다"
+    )
+
+
+def test_미분류_사유_칸이_비어_있어야_유추가_걸린다():
+    """★`unclassified` 사유에 상용구를 넣으면 **종류만 뒤집어도 통과**한다(적대 리뷰 실측).
+
+    종전 상용구는 **31자**라 임계(20자)를 넘었다. 지금은 `파일:줄` 을 요구하므로 길이만으로는
+    못 뚫지만, **비워 두는 것이 두 번째 방벽**이다 — 종류를 바꾸는 순간 사유가 비어 걸린다.
+    """
+    rows = _rows(_BASELINE)
+    unclassified = [(r, w) for r, k, w in rows if k == _UNCLASSIFIED]
+    assert unclassified, "미분류 행이 하나도 없다 — 이 검사가 공허해졌다"
+    filled = [(r, w) for r, w in unclassified if w.strip()]
+    assert not filled, (
+        "미분류 행의 사유 칸이 채워져 있다 — 종류만 뒤집으면 유추가 그대로 통과한다:\n"
+        + "\n".join(f"  {r}: {w[:40]}" for r, w in filled[:5])
+    )
+
+    # ★그리고 그 시나리오를 **직접 태운다** — 재라벨만 하면 실제로 걸리는가.
+    relabeled = [(r, "debt", w) for r, w in unclassified[:3]]
+    assert validate_rows(relabeled), "미분류를 근거 없이 debt 로 재라벨했는데 통과했다"
 
 
 def test_미분류_상한이_양방향으로_판정된다():
-    # 음성 대조군 — 상한 안에 있으면 조용하다.
+    # 음성 대조군 — 정확히 상한이면 조용하다.
     assert check_unclassified_ceiling(130, 130) == []
-    assert check_unclassified_ceiling(120, 130) == []
     # 넘치면 잡는다
     assert any("넘었다" in v for v in check_unclassified_ceiling(131, 130))
-    # ★죽은 상한도 잡는다 — 갚아 놓고 상한을 안 내리면 다시 늘 여지가 남는다
-    assert any("한참 낮다" in v for v in check_unclassified_ceiling(100, 130))
+    # ★죽은 상한도 잡는다 — 갚아 놓고 상한을 안 내리면 **그만큼 다시 늘 여지**가 남는다.
+    #   `slack=0` 이므로 **1건만 내려가도** 상한 갱신을 요구한다(종전 25 는 25칸의 무성 통로였다).
+    assert any("한참 낮다" in v for v in check_unclassified_ceiling(129, 130)), (
+        "1건을 분류했는데 상한 갱신을 요구하지 않는다 — 무성 통로가 남는다"
+    )
 
 
 def test_미분류는_늘어나지_않는다():
@@ -359,3 +399,54 @@ def test_미분류는_늘어나지_않는다():
     assert not violations, "\n".join(violations) + (
         "\n→ 한 건을 열어 분류했으면 _UNCLASSIFIED_CEILING 을 그 수로 내려라."
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ★배선 축 — 파서와 판정기가 **실제 파일 위에서 이어져 있는가**
+#
+# 탐지(로직이 위반을 낸다)와 특이도(정상을 신고하지 않는다)는 합성 입력으로 잠갔다.
+# 그런데 **그 로직이 파일에 실제로 걸려 있는가**는 별개 축이다 — 현재 기준선이 규칙을
+# 만족하므로 그 연결이 끊겨도 초록이다(적대 리뷰가 변이 5종 생존으로 실측).
+# → **위반을 주입한 임시 기준선**을 같은 파이프라인(`_rows` → `validate_rows`)에 태운다.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _write_baseline(tmp_path, lines: list[str]) -> str:
+    p = tmp_path / "baseline.txt"
+    p.write_text("# 주석은 무시된다\n\n" + "\n".join(lines) + "\n", encoding="utf-8")
+    return str(p)
+
+
+def test_파이프라인이_주입된_위반을_실제_파일에서_잡는다(tmp_path):
+    good = "/ok\tadmin-cron\t라우트 summary 가 관리용이다(routers/ok.py:1)"
+
+    # ★음성 대조군 — 정상만 있는 파일은 조용해야 한다(위양성 방지).
+    clean = _write_baseline(tmp_path, [good, "/y\tunclassified\t"])
+    rows = _rows(clean)
+    assert len(rows) == 2, f"파서가 행을 못 읽었다 — 배선이 끊겼다: {rows}"
+    assert validate_rows(rows) == [], "정상 파일을 위반으로 신고한다(위양성)"
+
+    # 각 위반 유형이 **파일을 거쳐** 잡히는가
+    cases = {
+        "종류 컬럼이 없다": "/a",                                   # 탭 없음
+        "닫힌 어휘 밖": "/b\tprobably-fine\t근거(routers/b.py:2)",   # 어휘 밖
+        "파일:줄": "/c\tdebt\t근거 없이 길게만 적은 사유입니다 정말로",  # 근거 없음
+    }
+    for expect, bad in cases.items():
+        path = _write_baseline(tmp_path, [good, bad])
+        violations = validate_rows(_rows(path))
+        assert any(expect in v for v in violations), (
+            f"주입한 위반이 파이프라인을 통과했다 — 파서·판정기 배선이 끊겼다\n"
+            f"  주입: {bad}\n  기대: {expect}\n  실제: {violations}"
+        )
+
+
+def test_사유_안의_탭이_잘리지_않는다(tmp_path):
+    """★근거를 남기는 것이 이 파일의 목적인데 근거가 **무성 소실**되면 안 된다.
+
+    `split("\\t")` 로 자르고 `parts[2]` 만 취하면 사유 중간의 탭 뒤가 사라진다(실측).
+    """
+    path = _write_baseline(tmp_path, ["/a\tdebt\t앞부분(routers/a.py:1)\t뒷부분도 남아야 한다"])
+    rows = _rows(path)
+    assert len(rows) == 1
+    assert "뒷부분도 남아야 한다" in rows[0][2], f"사유 뒷부분이 잘렸다: {rows[0][2]!r}"

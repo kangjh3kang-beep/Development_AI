@@ -71,138 +71,143 @@
 #   unclassified    ★아직 안 봤다. 유추 금지. 이 수는 **늘어날 수 없다**(래칫)
 #
 # 【고칠 때】한 건을 열어 확인했으면 `unclassified` 를 실제 종류로 바꾸고 **무엇을 보고
-# 그렇게 판단했는지**(파일:줄)를 사유에 적어라. 사유 없는 비-unclassified 는 실패한다.
+# 그렇게 판단했는지**(`파일:줄`)를 사유에 적어라. 사유 없는 비-unclassified 는 실패한다.
+#
+# ★**`unclassified` 행의 사유 칸은 일부러 비워 둔다.** 종전엔 상용구 한 줄이 들어 있었는데
+#   그것이 **31자**라 근거 검사 임계(20자)를 넘어, **파일을 열지 않고 종류만 뒤집어도**
+#   락이 통과했다(적대 리뷰 실측). 비워 두면 종류를 바꾸는 순간 사유가 비어 **반드시 걸린다**.
+#   즉 이 빈칸은 누락이 아니라 **장치**다.
 # ─────────────────────────────────────────────────────────────────────────────
 #
-/access/assess	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/admin/sales-rls/apply	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/admin/sales-rls/rollback	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/admin/sales-rls/status	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/admin/secrets/backups/{backup_id}/restore	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/admin/secrets/image-health	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/admin/secrets/llm-health	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/agents/domain/multi-analysis	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/agents/domain/run	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/agents/orchestrate	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/agents/specialist/dispatch	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/ai-costs/budget	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/ai-costs/budget-gate/{endpoint:path}	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/ai-costs/dashboard	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/analysis-ledger/admin/set-quota	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/analysis-ledger/delete-chain	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/analysis-ledger/prune	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/analysis-ledger/usage	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/analysis-ledger/verify-all	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/api-keys	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/api-keys/{key_id}	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/auction/analyze	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/auction/items/{item_id}	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/auction/listings/{listing_id}	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
+/access/assess	unclassified	
+/api/v1/admin/sales-rls/apply	unclassified	
+/api/v1/admin/sales-rls/rollback	unclassified	
+/api/v1/admin/sales-rls/status	unclassified	
+/api/v1/admin/secrets/backups/{backup_id}/restore	unclassified	
+/api/v1/admin/secrets/image-health	unclassified	
+/api/v1/admin/secrets/llm-health	unclassified	
+/api/v1/agents/domain/multi-analysis	unclassified	
+/api/v1/agents/domain/run	unclassified	
+/api/v1/agents/orchestrate	unclassified	
+/api/v1/agents/specialist/dispatch	unclassified	
+/api/v1/ai-costs/budget	unclassified	
+/api/v1/ai-costs/budget-gate/{endpoint:path}	unclassified	
+/api/v1/ai-costs/dashboard	unclassified	
+/api/v1/analysis-ledger/admin/set-quota	unclassified	
+/api/v1/analysis-ledger/delete-chain	unclassified	
+/api/v1/analysis-ledger/prune	unclassified	
+/api/v1/analysis-ledger/usage	unclassified	
+/api/v1/analysis-ledger/verify-all	unclassified	
+/api/v1/api-keys	unclassified	
+/api/v1/api-keys/{key_id}	unclassified	
+/api/v1/auction/analyze	unclassified	
+/api/v1/auction/items/{item_id}	unclassified	
+/api/v1/auction/listings/{listing_id}	unclassified	
 /api/v1/auction/opportunities	legacy-suspect	소비처 0 을 양쪽에서 확인했다 — 백엔드에서 list_opportunities 를 부르는 곳은 이 라우트뿐(routers/auction.py:148), 프론트 auction/opportunities 실행줄 0건(대조군: auction/watchlist 는 프론트 3파일에서 잡힌다). 구 트리 apps/api/services/auction_service.py:158 의 AuctionService 를 쓰는데 현행 경로는 app/services/auction 의 AuctionStep1Service 다 — 삭제 후보이나 **미확정**
 /api/v1/auction/sync	admin-cron	라우트 자신의 summary 가 "경공매 동기화(관리/cron)" 라고 선언한다(routers/auction.py:342). 예약 실행 경로는 app/tasks/auction_sync_task.py 가 서비스를 직접 부른다 — 프론트 소비처가 없는 것이 정상
-/api/v1/avm/estimate	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/billing/admin/orders/{order_id}/confirm	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/billing/admin/set-tier	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/billing/quote	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/bim/analyze	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/blockchain/escrow/direct-pay	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/blockchain/escrow/dispute	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/blockchain/escrow/fund	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/blockchain/escrow/refund	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/blockchain/escrow/release	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/blockchain/escrow/resolve	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/boq-auto/master/items	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/building-compliance/auto-correct	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/compliance/screening	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/contractors/register	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/cost-intelligence/material-prices/refresh	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/cost/admin/ingest-public-prices	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/dashboard/activity/recent	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/dashboard/portfolio/timeline	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/deliberation/analyze/async	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/deliberation/analyze/task/{run_id}	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/deliberation/scenario-matrix	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/design-audit/run	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/design-gen/seed/aihub	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/design-gen/seed/aihub/list	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/design-references/from-design	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/design/bim/analyze	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/design/report/stream	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/development-methods/evaluate	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/drawing/calculate-area	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/drawing/export-dxf	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/drawing/floor-plan	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/drawing/site-plan	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/energy/kepco/calculate	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/esg/assessment	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/esg/lcc/calculate	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/esign/request	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/external/parcel/merge	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/finance/monte-carlo	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/gresb/benchmarks	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/kdx/metrics	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/kdx/webhook	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/land-price/price-trend	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/land-price/rone-status	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/land-price/rone-test	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/lifecycle/construction/safety-plan	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/lifecycle/disaster-risk/assess	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/lifecycle/lifecycle-opt/replacement-schedule	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/lifecycle/procurement/eoq	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/lifecycle/supervision/evm	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/market-ai/ask	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/market-ai/tools	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/mass-templates/collect	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/mass-templates/collect-region	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/notifications/alimtalk	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/parking/recognize	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/permits/compliance-check	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/permits/submissions/{submission_id}/status	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/portals/market-data/{region_code}	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/portals/post-all	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/portals/{portal_id}/post	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/rates/history	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/rates/refresh	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/regulation/check	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/regulation/gosi/search	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/reports/stream/{project_id}	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/safety/analyze-frame	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/safety/analyze-stream	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/sre/dashboard	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/system/integration/status	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/tax/calculate	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/webhooks	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/webhooks/{webhook_id}	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/webhooks/{webhook_id}/deliveries	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/webhooks/{webhook_id}/test	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/webrtc/sessions	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/webrtc/sessions/active	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/webrtc/sessions/ice-candidate	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/webrtc/sessions/offer	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v1/zoning/special-parcels	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v2/collaboration/invites/{token}/accept	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v2/feasibility/finalize	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v2/feasibility/optimize	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/api/v2/pipeline/report/pdf-from-ledger	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/bank-report/sections	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/basis/assess	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/basis/{run_id}	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/basis/{run_id}/approve	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/c2r/ping	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/data-integrity/field-audit-status	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/data-integrity/freshness/{source_name}	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/data-integrity/refresh/{source_name}	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/data-integrity/status	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/g2b/sync	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/growth/settings	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/growth/settings/{key}/rollback	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/registry/cleanup	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/registry/land-schedule/import	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/registry/status	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/registry/tilko/realty	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/registry/tilko/search	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/registry/tilko/status	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/senior/consult-multi	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/similar-market	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/survey/coordinate/contract	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
-/survey/coordinate/reconcile	unclassified	미분류 — 아직 열어 보지 않았다(유추로 채우지 않는다)
+/api/v1/avm/estimate	unclassified	
+/api/v1/billing/admin/orders/{order_id}/confirm	unclassified	
+/api/v1/billing/admin/set-tier	unclassified	
+/api/v1/billing/quote	unclassified	
+/api/v1/bim/analyze	unclassified	
+/api/v1/blockchain/escrow/direct-pay	unclassified	
+/api/v1/blockchain/escrow/dispute	unclassified	
+/api/v1/blockchain/escrow/fund	unclassified	
+/api/v1/blockchain/escrow/refund	unclassified	
+/api/v1/blockchain/escrow/release	unclassified	
+/api/v1/blockchain/escrow/resolve	unclassified	
+/api/v1/boq-auto/master/items	unclassified	
+/api/v1/building-compliance/auto-correct	unclassified	
+/api/v1/compliance/screening	unclassified	
+/api/v1/contractors/register	unclassified	
+/api/v1/cost-intelligence/material-prices/refresh	unclassified	
+/api/v1/cost/admin/ingest-public-prices	unclassified	
+/api/v1/dashboard/activity/recent	unclassified	
+/api/v1/dashboard/portfolio/timeline	unclassified	
+/api/v1/deliberation/analyze/async	unclassified	
+/api/v1/deliberation/analyze/task/{run_id}	unclassified	
+/api/v1/deliberation/scenario-matrix	unclassified	
+/api/v1/design-audit/run	unclassified	
+/api/v1/design-gen/seed/aihub	unclassified	
+/api/v1/design-gen/seed/aihub/list	unclassified	
+/api/v1/design-references/from-design	unclassified	
+/api/v1/design/bim/analyze	unclassified	
+/api/v1/design/report/stream	unclassified	
+/api/v1/development-methods/evaluate	unclassified	
+/api/v1/drawing/calculate-area	unclassified	
+/api/v1/drawing/export-dxf	unclassified	
+/api/v1/drawing/floor-plan	unclassified	
+/api/v1/drawing/site-plan	unclassified	
+/api/v1/energy/kepco/calculate	unclassified	
+/api/v1/esg/assessment	unclassified	
+/api/v1/esg/lcc/calculate	unclassified	
+/api/v1/esign/request	unclassified	
+/api/v1/external/parcel/merge	unclassified	
+/api/v1/finance/monte-carlo	unclassified	
+/api/v1/gresb/benchmarks	unclassified	
+/api/v1/kdx/metrics	unclassified	
+/api/v1/kdx/webhook	unclassified	
+/api/v1/land-price/price-trend	unclassified	
+/api/v1/land-price/rone-status	unclassified	
+/api/v1/land-price/rone-test	unclassified	
+/api/v1/lifecycle/construction/safety-plan	unclassified	
+/api/v1/lifecycle/disaster-risk/assess	unclassified	
+/api/v1/lifecycle/lifecycle-opt/replacement-schedule	unclassified	
+/api/v1/lifecycle/procurement/eoq	unclassified	
+/api/v1/lifecycle/supervision/evm	unclassified	
+/api/v1/market-ai/ask	unclassified	
+/api/v1/market-ai/tools	unclassified	
+/api/v1/mass-templates/collect	unclassified	
+/api/v1/mass-templates/collect-region	unclassified	
+/api/v1/notifications/alimtalk	unclassified	
+/api/v1/parking/recognize	unclassified	
+/api/v1/permits/compliance-check	unclassified	
+/api/v1/permits/submissions/{submission_id}/status	unclassified	
+/api/v1/portals/market-data/{region_code}	unclassified	
+/api/v1/portals/post-all	unclassified	
+/api/v1/portals/{portal_id}/post	unclassified	
+/api/v1/rates/history	unclassified	
+/api/v1/rates/refresh	unclassified	
+/api/v1/regulation/check	unclassified	
+/api/v1/regulation/gosi/search	unclassified	
+/api/v1/reports/stream/{project_id}	unclassified	
+/api/v1/safety/analyze-frame	unclassified	
+/api/v1/safety/analyze-stream	unclassified	
+/api/v1/sre/dashboard	unclassified	
+/api/v1/system/integration/status	unclassified	
+/api/v1/tax/calculate	unclassified	
+/api/v1/webhooks	unclassified	
+/api/v1/webhooks/{webhook_id}	unclassified	
+/api/v1/webhooks/{webhook_id}/deliveries	unclassified	
+/api/v1/webhooks/{webhook_id}/test	unclassified	
+/api/v1/webrtc/sessions	unclassified	
+/api/v1/webrtc/sessions/active	unclassified	
+/api/v1/webrtc/sessions/ice-candidate	unclassified	
+/api/v1/webrtc/sessions/offer	unclassified	
+/api/v1/zoning/special-parcels	unclassified	
+/api/v2/collaboration/invites/{token}/accept	unclassified	
+/api/v2/feasibility/finalize	unclassified	
+/api/v2/feasibility/optimize	unclassified	
+/api/v2/pipeline/report/pdf-from-ledger	unclassified	
+/bank-report/sections	unclassified	
+/basis/assess	unclassified	
+/basis/{run_id}	unclassified	
+/basis/{run_id}/approve	unclassified	
+/c2r/ping	unclassified	
+/data-integrity/field-audit-status	unclassified	
+/data-integrity/freshness/{source_name}	unclassified	
+/data-integrity/refresh/{source_name}	unclassified	
+/data-integrity/status	unclassified	
+/g2b/sync	unclassified	
+/growth/settings	unclassified	
+/growth/settings/{key}/rollback	unclassified	
+/registry/cleanup	unclassified	
+/registry/land-schedule/import	unclassified	
+/registry/status	unclassified	
+/registry/tilko/realty	unclassified	
+/registry/tilko/search	unclassified	
+/registry/tilko/status	unclassified	
+/senior/consult-multi	unclassified	
+/similar-market	unclassified	
+/survey/coordinate/contract	unclassified	
+/survey/coordinate/reconcile	unclassified	
