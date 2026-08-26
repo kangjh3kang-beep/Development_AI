@@ -40,6 +40,11 @@ REAL_FILES_ONLY = (
     f"{_RPC}\n Test Files  1 failed | 338 passed (339)\n      Tests  3091 passed (3091)\n"
 )
 CRASH_NO_SUMMARY = "Error: Cannot find module 'x'\nELIFECYCLE Command failed with exit code 1.\n"
+# ★가장 위험한 형태 — **요약은 없는데 타임아웃 서명은 있다**(부분 실행 후 크래시).
+#   서명만 보면 FLAKE 로 읽히지만, 요약이 없으니 **무엇이 돌았는지 자체를 모른다.**
+#   이 픽스처가 없어서 "요약 부재" 가드가 무잠금이었다(변이 M2 가 SURVIVED 로 짚었다) —
+#   그 가드를 지워도 다른 픽스처는 전부 UNKNOWN 으로 흘러가 초록이었기 때문이다.
+CRASH_WITH_TIMEOUT = f"✓ lib/a.test.ts (2 tests)\n{_RPC}\nELIFECYCLE Command failed with exit code 1.\n"
 PASS_BUT_OTHER_FAILURE = f"{_SUMMARY_PASS.replace('Errors  1 error', 'Errors  0')}\nsome other failure\n"
 # GitHub Actions 실물 형식 — 타임스탬프 + ANSI 색이 모든 줄에 붙는다.
 GHA_FLAKE_LOG = "\n".join(
@@ -96,6 +101,7 @@ def test_real_failures_are_never_retried(name: str, text: str, tmp_path: Path) -
     "name,text",
     [
         ("요약 자체가 없다(수집 실패·크래시)", CRASH_NO_SUMMARY),
+        ("★요약은 없는데 서명은 있다(부분 실행 후 크래시)", CRASH_WITH_TIMEOUT),
         ("전량 통과인데 서명이 없다", PASS_BUT_OTHER_FAILURE),
     ],
 )
