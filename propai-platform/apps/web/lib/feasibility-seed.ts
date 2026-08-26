@@ -81,6 +81,10 @@ export function siteDerivedFeasibilityFields(
   // ★형제(`InvestmentAnalyticsWorkspaceClient.tsx`)와 **같은** 분리 규칙 — `/\s+/` + 빈 토큰 제거.
   //   종전 이 파일은 `split(" ")` 였다: 연속 공백·탭이 있으면 빈 토큰이 첫 자리에 와
   //   `sido_name=""` 가 됐다. 형제가 옳았고 여기가 부분집합이었다.
+  //   ★`filter(Boolean)` 은 **도달 불가 이중가드**다(변이 M6 SURVIVED — 설명 가능):
+  //     `trim()` 뒤에는 선행·후행 공백이 없고 `\s+` 가 연속 공백을 묶으므로 빈 토큰이 안 나오며,
+  //     빈 문자열은 위 삼항이 이미 `[]` 로 보낸다. **형제와 표기를 맞추려고** 남긴다.
+  //     점수용 단언을 만들지 않는다 — 취약한 락이 되고, 생존의 사유는 여기 적는 것이 맞다.
   const parts = addr ? addr.split(/\s+/).filter(Boolean) : [];
   return {
     totalLandAreaSqm: positive(effectiveLandAreaSqm(site)),
