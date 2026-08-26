@@ -76,15 +76,26 @@
   `risk_monitor`·`bid_analyzer`·`disaster_risk`·`lifecycle/risk` 는 전부 별도 응답 키다.
   도달 경로 확정: `:678 sec7=_research_dev_plans` → `:707 "development_plans": sec7`
   → 프론트 `result?.development_plans` → 배지.
-- **다른 9곳의 「안심 폴백」 트리아지 미완.** 파생 수집으로 10곳을 찾았고 그중 5곳을 원문으로 판정했다:
-  · `LEVEL_CHIP ?? low`(PreCheck) — **오탐.** 여기 `low` 는 위험도가 아니라 **신호 강도 약함**이고 색도 중립 회색이다
-  · `LEVEL_COLOR ?? low`(ZoningSignalMap) — **오탐.** 위와 동일 의미
-  · `APP_STYLE ?? "불가"` — **오탐.** 보수적 방향
-  · `PRESALE_STATUS_COLORS ?? "미정"` — **오탐.** 정직한 방향
-  · `CONFIDENCE_META ?? low` — **오탐.** 낮은 신뢰는 보수적 방향
-  → **10곳 중 진짜는 현재까지 1건**(위양성 5·미판정 4). ★남은 4곳(`VERDICT_META ?? warn` · `SEVERITY_META ?? P2` · `RISK_LEVEL_STYLE` 외 2)은 **이 PR 에서 판정하지 않았다.**
-- **`SEVERITY_META[finding.severity] ?? SEVERITY_META.P2`(FieldAuditNotice)** — `AuditSeverity` 가 `"P0"|"P1"|"P2"` **닫힌 유니온**이라 타입상 도달 불가지만, 네트워크 응답이 캐스팅되면 런타임 이탈이 가능하다. **백엔드 산출 집합을 재지 않았으므로 판정 보류.** P2 는 `holdValue: false` 라 이탈 시 **「사용 보류 권고」가 사라지는** 방향이므로 **후속 조사 대상**으로 남긴다.
-- **수집 축의 한계.** 모집단을 `표[값] ?? 기본` **정규식**으로 팠다. 삼항(`x === "a" ? … : …`)·`switch`·`Map.get` 으로 쓴 표는 **안 잡힌다.** 즉 **10곳은 하한**이다.
+- **「안심 폴백」 트리아지 — 동료 세션(`-47`) 실측으로 완결됐다. 내 하한 10 → 실제 12곳.**
+  · **진짜 3** — 내 `RISK_LEVEL_STYLE`(고침) + 아래 둘(**동료가 잡는다**, 브랜치 `fix/unknown-value-safe-fallback`)
+  · **오탐 9** — 내가 기각한 5건은 **전부 정당**하다고 재판정됐다(`CONFIDENCE_META ?? low` 는 `--status-error` **빨강**이라 안심 방향이 아니다 · `LEVEL_CHIP/LEVEL_COLOR` 는 신호강도)
+
+  | 새로 확인된 진짜 | 왜 심각한가 |
+  |---|---|
+  | `VerificationBadge.tsx:136` `VERDICT_META[verdict] \|\| VERDICT_META.warn` | `verdict` 가 **LLM 자유 JSON**(`verifier_service.py:187 data.get("verdict") or "pass"`)이고 **정규화 0건**. `"FAIL"`·`"실패"` 를 뱉으면 **「오류 발견」이 「주의」로 강등** |
+  | `LandIntelligencePanel.tsx:1402` `statusColors[c.status] \|\| statusColors.safe` | 폴백이 **`safe`(초록)** 인데 표에 **`danger`(빨강)가 실재**한다. 생산자는 LLM 자유 JSON·검증 0(`ai-analyze-client.ts:83`)이고 `:844` 에 **`as "safe"\|"warning"\|"danger"` 캐스트가 실물로 있다.** 이 칩은 **색만 있고 상태 단어가 없어** 색을 못 보는 사용자에겐 신호가 0 |
+
+- **`SEVERITY_META ?? P2`(FieldAuditNotice) — 오탐으로 판정 확정(동료 실측).** 백엔드
+  `field_audit/contracts.py` 가 **pydantic `Literal["P0","P1","P2"]` + `extra="forbid"`** 이고
+  대입 리터럴 전수에 이탈 0. **런타임 이탈 없음.**(방향은 여전히 틀렸으나 도달 불가)
+
+- **★수집 축의 한계 — 실측으로 정정한다(이게 다음 사람에게 중요하다).**
+  내가 §3 에 *"`switch`·삼항·`Map.get` 이 안 잡힌다"* 고 적었는데, **실제로 물린 것은 그것이 아니었다**:
+  1. **정규식이 `[A-Z][A-Z0-9_]*` 라 camelCase 표(`statusColors`)를 구조적으로 배제**했다 — 가장 심각한 1건이 거기 있었다
+  2. ★**그리고 정규식보다 두 번째 「안심어」 필터가 더 많이 잘랐다.** `SEVERITY_STYLES ?? .info` 는
+     **정규식은 잡았는데** 안심어 목록에 `info` 가 없어 탈락했다. **모집단을 자른 것은 수집기가 아니라 필터**였고, 그쪽이 더 조용하다
+  3. pathspec `'…/web/**/*.tsx'` 가 디렉토리 직속 3파일을 배제(실측 1060 vs 1063) — **이번 손실은 0**(전부 루트 config)
+  ★내가 선언한 한계(`switch`)도 실제로 물었다 — 정답 기준선(`DominantConstraintBanner`)을 그래서 놓쳤다.
 
 ---
 
