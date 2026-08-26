@@ -127,8 +127,21 @@ test.describe("프로젝트 선택 드롭다운 — 하이드레이션 일치", 
   });
 });
 
-// ── 부채: 같은 패턴이 남아 있는 소비처(적대검증이 실측으로 준 목록 — 스냅샷) ──
-// `persist` 스토어(6개, 어느 것도 `skipHydration` 을 쓰지 않는다)에서 파생한 값을 SSR 경로에서
+// ★★2026-08-26 정정 — 아래 「부채」 목록의 **전제가 틀렸다.**
+//   *"persist 스토어에서 파생한 값을 SSR 경로에서 그대로 렌더하는 자리"* 를 통째로 위험으로 적었는데,
+//   zustand v5 는 `useSyncExternalStore` 의 **서버 스냅샷**으로 `getInitialState` 를 넘긴다 —
+//   React 는 하이드레이션 렌더에서도 그것을 쓰므로 **셀렉터 읽기는 불일치를 못 만든다.**
+//   그래서 이 목록을 그대로 따라간 `#850`(드롭다운 노드 유무)은 **결함이 아닌 것을 고쳤고**,
+//   PR 에 박아 둔 예측(배포 후 #418 = 0)이 **반증**됐다. (`ContextHeader` 도 셀렉터 전용이라 무관하다.)
+//   진짜 원인은 같은 트리의 `GlobalAddressSearch` 였다 — `useState` 지연 초기값이
+//   `useProjectContextStore.getState()`(라이브 상태)를 읽어 서버 "대기" / 클라 "77필지" 를 그렸다.
+//   ★분류는 이제 파서가 한다: `apps/web/lib/hydration/render-path-store-reads.ts`
+//     (+ `lib/hydration/__tests__/render-path-store-reads.contract.test.ts` 가 전수 감시 · 필수 CI).
+//   남은 진짜 부채는 **클래스 ②(렌더 중 스토어 메서드 호출)** 이고 그 래칫도 위 계약 테스트에 있다.
+//
+// ── 부채(위 정정을 적용해 다시 읽을 것): 같은 패턴이 남아 있는 소비처 ──
+// `persist` 스토어(**8개** — 초판의 "6개" 는 낡은 수치다. 파생 실측 2026-08-26;
+//  어느 것도 `skipHydration` 을 쓰지 않는다)에서 파생한 값을 SSR 경로에서
 // 그대로 렌더하는 자리가 더 있다. 이 PR 은 **같은 레이아웃의 3곳**(레일·주소바·다음단계 CTA)만 고쳤다.
 //   · `app/[locale]/(dashboard)/projects/[id]/permit/page.tsx:201` — `진행률 {pct}%`(글자 그대로 같은 형태)
 //   · `components/common/ContextHeader.tsx` · `components/common/ProjectSwitcher.tsx`
