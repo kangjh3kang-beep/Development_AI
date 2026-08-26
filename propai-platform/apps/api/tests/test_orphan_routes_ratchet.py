@@ -34,10 +34,48 @@ _BASELINE = os.path.join(os.path.dirname(__file__), "orphan_routes_baseline.txt"
 _UNDECIDED = os.path.join(os.path.dirname(__file__), "orphan_routes_undecided.txt")
 
 
-def _load(path: str) -> set[str]:
-    """`#` 주석줄은 무시한다 — 수치가 움직인 **사유를 파일 안에** 남기기 위한 것이다."""
+#: 종류 어휘는 **닫혀 있다.** 열어 두면 다음 사람이 새 낱말을 만들어 같은 것을 두 이름으로
+#: 부르고, 그 순간 "몇 건이 진짜 부채인가"에 다시 답할 수 없게 된다.
+_KINDS = {
+    "admin-cron": "운영·배치 전용 — 프론트 소비처가 없는 것이 정상",
+    "internal": "백엔드 내부/서버간 호출 전용",
+    "legacy-suspect": "소비처 0 이고 구 트리·구 계약 — 삭제 후보이나 미확정",
+    "debt": "배선해야 하는데 안 됐다 — 진짜 부채",
+    "unclassified": "★아직 안 봤다(유추 금지)",
+}
+#: 아직 열어 보지 않은 것. **늘어날 수 없다**(줄이는 방향으로만 움직인다).
+_UNCLASSIFIED = "unclassified"
+
+#: `unclassified` 상한 — 형식 승격 시점(2026-08-26)의 실측값. 한 건을 열어 분류할 때마다
+#: 내려간다. ★이 수를 **올리는 커밋은 새 미분류를 들여오는 것**이므로 실패한다.
+_UNCLASSIFIED_CEILING = 130
+
+
+def _rows(path: str) -> list[tuple[str, str, str]]:
+    """`경로 <TAB> 종류 <TAB> 사유` 로 읽는다.
+
+    ★탭이 없는 줄도 **조용히 통과시키지 않는다** — 종류를 빈 문자열로 돌려주고
+      형식 검사가 잡는다. 여기서 관대하면 사유 없는 줄이 다시 스며든다.
+    """
+    out: list[tuple[str, str, str]] = []
     with open(path, encoding="utf-8") as f:
-        return {ln.strip() for ln in f if ln.strip() and not ln.lstrip().startswith("#")}
+        for ln in f:
+            if not ln.strip() or ln.lstrip().startswith("#"):
+                continue
+            parts = [c.strip() for c in ln.rstrip("\n").split("\t")]
+            route = parts[0]
+            kind = parts[1] if len(parts) > 1 else ""
+            reason = parts[2] if len(parts) > 2 else ""
+            out.append((route, kind, reason))
+    return out
+
+
+def _load(path: str) -> set[str]:
+    """**경로만** 돌려준다(래칫의 집합 연산용). 종류·사유는 `_rows` 로 본다.
+
+    `#` 주석줄은 무시한다 — 수치가 움직인 **사유를 파일 안에** 남기기 위한 것이다.
+    """
+    return {r for r, _k, _why in _rows(path)}
 
 
 def _load_baseline() -> set[str]:
@@ -210,3 +248,68 @@ def test_call_method_at_이_실제_호출부를_읽는다():
     s3 = prop_blob.index("/underwriting/${projectId}")
     e3 = s3 + len("/underwriting/${projectId}")
     assert _o.call_method_at(prop_blob, s3, e3) is None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 사유 컬럼 잠금 — 2026-08-26
+#
+# ★무엇이 있었나: 기준선이 **경로만** 담아서 `/api/v1/auction/sync`(라우트 자신이 summary 에
+#   "(관리/cron)" 이라고 적어 둔 **정당한 운영용**)와 `/api/v1/auction/opportunities`
+#   (소비처가 프론트·백엔드 양쪽 다 0인 **구 트리 잔재**)가 **나란히 서서 구별되지 않았다.**
+#   132 건이 한 덩어리라 *"이 중 몇 건이 진짜 부채인가"* 에 아무도 답할 수 없었다.
+#
+# ★왜 대부분이 `unclassified` 인가: **유추로 채우지 않기 때문이다.** 기계 분류를 시도했다가
+#   폐기했다 — *"핸들러가 정의 파일 밖에서 참조되는가"* 로 37건을 얻었는데 **표본 10건이
+#   전부 위양성**이었다(로그 문자열·독스트링·`from urllib.parse import quote` 같은 임포트 4건 ·
+#   **동명의 다른 함수 정의** 6건). 싼 신호는 없다. 연 사람만 사유를 적는다.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_모든_행이_경로_종류_사유_셋을_갖는다():
+    rows = _rows(_BASELINE)
+
+    # ★공허 진리 가드 — 파서가 죽어 빈 목록이면 아래 전부가 참이 된다.
+    assert len(rows) > 50, "기준선 행이 비정상적으로 적다 — 파서나 파일이 깨졌다"
+
+    malformed = [r for r, k, _w in rows if not k]
+    assert not malformed, (
+        "종류 컬럼이 없는 행이다 — `경로 <TAB> 종류 <TAB> 사유` 로 적어라:\n"
+        + "\n".join(f"  {r}" for r in malformed)
+    )
+
+    unknown = sorted({k for _r, k, _w in rows if k not in _KINDS})
+    assert not unknown, (
+        f"닫힌 어휘 밖의 종류다: {unknown}\n"
+        f"→ 쓸 수 있는 것: {sorted(_KINDS)}. 새 낱말이 필요하면 _KINDS 에 **뜻과 함께** 추가하라."
+    )
+
+
+def test_분류했다면_무엇을_보고_그렇게_판단했는지_적혀_있다():
+    """★`unclassified` 가 아닌 행은 **근거**를 지닌다 — 종류만 바꾸고 사유를 비우면 유추와 같다."""
+    rows = _rows(_BASELINE)
+    classified = [(r, k, w) for r, k, w in rows if k and k != _UNCLASSIFIED]
+
+    # ★모집단 가드 — 분류된 행이 0 이면 이 검사는 아무것도 잠그지 않는다(공허한 참).
+    assert classified, "분류된 행이 하나도 없다 — 이 검사가 공허해졌다"
+
+    thin = [(r, k) for r, k, w in classified if len(w) < 20]
+    assert not thin, (
+        "종류는 바꿨는데 사유가 비었거나 너무 짧다 — **파일:줄** 로 근거를 적어라:\n"
+        + "\n".join(f"  {r} [{k}]" for r, k in thin)
+    )
+
+
+def test_미분류는_늘어나지_않는다():
+    """★`unclassified` 는 *"아직 안 봤다"* 이지 *"문제없다"* 가 아니다. 줄이는 방향으로만 간다."""
+    rows = _rows(_BASELINE)
+    n = sum(1 for _r, k, _w in rows if k == _UNCLASSIFIED)
+
+    assert n <= _UNCLASSIFIED_CEILING, (
+        f"미분류가 {n} 건으로 상한 {_UNCLASSIFIED_CEILING} 을 넘었다 — 새 라우트를 기준선에 넣으면서"
+        " 사유를 안 적었을 가능성이 높다. 열어 보고 종류와 근거를 적어라."
+    )
+    # ★죽은 상한도 막는다 — 부채를 갚았는데 상한을 안 내리면 그만큼 다시 늘 수 있다.
+    assert n >= _UNCLASSIFIED_CEILING - 25, (
+        f"미분류가 {n} 건으로 상한 {_UNCLASSIFIED_CEILING} 보다 한참 낮다 — 부채를 갚았으면"
+        " _UNCLASSIFIED_CEILING 을 그 수로 **내려서** 다시 늘 여지를 없애라."
+    )
