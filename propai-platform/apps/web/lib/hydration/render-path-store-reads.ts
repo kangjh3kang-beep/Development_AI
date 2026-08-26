@@ -5,7 +5,11 @@
  * zustand v5 의 `useStore` 는 `useSyncExternalStore(subscribe, getState, **getInitialState**)` 로
  * 붙는다. React 는 **클라이언트 하이드레이션 렌더에서도 서버 스냅샷**(세 번째 인자)을 쓰므로,
  * **셀렉터로만 읽는 persist 소비는 원리적으로 불일치를 만들지 못한다.**
- *   → `apps/web/lib/__tests__/zustand-hydration-snapshot.contract.test.tsx` 가 이 전제를 잠근다.
+ *   ★단 그 세 번째 인자만으로는 **충분하지 않다.** 바닐라 `createStore` 의 `initialState` 는
+ *   initializer 반환값이고, `persist` 는 그 안에서 **동기 재수화**를 끝낸다. 안전한 진짜 이유는
+ *   `zustand/middleware` 가 `api.getInitialState = () => configResult` 로 **다시 덮어쓰기** 때문이다
+ *   (독립 리뷰가 이 구분을 짚었다 — 필요조건을 충분조건처럼 적고 있었다).
+ *   → `lib/hydration/__tests__/zustand-server-snapshot.contract.test.tsx` 가 **persist 픽스처로** 잠근다.
  *
  * 불일치는 그 스냅샷을 **우회**할 때만 난다. 우회 경로는 셋이다:
  *   ① `useXStore.getState()` 를 **렌더 중** 호출(= 라이브 상태)
@@ -26,12 +30,15 @@
  */
 import ts from "typescript";
 
+export type ReadKind = "getState" | "localStorage" | "store-method";
+export type RenderVia = "component-body" | "useState-initializer" | "useMemo" | "useSyncExternalStore";
+
 export type RenderPathRead = {
   file: string;
   line: number;
-  kind: "getState" | "localStorage" | "store-method";
+  kind: ReadKind;
   /** 렌더 중 실행되는 이유(어떤 훅 콜백 안인지) */
-  via: "component-body" | "useState-initializer" | "useMemo" | "useSyncExternalStore";
+  via: RenderVia;
   text: string;
 };
 
@@ -39,7 +46,25 @@ export type RenderPathRead = {
 const DEFERRED_HOOKS = new Set([
   "useEffect", "useLayoutEffect", "useCallback", "useInsertionEffect", "useImperativeHandle",
   "setTimeout", "setInterval", "requestAnimationFrame", "queueMicrotask", "then", "catch", "finally",
+  "addEventListener", "subscribe",
 ]);
+/** 렌더 중에 **실행되는** 콜백. */
+const RENDER_HOOKS: Record<string, RenderVia> = {
+  useMemo: "useMemo",
+  useState: "useState-initializer",
+  useSyncExternalStore: "useSyncExternalStore",
+};
+/**
+ * **즉시 실행되는 콜백**을 받는 배열/객체 API — 렌더 안에서 쓰이면 그 콜백도 렌더 중에 돈다.
+ * ★이걸 "알 수 없는 고차함수"로 버리면 `{rows.map((r) => …getState()…)}` 가 통째로 위음성이 된다
+ *   (독립 리뷰 실측: `InputResolveModal.tsx` 의 진짜 자리가 정확히 이 사각에 숨어 있었다).
+ */
+const TRANSPARENT_CALLBACKS = new Set([
+  "map", "filter", "flatMap", "reduce", "forEach", "some", "every", "find", "findIndex", "sort", "flat",
+]);
+/** 컴포넌트를 감싸기만 하는 래퍼 — 안쪽 함수는 여전히 컴포넌트 본문이다. */
+const COMPONENT_WRAPPERS = new Set(["memo", "forwardRef", "observer"]);
+
 /**
  * 스토어 메서드 중 **상태를 바꾸는 것**(뮤테이션)은 이 검사의 대상이 아니다.
  * 하이드레이션 불일치는 *읽은 값이 렌더에 실린* 결과이고, 뮤테이션은 값을 돌려주지 않는다.
@@ -49,55 +74,32 @@ const DEFERRED_HOOKS = new Set([
 const MUTATION_PREFIX =
   /^(set|update|clear|mark|add|revert|remove|reset|delete|toggle|save|push|consume|sync|trigger|apply|start|stop|cancel|record|register|init|load|refresh|schedule|enqueue|run)/;
 
-/** 렌더 중에 **실행되는** 콜백. */
-const RENDER_HOOKS: Record<string, RenderPathRead["via"]> = {
-  useMemo: "useMemo",
-  useState: "useState-initializer",
-  useSyncExternalStore: "useSyncExternalStore",
-};
-
+function calleeName(call: ts.CallExpression): string {
+  const e = call.expression;
+  if (ts.isIdentifier(e)) return e.text;
+  if (ts.isPropertyAccessExpression(e)) return e.name.text;
+  return "";
+}
+/**
+ * `X.getState()` — X 가 식별자면 전부 본다.
+ * ★`^use[A-Z]\w*Store$` 로 좁혔다가 별칭(`useProjectContext.getState()`)을 놓쳤다(리뷰 실측).
+ *   `getState()` 는 zustand 관용구라 넓게 잡아도 위양성이 사실상 없다.
+ */
 function isStoreGetState(node: ts.CallExpression): boolean {
   const e = node.expression;
-  if (!ts.isPropertyAccessExpression(e) || e.name.text !== "getState") return false;
-  const base = e.expression;
-  return ts.isIdentifier(base) && /^use[A-Z]\w*Store$/.test(base.text);
+  return ts.isPropertyAccessExpression(e) && e.name.text === "getState" && ts.isIdentifier(e.expression);
 }
-function isLocalStorageRead(node: ts.CallExpression): boolean {
-  const e = node.expression;
-  if (!ts.isPropertyAccessExpression(e)) return false;
-  if (e.name.text !== "getItem") return false;
-  const t = e.expression.getText();
-  return /(^|\.)localStorage$/.test(t) || /sessionStorage$/.test(t);
+const STORAGE_ROOT = /^(window\.)?(localStorage|sessionStorage)$/;
+/** `localStorage.getItem(...)` · `localStorage.length` · `localStorage["k"]` 전부 읽기다. */
+function isStorageRead(node: ts.Node): boolean {
+  if (ts.isPropertyAccessExpression(node)) {
+    if (!STORAGE_ROOT.test(node.expression.getText())) return false;
+    return node.name.text !== "setItem" && node.name.text !== "removeItem" && node.name.text !== "clear";
+  }
+  if (ts.isElementAccessExpression(node)) return STORAGE_ROOT.test(node.expression.getText());
+  return false;
 }
 
-/**
- * 이 호출이 렌더 중에 실행되는가를 **조상 체인**으로 판정한다.
- * 가장 가까운 함수 경계부터 위로 올라가며, 그 함수가 무엇의 인자인지 본다.
- * - `useEffect`/`useCallback`/… 의 인자 → 안전(null)
- * - `useMemo`/`useState`/`useSyncExternalStore` 의 인자 → 렌더 중
- * - 아무 호출의 인자도 아니고 컴포넌트 함수까지 올라가면 → 컴포넌트 본문(렌더 중)
- * - 그 외(일반 함수 선언·중첩 함수) → 안전(호출 시점을 알 수 없으므로 보수적으로 제외)
- */
-function renderPhase(node: ts.Node): RenderPathRead["via"] | null {
-  let cur: ts.Node | undefined = node;
-  while (cur) {
-    const fn = findEnclosingFunction(cur);
-    if (!fn) return null;
-    const parent = fn.parent;
-    if (parent && ts.isCallExpression(parent)) {
-      const callee = parent.expression;
-      const name = ts.isIdentifier(callee) ? callee.text
-        : ts.isPropertyAccessExpression(callee) ? callee.name.text : "";
-      if (DEFERRED_HOOKS.has(name)) return null;
-      if (name in RENDER_HOOKS) return RENDER_HOOKS[name];
-      return null; // 알 수 없는 고차함수 — 보수적으로 제외(위양성 방지)
-    }
-    // 함수가 어떤 호출의 인자가 아니다 → 컴포넌트/일반 함수 선언
-    if (isLikelyComponent(fn)) return "component-body";
-    return null;
-  }
-  return null;
-}
 function findEnclosingFunction(n: ts.Node): ts.Node | undefined {
   let p: ts.Node | undefined = n.parent;
   while (p) {
@@ -106,28 +108,76 @@ function findEnclosingFunction(n: ts.Node): ts.Node | undefined {
   }
   return undefined;
 }
-/** 대문자로 시작하는 이름 = React 컴포넌트 관례. */
+/** 대문자로 시작하는 이름 = React 컴포넌트 관례. 익명 `export default function` 도 컴포넌트로 본다. */
 function isLikelyComponent(fn: ts.Node): boolean {
-  if (ts.isFunctionDeclaration(fn) && fn.name) return /^[A-Z]/.test(fn.name.text);
+  if (ts.isFunctionDeclaration(fn)) {
+    if (fn.name) return /^[A-Z]/.test(fn.name.text);
+    return !!fn.modifiers?.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword);
+  }
   const p = fn.parent;
   if (p && ts.isVariableDeclaration(p) && ts.isIdentifier(p.name)) return /^[A-Z]/.test(p.name.text);
+  if (p && ts.isExportAssignment(p)) return true;
   return false;
+}
+/** 이 함수 노드에 붙은 이름(지역 헬퍼 오염 전파용). */
+function functionName(fn: ts.Node): string | null {
+  if (ts.isFunctionDeclaration(fn) && fn.name) return fn.name.text;
+  const p = fn.parent;
+  if (p && ts.isVariableDeclaration(p) && ts.isIdentifier(p.name)) return p.name.text;
+  return null;
+}
+
+/**
+ * 이 노드가 렌더 중에 실행되는가를 **조상 체인을 실제로 올라가며** 판정한다.
+ * ★초판은 `while` 안의 모든 경로가 첫 회에 return 해 **한 번도 상승하지 않았다**(독립 리뷰 실측).
+ *   그래서 `.map` 콜백·중첩 화살표가 통째로 위음성이었고, eslint `prefer-const` 가 그 사실을
+ *   기계로 신고하고 있었다 — **린트 결함과 논리 결함이 같은 한 줄이었다.**
+ */
+function renderPhase(node: ts.Node): RenderVia | null {
+  let cur: ts.Node = node;
+  for (let depth = 0; depth < 32; depth += 1) {
+    const fn = findEnclosingFunction(cur);
+    if (!fn) return null; // 모듈 스코프
+    const parent = fn.parent;
+    if (parent && ts.isCallExpression(parent)) {
+      const name = calleeName(parent);
+      if (DEFERRED_HOOKS.has(name)) return null;
+      if (name in RENDER_HOOKS) return RENDER_HOOKS[name];
+      if (TRANSPARENT_CALLBACKS.has(name)) { cur = parent; continue; } // ★계속 상승한다
+      if (COMPONENT_WRAPPERS.has(name)) return "component-body";
+      return null; // 알 수 없는 고차함수 — 보수적으로 제외(위양성 방지)
+    }
+    if (isLikelyComponent(fn)) return "component-body";
+    return null; // 지역/모듈 헬퍼 — 오염 전파(아래 2차 통과)가 대신 처리한다
+  }
+  return null;
 }
 
 /**
  * 이 식별자가 **재수화 게이트 뒤**에 있는가 — `hydrated && f()` · `hydrated ? f() : x`.
- * `useHydrated()` 로 만든 변수 이름 집합을 받아 조상 체인에서 그 가드를 찾는다.
  * ★가드를 못 보면 안전한 코드를 위반으로 신고하게 된다(위양성도 결함이다 — 저장소 §A-6).
  */
 function isBehindHydrationGate(node: ts.Node, gateNames: Set<string>): boolean {
   const named = (n: ts.Node): boolean => ts.isIdentifier(n) && gateNames.has(n.text);
+  /**
+   * `&&` 사슬의 **왼쪽 어딘가**에 게이트가 있으면 오른쪽은 게이트 뒤다.
+   * ★`hydrated && !isDone(id) && stageCompletion(id) === "partial"` 은
+   *   `((hydrated && !isDone) && (…))` 로 파싱돼 왼쪽이 **식별자 하나가 아니다** —
+   *   그걸 못 보면 이미 고쳐 둔 코드를 위반으로 신고한다(독립 리뷰가 짚은 위양성 클래스).
+   */
+  const leftHasGate = (n: ts.Node): boolean => {
+    if (named(n)) return true;
+    if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken) {
+      return leftHasGate(n.left) || leftHasGate(n.right);
+    }
+    return false;
+  };
   let cur: ts.Node | undefined = node;
   while (cur) {
     const p: ts.Node | undefined = cur.parent;
     if (!p) break;
-    if (ts.isBinaryExpression(p) && p.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken && p.right === cur && named(p.left)) return true;
+    if (ts.isBinaryExpression(p) && p.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken && p.right === cur && leftHasGate(p.left)) return true;
     if (ts.isConditionalExpression(p) && named(p.condition) && p.whenTrue === cur) return true;
-    // `if (!hydrated) return …` 로 조기 반환하는 형태는 함수 전체가 게이트된다.
     cur = p;
   }
   return false;
@@ -138,12 +188,18 @@ function hasEarlyHydrationReturn(sf: ts.SourceFile, gateNames: Set<string>): boo
   const visit = (n: ts.Node): void => {
     if (found) return;
     if (ts.isIfStatement(n)) {
-      const c = n.expression;
-      const isNegGate = ts.isPrefixUnaryExpression(c) && c.operator === ts.SyntaxKind.ExclamationToken
-        && ts.isIdentifier(c.operand) && gateNames.has(c.operand.text);
-      const isNegGateInAnd = ts.isBinaryExpression(c) && c.operatorToken.kind === ts.SyntaxKind.BarBarToken
-        && ts.isPrefixUnaryExpression(c.left) && ts.isIdentifier(c.left.operand) && gateNames.has(c.left.operand.text);
-      if ((isNegGate || isNegGateInAnd) && n.thenStatement) found = true;
+      let neg = false;
+      const scan = (e: ts.Node): void => {
+        if (ts.isPrefixUnaryExpression(e) && e.operator === ts.SyntaxKind.ExclamationToken
+            && ts.isIdentifier(e.operand) && gateNames.has(e.operand.text)) neg = true;
+        ts.forEachChild(e, scan);
+      };
+      scan(n.expression);
+      // ★`!a && !hydrated` 처럼 **조건이 결합**되면 다른 분기에서 게이트가 빠진다 —
+      //   그때는 "전체 게이트"로 보지 않는다(부분 게이트는 잡아야 한다).
+      const simple = ts.isPrefixUnaryExpression(n.expression)
+        || (ts.isBinaryExpression(n.expression) && n.expression.operatorToken.kind === ts.SyntaxKind.BarBarToken);
+      if (neg && simple && n.thenStatement) found = true;
     }
     ts.forEachChild(n, visit);
   };
@@ -157,7 +213,7 @@ export function scanSource(file: string, source: string): RenderPathRead[] {
   const out: RenderPathRead[] = [];
 
   // ── 1차 통과: 이름 수집 ──
-  //   ①`useHydrated()` 로 만든 게이트 변수  ②스토어 셀렉터로 꺼낸 **메서드** 변수
+  //   ①`useHydrated()` 게이트 변수  ②스토어 셀렉터로 꺼낸 **메서드** 변수
   const gateNames = new Set<string>();
   const storeMethodNames = new Set<string>();
   const collect = (n: ts.Node): void => {
@@ -165,11 +221,9 @@ export function scanSource(file: string, source: string): RenderPathRead[] {
       const call = n.initializer;
       const callee = call.expression;
       if (ts.isIdentifier(callee) && callee.text === "useHydrated") gateNames.add(n.name.text);
-      // `const stageCompletion = useXStore((s) => s.stageCompletion);`
       if (ts.isIdentifier(callee) && /^use[A-Z]\w*Store$/.test(callee.text) && call.arguments.length === 1) {
         const arg = call.arguments[0];
-        if (ts.isArrowFunction(arg) && ts.isPropertyAccessExpression(arg.body)
-            && !MUTATION_PREFIX.test(n.name.text)) {
+        if (ts.isArrowFunction(arg) && ts.isPropertyAccessExpression(arg.body) && !MUTATION_PREFIX.test(n.name.text)) {
           storeMethodNames.add(n.name.text);
         }
       }
@@ -179,29 +233,70 @@ export function scanSource(file: string, source: string): RenderPathRead[] {
   collect(sf);
   const wholeComponentGated = gateNames.size > 0 && hasEarlyHydrationReturn(sf, gateNames);
 
-  const visit = (n: ts.Node): void => {
+  /** 이 노드 자체가 라이브 읽기인가. */
+  const readKindOf = (n: ts.Node): ReadKind | null => {
     if (ts.isCallExpression(n)) {
-      // ②스토어가 노출한 메서드를 렌더 중 호출 — 내부에서 `get()`(라이브 상태)을 읽는다.
-      //   2026-08-13 `LifecycleProgressRail` 사고가 이 형태였다.
-      if (ts.isIdentifier(n.expression) && storeMethodNames.has(n.expression.text)) {
-        const via = renderPhase(n);
-        if (via && !wholeComponentGated && !isBehindHydrationGate(n, gateNames)) {
-          out.push({ file, kind: "store-method", via,
-            line: sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1,
-            text: n.getText(sf).slice(0, 120) });
-        }
-      }
-      const kind = isStoreGetState(n) ? "getState" : isLocalStorageRead(n) ? "localStorage" : null;
-      if (kind) {
-        const via = renderPhase(n);
-        if (via && !wholeComponentGated && !isBehindHydrationGate(n, gateNames)) {
-          out.push({
-            file, kind, via,
-            line: sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1,
-            text: n.getText(sf).slice(0, 120),
-          });
-        }
-      }
+      if (isStoreGetState(n)) return "getState";
+      if (ts.isIdentifier(n.expression) && storeMethodNames.has(n.expression.text)) return "store-method";
+    }
+    if (isStorageRead(n)) return "localStorage";
+    return null;
+  };
+
+  // ── 2차 통과: **오염 전파** ──
+  //   지역/모듈 헬퍼가 라이브 상태를 읽으면, 그 헬퍼를 렌더 중에 부르는 것도 라이브 읽기다.
+  //   ★이걸 안 하면 `const f = () => …getState(); … {rows.map(() => f())}` 가 통째로 위음성이다
+  //     (독립 리뷰가 `InputResolveModal.tsx` 에서 실제 사례를 찾아냈다).
+  const fnBodies = new Map<string, ts.Node>();
+  const mapFns = (n: ts.Node): void => {
+    if (ts.isArrowFunction(n) || ts.isFunctionExpression(n) || ts.isFunctionDeclaration(n)) {
+      const name = functionName(n);
+      if (name) fnBodies.set(name, n);
+    }
+    ts.forEachChild(n, mapFns);
+  };
+  mapFns(sf);
+  const tainted = new Set<string>();
+  for (let round = 0; round < 8; round += 1) {
+    let grew = false;
+    for (const [name, body] of fnBodies) {
+      if (tainted.has(name)) continue;
+      let hit = false;
+      const walk = (n: ts.Node): void => {
+        if (hit) return;
+        // ★게이트가 **헬퍼 안**에 있으면 그 헬퍼는 오염이 아니다.
+        //   `const isDone = (id) => hydrated && (… stageCompletion(id) …)` 이 실례다 —
+        //   이걸 빼먹으면 이미 고쳐 둔 `LifecycleProgressRail` 을 위반으로 신고한다(위양성도 결함).
+        if ((readKindOf(n) || (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && tainted.has(n.expression.text)))
+            && !isBehindHydrationGate(n, gateNames)) { hit = true; return; }
+        ts.forEachChild(n, walk);
+      };
+      walk(body);
+      if (hit) { tainted.add(name); grew = true; }
+    }
+    if (!grew) break;
+  }
+  // 오염된 헬퍼가 곧 컴포넌트면 전파 대상이 아니다(그 자신이 아래에서 직접 잡힌다).
+  for (const [name, body] of fnBodies) if (isLikelyComponent(body)) tainted.delete(name);
+
+  const push = (n: ts.Node, kind: ReadKind): void => {
+    const via = renderPhase(n);
+    if (!via || wholeComponentGated || isBehindHydrationGate(n, gateNames)) return;
+    out.push({
+      file, kind, via,
+      line: sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1,
+      text: n.getText(sf).replace(/\s+/g, " ").slice(0, 120),
+    });
+  };
+
+  const seen = new Set<number>();
+  const visit = (n: ts.Node): void => {
+    const kind = readKindOf(n);
+    if (kind && !seen.has(n.getStart(sf))) { seen.add(n.getStart(sf)); push(n, kind); }
+    else if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && tainted.has(n.expression.text)
+             && !seen.has(n.getStart(sf))) {
+      seen.add(n.getStart(sf));
+      push(n, "getState"); // 오염된 헬퍼 호출 = 라이브 읽기(간접)
     }
     ts.forEachChild(n, visit);
   };

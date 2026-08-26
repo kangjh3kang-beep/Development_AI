@@ -2,6 +2,8 @@
  * 하이드레이션(React #418) **재현·귀속 프로브**.
  *
  * 사용:
+ *   0) 자격증명은 **환경변수로만** 준다(기본값 없음 — 없으면 exit 2):
+ *        export PROBE_EMAIL=… PROBE_PASSWORD=…
  *   1) 라이브에서 로그인 상태의 localStorage 를 떠 놓는다(토큰 포함 — **커밋 금지**):
  *        node e2e/support/hydration-probe.mjs dump   (cwd = apps/web)   → /tmp/live_ls.json
  *   2) 로컬 dev(개발 모드 React 는 **컴포넌트 이름과 어긋난 텍스트를 그대로 찍는다**)에 이식:
@@ -24,8 +26,15 @@ const PATHS = process.argv.slice(3);
 const BASE = process.env.PROBE_BASE ?? "https://4t8t.net";
 const LIVE = process.env.PROBE_LIVE ?? "https://4t8t.net";
 const LS_FILE = process.env.PROBE_LS ?? "/tmp/live_ls.json";
-const EMAIL = process.env.PROBE_EMAIL ?? "admin@4t8t.net";
-const PASSWORD = process.env.PROBE_PASSWORD ?? "admin1234";
+// ★자격증명에 **기본값을 두지 않는다** — 저장소에 평문으로 남으면 그 자체가 유출이다.
+//   미설정이면 조용히 비로그인으로 재는 대신 **시끄럽게 실패**한다(그 침묵이 "0건" 오보를 만든다).
+const EMAIL = process.env.PROBE_EMAIL;
+const PASSWORD = process.env.PROBE_PASSWORD;
+if (!EMAIL || !PASSWORD) {
+  console.error("★PROBE_EMAIL / PROBE_PASSWORD 를 주지 않았다 — 로그인 없이 재면 라우트가 /ko/login 으로\n" +
+    "  리다이렉트되어 '0건'이 나온다(실측: 다섯 회차를 그렇게 잃을 뻔했다). 측정 무효로 중단한다.");
+  process.exit(2);
+}
 
 async function login(page, base) {
   await page.goto(base + "/ko/login", { waitUntil: "domcontentloaded" });
@@ -73,6 +82,8 @@ if (MODE === "dump") {
   } else {
     await login(page, BASE);
   }
+  let invalid = false;
+  let found = 0;
   for (const path of PATHS.length ? PATHS : ["/ko/regulations"]) {
     const before = errs.length;
     await page.goto(BASE + path, { waitUntil: "domcontentloaded" });
@@ -82,13 +93,19 @@ if (MODE === "dump") {
     await page.waitForTimeout(600);
     const slice = errs.slice(before);
     const rel = slice.filter((e) => !/PROBE_ALIVE|Failed to load resource|net::|CORS/.test(e));
-    console.log(JSON.stringify({
-      path,
-      finalUrl: page.url(),                                   // 대조군②
-      collectorAlive: slice.some((e) => e.includes("PROBE_ALIVE")), // 대조군①
-      hydration: rel.filter((e) => /Hydration failed|error #418|errors\/418|Text content/.test(e)).length,
-      sample: rel.slice(0, 3).map((x) => x.slice(0, 400)),
-    }, null, 1));
+    const finalUrl = page.url();
+    const collectorAlive = slice.some((e) => e.includes("PROBE_ALIVE"));
+    const hydration = rel.filter((e) => /Hydration failed|error #418|errors\/418|Text content/.test(e)).length;
+    const urlOk = new URL(finalUrl).pathname === path;
+    console.log(JSON.stringify({ path, finalUrl, collectorAlive, urlOk, hydration,
+      sample: rel.slice(0, 3).map((x) => x.slice(0, 400)) }, null, 1));
+    // ★대조군을 **찍기만 하면 아무것도 막지 못한다** — 종료코드로 단언한다.
+    //   막겠다고 적어 둔 실패(리다이렉트로 다른 페이지를 재고 "0건")가 조용히 통과하던 것을 고친다.
+    if (!collectorAlive) { console.error(`★수집기가 죽었다(${path}) — 이 회차의 '0건'은 근거가 아니다`); invalid = true; }
+    if (!urlOk) { console.error(`★목표와 다른 페이지를 쟀다: ${path} → ${finalUrl}`); invalid = true; }
+    if (hydration > 0) found += hydration;
   }
+  if (invalid) { await browser.close(); process.exit(2); }   // 무효 측정 — "0건"이라 말하지 마라
+  if (found > 0) { await browser.close(); process.exit(1); } // 하이드레이션 불일치 실재
 }
 await browser.close();

@@ -140,7 +140,8 @@ test.describe("프로젝트 선택 드롭다운 — 하이드레이션 일치", 
 //   남은 진짜 부채는 **클래스 ②(렌더 중 스토어 메서드 호출)** 이고 그 래칫도 위 계약 테스트에 있다.
 //
 // ── 부채(위 정정을 적용해 다시 읽을 것): 같은 패턴이 남아 있는 소비처 ──
-// `persist` 스토어(6개, 어느 것도 `skipHydration` 을 쓰지 않는다)에서 파생한 값을 SSR 경로에서
+// `persist` 스토어(**8개** — 초판의 "6개" 는 낡은 수치다. 파생 실측 2026-08-26;
+//  어느 것도 `skipHydration` 을 쓰지 않는다)에서 파생한 값을 SSR 경로에서
 // 그대로 렌더하는 자리가 더 있다. 이 PR 은 **같은 레이아웃의 3곳**(레일·주소바·다음단계 CTA)만 고쳤다.
 //   · `app/[locale]/(dashboard)/projects/[id]/permit/page.tsx:201` — `진행률 {pct}%`(글자 그대로 같은 형태)
 //   · `components/common/ContextHeader.tsx` · `components/common/ProjectSwitcher.tsx`
