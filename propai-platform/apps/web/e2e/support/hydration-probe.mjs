@@ -59,7 +59,7 @@ if (!EMAIL || !PASSWORD) {
   process.exit(2);
 }
 
-import { countHydration, samePath, pickMutableText, decideControlVerdict, decideRunVerdict } from "../../lib/hydration/probe-text.mjs";
+import { countHydration, relevantErrors, samePath, pickMutableText, decideControlVerdict, decideRunVerdict } from "../../lib/hydration/probe-text.mjs";
 
 async function login(page, base) {
   await page.goto(base + "/ko/login", { waitUntil: "domcontentloaded" });
@@ -161,7 +161,7 @@ if (MODE === "dump") {
     await page.evaluate(() => { setTimeout(() => { throw new Error("PROBE_ALIVE"); }, 0); });
     await page.waitForTimeout(600);
     const slice = errs.slice(before);
-    const rel = slice.filter((e) => !NOISE_RE.test(e));
+    const rel = relevantErrors(slice);
     const finalUrl = page.url();
     const collectorAlive = slice.some((e) => e.includes("PROBE_ALIVE"));
     const hydration = countHydration(slice);          // ★control 과 **같은 계수 경로**

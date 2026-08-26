@@ -10,8 +10,17 @@
 /** 하이드레이션 불일치로 셀 오류 — **두 모드가 같은 계수 경로를 쓴다**(대조군의 존재 이유). */
 const HYDRATION_RE = /Hydration failed|error #418|errors\/418|Text content/;
 const NOISE_RE = /PROBE_ALIVE|Failed to load resource|net::|CORS/;
+/**
+ * 노이즈를 걷어낸 줄 — **계수와 진단 표시가 같은 필터를 쓰게** 하는 단일 통로.
+ * ★이것이 없어서 `run` 모드가 `NOISE_RE`(이 모듈의 **지역 상수**)를 참조한 채 남았고,
+ *   그 한 줄 때문에 측정 모드가 `ReferenceError` 로 **즉시 죽었다**(2026-08-27 실측).
+ *   `control` 모드는 이 줄을 지나지 않아 **통과했고**, 그래서 프로브가 살아 있는 것처럼 보였다.
+ */
+export function relevantErrors(lines) {
+  return lines.filter((e) => !NOISE_RE.test(e));
+}
 export function countHydration(lines) {
-  return lines.filter((e) => !NOISE_RE.test(e)).filter((e) => HYDRATION_RE.test(e)).length;
+  return relevantErrors(lines).filter((e) => HYDRATION_RE.test(e)).length;
 }
 
 /**

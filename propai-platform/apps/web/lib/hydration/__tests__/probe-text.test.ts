@@ -12,7 +12,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  countHydration, samePath, pickMutableText, decideControlVerdict, decideRunVerdict,
+  countHydration, relevantErrors, samePath, pickMutableText, decideControlVerdict, decideRunVerdict,
 } from "@/lib/hydration/probe-text.mjs";
 
 describe("countHydration — 두 모드가 공유하는 계수 경로", () => {
@@ -36,6 +36,45 @@ describe("countHydration — 두 모드가 공유하는 계수 경로", () => {
       "[pageerror] PROBE_ALIVE",
       "[pageerror] Minified React error #418; …args[]=text",
     ])).toBe(1);
+  });
+});
+
+describe("relevantErrors — 계수와 진단 표시가 **같은 필터**를 쓴다", () => {
+  /**
+   * ★왜 이 함수가 생겼나(2026-08-27 실측): `run` 모드가 이 모듈의 **지역** 상수 `NOISE_RE` 를
+   *   자유 식별자로 참조한 채 남아 **실행 즉시 `ReferenceError`** 로 죽었다. `control` 모드는
+   *   그 줄을 지나지 않아 통과했고, 그래서 **측정 모드만 죽은 도구가 살아 있어 보였다.**
+   *   필터를 하나로 노출해 두 모드가 같은 통로를 쓰게 한다.
+   *   ★실행 가능성 자체는 여기서 못 잡는다 — 그건 `eslint.config.mjs` 의 `no-undef` 가 잡는다
+   *     (같은 규율을 두 곳에 두지 않는다).
+   */
+  const 잡음 = [
+    "[pageerror] PROBE_ALIVE",
+    "[console] Failed to load resource: the server responded with a status of 401 ()",
+    "[console] net::ERR_FAILED",
+    "[console] Access to resource blocked by CORS policy",
+  ];
+  const 진짜 = [
+    "[pageerror] Minified React error #418; …args[]=text",
+    "[console] TypeError: x is not a function",
+  ];
+
+  it("★두 모집단이 갈린다 — 잡음은 지워지고 나머지는 **남는다**", () => {
+    // 한쪽만 단언하면 "전부 지운다" 는 오구현이 초록이다(§D-19 양방향).
+    const out = relevantErrors([...잡음, ...진짜]);
+    expect(out).toEqual(진짜);
+  });
+
+  it("잡음만 주면 빈 배열", () => {
+    expect(relevantErrors(잡음)).toEqual([]);
+  });
+
+  it("★countHydration 은 relevantErrors 를 통과한 것만 센다(두 함수의 정합)", () => {
+    const 입력 = [...잡음, ...진짜];
+    // 기대값을 손으로 쓰지 않고 **다른 경로로 파생**한다 — 손 계산은 두 함수가 어긋나도 맞을 수 있다.
+    const 파생 = relevantErrors(입력).filter((e) => /Hydration failed|error #418|errors\/418|Text content/.test(e)).length;
+    expect(countHydration(입력)).toBe(파생);
+    expect(파생).toBeGreaterThan(0); // 공허 진리 가드 — 0 이면 위 단언이 아무것도 안 본다
   });
 });
 
