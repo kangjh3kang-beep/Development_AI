@@ -66,7 +66,13 @@ type GrowthInsight = {
   created_at: string | null;
 };
 
-type GrowthInsightList = { items: GrowthInsight[]; total: number };
+type GrowthInsightList = {
+  items: GrowthInsight[];
+  total: number;
+  /** severity → 건수. **서버가 필터 전체에 대해** 센 값(조치대상만·비조치 타입 제외).
+   *  ★`items` 는 `limit` 으로 잘리지만 이 값은 **안 잘린다** — 그래서 집계는 이것을 쓴다. */
+  actionable_counts?: Partial<Record<InsightSeverity, number>>;
+};
 type AckResult = { id: string; status: string };
 
 /* ------------------------------------------------------------------ */
@@ -734,6 +740,9 @@ export function GrowthDashboard() {
   const [tab, setTab] = useState<GrowthTab>("insights");
   const [insights, setInsights] = useState<GrowthInsight[]>([]);
   const [total, setTotal] = useState(0);
+  // ★서버가 준 집계. `insights` 는 `limit=200` 으로 잘리지만 이 값은 안 잘린다.
+  const [actionableCounts, setActionableCounts] =
+    useState<Partial<Record<InsightSeverity, number>> | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [authed, setAuthed] = useState(true);
   const [error, setError] = useState("");
@@ -744,11 +753,15 @@ export function GrowthDashboard() {
     setError("");
     try {
       const res = await apiClient.get<GrowthInsightList>(
-        "/growth/insights?sort=severity&limit=200",
+        // ★`status=open` — 서버 필터를 쓴다(5종이 이미 있는데 화면이 하나도 안 썼다).
+        //   종전엔 **이미 확인/기각한 항목이 200칸의 슬롯을 먹고** 미처리 항목을 밀어냈다
+        //   (라이브 실측 2026-08-26: critical 79칸 중 5건이 acknowledged).
+        "/growth/insights?sort=severity&status=open&limit=200",
         { useMock: false },
       );
       setInsights(res.items ?? []);
       setTotal(res.total ?? 0);
+      setActionableCounts(res.actionable_counts ?? null);
       setAuthed(true);
     } catch (e) {
       if (e instanceof ApiClientError && (e.status === 401 || e.status === 403)) {
@@ -831,10 +844,25 @@ export function GrowthDashboard() {
   const openInsights = insights.filter(
     (it) => it.status === "open" && !NON_ACTIONABLE_TYPES.has(it.insight_type),
   );
+  // ★★집계는 **서버가 준 값**을 쓴다 — 이 페이지(`limit=200`)를 세지 않는다.
+  //   【왜 바꿨나 · 라이브 실측 2026-08-26】라이브 분포가 critical 79 · warn 476 · info 2,544 라
+  //   `sort=severity&limit=200` 응답은 `critical 79 + warn 121` 로 채워지고 **info 는 0행** 온다.
+  //   그래서 이 카드가 warn 을 **476이 아니라 121**로 보여 줬다(**74% 과소계상**). 즉
+  //   **페이지 크기가 집계를 결정**하고 있었다 — 집계가 아니라 표본이었다.
+  //   서버는 같은 술어로 `limit` 없이 센다(`GrowthInsightList.actionable_counts`).
+  //   ★폴백은 종전 방식(페이지 집계)이다. 서버가 값을 안 주는 구버전 응답에서도 화면이 죽지
+  //     않게 하되, **그 경우 값이 과소일 수 있다**는 것을 여기 적어 둔다.
+  const serverCounts = actionableCounts;
   const severityCounts: Record<InsightSeverity, number> = { critical: 0, warn: 0, info: 0 };
-  for (const it of openInsights) {
-    if (it.severity === "critical" || it.severity === "warn" || it.severity === "info") {
-      severityCounts[it.severity] += 1;
+  if (serverCounts) {
+    severityCounts.critical = serverCounts.critical ?? 0;
+    severityCounts.warn = serverCounts.warn ?? 0;
+    severityCounts.info = serverCounts.info ?? 0;
+  } else {
+    for (const it of openInsights) {
+      if (it.severity === "critical" || it.severity === "warn" || it.severity === "info") {
+        severityCounts[it.severity] += 1;
+      }
     }
   }
 
@@ -996,7 +1024,15 @@ export function GrowthDashboard() {
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <p className="cc-label">인사이트 목록</p>
-                <span className="text-xs text-[var(--text-hint)]">총 {total.toLocaleString("ko-KR")}건</span>
+                {/* ★★절단을 **말한다**. 종전엔 `총 N건` 만 띄우고 200행만 그려서, 나머지가
+                    잘렸다는 사실이 화면 어디에도 없었다(라이브 실측 2026-08-26: 열림 3,083건 중
+                    200행 → **warn 355건이 조용히 사라짐**). 숫자 둘의 괴리가 유일한 단서였고
+                    그것도 읽는 사람이 스스로 이어 붙여야 했다. 이제 문장으로 말한다. */}
+                <span className="text-xs text-[var(--text-hint)]">
+                  {insights.length < total
+                    ? `열림 ${total.toLocaleString("ko-KR")}건 중 ${insights.length.toLocaleString("ko-KR")}건 표시 — 나머지는 목록에 없습니다`
+                    : `열림 ${total.toLocaleString("ko-KR")}건`}
+                </span>
               </div>
               <div className="mt-4 space-y-3">
                 {insights.map((it) => {
