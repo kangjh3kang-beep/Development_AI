@@ -62,6 +62,16 @@ def _code_lines() -> list[str]:
     return src.splitlines()
 
 
+class ScannerDeadError(RuntimeError):
+    """추출기가 죽었다 — **위반이 아니다.**
+
+    ★`AssertionError` 와 **다른 예외**로 던진다. 뭉치면 *"검사기가 죽었다"* 가
+    *"깨끗하다"* 로 읽힌다(`tests/_scan_guard.py` 가 같은 규율을 강제한다).
+    ★그리고 `()` 를 돌려주면 부분집합 단언이 **공허한 참**이 되어 소비 테스트가 전부
+    초록이 된다(동료 세션 실측 지적 · 2026-08-27). 그래서 **여기서 즉시 죽인다.**
+    """
+
+
 def _ladder() -> tuple[str, ...]:
     """파이썬 SSOT 에서 SEVERITY_ORDER 를 **ast 로** 읽는다(정규식이 주석·독스트링에 뚫리지 않게)."""
     tree = ast.parse(_SEVERITY_SSOT.read_text(encoding="utf-8"))
@@ -78,7 +88,10 @@ def _ladder() -> tuple[str, ...]:
                         for e in value.elts
                         if isinstance(e, ast.Constant) and isinstance(e.value, str)
                     )
-    return ()
+    raise ScannerDeadError(
+        f"{_SEVERITY_SSOT.name} 에서 SEVERITY_ORDER 리터럴을 못 읽었다 — "
+        "재대입·동적 생성(tuple(...))으로 바뀌었을 수 있다. 추출기를 고쳐라(위반 아님)."
+    )
 
 
 def _table_keys() -> tuple[str, ...]:
@@ -89,12 +102,15 @@ def _table_keys() -> tuple[str, ...]:
     """
     src = _PANEL.read_text(encoding="utf-8")
     start = src.find("export const RISK_LEVEL_STYLE")
-    if start < 0:
-        return ()
-    end = src.find("};", start)
-    if end < 0:
-        return ()
-    return tuple(_KEY.findall(src[start:end]))
+    end = src.find("};", start) if start >= 0 else -1
+    if start < 0 or end < 0:
+        raise ScannerDeadError(
+            f"{_PANEL.name} 에서 RISK_LEVEL_STYLE 블록을 못 찾았다 — 선언이 바뀌었다(위반 아님)."
+        )
+    keys = tuple(_KEY.findall(src[start:end]))
+    if not keys:
+        raise ScannerDeadError("RISK_LEVEL_STYLE 블록은 찾았는데 키가 0개다 — 키 정규식이 죽었다.")
+    return keys
 
 
 def test_extractors_are_alive() -> None:
@@ -182,3 +198,81 @@ def test_regression_the_grade_that_was_missing(grade: str) -> None:
     """
     assert grade in _ladder(), f"사다리에서 '{grade}' 가 사라졌다(제한보호구역 등급)"
     assert grade in _table_keys(), f"배지 표에서 '{grade}' 가 사라졌다"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ★우회로 락 (동료 세션 적대 검토 · 2026-08-27)
+#
+# 위 테스트들은 *"지금 사다리 5종이 표에 다 있다"* 만 잠근다. 그런데 **등급을 늘리는 경로가
+# `SEVERITY_ORDER` 를 반드시 거치지 않는다** — `_ZONE_SEVERITY` 에 새 등급 문자열을 적으면
+# 사다리를 안 건드리고도 그 값이 API 로 나간다. 그때 `severity_rank` 는 예외가 아니라
+# **`-1` 을 조용히** 돌려주므로(실측: `except ValueError: return -1`) 아무도 안 깨진다.
+# → 그러면 위 락의 **전제 자체가 거짓**이 된다. 여기서 그 전제를 잠근다.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _produced_severities() -> set[str]:
+    """등급 **생산지**의 리터럴을 ast 로 전수한다(손으로 센 목록이 상한이 되지 않게)."""
+    tree = ast.parse(_SEVERITY_SSOT.read_text(encoding="utf-8"))
+    out: set[str] = set()
+
+    # ① _ZONE_SEVERITY: ((키워드, 등급), ...) 의 두 번째 원소
+    for node in ast.walk(tree):
+        names = (
+            [node.target]
+            if isinstance(node, ast.AnnAssign)
+            else getattr(node, "targets", [])
+            if isinstance(node, ast.Assign)
+            else []
+        )
+        for t in names:
+            if isinstance(t, ast.Name) and t.id == "_ZONE_SEVERITY":
+                if isinstance(node.value, ast.Tuple | ast.List):
+                    for e in node.value.elts:
+                        if isinstance(e, ast.Tuple) and len(e.elts) == 2:
+                            v = e.elts[1]
+                            if isinstance(v, ast.Constant) and isinstance(v.value, str):
+                                out.add(v.value)
+
+    # ② _flight_safety_severity: 함수가 **직접 반환**하는 문자열 리터럴
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "_flight_safety_severity":
+            for r in ast.walk(node):
+                if isinstance(r, ast.Return) and isinstance(r.value, ast.Constant):
+                    if isinstance(r.value.value, str):
+                        out.add(r.value.value)
+
+    if not out:
+        raise ScannerDeadError(
+            "등급 생산지에서 리터럴을 하나도 못 읽었다 — _ZONE_SEVERITY 표기가 바뀌었다(위반 아님)."
+        )
+    return out
+
+
+def test_every_grade_producer_stays_inside_the_ssot_ladder() -> None:
+    """★우회로 — 등급을 만드는 모든 경로가 `SEVERITY_ORDER` 안이어야 한다.
+
+    밖으로 나가면 `severity_rank` 가 **-1 을 조용히** 주고, 그 값이 화면 표에도 없어
+    폴백으로 흘러간다. 즉 이 락이 깨지면 **표 파리티 락의 전제가 무너진다.**
+    """
+    ladder = set(_ladder())
+    produced = _produced_severities()
+    outside = sorted(produced - ladder)
+    assert not outside, (
+        f"사다리 밖 등급이 생산된다: {outside}. "
+        "SEVERITY_ORDER 에 넣어 순위를 정의하라 — 넣지 않으면 severity_rank 가 -1 을 "
+        "조용히 돌려주고 화면에서도 폴백으로 샌다."
+    )
+
+
+def test_ladder_has_no_dead_grade() -> None:
+    """★양성 대조군 — 사다리에만 있고 **아무도 안 내는** 등급.
+
+    현재 실측 **0**(2026-08-27). 0 이 아니게 되면 사다리에 죽은 등급이 생긴 것이고,
+    그때는 위 테스트의 '부분집합' 통과가 **의미가 약해진다**(모집단이 갈라진다).
+    """
+    dead = sorted(set(_ladder()) - _produced_severities())
+    assert not dead, (
+        f"사다리에 있으나 아무 생산지도 내지 않는 등급: {dead}. "
+        "죽은 등급이면 지우고, 다른 곳에서 낸다면 _produced_severities 의 축을 넓혀라."
+    )
