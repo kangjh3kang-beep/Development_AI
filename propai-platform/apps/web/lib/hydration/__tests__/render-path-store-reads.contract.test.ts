@@ -126,12 +126,21 @@ describe("렌더 경로 라이브 저장소 읽기 — 파생형 계약", () => 
       .split("\n")
       .filter((f) => /\.tsx?$/.test(f))
       .filter((f) => !f.includes("__tests__") && !/\.test\.tsx?$/.test(f) && !f.startsWith("e2e/"));
+    // ★**양방향**으로 건다 — 한쪽만 걸면 반대쪽이 무제한이 된다(저장소 §D-19).
+    //   누락(절단)만 보면 *"너무 넓힘"* 은 **원리적으로 탐지 불가**다: 제외를 지워
+    //   테스트·`e2e/` 까지 긁어도 `missing` 은 비어 있어 초록이다(동료 세션 실측이 같은 형태를
+    //   자기 락에서 잡았다 — 하한은 파생형, 상한은 목록형이라 오구현이 정답과 구별되지 않았다).
     const missing = BROAD.filter((f) => !REPO_FILES.includes(f)).sort();
+    const extra = REPO_FILES.filter((f) => !BROAD.includes(f)).sort();
     expect(
       missing,
       "모집단이 **더 넓은 조회보다 작다** — pathspec 이나 필터가 조용히 잘라 냈다.\n" +
         "(실측 2026-08-26: `lib/**\/*.ts` 형태가 디렉토리 **직속** 164파일을 지웠고,\n" +
         " 그걸 막으라고 둔 하한 가드는 **줄어든 모집단 안에서 만족**돼 통과했다.)",
+    ).toEqual([]);
+    expect(
+      extra,
+      "모집단이 **선언된 제외를 넘어 넓다** — 테스트·`e2e/` 를 긁으면 래칫이 남의 파일로 오염된다.",
     ).toEqual([]);  });
 
   it("②탐지 — 렌더 중 실행되는 모든 형태를 잡는다", () => {
