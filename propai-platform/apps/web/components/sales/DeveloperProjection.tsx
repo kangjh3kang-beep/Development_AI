@@ -302,7 +302,12 @@ function ReconciliationView({ rec }: { rec?: Reconciliation }) {
   //   #838 이 백엔드에 사유 문구·코드를 실었는데도 그 값을 **버리고** 이 상수를 그렸다
   //   — 백엔드가 사유를 바꿔도 화면은 옛말을 계속 한다(소비처 0 = dead output).
   //   폴백 문구는 **구버전 API 응답**(사유 미탑재)에서만 쓰인다.
-  if (balanced === null) {
+  // ★`undefined` 를 `null` 과 **같은 갈래**로 본다(§19 경계는 양방향).
+  //   타입은 `balanced: boolean | null`(필수)이지만 **JSON 런타임은 그 타입을 지키지 않는다**
+  //   — 백엔드가 키를 빠뜨리면 `undefined` 가 되어 아래 최종 `else`(불일치)로 떨어지고,
+  //   `discrepancies` 는 비어 있으므로 **항목이 하나도 없는 빨간 "불일치" 배너**가 뜬다.
+  //   즉 **정상 현장을 결함으로 신고**한다(위양성도 결함이다 §A-6).
+  if (balanced === null || balanced === undefined) {
     return (
       <p className="rounded-lg border border-[var(--status-info)]/40 bg-[var(--status-info)]/10 px-2.5 py-1.5 text-[11px] text-[var(--text-secondary)]">
         <b className="text-[var(--status-info)]">독립 대사 확인 불가</b>

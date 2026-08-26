@@ -93,7 +93,7 @@ describe("연결결산 보류 가시화(#838 소비처)", () => {
   it("D1 탐지 — 보류 현장 수를 배너에 **수까지** 그린다", async () => {
     fx.withheld = 11;
     render(<DeveloperProjection />);
-    const b = await screen.findByText(/독립 대사 확인 불가/);
+    const b = await screen.findByText(/독립 대사 확인 불가 · 현장/);
     // ★수를 못 박는다. "배너가 떴다"만 보면 상수 배너로 바꿔도 초록이다.
     expect(b.textContent).toContain("11곳");
   });
@@ -102,13 +102,13 @@ describe("연결결산 보류 가시화(#838 소비처)", () => {
     fx.withheld = 0;
     render(<DeveloperProjection />);
     await rollupRendered();               // ← 공허진리 가드
-    expect(screen.queryByText(/독립 대사 확인 불가/)).toBeNull();
+    expect(screen.queryByText(/독립 대사 확인 불가 · 현장/)).toBeNull();
   });
 
   it("D3 축 비혼입 — 보류만 있을 때 **불일치** 배너는 뜨지 않는다", async () => {
     fx.withheld = 11; fx.failed = 0;
     render(<DeveloperProjection />);
-    await screen.findByText(/독립 대사 확인 불가/);
+    await screen.findByText(/독립 대사 확인 불가 · 현장/);
     expect(screen.queryByText(/독립 대사 불일치 · 현장/)).toBeNull();
   });
 
@@ -117,7 +117,7 @@ describe("연결결산 보류 가시화(#838 소비처)", () => {
     render(<DeveloperProjection />);
     const b = await screen.findByText(/독립 대사 불일치 · 현장/);
     expect(b.textContent).toContain("2곳");
-    expect(screen.queryByText(/독립 대사 확인 불가/)).toBeNull();
+    expect(screen.queryByText(/독립 대사 확인 불가 · 현장/)).toBeNull();
   });
 
   it("D5 ★배선 — 드릴다운이 **백엔드가 말한 사유**를 그린다(화면이 지어내지 않는다)", async () => {
@@ -136,11 +136,22 @@ describe("연결결산 보류 가시화(#838 소비처)", () => {
     await waitFor(() => expect(screen.getByText(/대조할 근거가 없습니다/)).toBeTruthy());
   });
 
+  it("D8 경계 — balanced 키가 **없으면**(undefined) 거짓 불일치 경보를 내지 않는다", async () => {
+    // ★백엔드가 키를 빠뜨리면 JSON 에서 undefined 가 된다. 타입은 필수라 선언하지만
+    //   **런타임은 그 타입을 지키지 않는다**(tsc 통과 실측). 종전엔 최종 else 로 떨어져
+    //   항목 0개짜리 빨간 "불일치" 배너가 떴다 — 정상 현장을 결함으로 신고한 것이다.
+    fx.recon = {} as Recon;
+    render(<DeveloperProjection />);
+    fireEvent.click(await screen.findByText("관리 ▾"));
+    await waitFor(() => expect(screen.getByText(/대조할 근거가 없습니다/)).toBeTruthy());
+    expect(screen.queryByText(/독립 대사 불일치/)).toBeNull();
+  });
+
   it("D7 축 — balanced=true 는 보류로 읽지 않는다", async () => {
     fx.recon = { balanced: true };
     render(<DeveloperProjection />);
     fireEvent.click(await screen.findByText("관리 ▾"));
     await waitFor(() => expect(screen.getByText(/독립 대사 통과/)).toBeTruthy());
-    expect(screen.queryByText(/독립 대사 확인 불가/)).toBeNull();
+    expect(screen.queryByText(/독립 대사 확인 불가/)).toBeNull();   // 드릴다운 표면
   });
 });
