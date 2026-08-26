@@ -628,6 +628,14 @@ def build_rough_scenario_report_model(
     #   원장이 화면에만 있고 PDF/DOCX/PPTX 에 없으면 **가장 필요한 자리에서 빠진다.**
     #   ★값을 다시 계산하지 않는다 — 응답에 이미 실린 `legacy_ledger` 를 옮길 뿐이다.
     ledger = scenario.get("legacy_ledger") or {}
+    # ★제원 — 원본 양식은 표 **위**에 사업 제원을 둔다. 인쇄본에서 특히 필요하다
+    #   (읽는 사람이 "어느 사업의 수지인가"를 먼저 확인한다).
+    _hdr = ledger.get("header") or []
+    if _hdr:
+        feas_blocks.append(KVTableBlock(rows=[
+            (f"{h['label']}({h['unit']})" if h.get("unit") else h["label"], h["value"])
+            for h in _hdr
+        ]))
     ledger_rows: list[list[Any]] = []
     for sec in ledger.get("sections") or []:
         for g in sec.get("groups") or []:

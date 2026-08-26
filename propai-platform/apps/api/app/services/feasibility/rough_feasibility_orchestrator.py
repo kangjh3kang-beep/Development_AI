@@ -34,7 +34,10 @@ from app.services.land_intelligence.comprehensive_analysis_service import (
 )
 from app.services.land_intelligence.desk_appraisal_service import desk_appraisal
 from app.services.quality.precision import PrecisionGrade, lowest
-from app.services.tax.project_charges import compute_developer_stage_charges, parse_bool_flag
+from app.services.tax.project_charges import (
+    compute_developer_stage_charges,
+    parse_tristate_flag,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -261,6 +264,39 @@ def _num(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def construction_breakdown(cc: dict[str, Any]) -> dict[str, Any]:
+    """공사비 **직접/간접 분해** — 원장이 「설계비·감리비」를 그리는 재료.
+
+    `construction_cost_engine` 은 이미 `{design_fee_won, supervision_fee_won, contingency_won,
+    general_expense_won}` 를 **비율과 함께** 돌려주는데, 종전엔 총액과 ㎡단가 **두 숫자만**
+    남겼다. 원장이 그 행들을 못 그린 이유가 *"엔진에 없어서"* 가 아니라 **여기서 버려서**였다.
+
+    ★**분해지 추가가 아니다** — 엔진이 `total = direct + indirect` 로 합산하므로 쪼개도
+      **합계가 변하지 않는다**(원장 검산이 그것을 확인한다).
+
+    ★**엔진이 주는 항목을 골라내지 않는다** — `_won` 으로 끝나는 키를 **전부** 옮긴다.
+      새 간접비가 생기면 라벨은 없어도 **행은 나온다**(조용히 사라지지 않게).
+
+    ★모듈 레벨 함수인 이유: 인라인 dict 리터럴이면 **직접 태울 수 없어** 이 배선이 무잠금이
+      된다(변이 실증 — 이 저장소에서 **세 번째** 같은 자리다: `_compact` · `ratio_basis` · 이것).
+    """
+    direct = cc.get("direct") or {}
+    indirect = cc.get("indirect") or {}
+    direct_won = direct.get("total_direct_cost_won")
+    if direct_won is None or not indirect:
+        return {}   # 분해가 없으면 **키를 만들지 않는다** — 소비처가 종전대로 한 행을 그린다
+    return {
+        "direct_won": int(direct_won),
+        "indirect": {
+            "total_won": int(indirect.get("total_indirect_cost_won") or 0),
+            "items": {k: int(v) for k, v in indirect.items()
+                      if k.endswith("_won") and k != "total_indirect_cost_won"},
+            "ratios": dict(indirect.get("ratios") or {}),
+            "base_won": int(direct_won),
+        },
+    }
 
 
 def build_cost_ratio_basis(
@@ -684,6 +720,14 @@ async def build_rough_scenario(
             constr_block = {
                 "total_won": constr_total,
                 "unit_per_sqm_won": int(cc["direct"]["unit_cost_per_sqm"]),
+                # ★2026-08-26 — 직접/간접 **분해를 버리지 않는다**(additive).
+                #   `construction_cost_engine` 은 이미 `{design_fee_won, supervision_fee_won,
+                #   contingency_won, general_expense_won}` 를 **비율과 함께** 돌려주는데
+                #   종전엔 총액과 ㎡단가 **두 숫자만** 남겼다. 원장이 「설계비·감리비·예비비」를
+                #   못 그린 이유가 *"엔진에 없어서"* 가 아니라 **여기서 버려서**였다.
+                #   ★**분해지 추가가 아니다** — 엔진이 `total = direct + indirect` 로 합산하므로
+                #     원장이 쪼개도 **합계가 변하지 않는다**(검산이 그것을 확인한다).
+                **construction_breakdown(cc),
                 "basis": c_basis, "source": c_source,
             }
         except Exception as e:  # noqa: BLE001 — 공사비 산출 실패는 정직 null
@@ -753,7 +797,12 @@ async def build_rough_scenario(
                 #   (unit_standards SSOT)을 직접 전달한다. (D1 이후 avg_area_pyeong도 전용평
                 #   규약이지만, rough는 input_used 의존 없이 SSOT 직접 사용이 정본)
                 avg_area_sqm=_service._get_type_avg_unit_area(dev_type_final) or 85.0,
-                in_infra_charge_zone=parse_bool_flag(overrides.get("in_infra_charge_zone")),
+                # ★3상태 파서(2026-08-26 · #865 가 놓친 **네 번째 층**). `parse_bool_flag` 는
+                #   **미조회(None)를 미지정(False)으로 뭉개** 화면에 *"기반시설부담구역 미지정"*
+                #   이라는 **없는 관측 주장**을 냈다. #865 가 엔진·통합·모듈 세 층을 고쳤는데
+                #   **이 호출부가 남아** 라이브에서 그대로였다 — **라이브 프로브가 아니었으면
+                #   「고쳤다」로 남았을 것**이다.
+                in_infra_charge_zone=parse_tristate_flag(overrides.get("in_infra_charge_zone")),
             )
             charges_total = int(charges_result["total_won"])
             _compact = compact_charge_items(charges_result)

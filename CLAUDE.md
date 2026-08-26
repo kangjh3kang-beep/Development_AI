@@ -483,3 +483,68 @@ A~F 를 다 지켜도 **재는 행위 자체가 틀리면** 아무 소용이 없
   보이지 않고 지나간다.
 - ★**파생형으로 바꾸면 내가 못 센 것이 나온다.** 손 grep 은 `services/`·`routers/` 만 봐서
   `tasks/_async_batch.py` 를 **아예 세지 못했다**.
+
+## 성장루프·큐·배포 판정 (2026-08-26 신설 — ★산문이 아니라 **명령**을 적는다)
+
+★**이 절을 산문으로 적지 않는 이유**: 같은 날 통합자가 큐 정렬을 *"테스트 제외한 파일 수"* 라는
+**산문**으로 줬고, 받은 쪽이 그것을 다르게 구현해 **없는 결함을 신고**했다. **산문은 여러 구현을
+허용한다.** 아래는 전부 **붙여넣어 돌릴 수 있는 형태**다.
+
+### 성장루프 조회
+
+```bash
+TOK=$(curl -s -X POST https://api.4t8t.net/api/v1/auth/login -H 'Content-Type: application/json' \
+  -d '{"email":"admin@4t8t.net","password":"admin1234"}' | python3 -c 'import json,sys;print(json.load(sys.stdin)["access_token"])')
+curl -s -H "Authorization: Bearer $TOK" \
+  'https://api.4t8t.net/api/v1/growth/insights?sort=created_at&limit=500'
+```
+- ★**기본 정렬이 `severity` 다**(`created_at` 아님) — 최신을 보려면 `sort=created_at` 을 **명시**한다.
+- ★**토큰이 만료되면 401 이 아니라 `0건`이 온다.** `0건`을 보면 **재로그인부터** 하고,
+  그 전에는 *"인사이트가 없다"* 고 결론내지 않는다.
+- ★`/health` 가 `healthy` 여도 **데이터 경로는 느릴 수 있다.** 판정하려면 **인증 붙인 실엔드포인트**를
+  태워라(실측 2026-08-26: `/health` degraded 와 `/projects` 45초 타임아웃이 함께 왔고, 회복도 함께 왔다).
+
+### 배포 판정 — ★브랜치 sha 로 재지 마라(스쿼시 머지)
+
+```bash
+curl -s https://4t8t.net/sw.js | grep -m1 '^const CACHE_NAME'   # ★줄시작 앵커 필수
+MC=$(gh pr view <N> --json mergeCommit --jq '.mergeCommit.oid')  # ★브랜치 sha 아님
+git merge-base --is-ancestor "$MC" origin/main && echo 포함
+```
+브랜치 sha 는 **main 의 조상이 아니다** — 그것으로 재면 `미포함` 이 나와 **거짓 미배포 보고**가 된다
+(실측 대조군으로 확인: 머지커밋 `포함` / 브랜치 sha `미포함`).
+
+### 큐 순서 — strict 보호 + auto-merge 는 브랜치를 **안 밀어 준다**
+
+```bash
+# 런타임 델타(테스트·e2e 제외). 이 수가 클수록 먼저.
+gh pr view <N> --json files --jq '.files[].path' \
+ | grep -E '^propai-platform/apps/(web|api)/' \
+ | grep -vcE '(^|/)(tests?|e2e)/|\.test\.|\.spec\.|__tests__|vitest\.config'
+gh api -X PUT repos/kangjh3kang-beep/Development_AI/pulls/<N>/update-branch  # BEHIND 면 손이 필요
+```
+1. 사용자에게 닿는 실결함(런타임 델타 > 0) → 2. 라이브 응답 불변(락·경화) → 3. 델타 0(test·docs, **서로 순위 없음**)
+- ★**한 번에 하나만** `update-branch`. 동시에 밀면 CI 약 12분 vs 커밋 간격 13분이라 **서로를 무효화**한다.
+- ★**순위표는 휘발성**이다 — 값을 물려받지 말고 **위 명령을 다시 돌려라**(30분 만에 상위 2건이 새로 들어온 실측이 있다).
+- ★`gh pr checks` 의 `pending 0` 은 **소요시간**이지 미실행이 아니다 → 상태는 `gh run view <id> --json jobs`.
+- ★`Cloudflare Pages`·`Workers Builds` 는 **열린 PR 전부에서 상시 FAILURE 이고 필수가 아니다**(실측 5/5).
+  필수 목록은 파생시켜라: `gh api repos/.../branches/main/protection --jq '.required_status_checks.contexts[]'`
+
+### 회귀 기준선 — ★"깨진 로컬"을 기준선으로 쓰지 마라
+
+```bash
+gh run view <id> --log | grep -E '^Backend \(pytest\)' | grep -E '[0-9]+ passed'
+```
+CI 는 **실패 0** 이다(실측 `10,592 passed` + 루트 `1,004 passed`). 로컬에서 뜬
+`10,362 passed · 69 failed` 를 기준선으로 삼으면 **새 회귀가 그 69 안으로 흡수된다.**
+★**빨강 개수가 아니라 통과 수를 대조**하라 — 수집 실패는 조용하다(실측: 추가 테스트 8건 ↔ CI 통과 수 +8 로 수집 확인).
+로컬 CI 재현은 `postgres:16@55432` + GDAL 이 필요하다 — **근사치는 그 자체가 거짓 기준선**이다.
+
+### 라이브 프로브 — ★검증 비용이 보호 대상과 같으면 자기모순이다
+
+유료 산출물이 지워지는지 확인하려고 **그 유료 산출물을 사지 마라**(렌더 3,000원/건).
+결함 경로를 다시 쪼개면 돈 없이 잰다 — 결함은 *"구매"* 가 아니라 *"저장분이 있는 상태에서 와이프가 도는 것"* 이다.
+- ★**앱이 스스로 쓴 값이 내가 심은 값보다 강한 대조군**이다(내가 심은 `projectName` 카나리는
+  **새로고침만으로** 사라졌다 — 앱이 그 필드를 관리한다. 프로젝트 목록 `20 → 0` 으로 바꿔 갈랐다).
+- ★**두 모집단을 갈라라**: 남아야 할 것이 남고 **지워져야 할 것이 지워지는지**를 같은 실행에서 본다.
+- ★화면 검증 **전에** `caches.keys()` — 구 캐시가 남으면 *"배포됐는데 화면이 옛것"* 을 **배선 결함으로 오진**한다.
