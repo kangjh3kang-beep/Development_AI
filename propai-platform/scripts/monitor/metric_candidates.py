@@ -43,7 +43,13 @@ from tests._scan_guard import code_lines             # noqa: E402  ★재구현 
 #  · 지역 식별자·함수명           → **최소화된다** → 후보 아님(프론트 한정)
 _STR = re.compile(r'"([^"\\\n]{4,60})"|\'([^\'\\\n]{4,60})\'')
 _PROP = re.compile(r'\b([a-z][a-zA-Z0-9]{5,28})\??:')
-_PYDEF = re.compile(r'^\s*(?:async\s+)?def\s+([a-zA-Z_][a-zA-Z0-9_]{4,40})|^\s*class\s+([A-Za-z_][A-Za-z0-9_]{3,40})')
+# ★`re.M` 이 **필수**다 — 이 패턴은 `^` 앵커를 쓰는데 MULTILINE 이 없으면 `^` 가
+#   **문자열 맨 앞에서만** 맞는다. 즉 추가된 실행 라인의 **첫 줄이 def/class 일 때만** 잡히고
+#   나머지는 전부 놓친다. 실측(2026-08-26): `#849` 의 `def max_area_sqm_for` 를 못 찾아
+#   **후보 0개 + exit 0** 을 냈다(이 도구가 막으려던 바로 그 "조용한 빈 목록"이다).
+#   ★더 나쁜 것은 **가끔 맞았다**는 점이다 — `#843` 은 우연히 `def` 가 첫 줄이라 1개를 냈고,
+#     그래서 도구가 도는 것처럼 보였다. 틀리기만 하면 금방 드러나는데 섞이면 신뢰가 쌓인 뒤 배신한다.
+_PYDEF = re.compile(r'^\s*(?:async\s+)?def\s+([a-zA-Z_][a-zA-Z0-9_]{4,40})|^\s*class\s+([A-Za-z_][A-Za-z0-9_]{3,40})', re.M)
 
 
 def added_lines(base: str, paths: list[str]) -> tuple[str, str]:
