@@ -26,6 +26,7 @@ import { useDevelopmentPlanStore } from "@/store/useDevelopmentPlanStore";
 import { usePaidRenderStore } from "@/store/usePaidRenderStore";
 import { useRegistryAnalysisStore } from "@/store/useRegistryAnalysisStore";
 import { currentUserId, decodeTokenUser } from "@/lib/account-scope";
+import { withWritesSuspended } from "@/lib/account-scoped-storage";
 import {
   SATONG_DOMINANT_CONSTRAINT_KEY,
   SATONG_MAP_SELECTION_KEY,
@@ -92,19 +93,26 @@ export function clearAllProjectData(): void {
   try { useProjectStore.setState({ projects: [] } as never); } catch { /* noop */ }
   try { useLandScheduleStore.setState({ byProject: {} } as never); } catch { /* noop */ }
   // ★유료 산출물(렌더 3,000원/건 · 등기 권리분석 1,200원/필지)은 **키를 지우지 않는다** —
-  //   지우면 사용자가 이미 낸 돈이 사라진다. 대신 계정별 키(`<base>__<uid>`)로 갈라 두고,
-  //   전환 시에는 **메모리 상태만** 비운 뒤 새 계정 키에서 다시 하이드레이션한다.
-  //   이 호출이 없으면 화면에는 **이전 계정의 유료 산출물이 그대로 남는다**(격리 구멍).
-  //   ★순서가 계약이다: 먼저 비우고(=이전 계정 잔재 제거) 그다음 rehydrate(=본인 것 복원).
-  //     디바운스 저장소가 같은 키의 대기 쓰기를 **덮어쓰므로** 마지막 값(본인 것)이 남는다.
-  //   ★두 스토어를 배열로 묶어 돌리지 않는다 — 유니온 타입이 되어 `setState` 시그니처가
-  //     서로 호환되지 않는다(tsc 가 잡았다). 각각 명시한다.
-  try { usePaidRenderStore.setState({ byProject: {} } as never); } catch { /* noop */ }
-  try { void usePaidRenderStore.persist?.rehydrate(); } catch { /* noop */ }
-  try { useRegistryAnalysisStore.setState({ byProject: {} } as never); } catch { /* noop */ }
-  try { void useRegistryAnalysisStore.persist?.rehydrate(); } catch { /* noop */ }
-  try { useDevelopmentPlanStore.setState({ byProject: {} } as never); } catch { /* noop */ }
-  try { void useDevelopmentPlanStore.persist?.rehydrate(); } catch { /* noop */ }
+  //   지우면 사용자가 이미 낸 돈이 사라진다. 계정별 키(`<base>__<uid>`)로 갈라 두고
+  //   여기서는 **메모리 상태만** 비운다.
+  //
+  // ★★**쓰기 정지 창 안에서** 비운다 — 이것이 계약이다.
+  //   `#839` 는 여기서 그냥 `setState({byProject:{}})` 를 부르고 곧바로 `rehydrate()` 가
+  //   *"대기 쓰기를 덮어쓴다"* 고 적었다. **그 주장이 거짓이었다**(적대 리뷰가 실행 재현):
+  //   zustand `hydrate()` 는 **버전 마이그레이션 때만** `setItem` 을 부른다. 그래서 빈 값이
+  //   그대로 flush 돼 **첫 로그아웃에 유료 산출물이 영구 소실**됐다. 세 로그아웃 경로가 모두
+  //   `clearOnLogout()` 을 **토큰 제거보다 먼저** 부르므로 교차계정 가드도 통과했다.
+  //   ★그래서 라이브러리 내부 동작에 기대지 않는다 — **쓰기를 아예 못 하게** 만든다.
+  //
+  // ★복원은 여기서 하지 않는다. `ensureDataOwner()` → `syncAccountScopedStores()` 가
+  //   **계정이 바뀐 것을 보고** 한다(로그아웃 경로에서 이전 계정 것을 되살리지 않게).
+  withWritesSuspended(() => {
+    // ★스토어를 배열로 묶어 돌리지 않는다 — 유니온 타입이 되어 `setState` 시그니처가
+    //   서로 호환되지 않는다(tsc 가 잡았다). 각각 명시한다.
+    try { usePaidRenderStore.setState({ byProject: {} } as never); } catch { /* noop */ }
+    try { useRegistryAnalysisStore.setState({ byProject: {} } as never); } catch { /* noop */ }
+    try { useDevelopmentPlanStore.setState({ byProject: {} } as never); } catch { /* noop */ }
+  });
   pulled = false; // 빈 상태가 서버로 syncUp되지 않도록(scheduleSyncUp이 pulled=false면 무시)
   for (const k of PROJECT_PERSIST_KEYS) {
     try { window.localStorage.removeItem(k); } catch { /* noop */ }
@@ -161,6 +169,30 @@ export function clearOnLogout(): void {
 
 /** 현재 토큰의 사용자와 로컬 데이터 소유자가 다르면(계정 전환·잔존) 로컬을 즉시 비운다.
  *  앱 로드/로그인 직후 호출 → 다른 계정 데이터 노출을 원천 차단. */
+/** 마지막으로 계정 스코프 스토어를 맞춘 사용자. `null` 이면 아직 한 번도 안 맞췄다. */
+let _lastScopedUid: string | null = null;
+
+/**
+ * 계정별 스토어를 **지금 로그인한 계정의 키**로 다시 하이드레이션한다.
+ *
+ * ★왜 `propai_data_owner` 판정과 **별도**인가 (2026-08-26 · 적대 리뷰가 적발):
+ *   세션 만료는 토큰만 지우고 `propai_data_owner` 는 **남긴 채** `/login` 으로 하드 내비게이션한다
+ *   (`lib/api-client.ts`). 새 페이지는 **토큰 없이** 스토어를 하이드레이션하므로 어댑터의 스코프가
+ *   `guest` 로 고착되고, **같은 계정으로 다시 로그인**하면 `owner === uid` 라 와이프도 복원도
+ *   일어나지 않는다. 그 뒤로 그 세션에서 산 유료 산출물은 교차계정 가드에 걸려
+ *   **어느 키에도 기록되지 않고 조용히 사라진다.**
+ *   → 그래서 소유자 일치 여부와 **무관하게** 계정이 바뀌었으면 맞춘다.
+ */
+export function syncAccountScopedStores(): void {
+  if (typeof window === "undefined") return;
+  const uid = currentUserId();
+  if (_lastScopedUid === uid) return;
+  _lastScopedUid = uid;
+  try { void usePaidRenderStore.persist?.rehydrate(); } catch { /* noop */ }
+  try { void useRegistryAnalysisStore.persist?.rehydrate(); } catch { /* noop */ }
+  try { void useDevelopmentPlanStore.persist?.rehydrate(); } catch { /* noop */ }
+}
+
 export function ensureDataOwner(): void {
   if (typeof window === "undefined") return;
   const uid = decodeTokenUser(window.localStorage.getItem("propai_access_token"));
@@ -170,6 +202,8 @@ export function ensureDataOwner(): void {
     clearAllProjectData();
     try { window.localStorage.setItem(DATA_OWNER_KEY, uid); } catch { /* noop */ }
   }
+  // ★소유자 일치 여부와 무관하게 맞춘다 — 위 독스트링의 `guest` 고착 경로를 닫는다.
+  syncAccountScopedStores();
 }
 
 // 백엔드 UUID 프로젝트만 /projects/{id} 경로로 분석 스냅샷을 직접 영속한다.
