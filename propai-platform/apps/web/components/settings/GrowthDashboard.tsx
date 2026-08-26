@@ -189,6 +189,35 @@ export function coverageRows(cov: unknown): { label: string; value: string }[] {
  * ★모르는 코드는 **감추지 않고 원문 그대로** 보여준다. 숨기면 분포 합이 틀어지고,
  *   "새 실패 유형이 생겼다"는 가장 중요한 신호가 조용히 사라진다.
  */
+/**
+ * 자동 PR 파이프라인 상태 코드 → 한글.
+ *
+ * ★왜 필요한가(라이브 실측 2026-08-27): `improvement_proposal` **53건 전부**가
+ * `pr_status="artifact_only"` 인데 화면은 그 **영문 원문을 그대로** 찍었다.
+ * `artifact_only` 의 뜻은 *"`GH_TOKEN` 이 없어 PR 을 만들지 못하고 아티팩트만 남겼다"* 인데,
+ * 운영자는 그것이 **정상 축약인지 장애인지** 알 수 없다.
+ * ★이건 `#808`(인사이트 7종이 라벨 없이 raw 로 떴다)과 **같은 결함 클래스**다 —
+ *   그때 고친 것은 `insight_type` 축이고, 이 축은 남아 있었다.
+ *
+ * 원천은 `tasks/growth_pr_task._mark_pr_status` 호출부 4종 + `improvement_agent.py:204`
+ * 초기값 1종이고, `tests/test_insight_metrics_key_coverage.py` 가 그 집합과 대조한다.
+ *
+ * ★모르는 코드는 **감추지 않고 원문 그대로** 보여준다 — 새 상태가 생겼다는 신호를
+ *   숨기면 그것이 가장 조용한 결함이 된다(REASON_LABELS 와 같은 규율).
+ */
+const PR_STATUS_LABELS: Record<string, string> = {
+  draft_only: "PR 준비됨(봇 대기)",
+  artifact_only: "PR 미생성 — 토큰 없음(제안만 보관)",
+  pr_created: "Draft PR 생성됨",
+  pr_failed: "PR 생성 실패",
+  rejected_path: "거부 — 허용 경로 밖 파일",
+};
+
+/** 상태 코드 → 한글. 모르는 코드는 **원문 그대로**(숨기지 않는다). */
+export function prStatusLabel(code: string): string {
+  return PR_STATUS_LABELS[code] ?? code;
+}
+
 const REASON_LABELS: Record<string, string> = {
   timeout: "타임아웃",
   parse: "응답 파싱 실패",
@@ -372,7 +401,7 @@ export function InsightMetrics({ insight }: { insight: GrowthInsight }) {
       const prStatus = str(m.pr_status);
       if (conf !== null) rows.push({ label: "신뢰도", value: pct(conf) });
       if (files !== null) rows.push({ label: "영향 파일", value: `${files.toLocaleString("ko-KR")}개` });
-      if (prStatus) rows.push({ label: "PR 상태", value: prStatus });
+      if (prStatus) rows.push({ label: "PR 상태", value: prStatusLabel(prStatus) });
       // ★자동 머지가 **꺼져 있다**는 사실이 이 카드의 안전 정보다 — 사람 승인 없이는
       //   아무것도 반영되지 않는다는 것을 화면이 말해야 한다.
       rows.push({ label: "반영", value: "사람 승인 필요(자동 머지 없음)" });

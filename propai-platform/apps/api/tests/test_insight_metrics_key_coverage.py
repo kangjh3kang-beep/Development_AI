@@ -40,6 +40,8 @@ from pathlib import Path
 _API = Path(__file__).resolve().parents[1]
 _WEB = _API.parents[0] / "web"
 _ANALYZER = _API / "app" / "services" / "growth" / "analyzer.py"
+_PR_TASK = _API / "app" / "tasks" / "growth_pr_task.py"
+_AGENT = _API / "app" / "services" / "growth" / "improvement_agent.py"
 _DASH = _WEB / "components" / "settings" / "GrowthDashboard.tsx"
 
 #: 그리지 않기로 **결정한** 키 → 사유. 사유 없는 면제는 문법적으로 불가능하다(dict 값 필수).
@@ -103,6 +105,14 @@ def _produced() -> dict[str, set[str]]:
             "analyzer.py 에서 insight dict 를 하나도 못 읽었다 — 구조가 바뀌었다(위반 아님)."
         )
     return out
+
+
+def _dash_code() -> str:
+    """대시보드에서 **주석 3종(줄·블록·JSX)** 을 걷은 실행 소스."""
+    src = _DASH.read_text(encoding="utf-8")
+    for rx in (_JSX_COMMENT, _BLOCK_COMMENT):
+        src = rx.sub(lambda m: "\n" * m.group(0).count("\n"), src)
+    return _LINE_COMMENT.sub("", src)
 
 
 def _referenced() -> set[str]:
@@ -191,4 +201,79 @@ def test_coverage_is_surfaced_type_agnostically() -> None:
     assert "}" in between and between.count("}") >= 2, (
         "analysis_coverage 가 특정 case 안에 있는 것으로 보인다 — switch 밖으로 빼라.\n"
         f"검사한 꼬리: {between[-200:]!r}"
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ★pr_status 라벨 파리티 (2026-08-27)
+#
+# 라이브 실측: `improvement_proposal` **53건 전부** `pr_status="artifact_only"` 인데
+# 화면은 **영문 원문을 그대로** 찍고 있었다. `artifact_only` = *"GH_TOKEN 이 없어 PR 미생성"*
+# 인데 운영자는 그것이 정상 축약인지 장애인지 알 수 없다.
+# `#808`(인사이트 7종이 라벨 없이 raw 로 떴다)과 **같은 결함 클래스**의 다른 축이다.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_PR_LABEL_KEY = re.compile(r"^\s*([a-z_]+)\s*:\s*\"", re.M)
+
+
+def _pr_status_values() -> set[str]:
+    """백엔드가 쓰는 pr_status 값을 **두 생산지**에서 파생한다.
+
+    ① `growth_pr_task._mark_pr_status(db, id, "<값>")` 호출부
+    ② `improvement_agent` 의 초기값 `"pr_status": "<값>"`
+    ★한 곳만 보면 초기값(`draft_only`)을 놓친다 — 실제로 그 값은 태스크가 아니라
+      제안 생성 시점에 박힌다.
+    """
+    out: set[str] = set()
+    out |= set(re.findall(r'_mark_pr_status\([^,]+,\s*[^,]+,\s*"([a-z_]+)"',
+                          _PR_TASK.read_text(encoding="utf-8")))
+    out |= set(re.findall(r'"pr_status":\s*"([a-z_]+)"',
+                          _AGENT.read_text(encoding="utf-8")))
+    if not out:
+        raise ScannerDeadError("pr_status 값을 하나도 못 읽었다 — 표기가 바뀌었다(위반 아님).")
+    return out
+
+
+def _pr_label_keys() -> set[str]:
+    src = _dash_code()
+    start = src.find("const PR_STATUS_LABELS")
+    end = src.find("};", start) if start >= 0 else -1
+    if start < 0 or end < 0:
+        raise ScannerDeadError("PR_STATUS_LABELS 블록을 못 찾았다(위반 아님).")
+    keys = set(_PR_LABEL_KEY.findall(src[start:end]))
+    if not keys:
+        raise ScannerDeadError("PR_STATUS_LABELS 에서 키를 하나도 못 읽었다(위반 아님).")
+    return keys
+
+
+def test_pr_status_extractors_are_alive() -> None:
+    """★공허한 초록 방지 + 양성 대조군."""
+    vals = _pr_status_values()
+    keys = _pr_label_keys()
+    assert len(vals) >= 4, f"값을 {len(vals)}개만 읽었다: {sorted(vals)}"
+    assert "artifact_only" in vals, "라이브 53/53 이 쓰는 값을 못 읽었다 — 추출기 사망"
+    assert "draft_only" in vals, "초기값 축(improvement_agent)을 못 읽었다"
+    assert "artifact_only" in keys
+
+
+def test_every_pr_status_has_a_korean_label() -> None:
+    """백엔드가 쓰는 상태 코드는 전부 한글 라벨이 있어야 한다."""
+    missing = sorted(_pr_status_values() - _pr_label_keys())
+    assert not missing, (
+        f"영문 raw 로 화면에 뜨는 pr_status: {missing}. "
+        "PR_STATUS_LABELS 에 추가하라 — #808 과 같은 결함 클래스다."
+    )
+
+
+def test_pr_status_labels_have_no_phantom() -> None:
+    """역방향(느슨) — 아무도 안 내는 라벨은 표를 신뢰할 수 없게 만든다."""
+    phantom = sorted(_pr_label_keys() - _pr_status_values())
+    assert not phantom, f"라벨표에만 있고 백엔드가 안 내는 상태: {phantom}"
+
+
+def test_pr_status_is_rendered_through_the_label() -> None:
+    """★배선 — 라벨표가 **있는 것**과 렌더가 **태우는 것**은 다른 명제다."""
+    code = _dash_code()
+    assert 'value: prStatusLabel(prStatus)' in code, (
+        "PR 상태 행이 라벨 함수를 안 태운다 — 표는 있는데 화면엔 여전히 raw 다."
     )
