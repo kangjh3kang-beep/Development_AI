@@ -212,23 +212,45 @@ import pytest
 
 
 class _RecordingClient:
-    """`get_transactions` 호출 인자를 기록만 하는 스텁."""
+    """`get_transactions` 호출 인자를 **순서대로** 기록하는 스텁.
 
-    def __init__(self) -> None:
+    ★`succeed_first` 를 주면 그 수만큼만 성공하고 이후는 `429` 로 죽는다 —
+      **쿼터 소진**을 재현한다. 성공분은 `ok`, 전체는 `calls` 에 남는다.
+      (태스크는 조회 실패를 `fetch_errors` 로 삼키고 계속하므로, 쿼터 소진은
+      루프를 끊는 게 아니라 **이후 전 스코프를 빈손으로** 만든다.)
+    """
+
+    def __init__(self, succeed_first: int | None = None) -> None:
         self.calls: list[tuple[str, str, str]] = []
+        self.ok: list[tuple[str, str, str]] = []
+        self._budget = succeed_first
 
     async def get_transactions(self, lawd_cd, deal_ym, prop_type="apt", **_kw):
-        self.calls.append((lawd_cd, deal_ym, prop_type))
+        triple = (lawd_cd, deal_ym, prop_type)
+        self.calls.append(triple)
+        if self._budget is not None and len(self.calls) > self._budget:
+            raise RuntimeError("429 quota exhausted")   # 태스크가 fetch_errors 로 삼킨다
+        self.ok.append(triple)
         return []          # 빈 응답 — 이 락은 **무엇을 조회하는가**만 본다
 
     async def close(self) -> None: ...
 
 
-async def _run_and_capture(monkeypatch, when: datetime) -> set[tuple[str, str, str]]:
-    """실제 `sync_realtx_trades` 를 태우고 **조회한 (시군구, 월, 유형)** 집합을 돌려준다."""
+#: 스텁이 주는 시군구 — ★**2개 이상이어야** 순서·기아 단언이 공허하지 않다.
+_STUB_TARGETS = ("41370", "41465")
+
+
+async def _run_and_capture_client(
+    monkeypatch, when: datetime, succeed_first: int | None = None
+) -> _RecordingClient:
+    """실제 `sync_realtx_trades` 를 태우고 **호출 기록기 자체**를 돌려준다.
+
+    ★`_run_and_capture` 는 이 결과를 `set` 으로 접는다 — 그래서 **순서가 사라진다**.
+      루프 순서(리뷰 H2)를 보는 락은 반드시 이 함수를 직접 써야 한다.
+    """
     import contextlib
 
-    client = _RecordingClient()
+    client = _RecordingClient(succeed_first=succeed_first)
 
     class _Sess:
         async def __aenter__(self): return object()
@@ -238,14 +260,19 @@ async def _run_and_capture(monkeypatch, when: datetime) -> set[tuple[str, str, s
     monkeypatch.setattr("apps.api.database.session.AsyncSessionLocal", lambda: _Sess())
     monkeypatch.setattr("apps.api.integrations.molit_client.MolitClient", lambda *a, **k: client)
 
-    async def _targets(_db): return {"41370", "41465"}
+    async def _targets(_db): return set(_STUB_TARGETS)
     async def _persist(*_a, **_k): return {"submitted": 0, "corrections": [], "baseline": True}
     monkeypatch.setattr("app.services.land_intelligence.realtx_store.derive_scan_targets", _targets)
     monkeypatch.setattr("app.services.land_intelligence.realtx_store.persist_scope", _persist)
 
     with contextlib.suppress(Exception):
         await T.sync_realtx_trades({})
-    return set(client.calls)
+    return client
+
+
+async def _run_and_capture(monkeypatch, when: datetime) -> set[tuple[str, str, str]]:
+    """조회한 `(시군구, 월, 유형)` **집합**. 순서를 안 보는 락 전용."""
+    return set((await _run_and_capture_client(monkeypatch, when)).calls)
 
 
 class _FrozenDatetime:
@@ -309,6 +336,86 @@ async def test_scope_count_matches_the_quota_arithmetic(monkeypatch):
     assert len(wed) == regions * per_region, (len(wed), per_region)
     assert len(thu) == regions * T.RECENT_MONTHS * len(T.DEFAULT_PROP_TYPES)
     assert len(wed) > len(thu)                    # ★두 모집단이 갈린다
+
+
+# ══════════════════════════════════════════════════════════════
+# 5-2. ★루프 **순서** — 리뷰 H2 봉합이 무잠금이었다
+# ══════════════════════════════════════════════════════════════
+#
+# 이 파일의 태스크는 주석으로 *"루프는 **월-major** 다 … 월-major 면 어디서 끊겨도
+# **모든 시군구의 최근 달이 먼저 확보**된다"* 라고 **동작을 선언**한다(리뷰 H2 봉합).
+#
+# ★실측 2026-08-27 — **그 선언에 락이 없었다.**
+#   `scripts/mutate_manual.sh` 로 루프를 **시군구-major 로 되돌리는 변이**를 넣었더니
+#   이 파일 락 **22건이 전부 초록**이었다(SURVIVED).
+#
+# ★근본은 **수집기가 아니라 필터**였다: 위 `_run_and_capture` 가 호출을 `set` 으로 접어
+#   **순서를 구조적으로 버린다.** 호출 인자 삼중쌍은 잠갔는데(어제 교훈의 봉합) 그
+#   삼중쌍이 **어떤 순서로** 나오는지는 어떤 단언도 볼 수 없었다.
+#   → 그래서 아래 둘은 `_run_and_capture_client` 를 직접 쓴다.
+#
+# ★그리고 **순서만** 잠그지 않는다(§"부른다"를 잠그면 아무것도 안 잠긴다).
+#   H2 가 말한 **피해**는 순서 그 자체가 아니라 *"쿼터가 끊길 때 뒤쪽 시군구가 해제
+#   신호까지 통째로 잃는다"* 이다 → `test_quota_truncation_never_starves_a_region`
+#   이 그 **행위**를 태운다. 순서 락은 그것의 구조적 짝이다.
+
+
+@pytest.mark.asyncio
+async def test_tail_run_is_month_major_not_region_major(monkeypatch):
+    """★조회 순서가 **월-major** 인가 — 시군구-major 로 되돌리면 여기서 죽는다."""
+    client = await _run_and_capture_client(monkeypatch, _at(26))    # 수(꼬리일)
+    calls = client.calls
+    assert calls, "조회가 한 번도 안 일어났다 — 이 단언이 공허하다"
+
+    months = T.recent_months(_at(26), T.TAIL_MONTHS)
+    order = {ym: i for i, ym in enumerate(months)}
+
+    # ★공허 방지 — 시군구가 1개거나 월이 1개면 순서 성질이 **원리적으로 위반 불가**다.
+    assert len({c[0] for c in calls}) >= 2, "시군구가 1개면 이 단언은 공허하다"
+    assert len({c[1] for c in calls}) >= 2, "월이 1개면 이 단언은 공허하다"
+
+    seen = [order[ym] for _l, ym, _p in calls]
+    assert seen == sorted(seen), (
+        "★조회가 월-major 가 아니다(시군구-major 로 되돌아갔다). "
+        f"월 인덱스 순서={seen}"
+    )
+
+    # ★두 모집단이 갈리는 지점을 명시 — 각 월 블록 안에는 **모든 시군구**가 들어 있다.
+    first_block = [c for c in calls if c[1] == months[0]]
+    assert {c[0] for c in first_block} == set(_STUB_TARGETS), (
+        "첫 달 블록이 일부 시군구만 담았다 — 월-major 가 아니다"
+    )
+
+
+@pytest.mark.asyncio
+async def test_quota_truncation_never_starves_a_region_of_the_recent_window(monkeypatch):
+    """★★쿼터가 끊겨도 **모든 시군구의 최근 창**은 확보돼야 한다(리뷰 H2 의 피해 그 자체).
+
+    시군구-major 로 돌면 `targets` 가 정렬돼 있어 **매주 같은 뒤쪽 시군구**가
+    해제 신호(최근 3개월)까지 통째로 잃는다 — 계통적 손실이다.
+    """
+    budget = T.RECENT_MONTHS * len(T.DEFAULT_PROP_TYPES) * len(_STUB_TARGETS)
+    client = await _run_and_capture_client(monkeypatch, _at(26), succeed_first=budget)
+
+    # ★대조군 — 쿼터가 **실제로 끊겼는지** 먼저 증명한다(안 끊겼으면 이 락은 공허하다).
+    assert len(client.calls) > budget, (
+        f"쿼터가 끊기지 않았다 — 총 조회 {len(client.calls)} <= 예산 {budget}. 락이 공허하다"
+    )
+    assert len(client.ok) == budget
+
+    recent = T.recent_months(_at(26), T.RECENT_MONTHS)
+    got = set(client.ok)
+    missing = [
+        (lawd, ym, pt)
+        for lawd in _STUB_TARGETS
+        for ym in recent
+        for pt in T.DEFAULT_PROP_TYPES
+        if (lawd, ym, pt) not in got
+    ]
+    assert not missing, (
+        "★쿼터 소진으로 **최근 창을 잃은 시군구**가 있다 — 시군구-major 회귀. "
+        f"누락 {len(missing)}건: {missing[:6]}"
+    )
 
 
 # ══════════════════════════════════════════════════════════════
