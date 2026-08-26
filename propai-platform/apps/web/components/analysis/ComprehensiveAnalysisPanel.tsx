@@ -135,12 +135,27 @@ function Field({ label, value }: { label: string; value: string | number }) {
 }
 
 // 개발계획 종합 리스크 등급 → 배지 색(comprehensive_analysis_service._research_dev_plans 산출).
-const RISK_LEVEL_STYLE: Record<string, string> = {
+// ★키 집합의 SSOT 는 백엔드 사다리 protection_zone_severity.SEVERITY_ORDER(5종)다.
+//   손으로 적은 이 목록이 사다리보다 짧으면 빠진 등급이 폴백으로 흘러간다 — 실제로
+//   "중간"(제한보호구역)이 빠져 있었고 폴백이 "낮음"이라 **초록(안전색)으로 칠해졌다.**
+//   tests/test_risk_level_label_parity.py 가 사다리를 파싱해 이 표를 강제한다.
+export const RISK_LEVEL_STYLE: Record<string, string> = {
   "낮음": "bg-[var(--status-success)]/20 text-[var(--status-success)]",
   "보통": "bg-[var(--status-warning)]/20 text-[var(--status-warning)]",
+  "중간": "bg-amber-500/20 text-amber-400",
   "높음": "bg-orange-500/20 text-orange-400",
   "극히 높음": "bg-[var(--status-error)]/20 text-[var(--status-error)]",
 };
+
+// 표에 없는 등급은 **중립**으로 둔다 — 안전색(낮음)으로 떨어뜨리지 않는다.
+// ★블랙리스트("낮음이 아니면…")가 아니라 **표에 있는 것만** 색을 준다: 미지의 새 등급이
+//   생겨도 조용히 "안전"으로 분류되지 않는다(2026-08-20 #712 규제구역 판정과 같은 규율).
+const RISK_LEVEL_UNKNOWN_STYLE = "bg-[var(--surface-strong)] text-[var(--text-tertiary)]";
+
+/** 리스크 등급 → 배지 클래스. 미지 등급은 중립(안전색 금지). */
+export function riskLevelStyle(level: string | null | undefined): string {
+  return RISK_LEVEL_STYLE[(level ?? "").trim()] ?? RISK_LEVEL_UNKNOWN_STYLE;
+}
 
 // ★SEVERITY_CARD_STYLE(심각도→카드색) 제거(2026-08-01): 값 변화의 상대폭으로 경고색을 칠하면
 //   입력 변경(필지 재선택)까지 빨간 HIGH가 되는 라이브 오표기가 재발한다. 카드색은 이제
@@ -1383,7 +1398,7 @@ export function ComprehensiveAnalysisPanel() {
                             <p className="text-[10px] font-bold text-[var(--text-hint)]">토지이용계획 규제</p>
                             {/* ★risk_level(종합 리스크) — 핸드오프 손실 해소(그간 규제명 나열만 표시). */}
                             {devPlans.risk_level && (
-                              <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[9px] font-bold ${RISK_LEVEL_STYLE[devPlans.risk_level as string] || RISK_LEVEL_STYLE["낮음"]}`}>
+                              <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[9px] font-bold ${riskLevelStyle(devPlans.risk_level as string)}`}>
                                 종합 리스크 {devPlans.risk_level}
                               </span>
                             )}
