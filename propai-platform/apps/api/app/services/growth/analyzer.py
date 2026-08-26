@@ -244,6 +244,40 @@ def _classify_contamination(verdict: str, count: int) -> str | None:
     return None
 
 
+def note_coverage(
+    coverage: dict[str, dict[str, int]] | None,
+    axis: str, *, judged: int, withheld: int, floor: int,
+) -> None:
+    """이번 분석에서 **몇 개를 판정했고 몇 개를 표본 부족으로 보류했는지** 적는다.
+
+    ## 왜 (라이브 실측 2026-08-26T09:0xZ · 활성 컨테이너)
+
+        latency  키 **825개 중 802개(97%)** 가 표본 하한 미달로 `continue` 되어
+                 **행 자체가 사라진다**(이벤트 1,243/3,893)
+        fallback 서비스 **5개 전부**(permit·regulation·scenario·site_analysis·verifier)
+                 가 하한 미달 → 인사이트 **0건**
+
+    세 자리의 주석은 이미 *"판정 보류"* 라고 **말하고 있었다**. 없던 것은 그 보류가
+    **어디에도 남지 않는다**는 사실이다 — 보는 사람은 *"문제가 없었다"* 와
+    *"판정할 표본이 없었다"* 를 **구별할 수 없다**.
+
+    ★선례를 그대로 쓴다 — `site_score_service` 의 `GRADE_COVERAGE_FLOOR` 는
+      값을 `None` 으로 두고 사유를 문구로 말하며 **발행했을 때도 `covered/total` 을
+      항상 싣는다**. 새 설계가 아니라 **의도-구현 격차**를 메우는 것이다.
+
+    ★**행을 새로 만들지 않는다.** 802개를 보류 행으로 발행하면 소음이 늘 뿐이다
+      (현재 재고 3,127건 중 `latency_regression` 이 이미 2,308건). 대신
+      `run_analysis` 가 **모든 인사이트**에 이 값을 박고, 인사이트가 **0건일 때도**
+      로그로 남긴다.
+    """
+    if coverage is None:
+        return
+    coverage[axis] = {
+        "judged": judged, "withheld": withheld,
+        "total": judged + withheld, "floor": floor,
+    }
+
+
 def _classify_fallback(fallback: int, total_calls: int) -> tuple[str | None, float]:
     """폴백률(%) 산출 + severity. 분모 부족 시 (None, pct).
 
@@ -351,13 +385,16 @@ async def analyze_window(
     await _prime_dynamic_config(db)
 
     insights: list[dict[str, Any]] = []
+    # ★표본 하한으로 **판정하지 못한 것**을 세어 둔다 — 아래에서 모든 인사이트에 박고,
+    #   인사이트가 0건이어도 로그로 남긴다(라이브 실측: latency 키의 97%가 여기 해당).
+    coverage: dict[str, dict[str, int]] = {}
     try:
         insights.extend(await _analyze_error_cluster(db, window_start, window_end))
         insights.extend(await _analyze_recurring_verify_errors(db, window_start, window_end))
-        insights.extend(await _analyze_fallback_rate(db, window_start, window_end))
+        insights.extend(await _analyze_fallback_rate(db, window_start, window_end, coverage))
         insights.extend(await _analyze_selection_contamination(db, window_start, window_end))
-        insights.extend(await _analyze_quality_drop(db, window_start, window_end))
-        insights.extend(await _analyze_latency_regression(db, window_start, window_end))
+        insights.extend(await _analyze_quality_drop(db, window_start, window_end, coverage))
+        insights.extend(await _analyze_latency_regression(db, window_start, window_end, coverage))
     except Exception as e:  # noqa: BLE001 — 스캔 실패는 배치를 죽이지 않는다.
         logger.warning("growth analyze 스캔 실패: %s", str(e)[:160])
         return insights
@@ -398,7 +435,11 @@ async def analyze_window(
                 #   타입별 손수 분기는 새 타입을 자동으로 누락시킨다.
                 "metrics_json": json.dumps(
                     {**(ins.get("metrics_json") or {}),
-                     "producer_build_id": stale_build_guard.running_build_id()},
+                     "producer_build_id": stale_build_guard.running_build_id(),
+                     # ★생산자 표식과 **같은 자리**에 박는다 — 이 자리의 주석이 이미
+                     #   "타입별 손수 분기는 새 타입을 자동으로 누락시킨다"고 말한다.
+                     #   커버리지도 같은 이유로 전 타입에 박는다.
+                     "analysis_coverage": coverage},
                     ensure_ascii=False, default=str,
                 ),
                 "severity": ins.get("severity"),
@@ -413,8 +454,15 @@ async def analyze_window(
         with contextlib.suppress(Exception):
             await db.rollback()
 
-    if insights:
-        logger.info("growth analyze: 인사이트 %d건 생성(INSERT %d)", len(insights), inserted)
+    # ★종전엔 `if insights:` 라 **0건인 실행이 아무 로그도 남기지 않았다** — 배치가
+    #   돌지 않은 것과 구별이 안 됐다. 커버리지는 **0건일 때가 가장 중요하다**
+    #   (라이브: fallback 은 서비스 5개 전부 하한 미달이라 인사이트가 0건이다).
+    logger.info(
+        "growth analyze: 인사이트 %d건 생성(INSERT %d) · 커버리지 %s",
+        len(insights), inserted,
+        {k: f"{v['judged']}/{v['total']}(하한 {v['floor']})" for k, v in coverage.items()}
+        or "축 없음",
+    )
     return insights
 
 
@@ -482,7 +530,7 @@ async def _analyze_recurring_verify_errors(db, w0, w1) -> list[dict[str, Any]]:
     return _cluster_verify_issues(parsed, hours)
 
 
-async def _analyze_fallback_rate(db, w0, w1) -> list[dict[str, Any]]:
+async def _analyze_fallback_rate(db, w0, w1, coverage: dict[str, dict[str, int]] | None = None) -> list[dict[str, Any]]:
     """service별 폴백률 인사이트.
 
     분자(fallback): base_interpreter 는 LLM 호출 실패 시 별도 'fallback' 이벤트를
@@ -525,8 +573,15 @@ async def _analyze_fallback_rate(db, w0, w1) -> list[dict[str, Any]]:
         by_service.setdefault(svc, {})[str(reason)] = int(n or 0)
 
     out: list[dict[str, Any]] = []
+    judged = withheld = 0
     for r in rows:
         service, fb, calls = r[0], int(r[1] or 0), int(r[2] or 0)
+        # ★판정 가능 여부를 **분류 결과가 아니라 표본으로** 센다 — `sev is None` 은
+        #   "표본 부족"과 "표본 충분하고 정상"을 뭉갠다(둘 다 None 이다).
+        if calls < FALLBACK_MIN_CALLS:
+            withheld += 1
+        else:
+            judged += 1
         sev, pct = _classify_fallback(fb, calls)
         if sev is None:
             continue
@@ -545,6 +600,8 @@ async def _analyze_fallback_rate(db, w0, w1) -> list[dict[str, Any]]:
                 "reasons": reasons, "top_reason": top,
             },
         })
+    note_coverage(coverage, "fallback_rate", judged=judged, withheld=withheld,
+                  floor=FALLBACK_MIN_CALLS)
     return out
 
 
@@ -611,7 +668,7 @@ async def _analyze_selection_contamination(db, w0, w1) -> list[dict[str, Any]]:
     return out
 
 
-async def _analyze_quality_drop(db, w0, w1) -> list[dict[str, Any]]:
+async def _analyze_quality_drop(db, w0, w1, coverage: dict[str, dict[str, int]] | None = None) -> list[dict[str, Any]]:
     """service별 verify_result(fail/warn) + ai_feedback(down) 결합 품질저하 인사이트."""
     from sqlalchemy import text
 
@@ -648,7 +705,15 @@ async def _analyze_quality_drop(db, w0, w1) -> list[dict[str, Any]]:
         a["ftotal"] += int(r[2] or 0)
 
     out: list[dict[str, Any]] = []
+    judged = withheld = 0
     for service, a in agg.items():
+        # ★`sev is None` 으로 세면 "표본 부족"과 "표본 충분·정상"이 뭉개진다.
+        #   `_classify_quality` 와 **같은 판정식**을 쓴다(하나를 고치면 다른 하나가 어긋나는
+        #   것을 막기 위해 두 값 모두 QUALITY_MIN_SAMPLES 에 결속한다).
+        if a["vtotal"] < QUALITY_MIN_SAMPLES and a["ftotal"] < QUALITY_MIN_SAMPLES:
+            withheld += 1
+        else:
+            judged += 1
         sev, metrics = _classify_quality(
             a["fail"], a["warn"], a["vtotal"], a["down"], a["ftotal"]
         )
@@ -665,10 +730,12 @@ async def _analyze_quality_drop(db, w0, w1) -> list[dict[str, Any]]:
                 "feedback_total": a["ftotal"], "down": a["down"], **metrics,
             },
         })
+    note_coverage(coverage, "quality_drop", judged=judged, withheld=withheld,
+                  floor=QUALITY_MIN_SAMPLES)
     return out
 
 
-async def _analyze_latency_regression(db, w0, w1) -> list[dict[str, Any]]:
+async def _analyze_latency_regression(db, w0, w1, coverage: dict[str, dict[str, int]] | None = None) -> list[dict[str, Any]]:
     """route/service p95 vs 직전 7일 baseline. baseline 은 insights 에 저장·참조."""
     from sqlalchemy import text
 
@@ -698,9 +765,14 @@ async def _analyze_latency_regression(db, w0, w1) -> list[dict[str, Any]]:
     baselines = {r[0]: float(r[1] or 0.0) for r in base_rows}
 
     out: list[dict[str, Any]] = []
+    judged = withheld = 0
     for key, vals in by_key.items():
         if len(vals) < LATENCY_MIN_SAMPLES:
+            # ★행을 만들지 않는 것은 옳다(802개를 발행하면 소음이 는다). 다만
+            #   **몇 개를 못 봤는지는 말해야** 한다 — 안 그러면 커버리지 3% 가 100% 로 읽힌다.
+            withheld += 1
             continue
+        judged += 1
         p95 = round(_percentile(vals, 95.0), 2)
         baseline_p95 = baselines.get(key, 0.0)
         sev = _classify_latency(p95, baseline_p95)
@@ -719,6 +791,8 @@ async def _analyze_latency_regression(db, w0, w1) -> list[dict[str, Any]]:
                 "prev_baseline_p95": baseline_p95,
             },
         })
+    note_coverage(coverage, "latency_regression", judged=judged, withheld=withheld,
+                  floor=LATENCY_MIN_SAMPLES)
     return out
 
 
