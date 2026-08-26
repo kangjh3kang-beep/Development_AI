@@ -180,3 +180,122 @@ def test_scope_count_stays_within_the_measured_quota_budget():
                              for m in weekday_months)
     assert per_region_weekday == 6, per_region_weekday  # 3월×2
     assert per_region > per_region_weekday              # ★두 모집단이 갈린다
+
+
+# ══════════════════════════════════════════════════════════════
+# 5. ★배선을 **실제로 태운다** — 2026-08-27 독립 리뷰 C1 봉합
+# ══════════════════════════════════════════════════════════════
+#
+# 종전 15건은 **전부 순수 함수·상수 단언**이었고 `sync_realtx_trades` 를 임포트하는
+# 테스트가 저장소 전체에 **0건**이었다. 그래서 리뷰어가 배선을 통째로 되돌렸는데
+# **15개가 전부 초록**이었다(저자 재현 확인 · 4/4 SURVIVED):
+#
+#     루프가 `prop_types_for` 를 안 쓴다        → SURVIVED
+#     `months_for` 를 안 쓴다(꼬리 폐지)         → SURVIVED
+#     `recent = months`(최근/꼬리 경계 소멸)      → SURVIVED
+#     `tail_included` 필드 삭제                  → SURVIVED
+#
+# ★어제 기록한 「변이를 함수 안에만 넣으면 5/5 CAUGHT 인데 배선은 무잠금」의
+#   **세 번째 재발**이다. 그래서 여기서는 **호출 인자 삼중쌍을 직접 단언**한다.
+
+import pytest
+
+
+class _RecordingClient:
+    """`get_transactions` 호출 인자를 기록만 하는 스텁."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, str]] = []
+
+    async def get_transactions(self, lawd_cd, deal_ym, prop_type="apt", **_kw):
+        self.calls.append((lawd_cd, deal_ym, prop_type))
+        return []          # 빈 응답 — 이 락은 **무엇을 조회하는가**만 본다
+
+    async def close(self) -> None: ...
+
+
+async def _run_and_capture(monkeypatch, when: datetime) -> set[tuple[str, str, str]]:
+    """실제 `sync_realtx_trades` 를 태우고 **조회한 (시군구, 월, 유형)** 집합을 돌려준다."""
+    import contextlib
+
+    client = _RecordingClient()
+
+    class _Sess:
+        async def __aenter__(self): return object()
+        async def __aexit__(self, *a): return False
+
+    monkeypatch.setattr(T, "datetime", _FrozenDatetime(when), raising=False)
+    monkeypatch.setattr("apps.api.database.session.AsyncSessionLocal", lambda: _Sess())
+    monkeypatch.setattr("apps.api.integrations.molit_client.MolitClient", lambda *a, **k: client)
+
+    async def _targets(_db): return {"41370", "41465"}
+    async def _persist(*_a, **_k): return {"submitted": 0, "corrections": [], "baseline": True}
+    monkeypatch.setattr("app.services.land_intelligence.realtx_store.derive_scan_targets", _targets)
+    monkeypatch.setattr("app.services.land_intelligence.realtx_store.persist_scope", _persist)
+
+    with contextlib.suppress(Exception):
+        await T.sync_realtx_trades({})
+    return set(client.calls)
+
+
+class _FrozenDatetime:
+    """`datetime.now(tz=…)` 만 고정한다(나머지는 원본에 위임)."""
+
+    def __init__(self, when: datetime) -> None:
+        self._when = when
+
+    def now(self, tz=None):  # noqa: A003
+        return self._when
+
+    def __getattr__(self, name):
+        import datetime as _dt
+        return getattr(_dt.datetime, name)
+
+
+@pytest.mark.asyncio
+async def test_tail_day_actually_fetches_tail_months_apt_only(monkeypatch):
+    """★수요일 실행이 **꼬리 달을 apt 로만** 조회하는지 — 호출 인자로 확인한다."""
+    calls = await _run_and_capture(monkeypatch, _at(26))    # 수
+    assert calls, "조회가 한 번도 안 일어났다 — 이 단언이 공허하다"
+
+    recent = set(T.recent_months(_at(26), T.RECENT_MONTHS))
+    tail_only = {ym for _l, ym, _p in calls} - recent
+    assert tail_only, f"꼬리 달을 하나도 안 봤다: {sorted({y for _l,y,_p in calls})}"
+    for lawd, ym, pt in calls:
+        if ym in tail_only:
+            assert pt in T.TAIL_PROP_TYPES, f"꼬리 달 {ym} 을 {pt} 로 조회했다"
+    # ★두 모집단: 꼬리 달의 land 는 **없어야** 한다
+    assert not [c for c in calls if c[1] in tail_only and c[2] == "land"]
+
+
+@pytest.mark.asyncio
+async def test_weekday_run_never_touches_tail_months(monkeypatch):
+    """★대조군 — 목요일은 꼬리를 **안** 본다(두 모집단이 갈린다)."""
+    calls = await _run_and_capture(monkeypatch, _at(27))    # 목
+    assert calls
+    recent = set(T.recent_months(_at(27), T.RECENT_MONTHS))
+    assert {ym for _l, ym, _p in calls} == recent, "평일에 꼬리 달을 조회했다"
+
+
+@pytest.mark.asyncio
+async def test_recent_months_are_fetched_for_every_type_on_both_days(monkeypatch):
+    """최근 창에서는 land 를 빼면 안 된다 — 토지의 신호(해제)가 거기 있다."""
+    for day in (26, 27):
+        calls = await _run_and_capture(monkeypatch, _at(day))
+        recent = set(T.recent_months(_at(day), T.RECENT_MONTHS))
+        for ym in recent:
+            for pt in T.DEFAULT_PROP_TYPES:
+                assert any(c[1] == ym and c[2] == pt for c in calls), (day, ym, pt)
+
+
+@pytest.mark.asyncio
+async def test_scope_count_matches_the_quota_arithmetic(monkeypatch):
+    """★실제 호출 수가 계획서의 쿼터 산술과 맞는지 — 조용히 늘면 여기서 걸린다."""
+    wed = await _run_and_capture(monkeypatch, _at(26))
+    thu = await _run_and_capture(monkeypatch, _at(27))
+    regions = 2                                   # 스텁이 준 시군구 수
+    per_region = (T.RECENT_MONTHS * len(T.DEFAULT_PROP_TYPES)
+                  + (T.TAIL_MONTHS - T.RECENT_MONTHS) * len(T.TAIL_PROP_TYPES))
+    assert len(wed) == regions * per_region, (len(wed), per_region)
+    assert len(thu) == regions * T.RECENT_MONTHS * len(T.DEFAULT_PROP_TYPES)
+    assert len(wed) > len(thu)                    # ★두 모집단이 갈린다
