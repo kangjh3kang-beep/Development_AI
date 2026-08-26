@@ -13,6 +13,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { DashboardProjectLoader } from "@/components/dashboard/DashboardProjectLoader";
+import { RealtxReportPanel } from "@/components/dashboard/RealtxReportPanel";
 import { HeroMotionLayer } from "@/components/dashboard/HeroMotionLayer";
 import { OnboardingWizard } from "@/components/onboarding/OnboardingWizard";
 import { SatongMapShell } from "@/components/precheck/SatongMapShell";
@@ -273,6 +274,11 @@ export function DashboardHome({ locale }: { locale: string }) {
             );
           })}
         </div>
+
+        {/* ★생성허브 안의 **데이터 패널** — 링크 카드가 아니라 여기서 직접 그린다.
+            선례: 같은 페이지의 <SatongMapShell/>(위) · <DashboardProjectLoader/>(아래).
+            `#837` 이 보존한 계약상태 6필드의 **첫 소비 표면**이다 — 그전엔 읽는 화면이 0곳이었다. */}
+        <RealtxReportPanel />
       </section>
 
       <section className="min-w-0 space-y-3 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-strong)] p-4">

@@ -191,3 +191,41 @@ class Test배선:
             if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
         }
         assert "fold_parcels_by_lawd" in called, "시군구 접기를 쓰지 않는다 — 쿼터가 죽는다"
+
+
+class Test엔드포인트계약:
+    def test_라우트가_등록돼_있다(self) -> None:
+        """★배선 — 서비스가 있어도 라우트가 없으면 사용자에게 닿지 않는다."""
+        import routers.market_report as m
+
+        paths = {r.path for r in m.router.routes}
+        assert "/api/v1/market/realtx-report" in paths, f"라우트 미등록: {sorted(paths)}"
+        # 대조군 — 조회기가 살아 있는가(형제 라우트가 보여야 한다)
+        assert "/api/v1/market/quick-survey" in paths, "대조군 실패 — 라우터 조회가 죽었다"
+
+    def test_과금_게이트를_걸지_않는다(self) -> None:
+        """LLM 미사용 조회다 — 형제(`/quick-survey`·`/trend`)와 같은 취급.
+
+        ★과금 게이트를 잘못 걸면 **무료 조회에 코인이 빠진다.**
+        """
+        import routers.market_report as m
+
+        route = next(r for r in m.router.routes if r.path == "/api/v1/market/realtx-report")
+        dep_names = [
+            getattr(d.call, "__name__", "") for d in route.dependant.dependencies
+        ]
+        assert "enforce_llm_quota" not in dep_names, f"무료 조회에 과금 게이트가 걸렸다: {dep_names}"
+        # 대조군 — 실제로 과금 게이트가 걸린 형제가 있다(이 단언이 공허하지 않음을 증명)
+        paid = next(r for r in m.router.routes if r.path == "/api/v1/market/report")
+        paid_names = [getattr(d.call, "__name__", "") for d in paid.dependant.dependencies]
+        assert "enforce_llm_quota" in paid_names, "대조군 실패 — 유료 형제에 게이트가 없다"
+
+    def test_인증을_요구한다(self) -> None:
+        import routers.market_report as m
+
+        route = next(r for r in m.router.routes if r.path == "/api/v1/market/realtx-report")
+        src = str(route.dependant.dependencies) + str(route.endpoint.__annotations__)
+        assert "CurrentUser" in src or any(
+            getattr(d.call, "__name__", "") == "get_current_user"
+            for d in route.dependant.dependencies
+        ), "인증 의존성이 없다"
