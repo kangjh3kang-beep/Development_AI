@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from apps.api.app.utils import withheld as withheld_mod
 from apps.api.app.utils.withheld import (
     ABSENT_REASONS,
     AMBIGUOUS,
@@ -107,14 +108,58 @@ class Test전역스윕:
         return files
 
     def test_어휘_밖_absent_코드가_없다(self, api_sources: list[Path]) -> None:
-        """`*_absent` 로 실린 값이 닫힌 어휘 안인지 **코드에서 파생해** 본다."""
-        pat = re.compile(r'"([a-z_]+)_absent"\s*:\s*"([a-z_]+)"')
-        seen, bad = 0, []
-        for p in api_sources:
-            for field, code in pat.findall(p.read_text(encoding="utf-8")):
-                seen += 1
-                if code not in ABSENT_REASONS:
-                    bad.append(f"{p.name}: {field}_absent={code!r}")
+        """`_absent` 로 실리는 사유 코드가 **닫힌 어휘 안**인지 코드에서 파생해 본다.
+
+        ★첫 판은 **완전히 공허했다**(2026-08-26 독립 리뷰가 적발 · 실측 재현):
+          키·값 **리터럴**을 찾는 정규식이 `app/**` **797파일에서 0매치**였다.
+          이유는 `withheld()` 가 키를 **f-string 으로 런타임 생성**하기 때문이다
+          (`f"{field}_absent": code`) — 소스에 그런 **리터럴이 애초에 존재하지 않는다.**
+          게다가 `seen` 을 세어 놓고 **한 번도 단언하지 않아** 0매치가 초록이었다.
+          *"파생형이라 새 생산자가 자동으로 감시망에 든다"* 는 선언이 거짓이었다.
+
+        ★그래서 **두 통로를 AST 로** 본다 — 계약 헬퍼 경유와 손수 딕셔너리 둘 다.
+        """
+        import ast
+
+        seen: list[str] = []
+        bad: list[str] = []
+        # 계약 모듈이 내보내는 코드 상수 이름(예 INSUFFICIENT_COVERAGE) — 이름으로 넘길 때 대조용
+        const_names = {n for n in dir(withheld_mod) if n.isupper() and isinstance(getattr(withheld_mod, n), str)}
+
+        for path in api_sources:
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except SyntaxError:
+                continue          # 문법 오류는 이 검사의 대상이 아니다(별도 게이트)
+            for node in ast.walk(tree):
+                # ㉠ 계약 헬퍼 경유 — withheld(CODE, …)
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
+                        and node.func.id == "withheld" and node.args:
+                    a = node.args[0]
+                    if isinstance(a, ast.Constant) and isinstance(a.value, str):
+                        seen.append(f"{path.name}:{a.value}")
+                        if a.value not in ABSENT_REASONS:
+                            bad.append(f"{path.name}: withheld({a.value!r})")
+                    elif isinstance(a, ast.Name):
+                        seen.append(f"{path.name}:{a.id}")
+                        if a.id not in const_names:
+                            bad.append(f"{path.name}: withheld({a.id}) — 계약 상수가 아니다")
+                # ㉡ 손수 딕셔너리 — {"x_absent": "code"}
+                if isinstance(node, ast.Dict):
+                    for k, v in zip(node.keys, node.values, strict=False):
+                        if isinstance(k, ast.Constant) and isinstance(k.value, str) \
+                                and k.value.endswith("_absent") \
+                                and isinstance(v, ast.Constant) and isinstance(v.value, str):
+                            seen.append(f"{path.name}:{k.value}={v.value}")
+                            if v.value not in ABSENT_REASONS:
+                                bad.append(f"{path.name}: {k.value}={v.value!r}")
+
+        # ★공허진리 가드 — **매치 개수**에 건다(파일 개수가 아니라).
+        #   첫 판은 가드가 `len(files) > 100` 뿐이라 **0매치가 초록**이었다.
+        assert seen, (
+            "사유 코드를 한 건도 못 찾았다 — 스윕이 공허하다. "
+            "생산자가 정말 0인가, 아니면 조회 방식이 생산 형태를 못 보는가?"
+        )
         assert not bad, f"닫힌 어휘 밖 사유 코드: {bad}"
 
     def test_센티널_어휘가_비어있지_않다(self) -> None:
@@ -166,6 +211,14 @@ class Test문구키관용:
             w, "sell_claim_judgment", text_field="sell_claim_reason") == []
 
 
+#: 계약 모듈이 내보내는 **사유 코드 상수 이름** — 모듈에서 파생한다(손으로 적지 않는다).
+_CONTRACT_CONSTS = {
+    n for n in dir(withheld_mod)
+    if n.isupper() and isinstance(getattr(withheld_mod, n), str)
+    and getattr(withheld_mod, n) in withheld_mod.ABSENT_REASONS
+}
+
+
 class Test커버리지원장:
     """★"완성도"를 **파일 수로 세지 않는다** — 그 분모가 틀렸다(§계획서 §1).
 
@@ -176,7 +229,9 @@ class Test커버리지원장:
     #: 실측으로 확인한 **생산자**(응답에 보류값을 싣는 곳). 주석·소비자는 제외한다.
     #: ★이 목록이 늘어나면 아래 비율이 자동으로 떨어진다 — 부채가 초록 안에서 보인다.
     KNOWN_PRODUCERS = {
-        "site_score_service.py": True,               # grade_basis (#825·#831)
+        # ★부채 — `grade_basis`(**산문**)만 있고 `grade_absent` **코드가 없다.**
+        #   사람은 읽을 수 있으나 **기계가 못 센다** — 계약이 강제하는 것은 `_absent` 다.
+        "site_score_service.py": False,
         "parcel_rights_survey_service.py": True,     # sell_claim_judgment_absent
         "parcel_purchase_strategy_service.py": True, # 중간 전파
         "suggest.py": True,                          # suggested_price_absent
@@ -185,8 +240,15 @@ class Test커버리지원장:
         "decision_brief_service.py": False,          # ★부채 — reasons[] 목록형이라 사상 필요
     }
 
-    #: 배선 신호 — 식별자·호출·딕셔너리 키 이름. 이름 끝으로 판별한다.
-    _WIRED_SUFFIX = ("_absent", "_basis")
+    #: ★배선 신호는 **`_absent` 코드**(또는 `withheld()` 호출)다 — `_basis` 는 신호가 아니다.
+    #:   계약 모듈이 스스로 그렇게 적어 뒀다: *"강제할 것은 `_absent` 코드 하나다 —
+    #:   기계가 세는 것은 그것이고, 문구는 사람이 읽는다."*
+    #:   ★`_basis` 를 신호로 쓰면 **무관한 키가 배선으로 둔갑한다**(2026-08-26 실측):
+    #:     · `console.py` 의 매치는 **`recognition_basis`**(K-IFRS 회계 기준 — 보류와 무관)라
+    #:       `withheld(` 호출을 지워도 초록이었다 → **의도한 회귀가 무잠금**이었다.
+    #:     · `site_score_service.py` 는 `withheld()` 도 `_absent` 도 **없이** `grade_basis` 만으로
+    #:       '배선됨'으로 세어지고 있었다 → 산문은 있으나 **기계가 못 세는** 상태.
+    _WIRED_SUFFIX = ("_absent",)
 
     @classmethod
     def _wired_in_code(cls, path: Path) -> bool:
@@ -220,25 +282,25 @@ class Test커버리지원장:
             return any(name.endswith(sfx) for sfx in cls._WIRED_SUFFIX)
 
         for node in ast.walk(tree):
-            # ① withheld(...) 호출 — 계약 헬퍼를 직접 쓴다
+            # ① `withheld(...)` 호출 — 계약 헬퍼를 직접 쓴다(가장 강한 신호)
             if isinstance(node, ast.Call):
                 fn = node.func
                 if (isinstance(fn, ast.Name) and fn.id == "withheld") or \
                         (isinstance(fn, ast.Attribute) and fn.attr == "withheld"):
                     return True
-                # withheld(..., field=...) 형태의 키워드도 신호로 본다
-                for kw in node.keywords:
-                    if kw.arg and _hit(kw.arg):
-                        return True
-            # ② 식별자·속성 이름 (balanced_absent = ... / obj.grade_basis)
-            if isinstance(node, ast.Name) and _hit(node.id):
-                return True
-            if isinstance(node, ast.Attribute) and _hit(node.attr):
-                return True
-            # ③ 딕셔너리 키·문자열 상수 ("balanced_absent": code) — 독스트링은 제외
-            if isinstance(node, ast.Constant) and isinstance(node.value, str) \
-                    and id(node) not in docstrings and _hit(node.value):
-                return True
+            # ② `X_absent` 의 **값이 닫힌 어휘 안**일 때만 배선으로 센다.
+            #    ★접미 문자열만 보면 **무관한 키가 배선으로 둔갑한다** — 실측:
+            #      `gosi_coverage_service.py` 의 `pdf_attachment_absent`(고시 PDF 첨부 부재)는
+            #      보류 계약과 무관한데 접미만 같다. `_basis` 로 데인 위양성이 `_absent` 로
+            #      **자리만 옮긴 것**이라, 이번엔 **값을 계약에 결속**한다.
+            if isinstance(node, ast.Dict):
+                for k, v in zip(node.keys, node.values, strict=False):
+                    if isinstance(k, ast.Constant) and isinstance(k.value, str) \
+                            and k.value.endswith("_absent"):
+                        if isinstance(v, ast.Constant) and v.value in ABSENT_REASONS:
+                            return True
+                        if isinstance(v, ast.Name) and v.id in _CONTRACT_CONSTS:
+                            return True
         return False
 
     @classmethod
@@ -285,7 +347,13 @@ class Test커버리지원장:
         total = len(self.KNOWN_PRODUCERS)
         wired = sum(self.KNOWN_PRODUCERS.values())
         assert total >= 7, "생산자 모집단이 줄었다 — 목록이 낡았는지 확인하라"
-        assert wired >= 6, f"배선 생산자가 {wired}/{total} 로 줄었다(회귀 — #838 로 6 이 됐다)"
+        assert wired >= 5, (
+            f"원장 **선언**이 {wired}/{total} 로 낮아졌다. "
+            f"★이 단언이 잡는 것은 **사람이 원장을 낮춰 쓰는 것**뿐이다 — "
+            f"코드 회귀(배선 제거)는 위 두 테스트(배선/부채 양방향)가 잡는다. "
+            f"하한이 2026-08-26 에 6→5 로 내려간 것은 **회귀가 아니라** 판정 기준을 "
+            f"'`_basis` 도 인정'에서 '`withheld()` 또는 어휘 안 `_absent`'로 **좁혔기** 때문이다."
+        )
         # ★미배선이 0 이 되면 이 단언이 실패한다 → 그때 이 테스트를 지우고 전수 락으로 승격하라.
         assert wired < total, (
             "모든 생산자가 배선됐다 — 이제 목록형을 버리고 **파생형 전수 락**으로 승격하라"
