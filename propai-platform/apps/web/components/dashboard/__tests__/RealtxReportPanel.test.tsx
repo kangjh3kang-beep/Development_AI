@@ -12,7 +12,14 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
 const post = vi.fn();
-vi.mock("@/lib/api-client", () => ({ apiClient: { post: (...a: unknown[]) => post(...a) } }));
+// ★보고서 다운로드는 apiClient 가 아니라 **raw fetch**(blob)를 쓴다 — 그 경로를 따로 잠근다.
+const fetchSpy = vi.fn();
+vi.mock("@/lib/api-client", () => ({
+  apiClient: {
+    post: (...a: unknown[]) => post(...a),
+    getRuntimeConfig: () => ({ apiBaseUrl: "https://api.test/api/v1" }),
+  },
+}));
 
 const rows = [{ id: "r1", pnu: "1159010200102100453", jibun: "서울특별시 동작구 상도동 210-453",
   owner: "", share: "", area_sqm: 53, owner_type: "사유지" as const,
@@ -59,7 +66,7 @@ async function analyze() {
   fireEvent.click(screen.getByText("분석"));
 }
 
-beforeEach(() => post.mockReset());
+beforeEach(() => { post.mockReset(); fetchSpy.mockReset(); });
 
 describe("실거래 신고내역 패널 — 정직성", () => {
   it("D1 ★마스킹 사유를 **백엔드 문구 그대로** 보여 준다(화면이 지어내지 않는다)", async () => {
@@ -122,6 +129,38 @@ describe("실거래 신고내역 패널 — 정직성", () => {
     render(<RealtxReportPanel />);
     const opts = Array.from(screen.getByLabelText("분석할 프로젝트").querySelectorAll("option"));
     expect(opts.map((o) => o.textContent)).toContain("테스트프로젝트 · 필지 1");
+  });
+
+  it("D10 ★배선 — 보고서 저장이 **정본 다운로드 경로**를 호출한다", async () => {
+    post.mockResolvedValue(reportWith());
+    await analyze();
+    await screen.findByText(/국토부 조회/);   // ★이 패널의 실제 문구(다른 컴포넌트 것을 쓰지 않는다)
+    // ★스텁은 **렌더가 끝난 뒤**에 건다 — 먼저 걸면 렌더 경로의 fetch 까지 가로채
+    //   화면이 안 그려지고, 그러면 이 테스트가 **다른 이유로** 실패한다(실측).
+    // blob URL API 는 jsdom 에 없다 — 최소 스텁(★렌더 뒤에 건다)
+    (URL as unknown as { createObjectURL: unknown }).createObjectURL = vi.fn(() => "blob:x");
+    (URL as unknown as { revokeObjectURL: unknown }).revokeObjectURL = vi.fn();
+    fetchSpy.mockResolvedValue({ ok: true, blob: async () => new Blob(["x"]) });
+    vi.stubGlobal("fetch", fetchSpy);
+    fireEvent.click(screen.getByText("PDF"));
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalled());
+    const [url, opts] = fetchSpy.mock.calls[0] as [string, { body: string }];
+    expect(url).toContain("/market/realtx-report/download");
+    expect(url).toContain("format=pdf");
+    // ★필지를 실제로 보낸다(빈 요청으로 "보고서"를 만들지 않는다)
+    expect(JSON.parse(opts.body).parcels[0].pnu).toBe("1159010200102100453");
+    vi.unstubAllGlobals();
+  });
+
+  it("D11 다운로드 실패 시 침묵하지 않는다", async () => {
+    post.mockResolvedValue(reportWith());
+    await analyze();
+    await screen.findByText(/국토부 조회/);   // ★이 패널의 실제 문구(다른 컴포넌트 것을 쓰지 않는다)
+    fetchSpy.mockResolvedValueOnce({ ok: false, status: 403 });
+    vi.stubGlobal("fetch", fetchSpy);
+    fireEvent.click(screen.getByText("DOCX"));
+    await waitFor(() => expect(screen.getByText(/권한이 필요합니다/)).toBeTruthy());
+    vi.unstubAllGlobals();
   });
 
   it("D9 실패 시 침묵하지 않는다", async () => {
