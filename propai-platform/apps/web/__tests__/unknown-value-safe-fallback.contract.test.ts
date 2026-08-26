@@ -116,9 +116,29 @@ describe("필지 특성 칩 — 미지 status 가 safe(초록)로 떨어지지 �
     expect(UNKNOWN_CHARACTERISTIC_CLS).not.toMatch(/\b(?:red|green|emerald|rose)-\d/);
   });
 
-  it("danger 가 미지에 가려지지 않는다 — 두 표기가 서로 다르다", () => {
-    expect(UNKNOWN_CHARACTERISTIC_CLS).not.toBe(CHARACTERISTIC_STATUS_COLORS.danger);
-    expect(CHARACTERISTIC_STATUS_COLORS.danger).not.toBe(CHARACTERISTIC_STATUS_COLORS.safe);
+  /**
+   * ★동료 세션 `-0b` 의 실측 경고를 반영한 형태다: *"「구별된다」를 문자열 부등호로 잠그면
+   * 잠긴 게 아니다 — 같은 초록을 다른 철자로 쓰면 통과한다"*(그쪽 락이 그렇게 뚫렸다).
+   *
+   * 그래서 **철자가 아니라 토큰 정체**로 본다. `danger` 값을 초록으로 바꾸는 공격이
+   * `text-green-500` 이든 `--status-success` 든 **성공 계열 토큰을 쓰는 순간** 잡힌다.
+   *
+   * ★한계(정직하게): 이것도 **완전한 색 구별 검사는 아니다.** 서로 다른 토큰이
+   * 시각적으로 같은 색일 가능성은 남는다 — 그건 oklab 거리로 재야 하고 **이 PR 의
+   * 계약(미지값 접힘)이 아니다.** 여기서는 「위험이 안전처럼 보이는 것」만 막는다.
+   */
+  it("★danger·warning 이 **성공 계열 토큰을 쓰지 않는다**(철자가 아니라 토큰으로 본다)", () => {
+    const SUCCESSISH = /--status-success|\b(?:green|emerald|lime|teal)-\d/;
+    for (const k of ["danger", "warning"]) {
+      expect(
+        CHARACTERISTIC_STATUS_COLORS[k],
+        `${k} 가 성공 계열 색을 쓴다 — 위험이 안전처럼 보인다`,
+      ).not.toMatch(SUCCESSISH);
+    }
+    // [대조군] safe 는 성공 계열이어야 한다 — 없으면 "전부 회색" 구현도 통과한다.
+    expect(CHARACTERISTIC_STATUS_COLORS.safe).toMatch(SUCCESSISH);
+    // 미지는 셋 중 어느 것과도 같지 않다.
+    expect(Object.values(CHARACTERISTIC_STATUS_COLORS)).not.toContain(UNKNOWN_CHARACTERISTIC_CLS);
   });
 });
 
