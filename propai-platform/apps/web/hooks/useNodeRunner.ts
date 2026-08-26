@@ -268,8 +268,11 @@ function feedbackToStore(
           patch.roiPct = readNum(resp, "roiPct", "roi_pct");
           patch.npvWon = readNum(resp, "npvWon", "npv_won");
         }
-        // updateFeasibilityData는 meta 인자를 받지 않음(store 시그니처) — patch만 전달.
-        store.updateFeasibilityData(patch);
+        // ★2026-08-26 — 종전 주석은 *"meta 인자를 받지 않음"* 이었고 그것이 **거짓이 됐다**
+        //   (`feasibility` 가 `ProvenanceModule` 에 편입되며 시그니처가 형제와 같아졌다).
+        //   형제 `updateCostData`·`updateEsgData` 와 정렬해 `auto` 를 명시한다 —
+        //   그래야 사용자가 손으로 넣은 수지값을 이 자동 환류가 덮지 않는다.
+        store.updateFeasibilityData(patch, { source: "auto" });
         break;
       }
       case "updateEsgData":

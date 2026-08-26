@@ -220,6 +220,12 @@ interface StoreFieldEntry {
 const STORE_FIELD_MAP: Record<string, StoreFieldEntry> = {
   "site_analysis.land_area_sqm": { module: "siteAnalysis", storeField: "landAreaSqm" },
   "cost.total_construction_cost": { module: "cost", storeField: "totalConstructionCostWon" },
+  // ★2026-08-26 — 이 두 필드는 위 `fields` 에서 **`editable: true`** 인데 맵에 없어
+  //   **세션 한정**으로만 동작했다(새로고침·재실행에 사라짐). `feasibility` 가 이제
+  //   `ProvenanceModule` 안이므로 영속 + 수동값 보호가 성립한다.
+  //   ★이 항목이 없으면 아래 가드는 **아무도 쓰지 않는 맵**을 읽는다 — 정의만 하고 소비처 0.
+  "feasibility.total_cost_won": { module: "feasibility", storeField: "totalCostWon" },
+  "feasibility.total_revenue_won": { module: "feasibility", storeField: "totalRevenueWon" },
 };
 const storeFieldKey = (stage: string, field: string) => `${stage}.${field}`;
 
@@ -338,6 +344,7 @@ export function PipelineResultDetail({ result, onRerun, addresses }: PipelineRes
   // 셀렉터 단위 구독으로 불필요 리렌더 최소화(기존 ProjectPipelinePanel 패턴과 동일).
   const updateSiteAnalysis = useProjectContextStore((s) => s.updateSiteAnalysis);
   const updateCostData = useProjectContextStore((s) => s.updateCostData);
+  const updateFeasibilityData = useProjectContextStore((s) => s.updateFeasibilityData);
   const revertFieldToAuto = useProjectContextStore((s) => s.revertFieldToAuto);
   // 마운트 시 시드 복원·배지 출처 판정은 현재 manualFields 스냅을 구독해 반영한다.
   const manualFields = useProjectContextStore((s) => s.manualFields);
@@ -464,6 +471,17 @@ export function PipelineResultDetail({ result, onRerun, addresses }: PipelineRes
   // STORE_FIELD_MAP에 등록된 핵심 필드는 store에 source:"user"로 영속한다(이탈 시 소실 해소).
   // siteAnalysis는 partial patch, cost는 full replace이므로 현재 store costData 위에 병합한다.
   const persistFieldToStore = useCallback((entry: StoreFieldEntry, value: unknown) => {
+    // ★모듈별 손수 분기다 — 새 모듈을 맵에 넣어도 **여기에 가지를 안 치면 아무 일도 안 일어난다**
+    //   (조용한 미배선). 그래서 맨 끝에 **미배선 감지**를 둔다: 맵에 있는데 여기서 처리 못 하면
+    //   개발 중 시끄럽게 실패시킨다. `feasibility` 를 추가하며 이 함정을 실제로 밟았다.
+    if (entry.module === "feasibility") {
+      // merge patch 계약 — 단일 키만 갱신(나머지 보존). user stamp 로 자동 재실행 덮어쓰기 차단.
+      updateFeasibilityData(
+        { [entry.storeField]: value } as Parameters<typeof updateFeasibilityData>[0],
+        { source: "user" },
+      );
+      return;
+    }
     if (entry.module === "siteAnalysis") {
       // partial patch — 단일 키만 갱신(나머지 보존). store는 Partial<SiteAnalysisData> 수용.
       updateSiteAnalysis(
@@ -487,8 +505,15 @@ export function PipelineResultDetail({ result, onRerun, addresses }: PipelineRes
         source: "overview",
       };
       updateCostData({ ...base, [entry.storeField]: value } as CostData, { source: "user" });
+      return;
     }
-  }, [updateSiteAnalysis, updateCostData]);
+    // ★미배선 감지 — 맵에 넣고 가지를 안 친 상태를 **조용히 넘기지 않는다**.
+    if (process.env.NODE_ENV !== "production") {
+      console.error(
+        `[PipelineResultDetail] STORE_FIELD_MAP 에 '${entry.module}' 가 있는데 persistFieldToStore 가 처리하지 못한다 — 편집이 조용히 사라진다.`,
+      );
+    }
+  }, [updateSiteAnalysis, updateCostData, updateFeasibilityData]);
 
   const setFieldOverride = useCallback((sourceStage: string, fieldKey: string, value: unknown) => {
     setOverrides((prev) => ({
@@ -508,10 +533,24 @@ export function PipelineResultDetail({ result, onRerun, addresses }: PipelineRes
     for (const [flatKey, entry] of Object.entries(STORE_FIELD_MAP)) {
       const prov = st.getFieldProvenance(entry.module, entry.storeField);
       if (prov?.source !== "user") continue;
-      const dataRec =
-        entry.module === "siteAnalysis"
-          ? (st.siteAnalysis as Record<string, unknown> | null)
-          : (st.costData as Record<string, unknown> | null);
+      // ★이항 삼항식이었다 — `siteAnalysis` 가 아니면 **무조건 costData** 라, 맵에 세 번째
+      //   모듈을 넣는 순간 **엉뚱한 데이터를 읽는다**(feasibility 를 넣으며 실제로 밟았다).
+      //   모듈 → 데이터의 대응을 **표로 파생**시켜 새 모듈이 조용히 오독되지 않게 한다.
+      const MODULE_DATA: Partial<Record<ProvenanceModule, Record<string, unknown> | null>> = {
+        siteAnalysis: st.siteAnalysis as Record<string, unknown> | null,
+        cost: st.costData as Record<string, unknown> | null,
+        feasibility: st.feasibilityData as Record<string, unknown> | null,
+      };
+      const dataRec = MODULE_DATA[entry.module];
+      if (dataRec === undefined) {
+        // 맵에 있는데 여기 대응이 없다 — 조용히 넘기지 않는다(위 persistFieldToStore 와 같은 규율).
+        if (process.env.NODE_ENV !== "production") {
+              console.error(
+            `[PipelineResultDetail] MODULE_DATA 에 '${entry.module}' 대응이 없다 — 시드 복원이 조용히 건너뛴다.`,
+          );
+        }
+        continue;
+      }
       const val = dataRec?.[entry.storeField];
       if (val == null) continue;
       const dot = flatKey.indexOf(".");
