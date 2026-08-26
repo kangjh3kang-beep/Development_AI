@@ -131,6 +131,27 @@ describe("배선 — 세 경로가 같은 산출처를 쓴다", () => {
     expect(orch, "sido_name 대입이 없다").toMatch(/body\.sido_name\s*=/);
   });
 
+  // ★★래칫이 스스로 무장해제되지 않게 — 변이 실증(2026-08-26).
+  //   계약 목록에서 이름 한 줄을 지우면 아래 파생형 락은 그 필드를 **더 이상 안 본다**.
+  //   즉 목록 자체가 래칫이면 **래칫을 낮출 수 있다**(변이 M5 SURVIVED).
+  //   그래서 계약을 **헬퍼가 실제로 산출하는 키**에서 파생시켜 대조한다 — 산출은 하는데
+  //   계약에 없으면 빨개진다. 이제 목록을 줄이는 것만으로는 통과할 수 없다.
+  it("★★계약 목록이 헬퍼 산출과 1:1 이다 — 목록을 줄여 락을 끄지 못한다", () => {
+    const produced = siteDerivedFeasibilityFields({
+      address: "울산광역시 동구 화정동",
+      landAreaSqm: 1,
+      officialPrices: [{ pricePerSqm: 1 }],
+    } as never);
+    const snake = (k: string) => k.replace(/[A-Z]/g, (c) => "_" + c.toLowerCase());
+    // 헬퍼의 camelCase 키 → 요청 필드명(snake_case). 이름 규칙이 어긋나면 여기서 드러난다.
+    const expected = Object.keys(produced).map(snake).sort();
+    expect(expected.length, "헬퍼가 아무것도 산출하지 않는다 — 검사 전제가 깨졌다").toBeGreaterThan(2);
+    expect(
+      [...SITE_DERIVED_REQUEST_FIELDS].sort(),
+      "계약 목록과 헬퍼 산출이 어긋난다 — 산출은 하는데 계약에 없거나(경로가 안 보냄) 그 반대다",
+    ).toEqual(expected);
+  });
+
   it("★파생형 — 계약 목록의 필드가 각 경로 소스에 전부 나타난다(새 필드가 조용히 빠지지 않게)", () => {
     expect(SITE_DERIVED_REQUEST_FIELDS.length, "계약 목록이 비었다").toBeGreaterThan(2);
     const missing: string[] = [];
