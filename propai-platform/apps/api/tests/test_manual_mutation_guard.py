@@ -139,3 +139,83 @@ def test_파이프가_있으면_경고한다(sandbox) -> None:
     # ★음성 대조군 — 파이프가 없으면 경고하지 않아야 한다(위양성 방지).
     r2 = _run(root, "target.txt", "s|alpha|ALPHA|", "true")
     assert "파이프" not in (r2.stdout + r2.stderr), "파이프가 없는데 경고한다(위양성)"
+
+
+# ══════════════════════════════════════════════════════════════════════
+# ⑤파이프 판정 오염 — **경고가 아니라 하드 스톱** (2026-08-27 추가)
+# ══════════════════════════════════════════════════════════════════════
+#
+# 종전엔 테스트 명령에 파이프가 있으면 **경고만 stderr 로 찍고** 그대로 진행해,
+# 오염된 종료코드로 판정을 **발행**했다. 곧 도구가 *"이 값은 못 믿는다"* 를 알면서
+# **그 값으로 판정을 냈다.** 다음 사람은 경고가 아니라 **마지막 줄**을 읽는다.
+#
+# ★이 파일의 대상 스크립트 주석이 그 사고를 **이미 적어 두었다**(첫 실사용 2026-08-21:
+#   테스트는 `1 failed` 인데 `| tail -1` 때문에 통과로 찍혔다). 처방이 **산문**이었다.
+#   **경고는 산문이고 판정이 산출물이다.**
+#
+# ★이 락이 **못 보는** 것: `MUTATE_ALLOW_PIPE` 우회는 **틀린 판정을 낼 수 있다**
+#   (진짜 파이프인데 무해하다고 주장하면 그대로 통과한다). 그것이 탈출구의 값이고,
+#   그래서 **사유를 출력에 남긴다** — 자동으로 막지 않고 **사람이 되짚을 수 있게** 한다.
+
+_EXIT_PIPE_UNJUDGEABLE = 12
+
+
+def test_파이프가_있으면_판정을_내지_않는다_exit12(sandbox) -> None:
+    """★핵심 — 오염된 종료코드로 판정을 **발행하지 않는다**."""
+    root, target = sandbox
+    r = _run(root, "target.txt", "s|alpha|ALPHA|", "sh", "-c", "false | true")
+    assert r.returncode == _EXIT_PIPE_UNJUDGEABLE, (r.returncode, r.stdout, r.stderr)
+    assert "판정 불가" in r.stderr, r.stderr
+
+
+def test_하드스톱은_대상_파일을_건드리지_않는다(sandbox) -> None:
+    """판정을 안 낼 거면 **변이도 넣지 않는다**(파일을 건드리고 죽으면 더 나쁘다)."""
+    root, target = sandbox
+    before = target.read_bytes()
+    _run(root, "target.txt", "s|alpha|ALPHA|", "sh", "-c", "false | true")
+    assert target.read_bytes() == before
+    assert _git("diff", "--quiet", cwd=root).returncode == 0
+
+
+def test_안내문에_판정어_리터럴이_없다(sandbox) -> None:
+    """★자기 텍스트 함정 — 안내문에 판정어가 있으면 출력에서 판정을 찾는 사람이 오독한다.
+
+    실측(2026-08-27): 첫 구현의 안내문이 *"…가 …로 오보된다"* 를 **영문 판정어로** 써서,
+    내 자신의 검사기가 그 문장을 판정으로 집었다.
+    """
+    root, target = sandbox
+    r = _run(root, "target.txt", "s|alpha|ALPHA|", "sh", "-c", "false | true")
+    blob = r.stdout + r.stderr
+    for token in ("SURVIVED", "CAUGHT"):
+        assert token not in blob, f"안내문에 판정어 {token} 가 남아 있다:\n{blob}"
+
+
+def test_pipefail_이_있으면_판정을_낸다(sandbox) -> None:
+    """★길 ① — 도구가 스스로 권한 처방을 쓰면 통과해야 한다(위양성 방지)."""
+    root, target = sandbox
+    r = _run(root, "target.txt", "s|alpha|ALPHA|",
+             "sh", "-c", "set -o pipefail; false | true")
+    assert r.returncode != _EXIT_PIPE_UNJUDGEABLE, (r.returncode, r.stdout, r.stderr)
+    assert "CAUGHT" in r.stdout, r.stdout
+
+
+def test_명시적_우회는_사유를_출력에_남긴다(sandbox) -> None:
+    """★길 ② — 차단하되 길을 준다. 다만 **사유가 남는다**(`REVIEW_EXEMPT` 어법)."""
+    root, target = sandbox
+    env = {**os.environ, "MUTATE_ALLOW_PIPE": "리터럴 파이프 — 무해"}
+    r = subprocess.run(
+        ["bash", "scripts/mutate_manual.sh", "target.txt", "s|alpha|ALPHA|", "sh", "-c", "true | true"],
+        cwd=root, capture_output=True, text=True, env=env,
+    )
+    assert r.returncode != _EXIT_PIPE_UNJUDGEABLE, (r.returncode, r.stdout, r.stderr)
+    assert "리터럴 파이프 — 무해" in r.stdout, r.stdout
+
+
+def test_파이프가_없으면_종전대로_판정한다(sandbox) -> None:
+    """★특이도 — 정상 호출을 막으면 그것도 결함이다(두 모집단이 갈려야 한다)."""
+    root, target = sandbox
+    survived = _run(root, "target.txt", "s|alpha|ALPHA|", "true")
+    caught = _run(root, "target.txt", "s|alpha|ALPHA|", "false")
+    assert survived.returncode == 0 and "SURVIVED" in survived.stdout
+    assert caught.returncode not in (0, _EXIT_PIPE_UNJUDGEABLE)
+    assert "CAUGHT" in caught.stdout
