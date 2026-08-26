@@ -17,6 +17,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.data_validation.trust import Signal, cross_validate
+from apps.api.app.utils.withheld import INSUFFICIENT_COVERAGE, withheld
 from apps.api.database.models.sales.site_org import SalesSite
 from apps.api.integrations.region_codes import pnu_to_bcode
 
@@ -386,9 +387,13 @@ async def suggest_base_price(
         outlier_ratio=1.6, min_anchor_samples=20, plausible_min=_PP_MIN, plausible_max=_PP_MAX,
     )
     if trust.trusted_value is None or trust.verdict == "fail":
+        # ★보류값 계약(2026-08-25) — `data_source="unavailable"` 은 **자체 어휘**였다.
+        #   닫힌 코드를 함께 실어 기계가 셀 수 있게 한다(기존 키는 그대로 — 소비처 불변).
         return {"data_source": "unavailable", "address": address, "lawd_cd": lawd,
                 "trust": trust.to_dict(),
-                "note": "주변 실거래 신뢰도 부족으로 적정분양가 산출 보류(가짜값 금지).",
+                **withheld(INSUFFICIENT_COVERAGE,
+                           "주변 실거래 신뢰도 부족으로 적정분양가 산출 보류(가짜값 금지).",
+                           field="suggested_price", text_field="note"),
                 **trade_cases_extra}
 
     market_pp_exclusive = float(trust.trusted_value)        # 만원/평(전용) — 주변 시세

@@ -160,7 +160,7 @@ def compute_site_score(context: Any, region_baseline: dict[str, float] | None = 
         # ★계약 일관성 — 등급이 없는 두 경로(0개 / 하한 미달)가 **같은 키 모양**을 내야
         #   소비처가 한 가지 방법으로 다룰 수 있다(키가 갈리면 한쪽만 처리하게 된다).
         return {"score": None, "grade": None, "factors": [],
-                "grade_withheld_reason": (
+                "grade_basis": (
                     f"판정 보류 — 입지 지표를 하나도 확보하지 못했습니다"
                     f"(등급 발행 최소 {GRADE_COVERAGE_FLOOR}/{len(WEIGHTS)}개)."
                 ),
@@ -180,23 +180,33 @@ def compute_site_score(context: Any, region_baseline: dict[str, float] | None = 
 
     # ★커버리지 하한 미달이면 **등급을 발행하지 않는다**(점수는 참고로 남긴다).
     #   정답이 '값'이 아니라 '보류'일 수 있다 — 같은 원칙을 탁상감정 신뢰도에도 적용했다.
-    grade_withheld_reason: str | None = None
+    # ★2026-08-25 네이밍 정렬 — 종전 `grade_withheld_reason` 은 **이단아**였다.
+    #   이 저장소의 확립된 관용은 **`X_basis`** 다(실측: `legal_basis` 293 · `far_basis` 135
+    #   · `sample_basis` 18 · `gfa_basis` 16 · `price_basis` 12 · `area_basis` 11 …).
+    #   뜻도 그쪽이 낫다 — **값이 어디서 왔는지**를 항상 말하므로 발행/보류 **양쪽**을 덮는다.
+    #   (`_withheld_reason` 은 보류일 때만 채워져, 발행된 값의 근거는 아무도 말하지 않았다.)
+    #   ★프론트 소비처 0건일 때 바꾼다 — 지금은 싸고 나중엔 비싸다.
+    _covered = ", ".join(_FNAME.get(f["key"], f["key"]) for f in factors)
     if len(factors) < GRADE_COVERAGE_FLOOR:
         grade = None
-        grade_withheld_reason = (
+        grade_basis = (
             f"판정 보류 — 입지 지표 {len(factors)}/{len(WEIGHTS)}개만 확보했습니다"
-            f"(등급 발행 최소 {GRADE_COVERAGE_FLOOR}개). 확보한 지표: "
-            + ", ".join(_FNAME.get(f["key"], f["key"]) for f in factors)
-            + ". 점수는 확보분만으로 계산한 참고값입니다."
+            f"(등급 발행 최소 {GRADE_COVERAGE_FLOOR}개). 확보한 지표: {_covered}"
+            ". 점수는 확보분만으로 계산한 참고값입니다."
         )
     else:
         grade = ("A+" if score >= 90 else "A" if score >= 80 else "B+" if score >= 70
                  else "B" if score >= 60 else "C" if score >= 45 else "D")
+        # ★발행했을 때도 **근거를 말한다** — 종전엔 이 자리가 비어 있었다(보류일 때만 채움).
+        grade_basis = (
+            f"입지 지표 {len(factors)}/{len(WEIGHTS)}개 확보(발행 최소 {GRADE_COVERAGE_FLOOR}개) "
+            f"→ 점수 {score} 기준 등급 {grade}. 확보한 지표: {_covered}."
+        )
     factors.sort(key=lambda x: x["contribution"], reverse=True)
 
     return {
         "score": score, "grade": grade,
-        "grade_withheld_reason": grade_withheld_reason,
+        "grade_basis": grade_basis,
         "factors": factors,
         "covered": len(factors), "total_features": len(WEIGHTS),
         "weight_basis": WEIGHT_BASIS,

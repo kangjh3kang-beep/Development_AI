@@ -70,6 +70,11 @@ export type NearbyMapPayload = {
     headline: string;
     reconciles: boolean;
     stages: { key: string; label: string; dropped: number; reason: string }[];
+    /** ★차감이 **아니다** — 좌표를 못 얻어 반경 판정을 못 했을 뿐 표시에는 남는다.
+     *  종전엔 이걸 제외로 세어 "제외됐다"는 거짓을 말했고 사슬도 깨졌다(제천 실측). */
+    unlocated_group_count?: number;
+    unlocated_note?: string | null;
+    in_radius_group_count?: number;
   } | null;
   lawd_cd: string;
   months: string[];
@@ -378,6 +383,11 @@ export function NearbyTransactionsMap({
             >
               {payload.sample_attenuation.headline}
               {!payload.sample_attenuation.reconciles ? " (계기 불일치 — 사슬은 참고용)" : ""}
+              {payload.sample_attenuation.unlocated_note ? (
+                <span className="block text-[var(--text-hint)]">
+                  {payload.sample_attenuation.unlocated_note.replace(/\*\*/g, "")}
+                </span>
+              ) : null}
             </p>
           ) : null}
         </div>

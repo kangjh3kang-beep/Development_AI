@@ -202,6 +202,21 @@ export function ParcelPurchaseStrategyPanel({ parcels }: { parcels: StrategyParc
           </div>
         </div>
 
+        {/* ★**왜 못 누르는지 말한다.** 2026-08-25 사용자 신고: *"매입전략 분석 시작 버튼이
+            활성화되지 않고 기능을 사용할 수 없다"*. 조건 자체는 옳다(방식이 없으면 판정이
+            성립하지 않는다) — 결함은 **비활성의 사유가 화면에 없다**는 것이었다.
+            라벨의 빨간 `*` 하나로는 회색 버튼과 연결되지 않는다.
+            ★`overCap` 은 이미 위에 경고가 있으므로 여기서는 미선택만 말한다(중복 금지). */}
+        {!scheme && !overCap && (
+          <p
+            data-testid="strategy-disabled-reason"
+            className="mt-3 text-xs font-semibold text-[var(--status-warning)]"
+          >
+            위에서 <b>사업방식</b>을 먼저 선택하세요 — 방식에 따라 협의매수·매도청구·수용·제척
+            판정 기준이 달라져, 선택 전에는 분석을 시작할 수 없습니다.
+          </p>
+        )}
+
         {/* ★유료 실행이라 한 번의 확인을 받는다 */}
         {!confirmed ? (
           <button

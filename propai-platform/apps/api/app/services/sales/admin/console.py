@@ -18,6 +18,8 @@ from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from apps.api.app.utils.withheld import INSUFFICIENT_COVERAGE, withheld
+
 logger = logging.getLogger(__name__)
 
 _ENTRY_TYPES = {"LABOR": "인건비", "EXPENSE": "경비", "UTILITY": "공과금", "AD": "광고비", "ETC": "기타"}
@@ -253,6 +255,31 @@ async def _scalar(db: AsyncSession, sql: str, **p) -> int:
         raise
 
 
+def tally_reconciliation(reconciliations: list[dict[str, Any]] | None) -> dict[str, int]:
+    """현장별 대사 결과를 **세 갈래로** 집계한다 — 순수 함수(DB 무관·단위테스트 대상).
+
+    ★왜 함수로 꺼냈나: 종전엔 이 판정이 롤업 루프 안에 인라인이라 **소스 검사로만** 잠글 수
+      있었고, 증가문을 `pass` 로 바꾸는 변이가 **생존**했다(문자열은 그대로 있으니까).
+      판단을 꺼내면 **행동으로** 잠긴다.
+
+    ★`failed`(불일치)와 `withheld`(대사 불가)는 **다른 축**이다.
+      섞으면 미탐지가 '정합'으로 위장된다 — 라이브에서 13곳 중 11곳이 withheld 였는데
+      화면엔 `failed=0` 만 보였다.
+    """
+    failed = withheld_n = ok = 0
+    for r in (reconciliations or []):
+        if not isinstance(r, dict):
+            continue
+        b = r.get("balanced")
+        if b is False:
+            failed += 1
+        elif b is None:
+            withheld_n += 1
+        else:
+            ok += 1
+    return {"failed": failed, "withheld": withheld_n, "ok": ok}
+
+
 def _reconcile(revenue_signed: int, scheduled_total: int, installment_paid: int,
                installment_count: int, ratio_invalid_count: int) -> dict[str, Any]:
     """독립 대사(실불일치 탐지) — 순수 로직(DB 무관, 단위테스트 대상).
@@ -310,7 +337,21 @@ def _reconcile(revenue_signed: int, scheduled_total: int, installment_paid: int,
             })
             return {"balanced": False, "discrepancies": discrepancies, "tolerance": tol}
         # 서명매출도 0 → 독립 출처 부재로 판정 보류(미탐지를 '정합'으로 위장 금지).
-        return {"balanced": None, "discrepancies": [], "tolerance": tol}
+        # ★2026-08-26 — 보류에 **사유 코드**를 붙인다(#832 보류값 계약).
+        #   라이브 실측: 현장 13곳 중 **11곳이 이 갈래**였는데, 롤업은 `reconcile_failed_count:0`
+        #   만 노출해 관리자 화면이 **"정합 실패 0"으로 깨끗해 보였다.** 소비처는 `is False` 로
+        #   옳게 비교하고 있었지만(실패와 보류를 갈랐지만) **보류를 버렸다.**
+        #   값은 바꾸지 않는다 — 세지 않던 것을 세게 한다.
+        return {
+            "discrepancies": [], "tolerance": tol,
+            **withheld(
+                INSUFFICIENT_COVERAGE,
+                "분납 약정표와 SIGNED 계약총액이 모두 비어 있어 **독립 대사를 수행하지 못했습니다** "
+                "— 정합이 확인된 것이 아니라 확인할 근거가 없는 상태입니다. "
+                "약정표를 생성하거나 계약을 SIGNED 로 확정하면 대사가 가능합니다.",
+                field="balanced",
+            ),
+        }
     delta_sc = scheduled_total - revenue_signed
     # ① 약정총액 vs 계약총액(SIGNED) — 반올림 잔차(±tol)는 흡수, 그 이상만 불일치로 본다.
     if abs(delta_sc) > tol:

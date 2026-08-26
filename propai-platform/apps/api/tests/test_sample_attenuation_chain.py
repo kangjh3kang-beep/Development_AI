@@ -30,8 +30,8 @@ def test_chain_reconciles_on_real_production_payload(live: dict) -> None:
     assert a["source_group_count"] > 0 and a["shown_group_count"] > 0
     assert a["dropped_total"] > 0, "감쇠가 0이면 이 테스트는 아무것도 잠그지 않는다"
 
-    assert a["source_group_count"] == 2350, a["source_group_count"]
-    assert a["shown_group_count"] == 209, a["shown_group_count"]
+    assert a["source_group_count"] == 2357, a["source_group_count"]
+    assert a["shown_group_count"] == 210, a["shown_group_count"]
     assert a["reconciles"] is True, a.get("reconcile_mismatch")
     # 원본 − 각 단계 = 표시
     assert a["source_group_count"] - sum(s["dropped"] for s in a["stages"]) == a["shown_group_count"]
@@ -40,9 +40,10 @@ def test_chain_reconciles_on_real_production_payload(live: dict) -> None:
 def test_headline_states_the_source_not_just_the_shown(live: dict) -> None:
     """★핵심 — 화면 문구가 **원본 수**를 말해야 한다(종전엔 표시 수만 있었다)."""
     h = build_sample_attenuation(live)["headline"]
-    assert "2,350" in h, f"원본 수가 문구에 없다: {h}"
-    assert "209" in h, f"표시 수가 문구에 없다: {h}"
-    for label in ("지오코딩 사전컷", "좌표 미확보", "반경 밖", "표시 상한 절단"):
+    assert "2,357" in h, f"원본 수가 문구에 없다: {h}"
+    assert "210" in h, f"표시 수가 문구에 없다: {h}"
+    # ★"좌표 미확보"는 뺐다 — 차감이 아니라 참고다(2026-08-25 교정).
+    for label in ("지오코딩 사전컷", "반경 밖", "표시 상한 절단"):
         assert label in h, f"감쇠 사유 '{label}' 가 문구에 없다: {h}"
 
 
@@ -72,6 +73,7 @@ def test_two_populations_differ(live: dict) -> None:
     for c in clean["categories"].values():
         c["precut"]["groups_before"] = len(c["groups"])
         c["precut"]["groups_cut"] = 0
+        c["capped_group_count"] = 0   # ★표시 상한도 0 이어야 "감쇠 없음" 이 성립한다
     clean["groups_evaluated_count"] = sum(len(c["groups"]) for c in clean["categories"].values())
     a_clean, a_live = build_sample_attenuation(clean), build_sample_attenuation(live)
     assert a_clean["dropped_total"] == 0 and a_live["dropped_total"] > 0
@@ -118,4 +120,66 @@ def test_service_actually_attaches_the_chain_to_its_response() -> None:
     # 임포트도 실행 줄에 있어야 한다(주석만 남기고 배선을 지우는 변이 차단)
     assert "from app.services.land_intelligence.sample_attenuation import" in src, (
         "헬퍼 임포트가 실행 줄에 없다"
+    )
+
+
+# ── 2026-08-25 교정 — 라이브 검증이 내 검산이 **공허했음**을 드러냈다 ──────────────
+_FIX2 = Path(__file__).parent / "fixtures" / "nearby_map_jecheon_live.json"
+
+
+@pytest.fixture
+def live_jecheon() -> dict:
+    """★현행 검산을 **깨뜨린** 실제 프로덕션 응답(제천 모산동 123-1).
+
+    반경 안 = evaluated 182 − filtered 180 = **2** 인데 표시는 **58** 이다
+    (좌표 미확보 그룹이 버려지지 않고 표시 경로에 들어간다 —
+     카테고리 실측: house_trade `located=0` 인데 `shown=19`).
+    """
+    return json.loads(_FIX2.read_text(encoding="utf-8"))
+
+
+def test_두_모집단에서_모두_검산이_성립한다(live: dict, live_jecheon: dict) -> None:
+    """★한쪽에서만 맞는 모델은 모델이 아니다.
+
+    종전 모델은 `display_cap` 을 **잔차**로 정의해 `reconciles` 가 **구성상 항상 참**이었다
+    (잔차가 음수가 될 때만 깨진다). 즉 자기검산이 모델 오류를 **흡수**했다.
+    """
+    a1, a2 = build_sample_attenuation(live), build_sample_attenuation(live_jecheon)
+    # 공허 방지 — 두 표본이 실제로 다른 모집단인가
+    assert a1["source_group_count"] != a2["source_group_count"], "두 픽스처가 같은 모집단이다"
+    assert a2["shown_group_count"] > a2["in_radius_group_count"], (
+        "이 픽스처의 핵심 성질(표시 > 반경안)이 사라졌다 — 회귀 대상이 바뀌었다"
+    )
+    for label, a in (("역삼동", a1), ("제천", a2)):
+        assert a["reconciles"] is True, f"[{label}] 검산 불일치: {a.get('reconcile_mismatch')}"
+        assert (a["source_group_count"] - sum(s["dropped"] for s in a["stages"])
+                == a["shown_group_count"]), f"[{label}] 사슬이 표시 수와 안 맞는다"
+
+
+def test_좌표_미확보는_차감이_아니라_참고다(live_jecheon: dict) -> None:
+    """★"제외됐다"는 거짓이다 — 반경 판정을 못 했을 뿐 표시에는 남는다."""
+    a = build_sample_attenuation(live_jecheon)
+    assert a["unlocated_group_count"] > 0, "이 픽스처는 미확보가 있어야 의미가 있다"
+    assert all(s["key"] != "unlocated" for s in a["stages"]), (
+        "좌표 미확보가 아직 **차감 단계**에 있다 — 표시에 남는 것을 제외됐다고 말한다"
+    )
+    assert a["unlocated_note"], "미확보를 세었으면 **무엇인지** 말해야 한다"
+    assert "제외된 것이 아니라" in a["unlocated_note"]
+    assert "좌표 미확보" not in a["headline"], (
+        f"헤드라인이 아직 미확보를 제외 사유로 말한다: {a['headline']}"
+    )
+
+
+def test_표시상한은_실제_카운터를_쓴다_잔차가_아니라(live: dict) -> None:
+    """★잔차는 모델 오류를 흡수해 검산을 공허하게 만든다.
+
+    역삼동에서 **총합은 우연히 같았지만 귀속이 틀렸다** — 잔차cap 37 = 실제cap 73 − 미확보 36.
+    표시 상한으로 깎인 36곳을 "좌표 미확보"라고 말하고 있었다.
+    """
+    a = build_sample_attenuation(live)
+    cap = next(s for s in a["stages"] if s["key"] == "display_cap")
+    real = sum((c.get("capped_group_count") or 0) for c in live["categories"].values())
+    assert real > 0, "이 픽스처는 절단이 있어야 이 테스트가 의미를 갖는다"
+    assert cap["dropped"] == real, (
+        f"표시 상한이 실제 카운터와 다르다 — 잔차로 되돌아갔다: {cap['dropped']} vs {real}"
     )

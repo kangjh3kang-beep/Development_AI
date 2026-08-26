@@ -740,8 +740,15 @@ def _rule_narrative(ins: dict[str, Any]) -> str:
                 f"시간당 {m.get('per_hour')}건(총 {m.get('count')}건, 심각 {m.get('high_count')}건). "
                 f"반복 검출 오류 — 원인 점검·개선 권장.")
     if t == "fallback_rate":
+        # ★사유를 **헤드라인에** 넣는다. metrics_json 에만 있으면 목록을 훑는 사람은
+        #   "80.77%" 만 보고 무엇부터 고칠지 모른다 — 비율과 사유가 같은 자리에 있어야
+        #   판단이 된다(#816 이 세운 원칙을 이 문장에도 적용).
+        #   ★`unlabeled` 는 **감추지 않고 그대로 말한다** — "사유 미분류"는 그 자체가
+        #   조치 신호다(쓰기 경로가 사유를 안 싣고 있다는 뜻).
+        top = m.get("top_reason")
+        why = f" 최다 사유 {top}." if top else ""
         return (f"[{sev}] {m.get('service')} 폴백률 {m.get('fallback_pct')}% "
-                f"(폴백 {m.get('fallback')}/{m.get('llm_call')}콜).")
+                f"(폴백 {m.get('fallback')}/{m.get('llm_call')}콜).{why}")
     if t == "selection_contamination":
         v = m.get("verdict")
         if v == "malformed":
@@ -760,7 +767,12 @@ def _rule_narrative(ins: dict[str, Any]) -> str:
     if t == "latency_regression":
         return (f"[{sev}] {m.get('key')} p95 {m.get('p95_ms')}ms "
                 f"(이전 baseline {m.get('prev_baseline_p95')}ms, 표본 {m.get('samples')}).")
-    return f"[{sev}] {t}"
+    # ★분기가 없는 타입의 기본 narrative. 종전엔 `{t}` 가 **영문 enum 그대로** 나갔다
+    #   (예: `[info] improvement_proposal`). 분기 없는 타입일수록 이 문장이 유일한 설명이라
+    #   여기서 raw 가 새면 그 카드는 **아무 말도 하지 않는 것과 같다.**
+    from app.services.growth.insight_types import insight_label
+
+    return f"[{sev}] {insight_label(t)}"
 
 
 def _llm_enabled() -> bool:

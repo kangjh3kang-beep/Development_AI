@@ -52,6 +52,14 @@ import re
 from datetime import date
 from typing import Any
 
+from apps.api.app.utils.withheld import (
+    AWAITING_INPUT,
+    INSUFFICIENT_COVERAGE,
+    NOT_APPLICABLE,
+    SOURCE_UNAVAILABLE,
+    withheld,
+)
+
 logger = logging.getLogger(__name__)
 
 # ★동시성 상한 — 외부 등기 발급 API(CODEF/틸코)는 건당 30~50초가 걸리고 **건당 과금**된다.
@@ -248,8 +256,11 @@ def _judge_owner(
             **base,
             "holding_period_basis": None,
             "holding_period_years": None,
-            "sell_claim_judgment": _JUDGMENT_OUT_OF_SCOPE,
-            "sell_claim_reason": _out_of_scope_reason(scheme, profile),
+            # ★보류값 계약(2026-08-25) — 판정 자리에는 **판정만** 들어간다.
+            #   종전엔 `"판정 불가(…)"` 라는 **문자열이 판정 자리**에 있어, 소비처가
+            #   `judgment == "매도청구 가능"` 으로 비교하면 조용히 거짓이 됐다(D7 과 같은 결함).
+            **withheld(NOT_APPLICABLE, _out_of_scope_reason(scheme, profile),
+                       field="sell_claim_judgment", text_field="sell_claim_reason"),
         }
 
     # ★제약2 — 기준일 미입력이면 판정하지 않는다(오늘 날짜로 임의 계산 금지).
@@ -258,11 +269,13 @@ def _judge_owner(
             **base,
             "holding_period_basis": None,
             "holding_period_years": None,
-            "sell_claim_judgment": "판정 보류",
-            "sell_claim_reason": (
-                "기준일(지구단위계획구역 결정고시일) 미입력으로 보유기간 판정 불가"
-                "(주택법 §22①2호 — 오늘 날짜로 임의 계산하지 않습니다)."
-            ),
+            # ★사유를 **코드로** 가른다 — 종전엔 두 원인이 같은 `"판정 보류"` 문자열로
+            #   뭉개져, 사용자가 **무엇을 하면 판정되는지** 알 수 없었다.
+            #   여기는 **사용자 입력** 문제다(기준일을 넣으면 풀린다).
+            **withheld(AWAITING_INPUT,
+                       "기준일(지구단위계획구역 결정고시일) 미입력으로 보유기간 판정 불가"
+                       "(주택법 §22①2호 — 오늘 날짜로 임의 계산하지 않습니다).",
+                       field="sell_claim_judgment", text_field="sell_claim_reason"),
         }
 
     acq_date = _parse_kdate(owner.get("acquisition_date"))
@@ -271,8 +284,10 @@ def _judge_owner(
             **base,
             "holding_period_basis": decision_date.isoformat(),
             "holding_period_years": None,
-            "sell_claim_judgment": "판정 보류",
-            "sell_claim_reason": "등기부상 취득일을 인식하지 못해 보유기간을 계산할 수 없습니다.",
+            # 여기는 **원천 자료** 문제다(사용자가 넣을 것이 없다) — 위와 원인이 다르다.
+            **withheld(SOURCE_UNAVAILABLE,
+                       "등기부상 취득일을 인식하지 못해 보유기간을 계산할 수 없습니다.",
+                       field="sell_claim_judgment", text_field="sell_claim_reason"),
         }
 
     holding_years = round((decision_date - acq_date).days / 365.25, 1)
@@ -444,11 +459,13 @@ def _summarize(cards: list[dict[str, Any]], decision_date_provided: bool) -> dic
             parcels_failed += 1
         for o in c.get("owners") or []:
             owners_total += 1
-            if o.get("sell_claim_judgment") == "판정 보류":
+            # ★문자열이 아니라 **코드**로 센다 — 문구를 다듬어도 집계가 안 깨진다.
+            _absent = o.get("sell_claim_judgment_absent")
+            if _absent in (AWAITING_INPUT, SOURCE_UNAVAILABLE, INSUFFICIENT_COVERAGE):
                 owners_undetermined += 1
             # ★"판정 보류"(자료 부족)와 "판정 불가"(해당 사업방식에 기준이 없음)를 **섞지 않는다**.
             #   섞으면 "자료를 더 모으면 판정된다"는 오독이 생긴다 — 후자는 자료 문제가 아니다.
-            if o.get("sell_claim_judgment") == _JUDGMENT_OUT_OF_SCOPE:
+            if _absent == NOT_APPLICABLE:
                 owners_out_of_scope += 1
             if o.get("holding_period_years") is not None and o["holding_period_years"] >= _LONG_TERM_HOLDING_YEARS:
                 owners_long_term += 1
