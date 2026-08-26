@@ -105,9 +105,13 @@ gh api -X PUT repos/kangjh3kang-beep/Development_AI/pulls/826/update-branch   # 
 ```
 ★**필수 체크는 4개**(`Backend (pytest)` · `Detect changes` · `Frontend (type-check+lint+test)` · `Frontend (next build)`). **`Cloudflare Pages`·`Workers Builds` 는 필수가 아니다 — 빨개도 머지된다. 쫓지 마라.**
 
-### (나) `#834` 종단 판정 — 감시기가 돌고 있다
+### (나) `#834` — ★**판정 통과(2026-08-26 01:05Z)**. 남은 것은 소급뿐
 구조는 통과(배포본에서 함수 직접 실행: **11종 전부 한글 · 영문 잔존 0종** · 대조군 `insight_label("zzz-unknown")` 은 그대로 통과 = 무차별 변환기 아님).
-**종단은 미판정** — 고친 폴백 경로(`latency_baseline` 등 **분기 없는 타입**)가 실제로 도는 순간 판정된다.
+**종단도 통과했다**: 배포 이후 `latency_baseline` 의 narrative = **`[info] 지연 기준선(기록)`**.
+대조군 — 경계 이전 같은 타입 **493건**은 `[info] latency_baseline`(영문 raw). **같은 타입이 경계로 갈린다.**
+
+★**남는 것**: 그 **493건은 소급 교정이 없다**(쓰기 경로만 고쳤다 — `#794`·`#815` 와 같은 형태).
+화면의 옛 카드는 계속 영문이다. **별건이고 소유 세션 판단이다.**
 ```sql
 -- 고친 경로를 타는 생성분만 본다(분기 있는 타입은 이 수정과 무관)
 select insight_type, narrative from platform_insights
