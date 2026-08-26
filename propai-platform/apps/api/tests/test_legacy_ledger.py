@@ -21,6 +21,8 @@ import pytest
 
 from app.services.feasibility.legacy_ledger import (
     CHECK_TOLERANCE_WON,
+    HEADER_SPECS,
+    build_header,
     build_legacy_ledger,
 )
 from app.services.feasibility.rough_feasibility_orchestrator import (
@@ -51,7 +53,14 @@ def _scenario() -> dict:
     ]
     developer_sum = 400_000_000 + 45_000_000 + 0
     return {
-        "inputs": {"land_area_sqm": 5_000.0, "gfa_sqm": 45_000.0},
+        # ★라이브 응답과 **같은 폭**으로 채운다(2026-08-26 실측 필드 기준).
+        #   종전 픽스처는 두 필드뿐이라 제원 락이 대상 없이 통과할 뻔했다 — 오류 #111 과 같은
+        #   형태(**픽스처가 현실보다 좁으면 그 필드를 쓰는 코드가 검사되지 않는다**).
+        "inputs": {"land_area_sqm": 5_000.0, "gfa_sqm": 45_000.0,
+                   "parcel_count": 1, "zone_type": "일반상업지역",
+                   "effective_far_pct": 1300.0, "dev_type_name": "주상복합",
+                   "total_households": 64, "project_months": 42,
+                   "saleable_area_pyeong": 10_000.0},
         "land_cost": {"total_won": 60_000_000_000, "per_sqm_won": 12_000_000,
                       "basis": "탁상감정 적정단가 × 면적 + 취득세 등", "evidence": None,
                       "source": "desk_appraisal"},
@@ -756,3 +765,51 @@ def test_breakdown_feeds_the_ledger_end_to_end():
     assert by["construction_direct"]["amount_won"] == 135_000_000_000, "상류가 직접비를 흘렸다"
     assert by["construction_design_fee"]["label"] == "설 계 비"
     assert by["construction_design_fee"]["unit_price"] == 0.04, "상류가 요율을 흘렸다"
+
+
+# ── 축 ⑬ 제원 블록 — 원본 양식의 **상단 절반**(2026-08-26) ────────────────────
+#   ★표만 만들고 제원을 안 만들면 「구성」이 절반이다. 원본 상단은 사업명·면적·용도지역·
+#     세대수·용적률·공사기간·단가·세전이익을 한눈에 보인다.
+def _hdr(sc) -> dict:
+    return {h["label"]: h for h in build_header(sc)}
+
+
+def test_header_is_derived_from_specs_not_hand_listed():
+    """★모집단이 `HEADER_SPECS` 에서 **파생**된다 — 손 목록이면 새 항목이 조용히 빠진다."""
+    assert len(HEADER_SPECS) >= 10, "제원 명세가 줄었다"
+    labels = {label for label, _, _ in HEADER_SPECS}
+    got = set(_hdr(_scenario()))
+    assert got <= labels, f"명세에 없는 라벨이 나왔다: {got - labels}"
+    assert len(got) >= 8, f"완전 시나리오인데 제원이 너무 적다: {sorted(got)}"
+
+
+def test_header_omits_rows_it_cannot_fill():
+    """★★값이 없으면 **행을 만들지 않는다** — 빈 행은 화면에서 「0」이나 「미정」으로 읽힌다."""
+    empty = build_header({})
+    assert empty == [], f"빈 시나리오인데 제원 행을 만들었다: {empty}"
+    # ★두 모집단 — 완전 시나리오는 여러 행이 나온다(항상 빈 목록을 내는 구현 배제).
+    assert len(build_header(_scenario())) > 0
+
+
+def test_header_carries_unit_and_numeric_flag():
+    """★단위와 수치여부를 함께 싣는다 — 화면이 정렬·포맷을 결정할 수 있게."""
+    h = _hdr(_scenario())
+    assert h["사업면적"]["unit"] == "㎡" and h["사업면적"]["is_numeric"] is True
+    assert h["용도지역"]["unit"] is None and h["용도지역"]["is_numeric"] is False
+    # ★두 모집단 — 수치/문자가 갈린다(전부 True 인 구현 배제).
+    assert h["사업면적"]["is_numeric"] != h["용도지역"]["is_numeric"]
+
+
+def test_header_does_not_fabricate_zero():
+    """★`0` 은 값이다 — 그 자체로는 빼지 않는다(무목업의 반대 방향도 지킨다)."""
+    h = _hdr({"summary": {"net_profit_won": 0}})
+    assert "세전이익" in h and h["세전이익"]["value"] == 0, "0 을 「없음」으로 취급했다"
+    # 빈 문자열·None 은 뺀다.
+    assert "사업지" not in _hdr({"address": "   "})
+
+
+def test_header_is_in_the_ledger_response():
+    """★배선 — 원장 응답에 실제로 실린다."""
+    led = build_legacy_ledger(_scenario())
+    assert led["header"], "제원이 응답에 없다"
+    assert any(h["label"] == "용도지역" for h in led["header"])

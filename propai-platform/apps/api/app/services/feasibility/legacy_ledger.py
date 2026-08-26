@@ -72,6 +72,28 @@ INDIRECT_LABELS: dict[str, str] = {
     "general_expense_won": "일반관리비",
 }
 
+#: 제원(header) — 원본 양식 상단 블록. **표시 순서가 계약**이다.
+#:   `(라벨, 값 경로, 단위)`. 값 경로는 `시나리오dict` 기준 점 표기.
+#:   ★**채울 수 없는 것은 넣지 않는다.** 원본에 있으나 우리 엔진에 대응 산출이 없는 항목
+#:     (공제·사용면적·지상/지하 분리·분양예정시기·중도금 기준·작성일자)은 **행을 만들지 않는다** —
+#:     빈 행은 화면에서 「0」이나 「미정」으로 읽힌다.
+HEADER_SPECS: tuple[tuple[str, str, str | None], ...] = (
+    ("사업지", "address", None),
+    ("사업면적", "inputs.land_area_sqm", "㎡"),
+    ("필지수", "inputs.parcel_count", "필지"),
+    ("용도지역", "inputs.zone_type", None),
+    ("실효 용적률", "inputs.effective_far_pct", "%"),
+    ("건축규모", "inputs.dev_type_name", None),
+    ("연면적", "inputs.gfa_sqm", "㎡"),
+    ("세대수", "inputs.total_households", "세대"),
+    ("공사기간", "inputs.project_months", "개월"),
+    ("토지원가", "land_cost.per_sqm_won", "원/㎡"),
+    ("직접공사비", "construction_cost.unit_per_sqm_won", "원/㎡"),
+    ("분양가격", "revenue.sale_price_per_pyeong", "원/평"),
+    ("분양가능면적", "inputs.saleable_area_pyeong", "평"),
+    ("세전이익", "summary.net_profit_won", "원"),
+)
+
 #: 대분류 — 원본 양식의 A열. **표시 순서가 계약**이다.
 LEDGER_SECTIONS: tuple[tuple[str, str], ...] = (
     ("revenue", "매 출"),
@@ -244,6 +266,37 @@ def _check(key: str, label: str, ledger: Any, engine: Any, *, note: str | None =
         "verdict": verdict,
         "note": note,
     }
+
+
+def _dig(src: dict[str, Any], path: str) -> Any:
+    """점 표기 경로로 값을 꺼낸다. 중간이 없으면 `None`(예외 없이)."""
+    cur: Any = src
+    for part in path.split("."):
+        if not isinstance(cur, dict):
+            return None
+        cur = cur.get(part)
+    return cur
+
+
+def build_header(scenario: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """제원 블록 — 원본 양식 상단(사업명·면적·용도지역·세대수·공사기간·단가…).
+
+    ★**값이 없으면 행을 만들지 않는다.** 원본은 21항목이지만 우리 엔진에 대응 산출이 없는 것이
+      있다(공제·사용면적·지상/지하 분리·분양예정시기·중도금 기준·작성일자). 빈 행을 만들면
+      화면에서 **「0」이나 「미정」으로 읽힌다** — 표 본문과 같은 규율이다.
+
+    ★**모집단은 `HEADER_SPECS` 에서 파생**한다. 손으로 나열하면 새 항목이 조용히 빠진다.
+    """
+    sc = scenario or {}
+    out: list[dict[str, Any]] = []
+    for label, path, unit in HEADER_SPECS:
+        val = _dig(sc, path)
+        if val is None or (isinstance(val, str) and not val.strip()):
+            continue
+        out.append({"key": path.replace(".", "_"), "label": label,
+                    "value": val, "unit": unit,
+                    "is_numeric": isinstance(val, (int, float)) and not isinstance(val, bool)})
+    return out
 
 
 def build_legacy_ledger(scenario: dict[str, Any] | None) -> dict[str, Any]:
@@ -485,6 +538,8 @@ def build_legacy_ledger(scenario: dict[str, Any] | None) -> dict[str, Any]:
     pct = lambda x, d: round(x / d * 100, 1) if d else None  # noqa: E731
 
     return {
+        # ★제원 — 원본 양식 상단 블록. 표 본문과 같은 규율(없으면 행을 만들지 않는다).
+        "header": build_header(sc),
         "sections": sections,
         "checks": checks,
         "coverage": {
