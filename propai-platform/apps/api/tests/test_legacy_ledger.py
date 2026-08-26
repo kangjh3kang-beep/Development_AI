@@ -323,3 +323,140 @@ def test_compact_output_feeds_the_ledger_end_to_end():
     assert by_key["charge_b03"]["unit_price"] == 150_000, "압축이 요율을 흘렸다"
     assert "표준건축비 미설정" in (by_key["charge_b01"]["note"] or ""), "압축이 사유를 흘렸다"
     assert "charge_c01" not in by_key, "수분양자 부담분이 원장에 실렸다"
+
+
+# ── 축 ⑦ **부분 결측** — 차단 1(적대 리뷰) ────────────────────────────────────
+#   ★첫 구현은 `None` 부분합을 **필터로 버리고** 남은 것만 더했다. 공사비·부담금·금융비·
+#     제경비가 전부 미확보인데 택지비만 있는 강등 시나리오에서 **세전이익 2,400억**이라는
+#     완전한 허구가 나왔다(엔진은 `None`). 화면은 같은 카드에서 엔진의 `순이익 —` 과
+#     원장의 `2,400억` 을 나란히 보이고 **큰 쪽이 더 권위 있어 보인다.**
+#   ★기존 락은 `build_legacy_ledger({})`(**전부** 결측)만 태웠다 — 처방과 결함의 **범위가
+#     달랐다**(§D20). 그래서 여기서 **세 모집단**을 가른다.
+def _partial() -> dict:
+    """오케스트레이터의 실제 강등 경로 재현 — 토지비·매출만 확보, 공사비 산출 실패."""
+    return {
+        "inputs": {"land_area_sqm": 5_000.0},
+        "land_cost": {"total_won": 60_000_000_000, "per_sqm_won": 12_000_000,
+                      "basis": "탁상감정", "evidence": None, "source": "desk"},
+        "construction_cost": {},          # ← 산출 실패
+        "revenue": {"total_won": 300_000_000_000, "sale_price_per_pyeong": 30_000_000,
+                    "saleable_area_pyeong": 10_000.0, "basis": "실거래", "source": "molit"},
+        "charges": {}, "cost_breakdown": {}, "summary": {},
+    }
+
+
+def test_partial_missing_does_not_fabricate_a_total():
+    """★★하나라도 모르면 **합계도 모른다** — 택지비만 있는데 지출 합계를 내지 않는다."""
+    led = build_legacy_ledger(_partial())
+    by = {s["key"]: s for s in led["sections"]}
+    assert by["cost"]["total_won"] is None, "축 4개가 미확보인데 지출 합계를 확정 숫자로 냈다"
+    assert by["profit"]["total_won"] is None, "★세전이익을 지어냈다(적대 리뷰 차단 1)"
+    prof = by["profit"]["groups"][0]["items"][0]
+    assert prof["amount_won"] is None
+    assert prof["share_pct"] is None, "허구 금액으로 구성비까지 그렸다"
+
+
+def test_three_populations_split():
+    """★세 모집단이 **서로 다른 결과**를 낸다 — 둘만 보면 부분 결측이 통과한다.
+
+    전부 결측(None) · **부분 결측(None)** · 완전(숫자). 가운데가 이번에 뚫린 자리다.
+    """
+    empty = build_legacy_ledger({})
+    partial = build_legacy_ledger(_partial())
+    full = build_legacy_ledger(_scenario())
+    cost = lambda led: next(s for s in led["sections"] if s["key"] == "cost")["total_won"]  # noqa: E731
+    assert cost(empty) is None
+    assert cost(partial) is None
+    assert isinstance(cost(full), (int, float)) and cost(full) > 0, "완전 시나리오까지 None 이면 과잉이다"
+
+
+def test_partial_missing_revenue_check_is_not_ok():
+    """★부분 결측에서 **「검산 통과」로 보이지 않는다** — 옆의 허구를 신뢰하게 만든다."""
+    v = {c["key"]: c["verdict"] for c in build_legacy_ledger(_partial())["checks"]}
+    assert v["cost_total"] != "OK"
+    assert v["pretax_profit"] != "OK"
+
+
+def test_charges_zero_is_distinguished_from_charges_unknown():
+    """★부담금 **0건(계산됨)** 과 **부담금 축 미확보**가 갈린다 — 중4.
+
+    행이 있는데 금액이 전부 미산정이면 소계는 「모름」이고, 검산이 **0원으로 일치 OK** 라는
+    거짓 초록을 내면 안 된다(한 응답 안에서 소계와 검산이 서로 다른 말을 하게 된다).
+    """
+    computed_zero = build_legacy_ledger({"charges": {"total_won": 0, "items": []}})
+    g = next(g for s in computed_zero["sections"] for g in s["groups"] if g["key"] == "charges")
+    assert g["subtotal_won"] == 0, "계산된 0 을 「모름」으로 강등했다"
+
+    not_computed = build_legacy_ledger({})
+    g2 = next(g for s in not_computed["sections"] for g in s["groups"] if g["key"] == "charges")
+    assert g2["subtotal_won"] is None, "미확보를 0 으로 만들었다"
+
+    # 행은 있는데 금액이 전부 None — 소계도 검산도 「모름」이어야 한다.
+    unknown_rows = build_legacy_ledger({"charges": {"total_won": 0, "items": [
+        {"code": "B03", "name": "상수도", "amount_won": None, "borne_by": "developer",
+         "base_won": 300, "rate": None},
+    ]}})
+    g3 = next(g for s in unknown_rows["sections"] for g in s["groups"] if g["key"] == "charges")
+    assert g3["subtotal_won"] is None
+    v = {c["key"]: c["verdict"] for c in unknown_rows["checks"]}
+    assert v["charges_items_vs_total"] == "UNKNOWN", "미산정 행을 0 으로 세어 거짓 OK 를 냈다"
+
+
+# ── 축 ⑧ 부담금 단위 — 차단 2 ────────────────────────────────────────────────
+def test_charge_units_are_not_all_won():
+    """★★과표 단위가 코드마다 다르다 — 전부 「원」이라 쓰면 **없는 주장**이 화면에 나간다.
+
+    실측: `base_won` 은 `int(total_gfa_sqm)`(㎡) · `total_households`(세대) ·
+    `total_sale_amount_won`(원) 세 가지다. 「300원 과표 × 140,000 요율」은 존재하지 않는다.
+    """
+    led = build_legacy_ledger({"charges": {"total_won": 1, "items": [
+        {"code": "B03", "name": "상수도", "amount_won": 45_000_000, "borne_by": "developer",
+         "base_won": 300, "rate": 150_000},
+        {"code": "B02", "name": "학교용지", "amount_won": 4_000_000, "borne_by": "developer",
+         "base_won": 100_000_000_000, "rate": 0.004},
+        {"code": "B01", "name": "광역교통", "amount_won": 1, "borne_by": "developer",
+         "base_won": 45_000, "rate": 0.02},
+    ]}})
+    by = {i["key"]: i for s in led["sections"] for g in s["groups"] for i in g["items"]}
+    assert by["charge_b03"]["qty_unit"] == "세대", "세대수를 「원」이라 불렀다"
+    assert by["charge_b02"]["qty_unit"] == "원"
+    assert by["charge_b01"]["qty_unit"] == "㎡"
+    # ★두 모집단 — 셋이 같은 라벨이면 파생을 끊어도 통과한다.
+    units = {by[k]["qty_unit"] for k in ("charge_b01", "charge_b02", "charge_b03")}
+    assert len(units) == 3, f"단위가 갈리지 않는다: {units}"
+
+
+def test_unknown_charge_code_carries_no_qty_at_all():
+    """★단위를 모르면 **수량·단가를 아예 싣지 않는다** — 거짓 라벨보다 공백이 낫다."""
+    led = build_legacy_ledger({"charges": {"total_won": 1, "items": [
+        {"code": "ZZ99", "name": "미지의 부담금", "amount_won": 1, "borne_by": "developer",
+         "base_won": 999, "rate": 0.5},
+    ]}})
+    it = next(i for s in led["sections"] for g in s["groups"] for i in g["items"]
+              if i["key"] == "charge_zz99")
+    assert it["qty"] is None and it["qty_unit"] is None
+    assert it["unit_price"] is None and it["unit_price_unit"] is None
+    assert it["amount_won"] == 1, "금액까지 버리면 과잉이다(대조군)"
+
+
+def test_qty_times_price_reproduces_amount_for_every_charge_row():
+    """★수량×단가 재현을 **부담금 전수**로 확대 — 종전엔 세 행만 봤다(통과하는 모집단만 골랐다).
+
+    비율형(`원 × 요율`)만 대상이다 — 단위형(세대·㎡)은 곱이 금액이 되는 것이 맞지만
+    반올림·상한이 끼므로 여유를 둔다.
+    """
+    led = build_legacy_ledger({"charges": {"total_won": 1, "items": [
+        {"code": "B02", "name": "학교용지", "amount_won": 400_000_000, "borne_by": "developer",
+         "base_won": 100_000_000_000, "rate": 0.004},
+        {"code": "B03", "name": "상수도", "amount_won": 45_000_000, "borne_by": "developer",
+         "base_won": 300, "rate": 150_000},
+    ]}})
+    rows = [i for s in led["sections"] for g in s["groups"] for i in g["items"]
+            if i["key"].startswith("charge_")]
+    assert rows, "부담금 행이 없다 — 검사 전제가 깨졌다"
+    for it in rows:
+        if it["qty"] is None or it["unit_price"] is None:
+            continue
+        assert abs(it["qty"] * it["unit_price"] - it["amount_won"]) <= max(1, abs(it["amount_won"]) * 0.01), (
+            f"{it['key']}: 수량×단가가 금액을 재현하지 못한다 — 표기가 장식이다"
+        )

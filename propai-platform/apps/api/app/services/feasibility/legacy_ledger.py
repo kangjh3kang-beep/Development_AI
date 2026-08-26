@@ -25,16 +25,33 @@
 빈 행을 만들면 화면에서 **0원으로 읽힌다.** 그래서 **있는 것만** 싣는다 —
 *"원본 58행을 재현했다"* 고 주장하지 않는다.
 
-## 검산이 자명하지 않은 지점
+## ★검산이 무엇을 잠그고 무엇을 못 잠그는가 (2026-08-26 정정)
 
-`매출 − 지출 = 세전이익` 은 항등식이라 늘 참이다(그래도 부호·누락을 잡는다). 진짜 판별력은
-**`부담금 항목 합 == 부담금 총계`** 에 있다 — 두 값이 **서로 다른 경로**로 온다
-(항목은 단계별 엔진에서, 총계는 통합 집계에서). 항목이 하나라도 흘리면 여기서 갈린다.
+초안은 *"부담금 항목 합 == 총계 는 두 값이 **서로 다른 경로**로 오므로 판별력이 있다"* 고
+**단정**했다. **소스를 따라가 보니 거짓이다** — 총계는 **같은 리스트에 대한 `sum()`** 이고
+항목 몇 줄 아래에서 계산된다(`utility_stage_engine.py:291` · `sale_stage_engine.py:228`).
+
+네 검산의 실제 성격:
+
+| 검산 | 성격 | 잡는 것 |
+|---|---|---|
+| `revenue_total` | **항등식** — `revenue_total` 한 변수가 블록과 summary 양쪽에 들어간다(`orchestrator:668,670,686`) | 원장의 **합산·전파** 오류 |
+| `cost_total` | 거의 항등 — `aggregation_engine` 이 같은 다섯 스칼라를 더한다 | 원장이 축을 **빠뜨리거나 두 번 세면** 갈린다 |
+| `pretax_profit` | **항등식** — `net = revenue − cost` 와 같은 식 | 부호·전파 |
+| `charges_items_vs_total` | 같은 `sum()`. **단 `borne_by` 파티션은 독립** | 원장의 **시행사/수분양자 분류**가 엔진과 어긋나면 갈린다 |
+
+> **즉 이 검산들은 「엔진이 맞는가」를 묻지 않는다. 「원장이 엔진을 옮기다 흘렸는가」를 묻는다.**
+> 좁지만 실재하는 값이다 — 그리고 **그 이상을 주장하면 사용자가 잘못 신뢰한다.**
+
+★진짜 독립 검산을 원하면 `cost_breakdown` 스칼라가 아니라 **각 엔진 원본 산출**을 두 번째
+경로로 끌어와야 한다. 이 커밋의 범위 밖이고, 그렇게 적어 둔다.
 """
 
 from __future__ import annotations
 
 from typing import Any
+
+from app.services.tax.charge_base_units import base_units_for
 
 __all__ = [
     "build_legacy_ledger",
@@ -99,7 +116,9 @@ def _item(
     }
 
 
-def _group(key: str, label: str, items: list[dict[str, Any]]) -> dict[str, Any]:
+def _group(
+    key: str, label: str, items: list[dict[str, Any]], *, computed: bool = False
+) -> dict[str, Any]:
     """중분류. **부분합은 항목에서 독립 합산**한다 — 엔진 값을 복사하면 검산이 공허해진다.
 
     ★**값을 가진 항목이 하나도 없으면 부분합은 `None`** 이다. 첫 구현은 빈 합을 `0` 으로
@@ -107,23 +126,41 @@ def _group(key: str, label: str, items: list[dict[str, Any]]) -> dict[str, Any]:
       *"모른다"* 가 *"영 원"* 이라는 **주장**으로 둔갑했다. 이 모듈이 자기 docstring 에
       금지한 그 일이고, 행위 락이 잡았다.
     """
-    valued = [i["amount_won"] for i in items if i["amount_won"] is not None]
-    return {
-        "key": key,
-        "label": label,
-        "items": items,
-        "subtotal_won": sum(valued) if valued else None,
-    }
+    amounts = [i["amount_won"] for i in items]
+    if not items:
+        # 행이 아예 없다 — **축이 계산됐는지**만이 0 과 「모름」을 가른다.
+        return {"key": key, "label": label, "items": items,
+                "subtotal_won": 0 if computed else None}
+    subtotal = None if any(a is None for a in amounts) else sum(amounts)
+    return {"key": key, "label": label, "items": items, "subtotal_won": subtotal}
 
 
 def _total(parts: list[Any]) -> float | None:
-    """부분합들의 합. **하나도 값이 없으면 `None`**(빈 합을 0 으로 만들지 않는다)."""
-    valued = [p for p in parts if p is not None]
-    return sum(valued) if valued else None
+    """부분합들의 합. **하나라도 `None` 이면 합계도 `None`.**
+
+    ★적대 리뷰 차단(2026-08-26): 첫 구현은 `None` 부분합을 **필터로 버리고** 남은 것만 더했다.
+      공사비·부담금·금융비·제경비가 전부 미확보인데 택지비만 있는 강등 시나리오에서
+      `지출 600억` → **`세전이익 2,400억`** 이라는 **완전한 허구**가 나왔다(엔진은 `None`).
+      화면은 같은 카드에서 엔진의 `순이익 —` 과 원장의 `2,400억` 을 나란히 보이고,
+      **큰 쪽이 더 권위 있어 보인다.**
+
+    ★이것은 커밋 `408f5fbc` 가 *"락이 잡았다"* 고 적은 그 결함의 **부분 결측 판**이다.
+      고친 것은 **완전 공집합**뿐이었다 — CLAUDE.md §D20(*"처방을 적용한 범위 =
+      결함이 사는 범위인지 확인하라"*)에 정확히 걸렸다.
+    """
+    if any(p is None for p in parts):
+        return None
+    return sum(parts) if parts else None
 
 
 def _charge_items(charges: dict[str, Any] | None) -> list[dict[str, Any]]:
     """부담금 16종 → 원장 행. 과표(`base_won`)가 수량, 요율(`rate`)이 단가다.
+
+    ★**과표의 단위는 코드마다 다르다.** 키 이름이 `base_won` 이라 전부 「원」처럼 읽히지만
+      실제로는 **㎡(4종) · 세대(5종) · 원(7종)** 이다. 손으로 라벨을 붙였다가
+      **「300원 과표 × 140,000 요율」** 같은 존재하지 않는 주장을 화면에 냈다(적대 리뷰 차단).
+      단위는 `app/services/tax/charge_base_units.py`(엔진 옆 SSOT)에서 **파생**하고,
+      표에 없는 코드는 **수량·단가를 싣지 않는다.**
 
     ★시행사 부담분만 싣는다(`borne_by == "developer"`). 수분양자 부담분은 총사업비에
       들어가지 않으므로 원장에 실으면 **지출 합계가 엔진과 갈린다**(검산이 그것을 잡는다).
@@ -135,6 +172,9 @@ def _charge_items(charges: dict[str, Any] | None) -> list[dict[str, Any]]:
         if it.get("borne_by", "developer") != "developer":
             continue
         code = str(it.get("code") or "")
+        # ★단위는 **엔진 옆 SSOT 에서 파생**한다 — 손으로 붙이면 거짓이 된다.
+        #   표에 없는 코드는 (None, None) 이고, 그러면 아래에서 수량·단가를 **싣지 않는다**.
+        qty_unit, rate_unit = base_units_for(code)
         reason = it.get("reason")
         conf = it.get("confidence")
         # 강등 항목은 **금액이 아니라 사유**가 본문이다 — 0원과 구별되게 note 에 싣는다.
@@ -148,11 +188,12 @@ def _charge_items(charges: dict[str, Any] | None) -> list[dict[str, Any]]:
                 f"charge_{code.lower()}" if code else "charge",
                 str(it.get("name") or code or "부담금"),
                 it.get("amount_won"),
-                qty=it.get("base_won"),
-                qty_unit="원(과표)",
-                unit_price=it.get("rate"),
-                unit_price_unit="요율",
-                basis=f"{code} — 통합 세금엔진(공사·분양 단계): 과표 × 요율" if code else None,
+                # ★단위를 모르면 **수량·단가를 아예 싣지 않는다**(거짓 라벨보다 공백이 낫다).
+                qty=it.get("base_won") if qty_unit else None,
+                qty_unit=qty_unit,
+                unit_price=it.get("rate") if rate_unit else None,
+                unit_price_unit=rate_unit,
+                basis=(f"{code} — 통합 세금엔진(공사·분양 단계): 과표 × 요율" if code else None),
                 structural_basis="부담금 = 과표 × 요율(단계별 세금엔진 산출)",
                 note=note,
             )
@@ -271,7 +312,9 @@ def build_legacy_ledger(scenario: dict[str, Any] | None) -> dict[str, Any]:
     cost_groups = [
         _group("land", "택지비", land_items),
         _group("construction", "공사비", constr_items),
-        _group("charges", "분담금·제세공과", charge_rows),
+        # ★부담금이 0건인 것과 「부담금 축을 못 구했다」는 다르다 — 총계 유무로 가른다.
+        _group("charges", "분담금·제세공과", charge_rows,
+               computed=charges.get("total_won") is not None),
         _group("finance", "금융비용", finance_items),
         _group("other", "일반사업비", other_items),
     ]
@@ -323,18 +366,25 @@ def build_legacy_ledger(scenario: dict[str, Any] | None) -> dict[str, Any]:
             )
 
     # ── 검산 ─────────────────────────────────────────────────────────────
-    charge_rows_sum = sum(i["amount_won"] for i in charge_rows if i["amount_won"] is not None)
+    # ★`_group` 과 **같은 규칙**을 쓴다(구현이 둘이면 반드시 갈린다 — 실제로 갈렸다).
+    #   종전엔 여기만 `None` 을 걸러 더해, 부담금 행이 **있는데 금액이 전부 미산정**일 때
+    #   소계는 「—」인데 검산은 「0원으로 일치, OK」라는 **거짓 초록**을 냈다.
+    charge_rows_sum = _group("_check", "", charge_rows, computed=False)["subtotal_won"]
+    #: 각 검산이 **무엇을 보증하는지** 화면까지 싣는다. 초안은 화면에
+    #: *"아래가 모두 OK 여야 유효합니다"* 라고 썼는데, 셋이 항등식이라 **그 문장이 과대주장**이었다.
     checks = [
-        _check("revenue_total", "매출 합계", revenue_total, summary.get("total_revenue_won")),
-        _check("cost_total", "지출 합계", cost_total, summary.get("total_cost_won")),
-        _check("pretax_profit", "세전이익", profit_ledger, summary.get("net_profit_won")),
-        # ★비자명 — 두 값이 서로 다른 경로에서 온다(항목은 단계별 엔진 · 총계는 통합 집계).
+        _check("revenue_total", "매출 합계", revenue_total, summary.get("total_revenue_won"),
+               note="항등식 — 원장의 합산·전파 오류만 잡는다(엔진 값의 정오는 못 본다)"),
+        _check("cost_total", "지출 합계", cost_total, summary.get("total_cost_won"),
+               note="원장이 축을 빠뜨리거나 두 번 세면 갈린다"),
+        _check("pretax_profit", "세전이익", profit_ledger, summary.get("net_profit_won"),
+               note="항등식 — 부호·전파 오류만 잡는다"),
         _check(
             "charges_items_vs_total",
             "부담금 항목 합 ↔ 부담금 총계",
             charge_rows_sum if charge_rows else None,
             charges.get("total_won"),
-            note="시행사 부담분만 대상(수분양자 부담분 제외)",
+            note="시행사/수분양자 분류가 엔진과 어긋나면 갈린다(총계는 같은 sum 이라 그 밖은 항등)",
         ),
     ]
 

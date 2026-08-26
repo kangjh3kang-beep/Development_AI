@@ -288,7 +288,10 @@ def compact_charge_items(charges_result: dict[str, Any]) -> list[dict[str, Any]]
             "rate": it.get("rate"),
             # 사유 — 미부과·미등록·강등의 근거. `detail.reason` 이 정본이다.
             "reason": (it.get("detail") or {}).get("reason"),
-            "confidence": it.get("confidence"),
+            # ★`confidence` 는 **`detail` 안**에 있다(엔진 16종 전수 실측: 최상위 non-None 0/16).
+            #   최상위에서 읽던 초안은 프로덕션에서 **항상 None** 이라 강등 표기가 한 번도
+            #   발화하지 않았다. 형제 `project_charges.py:55` 가 처음부터 옳게 읽고 있었다(§G29).
+            "confidence": (it.get("detail") or {}).get("confidence") or it.get("confidence"),
         }
         for stage in (charges_result["construction"], charges_result["sale"])
         for it in (stage.get("items") or [])

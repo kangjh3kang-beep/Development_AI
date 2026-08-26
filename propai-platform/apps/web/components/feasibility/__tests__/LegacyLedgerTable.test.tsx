@@ -96,10 +96,12 @@ describe("간략 수지 원장 표", () => {
     const err = ledger({ checks: [{ key: "a", label: "지출 합계", ledger_won: 2, engine_won: 1, diff_won: 1, verdict: "ERROR", note: null }] });
     const { unmount } = render(<LegacyLedgerTable ledger={err} />);
     expect(screen.getByTestId("ledger-check-a").textContent).toBe("ERROR");
-    expect(screen.queryByText(/합계가 어긋납니다/)).toBeTruthy();
+    // ★문구가 아니라 **존재**를 잠근다 — 산문에 건 락은 다듬을 때마다 깨지는 취약한 락이다
+    //   (실제로 이 케이스가 문구 정정 한 번에 빨개졌다).
+    expect(screen.queryByTestId("legacy-ledger-drift-warning")).toBeTruthy();
     unmount();
     render(<LegacyLedgerTable ledger={ledger()} />);
-    expect(screen.queryByText(/합계가 어긋납니다/)).toBeNull();
+    expect(screen.queryByTestId("legacy-ledger-drift-warning")).toBeNull();
   });
 
   it("★근거는 기본 숨김이고, 열면 나온다 — 조건부 렌더는 그 상태를 만들어서 검사한다", () => {
@@ -126,5 +128,85 @@ describe("간략 수지 원장 표", () => {
   it("커버리지를 화면에 신고한다", () => {
     render(<LegacyLedgerTable ledger={ledger()} />);
     expect(screen.getByTestId("legacy-ledger-coverage").textContent).toContain("항목 1개");
+  });
+
+  // ── 적대 리뷰 중2·중3 — 저자가 고른 5변이가 **가장 무거운 두 배선을 비껴갔다** ──────
+  //   리뷰가 실제로 넣어 본 변이 6건이 **전부 SURVIVED** 했다:
+  //     소계 금액 배선 절단 · 섹션 합계 배선 절단 · 합계 라벨 뒤집기 ·
+  //     커버리지 푸터 숨김 · `(추가)` 배지 제거 · 검산 note 제거.
+  //   ★CLAUDE.md §B5 — *"사람이 고른 변이는 사람이 못 본 층을 비껴간다."* 실증이다.
+  it("★★소계·섹션 합계 **금액**을 실제로 그린다(배선을 끊으면 빨개진다)", () => {
+    render(<LegacyLedgerTable ledger={ledger({
+      sections: [{
+        key: "cost", label: "매출원가",
+        groups: [{ key: "land", label: "택지비", items: [item({ amount_won: 6e10 })],
+                   subtotal_won: 6e10, share_pct: 20 }],
+        total_won: 6e10,
+      }],
+    })} />);
+    const rows = Array.from(document.querySelectorAll("tbody tr")).map((r) => r.textContent ?? "");
+    const sub = rows.find((t) => t.includes("택지비 소계"))!;
+    const tot = rows.find((t) => t.includes("매출원가 합계"))!;
+    expect(sub).toContain("600억");
+    expect(tot).toContain("600억");
+    // ★두 모집단 — 값이 없으면 「—」. 상수를 그리는 구현이 통과하지 않게.
+    expect(sub).not.toContain("—");
+  });
+
+  it("★★3단 계층 — 섹션 합계는 **자기 섹션 뒤**에 온다(표 끝에 몰리지 않는다)", () => {
+    render(<LegacyLedgerTable ledger={ledger({
+      sections: [
+        { key: "revenue", label: "매 출",
+          groups: [{ key: "sale", label: "분양", items: [item({ key: "r", label: "분양수입" })],
+                     subtotal_won: 1, share_pct: 1 }], total_won: 1 },
+        { key: "profit", label: "세 전 이 익",
+          groups: [{ key: "p", label: "세전이익", items: [item({ key: "p", label: "세전이익" })],
+                     subtotal_won: 1, share_pct: 1 }], total_won: 1 },
+      ],
+    })} />);
+    const rows = Array.from(document.querySelectorAll("tbody tr")).map((r) => r.textContent ?? "");
+    const iRevTotal = rows.findIndex((t) => t.includes("매 출 합계"));
+    const iProfitRow = rows.findIndex((t) => t.includes("세전이익"));
+    expect(iRevTotal).toBeGreaterThanOrEqual(0);
+    // ★초안은 합계 3행이 표 **맨 아래에 몰려** 「세전이익」 아래에 「매출 합계」가 왔다.
+    expect(iRevTotal).toBeLessThan(iProfitRow);
+  });
+
+  it("커버리지 푸터·`(추가)` 배지·검산 note 가 실제로 그려진다", () => {
+    render(<LegacyLedgerTable ledger={ledger({
+      sections: [{ key: "c", label: "매출원가", groups: [{
+        key: "g", label: "그룹", items: [item({ label: "신설항목", added: true })],
+        subtotal_won: 1, share_pct: 1 }], total_won: 1 }],
+      checks: [{ key: "a", label: "지출 합계", ledger_won: 1, engine_won: 1, diff_won: 0,
+                 verdict: "OK", note: "항등식 — 전파 오류만 잡는다" }],
+    })} />);
+    expect(screen.getByTestId("legacy-ledger-coverage").textContent).toContain("항목 1개");
+    expect(screen.getByText("신설항목").closest("tr")!.textContent).toContain("(추가)");
+    expect(screen.getByTestId("legacy-ledger-checks").textContent).toContain("항등식");
+  });
+
+  it("★소액이 **「0억」으로 뭉개지지 않는다** — 있는 값과 없는 값이 구별된다(중6)", () => {
+    render(<LegacyLedgerTable ledger={ledger({
+      sections: [{ key: "c", label: "매출원가", groups: [{
+        key: "g", label: "그룹",
+        items: [item({ key: "s", label: "소액", amount_won: 4_500_000 }),
+                item({ key: "z", label: "미부과", amount_won: 0 }),
+                item({ key: "n", label: "모름", amount_won: null })],
+        subtotal_won: 4_500_000, share_pct: 1 }], total_won: 4_500_000 }],
+    })} />);
+    const t = (l: string) => screen.getByText(l).closest("tr")!.textContent ?? "";
+    expect(t("소액")).toContain("450만원");
+    expect(t("소액")).not.toContain("0억");
+    // ★세 모집단이 전부 다르게 보여야 한다 — 소액 / 0원 / 모름.
+    expect(t("미부과")).toContain("0원");
+    expect(t("모름")).toContain("—");
+  });
+
+  it("★모르는 verdict 이 와도 패널이 죽지 않는다(TS 유니온은 런타임을 안 막는다)", () => {
+    render(<LegacyLedgerTable ledger={ledger({
+      checks: [{ key: "x", label: "미지", ledger_won: 1, engine_won: 1, diff_won: 0,
+                 verdict: "WAT" as never, note: null }],
+    })} />);
+    expect(screen.getByTestId("ledger-check-x").textContent).toBe("판정 불가");
   });
 });

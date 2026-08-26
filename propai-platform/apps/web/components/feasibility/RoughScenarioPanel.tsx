@@ -784,9 +784,11 @@ function RoughScenarioPanelInner({ projectId }: { projectId?: string }) {
               </div>
               {/* ★위 5줄은 축별 합계다. 아래 원장은 **행마다 「수량 × 단가 = 금액」과 근거**를
                   붙이고, 맨 아래에서 **합계가 맞는지 스스로 확인한 결과**를 보인다. */}
-              <div className="mt-4">
-                <LegacyLedgerTable ledger={result.legacy_ledger} />
-              </div>
+              {result.legacy_ledger && (
+                <div className="mt-4">
+                  <LegacyLedgerTable ledger={result.legacy_ledger} />
+                </div>
+              )}
             </div>
           </section>
 
