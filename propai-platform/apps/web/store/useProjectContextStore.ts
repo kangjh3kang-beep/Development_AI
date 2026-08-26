@@ -1427,6 +1427,12 @@ export const useProjectContextStore = create<ProjectContextState>()(
           const guardedData: Record<string, unknown> = { ...data };
           if (source === "auto" && prevRec) {
             for (const key of Object.keys(flagged)) {
+              // ★`key in guardedData` 는 **이중 가드**다 — 없어도 결과는 같다.
+              //   flagged 키가 들어온 patch 에 없으면 `guardedData[key] = prevRec[key]` 는
+              //   **이전값을 그대로 다시 넣는 것**이고, merge(`{...prev, ...guardedData}`)의
+              //   결과가 동일하다. 변이로 이 조건을 지워도 테스트가 초록인 것은 **구멍이 아니라
+              //   무연산**이기 때문이다(2026-08-26 변이 M6 SURVIVED — 설명 가능한 생존).
+              //   그래도 남겨 둔다: **의도를 읽히게** 한다("들어온 것만 되돌린다").
               if (key in guardedData && key in prevRec) guardedData[key] = prevRec[key];
             }
           }

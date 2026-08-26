@@ -22,7 +22,15 @@
  */
 import { beforeEach, describe, expect, it } from "vitest";
 
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+import { __stripCommentsForScan } from "@/lib/source-invariant";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+
+/** 워크스페이스 상대 소스를 주석 걷어 읽는다(형제 락과 같은 공용 헬퍼 경유). */
+const readSrc = (rel: string) =>
+  __stripCommentsForScan(readFileSync(resolve(__dirname, "../..", rel), "utf8"), rel);
 
 const reset = () =>
   useProjectContextStore.setState({ feasibilityData: null, manualFields: {} } as never);
@@ -88,5 +96,49 @@ describe("수지 수동값 보호 — 행위", () => {
       { source: "auto" },
     );
     expect(feas().equityWon, "equityIsManual 보존 계약이 깨졌다").toBe(500_000);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// ★생산자 배선 — **테스트가 스스로 생산자 역할을 하지 않게**
+//
+// 적대 리뷰가 짚은 것: 위 케이스들은 `{source:"user"}` 를 **테스트가 직접** 부른다.
+// 그런데 프로덕션 호출부 **7곳 중 `meta` 를 주는 곳이 0곳**이었다 →
+// `manualFields.feasibility` 를 **아무도 쓰지 않아** 가드가 장식이었다.
+// *"정의만 하고 소비처 0"* — 이 저장소가 반복해 데인 형태다.
+//
+// 그래서 **실제 사용자 편집 경로**(`PipelineResultDetail` 의 STORE_FIELD_MAP → persistFieldToStore)가
+// 존재하고 feasibility 를 다루는지 **소스에서 파생형으로** 잠근다.
+// ★이것은 소스 락이다 — 그 컴포넌트를 렌더까지 태우는 것은 별건(범위 밖·미측정으로 적는다).
+// ─────────────────────────────────────────────────────────────────────────
+describe("생산자 배선 — 가드가 장식이 되지 않게", () => {
+  const SRC = "components/pipeline/PipelineResultDetail.tsx";
+  const read = () => readSrc(SRC);
+
+  it("★전제: 대상 파일을 읽었고 편집 표면이 있다(공허한 초록 방지)", () => {
+    const src = read();
+    expect(src.length, `${SRC} 를 못 읽었다`).toBeGreaterThan(2000);
+    expect(src, "편집 가능 필드가 없다 — 검사 전제가 깨졌다").toContain("editable: true");
+  });
+
+  it("★수지 필드가 **영속 맵**에 있다 — 없으면 편집이 세션 한정으로 사라진다", () => {
+    const src = read();
+    expect(src).toContain('"feasibility.total_cost_won"');
+    expect(src).toContain('"feasibility.total_revenue_won"');
+  });
+
+  it("★★그 편집이 **`{source:\"user\"}` 로 store 에 간다** — stamp 생산자", () => {
+    const src = read();
+    expect(
+      src,
+      "updateFeasibilityData 를 user 로 부르는 곳이 없다 — manualFields.feasibility 를 아무도 안 써서 가드가 장식이 된다",
+    ).toMatch(/updateFeasibilityData\([\s\S]{0,200}?source:\s*"user"/);
+  });
+
+  it("★음성 대조군 — 자동 환류 경로는 `auto` 로 부른다(무차별 user 승격 배제)", () => {
+    const src = readSrc("hooks/useNodeRunner.ts");
+    expect(src, "자동 환류가 user 로 stamp 하면 이후 자동 갱신이 통째로 막힌다").toMatch(
+      /updateFeasibilityData\([\s\S]{0,120}?source:\s*"auto"/,
+    );
   });
 });
