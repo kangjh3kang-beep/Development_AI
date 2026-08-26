@@ -84,7 +84,12 @@ def test_ledger_table_is_in_the_printed_report():
     title = next((t for t in tables if t and "원장" in t), None)
     assert title, f"원장 표가 보고서에 없다: {list(tables)}"
     blk = tables[title]
-    assert "산출내역(수량 × 단가)" in blk.headers and "근거" in blk.headers
+    # ★열 이름은 `근거` → `근거·비고` 로 바뀌었다(2026-08-27). 사유(`note`)를 **열을 늘리지
+    #   않고** 같은 칸에 합쳤기 때문이다 — 7열로 늘렸더니 금액 칸이 50.3pt → 31.8pt 로 좁아져
+    #   `9,541,093,804` 가 세 줄로 쪼개졌다(독립 적대 리뷰 실측). 접두사로 대조해 다음 개명에
+    #   덜 취약하게 두되, **열 수 자체는 별도 테스트가 6으로 못 박는다.**
+    assert "산출내역(수량 × 단가)" in blk.headers
+    assert any(h.startswith("근거") for h in blk.headers), f"근거 열이 없다: {blk.headers}"
     assert len(blk.rows) > 5, f"행이 너무 적다: {len(blk.rows)}"
     # ★산출내역이 **실제로 채워진 행**이 있어야 한다(컬럼만 있고 전부 공란이면 장식이다).
     calc_col = blk.headers.index("산출내역(수량 × 단가)")

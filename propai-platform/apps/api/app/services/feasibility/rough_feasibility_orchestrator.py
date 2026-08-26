@@ -35,6 +35,7 @@ from app.services.land_intelligence.comprehensive_analysis_service import (
 from app.services.land_intelligence.desk_appraisal_service import desk_appraisal
 from app.services.quality.precision import PrecisionGrade, lowest
 from app.services.tax.project_charges import (
+    charge_absent_reason,
     compute_developer_stage_charges,
     parse_tristate_flag,
 )
@@ -354,6 +355,12 @@ def compact_charge_items(charges_result: dict[str, Any]) -> list[dict[str, Any]]
             #   최상위에서 읽던 초안은 프로덕션에서 **항상 None** 이라 강등 표기가 한 번도
             #   발화하지 않았다. 형제 `project_charges.py:55` 가 처음부터 옳게 읽고 있었다(§G29).
             "confidence": (it.get("detail") or {}).get("confidence") or it.get("confidence"),
+            # ★보류 사유를 **닫힌 어휘 코드**로(`app/utils/withheld.py`). 여기서 계산하는
+            #   이유: 판별에 필요한 `detail.surveyed` 가 **이 압축에서 사라진다**.
+            #   하류에서 계산하면 `AWAITING_INPUT`(미조회 — 사용자가 확인하면 값이 생긴다)과
+            #   `SOURCE_UNAVAILABLE`(원천 부재 — 사용자가 뭘 해도 안 생긴다)을 **가를 수 없다**.
+            #   ★산문만 남기면 기계가 셀 수 없다 — 그 모듈이 만들어진 이유가 그것이다.
+            "absent": charge_absent_reason(it),
         }
         for stage in (charges_result["construction"], charges_result["sale"])
         for it in (stage.get("items") or [])
