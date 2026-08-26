@@ -18,6 +18,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+import pytest
+
 from app.services.feasibility.legacy_ledger import build_legacy_ledger
 from app.services.feasibility.rough_scenario_report import build_rough_scenario_report_model
 
@@ -25,7 +27,14 @@ from app.services.feasibility.rough_scenario_report import build_rough_scenario_
 def _scenario(with_ledger: bool = True) -> dict[str, Any]:
     sc: dict[str, Any] = {
         "address": "울산광역시 동구 화정동 637-11",
-        "inputs": {"land_area_sqm": 5_000.0, "gfa_sqm": 45_000.0, "dev_type_name": "주상복합"},
+        # ★라이브 응답과 **같은 폭**으로 채운다(2026-08-26 실측 필드 기준).
+        #   ★이 세션에서 **세 번째** 같은 형태다 — 픽스처가 현실보다 좁으면 그 필드를 쓰는
+        #   코드가 검사되지 않는다(오류 #111). 두 테스트 파일이 각자 픽스처를 들고 있는 것이
+        #   근본이고, 공용 픽스처로 뽑는 것이 정답이나 **이 커밋 범위 밖**이라 부채로 남긴다.
+        "inputs": {"land_area_sqm": 5_000.0, "gfa_sqm": 45_000.0, "dev_type_name": "주상복합",
+                   "parcel_count": 1, "zone_type": "일반상업지역",
+                   "effective_far_pct": 1300.0, "total_households": 64,
+                   "project_months": 42, "saleable_area_pyeong": 10_000.0},
         "land_cost": {"total_won": 60_000_000_000, "per_sqm_won": 12_000_000,
                       "basis": "탁상감정", "source": "desk"},
         "construction_cost": {"total_won": 180_000_000_000, "unit_per_sqm_won": 4_000_000,
@@ -148,3 +157,34 @@ def test_report_separates_qty_label_from_unit():
     assert all("(" not in c for c in unlabelled), (
         f"라벨이 없는데 괄호를 달았다(항상 다는 구현이 통과하지 않게): {unlabelled}"
     )
+
+
+def test_header_is_in_the_printed_report():
+    """★제원이 **인쇄본에도** 실린다 — #110 의 교훈(표시층을 화면만 잠그지 마라).
+
+    인쇄본은 제출물이라 *"어느 사업의 수지인가"* 가 특히 필요하다.
+    """
+    sec = _section5(_scenario())
+    kvs = [b for b in sec.blocks if type(b).__name__ == "KVTableBlock"]
+    assert kvs, "KV 블록이 없다"
+    text = " ".join(str(r[0]) for b in kvs for r in b.rows)
+    assert "용도지역" in text, f"제원이 인쇄본에 없다: {text[:120]}"
+    assert "사업면적(㎡)" in text, "단위를 라벨에 붙이지 않았다"
+
+
+def test_header_absent_means_no_header_block_in_report():
+    """★★제원이 없으면 **블록을 만들지 않는다**(두 모집단) — 빈 표는 「미정」으로 읽힌다."""
+    sc = _scenario(with_ledger=True)
+    sc["legacy_ledger"]["header"] = []
+    kv_no = [b for b in _section5(sc).blocks if type(b).__name__ == "KVTableBlock"]
+    kv_yes = [b for b in _section5(_scenario()).blocks if type(b).__name__ == "KVTableBlock"]
+    assert len(kv_yes) > len(kv_no), "제원이 없는데 블록을 만들었다"
+    # 대조군 — 기존 수지 KV 블록은 **둘 다** 있어야 한다(과잉 삭제 아님).
+    assert kv_no, "기존 KV 블록까지 사라졌다"
+
+
+# ★부채 — 두 테스트 파일이 **각자** 시나리오 픽스처를 들고 있어, 한쪽만 넓히면 다른 쪽이
+#   좁은 채로 남는다(이 세션에서 **세 번** 밟았다). 공용 픽스처로 뽑아야 한다.
+@pytest.mark.skip(reason="★부채: 공용 시나리오 픽스처 추출 — 두 파일이 같은 폭을 보게(초록 안에서 보이게 남긴다)")
+def test_shared_scenario_fixture_is_extracted():
+    """두 테스트 파일이 각자 픽스처를 들면 한쪽만 넓힐 때 다른 쪽이 좁은 채 남는다."""
