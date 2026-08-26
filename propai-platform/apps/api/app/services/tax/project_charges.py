@@ -19,10 +19,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.utils.withheld import AWAITING_INPUT, SOURCE_UNAVAILABLE
-
 from app.services.tax.sale_stage_engine import calculate_all_sale_stage
 from app.services.tax.utility_stage_engine import calculate_all_utility_stage
+from app.utils.withheld import AWAITING_INPUT, SOURCE_UNAVAILABLE
 
 # JSON/쿼리스트링 직렬화로 불리언이 문자열로 오는 흔한 오염 케이스의 거짓값 표기들.
 _FALSY_STRINGS = frozenset({"", "0", "false", "no", "n", "off"})

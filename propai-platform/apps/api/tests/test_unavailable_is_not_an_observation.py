@@ -46,16 +46,16 @@ from app.services.feasibility.legacy_ledger import build_legacy_ledger
 from app.services.feasibility.rough_feasibility_orchestrator import compact_charge_items
 from app.services.feasibility.rough_scenario_report import build_rough_scenario_report_model
 from app.services.tax.charge_base_units import base_units_for
+from app.services.tax.project_charges import (
+    charge_absent_reason,
+    charge_item_unavailable,
+    compute_developer_stage_charges,
+)
 from app.utils.withheld import (
     ABSENT_REASONS,
     AWAITING_INPUT,
     SOURCE_UNAVAILABLE,
     validate_withheld_pair,
-)
-from app.services.tax.project_charges import (
-    charge_absent_reason,
-    charge_item_unavailable,
-    compute_developer_stage_charges,
 )
 
 
