@@ -32,6 +32,8 @@ import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from app.utils.withheld import INSUFFICIENT_COVERAGE, withheld
+
 logger = logging.getLogger(__name__)
 
 # ── 임계값(설계 §5.1 초기값, 향후 L1 자동보정 대상) ───────────────────────────
@@ -244,6 +246,40 @@ def _classify_contamination(verdict: str, count: int) -> str | None:
     return None
 
 
+def note_coverage(
+    coverage: dict[str, dict[str, int]] | None,
+    axis: str, *, judged: int, withheld: int, floor: int,
+) -> None:
+    """이번 분석에서 **몇 개를 판정했고 몇 개를 표본 부족으로 보류했는지** 적는다.
+
+    ## 왜 (라이브 실측 2026-08-26T09:0xZ · 활성 컨테이너)
+
+        latency  키 **825개 중 802개(97%)** 가 표본 하한 미달로 `continue` 되어
+                 **행 자체가 사라진다**(이벤트 1,243/3,893)
+        fallback 서비스 **5개 전부**(permit·regulation·scenario·site_analysis·verifier)
+                 가 하한 미달 → 인사이트 **0건**
+
+    세 자리의 주석은 이미 *"판정 보류"* 라고 **말하고 있었다**. 없던 것은 그 보류가
+    **어디에도 남지 않는다**는 사실이다 — 보는 사람은 *"문제가 없었다"* 와
+    *"판정할 표본이 없었다"* 를 **구별할 수 없다**.
+
+    ★선례를 그대로 쓴다 — `site_score_service` 의 `GRADE_COVERAGE_FLOOR` 는
+      값을 `None` 으로 두고 사유를 문구로 말하며 **발행했을 때도 `covered/total` 을
+      항상 싣는다**. 새 설계가 아니라 **의도-구현 격차**를 메우는 것이다.
+
+    ★**행을 새로 만들지 않는다.** 802개를 보류 행으로 발행하면 소음이 늘 뿐이다
+      (현재 재고 3,127건 중 `latency_regression` 이 이미 2,308건). 대신
+      `run_analysis` 가 **모든 인사이트**에 이 값을 박고, 인사이트가 **0건일 때도**
+      로그로 남긴다.
+    """
+    if coverage is None:
+        return
+    coverage[axis] = {
+        "judged": judged, "withheld": withheld,
+        "total": judged + withheld, "floor": floor,
+    }
+
+
 def _classify_fallback(fallback: int, total_calls: int) -> tuple[str | None, float]:
     """폴백률(%) 산출 + severity. 분모 부족 시 (None, pct).
 
@@ -265,19 +301,54 @@ def _classify_fallback(fallback: int, total_calls: int) -> tuple[str | None, flo
 
 def _classify_quality(
     fail: int, warn: int, verify_total: int, down: int, feedback_total: int
-) -> tuple[str | None, dict[str, float]]:
+) -> tuple[str | None, dict[str, Any]]:
     """verify fail 비율 + feedback down 비율 결합 → severity.
 
     down>20% 또는 fail>15% → warn. 표본 부족(둘 다 MIN 미만)이면 None.
-    반환 metrics 에 fail_pct/warn_pct/down_pct 를 담는다.
-    """
-    fail_pct = round(100.0 * fail / verify_total, 2) if verify_total else 0.0
-    warn_pct = round(100.0 * warn / verify_total, 2) if verify_total else 0.0
-    down_pct = round(100.0 * down / feedback_total, 2) if feedback_total else 0.0
-    metrics = {"fail_pct": fail_pct, "warn_pct": warn_pct, "down_pct": down_pct}
 
+    ## ★한 번도 재지 않은 축을 **0.0 으로 발행하지 않는다** (2026-08-26 독립 리뷰 적발)
+
+    종전엔 `if verify_total else 0.0` 이라 **verify 표본이 0건인데 `fail_pct=0.0`** 이
+    나갔다. 그 행은 `severity='warn'` 으로 **실제 발행돼 화면까지 간다**:
+
+        _classify_quality(fail=1, warn=0, verify_total=5, down=0, feedback_total=0)
+          → ('warn', {'fail_pct': 20.0, 'warn_pct': 0.0, 'down_pct': **0.0**})
+            ★feedback 을 한 번도 안 쟀는데 "down 0%" 라고 말한다
+
+    *"재 보니 0%"* 와 *"잴 표본이 없었다"* 는 **다른 사실**이다. 저장소 표준 보류 계약
+    (`utils/withheld.py` · 닫힌 어휘 `INSUFFICIENT_COVERAGE`)으로 값을 `None` 으로 두고
+    **사유를 함께 싣는다** — 그래야 `tests/test_withheld_value_contract.py` 의 파생형
+    전역 스윕이 이 생산자도 자동으로 센다.
+
+    ★소비처 안전(실측): `feature_flags.py:480` 이 `float(m.get("down_pct") or 0.0)` 로
+      읽으므로 `None` 이 와도 죽지 않고, **미측정이 비활성 트리거가 되지 않는** 쪽으로
+      의미가 정확해진다.
+    """
     enough_verify = verify_total >= QUALITY_MIN_SAMPLES
     enough_feedback = feedback_total >= QUALITY_MIN_SAMPLES
+
+    metrics: dict[str, Any] = {}
+    if enough_verify:
+        metrics["fail_pct"] = round(100.0 * fail / verify_total, 2)
+        metrics["warn_pct"] = round(100.0 * warn / verify_total, 2)
+    else:
+        _why = (f"판정 보류 — verify 표본 {verify_total}건으로 최소 "
+                f"{QUALITY_MIN_SAMPLES}건에 미달합니다(미측정이며 0% 가 아닙니다).")
+        metrics.update(withheld(INSUFFICIENT_COVERAGE, _why, field="fail_pct"))
+        metrics.update(withheld(INSUFFICIENT_COVERAGE, _why, field="warn_pct"))
+    if enough_feedback:
+        metrics["down_pct"] = round(100.0 * down / feedback_total, 2)
+    else:
+        metrics.update(withheld(
+            INSUFFICIENT_COVERAGE,
+            f"판정 보류 — feedback 표본 {feedback_total}건으로 최소 "
+            f"{QUALITY_MIN_SAMPLES}건에 미달합니다(미측정이며 0% 가 아닙니다).",
+            field="down_pct",
+        ))
+
+    fail_pct = metrics.get("fail_pct") or 0.0
+    down_pct = metrics.get("down_pct") or 0.0
+
     if not enough_verify and not enough_feedback:
         return None, metrics
 
@@ -312,6 +383,8 @@ def _classify_latency(p95: float, baseline_p95: float) -> str | None:
 #: baseline 을 읽어 올 insight_type 들.
 #  ★`latency_regression` 을 반드시 포함한다 — 2026-08-23 이전 데이터(2,059건)가 그 타입이라
 #    빼면 baseline 이 0 이 되어 `_classify_latency` 가 **영원히 None**(회귀 미탐지)이 된다.
+from app.services.growth import stale_build_guard  # noqa: E402  (생산자 표식용)
+
 LATENCY_BASELINE_SOURCE_TYPES = ("latency_regression", "latency_baseline")
 
 
@@ -349,13 +422,16 @@ async def analyze_window(
     await _prime_dynamic_config(db)
 
     insights: list[dict[str, Any]] = []
+    # ★표본 하한으로 **판정하지 못한 것**을 세어 둔다 — 아래에서 모든 인사이트에 박고,
+    #   인사이트가 0건이어도 로그로 남긴다(라이브 실측: latency 키의 97%가 여기 해당).
+    coverage: dict[str, dict[str, int]] = {}
     try:
         insights.extend(await _analyze_error_cluster(db, window_start, window_end))
         insights.extend(await _analyze_recurring_verify_errors(db, window_start, window_end))
-        insights.extend(await _analyze_fallback_rate(db, window_start, window_end))
+        insights.extend(await _analyze_fallback_rate(db, window_start, window_end, coverage))
         insights.extend(await _analyze_selection_contamination(db, window_start, window_end))
-        insights.extend(await _analyze_quality_drop(db, window_start, window_end))
-        insights.extend(await _analyze_latency_regression(db, window_start, window_end))
+        insights.extend(await _analyze_quality_drop(db, window_start, window_end, coverage))
+        insights.extend(await _analyze_latency_regression(db, window_start, window_end, coverage))
     except Exception as e:  # noqa: BLE001 — 스캔 실패는 배치를 죽이지 않는다.
         logger.warning("growth analyze 스캔 실패: %s", str(e)[:160])
         return insights
@@ -389,8 +465,19 @@ async def analyze_window(
                 "insight_type": ins["insight_type"],
                 "window_start": window_start,
                 "window_end": window_end,
+                # ★생산자 표식(2026-08-25) — 어느 빌드가 이 행을 썼는지 남긴다.
+                #   왜: 낡은 스택이 병렬로 쓴 129건을 특정하는 데 **created_at 초 단위
+                #   지문**을 써야 했다(158 배치는 분 :15~:20, 168 은 :05/:30). 그 우회는
+                #   다음 사람이 못 한다. ★특정 타입만이 아니라 **모든 인사이트**에 박는다 —
+                #   타입별 손수 분기는 새 타입을 자동으로 누락시킨다.
                 "metrics_json": json.dumps(
-                    ins.get("metrics_json") or {}, ensure_ascii=False, default=str
+                    {**(ins.get("metrics_json") or {}),
+                     "producer_build_id": stale_build_guard.running_build_id(),
+                     # ★생산자 표식과 **같은 자리**에 박는다 — 이 자리의 주석이 이미
+                     #   "타입별 손수 분기는 새 타입을 자동으로 누락시킨다"고 말한다.
+                     #   커버리지도 같은 이유로 전 타입에 박는다.
+                     "analysis_coverage": coverage},
+                    ensure_ascii=False, default=str,
                 ),
                 "severity": ins.get("severity"),
                 "narrative": ins.get("narrative"),
@@ -404,8 +491,15 @@ async def analyze_window(
         with contextlib.suppress(Exception):
             await db.rollback()
 
-    if insights:
-        logger.info("growth analyze: 인사이트 %d건 생성(INSERT %d)", len(insights), inserted)
+    # ★종전엔 `if insights:` 라 **0건인 실행이 아무 로그도 남기지 않았다** — 배치가
+    #   돌지 않은 것과 구별이 안 됐다. 커버리지는 **0건일 때가 가장 중요하다**
+    #   (라이브: fallback 은 서비스 5개 전부 하한 미달이라 인사이트가 0건이다).
+    logger.info(
+        "growth analyze: 인사이트 %d건 생성(INSERT %d) · 커버리지 %s",
+        len(insights), inserted,
+        {k: f"{v['judged']}/{v['total']}(하한 {v['floor']})" for k, v in coverage.items()}
+        or "축 없음",
+    )
     return insights
 
 
@@ -473,7 +567,7 @@ async def _analyze_recurring_verify_errors(db, w0, w1) -> list[dict[str, Any]]:
     return _cluster_verify_issues(parsed, hours)
 
 
-async def _analyze_fallback_rate(db, w0, w1) -> list[dict[str, Any]]:
+async def _analyze_fallback_rate(db, w0, w1, coverage: dict[str, dict[str, int]] | None = None) -> list[dict[str, Any]]:
     """service별 폴백률 인사이트.
 
     분자(fallback): base_interpreter 는 LLM 호출 실패 시 별도 'fallback' 이벤트를
@@ -496,12 +590,41 @@ async def _analyze_fallback_rate(db, w0, w1) -> list[dict[str, Any]]:
         "GROUP BY service"
     ), {"w0": w0, "w1": w1})).fetchall()
 
+    # ★사유 분포 — 같은 창에서 (service, reason) 로 센다.
+    #   왜 새 인사이트 타입을 만들지 않았나: **비율과 사유는 같은 자리에 있어야** 판단이 된다.
+    #   "80.77% 폴백"만으로는 절단인지 타임아웃인지 스키마 위반인지 모르고, 그 셋은 처방이 다르다.
+    #   타입을 늘리면 카탈로그·대시보드가 따라와야 하는데 얻는 것이 없다.
+    #   ★`reason` 이 없는 옛 이벤트는 `unlabeled` 로 센다 — 0으로 감추면 분포가 거짓이 된다.
+    reason_rows = (await db.execute(text(
+        "SELECT service, COALESCE(NULLIF(payload->>'reason',''), 'unlabeled') AS reason, "
+        "  COUNT(*) AS n "
+        "FROM platform_events "
+        "WHERE created_at >= :w0 AND created_at < :w1 AND service IS NOT NULL "
+        "  AND (event_type='fallback' "
+        "       OR (event_type='llm_call' AND payload->>'ok'='false')) "
+        "GROUP BY service, reason"
+    ), {"w0": w0, "w1": w1})).fetchall()
+
+    by_service: dict[str, dict[str, int]] = {}
+    for svc, reason, n in reason_rows:
+        by_service.setdefault(svc, {})[str(reason)] = int(n or 0)
+
     out: list[dict[str, Any]] = []
+    judged = withheld = 0
     for r in rows:
         service, fb, calls = r[0], int(r[1] or 0), int(r[2] or 0)
+        # ★판정 가능 여부를 **분류 결과가 아니라 표본으로** 센다 — `sev is None` 은
+        #   "표본 부족"과 "표본 충분하고 정상"을 뭉갠다(둘 다 None 이다).
+        if calls < FALLBACK_MIN_CALLS:
+            withheld += 1
+        else:
+            judged += 1
         sev, pct = _classify_fallback(fb, calls)
         if sev is None:
             continue
+        reasons = dict(sorted(by_service.get(service, {}).items(),
+                              key=lambda kv: (-kv[1], kv[0])))
+        top = next(iter(reasons), None)
         out.append({
             "insight_type": "fallback_rate",
             "severity": sev,
@@ -510,8 +633,12 @@ async def _analyze_fallback_rate(db, w0, w1) -> list[dict[str, Any]]:
             "metrics_json": {
                 "service": service, "fallback": fb,
                 "llm_call": calls, "fallback_pct": pct,
+                # 사유별 건수(많은 순) + 최다 사유. 개선 착수 지점을 이 두 값이 정한다.
+                "reasons": reasons, "top_reason": top,
             },
         })
+    note_coverage(coverage, "fallback_rate", judged=judged, withheld=withheld,
+                  floor=FALLBACK_MIN_CALLS)
     return out
 
 
@@ -578,7 +705,7 @@ async def _analyze_selection_contamination(db, w0, w1) -> list[dict[str, Any]]:
     return out
 
 
-async def _analyze_quality_drop(db, w0, w1) -> list[dict[str, Any]]:
+async def _analyze_quality_drop(db, w0, w1, coverage: dict[str, dict[str, int]] | None = None) -> list[dict[str, Any]]:
     """service별 verify_result(fail/warn) + ai_feedback(down) 결합 품질저하 인사이트."""
     from sqlalchemy import text
 
@@ -615,7 +742,15 @@ async def _analyze_quality_drop(db, w0, w1) -> list[dict[str, Any]]:
         a["ftotal"] += int(r[2] or 0)
 
     out: list[dict[str, Any]] = []
+    judged = withheld = 0
     for service, a in agg.items():
+        # ★`sev is None` 으로 세면 "표본 부족"과 "표본 충분·정상"이 뭉개진다.
+        #   `_classify_quality` 와 **같은 판정식**을 쓴다(하나를 고치면 다른 하나가 어긋나는
+        #   것을 막기 위해 두 값 모두 QUALITY_MIN_SAMPLES 에 결속한다).
+        if a["vtotal"] < QUALITY_MIN_SAMPLES and a["ftotal"] < QUALITY_MIN_SAMPLES:
+            withheld += 1
+        else:
+            judged += 1
         sev, metrics = _classify_quality(
             a["fail"], a["warn"], a["vtotal"], a["down"], a["ftotal"]
         )
@@ -632,10 +767,12 @@ async def _analyze_quality_drop(db, w0, w1) -> list[dict[str, Any]]:
                 "feedback_total": a["ftotal"], "down": a["down"], **metrics,
             },
         })
+    note_coverage(coverage, "quality_drop", judged=judged, withheld=withheld,
+                  floor=QUALITY_MIN_SAMPLES)
     return out
 
 
-async def _analyze_latency_regression(db, w0, w1) -> list[dict[str, Any]]:
+async def _analyze_latency_regression(db, w0, w1, coverage: dict[str, dict[str, int]] | None = None) -> list[dict[str, Any]]:
     """route/service p95 vs 직전 7일 baseline. baseline 은 insights 에 저장·참조."""
     from sqlalchemy import text
 
@@ -665,9 +802,14 @@ async def _analyze_latency_regression(db, w0, w1) -> list[dict[str, Any]]:
     baselines = {r[0]: float(r[1] or 0.0) for r in base_rows}
 
     out: list[dict[str, Any]] = []
+    judged = withheld = 0
     for key, vals in by_key.items():
         if len(vals) < LATENCY_MIN_SAMPLES:
+            # ★행을 만들지 않는 것은 옳다(802개를 발행하면 소음이 는다). 다만
+            #   **몇 개를 못 봤는지는 말해야** 한다 — 안 그러면 커버리지 3% 가 100% 로 읽힌다.
+            withheld += 1
             continue
+        judged += 1
         p95 = round(_percentile(vals, 95.0), 2)
         baseline_p95 = baselines.get(key, 0.0)
         sev = _classify_latency(p95, baseline_p95)
@@ -686,6 +828,8 @@ async def _analyze_latency_regression(db, w0, w1) -> list[dict[str, Any]]:
                 "prev_baseline_p95": baseline_p95,
             },
         })
+    note_coverage(coverage, "latency_regression", judged=judged, withheld=withheld,
+                  floor=LATENCY_MIN_SAMPLES)
     return out
 
 
@@ -707,8 +851,15 @@ def _rule_narrative(ins: dict[str, Any]) -> str:
                 f"시간당 {m.get('per_hour')}건(총 {m.get('count')}건, 심각 {m.get('high_count')}건). "
                 f"반복 검출 오류 — 원인 점검·개선 권장.")
     if t == "fallback_rate":
+        # ★사유를 **헤드라인에** 넣는다. metrics_json 에만 있으면 목록을 훑는 사람은
+        #   "80.77%" 만 보고 무엇부터 고칠지 모른다 — 비율과 사유가 같은 자리에 있어야
+        #   판단이 된다(#816 이 세운 원칙을 이 문장에도 적용).
+        #   ★`unlabeled` 는 **감추지 않고 그대로 말한다** — "사유 미분류"는 그 자체가
+        #   조치 신호다(쓰기 경로가 사유를 안 싣고 있다는 뜻).
+        top = m.get("top_reason")
+        why = f" 최다 사유 {top}." if top else ""
         return (f"[{sev}] {m.get('service')} 폴백률 {m.get('fallback_pct')}% "
-                f"(폴백 {m.get('fallback')}/{m.get('llm_call')}콜).")
+                f"(폴백 {m.get('fallback')}/{m.get('llm_call')}콜).{why}")
     if t == "selection_contamination":
         v = m.get("verdict")
         if v == "malformed":
@@ -727,7 +878,12 @@ def _rule_narrative(ins: dict[str, Any]) -> str:
     if t == "latency_regression":
         return (f"[{sev}] {m.get('key')} p95 {m.get('p95_ms')}ms "
                 f"(이전 baseline {m.get('prev_baseline_p95')}ms, 표본 {m.get('samples')}).")
-    return f"[{sev}] {t}"
+    # ★분기가 없는 타입의 기본 narrative. 종전엔 `{t}` 가 **영문 enum 그대로** 나갔다
+    #   (예: `[info] improvement_proposal`). 분기 없는 타입일수록 이 문장이 유일한 설명이라
+    #   여기서 raw 가 새면 그 카드는 **아무 말도 하지 않는 것과 같다.**
+    from app.services.growth.insight_types import insight_label
+
+    return f"[{sev}] {insight_label(t)}"
 
 
 def _llm_enabled() -> bool:
@@ -760,7 +916,7 @@ def _llm_narrative(ins: dict[str, Any]) -> str | None:
     try:
         from app.services.ai.llm_provider import get_llm
 
-        llm = get_llm(timeout=20, max_tokens=200)
+        llm = get_llm(service="growth_analyze", timeout=20, max_tokens=200)
         prompt = (
             "다음 플랫폼 운영 인사이트를 한국어 2문장으로 요약하고 권고조치를 덧붙여라. "
             "과장 금지, 지표 근거만.\n"

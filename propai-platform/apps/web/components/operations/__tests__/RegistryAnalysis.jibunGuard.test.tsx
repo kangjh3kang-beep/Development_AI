@@ -9,7 +9,11 @@
  *
  * 그래서 **요청이 나가는지 아닌지**를 잠근다(라벨만 보면 이 결함은 안 보인다).
  */
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
+// ★`RegistryAnalysisWorkspaceClient` 는 이제 `ParcelAuctionWatchBadge`(useQuery)를
+//   렌더한다 — 프로바이더가 필요하다. 손으로 감싸지 말고 **공용 헬퍼**를 쓴다(§29).
+import { renderWithQueryClient as render } from "@/test/render-with-query-client";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { RegistryAnalysisWorkspaceClient } from "@/components/operations/RegistryAnalysisWorkspaceClient";

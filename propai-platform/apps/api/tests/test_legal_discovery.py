@@ -1,8 +1,34 @@
 """LLM 법령탐색 + 정본 교차검증 — 분류(verified_ssot/llm_unverified/drop) 검증."""
 import asyncio
 
+import pytest
+
 from app.services.legal import legal_reference_registry as reg
 from app.services.legal.legal_discovery_service import LegalDiscoveryService
+
+
+@pytest.fixture(autouse=True)
+def _isolate_discovery_cache(monkeypatch):
+    """★`discover` 의 **DB 영속 캐시**를 끊는다 — 이 파일은 코드를 검증하지 DB 잔재를 검증하지 않는다.
+
+    실측(2026-08-24): `test_empty_llm_graceful` 이 **단독으로는 실패, 파일 전체로는 통과**했다.
+    원인은 로직이 아니라 `legal_discovery_cache` 에 **앞선 실행이 심어 둔 행**이었다
+    (`cache.hit=true`, 같은 날 12:41 적재). 즉 결과가 **개발 DB 상태에 좌우**됐다.
+
+    그 순서 의존이 실제로 해를 끼쳤다 — 회귀 판정에서 이 테스트가 두 번 "내 회귀"로 오독됐고,
+    그때마다 기준선을 다시 떠서 아니라는 것을 증명해야 했다.
+    **순서 의존 테스트는 자기 파일만 흔드는 게 아니라 남의 판정을 흔든다.**
+    """
+    import app.services.legal.legal_discovery_service as mod
+
+    async def _no_cache(_h):
+        return None
+
+    async def _no_store(*_a, **_k):
+        return None
+
+    monkeypatch.setattr(mod, "_cache_load", _no_cache, raising=True)
+    monkeypatch.setattr(mod, "_cache_store", _no_store, raising=True)
 
 
 def _run(coro):

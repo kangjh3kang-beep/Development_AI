@@ -29,6 +29,7 @@ import app.services.registry.registry_analysis_service as ras
 from app.services.land_intelligence import parcel_purchase_strategy_service as ps
 from app.services.land_intelligence import parcel_rights_survey_service as prs
 from app.services.zoning.parcel_graph import build_parcel_graph
+from apps.api.app.utils.withheld import NOT_APPLICABLE
 
 # 사업방식 — 두 모집단(보유기간 요건 있음/없음)을 가르는 축.
 HOUSING_SCHEME = "지구단위계획 연계"          # 주택법 §22 — 보유기간 10년 요건 있음
@@ -661,7 +662,8 @@ async def test_같은_필지가_사업방식에_따라_다른_행을_낸다(monk
 
     # ① 판정이 다르다 — 보유기간 요건은 주택법 계열에만 있다.
     assert h["sell_claim_judgment"] == "불가(장기보유 추정)"
-    assert c["sell_claim_judgment"] == prs._JUDGMENT_OUT_OF_SCOPE
+    assert c["sell_claim_judgment"] is None
+    assert c["sell_claim_judgment_absent"] == NOT_APPLICABLE
     assert h["sell_claim_judgment"] != c["sell_claim_judgment"]
 
     # ② 액션도 다르다 — 확보율 95% 미만 + 장기보유면 강제수단이 없다(협의매수).
@@ -972,7 +974,11 @@ def test_엔드포인트는_사업방식_없이는_판정하지_않는다(monkey
     rows = resp.json()["strategy"]["rows"]
     assert len(rows) == 2
     assert {r["action"] for r in rows} == {ps.ACTION_UNDECIDED}
-    assert all(r["sell_claim_judgment"] == prs._JUDGMENT_OUT_OF_SCOPE for r in rows)
+    # ★보류값 계약 — 판정 자리엔 **판정만**. 사유는 코드로 온다.
+    assert all(r["sell_claim_judgment"] is None for r in rows), (
+        "판정 자리에 판정이 아닌 문자열이 들어 있다"
+    )
+    assert all(r["sell_claim_judgment_absent"] == NOT_APPLICABLE for r in rows)
 
 
 # ══ 6-b) ★★라우터 배선 락 — 변이 감사에서 41개 중 22개가 생존한 자리 ═══════
@@ -1280,10 +1286,13 @@ def test_도시개발사업_note에서_매도청구에_준함을_걷어냈다() 
 
 def test_out_of_scope_사유가_주택법_전용_요건임을_밝힌다() -> None:
     """★사유 문구가 **법적 설명**이다 — 사용자는 이 문장을 보고 왜 판정이 없는지 이해한다."""
-    assert prs._JUDGMENT_OUT_OF_SCOPE == "판정 불가(해당 사업방식 기준 없음)"
-
     consent = prs._judge_owner(
         _owner("소유자", "전부", "2005-03-02", "매매"), None, None, CONSENT_SCHEME
+    )
+    # ★상수 리터럴 대신 **계약**을 본다 — 문구는 다듬어도 계약은 안 바뀐다.
+    assert consent["sell_claim_judgment"] is None
+    assert consent["sell_claim_judgment_absent"] == NOT_APPLICABLE, (
+        "해당 사업방식에 기준이 없는 것은 **자료 부족이 아니라 not_applicable** 이다"
     )
     reason = consent["sell_claim_reason"]
     assert "도정법" in reason, reason

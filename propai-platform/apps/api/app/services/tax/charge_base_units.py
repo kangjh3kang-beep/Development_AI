@@ -1,0 +1,54 @@
+"""부담금 코드별 **과표·요율의 단위** — 표시층 SSOT.
+
+## 왜 필요한가 (2026-08-26 적대 리뷰 차단)
+
+항목 dict 의 키 이름이 `base_won` 이라 **전부 「원」인 것처럼 읽힌다.** 실제로는 셋이다:
+
+    int(total_gfa_sqm)      → ㎡     (B01 · B08 · C07 · C08)
+    total_households        → 세대   (B03 · B04 · B05 · B06 · B07)
+    total_sale_amount_won   → 원     (B02 · C01~C06)
+
+표시층이 `base_won` 을 전부 `"원(과표)"` 로 라벨링했더니 **「300원 과표 × 140,000 요율」**
+같은, **존재하지 않는 주장**이 화면에 나갔다(22 대입 중 11 이 거짓).
+
+★근본 처방은 **엔진이 단위를 함께 실어 보내는 것**이다. 그 전까지의 봉합으로 이 표를
+**엔진 옆에** 둔다 — 표시층에 두면 엔진이 코드를 추가할 때 같이 안 움직인다.
+★표에 없는 코드는 **`None`**(모름)이다. 추측해서 라벨을 붙이지 않는다.
+"""
+
+from __future__ import annotations
+
+__all__ = ["CHARGE_BASE_UNITS", "base_units_for"]
+
+#: code → (과표 단위, 요율 단위). `None` = 이 코드는 표에 없다(모름).
+#: ★근거는 각 엔진의 `base_won=` 대입식이다. 코드를 추가하면 **여기도 추가**해야 하고,
+#:   `tests/test_charge_base_units_contract.py` 가 누락을 실패로 신고한다.
+CHARGE_BASE_UNITS: dict[str, tuple[str, str]] = {
+    # 연면적 기준 — base_won = int(total_gfa_sqm)
+    "B01": ("㎡", "부과율"),          # utility_stage_engine.py:89  (광역교통시설)
+    "B08": ("㎡", "원/㎡"),           # utility_stage_engine.py:243 (소방시설)
+    "C07": ("㎡", "원/㎡"),           # sale_stage_engine.py:151    (기반시설)
+    "C08": ("㎡", "원/㎡"),           # sale_stage_engine.py:166    (에너지절약)
+    # 세대 기준 — base_won = total_households
+    "B03": ("세대", "원/세대"),        # utility_stage_engine.py:162 (상수도 원인자)
+    "B04": ("세대", "원/세대"),        # utility_stage_engine.py:186 (하수도 원인자)
+    "B05": ("세대", "원/세대"),        # utility_stage_engine.py:201 (전기인입)
+    "B06": ("세대", "원/세대"),        # utility_stage_engine.py:215 (도시가스인입)
+    "B07": ("세대", "원/세대"),        # utility_stage_engine.py:229 (통신인입)
+    # 금액 기준 — base_won = total_sale_amount_won
+    "B02": ("원", "요율"),            # utility_stage_engine.py:131 (학교용지)
+    "C01": ("원", "세율"),            # sale_stage_engine.py:48     (부가가치세)
+    "C02": ("원", "요율"),            # sale_stage_engine.py:64     (분양보증수수료)
+    "C03": ("원", "요율"),            # sale_stage_engine.py:78     (분양광고비)
+    "C04": ("원", "세율"),            # sale_stage_engine.py:92     (취득세)
+    "C05": ("원", "요율"),            # sale_stage_engine.py:106    (등기비용)
+    "C06": ("원", "요율"),            # sale_stage_engine.py:122    (국민주택채권)
+}
+
+
+def base_units_for(code: str | None) -> tuple[str | None, str | None]:
+    """코드 → (과표 단위, 요율 단위). **모르면 `(None, None)`** — 추측하지 않는다."""
+    if not code:
+        return (None, None)
+    u = CHARGE_BASE_UNITS.get(str(code).upper())
+    return u if u else (None, None)

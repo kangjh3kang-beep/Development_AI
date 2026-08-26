@@ -7,6 +7,8 @@
  */
 
 import { apiClient } from "@/lib/api-client";
+import { AUDIT_JOB_STORAGE_KEY } from "@/components/design-audit/DesignAuditWorkspace";
+import { MARKET_REPORT_JOB_STORAGE_KEY } from "@/lib/market-report-job";
 import { useProjectStore } from "@/store/useProjectStore";
 import {
   useProjectContextStore,
@@ -16,8 +18,15 @@ import {
   type SiteAnalysisData,
 } from "@/store/useProjectContextStore";
 import { healPhantomAreaAggregates } from "@/lib/site-analysis-invariants";
+import { effectiveLandAreaSqm } from "@/lib/site-area";
+import { VERIFY_CACHE_PREFIX } from "@/lib/verification-cache-key";
 import { looksLikeAddress } from "@/lib/selection-integrity";
 import { useLandScheduleStore } from "@/store/useLandScheduleStore";
+import { useDevelopmentPlanStore } from "@/store/useDevelopmentPlanStore";
+import { usePaidRenderStore } from "@/store/usePaidRenderStore";
+import { useRegistryAnalysisStore } from "@/store/useRegistryAnalysisStore";
+import { currentUserId, decodeTokenUser } from "@/lib/account-scope";
+import { withWritesSuspended } from "@/lib/account-scoped-storage";
 import {
   SATONG_DOMINANT_CONSTRAINT_KEY,
   SATONG_MAP_SELECTION_KEY,
@@ -47,36 +56,27 @@ const PROJECT_PERSIST_KEYS = [
   "propai-land-schedule",     // useLandScheduleStore
   "propai-project-storage",   // useProjectStore
   "propai-system-storage",    // useSystemStore (LLM provider·입력 API키 등 민감)
-  "propai_pipeline_history",  // 파이프라인 분석이력(프로젝트 상세)
+  // ★레거시 전용 — 지금 쓰는 키는 `propai_pipeline_history__<userId>`(계정별 격리)이고
+  //   그건 **의도적으로 지우지 않는다**(ProjectPipelinePanel: 키가 격리돼 있어 와이프 없이도
+  //   본인 이력이 보존되고 삭제는 본인만 영향). 이 항목은 격리 이전의 **공유키 잔재**만 걷는다.
+  //   ★접두로 바꾸지 마라 — 그 순간 계정별 이력까지 지워져 그들이 고친 결함이 되살아난다.
+  "propai_pipeline_history",
   "propai_precheck_handoff",  // PreCheck 분석결과 전달(localStorage일 수도)
 ];
 // 주소+컨텍스트 해시로 만들어지는 동적 캐시 키(개수 가변) — 접두사 패턴으로 일괄 제거.
 const PROJECT_PERSIST_PREFIXES = [
   "propai_panel_",        // 전문가 패널 분석결과(9유형)
   "propai_scenario_",     // 개발 시나리오 시뮬레이션
-  "propai_verification_", // 검증 배지 캐시
+  // ★정본 상수를 쓴다 — 종전엔 실재하지 않는 접두를 손으로 적어 뒀는데 실제 키는
+  //   `propai_verify_` 여서 이 스윕이 **한 번도 매치된 적이 없었다**(계정 전환 시 이전 계정의
+  //   검증 캐시 잔존). 만드는 쪽과 지우는 쪽이 같은 상수를 본다.
+  VERIFY_CACHE_PREFIX,
 ];
 
-/** JWT 페이로드에서 사용자 식별자(sub/user_id)를 디코드. 실패 시 null. */
-function decodeTokenUser(token: string | null): string | null {
-  if (!token) return null;
-  try {
-    const seg = token.split(".")[1];
-    if (!seg) return null;
-    const json = atob(seg.replace(/-/g, "+").replace(/_/g, "/"));
-    const payload = JSON.parse(json) as Record<string, unknown>;
-    const uid = payload.sub ?? payload.user_id ?? payload.uid;
-    return uid ? String(uid) : null;
-  } catch {
-    return null;
-  }
-}
-
-/** 현재 로그인 사용자 식별자(localStorage 키 분리용). 비로그인이면 "guest". */
-export function currentUserId(): string {
-  if (typeof window === "undefined") return "guest";
-  return decodeTokenUser(window.localStorage.getItem("propai_access_token")) || "guest";
-}
+// ★`currentUserId`/`decodeTokenUser` 는 `lib/account-scope.ts` 로 옮겼다 — 유료 산출물
+//   스토어가 계정별 키를 만들 때 이 함수를 쓰는데, 여기 두면 스토어→projectSync→스토어
+//   **순환 임포트**가 된다. 기존 소비처를 위해 이름은 그대로 재수출한다.
+export { currentUserId, decodeTokenUser };
 
 /** 모든 프로젝트/분석 로컬 데이터를 완전 초기화(메모리 store + localStorage). 토큰은 건드리지 않음. */
 export function clearAllProjectData(): void {
@@ -92,6 +92,27 @@ export function clearAllProjectData(): void {
   } catch { /* noop */ }
   try { useProjectStore.setState({ projects: [] } as never); } catch { /* noop */ }
   try { useLandScheduleStore.setState({ byProject: {} } as never); } catch { /* noop */ }
+  // ★유료 산출물(렌더 3,000원/건 · 등기 권리분석 1,200원/필지)은 **키를 지우지 않는다** —
+  //   지우면 사용자가 이미 낸 돈이 사라진다. 계정별 키(`<base>__<uid>`)로 갈라 두고
+  //   여기서는 **메모리 상태만** 비운다.
+  //
+  // ★★**쓰기 정지 창 안에서** 비운다 — 이것이 계약이다.
+  //   `#839` 는 여기서 그냥 `setState({byProject:{}})` 를 부르고 곧바로 `rehydrate()` 가
+  //   *"대기 쓰기를 덮어쓴다"* 고 적었다. **그 주장이 거짓이었다**(적대 리뷰가 실행 재현):
+  //   zustand `hydrate()` 는 **버전 마이그레이션 때만** `setItem` 을 부른다. 그래서 빈 값이
+  //   그대로 flush 돼 **첫 로그아웃에 유료 산출물이 영구 소실**됐다. 세 로그아웃 경로가 모두
+  //   `clearOnLogout()` 을 **토큰 제거보다 먼저** 부르므로 교차계정 가드도 통과했다.
+  //   ★그래서 라이브러리 내부 동작에 기대지 않는다 — **쓰기를 아예 못 하게** 만든다.
+  //
+  // ★복원은 여기서 하지 않는다. `ensureDataOwner()` → `syncAccountScopedStores()` 가
+  //   **계정이 바뀐 것을 보고** 한다(로그아웃 경로에서 이전 계정 것을 되살리지 않게).
+  withWritesSuspended(() => {
+    // ★스토어를 배열로 묶어 돌리지 않는다 — 유니온 타입이 되어 `setState` 시그니처가
+    //   서로 호환되지 않는다(tsc 가 잡았다). 각각 명시한다.
+    try { usePaidRenderStore.setState({ byProject: {} } as never); } catch { /* noop */ }
+    try { useRegistryAnalysisStore.setState({ byProject: {} } as never); } catch { /* noop */ }
+    try { useDevelopmentPlanStore.setState({ byProject: {} } as never); } catch { /* noop */ }
+  });
   pulled = false; // 빈 상태가 서버로 syncUp되지 않도록(scheduleSyncUp이 pulled=false면 무시)
   for (const k of PROJECT_PERSIST_KEYS) {
     try { window.localStorage.removeItem(k); } catch { /* noop */ }
@@ -125,7 +146,14 @@ export function clearAllProjectData(): void {
         k === SATONG_SITE_LAYOUT_KEY ||
         // ★W4 매스 시드 인계 — 뷰 캐시가 아니라 **인계 페이로드**지만 위험은 같거나 더 크다:
         //   남으면 이전 계정이 고른 배치안 층수가 다음 계정의 설계 시드로 들어간다.
-        k === SATONG_MASS_SEED_KEY
+        k === SATONG_MASS_SEED_KEY ||
+        // ★2026-08-24 실측 누락 2건 — **진행 잡 페이로드**가 남아 이전 계정이 분석한
+        //   **부지 주소**(`{jobId, startedAt, address}`)가 다음 계정 화면으로 복원될 수 있었다.
+        //   W1~W4 주석이 *"새 키는 만드는 즉시 이 목록에 등재한다"* 를 **네 번** 반복했는데도
+        //   또 빠졌다 — 산문이 아니라 **파생형 락**으로 잠근다
+        //   (`projectSync.wipeCoverage.test.ts`).
+        k === MARKET_REPORT_JOB_STORAGE_KEY ||
+        k === AUDIT_JOB_STORAGE_KEY
       ) {
         try { window.sessionStorage.removeItem(k); } catch { /* noop */ }
       }
@@ -141,6 +169,30 @@ export function clearOnLogout(): void {
 
 /** 현재 토큰의 사용자와 로컬 데이터 소유자가 다르면(계정 전환·잔존) 로컬을 즉시 비운다.
  *  앱 로드/로그인 직후 호출 → 다른 계정 데이터 노출을 원천 차단. */
+/** 마지막으로 계정 스코프 스토어를 맞춘 사용자. `null` 이면 아직 한 번도 안 맞췄다. */
+let _lastScopedUid: string | null = null;
+
+/**
+ * 계정별 스토어를 **지금 로그인한 계정의 키**로 다시 하이드레이션한다.
+ *
+ * ★왜 `propai_data_owner` 판정과 **별도**인가 (2026-08-26 · 적대 리뷰가 적발):
+ *   세션 만료는 토큰만 지우고 `propai_data_owner` 는 **남긴 채** `/login` 으로 하드 내비게이션한다
+ *   (`lib/api-client.ts`). 새 페이지는 **토큰 없이** 스토어를 하이드레이션하므로 어댑터의 스코프가
+ *   `guest` 로 고착되고, **같은 계정으로 다시 로그인**하면 `owner === uid` 라 와이프도 복원도
+ *   일어나지 않는다. 그 뒤로 그 세션에서 산 유료 산출물은 교차계정 가드에 걸려
+ *   **어느 키에도 기록되지 않고 조용히 사라진다.**
+ *   → 그래서 소유자 일치 여부와 **무관하게** 계정이 바뀌었으면 맞춘다.
+ */
+export function syncAccountScopedStores(): void {
+  if (typeof window === "undefined") return;
+  const uid = currentUserId();
+  if (_lastScopedUid === uid) return;
+  _lastScopedUid = uid;
+  try { void usePaidRenderStore.persist?.rehydrate(); } catch { /* noop */ }
+  try { void useRegistryAnalysisStore.persist?.rehydrate(); } catch { /* noop */ }
+  try { void useDevelopmentPlanStore.persist?.rehydrate(); } catch { /* noop */ }
+}
+
 export function ensureDataOwner(): void {
   if (typeof window === "undefined") return;
   const uid = decodeTokenUser(window.localStorage.getItem("propai_access_token"));
@@ -150,6 +202,8 @@ export function ensureDataOwner(): void {
     clearAllProjectData();
     try { window.localStorage.setItem(DATA_OWNER_KEY, uid); } catch { /* noop */ }
   }
+  // ★소유자 일치 여부와 무관하게 맞춘다 — 위 독스트링의 `guest` 고착 경로를 닫는다.
+  syncAccountScopedStores();
 }
 
 // 백엔드 UUID 프로젝트만 /projects/{id} 경로로 분석 스냅샷을 직접 영속한다.
@@ -350,9 +404,27 @@ export async function pushSnapshot(): Promise<void> {
     console.warn(`[projectSync] 스냅샷 푸시 보류(SSOT 오염 의심): ${violation}`);
     return;
   }
+  // ★프로젝트 레코드의 대지면적을 **같은 PUT 에 함께** 실어 보낸다.
+  //
+  //   왜: `projects.total_area_sqm` 은 **생성 시 1회 기록되고 그 뒤 갱신 경로가 없었다.**
+  //   필지를 고쳐도 레코드는 생성 시점에 얼어붙어, 같은 부지의 면적을 화면이 두 값으로
+  //   말했다(실측: 레코드 5,781 vs 스냅샷 필지합 5,881 · 프로덕션 20건 중 7건이 갈림).
+  //
+  //   ★산식을 서버에 복제하지 않는다 — 유효면적 판정(다필지 통합 우선·강등 처리)은
+  //     `effectiveLandAreaSqm` 한 곳에만 산다. 그 값을 **이미 가진 쪽**이 보낸다.
+  //   ★의미는 **대지면적**이다(생성 경로 둘 + `building_compliance_service._get_site_area`
+  //     독스트링이 일치). 추측이 아니라 소비처로 확인했다.
+  //   ★값이 없으면 **키를 만들지 않는다** — 미확보를 0/null 로 덮어써 레코드를 지우지 않는다.
+  const landAreaSqm = effectiveLandAreaSqm(
+    useProjectContextStore.getState().siteAnalysis as never,
+  );
+  const areaPatch =
+    typeof landAreaSqm === "number" && Number.isFinite(landAreaSqm) && landAreaSqm > 0
+      ? { total_area_sqm: landAreaSqm }
+      : {};
   try {
     await apiClient.put(`/projects/${pid}`, {
-      body: { analysis_snapshot: snap },
+      body: { analysis_snapshot: snap, ...areaPatch },
       useMock: false,
       timeoutMs: 30000,
     });

@@ -285,6 +285,29 @@ interface FeasibilityData {
   totalHouseholds?: number | null;
 }
 
+/** `grade` 와 `precision` 은 **같이 오거나 같이 없다**(판별 유니온).
+ *
+ *  왜 타입으로 묶는가 — `updateFeasibilityData` 는 **merge 패치**라 빠뜨린 키가 남는다.
+ *  `precision` 을 **비우는 writer 가 전수 0** 이었으므로, 개략수지(E) 뒤에 정밀 수지로
+ *  재계산하면 새 `grade` 만 갱신되고 `precision` 은 `"E"` 로 남아 배지
+ *  `개략(추정) — 설계 미반영` 이 **설계 반영된 결과 위에 거짓으로** 뜬다.
+ *  (`#794` 가 고친 "배지가 안 뜬다"의 **반대 방향**이다.)
+ *
+ *  ★목록·소스 스캔이 아니라 타입인 이유: 이 저장소의 스윕·파생형 수집기·조건부 타입이
+ *    차례로 **`patch.grade = …` 매퍼 형태**를 놓쳤다(하루 세 번). 판별 유니온은 리터럴도
+ *    매퍼 대입도 컴파일 타임에 막으므로 **표현 형태에 의존하지 않는다** — 새 writer 도 자동으로 걸린다.
+ *
+ *  ★`precision: null` 은 회피가 아니라 **정직한 답**이다: 그 산출 엔진이 정밀도를 계산하지
+ *    않으면 화면은 "정밀도 미표기"로 남아야 하고, 그게 백엔드 자신의 폴백 라벨과 같다.
+ *    반대로 모르는 값에 `"E"` 를 붙이면 이 축이 자살한다. */
+type FeasibilityPatchBase = Omit<Partial<FeasibilityData>, "grade" | "precision">;
+export type FeasibilityPatch =
+  | (FeasibilityPatchBase & { grade?: never; precision?: never })
+  | (FeasibilityPatchBase & {
+      grade: string | null;
+      precision: "E" | "D" | "V" | null;
+    });
+
 // 공사비 분석 결과(건축개요 기반) — 수지·사업성과 단일 데이터원으로 연동.
 interface CostData {
   totalConstructionCostWon: number | null;
@@ -350,7 +373,13 @@ export type ProvenanceModule =
   | "cost"
   | "design"
   | "tax"
-  | "esg";
+  | "esg"
+  // ★2026-08-26 편입 — 종전엔 수지가 **보호 밖**이라 백엔드 파이프라인 재실행이
+  //   사용자가 손으로 넣은 수지값을 **조용히 덮었다**(`ProjectPipelinePanel` 이
+  //   updateFeasibilityData 를 호출하는데 가드가 없었다). 보호되던 것은 `equityWon` 하나뿐이고,
+  //   그것도 provenance 가 아니라 `equityIsManual` 이라는 **전용 플래그**였다.
+  //   노드 레지스트리는 이 사실을 `provenanceGuarded: false` 로 정직하게 적어 두고 있었다.
+  | "feasibility";
 type ManualFieldsMap = Partial<
   Record<ProvenanceModule, Record<string, FieldProvenance>>
 >;
@@ -531,7 +560,10 @@ export interface ProjectContextState {
   ) => void;
   // merge 패치 — 부분 writer(UnitMix/AutoRecommend)가 기존 totalCostWon 등을 보존하도록
   // 기존 feasibilityData 위에 병합한다. 전체 객체를 넘기던 기존 호출도 동일하게 동작.
-  updateFeasibilityData: (data: Partial<FeasibilityData>) => void;
+  updateFeasibilityData: (
+    data: FeasibilityPatch,
+    meta?: { source?: FieldSource },
+  ) => void;
   // (Phase C-1) 추천 개발방식 코드(M01~M15)만 feasibilityData.developmentType에 부분패치.
   // ★updateFeasibilityData와 달리 updatedAt.feasibility를 stamp하지 않는다 —
   //  파생(recommend) 노드가 수지 staleness를 오염시켜 수지 노드가 영영 skipped-fresh되는
@@ -1130,7 +1162,27 @@ export const useProjectContextStore = create<ProjectContextState>()(
           : prev.snapshots;
         // 대상 프로젝트의 이전 분석이 있으면 복원, 없으면 초기화.
         // 구 hydrated 스냅샷 shape 호환을 위해 모든 필드에 ?? 폴백을 둔다.
-        const snap = snapshots[id];
+        const rawSnap = snapshots[id];
+        // ★전환 분기 오염 가드 — 같은 함수의 **같은 id 재바인딩 분기에는 이 검사가 있는데**
+        //   실제 프로젝트 전환에는 없었다(형제 비대칭). 그래서 `snapshots[id]` 에 다른 지역의
+        //   분석이 실려 있으면 전환하는 순간 **무검사로 복원**돼, 헤더가 "프로젝트 A · 주소 B"
+        //   처럼 갈린 상태를 그대로 그렸다(사용자 신고 화면의 기전).
+        //   ★판별자는 **지역 단위**(`addressRegionMismatch`)를 쓴다 — 번지까지 엄격하게 보면
+        //     "인접 필지를 추가해 대표 번지가 바뀐" 정상 작업의 캐시까지 날려 사용자가 한 분석을
+        //     잃는다. 막으려는 것은 **다른 지역**이 실려 오는 것이다.
+        //   ★산식·정화는 복제하지 않는다 — 기존 `purifyPollutedSnapshot` 을 그대로 태운다.
+        const snapSiteAddress = (
+          (rawSnap?.siteAnalysis as { address?: unknown } | null | undefined)?.address
+        );
+        const snapPolluted =
+          !!address &&
+          typeof snapSiteAddress === "string" &&
+          addressRegionMismatch(address, snapSiteAddress);
+        const snap = snapPolluted
+          ? (purifyPollutedSnapshot(
+              rawSnap as unknown as Record<string, unknown>,
+            ) as unknown as typeof rawSnap)
+          : rawSnap;
         const seededSite: SiteAnalysisData | null = address
           ? {
               estimatedValue: null,
@@ -1361,8 +1413,29 @@ export const useProjectContextStore = create<ProjectContextState>()(
         });
       },
 
-      updateFeasibilityData: (data) => {
+      updateFeasibilityData: (data, meta) => {
+        const source: FieldSource = meta?.source ?? "auto";
         set((state) => {
+          const flagged = state.manualFields?.feasibility ?? {};
+          const prevRec = state.feasibilityData
+            ? (state.feasibilityData as unknown as Record<string, unknown>)
+            : null;
+          // ★사용자 수동값 보호(2026-08-26). `cost` 와 형태가 **다르다** — 저쪽은 full replace 라
+          //   flagged 키를 이전값으로 되돌리지만, 여기는 **merge patch** 라 들어온 `data` 안의
+          //   flagged 키만 되돌리면 된다(안 들어온 키는 어차피 이전값이 남는다).
+          //   auto 경로에서만 되돌린다 — user 가 스스로 고치는 것은 막지 않는다.
+          const guardedData: Record<string, unknown> = { ...data };
+          if (source === "auto" && prevRec) {
+            for (const key of Object.keys(flagged)) {
+              // ★`key in guardedData` 는 **이중 가드**다 — 없어도 결과는 같다.
+              //   flagged 키가 들어온 patch 에 없으면 `guardedData[key] = prevRec[key]` 는
+              //   **이전값을 그대로 다시 넣는 것**이고, merge(`{...prev, ...guardedData}`)의
+              //   결과가 동일하다. 변이로 이 조건을 지워도 테스트가 초록인 것은 **구멍이 아니라
+              //   무연산**이기 때문이다(2026-08-26 변이 M6 SURVIVED — 설명 가능한 생존).
+              //   그래도 남겨 둔다: **의도를 읽히게** 한다("들어온 것만 되돌린다").
+              if (key in guardedData && key in prevRec) guardedData[key] = prevRec[key];
+            }
+          }
           // merge: 기존값 보존 후 patch 적용(부분 writer가 totalCostWon을 null로 덮지 않도록).
           const merged = {
             totalCostWon: null,
@@ -1370,7 +1443,7 @@ export const useProjectContextStore = create<ProjectContextState>()(
             profitRatePct: null,
             grade: null,
             ...(state.feasibilityData ?? {}),
-            ...data,
+            ...guardedData,
           } as FeasibilityData;
           // ★자기자본 자동 환류(공용 규칙, resolveEquityWon 단일 계약):
           //   총사업비가 나오면 자기자본이 없어도 equityRatioPct(기본 10%)로 자동 산출해 채운다
@@ -1397,8 +1470,27 @@ export const useProjectContextStore = create<ProjectContextState>()(
               totalCostWon: merged.totalCostWon,
               equityRatioPct: ratio,
             });
+          // ★user 경로에서 **stamp** 한다 — 이것이 없으면 위 가드가 읽을 flagged 가 영원히 비어
+          //   가드가 **장식**이 된다(행위 락이 정확히 이 상태를 잡았다: 소스 검사였으면 통과했다).
+          //   형제 `cost` 와 같은 규칙: null 은 "데이터 없음"이라 보호 대상이 아니고,
+          //   이전값과 같은 키는 stamp 하지 않는다(미변경 필드를 user 로 동결하면 이후 자동 환류가
+          //   통째로 무력화된다).
+          const nextManual = (() => {
+            if (source !== "user") return null;
+            const now = Date.now();
+            const stamped: Record<string, FieldProvenance> = { ...flagged };
+            for (const [key, value] of Object.entries(data)) {
+              if (value == null) continue;
+              if (prevRec && value === prevRec[key]) continue;
+              stamped[key] = { source: "user", updatedAt: now };
+            }
+            return stamped;
+          })();
           return withSnap(state, {
             feasibilityData: merged,
+            ...(nextManual
+              ? { manualFields: { ...(state.manualFields ?? {}), feasibility: nextManual } }
+              : {}),
             updatedAt: stampedAt(state, "feasibility"),
           });
         });

@@ -28,14 +28,29 @@ type InsightSeverity = "info" | "warn" | "critical";
 
 // 백엔드 enum 후보값(growth.py). 미래 신규 타입 대비해 string 도 수용한다.
 type InsightStatus = "open" | "acknowledged" | "dismissed" | "acted" | (string & {});
+/**
+ * ★백엔드 카탈로그(`apps/api/app/services/growth/insight_types.py`)와 **1:1**.
+ *
+ * 종전엔 이 목록이 7종이었는데 백엔드는 **11종**을 내보내고 있었고, 그 7종 중
+ * `funnel`·`usage_pattern`·`churn_risk` **3종은 백엔드가 한 번도 안 내보내는 유령**이었다.
+ * 결과: **7종이 라벨 없이 raw 문자열**로 떴다 — 그중 `heal_escalation` 은
+ * *"자동치유가 반복 발화했는데 효과가 없다 · 사람 점검 필요"* 라는 **critical** 이다.
+ * (규율 §A-4 — 사람이 센 목록이 곧 상한이 된다. 실제로 목록 7 vs 실제 11.)
+ *
+ * 두 목록이 다시 갈라지면 `GrowthDashboard.catalog.test.ts` 가 잡는다.
+ */
 type InsightType =
   | "error_cluster"
   | "fallback_rate"
   | "quality_drop"
+  | "recurring_verify_error"
   | "latency_regression"
-  | "funnel"
-  | "usage_pattern"
-  | "churn_risk"
+  | "latency_baseline"
+  | "selection_contamination"
+  | "stale_reanalysis"
+  | "heal_escalation"
+  | "improvement_proposal"
+  | "prompt_candidate"
   | (string & {});
 
 type GrowthInsight = {
@@ -51,7 +66,13 @@ type GrowthInsight = {
   created_at: string | null;
 };
 
-type GrowthInsightList = { items: GrowthInsight[]; total: number };
+type GrowthInsightList = {
+  items: GrowthInsight[];
+  total: number;
+  /** severity → 건수. **서버가 필터 전체에 대해** 센 값(조치대상만·비조치 타입 제외).
+   *  ★`items` 는 `limit` 으로 잘리지만 이 값은 **안 잘린다** — 그래서 집계는 이것을 쓴다. */
+  actionable_counts?: Partial<Record<InsightSeverity, number>>;
+};
 type AckResult = { id: string; status: string };
 
 /* ------------------------------------------------------------------ */
@@ -62,11 +83,22 @@ const TYPE_LABELS: Record<string, string> = {
   error_cluster: "오류 군집",
   fallback_rate: "폴백률",
   quality_drop: "품질 저하",
+  recurring_verify_error: "검증오류 재발",
   latency_regression: "지연 회귀(p95)",
-  funnel: "퍼널 이탈",
-  usage_pattern: "사용 패턴",
-  churn_risk: "이탈 위험",
+  latency_baseline: "지연 기준선(기록)",
+  selection_contamination: "선택 오염 관측",
+  stale_reanalysis: "재분석 제안",
+  heal_escalation: "자동치유 무효(사람 점검)",
+  improvement_proposal: "개선 제안",
+  prompt_candidate: "프롬프트 후보",
 };
+
+/**
+ * **조치 대상이 아닌** 타입 — "확인 필요"로 세면 진짜 신호가 묻힌다.
+ * ★`latency_baseline` 은 회귀가 **아닌** 기록이다(2026-08-23 에 2,059건이 쌓여
+ *   실제 조치 대상 critical 57 + warn 352 를 가렸다).
+ */
+const NON_ACTIONABLE_TYPES = new Set(["latency_baseline"]);
 
 const STATUS_LABELS: Record<string, string> = {
   open: "확인 필요",
@@ -110,6 +142,51 @@ function str(v: unknown): string | null {
 function pct(v: number | null): string {
   return v === null ? "-" : `${(v <= 1 ? v * 100 : v).toFixed(1)}%`;
 }
+/**
+ * LLM 실패 **사유 코드 → 한글**.
+ *
+ * 원천은 백엔드 `app/services/ai/llm_failure.py` 의 `classify_failure` 가 내는 값이고,
+ * `unlabeled` 은 `analyzer.py` 가 **사유가 안 실린 이벤트**에 붙이는 값이다.
+ * 갈리면 `GrowthDashboard.catalog.test.ts` 의 사유 라벨 축이 잡는다 — 라벨이 없으면
+ * #808 과 **같은 얼굴**(영문 raw 노출)이 된다.
+ *
+ * ★모르는 코드는 **감추지 않고 원문 그대로** 보여준다. 숨기면 분포 합이 틀어지고,
+ *   "새 실패 유형이 생겼다"는 가장 중요한 신호가 조용히 사라진다.
+ */
+const REASON_LABELS: Record<string, string> = {
+  timeout: "타임아웃",
+  parse: "응답 파싱 실패",
+  shape: "구조 불일치",
+  network: "네트워크",
+  rate_limit: "호출 한도",
+  overloaded: "공급자 과부하",
+  auth: "인증·잔액",
+  content_filter: "정책 거부",
+  bad_request: "요청 거부",
+  other: "그 외",
+  // ★"미분류"는 그 자체가 결함 신호다 — 쓰기 경로가 사유를 안 싣고 있다는 뜻이라,
+  //   감추거나 0으로 뭉개면 "사유가 도착했다"는 착시가 생긴다.
+  unlabeled: "사유 미분류(계측 누락)",
+};
+
+function reasonLabel(code: string): string {
+  return REASON_LABELS[code] ?? code;
+}
+
+/** `{timeout: 12, parse: 6}` → `"타임아웃 12 · 응답 파싱 실패 6"`(많은 순 · 상위 N + 나머지 종수). */
+function fmtReasons(v: unknown, top = 4): string | null {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  const pairs = Object.entries(v as Record<string, unknown>)
+    .map(([k, n]) => [k, typeof n === "number" && Number.isFinite(n) ? n : 0] as const)
+    .filter(([, n]) => n > 0)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  if (pairs.length === 0) return null;
+  const head = pairs.slice(0, top).map(([k, n]) => `${reasonLabel(k)} ${n.toLocaleString("ko-KR")}`);
+  // ★잘라낸 몫을 **말한다** — 안 적으면 상위 N 종이 전부인 줄로 읽는다(묵시적 상한 금지).
+  const rest = pairs.length - head.length;
+  return rest > 0 ? `${head.join(" · ")} 외 ${rest}종` : head.join(" · ");
+}
+
 function fmtDate(iso: string | null): string {
   if (!iso) return "-";
   const d = new Date(iso);
@@ -120,7 +197,14 @@ function fmtDate(iso: string | null): string {
 /*  insight_type 별 metrics_json 렌더 (필드 없으면 graceful)            */
 /* ------------------------------------------------------------------ */
 
-function InsightMetrics({ insight }: { insight: GrowthInsight }) {
+/**
+ * ★테스트를 위해 내보낸다(소비처는 이 파일 안뿐).
+ *
+ * 왜: 이 함수의 실패 형태는 **"case 는 있는데 rows 가 비어 `null` 을 반환"** 이라,
+ * 소스에서 `case "x":` 존재만 검사하면 **초록으로 통과한다**(실제로 `improvement_proposal`
+ * 이 그 상태였다 — 2026-08-25). 렌더 결과를 봐야만 잡힌다(규율 §A-1·A-3).
+ */
+export function InsightMetrics({ insight }: { insight: GrowthInsight }) {
   const m = insight.metrics_json ?? {};
   const rows: { label: string; value: string }[] = [];
 
@@ -133,6 +217,15 @@ function InsightMetrics({ insight }: { insight: GrowthInsight }) {
       if (service) rows.push({ label: "서비스", value: service });
       if (rate !== null) rows.push({ label: "폴백률", value: pct(rate) });
       if (total !== null) rows.push({ label: "호출 수", value: total.toLocaleString("ko-KR") });
+      // ★이 두 줄이 이 카드의 **존재 이유**다. "폴백률 80.77%" 만으로는 절단인지 스키마
+      //   위반인지 인증·잔액인지 모르고, 그 셋은 처방이 전혀 다르다.
+      //   ★`fallback`·`signature` 등 다른 백엔드 키를 여기 더하지 않은 것은 의도다 —
+      //     `_rule_narrative`(analyzer.py)가 이미 산문으로 말하고 그 문장은 이 카드 바로
+      //     아래에 렌더된다(:1040). 같은 값을 두 번 적으면 카드만 길어진다.
+      const top = str(m.top_reason);
+      if (top) rows.push({ label: "최다 사유", value: reasonLabel(top) });
+      const dist = fmtReasons(m.reasons);
+      if (dist) rows.push({ label: "사유 분포", value: dist });
       break;
     }
     case "error_cluster": {
@@ -164,25 +257,97 @@ function InsightMetrics({ insight }: { insight: GrowthInsight }) {
       if (baseline !== null) rows.push({ label: "기준선", value: `${Math.round(baseline).toLocaleString("ko-KR")}ms` });
       break;
     }
-    case "funnel": {
-      const step = str(m.step);
-      const dropoff = num(m.dropoff_rate ?? m.dropoff);
-      if (step) rows.push({ label: "단계", value: step });
-      if (dropoff !== null) rows.push({ label: "이탈률", value: pct(dropoff) });
-      break;
-    }
-    case "usage_pattern": {
-      const pattern = str(m.pattern ?? m.label);
+    case "recurring_verify_error": {
+      // 백엔드 키(analyzer.py): service / issue_type / per_hour / count / high_count.
+      const service = str(m.service);
+      const issue = str(m.issue_type);
+      const perHour = num(m.per_hour);
       const count = num(m.count);
-      if (pattern) rows.push({ label: "패턴", value: pattern });
-      if (count !== null) rows.push({ label: "빈도", value: count.toLocaleString("ko-KR") });
+      if (service) rows.push({ label: "서비스", value: service });
+      if (issue) rows.push({ label: "오류 유형", value: issue });
+      if (perHour !== null) rows.push({ label: "시간당", value: `${perHour.toLocaleString("ko-KR")}건` });
+      if (count !== null) rows.push({ label: "총 검출", value: count.toLocaleString("ko-KR") });
       break;
     }
-    case "churn_risk": {
-      const risk = num(m.risk_score ?? m.score);
-      const segment = str(m.segment);
-      if (segment) rows.push({ label: "세그먼트", value: segment });
-      if (risk !== null) rows.push({ label: "위험도", value: pct(risk) });
+    case "latency_baseline": {
+      // ★회귀가 아닌 **기록**이다 — 조치 대상이 아니라는 것이 이 화면의 핵심 정보다.
+      const key = str(m.key ?? m.route);
+      const p95 = num(m.p95_ms ?? m.p95);
+      if (key) rows.push({ label: "경로", value: key });
+      if (p95 !== null) rows.push({ label: "p95 지연", value: `${Math.round(p95).toLocaleString("ko-KR")}ms` });
+      rows.push({ label: "성격", value: "회귀 아님(기준선 기록)" });
+      break;
+    }
+    case "selection_contamination": {
+      // 백엔드 키(analyzer.py): verdict / count / max_spread_km / malformed_rows.
+      const verdict = str(m.verdict);
+      const count = num(m.count);
+      const spread = num(m.max_spread_km);
+      const malformed = num(m.malformed_rows);
+      if (verdict) {
+        rows.push({
+          label: "판정",
+          value: verdict === "malformed" ? "주소 아닌 값 혼입" : "서로 다른 지역 혼합",
+        });
+      }
+      if (count !== null) rows.push({ label: "관측", value: `${count.toLocaleString("ko-KR")}건` });
+      // ★좌표가 없으면 **미상**이다 — 0km 로 쓰면 "붙어 있다"는 거짓이 된다.
+      rows.push({
+        label: "최대 이격",
+        value: spread !== null ? `${spread.toLocaleString("ko-KR")}km` : "미상(좌표 없음)",
+      });
+      if (malformed !== null && malformed > 0) {
+        rows.push({ label: "문제 행", value: `${malformed.toLocaleString("ko-KR")}행` });
+      }
+      if (verdict === "multi_region") {
+        // ★캠페인 결정: 원거리 묶음은 **후보지 비교라는 정당한 사용**일 수 있다.
+        rows.push({ label: "참고", value: "후보지 비교면 정상" });
+      }
+      break;
+    }
+    case "stale_reanalysis": {
+      const service = str(m.service);
+      const reason = str(m.kind ?? m.reason);
+      if (service) rows.push({ label: "서비스", value: service });
+      if (reason) rows.push({ label: "사유", value: reason });
+      break;
+    }
+    case "heal_escalation": {
+      // 백엔드 키(healing_rules._escalate): action_type / trigger_key / reason.
+      const action = str(m.action_type);
+      const trigger = str(m.trigger_key);
+      if (action) rows.push({ label: "조치 유형", value: action });
+      if (trigger) rows.push({ label: "트리거", value: trigger });
+      rows.push({ label: "상태", value: "자동치유 무효 — 사람 점검 필요" });
+      break;
+    }
+    case "improvement_proposal": {
+      // ★실측 결함(2026-08-25): 이 분기는 `m.service`·`m.target` 을 읽는데 백엔드 payload
+      //   (`growth/improvement_agent.py:192`)에는 **둘 다 없다** — source_insight_id /
+      //   requires_approval / auto_merge / confidence / affected_files / proposal / pr_status.
+      //   그래서 rows 가 빈 채로 `null` 이 반환돼 **지표가 한 줄도 안 떴다**.
+      //   기존 카탈로그 락은 `case` 의 **존재**만 봐서 이 상태가 초록이었다.
+      const conf = num(m.confidence);
+      const files = Array.isArray(m.affected_files) ? m.affected_files.length : null;
+      const prStatus = str(m.pr_status);
+      if (conf !== null) rows.push({ label: "신뢰도", value: pct(conf) });
+      if (files !== null) rows.push({ label: "영향 파일", value: `${files.toLocaleString("ko-KR")}개` });
+      if (prStatus) rows.push({ label: "PR 상태", value: prStatus });
+      // ★자동 머지가 **꺼져 있다**는 사실이 이 카드의 안전 정보다 — 사람 승인 없이는
+      //   아무것도 반영되지 않는다는 것을 화면이 말해야 한다.
+      rows.push({ label: "반영", value: "사람 승인 필요(자동 머지 없음)" });
+      break;
+    }
+    case "prompt_candidate": {
+      // 백엔드 키(improvement_agent.py:410): service / candidate_label / confidence /
+      //                                     requires_approval / auto_adopt / proposal.
+      const service = str(m.service);
+      const label = str(m.candidate_label ?? m.target ?? m.key);
+      const conf = num(m.confidence);
+      if (service) rows.push({ label: "서비스", value: service });
+      if (label) rows.push({ label: "후보", value: label });
+      if (conf !== null) rows.push({ label: "신뢰도", value: pct(conf) });
+      rows.push({ label: "반영", value: "사람 승인 필요(자동 채택 없음)" });
       break;
     }
     default:
@@ -575,6 +740,9 @@ export function GrowthDashboard() {
   const [tab, setTab] = useState<GrowthTab>("insights");
   const [insights, setInsights] = useState<GrowthInsight[]>([]);
   const [total, setTotal] = useState(0);
+  // ★서버가 준 집계. `insights` 는 `limit=200` 으로 잘리지만 이 값은 안 잘린다.
+  const [actionableCounts, setActionableCounts] =
+    useState<Partial<Record<InsightSeverity, number>> | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [authed, setAuthed] = useState(true);
   const [error, setError] = useState("");
@@ -585,11 +753,15 @@ export function GrowthDashboard() {
     setError("");
     try {
       const res = await apiClient.get<GrowthInsightList>(
-        "/growth/insights?sort=severity&limit=200",
+        // ★`status=open` — 서버 필터를 쓴다(5종이 이미 있는데 화면이 하나도 안 썼다).
+        //   종전엔 **이미 확인/기각한 항목이 200칸의 슬롯을 먹고** 미처리 항목을 밀어냈다
+        //   (라이브 실측 2026-08-26: critical 79칸 중 5건이 acknowledged).
+        "/growth/insights?sort=severity&status=open&limit=200",
         { useMock: false },
       );
       setInsights(res.items ?? []);
       setTotal(res.total ?? 0);
+      setActionableCounts(res.actionable_counts ?? null);
       setAuthed(true);
     } catch (e) {
       if (e instanceof ApiClientError && (e.status === 401 || e.status === 403)) {
@@ -665,11 +837,32 @@ export function GrowthDashboard() {
   }
 
   /* ---- 파생 통계 ---- */
-  const openInsights = insights.filter((it) => it.status === "open");
+  // ★"확인 필요" 집계에서 **조치 대상이 아닌 타입은 뺀다.**
+  //   2026-08-23 실측: `latency_regression` 2,059건 중 최신 6건이 전부 회귀가 아니었고
+  //   `status=open` 2,248건이 실제 조치 대상(critical 57 + warn 352)을 **가렸다**.
+  //   지금은 회귀가 아닌 것이 `latency_baseline` 으로 분리되므로, 그것을 세지 않는다.
+  const openInsights = insights.filter(
+    (it) => it.status === "open" && !NON_ACTIONABLE_TYPES.has(it.insight_type),
+  );
+  // ★★집계는 **서버가 준 값**을 쓴다 — 이 페이지(`limit=200`)를 세지 않는다.
+  //   【왜 바꿨나 · 라이브 실측 2026-08-26】라이브 분포가 critical 79 · warn 476 · info 2,544 라
+  //   `sort=severity&limit=200` 응답은 `critical 79 + warn 121` 로 채워지고 **info 는 0행** 온다.
+  //   그래서 이 카드가 warn 을 **476이 아니라 121**로 보여 줬다(**74% 과소계상**). 즉
+  //   **페이지 크기가 집계를 결정**하고 있었다 — 집계가 아니라 표본이었다.
+  //   서버는 같은 술어로 `limit` 없이 센다(`GrowthInsightList.actionable_counts`).
+  //   ★폴백은 종전 방식(페이지 집계)이다. 서버가 값을 안 주는 구버전 응답에서도 화면이 죽지
+  //     않게 하되, **그 경우 값이 과소일 수 있다**는 것을 여기 적어 둔다.
+  const serverCounts = actionableCounts;
   const severityCounts: Record<InsightSeverity, number> = { critical: 0, warn: 0, info: 0 };
-  for (const it of openInsights) {
-    if (it.severity === "critical" || it.severity === "warn" || it.severity === "info") {
-      severityCounts[it.severity] += 1;
+  if (serverCounts) {
+    severityCounts.critical = serverCounts.critical ?? 0;
+    severityCounts.warn = serverCounts.warn ?? 0;
+    severityCounts.info = serverCounts.info ?? 0;
+  } else {
+    for (const it of openInsights) {
+      if (it.severity === "critical" || it.severity === "warn" || it.severity === "info") {
+        severityCounts[it.severity] += 1;
+      }
     }
   }
 
@@ -831,7 +1024,15 @@ export function GrowthDashboard() {
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <p className="cc-label">인사이트 목록</p>
-                <span className="text-xs text-[var(--text-hint)]">총 {total.toLocaleString("ko-KR")}건</span>
+                {/* ★★절단을 **말한다**. 종전엔 `총 N건` 만 띄우고 200행만 그려서, 나머지가
+                    잘렸다는 사실이 화면 어디에도 없었다(라이브 실측 2026-08-26: 열림 3,083건 중
+                    200행 → **warn 355건이 조용히 사라짐**). 숫자 둘의 괴리가 유일한 단서였고
+                    그것도 읽는 사람이 스스로 이어 붙여야 했다. 이제 문장으로 말한다. */}
+                <span className="text-xs text-[var(--text-hint)]">
+                  {insights.length < total
+                    ? `열림 ${total.toLocaleString("ko-KR")}건 중 ${insights.length.toLocaleString("ko-KR")}건 표시 — 나머지는 목록에 없습니다`
+                    : `열림 ${total.toLocaleString("ko-KR")}건`}
+                </span>
               </div>
               <div className="mt-4 space-y-3">
                 {insights.map((it) => {

@@ -14,7 +14,13 @@ from app.core.database import get_db
 from app.services.land_intelligence.parcel_normalize import ParcelsIn
 from apps.api.app.services.land_intelligence.land_info_service import LandInfoService
 from apps.api.app.services.zoning.auto_zoning_service import AutoZoningService
-from apps.api.app.utils.pnu import jibun_from_pnu, parcel_display_address
+from apps.api.app.utils.pnu import (
+    address_resolution,
+    jibun_from_pnu,
+    parcel_display_address,
+    pick_representative_parcel,
+    sigungu_spread,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -1723,6 +1729,8 @@ async def integrated_analysis(req: IntegratedAnalysisRequest):
         raise HTTPException(400, "parcels(필지 배열)가 필요합니다.")
 
     warnings: list[str] = []
+    # 시나리오 단계에서 발견한 용도지역 불일치 — integrity_warnings 생성 후 합류시킨다.
+    zone_mismatch_warnings: list[str] = []
     items = raw_parcels[:120]  # 1회 상한(대량은 클라가 분할 호출)
 
     # ── 1) enrich_parcel_list 보강(면적·용도지역·지목·공시지가). 입력 override는 보강 후 우선 적용.
@@ -1855,10 +1863,36 @@ async def integrated_analysis(req: IntegratedAnalysisRequest):
             from app.services.feasibility.feasibility_service_v2 import FeasibilityServiceV2
 
             # 대표 주소·시군구: 첫 개발가능 필지 주소를 site 라벨로, 시군구는 _extract_sigungu.
-            # ★위임(auto_recommend_top3)에는 '통합면적(total_area)'만 입력으로 반영된다. zone_type/한도는
-            #   위임 내부에서 대표주소로 재도출되므로, 아래 dominant_zone·blended_*는 '표시·검증용'(위임 미주입)이며
-            #   site.zone_basis='representative_parcel'로 실계산 기준이 대표필지임을 명시한다(표시값↔실계산 구분).
-            rep_addr = next((p.get("address") for p in enriched if p.get("address")), "")
+            # ★★근본수정(2026-08-24 라이브 실측) — 종전엔 위임에 '통합면적'만 넘기고 zone_type/한도는
+            #   **위임 내부가 대표주소로 재도출**하게 뒀다. 그 결과 한 응답 안에서 용도지역이 3번 갈렸다:
+            #     dominant_zone=제2종일반주거(area_weighted) · site=제2종일반주거 ·
+            #     **top3=자연녹지(far 100/bcr 20)** ← 실제 수지가 이걸로 계산됐다.
+            #   원인 둘이 겹쳤다:
+            #     ① 위임이 `parcels` 를 받으면 `build_integrated_context` 로 **면적가중 우세용도**를
+            #        채택하는 경로를 이미 갖고 있는데(zone_basis='integrated_dominant'), 호출부가
+            #        그 인자를 **안 넘겼다** — 이 저장소가 반복한 *"정의만 하고 소비처 0"*.
+            #     ② 재도출 입력인 `rep_addr` 가 **번지 없는 동 단위 주소**("경기도 오산시 내삼미동")라
+            #        지오코딩이 엉뚱한 필지를 집었다. 그래서 `zone_basis='representative_parcel'` 이라는
+            #        라벨도 **거짓**이었다 — 대표(첫) 필지조차 제2종일반주거였다.
+            #   → `parcels=enriched` 를 넘겨 위임이 **우리가 이미 보강한 실제 용도지역**을 쓰게 한다.
+            #     통합면적(land_area_sqm 스칼라)은 그대로 우선하므로 면적 경로는 무변경이다.
+            # ★D8(2026-08-24 화면감사) — 종전엔 **첫 필지**의 주소를 그대로 집었다. 그 값이
+            #   번지 없는 동 단위("경기도 오산시 내삼미동")면 아래 `region` 추출과 위임 내부
+            #   지오코딩이 **엉뚱한 필지**를 집는다. 실제로 그 탓에 `zone_basis` 라벨까지
+            #   거짓이 됐다(위 주석 ②).
+            #   ★없는 걸 새로 만든 게 아니다 — `parcel_display_address` 는 **이미 있었고
+            #     같은 파일 :901 · :2240 이 쓰고 있었다.** 여기만 raw 였다(§29 불일치).
+            rep_parcel = pick_representative_parcel(enriched)
+            rep_addr = (
+                parcel_display_address(rep_parcel.get("address"), rep_parcel.get("pnu"))
+                if rep_parcel else ""
+            )
+            # ★해상도를 **값과 함께** 싣는다 — "주소가 없다"와 "있는데 지오코딩하기엔 거칠다"는
+            #   다른 상태이고, 후자는 조회가 **성공하고 틀린 값**을 주므로 더 위험하다.
+            rep_resolution = address_resolution(
+                rep_parcel.get("address") if rep_parcel else None,
+                rep_parcel.get("pnu") if rep_parcel else None,
+            )
             # 시군구 미추출 시 ""(주소 시도 추론에 양보) — "서울" 폴백은 지방 부지 분양가를 서울가로 과대.
             region = _extract_sigungu({"address": rep_addr}) or ""
             site = {
@@ -1866,13 +1900,20 @@ async def integrated_analysis(req: IntegratedAnalysisRequest):
                 "zone_type": dominant_zone,
                 "far": integrated_zoning.get("blended_far_eff_pct"),
                 "bcr": integrated_zoning.get("blended_bcr_eff_pct"),
-                "zone_basis": "representative_parcel",  # 위임 수지는 대표 용도 기준(통합 blended는 표시·검증용)
+                # zone_basis 는 **위임이 실제로 쓴 기준**으로 아래에서 덮어쓴다(하드코딩 라벨 금지 —
+                # 종전 'representative_parcel' 은 실계산과 달라 거짓 라벨이었다).
+                "zone_basis": None,
+                # ★대표 주소를 **믿어도 되는지**를 소비처가 알 수 있게 함께 싣는다.
+                "address_resolution": rep_resolution,
             }
             kwargs: dict = {
                 "address": rep_addr,
                 "land_area_sqm": total_area,
                 "region": region,
                 "use_llm": req.use_llm,
+                # ★보강한 필지 목록을 그대로 넘긴다 — 위임이 면적가중 우세용도를 채택한다.
+                #   (2필지 미만이면 위임 내부에서 무시되므로 단일필지 경로는 무변경.)
+                "parcels": enriched,
             }
             if req.equity_won is not None:
                 kwargs["equity_won"] = req.equity_won
@@ -1880,6 +1921,42 @@ async def integrated_analysis(req: IntegratedAnalysisRequest):
             # 신뢰블록 additive 부착(zone_type/zone_limits 보유 → 법령링크·근거 트레이스).
             if isinstance(top3, dict):
                 _attach_trust_blocks(top3)
+
+                # ── zone_basis: 위임이 **실제로 쓴 기준**을 그대로 싣는다(하드코딩 라벨 금지).
+                site["zone_basis"] = top3.get("zone_basis") or "single"
+
+                # ★★전제 감사 — **변형관계 레지스트리**로 일임한다(2026-08-24).
+                #   종전엔 여기에 용도지역 불일치 **하나만** 손으로 박아 뒀다. 그러면 다음
+                #   불일치(면적 출처·필지수 보존…)는 또 손으로 박아야 하고, 결국 빠진다 —
+                #   이 저장소가 반복한 *"사람이 센 목록이 곧 상한이 된다"*(§A-4).
+                #   → `premise_audit` 레지스트리에 관계를 등록하면 **호출부 수정 없이** 감시망에 든다.
+                #   ★값을 고치지 않는다. 위반은 **말한다**(고지 + status 강등).
+                from app.services.zoning import premise_audit
+
+                _audit_ctx = {
+                    "dominant_zone": dominant_zone,
+                    "zone_mix": integrated_zoning.get("zone_mix"),
+                    "per_parcel": enriched,
+                    "integrated": {"total_area_sqm": total_area},
+                    "scenario": {"top3": top3},
+                    "_request_parcel_count": len(enriched),
+                }
+                _audit = premise_audit.audit(_audit_ctx)
+                scenario["premise_audit"] = {
+                    "checked": _audit["checked"],
+                    "registered": _audit["registered"],
+                    "violations": _audit["violations"],
+                }
+                if _audit["violations"]:
+                    for _v in _audit["violations"]:
+                        _msg = f"[{_v['title']}] {_v['detail']}"
+                        warnings.append(_msg)
+                        zone_mismatch_warnings.append(_msg)
+                    scenario["status"] = "tentative"
+                    scenario["disclosure"] = (
+                        (scenario.get("disclosure") or "")
+                        + " " + " ".join(v["detail"] for v in _audit["violations"])
+                    )
             scenario["site"] = site
             scenario["top3"] = top3
         except Exception as e:  # noqa: BLE001 — 위임 실패는 시나리오 degrade(정직), 통합집계는 유지.
@@ -1910,6 +1987,12 @@ async def integrated_analysis(req: IntegratedAnalysisRequest):
             # 시군구: 대표(첫 유효주소) 필지 주소로 도출(조례 용적률 resolver 입력).
             up_addr = next((p.get("address") for p in enriched if p.get("address")), "")
             up_sigungu = _extract_sigungu({"address": up_addr})
+            # ★D8 전역 스윕이 드러낸 인접 결함(2026-08-25) — 조례 시군구를 **첫 필지**에서
+            #   뽑아 전체에 쓴다. 필지가 시군구를 걸치면 나머지에 **틀린 조례**가 적용된다.
+            #   실측(같은 용도지역·면적, 시군구만 변경): 오산시 250% · 성남시 280% ·
+            #   강남구 250% · 미확보 300%(법정 폴백=과대) → **30%p 격차**.
+            #   ★숫자를 몰래 고르지 않는다 — **누구의 조례인지 말한다**(걸칠 때만).
+            up_spread = sigungu_spread(enriched)
             # 통합 special_districts 집계(규제/특수구역 → 종상향 제약). 필지별 합집합(중복 제거).
             agg_sd: list = []
             for p in enriched:
@@ -1934,6 +2017,14 @@ async def integrated_analysis(req: IntegratedAnalysisRequest):
             if isinstance(upzoning, dict):
                 upzoning_scenarios = upzoning.get("scenarios", []) or []
                 potential_far_range = upzoning.get("potential_far_range")
+                # 걸쳐 있을 때만 고지한다(정상 케이스에 경고를 붙이면 그것도 결함이다).
+                upzoning["sigungu_basis"] = {
+                    "applied": up_sigungu,
+                    "spread_count": up_spread["count"],
+                    "spread_names": up_spread["names"],
+                }
+                if up_spread["disclosure"]:
+                    upzoning["sigungu_disclosure"] = up_spread["disclosure"]
         except Exception as e:  # noqa: BLE001 — 종상향 산출 실패는 통합집계를 손상하지 않는다(정직 null).
             logger.warning("통합 종상향(upzoning) 산출 실패: %s", str(e)[:160])
             upzoning = {}
@@ -1979,6 +2070,8 @@ async def integrated_analysis(req: IntegratedAnalysisRequest):
         legal_far_pct=integrated_block["blended_far_legal_pct"],
         legal_bcr_pct=integrated_block["blended_bcr_legal_pct"],
     )
+    # 시나리오 단계의 용도지역 불일치를 무결성 경고에 합류(화면이 한 곳에서 읽는다).
+    integrity_warnings = list(integrity_warnings or []) + zone_mismatch_warnings
 
     # ── ★W2-5(ParcelGraph) 인접 그래프·핵심필지·N-1 시나리오(additive) ──
     #   enriched는 이미 pnu/geometry/area_sqm/_far_eff(실효용적률)를 보유하므로 변형 없이 그대로

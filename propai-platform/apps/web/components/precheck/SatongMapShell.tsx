@@ -2643,6 +2643,20 @@ export function SatongMapShell({
         const foreignToProject =
           !!projectId &&
           selectionMismatchesProject(restoredProjectAddress, stored.parcels[0]?.address);
+        // ★2026-08-24 — **정체성 필드가 있는데 판정에 안 쓰이고 있었다.** 바로 세 줄 위에서
+        //   `stored.ownerProjectId` 를 읽어 ref 에 넣어 놓고, 판정은 주소 **지역** 대리로만 했다.
+        //   그래서 **같은 지역의 다른 프로젝트** 선택은 아무 말 없이 현재 프로젝트에 커밋됐다.
+        //   ★그런데 그건 결함이 아니라 **의도된 제품 결정**이다(같은 지역이면 정상 워크플로우로
+        //     본다 — 그 결정이 양성 대조군 테스트로 잠겨 있다). 그래서 **차단하지 않는다.**
+        //   ★대신 **말한다.** 사용자 신고의 본질은 "커밋됐다"가 아니라 **"화면이 두 프로젝트를
+        //     섞어 놓고 아무 말도 안 한다"** 였다. 이 저장소의 원칙("막지 않고 고지한다")대로
+        //     정체성이 다르면 그 사실만 알린다 — 커밋 동작은 종전과 **완전히 동일**하다.
+        const storedOwner = stored.ownerProjectId; // string | null(사용자 소유) | undefined(구 payload)
+        const inheritedFromOtherProject =
+          !foreignToProject &&
+          typeof storedOwner === "string" &&
+          !!projectId &&
+          storedOwner !== projectId;
         if (foreignToProject) {
           selectionOwnerProjectIdRef.current = null; // 이 선택의 소유자는 프로젝트가 아니다
           setConnectNotice(
@@ -2651,6 +2665,13 @@ export function SatongMapShell({
           );
         } else {
           commitParcelsToContext(stored.parcels); // sessionStorage 경로는 기존대로 SSOT 동기화
+          if (inheritedFromOtherProject) {
+            // 커밋은 했다(같은 지역=정상 워크플로우). 다만 **어디서 온 선택인지**는 말한다.
+            setConnectNotice(
+              "이전에 고른 필지는 다른 프로젝트에서 가져온 선택입니다. " +
+                "현재 프로젝트 기준으로 계속하려면 그대로 두고, 아니면 선택을 비우세요.",
+            );
+          }
         }
         const focused = stored.parcels.find((parcel) => parcel.lat != null && parcel.lon != null);
         if (focused?.lat != null && focused.lon != null) {

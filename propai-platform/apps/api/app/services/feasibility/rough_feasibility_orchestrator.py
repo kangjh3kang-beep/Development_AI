@@ -33,8 +33,11 @@ from app.services.land_intelligence.comprehensive_analysis_service import (
     build_integrated_context,
 )
 from app.services.land_intelligence.desk_appraisal_service import desk_appraisal
-from app.services.quality.precision import PrecisionGrade
-from app.services.tax.project_charges import compute_developer_stage_charges, parse_bool_flag
+from app.services.quality.precision import PrecisionGrade, lowest
+from app.services.tax.project_charges import (
+    compute_developer_stage_charges,
+    parse_tristate_flag,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -263,6 +266,100 @@ def _num(value: Any) -> float | None:
         return None
 
 
+def construction_breakdown(cc: dict[str, Any]) -> dict[str, Any]:
+    """공사비 **직접/간접 분해** — 원장이 「설계비·감리비」를 그리는 재료.
+
+    `construction_cost_engine` 은 이미 `{design_fee_won, supervision_fee_won, contingency_won,
+    general_expense_won}` 를 **비율과 함께** 돌려주는데, 종전엔 총액과 ㎡단가 **두 숫자만**
+    남겼다. 원장이 그 행들을 못 그린 이유가 *"엔진에 없어서"* 가 아니라 **여기서 버려서**였다.
+
+    ★**분해지 추가가 아니다** — 엔진이 `total = direct + indirect` 로 합산하므로 쪼개도
+      **합계가 변하지 않는다**(원장 검산이 그것을 확인한다).
+
+    ★**엔진이 주는 항목을 골라내지 않는다** — `_won` 으로 끝나는 키를 **전부** 옮긴다.
+      새 간접비가 생기면 라벨은 없어도 **행은 나온다**(조용히 사라지지 않게).
+
+    ★모듈 레벨 함수인 이유: 인라인 dict 리터럴이면 **직접 태울 수 없어** 이 배선이 무잠금이
+      된다(변이 실증 — 이 저장소에서 **세 번째** 같은 자리다: `_compact` · `ratio_basis` · 이것).
+    """
+    direct = cc.get("direct") or {}
+    indirect = cc.get("indirect") or {}
+    direct_won = direct.get("total_direct_cost_won")
+    if direct_won is None or not indirect:
+        return {}   # 분해가 없으면 **키를 만들지 않는다** — 소비처가 종전대로 한 행을 그린다
+    return {
+        "direct_won": int(direct_won),
+        "indirect": {
+            "total_won": int(indirect.get("total_indirect_cost_won") or 0),
+            "items": {k: int(v) for k, v in indirect.items()
+                      if k.endswith("_won") and k != "total_indirect_cost_won"},
+            "ratios": dict(indirect.get("ratios") or {}),
+            "base_won": int(direct_won),
+        },
+    }
+
+
+def build_cost_ratio_basis(
+    base_won: float, finance_rate: float, other_rate: float, ratio_note: str | None
+) -> dict[str, Any]:
+    """금융비·제경비의 **과표·비율·출처** — 원장이 「수량 × 단가」를 재현하는 재료.
+
+    이 두 축은 `(토지비 + 공사비) × 비율` 이다. 즉 **수량 × 단가가 원래 있었다.**
+    종전엔 합계만 실어 보내서 원장이 *"개략 단계에서는 항목 단위 내역을 산출하지 않는다"* 고
+    적었는데 — **부재가 아니라 안 실어 보낸 것**이었다.
+
+    ★`source` 를 함께 싣는다. 비율이 **엔진 추출**인지 **표준 폴백**인지는 사용자가 알아야 한다
+      (폴백이면 그 숫자는 참고용이다). 표시층이 둘을 같게 그리면 폴백이 실측처럼 읽힌다.
+
+    ★모듈 레벨 함수인 이유: 인라인 dict 리터럴이면 **직접 태울 수 없어** 이 배선이 무잠금이
+      된다(변이 실증 — `"ratio_basis": None` 으로 바꿔도 아무 테스트도 빨개지지 않았다).
+      **호출할 수 없는 코드는 잠글 수 없다** — 이 저장소에서 같은 형태를 다섯 번 밟았다.
+    """
+    return {
+        "base_won": base_won,
+        "base_label": "토지비 + 공사비",
+        "finance_rate": finance_rate,
+        "other_rate": other_rate,
+        "source": "fallback" if ratio_note else "engine",
+        "note": ratio_note,
+    }
+
+
+def compact_charge_items(charges_result: dict[str, Any]) -> list[dict[str, Any]]:
+    """부담금 결과 → 응답용 항목 목록. **과표·요율·사유를 버리지 않는다.**
+
+    ★2026-08-26 — 종전 이 압축은 `code·name·amount_won·borne_by` 만 남기고
+    **`base_won`(과표)·`rate`(요율)·`detail.reason`(사유)를 떨어뜨렸다.** 엔진은 갖고 있는데
+    화면에 닿기 전에 사라져, 사용자는 금액만 보고 *왜 이 금액인지* 물을 곳이 없었고
+    `unavailable` 강등 사유도 마찬가지였다.
+    ★유료·비가역 산출물 규율 §4 — *"사유를 버리지 마라. 진단 불가는 그 자체로 장애다."*
+
+    ★여기서 값을 **만들지 않는다** — 엔진이 준 것만 옮기고, 없으면 `None` 이다(무목업).
+
+    ★모듈 레벨 함수인 이유: 인라인 컴프리헨션이면 **직접 태울 수 없어** 복원 자체가 무잠금이
+      된다(변이 실증 — 되돌려도 아무 테스트도 빨개지지 않았다).
+    """
+    return [
+        {
+            "code": it.get("code"),
+            "name": it.get("name"),
+            "amount_won": it.get("amount_won"),
+            "borne_by": it.get("borne_by", "developer"),
+            # 과표(수량)·요율(단가) — 원장에서 `수량 × 단가 = 금액` 을 재현하는 재료.
+            "base_won": it.get("base_won"),
+            "rate": it.get("rate"),
+            # 사유 — 미부과·미등록·강등의 근거. `detail.reason` 이 정본이다.
+            "reason": (it.get("detail") or {}).get("reason"),
+            # ★`confidence` 는 **`detail` 안**에 있다(엔진 16종 전수 실측: 최상위 non-None 0/16).
+            #   최상위에서 읽던 초안은 프로덕션에서 **항상 None** 이라 강등 표기가 한 번도
+            #   발화하지 않았다. 형제 `project_charges.py:55` 가 처음부터 옳게 읽고 있었다(§G29).
+            "confidence": (it.get("detail") or {}).get("confidence") or it.get("confidence"),
+        }
+        for stage in (charges_result["construction"], charges_result["sale"])
+        for it in (stage.get("items") or [])
+    ]
+
+
 def _null_block(kind: str) -> dict[str, Any]:
     """미확보 축의 표준 null 블록(키는 고정 — 프론트가 안정적으로 소비)."""
     if kind == "land":
@@ -276,6 +373,90 @@ def _null_block(kind: str) -> dict[str, Any]:
         return {"total_won": None, "construction_stage_won": None, "sale_stage_won": None,
                 "buyer_borne_total_won": None, "items": None, "basis": None, "source": None}
     return {}
+
+
+
+def compose_scenario_precision(
+    *,
+    gfa_precision: PrecisionGrade | None,
+    gfa_basis: str,
+    land_total: int | None,
+    land_price_reliable: bool,
+    price_pp: int | None,
+    price_source: str | None,
+) -> tuple[PrecisionGrade | None, str, dict[str, str | None]]:
+    """개략수지 세 입력의 정밀도를 **합성**한다 — "하류는 상류 최저를 따른다".
+
+    왜 합성인가(쉬운 설명):
+    이 수지는 세 입력으로 만들어진다 — 연면적(GFA)·토지비·분양단가. 종전엔 **GFA 하나**의
+    등급만 페이로드에 실었다. 그래서 토지비가 가정치이거나 분양단가가 아예 미확보여도
+    화면은 그대로 "개략(추정)"이라고만 말했다.
+    **등급을 올릴 수 있는 것은 더 나은 입력뿐이지 더 나은 계산이 아니다.**
+
+    ★None(=등급을 모름)은 0 이나 E 로 채우지 않는다. 하나라도 모르면 결과도 모른다 —
+      낙관적으로 채우는 순간 그것이 정밀도 위장의 시작이다(`quality/precision.lowest` 의 규칙).
+      정보가 줄지 않는 이유: 무엇 때문에 낮아졌는지는 반환하는 `inputs` 와 호출부의
+      `degraded_notes` 가 그대로 말한다.
+
+    ★왜 대형 async 함수 밖으로 뺐나: 안에 두면 **잠글 수가 없다**(네트워크 호출이 얽혀 있어
+      테스트가 이 분기를 태우지 못한다). 순수 함수로 두면 계약 테스트가 직접 태운다.
+
+    Returns:
+        (합성 등급, 근거 문구, 입력별 등급 dict). 등급이 None 이면 근거는 **어느 입력을
+        모르는지** 이름으로 말한다(모른다는 사실도 정보다).
+    """
+    # 토지비: 공시지가·탁상감정 **조회값**으로 만들었으면 확인됨(V), 가정치 폴백이면 개략(E).
+    land_precision: PrecisionGrade | None = (
+        None
+        if land_total is None
+        else PrecisionGrade.VERIFIED
+        if land_price_reliable
+        else PrecisionGrade.ESTIMATED
+    )
+    # 분양단가: 실거래(MOLIT)·사용자 지정은 확인됨(V). 지역 시세표는 **실거래가 아니라서**
+    #   source 문자열에 '추정' 이 박혀 있고(_resolve_sale_price_per_pyeong 이 그렇게 만든다) 개략(E).
+    price_precision: PrecisionGrade | None = (
+        None
+        if price_pp is None or price_source == "unavailable"
+        else PrecisionGrade.ESTIMATED
+        if "추정" in str(price_source or "")
+        else PrecisionGrade.VERIFIED
+    )
+    composed = lowest(gfa_precision, land_precision, price_precision)
+
+    if composed is None:
+        unknown = [
+            name
+            for name, g in (
+                ("연면적", gfa_precision),
+                ("토지비", land_precision),
+                ("분양단가", price_precision),
+            )
+            if g is None
+        ]
+        basis = (
+            f"{'·'.join(unknown)} 등급 미확보 — 산출물 전체의 정밀도를 판정할 수 없습니다"
+            if unknown
+            # ★도달 불가 방어 — composed is None 이면 반드시 unknown 이 비어 있지 않다
+            #   (lowest 는 입력에 None 이 있을 때만 None 을 돌려준다). 변이 검증에서 이 줄이
+            #   생존하는 것은 정상이며, 그 사실을 여기 적어 둔다(점수 부풀리기 방지).
+            else "정밀도 판정 불가"
+        )
+    elif composed is gfa_precision and gfa_basis:
+        basis = gfa_basis
+    elif land_precision is PrecisionGrade.ESTIMATED:
+        basis = "토지비 가정치 기준(개략) — 공시지가·탁상감정 미확보"
+    elif price_precision is PrecisionGrade.ESTIMATED:
+        basis = "분양단가 지역 시세표 추정 기준(개략) — 주변 실거래 미확보"
+    else:
+        basis = gfa_basis or "입력 최저 등급을 따름"
+
+    inputs: dict[str, str | None] = {
+        "gfa": gfa_precision.value if gfa_precision else None,
+        "land_cost": land_precision.value if land_precision else None,
+        "sale_price": price_precision.value if price_precision else None,
+    }
+    return composed, basis, inputs
 
 
 async def build_rough_scenario(
@@ -539,6 +720,14 @@ async def build_rough_scenario(
             constr_block = {
                 "total_won": constr_total,
                 "unit_per_sqm_won": int(cc["direct"]["unit_cost_per_sqm"]),
+                # ★2026-08-26 — 직접/간접 **분해를 버리지 않는다**(additive).
+                #   `construction_cost_engine` 은 이미 `{design_fee_won, supervision_fee_won,
+                #   contingency_won, general_expense_won}` 를 **비율과 함께** 돌려주는데
+                #   종전엔 총액과 ㎡단가 **두 숫자만** 남겼다. 원장이 「설계비·감리비·예비비」를
+                #   못 그린 이유가 *"엔진에 없어서"* 가 아니라 **여기서 버려서**였다.
+                #   ★**분해지 추가가 아니다** — 엔진이 `total = direct + indirect` 로 합산하므로
+                #     원장이 쪼개도 **합계가 변하지 않는다**(검산이 그것을 확인한다).
+                **construction_breakdown(cc),
                 "basis": c_basis, "source": c_source,
             }
         except Exception as e:  # noqa: BLE001 — 공사비 산출 실패는 정직 null
@@ -573,6 +762,7 @@ async def build_rough_scenario(
     core_ready = land_total is not None and constr_total is not None and revenue_total is not None
     finance_total: int | None = None
     other_total: int | None = None
+    cost_ratio_basis: dict[str, Any] | None = None
     if land_total is not None and constr_total is not None:
         fin_ratio, oth_ratio, ratio_note = _engine_cost_ratios(input_used)
         if ratio_note:
@@ -580,6 +770,11 @@ async def build_rough_scenario(
         base_sum = land_total + constr_total
         finance_total = round(base_sum * fin_ratio)
         other_total = round(base_sum * oth_ratio)
+        # ★2026-08-26 — 이 두 축도 **수량 × 단가**다(과표 = 토지+공사, 단가 = 엔진 비율).
+        #   종전엔 합계만 실어 보내서 원장이 *"개략 단계에서는 항목 단위 내역을 산출하지
+        #   않는다"* 고 적었는데, **부재가 아니라 안 실어 보낸 것**이었다.
+        #   비율 출처(엔진 추출 vs 표준 폴백)까지 함께 싣는다 — 폴백이면 사용자가 알아야 한다.
+        cost_ratio_basis = build_cost_ratio_basis(base_sum, fin_ratio, oth_ratio, ratio_note)
 
     # ── 6b) 부담금(B공사+C분양 단계, 시행사 부담) — ★상시-0 봉합 ──
     # 종전에는 total_tax_cost_won=0으로 학교용지·광역교통·상하수도·HUG 보증수수료 등
@@ -602,15 +797,15 @@ async def build_rough_scenario(
                 #   (unit_standards SSOT)을 직접 전달한다. (D1 이후 avg_area_pyeong도 전용평
                 #   규약이지만, rough는 input_used 의존 없이 SSOT 직접 사용이 정본)
                 avg_area_sqm=_service._get_type_avg_unit_area(dev_type_final) or 85.0,
-                in_infra_charge_zone=parse_bool_flag(overrides.get("in_infra_charge_zone")),
+                # ★3상태 파서(2026-08-26 · #865 가 놓친 **네 번째 층**). `parse_bool_flag` 는
+                #   **미조회(None)를 미지정(False)으로 뭉개** 화면에 *"기반시설부담구역 미지정"*
+                #   이라는 **없는 관측 주장**을 냈다. #865 가 엔진·통합·모듈 세 층을 고쳤는데
+                #   **이 호출부가 남아** 라이브에서 그대로였다 — **라이브 프로브가 아니었으면
+                #   「고쳤다」로 남았을 것**이다.
+                in_infra_charge_zone=parse_tristate_flag(overrides.get("in_infra_charge_zone")),
             )
             charges_total = int(charges_result["total_won"])
-            _compact = [
-                {"code": it.get("code"), "name": it.get("name"),
-                 "amount_won": it.get("amount_won"), "borne_by": it.get("borne_by", "developer")}
-                for stage in (charges_result["construction"], charges_result["sale"])
-                for it in (stage.get("items") or [])
-            ]
+            _compact = compact_charge_items(charges_result)
             charges_block = {
                 "total_won": charges_total,
                 "construction_stage_won": int(charges_result["construction"]["total_won"]),
@@ -663,6 +858,8 @@ async def build_rough_scenario(
     cost_breakdown = {
         "land_won": land_total, "construction_won": constr_total,
         "finance_won": finance_total, "other_won": other_total,
+        # ★금융·제경비의 과표·비율(원장이 「수량 × 단가」를 재현하는 재료) — additive.
+        "ratio_basis": cost_ratio_basis,
         "charges_won": charges_total,
     }
 
@@ -758,6 +955,15 @@ async def build_rough_scenario(
         )
         degraded.insert(0, f"[잠정·선행절차 전제] {_tnote}")
 
+    payload_precision, payload_precision_basis, precision_inputs = compose_scenario_precision(
+        gfa_precision=gfa_precision,
+        gfa_basis=gfa_precision_basis,
+        land_total=land_total,
+        land_price_reliable=land_price_reliable,
+        price_pp=price_pp,
+        price_source=price_source,
+    )
+
     return {
         "address": address,
         "project_id": project_id,
@@ -791,9 +997,16 @@ async def build_rough_scenario(
         # ★정밀도 등급 — 이 산출물 전체가 **무엇으로 만들어졌는지**를 화면에 알린다.
         #   `E`(개략)면 "설계 미반영"이라는 뜻이고, 하류 수지·등급도 같은 등급이다.
         #   화면은 이 값 없이 숫자를 확정치처럼 보여 주면 안 된다.
-        "precision": (gfa_precision.value if gfa_precision else None),
-        "precision_label": (gfa_precision.label_ko if gfa_precision else "정밀도 미표기"),
-        "precision_basis": gfa_precision_basis,
+        #   ★종전엔 **GFA 등급 하나**로만 판정했다 — 토지비가 가정치이거나 분양단가가 미확보여도
+        #     페이로드는 그대로 "개략(E)"이라 말했다. 이제 세 입력의 **최저**를 따른다(lowest).
+        "precision": (payload_precision.value if payload_precision else None),
+        "precision_label": (
+            payload_precision.label_ko if payload_precision else "정밀도 미표기"
+        ),
+        "precision_basis": payload_precision_basis,
+        # ★입력별 등급(additive) — 합성 결과만 주면 "무엇 때문에 낮아졌는지"를 화면이 말할 수 없다.
+        #   None 은 "그 입력의 등급을 모른다"는 뜻이며 0/추정으로 채우지 않는다.
+        "precision_inputs": precision_inputs,
         # ★A-3/G8(additive) — 법정초과 경량 가드 검출 시만 채워짐(빈 배열=검출 없음, 기존 키 불변).
         "integrity_warnings": integrity_warnings,
     }

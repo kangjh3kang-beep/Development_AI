@@ -95,7 +95,9 @@ async def test_기준일_미입력시_보유기간_판정을_하지_않는다(mo
     card = out["cards"][0]
     assert card["status"] == "ok"
     owner = card["owners"][0]
-    assert owner["sell_claim_judgment"] == "판정 보류", (
+    # ★보류값 계약 — 판정 자리엔 **판정만**. 사유는 코드로 온다(문구 변경에 안 깨진다).
+    assert owner["sell_claim_judgment"] is None, "판정 자리에 판정이 아닌 값이 들어 있다"
+    assert owner["sell_claim_judgment_absent"] == AWAITING_INPUT, (
         f"기준일 없이도 매도청구 판정을 냈다 — 오늘 날짜로 임의 계산했을 가능성: {owner}"
     )
     assert owner["holding_period_years"] is None, "기준일 없이 보유기간 숫자를 냈다(조용히 틀린 값)"
@@ -118,7 +120,8 @@ async def test_기준일_입력시엔_보유기간이_계산된다(monkeypatch: 
 
     assert out["summary"]["decision_date_provided"] is True
     owner = out["cards"][0]["owners"][0]
-    assert owner["sell_claim_judgment"] != "판정 보류"
+    assert owner["sell_claim_judgment"] is not None
+    assert not owner.get("sell_claim_judgment_absent")
     assert owner["holding_period_years"] is not None
     assert owner["holding_period_years"] >= 10  # 2005→2024 ≈ 18.8년
     assert owner["holding_period_basis"] == "2024-01-01", "기준일이 응답에 그대로 실리지 않았다"
@@ -181,7 +184,8 @@ async def test_취득일이_인식되지_않으면_보유기간_대신_판정보
         [{"address": "서울시 F"}], district_plan_decision_date="2024-01-01", scheme=_HOUSING_SCHEME
     )
     owner = out["cards"][0]["owners"][0]
-    assert owner["sell_claim_judgment"] == "판정 보류"
+    assert owner["sell_claim_judgment"] is None
+    assert owner["sell_claim_judgment_absent"] == SOURCE_UNAVAILABLE
     assert owner["holding_period_years"] is None
     assert owner["holding_period_basis"] == "2024-01-01", (
         "취득일 인식 실패와 무관하게 기준일 자체는 응답에 남아야 한다"
@@ -318,6 +322,11 @@ async def test_근거_스니펫_없는_판정을_만들지_않는다(monkeypatch
 from datetime import date as _date  # noqa: E402
 
 from app.services.land_intelligence import parcel_rights_survey_service as _svc  # noqa: E402
+from apps.api.app.utils.withheld import (
+    AWAITING_INPUT,
+    NOT_APPLICABLE,
+    SOURCE_UNAVAILABLE,
+)
 
 
 def _heir_owner(name: str, acq: str, cause: str) -> dict:
@@ -461,7 +470,8 @@ async def test_같은_필지가_사업방식에_따라_다른_판정을_낸다(m
     c = consent["cards"][0]["owners"][0]
 
     assert h["sell_claim_judgment"] == "불가(장기보유 추정)"
-    assert c["sell_claim_judgment"] == svc._JUDGMENT_OUT_OF_SCOPE
+    assert c["sell_claim_judgment"] is None
+    assert c["sell_claim_judgment_absent"] == NOT_APPLICABLE
     assert h["sell_claim_judgment"] != c["sell_claim_judgment"], (
         "사업방식이 판정을 가르지 않는다 — scheme 인자가 장식이다"
     )
@@ -486,7 +496,7 @@ async def test_사업방식_미지정이면_보유기간을_계산하지_않는�
         [{"address": "서울시 J"}], district_plan_decision_date="2024-01-01", scheme=None
     )
     o = out["cards"][0]["owners"][0]
-    assert o["sell_claim_judgment"] == svc._JUDGMENT_OUT_OF_SCOPE
+    assert o["sell_claim_judgment"] is None and o["sell_claim_judgment_absent"] == NOT_APPLICABLE
     assert o["holding_period_years"] is None
     assert "사업방식" in o["sell_claim_reason"]
 
@@ -524,5 +534,5 @@ def test_역세권_활성화사업은_근거법령을_추론하지_않는다() -
         None,
         "역세권 활성화사업",
     )
-    assert out["sell_claim_judgment"] == svc._JUDGMENT_OUT_OF_SCOPE
+    assert out["sell_claim_judgment"] is None and out["sell_claim_judgment_absent"] == NOT_APPLICABLE
     assert out["holding_period_years"] is None

@@ -82,7 +82,25 @@ export function ProjectsOverviewClient({
     nextAction: "부지분석 이어가기",
     modules: ["design", "finance", "report"],
   }));
-  const projectsData = { projects: cards, total: cards.length, updatedAt: new Date().toISOString() };
+  /**
+   * ★"마지막 업데이트"는 **데이터의 시각**이지 렌더 시각이 아니다.
+   *
+   * 종전엔 `new Date().toISOString()` 이었다 — 즉 라벨은 *"마지막 업데이트"* 라고 말하면서
+   * **화면을 그린 순간**을 보여 줬다. 값이 라벨의 약속과 다르다(거짓 근거).
+   *
+   * 그리고 그것은 **하이드레이션 불일치**를 만든다: 서버가 그린 시각과 클라이언트가
+   * 하이드레이트한 시각이 다르므로 같은 자리의 텍스트가 갈린다(React #418).
+   * ★로컬 프로덕션 빌드에서 변이로 확정했다 — 이 한 줄만 상수로 고정하니
+   *   `/ko/projects` 의 #418 이 1→0 이 되고, 같은 배치의 다른 라우트(양성 대조군)는 1을 유지했다.
+   * ★이 결함은 저장 상태와 무관하다 — localStorage 가 비어 있어도 재현된다.
+   *
+   * 이제 목록에서 **가장 최근 시각**을 파생한다. 없으면 `null` — 없는 것을 지어내지 않는다.
+   */
+  const latestUpdatedAt = cards.reduce<string | null>(
+    (acc, c) => (c.updatedAt && (acc === null || c.updatedAt > acc) ? c.updatedAt : acc),
+    null,
+  );
+  const projectsData = { projects: cards, total: cards.length, updatedAt: latestUpdatedAt };
   const hasProjects = cards.length > 0;
   const isLoading = syncing && !hasProjects;
   const isError = false;
@@ -124,7 +142,7 @@ export function ProjectsOverviewClient({
             <span className="cc-live"><i />{syncing ? "SYNCING" : "LIVE"}</span>
           </div>
         </div>
-        {projectsData && (
+        {projectsData.updatedAt && (
           <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">
             {labels.lastUpdatedLabel}:{" "}
             <span className="cc-num text-[var(--text-secondary)]">{formatDate(locale, projectsData.updatedAt)}</span>
@@ -293,7 +311,10 @@ export function ProjectsOverviewClient({
         open={deleteTarget !== null}
         name={deleteTarget?.name ?? ""}
         title="프로젝트 삭제"
-        description="삭제 시 백엔드에서도 제거되며 복구할 수 없습니다. 아래 프로젝트명을 그대로 입력해야 삭제됩니다."
+        // ★문구를 사실과 맞춘다 — 백엔드는 `is_deleted` 플래그만 세우는 **소프트 삭제**라
+        //   "백엔드에서도 제거되며"는 거짓이었다. 화면에서 되돌릴 수 없는 것은 사실이므로
+        //   그 부분은 유지하고, 서버 기록이 남는다는 사실을 숨기지 않는다.
+        description="삭제하면 목록에서 사라지고 이 브라우저의 분석 데이터(스냅샷·토지조서)도 함께 정리됩니다. 화면에서는 되돌릴 수 없습니다(서버 기록은 보관됩니다). 아래 프로젝트명을 그대로 입력해야 삭제됩니다."
         onCancel={() => setDeleteTarget(null)}
         onConfirm={() => {
           if (deleteTarget) {

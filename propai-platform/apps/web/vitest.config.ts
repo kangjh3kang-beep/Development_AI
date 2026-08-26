@@ -30,18 +30,11 @@ export default defineConfig({
     setupFiles: ["./test/setup.ts"],
     css: false,
     globals: true,
-    include: [
-      "__tests__/**/*.test.ts",
-      "__tests__/**/*.test.tsx",
-      "app/**/*.test.ts",
-      "app/**/*.test.tsx",
-      "components/**/*.test.ts",
-      "components/**/*.test.tsx",
-      "hooks/**/*.test.ts",
-      "hooks/**/*.test.tsx",
-      "lib/**/*.test.ts",
-      "lib/**/*.test.tsx",
-    ],
+    // ★파생형으로 수집한다. 종전엔 디렉토리를 **손으로 나열**해 그 목록이 곧 상한이었다 —
+    //   `store/`·`i18n/`·`types/` 등에 테스트를 만들면 `No test files found` 로 조용히
+    //   **한 번도 실행되지 않는 락**이 초록 안에 남는다(2026-08-24 실제로 그럴 뻔했다).
+    //   빠진 디렉토리를 사람이 알아채는 구조를 없앤다.
+    include: ["**/*.test.ts", "**/*.test.tsx"],
     exclude: ["node_modules/**", "e2e/**", ".next/**"],
   },
 });

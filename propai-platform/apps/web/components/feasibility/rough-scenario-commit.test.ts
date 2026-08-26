@@ -252,7 +252,13 @@ describe("roughResultToFeasibilityPatch — 정밀도 등급(#770)", () => {
     const patch = roughResultToFeasibilityPatch(fullResult());
     expect(patch).not.toBeNull();
     expect(patch?.grade, "전제: 다른 필드는 정상 매핑된다").toBe("B");
-    expect("precision" in (patch ?? {}), "미제공인데 키를 만들었다 — 기존 SSOT 를 덮는다").toBe(false);
+    // ★계약 변경(2026-08-24) — 종전 기대는 "키를 만들지 않는다"였다. 그 근거는 *기존 SSOT 보존*
+    //   이었는데, 보존되는 그 값은 **다른 등급을 설명하던 정밀도**다. 새 `grade` 와 함께 남으면
+    //   배지가 그 새 등급을 잘못 라벨한다(merge 패치). `grade` 를 쓰는 순간 정밀도는
+    //   **모른다고 명시**하는 것이 정직하다 — 화면은 "정밀도 미표기"로 남는다.
+    //   ★`grade` 를 **안 쓰는** 패치는 종전대로 키를 만들지 않는다(아래 대조군에서 고정).
+    expect("precision" in (patch ?? {}), "grade 를 쓰면 정밀도를 명시해야 한다").toBe(true);
+    expect(patch?.precision, "모르면 null — 옛 등급의 정밀도를 물려주지 않는다").toBeNull();
     expect("precisionLabel" in (patch ?? {})).toBe(false);
     expect("precisionBasis" in (patch ?? {})).toBe(false);
   });
@@ -260,7 +266,9 @@ describe("roughResultToFeasibilityPatch — 정밀도 등급(#770)", () => {
   it("★모르는 등급은 넣지 않는다 — 소비처가 판정할 수 없는 값을 만들지 않는다", () => {
     for (const bad of ["X", "e", "", "  ", "EE"]) {
       const patch = roughResultToFeasibilityPatch(fullResult({ precision: bad }));
-      expect("precision" in (patch ?? {}), `precision="${bad}" 가 통과했다`).toBe(false);
+      // 잘못된 값은 **그대로 통과하지 않는다**(핵심 락 유지). 다만 grade 가 실려 있으므로
+      //   키 자체는 `null` 로 명시된다(위 계약 변경) — 소비처 조건 `precision === "E"` 는 거짓.
+      expect(patch?.precision, `precision="${bad}" 가 통과했다`).toBeNull();
     }
     // 정상 3등급은 전부 통과한다(과잉 차단 방지).
     for (const ok of ["E", "D", "V"] as const) {
@@ -283,6 +291,8 @@ describe("roughResultToFeasibilityPatch — 정밀도 등급(#770)", () => {
     const patch = roughResultToFeasibilityPatch(
       fullResult({ summary: { grade: "B", precision: "E" } as never }),
     );
-    expect("precision" in (patch ?? {}), "summary 안의 값을 최상위로 착각해 읽었다").toBe(false);
+    // 형태 결속 유지 — summary 안의 "E" 를 최상위로 착각해 **주워 오면** 여기서 갈린다.
+    //   (키는 grade 동반으로 존재하되 값은 null 이어야 한다.)
+    expect(patch?.precision, "summary 안의 값을 최상위로 착각해 읽었다").toBeNull();
   });
 });

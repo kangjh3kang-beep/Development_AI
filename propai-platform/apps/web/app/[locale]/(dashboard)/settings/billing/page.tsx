@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+
 type Config = any;
 
 const STAGE_LABELS: Record<string, string> = {
@@ -53,7 +53,7 @@ export default function BillingConfigPage() {
   const setTierLabel = (t: string, v: string) =>
     setCfg((c: Config) => ({ ...c, tiers: { ...c.tiers, [t]: { ...c.tiers[t], label: v } } }));
   const addPlan = () => {
-    // eslint-disable-next-line no-alert
+
     const raw = window.prompt("새 구독 플랜 식별자(영문 소문자/숫자, 예: pro, business)") || "";
     const key = raw.trim().toLowerCase().replace(/[^a-z0-9_]/g, "");
     if (!key) return;
@@ -62,7 +62,7 @@ export default function BillingConfigPage() {
   };
   const deletePlan = (t: string) => {
     if (PROTECTED.has(t)) return;
-    // eslint-disable-next-line no-alert
+
     if (!window.confirm(`'${t}' 구독 플랜을 삭제할까요? (구독 중인 사용자 등급은 별도)`)) return;
     setCfg((c: Config) => { const tiers = { ...c.tiers }; delete tiers[t]; return { ...c, tiers }; });
     setRemoved((r) => Array.from(new Set([...r, t])));

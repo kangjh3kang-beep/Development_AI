@@ -47,7 +47,11 @@ export type DeskAppraisalResult = {
     land_use_situation?: string | null; terrain_height?: string | null; terrain_form?: string | null;
     official_price_year?: number | null;
   };
-  confidence: number; range_per_sqm: { low: number; high: number };
+  /** ★독립 추정이 1개면 `null`(보류) — 종전엔 주입 난수의 CV 로 늘 숫자였다. */
+  confidence: number | null;
+  /** 신뢰도를 산출/보류한 **사유**(무언 보류 금지). */
+  confidence_basis?: string | null;
+  range_per_sqm: { low: number; high: number };
   cross_check?: { firms: number[]; mean: number; cv_pct: number; min: number; max: number; note: string };
   irregularity?: number | null; methods: DeskAppraisalMethod[]; weight_note: string;
   /**

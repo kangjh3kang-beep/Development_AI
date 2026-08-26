@@ -403,6 +403,79 @@ export const CADASTRE_ZOOM_HINT =
   `지적도는 z${CADASTRE_MIN_ZOOM} 이상에서 제공됩니다 — 확대하면 지번·경계가 표시됩니다`
   + " (이 배율에서는 용도지역 레이어를 확인해 보세요)";
 
+/**
+ * ★선택이 **너무 멀리 흩어져** 지적도와 함께 볼 수 없을 때의 안내.
+ *
+ *   왜 따로 두는가 — 일반 안내(`CADASTRE_ZOOM_HINT`)는 *"확대하면 지번·경계가 표시됩니다"* 라고
+ *   말한다. 그런데 선택 필지가 15km 떨어져 있으면 **어떤 배율에서도 전체를 함께 볼 수 없다.**
+ *   즉 그 안내는 이 상황에서 **막다른 안내**다 — 이 파일이 스스로 세운 규칙("막다른 안내를
+ *   하지 않는다 · 이 배율에서 해 볼 것을 말한다")을 다중·원거리 선택에서만 어기고 있었다.
+ *   그 규칙은 계약 테스트로 잠겨 있었지만 **다중선택 시나리오가 0건**이라 빠져나갔다.
+ *
+ *   ★판정은 `map.getZoom()` 이 아니라 **선택 자체의 이격**으로 한다 — 줌만 보면 사용자가
+ *     손으로 축소한 경우와 구분하지 못해, 원인이 아닌 안내를 하게 된다.
+ */
+export const SPREAD_HINT_PREFIX = "선택한 필지가 서로 약 ";
+
+export function cadastreSpreadHint(spreadKm: number): string {
+  const km = spreadKm >= 10 ? Math.round(spreadKm) : Math.round(spreadKm * 10) / 10;
+  return (
+    `${SPREAD_HINT_PREFIX}${km}km 떨어져 있어 지적도와 전체 선택을 한 화면에서 함께 볼 수 없습니다`
+    + " — 필지를 눌러 개별로 확대해 보세요"
+  );
+}
+
+/** z{CADASTRE_MIN_ZOOM} 화면이 담는 대략 폭(km) — 웹메르카토르 기준(위도 37.5·1000px).
+ *  ★정밀한 값이 아니라 **자릿수 판정용**이다. 선택 이격이 이 폭을 넘으면 어떤 조작으로도
+ *    지적도와 전체 선택을 **동시에** 볼 수 없다. */
+export const CADASTRE_VIEW_WIDTH_KM = 0.95;
+
+/** 두 좌표의 거리(km) — 하버사인. 선택 이격 판정 전용(표시용 근사). */
+export function haversineKm(
+  a: { lat: number; lon: number },
+  b: { lat: number; lon: number },
+): number {
+  const R = 6371.0088;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const p1 = toRad(a.lat);
+  const p2 = toRad(b.lat);
+  const dp = p2 - p1;
+  const dl = toRad(b.lon - a.lon);
+  const h =
+    Math.sin(dp / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+/** 좌표를 가진 선택 필지들의 **최대 이격**(km). 좌표가 2개 미만이면 `null`(미상 ≠ 0). */
+/** 이격을 보고 **어느 안내를 쓸지 고르는 판단** — 순수 함수로 꺼내 둔다.
+ *  ★왜: 처음엔 이 판단이 effect 안 삼항식이었는데, 변이 검증에서 그 분기를 통째로 없애도
+ *    테스트가 **전부 초록**이었다(재료만 잠그고 판단은 안 잠근 상태). 판단을 함수로 꺼내면
+ *    런타임 테스트가 그것을 직접 태울 수 있다. */
+export function cadastreHintFor(spreadKm: number | null): string {
+  return spreadKm != null && spreadKm > CADASTRE_VIEW_WIDTH_KM
+    ? cadastreSpreadHint(spreadKm)
+    : CADASTRE_ZOOM_HINT;
+}
+
+export function selectionSpreadKm(
+  points: ReadonlyArray<{ lat?: number | null; lon?: number | null }>,
+): number | null {
+  const pts = points
+    .filter((p): p is { lat: number; lon: number } =>
+      typeof p?.lat === "number" && typeof p?.lon === "number")
+    .map((p) => ({ lat: p.lat, lon: p.lon }));
+  if (pts.length < 2) return null;
+  let max = 0;
+  for (let i = 0; i < pts.length; i += 1) {
+    for (let j = i + 1; j < pts.length; j += 1) {
+      const d = haversineKm(pts[i], pts[j]);
+      if (d > max) max = d;
+    }
+  }
+  return max;
+}
+
+
 const POI_CONTROL_CODES: Record<string, string[]> = {
   station: ["SW8"],
   school: ["SC4"],
@@ -1314,11 +1387,11 @@ export function SatongMultiMap({
   // 선택 필지 및 staged 필지 통합 평균 노후도 계산
   const avgAge = useMemo(() => {
     const allFeatures = new Map<string, { buildingAgeYears?: number | null }>();
-    
+
     boundaryFeatures.forEach((p) => {
       if (p.id) allFeatures.set(p.id, { buildingAgeYears: p.buildingAgeYears });
     });
-    
+
     staged.forEach((s) => {
       const id = s.pnu || s.address || s.jibun || "staged";
       allFeatures.set(id, { buildingAgeYears: s.building_age_years });
@@ -1395,6 +1468,12 @@ export function SatongMultiMap({
     ]),
     [boundaryFeatures, pending, staged],
   );
+  // ★지적 안내 effect 는 deps 가 [mapReady, showCadastreTile, aerialView] 라 선택을 직접
+  //   참조할 수 없다(참조하면 선택이 바뀔 때마다 타일 레이어가 재생성된다). 최신 선택을
+  //   ref 로 흘려보내 zoomend 핸들러가 **그 시점의** 이격을 볼 수 있게 한다.
+  const overlayFeaturesRef = useRef<SatongMapFeature[]>([]);
+  overlayFeaturesRef.current = overlayFeatures;
+
   const priceRange = useMemo(() => {
     const prices = overlayFeatures
       .map((feature) => feature.officialPricePerSqm ?? 0)
@@ -1443,7 +1522,7 @@ export function SatongMultiMap({
     focusTargetRef.current = focusTarget;
   }, [focusTarget]);
 
-  /* eslint-disable react-hooks/set-state-in-effect -- VWorld boundary fetch status is synchronized from an external API effect. */
+
   useEffect(() => {
     if (!selectedParcels.length) {
       // ★빈 선택 시 boundaryFeatures/status 를 '변화가 있을 때만' 갱신한다. 매번 새 [] 를
@@ -1513,7 +1592,7 @@ export function SatongMultiMap({
       alive = false;
     };
   }, [selectedParcelKey, selectedParcels]);
-  /* eslint-enable react-hooks/set-state-in-effect */
+
 
   /** pending 레이어(임시 마커·폴리곤) 지도에서 제거 */
   const clearPendingLayer = useCallback(() => {
@@ -1760,7 +1839,7 @@ export function SatongMultiMap({
   //   뺐다 — 업데이터는 React가 재호출(StrictMode 이중호출 등)할 수 있어 순수해야 한다. 최신
   //   staged는 이미 동기화된 stagedRef(위 useEffect)로 읽고, 변화가 있을 때만 setStaged(값)로
   //   직접 세팅한다(업데이터 함수 자체를 쓰지 않음).
-  /* eslint-disable-next-line react-hooks/set-state-in-effect -- staged reconcile follows the selectedParcels SSOT. */
+
   useEffect(() => {
     const prevStaged = stagedRef.current;
     const toRemove: string[] = [];
@@ -1901,7 +1980,7 @@ export function SatongMultiMap({
     };
   }, [queryParcel, readOnly]);
 
-  /* eslint-disable react-hooks/set-state-in-effect -- Tile loading status comes from Leaflet/VWorld tile lifecycle. */
+
   useEffect(() => {
     const map = mapRef.current;
     const L = window.L;
@@ -1938,7 +2017,7 @@ export function SatongMultiMap({
   const [zoningWideNote, setZoningWideNote] = useState("");
   const showZoningWide =
     hasSatongLayer(layerState, "zoning") && hasSatongLayerControl(layerState, "zoning", "land-use-wide");
-  /* eslint-disable react-hooks/set-state-in-effect -- Imperative Leaflet tile layer wiring. */
+
   useEffect(() => {
     const map = mapRef.current;
     const L = window.L;
@@ -1972,7 +2051,7 @@ export function SatongMultiMap({
       if (zoningWideTileRef.current === tile) zoningWideTileRef.current = null;
     };
   }, [mapReady, showZoningWide]);
-  /* eslint-enable react-hooks/set-state-in-effect */
+
 
   // ── 규제 오버레이(지구단위·개발행위 제한·상수원·교육환경·고도지구) — WMS 다중 레이어 ──
   //   zoning 플레이스홀더 컨트롤의 잠금 해제(2026-07-17 — GetCapabilities+GetMap 매트릭스
@@ -1990,7 +2069,7 @@ export function SatongMultiMap({
   );
   // 이펙트 의존성용 안정 키(배열 identity churn 방지).
   const regulationWmsKey = regulationWmsChunks.join("|");
-  /* eslint-disable react-hooks/set-state-in-effect -- Imperative Leaflet tile layer wiring. */
+
   useEffect(() => {
     const map = mapRef.current;
     const L = window.L;
@@ -2043,7 +2122,7 @@ export function SatongMultiMap({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- regulationWmsKey가 청크 배열의 안정 키다.
   }, [mapReady, regulationWmsKey]);
-  /* eslint-enable react-hooks/set-state-in-effect */
+
 
   useEffect(() => {
     const map = mapRef.current;
@@ -2123,9 +2202,16 @@ export function SatongMultiMap({
     //   ★진짜 오류 노트를 덮지 않는다 — 안내 문구일 때만 갈아끼운다.
     const syncZoomNote = () => {
       const below = map.getZoom() < CADASTRE_MIN_ZOOM;
+      // ★원인이 **선택 이격**이면 일반 안내는 막다른 안내가 된다(확대해도 전체를 못 본다).
+      //   판정은 줌이 아니라 선택 자체의 이격으로 한다 — 줌만 보면 사용자가 손으로 축소한
+      //   경우와 구분하지 못해 원인이 아닌 안내를 하게 된다.
+      const hint = cadastreHintFor(selectionSpreadKm(overlayFeaturesRef.current ?? []));
+      // ★두 안내를 **한 줄에서** 판정한다 — 자기 안내 목록이 여러 줄로 흩어지면 배선 락이
+      //   첫 줄만 보고 나머지를 놓친다(실제로 그렇게 통과했다).
+      const isOwnHint = (v: string) => v === CADASTRE_ZOOM_HINT || v.startsWith(SPREAD_HINT_PREFIX);
       setCadastreTileNote((prev) => {
-        if (below) return prev && prev !== CADASTRE_ZOOM_HINT ? prev : CADASTRE_ZOOM_HINT;
-        return prev === CADASTRE_ZOOM_HINT ? "" : prev;
+        if (below) return prev && !isOwnHint(prev) ? prev : hint;
+        return isOwnHint(prev) ? "" : prev;
       });
     };
     syncZoomNote();
@@ -2139,9 +2225,8 @@ export function SatongMultiMap({
       }
     };
   }, [mapReady, showCadastreTile, aerialView]);
-  /* eslint-enable react-hooks/set-state-in-effect */
 
-  /* eslint-disable react-hooks/set-state-in-effect -- Overlay notes are derived from imperative Leaflet layer rendering. */
+
   useEffect(() => {
     const map = mapRef.current;
     const L = window.L;
@@ -2321,7 +2406,7 @@ export function SatongMultiMap({
     priceRange.max,
     priceRange.min,
   ]);
-  /* eslint-enable react-hooks/set-state-in-effect */
+
 
   // ── W3 배치 미리보기 오버레이(건축가능 영역 + 선택 대안의 동 풋프린트) ──────────────
   //  ★기하는 전부 서버 산정(cad/site_layout_service)이다. 여기서 동을 배치하거나 세트백을
@@ -2363,7 +2448,7 @@ export function SatongMultiMap({
   const selectionLabelLayerRef = useRef<any>(null);
   // 롤업 여부만 dep로 — LOD 임계(z=15) 교차 시에만 라벨 재부착(줌마다 teardown 낭비 방지 — R1 L2).
   const selectionRollup = satongLabelLOD(mapZoom) === "hover-only";
-  /* eslint-disable react-hooks/set-state-in-effect -- Selection labels are rendered into an imperative Leaflet layer group. */
+
   useEffect(() => {
     const map = mapRef.current;
     const L = window.L;
@@ -2424,14 +2509,14 @@ export function SatongMultiMap({
       if (selectionLabelLayerRef.current === group) selectionLabelLayerRef.current = null;
     };
   }, [mapReady, overlayFeatures, selectionRollup]);
-  /* eslint-enable react-hooks/set-state-in-effect */
+
 
   // ── 거리재기 — 측정 모드 동기화·측정점/폴리라인/누적거리 렌더·모드 UX·ESC ──
   useEffect(() => {
     measureOnRef.current = measureOn;
   }, [measureOn]);
 
-  /* eslint-disable react-hooks/set-state-in-effect -- Measure shapes are rendered into an imperative Leaflet layer group. */
+
   useEffect(() => {
     const map = mapRef.current;
     const L = window.L;
@@ -2478,7 +2563,7 @@ export function SatongMultiMap({
       if (measureLayerRef.current === group) measureLayerRef.current = null;
     };
   }, [mapReady, measurePoints, measureMode]);
-  /* eslint-enable react-hooks/set-state-in-effect */
+
 
   // 측정 모드 UX — 더블클릭줌 비활성(더블클릭=종료 제스처와 충돌)·크로스헤어 커서.
   useEffect(() => {
@@ -2613,7 +2698,7 @@ export function SatongMultiMap({
   const poiLabelLimit = labelPlan.poi ?? 0;
   const devLabelLimit = labelPlan.development ?? 0;
 
-  /* eslint-disable react-hooks/set-state-in-effect -- Market markers are rendered into an imperative Leaflet layer group. */
+
   useEffect(() => {
     const map = mapRef.current;
     const L = window.L;
@@ -2775,9 +2860,8 @@ export function SatongMultiMap({
       if (marketLayerRef.current === group) marketLayerRef.current = null;
     };
   }, [mapReady, marketKind, marketTypes, marketPayload, marketRenderPlan, labelPlan, selectedParcelKey, selectedParcels.length, pricePerPyeongOn]);
-  /* eslint-enable react-hooks/set-state-in-effect */
 
-  /* eslint-disable react-hooks/set-state-in-effect -- Presale/auction markers are rendered into an imperative Leaflet layer group. */
+
   useEffect(() => {
     // ★P0-1: 분양·경매 렌더를 실거래(marketPayload) 이펙트에서 독립 분리.
     //   종전엔 market 이펙트 내부에 있어 실거래 레이어 OFF(기본값)거나 nearby-map 실패 시
@@ -2845,9 +2929,8 @@ export function SatongMultiMap({
       if (presaleAuctionLayerRef.current === group) presaleAuctionLayerRef.current = null;
     };
   }, [mapReady, showPresale, presaleItems, showAuction, auctionItems, presaleLabelLimit, auctionLabelLimit]);
-  /* eslint-enable react-hooks/set-state-in-effect */
 
-  /* eslint-disable react-hooks/set-state-in-effect -- POI markers are rendered into an imperative Leaflet layer group. */
+
   useEffect(() => {
     const map = mapRef.current;
     const L = window.L;
@@ -2916,9 +2999,8 @@ export function SatongMultiMap({
       if (poiLayerRef.current === group) poiLayerRef.current = null;
     };
   }, [mapReady, poiPayload, layerState, poiLabelLimit]);
-  /* eslint-enable react-hooks/set-state-in-effect */
 
-  /* eslint-disable react-hooks/set-state-in-effect -- Development-facility markers are rendered into an imperative Leaflet layer group. */
+
   useEffect(() => {
     const map = mapRef.current;
     const L = window.L;
@@ -2975,7 +3057,7 @@ export function SatongMultiMap({
       if (developmentLayerRef.current === group) developmentLayerRef.current = null;
     };
   }, [mapReady, developmentPayload, devLabelLimit]);
-  /* eslint-enable react-hooks/set-state-in-effect */
+
 
   useEffect(() => {
     const map = mapRef.current;
@@ -2985,7 +3067,7 @@ export function SatongMultiMap({
     const key = `${focusLat.toFixed(7)},${focusLon.toFixed(7)}`;
     if (lastAutoFocusKeyRef.current === key) return;
     lastAutoFocusKeyRef.current = key;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- Auto-preview intentionally queries parcel data after focusing the imperative map.
+
     void queryParcel(focusLat, focusLon, { autoStage: true });
   }, [autoPreviewFocus, focusLat, focusLon, queryParcel, readOnly]);
 
