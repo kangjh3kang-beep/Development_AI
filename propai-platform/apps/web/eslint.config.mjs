@@ -36,20 +36,11 @@ const eslintConfig = defineConfig([
     // (`lib/hydration/__tests__/probe-text.test.ts`)는 **스크립트 자체를 태우지 않는다.**
     // 그리고 `control` 모드는 그 줄을 지나지 않아 **통과했다** — 도구가 살아 있는 것처럼 보였다.
     //
-    // ★목록형 globals 의 한계를 알고 쓴다: 빠진 전역이 있으면 **위양성(정상 코드 차단)** 으로
-    //   시끄럽게 드러난다. 조용한 위음성이 아니므로 이 방향의 불완전성은 안전하다.
+    // ★`globals` 를 손으로 나열하지 않는다. 처음엔 18개를 적었는데 **변이(M6: `document` 제거)가
+    //   SURVIVED** 해서 재보니 `--print-config` 기준 이미 **1174개**가 상위 config 에서 오고 있었다
+    //   — 내 목록은 **전부 중복**이었고, 그 옆에 적어 둔 *"목록형의 한계를 알고 쓴다"* 는 주석은
+    //   **거짓 전제**였다. 목록을 두면 그것이 곧 상한이 되고, 여기서는 둘 이유조차 없었다.
     files: ["**/*.mjs"],
-    languageOptions: {
-      ecmaVersion: "latest",
-      sourceType: "module",
-      globals: {
-        process: "readonly", console: "readonly", URL: "readonly", Buffer: "readonly",
-        setTimeout: "readonly", setInterval: "readonly", clearTimeout: "readonly",
-        fetch: "readonly", TextEncoder: "readonly", TextDecoder: "readonly",
-        document: "readonly", window: "readonly", localStorage: "readonly", navigator: "readonly",
-        __dirname: "readonly", __filename: "readonly", module: "readonly", require: "readonly",
-      },
-    },
     rules: { "no-undef": "error" },
   },
   {

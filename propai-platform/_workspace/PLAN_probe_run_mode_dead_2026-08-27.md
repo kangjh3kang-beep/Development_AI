@@ -46,8 +46,10 @@
 ## 3. ★검증하지 못한 것
 
 - **왜 `run` 모드가 한 번도 실행되지 않은 채 머지됐는지**는 재지 않았다(추정하지 않는다).
-- `no-undef` globals 목록이 **모든 `.mjs` 미래 용례를 덮는지** — 목록형이라 상한이 될 수 있다.
-  다만 부족의 방향이 **위양성**이라 조용히 새지 않는다(그 성질을 근거로 채택했다).
+- ★**정정**: 초판은 `globals` 18개를 손으로 나열하고 그 옆에 *"목록형의 한계를 알고 쓴다"* 고
+  적었다. **변이 M6(`document` 제거)이 SURVIVED** 해서 재보니 `--print-config` 기준 이미
+  **1174개**가 상위 config(`eslint-config-next`)에서 오고 있었다 — 내 목록은 **전부 중복**이었고
+  그 주석은 **거짓 전제**였다. 목록을 걷어냈다. **변이가 아니었으면 거짓이 그대로 남았다.**
 - `next.config.mjs`·`postcss.config.mjs` 는 이 규칙 아래에서 **지금** 초록일 뿐, 그 파일들이 쓰는
   전역이 늘어날 때의 거동은 **미측정**이다.
 - 이 PR 은 **프로브를 고칠 뿐** 하이드레이션 결함 자체를 고치지 않는다(그 트리아지는 별건).
@@ -64,6 +66,7 @@
 | **스크립트의 미정의 참조**(이번 결함 클래스 전체) | `eslint.config.mjs` `no-undef` on `**/*.mjs` | ◎ Frontend(lint) — 차단 게이트 |
 | `relevantErrors` 가 **두 모집단을 가른다**(잡음은 지우고 나머지는 남긴다 · 양방향) | `lib/hydration/__tests__/probe-text.test.ts` | ◎ Frontend(vitest) |
 | `countHydration` 이 `relevantErrors` 와 **정합**(기대값을 다른 경로로 파생) | 같은 파일 · 공허진리 가드 포함 | ◎ |
+| **`no-undef` 가 꺼지거나 `warn` 으로 낮춰지는 것**(선언이 아니라 **동작**을 태운다) | `__tests__/eslint-mjs-undef.contract.test.ts` | ◎ Frontend(vitest) |
 
 ★**같은 규율을 두 곳에 두지 않는다** — "실행 가능성"은 `no-undef` 가 잠그고, vitest 는
 그 위의 **동작 계약**만 본다.
