@@ -70,6 +70,39 @@ def _rows(path: str) -> list[tuple[str, str, str]]:
     return out
 
 
+def validate_rows(rows: list[tuple[str, str, str]]) -> list[str]:
+    """행 목록을 보고 **위반 문구 목록**을 돌려준다(빈 목록 = 위반 없음).
+
+    ★왜 순수 함수로 꺼냈나 — 이 판정을 테스트 본문 안에 두었더니 **변이 2종이 생존**했다
+      (`malformed = []` 로 비워도 · 상한 단언을 `True or` 로 무력화해도 초록).
+      실제 파일이 지금 규칙을 만족하기 때문에 **검사 로직을 지워도 아무 일이 없었다** —
+      "현재 위반 0건"인 래칫은 그 자체로 **공허한 참**이다.
+      꺼내 놓으면 **합성 입력**으로 판정 자체를 태울 수 있고, 그때 비로소 변이가 죽는다.
+    """
+    out: list[str] = []
+    for route, kind, reason in rows:
+        if not kind:
+            out.append(f"{route}: 종류 컬럼이 없다 — `경로 <TAB> 종류 <TAB> 사유` 로 적어라")
+            continue
+        if kind not in _KINDS:
+            out.append(f"{route}: 닫힌 어휘 밖의 종류 '{kind}' — 쓸 수 있는 것 {sorted(_KINDS)}")
+            continue
+        if kind != _UNCLASSIFIED and len(reason) < 20:
+            out.append(f"{route} [{kind}]: 종류는 바꿨는데 사유가 비었거나 너무 짧다 — 파일:줄 로 근거를 적어라")
+    return out
+
+
+def check_unclassified_ceiling(n: int, ceiling: int, slack: int = 25) -> list[str]:
+    """미분류 수를 **양방향**으로 본다 — 넘치면 새 미분류가 든 것이고,
+    한참 낮으면 **죽은 상한**이라 그만큼 다시 늘 여지가 남는다."""
+    out: list[str] = []
+    if n > ceiling:
+        out.append(f"미분류 {n} 건이 상한 {ceiling} 을 넘었다 — 사유 없이 새 항목을 들였다")
+    if n < ceiling - slack:
+        out.append(f"미분류 {n} 건이 상한 {ceiling} 보다 한참 낮다 — 상한을 그 수로 내려라(죽은 상한)")
+    return out
+
+
 def _load(path: str) -> set[str]:
     """**경로만** 돌려준다(래칫의 집합 연산용). 종류·사유는 `_rows` 로 본다.
 
@@ -271,17 +304,8 @@ def test_모든_행이_경로_종류_사유_셋을_갖는다():
     # ★공허 진리 가드 — 파서가 죽어 빈 목록이면 아래 전부가 참이 된다.
     assert len(rows) > 50, "기준선 행이 비정상적으로 적다 — 파서나 파일이 깨졌다"
 
-    malformed = [r for r, k, _w in rows if not k]
-    assert not malformed, (
-        "종류 컬럼이 없는 행이다 — `경로 <TAB> 종류 <TAB> 사유` 로 적어라:\n"
-        + "\n".join(f"  {r}" for r in malformed)
-    )
-
-    unknown = sorted({k for _r, k, _w in rows if k not in _KINDS})
-    assert not unknown, (
-        f"닫힌 어휘 밖의 종류다: {unknown}\n"
-        f"→ 쓸 수 있는 것: {sorted(_KINDS)}. 새 낱말이 필요하면 _KINDS 에 **뜻과 함께** 추가하라."
-    )
+    violations = validate_rows(rows)
+    assert not violations, "기준선 형식 위반:\n" + "\n".join(f"  {v}" for v in violations)
 
 
 def test_분류했다면_무엇을_보고_그렇게_판단했는지_적혀_있다():
@@ -291,25 +315,47 @@ def test_분류했다면_무엇을_보고_그렇게_판단했는지_적혀_있�
 
     # ★모집단 가드 — 분류된 행이 0 이면 이 검사는 아무것도 잠그지 않는다(공허한 참).
     assert classified, "분류된 행이 하나도 없다 — 이 검사가 공허해졌다"
+    assert not validate_rows(classified)
 
-    thin = [(r, k) for r, k, w in classified if len(w) < 20]
-    assert not thin, (
-        "종류는 바꿨는데 사유가 비었거나 너무 짧다 — **파일:줄** 로 근거를 적어라:\n"
-        + "\n".join(f"  {r} [{k}]" for r, k in thin)
-    )
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ★판정 자체를 **합성 입력**으로 태운다 — 실제 파일은 지금 규칙을 만족하므로,
+#   이 케이스들이 없으면 검사 로직을 통째로 지워도 초록이다(변이 2종이 실제로 생존했다).
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_판정기가_각_위반을_실제로_지목한다():
+    ok = ("/x", "admin-cron", "라우트 summary 가 관리용이라고 적어 두었다(routers/x.py:1)")
+
+    # ★음성 대조군 먼저 — 정상 행을 위반으로 신고하면 그것도 결함이다.
+    assert validate_rows([ok]) == [], "정상 행을 위반으로 신고한다(위양성)"
+    assert validate_rows([("/y", "unclassified", "")]) == [], "미분류는 사유가 없어도 정상이다"
+
+    # 탭이 없어 종류가 비었다
+    assert any("종류 컬럼이 없다" in v for v in validate_rows([("/x", "", "")]))
+    # 닫힌 어휘 밖
+    assert any("닫힌 어휘 밖" in v for v in validate_rows([("/x", "probably-fine", "충분히 긴 사유를 적었다고 치자")]))
+    # 분류했는데 사유가 얇다
+    assert any("사유가 비었거나" in v for v in validate_rows([("/x", "debt", "짧음")]))
+
+
+def test_미분류_상한이_양방향으로_판정된다():
+    # 음성 대조군 — 상한 안에 있으면 조용하다.
+    assert check_unclassified_ceiling(130, 130) == []
+    assert check_unclassified_ceiling(120, 130) == []
+    # 넘치면 잡는다
+    assert any("넘었다" in v for v in check_unclassified_ceiling(131, 130))
+    # ★죽은 상한도 잡는다 — 갚아 놓고 상한을 안 내리면 다시 늘 여지가 남는다
+    assert any("한참 낮다" in v for v in check_unclassified_ceiling(100, 130))
 
 
 def test_미분류는_늘어나지_않는다():
     """★`unclassified` 는 *"아직 안 봤다"* 이지 *"문제없다"* 가 아니다. 줄이는 방향으로만 간다."""
     rows = _rows(_BASELINE)
+    assert len(rows) > 50, "기준선 행이 비정상적으로 적다 — 파서나 파일이 깨졌다"
     n = sum(1 for _r, k, _w in rows if k == _UNCLASSIFIED)
 
-    assert n <= _UNCLASSIFIED_CEILING, (
-        f"미분류가 {n} 건으로 상한 {_UNCLASSIFIED_CEILING} 을 넘었다 — 새 라우트를 기준선에 넣으면서"
-        " 사유를 안 적었을 가능성이 높다. 열어 보고 종류와 근거를 적어라."
-    )
-    # ★죽은 상한도 막는다 — 부채를 갚았는데 상한을 안 내리면 그만큼 다시 늘 수 있다.
-    assert n >= _UNCLASSIFIED_CEILING - 25, (
-        f"미분류가 {n} 건으로 상한 {_UNCLASSIFIED_CEILING} 보다 한참 낮다 — 부채를 갚았으면"
-        " _UNCLASSIFIED_CEILING 을 그 수로 **내려서** 다시 늘 여지를 없애라."
+    violations = check_unclassified_ceiling(n, _UNCLASSIFIED_CEILING)
+    assert not violations, "\n".join(violations) + (
+        "\n→ 한 건을 열어 분류했으면 _UNCLASSIFIED_CEILING 을 그 수로 내려라."
     )
