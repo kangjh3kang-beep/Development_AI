@@ -621,6 +621,64 @@ def build_rough_scenario_report_model(
                 ["총사업비", summ.get("total_cost_won")],
             ],
             numeric_cols=[1], total_row=True, title="총사업비 구성"))
+
+    # ── ★간략 수지 원장(실무 양식) — 인쇄·제출본에도 싣는다(2026-08-26) ────────────
+    #   위 「총사업비 구성」은 **축별 합계 5줄**이다. 실무 수지표는 **행마다 「수량 × 단가 =
+    #   금액」과 근거**를 요구하고, 이 산출물의 본래 용도가 **인쇄·제출**이다.
+    #   원장이 화면에만 있고 PDF/DOCX/PPTX 에 없으면 **가장 필요한 자리에서 빠진다.**
+    #   ★값을 다시 계산하지 않는다 — 응답에 이미 실린 `legacy_ledger` 를 옮길 뿐이다.
+    ledger = scenario.get("legacy_ledger") or {}
+    ledger_rows: list[list[Any]] = []
+    for sec in ledger.get("sections") or []:
+        for g in sec.get("groups") or []:
+            for it in g.get("items") or []:
+                qty, price = it.get("qty"), it.get("unit_price")
+                calc = (
+                    f"{qty:,.0f}{it.get('qty_unit') or ''} × {price:,.4g}"
+                    f"{(' ' + it['unit_price_unit']) if it.get('unit_price_unit') else ''}"
+                    if qty is not None and price is not None else None
+                )
+                ledger_rows.append([
+                    f"{sec.get('label')} · {g.get('label')}",
+                    it.get("label"),
+                    it.get("amount_won"),
+                    it.get("share_pct"),
+                    calc,
+                    it.get("basis"),
+                ])
+            if g.get("subtotal_won") is not None:
+                ledger_rows.append([
+                    f"{sec.get('label')} · {g.get('label')}", "소계",
+                    g.get("subtotal_won"), g.get("share_pct"), None, None,
+                ])
+    if ledger_rows:
+        feas_blocks.append(DataTableBlock(
+            headers=["구분", "항목", "금액(원)", "구성비(%)", "산출내역(수량 × 단가)", "근거"],
+            rows=ledger_rows, numeric_cols=[2, 3],
+            title="간략 수지 원장 (실무 양식 — 수량 × 단가 · 근거)"))
+        # ★검산 결과도 함께 — 표만 싣고 「이 합계가 맞는지」를 빼면 읽는 사람이 확인할 길이 없다.
+        checks = ledger.get("checks") or []
+        if checks:
+            feas_blocks.append(DataTableBlock(
+                headers=["검산 항목", "원장(원)", "엔진(원)", "차이(원)", "판정", "무엇을 보증하나"],
+                rows=[[c.get("label"), c.get("ledger_won"), c.get("engine_won"),
+                       c.get("diff_won"), c.get("verdict"), c.get("note")] for c in checks],
+                numeric_cols=[1, 2, 3],
+                title="합계 전파 점검 (엔진 값 자체의 정오는 보지 않음)"))
+        cov = ledger.get("coverage") or {}
+        if cov.get("items"):
+            # ★`NarrativeBlock` 이 정본이다 — 처음 쓴 `ParagraphBlock` 은 **존재하지 않는
+            #   클래스**였고, 모듈 import 는 성공해서 그 오류가 안 드러났다(함수 내부 NameError).
+            #   `claim_type="FACT"` — 이것은 해석이 아니라 **측정된 커버리지**다.
+            feas_blocks.append(NarrativeBlock(claim_type="FACT", paragraphs=[
+                f"원장 {cov['items']}행 중 수량·단가가 원리적으로 존재하는 "
+                f"{cov.get('qty_applicable_items')}행 기준 — 수량 {cov.get('qty_pct')}% · "
+                f"단가 {cov.get('unit_price_pct')}% · 근거 {cov.get('basis_pct')}%(전 행 기준).",
+                "산출 근거가 없는 항목은 0원이 아니라 공란으로 표기합니다(값을 지어내지 않음). "
+                "이 원장은 산출 엔진을 참조만 하며, 위 「합계 전파 점검」은 원장이 엔진 값을 "
+                "옮기다 흘렸는지만 봅니다 — 엔진 값 자체의 정오는 보지 않습니다.",
+            ]))
+
     sections.append(Section(section_no=5, title="개략 사업수지 (20% 마진)", blocks=feas_blocks))
 
     # ── ⑥ 월별 현금흐름(DCF·NPV·IRR·회수기간) ──

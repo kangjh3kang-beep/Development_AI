@@ -1322,7 +1322,6 @@ export function DetailModal({
                   className="group flex h-full w-full cursor-zoom-in items-center justify-center"
                   aria-label="사진 확대해서 보기"
                 >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
                   {/* max-h/max-w로 '원본 크기까지만' 표시 — h-full w-full로 강제 채우면 지적도 같은
                       저해상도 원본이 과하게 확대돼 뭉개진다(깨짐의 근본원인). 작은 이미지는 또렷하게
                       가운데 정렬되고, 큰 이미지만 컨테이너에 맞춰 줄어든다(레터박스). */}
