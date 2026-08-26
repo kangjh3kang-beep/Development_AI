@@ -181,22 +181,101 @@ class Test커버리지원장:
         "parcel_purchase_strategy_service.py": True, # 중간 전파
         "suggest.py": True,                          # suggested_price_absent
         "ordinance_conditional.py": True,            # decision_absent
-        "console.py": False,       # ★부채 — sales/admin. None 반환이나 사유 키가 없다
+        "console.py": True,                          # balanced_absent (#838 · sales/admin)
         "decision_brief_service.py": False,          # ★부채 — reasons[] 목록형이라 사상 필요
     }
 
+    #: 배선 신호 — 식별자·호출·딕셔너리 키 이름. 이름 끝으로 판별한다.
+    _WIRED_SUFFIX = ("_absent", "_basis")
+
+    @classmethod
+    def _wired_in_code(cls, path: Path) -> bool:
+        """그 파일이 **실행되는 코드에서** 보류 계약을 쓰는가 — AST 로 판정한다.
+
+        ★왜 정규식·줄주석 제거로는 부족한가(실측 2026-08-26):
+          `_scan_guard.code_lines` 는 자기 독스트링이 정직하게 밝히듯 **줄 주석만** 걷어낸다.
+          그래서 `from __future__ import annotations  # _basis` 처럼 **끝에 붙인 주석**과
+          **독스트링**은 그대로 남는다. 실제로 부채 파일에 그 한 줄을 넣어 보니
+          **"이미 배선됨"으로 오판**됐다(변이 L3a). 즉 종전 처방은 면역을 **과장**한 것이었다.
+
+        ★그래서 `ast.parse()` 로 바꾼다 — 주석·독스트링은 AST 에 **존재하지 않는다.**
+          부수 효과로 **문법이 먼저 타므로**, `SyntaxError` 인 파일이 조용히 통과하지 못한다
+          (문자열 락이 `SyntaxError` 파일을 초록으로 통과시킨 전례가 있다).
+        """
+        import ast  # noqa: PLC0415 — 저장소 관용(테스트 지역 임포트)
+
+        src = path.read_text(encoding="utf-8")
+        tree = ast.parse(src, filename=str(path))   # ★문법을 먼저 태운다(조용한 통과 금지)
+
+        # 독스트링은 코드가 아니다 — 모듈·클래스·함수의 선두 문자열 표현식을 제외 집합에 담는다.
+        docstrings: set[int] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                body = getattr(node, "body", None) or []
+                if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant) \
+                        and isinstance(body[0].value.value, str):
+                    docstrings.add(id(body[0].value))
+
+        def _hit(name: str) -> bool:
+            return any(name.endswith(sfx) for sfx in cls._WIRED_SUFFIX)
+
+        for node in ast.walk(tree):
+            # ① withheld(...) 호출 — 계약 헬퍼를 직접 쓴다
+            if isinstance(node, ast.Call):
+                fn = node.func
+                if (isinstance(fn, ast.Name) and fn.id == "withheld") or \
+                        (isinstance(fn, ast.Attribute) and fn.attr == "withheld"):
+                    return True
+                # withheld(..., field=...) 형태의 키워드도 신호로 본다
+                for kw in node.keywords:
+                    if kw.arg and _hit(kw.arg):
+                        return True
+            # ② 식별자·속성 이름 (balanced_absent = ... / obj.grade_basis)
+            if isinstance(node, ast.Name) and _hit(node.id):
+                return True
+            if isinstance(node, ast.Attribute) and _hit(node.attr):
+                return True
+            # ③ 딕셔너리 키·문자열 상수 ("balanced_absent": code) — 독스트링은 제외
+            if isinstance(node, ast.Constant) and isinstance(node.value, str) \
+                    and id(node) not in docstrings and _hit(node.value):
+                return True
+        return False
+
+    @classmethod
+    def _paths_named(cls, name: str) -> list[Path]:
+        root = Path(__file__).resolve().parents[1] / "app"
+        return [p for p in root.rglob("*.py") if p.name == name]
+
     def test_배선된_생산자가_실제로_계약을_쓴다(self) -> None:
         """선언한 것이 **실제로 코드에 있는지** 본다(선언과 산출물 일치 §24)."""
-        root = Path(__file__).resolve().parents[1] / "app"
         wired = {n for n, ok in self.KNOWN_PRODUCERS.items() if ok}
-        found = set()
-        for p in root.rglob("*.py"):
-            if p.name in wired and re.search(r"_absent|withheld\(|_basis", p.read_text(encoding="utf-8")):
-                found.add(p.name)
+        found = {n for n in wired if any(self._wired_in_code(p) for p in self._paths_named(n))}
         assert found == wired, (
-            f"배선했다고 선언했는데 코드에 없다: {wired - found} / "
-            f"목록에 없는데 배선됨: {found - wired}"
+            f"배선했다고 선언했는데 **실행 줄에** 없다: {wired - found} "
+            f"(주석에만 있는 경우도 여기에 걸린다)"
         )
+
+    def test_부채로_선언한_것이_실제로_아직_부채다(self) -> None:
+        """★**반대 방향**을 잠근다 — 이것이 없어서 실제로 뚫렸다.
+
+        종전 원장은 *"배선 선언 → 실제 배선"* 한 방향만 봤다. 그래서 `#838` 이
+        `console.py` 를 **배선한 뒤에도** 원장이 계속 `False`(부채)라고 말했고,
+        아무 테스트도 그것을 신고하지 않았다 — 커버리지가 **5/7 로 과소보고**됐다.
+        §36 이 말하는 **죽은 면제**이고, §19 가 말하는 **한쪽만 건 경계**다.
+
+        ★이 방향이 실패하면 처방은 "코드를 고쳐라"가 아니라 **"원장을 갱신하라"** 다.
+        """
+        debt = {n for n, ok in self.KNOWN_PRODUCERS.items() if not ok}
+        assert debt, "부채가 0 이면 이 테스트가 아니라 전수 락으로 승격할 때다"
+        # ★공허진리 가드 — 파일이 실재해야 "아직 부채"라는 말이 의미를 갖는다.
+        #   파일명이 바뀌었는데 원장이 그대로면 rglob 이 0개를 주고 판정이 공허해진다.
+        for name in debt:
+            paths = self._paths_named(name)
+            assert paths, f"원장이 가리키는 파일이 없다(이름이 바뀌었나?): {name}"
+            assert not any(self._wired_in_code(p) for p in paths), (
+                f"★죽은 부채 — {name} 은 이미 보류 계약을 쓰는데 원장은 아직 '부채'라고 말한다. "
+                f"KNOWN_PRODUCERS[{name!r}] 를 True 로 갱신하라(커버리지가 과소보고된다)."
+            )
 
     def test_커버리지를_정직하게_보고한다(self) -> None:
         """★분수로 남긴다 — 100%를 주장하지 않는다.
@@ -206,7 +285,7 @@ class Test커버리지원장:
         total = len(self.KNOWN_PRODUCERS)
         wired = sum(self.KNOWN_PRODUCERS.values())
         assert total >= 7, "생산자 모집단이 줄었다 — 목록이 낡았는지 확인하라"
-        assert wired >= 5, f"배선 생산자가 {wired}/{total} 로 줄었다(회귀)"
+        assert wired >= 6, f"배선 생산자가 {wired}/{total} 로 줄었다(회귀 — #838 로 6 이 됐다)"
         # ★미배선이 0 이 되면 이 단언이 실패한다 → 그때 이 테스트를 지우고 전수 락으로 승격하라.
         assert wired < total, (
             "모든 생산자가 배선됐다 — 이제 목록형을 버리고 **파생형 전수 락**으로 승격하라"
