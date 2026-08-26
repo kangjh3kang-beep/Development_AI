@@ -227,4 +227,24 @@ describe("간략 수지 원장 표", () => {
     // ★두 모집단 — 라벨 없는 행은 괄호가 없다(항상 괄호를 다는 구현이 통과하지 않게).
     expect(screen.getByText("택지비").closest("tr")!.textContent).not.toContain("(");
   });
+
+  it("★제원이 표 **위에** 그려진다 — 「어느 사업인가」를 먼저 보인다", () => {
+    render(<LegacyLedgerTable ledger={ledger({
+      header: [
+        { key: "inputs_zone_type", label: "용도지역", value: "일반상업지역", unit: null, is_numeric: false },
+        { key: "inputs_land_area_sqm", label: "사업면적", value: 505.6, unit: "㎡", is_numeric: true },
+      ],
+    })} />);
+    const h = screen.getByTestId("legacy-ledger-header");
+    expect(h.textContent).toContain("일반상업지역");
+    expect(h.textContent).toContain("사업면적 (㎡)");
+    expect(h.textContent).toContain("505.6");
+  });
+
+  it("★★제원이 없으면 **블록을 그리지 않는다** — 빈 제원표는 「미정」으로 읽힌다(두 모집단)", () => {
+    render(<LegacyLedgerTable ledger={ledger()} />);
+    expect(screen.queryByTestId("legacy-ledger-header")).toBeNull();
+    // 대조군 — 표 본문은 **둘 다** 그려진다(과잉 삭제가 아님).
+    expect(screen.getByTestId("legacy-ledger")).toBeTruthy();
+  });
 });
