@@ -58,3 +58,34 @@ export function pickMutableText(html) {
   }
   return null;
 }
+
+/**
+ * **종료코드 판정** — 프로브가 커밋 본문에 표로 선언한 계약을 **여기 하나로** 모은다.
+ *
+ * ★왜 꺼냈나(2026-08-27 · 동료 세션 지적): 순수부(문자열·계수)만 잠그면
+ *   **그것을 부르는 판정 층이 빈다.** 계약표가 산문으로 남는다.
+ *   브라우저 I/O 는 여전히 무잠금이지만, **무엇을 보고 어떤 코드를 내는가**는 여기서 잠긴다.
+ *
+ * @returns {{code: 0|1|2, kind: string, message: string|null}}
+ */
+export function decideControlVerdict({ handlerRan, urlOk, picked, hydration, noMutate }) {
+  // 무효(2)가 먼저다 — 무효를 음성으로 읽는 것이 이 프로브가 막으려는 첫 번째 오류다.
+  if (!handlerRan) return { code: 2, kind: "invalid-handler", message: "★라우트 핸들러가 발화하지 않았다 — 이 회차는 **무효**다" };
+  if (!urlOk) return { code: 2, kind: "invalid-url", message: "★목표와 다른 페이지를 쟀다 — **무효**" };
+  if (!picked) return { code: 2, kind: "invalid-nopick", message: "★서버 HTML 에서 개변할 유일 텍스트를 못 찾았다 — **무효**" };
+  if (noMutate) {
+    return hydration > 0
+      ? { code: 1, kind: "false-positive", message: "★개변하지 않았는데 #418 이 났다 — **가로채기 자체가 원인**이다. 양성 대조군이 위양성이다" }
+      : { code: 0, kind: "negative-ok", message: "음성 대조군 통과 — 가로채기만으로는 #418 이 나지 않는다(양성의 원인은 개변이다)" };
+  }
+  return hydration >= 1
+    ? { code: 0, kind: "positive-ok", message: "양성 대조군 통과 — 이 프로브는 프로덕션 번들에서 #418 을 잡는다" }
+    : { code: 1, kind: "probe-dead", message: "★대조군이 #418 을 못 만들었다 — **프로브가 죽었다.** 이 프로브로 잰 '0건'은 근거가 아니다" };
+}
+
+/** `run` 모드 판정 — 무효(2)가 발견(1)보다 **먼저**다("0건"이라 말하지 못하게). */
+export function decideRunVerdict({ invalid, found }) {
+  if (invalid) return { code: 2, kind: "invalid", message: null };
+  if (found > 0) return { code: 1, kind: "found", message: null };
+  return { code: 0, kind: "clean", message: null };
+}

@@ -11,7 +11,9 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { countHydration, samePath, pickMutableText } from "@/lib/hydration/probe-text.mjs";
+import {
+  countHydration, samePath, pickMutableText, decideControlVerdict, decideRunVerdict,
+} from "@/lib/hydration/probe-text.mjs";
 
 describe("countHydration — 두 모드가 공유하는 계수 경로", () => {
   it("하이드레이션 서명만 센다", () => {
@@ -103,7 +105,58 @@ describe("★프로브의 알려진 사각 — 부채를 초록 안에 남긴다
       "*\"SW 캐시가 준 옛 HTML + 새 JS\"* 라는 실제 불일치 원인 하나가 사정권 밖이다",
   );
   it.todo(
-    "브라우저를 태우는 부분(로그인·내비·가로채기)은 여전히 **무잠금**이다 — " +
-      "여기서 잠근 것은 판정 **순수부**뿐이다",
+    "브라우저 I/O(로그인·내비·가로채기)는 여전히 **무잠금**이다 — 판정 **표**는 " +
+      "`decideControlVerdict`/`decideRunVerdict` 로 잠갔지만, 프로브가 그것을 **실제로 부르는지**는 " +
+      "안 잠겼다. 상환하려면 **배선을 되살리는 변이**(호출 한 줄 되돌리기)가 CAUGHT 인지로 재라",
   );
+});
+
+/**
+ * ★**계약표를 실행 가능하게** — 커밋 본문의 종료코드 표를 여기서 태운다.
+ *   (동료 세션 지적: *"순수부는 잠기고 그것을 부르는 판정 층이 빈다"*.)
+ */
+const OK = { handlerRan: true, urlOk: true, picked: { text: "x", at: 1, context: "" } };
+describe("decideControlVerdict — 종료코드 계약", () => {
+  it("★무효(2)가 **먼저**다 — 무효를 음성으로 읽는 것이 이 프로브가 막으려는 첫 오류다", () => {
+    // 핸들러 미발화면 hydration 이 0 이든 1 이든 **무효**여야 한다(0/1 로 새면 안 된다).
+    expect(decideControlVerdict({ ...OK, handlerRan: false, hydration: 0, noMutate: false }).code).toBe(2);
+    expect(decideControlVerdict({ ...OK, handlerRan: false, hydration: 5, noMutate: false }).code).toBe(2);
+    expect(decideControlVerdict({ ...OK, urlOk: false, hydration: 1, noMutate: false }).code).toBe(2);
+    expect(decideControlVerdict({ ...OK, picked: null, hydration: 1, noMutate: false }).code).toBe(2);
+  });
+  it("양성: 개변했고 #418 이 났다 → 0(프로브 생존)", () => {
+    const v = decideControlVerdict({ ...OK, hydration: 1, noMutate: false });
+    expect(v.code).toBe(0);
+    expect(v.kind).toBe("positive-ok");
+  });
+  it("★양성: 개변했는데 0 → **1(프로브가 죽었다)**. 이게 0 이면 이 프로브의 '0건'이 근거가 된다", () => {
+    const v = decideControlVerdict({ ...OK, hydration: 0, noMutate: false });
+    expect(v.code).toBe(1);
+    expect(v.kind).toBe("probe-dead");
+  });
+  it("음성: 개변 안 했고 0 → 0(가로채기만으로는 안 난다)", () => {
+    expect(decideControlVerdict({ ...OK, hydration: 0, noMutate: true }).kind).toBe("negative-ok");
+  });
+  it("★음성: 개변 안 했는데 #418 → **1(양성이 위양성이다)**", () => {
+    const v = decideControlVerdict({ ...OK, hydration: 1, noMutate: true });
+    expect(v.code).toBe(1);
+    expect(v.kind).toBe("false-positive");
+  });
+  it("★두 모집단이 갈린다 — 같은 입력에서 noMutate 만 뒤집으면 판정이 **반대**가 된다", () => {
+    const h1 = { ...OK, hydration: 1 };
+    expect(decideControlVerdict({ ...h1, noMutate: false }).code).toBe(0);
+    expect(decideControlVerdict({ ...h1, noMutate: true }).code).toBe(1);
+    const h0 = { ...OK, hydration: 0 };
+    expect(decideControlVerdict({ ...h0, noMutate: false }).code).toBe(1);
+    expect(decideControlVerdict({ ...h0, noMutate: true }).code).toBe(0);
+  });
+});
+
+describe("decideRunVerdict — 무효가 발견보다 먼저", () => {
+  it("★무효면 발견이 있어도 2 — '0건'이라 말하지 못하게", () => {
+    expect(decideRunVerdict({ invalid: true, found: 0 }).code).toBe(2);
+    expect(decideRunVerdict({ invalid: true, found: 3 }).code).toBe(2);
+  });
+  it("유효 + 발견 → 1", () => expect(decideRunVerdict({ invalid: false, found: 2 }).code).toBe(1));
+  it("유효 + 무발견 → 0", () => expect(decideRunVerdict({ invalid: false, found: 0 }).code).toBe(0));
 });

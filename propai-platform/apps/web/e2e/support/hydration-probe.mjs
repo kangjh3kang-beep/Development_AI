@@ -59,7 +59,7 @@ if (!EMAIL || !PASSWORD) {
   process.exit(2);
 }
 
-import { countHydration, samePath, pickMutableText } from "../../lib/hydration/probe-text.mjs";
+import { countHydration, samePath, pickMutableText, decideControlVerdict, decideRunVerdict } from "../../lib/hydration/probe-text.mjs";
 
 async function login(page, base) {
   await page.goto(base + "/ko/login", { waitUntil: "domcontentloaded" });
@@ -137,16 +137,10 @@ if (MODE === "dump") {
     finalUrl: page.url(), urlOk, handlerRan, htmlLen, picked, hydration,
     sample: errs.slice(before).filter((e) => /418|Hydration/.test(e)).slice(0, 1) }, null, 1));
   await browser.close();   // ★아래 분기들은 전부 process.exit 하거나 이 블록에서 끝난다(파일 끝 close 는 run 전용)
-  if (!handlerRan) { console.error(`★라우트 핸들러가 발화하지 않았다(${target}) — 이 회차는 **무효**다`); process.exit(2); }
-  if (!urlOk) { console.error(`★목표와 다른 페이지를 쟀다: ${target} → ${page.url()} — **무효**`); process.exit(2); }
-  if (!picked) { console.error("★서버 HTML 에서 개변할 유일 텍스트를 못 찾았다 — **무효**"); process.exit(2); }
-  if (noMutate) {
-    if (hydration > 0) { console.error("★개변하지 않았는데 #418 이 났다 — **가로채기 자체가 원인**이다. 양성 대조군이 위양성이다"); process.exit(1); }
-    console.log("음성 대조군 통과 — 가로채기만으로는 #418 이 나지 않는다(양성의 원인은 개변이다)");
-  } else {
-    if (hydration < 1) { console.error("★대조군이 #418 을 못 만들었다 — **프로브가 죽었다.** 이 프로브로 잰 '0건'은 근거가 아니다"); process.exit(1); }
-    console.log("양성 대조군 통과 — 이 프로브는 프로덕션 번들에서 #418 을 잡는다");
-  }
+  const verdict = decideControlVerdict({ handlerRan, urlOk, picked, hydration, noMutate });
+  if (verdict.code === 0) console.log(verdict.message);
+  else console.error(verdict.message);
+  if (verdict.code !== 0) process.exit(verdict.code);
 } else {
   const errs = [];
   page.on("pageerror", (e) => errs.push("[pageerror] " + String(e?.message ?? e)));
@@ -181,6 +175,6 @@ if (MODE === "dump") {
     if (hydration > 0) found += hydration;
   }
   await browser.close();
-  if (invalid) process.exit(2);   // 무효 측정 — "0건"이라 말하지 마라
-  if (found > 0) process.exit(1); // 하이드레이션 불일치 실재
+  const v = decideRunVerdict({ invalid, found });   // ★판정은 순수 함수 하나로(계약이 테스트로 잠긴다)
+  if (v.code !== 0) process.exit(v.code);
 }
