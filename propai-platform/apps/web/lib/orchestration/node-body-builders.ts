@@ -14,6 +14,7 @@
 //    (호출측이 needs-input으로 정직 고지). 0 강제 금지.
 //  - 면적은 반드시 effectiveLandAreaSqm(통합면적 우선)으로 읽어 다필지 일관성을 지킨다.
 
+import { siteDerivedFeasibilityFields } from "@/lib/feasibility-seed";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { resolveFarPct, resolveBcrPct, resolveFarWithBasis } from "@/lib/zoning-ssot";
 import { PYEONG_SQM } from "@/lib/formatters";
@@ -271,6 +272,18 @@ export function buildNodeBody(
       else missing.push("total_gfa_sqm");
       const bt = nonEmptyStr(design?.buildingType);
       if (bt) body.building_type = bt;
+      // ★부지 파생 시드(2026-08-26) — 위 주석이 `official_price_per_sqm?` 를 **계약으로 선언**해
+      //   놓고 이 파일에서 대입이 **0건**이었다(대조군: `body.` 대입 31건). 그래서 오케스트레이션
+      //   으로 돌린 수지는 **공시지가 0** 으로 토지비를 잡았다. 형제(`ModuleInputForm`)는 이미
+      //   올바르게 보내고 있었다 — 정답이 옆에 있었다(§29).
+      //   ★세 경로가 같은 산출처를 쓰게 공용 헬퍼를 경유한다(각자 고치면 네 번째가 또 빠진다).
+      {
+        const seed = siteDerivedFeasibilityFields(site);
+        if (seed.officialPricePerSqm != null) body.official_price_per_sqm = seed.officialPricePerSqm;
+        if (seed.sidoName != null) body.sido_name = seed.sidoName;
+        // ★B03·B04(상하수도 원인자부담금)가 읽는 시군구 조례 키. 안 보내면 조용히 unavailable.
+        if (seed.sigunguName != null) body.sigungu_name = seed.sigunguName;
+      }
       // (Phase C-2) ★분양수입 폐루프: 매출단가·세대수·세대(전용)면적을 채워 수지가 실거래 기반으로 계산되게 한다.
       //  ★D1 규약(2026-07-16 갱신): avg_area_pyeong = '전용면적 평'(전 생산처 통일). 백엔드
       //   revenue_block이 매출 곱 시 공급평(전용÷전용률, unit_standards SSOT)으로 환산하므로
