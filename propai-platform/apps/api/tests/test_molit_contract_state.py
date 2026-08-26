@@ -110,7 +110,36 @@ class Test배선:
         src = code_lines(raw)
         # 대조군 — 형제(지분)가 반드시 있어야 한다. 없으면 경로·패턴이 틀린 것이다.
         assert 'share_deal_count' in src, "대상 파일이 틀렸다(조회기 사망)"
-        assert 'r.get("is_cancelled")' in src, (
-            "지도 서비스가 해제를 세지 않는다 — 파서가 읽어도 소비처가 0이면 화면은 그대로다"
-        )
         assert '"cancelled_count"' in src, "해제 건수를 그룹 응답에 노출하지 않는다"
+
+    def test_그룹핑이_해제를_실제로_센다(self) -> None:
+        """★**행동**으로 잠근다 — 소스 문자열 검사는 뚫렸다(변이 실증).
+
+        계수 라인(`g["_cancelled"] += 1`)을 `pass` 로 바꿔도 문자열 락 8건이 **전부 통과**
+        했다(`r.get("is_cancelled")` 라인은 그대로 남으니까). `_group_trade` 는 동기 순수
+        메서드라 **직접 태울 수 있다.**
+        """
+        rows = [
+            {**_CANCELLED, "prop_type": "apt", "price_10k_won": 230000, "area_m2": 84.99,
+             "sigungu": "서울 강남구", "dong": "삼성동", "jibun": "42",
+             "building_name": "삼성", "is_cancelled": True},
+            {**_NORMAL, "prop_type": "apt", "price_10k_won": 200000, "area_m2": 84.99,
+             "sigungu": "서울 강남구", "dong": "삼성동", "jibun": "42",
+             "building_name": "삼성", "is_cancelled": False},
+        ]
+        from apps.api.app.services.land_intelligence.nearby_map_service import (  # noqa: PLC0415
+            NearbyMapService,
+        )
+
+        out = NearbyMapService()._group_trade("apt_trade", "아파트 매매", rows, "서울 강남구")
+        groups = out.get("groups") or []
+        assert groups, f"그룹이 만들어지지 않았다 — 아래 단언이 공허해진다: {out}"
+        total = sum(int(g.get("cancelled_count") or 0) for g in groups)
+        assert total == 1, (
+            f"해제 1건·정상 1건을 넣었는데 해제 계수가 {total} 이다 — 세지 않고 있다"
+        )
+        # ★음성 대조군 — 정상만 넣으면 0이어야 한다(항상 1을 반환하는 구현이 아님을 증명)
+        only_normal = NearbyMapService()._group_trade(
+            "apt_trade", "아파트 매매", [rows[1]], "서울 강남구")
+        assert sum(int(g.get("cancelled_count") or 0)
+                   for g in (only_normal.get("groups") or [])) == 0
