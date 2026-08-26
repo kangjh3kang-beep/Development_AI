@@ -43,6 +43,40 @@ export const UNATTRIBUTED_BUCKET = "_default";
  *   막으려는 바로 그 누출을 내가 만드는 셈이다. 재하이드레이션이 상태를 갈아 끼울 때까지
  *   조용히 건너뛴다(원본은 각자의 키에 그대로 있으므로 잃는 것이 없다).
  */
+/**
+ * ★쓰기 정지 창 — **리셋이 저장분을 지우지 못하게** 한다.
+ *
+ * 【무엇이 있었나 (2026-08-26 · `#839` 가 만든 CRITICAL 회귀 · 적대 리뷰가 실행 재현으로 적발)】
+ * 계정 전환·로그아웃에서 메모리를 비우려고 `setState({byProject:{}})` 를 불렀는데,
+ * persist 가 그 `setState` 에 쓰기를 붙여 **빈 값이 계정 키에 예약**됐다. 뒤이어 부른
+ * `rehydrate()` 가 그것을 덮어 줄 거라고 적어 두었는데 **그 주장이 거짓이었다**:
+ * `zustand/middleware.js` 의 `hydrate()` 는 `set(stateFromStorage, true)` 뒤
+ * **`if (migrated) return setItem()`** — 즉 **버전 마이그레이션 때만** 쓴다.
+ * 게다가 세 로그아웃 경로가 전부 `clearOnLogout()` 을 **토큰 제거보다 먼저** 부르므로
+ * `currentUserId()` 가 아직 이전 계정이라 교차계정 가드도 통과했고, 하드 내비게이션의
+ * `pagehide` 가 디바운스를 **즉시 flush** 했다.
+ * → **첫 로그아웃에 유료 산출물이 영구 소실**된다(렌더 3,000원/건 · 등기 1,200원/필지).
+ *
+ * ★그래서 리셋은 **쓰기가 붙지 않는 창 안에서** 한다. zustand 내부 동작에 기대지 않는다 —
+ *   `hydrate` 가 언제 쓰는지는 **라이브러리 구현 세부**이고, 그것에 돈을 걸었다가 틀렸다.
+ */
+let _writesSuspended = false;
+
+/** `fn` 이 도는 동안 이 모듈의 모든 계정 스코프 쓰기를 **버린다**(동기 함수만 받는다). */
+export function withWritesSuspended(fn: () => void): void {
+  _writesSuspended = true;
+  try {
+    fn();
+  } finally {
+    _writesSuspended = false;
+  }
+}
+
+/** 테스트·진단용 — 지금 쓰기가 정지 중인가. */
+export function isWritesSuspended(): boolean {
+  return _writesSuspended;
+}
+
 export function createAccountScopedStorage<S>(delay?: number): PersistStorage<S> {
   const inner = createDebouncedStorage<S>(delay);
   /** 마지막으로 읽거나 쓴 계정. null 이면 아직 한 번도 접촉하지 않은 것. */
@@ -55,12 +89,15 @@ export function createAccountScopedStorage<S>(delay?: number): PersistStorage<S>
       return inner.getItem(accountScopedKey(name, uid));
     },
     setItem: (name, value) => {
+      // ★리셋 창 — 메모리를 비우는 동안의 쓰기는 **저장분을 지운다.** 버린다.
+      if (_writesSuspended) return;
       const uid = currentUserId();
       if (scopeUid !== null && scopeUid !== uid) return; // ★교차계정 쓰기 차단
       scopeUid = uid;
       inner.setItem(accountScopedKey(name, uid), value);
     },
     removeItem: (name) => {
+      if (_writesSuspended) return;
       const uid = currentUserId();
       if (scopeUid !== null && scopeUid !== uid) return;
       inner.removeItem(accountScopedKey(name, uid));
