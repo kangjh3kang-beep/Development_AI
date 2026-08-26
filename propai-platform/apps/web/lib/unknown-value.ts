@@ -25,6 +25,23 @@
  * 하드코딩하면 대문자 키를 쓰는 표에서 조용히 틀린다).
  */
 
+/**
+ * 검증되지 않은 입력을 조회용 문자열로 — **여기서 절대 던지지 않는다.**
+ * ★`String(raw)` 는 `toString` 이 던지는 객체에서 TypeError 를 낸다. 이 함수는 **미지값을
+ *   안전하게 다루는 것이 임무**인데 그 입력에서 죽으면 화면이 통째로 사라진다
+ *   (LegacyLedgerTable 이 같은 자리에 적어 둔 것: "백엔드가 네 번째 verdict 를 내면
+ *   undefined.cls 로 패널 전체가 죽는다").
+ */
+function toProbeText(raw: unknown): string {
+  if (typeof raw === "string") return raw.trim();
+  if (raw == null) return "";
+  try {
+    return String(raw).trim();
+  } catch {
+    return "";
+  }
+}
+
 /** 조회 결과. `known` 을 좁히지 않으면 `value` 를 쓸 수 없다(미지 처리 누락 방지). */
 export type Resolved<T> =
   | { readonly known: true; readonly value: T; readonly key: string }
@@ -37,25 +54,24 @@ export type Resolved<T> =
  * @param raw   서버·LLM에서 온 검증되지 않은 값
  * @returns 정확일치 → known · 대소문자/공백만 다름 → known(회복) · 그 외 → **known:false**
  */
-export function resolveKnown<T>(
-  table: Readonly<Record<string, T>>,
+export function resolveKnown<K extends string, T>(
+  table: Readonly<Record<K, T>>,
   raw: unknown,
 ): Resolved<T> {
   // ★비문자열도 원값을 버리지 않는다 — 이 파일이 「진단 불가는 그 자체로 장애다」라고
   //   써 놓고 raw=3 일 때 key 를 null 로 버리면 그 선언과 어긋난다.
-  const text =
-    typeof raw === "string" ? raw.trim() : raw == null ? "" : String(raw).trim();
+  const text = toProbeText(raw);
   if (text === "") return { known: false, value: null, key: null };
 
   if (Object.prototype.hasOwnProperty.call(table, text)) {
-    return { known: true, value: table[text] as T, key: text };
+    return { known: true, value: table[text as K] as T, key: text };
   }
 
   // 표기 흔들림 복원 — 기준을 표의 키에서 파생한다(소문자 가정 금지).
   const lowered = text.toLowerCase();
   for (const k of Object.keys(table)) {
     if (k.toLowerCase() === lowered) {
-      return { known: true, value: table[k] as T, key: k };
+      return { known: true, value: table[k as K] as T, key: k };
     }
   }
 

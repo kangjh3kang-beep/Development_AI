@@ -29,6 +29,7 @@ import {
   CHARACTERISTIC_STATUS_COLORS,
   UNKNOWN_CHARACTERISTIC_CLS,
   resolveCharacteristicStatus,
+  type KnownCharacteristicStatus,
 } from "@/lib/land-characteristic-status";
 import { __stripCommentsForScan, assertWiredThrough } from "@/lib/source-invariant";
 import { resolveKnown } from "@/lib/unknown-value";
@@ -92,7 +93,10 @@ describe("resolveKnown — 미지값을 표의 어떤 값으로도 접지 않는
 
 describe("필지 특성 칩 — 미지 status 가 safe(초록)로 떨어지지 않는다", () => {
   it("[대조군] 정상 status 는 종전과 같은 표의 클래스를 낸다", () => {
-    for (const k of Object.keys(CHARACTERISTIC_STATUS_COLORS)) {
+    // ★키를 유니온으로 받는다 — 표가 닫힌 유니온에 결속돼 string 색인이 tsc 에서 막힌다
+    //   (그 막힘 자체가 「표가 실제로 결속됐다」는 증거다).
+    const keys = Object.keys(CHARACTERISTIC_STATUS_COLORS) as KnownCharacteristicStatus[];
+    for (const k of keys) {
       const st = resolveCharacteristicStatus(k);
       expect(st.unknown).toBe(false);
       expect(st.cls).toBe(CHARACTERISTIC_STATUS_COLORS[k]);
@@ -129,7 +133,7 @@ describe("필지 특성 칩 — 미지 status 가 safe(초록)로 떨어지지 �
    */
   it("★danger·warning 이 **성공 계열 토큰을 쓰지 않는다**(철자가 아니라 토큰으로 본다)", () => {
     const SUCCESSISH = /--status-success|\b(?:green|emerald|lime|teal)-\d/;
-    for (const k of ["danger", "warning"]) {
+    for (const k of ["danger", "warning"] as const) {
       expect(
         CHARACTERISTIC_STATUS_COLORS[k],
         `${k} 가 성공 계열 색을 쓴다 — 위험이 안전처럼 보인다`,

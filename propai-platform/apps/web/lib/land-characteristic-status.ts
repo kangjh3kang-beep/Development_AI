@@ -18,7 +18,15 @@
 
 import { resolveKnown } from "@/lib/unknown-value";
 
-export const CHARACTERISTIC_STATUS_COLORS: Record<string, string> = {
+/**
+ * ★표를 **닫힌 유니온에 결속**한다(선례: `LegacyLedgerTable.tsx:100`).
+ * 등급을 추가하면 tsc 가 표를 채우라고 강제한다 — 종전 `Record<string, …>` 은 안 그랬다.
+ * ★단 이것은 **화면 표기의 오라클일 뿐 생산자의 오라클이 아니다** — 생산자가 LLM 자유 JSON
+ *   이라 「네 번째 값」은 여전히 온다. 그래서 tsc 가 아니라 `resolveKnown` 이 런타임을 막는다.
+ */
+export type KnownCharacteristicStatus = "safe" | "warning" | "danger";
+
+export const CHARACTERISTIC_STATUS_COLORS: Record<KnownCharacteristicStatus, string> = {
   safe: "text-[var(--status-success)] bg-[var(--status-success)]/10 border-[var(--status-success)]/20",
   warning: "text-[var(--status-warning)] bg-[var(--status-warning)]/10 border-[var(--status-warning)]/20",
   danger: "text-red-400 bg-red-500/10 border-red-500/20",

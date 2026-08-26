@@ -19,7 +19,17 @@ import { resolveKnown, shortenUnknownKey } from "@/lib/unknown-value";
 
 export type VerdictMeta = { label: string; cls: string; icon: LucideIcon };
 
-export const VERDICT_META: Record<string, VerdictMeta> = {
+/**
+ * ★표를 **닫힌 유니온에 결속**한다 — 여기 값을 추가하면 tsc 가 표를 채우라고 강제한다.
+ * 종전 `Record<string, …>` 은 아무것도 강제하지 않았다. (선례: `LegacyLedgerTable.tsx:100`
+ * 의 `Record<LedgerCheck["verdict"], …>` — 동료 세션 `-0b` 가 짚어 줬다.)
+ *
+ * ★백엔드 응답 타입(`"pass"|"warn"|"fail"| string`)에 결속하면 **안 된다**: `| string` 이
+ *   유니온을 삼켜서 tsc 가 아무것도 안 잡는다. 그래서 여기서 **따로 닫는다.**
+ */
+export type KnownVerdict = "pass" | "warn" | "fail";
+
+export const VERDICT_META: Record<KnownVerdict, VerdictMeta> = {
   pass: { label: "검증 통과", cls: "border-[var(--status-success)]/30 bg-[var(--status-success)]/10 text-[var(--status-success)]", icon: CheckCircle2 },
   warn: { label: "주의", cls: "border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 text-[var(--status-warning)]", icon: AlertTriangle },
   fail: { label: "오류 발견", cls: "border-[var(--status-error)]/30 bg-[var(--status-error)]/10 text-[var(--status-error)]", icon: XCircle },
