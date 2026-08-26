@@ -312,6 +312,8 @@ def _classify_latency(p95: float, baseline_p95: float) -> str | None:
 #: baseline 을 읽어 올 insight_type 들.
 #  ★`latency_regression` 을 반드시 포함한다 — 2026-08-23 이전 데이터(2,059건)가 그 타입이라
 #    빼면 baseline 이 0 이 되어 `_classify_latency` 가 **영원히 None**(회귀 미탐지)이 된다.
+from app.services.growth import stale_build_guard  # noqa: E402  (생산자 표식용)
+
 LATENCY_BASELINE_SOURCE_TYPES = ("latency_regression", "latency_baseline")
 
 
@@ -389,8 +391,15 @@ async def analyze_window(
                 "insight_type": ins["insight_type"],
                 "window_start": window_start,
                 "window_end": window_end,
+                # ★생산자 표식(2026-08-25) — 어느 빌드가 이 행을 썼는지 남긴다.
+                #   왜: 낡은 스택이 병렬로 쓴 129건을 특정하는 데 **created_at 초 단위
+                #   지문**을 써야 했다(158 배치는 분 :15~:20, 168 은 :05/:30). 그 우회는
+                #   다음 사람이 못 한다. ★특정 타입만이 아니라 **모든 인사이트**에 박는다 —
+                #   타입별 손수 분기는 새 타입을 자동으로 누락시킨다.
                 "metrics_json": json.dumps(
-                    ins.get("metrics_json") or {}, ensure_ascii=False, default=str
+                    {**(ins.get("metrics_json") or {}),
+                     "producer_build_id": stale_build_guard.running_build_id()},
+                    ensure_ascii=False, default=str,
                 ),
                 "severity": ins.get("severity"),
                 "narrative": ins.get("narrative"),
