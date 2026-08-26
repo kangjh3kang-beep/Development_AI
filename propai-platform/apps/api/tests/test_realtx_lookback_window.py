@@ -355,11 +355,19 @@ def test_fetch_errors_are_not_reported_as_ok():
     import inspect
     import textwrap
 
+    # ★소스 문자열로 보면 **이 수정을 설명하는 내 주석**에 걸린다(실제로 걸렸다 —
+    #   변이가 SURVIVED 했다). 판정은 **파서로** 한다.
     fn = ast.parse(textwrap.dedent(inspect.getsource(T.sync_realtx_trades))).body[0]
-    names = {n.value for n in ast.walk(fn)
-             if isinstance(n, ast.Constant) and isinstance(n.value, str)}
-    assert "partial" in names and "ok" in names, "상태 어휘를 못 찾았다 — 조회기 의심"
-    # `status` 대입식이 fetch_errors 를 참조하는지 구조로 본다.
-    src = inspect.getsource(T.sync_realtx_trades)
-    tail = src[src.index('stats["status"]'):]
-    assert "fetch_errors" in tail[:400], "status 판정이 fetch_errors 를 안 본다"
+
+    targets = [
+        n for n in ast.walk(fn)
+        if isinstance(n, ast.Assign)
+        and any(isinstance(t, ast.Subscript)
+                and isinstance(t.slice, ast.Constant) and t.slice.value == "status"
+                for t in n.targets)
+    ]
+    assert targets, "status 대입식을 못 찾았다 — 조회기 의심(공허한 참 방지)"
+    keys = {n.slice.value for a in targets for n in ast.walk(a.value)
+            if isinstance(n, ast.Subscript) and isinstance(n.slice, ast.Constant)}
+    assert "fetch_errors" in keys, f"status 판정이 fetch_errors 를 안 본다: {sorted(keys)}"
+    assert "persist_errors" in keys, f"status 판정이 persist_errors 를 안 본다: {sorted(keys)}"
