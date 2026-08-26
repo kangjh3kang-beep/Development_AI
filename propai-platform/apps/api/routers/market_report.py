@@ -1,6 +1,7 @@
 """시장조사보고서 라우터 — 구조화 JSON / PDF / PPTX 생성."""
 
 import hashlib
+import logging
 import re
 import uuid
 from datetime import datetime, timedelta
@@ -17,6 +18,8 @@ from app.services.market.market_report_service import MarketReportService, _reso
 from app.services.market.migration_region_service import MigrationRegionService
 from app.services.market.population_density_service import PopulationDensityService
 from apps.api.auth.jwt_handler import CurrentUser, get_current_user
+
+_realtx_log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/market", tags=["시장조사보고서"])
 
@@ -538,4 +541,46 @@ async def realtx_report(
         end_ym=end_ym,
         months=months,
         prop_type=body.prop_type or "land",
+    )
+
+@router.post(
+    "/realtx-report/download",
+    summary="실거래 신고내역 현황분석 보고서 다운로드(pdf/pptx/docx)",
+)
+async def realtx_report_download(
+    body: RealtxReportRequest,
+    format: str = "pdf",
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """`/realtx-report` 와 **같은 값**을 정본 통로로 렌더한다.
+
+    ★산식을 여기서 다시 계산하지 않는다 — 같은 서비스를 부르고 어댑터로 옮겨 담는다.
+      두 표면(JSON·문서)이 **다른 수를 말하는 것**을 구조적으로 막는다.
+    """
+    from app.services.land_intelligence.realtx_report_service import build_realtx_report
+    from app.services.report.render.engine import render_report
+    from app.services.report.render.realtx_adapter import build_report_model_from_realtx
+
+    if not body.parcels:
+        raise HTTPException(status_code=422, detail="필지 목록이 비어 있습니다.")
+    if len(body.parcels) > 2000:
+        raise HTTPException(status_code=422, detail="필지가 너무 많습니다(최대 2000).")
+    fmt = (format or "pdf").lower()
+    if fmt not in ("pdf", "pptx", "docx"):
+        raise HTTPException(status_code=422, detail="format 은 pdf|pptx|docx 만 가능합니다.")
+    months = max(1, min(int(body.months or 6), 24))
+    end_ym = (body.end_ym or datetime.now().strftime("%Y%m")).strip()
+    payload = await build_realtx_report(
+        [p.model_dump() for p in body.parcels],
+        end_ym=end_ym, months=months, prop_type=body.prop_type or "land",
+    )
+    model = build_report_model_from_realtx(payload)
+    try:
+        data, media_type, ext = render_report(model, fmt)
+    except Exception as e:  # noqa: BLE001 — 렌더 실패를 500 스택으로 흘리지 않는다
+        _realtx_log.warning("실거래 보고서 생성 실패: %s", str(e)[:200])
+        raise HTTPException(status_code=500, detail="보고서 생성에 실패했습니다.") from e
+    return StreamingResponse(
+        iter([data]), media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="realtx_report.{ext}"'},
     )

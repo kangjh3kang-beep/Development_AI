@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Card, CardContent, Input } from "@propai/ui";
 import { useFeasibilityV2Store, type FeasibilityInput } from "@/store/use-feasibility-v2-store";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { siteDerivedFeasibilityFields } from "@/lib/feasibility-seed";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { motion } from "framer-motion";
 import { NumberInput as CommaInput } from "@/components/common/NumberInput";
@@ -93,14 +94,14 @@ export function ModuleInputForm() {
     const put = (k: keyof FeasibilityInput, v: number | string, cond: boolean) => {
       if (cond && !editedFields.has(k)) (patch as Record<string, unknown>)[k] = v;
     };
-    const land = effectiveLandAreaSqm(siteAnalysis) ?? 0;
+    // ★공용 헬퍼 경유(2026-08-26) — 같은 규칙을 세 곳이 각자 만들다 오케스트레이션 경로가 빠졌다.
+    const seed = siteDerivedFeasibilityFields(siteAnalysis);
     const gfa = seededGfa();
-    const officialP = siteAnalysis?.officialPrices?.[0]?.pricePerSqm ?? 0;
-    const sido = siteAnalysis?.address ? siteAnalysis.address.split(" ")[0] : "";
-    put("total_land_area_sqm", land, land > 0);
+    put("total_land_area_sqm", seed.totalLandAreaSqm ?? 0, seed.totalLandAreaSqm != null);
     put("total_gfa_sqm", gfa, gfa > 0);
-    put("official_price_per_sqm", officialP, officialP > 0);
-    put("sido_name", sido, !!sido);
+    put("official_price_per_sqm", seed.officialPricePerSqm ?? 0, seed.officialPricePerSqm != null);
+    put("sido_name", seed.sidoName ?? "", seed.sidoName != null);
+    put("sigungu_name", seed.sigunguName ?? "", seed.sigunguName != null);
     if (Object.keys(patch).length > 0) setInput(patch);
     // editedFields는 의도적으로 의존성에서 제외(최신값을 클로저로 참조, 자동시드 무한루프 방지).
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -125,12 +126,12 @@ export function ModuleInputForm() {
   const loadFromSiteAnalysis = useCallback(() => {
     if (!siteAnalysis) return;
     const patch: Partial<FeasibilityInput> = {};
-    const land = effectiveLandAreaSqm(siteAnalysis);
-    if (land) patch.total_land_area_sqm = land;
-    if (siteAnalysis.address) patch.sido_name = siteAnalysis.address.split(" ")[0] || "";
-    if (siteAnalysis.officialPrices?.[0]?.pricePerSqm) {
-      patch.official_price_per_sqm = siteAnalysis.officialPrices[0].pricePerSqm;
-    }
+    // ★자동시드와 **같은 산출처**를 쓴다 — 종전엔 같은 규칙이 이 파일 안에서만 두 번 복제돼 있었다.
+    const seed = siteDerivedFeasibilityFields(siteAnalysis);
+    if (seed.totalLandAreaSqm != null) patch.total_land_area_sqm = seed.totalLandAreaSqm;
+    if (seed.sidoName != null) patch.sido_name = seed.sidoName;
+    if (seed.sigunguName != null) patch.sigungu_name = seed.sigunguName;
+    if (seed.officialPricePerSqm != null) patch.official_price_per_sqm = seed.officialPricePerSqm;
     setInput(patch);
   }, [siteAnalysis, setInput]);
 

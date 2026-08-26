@@ -78,21 +78,29 @@ class Test사유조립승계:
         """★배선 — 순수 함수만 잠그면 조립이 **다시** 손으로 고르는 회귀를 못 막는다.
 
         `#838` 이 정확히 그 상태였다: 사유는 계산됐고 테스트는 초록인데 **응답엔 없었다.**
-        소스를 보되 **`ast` 로 문법을 먼저 태우고**, 주석·독스트링은 판정에서 뺀다
-        (문자열 검사는 `SyntaxError` 파일도 초록으로 통과시킨 전례가 있다).
+        ★첫 판은 `ast.walk(모듈 전체)` 라 **호출이 어디에 있든** 초록이었다. 독립 리뷰가
+          잡아 줬고 **변이로 재현**했다: **조립을 결함 상태로 되돌리고** 그 호출을
+          **다른 함수에 심으면** `9 passed` 로 통과했다 — 이 PR 이 고쳤다는 결함이 그대로
+          돌아와도 락이 침묵했다. 리팩터링으로 호출이 옮겨가는 것은 **현실적 회귀**다.
         """
         import ast
 
         from apps.api.app.services.sales.admin import console
 
-        src = inspect.getsource(console)
-        tree = ast.parse(src)                      # ★문법을 먼저 태운다
-        # 대조군 — 조회 대상이 맞는지 먼저 증명한다(파일이 바뀌면 아래 '0건'이 공허해진다)
-        assert "site_management_detail" in src, "대상 모듈이 틀렸다(조회기 사망 대조군)"
-
+        tree = ast.parse(inspect.getsource(console))   # ★문법을 먼저 태운다
+        # ★대조군을 **문법 구조**에 결속한다 — 대상 함수가 사라지면 StopIteration 으로
+        #   시끄럽게 죽는다. 종전 대조군 `"site_management_detail" in src` 는 그 문자열이
+        #   **내가 방금 쓴 독스트링**(console.py)에 있어 **함수를 지워도 초록**이었다
+        #   (메모리 「내 패턴이 내 텍스트를 집는다」의 재발 · 변이로 실증).
+        fn = next(
+            n for n in ast.walk(tree)
+            if isinstance(n, (ast.AsyncFunctionDef, ast.FunctionDef))
+            and n.name == "site_management_detail"
+        )
+        # ★**그 함수 안에서만** 찾는다 — 모듈 전체를 보면 호출이 어디에 있든 초록이다.
         called = {
             n.func.id
-            for n in ast.walk(tree)
+            for n in ast.walk(fn)
             if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
         }
         assert "reconciliation_public_fields" in called, (
@@ -145,6 +153,19 @@ class Test사유조립승계:
         # 대조군 — 떼어내지 않았다면 계약이 실제로 위반이라고 말한다(단언이 공허하지 않음을 증명)
         assert validate_withheld_pair(malformed, "balanced"), "검사기 사망 — 이 형상은 위반이어야 한다"
 
-    def test_None_입력에도_죽지_않는다(self) -> None:
-        """대사 자체가 없는 현장(로직 오류로 rec 부재)에서 500 을 내지 않는다."""
-        assert reconciliation_public_fields(None) == {"balanced": None}
+    def test_판정이_없는_입력에서_없는_보류를_발명하지_않는다(self) -> None:
+        """★내가 만든 결함 — 첫 판은 이 자리에서 **계약 위반을 고정**하고 있었다.
+
+        종전 구현은 `{"balanced": r.get("balanced")}` 로 **판정 키를 무조건 만들었다.**
+        입력에 `balanced` 가 없어도 출력이 `{"balanced": None}` 이 되고,
+        `validate_withheld_pair` 가 그것을 **'무언 보류' 위반 2건**으로 신고한다 —
+        **입력엔 없던 위반을 이 함수가 발명한 것**이다(실측: 입력 위반 0 · 출력 위반 2).
+        그리고 첫 판 테스트는 그 형상을 `== {"balanced": None}` 으로 **정답이라 단언**했다.
+
+        ★이 PR 이 고친다고 선언한 결함 클래스를 **이 PR 의 신규 코드가 재발**시킨 자리다(§D16).
+        """
+        for empty in (None, {}, {"tolerance": 1}):
+            out = reconciliation_public_fields(empty)
+            assert out == {}, f"없는 판정을 발명했다: {empty!r} → {out!r}"
+            # ★나머지 테스트와 **같은 기준**으로 계약을 태운다(이 테스트만 면제받지 않는다)
+            assert validate_withheld_pair(out, "balanced") == []
