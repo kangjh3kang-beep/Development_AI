@@ -386,3 +386,36 @@ def test_failure_log_shares_the_probe_prefix():
     logged = [ln for ln in src.splitlines() if "logger." in ln and "growth 정리" in ln]
     assert len(logged) >= 2, f"성공/실패 양쪽에 같은 접두가 없다: {logged}"
     assert any("error" in ln for ln in logged), "실패 경로가 error 로 안 남는다"
+
+
+@pytest.mark.asyncio
+async def test_rows_without_the_identity_field_are_left_alone():
+    """★정체가 없는 행은 손대지 않는다 — 없으면 **서로를 승계**시킨다.
+
+    `metrics_json->>field` 가 NULL 이면 `PARTITION BY` 가 그것들을 **같은 파티션**으로
+    묶는다. 즉 *정체가 없다는 사실만 공유하는 무관한 행들*이 서로를 닫는다
+    (2026-08-27 독립 리뷰 L2 · 라이브 실행으로 재현됨).
+
+    오늘 선언된 7개 타입의 생산자는 전부 NULL 을 배제하지만(도달 불가), **새 타입이
+    들어오면 즉시 결함**이 된다 — 그래서 가드를 두고 여기서 잠근다.
+    """
+    rows = [
+        # 정체 필드가 아예 없는 행 둘 — 서로 무관하다.
+        {"id": "n1", "insight_type": "latency_regression", "status": "open",
+         "metrics": {"p95_ms": 10}, "created_at": 1, "window_hours": 1},
+        {"id": "n2", "insight_type": "latency_regression", "status": "open",
+         "metrics": {"p95_ms": 20}, "created_at": 2, "window_hours": 1},
+        # 정체 값이 JSON null 인 행 둘 — 역시 무관하다.
+        {"id": "z1", "insight_type": "latency_regression", "status": "open",
+         "metrics": {"key": None}, "created_at": 3, "window_hours": 1},
+        {"id": "z2", "insight_type": "latency_regression", "status": "open",
+         "metrics": {"key": None}, "created_at": 4, "window_hours": 1},
+    ]
+    db = _FakeInsightDb(rows)
+    res = await R.supersede_stale_insights(db)
+    assert res["superseded"] == 0, f"정체 없는 행이 서로를 승계했다: {res}"
+    assert all(r["status"] == "open" for r in db.rows)
+
+    # ★대조군 — 정체가 **있는** 두 행은 정상적으로 승계돼야 한다(가드가 전부를 막으면 안 된다).
+    db2 = _FakeInsightDb([_row("a", key="/x", ts=1), _row("b", key="/x", ts=2)])
+    assert (await R.supersede_stale_insights(db2))["superseded"] == 1
