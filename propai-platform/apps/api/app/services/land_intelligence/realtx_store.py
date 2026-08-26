@@ -283,6 +283,40 @@ ON CONFLICT (trade_key) DO UPDATE SET
 """
 
 
+#: `_UPSERT_SQL` 이 요구하는 바인드 이름 — **SQL 에서 파생**한다(손으로 나열하면 상한이 된다).
+_UPSERT_BINDS: frozenset[str] = frozenset(re.findall(r":([a-z_][a-z0-9_]*)", _UPSERT_SQL))
+
+#: 문자열로 정규화해 저장하는 필드(공백은 strip — `cancel_type` 의 `' '` 함정 참조)
+_TEXT_FIELDS: tuple[str, ...] = (
+    "dong", "jibun", "deal_date", "building_name", "share_dealing_type", *_MUTABLE_FIELDS,
+)
+#: 수치 그대로 저장하는 필드
+_NUMERIC_FIELDS: tuple[str, ...] = ("area_m2", "floor", "price_10k_won")
+
+
+def upsert_params(
+    record: dict[str, Any], key_id: str, lawd_cd: str, deal_ym: str, prop_type: str
+) -> dict[str, Any]:
+    """`_UPSERT_SQL` 에 넘길 바인드 사전.
+
+    ★순수 함수로 꺼낸 이유: 스텁 DB 는 SQL 을 실행하지 않으므로 **바인드 누락·오타를
+      런타임까지 못 잡는다.** 여기서 만들면 `_UPSERT_BINDS` 와 **키 집합 동일성**을 테스트로
+      잠글 수 있다(락의 한계 ①을 그만큼 좁힌다).
+    """
+    params: dict[str, Any] = {
+        "trade_key": key_id,
+        "lawd_cd": lawd_cd,
+        "deal_ym": deal_ym,
+        "prop_type": record.get("prop_type") or prop_type,
+    }
+    for field in _TEXT_FIELDS:
+        value = record.get(field)
+        params[field] = None if value is None else str(value).strip()
+    for field in _NUMERIC_FIELDS:
+        params[field] = record.get(field)
+    return params
+
+
 async def persist_scope(
     db: Any,
     *,
@@ -323,18 +357,7 @@ async def persist_scope(
     corrections: list[dict[str, Any]] = []
     for record in records:
         key_id = trade_key(record, lawd_cd, deal_ym)
-        params = {
-            "trade_key": key_id, "lawd_cd": lawd_cd, "deal_ym": deal_ym,
-            "prop_type": record.get("prop_type") or prop_type,
-        }
-        for field in ("dong", "jibun", "deal_date", "building_name",
-                      "share_dealing_type", *_MUTABLE_FIELDS):
-            value = record.get(field)
-            params[field] = None if value is None else str(value).strip()
-        params["area_m2"] = record.get("area_m2")
-        params["floor"] = record.get("floor")
-        params["price_10k_won"] = record.get("price_10k_won")
-        await db.execute(text(_UPSERT_SQL), params)
+        await db.execute(text(_UPSERT_SQL), upsert_params(record, key_id, lawd_cd, deal_ym, prop_type))
 
         before = previous.get(key_id)
         if before is None or is_baseline:

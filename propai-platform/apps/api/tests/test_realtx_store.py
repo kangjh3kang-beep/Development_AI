@@ -180,3 +180,33 @@ def test_schema_ready_flag_is_set_only_after_commit():
     commit_at = body.index("await db.commit()")
     ready_at = body.index("_SCHEMA_READY = True", commit_at)
     assert commit_at < ready_at
+
+
+# ══════════════════════════════════════════════════════════════════
+# 5. 바인드 파리티 — 락의 한계 ①(SQL 미실행)을 그만큼 좁힌다
+# ══════════════════════════════════════════════════════════════════
+
+def test_upsert_params_match_the_sql_binds_exactly():
+    """바인드 누락·오타는 스텁 DB 로는 **런타임까지 안 잡힌다** → 키 집합을 직접 잠근다.
+
+    ★기대값을 손으로 나열하지 않는다 — **SQL 에서 파생**한 `_UPSERT_BINDS` 와 대조한다.
+    """
+    got = set(rs.upsert_params(_BASE, "rtx_x", "47111", "202607", "land"))
+    assert got == set(rs._UPSERT_BINDS), {
+        "SQL 에만 있음": sorted(set(rs._UPSERT_BINDS) - got),
+        "파라미터에만 있음": sorted(got - set(rs._UPSERT_BINDS)),
+    }
+
+
+def test_sql_binds_were_actually_extracted():
+    """★파생이 비면 위 단언은 공허한 참이 된다(빈 집합 == 빈 집합)."""
+    assert len(rs._UPSERT_BINDS) >= 15, sorted(rs._UPSERT_BINDS)
+    assert "trade_key" in rs._UPSERT_BINDS
+
+
+def test_upsert_params_strip_text_but_preserve_numbers():
+    params = rs.upsert_params({**_BASE, "dong": "  대보리 ", "area_m2": 330.0},
+                              "rtx_x", "47111", "202607", "land")
+    assert params["dong"] == "대보리"
+    assert params["area_m2"] == 330.0          # 수치는 문자열로 바꾸지 않는다
+    assert params["cancel_type"] == ""          # ' ' → '' (해제 오판 차단)
