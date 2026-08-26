@@ -54,6 +54,42 @@ export const RISK_LEVEL_TONE: Record<string, RiskTone> = {
 /** 표에 없는 등급이 받는 톤. **안전색이 아니다.** */
 export const RISK_UNKNOWN_TONE: RiskTone = "neutral";
 
+/**
+ * 톤 → **글자색만** 주는 클래스. 배지(배경+글자)와 달리 **단색 하나**가 필요한 표면용이다
+ * (`DominantConstraintBanner` 의 아이콘·테두리 칩).
+ *
+ * ★왜 CSS 변수 하나로 안 주나: 이 앱은 `@theme inline` 이라 Tailwind 팔레트가 **런타임 CSS
+ *   변수로 나오지 않는다**(실측). 그래서 `var(--color-yellow-400)` 같은 인라인 색은 쓸 수 없고,
+ *   **클래스**가 두 표면을 잇는 유일한 공용 축이다.
+ * ★테두리는 `border-current` 로 글자색을 따라가게 한다 — 색을 두 번 적지 않는다.
+ */
+const RISK_TONE_TEXT: Record<RiskTone, string> = {
+  green: "text-[var(--status-success)]",
+  yellow: "text-yellow-300",
+  amber: "text-amber-400",
+  orange: "text-orange-400",
+  red: "text-[var(--status-error)]",
+  neutral: "text-[var(--text-hint)]",
+};
+
+/** 톤 → 글자색 클래스. */
+export function riskToneTextClass(tone: RiskTone): string {
+  return RISK_TONE_TEXT[tone];
+}
+
+/**
+ * 등급 → 글자색 클래스. **미지 등급은 중립**(안전색 금지) — 배지와 **같은 판정**을 쓴다.
+ *
+ * ★이것이 있는 이유: 종전에 배너가 자기 `switch` 로 5등급을 **3색**으로 접었고
+ *   (`극히 높음`=`높음`=error · `중간`=`보통`=warning), 배지가 5색이 되자 **같은 필지가
+ *   화면 두 곳에서 다른 색**이 될 판이었다(동료 통합자 지적 · 2026-08-27).
+ *   한 곳을 고치면 전역이 따라오게 — 이 저장소의 「전역 전파방지」 규율이다.
+ */
+export function riskLevelTextClass(level: unknown): string {
+  const key = typeof level === "string" ? level.trim() : "";
+  return riskToneTextClass(RISK_LEVEL_TONE[key] ?? RISK_UNKNOWN_TONE);
+}
+
 /** 톤 이름 → 클래스 문자열. 표 밖에서 색을 손으로 베끼지 않게 노출한다. */
 export function riskToneClass(tone: RiskTone): string {
   return RISK_TONE[tone];

@@ -15,7 +15,9 @@ import {
   allRiskTones,
   RISK_LEVEL_TONE,
   riskLevelStyle,
+  riskLevelTextClass,
   riskToneClass,
+  riskToneTextClass,
 } from "../risk-level-style";
 
 const LADDER = ["낮음", "보통", "중간", "높음", "극히 높음"] as const;
@@ -77,6 +79,25 @@ describe("톤 팔레트", () => {
     const tones = LADDER.map((g) => RISK_LEVEL_TONE[g]);
     expect(tones.every(Boolean)).toBe(true);
     expect(new Set(tones).size).toBe(LADDER.length);
+  });
+
+  it("★글자색 축도 5등급이 서로 다르다 — 배너가 이 축을 쓴다", () => {
+    // 배너는 단색 하나만 필요해 배지와 **다른 축**(text-only)을 쓴다.
+    // 축이 둘이면 각각 잠가야 한다 — 한쪽만 잠그면 나머지가 무제한이다.
+    const texts = LADDER.map((g) => riskLevelTextClass(g));
+    expect(new Set(texts).size).toBe(LADDER.length);
+    const fb = riskLevelTextClass(UNKNOWN);
+    for (const [i, t] of texts.entries()) {
+      expect(t, `${LADDER[i]} 가 폴백으로 떨어졌다`).not.toBe(fb);
+    }
+    expect(fb).not.toContain("--status-success");
+  });
+
+  it("모든 톤이 배경축·글자축 **양쪽**에 정의돼 있다", () => {
+    for (const t of allRiskTones()) {
+      expect(riskToneClass(t).length, `${t} 배경축 누락`).toBeGreaterThan(0);
+      expect(riskToneTextClass(t).length, `${t} 글자축 누락`).toBeGreaterThan(0);
+    }
   });
 
   it("톤 이름이 다르면 **클래스 문자열도 다르다**(이름만 다른 같은 색 금지)", () => {

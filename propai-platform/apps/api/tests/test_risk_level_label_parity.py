@@ -38,6 +38,7 @@ _WEB = _API.parents[0] / "web"
 _SEVERITY_SSOT = _API / "app" / "services" / "regulation" / "protection_zone_severity.py"
 _PANEL = _WEB / "lib" / "risk-level-style.ts"
 _CONSUMER = _WEB / "components" / "analysis" / "ComprehensiveAnalysisPanel.tsx"
+_BANNER = _WEB / "components" / "precheck" / "DominantConstraintBanner.tsx"
 
 # 표 리터럴의 키만 뽑는다. 값(클래스 문자열)은 보지 않는다 — 문안은 계약이 아니다.
 _KEY = re.compile(r'^\s*"([^"]+)"\s*:', re.M)
@@ -341,4 +342,26 @@ def test_ladder_has_no_dead_grade() -> None:
     assert not dead, (
         f"사다리에 있으나 아무 생산지도 내지 않는 등급: {dead}. "
         "죽은 등급이면 지우고, 다른 곳에서 낸다면 _produced_severities 의 축을 넓혀라."
+    )
+
+
+def test_sibling_surface_shares_the_same_judgment() -> None:
+    """★전역 전파방지 — **같은 등급이 두 화면에서 다른 색이면 안 된다.**
+
+    배너(`DominantConstraintBanner`)는 종전 자기 `switch` 로 5등급을 **3색**으로 접었다
+    (`극히 높음`=`높음`=error · `중간`=`보통`=warning). 배지가 5색이 되는 순간
+    **같은 필지가 두 화면에서 다른 색**이 된다(동료 통합자 지적 · 2026-08-27).
+
+    이 저장소 규율은 *"공용 함수·표준 계약으로 추출해 한 곳을 고치면 전역이 따라오게"* 다.
+    그래서 **판정을 공유하는지**를 잠근다 — 색 값이 아니라 **판정 함수 사용**을 본다
+    (색은 이미 프론트 락이 축별로 구별성을 단언한다).
+    """
+    code = "\n".join(_code_lines(_BANNER))
+    assert "riskLevelTextClass" in code, (
+        "배너가 공용 판정(riskLevelTextClass)을 안 쓴다 — 로컬 switch 로 되돌아갔다면 "
+        "같은 등급이 배지와 다른 색이 된다."
+    )
+    # ★되살아난 로컬 판정을 잡는다. 주석은 이미 제거된 상태다.
+    assert 'case "중간"' not in code, (
+        "배너에 등급별 로컬 분기가 되살아났다 — 판정이 두 곳이 되면 갈라진다."
     )
