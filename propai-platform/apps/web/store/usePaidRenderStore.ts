@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { createDebouncedStorage } from "@/lib/debounced-storage";
+import { createAccountScopedStorage } from "@/lib/account-scoped-storage";
 
 /**
  * 유료 AI 렌더(포토리얼·컨셉) 결과 보관 — 프로젝트별 영속.
@@ -54,6 +54,15 @@ type State = {
   clear: (projectId: ProjectKey) => void;
 };
 
+/**
+ * persist 이름 — **레거시 공유키 그대로**다. 실제 저장키는 `createAccountScopedStorage` 가
+ * 읽기/쓰기 시점에 `__<uid>` 를 붙여 만든다(`propai-paid-renders__<userId>`).
+ *
+ * ★이름을 바꾸지 않는 이유: 이 값은 **레거시 원본을 읽는 주소**이기도 하다. 바꾸면 계정별
+ *   키로 옮겨 가기 전의 유료 AI 렌더(포토리얼·컨셉) 결과이 **고아**가 된다 — 사용자가 이미 낸 돈이다.
+ */
+export const PAID_RENDER_STORE_KEY = "propai-paid-renders";
+
 const KEY = (projectId: ProjectKey) => projectId || "_default";
 
 /** 대략적인 바이트 수(문자열 길이 기반 — 정확한 인코딩 계산은 이 용도에 과하다). */
@@ -99,6 +108,6 @@ export const usePaidRenderStore = create<State>()(
           return { byProject: rest };
         }),
     }),
-    { name: "propai-paid-renders", storage: createDebouncedStorage<State>() },
+    { name: PAID_RENDER_STORE_KEY, storage: createAccountScopedStorage<State>() },
   ),
 );
