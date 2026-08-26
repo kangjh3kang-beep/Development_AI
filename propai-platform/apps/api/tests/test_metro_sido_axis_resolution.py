@@ -91,8 +91,8 @@ class TestResolverBasisPartition:
 
     def test_known_sido_is_derived_not_a_hand_list(self):
         """손 목록이면 `_SIDO_FULL_TO_SHORT` 에 시도를 추가해도 따라오지 않는다."""
-        assert KNOWN_SIDO_SHORT == frozenset(_SIDO_FULL_TO_SHORT.values())
-        assert METRO_AREA_SIDO <= set(KNOWN_SIDO_SHORT)  # 대도시권은 시도의 부분집합
+        assert frozenset(_SIDO_FULL_TO_SHORT.values()) == KNOWN_SIDO_SHORT
+        assert set(KNOWN_SIDO_SHORT) >= METRO_AREA_SIDO  # 대도시권은 시도의 부분집합
 
 
 class TestUnknownIsNotNonMetro:
@@ -332,3 +332,42 @@ class TestWiringIsLocked:
         assert any(isinstance(a, ast.Name) for a in sigungu), (
             "sigungu_name 이 비어 있으면 축이 여전히 붕괴한 것이다"
         )
+
+
+class TestHealingAlsoFixesTheRate:
+    """★#885 와의 합성 — 축 해석이 **부과율까지** 바로잡는다(금액이 움직인다).
+
+    #885 가 부과율을 `수도권 4% · 그 외 대도시권 2%` 로 법령 교정하면서 판정을
+    `sido_name` 에서 **파생**시켰다. 이 PR 이 `sido_name` 을 **해석된 시도**로 바꾸므로,
+    호출부가 시군구를 넘기던 경로는 이제 **요율까지** 옳아진다.
+
+    ★**이 PR 단독으로는 금액이 안 움직인다**(표준건축비 미주입이라 전부 0)는 서술은
+      `#885` **이전** 기준이었다. 합성 후에는 표준건축비가 주입되는 순간
+      **수도권 시군구 경로가 2% → 4% 로 2배** 바뀐다 — 그래서 여기서 잠근다.
+    """
+
+    @staticmethod
+    def _rate(**kw):
+        return get_metro_transport_charge(
+            gfa_sqm=10_000.0, building_type="apartment",
+            standard_build_cost_won_per_sqm=2_000_000, **kw,
+        )
+
+    def test_capital_area_sigungu_heals_to_4pct(self):
+        """`"강남구"` + 서울 주소 → **수도권 4%**(종전엔 시군구라 판정 실패 → 2%)."""
+        r = self._rate(sido_name="강남구", address="서울특별시 강남구 역삼동 1-2")
+        assert r["rate"] == 0.04
+        assert r["amount_won"] == 800_000_000
+
+    def test_non_capital_metro_sigungu_heals_to_2pct(self):
+        """★반대 모집단 — `"동구"` + 울산 주소 → **2%**. 무조건 4% 가 아니다."""
+        r = self._rate(sido_name="동구", address="울산광역시 동구 화정동 637-11")
+        assert r["rate"] == 0.02
+        assert r["amount_won"] == 400_000_000
+
+    def test_the_two_rates_actually_differ(self):
+        """대조군 — 두 모집단이 **실제로 갈린다**(차가 0이면 이 락은 장식이다)."""
+        cap = self._rate(sido_name="강남구", address="서울특별시 강남구 역삼동 1-2")
+        non = self._rate(sido_name="동구", address="울산광역시 동구 화정동 637-11")
+        assert cap["rate"] != non["rate"]
+        assert cap["amount_won"] == non["amount_won"] * 2
