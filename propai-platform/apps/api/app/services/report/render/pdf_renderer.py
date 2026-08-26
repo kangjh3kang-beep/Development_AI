@@ -76,7 +76,8 @@ def render_pdf(model: ReportModel, gate_warnings: list[GateViolation] | None = N
     el.append(Spacer(1, 8 * mm))
     el.append(Paragraph(K._esc(model.disclaimer or T.DISCLAIMER_TEXT), st["disclaimer"]))
 
-    cb = K.footer_callback(model.meta)
+    # ★꼬리말도 **본문과 같은 폰트**로 그린다 — 내용이 한글이다(종전엔 Helvetica 라 두부).
+    cb = K.footer_callback(model.meta, font)
     doc.build(el, onFirstPage=cb, onLaterPages=cb)
     return buf.getvalue()
 
