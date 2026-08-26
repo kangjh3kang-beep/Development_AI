@@ -148,9 +148,10 @@ class _FakeDb:
     """SQL 문자열의 **특징 조각**으로 답을 고르는 스텁."""
 
     def __init__(self, *, stored, reobserved, corrections, by_kind,
-                 scopes, last_recent, last_tail, schema=True):
+                 scopes, last_recent, last_tail, schema=True, targets=6):
         self._map = {
             "to_regclass": [("realtx_trades",)] if schema else [(None,)],
+            "count(DISTINCT split_part": [(targets,)],
             "count(*) FROM realtx_trades WHERE updated_at": [(reobserved,)],
             "count(*) FROM realtx_trades": [(stored,)],
             "kind, count(*)": list(by_kind.items()),
@@ -226,6 +227,75 @@ async def test_missing_schema_is_not_reported_as_empty():
     out = await S.build_layer2_status(db, now=_NOW)
     assert out["detection"]["state"] == "미배포"
     assert out["stored_rows"] is None, "미배포인데 0행이라고 단정했다"
+
+
+# ══════════════════════════════════════════════════════════════
+# 4-2. ★쿼터 — **한도를 지어내지 않는다**(`#884` P-d 부채의 관측 절반)
+# ══════════════════════════════════════════════════════════════
+#
+# `targets` 는 사용자가 늘면 **무한히 는다**. `#884` 의 39.4 스코프/일 산술은
+# **시군구 6 고정 가정**이었고, 그 부채는 미봉합으로 남았다.
+#
+# ★여기서 고치지 않는 이유: 상한을 걸어 대상을 자르면 **그 사용자의 지역이 조용히
+#   수집에서 빠진다** — 지금 결함보다 나쁘다. 그래서 자르지 않고 **보이게** 만든다.
+#
+# ★그리고 MOLIT 일일 한도는 **여전히 미측정**이다(재 본 것은 *"현재 소비량에서 진짜
+#   HTTP 429 가 0건"* 까지). 없는 한도를 상수로 박으면 다음 사람이 그것을 관측으로 읽는다.
+
+
+def test_quota_does_not_fabricate_a_limit():
+    """★★한도는 **모른다**고 적혀야 한다 — 수치로 위장하면 그것이 관측이 된다."""
+    view = S.quota_view(6)
+    assert view["limit"] == S.QUOTA_LIMIT_UNKNOWN
+    assert not isinstance(view["limit"], (int, float)), (
+        "★MOLIT 일일 한도를 수치로 단정했다 — 그 값은 측정된 적이 없다"
+    )
+
+
+def test_quota_arithmetic_is_derived_from_the_task_constants():
+    """★상수를 손으로 옮겨 적으면 그 사본이 상한이 된다 — 파생인지 확인한다."""
+    from app.tasks import realtx_sync_task as T
+
+    view = S.quota_view(6)
+    assert view["daily_scopes"] == 6 * T.RECENT_MONTHS * len(T.DEFAULT_PROP_TYPES)
+    assert view["weekly_tail_scopes"] == 6 * (T.TAIL_MONTHS - T.RECENT_MONTHS) * len(T.TAIL_PROP_TYPES)
+    # ★라이브 기준선과 맞는지 — 2026-08-26T19:10Z 실측 36 스코프/일
+    assert view["daily_scopes"] == 36, "기준선(시군구 6 → 36 스코프/일) 과 어긋났다"
+
+
+def test_quota_growth_flips_the_verdict():
+    """★두 모집단이 갈린다 — 기준선 범위 vs 재측정 필요."""
+    at_baseline = S.quota_view(S.QUOTA_BASELINE_TARGETS)
+    grown = S.quota_view(S.QUOTA_BASELINE_TARGETS * S.QUOTA_REVIEW_MULTIPLE)
+    assert at_baseline["state"] == "기준선범위"
+    assert grown["state"] == "재측정필요"
+    assert grown["daily_scopes"] > at_baseline["daily_scopes"]
+    # ★경계 바로 아래는 넘어가지 않아야 한다(위양성 방지)
+    just_under = S.quota_view(S.QUOTA_BASELINE_TARGETS * S.QUOTA_REVIEW_MULTIPLE - 1)
+    assert just_under["state"] == "기준선범위"
+
+
+def test_quota_unknown_targets_is_not_zero():
+    """★미배포일 때 대상 0 이라고 단정하지 않는다."""
+    view = S.quota_view(None)
+    assert view["targets"] is None and view["daily_scopes"] is None
+    assert view["state"] == S.NEVER_SCANNED
+
+
+@pytest.mark.asyncio
+async def test_status_reports_targets_from_scan_state(monkeypatch):
+    """★배선 — `targets` 가 scan_state 에서 파생돼 쿼터 판정까지 실려 나가는가."""
+    db = _FakeDb(stored=4898, reobserved=0, corrections=0, by_kind={}, scopes=(36, 36),
+                 last_recent=_NOW - timedelta(hours=8), last_tail=None, targets=6)
+    out = await S.build_layer2_status(db, now=_NOW)
+    assert out["scopes"]["targets"] == 6
+    assert out["quota"]["daily_scopes"] == 36
+    assert out["quota"]["state"] == "기준선범위"
+
+    grown = _FakeDb(stored=4898, reobserved=10, corrections=0, by_kind={}, scopes=(360, 360),
+                    last_recent=_NOW, last_tail=_NOW, targets=60)
+    out2 = await S.build_layer2_status(grown, now=_NOW)
+    assert out2["quota"]["state"] == "재측정필요", "대상이 10배가 됐는데 판정이 안 갈렸다"
 
 
 # ══════════════════════════════════════════════════════════════

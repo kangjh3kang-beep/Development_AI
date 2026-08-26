@@ -137,6 +137,45 @@ def detection_state(*, corrections_total: int, reobserved_rows: int, stored_rows
 #: ★스키마 부재를 **조회 실패와 섞지 않는다.** 2층은 lazy DDL 이라 크론이 한 번도 안 돈
 #:  환경에는 테이블 자체가 없다. 그때 500 을 내면 *"2층이 고장났다"* 로 읽히고, 예외를
 #:  통째로 삼키면 *"깨끗하다"* 로 읽힌다 — 둘 다 거짓이다. **존재를 먼저 묻는다.**
+def quota_view(targets: int | None) -> dict[str, Any]:
+    """대상 시군구가 **무한히 늘 수 있다**는 부채(`#884` P-d)를 **관측 가능하게** 만든다.
+
+    ★고치는 것이 아니라 **보이게** 하는 것이다. 상한을 걸어 대상을 잘라내면 그 사용자의
+      지역이 **조용히 수집에서 빠진다** — 지금 결함보다 나쁘다. 그래서 자르지 않고 센다.
+
+    ★한도는 **모른다**고 적는다. 절대 한도를 지어내면 다음 사람이 그것을 관측으로 읽는다.
+      판정은 **기준선 대비 배수**로 낸다.
+    """
+    from app.tasks.realtx_sync_task import (
+        DEFAULT_PROP_TYPES,
+        RECENT_MONTHS,
+        TAIL_MONTHS,
+        TAIL_PROP_TYPES,
+    )
+
+    if targets is None:
+        return {"targets": None, "daily_scopes": None, "weekly_tail_scopes": None,
+                "weekly_avg_per_day": None, "baseline_targets": QUOTA_BASELINE_TARGETS,
+                "vs_baseline": None, "limit": QUOTA_LIMIT_UNKNOWN, "state": NEVER_SCANNED}
+
+    daily = targets * RECENT_MONTHS * len(DEFAULT_PROP_TYPES)
+    tail = targets * (TAIL_MONTHS - RECENT_MONTHS) * len(TAIL_PROP_TYPES)
+    weekly_avg = round((daily * 7 + tail) / 7, 1)
+    ratio = round(targets / QUOTA_BASELINE_TARGETS, 2) if QUOTA_BASELINE_TARGETS else None
+    return {
+        "targets": targets,
+        "daily_scopes": daily,
+        "weekly_tail_scopes": tail,
+        "weekly_avg_per_day": weekly_avg,
+        "baseline_targets": QUOTA_BASELINE_TARGETS,
+        "vs_baseline": ratio,
+        # ★한도를 지어내지 않는다
+        "limit": QUOTA_LIMIT_UNKNOWN,
+        "state": ("재측정필요" if ratio is not None and ratio >= QUOTA_REVIEW_MULTIPLE
+                  else "기준선범위"),
+    }
+
+
 _SQL_SCHEMA_PRESENT = "SELECT to_regclass('public.realtx_trades')"
 
 _SQL_STORED = "SELECT count(*) FROM realtx_trades"
@@ -153,6 +192,28 @@ _SQL_LAST_SCAN_IN = (
     "WHERE split_part(scope_key, '|', 3) = ANY(:months)"
 )
 _SQL_SCOPES = "SELECT count(*), count(*) FILTER (WHERE baseline_done) FROM realtx_scan_state"
+#: 대상 시군구 — **scan_state 에서 파생**한다(스토어를 다시 훑지 않는다).
+_SQL_TARGETS = "SELECT count(DISTINCT split_part(scope_key, '|', 2)) FROM realtx_scan_state"
+
+#: 쿼터 산술의 **기준선** — 이 수치로 잰 날의 대상 시군구 수.
+#:
+#: ★라이브 실측 2026-08-26T19:10Z: 시군구 **6** → 하루 **36 스코프**(103.58초).
+#:   `user_project_store` **3행**에서 파생됐다(사용자별 시군구 5·2·0).
+QUOTA_BASELINE_TARGETS = 6
+
+#: ★★**MOLIT 일일 쿼터의 실제 한도는 미측정이다.** 그러므로 여기서 한도를 **지어내지
+#:   않는다** — 「모름」을 유효값으로 그리면 그것이 관측으로 읽힌다.
+#:
+#:   재 본 것(2026-08-27T00:0xZ · 보존된 로그 창): 진짜 HTTP 429 가 arq·api 모두 **0건**
+#:   (양성 대조군 `status_code: 200` 1,003건 — 조회기 생존 확인). 즉 **현재 소비량에서는
+#:   한도에 닿지 않는다**까지가 관측이고, 한도가 얼마인지는 **모른다**.
+#:
+#:   그래서 판정은 **절대 한도가 아니라 기준선 대비 배수**로 낸다 — 성장이 보이게 하되
+#:   없는 한도를 단정하지 않는다.
+QUOTA_LIMIT_UNKNOWN = "미측정"
+
+#: 기준선 대비 몇 배가 되면 사람이 봐야 하는가. ★임의값이 아니라 **재측정 트리거**다.
+QUOTA_REVIEW_MULTIPLE = 5
 
 
 async def build_layer2_status(db: Any, *, now: datetime | None = None) -> dict[str, Any]:
@@ -174,7 +235,8 @@ async def build_layer2_status(db: Any, *, now: datetime | None = None) -> dict[s
         # 스키마 미생성 — 크론이 한 번도 안 돌았다. **0행과 다른 상태**다.
         return {
             "stored_rows": None, "reobserved_rows": None,
-            "scopes": {"total": None, "baseline_done": None},
+            "scopes": {"total": None, "baseline_done": None, "targets": None},
+            "quota": quota_view(None),
             "corrections": {"total": None, "by_kind": {}},
             "detection": {"state": "미배포",
                           "meaning": ("2층 스키마가 아직 없다(lazy DDL) — "
@@ -197,6 +259,7 @@ async def build_layer2_status(db: Any, *, now: datetime | None = None) -> dict[s
     }
     scopes_row = (await db.execute(text(_SQL_SCOPES))).first()
     scopes_total, scopes_baseline = (int(scopes_row[0]), int(scopes_row[1])) if scopes_row else (0, 0)
+    targets = int(await _scalar(_SQL_TARGETS) or 0)
 
     last_recent = await _scalar(_SQL_LAST_SCAN_IN, {"months": recent})
     last_tail = await _scalar(_SQL_LAST_SCAN_IN, {"months": [tail_probe]})
@@ -204,7 +267,9 @@ async def build_layer2_status(db: Any, *, now: datetime | None = None) -> dict[s
     return {
         "stored_rows": stored,
         "reobserved_rows": reobserved,
-        "scopes": {"total": scopes_total, "baseline_done": scopes_baseline},
+        "scopes": {"total": scopes_total, "baseline_done": scopes_baseline,
+                   "targets": targets},
+        "quota": quota_view(targets),
         "corrections": {"total": corrections_total, "by_kind": by_kind},
         "detection": detection_state(
             corrections_total=corrections_total,
