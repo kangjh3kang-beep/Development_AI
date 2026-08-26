@@ -59,7 +59,20 @@ const NEGATIVE: Record<string, string> = {
 
 /**
  * ── **비성장 래칫**(파일 → 호출자 → 건수) ──
- * ★이 자리들은 **라이브에서 재현하지 않았다 — "미측정" 이다. 결함이라고 부르지 않는다.**
+ * ★이 자리들은 **결함이라고 부르지 않는다.** 아래 실측이 있는 것과 없는 것을 갈라 적는다.
+ *
+ *   ■ 실측(2026-08-26 · 로컬 `next dev` + 라이브 localStorage 이식 · React 개발 모드)
+ *     `/ko/projects/<id>` · `…/finance` · `…/permit` 에서 **하이드레이션 오류 0건**.
+ *     ★같은 하네스에서 `GlobalAddressSearch` 결함을 되살리면 `regulations`·`finance`·`permit` 이
+ *       **각 1건**을 낸다 — **대조군이 살아 있는 상태의 0** 이다(대조군 없는 0 은 근거가 아니다).
+ *     → 그 두 라우트가 렌더하는 `NextStageCta`·`ProjectLifecyclePipeline` 은 **지금은** 불일치를
+ *       내지 않는다. 형제 e2e 부채 주석의 가설(*"`useDictionary` 스피너로 우연히 가려져 있다"*)과
+ *       일치하지만 **그 가설 자체는 검증하지 않았다.**
+ *
+ *   ■ 미측정(재 보지 않았다)
+ *     프로덕션 번들 · 나머지 소비 라우트(`bim`·`esg`·`drone`·`contracts`·`legal`·`feasibility`) ·
+ *     `ProjectHealthBoard` · `BoqAutoWorkspace` · `FeasibilityEditorV2` · `OrchestratorPanel` ·
+ *     `InputResolveModal`(사용자 조작 뒤에만 렌더) · `AuthWorkspaceClient`(측정 시도 → **결론 불가**).
  *   `getState()`·스토어 메서드를 렌더 중에 부르면 zustand 의 서버 스냅샷을 우회하므로
  *   **불일치가 날 수 있는 형태**이지만, 실제로 나는지는 그 값이 렌더 텍스트에 실리는지와
  *   그 라우트가 SSR 되는지에 달렸다. 각각 따로 재야 판정된다.
