@@ -224,6 +224,62 @@ describe("buildNodeBody — 노드별 평면 body 매핑", () => {
     expect(body.building_type).toBe("공동주택");
   });
 
+  // ★부지 파생 시드 — **값**을 못 박는다(2026-08-26).
+  //   종전 락은 소스에 `body.official_price_per_sqm =` 라는 **대입문이 있는지**만 봤다.
+  //   적대 리뷰가 변이로 실증했다: 값을 `= 1` 로 바꿔도 **SURVIVED**.
+  //   *"대입이 있다"* 와 *"그 값이 시드에서 온다"* 는 다르다 — 여기서 실제로 돌려 값을 본다.
+  it("★feasibility: 공시지가·시도명을 **시드 값 그대로** 싣는다(대입 존재가 아니라 값)", () => {
+    const ctx: NodeBodyContext = {
+      siteAnalysis: multiSite({
+        address: "울산광역시 동구 화정동 637-11",
+        officialPrices: [{ pricePerSqm: 3_000_000 }],
+      } as Partial<SiteAnalysisData>),
+      designData: design(),
+    };
+    const { body } = buildNodeBody("feasibility", ctx, "p1");
+    expect(body.official_price_per_sqm).toBe(3_000_000);
+    expect(body.sido_name).toBe("울산광역시");
+    // ★시군구 — B03·B04(상하수도 원인자부담금)가 이 값으로 시군구 조례 단가표를 조회한다.
+    //   안 보내면 백엔드가 `unavailable` 로 강등해 **합계에서 빠지는데**, 화면엔
+    //   「미등록 지역」처럼 보인다. 값을 못 박는다.
+    expect(body.sigungu_name).toBe("동구");
+  });
+
+  it("★음성 대조군 — 시군구가 없는 주소면 **키 자체를 안 싣는다**(빈 문자열로 날조하지 않는다)", () => {
+    const ctx: NodeBodyContext = {
+      siteAnalysis: multiSite({
+        address: "세종특별자치시",
+        officialPrices: [{ pricePerSqm: 1_000_000 }],
+      } as Partial<SiteAnalysisData>),
+      designData: design(),
+    };
+    const { body } = buildNodeBody("feasibility", ctx, "p1");
+    expect(body.sigungu_name).toBeUndefined();
+    // ★두 모집단이 갈린다 — 시도는 실리고 시군구만 빠진다. 둘이 같이 움직이면
+    //   시군구 배선을 끊어도 시도 단언이 대신 초록을 만든다.
+    expect(body.sido_name).toBe("세종특별자치시");
+  });
+
+  it("★음성 대조군 — 공시지가가 없으면 **키 자체를 안 싣는다**(0 으로 날조하지 않는다)", () => {
+    const ctx: NodeBodyContext = {
+      siteAnalysis: multiSite({ officialPrices: [] } as Partial<SiteAnalysisData>),
+      designData: design(),
+    };
+    const { body } = buildNodeBody("feasibility", ctx, "p1");
+    expect(body.official_price_per_sqm).toBeUndefined();
+    // 주소는 있으므로 시도명은 실린다 — 두 필드가 **독립**임을 함께 잠근다.
+    expect(body.sido_name).toBe("서울특별시");
+  });
+
+  it("★0 은 「0원」이 아니라 「모름」 — 키를 안 싣는다", () => {
+    const ctx: NodeBodyContext = {
+      siteAnalysis: multiSite({ officialPrices: [{ pricePerSqm: 0 }] } as Partial<SiteAnalysisData>),
+      designData: design(),
+    };
+    const { body } = buildNodeBody("feasibility", ctx, "p1");
+    expect(body.official_price_per_sqm).toBeUndefined();
+  });
+
   it("feasibility(Phase C-1): 추천 환류값(M08)이 development_type으로 우선 채택", () => {
     const ctx: NodeBodyContext = {
       siteAnalysis: multiSite(),

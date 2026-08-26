@@ -34,7 +34,10 @@ from app.services.land_intelligence.comprehensive_analysis_service import (
 )
 from app.services.land_intelligence.desk_appraisal_service import desk_appraisal
 from app.services.quality.precision import PrecisionGrade, lowest
-from app.services.tax.project_charges import compute_developer_stage_charges, parse_bool_flag
+from app.services.tax.project_charges import (
+    compute_developer_stage_charges,
+    parse_tristate_flag,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -261,6 +264,100 @@ def _num(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def construction_breakdown(cc: dict[str, Any]) -> dict[str, Any]:
+    """공사비 **직접/간접 분해** — 원장이 「설계비·감리비」를 그리는 재료.
+
+    `construction_cost_engine` 은 이미 `{design_fee_won, supervision_fee_won, contingency_won,
+    general_expense_won}` 를 **비율과 함께** 돌려주는데, 종전엔 총액과 ㎡단가 **두 숫자만**
+    남겼다. 원장이 그 행들을 못 그린 이유가 *"엔진에 없어서"* 가 아니라 **여기서 버려서**였다.
+
+    ★**분해지 추가가 아니다** — 엔진이 `total = direct + indirect` 로 합산하므로 쪼개도
+      **합계가 변하지 않는다**(원장 검산이 그것을 확인한다).
+
+    ★**엔진이 주는 항목을 골라내지 않는다** — `_won` 으로 끝나는 키를 **전부** 옮긴다.
+      새 간접비가 생기면 라벨은 없어도 **행은 나온다**(조용히 사라지지 않게).
+
+    ★모듈 레벨 함수인 이유: 인라인 dict 리터럴이면 **직접 태울 수 없어** 이 배선이 무잠금이
+      된다(변이 실증 — 이 저장소에서 **세 번째** 같은 자리다: `_compact` · `ratio_basis` · 이것).
+    """
+    direct = cc.get("direct") or {}
+    indirect = cc.get("indirect") or {}
+    direct_won = direct.get("total_direct_cost_won")
+    if direct_won is None or not indirect:
+        return {}   # 분해가 없으면 **키를 만들지 않는다** — 소비처가 종전대로 한 행을 그린다
+    return {
+        "direct_won": int(direct_won),
+        "indirect": {
+            "total_won": int(indirect.get("total_indirect_cost_won") or 0),
+            "items": {k: int(v) for k, v in indirect.items()
+                      if k.endswith("_won") and k != "total_indirect_cost_won"},
+            "ratios": dict(indirect.get("ratios") or {}),
+            "base_won": int(direct_won),
+        },
+    }
+
+
+def build_cost_ratio_basis(
+    base_won: float, finance_rate: float, other_rate: float, ratio_note: str | None
+) -> dict[str, Any]:
+    """금융비·제경비의 **과표·비율·출처** — 원장이 「수량 × 단가」를 재현하는 재료.
+
+    이 두 축은 `(토지비 + 공사비) × 비율` 이다. 즉 **수량 × 단가가 원래 있었다.**
+    종전엔 합계만 실어 보내서 원장이 *"개략 단계에서는 항목 단위 내역을 산출하지 않는다"* 고
+    적었는데 — **부재가 아니라 안 실어 보낸 것**이었다.
+
+    ★`source` 를 함께 싣는다. 비율이 **엔진 추출**인지 **표준 폴백**인지는 사용자가 알아야 한다
+      (폴백이면 그 숫자는 참고용이다). 표시층이 둘을 같게 그리면 폴백이 실측처럼 읽힌다.
+
+    ★모듈 레벨 함수인 이유: 인라인 dict 리터럴이면 **직접 태울 수 없어** 이 배선이 무잠금이
+      된다(변이 실증 — `"ratio_basis": None` 으로 바꿔도 아무 테스트도 빨개지지 않았다).
+      **호출할 수 없는 코드는 잠글 수 없다** — 이 저장소에서 같은 형태를 다섯 번 밟았다.
+    """
+    return {
+        "base_won": base_won,
+        "base_label": "토지비 + 공사비",
+        "finance_rate": finance_rate,
+        "other_rate": other_rate,
+        "source": "fallback" if ratio_note else "engine",
+        "note": ratio_note,
+    }
+
+
+def compact_charge_items(charges_result: dict[str, Any]) -> list[dict[str, Any]]:
+    """부담금 결과 → 응답용 항목 목록. **과표·요율·사유를 버리지 않는다.**
+
+    ★2026-08-26 — 종전 이 압축은 `code·name·amount_won·borne_by` 만 남기고
+    **`base_won`(과표)·`rate`(요율)·`detail.reason`(사유)를 떨어뜨렸다.** 엔진은 갖고 있는데
+    화면에 닿기 전에 사라져, 사용자는 금액만 보고 *왜 이 금액인지* 물을 곳이 없었고
+    `unavailable` 강등 사유도 마찬가지였다.
+    ★유료·비가역 산출물 규율 §4 — *"사유를 버리지 마라. 진단 불가는 그 자체로 장애다."*
+
+    ★여기서 값을 **만들지 않는다** — 엔진이 준 것만 옮기고, 없으면 `None` 이다(무목업).
+
+    ★모듈 레벨 함수인 이유: 인라인 컴프리헨션이면 **직접 태울 수 없어** 복원 자체가 무잠금이
+      된다(변이 실증 — 되돌려도 아무 테스트도 빨개지지 않았다).
+    """
+    return [
+        {
+            "code": it.get("code"),
+            "name": it.get("name"),
+            "amount_won": it.get("amount_won"),
+            "borne_by": it.get("borne_by", "developer"),
+            # 과표(수량)·요율(단가) — 원장에서 `수량 × 단가 = 금액` 을 재현하는 재료.
+            "base_won": it.get("base_won"),
+            "rate": it.get("rate"),
+            # 사유 — 미부과·미등록·강등의 근거. `detail.reason` 이 정본이다.
+            "reason": (it.get("detail") or {}).get("reason"),
+            # ★`confidence` 는 **`detail` 안**에 있다(엔진 16종 전수 실측: 최상위 non-None 0/16).
+            #   최상위에서 읽던 초안은 프로덕션에서 **항상 None** 이라 강등 표기가 한 번도
+            #   발화하지 않았다. 형제 `project_charges.py:55` 가 처음부터 옳게 읽고 있었다(§G29).
+            "confidence": (it.get("detail") or {}).get("confidence") or it.get("confidence"),
+        }
+        for stage in (charges_result["construction"], charges_result["sale"])
+        for it in (stage.get("items") or [])
+    ]
 
 
 def _null_block(kind: str) -> dict[str, Any]:
@@ -623,6 +720,14 @@ async def build_rough_scenario(
             constr_block = {
                 "total_won": constr_total,
                 "unit_per_sqm_won": int(cc["direct"]["unit_cost_per_sqm"]),
+                # ★2026-08-26 — 직접/간접 **분해를 버리지 않는다**(additive).
+                #   `construction_cost_engine` 은 이미 `{design_fee_won, supervision_fee_won,
+                #   contingency_won, general_expense_won}` 를 **비율과 함께** 돌려주는데
+                #   종전엔 총액과 ㎡단가 **두 숫자만** 남겼다. 원장이 「설계비·감리비·예비비」를
+                #   못 그린 이유가 *"엔진에 없어서"* 가 아니라 **여기서 버려서**였다.
+                #   ★**분해지 추가가 아니다** — 엔진이 `total = direct + indirect` 로 합산하므로
+                #     원장이 쪼개도 **합계가 변하지 않는다**(검산이 그것을 확인한다).
+                **construction_breakdown(cc),
                 "basis": c_basis, "source": c_source,
             }
         except Exception as e:  # noqa: BLE001 — 공사비 산출 실패는 정직 null
@@ -657,6 +762,7 @@ async def build_rough_scenario(
     core_ready = land_total is not None and constr_total is not None and revenue_total is not None
     finance_total: int | None = None
     other_total: int | None = None
+    cost_ratio_basis: dict[str, Any] | None = None
     if land_total is not None and constr_total is not None:
         fin_ratio, oth_ratio, ratio_note = _engine_cost_ratios(input_used)
         if ratio_note:
@@ -664,6 +770,11 @@ async def build_rough_scenario(
         base_sum = land_total + constr_total
         finance_total = round(base_sum * fin_ratio)
         other_total = round(base_sum * oth_ratio)
+        # ★2026-08-26 — 이 두 축도 **수량 × 단가**다(과표 = 토지+공사, 단가 = 엔진 비율).
+        #   종전엔 합계만 실어 보내서 원장이 *"개략 단계에서는 항목 단위 내역을 산출하지
+        #   않는다"* 고 적었는데, **부재가 아니라 안 실어 보낸 것**이었다.
+        #   비율 출처(엔진 추출 vs 표준 폴백)까지 함께 싣는다 — 폴백이면 사용자가 알아야 한다.
+        cost_ratio_basis = build_cost_ratio_basis(base_sum, fin_ratio, oth_ratio, ratio_note)
 
     # ── 6b) 부담금(B공사+C분양 단계, 시행사 부담) — ★상시-0 봉합 ──
     # 종전에는 total_tax_cost_won=0으로 학교용지·광역교통·상하수도·HUG 보증수수료 등
@@ -686,15 +797,15 @@ async def build_rough_scenario(
                 #   (unit_standards SSOT)을 직접 전달한다. (D1 이후 avg_area_pyeong도 전용평
                 #   규약이지만, rough는 input_used 의존 없이 SSOT 직접 사용이 정본)
                 avg_area_sqm=_service._get_type_avg_unit_area(dev_type_final) or 85.0,
-                in_infra_charge_zone=parse_bool_flag(overrides.get("in_infra_charge_zone")),
+                # ★3상태 파서(2026-08-26 · #865 가 놓친 **네 번째 층**). `parse_bool_flag` 는
+                #   **미조회(None)를 미지정(False)으로 뭉개** 화면에 *"기반시설부담구역 미지정"*
+                #   이라는 **없는 관측 주장**을 냈다. #865 가 엔진·통합·모듈 세 층을 고쳤는데
+                #   **이 호출부가 남아** 라이브에서 그대로였다 — **라이브 프로브가 아니었으면
+                #   「고쳤다」로 남았을 것**이다.
+                in_infra_charge_zone=parse_tristate_flag(overrides.get("in_infra_charge_zone")),
             )
             charges_total = int(charges_result["total_won"])
-            _compact = [
-                {"code": it.get("code"), "name": it.get("name"),
-                 "amount_won": it.get("amount_won"), "borne_by": it.get("borne_by", "developer")}
-                for stage in (charges_result["construction"], charges_result["sale"])
-                for it in (stage.get("items") or [])
-            ]
+            _compact = compact_charge_items(charges_result)
             charges_block = {
                 "total_won": charges_total,
                 "construction_stage_won": int(charges_result["construction"]["total_won"]),
@@ -747,6 +858,8 @@ async def build_rough_scenario(
     cost_breakdown = {
         "land_won": land_total, "construction_won": constr_total,
         "finance_won": finance_total, "other_won": other_total,
+        # ★금융·제경비의 과표·비율(원장이 「수량 × 단가」를 재현하는 재료) — additive.
+        "ratio_basis": cost_ratio_basis,
         "charges_won": charges_total,
     }
 

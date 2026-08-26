@@ -373,7 +373,13 @@ export type ProvenanceModule =
   | "cost"
   | "design"
   | "tax"
-  | "esg";
+  | "esg"
+  // ★2026-08-26 편입 — 종전엔 수지가 **보호 밖**이라 백엔드 파이프라인 재실행이
+  //   사용자가 손으로 넣은 수지값을 **조용히 덮었다**(`ProjectPipelinePanel` 이
+  //   updateFeasibilityData 를 호출하는데 가드가 없었다). 보호되던 것은 `equityWon` 하나뿐이고,
+  //   그것도 provenance 가 아니라 `equityIsManual` 이라는 **전용 플래그**였다.
+  //   노드 레지스트리는 이 사실을 `provenanceGuarded: false` 로 정직하게 적어 두고 있었다.
+  | "feasibility";
 type ManualFieldsMap = Partial<
   Record<ProvenanceModule, Record<string, FieldProvenance>>
 >;
@@ -554,7 +560,10 @@ export interface ProjectContextState {
   ) => void;
   // merge 패치 — 부분 writer(UnitMix/AutoRecommend)가 기존 totalCostWon 등을 보존하도록
   // 기존 feasibilityData 위에 병합한다. 전체 객체를 넘기던 기존 호출도 동일하게 동작.
-  updateFeasibilityData: (data: FeasibilityPatch) => void;
+  updateFeasibilityData: (
+    data: FeasibilityPatch,
+    meta?: { source?: FieldSource },
+  ) => void;
   // (Phase C-1) 추천 개발방식 코드(M01~M15)만 feasibilityData.developmentType에 부분패치.
   // ★updateFeasibilityData와 달리 updatedAt.feasibility를 stamp하지 않는다 —
   //  파생(recommend) 노드가 수지 staleness를 오염시켜 수지 노드가 영영 skipped-fresh되는
@@ -1404,8 +1413,29 @@ export const useProjectContextStore = create<ProjectContextState>()(
         });
       },
 
-      updateFeasibilityData: (data) => {
+      updateFeasibilityData: (data, meta) => {
+        const source: FieldSource = meta?.source ?? "auto";
         set((state) => {
+          const flagged = state.manualFields?.feasibility ?? {};
+          const prevRec = state.feasibilityData
+            ? (state.feasibilityData as unknown as Record<string, unknown>)
+            : null;
+          // ★사용자 수동값 보호(2026-08-26). `cost` 와 형태가 **다르다** — 저쪽은 full replace 라
+          //   flagged 키를 이전값으로 되돌리지만, 여기는 **merge patch** 라 들어온 `data` 안의
+          //   flagged 키만 되돌리면 된다(안 들어온 키는 어차피 이전값이 남는다).
+          //   auto 경로에서만 되돌린다 — user 가 스스로 고치는 것은 막지 않는다.
+          const guardedData: Record<string, unknown> = { ...data };
+          if (source === "auto" && prevRec) {
+            for (const key of Object.keys(flagged)) {
+              // ★`key in guardedData` 는 **이중 가드**다 — 없어도 결과는 같다.
+              //   flagged 키가 들어온 patch 에 없으면 `guardedData[key] = prevRec[key]` 는
+              //   **이전값을 그대로 다시 넣는 것**이고, merge(`{...prev, ...guardedData}`)의
+              //   결과가 동일하다. 변이로 이 조건을 지워도 테스트가 초록인 것은 **구멍이 아니라
+              //   무연산**이기 때문이다(2026-08-26 변이 M6 SURVIVED — 설명 가능한 생존).
+              //   그래도 남겨 둔다: **의도를 읽히게** 한다("들어온 것만 되돌린다").
+              if (key in guardedData && key in prevRec) guardedData[key] = prevRec[key];
+            }
+          }
           // merge: 기존값 보존 후 patch 적용(부분 writer가 totalCostWon을 null로 덮지 않도록).
           const merged = {
             totalCostWon: null,
@@ -1413,7 +1443,7 @@ export const useProjectContextStore = create<ProjectContextState>()(
             profitRatePct: null,
             grade: null,
             ...(state.feasibilityData ?? {}),
-            ...data,
+            ...guardedData,
           } as FeasibilityData;
           // ★자기자본 자동 환류(공용 규칙, resolveEquityWon 단일 계약):
           //   총사업비가 나오면 자기자본이 없어도 equityRatioPct(기본 10%)로 자동 산출해 채운다
@@ -1440,8 +1470,27 @@ export const useProjectContextStore = create<ProjectContextState>()(
               totalCostWon: merged.totalCostWon,
               equityRatioPct: ratio,
             });
+          // ★user 경로에서 **stamp** 한다 — 이것이 없으면 위 가드가 읽을 flagged 가 영원히 비어
+          //   가드가 **장식**이 된다(행위 락이 정확히 이 상태를 잡았다: 소스 검사였으면 통과했다).
+          //   형제 `cost` 와 같은 규칙: null 은 "데이터 없음"이라 보호 대상이 아니고,
+          //   이전값과 같은 키는 stamp 하지 않는다(미변경 필드를 user 로 동결하면 이후 자동 환류가
+          //   통째로 무력화된다).
+          const nextManual = (() => {
+            if (source !== "user") return null;
+            const now = Date.now();
+            const stamped: Record<string, FieldProvenance> = { ...flagged };
+            for (const [key, value] of Object.entries(data)) {
+              if (value == null) continue;
+              if (prevRec && value === prevRec[key]) continue;
+              stamped[key] = { source: "user", updatedAt: now };
+            }
+            return stamped;
+          })();
           return withSnap(state, {
             feasibilityData: merged,
+            ...(nextManual
+              ? { manualFields: { ...(state.manualFields ?? {}), feasibility: nextManual } }
+              : {}),
             updatedAt: stampedAt(state, "feasibility"),
           });
         });

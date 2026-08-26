@@ -28,7 +28,26 @@ import {
   useRegistryAnalysisStore,
 } from "@/store/useRegistryAnalysisStore";
 
-/** 한 스토어의 처리 결과 — **왜 안 옮겼는지**까지 말한다(조용한 건너뜀 금지). */
+/**
+ * 한 스토어의 처리 결과.
+ *
+ * ★★**정직 고지 — 이 값은 아직 아무도 읽지 않는다(부채).**
+ *   종전 주석은 *"왜 안 옮겼는지까지 말한다(조용한 건너뜀 금지)"* 라고 적었는데,
+ *   유일한 호출부(`store/useProjectStore.ts` 의 `syncFromBackend`)가 **반환을 버린다.**
+ *   즉 **말할 준비만 되어 있고 말하는 곳이 없다** — 주장과 실행이 갈린 상태다
+ *   (CLAUDE.md §G30: *"…한다"는 동작 주장은 그 자체가 검증 대상이다*).
+ *
+ *   ★**왜 지금 안 고치나**: 쓸 만한 통로가 둘 다 이 변경의 범위를 넘는다 —
+ *    ①성장루프 이벤트로 보내려면 `GrowthEventType` 과 백엔드 `growth.py:_ALLOWED_TYPES` 를
+ *      **같은 커밋에서** 늘려야 한다(한쪽만 하면 서버가 조용히 `rejected` 로 버리고 화면은 초록이다)
+ *    ②사용자에게 알리려면(예: *"승계를 미뤘습니다 — 목록이 아직 불완전합니다"*)
+ *      **어디에 어떻게 띄울지가 제품 판단**이다.
+ *   ★사용자 영향: `defer` 일 때 레거시의 유료 산출물이 **화면에 안 보이는데 이유도 없다.**
+ *     다만 다음 동기화에 자동 재시도되므로 **데이터가 사라지지는 않는다**(안전장치 1).
+ *
+ *   부채를 초록 안에서 보이게 `lib/__tests__/paid-artifact-account-isolation.test.ts` 에
+ *   `it.todo` 로 남긴다 — 커밋 메시지에만 적으면 드러나지 않는다(회귀망 규율 C-13).
+ */
 export type PaidArtifactMigrationReport = {
   store: string;
   action: "migrate" | "defer" | "noop" | "skip";

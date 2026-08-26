@@ -147,8 +147,24 @@ class GrowthInsightOut(BaseModel):
 
 
 class GrowthInsightList(BaseModel):
+    """인사이트 목록 + **집계**.
+
+    ★`total` 과 `actionable_counts` 는 **다른 것**이다 — 이름으로 갈라 둔다:
+      · `total`             : 같은 필터에 걸리는 **전체 행 수**(비조치 타입 포함)
+      · `actionable_counts` : 같은 필터에서 **조치 대상만** severity 별로 센 값
+
+    ★★왜 서버가 세는가(2026-08-26 라이브 실측):
+      화면은 `?sort=severity&limit=200` 으로 받아 **그 200행을 세고 있었다.** 그런데 라이브 분포가
+      critical 79 · warn 476 · info 2,544 라 200행은 `critical 79 + warn 121` 로 채워지고
+      **info 는 0행 도달**한다. 결과로 요약 카드가 warn 을 **476이 아니라 121**로 표시했다
+      (**74% 과소계상**). 페이지 크기가 집계를 결정하는 구조였다.
+      → 집계는 **`limit` 과 무관하게** 서버가 같은 술어로 센다.
+    """
+
     items: list[GrowthInsightOut]
     total: int
+    #: severity → 건수. **조치 대상만**(NON_ACTIONABLE 타입 제외). 필터 전체 기준.
+    actionable_counts: dict[str, int] = Field(default_factory=dict)
 
 
 class InsightAckRequest(BaseModel):
@@ -227,6 +243,29 @@ async def list_insights(
         text(f"SELECT COUNT(*) FROM platform_insights WHERE {where_sql}"), params
     )).scalar() or 0
 
+    # ★조치대상 집계 — `total` 과 **같은 술어**로 세되 비조치 타입만 뺀다.
+    #   비조치 타입은 `insight_types.NON_ACTIONABLE`(백엔드 정본)에서 온다. 종전엔 그 상수의
+    #   **소비처가 0**이었고 같은 정책이 프론트 리터럴로 중복 구현돼 있었다 — 여기서 잇는다.
+    #   ★`limit` 을 타지 않는다: 이 값이 페이지 크기에 따라 변하면 집계가 아니라 표본이다.
+    # ★지연 임포트 — 이 라우터의 형제 관행을 따른다(`capture_service`·`heal_actions`·
+    #   `schema_guard` 전부 함수 안에서 임포트한다). 모듈 수준으로 올리면 그 관행이
+    #   회피하고 있는 것(순환참조·기동비용)을 내가 확인하지 않은 채 깨뜨리게 된다.
+    from app.services.growth.insight_types import NON_ACTIONABLE
+
+    _na = sorted(NON_ACTIONABLE)
+    _cnt_params = dict(params)
+    _cnt_where = where_sql
+    if _na:
+        _cnt_where = f"{where_sql} AND insight_type <> ALL(:na_types)"
+        _cnt_params["na_types"] = _na
+    actionable_counts: dict[str, int] = {
+        str(r[0]): int(r[1])
+        for r in (await db.execute(text(
+            f"SELECT severity, COUNT(*) FROM platform_insights "
+            f"WHERE {_cnt_where} GROUP BY severity"
+        ), _cnt_params)).fetchall()
+    }
+
     params["limit"] = limit
     params["offset"] = offset
     rows = (await db.execute(text(
@@ -245,7 +284,8 @@ async def list_insights(
         )
         for r in rows
     ]
-    return GrowthInsightList(items=items, total=int(total))
+    return GrowthInsightList(items=items, total=int(total),
+                             actionable_counts=actionable_counts)
 
 
 @router.post("/insights/{insight_id}/ack", response_model=InsightAckResult)
