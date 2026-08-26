@@ -1,7 +1,11 @@
 """vitest 플레이크 판정기 계약 — **두 모집단을 가른다.**
 
 왜: 2026-08-26 실측으로 `ci.yml` 의 `Frontend (type-check + lint + test)` 가
-최근 실패 6/6 을 **동일한 vitest-worker RPC 타임아웃**으로 냈다(테스트 실패 0건).
+빨강의 **58%** 를 vitest-worker RPC 타임아웃으로 냈다(전수: 창 14일 · 이 잡이 빨간 런 67건 =
+FLAKE 39 · **REAL 13** · UNKNOWN 15).
+★초판 주석은 *"최근 실패 6/6"* 만 보고 *"진짜 결함을 잡은 적 0회"* 라 적었는데 **틀렸다** —
+그 표본이 "최근 + 실패로 남은 런"으로 두 겹 잘려 있었다(성공한 게이트는 자기 증거를 지운다).
+**REAL 13건이 이 파일이 지키는 것**이다.
 그래서 그 서명일 때만 1회 재시도하도록 게이트를 고쳤다.
 
 ★이 파일이 잠그는 것은 **"재시도한다"가 아니라 "무엇을 재시도하지 않는가"** 다.
@@ -40,6 +44,14 @@ REAL_FILES_ONLY = (
     f"{_RPC}\n Test Files  1 failed | 338 passed (339)\n      Tests  3091 passed (3091)\n"
 )
 CRASH_NO_SUMMARY = "Error: Cannot find module 'x'\nELIFECYCLE Command failed with exit code 1.\n"
+# ★"0 failed" 는 **실패 0건**이다 — REAL 이 아니다.
+#   술어를 `[0-9]+ failed` 로 쓰면 이것이 REAL 로 잡혀 FLAKE 분기가 **영영 안 타면서 초록**이 된다.
+#   현재 vitest 는 0 을 생략해 미발현이지만, 선언한 의도(failed >= 1)와 구현이 갈리면
+#   그 자체가 결함이다(동료 세션 지적 → 실측으로 REAL 나오는 것 확인 후 교정).
+_SUMMARY_ZERO_FAILED = (
+    " Test Files  339 passed (339)\n      Tests  0 failed | 3091 passed (3091)"
+)
+ZERO_FAILED_LOG = f"{_RPC}\n{_SUMMARY_ZERO_FAILED}\n"
 # ★가장 위험한 형태 — **요약은 없는데 타임아웃 서명은 있다**(부분 실행 후 크래시).
 #   서명만 보면 FLAKE 로 읽히지만, 요약이 없으니 **무엇이 돌았는지 자체를 모른다.**
 #   이 픽스처가 없어서 "요약 부재" 가드가 무잠금이었다(변이 M2 가 SURVIVED 로 짚었다) —
@@ -77,6 +89,14 @@ def test_fixtures_actually_differ_where_it_matters() -> None:
 # ── ①-b 탐지 ─────────────────────────────────────────────────────────────────
 def test_known_flake_is_flake(tmp_path: Path) -> None:
     assert _classify(FLAKE_LOG, tmp_path) == "FLAKE"
+
+
+def test_zero_failed_is_not_a_real_failure(tmp_path: Path) -> None:
+    """★`0 failed` 를 REAL 로 읽으면 FLAKE 분기가 조용히 도달 불가가 된다."""
+    assert _classify(ZERO_FAILED_LOG, tmp_path) == "FLAKE"
+    # 대조군: 같은 형식에서 1 이면 REAL 이어야 한다(술어가 숫자를 실제로 본다는 증명).
+    one = ZERO_FAILED_LOG.replace("0 failed | 3091 passed", "1 failed | 3090 passed")
+    assert _classify(one, tmp_path) == "REAL"
 
 
 def test_real_github_actions_format_is_still_flake(tmp_path: Path) -> None:

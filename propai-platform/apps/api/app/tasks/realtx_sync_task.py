@@ -39,8 +39,7 @@ def recent_months(now: datetime, months: int) -> list[str]:
 async def sync_realtx_trades(ctx: dict[str, Any]) -> dict[str, Any]:
     """파생된 시군구 × 최근 N개월 × 유형을 수집·저장하고 정정을 탐지한다."""
     from app.services.land_intelligence.realtx_store import (
-        RealtxTargetsEmptyError,
-        derive_scan_targets,
+        derive_scan_targets,  # 대상 0건이면 RealtxTargetsEmptyError 를 **전파**한다
         persist_scope,
     )
     from apps.api.database.session import AsyncSessionLocal
@@ -49,16 +48,21 @@ async def sync_realtx_trades(ctx: dict[str, Any]) -> dict[str, Any]:
     months = recent_months(datetime.now(tz=UTC), DEFAULT_LOOKBACK_MONTHS)
 
     async with AsyncSessionLocal() as db:
-        try:
-            targets = sorted(await derive_scan_targets(db))
-        except RealtxTargetsEmptyError as exc:
-            # ★조용한 0건 금지 — 스킵이 아니라 **사유를 실은 실패**로 보고한다.
-            logger.error("실거래 수집 대상 파생 실패: %s", exc)
-            return {"status": "failed", "reason": "targets_empty", "note": str(exc)}
+        # ★★2026-08-26 독립 리뷰 적발 — 종전엔 여기서 예외를 잡아 dict 로 돌려줬다.
+        #   `realtx_store` 독스트링은 *"조용히 넘어가지 않고 죽는다"* 고 선언하는데,
+        #   **arq 는 정상 반환을 성공으로 기록**하고 이 저장소에 job result 를 읽는
+        #   코드가 **0건**이다(실측 · 대조군 arq 임포트 2건). 곧 선언과 동작이 어긋났다.
+        #   → **전파한다.** arq 가 실패로 기록하고 재시도한다.
+        targets = sorted(await derive_scan_targets(db))
 
         client = MolitClient()
-        stats = {"targets": len(targets), "months": len(months),
-                 "stored": 0, "corrections": 0, "fetch_errors": []}
+        stats: dict[str, Any] = {
+            "targets": len(targets), "months": len(months),
+            # ★`submitted` 로 이름을 바꿨다 — 종전 `stored` 는 **투입 레코드 수**이지
+            #   저장된 행 수가 아니다(멱등 upsert 라 기존 행 갱신이 섞인다).
+            "submitted": 0, "corrections": 0,
+            "fetch_errors": [], "persist_errors": [],
+        }
         try:
             for lawd_cd in targets:
                 for deal_ym in months:
@@ -72,19 +76,31 @@ async def sync_realtx_trades(ctx: dict[str, Any]) -> dict[str, Any]:
                                  "prop_type": prop_type, "error": type(exc).__name__}
                             )
                             continue
-                        result = await persist_scope(
-                            db, lawd_cd=lawd_cd, deal_ym=deal_ym,
-                            prop_type=prop_type, records=records,
-                        )
-                        stats["stored"] += result["stored"]
+                        try:
+                            result = await persist_scope(
+                                db, lawd_cd=lawd_cd, deal_ym=deal_ym,
+                                prop_type=prop_type, records=records,
+                            )
+                        except Exception as exc:  # noqa: BLE001
+                            # ★스코프 하나가 죽어도 나머지를 계속한다. 종전엔 무방비라
+                            #   한 건의 DataError 가 **남은 전 시군구·월을 미수집**으로 만들고
+                            #   stats 조차 반환되지 않았다. targets 가 정렬돼 있어 잘리는
+                            #   부분이 **항상 같은 뒷부분**이라 계통적 손실이었다.
+                            logger.error("실거래 저장 실패 lawd=%s ym=%s type=%s: %s",
+                                         lawd_cd, deal_ym, prop_type, str(exc)[:200])
+                            stats["persist_errors"].append(
+                                {"lawd_cd": lawd_cd, "deal_ym": deal_ym,
+                                 "prop_type": prop_type, "error": type(exc).__name__})
+                            continue
+                        stats["submitted"] += result["submitted"]
                         stats["corrections"] += len(result["corrections"])
         finally:
             await client.close()
 
-    stats["status"] = "ok"
+    stats["status"] = "ok" if not stats["persist_errors"] else "partial"
     logger.info(
-        "실거래 2층 수집 완료 시군구=%d 월=%d 저장=%d 정정=%d 조회실패=%d",
-        stats["targets"], stats["months"], stats["stored"],
-        stats["corrections"], len(stats["fetch_errors"]),
+        "실거래 2층 수집 %s 시군구=%d 월=%d 투입=%d 정정=%d 조회실패=%d 저장실패=%d",
+        stats["status"], stats["targets"], stats["months"], stats["submitted"],
+        stats["corrections"], len(stats["fetch_errors"]), len(stats["persist_errors"]),
     )
     return stats
