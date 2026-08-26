@@ -48,7 +48,13 @@ export interface LedgerCheck {
   verdict: "OK" | "ERROR" | "UNKNOWN";
   note: string | null;
 }
+export interface LedgerHeaderItem {
+  key: string; label: string; value: string | number | null;
+  unit: string | null; is_numeric: boolean;
+}
 export interface LegacyLedger {
+  /** 제원 — 원본 양식 상단 블록. **채울 수 없는 항목은 아예 오지 않는다**(빈 행 금지). */
+  header?: LedgerHeaderItem[] | null;
   sections: LedgerSection[];
   checks: LedgerCheck[];
   coverage: {
@@ -122,6 +128,28 @@ export default function LegacyLedgerTable({ ledger }: { ledger: LegacyLedger | n
           {showBasis ? "근거 숨기기" : "근거 보기"}
         </button>
       </header>
+
+      {/* ── 제원 — 표 위에 「어느 사업의 수지인가」를 먼저 보인다 ── */}
+      {ledger.header && ledger.header.length > 0 && (
+        <dl
+          data-testid="legacy-ledger-header"
+          className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-1.5 px-4 py-3 border-b border-[var(--line)] text-xs"
+        >
+          {ledger.header.map((h) => (
+            <div key={h.key} className="flex flex-col">
+              <dt className="text-[10px] text-[var(--text-tertiary)]">
+                {h.label}
+                {h.unit ? ` (${h.unit})` : ""}
+              </dt>
+              <dd className={`text-[var(--text-primary)] ${h.is_numeric ? "tabular-nums" : ""}`}>
+                {h.is_numeric && typeof h.value === "number"
+                  ? h.value.toLocaleString(undefined, { maximumFractionDigits: 1 })
+                  : String(h.value ?? DASH)}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      )}
 
       <div className="overflow-x-auto">
         <table id="legacy-ledger-table" className="w-full text-xs border-collapse">
