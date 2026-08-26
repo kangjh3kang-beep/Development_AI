@@ -209,4 +209,22 @@ describe("간략 수지 원장 표", () => {
     })} />);
     expect(screen.getByTestId("ledger-check-x").textContent).toBe("판정 불가");
   });
+
+  it("★★단위와 라벨을 섞지 않는다 — 숫자에 문장이 달라붙지 않게(라이브 실측 결함)", () => {
+    render(<LegacyLedgerTable ledger={ledger({
+      sections: [{ key: "c", label: "매출원가", groups: [{
+        key: "g", label: "그룹",
+        items: [item({ key: "f", label: "금융비용", qty: 19_027_218_768, qty_unit: "원",
+                       qty_label: "토지비 + 공사비", unit_price: 0.067, unit_price_unit: "비율" }),
+                item({ key: "l", label: "택지비", qty: 506, qty_unit: "㎡",
+                       unit_price: 1_676_000, unit_price_unit: "원/㎡" })],
+        subtotal_won: 1, share_pct: 1 }], total_won: 1 }],
+    })} />);
+    const fin = screen.getByText("금융비용").closest("tr")!.textContent ?? "";
+    // 라벨은 **괄호로 떼어** 있고, 숫자 바로 뒤에 붙지 않는다.
+    expect(fin).toContain("(토지비 + 공사비)");
+    expect(fin).not.toMatch(/\d토지비/);
+    // ★두 모집단 — 라벨 없는 행은 괄호가 없다(항상 괄호를 다는 구현이 통과하지 않게).
+    expect(screen.getByText("택지비").closest("tr")!.textContent).not.toContain("(");
+  });
 });

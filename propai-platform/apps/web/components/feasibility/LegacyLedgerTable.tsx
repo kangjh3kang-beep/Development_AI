@@ -23,6 +23,8 @@ export interface LedgerItem {
   amount_won: number | null;
   qty: number | null;
   qty_unit: string | null;
+  /** 「무엇의 수량인가」 — **단위가 아니다**(단위 자리에 넣으면 숫자에 문장이 달라붙는다). */
+  qty_label?: string | null;
   unit_price: number | null;
   unit_price_unit: string | null;
   basis: string | null;
@@ -81,7 +83,10 @@ const pctStr = (v: number | null): string =>
 /** 수량 × 단가 — 둘 중 하나라도 없으면 **그 자리를 비운다**(반쪽 산식을 만들지 않는다). */
 function calcText(it: LedgerItem): string {
   if (it.qty == null || it.unit_price == null) return DASH;
-  return `${numStr(it.qty)}${it.qty_unit ?? ""} × ${numStr(it.unit_price)}${
+  // ★단위는 숫자에 **붙이고**, 라벨은 괄호로 **떼어 놓는다.** 라이브 실측(2026-08-26)에서
+  //   둘을 섞어 `19,027,218,768토지비 + 공사비 × 0.06737` 이 화면에 나갔다.
+  const label = it.qty_label ? `(${it.qty_label}) ` : "";
+  return `${label}${numStr(it.qty)}${it.qty_unit ?? ""} × ${numStr(it.unit_price)}${
     it.unit_price_unit ? ` ${it.unit_price_unit}` : ""
   }`;
 }

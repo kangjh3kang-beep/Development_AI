@@ -500,7 +500,10 @@ def test_finance_and_other_now_carry_qty_and_rate():
         it = by[key]
         assert it["qty"] == 240_000_000_000, f"{key}: 과표가 없다"
         assert it["unit_price"] == rate
-        assert it["qty_unit"] == "토지비 + 공사비"
+        # ★단위는 「원」, 라벨은 별도 필드(2026-08-26 라이브 실측으로 갈랐다 — 종전엔
+        #   라벨이 단위 자리에 있어 화면에 `19,027,218,768토지비 + 공사비` 로 나갔다).
+        assert it["qty_unit"] == "원"
+        assert it["qty_label"] == "토지비 + 공사비"
         assert abs(it["qty"] * it["unit_price"] - it["amount_won"]) <= abs(it["amount_won"]) * 0.02
 
 
@@ -557,3 +560,50 @@ def test_cost_ratio_basis_feeds_the_ledger_end_to_end():
     assert fin["unit_price"] == 0.05, "상류가 비율을 흘렸다"
     assert abs(fin["qty"] * fin["unit_price"] - fin["amount_won"]) < 1_000
     assert fin["basis_kind"] == "data", "엔진 추출인데 구조 폴백으로 표기됐다"
+
+
+# ── 축 ⑪ 단위 ≠ 라벨 — **라이브가 아니면 못 잡았다**(2026-08-26) ──────────────
+#   실측: 화면에 **`19,027,218,768토지비 + 공사비 × 0.06737`** 이 나갔다.
+#   `base_label`("토지비 + 공사비")을 `qty_unit` 으로 써서 **숫자에 라벨이 단위처럼 붙었다.**
+#   단위는 `원`·`㎡`·`세대` 처럼 **수를 세는 말**이고, 라벨은 *"무엇의 수량인가"* 라
+#   **다른 자리**에 있어야 한다.
+#   ★합성 픽스처는 이 결함을 못 잡는다 — 값이 그럴듯해 보이기 때문이다. **표기 규약을 단언**한다.
+_UNIT_VOCAB = {"원", "㎡", "세대", "평", "원(과표)"}
+
+
+def test_qty_unit_is_a_unit_not_a_label():
+    """★★`qty_unit` 은 **수를 세는 말**이어야 한다 — 문장이 오면 화면이 깨진다."""
+    led = build_legacy_ledger(_scenario())
+    bad = []
+    for sec in led["sections"]:
+        for g in sec["groups"]:
+            for i in g["items"]:
+                u = i["qty_unit"]
+                if u is None:
+                    continue
+                # 단위는 짧고, 공백·연산기호를 포함하지 않는다.
+                if len(u) > 6 or any(ch in u for ch in " +-/×"):
+                    bad.append(f"{i['key']}: qty_unit={u!r}")
+                elif u not in _UNIT_VOCAB:
+                    bad.append(f"{i['key']}: 어휘에 없는 단위 {u!r} — 의도한 것이면 _UNIT_VOCAB 에 추가하라")
+    assert not bad, "단위 자리에 라벨이 들어갔다(화면에 숫자와 붙어 나간다):\n" + "\n".join(bad)
+
+
+def test_qty_label_carries_what_the_quantity_is():
+    """★라벨은 **버리지 않고** 별도 필드로 산다 — 「무엇의 수량인가」는 읽는 사람에게 필요하다."""
+    by = {i["key"]: i for s in build_legacy_ledger(_scenario())["sections"]
+          for g in s["groups"] for i in g["items"]}
+    fin = by["finance_cost"]
+    assert fin["qty_unit"] == "원", f"단위가 원이 아니다: {fin['qty_unit']!r}"
+    assert fin["qty_label"] == "토지비 + 공사비", "라벨을 잃었다"
+    # ★두 모집단 — 라벨이 있는 행과 없는 행이 갈린다(전부 같은 값이면 배선을 끊어도 통과).
+    land = by["land_acquisition"]
+    assert land["qty_unit"] == "㎡" and land["qty_label"] is None
+    assert fin["qty_label"] != land["qty_label"]
+
+
+def test_qty_label_is_absent_when_qty_is():
+    """★수량이 없으면 라벨도 없다 — 값 없는 자리에 설명만 남기지 않는다."""
+    by = {i["key"]: i for s in build_legacy_ledger({})["sections"]
+          for g in s["groups"] for i in g["items"]}
+    assert all(i["qty"] is None and i["qty_label"] is None for i in by.values())
