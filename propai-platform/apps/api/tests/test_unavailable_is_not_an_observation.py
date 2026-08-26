@@ -327,6 +327,9 @@ def test_printed_ledger_keeps_subtotal_rows():
 @pytest.mark.parametrize("prose_line", [
     "수량·단가가 공란인 행은 「비고」에 사유가 있습니다",
     "**미조회(잠정)** 와",
+    # ★파생이 아니라 손 목록이라 **누락이 조용하다** — 실제로 이 세 번째 줄을 처음에
+    #   빠뜨렸고 변이가 그것만 SURVIVED 로 남겼다. 문구를 늘리면 여기도 늘려라.
+    "**조회했고 해당 없음(확정 0원)** 은 다릅니다.",
 ])
 def test_the_reader_facing_prose_is_deliberately_not_asserted(prose_line: str):
     """★**이 테스트는 산문을 단언하지 않는다** — 왜 그런지를 기록하는 자리다.
