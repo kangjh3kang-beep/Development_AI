@@ -38,6 +38,26 @@ def parse_bool_flag(value: Any) -> bool:
     return bool(value)
 
 
+def parse_tristate_flag(value: Any) -> bool | None:
+    """게이트용 **3상태** 파서 — `None`(미조회) / `False`(조회했고 아님) / `True`(맞음).
+
+    ★`parse_bool_flag` 는 **미조회를 `False` 로 뭉갠다.** 금액은 어차피 같지만(안전측 0),
+      화면에 나가는 **주장이 달라진다** — *"미지정"* 은 관측이고 *"미조회"* 는 미측정이다.
+      증거 규율 §1(관측/추론/미측정 표기 구분)이 요구하는 구별이다.
+
+    `None`·미존재 키만 `None` 이다. 빈 문자열은 **입력했다가 지운 것**일 수 있으나
+    구별할 수단이 없으므로 `None`(미조회)로 본다 — 안전한 쪽은 「모른다」다.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        v = value.strip()
+        if not v:
+            return None
+        return v.lower() not in _FALSY_STRINGS
+    return bool(value)
+
+
 def _collect_unavailable_notes(stage: dict[str, Any]) -> list[str]:
     """단계 items에서 '산출 불가(정직 강등)' 항목의 사유를 수집한다.
 
@@ -68,7 +88,9 @@ def compute_developer_stage_charges(
     total_gfa_sqm: float = 0,
     building_type: str = "apartment",
     avg_area_sqm: float = 85.0,
-    in_infra_charge_zone: bool = False,
+    # ★3상태 — `None`(미조회) / `False`(조회했고 아님) / `True`(맞음).
+    #   종전 `bool = False` 는 **미조회를 미지정으로 뭉개** 화면에 없는 관측 주장을 냈다.
+    in_infra_charge_zone: bool | None = None,
 ) -> dict[str, Any]:
     """B(공사)+C(분양) 단계 시행사 부담금 일괄 계산 — 개략수지 총사업비 계상용.
 
