@@ -64,7 +64,12 @@ def _scenario() -> dict:
                     "items": charge_items, "basis": "B+C 단계", "source": "통합 세금엔진"},
         "cost_breakdown": {"land_won": 60_000_000_000, "construction_won": 180_000_000_000,
                            "finance_won": 12_000_000_000, "other_won": 8_000_000_000,
-                           "charges_won": developer_sum},
+                           "charges_won": developer_sum,
+                           # ★금융·제경비의 과표·비율 — 원장이 「수량 × 단가」를 재현하는 재료.
+                           "ratio_basis": {"base_won": 240_000_000_000,
+                                           "base_label": "토지비 + 공사비",
+                                           "finance_rate": 0.05, "other_rate": 0.0333,
+                                           "source": "engine", "note": None}},
         "summary": {"total_cost_won": 60_000_000_000 + 180_000_000_000 + 12_000_000_000
                     + 8_000_000_000 + developer_sum,
                     "total_revenue_won": 300_000_000_000,
@@ -215,8 +220,8 @@ def test_share_pct_uses_revenue_and_is_absent_without_it():
 #   09_LEGACY(실무 원본)는 수량 91% · 단가 79% · 근거 100% 다. 우리는 그보다 항목이 적고
 #   커버리지도 다르다. **숫자를 지어내 따라가지 않는다** — 대신 현재 수준을 하한으로 박아
 #   흘리면 빨개지게 한다. 이 수치를 올리는 것이 다음 작업의 정의다.
-_QTY_PCT_FLOOR = 50.0
-_UNIT_PRICE_PCT_FLOOR = 50.0
+_QTY_PCT_FLOOR = 100.0   # ★실측 8/8 — 금융·제경비를 항목화해 66.7 → 100 으로 올렸다
+_UNIT_PRICE_PCT_FLOOR = 100.0
 _BASIS_PCT_FLOOR = 100.0
 
 
@@ -460,3 +465,66 @@ def test_qty_times_price_reproduces_amount_for_every_charge_row():
         assert abs(it["qty"] * it["unit_price"] - it["amount_won"]) <= max(1, abs(it["amount_won"]) * 0.01), (
             f"{it['key']}: 수량×단가가 금액을 재현하지 못한다 — 표기가 장식이다"
         )
+
+
+# ── 축 ⑨ 래칫의 **분모** — 적대 리뷰 중7 ─────────────────────────────────────
+def test_coverage_denominator_excludes_rows_with_no_possible_qty():
+    """★「수량이 원리적으로 없는 행」을 분모에서 뺀다 — 안 그러면 **정직한 행을 벌한다**.
+
+    세전이익은 차액이라 수량·단가가 원래 없다. 그런 행이 분모에 있으면 계획서가 선언한
+    다음 작업(「못 채우는 행을 채운다」)을 할수록 %가 내려가 래칫이 **반대 신호**를 준다.
+    """
+    led = build_legacy_ledger(_scenario())
+    items = [i for s in led["sections"] for g in s["groups"] for i in g["items"]]
+    cov = led["coverage"]
+    na = [i for i in items if i["qty_applicable"]]
+    assert cov["qty_applicable_items"] == len(na)
+    assert cov["items"] > cov["qty_applicable_items"], (
+        "분모가 전체 행과 같다 — 「수량이 원리적으로 없는 행」이 하나도 표시되지 않았다"
+    )
+    prof = next(i for i in items if i["key"] == "pretax_profit")
+    assert prof["qty_applicable"] is False, "세전이익은 차액이라 수량이 원리적으로 없다"
+    # ★근거는 **모든 행**이 대상이다(분모를 좁히면 근거 100% 가 헐거워진다).
+    assert cov["basis_pct"] == 100.0
+
+
+def test_finance_and_other_now_carry_qty_and_rate():
+    """★★금융비·제경비가 **수량 × 단가**를 싣는다 — 「부재」가 아니라 안 실어 보낸 것이었다.
+
+    과표 = 토지비+공사비, 단가 = 엔진 추출 비율. 재현되는지까지 본다.
+    """
+    by = {i["key"]: i for s in build_legacy_ledger(_scenario())["sections"]
+          for g in s["groups"] for i in g["items"]}
+    for key, rate in (("finance_cost", 0.05), ("other_cost", 0.0333)):
+        it = by[key]
+        assert it["qty"] == 240_000_000_000, f"{key}: 과표가 없다"
+        assert it["unit_price"] == rate
+        assert it["qty_unit"] == "토지비 + 공사비"
+        assert abs(it["qty"] * it["unit_price"] - it["amount_won"]) <= abs(it["amount_won"]) * 0.02
+
+
+def test_fallback_ratio_is_labelled_differently_from_engine_ratio():
+    """★엔진 추출 비율과 **표준 폴백**을 화면이 구별한다 — 폴백이면 참고용이다(두 모집단)."""
+    import copy
+    fb = copy.deepcopy(_scenario())
+    fb["cost_breakdown"]["ratio_basis"].update(
+        {"source": "fallback", "note": "엔진 비율 추출 실패 — 표준 폴백비율 적용(참고용)"})
+    eng = {i["key"]: i for s in build_legacy_ledger(_scenario())["sections"]
+           for g in s["groups"] for i in g["items"]}["finance_cost"]
+    fbi = {i["key"]: i for s in build_legacy_ledger(fb)["sections"]
+           for g in s["groups"] for i in g["items"]}["finance_cost"]
+    assert eng["basis_kind"] == "data", "엔진 추출인데 구조 폴백으로 표기됐다"
+    assert fbi["basis_kind"] == "structural", "폴백 비율을 데이터근거처럼 표기했다"
+    assert "폴백" in (fbi["note"] or ""), "폴백 사실이 화면에 안 실린다"
+    assert eng["basis_kind"] != fbi["basis_kind"], "두 경우가 같게 보인다 — 배선을 끊어도 통과한다"
+
+
+def test_no_ratio_basis_means_no_fabricated_qty():
+    """★`ratio_basis` 가 없으면 수량·단가를 **만들지 않는다**(대조군: 금액은 그대로 산다)."""
+    import copy
+    no_rb = copy.deepcopy(_scenario())
+    no_rb["cost_breakdown"].pop("ratio_basis")
+    it = {i["key"]: i for s in build_legacy_ledger(no_rb)["sections"]
+          for g in s["groups"] for i in g["items"]}["finance_cost"]
+    assert it["qty"] is None and it["unit_price"] is None
+    assert it["amount_won"] == 12_000_000_000

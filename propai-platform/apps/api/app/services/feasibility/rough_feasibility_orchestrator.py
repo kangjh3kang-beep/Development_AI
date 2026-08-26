@@ -692,6 +692,7 @@ async def build_rough_scenario(
     core_ready = land_total is not None and constr_total is not None and revenue_total is not None
     finance_total: int | None = None
     other_total: int | None = None
+    cost_ratio_basis: dict[str, Any] | None = None
     if land_total is not None and constr_total is not None:
         fin_ratio, oth_ratio, ratio_note = _engine_cost_ratios(input_used)
         if ratio_note:
@@ -699,6 +700,18 @@ async def build_rough_scenario(
         base_sum = land_total + constr_total
         finance_total = round(base_sum * fin_ratio)
         other_total = round(base_sum * oth_ratio)
+        # ★2026-08-26 — 이 두 축도 **수량 × 단가**다(과표 = 토지+공사, 단가 = 엔진 비율).
+        #   종전엔 합계만 실어 보내서 원장이 *"개략 단계에서는 항목 단위 내역을 산출하지
+        #   않는다"* 고 적었는데, **부재가 아니라 안 실어 보낸 것**이었다.
+        #   비율 출처(엔진 추출 vs 표준 폴백)까지 함께 싣는다 — 폴백이면 사용자가 알아야 한다.
+        cost_ratio_basis = {
+            "base_won": base_sum,
+            "base_label": "토지비 + 공사비",
+            "finance_rate": fin_ratio,
+            "other_rate": oth_ratio,
+            "source": "fallback" if ratio_note else "engine",
+            "note": ratio_note,
+        }
 
     # ── 6b) 부담금(B공사+C분양 단계, 시행사 부담) — ★상시-0 봉합 ──
     # 종전에는 total_tax_cost_won=0으로 학교용지·광역교통·상하수도·HUG 보증수수료 등
@@ -777,6 +790,8 @@ async def build_rough_scenario(
     cost_breakdown = {
         "land_won": land_total, "construction_won": constr_total,
         "finance_won": finance_total, "other_won": other_total,
+        # ★금융·제경비의 과표·비율(원장이 「수량 × 단가」를 재현하는 재료) — additive.
+        "ratio_basis": cost_ratio_basis,
         "charges_won": charges_total,
     }
 

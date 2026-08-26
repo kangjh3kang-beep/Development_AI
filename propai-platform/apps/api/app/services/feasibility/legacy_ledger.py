@@ -94,6 +94,7 @@ def _item(
     basis: str | None = None,
     structural_basis: str | None = None,
     note: str | None = None,
+    qty_applicable: bool = True,
 ) -> dict[str, Any]:
     """원장 한 행. **없는 것은 None** — 0 으로 만들지 않는다."""
     return {
@@ -110,6 +111,11 @@ def _item(
         "basis": basis or structural_basis or None,
         "basis_kind": "data" if basis else ("structural" if structural_basis else None),
         "note": note or None,
+        # ★이 행에 **수량·단가가 원리적으로 존재하는가.**
+        #   `False` = 「아직 못 구했다」가 아니라 **「이 행은 원래 수량이 없다」**(예: 세전이익).
+        #   커버리지 분모를 이 값으로 좁힌다 — 안 그러면 **정직한 행을 추가할수록 %가 내려가**
+        #   래칫이 *"수량 없는 행은 만들지 마라"* 는 **역인센티브**를 준다(적대 리뷰 중7).
+        "qty_applicable": qty_applicable,
         # 원본 대조용 자리 — 대조할 "원본"을 사용자가 올리기 전까지는 전부 False.
         # ★필드를 미리 두는 이유: 나중에 추가하면 소비처가 옵셔널 처리를 안 해 깨진다.
         "added": False,
@@ -290,14 +296,28 @@ def build_legacy_ledger(scenario: dict[str, Any] | None) -> dict[str, Any]:
         )
     ]
     charge_rows = _charge_items(charges)
+    # ★금융·제경비도 **수량 × 단가**다(과표 = 토지+공사, 단가 = 엔진 추출 비율).
+    #   초안은 *"엔진이 항목 단위로 내지 않는다"* 고 적었는데 — **부재가 아니라 안 실어
+    #   보낸 것**이었다. 오케스트레이터가 `ratio_basis` 로 싣게 하고 여기서 소비한다.
+    rb = breakdown.get("ratio_basis") or {}
+    rb_base = rb.get("base_won")
+    rb_src = rb.get("source")
+    # 비율이 **엔진 추출**인지 **표준 폴백**인지는 사용자가 알아야 한다(폴백이면 참고용이다).
+    rb_note = rb.get("note") or (
+        "엔진 산출 비율(토지+공사 대비)" if rb_src == "engine" else None
+    )
     finance_items = [
         _item(
             "finance_cost",
             "금융비용(브릿지·PF·중도금)",
             breakdown.get("finance_won"),
-            structural_basis="금융비용 = 브릿지·PF·중도금 이자 합계(금융엔진 — 신용등급별 요율표)",
-            # ★수량·단가가 **미측정이 아니라 부재**다: 엔진이 항목 단위로 내지 않는다.
-            note="개략 단계에서는 항목 단위 내역을 산출하지 않는다(합계만).",
+            qty=rb_base,
+            qty_unit=rb.get("base_label") or ("원" if rb_base is not None else None),
+            unit_price=rb.get("finance_rate"),
+            unit_price_unit="비율",
+            basis=("금융비용 = (토지비 + 공사비) × 엔진 추출 비율" if rb_src == "engine" else None),
+            structural_basis="금융비용 = (토지비 + 공사비) × 금융비 비율(브릿지·PF·중도금 합산 유래)",
+            note=rb_note,
         )
     ]
     other_items = [
@@ -305,8 +325,13 @@ def build_legacy_ledger(scenario: dict[str, Any] | None) -> dict[str, Any]:
             "other_cost",
             "일반사업비·제경비",
             breakdown.get("other_won"),
-            structural_basis="일반사업비 = 설계·감리·분양·운영 등 제경비 합산(개략)",
-            note="개략 단계에서는 항목 단위 내역을 산출하지 않는다(합계만).",
+            qty=rb_base,
+            qty_unit=rb.get("base_label") or ("원" if rb_base is not None else None),
+            unit_price=rb.get("other_rate"),
+            unit_price_unit="비율",
+            basis=("제경비 = (토지비 + 공사비) × 엔진 추출 비율" if rb_src == "engine" else None),
+            structural_basis="일반사업비 = (토지비 + 공사비) × 제경비 비율(설계·감리·분양·운영 등)",
+            note=rb_note,
         )
     ]
     cost_groups = [
@@ -337,6 +362,7 @@ def build_legacy_ledger(scenario: dict[str, Any] | None) -> dict[str, Any]:
                     "세 전 이 익",
                     profit_ledger,
                     structural_basis="세전이익 = 매출 합계 − 지출 합계(원장 자체 합산)",
+                    qty_applicable=False,  # 차액이라 수량·단가가 원리적으로 없다
                 )
             ],
         )
@@ -391,22 +417,30 @@ def build_legacy_ledger(scenario: dict[str, Any] | None) -> dict[str, Any]:
     # ── 커버리지 — **우리가 지금 어디까지 답할 수 있는지** 스스로 신고 ────────────
     all_items = [i for sec in sections for g in sec["groups"] for i in g["items"]]
     n = len(all_items)
-    with_qty = sum(1 for i in all_items if i["qty"] is not None)
-    with_price = sum(1 for i in all_items if i["unit_price"] is not None)
-    with_basis = sum(1 for i in all_items if i["basis"])
-    pct = lambda x: round(x / n * 100, 1) if n else None  # noqa: E731
+    # ★분모는 **수량이 원리적으로 존재하는 행**이다(적대 리뷰 중7).
+    #   전체 행을 분모로 쓰면 세전이익·차액처럼 원래 수량이 없는 행이 %를 끌어내리고,
+    #   그러면 **정직한 행을 추가할수록 래칫이 빨개진다** — 계획서가 선언한 다음 작업
+    #   (「못 채우는 행을 채운다」)과 **정반대 신호**를 주게 된다.
+    applicable = [i for i in all_items if i["qty_applicable"]]
+    na = len(applicable)
+    with_qty = sum(1 for i in applicable if i["qty"] is not None)
+    with_price = sum(1 for i in applicable if i["unit_price"] is not None)
+    with_basis = sum(1 for i in all_items if i["basis"])   # 근거는 **모든 행**이 대상이다
+    pct = lambda x, d: round(x / d * 100, 1) if d else None  # noqa: E731
 
     return {
         "sections": sections,
         "checks": checks,
         "coverage": {
             "items": n,
+            # ★분모를 밝힌다 — %만 보면 무엇에 대한 비율인지 알 수 없다.
+            "qty_applicable_items": na,
             "with_qty": with_qty,
             "with_unit_price": with_price,
             "with_basis": with_basis,
-            "qty_pct": pct(with_qty),
-            "unit_price_pct": pct(with_price),
-            "basis_pct": pct(with_basis),
+            "qty_pct": pct(with_qty, na),
+            "unit_price_pct": pct(with_price, na),
+            "basis_pct": pct(with_basis, n),
         },
         "share_basis_won": basis_won,
         "share_basis_label": "매출 합계(부가세 미차감 — 원본 양식의 「매출액합계」와 기준이 다름)",
