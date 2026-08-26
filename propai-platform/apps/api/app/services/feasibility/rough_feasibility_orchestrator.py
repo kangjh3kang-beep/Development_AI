@@ -263,6 +263,38 @@ def _num(value: Any) -> float | None:
         return None
 
 
+def compact_charge_items(charges_result: dict[str, Any]) -> list[dict[str, Any]]:
+    """부담금 결과 → 응답용 항목 목록. **과표·요율·사유를 버리지 않는다.**
+
+    ★2026-08-26 — 종전 이 압축은 `code·name·amount_won·borne_by` 만 남기고
+    **`base_won`(과표)·`rate`(요율)·`detail.reason`(사유)를 떨어뜨렸다.** 엔진은 갖고 있는데
+    화면에 닿기 전에 사라져, 사용자는 금액만 보고 *왜 이 금액인지* 물을 곳이 없었고
+    `unavailable` 강등 사유도 마찬가지였다.
+    ★유료·비가역 산출물 규율 §4 — *"사유를 버리지 마라. 진단 불가는 그 자체로 장애다."*
+
+    ★여기서 값을 **만들지 않는다** — 엔진이 준 것만 옮기고, 없으면 `None` 이다(무목업).
+
+    ★모듈 레벨 함수인 이유: 인라인 컴프리헨션이면 **직접 태울 수 없어** 복원 자체가 무잠금이
+      된다(변이 실증 — 되돌려도 아무 테스트도 빨개지지 않았다).
+    """
+    return [
+        {
+            "code": it.get("code"),
+            "name": it.get("name"),
+            "amount_won": it.get("amount_won"),
+            "borne_by": it.get("borne_by", "developer"),
+            # 과표(수량)·요율(단가) — 원장에서 `수량 × 단가 = 금액` 을 재현하는 재료.
+            "base_won": it.get("base_won"),
+            "rate": it.get("rate"),
+            # 사유 — 미부과·미등록·강등의 근거. `detail.reason` 이 정본이다.
+            "reason": (it.get("detail") or {}).get("reason"),
+            "confidence": it.get("confidence"),
+        }
+        for stage in (charges_result["construction"], charges_result["sale"])
+        for it in (stage.get("items") or [])
+    ]
+
+
 def _null_block(kind: str) -> dict[str, Any]:
     """미확보 축의 표준 null 블록(키는 고정 — 프론트가 안정적으로 소비)."""
     if kind == "land":
@@ -689,24 +721,7 @@ async def build_rough_scenario(
                 in_infra_charge_zone=parse_bool_flag(overrides.get("in_infra_charge_zone")),
             )
             charges_total = int(charges_result["total_won"])
-            # ★2026-08-26 — `base_won`·`rate`·`reason` 을 **버리지 않는다**(additive).
-            #   종전 이 압축이 그 셋을 떨어뜨려, 엔진(`utility_stage_engine`·`sale_stage_engine`)이
-            #   **갖고 있는 과표·요율·사유가 화면에 닿기 전에 사라졌다.** 사용자는 부담금 금액만
-            #   보고 *왜 이 금액인지* 물을 곳이 없었고, `unavailable` 강등 사유도 마찬가지였다.
-            #   ★유료·비가역 산출물 규율 §4 — *"실패는 사유를 표면까지 싣는다. 진단 불가는 장애다."*
-            #   여기서 값을 **만들지 않는다** — 엔진이 준 것만 옮기고, 없으면 None 이다(무목업).
-            _compact = [
-                {"code": it.get("code"), "name": it.get("name"),
-                 "amount_won": it.get("amount_won"), "borne_by": it.get("borne_by", "developer"),
-                 # 과표(수량)·요율(단가) — 원장에서 `수량 × 단가 = 금액` 을 재현하는 재료.
-                 "base_won": it.get("base_won"),
-                 "rate": it.get("rate"),
-                 # 사유 — 미부과·미등록·강등의 근거. `detail.reason` 이 정본이다.
-                 "reason": (it.get("detail") or {}).get("reason"),
-                 "confidence": it.get("confidence")}
-                for stage in (charges_result["construction"], charges_result["sale"])
-                for it in (stage.get("items") or [])
-            ]
+            _compact = compact_charge_items(charges_result)
             charges_block = {
                 "total_won": charges_total,
                 "construction_stage_won": int(charges_result["construction"]["total_won"]),

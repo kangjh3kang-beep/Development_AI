@@ -23,7 +23,10 @@ from app.services.feasibility.legacy_ledger import (
     CHECK_TOLERANCE_WON,
     build_legacy_ledger,
 )
-from app.services.feasibility.rough_feasibility_orchestrator import _null_block
+from app.services.feasibility.rough_feasibility_orchestrator import (
+    _null_block,
+    compact_charge_items,
+)
 
 
 # ── 픽스처 ───────────────────────────────────────────────────────────────
@@ -270,3 +273,53 @@ def test_basis_kind_splits_data_from_structural():
     by_key = {i["key"]: i for s in full["sections"] for g in s["groups"] for i in g["items"]}
     for key in ("sale_revenue", "land_acquisition", "construction_direct"):
         assert by_key[key]["basis_kind"] == "data", f"{key}: 구조 폴백으로 때웠다"
+
+
+# ── 축 ⑥ 상류 — **엔진이 준 과표·요율·사유를 압축이 버리지 않는가** ───────────────
+#   ★변이 실증(2026-08-26): 이 축이 없을 때 `_compact` 가 `base_won` 을 다시 버리는 변이가
+#     **SURVIVED** 했다. 원장 테스트의 픽스처가 그 값을 **이미 갖고** 있어서, 압축 층을
+#     한 번도 태우지 않았기 때문이다 — 테스트가 스스로 생산자 역할을 한 형태다.
+def _charges_result() -> dict:
+    """단계별 세금엔진 산출 모양(과표·요율·사유·신뢰도를 **엔진이 준다**)."""
+    return {
+        "construction": {"items": [
+            {"code": "B03", "name": "상수도 원인자부담금", "amount_won": 45_000_000,
+             "base_won": 300, "rate": 150_000, "borne_by": "developer"},
+            {"code": "B01", "name": "광역교통시설부담금", "amount_won": None,
+             "base_won": None, "rate": None, "confidence": "unavailable",
+             "detail": {"reason": "표준건축비 미설정 — 산정 불가"}},
+        ]},
+        "sale": {"items": [
+            {"code": "C01", "name": "부가가치세", "amount_won": 9_000_000_000,
+             "base_won": 90_000_000_000, "rate": 0.1, "borne_by": "buyer"},
+        ]},
+    }
+
+
+def test_compact_preserves_base_rate_and_reason():
+    """★과표·요율·사유가 **살아서** 나온다 — 버리면 원장의 「수량×단가」가 통째로 죽는다."""
+    out = {i["code"]: i for i in compact_charge_items(_charges_result())}
+    assert out["B03"]["base_won"] == 300
+    assert out["B03"]["rate"] == 150_000
+    assert out["B01"]["reason"] == "표준건축비 미설정 — 산정 불가"
+    assert out["B01"]["confidence"] == "unavailable"
+
+
+def test_compact_does_not_fabricate_missing_values():
+    """★엔진이 안 준 것은 `None` 이다 — 0 이나 빈 문자열로 채우지 않는다(무목업)."""
+    out = {i["code"]: i for i in compact_charge_items(_charges_result())}
+    assert out["B01"]["base_won"] is None and out["B01"]["rate"] is None
+    assert out["B01"]["amount_won"] is None
+    # 대조군 — 준 것은 그대로 산다(전부 None 으로 만드는 구현이 통과하지 않게).
+    assert out["C01"]["base_won"] == 90_000_000_000
+
+
+def test_compact_output_feeds_the_ledger_end_to_end():
+    """★★상류(압축) → 하류(원장)가 **실제로 이어진다** — 픽스처가 아니라 압축 산출로 원장을 만든다."""
+    items = compact_charge_items(_charges_result())
+    led = build_legacy_ledger({"charges": {"total_won": 45_000_000, "items": items}})
+    by_key = {i["key"]: i for s in led["sections"] for g in s["groups"] for i in g["items"]}
+    assert by_key["charge_b03"]["qty"] == 300, "압축이 과표를 흘렸다"
+    assert by_key["charge_b03"]["unit_price"] == 150_000, "압축이 요율을 흘렸다"
+    assert "표준건축비 미설정" in (by_key["charge_b01"]["note"] or ""), "압축이 사유를 흘렸다"
+    assert "charge_c01" not in by_key, "수분양자 부담분이 원장에 실렸다"
