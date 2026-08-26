@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from app.services.feasibility.legacy_ledger import build_legacy_ledger
@@ -116,3 +117,34 @@ def test_two_populations_ledger_absent_means_no_ledger_blocks():
     # 대조군 — 기존 「총사업비 구성」은 **둘 다** 있어야 한다(과잉 삭제가 아님을 확인).
     assert any(t and "총사업비" in t for t in with_l)
     assert any(t and "총사업비" in t for t in without)
+
+
+def test_report_separates_qty_label_from_unit():
+    """★★인쇄본에서도 **단위와 라벨을 섞지 않는다** — #867 이 고친 것이 보고서에선 무잠금이었다.
+
+    라이브 실측(2026-08-26)에서 화면에 `19,027,218,768토지비 + 공사비 × 0.06737` 이 나갔다.
+    `#867` 이 화면·보고서 양쪽을 고쳤는데 **락은 화면에만 달았다** — 보고서 쪽은 되돌려도
+    아무것도 빨개지지 않았다. 이 세션 **여섯 번째** 같은 형태(고치고 안 잠금)다.
+
+    ★인쇄본은 **제출물**이라 더 오래 남는다. 화면은 새로고침하면 되지만 PDF 는 회의 탁자에 간다.
+    """
+    tables = _tables(_section5(_scenario()))
+    title = next(t for t in tables if t and "원장" in t)
+    blk = tables[title]
+    col = blk.headers.index("산출내역(수량 × 단가)")
+    calcs = [str(r[col]) for r in blk.rows if r[col]]
+    assert calcs, "산출내역이 전부 비었다 — 검사 전제가 깨졌다"
+
+    labelled = [c for c in calcs if "토지비 + 공사비" in c]
+    assert labelled, "라벨이 인쇄본에서 사라졌다 — 「무엇의 수량인가」를 잃었다"
+    for c in labelled:
+        assert "(토지비 + 공사비)" in c, f"라벨을 괄호로 떼지 않았다: {c}"
+        # ★숫자에 문장이 달라붙는 형태 자체를 막는다(그게 원래 결함의 모양이다).
+        assert not re.search(r"\d토지비", c), f"숫자에 라벨이 붙었다: {c}"
+
+    # ★두 모집단 — 라벨 없는 행(택지비·공사비)은 괄호가 없다.
+    unlabelled = [c for c in calcs if "토지비 + 공사비" not in c]
+    assert unlabelled, "라벨 없는 행이 하나도 없다 — 두 모집단이 안 갈린다"
+    assert all("(" not in c for c in unlabelled), (
+        f"라벨이 없는데 괄호를 달았다(항상 다는 구현이 통과하지 않게): {unlabelled}"
+    )
