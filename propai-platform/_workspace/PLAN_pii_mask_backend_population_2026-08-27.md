@@ -49,6 +49,39 @@
 - **위양성 0 은 「오늘의」 사실이다.** 이 락의 가치는 *미래* 방어이지 현재 결함 수정이 아니다.
 - 라이브 확증 불필요(테스트 전용 변경).
 
+## 3-b. ★독립 리뷰가 잡은 것 — **내 처방을 내 락이 막고 있었다**
+
+리뷰 판정 **REQUEST CHANGES**(치명 1 · 중대 2). 전부 봉합했다.
+
+| # | 무엇 | 근거 | 봉합 |
+|---|---|---|---|
+| **C1** | ★**교착**: `test_backend_payload_keys_survive_masking` 이 빨개지면 그 실패 메시지가 *"`_DIAGNOSTIC_SAFE_KEYS` 에 정확일치로 추가하라"* 고 지시하는데, `test_exemptions_are_derived_not_invented` 는 **여전히 `FRONTEND_PAYLOAD_KEYS` 만** 모집단으로 써서 백엔드 전용 면제를 **"발명"으로 신고**한다. 남는 길이 **락을 지우는 것뿐**이었다. ★`#906` 리뷰가 잡은 *"(정)은 파생형인데 (역)이 목록형"* 의 **거울상 재발** | 변이 M12(위양성 상황 재현 + PR 이 지시한 처방 적용) → `FAILED …invented` | 역방향 모집단을 `FRONTEND ∪ BACKEND ∪ DYNAMIC`(모듈 상수 `DERIVED_PAYLOAD_KEYS`)으로 |
+| **H1** | ★**래퍼 경유가 모집단 밖이고 조용했다**: `capture_service.record_fallback(service, kind, *, severity, **meta)` 이 `payload: {"kind": kind, **meta}` 로 **임의 키를 그대로** 싣는데, 그 호출은 `capture_service.py` 안이라 `direct=False` 로 걸러져 **모집단에도 `unresolved` 에도 안 들어갔다** | 변이 M9(생산자에 `owner_name="X"` 주입) → **SURVIVED** | 파생 축에 `record_fallback` 편입(`kind` + 명시 kwargs, `severity` 제외) · `**meta` 전달은 **`unresolved` 로 신고** |
+| **H2** | ★**`**` 언패킹·비상수 키가 조용히 버려졌다** — `unresolved` 로도 안 갔다. 같은 파일이 `strict=True` 로 *"조용히 잘리지 않고 터진다"* 고 적어 놓고 **이 줄이 조용히 잘랐다** | 변이 M8(`**{"owner_name": …}` 주입) → **SURVIVED** | payload·props **두 층 모두** 신고로 전환 |
+| **L1** | §3 이 불완전하고 **한 항목은 틀린 라벨** | 리뷰 실측 | 아래 §3-c |
+| **L2** | 하한만 걸려 **과대수집을 못 잡았다**(그 방어를 미해석 단언이 *오늘의 우연*으로 대신) | 리뷰 지적 | `19 <= BACKEND_CALLS <= 26` **양방향** + 실패 메시지에 **두 가능성**(수집기 사망 / 정당한 삭제)을 명시 |
+| **L3** | 양성 대조군 `cache_hit` 이 **단일 출처** | 리뷰 실측 | 세 대조군의 **두께 차이**를 주석에 명시 |
+
+★**봉합이 새로 찾아낸 것**: `base_interpreter.py:410` 의 **props 층에 실제 `**` 언패킹**이 있었다
+(`**({"latency_ms": …} if … else {})`). payload 키가 아니라 형제 필드지만, 초판 파서는 그것을
+**보지도 신고하지도 못했다.** 이제 사유와 함께 예외에 오른다.
+
+## 3-c. 여전히 검증하지 못한 것 (리뷰 반영 · **틀린 라벨 정정 포함**)
+
+- ★**정정**: 초판 §3 이 *"동적 payload 6종은 … **AST 로 파생되지 않는다**"* 라고 적었는데
+  **틀린 라벨**이다. `base_interpreter.py:399-408` 은 리터럴 대입·`update()`·subscript 뿐이라
+  **정적 파생은 가능**하고, **이 파생기의 현재 형태**(인라인 dict 리터럴만)로는 안 잡힐 뿐이다.
+  두 문장은 다음 사람에게 **다른 결정**을 유도한다(§증거 규율 7 · §C10).
+- **`mask_pii` 소비처는 `record_event` 만이 아니다 — 셋이다**: ①`record_event`(+`record_fallback`)
+  ②`routers/growth.py:558` `mask_pii(fb.payload)`(`POST /growth/feedback` · `payload: dict | None`
+  이라 **모집단이 임의** · 오늘 `payload` prop 을 넘기는 프론트 소비처 0개라 **실질 공집합**)
+  ③`learning_loop._summarize_payload`(`analysis_ledger` — **정적 파생 불가**). ②③ 은 **미측정**이다.
+- **2단 래퍼 `_record_engine_fallback(kind, **meta)`** 는 정적으로 못 따라간다. 오늘 싣는 키는
+  `reason`·`path` 이나 **시그니처가 `**meta` 라 모집단이 열려 있다** — 값이 아니라 **그 사실**을 기록했다.
+- `/growth/events` 는 **임의 HTTP 클라이언트**의 임의 키를 받는다 — *"우리 앱 `trackEvent` 가 유일한
+  생산자"* 라는 **전제 하에서만** 프론트 파생이 그것을 덮는다(예외 주석에 전제를 명시했다).
+- **위양성 0 은 「오늘의」 사실**이다. 이 락의 가치는 *미래* 방어다.
+
 ## 4. 되돌리기 경로
 
 단일 커밋 revert. **테스트 파일 하나**뿐이고 런타임·계약·스키마 변경이 없다.
