@@ -102,10 +102,14 @@ describe("요금제 — 숫자는 서버에서 온다", () => {
   });
 
   it("★없는 값은 **행을 만들지 않는다**(0 으로 지어내지 않는다)", async () => {
-    get.mockResolvedValue({ ...STATUS, billed_krw: null, budget_krw: null, included_budget_krw: null });
-    const { container } = render(<SubscriptionPanel />);
+    // ★첫 판에서 이 케이스는 **단언이 아니라 런타임 크래시**로 rc=1 을 냈다
+    //   (`Tests 7 passed · Errors 1`). 크래시로 잡힌 것은 락이 번 것이 아니다 —
+    //   구현이 크래시만 피하면(0 을 채우면) 통과한다. **사용량 영역 자체**를 단언한다.
+    get.mockResolvedValue({ ...STATUS, billed_krw: null, budget_krw: null, included_budget_krw: null, service_fee_krw: null });
+    render(<SubscriptionPanel />);
     await waitFor(() => expect(get).toHaveBeenCalled());
-    expect(container.textContent).not.toContain("이번 달 사용액");
+    const region = await screen.findByTestId("billing-usage");
+    expect(region.textContent?.trim(), "값이 없는데 사용량 행을 그렸다").toBe("");
   });
 
   it("★오류를 삼키지 않는다", async () => {
