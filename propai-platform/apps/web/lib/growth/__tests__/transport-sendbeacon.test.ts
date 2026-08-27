@@ -124,6 +124,16 @@ describe("★전송 — 프로덕션 분기(sendBeacon)를 실제로 태운다",
     expect(fetches.length, "예외 뒤 폴백이 없다").toBe(1);
   });
 
+  it("★readBlob 의 **조용한 오답 가드**가 실제로 발화한다", async () => {
+    // ★변이 실측: 이 케이스가 없으면 `JSON.parse(text)` 가드를 지워도 **생존**했다.
+    //   그 가드는 `new Response(blob).text()` 처럼 **던지지 않고 `"[object Blob]"` 를 주는**
+    //   읽기 방법을 채택하는 것을 막는다 — 그런 방법을 쓰면 **통과하지만 아무것도 안 재는**
+    //   테스트가 된다. 가드 자신을 잠그지 않으면 그 방어가 장식이다.
+    await expect(readBlob(new Blob(["[object Blob]"]))).rejects.toThrow(/JSON 이 아니다/);
+    // 두 모집단 — 정상 JSON 은 **통과해야** 한다(과잉 억제 방지).
+    await expect(readBlob(new Blob(['{"a":1}']))).resolves.toBe('{"a":1}');
+  });
+
   it("★D 음성 대조군 — 보낼 것이 없으면 **아무 경로도** 타지 않는다", () => {
     installTransport(true);
     flush(); // 링이 비어 있다
