@@ -8,6 +8,8 @@
  * 모킹 관례는 `components/mypage/__tests__/CoinsClient.test.tsx` 를 따른다.
  */
 
+import { StrictMode } from "react";
+
 import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -57,7 +59,14 @@ beforeEach(() => {
 describe("결제 승인 화면", () => {
   it("★서버에 승인을 **한 번만** 요청한다(중복 승인 유도 금지)", async () => {
     post.mockResolvedValue({ order_no: "CO20260827-AAAA", coin_krw: 50000 });
-    render(<PaymentSuccessClient {...PROPS} />);
+    // ★**StrictMode 로 렌더한다.** 기본 `render` 는 effect 를 한 번만 돌려서
+    //   `sent.current` 가드를 지우는 변이가 **SURVIVED** 했다(실측 2026-08-27).
+    //   Next.js 개발 모드는 StrictMode 라 실제로는 두 번 돈다 — 그 조건을 만들어서 잰다.
+    render(
+      <StrictMode>
+        <PaymentSuccessClient {...PROPS} />
+      </StrictMode>,
+    );
     await waitFor(() => expect(post).toHaveBeenCalled());
     expect(post.mock.calls[0][0]).toBe("/billing/payments/toss/confirm");
     expect(post.mock.calls[0][1]).toMatchObject({
