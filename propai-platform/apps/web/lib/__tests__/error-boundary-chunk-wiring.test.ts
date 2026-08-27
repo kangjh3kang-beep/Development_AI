@@ -64,6 +64,32 @@ const CHUNK_RECOVERY_DEBT = new Set([
 describe("에러 경계 — 청크 자동복구 전수 배선", () => {
   const files = boundaries();
 
+  it("★전제: 파생 축이 **클래스 경계까지** 잡는다(파일명 축으로 좁아지면 실패)", () => {
+    // ★변이 실측: 축을 파일명으로 되돌려도 **생존**했다 — 부채 목록은 「건너뛰기」라
+    //   대상이 사라지면 조용히 통과한다. 쌍둥이 락에는 이 단언이 있는데 형제엔 없었다.
+    const names = files.map((f) => relative(WEB_ROOT, f));
+    expect(names).toContain("components/common/MapShell.tsx");
+    expect(names).toContain("components/projects/HubErrorBoundary.tsx");
+  });
+
+  it("★죽은 부채는 실패시킨다 — 이미 배선된 것을 부채로 남기면 다음 사람이 오독한다", () => {
+    // ★내 커밋이 이것을 **선언만** 하고 구현하지 않았다(변이 N2 생존). 선언과 산출물이 갈리면
+    //   리뷰어와 다음 세션이 이미 된 것으로 읽는다(§F-24).
+    const names = new Set(files.map((f) => relative(WEB_ROOT, f)));
+    const notABoundary = [...CHUNK_RECOVERY_DEBT].filter((d) => !names.has(d));
+    expect(notABoundary, `부채 목록에 경계가 아닌 항목: ${notABoundary}`).toEqual([]);
+
+    const alreadyWired = [...CHUNK_RECOVERY_DEBT].filter((d) =>
+      /tryRecoverFromChunkError\s*\(/.test(
+        __stripCommentsForScan(readFileSync(join(WEB_ROOT, d), "utf8"), d),
+      ),
+    );
+    expect(
+      alreadyWired,
+      `이미 배선됐는데 부채로 남아 있다(목록에서 지울 것): ${alreadyWired}`,
+    ).toEqual([]);
+  });
+
   it("전제: 에러 경계를 실제로 찾았다(공허한 초록 방지)", () => {
     expect(files.length, "에러 경계를 하나도 못 찾았다 — 조회기가 죽었다").toBeGreaterThan(5);
   });
