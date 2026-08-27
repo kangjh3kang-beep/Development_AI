@@ -74,6 +74,32 @@
   ★**B 는 인위적 상한 시뮬레이션이다**(청크를 강제로 전부 끊었다). **자연발생 빈도는 미측정**이며,
   그것을 재기 전에는 그 처방의 비용/편익을 판정할 수 없다.
 
+- ★**독립 리뷰가 잡은 것 — 내 자기평가가 틀렸다.** 초판에서 *"변이 6/6 CAUGHT(두 층)"* 이라고
+  썼는데, **내가 고른 변이에만 참**이었다. 리뷰가 넣은 변이 6종 중 **5종이 생존**했다:
+  死코드(`if (String(1)==="2") report(…)`) · **별칭 임포트**(`trackEvent as trackEventAlias`) ·
+  `message`/`severity`/`digest` 삭제. 근본은 **경계 컴포넌트를 임포트·렌더하는 테스트가 0건**이라
+  그 층이 어떤 변이든 자동 생존이었던 것이다.
+  → 봉합: `boundary-render-delivery.test.tsx`(경계를 **실제로 렌더**) 신설 · (역) 락을
+  **임포트 선언**으로 전환(별칭 우회 차단) · payload 3필드 못 박음.
+  ★**남는 교훈**: 「N/N CAUGHT」를 말하기 전에 **몇 개 층에 넣었는지**를 먼저 답해야 한다.
+
+- ★**파생 축이 「에러 경계」가 아니라 「파일명 `error.tsx`」였다**(독립 리뷰 적발).
+  목적 기반으로 다시 조회하니(`getDerivedStateFromError|componentDidCatch` 전수) 클래스 경계
+  **2개가 축 밖**이었다 — `components/common/MapShell.tsx`(오류를 **가둔다** → 상위 `error.tsx` 가
+  구조적으로 볼 수 없다 · 소비처 8곳 · 지도/타일은 최빈 파손면) ·
+  `components/projects/HubErrorBoundary.tsx`(`console.error` 만 = 브라우저 밖으로 안 나감).
+  → 봉합: 둘 다 배선하고 **락의 파생 축을 「경계 훅을 가진 파일 ∪ `error.tsx`」로 넓혔다.**
+  축이 좁아지면 즉시 실패하도록 **전제 케이스**를 따로 뒀다.
+
+- **첫 청크 오류는 여전히 텔레메트리 0건**(리뷰 M4 · **미수정 부채**). 경계 10곳 모두
+  `if (tryRecoverFromChunkError(error)) return;` 이 보고기 **앞**에 있어, 배포 직후 열린 탭의
+  첫 청크 404 는 한 건도 안 남는다. `#893`·`#898` 이 정확히 그 자리였다.
+
+- **`registerWebVitals()` 익명 `visibilitychange` 리스너 누수**(리뷰 M2 · **선행 결함이나 이 PR 이
+  도달 경로를 넓힌다**). `teardownEventCollector` 는 `handleVisibility` 만 제거하고 익명 3개는
+  영구 잔존한다. 케이스 ②(teardown 뒤 보고기가 `initEventCollector()` 재실행)에서 3개가 더 붙는다.
+  **미수정** — 이 PR 범위 밖이나 부채로 명시한다.
+
 - **`promise_rejection` analyzer 소비처 0건**(독립 렌즈가 목적 기반 전수로 확증 — `analyzer.py` 의
   분석함수 6종 `WHERE event_type IN (…)` 전수에 부재. 진입점 `main.py:665` 는 실재하므로
   *"라우터만 보고 미배선"* 함정은 아니다). **별건 부채** — 이 PR 범위 밖.
