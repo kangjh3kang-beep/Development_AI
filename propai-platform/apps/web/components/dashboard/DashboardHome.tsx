@@ -126,10 +126,21 @@ const creationProducts: CreationProduct[] = [
     title: "실거래 신고내역 보고서",
     routeId: "realtx-report",
     icon: FileSearch,
-    intent: "프로젝트 필지의 실거래 신고내역을 법정동 단위로 모아 해제·직거래·등기 현황을 정리합니다.",
+    // ★**등기·법인을 말하지 않는다** — 이 패널은 `prop_type: "land"` 고정인데(RealtxReportPanel:67,117)
+    //   MOLIT **토지** 응답 원문에는 `rgstDate`·`buyerGbn`·`slerGbn` 이 **아예 없다**
+    //   (원문 키 실측: land 16키 ✘ / apt 32키 ◎ · 대조군 `cdealType` 양쪽 존재 —
+    //    `tasks/realtx_sync_task.py:88-108`). 집계는 그 필드가 비면 세지 않으므로 land 에서
+    //   **항상 0** 이다. 라이브 확인(2026-08-27 · 강남구 6개월):
+    //     registered=0 · registered_pct=0.0 · corporate_buyer=0 · corporate_seller=0
+    //     cancelled=1 · direct=52 · brokered=9 · share_deals=45   ← 이 넷은 실제로 나온다
+    //   ★「0%」를 광고하면 사용자가 그것을 **관측**으로 읽는다 — 실제는 **원천 필드 부재**다.
+    //   초판은 여기에 "등기 현황"·"등기 비율, 법인 거래"를 적었고 독립 리뷰가 잡았다.
+    intent: "프로젝트 필지의 실거래 신고내역을 법정동 단위로 모아 해제·직거래·지분 거래를 정리합니다.",
     inputs: "토지조서에 필지가 담긴 프로젝트",
-    result: "해제·직거래·등기 비율, 법인 거래, 거래 목록 (PDF·PPTX·DOCX)",
-    time: "약 1분",
+    result: "해제·직거래·지분 비율, 거래 목록 (PDF·PPTX·DOCX)",
+    // ★실측값이다(추정 아님): 1시군구 6콜 0.81초 · 3시군구 18콜 1.14초.
+    //   조회는 `(시군구, 월)` 로 접히므로 필지 수와 무관하다(응답 `meta.molit_calls`).
+    time: "약 5초",
     tone: "coral",
   },
 ] as const;
