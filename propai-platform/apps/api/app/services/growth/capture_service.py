@@ -35,6 +35,25 @@ _FLUSH_LIMIT = 500
 # user_hash 캐시(같은 user_id 반복 해시 비용 절감, 프로세스 로컬).
 _HASH_CACHE: dict[str, str] = {}
 
+# ★**진단 전용 안전 키(정확일치)** — `_PII_KEYS` 부분일치보다 **먼저** 본다.
+#
+# 왜 필요한가(2026-08-27 실측 · 원본 함수를 그대로 실행해 확인): `_PII_KEYS` 에 `"name"` 이 있고
+# 판정이 **부분일치**(`p in key_l`)라 **`"name" in "filename"` 이 참**이다. 그래서 조기 오류 포착이
+# 애써 싣는 `filename` 이 **적재 시점에 `[redacted]`** 되어 왔다 — 진단 불가는 그 자체로 장애다.
+# 프론트가 보내는 payload 키를 파생형으로 전수(23개) 태운 결과 위양성은 **이 하나**였다.
+#
+# ★**부분일치를 「토큰경계 일치」로 바꾸는 것이 가장 먼저 떠오르는 처방인데, 실측으로 기각했다.**
+#   위양성은 12/16 → 8/16 로만 줄고 **PII 누출을 5건 새로 만든다** —
+#   `username`·`firstname`·`lastname`·`nickname`·`realname` 이 전부 통과로 바뀐다(단일 토큰이라
+#   `"name"` 과 토큰 일치하지 않는다). **매처를 약화시키지 않는다.** 미지의 키는 계속 fail-safe 로
+#   redact 하고, **실측으로 확인된 진단 키만** 정확일치로 면제한다.
+#   → 이 결정은 `tests/test_pii_mask_diagnostic_keys.py` 가 잠근다(그 5개 키의 redact 를 못 박아,
+#     누가 나중에 매처를 "개선"하면 즉시 빨개진다).
+#
+# ★한계(정직): 이 목록은 **프론트 이벤트 모집단**에서 파생했다. `learning_loop._summarize_payload`
+#   가 태우는 `analysis_ledger` payload 키 모집단은 **미측정**이므로 거기엔 아직 위양성이 남아 있을 수 있다.
+_DIAGNOSTIC_SAFE_KEYS = frozenset({"filename"})
+
 # payload 에서 마스킹할 민감 키(부분일치, 소문자 비교).
 _PII_KEYS = (
     "email", "phone", "tel", "mobile", "name", "addr", "address", "jumin",
@@ -95,6 +114,7 @@ def _mask_str(value: str) -> str:
 def mask_pii(obj: Any, _depth: int = 0) -> Any:
     """payload 의 PII 를 재귀 마스킹한다.
 
+    - `_DIAGNOSTIC_SAFE_KEYS`(정확일치)는 면제 — 진단 전용 키가 부분일치에 걸리는 위양성을 막는다.
     - 민감 키(_PII_KEYS 부분일치)의 값은 통째로 [redacted].
     - 그 외 문자열 값은 내부 패턴(이메일/전화/주민번호)만 치환.
     - dict/list 재귀(과도한 깊이는 방어적으로 중단).
@@ -105,7 +125,10 @@ def mask_pii(obj: Any, _depth: int = 0) -> Any:
         masked: dict[str, Any] = {}
         for k, v in obj.items():
             key_l = str(k).lower()
-            if any(p in key_l for p in _PII_KEYS):
+            # ★정확일치 안전 키가 부분일치보다 **먼저**다(위 `_DIAGNOSTIC_SAFE_KEYS` 주석 참조).
+            if key_l in _DIAGNOSTIC_SAFE_KEYS:
+                masked[k] = mask_pii(v, _depth + 1)
+            elif any(p in key_l for p in _PII_KEYS):
                 masked[k] = _REDACTED
             else:
                 masked[k] = mask_pii(v, _depth + 1)
