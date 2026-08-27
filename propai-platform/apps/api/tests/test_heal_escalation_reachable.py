@@ -386,6 +386,27 @@ def test_dedup_query_keys_on_both_axes():
     assert "status = 'open'" in src
 
 
+def test_escalate_insert_and_dedup_read_agree_on_metrics_shape():
+    """★억제 질의가 읽는 키를 **INSERT 가 실제로 그 이름으로 쓰는가.**
+
+    `_escalate` 는 `metrics_json` 에 `{"action_type": …, "trigger_key": …}` 를 쓰고,
+    같은 함수의 억제 질의는 `metrics_json->>'action_type'`·`->>'trigger_key'` 로 읽는다.
+    한쪽 이름만 바뀌면 **억제가 영원히 안 걸리고** 한 트리거가 화면을 채운다
+    (드라이런에서 캡 도달 24건 중 18건이 한 트리거였다).
+
+    ★이건 `_record_blocked`↔`_blocked_count` 와 **같은 계약 클래스**다 —
+      스텁이 SQL 을 실행하지 않으므로 어긋나도 초록이다.
+    """
+    src = inspect.getsource(H._escalate)
+    # 쓰기: 두 키가 **최상위**에 그 이름으로
+    assert '"action_type": action_type' in src
+    assert '"trigger_key": trigger_key' in src
+    # 읽기: 같은 이름을 **최상위**에서(`->'params'->>` 같은 중첩이면 안 된다)
+    assert "metrics_json->>'action_type'" in src
+    assert "metrics_json->>'trigger_key'" in src
+    assert "metrics_json->'params'" not in src, "억제가 존재하지 않는 중첩 경로를 읽는다"
+
+
 def test_exported_names_actually_exist():
     """`__all__` 에 적은 이름이 실재하는지 — 오타는 `import *` 에서만 터진다."""
     for name in H.__all__:
