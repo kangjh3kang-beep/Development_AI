@@ -59,7 +59,7 @@ if (!EMAIL || !PASSWORD) {
   process.exit(2);
 }
 
-import { countHydration, samePath, pickMutableText, decideControlVerdict, decideRunVerdict } from "../../lib/hydration/probe-text.mjs";
+import { countHydration, buildRunSample, isCollectorAlive, samePath, pickMutableText, decideControlVerdict, decideRunVerdict } from "../../lib/hydration/probe-text.mjs";
 
 async function login(page, base) {
   await page.goto(base + "/ko/login", { waitUntil: "domcontentloaded" });
@@ -161,13 +161,12 @@ if (MODE === "dump") {
     await page.evaluate(() => { setTimeout(() => { throw new Error("PROBE_ALIVE"); }, 0); });
     await page.waitForTimeout(600);
     const slice = errs.slice(before);
-    const rel = slice.filter((e) => !NOISE_RE.test(e));
     const finalUrl = page.url();
-    const collectorAlive = slice.some((e) => e.includes("PROBE_ALIVE"));
+    const collectorAlive = isCollectorAlive(slice);
     const hydration = countHydration(slice);          // ★control 과 **같은 계수 경로**
     const urlOk = samePath(finalUrl, path, BASE);      // ★한글 경로·쿼리에서 위양성 나던 것 교정
     console.log(JSON.stringify({ path, finalUrl, collectorAlive, urlOk, hydration,
-      sample: rel.slice(0, 3).map((x) => x.slice(0, 400)) }, null, 1));
+      sample: buildRunSample(slice) }, null, 1));
     // ★대조군을 **찍기만 하면 아무것도 막지 못한다** — 종료코드로 단언한다.
     //   막겠다고 적어 둔 실패(리다이렉트로 다른 페이지를 재고 "0건")가 조용히 통과하던 것을 고친다.
     if (!collectorAlive) { console.error(`★수집기가 죽었다(${path}) — 이 회차의 '0건'은 근거가 아니다`); invalid = true; }

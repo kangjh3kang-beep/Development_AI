@@ -9,6 +9,7 @@ import { AiTokenUsageDashboard } from "@/components/settings/AiTokenUsageDashboa
 import { WebhookManagementPanel } from "@/components/settings/WebhookManagementPanel";
 import { SubscriptionPanel } from "@/components/settings/SubscriptionPanel";
 import { GrowthDashboard } from "@/components/settings/GrowthDashboard";
+import { RealtxLayer2StatusPanel } from "@/components/settings/RealtxLayer2StatusPanel";
 
 /* ------------------------------------------------------------------ */
 /*  Tab definition                                                    */
@@ -223,7 +224,15 @@ export default function SettingsPage() {
       {activeTab === "ai-usage" && <AiTokenUsageDashboard />}
 
       {/* 성장 분석 — 관리자 전용(이 페이지는 isAdmin 게이트 통과 후에만 렌더). */}
-      {activeTab === "growth" && isAdmin && <GrowthDashboard />}
+      {activeTab === "growth" && isAdmin && (
+        <>
+          <GrowthDashboard />
+          {/* ★실거래 2층 관측 — 수집이 조용히 멈추는 것을 여기서 본다.
+              이 배선이 없으면 라우트가 「소비처 0」이 되어, 그 결함을 고치겠다는
+              PR 이 같은 결함을 한 층 위에서 재발시킨다(orphan_routes 래칫이 적발). */}
+          <RealtxLayer2StatusPanel />
+        </>
+      )}
 
       {activeTab === "webhooks" && <WebhookManagementPanel />}
 
