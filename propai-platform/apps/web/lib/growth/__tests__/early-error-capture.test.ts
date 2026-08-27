@@ -326,6 +326,48 @@ describe("★빌드 안전 — 보간 템플릿을 `+` 로 이으면 빌드가 �
   });
 });
 
+describe("★프로브 판정 — 양성/음성을 **둘 다** 태운다(신호 반전 방지)", () => {
+  /**
+   * ★독립 리뷰가 실증한 것: 초판 프로브는 `drain` 이 `closed=true` 로 닫은 뒤 카나리를 던져
+   *   **고쳐진 배포본에서도 `exit 1`("죽음")** 을 냈다. `verdict:true` 가 나오는 유일한 조건이
+   *   *"수집기가 안 돈 페이지"* 였다 — **신호가 반전돼 있었다.**
+   *   그리고 그때는 **양성 방향을 태울 수 없었다**(고친 빌드가 배포 전이라). 그래서 판정을
+   *   순수 함수로 꺼내 여기서 **파티션형**으로 잠근다.
+   */
+  it("★정상 — 수집기가 인계한 상태(closed=true)는 **살아 있다**", async () => {
+    const { decideEarlyCaptureVerdict } = await import("@/lib/hydration/probe-text.mjs");
+    expect(decideEarlyCaptureVerdict({
+      runtime: { exists: true, hasBuf: true, closed: true },
+      caught: { grew: false, thrown: false },   // ← 닫혔으니 카나리는 안 던진다
+    }), "이 케이스가 false 면 고쳐진 배포본을 '죽음'으로 오보한다").toBe(true);
+  });
+
+  it("정상 — 아직 안 닫혔는데 실제로 담기면 살아 있다", async () => {
+    const { decideEarlyCaptureVerdict } = await import("@/lib/hydration/probe-text.mjs");
+    expect(decideEarlyCaptureVerdict({
+      runtime: { exists: true, hasBuf: true, closed: false },
+      caught: { grew: true, thrown: true },
+    })).toBe(true);
+  });
+
+  it("★음성 — 전역이 없으면 죽음(빌드가 잘랐거나 미배포)", async () => {
+    const { decideEarlyCaptureVerdict } = await import("@/lib/hydration/probe-text.mjs");
+    // 실제 라이브 관측값(2026-08-27 · #893 배포본)이 정확히 이 모양이었다.
+    expect(decideEarlyCaptureVerdict({
+      runtime: { exists: false, hasBuf: false, closed: null },
+      caught: { grew: false, thrown: false },
+    })).toBe(false);
+  });
+
+  it("★음성 — 전역은 있는데 안 닫히고 담기지도 않으면 죽음", async () => {
+    const { decideEarlyCaptureVerdict } = await import("@/lib/hydration/probe-text.mjs");
+    expect(decideEarlyCaptureVerdict({
+      runtime: { exists: true, hasBuf: true, closed: false },
+      caught: { grew: false, thrown: true },
+    })).toBe(false);
+  });
+});
+
 describe("배선(소스) — 루트 layout 이 그 스크립트를 **실제로 렌더**한다", () => {
   /**
    * ★이 축이 없으면 "상수는 있는데 페이지에 안 실린" 상태가 **전부 초록**이다.
