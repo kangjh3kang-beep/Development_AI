@@ -139,24 +139,27 @@ class TestB02SchoolSite:
 
 
 class TestB03WaterSupply:
-    def test_oasan_reference(self):
-        """오산 1624세대 참조: 120만원/세대 × 1624 ≈ 19.49억."""
+    def test_withheld_without_sourced_rate(self):
+        """★종전 이 테스트는 *"오산 1624세대: 120만원/세대 × 1624 ≈ 19.49억"* 을 참조하며
+        `amount_won > 0` 만 단언했다 — 그 단가는 **출처 없는 생성값**이었고, 주석은
+        *"data에 typo(1,200,000원으로 해석)"* 라는 **낡은 사실**까지 담고 있었다.
+        단언이 `> 0` 이라 그 typo 를 **구별할 수도 없었다.**
+        """
         result = calculate_b03_water_supply(
-            sido_name="경기", sigungu_name="오산시",
-            total_households=1624,
+            sido_name="경기", sigungu_name="오산시", total_households=1624,
         )
-        # 경기_오산시 = 120_0000 (data에 typo — 1,200,000원으로 해석)
-        assert result["amount_won"] > 0
+        assert result["amount_won"] == 0
+        assert result["detail"]["confidence"] == "unavailable"
 
 
 class TestB04Sewage:
-    def test_basic(self):
+    def test_withheld_without_sourced_rate(self):
         result = calculate_b04_sewage(
-            sido_name="서울", sigungu_name="강남구",
-            total_households=500,
+            sido_name="서울", sigungu_name="강남구", total_households=500,
         )
-        # 서울: 180,000원/세대 × 500 = 9000만
-        assert result["amount_won"] == 90_000_000
+        assert result["amount_won"] == 0, "종전 90,000,000원은 원/세대 × 세대수 (차원 오류)"
+        assert result["detail"]["confidence"] == "unavailable"
+        assert "㎥/일" in result["detail"]["reason"]
 
 
 class TestB05Electricity:
