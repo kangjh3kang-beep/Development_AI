@@ -753,6 +753,17 @@ type EffectorStatus = {
   undeclared: EffectorRow[];
   dormant_hours: number;
   telemetry_since?: string;
+  /** ★수집 파이프라인 건강 — 이 값이 나쁘면 위 표 전체를 믿을 수 없다. */
+  capture?: {
+    queue_depth: number;
+    max_queue: number;
+    max_sustained_per_sec: number;
+    requeued: number;
+    flush_failures: number;
+    lost_total: number;
+    /** ★분모가 0 이면 `null` — **0 이 아니다**(거짓 안심 방지). */
+    loss_rate_pct: number | null;
+  };
   summary: {
     declared: number;
     never_fired: number;
@@ -849,6 +860,50 @@ function EffectorSection() {
           {" "}· 휴면 기준 {data.dormant_hours}시간
         </p>
       </div>
+
+      {/* ★수집 건강 — **표보다 먼저** 온다. 입력이 새고 있으면 아래 표 전체가 거짓이다. */}
+      {data.capture ? (
+        <div
+          className={`rounded-xl border p-4 ${
+            data.capture.lost_total > 0
+              ? "border-[var(--status-error)] bg-[rgba(220,38,38,0.08)]"
+              : "border-[var(--line)] bg-[var(--surface-muted)]"
+          }`}
+          data-testid="capture-health"
+        >
+          <p className="text-sm text-[var(--text-primary)]">
+            수집 파이프라인{" "}
+            {data.capture.lost_total > 0 ? (
+              <strong className="text-[var(--status-error)]">
+                ★{data.capture.lost_total.toLocaleString("ko-KR")}건 유실
+              </strong>
+            ) : (
+              <span className="text-[var(--status-success)]">유실 없음</span>
+            )}
+            {/* ★분모가 0 이면 유실률을 **말하지 않는다** — "0%" 는 거짓 안심이다. */}
+            {data.capture.loss_rate_pct !== null ? (
+              <span className="text-[var(--text-tertiary)]">
+                {" "}({data.capture.loss_rate_pct}%)
+              </span>
+            ) : (
+              <span className="text-[var(--text-tertiary)]"> (아직 적재 없음 — 유실률 판정 불가)</span>
+            )}
+          </p>
+          <p className="mt-1 text-xs text-[var(--text-tertiary)]">
+            큐 {data.capture.queue_depth.toLocaleString("ko-KR")}/
+            {data.capture.max_queue.toLocaleString("ko-KR")} · 지속 처리 천장{" "}
+            {data.capture.max_sustained_per_sec}건/초 · 되돌림{" "}
+            {data.capture.requeued.toLocaleString("ko-KR")}건(유실 아님) · flush 실패{" "}
+            {data.capture.flush_failures.toLocaleString("ko-KR")}회
+          </p>
+          {data.capture.lost_total > 0 ? (
+            <p className="mt-2 text-xs font-semibold text-[var(--status-error)]">
+              ★유실이 있으면 아래 표의 「한 번도 발화 없음」·「휴면」을 믿을 수 없습니다 —
+              발화하지 않은 것과 발화 기록이 사라진 것이 같은 0 으로 보입니다.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="overflow-x-auto">
         <table className="w-full min-w-[640px] text-sm">

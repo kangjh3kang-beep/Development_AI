@@ -52,6 +52,11 @@ const STATUS = {
   ],
   dormant_hours: 72,
   telemetry_since: "2026-06-14",
+  // ★수집 건강 — 이 값이 나쁘면 위 표 전체를 믿을 수 없다.
+  capture: {
+    queue_depth: 12, max_queue: 10000, max_sustained_per_sec: 100,
+    requeued: 200, flush_failures: 3, lost_total: 0, loss_rate_pct: 0.0,
+  },
   summary: {
     declared: 3, never_fired: 1, dormant: 1, active: 1, undeclared: 1,
     product_reaching_declared: 1, product_reaching_active: 1,
@@ -165,5 +170,51 @@ describe("★라벨 정합 — 백엔드 상태 어휘에서 **파생**", () => 
     const states = new Set([...src.matchAll(/^STATE_[A-Z_]+ = "([a-z_]+)"/gm)].map((m) => m[1]));
     const ghosts = Object.keys(EFFECTOR_STATE_LABELS).filter((k) => !states.has(k));
     expect(ghosts, `백엔드에 없는 유령 라벨: ${ghosts.join(", ")}`).toEqual([]);
+  });
+});
+
+
+describe("★수집 건강 — 입력이 새면 위 표 전체가 거짓이다", () => {
+  it("되돌림은 **유실이 아니라고** 말한다(위양성도 결함)", async () => {
+    await openTab();
+    const el = await screen.findByTestId("capture-health");
+    const t = el.textContent ?? "";
+    expect(t).toContain("유실 없음");
+    expect(t).toContain("되돌림");
+    expect(t).toContain("200");
+    // ★되돌림 200 인데 「유실」이라 부르면 정상 복구가 장애로 보인다.
+    expect(t).not.toContain("★200건 유실");
+  });
+
+  it("★유실이 있으면 **아래 표를 믿지 말라고** 말한다", async () => {
+    get.mockImplementation((p: string) =>
+      p.startsWith("/growth/effectors")
+        ? Promise.resolve({
+            ...STATUS,
+            capture: { ...STATUS.capture, lost_total: 1234, loss_rate_pct: 2.5 },
+          })
+        : Promise.resolve({ insights: [], total: 0 }),
+    );
+    await openTab();
+    const t = (await screen.findByTestId("capture-health")).textContent ?? "";
+    expect(t).toContain("1,234");
+    expect(t).toContain("2.5");
+    // ★핵심 — 유실이 있으면 그 다음 표의 판정을 믿으면 안 된다고 **화면이 말한다**.
+    expect(t).toContain("믿을 수 없습니다");
+  });
+
+  it("★분모가 0 이면 유실률을 **말하지 않는다**(「0%」는 거짓 안심)", async () => {
+    get.mockImplementation((p: string) =>
+      p.startsWith("/growth/effectors")
+        ? Promise.resolve({
+            ...STATUS,
+            capture: { ...STATUS.capture, lost_total: 0, loss_rate_pct: null },
+          })
+        : Promise.resolve({ insights: [], total: 0 }),
+    );
+    await openTab();
+    const t = (await screen.findByTestId("capture-health")).textContent ?? "";
+    expect(t).toContain("판정 불가");
+    expect(t).not.toContain("(0%)");
   });
 });
