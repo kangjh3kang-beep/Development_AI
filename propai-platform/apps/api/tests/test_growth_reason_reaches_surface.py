@@ -92,6 +92,27 @@ def test_reason_tail_groups_identical_bases():
     assert "fail_pct·warn_pct" in n, "같은 사유의 필드가 묶이지 않았다"
 
 
+@pytest.mark.parametrize("payload,expect_tail", [
+    # 진짜 보류: 값이 없고 사유가 붙었다 → 사유를 싣는다
+    ({"down_pct": None, "down_pct_absent": "insufficient_coverage"}, True),
+    # ★값이 **있는데** 사유 표식만 남은 계약 위반(낡은 마커) → 「미측정」이라 말하면 안 된다
+    ({"down_pct": 5.0, "down_pct_absent": "insufficient_coverage"}, False),
+    # 사유 표식이 비어 있으면 보류가 아니다
+    ({"down_pct": None, "down_pct_absent": ""}, False),
+    # 아무 표식도 없다
+    ({"down_pct": 5.0}, False),
+])
+def test_reason_tail_only_for_genuinely_withheld_fields(payload, expect_tail):
+    """★**과잉 부착 방향**을 잠근다 — 한쪽만 걸면 반대 방향이 원리적으로 탐지 불가다.
+
+    `is_withheld` 게이트를 없애는 변이가 실제로 **생존**해서 추가한 락이다:
+    값이 있는 필드에까지 「미측정」을 붙이면, 이 PR 이 고치려던 바로 그 거짓말
+    (숫자 자리에 사실이 아닌 것을 넣는다)을 **반대 방향으로** 저지르게 된다.
+    """
+    note = A._withheld_note(payload)
+    assert bool(note) is expect_tail, note
+
+
 # ══════════════════════════════════════════════════════════════════════
 # ② 라우터가 스칼라 플래그 값을 삼키지 않는다
 # ══════════════════════════════════════════════════════════════════════
