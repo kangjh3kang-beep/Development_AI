@@ -43,7 +43,7 @@ from app.services.ai.llm_failure import (
 )
 
 
-class _NotFound(Exception):
+class _NotFoundError(Exception):
     """프로바이더 SDK 가 던지는 형태(타입 이름으로 갈리는 경로)."""
 
     __name__ = "NotFound"
@@ -80,7 +80,7 @@ def test_model_gone_variants(text: str) -> None:
 
 def test_notfound_type_is_model_gone() -> None:
     """타입으로도 갈린다 — 프로바이더가 문구를 바꿔도 큰 범주는 유지된다."""
-    e = _NotFound("something")
+    e = _NotFoundError("something")
     e.__class__.__name__ = "NotFoundError"
     assert classify_failure(e) == "model_gone"
 
