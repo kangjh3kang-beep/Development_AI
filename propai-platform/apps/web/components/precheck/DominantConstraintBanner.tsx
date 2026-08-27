@@ -16,25 +16,13 @@
 import { AlertTriangle, Ruler } from "lucide-react";
 
 import type { DominantConstraint } from "@/lib/satong-map-layers";
+import { riskLevelTextClass } from "@/lib/risk-level-style";
 
-/** severity → 색. protection_zone_severity SSOT의 5등급을 그대로 받는다(새 등급 정의 금지). */
-function severityColor(severity: string | null | undefined): string {
-  switch (severity) {
-    case "극히 높음":
-      return "var(--status-error)";
-    case "높음":
-      return "var(--status-error)";
-    case "중간":
-      return "var(--status-warning)";
-    case "보통":
-      return "var(--status-warning)";
-    case "낮음":
-      // ★R1 LOW: "낮음"은 실재하는 제약(경관 심의 등)이므로 '미상'과 같은 회색이면 안 된다.
-      return "var(--status-info)";
-    default:
-      return "var(--text-hint)";
-  }
-}
+// severity → 색은 **lib/risk-level-style 로 일원화**했다(2026-08-27).
+//   ★종전 로컬 switch 는 5등급을 **3색**으로 접었다(`극히 높음`=`높음`=error ·
+//     `중간`=`보통`=warning). SSOT 사다리가 **일부러 가른** 등급을 화면이 못 갈랐고,
+//     배지(ComprehensiveAnalysisPanel)가 5색이 되자 **같은 필지가 두 화면에서 다른 색**이
+//     될 판이었다. 한 곳을 고치면 전역이 따라오게 공용 판정을 쓴다.
 
 export function DominantConstraintBanner({
   constraint,
@@ -71,8 +59,7 @@ export function DominantConstraintBanner({
         <>
           <div className="flex items-center gap-1.5">
             <AlertTriangle
-              className="size-3.5 shrink-0"
-              style={{ color: severityColor(constraint?.severity) }}
+              className={`size-3.5 shrink-0 ${riskLevelTextClass(constraint?.severity)}`}
               aria-hidden
             />
             <span className="text-[11px] font-black uppercase tracking-[0.14em] text-[var(--text-hint)]">
@@ -80,11 +67,7 @@ export function DominantConstraintBanner({
             </span>
             {constraint?.severity ? (
               <span
-                className="rounded-full px-1.5 py-px text-[10px] font-black"
-                style={{
-                  color: severityColor(constraint.severity),
-                  border: `1px solid ${severityColor(constraint.severity)}`,
-                }}
+                className={`rounded-full border border-current px-1.5 py-px text-[10px] font-black ${riskLevelTextClass(constraint.severity)}`}
               >
                 {constraint.severity}
               </span>
