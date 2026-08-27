@@ -732,9 +732,174 @@ function HealSection() {
 
 /* ------------------------------------------------------------------ */
 /*  메인 컴포넌트                                                       */
+
+/* ------------------------------------------------------------------ */
+/* 효과기 발화 — 선언(effector_reach) × 실측(platform_events)            */
 /* ------------------------------------------------------------------ */
 
-type GrowthTab = "insights" | "heal";
+type EffectorRow = {
+  key: string;
+  declared_reach: string | null;
+  total: number;
+  last_fired_at: string | null;
+  hours_since: number | null;
+  state: string;
+  evidence?: string;
+  missing?: string;
+};
+
+type EffectorStatus = {
+  effectors: EffectorRow[];
+  undeclared: EffectorRow[];
+  dormant_hours: number;
+  summary: {
+    declared: number;
+    never_fired: number;
+    dormant: number;
+    active: number;
+    undeclared: number;
+    product_reaching_declared: number;
+    product_reaching_active: number;
+    product_reaching_max_hours_since: number | null;
+    product_reaching_never_fired: number;
+  };
+};
+
+/** ★상태 라벨 — 백엔드 `ALL_STATES` 와 1:1. 갈리면 화면에 영문 raw 가 뜬다. */
+export const EFFECTOR_STATE_LABELS: Record<string, string> = {
+  never_fired: "★한 번도 발화 없음",
+  dormant: "휴면",
+  active: "발화 중",
+  undeclared: "표에 없음(선언 누락)",
+};
+
+/** `reach` 가 무엇을 뜻하는지 — 코드만 아는 말을 화면에 그대로 내지 않는다. */
+const REACH_LABELS: Record<string, string> = {
+  product: "제품에 닿음",
+  self: "성장엔진 자기자신만",
+  none: "읽는 곳 없음",
+};
+
+function EffectorSection() {
+  const [data, setData] = useState<EffectorStatus | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const load = useCallback(async () => {
+    setIsLoading(true);
+    setError("");
+    try {
+      const res = await apiClient.get<EffectorStatus>("/growth/effectors", { useMock: false });
+      setData(res);
+    } catch (e) {
+      // ★조회 실패를 '효과기 없음'으로 위장하지 않는다.
+      const d = (e as { payload?: { detail?: unknown } })?.payload?.detail;
+      setError(typeof d === "string" ? d : "효과기 발화 현황을 불러오지 못했습니다.");
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  if (isLoading) {
+    return <p className="text-sm text-[var(--text-tertiary)]">불러오는 중…</p>;
+  }
+  if (error) {
+    return (
+      <p role="alert" className="rounded-lg bg-[rgba(220,38,38,0.1)] p-3 text-sm text-[var(--status-error)]">
+        {error}
+      </p>
+    );
+  }
+  if (!data) return null;
+
+  const s = data.summary;
+  return (
+    <div className="space-y-4" data-testid="effector-firing">
+      {/* ★가장 중요한 한 줄 — 선언과 실제가 갈리는가. */}
+      <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] p-4">
+        <p className="text-sm text-[var(--text-primary)]">
+          제품에 닿는 효과기{" "}
+          <strong>{s.product_reaching_active}</strong> / {s.product_reaching_declared} 발화 중
+          {s.product_reaching_max_hours_since !== null ? (
+            // ★임계 없는 사실 — 라벨(휴면/발화중)에 동의하지 않을 수 있게 원값을 보여 준다.
+            <span className="text-[var(--text-tertiary)]">
+              {" "}· 최장 침묵 {s.product_reaching_max_hours_since.toLocaleString("ko-KR")}시간
+            </span>
+          ) : null}
+        </p>
+        <p className="mt-1 text-xs text-[var(--text-tertiary)]">
+          선언 {s.declared}종 · 발화 중 {s.active} · 휴면 {s.dormant} ·{" "}
+          <span className={s.never_fired > 0 ? "font-semibold text-[var(--status-warning)]" : ""}>
+            한 번도 없음 {s.never_fired}
+          </span>
+          {s.undeclared > 0 ? (
+            <span className="font-semibold text-[var(--status-error)]">
+              {" "}· ★표에 없는 액션 {s.undeclared}
+            </span>
+          ) : null}
+          {" "}· 휴면 기준 {data.dormant_hours}시간
+        </p>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[640px] text-sm">
+          <thead>
+            <tr className="border-b border-[var(--line)] text-left text-xs text-[var(--text-tertiary)]">
+              <th className="py-2 pr-3 font-medium">효과기</th>
+              <th className="py-2 pr-3 font-medium">선언된 도달범위</th>
+              <th className="py-2 pr-3 font-medium">발화</th>
+              <th className="py-2 pr-3 font-medium">최근</th>
+              <th className="py-2 font-medium">상태</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[var(--line)]">
+            {[...data.effectors, ...data.undeclared].map((r) => (
+              <tr key={r.key}>
+                <td className="py-2 pr-3 font-mono text-xs text-[var(--text-primary)]">{r.key}</td>
+                <td className="py-2 pr-3 text-xs">
+                  {r.declared_reach ? REACH_LABELS[r.declared_reach] ?? r.declared_reach : "—"}
+                </td>
+                <td className="py-2 pr-3">{r.total.toLocaleString("ko-KR")}건</td>
+                <td className="py-2 pr-3 text-xs text-[var(--text-tertiary)]">
+                  {/* ★라벨과 함께 **원값**을 낸다. */}
+                  {r.hours_since !== null
+                    ? `${r.hours_since.toLocaleString("ko-KR")}시간 전`
+                    : "—"}
+                </td>
+                <td className="py-2">
+                  <span
+                    className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                      r.state === "active"
+                        ? "bg-[rgba(13,148,136,0.12)] text-[rgb(15,118,110)]"
+                        : r.state === "never_fired" || r.state === "undeclared"
+                          ? "bg-[rgba(220,38,38,0.12)] text-[var(--status-error)]"
+                          : "bg-[rgba(217,119,6,0.12)] text-[rgb(146,64,14)]"
+                    }`}
+                  >
+                    {EFFECTOR_STATE_LABELS[r.state] ?? r.state}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <p className="text-xs leading-5 text-[var(--text-tertiary)]">
+        ★발화 0건이 곧 결함은 아닙니다 — 「읽는 곳 없음」인 효과기가 영원히 발화하지 않는 것이
+        정상일 수 있습니다. 이 표는 <strong>사실과 판단 근거</strong>를 줄 뿐이고 판단은 사람이 합니다.
+      </p>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+
+type GrowthTab = "insights" | "heal" | "effectors";
 
 export function GrowthDashboard() {
   const [tab, setTab] = useState<GrowthTab>("insights");
@@ -1127,8 +1292,18 @@ export function GrowthDashboard() {
         <button type="button" onClick={() => setTab("heal")} className={tabBtn("heal")}>
           자가치유 현황
         </button>
+        {/* ★「닿는다」는 선언과 「발화했다」는 사실을 대조하는 자리. */}
+        <button type="button" onClick={() => setTab("effectors")} className={tabBtn("effectors")}>
+          효과기 발화
+        </button>
       </div>
-      {tab === "insights" ? renderInsights() : <HealSection />}
+      {tab === "insights" ? (
+        renderInsights()
+      ) : tab === "heal" ? (
+        <HealSection />
+      ) : (
+        <EffectorSection />
+      )}
     </div>
   );
 }
