@@ -365,7 +365,10 @@ function handleWindowError(event: ErrorEvent): void {
       severity: "error",
       payload: {
         message: maskString(String(event.message ?? "")),
-        filename: event.filename ?? null,
+        // ★`filename` 은 **인라인 스크립트 오류에서 문서 URL 전체**가 된다(쿼리 포함).
+        //   이 앱은 지번을 쿼리에 싣는다(`registry-analysis?addr=${encodeURIComponent(jibun)}`)
+        //   — 형제 `message`·`stack` 은 전부 `maskString` 을 거치는데 **이 줄만 생것**이었다.
+        filename: event.filename ? maskString(String(event.filename)) : null,
         lineno: event.lineno ?? null,
         colno: event.colno ?? null,
         stack: event.error?.stack ? maskString(String(event.error.stack)).slice(0, 2000) : null,
@@ -516,7 +519,7 @@ export function initEventCollector(): void {
           message: isRejection ? maskString(e.m).slice(0, 1000) : maskString(e.m),
           stack: e.s ? maskString(e.s).slice(0, 2000) : null,
           // 위치 정보는 `error` 경로에만 있다(형제 `handleRejection` 도 안 싣는다).
-          ...(isRejection ? {} : { filename: e.f, lineno: e.l, colno: e.c }),
+          ...(isRejection ? {} : { filename: e.f ? maskString(String(e.f)) : null, lineno: e.l, colno: e.c }),
           // ★진단용 — 이 오류가 **수집기 등록 전**에 났다는 사실 자체가 정보다.
           //   `tMs` 로 얼마나 앞섰는지까지 남는다(실측 기준 #418 237ms vs 등록 307ms).
           early: true,

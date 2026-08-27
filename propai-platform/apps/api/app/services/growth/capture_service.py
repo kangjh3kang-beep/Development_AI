@@ -7,7 +7,7 @@ Celery 태스크(또는 인프로세스 폴백)가 flush_batch() 로 배치 INSE
 프라이버시:
 - user_id → HMAC-SHA256(GROWTH_HMAC_KEY) → user_hash. 원본 user_id 미저장.
   GROWTH_HMAC_KEY 미설정 시 APP_SECRET_KEY 파생 폴백(둘 다 없으면 익명 처리).
-- payload 는 저장 전 PII 키/패턴 마스킹(이메일/전화/주민번호/주소 등).
+- payload 는 저장 전 PII 마스킹 — 이메일/전화/주민번호 **값 패턴** + 민감 **키**(이름·주소 등). ★주소는 **값 안에서 지워지지 않는다**(2026-08-27 실측 — `_mask_str` 에 주소 정규식 없음). 부채는 `tests/test_pii_mask_diagnostic_keys.py` 의 xfail 로 초록 안에 보인다.
 
 멱등: event_id(uuid) 가 있으면 INSERT ... ON CONFLICT(event_id) DO NOTHING.
 """
@@ -22,6 +22,7 @@ import re
 from collections import deque
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import unquote, urlsplit, urlunsplit
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,10 @@ _HASH_CACHE: dict[str, str] = {}
 # 왜 필요한가(2026-08-27 실측 · 원본 함수를 그대로 실행해 확인): `_PII_KEYS` 에 `"name"` 이 있고
 # 판정이 **부분일치**(`p in key_l`)라 **`"name" in "filename"` 이 참**이다. 그래서 조기 오류 포착이
 # 애써 싣는 `filename` 이 **적재 시점에 `[redacted]`** 되어 왔다 — 진단 불가는 그 자체로 장애다.
-# 프론트가 보내는 payload 키를 파생형으로 전수(23개) 태운 결과 위양성은 **이 하나**였다.
+# 프론트가 보내는 payload 키를 파생형으로 전수(**15개** — `trackEvent(` 호출 인자 + `TrackEventProps`
+# 반환 함수 두 축) 태운 결과 위양성은 **이 하나**였다.
+# ★초판 주석은 **23** 이라고 적었는데 그것은 **폐기된 수집 축**(파일 전체의 `payload:`)의 값이라
+#   재현되지 않았다 — 독립 리뷰가 적발했다. **주석에 박힌 거짓은 후임이 재검증하지 않고 신뢰한다.**
 #
 # ★**부분일치를 「토큰경계 일치」로 바꾸는 것이 가장 먼저 떠오르는 처방인데, 실측으로 기각했다.**
 #   위양성은 12/16 → 8/16 로만 줄고 **PII 누출을 5건 새로 만든다** —
@@ -111,6 +115,34 @@ def _mask_str(value: str) -> str:
     return out
 
 
+def _mask_diagnostic(value: Any, _depth: int) -> Any:
+    """면제된 **진단 키의 값**을 그래도 한 번 더 거른다 — 면제는 「무검사」가 아니다.
+
+    ★왜(2026-08-27 독립 적대 리뷰 실측): `filename` 은 **인라인 스크립트 오류에서 문서 URL 전체**가
+    된다(`ErrorEvent.filename` 실측 — 헤드리스 브라우저로 확인). 그리고 이 앱은 **지번을 쿼리에**
+    싣는다(`LandScheduleClient.tsx:460` — `registry-analysis?addr=${encodeURIComponent(jibun)}`).
+    즉 면제를 그냥 통과시키면 **지번·이메일·전화가 평문으로 적재**된다.
+
+    ★더 나쁜 것: **퍼센트 인코딩이 `_mask_str` 의 정규식을 전부 비켜 간다**
+    (`hong%40corp.co.kr` 는 이메일 정규식에 안 걸린다). 그래서 두 겹으로 막는다 —
+
+      ① URL 이면 **쿼리·프래그먼트를 통째로 버린다.** 진단 목적(어느 파일에서 났나)에는
+         **경로만으로 충분**하므로 이 절단은 목적을 훼손하지 않는다.
+      ② 남은 문자열을 **퍼센트 디코드해서** 검사한다. 디코드본에 PII 패턴이 있으면 통째로 버린다
+         (원본에서 지우려 하면 인코딩 경계가 어긋나 부분 노출이 남는다).
+    """
+    if not isinstance(value, str):
+        return mask_pii(value, _depth)
+    out = value
+    if "://" in out or out.startswith("/"):
+        parts = urlsplit(out)
+        out = urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+    decoded = unquote(out)
+    if _mask_str(decoded) != decoded:
+        return _REDACTED
+    return _mask_str(out)
+
+
 def mask_pii(obj: Any, _depth: int = 0) -> Any:
     """payload 의 PII 를 재귀 마스킹한다.
 
@@ -127,7 +159,7 @@ def mask_pii(obj: Any, _depth: int = 0) -> Any:
             key_l = str(k).lower()
             # ★정확일치 안전 키가 부분일치보다 **먼저**다(위 `_DIAGNOSTIC_SAFE_KEYS` 주석 참조).
             if key_l in _DIAGNOSTIC_SAFE_KEYS:
-                masked[k] = mask_pii(v, _depth + 1)
+                masked[k] = _mask_diagnostic(v, _depth + 1)
             elif any(p in key_l for p in _PII_KEYS):
                 masked[k] = _REDACTED
             else:
