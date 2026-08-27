@@ -23,6 +23,7 @@ import { optionsSummary } from "@/lib/use-analysis-history";
 import type { ParcelRow } from "@/lib/parcel-rows";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { riskLevelStyle } from "@/lib/risk-level-style";
 import { apiClient } from "@/lib/api-client";
 import {
   formatArea, formatPercent, formatPercentDelta, formatUpzoningFarRange,
@@ -134,13 +135,10 @@ function Field({ label, value }: { label: string; value: string | number }) {
   );
 }
 
-// 개발계획 종합 리스크 등급 → 배지 색(comprehensive_analysis_service._research_dev_plans 산출).
-const RISK_LEVEL_STYLE: Record<string, string> = {
-  "낮음": "bg-[var(--status-success)]/20 text-[var(--status-success)]",
-  "보통": "bg-[var(--status-warning)]/20 text-[var(--status-warning)]",
-  "높음": "bg-orange-500/20 text-orange-400",
-  "극히 높음": "bg-[var(--status-error)]/20 text-[var(--status-error)]",
-};
+// 개발계획 종합 리스크 등급 → 배지 색은 **lib/risk-level-style** 로 옮겼다.
+//   ★1,500줄 클라이언트 패널 안에 두면 순수 함수 테스트가 next/dynamic·지도 셸까지
+//     통째로 임포트해, 계약과 무관한 이유로 락이 죽는다(적대 리뷰 지적 · 2026-08-27).
+//   표 키의 SSOT 는 백엔드 SEVERITY_ORDER 이고 파생형 락이 강제한다.
 
 // ★SEVERITY_CARD_STYLE(심각도→카드색) 제거(2026-08-01): 값 변화의 상대폭으로 경고색을 칠하면
 //   입력 변경(필지 재선택)까지 빨간 HIGH가 되는 라이브 오표기가 재발한다. 카드색은 이제
@@ -1383,7 +1381,7 @@ export function ComprehensiveAnalysisPanel() {
                             <p className="text-[10px] font-bold text-[var(--text-hint)]">토지이용계획 규제</p>
                             {/* ★risk_level(종합 리스크) — 핸드오프 손실 해소(그간 규제명 나열만 표시). */}
                             {devPlans.risk_level && (
-                              <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[9px] font-bold ${RISK_LEVEL_STYLE[devPlans.risk_level as string] || RISK_LEVEL_STYLE["낮음"]}`}>
+                              <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[9px] font-bold ${riskLevelStyle(devPlans.risk_level as string)}`}>
                                 종합 리스크 {devPlans.risk_level}
                               </span>
                             )}
