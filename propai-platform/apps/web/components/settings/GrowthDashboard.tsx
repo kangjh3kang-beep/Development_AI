@@ -752,7 +752,6 @@ type EffectorStatus = {
   effectors: EffectorRow[];
   undeclared: EffectorRow[];
   dormant_hours: number;
-  telemetry_since?: string;
   summary: {
     declared: number;
     never_fired: number;
@@ -837,10 +836,6 @@ function EffectorSection() {
           <span className={s.never_fired > 0 ? "font-semibold text-[var(--status-warning)]" : ""}>
             한 번도 없음 {s.never_fired}
           </span>
-          {/* ★과대주장 방지 — 「한 번도 없음」이 **무엇에 대해** 0건인지 밝힌다. */}
-          {data.telemetry_since ? (
-            <span data-testid="telemetry-since"> ({data.telemetry_since} 계측 시작 이후)</span>
-          ) : null}
           {s.undeclared > 0 ? (
             <span className="font-semibold text-[var(--status-error)]">
               {" "}· ★표에 없는 액션 {s.undeclared}
@@ -863,7 +858,7 @@ function EffectorSection() {
           </thead>
           <tbody className="divide-y divide-[var(--line)]">
             {[...data.effectors, ...data.undeclared].map((r) => (
-              <tr key={r.key} data-testid={`effector-row-${r.key}`}>
+              <tr key={r.key}>
                 <td className="py-2 pr-3 font-mono text-xs text-[var(--text-primary)]">{r.key}</td>
                 <td className="py-2 pr-3 text-xs">
                   {r.declared_reach ? REACH_LABELS[r.declared_reach] ?? r.declared_reach : "—"}
@@ -877,7 +872,6 @@ function EffectorSection() {
                 </td>
                 <td className="py-2">
                   <span
-                    data-testid={`effector-state-${r.key}`}
                     className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
                       r.state === "active"
                         ? "bg-[rgba(13,148,136,0.12)] text-[rgb(15,118,110)]"
@@ -898,10 +892,6 @@ function EffectorSection() {
       <p className="text-xs leading-5 text-[var(--text-tertiary)]">
         ★발화 0건이 곧 결함은 아닙니다 — 「읽는 곳 없음」인 효과기가 영원히 발화하지 않는 것이
         정상일 수 있습니다. 이 표는 <strong>사실과 판단 근거</strong>를 줄 뿐이고 판단은 사람이 합니다.
-        <br />
-        ★「한 번도 발화 없음」은 <strong>세 가지를 구별하지 못합니다</strong> — ①조건이 아직 안 맞음
-        ②정상이라 발생할 일이 없었음 ③구조적으로 발화 불가(배선 결함). 처방이 서로 다르므로
-        0건을 보면 <strong>그 효과기의 경로를 직접 따라가야</strong> 합니다.
       </p>
     </div>
   );
