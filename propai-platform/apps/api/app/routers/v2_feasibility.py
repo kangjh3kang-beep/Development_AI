@@ -13,7 +13,6 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.billing_deps import enforce_llm_quota
-from app.services.feasibility.feasibility_service_v2 import _sido_short_or_empty
 from app.core.database import get_db
 
 # 주의(혼선 제거): 아래 current_user의 실제 런타임 타입은 get_current_user가 반환하는
@@ -44,7 +43,7 @@ from app.schemas.feasibility_v2 import (
 from app.services.auth.auth_service import get_current_user, get_current_user_optional
 from app.services.feasibility.ai_optimizer import optimize_slsqp
 from app.services.feasibility.ai_recommendation import diagnose
-from app.services.feasibility.feasibility_service_v2 import FeasibilityServiceV2
+from app.services.feasibility.feasibility_service_v2 import FeasibilityServiceV2, _sido_short_or_empty
 from app.services.feasibility.legacy_ledger import build_legacy_ledger
 from app.services.feasibility.modules.base_module import ModuleInput
 from app.services.feasibility.monte_carlo_engine import MCVariable, run_monte_carlo
