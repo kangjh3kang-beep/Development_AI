@@ -383,7 +383,13 @@ class ActiveFlagOut(BaseModel):
 
     key: str
     scope: str
-    value: dict | None = None
+    #: ★`dict` 만 받으면 **문자열 워터마크가 통째로 `None` 으로 위장**된다.
+    #  `growth_last_run.{analyze,heal,correct,improve}` 는 `schedule.py` 가
+    #  `now.isoformat()` 로 **평문 문자열**을 쓴다(`compute_due`). 종전 라우터는
+    #  `value=fr[2] if isinstance(fr[2], dict) else None` 이라 그 넷을 전부 `None` 으로
+    #  내보냈다 — 운영자가 *"성장 축이 도는가"* 를 물을 때 **가장 먼저 보는 값**이
+    #  「한 번도 안 돌았다」와 **구별 불가**했다(실측: 활성 플래그 6건 중 4건이 위장).
+    value: dict | str | float | bool | None = None
     ttl_expires_at: datetime | None = None
     updated_by: str | None = None
 
@@ -469,7 +475,8 @@ async def heal_log(
     active_flags = [
         ActiveFlagOut(
             key=fr[0], scope=fr[1],
-            value=fr[2] if isinstance(fr[2], dict) else None,
+            # 원값을 **그대로** 내보낸다(형변환·삼킴 금지 — 위 필드 주석 참조).
+            value=fr[2],
             ttl_expires_at=fr[3], updated_by=fr[4],
         )
         for fr in flag_rows
