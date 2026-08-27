@@ -74,6 +74,20 @@ const FLUSH_INTERVAL_MS = 5_000; // 5초마다 자동 flush
 const FLUSH_THRESHOLD = 20; // 또는 20건 쌓이면 즉시 flush
 const MAX_BATCH = 100; // 백엔드 _MAX_BATCH 와 동일(1회 전송 상한)
 const RING_CAPACITY = 200; // 링버퍼 용량(폭주 시 오래된 것 폐기, 메모리 보호)
+/**
+ * ★**1회 전송 본문의 바이트 상한.**
+ *
+ * `navigator.sendBeacon` 과 `fetch(keepalive:true)` 는 **같은 64KiB 예산**을 공유한다
+ * (둘 다 Fetch 표준의 keepalive 요청 본문 한도를 쓴다). 그래서 본문이 그 한도를 넘으면
+ * **1차와 2차가 같은 이유로 실패**하고, 종전 구현은 그것을 `.catch(() => {})` 로 삼킨 뒤
+ * 이미 `splice()` 로 링에서 빼낸 배치를 되돌리지 않아 **조용한 전손**이 됐다.
+ *
+ * 예산은 **동시에 떠 있는 keepalive 요청 전체가 나눠 쓰므로** 64KiB 를 다 쓰지 않고
+ * 여유를 남긴다(앱의 다른 keepalive 전송과 경합할 수 있다).
+ */
+const MAX_BODY_BYTES = 56_000;
+/** 이벤트 하나가 단독으로도 예산을 넘을 때 문자열 필드를 줄이는 상한(형제 `stack` 과 같은 축). */
+const MAX_FIELD_CHARS = 2_000;
 const SESSION_KEY = "propai_growth_session"; // sessionStorage 세션 UUID 키
 
 // ── 샘플링 비율(설계서: page_view·web_vital 15%, js_error·api_error 100%) ──
@@ -97,6 +111,11 @@ const ADDRESS_RE = /[가-힣0-9]+(?:로|길)\s?\d+(?:-\d+)?(?:번길)?|\d+동\s?
 
 // ── 모듈 상태 ────────────────────────────────────────────────────────
 const ring: GrowthEvent[] = [];
+/**
+ * ★전송을 **포기해서 버린** 이벤트 수(누적). 전손은 정의상 DB 에 0행이라 사후 조회가
+ * 원리적으로 불가능하다 — 침묵을 관측 가능하게 만들려면 **보내는 쪽이 세는 수밖에 없다**.
+ */
+let droppedEvents = 0;
 let flushTimer: ReturnType<typeof setInterval> | null = null;
 let initialized = false;
 let cachedSessionId: string | null = null;
@@ -282,13 +301,98 @@ function endpointUrl(): string {
  * 링버퍼를 비우고 백엔드로 배치 전송.
  * sendBeacon 우선(언로드 안전), 실패 시 fetch keepalive 폴백. 전부 논블로킹.
  */
+/** 문자열의 UTF-8 바이트 길이. `TextEncoder` 가 없는 환경은 보수적으로 과대 추정한다. */
+function byteLength(text: string): number {
+  try {
+    if (typeof TextEncoder !== "undefined") return new TextEncoder().encode(text).length;
+  } catch {
+    /* noop */
+  }
+  // 폴백: 최악치(UTF-8 최대 4바이트/코드유닛)로 **과대** 추정한다.
+  // ★과소 추정은 절벽으로 되돌아가므로, 모르면 크게 잡는 쪽이 안전측이다.
+  return text.length * 4;
+}
+
+/**
+ * 이벤트 하나가 **단독으로도** 예산을 넘을 때 문자열 필드를 줄인다.
+ * 줄여도 못 담으면 `null` — 호출부가 **버린 것으로 세고**, 배치 전체를 잃지 않는다.
+ */
+function shrinkOversized(event: GrowthEvent): GrowthEvent | null {
+  try {
+    const payload = event.payload;
+    if (!payload) return null;
+    const shrunk: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(payload)) {
+      shrunk[k] = typeof v === "string" && v.length > MAX_FIELD_CHARS ? v.slice(0, MAX_FIELD_CHARS) : v;
+    }
+    const candidate: GrowthEvent = { ...event, payload: shrunk };
+    return byteLength(JSON.stringify({ events: [candidate] })) <= MAX_BODY_BYTES ? candidate : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 링 **앞쪽**에서 예산 안에 담기는 만큼만 꺼낸다(건수 상한 `MAX_BATCH` 도 함께 지킨다).
+ *
+ * ★종전은 건수만 보고 `splice(0, MAX_BATCH)` 했다 — 바이트를 아무도 안 봤다.
+ */
+function takeBatchWithinBudget(): GrowthEvent[] {
+  const batch: GrowthEvent[] = [];
+  // `{"events":[]}` 자체의 고정 비용.
+  let bytes = byteLength('{"events":[]}');
+
+  while (ring.length > 0 && batch.length < MAX_BATCH) {
+    const next = ring[0];
+    // 항목 하나의 증분(직렬화 + 구분자 1바이트).
+    const cost = byteLength(JSON.stringify(next)) + 1;
+
+    if (bytes + cost > MAX_BODY_BYTES) {
+      if (batch.length > 0) break; // 다음 배치로 넘긴다(전손 아님).
+      // 단독으로도 안 들어간다 — 줄여 보고, 그래도 안 되면 **그 한 건만** 버린다.
+      ring.shift();
+      const shrunk = shrinkOversized(next);
+      if (!shrunk) {
+        droppedEvents += 1;
+        continue;
+      }
+      batch.push(shrunk);
+      break;
+    }
+
+    ring.shift();
+    batch.push(next);
+    bytes += cost;
+  }
+  return batch;
+}
+
+/** 전송하지 못한 배치를 링 **앞**으로 되돌린다(순서 보존). 용량 초과분은 종전 정책대로 축출. */
+function restoreUnsent(batch: GrowthEvent[]): void {
+  try {
+    if (batch.length === 0) return;
+    ring.unshift(...batch);
+    while (ring.length > RING_CAPACITY) {
+      ring.shift();
+      droppedEvents += 1;
+    }
+  } catch {
+    /* noop */
+  }
+}
+
+/** 테스트·진단용: 전송을 포기해 버린 누적 건수. */
+export function getDroppedEventCount(): number {
+  return droppedEvents;
+}
+
 export function flush(): void {
   try {
     if (typeof window === "undefined") return;
     if (ring.length === 0) return;
 
-    // 1회 전송 상한(MAX_BATCH)만큼 꺼낸다.
-    const batch = ring.splice(0, MAX_BATCH);
+    // ★건수가 아니라 **바이트 예산** 안에서 꺼낸다.
+    const batch = takeBatchWithinBudget();
     if (batch.length === 0) return;
 
     const body = JSON.stringify({ events: batch });
@@ -314,10 +418,12 @@ export function flush(): void {
           body,
           keepalive: true,
         }).catch(() => {
-          /* 전송 실패는 무시(수집은 베스트에포트) */
+          // ★삼키지 않는다 — 링으로 되돌려 다음 틱에 재시도한다.
+          //   종전에는 여기서 사라졌고, 배치는 이미 링에서 빠진 뒤라 되돌릴 대상조차 없었다.
+          restoreUnsent(batch);
         });
       } catch {
-        /* noop */
+        restoreUnsent(batch);
       }
     }
   } catch {
@@ -364,7 +470,11 @@ function handleWindowError(event: ErrorEvent): void {
     trackEvent("js_error", {
       severity: "error",
       payload: {
-        message: maskString(String(event.message ?? "")),
+        // ★상한이 **형제와 어긋나 있었다**: 같은 함수의 `stack` 은 2,000자, 형제 함수
+        //   `handleRejection` 의 `message` 는 1,000자인데 **이 줄만 무상한**이었다.
+        //   무상한 필드는 이벤트 하나로 전송 예산(`MAX_BODY_BYTES`)을 넘길 수 있고,
+        //   그때 종전 구현은 배치 전체를 조용히 잃었다.
+        message: maskString(String(event.message ?? "")).slice(0, MAX_FIELD_CHARS),
         // ★`filename` 은 **인라인 스크립트 오류에서 문서 URL 전체**가 된다(쿼리 포함).
         //   이 앱은 지번을 쿼리에 싣는다(`registry-analysis?addr=${encodeURIComponent(jibun)}`)
         //   — 형제 `message`·`stack` 은 전부 `maskString` 을 거치는데 **이 줄만 생것**이었다.
@@ -515,8 +625,10 @@ export function initEventCollector(): void {
         payload: {
           // ★절단 길이도 형제와 **같아야** 한다 — `analyzer.normalize_stack` 이 **메시지 전문**을
           //   sha1 해싱하므로, 조기/정식 경로의 자르는 길이가 다르면 같은 오류가 **다른 시그니처**로
-          //   군집된다(독립 리뷰 지적). `handleRejection`=1,000자 / `handleWindowError`=무절단.
-          message: isRejection ? maskString(e.m).slice(0, 1000) : maskString(e.m),
+          //   군집된다(독립 리뷰 지적). `handleRejection`=1,000자 / `handleWindowError`=`MAX_FIELD_CHARS`.
+          // ★2026-08-28: `handleWindowError` 가 **무절단**이던 것을 `MAX_FIELD_CHARS` 로 막으면서
+          //   **이 줄도 같이** 바꾼다. 한쪽만 고치면 바로 위 주석이 경고하는 시그니처 분열이 난다.
+          message: isRejection ? maskString(e.m).slice(0, 1000) : maskString(e.m).slice(0, MAX_FIELD_CHARS),
           stack: e.s ? maskString(e.s).slice(0, 2000) : null,
           // 위치 정보는 `error` 경로에만 있다(형제 `handleRejection` 도 안 싣는다).
           ...(isRejection ? {} : { filename: e.f ? maskString(String(e.f)) : null, lineno: e.l, colno: e.c }),
