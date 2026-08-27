@@ -106,17 +106,29 @@
 
 ## 5. 잠금 — 이 변경을 지키는 검사
 
-| # | 무엇을 잠그나 | 검사 |
+| # | 무엇을 잠그나 | 검사(실재하는 이름) |
 |---|---|---|
-| L1 | **단일 길목** — 토스 호출이 `_request` 밖으로 새지 않는다 | `test_toss_single_chokepoint.py`(ast 로 `httpx` 사용처 파생) |
-| L2 | **금액 검증** — 클라이언트 금액이 벤더로 흐르지 않는다 | `test_toss_confirm_amount_verification.py`(두 모집단: 일치/불일치) |
-| L3 | **IDOR** — 남의 주문을 승인할 수 없다 | 같은 파일(소유자 일치/불일치가 **다른 결과**) |
-| L4 | **★미확정 ≠ 실패** | `test_toss_outcome_unknown.py`(타임아웃이 `PaymentRejected` 가 아니라 `PaymentUnresolved`) |
-| L5 | **영수증이 롤백에 안 지워진다** | 독립 세션 사용을 **행위로** 확인 |
-| L6 | **오류 사유가 표면까지 간다** | 코드마다 문구+조치가 **비어 있지 않다**(파생형 — 표 전수) |
-| L7 | **키 위생** — 비밀키가 응답·오류에 안 실린다 | `config_status()` 반환 전수 검사 + `_redact` 행위 |
-| L8 | **CATALOG 파생** | 두 TOSS 키가 그룹과 함께 존재 · 기존 41키 불변 |
-| L9 | **중복 확정 불가** | 같은 payment_key 두 번 → 두 번째가 **이미 처리됨**으로 성공(멱등) · 다른 주문에 재사용 → **거절** |
+| L1 | **단일 길목** — 토스 호출이 `_request` 밖으로 새지 않는다 | `test_toss_http_has_exactly_one_chokepoint`(ast 파생) · `test_api_base_is_a_module_constant` |
+| L2 | **금액 검증** — 클라이언트 금액이 벤더로 흐르지 않는다 | `test_confirm_sends_server_amount_not_client_amount`(★픽스처가 `amount_krw≠coin_krw` 로 **갈려 있다**) · `test_confirm_rejects_amount_mismatch_before_calling_vendor` |
+| L3 | **IDOR** — 남의 주문을 승인할 수 없다 | `test_confirm_blocks_other_users_order`(소유자가 갈리면 결과가 갈린다 · 404 로 정규화) |
+| L4 | **★미확정 ≠ 실패** | `test_unknown_outcome_is_not_a_failure`(타임아웃 → `PaymentUnresolvedError`, `PaymentRejectedError` 아님) |
+| L5 | **영수증이 롤백에 안 지워진다** | `payment_receipts.record` 가 `AsyncSessionLocal` 로 독립 커밋 · `test_receipt_vocabulary_is_derived_and_complete` |
+| L6 | **오류 사유가 표면까지 간다** | `test_every_known_code_has_message_and_action`(파생형 전수) · `test_unknown_code_still_gets_remediation` · 프론트 `payment-error.test.ts` |
+| L7 | **키 위생** — 비밀키가 응답·오류에 안 실린다 | `test_secret_never_in_headers_or_status` · `test_redact_removes_keys` · `test_key_pairing_detects_mixed_environments` |
+| L8 | **CATALOG 파생** | `test_toss_keys_are_in_secret_catalog`(`secret` 플래그까지) |
+| L9 | **중복 확정 불가** | `test_same_payment_key_twice_is_idempotent_success` ↔ `test_different_payment_key_on_paid_order_is_conflict`(두 모집단) · `test_idempotency_key_binds_order_and_payment` |
+| L10 | **★가상계좌 무입금 지급 금지** | `test_confirm_grants_only_on_done` · `test_pending_statuses_are_not_done` · `test_revoked_statuses_trigger_clawback` |
+| L11 | **★배선** — 함수를 고쳐도 호출부가 옛 식이면 결함이 산다 | `test_is_blocked_is_wired_to_compute_remaining` ↔ `test_is_blocked_still_blocks_when_everything_spent` · `test_status_blocked_flag_is_wired`(조기반환 가드 포함) |
+| L12 | **전상법 §6** — 환불기록 PII 를 즉시 파기하지 않는다 | `test_pii_purge_cannot_touch_orders_that_were_ever_paid`(`paid_at IS NULL` 강제) |
+| L13 | **환불 원장** — 조용히 건너뛰지 않는다 | `test_refund_ledger_types_exist` |
+| L14 | **라벨 정합** — 백엔드 이벤트가 영문 raw 로 안 뜬다 | 프론트 `payment-error.test.ts` 가 **`payment_receipts.py` 원본을 읽어** 양방향 대조 |
+
+★**파일**: 백엔드 `apps/api/tests/test_toss_payment_locks.py`(55건) ·
+프론트 `apps/web/lib/payments/__tests__/payment-error.test.ts`(20건) ·
+`apps/web/components/payments/__tests__/PaymentSuccessClient.test.tsx`(7건).
+
+★첫 판의 이 표는 **존재하지 않는 파일명 3개**를 적었고 L2·L3 는 실제로 **무잠금**이었다.
+  계획서가 선언한 잠금이 실제 테스트로 있는지는 **PR 산출물로** 확인해야 한다(§C 규율).
 
 ---
 

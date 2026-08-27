@@ -568,3 +568,221 @@ async def test_status_blocked_flag_is_wired(monkeypatch: pytest.MonkeyPatch) -> 
     # ★두 모집단: 남은 것과 쓴 것이 **다른 값**이어야 한다(둘 다 0 이면 락이 공허하다).
     assert st["monthly_base_remaining"] == 0
     assert st["topup_remaining"] != st["monthly_base_remaining"]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# L2 / L3 / L4 — ★승인 오케스트레이션을 **직접 태운다**
+#
+# 위 락들은 순수 함수·소스 구조를 본다. 여기서는 `confirm_toss_payment` 를 실제로
+# 실행해 **금액 검증 · 소유자 검증 · 미확정 처리**가 배선돼 있는지 잰다.
+#
+# ★계획서 §5 가 이 셋을 선언했는데 첫 판에는 **없었다**(파일명도 실재하지 않았다).
+#   선언과 산출물이 갈리면 리뷰어가 이미 안전하다고 오독한다 — 그래서 채운다.
+# ═══════════════════════════════════════════════════════════════════════════
+import app.services.billing.payment_receipts as _pr  # noqa: E402
+import app.services.billing.toss_orders_service as _tos  # noqa: E402
+from app.services.billing.toss_payments import TossOutcomeUnknownError  # noqa: E402
+
+
+class _Mapped:
+    def __init__(self, row):
+        self._row = row
+
+    def first(self):
+        return self._row
+
+
+class _Res:
+    def __init__(self, row=None):
+        self._row = row
+
+    def mappings(self):
+        return _Mapped(self._row)
+
+    def first(self):
+        return None
+
+    def scalar(self):
+        return None
+
+
+class _OrderSession:
+    """`coin_orders` 조회에만 응답하는 최소 세션 — 나머지는 통과시킨다."""
+
+    def __init__(self, order_row):
+        self.order_row = order_row
+        self.sql: list[str] = []
+
+    async def execute(self, stmt, params=None):
+        s = str(getattr(stmt, "text", stmt))
+        self.sql.append(s)
+        if "FROM coin_orders WHERE id" in s:
+            return _Res(self.order_row)
+        return _Res()
+
+    async def commit(self):
+        pass
+
+    async def rollback(self):
+        pass
+
+
+def _order(**over):
+    base = {
+        "id": "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
+        "user_id": "user-A",
+        "tenant_id": None,
+        # ★두 모집단을 **가른다**: amount(결제액) ≠ coin(지급액).
+        #   둘이 같은 픽스처면 "어느 컬럼을 비교하는가"를 잠글 수 없다 —
+        #   실제로 현재 코드는 둘을 항상 같게 넣으므로 손으로 갈라 줘야 한다.
+        "amount_krw": 10_000.0,
+        "coin_krw": 12_000.0,
+        "status": "pending",
+        "provider": None,
+        "provider_ref": None,
+        "order_no": "CO20260827-DEADBEEF",
+    }
+    base.update(over)
+    return base
+
+
+@pytest.fixture
+def _capture(monkeypatch: pytest.MonkeyPatch):
+    """토스 호출을 가로채 **무엇을 보냈는지** 잡고, 영수증은 메모리에 모은다."""
+    sent: dict[str, object] = {}
+    receipts: list[dict] = []
+
+    async def fake_confirm(*, payment_key, order_id, amount, idempotency_key):
+        sent.update(
+            payment_key=payment_key, order_id=order_id, amount=amount, idem=idempotency_key
+        )
+        return {"status": "DONE", "totalAmount": amount, "paymentKey": payment_key}
+
+    async def fake_record(**kw):
+        receipts.append(kw)
+        return "rcpt-1"
+
+    async def fake_confirm_order(db, **kw):
+        return {"id": kw["order_id"], "order_no": "CO20260827-DEADBEEF",
+                "status": "paid", "coin_krw": 12_000.0}
+
+    monkeypatch.setattr(_tos.toss_payments, "is_configured", lambda: True)
+    monkeypatch.setattr(_tos.toss_payments, "confirm", fake_confirm)
+    monkeypatch.setattr(_pr, "record", fake_record)
+    monkeypatch.setattr(_tos.payment_receipts, "record", fake_record)
+    monkeypatch.setattr(_tos.coin_orders_service, "ensure_schema", lambda db: _noop())
+    monkeypatch.setattr(_tos.coin_orders_service, "confirm_order", fake_confirm_order)
+    return sent, receipts
+
+
+async def _noop():
+    return None
+
+
+@pytest.mark.asyncio
+async def test_confirm_sends_server_amount_not_client_amount(_capture) -> None:
+    """★L2 — 토스로 가는 금액은 **서버 저장값**이다(클라이언트 주장이 아니다).
+
+    픽스처가 `amount_krw=10,000` · `coin_krw=12,000` 으로 **갈려 있다** —
+    비교 대상을 `coin_krw` 로 바꾸는 변이가 이 단언을 죽인다.
+    """
+    sent, _ = _capture
+    db = _OrderSession(_order())
+    r = await _tos.confirm_toss_payment(
+        db, order_id=_order()["id"], payment_key="pk_x",
+        claimed_amount=10_000, current_user_id="user-A",
+    )
+    assert r["status"] == "paid"
+    assert sent["amount"] == 10_000, f"★토스로 보낸 금액이 {sent['amount']} — 서버 저장값이 아니다"
+    assert sent["order_id"] == _order()["id"], "★orderId 가 uuid 가 아니다"
+
+
+@pytest.mark.asyncio
+async def test_confirm_rejects_amount_mismatch_before_calling_vendor(_capture) -> None:
+    """★L2 대조군 — 금액이 어긋나면 **벤더를 부르기 전에** 막는다(돈이 안 움직인다)."""
+    sent, receipts = _capture
+    db = _OrderSession(_order())
+    with pytest.raises(_tos.PaymentRejectedError) as e:
+        await _tos.confirm_toss_payment(
+            db, order_id=_order()["id"], payment_key="pk_x",
+            claimed_amount=1, current_user_id="user-A",   # ★조작된 금액
+        )
+    assert e.value.code == _tos.CODE_AMOUNT_MISMATCH
+    assert e.value.remediation.strip(), "★조치가 비었다"
+    assert not sent, "★금액이 어긋났는데 벤더를 불렀다(돈이 움직일 수 있다)"
+    assert any(r["event"] == _pr.EVENT_BLOCKED for r in receipts), "★차단 기록이 없다"
+
+
+@pytest.mark.asyncio
+async def test_confirm_blocks_other_users_order(_capture) -> None:
+    """★L3(IDOR) — 남의 주문은 승인할 수 없다. **소유자가 갈리면 결과도 갈린다.**"""
+    sent, _ = _capture
+    db = _OrderSession(_order())
+    with pytest.raises(_tos.PaymentRejectedError) as e:
+        await _tos.confirm_toss_payment(
+            db, order_id=_order()["id"], payment_key="pk_x",
+            claimed_amount=10_000, current_user_id="user-B",   # ★남의 계정
+        )
+    # ★존재 여부를 흘리지 않는다 — 404 로 정규화(주문 열거 방지).
+    assert e.value.http_status == 404
+    assert not sent, "★남의 주문인데 벤더를 불렀다"
+
+
+@pytest.mark.asyncio
+async def test_unknown_outcome_is_not_a_failure(_capture, monkeypatch) -> None:
+    """★L4 — 타임아웃은 **실패가 아니다.** 재조회도 실패하면 `PaymentUnresolvedError`.
+
+    되살리는 변이: `except TossOutcomeUnknownError` 를 `PaymentRejectedError` 로 접으면
+    사용자가 "실패"를 보고 **다시 결제한다**(이중 결제).
+    """
+    sent, receipts = _capture
+
+    async def timeout(**kw):
+        raise TossOutcomeUnknownError("타임아웃", payment_key=kw.get("payment_key"))
+
+    async def no_resolve(*a, **k):
+        raise TossOutcomeUnknownError("재조회도 실패")
+
+    monkeypatch.setattr(_tos.toss_payments, "confirm", timeout)
+    monkeypatch.setattr(_tos.toss_payments, "get_payment", no_resolve)
+    monkeypatch.setattr(_tos.toss_payments, "get_payment_by_order_id", no_resolve)
+
+    db = _OrderSession(_order())
+    with pytest.raises(_tos.PaymentUnresolvedError) as e:
+        await _tos.confirm_toss_payment(
+            db, order_id=_order()["id"], payment_key="pk_x",
+            claimed_amount=10_000, current_user_id="user-A",
+        )
+    # ★"실패"라고 말하지 않는다 — 중복 결제를 유도하면 안 된다.
+    assert "중복 결제하지 마시고" in str(e.value)
+    assert any(r["event"] == _pr.EVENT_UNKNOWN for r in receipts), "★미확정 기록이 없다"
+    # ★두 모집단: 거절(위 테스트)은 PaymentRejectedError, 미확정은 PaymentUnresolvedError.
+    assert not isinstance(e.value, _tos.PaymentRejectedError)
+
+
+@pytest.mark.asyncio
+async def test_same_payment_key_twice_is_idempotent_success(_capture) -> None:
+    """★L9 — 같은 결제로 다시 오면 **성공**(새로고침이 오류로 보이면 안 된다)."""
+    sent, _ = _capture
+    paid = _order(status="paid", provider="toss", provider_ref="pk_x")
+    r = await _tos.confirm_toss_payment(
+        _OrderSession(paid), order_id=paid["id"], payment_key="pk_x",
+        claimed_amount=10_000, current_user_id="user-A",
+    )
+    assert r["already_applied"] is True
+    assert not sent, "★이미 지급된 주문인데 벤더를 다시 불렀다(재과금 경로)"
+
+
+@pytest.mark.asyncio
+async def test_different_payment_key_on_paid_order_is_conflict(_capture) -> None:
+    """★L9 대조군 — **다른** 결제키가 붙은 주문은 409(이중 결제 의심)."""
+    sent, _ = _capture
+    paid = _order(status="paid", provider="toss", provider_ref="pk_OTHER")
+    with pytest.raises(_tos.PaymentRejectedError) as e:
+        await _tos.confirm_toss_payment(
+            _OrderSession(paid), order_id=paid["id"], payment_key="pk_x",
+            claimed_amount=10_000, current_user_id="user-A",
+        )
+    assert e.value.http_status == 409
+    assert e.value.code == _tos.CODE_PAYMENT_KEY_CONFLICT
+    assert not sent
