@@ -70,11 +70,35 @@ ESCALATION_THRESHOLD = 5
 #: 캡 차단 시도를 남기는 이벤트 타입(heal_action 과 **분리** — 기존 집계·화면·가드에 무영향).
 HEAL_BLOCKED_EVENT = "heal_blocked"
 
-#: ★"캡에 막힘"으로 세는 사유. **쿨다운은 넣지 않는다.**
-#  쿨다운은 정상 페이싱이다 — 세면 `threshold_relax`(쿨다운 15분 · beat 10분 주기)가
-#  상시 에스컬레이션된다. `gate()` 가 쿨다운을 캡보다 **먼저** 판정하고 즉시 반환하므로
-#  쿨다운 차단은 이 집합에 **구조적으로** 들어올 수 없다(그 성질을 락으로 고정한다).
+#: 차단 시도를 **기록**하는 사유(관측용). 쿨다운은 정상 페이싱이라 넣지 않는다 —
+#  `gate()` 가 쿨다운을 캡보다 **먼저** 판정하고 즉시 반환하므로 구조적으로 안 들어온다.
 CAP_BLOCK_REASONS = ("global_cap", "trigger_cap")
+
+#: ★에스컬레이션으로 **세는** 사유는 `trigger_cap` **하나뿐**이다(기록 대상보다 좁다).
+#
+#  ★2026-08-27 독립 적대 리뷰가 잡은 결함: 종전에는 `CAP_BLOCK_REASONS` 전체를 셌는데,
+#  시뮬(beat 10분·6시간)로 재 보니 임계에 닿게 해 주는 것이 **전부 `global_cap`** 이었다:
+#      cache_warm      n=2 → 계수차단 41건이 **전부 global_cap** · 발화 31
+#      threshold_relax n=1 → trigger_cap 15건뿐 · 발화 **0**
+#  `global_cap` 은 *"이 트리거의 치유가 무효"* 가 아니라 *"지금 아픈 서비스가 여럿"* 이다.
+#  그걸 critical 로 올리면 서사(*"반복 발화했으나 효과가 없어"*)가 **거짓말**이 된다 —
+#  전역 예산에 막힌 트리거는 **한 번도 발화한 적이 없다.**
+#  → 기록은 둘 다 하되(관측 가치가 있다) **판정은 `trigger_cap` 만** 쓴다.
+ESCALATION_COUNT_REASONS = ("trigger_cap",)
+
+#: 캡차단 시도를 세는 창(시간). ★캡·임계 상수를 건드리지 않고 도달 가능성을 만드는 축이다.
+#
+#  캡은 **시간당** 정의라 `trigger_cap` 차단도 시간당 상한이 있다
+#  (`threshold_relax`: 쿨다운 15분·beat 10분 → 시간당 실행 ≤2 · trigger_cap 차단 ≤4).
+#  **≤4 < 임계 5** 이므로 1시간 창에서는 여전히 도달 불가다. 창을 3시간으로 두면
+#  누적되어 도달 가능해진다(시뮬 실측 ≈2.5건/시 → 3시간 ≈7.5 ≥ 5).
+#  ★캡을 올리거나(프로덕션 타임아웃 곱 증가) 임계를 내리는(한 번 막혀도 승격) 길을
+#  피하면서 도달 가능성을 얻는 유일한 축이라 이것을 골랐다.
+ESCALATION_WINDOW_HOURS = 3
+
+#: 억제 대상 상태 — **아직 사람 손에 있는** 것만. `dismissed`·`acted`·`superseded` 는
+#  억제하지 않는다(재발하면 다시 올라와야 한다).
+_SUPPRESSING_STATUSES = ("open", "acknowledged")
 
 # 외부API "전면장애" 판정: 폴백률(%) 이 이 값 이상이면 threshold_relax 대상.
 TOTAL_OUTAGE_FALLBACK_PCT = 50.0
@@ -174,33 +198,43 @@ async def _guard_counts(db, action_type: str, trigger_key: str,
     return int(g), t_count, last_ts
 
 
-async def _record_blocked(db, action_type: str, trigger_key: str) -> None:
+async def _record_blocked(db, action_type: str, trigger_key: str, reason: str,
+                          now: datetime) -> None:
     """캡에 막힌 **시도**를 남긴다 — 에스컬레이션이 셀 수 있는 유일한 흔적.
 
     ★왜 필요한가: 차단된 후보는 `execute()` 앞에서 빠지므로 `heal_action` 이벤트가
       생기지 않는다. 그래서 종전에는 **막힐수록 카운터가 조용해졌다**(캡에서 얼어붙음).
-      막힌 사실 자체를 남겨야 "반복해서 못 하고 있다"를 셀 수 있다.
-    ★`heal_action` 과 **다른 이벤트 타입**을 쓴다 — 기존 집계·화면·`_guard_counts`
-      (전부 `event_type='heal_action'` 로 필터)에 영향이 없다.
+    ★`reason` 을 **싣는다** — 안 실으면 배포 후에도 "global 이었나 trigger 였나"를
+      사후에 가를 수 없다(독립 리뷰 지적). 판정은 `trigger_cap` 만 쓰지만
+      `global_cap` 도 기록해 전역 예산 포화를 관측 가능하게 둔다.
+    ★멱등키: 형제(`heal_actions._record`·`feature_flags`)와 **같은 패턴**으로
+      `event_id` + `ON CONFLICT DO NOTHING` 을 쓴다. beat 중복 발화·태스크 재전달이
+      있으면 카운터가 **배로 세어 임계에 절반 시간에 닿기** 때문이다.
+      키는 (타입·트리거·분) 이라 같은 분의 중복만 접는다.
+
     best-effort: 기록 실패가 치유 사이클을 죽이지 않는다.
 
     ★변이 감사 기록(2026-08-27): 이 함수와 `_blocked_count` 의 `logger.warning` **문구**는
       변이에 생존한다. **구멍이 아니다** — 문구는 계약이 아니라 표현이라, 단언하면
       다듬을 때마다 깨지는 취약한 락이 된다(§G-30). 대신 이 두 함수의 **계약**
-      (표·열·JSON 경로·창 경계·이벤트 타입 구분)은 전부 잠갔다:
-      `tests/test_heal_escalation_reachable.py` 의 쓰기·읽기 정합 락 참조.
-      그 밖의 변이 40/42 는 CAUGHT 다.
+      (표·열·JSON 경로·창 경계·이벤트 타입 구분·사유 필터)은 전부 잠갔다:
+      `tests/test_heal_escalation_reachable.py` 참조.
     """
     import json
+    import uuid
 
     from sqlalchemy import text
 
+    eid = str(uuid.uuid5(
+        uuid.NAMESPACE_URL,
+        f"heal_blocked:{action_type}:{trigger_key}:{now.strftime('%Y-%m-%dT%H:%M')}"))
     try:
         await db.execute(text(
-            "INSERT INTO platform_events (event_type, payload) "
-            "VALUES (:et, CAST(:p AS jsonb))"
-        ), {"et": HEAL_BLOCKED_EVENT,
-            "p": json.dumps({"action_type": action_type,
+            "INSERT INTO platform_events (event_id, event_type, payload) "
+            "VALUES (CAST(:eid AS uuid), :et, CAST(:p AS jsonb)) "
+            "ON CONFLICT (event_id) DO NOTHING"
+        ), {"eid": eid, "et": HEAL_BLOCKED_EVENT,
+            "p": json.dumps({"action_type": action_type, "reason": reason,
                              "params": {"trigger_key": trigger_key}},
                             ensure_ascii=False)})
         await db.commit()
@@ -211,23 +245,28 @@ async def _record_blocked(db, action_type: str, trigger_key: str) -> None:
 
 
 async def _blocked_count(db, action_type: str, trigger_key: str, now: datetime) -> int:
-    """최근 1시간 동안 이 (action_type, trigger_key) 가 **캡에 막힌 횟수**.
+    """최근 `ESCALATION_WINDOW_HOURS` 시간 동안 이 트리거가 **`trigger_cap` 에 막힌 횟수**.
+
+    ★`global_cap` 차단은 **세지 않는다**(기록은 된다) — 그건 전역 예산 경합이지
+      이 트리거의 치유가 무효라는 뜻이 아니다.
 
     실패하면 0 을 돌려준다 — 조회 실패가 **없던 에스컬레이션을 만들지 않게** 한다
     (거짓 critical 은 그 자체로 결함이다).
     """
     from sqlalchemy import text
 
-    since = now - timedelta(hours=1)
+    since = now - timedelta(hours=ESCALATION_WINDOW_HOURS)
     try:
         return int((await db.execute(text(
             "SELECT COUNT(*) FROM platform_events "
             "WHERE event_type = :et "
             "  AND payload->>'action_type' = :at "
             "  AND payload->'params'->>'trigger_key' = :tk "
+            "  AND payload->>'reason' = ANY(:reasons) "
             "  AND created_at >= :since"
         ), {"et": HEAL_BLOCKED_EVENT, "at": action_type,
-            "tk": trigger_key, "since": since})).scalar() or 0)
+            "tk": trigger_key, "reasons": list(ESCALATION_COUNT_REASONS),
+            "since": since})).scalar() or 0)
     except Exception as e:  # noqa: BLE001
         logger.warning("heal 차단수 조회 실패(%s): %s", action_type, str(e)[:160])
         return 0
@@ -356,12 +395,19 @@ async def _escalate(db, action_type: str, trigger_key: str) -> bool:
 
     반환: **새로 만들었으면 True**, 억제됐거나 실패했으면 False.
 
-    ★축 단위 중복 억제: 같은 `(action_type, trigger_key)` 에 **열린** `heal_escalation`
-      이 이미 있으면 새로 만들지 않는다. 억제가 없으면 한 트리거가 화면을 채운다 —
-      라이브 드라이런에서 캡 도달 24건 중 **18건이 `threshold_relax:fallback_rate:site_analysis`
-      하나**였다(폭주가 아니라 **반복**이다).
-    ★억제는 `status='open'` 만 본다. 사람이 `dismissed` 한 뒤 문제가 **재발하면 다시 올라와야**
-      하기 때문이다 — 억제가 은신처가 되면 안 된다(경계는 양방향으로 · §D-19).
+    ★축 단위 중복 억제: 같은 `(action_type, trigger_key)` 에 **아직 사람 손에 있는**
+      `heal_escalation` 이 있으면 새로 만들지 않는다. 억제가 없으면 한 트리거가 화면을
+      채운다 — 드라이런에서 캡 도달 24건 중 **18건이 한 트리거**였다.
+
+    ★억제 대상 상태는 `open` **과 `acknowledged` 둘 다**다(`_SUPPRESSING_STATUSES`).
+      독립 리뷰 지적: `acknowledged` 는 *"봤고 조치 중"* 이라 관리자 전이에 실재하는데
+      (`routers/growth.py` 의 `_ACK_STATUSES`·`allowed_from`), `open` 만 보면 사람이
+      ack 하는 **순간 다음 beat(≤10분)에 같은 critical 이 새로 생긴다.**
+      그러면 이 타입에서 `acknowledged` 가 **쓸 수 없는 상태**가 되고,
+      설계가 가르려던 두 상태(`acknowledged` = 조치 중 / `dismissed` = 기각)가 붕괴한다.
+
+    ★`dismissed`·`acted`·`superseded` 는 **억제하지 않는다** — 사람이 기각한 뒤 문제가
+      **재발하면 다시 올라와야** 하기 때문이다. 억제가 은신처가 되면 안 된다(§D-19).
     """
     import json
 
@@ -370,11 +416,13 @@ async def _escalate(db, action_type: str, trigger_key: str) -> bool:
     try:
         dup = (await db.execute(text(
             "SELECT 1 FROM platform_insights "
-            "WHERE insight_type = 'heal_escalation' AND status = 'open' "
+            "WHERE insight_type = 'heal_escalation' "
+            "  AND status = ANY(:statuses) "
             "  AND metrics_json->>'action_type' = :at "
             "  AND metrics_json->>'trigger_key' = :tk "
             "LIMIT 1"
-        ), {"at": action_type, "tk": trigger_key})).fetchone()
+        ), {"statuses": list(_SUPPRESSING_STATUSES),
+            "at": action_type, "tk": trigger_key})).fetchone()
         if dup is not None:
             return False
         await db.execute(text(
@@ -385,8 +433,12 @@ async def _escalate(db, action_type: str, trigger_key: str) -> bool:
         ), {
             "m": json.dumps({"action_type": action_type, "trigger_key": trigger_key,
                              "reason": "auto_heal_ineffective"}, ensure_ascii=False),
-            "narr": (f"자동치유 무효: {action_type}({trigger_key}) 가 반복 발화했으나 "
-                     f"효과가 없어 에스컬레이션합니다. 사람 점검 필요."),
+            # ★서사는 `trigger_cap` 의 실제 의미만 말한다. 종전 문구 *"반복 발화했으나"* 는
+            #   `global_cap` 으로 막힌 트리거(한 번도 발화한 적 없다)에도 붙어 **거짓**이었다.
+            "narr": (f"자동치유가 반복해서 한도에 막혔습니다: {action_type}({trigger_key}) 가 "
+                     f"최근 {ESCALATION_WINDOW_HOURS}시간 동안 시간당 한도(trigger_cap)에 "
+                     f"{ESCALATION_THRESHOLD}회 이상 막혀 조치가 나가지 못했습니다. "
+                     f"자동치유로 해소되지 않는 상태이므로 사람 점검이 필요합니다."),
         })
         await db.commit()
         return True
@@ -442,9 +494,10 @@ async def evaluate(db, *, now: datetime | None = None) -> dict[str, Any]:
                         blocked_count=blocked_prior)
 
         if not decision["allow"]:
-            # 캡에 막힌 시도만 남긴다 — 쿨다운은 정상 페이싱이라 세지 않는다.
+            # 캡에 막힌 시도만 남긴다 — 쿨다운은 정상 페이싱이라 기록하지 않는다.
+            # ★사유를 함께 싣는다: 기록은 global/trigger 둘 다, **판정은 trigger 만**.
             if decision["reason"] in CAP_BLOCK_REASONS:
-                await _record_blocked(db, atype, tkey)
+                await _record_blocked(db, atype, tkey, decision["reason"], now)
             if decision["escalate"] and await _escalate(db, atype, tkey):
                 summary["escalated"] += 1
             summary["blocked"] += 1
@@ -474,4 +527,5 @@ __all__ = [
     "GLOBAL_HOURLY_CAP", "PER_TRIGGER_HOURLY_CAP", "COOLDOWN_MIN",
     "ESCALATION_THRESHOLD", "TOTAL_OUTAGE_FALLBACK_PCT",
     "HEAL_BLOCKED_EVENT", "CAP_BLOCK_REASONS",
+    "ESCALATION_COUNT_REASONS", "ESCALATION_WINDOW_HOURS",
 ]
