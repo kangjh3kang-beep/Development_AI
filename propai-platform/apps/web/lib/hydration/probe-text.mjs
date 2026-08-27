@@ -37,6 +37,23 @@ export function buildRunSample(lines, max = 3, width = 400) {
  * 수집기 생존 — 일부러 던진 `PROBE_ALIVE` 가 잡혔는가.
  * ★이 판정이 거짓이면 그 회차의 "0건"은 근거가 아니다. 그래서 **판정 자체를 잠근다.**
  */
+/**
+ * **조기 포착 프로브의 판정** — `e2e/support/early-capture-probe.mjs` 가 이 함수를 쓴다.
+ *
+ * ★순수 함수로 꺼낸 이유: 초판은 판정이 스크립트 본문에 있어 **양성 방향을 태울 수 없었다**
+ *   (고친 빌드가 배포되기 전에는 `verdict:true` 를 만들 수 없다). 독립 리뷰가 그 사이
+ *   **신호 반전**을 실증했다 — `drainEarlyErrors()` 가 `closed=true` 로 닫으므로 카나리는 절대
+ *   담기지 않고, 그래서 **고쳐진 배포본에서도 `exit 1`("죽음")** 이 나왔다.
+ *   `verdict:true` 가 나오는 유일한 조건이 *"수집기가 안 돈 페이지"* 였다.
+ *
+ * ★`closed === true` 가 **가장 강한 증거**다: 그 플래그를 세우는 주체는 `drainEarlyErrors()` 뿐이고
+ *   그것은 `initEventCollector()` 안에서만 불린다 → 부트스트랩이 실행됐고 수집기가 인계했다.
+ */
+export function decideEarlyCaptureVerdict({ runtime, caught }) {
+  if (!runtime?.exists || !runtime?.hasBuf) return false;
+  return runtime.closed === true || caught?.grew === true;
+}
+
 export function isCollectorAlive(lines) {
   return lines.some((e) => e.includes("PROBE_ALIVE"));
 }
