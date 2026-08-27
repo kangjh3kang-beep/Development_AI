@@ -496,6 +496,10 @@ def test_dedup_query_keys_on_both_axes():
     assert "metrics_json->>'action_type'" in src
     assert "metrics_json->>'trigger_key'" in src
     assert "_SUPPRESSING_STATUSES" in src, "억제 상태를 상수로 경유하지 않는다"
+    # 억제 질의의 몸통 — 타입 필터가 빠지면 **다른 타입 인사이트가 억제를 먹는다**
+    assert "insight_type = 'heal_escalation'" in src
+    assert "status = ANY(:statuses)" in src
+    assert "'statuses': list(_SUPPRESSING_STATUSES)" in src, "바인딩이 상수와 끊겼다"
 
 
 def test_escalate_insert_and_dedup_read_agree_on_metrics_shape():
@@ -528,6 +532,8 @@ def test_blocked_insert_binds_columns_and_is_idempotent():
     """
     write = _code(H._record_blocked)
     assert "(event_id, event_type, payload)" in write
+    # 열 목록과 VALUES 절이 **자릿수·형변환까지** 맞아야 한다(어긋나면 INSERT 가 조용히 실패)
+    assert "VALUES (CAST(:eid AS uuid), :et, CAST(:p AS jsonb))" in write
     assert "ON CONFLICT (event_id) DO NOTHING" in write, "멱등키가 없다 — 중복이 배로 세어진다"
     assert "uuid5" in write, "멱등키가 결정적이지 않다(uuid4 면 매번 새 행이다)"
 

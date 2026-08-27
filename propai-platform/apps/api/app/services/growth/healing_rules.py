@@ -219,6 +219,8 @@ async def _record_blocked(db, action_type: str, trigger_key: str, reason: str,
       다듬을 때마다 깨지는 취약한 락이 된다(§G-30). 대신 이 두 함수의 **계약**
       (표·열·JSON 경로·창 경계·이벤트 타입 구분·사유 필터)은 전부 잠갔다:
       `tests/test_heal_escalation_reachable.py` 참조.
+      ★남은 생존은 **서사(narrative) 문구**와 `logger.warning` 문구 6건뿐이고, 둘 다
+      계약이 아니라 표현이라 단언하지 않는다(다듬을 때마다 깨지는 취약한 락이 된다).
     """
     import json
     import uuid
