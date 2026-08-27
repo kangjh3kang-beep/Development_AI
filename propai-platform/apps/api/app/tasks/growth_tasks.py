@@ -209,6 +209,41 @@ def evaluate_improvement() -> dict:
     return result
 
 
+async def _retention_async() -> dict:
+    from app.core.database import async_session_factory
+    from app.services.growth.insight_retention import supersede_stale_insights
+
+    async with async_session_factory() as session:
+        return await supersede_stale_insights(session)
+
+
+def cleanup_insights() -> dict:
+    """승계된 옛 인사이트를 `superseded` 로 전이(정리 배치).
+
+    ★왜 필요했나(라이브 실측 2026-08-26): `platform_insights` 에 **정리 경로가 없어서**
+      `open` 3,127 / `acknowledged` 16 이 됐고, `latency_regression` 만 30일 초과가
+      1,212건이었다. 화면의 「열린 인사이트」가 **재고**를 세니 오늘 볼 것이 묻힌다.
+
+    반환: `{"scanned_types": int, "superseded": int, "by_type": {...}}`. best-effort.
+    """
+    try:
+        result = run_async_batch(lambda: _retention_async())
+    except Exception as e:  # noqa: BLE001
+        # ★★실패 로그를 성공과 **같은 접두**(`growth 정리:`)로 낸다(2026-08-27 독립 리뷰 H4).
+        #   종전엔 `cleanup_insights 실패` 라, 계획서가 선언한 라이브 프로브
+        #   `docker logs … | grep 'growth 정리'` 에 **안 걸렸다** — 즉 *"배치가 터졌다"* 와
+        #   *"beat 가 아예 안 돌았다"* 가 운영자에게 **똑같이 보였다.**
+        #   이 서비스는 `RuntimeError` 로 *"조용한 0건 금지"* 를 선언해 두었는데,
+        #   호출자가 그것을 `{"superseded": 0}` 으로 되돌리고 있었다.
+        logger.error("growth 정리: **실패** — %s", str(e)[:200])
+        return {"status": "failed", "superseded": 0, "error": str(e)[:200]}
+    # ★0건일 때도 로그를 남긴다 — 배치가 안 돈 것과 정리할 게 없는 것은 다른 사실이다.
+    logger.info("growth 정리: %s 승계 전이 %d건 %s",
+                result.get("status", "ok"), result.get("superseded", 0),
+                result.get("by_type") or "{}")
+    return result
+
+
 # Celery 태스크 등록(앱이 있을 때만; 미설치 환경에서도 함수는 직접 호출 가능).
 _celery = _get_celery_app()
 if _celery is not None:
@@ -227,3 +262,6 @@ if _celery is not None:
     evaluate_improvement = _celery.task(
         name="app.tasks.growth_tasks.evaluate_improvement"
     )(evaluate_improvement)
+    cleanup_insights = _celery.task(
+        name="app.tasks.growth_tasks.cleanup_insights"
+    )(cleanup_insights)
