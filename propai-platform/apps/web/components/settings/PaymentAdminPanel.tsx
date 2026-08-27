@@ -60,6 +60,19 @@ type Unresolved = {
   created_at: string | null;
 };
 
+type RecentOrder = {
+  id: string;
+  order_no: string;
+  email_masked: string;
+  amount_krw: number;
+  refunded_krw: number;
+  /** ★환불 가능액은 **서버가 계산해 준다** — 화면이 계산하면 두 곳이 갈린다. */
+  refundable_krw: number;
+  status: string;
+  provider: string | null;
+  paid_at: string | null;
+};
+
 type Revenue = {
   summary: Summary;
   daily: DailyRow[];
@@ -67,6 +80,7 @@ type Revenue = {
   failure_reasons: FailureRow[];
   top_payers: PayerRow[];
   unresolved: Unresolved[];
+  recent_orders: RecentOrder[];
 };
 
 const krw = (n: number | null | undefined) =>
@@ -119,6 +133,52 @@ export function PaymentAdminPanel() {
     } catch (e) {
       const detail = (e as { payload?: { detail?: unknown } })?.payload?.detail;
       setNotice(typeof detail === "string" ? detail : "재조회에 실패했습니다.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const refund = async (o: RecentOrder) => {
+    const reason = window.prompt(
+      `주문 ${o.order_no}(${o.email_masked}) 환불 사유 — 환불 가능 ${krw(o.refundable_krw)}`,
+    );
+    if (!reason || reason.trim().length < 2) return;
+    setBusy(true);
+    setNotice(null);
+    try {
+      const r = await apiClient.post<{ refunded_krw: number }>(
+        `/billing/admin/orders/${o.id}/refund`,
+        { body: { reason: reason.trim() }, useMock: false },
+      );
+      setNotice(`${krw(r.refunded_krw)} 환불 처리했습니다.`);
+      await load();
+    } catch (e) {
+      // ★사유를 버리지 않는다 — 관리자가 무엇이 막혔는지 알아야 다음 조치를 정한다.
+      const d = (e as { payload?: { detail?: unknown } })?.payload?.detail;
+      const msg =
+        d && typeof d === "object"
+          ? `${(d as { message?: string }).message ?? ""} ${(d as { remediation?: string }).remediation ?? ""}`.trim()
+          : typeof d === "string"
+            ? d
+            : "환불에 실패했습니다.";
+      setNotice(msg);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** 계좌이체 등 오프라인 입금 확인 후 관리자가 직접 지급한다(`provider="manual"`). */
+  const manualConfirm = async (o: RecentOrder) => {
+    if (!window.confirm(`주문 ${o.order_no}(${krw(o.amount_krw)})을 입금 확인 처리할까요?`)) return;
+    setBusy(true);
+    setNotice(null);
+    try {
+      await apiClient.post(`/billing/admin/orders/${o.id}/confirm`, { useMock: false });
+      setNotice(`주문 ${o.order_no} 을 수동 확정했습니다.`);
+      await load();
+    } catch (e) {
+      const d = (e as { payload?: { detail?: unknown } })?.payload?.detail;
+      setNotice(typeof d === "string" ? d : "수동 확정에 실패했습니다.");
     } finally {
       setBusy(false);
     }
@@ -308,6 +368,66 @@ export function PaymentAdminPanel() {
                 </li>
               ))}
             </ul>
+          </div>
+        ) : null}
+
+        {rev && rev.recent_orders.length > 0 ? (
+          <div className="mt-5" data-testid="recent-orders">
+            <h3 className="text-sm font-semibold text-[var(--text-secondary)]">
+              최근 결제 · 환불 집행
+            </h3>
+            <div className="mt-2 overflow-x-auto">
+              <table className="w-full min-w-[620px] text-sm">
+                <thead>
+                  <tr className="border-b border-[var(--line)] text-left text-xs text-[var(--text-tertiary)]">
+                    <th className="py-2 pr-3 font-medium">주문번호</th>
+                    <th className="py-2 pr-3 font-medium">사용자</th>
+                    <th className="py-2 pr-3 font-medium">결제</th>
+                    <th className="py-2 pr-3 font-medium">환불</th>
+                    <th className="py-2 pr-3 font-medium">상태</th>
+                    <th className="py-2 font-medium">처리</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--line)]">
+                  {rev.recent_orders.map((o) => (
+                    <tr key={o.id}>
+                      <td className="py-2 pr-3 font-mono text-xs">{o.order_no}</td>
+                      <td className="py-2 pr-3 font-mono text-xs">{o.email_masked}</td>
+                      <td className="py-2 pr-3">{krw(o.amount_krw)}</td>
+                      <td className="py-2 pr-3">
+                        {o.refunded_krw > 0 ? krw(o.refunded_krw) : "-"}
+                      </td>
+                      <td className="py-2 pr-3 text-xs">{o.status}</td>
+                      <td className="py-2">
+                        {/* ★토스 결제이고 환불 가능액이 남았을 때만 — 죽은 버튼을 만들지 않는다. */}
+                        {o.status === "pending" ? (
+                          // ★계좌이체 입금 확인 — 종전에도 API 는 있었으나 화면이 없었다.
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => void manualConfirm(o)}
+                            className="rounded-full border border-[var(--accent-strong)] px-3 py-1 text-xs font-semibold text-[var(--accent-strong)] disabled:opacity-50"
+                          >
+                            입금 확인
+                          </button>
+                        ) : o.provider === "toss" && o.refundable_krw > 0 ? (
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => void refund(o)}
+                            className="rounded-full border border-[var(--line)] px-3 py-1 text-xs font-semibold text-[var(--text-secondary)] disabled:opacity-50"
+                          >
+                            환불
+                          </button>
+                        ) : (
+                          <span className="text-xs text-[var(--text-tertiary)]">-</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         ) : null}
 

@@ -202,6 +202,46 @@ async def top_payers(db: AsyncSession, *, days: int = 30, limit: int = 20) -> li
     ]
 
 
+async def recent_orders(db: AsyncSession, *, days: int = 30, limit: int = 30) -> list[dict[str, Any]]:
+    """최근 결제 — ★관리자가 **여기서 환불을 집행**한다.
+
+    ★이 목록이 없으면 관리자 환불 API 는 만들어 놓고 **아무도 못 쓰는** 상태가 된다
+      (실제로 라우트 도달률 래칫이 그것을 잡았다 — 2026-08-27).
+    """
+    await _ensure(db)
+    rows = (
+        await db.execute(
+            text(
+                "SELECT o.id, o.order_no, o.user_id, u.email, o.amount_krw,"
+                "       COALESCE(o.refunded_krw,0) AS refunded_krw, o.status, o.provider,"
+                "       o.paid_at, o.created_at"
+                "  FROM coin_orders o LEFT JOIN public.users u ON u.id::text = o.user_id"
+                " WHERE o.created_at >= now() - make_interval(days => :d)"
+                " ORDER BY COALESCE(o.paid_at, o.created_at) DESC LIMIT :lim"
+            ),
+            {"d": int(days), "lim": int(limit)},
+        )
+    ).mappings().all()
+    return [
+        {
+            "id": str(r["id"]),
+            "order_no": r["order_no"],
+            "email_masked": _mask_email(r["email"]),
+            "amount_krw": round(float(r["amount_krw"] or 0)),
+            "refunded_krw": round(float(r["refunded_krw"] or 0)),
+            # ★환불 가능액을 **서버가 계산해서 준다** — 화면이 계산하면 두 곳이 갈린다.
+            "refundable_krw": max(
+                0, round(float(r["amount_krw"] or 0)) - round(float(r["refunded_krw"] or 0))
+            ),
+            "status": r["status"],
+            "provider": r["provider"],
+            "paid_at": r["paid_at"].isoformat() if r["paid_at"] else None,
+            "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+        }
+        for r in rows
+    ]
+
+
 def _mask_email(email: str | None) -> str:
     """`ab***@example.com` — 식별은 되되 원문은 남기지 않는다."""
     if not email or "@" not in email:

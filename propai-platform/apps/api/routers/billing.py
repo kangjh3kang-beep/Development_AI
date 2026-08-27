@@ -798,6 +798,8 @@ async def admin_revenue(
         "by_provider": await revenue_service.by_provider(db, days=d),
         "failure_reasons": await revenue_service.failure_reasons(db, days=d),
         "top_payers": await revenue_service.top_payers(db, days=d),
+        # ★관리자가 환불을 집행하는 목록. 이게 없으면 관리자 환불 API 는 도달 불가다.
+        "recent_orders": await revenue_service.recent_orders(db, days=d),
         # ★매출과 **같은 응답**에 미해결 건을 싣는다 — 따로 두면 아무도 안 본다.
         "unresolved": await payment_receipts.list_unresolved(db, limit=50),
     }

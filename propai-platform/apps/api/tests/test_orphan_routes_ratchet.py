@@ -49,7 +49,7 @@ _UNCLASSIFIED = "unclassified"
 
 #: `unclassified` 상한 — 형식 승격 시점(2026-08-26)의 실측값. 한 건을 열어 분류할 때마다
 #: 내려간다. ★이 수를 **올리는 커밋은 새 미분류를 들여오는 것**이므로 실패한다.
-_UNCLASSIFIED_CEILING = 130
+_UNCLASSIFIED_CEILING = 129
 
 
 def _rows(path: str) -> list[tuple[str, str, str]]:

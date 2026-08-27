@@ -25,8 +25,8 @@ import pytest
 from app.services.billing import payment_receipts, toss_payments
 from app.services.billing.billing_service import compute_remaining
 from app.services.billing.toss_orders_service import (
-    _REMEDIATION,
     _LOCAL_REMEDIATION,
+    _REMEDIATION,
     _REVOKED_STATUSES,
     STATUS_DONE,
     _idempotency_key,
