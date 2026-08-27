@@ -247,17 +247,32 @@ class TestHonestyMachineryIntegration:
         assert item["detail"].get("surveyed") is not False, "치유됐으면 미조회가 아니다"
 
 
-@pytest.mark.xfail(
-    reason=(
-        "★부채(미측정) — `integrated_recommender/orchestrator.py:286` 의 region 축을 "
-        "**재측정하지 않고** dead-path 로 제외했다(인계 라벨 승계). 이 계획의 다른 라벨 셋은 "
-        "재측정해서 둘이 뒤집혔으므로 이것도 뒤집힐 수 있다. 재측정 후 이 xfail 을 제거하거나 "
-        "진짜 락으로 바꾼다."
-    ),
-    strict=True,
-)
-def test_orchestrator_dead_path_remeasured():
-    raise AssertionError("미재측정 — 초록 안에 부채를 드러내 둔다")
+def test_integrated_recommender_path_is_live_and_covered():
+    """★인계 라벨 **「dead-path 확정 — 제외」가 거짓이었다**(2차 독립 리뷰가 잡았다).
+
+    인계서는 `integrated_recommender/orchestrator.py:286` 을 *"라우터 참조 0건 = dead-path,
+    대조군으로 판정 완료"* 라고 넘겼다. **실재하는 라이브 라우트다**:
+
+        routers/development_methods.py:267   IntegratedRecommender().recommend(...)
+        main.py:914                          include_router(..., prefix="/api/v1/development-methods")
+
+    ★**왜 0건이 나왔나** — 그 파일은 `apps/api/routers/` 에 있고 조회는 `app/routers/` 만 봤다.
+      **패턴이 아니라 범위가 틀렸다**(CLAUDE.md §26 — "0건"은 부재가 아니다).
+      나는 이 라벨을 §3-1 에 *"뒤집힐 수 있다"* 고 적어 두고도 **그대로 승계**했다.
+
+    그리고 이 경로의 `region` 은 **시·도**다(`_region_from_address` = 주소 첫 토큰).
+    같은 필드에 rough-scenario 는 **시군구**를 넣는다 — 그래서 *"region 은 시군구"* 라고
+    찍는 처방은 **이 경로에 새 축 날조**를 만들었을 것이다. `looks_like_sido` 가 그것을 막는다.
+    """
+    from app.services.feasibility.feasibility_service_v2 import FeasibilityServiceV2
+
+    inp = FeasibilityServiceV2().build_module_input(
+        dev_type="M01", site_area_sqm=1_000.0, max_far_pct=250.0,
+        region="경기도",  # ★이 경로가 실제로 넘기는 형태(주소 첫 토큰 = 시도)
+        address="경기도 수원시 영통구 1",
+    )
+    assert inp.sido_name == "경기", "시·도가 주소에서 해석돼야 대도시권 판정이 산다"
+    assert inp.sigungu_name == "", "시·도를 시군구 칸에 넣으면 새 축 날조다"
 
 
 class TestWiringIsLocked:
@@ -338,12 +353,13 @@ class TestWiringIsLocked:
         #   `str(region)` 도 Call 이라 **원래 결함이 그대로 통과**했다(독립 리뷰 M-A).
         assert all(
             isinstance(a, ast.Call)
-            and getattr(a.func, "id", getattr(a.func, "attr", None)) == "_sido_short_or_empty"
+            and getattr(a.func, "id", getattr(a.func, "attr", None)) == "sido_short_or_empty"
             for a in sido
         ), "sido_name 은 **공용 시도 해석기**의 반환값이어야 한다 — 시군구 변수 직결 금지"
-        assert any(
-            isinstance(a, (ast.Name, ast.Call, ast.BoolOp)) for a in sigungu
-        ), "sigungu_name 이 빈 리터럴이면 축이 여전히 붕괴한 것이다"
+        # ★sigungu 칸의 *내용*은 여기서 판정하지 않는다 — 노드 타입 단언은
+        #   `sigungu_name=""` 같은 축 붕괴를 못 잡는다(2차 리뷰 M-J 가 그렇게 생존했다).
+        #   그 판정은 **행위 락**(`TestProducersBurnedForReal`)이 한다. 여기는 존재만 본다.
+        assert sigungu, "sigungu_name 칸 자체가 없으면 축이 갈리지 않는다"
 
 
 class TestHealingAlsoFixesTheRate:
@@ -537,3 +553,111 @@ class TestAxisFixMovesB03B04Amounts:
         right = self._amounts(sido_name="경기", sigungu_name="수원시")
         unknown = self._amounts(sido_name="", sigungu_name="")
         assert right["B03"] != unknown["B03"]
+
+
+class TestProducersBurnedForReal:
+    """★**생산자를 행위로 태운다** — AST 락은 철자만 거부했다(2차 독립 리뷰).
+
+    1차 봉합의 AST 락은 `sido_name=region` 이라는 **철자 두 개**만 막았다. 그래서
+    `sido_name=_sido_short_or_empty(region)`(대상만 바꾼 것)이나 `sigungu_name=""`(축을 다시
+    비우는 것)은 **그대로 통과**했고, 그중 셋은 **돈을 움직였다**(B03+B04 −21.5%).
+
+    > **함수는 잠갔는데 배선은 무잠금** — 이 PR 이 고쳤다고 선언한 그 결함이
+    > **한 층 위에서 재발**했다. 그래서 이제 **생산자를 실제로 호출해** 나온
+    > `ModuleInput` 의 `(sido_name, sigungu_name)` 두 칸을 **두 모집단**으로 단언한다.
+    """
+
+    @staticmethod
+    def _svc():
+        from app.services.feasibility.feasibility_service_v2 import FeasibilityServiceV2
+
+        return FeasibilityServiceV2()
+
+    def test_build_module_input_splits_axes_for_sigungu_region(self):
+        """`region` 이 **시군구**로 오는 호출부(rough-scenario) — 두 칸이 갈려야 한다."""
+        inp = self._svc().build_module_input(
+            dev_type="M01", site_area_sqm=1_000.0, max_far_pct=250.0,
+            region="수원시", address="경기도 수원시 영통구 1-2",
+        )
+        assert inp.sido_name == "경기", "시·도는 주소에서 해석"
+        assert inp.sigungu_name == "수원시", "시군구는 region 에서"
+
+    def test_build_module_input_refuses_to_put_a_sido_into_sigungu(self):
+        """★반대 모집단 — `region` 이 **시도**로 오는 호출부(integrated_recommender).
+
+        같은 필드에 뜻이 다른 값이 온다. 시·도를 시군구 칸에 넣으면 **새 축 날조**다.
+        """
+        inp = self._svc().build_module_input(
+            dev_type="M01", site_area_sqm=1_000.0, max_far_pct=250.0,
+            region="경기도", address="경기도 수원시 영통구 1-2",
+        )
+        assert inp.sido_name == "경기"
+        assert inp.sigungu_name == "", "시·도를 시군구 칸에 넣으면 안 된다"
+
+    def test_build_module_input_unresolved_address_invents_nothing(self):
+        """주소로 시·도를 못 얻으면 **빈 문자열**. `"서울"` 을 지어내지 않는다."""
+        inp = self._svc().build_module_input(
+            dev_type="M01", site_area_sqm=1_000.0, max_far_pct=250.0,
+            region="", address="의정부동 224",
+        )
+        assert inp.sido_name == ""
+        assert inp.sigungu_name == ""
+
+    def test_the_two_populations_actually_differ(self):
+        """대조군 — 두 모집단이 실제로 갈린다(차가 0이면 락이 아니다)."""
+        svc = self._svc()
+        a = svc.build_module_input(dev_type="M01", site_area_sqm=1_000.0, max_far_pct=250.0,
+                                   region="수원시", address="경기도 수원시 영통구 1-2")
+        b = svc.build_module_input(dev_type="M01", site_area_sqm=1_000.0, max_far_pct=250.0,
+                                   region="경기도", address="경기도 수원시 영통구 1-2")
+        assert a.sigungu_name != b.sigungu_name
+
+    def test_precheck_producer_splits_axes(self):
+        """precheck 생산자도 **같은 계약**이어야 한다(형제 일치)."""
+        import asyncio
+
+        from app.services.precheck.precheck_service import _build_band_module_input
+
+        _svc, inp = asyncio.run(_build_band_module_input(
+            best_code="M01", zone_type="제2종일반주거지역",
+            legal={"sigungu": "수원시", "far_pct": 250.0, "applied_far_pct": 250.0},
+            area_sqm=1_000.0, address="경기도 수원시 영통구 1-2",
+            official_price_per_sqm=1_500_000.0,
+        ))
+        assert inp.sido_name == "경기"
+        assert inp.sigungu_name == "수원시"
+
+    def test_precheck_producer_does_not_fabricate_seoul(self):
+        """★반대 모집단 — 시군구 미확인이면 **지어낸 `"서울"`** 이 축에 들어가면 안 된다."""
+        import asyncio
+
+        from app.services.precheck.precheck_service import _build_band_module_input
+
+        _svc, inp = asyncio.run(_build_band_module_input(
+            best_code="M01", zone_type="제2종일반주거지역",
+            legal={"far_pct": 250.0, "applied_far_pct": 250.0},
+            area_sqm=1_000.0, address="주소미상",
+            official_price_per_sqm=1_500_000.0,
+        ))
+        assert inp.sigungu_name == "", "지어낸 폴백이 시군구 축에 새면 안 된다"
+        assert inp.sido_name == ""
+
+    def test_producer_axes_reach_the_money(self):
+        """★종단 — 생산자가 낸 두 칸이 **실제 B03/B04 금액**을 만든다.
+
+        이것이 없으면 「금액이 움직인다」는 선언이 **그것을 만드는 코드에 결속되지 않는다.**
+        """
+        svc = self._svc()
+        good = svc.build_module_input(dev_type="M01", site_area_sqm=1_000.0, max_far_pct=250.0,
+                                      region="수원시", address="경기도 수원시 영통구 1-2")
+        blind = svc.build_module_input(dev_type="M01", site_area_sqm=1_000.0, max_far_pct=250.0,
+                                       region="", address="의정부동 224")
+        amt = lambda i: {  # noqa: E731
+            x["code"]: x["amount_won"] for x in compute_developer_stage_charges(
+                sido_name=i.sido_name, sigungu_name=i.sigungu_name,
+                total_gfa_sqm=10_000.0, total_households=64,
+            )["construction"]["items"]
+        }
+        g, b = amt(good), amt(blind)
+        assert g["B03"] > 0 and g["B04"] > 0, "축이 맞으면 등록 단가가 살아난다"
+        assert b["B03"] == 0 and b["B04"] == 0, "모르면 0 + 정직 강등"

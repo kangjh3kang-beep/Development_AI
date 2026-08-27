@@ -308,6 +308,32 @@ _SIDO_ADDRESS_PREFIXES: tuple[str, ...] = tuple(
            key=lambda n: (-len(n), n))
 )
 
+#: ★같은 철자가 **광역시와 기초자치단체 양쪽**을 가리키는 접두 — 판정하지 않는다.
+#:   `"광주시"` = 광주광역시(구어) 또는 **경기도 광주시**. 전자는 2%, 후자는 수도권 **4%** 라
+#:   찍으면 절반이 틀린다. 완전명(`"광주광역시"`)이나 도명 동반(`"경기도 광주시"`)은 모호하지 않다.
+_AMBIGUOUS_SIDO_PREFIXES: tuple[str, ...] = ("광주시",)
+
+
+def sido_short_or_empty(address: str | None) -> str:
+    """주소에서 시·도 축약키만 꺼낸다 — 실패하면 **빈 문자열**(추측 금지).
+
+    ★**공용 헬퍼다.** 종전에는 이 세 줄이 `precheck_service`·`feasibility_service_v2` 에
+      각각 복제돼 있었고 라우터가 **private 심볼을 교차 임포트**했다(독립 리뷰 지적).
+      복제하면 두 축이 다시 갈린다 — 해석기는 **한 자리**에 둔다.
+    """
+    return resolve_sido_for_charges(address=str(address or ""))[0]
+
+
+def looks_like_sido(value: str | None) -> bool:
+    """이 값이 **시·도명인가**(시군구가 아니라).
+
+    ★`region` 이 이 코드베이스에서 **과부하**돼 있기 때문에 필요하다 — 같은 필드에
+      `rough-scenario` 는 **시군구**("동구")를, `integrated_recommender` 는 **시도**("경기도")를
+      넣는다. 그래서 *"region 은 시군구다"* 라고 **찍으면 절반이 틀린다.**
+      시군구 칸에 넣기 전에 **그 값이 시·도인지 물어** 시·도면 넣지 않는다(축 날조 방지).
+    """
+    return resolve_sido_for_charges(sido_name=str(value or ""))[1] == SIDO_BASIS_EXPLICIT
+
 #: 시도 해석 근거(basis) 닫힌 어휘 — `resolve_sido_for_charges` 반환값.
 SIDO_BASIS_EXPLICIT = "sido_explicit"    # 호출부가 넘긴 값이 실제 시도였다
 SIDO_BASIS_ADDRESS = "sido_address"      # 주소 문자열에서 추론했다
@@ -345,6 +371,13 @@ def resolve_sido_for_charges(sido_name: str = "", address: str = "") -> tuple[st
         return explicit, SIDO_BASIS_EXPLICIT
     addr = str(address or "").strip()
     if addr:
+        # ★**두 뜻으로 읽히는 접두는 지어내지 않는다.** `"광주시 오포읍"` 은
+        #   경기도 **광주시**(비수도권 아님 — 경기=수도권 4%)일 수도, **광주광역시**(2%)일 수도
+        #   있다. 어느 쪽으로 찍어도 부과율이 틀릴 수 있으므로 **모른다고 한다.**
+        #   (`"광주광역시…"`·`"경기도 광주시…"` 처럼 **가려지는** 표기는 아래에서 정상 해석된다.)
+        for ambiguous in _AMBIGUOUS_SIDO_PREFIXES:
+            if addr.startswith(ambiguous):
+                return "", SIDO_BASIS_UNRESOLVED
         # ★**주소의 맨 앞에서만** 시·도를 인정한다(한국 주소는 시도 → 시군구 → … 순서).
         for name in _SIDO_ADDRESS_PREFIXES:
             if addr.startswith(name):

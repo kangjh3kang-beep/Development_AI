@@ -43,7 +43,7 @@ from app.schemas.feasibility_v2 import (
 from app.services.auth.auth_service import get_current_user, get_current_user_optional
 from app.services.feasibility.ai_optimizer import optimize_slsqp
 from app.services.feasibility.ai_recommendation import diagnose
-from app.services.feasibility.feasibility_service_v2 import FeasibilityServiceV2, _sido_short_or_empty
+from app.services.feasibility.feasibility_service_v2 import FeasibilityServiceV2
 from app.services.feasibility.legacy_ledger import build_legacy_ledger
 from app.services.feasibility.modules.base_module import ModuleInput
 from app.services.feasibility.monte_carlo_engine import MCVariable, run_monte_carlo
@@ -54,6 +54,7 @@ from app.services.feasibility.sensitivity_engine import (
 )
 from app.services.feasibility.version_control_db import FeasibilityVCSDB
 from app.services.land_intelligence.parcel_normalize import ParcelsIn
+from app.services.tax.regional_tax_data import looks_like_sido, sido_short_or_empty
 
 router = APIRouter(prefix="/api/v2/feasibility", tags=["feasibility-v2"])
 
@@ -717,8 +718,10 @@ async def baseline_feasibility(req: FeasibilityBaselineRequest):
         # ★축 교정(형제 스윕) — `req.region` 은 프론트가 **시군구**를 넣어 보낸다
         #   (`RoughScenarioPanel` 의 `regionFromAddress()`). 시·도 칸에 직결하면
         #   B01 광역교통이 대도시권을 비대도시권으로 오판한다. 주소에서 해석한다.
-        sido_name=_sido_short_or_empty(req.address),
-        sigungu_name=req.region or "",
+        sido_name=sido_short_or_empty(req.address),
+        # ★`req.region` 은 스키마상 **시도명**이라 적혀 있다 — 시군구 칸에 넣기 전에
+        #   **시·도인지 묻는다**(스키마를 지키는 클라이언트의 값을 축 날조로 만들지 않기 위해).
+        sigungu_name=("" if looks_like_sido(req.region) else (req.region or "")),
         project_months=_service._get_type_project_months(dev_type),
         discount_rate=0.08,
         equity_won=equity,
