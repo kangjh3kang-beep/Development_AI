@@ -47,7 +47,11 @@ function walk(dir: string, out: string[] = []): string[] {
 const code = (f: string) => __stripCommentsForScan(readFileSync(f, "utf8"), f);
 
 /** ★파생: 파일명이 경계이거나, **오류 경계 훅을 구현한** 파일. 새 경계는 자동 편입된다. */
-const CANDIDATES = [join(WEB_ROOT, "app"), join(WEB_ROOT, "components")].flatMap((d) => walk(d));
+// ★`lib` 도 넣는다 — 보고기를 부르는 곳이 `app`/`components` 밖에도 있다
+//   (`lib/chunk-recovery.ts` 가 자동복구 직전에 보고한다).
+const CANDIDATES = [join(WEB_ROOT, "app"), join(WEB_ROOT, "components"), join(WEB_ROOT, "lib")].flatMap(
+  (d) => walk(d),
+);
 const boundaries = CANDIDATES.filter((f) => {
   if (!/\.tsx$/.test(f)) return false;
   if (/[\\/](error|global-error)\.tsx$/.test(f)) return true;
@@ -87,7 +91,31 @@ describe("에러 경계 — 오류 보고 전수 배선", () => {
     ).toEqual([]);
   });
 
-  it("★(역) 어떤 경계도 수집기를 **직접 임포트하지 않는다** — 별칭 우회까지 막는다", () => {
+  it("★(역) 보고하는 **모든 파일**이 수집기를 직접 임포트하지 않는다 — 별칭 우회까지 막는다", () => {
+    // ★모집단을 `경계` 가 아니라 **「보고기를 부르는 파일 전수」**로 넓힌다.
+    //   `lib/chunk-recovery.ts` 는 경계가 아니지만 자동복구 직전에 보고한다(2026-08-27) —
+    //   좁은 축에서는 그 파일이 `trackEvent` 를 직접 불러도 **아무것도 막지 않았다**.
+    // ★**정의를 호출로 세지 않는다**: `report-boundary-error.ts` 자신은 당연히 수집기를
+    //   임포트한다(그게 그 파일의 일이다). 초판은 그것을 위반으로 신고했다 — **위양성도 결함이다.**
+    //   ★오늘 같은 형태로 세 번 데였다(`record_event` 정의 · 동명의 다른 함수 · 여기).
+    const reporters = CANDIDATES.filter(
+      (f) =>
+        /\.tsx?$/.test(f) &&
+        /reportBoundaryError\s*\(/.test(code(f)) &&
+        !/export\s+function\s+reportBoundaryError/.test(code(f)),
+    );
+    expect(
+      reporters.some((f) => f.endsWith("chunk-recovery.ts")),
+      "보고기 호출부 파생이 `lib/chunk-recovery.ts` 를 못 잡았다 — 축이 좁아졌다",
+    ).toBe(true);
+    const leaked = reporters
+      .filter((f) => importsFrom(code(f), "@/lib/growth/event-collector"))
+      .map((f) => relative(WEB_ROOT, f));
+    expect(
+      leaked,
+      `보고하는 파일이 수집기를 직접 임포트한다 — 배달 구동자 없는 문서에서 그 이벤트는\n영영 링버퍼에 갇힌다. reportBoundaryError 를 써라:\n${leaked.join("\n")}`,
+    ).toEqual([]);
+
     const bypass = boundaries
       .filter((f) => importsFrom(code(f), "@/lib/growth/event-collector"))
       .map((f) => relative(WEB_ROOT, f));
@@ -99,7 +127,7 @@ describe("에러 경계 — 오류 보고 전수 배선", () => {
     ).toEqual([]);
   });
 
-  it("★scope 가 경계마다 **서로 다르다** — 같으면 analyzer 가 라우트를 못 가른다", () => {
+  it("★scope 가 경계마다 **서로 다르다** — 같으면 어느 화면이 깨졌는지 조회로 못 가른다", () => {
     const scopes = boundaries.map((f) => ({
       file: relative(WEB_ROOT, f),
       scope: /reportBoundaryError\s*\(\s*"([^"]+)"/.exec(code(f))?.[1] ?? null,
