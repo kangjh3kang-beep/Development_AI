@@ -12,6 +12,14 @@ import {
   formatKrw,
 } from "./MyPageShell";
 
+/** 환불 응답 — ★「미사용분만」 정책을 화면이 설명할 수 있게 서버가 근거를 함께 준다. */
+type RefundResult = {
+  refunded_krw: number;
+  /** 이미 사용해 **돌려줄 수 없는** 금액 */
+  unrefundable_consumed_krw?: number;
+  partial?: boolean;
+};
+
 type Receipt = {
   id: string;
   event: string;
@@ -269,13 +277,21 @@ export function CoinsClient({ locale }: { locale: Locale }) {
     setBusy(true);
     setNotice(null);
     try {
-      const r = await apiClient.post<{ refunded_krw: number }>(
-        `/billing/orders/${id}/refund`,
-        { body: { reason: reason.trim() }, useMock: false },
-      );
+      const r = await apiClient.post<RefundResult>(`/billing/orders/${id}/refund`, {
+        body: { reason: reason.trim() },
+        useMock: false,
+      });
+      // ★부분 환불이면 **왜 이만큼인지** 말한다. 조용히 적게 돌려주면 사용자가 모른다.
+      const consumed = r.unrefundable_consumed_krw ?? 0;
       setNotice({
         kind: "info",
-        text: `${r.refunded_krw.toLocaleString("ko-KR")}원이 환불 처리되었습니다. 카드사에 따라 영업일 기준 3~4일이 걸릴 수 있습니다.`,
+        text:
+          consumed > 0
+            ? `미사용분 ${r.refunded_krw.toLocaleString("ko-KR")}원을 환불했습니다.` +
+              ` 이미 사용하신 ${consumed.toLocaleString("ko-KR")}원은 환불되지 않습니다.` +
+              ` 카드사에 따라 영업일 기준 3~4일이 걸릴 수 있습니다.`
+            : `${r.refunded_krw.toLocaleString("ko-KR")}원이 환불 처리되었습니다.` +
+              ` 카드사에 따라 영업일 기준 3~4일이 걸릴 수 있습니다.`,
       });
       await reload();
     } catch (error) {

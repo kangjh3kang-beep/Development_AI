@@ -140,17 +140,26 @@ export function PaymentAdminPanel() {
 
   const refund = async (o: RecentOrder) => {
     const reason = window.prompt(
-      `주문 ${o.order_no}(${o.email_masked}) 환불 사유 — 환불 가능 ${krw(o.refundable_krw)}`,
+      `주문 ${o.order_no}(${o.email_masked}) 환불 사유 — **미사용분만** 환불됩니다(주문 미환불 잔액 ${krw(o.refundable_krw)})`,
     );
     if (!reason || reason.trim().length < 2) return;
     setBusy(true);
     setNotice(null);
     try {
-      const r = await apiClient.post<{ refunded_krw: number }>(
-        `/billing/admin/orders/${o.id}/refund`,
-        { body: { reason: reason.trim() }, useMock: false },
+      const r = await apiClient.post<{
+        refunded_krw: number;
+        unrefundable_consumed_krw?: number;
+      }>(`/billing/admin/orders/${o.id}/refund`, {
+        body: { reason: reason.trim() },
+        useMock: false,
+      });
+      const consumed = r.unrefundable_consumed_krw ?? 0;
+      // ★관리자에게도 **왜 이만큼인지** 말한다(미사용분만 정책).
+      setNotice(
+        consumed > 0
+          ? `미사용분 ${krw(r.refunded_krw)} 환불 · 사용분 ${krw(consumed)} 은 환불 대상이 아닙니다.`
+          : `${krw(r.refunded_krw)} 환불 처리했습니다.`,
       );
-      setNotice(`${krw(r.refunded_krw)} 환불 처리했습니다.`);
       await load();
     } catch (e) {
       // ★사유를 버리지 않는다 — 관리자가 무엇이 막혔는지 알아야 다음 조치를 정한다.
