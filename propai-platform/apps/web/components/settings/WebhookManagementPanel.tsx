@@ -13,7 +13,7 @@ import { Button, Card, CardContent, Input } from "@propai/ui";
  *   **서버에는 아무 일도 일어나지 않았다.** 미배선보다 나쁘다 — 거짓말이다.
  *
  * ★그리고 목업은 **없는 필드를 지어냈다**: `last_delivery_status`·`last_delivered_at`·`active`.
- *   실제 계약은 `is_active` 이고 전송 이력은 `/webhooks/{id}/deliveries` 로 **따로** 조회한다.
+ *   실제 계약은 `is_active` 이고 전송 이력은 **별도 엔드포인트**로 따로 조회한다.
  *   지어낸 두 필드는 **지웠다** — 모르는 것을 화면에 만들어 내지 않는다.
  */
 type Webhook = {
@@ -58,6 +58,8 @@ export function WebhookManagementPanel() {
   const [selectedEvents, setSelectedEvents] = useState<string[]>([]);
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState("");
+  // 테스트 전송이 성공한 웹훅 id — ★성공도 **보여야** 사용자가 결과를 안다.
+  const [sent, setSent] = useState<string | null>(null);
 
   // ★GET /webhooks 는 **배열을 직접** 준다(목업이 가정한 `{webhooks: []}` 래퍼가 아니다).
   async function reload() {
@@ -142,6 +144,20 @@ export function WebhookManagementPanel() {
     } catch (e) {
       // ★서버가 거부하면 화면도 바뀌면 안 된다 — 낙관적 갱신을 하지 않는다.
       setError(describe(e, "활성 상태를 바꾸지 못했습니다."));
+    }
+  }
+
+  /** ★테스트 전송 — 등록한 URL 이 **실제로 받는지** 확인한다.
+   *  엔드포인트는 종전부터 있었는데 **화면이 없어 아무도 못 썼다**(라우트 도달률 실측). */
+  async function sendTest(webhookId: string) {
+    try {
+      await apiClient.post(`/webhooks/${webhookId}/test`, { useMock: false });
+      setError("");
+      setSent(webhookId);
+    } catch (e) {
+      // ★사유를 버리지 않는다 — 404·타임아웃·수신서버 오류가 구별돼야 고칠 수 있다.
+      setSent(null);
+      setError(describe(e, "테스트 전송에 실패했습니다."));
     }
   }
 
@@ -318,8 +334,10 @@ export function WebhookManagementPanel() {
                     </div>
 
                     {/* ★「마지막 전송」 두 줄은 지웠다 — 목업이 지어낸 필드였고 목록
-                        엔드포인트는 그 값을 주지 않는다. 전송 이력은 별도 경로
-                        (`/webhooks/{id}/deliveries`)이므로, 없는 것을 화면에 만들지 않는다.
+                        엔드포인트는 그 값을 주지 않는다. 전송 이력은 **별도 엔드포인트**라
+                        아직 화면에 없다(없는 것을 만들지 않는다).
+                        ★주석에 그 경로 리터럴을 적지 않는다 — 라우트 도달률 분류기가
+                        **주석을 소비처로 세어** 그 라우트를 「배선됨」으로 오판한다(실측).
                         ★대신 서버가 실제로 주는 것을 적는다. */}
                     <div className="flex items-center gap-4 text-xs text-[var(--text-hint)]">
                       {wh.description && <span>{wh.description}</span>}
@@ -343,6 +361,12 @@ export function WebhookManagementPanel() {
                       }`}
                     >
                       {wh.is_active ? "활성" : "비활성"}
+                    </button>
+                    <button
+                      onClick={() => void sendTest(wh.id)}
+                      className="rounded-xl px-3 py-1.5 text-xs font-bold text-[var(--text-secondary)] transition-all hover:bg-[var(--surface-soft)]"
+                    >
+                      {sent === wh.id ? "보냈습니다" : "테스트 전송"}
                     </button>
                     <button
                       onClick={() => handleDelete(wh.id)}
