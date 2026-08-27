@@ -304,13 +304,56 @@ def _metro_scb_from_env() -> int | None:
 _METRO_HOUSING_TYPES = {"apartment", "아파트", "주택", "공동주택", "다세대", "연립", "도시형생활주택"}
 
 
-def metro_transport_charge_rate(*, is_housing: bool, exclusive_area_sqm: float | None) -> float:
-    """광역교통시설부담금 부과율(시행령 제16조의2): 주택 전용 85㎡ 이하 1%·초과 2%·주택 외 2%."""
-    if not is_housing:
-        return 0.02
-    if exclusive_area_sqm is not None and exclusive_area_sqm <= 85.0:
-        return 0.01
-    return 0.02  # 85㎡ 초과 또는 전용면적 미상(보수적으로 2%)
+#: 수도권 — 법 별표 1 「대도시권」 중 수도권. 시행령 §16조의2⑧2호 단서의 판정 대상.
+#: ★`METRO_AREA_SIDO`(대도시권 전체)와 **다른 집합**이다. 부산·울산·대구·광주·대전·세종은
+#:   대도시권이지만 수도권이 아니다 → 부과율이 갈린다.
+CAPITAL_AREA_SIDO: frozenset[str] = frozenset({"서울", "인천", "경기"})
+
+#: 광역교통시설부담금 부과율 — **법령 원문 결속**(2026-08-27 법제처 DRF 원문 조회).
+#:   시행령 §16조의2⑧2호: *"법 제11조의3제1항제2호 및 제3호의 부과율 : **100분의 2**.
+#:   다만, 별표 1의 대도시권중 **수도권인 경우에는 100분의 4**"*
+METRO_TRANSPORT_RATE_CAPITAL = 0.04      # 수도권
+METRO_TRANSPORT_RATE_NON_CAPITAL = 0.02  # 그 외 대도시권
+
+
+def is_capital_area_sido(sido_name: str) -> bool:
+    """수도권인가 — 시도명에서 파생(완전명·축약형 모두)."""
+    return normalize_sido_short(sido_name) in CAPITAL_AREA_SIDO
+
+
+def metro_transport_charge_rate(
+    *, is_housing: bool, exclusive_area_sqm: float | None, sido_name: str = "",
+) -> float:
+    """광역교통시설부담금 부과율 — **수도권 4% · 그 외 대도시권 2%**.
+
+    ★**근거(2026-08-27 법제처 DRF 원문 직접 조회 · 인용 승계 아님)**
+      · 법 §11조의3①**2호**(§11①4·5호 사업)·**3호**(§11①6호 사업):
+        `1㎡당 **표준건축비** × 부과율 × **건축연면적** − 공제액`
+        → 이 모듈의 산식이 그것이므로 부과율은 **2·3호** 것을 쓴다.
+      · 시행령 §16조의2⑧**2호**: **100분의 2**, 다만 **수도권은 100분의 4**.
+      · (참고) §11조의3①**1호**(§11①1~3호 택지개발·도시개발·대지조성)는 **다른 산식**
+        (`표준개발비 × 부과율 × 개발면적 × 용적률÷200`)이고 부과율도 **15%/수도권 30%** 다.
+
+    ★★**종전 구현(전용 85㎡ 이하 1% · 초과 2%)은 법령에 근거가 없다.**
+      법·시행령 원문 양쪽에서 **`전용면적` 출현 0회**(대조군: 같은 문서에 `부담금` 63회 ·
+      `제16조의2` 22회 — 문서는 맞다). 감면(법 §11의2·령 §16)은 *국민주택규모 이하 임대주택
+      **사업***에 대한 **사업유형 면제**이지 요율 분기가 아니다.
+      → 그 분기를 **제거**한다. 수도권은 종전 1~2% → **4%** 로 **2~4배** 교정된다.
+
+    ★**미반영 부채**: 법 §11조의3③ 은 시·도지사가 **조례로 100분의 50 범위에서 부과율을
+      조정**할 수 있게 한다. 조정한 시·도가 실재하는지는 **미측정**이고, 이 함수는 조례를
+      보지 않는다 — `tests/` 에 `xfail` 로 초록 안에 드러내 둔다.
+      ★이것이 「지자체별 실시간 조사」가 **실제로 값을 하는 자리**다(상하수도 단가와 달리
+        요율은 조례 본문에 숫자로 있을 가능성이 높다 — 미측정).
+
+    ★`is_housing`·`exclusive_area_sqm` 은 **시그니처 호환을 위해 남긴다**(호출부가 위치인자로
+      넘길 수 있어 제거하면 조용히 밀린다 — §G33). 요율 판정에는 **쓰지 않는다.**
+    """
+    return (
+        METRO_TRANSPORT_RATE_CAPITAL
+        if is_capital_area_sido(sido_name)
+        else METRO_TRANSPORT_RATE_NON_CAPITAL
+    )
 
 
 def get_metro_transport_charge(
@@ -334,7 +377,11 @@ def get_metro_transport_charge(
             "amount_won": 0, "applicable": False, "source": "not_metro_area",
             "reason": f"{sido_name or '지역미상'} — 대도시권 아님(광역교통시설부담금 미부과)",
         }
-    rate = metro_transport_charge_rate(is_housing=is_housing, exclusive_area_sqm=exclusive_area_sqm)
+    # ★`sido_name` 을 넘겨야 수도권 4%/그 외 2% 가 갈린다. 종전엔 안 넘겨서 요율이
+    #   지역과 무관했다(그리고 값 자체가 법령과 달랐다 — 함수 docstring 참조).
+    rate = metro_transport_charge_rate(
+        is_housing=is_housing, exclusive_area_sqm=exclusive_area_sqm, sido_name=sido_name,
+    )
     # 우선순위: 호출부 명시 인자 > 모듈 상수(테스트/패치용) > 운영 env 주입 채널
     scb = (
         standard_build_cost_won_per_sqm
