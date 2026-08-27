@@ -64,7 +64,11 @@ def test_live_observed_404_is_model_gone() -> None:
 @pytest.mark.parametrize(
     "text",
     [
-        "404 models/gemini-2.0-flash is no longer available.",
+        # ★각 바늘을 **하나씩 격리**한다. 여러 바늘이 동시에 맞는 문구만 쓰면
+        #   바늘 하나를 지우는 변이가 **생존**한다(첫 판에서 그랬다 — `"404"` 를 지워도
+        #   `"no longer available"` 이 남아 통과했다).
+        "404",                                   # 코드만
+        "model is no longer available",          # 문구만
         "model not found: gpt-9",
         "The model `x` does not exist",
         "this model has been deprecated",
@@ -108,6 +112,17 @@ def test_404_does_not_steal_auth_or_rate_limit() -> None:
     assert classify_failure(Exception("Your credit balance is too low")) == "auth"
     assert classify_failure(Exception("429 too many requests")) == "rate_limit"
     assert classify_failure(Exception("bad request")) == "bad_request"
+
+
+def test_model_gone_wins_over_auth_when_both_match() -> None:
+    """★순서 규칙을 **행위로** 잠근다.
+
+    `model_gone` 을 `auth` **뒤로** 옮기는 변이가 이 단언을 죽인다. 순서를 소스에서
+    확인하는 대신, **둘 다 맞는 문구**로 우선순위를 태운다(대리 변수 금지).
+    """
+    both = "404 permission denied for models/gemini-2.5-flash"
+    assert "permission" in both and "404" in both, "픽스처가 두 규칙에 동시에 맞지 않는다"
+    assert classify_failure(Exception(both)) == "model_gone"
 
 
 def test_unknown_stays_other() -> None:
