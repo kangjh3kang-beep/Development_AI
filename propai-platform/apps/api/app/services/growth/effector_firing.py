@@ -42,6 +42,7 @@ from typing import Any
 
 from sqlalchemy import text
 
+from app.services.growth.capture_service import capture_status as _capture_status
 from app.services.growth.effector_reach import EFFECTORS, Reach
 
 #: 발화 기록이 사는 곳 — L0(`heal_actions`)·L1(`feature_flags._emit_l1_event`) **공통**.
@@ -153,6 +154,10 @@ async def firing_status(db: Any, *, now: datetime | None = None) -> dict[str, An
         "effectors": out,
         "undeclared": undeclared,
         "dormant_hours": DORMANT_HOURS,
+        # ★**수집 파이프라인의 건강** — 이 표의 모든 결론이 `platform_events` 의
+        #   완전성을 가정한다. 그 가정이 참인지 여기서 말한다.
+        #   유실이 있으면 `never_fired` 도 `dormant` 도 **믿을 수 없다.**
+        "capture": _capture_status(),
         "summary": {
             "declared": len(out),
             STATE_NEVER: states.count(STATE_NEVER),
