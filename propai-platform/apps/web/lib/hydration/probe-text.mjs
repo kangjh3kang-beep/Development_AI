@@ -8,10 +8,37 @@
  *   → 판정에 쓰이는 세 함수를 여기로 옮기고 `__tests__/probe-text.test.ts` 가 잠근다.
  */
 /** 하이드레이션 불일치로 셀 오류 — **두 모드가 같은 계수 경로를 쓴다**(대조군의 존재 이유). */
-const HYDRATION_RE = /Hydration failed|error #418|errors\/418|Text content/;
+export const HYDRATION_RE = /Hydration failed|error #418|errors\/418|Text content/;
 const NOISE_RE = /PROBE_ALIVE|Failed to load resource|net::|CORS/;
+/**
+ * 노이즈를 걷어낸 줄 — **계수와 진단 표시가 같은 필터를 쓰게** 하는 단일 통로.
+ * ★이것이 없어서 `run` 모드가 `NOISE_RE`(이 모듈의 **지역 상수**)를 참조한 채 남았고,
+ *   그 한 줄 때문에 측정 모드가 `ReferenceError` 로 **즉시 죽었다**(2026-08-27 실측).
+ *   `control` 모드는 이 줄을 지나지 않아 **통과했고**, 그래서 프로브가 살아 있는 것처럼 보였다.
+ */
+export function relevantErrors(lines) {
+  return lines.filter((e) => !NOISE_RE.test(e));
+}
 export function countHydration(lines) {
-  return lines.filter((e) => !NOISE_RE.test(e)).filter((e) => HYDRATION_RE.test(e)).length;
+  return relevantErrors(lines).filter((e) => HYDRATION_RE.test(e)).length;
+}
+
+/**
+ * `run` 회차의 **진단 표본** — 잡음을 걷은 뒤 앞 3건을 400자로 자른다.
+ * ★프로브 본문에 판정이 남으면 그 줄은 **무잠금**이다(브라우저 없이는 태울 수 없다).
+ *   그래서 판정을 여기로 옮기고 프로브에는 **호출 한 줄**만 남긴다 — 표면을 줄이는 것이
+ *   현실적 처방이다(독립 리뷰 MAJOR-2 지적).
+ */
+export function buildRunSample(lines, max = 3, width = 400) {
+  return relevantErrors(lines).slice(0, max).map((x) => x.slice(0, width));
+}
+
+/**
+ * 수집기 생존 — 일부러 던진 `PROBE_ALIVE` 가 잡혔는가.
+ * ★이 판정이 거짓이면 그 회차의 "0건"은 근거가 아니다. 그래서 **판정 자체를 잠근다.**
+ */
+export function isCollectorAlive(lines) {
+  return lines.some((e) => e.includes("PROBE_ALIVE"));
 }
 
 /**
