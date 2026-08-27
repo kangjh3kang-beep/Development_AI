@@ -327,3 +327,46 @@ def test_diagnostic_fields_carry_real_values_not_placeholders() -> None:
     assert cs.capture_status()["consecutive_failures"] == 7
     cs._consecutive_failures = 0
     assert cs.capture_status()["consecutive_failures"] == 0
+
+
+@pytest.mark.asyncio
+async def test_requeue_overflow_is_also_counted(monkeypatch: pytest.MonkeyPatch) -> None:
+    """★**되돌리기 경로 자체가 조용히 잃을 수 있다** — 기계 변이가 그 자리를 짚었다.
+
+    `_drain` 이 빼낸 사이에 새 이벤트가 큐를 채우면, 되돌릴 때 `maxlen` 이
+    가장 오래된 것을 밀어낸다. 그것을 안 세면 **이 PR 이 고치려던 결함이
+    바로 그 수리 경로 안에서 재발**한다.
+
+    실제 경로를 태운다: `execute` 가 **터지기 전에** 큐를 채워 그 상황을 만든다.
+    """
+    from collections import deque
+
+    monkeypatch.setattr(cs, "_MAX_QUEUE", 5)
+    q: deque = deque(maxlen=5)
+    monkeypatch.setattr(cs, "_QUEUE", q)
+    for i in range(5):
+        q.append({"event_id": f"old{i}", "event_type": "t", "created_at": None})
+
+    class _FillThenFail:
+        async def execute(self, *a, **k):
+            # ★drain 직후 새 이벤트가 들어온 상황을 만든다(큐가 다시 가득).
+            for j in range(3):
+                q.append({"event_id": f"new{j}", "event_type": "t", "created_at": None})
+            raise RuntimeError("DB down")
+
+        async def commit(self):  # pragma: no cover
+            raise AssertionError("실패 경로")
+
+        async def rollback(self):
+            return None
+
+    await cs.flush_batch(_FillThenFail(), limit=3)   # old0~2 를 빼고, new0~2 가 들어옴
+    # 큐는 maxlen=5 이고 되돌릴 3건이 더 오므로 **밀려나는 것이 생긴다**.
+    assert len(q) == 5
+    assert cs._STATS["dropped_overflow"] > 0, (
+        "★되돌리는 중에 밀려났는데 세지 않았다 — 수리 경로가 조용히 잃는다"
+    )
+    # ★그리고 그것은 **유실**로 집계돼야 한다(되돌림과 구별).
+    st = cs.capture_status()
+    assert st["lost_total"] == cs._STATS["dropped_overflow"]
+    assert st["requeued"] == 3, "되돌린 건수는 별도로 남는다"
