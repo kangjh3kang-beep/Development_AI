@@ -15,14 +15,27 @@ class TestB01MetroTransport:
     """★실산식(표준건축비×부과율×건축연면적) — 이전 세대별 정액표(날조) 폐기 후 교정."""
 
     def test_formula_with_standard_cost(self):
-        # 표준건축비 200만/㎡ × 부과율 1%(전용 59㎡) × 연면적 10,000㎡ = 2억
+        # 표준건축비 200만/㎡ × 부과율 **4%(서울=수도권)** × 연면적 10,000㎡ = 8억
+        # ★2026-08-27 교정: 종전 1%(전용 59㎡≤85)는 **법령에 근거가 없다**.
+        #   시행령 §16조의2⑧2호 = 100분의 2, 수도권은 100분의 4.
         result = calculate_b01_metro_transport(
             sido_name="서울", total_gfa_sqm=10_000, building_type="apartment",
             exclusive_area_sqm=59, standard_build_cost_won_per_sqm=2_000_000,
         )
         assert result["name"] == "광역교통시설부담금"
-        assert result["amount_won"] == 200_000_000
+        assert result["amount_won"] == 800_000_000
         assert result["detail"]["amount_computable"] is True
+
+    def test_non_capital_metro_is_half_of_capital(self):
+        """★두 모집단 — 같은 입력에서 부산(비수도권)은 서울의 **절반**이어야 한다."""
+        kw = dict(total_gfa_sqm=10_000, building_type="apartment",
+                  exclusive_area_sqm=59, standard_build_cost_won_per_sqm=2_000_000)
+        seoul = calculate_b01_metro_transport(sido_name="서울", **kw)
+        busan = calculate_b01_metro_transport(sido_name="부산", **kw)
+        assert busan["amount_won"] == 400_000_000
+        assert seoul["amount_won"] == busan["amount_won"] * 2, (
+            "수도권과 비수도권이 갈리지 않는다 — 요율이 지역에 도달하지 않았다"
+        )
 
     def test_unavailable_without_standard_cost(self):
         """★무목업: 표준건축비 고시값 미설정 → amount_won 0 + unavailable(합산 안전·정직)."""
