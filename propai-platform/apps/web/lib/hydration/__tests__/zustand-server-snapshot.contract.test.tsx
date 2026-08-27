@@ -23,6 +23,7 @@
 import { renderToString } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { create } from "zustand";
+import { useShallow } from "zustand/react/shallow";
 import { persist, type PersistStorage, type StorageValue } from "zustand/middleware";
 
 type Probe = { n: number; read: () => number };
@@ -61,11 +62,17 @@ function ViaMethod() {
   const read = usePersistedStore((s) => s.read);
   return <span>{`메서드:${read()}`}</span>;
 }
-/** ★처방 형태 — 입력을 **셀렉터로** 읽고 계산은 **순수 함수**로. 서버 스냅샷을 벗어나지 않는다. */
+/**
+ * ★처방 형태 — 입력을 **객체 셀렉터 + `useShallow`** 로 읽고 계산은 **순수 함수**로.
+ * ★초판은 `(s) => ({ n: s.n }).n` 이었는데 그건 객체를 즉시 푸는 **스칼라 셀렉터**라
+ *   바로 위 `ViaSelector` 와 판별력이 같았다 — **실제 처방을 한 번도 렌더하지 않았다**
+ *   (독립 리뷰 MINOR-1: 등재와 산출물이 갈렸다). 실제 형태 그대로 태운다.
+ */
 const double = (i: { n: number }) => i.n * 2;
+const pickN = (s: Probe) => ({ n: s.n });
 function ViaSelectorThenPure() {
-  const i = usePersistedStore((s) => ({ n: s.n }).n);
-  return <span>{`처방:${double({ n: i })}`}</span>;
+  const i = usePersistedStore(useShallow(pickN));
+  return <span>{`처방:${double(i)}`}</span>;
 }
 
 describe("zustand persist 서버 스냅샷 계약", () => {

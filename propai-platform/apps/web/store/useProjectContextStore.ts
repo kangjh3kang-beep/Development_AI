@@ -695,7 +695,15 @@ export function selectFeasibilityCompletenessInputs(
   s: Pick<ProjectContextState, "siteAnalysis" | "designData" | "costData" | "feasibilityData">,
 ): FeasibilityCompletenessInputs {
   return {
-    landAreaSqm: s.siteAnalysis?.landAreaSqm ?? 0,
+    // ★면적은 `effectiveLandAreaSqm`(SSOT) — raw `landAreaSqm` 금지.
+    //   같은 파일의 `stageCompletion` 이 그 규칙을 명문으로 적어 두고 지키는데
+    //   이 판정만 raw 를 읽고 있었다. 귀결(독립 리뷰 실측 · 7필지 164,823㎡ 픽스처):
+    //     `stageCompletion=done` · `projectCompleteness.site.done=true`
+    //     ↔ **`feasibilityCompleteness.site.done=false` · pct 0**
+    //   즉 프로젝트 허브는 「부지 완료」, 같은 사용자의 수지 화면은 「부지 대기 · 0%」였다.
+    //   ★더 나쁜 것은 **같은 컴포넌트**가 baseline 을 `effectiveLandAreaSqm` 로 호출한다는 점이다
+    //     (`FeasibilityEditorV2.tsx:160`) — **분석은 통합면적으로 도는데 배지만 0%** 였다.
+    landAreaSqm: effectiveLandAreaSqm(s.siteAnalysis) ?? 0,
     address: s.siteAnalysis?.address ?? "",
     totalGfaSqm: s.designData?.totalGfaSqm ?? 0,
     totalConstructionCostWon: s.costData?.totalConstructionCostWon ?? 0,
@@ -704,9 +712,14 @@ export function selectFeasibilityCompletenessInputs(
 }
 
 /**
- * **판정은 여기 한 곳뿐이다.** 스토어 메서드도 이 함수를 경유한다 —
- * 판정을 복제하면 두 사본이 어긋나 같은 화면이 같은 단계를 두고 반대로 말한다
- * (이 저장소의 `stageCompletion` 이 실제로 그랬다).
+ * **수지 완성도 판정은 여기 한 곳뿐이다** — 스토어 메서드도 이 함수를 경유한다.
+ * 판정을 복제하면 두 사본이 어긋나 같은 화면이 같은 단계를 두고 반대로 말한다.
+ *
+ * ★단 **「이 저장소에 완성도 판정이 하나뿐」이라는 뜻이 아니다**(초판 주석이 그렇게 읽혔고
+ *   독립 리뷰가 실측으로 반증했다 — §C-11 *"면역을 거짓 주장하지 마라"*). `stageCompletion` ·
+ *   `projectCompleteness` 는 **다른 축**(단계 완료 등급)을 판정하는 별도 SSOT 다.
+ *   **공유해야 하는 것은 「판정」이 아니라 「면적의 출처」** 이고, 그것은 위 입력 셀렉터가
+ *   `effectiveLandAreaSqm` 을 쓰는 것으로 맞췄다.
  */
 export function computeFeasibilityCompleteness(
   i: FeasibilityCompletenessInputs,

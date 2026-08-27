@@ -40,6 +40,12 @@ describe("computeFeasibilityCompleteness — 판정은 한 곳뿐", () => {
     }).pct).toBe(100);
   });
 
+  /**
+   * ★**부채 고지**(독립 리뷰 MINOR-2): `partial` 은 **이 표면에 닿지 않는다** —
+   *   `FeasibilityEditorV2.tsx` 의 칩은 `st.done ? "반영" : "대기"` 뿐이라 `partial` 을 안 읽는다.
+   *   (읽는 곳은 `ProjectHealthBoard.tsx` 의 **다른 객체**다.) 여기서 잠그는 것은 **판정의 계약**이지
+   *   화면 표시가 아니다 — 그 구분을 적어 두지 않으면 다음 사람이 "화면도 잠겼다"고 오독한다.
+   */
   it("★주소만 있으면 done 이 아니라 partial — 거짓 30% 를 만들지 않는다", () => {
     const r = computeFeasibilityCompleteness({ ...빈입력, address: "서울시 …" });
     const site = r.stages.find((s) => s.key === "site")!;
@@ -70,6 +76,34 @@ describe("selectFeasibilityCompletenessInputs — 셀렉터가 판정 입력 전
     });
     // 셀렉터 → 판정이 실제로 이어지는가(배선). 값이 하나라도 누락되면 pct 가 100 이 안 된다.
     expect(computeFeasibilityCompleteness(i).pct).toBe(100);
+  });
+
+  it("★★다필지 통합면적만으로도 부지 완료다 — 형제 판정과 **같은 답**을 낸다", () => {
+    /**
+     * ★독립 리뷰가 실측으로 반증한 자리(2026-08-27). 이 셀렉터가 raw `landAreaSqm` 을 읽던 때:
+     *     `stageCompletion`=done · `projectCompleteness.site.done`=true
+     *   ↔ **`feasibilityCompleteness.site.done`=false · pct 0**
+     *   즉 프로젝트 허브는 「부지 완료」, 같은 사용자의 수지 화면은 「부지 대기 · 0%」였다.
+     *   ★더 나쁜 것은 **같은 컴포넌트**가 baseline 을 `effectiveLandAreaSqm` 로 호출한다는 점이다
+     *     — **분석은 통합면적으로 도는데 배지만 0%** 였다.
+     *   같은 파일의 `stageCompletion` 은 *"면적은 effectiveLandAreaSqm(SSOT) — raw 금지"* 를
+     *   **명문으로 적어 두고 지키는데** 이 판정만 어기고 있었다.
+     */
+    const 다필지 = {
+      siteAnalysis: { address: "경기도 오산시 …", landAreaSqm: null, landAreaSqmTotal: 164823, parcelCount: 7 },
+      designData: { totalGfaSqm: 3000 },
+    } as never;
+    const i = selectFeasibilityCompletenessInputs(다필지);
+    expect(i.landAreaSqm, "통합면적을 못 읽으면 0 이 되어 부지가 '대기' 로 셈해진다").toBe(164823);
+    const r = computeFeasibilityCompleteness(i);
+    expect(r.stages.find((s) => s.key === "site")!.done).toBe(true);
+    expect(r.pct).toBe(60);
+
+    // ★두 모집단 — 다필지가 아니고 통합면적도 없으면 여전히 '대기' 여야 한다(과잉 통과 방지).
+    const 빈부지 = { siteAnalysis: { address: "서울시 …" }, designData: { totalGfaSqm: 3000 } } as never;
+    const r2 = computeFeasibilityCompleteness(selectFeasibilityCompletenessInputs(빈부지));
+    expect(r2.stages.find((s) => s.key === "site")!.done).toBe(false);
+    expect(r2.pct).toBe(0);
   });
 
   it("★결측은 0/빈문자로 정규화된다 — undefined 가 판정에 새지 않는다", () => {
