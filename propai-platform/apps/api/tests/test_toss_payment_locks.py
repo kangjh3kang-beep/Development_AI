@@ -420,3 +420,151 @@ def test_refund_ledger_types_exist() -> None:
 
     assert "order_refunded" in ENTRY_TYPES, "★환불이 원장에 안 남는다"
     assert "order_refund_reverted" in ENTRY_TYPES, "★환수 원복이 원장에 안 남는다"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ★★배선 락 — 「함수가 옳다」와 「그 함수를 쓴다」는 **다른 명제**다
+#
+# 위 `test_full_topup_is_usable` 는 `compute_remaining` 을 **직접** 태운다. 그래서
+# 그 함수를 고쳐 놓고 **호출부를 옛 식으로 되돌리면 전부 초록인 채 결함이 부활한다.**
+# ★실측: 그 배선 변이를 넣었더니 **56건 전부 통과(SURVIVED)** 했다.
+#
+# 그래서 여기서는 **소비처를 직접 태운다.** 판정 기준은 두 모집단이다:
+#   · A(옛 게이트는 차단, 새 게이트는 통과) → **갈려야 한다**
+#   · B(둘 다 차단)                        → **같아야 한다**(과잉 완화 방지)
+# B 가 없으면 「아무도 차단하지 않는」 구현도 A 를 통과한다.
+# ═══════════════════════════════════════════════════════════════════════════
+import app.services.billing.billing_service as _bs  # noqa: E402
+
+_TIER = "power"  # 과금 등급(런타임 실측: TIER_BILLING = power/superpower/master)
+
+#: (billed, budget, monthly_base, topup) — `ensure_cycle` 반환 형태
+#: ★A: 월기본 10,000 소진 + 충전 25,000 **남음**.
+#:    옛 식 `billed >= budget` = 35,000 >= 35,000 → **차단**(★잘못)
+#:    새 식 = 충전이 남았으므로 → **통과**
+_ROW_TOPUP_LEFT = (_TIER, 35_000.0, 35_000.0, 10_000.0, 25_000.0)
+#: ★B(대조군): 충전 0 · 월기본 소진 → 둘 다 **차단**(동작이 바뀌면 안 되는 자리)
+_ROW_ALL_SPENT = (_TIER, 10_000.0, 10_000.0, 10_000.0, 0.0)
+
+#: ★`get_status` 가 **판정 경로까지 갔을 때만** 나오는 키들.
+#:   조기 반환은 `{tier, metered, blocked}` 3개뿐이라 이 가드에 걸린다.
+_FULL_KEYS = frozenset({"topup_remaining", "monthly_base_remaining", "remaining_krw", "usage_pct"})
+
+
+class _EmptyResult:
+    def first(self):
+        return None
+
+    def scalar(self):
+        return None
+
+    def mappings(self):
+        return self
+
+    def all(self):
+        return []
+
+
+class _NullSession:
+    """판정에 쓰이는 값은 **전부 스텁으로 주입**하고, 그 외 조회는 빈 결과를 준다.
+
+    ★`get_status` 는 판정과 무관한 조회(설정 로드 등)도 한다. 그걸 예외로 막으면
+      **락이 배선이 아니라 무관한 부수효과를 검사**하게 된다(첫 판이 그랬다).
+      이 락이 보는 것은 **`_rem` 이 실제로 소비되는가** 하나다.
+    """
+
+    async def execute(self, *a, **k):
+        return _EmptyResult()
+
+    async def commit(self):
+        pass
+
+    async def rollback(self):
+        pass
+
+
+@pytest.fixture
+def _stub_cycle(monkeypatch: pytest.MonkeyPatch):
+    """`ensure_cycle`/`team_limit_exceeded` 만 갈아 끼우고 **`is_blocked` 본문은 실제로 태운다**."""
+
+    def _apply(row):
+        async def fake_cycle(db, uid):
+            return row
+
+        async def fake_team(db, uid):
+            return False
+
+        monkeypatch.setattr(_bs, "ensure_cycle", fake_cycle)
+        monkeypatch.setattr(_bs, "team_limit_exceeded", fake_team)
+
+    return _apply
+
+
+@pytest.mark.asyncio
+async def test_is_blocked_is_wired_to_compute_remaining(_stub_cycle) -> None:
+    """★배선 — `is_blocked` 가 **새 판정**을 실제로 쓰는가.
+
+    되살리는 변이: 본문을 `return billed >= row[2]` 로 되돌리면 A 가 True 가 되어 실패한다.
+    (그 변이는 이 락이 없을 때 **SURVIVED** 했다 — 실측)
+    """
+    _stub_cycle(_ROW_TOPUP_LEFT)
+    assert await _bs.is_blocked(_NullSession(), "u1") is False, (
+        "★충전이 25,000원 남았는데 차단됐다 — 옛 이중차감 게이트가 살아 있다"
+    )
+
+
+@pytest.mark.asyncio
+async def test_is_blocked_still_blocks_when_everything_spent(_stub_cycle) -> None:
+    """★대조군 — 진짜 소진이면 여전히 차단한다(무제한 구현이 통과하지 않게)."""
+    _stub_cycle(_ROW_ALL_SPENT)
+    assert await _bs.is_blocked(_NullSession(), "u1") is True
+
+
+@pytest.mark.asyncio
+async def test_status_blocked_flag_is_wired(monkeypatch: pytest.MonkeyPatch) -> None:
+    """★형제 배선 — 화면이 읽는 `blocked`·`topup_remaining` 도 같은 판정을 쓰는가.
+
+    ★게이트만 고치고 표시를 안 고치면 **API 는 허용하는데 화면은 잠긴 것처럼 보인다.**
+    """
+
+    # ★`get_status` 는 `ensure_cycle` 의 **반환을 안 쓴다** — `_row` 를 따로 부른다.
+    #   첫 판이 `ensure_cycle` 만 갈아 끼웠다가 `_row` 가 None 을 돌려주는 **조기 반환**
+    #   경로로 빠졌고, `blocked is False` 가 **공허하게 참**이 됐다(키 3개만 반환).
+    #   ★그래서 아래 `_FULL_KEYS` 가드가 있다 — 그 경로를 밟으면 실패한다.
+    #   `_row` 반환: (tier, billed, budget, cycle_start, monthly_base, topup)
+    async def fake_row(db, uid):
+        return (_TIER, 35_000.0, 35_000.0, None, 10_000.0, 25_000.0)
+
+    async def fake_cycle(db, uid):
+        return _ROW_TOPUP_LEFT
+
+    async def fake_team(db, uid):
+        return False
+
+    async def fake_meta(db, uid):
+        return (_TIER, 0, 0.0)
+
+    async def fake_rate():
+        return 1350.0
+
+    async def fake_load(db):
+        return None
+
+    monkeypatch.setattr(_bs, "_row", fake_row)
+    monkeypatch.setattr(_bs, "ensure_cycle", fake_cycle)
+    monkeypatch.setattr(_bs, "team_limit_exceeded", fake_team)
+    monkeypatch.setattr(_bs, "_meta", fake_meta)
+    monkeypatch.setattr(_bs, "get_usd_krw_rate", fake_rate)
+    monkeypatch.setattr(_bs, "load_config", fake_load)
+
+    st = await _bs.get_status(_NullSession(), "u1")
+    # ★공허한 초록 가드 — 조기 반환 경로({tier,metered,blocked} 3키)를 밟으면 실패한다.
+    missing = _FULL_KEYS - set(st)
+    assert not missing, f"★판정 경로에 도달하지 못했다(조기 반환) — 없는 키: {sorted(missing)}"
+    assert st["blocked"] is False, "★표시가 옛 식을 쓴다 — API 와 화면이 갈린다"
+    assert st["topup_remaining"] == 25_000, (
+        f"★충전 잔여가 {st['topup_remaining']} — 컬럼 순액에서 또 뺐다(절반 표시 결함)"
+    )
+    # ★두 모집단: 남은 것과 쓴 것이 **다른 값**이어야 한다(둘 다 0 이면 락이 공허하다).
+    assert st["monthly_base_remaining"] == 0
+    assert st["topup_remaining"] != st["monthly_base_remaining"]
