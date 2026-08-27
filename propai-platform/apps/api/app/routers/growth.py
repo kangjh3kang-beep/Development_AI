@@ -554,7 +554,7 @@ async def submit_feedback(
     # 인증 선택: 로그인 사용자면 user_id → HMAC user_hash(원본 미저장), tenant_id 귀속.
     user_id, tenant_id = _extract_identity(request)
     user_hash = capture_service.hash_user_id(user_id) if user_id else None
-    # payload 는 capture_service 의 PII 마스킹 재사용(이메일/전화/주민번호/주소 등).
+    # payload 는 capture_service 의 PII 마스킹 재사용 — 이메일/전화/주민번호 **값 패턴** + 민감 **키**(이름·주소 등). ★주소는 **값 안에서 지워지지 않는다**(2026-08-27 실측 — `_mask_str` 에 주소 정규식 없음). 부채는 `tests/test_pii_mask_diagnostic_keys.py` 의 xfail 로 초록 안에 보인다.
     masked_payload = capture_service.mask_pii(fb.payload) if fb.payload else None
 
     try:
