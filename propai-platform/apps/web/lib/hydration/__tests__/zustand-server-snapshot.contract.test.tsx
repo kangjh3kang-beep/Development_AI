@@ -23,12 +23,14 @@
 import { renderToString } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { create } from "zustand";
+import { useShallow } from "zustand/react/shallow";
 import { persist, type PersistStorage, type StorageValue } from "zustand/middleware";
 
-type Probe = { n: number };
+type Probe = { n: number; read: () => number };
 
 /** 이미 값이 저장돼 있는 **동기** 저장소 — 브라우저 `localStorage` 와 같은 조건. */
-const SEEDED: StorageValue<Probe> = { state: { n: 77 }, version: 0 };
+/** ★`read` 는 저장되지 않는다(함수) — 재수화는 `n` 만 덮어쓴다. 실제 스토어와 같은 조건. */
+const SEEDED = { state: { n: 77 }, version: 0 } as unknown as StorageValue<Probe>;
 const syncStorage: PersistStorage<Probe> = {
   getItem: () => SEEDED,
   setItem: () => {},
@@ -36,7 +38,10 @@ const syncStorage: PersistStorage<Probe> = {
 };
 
 const usePersistedStore = create<Probe>()(
-  persist(() => ({ n: 0 }), { name: "hydration-probe", storage: syncStorage }),
+  persist(
+    (_set, get) => ({ n: 0, read: () => get().n }),
+    { name: "hydration-probe", storage: syncStorage },
+  ),
 );
 
 function ViaSelector() {
@@ -46,6 +51,28 @@ function ViaSelector() {
 function ViaGetState() {
   const n = usePersistedStore.getState().n;
   return <span>{`직접:${n}`}</span>;
+}
+
+/**
+ * ★**스토어 메서드** 경유 — `getState()` 를 안 써도 메서드 내부의 `get()` 이 라이브를 읽는다.
+ *   2026-08-27 `FeasibilityEditorV2` 의 실제 결함 형태다(`feasibilityCompleteness()`).
+ *   이 대조군이 없으면 "getState 만 조심하면 된다"는 **좁은 오독**이 굳는다.
+ */
+function ViaMethod() {
+  const read = usePersistedStore((s) => s.read);
+  return <span>{`메서드:${read()}`}</span>;
+}
+/**
+ * ★처방 형태 — 입력을 **객체 셀렉터 + `useShallow`** 로 읽고 계산은 **순수 함수**로.
+ * ★초판은 `(s) => ({ n: s.n }).n` 이었는데 그건 객체를 즉시 푸는 **스칼라 셀렉터**라
+ *   바로 위 `ViaSelector` 와 판별력이 같았다 — **실제 처방을 한 번도 렌더하지 않았다**
+ *   (독립 리뷰 MINOR-1: 등재와 산출물이 갈렸다). 실제 형태 그대로 태운다.
+ */
+const double = (i: { n: number }) => i.n * 2;
+const pickN = (s: Probe) => ({ n: s.n });
+function ViaSelectorThenPure() {
+  const i = usePersistedStore(useShallow(pickN));
+  return <span>{`처방:${double(i)}`}</span>;
 }
 
 describe("zustand persist 서버 스냅샷 계약", () => {
@@ -67,5 +94,16 @@ describe("zustand persist 서버 스냅샷 계약", () => {
   it("★대조군 — `getState()` 직접 읽기는 **라이브(재수화된) 값**을 본다(= 서버/클라가 갈린다)", () => {
     // 이 줄이 두 모집단을 가른다. 둘 다 0 이면 위 검사는 "무엇을 재도 0"인 공허한 참이 된다.
     expect(renderToString(<ViaGetState />)).toContain("직접:77");
+  });
+
+  it("★★스토어 **메서드** 호출도 라이브를 본다 — `getState()` 만 조심하면 된다는 오독을 막는다", () => {
+    // 2026-08-27 실제 결함(`feasibilityCompleteness()`)의 형태. 셀렉터로 꺼냈어도 **부르면** 라이브다.
+    expect(renderToString(<ViaMethod />)).toContain("메서드:77");
+  });
+
+  it("★처방 — 입력은 셀렉터로, 계산은 순수 함수로 하면 서버 스냅샷을 벗어나지 않는다", () => {
+    const html = renderToString(<ViaSelectorThenPure />);
+    expect(html).toContain("처방:0");
+    expect(html).not.toContain("처방:154"); // 라이브(77×2)를 봤다면 이 값이 나온다
   });
 });

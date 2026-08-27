@@ -24,6 +24,7 @@ from app.services.feasibility.permit_validator import (
     get_permit_complexity,
     get_permitted_types,
 )
+from app.services.tax.regional_tax_data import sido_short_or_empty
 from app.services.zoning.auto_zoning_service import ZONE_LIMITS, AutoZoningService
 from app.services.zoning.special_parcel import detect_special_parcel
 
@@ -234,6 +235,7 @@ async def _extract_sigungu_from_address(
         return fb.get("sigungu")
     except Exception:  # noqa: BLE001 — 폴백 실패는 기존 동작(None) 보존
         return None
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -918,7 +920,11 @@ async def _build_band_module_input(
     eff_ratio = svc._get_type_efficiency_ratio(best_code)
     avg_unit_area = svc._get_type_avg_unit_area(best_code)
     total_hh = max(1, int(total_gfa * eff_ratio / avg_unit_area))
-    region = (legal.get("sigungu") or await _extract_sigungu_from_address(address) or "서울")
+    # ★두 값을 **가른다** — 종전엔 하나로 뭉쳐 `"서울"` 폴백까지 시군구로 흘렀다.
+    #   `sigungu_real` : 실제로 확인된 시군구(없으면 빈 문자열 — 지어내지 않는다)
+    #   `region`       : 분양가 보정용 폴백 포함 값(종전 동작 그대로 — 무회귀)
+    sigungu_real = (legal.get("sigungu") or await _extract_sigungu_from_address(address) or "")
+    region = sigungu_real or "서울"
 
     inp = ModuleInput(
         development_type=best_code,
@@ -932,8 +938,16 @@ async def _build_band_module_input(
         official_price_per_sqm=official_price_per_sqm,
         price_multiplier=1.1,
         building_type=svc._get_building_type(best_code),
-        sido_name=region,
-        sigungu_name="",
+        # ★축 교정 — `region` 은 `_extract_sigungu_from_address` 가 낸 **시군구**다
+        #   ("동구"·"강남구"). 종전에는 그것을 `sido_name` 에 직결하고 `sigungu_name` 은
+        #   빈 채로 뒀다 = **두 칸이 모두 틀렸다.** 시군구를 시도로 읽은 B01 광역교통은
+        #   울산(대도시권)을 "동구 — 대도시권 아님"으로 판정해 침묵 미부과했다.
+        #   시·도는 주소에서 **공용 해석기**로 뽑는다(못 뽑으면 빈 문자열 — 지어내지 않는다).
+        sido_name=sido_short_or_empty(address),
+        # ★`region` 은 실패 시 `"서울"` 로 **지어낸 폴백**이 섞인다(위 934행). 분양가 보정에는
+        #   종전부터 그렇게 쓰였지만(무회귀), **시군구 칸에는 지어낸 값을 넣지 않는다** —
+        #   축을 바로잡는 자리에서 그 축에 날조를 남기면 다음 사람이 관측으로 읽는다.
+        sigungu_name=sigungu_real,
         project_months=svc._get_type_project_months(best_code),
         discount_rate=0.08,
     )
