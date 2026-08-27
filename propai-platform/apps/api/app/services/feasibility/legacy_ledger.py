@@ -454,6 +454,23 @@ def build_legacy_ledger(scenario: dict[str, Any] | None) -> dict[str, Any]:
                 note=constr.get("source") or "공사단가 미확보 — 금액 산출 불가",
             )
         ]
+    # ★인입 공사비(구 B05~B07) — 부담금에서 **공사비로 이관**된 항목(2026-08-27).
+    #   행을 안 그리면 **행 합계 ≠ 엔진 총액**이 되어 검산이 ERROR 를 낸다(실측 -32,640,000).
+    #   ★개산이므로 `note` 에 **개산이라는 사실과 출처 부재**를 싣는다 — 「고시값」과 구별되게.
+    for ci in ((constr.get("utility_connection") or {}).get("items") or []):
+        constr_items.append(
+            _item(
+                f"construction_{str(ci.get('code', '')).lower()}",
+                str(ci.get("name") or "인입공사비"),
+                ci.get("amount_won"),
+                qty=ci.get("qty"),
+                qty_unit=ci.get("qty_unit"),
+                unit_price=ci.get("unit_price"),
+                unit_price_unit=f"원/{ci.get('qty_unit')}" if ci.get("qty_unit") else None,
+                structural_basis="인입공사비 = 수량 × 단가(공급자 약관·계약)",
+                note=ci.get("basis"),
+            )
+        )
     charge_rows = _charge_items(charges)
     # ★금융·제경비도 **수량 × 단가**다(과표 = 토지+공사, 단가 = 엔진 추출 비율).
     #   초안은 *"엔진이 항목 단위로 내지 않는다"* 고 적었는데 — **부재가 아니라 안 실어
