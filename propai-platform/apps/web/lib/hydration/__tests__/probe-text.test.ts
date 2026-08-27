@@ -8,6 +8,11 @@
  *   ★그리고 직전 커밋의 계획서 잠금표는 그 프로브 행을 싣고 표 아래에
  *   *"전부 필수 CI(vitest)에서 돈다"* 라고 적었다 — **그 행에 대해서는 거짓**이었다.
  *   선언을 락으로 바꾼다: 판정에 쓰이는 세 함수를 여기서 태운다.
+ *
+ * ★**콜백 파라미터에 타입을 명시하는 이유**(2026-08-27 CI 실패로 배움): 이 모듈은 `.mjs` 라
+ *   타입 선언이 없어 반환값이 `any` 로 흐르고, 그 위 콜백 파라미터가 `TS7006(implicit any)` 이 된다.
+ *   ★로컬 `npx tsc --noEmit` 은 통과했는데 CI(`pnpm type-check` = `next typegen && tsc --noEmit
+ *   --incremental false`)에서 **빨갰다** — **같은 명령이 아니면 같은 게이트가 아니다.**
  */
 import { describe, expect, it } from "vitest";
 
@@ -89,7 +94,7 @@ describe("relevantErrors — 계수와 진단 표시가 **같은 필터**를 쓴
     // ★기대값을 **소스에서** 파생한다 — 초판은 이 정규식을 손으로 복사했는데(평행 선언),
     //   그러면 `HYDRATION_RE` 를 정당하게 넓힐 때 이 테스트가 **위양성으로** 빨개진다
     //   (독립 리뷰 MINOR-2). 이제 모듈이 export 하는 그 상수를 그대로 쓴다.
-    const 파생 = relevantErrors(입력).filter((e) => HYDRATION_RE.test(e)).length;
+    const 파생 = relevantErrors(입력).filter((e: string) => HYDRATION_RE.test(e)).length;
     expect(countHydration(입력)).toBe(파생);
     expect(파생).toBeGreaterThan(0); // 공허 진리 가드 — 0 이면 위 단언이 아무것도 안 본다
   });
@@ -106,7 +111,7 @@ describe("buildRunSample / isCollectorAlive — 프로브 본문에서 옮겨 �
 
   it("★두 모집단이 갈린다 — 잡음은 표본에서 빠지고 진짜는 남는다", () => {
     const out = buildRunSample([...잡음, ...진짜]);
-    expect(out.every((x) => !x.includes("PROBE_ALIVE"))).toBe(true);
+    expect(out.every((x: string) => !x.includes("PROBE_ALIVE"))).toBe(true);
     expect(out[1]).toBe("[console] B"); // 잡음이 안 걷혔다면 여기 잡음이 온다
   });
 
