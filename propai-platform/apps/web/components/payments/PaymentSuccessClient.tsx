@@ -13,7 +13,7 @@
  *    브라우저 히스토리·스크린샷·성장루프 라우트에 남기지 않는다.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 
 import { apiClient } from "@/lib/api-client";
@@ -35,48 +35,61 @@ type ConfirmResult = {
 
 type Phase = "confirming" | "done" | "error";
 
+/** 리다이렉트가 필요한 값을 안 실어 준 경우 — ★**props 에서 순수하게 유도**된다. */
+const MISSING_PARAMS: PaymentErrorView = {
+  code: "MISSING_PARAMS",
+  message: "결제 정보가 전달되지 않았습니다.",
+  remediation:
+    "충전 내역에서 결제 상태를 확인해 주세요. 금액이 청구되었다면 고객센터로 문의해 주세요.",
+  outcome: "unknown",
+  retryable: false,
+};
+
 export function PaymentSuccessClient({ locale, orderId, paymentKey, amount }: Props) {
-  const [phase, setPhase] = useState<Phase>("confirming");
+  // ★파라미터 누락 판정은 **props 의 순수 함수**다 — effect 안에서 setState 로 만들면
+  //   동기 setState 가 되어 연쇄 렌더를 부른다(`react-hooks/set-state-in-effect`).
+  //   렌더 시점에 정하면 그 자체가 없어진다.
+  const missing = !orderId || !paymentKey || amount === null;
+  const [phase, setPhase] = useState<Phase>(() => (missing ? "error" : "confirming"));
   const [result, setResult] = useState<ConfirmResult | null>(null);
-  const [err, setErr] = useState<PaymentErrorView | null>(null);
+  const [err, setErr] = useState<PaymentErrorView | null>(() => (missing ? MISSING_PARAMS : null));
   // ★StrictMode 는 effect 를 두 번 돌린다. ref 로 **한 번만** 보낸다.
   const sent = useRef(false);
   const coinsHref = `/${locale}/mypage/coins`;
 
-  const confirm = useCallback(async () => {
-    if (!orderId || !paymentKey || amount === null) {
-      setErr({
-        code: "MISSING_PARAMS",
-        message: "결제 정보가 전달되지 않았습니다.",
-        remediation: "충전 내역에서 결제 상태를 확인해 주세요. 금액이 청구되었다면 고객센터로 문의해 주세요.",
-        outcome: "unknown",
-        retryable: false,
-      });
-      setPhase("error");
-      return;
-    }
-    try {
-      const r = await apiClient.post<ConfirmResult>("/billing/payments/toss/confirm", {
-        body: { order_id: orderId, payment_key: paymentKey, amount: Number(amount) },
-        useMock: false,
-      });
-      setResult(r);
-      setPhase("done");
-    } catch (error) {
-      setErr(fromApiError(error, "결제 승인에 실패했습니다."));
-      setPhase("error");
-    }
-  }, [orderId, paymentKey, amount]);
-
   useEffect(() => {
-    // ★결제 식별자를 URL 에서 즉시 제거(요청은 위 클로저가 이미 값을 들고 있다).
+    // ★결제 식별자를 URL 에서 즉시 제거(요청은 아래 클로저가 이미 값을 들고 있다).
     if (typeof window !== "undefined" && window.location.search) {
       window.history.replaceState(null, "", window.location.pathname);
     }
-    if (sent.current) return;
+    if (missing || sent.current) return;
     sent.current = true;
-    void confirm();
-  }, [confirm]);
+
+    // ★비동기 작업을 effect 안에 두고 **언마운트 가드**를 건다.
+    //   종전에는 `useCallback` 으로 뺀 뒤 `void confirm()` 으로 불렀는데,
+    //   ①언마운트 후 setState 를 막을 길이 없었고
+    //   ②`react-hooks/set-state-in-effect` 가 그 형태를 경고했다.
+    //   여기 두면 둘 다 해소된다 — 린터를 피하려는 비틀기가 아니라 실제로 안전한 형태다.
+    let alive = true;
+    void (async () => {
+      try {
+        const r = await apiClient.post<ConfirmResult>("/billing/payments/toss/confirm", {
+          body: { order_id: orderId, payment_key: paymentKey, amount: Number(amount) },
+          useMock: false,
+        });
+        if (!alive) return;
+        setResult(r);
+        setPhase("done");
+      } catch (error) {
+        if (!alive) return;
+        setErr(fromApiError(error, "결제 승인에 실패했습니다."));
+        setPhase("error");
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [orderId, paymentKey, amount, missing]);
 
   if (phase === "confirming") {
     return (
