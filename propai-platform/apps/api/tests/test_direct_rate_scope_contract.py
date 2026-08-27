@@ -150,8 +150,10 @@ class TestScopeStatementIsStructurallyIntact:
         for token in ("기계설비", "전기설비"):
             assert token in included, f"'{token}' 이 **포함** 절에서 사라졌다"
             assert token not in excluded, f"'{token}' 이 **제외** 절에도 있다(모순)"
-        assert "인입 분담금" in excluded, "'인입 분담금' 이 **제외** 절에 없다"
-        assert "인입 분담금" not in included, "인입비가 포함으로 넘어갔다 — 이중계상"
+        # ★인입비와 **소방**은 도급 밖이다 — 소방은 **법정 분리 도급**(§21②).
+        for token in ("인입 분담금", "소방시설공사"):
+            assert token in excluded, f"'{token}' 이 **제외** 절에 없다"
+            assert token not in included, f"'{token}' 이 포함으로 넘어갔다 — 이중계상"
 
     def test_the_window_does_not_swallow_neighbours(self):
         """★대조군 — 제외 절 창이 **근거 절까지** 먹으면 위 단언이 거짓 사유로 실패한다."""
@@ -159,12 +161,17 @@ class TestScopeStatementIsStructurallyIntact:
         assert "기각 —" not in excluded, "제외 절 창이 인접(근거) 절을 침범했다"
         assert len(excluded) < 600, f"제외 절 창이 너무 넓다: {len(excluded)}자"
 
-    def test_the_rejected_axes_stay_recorded(self):
-        """★**기각한 가설을 기록**한다 — 다음 사람이 같은 길을 다시 가지 않게."""
+    def test_the_correction_and_its_law_stay_recorded(self):
+        """★**정정과 그 법적 근거를 기록**한다 — 다음 사람이 같은 길을 다시 가지 않게.
+
+        `#916` 은 소방을 이 단가 **안**에 두었고 `#913` 은 그 전제로 소방을 **제거**했다.
+        **법이 정반대**다(소방시설공사업법 §21② 분리 도급 의무). 그 정정이 사라지면
+        같은 오판이 재발한다.
+        """
         src = (_API / "app/services/cost/unit_price_repository.py").read_text(encoding="utf-8")
-        assert src.count("기각 —") >= 2, "무너진 두 축의 기록이 사라졌다"
-        assert "판별력이 0" in src, "크기 비교가 판별력 없다는 실측이 사라졌다"
-        assert "미측정" in src and "재검토" in src, "한계·되돌리기 트리거 표기가 사라졌다"
+        for token in ("소방시설공사업법", "§21", "분리하여 도급", "내역서 편성 ≠ 도급 편성"):
+            assert token in src, f"소방 분리도급 정정에서 '{token}' 이 사라졌다"
+        assert "미측정" in src, "남은 한계 표기가 사라졌다"
 
 
 class TestBoundToPr913:
