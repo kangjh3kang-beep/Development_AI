@@ -28,24 +28,22 @@ export const EARLY_ERROR_CAP = 20;
 export const EARLY_MESSAGE_CAP = 8000;
 export const EARLY_STACK_CAP = 2000;
 
-export const earlyErrorBootstrap =
-  // ★멱등 — 두 번 실행되면 store 가 갈려 첫 store 의 리스너가 담은 것을 drain 이 **못 본다**
-  //   (이중 전송이 아니라 **조용한 손실**이다 — 독립 리뷰 실측).
-  `(function(){try{if(window.__propaiEarly)return;var B=[];var S={buf:B,closed:false};window.__propaiEarly=S;` +
-  `function P(o){if(S.closed)return;if(B.length<${EARLY_ERROR_CAP})B.push(o);}` +
-  // ★사유→메시지 정규화는 형제 `handleRejection` 과 **같은 규칙**이어야 한다.
-  //   달라지면 같은 사건이 다른 시그니처로 군집돼 `error_cluster` 가 갈린다.
-  `function M(r){try{if(r instanceof Error)return String(r.message);if(typeof r==="string")return r;` +
-  `try{return JSON.stringify(r);}catch(e){return String(r);}}catch(e){return "";}}` +
-  `function C(x,n){return (x==null)?null:String(x).slice(0,n);}` +
-  // ★리스너 **본문**도 try/catch 로 감싼다 — 바깥 try 는 등록만 감싼다(수집기 헤더가 선언한
-  //   "모든 경로 격리"를 신규 코드가 어기고 있었다 · 독립 리뷰 지적).
-  `window.addEventListener("error",function(e){try{P({k:"error",m:C(e.message,${EARLY_MESSAGE_CAP})||"",` +
-  `f:e.filename||null,l:e.lineno||null,c:e.colno||null,` +
-  `s:(e.error&&e.error.stack)?C(e.error.stack,${EARLY_STACK_CAP}):null,` +
-  `t:Math.round(performance.now())});}catch(x){}});` +
-  `window.addEventListener("unhandledrejection",function(e){try{var r=e.reason;` +
-  `P({k:"rejection",m:C(M(r),${EARLY_MESSAGE_CAP})||"",f:null,l:null,c:null,` +
-  `s:(r&&r.stack)?C(r.stack,${EARLY_STACK_CAP}):null,` +
-  `t:Math.round(performance.now())});}catch(x){}});` +
-  `}catch(e){}})();`;
+/**
+ * ★★**단일 템플릿 리터럴이어야 한다 — 조각을 `+` 로 이으면 빌드가 잘라 버린다.**
+ *
+ * 실측(2026-08-27 · 로컬 프로덕션 빌드에서 **라이브와 바이트 동일하게 재현**):
+ * 초판은 백틱 조각을 `+` 로 이었는데, `.next/server/pages/404.html` 산출물이 이랬다 —
+ *
+ *     if(B.length<20window.addEventListener("error",...m:C(e.message,8000s:(e.error&&...
+ *
+ * **각 조각이 `${…}` 보간 직후에서 끊기고, 보간 없는 조각은 통째로 사라진다.**
+ * 결과: 라이브에서 `window.__propaiEarly` 가 **`undefined`** 였고(스크립트는 HTML 에 있는데
+ * 실행이 안 됐다) `#418` 이 나도 `js_error` **0건**이었다(대조군 `api_call` 9건은 실림).
+ * 형제 `themeBootstrap` 은 보간이 둘이나 있어도 **단일 리터럴**이라 온전하고 실제로 작동한다.
+ *
+ * ★**소스가 파싱된다는 것과 빌드 산출물이 파싱된다는 것은 다른 명제다.** 초판의 락은
+ *   소스 상수를 `new Function` 으로 실행했고 독립 리뷰도 `renderToStaticMarkup` 까지만 봤다 —
+ *   리뷰가 *"태우지 않은 축"* 으로 정직하게 밝힌 그 자리(`next build` 산출물)에서 결함이 났다.
+ *   → 아래 `earlyErrorBootstrapIsSingleLiteral` 계약이 **원인 자체**(연결 금지)를 잠근다.
+ */
+export const earlyErrorBootstrap = `(function(){try{if(window.__propaiEarly)return;var B=[];var S={buf:B,closed:false};window.__propaiEarly=S;function P(o){if(S.closed)return;if(B.length<${EARLY_ERROR_CAP})B.push(o);}function M(r){try{if(r instanceof Error)return String(r.message);if(typeof r==="string")return r;try{return JSON.stringify(r);}catch(e){return String(r);}}catch(e){return "";}}function C(x,n){return (x==null)?null:String(x).slice(0,n);}window.addEventListener("error",function(e){try{P({k:"error",m:C(e.message,${EARLY_MESSAGE_CAP})||"",f:e.filename||null,l:e.lineno||null,c:e.colno||null,s:(e.error&&e.error.stack)?C(e.error.stack,${EARLY_STACK_CAP}):null,t:Math.round(performance.now())});}catch(x){}});window.addEventListener("unhandledrejection",function(e){try{var r=e.reason;P({k:"rejection",m:C(M(r),${EARLY_MESSAGE_CAP})||"",f:null,l:null,c:null,s:(r&&r.stack)?C(r.stack,${EARLY_STACK_CAP}):null,t:Math.round(performance.now())});}catch(x){}});}catch(e){}})();`;

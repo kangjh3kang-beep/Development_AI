@@ -197,6 +197,55 @@ describe("이벤트 타입 — 형제와 **같은 이름**을 쓴다(군집이 �
   });
 });
 
+describe("★빌드 안전 — 조각을 `+` 로 이으면 빌드가 잘라 버린다", () => {
+  /**
+   * ★실측(2026-08-27 · 로컬 프로덕션 빌드에서 **라이브와 바이트 동일하게 재현**):
+   *   백틱 조각을 `+` 로 이었더니 `.next/server/pages/404.html` 산출물이
+   *     `if(B.length<20window.addEventListener(...m:C(e.message,8000s:(e.error&&...`
+   *   — **각 조각이 `${…}` 보간 직후에서 끊기고 보간 없는 조각은 통째로 사라졌다.**
+   *   라이브에서 `window.__propaiEarly` 가 `undefined` 였고 `js_error` 가 0건이었다.
+   *
+   * ★이 검사는 **대리 변수가 아니라 원인**을 잠근다 — 그 형태를 쓰면 빌드가 부순다.
+   *   ★한계: *"왜 SWC 가 그렇게 접는가"* 는 규명하지 못했다(추정). 그러므로
+   *   **배포 후 라이브에서 `window.__propaiEarly` 존재를 확인**하는 절차를 계획서에 남긴다.
+   */
+  it("초기화식이 **단일 템플릿 리터럴**이다(연결 금지)", async () => {
+    const ts = (await import("typescript")).default;
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync("lib/growth/early-error-bootstrap.ts", "utf8");
+    const sf = ts.createSourceFile("b.ts", src, ts.ScriptTarget.ES2022, true);
+
+    let init: TS.Expression | undefined;
+    const visit = (n: TS.Node): void => {
+      if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.name.text === "earlyErrorBootstrap") init = n.initializer;
+      ts.forEachChild(n, visit);
+    };
+    visit(sf);
+    expect(init, "선언을 못 찾았다 — 이 검사가 공허하다").toBeTruthy();
+    // 양성: 템플릿 리터럴이어야 하고, 음성: `+` 연결(BinaryExpression)이면 안 된다.
+    expect(
+      init && (ts.isTemplateExpression(init) || ts.isNoSubstitutionTemplateLiteral(init)),
+      "백틱 조각을 `+` 로 잇지 마라 — 빌드가 `${…}` 직후를 버린다(실측)",
+    ).toBe(true);
+    expect(init && ts.isBinaryExpression(init)).toBe(false);
+  });
+
+  it("★형제 `themeBootstrap` 도 같은 형태다(양성 대조군 — 이 규칙이 이 저장소의 관행이다)", async () => {
+    const ts = (await import("typescript")).default;
+    const { readFileSync } = await import("node:fs");
+    const sf = ts.createSourceFile("l.tsx", readFileSync("app/layout.tsx", "utf8"), ts.ScriptTarget.ES2022, true, ts.ScriptKind.TSX);
+    let ok = false;
+    const visit = (n: TS.Node): void => {
+      if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.name.text === "themeBootstrap" && n.initializer) {
+        ok = ts.isTemplateExpression(n.initializer) || ts.isNoSubstitutionTemplateLiteral(n.initializer);
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(sf);
+    expect(ok, "대조군이 죽었다 — themeBootstrap 을 못 찾았거나 형태가 다르다").toBe(true);
+  });
+});
+
 describe("배선(소스) — 루트 layout 이 그 스크립트를 **실제로 렌더**한다", () => {
   /**
    * ★이 축이 없으면 "상수는 있는데 페이지에 안 실린" 상태가 **전부 초록**이다.
