@@ -129,13 +129,30 @@ def test_test_endpoint_burns_the_live_health_path() -> None:
 
 
 def test_failure_reason_is_not_swallowed() -> None:
-    """★실패 사유를 버리지 않는다 — 401/402/429/모델거부가 구별돼야 고칠 수 있다."""
-    code = _code()
-    i = code.find("def _health_to_test_result")
-    assert i > 0, "변환기를 못 찾았다(위반 아님)"
-    body = code[i : i + 900]
-    assert "error_type" in body, "실패 메시지에 error_type 이 안 실린다"
-    assert '"detail"' in body, "원본 헬스 응답(detail)을 안 싣는다 — 조사자가 근거를 잃는다"
+    """★실패 사유를 버리지 않는다 — 401/402/429/모델거부가 구별돼야 고칠 수 있다.
+
+    ★**소스에 `error_type` 이 있는지 보면 안 잠긴다.** 첫 판이 그랬고, 반환문만
+    `{"ok": False, "message": "테스트 실패"}` 로 바꾸는 변이가 **생존**했다
+    (변수 대입은 그대로라 소스 검사가 통과한다). **행위를 태운다** — 순수 함수를 직접 부른다.
+    """
+    from app.routers.admin_secrets import _health_to_test_result
+
+    # 두 모집단: 사유가 다르면 메시지도 달라야 한다(같으면 구별 불가).
+    a = _health_to_test_result(
+        {"ok": False, "error_type": "AuthenticationError", "error": "invalid api key"}, "LLM(anthropic)"
+    )
+    b = _health_to_test_result(
+        {"ok": False, "error_type": "RateLimitError", "error": "credit balance too low"}, "LLM(anthropic)"
+    )
+    assert a["ok"] is False and b["ok"] is False
+    assert "AuthenticationError" in a["message"], f"사유가 메시지에 없다: {a['message']!r}"
+    assert "RateLimitError" in b["message"], f"사유가 메시지에 없다: {b['message']!r}"
+    assert a["message"] != b["message"], "서로 다른 실패가 같은 문구를 낸다 — 구별 불가"
+    # 조사자가 근거를 잃지 않게 원본을 싣는다.
+    assert a.get("detail", {}).get("error") == "invalid api key"
+
+    ok = _health_to_test_result({"ok": True, "reply": "PONG"}, "LLM(anthropic)")
+    assert ok["ok"] is True and "성공" in ok["message"]
 
 
 def test_generic_keys_keep_the_old_message() -> None:
