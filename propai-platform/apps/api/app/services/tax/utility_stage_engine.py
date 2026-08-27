@@ -20,7 +20,6 @@ from app.services.tax.regional_tax_data import (
     SCHOOL_SITE_CHARGE_RATE_DETACHED,
     SCHOOL_SITE_MIN_HOUSEHOLDS,
     SEWAGE_CHARGES_WON,
-    WATER_SUPPLY_CHARGES_WON,
     get_metro_transport_charge,
     get_utility_charge,
 )
@@ -150,21 +149,31 @@ def calculate_b03_water_supply(
     sigungu_name: str,
     total_households: int,
 ) -> dict[str, Any]:
-    """B03 상수도 원인자부담금."""
-    per_hh = get_utility_charge(WATER_SUPPLY_CHARGES_WON, sido_name, sigungu_name)
-    if per_hh is None:  # ★조례 미등록 — 전국 단일값 없음(수도법 §71). 지어내지 않고 정직 표기.
-        return {
-            "code": "B03", "name": "상수도 원인자부담금",
-            "base_won": total_households, "rate": None, "amount_won": 0,
-            "detail": {"confidence": "unavailable",
-                       "reason": "지자체 조례 단가 미등록 — 관할 조례 확인 필요(수도법 §71·전국 단일값 없음)"},
-        }
-    amount = per_hh * total_households
+    """B03 상수도 원인자부담금 — ★**단위단가 개념이 없다**(실비·원가계산).
+
+    수도법 §71② → 시행령 §65③: *"다음 각 호의 **비용을 합산한 금액**"*(신설·증설비 ·
+    원상복구 공사비 · 수돗물 요금 상당액 · 급수차 경비 · 도로복구비 …).
+    §65① 단서의 *"수돗물 **사용량**에 따라 … **고려하여** 정할 수 있다"* 는 **재량 고려사항**이지
+    `사용량 × 단위단가` 산식이 아니다. 실제 조례 표본(강릉시 상수도 급수 조례)도 비용 축이
+    **구경(관경)** 이고 `'㎥'` **0회**다.
+
+    ★따라서 이 항목은 **사전 산정 자체가 불가**하다 — 표를 두지 않고 항상 보류한다.
+      종전에는 `원/세대 × 세대수` 로 부과했고(출처 0건의 생성값), 첫 봉합에서 나는 그것을
+      `원/㎥/일` 로 바꿨는데 **그것도 근거가 없었다**(독립 리뷰 지적 — 지어낸 값을
+      지어낸 차원으로 바꾼 셈).
+
+    `total_households` 는 시그니처 호환을 위해 남긴다(호출부가 넘긴다) — **쓰지 않는다.**
+    """
     return {
         "code": "B03", "name": "상수도 원인자부담금",
-        "base_won": total_households, "rate": per_hh,
-        "amount_won": amount,
-        "detail": {"per_hh_won": per_hh, "confidence": "regional"},
+        "base_won": 0, "rate": None, "amount_won": 0,
+        "detail": {
+            "confidence": "unavailable", "surveyed": False,
+            "reason": ("상수도 원인자부담금 미산정 — 수도법 §71·시행령 §65③ 은 신설·증설 "
+                       "**실비(원가계산) 합산**이라 사전 단일단가가 존재하지 않는다"
+                       "(조례도 「원가계산에 따른 예정가격」 + 사후 정산). "
+                       "관할 상수도사업소 협의 견적이 필요하다."),
+        },
     }
 
 
@@ -174,21 +183,39 @@ def calculate_b04_sewage(
     sigungu_name: str,
     total_households: int,
 ) -> dict[str, Any]:
-    """B04 하수도 원인자부담금."""
-    per_hh = get_utility_charge(SEWAGE_CHARGES_WON, sido_name, sigungu_name)
-    if per_hh is None:  # ★조례 미등록 — 전국 단일값 없음(하수도법 §61). 지어내지 않고 정직 표기.
+    """B04 하수도 원인자부담금 — **오수발생량(㎥/일) × 단위단가(원/㎥/일)**.
+
+    ★종전에는 `원/세대 × 세대수` 로 부과했다. 이 함수의 `reason` 이 스스로
+      *"오수발생량×조례단가"* 라고 적어 놓고 **세대수를 곱하는** 자기모순이었다.
+      법제처 원문(대조군으로 파서 생존 증명):
+        · 하수도법 §61① + 시행령 §35① — *"오수가 **하루 10세제곱미터** 이상 증가"*
+        · 울산광역시 하수도 사용 조례 §24①4호 — *"**오수발생량(㎥/일)에 단위단가(원/㎥/일)를
+          곱하여** 산정한다"*
+      ★**법 2 + 시행령 2** 에서 `'세대'`·`'가구'` 출현 **0회**. ★조례는 별개(울산 §9② 는 세대별 정액 고시 허용).
+    """
+    rate = get_utility_charge(SEWAGE_CHARGES_WON, sido_name, sigungu_name)
+    if rate is None:
         return {
             "code": "B04", "name": "하수도 원인자부담금",
-            "base_won": total_households, "rate": None, "amount_won": 0,
-            "detail": {"confidence": "unavailable",
-                       "reason": "지자체 조례 단가 미등록 — 관할 조례 확인 필요(하수도법 §61·오수발생량×조례단가)"},
+            "base_won": 0, "rate": None, "amount_won": 0,
+            "detail": {
+                "confidence": "unavailable", "surveyed": False,
+                "reason": ("하수도 원인자부담금 미산정 — 관할 지자체 **단위단가(원/㎥/일)** 미확보. "
+                           "단가는 조례가 아니라 **시 공고**에 있어 자동조회 대상이 아니다"
+                           "(하수도법 §61·시행령 §35 — 오수발생량 ㎥/일 기준). "
+                           "관할 공고의 단위단가와 예상 오수발생량을 입력해 주십시오."),
+            },
         }
-    amount = per_hh * total_households
     return {
         "code": "B04", "name": "하수도 원인자부담금",
-        "base_won": total_households, "rate": per_hh,
-        "amount_won": amount,
-        "detail": {"per_hh_won": per_hh, "confidence": "regional"},
+        "base_won": 0, "rate": rate.won_per_cbm_day, "amount_won": 0,
+        "detail": {
+            "confidence": "unavailable", "surveyed": False,
+            "basis": rate.basis, "source_url": rate.source_url, "as_of": rate.as_of,
+            "reason": ("단위단가는 확보했으나 **예상 오수발생량(㎥/일)** 이 입력되지 않아 미산정 — "
+                       "환경부 「건축물의 용도별 오수발생량…산정방법」 고시 별표 기준으로 "
+                       "산정한 값을 입력해 주십시오."),
+        },
     }
 
 

@@ -510,21 +510,21 @@ class TestSiblingCallSitesAreSwept:
         assert len(hits) == 1, "검사기 사망 — 위반을 심었는데 못 잡는다"
 
 
-class TestAxisFixMovesB03B04Amounts:
-    """★**금액이 움직인다** — 선언하지 않으면 그것이 결함이다(CLAUDE.md §F24).
+class TestAxisFixNoLongerFabricatesB03B04:
+    """★**이 클래스는 내가 만든 락이 날조값을 굳히고 있었다**(2026-08-27 자기정정).
 
-    계획서 전제 9 에 *"금액은 안 바뀐다"* 라고 적었는데 **거짓이었다**(독립 리뷰 D5).
-    B01 은 그대로 0 이지만, 축을 바로잡으면 **B03/B04 상하수도 조회 지자체가 바뀐다.**
-    실측(연면적 10,000㎡ · 64세대):
+    #891 에서 나는 *"축이 맞으면 등록 단가가 살아난다"* 를 락으로 걸었다 —
+    `B03 > 0 and B04 > 0`. 그 「등록 단가」가 **출처 0건의 생성값**이었다:
 
-        정상(수원)   종전 sido="수원시" sigungu=""      → B03/B04 **0**(미등록으로 강등)
-                     현재 sido="경기"  sigungu="수원시" → B03 8,320,000 · B04 10,240,000  (+15.8%)
-        지오코딩실패 종전 sido="서울"(**지어낸 폴백**)   → B03 9,600,000 · B04 11,520,000
-                     현재 sido=""                      → **0**(정직 강등)              (−15.3%)
+      · 제거된 「전국폴백 날조값」 `120_000` 이 표에 그대로 있었다(`대구`·`경기_오산시`)
+      · 값 분포가 **5,000원 계단** — 독립 조례 20건이 낼 분포가 아니다
+      · ★**차원이 법과 다르다** — **법 2 + 시행령 2** 에서 `'세대'` 출현 **0회**(★조례는 별개 — 울산 하수도 조례 §9② 는 세대별 정액 고시를 허용한다)
+        (하수도법 §61+시행령 §35 = ㎥/일 · 수도법 시행령 §65① = 사용량)
+      · 울산 실제 단위단가로 재계산하면 **8~11배 과소**
 
-    **두 방향 다 교정이다** — 전자는 축이 틀려 등록 지자체를 미등록으로 읽던 것이고,
-    후자는 지어낸 폴백이 만든 값이 사라진 것이다. 그러나 **움직인다는 사실 자체**를
-    여기서 못 박는다. 소리 없이 바뀌면 다음 사람이 회귀로 오독한다.
+    즉 내 락은 *"축을 고쳤다"* 를 잠근 게 아니라 **"날조값이 계상된다"** 를 잠갔다.
+    → 단언을 뒤집는다. **축 교정의 진짜 성과는 B01(광역교통)** 이고, B03/B04 는
+      **정직하게 보류**되어야 한다.
     """
 
     @staticmethod
@@ -532,27 +532,30 @@ class TestAxisFixMovesB03B04Amounts:
         out = compute_developer_stage_charges(
             total_gfa_sqm=10_000.0, total_households=64, **kw,
         )
-        return {i["code"]: i["amount_won"] for i in out["construction"]["items"]}
+        return {i["code"]: i for i in out["construction"]["items"]}
 
-    def test_correct_axis_recovers_registered_ordinance_rates(self):
-        """축이 맞으면 **등록 지자체 단가가 살아난다**(종전엔 0으로 강등됐다)."""
-        wrong = self._amounts(sido_name="수원시", sigungu_name="")   # 종전(축 붕괴)
-        right = self._amounts(sido_name="경기", sigungu_name="수원시")  # 현재
-        assert wrong["B03"] == 0 and wrong["B04"] == 0
-        assert right["B03"] > 0 and right["B04"] > 0
+    def test_b03_b04_are_withheld_regardless_of_axis(self):
+        """축이 맞든 틀리든 **날조값을 계상하지 않는다**(단가 출처 미확보)."""
+        for kw in (
+            {"sido_name": "경기", "sigungu_name": "수원시"},   # 종전 「등록 지역」
+            {"sido_name": "", "sigungu_name": ""},             # 미해석
+        ):
+            a = self._amounts(**kw)
+            assert a["B03"]["amount_won"] == 0
+            assert a["B04"]["amount_won"] == 0
+            assert a["B03"]["detail"]["confidence"] == "unavailable"
+            assert a["B04"]["detail"]["confidence"] == "unavailable"
 
-    def test_unknown_region_does_not_fabricate_seoul_rates(self):
-        """★반대 방향 — 시·도를 모르면 **0 + 강등**. 지어낸 서울 단가를 쓰지 않는다."""
-        unknown = self._amounts(sido_name="", sigungu_name="")
-        seoul = self._amounts(sido_name="서울", sigungu_name="")
-        assert unknown["B03"] == 0 and unknown["B04"] == 0
-        assert seoul["B03"] > 0, "대조군 사망 — 서울이 0이면 단가표 조회가 죽은 것이다"
+    def test_axis_fix_still_pays_off_on_b01(self):
+        """★대조군 — 축 교정 자체는 **여전히 유효**하다(B01 이 그 증거).
 
-    def test_the_two_directions_actually_differ(self):
-        """대조군 — 두 방향이 **실제로 갈린다**(차가 0이면 이 락은 장식이다)."""
-        right = self._amounts(sido_name="경기", sigungu_name="수원시")
-        unknown = self._amounts(sido_name="", sigungu_name="")
-        assert right["B03"] != unknown["B03"]
+        이 단언이 없으면 *"전부 0으로 만들면 통과"* 하는 구현과 구별되지 않는다.
+        """
+        resolved = self._amounts(sido_name="울산", sigungu_name="")
+        unresolved = self._amounts(sido_name="", sigungu_name="")
+        assert resolved["B01"]["rate"] is not None, "해석되면 부과율이 나온다"
+        assert unresolved["B01"]["rate"] is None, "미해석은 부과율도 없다"
+        assert resolved["B01"]["detail"].get("sido_basis") == SIDO_BASIS_EXPLICIT
 
 
 class TestProducersBurnedForReal:
@@ -653,11 +656,14 @@ class TestProducersBurnedForReal:
         blind = svc.build_module_input(dev_type="M01", site_area_sqm=1_000.0, max_far_pct=250.0,
                                        region="", address="의정부동 224")
         amt = lambda i: {  # noqa: E731
-            x["code"]: x["amount_won"] for x in compute_developer_stage_charges(
+            x["code"]: x["rate"] for x in compute_developer_stage_charges(
                 sido_name=i.sido_name, sigungu_name=i.sigungu_name,
                 total_gfa_sqm=10_000.0, total_households=64,
             )["construction"]["items"]
         }
         g, b = amt(good), amt(blind)
-        assert g["B03"] > 0 and g["B04"] > 0, "축이 맞으면 등록 단가가 살아난다"
-        assert b["B03"] == 0 and b["B04"] == 0, "모르면 0 + 정직 강등"
+        # ★종전 이 단언은 `g["B03"] > 0` 이었다 — **날조 단가가 계상되는 것**을 잠갔다.
+        #   축 교정의 진짜 성과는 **B01 광역교통**이다(부과율이 나오는가).
+        assert g["B01"] is not None, "★시·도가 해석되면 광역교통 부과율이 나온다"
+        assert b["B01"] is None, "★반대 모집단 — 미해석이면 부과율도 없다"
+        assert g["B03"] is None and b["B03"] is None, "단가 출처 미확보 — 양쪽 다 정직 보류"
