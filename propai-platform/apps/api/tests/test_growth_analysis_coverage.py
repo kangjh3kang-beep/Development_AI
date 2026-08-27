@@ -38,6 +38,9 @@ def test_coverage_records_both_halves_and_the_floor():
     A.note_coverage(cov, "latency_regression", judged=23, withheld=802, floor=20)
     assert cov["latency_regression"] == {
         "judged": 23, "withheld": 802, "total": 825, "floor": 20,
+        # ★전체 동등성을 **유지**한다(부분집합으로 약화하지 않는다) — 키가 조용히
+        #   늘어나는 것도 계속 잡아야 한다. 새 키는 명시적으로 적는다.
+        "judged_pct": 2.8, "state": "partial",
     }
 
 
@@ -75,7 +78,10 @@ async def test_fallback_coverage_splits_below_and_above_the_floor():
     below = _FakeDb([("permit", 1, 3), ("regulation", 0, 1)], [])      # calls 3·1 < 10
     cov_b: dict = {}
     await A._analyze_fallback_rate(below, None, None, cov_b)
-    assert cov_b["fallback_rate"] == {"judged": 0, "withheld": 2, "total": 2, "floor": 10}
+    assert cov_b["fallback_rate"] == {
+        "judged": 0, "withheld": 2, "total": 2, "floor": 10,
+        "judged_pct": 0.0, "state": "partial",
+    }
 
     above = _FakeDb([("assistant", 9, 50), ("market", 0, 40)], [])     # calls 50·40 >= 10
     cov_a: dict = {}
@@ -250,7 +256,10 @@ async def test_the_stamped_value_is_the_real_coverage_not_just_the_key(monkeypat
         ["fallback_rate"])
     assert got, "인사이트가 하나도 INSERT 되지 않았다 — 이 단언이 공허하다"
     assert got[0]["analysis_coverage"] == {
-        "fallback_rate": {"judged": 3, "withheld": 802, "total": 805, "floor": 20},
+        "fallback_rate": {
+            "judged": 3, "withheld": 802, "total": 805, "floor": 20,
+            "judged_pct": 0.4, "state": "partial",
+        },
     }, got[0].get("analysis_coverage")
 
 
@@ -276,7 +285,10 @@ async def test_quality_coverage_splits_below_and_above_the_floor():
     fb = [("permit", 0, 2)]                                   # ftotal 2 < 5
     cov_b: dict = {}
     await A._analyze_quality_drop(_FakeDb(verify, fb), None, None, cov_b)
-    assert cov_b["quality_drop"] == {"judged": 0, "withheld": 1, "total": 1, "floor": 5}
+    assert cov_b["quality_drop"] == {
+        "judged": 0, "withheld": 1, "total": 1, "floor": 5,
+        "judged_pct": 0.0, "state": "partial",
+    }
 
     verify2 = [("assistant", "fail", None)] * 6               # vtotal 6 >= 5
     cov_a: dict = {}
@@ -294,7 +306,10 @@ async def test_latency_coverage_splits_below_and_above_the_floor():
     few = [("/a", 10.0)] * 3                                  # 3 < 20
     cov_b: dict = {}
     await A._analyze_latency_regression(_FakeDb(few, []), w0, w1, cov_b)
-    assert cov_b["latency_regression"] == {"judged": 0, "withheld": 1, "total": 1, "floor": 20}
+    assert cov_b["latency_regression"] == {
+        "judged": 0, "withheld": 1, "total": 1, "floor": 20,
+        "judged_pct": 0.0, "state": "partial",
+    }
 
     many = [("/b", 10.0)] * 25                                # 25 >= 20
     cov_a: dict = {}

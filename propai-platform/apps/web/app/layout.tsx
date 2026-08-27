@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "@propai/ui/styles/tokens.css";
 import "./globals.css";
 import { fontVariables } from "./fonts";
+import { earlyErrorBootstrap } from "@/lib/growth/early-error-bootstrap";
 
 // 기본 테마(P2a=dark). Nexus 다크가 기본 부팅 테마다. 이 상수 한 곳만 바꾸면 전역 전환
 // (부트스트랩 스크립트가 이 값을 사용 — localStorage에 저장된 사용자 선택이 항상 우선).
@@ -48,6 +49,8 @@ export default function RootLayout({ children }: RootLayoutProps) {
     <html lang="ko" className={`notranslate ${fontVariables}`} translate="no" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeBootstrap }} />
+        {/* ★테마 부트스트랩과 **같은 자리**에 둔다 — 하이드레이션 전에 오류를 잡기 위해서다. */}
+        <script dangerouslySetInnerHTML={{ __html: earlyErrorBootstrap }} />
         <meta name="google" content="notranslate" />
       </head>
       <body className="antialiased">

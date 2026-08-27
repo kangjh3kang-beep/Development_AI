@@ -796,6 +796,11 @@ async def build_rough_scenario(
             charges_result = compute_developer_stage_charges(
                 sido_name=str(getattr(input_used, "sido_name", "") or region or ""),
                 sigungu_name=str(getattr(input_used, "sigungu_name", "") or ""),
+                # ★주소를 함께 넘긴다 — `region` 이 비었거나(프론트 미전송) 시·도가 아닌
+                #   값(프론트가 `regionFromAddress()` 로 뽑은 **시군구**)일 때 B01 이
+                #   주소에서 시·도를 복구한다. 종전에는 그 두 경우가 모두
+                #   "지역미상 — 대도시권 아님"으로 **단정**돼 법정 부담금이 침묵 미부과였다.
+                address=address,
                 total_households=total_households_assumed or 0,
                 total_sale_amount_won=revenue_total,
                 total_gfa_sqm=float(gfa_sqm or 0),
