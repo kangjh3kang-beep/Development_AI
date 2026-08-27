@@ -289,16 +289,25 @@ async def test_effectors_response_carries_capture_health() -> None:
 # 프론트가 **실제로 그리는 값**인데(「큐 12/10000 · 천장 100건/초」) 백엔드는
 # 하나도 단언하지 않았다 — 지우면 화면에 `undefined` 가 뜬다.
 # ═══════════════════════════════════════════════════════════════════════════
-#: `capture_status()` 가 **반드시** 내는 키 — 프론트가 소비하는 계약이다.
+#: `capture_status()` 가 **반드시** 내는 키 — 응답 계약이다.
 #:
 #: ★파생형으로 만들 수 없다: 이 집합 **자체가** 계약이므로 구현에서 뽑으면
 #:   무엇을 바꿔도 통과하는 순환이 된다(자기 상수를 단언하는 락). 그래서 **못 박는다**.
+#:
+#: ★★**종전 주석이 거짓이었다**(독립 적대 리뷰 실측 2026-08-27): *"프론트가 실제로 그리는
+#:   값이라 지우면 화면에 `undefined` 가 뜬다"* 라고 `flush_limit`·`consecutive_failures`·
+#:   `max_flush_retry` 를 지목했는데, **프론트는 그 셋을 안 읽는다**(14키 중 **6키**가 미소비).
+#:   화면이 그리는 것은 `queue_depth`·`max_queue`·`max_sustained_per_sec`·`requeued`·
+#:   `flush_failures`·`lost_total`·`loss_rate_pct`·`scope` 여덟이다.
+#:   → 근거를 사실로 고친다: 나머지 여섯은 **화면이 아니라 운영자·조사자가 API 로 읽는**
+#:     진단 필드다. 그래도 계약이므로 잠근다 — 다만 **이유를 바르게 적는다**(§C-10).
 _CONTRACT_KEYS = frozenset({
-    "queue_depth", "max_queue", "flush_limit", "max_sustained_per_sec",
-    "dropped_overflow", "dropped_after_retry", "requeued",
-    "flush_failures", "flushed",
-    "consecutive_failures", "max_flush_retry",
-    "lost_total", "loss_rate_pct", "scope",
+    # 화면이 그리는 것
+    "queue_depth", "max_queue", "max_sustained_per_sec",
+    "requeued", "flush_failures", "lost_total", "loss_rate_pct", "scope",
+    # API 로만 읽는 진단 필드
+    "flush_limit", "dropped_overflow", "dropped_after_retry", "flushed",
+    "consecutive_failures", "max_flush_retry", "cancelled_requeued",
 })
 
 
@@ -388,3 +397,109 @@ def test_stats_scope_is_declared_as_process_local() -> None:
     assert "프로세스 로컬" in doc
     # ★주석은 화면에 안 보인다 — **응답에도** 실려야 한다.
     assert cs.capture_status()["scope"] == "process_local"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ★독립 적대 리뷰 REVISE 봉합 (2026-08-27) — 리뷰가 뚫은 자리를 직접 태운다
+# ═══════════════════════════════════════════════════════════════════════════
+@pytest.mark.asyncio
+async def test_cancellation_requeues_and_reraises() -> None:
+    """★리뷰 #1(CRITICAL) — `except Exception` 은 `CancelledError` 를 **못 잡는다**.
+
+    `asyncio.CancelledError` 는 `BaseException` 전용이라(실측 확인), 종료 시
+    `main.py` 가 `cancel()` 을 걸면 `_drain` 이 이미 빼낸 배치가 **어떤 계수기에도
+    안 잡힌 채 사라졌다** — 이 PR 의 논지가 **수리 안에서 재현**된 자리다.
+
+    되살리는 변이: `except BaseException` → `except Exception` 이면 이 테스트가 죽는다.
+    """
+    import asyncio
+
+    class _CancelDb:
+        async def execute(self, *a, **k):
+            raise asyncio.CancelledError()
+
+        async def commit(self):  # pragma: no cover
+            raise AssertionError("취소 경로")
+
+        async def rollback(self):  # pragma: no cover
+            return None
+
+    _fill(50)
+    with pytest.raises(asyncio.CancelledError):
+        await cs.flush_batch(_CancelDb(), limit=50)
+
+    # ★①한 건도 안 잃었다 ②그 사실이 **세어졌다** ③취소는 **삼키지 않았다**(위 raises)
+    assert len(cs._QUEUE) == 50, f"★{50 - len(cs._QUEUE)}건이 취소로 사라졌다"
+    assert cs._STATS["cancelled_requeued"] == 50
+    assert cs.capture_status()["lost_total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_cancellation_is_counted_separately_from_db_failure() -> None:
+    """★두 모집단 — 취소와 DB 실패는 **다른 사실**이다(같은 계수기로 뭉개지 않는다)."""
+    import asyncio
+
+    class _CancelDb:
+        async def execute(self, *a, **k):
+            raise asyncio.CancelledError()
+
+        async def commit(self):  # pragma: no cover
+            raise AssertionError
+
+        async def rollback(self):  # pragma: no cover
+            return None
+
+    _fill(10)
+    with pytest.raises(asyncio.CancelledError):
+        await cs.flush_batch(_CancelDb(), limit=10)
+    assert cs._STATS["cancelled_requeued"] == 10
+    # ★취소는 flush **실패**가 아니다 — 연속실패 카운터를 올리면 상한이 헛되이 소모된다.
+    assert cs._STATS["flush_failures"] == 0
+    assert cs._consecutive_failures == 0
+
+    await cs.flush_batch(_FailingDb(), limit=10)
+    assert cs._STATS["flush_failures"] == 1
+    assert cs._STATS["cancelled_requeued"] == 10, "★DB 실패를 취소로 셌다"
+
+
+def test_queue_maxlen_matches_the_constant() -> None:
+    """★리뷰 #5-M1 — `deque(maxlen=…)` 과 `_MAX_QUEUE` 가 **갈릴 수 있었다**.
+
+    갈리면 `dropped_overflow` 가 **일어나지 않은 유실**을 신고한다(위양성도 결함).
+    옛 테스트는 둘 다 monkeypatch 해서 **검사 대상 자체를 갈아 끼웠다.**
+    """
+    assert cs._QUEUE.maxlen == cs._MAX_QUEUE
+
+
+def test_flush_limit_matches_main_loop_literals() -> None:
+    """★리뷰 #5-M3 — 주기는 잠갔는데 **상한은 안 잠갔다**(한쪽만 거는 단언).
+
+    `main.py` 는 `_FLUSH_LIMIT` 을 **두 곳에 하드코딩**한다(`if n < 500`).
+    갈리면 화면의 `max_sustained_per_sec` 이 거짓이 된다 — 그 값은 주기와 상한 **둘 다**에서
+    나온다. 소스에서 **파생**해 대조한다.
+    """
+    src = (_API / "main.py").read_text(encoding="utf-8")
+    lits = [int(m) for m in re.findall(r"if n < (\d+):", src)]
+    assert lits, "★main.py 에서 배치 상한 비교를 못 찾았다 — 추출기가 죽었다(위반 아님)"
+    assert len(lits) >= 2, f"★하드코딩 지점이 {len(lits)}곳 — 구조가 바뀌었다"
+    assert set(lits) == {cs._FLUSH_LIMIT}, (
+        f"★main.py 의 상한 {sorted(set(lits))} ≠ _FLUSH_LIMIT {cs._FLUSH_LIMIT}"
+    )
+
+
+def test_retry_cap_is_pinned_not_just_banded() -> None:
+    """★리뷰 #5-M2 — 대역(`>=6 and <=120`)만 보면 12→6 이 **통과**한다.
+
+    그 상수는 **무손실 창의 길이**를 정한다(상한 × 주기). 절반으로 줄이면 창도 절반이 된다.
+    ★대역만 보면 상수가 장식이 된다(§A-5). 값을 못 박고 **창을 함께 단언**한다.
+    """
+    assert cs._MAX_FLUSH_RETRY == 12
+    window_s = cs._MAX_FLUSH_RETRY * cs._FLUSH_INTERVAL_S
+    assert window_s == 60, f"★무손실 창이 {window_s}초 — 60초가 아니다"
+
+
+def test_loss_rate_precision_is_pinned() -> None:
+    """★리뷰 #12 — `round(..., 3)` → `round(..., 0)` 이 생존했다(2.5% 가 2% 로 표시)."""
+    cs._STATS["flushed"] = 1000
+    cs._STATS["dropped_overflow"] = 25
+    assert cs.capture_status()["loss_rate_pct"] == pytest.approx(2.439, abs=0.001)

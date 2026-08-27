@@ -48,6 +48,8 @@ _STATS: dict[str, int] = {
     "flush_failures": 0,
     # 정상 적재된 누계(분모 — 이게 없으면 유실률을 말할 수 없다).
     "flushed": 0,
+    # ★취소(`CancelledError`)로 중단됐다가 되돌린 수 — 종료 경로가 잃지 않았음을 보이는 값.
+    "cancelled_requeued": 0,
 }
 
 #: 같은 배치가 이 횟수를 넘게 실패하면 **포기하고 버린다**(계수와 함께).
@@ -318,7 +320,28 @@ async def flush_batch(db, limit: int = _FLUSH_LIMIT) -> int:
         _consecutive_failures = 0
         _STATS["flushed"] += len(params)
         return len(params)
-    except Exception as e:  # noqa: BLE001
+    except BaseException as e:
+        # ★★**`Exception` 이 아니라 `BaseException` 이다**(독립 적대 리뷰 실측 2026-08-27).
+        #
+        #   `asyncio.CancelledError` 는 **`BaseException` 전용**이다(3.8+ · 실측 확인).
+        #   `main.py:712` 는 종료 시 `_gt.cancel()` 을 **await 없이** 부르고 바로 마지막 flush 를
+        #   시도하는데, 그 취소가 `await db.execute(...)` 안에서 배달되면
+        #   **`_drain` 이 이미 빼낸 배치가 그대로 사라진다** — 어떤 계수기에도 안 잡힌 채.
+        #
+        #   ★이 PR 의 논지("조용히 사라지던 것")가 **수리 안에서 그대로 재현**된 자리다.
+        #     노출 창은 (INSERT 소요 / 5초)이고 **DB 가 느릴수록 넓어진다** —
+        #     즉 큐가 가장 깊을 때 가장 잘 터진다.
+        #
+        #   → 취소도 **되돌리고 센다.** 다만 취소는 **삼키면 안 되므로** 되돌린 뒤 re-raise 한다.
+        if not isinstance(e, Exception):
+            for r in reversed(rows):
+                if len(_QUEUE) == _MAX_QUEUE:
+                    _STATS["dropped_overflow"] += 1
+                _QUEUE.appendleft(r)
+            _STATS["requeued"] += len(rows)
+            _STATS["cancelled_requeued"] += len(rows)
+            logger.warning("growth flush_batch 취소 — %d건 되돌림(재전파)", len(rows))
+            raise
         # ★★종전에는 여기서 **그대로 잃었다** — `_drain` 이 `popleft()` 로 큐에서 빼낸 뒤라
         #   실패하면 되돌아갈 곳이 없었다. 로그 문구가 그 사실을 그대로 적고 있었다:
         #   *"flush_batch 실패(%d건 유실)"*.
@@ -326,7 +349,11 @@ async def flush_batch(db, limit: int = _FLUSH_LIMIT) -> int:
         #   flush 는 5초마다 최대 500건이므로 **10분 DB 장애 = 120회 × 최대 500건**이다.
         #   이 저장소는 그런 길이의 DB 버스트를 실제로 기록했다.
         #
-        #   → **되돌린다.** 일시적 장애에서는 한 건도 잃지 않는다.
+        #   → **되돌린다.** ★단 **무조건 무손실이 아니다**: 재시도 상한(`_MAX_FLUSH_RETRY`)
+        #     × flush 주기(`_FLUSH_INTERVAL_S`) = **약 65초** 이내의 장애에서만 무손실이고,
+        #     그보다 길면 상한에서 **포기하며 그 사실을 센다**(`dropped_after_retry`).
+        #     ★리뷰 실측: 연속 13회(=65초)째에 500건 유실. 위 「10분 장애」 시나리오는
+        #     **이 코드로도 잃는다** — 다만 **조용하지 않다**(계수 + logger.error + 화면).
         _consecutive_failures += 1
         _STATS["flush_failures"] += 1
         try:
@@ -374,7 +401,10 @@ def capture_status() -> dict[str, Any]:
 
     - `queue_depth` 가 `max_queue` 에 가까우면 flush 가 못 따라가고 있다.
       지속 처리량 천장은 **`flush_limit / flush_interval`** 이다(현재 500/5초 = 100건/초).
-    - `dropped_overflow` > 0 이면 **이미 잃었다**(가장 오래된 것부터).
+    - `dropped_overflow` > 0 이면 **이미 잃었다**. ★단 **어느 쪽이 밀려나는지는 경로마다 다르다**:
+      · `record_event`(정상 유입) — 오른쪽에 붙이므로 **가장 오래된 것**이 밀려난다
+      · 되돌리기(`appendleft`) — 왼쪽에 넣으므로 **가장 새것**이 밀려난다
+      같은 계수기로 세지만 **뜻이 다르다**. 종전 문서가 전자만 적어 후자를 가렸다.
     - `dropped_after_retry` > 0 이면 **한 배치를 포기했다** — 그 사유가 로그에 있다.
     - `requeued` 는 **유실이 아니다**(일시 장애에서 되돌린 것). 유실과 뭉치지 않는다.
     - ★`loss_rate_pct` 는 분모가 0 이면 `None` 이다 — **0.0 이 아니다.**

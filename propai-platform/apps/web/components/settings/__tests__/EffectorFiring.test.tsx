@@ -176,14 +176,18 @@ describe("★라벨 정합 — 백엔드 상태 어휘에서 **파생**", () => 
 
 
 describe("★수집 건강 — 입력이 새면 위 표 전체가 거짓이다", () => {
-  it("되돌림은 **유실이 아니라고** 말한다(위양성도 결함)", async () => {
+  it("★리뷰 F1 — 값이 **자기 자리에** 붙는가(서로 바꿔치기해도 통과했다)", async () => {
     await openTab();
-    const el = await screen.findByTestId("capture-health");
-    const t = el.textContent ?? "";
+    // ★필드별 대조 — 전역 toContain 은 되돌림↔flush실패를 맞바꿔도 만족된다.
+    //   그러면 운영자가 «일어나지 않은 200회 실패»를 본다.
+    expect((await screen.findByTestId("cap-requeued")).textContent).toBe("200");
+    expect((await screen.findByTestId("cap-failures")).textContent?.trim()).toBe("3");
+    expect((await screen.findByTestId("cap-queue")).textContent).toBe("12");
+    expect((await screen.findByTestId("cap-max")).textContent).toBe("10,000");
+    expect((await screen.findByTestId("cap-ceiling")).textContent).toBe("100");
+    // 되돌림은 유실이 아니다.
+    const t = (await screen.findByTestId("capture-health")).textContent ?? "";
     expect(t).toContain("유실 없음");
-    expect(t).toContain("되돌림");
-    expect(t).toContain("200");
-    // ★되돌림 200 인데 「유실」이라 부르면 정상 복구가 장애로 보인다.
     expect(t).not.toContain("★200건 유실");
   });
 

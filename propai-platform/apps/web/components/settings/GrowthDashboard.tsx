@@ -892,11 +892,19 @@ function EffectorSection() {
             )}
           </p>
           <p className="mt-1 text-xs text-[var(--text-tertiary)]">
-            큐 {data.capture.queue_depth.toLocaleString("ko-KR")}/
-            {data.capture.max_queue.toLocaleString("ko-KR")} · 지속 처리 천장{" "}
-            {data.capture.max_sustained_per_sec}건/초 · 되돌림{" "}
-            {data.capture.requeued.toLocaleString("ko-KR")}건(유실 아님) · flush 실패{" "}
-            {data.capture.flush_failures.toLocaleString("ko-KR")}회
+            {/* ★필드마다 testid — 전역 toContain 은 **값을 서로 바꿔치기해도** 통과한다.
+                (같은 파일이 효과기 행에서 이미 고친 결함인데 이 패널에서 재발했다) */}
+            큐 <span data-testid="cap-queue">{data.capture.queue_depth.toLocaleString("ko-KR")}</span>/
+            <span data-testid="cap-max">{data.capture.max_queue.toLocaleString("ko-KR")}</span> ·
+            지속 처리 천장{" "}
+            <span data-testid="cap-ceiling">{data.capture.max_sustained_per_sec}</span>건/초 ·
+            되돌림{" "}
+            <span data-testid="cap-requeued">{data.capture.requeued.toLocaleString("ko-KR")}</span>
+            건(유실 아님) · flush 실패{" "}
+            <span data-testid="cap-failures">
+              {data.capture.flush_failures.toLocaleString("ko-KR")}
+            </span>
+            회
           </p>
           {/* ★「유실 없음」이 **어떤 범위**의 말인지 밝힌다 — 프로세스 로컬이라
               재시작하면 0 이 된다. 안 밝히면 그 0 이 거짓 안심이 된다. */}
