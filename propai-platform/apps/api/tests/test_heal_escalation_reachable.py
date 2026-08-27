@@ -319,3 +319,84 @@ def test_suppression_only_looks_at_open_rows():
     src = inspect.getsource(H._escalate)
     assert "status = 'open'" in src, "억제가 open 이외 상태까지 덮는다"
     assert "metrics_json->>'trigger_key'" in src, "억제가 축(trigger_key)을 보지 않는다"
+
+
+# ══════════════════════════════════════════════════════════════════════
+# ★스텁이 **우회하는 층**을 따로 태운다 (변이 감사에서 드러난 구멍)
+#
+#   위 `_RoutingDB` 는 SQL 을 **실행하지 않고** 본문으로 갈래만 나눈다. 그래서
+#   INSERT 가 쓰는 payload 모양과 SELECT 가 읽는 JSON 경로가 **어긋나도 초록**이었다
+#   (기계적 변이가 그 자리를 정확히 짚었다 — 문자열변경 6건 생존).
+#
+#   ★이 어긋남은 **원결함의 재발 형태**다: 카운터가 조용히 영원히 0 이 되고,
+#     에스컬레이션은 다시 발화 불가가 된다. 그때 아무것도 빨개지지 않는다.
+# ══════════════════════════════════════════════════════════════════════
+
+import inspect
+import re
+
+
+def test_blocked_event_type_is_distinct_from_heal_action():
+    """★같은 이름이면 `_guard_counts` 가 **차단 시도를 실행으로 센다**.
+
+    그러면 캡이 즉시 초과되어 치유가 통째로 멈춘다 — 조용한 대형 회귀다.
+    """
+    assert H.HEAL_BLOCKED_EVENT == "heal_blocked"
+    assert H.HEAL_BLOCKED_EVENT != "heal_action"
+    guard_sql = inspect.getsource(H._guard_counts)
+    assert "'heal_action'" in guard_sql
+    assert H.HEAL_BLOCKED_EVENT not in guard_sql, \
+        "가드 집계가 차단 이벤트까지 센다"
+
+
+def test_write_and_read_agree_on_the_payload_shape():
+    """★쓰는 모양과 읽는 경로가 **같은 계약**인지 본다.
+
+    `_record_blocked` 는 `{"action_type": …, "params": {"trigger_key": …}}` 로 쓰고
+    `_blocked_count` 는 `payload->>'action_type'` · `payload->'params'->>'trigger_key'`
+    로 읽는다. 한쪽만 바뀌면 **카운터가 영원히 0** 이 된다(= 원결함 재발).
+    """
+    write = inspect.getsource(H._record_blocked)
+    read = inspect.getsource(H._blocked_count)
+
+    # 쓰기: 최상위 action_type + params 아래 trigger_key
+    assert '"action_type": action_type' in write
+    assert '"params": {"trigger_key": trigger_key}' in write
+
+    # 읽기: 그 모양과 **정확히 같은** 경로
+    assert "payload->>'action_type'" in read, "action_type 을 최상위에서 읽지 않는다"
+    assert "payload->'params'->>'trigger_key'" in read, "trigger_key 를 params 아래에서 읽지 않는다"
+
+    # 두 문장이 같은 이벤트 타입을 쓰는지 — 상수 경유여야 한다(리터럴 분기 금지)
+    assert "HEAL_BLOCKED_EVENT" in write and "HEAL_BLOCKED_EVENT" in read
+
+    # 창 경계: 읽기는 1시간 창을 실제로 건다(빼면 전 기간을 세어 과잉 발화한다)
+    assert "created_at >= :since" in read
+    assert "timedelta(hours=1)" in read
+
+
+def test_dedup_query_keys_on_both_axes():
+    """억제는 **(action_type, trigger_key) 둘 다**로 걸려야 한다.
+
+    하나만 보면 서로 다른 축이 서로를 억제해 **진짜 에스컬레이션이 사라진다**.
+    """
+    src = inspect.getsource(H._escalate)
+    assert "metrics_json->>'action_type' = :at" in src
+    assert "metrics_json->>'trigger_key' = :tk" in src
+    assert "status = 'open'" in src
+
+
+def test_exported_names_actually_exist():
+    """`__all__` 에 적은 이름이 실재하는지 — 오타는 `import *` 에서만 터진다."""
+    for name in H.__all__:
+        assert hasattr(H, name), f"__all__ 에 있으나 실재하지 않음: {name}"
+    assert "HEAL_BLOCKED_EVENT" in H.__all__
+    assert "CAP_BLOCK_REASONS" in H.__all__
+
+
+def test_insert_targets_platform_events_table():
+    """차단 기록이 **어느 표로** 가는지 — 표를 바꾸면 카운터가 조용히 0 이 된다."""
+    write = inspect.getsource(H._record_blocked)
+    read = inspect.getsource(H._blocked_count)
+    assert re.search(r"INSERT INTO platform_events", write)
+    assert re.search(r"FROM platform_events", read)
