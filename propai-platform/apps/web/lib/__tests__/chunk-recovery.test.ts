@@ -152,10 +152,15 @@ describe("★자동복구는 **보고한 뒤에** 리로드한다", () => {
     //   **생존**했다 — jsdom 의 `replace` 는 스텁이라 실제 이동이 없어 뒤에서도 보고가 돈다.
     //   프로덕션에서 그 순서가 안전한지는 **재지 않았다**(내비게이션이 이미 시작된 뒤다).
     //   재지 않은 것에 기대지 않는다 — 계약을 「리로드 **전에** 보낸다」로 못 박는다.
+    // ★`toEqual(["send","replace"])` 로 못 박지 **않는다** — 조기 포착 버퍼가 임계(20)를 넘으면
+    //   drain 루프 안에서 먼저 flush 되어 `["send","send","replace"]` 가 **정상**인데 빨개진다
+    //   (독립 리뷰 지적 — 가드의 위양성도 결함이다). 잠그는 것은 **순서**이지 횟수가 아니다.
+    expect(timeline.indexOf("send"), "전송이 아예 없다").toBeGreaterThanOrEqual(0);
     expect(
-      timeline,
+      timeline.indexOf("send"),
       `전송이 리로드보다 뒤다 — 이 순서의 안전성은 미측정이다: ${JSON.stringify(timeline)}`,
-    ).toEqual(["send", "replace"]);
+    ).toBeLessThan(timeline.indexOf("replace"));
+    expect(timeline.filter((x) => x === "replace"), "리로드가 1회가 아니다").toHaveLength(1);
   });
 
   it("B(음성 대조군) 평범한 오류 — 여기서는 아무것도 하지 않는다(경계가 보고한다)", () => {

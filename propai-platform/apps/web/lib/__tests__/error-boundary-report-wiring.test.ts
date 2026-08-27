@@ -44,7 +44,15 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-const code = (f: string) => __stripCommentsForScan(readFileSync(f, "utf8"), f);
+// ★파일당 여러 번 읽히므로 메모이즈한다(축을 `lib` 까지 넓히며 대상이 282파일 늘었다).
+const _codeCache = new Map<string, string>();
+const code = (f: string): string => {
+  const hit = _codeCache.get(f);
+  if (hit !== undefined) return hit;
+  const v = __stripCommentsForScan(readFileSync(f, "utf8"), f);
+  _codeCache.set(f, v);
+  return v;
+};
 
 /** ★파생: 파일명이 경계이거나, **오류 경계 훅을 구현한** 파일. 새 경계는 자동 편입된다. */
 // ★`lib` 도 넣는다 — 보고기를 부르는 곳이 `app`/`components` 밖에도 있다
@@ -102,6 +110,9 @@ describe("에러 경계 — 오류 보고 전수 배선", () => {
       (f) =>
         /\.tsx?$/.test(f) &&
         /reportBoundaryError\s*\(/.test(code(f)) &&
+        // ★테스트 파일은 제외한다 — 배달을 단언하는 **정당한** 테스트가 collector 를 임포트하는데,
+        //   그것을 위반으로 신고하면 정상 코드를 막는다(위양성도 결함이다).
+        !/__tests__|\.(test|spec)\./.test(f) &&
         !/export\s+function\s+reportBoundaryError/.test(code(f)),
     );
     expect(

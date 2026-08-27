@@ -33,9 +33,33 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
+/**
+ * ★파생의 축은 **파일명이 아니라 「에러 경계」**다.
+ *
+ * 초판은 `app/**\/error.tsx` 파일명으로만 파생해 **클래스 경계를 구조적으로 제외**했다.
+ * 쌍둥이 `error-boundary-report-wiring.test.ts` 는 **바로 그 이유로** 축을 넓혔다고 자기
+ * 독스트링에 적어 뒀는데(*"클래스 경계 2개를 통째로 놓쳤다 — 독립 리뷰 적발"*),
+ * **이 형제는 안 쓸렸다**(2026-08-27 독립 리뷰). 같은 저장소가 같은 결함을 두 파일에 나눠 가졌다.
+ */
 function boundaries(): string[] {
-  return walk(APP).filter((f) => /[\\/](error|global-error)\.tsx$/.test(f));
+  return [APP, join(WEB_ROOT, "components")]
+    .flatMap((d) => walk(d))
+    .filter((f) => {
+      if (!/\.tsx$/.test(f)) return false;
+      if (/[\\/](error|global-error)\.tsx$/.test(f)) return true;
+      return /\b(getDerivedStateFromError|componentDidCatch)\s*[(<]/.test(
+        __stripCommentsForScan(readFileSync(f, "utf8"), f),
+      );
+    });
 }
+
+/** ★자동복구가 **배선되지 않은** 경계 — 부채를 초록 안에 보이게 남긴다(§C13). */
+const CHUNK_RECOVERY_DEBT = new Set([
+  // 지도 셸은 오류를 **가둔다**(상위 error.tsx 로 전파 안 됨) — 지도·타일 청크가 404 나면
+  // 자동복구도 그 텔레메트리도 없다. 지도는 이 플랫폼 최빈 파손면이다.
+  "components/common/MapShell.tsx",
+  "components/projects/HubErrorBoundary.tsx",
+]);
 
 describe("에러 경계 — 청크 자동복구 전수 배선", () => {
   const files = boundaries();
@@ -49,7 +73,9 @@ describe("에러 경계 — 청크 자동복구 전수 배선", () => {
     for (const f of files) {
       // ★주석에 적어 놓고 안 부르는 것을 통과시키지 않는다(소스 검사는 주석에 뚫린다).
       const src = __stripCommentsForScan(readFileSync(f, "utf8"), f);
-      if (!/tryRecoverFromChunkError\s*\(/.test(src)) missing.push(relative(WEB_ROOT, f));
+      const rel = relative(WEB_ROOT, f);
+      if (CHUNK_RECOVERY_DEBT.has(rel)) continue;
+      if (!/tryRecoverFromChunkError\s*\(/.test(src)) missing.push(rel);
     }
     expect(
       missing,
