@@ -167,6 +167,9 @@ def calculate_all_taxes(
     # 공사단계
     sido_name: str = "",
     sigungu_name: str = "",
+    # ★주소 — B01 이 시·도를 해석하지 못할 때 여기서 복구한다(초크포인트 자가치유).
+    #   이 인자가 없으면 `ModuleInput` 경로(주 엔진)는 치유될 수 없다.
+    address: str = "",
     total_households: int = 0,
     total_sale_amount_won: int = 0,
     total_gfa_sqm: float = 0,
@@ -234,6 +237,7 @@ def calculate_all_taxes(
         total_sale_amount_won=total_sale_amount_won,
         total_gfa_sqm=total_gfa_sqm,
         building_type=building_type,
+        address=address,
     )
 
     sale = calculate_all_sale_stage(

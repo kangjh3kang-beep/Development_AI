@@ -103,7 +103,10 @@ class TestUnknownIsNotNonMetro:
         assert r["amount_won"] is None, "미해석인데 금액을 0으로 **단정**하면 안 된다"
         assert r["confidence"] == "unavailable"
         assert r.get("surveyed") is False, "정직 기계가 AWAITING_INPUT 를 내려면 필요"
-        assert r.get("source") != "not_metro_area", "모르는 것을 「아니다」라고 하면 안 된다"
+        # ★`source` 로 판정하지 않는다 — 미해석 분기 dict 에는 `source` 키가 **아예 없어서**
+        #   `!= "not_metro_area"` 가 **원리적으로 위반 불가**였다(독립 리뷰 D9-1).
+        #   확정 분기와 **같은 축**에서 비교해야 락이 된다.
+        assert r.get("sido_basis") == SIDO_BASIS_UNRESOLVED
         assert r.get("applicable") is not False, "미해석은 「미부과 확정」이 아니다"
 
     def test_resolved_non_metro_is_a_real_determination(self):
@@ -118,8 +121,11 @@ class TestUnknownIsNotNonMetro:
         """대조군 생존 — 두 입력이 **실제로 다른 결과**를 낸다(차가 0이면 락이 아니다)."""
         unresolved = _b01(sido_name="", address="")
         non_metro = _b01(sido_name="제주")
-        assert unresolved["amount_won"] is not non_metro["amount_won"]
-        assert unresolved.get("confidence") != non_metro.get("confidence")
+        # ★`is not` 는 **동일성**이라 0 과 0.0 을 구별 못 한다 — 값으로 단언한다(D9-2).
+        assert unresolved["amount_won"] is None
+        assert non_metro["amount_won"] == 0
+        assert unresolved.get("confidence") == "unavailable"
+        assert non_metro.get("confidence") != "unavailable"
 
 
 class TestSigunguSelfHealing:
@@ -301,8 +307,10 @@ class TestWiringIsLocked:
         path = "app/services/feasibility/rough_feasibility_orchestrator.py"
         args = self._kwarg_of_call(path, "compute_developer_stage_charges", "address")
         assert args, "★배선 없음 — 주소를 안 넘기면 시군구 자가치유가 죽는다"
-        assert any(isinstance(a, ast.Name) for a in args), (
-            "address 가 리터럴(예: \"\")이면 배선이 끊긴 것과 같다"
+        # ★**이름까지** 단언한다 — 노드 타입만 보면 `address=region` 도 `ast.Name` 이라
+        #   통과한다(독립 리뷰 M-B 가 그렇게 생존했다). **대리 변수 잠금은 잠금이 아니다.**
+        assert any(isinstance(a, ast.Name) and a.id == "address" for a in args), (
+            "address 에는 **주소 변수**가 가야 한다(리터럴·다른 변수 금지)"
         )
 
     def test_project_charges_forwards_address_downstream(self):
@@ -312,7 +320,7 @@ class TestWiringIsLocked:
         path = "app/services/tax/project_charges.py"
         args = self._kwarg_of_call(path, "calculate_all_utility_stage", "address")
         assert args, "★체인 중간에서 주소가 끊긴다"
-        assert any(isinstance(a, ast.Name) for a in args)
+        assert any(isinstance(a, ast.Name) and a.id == "address" for a in args)
 
     def test_precheck_does_not_put_sigungu_into_sido(self):
         """M5 — `sido_name=` 에 **시군구 변수를 직결**하지 않는다.
@@ -326,12 +334,16 @@ class TestWiringIsLocked:
         sido = self._kwarg_of_call(path, "ModuleInput", "sido_name")
         sigungu = self._kwarg_of_call(path, "ModuleInput", "sigungu_name")
         assert sido and sigungu, "★대조군 사망 — ModuleInput 호출을 못 찾았다(파서 점검)"
-        assert all(isinstance(a, ast.Call) for a in sido), (
-            "sido_name 은 주소 해석기의 **반환값**이어야 한다 — 시군구 변수 직결 금지"
-        )
-        assert any(isinstance(a, ast.Name) for a in sigungu), (
-            "sigungu_name 이 비어 있으면 축이 여전히 붕괴한 것이다"
-        )
+        # ★**호출되는 함수 이름까지** 단언한다 — `isinstance(a, ast.Call)` 만 보면
+        #   `str(region)` 도 Call 이라 **원래 결함이 그대로 통과**했다(독립 리뷰 M-A).
+        assert all(
+            isinstance(a, ast.Call)
+            and getattr(a.func, "id", getattr(a.func, "attr", None)) == "_sido_short_or_empty"
+            for a in sido
+        ), "sido_name 은 **공용 시도 해석기**의 반환값이어야 한다 — 시군구 변수 직결 금지"
+        assert any(
+            isinstance(a, (ast.Name, ast.Call, ast.BoolOp)) for a in sigungu
+        ), "sigungu_name 이 빈 리터럴이면 축이 여전히 붕괴한 것이다"
 
 
 class TestHealingAlsoFixesTheRate:
@@ -371,3 +383,157 @@ class TestHealingAlsoFixesTheRate:
         non = self._rate(sido_name="동구", address="울산광역시 동구 화정동 637-11")
         assert cap["rate"] != non["rate"]
         assert cap["amount_won"] == non["amount_won"] * 2
+
+
+class TestAddressInferenceIsDeterministicAndHonest:
+    """★독립 리뷰가 잡은 CRITICAL — 집합 순회는 **프로세스마다 답이 달랐다**.
+
+    `frozenset[str]` 순회 순서는 `PYTHONHASHSEED` 의존이라, 주소에 시·도 축약명이
+    둘 이상 걸리면 **같은 요청이 워커마다 다른 법정 부담금**을 냈다(실측):
+
+        "서울 종로구 세종대로 209" → seed1: 서울(4%) · seed0/2/3: 세종(2%)
+        "부산 해운대구 대전로 12"  → seed0: 부산 · seed1: 대전 · seed5: 대구
+
+    그리고 부분일치라 **없는 시·도를 지어냈다** — `"해운대구"` ⊃ `"대구"`,
+    `"세종대왕면"` ⊃ `"세종"`. 그런데 `basis="sido_address"`(=관측)로 라벨링됐다.
+
+    ★내 기존 위양성 가드는 `"경기도 광주시"`(**완전명 분기**)만 태워서
+      **깨진 축약형 루프를 한 번도 실행하지 않았다.** 가드가 다른 분기를 보고 있었다.
+    """
+
+    @pytest.mark.parametrize(
+        ("addr", "expected"),
+        [
+            ("울산광역시 동구 화정동 637-11", "울산"),
+            ("경기도 광주시 오포읍 1-2", "경기"),
+            ("경기 광주시 오포읍 1-2", "경기"),      # 축약형도 맨 앞이면 인정
+            ("서울 종로구 세종대로 209", "서울"),     # ★"세종대로" 에 속지 않는다
+            ("부산 해운대구 대전로 12", "부산"),      # ★"대전로" 에 속지 않는다
+            ("전남 나주시 전북로 5", "전남"),
+        ],
+    )
+    def test_prefix_anchored_inference(self, addr, expected):
+        assert resolve_sido_for_charges(address=addr) == (expected, SIDO_BASIS_ADDRESS)
+
+    @pytest.mark.parametrize(
+        "addr",
+        [
+            "여주시 세종대왕면 왕대리 1",   # ★실재 행정구역 — "세종" 을 지어내면 안 된다
+            "해운대구 우동 1394",          # ★"대구" 를 지어내면 안 된다
+            "의정부동 224",               # 시·도 접두 없음(이 저장소에 실재하는 형태)
+            "주소미상",
+        ],
+    )
+    def test_no_sido_prefix_is_unresolved_not_invented(self, addr):
+        """★반대 모집단 — 모르면 **모른다고** 한다. 지어내고 `sido_address` 라벨을 달지 않는다."""
+        short, basis = resolve_sido_for_charges(address=addr)
+        assert basis == SIDO_BASIS_UNRESOLVED
+        assert short == ""
+
+    def test_candidate_order_is_deterministic_not_a_set(self):
+        """순회 대상이 **집합이면** 순서가 프로세스마다 바뀐다 — 자료형 자체를 잠근다."""
+        from app.services.tax.regional_tax_data import _SIDO_ADDRESS_PREFIXES
+
+        assert isinstance(_SIDO_ADDRESS_PREFIXES, tuple), (
+            "set/frozenset 순회는 PYTHONHASHSEED 의존 — 같은 입력에 다른 답을 낸다"
+        )
+        lengths = [len(n) for n in _SIDO_ADDRESS_PREFIXES]
+        assert lengths == sorted(lengths, reverse=True), "긴 이름 우선이어야 최장일치"
+
+
+class TestSiblingCallSitesAreSwept:
+    """★형제 스윕 — 한 곳만 고치면 근본 봉합이 아니다(CLAUDE.md 전역 전파방지).
+
+    독립 리뷰가 잡았다: `precheck` 만 고치고 **주 엔진 경로**(`ModuleInput` 생산자)는
+    같은 결함이 남아 있었다. `sido_name=region`(시군구 직결) 자리를 **파생형으로** 훑는다.
+    """
+
+    #: 시·도 칸에 값을 넣는 **생산자** 전수. 새 생산자가 생기면 여기 걸린다.
+    PRODUCERS = (
+        "app/services/precheck/precheck_service.py",
+        "app/services/feasibility/feasibility_service_v2.py",
+        "app/routers/v2_feasibility.py",
+    )
+
+    @pytest.mark.parametrize("path", PRODUCERS)
+    def test_no_producer_assigns_bare_region_to_sido(self, path):
+        """`sido_name=region` / `sido_name=req.region` 이 **한 건도** 남지 않아야 한다."""
+        import ast
+        import pathlib
+
+        tree = ast.parse(pathlib.Path(path).read_text(encoding="utf-8"))
+        offenders = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            for kw in node.keywords:
+                if kw.arg != "sido_name":
+                    continue
+                v = kw.value
+                if isinstance(v, ast.Name) and v.id == "region":
+                    offenders.append(f"{path}: sido_name=region")
+                if isinstance(v, ast.Attribute) and v.attr == "region":
+                    offenders.append(f"{path}: sido_name=*.region")
+        assert not offenders, f"★축 붕괴 잔존: {offenders}"
+
+    def test_the_scanner_can_actually_see_offenders(self):
+        """★대조군 — 검사기가 **살아 있는지** 증명한다("위반 0"이 조회 실패일 수 있다).
+
+        일부러 위반이 든 소스를 파서에 태워 **잡히는지** 본다. 이게 없으면
+        위 parametrize 의 초록은 "위반이 없다"가 아니라 "못 찾는다"일 수 있다.
+        """
+        import ast
+
+        bad = "ModuleInput(sido_name=region, sigungu_name='')"
+        tree = ast.parse(bad)
+        hits = [
+            kw for node in ast.walk(tree) if isinstance(node, ast.Call)
+            for kw in node.keywords
+            if kw.arg == "sido_name" and isinstance(kw.value, ast.Name) and kw.value.id == "region"
+        ]
+        assert len(hits) == 1, "검사기 사망 — 위반을 심었는데 못 잡는다"
+
+
+class TestAxisFixMovesB03B04Amounts:
+    """★**금액이 움직인다** — 선언하지 않으면 그것이 결함이다(CLAUDE.md §F24).
+
+    계획서 전제 9 에 *"금액은 안 바뀐다"* 라고 적었는데 **거짓이었다**(독립 리뷰 D5).
+    B01 은 그대로 0 이지만, 축을 바로잡으면 **B03/B04 상하수도 조회 지자체가 바뀐다.**
+    실측(연면적 10,000㎡ · 64세대):
+
+        정상(수원)   종전 sido="수원시" sigungu=""      → B03/B04 **0**(미등록으로 강등)
+                     현재 sido="경기"  sigungu="수원시" → B03 8,320,000 · B04 10,240,000  (+15.8%)
+        지오코딩실패 종전 sido="서울"(**지어낸 폴백**)   → B03 9,600,000 · B04 11,520,000
+                     현재 sido=""                      → **0**(정직 강등)              (−15.3%)
+
+    **두 방향 다 교정이다** — 전자는 축이 틀려 등록 지자체를 미등록으로 읽던 것이고,
+    후자는 지어낸 폴백이 만든 값이 사라진 것이다. 그러나 **움직인다는 사실 자체**를
+    여기서 못 박는다. 소리 없이 바뀌면 다음 사람이 회귀로 오독한다.
+    """
+
+    @staticmethod
+    def _amounts(**kw):
+        out = compute_developer_stage_charges(
+            total_gfa_sqm=10_000.0, total_households=64, **kw,
+        )
+        return {i["code"]: i["amount_won"] for i in out["construction"]["items"]}
+
+    def test_correct_axis_recovers_registered_ordinance_rates(self):
+        """축이 맞으면 **등록 지자체 단가가 살아난다**(종전엔 0으로 강등됐다)."""
+        wrong = self._amounts(sido_name="수원시", sigungu_name="")   # 종전(축 붕괴)
+        right = self._amounts(sido_name="경기", sigungu_name="수원시")  # 현재
+        assert wrong["B03"] == 0 and wrong["B04"] == 0
+        assert right["B03"] > 0 and right["B04"] > 0
+
+    def test_unknown_region_does_not_fabricate_seoul_rates(self):
+        """★반대 방향 — 시·도를 모르면 **0 + 강등**. 지어낸 서울 단가를 쓰지 않는다."""
+        unknown = self._amounts(sido_name="", sigungu_name="")
+        seoul = self._amounts(sido_name="서울", sigungu_name="")
+        assert unknown["B03"] == 0 and unknown["B04"] == 0
+        assert seoul["B03"] > 0, "대조군 사망 — 서울이 0이면 단가표 조회가 죽은 것이다"
+
+    def test_the_two_directions_actually_differ(self):
+        """대조군 — 두 방향이 **실제로 갈린다**(차가 0이면 이 락은 장식이다)."""
+        right = self._amounts(sido_name="경기", sigungu_name="수원시")
+        unknown = self._amounts(sido_name="", sigungu_name="")
+        assert right["B03"] != unknown["B03"]

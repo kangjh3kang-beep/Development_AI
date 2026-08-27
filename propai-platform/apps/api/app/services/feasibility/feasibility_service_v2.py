@@ -16,6 +16,18 @@ from app.services.feasibility.modules.module_assembler import get_module, list_m
 logger = logging.getLogger(__name__)
 
 
+def _sido_short_or_empty(address: str | None) -> str:
+    """주소에서 시·도 축약키를 해석 — 실패하면 **빈 문자열**(추측 금지).
+
+    부담금 테이블(`METRO_AREA_SIDO`·상하수도 단가표)과 **같은 해석기**를 쓴다.
+    여기서 자체 정규식을 새로 쓰면 두 축이 다시 갈린다(§29).
+    """
+    from app.services.tax.regional_tax_data import resolve_sido_for_charges
+
+    short, _basis = resolve_sido_for_charges(address=str(address or ""))
+    return short
+
+
 class FeasibilityServiceV2:
     """수지분석 고도화 v2 통합 서비스."""
 
@@ -677,8 +689,13 @@ class FeasibilityServiceV2:
             official_price_per_sqm=official_price_per_sqm or 1_500_000,
             price_multiplier=1.1,
             building_type=self._get_building_type(dev_type),
-            sido_name=region,
-            sigungu_name="",
+            # ★축 교정(형제 스윕) — `region` 은 이 코드베이스에서 **시군구**로 쓰인다
+            #   (바로 위 `local_ordinance={"sigungu": region}` 이 그 증거다). 그것을
+            #   `sido_name` 에 직결하면 B01 광역교통이 대도시권을 **비대도시권으로 오판**한다.
+            #   시·도는 주소에서 공용 해석기로 뽑는다(못 뽑으면 빈 문자열 — 지어내지 않는다).
+            #   ※ `precheck_service._build_band_module_input` 과 **같은 처방**이다.
+            sido_name=_sido_short_or_empty(address),
+            sigungu_name=region or "",
             project_months=self._get_type_project_months(dev_type),
             discount_rate=0.08,
             equity_won=equity_won or 0,

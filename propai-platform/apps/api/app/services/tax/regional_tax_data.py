@@ -292,6 +292,22 @@ def normalize_sido_short(sido_name: str) -> str:
 #: 곧 상한이 되고, `_SIDO_FULL_TO_SHORT` 에 시도를 추가해도 여기가 따라오지 않는다.
 KNOWN_SIDO_SHORT: frozenset[str] = frozenset(_SIDO_FULL_TO_SHORT.values())
 
+#: 주소에서 시·도를 인정할 때 쓰는 **결정적** 후보 목록 — 긴 이름 우선, 동률은 사전순.
+#:
+#: ★**왜 `frozenset` 을 순회하면 안 되나** (2026-08-27 독립 리뷰 실측 · CRITICAL)
+#:   문자열 집합의 순회 순서는 **`PYTHONHASHSEED` 에 따라 프로세스마다 다르다.**
+#:   주소에 시·도 축약명이 둘 이상 걸리면 **같은 요청이 워커마다 다른 답**을 냈다:
+#:
+#:       "서울 종로구 세종대로 209"  → seed1: 서울(4%) · seed0/2/3: **세종(2%)**
+#:       "부산 해운대구 대전로 12"   → seed0: 부산 · seed1: **대전** · seed5: **대구**
+#:
+#:   부과율이 2%↔4% 로 갈리고 상하수도 단가표 조회 지자체도 갈린다.
+#:   → 순회 대상을 **정렬된 튜플**로 고정한다(집합 순회 금지).
+_SIDO_ADDRESS_PREFIXES: tuple[str, ...] = tuple(
+    sorted(set(_SIDO_FULL_TO_SHORT) | set(_SIDO_FULL_TO_SHORT.values()),
+           key=lambda n: (-len(n), n))
+)
+
 #: 시도 해석 근거(basis) 닫힌 어휘 — `resolve_sido_for_charges` 반환값.
 SIDO_BASIS_EXPLICIT = "sido_explicit"    # 호출부가 넘긴 값이 실제 시도였다
 SIDO_BASIS_ADDRESS = "sido_address"      # 주소 문자열에서 추론했다
@@ -327,15 +343,12 @@ def resolve_sido_for_charges(sido_name: str = "", address: str = "") -> tuple[st
     explicit = normalize_sido_short(sido_name)
     if explicit in KNOWN_SIDO_SHORT:
         return explicit, SIDO_BASIS_EXPLICIT
-    addr = str(address or "")
+    addr = str(address or "").strip()
     if addr:
-        # 완전명을 먼저 본다("서울특별시"가 "서울"보다 구체적) — 부분일치 오판 방지.
-        for full, short in _SIDO_FULL_TO_SHORT.items():
-            if full in addr:
-                return short, SIDO_BASIS_ADDRESS
-        for short in KNOWN_SIDO_SHORT:
-            if short in addr:
-                return short, SIDO_BASIS_ADDRESS
+        # ★**주소의 맨 앞에서만** 시·도를 인정한다(한국 주소는 시도 → 시군구 → … 순서).
+        for name in _SIDO_ADDRESS_PREFIXES:
+            if addr.startswith(name):
+                return _SIDO_FULL_TO_SHORT.get(name, name), SIDO_BASIS_ADDRESS
     return "", SIDO_BASIS_UNRESOLVED
 # 표준건축비(원/㎡): 광특법 시행령 제16조의2가 「공공건설임대주택 표준건축비」 고시(국토부)를
 # 준용 — 고시는 층수×전용면적 구간별 표라 단일 상수 하드코딩 자체가 부정확(사업 특성 의존).

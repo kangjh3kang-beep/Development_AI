@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.billing_deps import enforce_llm_quota
+from app.services.feasibility.feasibility_service_v2 import _sido_short_or_empty
 from app.core.database import get_db
 
 # 주의(혼선 제거): 아래 current_user의 실제 런타임 타입은 get_current_user가 반환하는
@@ -714,7 +715,11 @@ async def baseline_feasibility(req: FeasibilityBaselineRequest):
         avg_sale_price_per_pyeong=sale_price_per_pyeong,
         avg_area_pyeong=avg_area_pyeong,
         sale_ratio=0.95,
-        sido_name=req.region,
+        # ★축 교정(형제 스윕) — `req.region` 은 프론트가 **시군구**를 넣어 보낸다
+        #   (`RoughScenarioPanel` 의 `regionFromAddress()`). 시·도 칸에 직결하면
+        #   B01 광역교통이 대도시권을 비대도시권으로 오판한다. 주소에서 해석한다.
+        sido_name=_sido_short_or_empty(req.address),
+        sigungu_name=req.region or "",
         project_months=_service._get_type_project_months(dev_type),
         discount_rate=0.08,
         equity_won=equity,
