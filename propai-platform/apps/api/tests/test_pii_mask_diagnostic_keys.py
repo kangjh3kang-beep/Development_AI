@@ -21,6 +21,7 @@
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -110,6 +111,107 @@ _EXTRACTED = {p: _extract(p) for p in SOURCES}
 FRONTEND_PAYLOAD_KEYS: set[str] = set().union(set(), *(k for k, _, _ in _EXTRACTED.values()))
 
 
+# ── 백엔드 `record_event(...)` payload 키도 **소스에서 파생**한다 ────────────────
+# ★`#906` 은 모집단을 **프론트 전용**으로 두고 그 한계를 계획서 §3 에 「미측정」으로 적었다 — 여기서 닫는다.
+#   실측(2026-08-27 · 원본 `mask_pii` 를 AST 로 추출해 **그대로 실행**): 백엔드 키 **57종 중 위양성 0** ·
+#   `_PII_KEYS` 와 부분일치하는 **위험 근접 키도 0**. **그래서 런타임은 안 고쳤다** —
+#   이 파생은 *앞으로* 추가될 백엔드 키가 부분일치에 걸리면 **즉시 빨개지게** 한다.
+#
+# ★수집기가 **양방향으로** 틀렸던 것을 여기 남긴다(그래서 이 함수가 이 모양이다):
+#   ①**이름만**으로 매칭 → 25건(**과다**). `api/endpoints/sales/referral.py` 가 **동명의 다른 함수**를
+#     정의하고 `mh.py`·`referral.py` 가 그것을 부른다. `capture_service` 의 정의 자신도 섞인다.
+#   ②**모듈 별칭만**으로 매칭 → 15건(**과소**). `design_ingest/orchestrator.py`·`ingest_service.py` 는
+#     **함수 안 지역 import**(`from … import record_event`)라 모듈레벨 스캔에 안 잡힌다.
+#   ③둘 다 처리 → **17건**. `ast.walk` 로 지역 import 까지 보고, **자기 정의가 있는 파일은 뺀다**.
+#   ★한쪽만 고쳤으면 반대 방향이 조용히 남았다 — 위양성도 위음성도 결함이다.
+API_ROOT = Path(__file__).resolve().parents[1]
+_CS_MODULE = "growth.capture_service"
+
+
+def _record_event_payload_keys() -> tuple[set[str], list[str], int]:
+    """`capture_service.record_event(...)` 의 payload 키를 판다.
+
+    반환: (키, **해석 못 한 호출 위치**, 진짜 호출 수). ★판정은 테스트가 한다 — 여기서 뭉개지 않는다
+    (`#906` 에서 수집기 안 보정 한 줄이 가드를 통째로 공허하게 만든 전례가 있다).
+    """
+    keys: set[str] = set()
+    unresolved: list[str] = []
+    calls = 0
+    for path in API_ROOT.rglob("*.py"):
+        rel = path.relative_to(API_ROOT).as_posix()
+        if rel.startswith("tests/") or path.name.startswith("test_"):
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (SyntaxError, OSError, UnicodeDecodeError):  # pragma: no cover
+            continue
+
+        aliases: set[str] = set()
+        direct = False
+        defines_own = False
+        for n in ast.walk(tree):  # ★walk — 함수 **안**의 지연 import 도 본다
+            if isinstance(n, ast.Import):
+                for a in n.names:
+                    if a.name.endswith(_CS_MODULE):
+                        aliases.add(a.asname or a.name.rsplit(".", 1)[-1])
+            elif isinstance(n, ast.ImportFrom):
+                mod = n.module or ""
+                if mod.endswith(_CS_MODULE) and any(a.name == "record_event" for a in n.names):
+                    direct = True
+                if mod.endswith("services.growth"):
+                    for a in n.names:
+                        if a.name == "capture_service":
+                            aliases.add(a.asname or "capture_service")
+            elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == "record_event":
+                # ★**설명되는 생존**(변이 점수 부풀리기 방지 · 실측 기록): 이 줄을 `False` 로 바꿔도
+                #   변이가 **생존한다**. 오늘 자기 정의를 가진 파일
+                #   (`growth/capture_service.py` · `sales/referral.py`)은 **둘 다 `direct=False`** 라
+                #   bare-name 분기가 애초에 안 탄다(실측). 즉 **도달 불가 이중 가드**다.
+                #   그래도 남긴다 — 두 조건이 동시에 참인 파일(자기도 정의하고 우리 것도 들여옴)이
+                #   생기면 그때는 **이 줄만이** 오배정을 막는다. 점수용 단언은 붙이지 않는다.
+                defines_own = True
+
+        for n in ast.walk(tree):
+            if not isinstance(n, ast.Call):
+                continue
+            fn = n.func
+            is_ours = (
+                isinstance(fn, ast.Attribute)
+                and fn.attr == "record_event"
+                and isinstance(fn.value, ast.Name)
+                and fn.value.id in aliases
+            ) or (
+                isinstance(fn, ast.Name) and fn.id == "record_event" and direct and not defines_own
+            )
+            if not is_ours:
+                continue
+            calls += 1
+            props = n.args[1] if len(n.args) >= 2 else next(
+                (k.value for k in n.keywords if k.arg == "props"), None
+            )
+            if props is None:
+                continue
+            if not isinstance(props, ast.Dict):
+                unresolved.append(f"{rel}:{n.lineno}")
+                continue
+            # `strict=True` — 길이가 어긋나면 **조용히 잘리지 않고** 터진다(파서 사망을 드러낸다).
+            for k, v in zip(props.keys, props.values, strict=True):
+                if not (isinstance(k, ast.Constant) and k.value == "payload"):
+                    continue
+                if isinstance(v, ast.Dict):
+                    keys |= {
+                        pk.value
+                        for pk in v.keys
+                        if isinstance(pk, ast.Constant) and isinstance(pk.value, str)
+                    }
+                else:
+                    unresolved.append(f"{rel}:{n.lineno}(payload 비리터럴)")
+    return keys, unresolved, calls
+
+
+BACKEND_KEYS, BACKEND_UNRESOLVED, BACKEND_CALLS = _record_event_payload_keys()
+
+
 # ── 수집기·파서 생존 ────────────────────────────────────────────────────────
 def test_deriver_is_alive() -> None:
     """전제: 수집기와 파서가 살아 있다(공허한 초록 방지)."""
@@ -148,6 +250,55 @@ def test_every_indirect_call_has_a_resolver() -> None:
     total_indirect = sum(i for _, i, _ in _EXTRACTED.values())
     assert total_indirect > 0, (
         "간접 호출을 한 건도 못 찾았다 — 수집기가 죽었으면 위 단언은 공허하게 참이다"
+    )
+
+
+# ── 백엔드 모집단 ────────────────────────────────────────────────────────────
+def test_backend_deriver_is_alive() -> None:
+    """전제: 백엔드 수집기가 살아 있다(공허 진리 방지)."""
+    # 하한을 **실측값에 붙인다** — 여유를 크게 두면 절반이 사라져도 통과한다.
+    assert BACKEND_CALLS >= 17, f"record_event 호출을 못 찾았다 — 수집기가 죽었다: {BACKEND_CALLS}"
+    assert len(BACKEND_KEYS) >= 54, f"백엔드 payload 키 파생 실패: {sorted(BACKEND_KEYS)}"
+    # ★양성 대조군 — 반드시 있어야 하는 키가 같은 방법으로 조회된다.
+    for probe in ("zone_code", "ok", "cache_hit"):
+        assert probe in BACKEND_KEYS, f"`{probe}` 가 파생 집합에 없다 — 파서가 그 블록을 놓쳤다"
+
+
+def test_backend_unresolved_calls_are_documented() -> None:
+    """★해석 못 한 호출은 **사유와 함께 열거**된 것뿐이어야 한다.
+
+    이 단언은 **이름충돌 대조군을 겸한다**: `api/endpoints/sales/referral.py` 가 정의하는
+    **동명의 다른 함수**(`record_event(db, code, event, …)`)를 잘못 포함하면 그 호출들은
+    payload dict 가 없어 **미해석이 2건에서 5건으로 늘어난다**. 즉 여기가 빨개진다.
+    """
+    known = {
+        # 프론트가 보낸 것을 그대로 적재하는 경로 — 프론트 파생(`FRONTEND_PAYLOAD_KEYS`)이 덮는다.
+        "app/routers/growth.py:98(payload 비리터럴)",
+        # LLM 호출 계측 — payload 를 조건부로 조립한다(`ok`/`input_tokens`/`output_tokens`/
+        # `error`/`reason`/`error_type`). 그 6키는 아래 마스킹 단언에 **직접 실어** 태운다.
+        "app/services/ai/base_interpreter.py:410(payload 비리터럴)",
+    }
+    surprise = sorted(set(BACKEND_UNRESOLVED) - known)
+    assert surprise == [], (
+        f"새로 해석 못 한 `record_event` 호출 — 그 키들은 이 락의 감시 밖이다:\n{surprise}"
+    )
+    # ★죽은 면제도 실패시킨다 — 사라진 예외를 남겨 두면 다음 사람이 유효한 것으로 읽는다.
+    stale = sorted(known - set(BACKEND_UNRESOLVED))
+    assert stale == [], f"이미 해소된 예외가 목록에 남아 있다(정리할 것): {stale}"
+
+
+def test_backend_payload_keys_survive_masking() -> None:
+    """★백엔드 `record_event` payload 키도 **하나도 지워지지 않는다**.
+
+    실측(2026-08-27): 57종(정적 54 + `base_interpreter` 동적 6, 중복 제외) 중 **위양성 0**.
+    `_PII_KEYS` 와 부분일치하는 **위험 근접 키도 0** 이었다 — 그래서 런타임은 안 고쳤다.
+    """
+    dynamic = {"ok", "input_tokens", "output_tokens", "error", "reason", "error_type"}
+    wiped = sorted(k for k in (BACKEND_KEYS | dynamic) if mask_pii({k: "S"})[k] == "[redacted]")
+    assert wiped == [], (
+        "적재 마스킹이 백엔드 진단 필드를 지운다 — 그 필드는 analyzer 어디에도 도착하지 않는다.\n"
+        f"지워지는 키: {wiped}\n"
+        "처방: `_DIAGNOSTIC_SAFE_KEYS` 에 **정확일치**로 추가하라. 매처를 약화시키지 마라."
     )
 
 
