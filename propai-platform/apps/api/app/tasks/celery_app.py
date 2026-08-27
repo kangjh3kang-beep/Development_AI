@@ -130,6 +130,17 @@ def _create_app() -> Celery:
             "kwargs": {"window_hours": 24},
             "options": {"queue": "growth"},
         },
+        # ★정리 — 승계된 옛 인사이트를 닫는다. growth 는 beat 잡이 여럿인데
+        #   **정리 잡이 0개**여서 재고가 무한 누적됐다(2026-08-26 실측: open 3,127 ·
+        #   그중 승계분 2,678 · latency_regression 30일 초과 1,212).
+        #   분석(02:30)이 새 행을 만든 **뒤에** 돌린다.
+        #   ★03:12 인 이유 — `evaluate-healing` 이 `*/10` 이라 03:10 에 동시 발화하고,
+        #     그 잡은 `status='open' AND created_at >= now-2h` 를 읽는다. 비켜 간다.
+        "cleanup-growth-insights": {
+            "task": "app.tasks.growth_tasks.cleanup_insights",
+            "schedule": crontab(hour=3, minute=12),
+            "options": {"queue": "growth"},
+        },
         # 자가치유 평가(Phase 3, §6.1) — open 인사이트/이벤트 → heal 액션(무인 L0).
         # analyze 와 동일하게 DB 를 읽으므로 별도 Celery 워커에서도 정상 동작.
         # 10분 주기: 가드(시간당 캡·쿨다운)가 빈번 실행을 자체 차단하므로 안전.
