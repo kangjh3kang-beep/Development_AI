@@ -795,8 +795,73 @@ async def _analyze_quality_drop(db, w0, w1, coverage: dict[str, dict[str, Any]] 
     return out
 
 
+#: ★4xx 는 latency 모집단에서 뺀다(5xx 는 남긴다).
+#:
+#: ## 왜 (라이브 실측 2026-08-27 · platform_events 7일 전수)
+#:
+#: 이 검출기의 커버리지가 낮아 보인 것은 **analyzer 결함이 아니라 모집단 정의 결함**이었다.
+#: 판정률(1시간 key-시간 기준)과 고유 key 수:
+#:
+#:     현행(전건)    judged 347 / 6,735 =   5.2%   고유 key **2,462**
+#:     4xx 제외      judged 332 / 1,946 = **17.1%**  고유 key **401**
+#:
+#: ★**judged 는 347→332 로 거의 안 준다.** 분모가 붕괴할 뿐이다 — 판정을 잃는 것이 아니라
+#:   **애초에 판정될 수 없던 key 를 모집단에서 빼는 것**이다.
+#:
+#: ★**빠지는 key 는 2,062개다**(하한 무관 전수). 종전 주석의 *"8개"* 는 `n>=20` 을 통과한
+#:   것만 센 수라 **분모를 감췄다**(독립 리뷰 F6). 성격 판정은 유지된다 — `/api/` 로
+#:   시작하는 것까지 열어 봐도 `/api/.env` · `/api/mcp` · `/api/graphql` ·
+#:   `/api/vendor/phpunit/.../eval-stdin.php` 같은 **스캐너 프로브**다.
+#: ★★단 **전건 4xx 인 진짜 라우트도 사라진다** — 오늘은 표본이 1건이라 어차피 하한 미달이다
+#:   (`/api/v1/deliberation/health`{401:1} · `/api/v1/regulation/gosi/coverage`{422:1}).
+#:   **그 라우트가 인증 실패로만 호출되기 시작하면 지연을 못 본다.** 미봉합 부채.
+#:
+#: ★★**5xx 절은 「장래 대비 방어」다 — 지금 무엇을 지키고 있지 않다.**
+#:
+#:   ★2026-08-27 독립 리뷰 F1 이 내 종전 주석을 반증했다. 나는 *"`status<400` 으로 자르면
+#:   타임아웃 라우트가 사라진다"* 고 적었는데, **그 라우트는 애초에 이 모집단에 없다**:
+#:   `growth_telemetry.py:139` 가 `status_code >= 500` 을 **`api_error` 로** 보내고,
+#:   이 함수는 `event_type IN ('api_call','llm_call')` 만 읽는다.
+#:
+#:       라이브 전 기간(2026-06-14~08-27) 실측
+#:         api_call  중 5xx = **0건**  ← 데이터 우연이 아니라 미들웨어가 구조적으로 보장
+#:         api_error 중 5xx = **4,720건**
+#:
+#:   → `>= 500` 절은 **구조적 死코드**다. 그래도 **남긴다**: 미들웨어가 바뀌거나 다른
+#:     생산자가 5xx 를 `api_call` 로 넣기 시작하면 그때 지연이 조용히 사라지기 때문이다.
+#:     **다만 그것이 "지금 5xx 지연이 커버된다"는 뜻은 아니다**(§C-11 — 거짓 면역 금지).
+#:
+#: ★★**부채(별건)**: **5xx 의 지연은 지금 어떤 검출기에도 없다.** `_analyze_error_cluster`
+#:   는 **건수**만 세고(`api_error`) p95 를 보지 않으며, 이 함수는 `api_error` 를 안 읽는다.
+#:   라이브에 `api_error /api/v1/auth/login 500 latency 60,069ms` 같은 행이 실재한다.
+#:
+#: ★`status_code IS NULL` 도 남긴다 — `llm_call` 은 HTTP 상태가 없다(실측 73건 · p95 90초).
+#:
+#: ## ★이것이 **고치지 않는** 것 (섞어 읽지 말 것)
+#:
+#: 1. **baseline 이 자기참조**라 **점진적 회귀는 구조적으로 탐지 불가**(반감기 ≈ 2일). 별건.
+#: 2. **tenant 혼입** — 같은 key 안 tenant 별 p95 **62배** 차이
+#:    (`/api/v1/store/projects` 3,766 vs 61). 지연을 안 바꾸고 **구성비만 옮겨도 발화 86~98.7%**.
+#: 3. **n=20 에서 p95 는 잡음** — 회귀가 없어도 발화율 23~36%(nearest-rank 소표본 편향).
+#:
+#: ## ★검토했으나 **하지 않은 것**
+#:
+#: · **접두 정규화로 `/api/v1/X` 와 `/X` 병합** → **철회.** 둘은 **다른 것을 잰다**
+#:   (백엔드 `perf_counter` 핸들러 시간 vs 프론트 fetch **왕복**). p95 격차 최대 **16.4배**,
+#:   8쌍 중 **4쌍이 회귀 임계(1.5배) 초과** — 병합하면 **구성비만 바뀌어도 발화**한다.
+#: · **`surface` 를 key 에 포함** → **보류.** 한 route 문자열에 surface 가 섞인 key 가
+#:   라이브 **0건**이라 지금 넣으면 **공허한 락**이다. ★단 그 분리는 **우연**이다 —
+#:   프론트가 절대 URL 을 보내는 경우가 실재한다(124건).
+
+
 async def _analyze_latency_regression(db, w0, w1, coverage: dict[str, dict[str, Any]] | None = None) -> list[dict[str, Any]]:
-    """route/service p95 vs 직전 7일 baseline. baseline 은 insights 에 저장·참조."""
+    """route/service p95 vs **직전 배치** p95. 4xx 는 모집단에서 제외한다.
+
+    ★종전 독스트링은 *"직전 7일 baseline"* 이라 적었는데 **사실이 아니다** — 7일은
+      *"마지막 저장 행을 찾는 lookback"* 이고, 실제 baseline 은
+      `metrics_json["baseline_p95"] = p95`(**이번 배치 자기 p95**)다. 문장을 사실로 낮춘다.
+      (라이브 확증 2026-08-27: `baseline_p95 == p95_ms` 인 행이 **200/200**.)
+    """
     from sqlalchemy import text
 
     rows = (await db.execute(text(
@@ -804,7 +869,9 @@ async def _analyze_latency_regression(db, w0, w1, coverage: dict[str, dict[str, 
         "WHERE event_type IN ('api_call','llm_call') "
         "  AND latency_ms IS NOT NULL "
         "  AND created_at >= :w0 AND created_at < :w1 "
-        "  AND COALESCE(route, service) IS NOT NULL"
+        "  AND COALESCE(route, service) IS NOT NULL "
+        # ★★2026-08-27 — **4xx 를 모집단에서 뺀다**(5xx·NULL 은 남긴다). 위 주석 참조.
+        "  AND (status_code IS NULL OR status_code < 400 OR status_code >= 500)"
     ), {"w0": w0, "w1": w1})).fetchall()
 
     by_key: dict[str, list[float]] = {}
