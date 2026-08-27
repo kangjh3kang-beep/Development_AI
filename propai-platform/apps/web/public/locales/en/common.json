@@ -433,7 +433,7 @@
     },
     "feasibilityV2": {
       "title": "Feasibility Analysis v2",
-      "subtitle": "15 dev types x 38 taxes x 229 regions — fully automated",
+      "subtitle": "15 dev types x 32 tax/charge codes, automated",
       "tabInput": "Input",
       "tabResult": "Results",
       "tabMonteCarlo": "Monte Carlo",
@@ -564,7 +564,7 @@
     "feasibility": {
       "eyebrow": "PROP / FEASIBILITY",
       "title": "Feasibility Analysis",
-      "description": "Integrates 15 development types, 38 tax algorithms, and ordinances of 229 municipalities in real time to support optimal investment decisions.",
+      "description": "Automatically computes 15 development types and 32 tax/charge codes. Local ordinances are looked up and applied; when unavailable, the statutory ceiling is used and disclosed as degraded.",
       "items": [
         "· Feasibility simulation across 15 development types — server connected",
         "· Tax and financing cost auto-calculation — server connected",
