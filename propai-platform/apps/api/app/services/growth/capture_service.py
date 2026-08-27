@@ -379,6 +379,19 @@ def capture_status() -> dict[str, Any]:
     - `requeued` 는 **유실이 아니다**(일시 장애에서 되돌린 것). 유실과 뭉치지 않는다.
     - ★`loss_rate_pct` 는 분모가 0 이면 `None` 이다 — **0.0 이 아니다.**
       "잃은 게 없다"와 "아직 아무것도 안 실었다"는 다른 말이다.
+
+    ## ★★이 수치는 **하한**이다 — 과대해석 금지
+
+    `_STATS` 는 **프로세스 로컬**이다:
+      · 재시작하면 **0 으로 돌아간다**(누적 이력이 아니다)
+      · 워커가 여럿이면 **워커마다 다른 값**을 본다
+
+    → 따라서 **실제 유실 ≥ 여기 보이는 값**이다. `lost_total == 0` 은
+      *"이 프로세스가 시작한 뒤로는 못 봤다"* 이지 *"유실이 없었다"* 가 아니다.
+      ★이 구분을 놓치면 화면의 「유실 없음」이 **거짓 안심**이 된다.
+
+    (누적을 보려면 `platform_events` 에 유실 이벤트를 적재하는 별도 설계가 필요하다 —
+     이 PR 범위 밖이고, 그 사실을 여기 적어 다음 사람이 오해하지 않게 한다.)
     """
     lost = _STATS["dropped_overflow"] + _STATS["dropped_after_retry"]
     denom = _STATS["flushed"] + lost
@@ -393,6 +406,9 @@ def capture_status() -> dict[str, Any]:
         "max_flush_retry": _MAX_FLUSH_RETRY,
         # 유실 = 밀려난 것 + 포기한 것. **되돌린 것은 유실이 아니다.**
         "lost_total": lost,
+        # ★이 수치가 **프로세스 로컬**이라는 사실을 응답에 싣는다 —
+        #   화면이 「유실 없음」을 **어떤 범위에서** 말하는지 밝힐 수 있게.
+        "scope": "process_local",
         "loss_rate_pct": round(100.0 * lost / denom, 3) if denom else None,
     }
 

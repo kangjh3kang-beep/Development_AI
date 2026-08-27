@@ -298,7 +298,7 @@ _CONTRACT_KEYS = frozenset({
     "dropped_overflow", "dropped_after_retry", "requeued",
     "flush_failures", "flushed",
     "consecutive_failures", "max_flush_retry",
-    "lost_total", "loss_rate_pct",
+    "lost_total", "loss_rate_pct", "scope",
 })
 
 
@@ -370,3 +370,21 @@ async def test_requeue_overflow_is_also_counted(monkeypatch: pytest.MonkeyPatch)
     st = cs.capture_status()
     assert st["lost_total"] == cs._STATS["dropped_overflow"]
     assert st["requeued"] == 3, "되돌린 건수는 별도로 남는다"
+
+
+def test_stats_scope_is_declared_as_process_local() -> None:
+    """★이 수치는 **하한**이다 — `_STATS` 가 프로세스 로컬이라 재시작하면 0 이 된다.
+
+    `lost_total == 0` 은 *"이 프로세스가 시작한 뒤로는 못 봤다"* 이지
+    *"유실이 없었다"* 가 아니다. 그 구분을 놓치면 화면의 「유실 없음」이 **거짓 안심**이 된다.
+
+    ★계획서에 *"코드에 적었다"* 고 썼는데 **처음엔 안 적혀 있었다** — 선언과 산출물이
+      갈리면 다음 사람이 이미 안전하다고 오독한다(§F-24). 그래서 락으로 잠근다.
+    """
+    import inspect
+
+    doc = inspect.getdoc(cs.capture_status) or ""
+    assert "하한" in doc, "★하한이라는 사실이 문서화돼 있지 않다"
+    assert "프로세스 로컬" in doc
+    # ★주석은 화면에 안 보인다 — **응답에도** 실려야 한다.
+    assert cs.capture_status()["scope"] == "process_local"

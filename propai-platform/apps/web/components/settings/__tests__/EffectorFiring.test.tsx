@@ -56,6 +56,7 @@ const STATUS = {
   capture: {
     queue_depth: 12, max_queue: 10000, max_sustained_per_sec: 100,
     requeued: 200, flush_failures: 3, lost_total: 0, loss_rate_pct: 0.0,
+    scope: "process_local",
   },
   summary: {
     declared: 3, never_fired: 1, dormant: 1, active: 1, undeclared: 1,
@@ -217,4 +218,12 @@ describe("★수집 건강 — 입력이 새면 위 표 전체가 거짓이다",
     expect(t).toContain("판정 불가");
     expect(t).not.toContain("(0%)");
   });
+});
+
+
+it("★「유실 없음」이 **어떤 범위**의 말인지 밝힌다(거짓 안심 방지)", async () => {
+  await openTab();
+  const t = (await screen.findByTestId("capture-scope")).textContent ?? "";
+  expect(t).toContain("현재 프로세스");
+  expect(t).toContain("이상");
 });

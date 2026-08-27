@@ -763,6 +763,8 @@ type EffectorStatus = {
     lost_total: number;
     /** ★분모가 0 이면 `null` — **0 이 아니다**(거짓 안심 방지). */
     loss_rate_pct: number | null;
+    /** ★계수의 범위 — `process_local` 이면 재시작 시 0 이라 **하한**이다. */
+    scope?: string;
   };
   summary: {
     declared: number;
@@ -896,6 +898,15 @@ function EffectorSection() {
             {data.capture.requeued.toLocaleString("ko-KR")}건(유실 아님) · flush 실패{" "}
             {data.capture.flush_failures.toLocaleString("ko-KR")}회
           </p>
+          {/* ★「유실 없음」이 **어떤 범위**의 말인지 밝힌다 — 프로세스 로컬이라
+              재시작하면 0 이 된다. 안 밝히면 그 0 이 거짓 안심이 된다. */}
+          {data.capture.scope === "process_local" ? (
+            <p className="mt-1 text-xs text-[var(--text-tertiary)]" data-testid="capture-scope">
+              ★이 수치는 <strong>현재 프로세스 기준</strong>입니다 — 재시작하면 0 으로
+              돌아가고 워커가 여럿이면 워커마다 다릅니다. 실제 유실은 이 값{" "}
+              <strong>이상</strong>입니다.
+            </p>
+          ) : null}
           {data.capture.lost_total > 0 ? (
             <p className="mt-2 text-xs font-semibold text-[var(--status-error)]">
               ★유실이 있으면 아래 표의 「한 번도 발화 없음」·「휴면」을 믿을 수 없습니다 —
