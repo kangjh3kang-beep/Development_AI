@@ -197,52 +197,125 @@ describe("이벤트 타입 — 형제와 **같은 이름**을 쓴다(군집이 �
   });
 });
 
-describe("★빌드 안전 — 조각을 `+` 로 이으면 빌드가 잘라 버린다", () => {
+describe("★빌드 안전 — 보간 템플릿을 `+` 로 이으면 빌드가 좌변 꼬리를 버린다", () => {
   /**
-   * ★실측(2026-08-27 · 로컬 프로덕션 빌드에서 **라이브와 바이트 동일하게 재현**):
-   *   백틱 조각을 `+` 로 이었더니 `.next/server/pages/404.html` 산출물이
-   *     `if(B.length<20window.addEventListener(...m:C(e.message,8000s:(e.error&&...`
-   *   — **각 조각이 `${…}` 보간 직후에서 끊기고 보간 없는 조각은 통째로 사라졌다.**
-   *   라이브에서 `window.__propaiEarly` 가 `undefined` 였고 `js_error` 가 0건이었다.
+   * ★**정확한 규칙**(독립 리뷰가 최소 재현으로 규명 · swc.minify + next 16.1.7):
+   *   상수 폴딩되는 `+` 체인에서 **누적된 좌변이 치환을 가진 템플릿**이고 **우변도 치환을 가진
+   *   템플릿**이면, **좌변의 마지막 치환 이후 꼬리가 통째로 버려진다.**
    *
-   * ★이 검사는 **대리 변수가 아니라 원인**을 잠근다 — 그 형태를 쓰면 빌드가 부순다.
-   *   ★한계: *"왜 SWC 가 그렇게 접는가"* 는 규명하지 못했다(추정). 그러므로
-   *   **배포 후 라이브에서 `window.__propaiEarly` 존재를 확인**하는 절차를 계획서에 남긴다.
+   *   | 형태 | 결과 |
+   *   |---|---|
+   *   | `` `x${A}y` + `q${A}r` `` | ✘ **BAD** → `"x1q1r"`(`y` 가 사라진다) |
+   *   | `` `x${A}y` + `p` `` (우변 치환 없음) | ◎ OK |
+   *   | `` 'x1y' + `q${A}r` `` (좌변 치환 없음) | ◎ OK |
+   *   | `` `x${a}y` + `q${b}r` `` (**런타임** 보간 — 폴딩 불가) | ◎ OK |
+   *   | `` `${p1}${p2}` `` · `p1+p2` · `join("")` · `concat()` | ◎ OK |
+   *
+   * ★초판 서술(*"보간 없는 조각은 통째로 사라진다"*)은 **관측으로는 맞지만 규칙으로는 부정확**했다
+   *   — 첫 조각 `(function(){…` 은 치환이 없는데도 **살아남았다**. 사라지는 것은
+   *   「보간 없는 조각」이 아니라 **「좌변 꼬리 구간」**이다.
+   *
+   * ★★초판 락은 **선언 하나의 초기화식**만 봤다(대리). 리뷰가 그것을 통과하면서 산출물을 깨는
+   *   변이를 실증했다 — 중간 상수 안에서 잇고 초기화식은 `` `${_P1}` `` 로 두는 형태(880자 한 줄을
+   *   쪼개려는 후임이 **가장 먼저 할 리팩토링**). 그래서 **파일 전체**를 본다.
    */
-  it("초기화식이 **단일 템플릿 리터럴**이다(연결 금지)", async () => {
-    const ts = (await import("typescript")).default;
-    const { readFileSync } = await import("node:fs");
-    const src = readFileSync("lib/growth/early-error-bootstrap.ts", "utf8");
-    const sf = ts.createSourceFile("b.ts", src, ts.ScriptTarget.ES2022, true);
+  type Finding = { file: string; line: number; text: string };
 
-    let init: TS.Expression | undefined;
-    const visit = (n: TS.Node): void => {
-      if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.name.text === "earlyErrorBootstrap") init = n.initializer;
-      ts.forEachChild(n, visit);
-    };
-    visit(sf);
-    expect(init, "선언을 못 찾았다 — 이 검사가 공허하다").toBeTruthy();
-    // 양성: 템플릿 리터럴이어야 하고, 음성: `+` 연결(BinaryExpression)이면 안 된다.
-    expect(
-      init && (ts.isTemplateExpression(init) || ts.isNoSubstitutionTemplateLiteral(init)),
-      "백틱 조각을 `+` 로 잇지 마라 — 빌드가 `${…}` 직후를 버린다(실측)",
-    ).toBe(true);
-    expect(init && ts.isBinaryExpression(init)).toBe(false);
-  });
+  /** 상수 폴딩 대상인 「치환 있는 템플릿」인가 — 식별자 보간만(런타임 보간은 폴딩되지 않아 안전). */
+  function isFoldableTemplate(n: TS.Node, ts: typeof import("typescript")): boolean {
+    if (ts.isNoSubstitutionTemplateLiteral(n)) return false; // 치환 없음 → 안전
+    if (ts.isTemplateExpression(n)) return n.templateSpans.length > 0;
+    if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+      // 누적 좌변: 어느 한쪽이라도 치환 템플릿이면 누적값은 치환을 갖는다
+      return isFoldableTemplate(n.left, ts) || isFoldableTemplate(n.right, ts);
+    }
+    return false;
+  }
 
-  it("★형제 `themeBootstrap` 도 같은 형태다(양성 대조군 — 이 규칙이 이 저장소의 관행이다)", async () => {
-    const ts = (await import("typescript")).default;
-    const { readFileSync } = await import("node:fs");
-    const sf = ts.createSourceFile("l.tsx", readFileSync("app/layout.tsx", "utf8"), ts.ScriptTarget.ES2022, true, ts.ScriptKind.TSX);
-    let ok = false;
+  function scan(file: string, src: string, ts: typeof import("typescript")): Finding[] {
+    const sf = ts.createSourceFile(file, src, ts.ScriptTarget.ES2022, true, /\.tsx$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+    const out: Finding[] = [];
     const visit = (n: TS.Node): void => {
-      if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.name.text === "themeBootstrap" && n.initializer) {
-        ok = ts.isTemplateExpression(n.initializer) || ts.isNoSubstitutionTemplateLiteral(n.initializer);
+      if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.PlusToken
+          && isFoldableTemplate(n.left, ts) && isFoldableTemplate(n.right, ts)) {
+        out.push({ file, line: sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1, text: n.getText(sf).replace(/\s+/g, " ").slice(0, 80) });
       }
       ts.forEachChild(n, visit);
     };
     visit(sf);
-    expect(ok, "대조군이 죽었다 — themeBootstrap 을 못 찾았거나 형태가 다르다").toBe(true);
+    return out;
+  }
+
+  /** ★대상은 **파생**시킨다 — layout 이 인라인 `<script>` 로 넣는 상수의 **출처 모듈** 전부. */
+  async function targets(ts: typeof import("typescript"), readFileSync: typeof import("node:fs").readFileSync): Promise<string[]> {
+    const layout = "app/layout.tsx";
+    const sf = ts.createSourceFile(layout, readFileSync(layout, "utf8"), ts.ScriptTarget.ES2022, true, ts.ScriptKind.TSX);
+    const injected = new Set<string>();
+    const visitJsx = (n: TS.Node): void => {
+      if (ts.isJsxSelfClosingElement(n) || ts.isJsxOpeningElement(n)) {
+        for (const attr of n.attributes.properties) {
+          if (!ts.isJsxAttribute(attr) || attr.name.getText(sf) !== "dangerouslySetInnerHTML") continue;
+          const init = attr.initializer;
+          if (!init || !ts.isJsxExpression(init) || !init.expression || !ts.isObjectLiteralExpression(init.expression)) continue;
+          for (const prop of init.expression.properties) {
+            if (ts.isPropertyAssignment(prop) && prop.name.getText(sf) === "__html" && ts.isIdentifier(prop.initializer)) injected.add(prop.initializer.text);
+          }
+        }
+      }
+      ts.forEachChild(n, visitJsx);
+    };
+    visitJsx(sf);
+    // 그 식별자가 import 라면 그 모듈 파일도 대상에 넣는다(로컬 선언이면 layout 자신).
+    const files = new Set<string>([layout]);
+    for (const st of sf.statements) {
+      if (!ts.isImportDeclaration(st) || !st.importClause?.namedBindings) continue;
+      const nb = st.importClause.namedBindings;
+      if (!ts.isNamedImports(nb)) continue;
+      const spec = (st.moduleSpecifier as TS.StringLiteral).text;
+      for (const el of nb.elements) {
+        if (!injected.has(el.name.text)) continue;
+        files.add(spec.replace(/^@\//, "") + ".ts");
+      }
+    }
+    return [...files];
+  }
+
+  it("★layout 이 인라인하는 스크립트의 **출처 파일 전부**에서 위험 형태가 없다(파생형)", async () => {
+    const ts = (await import("typescript")).default;
+    const { readFileSync, existsSync } = await import("node:fs");
+    const files = (await targets(ts, readFileSync)).filter((f) => existsSync(f));
+
+    // ★양성 대조군을 **먼저** — 대상이 비면 아래 단언이 공허하다.
+    expect(files, "대상 파생이 죽었다 — layout 의 인라인 스크립트를 못 찾는다").toContain("app/layout.tsx");
+    expect(files.length, "부트스트랩 모듈이 대상에서 빠졌다").toBeGreaterThan(1);
+
+    const found = files.flatMap((f) => scan(f, readFileSync(f, "utf8"), ts));
+    expect(
+      found,
+      "보간 템플릿을 `+` 로 이었다 — 빌드가 **좌변의 마지막 치환 이후 꼬리**를 버린다(2026-08-27 실측).\n" +
+        "단일 리터럴로 쓰거나, 나눠야 하면 `[a, b].join(\"\")` 처럼 폴딩되지 않는 형태를 써라.",
+    ).toEqual([]);
+  });
+
+  it("★검사기 생존 — 위험 형태를 주면 실제로 잡는다(음성 대조군은 통과시킨다)", async () => {
+    const ts = (await import("typescript")).default;
+    // 파티션형: 위험/안전을 같은 검사기에 태워 **갈리는지** 본다.
+    const BAD = "const A=1; export const x = `p${A}q` + `r${A}s`;";
+    const OK1 = "const A=1; export const x = `p${A}q` + `plain`;";      // 우변 치환 없음
+    const OK2 = "const A=1; export const x = `p${A}q${A}r`;";            // 단일 리터럴
+    const OK3 = "export const x = [`a`, `b`].join('');";                 // 폴딩 안 됨
+    expect(scan("bad.ts", BAD, ts).length, "위험 형태를 못 잡으면 이 락은 장식이다").toBe(1);
+    for (const [n, src] of [["OK1", OK1], ["OK2", OK2], ["OK3", OK3]] as const) {
+      expect(scan(`${n}.ts`, src, ts), `정상 코드를 막으면 그것도 결함이다(${n})`).toEqual([]);
+    }
+  });
+
+  it("★형제 `themeBootstrap` 도 안전한 형태다(이 규칙이 저장소 관행임을 확인)", async () => {
+    const ts = (await import("typescript")).default;
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync("app/layout.tsx", "utf8");
+    expect(src.includes("themeBootstrap"), "대조군이 죽었다").toBe(true);
+    expect(scan("app/layout.tsx", src, ts)).toEqual([]);
   });
 });
 
