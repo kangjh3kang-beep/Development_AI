@@ -394,6 +394,22 @@ def test_exported_names_actually_exist():
     assert "CAP_BLOCK_REASONS" in H.__all__
 
 
+def test_blocked_insert_binds_both_columns():
+    """★INSERT 가 **두 값을 다 싣는지** — 이 실패는 `best-effort` 라 **조용하다.**
+
+    `_record_blocked` 는 예외를 삼키고 로그만 남긴다. 그래서 INSERT 가 깨지면
+    카운터는 영원히 0 이고 에스컬레이션은 다시 발화 불가가 되는데 **아무것도
+    빨개지지 않는다** — 원결함과 같은 침묵이다.
+    """
+    write = inspect.getsource(H._record_blocked)
+    assert "(event_type, payload)" in write, "열 목록이 바뀌었다"
+    assert ":et" in write and ":p" in write, "바인딩 파라미터가 빠졌다"
+    assert "CAST(:p AS jsonb)" in write, "payload 를 jsonb 로 넣지 않는다"
+    # 바인딩 이름과 실제 전달 키가 일치하는가(이름만 바꾸면 런타임에서만 터진다)
+    assert '{"et": HEAL_BLOCKED_EVENT' in write
+    assert '"p": json.dumps(' in write
+
+
 def test_insert_targets_platform_events_table():
     """차단 기록이 **어느 표로** 가는지 — 표를 바꾸면 카운터가 조용히 0 이 된다."""
     write = inspect.getsource(H._record_blocked)
