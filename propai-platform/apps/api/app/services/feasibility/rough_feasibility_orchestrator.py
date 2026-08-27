@@ -288,7 +288,7 @@ def construction_breakdown(cc: dict[str, Any]) -> dict[str, Any]:
     direct_won = direct.get("total_direct_cost_won")
     if direct_won is None or not indirect:
         return {}   # 분해가 없으면 **키를 만들지 않는다** — 소비처가 종전대로 한 행을 그린다
-    return {
+    out = {
         "direct_won": int(direct_won),
         "indirect": {
             "total_won": int(indirect.get("total_indirect_cost_won") or 0),
@@ -298,6 +298,26 @@ def construction_breakdown(cc: dict[str, Any]) -> dict[str, Any]:
             "base_won": int(direct_won),
         },
     }
+    # ★인입 공사비(구 B05~B07) — **이 함수가 스스로 경고한 자리다.**
+    #   위 독스트링이 *"엔진이 주는 항목을 골라내지 않는다 … 조용히 사라지지 않게"* 라고
+    #   적어 두었는데, 내가 엔진에 새 블록을 더하고 **여기서 투사를 빠뜨렸다.**
+    #   그 결과 원장 검산이 `cost_total` **ERROR(-32,640,000)** 를 냈다(독립 리뷰 실측) —
+    #   합계는 인입비를 포함하는데 행이 없어서 **행 합계 ≠ 총액**이 됐다.
+    connection = cc.get("utility_connection") or {}
+    conn_items = connection.get("items") or []
+    if conn_items:
+        out["utility_connection"] = {
+            "total_won": int(connection.get("total_won") or 0),
+            "items": [
+                {"code": i["code"], "name": i["name"], "amount_won": int(i["amount_won"]),
+                 "qty": i.get("qty"), "qty_unit": i.get("qty_unit"),
+                 "unit_price": i.get("unit_price"),
+                 # ★개산이라는 사실과 사유를 **여기까지** 실어야 화면이 「고시값」과 구별한다.
+                 "confidence": i.get("confidence"), "basis": i.get("basis")}
+                for i in conn_items
+            ],
+        }
+    return out
 
 
 def build_cost_ratio_basis(
@@ -714,12 +734,15 @@ async def build_rough_scenario(
             if ov_unit is not None:
                 cc = construction_cost_engine.calculate_total_construction_cost(
                     total_gfa_sqm=gfa_sqm, building_type=building_type, unit_cost_per_sqm=int(ov_unit),
+                    # ★인입 분담금(구 B05~B07)은 세대수 기반 — 안 넘기면 조용히 0이 된다.
+                    total_households=total_households_assumed or 0,
                 )
                 applied.append("construction_unit_won")
                 c_source, c_basis = "user_override", "사용자 지정 공사비 단가(2차 수정) + 간접비 15%"
             else:
                 cc = construction_cost_engine.calculate_total_construction_cost(
                     total_gfa_sqm=gfa_sqm, building_type=building_type,
+                    total_households=total_households_assumed or 0,
                 )
                 c_source = "construction_cost_engine(국토부 SSOT)"
                 c_basis = "국토부 기본형건축비(unit_price_repository SSOT) 직접공사비 + 간접비 15%"
