@@ -19,6 +19,7 @@ import httpx
 import structlog
 
 from app.core.config import settings
+from app.services.legal.moleg_drf_envelope import MolegDrfError, raise_if_drf_error
 
 logger = structlog.get_logger(__name__)
 
@@ -82,6 +83,15 @@ class GosiSearchService:
                     "query": query, "display": str(max_results), "sort": "date"})
                 r.raise_for_status()
                 data = r.json()
+            # ★법제처는 **오류도 HTTP 200** 으로 준다 — `raise_for_status()` 가 못 잡는다.
+            #   종전에는 이 봉투가 루트키 매칭에 실패해 `results=[]` 로 흘러
+            #   **`available=True`(=조회 성공·결과 0건)** 로 보고됐고,
+            #   `basic_building_cost.detect_gosi_update` 가 그것을 받아
+            #   **"확인했고 고시가 안 바뀌었다"** 고 단정했다(2026-08-27 라이브 실측).
+            raise_if_drf_error(data)
+        except MolegDrfError as e:
+            logger.warning("법제처 DRF 오류 봉투(200)", err=str(e)[:160])
+            return {"available": False, "reason": f"법제처 인증/권한 오류: {e}", "results": []}
         except Exception as e:  # noqa: BLE001
             logger.warning("법제처 고시 검색 실패", err=f"{type(e).__name__}: {str(e)[:120]}")
             return {"available": False, "reason": "법제처 API 호출 실패", "results": []}
@@ -123,6 +133,7 @@ class GosiSearchService:
                     "OC": key, "target": "admrul", "type": "JSON", "ID": str(admrul_id)})
                 r.raise_for_status()
                 data = r.json()
+            raise_if_drf_error(data)  # ★본문 조회도 같은 200-오류 봉투로 실패한다
         except Exception as e:  # noqa: BLE001
             logger.warning("법제처 고시 본문 실패", err=f"{type(e).__name__}: {str(e)[:120]}")
             return {"found": False, "text": ""}

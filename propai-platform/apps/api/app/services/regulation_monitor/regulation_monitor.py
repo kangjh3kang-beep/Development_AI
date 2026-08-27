@@ -5,6 +5,7 @@ import httpx
 import structlog
 
 from app.core.config import settings
+from app.services.legal.moleg_drf_envelope import raise_if_drf_error
 
 logger = structlog.get_logger()
 
@@ -151,8 +152,17 @@ class RegulationMonitorService:
         async def _one(client: httpx.AsyncClient, law: dict) -> dict | None:
             params = {"OC": settings.MOLEG_API_KEY, "target": "law", "type": "JSON", "ID": law["id"]}
             resp = await client.get(f"{settings.MOLEG_BASE_URL}/lawService.do", params=params)
-            resp.raise_for_status()  # 非200(403 무효키·429·5xx) → 예외(조용한 skip 금지=거짓 not-stale 차단)
-            prom = ((resp.json().get("법령") or {}).get("기본정보") or {}).get("공포일자", "")
+            resp.raise_for_status()  # 非200(429·5xx) → 예외(조용한 skip 금지=거짓 not-stale 차단)
+            payload = resp.json()
+            # ★★**이 줄이 없으면 위 가드가 통째로 무력하다** — 법제처는 **무효키·미등록 IP 에
+            #   HTTP 200** 을 주고 오류를 본문 JSON 으로 싣는다(2026-08-27 라이브 실측).
+            #   종전 주석은 무효키를 `非200(403)` 이라 적었는데 **전제가 틀렸다.**
+            #   그 결과: `raise_for_status()` 통과 → `법령` 키 없음 → `공포일자=""` →
+            #   `recent=False` → **"변경 없음"**. 게다가 예외가 아니라 `failures` 가 0 이라
+            #   *"전건 실패 시 RuntimeError"* 가드가 **발화하지 못했다** —
+            #   **이 함수가 막겠다고 선언한 바로 그 위장**에 뚫려 있었다.
+            raise_if_drf_error(payload)
+            prom = ((payload.get("법령") or {}).get("기본정보") or {}).get("공포일자", "")
             try:
                 recent = bool(prom) and datetime.strptime(prom, "%Y%m%d") >= cutoff
             except ValueError:
