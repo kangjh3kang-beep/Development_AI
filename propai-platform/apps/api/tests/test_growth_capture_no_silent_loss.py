@@ -279,3 +279,51 @@ async def test_effectors_response_carries_capture_health() -> None:
         assert k in cap, f"★{k} 가 빠졌다"
     # ★#917 이 넣은 키도 **같이** 살아 있어야 한다(머지에서 한쪽을 고르지 않았는지).
     assert "telemetry_since" in out
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ★기계적 변이(`scripts/mutate_changed.py`) 생존분 봉합
+#
+# 손으로 고른 9종(7개 층)을 전부 잡은 **뒤에도** 도구가 진단 필드 4개의 생존을 찾았다:
+# `max_queue` · `flush_limit` · `consecutive_failures` · `max_flush_retry`.
+# 프론트가 **실제로 그리는 값**인데(「큐 12/10000 · 천장 100건/초」) 백엔드는
+# 하나도 단언하지 않았다 — 지우면 화면에 `undefined` 가 뜬다.
+# ═══════════════════════════════════════════════════════════════════════════
+#: `capture_status()` 가 **반드시** 내는 키 — 프론트가 소비하는 계약이다.
+#:
+#: ★파생형으로 만들 수 없다: 이 집합 **자체가** 계약이므로 구현에서 뽑으면
+#:   무엇을 바꿔도 통과하는 순환이 된다(자기 상수를 단언하는 락). 그래서 **못 박는다**.
+_CONTRACT_KEYS = frozenset({
+    "queue_depth", "max_queue", "flush_limit", "max_sustained_per_sec",
+    "dropped_overflow", "dropped_after_retry", "requeued",
+    "flush_failures", "flushed",
+    "consecutive_failures", "max_flush_retry",
+    "lost_total", "loss_rate_pct",
+})
+
+
+def test_capture_status_contract_keys() -> None:
+    """★응답 계약을 못 박는다 — 필드가 사라지면 화면이 `undefined` 를 그린다."""
+    got = set(cs.capture_status())
+    missing = _CONTRACT_KEYS - got
+    extra = got - _CONTRACT_KEYS
+    assert not missing, f"★계약 필드가 사라졌다(화면이 깨진다): {sorted(missing)}"
+    assert not extra, f"★계약에 없는 필드가 늘었다 — 계약을 갱신하라: {sorted(extra)}"
+
+
+def test_diagnostic_fields_carry_real_values_not_placeholders() -> None:
+    """★필드가 **있는 것**과 **맞는 값인 것**은 다른 명제다.
+
+    기계 변이는 `"max_queue": _MAX_QUEUE` → `"max_queue": "x"` 같은 값 바꿔치기도 넣는다.
+    키 존재만 보면 그것이 통과한다.
+    """
+    st = cs.capture_status()
+    assert st["max_queue"] == cs._MAX_QUEUE
+    assert st["flush_limit"] == cs._FLUSH_LIMIT
+    assert st["max_flush_retry"] == cs._MAX_FLUSH_RETRY
+    assert st["consecutive_failures"] == cs._consecutive_failures
+    # ★두 모집단 — 값이 바뀌면 응답도 바뀐다(상수 복사가 아니라 실값을 읽는지).
+    cs._consecutive_failures = 7
+    assert cs.capture_status()["consecutive_failures"] == 7
+    cs._consecutive_failures = 0
+    assert cs.capture_status()["consecutive_failures"] == 0
