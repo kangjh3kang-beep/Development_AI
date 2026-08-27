@@ -292,6 +292,34 @@ async def restore_secret_backup(
     return {"status": "ok", "backup_id": backup_id}
 
 
+#: 시크릿 이름 → LLM 프로바이더. ★`llm_health` 의 `env_map` 을 **뒤집은 것**이고,
+#: 두 표가 갈리면 `tests/test_secret_test_uses_live_health.py` 가 실패한다(손 목록 금지).
+_LLM_KEY_PROVIDER: dict[str, str] = {
+    "ANTHROPIC_API_KEY": "anthropic",
+    "OPENAI_API_KEY": "openai",
+    "GOOGLE_API_KEY": "google",
+}
+
+#: 시크릿 이름 → 이미지 프로바이더.
+_IMAGE_KEY_PROVIDER: dict[str, str] = {
+    "OPENAI_API_KEY": "openai",
+}
+
+
+def _health_to_test_result(h: dict, what: str) -> dict:
+    """헬스 응답을 테스트 결과로. ★실패 **사유**를 버리지 않는다.
+
+    종전 실패 메시지는 *"테스트 실패"* 한 줄이라 401/402/429/모델거부가 구별되지 않았다.
+    `error_type` 을 함께 실어야 관리자가 **무엇을 고쳐야 하는지** 안다.
+    """
+    ok = bool(h.get("ok"))
+    if ok:
+        return {"ok": True, "message": f"{what} 실호출 성공", "detail": h}
+    et = h.get("error_type") or "unknown"
+    err = str(h.get("error") or "")[:160]
+    return {"ok": False, "message": f"{what} 실호출 실패 [{et}] {err}".strip(), "detail": h}
+
+
 @router.post("/{name}/test")
 async def test_secret(
     name: str,
@@ -319,6 +347,21 @@ async def test_secret(
             return {"ok": ok,
                     "message": st.get("message") or f"등기 공급자: {st.get('provider')}",
                     "detail": st}
+        # ★LLM/이미지 키도 **실호출로** 판정한다(2026-08-27).
+        #   종전엔 여기로 떨어져 `ok: True · "값이 설정되어 있습니다"` 를 돌려줬다 —
+        #   화면은 그것을 **초록 「연결 성공」** 으로 그린다. 그러면 키가 401(무효)이거나
+        #   402/429(크레딧·레이트)여도 관리자는 **성공으로 읽는다.**
+        #   ★바로 위 주석이 이미 그 원칙을 적어 뒀는데(「키가 저장돼 있다는 이유로 초록을
+        #     띄우면 벤더가 거절하는 상태를 사용자가 알 수 없다」) **등기 키에만** 적용돼 있었다.
+        #   진단 도구(`/admin/secrets/llm-health`·`image-health`)는 **이미 있었고 소비처가 0** 이었다.
+        prov = _LLM_KEY_PROVIDER.get(name)
+        if prov:
+            r = await llm_health(provider=prov, model=None, current=current, db=db)
+            return _health_to_test_result(r, f"LLM({prov})")
+        prov = _IMAGE_KEY_PROVIDER.get(name)
+        if prov:
+            r = await image_health(provider=prov, model=None, current=current, db=db)
+            return _health_to_test_result(r, f"이미지({prov})")
         return {"ok": True, "message": "값이 설정되어 있습니다(전용 테스트 미지원 키)."}
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "message": f"테스트 실패: {str(e)[:120]}"}
