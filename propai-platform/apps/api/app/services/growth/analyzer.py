@@ -75,6 +75,47 @@ LATENCY_REGRESSION_FACTOR = 1.5
 LATENCY_MIN_SAMPLES = 20
 LATENCY_BASELINE_DAYS = 7
 
+#: ★**절대편차 임계(ms)** — `p95` 가 그 route 의 **평소값 + 이 값**을 넘으면 발화.
+#:
+#: ## 왜 비율(1.5배)만으로는 부족한가 (라이브 7일 전수 · 2026-08-27)
+#:
+#: 같은 지연 풀에서 `n=20` 을 **두 번 뽑아** 비교하면(= **회귀가 전혀 없는** 상태)
+#: 그것만으로 발화합니다:
+#:
+#:     p95 **23.0%**   p75 14.9%   p50 14.7%
+#:
+#: ★백분위를 낮추는 것으로는 안 됩니다 — `tiles/vworld` 계열은 **어느 백분위에서도
+#:   20%대**입니다. 분포 자체의 분산이라 통계량 선택이 듣지 않습니다.
+#:   (`_percentile` 은 nearest-rank 라 `n=20` 의 p95 는 사실상 20개 중 19번째 = 최대값 근처)
+#:
+#: ## 왜 **단순** 절대임계도 아닌가
+#:
+#: 고정 10초로 걸면 발화 29건 중 **69%(20건)가 상시 느린 4개 route** 입니다
+#: (`/api/v1/zoning/parcel-boundaries` 는 판정 16회 중 **14회 = 88%** 발화). 경보 피로입니다.
+#:
+#: ## ★쓰는 형태 — **그 route 자신의 평소값 대비** 편차
+#:
+#: `p95 > (그 route 의 7일 p95 중앙값) + LATENCY_ABSOLUTE_DEVIATION_MS`
+#:
+#:     07:05Z 실장애 버스트 5개 route → **5/5 전부 포착**
+#:       parcel-boundaries 평소 23,524 → 66,230   (편차 42,706)
+#:       analysis-ledger   평소  3,045 → 13,763   (편차 10,718)
+#:       store/projects    평소  3,202 → 12,340   (편차  9,138)
+#:       auth/is-admin     평소  3,169 → 11,408   (편차  8,239)
+#:       auth/me           평소  3,210 → 11,309   (편차  8,099)
+#:     그 창에 **정상이던** `/api/v1/auth/login` → 편차 **0** · 미발화 ✓
+#:
+#:   발화율 **하루 2.1건**(+10초로 올리면 1.0건이지만 위 5개 중 **2개만** 잡는다).
+#:   상시 느린 route 는 **자기 기준선이 함께 높으므로 자동 배제**됩니다.
+#:
+#: ★★**두 표본을 비교하지 않으므로 표본 잡음이 원리적으로 없습니다.** 평소값은 7일치
+#:   여러 시간창의 **중앙값**이라 `n=20` 한 표본의 요동에 흔들리지 않습니다.
+LATENCY_ABSOLUTE_DEVIATION_MS = 5000
+
+#: 평소값을 만들 때 필요한 **최소 관측 시간창 수**. ★한두 창으로 「평소」를 말하면
+#:  그 자체가 잡음이다 — 그때는 절대편차를 **판정하지 않는다**(비율만 남는다).
+LATENCY_TYPICAL_MIN_WINDOWS = 3
+
 # LLM narrative 비용가드: critical 인사이트 1배치당 최대 콜 수.
 _LLM_NARRATIVE_MAX_CALLS = 3
 
@@ -406,6 +447,40 @@ def _classify_latency(p95: float, baseline_p95: float) -> str | None:
     if baseline_p95 <= 0:
         return None
     if p95 > baseline_p95 * LATENCY_REGRESSION_FACTOR:
+        return "warn"
+    return None
+
+
+def typical_p95(history: list[float]) -> float | None:
+    """그 route 의 **평소값** = 관측된 시간창 p95 들의 **중앙값**.
+
+    ★평균이 아니라 중앙값이다 — 장애 시간창(66,230ms 같은)이 평소값을 끌어올리면
+      **다음 장애를 놓친다**. 중앙값은 소수의 극단에 흔들리지 않는다.
+
+    ★창이 `LATENCY_TYPICAL_MIN_WINDOWS` 미만이면 `None`(판정 불가) — 한두 창으로
+      *"평소"* 를 말하면 그 자체가 잡음이고, 비율 방식과 같은 문제를 되풀이한다.
+    """
+    if len(history) < LATENCY_TYPICAL_MIN_WINDOWS:
+        return None
+    return _percentile(sorted(history), 50.0)
+
+
+def classify_latency_absolute(p95: float, typical: float | None) -> str | None:
+    """★**절대편차** 판정 — 두 표본을 비교하지 않으므로 표본 잡음이 없다.
+
+    비율 방식(`_classify_latency`)을 **대체하지 않고 보완한다**:
+
+    · 비율   — 빠른 route 의 **비례적** 악화를 잡는다
+               (`/api/v1/ai/status` 는 평소 70ms → 3,282ms 로 **47배**인데
+                절대편차 3.2초는 임계 5초 미만이라 **여기서는 안 잡힌다**)
+    · 절대편차 — **잡음 없이** 절대적 악화를 잡는다(위 버스트 5/5)
+
+    둘 다 필요하다. `None` 이면 이 축에서는 발화하지 않는다는 뜻이지
+    *"정상이다"* 라는 뜻이 아니다.
+    """
+    if typical is None or typical < 0:
+        return None
+    if p95 > typical + LATENCY_ABSOLUTE_DEVIATION_MS:
         return "warn"
     return None
 
@@ -898,6 +973,23 @@ async def _analyze_latency_regression(db, w0, w1, coverage: dict[str, dict[str, 
         "types": list(LATENCY_BASELINE_SOURCE_TYPES)})).fetchall()
     baselines = {r[0]: float(r[1] or 0.0) for r in base_rows}
 
+    # ★**평소값** — 그 route 가 지금까지 낸 `p95_ms` 이력의 중앙값(절대편차 판정용).
+    #   ★baseline 조회와 **다른 질문**이다: baseline 은 *"직전 배치가 얼마였나"*,
+    #     평소값은 *"이 route 는 평소 얼마인가"* 다. 그래서 `DISTINCT ON` 이 아니라
+    #     **전 이력**을 모은다.
+    hist_rows = (await db.execute(text(
+        "SELECT metrics_json->>'key' AS k, (metrics_json->>'p95_ms')::float AS p "
+        "FROM platform_insights "
+        "WHERE insight_type = ANY(:types) "
+        "  AND created_at >= :since "
+        "  AND metrics_json->>'p95_ms' IS NOT NULL"
+    ), {"since": w1 - timedelta(days=LATENCY_BASELINE_DAYS),
+        "types": list(LATENCY_BASELINE_SOURCE_TYPES)})).fetchall()
+    history: dict[str, list[float]] = {}
+    for r in hist_rows:
+        if r[0] is not None and r[1] is not None:
+            history.setdefault(r[0], []).append(float(r[1]))
+
     out: list[dict[str, Any]] = []
     judged = withheld_n = 0
     for key, vals in by_key.items():
@@ -909,7 +1001,14 @@ async def _analyze_latency_regression(db, w0, w1, coverage: dict[str, dict[str, 
         judged += 1
         p95 = round(_percentile(vals, 95.0), 2)
         baseline_p95 = baselines.get(key, 0.0)
-        sev = _classify_latency(p95, baseline_p95)
+        ratio_sev = _classify_latency(p95, baseline_p95)
+        # ★절대편차 — 비율과 **독립**으로 판정한다(둘 다 필요 · 상수 주석 참조).
+        typical = typical_p95(history.get(key, []))
+        abs_sev = classify_latency_absolute(p95, typical)
+        # ★둘 중 **하나라도** 걸리면 회귀로 본다. 어느 축이 걸었는지는 아래 `triggers` 로
+        #   남긴다 — 안 남기면 사람이 *"왜 울렸는지"* 를 알 수 없다(진단 불가는 장애다).
+        sev = ratio_sev or abs_sev
+        triggers = [n for n, v in (("ratio", ratio_sev), ("absolute", abs_sev)) if v]
         # baseline 없으면(첫 관측) 정보성 baseline 적재만(트리거 없음).
         out.append({
             # ★회귀가 아니면 `latency_baseline` — 사람이 보는 인사이트 목록을 오염시키지 않는다.
@@ -923,6 +1022,12 @@ async def _analyze_latency_regression(db, w0, w1, coverage: dict[str, dict[str, 
                 # 다음 배치가 baseline 으로 참조(자가보정 기반): 이번 p95 를 저장.
                 "baseline_p95": p95,
                 "prev_baseline_p95": baseline_p95,
+                # ★어느 축이 울렸는가 — 빈 목록이면 발화 아님
+                "triggers": triggers,
+                # ★평소값을 **함께 싣는다**. 없으면 `None` — 「모름」을 수치로 위장하지 않는다
+                #   (창이 LATENCY_TYPICAL_MIN_WINDOWS 미만이면 절대편차는 판정 불가)
+                "typical_p95": typical,
+                "typical_windows": len(history.get(key, [])),
             },
         })
     note_coverage(coverage, "latency_regression", judged=judged, withheld_count=withheld_n,
