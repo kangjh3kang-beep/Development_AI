@@ -6,6 +6,7 @@ import {
   BarChart3,
   Clock,
   DraftingCompass,
+  FileSearch,
   Layers3,
   Scale,
   Search,
@@ -13,7 +14,6 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { DashboardProjectLoader } from "@/components/dashboard/DashboardProjectLoader";
-import { RealtxReportPanel } from "@/components/dashboard/RealtxReportPanel";
 import { HeroMotionLayer } from "@/components/dashboard/HeroMotionLayer";
 import { OnboardingWizard } from "@/components/onboarding/OnboardingWizard";
 import { SatongMapShell } from "@/components/precheck/SatongMapShell";
@@ -116,6 +116,21 @@ const creationProducts: CreationProduct[] = [
     result: "건축개요, CAD 계획도면, 법규 적합성",
     time: "약 4분",
     tone: "lime",
+  },
+  {
+    // ★9번째 카드 — 종전에는 이 그리드 **아래**에 데이터 패널로만 있어 라이브에서 y≈2,921px
+    //   (페이지 높이 4,256px)에 묻혔다. 스크롤 없이는 보이지 않아 "생성허브에 없다"로 읽혔다.
+    //   형제 8개와 같은 형태(카드 → 전용 라우트 `/realtx-report`)로 올린다.
+    // ★"필지별"이라고 쓰지 않는다 — 국토부 공개자료는 토지 거래 지번을 마스킹하므로
+    //   서버 집계 단위가 **법정동**이다. 화면이 백엔드보다 더 말하면 그 자체가 거짓이다.
+    title: "실거래 신고내역 보고서",
+    routeId: "realtx-report",
+    icon: FileSearch,
+    intent: "프로젝트 필지의 실거래 신고내역을 법정동 단위로 모아 해제·직거래·등기 현황을 정리합니다.",
+    inputs: "토지조서에 필지가 담긴 프로젝트",
+    result: "해제·직거래·등기 비율, 법인 거래, 거래 목록 (PDF·PPTX·DOCX)",
+    time: "약 1분",
+    tone: "coral",
   },
 ] as const;
 
@@ -275,10 +290,6 @@ export function DashboardHome({ locale }: { locale: string }) {
           })}
         </div>
 
-        {/* ★생성허브 안의 **데이터 패널** — 링크 카드가 아니라 여기서 직접 그린다.
-            선례: 같은 페이지의 <SatongMapShell/>(위) · <DashboardProjectLoader/>(아래).
-            `#837` 이 보존한 계약상태 6필드의 **첫 소비 표면**이다 — 그전엔 읽는 화면이 0곳이었다. */}
-        <RealtxReportPanel />
       </section>
 
       <section className="min-w-0 space-y-3 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-strong)] p-4">
