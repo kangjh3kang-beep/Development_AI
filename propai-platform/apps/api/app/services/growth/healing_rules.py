@@ -22,6 +22,7 @@ best-effort: 어떤 예외도 heal 태스크를 죽이지 않는다.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -227,6 +228,36 @@ async def _candidate_actions(db, now: datetime) -> list[dict[str, Any]]:
     return candidates
 
 
+async def mark_insight_acted(db, action: dict[str, Any], result: dict[str, Any]) -> int:
+    """실행된 heal 이 겨냥한 인사이트를 `acted` 로 닫는다. 닫힌 행 수를 반환.
+
+    ★왜 이 자리인가: `heal_actions.execute` 는 반환 지점이 다섯이다. 그 안에 닫기를
+    손으로 붙이면 **반드시 하나를 빠뜨리고 그 하나가 곧 안 닫히는 경로**가 된다.
+    호출부의 **단일 길목**(성공 판정 직후)에서 한 번만 닫는다.
+
+    ★`open` 만 닫는다 — 사람이 이미 판단한 `acknowledged`·`dismissed` 는 건드리지 않는다.
+    ★best-effort: 닫기 실패가 치유 태스크를 죽이지 않는다(치유는 이미 일어났다).
+    """
+    from sqlalchemy import text
+
+    ins_id = (action.get("params") or {}).get("insight_id")
+    if not ins_id or not result.get("executed"):
+        return 0
+    try:
+        row = (await db.execute(text(
+            "UPDATE platform_insights SET status = 'acted' "
+            "WHERE id = CAST(:id AS uuid) AND status = 'open' "
+            "RETURNING id"
+        ), {"id": str(ins_id)})).fetchone()
+        await db.commit()
+        return 1 if row is not None else 0
+    except Exception as e:  # noqa: BLE001 — 치유 자체는 성공했다.
+        logger.warning("insight acted 전이 실패(%s): %s", ins_id, str(e)[:160])
+        with contextlib.suppress(Exception):
+            await db.rollback()
+        return 0
+
+
 async def _escalate(db, action_type: str, trigger_key: str) -> None:
     """효과없는 반복 조치 → critical 인사이트로 승격(사람 알림). best-effort."""
     import json
@@ -261,7 +292,7 @@ async def evaluate(db, *, now: datetime | None = None) -> dict[str, Any]:
     best-effort: 어떤 예외도 사이클을 죽이지 않는다.
     """
     now = now or datetime.now(UTC)
-    summary = {"candidates": 0, "executed": 0, "blocked": 0,
+    summary = {"candidates": 0, "executed": 0, "closed": 0, "blocked": 0,
                "escalated": 0, "actions": []}
     try:
         candidates = await _candidate_actions(db, now)
@@ -303,6 +334,11 @@ async def evaluate(db, *, now: datetime | None = None) -> dict[str, Any]:
         result = await heal_actions.execute(db, cand)
         if result.get("executed"):
             summary["executed"] += 1
+            # ★피드백 고리를 닫는다 — 종전엔 여기서 끊겼다.
+            #   자가치유는 실행되고 params 에 insight_id 까지 싣는데, 그 인사이트는
+            #   영원히 `open` 이었다(라이브 실측 2026-08-27: heal 액션 520건 · `acted` 0건).
+            #   ★상태값 `acted` 와 프론트 라벨 "조치됨" 은 **이미 있었다** — 쓰는 코드만 없었다.
+            summary["closed"] += await mark_insight_acted(db, cand, result)
         summary["actions"].append({"type": atype, "trigger_key": tkey,
                                    "executed": bool(result.get("executed")),
                                    "action_id": result.get("action_id"),
@@ -311,7 +347,7 @@ async def evaluate(db, *, now: datetime | None = None) -> dict[str, Any]:
 
 
 __all__ = [
-    "evaluate", "gate",
+    "evaluate", "gate", "mark_insight_acted",
     # 순수 가드 함수(단위검증 공개).
     "_within_cooldown", "_cap_exceeded", "should_escalate",
     "GLOBAL_HOURLY_CAP", "PER_TRIGGER_HOURLY_CAP", "COOLDOWN_MIN",

@@ -247,7 +247,9 @@ def _classify_contamination(verdict: str, count: int) -> str | None:
 
 
 def note_coverage(
-    coverage: dict[str, dict[str, int]] | None,
+    # ★값 타입이 int 만이 아니다 — `judged_pct`(float|None) · `state`(str) 가 함께 들어간다.
+    #   종전 `dict[str, int]` 는 거짓이었고 tsc 도 mypy 도 이 자리를 안 봤다.
+    coverage: dict[str, dict[str, Any]] | None,
     axis: str, *, judged: int, withheld: int, floor: int,
 ) -> None:
     """이번 분석에서 **몇 개를 판정했고 몇 개를 표본 부족으로 보류했는지** 적는다.
@@ -274,9 +276,30 @@ def note_coverage(
     """
     if coverage is None:
         return
+    total = judged + withheld
+    #: ★판정률의 정의 — **「모든 축이 무언가를 말한다」** 가 100% 다.
+    #  `judged_pct` 는 *"임계로 분류할 수 있었던 비율"* 이라 **트래픽이 적으면 영원히 100%
+    #  가 못 된다**. 트래픽이 적은 것은 결함이 아니다(라이브 실측: LLM 호출 자체가 적다).
+    #  `coverage_pct` 는 *"판정했거나 **왜 판정 못 하는지 말했거나**"* 의 비율이다.
+    #  ★둘 다 싣는다 — 한 수로 뭉개면 `coverage_pct=100` 이 *"다 판정했다"* 로 오독된다.
+    #: 판정률 — **임계로 분류한** 비율. `total==0`(축이 안 돎)이면 **`None`**:
+    #  0.0 으로 두면 *"판정률 0%"* 가 되어 **축이 안 도는 것을 결함으로 오독**시킨다.
+    judged_pct = round(100.0 * judged / total, 1) if total else None
+    #: 축이 아예 안 돈 것(`total==0`)과 표본이 부족한 것(`withheld>0`)은 **다른 사실**이다.
+    #  종전엔 둘 다 `judged=0` 이라 뭉개졌다. 이 세 값이 그 구분을 나른다.
+    #
+    #  ★**`coverage_pct` 는 넣지 않는다** — 독립 적대 리뷰(2026-08-27)가 반증했다.
+    #    `100.0 if total else None` 은 `total>0` 인 모든 입력에서 **상수 100.0** 이고,
+    #    유일한 비상수 거동(`total==0` → `None`)은 `state=="axis_idle"` 와 **완전 중복**이라
+    #    독립 정보량이 0이다. 계획서의 식 `(judged + withheld_reported)/total` 에서
+    #    `withheld_reported`(보류의 인사이트 승격)가 **이 PR 에 없으므로** 그 식은 아직
+    #    성립하지 않는다. **소비처 0인 상수를 싣지 않는다.**
+    state = "axis_idle" if total == 0 else ("judged" if withheld == 0 else "partial")
     coverage[axis] = {
         "judged": judged, "withheld": withheld,
-        "total": judged + withheld, "floor": floor,
+        "total": total, "floor": floor,
+        "judged_pct": judged_pct,
+        "state": state,
     }
 
 
@@ -424,7 +447,7 @@ async def analyze_window(
     insights: list[dict[str, Any]] = []
     # ★표본 하한으로 **판정하지 못한 것**을 세어 둔다 — 아래에서 모든 인사이트에 박고,
     #   인사이트가 0건이어도 로그로 남긴다(라이브 실측: latency 키의 97%가 여기 해당).
-    coverage: dict[str, dict[str, int]] = {}
+    coverage: dict[str, dict[str, Any]] = {}
     try:
         insights.extend(await _analyze_error_cluster(db, window_start, window_end))
         insights.extend(await _analyze_recurring_verify_errors(db, window_start, window_end))
@@ -567,7 +590,7 @@ async def _analyze_recurring_verify_errors(db, w0, w1) -> list[dict[str, Any]]:
     return _cluster_verify_issues(parsed, hours)
 
 
-async def _analyze_fallback_rate(db, w0, w1, coverage: dict[str, dict[str, int]] | None = None) -> list[dict[str, Any]]:
+async def _analyze_fallback_rate(db, w0, w1, coverage: dict[str, dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     """service별 폴백률 인사이트.
 
     분자(fallback): base_interpreter 는 LLM 호출 실패 시 별도 'fallback' 이벤트를
@@ -705,7 +728,7 @@ async def _analyze_selection_contamination(db, w0, w1) -> list[dict[str, Any]]:
     return out
 
 
-async def _analyze_quality_drop(db, w0, w1, coverage: dict[str, dict[str, int]] | None = None) -> list[dict[str, Any]]:
+async def _analyze_quality_drop(db, w0, w1, coverage: dict[str, dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     """service별 verify_result(fail/warn) + ai_feedback(down) 결합 품질저하 인사이트."""
     from sqlalchemy import text
 
@@ -772,7 +795,7 @@ async def _analyze_quality_drop(db, w0, w1, coverage: dict[str, dict[str, int]] 
     return out
 
 
-async def _analyze_latency_regression(db, w0, w1, coverage: dict[str, dict[str, int]] | None = None) -> list[dict[str, Any]]:
+async def _analyze_latency_regression(db, w0, w1, coverage: dict[str, dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     """route/service p95 vs 직전 7일 baseline. baseline 은 insights 에 저장·참조."""
     from sqlalchemy import text
 

@@ -286,6 +286,103 @@ def normalize_sido_short(sido_name: str) -> str:
     """시도명을 부담금 테이블 축약 키로 정규화 — 이미 축약형이면 그대로(멱등)."""
     s = (sido_name or "").strip()
     return _SIDO_FULL_TO_SHORT.get(s, s)
+
+
+#: 알려진 시도 축약키 전체(17개) — **완전명 표에서 파생**한다. 손 목록을 두면 그 목록이
+#: 곧 상한이 되고, `_SIDO_FULL_TO_SHORT` 에 시도를 추가해도 여기가 따라오지 않는다.
+KNOWN_SIDO_SHORT: frozenset[str] = frozenset(_SIDO_FULL_TO_SHORT.values())
+
+#: 주소에서 시·도를 인정할 때 쓰는 **결정적** 후보 목록 — 긴 이름 우선, 동률은 사전순.
+#:
+#: ★**왜 `frozenset` 을 순회하면 안 되나** (2026-08-27 독립 리뷰 실측 · CRITICAL)
+#:   문자열 집합의 순회 순서는 **`PYTHONHASHSEED` 에 따라 프로세스마다 다르다.**
+#:   주소에 시·도 축약명이 둘 이상 걸리면 **같은 요청이 워커마다 다른 답**을 냈다:
+#:
+#:       "서울 종로구 세종대로 209"  → seed1: 서울(4%) · seed0/2/3: **세종(2%)**
+#:       "부산 해운대구 대전로 12"   → seed0: 부산 · seed1: **대전** · seed5: **대구**
+#:
+#:   부과율이 2%↔4% 로 갈리고 상하수도 단가표 조회 지자체도 갈린다.
+#:   → 순회 대상을 **정렬된 튜플**로 고정한다(집합 순회 금지).
+_SIDO_ADDRESS_PREFIXES: tuple[str, ...] = tuple(
+    sorted(set(_SIDO_FULL_TO_SHORT) | set(_SIDO_FULL_TO_SHORT.values()),
+           key=lambda n: (-len(n), n))
+)
+
+#: ★같은 철자가 **광역시와 기초자치단체 양쪽**을 가리키는 접두 — 판정하지 않는다.
+#:   `"광주시"` = 광주광역시(구어) 또는 **경기도 광주시**. 전자는 2%, 후자는 수도권 **4%** 라
+#:   찍으면 절반이 틀린다. 완전명(`"광주광역시"`)이나 도명 동반(`"경기도 광주시"`)은 모호하지 않다.
+_AMBIGUOUS_SIDO_PREFIXES: tuple[str, ...] = ("광주시",)
+
+
+def sido_short_or_empty(address: str | None) -> str:
+    """주소에서 시·도 축약키만 꺼낸다 — 실패하면 **빈 문자열**(추측 금지).
+
+    ★**공용 헬퍼다.** 종전에는 이 세 줄이 `precheck_service`·`feasibility_service_v2` 에
+      각각 복제돼 있었고 라우터가 **private 심볼을 교차 임포트**했다(독립 리뷰 지적).
+      복제하면 두 축이 다시 갈린다 — 해석기는 **한 자리**에 둔다.
+    """
+    return resolve_sido_for_charges(address=str(address or ""))[0]
+
+
+def looks_like_sido(value: str | None) -> bool:
+    """이 값이 **시·도명인가**(시군구가 아니라).
+
+    ★`region` 이 이 코드베이스에서 **과부하**돼 있기 때문에 필요하다 — 같은 필드에
+      `rough-scenario` 는 **시군구**("동구")를, `integrated_recommender` 는 **시도**("경기도")를
+      넣는다. 그래서 *"region 은 시군구다"* 라고 **찍으면 절반이 틀린다.**
+      시군구 칸에 넣기 전에 **그 값이 시·도인지 물어** 시·도면 넣지 않는다(축 날조 방지).
+    """
+    return resolve_sido_for_charges(sido_name=str(value or ""))[1] == SIDO_BASIS_EXPLICIT
+
+#: 시도 해석 근거(basis) 닫힌 어휘 — `resolve_sido_for_charges` 반환값.
+SIDO_BASIS_EXPLICIT = "sido_explicit"    # 호출부가 넘긴 값이 실제 시도였다
+SIDO_BASIS_ADDRESS = "sido_address"      # 주소 문자열에서 추론했다
+SIDO_BASIS_UNRESOLVED = "unresolved"     # ★모른다 — 값을 지어내지 않는다
+
+
+def resolve_sido_for_charges(sido_name: str = "", address: str = "") -> tuple[str, str]:
+    """부담금 판정용 **시도** 해석 — `(시도축약키, basis)`.
+
+    ★**왜 「비어 있지 않음」이 아니라 「시도 표에 있음」으로 판정하나** (2026-08-27 라이브 실측)
+
+      프론트(`RoughScenarioPanel`)는 `regionFromAddress()` 로 뽑은 **시군구**("동구")를
+      `region` 으로 보내고, 그 값이 `sido_name` 까지 그대로 흘렀다. 종전 게이트는
+      `sido_name not in METRO_AREA_SIDO` 하나뿐이라 **"동구"를 「비대도시권」으로 단정**했다.
+      → 울산(대도시권)인데 광역교통시설부담금이 **침묵 미부과**.
+
+      여기서 **알려진 시도인지**를 먼저 물으면 "동구"는 1단계를 **통과하지 못하고**
+      주소 추론으로 떨어져 "울산"으로 **자가치유**된다. 호출부 3곳을 각각 고치는 것보다
+      강한 처방이다 — **새 호출부가 같은 실수를 해도 초크포인트가 잡는다.**
+
+    ★**사다리의 모양은 같은 도메인 형제에서 가져왔다**(새로 발명하지 않는다 — §29):
+      `feasibility/regional_pricing.resolve_regional_base_price` 가
+      *시군구 → 명시 시도 → **주소 시도 추론** → 폴백* 을 이미 하고 있고 `basis` 도 돌려준다.
+
+    ★★**형제와 다른 점 하나 — 폴백이 없다.** 분양가는 전국 기본값이 정당한 근사지만,
+      부담금은 **모르는 것을 아는 척하면 법정 부담금이 통째로 사라진다.** 그래서 마지막
+      단계는 기본값이 아니라 `unresolved` 이고, 호출부는 그것을 **보류(withheld)로 고지**한다.
+      (「모름」을 그 타입의 유효값으로 표현하면 관측이 된다 — `app/utils/withheld.py`)
+
+    Returns:
+        `("울산", "sido_explicit")` 처럼 (축약키, basis). 해석 실패 시 `("", "unresolved")`.
+    """
+    explicit = normalize_sido_short(sido_name)
+    if explicit in KNOWN_SIDO_SHORT:
+        return explicit, SIDO_BASIS_EXPLICIT
+    addr = str(address or "").strip()
+    if addr:
+        # ★**두 뜻으로 읽히는 접두는 지어내지 않는다.** `"광주시 오포읍"` 은
+        #   경기도 **광주시**(비수도권 아님 — 경기=수도권 4%)일 수도, **광주광역시**(2%)일 수도
+        #   있다. 어느 쪽으로 찍어도 부과율이 틀릴 수 있으므로 **모른다고 한다.**
+        #   (`"광주광역시…"`·`"경기도 광주시…"` 처럼 **가려지는** 표기는 아래에서 정상 해석된다.)
+        for ambiguous in _AMBIGUOUS_SIDO_PREFIXES:
+            if addr.startswith(ambiguous):
+                return "", SIDO_BASIS_UNRESOLVED
+        # ★**주소의 맨 앞에서만** 시·도를 인정한다(한국 주소는 시도 → 시군구 → … 순서).
+        for name in _SIDO_ADDRESS_PREFIXES:
+            if addr.startswith(name):
+                return _SIDO_FULL_TO_SHORT.get(name, name), SIDO_BASIS_ADDRESS
+    return "", SIDO_BASIS_UNRESOLVED
 # 표준건축비(원/㎡): 광특법 시행령 제16조의2가 「공공건설임대주택 표준건축비」 고시(국토부)를
 # 준용 — 고시는 층수×전용면적 구간별 표라 단일 상수 하드코딩 자체가 부정확(사업 특성 의존).
 # 코드 기본값은 None(무날조·unavailable 정직 강등) 유지, 운영자는 사업 포트폴리오에 맞는
@@ -363,19 +460,55 @@ def get_metro_transport_charge(
     building_type: str = "apartment",
     exclusive_area_sqm: float | None = None,
     standard_build_cost_won_per_sqm: int | None = None,
+    address: str = "",
 ) -> dict[str, Any]:
     """광역교통시설부담금 = 표준건축비 × 부과율 × 건축연면적(대도시권만).
 
-    · 비대도시권 → amount_won=0(미부과·applicable False).
+    · **시도 미해석** → amount_won=None(★보류 — `대도시권 아님`이라고 **단정하지 않는다**).
+    · 해석된 비대도시권 → amount_won=0(미부과·applicable False).
     · 표준건축비 미설정(고시값 미주입) 또는 연면적≤0 → amount_won=None(무목업·정직 unavailable).
     · 그 외 → 실산식 산정. (v1은 공제·감면 미반영 = 보수적 상한.)
+
+    ★★**「모른다」와 「아니다」를 가른다** — 2026-08-27 라이브 3모집단 대조군으로 확정.
+
+      같은 주소(`울산광역시 동구 화정동 637-11` · 울산은 대도시권)에 `region` 만 바꿔 실측:
+
+          region=""      → rate=null · "지역미상 — 대도시권 아님" · confidence=null   ← 침묵
+          region="울산"  → rate=0.02 · confidence="unavailable"  · absent=...        ← 정직
+          region="동구"  → rate=null · "동구 — 대도시권 아님"     · confidence=null   ← 침묵
+
+      종전 게이트는 **해석 실패**(`""`·`"동구"`)를 **비대도시권이라는 판정**으로 표기했다.
+      그 표기에는 `confidence` 가 없어서 `project_charges._collect_unavailable_notes` 의
+      정직 기계에 **아예 편입되지 않았고**, 결과적으로 법정 부담금이 **사유 없이 사라졌다.**
+      (#874/C07 「미조회를 관측처럼 그렸다」와 **같은 결함 클래스**)
+
+      → 이제 미해석은 `confidence="unavailable"` + `absent=AWAITING_INPUT` 이라
+        **형제(B03/B04/C07)와 같은 통로**로 `degraded_notes` 까지 올라간다. 새 배선 없음.
+
+    ★**금액은 바뀌지 않는다.** 미해석도 종전 0, 지금도 합계 미반영(0). 바뀌는 것은
+      **0 인 이유가 사용자에게 보이는가** 뿐이다.
     """
     is_housing = building_type in _METRO_HOUSING_TYPES
-    sido_name = normalize_sido_short(sido_name)  # 완전명("서울특별시") 입력도 대도시권 정상 판정
+    # ★시도를 **해석**한다 — 종전엔 정규화만 해서 시군구("동구")가 그대로 게이트에 들어갔다.
+    sido_short, sido_basis = resolve_sido_for_charges(sido_name=sido_name, address=address)
+    if sido_basis == SIDO_BASIS_UNRESOLVED:
+        return {
+            "amount_won": None, "applicable": None, "confidence": "unavailable",
+            # ★`surveyed=False` 는 형제(C07)가 쓰는 **기존 통로**다 —
+            #   `project_charges.charge_absent_reason` 가 이것을 보고 `AWAITING_INPUT` 를
+            #   낸다. 새 키(`absent`)를 여기서 발명하면 부재 어휘가 다시 갈라진다.
+            "surveyed": False, "sido_basis": sido_basis,
+            "reason": ("시·도 미상 — 대도시권 여부를 **판정하지 못했다**(광역교통시설부담금 "
+                       "미산정). 주소의 시·도가 인식되지 않았거나 호출부가 시·도가 아닌 값을 "
+                       "넘겼다. 대도시권이면 '표준건축비 × 부과율 × 건축연면적'이 부과된다 "
+                       "(대도시권광역교통관리법 §11의3)."),
+        }
+    sido_name = sido_short
     if sido_name not in METRO_AREA_SIDO:
         return {
             "amount_won": 0, "applicable": False, "source": "not_metro_area",
-            "reason": f"{sido_name or '지역미상'} — 대도시권 아님(광역교통시설부담금 미부과)",
+            "sido_basis": sido_basis,
+            "reason": f"{sido_name} — 대도시권 아님(광역교통시설부담금 미부과)",
         }
     # ★`sido_name` 을 넘겨야 수도권 4%/그 외 2% 가 갈린다. 종전엔 안 넘겨서 요율이
     #   지역과 무관했다(그리고 값 자체가 법령과 달랐다 — 함수 docstring 참조).
@@ -391,6 +524,10 @@ def get_metro_transport_charge(
     if not scb or gfa_sqm <= 0:
         return {
             "amount_won": None, "applicable": True, "confidence": "unavailable", "rate": rate,
+            # ★출처는 **값이 있을 때도** 말한다(PROV-O) — 모든 분기가 `sido_basis` 를 싣는다.
+            #   한 분기만 빠뜨리면 소비처가 "왜 없지" 를 되물을 수 없고, 배선 락도 그 분기를
+            #   통과하지 못한다(실제로 이 누락을 구조 단언이 잡아냈다).
+            "sido_basis": sido_basis,
             "formula": "표준건축비 × 부과율 × 건축연면적 − 공제",
             "reason": ("표준건축비 미설정(광특법 시행령 §16조의2 준용 「공공건설임대주택 "
                        "표준건축비」 고시 — 층수·면적 구간표) — 환경변수 "
@@ -401,6 +538,7 @@ def get_metro_transport_charge(
     return {
         "amount_won": amount, "applicable": True, "confidence": "regional", "rate": rate,
         "standard_build_cost_won_per_sqm": scb, "gfa_sqm": gfa_sqm, "source": "formula",
+        "sido_basis": sido_basis,
         "formula": "표준건축비 × 부과율 × 건축연면적 − 공제(v1 공제·감면 미반영)",
     }
 

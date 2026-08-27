@@ -325,6 +325,39 @@ export function flush(): void {
   }
 }
 
+/**
+ * ★**조기 포착 버퍼** — `app/layout.tsx` 의 인라인 부트스트랩이 하이드레이션 **전에** 담아 둔 오류.
+ *
+ * 왜 필요한가(2026-08-27 라이브 실측): 아래 `handleWindowError` 는 `initEventCollector()` 에서
+ * 등록되는데 그 호출이 `useGrowthEvents` 의 **`useEffect`** 안이라 하이드레이션 커밋 **이후**에 돈다.
+ * 같은 타임라인에서 재니 `#418` = **237ms**, `addEventListener("error")` = **307ms** —
+ * **오류가 등록보다 70ms 먼저 났다.** 그래서 초기 렌더 오류는 구조적으로 수집되지 않았다.
+ */
+export type EarlyCapturedError = {
+  k: "error" | "rejection";
+  m: string;
+  f: string | null;
+  l: number | null;
+  c: number | null;
+  s: string | null;
+  t: number;
+};
+type EarlyStore = { buf: EarlyCapturedError[]; closed: boolean };
+
+/**
+ * 버퍼를 **비우고 닫는다**. 닫는 이유: 이 뒤에는 정식 핸들러가 붙으므로, 닫지 않으면 같은 오류가
+ * **두 경로로 두 번** 전송된다(부트스트랩 리스너는 페이지 수명 내내 살아 있다).
+ * ★순수 함수로 둔 이유는 이 계약을 **브라우저 없이 태우기** 위해서다.
+ */
+export function drainEarlyErrors(w: { __propaiEarly?: EarlyStore }): EarlyCapturedError[] {
+  const s = w.__propaiEarly;
+  if (!s || !Array.isArray(s.buf)) return [];
+  const out = s.buf.slice();
+  s.buf.length = 0;
+  s.closed = true;
+  return out;
+}
+
 /** window.onerror — 런타임 JS 오류(전수 수집). */
 function handleWindowError(event: ErrorEvent): void {
   try {
@@ -466,6 +499,31 @@ export function initEventCollector(): void {
 
     window.addEventListener("error", handleWindowError);
     window.addEventListener("unhandledrejection", handleRejection);
+
+    // ★정식 핸들러를 **먼저** 붙인 뒤 조기 버퍼를 비운다 — 그 사이(등록~flush)에 난 오류도
+    //   정식 경로로 잡히고, 버퍼를 닫는 순간 이중 전송이 끊긴다.
+    for (const e of drainEarlyErrors(window as unknown as { __propaiEarly?: EarlyStore })) {
+      // ★형제와 **같은 이벤트 타입**을 쓴다 — 조기 포착이라고 다른 타입으로 보내면 같은 사건이
+      //   두 이름으로 쌓여 analyzer 의 군집이 갈린다(`handleWindowError`=js_error /
+      //   `handleRejection`=promise_rejection · 둘 다 백엔드 화이트리스트에 있다).
+      const isRejection = e.k === "rejection";
+      trackEvent(isRejection ? "promise_rejection" : "js_error", {
+        severity: "error",
+        payload: {
+          // ★절단 길이도 형제와 **같아야** 한다 — `analyzer.normalize_stack` 이 **메시지 전문**을
+          //   sha1 해싱하므로, 조기/정식 경로의 자르는 길이가 다르면 같은 오류가 **다른 시그니처**로
+          //   군집된다(독립 리뷰 지적). `handleRejection`=1,000자 / `handleWindowError`=무절단.
+          message: isRejection ? maskString(e.m).slice(0, 1000) : maskString(e.m),
+          stack: e.s ? maskString(e.s).slice(0, 2000) : null,
+          // 위치 정보는 `error` 경로에만 있다(형제 `handleRejection` 도 안 싣는다).
+          ...(isRejection ? {} : { filename: e.f, lineno: e.l, colno: e.c }),
+          // ★진단용 — 이 오류가 **수집기 등록 전**에 났다는 사실 자체가 정보다.
+          //   `tMs` 로 얼마나 앞섰는지까지 남는다(실측 기준 #418 237ms vs 등록 307ms).
+          early: true,
+          tMs: e.t,
+        },
+      });
+    }
     window.addEventListener("visibilitychange", handleVisibility);
     window.addEventListener("pagehide", flush);
 
