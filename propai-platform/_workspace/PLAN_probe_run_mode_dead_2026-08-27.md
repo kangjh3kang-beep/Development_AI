@@ -30,6 +30,10 @@
 | 9 | `.mjs` 모집단 | `git ls-files '*.mjs'` | **5건**(hydration-probe · probe-text · eslint.config · next.config · postcss.config) |
 | 10 | 새 규칙의 기존 위반 | `npx eslint '**/*.mjs'`(수정 후) | **0건 · exit 0** — 래칫 부담 없음 |
 | 11 | ★그 규칙이 **원결함을 잡는가** | 원결함 재주입 후 같은 명령 | ◎ **`164:38 error 'NOISE_RE' is not defined no-undef` · exit 1** |
+| 12 | ★**수정 후 `run` 이 실제로 도는가**(대리 변수가 아니라 그 속성) | 라이브 `node … run /ko/regulations` | ◎ **exit 0** · `collectorAlive:true` · `urlOk:true` · `hydration:0` — 원결함 재주입 시 다시 `ReferenceError`(양방향) |
+| 13 | **CI 명령**이 실제로 `.mjs` 를 태우는가 | `package.json` 의 `lint` = `eslint . --no-cache`(≠ `next lint`) + 원결함 재주입 후 `pnpm lint --format json` | ◎ **CAUGHT(rc=1)** |
+| 14 | `.js` 도 같은 사각인가 | `fix-dict.js` 에 **원결함과 같은 형태** 주입 후 CI 명령 | ✘ **SURVIVED** → 규칙을 `.js` 로 넓혔다(§2-4) |
+| 15 | 넓힌 뒤의 비용 | `.js`·`.mjs` 전수 | **error 1**(`public/sw.js:450 'clients'`) → 그 파일에만 서비스워커 전역 블록. 이후 **error 0 · warning 158**(래칫 불변) |
 
 ★11 번이 이 계획의 중심이다 — **수정 전 상태에서 락이 빨간 것**을 확인했다(초록만 보면 공허할 수 있다).
 
@@ -43,6 +47,20 @@
 3. `eslint.config.mjs` — `**/*.mjs` 에 **`no-undef: error`**.
    · 회귀 아님: 전제 10(기존 위반 0). globals 목록이 부족하면 **위양성으로 시끄럽게** 드러난다(조용한 위음성 아님).
 
+## 2-4. 독립 리뷰가 찾은 것과 봉합 (반증 임무 · 4건)
+
+★**자기 검증만으로는 아래 둘을 못 잡았다.** 임무를 「틀린 곳을 찾아라」로 준 독립 리뷰가 갈랐다.
+
+| 등급 | 발견 | 봉합 |
+|---|---|---|
+| **MAJOR-1** | **적용 범위 ≠ 결함 범위** — 고친 클래스는 *"확장자가 `.mjs`"* 가 아니라 *"`tsc` 가 안 보는 손실행 스크립트"* 인데 파생의 축을 **확장자**로 잡았다. `.js` 5건(그중 **프로덕션에 실리는 `public/sw.js`**)이 무잠금이었고 실제 주입이 **SURVIVED** | `files` 를 `["**/*.mjs","**/*.js"]` 로 · `public/sw.js` 전용 서비스워커 전역 블록 · 계약 테스트에 `.js` 픽스처 케이스 |
+| **MAJOR-2(a)** | **배선 무잠금** — `relevantErrors` 라는 *함수* 는 잠갔지만 **프로브가 그것을 쓰는지**는 아무것도 안 잠근다(브라우저 없이는 못 태운다) | 남은 판정 두 개(`buildRunSample`·`isCollectorAlive`)를 순수부로 옮겨 **프로브에는 호출 한 줄만** 남겼다 + 각각 파티션형 단언 |
+| **MAJOR-2(b)** | ★**전수 `vitest run` 이 변이 없이도 `rc=1`**(`Timeout calling "onTaskUpdate"`) — 그것을 변이 판정 명령으로 쓰면 **모든 변이가 거짓 CAUGHT** | **이 PR 범위 밖**(도구 `scripts/mutate_manual.sh`). §3 에 미해결로 남기고 보드에 공유했다. 이 PR 의 변이 6종은 **타깃 테스트 파일**로 돌려 유효하다 |
+| MINOR-2 | 정합 단언이 `HYDRATION_RE` 를 **손으로 복사**(평행 선언) → 그 상수를 정당하게 넓히면 **위양성** | 상수를 `export` 하고 테스트가 그것을 import |
+
+★리뷰가 *"가장 유력한 구멍"* 으로 지목했던 **CI 명령 불일치**는 실측으로 **반증**됐다
+(`pnpm lint` = `eslint . --no-cache`). **틀린 곳을 찾으라는 임무가 다른 곳에서 진짜를 찾았다.**
+
 ## 3. ★검증하지 못한 것
 
 - **왜 `run` 모드가 한 번도 실행되지 않은 채 머지됐는지**는 재지 않았다(추정하지 않는다).
@@ -52,6 +70,12 @@
   그 주석은 **거짓 전제**였다. 목록을 걷어냈다. **변이가 아니었으면 거짓이 그대로 남았다.**
 - `next.config.mjs`·`postcss.config.mjs` 는 이 규칙 아래에서 **지금** 초록일 뿐, 그 파일들이 쓰는
   전역이 늘어날 때의 거동은 **미측정**이다.
+- ★**`mutate_manual.sh` 가 기준선 `rc` 를 안 잰다** — 전수 `vitest run` 이 변이 없이도 `rc=1` 인
+  이 저장소에서는 그것을 판정 명령으로 쓰면 **모든 변이가 거짓 CAUGHT** 다. 이 PR 은 그것을
+  **고치지 않는다**(그 파일은 `#875` 가 방금 손댔다 — 겹침 회피). 보드에 공유했다.
+- 프로브가 `buildRunSample`·`isCollectorAlive` 를 **실제로 부르는지**는 여전히 무잠금이다
+  (브라우저가 필요하다). 표면을 **호출 한 줄**로 줄였을 뿐이며, 그 사실을 여기 적어 둔다.
+- `control`/`dump` 모드는 이번 라운드에서 라이브로 안 돌렸다(`run` 만).
 - 이 PR 은 **프로브를 고칠 뿐** 하이드레이션 결함 자체를 고치지 않는다(그 트리아지는 별건).
 
 ## 4. 되돌리기 경로
@@ -67,6 +91,9 @@
 | `relevantErrors` 가 **두 모집단을 가른다**(잡음은 지우고 나머지는 남긴다 · 양방향) | `lib/hydration/__tests__/probe-text.test.ts` | ◎ Frontend(vitest) |
 | `countHydration` 이 `relevantErrors` 와 **정합**(기대값을 다른 경로로 파생) | 같은 파일 · 공허진리 가드 포함 | ◎ |
 | **`no-undef` 가 꺼지거나 `warn` 으로 낮춰지는 것**(선언이 아니라 **동작**을 태운다) | `__tests__/eslint-mjs-undef.contract.test.ts` | ◎ Frontend(vitest) |
+| **`.js` 가 규칙 블록에서 빠지는 것**(확장자 하나만 잠그면 나머지가 사각) | 같은 파일 · `.js` 픽스처 케이스 | ◎ |
+| `buildRunSample` 이 **두 모집단을 가른다**(잡음 빠지고 진짜 남는다) · 3건/400자 절단 | `probe-text.test.ts` | ◎ |
+| `isCollectorAlive` **파티션형**(살아 있음/죽음 양방향) | 같은 파일 | ◎ |
 
 ★**같은 규율을 두 곳에 두지 않는다** — "실행 가능성"은 `no-undef` 가 잠그고, vitest 는
 그 위의 **동작 계약**만 본다.

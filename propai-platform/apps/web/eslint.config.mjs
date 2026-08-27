@@ -40,8 +40,21 @@ const eslintConfig = defineConfig([
     //   SURVIVED** 해서 재보니 `--print-config` 기준 이미 **1174개**가 상위 config 에서 오고 있었다
     //   — 내 목록은 **전부 중복**이었고, 그 옆에 적어 둔 *"목록형의 한계를 알고 쓴다"* 는 주석은
     //   **거짓 전제**였다. 목록을 두면 그것이 곧 상한이 되고, 여기서는 둘 이유조차 없었다.
-    files: ["**/*.mjs"],
+    //
+    // ★`.js` 까지 넣는다(독립 리뷰가 제안 → **내가 실측해** 채택). tracked `.js` 는 **5건**이고
+    //   그중 `public/sw.js` 는 **프로덕션에 실리는 서비스워커**다 — `.mjs` 와 똑같이 `tsc` 사각이다.
+    //   실측: 확장 후 `.js`·`.mjs` 전수 **no-undef error 0**(기존 위반 없음 · 래칫 158 불변).
+    files: ["**/*.mjs", "**/*.js"],
     rules: { "no-undef": "error" },
+  },
+  {
+    // ★서비스워커 전역 — 상위 config 의 globals 1174개에 `clients` 가 **없다**(실측:
+    //   `document`/`localStorage`/`window` 는 있는데 `clients` 만 빠졌다). 목록을 두되
+    //   **이 파일에만** 두고, 부족하면 **위양성으로 시끄럽게** 드러나게 한다(조용한 위음성 아님).
+    files: ["public/sw.js"],
+    languageOptions: {
+      globals: { clients: "readonly", self: "readonly", caches: "readonly", skipWaiting: "readonly" },
+    },
   },
   {
     // ★자가검증(field_audit) 표면에는 피드백 수집 위젯을 붙이지 못하게 **빌드로** 막는다.

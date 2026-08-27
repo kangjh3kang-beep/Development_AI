@@ -12,7 +12,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  countHydration, relevantErrors, samePath, pickMutableText, decideControlVerdict, decideRunVerdict,
+  countHydration, relevantErrors, buildRunSample, isCollectorAlive, HYDRATION_RE,
+  samePath, pickMutableText, decideControlVerdict, decideRunVerdict,
 } from "@/lib/hydration/probe-text.mjs";
 
 describe("countHydration — 두 모드가 공유하는 계수 경로", () => {
@@ -85,9 +86,39 @@ describe("relevantErrors — 계수와 진단 표시가 **같은 필터**를 쓴
   it("★countHydration 은 relevantErrors 를 통과한 것만 센다(두 함수의 정합)", () => {
     const 입력 = [...잡음, ...진짜];
     // 기대값을 손으로 쓰지 않고 **다른 경로로 파생**한다 — 손 계산은 두 함수가 어긋나도 맞을 수 있다.
-    const 파생 = relevantErrors(입력).filter((e) => /Hydration failed|error #418|errors\/418|Text content/.test(e)).length;
+    // ★기대값을 **소스에서** 파생한다 — 초판은 이 정규식을 손으로 복사했는데(평행 선언),
+    //   그러면 `HYDRATION_RE` 를 정당하게 넓힐 때 이 테스트가 **위양성으로** 빨개진다
+    //   (독립 리뷰 MINOR-2). 이제 모듈이 export 하는 그 상수를 그대로 쓴다.
+    const 파생 = relevantErrors(입력).filter((e) => HYDRATION_RE.test(e)).length;
     expect(countHydration(입력)).toBe(파생);
     expect(파생).toBeGreaterThan(0); // 공허 진리 가드 — 0 이면 위 단언이 아무것도 안 본다
+  });
+});
+
+describe("buildRunSample / isCollectorAlive — 프로브 본문에서 옮겨 온 판정", () => {
+  /**
+   * ★왜 옮겼나(독립 리뷰 MAJOR-2): 프로브 본문의 판정은 **브라우저 없이는 태울 수 없어**
+   *   구조적으로 무잠금이다. 판정을 순수부로 옮기면 그 자리는 잠기고, 프로브에는
+   *   **호출 한 줄**만 남아 표면이 줄어든다.
+   */
+  const 잡음 = ["[pageerror] PROBE_ALIVE", "[console] net::ERR_FAILED"];
+  const 진짜 = ["[pageerror] A".padEnd(500, "x"), "[console] B", "[console] C", "[console] D"];
+
+  it("★두 모집단이 갈린다 — 잡음은 표본에서 빠지고 진짜는 남는다", () => {
+    const out = buildRunSample([...잡음, ...진짜]);
+    expect(out.every((x) => !x.includes("PROBE_ALIVE"))).toBe(true);
+    expect(out[1]).toBe("[console] B"); // 잡음이 안 걷혔다면 여기 잡음이 온다
+  });
+
+  it("표본은 3건·400자로 자른다 — 로그가 회차를 삼키지 않게", () => {
+    const out = buildRunSample([...진짜]);
+    expect(out).toHaveLength(3);
+    expect(out[0]).toHaveLength(400);
+  });
+
+  it("★`isCollectorAlive` — 이 판정이 거짓이면 그 회차의 '0건'은 근거가 아니다", () => {
+    expect(isCollectorAlive(["[console] x", "[pageerror] Error: PROBE_ALIVE"])).toBe(true);
+    expect(isCollectorAlive(["[console] x", "[console] y"])).toBe(false); // 파티션형 — 반대도 단언
   });
 });
 

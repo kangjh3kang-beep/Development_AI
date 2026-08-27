@@ -34,6 +34,14 @@ describe(".mjs 자유 식별자 — 실행 불가를 lint 가 잡는다", () => 
     expect(undef[0].message).toContain("NOISE_RE");
   });
 
+  it("★`.js` 도 같은 규칙 아래 있다 — `public/sw.js` 는 **프로덕션에 실리는** 서비스워커다", async () => {
+    // 확장자를 하나만 잠그면 나머지가 조용히 사각으로 남는다(`tsc` 는 둘 다 안 본다).
+    const msgs = await lintMjs("export const f = () => UNDEFINED_IN_JS;\n", "public/__fixture__.js");
+    const undef = msgs.filter((m) => m.ruleId === "no-undef");
+    expect(undef.length, "`.js` 가 규칙 블록에서 빠졌다").toBeGreaterThan(0);
+    expect(undef[0].severity).toBe(2);
+  });
+
   it("★음성 대조군 — 정상 코드는 걸리지 않는다(위양성도 결함이다)", async () => {
     // 같은 파일에서 선언한 것 · import 한 것 · 선언된 전역(process/console) 전부 통과해야 한다.
     const 정상 = [
