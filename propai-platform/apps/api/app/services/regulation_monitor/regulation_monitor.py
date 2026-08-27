@@ -5,7 +5,7 @@ import httpx
 import structlog
 
 from app.core.config import settings
-from app.services.legal.moleg_drf_envelope import raise_if_drf_error
+from app.services.legal.moleg_drf_envelope import raise_unless_expected
 
 logger = structlog.get_logger()
 
@@ -161,7 +161,10 @@ class RegulationMonitorService:
             #   `recent=False` → **"변경 없음"**. 게다가 예외가 아니라 `failures` 가 0 이라
             #   *"전건 실패 시 RuntimeError"* 가드가 **발화하지 못했다** —
             #   **이 함수가 막겠다고 선언한 바로 그 위장**에 뚫려 있었다.
-            raise_if_drf_error(payload)
+            # ★「기대 루트키가 없으면 실패」로 판정한다 — 오류 형태를 열거하면
+            #   `{"Law":"일치하는 법령이 없습니다."}` 같은 새 계열에 조용히 뚫린다
+            #   (독립 리뷰 실측: 전건 그 봉투인데 예외 없이 "변경 없음"을 돌려줬다).
+            raise_unless_expected(payload, expect=("법령",))
             prom = ((payload.get("법령") or {}).get("기본정보") or {}).get("공포일자", "")
             try:
                 recent = bool(prom) and datetime.strptime(prom, "%Y%m%d") >= cutoff
