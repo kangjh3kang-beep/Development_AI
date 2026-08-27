@@ -127,7 +127,12 @@ async def ingest_events(batch: GrowthEventBatch, request: Request) -> GrowthInge
 #  ★role 기반 금지(가입 시 전원 자기 테넌트 role='admin' → 전역 인사이트 누출).
 # 전역(tenant NULL)+테넌트 분리 정책은 설계 §11 미결 → 우선 관리자=전역 전체 조회.
 
-_INSIGHT_STATUSES = {"open", "acknowledged", "acted", "dismissed"}
+# ★`superseded` — 정리 배치가 **승계된 옛 행**에 붙이는 상태(`insight_retention`).
+#   어휘에 없으면 `GET /growth/insights?status=superseded` 가 **400** 이라
+#   2,678행의 상태 전이를 **제품 안에서 확인할 방법이 0** 이 된다(되돌리기가 원시 SQL 뿐).
+#   조회는 가능해야 잘못 닫힌 것을 사람이 발견한다(2026-08-27 독립 리뷰 H5).
+#   ★`_ACK_STATUSES` 에는 넣지 않는다 — 승계분은 사람이 재처리할 대상이 아니다.
+_INSIGHT_STATUSES = {"open", "acknowledged", "acted", "dismissed", "superseded"}
 _ACK_STATUSES = {"acknowledged", "dismissed"}
 
 
