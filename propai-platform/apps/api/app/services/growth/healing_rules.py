@@ -53,8 +53,28 @@ COOLDOWN_MIN = {
     heal_actions.ACTION_STALE_REANALYSIS: 30,
     heal_actions.ACTION_CIRCUIT_OBSERVE: 1,
 }
-# 에스컬레이션 임계: 동일 트리거가 시간당 이 횟수 이상 발화하면 효과없음으로 보고 critical 승격.
+# 에스컬레이션 임계: 동일 트리거가 시간당 이 횟수 이상 **캡에 막히면** 효과없음으로 보고 critical 승격.
+#
+# ★2026-08-27 — 이 상수는 **바뀌지 않았다.** 바뀐 것은 **무엇을 세는가** 다.
+#   종전에는 `_guard_counts` 의 **실행수**(heal_action 이벤트)를 셌는데, 그 값은
+#   `_cap_exceeded(count, cap)` 가 `count >= cap` 에서 실행을 막으므로 **t_cap 을 넘을 수 없었다**:
+#       cache_warm 1 · threshold_relax 2 · stale_reanalysis 3 · circuit_observe 10
+#   즉 임계 5 에 닿을 수 있는 것은 `circuit_observe` **하나뿐**이었고, 그 액션은 스스로를
+#   "관측 기록(부작용 없음)" 이라 적는다 — **에스컬레이션이 필요 없는 것만 에스컬레이션할 수 있었다.**
+#   라이브 실측(2026-08-27): heal_escalation **전 상태 0건**(대조군 fallback_rate 26 · 음성 0),
+#   heal-log 472 시간버킷 중 캡 도달 24(5.1%) · **임계 도달 0(0.0%)**.
+#   ★상수를 올리거나 내리는 길은 **기각**이다 — 캡을 올리면 `threshold_relax` 가 프로덕션 HTTP
+#   타임아웃을 더 곱하고(볼트 2026-08-25 사고), 임계를 내리면 한 번 막힌 것도 에스컬레이션된다.
 ESCALATION_THRESHOLD = 5
+
+#: 캡 차단 시도를 남기는 이벤트 타입(heal_action 과 **분리** — 기존 집계·화면·가드에 무영향).
+HEAL_BLOCKED_EVENT = "heal_blocked"
+
+#: ★"캡에 막힘"으로 세는 사유. **쿨다운은 넣지 않는다.**
+#  쿨다운은 정상 페이싱이다 — 세면 `threshold_relax`(쿨다운 15분 · beat 10분 주기)가
+#  상시 에스컬레이션된다. `gate()` 가 쿨다운을 캡보다 **먼저** 판정하고 즉시 반환하므로
+#  쿨다운 차단은 이 집합에 **구조적으로** 들어올 수 없다(그 성질을 락으로 고정한다).
+CAP_BLOCK_REASONS = ("global_cap", "trigger_cap")
 
 # 외부API "전면장애" 판정: 폴백률(%) 이 이 값 이상이면 threshold_relax 대상.
 TOTAL_OUTAGE_FALLBACK_PCT = 50.0
@@ -78,25 +98,39 @@ def _cap_exceeded(recent_count: int, cap: int) -> bool:
     return recent_count >= cap
 
 
-def should_escalate(per_trigger_hourly: int, threshold: int = ESCALATION_THRESHOLD) -> bool:
-    """동일 트리거가 시간당 threshold 이상 반복 → 효과없음으로 보고 에스컬레이션."""
-    return per_trigger_hourly >= threshold
+def should_escalate(blocked_attempts: int, threshold: int = ESCALATION_THRESHOLD) -> bool:
+    """동일 트리거가 시간당 threshold 이상 **캡에 막히면** 에스컬레이션.
+
+    ★인자는 **실행수가 아니라 캡차단 시도수**다(ESCALATION_THRESHOLD 주석 참조).
+      실행수는 캡이 천장을 씌우므로 임계에 닿을 수 없었다 — 그것이 이 안전망이
+      라이브에서 **한 번도 발화하지 않은** 이유다.
+
+    의미도 이쪽이 더 곧다: *"같은 트리거가 계속 치유를 원하는데 못 하고 있다"* 가
+    *"몇 번 실행했다"* 보다 **사람이 봐야 한다**는 신호에 가깝다.
+    """
+    return blocked_attempts >= threshold
 
 
 def gate(action_type: str, trigger_key: str, *, now: datetime,
-         global_count: int, trigger_count: int, last_ts: datetime | None) -> dict[str, Any]:
+         global_count: int, trigger_count: int, last_ts: datetime | None,
+         blocked_count: int = 0) -> dict[str, Any]:
     """단일 후보 액션의 통과/차단을 종합 판정한다(순수 함수, 단위검증 진입점).
 
     반환: {"allow": bool, "reason": str, "escalate": bool}.
       - 쿨다운 내 → 차단.
-      - 전역/트리거 캡 초과 → 차단(+ 트리거 캡 초과 시 에스컬레이션 검토).
+      - 전역/트리거 캡 초과 → 차단.
       - 모두 통과 → allow.
+
+    ★`escalate` 는 **`blocked_count`(최근 1시간 캡차단 시도수)** 로만 정해진다.
+      기본값 0 이므로 이 인자를 주지 않는 호출부(`feature_flags`)의 동작은 **종전과 같다**.
+      `trigger_count`(실행수)는 **더 이상 에스컬레이션 입력이 아니다** — 캡이 천장을
+      씌워 임계에 닿을 수 없었기 때문이다(ESCALATION_THRESHOLD 주석).
     """
     cooldown = COOLDOWN_MIN.get(action_type, 15)
     g_cap = GLOBAL_HOURLY_CAP.get(action_type, 5)
     t_cap = PER_TRIGGER_HOURLY_CAP.get(action_type, 2)
 
-    escalate = should_escalate(trigger_count)
+    escalate = should_escalate(blocked_count)
 
     if _within_cooldown(last_ts, now, cooldown):
         return {"allow": False, "reason": "cooldown", "escalate": escalate}
@@ -138,6 +172,58 @@ async def _guard_counts(db, action_type: str, trigger_key: str,
     t_count = int(trow[0] or 0) if trow else 0
     last_ts = trow[1] if trow else None
     return int(g), t_count, last_ts
+
+
+async def _record_blocked(db, action_type: str, trigger_key: str) -> None:
+    """캡에 막힌 **시도**를 남긴다 — 에스컬레이션이 셀 수 있는 유일한 흔적.
+
+    ★왜 필요한가: 차단된 후보는 `execute()` 앞에서 빠지므로 `heal_action` 이벤트가
+      생기지 않는다. 그래서 종전에는 **막힐수록 카운터가 조용해졌다**(캡에서 얼어붙음).
+      막힌 사실 자체를 남겨야 "반복해서 못 하고 있다"를 셀 수 있다.
+    ★`heal_action` 과 **다른 이벤트 타입**을 쓴다 — 기존 집계·화면·`_guard_counts`
+      (전부 `event_type='heal_action'` 로 필터)에 영향이 없다.
+    best-effort: 기록 실패가 치유 사이클을 죽이지 않는다.
+    """
+    import json
+
+    from sqlalchemy import text
+
+    try:
+        await db.execute(text(
+            "INSERT INTO platform_events (event_type, payload) "
+            "VALUES (:et, CAST(:p AS jsonb))"
+        ), {"et": HEAL_BLOCKED_EVENT,
+            "p": json.dumps({"action_type": action_type,
+                             "params": {"trigger_key": trigger_key}},
+                            ensure_ascii=False)})
+        await db.commit()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("heal 차단기록 실패(%s): %s", action_type, str(e)[:160])
+        with contextlib.suppress(Exception):
+            await db.rollback()
+
+
+async def _blocked_count(db, action_type: str, trigger_key: str, now: datetime) -> int:
+    """최근 1시간 동안 이 (action_type, trigger_key) 가 **캡에 막힌 횟수**.
+
+    실패하면 0 을 돌려준다 — 조회 실패가 **없던 에스컬레이션을 만들지 않게** 한다
+    (거짓 critical 은 그 자체로 결함이다).
+    """
+    from sqlalchemy import text
+
+    since = now - timedelta(hours=1)
+    try:
+        return int((await db.execute(text(
+            "SELECT COUNT(*) FROM platform_events "
+            "WHERE event_type = :et "
+            "  AND payload->>'action_type' = :at "
+            "  AND payload->'params'->>'trigger_key' = :tk "
+            "  AND created_at >= :since"
+        ), {"et": HEAL_BLOCKED_EVENT, "at": action_type,
+            "tk": trigger_key, "since": since})).scalar() or 0)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("heal 차단수 조회 실패(%s): %s", action_type, str(e)[:160])
+        return 0
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -258,13 +344,32 @@ async def mark_insight_acted(db, action: dict[str, Any], result: dict[str, Any])
         return 0
 
 
-async def _escalate(db, action_type: str, trigger_key: str) -> None:
-    """효과없는 반복 조치 → critical 인사이트로 승격(사람 알림). best-effort."""
+async def _escalate(db, action_type: str, trigger_key: str) -> bool:
+    """효과없는 반복 조치 → critical 인사이트로 승격(사람 알림). best-effort.
+
+    반환: **새로 만들었으면 True**, 억제됐거나 실패했으면 False.
+
+    ★축 단위 중복 억제: 같은 `(action_type, trigger_key)` 에 **열린** `heal_escalation`
+      이 이미 있으면 새로 만들지 않는다. 억제가 없으면 한 트리거가 화면을 채운다 —
+      라이브 드라이런에서 캡 도달 24건 중 **18건이 `threshold_relax:fallback_rate:site_analysis`
+      하나**였다(폭주가 아니라 **반복**이다).
+    ★억제는 `status='open'` 만 본다. 사람이 `dismissed` 한 뒤 문제가 **재발하면 다시 올라와야**
+      하기 때문이다 — 억제가 은신처가 되면 안 된다(경계는 양방향으로 · §D-19).
+    """
     import json
 
     from sqlalchemy import text
 
     try:
+        dup = (await db.execute(text(
+            "SELECT 1 FROM platform_insights "
+            "WHERE insight_type = 'heal_escalation' AND status = 'open' "
+            "  AND metrics_json->>'action_type' = :at "
+            "  AND metrics_json->>'trigger_key' = :tk "
+            "LIMIT 1"
+        ), {"at": action_type, "tk": trigger_key})).fetchone()
+        if dup is not None:
+            return False
         await db.execute(text(
             "INSERT INTO platform_insights "
             "(insight_type, metrics_json, severity, narrative, recommended_action, status) "
@@ -277,12 +382,14 @@ async def _escalate(db, action_type: str, trigger_key: str) -> None:
                      f"효과가 없어 에스컬레이션합니다. 사람 점검 필요."),
         })
         await db.commit()
+        return True
     except Exception as e:  # noqa: BLE001
         logger.warning("heal 에스컬레이션 실패: %s", str(e)[:160])
         try:
             await db.rollback()
         except Exception:  # noqa: BLE001
             pass
+        return False
 
 
 async def evaluate(db, *, now: datetime | None = None) -> dict[str, Any]:
@@ -318,14 +425,21 @@ async def evaluate(db, *, now: datetime | None = None) -> dict[str, Any]:
             logger.warning("heal 가드 카운트 실패(%s): %s", atype, str(e)[:120])
             continue
 
-        decision = gate(atype, tkey, now=now, global_count=g_count,
-                        trigger_count=t_count, last_ts=last_ts)
+        # ★에스컬레이션 입력은 **캡차단 시도수**다(실행수 아님 — ESCALATION_THRESHOLD 주석).
+        #   여기서 세는 것은 **직전까지의 이력**이고, 이번 사이클의 차단은 아래에서 기록해
+        #   다음 사이클이 센다. 그래서 임계 5 는 "이미 5회 막혔는데 또 막힌다"를 뜻한다.
+        blocked_prior = await _blocked_count(db, atype, tkey, now)
 
-        if decision["escalate"]:
-            await _escalate(db, atype, tkey)
-            summary["escalated"] += 1
+        decision = gate(atype, tkey, now=now, global_count=g_count,
+                        trigger_count=t_count, last_ts=last_ts,
+                        blocked_count=blocked_prior)
 
         if not decision["allow"]:
+            # 캡에 막힌 시도만 남긴다 — 쿨다운은 정상 페이싱이라 세지 않는다.
+            if decision["reason"] in CAP_BLOCK_REASONS:
+                await _record_blocked(db, atype, tkey)
+            if decision["escalate"] and await _escalate(db, atype, tkey):
+                summary["escalated"] += 1
             summary["blocked"] += 1
             summary["actions"].append({"type": atype, "trigger_key": tkey,
                                        "executed": False, "reason": decision["reason"]})
@@ -352,4 +466,5 @@ __all__ = [
     "_within_cooldown", "_cap_exceeded", "should_escalate",
     "GLOBAL_HOURLY_CAP", "PER_TRIGGER_HOURLY_CAP", "COOLDOWN_MIN",
     "ESCALATION_THRESHOLD", "TOTAL_OUTAGE_FALLBACK_PCT",
+    "HEAL_BLOCKED_EVENT", "CAP_BLOCK_REASONS",
 ]
