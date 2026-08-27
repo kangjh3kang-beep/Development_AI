@@ -510,7 +510,10 @@ export function initEventCollector(): void {
       trackEvent(isRejection ? "promise_rejection" : "js_error", {
         severity: "error",
         payload: {
-          message: maskString(e.m).slice(0, 1000),
+          // ★절단 길이도 형제와 **같아야** 한다 — `analyzer.normalize_stack` 이 **메시지 전문**을
+          //   sha1 해싱하므로, 조기/정식 경로의 자르는 길이가 다르면 같은 오류가 **다른 시그니처**로
+          //   군집된다(독립 리뷰 지적). `handleRejection`=1,000자 / `handleWindowError`=무절단.
+          message: isRejection ? maskString(e.m).slice(0, 1000) : maskString(e.m),
           stack: e.s ? maskString(e.s).slice(0, 2000) : null,
           // 위치 정보는 `error` 경로에만 있다(형제 `handleRejection` 도 안 싣는다).
           ...(isRejection ? {} : { filename: e.f, lineno: e.l, colno: e.c }),

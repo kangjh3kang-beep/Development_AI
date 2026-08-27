@@ -16,10 +16,11 @@
 import type * as TS from "typescript";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { earlyErrorBootstrap, EARLY_ERROR_CAP } from "@/lib/growth/early-error-bootstrap";
+import { earlyErrorBootstrap, EARLY_ERROR_CAP, EARLY_MESSAGE_CAP } from "@/lib/growth/early-error-bootstrap";
 import { drainEarlyErrors, type EarlyCapturedError } from "@/lib/growth/event-collector";
 
 type EarlyStore = { buf: EarlyCapturedError[]; closed: boolean };
+type Ev = { event_type?: string; payload?: { message?: string; early?: boolean; tMs?: number } };
 const store = (): EarlyStore | undefined =>
   (window as unknown as { __propaiEarly?: EarlyStore }).__propaiEarly;
 
@@ -58,6 +59,33 @@ describe("부트스트랩 — 등록보다 먼저 난 오류를 담는다", () =
     runBootstrap();
     for (let i = 0; i < EARLY_ERROR_CAP + 15; i += 1) fireError(`boom ${i}`);
     expect(store()?.buf).toHaveLength(EARLY_ERROR_CAP);
+  });
+
+  it("★멱등 — 두 번 실행돼도 store 가 갈리지 않는다(갈리면 **조용한 손실**)", () => {
+    // 독립 리뷰 실측: 가드가 없으면 두 번째 실행이 store 를 갈아 치우고, 첫 store 의 리스너가
+    // 담은 것을 drain 이 **못 본다** — 이중 전송이 아니라 **손실**이다.
+    runBootstrap();
+    const first = store();
+    fireError("before-second-run");
+    runBootstrap();
+    expect(store(), "두 번째 실행이 store 를 갈아 치웠다").toBe(first);
+    expect(store()?.buf.map((e) => e.m)).toEqual(["before-second-run"]);
+  });
+
+  it("★메시지에도 상한이 있다 — 건수만 잠그면 **한 건이** 메모리를 먹는다", () => {
+    runBootstrap();
+    fireError("x".repeat(500_000));
+    const m = store()?.buf[0].m ?? "";
+    expect(m.length, "메시지가 안 잘렸다 — 20건 × 500KB 는 10MB 다").toBe(EARLY_MESSAGE_CAP);
+  });
+
+  it("★리스너 **본문**도 격리돼 있다 — 바깥 try 는 등록만 감싼다", () => {
+    // 리스너 안에서 예외가 나면(예: 전역 부재) 그 오류가 페이지로 새어 나가면 안 된다.
+    runBootstrap();
+    const orig = performance.now;
+    performance.now = () => { throw new Error("no clock"); };
+    expect(() => fireError("boom")).not.toThrow();
+    performance.now = orig;
   });
 
   it("unhandledrejection 도 담는다", () => {
@@ -147,16 +175,25 @@ describe("이벤트 타입 — 형제와 **같은 이름**을 쓴다(군집이 �
     mod.flush();
 
     globalThis.fetch = origFetch;
-    const types = bodies.flatMap((t) => {
-      try {
-        const j = JSON.parse(t) as { events?: { event_type?: string }[] };
-        return (j.events ?? []).map((e) => e.event_type ?? "");
-      } catch { return []; }
+    /**
+     * ★**집합 소속이 아니라 대응을 건다**(독립 리뷰 MAJOR-1 실측): `arrayContaining` 만 쓰면
+     *   매핑을 **뒤집어도** 통과한다 — 뒤집힌 상태에서 초기 JS 오류는 `promise_rejection` 으로
+     *   적재되고, analyzer 의 `_analyze_error_cluster` 는 `js_error/api_error` 만 조회하므로
+     *   **이 PR 이 고치려는 증상(js_error 0건)이 그대로 재발**한다.
+     */
+    const evs = bodies.flatMap((t) => {
+      try { return (JSON.parse(t) as { events?: Ev[] }).events ?? []; } catch { return []; }
     });
-    expect(types.length, "전제 — 아무것도 안 나갔으면 아래 단언이 공허하다").toBeGreaterThan(0);
-    expect(types, "두 이름이 다 나와야 한다 — 한쪽만 나오면 군집이 갈린다").toEqual(
-      expect.arrayContaining(["js_error", "promise_rejection"]),
-    );
+    expect(evs.length, "전제 — 아무것도 안 나갔으면 아래 단언이 공허하다").toBeGreaterThan(0);
+    const byMsg = (m: string) => evs.find((e) => e.payload?.message === m)?.event_type;
+    expect(byMsg("boom"), "error 는 js_error 로 가야 한다").toBe("js_error");
+    expect(byMsg("rejected!"), "rejection 은 promise_rejection 으로 가야 한다").toBe("promise_rejection");
+
+    // ★`payload.early` 는 **라이브 확증 절차가 근거로 삼는 필드**다(계획서 §3) — 잠그지 않으면
+    //   그 절차가 영원히 아무것도 못 찾는다. `tMs` 는 "얼마나 앞섰나" 를 남긴다.
+    const one = evs.find((x) => x.payload?.message === "boom");
+    expect(one?.payload?.early, "early 플래그가 빠지면 조기 포착분을 구별할 수 없다").toBe(true);
+    expect(typeof one?.payload?.tMs, "tMs 가 없으면 얼마나 앞섰는지 못 남긴다").toBe("number");
   });
 });
 
@@ -199,5 +236,24 @@ describe("배선(소스) — 루트 layout 이 그 스크립트를 **실제로 �
     // ★양성 대조군을 **먼저** — theme 부트스트랩이 안 잡히면 이 수집기가 죽은 것이다.
     expect(injected, "수집기가 죽었다 — theme 부트스트랩조차 못 찾는다").toContain("script:themeBootstrap");
     expect(injected, "조기 오류 캡처가 layout 에서 렌더되지 않는다").toContain("script:earlyErrorBootstrap");
+
+    /**
+     * ★**이름만 보면 대리 변수다**(독립 리뷰 MAJOR-2 실측): layout 에서
+     * `const earlyErrorBootstrap = "";` 로 바꿔도 위 단언은 통과하고 프로덕션 `<head>` 에는
+     * **빈 `<script>`** 가 나간다. 런타임 락 8개는 자기가 import 한 상수를 태우므로 여전히 초록이다.
+     * → 그 식별자가 **어느 모듈에서 import 되는지**까지 되짚는다.
+     */
+    const importedFrom = new Map<string, string>();
+    for (const st of sf.statements) {
+      if (!ts.isImportDeclaration(st) || !st.importClause?.namedBindings) continue;
+      const nb = st.importClause.namedBindings;
+      if (!ts.isNamedImports(nb)) continue;
+      const from = (st.moduleSpecifier as TS.StringLiteral).text;
+      for (const el of nb.elements) importedFrom.set(el.name.text, `${(el.propertyName ?? el.name).text}@${from}`);
+    }
+    expect(
+      importedFrom.get("earlyErrorBootstrap"),
+      "layout 이 넣는 것이 **그 모듈의 상수가 아니다** — 로컬 선언이면 빈 스크립트가 나갈 수 있다",
+    ).toBe("earlyErrorBootstrap@@/lib/growth/early-error-bootstrap");
   });
 });
