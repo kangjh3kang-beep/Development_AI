@@ -786,3 +786,217 @@ async def test_different_payment_key_on_paid_order_is_conflict(_capture) -> None
     assert e.value.http_status == 409
     assert e.value.code == _tos.CODE_PAYMENT_KEY_CONFLICT
     assert not sent
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ★환불 정책: **미사용분만** (소유자 확정 2026-08-27)
+#
+# 법적 근거: 충전과 소비는 별개 거래이고, 전자상거래법 §17②5(*"디지털콘텐츠의 제공이
+# 개시된 경우"*)는 **소비한 부분에만** 걸린다 → 미사용 잔액은 청약철회 대상이다.
+#
+# ★종전 구현은 「잔액이 모자라면 **전부 거절**」이었다 — **다른 규칙**이다.
+#   그래서 이 절의 핵심은 **세 모집단이 서로 다른 결과를 내는지**다:
+#     ① 전혀 안 씀   → 전액 환불
+#     ② 일부 씀      → **미사용분만** 부분 환불 + 못 돌려주는 이유를 응답에 싣는다
+#     ③ 전부 씀      → 거절(사유 포함)
+#   ①만 잠그면 "언제나 전액 환불" 구현이 통과하고, ③만 잠그면 옛 구현이 통과한다.
+# ═══════════════════════════════════════════════════════════════════════════
+class _RefundSession:
+    """환불 경로가 실제로 만지는 SQL 에만 응답한다."""
+
+    def __init__(self, order_row, topup_balance: float):
+        self.order_row = order_row
+        self.topup = topup_balance
+        self.clawed: list[float] = []
+
+    async def execute(self, stmt, params=None):
+        s = str(getattr(stmt, "text", stmt))
+        p = params or {}
+        if "FROM coin_orders WHERE order_no" in s:
+            return _Res(self.order_row)
+        if "COALESCE(topup_krw, 0) FROM public.users" in s:
+            return _ScalarRes(self.topup)
+        if "UPDATE public.users" in s and "topup_krw" in s and "RETURNING" in s:
+            # ★조건부 UPDATE 를 재현한다 — 잔액이 모자라면 **성립하지 않는다**.
+            amt = float(p.get("a", 0))
+            if self.topup >= amt:
+                self.topup -= amt
+                self.clawed.append(amt)
+                return _RowRes(("u",))
+            return _RowRes(None)
+        return _Res()
+
+    async def commit(self):
+        pass
+
+    async def rollback(self):
+        pass
+
+
+class _ScalarRes:
+    def __init__(self, v):
+        self._v = v
+
+    def scalar(self):
+        return self._v
+
+    def mappings(self):
+        return _Mapped(None)
+
+    def first(self):
+        return None
+
+
+class _RowRes:
+    def __init__(self, row):
+        self._row = row
+
+    def first(self):
+        return self._row
+
+    def mappings(self):
+        return _Mapped(None)
+
+    def scalar(self):
+        return None
+
+
+def _paid_order(**over):
+    o = _order(status="paid", provider="toss", provider_ref="pk_x")
+    o["refunded_krw"] = 0.0
+    o.update(over)
+    return o
+
+
+@pytest.fixture
+def _refund_env(monkeypatch: pytest.MonkeyPatch):
+    """벤더 취소를 가로채고, 영수증·원장은 메모리로."""
+    sent: dict = {}
+
+    async def fake_cancel(**kw):
+        sent.update(kw)
+        return {"status": "CANCELED"}
+
+    async def fake_record(**kw):
+        return "r"
+
+    async def fake_append(**kw):
+        return {"persisted": True}
+
+    async def fake_fetch(**kw):
+        # 부분 취소 가능(대부분의 카드 결제)
+        return {"status": "DONE", "isPartialCancelable": True}
+
+    monkeypatch.setattr(_tos.toss_payments, "is_configured", lambda: True)
+    monkeypatch.setattr(_tos.toss_payments, "cancel", fake_cancel)
+    monkeypatch.setattr(_tos.payment_receipts, "record", fake_record)
+    monkeypatch.setattr(_tos.coin_ledger_service, "append_event", fake_append)
+    monkeypatch.setattr(_tos.coin_orders_service, "ensure_schema", lambda db: _noop())
+    monkeypatch.setattr(_tos, "_fetch_payment", fake_fetch)
+    return sent
+
+
+@pytest.mark.asyncio
+async def test_refund_full_when_nothing_consumed(_refund_env) -> None:
+    """① 전혀 안 썼으면 **전액** 환불되고, 벤더에는 전액취소(`cancelAmount` 생략)로 간다."""
+    sent = _refund_env
+    db = _RefundSession(_paid_order(), topup_balance=10_000)
+    r = await _tos.refund_toss_payment(
+        db, order_no="CO20260827-DEADBEEF", reason="단순변심",
+        amount=None, actor_id="user-A", is_admin=False,
+    )
+    assert r["refunded_krw"] == 10_000
+    assert r["partial"] is False
+    assert r["unrefundable_consumed_krw"] == 0
+    assert sent["cancel_amount"] is None, "★전액인데 부분취소로 보냈다"
+
+
+@pytest.mark.asyncio
+async def test_refund_only_unused_when_partially_consumed(_refund_env) -> None:
+    """★② 일부 썼으면 **미사용분만** 환불하고, 못 돌려주는 금액을 응답에 **싣는다**.
+
+    되살리는 변이: `refundable = min(order_remaining, balance)` 를 `order_remaining` 으로
+    되돌리면 **이미 쓴 코인까지 환불**해 잔액이 음수가 되거나 조건부 UPDATE 가 실패한다.
+    """
+    sent = _refund_env
+    # 10,000 결제 · 7,000 소진 → 미사용 3,000
+    db = _RefundSession(_paid_order(), topup_balance=3_000)
+    r = await _tos.refund_toss_payment(
+        db, order_no="CO20260827-DEADBEEF", reason="단순변심",
+        amount=None, actor_id="user-A", is_admin=False,
+    )
+    assert r["refunded_krw"] == 3_000, "★미사용분(3,000)만 환불해야 한다"
+    assert r["partial"] is True
+    # ★못 돌려주는 이유를 응답이 말한다 — 조용히 적게 주면 사용자가 모른다.
+    assert r["unrefundable_consumed_krw"] == 7_000
+    assert r["order_remaining_before_krw"] == 10_000
+    assert sent["cancel_amount"] == 3_000, "★벤더에 부분취소 금액이 안 갔다"
+    assert db.topup == 0, "★환수 후 충전잔액이 0 이어야 한다"
+
+
+@pytest.mark.asyncio
+async def test_refund_rejected_when_fully_consumed(_refund_env) -> None:
+    """★③ 전부 썼으면 **거절** — 그리고 사유가 있다(없는 것을 돌려줄 수는 없다)."""
+    sent = _refund_env
+    db = _RefundSession(_paid_order(), topup_balance=0)
+    with pytest.raises(_tos.PaymentRejectedError) as e:
+        await _tos.refund_toss_payment(
+            db, order_no="CO20260827-DEADBEEF", reason="단순변심",
+            amount=None, actor_id="user-A", is_admin=False,
+        )
+    assert e.value.code == _tos.CODE_INSUFFICIENT_BALANCE
+    assert "미사용분만" in e.value.message
+    assert e.value.remediation.strip()
+    assert not sent, "★환불 불가인데 벤더를 불렀다"
+
+
+@pytest.mark.asyncio
+async def test_explicit_amount_over_unused_is_rejected_not_silently_reduced(_refund_env) -> None:
+    """★명시 금액이 미사용분을 넘으면 **조용히 줄이지 않는다** — 그러면 사용자가 모른다."""
+    sent = _refund_env
+    db = _RefundSession(_paid_order(), topup_balance=3_000)
+    with pytest.raises(_tos.PaymentRejectedError) as e:
+        await _tos.refund_toss_payment(
+            db, order_no="CO20260827-DEADBEEF", reason="x",
+            amount=10_000, actor_id="user-A", is_admin=False,
+        )
+    assert e.value.code == _tos.CODE_INSUFFICIENT_BALANCE
+    assert "3,000" in e.value.message, f"★환불 가능액을 안 알려 준다: {e.value.message}"
+    assert not sent
+
+
+@pytest.mark.asyncio
+async def test_partial_refund_blocked_when_vendor_forbids(_refund_env, monkeypatch) -> None:
+    """★부분 취소가 **벤더에서 불가**하면 코인을 건드리기 **전에** 막는다.
+
+    (그러지 않으면 환수해 놓고 벤더가 거절해 되돌리는 왕복이 생긴다)
+    """
+    sent = _refund_env
+
+    async def no_partial(**kw):
+        return {"status": "DONE", "isPartialCancelable": False}
+
+    monkeypatch.setattr(_tos, "_fetch_payment", no_partial)
+    db = _RefundSession(_paid_order(), topup_balance=3_000)
+    with pytest.raises(_tos.PaymentRejectedError) as e:
+        await _tos.refund_toss_payment(
+            db, order_no="CO20260827-DEADBEEF", reason="x",
+            amount=None, actor_id="user-A", is_admin=False,
+        )
+    assert e.value.code == "NOT_ALLOWED_PARTIAL_REFUND"
+    assert not db.clawed, "★벤더가 못 한다는데 코인을 먼저 뺏었다"
+    assert not sent
+
+
+@pytest.mark.asyncio
+async def test_refund_blocks_other_users_order(_refund_env) -> None:
+    """★IDOR — 남의 주문은 환불할 수 없다(관리자는 예외)."""
+    sent = _refund_env
+    db = _RefundSession(_paid_order(), topup_balance=10_000)
+    with pytest.raises(_tos.PaymentRejectedError) as e:
+        await _tos.refund_toss_payment(
+            db, order_no="CO20260827-DEADBEEF", reason="x",
+            amount=None, actor_id="user-B", is_admin=False,
+        )
+    assert e.value.http_status == 404
+    assert not sent

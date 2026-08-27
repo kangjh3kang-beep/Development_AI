@@ -633,8 +633,9 @@ _LOCAL_REMEDIATION.update(
             "결제 완료된 주문만 환불할 수 있습니다. 충전 내역에서 상태를 확인해 주세요.",
         ),
         CODE_INSUFFICIENT_BALANCE: (
-            "코인을 이미 사용하셔서 요청하신 금액을 환불할 수 없습니다.",
-            "현재 남은 코인 범위 내에서 환불할 수 있습니다. 자세한 안내는 고객센터로 문의해 주세요.",
+            "이미 사용하신 코인은 환불되지 않습니다(미사용분만 환불).",
+            "남아 있는 미사용 코인만큼만 환불할 수 있습니다. 금액을 비워 두고 요청하시면"
+            " 미사용분 전액이 환불됩니다. 그 외는 고객센터로 문의해 주세요.",
         ),
         CODE_REFUND_AMOUNT_INVALID: (
             "환불 금액이 올바르지 않습니다.",
@@ -721,28 +722,76 @@ async def refund_toss_payment(
 
     paid = int(round(float(row["amount_krw"])))
     already = int(round(float(row["refunded_krw"])))
-    remaining = paid - already
-    want = remaining if amount is None else int(amount)
+    order_remaining = paid - already
 
-    if want <= 0 or want > remaining:
-        msg, fix = _LOCAL_REMEDIATION[CODE_REFUND_AMOUNT_INVALID]
-        raise PaymentRejectedError(
-            CODE_REFUND_AMOUNT_INVALID,
-            f"{msg}(요청 {want:,}원 · 환불 가능 {remaining:,}원)",
-            remediation=fix,
-        )
+    # ── ★환불 정책: **미사용분만** (소유자 확정 2026-08-27) ───────────────────
+    #
+    # 법적 근거(법령 렌즈 조사): 충전(코인 구매)과 소비(AI 분석 실행)는 **별개 거래**다.
+    # 전자상거래법 §17②5(*"용역 또는 디지털콘텐츠의 제공이 개시된 경우"*)는 **소비한
+    # 부분에만** 걸린다. 미사용 잔액은 제공이 개시되지 않았으므로 청약철회 대상이고,
+    # 그래서 **부분 취소**가 법적으로도 정확한 구조이며 토스 `cancelAmount` 와 그대로 맞는다.
+    #
+    # ★종전 구현은 「잔액이 모자라면 **전부 거절**」이었다 — 그건 다른 규칙이다.
+    #   미사용분이 3,000원 남았는데 10,000원 주문을 환불하려 하면 옛 코드는 0원을 돌려줬다.
+    #   지금은 **3,000원을 돌려주고, 7,000원은 왜 못 돌려주는지 말한다.**
+    #
+    # ★한계(정직): `coin_ledger_events` 에 **주문→소비 귀속(lot)이 없다.** 그래서
+    #   "이 주문에서 온 코인이 얼마나 남았나"를 정확히는 모른다. 계정 전체 충전잔액을
+    #   상한으로 쓰는 **보수적 근사**다 — 실제 미사용분보다 **적게** 환불될 수는 있어도
+    #   **더 많이** 환불되지는 않는다(음수 잔액이 구조적으로 불가능하다).
+    balance = int(await _available_balance(db, owner_id))
+    refundable = max(0, min(order_remaining, balance))
 
-    # ★코인을 이미 썼으면 환불할 수 없다 — 없는 것을 돌려줄 수는 없다.
-    #   ※ 이 정책은 **소유자 판단 사항**이다(계획서 §6-1). 현재는 「잔액 내에서만」이다.
-    balance = await _available_balance(db, owner_id)
-    if balance < want:
+    if refundable <= 0:
         msg, fix = _LOCAL_REMEDIATION[CODE_INSUFFICIENT_BALANCE]
         raise PaymentRejectedError(
             CODE_INSUFFICIENT_BALANCE,
-            f"{msg}(남은 코인 {int(balance):,}원 · 요청 {want:,}원)",
+            f"{msg}(이 주문의 미환불 잔액 {order_remaining:,}원 · 계정 충전잔액 {balance:,}원)",
             remediation=fix,
             http_status=409,
         )
+
+    if amount is None:
+        # 금액을 안 주면 **미사용분 전액**. 이미 쓴 만큼은 못 돌려준다.
+        want = refundable
+    else:
+        want = int(amount)
+        if want <= 0 or want > order_remaining:
+            msg, fix = _LOCAL_REMEDIATION[CODE_REFUND_AMOUNT_INVALID]
+            raise PaymentRejectedError(
+                CODE_REFUND_AMOUNT_INVALID,
+                f"{msg}(요청 {want:,}원 · 이 주문의 미환불 잔액 {order_remaining:,}원)",
+                remediation=fix,
+            )
+        if want > refundable:
+            # ★명시 금액이 미사용분을 넘으면 **조용히 줄이지 않는다** — 사용자가 모른다.
+            msg, fix = _LOCAL_REMEDIATION[CODE_INSUFFICIENT_BALANCE]
+            raise PaymentRejectedError(
+                CODE_INSUFFICIENT_BALANCE,
+                f"{msg}(요청 {want:,}원 · 환불 가능한 미사용분 {refundable:,}원)",
+                remediation=(
+                    f"{refundable:,}원까지 환불할 수 있습니다. 금액을 비워 두고 다시 요청하시면"
+                    " 미사용분 전액이 환불됩니다."
+                ),
+                http_status=409,
+            )
+
+    # ★부분 취소가 **벤더에서 가능한지** 먼저 묻는다(무과금 GET).
+    #   가능하지 않은데 부분 취소를 보내면 토스가 거절하고, 그 사이 우리는 이미 코인을
+    #   환수한 상태가 된다. 되돌릴 수는 있지만 **묻는 편이 싸다**.
+    partial = want < order_remaining or already > 0
+    if partial:
+        probe = await _fetch_payment(payment_key=payment_key, order_id=order_id)
+        if probe is not None and probe.get("isPartialCancelable") is False:
+            raise PaymentRejectedError(
+                "NOT_ALLOWED_PARTIAL_REFUND",
+                "이 결제수단은 부분 환불이 되지 않습니다(전액 취소만 가능).",
+                remediation=(
+                    "이미 사용하신 코인이 있어 전액 취소는 자동으로 처리할 수 없습니다."
+                    " 고객센터로 문의해 주시면 확인 후 처리해 드리겠습니다."
+                ),
+                http_status=409,
+            )
 
     # 1) 먼저 코인 환수(되돌릴 수 있는 쪽).
     #    ★조건부 UPDATE — 잔액이 그 사이 줄었으면 성립하지 않는다(TOCTOU 방어).
@@ -792,7 +841,9 @@ async def refund_toss_payment(
         cancel_result = await toss_payments.cancel(
             payment_key=payment_key,
             cancel_reason=reason[:200],
-            cancel_amount=None if want == remaining and already == 0 else want,
+            # ★전액 취소는 **처음이자 전부**일 때만(`cancelAmount` 생략 = 전액).
+            #   미사용분만 환불하는 경우는 언제나 부분 취소다.
+            cancel_amount=None if (want == order_remaining and already == 0) else want,
             idempotency_key=f"propai-cancel-{order_no}-{new_refunded}"[:200],
             refund_receive_account=refund_receive_account,
         )
@@ -825,12 +876,20 @@ async def refund_toss_payment(
         payment_key=payment_key, amount_krw=float(want),
         toss_code=str(cancel_result.get("status") or ""), raw=cancel_result,
     )
+    # ★요청과 실제가 다르면 **그 사실과 이유를 응답에 싣는다.** 조용히 적게 돌려주면
+    #   사용자는 나머지가 어디 갔는지 모른다(진단 불가는 그 자체로 장애다).
+    consumed = max(0, order_remaining - refundable)
     return {
         "order_no": order_no,
         "refunded_krw": want,
         "refunded_total_krw": new_refunded,
         "remaining_krw": paid - new_refunded,
         "status": STATUS_REFUNDED if new_refunded >= paid else "paid",
+        # 아래 셋이 「미사용분만」 정책을 화면에 설명하게 한다.
+        "order_remaining_before_krw": order_remaining,
+        "unrefundable_consumed_krw": consumed,
+        "partial": want < order_remaining,
+        "policy": "unused_only",
     }
 
 
