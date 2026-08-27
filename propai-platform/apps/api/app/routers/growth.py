@@ -964,3 +964,27 @@ async def promote_learning_example(
         example_id=str(row[0]), status=str(row[1]),
         rights_acknowledged=rights_acknowledged,
     )
+
+
+@router.get("/effectors")
+async def effector_firing(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """효과기가 **실제로 발화했는가** — 선언(`effector_reach`) × 실측(`platform_events`).
+
+    ## 왜 이 라우트가 필요한가
+
+    `effector_reach` 표는 *"이 효과기가 동작하면 어디까지 닿는가"* 를 적는다.
+    그런데 **"동작한 적이 있는가"** 는 어디에도 없었다. 그래서 표만 읽으면
+    `threshold_relax` 를 보고 *"제품에 닿는 효과기가 살아 있다"* 고 읽는데,
+    실제로는 며칠째 조용할 수 있고 **그것을 알 방법이 없었다**(라이브 실측 66시간).
+
+    ★**진단하지 판정하지 않는다.** `reach=NONE` 인 효과기가 영원히 발화하지 않는 것이
+    정상일 수 있다. 사실(`total`·`last_fired_at`·`hours_since`)과 라벨(`state`)을 함께
+    주고, 라벨에 동의하지 않을 수 있게 **원값을 항상 싣는다**.
+    """
+    from app.services.growth import effector_firing as _ef
+
+    await _require_admin(request, db)
+    return await _ef.firing_status(db)
