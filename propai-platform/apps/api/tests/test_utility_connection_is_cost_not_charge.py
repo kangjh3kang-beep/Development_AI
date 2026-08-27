@@ -1,0 +1,248 @@
+"""인입·부대 비용은 **부담금이 아니라 공사비**다 — 분류와 총액을 함께 잠근다.
+
+## 왜 (2026-08-27 · 법제처 원문 + 저장소 적산 실적)
+
+종전 `utility_stage_engine` 의 **B05~B08 「부담금」** 은 법정 부담금이 아니었다:
+
+    전기사업법        '시설부담금' 0회   (대조군 '전기' 755회)  — §51 부담금은 전력산업기반부담금(사용자 부과)
+    도시가스사업법     '분담금' 4회      — 설치비용 분담금은 실재하나 산정기준은 위임(공급규정)
+    소방시설법        '부담금' 0·'분담금' 0 (대조군 '소방' 887회·본문 130KB)
+
+★저장소가 절반은 알고 있었다 — `budget_template._CHARGES` 의 note 가
+*"한전 **시설분담금**(코드 B05)"*·*"도시가스 **공급규정**(코드 B06)"* 이라 적는다.
+**라벨만 「부담금」이었다.**
+
+## ★소방(구 B08)만 처방이 다르다 — 이관이 아니라 **제거**
+
+저장소 **적산 실적**(`data/boq_master/electrical.json` · 실적 공내역서 1건 · GFA 238,504㎡ ·
+**재료비만**)으로 재니:
+
+    전기공사 58,176 원/㎡ · 통신공사 20,017 원/㎡ · **소방공사 27,223 원/㎡**
+
+코드값 `3,500원/㎡` 의 **7.8배**(재료비만). 즉 그 값은 소방공사비가 **될 수 없고**,
+실제 소방공사는 **직접공사비 도급단가에 이미 포함**돼 있다(전기+통신+소방 재료비만
+105,416원/㎡ = 도급단가 2,400,000원/㎡ 의 4.4%. 도급 밖이라면 그 단가가 성립하지 않는다).
+
+★**인입은 반대다** — 적산 내역서에 `'인입'` **0회**(electrical)·**1회**(mechanical)이고
+대조군은 풍부하다(`'간선'` 270 · `'스프링클러'` 92 · `'가스'` 272). 한전·도시가스사에
+**내는 돈**은 도급 내역서에 나타나지 않는다 → **도급 밖이므로 별도 계상이 정당**하다.
+
+★**한계**: 적산 실적 **n=1**(주상복합) · **재료비만** · 도급단가가 소방을 포함한다고
+**저장소가 명시한 문서는 없다**(강한 방증이지 직접 확인은 아니다).
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from app.services.cost.utility_connection_cost import (
+    UTILITY_CONNECTION_ITEMS,
+    calculate_utility_connection_cost,
+)
+from app.services.feasibility.construction_cost_engine import (
+    calculate_total_construction_cost,
+)
+from app.services.tax.utility_stage_engine import calculate_all_utility_stage
+
+GFA = 6_572.0
+HH = 64
+#: 종전 B05~B07(인입) 금액 — 이관은 **금액을 바꾸지 않는다**.
+_LEGACY_CONNECTION_WON = 250_000 * HH + 180_000 * HH + 80_000 * HH   # 32,640,000
+#: 종전 B08(소방) 금액 — **제거**되는 것(이중계상).
+_LEGACY_FIRE_WON = 3_500 * int(GFA)                                   # 23,002,000
+
+
+class TestChargeEngineHoldsOnlyStatutoryCharges:
+    def test_only_four_statutory_codes_remain(self):
+        codes = [i["code"] for i in calculate_all_utility_stage(
+            sido_name="서울", sigungu_name="강남구",
+            total_households=HH, total_gfa_sqm=GFA, total_sale_amount_won=10**11,
+        )["items"]]
+        assert codes == ["B01", "B02", "B03", "B04"]
+
+    def test_cost_natured_codes_do_not_return(self):
+        """★반대 방향 — 공사비 성격 코드가 부담금 엔진에 되돌아오면 실패."""
+        codes = {i["code"] for i in calculate_all_utility_stage(
+            sido_name="서울", sigungu_name="강남구",
+            total_households=HH, total_gfa_sqm=GFA,
+        )["items"]}
+        assert not ({"B05", "B06", "B07", "B08"} & codes)
+
+    def test_every_remaining_charge_has_a_legal_ref(self):
+        """남은 넷은 **전부** 법령 근거를 갖는다 — 그것이 「부담금」의 정의다."""
+        items = calculate_all_utility_stage(
+            sido_name="서울", sigungu_name="강남구",
+            total_households=HH, total_gfa_sqm=GFA, total_sale_amount_won=10**11,
+        )["items"]
+        assert items, "★모집단이 비었다 — 아래 단언이 공허해진다"
+        missing = [i["code"] for i in items if not i.get("legal_ref")]
+        assert not missing, f"법령 근거 없는 부담금: {missing}"
+
+
+class TestConnectionCostMovedWithoutChangingTheAmount:
+    def test_connection_total_equals_legacy_b05_b06_b07(self):
+        """★이관은 **금액을 바꾸지 않는다** — 바뀌는 것은 무엇이라 부르는가다."""
+        got = calculate_utility_connection_cost(
+            total_households=HH, total_gfa_sqm=GFA,
+        )["total_won"]
+        assert got == _LEGACY_CONNECTION_WON == 32_640_000
+
+    def test_construction_total_grows_by_exactly_the_connection_cost(self):
+        """★공사비 총액이 **정확히 인입비만큼** 는다(다른 것이 딸려 오지 않는다)."""
+        with_hh = calculate_total_construction_cost(
+            total_gfa_sqm=GFA, building_type="apartment", total_households=HH,
+        )["total_construction_cost_won"]
+        without = calculate_total_construction_cost(
+            total_gfa_sqm=GFA, building_type="apartment", total_households=0,
+        )["total_construction_cost_won"]
+        assert with_hh - without == _LEGACY_CONNECTION_WON
+
+    def test_households_zero_means_no_connection_cost(self):
+        """★반대 모집단 — 세대수가 없으면 인입비도 없다(무조건 더하는 구현 탐지)."""
+        assert calculate_utility_connection_cost(
+            total_households=0, total_gfa_sqm=GFA,
+        )["total_won"] == 0
+
+
+class TestFireIsRemovedNotMoved:
+    def test_fire_is_not_in_connection_cost(self):
+        """★소방은 **이관 대상이 아니다** — 도급단가에 이미 포함(적산 실측 7.8배 격차)."""
+        names = " ".join(i["name"] for i in UTILITY_CONNECTION_ITEMS)
+        assert "소방" not in names, "소방을 인입비로 옮기면 이중계상이 그대로 남는다"
+
+    def test_total_drop_equals_exactly_the_fire_amount(self):
+        """★**총사업비 순변화 = 소방 제거분** — 그 외에는 아무것도 움직이지 않는다.
+
+        ★**첫 판의 이 테스트는 공허했다**(독립 리뷰 실증). 손으로 쓴 상수끼리 비교해
+          `calculate_utility_connection_cost` 만 태웠고 **부담금 엔진도 공사비 엔진도 안 태웠다** —
+          부담금에 B08 소방을 **되살리는 변이가 SURVIVED** 했다. 그래서 이 락이 있었는데도
+          「호출부 하나 누락」(총사업비 -55,642,000)이 통과했다.
+          → **두 엔진을 실제로 태워** 순변화를 계산한다.
+        """
+        charges_won = calculate_all_utility_stage(
+            sido_name="서울", sigungu_name="강남구",
+            total_households=HH, total_gfa_sqm=GFA, total_sale_amount_won=10**11,
+        )["total_won"]
+        constr_won = calculate_total_construction_cost(
+            total_gfa_sqm=GFA, building_type="apartment", total_households=HH,
+        )["total_construction_cost_won"]
+        # 종전(HEAD~1) 상태를 같은 엔진으로 재현: 부담금에 B05~B08 이 있었고 공사비엔 인입이 없었다.
+        legacy_charges = charges_won + _LEGACY_CONNECTION_WON + _LEGACY_FIRE_WON
+        legacy_constr = constr_won - _LEGACY_CONNECTION_WON
+        now_total = charges_won + constr_won
+        legacy_total = legacy_charges + legacy_constr
+        assert legacy_total - now_total == _LEGACY_FIRE_WON == 23_002_000, (
+            f"총사업비 순변화가 소방 금액이 아니다: {legacy_total - now_total:,}"
+        )
+
+    def test_charge_engine_no_longer_contains_the_moved_amounts(self):
+        """★위 계산이 성립하려면 **부담금 엔진에 그 금액이 실제로 없어야** 한다.
+
+        상수 산술만으로는 「엔진에 되살아난 것」을 못 잡는다(그 변이가 실제로 생존했다).
+        """
+        items = calculate_all_utility_stage(
+            sido_name="서울", sigungu_name="강남구",
+            total_households=HH, total_gfa_sqm=GFA, total_sale_amount_won=10**11,
+        )["items"]
+        codes = {i["code"] for i in items}
+        assert not ({"B05", "B06", "B07", "B08"} & codes)
+        # ★금액으로도 확인 — 코드명을 바꿔 되살리는 변이를 잡는다.
+        for i in items:
+            assert i["amount_won"] != _LEGACY_FIRE_WON, f"소방 금액이 {i['code']} 로 되살아났다"
+
+
+class TestEstimatesDeclareThemselves:
+    """★공사비 **개산은 정당**하지만, 개산이라고 **말해야** 한다."""
+
+    @pytest.mark.parametrize("item", UTILITY_CONNECTION_ITEMS, ids=lambda i: i["code"])
+    def test_each_item_carries_basis_and_legal_note(self, item):
+        assert item["basis"].strip() and "출처 미확보" in item["basis"], (
+            "단가 출처가 없다는 사실을 값 옆에 적어야 한다"
+        )
+        assert item["legal_note"].strip()
+
+    def test_rendered_items_are_labelled_estimate(self):
+        """★`confidence="estimate"` — 「고시값」과 구별되게."""
+        for i in calculate_utility_connection_cost(
+            total_households=HH, total_gfa_sqm=GFA,
+        )["items"]:
+            assert i["confidence"] == "estimate"
+            assert i["qty_unit"] in {"세대", "㎡"}
+
+
+class TestEveryCallSiteCarriesHouseholds:
+    """★**호출부를 「내가 기억하는 것」이 아니라 파생형으로 센다**(독립 리뷰 CRITICAL).
+
+    첫 판에서 나는 `calculate_total_construction_cost` 호출부 **3곳 중 2곳만** 고쳤다.
+    남은 `modules/common/cost_blocks.py` 는 `total_households` 를 안 넘겨 **인입비가 조용히 0**
+    이 됐고, 같은 커밋이 부담금에서는 그 금액을 빼면서 공사비에는 안 더해
+    **15개 개발유형에서 총사업비 −55,642,000** 이 새어 나갔다(리뷰 실측).
+
+    ★그 자리는 **무잠금**이었다 — 고쳐도 105건이 전부 초록이었다.
+      그래서 여기서 **호출부를 AST 로 전수**한다. 새 호출부가 생기면 이 테스트가 먼저 빨개진다.
+    """
+
+    @staticmethod
+    def _call_sites():
+        import ast
+        import pathlib
+
+        out = []
+        root = pathlib.Path(__file__).resolve().parents[1] / "app"
+        for p in root.rglob("*.py"):
+            try:
+                tree = ast.parse(p.read_text(encoding="utf-8"))
+            except SyntaxError:
+                continue
+            for n in ast.walk(tree):
+                if not isinstance(n, ast.Call):
+                    continue
+                nm = getattr(n.func, "attr", None) or getattr(n.func, "id", None)
+                if nm == "calculate_total_construction_cost":
+                    out.append((str(p.relative_to(root)), n.lineno,
+                                {k.arg for k in n.keywords}))
+        return out
+
+    def test_the_scanner_finds_call_sites(self):
+        """★대조군 — 하나도 못 찾으면 아래 「전부 통과」가 공허하다."""
+        sites = self._call_sites()
+        assert len(sites) >= 3, f"★조회기 사망 — 호출부 {len(sites)}건"
+
+    def test_every_call_site_passes_total_households(self):
+        missing = [f"{f}:{ln}" for f, ln, kws in self._call_sites()
+                   if "total_households" not in kws]
+        assert not missing, (
+            f"★인입비가 조용히 0이 되는 호출부: {missing} — "
+            "총사업비가 새어 나간다(부담금에서는 빠지는데 공사비에 안 들어온다)"
+        )
+
+
+class TestLedgerReconciles:
+    """★행 합계 = 엔진 총액. 인입 행을 안 그리면 **사용자 화면에 검산 ERROR** 가 뜬다."""
+
+    def test_breakdown_projects_connection_rows(self):
+        from app.services.feasibility.rough_feasibility_orchestrator import (
+            construction_breakdown,
+        )
+
+        cc = calculate_total_construction_cost(
+            total_gfa_sqm=GFA, building_type="apartment", total_households=HH,
+        )
+        bd = construction_breakdown(cc)
+        conn = bd.get("utility_connection") or {}
+        assert conn.get("items"), "★투사가 빠지면 행이 사라지고 검산이 깨진다"
+        total = bd["direct_won"] + bd["indirect"]["total_won"] + conn["total_won"]
+        assert total == cc["total_construction_cost_won"], "행 합계 ≠ 엔진 총액"
+
+    def test_connection_rows_carry_the_estimate_disclosure(self):
+        """★개산 고지가 **투사 층까지** 살아남는가(로그가 아니라 페이로드로)."""
+        from app.services.feasibility.rough_feasibility_orchestrator import (
+            construction_breakdown,
+        )
+
+        bd = construction_breakdown(calculate_total_construction_cost(
+            total_gfa_sqm=GFA, building_type="apartment", total_households=HH,
+        ))
+        for i in bd["utility_connection"]["items"]:
+            assert i["confidence"] == "estimate"
+            assert "출처 미확보" in (i.get("basis") or "")
