@@ -309,13 +309,26 @@ async def ack_insight(
             status_code=400, detail="status 는 acknowledged 또는 dismissed 여야 합니다."
         )
 
-    # 허용 전이만(open/acknowledged → acknowledged|dismissed). acted/dismissed 등
-    # 이미 처리된 상태는 임의 재전이 금지.
+    # 허용 전이만. `dismissed` 등 이미 **사람이** 판단한 상태는 임의 재전이 금지.
+    #
+    # ★`acted → dismissed` 만 연다(2026-08-27). `acted` 는 **기계**(healing_rules)가 쓰는
+    #   상태다. 기계가 넣을 수 있는 상태에 사람이 못 들어가면 **한쪽만 걸린 경계**가 된다
+    #   (규율 §D-19 — 경계를 걸면 양방향으로).
+    #   ★근거는 이론이 아니라 실측이다: `threshold_relax` 는 base_client 를 통해 **실제
+    #     프로덕션 HTTP 타임아웃을 곱하는** 유일한 PRODUCT 이펙터인데, 무효한 치유를
+    #     걸러 준다던 `heal_escalation` 은 **라이브에 0건**이다(heal 액션 520건이 쌓이는
+    #     동안 단 한 건도 없었다 — 대조군 `fallback_rate open` 21건으로 조회기 생존 확인).
+    #     발화한 적 없는 안전망 위에 "사람은 못 건드려도 된다"를 세울 수 없다.
+    #   ★★열린 것은 **이 한 방향뿐**이다 — `acted → open`(기계 상태 되돌리기)이나
+    #     `dismissed → *` 는 여전히 막힌다. 전면 개방이 아니다.
+    allowed_from = ["open", "acknowledged"]
+    if req.status == "dismissed":
+        allowed_from = ["open", "acknowledged", "acted"]
     row = (await db.execute(text(
         "UPDATE platform_insights SET status = :st "
-        "WHERE id = :id AND status IN ('open','acknowledged') "
+        "WHERE id = :id AND status = ANY(:from_) "
         "RETURNING id, status"
-    ), {"st": req.status, "id": insight_id})).fetchone()
+    ), {"st": req.status, "id": insight_id, "from_": allowed_from})).fetchone()
     if row is None:
         await db.rollback()
         # 행이 없으면: 존재하지 않거나(404) 이미 처리됨(409)을 구분.
