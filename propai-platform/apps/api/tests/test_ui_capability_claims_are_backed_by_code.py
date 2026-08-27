@@ -12,7 +12,16 @@
 | 주장 | 실제 |
 |---|---|
 | **229개 시군구** | 조례 정적 캐시 **26** · 상하수도 단가표 **20** · `regions` 테이블 **부재** |
-| **38종 세금** | 엔진이 실제로 내는 코드 **32종**(A01–A10·B01–B08·C01–C08·D01–D06) |
+| **38종 세금** | 엔진이 실제로 내는 코드 **32종**(A01–A10·B01–B08·C01–C08·D01–D06) — *2026-08-27 시점* |
+
+★**그 32 도 이미 낡았다(2026-08-27 → 08-28)**. `#913` 이 인입 4종(B05 전기·B06 가스·
+B07 통신·B08 소방)을 **부담금에서 공사비로 재분류**하면서 `app/services/tax/` 를 떠나
+파생값이 **28** 이 됐다. 실측(같은 방법·다른 커밋으로 조회기 생존 확인):
+
+    0cb731ac~1 (재분류 전) → 32종      df81fc85 (#913) → 28종      origin/main → 28종
+
+**이 락이 그것을 잡았다** — 문구는 「32종」인 채였고 CI 가 6건을 빨갛게 냈다.
+★그러니 아래 표의 수치를 **현재 값으로 읽지 마라.** 현재 값은 `_derived_counts()` 가 말한다.
 | 15개 개발유형 | **15** ✓ (M01–M15) |
 
 ★`229` 는 `app/models/tax_regional.py` **독스트링**에만 있고 — 그 파일이 정의하는
@@ -38,12 +47,23 @@ import re
 
 import pytest
 
-#: 사용자에게 **역량(capability)을 수치로 주장**하는 i18n 키.
-#: ★새 주장 키가 생기면 여기 등록해야 한다 — 등록을 강제하는 것은 리뷰다(이 락의 한계, 명시).
-CLAIM_KEYS: tuple[str, ...] = (
-    "modulePlaceholders.feasibility.description",
-    "deepIntegration.feasibilityV2.subtitle",
+#: 주장 문자열이 사는 **구조적 축**(손 목록이 아니라 파생형).
+#:
+#: ★2026-08-28 — 종전에는 손으로 적은 `CLAIM_KEYS` 2개였고, 이 파일이 스스로
+#: *"등록을 강제하는 것은 리뷰다"* 라고 한계를 적어 두었다. **그 한계가 실재 결함을 이미
+#: 놓치고 있었다** — `deepIntegration.taxV2.subtitle` 이 3개 언어로 「38종 세금」을
+#: 주장하는데 등록이 안 돼 감시 밖이었다(엔진 파생값은 28). 목록은 곧 상한이 된다.
+#:
+#: 그래서 **축을 선언하고 키는 파생**시킨다. 새 주장 키가 이 축에 생기면 자동으로 감시망에 든다.
+CLAIM_SECTIONS: tuple[tuple[str, str], ...] = (
+    ("deepIntegration", "subtitle"),
+    ("modulePlaceholders", "description"),
 )
+
+#: 차원 표기(`2D`·`3D`·`4D`)는 **개수가 아니다** — 숫자 검사 전에 걷어낸다.
+#: ★이 면제가 죽으면(대상이 사라지면) `test_dimension_exemption_is_live` 가 실패한다.
+#:   죽은 면제를 초록으로 남기지 않기 위해서다.
+_DIMENSION = re.compile(r"\b\d+\s?D\b")
 LOCALES: tuple[str, ...] = ("ko", "en", "zh-CN")
 _WEB = pathlib.Path(__file__).resolve().parents[2] / "web" / "public" / "locales"
 
@@ -58,7 +78,21 @@ def _derived_counts() -> dict[str, int]:
     codes: set[str] = set()
     for f in (api / "app/services/tax").rglob("*.py"):
         codes |= set(re.findall(r'"code":\s*"([A-D]\d\d)"', f.read_text(encoding="utf-8")))
-    return {"development_types": len(dev), "tax_codes": len(codes)}
+    return {
+        "development_types": len(dev),
+        "tax_codes": len(codes),
+        "stage_groups": _stage_groups(codes),
+    }
+
+
+def _stage_groups(codes: set[str]) -> int:
+    """「4단계」 = 코드군 머리글자 수(A 취득 · B 부담금 · C 분양 · D 처분).
+
+    ★손으로 4 를 적지 않는다 — 군이 늘면 파생값이 따라 늘어 문구가 여기서 깨진다.
+    ★순수 함수로 꺼낸 이유: 리터럴 `4` 로 바꾸는 변이는 **오늘의 코드에서는 A~D 가 마침
+      넷이라 잡히지 않는다.** 두 모집단(3군·5군)을 먹여야 그 변이가 죽는다.
+    """
+    return len({c[0] for c in codes})
 
 
 def _get(dic: dict, dotted: str):
@@ -70,11 +104,25 @@ def _get(dic: dict, dotted: str):
     return cur
 
 
+def _claim_keys(locale: str = "ko") -> list[str]:
+    """축에서 **파생**한다 — 숫자를 주장하는 문자열만 고른다(차원 표기는 개수가 아니다)."""
+    data = json.loads((_WEB / locale / "common.json").read_text(encoding="utf-8"))
+    keys: list[str] = []
+    for section, leaf in CLAIM_SECTIONS:
+        for name, node in (data.get(section) or {}).items():
+            if not isinstance(node, dict):
+                continue
+            val = node.get(leaf)
+            if isinstance(val, str) and re.search(r"\d", _DIMENSION.sub("", val)):
+                keys.append(f"{section}.{name}.{leaf}")
+    return sorted(keys)
+
+
 def _claim_strings() -> list[tuple[str, str, str]]:
     out = []
     for loc in LOCALES:
         data = json.loads((_WEB / loc / "common.json").read_text(encoding="utf-8"))
-        for key in CLAIM_KEYS:
+        for key in _claim_keys():
             val = _get(data, key)
             if isinstance(val, str):
                 out.append((loc, key, val))
@@ -88,12 +136,49 @@ class TestDerivationIsAlive:
         d = _derived_counts()
         assert d["development_types"] >= 10, f"개발유형 파생 실패: {d}"
         assert d["tax_codes"] >= 20, f"세금코드 파생 실패: {d}"
+        # 코드군은 A·B·C·D 넷이다. 0/1 이면 파생 정규식이 죽은 것이고,
+        # 그때 「4단계」가 조용히 허용되지 않게 하한을 건다.
+        assert d["stage_groups"] >= 4, f"코드군 파생 실패: {d}"
+
+    def test_stage_groups_is_derived_not_a_literal(self):
+        """★두 모집단 — 리터럴 4 로 바꾸면 여기서 죽는다(상수 단언은 락이 아니다)."""
+        assert _stage_groups({"A01", "B01", "C01"}) == 3
+        assert _stage_groups({"A01", "B01", "C01", "D01", "E01"}) == 5
+        # 같은 군의 코드가 늘어도 군 수는 안 변한다(개수를 세는 게 아니라 군을 센다).
+        assert _stage_groups({"A01", "A02", "A03"}) == 1
+
+    def test_claim_keys_are_derived_not_a_hand_list(self):
+        """★축에서 파생됐는지 — 손 목록으로 되돌리면 여기서 걸린다."""
+        keys = _claim_keys()
+        # 하한: 셋은 지금 실재한다(줄면 축이 좁아졌거나 문구가 사라진 것).
+        assert len(keys) >= 3, f"★주장 키 파생 실패: {keys}"
+        # ★2026-08-28 에 손 목록이 놓쳤던 바로 그 키가 축에 들어오는지.
+        assert "deepIntegration.taxV2.subtitle" in keys, (
+            f"★손 목록이 놓쳤던 키가 축에서 빠졌다 — 축이 좁아졌다: {keys}"
+        )
+        for section, leaf in CLAIM_SECTIONS:
+            assert any(k.startswith(f"{section}.") and k.endswith(f".{leaf}") for k in keys), (
+                f"★축 {section}.*.{leaf} 이 한 건도 안 잡힌다(수집기 사망): {keys}"
+            )
 
     def test_claim_strings_were_actually_found(self):
         found = _claim_strings()
-        assert len(found) == len(LOCALES) * len(CLAIM_KEYS), (
-            f"★수집기 사망 — 주장 문자열 {len(LOCALES) * len(CLAIM_KEYS)}개를 기대했는데 {len(found)}개"
+        expected = len(LOCALES) * len(_claim_keys())
+        assert len(found) == expected, (
+            f"★수집기 사망 — 주장 문자열 {expected}개를 기대했는데 {len(found)}개"
         )
+        assert found, "★수집기가 아무것도 못 찾았다"
+
+    def test_dimension_exemption_is_live(self):
+        """★죽은 면제를 초록으로 두지 않는다 — 2D/3D/4D 가 실제로 걸러지고 있는가."""
+        raw = (_WEB / "ko" / "common.json").read_text(encoding="utf-8")
+        hits = _DIMENSION.findall(raw)
+        assert hits, (
+            "★차원 표기 면제가 죽었다 — 대상이 사라졌으면 면제를 지워라"
+            "(면제가 남으면 다음 사람이 '걸러지고 있다'고 오독한다)"
+        )
+        # 면제가 **과잉**이 아닌지: 개수 주장(28/15)까지 먹으면 락이 무력해진다.
+        assert _DIMENSION.sub("", "28종 세금") == "28종 세금"
 
 
 class TestEveryClaimedNumberIsDerived:

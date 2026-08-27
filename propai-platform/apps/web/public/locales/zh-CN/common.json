@@ -433,7 +433,7 @@
     },
     "feasibilityV2": {
       "title": "收支分析 v2",
-      "subtitle": "15 种开发类型 x 32 种税费代码 自动计算",
+      "subtitle": "15 种开发类型 x 28 种税费代码 自动计算",
       "tabInput": "输入",
       "tabResult": "分析结果",
       "tabMonteCarlo": "蒙特卡洛",
@@ -456,7 +456,7 @@
     },
     "taxV2": {
       "title": "税务模拟 v2",
-      "subtitle": "4阶段38种税一键计算",
+      "subtitle": "4阶段28种税费代码一键计算",
       "calculateAll": "计算税费",
       "grandTotal": "总税额",
       "stageAcquisition": "取得阶段",
@@ -543,7 +543,7 @@
     "feasibility": {
       "eyebrow": "PROP / FEASIBILITY",
       "title": "收支可行性分析",
-      "description": "自动计算 15 种开发类型与 32 种税费代码。查询并适用属地条例；无法获取时使用法定上限并如实标注为降级。",
+      "description": "自动计算 15 种开发类型与 28 种税费代码。查询并适用属地条例；无法获取时使用法定上限并如实标注为降级。",
       "items": [
         "· 15 种开发类型的收支模拟 — 已接入服务器",
         "· 税务·融资成本自动测算 — 已接入服务器",
