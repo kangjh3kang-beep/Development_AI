@@ -183,6 +183,13 @@ async def _record_blocked(db, action_type: str, trigger_key: str) -> None:
     ★`heal_action` 과 **다른 이벤트 타입**을 쓴다 — 기존 집계·화면·`_guard_counts`
       (전부 `event_type='heal_action'` 로 필터)에 영향이 없다.
     best-effort: 기록 실패가 치유 사이클을 죽이지 않는다.
+
+    ★변이 감사 기록(2026-08-27): 이 함수와 `_blocked_count` 의 `logger.warning` **문구**는
+      변이에 생존한다. **구멍이 아니다** — 문구는 계약이 아니라 표현이라, 단언하면
+      다듬을 때마다 깨지는 취약한 락이 된다(§G-30). 대신 이 두 함수의 **계약**
+      (표·열·JSON 경로·창 경계·이벤트 타입 구분)은 전부 잠갔다:
+      `tests/test_heal_escalation_reachable.py` 의 쓰기·읽기 정합 락 참조.
+      그 밖의 변이 40/42 는 CAUGHT 다.
     """
     import json
 
