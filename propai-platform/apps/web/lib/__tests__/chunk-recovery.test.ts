@@ -25,11 +25,15 @@ const realLocation = window.location;
  * `try/catch` 로 삼켜져 **조용히 초록**이 된다 — 락이 아니라 장식이 된다(적대 리뷰 지적).
  */
 let sent: string[] = [];
+/** ★전송과 리로드를 **하나의 타임라인**에 기록한다 — 「리로드 전에 보낸다」는 성질을 직접 잠근다. */
+let timeline: string[] = [];
 function captureSends(): void {
   sent = [];
+  timeline = [];
   vi.stubGlobal("navigator", { ...globalThis.navigator, sendBeacon: undefined });
   vi.stubGlobal("fetch", ((_u: string, init?: RequestInit) => {
     sent.push(String(init?.body ?? ""));
+    timeline.push("send");
     return Promise.resolve({ ok: true } as Response);
   }) as unknown as typeof fetch);
 }
@@ -50,7 +54,12 @@ beforeEach(() => {
   // jsdom 의 location 은 실제 이동을 하지 않으므로 replace 를 감시로 대체한다.
   Object.defineProperty(window, "location", {
     configurable: true,
-    value: { href: "https://4t8t.net/ko/dashboard", replace: vi.fn() },
+    value: {
+      href: "https://4t8t.net/ko/dashboard",
+      replace: vi.fn(() => {
+        timeline.push("replace");
+      }),
+    },
   });
 });
 afterEach(() => {
@@ -138,6 +147,15 @@ describe("★자동복구는 **보고한 뒤에** 리로드한다", () => {
       window.location.replace,
       "보고는 했는데 복구를 안 했다 — 사용자는 낫지 않는 화면에 남는다",
     ).toHaveBeenCalledTimes(1);
+
+    // ★**순서**까지 잠근다. 초판은 이것을 안 걸어 「보고를 `replace` 뒤로 옮기는」 변이가
+    //   **생존**했다 — jsdom 의 `replace` 는 스텁이라 실제 이동이 없어 뒤에서도 보고가 돈다.
+    //   프로덕션에서 그 순서가 안전한지는 **재지 않았다**(내비게이션이 이미 시작된 뒤다).
+    //   재지 않은 것에 기대지 않는다 — 계약을 「리로드 **전에** 보낸다」로 못 박는다.
+    expect(
+      timeline,
+      `전송이 리로드보다 뒤다 — 이 순서의 안전성은 미측정이다: ${JSON.stringify(timeline)}`,
+    ).toEqual(["send", "replace"]);
   });
 
   it("B(음성 대조군) 평범한 오류 — 여기서는 아무것도 하지 않는다(경계가 보고한다)", () => {
