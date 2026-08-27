@@ -898,6 +898,10 @@ function EffectorSection() {
       <p className="text-xs leading-5 text-[var(--text-tertiary)]">
         ★발화 0건이 곧 결함은 아닙니다 — 「읽는 곳 없음」인 효과기가 영원히 발화하지 않는 것이
         정상일 수 있습니다. 이 표는 <strong>사실과 판단 근거</strong>를 줄 뿐이고 판단은 사람이 합니다.
+        <br />
+        ★「한 번도 발화 없음」은 <strong>세 가지를 구별하지 못합니다</strong> — ①조건이 아직 안 맞음
+        ②정상이라 발생할 일이 없었음 ③구조적으로 발화 불가(배선 결함). 처방이 서로 다르므로
+        0건을 보면 <strong>그 효과기의 경로를 직접 따라가야</strong> 합니다.
       </p>
     </div>
   );
