@@ -301,10 +301,17 @@ describe("★빌드 안전 — 보간 템플릿을 `+` 로 이으면 빌드가 �
     const ts = (await import("typescript")).default;
     // 파티션형: 위험/안전을 같은 검사기에 태워 **갈리는지** 본다.
     const BAD = "const A=1; export const x = `p${A}q` + `r${A}s`;";
+    // ★**누적 좌변** — 3조각 이상. 재귀를 지우면 좌변이 BinaryExpression 이라 못 본다
+    //   (변이 R5 가 그 구멍을 실증했다: 재귀 제거 → SURVIVED).
+    const BAD3 = "const A=1; export const x = `p${A}q` + `plain` + `r${A}s`;";
     const OK1 = "const A=1; export const x = `p${A}q` + `plain`;";      // 우변 치환 없음
     const OK2 = "const A=1; export const x = `p${A}q${A}r`;";            // 단일 리터럴
     const OK3 = "export const x = [`a`, `b`].join('');";                 // 폴딩 안 됨
     expect(scan("bad.ts", BAD, ts).length, "위험 형태를 못 잡으면 이 락은 장식이다").toBe(1);
+    expect(
+      scan("bad3.ts", BAD3, ts).length,
+      "누적 좌변(3조각 이상)을 못 잡는다 — `isFoldableTemplate` 의 재귀가 죽었다",
+    ).toBeGreaterThan(0);
     for (const [n, src] of [["OK1", OK1], ["OK2", OK2], ["OK3", OK3]] as const) {
       expect(scan(`${n}.ts`, src, ts), `정상 코드를 막으면 그것도 결함이다(${n})`).toEqual([]);
     }
