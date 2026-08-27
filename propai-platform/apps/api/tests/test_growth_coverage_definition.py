@@ -35,7 +35,11 @@ def _mod():
     #   — 조용한 skip 은 "잠갔다"와 "안 돌았다"를 구별해 주지 않는다.
     import datetime as _dt
     if not hasattr(_dt, "UTC"):
-        _dt.UTC = _dt.timezone.utc  # type: ignore[attr-defined]
+        # ★`noqa: UP017` — **이 줄이 그 폴리필 자체다.** ruff 는 target-version=py312 라
+        #   `_dt.timezone.utc` 를 `_dt.UTC` 로 바꾸라고 하는데, 그 자동수정은
+        #   `_dt.UTC = _dt.UTC` **자기참조**가 되어 3.10 에서 AttributeError 로 폴리필을 깬다
+        #   (ruff 0.16.3 이 실제로 그 수정을 제안한다 — 도구 출력이 원문보다 옳지 않은 사례).
+        _dt.UTC = _dt.timezone.utc  # type: ignore[attr-defined]  # noqa: UP017
 
     spec = importlib.util.spec_from_file_location("growth_analyzer", _A)
     m = importlib.util.module_from_spec(spec)
