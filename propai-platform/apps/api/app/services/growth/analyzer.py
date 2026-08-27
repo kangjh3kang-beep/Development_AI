@@ -952,6 +952,11 @@ def _withheld_note(m: dict[str, Any]) -> str:
     """
     by_basis: dict[str, list[str]] = {}
     for key in list(m):
+        # ★변이 감사 기록(2026-08-27): 이 줄을 무력화하는 변이는 **생존한다.
+        #   구멍이 아니라 이중 가드**다 — 접미 검사를 지워도 아래 `is_withheld` 가
+        #   막는다(`"down_pct"[:-7] == "d"` → `m["d_absent"]` 없음 → skip).
+        #   이 줄은 **성능·명확성**을 위한 1차 필터이고 정합성은 아래가 지킨다.
+        #   (점수를 위해 억지 락을 만들지 않는다 — 도구가 그렇게 지시한다.)
         if not key.endswith("_absent") or not m.get(key):
             continue
         field = key[: -len("_absent")]
