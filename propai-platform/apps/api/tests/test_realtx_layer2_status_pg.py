@@ -54,35 +54,64 @@ _NOW = datetime(2026, 8, 27, 3, 0, tzinfo=UTC)
 
 @pytest_asyncio.fixture
 async def db():
-    engine = create_async_engine(_DSN, future=True)
+    """★**테스트마다 전용 스키마**를 만들고 `search_path` 를 거기로 돌린다.
+
+    ## 왜 스키마 격리인가 (2026-08-27 · CI 실패에서 배웠다)
+
+    `build_layer2_status` 는 **전역 집계**(`SELECT count(*) FROM realtx_corrections`)를 읽는다.
+    CI 는 `pytest -n auto` 로 **병렬** 실행하므로, 옆 워커가 넣은 정정 행이 내 집계에 섞여
+    판정이 `미시험` → **`모순`** 으로 뒤집혔다(실측 재현).
+    → 행 단위 태그(`lawd_cd LIKE 'T%'`)로는 **전역 집계를 격리할 수 없다.**
+      **창·키가 아니라 스키마 자체**를 갈라야 한다.
+
+    ## ★부수 소득 — 이것이 `to_regclass` 무자격 선택을 **검증**한다
+
+    서비스는 `to_regclass(t)` 를 **무자격**으로 묻는다(리뷰 M2 — DDL 도 무자격이라
+    `search_path` 를 따른다). 그 판단은 종전 **추론**이었는데, 이 픽스처가
+    `search_path` 를 `public` 이 **아닌** 곳으로 돌리므로 **관측이 된다** —
+    `public.` 을 못 박은 구현이면 여기서 `미배포` 가 나와 죽는다.
+    """
+    schema = "rtx_t_" + uuid.uuid4().hex[:10]
+    admin = create_async_engine(_DSN, future=True, poolclass=None)
     try:
-        async with engine.begin() as conn:
-            # ★DDL 을 손으로 쓰지 않는다 — **생산자의 DDL 상수**를 그대로 태운다.
-            #   손으로 쓰면 스키마가 바뀔 때 이 테스트만 옛 모양으로 남아 조용히 갈라진다.
-            for ddl in (store._TRADES_DDL, store._CORRECTIONS_DDL, store._SCAN_STATE_DDL):
-                await conn.execute(text(ddl))
+        async with admin.begin() as conn:
+            await conn.execute(text(f'CREATE SCHEMA "{schema}"'))
     except Exception as e:  # noqa: BLE001
-        await engine.dispose()
+        await admin.dispose()
         if _EXPLICIT_DSN:
             pytest.fail(f"TEST_PG_DSN 이 설정됐는데 실 Postgres 준비 실패 — 무잠금이다: {e}")
         pytest.skip(f"로컬에 Postgres 없음(스킵): {e}")
+
+    # ★`search_path` 를 커넥션 설정으로 준다(세션 `SET` 은 풀러에서 남의 커넥션으로 샌다).
+    engine = create_async_engine(
+        _DSN, future=True,
+        connect_args={"server_settings": {"search_path": schema}},
+    )
+    async with engine.begin() as conn:
+        # ★DDL 을 손으로 쓰지 않는다 — **생산자의 DDL 상수**를 그대로 태운다.
+        for ddl in (store._TRADES_DDL, store._CORRECTIONS_DDL, store._SCAN_STATE_DDL):
+            await conn.execute(text(ddl))
+        # ★이 픽스처가 실제로 public 밖에 있는지 단언(공허 방지)
+        row = (await conn.execute(text("SELECT current_schema()"))).first()
+        assert row and row[0] == schema, f"search_path 가 안 먹었다: {row}"
+
     sm = async_sessionmaker(engine, expire_on_commit=False)
     async with sm() as s:
         try:
             yield s
         finally:
-            # ★정리는 **teardown 에서 무조건** — 본문 끝에 두면 실패 시 도달 못 해 잔재가 쌓인다
             with contextlib.suppress(Exception):
                 await s.rollback()
-                await s.execute(text("DELETE FROM realtx_trades WHERE lawd_cd LIKE 'T%'"))
-                await s.execute(text("DELETE FROM realtx_corrections WHERE lawd_cd LIKE 'T%'"))
-                await s.execute(text("DELETE FROM realtx_scan_state WHERE scope_key LIKE '%|T%'"))
-                await s.commit()
     await engine.dispose()
+    # ★정리는 **teardown 에서 무조건** — 스키마째 지우므로 잔재가 원리적으로 없다
+    with contextlib.suppress(Exception):
+        async with admin.begin() as conn:
+            await conn.execute(text(f'DROP SCHEMA "{schema}" CASCADE'))
+    await admin.dispose()
 
 
 def _tag() -> str:
-    """이 실행만의 시군구 접두 — **남의 행이 섞이지 않게** 창·키 자체를 격리한다."""
+    """읽기 좋으라고 붙이는 접두 — **격리는 스키마가 한다**(위 픽스처 참조)."""
     return "T" + uuid.uuid4().hex[:4]
 
 
@@ -179,7 +208,14 @@ async def test_min_not_max_decides_staleness(db):
 
 
 async def test_schema_probe_follows_search_path(db):
-    """★`to_regclass` 를 **무자격**으로 묻는가(리뷰 M2) — 3종 전부 본다."""
+    """★★`to_regclass` 를 **무자격**으로 묻는가(리뷰 M2) — 3종 전부 본다.
+
+    ★이 픽스처의 `search_path` 는 `public` 이 **아니다**. 그러므로 이 테스트가 통과한다는
+      것은 *"무자격 프로브가 `search_path` 를 따른다"* 가 **관측**이라는 뜻이다 —
+      `public.` 을 못 박은 종전 구현이면 여기서 `0` 이 나와 죽는다.
+    """
+    cur = (await db.execute(text("SELECT current_schema()"))).scalar()
+    assert cur != "public", f"이 락이 공허하다 — search_path 가 public 이다: {cur}"
     n = (await db.execute(text(S._SQL_SCHEMA_PRESENT),
                           {"tables": list(S._LAYER2_TABLES)})).scalar()
     assert n == len(S._LAYER2_TABLES), n
@@ -219,6 +255,17 @@ async def test_end_to_end_verdict_on_real_postgres(db):
     await db.commit()
 
     out = await S.build_layer2_status(db, now=_NOW)
-    assert out["detection"]["state"] in ("미시험", "상태소실"), out["detection"]
-    assert out["stored_rows"] >= 3
-    assert out["collection"]["recent"]["state"] in ("정상", "낡음")
+    # ★스키마가 격리돼 있으므로 **정확히** 단언할 수 있다. 종전엔 병렬 워커의 행이 섞여
+    #   `("미시험","상태소실")` 로 느슨하게 열어 뒀는데, 그 느슨함이 곧 무잠금이었다.
+    assert out["detection"]["state"] == "미시험", out["detection"]
+    assert out["stored_rows"] == T.RECENT_MONTHS          # 내가 심은 것만 보인다
+    assert out["reobserved_rows"] == 0
+    assert out["corrections"]["total"] == 0
+    assert out["collection"]["recent"]["stale"] is False  # 2시간 전 = 신선
+
+    # ★두 모집단 — 재관측을 만들면 **같은 실행에서** 판정이 갈린다
+    await _seed_trade(db, lawd=lawd, ym=T.recent_months(_NOW, T.RECENT_MONTHS)[0], reobserved=True)
+    await db.commit()
+    after = await S.build_layer2_status(db, now=_NOW)
+    assert after["reobserved_rows"] == 1
+    assert after["detection"]["state"] == "관측됨_정정없음", after["detection"]
