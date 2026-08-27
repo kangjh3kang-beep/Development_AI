@@ -58,10 +58,22 @@ EVENT_TYPE = "heal_action"
 DORMANT_HOURS = 72
 
 #: 발화 상태 — ★닫힌 집합. 새 상태를 늘리면 락이 라벨을 요구한다.
-STATE_NEVER = "never_fired"      # 기록 전체에서 0건 — 존재하지만 **발화한 적 없다**
+STATE_NEVER = "never_fired"      # ★**계측 시작 이후** 0건(아래 TELEMETRY_SINCE 참조)
 STATE_DORMANT = "dormant"        # 발화한 적은 있으나 DORMANT_HOURS 를 넘게 조용
 STATE_ACTIVE = "active"          # 최근 발화
 ALL_STATES: frozenset[str] = frozenset({STATE_NEVER, STATE_DORMANT, STATE_ACTIVE})
+
+#: ★`never_fired` 가 **무엇에 대해** 0건인가 — 과대주장을 막는다.
+#:
+#:   *"기록 전체에서 0건"* 이라고 적었었는데 **그렇게 말할 근거가 없다.**
+#:   저장소에는 `platform_events` 삭제 경로가 없지만(전수 확인 — `DELETE FROM
+#:   platform_events` 는 테스트 정리 1건뿐), 그것이 *"영원히 0건"* 을 뜻하지는 않는다:
+#:     · 테이블 생성 이전은 애초에 기록이 없다
+#:     · `capture_service._QUEUE` 는 `maxlen=10_000` **드롭-올디스트**라 유실이 가능하다
+#:   → 화면·주석은 **"계측 시작 이후"** 로 좁혀 말한다.
+#:   ★계획서 §3-4 가 이미 *"표현을 그렇게 좁혀야 한다"* 고 적었는데 코드는 안 좁혔다 —
+#:     주석에 쓴 주장도 검증 대상이다(§G-30).
+TELEMETRY_SINCE = "2026-06-14"
 
 #: 표에 **없는데** 이벤트에는 있는 액션 — 선언이 낡았다는 뜻이다.
 #: ★한 방향만 보면 이걸 못 잡는다(선언→실측만 보면 실측→선언이 빈다).
@@ -153,6 +165,8 @@ async def firing_status(db: Any, *, now: datetime | None = None) -> dict[str, An
         "effectors": out,
         "undeclared": undeclared,
         "dormant_hours": DORMANT_HOURS,
+        # ★화면이 "한 번도 없음"을 **무엇에 대해** 말하는지 밝힐 수 있게.
+        "telemetry_since": TELEMETRY_SINCE,
         "summary": {
             "declared": len(out),
             STATE_NEVER: states.count(STATE_NEVER),
@@ -176,16 +190,30 @@ async def firing_status(db: Any, *, now: datetime | None = None) -> dict[str, An
             #   휴면**이었는데, `DORMANT_HOURS=72` 라 그 사례는 `active` 로 분류된다.
             #   ★임계를 66 아래로 내려 그 하나를 잡게 만드는 것은 **관측에 지표를 맞추는
             #     것**이고(굿하트), 다음 관측에서 또 내려야 한다.
-            #   그래서 라벨은 그대로 두고 **원값을 싣는다** — 사람이 "제품 효과기가 66시간
-            #   조용하다"를 보고 스스로 판단하면 된다. 라벨은 경보이고 이 값이 진실이다.
-            #   발화 이력이 아예 없으면 `None`(0 이 아니다 — 0 은 "방금 발화"를 뜻한다).
-            "product_reaching_max_hours_since": max(
-                (
-                    r["hours_since"]
+            #   그래서 라벨은 그대로 두고 **원값을 싣는다** — 라벨은 경보이고 이 값이 진실이다.
+            #
+            # ★★**혼합 모집단에서 거짓말을 했다**(독립 적대 리뷰 2026-08-27, 실측):
+            #   PRODUCT 효과기가 둘일 때 하나는 5시간 전 발화, 하나는 **한 번도 발화 없음**이면
+            #   옛 식은 `None` 을 걸러 **5.0** 을 냈다 — "최장 침묵 5시간"은 **거짓**이다.
+            #   한쪽이 영원히 조용한데 그 사실이 이 한 줄에서 사라졌다.
+            #   ★그리고 이 결함은 `product_reaching_count()` 가 1 을 넘는 순간 발화한다 —
+            #     즉 `effector_reach` 가 *"이 값이 늘어나는 것이 목표다"* 라고 적은 **성공 시점**에.
+            #   → **한 번도 발화 없음이 하나라도 있으면 `None`** 을 낸다(= 무한대. 숫자로
+            #     비교 가능한 값을 주면 그것이 곧 과소보고다). 그 사실은 아래 카운트가 나른다.
+            "product_reaching_max_hours_since": (
+                None
+                if any(
+                    e.reach is Reach.PRODUCT and r["state"] == STATE_NEVER
                     for e, r in zip(EFFECTORS, out, strict=True)
-                    if e.reach is Reach.PRODUCT and r["hours_since"] is not None
-                ),
-                default=None,
+                )
+                else max(
+                    (
+                        r["hours_since"]
+                        for e, r in zip(EFFECTORS, out, strict=True)
+                        if e.reach is Reach.PRODUCT and r["hours_since"] is not None
+                    ),
+                    default=None,
+                )
             ),
             # 한 번도 발화한 적 없는 **제품** 효과기 — 있으면 그 자체로 이상하다.
             "product_reaching_never_fired": sum(

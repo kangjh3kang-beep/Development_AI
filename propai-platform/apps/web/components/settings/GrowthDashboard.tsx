@@ -752,6 +752,7 @@ type EffectorStatus = {
   effectors: EffectorRow[];
   undeclared: EffectorRow[];
   dormant_hours: number;
+  telemetry_since?: string;
   summary: {
     declared: number;
     never_fired: number;
@@ -836,6 +837,10 @@ function EffectorSection() {
           <span className={s.never_fired > 0 ? "font-semibold text-[var(--status-warning)]" : ""}>
             한 번도 없음 {s.never_fired}
           </span>
+          {/* ★과대주장 방지 — 「한 번도 없음」이 **무엇에 대해** 0건인지 밝힌다. */}
+          {data.telemetry_since ? (
+            <span data-testid="telemetry-since"> ({data.telemetry_since} 계측 시작 이후)</span>
+          ) : null}
           {s.undeclared > 0 ? (
             <span className="font-semibold text-[var(--status-error)]">
               {" "}· ★표에 없는 액션 {s.undeclared}
@@ -858,7 +863,7 @@ function EffectorSection() {
           </thead>
           <tbody className="divide-y divide-[var(--line)]">
             {[...data.effectors, ...data.undeclared].map((r) => (
-              <tr key={r.key}>
+              <tr key={r.key} data-testid={`effector-row-${r.key}`}>
                 <td className="py-2 pr-3 font-mono text-xs text-[var(--text-primary)]">{r.key}</td>
                 <td className="py-2 pr-3 text-xs">
                   {r.declared_reach ? REACH_LABELS[r.declared_reach] ?? r.declared_reach : "—"}
@@ -872,6 +877,7 @@ function EffectorSection() {
                 </td>
                 <td className="py-2">
                   <span
+                    data-testid={`effector-state-${r.key}`}
                     className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
                       r.state === "active"
                         ? "bg-[rgba(13,148,136,0.12)] text-[rgb(15,118,110)]"
