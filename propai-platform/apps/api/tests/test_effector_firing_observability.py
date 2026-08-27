@@ -437,3 +437,48 @@ async def test_route_requires_admin_and_returns_all_declared(monkeypatch) -> Non
     assert len(body["effectors"]) == len(EFFECTORS)
     assert body["summary"]["declared"] == len(EFFECTORS)
     assert len(calls) == 2, "★두 번째 호출에서 가드를 건너뛰었다"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ★기계적 변이(`scripts/mutate_changed.py`) 생존분 봉합 — 손으로 고르지 않은 변이
+#
+# 리뷰 항목 ⑩: *"손으로 고른 여섯 개 말고 도구를 돌려라 — 사람이 고른 변이는 사람이
+# 못 본 층을 비껴간다."* 돌렸더니 **11건 중 5건이 생존**했다. 넷은 진짜 구멍이었다.
+# ═══════════════════════════════════════════════════════════════════════════
+def test_state_literals_are_pinned() -> None:
+    """★상태 **문자열 값**을 못 박는다(기계 변이 #2 생존).
+
+    이 값은 프론트 `EFFECTOR_STATE_LABELS` 의 **키**다. 바뀌면 화면에 영문 raw 가 뜬다.
+    프론트 정합 테스트가 잡긴 하지만 **다른 스위트**라, 백엔드만 돌리는 사람에게는
+    무잠금이었다. 리터럴을 여기서도 못 박는다.
+    """
+    assert ef.STATE_NEVER == "never_fired"
+    assert ef.STATE_DORMANT == "dormant"
+    assert ef.STATE_ACTIVE == "active"
+    assert ef.STATE_UNDECLARED == "undeclared"
+    # ★네 값이 서로 달라야 상태 구별이 성립한다.
+    assert len({ef.STATE_NEVER, ef.STATE_DORMANT, ef.STATE_ACTIVE, ef.STATE_UNDECLARED}) == 4
+
+
+def test_telemetry_since_is_a_real_date_not_a_placeholder() -> None:
+    """★`TELEMETRY_SINCE` 를 아무 문자열로 바꿔도 통과했다(기계 변이 #4 생존).
+
+    이 값은 화면이 *"(… 계측 시작 이후)"* 라고 말할 때 쓰는 **근거**다.
+    형식이 깨지면 사용자에게 의미 없는 문자열이 그대로 나간다.
+    """
+    from datetime import date
+
+    d = date.fromisoformat(ef.TELEMETRY_SINCE)  # 형식이 깨지면 ValueError
+    assert date(2026, 1, 1) <= d <= date.today(), f"★미래이거나 비현실적: {d}"
+
+
+@pytest.mark.asyncio
+async def test_response_carries_telemetry_since(_two_rows) -> None:
+    """★응답에서 `telemetry_since` 를 빼도 백엔드는 초록이었다(기계 변이 #5·#6 생존).
+
+    이게 없으면 화면이 *"한 번도 없음"* 을 **무엇에 대해** 말하는지 밝힐 수 없다 —
+    바로 그 과대주장을 막으려고 넣은 값이다.
+    """
+    out = await ef.firing_status(_two_rows, now=NOW)
+    assert out["telemetry_since"] == ef.TELEMETRY_SINCE
+    assert out["dormant_hours"] == ef.DORMANT_HOURS
