@@ -63,8 +63,10 @@ def _keys_in_payload_blocks(text: str) -> set[str]:
     return keys - _JS_LITERALS
 
 
-def _extract(path: Path) -> tuple[set[str], int]:
+def _extract(path: Path) -> tuple[set[str], int, int]:
     """성장루프 이벤트의 payload 키를 뽑고, **해석 못 한 호출 수**를 함께 돌려준다.
+
+    반환: (키, **간접 호출 수**, **축② 생산자 수**). ★셋을 그대로 돌려주고 판정은 테스트가 한다.
 
     ★파일 전체의 `payload:` 를 훑으면 **경매 화면의 TypeScript 타입 선언**까지 집는다(실측 —
     그대로 갔으면 `name` 을 안전키로 면제하라는 **정반대 처방**을 유도했을 것이다).
@@ -72,23 +74,21 @@ def _extract(path: Path) -> tuple[set[str], int]:
     """
     src = path.read_text(encoding="utf-8")
     keys: set[str] = set()
-    unresolved = 0
+    indirect = 0
     for call in re.finditer(r"\btrackEvent\s*\(", src):
         args = _balanced(src, call.end() - 1, "(", ")")
         if "payload:" in args:
             keys |= _keys_in_payload_blocks(args)
         elif not re.search(r"\{", args):
-            unresolved += 1  # payload 를 **변수로** 넘긴 호출 — 축 ②가 덮어야 한다
+            indirect += 1  # payload 를 **변수로** 넘긴 호출 — 축 ②가 덮어야 한다
     axis2 = 0
     for fn in re.finditer(r":\s*TrackEventProps(?:\s*\|\s*null)?\s*\{", src):
-        before = len(keys)
         keys |= _keys_in_payload_blocks(_balanced(src, fn.end() - 1, "{", "}"))
-        axis2 += 1 if len(keys) >= before else 0
-    # ★같은 파일이 축 ②(`TrackEventProps` 생산자)로 해석됐으면 그 간접 호출은 **해소**다.
-    #   그렇지 않은 간접 호출만 미해석으로 센다 — 그것이 진짜 감시 밖이다.
-    if axis2:
-        unresolved = 0
-    return keys, unresolved
+        axis2 += 1
+    # ★**판정을 여기서 하지 않는다.** 초판은 `if axis2: unresolved = 0` 으로 여기서 뭉갰는데,
+    #   그 한 줄을 `if True:` 로 바꾸면 미해석 가드가 **통째로 공허**해졌다(변이 SURVIVED 실측).
+    #   경고·보정은 산문이고 **판정은 테스트가 한다** — 두 수를 **그대로** 돌려준다.
+    return keys, indirect, axis2
 
 
 def _sources() -> list[Path]:
@@ -106,9 +106,8 @@ def _sources() -> list[Path]:
 
 
 SOURCES = _sources()
-_EXTRACTED = [_extract(p) for p in SOURCES]
-FRONTEND_PAYLOAD_KEYS: set[str] = set().union(set(), *(k for k, _ in _EXTRACTED))
-UNRESOLVED_CALLS = sum(u for _, u in _EXTRACTED)
+_EXTRACTED = {p: _extract(p) for p in SOURCES}
+FRONTEND_PAYLOAD_KEYS: set[str] = set().union(set(), *(k for k, _, _ in _EXTRACTED.values()))
 
 
 # ── 수집기·파서 생존 ────────────────────────────────────────────────────────
@@ -125,11 +124,30 @@ def test_deriver_is_alive() -> None:
     )
 
 
-def test_no_unresolved_trackevent_calls() -> None:
-    """★해석하지 못한 호출이 남으면 **시끄럽게** 실패한다 — 조용한 위음성 금지."""
-    assert UNRESOLVED_CALLS == 0, (
-        f"payload 를 해석하지 못한 `trackEvent` 호출 {UNRESOLVED_CALLS}건 — 그 키들은 이 락의\n"
-        "감시 밖이다. 축(`trackEvent(` 인자 · `TrackEventProps` 반환 함수)을 넓혀라."
+def test_every_indirect_call_has_a_resolver() -> None:
+    """★payload 를 **변수로** 넘기는 호출이 있으면, 같은 파일에 축② 생산자가 **있어야** 한다.
+
+    없으면 그 키들은 이 락의 감시 밖이다 — **조용한 위음성**이다.
+    ★판정을 수집기 안에서 하지 않는다: 초판은 `if axis2: unresolved = 0` 으로 뭉갰고, 그 한 줄을
+    `if True:` 로 바꾸면 가드가 통째로 공허해졌다(변이 SURVIVED 실측).
+    """
+    orphan = sorted(
+        str(p.relative_to(WEB))
+        for p, (_, indirect, axis2) in _EXTRACTED.items()
+        if indirect > 0 and axis2 == 0
+    )
+    assert orphan == [], (
+        f"payload 를 해석할 수 없는 `trackEvent` 호출이 있는 파일: {orphan}\n"
+        "축(`trackEvent(` 인자 · `TrackEventProps` 반환 함수)을 넓혀라."
+    )
+    # ★**설명되는 생존**(변이 점수 부풀리기 방지 · 실측 기록): 위 조건절을 `if False` 로 바꾸면
+    #   이 단언은 생존한다. 그러나 그것은 **단언 자신의 술어를 죽인 것**이고, 그렇게 하면 어떤
+    #   테스트든 죽는다 — 제품이 아니라 락을 지운 것이다. 앞선 `if axis2: unresolved = 0` 생존과
+    #   **다른 층**이다: 그건 **수집기 안**의 보정이라 "정리"처럼 보였고 그래서 진짜 구멍이었다.
+    # ★공허 진리 가드 — 간접 호출이 **실재**해야 위 단언이 무엇이라도 잰다.
+    total_indirect = sum(i for _, i, _ in _EXTRACTED.values())
+    assert total_indirect > 0, (
+        "간접 호출을 한 건도 못 찾았다 — 수집기가 죽었으면 위 단언은 공허하게 참이다"
     )
 
 
