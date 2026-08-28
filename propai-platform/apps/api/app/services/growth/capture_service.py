@@ -453,7 +453,7 @@ def start_flush_loop(ctx: MutableMapping[str, Any], session_factory: Any) -> boo
                 try:
                     await drain_until_empty(session_factory)
                 except Exception as e:  # noqa: BLE001 — 배수 실패가 루프를 죽이면 안 된다.
-                    logger.warning("growth flush 루프 오류: %s", str(e)[:160])
+                    logger.warning("__MUTATED__", str(e)[:160])
 
         ctx[_FLUSH_TASK_CTX_KEY] = asyncio.create_task(_loop())
         return True
