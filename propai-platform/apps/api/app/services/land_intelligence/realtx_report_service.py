@@ -33,10 +33,12 @@ MOLIT 은 **무과금이지만 일일 쿼터가 진짜 제약**이고 그 키를
 from __future__ import annotations
 
 import logging
+import math
 from collections import defaultdict
 from typing import Any
 
 from apps.api.app.utils.withheld import (
+    INSUFFICIENT_COVERAGE,
     MASKED_BY_SOURCE,
     NOT_APPLICABLE,
     SOURCE_UNAVAILABLE,
@@ -130,10 +132,19 @@ def month_range(end_ym: str, months: int) -> list[str]:
 #   area= 3.31㎡ → 1.001275평 | 2,000만원 | 1,997.45 만원/평 | 33건
 #   area= 6.61㎡ → 1.999525평 | 4,000만원 | 2,000.48 만원/평 | 12건
 #
-#   **면적이 평의 정수배에 소수 여섯째 자리까지 붙는다.** 즉 원천의 1차 자료는 ㎡ 가 아니라
-#   **평당 단가**이고, 총액은 `평 × 단가` 로 만들어진 것이다. 결정적 대조군 — **같은 날
-#   서로 다른 면적 3건이 소수 둘째 자리까지 동일 단가**(182.9/139.0/136.2㎡ → 전부 14,623.39).
-#   전수: 만원/평이 정수·10단위에 붙는 행 **71/71** · 고유 단가 **21개**(표의 70%가 반복).
+#   ★★**아래 서술은 독립 리뷰가 두 곳을 반증해 정정한 판이다**(첫 판은 과장이었다):
+#
+#   · **고유 면적 24개 중 2개**가 평의 정수배다(`3.31㎡=1.0013평`·`6.61㎡=1.9995평`).
+#     첫 판은 이를 *"면적이 평의 정수배"* 라고 **전수처럼** 적었다 — 거짓이다.
+#     다만 **그 2개가 71행 중 47행(66%)을 덮는다.**
+#   · 첫 판의 *"만원/평이 정수·10단위에 붙는 행 71/71"* 은 **공허한 참**이었다 —
+#     내가 쓴 지표 `|v − round(v)| ≤ 0.5` 는 **모든 실수에 참**이다.
+#     엄격히 재면 tol=0.05 에서 **5/71** 이다. 이 문장은 근거가 되지 못한다.
+#
+#   ★**살아남은 결정적 근거는 이것 하나다** — **같은 날 서로 다른 면적 3건이 소수 둘째
+#     자리까지 동일 단가**(182.9/139.0/136.2㎡ → 전부 14,623.39). 총액이 `평 × 단가` 로
+#     생성되지 않았다면 나올 수 없다. (128.3㎡ 는 14,623.**40** 이라 4건째에서 갈린다.)
+#   그리고 고유 단가 **21개 / 71행**(70%가 반복)도 재현된다.
 #
 #   ★그래서 우리 나눗셈은 **역산**이고, 원천이 평→㎡ 를 소수 2자리에서 끊은 탓에
 #   **같은 2,000만원/평 거래 45건이 1,997 과 2,000 두 값으로 갈린다** — 우리가 만든 가짜 가격차다.
@@ -149,30 +160,51 @@ def month_range(end_ym: str, months: int) -> list[str]:
 #   요약 타일에는 그 맥락이 없기 때문이다(라이브 실측: 최빈 행이 **「도로 지분」 73%**).
 
 
-def _round_sig(x: float, digits: int = 3) -> int:
-    """유효숫자 `digits` 자리로 반올림한 정수.
+def _round_sig(x: float, digits: int = 3) -> float:
+    """유효숫자 `digits` 자리로 반올림한 **실수**.
 
-    ★원천 면적의 유효숫자가 3자리(예 `3.31㎡`)라 그보다 많은 자리를 표시하면 **허위 정밀도**다.
+    ★대부분의 원천 면적이 유효숫자 3자리(예 `3.31㎡`)라 그보다 많은 자리는 **허위 정밀도**다.
+      다만 이 표본에서도 **4자리인 행이 15%**(예 `102.3`·`182.9`) 있어, 그 행에서는 이 규칙이
+      실재하는 정밀도를 조금 버린다(최대 상대오차 0.175% — 표시 목적에서 무시할 만하다).
+
+    ★★**정수로 반올림하지 않는다.** 앞 판은 `int()` 로 절단했고, 그 결과
+      **1만원/평 미만이 조용히 `0` 이 되어 값처럼 실려 나갔다**(독립 리뷰 실측):
+
+          임야 1ha / 3,000만원(=3,000원/㎡, 지방 토지에 흔하다)
+            raw 0.9917 → 앞 판 0 → payload `{"price_per_pyeong_10k": 0}` · `_absent` 없음
+            → `is_withheld()` False · `validate_withheld_pair()` **위반 0** 으로 통과
+
+      이 파일이 *"「모름」을 `0` 으로 표현하지 않는다"* 고 적어 놓고 **정확히 그것을 했다.**
+      `int()` 는 `9.99 → 9` 처럼 1~10 대역에서 자릿수도 하나 잃는다.
+
+    ★`%.3g` 는 유효숫자 반올림을 **표준 서식으로** 위임한다 — 직접 `log10`·`floor` 를 쓰면
+      경계에서 틀리기 쉽다(그 손계산이 위 절단의 출처였다).
     """
-    if x <= 0:
-        return 0
-    import math
-
-    mag = math.floor(math.log10(x))
-    q = 10 ** (mag - digits + 1)
-    return int(round(x / q) * q)
+    if not math.isfinite(x) or x <= 0:
+        return 0.0
+    return float(f"{x:.{digits}g}")
 
 
-def per_pyeong_10k(price_10k_won: Any, area_m2: Any) -> int | None:
-    """만원/평 — 값이 **둘 다 유효할 때만**. 아니면 `None`(지어내지 않는다)."""
+def per_pyeong_10k(price_10k_won: Any, area_m2: Any) -> float | None:
+    """만원/평 — 값이 **둘 다 유효할 때만**. 아니면 `None`(지어내지 않는다).
+
+    ★`bool` 은 거부한다 — `True` 는 파이썬에서 `1` 이라 조용히 통과한다.
+    ★`inf`/`nan` 도 거부한다 — 앞 판은 `OverflowError` 로 터졌다(문자열 `"inf"` 포함).
+    """
+    if isinstance(price_10k_won, bool) or isinstance(area_m2, bool):
+        return None
     try:
         p = float(price_10k_won)
         a = float(area_m2)
     except (TypeError, ValueError):
         return None
+    if not (math.isfinite(p) and math.isfinite(a)):
+        return None
     if not (p > 0 and a > 0):
         return None
-    return _round_sig(p / (a / PYEONG_SQM))
+    v = _round_sig(p / (a / PYEONG_SQM))
+    # ★반올림 결과가 0 이면 **값이 아니라 보류**다(위 독스트링의 그 사고).
+    return v if v > 0 else None
 
 
 def attach_per_pyeong(txs: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -185,11 +217,18 @@ def attach_per_pyeong(txs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for t in txs or []:
         if not isinstance(t, dict):
+            # ★조용히 버리지 않는다 — 행이 소리 없이 줄면 "거래가 적었다"는 거짓이 된다.
+            #   그대로 통과시키고 상류가 다루게 둔다(우리 책임은 단가뿐이다).
+            out.append(t)
             continue
         row = dict(t)
         # ★해제 거래 — 일어나지 않은 거래에 단가는 **해당 없음**이다.
         #   라이브 실측: 해제 행은 원거래와 **전 필드 동일한 별개 행**으로 오고(102.3㎡/20,150만),
-        #   그 평당가는 대지 중앙의 1/22.5 라 **표 최저 이상치가 두 번 찍힌다**.
+        #   그 평당가 651 은 대지 중앙(14,623)의 **1/22.5** 다.
+        #   ★첫 판은 이를 *"표 최저 이상치"* 라 적었는데 **거짓**이다(리뷰 반증) —
+        #     실제 최저는 350 이고 651 보다 낮은 행이 10건 있다. 그리고 **비해제 쌍둥이 행이
+        #     그대로 651 을 찍으므로 억제해도 그 값은 한 번 남는다.** 이 분기의 목적은
+        #     「이상치 제거」가 아니라 **일어나지 않은 거래에 단가를 붙이지 않는 것**이다.
         if str(row.get("cancel_type") or "").strip():
             row.update(withheld(
                 NOT_APPLICABLE,
@@ -200,11 +239,19 @@ def attach_per_pyeong(txs: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
         pp = per_pyeong_10k(row.get("price_10k_won"), row.get("area_m2"))
         if pp is None:
-            row.update(withheld(
-                MASKED_BY_SOURCE,
-                "원천이 면적 또는 거래금액을 제공하지 않아 단가를 산정할 수 없습니다.",
-                field="price_per_pyeong_10k",
-            ))
+            # ★사유를 가른다 — 「원천이 안 줬다」와 「값은 왔는데 산정 불가」는 **다른 사실**이다.
+            #   후자를 전자로 적으면 조사자가 **원천을 의심하러 간다**(리뷰 지적).
+            has_both = (
+                row.get("price_10k_won") is not None and row.get("area_m2") is not None
+            )
+            code, text = (
+                (INSUFFICIENT_COVERAGE,
+                 "거래금액 또는 면적이 단가를 산정할 수 있는 값이 아닙니다(0 이하·비정상).")
+                if has_both else
+                (MASKED_BY_SOURCE,
+                 "원천이 면적 또는 거래금액을 제공하지 않아 단가를 산정할 수 없습니다.")
+            )
+            row.update(withheld(code, text, field="price_per_pyeong_10k"))
         else:
             row["price_per_pyeong_10k"] = pp
         out.append(row)

@@ -71,8 +71,11 @@ const PP_ABSENT_LABEL: Record<string, string> = {
 /** 만원/평 — 서버가 실은 값만 그린다. 없으면 **왜 없는지**를 찍는다(지어내지 않는다). */
 function perPyeong(t: Tx) {
   const v = t.price_per_pyeong_10k;
-  if (typeof v === "number" && v > 0) {
-    return <span className="font-semibold">{v.toLocaleString()}</span>;
+  if (typeof v === "number" && Number.isFinite(v) && v > 0) {
+    // ★서버가 이미 유효숫자 3자리로 반올림했다 — 여기서 다시 깎지 않는다.
+    //   1만원/평 미만(지방 임야 등)을 정수로 만들면 **0 이 된다**(문서 어댑터와 같은 규칙).
+    const text = v >= 1 ? Math.round(v).toLocaleString() : String(v);
+    return <span className="font-semibold">{text}</span>;
   }
   const label = PP_ABSENT_LABEL[String(t.price_per_pyeong_10k_absent ?? "")] ?? "—";
   return (

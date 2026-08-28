@@ -65,8 +65,10 @@ _PP_ABSENT_SHORT = {
 def _fmt_per_pyeong(t: dict[str, Any]) -> str:
     """만원/평 — 서버가 실은 값을 그대로. 없으면 **왜 없는지**를 짧게 찍는다."""
     v = t.get("price_per_pyeong_10k")
-    if isinstance(v, (int, float)) and v > 0:
-        return f"{int(v):,}"
+    if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0:
+        # ★서버가 이미 유효숫자 3자리로 반올림했다 — 여기서 다시 깎지 않는다.
+        #   1만원/평 미만(지방 임야 등)은 정수로 만들면 **0 이 된다**.
+        return f"{v:,.0f}" if v >= 1 else f"{v:g}"
     code = str(t.get("price_per_pyeong_10k_absent") or "").strip()
     return _PP_ABSENT_SHORT.get(code, "—")
 
@@ -194,7 +196,10 @@ def build_report_model_from_realtx(
                 title="날짜별 신고 내역",
                 headers=list(_TX_HEADERS),
                 rows=[_tx_row(t) for t in txs],
-                numeric_cols=[2, 3],
+                # ★목록형 금지 — 열이 또 늘면 같은 결함이 재발한다(리뷰 실측: 단가 열을 넣고
+            #   여기를 안 고쳐 **문서에서만 좌측 정렬**이 됐다. 화면은 우측이라 두 표면이 갈렸고,
+            #   쉼표 숫자 열이 좌측이면 **자릿수 비교가 불가능**하다 — 이 열의 존재 이유다).
+            numeric_cols=[_TX_HEADERS.index(h) for h in ("면적(㎡)", "거래가(만원)", "만원/평")],
                 caption=f"이 동에 속한 프로젝트 필지 {len(g.get('parcels') or [])}필지 · 신고 {len(txs)}건",
             ))
         # ★백엔드가 말한 귀속 불가 사유를 **그대로** 싣는다(문서가 지어내지 않는다).

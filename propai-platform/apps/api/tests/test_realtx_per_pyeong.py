@@ -21,6 +21,7 @@ from __future__ import annotations
 import pytest
 
 from apps.api.app.services.land_intelligence.realtx_report_service import (
+    _round_sig,
     attach_per_pyeong,
     per_pyeong_10k,
 )
@@ -213,3 +214,104 @@ class Test배선이_실제로_돈다:
             f"이 모듈이 정본과 다른 계수를 쓴다: {svc.PYEONG_SQM} vs {mrs.PYEONG_SQM} — "
             "뿌리를 늘리지 마라(저장소에 3.3058 이 공존한다)"
         )
+
+
+class Test리뷰가_찾은_구멍:
+    """★독립 적대 리뷰(2026-08-28)가 **생존시킨 변이 5종**을 잠근다.
+
+    내 «7종 전부 CAUGHT» 는 **내가 고른 7종에만** 참이었다.
+    """
+
+    def test_1만원_평_미만이_0으로_사라지지_않는다(self) -> None:
+        """★HIGH-1 — 앞 판은 `int()` 절단이라 **저가 토지가 값 `0` 으로** 나갔다.
+
+        임야 1ha / 3,000만원 = 3,000원/㎡ 는 지방 토지에 흔하고, 이 플랫폼의
+        핵심 유스케이스(태양광·물류·전원주택)가 바로 그 대역이다.
+        """
+        v = per_pyeong_10k(3_000, 10_000.0)
+        assert v is not None and v > 0, "저가 토지 단가가 사라졌다"
+        assert v == pytest.approx(0.992, abs=1e-9)
+
+    def test_0이_값처럼_실려_나가지_않는다(self) -> None:
+        """★계약 검사가 통과시킨 그 자리 — `is_withheld` 로 판정한다."""
+        from apps.api.app.utils.withheld import is_withheld
+
+        (row,) = attach_per_pyeong([{"price_10k_won": 3_000, "area_m2": 10_000.0}])
+        assert row["price_per_pyeong_10k"] != 0
+        # 값이 있으면 보류가 아니어야 하고, 없으면 반드시 보류여야 한다(파티션형).
+        if row.get("price_per_pyeong_10k") is None:
+            assert is_withheld(row, "price_per_pyeong_10k")
+
+    def test_1과_10_사이에서_자릿수를_잃지_않는다(self) -> None:
+        """★`int()` 절단은 `9.99 → 9` 로 유효숫자를 하나 깎았다."""
+        assert _round_sig(9.99) == pytest.approx(9.99)
+        # ★1.005 → 1.00 은 **옳다**(유효숫자 3자리). 처음에 `> 1.0` 이라 썼는데
+        #   그건 「3자리」가 아니라 「올림」을 기대한 것이었다 — 내 단언이 틀렸다.
+        assert _round_sig(1.005) == pytest.approx(1.0)
+        # 절단이었으면 아래가 1 이 된다(원래 결함을 되살리는 방향).
+        assert _round_sig(1.29) == pytest.approx(1.29)
+
+    def test_정상_해제표기_공백을_해제로_읽지_않는다(self) -> None:
+        """★HIGH-3 — 형제 어댑터가 *"정상 건의 `cancel_type` 은 `' '`(스페이스)라 `strip()` 필수"*
+        라고 **이미 적어 둔** 함정인데, 새 코드에서는 무잠금이었다(`.strip()` 제거 변이 SURVIVED).
+        회귀하면 **정상 행 전부가 「해당없음」** 이 되어 표가 조용히 빈다.
+        """
+        (row,) = attach_per_pyeong([
+            {"price_10k_won": 2_000, "area_m2": 3.31, "cancel_type": " "},
+        ])
+        assert row["price_per_pyeong_10k"] == pytest.approx(2_000), (
+            "공백 cancel_type 을 해제로 읽었다 — 정상 거래가 전부 사라진다"
+        )
+        assert "price_per_pyeong_10k_absent" not in row
+
+    def test_비정상_입력이_터지지_않고_거부된다(self) -> None:
+        """★앞 판은 `inf` 에서 `OverflowError` 로 **터졌다**(문자열 `"inf"` 포함)."""
+        assert per_pyeong_10k(float("inf"), 3.31) is None
+        assert per_pyeong_10k("inf", "1") is None
+        assert per_pyeong_10k(float("nan"), 3.31) is None
+        # bool 은 파이썬에서 1/0 이라 조용히 통과한다 — 거부해야 한다.
+        assert per_pyeong_10k(True, True) is None
+        # 음수도(상·하한은 한 쌍이다)
+        assert per_pyeong_10k(-2_000, 3.31) is None
+        assert per_pyeong_10k(2_000, -3.31) is None
+
+    def test_0원과_면적결측의_사유가_다르다(self) -> None:
+        """★「원천이 안 줬다」와 「값은 왔는데 산정 불가」는 다른 사실이다.
+
+        앞 판은 둘 다 `masked_by_source` 라, 조사자가 **원천을 의심하러** 가게 만들었다.
+        """
+        영원, 결측 = attach_per_pyeong([
+            {"price_10k_won": 0, "area_m2": 3.31},
+            {"price_10k_won": 2_000, "area_m2": None},
+        ])
+        assert 영원["price_per_pyeong_10k_absent"] == "insufficient_coverage"
+        assert 결측["price_per_pyeong_10k_absent"] == "masked_by_source"
+        assert 영원["price_per_pyeong_10k_absent"] != 결측["price_per_pyeong_10k_absent"]
+
+    def test_비dict_원소를_조용히_버리지_않는다(self) -> None:
+        """★행이 소리 없이 줄면 *"거래가 적었다"* 는 거짓이 된다."""
+        rows = attach_per_pyeong([{"price_10k_won": 2_000, "area_m2": 3.31}, "쓰레기", None])
+        assert len(rows) == 3, f"입력 3건인데 {len(rows)}건만 나왔다 — 조용한 소실"
+
+    def test_문서_단가열이_우측정렬이다(self) -> None:
+        """★HIGH-2 — 화면은 우측인데 **문서만 좌측**이었다. 쉼표 숫자 열이 좌측이면
+        자릿수 비교가 불가능하고, 그게 이 열의 존재 이유다.
+        ★목록형으로 단언하지 않는다 — 헤더 위치에서 **파생**시켜야 열이 또 늘 때 따라온다.
+        """
+        from apps.api.app.services.report.render import realtx_adapter as ad
+
+        model = ad.build_report_model_from_realtx({"groups": [{
+            "lawd_cd": "11680", "dong": "역삼동", "parcels": [],
+            "summary": {"total": 1},
+            "transactions": attach_per_pyeong([{"price_10k_won": 2_000, "area_m2": 3.31}]),
+        }], "months": ["202608"]})
+        blocks = [b for s in model.sections for b in s.blocks]
+        tables = [b for b in blocks if getattr(b, "numeric_cols", None) is not None]
+        assert tables, "표 블록을 못 찾았다(수집기 사망)"
+        idx = ad._TX_HEADERS.index("만원/평")
+        tx_tables = [b for b in tables if list(getattr(b, "headers", [])) == list(ad._TX_HEADERS)]
+        assert tx_tables, "거래 표를 못 찾았다"
+        for b in tx_tables:
+            assert idx in b.numeric_cols, (
+                f"단가 열({idx})이 numeric_cols={b.numeric_cols} 에 없다 — 문서에서 좌측 정렬된다"
+            )
