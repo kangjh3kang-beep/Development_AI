@@ -110,7 +110,20 @@ describe("★전송 — 프로덕션 분기(sendBeacon)를 실제로 태운다",
     expect(beacons.length, "beacon 을 시도조차 안 했다").toBe(1);
     expect(fetches.length, "beacon 이 false 인데 폴백이 안 돌았다 — 조용한 전손").toBe(1);
     const { init } = fetches[0];
-    expect(JSON.parse(String(init?.body)).events.length).toBeGreaterThan(0);
+    // ★**개수가 아니라 값**을 본다. 초판은 `events.length > 0` 만 봐서, **폴백 본문을 상수로
+    //   동결하는** 변이를 **내 파일은 못 잡았다**(형제 테스트가 대신 잡아 CAUGHT 로 보였을 뿐 —
+    //   내 파일 단독 러너로 재서 갈랐다). 동료 세션 `development-ai-ca` 가 같은 형태를
+    //   `#920` 에서 실측해 넘겨 준 패턴이다:
+    //     *"이 단언은 「이름이 있다」를 보는가, 「값이 실린다」를 보는가?"*
+    const fbEvents = (JSON.parse(String(init?.body)) as {
+      events: Array<Record<string, unknown>>;
+    }).events;
+    const mine = fbEvents.find(
+      (e) => (e.payload as Record<string, unknown> | null)?.scope === "TX-PROBE",
+    );
+    expect(mine, `폴백 본문에 **내 이벤트의 값**이 없다: ${JSON.stringify(fbEvents).slice(0, 120)}`)
+      .toBeTruthy();
+    expect(mine!.event_type).toBe("js_error");
     // ★제목이 **선언**한 것을 단언한다 — `keepalive` 가 죽으면 **언로드 시 전손**이고,
     //   그것이 이 폴백이 존재하는 유일한 이유다(선언 ≠ 발화).
     expect(init?.keepalive, "keepalive 가 아니면 언로드 시 전손이다").toBe(true);
