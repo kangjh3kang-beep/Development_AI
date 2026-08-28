@@ -124,6 +124,33 @@ export function parcelDataToRows(
 }
 
 /**
+ * 필지 **정체성** 주소 목록 — PNU 로 지번을 파생해 **서로 구분되는** 주소를 만든다.
+ * 면적 필터는 **걸지 않는다**(표시·렌더 게이트용 = 사용자가 «고른» 모집단).
+ *
+ * ★2026-08-28 사용자 신고의 근원 — 여러 화면이 `parcels.map((p) => p.address)` 를 손수 썼고,
+ *   스토어 주소에 지번이 없으면(예: "경기도 오산시 내삼미동") **77필지가 한 문자열로 붕괴**해
+ *   백엔드 `scenario_simulator._merge`(주소 중복제거)가 **1필지 44㎡** 로 시뮬레이션했다.
+ *   개발방식 19건이 거짓 '불가'로 막혔다(«도시개발사업: 44m² < 1만m²»).
+ *
+ * ★★`parcelAddressList` 와 **다르다** — 그쪽은 `parcelDataToRows` 의 **면적>0** 의미론을
+ *   상속한다(전송용). 표시 모집단에 그걸 쓰면 «외 N필지 선택됨» 이 **줄어드는 회귀**가 된다.
+ *   두 모집단은 뜻이 다르므로 함수도 둘이다.
+ *
+ * ★PNU 가 없으면 **구분을 지어내지 않는다**(무날조) — 그때는 백엔드가 붕괴를 고지한다.
+ */
+export function parcelIdentityAddresses(
+  parcels:
+    | ReadonlyArray<{ address?: string | null; pnu?: string | null }>
+    | undefined
+    | null,
+): string[] {
+  if (!parcels) return [];
+  return parcels
+    .map((p) => parcelDisplayAddress(p.address ?? "", p.pnu ?? null))
+    .filter((a): a is string => Boolean(a && a.trim()));
+}
+
+/**
  * 다필지 통합을 보낼 가치가 있는지 — 2필지 이상일 때만 parcels를 첨부한다.
  * (1필지면 백엔드가 단일 경로로 처리 = 무회귀. 호출부에서 `...(parcels.length>1 ? {parcels} : {})`.)
  */
