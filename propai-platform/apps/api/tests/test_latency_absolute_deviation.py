@@ -151,3 +151,114 @@ def test_two_axes_catch_different_things():
     t2, p2 = 23524.0, 33000.0        # 1.40배 — 비율 임계 1.5 미만
     assert az._classify_latency(p2, t2) is None
     assert az.classify_latency_absolute(p2, t2) == "warn"
+
+# ---------------------------------------------------------------------------
+# ★리뷰 생존변이 봉합 — 중앙값을 **양방향**으로 잠근다
+#
+#   종전 락은 `min(calm) <= t <= max(calm)` 이었고 이것은 **p0(최솟값)에서도 참**이라
+#   `p50 → p0` 변이가 SURVIVED 했다. 잠기지 않은 그 방향이 하필
+#   *"평소값이 너무 낮아짐 = 위양성 폭증"* — **이 변경이 고치겠다고 선언한 바로 그 방향**이다.
+#   방향이 있는 결함에는 방향이 있는 단언을 건다(파티션형).
+# ---------------------------------------------------------------------------
+
+#: 두 방향을 **동시에** 가르는 픽스처. 산포(1,000~10,000)가 임계(5,000ms)보다 커야
+#: 평소값이 낮게 붕괴했을 때 실제로 위양성이 난다 — 산포가 임계보다 작으면
+#: `p0` 변이를 넣어도 아무 일이 안 일어나 **락이 공허해진다**(실측으로 고른 값).
+_SPREAD = [1000.0, 2000.0, 8000.0, 9000.0, 10000.0]   # p50=8,000 · p0=1,000 · p100=10,000
+
+
+def test_typical_is_interior_not_an_extreme():
+    """평소값은 **양쪽 극단 어느 쪽도 아니어야** 한다.
+
+    · 낮은 쪽으로 붕괴 → 위양성 폭증(`p0`·`p25` 변이를 죽인다)
+    · 높은 쪽으로 끌려감 → 장애 미탐(`p100`·평균 변이를 죽인다)
+    """
+    t = az.typical_p95(_SPREAD)
+    assert t is not None, "평소값이 없다 — 창 수 하한이 잘못 걸렸다"
+    assert t > min(_SPREAD), f"평소값 {t} 가 최솟값으로 붕괴 — **위양성 폭증** 방향이 열렸다"
+    assert t < max(_SPREAD), f"평소값 {t} 가 최댓값에 끌려감 — **장애 미탐** 방향이 열렸다"
+
+
+def test_typical_bias_is_locked_by_its_effect_not_its_name():
+    """★단언을 **효과**에 건다 — *"중앙값을 쓴다"* 가 아니라 *"그래서 어떻게 되는가"*.
+
+    같은 실행에서 **두 모집단**을 가른다(한 모집단만 보면 *"아무것도 안 하는 구현"* 과
+    *"올바른 구현"* 을 구별할 수 없다):
+
+      · 평소 범위 안의 관측 → **발화하지 않는다**  ← 평소값이 낮게 붕괴하면 깨진다
+      · 진짜 버스트          → **발화한다**        ← 평소값이 높게 끌려가면 깨진다
+    """
+    t = az.typical_p95(_SPREAD)
+    normal = 9000.0                                              # 평소 범위 안
+    burst = 8000.0 + az.LATENCY_ABSOLUTE_DEVIATION_MS + 1000.0   # 평소값 + 임계 초과
+
+    assert az.classify_latency_absolute(normal, t) is None, (
+        "평소 범위 안의 관측이 발화했다 — 평소값이 낮은 쪽으로 붕괴한 것이다(위양성)")
+    assert az.classify_latency_absolute(burst, t) is not None, (
+        "진짜 버스트를 놓쳤다 — 평소값이 높은 쪽으로 끌려간 것이다(미탐)")
+
+
+# ---------------------------------------------------------------------------
+# ★H4 봉합 — `triggers`·`typical_p95` 의 **소비처 0** 을 끝낸다
+#
+#   두 필드는 `metrics_json` 에 **쓰이기만** 하고 읽는 곳이 0건이었다(실측:
+#   `typical_p95` 3건 전부 analyzer.py 안 · `typical_windows` 1건 = 쓰기뿐).
+#   그 결과 절대편차 **단독** 발화가 화면에 `p95 33,000ms (이전 baseline 23,524ms)`
+#   = **1.40배**로 나가, 비율 임계(1.5배) **미만**인 수치 옆에 `warn` 이 붙었다.
+#   ★코드 주석이 *"안 남기면 왜 울렸는지 알 수 없다"* 라고 적어 놓고 표면까지 안 보낸 것.
+# ---------------------------------------------------------------------------
+
+
+def _ins(triggers, typical, windows=5, sev="warn"):
+    return {"insight_type": "latency_regression", "severity": sev,
+            "metrics_json": {"key": "/api/v1/zoning/parcel-boundaries", "p95_ms": 33000.0,
+                             "prev_baseline_p95": 23524.0, "samples": 20,
+                             "triggers": triggers, "typical_p95": typical,
+                             "typical_windows": windows}}
+
+
+def test_narrative_says_which_axis_fired_two_populations():
+    """★**두 모집단**이 서로 다른 문장을 내야 한다.
+
+    한쪽만 단언하면 *"항상 같은 문자열을 붙이는 구현"* 이 통과한다.
+    """
+    ratio_only = az._rule_narrative(_ins(["ratio"], 23000.0))
+    abs_only = az._rule_narrative(_ins(["absolute"], 23524.0))
+
+    assert "비율" in ratio_only and "절대편차" not in ratio_only, (
+        f"비율 단독 발화인데 문장이 축을 잘못 말한다: {ratio_only}")
+    assert "절대편차" in abs_only and "비율" not in abs_only, (
+        f"절대편차 단독 발화인데 문장이 축을 잘못 말한다: {abs_only}")
+    assert ratio_only != abs_only, "두 축이 **같은 문장**을 낸다 — 축을 읽지 않는 구현이다"
+
+
+def test_narrative_carries_typical_value():
+    """평소값이 문장에 **실려야** 한다 — 키만 있고 값이 안 실리는 것을 막는다."""
+    out = az._rule_narrative(_ins(["absolute"], 23524.0))
+    assert "23524" in out.replace(",", ""), f"평소값이 문장에 없다: {out}"
+
+
+def test_unknown_typical_is_not_disguised_as_zero():
+    """★「모름」을 **유효값으로 위장하지 않는다.**
+
+    평소값이 `None`(창 부족)인데 `0ms` 로 그리면 *"평소가 0ms 인 경로"* 라는
+    **관측이 되어 버린다** — 면제 확정 0원과 미조회 0원을 구별 못 하게 만든 것과 같은 결함.
+    """
+    out = az._rule_narrative(_ins(["absolute"], None, windows=2))
+    assert "판정 불가" in out, f"「모름」이 판정 불가라고 말하지 않는다: {out}"
+    assert "평소값 0ms" not in out, f"「모름」이 0ms 로 위장됐다: {out}"
+
+
+def test_non_firing_row_gets_no_axis_phrase():
+    """발화가 아니면(`triggers` 빈 목록) 축 문구를 **붙이지 않는다**.
+
+    ★음성 대조군 — 이것이 없으면 *"항상 문구를 붙이는 구현"* 이 위 락을 전부 통과한다.
+    """
+    out = az._rule_narrative(_ins([], 23524.0, sev="info"))
+    assert "발화 축" not in out, f"발화가 아닌 행에 축 문구가 붙었다: {out}"
+
+
+def test_unknown_axis_code_is_shown_raw_not_hidden():
+    """모르는 축 코드는 **감추지 않고 원문 그대로** — 숨기면 새 축이 조용히 사라진다."""
+    out = az._rule_narrative(_ins(["ratio", "brand_new_axis"], 23524.0))
+    assert "brand_new_axis" in out, f"모르는 축이 화면에서 사라졌다: {out}"

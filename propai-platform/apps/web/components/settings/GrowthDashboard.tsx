@@ -139,6 +139,24 @@ function num(v: unknown): number | null {
 function str(v: unknown): string | null {
   return typeof v === "string" && v.trim() ? v : null;
 }
+/** metrics_json 의 문자열 배열(예: `triggers`). 배열이 아니면 빈 배열. */
+function arr(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && !!x.trim()) : [];
+}
+/**
+ * 지연 발화 **축 코드 → 한글**.
+ *
+ * 원천은 백엔드 `app/services/growth/analyzer.py` 의 `_LATENCY_TRIGGER_LABELS` 이고
+ * 값을 만드는 곳은 같은 파일의 `triggers = [...]` 다. ★어긋나면 화면에 영문 raw
+ * (`ratio`/`absolute`)가 그대로 새므로 **양쪽을 파생시켜 대조하는 락**이 잡는다.
+ *
+ * ★모르는 코드는 **감추지 않고 원문 그대로** 보여준다(REASON_LABELS 와 같은 원칙) —
+ *   숨기면 "새 축이 생겼다"는 가장 중요한 신호가 조용히 사라진다.
+ */
+const LATENCY_TRIGGER_LABELS: Record<string, string> = {
+  ratio: "비율(기준선 대비)",
+  absolute: "절대편차(평소값 대비)",
+};
 function pct(v: number | null): string {
   return v === null ? "-" : `${(v <= 1 ? v * 100 : v).toFixed(1)}%`;
 }
@@ -248,13 +266,35 @@ export function InsightMetrics({ insight }: { insight: GrowthInsight }) {
       break;
     }
     case "latency_regression": {
-      // 백엔드 키(analyzer.py): key(route|service) / p95_ms / prev_baseline_p95.
+      // 백엔드 키(analyzer.py): key(route|service) / p95_ms / prev_baseline_p95
+      //                        / triggers / typical_p95 / typical_windows.
       const p95 = num(m.p95_ms ?? m.p95);
       const baseline = num(m.prev_baseline_p95 ?? m.baseline_ms ?? m.baseline);
       const key = str(m.key ?? m.route);
       if (key) rows.push({ label: "경로", value: key });
       if (p95 !== null) rows.push({ label: "p95 지연", value: `${Math.round(p95).toLocaleString("ko-KR")}ms` });
       if (baseline !== null) rows.push({ label: "기준선", value: `${Math.round(baseline).toLocaleString("ko-KR")}ms` });
+      // ★**어느 축이 울렸는가.** 없으면 절대편차 단독 발화가 `p95 33,000ms /
+      //   기준선 23,524ms` = 1.40배로 보여, 비율 임계(1.5배) **미만**인데 warn 이 붙은
+      //   것으로 읽힌다 — 화면만 보고는 왜 울렸는지 알 수 없다.
+      const trigs = arr(m.triggers);
+      if (trigs.length > 0) {
+        rows.push({
+          label: "발화 축",
+          value: trigs.map((x) => LATENCY_TRIGGER_LABELS[x] ?? x).join(", "),
+        });
+        // ★`typical_p95` 가 없으면 **0ms 로 그리지 않는다** — 「모름」을 유효값으로
+        //   위장하는 순간 「평소가 0ms 인 경로」라는 관측이 되어 버린다.
+        const typical = num(m.typical_p95);
+        const windows = num(m.typical_windows);
+        rows.push({
+          label: "평소값",
+          value:
+            typical !== null
+              ? `${Math.round(typical).toLocaleString("ko-KR")}ms`
+              : `판정 불가(창 ${windows !== null ? windows : "?"}개)`,
+        });
+      }
       break;
     }
     case "recurring_verify_error": {

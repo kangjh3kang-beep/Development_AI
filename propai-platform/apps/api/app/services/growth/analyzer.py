@@ -1087,6 +1087,33 @@ def _withheld_note(m: dict[str, Any]) -> str:
     return "  ※ " + " / ".join(parts)
 
 
+#: 발화 축 코드 → 한글. ★모르는 코드는 **감추지 않고 원문 그대로** 내보낸다 —
+#  숨기면 "새 축이 생겼다"는 가장 중요한 신호가 조용히 사라진다(REASON_LABELS 와 같은 원칙).
+_LATENCY_TRIGGER_LABELS = {"ratio": "비율(기준선 대비)", "absolute": "절대편차(평소값 대비)"}
+
+
+def _latency_trigger_phrase(m: dict[str, Any]) -> str:
+    """★`triggers`·`typical_p95` 를 **문장으로** 만든다 — 소비처 0 을 끝낸다.
+
+    · 발화가 아니면(`triggers` 비었음) **빈 문자열** — 기록성 행을 오염시키지 않는다.
+    · `typical_p95` 가 `None` 이면 *"평소값 판정 불가"* 라고 **말한다.**
+      ★`0ms` 로 그리지 않는다 — 「모름」을 유효값으로 위장하면 그 순간 관측이 된다
+        (면제 확정 0원과 미조회 0원을 구별 못 하게 만든 것과 같은 결함).
+    """
+    trigs = m.get("triggers") or []
+    if not isinstance(trigs, (list, tuple)) or not trigs:
+        return ""
+    names = ", ".join(_LATENCY_TRIGGER_LABELS.get(str(x), str(x)) for x in trigs)
+    typical = m.get("typical_p95")
+    if isinstance(typical, (int, float)):
+        why = f" 평소값 {round(float(typical))}ms."
+    else:
+        windows = m.get("typical_windows")
+        w = f"창 {windows}개" if isinstance(windows, int) else "창 부족"
+        why = f" 평소값 판정 불가({w} · 최소 {LATENCY_TYPICAL_MIN_WINDOWS}개 필요)."
+    return f" 발화 축: {names}.{why}"
+
+
 def _rule_narrative(ins: dict[str, Any]) -> str:
     """규칙 기반 narrative(LLM 없이도 항상 채워지는 한국어 요약).
 
@@ -1136,8 +1163,14 @@ def _rule_narrative_body(ins: dict[str, Any]) -> str:
                 f"{_metric_text(m, 'fail_pct')}/warn {_metric_text(m, 'warn_pct')}, "
                 f"feedback down {_metric_text(m, 'down_pct')}.")
     if t == "latency_regression":
+        # ★**어느 축이 울렸는가**를 헤드라인에 넣는다(`fallback_rate` 가 사유를 헤드라인에
+        #   넣는 것과 같은 원칙). 안 넣으면 절대편차 단독 발화가 화면에
+        #   `p95 33000ms (이전 baseline 23524ms)` = **1.40배**로 나가, 비율 임계(1.5배)
+        #   **미만**인 수치 옆에 `warn` 이 붙는다 — 사람이 *"왜 울렸는지"* 를 알 수 없다.
+        #   진단 불가는 그 자체가 장애다.
         return (f"[{sev}] {m.get('key')} p95 {m.get('p95_ms')}ms "
-                f"(이전 baseline {m.get('prev_baseline_p95')}ms, 표본 {m.get('samples')}).")
+                f"(이전 baseline {m.get('prev_baseline_p95')}ms, 표본 {m.get('samples')})."
+                f"{_latency_trigger_phrase(m)}")
     # ★분기가 없는 타입의 기본 narrative. 종전엔 `{t}` 가 **영문 enum 그대로** 나갔다
     #   (예: `[info] improvement_proposal`). 분기 없는 타입일수록 이 문장이 유일한 설명이라
     #   여기서 raw 가 새면 그 카드는 **아무 말도 하지 않는 것과 같다.**
