@@ -256,6 +256,16 @@ def record_fallback(service: str, kind: str, *, severity: str = "warn", **meta: 
         logger.debug("growth record_fallback 무시: %s", str(e)[:120])
 
 
+def flush_interval_s() -> int:
+    """배수 루프의 대기 주기(초). ★소비처가 리터럴을 쓰지 않게 **파생시킨다**.
+
+    `apps/api/main.py` 는 역사적으로 `sleep(5)` 리터럴을 쓰고 그 짝을
+    `test_flush_interval_matches_the_actual_loop` 이 소스 대조로 잠근다(그대로 둔다).
+    **새로 배선하는 소비처는 이 접근자를 쓴다** — 리터럴을 하나 더 만들지 않는다.
+    """
+    return _FLUSH_INTERVAL_S
+
+
 def queue_size() -> int:
     """현재 큐 적재 건수(관측·테스트용)."""
     return len(_QUEUE)
@@ -413,6 +423,39 @@ async def flush_batch(db, limit: int = _FLUSH_LIMIT) -> int:
             len(rows), _consecutive_failures, str(e)[:160],
         )
         return 0
+
+
+async def drain_until_empty(session_factory: Any, *, max_rounds: int = 20) -> int:
+    """큐가 빌 때까지 배치 flush 한다. 적재된 총 건수 반환.
+
+    ## ★왜 함수로 빼는가 — **배수 경로가 여럿이면 하나가 빠진다**
+
+    이 루프는 종전에 `apps/api/main.py` **두 곳에 복제**돼 있었고(주기 루프 · 종료 flush),
+    상한 `500` 이 **리터럴로 하드코딩**돼 `_FLUSH_LIMIT` 과 따로 놀았다.
+    거기에 워커용으로 **세 번째 사본**을 만들면 셋이 갈라진다.
+
+    ★그리고 실제로 **배수구가 아예 없는 프로세스**가 있었다 — `apps/worker`(arq).
+      진입점 임포트 폐포(79파일)가 `record_event` 에 **닿는데**(`base_client._emit_growth_fallback`
+      → 외부 API 회로차단기 폴백마다 발화) 그 폐포 안에 `flush_batch` 호출은 **0건**이었다.
+      즉 워커가 담은 이벤트는 **컨테이너 재시작마다 통째로 사라졌다.**
+
+    ## 계약
+
+    - 큐가 비어 있으면 **세션을 열지 않는다**(빈 커넥션 낭비 방지).
+    - 한 회차가 `_FLUSH_LIMIT` **미만**을 적재하면 큐가 마른 것이므로 멈춘다.
+    - `max_rounds` 는 **폭주 상한**이다 — 계속 차오르는 큐에 갇히지 않는다.
+    - ★상한은 **리터럴이 아니라 `_FLUSH_LIMIT` 에서 파생**된다. 상수를 바꾸면 여기가 따라온다.
+    """
+    if queue_size() == 0:
+        return 0
+    total = 0
+    async with session_factory() as session:
+        for _ in range(max_rounds):
+            n = await flush_batch(session)
+            total += n
+            if n < _FLUSH_LIMIT:
+                break
+    return total
 
 
 def capture_status() -> dict[str, Any]:

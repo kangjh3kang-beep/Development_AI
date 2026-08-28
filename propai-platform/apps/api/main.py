@@ -464,13 +464,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         while True:
             await _asyncio.sleep(5)
             try:
-                if capture_service.queue_size() == 0:
-                    continue
-                async with AsyncSessionLocal() as _s:
-                    for _ in range(20):
-                        n = await capture_service.flush_batch(_s)
-                        if n < 500:
-                            break
+                # ★배수 로직은 capture_service.drain_until_empty 하나뿐이다 —
+                #   종전에는 이 루프와 아래 종료 flush 에 **복제**돼 있었고 상한 500 이
+                #   리터럴이라 `_FLUSH_LIMIT` 과 따로 놀았다. 사본이 갈리면 하나가 낡는다.
+                await capture_service.drain_until_empty(AsyncSessionLocal)
             except Exception as e:  # noqa: BLE001
                 logger.warning("growth flush 루프 오류: %s", str(e)[:160])
 
@@ -715,12 +712,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         try:
             from app.services.growth import capture_service
             from apps.api.database.session import AsyncSessionLocal
-            if capture_service.queue_size() > 0:
-                async with AsyncSessionLocal() as _fs:
-                    for _ in range(20):
-                        n = await capture_service.flush_batch(_fs)
-                        if n < 500:
-                            break
+            await capture_service.drain_until_empty(AsyncSessionLocal)
         except Exception as e:  # noqa: BLE001
             logger.warning("growth 종료 flush 오류: %s", str(e)[:160])
     logger.info("PropAI API 종료")

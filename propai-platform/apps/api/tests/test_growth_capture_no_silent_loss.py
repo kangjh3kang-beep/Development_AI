@@ -471,20 +471,96 @@ def test_queue_maxlen_matches_the_constant() -> None:
     assert cs._QUEUE.maxlen == cs._MAX_QUEUE
 
 
-def test_flush_limit_matches_main_loop_literals() -> None:
-    """★리뷰 #5-M3 — 주기는 잠갔는데 **상한은 안 잠갔다**(한쪽만 거는 단언).
+def test_main_no_longer_duplicates_the_batch_cap() -> None:
+    """★종전 락의 **승계** — 「두 리터럴이 `_FLUSH_LIMIT` 과 같은가」였다.
 
-    `main.py` 는 `_FLUSH_LIMIT` 을 **두 곳에 하드코딩**한다(`if n < 500`).
-    갈리면 화면의 `max_sustained_per_sec` 이 거짓이 된다 — 그 값은 주기와 상한 **둘 다**에서
-    나온다. 소스에서 **파생**해 대조한다.
+    이제 `main.py` 는 상한을 **아예 안 갖는다**: 배수 루프가 `capture_service.drain_until_empty`
+    하나로 모였고 상한은 그 안에서 `_FLUSH_LIMIT` 에서 **파생**된다.
+    ★리터럴을 **맞추는 것**보다 **없애는 것**이 강하다 — 그래서 락도 그렇게 바꾼다.
+    (지표를 느슨하게 한 것이 아니라 **더 센 성질**을 단언한다.)
+
+    되살리는 변이: `main.py` 에 `if n < 500:` 루프를 되돌리면 이 테스트가 죽는다.
     """
     src = (_API / "main.py").read_text(encoding="utf-8")
-    lits = [int(m) for m in re.findall(r"if n < (\d+):", src)]
-    assert lits, "★main.py 에서 배치 상한 비교를 못 찾았다 — 추출기가 죽었다(위반 아님)"
-    assert len(lits) >= 2, f"★하드코딩 지점이 {len(lits)}곳 — 구조가 바뀌었다"
-    assert set(lits) == {cs._FLUSH_LIMIT}, (
-        f"★main.py 의 상한 {sorted(set(lits))} ≠ _FLUSH_LIMIT {cs._FLUSH_LIMIT}"
+    # ★양성 대조군 먼저 — 파일을 제대로 읽었는가(조회기 생존). 없으면 "0건"이 공허하다.
+    assert "drain_until_empty" in src, "★배수 호출이 main.py 에 없다 — 추출기가 죽었거나 배선이 끊겼다"
+    lits = re.findall(r"if n < (\d+):", src)
+    assert not lits, f"★배치 상한 리터럴이 되살아났다: {lits} — 사본이 갈리면 하나가 낡는다"
+
+
+def test_drain_cap_is_derived_from_the_constant_not_a_literal() -> None:
+    """★상한이 **상수에서 나오는지**를 파서로 본다 — 리터럴이면 상수가 장식이 된다.
+
+    `grep` 이 아니라 `ast` 로 **`drain_until_empty` 함수 본문만** 본다(주석·독스트링 배제).
+    """
+    import ast as _ast
+    src = (_API / "app/services/growth/capture_service.py").read_text(encoding="utf-8")
+    fn = next(
+        (n for n in _ast.walk(_ast.parse(src))
+         if isinstance(n, _ast.AsyncFunctionDef) and n.name == "drain_until_empty"),
+        None,
     )
+    assert fn is not None, "★drain_until_empty 를 못 찾았다 — 추출기가 죽었다(위반 아님)"
+    names = {n.id for n in _ast.walk(fn) if isinstance(n, _ast.Name)}
+    assert "_FLUSH_LIMIT" in names, "★상한이 상수에서 파생되지 않는다"
+    ints = {n.value for n in _ast.walk(fn)
+            if isinstance(n, _ast.Constant) and isinstance(n.value, int) and not isinstance(n.value, bool)}
+    assert cs._FLUSH_LIMIT not in ints, f"★상한이 리터럴로 박혀 있다({cs._FLUSH_LIMIT})"
+
+
+@pytest.mark.asyncio
+async def test_drain_until_empty_empties_the_queue_and_honours_its_round_cap() -> None:
+    """★두 모집단 — **비운다**(A)와 **폭주 상한을 지킨다**(B)를 같은 실행에서 본다.
+
+    한쪽만 보면 구별이 안 된다: *"큐를 비운다"* 만 단언하면 **상한을 무시하는 구현**도 통과하고,
+    *"상한을 지킨다"* 만 단언하면 **아무것도 안 하는 구현**도 통과한다.
+    """
+    class _Factory:
+        def __init__(self, db): self._db = db
+        def __call__(self): return self
+        async def __aenter__(self): return self._db
+        async def __aexit__(self, *a): return False
+
+    f = _Factory(_OkDb())
+
+    # ── A: 상한보다 큰 큐도 **끝까지 비운다**(여러 회차) ──
+    cs._reset_stats_for_test()
+    _fill(cs._FLUSH_LIMIT * 2 + 200)
+    total = await cs.drain_until_empty(f)
+    assert len(cs._QUEUE) == 0, f"★큐가 안 비었다({len(cs._QUEUE)}건 남음)"
+    assert total == cs._FLUSH_LIMIT * 2 + 200
+
+    # ── B: `max_rounds` 를 1 로 주면 **한 회차만** — 나머지는 큐에 남는다 ──
+    cs._reset_stats_for_test()
+    _fill(cs._FLUSH_LIMIT * 2)
+    total_capped = await cs.drain_until_empty(f, max_rounds=1)
+    assert total_capped == cs._FLUSH_LIMIT, "★폭주 상한이 안 지켜졌다"
+    assert len(cs._QUEUE) == cs._FLUSH_LIMIT, "★남아야 할 것이 안 남았다"
+
+    # ★두 모집단이 실제로 **갈렸는지** — 같지 않아야 락이 공허하지 않다.
+    assert total != total_capped
+
+
+@pytest.mark.asyncio
+async def test_drain_opens_no_session_when_queue_is_empty() -> None:
+    """★빈 큐에 커넥션을 열지 않는다 — 워커는 대부분의 시간 큐가 비어 있다."""
+    opened = {"n": 0}
+
+    class _CountingFactory:
+        def __call__(self): return self
+        async def __aenter__(self):
+            opened["n"] += 1
+            return _OkDb()
+        async def __aexit__(self, *a): return False
+
+    cs._reset_stats_for_test()
+    assert await cs.drain_until_empty(_CountingFactory()) == 0
+    assert opened["n"] == 0, "★빈 큐인데 세션을 열었다"
+
+    # ★음성 대조군 — 큐가 있으면 **연다**(위 0 이 "팩토리가 죽어서"가 아님을 증명)
+    _fill(3)
+    assert await cs.drain_until_empty(_CountingFactory()) == 3
+    assert opened["n"] == 1, "★큐가 있는데 세션을 안 열었다 — 대조군 실패"
 
 
 def test_retry_cap_is_pinned_not_just_banded() -> None:
