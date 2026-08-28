@@ -37,6 +37,11 @@ import math
 from collections import defaultdict
 from typing import Any
 
+# ★평↔㎡ 계수는 **새로 선언하지 않는다.** `market_report_service.PYEONG_SQM` 이 사실상 정본이고
+#   형제 둘(`report/render/market_adapter.py`·프론트 `PricingBandPanel.tsx`)이 자기 주석에
+#   *"이 상수의 미러"* 라고 적어 두었다. 저장소에 `3.3058`(121배 부정확)도 공존하므로
+#   **뿌리를 늘리지 않는 것**이 이 import 의 요점이다.
+from apps.api.app.services.market.market_report_service import PYEONG_SQM
 from apps.api.app.utils.withheld import (
     INSUFFICIENT_COVERAGE,
     MASKED_BY_SOURCE,
@@ -44,12 +49,6 @@ from apps.api.app.utils.withheld import (
     SOURCE_UNAVAILABLE,
     withheld,
 )
-
-# ★평↔㎡ 계수는 **새로 선언하지 않는다.** `market_report_service.PYEONG_SQM` 이 사실상 정본이고
-#   형제 둘(`report/render/market_adapter.py`·프론트 `PricingBandPanel.tsx`)이 자기 주석에
-#   *"이 상수의 미러"* 라고 적어 두었다. 저장소에 `3.3058`(121배 부정확)도 공존하므로
-#   **뿌리를 늘리지 않는 것**이 이 import 의 요점이다.
-from apps.api.app.services.market.market_report_service import PYEONG_SQM
 
 logger = logging.getLogger(__name__)
 

@@ -28,12 +28,12 @@ from apps.api.app.services.land_intelligence.realtx_report_service import (
 from apps.api.app.services.market.market_report_service import PYEONG_SQM
 
 
-class Test파생이_살아있다:
+class Test파생이살아있다:
     """★대조군 — 이게 죽으면 아래 「위반 0」이 전부 공허해진다."""
 
     def test_계수가_정본에서_온다(self) -> None:
         # ★뿌리를 늘리지 않는다. `3.3058`(121배 부정확)이 저장소에 공존한다.
-        assert PYEONG_SQM == pytest.approx(3.305785, abs=1e-9)
+        assert pytest.approx(3.305785, abs=1e-9) == PYEONG_SQM
 
     def test_정상값이_실제로_나온다(self) -> None:
         # 대조군이 없으면 "전부 None" 인 구현도 아래 보류 테스트를 통과한다.
@@ -41,7 +41,7 @@ class Test파생이_살아있다:
         assert per_pyeong_10k(2_070_000, 330.5) == 20_700
 
 
-class Test허위정밀도를_만들지_않는다:
+class Test허위정밀도를만들지않는다:
     """★이 열의 존재 이유 — **없는 가격차를 만들지 않는다.**"""
 
     def test_같은_평당단가_거래는_같은_값으로_표시된다(self) -> None:
@@ -70,7 +70,7 @@ class Test허위정밀도를_만들지_않는다:
         )
 
 
-class Test모름을_유효값으로_표현하지_않는다:
+class Test모름을유효값으로표현하지않는다:
     """★「해제라 해당 없음」과 「원천이 가림」은 **다른 사유**다 — 한 글리프로 뭉개지 않는다."""
 
     def test_해제_행은_해당없음이다(self) -> None:
@@ -106,7 +106,7 @@ class Test모름을_유효값으로_표현하지_않는다:
         assert row["price_per_pyeong_10k_absent"], "0 을 값으로 흘려보내면 안 된다"
 
 
-class Test두_표면이_같은_말을_한다:
+class Test두표면이같은말을한다:
     """★화면에만 열이 생기고 **문서(PDF·PPTX·DOCX)에는 없는** 상태를 막는다."""
 
     def test_문서_헤더에_단가열이_있다(self) -> None:
@@ -136,7 +136,7 @@ class Test두_표면이_같은_말을_한다:
         assert 해제[i] != "—" and 결측[i] != "—"
 
 
-class Test평균을_만들지_않는다:
+class Test평균을만들지않는다:
     """★층화 없는 평균은 이 표본에서 거짓이다 — 요약 타일에 단가를 넣지 않는다.
 
     라이브 실측(역삼동 71건): 최빈 행이 **「도로 지분」 52/71 = 73%** 이고,
@@ -157,7 +157,7 @@ class Test평균을_만들지_않는다:
         assert not leaked, f"요약에 단가가 샜다: {leaked} — 층화 없는 평균은 거짓이다"
 
 
-class Test배선이_실제로_돈다:
+class Test배선이실제로돈다:
     """★**함수만 태우면 배선은 무잠금이다.**
 
     2026-08-28 실측: 위 테스트들이 `attach_per_pyeong` 을 **직접** 부르기만 해서,
@@ -216,7 +216,7 @@ class Test배선이_실제로_돈다:
         )
 
 
-class Test리뷰가_찾은_구멍:
+class Test리뷰가찾은구멍:
     """★독립 적대 리뷰(2026-08-28)가 **생존시킨 변이 5종**을 잠근다.
 
     내 «7종 전부 CAUGHT» 는 **내가 고른 7종에만** 참이었다.
