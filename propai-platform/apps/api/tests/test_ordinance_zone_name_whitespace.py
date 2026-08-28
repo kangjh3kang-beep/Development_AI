@@ -103,3 +103,32 @@ def test_anchor_path_unchanged_for_unspaced(svc: OrdinanceService) -> None:
     seg = "4. 제2종일반주거지역: 230퍼센트 이하 16. 자연녹지지역: 20퍼센트 이하"
     names = [f[0] for f in svc._iter_zone_fragments(seg)]
     assert len(names) == 2, f"무공백 표기가 회귀했다: {names}"
+
+
+def test_pattern_does_not_cross_line_breaks() -> None:
+    """★줄바꿈은 넘지 않는다 — **없는 용도지역을 지어내지 않기 위해서**.
+
+    `\\s*` 로 두면 앞 줄 끝 글자와 다음 줄 첫 글자가 우연히 이어져 **가짜 매칭**이 난다.
+    이 저장소의 교훈: **틀린 값은 `None` 보다 위험하다**(그럴듯해서 통과한다).
+
+    조이는 비용이 0 임을 실측했다 — 오산시 조례 원문에서 `\\s*` 와 수평공백 전용의
+    매칭 수가 **21개 용도지역 전부 동일**(줄을 넘는 이름 0건).
+    """
+    import re
+
+    pat = _flex_zone_pattern("농림지역")
+    assert re.search(pat, "농림지역"), "무공백 표기를 놓쳤다"
+    assert re.search(pat, "농 림지역"), "같은 줄 공백을 놓쳤다"
+    assert re.search(pat, "농　림지역"), "전각공백을 놓쳤다(다른 지자체 대비)"
+    # ★핵심 — 줄을 넘으면 **매칭되면 안 된다**.
+    assert not re.search(pat, "농\n림지역"), "줄바꿈을 넘어 매칭했다 — 가짜 용도지역을 만든다"
+    assert not re.search(pat, "…농\n   림지역…"), "들여쓰기된 다음 줄과 이어 붙었다"
+
+
+def test_real_document_unaffected_by_the_tightening(svc: OrdinanceService, text: str) -> None:
+    """★특이도 — 조이고 나서도 **실제 원문 결과가 그대로**여야 한다(회귀 0의 근거)."""
+    for zone, (want_bcr, want_far) in ORDINANCE_TRUTH.items():
+        got = svc._parse_bcr_far_from_text(text, zone, "오산시")
+        assert got is not None and (got.get("bcr"), got.get("far")) == (want_bcr, want_far), (
+            f"{zone}: 줄바꿈 배제 후 값이 달라졌다 → {got}"
+        )
