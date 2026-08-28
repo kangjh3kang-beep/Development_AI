@@ -257,6 +257,8 @@ class DevelopmentScenarioSimulator:
     ) -> dict[str, Any]:
         site = site or {}
         addrs = self._merge(address, parcels)
+        # ★중복제거 **전** 요청 수 — 붕괴를 말할 수 있게(아래 ctx 참조).
+        requested_count = self._requested_count(address, parcels)
         multi = len(addrs) >= 2
 
         # ★호출자가 이미 아는 값(면적·용도지역)을 받아 둔다 — `ParcelsIn` 정규화를 거친
@@ -495,7 +497,13 @@ class DevelopmentScenarioSimulator:
             #   화면이 설명할 수 없었다). 몇 개 중 몇 개가 실측인지를 같이 낸다.
             "resolved_parcel_count": len(resolved),
             "unresolved_parcels": unresolved,
-            "area_is_partial": bool(unresolved),
+            # ★요청 수(중복제거 **전**)와 붕괴 수 — `parcel_count` 만으로는 «원래 1필지였다» 와
+            #   «77을 요청했는데 1로 줄었다» 를 **구별할 수 없다**(2026-08-28 실측 결함).
+            "requested_parcel_count": requested_count,
+            "collapsed_parcel_count": max(0, requested_count - len(addrs)),
+            # 면적이 부분합인 두 경로 — ①조회 실패(unresolved) ②주소 붕괴(collapsed).
+            #   종전엔 ①만 봤다. ②가 바로 44㎡ 사고의 경로다.
+            "area_is_partial": bool(unresolved) or requested_count > len(addrs),
             # ★계획이 한도·**허용용도**를 정하는 구역인데 그 내용을 못 구했다면, 아래 개발방식·
             #   세대수 제안은 전부 미검증이다. 수치 경고만 달고 용도 추천을 그대로 내보내면
             #   더 비싼 오답(불허 용도 추천)이 조용히 나간다.
@@ -626,6 +634,36 @@ class DevelopmentScenarioSimulator:
             if a and a not in out:
                 out.append(a)
         return out
+
+    @staticmethod
+    def _requested_count(
+        address: str, parcels: list[str] | list[dict[str, Any]] | None,
+    ) -> int:
+        """호출자가 **요청한** 필지 수 — 중복제거 **전**, 주소가 있는 것만 센다.
+
+        ★`_merge` 는 주소 문자열로 중복제거한다. 그 자체는 옳지만(같은 주소는 같은 필지다),
+          **주소에 지번이 없으면 서로 다른 필지가 같은 문자열이 되어 통째로 붕괴**한다.
+          2026-08-28 라이브 실측: 77필지 부지(86,755㎡)가 **1필지 44㎡** 로 시뮬레이션돼
+          「도시개발사업 1만㎡ 미달」 등 **19개 개발방식이 거짓 '불가'** 로 막혔다.
+
+        ★★그때 `parcel_count`(= 중복제거 **후**)만 보면 *"원래 1필지였다"* 와 구별되지 않는다.
+          이 함수는 **분모**를 만든다 — *"몇 개를 요청했는데 몇 개로 줄었는가"* 를 말할 수 있게.
+          같은 파일이 이미 적어 둔 원칙이다: **조용한 축소가 조용한 오답을 만든다.**
+        """
+        def _addr(item: Any) -> str:
+            a = item.get("address") if isinstance(item, dict) else (
+                item if isinstance(item, str) else None
+            )
+            return (a or "").strip()
+
+        rows = [a for a in (_addr(i) for i in (parcels or [])) if a]
+        rep = _addr(address)
+        # ★★대표주소를 **이중으로 세지 않는다.** 프로덕션 호출부는 `parcels` 선두에 대표주소를
+        #   넣는다(`buildAnalysisParcelAddrs`: `[target, ...]`). 그것을 또 세면 정상 다필지에서
+        #   `requested > used` 가 되어 **붕괴가 없는데 빨간 경보**가 뜬다 — 독립 리뷰 실측.
+        #   ★내 첫 위양성 테스트는 `("A", ["B","C"])` 였는데 그건 **프로덕션이 보내지 않는 형태**다.
+        #     픽스처가 두 모집단을 안 가르면 위양성은 영원히 안 보인다.
+        return len(rows) + (1 if rep and rep not in rows else 0)
 
     @staticmethod
     def _supplied_rows(

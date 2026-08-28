@@ -52,6 +52,12 @@ const STATUS = {
   ],
   dormant_hours: 72,
   telemetry_since: "2026-06-14",
+  // ★수집 건강 — 이 값이 나쁘면 위 표 전체를 믿을 수 없다.
+  capture: {
+    queue_depth: 12, max_queue: 10000, max_sustained_per_sec: 100,
+    requeued: 200, flush_failures: 3, lost_total: 0, loss_rate_pct: 0.0,
+    scope: "process_local",
+  },
   summary: {
     declared: 3, never_fired: 1, dormant: 1, active: 1, undeclared: 1,
     product_reaching_declared: 1, product_reaching_active: 1,
@@ -166,4 +172,62 @@ describe("★라벨 정합 — 백엔드 상태 어휘에서 **파생**", () => 
     const ghosts = Object.keys(EFFECTOR_STATE_LABELS).filter((k) => !states.has(k));
     expect(ghosts, `백엔드에 없는 유령 라벨: ${ghosts.join(", ")}`).toEqual([]);
   });
+});
+
+
+describe("★수집 건강 — 입력이 새면 위 표 전체가 거짓이다", () => {
+  it("★리뷰 F1 — 값이 **자기 자리에** 붙는가(서로 바꿔치기해도 통과했다)", async () => {
+    await openTab();
+    // ★필드별 대조 — 전역 toContain 은 되돌림↔flush실패를 맞바꿔도 만족된다.
+    //   그러면 운영자가 «일어나지 않은 200회 실패»를 본다.
+    expect((await screen.findByTestId("cap-requeued")).textContent).toBe("200");
+    expect((await screen.findByTestId("cap-failures")).textContent?.trim()).toBe("3");
+    expect((await screen.findByTestId("cap-queue")).textContent).toBe("12");
+    expect((await screen.findByTestId("cap-max")).textContent).toBe("10,000");
+    expect((await screen.findByTestId("cap-ceiling")).textContent).toBe("100");
+    // 되돌림은 유실이 아니다.
+    const t = (await screen.findByTestId("capture-health")).textContent ?? "";
+    expect(t).toContain("유실 없음");
+    expect(t).not.toContain("★200건 유실");
+  });
+
+  it("★유실이 있으면 **아래 표를 믿지 말라고** 말한다", async () => {
+    get.mockImplementation((p: string) =>
+      p.startsWith("/growth/effectors")
+        ? Promise.resolve({
+            ...STATUS,
+            capture: { ...STATUS.capture, lost_total: 1234, loss_rate_pct: 2.5 },
+          })
+        : Promise.resolve({ insights: [], total: 0 }),
+    );
+    await openTab();
+    const t = (await screen.findByTestId("capture-health")).textContent ?? "";
+    expect(t).toContain("1,234");
+    expect(t).toContain("2.5");
+    // ★핵심 — 유실이 있으면 그 다음 표의 판정을 믿으면 안 된다고 **화면이 말한다**.
+    expect(t).toContain("믿을 수 없습니다");
+  });
+
+  it("★분모가 0 이면 유실률을 **말하지 않는다**(「0%」는 거짓 안심)", async () => {
+    get.mockImplementation((p: string) =>
+      p.startsWith("/growth/effectors")
+        ? Promise.resolve({
+            ...STATUS,
+            capture: { ...STATUS.capture, lost_total: 0, loss_rate_pct: null },
+          })
+        : Promise.resolve({ insights: [], total: 0 }),
+    );
+    await openTab();
+    const t = (await screen.findByTestId("capture-health")).textContent ?? "";
+    expect(t).toContain("판정 불가");
+    expect(t).not.toContain("(0%)");
+  });
+});
+
+
+it("★「유실 없음」이 **어떤 범위**의 말인지 밝힌다(거짓 안심 방지)", async () => {
+  await openTab();
+  const t = (await screen.findByTestId("capture-scope")).textContent ?? "";
+  expect(t).toContain("현재 프로세스");
+  expect(t).toContain("이상");
 });

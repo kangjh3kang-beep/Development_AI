@@ -27,6 +27,7 @@ import httpx
 from sqlalchemy import text
 
 from app.core.config import settings
+from app.services.legal.moleg_drf_envelope import raise_unless_expected_xml
 
 logger = logging.getLogger(__name__)
 
@@ -477,6 +478,45 @@ ORDINANCE_CACHE: dict[str, dict[str, dict[str, float]]] = {
 # 법제처 API 엔드포인트 — 법제처 DRF는 https를 지원하므로 평문 http 대신 https 사용
 # (평문 전송 시 API키·조회내용이 중간자에 노출될 수 있음). 만약 특정 환경에서 https 접속이
 # 실패하면 인프라(프록시/CA)를 점검할 것 — 코드에서 http로 되돌리지 말 것.
+# 수평 공백만(줄바꿈 제외) — 스페이스·탭·NBSP·전각공백.
+_HSPACE = r"[ \t\u00a0\u3000]*"
+
+
+def _flex_zone_pattern(zone: str) -> str:
+    r"""표준 용도지역명을 **공백 허용** 정규식으로 바꾼다(본문 표기변형 흡수).
+
+    ★왜(2026-08-28 실측): 조례 원문은 `제2종 일반주거지역`(띄어쓰기)을 쓰는데 표준 키는
+    `제2종일반주거지역`(무공백)이다. 오산시 조례 원문 전수 — 공백형 **3건** / 무공백형 **0건**.
+    그래서 `re.escape(zone)` 로 만든 패턴이 **주거지역을 통째로 못 읽었고**, 제2종·제3종이
+    `None` 으로 떨어져 국가상한 폴백(250%)이 조례값(230%) 대신 나갔다.
+
+    ★**문서를 정규화하지 않고 패턴만 넓힌다.** 본문에서 공백을 지우면
+    `evidence_span`·`context` 발췌의 **문자 오프셋이 어긋나** 증거 품질이 떨어진다.
+
+    줄바꿈은 허용하지 않는다(`\s*` 가 아니라 수평 공백 전용) — **방어적 경화**다.
+    ★**정직 표기(독립 리뷰 지적)**: 이 경화가 막는다는 *"이름이 줄을 넘어 이어져 없는
+    용도지역을 지어낸다"* 는 **도달 가능 경로에서 실증되지 않았다.** 이 함수의 소비처가
+    받는 `section` 은 `_locate_section` 이 `_normalize_ws`(`\s+`→단일 공백)로 접은 문자열이라
+    **개행이 도달하지 않는다**(실측: 오산 섹션 4,207자에 `\n` 0건).
+    내가 잰 *"`\s*` 와 수평공백 전용의 매칭 수가 21개 용도지역 전부 동일"* 이 이미 그 사실을
+    말하고 있었는데 인과 주장으로 잘못 적었다.
+    → 경화 자체는 **비용 0**(위 실측)이라 유지하되, **미실증 방어**임을 명시한다.
+    공백류 분포: U+0020 6,874 · U+000A 532 (탭·NBSP·전각공백 0) — 다른 지자체를 위해
+    전각공백/NBSP 는 허용한다.
+
+    ★수평 공백은 **선택**이므로 기존 무공백 표기는 **그대로** 잡힌다(상위집합 = 무회귀).
+    표기변형은 이 저장소에서 **세 번째**다(선례: `안에서의` 필수 · 분수형 `100분의 40`).
+    """
+    return _HSPACE.join(re.escape(ch) for ch in zone)
+
+
+# DRF 자치법규 응답의 정상 루트태그 — **라이브 실측값만** 둔다(2026-08-28).
+#   목록조회 lawSearch.do?target=ordin → <OrdinSearch>
+#   본문조회 lawService.do?target=ordin → <LawService>
+# ★추측한 태그를 넣지 않는다: 목록이 넓으면 **실패 봉투를 정상으로 통과**시킨다.
+_ORDIN_LIST_ROOTS: tuple[str, ...] = ("OrdinSearch",)
+_ORDIN_TEXT_ROOTS: tuple[str, ...] = ("LawService",)
+
 MOLEG_ORDIN_LIST_URL = "https://www.law.go.kr/DRF/lawSearch.do"
 MOLEG_ORDIN_TEXT_URL = "https://www.law.go.kr/DRF/lawService.do"
 
@@ -681,6 +721,16 @@ class OrdinanceService:
                 )
                 resp.raise_for_status()
                 ordin_list_xml = resp.text
+            # ★법제처는 **실패도 HTTP 200** 으로 준다 — `raise_for_status()` 가 못 잡는다.
+            #   형제 둘(regulation_monitor·gosi_search_service)은 이미 검증하는데 조례만
+            #   무방비였다.
+            # ★★**무엇이 바뀌고 무엇이 안 바뀌었는지 정직하게**(독립 리뷰 지적):
+            #   바뀐 것 = ①실패를 **감지**하고 ②파싱을 **차단**하며 ③사유를 로그에 남긴다.
+            #   **안 바뀐 것 = 화면 폴백이다.** 아래 광범위 `except` 가 `MolegDrfError` 를
+            #   그대로 삼켜 반환값은 종전과 같은 `None` 이고, 화면은 여전히
+            #   "조례 확인 못함 → 법정상한 잠정 적용"(= 낙관 폴백)을 낸다.
+            #   호출부가 *"조회 실패"* 와 *"결과 0건"* 을 **구분하게 만드는 것은 별건**이다.
+            raise_unless_expected_xml(ordin_list_xml, expect=_ORDIN_LIST_ROOTS)
 
             # 조례 일련번호 추출
             ordin_id = self._parse_ordin_id(ordin_list_xml, jurisdiction or sigungu or sido)
@@ -700,6 +750,7 @@ class OrdinanceService:
                 )
                 resp.raise_for_status()
                 ordin_text = resp.text
+            raise_unless_expected_xml(ordin_text, expect=_ORDIN_TEXT_ROOTS)
 
             # Step 3: 본문에서 건폐율/용적률 파싱
             return self._parse_bcr_far_from_text(ordin_text, zone_type, jurisdiction or sigungu or sido)
@@ -1039,7 +1090,12 @@ class OrdinanceService:
         #     `None` 을 냈다(테스트 7건이 그것으로 죽었다 — 가드의 위양성도 결함이다).
         #     원래 막으려던 사례("건폐율과 " 5글자)의 결정적 특징은 *용도지역이 적다*가
         #     아니라 **값이 0개**라는 것이다 — 그쪽이 날카로운 판별자다.
-        if not (any(z in section for z in self._CANONICAL_ZONES)
+        # ★이 게이트도 **공백 표기**를 읽어야 한다(형제 미스윕 방지 — 독립 리뷰 지적).
+        #   `z in section` 은 표준명(무공백)만 보므로, 용도지역명이 전부 공백 표기인 조례가
+        #   오면 **섹션 판정 단계에서 통째로 실패**한다 — 이 PR 이 고치겠다고 선언한 그 증상이다.
+        #   ★도달성 정직: 라이브 11개 지자체 실측에서 **전면 공백 지자체는 0건**(전부 혼용)이라
+        #     이것은 구성한 재현이지 관측된 라이브 결함이 아니다. 방어적 경화로 적용한다.
+        if not (any(re.search(_flex_zone_pattern(z), section) for z in self._CANONICAL_ZONES)
                 and _KR_PCT_RE.search(section)):
             return None, False
         return section, is_full_header
@@ -1200,7 +1256,13 @@ class OrdinanceService:
             #   분수형을 몰라서 전주시는 기본항 추출이 통째로 실패했고, 폴백이 "100분의 20"의
             #   **앞 100** 을 집어 법정 20% 초과로 기각됐다(원인을 '섹션 경계'로 오진했었다 —
             #   실측하니 섹션은 32,132→34,988 로 정확했다).
-            head = (r"(?<![\d])\d{1,2}\s*\.\s*" + re.escape(zone)
+            # ★**이중 경로임을 적어 둔다**(변이 점수 부풀리기 방지).
+            #   이 기본항 경로를 `re.escape` 로 되돌리는 변이는 **SURVIVED** 하는데,
+            #   구멍이 아니라 **설명되는 생존**이다: 앵커 경로(`_iter_zone_fragments`)가
+            #   같은 값을 독립적으로 공급한다. 실측 — 기본항을 통째로 비활성화해도
+            #   오산 제2종이 `(bcr 60, far 230)` 로 그대로 나온다.
+            #   두 경로 각각의 공백 대응은 **각자의 락**으로 잠갔다(소비처마다 별도 단언).
+            head = (r"(?<![\d])\d{1,2}\s*\.\s*" + _flex_zone_pattern(zone)
                     + r"(?:\s*\([^)]{0,20}\))?\s*[:：]\s*")
             m = re.search(head + r"(\d{1,4})\s*퍼센트", section)
             if m:
@@ -1223,12 +1285,19 @@ class OrdinanceService:
         이렇게 하면 'OO지역 : 200퍼센트' 뿐 아니라 표/줄바꿈/공백 변형에서도 값을 잡는다.
         """
         # 앵커: 표준 용도지역명 + (선택) 세분 괄호. 긴 이름 우선(제2종일반주거지역 > 주거지역).
-        alt = "|".join(re.escape(z) for z in sorted(self._CANONICAL_ZONES, key=len, reverse=True))
+        alt = "|".join(_flex_zone_pattern(z) for z in sorted(self._CANONICAL_ZONES, key=len, reverse=True))
         anchor_re = re.compile(r"(" + alt + r")\s*(\([^)]*?층[^)]*?\))?")
 
         hits = list(anchor_re.finditer(section))
         for i, m in enumerate(hits):
-            base = m.group(1)
+            # ★매칭 텍스트를 **그대로 키로 쓰면 안 된다.** 앵커 패턴이 공백을 허용하게 되면서
+            #   `group(1)` 은 원문 표기(`제2종 일반주거지역`)가 된다 — `re.escape` 시절엔
+            #   곧 표준명이었다. 그대로 두면 `zones` 에 표준명과 공백형이 **둘 다** 들어가
+            #   (독립 리뷰 실측: 오산 공백키 5 · 포항 2 · 수원 1 · PR 전에는 전부 0),
+            #   `value_basis == "base_item"` 게이트가 **다른 딕셔너리를 보게 되어 발화하지 않는다**.
+            #   그 게이트는 완화·특례값이 기본항을 덮어쓰는 것을 막는 2026-08-19 봉합이다.
+            #   실측된 모순: 수원 `제3종 일반주거지역={'far':60}` vs 표준키 `{'bcr':40,'far':300}`.
+            base = re.sub(r"\s+", "", m.group(1))
             qualifier = m.group(2) or ""
             # 세분 접미사(예: '(7층 이하)')가 있으면 표준화해 붙인다.
             if qualifier:
