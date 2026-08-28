@@ -320,3 +320,28 @@ describe("★복원의 성질 — 순서와 메모리 상한", () => {
     expect(delivered, "전부 사라졌다 — 상한을 지킨다고 다 버리면 안 된다").toBeGreaterThan(0);
   });
 });
+
+describe("★단독 초과 이벤트 — 줄여서 **배달**한다(통째로 버리지 않는다)", () => {
+  it("**중첩된** 거대 문자열도 축소 경로를 타서 배달된다", async () => {
+    const { trackEvent, flush, getDroppedEventCount } = await freshCollector();
+    const bodies = captureBodies();
+
+    // ★중첩이다. 형제 `maskPayload` 는 depth 4 까지 재귀하므로 이 모양은 이 저장소가
+    //   정상으로 취급한다. 최상위만 훑는 축소는 **줄이는 단계를 건너뛰고 곧장 폐기**한다
+    //   (독립 리뷰 실측: 전송 0건 · 폐기 1건).
+    trackEvent("js_error", {
+      severity: "error",
+      payload: { marker: "NESTED", detail: { blob: "y".repeat(60_000) } },
+    });
+    for (let i = 0; i < 20; i += 1) flush();
+
+    const evs = bodies.flatMap(eventsIn);
+    expect(evs.length, "단독 초과 이벤트가 통째로 폐기됐다 — 축소 경로를 안 탔다").toBe(1);
+    expect(getDroppedEventCount(), "축소로 담을 수 있었는데 버렸다").toBe(0);
+
+    // 값으로 본다 — 배달됐다는 것만이 아니라 **줄여서** 배달됐는가.
+    const detail = (evs[0].payload as Record<string, unknown>).detail as Record<string, unknown>;
+    expect(String(detail.blob).length, "중첩 문자열이 안 줄었다").toBeLessThanOrEqual(2_000);
+    expect(utf8(bodies[0]), "축소했는데도 예산을 넘겼다").toBeLessThanOrEqual(BUDGET_BYTES);
+  });
+});
