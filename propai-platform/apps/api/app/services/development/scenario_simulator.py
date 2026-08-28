@@ -650,14 +650,20 @@ class DevelopmentScenarioSimulator:
           이 함수는 **분모**를 만든다 — *"몇 개를 요청했는데 몇 개로 줄었는가"* 를 말할 수 있게.
           같은 파일이 이미 적어 둔 원칙이다: **조용한 축소가 조용한 오답을 만든다.**
         """
-        n = 0
-        for item in [address, *(parcels or [])]:
+        def _addr(item: Any) -> str:
             a = item.get("address") if isinstance(item, dict) else (
                 item if isinstance(item, str) else None
             )
-            if (a or "").strip():
-                n += 1
-        return n
+            return (a or "").strip()
+
+        rows = [a for a in (_addr(i) for i in (parcels or [])) if a]
+        rep = _addr(address)
+        # ★★대표주소를 **이중으로 세지 않는다.** 프로덕션 호출부는 `parcels` 선두에 대표주소를
+        #   넣는다(`buildAnalysisParcelAddrs`: `[target, ...]`). 그것을 또 세면 정상 다필지에서
+        #   `requested > used` 가 되어 **붕괴가 없는데 빨간 경보**가 뜬다 — 독립 리뷰 실측.
+        #   ★내 첫 위양성 테스트는 `("A", ["B","C"])` 였는데 그건 **프로덕션이 보내지 않는 형태**다.
+        #     픽스처가 두 모집단을 안 가르면 위양성은 영원히 안 보인다.
+        return len(rows) + (1 if rep and rep not in rows else 0)
 
     @staticmethod
     def _supplied_rows(

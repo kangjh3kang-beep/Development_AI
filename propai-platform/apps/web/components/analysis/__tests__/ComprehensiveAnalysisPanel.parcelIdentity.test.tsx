@@ -25,8 +25,10 @@
 import { render, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const post = vi.fn(async () => ({}));
-const get = vi.fn(async () => ({ providers: [] }));
+// ★인자 타입을 명시한다 — `vi.fn(async () => ({}))` 는 **0-인자**로 추론돼
+//   `post(path, opts)` 호출이 `tsc` 에서 TS2554 로 터진다(CI 차단 게이트).
+const post = vi.fn(async (_path: string, _opts?: unknown) => ({}) as unknown);
+const get = vi.fn(async (_path: string, _opts?: unknown) => ({ providers: [] }) as unknown);
 
 vi.mock("@/lib/api-client", () => ({
   apiClient: {
@@ -41,10 +43,12 @@ vi.mock("@/lib/api-client", () => ({
 vi.mock("@/components/precheck/SatongMapShell", () => ({ SatongMapShell: () => null }));
 
 /** 시뮬레이션 카드를 가로채 **패널이 무엇을 넘기는지** 그대로 본다(렌더 부작용 없이). */
-const captured: { parcels?: string[]; parcelRows?: { address: string }[] }[] = [];
+const captured: { address?: string; parcels?: string[]; parcelRows?: { address: string }[] }[] = [];
 vi.mock("@/components/common/DevelopmentScenarioCard", () => ({
-  DevelopmentScenarioCard: (props: { parcels?: string[]; parcelRows?: { address: string }[] }) => {
-    captured.push({ parcels: props.parcels, parcelRows: props.parcelRows });
+  DevelopmentScenarioCard: (props: {
+    address?: string; parcels?: string[]; parcelRows?: { address: string }[];
+  }) => {
+    captured.push({ address: props.address, parcels: props.parcels, parcelRows: props.parcelRows });
     return null;
   },
 }));
@@ -121,5 +125,27 @@ describe("다필지 정체성 — 주소 붕괴 방지", () => {
     expect((p.parcels ?? []).length).toBe(4);
     // 보낼 수 있는 것 = 3 (면적>0)
     expect((p.parcelRows ?? []).length).toBe(3);
+  });
+});
+
+describe("대표주소 정체성 — 유령 필지 방지", () => {
+  it("P5 ★대표주소도 **parcels 와 같은 형태**로 넘어간다(유령 주입 방지)", async () => {
+    const p = await mount();
+    // ★원본(지번 없는 동 주소)을 그대로 넘기면 백엔드 `_merge` 가 **별개 필지로 승격**해
+    //   77 → 78 이 되고, `primary_zone` 이 그 유령(enriched[0])에서 나온다(독립 리뷰 실측).
+    expect(p.address).not.toBe(DONG);
+    expect(p.parcels).toContain(p.address);
+  });
+
+  it("P6 ★음성 대조군 — PNU 가 없으면 대표주소도 **원본 그대로**(지어내지 않는다)", async () => {
+    useProjectContextStore.setState({
+      siteAnalysis: {
+        address: DONG, zoneCode: "자연녹지지역",
+        parcels: PARCELS.map((x) => ({ ...x, pnu: null })),
+      } as never,
+    } as never);
+    captured.length = 0;
+    const p = await mount();
+    expect(p.address).toBe(DONG);
   });
 });

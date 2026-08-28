@@ -36,20 +36,33 @@ class Test요청수를_중복제거_전에_센다:
     def test_같은_주소가_겹치면_요청수가_사용수보다_크다(self) -> None:
         req = Sim._requested_count("A", ["A", "A", "A"])
         used = len(Sim._merge("A", ["A", "A", "A"]))
-        assert req == 4, f"요청 수가 중복제거 후 값을 세고 있다: {req}"
+        # ★3(대표가 목록 안에 있으므로 한 번만) — 첫 판은 4 를 기대했는데, 그 4 가 바로
+        #   **대표주소 이중 계수**였고 정상 다필지에 거짓 경보를 냈다(독립 리뷰 실측).
+        assert req == 3, f"요청 수가 틀렸다: {req}"
         assert used == 1
         assert req > used, "붕괴를 표현할 분모가 없다"
 
     def test_정상_다필지는_붕괴가_없다(self) -> None:
-        """★음성 대조군 — 「항상 붕괴」라고 신고하는 구현은 정상 코드를 막는다."""
-        req = Sim._requested_count("A", ["B", "C"])
-        used = len(Sim._merge("A", ["B", "C"]))
-        assert req == used == 3, f"정상 케이스에서 붕괴로 오신고: {req} vs {used}"
+        """★음성 대조군 — 「항상 붕괴」라고 신고하는 구현은 정상 코드를 막는다.
+
+        ★★**프로덕션이 실제로 보내는 형태**로 태운다 — 대표주소가 `parcels` **선두에 들어 있다**
+          (`buildAnalysisParcelAddrs`: `[target, ...]`). 첫 판은 `("A", ["B","C"])` 였는데
+          그건 프로덕션이 보내지 않는 형태라, `address` 이중 계수를 **원리적으로 못 잡았다**
+          — 독립 리뷰가 이 픽스처로 **정상 다필지 전부에 거짓 붕괴 경보**를 실증했다.
+        """
+        req = Sim._requested_count("A", ["A", "B", "C"])   # ← address ∈ parcels
+        used = len(Sim._merge("A", ["A", "B", "C"]))
+        assert req == used == 3, f"정상 케이스에서 붕괴로 오신고: 요청 {req} vs 사용 {used}"
+
+    def test_대표주소가_목록에_있어도_한_번만_센다(self) -> None:
+        """★같은 뿌리의 다른 얼굴 — 대표가 목록 **밖**이면 정상적으로 +1 이어야 한다."""
+        assert Sim._requested_count("A", ["A", "B"]) == 2   # 안에 있음 → 2
+        assert Sim._requested_count("A", ["B", "C"]) == 3   # 밖에 있음 → 3
 
     def test_dict_행도_센다(self) -> None:
         """호출자가 `ParcelsIn` dict 를 보내는 경로(면적 포함)도 같은 분모를 만든다."""
         rows = [{"address": "A", "area_sqm": 100}, {"address": "A", "area_sqm": 200}]
-        assert Sim._requested_count("A", rows) == 3
+        assert Sim._requested_count("A", rows) == 2   # 대표는 목록 안 → 이중 계수 금지
         assert len(Sim._merge("A", rows)) == 1
 
     def test_주소_없는_행은_세지_않는다(self) -> None:
@@ -134,6 +147,27 @@ class Test배선:
         ), (
             "requested_count 가 `_requested_count` 가 아닌 것에서 온다 — "
             "`len(addrs)` 로 되돌리면 중복제거 **후** 값이라 붕괴가 영원히 0이 된다"
+        )
+
+    def test_부분집계가_붕괴_경로를_읽는다(self) -> None:
+        """★F4 — 44㎡ 사고에서 **실제로 침묵한 필드**는 `area_is_partial` 이다.
+
+        첫 판은 `requested_parcel_count`·`collapsed_parcel_count` 두 키만 봤고,
+        `area_is_partial` 을 `bool(unresolved)` 로 되돌리는 변이가 **SURVIVED** 했다
+        (독립 리뷰 실측). 그러면 붕괴해도 화면이 **다시 침묵한다** — 고친 것이 아니다.
+        """
+        ast, fn = self._simulate_fn()
+        pairs: dict[str, object] = {}
+        for n in ast.walk(fn):
+            if isinstance(n, ast.Dict):
+                for k, v in zip(n.keys, n.values, strict=False):
+                    if isinstance(k, ast.Constant) and isinstance(k.value, str):
+                        pairs.setdefault(k.value, v)
+        assert "area_is_partial" in pairs, "ctx 에 area_is_partial 이 없다"
+        names = {n.id for n in ast.walk(pairs["area_is_partial"]) if isinstance(n, ast.Name)}
+        assert "unresolved" in names, "조회실패 경로가 빠졌다(종전 회귀)"
+        assert "requested_count" in names, (
+            "붕괴 경로가 빠졌다 — 77필지가 1로 줄어도 부분집계로 표시되지 않는다"
         )
 
     def test_ctx_가_요청수와_붕괴수를_싣는다(self) -> None:
