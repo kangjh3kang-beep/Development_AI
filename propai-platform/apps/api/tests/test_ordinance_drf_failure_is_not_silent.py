@@ -38,10 +38,16 @@ class _Resp:
 
 
 class _Client:
-    """httpx.AsyncClient 대역 — **네트워크만** 가로챈다(파서·검증기는 진짜가 돈다)."""
+    """httpx.AsyncClient 대역 — **네트워크만** 가로챈다(파서·검증기는 진짜가 돈다).
 
-    def __init__(self, body: str) -> None:
-        self._body = body
+    ★호출 **순서별로 다른 본문**을 줄 수 있어야 한다. 모든 호출에 같은 본문을 주면
+    목록조회(Step 1)에서 먼저 예외가 나 **본문조회(Step 2) 검증에 도달하지 못하고**,
+    그 자리가 무잠금으로 남는다(변이 실측: Step 2 검증 제거가 SURVIVED 였다).
+    """
+
+    def __init__(self, body: str | list[str]) -> None:
+        self._bodies = list(body) if isinstance(body, list) else [body]
+        self._i = 0
 
     async def __aenter__(self) -> "_Client":
         return self
@@ -50,7 +56,9 @@ class _Client:
         return None
 
     async def get(self, *a: Any, **k: Any) -> _Resp:
-        return _Resp(self._body)
+        body = self._bodies[min(self._i, len(self._bodies) - 1)]
+        self._i += 1
+        return _Resp(body)
 
 
 @pytest.fixture(autouse=True)
@@ -62,7 +70,10 @@ def _key(monkeypatch: pytest.MonkeyPatch) -> None:
 def _run(monkeypatch: pytest.MonkeyPatch, body: str, caplog: pytest.LogCaptureFixture):
     import asyncio
 
-    monkeypatch.setattr(OS.httpx, "AsyncClient", lambda *a, **k: _Client(body))
+    # ★대역 **인스턴스를 공유**한다. `AsyncClient(...)` 가 호출될 때마다 새로 만들면
+    #   호출 순번 카운터가 리셋돼 Step 2 에도 Step 1 의 본문이 간다(내 첫 판이 그랬다).
+    client = _Client(body)
+    monkeypatch.setattr(OS.httpx, "AsyncClient", lambda *a, **k: client)
     svc = OS.OrdinanceService()
     with caplog.at_level("WARNING"):
         out = asyncio.run(
@@ -93,3 +104,19 @@ def test_success_path_does_not_log_that_failure(
     """
     _out, log = _run(monkeypatch, OK_LIST_XML, caplog)
     assert "사용자 정보 검증에 실패" not in log, f"정상 응답에 실패 사유가 찍혔다: {log[:300]!r}"
+
+
+def test_step2_body_fetch_failure_also_reaches_the_log(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """★2단계 배선 — **목록은 정상인데 본문조회가 실패**하는 모집단.
+
+    앞 테스트는 Step 1 에서 예외가 나 Step 2 검증에 **도달조차 못 한다**.
+    두 호출을 갈라 줘야 그 자리가 잠긴다(변이 실측으로 확인한 구멍).
+    """
+    out, log = _run(monkeypatch, [OK_LIST_XML, FAILURE_XML], caplog)
+    assert out is None
+    assert "사용자 정보 검증에 실패" in log, (
+        "본문조회(Step 2) 실패 사유가 로그에 없다 — 그 자리 검증기가 배선되지 않았다.\n"
+        f"로그: {log[:300]!r}"
+    )
