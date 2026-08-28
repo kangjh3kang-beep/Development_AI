@@ -180,6 +180,11 @@ def _round_sig(x: float, digits: int = 3) -> float:
     ★`%.3g` 는 유효숫자 반올림을 **표준 서식으로** 위임한다 — 직접 `log10`·`floor` 를 쓰면
       경계에서 틀리기 쉽다(그 손계산이 위 절단의 출처였다).
     """
+    # ★★변이 `x <= 0` → `x < 0` 은 **SURVIVED 하고, 그것이 옳다**(2026-08-28 실측).
+    #   `f"{0:.3g}"` 이 `"0"` 이라 이 가드가 없어도 `0.0` 이 나오고, 호출부의 최종
+    #   `v > 0` 이 그것을 `None`(보류)으로 만든다. **이중 가드이며 도달 불가**다.
+    #   점수를 올리려고 단언을 덧대지 않는다 — 대신 **왜 구멍이 아닌지를 여기 적는다.**
+    #   (이 가드를 지우지는 않는다: `_round_sig` 를 다른 곳에서 쓰게 되면 방어가 필요하다.)
     if not math.isfinite(x) or x <= 0:
         return 0.0
     return float(f"{x:.{digits}g}")
@@ -200,6 +205,10 @@ def per_pyeong_10k(price_10k_won: Any, area_m2: Any) -> float | None:
         return None
     if not (math.isfinite(p) and math.isfinite(a)):
         return None
+    # ★★변이 `p > 0 and a > 0` → `p != 0 and a != 0` 도 **SURVIVED 하고, 그것도 옳다.**
+    #   음수 입력은 `_round_sig` 가 `0.0` 을 주고 아래 `v > 0` 이 `None` 으로 만든다.
+    #   역시 **이중 가드**다. 다만 이 가드는 **의도를 말한다**(음수·0 은 단가가 아니다) —
+    #   아래 방어에만 기대면 다음 사람이 `_round_sig` 를 바꿀 때 조용히 새어 나간다.
     if not (p > 0 and a > 0):
         return None
     v = _round_sig(p / (a / PYEONG_SQM))
