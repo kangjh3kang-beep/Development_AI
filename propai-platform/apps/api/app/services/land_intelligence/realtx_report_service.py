@@ -252,14 +252,22 @@ def attach_per_pyeong(txs: list[dict[str, Any]]) -> list[dict[str, Any]]:
             has_both = (
                 row.get("price_10k_won") is not None and row.get("area_m2") is not None
             )
-            code, text = (
-                (INSUFFICIENT_COVERAGE,
-                 "거래금액 또는 면적이 단가를 산정할 수 있는 값이 아닙니다(0 이하·비정상).")
-                if has_both else
-                (MASKED_BY_SOURCE,
-                 "원천이 면적 또는 거래금액을 제공하지 않아 단가를 산정할 수 없습니다.")
-            )
-            row.update(withheld(code, text, field="price_per_pyeong_10k"))
+            # ★`withheld()` 의 첫 인자는 **계약 상수 리터럴**이어야 한다.
+            #   변수(삼항식 결과)로 넘기면 `test_withheld_value_contract.py` 의 AST 스윕이
+            #   *"계약 상수가 아니다"* 로 **정확히 잡는다** — 그 락이 어휘를 정적으로 검증하기
+            #   때문이다. 분기를 나눠 각각 리터럴로 부른다(락을 끄지 않고 코드를 맞춘다).
+            if has_both:
+                row.update(withheld(
+                    INSUFFICIENT_COVERAGE,
+                    "거래금액 또는 면적이 단가를 산정할 수 있는 값이 아닙니다(0 이하·비정상).",
+                    field="price_per_pyeong_10k",
+                ))
+            else:
+                row.update(withheld(
+                    MASKED_BY_SOURCE,
+                    "원천이 면적 또는 거래금액을 제공하지 않아 단가를 산정할 수 없습니다.",
+                    field="price_per_pyeong_10k",
+                ))
         else:
             row["price_per_pyeong_10k"] = pp
         out.append(row)
