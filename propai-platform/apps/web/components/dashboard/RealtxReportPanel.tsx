@@ -26,6 +26,12 @@ import { useProjectStore } from "@/store/useProjectStore";
 type Tx = {
   deal_date?: string; dong?: string; jibun?: string; jimok?: string;
   area_m2?: number; price_10k_won?: number;
+  // ★단가는 **서버가 계산해 보낸 것**을 그대로 쓴다 — 화면에서 다시 나누지 않는다.
+  //   `/realtx-report/download` 가 *"산식을 여기서 다시 계산하지 않는다"* 를 선언하고 있어,
+  //   화면에서 계산하면 그 값이 **PDF·PPTX·DOCX 에는 없는** 상태가 된다.
+  price_per_pyeong_10k?: number | null;
+  price_per_pyeong_10k_absent?: string;
+  price_per_pyeong_10k_basis?: string;
   cancel_type?: string; cancel_date?: string; dealing_type?: string;
   registered_date?: string; buyer_type?: string; seller_type?: string;
   share_dealing_type?: string;
@@ -49,6 +55,32 @@ type Report = {
 type Fetch =
   | { s: "idle" } | { s: "loading" }
   | { s: "error"; message: string } | { s: "ready"; data: Report };
+
+//: 보류 사유 → 화면에 쓸 짧은 말. ★`"—"` 하나로 뭉개지 않는다 — 면적 열이 이미 `"—"` 를
+//  쓰므로, 같은 글리프면 「해제라 해당 없음」과 「원천이 가림」이 구별되지 않는다.
+//  (이 저장소가 `0㎡ × 0원/㎡` 로 값을 치른 형태다.)
+const PP_ABSENT_LABEL: Record<string, string> = {
+  // ★"해제" 라고 쓰지 않는다 — **상태 열이 이미 「해제」를 말한다.** 두 열이 같은 말을 하면
+  //   사용자는 새 정보를 못 얻고, 테스트도 두 열을 구별하지 못한다(실제로 걸렸다).
+  //   여기서 말할 것은 «왜 단가가 없는가» 이고, 답은 «해당 없음» 이다.
+  not_applicable: "해당없음",
+  masked_by_source: "원천미제공",
+  source_unavailable: "조회실패",
+};
+
+/** 만원/평 — 서버가 실은 값만 그린다. 없으면 **왜 없는지**를 찍는다(지어내지 않는다). */
+function perPyeong(t: Tx) {
+  const v = t.price_per_pyeong_10k;
+  if (typeof v === "number" && v > 0) {
+    return <span className="font-semibold">{v.toLocaleString()}</span>;
+  }
+  const label = PP_ABSENT_LABEL[String(t.price_per_pyeong_10k_absent ?? "")] ?? "—";
+  return (
+    <span className="text-[var(--text-hint)]" title={t.price_per_pyeong_10k_basis ?? undefined}>
+      {label}
+    </span>
+  );
+}
 
 const won = (man?: number) =>
   man == null ? "—" : man >= 10_000 ? `${(man / 10_000).toFixed(1)}억` : `${man.toLocaleString()}만`;
@@ -269,13 +301,19 @@ function ReportView({ data }: { data: Report }) {
 
           {g.transactions.length > 0 && (
             <div className="mt-2 max-h-72 overflow-auto rounded-lg border border-[var(--line)]">
-              <table className="w-full min-w-[560px] text-[11px]">
+              <table className="w-full min-w-[640px] whitespace-nowrap text-[11px]">
                 <thead className="sticky top-0 bg-[var(--surface-strong)]">
                   <tr className="text-[var(--text-hint)]">
                     <th className="px-2 py-1 text-left font-medium">거래일</th>
                     <th className="px-2 py-1 text-left font-medium">지목</th>
                     <th className="px-2 py-1 text-right font-medium">면적</th>
                     <th className="px-2 py-1 text-right font-medium">거래가</th>
+                    <th
+                      className="px-2 py-1 text-right font-medium"
+                      title="거래금액 ÷ 면적. 원천이 평 단위로 정한 단가를 되돌린 값이라 유효숫자 3자리로 표기합니다. 지목·지분·해제가 섞여 있으니 행끼리 그대로 비교하지 마십시오."
+                    >
+                      만원/평
+                    </th>
                     <th className="px-2 py-1 text-left font-medium">거래유형</th>
                     <th className="px-2 py-1 text-left font-medium">등기일자</th>
                     <th className="px-2 py-1 text-left font-medium">매수/매도</th>
@@ -289,6 +327,11 @@ function ReportView({ data }: { data: Report }) {
                       <td className="px-2 py-1 text-[var(--text-tertiary)]">{t.jimok || "—"}</td>
                       <td className="px-2 py-1 text-right text-[var(--text-primary)]">{t.area_m2 ? `${t.area_m2.toLocaleString()}㎡` : "—"}</td>
                       <td className="px-2 py-1 text-right font-semibold text-[var(--text-primary)]">{won(t.price_10k_won)}</td>
+                      {/* ★`won()` 을 쓰지 않는다 — 억 절단이 14,623 과 14,999 를 **둘 다 "1.5억"** 으로
+                          만들어 이 열의 존재이유(정밀도)를 지운다. */}
+                      <td className="px-2 py-1 text-right text-[var(--text-primary)]">
+                        {perPyeong(t)}
+                      </td>
                       <td className="px-2 py-1 text-[var(--text-secondary)]">
                         {t.dealing_type || "—"}
                         {t.share_dealing_type === "지분" && <span className="ml-1 text-[9px] text-[var(--status-warning)]">지분</span>}

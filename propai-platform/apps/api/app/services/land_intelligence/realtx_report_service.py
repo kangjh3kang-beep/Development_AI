@@ -38,9 +38,16 @@ from typing import Any
 
 from apps.api.app.utils.withheld import (
     MASKED_BY_SOURCE,
+    NOT_APPLICABLE,
     SOURCE_UNAVAILABLE,
     withheld,
 )
+
+# ★평↔㎡ 계수는 **새로 선언하지 않는다.** `market_report_service.PYEONG_SQM` 이 사실상 정본이고
+#   형제 둘(`report/render/market_adapter.py`·프론트 `PricingBandPanel.tsx`)이 자기 주석에
+#   *"이 상수의 미러"* 라고 적어 두었다. 저장소에 `3.3058`(121배 부정확)도 공존하므로
+#   **뿌리를 늘리지 않는 것**이 이 import 의 요점이다.
+from apps.api.app.services.market.market_report_service import PYEONG_SQM
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +121,94 @@ def month_range(end_ym: str, months: int) -> list[str]:
         if m == 0:
             y, m = y - 1, 12
     return sorted(out)
+
+
+# ── 평당 단가 ───────────────────────────────────────────────────────────────────
+#
+# ★★왜 「금액 ÷ 면적」을 그대로 쓰지 않는가 — 2026-08-28 라이브 실측(역삼동·6개월·71건)
+#
+#   area= 3.31㎡ → 1.001275평 | 2,000만원 | 1,997.45 만원/평 | 33건
+#   area= 6.61㎡ → 1.999525평 | 4,000만원 | 2,000.48 만원/평 | 12건
+#
+#   **면적이 평의 정수배에 소수 여섯째 자리까지 붙는다.** 즉 원천의 1차 자료는 ㎡ 가 아니라
+#   **평당 단가**이고, 총액은 `평 × 단가` 로 만들어진 것이다. 결정적 대조군 — **같은 날
+#   서로 다른 면적 3건이 소수 둘째 자리까지 동일 단가**(182.9/139.0/136.2㎡ → 전부 14,623.39).
+#   전수: 만원/평이 정수·10단위에 붙는 행 **71/71** · 고유 단가 **21개**(표의 70%가 반복).
+#
+#   ★그래서 우리 나눗셈은 **역산**이고, 원천이 평→㎡ 를 소수 2자리에서 끊은 탓에
+#   **같은 2,000만원/평 거래 45건이 1,997 과 2,000 두 값으로 갈린다** — 우리가 만든 가짜 가격차다.
+#   → **유효숫자 3자리**로 표시해 그 허위 정밀도를 걷어낸다(3.31㎡ 의 유효숫자가 3자리다).
+#     큰 필지에서는 약간 보수적으로(14,623 → 14,600) 표시되지만, **없는 차이를 만들지 않는 것**을
+#     우선한다. 균일한 규칙이라 잠글 수 있다는 것도 이유다.
+#
+# ★섞으면 무의미하다는 것은 원천 주석이 이미 적어 두었다(`molit_client.py:459`):
+#   *"지분 비율이 지역마다 크고 단가 차이도 방향이 제각각 — 강남 0.27배·포항북 2.14배.
+#     즉 섞으면 그 값은 무의미하다. ★제외·가중은 **소비처 판단**이다."*
+#   이 서비스가 그 소비처다. 우리는 **행 단위로만** 싣고 **평균을 만들지 않는다** —
+#   층화 축(지목·지분·해제)이 같은 행에 이미 있어 사용자가 스스로 가를 수 있고,
+#   요약 타일에는 그 맥락이 없기 때문이다(라이브 실측: 최빈 행이 **「도로 지분」 73%**).
+
+
+def _round_sig(x: float, digits: int = 3) -> int:
+    """유효숫자 `digits` 자리로 반올림한 정수.
+
+    ★원천 면적의 유효숫자가 3자리(예 `3.31㎡`)라 그보다 많은 자리를 표시하면 **허위 정밀도**다.
+    """
+    if x <= 0:
+        return 0
+    import math
+
+    mag = math.floor(math.log10(x))
+    q = 10 ** (mag - digits + 1)
+    return int(round(x / q) * q)
+
+
+def per_pyeong_10k(price_10k_won: Any, area_m2: Any) -> int | None:
+    """만원/평 — 값이 **둘 다 유효할 때만**. 아니면 `None`(지어내지 않는다)."""
+    try:
+        p = float(price_10k_won)
+        a = float(area_m2)
+    except (TypeError, ValueError):
+        return None
+    if not (p > 0 and a > 0):
+        return None
+    return _round_sig(p / (a / PYEONG_SQM))
+
+
+def attach_per_pyeong(txs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """각 거래 행에 `price_per_pyeong_10k` 을 싣는다 — **없으면 사유를 싣는다.**
+
+    ★「모름」을 `0` 이나 `"—"` 로 표현하지 않는다. 이 저장소는 `0㎡ × 0원/㎡` 가 **면제 확정**과
+      구별되지 않아 값을 치른 적이 있다. 화면의 `"—"` 는 이미 **면적 결측**이 쓰는 글리프라,
+      여기서 재사용하면 「해제라 해당 없음」과 「원천이 가림」이 한 글리프로 뭉개진다.
+    """
+    out: list[dict[str, Any]] = []
+    for t in txs or []:
+        if not isinstance(t, dict):
+            continue
+        row = dict(t)
+        # ★해제 거래 — 일어나지 않은 거래에 단가는 **해당 없음**이다.
+        #   라이브 실측: 해제 행은 원거래와 **전 필드 동일한 별개 행**으로 오고(102.3㎡/20,150만),
+        #   그 평당가는 대지 중앙의 1/22.5 라 **표 최저 이상치가 두 번 찍힌다**.
+        if str(row.get("cancel_type") or "").strip():
+            row.update(withheld(
+                NOT_APPLICABLE,
+                "계약이 해제된 신고 건이라 거래 단가를 산정하지 않습니다.",
+                field="price_per_pyeong_10k",
+            ))
+            out.append(row)
+            continue
+        pp = per_pyeong_10k(row.get("price_10k_won"), row.get("area_m2"))
+        if pp is None:
+            row.update(withheld(
+                MASKED_BY_SOURCE,
+                "원천이 면적 또는 거래금액을 제공하지 않아 단가를 산정할 수 없습니다.",
+                field="price_per_pyeong_10k",
+            ))
+        else:
+            row["price_per_pyeong_10k"] = pp
+        out.append(row)
+    return out
 
 
 def summarize_contract_state(txs: list[dict[str, Any]]) -> dict[str, Any]:
@@ -248,7 +343,7 @@ async def build_realtx_report(
                 "dong": dong,
                 "parcels": [parcel_view(pc) for pc in pcs if _dong_name_of(pc) == dong],
                 "summary": summarize_contract_state(txs_sorted),
-                "transactions": txs_sorted,
+                "transactions": attach_per_pyeong(txs_sorted),
                 # ★이 보고서가 **필지별이 아닌 이유**를 응답에 싣는다(보류값 계약).
                 **withheld(
                     MASKED_BY_SOURCE,

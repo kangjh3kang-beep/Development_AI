@@ -34,7 +34,13 @@ from app.services.report.render.model import (
 )
 
 #: 표 헤더 — 화면(패널)과 **같은 축**을 쓴다(두 표면이 다른 말을 하지 않게).
-_TX_HEADERS = ["거래일", "지목", "면적(㎡)", "거래가(만원)", "거래유형", "등기일자", "매수/매도", "상태"]
+_TX_HEADERS = [
+    "거래일", "지목", "면적(㎡)", "거래가(만원)",
+    # ★단가는 **화면과 같은 서버 값**을 옮겨 담기만 한다 — 여기서 다시 나누지 않는다.
+    #   `market_report.py:554` 가 *"산식을 여기서 다시 계산하지 않는다"* 를 선언한 그 계약이다.
+    "만원/평",
+    "거래유형", "등기일자", "매수/매도", "상태",
+]
 
 
 def _fmt_won_man(v: Any) -> str:
@@ -43,6 +49,26 @@ def _fmt_won_man(v: Any) -> str:
     except (TypeError, ValueError):
         return "—"
     return f"{n:,}"
+
+
+#: 보류 사유 → 문서에 찍을 짧은 말. ★`"—"` 하나로 뭉개지 않는다 —
+#: 면적 결측 열이 이미 `"—"` 를 쓰므로, 같은 글리프를 쓰면 「해제라 해당 없음」과
+#: 「원천이 가림」이 구별되지 않는다(이 저장소가 `0㎡ × 0원/㎡` 로 값을 치른 형태).
+_PP_ABSENT_SHORT = {
+    # ★"해제" 금지 — **상태 열이 이미 그 말을 한다**(화면과 같은 이유).
+    "not_applicable": "해당없음",
+    "masked_by_source": "원천미제공",
+    "source_unavailable": "조회실패",
+}
+
+
+def _fmt_per_pyeong(t: dict[str, Any]) -> str:
+    """만원/평 — 서버가 실은 값을 그대로. 없으면 **왜 없는지**를 짧게 찍는다."""
+    v = t.get("price_per_pyeong_10k")
+    if isinstance(v, (int, float)) and v > 0:
+        return f"{int(v):,}"
+    code = str(t.get("price_per_pyeong_10k_absent") or "").strip()
+    return _PP_ABSENT_SHORT.get(code, "—")
 
 
 def _tx_row(t: dict[str, Any]) -> list[Any]:
@@ -61,6 +87,7 @@ def _tx_row(t: dict[str, Any]) -> list[Any]:
         str(t.get("jimok") or "—"),
         f"{float(t.get('area_m2') or 0):,.1f}" if t.get("area_m2") else "—",
         _fmt_won_man(t.get("price_10k_won")),
+        _fmt_per_pyeong(t),
         dealing,
         # ★"미등기"라고 쓰지 않는다 — 원천 미기재일 뿐이다.
         str(t.get("registered_date") or "").strip() or "미기재",
