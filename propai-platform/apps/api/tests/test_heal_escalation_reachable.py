@@ -415,6 +415,69 @@ def test_suppression_partitions_by_status(status, suppressed):
     assert (status in H._SUPPRESSING_STATUSES) is suppressed
 
 
+def _escalate_sql() -> str:
+    """`_escalate` 의 억제 질의 SQL 을 **파서로** 꺼낸다.
+
+    ★문자열 검사는 이 파일의 설명 문장과 대상 함수의 주석에 걸린다 —
+      같은 날 다른 PR 에서 배선 락 3종이 **주석 처리만으로 전부 초록**이 된 것을
+      독립 리뷰가 실증했다. **판정은 파서로.**
+    """
+    import ast
+    import textwrap
+    node = ast.parse(textwrap.dedent(inspect.getsource(H._escalate))).body[0]
+    for sub in ast.walk(node):
+        if isinstance(sub, ast.Call) and getattr(sub.func, "id", None) == "text" \
+                and sub.args and isinstance(sub.args[0], ast.Constant) \
+                and "SELECT 1" in sub.args[0].value:
+            return sub.args[0].value
+    raise AssertionError("억제 질의 SQL 상수를 못 찾았다 — 파서가 죽었다")
+
+
+def test_dismissed_is_suppressed_only_inside_the_window():
+    """★**시간 축**을 가른다 — 종전 락은 축이 없어 어느 구현이든 통과했다.
+
+    독립 리뷰(2026-08-27)가 내 M-4 논증의 **거울상**을 짚었다:
+    *"`open` 만 보면 ack 하는 순간 다음 beat 에 새 critical 이 생긴다"* 가
+    **`dismissed` 에 글자 그대로 성립**한다. 기각은 계수 행을 지우지 않으므로
+    (실측 `DELETE FROM platform_events` **0건** · 대조군 다른 DELETE 25건)
+    `blocked_prior >= 5` 가 유지돼 **조건이 지속되는 한 최대 3시간 반복**된다.
+
+    처방은 **창으로 경계 짓기**다. 그래서 SQL 에 **두 갈래**가 있어야 한다:
+      · `status = ANY(:statuses)`                        → 나이 무관(open·acknowledged)
+      · `status = 'dismissed' AND created_at >= :since`  → **창 안에서만**
+    """
+    sql = _escalate_sql()
+    assert "status = ANY(:statuses)" in sql, "나이 무관 억제 갈래가 없다"
+    assert "status = 'dismissed'" in sql and "created_at >= :since" in sql, \
+        "기각을 **창으로 경계 짓는** 갈래가 없다 — 기각이 ≤10분 만에 부활한다"
+    # ★창이 상수를 경유하는가 — **파서로** 본다.
+    #   ★첫 판은 `"ESCALATION_WINDOW_HOURS" in inspect.getsource(...)` 였고,
+    #     리터럴 하드코딩 변이가 **생존**했다 — 그 이름이 **주석·독스트링에도** 있기 때문이다.
+    #     같은 날 다른 PR 에서 고친 바로 그 결함을 **몇 분 만에 이 파일에 다시 넣었다.**
+    #     문자열 검사는 자기 설명문에 걸린다 — 예외 없다.
+    import ast
+    import textwrap
+    node = ast.parse(textwrap.dedent(inspect.getsource(H._escalate))).body[0]
+    since_names: set[str] = set()
+    for sub in ast.walk(node):
+        if isinstance(sub, ast.Dict):
+            for k, v in zip(sub.keys, sub.values, strict=False):
+                if isinstance(k, ast.Constant) and k.value == "since":
+                    since_names |= {n.id for n in ast.walk(v) if isinstance(n, ast.Name)}
+    assert "ESCALATION_WINDOW_HOURS" in since_names, \
+        f"창이 상수를 경유하지 않는다(리터럴 하드코딩) — since 참조: {sorted(since_names)}"
+
+
+def test_dismissed_is_not_in_the_age_independent_set():
+    """★반대 방향 — `dismissed` 가 **나이 무관** 집합에 들어가면 은신처가 된다.
+
+    창 경계를 두는 이유가 *"창이 지나면 자동으로 열린다"* 인데,
+    `_SUPPRESSING_STATUSES` 에 넣어 버리면 **영원히 억제**돼 §D-19 를 어긴다.
+    """
+    assert "dismissed" not in H._SUPPRESSING_STATUSES
+    assert set(H._SUPPRESSING_STATUSES) == {"open", "acknowledged"}
+
+
 def test_suppressing_statuses_match_the_admin_transitions():
     """★억제 집합이 **관리자 전이와 정합**한지 — 라우터가 진실의 원천이다.
 

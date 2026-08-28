@@ -100,6 +100,25 @@ ESCALATION_WINDOW_HOURS = 3
 #  억제하지 않는다(재발하면 다시 올라와야 한다).
 _SUPPRESSING_STATUSES = ("open", "acknowledged")
 
+#: ★`dismissed` 는 **창 안에서만** 억제한다(나이 무관 억제 아님).
+#
+#  독립 적대 리뷰(2026-08-27)가 내 M-4 논증의 **거울상**을 짚었다. 내가 `acknowledged` 를
+#  넣은 근거는 *"`open` 만 보면 사람이 ack 하는 **순간 다음 beat(≤10분)에 같은 critical 이
+#  새로 생긴다**"* 였는데, **그 문장이 `dismissed` 에 글자 그대로 성립한다**:
+#  `_blocked_count` 는 창(`ESCALATION_WINDOW_HOURS`) 안의 계수 행을 셀 뿐이고
+#  **기각은 그 행을 지우지 않는다**(실측: `DELETE FROM platform_events` **0건** ·
+#  대조군 다른 `DELETE` 25건으로 조회기 생존 확인). 그래서 기각 직후에도
+#  `blocked_prior >= 5` 가 유지돼 **조건이 지속되는 한 최대 3시간 반복**된다.
+#
+#  ★근본은 **이 기전에 「재발」을 재는 축이 없다**는 것이다 — 창에 남은 잔여를 셀 뿐이라
+#  *"같은 에피소드가 계속되는 것"* 과 *"기각 후 재발"* 을 **원리적으로 구별하지 못한다.**
+#  `platform_insights` 에 상태변경 시각이 없어(UPDATE 가 `status` 만 쓴다) 새 열 없이
+#  가르려면 **창으로 경계**를 짓는 수밖에 없다:
+#      · 에피소드 동안(창 안) → 기각이 유지된다(≤10분 부활 없음)
+#      · 창이 비워진 뒤의 **진짜 재발** → 다시 올라온다(원래 의도 보존)
+#  ★그래서 **억제가 은신처가 되지 않는다** — 창이 지나면 자동으로 열린다(§D-19).
+_DISMISSED_SUPPRESS_WITHIN_WINDOW = True
+
 # 외부API "전면장애" 판정: 폴백률(%) 이 이 값 이상이면 threshold_relax 대상.
 TOTAL_OUTAGE_FALLBACK_PCT = 50.0
 
@@ -392,7 +411,7 @@ async def mark_insight_acted(db, action: dict[str, Any], result: dict[str, Any])
         return 0
 
 
-async def _escalate(db, action_type: str, trigger_key: str) -> bool:
+async def _escalate(db, action_type: str, trigger_key: str, now: datetime) -> bool:
     """효과없는 반복 조치 → critical 인사이트로 승격(사람 알림). best-effort.
 
     반환: **새로 만들었으면 True**, 억제됐거나 실패했으면 False.
@@ -419,11 +438,13 @@ async def _escalate(db, action_type: str, trigger_key: str) -> bool:
         dup = (await db.execute(text(
             "SELECT 1 FROM platform_insights "
             "WHERE insight_type = 'heal_escalation' "
-            "  AND status = ANY(:statuses) "
             "  AND metrics_json->>'action_type' = :at "
             "  AND metrics_json->>'trigger_key' = :tk "
+            "  AND ( status = ANY(:statuses) "
+            "     OR (status = 'dismissed' AND created_at >= :since) ) "
             "LIMIT 1"
         ), {"statuses": list(_SUPPRESSING_STATUSES),
+            "since": now - timedelta(hours=ESCALATION_WINDOW_HOURS),
             "at": action_type, "tk": trigger_key})).fetchone()
         if dup is not None:
             return False
@@ -500,7 +521,7 @@ async def evaluate(db, *, now: datetime | None = None) -> dict[str, Any]:
             # ★사유를 함께 싣는다: 기록은 global/trigger 둘 다, **판정은 trigger 만**.
             if decision["reason"] in CAP_BLOCK_REASONS:
                 await _record_blocked(db, atype, tkey, decision["reason"], now)
-            if decision["escalate"] and await _escalate(db, atype, tkey):
+            if decision["escalate"] and await _escalate(db, atype, tkey, now):
                 summary["escalated"] += 1
             summary["blocked"] += 1
             summary["actions"].append({"type": atype, "trigger_key": tkey,
@@ -530,4 +551,5 @@ __all__ = [
     "ESCALATION_THRESHOLD", "TOTAL_OUTAGE_FALLBACK_PCT",
     "HEAL_BLOCKED_EVENT", "CAP_BLOCK_REASONS",
     "ESCALATION_COUNT_REASONS", "ESCALATION_WINDOW_HOURS",
+    "_SUPPRESSING_STATUSES", "_DISMISSED_SUPPRESS_WITHIN_WINDOW",
 ]
