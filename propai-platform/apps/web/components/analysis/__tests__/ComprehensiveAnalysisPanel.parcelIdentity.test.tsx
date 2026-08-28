@@ -25,10 +25,14 @@
 import { render, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// ★인자 타입을 명시한다 — `vi.fn(async () => ({}))` 는 **0-인자**로 추론돼
-//   `post(path, opts)` 호출이 `tsc` 에서 TS2554 로 터진다(CI 차단 게이트).
-const post = vi.fn(async (_path: string, _opts?: unknown) => ({}) as unknown);
-const get = vi.fn(async (_path: string, _opts?: unknown) => ({ providers: [] }) as unknown);
+// ★타입은 **제네릭**으로 주고 구현은 무인자로 둔다(형제 `…stageSplit.test.tsx` 관례).
+//   · `vi.fn(async () => ({}))` 만 쓰면 **0-인자**로 추론돼 `post(path, opts)` 가 tsc TS2554.
+//   · 반대로 `async (_path, _opts) =>` 로 받으면 eslint `no-unused-vars` 경고가 늘어
+//     **lint 래칫**(경고가 늘지 않았는가)이 CI 를 막는다. 둘 다 **차단 게이트**다.
+const post = vi.fn<(path: string, opts?: unknown) => Promise<unknown>>(async () => ({}));
+const get = vi.fn<(path: string, opts?: unknown) => Promise<unknown>>(
+  async () => ({ providers: [] }),
+);
 
 vi.mock("@/lib/api-client", () => ({
   apiClient: {

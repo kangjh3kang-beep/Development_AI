@@ -32,7 +32,7 @@ from apps.api.app.services.development.scenario_simulator import (
 )
 
 
-class Test요청수를_중복제거_전에_센다:
+class Test요청수를중복제거전에센다:
     def test_같은_주소가_겹치면_요청수가_사용수보다_크다(self) -> None:
         req = Sim._requested_count("A", ["A", "A", "A"])
         used = len(Sim._merge("A", ["A", "A", "A"]))
@@ -70,7 +70,7 @@ class Test요청수를_중복제거_전에_센다:
         assert Sim._requested_count("A", [{"area_sqm": 100}, "", "   ", 42]) == 1
 
 
-class Test붕괴가_응답에_드러난다:
+class Test붕괴가응답에드러난다:
     """★계약 락 — 값이 실리는지를 본다(키가 있는지가 아니라).
 
     ctx 조립은 비동기 I/O 를 타므로, 여기서는 **ctx 를 만드는 산식**을 그대로 재현해
