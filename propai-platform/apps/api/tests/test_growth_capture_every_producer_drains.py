@@ -140,21 +140,62 @@ def test_every_entrypoint_that_produces_events_also_drains_them() -> None:
     )
 
 
-def test_worker_drains_on_both_startup_loop_and_shutdown() -> None:
-    """★두 자리 **모두** 필요하다 — 주기 배수만 있으면 **종료 시 잔여**가 사라진다.
+def _drain_sites_by_position(path: Path) -> dict[str, list[int]]:
+    """배수 호출을 **주기(while 안)** 와 **종료(while 밖)** 로 가른다.
 
-    한쪽만 단언하면 반대쪽을 지워도 초록이다(한쪽만 거는 단언).
+    ★두 자리는 **다른 일을 한다**: 주기 배수가 없으면 큐가 프로세스 수명 내내 차올라
+      `maxlen` 오버플로로 **조용히 밀려나고**, 종료 배수가 없으면 **잔여가 통째로** 사라진다.
+      한쪽만 단언하면 반대쪽을 지워도 초록이다(한쪽만 거는 단언).
     """
-    src = (_APPS / "worker" / "main.py").read_text(encoding="utf-8")
-    tree = ast.parse(src)
-    where: dict[str, list[int]] = {}
-    for fn in ast.walk(tree):
-        if isinstance(fn, ast.AsyncFunctionDef) and fn.name in ("startup", "shutdown"):
-            where[fn.name] = [
-                n.lineno for n in ast.walk(fn)
-                if isinstance(n, ast.Call)
-                and getattr(n.func, "attr", getattr(n.func, "id", None)) in _DRAINS
-            ]
-    assert set(where) == {"startup", "shutdown"}, f"★훅을 못 찾았다: {sorted(where)}"
-    assert where["startup"], "★startup 에 배수 루프가 없다 — 워커가 담기만 한다"
-    assert where["shutdown"], "★shutdown 에 마지막 배수가 없다 — 종료 시 잔여가 사라진다"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    parent: dict[ast.AST, ast.AST] = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parent[child] = node
+
+    def in_loop(n: ast.AST) -> bool:
+        cur = parent.get(n)
+        while cur is not None:
+            if isinstance(cur, (ast.While, ast.For, ast.AsyncFor)):
+                return True
+            cur = parent.get(cur)
+        return False
+
+    out: dict[str, list[int]] = {"periodic": [], "shutdown": []}
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Call):
+            f = n.func
+            nm = f.id if isinstance(f, ast.Name) else (f.attr if isinstance(f, ast.Attribute) else None)
+            if nm in _DRAINS:
+                out["periodic" if in_loop(n) else "shutdown"].append(n.lineno)
+    return out
+
+
+def test_every_producing_entrypoint_drains_periodically_AND_on_shutdown() -> None:
+    """★배수는 **두 자리 모두** 있어야 한다 — 파생형으로 전 진입점에 건다.
+
+    종전 판은 워커만 손으로 검사해서 **API 의 주기 배수를 지워도 초록**이었다
+    (변이 M3 가 생존했다 — 폐포에 종료 배수가 남아 있으면 「배수한다」가 참이 되어서).
+    ★**「배수구가 있다」와 「제때 배수한다」는 다른 명제**다.
+
+    되살리는 변이: `apps/api/main.py` 또는 `apps/worker/main.py` 의 **어느 쪽 한 자리**를
+    지워도 이 테스트가 죽는다.
+    """
+    checked = 0
+    for ep in _entrypoints():
+        clo = _closure(ep)
+        if not sum(len(_calls(f, _PRODUCERS)) for f in clo):
+            continue                       # 담지 않는 진입점은 배수 의무가 없다
+        sites = _drain_sites_by_position(ep)
+        assert sites["periodic"], (
+            f"★{ep.parent.name}: **주기 배수가 없다** — 큐가 프로세스 수명 내내 차올라 "
+            f"maxlen 오버플로로 조용히 밀려난다. (발견된 배수: {sites})"
+        )
+        assert sites["shutdown"], (
+            f"★{ep.parent.name}: **종료 배수가 없다** — 잔여가 통째로 사라진다. "
+            f"(발견된 배수: {sites})"
+        )
+        checked += 1
+
+    # ★공허 진리 가드 — 하나도 안 봤으면 위 단언은 전부 무의미하다.
+    assert checked >= 2, f"★담는 진입점을 {checked}개만 검사했다 — 폐포 계산이 죽었다(위반 아님)"
