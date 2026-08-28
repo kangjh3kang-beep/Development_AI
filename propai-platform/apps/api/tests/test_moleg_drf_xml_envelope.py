@@ -42,6 +42,12 @@ def test_failure_envelope_is_detected_with_its_reason() -> None:
     reason = xml_failure_reason(FAILURE_XML, expect=_ORDIN_LIST_ROOTS)
     assert reason is not None, "200-실패를 정상으로 통과시켰다"
     assert "사용자 정보 검증에 실패" in reason, f"사유가 유실됐다: {reason!r}"
+    # ★공허 방지(변이 실측): 사유 추출을 지워도 폴백이 **본문 앞 120자를 그대로 echo** 해서
+    #   위 단언만으로는 SURVIVED 였다. **추출된 형태**인지까지 본다 —
+    #   원문 덤프면 XML 태그가 섞이고 폴백 문구가 붙는다.
+    assert "<result>" not in reason, f"원문 덤프가 그대로 나왔다(추출 실패): {reason!r}"
+    assert "기대 루트태그" not in reason, f"폴백 경로로 샜다(태그 추출이 안 됐다): {reason!r}"
+    assert reason.startswith("사용자 정보 검증에 실패"), f"추출 형태가 아니다: {reason!r}"
 
 
 def test_success_envelopes_are_not_flagged() -> None:
