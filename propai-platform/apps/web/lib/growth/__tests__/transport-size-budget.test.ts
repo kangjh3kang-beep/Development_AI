@@ -86,6 +86,37 @@ describe("★전송 예산 — 예산을 넘는 배치를 만들지 않는다", 
     expect(getDroppedEventCount(), "버린 건이 있다").toBe(0);
   });
 
+  it("★`TextEncoder` 가 없어도 예산을 지킨다 — 폴백은 **과대** 추정이어야 한다", async () => {
+    // ★이 축은 jsdom 에 `TextEncoder` 가 **항상 있어서** 다른 테스트로는 절대 안 태워진다
+    //   (변이 실측: 폴백을 `return 0` 으로 바꿔도 전 테스트 통과 = SURVIVED).
+    //   폴백이 **과소** 추정하면 예산 계산이 무너져 그대로 절벽으로 돌아간다.
+    const realEncoder = globalThis.TextEncoder;
+    try {
+      // @ts-expect-error — 폴백 경로를 강제로 태운다.
+      delete (globalThis as Record<string, unknown>).TextEncoder;
+
+      const { trackEvent, flush } = await freshCollector();
+      const bodies: string[] = [];
+      vi.stubGlobal("navigator", { ...globalThis.navigator, sendBeacon: undefined });
+      vi.stubGlobal("fetch", ((_url: string, init?: RequestInit) => {
+        bodies.push(String(init?.body ?? ""));
+        return Promise.resolve({ ok: true } as Response);
+      }) as unknown as typeof fetch);
+
+      for (let i = 0; i < 40; i += 1) {
+        trackEvent("js_error", { severity: "error", payload: { i, message: "x".repeat(10_000) } });
+      }
+      for (let i = 0; i < 30; i += 1) flush();
+
+      expect(bodies.length, "전송이 없었다").toBeGreaterThan(0);
+      // 실측 바이트는 **진짜** 인코더로 잰다(대상이 쓰는 폴백과 독립).
+      const over = bodies.map((b) => new realEncoder().encode(b).length).filter((n) => n > BUDGET_BYTES);
+      expect(over, `폴백이 과소 추정해 예산을 넘겼다: ${over.join(",")}`).toEqual([]);
+    } finally {
+      globalThis.TextEncoder = realEncoder;
+    }
+  });
+
   it("★특이도 — 예산 **이하** 입력은 쪼개지 않고 **한 번에** 보낸다", async () => {
     const { trackEvent, flush } = await freshCollector();
     const bodies = captureBodies();
