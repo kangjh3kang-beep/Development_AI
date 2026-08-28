@@ -119,8 +119,12 @@ else
   #     파이프 마지막 명령의 것이라 set -e 가 **판정 대신 스크립트를 죽인다**(rc=1).
   #     실측 2026-08-28: 이 줄이 없어서 vitest 빈 선택이 exit 15 가 아니라 rc=1 로 나왔다 —
   #     ★그러면 「테스트 실패(1)」와 **구별되지 않는다.** 무성 실패보다 나쁘다: 그럴듯하다.
-  BASE_PASSED=$( { grep -oE '[0-9]+ passed' "$BASE_LOG" 2>/dev/null || true; } \
-                  | grep -oE '^[0-9]+' | sort -rn | head -1 || true )
+  #   ★가드는 **파이프 끝에 하나만** 둔다. 명령치환 대입의 종료코드는 파이프
+  #     **마지막** 명령의 것이므로 중간 grep 에 || true 를 또 달아도 판정에 영향이 없다
+  #     (실측: 안쪽만 지운 변이는 **생존** · 바깥을 지우면 CAUGHT).
+  #     도달 불가 방어를 남겨 두면 변이 점수만 부풀린다.
+  BASE_PASSED=$(grep -oE '[0-9]+ passed' "$BASE_LOG" 2>/dev/null \
+                  | grep -oE '^[0-9]+' | sort -rn | head -1 || true)
   BASE_PASSED=${BASE_PASSED:-0}
   if [ "$BASE_PASSED" -eq 0 ]; then
     echo "판정 불가(무효) — 기준선에서 **통과한 케이스가 0건**이다(rc=$BASE_RC)." >&2
