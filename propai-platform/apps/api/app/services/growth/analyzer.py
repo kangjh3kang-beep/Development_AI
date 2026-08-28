@@ -29,6 +29,7 @@ import json
 import logging
 import os
 import re
+import statistics
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -136,6 +137,12 @@ LATENCY_BASELINE_DAYS = 7
 #: ★★**두 표본을 비교하지 않으므로 표본 잡음이 원리적으로 없습니다.** 평소값은 7일치
 #:   여러 시간창의 **중앙값**이라 `n=20` 한 표본의 요동에 흔들리지 않습니다.
 LATENCY_ABSOLUTE_DEVIATION_MS = 5000
+
+#: 평소값을 만들 때 볼 **이력 기간(일)**. ★`LATENCY_BASELINE_DAYS` 와 **의미가 다르다** —
+#  그쪽은 *"직전 baseline 을 어디까지 거슬러 찾나"*, 이쪽은 *"이 route 의 평소가 얼마인가"* 다.
+#  ★상수를 공유하면 baseline lookback 튜닝이 **평소값 창을 조용히 바꾼다**. 실측: 같은
+#  데이터가 창에 따라 7일 10.86 / 14일 5.92 / 30일 2.80 / 73.6일 1.32 건일 = **8배** 벌어진다.
+LATENCY_TYPICAL_WINDOW_DAYS = 7
 
 #: 평소값을 만들 때 필요한 **최소 관측 시간창 수**. ★한두 창으로 「평소」를 말하면
 #:  그 자체가 잡음이다 — 그때는 절대편차를 **판정하지 않는다**(비율만 남는다).
@@ -487,7 +494,13 @@ def typical_p95(history: list[float]) -> float | None:
     """
     if len(history) < LATENCY_TYPICAL_MIN_WINDOWS:
         return None
-    return _percentile(sorted(history), 50.0)
+    # ★`_percentile`(nearest-rank)을 쓰지 않는다 — 그것은 `int(round((n-1)/2))` 이고
+    #   파이썬 `round` 가 **은행가 반올림**이라 **짝수 n 에서 중앙이 상단/하단으로 번갈아 간다**:
+    #       n=4 [1000, 2000, 30000, 40000]            -> 30000  ← 장애값으로 점프
+    #       n=6 [1000,2000,3000, 30000,40000,50000]   ->  3000  ← 정상값
+    #   즉 **장애 창이 정확히 절반**일 때 창이 하나 더 쌓이면 탐지 상태가 뒤집힌다(비단조).
+    #   `statistics.median` 은 짝수 n 에서 두 중앙의 평균이라 그 뒤집힘이 없다.
+    return statistics.median(history)
 
 
 def classify_latency_absolute(p95: float, typical: float | None) -> str | None:
@@ -503,6 +516,10 @@ def classify_latency_absolute(p95: float, typical: float | None) -> str | None:
     둘 다 필요하다. `None` 이면 이 축에서는 발화하지 않는다는 뜻이지
     *"정상이다"* 라는 뜻이 아니다.
     """
+    # ★`typical < 0` 은 **현재 도달 불가**다(`p95_ms` 는 음수가 될 수 없고 중앙값도 그렇다).
+    #   그래도 남긴다 — 데이터 손상 시 **조용히 발화하는 것보다 조용히 침묵하는 편이 안전**하고,
+    #   침묵은 `typical_p95`/`typical_windows` 가 표면에 실려 사람이 볼 수 있다.
+    #   ★변이로 지워도 안 죽는 것이 정상이다(규율 §B-5 — 도달 불가 방어는 그 사실을 적는다).
     if typical is None or typical < 0:
         return None
     if p95 > typical + LATENCY_ABSOLUTE_DEVIATION_MS:
@@ -993,6 +1010,8 @@ async def _analyze_latency_regression(db, w0, w1, coverage: dict[str, dict[str, 
         "FROM platform_insights "
         "WHERE insight_type = ANY(:types) "
         "  AND created_at >= :since "
+        # ★형제 스윕 — 위 history 와 **같은 결함**이 여기에도 있었다(전역 전파방지).
+        "  AND (metrics_json->>'baseline_p95') ~ '^-?[0-9]+(\\.[0-9]+)?$' "
         "ORDER BY metrics_json->>'key', created_at DESC"
     ), {"since": w1 - timedelta(days=LATENCY_BASELINE_DAYS),
         "types": list(LATENCY_BASELINE_SOURCE_TYPES)})).fetchall()
@@ -1002,13 +1021,20 @@ async def _analyze_latency_regression(db, w0, w1, coverage: dict[str, dict[str, 
     #   ★baseline 조회와 **다른 질문**이다: baseline 은 *"직전 배치가 얼마였나"*,
     #     평소값은 *"이 route 는 평소 얼마인가"* 다. 그래서 `DISTINCT ON` 이 아니라
     #     **전 이력**을 모은다.
+    #   ★**숫자꼴일 때만 캐스팅한다** — 같은 파일의 `_analyze_selection_contamination`
+    #     이 이미 명령한 규율이다. 그대로 `::float` 하면 숫자가 아닌 값 **한 행**에
+    #     `InvalidTextRepresentation` 이 나고, `analyze_window` 의 광역 except 가 그것을
+    #     삼켜 **그 윈도우의 인사이트가 전부 사라진다**(내 지표가 남의 지표를 죽인다).
+    #     7일 lookback 이라 오염행 하나가 **7일 내내 매 배치를 죽인다.**
+    #   ★**창에 상한도 건다**(`< :until`) — 백필·재실행 때 **미래 행이 평소값에 섞이면**
+    #     그것이 바로 lookahead 오염이다. 경계는 **양방향으로** 건다.
     hist_rows = (await db.execute(text(
         "SELECT metrics_json->>'key' AS k, (metrics_json->>'p95_ms')::float AS p "
         "FROM platform_insights "
         "WHERE insight_type = ANY(:types) "
-        "  AND created_at >= :since "
-        "  AND metrics_json->>'p95_ms' IS NOT NULL"
-    ), {"since": w1 - timedelta(days=LATENCY_BASELINE_DAYS),
+        "  AND created_at >= :since AND created_at < :until "
+        "  AND metrics_json->>'p95_ms' ~ '^-?[0-9]+(\\.[0-9]+)?$'"
+    ), {"since": w1 - timedelta(days=LATENCY_TYPICAL_WINDOW_DAYS), "until": w1,
         "types": list(LATENCY_BASELINE_SOURCE_TYPES)})).fetchall()
     history: dict[str, list[float]] = {}
     for r in hist_rows:
@@ -1050,8 +1076,11 @@ async def _analyze_latency_regression(db, w0, w1, coverage: dict[str, dict[str, 
                 # ★어느 축이 울렸는가 — 빈 목록이면 발화 아님
                 "triggers": triggers,
                 # ★평소값을 **함께 싣는다**. 없으면 `None` — 「모름」을 수치로 위장하지 않는다
-                #   (창이 LATENCY_TYPICAL_MIN_WINDOWS 미만이면 절대편차는 판정 불가)
+                #   (이력이 LATENCY_TYPICAL_MIN_WINDOWS 미만이면 절대편차는 판정 불가)
                 "typical_p95": typical,
+                # ★이것은 **이력 행 수**다(고유 시간창 수가 아니다) — 재실행·백필로
+                #   같은 창이 두 번 들어가면 중복 계수된다. 키 이름은 계약이라 유지하되
+                #   **표시 문구는 「이력 N건」** 으로 적어 사람을 오도하지 않는다.
                 "typical_windows": len(history.get(key, [])),
             },
         })
@@ -1134,7 +1163,7 @@ def _latency_trigger_phrase(m: dict[str, Any]) -> str:
         why = f" 평소값 {round(float(typical))}ms."
     else:
         windows = m.get("typical_windows")
-        w = f"창 {windows}개" if isinstance(windows, int) else "창 부족"
+        w = f"이력 {windows}건" if isinstance(windows, int) else "이력 부족"
         why = f" 평소값 판정 불가({w} · 최소 {LATENCY_TYPICAL_MIN_WINDOWS}개 필요)."
     return f" 발화 축: {names}.{why}"
 

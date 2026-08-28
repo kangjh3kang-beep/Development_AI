@@ -269,3 +269,98 @@ def test_unknown_axis_code_is_shown_raw_not_hidden():
     """모르는 축 코드는 **감추지 않고 원문 그대로** — 숨기면 새 축이 조용히 사라진다."""
     out = az._rule_narrative(_ins(["ratio", "brand_new_axis"], 23524.0))
     assert "brand_new_axis" in out, f"모르는 축이 화면에서 사라졌다: {out}"
+
+
+# ---------------------------------------------------------------------------
+# ★적대 리뷰 봉합 (2026-08-28) — H-2 · M-1 · M-2
+# ---------------------------------------------------------------------------
+
+
+def test_typical_does_not_flip_when_outage_is_exactly_half():
+    """★장애 창이 **정확히 절반**일 때 창이 하나 더 쌓여도 판정이 뒤집히지 않는다.
+
+    종전 `_percentile`(nearest-rank)은 `int(round((n-1)/2))` 이고 파이썬 `round` 가
+    **은행가 반올림**이라 짝수 `n` 에서 중앙이 상단/하단으로 **번갈아** 갔다:
+
+        n=4 [1000, 2000, 30000, 40000]           -> 30,000  ← 장애값으로 점프
+        n=6 [1000,2000,3000, 30000,40000,50000]  ->  3,000  ← 정상값
+
+    같은 상황에서 **창 하나 차이로 침묵/발화가 뒤집히는 비단조** 동작이다.
+    ★평소값이 장애값으로 점프하면 **진행 중인 회귀가 침묵**하고, 비율축도
+      `baseline_p95 == p95_ms`(라이브 3,073/3,073) 라 함께 침묵한다 — **두 축이 다 눈이 먼다.**
+    """
+    n4 = [1000.0, 2000.0, 30000.0, 40000.0]
+    n6 = [1000.0, 2000.0, 3000.0, 30000.0, 40000.0, 50000.0]
+    t4, t6 = az.typical_p95(n4), az.typical_p95(n6)
+    assert t4 is not None and t6 is not None
+
+    # ① 어느 쪽도 **장애값으로 점프하지 않는다**
+    assert t4 < 30000.0, f"n=4 평소값이 장애값으로 점프했다: {t4}"
+    assert t6 < 30000.0, f"n=6 평소값이 장애값으로 점프했다: {t6}"
+
+    # ② ★**두 모집단이 같은 판정을 낸다** — 창 수만 달라졌는데 뒤집히면 안 된다.
+    #    `20,000ms` 는 옛 구현에서 정확히 갈리던 관측이다(n=4 임계 35,000 → 미발화 /
+    #    n=6 임계 8,000 → 발화). 이 값이 이 락의 판별력 전부다.
+    obs = 20000.0
+    fired4 = az.classify_latency_absolute(obs, t4) is not None
+    fired6 = az.classify_latency_absolute(obs, t6) is not None
+    assert fired4 == fired6, (
+        f"창 수만 달라졌는데 판정이 뒤집힌다(비단조): n=4 typical={t4} 발화={fired4} · "
+        f"n=6 typical={t6} 발화={fired6}")
+
+
+def test_threshold_lower_bound_is_pinned_by_its_own_lock():
+    """★임계의 **아래쪽**을 목적 있게 못 박는다.
+
+    종전엔 선언된 하한이 `>= 1000` 뿐이라 **[3,212 ~ 5,999] 안에서 자유롭게 표류**했다
+    (적대 리뷰 실측: 3,300·4,000 을 넣어도 27건 전부 초록). 그리고 실효 하한 3,212 는
+    **선언된 락이 아니라 부수효과**였다 — 목적이 다른
+    `test_two_axes_catch_different_things`(`ai/status` 70→3,282ms) 가 우연히 만든 것이라,
+    그 테스트를 다른 route 로 바꾸면 하한이 조용히 1,000 으로 내려간다.
+
+    ★내려가는 방향이 하필 **이 설계가 존재하는 이유**(위양성 폭증)다.
+    """
+    assert az.LATENCY_ABSOLUTE_DEVIATION_MS >= 4500, (
+        "임계가 4.5초 미만이면 정상 변동에 울기 시작한다 — 이 축의 존재 이유가 무너진다")
+
+
+def test_typical_window_is_its_own_constant_not_shared_with_baseline():
+    """★평소값 창과 baseline lookback 은 **다른 질문**이므로 상수를 공유하지 않는다.
+
+    공유하면 baseline lookback 튜닝(전혀 다른 목적)이 **평소값 창을 조용히 바꾼다**.
+    실측(라이브 3,073행): 같은 데이터가 창에 따라
+    7일 10.86 / 14일 5.92 / 30일 2.80 / 73.6일 1.32 건일 = **8배** 벌어진다 —
+    결과를 8배 움직이는 파라미터가 무잠금이었다.
+    """
+    assert hasattr(az, "LATENCY_TYPICAL_WINDOW_DAYS"), (
+        "평소값 창 상수가 없다 — baseline 상수를 재사용하고 있다")
+    # 양방향 유계: 너무 짧으면 창 수 하한에 걸려 침묵하고, 너무 길면 옛 장애가 평소가 된다.
+    assert 3 <= az.LATENCY_TYPICAL_WINDOW_DAYS <= 30
+
+    # ★**쿼리가 실제로 그 상수를 쓰는지**까지 태운다 — 상수만 단언하면 장식이다.
+    import inspect
+
+    src = inspect.getsource(az._analyze_latency_regression)
+    assert "LATENCY_TYPICAL_WINDOW_DAYS" in src, (
+        "상수는 있는데 평소값 조회가 그것을 쓰지 않는다(선언만 하고 소비처 0)")
+
+
+def test_history_query_guards_non_numeric_and_bounds_both_ways():
+    """★숫자꼴 가드와 **양방향** 창 경계가 쿼리에 실재한다.
+
+    · 숫자꼴 가드: 같은 파일 `_analyze_selection_contamination` 이 이미 명령한 규율이다.
+      없으면 숫자가 아닌 값 **한 행**이 `analyze_window` 의 광역 except 에 삼켜져
+      **그 윈도우의 인사이트가 전부 사라진다**(7일 lookback 이라 7일 내내).
+    · 창 상한(`< :until`): 백필·재실행 때 **미래 행이 평소값에 섞이면** lookahead 오염이다.
+      계획서 §6-1 이 *"lookahead 로 재면 답이 달라진다"* 를 이미 실측했다.
+    """
+    import inspect
+
+    src = inspect.getsource(az._analyze_latency_regression)
+    # ★백슬래시가 없는 구간으로 본다 — 이스케이프 층(파이썬 리터럴 ↔ 파일 내용)이
+    #   어긋나면 **락이 조용히 위음성**이 된다(실제로 한 번 걸렸다).
+    assert "~ '^-?[0-9]+(" in src, "숫자꼴 가드가 없다 — 오염행 1건이 윈도우를 죽인다"
+    assert "created_at < :until" in src, "창 상한이 없다 — 백필 시 미래 행이 평소값에 섞인다"
+    # ★형제도 함께(전역 전파방지) — baseline 캐스팅에도 같은 결함이 있었다.
+    assert src.count("~ '^-?[0-9]+(") >= 2, (
+        "형제(baseline_p95) 캐스팅에 같은 가드가 없다 — 한쪽만 고쳤다")

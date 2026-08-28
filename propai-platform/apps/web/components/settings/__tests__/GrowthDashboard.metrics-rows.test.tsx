@@ -128,7 +128,7 @@ describe("★계약 — 인사이트 카드가 지표를 실제로 낸다", () =
     render(
       <InsightMetrics insight={latencyWith({ triggers: ["absolute"], typical_p95: null, typical_windows: 2 })} />,
     );
-    expect(screen.getByText(/판정 불가\(창 2개\)/)).toBeTruthy();
+    expect(screen.getByText(/판정 불가\(이력 2건\)/)).toBeTruthy();
     // ★부분문자열로 보지 않는다 — `not.toContain("0ms")` 는 같은 카드의 **`2,200ms`**
     //   안의 `0ms` 를 집어 **정상 렌더를 위반으로 신고**한다(실측으로 걸렸다).
     //   값 노드와 **정확히 일치**하는지로 판정한다.

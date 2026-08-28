@@ -86,17 +86,31 @@ async def _events(db, *, route, n, latency):
              "c": _W0 + timedelta(minutes=1)})
 
 
-async def _history(db, *, route, p95s, itype="latency_baseline"):
-    """그 route 의 과거 `p95_ms` 이력을 심는다(평소값의 재료)."""
+async def _history(db, *, route, p95s, itype="latency_baseline", age_days=0.0, baseline=None):
+    """그 route 의 과거 `p95_ms` 이력을 심는다(평소값의 재료).
+
+    ★`created_at` 을 **명시한다.** 종전엔 안 넣어서 DB 기본값 `now()` 가 들어갔고,
+      `_W1` 은 과거 고정 시각이라 **이력 창(`created_at` 범위)이 한 번도 검증되지 않았다** —
+      창을 1일로 줄이든 3650일로 늘리든 `now()` 는 늘 `since` 이후였다.
+      적대 리뷰가 찾은 *"이력 창 변이 SURVIVED"* 의 **근본 원인이 이 픽스처**였다.
+
+    `age_days` 로 **창 밖** 이력을 심을 수 있다(두 모집단을 가르기 위해).
+    """
     for i, p in enumerate(p95s):
         # ★`id` 는 DB 기본값이 없다(앱이 uuid4 로 만든다 — `platform_event.py:101`)
+        created = _W0 - timedelta(hours=i + 1) - timedelta(days=age_days)
         await db.execute(text(
             "INSERT INTO platform_insights (id, insight_type, window_start, window_end, "
-            " metrics_json, severity, narrative, recommended_action, status) "
-            "VALUES (CAST(:i AS uuid), :t, :ws, :we, CAST(:m AS jsonb), 'info', 'n', 'none', 'open')"),
+            " metrics_json, severity, narrative, recommended_action, status, created_at) "
+            "VALUES (CAST(:i AS uuid), :t, :ws, :we, CAST(:m AS jsonb), 'info', 'n', 'none', "
+            "        'open', :c)"),
             {"i": str(uuid.uuid4()), "t": itype,
              "ws": _W0 - timedelta(hours=i + 2), "we": _W0 - timedelta(hours=i + 1),
-             "m": json.dumps({"key": route, "p95_ms": p, "baseline_p95": p})})
+             "c": created,
+             # ★`baseline` 을 주면 `p95_ms` 와 **다른 값**을 심는다 — 두 필드가 같으면
+             #   *"평소값을 어느 필드에서 읽는가"* 가 **원리적으로 안 잠긴다**(실측: 그 변이가 생존).
+             "m": json.dumps({"key": route, "p95_ms": p,
+                              "baseline_p95": p if baseline is None else baseline})})
 
 
 async def _run(db):
@@ -205,3 +219,97 @@ async def test_absolute_axis_alone_drives_severity(db):
     assert got[r]["severity"] == "warn", f"절대편차가 severity 에 반영되지 않았다: {got[r]}"
     assert got[r]["insight_type"] == "latency_regression"
     assert got[r]["recommended_action"] == "heal"
+
+
+async def test_history_window_excludes_old_rows_two_populations(db):
+    """★★이력 **창**을 두 모집단으로 가른다 — 창 안은 쓰고, 창 **밖은 버린다**.
+
+    ## 왜 이 락이 필요했나 (적대 리뷰 2026-08-28)
+
+    `history` 창 변이(`7일 → 1일` · `7일 → 3650일` · 창 조건 제거)가 **전부 SURVIVED** 했다.
+    근본 원인은 코드가 아니라 **픽스처**였다 — `created_at` 을 안 심어 DB 기본값 `now()` 가
+    들어갔고, `_W1` 이 과거 고정 시각이라 **어떤 창을 줘도 늘 포함**됐다.
+    즉 결과를 **8배** 움직이는 파라미터(계획서 §6-1: 7일 10.86 / 73.6일 1.32 건일)가
+    **한 번도 검증되지 않은 채** 「전부 CAUGHT」로 보고됐다.
+
+    ## 두 모집단
+
+    · 창 **안**(최근 몇 시간): 평범한 값 → 평소값이 된다
+    · 창 **밖**(30일 전): **극단값 500,000ms** → 들어오면 평소값을 통째로 오염시킨다
+
+    창이 제대로 걸려 있으면 평소값은 창 안 값 근처이고, 창이 풀리면 극단값에 끌려간다.
+    """
+    r = "/api/v1/zoning/parcel-boundaries"
+    # 창 밖 — 버려져야 한다(30일 전 · LATENCY_TYPICAL_WINDOW_DAYS=7 을 훨씬 넘는다)
+    await _history(db, route=r, p95s=[500000.0, 500000.0, 500000.0, 500000.0], age_days=30.0)
+    # 창 안 — 쓰여야 한다
+    await _history(db, route=r, p95s=[23000.0, 23524.0, 24000.0, 23100.0])
+    await _events(db, route=r, n=25, latency=66230)
+    await db.commit()
+
+    got = await _run(db)
+    assert r in got, f"판정이 안 나왔다 — 이 락이 공허하다: {list(got)}"
+    m = got[r]["metrics_json"]
+
+    # ① 창 안만 쓰였다 — 창 밖 4건이 섞이면 8건이 된다
+    assert m["typical_windows"] == 4, (
+        f"창 밖 이력이 섞였다(기대 4건, 실제 {m['typical_windows']}건) — 창 조건이 풀렸다")
+    # ② ★평소값이 **극단값에 끌려가지 않았다**
+    assert m["typical_p95"] is not None and m["typical_p95"] < 30000.0, (
+        f"평소값이 창 밖 극단값(500,000ms)에 오염됐다: {m['typical_p95']}")
+    # ③ 그래서 **여전히 발화한다** — 창이 풀렸다면 평소값 500,000 에 눌려 침묵했을 것이다
+    assert "absolute" in m["triggers"], f"절대편차가 침묵했다 — 평소값 오염 의심: {m}"
+
+
+async def test_typical_reads_p95_not_baseline_two_populations(db):
+    """★평소값은 `p95_ms` 에서 온다 — `baseline_p95` 가 아니다.
+
+    ## 왜 (적대 리뷰 2026-08-28)
+
+    변이 `metrics_json->>'p95_ms'` → `'baseline_p95'` 가 **SURVIVED** 했다.
+    원인은 코드가 아니라 **픽스처**였다 — `_history` 가 두 필드에 **같은 값**을 심어서
+    *"어느 필드를 읽는가"* 가 원리적으로 구별되지 않았다.
+    (CLAUDE.md §검증 규율 2 — *"픽스처는 두 모집단을 갈라야 한다. 차가 0인 픽스처는 잠금이 아니다."*)
+
+    여기서는 두 필드를 **크게 벌린다**: `p95_ms=23,xxx` · `baseline_p95=1,000`.
+    평소값을 `baseline_p95` 에서 읽으면 1,000 이 되어 편차가 65,230ms 로 뻥튀기되고,
+    `typical_p95` 단언이 곧바로 깨진다.
+    """
+    r = "/api/v1/zoning/parcel-boundaries"
+    await _history(db, route=r, p95s=[23000.0, 23524.0, 24000.0, 23100.0], baseline=1000.0)
+    await _events(db, route=r, n=25, latency=66230)
+    await db.commit()
+
+    got = await _run(db)
+    assert r in got, f"판정이 안 나왔다 — 이 락이 공허하다: {list(got)}"
+    m = got[r]["metrics_json"]
+    # ★평소값이 p95_ms 쪽(23,000대)이어야 한다. baseline 쪽(1,000)이면 필드를 잘못 읽은 것이다.
+    assert m["typical_p95"] is not None
+    assert 20000.0 < m["typical_p95"] < 30000.0, (
+        f"평소값이 p95_ms 가 아니라 baseline_p95(1,000) 에서 온 것 같다: {m['typical_p95']}")
+    assert "absolute" in m["triggers"], f"절대편차가 안 걸렸다: {m}"
+
+
+async def test_history_includes_both_source_types_two_populations(db):
+    """★이력은 `latency_baseline` **과** `latency_regression` 을 **둘 다** 모은다.
+
+    코드 주석은 *"`latency_regression` 을 반드시 포함한다 — 2026-08-23 이전 데이터(2,059건)가
+    그 타입이라 빼면 baseline 이 0 이 된다"* 고 **선언만** 하고 단언이 **0건**이었다
+    (계획서 §3-2 이 이미 지적했고, 적대 리뷰가 변이 생존으로 재확인).
+
+    두 모집단으로 가른다: 타입을 하나로 좁히면 **이력 수가 절반**이 되어 단언이 깨진다.
+    """
+    r = "/api/v1/zoning/parcel-boundaries"
+    await _history(db, route=r, p95s=[23000.0, 23524.0], itype="latency_baseline")
+    await _history(db, route=r, p95s=[24000.0, 23100.0], itype="latency_regression")
+    await _events(db, route=r, n=25, latency=66230)
+    await db.commit()
+
+    got = await _run(db)
+    assert r in got, f"판정이 안 나왔다 — 이 락이 공허하다: {list(got)}"
+    m = got[r]["metrics_json"]
+    # ★4건 = 두 타입이 **둘 다** 들어왔다. 한 타입만 모으면 2건이 되어 여기서 깨진다.
+    assert m["typical_windows"] == 4, (
+        f"이력이 한 타입만 모였다(기대 4건, 실제 {m['typical_windows']}건) — "
+        f"2026-08-23 이전 데이터가 통째로 빠지는 결함")
+    assert m["typical_p95"] is not None

@@ -147,8 +147,13 @@ function arr(v: unknown): string[] {
  * 지연 발화 **축 코드 → 한글**.
  *
  * 원천은 백엔드 `app/services/growth/analyzer.py` 의 `_LATENCY_TRIGGER_LABELS` 이고
- * 값을 만드는 곳은 같은 파일의 `triggers = [...]` 다. ★어긋나면 화면에 영문 raw
- * (`ratio`/`absolute`)가 그대로 새므로 **양쪽을 파생시켜 대조하는 락**이 잡는다.
+ * 값을 만드는 곳은 같은 파일의 `triggers = [...]` 다. 어긋나면 화면에 영문 raw
+ * (`ratio`/`absolute`)가 그대로 샌다 — **`GrowthDashboard.trigger-parity.test.ts` 가
+ * 양쪽을 파일에서 파생해 대조한다**(형제 `REASON_LABELS` 와 같은 형식으로 락 파일명을 적는다).
+ *
+ * ★이 주석은 한때 **없는 락을 있다고 단언**했다(적대 리뷰가 실증: 백엔드에 세 번째 축을
+ *   추가해도 프론트 89건이 전부 초록이었다). 면역을 적을 때는 **그 면역이 실재하는지**
+ *   확인하고 적는다 — 없는 면역을 적는 것이 없는 것보다 나쁘다.
  *
  * ★모르는 코드는 **감추지 않고 원문 그대로** 보여준다(REASON_LABELS 와 같은 원칙) —
  *   숨기면 "새 축이 생겼다"는 가장 중요한 신호가 조용히 사라진다.
@@ -292,7 +297,7 @@ export function InsightMetrics({ insight }: { insight: GrowthInsight }) {
           value:
             typical !== null
               ? `${Math.round(typical).toLocaleString("ko-KR")}ms`
-              : `판정 불가(창 ${windows !== null ? windows : "?"}개)`,
+              : `판정 불가(이력 ${windows !== null ? windows : "?"}건)`,
         });
       }
       break;
