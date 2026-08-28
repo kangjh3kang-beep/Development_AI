@@ -103,19 +103,25 @@ describe("★계약 — 인사이트 카드가 지표를 실제로 낸다", () =
   it("★두 모집단 — 비율 단독과 절대편차 단독이 **서로 다른** 축을 말한다", () => {
     // 한쪽만 단언하면 "항상 같은 문구를 붙이는 구현"이 통과한다.
     const r = render(<InsightMetrics insight={latencyWith({ triggers: ["ratio"] })} />);
+    // ★**라벨을 정확 일치로** 단언한다 — 값만 보면 라벨을 지우는 변이가 생존한다(실측).
+    expect(screen.getByText("발화 축")).toBeTruthy();
     expect(r.container.textContent).toContain("비율(기준선 대비)");
     expect(r.container.textContent).not.toContain("절대편차");
     r.unmount();
 
     const a = render(<InsightMetrics insight={latencyWith({ triggers: ["absolute"] })} />);
+    expect(screen.getByText("발화 축")).toBeTruthy();
     expect(a.container.textContent).toContain("절대편차(평소값 대비)");
     expect(a.container.textContent).not.toContain("비율(기준선 대비)");
   });
 
   it("★평소값이 **실린다** — 키만 있고 값이 안 실리는 것을 막는다", () => {
-    const { container } = render(<InsightMetrics insight={latencyWith({ triggers: ["absolute"], typical_p95: 23524.0 })} />);
-    expect(container.textContent).toContain("평소값");
-    expect(container.textContent).toContain("23,524ms");
+    render(<InsightMetrics insight={latencyWith({ triggers: ["absolute"], typical_p95: 23524.0 })} />);
+    // ★★`toContain("평소값")` 은 **공허했다** — 축 라벨 `절대편차(평소값 대비)` 가
+    //   그 부분문자열을 이미 갖고 있어, 평소값 **행을 통째로 지워도 초록**이었다(실측).
+    //   내가 쓴 문구가 내 단언을 무력화한 것 — 라벨은 **정확 일치 노드**로 본다.
+    expect(screen.getByText("평소값")).toBeTruthy();
+    expect(screen.getByText("23,524ms")).toBeTruthy();
   });
 
   it("★「모름」을 **0ms 로 위장하지 않는다** — 평소가 0ms 인 경로라는 관측이 되어 버린다", () => {
