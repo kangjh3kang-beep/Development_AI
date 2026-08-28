@@ -50,9 +50,15 @@ describe("★전송 예산 — 예산을 넘는 배치를 만들지 않는다", 
     const { trackEvent, flush, getDroppedEventCount } = await freshCollector();
     const bodies = captureBodies();
 
+    // ★크기를 이렇게 잡는 이유(첫 판이 **공허하게 초록**이었다):
+    //   `FLUSH_THRESHOLD=20` 이 20건마다 자동 flush 를 건다. 건당 1,500자로는 한 배치가
+    //   ~32KB 라 **예산이 한 번도 안 걸리고**, 그런데도 "쪼개졌다"는 참이 된다(쪼갠 것은
+    //   예산이 아니라 임계다). 그 상태에서는 예산 상수를 지워도 테스트가 통과한다 — 실측했다.
+    //   건당 10,000자면 임계 배치(20건)만으로 ~200KB 라 **예산이 반드시 구속**한다.
     const TOTAL = 100;
+    const PER_EVENT_CHARS = 10_000;
     for (let i = 0; i < TOTAL; i += 1) {
-      trackEvent("js_error", { severity: "error", payload: { i, message: "x".repeat(1_500) } });
+      trackEvent("js_error", { severity: "error", payload: { i, message: "x".repeat(PER_EVENT_CHARS) } });
     }
 
     // 링이 빌 때까지 flush(자동 flush 로 이미 일부 나갔을 수 있다).
@@ -65,8 +71,14 @@ describe("★전송 예산 — 예산을 넘는 배치를 만들지 않는다", 
     const oversized = bodies.map(utf8).filter((n) => n > BUDGET_BYTES);
     expect(oversized, `예산 초과 본문 ${oversized.length}건: ${oversized.join(",")}`).toEqual([]);
 
-    // ★이 입력은 반드시 **쪼개져야** 한다 — 한 번에 나갔다면 예산 단언이 공허해진다.
-    expect(bodies.length, "쪼개지지 않았다 — 입력이 예산을 넘지 않았다는 뜻이라 이 테스트가 무의미").toBeGreaterThan(1);
+    // ★공허 방지 — **예산이 실제로 구속했는지**를 본다.
+    //   단순히 "쪼개졌다"로는 부족하다: `FLUSH_THRESHOLD` 도 쪼개기 때문에 예산을 지워도 참이다.
+    //   예산이 구속했다면 배치당 건수가 임계(20)보다 **작아야** 한다.
+    const counts = bodies.map((b) => eventsIn(b).length);
+    expect(
+      Math.max(...counts),
+      "배치당 건수가 임계(20) 이상이다 — 쪼갠 것이 예산이 아니라 임계라서 이 테스트가 공허하다",
+    ).toBeLessThan(20);
 
     // ★무손실: 전손이 결함의 본체였다. 넣은 수와 나간 수가 같아야 한다.
     const delivered = bodies.reduce((n, b) => n + eventsIn(b).length, 0);
