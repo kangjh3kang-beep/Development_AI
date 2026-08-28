@@ -27,7 +27,7 @@ import httpx
 from sqlalchemy import text
 
 from app.core.config import settings
-from app.services.legal.moleg_drf_envelope import MolegDrfError, raise_unless_expected_xml
+from app.services.legal.moleg_drf_envelope import raise_unless_expected_xml
 
 logger = logging.getLogger(__name__)
 
