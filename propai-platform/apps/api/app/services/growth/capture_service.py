@@ -281,6 +281,24 @@ ON CONFLICT (event_id) DO NOTHING
 """
 
 
+def _requeue(rows: list[dict[str, Any]], *, cancelled: bool) -> None:
+    """빼낸 행을 큐 앞으로 **되돌리고 센다** — ★되돌림 경로는 **하나뿐이어야 한다**.
+
+    `flush_batch` 에는 되돌려야 하는 출구가 **셋**이다(취소 · 정리 중 취소 · 평범한 실패).
+    셋이 각자 되돌림 루프를 갖고 있으면 **반드시 하나를 빠뜨리고, 그 하나가 곧 무성 유실 경로**다
+    — 실제로 그렇게 뚫렸다(정리용 `rollback()` 이 `except Exception` 이라 취소를 안 잡았다).
+
+    FIFO 를 지켜 역순으로 `appendleft` 하고, 큐가 가득이면 밀려나는 것**도 센다**.
+    """
+    for r in reversed(rows):
+        if len(_QUEUE) == _MAX_QUEUE:
+            _STATS["dropped_overflow"] += 1
+        _QUEUE.appendleft(r)
+    _STATS["requeued"] += len(rows)
+    if cancelled:
+        _STATS["cancelled_requeued"] += len(rows)
+
+
 async def flush_batch(db, limit: int = _FLUSH_LIMIT) -> int:
     """큐의 이벤트를 platform_events 로 배치 INSERT 한다. 적재 건수 반환.
 
@@ -334,12 +352,7 @@ async def flush_batch(db, limit: int = _FLUSH_LIMIT) -> int:
         #
         #   → 취소도 **되돌리고 센다.** 다만 취소는 **삼키면 안 되므로** 되돌린 뒤 re-raise 한다.
         if not isinstance(e, Exception):
-            for r in reversed(rows):
-                if len(_QUEUE) == _MAX_QUEUE:
-                    _STATS["dropped_overflow"] += 1
-                _QUEUE.appendleft(r)
-            _STATS["requeued"] += len(rows)
-            _STATS["cancelled_requeued"] += len(rows)
+            _requeue(rows, cancelled=True)
             logger.warning("growth flush_batch 취소 — %d건 되돌림(재전파)", len(rows))
             raise
         # ★★종전에는 여기서 **그대로 잃었다** — `_drain` 이 `popleft()` 로 큐에서 빼낸 뒤라
@@ -360,6 +373,25 @@ async def flush_batch(db, limit: int = _FLUSH_LIMIT) -> int:
             await db.rollback()
         except Exception:  # noqa: BLE001
             pass
+        except BaseException:
+            # ★★**같은 구멍이 정리 경로에 하나 더 있었다**(독립 적대 렌즈 실측 2026-08-28).
+            #
+            #   위에서 `db.execute()`/`commit()` 의 취소는 `BaseException` 으로 막았는데,
+            #   **바로 아래 정리용 `rollback()` 은 `except Exception`** 이라
+            #   `CancelledError` 를 **안 잡는다**. 그러면 취소가 여기서 그대로 전파돼
+            #   **아래 되돌림을 건너뛴다** — `_drain` 이 이미 빼낸 행이
+            #   **어떤 계수기에도 안 잡힌 채** 사라진다.
+            #
+            #   ★실측(두 모집단 대조 · 큐 300행 중 200행 배치):
+            #     rollback 정상 → 사라진 행 **0** · `requeued` 200 · `lost_total` 0
+            #     rollback 취소 → 사라진 행 **200** · `requeued` **0** · `lost_total` **0**
+            #   ★즉 **계수기끼리는 서로 일치하는데 둘 다 틀렸다.** 화면에는 아무 이상이
+            #     안 보인다 — 계수기가 없는 것보다 나쁘다.
+            #
+            #   ★이 PR 의 논지("조용히 사라지던 것")가 **수리 안에서 두 번째로** 재현된 자리다.
+            _requeue(rows, cancelled=True)
+            logger.warning("growth flush_batch 정리 중 취소 — %d건 되돌림(재전파)", len(rows))
+            raise
 
         if _consecutive_failures > _MAX_FLUSH_RETRY:
             # ★한 배치가 영원히 실패하면 큐 앞을 막아 **새 이벤트가 영영 못 들어간다**.
@@ -375,11 +407,7 @@ async def flush_batch(db, limit: int = _FLUSH_LIMIT) -> int:
 
         # ★FIFO 순서를 지켜 되돌린다(역순 appendleft). 큐가 가득이면 `maxlen` 이
         #   가장 오래된 것을 밀어내는데 **그것도 센다**.
-        for r in reversed(rows):
-            if len(_QUEUE) == _MAX_QUEUE:
-                _STATS["dropped_overflow"] += 1
-            _QUEUE.appendleft(r)
-        _STATS["requeued"] += len(rows)
+        _requeue(rows, cancelled=False)
         logger.warning(
             "growth flush_batch 실패(%d건 되돌림 · 연속 %d회): %s",
             len(rows), _consecutive_failures, str(e)[:160],

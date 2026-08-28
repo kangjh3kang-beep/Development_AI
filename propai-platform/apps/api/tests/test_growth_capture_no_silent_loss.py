@@ -503,3 +503,141 @@ def test_loss_rate_precision_is_pinned() -> None:
     cs._STATS["flushed"] = 1000
     cs._STATS["dropped_overflow"] = 25
     assert cs.capture_status()["loss_rate_pct"] == pytest.approx(2.439, abs=0.001)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ★독립 적대 렌즈 실측 봉합 (2026-08-28)
+#
+# 앞 PR 이 「7개 층에 변이를 넣었다」고 적고 착지 직전까지 갔는데, 독립 렌즈 셋을
+# 돌리니 **확증 결함 2건**이 더 나왔다. 둘 다 이 파일이 고치겠다고 선언한 결함 클래스가
+# **수리 안에서 재현**된 것이다.
+# ═══════════════════════════════════════════════════════════════════════════
+@pytest.mark.asyncio
+async def test_cancellation_during_rollback_also_requeues_and_reraises() -> None:
+    """★렌즈 실측 — **정리 경로에 같은 구멍이 하나 더** 있었다.
+
+    위 `test_cancellation_requeues_and_reraises` 는 취소가 `db.execute()` 에서
+    배달되는 경우만 태운다. 그런데 **평범한 DB 오류로 실패한 뒤 도는 정리용
+    `await db.rollback()`** 은 `except Exception` 안에 있어서 `CancelledError` 를
+    **안 잡는다**(`BaseException` 전용이므로). 그러면 취소가 거기서 전파돼
+    **되돌림을 통째로 건너뛴다** — `_drain` 이 이미 빼낸 행이 사라진다.
+
+    ★수리 전 실측(큐 300 · 배치 200): 사라진 행 **200** · `requeued` **0** ·
+      화면 `lost_total` **0**. 계수기끼리는 일치하는데 **둘 다 틀렸다** —
+      화면에 아무 이상이 안 보이므로 **계수기가 없는 것보다 나쁘다**.
+
+    되살리는 변이: `except BaseException:` 절을 지우면(=종전 코드) 이 테스트가 죽는다.
+    """
+    import asyncio
+
+    class _RollbackCancelDb:
+        """execute 는 **평범한 예외** · rollback 에서 **취소**가 배달된다."""
+
+        async def execute(self, *a, **k):
+            raise RuntimeError("DB 장애(평범한 예외)")
+
+        async def commit(self):  # pragma: no cover
+            raise AssertionError("실패 경로")
+
+        async def rollback(self):
+            raise asyncio.CancelledError()
+
+    _fill(300)
+    with pytest.raises(asyncio.CancelledError):
+        await cs.flush_batch(_RollbackCancelDb(), limit=200)
+
+    # ★①한 건도 안 잃었다 ②그 사실이 **세어졌다** ③취소는 **삼키지 않았다**(위 raises)
+    assert len(cs._QUEUE) == 300, f"★정리 중 취소로 {300 - len(cs._QUEUE)}건이 사라졌다"
+    assert cs._STATS["requeued"] == 200
+    assert cs._STATS["cancelled_requeued"] == 200, "★취소는 DB 실패와 **다른 사실**이다"
+
+
+@pytest.mark.asyncio
+async def test_every_flush_exit_either_inserts_or_requeues_or_counts() -> None:
+    """★**두 모집단** — 되돌림 출구가 셋인데 하나만 새도 무성 유실이다.
+
+    단일 케이스 단언은 *"올바른 구현"* 과 *"아무것도 안 하는 구현"* 을 구별하지 못한다.
+    그래서 **같은 실행에서** 세 출구를 다 태우고, 매번 **행 보존**을 단언한다.
+
+    ★이 테스트가 잠그는 불변식: `flush_batch` 의 **어떤 종료 경로에서도**
+      (빠진 행) == (INSERT 된 행) + (되돌아온 행) + (세어진 유실). 무성 유실은 0.
+    """
+    import asyncio
+
+    class _Db:
+        def __init__(self, exc): self.exc = exc
+        async def execute(self, *a, **k):
+            if self.exc: raise self.exc
+        async def commit(self): pass
+        async def rollback(self): pass
+
+    class _RollbackCancelDb(_Db):
+        async def rollback(self): raise asyncio.CancelledError()
+
+    cases = [
+        ("정상 INSERT", _Db(None), None),
+        ("평범한 DB 실패", _Db(RuntimeError("boom")), None),
+        ("execute 취소", _Db(asyncio.CancelledError()), asyncio.CancelledError),
+        ("정리 중 취소", _RollbackCancelDb(RuntimeError("boom")), asyncio.CancelledError),
+    ]
+    seen_flushed, seen_requeued = 0, 0
+    for label, db, raises in cases:
+        cs._reset_stats_for_test()
+        _fill(120)
+        before = len(cs._QUEUE)
+        if raises:
+            with pytest.raises(raises):
+                await cs.flush_batch(db, limit=80)
+        else:
+            await cs.flush_batch(db, limit=80)
+        after = len(cs._QUEUE)
+        st = cs.capture_status()
+        vanished = before - after - cs._STATS["flushed"] - st["lost_total"]
+        assert vanished == 0, (
+            f"★[{label}] 무성 유실 {vanished}건 — 빠졌는데 INSERT 도 되돌림도 계수도 아니다"
+        )
+        seen_flushed += cs._STATS["flushed"]
+        seen_requeued += cs._STATS["requeued"]
+
+    # ★대조군 — 위 루프가 **두 모집단을 실제로 태웠는지**. 한쪽만 돌았으면 공허한 초록이다.
+    assert seen_flushed == 80, f"★INSERT 성공 경로가 안 돌았다(flushed={seen_flushed})"
+    assert seen_requeued == 240, f"★되돌림 경로 3종이 다 안 돌았다(requeued={seen_requeued})"
+
+
+@pytest.mark.asyncio
+async def test_effectors_response_carries_the_capture_VALUE_not_just_the_key() -> None:
+    """★렌즈 실측 — 배선 락이 **「이름이 있다」만 보고 「값이 실린다」를 안 봤다**.
+
+    종전 락은 `assert "capture" in out` + 키 존재만 봤다. 렌즈가
+    `_capture_status` 를 **상수 dict 로 갈아끼우는 변이**를 넣자 **44건 전부 초록**이었다.
+    즉 *"계수가 0이 아닌데 화면에 도달하는가"* 를 **아무 층도 안 잠그고 있었다.**
+
+    ★프론트도 이 구멍을 못 덮는다 — `EffectorFiring.test.tsx` 가 `@/lib/api-client` 를
+      통째로 목킹하고 **자체 `capture` 픽스처**를 주므로 백엔드 계약을 전혀 안 태운다
+      (*"스텁이 검증 대상 층을 우회한다"* 의 정확한 사례).
+
+    되살리는 변이: `effector_firing.py` 의 `"capture": _capture_status()` 를 상수로
+    바꾸면 이 테스트가 죽는다(종전 락은 안 죽었다).
+    """
+    from app.services.growth import effector_firing as ef
+
+    class _Db:
+        async def execute(self, *a, **k):
+            class _R:
+                @staticmethod
+                def fetchall(): return []
+            return _R()
+
+    # ★두 모집단 — 같은 실행에서 **값이 갈려야** 한다. 한 값만 보면 상수 구현도 통과한다.
+    cs._reset_stats_for_test()
+    cs._STATS["dropped_after_retry"] = 777
+    cs._QUEUE.append({"event_id": "x", "event_type": "t", "created_at": None})
+    hot = (await ef.firing_status(_Db()))["capture"]
+
+    cs._reset_stats_for_test()
+    cold = (await ef.firing_status(_Db()))["capture"]
+
+    assert hot["lost_total"] == 777, "★유실 계수가 응답까지 **도달하지 않는다**(상수·동결 의심)"
+    assert cold["lost_total"] == 0, "★대조군이 0 이 아니다 — 상태가 안 갈렸다"
+    assert hot["queue_depth"] == 1 and cold["queue_depth"] == 0, "★큐 깊이도 갈려야 한다"
+    assert hot["lost_total"] != cold["lost_total"], "★두 모집단이 안 갈렸다 = 공허한 초록"
