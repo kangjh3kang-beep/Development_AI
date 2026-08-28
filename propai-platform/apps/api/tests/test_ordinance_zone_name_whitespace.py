@@ -152,3 +152,29 @@ def test_fragment_only_path_resolves_to_canonical(svc: OrdinanceService) -> None
     keys = {f[0] for f in svc._iter_zone_fragments(sec)}
     assert keys == {"제2종일반주거지역", "자연녹지지역"}, keys
     assert svc._match_requested_zone("제2종일반주거지역", keys) == "제2종일반주거지역"
+
+
+def test_section_gate_accepts_all_spaced_document(svc: OrdinanceService) -> None:
+    """★섹션 판정 게이트도 공백 표기를 읽는다(형제 미스윕 — 소비처 4곳 중 하나였다).
+
+    `_locate_section` 의 공허-찾음 게이트가 `z in section`(표준명·무공백)만 보면,
+    용도지역명이 **전부 공백 표기**인 조례는 섹션 판정 단계에서 통째로 기각된다 —
+    이 PR 이 고치겠다고 선언한 바로 그 증상이 한 층 위에서 재발한다.
+
+    ★도달성 정직(독립 리뷰 실측): 라이브 11개 지자체에 **전면 공백 지자체는 0건**
+    (전부 혼용)이었다. 즉 이것은 **구성한 재현**이지 관측된 라이브 결함이 아니다.
+    비용이 0 이라 방어적으로 경화하고, 경화한 이상 **잠근다**.
+    """
+    spaced = (
+        "제45조(용도지역에서의 건폐율) ① 각 용도지역에서의 건폐율은 다음 각 호와 같다. "
+        "1. 제2종 일반주거지역: 60퍼센트 이하 2. 자연 녹지지역: 20퍼센트 이하"
+    )
+    section, _ = svc._locate_section(spaced, "건폐율")
+    assert section is not None, "전면 공백 문서에서 섹션을 통째로 놓쳤다"
+
+    # ★대조 모집단 — 용도지역이 **하나도 없는** 문서는 여전히 기각해야 한다
+    #   (게이트를 무력화해 통과시키는 것과 구별된다).
+    no_zone = "제45조(용도지역에서의 건폐율) ① 이 조문에는 용도지역 이름이 없다. 60퍼센트 이하"
+    assert svc._locate_section(no_zone, "건폐율")[0] is None, (
+        "용도지역이 없는 섹션을 통과시켰다 — 게이트가 무력화됐다"
+    )
