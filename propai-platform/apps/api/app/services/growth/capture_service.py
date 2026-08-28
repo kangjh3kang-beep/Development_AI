@@ -432,6 +432,13 @@ async def flush_batch(db, limit: int = _FLUSH_LIMIT) -> int:
 #:   리터럴로** 갖고 있었고, 기계 변이가 정확히 그 자리를 짚었다 — 한쪽만 바뀌면
 #:   `cancel()` 이 **영영 안 불리는데 아무 신호도 안 난다**(조용한 실패).
 #:   `_FLUSH_LIMIT` 이 `main.py` 두 곳에 하드코딩돼 있던 것과 **같은 형태**다.
+#:
+#: ★**변이 생존 설명**(도구가 요구한다 — 점수 부풀리기 방지): 이 문자열의 **값**을 바꾸는
+#:   변이는 **생존한다. 그리고 그것이 옳다.** 쓰는 쪽·읽는 쪽이 **둘 다 이 상수**를 보므로
+#:   값이 무엇이든 짝이 맞는다 — 프로세스 로컬 dict 의 키라 값 자체에 의미가 없다.
+#:   ★**그것이 이 상수를 만든 이유다.** 리터럴이 둘이던 종전에는 한쪽만 바뀔 수 있었고,
+#:   그때는 cancel 이 영영 안 불리는데 **아무 예외도 안 났다**(조용한 실패).
+#:   즉 이 생존은 구멍이 아니라 **결함이 구조적으로 불가능해졌다는 신호**다.
 _FLUSH_TASK_CTX_KEY = "growth_flush_task"
 
 
@@ -453,7 +460,7 @@ def start_flush_loop(ctx: MutableMapping[str, Any], session_factory: Any) -> boo
                 try:
                     await drain_until_empty(session_factory)
                 except Exception as e:  # noqa: BLE001 — 배수 실패가 루프를 죽이면 안 된다.
-                    logger.warning("__MUTATED__", str(e)[:160])
+                    logger.warning("growth flush 루프 오류: %s", str(e)[:160])
 
         ctx[_FLUSH_TASK_CTX_KEY] = asyncio.create_task(_loop())
         return True
