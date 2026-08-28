@@ -31,8 +31,17 @@
 | 형제 락 파손 | 관련 테스트 4파일 | ✅ **31 passed** |
 | 워크트리가 다른 DB 를 안 봄 | `.env` 복사 확인 | ✅ 복사함 |
 
-**소비처 3곳**: `app/services/auth/auth_service.py` · `app/api/endpoints/sales/site_auth.py` ·
-`app/api/endpoints/sales/_ws_hardening.py` (전부 `from jose import jwt` 계열).
+**소비처 — ★손으로 세어 3곳이라 적었다가 리뷰가 4곳임을 보였다.** 파생형(`grep -rn "from jose\|import jose"
+--include=*.py`, `.venv`·`tests` 제외)으로 다시 세면:
+
+    app/services/auth/auth_service.py:7          from jose import JWTError, jwt
+    app/api/endpoints/sales/site_auth.py:24      from jose import jwt
+    app/api/endpoints/sales/_ws_hardening.py:129 from jose import jwt
+    auth/jwt_handler.py:14                       from jose import JWTError, jwt   ← ★내 목록에 없었다
+
+★빠진 것이 **가장 큰 소비처**였다 — `get_current_user`/`CurrentUser` 로 라우터 다수가 임포트하고
+`auth_service.py:52` 주석이 스스로 *"로그인은 jwt_handler 로 토큰 발급"* 이라 적는다.
+**우연히 같은 심볼(`jwt.encode`·`jwt.decode`·`JWTError`)만 써서 덮였을 뿐, 덮으려고 덮은 것이 아니다.**
 
 ## 2. 변경 내용과 **회귀가 아닌 근거**
 
@@ -68,3 +77,38 @@
 | 두 매니페스트가 갈리지 않음 | `test_배포_매니페스트와_개발_매니페스트의_인증버전이_같다` |
 | **쉬운 길(pyasn1 직접 핀) 차단** | `test_pyasn1_을_직접_핀해서_우회하지_않는다` ← 신설 |
 | 추출기 생존(공허한 초록 방지) | `test_추출기가_살아있다` ← 신설(주석 줄·부재 패키지 두 방향) |
+
+
+## 6. ★독립 적대 리뷰(반증 임무)가 깬 것 — 2026-08-28
+
+리뷰 판정은 **REQUEST CHANGES** 였고, 아래는 **전부 내 것이 틀린 것**이다.
+
+| # | 리뷰가 보인 것 | 처분 |
+|---|---|---|
+| 1 | **HIGH** `_MANIFESTS` 축 무잠금 — 공허진리 가드 `검사됨 == len(_MANIFESTS)` 가 **자기지시적**이라 모집단을 깎으면 가드도 같이 깎인다. `_MANIFESTS` 를 1개로 줄이고 **oracle 을 3.4.0 으로 강등하면 락 전부 초록**(COMBO_RC=0). ★깎이는 쪽이 `Dockerfile.oracle` 이 설치하는 **프로덕션**이다 | ✅ `test_감시_매니페스트_집합이_깎이지_않는다` 신설(리터럴 못 박기). **재판정 CAUGHT** |
+| 2 | **HIGH** `test_pyasn1_을_직접_핀해서_우회하지_않는다` 가 **자기 이름이 금지한 것을 허용**(`ver >= (0,5,0)` 이라 `pyasn1==0.6.4` 통과). 계획서 §5 의 «직접 핀 차단» 은 **거짓 계상**이었다 | ✅ 표기 무관 `_requirements()` 로 **직접 요구 자체를 금지**. 이름도 값에 맞춤 |
+| 3 | **MED** `_pinned` 가 `==` 만 봐서 `pyasn1>=0.4.1,<0.5.0` **범위 표기로 새어 나감**(jose 쪽은 fail-closed 인데 pyasn1 쪽은 **fail-open** — 한 헬퍼, 반대 방향) | ✅ 질문이 둘이라 함수를 둘로 갈랐다 |
+| 4 | **MED** 「소비처 3곳」이 **손 목록**이고 `auth/jwt_handler.py` 가 빠졌다 | ✅ 위 §1 파생형으로 교체 |
+| 5 | **MED** *"`pyasn1==0.6.4` 직접 핀은 해석 불가다"* 를 **3.5.0 을 핀하는 줄 아래에 현재형으로** 남겼다 — 3.5.0 에서는 **해석된다**(대조군: 3.4.0 은 `ResolutionImpossible`). *"거짓이 된 근거를 남기지 않는다"* 고 선언하면서 **새 거짓을 심었다** | ✅ 세 자리(매니페스트 2 + 독스트링) 전부 시제·조건 명시로 교체 |
+| 6 | **LOW-MED** `assert _MIN < (4,0,0)` 의 사유가 거짓(`_MIN` 은 **테스트 전용 상수**라 설치를 안 깨뜨린다)이고 **단독 발화 불가능** — 「경계는 한 쌍」의 이름을 빌린 **장식 단언** | ✅ 제거하고 **왜 안 거는지**를 그 자리에 적었다 |
+| 7 | **LOW** 함수명이 값보다 낡음(`..._3_4_0_이상이다` 인데 `_MIN=(3,5,0)`) | ✅ `..._하한_이상이다` 로 |
+
+### ★리뷰가 찾은 **환경 오염** — 내 거짓 SURVIVED 의 원인
+
+내가 «④ `_MIN` 변이 SURVIVED» 를 보고했다가 재현되지 않아 **원인 미상**으로 남겼는데,
+리뷰가 특정했다: pytest 어서션 재작성 캐시의 **좀비 `.pyc`**. `(3,4,0)` 과 `(3,5,0)` 은
+**바이트 길이가 같고** mtime 도 **같은 초**라, pytest 의 `(mtime, size)` 검증을 통과해
+**낡은 바이트코드가 영구히 서빙**됐다.
+
+★**교훈**: 이 파일을 만지는 세션은 변이 전에 `rm -rf tests/__pycache__` 를 선행하라.
+그리고 **원인 미상으로 남긴 도구 이상은 도구가 아니라 환경일 수 있다.**
+
+### 리뷰가 **반증에 실패한 것**(= 살아 있음)
+
+핵심 처방은 4개 축에서 **독립 확증**됐다 — ①CI 와 동일 핀(`pip-audit 2.10.1`)으로 실제 게이트
+스크립트 실행 → **`새 취약점 없음` · GATE_RC=0** ②두 매니페스트 각각 별도 해석 → 둘 다 `pyasn1 0.6.4`
+③3.5.0 에서 **새 취약 ID 0**(`ecdsa PYSEC-2026-1325` 는 베이스라인 기등재) ④런타임 회귀 —
+만료 시 `ExpiredSignatureError` 가 `JWTError` 의 하위라 `auth_service` 의 `except JWTError` 가
+**401 을 유지**(500 아님) · `alg=none` 위조도 `JWTError`.
+
+★리뷰의 경계: 관측은 **로컬 Python 3.10**, CI 는 **3.12** 다. `GATE_RC=0` 은 «3.10 에서 초록» 까지만 신뢰하라.

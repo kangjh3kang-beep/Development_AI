@@ -14,8 +14,11 @@
     python-jose 3.4.0 -> pyasn1<0.5.0,>=0.4.1   ⟹ 0.4.8 (PYSEC-2026-2263/3455/3456/3457)
     python-jose 3.5.0 -> pyasn1>=0.5.0          ⟹ 0.6.4 ✅ (pip --dry-run --report 실측)
 
-  ★**`pyasn1==0.6.4` 를 직접 핀하는 처방은 해석 불가다**(3.4.0 의 캡과 충돌한다).
+  ★**3.4.0 을 둔 채 `pyasn1==0.6.4` 를 직접 핀하는 길은 해석 불가였다**(`ResolutionImpossible`).
     고칠 자리는 pyasn1 이 아니라 **여기(python-jose)** 였다. 먼저 떠오르는 처방이 아니다.
+    ★단 **3.5.0 으로 올린 지금은 그 직접 핀도 해석은 된다** — 이 문장을 현재형으로 남기면
+      그 자체가 거짓이 된다(독립 리뷰가 앞 판에서 정확히 이 거짓을 잡았다).
+      그래도 직접 핀은 막는다 — 아래 `test_pyasn1_을_직접_핀하지_않는다` 참조.
 
 ★그래서 하한은 **3.5.0** 이고, 이유가 **둘**이다 — 3.4.0 미만은 **인증 우회**(PYSEC-2024-232),
   3.5.0 미만은 **pyasn1 DoS 4건**. 되돌리려는 사람은 **둘 다** 되살린다는 뜻이다.
@@ -34,6 +37,24 @@ _MANIFESTS = ("requirements.txt", "requirements.oracle.txt")
 _MIN = (3, 5, 0)
 
 
+def _requirements(text: str, pkg: str) -> list[str]:
+    """`pkg` 에 대한 **직접 요구 줄**을 표기와 무관하게 모은다.
+
+    ★`_pinned` 는 `==` 만 본다. 그건 「어느 버전인가」를 묻는 질문에는 맞지만
+    「직접 요구가 있는가」에는 **fail-open** 이다 — `>=`·`~=`·`<` 로 새어 나간다.
+    두 질문은 다른 함수가 답해야 한다.
+    """
+    out: list[str] = []
+    for line in text.splitlines():
+        s = line.split("#", 1)[0].strip()
+        if not s:
+            continue
+        m = re.match(rf'^{re.escape(pkg)}(\[[^\]]*\])?\s*(==|>=|<=|~=|!=|<|>|$)', s, re.I)
+        if m:
+            out.append(s)
+    return out
+
+
 def _pinned(text: str, pkg: str) -> tuple[int, ...] | None:
     for line in text.splitlines():
         s = line.split("#", 1)[0].strip()
@@ -45,7 +66,7 @@ def _pinned(text: str, pkg: str) -> tuple[int, ...] | None:
     return None
 
 
-def test_모든_매니페스트에서_python_jose_가_3_4_0_이상이다() -> None:
+def test_모든_매니페스트에서_python_jose_가_하한_이상이다() -> None:
     검사됨 = 0
     for fn in _MANIFESTS:
         p = _API / fn
@@ -76,24 +97,48 @@ def test_배포_매니페스트와_개발_매니페스트의_인증버전이_같
     )
 
 
-def test_pyasn1_을_직접_핀해서_우회하지_않는다() -> None:
+def test_pyasn1_을_직접_핀하지_않는다() -> None:
     """★하지 않기로 한 것을 잠근다 — 다음 사람이 **쉬운 길**로 가는 것을 기계가 막는다.
 
-    `Security Scan` 을 초록으로 만드는 가장 빨라 보이는 길은 `pyasn1==0.6.4` 를
-    매니페스트에 직접 적는 것이다. 그러면 `python-jose 3.4.0` 의 `pyasn1<0.5.0` 과
-    **충돌해 설치가 깨진다**(CI 는 pip-audit 만 보므로 초록으로 보일 수 있다).
-    올바른 자리는 python-jose 하한이다.
+    `Security Scan` 을 초록으로 만드는 가장 빨라 보이는 길은 `pyasn1` 을 매니페스트에
+    직접 적는 것이다. **그러면 안 된다** — pyasn1 대역을 정하는 것은 `python-jose` 의
+    제약이고, 직접 핀은 그것과 **조용히 어긋난다**(jose 를 내리면 해석 불가가 되는데,
+    CI 의 pip-audit 은 설치가 아니라 매니페스트를 보므로 그 파손을 안 알려 준다).
+
+    ★2026-08-28 독립 적대 리뷰가 **이 락의 앞 판을 깼다**: 종전 단언은
+    `ver is None or ver >= (0,5,0)` 이라 **`pyasn1==0.6.4` 를 통과시켰다** —
+    이름·독스트링·계획서는 *"직접 핀 차단"* 이라 말하는데 **값은 그것을 허용**했다.
+    («이 단언은 「이름이 있다」를 보는가, 「값이 실린다」를 보는가»)
+    그리고 `_pinned` 는 `==` 만 보므로 `pyasn1>=0.4.1,<0.5.0` 같은 **범위 표기로도 새어** 나갔다.
+    그래서 이제 **표기와 무관하게 「pyasn1 이라는 직접 요구가 있는가」**를 본다.
     """
     검사됨 = 0
     for fn in _MANIFESTS:
-        text = (_API / fn).read_text(encoding="utf-8")
-        ver = _pinned(text, "pyasn1")
-        assert ver is None or ver >= (0, 5, 0), (
-            f"{fn}: pyasn1 을 {'.'.join(map(str, ver))} 로 직접 핀했다. "
-            "python-jose 하한을 올리는 것이 옳은 자리다(직접 핀은 캡과 충돌한다)"
+        요구 = _requirements(( _API / fn).read_text(encoding="utf-8"), "pyasn1")
+        assert not 요구, (
+            f"{fn}: pyasn1 을 직접 요구했다({요구}). 고칠 자리는 여기가 아니라 "
+            "**python-jose 하한**이다 — pyasn1 대역은 jose 의 제약이 정한다"
         )
         검사됨 += 1
     assert 검사됨 == len(_MANIFESTS), f"매니페스트 {검사됨}/{len(_MANIFESTS)}개만 검사됐다"
+
+
+def test_감시_매니페스트_집합이_깎이지_않는다() -> None:
+    """★리뷰가 찾은 HIGH — `_MANIFESTS` 를 줄이면 **모집단과 공허진리 가드가 함께 줄어든다.**
+
+    위 테스트들의 가드는 `검사됨 == len(_MANIFESTS)` 인데, 이건 **자기지시적**이다:
+    `_MANIFESTS` 를 `("requirements.txt",)` 로 깎으면 카운터도 같이 깎여 **전부 초록**이다.
+    그 상태에서 `requirements.oracle.txt` 를 3.4.0 으로 내리면 **프로덕션이 인증 우회
+    대역으로 복귀하는데 락이 한 개도 안 운다**(리뷰 실측: COMBO_RC=0).
+
+    ★`Dockerfile.oracle` 이 설치하는 것은 **`requirements.oracle.txt`** 다 — 깎이는 쪽이
+    프로덕션이다. 그래서 집합을 **리터럴로 못 박는다**(형제 락
+    `test_security_scan_audits_deployed_manifest.py` 가 이미 쓰는 방식이다).
+    """
+    assert set(_MANIFESTS) == {"requirements.txt", "requirements.oracle.txt"}, (
+        f"감시 매니페스트 집합이 바뀌었다: {_MANIFESTS}. 배포본(oracle)이 빠지면 "
+        "«CI 는 초록인데 프로덕션은 취약»이 된다"
+    )
 
 
 def test_추출기가_살아있다() -> None:
@@ -104,6 +149,12 @@ def test_추출기가_살아있다() -> None:
     assert _pinned("# python-jose[cryptography]==3.3.0", "python-jose") is None
     # 없는 패키지는 None(있다고 지어내지 않는지).
     assert _pinned("fastapi==0.1.0", "python-jose") is None
+    # ★표기 무관 추출기도 두 방향으로 — 범위 표기를 **잡고**, 무관 패키지는 **안 잡는다**.
+    assert _requirements("pyasn1>=0.4.1,<0.5.0", "pyasn1") == ["pyasn1>=0.4.1,<0.5.0"]
+    assert _requirements("pyasn1==0.6.4", "pyasn1") == ["pyasn1==0.6.4"]
+    assert _requirements("pyasn1-modules==0.2.8", "pyasn1") == []   # 접두 충돌 금지
+    assert _requirements("# pyasn1==0.4.8", "pyasn1") == []         # 주석은 요구가 아니다
+    assert _requirements("fastapi==0.1.0", "pyasn1") == []
 
 
 def test_하한_자체가_내려가지_않는다() -> None:
@@ -124,6 +175,9 @@ def test_하한_자체가_내려가지_않는다() -> None:
         f"python-jose 하한이 {_MIN} 로 내려갔다. 3.5.0 미만은 pyasn1 을 <0.5.0 으로 캡해 "
         "PYSEC-2026-2263/3455/3456/3457 을 되살린다(Security Scan 이 다시 상시 빨개진다)"
     )
-    # ★상한도 함께 — 하한만 걸면 반대쪽이 무제한이 된다(경계는 한 쌍이다).
-    #   비현실적으로 높은 값을 박아 두면 「존재하지 않는 버전 요구」로 설치가 깨진다.
-    assert _MIN < (4, 0, 0), f"하한 {_MIN} 은 존재하지 않는 메이저다 — 설치가 깨진다"
+    # ★상한은 걸지 않는다. 앞 판에 `assert _MIN < (4,0,0)` 을 「경계는 한 쌍」이라는
+    #   이름으로 넣었는데, 독립 리뷰가 그 **사유가 거짓**임을 보였다:
+    #   `_MIN` 은 **테스트 전용 상수**라 매니페스트·Dockerfile 어디에도 안 닿아
+    #   올려도 «설치가 깨지»지 않고, `_MIN >= (4,0,0)` 이면 위의
+    #   `test_모든_매니페스트에서...` 가 **이미** 실패하므로 **단독 발화가 불가능**하다.
+    #   → 옳은 규율의 이름을 빌린 **장식 단언**이었다. 장식은 규율의 값을 떨어뜨린다.
