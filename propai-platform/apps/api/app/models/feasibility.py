@@ -219,7 +219,7 @@ class OtherCostItem(Base):
 # ── 제세공과금 ──
 
 class TaxCostItem(Base):
-    """제세공과금 항목 — 38종 세금 개별 기록."""
+    """제세공과금 항목 — 28종 세금 개별 기록."""
     __tablename__ = "feasibility_tax_cost_items"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
