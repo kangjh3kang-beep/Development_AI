@@ -154,3 +154,62 @@ class Test평균을_만들지_않는다:
         ])
         leaked = [k for k in s if "pyeong" in k or "단가" in k]
         assert not leaked, f"요약에 단가가 샜다: {leaked} — 층화 없는 평균은 거짓이다"
+
+
+class Test배선이_실제로_돈다:
+    """★**함수만 태우면 배선은 무잠금이다.**
+
+    2026-08-28 실측: 위 테스트들이 `attach_per_pyeong` 을 **직접** 부르기만 해서,
+    `build_realtx_report` 의 `"transactions": attach_per_pyeong(...)` 를
+    `txs_sorted` 로 되돌리는 변이가 **SURVIVED** 했다. 조립 경로를 태운다.
+    """
+
+    @staticmethod
+    def _run(txs: list[dict]) -> list[dict]:
+        import asyncio
+
+        from apps.api.app.services.land_intelligence import realtx_report_service as svc
+
+        class _C:
+            async def get_transactions(self, lawd, ym, prop_type="land"):
+                return txs
+
+        r = asyncio.run(svc.build_realtx_report(
+            [{"pnu": "1159010200102100453", "jibun": "서울특별시 동작구 상도동 210-453"}],
+            end_ym="202608", months=1, client=_C(),
+        ))
+        return r["groups"][0]["transactions"]
+
+    def test_조립된_응답에_단가가_실린다(self) -> None:
+        (row,) = self._run([{
+            "dong": "상도동", "deal_date": "2026년 7월 1일",
+            "area_m2": 3.31, "price_10k_won": 2_000,
+        }])
+        assert row["price_per_pyeong_10k"] == 2_000, (
+            "조립 경로가 단가를 싣지 않는다 — 배선이 끊겼다"
+        )
+
+    def test_조립된_응답에서_해제행은_사유를_싣는다(self) -> None:
+        """★두 모집단 — 「전부 값이 실린다」인 구현도 위 테스트는 통과한다."""
+        정상, 해제 = self._run([
+            {"dong": "상도동", "deal_date": "d1", "area_m2": 3.31, "price_10k_won": 2_000},
+            {"dong": "상도동", "deal_date": "d2", "area_m2": 102.3, "price_10k_won": 20_150,
+             "cancel_type": "O"},
+        ])
+        assert 정상["price_per_pyeong_10k"] == 2_000
+        assert 해제["price_per_pyeong_10k"] is None
+        assert 해제["price_per_pyeong_10k_absent"] == "not_applicable"
+
+    def test_계수가_이_모듈에서도_정본이다(self) -> None:
+        """★위 `test_계수가_정본에서_온다` 는 **뿌리**만 단언해서, 이 모듈이 로컬 상수를
+        선언해 버리는 변이가 **SURVIVED** 했다(2026-08-28 실측).
+        **코드가 실제로 쓰는 값**을 본다 — 3자리 반올림 뒤에는 두 계수의 차가 보이지 않으므로
+        출력값으로는 원리적으로 잡을 수 없고, **모듈 속성 동일성**으로만 잠긴다.
+        """
+        from apps.api.app.services.land_intelligence import realtx_report_service as svc
+        from apps.api.app.services.market import market_report_service as mrs
+
+        assert svc.PYEONG_SQM == mrs.PYEONG_SQM, (
+            f"이 모듈이 정본과 다른 계수를 쓴다: {svc.PYEONG_SQM} vs {mrs.PYEONG_SQM} — "
+            "뿌리를 늘리지 마라(저장소에 3.3058 이 공존한다)"
+        )
