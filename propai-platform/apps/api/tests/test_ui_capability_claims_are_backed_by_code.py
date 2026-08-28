@@ -193,6 +193,20 @@ class TestDerivationIsAlive:
         # 같은 군의 코드가 늘어도 군 수는 안 변한다(개수를 세는 게 아니라 군을 센다).
         assert _stage_groups({"A01", "A02", "A03"}) == 1
 
+    def test_로케일_집합이_디스크와_일치한다(self):
+        """★`LOCALES` 를 파생으로 바꿨어도 **그것만으로는 안 잠긴다.**
+
+        수집기 생존 락의 기대값이 `len(LOCALES) * …` 라 **자기지시적**이다 — `LOCALES` 를
+        `("ko",)` 로 하드코딩하면 기대값도 같이 줄어 **초록**이다(실측: 변이 SURVIVED).
+        그래서 **디스크에서 독립적으로 다시 세어** 대조한다. 상수를 상수로 단언하지 않는다.
+        """
+        디스크 = {d.name for d in _WEB.iterdir() if d.is_dir() and (d / "common.json").exists()}
+        assert set(LOCALES) == 디스크, (
+            f"LOCALES 가 디스크와 다르다 — 화면 {sorted(LOCALES)} vs 디스크 {sorted(디스크)}. "
+            "로케일이 조용히 빠지면 그 언어의 단언이 **빨개지지 않고 사라진다**"
+        )
+        assert len(LOCALES) >= 3, f"로케일이 {len(LOCALES)}개뿐이다(ko·en·zh-CN 최소): {LOCALES}"
+
     def test_claim_keys_are_derived_not_a_hand_list(self):
         """★축에서 파생됐는지 — 손 목록으로 되돌리면 여기서 걸린다."""
         keys = _claim_keys()
