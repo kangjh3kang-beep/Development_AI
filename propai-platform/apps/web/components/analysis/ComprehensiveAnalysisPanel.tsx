@@ -20,7 +20,8 @@ import { EvidencePanel } from "@/components/common/EvidencePanel";
 import { adaptEvidence } from "@/lib/evidence/adaptEvidence";
 import { AnalysisHistoryCard } from "@/components/common/AnalysisHistoryCard";
 import { optionsSummary } from "@/lib/use-analysis-history";
-import type { ParcelRow } from "@/lib/parcel-rows";
+import { parcelDataToRows, type ParcelRow } from "@/lib/parcel-rows";
+import { parcelDisplayAddress } from "@/lib/pnu";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { riskLevelStyle } from "@/lib/risk-level-style";
@@ -484,22 +485,27 @@ export function ComprehensiveAnalysisPanel() {
 
     const parcelList = siteAnalysis.parcels ?? [];
     if (parcelList.length > 0) {
-      setParcels(parcelList.map((p) => p.address).filter(Boolean));
-      setParcelRows(
+      // ★★2026-08-28 봉합 — 종전엔 `p.address` 를 **그대로** 썼다. 스토어 필지 주소는 지번이
+      //   없는 경우가 있어(예: "경기도 오산시 내삼미동") **77필지가 모두 같은 문자열**이 되고,
+      //   백엔드 `scenario_simulator._merge` 가 주소로 중복제거하며 **1필지로 붕괴**했다.
+      //   그 결과 86,755㎡ 부지가 **44㎡**(약 13평)로 시뮬레이션돼 「도시개발사업 1만㎡ 미달」 등
+      //   **개발방식 19건이 거짓 '불가'** 로 막혔다(라이브 재현: parcel_count=1 · total_area=44.0).
+      //
+      //   ★처방이 이미 저장소에 있었다 — `lib/parcel-rows.ts` 가 `parcelDisplayAddress` 로
+      //     **PNU 에서 지번을 파생**해 같은 동의 필지를 구분한다. 그 파일 주석이 이 결함을 그대로
+      //     적어 뒀다: *"여기서 지번이 빠지면 백엔드가 같은 동의 필지를 구분하지 못한다."*
+      //     형제 3화면(파이프라인·시장·규제)은 그 헬퍼를 쓰는데 **이 패널만 손수 복제**했다
+      //     (이 파일은 같은 모듈에서 **타입만** 임포트하고 빌더는 베껴 썼다).
+      //
+      //   ★두 값은 의미가 다르므로 갈라서 만든다(한 헬퍼로 뭉치면 표시가 회귀한다):
+      //     · `parcels`    = 사용자가 **고른** 것 → 표시·렌더 게이트. 면적 유무로 거르지 않는다.
+      //     · `parcelRows` = 우리가 **보낼 수 있는** 것 → 면적>0(`parcelDataToRows` 의미론).
+      setParcels(
         parcelList
-          .filter((p) => (p.areaSqm ?? 0) > 0)
-          .map((p) => ({
-            address: p.address,
-            area_sqm: p.areaSqm ?? null,
-            zone_type: p.zoneCode ?? null,
-            farPct: null,
-            bcrPct: null,
-            farLegalPct: null,
-            bcrLegalPct: null,
-            // ★P1(감사): 경계 전송 — 서버 통합집계의 인접성(contiguous) 판정 재료.
-            geometry: p.geometry ?? null,
-          }))
+          .map((p) => parcelDisplayAddress(p.address, p.pnu ?? null))
+          .filter(Boolean),
       );
+      setParcelRows(parcelDataToRows(parcelList));
     } else if (mainAddr) {
       setParcels([mainAddr]);
       setParcelRows([

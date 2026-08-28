@@ -144,3 +144,57 @@ describe("필지 상세 전송 배선", () => {
     expect(body.parcels).toEqual([ADDR_A, ADDR_B]);
   });
 });
+
+/**
+ * ★2026-08-28 — **붕괴**는 조회 실패와 **다른 사실**이다.
+ *
+ * 사용자 신고: 77필지·86,755㎡ 프로젝트가 **44㎡(13평)** 로 시뮬레이션돼 개발방식 19건이
+ * 거짓 '불가'로 막혔다. 원인은 필지 주소에 지번이 없어 **77개가 한 문자열로 붕괴**한 것이고,
+ * 그때 `parcel_count` 는 붕괴 **후** 값(1)이라 종전 문구를 쓰면
+ * 「1필지 중 1필지만 조회됨」이라는 **무의미한 말**이 된다.
+ */
+const COLLAPSED_SITE = {
+  multi: false,
+  parcel_count: 1,
+  resolved_parcel_count: 1,
+  unresolved_parcels: [],
+  requested_parcel_count: 77,
+  collapsed_parcel_count: 76,
+  area_is_partial: true,
+  primary_zone: "자연녹지지역",
+  primary_zone_is_inferred: false,
+  total_area_sqm: 44,
+};
+
+describe("필지 주소 붕괴 고지", () => {
+  it("C1 ★붕괴하면 **요청 수와 사용 수**를 말한다(분모가 붕괴 전이어야 한다)", async () => {
+    reply(COLLAPSED_SITE);
+    await runCard(<DevelopmentScenarioCard address={ADDR_A} parcels={[ADDR_A, ADDR_B]} />);
+    await waitFor(() => expect(screen.getByText(/필지 주소 중복/)).toBeTruthy());
+    // ★77(요청)이 보여야 한다 — 1(사용)만 보이면 "원래 1필지였다"와 구별되지 않는다.
+    expect(screen.getByText(/77필지 요청 중 1필지만 구분됨/)).toBeTruthy();
+  });
+
+  it("C2 ★붕괴 문구와 조회실패 문구는 **서로 다른 말**이다(한 문구로 뭉개지 않는다)", async () => {
+    reply(COLLAPSED_SITE);
+    await runCard(<DevelopmentScenarioCard address={ADDR_A} parcels={[ADDR_A, ADDR_B]} />);
+    await waitFor(() => expect(screen.getByText(/필지 주소 중복/)).toBeTruthy());
+    // 붕괴일 때 「N필지 중 M필지만 조회됨」이 함께 뜨면 1중1 이라는 무의미한 말이 된다.
+    expect(screen.queryByText(/필지만 조회됨/)).toBeNull();
+  });
+
+  it("C3 ★조회실패 경로는 **종전 문구 그대로**(무회귀)", async () => {
+    reply(PARTIAL_SITE);
+    await runCard(<DevelopmentScenarioCard address={ADDR_A} parcels={[ADDR_A, ADDR_B]} />);
+    await waitFor(() => expect(screen.getByText(/필지만 조회됨/)).toBeTruthy());
+    expect(screen.queryByText(/필지 주소 중복/)).toBeNull();
+  });
+
+  it("C4 ★대조군 — 붕괴도 실패도 없으면 두 배지 **모두** 안 뜬다(위양성 방지)", async () => {
+    reply(CLEAN_SITE);
+    await runCard(<DevelopmentScenarioCard address={ADDR_A} parcels={[ADDR_A, ADDR_B]} />);
+    await waitFor(() => expect(post).toHaveBeenCalled());
+    expect(screen.queryByText(/필지 주소 중복/)).toBeNull();
+    expect(screen.queryByText(/필지만 조회됨/)).toBeNull();
+  });
+});
