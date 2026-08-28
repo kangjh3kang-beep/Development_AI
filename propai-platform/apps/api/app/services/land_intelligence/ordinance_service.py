@@ -27,6 +27,7 @@ import httpx
 from sqlalchemy import text
 
 from app.core.config import settings
+from app.services.legal.moleg_drf_envelope import MolegDrfError, raise_unless_expected_xml
 
 logger = logging.getLogger(__name__)
 
@@ -477,6 +478,30 @@ ORDINANCE_CACHE: dict[str, dict[str, dict[str, float]]] = {
 # 법제처 API 엔드포인트 — 법제처 DRF는 https를 지원하므로 평문 http 대신 https 사용
 # (평문 전송 시 API키·조회내용이 중간자에 노출될 수 있음). 만약 특정 환경에서 https 접속이
 # 실패하면 인프라(프록시/CA)를 점검할 것 — 코드에서 http로 되돌리지 말 것.
+def _flex_zone_pattern(zone: str) -> str:
+    r"""표준 용도지역명을 **공백 허용** 정규식으로 바꾼다(본문 표기변형 흡수).
+
+    ★왜(2026-08-28 실측): 조례 원문은 `제2종 일반주거지역`(띄어쓰기)을 쓰는데 표준 키는
+    `제2종일반주거지역`(무공백)이다. 오산시 조례 원문 전수 — 공백형 **3건** / 무공백형 **0건**.
+    그래서 `re.escape(zone)` 로 만든 패턴이 **주거지역을 통째로 못 읽었고**, 제2종·제3종이
+    `None` 으로 떨어져 국가상한 폴백(250%)이 조례값(230%) 대신 나갔다.
+
+    ★**문서를 정규화하지 않고 패턴만 넓힌다.** 본문에서 공백을 지우면
+    `evidence_span`·`context` 발췌의 **문자 오프셋이 어긋나** 증거 품질이 떨어진다.
+
+    ★`\s*` 는 공백만 매칭하므로 기존 무공백 표기는 **그대로** 잡힌다(상위집합 = 무회귀).
+    표기변형은 이 저장소에서 **세 번째**다(선례: `안에서의` 필수 · 분수형 `100분의 40`).
+    """
+    return r"\s*".join(re.escape(ch) for ch in zone)
+
+
+# DRF 자치법규 응답의 정상 루트태그 — **라이브 실측값만** 둔다(2026-08-28).
+#   목록조회 lawSearch.do?target=ordin → <OrdinSearch>
+#   본문조회 lawService.do?target=ordin → <LawService>
+# ★추측한 태그를 넣지 않는다: 목록이 넓으면 **실패 봉투를 정상으로 통과**시킨다.
+_ORDIN_LIST_ROOTS: tuple[str, ...] = ("OrdinSearch",)
+_ORDIN_TEXT_ROOTS: tuple[str, ...] = ("LawService",)
+
 MOLEG_ORDIN_LIST_URL = "https://www.law.go.kr/DRF/lawSearch.do"
 MOLEG_ORDIN_TEXT_URL = "https://www.law.go.kr/DRF/lawService.do"
 
@@ -681,6 +706,11 @@ class OrdinanceService:
                 )
                 resp.raise_for_status()
                 ordin_list_xml = resp.text
+            # ★법제처는 **실패도 HTTP 200** 으로 준다 — `raise_for_status()` 가 못 잡는다.
+            #   형제 둘(regulation_monitor·gosi_search_service)은 이미 검증하는데 조례만
+            #   무방비였고, 아래 광범위 `except` 가 그것을 삼켜 화면에는 "조례 확인 못함 →
+            #   법정상한 잠정 적용"(= 낙관 폴백)으로 나갔다.
+            raise_unless_expected_xml(ordin_list_xml, expect=_ORDIN_LIST_ROOTS)
 
             # 조례 일련번호 추출
             ordin_id = self._parse_ordin_id(ordin_list_xml, jurisdiction or sigungu or sido)
@@ -700,6 +730,7 @@ class OrdinanceService:
                 )
                 resp.raise_for_status()
                 ordin_text = resp.text
+            raise_unless_expected_xml(ordin_text, expect=_ORDIN_TEXT_ROOTS)
 
             # Step 3: 본문에서 건폐율/용적률 파싱
             return self._parse_bcr_far_from_text(ordin_text, zone_type, jurisdiction or sigungu or sido)
@@ -1200,7 +1231,7 @@ class OrdinanceService:
             #   분수형을 몰라서 전주시는 기본항 추출이 통째로 실패했고, 폴백이 "100분의 20"의
             #   **앞 100** 을 집어 법정 20% 초과로 기각됐다(원인을 '섹션 경계'로 오진했었다 —
             #   실측하니 섹션은 32,132→34,988 로 정확했다).
-            head = (r"(?<![\d])\d{1,2}\s*\.\s*" + re.escape(zone)
+            head = (r"(?<![\d])\d{1,2}\s*\.\s*" + _flex_zone_pattern(zone)
                     + r"(?:\s*\([^)]{0,20}\))?\s*[:：]\s*")
             m = re.search(head + r"(\d{1,4})\s*퍼센트", section)
             if m:
@@ -1223,7 +1254,7 @@ class OrdinanceService:
         이렇게 하면 'OO지역 : 200퍼센트' 뿐 아니라 표/줄바꿈/공백 변형에서도 값을 잡는다.
         """
         # 앵커: 표준 용도지역명 + (선택) 세분 괄호. 긴 이름 우선(제2종일반주거지역 > 주거지역).
-        alt = "|".join(re.escape(z) for z in sorted(self._CANONICAL_ZONES, key=len, reverse=True))
+        alt = "|".join(_flex_zone_pattern(z) for z in sorted(self._CANONICAL_ZONES, key=len, reverse=True))
         anchor_re = re.compile(r"(" + alt + r")\s*(\([^)]*?층[^)]*?\))?")
 
         hits = list(anchor_re.finditer(section))
