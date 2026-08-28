@@ -1,5 +1,6 @@
 "use client";
 
+import { parcelIdentityAddresses } from "@/lib/parcel-rows";
 import type { SiteAnalysisData } from "@/store/useProjectContextStore";
 import type { ParcelRow } from "@/lib/parcel-rows";
 import { addressHasJibun, normalizePnu } from "@/lib/pnu";
@@ -221,7 +222,9 @@ export function writeSatongMapSelection(
 }
 
 export function satongSelectionAddresses(parcels: SatongSelectionParcel[]): string[] {
-  return parcels.map((parcel) => parcel.address).filter(Boolean);
+  // ★PNU 로 지번을 파생해 **서로 구분되는** 주소를 만든다 — 같은 동의 필지가 한 문자열로
+  //   붕괴하면 백엔드가 1필지로 시뮬레이션한다(2026-08-28 사용자 신고의 근원).
+  return parcelIdentityAddresses(parcels);
 }
 
 export function satongSelectionToParcelRows(
