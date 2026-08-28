@@ -100,7 +100,24 @@ const SAMPLE_RATES: Partial<Record<GrowthEventType, number>> = {
 };
 
 // ── PII 1차 마스킹 정규식 ────────────────────────────────────────────
-const EMAIL_RE = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
+/**
+ * ★수량자에 **상한이 있어야 한다** — 없으면 2차 백트래킹으로 메인 스레드가 멈춘다.
+ *
+ * 종전 `[a-zA-Z0-9._%+-]+@` 는 `@` 가 없는 긴 문자열에서 각 시작위치마다 끝까지 삼켰다가
+ * 되돌아온다. 실측(2026-08-28, node · 같은 입력 `"x".repeat(n)`):
+ *
+ *     n=4,000    무상한 15.1ms  →  상한 1.1ms
+ *     n=10,000   무상한 90.9ms  →  상한 3.1ms
+ *     n=50,000   무상한 **2,450.9ms**  →  상한 **14.6ms**   (168배)
+ *
+ * ★대조군: 같은 길이라도 `@` 가 있으면 무상한도 0.0ms 다 — 길이가 아니라 **백트래킹**이
+ *   원인이라는 증거다.
+ *
+ * 상한값은 RFC 5321 의 한도를 쓴다(local-part 64 · domain 255). 따라서 **RFC 유효한
+ * 이메일은 종전과 동일하게 전부 마스킹된다** — 탐지 동등성을 6개 입력으로 대조 확인했다.
+ * ★한계(정직하게): local-part 가 64자를 **넘는** RFC 무효 문자열은 앞부분 일부가 남는다.
+ */
+const EMAIL_RE = /[a-zA-Z0-9._%+-]{1,64}@[a-zA-Z0-9.-]{1,255}\.[a-zA-Z]{2,}/g;
 // 한국 휴대폰만 좁게 매칭(010/011/016/017/018/019 앵커, 총 10~11자리).
 // ⚠️ 이전 정규식은 일반 7자리+ 숫자열(가격·면적·좌표·PNU)까지 [phone]으로
 //    오마스킹했다. 휴대폰 앵커(01[016789])로 시작하는 번호만 마스킹한다.
@@ -210,6 +227,28 @@ function maskString(value: string): string {
   } catch {
     return value;
   }
+}
+
+/**
+ * ★**자르고 나서 마스킹한다** — 순서가 성능 계약이다.
+ *
+ * `maskString` 의 `EMAIL_RE`(`[a-zA-Z0-9._%+-]+@…`)는 `@` 가 없는 긴 문자열에서
+ * **2차 백트래킹**을 한다. 실측(2026-08-28, node):
+ *
+ *     1,000자 9.6ms · 2,000자 22.7ms · 4,000자 76.8ms · **10,000자 432ms**
+ *     (대조군: 같은 길이라도 `@` 가 있으면 0.0ms — 백트래킹이 원인이라는 증거)
+ *
+ * 종전은 `maskString(전체).slice(0, N)` 이라 **자르기 전에 전체를 스캔**했다. 즉 상한을
+ * 걸어도 비용은 안 줄었고, 무상한이던 `js_error.message` 는 **사용자 메인 스레드**를
+ * 초 단위로 멈출 수 있었다(10만자면 산술적으로 ~40초 규모).
+ *
+ * 자르는 창을 `cap` 보다 조금 넓게 잡아 마스킹한 뒤 최종 절단한다 — 경계에 걸친 이메일이
+ * **부분만 남아 노출되는 것**을 막기 위해서다(창 안에 온전히 들어오면 통째로 마스킹된다).
+ */
+const MASK_BOUNDARY_MARGIN = 256;
+
+function maskCapped(value: string, cap: number): string {
+  return maskString(value.slice(0, cap + MASK_BOUNDARY_MARGIN)).slice(0, cap);
 }
 
 /** payload(object) 의 문자열 값을 재귀 마스킹(얕은 깊이 제한으로 폭주 방지). */
@@ -333,6 +372,33 @@ function shrinkOversized(event: GrowthEvent): GrowthEvent | null {
 }
 
 /**
+ * 이벤트 하나의 전송 비용(바이트)을 **한 번만** 재고 기억한다.
+ *
+ * ★왜 캐시가 필요한가(2026-08-28 실측): 캐시가 없으면 `flush()` 가 돌 때마다 링에 남은
+ *   **모든** 이벤트를 다시 `JSON.stringify` + 인코딩한다. 링은 최대 200건이고 flush 는
+ *   5초마다 도는데, 대용량 오류(메시지 10,000자)가 쌓이면 그 재직렬화가 **사용자 메인
+ *   스레드**에서 반복된다. 전수 테스트에서 이 O(n²) 가 30초 타임아웃으로 드러났다
+ *   (단독 실행 417ms → 전수 실행 timeout). 이벤트는 만들어진 뒤 변경되지 않으므로
+ *   객체 동일성으로 캐시해도 안전하다.
+ */
+const costCache = new WeakMap<GrowthEvent, number>();
+
+function eventCost(event: GrowthEvent): number {
+  const cached = costCache.get(event);
+  if (cached !== undefined) return cached;
+  // 항목 하나의 증분(직렬화 + 구분자 1바이트).
+  let cost: number;
+  try {
+    cost = byteLength(JSON.stringify(event)) + 1;
+  } catch {
+    // 직렬화 불가는 배치 전체를 위협한다 — 예산을 넘는 값으로 쳐서 격리한다.
+    cost = MAX_BODY_BYTES + 1;
+  }
+  costCache.set(event, cost);
+  return cost;
+}
+
+/**
  * 링 **앞쪽**에서 예산 안에 담기는 만큼만 꺼낸다(건수 상한 `MAX_BATCH` 도 함께 지킨다).
  *
  * ★종전은 건수만 보고 `splice(0, MAX_BATCH)` 했다 — 바이트를 아무도 안 봤다.
@@ -344,8 +410,7 @@ function takeBatchWithinBudget(): GrowthEvent[] {
 
   while (ring.length > 0 && batch.length < MAX_BATCH) {
     const next = ring[0];
-    // 항목 하나의 증분(직렬화 + 구분자 1바이트).
-    const cost = byteLength(JSON.stringify(next)) + 1;
+    const cost = eventCost(next);
 
     if (bytes + cost > MAX_BODY_BYTES) {
       if (batch.length > 0) break; // 다음 배치로 넘긴다(전손 아님).
@@ -474,14 +539,14 @@ function handleWindowError(event: ErrorEvent): void {
         //   `handleRejection` 의 `message` 는 1,000자인데 **이 줄만 무상한**이었다.
         //   무상한 필드는 이벤트 하나로 전송 예산(`MAX_BODY_BYTES`)을 넘길 수 있고,
         //   그때 종전 구현은 배치 전체를 조용히 잃었다.
-        message: maskString(String(event.message ?? "")).slice(0, MAX_FIELD_CHARS),
+        message: maskCapped(String(event.message ?? ""), MAX_FIELD_CHARS),
         // ★`filename` 은 **인라인 스크립트 오류에서 문서 URL 전체**가 된다(쿼리 포함).
         //   이 앱은 지번을 쿼리에 싣는다(`registry-analysis?addr=${encodeURIComponent(jibun)}`)
         //   — 형제 `message`·`stack` 은 전부 `maskString` 을 거치는데 **이 줄만 생것**이었다.
-        filename: event.filename ? maskString(String(event.filename)) : null,
+        filename: event.filename ? maskCapped(String(event.filename), MAX_FIELD_CHARS) : null,
         lineno: event.lineno ?? null,
         colno: event.colno ?? null,
-        stack: event.error?.stack ? maskString(String(event.error.stack)).slice(0, 2000) : null,
+        stack: event.error?.stack ? maskCapped(String(event.error.stack), MAX_FIELD_CHARS) : null,
       },
     });
   } catch {
@@ -508,8 +573,8 @@ function handleRejection(event: PromiseRejectionEvent): void {
     trackEvent("promise_rejection", {
       severity: "error",
       payload: {
-        message: maskString(String(message ?? "")).slice(0, 1000),
-        stack: reason instanceof Error && reason.stack ? maskString(reason.stack).slice(0, 2000) : null,
+        message: maskCapped(String(message ?? ""), 1000),
+        stack: reason instanceof Error && reason.stack ? maskCapped(reason.stack, MAX_FIELD_CHARS) : null,
       },
     });
   } catch {
@@ -628,10 +693,10 @@ export function initEventCollector(): void {
           //   군집된다(독립 리뷰 지적). `handleRejection`=1,000자 / `handleWindowError`=`MAX_FIELD_CHARS`.
           // ★2026-08-28: `handleWindowError` 가 **무절단**이던 것을 `MAX_FIELD_CHARS` 로 막으면서
           //   **이 줄도 같이** 바꾼다. 한쪽만 고치면 바로 위 주석이 경고하는 시그니처 분열이 난다.
-          message: isRejection ? maskString(e.m).slice(0, 1000) : maskString(e.m).slice(0, MAX_FIELD_CHARS),
-          stack: e.s ? maskString(e.s).slice(0, 2000) : null,
+          message: isRejection ? maskCapped(e.m, 1000) : maskCapped(e.m, MAX_FIELD_CHARS),
+          stack: e.s ? maskCapped(e.s, MAX_FIELD_CHARS) : null,
           // 위치 정보는 `error` 경로에만 있다(형제 `handleRejection` 도 안 싣는다).
-          ...(isRejection ? {} : { filename: e.f ? maskString(String(e.f)) : null, lineno: e.l, colno: e.c }),
+          ...(isRejection ? {} : { filename: e.f ? maskCapped(String(e.f), MAX_FIELD_CHARS) : null, lineno: e.l, colno: e.c }),
           // ★진단용 — 이 오류가 **수집기 등록 전**에 났다는 사실 자체가 정보다.
           //   `tMs` 로 얼마나 앞섰는지까지 남는다(실측 기준 #418 237ms vs 등록 307ms).
           early: true,
