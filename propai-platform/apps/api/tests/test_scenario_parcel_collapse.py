@@ -94,3 +94,66 @@ class Test붕괴가_응답에_드러난다:
         # 그러나 **사유는 구별된다** — 화면이 다른 말을 해야 하기 때문이다.
         assert 붕괴["collapsed_parcel_count"] > 0
         assert 실패["collapsed_parcel_count"] == 0
+
+
+class Test배선:
+    """★`simulate` **함수 안에서** 실제로 그렇게 배선돼 있는가.
+
+    2026-08-28 실측: 위 테스트들이 `_requested_count` 를 **직접** 부르고 ctx 산식을
+    **재구현**해서, `requested_count = len(addrs)` 로 되돌리는 변이가 **SURVIVED** 했다.
+    그러면 분모가 중복제거 **후** 값이 되어 **붕괴가 영원히 0으로 보인다** — 고친 것이 아니다.
+    (저장소 전례 미러: `test_realtx_report_service.py::Test배선`)
+    """
+
+    @staticmethod
+    def _simulate_fn():
+        import ast
+        import inspect
+
+        from apps.api.app.services.development import scenario_simulator as mod
+
+        tree = ast.parse(inspect.getsource(mod))
+        return ast, next(
+            n for n in ast.walk(tree)
+            if isinstance(n, (ast.AsyncFunctionDef, ast.FunctionDef)) and n.name == "simulate"
+        )
+
+    def test_요청수는_전용_계수기에서_온다(self) -> None:
+        ast, fn = self._simulate_fn()
+        assigns = [
+            n for n in ast.walk(fn)
+            if isinstance(n, ast.Assign)
+            and any(isinstance(t, ast.Name) and t.id == "requested_count" for t in n.targets)
+        ]
+        assert assigns, "simulate 가 requested_count 를 만들지 않는다 — 분모가 없다"
+        assert all(
+            isinstance(a.value, ast.Call)
+            and isinstance(a.value.func, ast.Attribute)
+            and a.value.func.attr == "_requested_count"
+            for a in assigns
+        ), (
+            "requested_count 가 `_requested_count` 가 아닌 것에서 온다 — "
+            "`len(addrs)` 로 되돌리면 중복제거 **후** 값이라 붕괴가 영원히 0이 된다"
+        )
+
+    def test_ctx_가_요청수와_붕괴수를_싣는다(self) -> None:
+        """★키가 있는지가 아니라 **값이 실리는지** — 리터럴 0 을 박으면 실패해야 한다."""
+        ast, fn = self._simulate_fn()
+        pairs: dict[str, object] = {}
+        for n in ast.walk(fn):
+            if isinstance(n, ast.Dict):
+                for k, v in zip(n.keys, n.values, strict=False):
+                    if isinstance(k, ast.Constant) and isinstance(k.value, str):
+                        pairs.setdefault(k.value, v)
+        for key in ("requested_parcel_count", "collapsed_parcel_count"):
+            assert key in pairs, f"ctx 에 {key} 가 없다"
+            assert not isinstance(pairs[key], ast.Constant), (
+                f"{key} 가 상수다 — 붕괴를 재지 않고 값을 지어낸다"
+            )
+        # 붕괴수는 요청수와 사용수의 **차**여야 한다(둘 중 하나만 읽으면 항상 0/항상 양수다).
+        names = {
+            n.id for n in ast.walk(pairs["collapsed_parcel_count"]) if isinstance(n, ast.Name)
+        }
+        assert "requested_count" in names and "addrs" in names, (
+            f"collapsed_parcel_count 가 요청수·사용수를 둘 다 읽지 않는다: {sorted(names)}"
+        )
