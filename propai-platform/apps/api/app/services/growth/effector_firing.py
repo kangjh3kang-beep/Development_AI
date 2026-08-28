@@ -33,6 +33,23 @@ L0·L1 이 **같은 매체**에 있다. 따라서 위 0건은 매체를 잘못 �
 
 ★그리고 **"0건 = 결함"이라고 단정하지 않는다.** `reach=NONE` 인 효과기가 영원히
 발화하지 않는 것이 정상일 수 있다. 이 표면은 **사실과 판단 근거**를 주고, 판단은 사람이 한다.
+
+## ★알려진 한계 — `never_fired` 는 **세 가지를 구별하지 못한다**
+
+독립 적대 리뷰(2026-08-27)가 위 0건 셋을 하나하나 추적해 **서로 다른 상황**임을 보였다.
+내가 셋을 **같은 줄에 나란히 적은 것은 과대주장**이었다:
+
+| 효과기 | 실제 | 0건의 뜻 |
+|---|---|---|
+| `feature_toggle` | **살아 있는 경로** — 조건 미충족 | ★진짜 발견. `down_pct >= 40` 이 필요한데 `analyzer._classify_quality` 는 20% 위에서만 `quality_drop` 을 낸다 |
+| `stale_reanalysis` | **자기참조** — 유일한 생산자가 자기 자신 | **건강한 시스템의 사실**(원장 훼손이 없었다는 뜻). 결함 아님 |
+| `prompt_ab_adopt` | ★**구조적 도달 불가** | `_pick_better_version` 이 `cand-N` 라벨을 기대하는데 텔레메트리는 `"v4"` 를 준다 → 언제나 `insufficient_versions`. **부트스트랩 교착** |
+
+★그래서 **이 표면의 `never_fired` 하나로 셋을 가를 수 없다.** "무장했으나 미발화"와
+"발화 불가"는 **처방이 다르다**(전자는 데이터 조건, 후자는 배선 결함).
+그 판별은 코드 추적이 필요해 여기에 넣지 않았다 — **넣으면 그 분석이 낡는다.**
+대신 **이 한계를 적어 둔다**: 이 표를 보는 사람은 0건을 보면 **그 효과기의 경로를
+직접 따라가야 한다.** 표는 "어디를 볼지"를 알려 줄 뿐이다.
 """
 
 from __future__ import annotations
@@ -42,6 +59,7 @@ from typing import Any
 
 from sqlalchemy import text
 
+from app.services.growth.capture_service import capture_status as _capture_status
 from app.services.growth.effector_reach import EFFECTORS, Reach
 
 #: 발화 기록이 사는 곳 — L0(`heal_actions`)·L1(`feature_flags._emit_l1_event`) **공통**.
@@ -58,10 +76,22 @@ EVENT_TYPE = "heal_action"
 DORMANT_HOURS = 72
 
 #: 발화 상태 — ★닫힌 집합. 새 상태를 늘리면 락이 라벨을 요구한다.
-STATE_NEVER = "never_fired"      # 기록 전체에서 0건 — 존재하지만 **발화한 적 없다**
+STATE_NEVER = "never_fired"      # ★**계측 시작 이후** 0건(아래 TELEMETRY_SINCE 참조)
 STATE_DORMANT = "dormant"        # 발화한 적은 있으나 DORMANT_HOURS 를 넘게 조용
 STATE_ACTIVE = "active"          # 최근 발화
 ALL_STATES: frozenset[str] = frozenset({STATE_NEVER, STATE_DORMANT, STATE_ACTIVE})
+
+#: ★`never_fired` 가 **무엇에 대해** 0건인가 — 과대주장을 막는다.
+#:
+#:   *"기록 전체에서 0건"* 이라고 적었었는데 **그렇게 말할 근거가 없다.**
+#:   저장소에는 `platform_events` 삭제 경로가 없지만(전수 확인 — `DELETE FROM
+#:   platform_events` 는 테스트 정리 1건뿐), 그것이 *"영원히 0건"* 을 뜻하지는 않는다:
+#:     · 테이블 생성 이전은 애초에 기록이 없다
+#:     · `capture_service._QUEUE` 는 `maxlen=10_000` **드롭-올디스트**라 유실이 가능하다
+#:   → 화면·주석은 **"계측 시작 이후"** 로 좁혀 말한다.
+#:   ★계획서 §3-4 가 이미 *"표현을 그렇게 좁혀야 한다"* 고 적었는데 코드는 안 좁혔다 —
+#:     주석에 쓴 주장도 검증 대상이다(§G-30).
+TELEMETRY_SINCE = "2026-06-14"
 
 #: 표에 **없는데** 이벤트에는 있는 액션 — 선언이 낡았다는 뜻이다.
 #: ★한 방향만 보면 이걸 못 잡는다(선언→실측만 보면 실측→선언이 빈다).
@@ -153,6 +183,13 @@ async def firing_status(db: Any, *, now: datetime | None = None) -> dict[str, An
         "effectors": out,
         "undeclared": undeclared,
         "dormant_hours": DORMANT_HOURS,
+        # ★화면이 "한 번도 없음"을 **무엇에 대해** 말하는지 밝힐 수 있게.
+        "telemetry_since": TELEMETRY_SINCE,
+        # ★**수집 파이프라인의 건강** — 이 표의 모든 결론이 `platform_events` 의
+        #   완전성을 가정한다. 그 가정이 참인지 여기서 말한다.
+        #   ★유실이 있으면 `never_fired` 도 `dormant` 도 **믿을 수 없다** —
+        #     "발화 안 함"과 "발화 기록이 사라짐"이 같은 0 으로 보이기 때문이다.
+        "capture": _capture_status(),
         "summary": {
             "declared": len(out),
             STATE_NEVER: states.count(STATE_NEVER),
@@ -176,16 +213,36 @@ async def firing_status(db: Any, *, now: datetime | None = None) -> dict[str, An
             #   휴면**이었는데, `DORMANT_HOURS=72` 라 그 사례는 `active` 로 분류된다.
             #   ★임계를 66 아래로 내려 그 하나를 잡게 만드는 것은 **관측에 지표를 맞추는
             #     것**이고(굿하트), 다음 관측에서 또 내려야 한다.
-            #   그래서 라벨은 그대로 두고 **원값을 싣는다** — 사람이 "제품 효과기가 66시간
-            #   조용하다"를 보고 스스로 판단하면 된다. 라벨은 경보이고 이 값이 진실이다.
-            #   발화 이력이 아예 없으면 `None`(0 이 아니다 — 0 은 "방금 발화"를 뜻한다).
-            "product_reaching_max_hours_since": max(
-                (
-                    r["hours_since"]
+            #   그래서 라벨은 그대로 두고 **원값을 싣는다** — 라벨은 경보이고 이 값이 진실이다.
+            #
+            # ★★**혼합 모집단에서 거짓말을 했다**(독립 적대 리뷰 2026-08-27, 실측):
+            #   PRODUCT 효과기가 둘일 때 하나는 5시간 전 발화, 하나는 **한 번도 발화 없음**이면
+            #   옛 식은 `None` 을 걸러 **5.0** 을 냈다 — "최장 침묵 5시간"은 **거짓**이다.
+            #   한쪽이 영원히 조용한데 그 사실이 이 한 줄에서 사라졌다.
+            #   ★그리고 이 결함은 `product_reaching_count()` 가 1 을 넘는 순간 발화한다 —
+            #     즉 `effector_reach` 가 *"이 값이 늘어나는 것이 목표다"* 라고 적은 **성공 시점**에.
+            #   → **한 번도 발화 없음이 하나라도 있으면 `None`** 을 낸다(= 무한대. 숫자로
+            #     비교 가능한 값을 주면 그것이 곧 과소보고다). 그 사실은 아래 카운트가 나른다.
+            "product_reaching_max_hours_since": (
+                None
+                if any(
+                    e.reach is Reach.PRODUCT and r["state"] == STATE_NEVER
                     for e, r in zip(EFFECTORS, out, strict=True)
-                    if e.reach is Reach.PRODUCT and r["hours_since"] is not None
-                ),
-                default=None,
+                )
+                else max(
+                    (
+                        r["hours_since"]
+                        for e, r in zip(EFFECTORS, out, strict=True)
+                        if e.reach is Reach.PRODUCT and r["hours_since"] is not None
+                    ),
+                    # ★이 `default` 는 **도달 불가 방어**다(기계 변이 생존 · 설명을 남긴다):
+                    #   위 `any(...)` 가 False 라는 것은 PRODUCT 효과기 중 `never_fired` 가
+                    #   하나도 없다는 뜻이고, 그러면 모두 `hours_since` 가 있어 제너레이터가
+                    #   비지 않는다. **PRODUCT 효과기가 아예 0종일 때만** 여기에 닿는다.
+                    #   그 경우는 `effector_reach` 가 PRODUCT 를 전부 잃었다는 뜻이라
+                    #   지금 구성에서는 발생하지 않는다 — 그래도 `max()` 가 터지지 않게 남긴다.
+                    default=None,
+                )
             ),
             # 한 번도 발화한 적 없는 **제품** 효과기 — 있으면 그 자체로 이상하다.
             "product_reaching_never_fired": sum(

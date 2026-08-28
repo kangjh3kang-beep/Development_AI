@@ -752,6 +752,20 @@ type EffectorStatus = {
   effectors: EffectorRow[];
   undeclared: EffectorRow[];
   dormant_hours: number;
+  telemetry_since?: string;
+  /** ★수집 파이프라인 건강 — 이 값이 나쁘면 위 표 전체를 믿을 수 없다. */
+  capture?: {
+    queue_depth: number;
+    max_queue: number;
+    max_sustained_per_sec: number;
+    requeued: number;
+    flush_failures: number;
+    lost_total: number;
+    /** ★분모가 0 이면 `null` — **0 이 아니다**(거짓 안심 방지). */
+    loss_rate_pct: number | null;
+    /** ★계수의 범위 — `process_local` 이면 재시작 시 0 이라 **하한**이다. */
+    scope?: string;
+  };
   summary: {
     declared: number;
     never_fired: number;
@@ -836,6 +850,10 @@ function EffectorSection() {
           <span className={s.never_fired > 0 ? "font-semibold text-[var(--status-warning)]" : ""}>
             한 번도 없음 {s.never_fired}
           </span>
+          {/* ★과대주장 방지 — 「한 번도 없음」이 **무엇에 대해** 0건인지 밝힌다. */}
+          {data.telemetry_since ? (
+            <span data-testid="telemetry-since"> ({data.telemetry_since} 계측 시작 이후)</span>
+          ) : null}
           {s.undeclared > 0 ? (
             <span className="font-semibold text-[var(--status-error)]">
               {" "}· ★표에 없는 액션 {s.undeclared}
@@ -844,6 +862,67 @@ function EffectorSection() {
           {" "}· 휴면 기준 {data.dormant_hours}시간
         </p>
       </div>
+
+      {/* ★수집 건강 — **표보다 먼저** 온다. 입력이 새고 있으면 아래 표 전체가 거짓이다. */}
+      {data.capture ? (
+        <div
+          className={`rounded-xl border p-4 ${
+            data.capture.lost_total > 0
+              ? "border-[var(--status-error)] bg-[rgba(220,38,38,0.08)]"
+              : "border-[var(--line)] bg-[var(--surface-muted)]"
+          }`}
+          data-testid="capture-health"
+        >
+          <p className="text-sm text-[var(--text-primary)]">
+            수집 파이프라인{" "}
+            {data.capture.lost_total > 0 ? (
+              <strong className="text-[var(--status-error)]">
+                ★{data.capture.lost_total.toLocaleString("ko-KR")}건 유실
+              </strong>
+            ) : (
+              <span className="text-[var(--status-success)]">유실 없음</span>
+            )}
+            {/* ★분모가 0 이면 유실률을 **말하지 않는다** — "0%" 는 거짓 안심이다. */}
+            {data.capture.loss_rate_pct !== null ? (
+              <span className="text-[var(--text-tertiary)]">
+                {" "}({data.capture.loss_rate_pct}%)
+              </span>
+            ) : (
+              <span className="text-[var(--text-tertiary)]"> (아직 적재 없음 — 유실률 판정 불가)</span>
+            )}
+          </p>
+          <p className="mt-1 text-xs text-[var(--text-tertiary)]">
+            {/* ★필드마다 testid — 전역 toContain 은 **값을 서로 바꿔치기해도** 통과한다.
+                (같은 파일이 효과기 행에서 이미 고친 결함인데 이 패널에서 재발했다) */}
+            큐 <span data-testid="cap-queue">{data.capture.queue_depth.toLocaleString("ko-KR")}</span>/
+            <span data-testid="cap-max">{data.capture.max_queue.toLocaleString("ko-KR")}</span> ·
+            지속 처리 천장{" "}
+            <span data-testid="cap-ceiling">{data.capture.max_sustained_per_sec}</span>건/초 ·
+            되돌림{" "}
+            <span data-testid="cap-requeued">{data.capture.requeued.toLocaleString("ko-KR")}</span>
+            건(유실 아님) · flush 실패{" "}
+            <span data-testid="cap-failures">
+              {data.capture.flush_failures.toLocaleString("ko-KR")}
+            </span>
+            회
+          </p>
+          {/* ★「유실 없음」이 **어떤 범위**의 말인지 밝힌다 — 프로세스 로컬이라
+              재시작하면 0 이 된다. 안 밝히면 그 0 이 거짓 안심이 된다. */}
+          {data.capture.scope === "process_local" ? (
+            <p className="mt-1 text-xs text-[var(--text-tertiary)]" data-testid="capture-scope">
+              ★이 수치는 <strong>현재 프로세스 기준</strong>입니다 — 재시작하면 0 으로
+              돌아가고 워커가 여럿이면 워커마다 다릅니다. 실제 유실은 이 값{" "}
+              <strong>이상</strong>입니다.
+            </p>
+          ) : null}
+          {data.capture.lost_total > 0 ? (
+            <p className="mt-2 text-xs font-semibold text-[var(--status-error)]">
+              ★유실이 있으면 아래 표의 「한 번도 발화 없음」·「휴면」을 믿을 수 없습니다 —
+              발화하지 않은 것과 발화 기록이 사라진 것이 같은 0 으로 보입니다.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="overflow-x-auto">
         <table className="w-full min-w-[640px] text-sm">
@@ -858,7 +937,7 @@ function EffectorSection() {
           </thead>
           <tbody className="divide-y divide-[var(--line)]">
             {[...data.effectors, ...data.undeclared].map((r) => (
-              <tr key={r.key}>
+              <tr key={r.key} data-testid={`effector-row-${r.key}`}>
                 <td className="py-2 pr-3 font-mono text-xs text-[var(--text-primary)]">{r.key}</td>
                 <td className="py-2 pr-3 text-xs">
                   {r.declared_reach ? REACH_LABELS[r.declared_reach] ?? r.declared_reach : "—"}
@@ -872,6 +951,7 @@ function EffectorSection() {
                 </td>
                 <td className="py-2">
                   <span
+                    data-testid={`effector-state-${r.key}`}
                     className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
                       r.state === "active"
                         ? "bg-[rgba(13,148,136,0.12)] text-[rgb(15,118,110)]"
@@ -892,6 +972,10 @@ function EffectorSection() {
       <p className="text-xs leading-5 text-[var(--text-tertiary)]">
         ★발화 0건이 곧 결함은 아닙니다 — 「읽는 곳 없음」인 효과기가 영원히 발화하지 않는 것이
         정상일 수 있습니다. 이 표는 <strong>사실과 판단 근거</strong>를 줄 뿐이고 판단은 사람이 합니다.
+        <br />
+        ★「한 번도 발화 없음」은 <strong>세 가지를 구별하지 못합니다</strong> — ①조건이 아직 안 맞음
+        ②정상이라 발생할 일이 없었음 ③구조적으로 발화 불가(배선 결함). 처방이 서로 다르므로
+        0건을 보면 <strong>그 효과기의 경로를 직접 따라가야</strong> 합니다.
       </p>
     </div>
   );
