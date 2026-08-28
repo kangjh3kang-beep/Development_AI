@@ -146,8 +146,15 @@ def test_router_does_not_coerce_non_dict_to_none():
             if kw.arg != "value":
                 continue
             checked += 1
-            assert not isinstance(kw.value, ast.IfExp), \
-                "value= 가 조건식이다 — 비-dict 를 삼키고 있다"
+            # ★**허용형**으로 판정한다(금지 목록형 금지).
+            #   독립 리뷰(2026-08-27) 실증: `IfExp` 하나만 거부하면 **삼키는 다른 방법이
+            #   전부 초록**이다 — `_coerce(fr[2])` · `fr[2] or None` · `_only_dict(fr[2])`.
+            #   특히 `or None` 은 **한 글자로 원래 결함을 되살리는데** 금지형은 못 잡는다.
+            #   → *"조건식이 아니다"* 가 아니라 *"**맨 첨자/이름**이다"* 로 뒤집으면
+            #     세 우회가 전부 빨개진다(리뷰 제안 · 복제 실측으로 확인).
+            assert isinstance(kw.value, ast.Subscript | ast.Name), (
+                f"value= 가 맨 첨자/이름이 아니다({type(kw.value).__name__}) — "
+                "형변환·조건식·함수 경유는 전부 삼킬 수 있다")
     assert checked == 1, f"ActiveFlagOut(value=…) 호출을 {checked}건 찾았다(1건이어야)"
 
 
