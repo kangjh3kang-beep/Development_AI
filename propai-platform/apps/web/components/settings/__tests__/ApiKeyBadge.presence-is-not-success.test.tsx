@@ -74,8 +74,10 @@ describe("★존재 배지 — 초록(성공)으로 그리지 않는다", () => 
     await renderPanel();
     const badge = badgeOf("VWORLD_API_KEY");
     expect(badge, "「설정됨」 배지를 못 찾았다 — 이 테스트가 공허해진다").toBeTruthy();
-    const cls = badge!.getAttribute("class") || "";
-    expect(cls, `존재를 성공색으로 그린다: ${cls}`).not.toContain("status-success");
+    // ★**배지 전체(자식 포함)** 를 본다. 바깥 span 의 class 만 보면 **안쪽 점만 초록**으로
+    //   바꾸는 변이가 통과한다(실측: SURVIVED). 관리자가 「정상」으로 읽는 것은 바로 그 점이다.
+    const html = badge!.outerHTML;
+    expect(html, `존재를 성공색으로 그린다(자식 포함): ${html}`).not.toContain("status-success");
   });
 
   it("★중립 토큰을 쓴다(색만 지우고 끝내지 않았다)", async () => {
