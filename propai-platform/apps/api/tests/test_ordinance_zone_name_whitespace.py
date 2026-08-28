@@ -82,3 +82,24 @@ def test_flex_pattern_is_superset_of_exact(svc: OrdinanceService) -> None:
     assert re.search(pat, "4. 제2종 일반주거지역: 230퍼센트 이하"), "공백 표기를 놓쳤다"
     # 공백만 허용한다 — 사이에 **다른 문자**가 끼면 매칭되면 안 된다(과잉 일반화 방지).
     assert not re.search(pat, "제2종XX일반주거지역"), "공백 아닌 문자를 넘어 매칭했다"
+
+
+def test_anchor_path_also_reads_spaced_names(svc: OrdinanceService) -> None:
+    """★두 번째 소비처 — `_iter_zone_fragments`(앵커)도 공백 표기를 읽는다.
+
+    ★왜 별도 락인가(변이 실측): 공백 허용 헬퍼를 **두 곳**(기본항 `head` · 앵커 `alt`)에
+    적용했는데, 처음엔 기본항만 태우는 락뿐이라 **앵커를 `re.escape` 로 되돌리는 변이가
+    SURVIVED** 했다. 한 헬퍼를 여러 곳이 쓰면 **소비처마다** 잠가야 한다.
+    """
+    seg = "4. 제2종 일반주거지역: 230퍼센트 이하 5. 제3종 일반주거지역: 280퍼센트 이하"
+    names = [f[0] for f in svc._iter_zone_fragments(seg)]
+    assert len(names) == 2, f"공백 표기 조각을 놓쳤다: {names}"
+    assert any("제2종" in n and "일반주거지역" in n for n in names), names
+    assert any("제3종" in n and "일반주거지역" in n for n in names), names
+
+
+def test_anchor_path_unchanged_for_unspaced(svc: OrdinanceService) -> None:
+    """★특이도 — 무공백 표기 앵커는 **종전과 같이** 잡힌다(상위집합 = 무회귀)."""
+    seg = "4. 제2종일반주거지역: 230퍼센트 이하 16. 자연녹지지역: 20퍼센트 이하"
+    names = [f[0] for f in svc._iter_zone_fragments(seg)]
+    assert len(names) == 2, f"무공백 표기가 회귀했다: {names}"
