@@ -71,21 +71,11 @@ async def startup(ctx: dict[str, Any]) -> None:
     #   ★`#920` 의 계수기도 이것을 못 본다 — 그 계수기 역시 **API 프로세스 큐**만 센다.
     #     즉 이 프로세스의 유실은 **화면에도 안 나오고 로그에도 안 남았다.**
     try:
-        import asyncio as _asyncio
-
         from app.services.growth import capture_service as _gcap
+        from apps.api.database.session import AsyncSessionLocal
 
-        async def _growth_flush_loop() -> None:
-            from apps.api.database.session import AsyncSessionLocal
-            while True:
-                await _asyncio.sleep(_gcap.flush_interval_s())
-                try:
-                    await _gcap.drain_until_empty(AsyncSessionLocal)
-                except Exception as e:  # noqa: BLE001 — 배수 실패가 워커를 죽이면 안 된다.
-                    logger.warning("growth flush 루프 오류", error=str(e)[:160])
-
-        ctx["growth_flush_task"] = _asyncio.create_task(_growth_flush_loop())
-        logger.info("성장루프 배수 루프 시작")
+        if _gcap.start_flush_loop(ctx, AsyncSessionLocal):
+            logger.info("성장루프 배수 루프 시작")
     except Exception as e:  # noqa: BLE001 — 배선 실패가 워커 기동을 막으면 안 된다.
         logger.warning("성장루프 배수 루프 시작 실패", error=str(e)[:160])
 
@@ -99,13 +89,13 @@ async def shutdown(ctx: dict[str, Any]) -> None:
 
     # ★종료 시 큐 잔여를 마지막으로 비운다 — 여기가 **가장 많이 잃던 자리**다.
     #   배수구가 없던 종전에는 워커가 담은 것이 **전부** 여기서 사라졌다.
-    _gt = ctx.get("growth_flush_task")
-    if _gt is not None:
-        _gt.cancel()
+    #   ★취소와 마지막 배수는 capture_service 가 **한 함수**로 갖는다 — 종전에는 여기서
+    #     `ctx.get("growth_flush_task")` 리터럴을 **쓰는 쪽·읽는 쪽에 각각** 두었고,
+    #     기계 변이가 그 키를 한쪽만 바꿔도 **생존**했다(취소가 영영 안 불리는데 무신호).
     try:
         from app.services.growth import capture_service as _gcap
         from apps.api.database.session import AsyncSessionLocal
-        await _gcap.drain_until_empty(AsyncSessionLocal)
+        await _gcap.stop_flush_loop_and_drain(ctx, AsyncSessionLocal)
     except Exception as e:  # noqa: BLE001 — 어떤 예외도 종료를 막지 않는다.
         logger.warning("growth 종료 flush 오류", error=str(e)[:160])
 

@@ -20,6 +20,7 @@ import logging
 import os
 import re
 from collections import deque
+from collections.abc import MutableMapping
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import unquote, urlsplit, urlunsplit
@@ -422,6 +423,62 @@ async def flush_batch(db, limit: int = _FLUSH_LIMIT) -> int:
             "growth flush_batch 실패(%d건 되돌림 · 연속 %d회): %s",
             len(rows), _consecutive_failures, str(e)[:160],
         )
+        return 0
+
+
+#: 배수 루프 태스크를 워커 컨텍스트에 담을 때 쓰는 키.
+#:
+#: ★**한 곳에서만 정의한다.** 종전에는 워커가 이 문자열을 **쓰는 쪽과 읽는 쪽에 각각
+#:   리터럴로** 갖고 있었고, 기계 변이가 정확히 그 자리를 짚었다 — 한쪽만 바뀌면
+#:   `cancel()` 이 **영영 안 불리는데 아무 신호도 안 난다**(조용한 실패).
+#:   `_FLUSH_LIMIT` 이 `main.py` 두 곳에 하드코딩돼 있던 것과 **같은 형태**다.
+_FLUSH_TASK_CTX_KEY = "growth_flush_task"
+
+
+def start_flush_loop(ctx: MutableMapping[str, Any], session_factory: Any) -> bool:
+    """배수 루프를 띄워 `ctx` 에 담는다. 성공 여부 반환.
+
+    ★워커(arq)는 `on_startup` 에서 이것을 부른다. **`arq` 없이 테스트 가능**하도록
+      여기 두었다 — 종전에는 이 로직이 `apps/worker/main.py` 안에만 있어서
+      `arq` 미설치 환경에서 **그 층을 아무도 태우지 않았다**(기계 변이 생존 4건이 그 자리).
+
+    실패해도 예외를 올리지 않는다 — 수집 배선이 워커 기동을 막으면 안 된다.
+    """
+    try:
+        import asyncio
+
+        async def _loop() -> None:
+            while True:
+                await asyncio.sleep(flush_interval_s())
+                try:
+                    await drain_until_empty(session_factory)
+                except Exception as e:  # noqa: BLE001 — 배수 실패가 루프를 죽이면 안 된다.
+                    logger.warning("growth flush 루프 오류: %s", str(e)[:160])
+
+        ctx[_FLUSH_TASK_CTX_KEY] = asyncio.create_task(_loop())
+        return True
+    except Exception as e:  # noqa: BLE001
+        logger.warning("growth flush 루프 시작 실패: %s", str(e)[:160])
+        return False
+
+
+async def stop_flush_loop_and_drain(ctx: MutableMapping[str, Any], session_factory: Any) -> int:
+    """배수 루프를 멈추고 **마지막으로 비운다**. 적재 건수 반환.
+
+    ★두 일을 **한 함수**에 둔 이유: 종전 워커 코드는 취소와 마지막 배수가 따로 있었고,
+      기계 변이가 *"`ctx.get` 의 키를 바꾼다"* · *"`is not None` 가드를 무력화한다"* 를
+      **둘 다 생존**시켰다. 키를 상수로 모으고 이 함수를 직접 태우면 그 자리가 잠긴다.
+
+    ★취소 대상이 **없어도 배수는 한다** — 루프 기동에 실패한 프로세스야말로
+      큐가 가장 많이 쌓여 있다(그 경우 잔여를 버리면 결함이 두 배가 된다).
+    """
+    task = ctx.get(_FLUSH_TASK_CTX_KEY)
+    if task is not None:
+        task.cancel()
+    try:
+        return await drain_until_empty(session_factory)
+    except Exception as e:  # noqa: BLE001 — 어떤 예외도 종료를 막지 않는다.
+        logger.warning("growth 종료 flush 오류: %s", str(e)[:160])
         return 0
 
 

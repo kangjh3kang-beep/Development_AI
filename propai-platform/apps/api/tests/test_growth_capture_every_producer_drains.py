@@ -41,6 +41,11 @@ _APPS = _PLATFORM / "apps"
 
 _PRODUCERS = {"record_event", "record_fallback"}
 _DRAINS = {"flush_batch", "drain_until_empty"}
+#: 배수를 **위임하는** 헬퍼. 진입점이 루프를 직접 갖지 않고 이것을 부를 수 있다.
+#: ★이름만 믿지 않는다 — `test_delegating_helpers_actually_do_what_their_names_claim`
+#:   이 **그 함수들이 실제로 배수하는지**를 따로 태운다(이름 검사는 계약이 아니다).
+_PERIODIC_DELEGATES = {"start_flush_loop"}
+_SHUTDOWN_DELEGATES = {"stop_flush_loop_and_drain"}
 
 
 def _module_file(dotted: str) -> Path | None:
@@ -166,9 +171,40 @@ def _drain_sites_by_position(path: Path) -> dict[str, list[int]]:
         if isinstance(n, ast.Call):
             f = n.func
             nm = f.id if isinstance(f, ast.Name) else (f.attr if isinstance(f, ast.Attribute) else None)
-            if nm in _DRAINS:
+            if nm in _PERIODIC_DELEGATES:
+                out["periodic"].append(n.lineno)
+            elif nm in _SHUTDOWN_DELEGATES:
+                out["shutdown"].append(n.lineno)
+            elif nm in _DRAINS:
                 out["periodic" if in_loop(n) else "shutdown"].append(n.lineno)
     return out
+
+
+def test_delegating_helpers_actually_do_what_their_names_claim() -> None:
+    """★위임 헬퍼를 **이름으로** 인정했으니, 그 이름이 **거짓이 아님**을 따로 태운다.
+
+    이걸 안 하면 위 배선 락이 *"`start_flush_loop` 을 부른다"* 만 보는 **이름 검사**가 된다 —
+    그 함수가 배수를 그만둬도 진입점 락은 초록이다.
+    """
+    src = (_APPS / "api" / "app/services/growth/capture_service.py").read_text(encoding="utf-8")
+    fns = {n.name: n for n in ast.walk(ast.parse(src))
+           if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+
+    for name in _PERIODIC_DELEGATES | _SHUTDOWN_DELEGATES:
+        assert name in fns, f"★위임 헬퍼 {name} 가 없다 — 추출기가 죽었거나 배선이 끊겼다"
+
+    def _names(fn):
+        return {getattr(c.func, "attr", getattr(c.func, "id", None))
+                for c in ast.walk(fn) if isinstance(c, ast.Call)}
+
+    start = fns["start_flush_loop"]
+    assert _names(start) & _DRAINS, "★start_flush_loop 이 **배수를 하지 않는다** — 이름만 남았다"
+    assert any(isinstance(n, ast.While) for n in ast.walk(start)), \
+        "★start_flush_loop 에 **주기 루프가 없다** — 한 번만 비우고 끝난다"
+
+    stop = fns["stop_flush_loop_and_drain"]
+    assert _names(stop) & _DRAINS, "★stop_flush_loop_and_drain 이 **배수를 하지 않는다**"
+    assert "cancel" in _names(stop), "★stop_flush_loop_and_drain 이 루프를 **안 멈춘다**"
 
 
 def test_every_producing_entrypoint_drains_periodically_AND_on_shutdown() -> None:

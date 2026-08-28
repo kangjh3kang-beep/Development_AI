@@ -717,3 +717,73 @@ async def test_effectors_response_carries_the_capture_VALUE_not_just_the_key() -
     assert cold["lost_total"] == 0, "★대조군이 0 이 아니다 — 상태가 안 갈렸다"
     assert hot["queue_depth"] == 1 and cold["queue_depth"] == 0, "★큐 깊이도 갈려야 한다"
     assert hot["lost_total"] != cold["lost_total"], "★두 모집단이 안 갈렸다 = 공허한 초록"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ★기계 변이 생존분 봉합 — **워커 배선 층을 아무도 태우지 않았다**
+#
+# `mutate_changed.py` 가 `apps/worker/main.py` 에서 생존 4건을 냈다:
+#   ctx 키(쓰는 쪽) · ctx 키(읽는 쪽) · `is not None` 가드 · (그 외는 로그 문구)
+# 원인은 명확했다 — `arq` 미설치라 **워커 모듈을 임포트하는 테스트가 0건**이었고,
+# 배선 락은 AST 로 **모양만** 봤다(*"스텁이 검증 대상 층을 우회한다"* 의 정확한 사례).
+#
+# → 로직을 `capture_service` 로 옮겨 **arq 없이 태울 수 있게** 했고, 키는 **상수 하나**로
+#   모았다(리터럴이 둘이면 한쪽만 바뀌어도 조용히 어긋난다 — `_FLUSH_LIMIT` 과 같은 형태).
+# ═══════════════════════════════════════════════════════════════════════════
+class _SessionFactory:
+    """`async with` 로 열리는 세션 팩토리 — `drain_until_empty` 계약."""
+
+    def __init__(self, db: object) -> None:
+        self._db = db
+
+    def __call__(self) -> _SessionFactory:
+        return self
+
+    async def __aenter__(self) -> object:
+        return self._db
+
+    async def __aexit__(self, *a: object) -> bool:
+        return False
+
+
+@pytest.mark.asyncio
+async def test_start_and_stop_are_paired_through_one_ctx_key() -> None:
+    """★기동과 종료가 **같은 키**로 만난다 — 리터럴이 둘이면 한쪽만 어긋나도 무신호다.
+
+    되살리는 변이: 어느 한쪽 키를 바꾸면 `stop` 이 태스크를 **영영 못 찾고**,
+    루프는 취소되지 않은 채 남는다. 그런데 **아무 예외도 안 난다** — 그래서 조용하다.
+    """
+    import asyncio
+
+    f = _SessionFactory(_OkDb())
+    ctx: dict[str, object] = {}
+    assert cs.start_flush_loop(ctx, f) is True
+
+    # ★키가 **상수 하나**에서 나온다(양쪽이 같은 것을 본다).
+    assert list(ctx) == [cs._FLUSH_TASK_CTX_KEY], f"★ctx 키가 예상과 다르다: {list(ctx)}"
+    task = ctx[cs._FLUSH_TASK_CTX_KEY]
+    assert not task.done(), "★루프가 뜨자마자 죽었다"
+
+    cs._reset_stats_for_test()
+    _fill(7)
+    assert await cs.stop_flush_loop_and_drain(ctx, f) == 7, "★종료 배수가 큐를 안 비웠다"
+
+    await asyncio.sleep(0)  # 취소 전파 한 틱
+    assert task.cancelled() or task.done(), "★루프가 **안 멈췄다** — 종료 후에도 돈다"
+
+
+@pytest.mark.asyncio
+async def test_stop_still_drains_when_no_loop_was_started() -> None:
+    """★두 번째 모집단 — 루프가 **없어도** 잔여는 비운다(그리고 터지지 않는다).
+
+    ★기동에 실패한 프로세스야말로 큐가 가장 많이 쌓여 있다. 거기서 잔여를 버리면
+      결함이 두 배가 된다.
+
+    되살리는 변이: `if task is not None:` 가드를 무력화하면 `None.cancel()` 로 터진다 —
+    이 테스트가 그것을 잡는다(위 테스트는 태스크가 **있는** 모집단이라 못 잡는다).
+    """
+    f = _SessionFactory(_OkDb())
+    cs._reset_stats_for_test()
+    _fill(5)
+    assert await cs.stop_flush_loop_and_drain({}, f) == 5
+    assert len(cs._QUEUE) == 0
