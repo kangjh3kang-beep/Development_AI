@@ -1,4 +1,4 @@
-"""세금/지역 모델 — 229개 시군구, 38종 세금코드, 법령변경 추적."""
+"""세금/지역 모델 — 229개 시군구, 28종 세금코드, 법령변경 추적."""
 
 import uuid
 from datetime import datetime
@@ -38,7 +38,7 @@ class RegionTaxRate(Base):
 
 
 class TaxCode(Base):
-    """세금 코드 마스터 — 38종 세금 정의."""
+    """세금 코드 마스터 — 28종 세금 정의."""
     __tablename__ = "tax_codes"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -51,7 +51,7 @@ class TaxCode(Base):
 
 
 class TaxCalculationResult(Base):
-    """세금 계산 결과 — 프로젝트별 38종 일괄 결과."""
+    """세금 계산 결과 — 프로젝트별 28종 일괄 결과."""
     __tablename__ = "tax_calculation_results"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -66,7 +66,7 @@ class TaxCalculationResult(Base):
 
 
 class DevelopmentTypeTaxMapping(Base):
-    """개발유형별 세금 매핑 — M01~M15 × 38종."""
+    """개발유형별 세금 매핑 — M01~M15 × 28종."""
     __tablename__ = "development_type_tax_mappings"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
