@@ -96,7 +96,9 @@ def xml_failure_reason(text: str, *, expect: tuple[str, ...]) -> str | None:
     if any(f"<{k}" in text for k in expect):
         return None
     parts: list[str] = []
-    for tag in ("result", "msg", "resultMsg"):
+    # ★형제(JSON 판)의 `_REASON_KEYS` 에서 **파생**시킨다. 손으로 나열하면 두 판이 갈리고,
+    #   이 저장소의 교훈대로 **목록이 곧 상한**이 된다(독립 리뷰 지적).
+    for tag in (*_REASON_KEYS, "resultMsg"):
         m = re.search(rf"<{tag}>(.*?)</{tag}>", text, re.S)
         if m and m.group(1).strip():
             parts.append(m.group(1).strip())

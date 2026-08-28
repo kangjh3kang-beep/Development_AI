@@ -93,26 +93,32 @@ def test_anchor_path_also_reads_spaced_names(svc: OrdinanceService) -> None:
     """
     seg = "4. 제2종 일반주거지역: 230퍼센트 이하 5. 제3종 일반주거지역: 280퍼센트 이하"
     names = [f[0] for f in svc._iter_zone_fragments(seg)]
-    assert len(names) == 2, f"공백 표기 조각을 놓쳤다: {names}"
-    assert any("제2종" in n and "일반주거지역" in n for n in names), names
-    assert any("제3종" in n and "일반주거지역" in n for n in names), names
+    # ★**키를 못 박는다.** 처음엔 `any("제2종" in n …)` 로 썼는데 그것은 표준명이든 공백형이든
+    #   통과하는 단언이라, 앵커가 **매칭 텍스트를 그대로 키로 쓰는 회귀**(유령 키)를
+    #   그대로 통과시켰다(독립 리뷰가 변이로 적발 — 정정을 넣어도 초록이었다).
+    #   조각 키는 **반드시 표준명**이어야 한다: 그래야 `value_basis=="base_item"` 게이트가
+    #   같은 딕셔너리를 보고 완화값이 기본항을 덮어쓰는 것을 막는다.
+    assert names == ["제2종일반주거지역", "제3종일반주거지역"], (
+        f"조각 키가 표준명이 아니다 — 유령 키가 생겼다: {names}"
+    )
 
 
 def test_anchor_path_unchanged_for_unspaced(svc: OrdinanceService) -> None:
     """★특이도 — 무공백 표기 앵커는 **종전과 같이** 잡힌다(상위집합 = 무회귀)."""
     seg = "4. 제2종일반주거지역: 230퍼센트 이하 16. 자연녹지지역: 20퍼센트 이하"
     names = [f[0] for f in svc._iter_zone_fragments(seg)]
-    assert len(names) == 2, f"무공백 표기가 회귀했다: {names}"
+    assert names == ["제2종일반주거지역", "자연녹지지역"], f"무공백 표기가 회귀했다: {names}"
 
 
 def test_pattern_does_not_cross_line_breaks() -> None:
-    """★줄바꿈은 넘지 않는다 — **없는 용도지역을 지어내지 않기 위해서**.
+    """줄바꿈은 넘지 않는다 — **방어적 경화**(도달 가능 경로에서는 미실증).
 
-    `\\s*` 로 두면 앞 줄 끝 글자와 다음 줄 첫 글자가 우연히 이어져 **가짜 매칭**이 난다.
-    이 저장소의 교훈: **틀린 값은 `None` 보다 위험하다**(그럴듯해서 통과한다).
-
-    조이는 비용이 0 임을 실측했다 — 오산시 조례 원문에서 `\\s*` 와 수평공백 전용의
-    매칭 수가 **21개 용도지역 전부 동일**(줄을 넘는 이름 0건).
+    ★정직 표기(독립 리뷰 지적): 소비처가 받는 `section` 은 `_locate_section` 이
+    `_normalize_ws`(`\\s+`→단일 공백)로 접은 문자열이라 **개행이 도달하지 않는다**
+    (실측: 오산 섹션 4,207자에 개행 0건). 내가 잰 *"매칭 수 21개 전부 동일"* 이 이미
+    그 사실을 말하고 있었는데 인과 주장으로 잘못 적었다.
+    즉 이 락은 *"지금 나는 결함"* 이 아니라 그 성질이 우연히 넓어지는 것을 막는다 —
+    조이는 비용이 0 이므로 유지한다.
     """
     import re
 
@@ -132,3 +138,17 @@ def test_real_document_unaffected_by_the_tightening(svc: OrdinanceService, text:
         assert got is not None and (got.get("bcr"), got.get("far")) == (want_bcr, want_far), (
             f"{zone}: 줄바꿈 배제 후 값이 달라졌다 → {got}"
         )
+
+
+def test_fragment_only_path_resolves_to_canonical(svc: OrdinanceService) -> None:
+    """★번호(`NN.`) 없는 **조각 전용** 문서에서도 표준명으로 해소된다.
+
+    기본항 추출이 비면 유일한 키가 조각 키다. 그것이 공백형이면 표준명 요청과
+    매칭되지 않아 **값 230 을 읽어 놓고 버리고** 국가상한 폴백이 나간다
+    (독립 리뷰가 이 경로를 별건으로 지적했다 — 오산 픽스처는 번호형이라 안 걸린다).
+    """
+    sec = "용도지역에서의 용적률 제2종 일반주거지역 230퍼센트 이하 자연녹지지역 100퍼센트 이하"
+    assert svc._extract_base_items(sec) == {}, "이 픽스처는 기본항이 비어야 조각 경로를 태운다"
+    keys = {f[0] for f in svc._iter_zone_fragments(sec)}
+    assert keys == {"제2종일반주거지역", "자연녹지지역"}, keys
+    assert svc._match_requested_zone("제2종일반주거지역", keys) == "제2종일반주거지역"

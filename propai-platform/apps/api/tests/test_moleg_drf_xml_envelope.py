@@ -48,6 +48,23 @@ def test_failure_envelope_is_detected_with_its_reason() -> None:
     assert "<result>" not in reason, f"원문 덤프가 그대로 나왔다(추출 실패): {reason!r}"
     assert "기대 루트태그" not in reason, f"폴백 경로로 샜다(태그 추출이 안 됐다): {reason!r}"
     assert reason.startswith("사용자 정보 검증에 실패"), f"추출 형태가 아니다: {reason!r}"
+    # ★`<msg>` 절반도 실려야 한다 — 그것이 **사용자가 할 수 있는 유일한 행동**을 담는다
+    #   (독립 리뷰 실측: 태그 목록을 `("result",)` 로 줄이는 변이가 SURVIVED 였다).
+    assert "IP주소 및 도메인주소를 등록" in reason, (
+        f"조치 안내(<msg>)가 유실됐다 — 사유의 절반만 실렸다: {reason!r}"
+    )
+
+
+def test_reason_tags_derive_from_the_json_sibling() -> None:
+    """★형제 정합 — XML 판이 태그를 **손으로 나열**하면 두 판이 갈린다(목록=상한)."""
+    from app.services.legal.moleg_drf_envelope import _REASON_KEYS
+
+    assert "result" in _REASON_KEYS and "msg" in _REASON_KEYS, _REASON_KEYS
+    # 파생이 실제로 동작하는지 — 두 태그 값이 **모두** 사유에 들어간다.
+    both = xml_failure_reason(
+        "<Response><result>가</result><msg>나</msg></Response>", expect=("OrdinSearch",)
+    )
+    assert both is not None and "가" in both and "나" in both, both
 
 
 def test_success_envelopes_are_not_flagged() -> None:

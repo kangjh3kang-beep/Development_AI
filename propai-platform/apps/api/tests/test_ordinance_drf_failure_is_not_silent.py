@@ -120,3 +120,42 @@ def test_step2_body_fetch_failure_also_reaches_the_log(
         "본문조회(Step 2) 실패 사유가 로그에 없다 — 그 자리 검증기가 배선되지 않았다.\n"
         f"로그: {log[:300]!r}"
     )
+
+
+def test_failure_actually_blocks_parsing_not_just_logs(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """★"막았다" 를 본다 — 로그만 보면 *"찍고 그냥 진행"* 구현이 초록이다.
+
+    독립 리뷰가 변이로 적발: 검증기를 `raise` 대신 **같은 사유를 로그만 찍고 반환**하도록
+    바꿔도 기존 배선 락 3건이 전부 통과했다. 로그 도달은 **감지**의 증거일 뿐
+    **차단**의 증거가 아니다.
+
+    그래서 실패 봉투일 때 **하류 파서가 호출되지 않는지**를 단언한다.
+    """
+    called: list[str] = []
+    real_id = OS.OrdinanceService._parse_ordin_id
+    real_bcr = OS.OrdinanceService._parse_bcr_far_from_text
+
+    def spy_id(self, *a, **k):  # type: ignore[no-untyped-def]
+        called.append("_parse_ordin_id")
+        return real_id(self, *a, **k)
+
+    def spy_bcr(self, *a, **k):  # type: ignore[no-untyped-def]
+        called.append("_parse_bcr_far_from_text")
+        return real_bcr(self, *a, **k)
+
+    monkeypatch.setattr(OS.OrdinanceService, "_parse_ordin_id", spy_id)
+    monkeypatch.setattr(OS.OrdinanceService, "_parse_bcr_far_from_text", spy_bcr)
+
+    # 모집단 A — Step 1 실패: 하류 파싱이 **한 번도** 불리면 안 된다.
+    called.clear()
+    _out, _log = _run(monkeypatch, FAILURE_XML, caplog)
+    assert called == [], f"실패를 감지하고도 파싱을 진행했다(차단 실패): {called}"
+
+    # ★대조 모집단 — 정상이면 하류가 **실제로 불린다**(위 단언이 공허하지 않다는 증거).
+    called.clear()
+    _run(monkeypatch, [OK_LIST_XML, OK_LIST_XML], caplog)
+    assert "_parse_ordin_id" in called, (
+        f"정상 경로에서도 파서가 안 불렸다 — 위 '호출 0건' 단언이 공허하다: {called}"
+    )
