@@ -82,12 +82,16 @@ const RING_CAPACITY = 200; // 링버퍼 용량(폭주 시 오래된 것 폐기, 
  * **1차와 2차가 같은 이유로 실패**하고, 종전 구현은 그것을 `.catch(() => {})` 로 삼킨 뒤
  * 이미 `splice()` 로 링에서 빼낸 배치를 되돌리지 않아 **조용한 전손**이 됐다.
  *
- * 예산은 **동시에 떠 있는 keepalive 요청 전체가 나눠 쓰므로** 64KiB 를 다 쓰지 않고
- * 여유를 남긴다(앱의 다른 keepalive 전송과 경합할 수 있다).
+ * ★**이 값이 동시성을 보장하지는 않는다**(독립 리뷰 지적 — 종전 주석은 그렇게 읽혔다).
+ * keepalive 예산은 **출처당·동시 in-flight 합산**이라, `visibilitychange` 와 `pagehide` 가
+ * 각각 배치를 꺼내면 56,000 × 2 > 65,536 으로 **둘 다 실패할 수 있다.**
+ * 그 경우의 안전은 이 숫자가 아니라 **실패 시 링으로 되돌리는 것**(`restoreUnsent`)이 준다 —
+ * 브라우저가 `sendBeacon=false` 나 fetch 거부로 **알려 주고**, 우리는 다음 틱에 다시 보낸다.
+ * 즉 이 상수는 **처리량 최적화**이고, **무손실은 복원 경로가 보장한다.**
  */
 const MAX_BODY_BYTES = 56_000;
 /** 이벤트 하나가 단독으로도 예산을 넘을 때 문자열 필드를 줄이는 상한(형제 `stack` 과 같은 축). */
-const MAX_FIELD_CHARS = 2_000;
+export const MAX_FIELD_CHARS = 2_000;
 const SESSION_KEY = "propai_growth_session"; // sessionStorage 세션 UUID 키
 
 // ── 샘플링 비율(설계서: page_view·web_vital 15%, js_error·api_error 100%) ──
@@ -305,7 +309,14 @@ export function trackEvent(type: GrowthEventType, props: TrackEventProps = {}): 
 
     ring.push(event);
     // 링버퍼 용량 초과 시 가장 오래된 항목 폐기(메모리 보호).
-    while (ring.length > RING_CAPACITY) ring.shift();
+    // ★이 축출도 **센다**. 종전에는 여기서 버린 것이 계수기에 안 잡혀, 계수기가
+    //   *"침묵을 관측 가능하게 한다"* 고 주장하면서 **가장 큰 침묵 채널**을 비워 뒀다
+    //   (독립 리뷰 실측: 1,000건 투입 시 수백 건 축출 · 폐기계수 0).
+    //   ★게다가 바이트 예산은 flush 당 배출량을 줄이므로 **이 채널의 압력을 올린다.**
+    while (ring.length > RING_CAPACITY) {
+      ring.shift();
+      droppedEvents += 1;
+    }
 
     if (ring.length >= FLUSH_THRESHOLD) {
       flush();
@@ -358,12 +369,22 @@ function byteLength(text: string): number {
  */
 function shrinkOversized(event: GrowthEvent): GrowthEvent | null {
   try {
+    // ★**최상위만 훑으면 안 된다** — 형제 `maskPayload` 는 depth 4 까지 재귀하므로
+    //   중첩 페이로드는 이 저장소가 정상으로 취급하는 모양이다. 최상위만 줄이면
+    //   `{ detail: { blob: 60,000자 } }` 가 **줄이는 단계를 건너뛰고 곧장 폐기**된다
+    //   (독립 리뷰 실측: 전송 0건 · 폐기 1건).
+    const shrinkDeep = (v: unknown, depth: number): unknown => {
+      if (typeof v === "string") return v.length > MAX_FIELD_CHARS ? v.slice(0, MAX_FIELD_CHARS) : v;
+      if (depth >= 4 || v === null || typeof v !== "object") return v;
+      if (Array.isArray(v)) return v.map((x) => shrinkDeep(x, depth + 1));
+      const out: Record<string, unknown> = {};
+      for (const [k, x] of Object.entries(v as Record<string, unknown>)) out[k] = shrinkDeep(x, depth + 1);
+      return out;
+    };
     const payload = event.payload;
-    if (!payload) return null;
-    const shrunk: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(payload)) {
-      shrunk[k] = typeof v === "string" && v.length > MAX_FIELD_CHARS ? v.slice(0, MAX_FIELD_CHARS) : v;
-    }
+    // ★`payload` 가 없어도 **무조건 폐기하지 않는다** — 최상위 필드(`route` 등)만으로
+    //   예산을 넘는 경우가 있고, 그때도 폐기 전에 한 번은 재 봐야 한다.
+    const shrunk = payload ? (shrinkDeep(payload, 0) as Record<string, unknown>) : null;
     const candidate: GrowthEvent = { ...event, payload: shrunk };
     return byteLength(JSON.stringify({ events: [candidate] })) <= MAX_BODY_BYTES ? candidate : null;
   } catch {

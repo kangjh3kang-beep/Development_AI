@@ -92,7 +92,6 @@ describe("★전송 예산 — 예산을 넘는 배치를 만들지 않는다", 
     //   폴백이 **과소** 추정하면 예산 계산이 무너져 그대로 절벽으로 돌아간다.
     const realEncoder = globalThis.TextEncoder;
     try {
-      // @ts-expect-error — 폴백 경로를 강제로 태운다.
       delete (globalThis as Record<string, unknown>).TextEncoder;
 
       const { trackEvent, flush } = await freshCollector();
@@ -103,8 +102,13 @@ describe("★전송 예산 — 예산을 넘는 배치를 만들지 않는다", 
         return Promise.resolve({ ok: true } as Response);
       }) as unknown as typeof fetch);
 
+      // ★★반드시 **다바이트** 문자여야 한다. ASCII 는 `length === UTF-8 바이트수` 라
+      //   폴백의 **과소** 추정이 원리적으로 보이지 않는다(독립 리뷰가 실측으로 잡았다:
+      //   `"x"` 로는 `length * 4` → `length` 변이가 SURVIVED · `"가"` 로 바꾸니 본문 최대
+      //   **151,402바이트**(예산의 2.7배)로 즉시 CAUGHT). 이 앱은 한국어 플랫폼이라
+      //   실제 오류 메시지·페이로드도 대부분 다바이트다 — ASCII 픽스처는 현실도 못 닮았다.
       for (let i = 0; i < 40; i += 1) {
-        trackEvent("js_error", { severity: "error", payload: { i, message: "x".repeat(10_000) } });
+        trackEvent("js_error", { severity: "error", payload: { i, message: "가".repeat(10_000) } });
       }
       for (let i = 0; i < 30; i += 1) flush();
 
@@ -215,5 +219,104 @@ describe("★형제 절단 — 두 경로가 **같은 길이**로 자른다", ()
     for (const n of lens) expect(n).toBe(FIELD_CHARS);
     // 두 경로가 **같은 길이**여야 analyzer 의 sha1 군집이 갈리지 않는다.
     expect(new Set(lens).size, "조기/정식 경로의 절단 길이가 다르다 — 시그니처가 분열된다").toBe(1);
+  });
+});
+
+describe("★손실 계수 — 침묵을 실제로 센다(계수기가 장식이 아니다)", () => {
+  it("정상 경로는 0, **축출이 일어나면 증가**한다(두 모집단)", async () => {
+    const { trackEvent, flush, getDroppedEventCount } = await freshCollector();
+    const bodies = captureBodies();
+
+    // 모집단 A — 링 용량 안. 아무것도 버리지 않는다.
+    for (let i = 0; i < 5; i += 1) trackEvent("js_error", { severity: "error", payload: { i } });
+    for (let i = 0; i < 5; i += 1) flush();
+    expect(bodies.length, "전송이 없었다").toBeGreaterThan(0);
+    expect(getDroppedEventCount(), "버린 게 없는데 계수기가 올랐다").toBe(0);
+
+    // 모집단 B — 전송이 실패하는 동안 링 용량(200)을 크게 넘겨 **축출**을 일으킨다.
+    vi.unstubAllGlobals();
+    captureBodies({ reject: true });
+    for (let i = 0; i < 1_200; i += 1) trackEvent("js_error", { severity: "error", payload: { i } });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // ★값을 본다 — "계수기가 있다"가 아니라 "실제로 셌다".
+    //   종전에는 `trackEvent` 의 축출이 계수기에 안 잡혀 이 단언이 0 이었다(독립 리뷰 지적).
+    expect(
+      getDroppedEventCount(),
+      "축출이 수백 건 일어났는데 계수기가 0 — 가장 큰 침묵 채널을 안 세고 있다",
+    ).toBeGreaterThan(0);
+  });
+});
+
+describe("★내용 보존 — 건수만 세면 조용한 절단을 못 본다", () => {
+  it("예산 안에 들어가는 이벤트는 **줄이지 않고** 원본 길이로 배달된다", async () => {
+    const { trackEvent, flush } = await freshCollector();
+    const bodies = captureBodies();
+
+    // 단독으로는 예산(56,000)에 들어가는 크기 — 줄일 이유가 없다.
+    const N = 10_000;
+    for (let i = 0; i < 20; i += 1) {
+      trackEvent("js_error", { severity: "error", payload: { i, message: "x".repeat(N) } });
+    }
+    for (let i = 0; i < 40; i += 1) flush();
+
+    const msgs = bodies
+      .flatMap(eventsIn)
+      .map((e) => String((e.payload as Record<string, unknown>).message ?? ""));
+    expect(msgs.length, "배달된 이벤트가 없다").toBe(20);
+
+    // ★건수만 세면 "100건 배달"이 참인 채로 내용이 2,000자로 잘려도 초록이다
+    //   (독립 리뷰 실측: 미루기 분기를 지우면 10,000 → 2,000 으로 조용히 잘렸는데 락 전부 초록).
+    const lens = [...new Set(msgs.map((m) => m.length))];
+    expect(lens, `배달된 메시지 길이가 원본과 다르다: ${lens.join(",")}`).toEqual([N]);
+  });
+});
+
+describe("★복원의 성질 — 순서와 메모리 상한", () => {
+  it("실패 후 복원해도 **순서가 보존**된다", async () => {
+    const { trackEvent, flush } = await freshCollector();
+
+    // ★★링이 **비어 있으면 unshift 와 push 를 구별할 수 없다** — 복원분만 있으면 어느 쪽이든
+    //   0..4 순서가 그대로다. 실제로 첫 판이 그래서 `unshift → push` 변이를 **놓쳤다**
+    //   (독립 리뷰가 SURVIVED 로 잡았다). 복원 시점에 **더 새로운 이벤트가 링에 있어야**
+    //   "앞으로 되돌린다"가 검증된다.
+    captureBodies({ reject: true });
+    for (let i = 0; i < 5; i += 1) trackEvent("js_error", { severity: "error", payload: { seq: i } });
+    flush(); // 0..4 를 꺼내 보낸다 → 거부는 **마이크로태스크**라 아직 안 돌았다
+    // 거부가 돌기 **전에** 더 새로운 것을 넣는다 → 링 = [5..9]
+    for (let i = 5; i < 10; i += 1) trackEvent("js_error", { severity: "error", payload: { seq: i } });
+    await Promise.resolve();
+    await Promise.resolve();
+    // 여기서 복원이 일어난다. 앞으로 되돌리면 [0..4, 5..9], 뒤로 붙이면 [5..9, 0..4].
+    vi.unstubAllGlobals();
+
+    const ok = captureBodies();
+    for (let i = 0; i < 10; i += 1) flush();
+    const seqs = ok
+      .flatMap(eventsIn)
+      .map((e) => (e.payload as Record<string, unknown>).seq as number);
+    expect(seqs.length, "복원분이 배달되지 않았다").toBe(10);
+    // ★주석이 "링 앞으로 되돌린다(순서 보존)"고 단정한다 — 그 단정을 잠근다.
+    expect(seqs, `순서가 뒤집혔다: ${seqs.join(",")}`).toEqual([...seqs].sort((a, b) => a - b));
+  });
+
+  it("복원이 **메모리 상한을 넘기지 않는다**(계획서가 회귀 아님의 근거로 쓴 성질)", async () => {
+    const { trackEvent, flush, getDroppedEventCount } = await freshCollector();
+
+    captureBodies({ reject: true });
+    for (let i = 0; i < 1_000; i += 1) trackEvent("js_error", { severity: "error", payload: { i } });
+    for (let i = 0; i < 30; i += 1) flush();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(getDroppedEventCount(), "상한을 넘겼는데 아무것도 안 버렸다 = 무제한 증가").toBeGreaterThan(0);
+    vi.unstubAllGlobals();
+
+    const ok = captureBodies();
+    for (let i = 0; i < 60; i += 1) flush();
+    const delivered = ok.flatMap(eventsIn).length;
+    // ★링 용량은 200 이다. 복원이 상한을 무시하면 1,000건이 그대로 남는다.
+    expect(delivered, `링 상한을 넘겨 보관했다: ${delivered}건`).toBeLessThanOrEqual(200);
+    expect(delivered, "전부 사라졌다 — 상한을 지킨다고 다 버리면 안 된다").toBeGreaterThan(0);
   });
 });
