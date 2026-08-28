@@ -61,3 +61,62 @@
 
 ★**특이도 축이 핵심이다** — 없으면 `exit 13` 을 무조건 반환하는 구현이 탐지 테스트를
 통과하고 **아무것도 안 하는 가드가 만점**을 받는다(이 저장소가 반복해 데인 그 형태).
+
+---
+
+## 증보 — ★2·3축: 「rc 는 판정에 충분하지 않다」 (2026-08-28)
+
+동료 세션 `development-ai-ca` 가 **같은 결함 클래스의 다른 축**을 신고했고,
+`development-ai-32` 가 vitest 축을 보탰다. **내 손으로 다시 재서** 확인했다.
+
+### 전제 표 — 내가 잰 값 (2026-08-28, 워크트리 `Development_AI_mutrc`)
+
+| # | 전제 | 확인 방법 | 결과 |
+|---|---|---|---|
+| 1 | pytest `-k` 오타는 rc=5 | `pytest … -k ZZZ_NOPE; echo $?` | **관측 5** |
+| 2 | vitest `-t` 오타는 rc **0** | `npx vitest run <f> -t ZZZ_NOPE` | **관측 0** · 요약 `Tests 15 skipped (15)` |
+| 3 | vitest 대조군 | 같은 파일, `-t` 없이 | **관측 0** · `Tests 15 passed (15)` |
+| 4 | vitest 경로 오타 | `… NO_SUCH.test.ts` | **관측 1** · `No test files found` |
+| 5 | 빈 선택 출력에 `N passed` 가 있나 | `grep -oE '[0-9]+ passed'` | **관측 0건** (`Test Files` 도 `skipped`) |
+
+★전제 2 가 핵심이다 — **기준선도 rc=0** 이라 rc 기반 게이트는 **원리적으로** 통과시킨다.
+그리고 변이 후에도 rc=0 이므로 **거짓 SURVIVED** 로 틀린다(가장 조용한 방향).
+
+### 변경 내용
+
+| 종료코드 | 조건 | 왜 갈랐나 |
+|---|---|---|
+| **14** | pytest rc=5 (수집 0건) | **처방이 다르다** — 러너(`-k`·경로)를 고친다 |
+| **13** | 그 외 rc≠0 | 코드·환경을 고친다 |
+| **15** | rc=0 인데 **통과 0건** | rc 로는 **못 잡는 칸**. 개수를 봐야 갈린다 |
+
+추출은 **모든 `N passed` 매치의 최대값**을 쓴다 — 첫 매치를 집으면 vitest 의
+`Test Files 1 passed (1)` 를 읽는다(동료가 경고한 새 서식지).
+
+### ★검증하지 못한 것
+
+- **jest·mocha·go test 등 다른 러너**의 빈 선택 rc/요약 — **미측정**.
+  `N passed` 를 찍지 않는 러너는 **위양성**(exit 15)이 난다 → 탈출구로 우회 가능하나
+  그 러너를 쓰는 사람이 이 게이트를 처음 만날 때 **막힌다.**
+- **전부 xfail 인 정당한 대상**의 실제 빈도 — 미측정(탈출구는 뒀다).
+- CI 는 이 스크립트를 돌리지 않는다 — 락은 `pytest` 로 도구를 **호출**해 검증한다.
+
+### 되돌리기
+
+`scripts/mutate_manual.sh` 의 `⑤-2` 블록을 지우면 2·3축만 사라지고 rc 축은 남는다.
+
+### 잠금
+
+`propai-platform/tests/test_mutate_manual_baseline_gate.py` — 13건.
+개수 축 전용: `test_green_rc_with_zero_passed_refuses_to_judge`(탐지) ·
+`test_vitest_shaped_green_baseline_is_not_falsely_blocked`(특이도) ·
+`test_count_is_read_from_the_largest_match_not_the_first_line`(추출 함정) ·
+`test_zero_passed_gate_has_an_escape_hatch`(배선) ·
+`test_gate_judges_rather_than_crashing_on_zero_matches`(판정 vs 크래시).
+
+### ★내가 이 변경을 만들며 낸 결함 2건 (락으로 남겼다)
+
+1. **`grep` 0건 → exit 1 → `set -e` 가 판정 대신 스크립트를 죽였다**(rc=1).
+   ★rc=1 은 「테스트 실패」와 **구별되지 않는다** — 무성 실패보다 나쁘다: 그럴듯하다.
+2. **픽스처의 가짜 러너가 개수를 안 찍었다.** 실제 러너는 언제나 찍는다.
+   그 차이 때문에 개수 축이 **통째로 우회**됐고, 게이트를 넣자 기존 2건이 깨져서 드러났다.
