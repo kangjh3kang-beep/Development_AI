@@ -445,7 +445,14 @@ class DevelopmentScenarioSimulator:
                     #   빠지면 정작 "왜 막혔나"를 설명해야 할 화면에서 신호가 사라진다.
                     "resolved_parcel_count": len(resolved),
                     "unresolved_parcels": unresolved,
-                    "area_is_partial": bool(unresolved),
+                    # ★★2026-08-29 — `#933` 이 이 **형제 미러를 안 쓸었다.** 정상경로 ctx 에만
+                    #   붕괴 필드를 넣어, **차단 경로에서는 「77필지를 요청했는데 1로 줄었다」를
+                    #   말하지 못했다.** 바로 위 주석이 그 위험을 이미 적어 두었는데도 놓쳤다:
+                    #   *"차단 경로에서 빠지면 정작 «왜 막혔나»를 설명해야 할 화면에서 신호가 사라진다."*
+                    #   ★사용자가 신고한 44㎡ 화면이 **정확히 이 차단 경로**였다(특이부지 → 불가).
+                    "requested_parcel_count": requested_count,
+                    "collapsed_parcel_count": max(0, requested_count - len(addrs)),
+                    "area_is_partial": bool(unresolved) or requested_count > len(addrs),
                     "plan_limit_unknown": plan_unknown_agg,   # 형제 미러
                     "primary_zone": primary_zone, "zones": zones,
                     "primary_zone_is_inferred": bool(primary_zone) and not zones_measured,

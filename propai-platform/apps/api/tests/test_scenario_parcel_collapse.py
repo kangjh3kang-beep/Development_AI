@@ -191,3 +191,81 @@ class Test배선:
         assert "requested_count" in names and "addrs" in names, (
             f"collapsed_parcel_count 가 요청수·사용수를 둘 다 읽지 않는다: {sorted(names)}"
         )
+
+
+class Test형제미러패리티:
+    """★`simulate` 안의 **모든 site ctx** 가 같은 정직 키를 낸다 — 파생형.
+
+    ## 왜 (2026-08-29 라이브 실측)
+
+    `#933` 이 붕괴 필드를 **정상경로 ctx 에만** 넣고 **차단 경로(특이부지 → 개발 불가)의
+    형제 미러를 안 쓸었다.** 라이브에서 갈렸다:
+
+        중복 주소 3건(→ addrs 1, 단일 경로)  : requested=3 collapsed=2 ✔
+        서로 다른 3건(→ addrs 3, 차단 경로)  : requested=**없음** collapsed=**없음** ✘
+
+    ★**사용자가 신고한 44㎡ 화면이 정확히 그 차단 경로**였다. 즉 «왜 막혔나»를 설명해야 할
+      바로 그 화면에서 붕괴 신호가 사라진다.
+
+    ★★그 자리에 **경고가 이미 적혀 있었다**:
+      *"형제 미러 — 아래 정상경로 ctx 와 같은 정직 키를 낸다. 차단 경로에서 빠지면
+        정작 «왜 막혔나»를 설명해야 할 화면에서 신호가 사라진다."*
+      **산문으로 있던 경고를 락으로 바꾼다** — 다음 사람이 ctx 를 하나 더 만들어도 잡히게.
+    """
+
+    #: site ctx 를 식별하는 표지(이 키가 있으면 그건 site ctx 다).
+    _MARKER = "resolved_parcel_count"
+    #: 모든 site ctx 가 함께 내야 하는 정직 키.
+    _REQUIRED = ("unresolved_parcels", "area_is_partial",
+                 "requested_parcel_count", "collapsed_parcel_count")
+
+    @staticmethod
+    def _site_ctxs():
+        import ast
+        import inspect
+
+        from apps.api.app.services.development import scenario_simulator as mod
+
+        tree = ast.parse(inspect.getsource(mod))
+        fn = next(
+            n for n in ast.walk(tree)
+            if isinstance(n, (ast.AsyncFunctionDef, ast.FunctionDef)) and n.name == "simulate"
+        )
+        out = []
+        for node in ast.walk(fn):
+            if not isinstance(node, ast.Dict):
+                continue
+            keys = {k.value for k in node.keys
+                    if isinstance(k, ast.Constant) and isinstance(k.value, str)}
+            if Test형제미러패리티._MARKER in keys:
+                out.append((keys, node))
+        return ast, out
+
+    def test_site_ctx_를_실제로_찾았다(self) -> None:
+        """★공허 진리 가드 — 0개를 찾고 «위반 0» 이라 말하지 않는다.
+
+        ★그리고 **2개 이상**이어야 한다. 1개면 이 테스트는 형제 미러를 보고 있지 않다
+        (그 형제가 사라졌거나, 내 탐색이 못 찾은 것이다 — 둘 다 알아야 한다).
+        """
+        _ast, ctxs = self._site_ctxs()
+        assert len(ctxs) >= 2, (
+            f"site ctx 를 {len(ctxs)}개만 찾았다 — 형제 미러(차단 경로)가 사라졌거나 탐색이 실패했다"
+        )
+
+    def test_모든_site_ctx_가_같은_정직키를_낸다(self) -> None:
+        _ast, ctxs = self._site_ctxs()
+        모자란곳 = [sorted(set(self._REQUIRED) - keys) for keys, _ in ctxs]
+        assert not any(모자란곳), (
+            f"site ctx 마다 정직 키가 다르다: {모자란곳} — "
+            "한 경로에서 빠지면 그 화면만 조용해진다(차단 경로가 바로 그 자리였다)"
+        )
+
+    def test_모든_site_ctx_의_부분집계가_두_경로를_읽는다(self) -> None:
+        """★키만 있고 **값이 한 경로만 읽으면** 붕괴는 여전히 침묵한다."""
+        ast, ctxs = self._site_ctxs()
+        for keys, node in ctxs:
+            expr = next(v for k, v in zip(node.keys, node.values, strict=False)
+                        if isinstance(k, ast.Constant) and k.value == "area_is_partial")
+            names = {n.id for n in ast.walk(expr) if isinstance(n, ast.Name)}
+            assert "unresolved" in names, f"조회실패 경로 누락: {sorted(names)}"
+            assert "requested_count" in names, f"붕괴 경로 누락: {sorted(names)}"
