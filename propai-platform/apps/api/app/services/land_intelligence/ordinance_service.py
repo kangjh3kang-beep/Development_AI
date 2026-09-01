@@ -1555,6 +1555,17 @@ class OrdinanceService:
                     },
                 )
                 resp.raise_for_status()
+                # ★형제 미러(`_fetch_from_moleg_api`)에 이미 있던 봉투 검사가 **여기엔 없었다.**
+                #   법제처 DRF 는 인증/IP 실패를 **HTTP 200** 으로 돌려주므로
+                #   `raise_for_status()` 가 발화하지 않고, `_parse_ordin_id` 가 `None` 을 내며,
+                #   아래 광범위 `except` 가 그것을 삼켜 **`resolve_slope_criteria` 는
+                #   "이 지자체는 경사도 조례가 없다 → 국가기준 25도"** 로 읽는다.
+                #   즉 **조회 실패가 「조례 미보유」로 오귀속**된다(라이브 실측: 틀린 OC →
+                #   HTTP 200 · 루트 `<Response><result>사용자 정보 검증에 실패하였습니다.`).
+                # ★★**안 바뀌는 것도 적는다**(형제와 동일): 반환값은 여전히 `None` 이고
+                #   화면 폴백도 그대로다. 바뀐 것은 ①감지 ②파싱 차단 ③사유 로그다.
+                #   호출부가 *"조회 실패"* 와 *"조례 없음"* 을 **구분하게 만드는 것은 별건**이다.
+                raise_unless_expected_xml(resp.text, expect=_ORDIN_LIST_ROOTS)
                 ordin_id = self._parse_ordin_id(resp.text, region_name)
             if not ordin_id:
                 return None
@@ -1569,6 +1580,9 @@ class OrdinanceService:
                     },
                 )
                 resp.raise_for_status()
+                # ★형제 미러 — 본문 조회도 같은 봉투를 받는다(라이브: 인증실패 루트 `<Response>`,
+                #   대상없음 루트 `<Law>일치하는 자치법규가 없습니다`). 둘 다 `LawService` 가 아니다.
+                raise_unless_expected_xml(resp.text, expect=_ORDIN_TEXT_ROOTS)
                 return resp.text
         except Exception as e:  # noqa: BLE001 — 외부 API 실패는 정직 폴백(None)
             logger.warning("법제처 API 조례 본문 조회 실패: %s (%s)", region_name, str(e))
