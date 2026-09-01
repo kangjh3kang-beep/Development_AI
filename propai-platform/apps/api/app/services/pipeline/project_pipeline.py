@@ -2372,7 +2372,7 @@ class ProjectPipeline:
             cf_gen = CashflowGenerator()
             sale_start_month = max(0, cost.construction_months - 6)  # 준공 6개월 전 분양 시작
 
-            # ── R1 세후 IRR: 통합 세금엔진(38종) 결과를 시점 매핑해 주입(additive) ──
+            # ── R1 세후 IRR: 통합 세금엔진(28종) 결과를 시점 매핑해 주입(additive) ──
             # 실패·세금 전무 시 tax_schedule=None → 기존 세전 현금흐름과 완전 동일(graceful).
             tax_schedule = None
             try:
