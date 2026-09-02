@@ -161,13 +161,16 @@ def test_zero_insight_run_still_logs_coverage():
 
 
 # ══════════════════════════════════════════════════════════════
-# 4. ★부채 — 초록 안에 보이게 남긴다
+# 4. ★소비처 — 값을 싣는 것과 **사용자가 보는 것**은 다르다
 # ══════════════════════════════════════════════════════════════
-
-@pytest.mark.xfail(reason="★소비처 0 — `metrics_json.analysis_coverage` 를 읽는 화면이 "
-                          "아직 없다. 값을 실어 보내는 것과 사용자가 보는 것은 다르다. "
-                          "다음 단계(성장루프 페이지 계약 · #854 계열)의 몫.",
-                   strict=True)
+#
+# ★이 자리는 원래 `xfail(strict=True)` **부채 표식**이었다(*"소비처 0 — 읽는 화면이
+#   아직 없다"*). 이 PR 이 `GrowthDashboard` 에 커버리지 행을 추가해 **그 부채를 갚았고**,
+#   strict xfail 이 **XPASS 로 빨개져** 표식을 지우라고 알려 줬다(CI 실측).
+#   → 표식을 지우고 **정식 락으로 승격**한다. 이제 소비처를 없애면 이 테스트가 빨개진다.
+#
+# ★부채 표식이 제 일을 한 사례다 — `xfail` 을 non-strict 로 뒀으면 빚을 갚아도
+#   아무도 몰랐고, 표식이 영원히 남아 다음 사람을 속였을 것이다.
 def test_a_surface_reads_analysis_coverage():
     import subprocess
     from pathlib import Path

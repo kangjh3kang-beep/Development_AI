@@ -18,6 +18,8 @@ type Reporter = typeof import("../report-boundary-error");
 function captureSends(): string[] {
   const sent: string[] = [];
   // sendBeacon 을 없는 것으로 만들어 fetch 폴백을 강제한다(Blob 은 동기로 못 읽는다).
+  // ★*"그래서 이 층을 못 태운다"* 는 **오추론**이다 — **비동기로는 읽을 수 있다**
+  //   (`__tests__/_read-blob.ts` · `transport-sendbeacon.test.ts`). 그 오추론이 부채를 만들었다.
   vi.stubGlobal("navigator", { ...globalThis.navigator, sendBeacon: undefined });
   vi.stubGlobal("fetch", ((_u: string, init?: RequestInit) => {
     sent.push(String(init?.body ?? ""));

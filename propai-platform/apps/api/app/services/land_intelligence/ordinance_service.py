@@ -26,8 +26,11 @@ from typing import Any
 import httpx
 from sqlalchemy import text
 
-from app.core.config import settings
-from app.services.legal.moleg_drf_envelope import MolegDrfError, raise_unless_expected_xml
+from app.services.legal.moleg_drf_envelope import (
+    MolegDrfError,
+    moleg_oc_key,
+    raise_unless_expected_xml,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -697,7 +700,7 @@ class OrdinanceService:
         self, sido: str, sigungu: str | None, zone_type: str, *, jurisdiction: str | None = None
     ) -> dict[str, Any] | None:
         """법제처 API로 도시계획조례 실시간 조회. jurisdiction=정규화 관할명(특별시/광역시는 시 본청)."""
-        api_key = getattr(settings, "MOLEG_API_KEY", "") or ""
+        api_key = moleg_oc_key()
         if not api_key:
             return None
 
@@ -1535,7 +1538,7 @@ class OrdinanceService:
         기존 _fetch_from_moleg_api 와 동일한 2단 호출(목록 검색 → 본문 조회) 규약.
         API 키 미설정·조회 실패는 None(호출부가 정직 폴백).
         """
-        api_key = getattr(settings, "MOLEG_API_KEY", "") or ""
+        api_key = moleg_oc_key()
         if not api_key:
             return None
 
