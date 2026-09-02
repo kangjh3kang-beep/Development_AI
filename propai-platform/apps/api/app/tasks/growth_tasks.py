@@ -36,20 +36,19 @@ def _get_celery_app():
         return None
 
 
-async def _flush_async(limit: int = 500) -> int:
-    """새 AsyncSession 으로 큐를 platform_events 에 배치 INSERT 한다."""
+async def _flush_async() -> int:
+    """큐를 platform_events 에 비운다. 적재 건수 반환.
+
+    ★**배수 사본이 여기 하나 더 있었다**(독립 적대 렌즈 실측 2026-08-29). 상한이
+      리터럴 `500` 으로 굳어 `_FLUSH_LIMIT` 과 따로 놀았고, 청크 상한 `20` 도 따로였다.
+      그래서 *"배수 로직은 `drain_until_empty` 하나뿐"* 이라고 적은 주석이 **거짓**이었다
+      — 셋이었다. 사본이 갈리면 **하나가 낡는데 아무도 모른다.**
+    → 공용 헬퍼로 위임한다. 상한은 그 안에서 상수에서 파생된다.
+    """
     from app.services.growth import capture_service
     from apps.api.database.session import AsyncSessionLocal
 
-    total = 0
-    async with AsyncSessionLocal() as session:
-        # 한 사이클에 누적분을 비우되, 단일 트랜잭션 폭주를 막기 위해 청크 반복.
-        for _ in range(20):  # 최대 20청크/사이클(= limit*20 건)
-            n = await capture_service.flush_batch(session, limit=limit)
-            total += n
-            if n < limit:
-                break
-    return total
+    return await capture_service.drain_until_empty(AsyncSessionLocal)
 
 
 def flush_growth_events() -> dict:

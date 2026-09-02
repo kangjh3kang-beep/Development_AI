@@ -16,6 +16,7 @@ import time
 from datetime import datetime
 from typing import Any
 
+from ...utils.pnu import lawd_cd_from_pnu
 from ..data_validation.price_stats import robust_price_stats
 from ..external_api.building_registry_service import BuildingRegistryService
 from ..external_api.commercial_area_service import CommercialAreaService
@@ -1334,8 +1335,8 @@ class LandInfoService:
     def _extract_lawd_cd(address: str, pnu: str | None) -> str | None:
         """주소 또는 PNU에서 법정동코드(5자리)를 추출."""
         # PNU 앞 5자리 = 시군구코드
-        if pnu and len(pnu) >= 5:
-            return pnu[:5]
+        if lawd_cd_from_pnu(pnu):
+            return lawd_cd_from_pnu(pnu)
 
         # 주소 기반 매핑 (서울 주요 구)
         district_map: dict[str, str] = {

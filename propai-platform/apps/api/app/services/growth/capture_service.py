@@ -20,6 +20,7 @@ import logging
 import os
 import re
 from collections import deque
+from collections.abc import MutableMapping
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import unquote, urlsplit, urlunsplit
@@ -256,6 +257,16 @@ def record_fallback(service: str, kind: str, *, severity: str = "warn", **meta: 
         logger.debug("growth record_fallback 무시: %s", str(e)[:120])
 
 
+def flush_interval_s() -> int:
+    """배수 루프의 대기 주기(초). ★소비처가 리터럴을 쓰지 않게 **파생시킨다**.
+
+    `apps/api/main.py` 는 역사적으로 `sleep(5)` 리터럴을 쓰고 그 짝을
+    `test_flush_interval_matches_the_actual_loop` 이 소스 대조로 잠근다(그대로 둔다).
+    **새로 배선하는 소비처는 이 접근자를 쓴다** — 리터럴을 하나 더 만들지 않는다.
+    """
+    return _FLUSH_INTERVAL_S
+
+
 def queue_size() -> int:
     """현재 큐 적재 건수(관측·테스트용)."""
     return len(_QUEUE)
@@ -413,6 +424,277 @@ async def flush_batch(db, limit: int = _FLUSH_LIMIT) -> int:
             len(rows), _consecutive_failures, str(e)[:160],
         )
         return 0
+
+
+#: 배수 루프 태스크를 워커 컨텍스트에 담을 때 쓰는 키.
+#:
+#: ★**한 곳에서만 정의한다.** 종전에는 워커가 이 문자열을 **쓰는 쪽과 읽는 쪽에 각각
+#:   리터럴로** 갖고 있었고, 기계 변이가 정확히 그 자리를 짚었다 — 한쪽만 바뀌면
+#:   `cancel()` 이 **영영 안 불리는데 아무 신호도 안 난다**(조용한 실패).
+#:   `_FLUSH_LIMIT` 이 `main.py` 두 곳에 하드코딩돼 있던 것과 **같은 형태**다.
+#:
+#: ★**변이 생존 설명**(도구가 요구한다 — 점수 부풀리기 방지): 이 문자열의 **값**을 바꾸는
+#:   변이는 **생존한다. 그리고 그것이 옳다.** 쓰는 쪽·읽는 쪽이 **둘 다 이 상수**를 보므로
+#:   값이 무엇이든 짝이 맞는다 — 프로세스 로컬 dict 의 키라 값 자체에 의미가 없다.
+#:   ★**그것이 이 상수를 만든 이유다.** 리터럴이 둘이던 종전에는 한쪽만 바뀔 수 있었고,
+#:   그때는 cancel 이 영영 안 불리는데 **아무 예외도 안 났다**(조용한 실패).
+#:   즉 이 생존은 구멍이 아니라 **결함이 구조적으로 불가능해졌다는 신호**다.
+_FLUSH_TASK_CTX_KEY = "growth_flush_task"
+
+
+#: 수집 상태를 **프로세스 경계 밖으로** 내보내는 설정 키. `scope` 로 프로세스를 가른다.
+#:
+#: ★**새 표면을 만들지 않는다** — `growth_last_run.*` 워터마크가 이미 쓰는 통로
+#:   (`schema_guard.set_setting` → `platform_settings` → `/growth/heal-log` 의 `active_flags`)를
+#:   그대로 탄다. 읽기 경로는 **한 줄도 안 바꾼다**.
+CAPTURE_STATUS_SETTING_KEY = "growth_capture"
+
+#: 발행 행의 수명. **TTL 이 이 설계의 세 번째 모집단을 만든다.**
+#:
+#: ★TTL 이 없으면 행이 **한 번 쓰이면 영영 안 사라진다**(`clear_setting` 은 치유 롤백 전용).
+#:   그러면 「워커가 죽었다」가 **「행 부재」로 나타나지 못하고** 낡은 값으로 남아
+#:   **「정상 유휴」와 구별되지 않는다** — 이 함수가 막으려던 바로 그 상태다.
+#: ★그리고 `/heal-log` 는 `ttl_expires_at IS NULL OR > now()` 로 거르므로,
+#:   TTL 이 지나면 행이 **스스로 목록에서 빠진다**(청소 코드가 필요 없다).
+#: ★주기의 **3배** — 한두 번 걸러도 안 사라지고, 정말 멈추면 곧 사라진다.
+_PUBLISH_TTL_S = 15
+
+#: 발행 한 번에 허용하는 시간. ★**관측이 배수의 임계경로에 있으면 안 된다** —
+#: 넘으면 그 주기 관측을 버리고 배수를 계속한다(관측 없음 < 배수 지연).
+_PUBLISH_TIMEOUT_S = 2.0
+
+
+async def publish_capture_status(session_factory: Any, *, scope: str) -> bool:
+    """이 프로세스의 `capture_status()` 를 `platform_settings` 에 발행한다. 성공 여부 반환.
+
+    ## ★왜 필요한가 — 큐가 **프로세스 로컬**이라 밖에서 안 보인다
+
+    `_QUEUE` 는 모듈 전역 deque 다. 그래서 arq 워커가 담은 이벤트의 깊이를 **API 프로세스가
+    볼 방법이 없었다** — `/growth/effectors` 의 `capture` 는 **API 자기 큐**만 말한다.
+    그 결과 *"워커가 안 비운다"* 와 *"워커가 비울 게 없다"* 가 **같은 관측(0)** 으로 보였다.
+
+    ## ★세 모집단으로 가른다 (둘로 만들면 표면이 죽은 것이 「정상 유휴」로 읽힌다)
+
+        깊이 0 · `at` 갱신됨   → 비울 게 없다(정상 유휴)
+        깊이 N · `at` 정지     → 안 비운다(고장)
+        ★**행 자체가 없음**    → 관측이 안 온다(워커·발행 부재)
+
+    ★**시각을 `payload` 안에 넣는 이유**: `/heal-log` 의 `active_flags` 는
+      `key·scope·value·ttl_expires_at·updated_by` 만 내보내고 **`updated_at` 은 안 준다**(실측).
+      `updated_at` 에 기대면 **밖에서 세 번째 칸을 못 가른다.**
+
+    ## ★★설계 제약 — **측정 대상으로 측정하지 않는다**
+
+    큐 깊이를 `record_event` 로 보고하면 **자기가 재려는 큐에 자기 관측을 넣는 순환**이 된다:
+      ①유실이 나면 **관측치가 먼저 사라지고**(가장 필요한 순간에 없다)
+      ②유휴일 때 *"비었다"* 와 *"관측이 안 왔다"* 를 **가르지 못한다**(판별력 자체의 문제).
+    → 그래서 **별도 통로**(`platform_settings`)로 낸다. 이 함수는 `record_event` 를 부르지 않는다.
+
+    ★발행 실패는 **삼킨다** — 관측이 배수를 죽이면 안 된다.
+    """
+    try:
+        from datetime import UTC, datetime, timedelta
+
+        from app.services.growth import schema_guard, stale_build_guard
+
+        raw = dict(capture_status())
+        # ★★**`at` 을 맨 앞에 둔다**(독립 적대 렌즈 실측 2026-09-02).
+        #   화면의 `summarizeParams` 는 **삽입 순서로 앞 4키만** 그린다(`parts.length >= 4` break).
+        #   종전엔 `at` 이 **16키 중 15번째**라 **화면에 아예 안 나왔고**, 보이는 4개 중 3개는
+        #   `max_queue`·`flush_limit`·`max_sustained_per_sec` = **정적 상수**였다.
+        #   그래서 「정상 유휴」와 「워커 사망」이 **화면에서 바이트 동일**했다 —
+        #   이 함수가 존재하는 이유가 그 둘을 가르는 것인데.
+        #   ★**범위 밖으로 뺀 프론트가 바로 그 전제가 검증되는 유일한 곳**이었다.
+        # ★★★**삽입 순서는 저장되면 사라진다 — `jsonb` 가 키를 재정렬한다.**
+        #
+        #   Postgres `jsonb` 는 삽입 순서를 **보존하지 않고 (키 길이, 바이트순)** 으로
+        #   정렬해 저장한다. 그래서 *"판별 필드를 앞에 넣는다"* 는 처방이 **저장을 통과하며
+        #   무효화됐다.** 라이브 실측(2026-09-02 12:41Z)이 예측과 **정확히 일치**했다:
+        #
+        #       at(2) · flushed(7) · requeued(8) · max_queue(9) · lost_total(10) · flush_limit(11)
+        #
+        #   → `queue_depth` 가 17키 중 **7번째**로 밀려 화면(앞 4키)에 **못 들었다.**
+        #     ①정상 유휴 vs ③워커 사망은 갈렸지만(`at` 이 2글자라 항상 첫째)
+        #     **①정상 유휴 vs ②쌓이는 중은 여전히 안 갈렸다** — 절반만 고쳐진 상태였다.
+        #
+        #   ★**정렬 규칙은 바꿀 수 없다.** 한때 **이름을 짧게** 해서 앞자리를 얻으려 했으나
+        #     ★★**그 처방은 폐기했다**(2026-09-03) — 동료 세션이 *"락이 아니라 경주"* 로
+        #     반증했고(4글자 키 하나만 추가돼도 밀려난다), 렌더러가 상한을 올려
+        #     **버림이 0** 이 되면서 **목적 자체가 달성**됐다. 자세한 근거는 아래 참조.
+        #
+        #   ★내 종전 락이 이것을 못 잡은 이유: **Python dict(삽입 순서)** 를 그려 봤고
+        #     **저장소를 왕복한 값이 아니었다.** 자문 —
+        #     *"내 락이 태우는 값이 저장소를 왕복한 값인가, 그 전의 값인가?"*
+        payload = {
+            "at": datetime.now(UTC).isoformat(),
+            # ★★**짧은 별칭을 쓰지 않는다**(2026-09-03 재판단 · 라이브 실측).
+            #   종전엔 `depth`·`lost`·`build` 로 줄여 jsonb 정렬에서 앞자리를 얻으려 했다.
+            #   그런데 `#947` 이 화면 상한을 올려 **버림이 0** 이 됐다(실측: 17키 중 보임 17).
+            #   즉 **가시성 목적은 이미 달성**됐고, 짧은 이름이 남기는 것은 **비용뿐**이다:
+            #     `/growth/effectors` 는 `queue_depth`·`lost_total`
+            #     `/growth/heal-log`  는 `depth`·`lost`
+            #   → **같은 사실을 두 표면이 다른 이름으로** 부르게 된다.
+            #   ★바로 아래에서 내가 *"같은 사실이 두 이름으로 있으면 갈린다"* 고 적어 놓고
+            #     **표면 사이에 그것을 만들고 있었다.** 형제 `analyzer.py` 도
+            #     `producer_build_id` 로 쓰므로 그 이름을 따른다.
+            #   ★상한이 다시 작아지는 순간은 **키 수 상한 락**이 시끄럽게 잡는다 —
+            #     그때의 옳은 처방은 이름 길이 경주가 아니라 **렌더러의 명시 선택**이다.
+            "queue_depth": raw.get("queue_depth"),
+            "lost_total": raw.get("lost_total"),
+            "producer_build_id": stale_build_guard.running_build_id(),
+            # ★`producer_build_id` = 어느 빌드가 썼는지 — 형제 `analyzer.py` 가 같은 이유로 이미 싣는다.
+            #   낡은 스택이 같은 DB 를 공유하면 `(key, scope)` 가 같아 **같은 행을 덮어쓴다**
+            #   (`stale_build_guard` 가 실측 18일 사고로 기록해 둔 그 형태).
+            #   빌드 id 가 없으면 **누가 쓴 값인지 구별할 수 없다.**
+            #
+            # ★아래 `**raw` 는 **원본 전체**를 그대로 싣는다(하나도 안 버린다).
+            #   위 명시 키들은 **같은 이름으로 덮어쓰는 것**이라 중복이 생기지 않는다 —
+            #   한때 짧은 별칭을 썼을 때는 긴 이름을 **빼야** 했고, 그것이
+            #   **API 계약에서 두 키를 지우는** 결과가 됐다(동료 세션 실측으로 발견).
+            **raw,
+        }
+        # ★내부 `scope`(계수기 범위)와 바깥 `scope`(프로세스)가 **같은 이름으로 충돌**했다.
+        #   같은 화면에 나란히 뜨는데 뜻이 다르다 → 안쪽 이름을 바꾼다.
+        if "scope" in payload:
+            payload["counter_scope"] = payload.pop("scope")
+
+        async with session_factory() as db:
+            return await schema_guard.set_setting(
+                db, CAPTURE_STATUS_SETTING_KEY, payload,
+                scope=scope, updated_by=f"growth-capture:{scope}",
+                ttl_expires_at=datetime.now(UTC) + timedelta(seconds=_PUBLISH_TTL_S),
+            )
+    except Exception as e:  # noqa: BLE001 — 관측 실패가 배수를 막지 않는다.
+        logger.warning("growth capture 상태 발행 실패(%s): %s", scope, str(e)[:160])
+        return False
+
+
+def start_flush_loop(ctx: MutableMapping[str, Any], session_factory: Any,
+                     *, publish_scope: str = "api") -> bool:
+    """배수 루프를 띄워 `ctx` 에 담는다. 성공 여부 반환.
+
+    ★워커(arq)는 `on_startup` 에서 이것을 부른다. **`arq` 없이 테스트 가능**하도록
+      여기 두었다 — 종전에는 이 로직이 `apps/worker/main.py` 안에만 있어서
+      `arq` 미설치 환경에서 **그 층을 아무도 태우지 않았다**(기계 변이 생존 4건이 그 자리).
+
+    실패해도 예외를 올리지 않는다 — 수집 배선이 워커 기동을 막으면 안 된다.
+    """
+    try:
+        import asyncio
+
+        async def _loop() -> None:
+            while True:
+                await asyncio.sleep(flush_interval_s())
+                try:
+                    await drain_until_empty(session_factory)
+                except Exception as e:  # noqa: BLE001 — 배수 실패가 루프를 죽이면 안 된다.
+                    logger.warning("growth flush 루프 오류: %s", str(e)[:160])
+                # ★**배수 뒤에** 발행한다 — 방금 비운 결과가 실려야 「비울 게 없다」가 참이 된다.
+                #   배수가 실패해도 발행은 한다: 그때가 **깊이 N + 시각 갱신**(=쌓이는 중)이라는
+                #   가장 중요한 신호가 나오는 순간이다.
+                #
+                # ★★**관측이 배수를 늦추면 안 된다**(독립 적대 렌즈 실측 2026-09-02).
+                #   발행이 이 루프 **안**에 있으므로 느려지면 다음 배수가 그만큼 밀린다 —
+                #   실측: 발행 3초 지연 시 같은 창에서 **배수 5회 → 2회**.
+                #   그러면 보고된 깊이가 **보고 행위 자체가 만든 것**이 되어
+                #   「깊이 N = 쌓이는 중」이 **자기가 만든 거짓**이 된다.
+                #   → 상한을 건다. 넘으면 그 주기의 관측을 포기하고 **배수를 계속한다.**
+                try:
+                    await asyncio.wait_for(
+                        publish_capture_status(session_factory, scope=publish_scope),
+                        timeout=_PUBLISH_TIMEOUT_S,
+                    )
+                except Exception as e:  # noqa: BLE001 — 관측이 배수를 막지 않는다(TimeoutError 포함).
+                    logger.warning("growth capture 발행 지연·실패: %s", str(e)[:120])
+
+        ctx[_FLUSH_TASK_CTX_KEY] = asyncio.create_task(_loop())
+        return True
+    except Exception as e:  # noqa: BLE001
+        logger.warning("growth flush 루프 시작 실패: %s", str(e)[:160])
+        return False
+
+
+async def stop_flush_loop_and_drain(ctx: MutableMapping[str, Any], session_factory: Any) -> int:
+    """배수 루프를 멈추고 **마지막으로 비운다**. 적재 건수 반환.
+
+    ★두 일을 **한 함수**에 둔 이유: 종전 워커 코드는 취소와 마지막 배수가 따로 있었고,
+      기계 변이가 *"`ctx.get` 의 키를 바꾼다"* · *"`is not None` 가드를 무력화한다"* 를
+      **둘 다 생존**시켰다. 키를 상수로 모으고 이 함수를 직접 태우면 그 자리가 잠긴다.
+
+    ★취소 대상이 **없어도 배수는 한다** — 루프 기동에 실패한 프로세스야말로
+      큐가 가장 많이 쌓여 있다(그 경우 잔여를 버리면 결함이 두 배가 된다).
+    """
+    import asyncio
+    import contextlib
+
+    task = ctx.get(_FLUSH_TASK_CTX_KEY)
+    if task is not None:
+        task.cancel()
+        # ★★**취소를 기다린다** — 안 기다리면 비행 중 배치가 통째로 사라진다.
+        #
+        #   `cancel()` 은 **요청**일 뿐이다. 루프가 `flush_batch` 안에서
+        #   `await db.execute(...)` 로 대기 중이면, 그 배치는 이미 `_drain` 이
+        #   큐에서 **빼낸** 상태다. 취소가 배달되면 #920 의 `BaseException` 핸들러가
+        #   그것을 **되돌리는데**, 그 되돌림은 **await 를 한 번 더 돌아야** 일어난다.
+        #   기다리지 않으면 아래 `drain_until_empty` 가 **되돌림 전의 얕은 큐**를 보고
+        #   끝내 버리고, 되돌아온 행은 **아무도 비우지 않은 채 프로세스가 죽는다**.
+        #
+        #   ★실측(두 모집단 대조 · 큐 600건 · 비행 배치 500건):
+        #     기다리지 않음 → 종료 후 큐 잔여 **500** · DB 적재 100 = **500건 소실**
+        #     기다림        → 종료 후 큐 잔여 **0**   · DB 적재 **600** = 소실 0
+        #
+        #   ★노출 창은 (INSERT 소요 / flush 주기)라 **DB 가 느릴수록 넓어진다** —
+        #     즉 **큐가 가장 깊을 때 가장 잘 터진다**. 이 파일은 바로 위
+        #     `flush_batch` 에서 같은 창을 이미 적어 뒀는데, 그 사슬의
+        #     **다음 고리**가 여기였다.
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+    try:
+        return await drain_until_empty(session_factory)
+    except Exception as e:  # noqa: BLE001 — 어떤 예외도 종료를 막지 않는다.
+        logger.warning("growth 종료 flush 오류: %s", str(e)[:160])
+        return 0
+
+
+async def drain_until_empty(session_factory: Any, *, max_rounds: int = 20) -> int:
+    """큐가 빌 때까지 배치 flush 한다. 적재된 총 건수 반환.
+
+    ## ★왜 함수로 빼는가 — **배수 경로가 여럿이면 하나가 빠진다**
+
+    ★**정정(2026-08-29 · 독립 적대 렌즈 실측)**: 종전에 이 주석은 *"두 곳에 복제"* 라고
+    적었는데 **틀렸다 — 셋이었다**: `apps/api/main.py` 의 주기 루프 · 같은 파일의 종료 flush ·
+    그리고 `app/tasks/growth_tasks.py` 의 `_flush_async`. 세 번째가 상한을 리터럴 `500` 으로
+    굳혀 `_FLUSH_LIMIT` 과 따로 놀고 있었다.
+    ★**그리고 내가 그 주석을 쓸 때 이미 셋이었다.** 산문은 사본이 갈리는 것을 막지 못한다 —
+      그래서 이 주장은 이제 **파생형 락**이 강제한다
+      (`test_there_is_exactly_one_drain_implementation`).
+
+    이 루프는 종전에 **세 곳에 복제**돼 있었고(주기 루프 · 종료 flush · celery 태스크),
+    상한 `500` 이 **리터럴로 하드코딩**돼 `_FLUSH_LIMIT` 과 따로 놀았다.
+    거기에 워커용으로 **세 번째 사본**을 만들면 셋이 갈라진다.
+
+    ★그리고 실제로 **배수구가 아예 없는 프로세스**가 있었다 — `apps/worker`(arq).
+      진입점 임포트 폐포(79파일)가 `record_event` 에 **닿는데**(`base_client._emit_growth_fallback`
+      → 외부 API 회로차단기 폴백마다 발화) 그 폐포 안에 `flush_batch` 호출은 **0건**이었다.
+      즉 워커가 담은 이벤트는 **컨테이너 재시작마다 통째로 사라졌다.**
+
+    ## 계약
+
+    - 큐가 비어 있으면 **세션을 열지 않는다**(빈 커넥션 낭비 방지).
+    - 한 회차가 `_FLUSH_LIMIT` **미만**을 적재하면 큐가 마른 것이므로 멈춘다.
+    - `max_rounds` 는 **폭주 상한**이다 — 계속 차오르는 큐에 갇히지 않는다.
+    - ★상한은 **리터럴이 아니라 `_FLUSH_LIMIT` 에서 파생**된다. 상수를 바꾸면 여기가 따라온다.
+    """
+    if queue_size() == 0:
+        return 0
+    total = 0
+    async with session_factory() as session:
+        for _ in range(max_rounds):
+            n = await flush_batch(session)
+            total += n
+            if n < _FLUSH_LIMIT:
+                break
+    return total
 
 
 def capture_status() -> dict[str, Any]:
