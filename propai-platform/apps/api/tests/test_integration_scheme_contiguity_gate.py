@@ -35,11 +35,13 @@ _SRC = pathlib.Path(inspect.getsourcefile(SS)).read_text(encoding="utf-8")
 
 
 def _ctx(*, integration_ok, area_sqm=5000.0, zone="제2종일반주거지역",
-         multi=True, station=True, region="서울특별시", max_pair_m=30.0):
+         multi=True, station=True, region="서울특별시", max_pair_m=30.0, zones=None):
     """★기존 픽스처와 달리 `integration_feasible` 를 **실제로 False 로 만든다.**"""
     return {
         "total_area_sqm": area_sqm,
         "primary_zone": zone,
+        # ★부지에 실재하는 용도지역 전부 — 우세만 보면 혼재 부지에서 제약이 꺼진다(M-5).
+        "zones": list(zones) if zones is not None else [zone],
         "far_effective_blended": 200,
         "far_legal_blended": 250,
         "multi": multi,
@@ -557,26 +559,92 @@ def _named_set_literal(name: str) -> set[str]:
     return set()
 
 
-def test_buildable_types_covers_every_scheme_not_just_one():
-    """★★C-1 — `_buildable_types` 를 **21종 전수**로 태운다.
+def _constraint_map(**kw):
+    """★`_scenarios()` 를 **통과시켜** 얻는다 — `_buildable_types` 직접 호출이 아니다.
 
-    종전 락은 `scheme="단순 건축"` **하나**만 줬다. 그런데 이 함수는 2단계라
-    **scheme 오버라이드가 `base` 를 버리고 early return** 한다 —
-    적대 리뷰 실측 **12/21 종이 제1종일반주거에서 아파트를 제안**했는데 락 32건이 전부 초록이었다.
-    같은 파일에 `_add_scheme_names()` 파생 수집기가 **이미 있는데** 쓰지 않은 것이 원인이다.
+    적대 리뷰 M-2: C-1 락 전부가 정적 메서드를 직접 불러 **배선을 안 태웠다.**
+    그래서 `_zone = c.get("primary_zone")` 를 고정값으로 바꾸는 변이가 **통과**했다 —
+    즉 «제1종 부지에서 아파트 제안» 이라는 **바로 그 사용자 결함을 되살려도 초록**이었다.
     """
+    sim = DevelopmentScenarioSimulator()
+    return _map(sim._scenarios(_ctx(integration_ok=True, **kw)))
+
+
+def test_wiring_marks_every_apartment_proposal_on_type1_site():
+    """★★C-1(배선) — 제1종 부지에서 **아파트를 제안하는 모든 방식**이 제약을 달아야 한다.
+
+    모집단은 `add()` 전수에서 파생하고, 판정은 **`_scenarios()` 결과**로 한다.
+    """
+    got = _constraint_map(zone="제1종일반주거지역", area_sqm=12000.0)
+    assert len(got) >= 20, f"시나리오가 {len(got)}종 — 픽스처가 모집단을 못 만든다"
+    proposing = [k for k, v in got.items() if SS.proposes_apartment(v.get("buildable_types") or [])]
+    assert proposing, "제1종 부지인데 아파트를 제안하는 방식이 0개 — 검사기가 죽었다"
+    missing = [k for k in proposing if not v_ok(got[k])]
+    assert not missing, (
+        f"아파트를 제안하면서 용도 제약을 안 단 방식 {len(missing)}/{len(proposing)}: {missing}"
+    )
+
+
+def v_ok(scn: dict) -> bool:
+    c = scn.get("zone_use_constraint")
+    return bool(c) and "아파트" in (c.get("prohibited") or []) and bool(c.get("message"))
+
+
+def test_wiring_survives_mixed_zone_where_type1_is_not_dominant():
+    """★★M-5 — 제2종이 **면적 우세**여도 제1종이 부지에 있으면 제약이 살아 있어야 한다.
+
+    사용자가 신고한 부지가 정확히 `zones=[제1종, 제2종]` 이다. RC-2(면적가중)를 고치자
+    `primary_zone=제2종` 이 되어 RC-3(제1종 제약)의 발화 조건이 **지워졌다** —
+    둘이 서로를 가린다고 적어 놓고, 같이 고쳤더니 한쪽이 다른 쪽을 껐다.
+    """
+    got = _constraint_map(zone="제2종일반주거지역",
+                          zones=["제1종일반주거지역", "제2종일반주거지역"], area_sqm=12000.0)
+    proposing = [k for k, v in got.items() if SS.proposes_apartment(v.get("buildable_types") or [])]
+    assert proposing, "혼재 부지에서 아파트 제안이 0개 — 픽스처 이상"
+    missing = [k for k in proposing if not v_ok(got[k])]
+    assert not missing, f"혼재 부지에서 제1종 제약이 꺼졌다: {missing}"
+    # ★음성 대조군 — 제1종이 **없는** 부지에서는 붙으면 안 된다.
+    clean = _constraint_map(zone="제2종일반주거지역",
+                            zones=["제2종일반주거지역", "제3종일반주거지역"], area_sqm=12000.0)
+    stuck = [k for k, v in clean.items() if v.get("zone_use_constraint")]
+    assert not stuck, f"제1종이 없는 부지에 제약이 붙었다: {stuck}"
+
+
+def test_constraint_is_not_pasted_into_buildable_types():
+    """★M-4 — 경고를 **「건축 가능」 칩 목록에 섞지 않는다.**
+
+    프론트(`DevelopmentScenarioCard.tsx`)는 `buildable_types` 의 **모든 원소를 같은 악센트
+    색 칩**으로 그린다. 거기에 경고를 넣으면 *"아파트"* 와 *"아파트 불허"* 가 나란히 서고,
+    그건 고친 것이 아니라 **문구로 덮은 것**이다. 전용 필드 + `cons` 로 낸다.
+    """
+    got = _constraint_map(zone="제1종일반주거지역", area_sqm=12000.0)
+    for k, v in got.items():
+        for t in (v.get("buildable_types") or []):
+            assert SS.APARTMENT_PROHIBITED_MARK not in t, f"{k}: 경고가 칩 목록에 섞였다 — {t!r}"
+        if v.get("zone_use_constraint"):
+            joined = " ".join(v.get("cons") or [])
+            assert SS.APARTMENT_PROHIBITED_MARK in joined, f"{k}: cons 에 제약이 없다"
+
+
+def test_apartment_detector_ignores_its_own_negative_label():
+    """★M-3 — 검출기가 **자기가 심은 부정 라벨**을 「아파트 제안」으로 세면 안 된다.
+
+    적대 리뷰 실측: `any("아파트" in t …)` 가 `"(4층 이하 — 아파트 불가)"` 에 걸려
+    21종 중 **9종이 위양성**이었다. 파티션형으로 잠근다.
+    """
+    assert SS.proposes_apartment(["아파트", "단독주택"]) is True
+    assert SS.proposes_apartment(["저층 아파트"]) is True
+    assert SS.proposes_apartment(["연립/다세대(빌라)", "(4층 이하 — 아파트 불가)"]) is False
+    assert SS.proposes_apartment([SS.APARTMENT_PROHIBITED_MARK]) is False
+    assert SS.proposes_apartment([]) is False
+    # 전수 — 제1종에서 검출기가 세는 수가 실제 아파트 제안 수와 같아야 한다.
     D = DevelopmentScenarioSimulator
     schemes = sorted(_add_scheme_names())
-    assert len(schemes) >= 20, f"모집단이 {len(schemes)}종 — 수집기 사망"
-
-    unmarked = [
-        s for s in schemes
-        if any("아파트" in t for t in D._buildable_types("제1종일반주거지역", s))
-        and SS.APARTMENT_PROHIBITED_MARK not in D._buildable_types("제1종일반주거지역", s)
-    ]
-    assert not unmarked, (
-        f"제1종일반주거에서 **제약 고지 없이** 아파트를 제안하는 방식 {len(unmarked)}/{len(schemes)}: "
-        f"{unmarked} — [별표 4] 1호 나목은 *공동주택(아파트를 제외한다)*"
+    flagged = [x for x in schemes if SS.proposes_apartment(D._buildable_types("제1종일반주거지역", x))]
+    naive = [x for x in schemes
+             if any("아파트" in t for t in D._buildable_types("제1종일반주거지역", x))]
+    assert len(flagged) < len(naive), (
+        f"부정 라벨 배제가 아무것도 걸러내지 못했다(검출기={len(flagged)} 순진={len(naive)})"
     )
 
 
@@ -625,35 +693,68 @@ def test_station_is_not_an_eligibility_axis_for_combined_building():
     assert com["est_far"] is not None, "상업지역(1호)은 측정된 적격 축이어야 한다"
 
 
-def test_combined_building_100m_axis_is_actually_judged():
-    """★J-5 — 법정 축(100m)이 **판정에 들어간다**. 세 모집단이 갈려야 한다."""
+def test_distance_is_not_used_as_a_verdict():
+    """★축이 틀렸으므로 **거리로 판정하지 않는다**(시행령 §111 원문 확인 2026-09-02).
+
+    종전 이 자리의 락은 `assert far["applicable"] == "불가"`(450m) 였다 —
+    **결함을 계약으로 못 박은 것**이다. 실제 법:
+
+    · 건축법 §77의15① 의 「100미터」는 **외곽 한계**이고, 조작적 기준은 시행령 **§111①**:
+      ①동일 지역 + ②**너비 12m 이상 도로로 둘러싸인 하나의 구역** 안. **거리 요건이 아니다.**
+    · **3개 이상 대지는 §111③ 이 「500미터」** 다 — 100m 를 적용하면 **거짓 「불가」**가 난다.
+
+    현 분석은 두 축(12m 도로 구역 · 대지 수별 상한) 어느 것도 측정하지 못하므로,
+    **거리로 「불가」를 만들지 않는다.**
+    """
     sim = DevelopmentScenarioSimulator()
-    near = _map(sim._scenarios(_ctx(integration_ok=False, zone="일반상업지역",
-                                     max_pair_m=30.0)))["결합건축"]
-    far = _map(sim._scenarios(_ctx(integration_ok=False, zone="일반상업지역",
-                                    max_pair_m=450.0)))["결합건축"]
-    unknown = _map(sim._scenarios(_ctx(integration_ok=False, zone="일반상업지역",
-                                        max_pair_m=None)))["결합건축"]
-    assert near["applicable"] == "조건부", f"30m 는 요건 충족 — {near['applicable']}"
-    assert far["applicable"] == "불가", f"450m 는 100m 초과라 법정 미달 — {far['applicable']}"
-    assert "450" in (far["notes"] or ""), f"실측값이 사유에 없다: {far['notes']!r}"
-    # ★미측정을 「불가」로 만들지 않는다 — 양방향으로 건다.
-    assert unknown["applicable"] == "조건부", (
-        f"형상 미확보(미측정)를 불가로 만들면 안 된다 — {unknown['applicable']}"
+    verdicts = {
+        m: _map(sim._scenarios(_ctx(integration_ok=False, zone="일반상업지역",
+                                     max_pair_m=m)))["결합건축"]["applicable"]
+        for m in (5.0, 30.0, 450.0, 5000.0, None)
+    }
+    assert len(set(verdicts.values())) == 1, (
+        f"거리가 판정을 가르고 있다 — {verdicts}. 시행령 §111 의 축은 거리가 아니다"
     )
+    assert set(verdicts.values()) == {"조건부"}, f"판정은 조건부여야 한다 — {verdicts}"
 
 
-def test_distance_verdict_is_tri_state():
-    """순수함수 — 충족/미달/미측정 **세 상태**가 구별된다."""
-    assert SS.combined_building_distance_verdict({"max_pair_distance_m_min": 30.0}) == (True, 30.0)
-    assert SS.combined_building_distance_verdict({"max_pair_distance_m_min": 450.0}) == (False, 450.0)
-    assert SS.combined_building_distance_verdict({}) == (None, None)
-    assert SS.combined_building_distance_verdict(None) == (None, None)
-    # ★상수를 리터럴로 못 박는다(자기 상수를 단언하는 락 금지)
+def test_real_decree_axes_are_disclosed_not_invented():
+    """측정 못 하는 축은 **요건으로 고지**한다 — 지어내지도, 침묵하지도 않는다."""
+    s = _map(DevelopmentScenarioSimulator()._scenarios(
+        _ctx(integration_ok=False, zone="일반상업지역")))["결합건축"]
+    blob = " ".join(s["requirements"] or [])
+    assert "12m" in blob or "12미터" in blob, f"§111① 의 12m 도로 구역 축이 없다: {blob!r}"
+    assert "500" in blob, f"§111③ 의 3개 이상 500m 축이 없다: {blob!r}"
+    assert "§111" in blob, f"시행령 근거가 없다: {blob!r}"
+    # ★거리로 판정한다는 주장이 표면에 남으면 안 된다(종전 문구 회귀 방지)
+    assert "100m 이내" not in blob, f"틀린 축(100m 판정)이 요건에 남았다: {blob!r}"
+
+
+def test_distance_helper_exists_but_is_not_wired():
+    """`combined_building_distance_verdict` 는 **판정에서 뺐다** — 죽은 채로 두되 사실을 잠근다.
+
+    ★§36 「죽은 면제도 실패시켜라」의 형태: 값·헬퍼를 남기면서 **왜 안 쓰는지**를 코드에 적었고,
+    여기서는 **실제로 안 쓰이는지**를 확인한다. 되살리려면 12m 도로 구역·대지 수별 상한을
+    먼저 측정할 수 있어야 한다.
+    """
     assert SS.COMBINED_BUILDING_MAX_DISTANCE_M == 100.0
-    # 경계 — 정확히 100m 는 "이내"라 충족
-    assert SS.combined_building_distance_verdict({"max_pair_distance_m_min": 100.0})[0] is True
-    assert SS.combined_building_distance_verdict({"max_pair_distance_m_min": 100.1})[0] is False
+    assert SS.COMBINED_BUILDING_MAX_DISTANCE_M_3PLUS == 500.0
+    # 순수함수 자체는 정상 동작(향후 배선용)
+    assert SS.combined_building_distance_verdict({"max_pair_distance_m_min": 30.0}) == (True, 30.0)
+    assert SS.combined_building_distance_verdict({}) == (None, None)
+    # ★그러나 시나리오 판정 경로에서는 호출되지 않는다(AST)
+    called_in = set()
+    tree = ast.parse(_SRC)
+    for fn in ast.walk(tree):
+        if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for n in ast.walk(fn):
+                if (isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                        and n.func.id == "combined_building_distance_verdict"):
+                    called_in.add(fn.name)
+    assert not called_in, (
+        f"거리 판정이 다시 배선됐다: {sorted(called_in)} — 12m 도로 구역(§111①)과 "
+        "대지 수별 상한(§111③ 500m)을 측정할 수 있게 된 뒤에만 되살려라"
+    )
 
 
 def test_measured_zone_predicate_has_no_duplicate():
@@ -717,3 +818,51 @@ def test_small_site_asymmetry_is_declared_not_accidental():
     assert single["지구단위계획 연계"]["applicable"] == "불가", "단일 소규모 규모 하한은 유지"
     assert multi_np["지구단위계획 연계"]["applicable"] == "조건부", "다필지는 규모 하한을 안 탄다"
     assert single["단순 건축"]["applicable"] == "가능"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 10) ★M-1 — 게이트 멤버십을 **행동**으로 잠근다(분류만으로 통과하지 않게)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_gate_membership_is_locked_by_behavior_not_by_classification():
+    """★★파티션 단언만으로는 **이관 우회로**가 열린다.
+
+    적대 리뷰 실측: `도심복합개발사업` 을 게이트에서 지우고 `NON_GATED_WITH_REASON` 에
+    **상용구 사유**로 옮기면 44건 전부 초록이었다(2종을 옮겨도 초록).
+    파티션은 「겹침·누락·유령·크기합」만 보고 **어느 쪽에 있느냐**는 안 봤다.
+
+    실전 위험이 정확히 이것이다 — 다음 사람이 빨간 테스트를
+    **`NON_GATED_WITH_REASON` 에 「★부채」로 옮겨서 고친다.** 테스트가 그 행동을 보상한다.
+
+    → **행동으로** 판정한다: 게이트 원소는 비인접에서 **사유가 달라지고**,
+      비게이트 원소는 두 실행이 **동일**해야 한다. 이관하면 반대편에서 빨개진다.
+    """
+    ok, bad = _adjacency_pair(area_sqm=12000.0)
+    gate = set().union(*_gate_set_literals().values())
+    declared_out = set(NON_GATED_WITH_REASON)
+
+    def _touched(k: str) -> bool:
+        """비인접 실행에서 판정 또는 사유가 달라졌는가."""
+        a, b = ok.get(k), bad.get(k)
+        if a is None or b is None:
+            return False
+        return (a["applicable"] != b["applicable"]
+                or (a["notes"] or "") != (b["notes"] or "")
+                or (a["cons"] or []) != (b["cons"] or []))
+
+    # ① 게이트 원소 중 **인접 시 추진 가능**한 것은 반드시 영향을 받아야 한다.
+    eligible_gate = [k for k in gate if k in ok and ok[k]["applicable"] != "불가"]
+    assert len(eligible_gate) >= 3, f"판정 대상이 너무 적다 — {eligible_gate}"
+    inert = [k for k in eligible_gate if not _touched(k)]
+    assert not inert, (
+        f"게이트에 있는데 인접성이 **아무것도 바꾸지 않는** 방식: {inert} — "
+        "선언만 되고 발화하지 않으면 게이트에 있을 이유가 없다"
+    )
+
+    # ② ★반대 방향 — 비게이트 원소는 인접성으로 **한 글자도** 달라지면 안 된다.
+    #    이관 우회로가 여기서 죽는다: 게이트에서 빼서 옮기면 이 단언이 빨개진다.
+    leaked = [k for k in declared_out if _touched(k)]
+    assert not leaked, (
+        f"비게이트로 선언해 놓고 인접성이 판정/사유를 바꾸는 방식: {leaked} — "
+        "게이트에서 지우고 표로 옮기는 것만으로는 계약이 성립하지 않는다"
+    )

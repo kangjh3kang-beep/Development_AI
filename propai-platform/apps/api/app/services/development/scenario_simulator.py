@@ -248,7 +248,26 @@ ZONE_BASIS_NONE = "none"
 #: 현 용도지역만으로는 **아파트를 지을 수 없는** 용도지역(국토계획법 시행령 009419 §71).
 #  · 제1종일반주거 → [별표 4] 1호 나목 *"공동주택(**아파트를 제외한다**)"* · 4층 이하
 #  · 전용주거(1·2종) → [별표 2]·[별표 3] — 단독·저층 공동주택 중심
-APARTMENT_PROHIBITED_MARK = "★현 용도지역은 아파트 불허 — 용도지역 변경(종상향) 전제"
+#: `buildable_types` 안에 넣지 않는다 — 프론트가 그 리스트의 **모든 원소를 「건축 가능」 칩**으로
+#  같은 악센트 색에 그린다(`DevelopmentScenarioCard.tsx`). 경고를 상품명 자리에 넣으면
+#  **서로 모순되는 두 칩이 나란히** 서고, 그건 결함을 고친 것이 아니라 **문구로 덮은 것**이다.
+#  → 전용 필드 `zone_use_constraint` 로 내보내고, 소비되기 전까지는 `cons`(부정 목록)에도 싣는다.
+APARTMENT_PROHIBITED_MARK = "현 용도지역은 아파트 불허 — 용도지역 변경(종상향) 등 별도 절차 전제"
+#: 아파트가 **불허**임을 말하는 부정 라벨(검출기가 자기 라벨을 「아파트 제안」으로 세면 위양성).
+_APARTMENT_NEGATIVE_MARKERS = ("아파트 불가", "아파트 불허")
+
+
+def proposes_apartment(items: list[str]) -> bool:
+    """목록이 **아파트를 제안**하는가 — ★부정 라벨은 제외한다.
+
+    적대 리뷰 실측: `any("아파트" in t …)` 가 **자기가 심은** `"(4층 이하 — 아파트 불가)"` 에 걸려
+    21종 중 **9종이 위양성**이었다(CLAUDE.md §검증 규율 8 — *"주석에 예시를 적으면 그 예시가
+    다음 검사의 위양성이 된다"* 와 같은 형태).
+    """
+    return any(
+        "아파트" in t and not any(m in t for m in _APARTMENT_NEGATIVE_MARKERS)
+        for t in (items or [])
+    )
 
 
 def zone_prohibits_apartment(zone: str | None) -> bool:
@@ -263,8 +282,16 @@ def zone_prohibits_apartment(zone: str | None) -> bool:
 #  평면 도(degree) 거리를 미터로 옮길 때 **작은 쪽**을 쓴다 — 과잉차단(있지도 않은 법정 위반을
 #  신고하는 것)을 피하기 위한 보수적 방향이다. 즉 이 값이 100m 를 넘으면 **어느 방위든** 넘는다.
 DEG_TO_M_MIN = 88_800.0
-#: 건축법 §77의15① — *"대지간의 최단거리가 100미터 이내"*.
+#: ★**판정에 쓰지 않는다** — 축이 틀렸기 때문이다. 원문 확인(2026-09-02):
+#  · 건축법 §77의15① 의 「100미터」는 **외곽 한계**이고, 조작적 기준은 시행령 **§111①** 이
+#    정한다 — ①동일 지역 + ②**너비 12m 이상 도로로 둘러싸인 하나의 구역** 안.
+#    **거리 요건이 아니다**(가로구역과 같은 형태). 현 분석은 그 축을 측정하지 못한다.
+#  · **3개 이상 대지는 §111③ 이 「500미터」** 다 — 100m 를 적용하면 **거짓 「불가」**가 난다.
+#  → 값은 남기되(요건 문구·향후 구현의 기준점) **판정에서는 뺐다.** 되살리려면 위 두 축을
+#    먼저 측정할 수 있어야 한다.
 COMBINED_BUILDING_MAX_DISTANCE_M = 100.0
+#: 시행령 §111③ — 3개 이상 대지의 최단거리 상한.
+COMBINED_BUILDING_MAX_DISTANCE_M_3PLUS = 500.0
 
 
 def combined_building_distance_verdict(adjacency: dict[str, Any] | None) -> tuple[bool | None, float | None]:
@@ -1626,22 +1653,19 @@ class DevelopmentScenarioSimulator:
         #     이것을 적격으로 쓰면 서울 다필지 대부분에 `est_far = far×1.2` 가 붙고,
         #     그 값은 화면 표시이자 **추천 정렬 키**다. → **1호(상업지역)만 측정된 축**으로 두고
         #     2·3·4호는 **미측정**으로 분류한다(모름이 유효값을 입지 않게).
-        _dist_ok, _dist_m = combined_building_distance_verdict(c.get("adjacency"))
         _combined_eligible = com
-        if multi and _dist_ok is False:
-            # ★법정 요건 **명시 미달** — 대상지역과 무관하게 불가(§77의15① 100m).
-            add("결합건축", "불가", None, None,
-                [f"대지간 최단거리 {COMBINED_BUILDING_MAX_DISTANCE_M:.0f}m 이내(건축법 §77의15①)"],
-                [], [f"대지 간 최단거리 약 {_dist_m:,.0f}m — 100m 초과"],
-                f"결합건축은 대지간 최단거리 100m 이내여야 합니다(건축법 §77의15①) — 실측 약 {_dist_m:,.0f}m")
-        elif multi and _combined_eligible:
+        if multi and _combined_eligible:
             add("결합건축", "조건부", (far or 0) * 1.2, 0,
-                ["2개 이상 대지 · 대지간 최단거리 100m 이내(건축법 §77의15①)",
-                 "대상지역: 상업지역·역세권개발구역·주거환경개선 정비구역 등(§77의15① 각 호)",
+                ["대상지역: 상업지역·역세권개발구역·주거환경개선 정비구역 등(건축법 §77의15① 각 호)",
+                 "★**2개 대지**: 동일 지역 + **너비 12m 이상 도로로 둘러싸인 하나의 구역** 안"
+                 "(건축법 시행령 §111①) — 현 분석은 이 축을 **측정하지 못했습니다**",
+                 "★**3개 이상 대지**: 같은 지역 + **모든 대지 간 최단거리 500m 이내**"
+                 "(같은 영 §111③) — 100m 가 아닙니다",
                  "용적률 결합·이전 협정·등기"],
                 ["떨어진 대지 간 용적 이전으로 한쪽 고밀화", "역사·녹지 보전과 병행"],
                 ["대상지역 해당 여부는 관할 확인 필요", "대지 간 협정·등기 필요"],
-                "대지 간 용적률 결합·이전(건축법 §77의15) — ★인접이 아니라 **100m 이내 이격**이 전제")
+                "대지 간 용적률 결합·이전(건축법 §77의15) — ★인접이 아니라 **이격**이 전제입니다. "
+                "대상지 요건(2개=12m 도로 구역 / 3개 이상=500m)은 관할 확인이 필요합니다")
         elif multi:
             add("결합건축", "조건부", None, None,
                 ["대상지역 해당 필요 — 상업지역·역세권개발구역·주거환경개선 정비구역 등(§77의15① 각 호)"],
@@ -1693,8 +1717,28 @@ class DevelopmentScenarioSimulator:
 
         # 각 방식에 건축 가능 분류(아파트/호텔/상가/지산/빌라/콘도/전원주택 등) 부착.
         _zone = c.get("primary_zone")
+        # ★M-5 — **우세 용도지역만 보면 혼재 부지에서 제약이 꺼진다.**
+        #   사용자가 신고한 부지가 정확히 `zones=[제1종, 제2종]` 이었고, 제2종이 면적으로
+        #   우세하면 `primary_zone=제2종` 이라 제1종 부분의 아파트 불허가 **사라진다.**
+        #   RC-2(면적가중)를 고치자 RC-3(제1종 분리)의 발화 조건이 지워진 것 — 둘이 서로를
+        #   가린다고 적어 놓고 **같이 고쳤더니 한쪽이 다른 쪽을 껐다.**
+        #   → 제약은 **부지에 존재하는 모든 용도지역**으로 판정한다(한 필지라도 불허면 고지).
+        _zones_all = [z for z in (c.get("zones") or []) if z] or ([_zone] if _zone else [])
+        _restricted_zones = [z for z in _zones_all if zone_prohibits_apartment(z)]
         for _s in S:
             _s["buildable_types"] = self._buildable_types(_zone, _s.get("scheme", ""))
+            # ★M-4 — 경고를 `buildable_types`(프론트가 「건축 가능」 칩으로 그린다)에 섞지 않고
+            #   **전용 필드 + `cons`**(부정 목록)로 낸다.
+            if _restricted_zones and proposes_apartment(_s["buildable_types"]):
+                _zlist = ", ".join(dict.fromkeys(_restricted_zones))
+                _msg = f"{_zlist}: {APARTMENT_PROHIBITED_MARK}"
+                _s["zone_use_constraint"] = {
+                    "zones": list(dict.fromkeys(_restricted_zones)),
+                    "prohibited": ["아파트"],
+                    "message": _msg,
+                    "legal_ref": "국토계획법 시행령 §71①3호 [별표 4] 1호 나목 — 공동주택(아파트를 제외한다)",
+                }
+                _s["cons"] = [*(_s.get("cons") or []), _msg]
             # 시나리오↔규범 일치(가산) — 각 사업방식의 근거법령 verified 딥링크 부착(소비처 옵셔널).
             _s["legal_refs"] = _scheme_legal_refs(_s.get("scheme", ""))
 
@@ -1738,8 +1782,8 @@ class DevelopmentScenarioSimulator:
         z = zone or ""
 
         def _annotate(items: list[str]) -> list[str]:
-            if zone_prohibits_apartment(z) and any("아파트" in t for t in items):
-                return [*items, APARTMENT_PROHIBITED_MARK]
+            # ★경고는 여기 넣지 않는다(M-4) — `zone_use_constraint` 전용 필드로 나간다.
+            #   여기서는 제1종의 층수 제약만 목록에 남긴다(그 자체가 건축 형태 정보다).
             return items
 
         # 1) 용도지역 기준 기본 건축 가능 분류.
