@@ -560,3 +560,48 @@ async def test_screen_either_shows_everything_or_says_how_many_it_hid() -> None:
     assert live_cap >= n or f"외 {n - live_cap}종" in _render_like_dashboard(stored), (
         f"★라이브 상한 {live_cap} 에서 {n - live_cap}개가 조용히 잘린다"
     )
+
+
+def test_the_axis_this_file_does_not_lock_is_locked_by_the_front_test() -> None:
+    """★★**이 파일이 안 잡는 축**을 명시하고, **그 축을 잡는 락이 실재함**을 확인한다.
+
+    ## 이 파일이 **안 잡는 것**
+
+    위 `_render_like_dashboard` 는 화면을 **파이썬으로 흉내 낸 사본**이다. 그래서
+    `외 N종` 접미를 **스스로 만들어 붙인다** — 즉 **TSX 에서 그 접미를 지워도 이 파일은
+    모른다.** 복제본 락의 남은 구멍이고, 여기서 잡을 수 없다.
+
+    ## 그 축은 **프론트 락**이 잡는다 (동료 세션 development-ai-62 가 실측)
+
+        외 N종 접미 제거(TSX)            → CAUGHT
+        rest 를 0 으로 고정(같은 축 다른 형태) → CAUGHT
+
+    ★**같은 축을 두 형태로** 넣은 것이 중요하다 — 하나만 넣으면 *"그 한 형태만 잡는 락"*
+      일 수 있다(문구를 지우는 것과 계산을 죽이는 것은 다르다).
+
+    ## ★왜 주석이 아니라 **테스트**인가
+
+    *"프론트 락이 잡는다"* 를 **주석으로만** 적으면 **그 파일이 사라져도 조용하다**
+    (동료 지적). 이 저장소 원장이 말하는 **산문 77%** 가 정확히 그 형태다 —
+    원칙은 적혀 있는데 **강제하는 것이 없다.**
+    → 그래서 **파일과 그 안의 테스트 이름까지** 여기서 확인한다.
+      프론트 락이 지워지거나 이름이 바뀌면 **이 파일이 빨개진다.**
+    """
+    front = (next(q for q in _SRC.parents if q.name == "apps")
+             / "web" / "components" / "settings" / "__tests__"
+             / "GrowthDashboard.flagValueTruncation.test.tsx")
+    assert front.is_file(), (
+        f"★내가 「저쪽이 잡는다」고 적은 락이 **사라졌다**: {front}\n"
+        "   그 축(절단을 말하는가)이 지금 **아무도 안 잡는다** — 여기서 잡거나, 그쪽을 되살려라."
+    )
+    src = front.read_text(encoding="utf-8")
+
+    # ★대조군 먼저 — 조회기가 살아 있나(빈 파일이면 아래가 공허하다)
+    assert "summarizeParams" in src or "flag" in src.lower(), "★프론트 락이 비었다(위반 아님)"
+
+    # 그 파일 안에서 **이 축을 잡는 테스트**가 실재하는가
+    for marker in ("상한 초과", "음성 대조군"):
+        assert marker in src, (
+            f"★프론트 락에서 「{marker}」 축이 사라졌다 — "
+            "절단을 말하는지 확인하는 쪽이 없어졌다"
+        )
