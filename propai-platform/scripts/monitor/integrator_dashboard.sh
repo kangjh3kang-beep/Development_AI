@@ -20,15 +20,39 @@
 #   2 = **진짜 위반** — 낡은 생산자 재발 / 정지한 옛 스택 부활
 #   3 = **검사기 사망** — 프로브 실패 또는 대조군 파괴. ★0 과 절대 뭉치지 않는다.
 #       (3 을 0 으로 읽으면 "안 재 봤다"가 "깨끗하다"가 된다)
+#   4 = **관측 이상** — 위반은 아니나 **「이상 없음」도 아니다**. 판정은 사람이 한다.
+#       ★왜 4 가 따로 있나(2026-08-28 · 독립 리뷰가 짚었다):
+#         이 파일이 ⑤에서 *"사망과 청결을 뭉치면 죽은 검사기가 초록으로 읽힌다"* 고 적어 놓고
+#         **관측된 버스트는 0 에 뭉쳐 두고 있었다** — 처방을 적용한 범위가 결함이 사는 범위보다
+#         좁았다(§D-20). 92,238ms 짜리 동시다발 버스트가 도는 중에도 `exit 0` 이었다.
+#         ★가설이 아니다: 이 계기판을 읽는 **통합자 세션이 실제로 `EXIT=0` 을 35회
+#           완료신호로 인용했다**(전사 실측). 사람이 소비자였고, 그 사람이 오독했다.
+#       ★그런데 `2` 로 올리지는 않는다 — 원인이 외부(DB·풀러)라 상시 빨개지면 그 신호는
+#         무시되고(#868 이 값을 치렀다) 그때 **진짜 위반이 묻힌다.** `4` 는 `2` 의 희소성을
+#         보존하면서 「이상 없음이 아님」을 기계에도 전한다.
+#       ★굳지 않는다는 근거(리뷰 실측 · 48h 를 6h 슬라이스 8개로): 동시다발이 있는 창 6/8.
+#         최근 12시간은 조용했다 — 즉 `4` 는 **켜진 채 굳지 않는다**(항상 4면 3과 같은 문제다).
 #
 # 사용: bash propai-platform/scripts/monitor/integrator_dashboard.sh
 # 각 항목에 대조군을 붙인다(0/없음이 "조회 결과"인지 "부재"인지 가르기 위해).
+# ── 판정(★락이 이 함수를 **네 모집단**으로 태운다) ──
+#   함수로 꺼낸 이유: 종료코드 결정이 스크립트 끝에 인라인으로 있으면 그것을 태우려면
+#   DB·SSH·네트워크가 전부 살아 있어야 한다 → 실제로는 **아무도 안 태운다.**
+verdict_exit() {
+  if [ "${DEAD:-0}" -eq 1 ]; then echo "판정: ★검사기 사망 — 결과를 신뢰하지 마라 (exit 3)"; exit 3; fi
+  if [ "${VIOL:-0}" -eq 1 ]; then echo "판정: ★★위반 발견 (exit 2)"; exit 2; fi
+  if [ "${OBS:-0}" -eq 1 ]; then echo "판정: ★관측 이상 — 위반은 아니나 **이상 없음도 아니다** (exit 4)"; exit 4; fi
+  echo "판정: 이상 없음 — 모든 프로브 생존 (exit 0)"; exit 0
+}
+if [ "${1:-}" = "--verdict-lib" ]; then return 0 2>/dev/null || exit 0; fi
+
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # ★cd 이전에 확정한다
 REPO="$(cd "$SELF_DIR/../../.." && pwd)"
 cd "$REPO" || { echo "★저장소 루트를 못 찾음: $REPO"; exit 1; }
 K="ssh -i $HOME/.oci.key -o StrictHostKeyChecking=no -o ConnectTimeout=15"
 DEAD=0   # 검사기 사망
 VIOL=0   # 진짜 위반
+OBS=0    # ★관측 이상(위반은 아니나 「이상 없음」도 아니다) — exit 4
 
 echo "════ 통합자 계기판  $(date '+%Y-%m-%d %H:%M:%S %Z')  (UTC $(date -u '+%H:%M')) ════"
 
@@ -160,6 +184,47 @@ else
     [ "${post:-0}" -gt 0 ] && { VIOL=1; echo "   ★★재발 — 낡은 생산자가 또 있다. 기각한 가설(워커 옛이미지·severity UPDATE·다른 INSERT 경로)은 재생성 말 것."; }
   fi
 fi
+echo "── ③-2 지연 버스트 (★사후 판정 — /health 는 그 순간만 말한다)"
+# ★왜 이 절이 있나: 2026-08-27 하루에 ~10분짜리 지연 버스트가 **최소 5회** 났고
+#   **두 세션이 라이브로 못 봤다.** 가장 심한 것(parcel-boundaries **69,503ms** @07:05Z)은
+#   아무도 안 보고 지나갔다 — 우연히 로그인을 시도한 시각에만 알아챘기 때문이다.
+#   `/health` 폴링은 구조적으로 못 잡는다(그 순간만 말한다). `platform_events` 는
+#   **지나간 버스트를 되짚을 수 있다.**
+# ★판정은 개수가 아니라 **동시성**이다 — 여러 라우트가 같은 5분에 걸리면 공통 경로(DB) 의심.
+BPROBE="$SELF_DIR/latency_burst_probe.py"
+[ -f "$BPROBE" ] || { echo "   ★프로브 파일 없음: $BPROBE"; DEAD=1; }
+if ! scp -i "$HOME/.oci.key" -o StrictHostKeyChecking=no -o ConnectTimeout=15 "$BPROBE" ubuntu@168.110.125.89:/tmp/burst_probe.py >/dev/null 2>&1; then
+     echo "   ★프로브 전송 실패 — 아래 숫자는 **컨테이너에 남은 옛 사본**의 결과일 수 있다."
+     DEAD=1
+   fi
+B=$($K ubuntu@168.110.125.89 "$ACTIVE_SNIPPET"'; docker cp /tmp/burst_probe.py $C:/tmp/ >/dev/null 2>&1 && docker exec $C python /tmp/burst_probe.py' 2>&1 | grep -m1 '^PROBE ')
+if [ -z "$B" ]; then
+  echo "   ★프로브 실패 — 이 절은 '버스트 없음'이 **아니다**. 컨테이너 교체/DB/구문을 확인하라."
+  DEAD=1
+else
+  SCAN=$(echo "$B" | grep -oE 'scanned_buckets=[0-9]+' | cut -d= -f2)
+  NB2=$(echo  "$B" | grep -oE 'burst_buckets=[0-9]+'   | cut -d= -f2)
+  MR=$(echo   "$B" | grep -oE 'multi_route=[0-9]+'     | cut -d= -f2)
+  WORST=$(echo "$B" | grep -oE 'worst_p95_ms=[0-9]+'   | cut -d= -f2)
+  TOP=$(echo  "$B" | sed -n 's/.*top=//p')
+  if [ "${SCAN:-0}" -eq 0 ]; then
+    # ★대조군 — 스캔한 버킷이 0이면 「버스트 0」은 청결이 아니라 **조회 실패**다
+    echo "   ★대조군 0 — 스캔한 버킷이 없다. 수집이 멈췄거나 컬럼이 바뀌었다(버스트 0 을 청결로 읽지 마라)."
+    DEAD=1
+  else
+    echo "   최근 6시간: 스캔 ${SCAN}버킷 · 버스트 ${NB2} · **동시다발 ${MR}** · 최대 ${WORST}ms"
+    [ "$TOP" != "none" ] && echo "   동시다발 버킷: $TOP"
+    # ★여기서 exit 2 를 내지 **않는다.** 원인이 외부(DB·풀러)라 상시 빨개지면
+    #   그 신호는 곧 무시되고(#868 이 배운 것), 그때 진짜 위반이 묻힌다.
+    #   버스트는 **관측**으로 싣고, 판정은 사람이 한다.
+    if [ "${MR:-0}" -gt 0 ]; then
+      OBS=1
+      echo "   ⚠ 동시다발 버스트는 **공통 경로(DB·풀러) 의심**이다 — 라우트별 문제가 아니다."
+      echo "     (exit 2 가 아니라 **exit 4(관측 이상)** 이다 — 외부 원인이라 2 로 올리면 상시 빨강이 된다)"
+    fi
+  fi
+fi
+
 echo "── ④ 정지시킨 옛 스택 (부활 감시 · compose 에 아직 정의돼 있음)"
 OLD=$($K ubuntu@158.179.174.207 'docker inspect -f "{{.State.Status}} restart={{.HostConfig.RestartPolicy.Name}}" propai-platform_api_1 2>/dev/null || echo "absent"' 2>&1)
 echo "   propai-platform_api_1 = $OLD"
@@ -231,8 +296,5 @@ else
 fi
 echo "════ 끝 ════"
 
-# ── 종료코드 (★사망과 청결을 뭉치지 않는다) ──
-if [ "$DEAD" -eq 1 ]; then echo "판정: ★검사기 사망 — 결과를 신뢰하지 마라 (exit 3)"; exit 3; fi
-if [ "$VIOL" -eq 1 ]; then echo "판정: ★★위반 발견 (exit 2)"; exit 2; fi
-echo "판정: 이상 없음 — 모든 프로브 생존 (exit 0)"
-exit 0
+# ── 종료코드 (★사망·위반·관측이상·청결을 뭉치지 않는다) ──
+verdict_exit

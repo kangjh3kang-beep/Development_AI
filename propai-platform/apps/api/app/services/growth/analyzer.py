@@ -29,10 +29,16 @@ import json
 import logging
 import os
 import re
+import statistics
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from app.utils.withheld import INSUFFICIENT_COVERAGE, withheld
+from app.utils.withheld import (
+    ABSENT_REASONS,
+    INSUFFICIENT_COVERAGE,
+    is_withheld,
+    withheld,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +75,78 @@ CONTAM_MULTI_REGION_INFO_COUNT = 3
 LATENCY_REGRESSION_FACTOR = 1.5
 LATENCY_MIN_SAMPLES = 20
 LATENCY_BASELINE_DAYS = 7
+
+#: ★**절대편차 임계(ms)** — `p95` 가 그 route 의 **평소값 + 이 값**을 넘으면 발화.
+#:
+#: ## 왜 비율(1.5배)만으로는 부족한가 (라이브 7일 전수 · 2026-08-27)
+#:
+#: 같은 지연 풀에서 `n=20` 을 **두 번 뽑아** 비교하면(= **회귀가 전혀 없는** 상태)
+#: 그것만으로 발화합니다:
+#:
+#:     p95 **23.0%**   p75 14.9%   p50 14.7%
+#:
+#: ★백분위를 낮추는 것으로는 안 됩니다 — `tiles/vworld` 계열은 **어느 백분위에서도
+#:   20%대**입니다. 분포 자체의 분산이라 통계량 선택이 듣지 않습니다.
+#:   (`_percentile` 은 nearest-rank 라 `n=20` 의 p95 는 사실상 20개 중 19번째 = 최대값 근처)
+#:
+#: ## 왜 **단순** 절대임계도 아닌가
+#:
+#: 고정 10초로 걸면 발화 29건 중 **69%(20건)가 상시 느린 4개 route** 입니다
+#: (`/api/v1/zoning/parcel-boundaries` 는 판정 16회 중 **14회 = 88%** 발화). 경보 피로입니다.
+#:
+#: ## ★쓰는 형태 — **그 route 자신의 평소값 대비** 편차
+#:
+#: `p95 > (그 route 의 7일 p95 중앙값) + LATENCY_ABSOLUTE_DEVIATION_MS`
+#:
+#:     07:05Z 실장애 버스트 5개 route → **5/5 전부 포착**
+#:       parcel-boundaries 평소 23,524 → 66,230   (편차 42,706)
+#:       analysis-ledger   평소  3,045 → 13,763   (편차 10,718)
+#:       store/projects    평소  3,202 → 12,340   (편차  9,138)
+#:       auth/is-admin     평소  3,169 → 11,408   (편차  8,239)
+#:       auth/me           평소  3,210 → 11,309   (편차  8,099)
+#:     그 창에 **정상이던** `/api/v1/auth/login` → 편차 **0** · 미발화 ✓
+#:
+#:   ★★**2026-08-28 정정 — 위 두 문장이 틀렸다**(라이브 3,073행 trailing 재현).
+#:
+#:   ① 발화율 *"하루 2.1건"* 은 **거짓**이다. 코드는 **선행 이력만** 쓰는데(trailing)
+#:      그 값은 창 전체를 본(lookahead) 수였다. 실측 **10.86건/일(창 7일)**.
+#:      ★그리고 **창을 안 적으면 미완성 문장**이다 — 같은 데이터가
+#:      7일 10.86 / 14일 5.92 / 30일 2.80 / 73.6일 1.32 로 **8배** 벌어진다.
+#:
+#:   ② *"상시 느린 route 는 자동 배제된다"* 는 **거짓**이다. 이 축 단독 발화의
+#:      **68.4%가 상위 4 route** 로, 이 설계가 기각한 고정 10초(69%)와 **사실상 같다**.
+#:      배제는 일어나지 않는다.
+#:
+#:   ★★**그런데 임계는 바꾸지 않는다 — 「상위4 점유율」이 기준으로서 무효이기 때문이다.**
+#:      그 지표를 최적화해 보면 무슨 일이 나는지 실측했다:
+#:
+#:        · 임계 상향     +10초 → 83.3% · +30초 → **100.0%**  (더 나빠진다)
+#:        · MAD 스케일    max(5s, 4×MAD) → 56.4% 로 "개선"되지만
+#:          ★판정의 **94.0%가 5초 바닥**에 머물고, `/store/projects` 의 실효임계가
+#:            **165,792ms(166초)** 가 된다 — **가장 망가진 route 가 발화 불가**가 된다.
+#:            즉 지표 개선분이 **최악 route 에 눈을 감아** 얻은 것이다(굿하트).
+#:
+#:      → **점유율은 품질이 아니라 route 수의 파생물**이다. 실제 배포 형태(비율 OR 절대)의
+#:        점유율은 **34.0%** 이고, 이 축이 단독으로 나가는 일은 없다.
+#:
+#:   ★그래서 5,000ms 는 **발화율을 맞추려고 고른 수가 아니라** *"사용자가 체감하는
+#:     추가 지연"* 이라는 **제품 기준**으로 유지한다. 튜닝 대상이 아니다.
+#:     (양방향 경계는 `test_threshold_is_bounded_both_ways` 와
+#:      `test_typical_bias_is_locked_by_its_effect_not_its_name` 가 잠근다.)
+#:
+#: ★★**두 표본을 비교하지 않으므로 표본 잡음이 원리적으로 없습니다.** 평소값은 7일치
+#:   여러 시간창의 **중앙값**이라 `n=20` 한 표본의 요동에 흔들리지 않습니다.
+LATENCY_ABSOLUTE_DEVIATION_MS = 5000
+
+#: 평소값을 만들 때 볼 **이력 기간(일)**. ★`LATENCY_BASELINE_DAYS` 와 **의미가 다르다** —
+#  그쪽은 *"직전 baseline 을 어디까지 거슬러 찾나"*, 이쪽은 *"이 route 의 평소가 얼마인가"* 다.
+#  ★상수를 공유하면 baseline lookback 튜닝이 **평소값 창을 조용히 바꾼다**. 실측: 같은
+#  데이터가 창에 따라 7일 10.86 / 14일 5.92 / 30일 2.80 / 73.6일 1.32 건일 = **8배** 벌어진다.
+LATENCY_TYPICAL_WINDOW_DAYS = 7
+
+#: 평소값을 만들 때 필요한 **최소 관측 시간창 수**. ★한두 창으로 「평소」를 말하면
+#:  그 자체가 잡음이다 — 그때는 절대편차를 **판정하지 않는다**(비율만 남는다).
+LATENCY_TYPICAL_MIN_WINDOWS = 3
 
 # LLM narrative 비용가드: critical 인사이트 1배치당 최대 콜 수.
 _LLM_NARRATIVE_MAX_CALLS = 3
@@ -250,7 +328,7 @@ def note_coverage(
     # ★값 타입이 int 만이 아니다 — `judged_pct`(float|None) · `state`(str) 가 함께 들어간다.
     #   종전 `dict[str, int]` 는 거짓이었고 tsc 도 mypy 도 이 자리를 안 봤다.
     coverage: dict[str, dict[str, Any]] | None,
-    axis: str, *, judged: int, withheld: int, floor: int,
+    axis: str, *, judged: int, withheld_count: int, floor: int,
 ) -> None:
     """이번 분석에서 **몇 개를 판정했고 몇 개를 표본 부족으로 보류했는지** 적는다.
 
@@ -276,7 +354,7 @@ def note_coverage(
     """
     if coverage is None:
         return
-    total = judged + withheld
+    total = judged + withheld_count
     #: ★판정률의 정의 — **「모든 축이 무언가를 말한다」** 가 100% 다.
     #  `judged_pct` 는 *"임계로 분류할 수 있었던 비율"* 이라 **트래픽이 적으면 영원히 100%
     #  가 못 된다**. 트래픽이 적은 것은 결함이 아니다(라이브 실측: LLM 호출 자체가 적다).
@@ -285,7 +363,7 @@ def note_coverage(
     #: 판정률 — **임계로 분류한** 비율. `total==0`(축이 안 돎)이면 **`None`**:
     #  0.0 으로 두면 *"판정률 0%"* 가 되어 **축이 안 도는 것을 결함으로 오독**시킨다.
     judged_pct = round(100.0 * judged / total, 1) if total else None
-    #: 축이 아예 안 돈 것(`total==0`)과 표본이 부족한 것(`withheld>0`)은 **다른 사실**이다.
+    #: 축이 아예 안 돈 것(`total==0`)과 표본이 부족한 것(`withheld_count>0`)은 **다른 사실**이다.
     #  종전엔 둘 다 `judged=0` 이라 뭉개졌다. 이 세 값이 그 구분을 나른다.
     #
     #  ★**`coverage_pct` 는 넣지 않는다** — 독립 적대 리뷰(2026-08-27)가 반증했다.
@@ -294,9 +372,11 @@ def note_coverage(
     #    독립 정보량이 0이다. 계획서의 식 `(judged + withheld_reported)/total` 에서
     #    `withheld_reported`(보류의 인사이트 승격)가 **이 PR 에 없으므로** 그 식은 아직
     #    성립하지 않는다. **소비처 0인 상수를 싣지 않는다.**
-    state = "axis_idle" if total == 0 else ("judged" if withheld == 0 else "partial")
+    state = "axis_idle" if total == 0 else ("judged" if withheld_count == 0 else "partial")
     coverage[axis] = {
-        "judged": judged, "withheld": withheld,
+        # ★발행 키는 `withheld` 그대로다 — 이건 `metrics_json.analysis_coverage` 의
+        #   **계약**이라 개명하면 화면·API·기존 재고 행과 어긋난다. 파라미터만 바꿨다.
+        "judged": judged, "withheld": withheld_count,
         "total": total, "floor": floor,
         "judged_pct": judged_pct,
         "state": state,
@@ -399,6 +479,50 @@ def _classify_latency(p95: float, baseline_p95: float) -> str | None:
     if baseline_p95 <= 0:
         return None
     if p95 > baseline_p95 * LATENCY_REGRESSION_FACTOR:
+        return "warn"
+    return None
+
+
+def typical_p95(history: list[float]) -> float | None:
+    """그 route 의 **평소값** = 관측된 시간창 p95 들의 **중앙값**.
+
+    ★평균이 아니라 중앙값이다 — 장애 시간창(66,230ms 같은)이 평소값을 끌어올리면
+      **다음 장애를 놓친다**. 중앙값은 소수의 극단에 흔들리지 않는다.
+
+    ★창이 `LATENCY_TYPICAL_MIN_WINDOWS` 미만이면 `None`(판정 불가) — 한두 창으로
+      *"평소"* 를 말하면 그 자체가 잡음이고, 비율 방식과 같은 문제를 되풀이한다.
+    """
+    if len(history) < LATENCY_TYPICAL_MIN_WINDOWS:
+        return None
+    # ★`_percentile`(nearest-rank)을 쓰지 않는다 — 그것은 `int(round((n-1)/2))` 이고
+    #   파이썬 `round` 가 **은행가 반올림**이라 **짝수 n 에서 중앙이 상단/하단으로 번갈아 간다**:
+    #       n=4 [1000, 2000, 30000, 40000]            -> 30000  ← 장애값으로 점프
+    #       n=6 [1000,2000,3000, 30000,40000,50000]   ->  3000  ← 정상값
+    #   즉 **장애 창이 정확히 절반**일 때 창이 하나 더 쌓이면 탐지 상태가 뒤집힌다(비단조).
+    #   `statistics.median` 은 짝수 n 에서 두 중앙의 평균이라 그 뒤집힘이 없다.
+    return statistics.median(history)
+
+
+def classify_latency_absolute(p95: float, typical: float | None) -> str | None:
+    """★**절대편차** 판정 — 두 표본을 비교하지 않으므로 표본 잡음이 없다.
+
+    비율 방식(`_classify_latency`)을 **대체하지 않고 보완한다**:
+
+    · 비율   — 빠른 route 의 **비례적** 악화를 잡는다
+               (`/api/v1/ai/status` 는 평소 70ms → 3,282ms 로 **47배**인데
+                절대편차 3.2초는 임계 5초 미만이라 **여기서는 안 잡힌다**)
+    · 절대편차 — **잡음 없이** 절대적 악화를 잡는다(위 버스트 5/5)
+
+    둘 다 필요하다. `None` 이면 이 축에서는 발화하지 않는다는 뜻이지
+    *"정상이다"* 라는 뜻이 아니다.
+    """
+    # ★`typical < 0` 은 **현재 도달 불가**다(`p95_ms` 는 음수가 될 수 없고 중앙값도 그렇다).
+    #   그래도 남긴다 — 데이터 손상 시 **조용히 발화하는 것보다 조용히 침묵하는 편이 안전**하고,
+    #   침묵은 `typical_p95`/`typical_windows` 가 표면에 실려 사람이 볼 수 있다.
+    #   ★변이로 지워도 안 죽는 것이 정상이다(규율 §B-5 — 도달 불가 방어는 그 사실을 적는다).
+    if typical is None or typical < 0:
+        return None
+    if p95 > typical + LATENCY_ABSOLUTE_DEVIATION_MS:
         return "warn"
     return None
 
@@ -633,13 +757,13 @@ async def _analyze_fallback_rate(db, w0, w1, coverage: dict[str, dict[str, Any]]
         by_service.setdefault(svc, {})[str(reason)] = int(n or 0)
 
     out: list[dict[str, Any]] = []
-    judged = withheld = 0
+    judged = withheld_n = 0
     for r in rows:
         service, fb, calls = r[0], int(r[1] or 0), int(r[2] or 0)
         # ★판정 가능 여부를 **분류 결과가 아니라 표본으로** 센다 — `sev is None` 은
         #   "표본 부족"과 "표본 충분하고 정상"을 뭉갠다(둘 다 None 이다).
         if calls < FALLBACK_MIN_CALLS:
-            withheld += 1
+            withheld_n += 1
         else:
             judged += 1
         sev, pct = _classify_fallback(fb, calls)
@@ -660,7 +784,7 @@ async def _analyze_fallback_rate(db, w0, w1, coverage: dict[str, dict[str, Any]]
                 "reasons": reasons, "top_reason": top,
             },
         })
-    note_coverage(coverage, "fallback_rate", judged=judged, withheld=withheld,
+    note_coverage(coverage, "fallback_rate", judged=judged, withheld_count=withheld_n,
                   floor=FALLBACK_MIN_CALLS)
     return out
 
@@ -765,13 +889,13 @@ async def _analyze_quality_drop(db, w0, w1, coverage: dict[str, dict[str, Any]] 
         a["ftotal"] += int(r[2] or 0)
 
     out: list[dict[str, Any]] = []
-    judged = withheld = 0
+    judged = withheld_n = 0
     for service, a in agg.items():
         # ★`sev is None` 으로 세면 "표본 부족"과 "표본 충분·정상"이 뭉개진다.
         #   `_classify_quality` 와 **같은 판정식**을 쓴다(하나를 고치면 다른 하나가 어긋나는
         #   것을 막기 위해 두 값 모두 QUALITY_MIN_SAMPLES 에 결속한다).
         if a["vtotal"] < QUALITY_MIN_SAMPLES and a["ftotal"] < QUALITY_MIN_SAMPLES:
-            withheld += 1
+            withheld_n += 1
         else:
             judged += 1
         sev, metrics = _classify_quality(
@@ -790,7 +914,7 @@ async def _analyze_quality_drop(db, w0, w1, coverage: dict[str, dict[str, Any]] 
                 "feedback_total": a["ftotal"], "down": a["down"], **metrics,
             },
         })
-    note_coverage(coverage, "quality_drop", judged=judged, withheld=withheld,
+    note_coverage(coverage, "quality_drop", judged=judged, withheld_count=withheld_n,
                   floor=QUALITY_MIN_SAMPLES)
     return out
 
@@ -886,23 +1010,56 @@ async def _analyze_latency_regression(db, w0, w1, coverage: dict[str, dict[str, 
         "FROM platform_insights "
         "WHERE insight_type = ANY(:types) "
         "  AND created_at >= :since "
+        # ★형제 스윕 — 위 history 와 **같은 결함**이 여기에도 있었다(전역 전파방지).
+        "  AND (metrics_json->>'baseline_p95') ~ '^-?[0-9]+(\\.[0-9]+)?$' "
         "ORDER BY metrics_json->>'key', created_at DESC"
     ), {"since": w1 - timedelta(days=LATENCY_BASELINE_DAYS),
         "types": list(LATENCY_BASELINE_SOURCE_TYPES)})).fetchall()
     baselines = {r[0]: float(r[1] or 0.0) for r in base_rows}
 
+    # ★**평소값** — 그 route 가 지금까지 낸 `p95_ms` 이력의 중앙값(절대편차 판정용).
+    #   ★baseline 조회와 **다른 질문**이다: baseline 은 *"직전 배치가 얼마였나"*,
+    #     평소값은 *"이 route 는 평소 얼마인가"* 다. 그래서 `DISTINCT ON` 이 아니라
+    #     **전 이력**을 모은다.
+    #   ★**숫자꼴일 때만 캐스팅한다** — 같은 파일의 `_analyze_selection_contamination`
+    #     이 이미 명령한 규율이다. 그대로 `::float` 하면 숫자가 아닌 값 **한 행**에
+    #     `InvalidTextRepresentation` 이 나고, `analyze_window` 의 광역 except 가 그것을
+    #     삼켜 **그 윈도우의 인사이트가 전부 사라진다**(내 지표가 남의 지표를 죽인다).
+    #     7일 lookback 이라 오염행 하나가 **7일 내내 매 배치를 죽인다.**
+    #   ★**창에 상한도 건다**(`< :until`) — 백필·재실행 때 **미래 행이 평소값에 섞이면**
+    #     그것이 바로 lookahead 오염이다. 경계는 **양방향으로** 건다.
+    hist_rows = (await db.execute(text(
+        "SELECT metrics_json->>'key' AS k, (metrics_json->>'p95_ms')::float AS p "
+        "FROM platform_insights "
+        "WHERE insight_type = ANY(:types) "
+        "  AND created_at >= :since AND created_at < :until "
+        "  AND metrics_json->>'p95_ms' ~ '^-?[0-9]+(\\.[0-9]+)?$'"
+    ), {"since": w1 - timedelta(days=LATENCY_TYPICAL_WINDOW_DAYS), "until": w1,
+        "types": list(LATENCY_BASELINE_SOURCE_TYPES)})).fetchall()
+    history: dict[str, list[float]] = {}
+    for r in hist_rows:
+        if r[0] is not None and r[1] is not None:
+            history.setdefault(r[0], []).append(float(r[1]))
+
     out: list[dict[str, Any]] = []
-    judged = withheld = 0
+    judged = withheld_n = 0
     for key, vals in by_key.items():
         if len(vals) < LATENCY_MIN_SAMPLES:
             # ★행을 만들지 않는 것은 옳다(802개를 발행하면 소음이 는다). 다만
             #   **몇 개를 못 봤는지는 말해야** 한다 — 안 그러면 커버리지 3% 가 100% 로 읽힌다.
-            withheld += 1
+            withheld_n += 1
             continue
         judged += 1
         p95 = round(_percentile(vals, 95.0), 2)
         baseline_p95 = baselines.get(key, 0.0)
-        sev = _classify_latency(p95, baseline_p95)
+        ratio_sev = _classify_latency(p95, baseline_p95)
+        # ★절대편차 — 비율과 **독립**으로 판정한다(둘 다 필요 · 상수 주석 참조).
+        typical = typical_p95(history.get(key, []))
+        abs_sev = classify_latency_absolute(p95, typical)
+        # ★둘 중 **하나라도** 걸리면 회귀로 본다. 어느 축이 걸었는지는 아래 `triggers` 로
+        #   남긴다 — 안 남기면 사람이 *"왜 울렸는지"* 를 알 수 없다(진단 불가는 장애다).
+        sev = ratio_sev or abs_sev
+        triggers = [n for n, v in (("ratio", ratio_sev), ("absolute", abs_sev)) if v]
         # baseline 없으면(첫 관측) 정보성 baseline 적재만(트리거 없음).
         out.append({
             # ★회귀가 아니면 `latency_baseline` — 사람이 보는 인사이트 목록을 오염시키지 않는다.
@@ -916,9 +1073,18 @@ async def _analyze_latency_regression(db, w0, w1, coverage: dict[str, dict[str, 
                 # 다음 배치가 baseline 으로 참조(자가보정 기반): 이번 p95 를 저장.
                 "baseline_p95": p95,
                 "prev_baseline_p95": baseline_p95,
+                # ★어느 축이 울렸는가 — 빈 목록이면 발화 아님
+                "triggers": triggers,
+                # ★평소값을 **함께 싣는다**. 없으면 `None` — 「모름」을 수치로 위장하지 않는다
+                #   (이력이 LATENCY_TYPICAL_MIN_WINDOWS 미만이면 절대편차는 판정 불가)
+                "typical_p95": typical,
+                # ★이것은 **이력 행 수**다(고유 시간창 수가 아니다) — 재실행·백필로
+                #   같은 창이 두 번 들어가면 중복 계수된다. 키 이름은 계약이라 유지하되
+                #   **표시 문구는 「이력 N건」** 으로 적어 사람을 오도하지 않는다.
+                "typical_windows": len(history.get(key, [])),
             },
         })
-    note_coverage(coverage, "latency_regression", judged=judged, withheld=withheld,
+    note_coverage(coverage, "latency_regression", judged=judged, withheld_count=withheld_n,
                   floor=LATENCY_MIN_SAMPLES)
     return out
 
@@ -927,8 +1093,93 @@ async def _analyze_latency_regression(db, w0, w1, coverage: dict[str, dict[str, 
 # narrative (규칙 기본 + 선택적 LLM)
 # ════════════════════════════════════════════════════════════════════════════
 
+def _metric_text(m: dict[str, Any], field: str, *, unit: str = "%") -> str:
+    """지표 한 칸 — **보류된 값을 숫자 자리에 그대로 흘리지 않는다.**
+
+    ★`#861` 이 `down_pct` 를 거짓 `0.0` 대신 `None` + 사유로 바꿨는데, 사람이 읽는
+      이 층이 그 `None` 을 **f-string 에 그대로** 넣어 `feedback down None%` 를 출력했다.
+      값을 정직하게 만든 수정이 **마지막 한 층에서 거짓말로 되돌아간** 것이다.
+      (형제 정답 기준선: `tests/test_rfi_register.py` 의 `assert "None%" not in …`)
+    """
+    if is_withheld(m, field):
+        return "미측정"
+    v = m.get(field)
+    return "미상" if v is None else f"{v}{unit}"
+
+
+def _withheld_note(m: dict[str, Any]) -> str:
+    """보류된 지표들의 **사유를 문장 끝에 한 번** 싣는다(같은 사유는 합친다).
+
+    ★사유는 이미 만들어져 DB 에 저장까지 된다(`<field>_basis`). 그런데 화면이 읽는
+      유일한 층인 narrative 에 **한 번도 실리지 않았다** — 「사유를 버렸다」(유료·비가역
+      산출물 규율의 세 번째 얼굴)와 같은 형태다. 진단 불가는 그 자체로 장애다.
+    """
+    by_basis: dict[str, list[str]] = {}
+    for key in list(m):
+        # ★변이 감사 기록(2026-08-27): 이 줄을 무력화하는 변이는 **생존한다.
+        #   구멍이 아니라 이중 가드**다 — 접미 검사를 지워도 아래 `is_withheld` 가
+        #   막는다(`"down_pct"[:-7] == "d"` → `m["d_absent"]` 없음 → skip).
+        #   이 줄은 **성능·명확성**을 위한 1차 필터이고 정합성은 아래가 지킨다.
+        #   (점수를 위해 억지 락을 만들지 않는다 — 도구가 그렇게 지시한다.)
+        if not key.endswith("_absent") or not m.get(key):
+            continue
+        field = key[: -len("_absent")]
+        if not is_withheld(m, field):
+            continue
+        # ★`_basis`(사람이 읽는 문장)가 없으면 **코드값이 그대로** 독자에게 갔다 —
+        #   예: "※ down_pct insufficient_coverage". 같은 파일이 아래에서 바로 그 결함
+        #   클래스를 지적해 두고(*"종전엔 영문 enum 그대로 나갔다"*) 이 경로만 남았다.
+        #   `withheld()` 는 쓰기 시점에 문장을 강제하지만 **읽기 시점엔 아무도 강제하지 않아**
+        #   저장된 옛 행·문장을 안 넣는 미래 생산자가 그대로 새어 나온다.
+        #   → 코드값이면 한국어 사전으로 바꾼다(사전에 없으면 원값 유지).
+        _code = m.get(key)
+        basis = str(m.get(f"{field}_basis") or ABSENT_REASONS.get(str(_code), _code))
+        by_basis.setdefault(basis, []).append(field)
+    if not by_basis:
+        return ""
+    parts = [f"{'·'.join(fields)} {basis}" for basis, fields in by_basis.items()]
+    return "  ※ " + " / ".join(parts)
+
+
+#: 발화 축 코드 → 한글. ★모르는 코드는 **감추지 않고 원문 그대로** 내보낸다 —
+#  숨기면 "새 축이 생겼다"는 가장 중요한 신호가 조용히 사라진다(REASON_LABELS 와 같은 원칙).
+_LATENCY_TRIGGER_LABELS = {"ratio": "비율(기준선 대비)", "absolute": "절대편차(평소값 대비)"}
+
+
+def _latency_trigger_phrase(m: dict[str, Any]) -> str:
+    """★`triggers`·`typical_p95` 를 **문장으로** 만든다 — 소비처 0 을 끝낸다.
+
+    · 발화가 아니면(`triggers` 비었음) **빈 문자열** — 기록성 행을 오염시키지 않는다.
+    · `typical_p95` 가 `None` 이면 *"평소값 판정 불가"* 라고 **말한다.**
+      ★`0ms` 로 그리지 않는다 — 「모름」을 유효값으로 위장하면 그 순간 관측이 된다
+        (면제 확정 0원과 미조회 0원을 구별 못 하게 만든 것과 같은 결함).
+    """
+    trigs = m.get("triggers") or []
+    if not isinstance(trigs, (list, tuple)) or not trigs:
+        return ""
+    names = ", ".join(_LATENCY_TRIGGER_LABELS.get(str(x), str(x)) for x in trigs)
+    typical = m.get("typical_p95")
+    if isinstance(typical, (int, float)):
+        why = f" 평소값 {round(float(typical))}ms."
+    else:
+        windows = m.get("typical_windows")
+        w = f"이력 {windows}건" if isinstance(windows, int) else "이력 부족"
+        why = f" 평소값 판정 불가({w} · 최소 {LATENCY_TYPICAL_MIN_WINDOWS}개 필요)."
+    return f" 발화 축: {names}.{why}"
+
+
 def _rule_narrative(ins: dict[str, Any]) -> str:
-    """규칙 기반 narrative(LLM 없이도 항상 채워지는 한국어 요약)."""
+    """규칙 기반 narrative(LLM 없이도 항상 채워지는 한국어 요약).
+
+    ★**보류 사유 부착은 여기 단일 길목에서 한 번만** 한다. 본문은 반환 지점이
+      일곱이라 거기에 손으로 붙이면 **반드시 하나를 빠뜨리고, 그 하나가 곧
+      사유가 사라지는 경로**가 된다(`#886` 이 같은 이유로 호출부 단일 길목을 골랐다).
+    """
+    return _rule_narrative_body(ins) + _withheld_note(ins.get("metrics_json") or {})
+
+
+def _rule_narrative_body(ins: dict[str, Any]) -> str:
+    """타입별 본문(사유 부착 전). 직접 부르지 말 것 — `_rule_narrative` 를 쓴다."""
     m = ins.get("metrics_json") or {}
     t = ins["insight_type"]
     sev = ins.get("severity")
@@ -963,11 +1214,17 @@ def _rule_narrative(ins: dict[str, Any]) -> str:
                 f"화면이 고지하고 있는지만 확인하세요.")
     if t == "quality_drop":
         return (f"[{sev}] {m.get('service')} 품질저하 — verify fail "
-                f"{m.get('fail_pct')}%/warn {m.get('warn_pct')}%, "
-                f"feedback down {m.get('down_pct')}%.")
+                f"{_metric_text(m, 'fail_pct')}/warn {_metric_text(m, 'warn_pct')}, "
+                f"feedback down {_metric_text(m, 'down_pct')}.")
     if t == "latency_regression":
+        # ★**어느 축이 울렸는가**를 헤드라인에 넣는다(`fallback_rate` 가 사유를 헤드라인에
+        #   넣는 것과 같은 원칙). 안 넣으면 절대편차 단독 발화가 화면에
+        #   `p95 33000ms (이전 baseline 23524ms)` = **1.40배**로 나가, 비율 임계(1.5배)
+        #   **미만**인 수치 옆에 `warn` 이 붙는다 — 사람이 *"왜 울렸는지"* 를 알 수 없다.
+        #   진단 불가는 그 자체가 장애다.
         return (f"[{sev}] {m.get('key')} p95 {m.get('p95_ms')}ms "
-                f"(이전 baseline {m.get('prev_baseline_p95')}ms, 표본 {m.get('samples')}).")
+                f"(이전 baseline {m.get('prev_baseline_p95')}ms, 표본 {m.get('samples')})."
+                f"{_latency_trigger_phrase(m)}")
     # ★분기가 없는 타입의 기본 narrative. 종전엔 `{t}` 가 **영문 enum 그대로** 나갔다
     #   (예: `[info] improvement_proposal`). 분기 없는 타입일수록 이 문장이 유일한 설명이라
     #   여기서 raw 가 새면 그 카드는 **아무 말도 하지 않는 것과 같다.**

@@ -21,6 +21,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.utils.pnu import is_valid_pnu
+
 # 엔진 enum 실측(vendoring). drift 시 prevalidate 테스트가 차단.
 _CALC_TARGETS = frozenset({"building_area", "gross_floor_area", "far_floor_area",
                            "plot_area", "building_height", "floor_count"})
@@ -155,7 +157,7 @@ def is_deterministic_path(dump: dict[str, Any]) -> bool:
     if dump.get("citations") and not dump.get("mirror_rules"):
         return False  # 공급측 가변 미러(SUPPLY_STORE) 의존 게이팅
     # address는 pnu가 19자리가 아닐 때만 라이브 지오코딩 발화(엔진 pipeline:205).
-    return not (dump.get("address") and len(str(dump.get("pnu") or "")) != 19)
+    return not (dump.get("address") and not is_valid_pnu(dump.get("pnu")))
 
 
 def _finite(v: Any) -> bool:

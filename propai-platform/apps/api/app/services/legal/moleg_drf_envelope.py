@@ -33,9 +33,47 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
-__all__ = ["MolegDrfError", "drf_failure_reason", "raise_unless_expected"]
+__all__ = [
+    "MolegDrfError",
+    "drf_failure_reason",
+    "moleg_oc_key",
+    "raise_unless_expected",
+    "raise_unless_expected_xml",
+    "xml_failure_reason",
+]
+
+
+def moleg_oc_key() -> str:
+    """법제처 DRF 인증키(OC)를 **호출 시점에** 읽는다.
+
+    ## ★왜 `settings.MOLEG_API_KEY` 를 직접 읽으면 안 되나 (2026-09-02 · 적대 리뷰)
+
+    관리자 화면의 시크릿 저장(`PUT /admin/secrets/{name}`)은 `os.environ[name] = value`
+    **만** 한다. 그런데 `settings` 는 `app/core/config.py` 의 **모듈 싱글턴**이고
+    `get_settings()` 는 `@lru_cache` 라 **재동기화 경로가 0건**이다(전수 조회로 확인).
+
+    → 소비처가 `settings` 를 직접 읽으면 운영자가 화면에서 키를 바꿔도
+      **「저장됨」 초록만 뜨고 실제로는 아무것도 안 바뀐다** — 즉 **작동하지 않는 조작 수단**이다.
+      저장소가 이미 두 곳에 그 갭을 적어 뒀다:
+
+        app/core/observability.py  *"load_into_env() 가 os.environ 에 올리므로
+                                     **settings 에는 반영되지 않는다**"*
+        tests/test_base_interpreter_fewshot.py  *"관리자 시크릿으로 켜도 **재시작 전 무효**"*
+
+    ★그래서 **`os.environ` 을 먼저** 본다(런타임 갱신분) → 없으면 부팅 설정.
+      `base_interpreter._fewshot_enabled` 가 같은 이유로 같은 순서를 쓴다(저장소 선례).
+    ★**빈 문자열도 「없음」으로 본다** — `os.environ` 의 빈 값이 부팅 설정을 가리지 않게.
+    """
+    import os
+
+    from app.core.config import settings
+
+    return (os.getenv("MOLEG_API_KEY") or "").strip() or (
+        getattr(settings, "MOLEG_API_KEY", "") or ""
+    ).strip()
 
 #: 법제처가 사유를 싣는 관용 키(계열 ①②). 없으면 값이 문자열인 아무 키나 사유로 쓴다(계열 ③).
 _REASON_KEYS: tuple[str, ...] = ("result", "msg")
@@ -76,6 +114,41 @@ def drf_failure_reason(payload: Any, *, expect: tuple[str, ...]) -> str | None:
     if parts:
         return " / ".join(parts)
     return f"기대 루트키 {list(expect)} 없음 (수신 키: {sorted(map(str, payload))[:6]})"
+
+
+def xml_failure_reason(text: str, *, expect: tuple[str, ...]) -> str | None:
+    """XML 응답판 — `expect` 루트태그가 **하나도 없으면** 실패 사유를, 있으면 `None`.
+
+    ★왜 형제가 필요한가(2026-08-28 실측): 위 JSON 판은 `isinstance(payload, dict)` 라
+    **JSON 전용**인데, 조례 조회(`ordinance_service`)는 `type=XML` 로 부른다. 그래서
+    형제 둘(`regulation_monitor`·`gosi_search_service`)이 200-실패를 잡는 동안
+    **조례 경로만 무방비**였고, 광범위한 `except Exception: return None` 이 그것을 삼켜
+    화면에는 *"조례를 확인하지 못해 법정상한 잠정 적용"* 으로 나갔다(= 낙관 방향 폴백).
+
+    법제처 XML 실패 봉투 실측:
+        <Response><result>사용자 정보 검증에 실패하였습니다.</result><msg>…</msg></Response>
+    """
+    if not isinstance(text, str) or not text.strip():
+        return "응답 본문이 비어 있다"
+    if any(f"<{k}" in text for k in expect):
+        return None
+    parts: list[str] = []
+    # ★형제(JSON 판)의 `_REASON_KEYS` 에서 **파생**시킨다. 손으로 나열하면 두 판이 갈리고,
+    #   이 저장소의 교훈대로 **목록이 곧 상한**이 된다(독립 리뷰 지적).
+    for tag in (*_REASON_KEYS, "resultMsg"):
+        m = re.search(rf"<{tag}>(.*?)</{tag}>", text, re.S)
+        if m and m.group(1).strip():
+            parts.append(m.group(1).strip())
+    if parts:
+        return " / ".join(parts)
+    return f"기대 루트태그 {list(expect)} 없음 (본문 앞 120자: {text.strip()[:120]!r})"
+
+
+def raise_unless_expected_xml(text: str, *, expect: tuple[str, ...]) -> None:
+    """XML 응답에 `expect` 루트태그가 없으면 `MolegDrfError` 로 **시끄럽게** 죽는다."""
+    reason = xml_failure_reason(text, expect=expect)
+    if reason is not None:
+        raise MolegDrfError(reason)
 
 
 def raise_unless_expected(payload: Any, *, expect: tuple[str, ...]) -> None:

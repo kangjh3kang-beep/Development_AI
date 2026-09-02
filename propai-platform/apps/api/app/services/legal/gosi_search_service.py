@@ -18,8 +18,11 @@ from typing import Any
 import httpx
 import structlog
 
-from app.core.config import settings
-from app.services.legal.moleg_drf_envelope import MolegDrfError, raise_unless_expected
+from app.services.legal.moleg_drf_envelope import (
+    MolegDrfError,
+    moleg_oc_key,
+    raise_unless_expected,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -76,7 +79,7 @@ class GosiSearchService:
 
     @staticmethod
     def _key() -> str:
-        return getattr(settings, "MOLEG_API_KEY", "") or ""
+        return moleg_oc_key()
 
     async def search_admrule(self, query: str, *, max_results: int = 5) -> dict[str, Any]:
         """국가 고시(행정규칙) 검색 — 법제처 DRF target=admrul. → {available, results:[{name,id,dept,date}]}."""

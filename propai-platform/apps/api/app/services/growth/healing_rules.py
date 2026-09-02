@@ -59,6 +59,14 @@ ESCALATION_THRESHOLD = 5
 # 외부API "전면장애" 판정: 폴백률(%) 이 이 값 이상이면 threshold_relax 대상.
 TOTAL_OUTAGE_FALLBACK_PCT = 50.0
 
+#: `_candidate_actions` 가 **실제로 분기를 가진** 인사이트 타입.
+#
+#  ★이 목록은 **선언이고, 선언은 스스로 옳음을 보증하지 않는다.** 그래서 락이 `ast` 로
+#  `_candidate_actions` 안의 `itype == "..."` 비교를 전부 뽑아 이 상수와 **정확히 일치**하는지
+#  본다. 분기를 추가하고 여기 안 적으면(또는 그 반대면) 빨개진다 —
+#  **선언과 생산자가 어긋나는 것**이 이 저장소가 반복해서 데인 형태다.
+HANDLED_INSIGHT_TYPES = ("fallback_rate", "stale_reanalysis")
+
 
 # ════════════════════════════════════════════════════════════════════════════
 # 순수 가드 함수군 (DB 무의존 — inline 단위검증 대상)
@@ -154,12 +162,24 @@ async def _candidate_actions(db, now: datetime) -> list[dict[str, Any]]:
     candidates: list[dict[str, Any]] = []
 
     # ── open 인사이트 기반 ────────────────────────────────────────────────
+    # ★**타입으로도 좁힌다.** 종전에는 `recommended_action` 으로만 걸러서 아래 `for` 루프에
+    #   **분기가 없는 타입까지 `LIMIT 200` 슬롯을 먹었다.**
+    #   실측(2026-08-27): open 인사이트의 **97.2%** 가 `latency_baseline`(76.2%) +
+    #   `latency_regression`(21.0%) 이고, `latency_regression` 은 `recommended_action='heal'`
+    #   을 내는데(`analyzer.py:846`) 이 함수에 분기가 **없다**.
+    #   ★`'none'` 도 종전 WHERE 를 통과하므로 **사유로는 못 막고 타입으로만 막힌다.**
+    #   잡음이 슬롯을 채우면 진짜 후보가 200 밖으로 밀리는데, 한 배치의 `created_at` 이
+    #   **하나**라 어느 200 이 남는지가 **임의**가 된다 — 조용한 기아다.
+    # ★`ORDER BY` 에 `id` 타이브레이커를 넣는다. 형제 `insight_retention._build_select` 가
+    #   이미 `created_at DESC, id DESC` 로 하고 있었다 — **옳은 패턴이 옆에 있었다.**
     rows = (await db.execute(text(
         "SELECT id, insight_type, severity, metrics_json FROM platform_insights "
         "WHERE status='open' AND recommended_action IN ('heal','none','correct') "
+        "  AND insight_type = ANY(:handled) "
         "  AND created_at >= :since "
-        "ORDER BY created_at DESC LIMIT 200"
-    ), {"since": now - timedelta(hours=2)})).fetchall()
+        "ORDER BY created_at DESC, id DESC LIMIT 200"
+    ), {"since": now - timedelta(hours=2),
+        "handled": list(HANDLED_INSIGHT_TYPES)})).fetchall()
 
     for r in rows:
         _ins_id, itype, severity, metrics = r[0], r[1], r[2], r[3]
@@ -351,5 +371,5 @@ __all__ = [
     # 순수 가드 함수(단위검증 공개).
     "_within_cooldown", "_cap_exceeded", "should_escalate",
     "GLOBAL_HOURLY_CAP", "PER_TRIGGER_HOURLY_CAP", "COOLDOWN_MIN",
-    "ESCALATION_THRESHOLD", "TOTAL_OUTAGE_FALLBACK_PCT",
+    "ESCALATION_THRESHOLD", "TOTAL_OUTAGE_FALLBACK_PCT", "HANDLED_INSIGHT_TYPES",
 ]
