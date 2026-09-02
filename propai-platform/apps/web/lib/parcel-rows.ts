@@ -9,7 +9,7 @@
  *          farLegalPct/bcrLegalPct(법정상한 — 보조).
  */
 import type { AddressEntry } from "@/components/common/GlobalAddressSearch";
-import { parcelDisplayAddress } from "@/lib/pnu";
+import { normalizePnu, parcelDisplayAddress } from "@/lib/pnu";
 
 /**
  * 필지 대표 주소 정규화(공용) — 지오코딩 성공률↑ + **PNU 로 지번 파생**.
@@ -117,10 +117,38 @@ export function parcelDataToRows(
       farPct: null, // 실효 용적/건폐는 store ParcelData에 없음(피커 경로에서만 풀데이터)
       bcrPct: null,
       // 특이부지 감지(지목)·인접성 판정(geometry)·정밀판정(pnu)용 — 보유 시에만 전달(무날조).
-      ...(p.pnu ? { pnu: p.pnu } : {}),
+      // ★유효한 것만 보낸다 — 가짜를 보내면 서버가 echo 하며 필지 보강이 조용히 죽는다.
+      ...(normalizePnu(p.pnu) ? { pnu: normalizePnu(p.pnu) as string } : {}),
       ...(p.landCategory ? { land_category: p.landCategory } : {}),
       ...(p.geometry ? { geometry: p.geometry } : {}),
     }));
+}
+
+/**
+ * 필지 **정체성** 주소 목록 — PNU 로 지번을 파생해 **서로 구분되는** 주소를 만든다.
+ * 면적 필터는 **걸지 않는다**(표시·렌더 게이트용 = 사용자가 «고른» 모집단).
+ *
+ * ★2026-08-28 사용자 신고의 근원 — 여러 화면이 `parcels.map((p) => p.address)` 를 손수 썼고,
+ *   스토어 주소에 지번이 없으면(예: "경기도 오산시 내삼미동") **77필지가 한 문자열로 붕괴**해
+ *   백엔드 `scenario_simulator._merge`(주소 중복제거)가 **1필지 44㎡** 로 시뮬레이션했다.
+ *   개발방식 19건이 거짓 '불가'로 막혔다(«도시개발사업: 44m² < 1만m²»).
+ *
+ * ★★`parcelAddressList` 와 **다르다** — 그쪽은 `parcelDataToRows` 의 **면적>0** 의미론을
+ *   상속한다(전송용). 표시 모집단에 그걸 쓰면 «외 N필지 선택됨» 이 **줄어드는 회귀**가 된다.
+ *   두 모집단은 뜻이 다르므로 함수도 둘이다.
+ *
+ * ★PNU 가 없으면 **구분을 지어내지 않는다**(무날조) — 그때는 백엔드가 붕괴를 고지한다.
+ */
+export function parcelIdentityAddresses(
+  parcels:
+    | ReadonlyArray<{ address?: string | null; pnu?: string | null }>
+    | undefined
+    | null,
+): string[] {
+  if (!parcels) return [];
+  return parcels
+    .map((p) => parcelDisplayAddress(p.address ?? "", p.pnu ?? null))
+    .filter((a): a is string => Boolean(a && a.trim()));
 }
 
 /**

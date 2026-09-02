@@ -14,6 +14,20 @@
 ★목록형이 아니라 **파생형**이다. "ruff 를 핀했는가"를 보면 다음에 추가되는 도구가 그대로
   빠져나간다(실제로 이번 스윕에서 `bandit`·`pip-audit` 두 형제가 같은 상태로 발견됐다).
   그래서 **워크플로 전체에서 핀 없는 설치 줄**을 찾는다 — 새 워크플로도 자동으로 감시망에 든다.
+
+★★2026-08-30 — **이 파일이 잡지 못한 축이 있었다: `uses:` (GitHub Actions).**
+  같은 사고가 **다른 매체**에서 그대로 재발했다:
+
+      Security Scan / Gitleaks 잡
+        같은 커밋 09b270fb  08-28 **success**  →  08-30 **failure** (26건)
+        코드 변경 **0**. 원인은 `uses: gitleaks/gitleaks-action@v2` 의 **이동 태그**.
+
+  이 파일의 독스트링은 *"워크플로 전체에서 핀 없는 설치 줄"* 이라 적었지만 실제 탐지는
+  `pip install` **한 매체**만 봤다 — **처방을 적용한 범위가 결함이 사는 범위보다 좁았다**
+  (CLAUDE.md §D20). 그래서 `uses:` 축을 **같은 파일에 추가**한다(새 파일을 만들지 않는다).
+
+  ★`actions/*` 는 예외다 — GitHub 공식 인프라 액션이고 **규칙(findings)을 만들지 않는다**.
+    핀이 필요한 것은 **판정을 만드는 서드파티**다(스캐너·서명·SBOM).
 """
 from __future__ import annotations
 
@@ -153,3 +167,77 @@ def test_병렬_실행과_핀이_한_쌍으로_움직인다() -> None:
             "xdist/execnet 이 핀돼 있는데 CI 는 병렬로 돌지 않는다 — 측정으로 얻은 1.95배가 "
             "조용히 사라진 상태다. 되돌린 것이 의도라면 핀도 함께 지워라."
         )
+
+
+# ── `uses:` 축(2026-08-30 추가) ────────────────────────────────────────────────
+
+#: `uses: owner/repo@ref` — 주석 줄은 제외한다(위 `_code_lines` 와 같은 규율).
+_USES = re.compile(r"^\s*(?:-\s*)?uses:\s*(?P<owner>[A-Za-z0-9_.-]+)/(?P<repo>[A-Za-z0-9_.-]+)@(?P<ref>\S+)")
+
+#: GitHub 공식 인프라 액션 — **판정(findings)을 만들지 않으므로** 메이저 태그를 허용한다.
+#: ★예외에는 사유를 적는다(죽은 면제를 초록으로 두지 않기 위해 아래 대조군이 이 집합을 태운다).
+_ACTIONS_ORG_EXEMPT = "actions"
+
+#: 핀으로 인정 — 40자 SHA 또는 `vN.N.N` 이상의 구체 버전. 맨 `vN` 은 **이동 태그**다.
+_REF_PINNED = re.compile(r"^([0-9a-f]{40}|v?\d+\.\d+(\.\d+)?([-.+]\S+)?)$")
+
+
+def _uses_entries():
+    out = []
+    for f in _workflow_files():
+        for i, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
+            if line.lstrip().startswith("#"):
+                continue
+            m = _USES.match(line)
+            if m:
+                out.append((f.name, i, m.group("owner"), m.group("repo"), m.group("ref")))
+    return out
+
+
+def test_uses_수집기가_살아있다() -> None:
+    """★대조군 — 0건을 찾고 「위반 0」이라 말하지 않는다."""
+    entries = _uses_entries()
+    assert len(entries) >= 5, f"`uses:` 를 {len(entries)}개만 찾았다 — 수집기 사망"
+    assert any(o != _ACTIONS_ORG_EXEMPT for _f, _i, o, _r, _ref in entries), (
+        "서드파티 액션을 하나도 못 찾았다 — 아래 검사가 공허해진다"
+    )
+
+
+def test_서드파티_액션이_이동태그를_쓰지_않는다() -> None:
+    """★2026-08-30 실사고 — `gitleaks-action@v2` 가 **코드 변경 0으로** 게이트를 빨갛게 만들었다.
+
+    같은 커밋 `09b270fb` 가 08-28 success / 08-30 failure(26건). 스캐너 규칙이 넓어진 것이고,
+    **26/26 이 위양성**이었다(테스트 더미·객체 키·`CHANGE_ME_…` 플레이스홀더).
+    """
+    bad = [
+        f"{f}:{i} {o}/{r}@{ref}"
+        for f, i, o, r, ref in _uses_entries()
+        if o != _ACTIONS_ORG_EXEMPT and not _REF_PINNED.match(ref)
+    ]
+    assert not bad, (
+        "판정을 만드는 서드파티 액션이 **이동 태그**를 쓴다 — 새 릴리스가 코드 변경 0으로 "
+        f"게이트를 빨갛게 만든다: {bad}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("ref", "pinned"),
+    [
+        ("v2", False),          # ★이번 사고의 그 형태
+        ("v0", False),
+        ("main", False),
+        ("v2.3.9", True),
+        ("ff98106e4c7b2bc287b24eaf42907196329070c7", True),
+    ],
+)
+def test_ref_판정기_대조군(ref: str, pinned: bool) -> None:
+    """★검사기가 **양방향**으로 작동하는지 — 「전부 통과」·「전부 차단」 구현을 잡는다."""
+    assert bool(_REF_PINNED.match(ref)) is pinned
+
+
+def test_공식액션_예외가_죽지_않았다() -> None:
+    """★죽은 면제를 초록으로 두지 않는다 — `actions/*` 가 실제로 쓰이고 있는가."""
+    owners = {o for _f, _i, o, _r, _ref in _uses_entries()}
+    assert _ACTIONS_ORG_EXEMPT in owners, (
+        "`actions/*` 예외의 대상이 사라졌다 — 면제를 지워라(남기면 다음 사람이 오독한다)"
+    )

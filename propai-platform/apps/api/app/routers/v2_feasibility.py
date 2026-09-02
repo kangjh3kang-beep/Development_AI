@@ -54,6 +54,7 @@ from app.services.feasibility.sensitivity_engine import (
 )
 from app.services.feasibility.version_control_db import FeasibilityVCSDB
 from app.services.land_intelligence.parcel_normalize import ParcelsIn
+from app.services.tax.regional_tax_data import looks_like_sido, sido_short_or_empty
 
 router = APIRouter(prefix="/api/v2/feasibility", tags=["feasibility-v2"])
 
@@ -714,7 +715,13 @@ async def baseline_feasibility(req: FeasibilityBaselineRequest):
         avg_sale_price_per_pyeong=sale_price_per_pyeong,
         avg_area_pyeong=avg_area_pyeong,
         sale_ratio=0.95,
-        sido_name=req.region,
+        # ★축 교정(형제 스윕) — `req.region` 은 프론트가 **시군구**를 넣어 보낸다
+        #   (`RoughScenarioPanel` 의 `regionFromAddress()`). 시·도 칸에 직결하면
+        #   B01 광역교통이 대도시권을 비대도시권으로 오판한다. 주소에서 해석한다.
+        sido_name=sido_short_or_empty(req.address),
+        # ★`req.region` 은 스키마상 **시도명**이라 적혀 있다 — 시군구 칸에 넣기 전에
+        #   **시·도인지 묻는다**(스키마를 지키는 클라이언트의 값을 축 날조로 만들지 않기 위해).
+        sigungu_name=("" if looks_like_sido(req.region) else (req.region or "")),
         project_months=_service._get_type_project_months(dev_type),
         discount_rate=0.08,
         equity_won=equity,
@@ -1382,7 +1389,7 @@ class CashflowRequest(BaseModel):
     design_cost_ratio: float = 0.03
     discount_rate_annual: float = 0.06  # NPV 할인율(연)
     # R1(additive): integrated_tax_engine.calculate_all_taxes 키워드 입력(부분집합).
-    # 지정 시 38종 세금을 시점 매핑 주입해 summary에 after_tax_irr_annual_pct·total_tax_won 가산.
+    # 지정 시 28종 세금을 시점 매핑 주입해 summary에 after_tax_irr_annual_pct·total_tax_won 가산.
     # 미지정(None, 기본)이면 기존 세전 현금흐름과 완전 동일.
     tax_inputs: dict | None = None
 
@@ -1394,7 +1401,7 @@ def _build_cashflow(req: CashflowRequest) -> dict:
         npv_from_netflows,
     )
 
-    # ── R1 세후 IRR(additive): tax_inputs 지정 시에만 통합 세금엔진(38종) 주입 ──
+    # ── R1 세후 IRR(additive): tax_inputs 지정 시에만 통합 세금엔진(28종) 주입 ──
     tax_schedule = None
     if req.tax_inputs:
         import inspect

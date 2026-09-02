@@ -24,6 +24,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 
 # tests/ → apps/api/tests 기준으로 propai-platform/scripts 를 찾는다(3단계 상위).
@@ -34,10 +35,95 @@ _BASELINE = os.path.join(os.path.dirname(__file__), "orphan_routes_baseline.txt"
 _UNDECIDED = os.path.join(os.path.dirname(__file__), "orphan_routes_undecided.txt")
 
 
+#: 종류 어휘는 **닫혀 있다.** 열어 두면 다음 사람이 새 낱말을 만들어 같은 것을 두 이름으로
+#: 부르고, 그 순간 "몇 건이 진짜 부채인가"에 다시 답할 수 없게 된다.
+_KINDS = {
+    "admin-cron": "운영·배치 전용 — 프론트 소비처가 없는 것이 정상",
+    "internal": "백엔드 내부/서버간 호출 전용",
+    "legacy-suspect": "소비처 0 이고 구 트리·구 계약 — 삭제 후보이나 미확정",
+    "debt": "배선해야 하는데 안 됐다 — 진짜 부채",
+    "unclassified": "★아직 안 봤다(유추 금지)",
+}
+#: 아직 열어 보지 않은 것. **늘어날 수 없다**(줄이는 방향으로만 움직인다).
+_UNCLASSIFIED = "unclassified"
+
+#: `unclassified` 상한 — 형식 승격 시점(2026-08-26)의 실측값. 한 건을 열어 분류할 때마다
+#: 내려간다. ★이 수를 **올리는 커밋은 새 미분류를 들여오는 것**이므로 실패한다.
+_UNCLASSIFIED_CEILING = 125
+
+
+def _rows(path: str) -> list[tuple[str, str, str]]:
+    """`경로 <TAB> 종류 <TAB> 사유` 로 읽는다.
+
+    ★탭이 없는 줄도 **조용히 통과시키지 않는다** — 종류를 빈 문자열로 돌려주고
+      형식 검사가 잡는다. 여기서 관대하면 사유 없는 줄이 다시 스며든다.
+    """
+    out: list[tuple[str, str, str]] = []
+    with open(path, encoding="utf-8-sig") as f:  # ★BOM 은 strip() 이 못 지운다
+        for ln in f:
+            if not ln.strip() or ln.lstrip().startswith("#"):
+                continue
+            # ★`maxsplit=2` — 사유 안의 탭 뒤가 **무성 소실**되지 않게 한다(적대 리뷰 지적).
+            parts = [c.strip() for c in ln.rstrip("\n").split("\t", 2)]
+            route = parts[0]
+            kind = parts[1] if len(parts) > 1 else ""
+            reason = parts[2] if len(parts) > 2 else ""
+            out.append((route, kind, reason))
+    return out
+
+
+def validate_rows(rows: list[tuple[str, str, str]]) -> list[str]:
+    """행 목록을 보고 **위반 문구 목록**을 돌려준다(빈 목록 = 위반 없음).
+
+    ★왜 순수 함수로 꺼냈나 — 이 판정을 테스트 본문 안에 두었더니 **변이 2종이 생존**했다
+      (`malformed = []` 로 비워도 · 상한 단언을 `True or` 로 무력화해도 초록).
+      실제 파일이 지금 규칙을 만족하기 때문에 **검사 로직을 지워도 아무 일이 없었다** —
+      "현재 위반 0건"인 래칫은 그 자체로 **공허한 참**이다.
+      꺼내 놓으면 **합성 입력**으로 판정 자체를 태울 수 있고, 그때 비로소 변이가 죽는다.
+    """
+    out: list[str] = []
+    for route, kind, reason in rows:
+        if not kind:
+            out.append(f"{route}: 종류 컬럼이 없다 — `경로 <TAB> 종류 <TAB> 사유` 로 적어라")
+            continue
+        if kind not in _KINDS:
+            out.append(f"{route}: 닫힌 어휘 밖의 종류 '{kind}' — 쓸 수 있는 것 {sorted(_KINDS)}")
+            continue
+        if kind != _UNCLASSIFIED and not _EVIDENCE_RE.search(reason):
+            out.append(
+                f"{route} [{kind}]: 사유에 **파일:줄** 근거가 없다 — 무엇을 보고 그렇게 판단했는지 적어라"
+            )
+    return out
+
+
+#: 근거는 **`파일:줄`** 이어야 한다. 길이만 보면 `"x"*20` 이 "근거"로 통과한다(실측).
+#: 위반 문구가 *"파일:줄 로 근거를 적어라"* 라고 **지시**하므로, 그 주장 자체를 강제한다
+#: (CLAUDE.md §G30 — 동작 주장은 그 자체가 검증 대상이다).
+_EVIDENCE_RE = re.compile(r"[\w/.-]+\.(?:py|tsx?|ts|txt|md):\d+")
+
+
+def check_unclassified_ceiling(n: int, ceiling: int, slack: int = 0) -> list[str]:
+    """미분류 수를 **양방향**으로 본다 — 넘치면 새 미분류가 든 것이고,
+    한참 낮으면 **죽은 상한**이라 그만큼 다시 늘 여지가 남는다.
+
+    ★`slack` 기본이 **0** 이다. 종전 25 는 *"25건까지는 상한을 안 내려도 조용하다"* 는 뜻이라
+      **정확히 25칸의 무성 통로**를 남겼다 — 누가 1건을 분류해 `n` 이 내려가면, 그 뒤 사유 없는
+      신규 고아가 그 칸으로 들어와도 상한에 안 걸린다(적대 리뷰 실측).
+      분류할 때마다 상수를 내리게 하는 것이 이 상한의 **목적**이다."""
+    out: list[str] = []
+    if n > ceiling:
+        out.append(f"미분류 {n} 건이 상한 {ceiling} 을 넘었다 — 사유 없이 새 항목을 들였다")
+    if n < ceiling - slack:
+        out.append(f"미분류 {n} 건이 상한 {ceiling} 보다 한참 낮다 — 상한을 그 수로 내려라(죽은 상한)")
+    return out
+
+
 def _load(path: str) -> set[str]:
-    """`#` 주석줄은 무시한다 — 수치가 움직인 **사유를 파일 안에** 남기기 위한 것이다."""
-    with open(path, encoding="utf-8") as f:
-        return {ln.strip() for ln in f if ln.strip() and not ln.lstrip().startswith("#")}
+    """**경로만** 돌려준다(래칫의 집합 연산용). 종류·사유는 `_rows` 로 본다.
+
+    `#` 주석줄은 무시한다 — 수치가 움직인 **사유를 파일 안에** 남기기 위한 것이다.
+    """
+    return {r for r, _k, _why in _rows(path)}
 
 
 def _load_baseline() -> set[str]:
@@ -210,3 +296,157 @@ def test_call_method_at_이_실제_호출부를_읽는다():
     s3 = prop_blob.index("/underwriting/${projectId}")
     e3 = s3 + len("/underwriting/${projectId}")
     assert _o.call_method_at(prop_blob, s3, e3) is None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 사유 컬럼 잠금 — 2026-08-26
+#
+# ★무엇이 있었나: 기준선이 **경로만** 담아서 `/api/v1/auction/sync`(라우트 자신이 summary 에
+#   "(관리/cron)" 이라고 적어 둔 **정당한 운영용**)와 `/api/v1/auction/opportunities`
+#   (소비처가 프론트·백엔드 양쪽 다 0인 **구 트리 잔재**)가 **나란히 서서 구별되지 않았다.**
+#   132 건이 한 덩어리라 *"이 중 몇 건이 진짜 부채인가"* 에 아무도 답할 수 없었다.
+#
+# ★왜 대부분이 `unclassified` 인가: **유추로 채우지 않기 때문이다.** 기계 분류를 시도했다가
+#   폐기했다 — *"핸들러가 정의 파일 밖에서 참조되는가"* 로 37건을 얻었는데 **표본 10건이
+#   전부 위양성**이었다(로그 문자열·독스트링·`from urllib.parse import quote` 같은 임포트 4건 ·
+#   **동명의 다른 함수 정의** 6건). 싼 신호는 없다. 연 사람만 사유를 적는다.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_모든_행이_경로_종류_사유_셋을_갖는다():
+    rows = _rows(_BASELINE)
+
+    # ★공허 진리 가드 — 파서가 죽어 빈 목록이면 아래 전부가 참이 된다.
+    assert len(rows) > 50, "기준선 행이 비정상적으로 적다 — 파서나 파일이 깨졌다"
+
+    violations = validate_rows(rows)
+    assert not violations, "기준선 형식 위반:\n" + "\n".join(f"  {v}" for v in violations)
+
+
+def test_분류했다면_무엇을_보고_그렇게_판단했는지_적혀_있다():
+    """★`unclassified` 가 아닌 행은 **근거**를 지닌다 — 종류만 바꾸고 사유를 비우면 유추와 같다."""
+    rows = _rows(_BASELINE)
+    classified = [(r, k, w) for r, k, w in rows if k and k != _UNCLASSIFIED]
+
+    # ★모집단 가드 — 분류된 행이 0 이면 이 검사는 아무것도 잠그지 않는다(공허한 참).
+    assert classified, "분류된 행이 하나도 없다 — 이 검사가 공허해졌다"
+    assert not validate_rows(classified)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ★판정 자체를 **합성 입력**으로 태운다 — 실제 파일은 지금 규칙을 만족하므로,
+#   이 케이스들이 없으면 검사 로직을 통째로 지워도 초록이다(변이 2종이 실제로 생존했다).
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_판정기가_각_위반을_실제로_지목한다():
+    ok = ("/x", "admin-cron", "라우트 summary 가 관리용이라고 적어 두었다(routers/x.py:1)")
+
+    # ★음성 대조군 먼저 — 정상 행을 위반으로 신고하면 그것도 결함이다.
+    assert validate_rows([ok]) == [], "정상 행을 위반으로 신고한다(위양성)"
+    assert validate_rows([("/y", "unclassified", "")]) == [], "미분류는 사유가 없어도 정상이다"
+
+    # 탭이 없어 종류가 비었다
+    assert any("종류 컬럼이 없다" in v for v in validate_rows([("/x", "", "")]))
+    # 닫힌 어휘 밖
+    assert any("닫힌 어휘 밖" in v for v in validate_rows([("/x", "probably-fine", "근거(routers/x.py:1)")]))
+    # ★분류했는데 **파일:줄 근거가 없다** — 길이만으로는 못 잡는다
+    assert any("파일:줄" in v for v in validate_rows([("/x", "debt", "짧음")]))
+    assert any("파일:줄" in v for v in validate_rows([("/x", "debt", "x" * 40)])), (
+        "길이만 채운 사유가 통과한다 — 근거 검사가 길이 검사로 퇴화했다"
+    )
+
+
+def test_미분류_사유_칸이_비어_있어야_유추가_걸린다():
+    """★`unclassified` 사유에 상용구를 넣으면 **종류만 뒤집어도 통과**한다(적대 리뷰 실측).
+
+    종전 상용구는 **31자**라 임계(20자)를 넘었다. 지금은 `파일:줄` 을 요구하므로 길이만으로는
+    못 뚫지만, **비워 두는 것이 두 번째 방벽**이다 — 종류를 바꾸는 순간 사유가 비어 걸린다.
+    """
+    rows = _rows(_BASELINE)
+    unclassified = [(r, w) for r, k, w in rows if k == _UNCLASSIFIED]
+    assert unclassified, "미분류 행이 하나도 없다 — 이 검사가 공허해졌다"
+    filled = [(r, w) for r, w in unclassified if w.strip()]
+    assert not filled, (
+        "미분류 행의 사유 칸이 채워져 있다 — 종류만 뒤집으면 유추가 그대로 통과한다:\n"
+        + "\n".join(f"  {r}: {w[:40]}" for r, w in filled[:5])
+    )
+
+    # ★그리고 그 시나리오를 **직접 태운다** — 재라벨만 하면 실제로 걸리는가.
+    relabeled = [(r, "debt", w) for r, w in unclassified[:3]]
+    assert validate_rows(relabeled), "미분류를 근거 없이 debt 로 재라벨했는데 통과했다"
+
+
+def test_미분류_상한이_양방향으로_판정된다():
+    # 음성 대조군 — 정확히 상한이면 조용하다.
+    assert check_unclassified_ceiling(130, 130) == []
+    # 넘치면 잡는다
+    assert any("넘었다" in v for v in check_unclassified_ceiling(131, 130))
+    # ★죽은 상한도 잡는다 — 갚아 놓고 상한을 안 내리면 **그만큼 다시 늘 여지**가 남는다.
+    #   `slack=0` 이므로 **1건만 내려가도** 상한 갱신을 요구한다(종전 25 는 25칸의 무성 통로였다).
+    assert any("한참 낮다" in v for v in check_unclassified_ceiling(129, 130)), (
+        "1건을 분류했는데 상한 갱신을 요구하지 않는다 — 무성 통로가 남는다"
+    )
+
+
+def test_미분류는_늘어나지_않는다():
+    """★`unclassified` 는 *"아직 안 봤다"* 이지 *"문제없다"* 가 아니다. 줄이는 방향으로만 간다."""
+    rows = _rows(_BASELINE)
+    assert len(rows) > 50, "기준선 행이 비정상적으로 적다 — 파서나 파일이 깨졌다"
+    n = sum(1 for _r, k, _w in rows if k == _UNCLASSIFIED)
+
+    violations = check_unclassified_ceiling(n, _UNCLASSIFIED_CEILING)
+    assert not violations, "\n".join(violations) + (
+        "\n→ 한 건을 열어 분류했으면 _UNCLASSIFIED_CEILING 을 그 수로 내려라."
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ★배선 축 — 파서와 판정기가 **실제 파일 위에서 이어져 있는가**
+#
+# 탐지(로직이 위반을 낸다)와 특이도(정상을 신고하지 않는다)는 합성 입력으로 잠갔다.
+# 그런데 **그 로직이 파일에 실제로 걸려 있는가**는 별개 축이다 — 현재 기준선이 규칙을
+# 만족하므로 그 연결이 끊겨도 초록이다(적대 리뷰가 변이 5종 생존으로 실측).
+# → **위반을 주입한 임시 기준선**을 같은 파이프라인(`_rows` → `validate_rows`)에 태운다.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _write_baseline(tmp_path, lines: list[str]) -> str:
+    p = tmp_path / "baseline.txt"
+    p.write_text("# 주석은 무시된다\n\n" + "\n".join(lines) + "\n", encoding="utf-8")
+    return str(p)
+
+
+def test_파이프라인이_주입된_위반을_실제_파일에서_잡는다(tmp_path):
+    good = "/ok\tadmin-cron\t라우트 summary 가 관리용이다(routers/ok.py:1)"
+
+    # ★음성 대조군 — 정상만 있는 파일은 조용해야 한다(위양성 방지).
+    clean = _write_baseline(tmp_path, [good, "/y\tunclassified\t"])
+    rows = _rows(clean)
+    assert len(rows) == 2, f"파서가 행을 못 읽었다 — 배선이 끊겼다: {rows}"
+    assert validate_rows(rows) == [], "정상 파일을 위반으로 신고한다(위양성)"
+
+    # 각 위반 유형이 **파일을 거쳐** 잡히는가
+    cases = {
+        "종류 컬럼이 없다": "/a",                                   # 탭 없음
+        "닫힌 어휘 밖": "/b\tprobably-fine\t근거(routers/b.py:2)",   # 어휘 밖
+        "파일:줄": "/c\tdebt\t근거 없이 길게만 적은 사유입니다 정말로",  # 근거 없음
+    }
+    for expect, bad in cases.items():
+        path = _write_baseline(tmp_path, [good, bad])
+        violations = validate_rows(_rows(path))
+        assert any(expect in v for v in violations), (
+            f"주입한 위반이 파이프라인을 통과했다 — 파서·판정기 배선이 끊겼다\n"
+            f"  주입: {bad}\n  기대: {expect}\n  실제: {violations}"
+        )
+
+
+def test_사유_안의_탭이_잘리지_않는다(tmp_path):
+    """★근거를 남기는 것이 이 파일의 목적인데 근거가 **무성 소실**되면 안 된다.
+
+    `split("\\t")` 로 자르고 `parts[2]` 만 취하면 사유 중간의 탭 뒤가 사라진다(실측).
+    """
+    path = _write_baseline(tmp_path, ["/a\tdebt\t앞부분(routers/a.py:1)\t뒷부분도 남아야 한다"])
+    rows = _rows(path)
+    assert len(rows) == 1
+    assert "뒷부분도 남아야 한다" in rows[0][2], f"사유 뒷부분이 잘렸다: {rows[0][2]!r}"

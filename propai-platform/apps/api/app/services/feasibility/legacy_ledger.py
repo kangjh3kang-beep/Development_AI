@@ -52,6 +52,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.services.tax.charge_base_units import base_units_for
+from app.services.tax.project_charges import charge_absent_reason, charge_item_unavailable
 
 __all__ = [
     "build_legacy_ledger",
@@ -127,6 +128,8 @@ def _item(
     note: str | None = None,
     qty_label: str | None = None,
     qty_applicable: bool = True,
+    qty_absent: str | None = None,
+    unit_price_absent: str | None = None,
 ) -> dict[str, Any]:
     """원장 한 행. **없는 것은 None** — 0 으로 만들지 않는다."""
     return {
@@ -153,6 +156,10 @@ def _item(
         #   커버리지 분모를 이 값으로 좁힌다 — 안 그러면 **정직한 행을 추가할수록 %가 내려가**
         #   래칫이 *"수량 없는 행은 만들지 마라"* 는 **역인센티브**를 준다(적대 리뷰 중7).
         "qty_applicable": qty_applicable,
+        # ★보류 사유 코드(`app/utils/withheld.py` 닫힌 어휘). **값이 None 일 때만** 붙는다 —
+        #   값이 있는데 코드가 남으면 「거짓 보류」이고, `validate_withheld_pair` 가 그것도 잡는다.
+        "qty_absent": qty_absent if _num(qty) is None else None,
+        "unit_price_absent": unit_price_absent if _num(unit_price) is None else None,
         # 원본 대조용 자리 — 대조할 "원본"을 사용자가 올리기 전까지는 전부 False.
         # ★필드를 미리 두는 이유: 나중에 추가하면 소비처가 옵셔널 처리를 안 해 깨진다.
         "added": False,
@@ -220,6 +227,48 @@ def _charge_items(charges: dict[str, Any] | None) -> list[dict[str, Any]]:
         qty_unit, rate_unit = base_units_for(code)
         reason = it.get("reason")
         conf = it.get("confidence")
+        # ★**미조회는 관측이 아니다.** 산출 불가(정직 강등) 항목은 과표·요율이 「0 이라고
+        #   측정된 값」이 아니라 **아직 재지 않은 값**이다. 그것을 수량·단가 자리에 실으면
+        #   표가 `0㎡ × 0 원/㎡` 라고 **없는 관측을 주장**한다 — 라이브 실측으로 확인했다
+        #   (2026-08-27 C07 · 제출용 PDF 까지 그대로 나갔다).
+        #
+        #   ★이 모듈은 **같은 처방을 이미 쓰고 있다** — 바로 아래 `qty_unit` 게이트가
+        #     *"단위를 모르면 수량·단가를 아예 싣지 않는다(거짓 라벨보다 공백이 낫다)"* 다.
+        #     결함은 **처방이 없어서가 아니라 적용 축이 좁아서** 났다(CLAUDE.md §D20).
+        #
+        #   ★**금액은 건드리지 않는다**(0 유지). 표기 수정과 값 변경을 한 커밋에 섞지 않는다 —
+        #     `_group` 이 `None` 부분합을 총계 `None` 으로 전파하므로 금액을 비우면
+        #     **세전이익까지 무너진다.** 검산 4종이 그 불변을 보증한다.
+        #
+        #   ★판정은 **엔진 옆 공용 판정자**를 쓴다(`charge_item_unavailable`). 여기서 다시
+        #     구현하면 표기 관례가 하나 더 생길 때 두 소비처가 **조용히 갈린다**.
+        #
+        #   ★★**항목 전체가 아니라 「칸」 단위로 판정한다**(독립 적대 리뷰가 잡았다).
+        #     첫 구현은 `unavailable` 이면 수량·단가를 **둘 다** 지웠는데, 미측정인 것은
+        #     대개 **한 칸뿐**이다:
+        #       · B03/B04 — 조례 **단가** 미등록. 과표(`base_won`)는 **세대수 64 = 관측값**
+        #       · B01     — 표준건축비 미고시. 과표는 **연면적 6,572㎡ = 관측값**
+        #       · C07     — 부담구역 **지정 여부** 미조회. 과표·요율 **둘 다** 0 센티널
+        #     즉 항목 단위로 지우면 **관측된 과표까지 지우는 위양성**이 된다.
+        #
+        #   ★거짓 관측을 만드는 것은 `confidence` 가 아니라 **측정되지 않은 0(센티널)** 이다.
+        #     엔진은 미상인 칸을 이미 `None` 으로 준다(B03/B04 의 `rate`) — 그건 `_item` 이
+        #     원래 안 싣는다. 문제는 C07 처럼 **미상인데 `0` 을 쓴** 칸이다. `0` 은 유효한
+        #     금액이라 「관측된 0」과 구별되지 않는다.
+        unavailable = charge_item_unavailable(it)
+        # 미조회 **이면서** 값이 0/결측인 칸 = 센티널. 관측된 값은 미조회여도 싣는다.
+        qty_sentinel = unavailable and not _num(it.get("base_won"))
+        rate_sentinel = unavailable and not _num(it.get("rate"))
+        # ★**보류 사유를 닫힌 어휘 코드로** 함께 싣는다(`app/utils/withheld.py` 표준 계약).
+        #   산문(`note`)만 두면 **기계가 셀 수 없고**, 셀 수 없으면 새 표면이 생겨도
+        #   감시망에 들지 않는다 — 그 모듈이 만들어진 이유가 그것이다.
+        #   ★이 계약을 **새로 만들지 않았다**: 이미 있는 통로를 쓴다(§G29 — 없는 것을
+        #     만드는 것과 있는 것을 안 쓴 것은 처방이 다르다).
+        #   ★`compact_charge_items` 가 **원자료가 살아 있는 자리에서** 이미 계산해 싣는다.
+        #     여기서 다시 계산하면 `detail` 이 없어 `AWAITING_INPUT` 을 가릴 수 없다 —
+        #     그래서 실어 온 값을 **우선**하고, 없을 때만(직접 stage items 를 넘기는 경로)
+        #     계산한다. **판정 로직은 한 곳뿐**이다(양쪽 다 `charge_absent_reason`).
+        absent = it.get("absent") or charge_absent_reason(it)
         # 강등 항목은 **금액이 아니라 사유**가 본문이다 — 0원과 구별되게 note 에 싣는다.
         note = None
         if conf and conf != "confirmed":
@@ -232,9 +281,12 @@ def _charge_items(charges: dict[str, Any] | None) -> list[dict[str, Any]]:
                 str(it.get("name") or code or "부담금"),
                 it.get("amount_won"),
                 # ★단위를 모르면 **수량·단가를 아예 싣지 않는다**(거짓 라벨보다 공백이 낫다).
-                qty=it.get("base_won") if qty_unit else None,
+                #   미조회의 **센티널 0** 도 같은 이유로 싣지 않는다 — 위 주석 참조.
+                qty=it.get("base_won") if (qty_unit and not qty_sentinel) else None,
                 qty_unit=qty_unit,
-                unit_price=it.get("rate") if rate_unit else None,
+                unit_price=it.get("rate") if (rate_unit and not rate_sentinel) else None,
+                qty_absent=absent if (qty_unit and qty_sentinel) else None,
+                unit_price_absent=absent if (rate_unit and rate_sentinel) else None,
                 unit_price_unit=rate_unit,
                 basis=(f"{code} — 통합 세금엔진(공사·분양 단계): 과표 × 요율" if code else None),
                 structural_basis="부담금 = 과표 × 요율(단계별 세금엔진 산출)",
@@ -402,6 +454,23 @@ def build_legacy_ledger(scenario: dict[str, Any] | None) -> dict[str, Any]:
                 note=constr.get("source") or "공사단가 미확보 — 금액 산출 불가",
             )
         ]
+    # ★인입 공사비(구 B05~B07) — 부담금에서 **공사비로 이관**된 항목(2026-08-27).
+    #   행을 안 그리면 **행 합계 ≠ 엔진 총액**이 되어 검산이 ERROR 를 낸다(실측 -32,640,000).
+    #   ★개산이므로 `note` 에 **개산이라는 사실과 출처 부재**를 싣는다 — 「고시값」과 구별되게.
+    for ci in ((constr.get("utility_connection") or {}).get("items") or []):
+        constr_items.append(
+            _item(
+                f"construction_{str(ci.get('code', '')).lower()}",
+                str(ci.get("name") or "인입공사비"),
+                ci.get("amount_won"),
+                qty=ci.get("qty"),
+                qty_unit=ci.get("qty_unit"),
+                unit_price=ci.get("unit_price"),
+                unit_price_unit=f"원/{ci.get('qty_unit')}" if ci.get("qty_unit") else None,
+                structural_basis="인입공사비 = 수량 × 단가(공급자 약관·계약)",
+                note=ci.get("basis"),
+            )
+        )
     charge_rows = _charge_items(charges)
     # ★금융·제경비도 **수량 × 단가**다(과표 = 토지+공사, 단가 = 엔진 추출 비율).
     #   초안은 *"엔진이 항목 단위로 내지 않는다"* 고 적었는데 — **부재가 아니라 안 실어

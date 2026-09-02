@@ -273,3 +273,47 @@ describe("배선 — 지배 제약이 병합/변환에서 소실되지 않는다
     });
   });
 });
+
+/**
+ * ★사다리 전수 — 종전 픽스처는 `높음`·`보통` **둘뿐**이라 `중간`·`낮음`·`극히 높음` 을
+ * **한 번도 안 태웠다**(적대 리뷰 실측 · 2026-08-27). 색이 5→3 으로 접혀 있었는데도
+ * 초록이었던 이유가 그것이다.
+ */
+describe("지배 제약 배지 — 사다리 5등급이 서로 다른 색", () => {
+  const LADDER = ["낮음", "보통", "중간", "높음", "극히 높음"] as const;
+
+  function classesFor(severity: string): string {
+    const { container } = render(
+      <DominantConstraintBanner
+        constraint={
+          {
+            headline: "테스트 제약",
+            severity,
+            ranked: [],
+          } as unknown as Parameters<typeof DominantConstraintBanner>[0]["constraint"]
+        }
+      />,
+    );
+    // 등급 텍스트를 그리는 칩의 class 를 본다(색은 class 로 들어간다).
+    const chip = Array.from(container.querySelectorAll("span")).find(
+      (el) => el.textContent?.trim() === severity,
+    );
+    expect(chip, `'${severity}' 칩이 렌더되지 않았다 — 조건을 못 만들었다`).toBeTruthy();
+    return chip!.className;
+  }
+
+  it("★공허한 참 방지 — 다섯 등급이 모두 실제로 렌더된다", () => {
+    for (const g of LADDER) expect(classesFor(g).length).toBeGreaterThan(0);
+  });
+
+  it("다섯 등급의 색 클래스가 **서로 다르다**", () => {
+    const seen = LADDER.map((g) => classesFor(g));
+    expect(new Set(seen).size).toBe(LADDER.length);
+  });
+
+  it("미지 등급은 **안전색으로 떨어지지 않는다**", () => {
+    const unknown = classesFor("존재하지_않는_등급");
+    expect(unknown).not.toContain("--status-success");
+    expect(unknown).not.toBe(classesFor("낮음"));
+  });
+});

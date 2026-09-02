@@ -1,0 +1,67 @@
+# gitleaks 설정 — **위양성만** 좁게 면제한다.
+#
+# ## 왜 이 파일이 생겼나 (2026-08-30 실측)
+#
+# `Security Scan` 의 Gitleaks 잡이 **코드 변경 0으로** 빨개졌다. 결정적 증거는
+# **같은 커밋이 다른 결과**를 냈다는 것이다:
+#
+#     09b270fb  2026-08-28T15:24  success
+#     09b270fb  2026-08-30T18:15  failure (26건)
+#
+# 원인은 **스캐너 드리프트**다 — `security.yml` 이 `bandit`·`pip-audit` 는
+# `-c requirements-dev.txt` 로 **핀**하면서 `gitleaks` 만 `@v2` **이동 태그**를 썼다.
+# 이 저장소가 이미 적어 둔 것과 같은 형태다(CLAUDE.md §G-32: *"CI 가 린터를 핀 없이
+# 설치하면 새 릴리스가 **코드 변경 0으로 전 PR을 빨갛게** 만든다"*) — 그때는 `ruff` 에서만
+# 봉합하고 **형제로 안 쓸렸다.**
+#
+# ## ★면제 전에 전수 triage 했다 — 26/26 위양성
+#
+# 각 발견을 **자기 커밋의 blob** 에서 읽어 확인했다(라인 번호가 `origin/main` 기준이 아니라
+# 커밋 기준이라, 워킹트리를 읽으면 엉뚱한 줄을 본다 — 처음에 그렇게 틀렸다):
+#
+#   · 테스트 더미      `pk_test_abc123` · `test_sk_x1234567` · `test-key-1234567890`
+#                      `test-jwt-secret-32-chars-long-key`
+#   · **객체 키/식별자** `avg_price_10k` · `primaryEnergyDemandKwhM2` ·
+#                      `operational_carbon_30yr_kg` · `satong.dominantConstraint.v1`
+#                      → 새 `generic-api-key` 규칙이 **긴 식별자까지** 잡는 쪽으로 넓어졌다
+#   · k8s 매니페스트   `secrets.yaml` 9키 전부 base64 디코드 시 **`CHANGE_ME_…`** (플레이스홀더)
+#   · 문서             `.md` 의 `curl` 예시
+#   · ★`.env.example` 의 64자 hex `JWT_SECRET_KEY` — **유일하게 의심스러웠다.**
+#     해시 대조: 그 값 ≠ 현재 `.env.example` ≠ 실사용 `.env` (**셋 다 다름**) → 사용 이력 없음.
+#     ★단 **프로덕션 컨테이너의 값은 읽을 수 없어 그 축은 미측정**이다.
+#
+# ## ★면제 원칙 — 넓게 끄지 않는다
+#
+# *"게이트가 시끄러우니 규칙을 끄자"* 는 **지표를 느슨하게 해서 달성**하는 것이다.
+# 여기서는 **경로를 좁혀** 면제한다(테스트·예시·k8s 템플릿). **프로덕션 소스는 면제하지 않는다** —
+# 거기서 나온 위양성(객체 키)은 규칙이 아니라 **정규식 대상 축소**로 처리한다.
+# 새 진짜 유출이 프로덕션 코드에 들어오면 **여전히 잡힌다.**
+
+title = "PropAI gitleaks"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "위양성만 — 전수 triage(26/26) 근거는 이 파일 상단 주석"
+
+paths = [
+  # 테스트 픽스처 — 값이 `test_`·`pk_test_`·`test-key-` 등으로 자기표지한다.
+  '''.*/__tests__/.*''',
+  '''.*/tests?/.*''',
+  '''.*\.test\.(ts|tsx|js|jsx|py)$''',
+  '''.*\.spec\.(ts|tsx|js|jsx|py)$''',
+  # 예시·템플릿 — 값이 플레이스홀더다(`CHANGE_ME_…`).
+  '''.*\.env\.example$''',
+  '''propai-platform/infra/k8s/base/secrets\.yaml$''',
+  # 문서의 curl 예시.
+  '''.*\.md$''',
+]
+
+regexes = [
+  # ★프로덕션 소스의 **객체 키/식별자**만 좁게 면제한다(경로 면제가 아니라 값 형태 면제).
+  #   snake_case·camelCase 식별자에 구분자만 있는 문자열은 비밀이 아니다.
+  #   ★비밀은 보통 **엔트로피가 높고 사전 낱말이 아니다** — 아래는 그 반대만 통과시킨다.
+  '''^[a-z][a-z0-9]*(?:[._][a-z0-9]+)+$''',
+  '''^[a-z][a-zA-Z0-9]*(?:[A-Z][a-zA-Z0-9]*)+$''',
+]

@@ -19,7 +19,8 @@ import { AlertTriangle, Building2, CheckCircle2, FileSpreadsheet, Landmark, Laye
 import { KakaoAddressSearch, type KakaoAddressResult } from "@/components/ui/KakaoAddressSearch";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient, apiV1BaseUrl } from "@/lib/api-client";
-import { joinAddressJibun } from "@/lib/pnu";
+import { bcodeFromPnu, joinAddressJibun, normalizePnu } from "@/lib/pnu";
+import { dedupeByIdentity, entryIdentityKey, isDuplicateOf, mergeKeepingIncomingFirst } from "@/lib/parcel-entry-identity";
 import { scheduleSnapshotSync } from "@/lib/projectSync";
 import { preferredEntryAddress } from "@/lib/parcel-rows";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
@@ -95,8 +96,8 @@ export function buildInitialAddressEntries(opts: {
             bname: "",
             zonecode: "",
             // PNU 앞 10자리 = 법정동 코드(있으면 유도, 없으면 빈값).
-            bcode: pnu.length >= 10 ? pnu.slice(0, 10) : "",
-            pnu: pnu || undefined,
+            bcode: bcodeFromPnu(pnu) ?? "",
+            pnu: normalizePnu(pnu) ?? undefined,
             areaSqm: typeof p.areaSqm === "number" && p.areaSqm > 0 ? p.areaSqm : undefined,
             zoneCode: p.zoneCode ?? undefined,
           } as AddressEntry;
@@ -509,11 +510,12 @@ export function GlobalAddressSearch({
       // ★검증된 bcode만 형제전파 학습 — PNU 동반(실제 조회로 확정)만 신뢰한다.
       //   엑셀 입력 bcode는 양식 예시값(의정부 4115·강남 1168)이 1~2행에 남아 주소와 어긋날 수
       //   있어 형제 학습에서 제외(오염 전파 방지). PNU 없는 엑셀 bcode는 백엔드가 주소로 재해소.
-      const b = e.pnu && e.pnu.length >= 10 ? e.pnu.slice(0, 10) : "";
+      const b = bcodeFromPnu(e.pnu) ?? "";
       const src = e.fullAddress || e.jibunAddress || "";
       const sg = sigunguOf(src);
       const d = dongOf(src);
-      if (b && b.length >= 10 && sg && d && !sgDongBcode.has(`${sg}|${d}`)) sgDongBcode.set(`${sg}|${d}`, b.slice(0, 10));
+      // `b` 는 `bcodeFromPnu` 의 산출이라 "" 이거나 **정확히 10자**다 — 길이 재검사는 공허하다.
+      if (b && sg && d && !sgDongBcode.has(`${sg}|${d}`)) sgDongBcode.set(`${sg}|${d}`, b);
     }
     const bcodeFor = (e: AddressEntry): string => {
       const src = e.fullAddress || e.jibunAddress || "";
@@ -569,7 +571,7 @@ export function GlobalAddressSearch({
         const r = await apiClient.post<{ parcels: P[] }>("/zoning/parcels-info", {
           // area_input_sqm: 엑셀 입력 면적(비권위)을 함께 보내 백엔드가 공부상과 교차검증→괴리 시
           //   공부상 채택 + area_warning 생성하게 한다(_enrich_fill 신뢰루프 활성화).
-          body: { parcels: slice.map((e, i) => ({ __rid: i, address: e.fullAddress, jibun: e.jibunAddress || e.fullAddress, pnu: e.pnu, bcode: bcodeFor(e), area_input_sqm: e.areaInputSqm ?? e.areaSqm ?? null })) },
+          body: { parcels: slice.map((e, i) => ({ __rid: i, address: e.fullAddress, jibun: e.jibunAddress || e.fullAddress, pnu: normalizePnu(e.pnu) ?? undefined, bcode: bcodeFor(e), area_input_sqm: e.areaInputSqm ?? e.areaSqm ?? null })) },
           useMock: false, timeoutMs: 90000,
         });
         parcels = r.parcels || [];
@@ -585,7 +587,18 @@ export function GlobalAddressSearch({
         const uid = slice[p.__rid]?.__uid;
         if (uid) { byUid.set(uid, p); enrichedByUid.set(uid, p); }
       }
-      setAddresses((prev) => prev.map((a) => {
+      // ★보강이 **정체성 문자열을 수렴시킨다** — 백엔드가 짧은 주소를 전체 시군구 주소로
+      //   자동 해소하고(`resolvedAddr`) 없던 PNU 를 채운다(`m.pnu || a.pnu`). 그래서 병합
+      //   시점에는 서로 다른 문자열이던 두 행이 **여기서 비로소 같은 필지로 드러난다.**
+      //   종전엔 수렴 후 다시 중복제거하는 곳이 **없어서**, «중복제거를 했다» 는 사실이
+      //   «중복이 없다» 를 보장하지 못했다. 수렴 직후 같은 규칙으로 한 번 더 접는다.
+      //
+      // ★**이것은 입력 시점 중복제거와 이중 가드다**(변이 검증에서 실측). 보강이 성공하면
+      //   여기가 목록 전체를 다시 접으므로, 입력 시점 가드를 지워도 최종 수가 같다 —
+      //   그래서 그 변이가 「생존」으로 보인다. **구멍이 아니라 중복 방어다.**
+      //   단, **보강이 실패하면 이 줄은 돌지 않는다**(청크 예외 → `continue`). 그때는 입력
+      //   시점 가드가 유일하므로 둘 다 필요하다. 두 경로 모두 테스트가 따로 태운다.
+      setAddresses((prev) => dedupeByIdentity(prev.map((a) => {
         const m = a.__uid ? byUid.get(a.__uid) : undefined;
         if (!m) return a;
         // ★공공데이터(공부상) 우선: parcels-info status=ok이고 공부상 면적이 있으면 엑셀 입력값을
@@ -623,7 +636,7 @@ export function GlobalAddressSearch({
           unitCount: m.building?.unit_count ?? a.unitCount,
           infoStatus: (m.status as AddressEntry["infoStatus"]) || a.infoStatus,
         };
-      }));
+      })));
     }
 
     if (seq !== enrichSeq.current) { finishPending(); return; } // 더 새로운 보강이 시작됐으면 이후 단계(자기치유·SSOT) 폐기
@@ -687,14 +700,14 @@ export function GlobalAddressSearch({
         const zone = m?.zone_type ?? e.zoneCode ?? null;
         // 토지조서 SSOT(parcels) 배선용 필지별 데이터 — 보강(m) 우선, 로컬 entry 폴백.
         //   무목업: 없는 값은 빈 문자열(가짜 미생성). ownerType은 무료 API 미제공이라 항상 "".
-        const pnu = (m?.pnu ?? e.pnu) ?? "";
+        const pnu = normalizePnu(m?.pnu ?? e.pnu) ?? "";
         const address = (m?.address ?? e.fullAddress ?? e.jibunAddress) ?? "";
         const landCategory = (m?.jimok ?? e.jimok) ?? "";
         // 개발가능성 우선정렬용 특이부지 판정(지목 + 백엔드 게이트) — '대표' 선정의 핵심.
         const special = _isSpecialParcel({ jimok: landCategory, isSpecial: (m?.special_parcel ?? e.specialParcel)?.is_special });
         // ★K1: 대표(개발가능 필지)로 종합/시나리오 분석을 '재조준'하기 위해 bcode·지번도 함께 보존.
         //   (도로 등 특이부지가 입력 1번이라 분석이 거기 고정되던 근본버그 해소 — analysisAddress 보정.)
-        const bcode = (e.bcode || (pnu && pnu.length >= 10 ? pnu.slice(0, 10) : "")) ?? "";
+        const bcode = (e.bcode || (bcodeFromPnu(pnu) ?? "")) ?? "";
         const jibun = (e.jibunAddress || address) ?? "";
         return { area, status, zone, pnu, address, landCategory, special, bcode, jibun };
       })
@@ -760,8 +773,10 @@ export function GlobalAddressSearch({
       // ★토지조서 SSOT 배선: 다필지 배열을 기록해 LandSchedule·Registry 시드 useEffect가
       //   집계값이 아닌 실제 필지목록으로 표를 자동 복원하게 한다('절반만 배선된 SSOT' 해소).
       //   ParcelData 타입 정합(pnu/address/areaSqm/landCategory/ownerType), 누락필드는 "".
+      // ★여기가 **되쓰기** 지점이다 — 오염값을 그대로 넣으면 스토어가 오염을 스스로 재생산하고
+      //   («레거시 저장분이라 활성 생산이 아니다» 라는 서술이 이 파일에서는 거짓이 된다).
       parcels: valid.map((p) => ({
-        pnu: p.pnu,
+        pnu: normalizePnu(p.pnu) ?? "",
         address: p.address,
         areaSqm: p.area,
         landCategory: p.landCategory,
@@ -841,7 +856,9 @@ export function GlobalAddressSearch({
       newAddresses = [entry];
     } else {
       // 다필지: 중복이면 조기 반환(불필요한 종합분석·보강 재발사 차단).
-      if (addresses.some((a) => a.fullAddress === entry.fullAddress)) {
+      // ★정체성은 **PNU 우선**이다(`parcel-entry-identity`). 종전엔 `fullAddress` 문자열만 봐서
+      //   같은 동 단위 주소를 공유하는 **서로 다른 필지**가 「중복」으로 버려졌다.
+      if (isDuplicateOf(entry, addresses)) {
         setIsSearching(false);
         onChange?.(addresses);
         return;
@@ -956,7 +973,7 @@ export function GlobalAddressSearch({
   // bcode는 PNU 앞 10자리로 구성(pickCandidate 패턴 동일).
   const handleMapPick = useCallback((parcel: ParcelAtPointResult) => {
     if (!parcel.found || !parcel.address) return;
-    const bcode = parcel.bcode || (parcel.pnu && parcel.pnu.length >= 10 ? parcel.pnu.slice(0, 10) : "");
+    const bcode = parcel.bcode || (bcodeFromPnu(parcel.pnu) ?? "");
     handleAddressSelect({
       fullAddress: parcel.address,
       jibunAddress: parcel.jibun || parcel.address,
@@ -973,17 +990,24 @@ export function GlobalAddressSearch({
 
     // 현재 addresses를 읽어 중복 체크용 Set 생성(함수 호출 시점 스냅샷).
     // handleAddressSelect 내부에서도 중복 체크하므로 실질적으로 이중 방어.
-    const existingAddresses = new Set(addresses.map((a) => a.fullAddress));
+    // ★주소 문자열이 아니라 **정체성 키**로 본다 — 같은 동 주소의 다른 필지를 삼키지 않는다.
+    const existingKeys = new Set(
+      addresses.map(entryIdentityKey).filter((k): k is string => k !== null),
+    );
 
     let merged = [...addresses];
 
     for (const parcel of parcels) {
       if (!parcel.found || !parcel.address) continue;
       const fullAddress = parcel.address;
-      if (existingAddresses.has(fullAddress)) continue; // 이미 있으면 건너뜀
-      existingAddresses.add(fullAddress);
+      // ★앵커(유효 PNU·주소)가 없으면 `null` — 그때는 **중복이 아니다**(무음 손실 금지).
+      const key = entryIdentityKey({ pnu: parcel.pnu, fullAddress });
+      if (key !== null) {
+        if (existingKeys.has(key)) continue; // 이미 있으면 건너뜀
+        existingKeys.add(key);
+      }
 
-      const bcode = parcel.bcode || (parcel.pnu && parcel.pnu.length >= 10 ? parcel.pnu.slice(0, 10) : "");
+      const bcode = parcel.bcode || (bcodeFromPnu(parcel.pnu) ?? "");
       const entry: AddressEntry = {
         __uid: newUid(),
         fullAddress,
@@ -1025,7 +1049,7 @@ export function GlobalAddressSearch({
 
   // 후보 선택 → 필지로 추가(PNU 보유 시 bcode 직접 구성, 종합분석 재실행).
   const pickCandidate = useCallback((c: AddrCandidate) => {
-    const bcode = c.pnu && c.pnu.length >= 10 ? c.pnu.slice(0, 10) : "";
+    const bcode = bcodeFromPnu(c.pnu) ?? "";
     handleAddressSelect({
       fullAddress: c.address,
       jibunAddress: c.address,
@@ -1140,19 +1164,21 @@ export function GlobalAddressSearch({
       //   지번으로 복원돼 분석 목록에 중복 표시된다(211-443이 5번 등). 분석 목록은 '필지 단위'
       //   이므로 PNU(없으면 주소)로 1필지=1행 정리한다. 소유자별·세대별 상세(대지지분 등)는
       //   토지조서 메뉴에서 관리한다(중앙분석센터=부지분석, 토지조서=권리/세대 관리로 역할분리).
-      const seenKey = new Set<string>();
-      const uniqEntries = entries.filter((e) => {
-        const key = (e.pnu || e.fullAddress || "").replace(/\s+/g, "");
-        if (key && seenKey.has(key)) return false; // 키 있고 이미 본 필지만 중복 제거
-        if (key) seenKey.add(key);
-        return true; // 빈 키(주소·PNU 모두 없는 행)는 제거하지 않고 보존(데이터 손실 방지)
-      });
+      // ★정체성 판정은 `parcel-entry-identity` 한 곳이다. 종전 인라인 키
+      //   `(e.pnu || e.fullAddress || "")` 는 **PNU 유효성을 안 봤다** — `#941` 라이브 실측에서
+      //   PNU 칸의 비-PNU 값이 292필지 중 5건이었고, 그 값은 생산자가 주소로 합성하므로
+      //   **주소가 같으면 값도 같다**. 즉 가짜 PNU 가 곧 정체성이 되어 다시 접혔다.
+      //   빈 키(앵커 없는 행)는 여전히 **보존**한다(데이터 손실 방지).
+      const uniqEntries = dedupeByIdentity(entries);
       const dupRemoved = entries.length - uniqEntries.length;
       // ★업로드한 필지를 앞에 둔다(기존 검색분은 뒤로 보존, 혼용 가능). 방금 올린 토지조서가
       //   대표(primary)가 되어 이전에 검색한 주소가 분석에 잔류하는 오류를 막는다.
       const merged = single
         ? uniqEntries.slice(0, 1)
-        : [...uniqEntries, ...addresses.filter((a) => !uniqEntries.some((e) => e.fullAddress === a.fullAddress))];
+        // ★업로드분을 앞에 두고 기존분 중 **같은 필지가 아닌 것만** 뒤에 붙인다.
+        //   종전엔 `fullAddress` 동일성만 봐서, 같은 필지가 표기만 다르면(`상도동 211-204` vs
+        //   `서울특별시 동작구 상도동 211-204`) **두 건으로 남았다.**
+        : mergeKeepingIncomingFirst(uniqEntries, addresses);
       setAddresses(merged);
       setMapMode("cadastre");
 
