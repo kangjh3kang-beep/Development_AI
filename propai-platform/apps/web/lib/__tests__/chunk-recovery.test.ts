@@ -20,16 +20,51 @@ import {
 
 const realLocation = window.location;
 
+/**
+ * ★전송을 **실제로 가로챈다**. 이 스텁이 없으면 `flush()` 가 `sendBeacon` 부재 → `fetch` 폴백 →
+ * `try/catch` 로 삼켜져 **조용히 초록**이 된다 — 락이 아니라 장식이 된다(적대 리뷰 지적).
+ */
+let sent: string[] = [];
+/** ★전송과 리로드를 **하나의 타임라인**에 기록한다 — 「리로드 전에 보낸다」는 성질을 직접 잠근다. */
+let timeline: string[] = [];
+function captureSends(): void {
+  sent = [];
+  timeline = [];
+  vi.stubGlobal("navigator", { ...globalThis.navigator, sendBeacon: undefined });
+  vi.stubGlobal("fetch", ((_u: string, init?: RequestInit) => {
+    sent.push(String(init?.body ?? ""));
+    timeline.push("send");
+    return Promise.resolve({ ok: true } as Response);
+  }) as unknown as typeof fetch);
+}
+const sentScopes = (): string[] =>
+  sent.flatMap((b) => {
+    try {
+      return (JSON.parse(b) as { events: Array<Record<string, unknown>> }).events.map(
+        (e) => String((e.payload as Record<string, unknown> | null)?.scope ?? ""),
+      );
+    } catch {
+      return [];
+    }
+  });
+
 beforeEach(() => {
   __resetChunkRecoveryForTest();
+  captureSends();
   // jsdom 의 location 은 실제 이동을 하지 않으므로 replace 를 감시로 대체한다.
   Object.defineProperty(window, "location", {
     configurable: true,
-    value: { href: "https://4t8t.net/ko/dashboard", replace: vi.fn() },
+    value: {
+      href: "https://4t8t.net/ko/dashboard",
+      replace: vi.fn(() => {
+        timeline.push("replace");
+      }),
+    },
   });
 });
 afterEach(() => {
   Object.defineProperty(window, "location", { configurable: true, value: realLocation });
+  vi.unstubAllGlobals();
   __resetChunkRecoveryForTest();
 });
 
@@ -84,5 +119,80 @@ describe("복구는 세션당 한 번만 한다", () => {
     expect(tryRecoverFromChunkError(new Error("Failed to load chunk /a.js"))).toBe(false);
     expect(window.location.replace).not.toHaveBeenCalled();
     spy.mockRestore();
+  });
+});
+
+/**
+ * ★**자동복구가 도는 그 사건이 텔레메트리에 남는가.**
+ *
+ * 【라이브 실측 2026-08-27 · 네트워크 층에서 `POST /growth/events` 를 가로채 문서 리로드를 넘겨 관측】
+ *     `_cr` 자동복구 리로드      25,682ms
+ *     첫 청크 오류(리로드 前)  `js_error` **0건**   ← 유실
+ *     두 번째  (리로드 後)  `js_error` **1건**   ← `scope="dashboard-error"`
+ *   두 번째가 배달됐으므로 **프로브 사망이 아니다**(같은 실행 안 양성 대조군).
+ *   즉 **배포 직후 열린 탭이 깨지는, 가장 정보가 많은 경우**가 통째로 안 남았다.
+ *
+ * ★**두 단언을 둘 다 건다.** `replace` 단언이 없으면 「자동복구를 통째로 제거」한 변이가 초록이고,
+ *   전송 단언이 없으면 원래 결함이 그대로다.
+ */
+describe("★자동복구는 **보고한 뒤에** 리로드한다", () => {
+  it("A(결함이 살던 자리) 첫 청크 오류 — 전송 ≥1 **그리고** replace 1회", () => {
+    const ok = tryRecoverFromChunkError(new Error("Failed to load chunk /a.js"));
+    expect(ok).toBe(true);
+    expect(
+      sentScopes(),
+      "리로드 전에 보고하지 않았다 — 이 사건은 어디에도 남지 않는다",
+    ).toContain("chunk-auto-recovery");
+    expect(
+      window.location.replace,
+      "보고는 했는데 복구를 안 했다 — 사용자는 낫지 않는 화면에 남는다",
+    ).toHaveBeenCalledTimes(1);
+
+    // ★**순서**까지 잠근다. 초판은 이것을 안 걸어 「보고를 `replace` 뒤로 옮기는」 변이가
+    //   **생존**했다 — jsdom 의 `replace` 는 스텁이라 실제 이동이 없어 뒤에서도 보고가 돈다.
+    //   프로덕션에서 그 순서가 안전한지는 **재지 않았다**(내비게이션이 이미 시작된 뒤다).
+    //   재지 않은 것에 기대지 않는다 — 계약을 「리로드 **전에** 보낸다」로 못 박는다.
+    // ★`toEqual(["send","replace"])` 로 못 박지 **않는다** — 조기 포착 버퍼가 임계(20)를 넘으면
+    //   drain 루프 안에서 먼저 flush 되어 `["send","send","replace"]` 가 **정상**인데 빨개진다
+    //   (독립 리뷰 지적 — 가드의 위양성도 결함이다). 잠그는 것은 **순서**이지 횟수가 아니다.
+    expect(timeline.indexOf("send"), "전송이 아예 없다").toBeGreaterThanOrEqual(0);
+    expect(
+      timeline.indexOf("send"),
+      `전송이 리로드보다 뒤다 — 이 순서의 안전성은 미측정이다: ${JSON.stringify(timeline)}`,
+    ).toBeLessThan(timeline.indexOf("replace"));
+    expect(timeline.filter((x) => x === "replace"), "리로드가 1회가 아니다").toHaveLength(1);
+  });
+
+  it("B(음성 대조군) 평범한 오류 — 여기서는 아무것도 하지 않는다(경계가 보고한다)", () => {
+    const ok = tryRecoverFromChunkError(new Error("undefined is not a function"));
+    expect(ok).toBe(false);
+    expect(window.location.replace).not.toHaveBeenCalled();
+    // ★과잉 억제 방지의 반대편: 여기서 보고하면 경계 보고와 **이중**이 된다.
+    expect(sentScopes(), "청크 오류가 아닌데 자동복구 보고가 나갔다").not.toContain(
+      "chunk-auto-recovery",
+    );
+  });
+
+  it("C 두 번째 청크 오류 — 복구를 포기하므로 **여기서는** 보고하지 않는다(경계가 한다)", () => {
+    expect(tryRecoverFromChunkError(new Error("Failed to load chunk /a.js"))).toBe(true);
+    sent = [];
+    expect(tryRecoverFromChunkError(new Error("Failed to load chunk /a.js"))).toBe(false);
+    expect(sentScopes(), "복구도 안 하면서 보고까지 하면 경계 보고와 이중이다").toEqual([]);
+  });
+
+  it("★sessionStorage 가 막혀 복구를 포기할 때도 **여기서는** 보고하지 않는다", () => {
+    const realSS = window.sessionStorage;
+    Object.defineProperty(window, "sessionStorage", {
+      configurable: true,
+      get() {
+        throw new Error("blocked");
+      },
+    });
+    try {
+      expect(tryRecoverFromChunkError(new Error("Failed to load chunk /a.js"))).toBe(false);
+      expect(sentScopes()).toEqual([]);
+    } finally {
+      Object.defineProperty(window, "sessionStorage", { configurable: true, value: realSS });
+    }
   });
 });

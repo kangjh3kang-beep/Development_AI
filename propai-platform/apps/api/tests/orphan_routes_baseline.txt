@@ -176,10 +176,6 @@
 /api/v1/sre/dashboard	unclassified	
 /api/v1/system/integration/status	unclassified	
 /api/v1/tax/calculate	unclassified	
-/api/v1/webhooks	unclassified	
-/api/v1/webhooks/{webhook_id}	unclassified	
-/api/v1/webhooks/{webhook_id}/deliveries	unclassified	
-/api/v1/webhooks/{webhook_id}/test	unclassified	
 /api/v1/webrtc/sessions	unclassified	
 /api/v1/webrtc/sessions/active	unclassified	
 /api/v1/webrtc/sessions/ice-candidate	unclassified	

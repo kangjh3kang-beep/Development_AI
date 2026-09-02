@@ -17,6 +17,7 @@ from typing import Any
 
 from app.services.mass_backbone.mass_aggregation import aggregate_mass_templates
 from app.services.mass_backbone.region_util import dominant_region, region_from_address
+from app.utils.pnu import is_valid_pnu
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +64,7 @@ async def collect_region(
         except Exception as e:  # noqa: BLE001
             logger.warning("법정동 PNU 검색 실패 %s: %s", dong, str(e)[:120])
             pnu = None
-        if not pnu or len(pnu) < 19:
+        if not is_valid_pnu(pnu):
             continue
         sgg, bjd = pnu[:5], pnu[5:10]
         try:

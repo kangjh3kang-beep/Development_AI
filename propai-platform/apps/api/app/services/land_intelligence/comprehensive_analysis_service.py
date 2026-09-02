@@ -38,6 +38,7 @@ from app.services.feasibility.unit_standards import (
 from app.services.feasibility.unit_standards import (
     TYPICAL_FAR_PCT as TYPICAL_FAR,
 )
+from app.utils.pnu import lawd_cd_from_pnu
 
 # ── 개발방식별 주차 기준 ──
 PARKING_RULES: dict[str, dict[str, Any]] = {
@@ -1529,8 +1530,8 @@ class ComprehensiveAnalysisService:
             return existing
 
         pnu = base.get("pnu", "")
-        if len(pnu) >= 5:
-            lawd_cd = pnu[:5]
+        if lawd_cd_from_pnu(pnu):
+            lawd_cd = lawd_cd_from_pnu(pnu)
         else:
             return {"message": "PNU 부재로 실거래가 조회 불가"}
 

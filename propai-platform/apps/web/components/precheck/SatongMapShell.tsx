@@ -90,6 +90,7 @@ import {
 } from "@/lib/satong-map-layers";
 import { buildSelectionGeoJson, buildSelectionKml, kakaoRoadviewUrl } from "@/lib/satong-export";
 import { joinAddressJibun, normalizePnu } from "@/lib/pnu";
+import { isSameParcel } from "@/lib/parcel-entry-identity";
 import { countJibunHealTargets, healParcelJibunByPoint } from "@/lib/parcel-jibun-heal";
 import { ParcelJibunLabel } from "@/components/precheck/ParcelJibunLabel";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
@@ -1925,7 +1926,9 @@ export function SatongMapShell({
         if (removed) {
           setDetailFeature((current) =>
             current &&
-            ((removed.pnu && current.pnu === removed.pnu) || current.address === removed.address)
+            // ★종전 `(removed.pnu && …) || current.address === removed.address` 는 **PNU 가
+            //   서로 달라도 주소만 같으면 참**이라, 같은 동 주소의 **다른 필지** 패널을 닫았다.
+            isSameParcel(current, removed)
               ? null
               : current,
           );
@@ -4059,7 +4062,8 @@ export function SatongMapShell({
                     onClick={() => {
                       const feature =
                         selectedMapFeatures.find(
-                          (f) => (parcel.pnu && f.pnu === parcel.pnu) || f.address === parcel.address,
+                          // ★같은 동 주소의 다른 필지로 지도가 튀던 자리 — 판정은 한 곳(`isSameParcel`).
+                          (f) => isSameParcel(f, parcel),
                         ) ??
                         ({
                           id: parcel.id,

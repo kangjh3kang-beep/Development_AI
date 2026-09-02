@@ -33,6 +33,7 @@ import {
   type BackendEvidence,
   type BackendLegalRef,
 } from "@/lib/evidence/adaptEvidence";
+import { bcodeFromPnu, normalizePnu } from "@/lib/pnu";
 
 /* ── 백엔드 계약(읽기 전용 타입) ── */
 
@@ -492,8 +493,9 @@ export function PersonaPanel({ projectId, runDisabled = false }: PersonaPanelPro
 
   // SSOT 1회 캡처(읽기) — PersonaAnalyzeRequest 정합. bcode는 store에 없어 pnu[:10]에서 파생(없으면 null).
   const requestBody = useMemo<PersonaRequestBody>(() => {
-    const pnu = siteAnalysis?.pnu ?? null;
-    const bcode = pnu && pnu.length >= 10 ? pnu.slice(0, 10) : null;
+    // ★유효한 19자리에서만 파생한다(가짜 PNU 가 `"store-rep-"` 을 법정동코드로 만들었다).
+    const pnu = normalizePnu(siteAnalysis?.pnu);
+    const bcode = bcodeFromPnu(siteAnalysis?.pnu);
     const parcels =
       siteAnalysis?.parcels
         ?.map((p) => p.address)
