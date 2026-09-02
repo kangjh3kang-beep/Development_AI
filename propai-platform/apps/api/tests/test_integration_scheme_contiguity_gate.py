@@ -170,17 +170,46 @@ def _add_scheme_names() -> set[str]:
 
 
 def _gate_set_literals() -> dict[str, set[str]]:
-    """세 집합의 원소를 **AST 로** 뽑는다(정규식이 주석·문자열에 뚫리지 않도록)."""
-    out: dict[str, set[str]] = {}
-    for n in ast.walk(ast.parse(_SRC)):
+    """게이트를 구성하는 집합만 **AST 로** 뽑는다.
+
+    ★축을 «이름이 `_SCHEMES` 로 끝나는 것» 으로 잡았다가 `SELF_STANDING_SCHEMES`(= 단순 건축)
+      까지 빨아들여 **틀린 모집단**을 만들었다. 게이트의 정의는 이름이 아니라
+      `INTEGRATION_SCHEMES = A | B | C` **그 식**이므로, 거기서 피연산자 이름을 파생한다.
+      (새 축을 추가해도 그 식에 넣기만 하면 이 수집기가 자동으로 따라온다.)
+    """
+    tree = ast.parse(_SRC)
+    assigns: dict[str, ast.AST] = {}
+    for n in ast.walk(tree):
         tgt = None
         if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name):
             tgt = n.targets[0].id
         elif isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name):
             tgt = n.target.id
-        if tgt and tgt.endswith("_SCHEMES") and isinstance(getattr(n, "value", None), ast.Set):
-            out[tgt] = {e.value for e in n.value.elts
-                        if isinstance(e, ast.Constant) and isinstance(e.value, str)}
+        if tgt and getattr(n, "value", None) is not None:
+            assigns[tgt] = n.value
+
+    union = assigns.get("INTEGRATION_SCHEMES")
+    assert union is not None, "INTEGRATION_SCHEMES 대입을 못 찾았다 — 수집기가 죽었다"
+    members: list[str] = []
+
+    def _walk(node):
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+            _walk(node.left); _walk(node.right)
+        elif isinstance(node, ast.Name):
+            members.append(node.id)
+
+    _walk(union)
+    assert len(members) >= 2, f"게이트가 합집합으로 구성돼 있지 않다 — {members}"
+
+    out: dict[str, set[str]] = {}
+    for name in members:
+        v = assigns.get(name)
+        if isinstance(v, ast.Set):
+            out[name] = {e.value for e in v.elts
+                         if isinstance(e, ast.Constant) and isinstance(e.value, str)}
+        elif isinstance(v, ast.Call) and isinstance(v.func, ast.Name) and v.func.id == "set" and not v.args:
+            out[name] = set()   # 의도적 빈 축(근거 미확인이라 비워 둔 것)
+    assert set(out) == set(members), f"피연산자 중 해석 못 한 것: {set(members) - set(out)}"
     return out
 
 
@@ -316,3 +345,84 @@ def test_buildable_types_partition_is_actually_split():
     t1 = DevelopmentScenarioSimulator._buildable_types("제1종일반주거지역", "단순 건축")
     t2 = DevelopmentScenarioSimulator._buildable_types("제2종일반주거지역", "단순 건축")
     assert t1 != t2, "제1종과 제2종이 같은 목록이면 1·2·3종이 여전히 뭉개진 것"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 6) ★기계 변이(`scripts/mutate_changed.py`)가 드러낸 구멍 봉합
+#    손으로 고른 변이 8종은 전부 CAUGHT 였는데, 기계는 아래를 생존시켰다.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_downgrade_lands_on_conditional_not_merely_not_impossible():
+    """★`applicable = "조건부"` **줄을 지워도** 종전 락이 초록이었다.
+
+    *"불가가 아니다"* 는 **강등이 아예 일어나지 않는 경우**에도 참이다(「가능」이 그대로 남음).
+    계약은 «불가가 아님» 이 아니라 **«조건부로 내려간다»** 이므로 값을 못 박는다.
+    """
+    ok, bad = _adjacency_pair()
+    # 인접 시 「가능」이던 게이트 대상만 고른다(파생) — 이미 조건부인 것은 변화가 안 보인다.
+    gate = set().union(*_gate_set_literals().values())
+    was_possible = sorted(k for k in gate if k in ok and ok[k]["applicable"] == "가능")
+    assert was_possible, f"「가능」이던 게이트 대상이 0개 — 픽스처가 모집단을 못 만든다"
+    for k in was_possible:
+        assert bad[k]["applicable"] == "조건부", (
+            f"{k}: 비인접이면 **조건부**여야 한다 — 실제 {bad[k]['applicable']!r} "
+            "(강등 자체가 사라지면 사용자는 근거 없는 「가능」을 본다)"
+        )
+
+
+def test_downgrade_reason_reaches_cons_not_only_notes():
+    """사유는 `notes` 뿐 아니라 **`cons`** 에도 실려야 한다(화면이 둘을 다르게 쓴다)."""
+    _, bad = _adjacency_pair()
+    s = bad["지구단위계획 연계"]
+    joined = " ".join(s["cons"] or [])
+    assert "비인접" in joined, f"cons 에 비인접 사유가 없다: {s['cons']!r}"
+    assert "관할 확인" in joined, f"cons 에 후속 안내가 없다: {s['cons']!r}"
+
+
+def test_zone_basis_constants_are_pinned_literals():
+    """★상수를 **리터럴로 못 박는다**.
+
+    종전 락은 `basis == ZONE_BASIS_AREA_WEIGHTED` 처럼 **상수를 임포트해 비교**해서,
+    상수 값을 바꾸면 양변이 같이 바뀌어 **통과했다**(자기 상수를 단언하는 락).
+    값은 응답 계약이므로 소비처가 문자열로 분기할 수 있다 — 바뀌면 깨져야 한다.
+    """
+    assert ZONE_BASIS_AREA_WEIGHTED == "area_weighted"
+    assert ZONE_BASIS_SINGLE == "single_zone"
+    assert ZONE_BASIS_NO_AREA == "first_parcel_no_area"
+    # 닫힌 집합 — 새 값을 조용히 늘리면 소비처가 모른다.
+    assert {ZONE_BASIS_AREA_WEIGHTED, ZONE_BASIS_SINGLE,
+            ZONE_BASIS_NO_AREA, SS.ZONE_BASIS_NONE} == {
+        "area_weighted", "single_zone", "first_parcel_no_area", "none"}
+
+
+def test_every_site_payload_carrying_primary_zone_also_carries_basis():
+    """★소스 문자열 검사가 아니라 **AST 로 전수** 대조한다.
+
+    종전 락은 `'"primary_zone_basis": …' in _SRC` 였다 — 페이로드가 **두 군데**인데
+    한 곳만 지워도 통과했다(기계 변이가 `:507` 줄삭제로 정확히 그것을 생존시켰다).
+    """
+    with_zone = with_basis = 0
+    for n in ast.walk(ast.parse(_SRC)):
+        if not isinstance(n, ast.Dict):
+            continue
+        keys = {k.value for k in n.keys
+                if isinstance(k, ast.Constant) and isinstance(k.value, str)}
+        if "primary_zone" in keys:
+            with_zone += 1
+            if "primary_zone_basis" in keys:
+                with_basis += 1
+    assert with_zone >= 2, f"primary_zone 을 싣는 딕트가 {with_zone}개 — 수집기가 죽었다"
+    assert with_basis == with_zone, (
+        f"primary_zone 을 싣는 {with_zone}곳 중 basis 를 함께 싣는 곳은 {with_basis}곳뿐 — "
+        "근거 없이 용도지역만 실으면 「면적가중」과 「첫 필지 폴백」이 구별되지 않는다"
+    )
+
+
+def test_zone_fallback_paths_are_wired():
+    """폴백 경로 — 실측 용도지역이 **없을 때** 전체 목록으로 떨어지는가."""
+    # 실측이 하나도 없으면 전체(추론 포함) 행으로 판단해야 한다.
+    rows = [{"zone": "제1종일반주거지역", "area": 100.0},
+            {"zone": "제2종일반주거지역", "area": 900.0}]
+    assert dominant_zone_by_area(rows)[0] == "제2종일반주거지역"
+    # 전부 비어 있으면 빈 문자열 + none — 조용히 첫 값을 지어내지 않는다.
+    assert dominant_zone_by_area([{"zone": None, "area": 5.0}]) == ("", SS.ZONE_BASIS_NONE)
