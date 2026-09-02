@@ -7,6 +7,7 @@ import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { TrustBadge } from "@/components/common/TrustBadge";
 import { DataSourceNotice } from "@/components/ui/DataSourceNotice";
 import { apiClient, ApiClientError } from "@/lib/api-client";
+import { normalizePnu } from "@/lib/pnu";
 
 /* ── Types ── */
 
@@ -384,7 +385,7 @@ export function BankReadyReportBuilder() {
           selected_sections: Array.from(selectedSections),
           template,
           project_id: projectId || undefined,
-          pnu: siteAnalysis?.pnu || undefined,
+          pnu: normalizePnu(siteAnalysis?.pnu) ?? undefined,
           address: siteAnalysis?.address || undefined,
         },
         useMock: false,
@@ -440,7 +441,7 @@ export function BankReadyReportBuilder() {
             selected_sections: Array.from(selectedSections),
             template,
             project_id: projectId || undefined,
-            pnu: siteAnalysis?.pnu || undefined,
+            pnu: normalizePnu(siteAnalysis?.pnu) ?? undefined,
             address: siteAnalysis?.address || undefined,
           }),
         },
