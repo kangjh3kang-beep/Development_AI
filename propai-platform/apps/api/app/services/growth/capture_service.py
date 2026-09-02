@@ -20,6 +20,7 @@ import logging
 import os
 import re
 from collections import deque
+from collections.abc import MutableMapping
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import unquote, urlsplit, urlunsplit
@@ -30,8 +31,45 @@ logger = logging.getLogger(__name__)
 _MAX_QUEUE = 10_000
 _QUEUE: deque[dict[str, Any]] = deque(maxlen=_MAX_QUEUE)
 
+#: ★**유실을 센다.** 종전에는 세는 것이 하나도 없었다(전수 확인 — 이 파일에 계수기 0건).
+#:
+#:   그래서 *"성장루프 데이터가 얼마나 사라졌나"* 에 **아무도 답할 수 없었다.**
+#:   하류 전체(인사이트·자가치유·효과기 발화 표면)가 `platform_events` 의 **완전성을 가정**하는데,
+#:   그 가정이 참인지 거짓인지 판별할 관측이 없었다.
+#:
+#:   ★침묵은 성공이 아니다 — 유실이 0인 것과 유실을 **안 세는 것**은 다른 사실이다.
+_STATS: dict[str, int] = {
+    # 큐가 가득 차 **가장 오래된 것이 밀려난** 수(deque maxlen 동작).
+    "dropped_overflow": 0,
+    # flush 가 반복 실패해 **포기하고 버린** 수(아래 _MAX_FLUSH_RETRY 참조).
+    "dropped_after_retry": 0,
+    # flush 실패 후 **큐로 되돌린** 수(유실이 아니다 — 구별해서 센다).
+    "requeued": 0,
+    # flush 시도가 실패한 횟수.
+    "flush_failures": 0,
+    # 정상 적재된 누계(분모 — 이게 없으면 유실률을 말할 수 없다).
+    "flushed": 0,
+    # ★취소(`CancelledError`)로 중단됐다가 되돌린 수 — 종료 경로가 잃지 않았음을 보이는 값.
+    "cancelled_requeued": 0,
+}
+
+#: 같은 배치가 이 횟수를 넘게 실패하면 **포기하고 버린다**(계수와 함께).
+#:
+#:   ★왜 무한 재시도가 아닌가: 행 자체가 잘못돼(스키마 위반 등) 영원히 실패하면
+#:   그 배치가 큐 앞을 막아 **새 이벤트가 영영 못 들어간다**. 한 배치를 지키려다
+#:   전체를 잃는다. 그래서 상한을 두되 **버린 사실을 센다**.
+#:   ★반대로 상한을 1 로 두면 종전과 같아진다(일시적 DB 장애에 즉시 유실).
+_MAX_FLUSH_RETRY = 12
+
+#: 연속 실패 횟수(프로세스 로컬). 성공하면 0 으로.
+_consecutive_failures = 0
+
 # 1회 배치 INSERT 상한(과도한 단일 트랜잭션 방지).
 _FLUSH_LIMIT = 500
+
+#: 인프로세스 flush 루프의 주기(초) — `main.py` 의 `_growth_flush_loop` 와 **짝이다**.
+#:   ★이 둘이 갈리면 `max_sustained_per_sec` 이 거짓이 된다. 락이 두 값을 대조한다.
+_FLUSH_INTERVAL_S = 5
 
 # user_hash 캐시(같은 user_id 반복 해시 비용 절감, 프로세스 로컬).
 _HASH_CACHE: dict[str, str] = {}
@@ -192,6 +230,9 @@ def record_event(event_type: str, props: dict[str, Any] | None = None) -> None:
         row["event_type"] = event_type
         if row.get("created_at") is None:
             row["created_at"] = datetime.now(UTC)
+        # ★밀려나는 것을 **센다** — `deque(maxlen=)` 은 조용히 버린다.
+        if len(_QUEUE) == _MAX_QUEUE:
+            _STATS["dropped_overflow"] += 1
         _QUEUE.append(row)
     except Exception as e:  # noqa: BLE001 — 수집은 절대 호출경로를 깨뜨리면 안 됨.
         logger.debug("growth record_event 무시: %s", str(e)[:120])
@@ -214,6 +255,16 @@ def record_fallback(service: str, kind: str, *, severity: str = "warn", **meta: 
                                   "payload": {"kind": kind, **meta}})
     except Exception as e:  # noqa: BLE001 — 이중 방어(record_event 자체도 이미 삼킴)
         logger.debug("growth record_fallback 무시: %s", str(e)[:120])
+
+
+def flush_interval_s() -> int:
+    """배수 루프의 대기 주기(초). ★소비처가 리터럴을 쓰지 않게 **파생시킨다**.
+
+    `apps/api/main.py` 는 역사적으로 `sleep(5)` 리터럴을 쓰고 그 짝을
+    `test_flush_interval_matches_the_actual_loop` 이 소스 대조로 잠근다(그대로 둔다).
+    **새로 배선하는 소비처는 이 접근자를 쓴다** — 리터럴을 하나 더 만들지 않는다.
+    """
+    return _FLUSH_INTERVAL_S
 
 
 def queue_size() -> int:
@@ -241,6 +292,24 @@ ON CONFLICT (event_id) DO NOTHING
 """
 
 
+def _requeue(rows: list[dict[str, Any]], *, cancelled: bool) -> None:
+    """빼낸 행을 큐 앞으로 **되돌리고 센다** — ★되돌림 경로는 **하나뿐이어야 한다**.
+
+    `flush_batch` 에는 되돌려야 하는 출구가 **셋**이다(취소 · 정리 중 취소 · 평범한 실패).
+    셋이 각자 되돌림 루프를 갖고 있으면 **반드시 하나를 빠뜨리고, 그 하나가 곧 무성 유실 경로**다
+    — 실제로 그렇게 뚫렸다(정리용 `rollback()` 이 `except Exception` 이라 취소를 안 잡았다).
+
+    FIFO 를 지켜 역순으로 `appendleft` 하고, 큐가 가득이면 밀려나는 것**도 센다**.
+    """
+    for r in reversed(rows):
+        if len(_QUEUE) == _MAX_QUEUE:
+            _STATS["dropped_overflow"] += 1
+        _QUEUE.appendleft(r)
+    _STATS["requeued"] += len(rows)
+    if cancelled:
+        _STATS["cancelled_requeued"] += len(rows)
+
+
 async def flush_batch(db, limit: int = _FLUSH_LIMIT) -> int:
     """큐의 이벤트를 platform_events 로 배치 INSERT 한다. 적재 건수 반환.
 
@@ -249,6 +318,8 @@ async def flush_batch(db, limit: int = _FLUSH_LIMIT) -> int:
     import json
 
     from sqlalchemy import text
+
+    global _consecutive_failures
 
     rows = _drain(limit)
     if not rows:
@@ -275,11 +346,272 @@ async def flush_batch(db, limit: int = _FLUSH_LIMIT) -> int:
     try:
         await db.execute(text(_INSERT_SQL), params)
         await db.commit()
+        _consecutive_failures = 0
+        _STATS["flushed"] += len(params)
         return len(params)
-    except Exception as e:  # noqa: BLE001
-        logger.warning("growth flush_batch 실패(%d건 유실): %s", len(params), str(e)[:160])
+    except BaseException as e:
+        # ★★**`Exception` 이 아니라 `BaseException` 이다**(독립 적대 리뷰 실측 2026-08-27).
+        #
+        #   `asyncio.CancelledError` 는 **`BaseException` 전용**이다(3.8+ · 실측 확인).
+        #   `main.py:712` 는 종료 시 `_gt.cancel()` 을 **await 없이** 부르고 바로 마지막 flush 를
+        #   시도하는데, 그 취소가 `await db.execute(...)` 안에서 배달되면
+        #   **`_drain` 이 이미 빼낸 배치가 그대로 사라진다** — 어떤 계수기에도 안 잡힌 채.
+        #
+        #   ★이 PR 의 논지("조용히 사라지던 것")가 **수리 안에서 그대로 재현**된 자리다.
+        #     노출 창은 (INSERT 소요 / 5초)이고 **DB 가 느릴수록 넓어진다** —
+        #     즉 큐가 가장 깊을 때 가장 잘 터진다.
+        #
+        #   → 취소도 **되돌리고 센다.** 다만 취소는 **삼키면 안 되므로** 되돌린 뒤 re-raise 한다.
+        if not isinstance(e, Exception):
+            _requeue(rows, cancelled=True)
+            logger.warning("growth flush_batch 취소 — %d건 되돌림(재전파)", len(rows))
+            raise
+        # ★★종전에는 여기서 **그대로 잃었다** — `_drain` 이 `popleft()` 로 큐에서 빼낸 뒤라
+        #   실패하면 되돌아갈 곳이 없었다. 로그 문구가 그 사실을 그대로 적고 있었다:
+        #   *"flush_batch 실패(%d건 유실)"*.
+        #
+        #   flush 는 5초마다 최대 500건이므로 **10분 DB 장애 = 120회 × 최대 500건**이다.
+        #   이 저장소는 그런 길이의 DB 버스트를 실제로 기록했다.
+        #
+        #   → **되돌린다.** ★단 **무조건 무손실이 아니다**: 재시도 상한(`_MAX_FLUSH_RETRY`)
+        #     × flush 주기(`_FLUSH_INTERVAL_S`) = **약 65초** 이내의 장애에서만 무손실이고,
+        #     그보다 길면 상한에서 **포기하며 그 사실을 센다**(`dropped_after_retry`).
+        #     ★리뷰 실측: 연속 13회(=65초)째에 500건 유실. 위 「10분 장애」 시나리오는
+        #     **이 코드로도 잃는다** — 다만 **조용하지 않다**(계수 + logger.error + 화면).
+        _consecutive_failures += 1
+        _STATS["flush_failures"] += 1
         try:
             await db.rollback()
         except Exception:  # noqa: BLE001
             pass
+        except BaseException:
+            # ★★**같은 구멍이 정리 경로에 하나 더 있었다**(독립 적대 렌즈 실측 2026-08-28).
+            #
+            #   위에서 `db.execute()`/`commit()` 의 취소는 `BaseException` 으로 막았는데,
+            #   **바로 아래 정리용 `rollback()` 은 `except Exception`** 이라
+            #   `CancelledError` 를 **안 잡는다**. 그러면 취소가 여기서 그대로 전파돼
+            #   **아래 되돌림을 건너뛴다** — `_drain` 이 이미 빼낸 행이
+            #   **어떤 계수기에도 안 잡힌 채** 사라진다.
+            #
+            #   ★실측(두 모집단 대조 · 큐 300행 중 200행 배치):
+            #     rollback 정상 → 사라진 행 **0** · `requeued` 200 · `lost_total` 0
+            #     rollback 취소 → 사라진 행 **200** · `requeued` **0** · `lost_total` **0**
+            #   ★즉 **계수기끼리는 서로 일치하는데 둘 다 틀렸다.** 화면에는 아무 이상이
+            #     안 보인다 — 계수기가 없는 것보다 나쁘다.
+            #
+            #   ★이 PR 의 논지("조용히 사라지던 것")가 **수리 안에서 두 번째로** 재현된 자리다.
+            _requeue(rows, cancelled=True)
+            logger.warning("growth flush_batch 정리 중 취소 — %d건 되돌림(재전파)", len(rows))
+            raise
+
+        if _consecutive_failures > _MAX_FLUSH_RETRY:
+            # ★한 배치가 영원히 실패하면 큐 앞을 막아 **새 이벤트가 영영 못 들어간다**.
+            #   한 배치를 지키려다 전체를 잃지 않는다 — 버리되 **센다**.
+            _STATS["dropped_after_retry"] += len(rows)
+            logger.error(
+                "growth flush_batch %d회 연속 실패 — %d건 포기(누계 유실 %d): %s",
+                _consecutive_failures, len(rows),
+                _STATS["dropped_after_retry"], str(e)[:160],
+            )
+            _consecutive_failures = 0
+            return 0
+
+        # ★FIFO 순서를 지켜 되돌린다(역순 appendleft). 큐가 가득이면 `maxlen` 이
+        #   가장 오래된 것을 밀어내는데 **그것도 센다**.
+        _requeue(rows, cancelled=False)
+        logger.warning(
+            "growth flush_batch 실패(%d건 되돌림 · 연속 %d회): %s",
+            len(rows), _consecutive_failures, str(e)[:160],
+        )
         return 0
+
+
+#: 배수 루프 태스크를 워커 컨텍스트에 담을 때 쓰는 키.
+#:
+#: ★**한 곳에서만 정의한다.** 종전에는 워커가 이 문자열을 **쓰는 쪽과 읽는 쪽에 각각
+#:   리터럴로** 갖고 있었고, 기계 변이가 정확히 그 자리를 짚었다 — 한쪽만 바뀌면
+#:   `cancel()` 이 **영영 안 불리는데 아무 신호도 안 난다**(조용한 실패).
+#:   `_FLUSH_LIMIT` 이 `main.py` 두 곳에 하드코딩돼 있던 것과 **같은 형태**다.
+#:
+#: ★**변이 생존 설명**(도구가 요구한다 — 점수 부풀리기 방지): 이 문자열의 **값**을 바꾸는
+#:   변이는 **생존한다. 그리고 그것이 옳다.** 쓰는 쪽·읽는 쪽이 **둘 다 이 상수**를 보므로
+#:   값이 무엇이든 짝이 맞는다 — 프로세스 로컬 dict 의 키라 값 자체에 의미가 없다.
+#:   ★**그것이 이 상수를 만든 이유다.** 리터럴이 둘이던 종전에는 한쪽만 바뀔 수 있었고,
+#:   그때는 cancel 이 영영 안 불리는데 **아무 예외도 안 났다**(조용한 실패).
+#:   즉 이 생존은 구멍이 아니라 **결함이 구조적으로 불가능해졌다는 신호**다.
+_FLUSH_TASK_CTX_KEY = "growth_flush_task"
+
+
+def start_flush_loop(ctx: MutableMapping[str, Any], session_factory: Any) -> bool:
+    """배수 루프를 띄워 `ctx` 에 담는다. 성공 여부 반환.
+
+    ★워커(arq)는 `on_startup` 에서 이것을 부른다. **`arq` 없이 테스트 가능**하도록
+      여기 두었다 — 종전에는 이 로직이 `apps/worker/main.py` 안에만 있어서
+      `arq` 미설치 환경에서 **그 층을 아무도 태우지 않았다**(기계 변이 생존 4건이 그 자리).
+
+    실패해도 예외를 올리지 않는다 — 수집 배선이 워커 기동을 막으면 안 된다.
+    """
+    try:
+        import asyncio
+
+        async def _loop() -> None:
+            while True:
+                await asyncio.sleep(flush_interval_s())
+                try:
+                    await drain_until_empty(session_factory)
+                except Exception as e:  # noqa: BLE001 — 배수 실패가 루프를 죽이면 안 된다.
+                    logger.warning("growth flush 루프 오류: %s", str(e)[:160])
+
+        ctx[_FLUSH_TASK_CTX_KEY] = asyncio.create_task(_loop())
+        return True
+    except Exception as e:  # noqa: BLE001
+        logger.warning("growth flush 루프 시작 실패: %s", str(e)[:160])
+        return False
+
+
+async def stop_flush_loop_and_drain(ctx: MutableMapping[str, Any], session_factory: Any) -> int:
+    """배수 루프를 멈추고 **마지막으로 비운다**. 적재 건수 반환.
+
+    ★두 일을 **한 함수**에 둔 이유: 종전 워커 코드는 취소와 마지막 배수가 따로 있었고,
+      기계 변이가 *"`ctx.get` 의 키를 바꾼다"* · *"`is not None` 가드를 무력화한다"* 를
+      **둘 다 생존**시켰다. 키를 상수로 모으고 이 함수를 직접 태우면 그 자리가 잠긴다.
+
+    ★취소 대상이 **없어도 배수는 한다** — 루프 기동에 실패한 프로세스야말로
+      큐가 가장 많이 쌓여 있다(그 경우 잔여를 버리면 결함이 두 배가 된다).
+    """
+    import asyncio
+    import contextlib
+
+    task = ctx.get(_FLUSH_TASK_CTX_KEY)
+    if task is not None:
+        task.cancel()
+        # ★★**취소를 기다린다** — 안 기다리면 비행 중 배치가 통째로 사라진다.
+        #
+        #   `cancel()` 은 **요청**일 뿐이다. 루프가 `flush_batch` 안에서
+        #   `await db.execute(...)` 로 대기 중이면, 그 배치는 이미 `_drain` 이
+        #   큐에서 **빼낸** 상태다. 취소가 배달되면 #920 의 `BaseException` 핸들러가
+        #   그것을 **되돌리는데**, 그 되돌림은 **await 를 한 번 더 돌아야** 일어난다.
+        #   기다리지 않으면 아래 `drain_until_empty` 가 **되돌림 전의 얕은 큐**를 보고
+        #   끝내 버리고, 되돌아온 행은 **아무도 비우지 않은 채 프로세스가 죽는다**.
+        #
+        #   ★실측(두 모집단 대조 · 큐 600건 · 비행 배치 500건):
+        #     기다리지 않음 → 종료 후 큐 잔여 **500** · DB 적재 100 = **500건 소실**
+        #     기다림        → 종료 후 큐 잔여 **0**   · DB 적재 **600** = 소실 0
+        #
+        #   ★노출 창은 (INSERT 소요 / flush 주기)라 **DB 가 느릴수록 넓어진다** —
+        #     즉 **큐가 가장 깊을 때 가장 잘 터진다**. 이 파일은 바로 위
+        #     `flush_batch` 에서 같은 창을 이미 적어 뒀는데, 그 사슬의
+        #     **다음 고리**가 여기였다.
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+    try:
+        return await drain_until_empty(session_factory)
+    except Exception as e:  # noqa: BLE001 — 어떤 예외도 종료를 막지 않는다.
+        logger.warning("growth 종료 flush 오류: %s", str(e)[:160])
+        return 0
+
+
+async def drain_until_empty(session_factory: Any, *, max_rounds: int = 20) -> int:
+    """큐가 빌 때까지 배치 flush 한다. 적재된 총 건수 반환.
+
+    ## ★왜 함수로 빼는가 — **배수 경로가 여럿이면 하나가 빠진다**
+
+    ★**정정(2026-08-29 · 독립 적대 렌즈 실측)**: 종전에 이 주석은 *"두 곳에 복제"* 라고
+    적었는데 **틀렸다 — 셋이었다**: `apps/api/main.py` 의 주기 루프 · 같은 파일의 종료 flush ·
+    그리고 `app/tasks/growth_tasks.py` 의 `_flush_async`. 세 번째가 상한을 리터럴 `500` 으로
+    굳혀 `_FLUSH_LIMIT` 과 따로 놀고 있었다.
+    ★**그리고 내가 그 주석을 쓸 때 이미 셋이었다.** 산문은 사본이 갈리는 것을 막지 못한다 —
+      그래서 이 주장은 이제 **파생형 락**이 강제한다
+      (`test_there_is_exactly_one_drain_implementation`).
+
+    이 루프는 종전에 **세 곳에 복제**돼 있었고(주기 루프 · 종료 flush · celery 태스크),
+    상한 `500` 이 **리터럴로 하드코딩**돼 `_FLUSH_LIMIT` 과 따로 놀았다.
+    거기에 워커용으로 **세 번째 사본**을 만들면 셋이 갈라진다.
+
+    ★그리고 실제로 **배수구가 아예 없는 프로세스**가 있었다 — `apps/worker`(arq).
+      진입점 임포트 폐포(79파일)가 `record_event` 에 **닿는데**(`base_client._emit_growth_fallback`
+      → 외부 API 회로차단기 폴백마다 발화) 그 폐포 안에 `flush_batch` 호출은 **0건**이었다.
+      즉 워커가 담은 이벤트는 **컨테이너 재시작마다 통째로 사라졌다.**
+
+    ## 계약
+
+    - 큐가 비어 있으면 **세션을 열지 않는다**(빈 커넥션 낭비 방지).
+    - 한 회차가 `_FLUSH_LIMIT` **미만**을 적재하면 큐가 마른 것이므로 멈춘다.
+    - `max_rounds` 는 **폭주 상한**이다 — 계속 차오르는 큐에 갇히지 않는다.
+    - ★상한은 **리터럴이 아니라 `_FLUSH_LIMIT` 에서 파생**된다. 상수를 바꾸면 여기가 따라온다.
+    """
+    if queue_size() == 0:
+        return 0
+    total = 0
+    async with session_factory() as session:
+        for _ in range(max_rounds):
+            n = await flush_batch(session)
+            total += n
+            if n < _FLUSH_LIMIT:
+                break
+    return total
+
+
+def capture_status() -> dict[str, Any]:
+    """수집 파이프라인의 **건강 상태** — 세기만 하고 아무도 못 보면 같은 결함이다.
+
+    ## 왜 이 함수가 필요한가
+
+    성장루프의 모든 결론(인사이트·자가치유·효과기 발화)은 `platform_events` 의
+    **완전성을 가정**한다. 그런데 그 가정이 참인지 거짓인지 판별할 관측이 **하나도 없었다**.
+
+    ★**유실이 0인 것과 유실을 안 세는 것은 다른 사실이다.** 종전에는 둘을 구별할 수 없었다.
+
+    ## 이 값을 어떻게 읽나
+
+    - `queue_depth` 가 `max_queue` 에 가까우면 flush 가 못 따라가고 있다.
+      지속 처리량 천장은 **`flush_limit / flush_interval`** 이다(현재 500/5초 = 100건/초).
+    - `dropped_overflow` > 0 이면 **이미 잃었다**. ★단 **어느 쪽이 밀려나는지는 경로마다 다르다**:
+      · `record_event`(정상 유입) — 오른쪽에 붙이므로 **가장 오래된 것**이 밀려난다
+      · 되돌리기(`appendleft`) — 왼쪽에 넣으므로 **가장 새것**이 밀려난다
+      같은 계수기로 세지만 **뜻이 다르다**. 종전 문서가 전자만 적어 후자를 가렸다.
+    - `dropped_after_retry` > 0 이면 **한 배치를 포기했다** — 그 사유가 로그에 있다.
+    - `requeued` 는 **유실이 아니다**(일시 장애에서 되돌린 것). 유실과 뭉치지 않는다.
+    - ★`loss_rate_pct` 는 분모가 0 이면 `None` 이다 — **0.0 이 아니다.**
+      "잃은 게 없다"와 "아직 아무것도 안 실었다"는 다른 말이다.
+
+    ## ★★이 수치는 **하한**이다 — 과대해석 금지
+
+    `_STATS` 는 **프로세스 로컬**이다:
+      · 재시작하면 **0 으로 돌아간다**(누적 이력이 아니다)
+      · 워커가 여럿이면 **워커마다 다른 값**을 본다
+
+    → 따라서 **실제 유실 ≥ 여기 보이는 값**이다. `lost_total == 0` 은
+      *"이 프로세스가 시작한 뒤로는 못 봤다"* 이지 *"유실이 없었다"* 가 아니다.
+      ★이 구분을 놓치면 화면의 「유실 없음」이 **거짓 안심**이 된다.
+
+    (누적을 보려면 `platform_events` 에 유실 이벤트를 적재하는 별도 설계가 필요하다 —
+     이 PR 범위 밖이고, 그 사실을 여기 적어 다음 사람이 오해하지 않게 한다.)
+    """
+    lost = _STATS["dropped_overflow"] + _STATS["dropped_after_retry"]
+    denom = _STATS["flushed"] + lost
+    return {
+        "queue_depth": len(_QUEUE),
+        "max_queue": _MAX_QUEUE,
+        "flush_limit": _FLUSH_LIMIT,
+        # ★지속 처리량 천장 — 이 수를 넘는 유입이 이어지면 큐가 찬다.
+        "max_sustained_per_sec": _FLUSH_LIMIT // _FLUSH_INTERVAL_S,
+        **{k: v for k, v in _STATS.items()},
+        "consecutive_failures": _consecutive_failures,
+        "max_flush_retry": _MAX_FLUSH_RETRY,
+        # 유실 = 밀려난 것 + 포기한 것. **되돌린 것은 유실이 아니다.**
+        "lost_total": lost,
+        # ★이 수치가 **프로세스 로컬**이라는 사실을 응답에 싣는다 —
+        #   화면이 「유실 없음」을 **어떤 범위에서** 말하는지 밝힐 수 있게.
+        "scope": "process_local",
+        "loss_rate_pct": round(100.0 * lost / denom, 3) if denom else None,
+    }
+
+
+def _reset_stats_for_test() -> None:
+    """테스트 전용 — 프로세스 로컬 카운터를 초기화한다."""
+    global _consecutive_failures
+    for k in _STATS:
+        _STATS[k] = 0
+    _consecutive_failures = 0
+    _QUEUE.clear()
