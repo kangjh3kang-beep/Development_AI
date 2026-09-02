@@ -118,9 +118,44 @@ def _mutations_for_line(path: Path, line: str, line_no: int) -> list[Mutation]:
     return out
 
 
+def _resolve_base(base: str) -> str:
+    """`base` 를 **HEAD 와의 공통 조상**으로 낮춘다 — 남의 커밋을 대상에서 뺀다.
+
+    ★왜 (2026-08-27 · SESSION-H 실측):
+        아래 `_changed_files` 는 **두-점** diff 다(워킹트리를 봐야 해서 — 그 이유는 거기
+        주석에 있다). 두-점은 **양방향** 차이라, `origin/main` 이 내 HEAD 보다 앞서면
+        **남이 머지한 파일까지** 변이 대상이 된다. 이 도구가 없애려는 상태 — 진짜 신호가
+        남의 코드에서 나온 소음에 묻히는 것 — 을 이 도구가 스스로 만든다.
+
+        실측: 26변이·생존 9 중 **5건이 남이 머지한 파일**(`growth_stale_producer_probe.py`)
+        이었다. 공통 조상으로 낮추니 21변이·생존 4.
+        대조군(같은 저장소, `HEAD~5` 를 가상 HEAD 로): 두-점 **10파일** ↔ 공통조상 **0파일**.
+
+    ★두-점을 세-점으로 바꿔서 고치지 **않는다.** 세-점은 커밋된 것만 보므로
+      "커밋 전에 돌린다"는 이 도구의 정상 사용법이 조용히 무효가 된다. base 만 낮추면
+      워킹트리는 그대로 보면서 남의 커밋만 빠진다.
+
+    ★`--base HEAD~1` 처럼 **이미 조상인 ref** 에는 아무 영향이 없다
+      (merge-base(HEAD~1, HEAD) == HEAD~1). 그래서 기존 사용법을 깨지 않는다.
+    """
+    mb = subprocess.run(
+        ["git", "merge-base", base, "HEAD"], capture_output=True, text=True,
+    )
+    resolved = mb.stdout.strip()
+    if mb.returncode != 0 or not resolved:
+        # ★공통 조상이 없다(무관한 히스토리·없는 ref). **조용히 넘기지 않는다** —
+        #   그대로 쓰되 남의 커밋이 섞일 수 있다는 사실을 알린다.
+        print(f"★공통 조상을 찾지 못했다({base}) — base 를 그대로 쓴다. "
+              f"남의 커밋이 대상에 섞일 수 있다.")
+        return base
+    return resolved
+
+
 def _changed_files(base: str) -> list[Path]:
     # ★`A...B`(three-dot)는 **커밋된 것만** 본다. 커밋 전에 돌리는 것이 자연스러운
     # 사용법이라(실사용에서 발견) `A`(two-dot)로 워킹트리까지 포함한다.
+    # ★단 그 두-점 때문에 base 가 앞서면 **남의 커밋이 들어온다** — 호출 전에
+    #   `_resolve_base()` 로 공통 조상까지 낮춰서 준다(그 함수의 독스트링 참조).
     cmd = ["git", "diff", "--name-only", base]
     names = subprocess.run(cmd, capture_output=True, text=True).stdout.split()
     out = []
@@ -297,7 +332,12 @@ def main() -> int:
     ap.add_argument("--max", type=int, default=60)
     # ★★`--only` — 지정한 테스트가 **실제로 덮는 파일**로 좁힌다.
     #   확장자만 맞추면(프론트 테스트 ↔ 모든 .tsx) 무관한 파일이 전부 "생존"으로 나와
-    #   진짜 신호가 묻힌다(멀티세션 저장소라 남의 변경까지 diff 에 들어온다).
+    #   진짜 신호가 묻힌다.
+    #   ★2026-08-27 정정 — 종전 이 자리에 *"멀티세션 저장소라 남의 변경까지 diff 에
+    #     들어온다"* 고 적혀 있었다. **그건 이제 참이 아니다**: `_resolve_base()` 가
+    #     base 를 공통 조상까지 낮춰 남의 커밋을 구조적으로 뺀다. 이 주석이 지목하던
+    #     결함을 **목록형 필터(`--only`)로 우회하던 것**이 근본이었다.
+    #     `--only` 는 이제 **의도적 좁히기 전용**이다(무관한 조합 소음 제거).
     ap.add_argument("--only", nargs="*", default=None,
                     help="경로에 이 문자열이 포함된 파일만 변이(부분 일치)")
     ap.add_argument("--cwd", default="propai-platform/apps/api")
@@ -313,7 +353,12 @@ def main() -> int:
 
         os.chdir(root)
 
-    files = _changed_files(args.base)
+    # ★base 를 **공통 조상까지 낮춘 뒤** 쓴다 — 두 소비처(`_changed_files`·`_added_lines`)가
+    #   같은 값을 봐야 한다. 한쪽만 낮추면 파일 목록과 변이 줄이 어긋난다.
+    base = _resolve_base(args.base)
+    if base != args.base:
+        print(f"  base: {args.base} → {base[:12]} (공통 조상 · 남의 커밋 제외)")
+    files = _changed_files(base)
     if not files:
         # ★"변경 없음"은 성공이 아니라 **아무것도 검증하지 않음**이다. EXIT 0 으로 두면
         #   호출자가 초록으로 읽는다(테스트 미발견 경로가 이미 2 로 실패하는 것과 대칭).
@@ -350,7 +395,7 @@ def main() -> int:
     muts: list[Mutation] = []
     for f in files:
         skip = _docstring_line_nos(f)
-        for no, line in _added_lines(args.base, f):
+        for no, line in _added_lines(base, f):
             if no in skip:
                 continue      # 여러 줄 문자열(독스트링) 내부 — 코드가 아니다
             muts.extend(_mutations_for_line(f, line, no))

@@ -34,7 +34,13 @@ from app.services.report.render.model import (
 )
 
 #: 표 헤더 — 화면(패널)과 **같은 축**을 쓴다(두 표면이 다른 말을 하지 않게).
-_TX_HEADERS = ["거래일", "지목", "면적(㎡)", "거래가(만원)", "거래유형", "등기일자", "매수/매도", "상태"]
+_TX_HEADERS = [
+    "거래일", "지목", "면적(㎡)", "거래가(만원)",
+    # ★단가는 **화면과 같은 서버 값**을 옮겨 담기만 한다 — 여기서 다시 나누지 않는다.
+    #   `market_report.py:554` 가 *"산식을 여기서 다시 계산하지 않는다"* 를 선언한 그 계약이다.
+    "만원/평",
+    "거래유형", "등기일자", "매수/매도", "상태",
+]
 
 
 def _fmt_won_man(v: Any) -> str:
@@ -43,6 +49,28 @@ def _fmt_won_man(v: Any) -> str:
     except (TypeError, ValueError):
         return "—"
     return f"{n:,}"
+
+
+#: 보류 사유 → 문서에 찍을 짧은 말. ★`"—"` 하나로 뭉개지 않는다 —
+#: 면적 결측 열이 이미 `"—"` 를 쓰므로, 같은 글리프를 쓰면 「해제라 해당 없음」과
+#: 「원천이 가림」이 구별되지 않는다(이 저장소가 `0㎡ × 0원/㎡` 로 값을 치른 형태).
+_PP_ABSENT_SHORT = {
+    # ★"해제" 금지 — **상태 열이 이미 그 말을 한다**(화면과 같은 이유).
+    "not_applicable": "해당없음",
+    "masked_by_source": "원천미제공",
+    "source_unavailable": "조회실패",
+}
+
+
+def _fmt_per_pyeong(t: dict[str, Any]) -> str:
+    """만원/평 — 서버가 실은 값을 그대로. 없으면 **왜 없는지**를 짧게 찍는다."""
+    v = t.get("price_per_pyeong_10k")
+    if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0:
+        # ★서버가 이미 유효숫자 3자리로 반올림했다 — 여기서 다시 깎지 않는다.
+        #   1만원/평 미만(지방 임야 등)은 정수로 만들면 **0 이 된다**.
+        return f"{v:,.0f}" if v >= 1 else f"{v:g}"
+    code = str(t.get("price_per_pyeong_10k_absent") or "").strip()
+    return _PP_ABSENT_SHORT.get(code, "—")
 
 
 def _tx_row(t: dict[str, Any]) -> list[Any]:
@@ -61,6 +89,7 @@ def _tx_row(t: dict[str, Any]) -> list[Any]:
         str(t.get("jimok") or "—"),
         f"{float(t.get('area_m2') or 0):,.1f}" if t.get("area_m2") else "—",
         _fmt_won_man(t.get("price_10k_won")),
+        _fmt_per_pyeong(t),
         dealing,
         # ★"미등기"라고 쓰지 않는다 — 원천 미기재일 뿐이다.
         str(t.get("registered_date") or "").strip() or "미기재",
@@ -167,7 +196,10 @@ def build_report_model_from_realtx(
                 title="날짜별 신고 내역",
                 headers=list(_TX_HEADERS),
                 rows=[_tx_row(t) for t in txs],
-                numeric_cols=[2, 3],
+                # ★목록형 금지 — 열이 또 늘면 같은 결함이 재발한다(리뷰 실측: 단가 열을 넣고
+            #   여기를 안 고쳐 **문서에서만 좌측 정렬**이 됐다. 화면은 우측이라 두 표면이 갈렸고,
+            #   쉼표 숫자 열이 좌측이면 **자릿수 비교가 불가능**하다 — 이 열의 존재 이유다).
+            numeric_cols=[_TX_HEADERS.index(h) for h in ("면적(㎡)", "거래가(만원)", "만원/평")],
                 caption=f"이 동에 속한 프로젝트 필지 {len(g.get('parcels') or [])}필지 · 신고 {len(txs)}건",
             ))
         # ★백엔드가 말한 귀속 불가 사유를 **그대로** 싣는다(문서가 지어내지 않는다).

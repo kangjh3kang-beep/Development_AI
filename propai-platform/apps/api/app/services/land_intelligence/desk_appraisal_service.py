@@ -17,6 +17,7 @@ import structlog
 
 from app.services.land_intelligence.land_price_estimator import _market_multiplier
 from app.services.market.land_dong_stats import stats_note as land_stats_note
+from app.utils.pnu import lawd_cd_from_pnu
 
 logger = structlog.get_logger(__name__)
 
@@ -211,7 +212,7 @@ async def desk_appraisal(
     comparable_skip_note: str | None = None
     # ★토지 층화 통계(참고) — 좌표가 없어 반경으로는 못 말하는 것을 행정구역+용도 축으로.
     land_dong_stats_out: dict | None = None
-    if comparable_avg_per_sqm is None and pnu and len(pnu) >= 5:
+    if comparable_avg_per_sqm is None and lawd_cd_from_pnu(pnu):
         try:
             from app.services.land_intelligence.nearby_map_service import NearbyMapService
             from app.services.market.comparable_sample import (

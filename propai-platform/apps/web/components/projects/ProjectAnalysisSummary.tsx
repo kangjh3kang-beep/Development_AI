@@ -26,6 +26,7 @@ import { BuildableEnvelopeCard } from "@/components/projects/BuildableEnvelopeCa
 import { SolarPlacementCard } from "@/components/projects/SolarPlacementCard";
 import { ParcelExportButton } from "@/components/projects/ParcelExportButton";
 import { DevelopmentScenarioCard } from "@/components/common/DevelopmentScenarioCard";
+import { parcelIdentityAddresses } from "@/lib/parcel-rows";
 import { DataLineageTooltip } from "@/components/common/DataLineageTooltip";
 import { DataField } from "@/components/projects/DataField";
 import { StagePreview } from "@/components/projects/StagePreview";
@@ -480,9 +481,7 @@ export function ProjectAnalysisSummary({ locale }: { locale?: string }) {
         {(site?.address || (ssotParcels?.length ?? 0) > 0) && (
           <DevelopmentScenarioCard
             address={site?.address ?? undefined}
-            parcels={(ssotParcels ?? [])
-              .map((p) => p.address)
-              .filter((a): a is string => !!a && a.trim().length > 0)}
+            parcels={parcelIdentityAddresses(ssotParcels)}
           />
         )}
       </div>

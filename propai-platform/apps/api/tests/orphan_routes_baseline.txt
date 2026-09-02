@@ -106,8 +106,8 @@
 /api/v1/auction/opportunities	legacy-suspect	소비처 0 을 양쪽에서 확인했다 — 백엔드에서 list_opportunities 를 부르는 곳은 이 라우트뿐(routers/auction.py:148), 프론트 auction/opportunities 실행줄 0건(대조군: auction/watchlist 는 프론트 3파일에서 잡힌다). 구 트리 apps/api/services/auction_service.py:158 의 AuctionService 를 쓰는데 현행 경로는 app/services/auction 의 AuctionStep1Service 다 — 삭제 후보이나 **미확정**
 /api/v1/auction/sync	admin-cron	라우트 자신의 summary 가 "경공매 동기화(관리/cron)" 라고 선언한다(routers/auction.py:342). 예약 실행 경로는 app/tasks/auction_sync_task.py 가 서비스를 직접 부른다 — 프론트 소비처가 없는 것이 정상
 /api/v1/avm/estimate	unclassified	
-/api/v1/billing/admin/orders/{order_id}/confirm	unclassified	
 /api/v1/billing/admin/set-tier	unclassified	
+/api/v1/billing/payments/toss/webhook	internal	토스페이먼츠 서버가 부르는 웹훅 — 프론트가 부르면 안 된다(외부 호출이라 인증을 걸 수 없다). 본문을 신뢰하지 않고 재조회로 확정한다: apps/api/routers/billing.py:697 · apps/api/app/services/billing/toss_orders_service.py:1030
 /api/v1/billing/quote	unclassified	
 /api/v1/bim/analyze	unclassified	
 /api/v1/blockchain/escrow/direct-pay	unclassified	
@@ -176,10 +176,6 @@
 /api/v1/sre/dashboard	unclassified	
 /api/v1/system/integration/status	unclassified	
 /api/v1/tax/calculate	unclassified	
-/api/v1/webhooks	unclassified	
-/api/v1/webhooks/{webhook_id}	unclassified	
-/api/v1/webhooks/{webhook_id}/deliveries	unclassified	
-/api/v1/webhooks/{webhook_id}/test	unclassified	
 /api/v1/webrtc/sessions	unclassified	
 /api/v1/webrtc/sessions/active	unclassified	
 /api/v1/webrtc/sessions/ice-candidate	unclassified	
