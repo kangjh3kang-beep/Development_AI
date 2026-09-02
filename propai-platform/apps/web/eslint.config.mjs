@@ -27,6 +27,36 @@ const eslintConfig = defineConfig([
     }
   },
   {
+    // ★`.mjs` 스크립트에 **no-undef** 를 켠다 — 이 저장소에는 이것을 보는 층이 없었다.
+    //
+    // 실측(2026-08-27): `e2e/support/hydration-probe.mjs` 의 `run` 모드가 `NOISE_RE`(그 상수를
+    // 옮겨 간 `probe-text.mjs` 의 **지역** 상수)를 참조한 채 남아 **실행 즉시 ReferenceError** 로
+    // 죽었다. 세 층이 전부 통과시켰다 — ①`tsc` 는 `.mjs` 를 대상으로 삼지 않고 ②`no-undef` 가
+    // **미설정**이라 eslint 는 그 파일을 보고도 위반 0 을 냈으며 ③순수부 테스트
+    // (`lib/hydration/__tests__/probe-text.test.ts`)는 **스크립트 자체를 태우지 않는다.**
+    // 그리고 `control` 모드는 그 줄을 지나지 않아 **통과했다** — 도구가 살아 있는 것처럼 보였다.
+    //
+    // ★`globals` 를 손으로 나열하지 않는다. 처음엔 18개를 적었는데 **변이(M6: `document` 제거)가
+    //   SURVIVED** 해서 재보니 `--print-config` 기준 이미 **1174개**가 상위 config 에서 오고 있었다
+    //   — 내 목록은 **전부 중복**이었고, 그 옆에 적어 둔 *"목록형의 한계를 알고 쓴다"* 는 주석은
+    //   **거짓 전제**였다. 목록을 두면 그것이 곧 상한이 되고, 여기서는 둘 이유조차 없었다.
+    //
+    // ★`.js` 까지 넣는다(독립 리뷰가 제안 → **내가 실측해** 채택). tracked `.js` 는 **5건**이고
+    //   그중 `public/sw.js` 는 **프로덕션에 실리는 서비스워커**다 — `.mjs` 와 똑같이 `tsc` 사각이다.
+    //   실측: 확장 후 `.js`·`.mjs` 전수 **no-undef error 0**(기존 위반 없음 · 래칫 158 불변).
+    files: ["**/*.mjs", "**/*.js"],
+    rules: { "no-undef": "error" },
+  },
+  {
+    // ★서비스워커 전역 — 상위 config 의 globals 1174개에 `clients` 가 **없다**(실측:
+    //   `document`/`localStorage`/`window` 는 있는데 `clients` 만 빠졌다). 목록을 두되
+    //   **이 파일에만** 두고, 부족하면 **위양성으로 시끄럽게** 드러나게 한다(조용한 위음성 아님).
+    files: ["public/sw.js"],
+    languageOptions: {
+      globals: { clients: "readonly", self: "readonly", caches: "readonly", skipWaiting: "readonly" },
+    },
+  },
+  {
     // ★자가검증(field_audit) 표면에는 피드백 수집 위젯을 붙이지 못하게 **빌드로** 막는다.
     //
     // 왜: 성장엔진은 사용자 👎(ai_feedback)를 모아 품질저하로 판정하고, 그 판정이 임계를

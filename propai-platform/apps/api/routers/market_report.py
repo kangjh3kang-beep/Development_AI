@@ -584,3 +584,38 @@ async def realtx_report_download(
         iter([data]), media_type=media_type,
         headers={"Content-Disposition": f'attachment; filename="realtx_report.{ext}"'},
     )
+
+
+@router.get(
+    "/realtx-layer2/status",
+    summary="실거래 2층(저장·정정탐지) 관측 상태 — 관리자 전용",
+)
+async def realtx_layer2_status(
+    current_user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """2층이 **살아 있는지**, 무엇을 봤는지 — 저장분을 처음으로 **읽는** 통로.
+
+    ★**LLM 미사용**(읽기 전용 집계) → 과금 게이트 없음.
+
+    ★★**관리자 전용**(2026-08-27 독립 리뷰 M5). 이 응답은 테넌트 데이터가 아니지만
+      **플랫폼 전역 규모**(총 저장 행수·전 시군구 수·쿼터 산술·마지막 수집 시각)를
+      드러낸다. 종전엔 `get_current_user` 하나뿐이라 **어떤 인증 사용자든** 읽었다.
+      ★게이트는 형제(`routers/analysis_ledger.py:_require_admin`)와 **같은 판별**을 쓴다 —
+        `role` 로 걸면 **가입 시 모두 `role='admin'`** 이라 누출된다(그 파일이 적어 둔 실측).
+
+    ★왜 필요한가: `#855`·`#860`·`#884` 가 2층을 만들었고 프로덕션에 수천 행이 쌓였는데
+      **읽는 코드가 0건**이었다(실측 2026-08-27). 수집이 조용히 멈춰도, 정정이 쏟아져도
+      아무도 몰랐다. `#884` 가 스스로 부채로 적어 둔 *"8일 이상 낡음을 판정하는 소비처"* 다.
+
+    ★응답의 `detection.state` 를 먼저 보라 — `corrections.total = 0` 은 **여러 뜻**이 있고
+      (`미시험` · `상태소실` · `관측됨_정정없음`) 이 필드가 그것을 가른다. 섞어 읽으면
+      **정상을 장애로**, 혹은 **죽은 탐지를 정상으로** 판정하게 된다.
+    """
+    from app.services.billing.billing_service import is_super_admin
+    from app.services.land_intelligence.realtx_layer2_status import build_layer2_status
+    from apps.api.database.session import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as db:
+        if not await is_super_admin(db, current_user.user_id):
+            raise HTTPException(status_code=403, detail="관리자 권한이 필요합니다.")
+        return await build_layer2_status(db)

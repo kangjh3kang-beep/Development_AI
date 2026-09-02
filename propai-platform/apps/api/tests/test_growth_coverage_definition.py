@@ -75,24 +75,24 @@ def test_락이_이_환경에서_실제로_실행된다():
 class Test판정률정의:
     def test_표본_충분하면_judged_100(self):
         m = _mod(); cov: dict = {}
-        m.note_coverage(cov, "ax", judged=5, withheld=0, floor=10)
+        m.note_coverage(cov, "ax", judged=5, withheld_count=0, floor=10)
         assert cov["ax"]["judged_pct"] == 100.0
         assert cov["ax"]["state"] == "judged"
 
     def test_표본_부족은_judged_0_이되_축이_안_도는_것과_구별된다(self):
         """★핵심 — 표본 부족(`partial`)과 축 정지(`axis_idle`)는 **다른 사실**이다."""
         m = _mod(); cov: dict = {}
-        m.note_coverage(cov, "ax", judged=0, withheld=2, floor=10)
+        m.note_coverage(cov, "ax", judged=0, withheld_count=2, floor=10)
         assert cov["ax"]["judged_pct"] == 0.0, "판정 못 했는데 judged_pct 가 0 이 아니다"
         assert cov["ax"]["state"] == "partial"
 
     def test_judged_pct_가_실제_비율이다(self):
         """★비율이 **값**이어야 한다 — 상수를 싣지 않는다(공허한 지표 방지)."""
         m = _mod(); cov: dict = {}
-        m.note_coverage(cov, "ax", judged=1, withheld=9, floor=10)
+        m.note_coverage(cov, "ax", judged=1, withheld_count=9, floor=10)
         assert cov["ax"]["judged_pct"] == 10.0
         cov2: dict = {}
-        m.note_coverage(cov2, "ax", judged=9, withheld=1, floor=10)
+        m.note_coverage(cov2, "ax", judged=9, withheld_count=1, floor=10)
         assert cov2["ax"]["judged_pct"] == 90.0
         assert cov["ax"]["judged_pct"] != cov2["ax"]["judged_pct"], "입력이 달라도 같은 값 = 상수"
 
@@ -100,24 +100,24 @@ class Test판정률정의:
         """★★`0.0` 으로 두면 *"판정률 0%"* 가 되어 **축 정지를 결함으로 오독**시킨다 —
         이 PR 이 고치겠다고 선언한 바로 그 혼동이다(독립 리뷰 지적)."""
         m = _mod(); cov: dict = {}
-        m.note_coverage(cov, "idle", judged=0, withheld=0, floor=5)
+        m.note_coverage(cov, "idle", judged=0, withheld_count=0, floor=5)
         assert cov["idle"]["judged_pct"] is None, "축 정지인데 0.0 이면 결함으로 읽힌다"
         cov2: dict = {}
-        m.note_coverage(cov2, "short", judged=0, withheld=3, floor=5)
+        m.note_coverage(cov2, "short", judged=0, withheld_count=3, floor=5)
         assert cov2["short"]["judged_pct"] == 0.0, "표본 부족은 0.0 이어야 한다"
         assert cov["idle"]["judged_pct"] != cov2["short"]["judged_pct"], "두 모집단이 같은 값"
 
     def test_소수점_한_자리로_반올림한다(self):
         """★`round(..., 1)` 이 장식이 되지 않게 — 자릿수를 바꾸면 빨개진다."""
         m = _mod(); cov: dict = {}
-        m.note_coverage(cov, "ax", judged=1, withheld=2, floor=10)
+        m.note_coverage(cov, "ax", judged=1, withheld_count=2, floor=10)
         assert cov["ax"]["judged_pct"] == 33.3, "한 자리 반올림이 아니다"
 
     def test_축이_안_도는_것과_표본_부족은_다른_표기(self):
         """★종전엔 둘 다 judged=0 이라 뭉개졌다."""
         m = _mod(); cov: dict = {}
-        m.note_coverage(cov, "idle", judged=0, withheld=0, floor=5)
-        m.note_coverage(cov, "short", judged=0, withheld=3, floor=5)
+        m.note_coverage(cov, "idle", judged=0, withheld_count=0, floor=5)
+        m.note_coverage(cov, "short", judged=0, withheld_count=3, floor=5)
         assert cov["idle"]["state"] == "axis_idle"
         assert cov["short"]["state"] == "partial"
         assert cov["idle"]["state"] != cov["short"]["state"], "두 모집단이 같은 값을 낸다"
@@ -125,13 +125,13 @@ class Test판정률정의:
     def test_기존_키가_사라지지_않는다(self):
         """★소비처가 읽던 키를 지우면 화면이 조용히 빈다(회귀 방지)."""
         m = _mod(); cov: dict = {}
-        m.note_coverage(cov, "ax", judged=3, withheld=1, floor=10)
+        m.note_coverage(cov, "ax", judged=3, withheld_count=1, floor=10)
         for k in ("judged", "withheld", "total", "floor"):
             assert k in cov["ax"], f"기존 키 {k} 가 사라졌다"
 
     def test_coverage_None_이면_아무것도_안_한다(self):
         m = _mod()
-        m.note_coverage(None, "ax", judged=1, withheld=0, floor=10)  # 예외 없이 통과
+        m.note_coverage(None, "ax", judged=1, withheld_count=0, floor=10)  # 예외 없이 통과
 
 
 class Test하한불변:
