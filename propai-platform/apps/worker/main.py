@@ -53,6 +53,32 @@ async def startup(ctx: dict[str, Any]) -> None:
         ctx["mqtt_subscriber"] = subscriber
         logger.info("MQTT 드론 구독자 연결됨")
 
+    # ★자가성장 엔진 — 이 프로세스의 텔레메트리 큐를 **비운다**.
+    #
+    #   종전에 이 워커에는 배수구가 **하나도 없었다**(실측: `apps/worker` 전수 `flush_batch`
+    #   호출 0건 · 대조군으로 `apps/api` 에서는 3건 탐지 = 조회기 생존).
+    #   그런데 워커는 이벤트를 **담는다** — 직접 호출은 0건이지만 **전이 임포트**로 닿는다:
+    #
+    #     etl_public_data(매일 03:00 cron) → tasks/etl_scheduled.py → MolitClient
+    #       → BaseAPIClient._request 실패 → integrations/base_client.py:_emit_growth_fallback
+    #       → capture_service.record_event(...)
+    #
+    #   `capture_service._QUEUE` 는 **프로세스 로컬 deque**(maxlen=10,000)라 API 프로세스의
+    #   flush 루프가 **이 큐를 볼 수 없다.** 즉 워커가 담은 이벤트는
+    #   **컨테이너 재시작마다 통째로 사라졌고**, 그 안에는 회로차단기 폴백과
+    #   `ledger_broken`(severity=critical) 이 포함된다.
+    #
+    #   ★`#920` 의 계수기도 이것을 못 본다 — 그 계수기 역시 **API 프로세스 큐**만 센다.
+    #     즉 이 프로세스의 유실은 **화면에도 안 나오고 로그에도 안 남았다.**
+    try:
+        from app.services.growth import capture_service as _gcap
+        from apps.api.database.session import AsyncSessionLocal
+
+        if _gcap.start_flush_loop(ctx, AsyncSessionLocal):
+            logger.info("성장루프 배수 루프 시작")
+    except Exception as e:  # noqa: BLE001 — 배선 실패가 워커 기동을 막으면 안 된다.
+        logger.warning("성장루프 배수 루프 시작 실패", error=str(e)[:160])
+
 
 async def shutdown(ctx: dict[str, Any]) -> None:
     """워커 종료 시 정리."""
@@ -60,6 +86,18 @@ async def shutdown(ctx: dict[str, Any]) -> None:
     subscriber = ctx.get("mqtt_subscriber")
     if subscriber is not None:
         subscriber.stop()
+
+    # ★종료 시 큐 잔여를 마지막으로 비운다 — 여기가 **가장 많이 잃던 자리**다.
+    #   배수구가 없던 종전에는 워커가 담은 것이 **전부** 여기서 사라졌다.
+    #   ★취소와 마지막 배수는 capture_service 가 **한 함수**로 갖는다 — 종전에는 여기서
+    #     `ctx.get("growth_flush_task")` 리터럴을 **쓰는 쪽·읽는 쪽에 각각** 두었고,
+    #     기계 변이가 그 키를 한쪽만 바꿔도 **생존**했다(취소가 영영 안 불리는데 무신호).
+    try:
+        from app.services.growth import capture_service as _gcap
+        from apps.api.database.session import AsyncSessionLocal
+        await _gcap.stop_flush_loop_and_drain(ctx, AsyncSessionLocal)
+    except Exception as e:  # noqa: BLE001 — 어떤 예외도 종료를 막지 않는다.
+        logger.warning("growth 종료 flush 오류", error=str(e)[:160])
 
     logger.info("PropAI 워커 종료")
 

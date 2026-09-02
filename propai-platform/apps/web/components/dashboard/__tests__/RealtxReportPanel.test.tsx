@@ -45,10 +45,15 @@ function reportWith(over: Record<string, unknown> = {}) {
       transactions: [
         { deal_date: "2026년 7월 1일", jimok: "임야", area_m2: 1795, price_10k_won: 12000,
           dealing_type: "직거래", registered_date: "", buyer_type: "법인", seller_type: "개인",
-          cancel_type: "O", cancel_date: "26.07.20", share_dealing_type: "지분" },
+          cancel_type: "O", cancel_date: "26.07.20", share_dealing_type: "지분",
+          // ★해제 행 — 서버가 값 대신 사유를 싣는다
+          price_per_pyeong_10k: null, price_per_pyeong_10k_absent: "not_applicable",
+          price_per_pyeong_10k_basis: "계약이 해제된 신고 건이라 거래 단가를 산정하지 않습니다." },
         { deal_date: "2026년 7월 5일", jimok: "전", area_m2: 300, price_10k_won: 5000,
           dealing_type: "중개거래", registered_date: "26.07.10", buyer_type: "개인",
-          seller_type: "개인", cancel_type: " ", share_dealing_type: "" },
+          seller_type: "개인", cancel_type: " ", share_dealing_type: "",
+          // ★정상 행 — 값이 실린다(억 절단이면 "1.5억"이 된다)
+          price_per_pyeong_10k: 14623 },
       ],
       parcel_level_match: null, parcel_level_match_absent: "masked_by_source",
       parcel_level_match_basis: BASIS,
@@ -171,5 +176,48 @@ describe("실거래 신고내역 패널 — 정직성", () => {
     await analyze();
     const el = await screen.findByText(/조회 실패/);
     expect(el.textContent).toContain("HTTP 500");
+  });
+});
+
+describe("만원/평 열 — 정밀도와 보류", () => {
+  it("D12 ★`won()` 억 절단을 쓰지 않는다 — 14,623 이 「1.5억」으로 뭉개지면 이 열은 무의미하다", async () => {
+    post.mockResolvedValue(reportWith());
+    await analyze();
+    // 값이 그대로 보인다
+    await waitFor(() => expect(screen.getByText("14,623")).toBeTruthy());
+    // ★음성 대조군 — 억 절단 표기가 이 열에 나타나면 안 된다.
+    //   (거래가 열의 억 표기는 정당하므로, 단가값 자체가 절단되지 않았는지로 판정한다)
+    expect(screen.queryByText("1.5억")).toBeNull();
+  });
+
+  it("D13 ★해제 행은 값이 아니라 **사유**를 보여 준다(0 이나 계산값을 흘리지 않는다)", async () => {
+    post.mockResolvedValue(reportWith());
+    await analyze();
+    await waitFor(() => expect(screen.getByText("해당없음")).toBeTruthy());
+    // 해제 행의 원시 단가(12000/(1795/3.305785)=22)가 새어 나오면 안 된다
+    expect(screen.queryByText("22")).toBeNull();
+  });
+
+  it("D14 ★두 보류 사유가 **서로 다른 말**로 보인다(한 글리프로 뭉개지 않는다)", async () => {
+    post.mockResolvedValue(reportWith({
+      groups: [{
+        ...reportWith().groups[0],
+        transactions: [
+          { deal_date: "d1", jimok: "대", area_m2: 100, price_10k_won: 1000, cancel_type: "O",
+            price_per_pyeong_10k: null, price_per_pyeong_10k_absent: "not_applicable",
+            price_per_pyeong_10k_basis: "해제 사유" },
+          { deal_date: "d2", jimok: "대", area_m2: null, price_10k_won: 1000, cancel_type: " ",
+            price_per_pyeong_10k: null, price_per_pyeong_10k_absent: "masked_by_source",
+            price_per_pyeong_10k_basis: "원천 미제공 사유" },
+        ],
+      }],
+    }));
+    await analyze();
+    await waitFor(() => expect(screen.getByText("원천미제공")).toBeTruthy());
+    expect(screen.getByText("해당없음")).toBeTruthy();
+    // ★파티션형 — 두 사유가 같은 문자열이면 이 단언이 죽는다
+    expect(screen.queryByText("원천미제공")).not.toBe(screen.queryByText("해당없음"));
+    // ★그리고 상태 열의 「해제」와 **다른 말**이어야 한다(두 열이 같은 말을 하면 정보가 0이다)
+    expect(screen.queryByText("해당없음")).not.toBe(screen.queryByText("해제"));
   });
 });

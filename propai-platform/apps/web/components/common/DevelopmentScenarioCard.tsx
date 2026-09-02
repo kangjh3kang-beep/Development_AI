@@ -57,6 +57,10 @@ type SimResult = {
     // ★총면적의 '분모' — 몇 필지 중 몇 필지가 실측인지. 미해석 필지는 0㎡로 합산되므로
     //   이 값 없이 total_area_sqm 만 보면 "원래 작은 부지"로 오독된다(2026-08-19 실측 결함).
     resolved_parcel_count?: number;
+    /** 중복제거 **전** 요청 필지 수 — `parcel_count` 만으로는 «원래 1필지» 와 «붕괴» 를 못 가른다. */
+    requested_parcel_count?: number;
+    /** 주소 문자열이 겹쳐 사라진 필지 수(지번 누락 등). >0 이면 이 부지는 요청보다 작게 계산됐다. */
+    collapsed_parcel_count?: number;
     unresolved_parcels?: { address?: string; reason?: string }[];
     area_is_partial?: boolean;
     primary_zone_is_inferred?: boolean;
@@ -205,7 +209,20 @@ export function DevelopmentScenarioCard({
             {site.total_area_sqm != null && <span className="text-[var(--text-secondary)]">{site.total_area_sqm.toLocaleString()}㎡</span>}
             {/* ★총면적의 분모 — 미해석 필지는 0㎡로 합산되므로, 몇 필지가 빠졌는지 같이 말한다.
                 이것이 없으면 "면적이 작아 개발방식이 불가"라는 결론만 보이고 이유가 안 보인다. */}
-            {site.area_is_partial && (
+            {/* ★붕괴는 **조회 실패와 다른 사실**이라 따로 말한다 — 종전 문구를 그대로 쓰면
+                「1필지 중 1필지만 조회됨」이라는 무의미한 말이 된다(붕괴 후엔 분모도 1이다).
+                2026-08-28: 77필지가 같은 주소 문자열이라 1필지 44㎡로 계산된 사고의 고지. */}
+            {(site.collapsed_parcel_count ?? 0) > 0 && (
+              <span
+                className="inline-flex items-center gap-1 rounded-lg border border-[var(--status-error)]/40 bg-[var(--status-error)]/10 px-2 py-0.5 font-bold text-[var(--status-error)]"
+                title={"필지 주소가 서로 겹쳐(지번 누락 등) 구분되지 않았습니다. 아래 개발방식 판정은 "
+                  + "축소된 면적 기준이므로 그대로 신뢰하지 마십시오."}
+              >
+                <AlertTriangle className="size-3.5" aria-hidden />
+                필지 주소 중복 — {site.requested_parcel_count ?? 0}필지 요청 중 {site.parcel_count ?? 0}필지만 구분됨
+              </span>
+            )}
+            {site.area_is_partial && (site.collapsed_parcel_count ?? 0) === 0 && (
               <span
                 className="inline-flex items-center gap-1 rounded-lg border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 px-2 py-0.5 font-bold text-[var(--status-warning)]"
                 title={(site.unresolved_parcels || []).map((u) => `${u.address ?? ""} — ${u.reason ?? ""}`).join("\n")}
