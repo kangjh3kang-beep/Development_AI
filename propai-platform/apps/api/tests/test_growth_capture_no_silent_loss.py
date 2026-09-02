@@ -233,17 +233,42 @@ def test_flush_interval_matches_the_actual_loop() -> None:
     둘이 갈리면 화면이 *"천장 100건/초"* 라고 **거짓**을 말한다.
     소스에서 **파생**해 대조한다(손으로 옮겨 적지 않는다).
     """
-    src = (_API / "main.py").read_text(encoding="utf-8")
-    # 성장 flush 루프 안의 sleep 을 구조로 집는다(주석·다른 루프에 걸리지 않게).
-    i = src.find("_growth_flush_loop")
-    assert i > 0, "★flush 루프를 못 찾았다 — 추출기가 죽었다(위반 아님)"
-    seg = src[i : i + 1200]
-    m = re.search(r"sleep\((\d+(?:\.\d+)?)\)", seg)
-    assert m, f"★루프에서 sleep 을 못 찾았다: {seg[:200]!r}"
-    assert float(m.group(1)) == float(cs._FLUSH_INTERVAL_S), (
-        f"★main.py 주기 {m.group(1)}초 ≠ 상수 {cs._FLUSH_INTERVAL_S}초 — "
-        "천장 계산이 거짓이 된다"
+    # ★★**고정 창(find + 1200자) 을 버리고 파서로 본다.** 그리고 대상이 바뀌었다 —
+    #   주기 루프는 이제 `main.py` 가 아니라 **공용 헬퍼 안에 하나만** 있다.
+    #   종전 락은 `main.py` 의 사본을 태우고 있었으므로, 사본을 없애자 **락이 먼저 빨개졌다**
+    #   (락이 실제로 그 자리를 보고 있었다는 증거다 — 조용히 초록이면 그게 더 나빴다).
+    import ast as _ast
+
+    src = (_API / "app/services/growth/capture_service.py").read_text(encoding="utf-8")
+    fn = next(
+        (n for n in _ast.walk(_ast.parse(src))
+         if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))
+         and n.name == "start_flush_loop"),
+        None,
     )
+    assert fn is not None, "★start_flush_loop 을 못 찾았다 — 추출기가 죽었다(위반 아님)"
+
+    sleeps = [
+        c for c in _ast.walk(fn)
+        if isinstance(c, _ast.Call)
+        and getattr(c.func, "attr", getattr(c.func, "id", None)) == "sleep"
+    ]
+    assert sleeps, "★주기 루프에서 sleep 을 못 찾았다 — 추출기가 죽었다(위반 아님)"
+
+    # ★**리터럴이면 실패한다** — 주기가 상수에서 파생되지 않으면 천장 계산이 거짓이 된다.
+    for c in sleeps:
+        arg = c.args[0] if c.args else None
+        assert not isinstance(arg, _ast.Constant), (
+            f"★주기가 리터럴 {getattr(arg, 'value', arg)!r} 로 굳었다 — "
+            f"상수 _FLUSH_INTERVAL_S({cs._FLUSH_INTERVAL_S}) 와 따로 논다"
+        )
+        called = getattr(arg, "func", None)
+        assert getattr(called, "attr", getattr(called, "id", None)) == "flush_interval_s", (
+            "★주기가 flush_interval_s() 에서 나오지 않는다 — 상수가 장식이 된다"
+        )
+
+    # ★그리고 그 함수가 **실제로 상수를 반환하는지**까지 태운다(이름만 맞고 값이 다르면 무의미).
+    assert cs.flush_interval_s() == cs._FLUSH_INTERVAL_S
     assert cs.capture_status()["max_sustained_per_sec"] == (
         cs._FLUSH_LIMIT // cs._FLUSH_INTERVAL_S
     )
@@ -482,10 +507,17 @@ def test_main_no_longer_duplicates_the_batch_cap() -> None:
     되살리는 변이: `main.py` 에 `if n < 500:` 루프를 되돌리면 이 테스트가 죽는다.
     """
     src = (_API / "main.py").read_text(encoding="utf-8")
-    # ★양성 대조군 먼저 — 파일을 제대로 읽었는가(조회기 생존). 없으면 "0건"이 공허하다.
-    assert "drain_until_empty" in src, "★배수 호출이 main.py 에 없다 — 추출기가 죽었거나 배선이 끊겼다"
+    # ★양성 대조군 — 파일을 제대로 읽었는가(조회기 생존). 없으면 "0건"이 공허하다.
+    #   ★대조군의 **대상이 바뀌었다**: main.py 는 이제 배수를 **구현하지 않고 위임**한다.
+    assert "stop_flush_loop_and_drain" in src, (
+        "★배수 위임이 main.py 에 없다 — 추출기가 죽었거나 배선이 끊겼다"
+    )
     lits = re.findall(r"if n < (\d+):", src)
     assert not lits, f"★배치 상한 리터럴이 되살아났다: {lits} — 사본이 갈리면 하나가 낡는다"
+    # ★**사본 자체가 없어야 한다** — 리터럴만 막으면 사본이 상수를 들고 되살아난다.
+    assert "drain_until_empty" not in src, (
+        "★main.py 가 배수를 **다시 구현**한다 — 사본이 갈리면 하나가 낡는다(위임만 해야 한다)"
+    )
 
 
 def test_drain_cap_is_derived_from_the_constant_not_a_literal() -> None:
@@ -787,3 +819,114 @@ async def test_stop_still_drains_when_no_loop_was_started() -> None:
     _fill(5)
     assert await cs.stop_flush_loop_and_drain({}, f) == 5
     assert len(cs._QUEUE) == 0
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ★★층 8 — **효과(effect)**: 「배수구가 있다」가 아니라 「실제로 비운다」
+#
+# 독립 적대 렌즈 실측(2026-08-29): 위 구조 락들은 **AST 노드의 존재**만 봤다.
+# 그래서 `while True:` 를 `while False:` 로 바꿔 **루프 본문이 한 번도 안 돌게** 해도
+# 성장루프 테스트 **242건이 전부 초록**이었다 — 이 PR 의 산출물 전체가 무력화되는데도.
+#   · 구조 락은 `ast.While` **노드**를 보는데 `while False` 에도 그 노드가 있다
+#   · 짝 락은 `start_flush_loop` 직후 `not task.done()` 을 보는데
+#     그것은 **본문이 무엇이든** 참이다(아직 스케줄되기 전이다)
+# → **효과를 태운다.** 큐를 채우고, 기다리고, **비워졌는지**를 본다.
+# ═══════════════════════════════════════════════════════════════════════════
+class _RecordingFactory:
+    """열릴 때마다 적재 건수를 기록하는 세션 팩토리(실제 flush 경로를 태운다)."""
+
+    def __init__(self, delay: float = 0.0) -> None:
+        self.loaded: list[int] = []
+        self.delay = delay
+
+    def __call__(self):
+        outer = self
+
+        class _Db:
+            async def execute(self, *a, **k):
+                params = a[1] if len(a) > 1 else k.get("params")
+                if outer.delay:
+                    import asyncio as _a
+                    await _a.sleep(outer.delay)
+                outer.loaded.append(len(params or []))
+
+            async def commit(self):
+                return None
+
+            async def rollback(self):
+                return None
+
+        class _Ctx:
+            async def __aenter__(self): return _Db()
+            async def __aexit__(self, *a): return False
+
+        return _Ctx()
+
+
+@pytest.mark.asyncio
+async def test_periodic_loop_actually_drains_not_just_exists(monkeypatch) -> None:
+    """★**주기 루프가 실제로 돈다** — 노드가 아니라 결과를 본다.
+
+    되살리는 변이: `start_flush_loop` 의 `while True:` → `while False:` 로 바꾸면
+    이 테스트가 죽는다. **종전 락은 그 변이에 전부 생존했다.**
+    """
+    import asyncio
+
+    monkeypatch.setattr(cs, "_FLUSH_INTERVAL_S", 0.01, raising=False)
+    f = _RecordingFactory()
+    ctx: dict = {}
+    _fill(120)
+    assert len(cs._QUEUE) == 120
+
+    assert cs.start_flush_loop(ctx, f) is True
+    try:
+        for _ in range(200):                       # ★고정 sleep 이 아니라 조건 대기
+            if not cs._QUEUE:
+                break
+            await asyncio.sleep(0.01)
+        # ★①효과: 큐가 비었다 ②stop 을 **부르지 않고** 비었다(=주기 루프가 한 일이다)
+        assert not cs._QUEUE, (
+            f"★주기 루프가 큐를 안 비웠다(잔여 {len(cs._QUEUE)}) — "
+            "루프 본문이 한 번도 안 돌았을 수 있다"
+        )
+        assert sum(f.loaded) == 120, f"★적재 건수가 다르다: {f.loaded}"
+    finally:
+        t = ctx.get(cs._FLUSH_TASK_CTX_KEY)
+        if t is not None:
+            t.cancel()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_does_not_lose_the_in_flight_batch(monkeypatch) -> None:
+    """★**종료가 비행 중 배치를 잃지 않는다** — 이 PR 이 가장 크게 데인 자리다.
+
+    `cancel()` 은 **요청**일 뿐이라, 기다리지 않으면 `_drain` 이 이미 빼낸 배치의
+    **되돌림이 일어나기 전에** 종료 배수가 얕은 큐를 보고 끝난다.
+
+    ★실측(수정 전 · 큐 600 · 비행 배치 500): 종료 후 큐 잔여 **500** · DB 적재 100.
+      즉 **500건이 프로세스와 함께 사라졌다.** 수정 후 잔여 **0** · 적재 **600**.
+
+    되살리는 변이: `stop_flush_loop_and_drain` 의 `await task` 를 지우면 이 테스트가 죽는다.
+    """
+    import asyncio
+
+    monkeypatch.setattr(cs, "_FLUSH_INTERVAL_S", 0.01, raising=False)
+    f = _RecordingFactory(delay=0.30)              # ★INSERT 를 느리게 = 비행 창을 연다
+    ctx: dict = {}
+    _fill(600)
+
+    assert cs.start_flush_loop(ctx, f) is True
+    await asyncio.sleep(0.15)                      # 배치가 비행 중이 되도록
+
+    # ★대조군 — 정말 「비행 중」인가. 아니면 이 테스트는 아무것도 안 태운다(공허한 초록).
+    inflight_depth = len(cs._QUEUE)
+    assert inflight_depth < 600, (
+        f"★배치가 비행 중이 아니다(큐 {inflight_depth}) — 이 테스트가 그 창을 못 만들었다"
+    )
+
+    await cs.stop_flush_loop_and_drain(ctx, f)
+
+    assert not cs._QUEUE, (
+        f"★종료 후 큐에 {len(cs._QUEUE)}건이 남았다 — 프로세스가 죽으면 그대로 사라진다"
+    )
+    assert sum(f.loaded) == 600, f"★600건 중 {sum(f.loaded)}건만 적재됐다"

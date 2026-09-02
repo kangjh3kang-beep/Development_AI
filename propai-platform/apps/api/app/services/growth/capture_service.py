@@ -479,9 +479,31 @@ async def stop_flush_loop_and_drain(ctx: MutableMapping[str, Any], session_facto
     ★취소 대상이 **없어도 배수는 한다** — 루프 기동에 실패한 프로세스야말로
       큐가 가장 많이 쌓여 있다(그 경우 잔여를 버리면 결함이 두 배가 된다).
     """
+    import asyncio
+    import contextlib
+
     task = ctx.get(_FLUSH_TASK_CTX_KEY)
     if task is not None:
         task.cancel()
+        # ★★**취소를 기다린다** — 안 기다리면 비행 중 배치가 통째로 사라진다.
+        #
+        #   `cancel()` 은 **요청**일 뿐이다. 루프가 `flush_batch` 안에서
+        #   `await db.execute(...)` 로 대기 중이면, 그 배치는 이미 `_drain` 이
+        #   큐에서 **빼낸** 상태다. 취소가 배달되면 #920 의 `BaseException` 핸들러가
+        #   그것을 **되돌리는데**, 그 되돌림은 **await 를 한 번 더 돌아야** 일어난다.
+        #   기다리지 않으면 아래 `drain_until_empty` 가 **되돌림 전의 얕은 큐**를 보고
+        #   끝내 버리고, 되돌아온 행은 **아무도 비우지 않은 채 프로세스가 죽는다**.
+        #
+        #   ★실측(두 모집단 대조 · 큐 600건 · 비행 배치 500건):
+        #     기다리지 않음 → 종료 후 큐 잔여 **500** · DB 적재 100 = **500건 소실**
+        #     기다림        → 종료 후 큐 잔여 **0**   · DB 적재 **600** = 소실 0
+        #
+        #   ★노출 창은 (INSERT 소요 / flush 주기)라 **DB 가 느릴수록 넓어진다** —
+        #     즉 **큐가 가장 깊을 때 가장 잘 터진다**. 이 파일은 바로 위
+        #     `flush_batch` 에서 같은 창을 이미 적어 뒀는데, 그 사슬의
+        #     **다음 고리**가 여기였다.
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
     try:
         return await drain_until_empty(session_factory)
     except Exception as e:  # noqa: BLE001 — 어떤 예외도 종료를 막지 않는다.

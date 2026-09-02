@@ -112,10 +112,25 @@ def test_scanner_is_alive_before_any_zero_is_believed() -> None:
     assert {"api", "worker"} <= names, f"★알려진 진입점이 빠졌다: {names}"
 
     api_main = _APPS / "api" / "main.py"
-    assert _calls(api_main, _DRAINS), "★api/main.py 에서 배수 호출을 못 찾았다 — 추출기가 죽었다"
+    # ★대조군의 **대상이 바뀌었다**: main.py 는 배수를 구현하지 않고 **위임**한다.
+    assert _calls(api_main, _PERIODIC_DELEGATES | _SHUTDOWN_DELEGATES), \
+        "★api/main.py 에서 배수 위임을 못 찾았다 — 추출기가 죽었다"
 
     # ★음성 대조군 — 존재하지 않는 이름은 0건이어야 한다(무엇이든 매치하는 조회기가 아님)
     assert not _calls(api_main, {"zzz_nope_no_such_call"}), "★조회기가 아무거나 매치한다"
+
+
+def _definer_of_drains() -> Path | None:
+    """배수 함수를 **정의한** 파일을 파생한다(손으로 적지 않는다)."""
+    for f in (_APPS / "api").rglob("*.py"):
+        try:
+            tree = ast.parse(f.read_text(encoding="utf-8"))
+        except (SyntaxError, UnicodeDecodeError):
+            continue
+        for n in ast.walk(tree):
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == "drain_until_empty":
+                return f
+    return None
 
 
 def test_every_entrypoint_that_produces_events_also_drains_them() -> None:
@@ -126,11 +141,24 @@ def test_every_entrypoint_that_produces_events_also_drains_them() -> None:
     produced_by: dict[str, int] = {}
     drained_by: dict[str, int] = {}
 
+    # ★★**구현 모듈은 배선으로 세지 않는다**(독립 적대 렌즈 실측).
+    #   `drain_until_empty` 를 **정의한** 모듈은 `record_event` 도 정의하므로
+    #   **모든 생산자의 폐포에 반드시 들어간다.** 그 안의 호출까지 세면
+    #   `drained_by >= 1` 이 **누구에게나 참**이 되어 이 단언이 **공허**해진다 —
+    #   실제로 워커 배선을 **통째로 지워도** 이 테스트가 초록이었다.
+    #   → 세는 것은 **「배수를 배선했는가」**이지 「배수 코드가 폐포에 있는가」가 아니다.
+    definer = _definer_of_drains()
+    assert definer is not None, "★배수 정의 모듈을 못 찾았다 — 추출기가 죽었다(위반 아님)"
+
     for ep in _entrypoints():
         name = ep.parent.name
         clo = _closure(ep)
         produced_by[name] = sum(len(_calls(f, _PRODUCERS)) for f in clo)
-        drained_by[name] = sum(len(_calls(f, _DRAINS)) for f in clo)
+        drained_by[name] = sum(
+            len(_calls(f, _DRAINS | _PERIODIC_DELEGATES | _SHUTDOWN_DELEGATES))
+            for f in clo
+            if f != definer
+        )
 
     # ★공허 진리 가드 — 「담는 진입점」이 하나도 없으면 아래 단언은 무의미하다.
     producers = {k: v for k, v in produced_by.items() if v > 0}
@@ -145,18 +173,61 @@ def test_every_entrypoint_that_produces_events_also_drains_them() -> None:
     )
 
 
-def _drain_sites_by_position(path: Path) -> dict[str, list[int]]:
-    """배수 호출을 **주기(while 안)** 와 **종료(while 밖)** 로 가른다.
+def _phase_bindings(tree: ast.AST) -> dict[str, str]:
+    """`WorkerSettings.on_startup/on_shutdown = <함수>` 바인딩을 **파생**한다."""
+    out: dict[str, str] = {}
+    for n in ast.walk(tree):
+        if isinstance(n, ast.ClassDef):
+            for st in n.body:
+                if isinstance(st, ast.Assign):
+                    tgt = getattr(st.targets[0], "id", "")
+                    if tgt in ("on_startup", "on_shutdown"):
+                        nm = getattr(st.value, "id", getattr(st.value, "attr", None))
+                        if nm:
+                            out[nm] = "startup" if tgt == "on_startup" else "shutdown"
+    return out
 
-    ★두 자리는 **다른 일을 한다**: 주기 배수가 없으면 큐가 프로세스 수명 내내 차올라
-      `maxlen` 오버플로로 **조용히 밀려나고**, 종료 배수가 없으면 **잔여가 통째로** 사라진다.
-      한쪽만 단언하면 반대쪽을 지워도 초록이다(한쪽만 거는 단언).
+
+def _drain_sites_by_position(path: Path) -> dict[str, list[int]]:
+    """배수 호출을 **주기** 와 **종료** 로 가른다.
+
+    ★★**이름만으로 가르지 않는다.** 종전 판은 `start_flush_loop` 이라는 **호출 이름**만 보고
+      `periodic` 으로 넣었다. 그래서 **기동부와 종료부를 서로 맞바꿔도** 락 4건이 전부 초록이었다
+      (독립 적대 렌즈 실측) — 즉 *"루프를 죽을 때 만들고, 마지막 배수를 빈 큐에 대고 한다"* 는
+      **원래 결함을 그대로 되살려도** 통과했다.
+
+    → **호출이 실제로 어느 단계에 있는지**를 구조로 판정하고, **이름과 단계가 일치할 때만** 센다.
+      단계 판정은 두 형태를 모두 다룬다(둘 다 이 저장소에 실재한다):
+        · arq 워커  — `WorkerSettings.on_startup/on_shutdown` 바인딩에서 **파생**
+        · FastAPI   — `lifespan` 은 **한 함수 안**이라 이름으로는 못 가른다 →
+                      **`yield` 앞이 기동 · 뒤가 종료**
     """
     tree = ast.parse(path.read_text(encoding="utf-8"))
     parent: dict[ast.AST, ast.AST] = {}
     for node in ast.walk(tree):
         for child in ast.iter_child_nodes(node):
             parent[child] = node
+
+    bindings = _phase_bindings(tree)
+
+    def enclosing_fn(n: ast.AST):
+        cur = parent.get(n)
+        while cur is not None:
+            if isinstance(cur, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                return cur
+            cur = parent.get(cur)
+        return None
+
+    def phase_of(n: ast.AST) -> str | None:
+        fn = enclosing_fn(n)
+        while fn is not None:
+            if fn.name in bindings:
+                return bindings[fn.name]
+            ylines = [y.lineno for y in ast.walk(fn) if isinstance(y, (ast.Yield, ast.YieldFrom))]
+            if ylines:
+                return "startup" if n.lineno < min(ylines) else "shutdown"
+            fn = enclosing_fn(fn)
+        return None
 
     def in_loop(n: ast.AST) -> bool:
         cur = parent.get(n)
@@ -168,15 +239,20 @@ def _drain_sites_by_position(path: Path) -> dict[str, list[int]]:
 
     out: dict[str, list[int]] = {"periodic": [], "shutdown": []}
     for n in ast.walk(tree):
-        if isinstance(n, ast.Call):
-            f = n.func
-            nm = f.id if isinstance(f, ast.Name) else (f.attr if isinstance(f, ast.Attribute) else None)
-            if nm in _PERIODIC_DELEGATES:
+        if not isinstance(n, ast.Call):
+            continue
+        f = n.func
+        nm = f.id if isinstance(f, ast.Name) else (f.attr if isinstance(f, ast.Attribute) else None)
+        ph = phase_of(n)
+        if nm in _PERIODIC_DELEGATES:
+            # ★기동 단계에 있을 때만 「주기 배수」로 인정한다(맞바꾸기 방어).
+            if ph == "startup":
                 out["periodic"].append(n.lineno)
-            elif nm in _SHUTDOWN_DELEGATES:
+        elif nm in _SHUTDOWN_DELEGATES:
+            if ph == "shutdown":
                 out["shutdown"].append(n.lineno)
-            elif nm in _DRAINS:
-                out["periodic" if in_loop(n) else "shutdown"].append(n.lineno)
+        elif nm in _DRAINS:
+            out["periodic" if in_loop(n) else "shutdown"].append(n.lineno)
     return out
 
 
