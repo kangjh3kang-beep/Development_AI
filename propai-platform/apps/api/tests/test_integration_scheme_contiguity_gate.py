@@ -910,3 +910,39 @@ def test_axis_sizes_are_pinned():
             f"현재 {sorted(sets[name])}. 이관·삭제는 사유와 함께 여기도 고쳐라"
         )
     assert len(NON_GATED_WITH_REASON) == len(_add_scheme_names()) - sum(_AXIS_SIZES.values())
+
+
+def test_adjacency_producer_reports_real_pair_distance():
+    """★C-A — `max_pair_distance_m_min` 의 **생산자**(`_adjacency`)를 실 geometry 로 태운다.
+
+    적대 리뷰 실측: `max_pair_deg = max(…)` → `min(…)` 으로 바꾸면 시드가 0.0 이라
+    **모든 부지가 영원히 0.0m** 를 보고하는데 락 전부 초록이었다. 픽스처가 그 값을
+    **손으로 넣어 줘서** 생산자가 한 번도 안 탔기 때문이다(«순수함수는 잠갔는데 생산자는 무잠금»).
+
+    ★이 값은 현재 **판정에 쓰이지 않는다**(축이 틀려 철회 — 시행령 §111). 그래도 응답에 실려
+    나가므로, 다음 사람이 §111③(3개 이상 500m)을 구현할 때 **틀린 값을 믿지 않도록** 잠근다.
+    """
+    pytest.importorskip("shapely")
+
+    def _sq(lon, lat, d=0.00002):
+        return {"type": "Polygon", "coordinates": [[
+            [lon, lat], [lon + d, lat], [lon + d, lat + d], [lon, lat + d], [lon, lat]]]}
+
+    # 서울 도심 부근. 세 번째 필지를 **멀리** 둬서 최댓값이 그것으로 정해지게 한다.
+    near = [{"geometry": _sq(127.0, 37.5)}, {"geometry": _sq(127.00005, 37.5)}]
+    far = [*near, {"geometry": _sq(127.005, 37.5)}]
+
+    a_near = DevelopmentScenarioSimulator._adjacency(near)
+    a_far = DevelopmentScenarioSimulator._adjacency(far)
+    d_near = a_near.get("max_pair_distance_m_min")
+    d_far = a_far.get("max_pair_distance_m_min")
+
+    assert d_near is not None and d_far is not None, (
+        f"생산자가 쌍거리를 방출하지 않는다 — near={a_near} far={a_far}"
+    )
+    # ★두 모집단이 **갈려야** 한다(0.0 붕괴·상수화가 여기서 죽는다)
+    assert d_far > d_near, f"먼 필지를 더해도 최댓값이 안 커진다 — near={d_near} far={d_far}"
+    assert d_far > 100.0, f"약 440m 떨어진 쌍인데 {d_far}m 로 보고 — max 가 아니라 min/0 붕괴 의심"
+    assert d_near < 50.0, f"맞닿은 두 필지가 {d_near}m — 과대보고"
+    # ★상수 변경 탐지 — 0.005도(경도)는 88,800 기준 약 444m 다.
+    assert 380.0 < d_far < 520.0, f"도→미터 변환이 바뀌었다 — {d_far}m (기대 약 444m)"
