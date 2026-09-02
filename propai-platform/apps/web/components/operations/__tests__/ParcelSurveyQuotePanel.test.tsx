@@ -150,3 +150,72 @@ describe("ParcelSurveyQuotePanel — 견적·선별 정직성 계약", () => {
     expect(post).toHaveBeenCalledTimes(1);
   });
 });
+
+// ────────────────────────────────────────────────────────────────────────────
+// 2026-09-02 — **배선 락**. 종전엔 접힘방지 규칙이 이 패널에 **인라인**이었고 테스트는 그것을
+// `lib/pnu.test.ts` 안에서 **재구현**해 검사했다. 그래서 규칙을 옛 형태
+// (`p.pnu ? parcelDedupKey(p) : project-idx…`)로 되돌리는 변이가 **어떤 테스트도 깨지 않았다**
+// (실측 SURVIVED). 여기서는 **패널 자신**을 태운다 — 스토어에 필지를 넣고 버튼을 눌러
+// 견적 요청 본문을 본다.
+//
+// ★두 모집단을 **같은 실행에서** 가른다:
+//   A 진짜 PNU 3건(주소 동일)   → 3건이 살아남는다
+//   B 오염 PNU 3건(값도 동일)   → **3건이 살아남는다** ← 옛 조건에서는 1건으로 접혔다
+// A 만 보면 «가짜를 그냥 키로 써도» 통과한다(가짜끼리 값이 다르면). B 가 그것을 가른다.
+// ────────────────────────────────────────────────────────────────────────────
+
+const 동주소 = "경기도 오산시 내삼미동";
+
+function 프로젝트필지주입(parcels: Array<{ address: string; pnu?: string | null }>) {
+  useProjectContextStore.setState({
+    projectId: "p-test",
+    siteAnalysis: { address: 동주소, parcels },
+  } as never);
+}
+
+async function 불러오기후_견적필지() {
+  fireEvent.click(screen.getByRole("button", { name: /현재 프로젝트 필지 불러오기/ }));
+  await waitFor(() => expect(post).toHaveBeenCalled());
+  const last = post.mock.calls[post.mock.calls.length - 1] as [
+    string,
+    { body: { parcels: Array<{ address: string; pnu?: string }> } },
+  ];
+  return last[1].body.parcels;
+}
+
+describe("★배선 — 프로젝트 필지 불러오기가 오염된 PNU 로 접히지 않는다", () => {
+  it("모집단 A(진짜 PNU · 주소 동일) — 3건이 3건으로 들어온다", async () => {
+    프로젝트필지주입([
+      { address: 동주소, pnu: "4137011000104670001" },
+      { address: 동주소, pnu: "4137011000104670002" },
+      { address: 동주소, pnu: "4137011000104670003" },
+    ]);
+    render(<ParcelSurveyQuotePanel locale="ko" />);
+    expect((await 불러오기후_견적필지()).length).toBe(3);
+  });
+
+  it("★모집단 B(오염 PNU · **값까지 동일**) — 그래도 3건이다(77→1 재발 방지)", async () => {
+    // 생산자 `satong-map-selection.ts` 의 `store-rep-${address}` 는 **주소 파생**이라
+    // 같은 동의 필지가 전부 **똑같은 값**을 받는다. 옛 조건은 이걸 truthy 로 보고
+    // 인덱스 탈출구를 건너뛰어 3건을 1건으로 접었다.
+    const 오염 = `store-rep-${동주소}`;
+    프로젝트필지주입([
+      { address: 동주소, pnu: 오염 },
+      { address: 동주소, pnu: 오염 },
+      { address: 동주소, pnu: 오염 },
+    ]);
+    render(<ParcelSurveyQuotePanel locale="ko" />);
+    const parcels = await 불러오기후_견적필지();
+    expect(parcels.length).toBe(3);
+    // ★그리고 오염값이 **요청 본문으로 새어 나가지 않는다** — 나가면 서버가 그대로 echo 하고
+    //   `jibun:null·area_sqm:0` 을 돌려준다(볼트 2026-08-20 실측).
+    expect(parcels.some((p) => typeof p.pnu === "string" && p.pnu.includes("store-rep"))).toBe(false);
+  });
+
+  it("★음성 대조 — 진짜 PNU 는 요청 본문에 **실려 나간다**(과잉 제거가 아님을 가른다)", async () => {
+    프로젝트필지주입([{ address: 동주소, pnu: "4137011000104670001" }]);
+    render(<ParcelSurveyQuotePanel locale="ko" />);
+    const parcels = await 불러오기후_견적필지();
+    expect(parcels.map((p) => p.pnu)).toEqual(["4137011000104670001"]);
+  });
+});
