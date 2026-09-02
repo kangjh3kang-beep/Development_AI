@@ -19,6 +19,8 @@ from typing import Any
 
 import structlog
 
+from app.utils.pnu import is_valid_pnu
+
 logger = structlog.get_logger(__name__)
 
 # 양식 컬럼(순서·헤더 = 플랫폼 표준). 필수=소재지(주소). 나머지는 있으면 정확도↑.
@@ -398,7 +400,7 @@ def _row_issues(p: dict[str, Any]) -> list[str]:
     if jb and not _JIBUN_RE.match(jb):
         issues.append("jibun_format")
     pnu = p.get("pnu")
-    if pnu and (len(pnu) != 19 or not pnu.isdigit()):
+    if pnu and not is_valid_pnu(pnu):
         issues.append("pnu_format")
     st = p.get("status")
     if st in _UNRESOLVED_STATUSES:
@@ -932,7 +934,7 @@ class ParcelExcelService:
                 structure_notes.append(f"집계/합계 추정 행 제외: {_row_summary or f'{excluded_n}번째 제외행'}")
                 continue
 
-            pnu = pnu_raw if len(pnu_raw) == 19 else (_pnu_from_bcode(bcode, jibun) if bcode else None)
+            pnu = pnu_raw if is_valid_pnu(pnu_raw) else (_pnu_from_bcode(bcode, jibun) if bcode else None)
             status = "ok" if pnu else ("need_geocode" if address else "failed")
             p: dict[str, Any] = {
                 "address": address or None, "jibun": jibun or None,
@@ -1263,7 +1265,7 @@ class ParcelExcelService:
                             cands = await vworld.search_address(query, size=8)
                     except Exception:  # noqa: BLE001
                         cands = []
-                    cand_pnus = [str(c.get("pnu") or "") for c in cands if len(str(c.get("pnu") or "")) == 19]
+                    cand_pnus = [str(c.get("pnu") or "") for c in cands if is_valid_pnu(c.get("pnu"))]
                     bcodes = {cp[:10] for cp in cand_pnus}
                     if len(bcodes) == 1 and cand_pnus:
                         # 단일 법정동 수렴 → 최적 후보(첫 후보=검색 best match)로 확정.
@@ -1415,11 +1417,11 @@ class ParcelExcelService:
                 "address": str(it.get("address") or "").strip(),
                 "jibun": str(it.get("jibun") or "").strip(),
                 "bcode": str(it.get("bcode") or "").strip(),
-                "pnu": pnu if len(pnu) == 19 else None,
+                "pnu": pnu if is_valid_pnu(pnu) else None,
                 "area_sqm": area_in if (area_in and area_in > 0) else None,
                 "zone_type": None, "jimok": None,
                 "official_price_per_sqm": None,
-                "status": "ok" if len(pnu) == 19 else "pending",
+                "status": "ok" if is_valid_pnu(pnu) else "pending",
             })
 
         need_geocode = [i for i, p in enumerate(parcels) if not p["pnu"]]

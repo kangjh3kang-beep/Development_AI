@@ -16,6 +16,7 @@ import { apiV1BaseUrl } from "@/lib/api-client";
 import { PYEONG_SQM } from "@/lib/formatters";
 import { useModalFocusWhileMounted } from "@/hooks/useModalFocus";
 import { DISMISS_Z, useDismissibleWhileMounted } from "@/lib/satong-dismiss";
+import { normalizePnu } from "@/lib/pnu";
 
 const py = (sqm: number | null | undefined) =>
   sqm == null ? "—" : `${(sqm / PYEONG_SQM).toLocaleString(undefined, { maximumFractionDigits: 2 })}평`;
@@ -75,7 +76,9 @@ export function LandShareModal({
         const res = await fetch(`${apiV1BaseUrl()}/zoning/land-share`, {
           method: "POST",
           headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-          body: JSON.stringify(pnu && pnu.length >= 19 ? { pnu } : { address: jibun }),
+          // ★길이만 보면 안 된다 — `'store-rep-용인시 수지구 신봉동 56-1'` 은 26자라
+          //   `>= 19` 를 통과해 **가짜가 진짜 PNU 로 전송**됐다. 19자리 **숫자**인지 본다.
+          body: JSON.stringify(normalizePnu(pnu) ? { pnu: normalizePnu(pnu) } : { address: jibun }),
         });
         const d: Result = await res.json();
         if (!cancelled) setData(d);
