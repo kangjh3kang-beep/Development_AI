@@ -245,6 +245,20 @@ ZONE_BASIS_NO_AREA = "first_parcel_no_area"
 ZONE_BASIS_NONE = "none"
 
 
+#: 현 용도지역만으로는 **아파트를 지을 수 없는** 용도지역(국토계획법 시행령 009419 §71).
+#  · 제1종일반주거 → [별표 4] 1호 나목 *"공동주택(**아파트를 제외한다**)"* · 4층 이하
+#  · 전용주거(1·2종) → [별표 2]·[별표 3] — 단독·저층 공동주택 중심
+APARTMENT_PROHIBITED_MARK = "★현 용도지역은 아파트 불허 — 용도지역 변경(종상향) 전제"
+
+
+def zone_prohibits_apartment(zone: str | None) -> bool:
+    """현 용도지역 그대로는 아파트가 **법정 불허**인가."""
+    z = zone or ""
+    if "전용주거" in z:
+        return True
+    return ("제1종일반주거" in z) or ("1종일반주거" in z)
+
+
 def select_primary_zone(enriched: list[dict[str, Any]], site_zone_type: str = "") -> tuple[str, str]:
     """부지 대표 용도지역을 고르는 **배선 전체**를 순수함수로 꺼낸다.
 
@@ -1649,7 +1663,29 @@ class DevelopmentScenarioSimulator:
     # ── 방식·용도지역별 건축 가능 분류(아파트/호텔/상가/지산/빌라/콘도/전원주택 등) 제안 ──
     @staticmethod
     def _buildable_types(zone: str | None, scheme: str) -> list[str]:
+        """★이 함수는 **2단계**다 — 1단계 `base`(용도지역) → 2단계 `scheme` 오버라이드가
+        `base` 를 **통째로 버리고 early return** 한다.
+
+        ★★적대 리뷰 실측(2026-09-02): `base` 만 고쳤더니 **21종 중 12종**이 제1종일반주거에서
+          여전히 아파트를 제안했다(오버라이드 경로). *"1·2·3종 분리"* 라는 선언이 **9종에만**
+          적용된 것 — 「처방을 적용한 범위 ≠ 결함이 사는 범위」.
+          → 아래 `_annotate` 로 **모든 반환 경로**를 감싼다.
+
+        ★그리고 «아파트를 무조건 막는 것» 도 틀리다(원문 확인). 소규모주택정비법 012805 는
+          **용도지역 변경 근거를 갖는다** — §43의3 7호(관리계획에 *"용도지역의 지정 및 변경"*) ·
+          §43의5①(*"시행으로 용도지역이 변경된 경우"*) · §49의2① 단서(*"일부를 종전 용도지역으로
+          그대로 유지"* → 반대해석상 변경 가능). 역세권활성화·도심복합도 종상향이 제도의 핵심이다.
+          단 §48① 이 완화하는 것은 **조경·건폐율 산정·공지·높이 넷뿐**이고 **용도 제한은 없다** —
+          즉 아파트는 **용도지역 변경을 거쳐야** 가능하다.
+          → 막지도 허용하지도 않고 **「종상향 전제」임을 표면에 싣는다.**
+        """
         z = zone or ""
+
+        def _annotate(items: list[str]) -> list[str]:
+            if zone_prohibits_apartment(z) and any("아파트" in t for t in items):
+                return [*items, APARTMENT_PROHIBITED_MARK]
+            return items
+
         # 1) 용도지역 기준 기본 건축 가능 분류.
         if any(k in z for k in ("중심상업", "일반상업", "근린상업", "유통상업")):
             base = ["상가(근린생활)", "오피스(업무시설)", "오피스텔", "주상복합 아파트", "호텔/생활숙박", "지식산업센터"]
@@ -1679,16 +1715,17 @@ class DevelopmentScenarioSimulator:
             base = ["용도지역 확인 필요"]
         # 2) 개발방식 보정(방식 특성상 유리한 분류로 좁힘/추가).
         if "역세권" in scheme or "도심복합" in scheme:
-            return ["주상복합 아파트", "오피스텔", "상가", "오피스", "호텔/생활숙박"] + (["청년·신혼 임대주택"] if "청년" in scheme else [])
+            return _annotate(["주상복합 아파트", "오피스텔", "상가", "오피스", "호텔/생활숙박"]
+                             + (["청년·신혼 임대주택"] if "청년" in scheme else []))
         if any(k in scheme for k in ("가로주택", "모아", "자율주택", "소규모재건축", "주거환경")):
-            return ["저층 아파트", "연립/다세대(빌라)", "단독주택"]
+            return _annotate(["저층 아파트", "연립/다세대(빌라)", "단독주택"])
         if "대지조성" in scheme:
-            return ["단독/전원주택 용지", "아파트 건설용지", "상가/근생 용지(분양)"]
+            return _annotate(["단독/전원주택 용지", "아파트 건설용지", "상가/근생 용지(분양)"])
         if "리모델링" in scheme:
-            return ["기존 공동주택 증축(아파트)"]
+            return _annotate(["기존 공동주택 증축(아파트)"])
         if "뉴스테이" in scheme or "장기전세" in scheme or "청년안심" in scheme:
-            return ["임대 아파트", "오피스텔", "주상복합"]
-        return base
+            return _annotate(["임대 아파트", "오피스텔", "주상복합"])
+        return _annotate(base)
 
     async def _llm(self, ctx: dict, scenarios: list[dict]) -> dict[str, Any]:
         try:

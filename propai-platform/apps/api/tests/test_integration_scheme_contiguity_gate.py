@@ -467,3 +467,129 @@ def test_simulate_uses_the_extracted_wiring():
     assert "select_primary_zone(enriched" in _SRC
     # ★인라인 복제본이 남으면 두 경로가 갈린다 — 종전 인라인 표식이 사라졌는지 확인.
     assert "dominant_zone_by_area(_measured_rows or _all_rows)" not in _SRC
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 8) ★적대 리뷰(2026-09-02)가 뚫은 두 층 — CRITICAL 봉합
+# ─────────────────────────────────────────────────────────────────────────────
+
+#: 게이트에 **의도적으로 넣지 않은** 방식과 그 사유. ★이 표가 없으면 아래 파티션 단언이
+#  성립하지 않으므로, 새 방식을 추가하면 **여기서 판단을 강제**당한다(조용한 누락 방지).
+#  ★사유 없는 원소는 금지 — 「부채」도 사유로 적어 둔다(§36 죽은 면제도 실패시킬 것).
+NON_GATED_WITH_REASON: dict[str, str] = {
+    "단순 건축": "자립방식 — 현 용도지역 한도 내 건축이라 구역·가로구역과 무관",
+    "결합건축": "제도의 전제가 **100m 이내 이격**(건축법 §77의15①) — 인접성 축 자체가 역적용",
+    "공동주택 리모델링": "기존 건축물 증축 — 신규 구역 지정과 무관",
+    "도시재생사업": "★부채 — 인접 요건 조문 미확인(지어내지 않는다)",
+    "자율주택정비사업": "★부채 — 인접 요건 조문 미확인",
+    "소규모재건축사업": "★부채 — 인접 요건 조문 미확인(주택단지 축일 가능성)",
+    "역세권 청년안심주택": "★부채 — 서울시 조례 발원, 인접 요건 미확인",
+    "공공지원민간임대(뉴스테이)": "★부채 — 촉진지구 요건 미확인",
+}
+
+
+def test_gate_membership_is_a_partition_of_all_schemes():
+    """★★기대값을 **변이 대상 밖**에서 만든다.
+
+    적대 리뷰 실측: 종전 락은 모집단을 `_gate_set_literals()` — **자기가 잠그려는 그 집합** —
+    에서 파생시켰다. 그래서 원소를 지우면 **기대값이 함께 깎여** 단언이 빨개지지 않고
+    **사라졌다**: 13종 중 **10종을 지워도 32건 전부 초록**(M17).
+
+    여기서는 원천을 **`add()` 전수**(게이트와 무관한 축)로 두고, 게이트와 명시적 비게이트 표가
+    **정확히 그것을 분할**하는지 본다. 어느 쪽에서 원소가 사라지면 **양변이 갈린다.**
+    """
+    every = _add_scheme_names()
+    gate = set().union(*_gate_set_literals().values())
+    declared_out = set(NON_GATED_WITH_REASON)
+
+    assert len(every) >= 20, f"add() 수집이 비정상 — {len(every)}종(수집기 사망)"
+    assert not (gate & declared_out), f"게이트와 비게이트가 겹친다: {sorted(gate & declared_out)}"
+
+    missing = sorted(every - gate - declared_out)
+    assert not missing, (
+        f"게이트에도 비게이트 표에도 없는 방식: {missing} — "
+        "새 방식을 추가하면 인접성 판정을 **의도적으로** 정하고 여기 적어라"
+    )
+    ghost = sorted((gate | declared_out) - every)
+    assert not ghost, f"실재하지 않는 방식이 선언돼 있다(죽은 원소): {ghost}"
+    # ★양쪽 크기를 못 박는다 — 한쪽에서 지우면 다른 쪽 합이 어긋난다.
+    assert len(gate) + len(declared_out) == len(every), (
+        f"분할이 성립하지 않는다: 게이트 {len(gate)} + 비게이트 {len(declared_out)} != 전체 {len(every)}"
+    )
+
+
+def test_every_non_gated_entry_carries_a_reason():
+    """비게이트 표의 **사유가 비어 있으면 실패** — 조용한 면제를 금지한다."""
+    for k, v in NON_GATED_WITH_REASON.items():
+        assert v and len(v) >= 10, f"{k}: 비게이트 사유가 비었거나 너무 짧다 — {v!r}"
+
+
+def test_self_standing_never_enters_the_gate():
+    """★처음 뚫린 그 성질 자체를 잠근다 — 자립방식이 게이트에 **침투하지 않는다**.
+
+    적대 리뷰 M22: `GARO_GUYEOK_SCHEMES` 에 `"단순 건축"` 을 넣어도 **생존**했다.
+    수집기의 «어떻게 파생하는가» 는 고쳤지만 이 성질은 아무도 단언하지 않았다.
+    """
+    self_standing = _named_set_literal("SELF_STANDING_SCHEMES")
+    assert self_standing, "SELF_STANDING_SCHEMES 를 못 찾았다 — 수집기 사망"
+    gate = set().union(*_gate_set_literals().values())
+    overlap = sorted(gate & self_standing)
+    assert not overlap, f"자립방식이 인접성 게이트에 들어왔다: {overlap}"
+
+
+def _named_set_literal(name: str) -> set[str]:
+    for n in ast.walk(ast.parse(_SRC)):
+        tgt = None
+        if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name):
+            tgt = n.targets[0].id
+        elif isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name):
+            tgt = n.target.id
+        if tgt == name and isinstance(getattr(n, "value", None), ast.Set):
+            return {e.value for e in n.value.elts
+                    if isinstance(e, ast.Constant) and isinstance(e.value, str)}
+    return set()
+
+
+def test_buildable_types_covers_every_scheme_not_just_one():
+    """★★C-1 — `_buildable_types` 를 **21종 전수**로 태운다.
+
+    종전 락은 `scheme="단순 건축"` **하나**만 줬다. 그런데 이 함수는 2단계라
+    **scheme 오버라이드가 `base` 를 버리고 early return** 한다 —
+    적대 리뷰 실측 **12/21 종이 제1종일반주거에서 아파트를 제안**했는데 락 32건이 전부 초록이었다.
+    같은 파일에 `_add_scheme_names()` 파생 수집기가 **이미 있는데** 쓰지 않은 것이 원인이다.
+    """
+    D = DevelopmentScenarioSimulator
+    schemes = sorted(_add_scheme_names())
+    assert len(schemes) >= 20, f"모집단이 {len(schemes)}종 — 수집기 사망"
+
+    unmarked = [
+        s for s in schemes
+        if any("아파트" in t for t in D._buildable_types("제1종일반주거지역", s))
+        and SS.APARTMENT_PROHIBITED_MARK not in D._buildable_types("제1종일반주거지역", s)
+    ]
+    assert not unmarked, (
+        f"제1종일반주거에서 **제약 고지 없이** 아파트를 제안하는 방식 {len(unmarked)}/{len(schemes)}: "
+        f"{unmarked} — [별표 4] 1호 나목은 *공동주택(아파트를 제외한다)*"
+    )
+
+
+def test_apartment_mark_is_not_pasted_where_it_does_not_belong():
+    """★음성 대조군 — 제2·3종에는 **붙으면 안 된다**([별표 5]에 제외 문구 없음).
+
+    이 단언이 없으면 *"전부 고지 붙이기"* 라는 과잉 구현도 통과한다.
+    """
+    D = DevelopmentScenarioSimulator
+    for zone in ("제2종일반주거지역", "제3종일반주거지역"):
+        marked = [s for s in sorted(_add_scheme_names())
+                  if SS.APARTMENT_PROHIBITED_MARK in D._buildable_types(zone, s)]
+        assert not marked, f"{zone} 에 불허 고지가 붙었다: {marked}"
+
+
+def test_zone_prohibits_apartment_partitions():
+    """순수함수 — 두 모집단이 **다른 답**을 내야 한다."""
+    assert SS.zone_prohibits_apartment("제1종일반주거지역") is True
+    assert SS.zone_prohibits_apartment("제1종전용주거지역") is True
+    assert SS.zone_prohibits_apartment("제2종일반주거지역") is False
+    assert SS.zone_prohibits_apartment("제3종일반주거지역") is False
+    assert SS.zone_prohibits_apartment("일반상업지역") is False
+    assert SS.zone_prohibits_apartment(None) is False
