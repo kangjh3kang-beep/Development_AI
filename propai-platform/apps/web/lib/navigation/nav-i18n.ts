@@ -46,6 +46,7 @@ export const NAV_ITEM_LABELS: Record<string, Record<TranslatedLocale, string>> =
   "market-sales": { en: "Market & Sales", "zh-CN": "市场与销售" },
   "market-insights": { en: "Market & Price Analysis", "zh-CN": "市场行情分析" },
   "quick-survey": { en: "Quick Sales Feasibility Survey", "zh-CN": "简易销售可行性调查" },
+  "realtx-report": { en: "Actual Transaction Filings", "zh-CN": "实际成交申报明细" },
   "market-ai": { en: "Conversational Market AI", "zh-CN": "对话式市场分析 AI" },
   "sales-info": { en: "Presale Information", "zh-CN": "销售信息" },
   acquisition: { en: "Business Acquisition", "zh-CN": "业务获取" },

@@ -14,7 +14,12 @@ import { AIRecommendationPanel } from "./AIRecommendationPanel";
 import { FeasibilityExportButton } from "./FeasibilityExportButton";
 import { AutoRecommendPanel } from "./AutoRecommendPanel";
 import { EnvironmentSummaryCard } from "@/components/environment/EnvironmentSummaryCard";
-import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { useShallow } from "zustand/react/shallow";
+import {
+  useProjectContextStore,
+  computeFeasibilityCompleteness,
+  selectFeasibilityCompletenessInputs,
+} from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 
 interface Props {
@@ -48,7 +53,14 @@ export function FeasibilityEditorV2({ projectId }: Props) {
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
   const costData = useProjectContextStore((s) => s.costData);
   const isStale = useProjectContextStore((s) => s.isStale);
-  const feasibilityCompleteness = useProjectContextStore((s) => s.feasibilityCompleteness);
+  // ★렌더 경로에서는 스토어 **메서드**를 부르지 않는다 — 메서드는 내부에서 `get()` 을 쓰므로
+  //   **재수화된 라이브 상태**를 읽어 zustand 의 서버 스냅샷을 우회한다. 그 결과 서버가 그린
+  //   `0% · 부지 대기` 와 클라 하이드레이션 렌더의 `60% · 부지 반영` 이 갈려 프로덕션에서
+  //   `Minified React error #418 (args[]=text)` 이 났다(2026-08-27 라이브 귀속: 무개변 1 /
+  //   그 블록 텍스트만 서버에서 일치시키면 0 / 무관 개변 1).
+  //   셀렉터는 하이드레이션 렌더에서 `getInitialState()`(= 서버와 같은 값)를 보므로 안전하다.
+  //   ★`useShallow` 가 필요하다 — 셀렉터가 매 렌더 새 객체를 만들면 무한 리렌더가 된다.
+  const completenessInputs = useProjectContextStore(useShallow(selectFeasibilityCompletenessInputs));
   const updateFeasibilityData = useProjectContextStore((s) => s.updateFeasibilityData);
 
   // 마지막 계산에 반영된 공사비(원) — 업스트림 변경(stale) 감지용.
@@ -153,7 +165,7 @@ export function FeasibilityEditorV2({ projectId }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isFeasibilityStale]);
 
-  const completeness = feasibilityCompleteness();
+  const completeness = computeFeasibilityCompleteness(completenessInputs);
 
   return (
     <div className="flex flex-col gap-10">

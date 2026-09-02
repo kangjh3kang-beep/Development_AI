@@ -95,6 +95,61 @@ INSIGHT_LABELS: dict[str, str] = {
 }
 
 
+# ── 정체 필드 — **무엇이 "같은 인사이트"인가** ──────────────────────────────
+#
+# ★왜 이 축이 필요한가 (라이브 실측 2026-08-26T16:xxZ · 활성 컨테이너)
+#
+#   `platform_insights` 에 **정리 경로가 하나도 없다** — `status` 분포가
+#   `open 3,127 / acknowledged 16` 이고 `expired`·`superseded` 는 **0** 이다.
+#   그래서 같은 지표가 매 실행마다 새 행으로 쌓이고 옛 행이 영원히 열려 있다:
+#
+#       latency_regression  open 2,298  ← 그중 **30일 초과 1,212건**
+#       ★같은 키에 더 새 행이 있는 옛 행(= 승계됨) = 전 타입 **2,678**
+#         승계분만 닫으면 open 3,127 → **449** (86% 감소)
+#
+# ★**목록이 아니라 선언이다.** 이 표에 빠진 타입은 정리 대상에서 **조용히 제외**되므로,
+#   `tests/test_growth_insight_retention.py` 가 `INSIGHT_TYPES` 전수와 대조해 **빠지면 실패**한다.
+#   ★2026-08-27 정정 — 종전 주석은 `test_insight_type_catalog.py` 를 가리켰는데 그 파일엔
+#     이 표를 보는 단언이 **0건**이다. 매달린 참조는 후임을 엉뚱한 곳으로 보낸다.
+#   값이 `None` 인 것은 *"정체를 정의할 수 없다"* 는 **명시적 선언**이지 누락이 아니다.
+#
+# ★손으로 고르면 상한이 된다(실증): 이 표를 만들기 전 조사에서 `error_cluster` 를
+#   `key` 로 물었는데 실제 정체는 `signature` 였다 — 112행(고유 12)이 **승계 0** 으로
+#   과소계상됐다. 그래서 필드명을 **코드에 선언**하고 락에 결속한다.
+IDENTITY_FIELDS: dict[str, tuple[str, ...] | None] = {
+    # metrics_json 안의 **이 필드들이 모두 같으면** 같은 대상에 대한 관측이다.
+    #
+    # ★★단일 필드로는 부족하다(2026-08-27 독립 리뷰 적발). 처음엔
+    #   `recurring_verify_error` 의 정체를 `service` **하나**로 적었는데, 생산자
+    #   `_cluster_verify_issues`(`analyzer.py:191`)는 **`(service, issue_type)` 복합키**로
+    #   군집한다. 즉 **한 번의 `analyze_window` 가 같은 service 에 issue_type 개수만큼
+    #   행을 발행**하는데, 정체가 `service` 뿐이면 그것들이 **서로를 승계**한다 —
+    #   닫히는 것이 *옛 관측*이 아니라 **같은 순간에 발행된 서로 다른 결함**이 된다.
+    #   게다가 한 윈도우의 INSERT 가 한 트랜잭션이라 `created_at` 이 전부 같아
+    #   무엇이 살아남을지가 **uuid 정렬 = 사실상 난수**였다.
+    #   ★이것은 이 커밋이 자랑한 바로 그 실수(`error_cluster` 를 `key` 로 물었던 것)의
+    #     **재발**이다 — 그때 얻은 교훈은 *"필드를 선언하라"* 였는데 부족했다.
+    #     **선언의 존재는 그 선언이 옳은지 말해 주지 않는다.**
+    "error_cluster": ("signature",),                       # 라이브: 112행 → 고유 12
+    "fallback_rate": ("service",),                         # 21행 → 3
+    "quality_drop": ("service",),                          # 4행 → 1
+    "recurring_verify_error": ("service", "issue_type"),   # ★복합 — 위 참조
+    "latency_regression": ("key",),                        # 2,298행 → 189
+    "latency_baseline": ("key",),                          # 577행 → 84
+    "selection_contamination": ("verdict",),               # 2행 → 1
+    # ★아래는 **정리하지 않는다** — 정체가 없거나, 있어도 승계 개념이 맞지 않는다.
+    "stale_reanalysis": None,               # 대상마다 1회성 제안
+    "heal_escalation": None,                # critical — 사람이 닫아야 한다
+    "improvement_proposal": None,           # PR 아티팩트(source_insight_id 로 추적)
+    "prompt_candidate": None,               # 사람 승인 대기 자산
+}
+
+
+def identity_fields(insight_type: str | None) -> tuple[str, ...] | None:
+    """이 타입의 정체 필드들. 선언되지 않은 타입은 **정리 대상이 아니다**(안전 기본값)."""
+    return IDENTITY_FIELDS.get(insight_type or "")
+
+
 def insight_label(insight_type: str | None) -> str:
     """타입 → 한국어 표시명. **모르면 감추지 않고 원문 그대로** 돌려준다.
 

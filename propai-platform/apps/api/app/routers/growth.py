@@ -127,7 +127,12 @@ async def ingest_events(batch: GrowthEventBatch, request: Request) -> GrowthInge
 #  ★role 기반 금지(가입 시 전원 자기 테넌트 role='admin' → 전역 인사이트 누출).
 # 전역(tenant NULL)+테넌트 분리 정책은 설계 §11 미결 → 우선 관리자=전역 전체 조회.
 
-_INSIGHT_STATUSES = {"open", "acknowledged", "acted", "dismissed"}
+# ★`superseded` — 정리 배치가 **승계된 옛 행**에 붙이는 상태(`insight_retention`).
+#   어휘에 없으면 `GET /growth/insights?status=superseded` 가 **400** 이라
+#   2,678행의 상태 전이를 **제품 안에서 확인할 방법이 0** 이 된다(되돌리기가 원시 SQL 뿐).
+#   조회는 가능해야 잘못 닫힌 것을 사람이 발견한다(2026-08-27 독립 리뷰 H5).
+#   ★`_ACK_STATUSES` 에는 넣지 않는다 — 승계분은 사람이 재처리할 대상이 아니다.
+_INSIGHT_STATUSES = {"open", "acknowledged", "acted", "dismissed", "superseded"}
 _ACK_STATUSES = {"acknowledged", "dismissed"}
 
 
@@ -304,13 +309,26 @@ async def ack_insight(
             status_code=400, detail="status 는 acknowledged 또는 dismissed 여야 합니다."
         )
 
-    # 허용 전이만(open/acknowledged → acknowledged|dismissed). acted/dismissed 등
-    # 이미 처리된 상태는 임의 재전이 금지.
+    # 허용 전이만. `dismissed` 등 이미 **사람이** 판단한 상태는 임의 재전이 금지.
+    #
+    # ★`acted → dismissed` 만 연다(2026-08-27). `acted` 는 **기계**(healing_rules)가 쓰는
+    #   상태다. 기계가 넣을 수 있는 상태에 사람이 못 들어가면 **한쪽만 걸린 경계**가 된다
+    #   (규율 §D-19 — 경계를 걸면 양방향으로).
+    #   ★근거는 이론이 아니라 실측이다: `threshold_relax` 는 base_client 를 통해 **실제
+    #     프로덕션 HTTP 타임아웃을 곱하는** 유일한 PRODUCT 이펙터인데, 무효한 치유를
+    #     걸러 준다던 `heal_escalation` 은 **라이브에 0건**이다(heal 액션 520건이 쌓이는
+    #     동안 단 한 건도 없었다 — 대조군 `fallback_rate open` 21건으로 조회기 생존 확인).
+    #     발화한 적 없는 안전망 위에 "사람은 못 건드려도 된다"를 세울 수 없다.
+    #   ★★열린 것은 **이 한 방향뿐**이다 — `acted → open`(기계 상태 되돌리기)이나
+    #     `dismissed → *` 는 여전히 막힌다. 전면 개방이 아니다.
+    allowed_from = ["open", "acknowledged"]
+    if req.status == "dismissed":
+        allowed_from = ["open", "acknowledged", "acted"]
     row = (await db.execute(text(
         "UPDATE platform_insights SET status = :st "
-        "WHERE id = :id AND status IN ('open','acknowledged') "
+        "WHERE id = :id AND status = ANY(:from_) "
         "RETURNING id, status"
-    ), {"st": req.status, "id": insight_id})).fetchone()
+    ), {"st": req.status, "id": insight_id, "from_": allowed_from})).fetchone()
     if row is None:
         await db.rollback()
         # 행이 없으면: 존재하지 않거나(404) 이미 처리됨(409)을 구분.
@@ -365,7 +383,24 @@ class ActiveFlagOut(BaseModel):
 
     key: str
     scope: str
-    value: dict | None = None
+    #: ★`dict` 만 받으면 **문자열 워터마크가 통째로 `None` 으로 위장**된다.
+    #  `growth_last_run.{analyze,heal,correct,improve}` 는 `schedule.py` 가
+    #  `now.isoformat()` 로 **평문 문자열**을 쓴다(`compute_due`). 종전 라우터는
+    #  `value=fr[2] if isinstance(fr[2], dict) else None` 이라 그 넷을 전부 `None` 으로
+    #  내보냈다 — 운영자가 *"성장 축이 도는가"* 를 물을 때 **가장 먼저 보는 값**이
+    #  「한 번도 안 돌았다」와 **구별 불가**했다(실측: 활성 플래그 6건 중 4건이 위장).
+    #: ★★**쓰기 쪽 선언과 같아야 한다**(독립 적대 리뷰 실측 2026-09-02).
+    #  이 줄이 `SettingIn.value`(아래 `PUT /settings` 본문)보다 **좁으면**, 쓰기가 받아 준
+    #  값을 읽기가 **거부**한다 — `ActiveFlagOut(...)` 은 엔드포인트 본문 안이라
+    #  `response_model` 경고가 아니라 **처리되지 않은 예외 = HTTP 500** 이다.
+    #  그러면 `actions`·`active_flags`·`total` 이 **함께** 죽어 이 PR 이 읽히게 만들려던
+    #  진단 화면 전체가 사라진다.
+    #  ★실측(쓰기가 받는 여섯 타입을 읽기에 태움):
+    #      str ◎ · dict ◎ · **list → ValidationError(500)** · **int → 5 가 5.0 으로 변형**
+    #      · float ◎ · bool ◎
+    #  → `SettingIn.value` 와 **같은 순서·같은 집합**으로 맞춘다(int 를 float 앞에 둬야
+    #    정수가 정수로 남는다). 두 줄이 갈리면 다시 이 사고가 난다.
+    value: dict | list | str | int | float | bool | None = None
     ttl_expires_at: datetime | None = None
     updated_by: str | None = None
 
@@ -451,7 +486,8 @@ async def heal_log(
     active_flags = [
         ActiveFlagOut(
             key=fr[0], scope=fr[1],
-            value=fr[2] if isinstance(fr[2], dict) else None,
+            # 원값을 **그대로** 내보낸다(형변환·삼킴 금지 — 위 필드 주석 참조).
+            value=fr[2],
             ttl_expires_at=fr[3], updated_by=fr[4],
         )
         for fr in flag_rows
@@ -536,7 +572,7 @@ async def submit_feedback(
     # 인증 선택: 로그인 사용자면 user_id → HMAC user_hash(원본 미저장), tenant_id 귀속.
     user_id, tenant_id = _extract_identity(request)
     user_hash = capture_service.hash_user_id(user_id) if user_id else None
-    # payload 는 capture_service 의 PII 마스킹 재사용(이메일/전화/주민번호/주소 등).
+    # payload 는 capture_service 의 PII 마스킹 재사용 — 이메일/전화/주민번호 **값 패턴** + 민감 **키**(이름·주소 등). ★주소는 **값 안에서 지워지지 않는다**(2026-08-27 실측 — `_mask_str` 에 주소 정규식 없음). 부채는 `tests/test_pii_mask_diagnostic_keys.py` 의 xfail 로 초록 안에 보인다.
     masked_payload = capture_service.mask_pii(fb.payload) if fb.payload else None
 
     try:
@@ -946,3 +982,27 @@ async def promote_learning_example(
         example_id=str(row[0]), status=str(row[1]),
         rights_acknowledged=rights_acknowledged,
     )
+
+
+@router.get("/effectors")
+async def effector_firing(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """효과기가 **실제로 발화했는가** — 선언(`effector_reach`) × 실측(`platform_events`).
+
+    ## 왜 이 라우트가 필요한가
+
+    `effector_reach` 표는 *"이 효과기가 동작하면 어디까지 닿는가"* 를 적는다.
+    그런데 **"동작한 적이 있는가"** 는 어디에도 없었다. 그래서 표만 읽으면
+    `threshold_relax` 를 보고 *"제품에 닿는 효과기가 살아 있다"* 고 읽는데,
+    실제로는 며칠째 조용할 수 있고 **그것을 알 방법이 없었다**(라이브 실측 66시간).
+
+    ★**진단하지 판정하지 않는다.** `reach=NONE` 인 효과기가 영원히 발화하지 않는 것이
+    정상일 수 있다. 사실(`total`·`last_fired_at`·`hours_since`)과 라벨(`state`)을 함께
+    주고, 라벨에 동의하지 않을 수 있게 **원값을 항상 싣는다**.
+    """
+    from app.services.growth import effector_firing as _ef
+
+    await _require_admin(request, db)
+    return await _ef.firing_status(db)
