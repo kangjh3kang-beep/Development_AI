@@ -74,7 +74,10 @@ async def startup(ctx: dict[str, Any]) -> None:
         from app.services.growth import capture_service as _gcap
         from apps.api.database.session import AsyncSessionLocal
 
-        if _gcap.start_flush_loop(ctx, AsyncSessionLocal):
+        # ★`publish_scope="worker"` — 이 프로세스의 큐 깊이를 `platform_settings` 로 발행해
+        #   **프로세스 경계 밖**에서 보이게 한다. 종전에는 워커 큐가 모듈 전역 deque 라
+        #   *"워커가 안 비운다"* 와 *"비울 게 없다"* 가 **같은 관측(0)** 이었다.
+        if _gcap.start_flush_loop(ctx, AsyncSessionLocal, publish_scope="worker"):
             logger.info("성장루프 배수 루프 시작")
     except Exception as e:  # noqa: BLE001 — 배선 실패가 워커 기동을 막으면 안 된다.
         logger.warning("성장루프 배수 루프 시작 실패", error=str(e)[:160])
