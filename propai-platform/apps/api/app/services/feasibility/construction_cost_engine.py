@@ -184,6 +184,9 @@ def calculate_total_construction_cost(
     building_type: str = "apartment",
     unit_cost_per_sqm: int | None = None,
     cost_index_factor: float = 1.0,
+    # ★인입 분담금(한전·도시가스사·통신사)을 계상하려면 세대수를 준다. 0이면 미계상.
+    #   도급 밖 비용이라 직접공사비 단가에 포함되지 않는다(적산 내역서에 `인입` 0~1회 실측).
+    total_households: int = 0,
     design_fee_ratio: float | None = None,
     supervision_fee_ratio: float | None = None,
     contingency_ratio: float | None = None,
@@ -218,10 +221,24 @@ def calculate_total_construction_cost(
         general_expense_ratio=general_expense_ratio,
     )
 
-    total = direct["total_direct_cost_won"] + indirect["total_indirect_cost_won"]
+    # ★인입 공사비(전기·가스·통신) — **종전에는 「부담금」(B05~B07)으로 계상**됐다.
+    #   법정 부담금이 아니라 공급자 약관·계약 비용이라 공사비가 옳은 자리다(금액 불변).
+    #   상세·근거·한계는 `app/services/cost/utility_connection_cost` 머리말.
+    from app.services.cost.utility_connection_cost import calculate_utility_connection_cost
+
+    connection = calculate_utility_connection_cost(
+        total_households=total_households, total_gfa_sqm=total_gfa_sqm,
+    )
+
+    total = (
+        direct["total_direct_cost_won"]
+        + indirect["total_indirect_cost_won"]
+        + connection["total_won"]
+    )
 
     return {
         "direct": direct,
         "indirect": indirect,
+        "utility_connection": connection,
         "total_construction_cost_won": total,
     }

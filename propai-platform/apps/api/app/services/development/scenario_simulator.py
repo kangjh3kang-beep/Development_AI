@@ -239,6 +239,216 @@ def _scheme_legal_refs(scheme: str) -> list[dict]:
         return []
 
 
+ZONE_BASIS_AREA_WEIGHTED = "area_weighted"
+ZONE_BASIS_SINGLE = "single_zone"
+ZONE_BASIS_NO_AREA = "first_parcel_no_area"
+ZONE_BASIS_NONE = "none"
+
+
+#: 현 용도지역만으로는 **아파트를 지을 수 없는** 용도지역(국토계획법 시행령 009419 §71).
+#  · 제1종일반주거 → [별표 4] 1호 나목 *"공동주택(**아파트를 제외한다**)"* · 4층 이하
+#  · 전용주거(1·2종) → [별표 2]·[별표 3] — 단독·저층 공동주택 중심
+#: `buildable_types` 안에 넣지 않는다 — 프론트가 그 리스트의 **모든 원소를 「건축 가능」 칩**으로
+#  같은 악센트 색에 그린다(`DevelopmentScenarioCard.tsx`). 경고를 상품명 자리에 넣으면
+#  **서로 모순되는 두 칩이 나란히** 서고, 그건 결함을 고친 것이 아니라 **문구로 덮은 것**이다.
+#  → 전용 필드 `zone_use_constraint` 로 내보내고 **카드가 경고 스타일로 렌더**한다
+#    (`DevelopmentScenarioCard.tsx` · 프론트 락 3건).
+#  ★`cons` 에도 싣지만 **화면 소비처는 0** 이다(형제 필드 `pros`·`requirements`·`notes` 는 렌더됨).
+#    한때 이 주석이 *"소비되기 전까지는 `cons` 에도 싣는다"* 고 적었는데 **그 임시 경로도 죽어
+#    있었다** — 정직 신호를 만들어 놓고 **도달을 확인하지 않은** 것이다(적대 리뷰 3차).
+#    지금 `cons` 를 유지하는 이유는 **다른 소비처**(PDF·LLM 요약)가 그 필드를 읽기 때문이다.
+APARTMENT_PROHIBITED_MARK = "현 용도지역은 아파트 불허 — 용도지역 변경(종상향) 등 별도 절차 전제"
+#: 아파트가 **불허**임을 말하는 부정 라벨(검출기가 자기 라벨을 「아파트 제안」으로 세면 위양성).
+_APARTMENT_NEGATIVE_MARKERS = ("아파트 불가", "아파트 불허")
+
+
+def proposes_apartment(items: list[str]) -> bool:
+    """목록이 **아파트를 제안**하는가 — ★부정 라벨은 제외한다.
+
+    적대 리뷰 실측: `any("아파트" in t …)` 가 **자기가 심은** `"(4층 이하 — 아파트 불가)"` 에 걸려
+    21종 중 **9종이 위양성**이었다(CLAUDE.md §검증 규율 8 — *"주석에 예시를 적으면 그 예시가
+    다음 검사의 위양성이 된다"* 와 같은 형태).
+    """
+    return any(
+        "아파트" in t and not any(m in t for m in _APARTMENT_NEGATIVE_MARKERS)
+        for t in (items or [])
+    )
+
+
+def zone_prohibits_apartment(zone: str | None) -> bool:
+    """현 용도지역 그대로는 아파트가 **법정 불허**인가."""
+    z = zone or ""
+    if "전용주거" in z:
+        return True
+    return ("제1종일반주거" in z) or ("1종일반주거" in z)
+
+
+#: 평면 도(degree) 거리를 미터로 옮기는 **근사 상수**(북위 37° 부근의 경도 1도 ≈ 88.8km).
+#
+#  ★★**주의 — 이 값은 「거리 판정」에 쓰면 안 된다.** 처음 이 자리에 쓴 주석은
+#    *"이 값이 100m 를 넘으면 **어느 방위든** 넘는다"* 고 단정했는데 **거짓이다.**
+#    적대 리뷰가 WGS84 로 실측해 반증했다(서울시청 37.5666°):
+#
+#        동서 실거리 100.0m → 100.5m 로 **과대보고**(거짓 차단)
+#        남북 실거리 125.0m → 100.0m 로 **과소보고**(거짓 허용)
+#
+#    경도 1도의 실거리는 위도 37.00°에서 89,012m · 37.57°에서 88,343m · 38.00°에서 87,833m 다.
+#    **위도 37.06° 위에서는 이 상수가 과대보고**하고(서울·경기 북부 전역), 남북 축은 반대로
+#    **약 20% 과소보고**한다(실제 110,987m). 근본은 `shapely.distance()` 가 **경위도 평면의
+#    비계량 유클리드**라는 것이다 — **스칼라 하나로는 원리적으로 맞출 수 없다.**
+#
+#  → 그래서 이 값은 **정보 제공용**(`max_pair_distance_m_min`)으로만 쓴다. 실제 판정이 필요하면
+#    `EPSG:5186` 등으로 **투영**하거나 축별 변환(`hypot(dlon*m_lon(lat), dlat*m_lat)`)으로
+#    다시 계산해야 하고, 그때는 **위도를 입력으로 받아야** 한다(현 시그니처엔 없다).
+#  ★같은 루프의 `TOL_DEG # 약 6m` 는 ≈100,000 m/deg 기준이라 이 상수로는 **5.33m** 다 —
+#    같은 `d` 에 두 변환이 공존한다. 투영으로 옮길 때 **함께** 정리해야 한다.
+DEG_TO_M_MIN = 88_800.0
+#: ★**판정에 쓰지 않는다** — 축이 틀렸기 때문이다. 원문 확인(2026-09-02):
+#  · 건축법 §77의15① 의 「100미터」는 **외곽 한계**이고, 조작적 기준은 시행령 **§111①** 이
+#    정한다 — ①동일 지역 + ②**너비 12m 이상 도로로 둘러싸인 하나의 구역** 안.
+#    **거리 요건이 아니다**(가로구역과 같은 형태). 현 분석은 그 축을 측정하지 못한다.
+#  · **3개 이상 대지는 §111③ 이 「500미터」** 다 — 100m 를 적용하면 **거짓 「불가」**가 난다.
+#  → 값은 남기되(요건 문구·향후 구현의 기준점) **판정에서는 뺐다.** 되살리려면 위 두 축을
+#    먼저 측정할 수 있어야 한다.
+COMBINED_BUILDING_MAX_DISTANCE_M = 100.0
+#: 시행령 §111③ — 3개 이상 대지의 최단거리 상한.
+COMBINED_BUILDING_MAX_DISTANCE_M_3PLUS = 500.0
+
+
+def combined_building_distance_verdict(adjacency: dict[str, Any] | None) -> tuple[bool | None, float | None]:
+    """결합건축의 **거리 요건**을 판정한다 — (충족여부, 실측 최댓값m).
+
+    반환 `None` 은 **미측정**(형상 미확보·분석 실패)이고 「불가」가 아니다 — 양방향으로 건다.
+    """
+    d = (adjacency or {}).get("max_pair_distance_m_min")
+    if d is None:
+        return None, None
+    return (float(d) <= COMBINED_BUILDING_MAX_DISTANCE_M), float(d)
+
+
+def _low_rise_only(zones: list[str]) -> bool:
+    """제1종일반주거의 **층수 제한**([별표 4] 1호 머리 — 4층 이하 · 단지형은 5층 이하)."""
+    return any(("제1종일반주거" in z) or ("1종일반주거" in z) for z in (zones or []))
+
+
+def apartment_restricted_zones(enriched: list[dict[str, Any]]) -> list[str]:
+    """부지에서 **아파트가 법정 불허**인 용도지역 목록 — ★국토계획법 **§84①** 을 반영한다.
+
+    §84① 원문: *"…각 용도지역등에 걸치는 부분 중 **가장 작은 부분의 규모가 대통령령으로 정하는
+    규모 이하**인 경우에는 … **그 밖의 건축 제한 등에 관한 사항은 그 대지 중 가장 넓은 면적이
+    속하는 용도지역등에 관한 규정을 적용**한다."*
+
+    ★따라서 **전수 판정은 과잉 억제**다 — 제1종 자투리가 **330㎡ 이하**면 그 부분은
+    가장 넓은 용도지역(예: 제2종)에 **흡수**되어 아파트가 가능하다.
+    반대로 **330㎡ 초과**면 §84① 이 적용되지 않아 각 부분에 각각의 규정이 적용되므로,
+    그 제1종 부분은 여전히 아파트 불허다.
+
+    흡수 규칙은 새로 만들지 않고 기존 `mixed_zone_limits`(§84·시행령 §94)를 **재사용**한다.
+
+    Returns:
+        불허 용도지역명 목록(중복 제거·면적 큰 순). 빈 목록이면 제약 없음.
+    """
+    named = [p for p in (enriched or []) if p.get("zone")]
+    if not named:
+        return []
+    agg: dict[str, float | None] = {}
+    for p in named:
+        z = str(p["zone"]).strip()
+        a = p.get("area")
+        if z not in agg:
+            agg[z] = float(a) if a else None
+        elif a and agg[z] is not None:
+            agg[z] += float(a)
+
+    restricted = [z for z in agg if zone_prohibits_apartment(z)]
+    if not restricted:
+        return []
+    if len(agg) < 2:
+        return restricted  # 단일 용도지역이면 흡수 여지가 없다
+    if not all(v for v in agg.values()):
+        # ★면적 미확보 — 흡수 여부를 판정할 수 없다. **불허 쪽으로 남긴다**(고지가 사라지는 것보다
+        #   낫다). 이 선택은 §84① 을 「적용하지 않는다」가 아니라 「판정 불가」다.
+        return restricted
+
+    from app.services.zoning.legal_zone_limits import mixed_zone_limits
+
+    mix = mixed_zone_limits([{"zone_type": z, "area_sqm": a} for z, a in agg.items()])
+    absorbed = mix.get("absorbed")
+    if absorbed and absorbed in restricted:
+        # 가장 작은 부분이 330㎡ 이하로 흡수됐다 → 그 부분의 건축 제한은 적용되지 않는다.
+        restricted = [z for z in restricted if z != absorbed]
+    return sorted(restricted, key=lambda z: -(agg[z] or 0.0))
+
+
+def measured_zone_count(enriched: list[dict[str, Any]]) -> int:
+    """실측(추론 아님) 용도지역을 가진 필지 수. ★`select_primary_zone` 과 **같은 술어**를 쓴다.
+
+    적대 리뷰 J-2: 배선을 순수함수로 꺼낸 뒤에도 `simulate()` 안에 **인라인 복제본**이 남아
+    `primary_zone_is_inferred`(프론트 소비처 있음)를 조용히 죽일 수 있었다.
+    술어를 한 곳에 두면 드리프트가 **원리적으로** 불가능해진다.
+    """
+    return sum(1 for p in (enriched or [])
+               if p.get("zone") and p.get("zone_source") != "keyword_inference")
+
+
+def select_primary_zone(enriched: list[dict[str, Any]], site_zone_type: str = "") -> tuple[str, str]:
+    """부지 대표 용도지역을 고르는 **배선 전체**를 순수함수로 꺼낸다.
+
+    ★기계 변이(`scripts/mutate_changed.py`)가 이 배선의 두 줄(`_all_rows` 대입 · `if not
+      primary_zone` 폴백)을 **생존**시켰다 — `simulate()` 안에 인라인이라 태울 방법이 없었다.
+      판단은 `dominant_zone_by_area` 가, **어느 모집단을 줄지**는 여기가 정한다.
+
+    우선순위: ①실측 용도지역(추론 제외) → ②전체(추론 포함) → ③호출자가 준 `site.zone_type`.
+    """
+    measured = [
+        {"zone": p.get("zone"), "area": p.get("area")} for p in (enriched or [])
+        if p.get("zone") and p.get("zone_source") != "keyword_inference"
+    ]
+    assert len(measured) == measured_zone_count(enriched), "술어 드리프트"
+    every = [{"zone": p.get("zone"), "area": p.get("area")} for p in (enriched or []) if p.get("zone")]
+    zone, basis = dominant_zone_by_area(measured or every)
+    if not zone:
+        return (site_zone_type or ""), ZONE_BASIS_NONE
+    return zone, basis
+
+
+def dominant_zone_by_area(rows: list[dict[str, Any]]) -> tuple[str, str]:
+    """면적가중 **우세** 용도지역을 고른다 — ★「첫 필지」가 아니다.
+
+    종전 `zones_measured[0]` 은 배열 선두를 썼다. 라이브 실측(2026-09-02):
+    `zones=[제1종일반주거, 제2종일반주거]` 인 부지에서 `제1종` 이 선택돼,
+    같은 응답의 `far_effective_blended`(면적가중 156.9)와 **기준이 어긋났다**
+    — 용적률은 혼합인데 용도지역 라벨만 첫 필지였다.
+
+    규칙은 새로 만들지 않고 `mixed_zone_limits`(국토계획법 §84·시행령 §94 —
+    면적가중 및 330㎡ 이하 흡수)를 **재사용**한다. 그 함수는 이미 4개 표면이 쓴다.
+
+    Args:
+        rows: [{"zone": 용도지역명, "area": 면적㎡}] — 부지 내 각 필지.
+    Returns:
+        (zone, basis) — basis 는 **무엇을 근거로 골랐는지**를 호출부가 구별할 수 있게 한다.
+        면적 미확보 시 첫 필지로 떨어지되 그 사실을 `ZONE_BASIS_NO_AREA` 로 **말한다**
+        (조용히 첫 필지를 쓰면 종전 결함이 그대로 남는다).
+    """
+    named = [r for r in (rows or []) if r.get("zone")]
+    if not named:
+        return "", ZONE_BASIS_NONE
+    uniq = list(dict.fromkeys(str(r["zone"]).strip() for r in named))
+    if len(uniq) == 1:
+        return uniq[0], ZONE_BASIS_SINGLE
+    if not all(r.get("area") for r in named):
+        return str(named[0]["zone"]).strip(), ZONE_BASIS_NO_AREA
+    from app.services.zoning.legal_zone_limits import mixed_zone_limits
+
+    mix = mixed_zone_limits(
+        [{"zone_type": str(r["zone"]).strip(), "area_sqm": float(r["area"])} for r in named]
+    )
+    dom = mix.get("dominant_zone")
+    if dom:
+        return str(dom), ZONE_BASIS_AREA_WEIGHTED
+    return str(named[0]["zone"]).strip(), ZONE_BASIS_NO_AREA
+
+
 def _is_residential(zone: str) -> bool:
     return "주거" in (zone or "")
 
@@ -257,6 +467,8 @@ class DevelopmentScenarioSimulator:
     ) -> dict[str, Any]:
         site = site or {}
         addrs = self._merge(address, parcels)
+        # ★중복제거 **전** 요청 수 — 붕괴를 말할 수 있게(아래 ctx 참조).
+        requested_count = self._requested_count(address, parcels)
         multi = len(addrs) >= 2
 
         # ★호출자가 이미 아는 값(면적·용도지역)을 받아 둔다 — `ParcelsIn` 정규화를 거친
@@ -322,15 +534,13 @@ class DevelopmentScenarioSimulator:
         # ★실측 용도지역을 추론값보다 앞세운다 — 종전 `zones[0]` 은 **첫 필지**를 쓰므로,
         #   1번 필지 주소만 해석에 실패해도 **지어낸 용도지역이 부지 전체의 기준**이 됐다.
         #   (면적가중 우세용도까지 가는 것은 별건 — 여기서는 '날조가 실측을 이기는' 역전만 막는다.)
-        zones_measured = [
-            p.get("zone") for p in enriched
-            if p.get("zone") and p.get("zone_source") != "keyword_inference"
-        ]
+        # ★인라인 복제본을 제거하고 `measured_zone_count` 한 곳으로 모은다(적대 리뷰 J-2).
+        measured_zone_n = measured_zone_count(enriched)
         zones = [p.get("zone") for p in enriched if p.get("zone")]
-        primary_zone = (
-            zones_measured[0] if zones_measured
-            else (zones[0] if zones else (site.get("zone_type") or ""))
-        )
+        # ★선두가 아니라 **면적가중 우세**를 쓴다. 실측(2026-09-02) — `zones=[제1종,제2종]` 부지에서
+        #   `제1종` 이 선택돼 같은 응답의 `far_effective_blended`(면적가중)와 기준이 어긋났다.
+        #   실측 용도지역(추론 제외) 우선순위는 종전 그대로 유지한다.
+        primary_zone, primary_zone_basis = select_primary_zone(enriched, site.get("zone_type") or "")
         near_station = (subway_m is not None and subway_m <= 500) or any(
             "역세권" in (p.get("zone") or "") for p in enriched
         )
@@ -390,10 +600,24 @@ class DevelopmentScenarioSimulator:
                             avail_addrs[0], parcels=avail_addrs[1:], site=site, use_llm=False)
                         # 가용필지가 또 전면 차단이면(이중특이) None 처리 — 가짜 제시 금지.
                         if sub.get("scenarios"):
+                            _sub_site = sub.get("site") or {}
                             available_subset = {
                                 "parcels": avail_addrs,
                                 "parcel_count": len(avail_addrs),
-                                "total_area_sqm": (sub.get("site") or {}).get("total_area_sqm"),
+                                "total_area_sqm": _sub_site.get("total_area_sqm"),
+                                # ★★2026-09 — **세 번째 site 표면**이다. 종전엔 `total_area_sqm` 만
+                                #   복사하고 정직 필드를 **전부 버렸다**. 화면은 이 값을 **성공색**
+                                #   박스에 「가용 N필지 · X㎡」로 **단정** 표시한다 — 부분합인데
+                                #   부분합이라 말하지 않는 자리였다.
+                                #   ★그리고 형제 패리티 락이 이것을 **구조적으로 못 봤다**:
+                                #     선별자가 `resolved_parcel_count` 였는데 **그 키가 빠진 것이
+                                #     바로 결함**이라, 결함 있는 dict 만 정확히 모집단에서 빠졌다.
+                                #     («파생의 축» 때문에 파생형 스윕이 무력화된 형태)
+                                "resolved_parcel_count": _sub_site.get("resolved_parcel_count"),
+                                "unresolved_parcels": _sub_site.get("unresolved_parcels"),
+                                "requested_parcel_count": _sub_site.get("requested_parcel_count"),
+                                "collapsed_parcel_count": _sub_site.get("collapsed_parcel_count"),
+                                "area_is_partial": _sub_site.get("area_is_partial"),
                                 "scenarios": sub.get("scenarios"),
                                 "recommended": sub.get("recommended"),
                                 "pyeong_classification": sub.get("pyeong_classification"),
@@ -443,10 +667,19 @@ class DevelopmentScenarioSimulator:
                     #   빠지면 정작 "왜 막혔나"를 설명해야 할 화면에서 신호가 사라진다.
                     "resolved_parcel_count": len(resolved),
                     "unresolved_parcels": unresolved,
-                    "area_is_partial": bool(unresolved),
+                    # ★★2026-08-29 — `#933` 이 이 **형제 미러를 안 쓸었다.** 정상경로 ctx 에만
+                    #   붕괴 필드를 넣어, **차단 경로에서는 「77필지를 요청했는데 1로 줄었다」를
+                    #   말하지 못했다.** 바로 위 주석이 그 위험을 이미 적어 두었는데도 놓쳤다:
+                    #   *"차단 경로에서 빠지면 정작 «왜 막혔나»를 설명해야 할 화면에서 신호가 사라진다."*
+                    #   ★사용자가 신고한 44㎡ 화면이 **정확히 이 차단 경로**였다(특이부지 → 불가).
+                    "requested_parcel_count": requested_count,
+                    "collapsed_parcel_count": max(0, requested_count - len(addrs)),
+                    "area_is_partial": bool(unresolved) or requested_count > len(addrs),
                     "plan_limit_unknown": plan_unknown_agg,   # 형제 미러
-                    "primary_zone": primary_zone, "zones": zones,
-                    "primary_zone_is_inferred": bool(primary_zone) and not zones_measured,
+                    "primary_zone": primary_zone, "primary_zone_basis": primary_zone_basis, "zones": zones,
+            # ★§84① 흡수를 반영한 아파트 불허 용도지역(면적이 여기서만 보인다).
+            "apartment_restricted_zones": apartment_restricted_zones(enriched),
+                    "primary_zone_is_inferred": bool(primary_zone) and measured_zone_n == 0,
                     "special_parcel_gate": special_gate,
                     "dev_act_permit_gate": dev_act_gate,
                 },
@@ -495,14 +728,22 @@ class DevelopmentScenarioSimulator:
             #   화면이 설명할 수 없었다). 몇 개 중 몇 개가 실측인지를 같이 낸다.
             "resolved_parcel_count": len(resolved),
             "unresolved_parcels": unresolved,
-            "area_is_partial": bool(unresolved),
+            # ★요청 수(중복제거 **전**)와 붕괴 수 — `parcel_count` 만으로는 «원래 1필지였다» 와
+            #   «77을 요청했는데 1로 줄었다» 를 **구별할 수 없다**(2026-08-28 실측 결함).
+            "requested_parcel_count": requested_count,
+            "collapsed_parcel_count": max(0, requested_count - len(addrs)),
+            # 면적이 부분합인 두 경로 — ①조회 실패(unresolved) ②주소 붕괴(collapsed).
+            #   종전엔 ①만 봤다. ②가 바로 44㎡ 사고의 경로다.
+            "area_is_partial": bool(unresolved) or requested_count > len(addrs),
             # ★계획이 한도·**허용용도**를 정하는 구역인데 그 내용을 못 구했다면, 아래 개발방식·
             #   세대수 제안은 전부 미검증이다. 수치 경고만 달고 용도 추천을 그대로 내보내면
             #   더 비싼 오답(불허 용도 추천)이 조용히 나간다.
             "plan_limit_unknown": plan_unknown_agg,
-            "primary_zone": primary_zone, "zones": zones,
+            "primary_zone": primary_zone, "primary_zone_basis": primary_zone_basis, "zones": zones,
+            # ★§84① 흡수를 반영한 아파트 불허 용도지역(면적이 여기서만 보인다).
+            "apartment_restricted_zones": apartment_restricted_zones(enriched),
             # 대표 용도지역이 조회값인지 추론값인지 — 추론값이면 화면이 단정하면 안 된다.
-            "primary_zone_is_inferred": bool(primary_zone) and not zones_measured,
+            "primary_zone_is_inferred": bool(primary_zone) and measured_zone_n == 0,
             # ★시나리오 산정 기준 = 실효 용적률(현행·조례 반영). 법정상한은 라벨 구분용으로 병기.
             "far_effective_blended": far_effective,
             "far_legal_blended": far_legal,
@@ -626,6 +867,36 @@ class DevelopmentScenarioSimulator:
             if a and a not in out:
                 out.append(a)
         return out
+
+    @staticmethod
+    def _requested_count(
+        address: str, parcels: list[str] | list[dict[str, Any]] | None,
+    ) -> int:
+        """호출자가 **요청한** 필지 수 — 중복제거 **전**, 주소가 있는 것만 센다.
+
+        ★`_merge` 는 주소 문자열로 중복제거한다. 그 자체는 옳지만(같은 주소는 같은 필지다),
+          **주소에 지번이 없으면 서로 다른 필지가 같은 문자열이 되어 통째로 붕괴**한다.
+          2026-08-28 라이브 실측: 77필지 부지(86,755㎡)가 **1필지 44㎡** 로 시뮬레이션돼
+          「도시개발사업 1만㎡ 미달」 등 **19개 개발방식이 거짓 '불가'** 로 막혔다.
+
+        ★★그때 `parcel_count`(= 중복제거 **후**)만 보면 *"원래 1필지였다"* 와 구별되지 않는다.
+          이 함수는 **분모**를 만든다 — *"몇 개를 요청했는데 몇 개로 줄었는가"* 를 말할 수 있게.
+          같은 파일이 이미 적어 둔 원칙이다: **조용한 축소가 조용한 오답을 만든다.**
+        """
+        def _addr(item: Any) -> str:
+            a = item.get("address") if isinstance(item, dict) else (
+                item if isinstance(item, str) else None
+            )
+            return (a or "").strip()
+
+        rows = [a for a in (_addr(i) for i in (parcels or [])) if a]
+        rep = _addr(address)
+        # ★★대표주소를 **이중으로 세지 않는다.** 프로덕션 호출부는 `parcels` 선두에 대표주소를
+        #   넣는다(`buildAnalysisParcelAddrs`: `[target, ...]`). 그것을 또 세면 정상 다필지에서
+        #   `requested > used` 가 되어 **붕괴가 없는데 빨간 경보**가 뜬다 — 독립 리뷰 실측.
+        #   ★내 첫 위양성 테스트는 `("A", ["B","C"])` 였는데 그건 **프로덕션이 보내지 않는 형태**다.
+        #     픽스처가 두 모집단을 안 가르면 위양성은 영원히 안 보인다.
+        return len(rows) + (1 if rep and rep not in rows else 0)
 
     @staticmethod
     def _supplied_rows(
@@ -828,15 +1099,21 @@ class DevelopmentScenarioSimulator:
                     x = parent[x]
                 return x
 
+            max_pair_deg = 0.0
             for a in range(n):
                 for b in range(a + 1, n):
-                    if polys[idx[a]].distance(polys[idx[b]]) <= TOL_DEG:
+                    d = polys[idx[a]].distance(polys[idx[b]])
+                    max_pair_deg = max(max_pair_deg, d)
+                    if d <= TOL_DEG:
                         parent[find(a)] = find(b)
             comps = len({find(i) for i in range(n)})
             return {
                 "contiguous": comps == 1,
                 "components": comps,
                 "checked": n,
+                # ★종전에는 쌍거리를 **계산하고 버렸다**(적대 리뷰 J-5). 결합건축의 법정 축
+                #   (§77의15① *"대지간의 최단거리가 100미터 이내"*)이 여기 있는데 쓰이지 않았다.
+                "max_pair_distance_m_min": round(max_pair_deg * DEG_TO_M_MIN, 1),
                 "note": "모든 필지가 맞닿아 통합개발 가능" if comps == 1
                 else f"{comps}개 그룹으로 분리 — 비인접 필지는 통합개발(합필/일단지) 불가",
             }
@@ -1139,14 +1416,41 @@ class DevelopmentScenarioSimulator:
 
         S: list[dict] = []
 
-        # 통합개발(합필/일단지)이 필요한 정책은 다필지 비인접 시 불가
-        INTEGRATION_SCHEMES = {
-            "지구단위계획 연계", "도시개발사업(도시개발법)", "가로주택정비사업",
-            "모아주택/모아타운", "재개발·재건축(정비사업)", "역세권 활성화사업",
-            "역세권 장기전세주택(시프트)", "도심복합개발사업",
+        # ★인접성의 축을 **셋으로 가른다**(종전: 13종 한 덩어리 → 전부 「불가」).
+        #   법제처 원문 직독(2026-09-02)으로 확인한 것:
+        #   · 국토계획법 009294 §51·§52①3호 — 지구단위계획구역 지정에 **인접·연접 요건 없음**
+        #   · 도시개발법 002024 §3의2 — *"서로 **떨어진** 둘 이상의 지역을 결합하여 하나의
+        #     도시개발구역으로 지정"* 을 **명문으로 허용**(게이트가 정반대를 강제하고 있었다)
+        #   · 소규모정비법 시행령 013079 §3② — 가로주택의 축은 **가로구역**(폭 4m/6m 초과 도로 관통)
+        #   · 주택법 001809 §2 12호 — 재건축·대지조성의 축은 **주택단지**(20m/8m 도로·철도)
+        #   ★따라서 「물리적 인접」은 **구역지정형 사업의 요건이 아니다.** 판정어도 저장소 자기
+        #     기준선(`special_parcel.py` — *"관할 확인이 필요합니다"*)에 맞춰 **불가 → 조건부**로 낮춘다.
+        #
+        # ① 구역지정형 — **인접성으로 「불가」를 만들지 않는다**(조건부 + 관할 확인 고지).
+        #   ★"재개발·재건축(정비사업)"·"공공재개발·공공재건축" 은 **요건이 다른 둘을 한 이름으로**
+        #     묶고 있다(재개발=인접 불요 / 재건축=주택단지 축). 분리는 `scheme_legal_profile`·
+        #     모듈맵 등 여러 레지스트리 키로 파급되므로 **이 PR 범위 밖**이고, 그때까지는
+        #     **덜 제약적인 쪽(재개발)** 기준으로 둔다 — 이 게이트는 「조건부」까지만 내리므로
+        #     과대허용이 되지 않는다. ★분리 전에는 이 주석이 그 부채를 드러내는 유일한 표지다.
+        AREA_DESIGNATION_SCHEMES = {
+            "지구단위계획 연계", "도시개발사업(도시개발법)", "재개발·재건축(정비사업)",
+            "역세권 활성화사업", "역세권 장기전세주택(시프트)", "도심복합개발사업",
             "소규모재개발사업", "주거환경개선사업", "공공재개발·공공재건축",
             "입지규제최소구역", "대지조성사업",
         }
+        # ② 가로구역형 — 축은 도시계획**시설**도로의 관통(폭 4m/6m 초과). ★현 구현은 그 축을
+        #    재지 못하므로(물리 간격 6m 단일상수) **「불가」가 아니라 「조건부」로만** 강등한다.
+        #    ※모아주택/모아타운은 자치법규 조회 0건이라 근거 미확보 — **보류**(여기 둔다).
+        GARO_GUYEOK_SCHEMES = {"가로주택정비사업", "모아주택/모아타운"}
+        # ③ 주택단지형 — 축은 20m/8m 도로·철도(주택법 §2 12호). 같은 이유로 조건부까지만.
+        #   ※재건축은 위 병합 이름 안에 있어 여기서 따로 잡히지 않는다(위 주석의 부채).
+        #     ★"소규모재건축사업" 은 종전 게이트에도 **없었고**, 그 인접 요건 조문을 이번에
+        #       확인하지 못했으므로 **넣지 않는다**(지어내지 않는다 — 미검증).
+        HOUSING_COMPLEX_SCHEMES: set[str] = set()
+        # 인접성이 판정에 관여하는 전체 집합(파생형 — 아래 세 집합에서 만든다).
+        INTEGRATION_SCHEMES = (
+            AREA_DESIGNATION_SCHEMES | GARO_GUYEOK_SCHEMES | HOUSING_COMPLEX_SCHEMES
+        )
         # ★단일 소규모 필지가 '단독'으로 추진 가능한 방식(나머지는 인접 통합/구역 편입/기존
         #   건축물·세대수 요건이 있어 단독 검토대상이 못 됨). 단순건축만 자립 가능.
         SELF_STANDING_SCHEMES = {"단순 건축"}
@@ -1158,11 +1462,37 @@ class DevelopmentScenarioSimulator:
         _pyeong = round(area / 3.3058) if area else 0
 
         def add(scheme, applicable, est_far, contrib, requirements, pros, cons, notes):
-            # 다필지인데 비인접이면 통합개발 정책은 불가로 강등
+            # ★다필지 비인접 — **「불가」가 아니라 「조건부」**로 낮춘다(법적 근거는 위 주석).
+            #   종전에는 전부 "불가"였고, 사용자 화면에서 지구단위계획이 그렇게 막혔다.
             if multi and not integration_ok and scheme in INTEGRATION_SCHEMES and applicable != "불가":
-                applicable = "불가"
-                cons = [*(cons or []), "필지 비인접 — 통합개발 불가"]
-                notes = f"⚠ {adj_note}. 통합개발 불가 — 필지별 개별개발 검토"
+                # ★변이 생존에 대한 해명(`scripts/mutate_changed.py`) — 아래 안내문의 **문자열
+                #   변이 11건은 의도적으로 잠그지 않는다.** 락은 계약 토큰(`§51`·`§52`·`4m`·
+                #   `관할 확인`·`77의15`)의 **존재**만 단언한다. 문구 전체를 단언하면 표현을
+                #   다듬을 때마다 깨지는 취약한 락이 되고, 그때 사람은 락을 고치는 게 아니라
+                #   지운다. **계약은 「근거와 후속 안내가 실린다」이지 「이 문장이다」가 아니다.**
+                if scheme in AREA_DESIGNATION_SCHEMES:
+                    _why = ("구역지정형 사업 — 물리적 인접은 법정 요건이 아닙니다"
+                            "(국토계획법 §51의 지구단위계획구역 지정 대상에 인접·연접 요건이 없고, "
+                            "도시개발법 §3의2는 서로 떨어진 지역의 결합지정을 명문으로 허용합니다). "
+                            "구역 지정·편입 가능성은 관할 확인이 필요합니다.")
+                elif scheme in GARO_GUYEOK_SCHEMES:
+                    _why = ("가로구역 요건 — 판정축은 필지 간 물리적 거리가 아니라 "
+                            "폭 4m(일부 6m) 초과 도시계획시설도로의 관통 여부입니다"
+                            "(소규모주택정비법 시행령 §3②). 현 분석은 그 축을 측정하지 못했습니다 — "
+                            "관할 확인이 필요합니다.")
+                elif scheme in HOUSING_COMPLEX_SCHEMES:
+                    _why = ("주택단지 요건 — 판정축은 폭 20m 이상 일반도로·8m 이상 도시계획예정도로·"
+                            "철도 등의 분리 여부입니다(주택법 §2 12호). 현 분석은 그 축을 측정하지 "
+                            "못했습니다 — 관할 확인이 필요합니다.")
+                else:
+                    # ★도달 불가 — `INTEGRATION_SCHEMES` 가 위 세 집합의 합집합이므로.
+                    #   축을 추가하고 여기 분기를 잊으면 **조용히 틀린 사유**가 나가는 대신
+                    #   시끄럽게 죽는다(적대 리뷰 J-3: 종전 `else` 는 죽은 코드였는데
+                    #   주석이 현재형으로 서술해 살아 있는 축처럼 읽혔다).
+                    raise AssertionError(f"인접성 게이트에 사유 없는 축: {scheme}")
+                applicable = "조건부"
+                cons = [*(cons or []), "필지 비인접 — 구역 지정·편입 등 관할 확인 필요"]
+                notes = f"⚠ {adj_note}. {_why}"
             # ★단일 소규모 필지: 통합·정비·지구단위·역세권형 사업은 단독 검토대상 아님(불가 강등).
             #   사용자가 지적한 "50~100평에 지구단위/도시개발/역세권 제시" 오류의 근본 차단.
             elif single_small and scheme not in SELF_STANDING_SCHEMES and applicable != "불가":
@@ -1383,13 +1713,43 @@ class DevelopmentScenarioSimulator:
             add("공동주택 리모델링", "불가", None, None,
                 ["기존 공동주택·준공 15년 경과 필요"], [], ["미해당"], "")
 
-        # 16) 결합건축 (건축법 §77의4 — 인접 대지 용적률 결합·이전)
-        if multi:
-            add("결합건축", "가능" if integration_ok else "조건부", (far or 0) * 1.2, 0,
-                ["2개 이상 대지(상호 100m 이내)", "용적률 결합·이전 협정", "지구단위/특별구역 등"],
-                ["대지 간 용적 이전으로 한쪽 고밀화", "역사·녹지 보전과 병행"],
-                ["대지 간 협정·등기 필요"],
-                "인접 대지 용적률 결합·이전(한 대지 고밀화, 다른 대지 보전)")
+        # 16) 결합건축 (건축법 **§77의15** — 대지 간 용적률 결합·이전)
+        #   ★조문 정정: §77의4 는 **건축협정**이다(오기). 결합건축은 §77의15~§77의17.
+        #   ★★자기모순 제거: 종전은 `"가능" if integration_ok else "조건부"` 로 **물리적 인접**을
+        #     따졌는데, 바로 다음 줄의 요건이 스스로 *"상호 100m 이내"* 라고 적는다.
+        #     결합건축의 전제는 **떨어진 대지 사이의 용적 이전**이므로(§77의15 ① — 대지 간
+        #     100m 범위), 인접을 요구하면 제도를 거꾸로 적용하는 것이다.
+        #     → **축을 바꾼다**: 인접 여부가 아니라 **대상지역 해당 여부**다.
+        #   ★§77의15① 원문(법제처 직독): *"대지간의 최단거리가 100미터 이내의 범위에서 …
+        #     2개의 대지"* 이고, 대상지는 **한정**된다 —
+        #       1호 상업지역 · 2호 역세권개발구역 · 3호 주거환경개선사업 정비구역 · 4호 대통령령 지역.
+        #     종전은 `if multi:` 만으로 「가능」을 줬다(대상지역 무관 = **과대허용**).
+        #     인접 강등만 없애면 그 과대허용이 더 커지므로, 여기서 **대상지역 축을 세운다.**
+        #   ★적대 리뷰 J-1 반영 — `station` 을 적격 축에서 **뺀다.**
+        #     §77의15①2호는 *"「역세권의 개발 및 이용에 관한 법률」 제4조에 따라 **지정된**
+        #     역세권개발구역"* 인데, `near_station` 은 **지하철 500m 반경**이다(:399).
+        #     자릿수가 다른 모집단이라(지정 사례는 극소수 / 서울 시가지 상당 부분이 500m 안)
+        #     이것을 적격으로 쓰면 서울 다필지 대부분에 `est_far = far×1.2` 가 붙고,
+        #     그 값은 화면 표시이자 **추천 정렬 키**다. → **1호(상업지역)만 측정된 축**으로 두고
+        #     2·3·4호는 **미측정**으로 분류한다(모름이 유효값을 입지 않게).
+        _combined_eligible = com
+        if multi and _combined_eligible:
+            add("결합건축", "조건부", (far or 0) * 1.2, 0,
+                ["대상지역: 상업지역·역세권개발구역·주거환경개선 정비구역 등(건축법 §77의15① 각 호)",
+                 "★**2개 대지**: 동일 지역 + **너비 12m 이상 도로로 둘러싸인 하나의 구역** 안"
+                 "(건축법 시행령 §111①) — 현 분석은 이 축을 **측정하지 못했습니다**",
+                 "★**3개 이상 대지**: 같은 지역 + **모든 대지 간 최단거리 500m 이내**"
+                 "(같은 영 §111③) — 100m 가 아닙니다",
+                 "용적률 결합·이전 협정·등기"],
+                ["떨어진 대지 간 용적 이전으로 한쪽 고밀화", "역사·녹지 보전과 병행"],
+                ["대상지역 해당 여부는 관할 확인 필요", "대지 간 협정·등기 필요"],
+                "대지 간 용적률 결합·이전(건축법 §77의15) — ★인접이 아니라 **이격**이 전제입니다. "
+                "대상지 요건(2개=12m 도로 구역 / 3개 이상=500m)은 관할 확인이 필요합니다")
+        elif multi:
+            add("결합건축", "조건부", None, None,
+                ["대상지역 해당 필요 — 상업지역·역세권개발구역·주거환경개선 정비구역 등(§77의15① 각 호)"],
+                [], ["현 부지는 상업지역·역세권으로 확인되지 않음 — 4호(대통령령 지역) 해당 여부는 관할 확인 필요"],
+                "결합건축은 대상지역이 한정됩니다(건축법 §77의15①) — 관할 확인이 필요합니다")
         else:
             add("결합건축", "불가", None, None,
                 ["2개 이상 대지 필요"], [], ["단일 대지"], "")
@@ -1436,8 +1796,39 @@ class DevelopmentScenarioSimulator:
 
         # 각 방식에 건축 가능 분류(아파트/호텔/상가/지산/빌라/콘도/전원주택 등) 부착.
         _zone = c.get("primary_zone")
+        # ★M-5 — **우세 용도지역만 보면 혼재 부지에서 제약이 꺼진다.**
+        #   사용자가 신고한 부지가 정확히 `zones=[제1종, 제2종]` 이었고, 제2종이 면적으로
+        #   우세하면 `primary_zone=제2종` 이라 제1종 부분의 아파트 불허가 **사라진다.**
+        #   RC-2(면적가중)를 고치자 RC-3(제1종 분리)의 발화 조건이 지워진 것 — 둘이 서로를
+        #   가린다고 적어 놓고 **같이 고쳤더니 한쪽이 다른 쪽을 껐다.**
+        #   → 제약은 **부지에 존재하는 모든 용도지역**으로 판정한다(한 필지라도 불허면 고지).
+        #   ★§84① 흡수(330㎡ 이하 자투리)는 `simulate()` 에서 면적을 보고 판정해 넘겨준다.
+        #     여기서 `zones` 이름만으로 전수 판정하면 **1㎡ 자투리가 부지 전체를 막는다**(과잉 억제).
+        _restricted_zones = [z for z in (c.get("apartment_restricted_zones") or []) if z]
+        if _restricted_zones is None:
+            _restricted_zones = []
         for _s in S:
             _s["buildable_types"] = self._buildable_types(_zone, _s.get("scheme", ""))
+            # ★M-4 — 경고를 `buildable_types`(프론트가 「건축 가능」 칩으로 그린다)에 섞지 않고
+            #   **전용 필드 + `cons`**(부정 목록)로 낸다.
+            #   ★제안 여부와 **무관하게** 붙인다. 종전에는 `proposes_apartment` 일 때만 달았는데,
+            #     그러면 **아파트가 제안되지 않는 경로**(제1종 + 지구단위계획·청년주택·단순건축 등)
+            #     에서 **「왜 아파트가 없는지」가 화면에서 통째로 사라진다**(적대 리뷰 4차 실측).
+            #     제약은 부지의 성질이지 특정 제안의 성질이 아니다.
+            if _restricted_zones:
+                _zlist = ", ".join(dict.fromkeys(_restricted_zones))
+                _msg = f"{_zlist}: {APARTMENT_PROHIBITED_MARK}"
+                if _low_rise_only(_restricted_zones):
+                    _msg += " · 4층 이하(단지형 연립·다세대는 5층 이하)"
+                _s["zone_use_constraint"] = {
+                    "zones": list(dict.fromkeys(_restricted_zones)),
+                    "prohibited": ["아파트"],
+                    "message": _msg,
+                    "legal_ref": "국토계획법 시행령 §71①3호 [별표 4] 1호 나목 — 공동주택(아파트를 제외한다)",
+                }
+                # ★`cons` 는 **현재 화면 소비처가 0** 이다(전용 렌더가 `zone_use_constraint` 를 읽는다).
+                #   그래도 싣는 것은 다른 소비처(PDF·LLM 요약)가 `cons` 를 읽기 때문이다.
+                _s["cons"] = [*(_s.get("cons") or []), _msg]
             # 시나리오↔규범 일치(가산) — 각 사업방식의 근거법령 verified 딥링크 부착(소비처 옵셔널).
             _s["legal_refs"] = _scheme_legal_refs(_s.get("scheme", ""))
 
@@ -1462,7 +1853,27 @@ class DevelopmentScenarioSimulator:
     # ── 방식·용도지역별 건축 가능 분류(아파트/호텔/상가/지산/빌라/콘도/전원주택 등) 제안 ──
     @staticmethod
     def _buildable_types(zone: str | None, scheme: str) -> list[str]:
+        """★이 함수는 **2단계**다 — 1단계 `base`(용도지역) → 2단계 `scheme` 오버라이드가
+        `base` 를 **통째로 버리고 early return** 한다.
+
+        ★★적대 리뷰 실측(2026-09-02): `base` 만 고쳤더니 **21종 중 12종**이 제1종일반주거에서
+          여전히 아파트를 제안했다(오버라이드 경로). *"1·2·3종 분리"* 라는 선언이 **9종에만**
+          적용된 것 — 「처방을 적용한 범위 ≠ 결함이 사는 범위」.
+          → 처방은 **이 함수가 아니라 호출부**에 있다: `_scenarios()` 가 결과를
+            `proposes_apartment()` 로 검사해 `zone_use_constraint` 를 부착한다.
+            ★한때 여기 `_annotate` 래퍼를 뒀다가 **순수 항등함수(죽은 코드)** 가 됐는데
+              독스트링이 그것을 처방으로 지목해, 다음 사람이 **엉뚱한 곳을 고치러** 가게 했다.
+
+        ★그리고 «아파트를 무조건 막는 것» 도 틀리다(원문 확인). 소규모주택정비법 012805 는
+          **용도지역 변경 근거를 갖는다** — §43의3 7호(관리계획에 *"용도지역의 지정 및 변경"*) ·
+          §43의5①(*"시행으로 용도지역이 변경된 경우"*) · §49의2① 단서(*"일부를 종전 용도지역으로
+          그대로 유지"* → 반대해석상 변경 가능). 역세권활성화·도심복합도 종상향이 제도의 핵심이다.
+          단 §48① 이 완화하는 것은 **조경·건폐율 산정·공지·높이 넷뿐**이고 **용도 제한은 없다** —
+          즉 아파트는 **용도지역 변경을 거쳐야** 가능하다.
+          → 막지도 허용하지도 않고 **「종상향 전제」임을 표면에 싣는다.**
+        """
         z = zone or ""
+
         # 1) 용도지역 기준 기본 건축 가능 분류.
         if any(k in z for k in ("중심상업", "일반상업", "근린상업", "유통상업")):
             base = ["상가(근린생활)", "오피스(업무시설)", "오피스텔", "주상복합 아파트", "호텔/생활숙박", "지식산업센터"]
@@ -1472,7 +1883,23 @@ class DevelopmentScenarioSimulator:
             base = ["지식산업센터", "공장/제조", "오피스", "근린생활", "생활숙박(조건부)"]
         elif "전용주거" in z:
             base = ["단독주택", "저층 연립/다세대(빌라)"]
-        elif "주거" in z:  # 1·2·3종 일반주거
+        elif "제1종일반주거" in z or "1종일반주거" in z:
+            # ★법정 확인(법제처 원문 PDF 직독 2026-09-02 — 국토계획법 시행령 009419 §71①3호 →
+            #   **[별표 4]** 1호 나목): *"「건축법 시행령」 별표 1 제2호의 공동주택
+            #   (**아파트를 제외한다**)"* 이고 같은 호 머리에 **4층 이하**(단지형 연립·다세대는
+            #   5층 이하) 제한이 붙는다.
+            #   종전 코드는 `elif "주거" in z:` 로 **1·2·3종을 한 덩어리**로 묶어 제1종에도
+            #   아파트를 줬다 — **법정 불허를 허용**하는 과대허용이었다.
+            # ★칩 목록에는 **지을 수 있는 것**만 넣는다. 프론트가 이 리스트의 모든 원소를
+            #   「건축 가능」 라벨 아래 같은 악센트 칩으로 그리므로, 여기에 *"아파트 불가"* 를
+            #   넣으면 **「건축 가능」 → 「아파트 불가」** 라는 모순된 칩이 선다.
+            #   불허 사실도 **층수 제약도** `zone_use_constraint` 가 싣는다.
+            #   ★`"(4층 이하)"` 를 여기 두는 것도 같은 위반이다 — 그건 **지을 수 있는 것이 아니라
+            #     제약**이라 「건축 가능」 칩이 되면 매달린 수식어가 된다(적대 리뷰 4차 MINOR 1).
+            base = ["연립/다세대(빌라)", "단독주택", "근린생활"]
+        elif "주거" in z:  # 제2·3종 일반주거 및 그 밖의 주거계
+            # [별표 5](제2종) 1호 나목은 *"「건축법 시행령」 별표 1 제2호의 공동주택"* 으로
+            # **제외 문구가 없다** → 아파트 허용. 제3종도 같다([별표 6]).
             base = ["아파트", "연립/다세대(빌라)", "단독주택", "근린생활"]
         elif "계획관리" in z:
             base = ["전원주택", "단독주택", "근린생활", "물류창고", "공장", "콘도/펜션"]
@@ -1482,7 +1909,8 @@ class DevelopmentScenarioSimulator:
             base = ["용도지역 확인 필요"]
         # 2) 개발방식 보정(방식 특성상 유리한 분류로 좁힘/추가).
         if "역세권" in scheme or "도심복합" in scheme:
-            return ["주상복합 아파트", "오피스텔", "상가", "오피스", "호텔/생활숙박"] + (["청년·신혼 임대주택"] if "청년" in scheme else [])
+            return (["주상복합 아파트", "오피스텔", "상가", "오피스", "호텔/생활숙박"]
+                    + (["청년·신혼 임대주택"] if "청년" in scheme else []))
         if any(k in scheme for k in ("가로주택", "모아", "자율주택", "소규모재건축", "주거환경")):
             return ["저층 아파트", "연립/다세대(빌라)", "단독주택"]
         if "대지조성" in scheme:

@@ -91,7 +91,9 @@ describe("buildPrimaryNav", () => {
     //   지금은 최소 변경으로 신규 라우트만 반영한다 — 파생형 전환은 이 PR 범위 밖이다.
     //   `quick-survey` 는 order 5 로 `market-insights`(10) 보다 앞에 온다.
     expect(marketSales?.children?.map((c) => c.href)).toEqual([
-      "/en/quick-survey", "/en/market-insights", "/en/market-ai", "/en/sales-info",
+      // ★`realtx-report`(order 12)는 `market-insights`(10)와 `market-ai`(15) **사이**다 —
+      //   위치까지 단언해야 order 를 바꿔도 여기서 드러난다.
+      "/en/quick-survey", "/en/market-insights", "/en/realtx-report", "/en/market-ai", "/en/sales-info",
     ]);
     const acquisition = marketAcquisition.items.find((n) => n.id === "acquisition");
     expect(acquisition?.children?.map((c) => c.href)).toEqual(["/en/auction", "/en/g2b"]);

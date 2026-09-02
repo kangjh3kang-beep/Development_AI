@@ -12,7 +12,6 @@ from app.services.tax.regional_tax_data import (
     SCHOOL_SITE_CHARGE_RATE,
     SEWAGE_CHARGES_WON,
     VAT_RATE,
-    WATER_SUPPLY_CHARGES_WON,
     get_acquisition_tax_rates,
     get_metro_transport_charge,
     get_utility_charge,
@@ -170,19 +169,37 @@ class TestMetroTransportCharge:
 # ── 상하수도 원인자부담금 ──
 
 class TestUtilityCharge:
-    def test_sido_lookup(self):
-        assert get_utility_charge(WATER_SUPPLY_CHARGES_WON, "서울", "강남구") == 150_000
+    def test_lookup_returns_none_while_tables_are_unsourced(self):
+        """★2026-08-27: 종전 `== 150_000` / `== 130_000` 단언은 **출처 없는 생성값**을 굳혔다.
 
-    def test_sigungu_override(self):
-        assert get_utility_charge(WATER_SUPPLY_CHARGES_WON, "경기", "수원시") == 130_000
+        표를 비웠으므로 모든 조회가 `None` 이다. 조회 **경로**(시군구→시도 폴백)는
+        `test_sigungu_key_is_tried_before_sido` 가 별도로 잠근다.
+        """
+        assert get_utility_charge(SEWAGE_CHARGES_WON, "서울", "강남구") is None
+        assert get_utility_charge(SEWAGE_CHARGES_WON, "경기", "수원시") is None
+
+    def test_sigungu_key_is_tried_before_sido(self):
+        """★조회 **경로**는 살아 있어야 한다 — 표가 비었다고 배선까지 죽으면 안 된다.
+
+        합성 표로 두 모집단을 가른다(시군구 히트 vs 시도 폴백).
+        """
+        from app.services.tax.regional_tax_data import OrdinanceUnitRate
+
+        def _r(w):
+            return OrdinanceUnitRate(won_per_cbm_day=w, basis="테스트", source_url="test://", as_of="2026-01-01")
+
+        table = {"경기": _r(100), "경기_수원시": _r(200)}
+        assert get_utility_charge(table, "경기", "수원시").won_per_cbm_day == 200, "시군구 우선"
+        assert get_utility_charge(table, "경기", "없는시").won_per_cbm_day == 100, "시도 폴백"
+        assert get_utility_charge(table, "강원", "정선군") is None, "미등록"
 
     def test_unregistered_returns_none(self):
         # ★조례 미등록 지역 → None (수도법 §71 조례위임·전국 단일값 없음). 종전 임의 폴백 120,000은
         #   지어낸 값이라 무목업 위반이었음. 소비처(B03/B04)가 unavailable로 정직 처리한다.
-        assert get_utility_charge(WATER_SUPPLY_CHARGES_WON, "충남", "논산시") is None
+        assert get_utility_charge(SEWAGE_CHARGES_WON, "충남", "논산시") is None
 
-    def test_sewage_sido(self):
-        assert get_utility_charge(SEWAGE_CHARGES_WON, "부산", "해운대구") == 160_000
+    def test_sewage_table_is_also_empty(self):
+        assert get_utility_charge(SEWAGE_CHARGES_WON, "부산", "해운대구") is None
 
 
 # ── 상수값 검증 ──

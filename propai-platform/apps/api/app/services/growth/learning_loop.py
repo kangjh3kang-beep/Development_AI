@@ -66,7 +66,15 @@ LIST_MAX_LIMIT = 200
 def _summarize_payload(payload: Any, *, max_chars: int = SUMMARY_MAX_CHARS) -> str:
     """analysis_ledger payload(dict/str)를 PII 마스킹 + 요약 문자열로 변환한다.
 
-    - capture_service.mask_pii 로 민감 키/값(이메일·전화·주민번호·주소 등) 제거.
+    - capture_service.mask_pii 로 민감 **키**(이메일·전화·주민번호·주소·이름 등)와
+      **값 내부 패턴**(이메일·전화·주민번호)을 제거.
+      ★**주소는 값 안에서 지워지지 않는다**(2026-08-27 실측 — `_mask_str` 에 주소 정규식이 없다).
+      프론트 `maskString` 은 `ADDRESS_RE` 로 지우지만 이 경로는 프론트를 거치지 않는다.
+      초판 주석은 *"주소 등 제거"* 라고 **선언만** 했다 — 후임이 재검증 없이 신뢰한다.
+      부채는 `tests/test_pii_mask_diagnostic_keys.py` 의 xfail 로 **초록 안에 보이게** 남겼다
+      (고쳐지면 XPASS 로 시끄럽게 알린다). 처방 방향은 결정 필요 — 이 경로가 태우는 것은
+      `analysis_ledger` 부동산 분석 payload 이고 **주소가 곧 분석 대상**이라, 지우는 것이
+      학습 신호를 파괴할 수 있다(단독 판단하지 않았다).
     - dict 면 키 정렬 JSON, 그 외엔 str. max_chars 로 절단(긴 분석 본문 가드).
     원본 미저장 원칙: 이 함수가 반환한 익명 요약만 learning_examples 에 적재한다.
     """

@@ -458,26 +458,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # 자가성장 엔진 — 텔레메트리 큐 → platform_events 인프로세스 주기 flush.
     # Celery Beat(5초)가 정본이지만, Celery 미배포 환경에서도 적재되도록
     # _presale_monitor_loop 와 동일한 asyncio 폴백을 둔다(단일 워커 1개 루프).
-    async def _growth_flush_loop() -> None:
-        from app.services.growth import capture_service
-        from apps.api.database.session import AsyncSessionLocal
-        while True:
-            await _asyncio.sleep(5)
-            try:
-                if capture_service.queue_size() == 0:
-                    continue
-                async with AsyncSessionLocal() as _s:
-                    for _ in range(20):
-                        n = await capture_service.flush_batch(_s)
-                        if n < 500:
-                            break
-            except Exception as e:  # noqa: BLE001
-                logger.warning("growth flush 루프 오류: %s", str(e)[:160])
+    # ★**루프도 공용 헬퍼 하나로.** 종전에는 이 파일이 자기 루프를 따로 갖고 있어
+    #   워커와 **두 벌**이었다 — 사본이 갈리면 한쪽만 낡는다(상한 `500` 이 리터럴로
+    #   굳어 `_FLUSH_LIMIT` 과 따로 놀던 것이 그 실례다).
+    #   ★그리고 취소·종료배수 규율(취소를 **기다린다** · 대상이 없어도 **배수는 한다**)이
+    #     헬퍼 안에 있으므로, 이 파일이 그것을 **다시 구현하지 않아야** 같이 지켜진다.
+    from app.services.growth import capture_service as _gcap
+    from apps.api.database.session import AsyncSessionLocal as _GAS
 
-    try:
-        app.state.growth_flush_task = _asyncio.create_task(_growth_flush_loop())
-    except Exception:  # noqa: BLE001
-        logger.warning("growth flush 루프 시작 실패")
+    app.state.growth_flush_ctx = {}
+    _gcap.start_flush_loop(app.state.growth_flush_ctx, _GAS)
 
     # 전역 아웃박스(outbox_event) 디스패처 — 인프로세스 폴백(P15 A4).
     # 정본은 arq 워커(apps/worker/main.py dispatch_outbox)지만, 운영 Micro 는 uvicorn 1워커만
@@ -707,22 +697,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     _st = getattr(app.state, "growth_scheduler_task", None)
     if _st is not None:
         _st.cancel()
-    _gt = getattr(app.state, "growth_flush_task", None)
-    if _gt is not None:
-        _gt.cancel()
-        # 루프 cancel 직후 마지막 동기 flush 1회 — 종료 시 큐 잔여 이벤트 유실 방지.
-        # best-effort: 어떤 예외도 종료를 막지 않는다.
-        try:
-            from app.services.growth import capture_service
-            from apps.api.database.session import AsyncSessionLocal
-            if capture_service.queue_size() > 0:
-                async with AsyncSessionLocal() as _fs:
-                    for _ in range(20):
-                        n = await capture_service.flush_batch(_fs)
-                        if n < 500:
-                            break
-        except Exception as e:  # noqa: BLE001
-            logger.warning("growth 종료 flush 오류: %s", str(e)[:160])
+    # ★**중첩을 푼다** — 종전에는 마지막 배수가 `if _gt is not None:` **안**에 있어서
+    #   루프 기동에 실패한 프로세스는 **살아서도 안 비우고 죽을 때도 안 비웠다**.
+    #   그 프로세스야말로 큐가 가장 깊다 — 결함이 두 배가 되는 자리다.
+    #   헬퍼는 취소 대상이 없어도 배수하고, 취소를 **기다린 뒤** 배수한다.
+    try:
+        from app.services.growth import capture_service as _gcap2
+        from apps.api.database.session import AsyncSessionLocal as _GAS2
+
+        await _gcap2.stop_flush_loop_and_drain(
+            getattr(app.state, "growth_flush_ctx", {}), _GAS2
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("growth 종료 flush 오류: %s", str(e)[:160])
     logger.info("PropAI API 종료")
 
 

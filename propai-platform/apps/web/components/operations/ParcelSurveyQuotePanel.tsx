@@ -31,7 +31,7 @@ import { AlertTriangle, Calculator, Layers, Loader2, ListPlus, Trash2 } from "lu
 import { Card, CardContent } from "@propai/ui";
 import { apiClient } from "@/lib/api-client";
 import { ParcelPurchaseStrategyPanel } from "./ParcelPurchaseStrategyPanel";
-import { parcelDedupKey, parcelDisplayAddress } from "@/lib/pnu";
+import { normalizePnu, parcelDedupKey, parcelDisplayAddress, projectParcelIdentityKey } from "@/lib/pnu";
 import { withCommas } from "@/lib/formatters";
 import { MarkdownLite } from "@/components/common/MarkdownLite";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
@@ -126,19 +126,21 @@ export function ParcelSurveyQuotePanel({ locale }: { locale: Locale }) {
       const existing = new Set(prev.map((r) => parcelDedupKey(r)).filter(Boolean) as string[]);
       const added: QuoteParcelRow[] = [];
       for (const [i, p] of projectParcels.entries()) {
-        // ★PNU 가 없으면 주소로 떨어지는데, 프로젝트 필지는 **이미 서로 다른 필지**라
-        //   같은 동이면 또 접힌다(이 버그의 잔여분). 프로젝트 소스는 SSOT 가 이미 유일하므로
-        //   PNU 가 없을 때는 **인덱스를 섞어 접히지 않게** 한다.
-        //   대가: 불러오기를 두 번 누르면 PNU 없는 행이 중복될 수 있다 — 그건 **화면에 보이고
-        //   지울 수 있는** 문제이고, 조용히 사라지는 것보다 낫다(무음 손실 금지).
-        const k = p.pnu ? parcelDedupKey(p) : `project-idx:${i}:${(p.address || "").trim()}`;
-        if (!k || existing.has(k)) continue;
+        // ★규칙은 `projectParcelIdentityKey` 한 곳에만 있다(종전엔 여기 인라인 + 테스트에 재구현).
+        //   ★★종전 조건은 `p.pnu ?` 였다 — **참/거짓만** 보므로 PNU 칸에 들어앉은 가짜
+        //   (`'store-rep-<주소>'`·성명)가 truthy 라 **인덱스 탈출구를 건너뛰었다.**
+        //   가짜는 주소에서 파생되므로 동 단위 주소를 공유하면 **전원 같은 키** = 77→1 재발.
+        const pnu = normalizePnu(p.pnu);
+        const k = projectParcelIdentityKey(p, i);
+        if (existing.has(k)) continue;
         existing.add(k);
         added.push({
-          key: `project:${p.pnu || p.address}`,
+          key: `project:${pnu || p.address}:${i}`,
           address: p.address,
-          label: parcelDisplayAddress(p.address, p.pnu),
-          pnu: p.pnu || null,
+          label: parcelDisplayAddress(p.address, pnu),
+          // ★가짜 PNU 를 행에 담지 않는다 — 담으면 견적 요청 본문에 그대로 실려 나가고,
+          //   서버는 그것을 echo 하며 `jibun:null·area_sqm:0` 을 돌려준다(볼트 2026-08-20 실측).
+          pnu,
           geometry: p.geometry ?? undefined,
           // builtYear가 있으면 건축물 존재 확인 신호. 없다고 "토지만"으로 단정하지 않는다(모름=undefined).
           hasBuilding: typeof p.builtYear === "number" ? true : undefined,
