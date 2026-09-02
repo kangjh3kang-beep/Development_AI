@@ -82,3 +82,49 @@ describe("★형제 빌더도 함께 낫는다 — 같은 파일 안에서 하�
     expect(rows[0].address).toBe(동);
   });
 });
+
+// ────────────────────────────────────────────────────────────────────────────
+// 2026-09-02 — 표시만이 아니라 **전송**도 한 벌이다.
+// `parcelDataToRows` 는 payload 에 `pnu` 를 싣는데, 종전엔 `p.pnu ?`(참/거짓)만 봐서
+// PNU 칸의 오염값이 **그대로 백엔드로 나갔다**. 볼트 2026-08-20 실측: 서버가 그것을 echo 하고
+// `jibun:null · area_sqm:0 · zone_type:null · age_status:"lookup_failed"` 를 돌려준다 —
+// **필지 보강 전체가 조용히 죽는다**(표시만의 문제가 아니다).
+// ★두 모집단: 진짜는 실리고, 오염은 **키 자체가 없다**(`null` 로 싣지 않는다 — 무날조).
+// ────────────────────────────────────────────────────────────────────────────
+describe("★parcelDataToRows — 오염된 PNU 는 요청 본문에 싣지 않는다", () => {
+  const 오염 = ["◀ 전성결", "store-rep-경기도 오산시 내삼미동", "413701100010467000"];
+
+  it("모집단 A(진짜 PNU) — pnu 가 실린다", () => {
+    const rows = parcelDataToRows([
+      { address: "경기도 오산시 내삼미동", areaSqm: 53, pnu: "4137011000104670001" },
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].pnu).toBe("4137011000104670001");
+  });
+
+  it("★모집단 B(오염 PNU) — pnu **키가 아예 없다**(null 로도 싣지 않는다)", () => {
+    for (const bad of 오염) {
+      const rows = parcelDataToRows([
+        { address: "경기도 오산시 내삼미동", areaSqm: 53, pnu: bad },
+      ]);
+      expect(rows).toHaveLength(1);
+      expect("pnu" in rows[0]).toBe(false);
+      expect(JSON.stringify(rows[0])).not.toContain(bad);
+    }
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// ★부채 — 같은 수정을 했지만 **잠기지 않은** 자리(변이 실측 SURVIVED, 2026-09-02).
+//   커밋 메시지에만 적으면 드러나지 않으므로 초록 안에 남긴다.
+// ────────────────────────────────────────────────────────────────────────────
+describe("★부채 — 오염 PNU 무해화가 잠기지 않은 표면", () => {
+  it.todo(
+    "LandShareModal: `/zoning/land-share` 요청이 오염 PNU 대신 주소로 떨어지는가 " +
+      "— 수정은 했으나 변이 M6(`length >= 19` 로 되돌림)이 SURVIVED. fetch 모킹 + 렌더가 필요하다",
+  );
+  it.todo(
+    "PersonaPanel: requestBody.bcode 가 오염 PNU 에서 파생되지 않는가 " +
+      "— 수정은 했으나 변이 M8(검증 제거)이 SURVIVED. useMemo 를 태우려면 스토어 주입 렌더가 필요하다",
+  );
+});
