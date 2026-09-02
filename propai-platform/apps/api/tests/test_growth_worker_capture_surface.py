@@ -317,6 +317,28 @@ async def test_api_and_worker_do_not_clobber_each_other(monkeypatch) -> None:
 # **바이트 동일**한 문자열로 렌더됐다 — 이 기능이 존재하는 이유가 그 둘을 가르는 것인데.
 # ★**프론트를 「범위 밖」으로 뺐더니, 그 전제가 검증되는 유일한 곳을 뺀 것이었다.**
 # ═══════════════════════════════════════════════════════════════════════════
+#: 화면에 **안 보이는** 키의 현재 개수. ★이 수를 올릴 때는 **왜 안전한지**를 적어라.
+#: (지금은 유실 신호 6종을 포함해 13개가 안 보인다 — 동료 세션이 렌더러 층에서 잡고 있다.)
+_KNOWN_HIDDEN = 13
+
+
+def _render_cap() -> int:
+    """화면이 그리는 키 개수를 **TSX 소스에서 파생**한다(손으로 안 적는다)."""
+    import re
+    tsx = next(q for q in _SRC.parents if q.name == "apps") / "web" / "components" / "settings" / "GrowthDashboard.tsx"
+    m = re.search(r"parts\.length\s*>=\s*(\d+)", tsx.read_text(encoding="utf-8"))
+    assert m, "★화면 상한을 못 찾았다 — 추출기가 죽었다(위반 아님)"
+    return int(m.group(1))
+
+
+def _expected_payload_keys() -> set[str]:
+    """발행 payload 의 키 — `capture_status()` 에서 **파생**한다."""
+    base = set(cs.capture_status())
+    return (base - {"scope", "queue_depth", "lost_total"}) | {
+        "counter_scope", "at", "depth", "lost", "build",
+    }
+
+
 def _as_stored(payload: dict) -> dict:
     """**저장소를 왕복한 뒤의 키 순서**로 바꾼다 — `jsonb` 는 삽입 순서를 안 지킨다.
 
@@ -417,3 +439,65 @@ async def test_the_discriminating_field_survives_the_dashboard_truncation() -> N
     # ★그리고 **판별 필드 자체**가 잘려 나가지 않았는가
     assert "at " in r_idle, f"★시각이 화면에서 잘렸다: {r_idle}"
     assert "depth " in r_piling, f"★깊이가 화면에서 잘렸다: {r_piling}"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 7. ★★**저장소 왕복** — 리터럴 dict 로는 절대 안 잡히는 것을 잡는다
+#
+# 동료 세션 development-ai-62 와 왕복해 굳힌 축이다(그쪽 실측이 근거를 만들었다).
+# 내 종전 락은 **Python dict(삽입 순서)** 를 그려 봤고, 그래서
+# *"판별 필드를 앞에 넣었다"* 가 초록인 채 **라이브에서는 잘려 나갔다.**
+# ═══════════════════════════════════════════════════════════════════════════
+def _round_trip(payload: dict) -> dict:
+    """**저장 → 조회**를 흉내 낸다: 직렬화 → `jsonb` 키 재정렬 → 역직렬화.
+
+    ★리터럴 dict 를 그려 보는 것과 **결과가 다르다** — 그 차이가 이 파일이 존재하는 이유다.
+    """
+    import json as _json
+
+    return _as_stored(_json.loads(_json.dumps(payload, default=str)))
+
+
+@pytest.mark.asyncio
+async def test_discriminating_fields_survive_a_full_storage_round_trip() -> None:
+    """★**왕복 뒤에도** 판별 필드가 화면에 남는가 — 삽입 순서가 아니라 저장 결과로 본다.
+
+    되살리는 변이: 판별 필드 이름을 길게 되돌리면(`depth`→`queue_depth`) 죽는다.
+    """
+    s = _Store()
+    await cs.publish_capture_status(s, scope="worker")
+    stored = _round_trip(_published(s))
+
+    cap = _render_cap()
+    visible = [k for k in list(stored) if stored[k] is not None][:cap]
+    # ★대조군 — 화면 상한을 소스에서 못 읽었으면 아래가 공허하다
+    assert cap >= 1, f"★화면 상한을 못 읽었다: {cap}(위반 아님)"
+    assert "at" in visible, f"★시각이 왕복 뒤 잘렸다: {visible}"
+    assert "depth" in visible, f"★깊이가 왕복 뒤 잘렸다: {visible}"
+
+
+def test_a_flag_that_outgrows_the_screen_fails_loudly_instead_of_truncating() -> None:
+    """★★**조용한 절단을 시끄러운 실패로** 바꾼다.
+
+    화면(`summarizeParams`)은 앞 N키만 그리고 **버린 몫을 말하지 않는다**(형제 `fmtReasons`
+    는 *"외 N종"* 으로 말한다 — 같은 파일 260줄 위. §29 *"없는 게 아니라 불일치"*).
+
+    ★그래서 **키를 하나 더 넣는 순간 판별 필드가 조용히 밀려난다** — 이름 길이 경주다.
+      실측: `at·lost·build·depth` 상태에서 **4글자 키 하나만** 추가돼도 `depth` 가 밀린다.
+      그리고 **지금과 똑같이 아무도 안 알아챈다.**
+
+    → 이 테스트는 그 순간을 **시끄럽게** 만든다. 여기서 빨개지면 둘 중 하나를 하라:
+        ① 판별 필드 이름을 더 짧게 (임시방편 — 경주는 계속된다)
+        ② ★렌더러가 **판별 키를 명시 선택**하게 (근본 — 동료 세션이 그 층을 잡고 있다)
+
+    ★이 락은 **문제를 고치지 않는다. 조용한 것을 시끄럽게 만들 뿐이다.** 그 구분을 적어 둔다.
+    """
+    published = set(_expected_payload_keys())
+    cap = _render_cap()
+    hidden = len(published) - cap
+    assert hidden <= _KNOWN_HIDDEN, (
+        f"★화면에 안 보이는 키가 {hidden}개로 늘었다(허용 {_KNOWN_HIDDEN}).\n"
+        f"   화면은 앞 {cap}키만 그리고 **버린 몫을 말하지 않는다.**\n"
+        f"   판별 필드가 조용히 밀려났을 수 있다 — 렌더러의 명시 선택으로 옮기거나,\n"
+        f"   이 상한을 올리려면 **왜 안전한지**를 여기 적어라."
+    )
