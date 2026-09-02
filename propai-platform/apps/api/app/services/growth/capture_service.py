@@ -526,10 +526,21 @@ async def publish_capture_status(session_factory: Any, *, scope: str) -> bool:
         #     *"내 락이 태우는 값이 저장소를 왕복한 값인가, 그 전의 값인가?"*
         payload = {
             "at": datetime.now(UTC).isoformat(),
-            # ★짧은 이름은 **표시 우선순위**다(위 참조). 뜻은 아래 긴 이름과 같다.
-            "depth": raw.get("queue_depth"),
-            "lost": raw.get("lost_total"),
-            "build": stale_build_guard.running_build_id(),
+            # ★★**짧은 별칭을 쓰지 않는다**(2026-09-03 재판단 · 라이브 실측).
+            #   종전엔 `depth`·`lost`·`build` 로 줄여 jsonb 정렬에서 앞자리를 얻으려 했다.
+            #   그런데 `#947` 이 화면 상한을 올려 **버림이 0** 이 됐다(실측: 17키 중 보임 17).
+            #   즉 **가시성 목적은 이미 달성**됐고, 짧은 이름이 남기는 것은 **비용뿐**이다:
+            #     `/growth/effectors` 는 `queue_depth`·`lost_total`
+            #     `/growth/heal-log`  는 `depth`·`lost`
+            #   → **같은 사실을 두 표면이 다른 이름으로** 부르게 된다.
+            #   ★바로 아래에서 내가 *"같은 사실이 두 이름으로 있으면 갈린다"* 고 적어 놓고
+            #     **표면 사이에 그것을 만들고 있었다.** 형제 `analyzer.py` 도
+            #     `producer_build_id` 로 쓰므로 그 이름을 따른다.
+            #   ★상한이 다시 작아지는 순간은 **키 수 상한 락**이 시끄럽게 잡는다 —
+            #     그때의 옳은 처방은 이름 길이 경주가 아니라 **렌더러의 명시 선택**이다.
+            "queue_depth": raw.get("queue_depth"),
+            "lost_total": raw.get("lost_total"),
+            "producer_build_id": stale_build_guard.running_build_id(),
             # ★`build` = 어느 빌드가 썼는지 — 형제 `analyzer.py` 가 같은 이유로 이미 싣는다.
             #   낡은 스택이 같은 DB 를 공유하면 `(key, scope)` 가 같아 **같은 행을 덮어쓴다**
             #   (`stale_build_guard` 가 실측 18일 사고로 기록해 둔 그 형태).
@@ -539,7 +550,7 @@ async def publish_capture_status(session_factory: Any, *, scope: str) -> bool:
             #   짧은 이름은 **표시용 별칭**이고, 긴 이름은 API 로 읽는 쪽의 계약이다.
             #   단 `queue_depth`·`lost_total` 은 위에서 짧은 이름으로 이미 실었으므로
             #   **중복을 만들지 않기 위해** 뺀다(같은 사실이 두 이름으로 있으면 갈린다).
-            **{k: v for k, v in raw.items() if k not in ("queue_depth", "lost_total")},
+            **raw,
         }
         # ★내부 `scope`(계수기 범위)와 바깥 `scope`(프로세스)가 **같은 이름으로 충돌**했다.
         #   같은 화면에 나란히 뜨는데 뜻이 다르다 → 안쪽 이름을 바꾼다.
