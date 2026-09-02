@@ -131,8 +131,18 @@ describe("summarizeParams — 네 모집단", () => {
     expect(summarizeParams({ a: 1, b: 2, c: 3, d: 4 })).not.toContain("외 ");
   });
 
-  it("★null 은 분모에서도 빠진다 — 빈 칸을 「감춘 것」으로 세면 거짓말이 된다", () => {
-    expect(summarizeParams({ a: 1, b: null, c: undefined, d: 2 })).not.toContain("외 ");
+  /**
+   * ★이 케이스는 처음에 **변이 생존**을 냈다. `not.toContain("외 ")` 만 보고 있었는데,
+   * 필터를 무력화해도 4키 입력에서는 `rest` 가 0 이라 그 단언이 **여전히 참**이었다.
+   * → **음성만 보지 말고 출력 자체를 못 박는다**(null 이 화면에 실리는 것을 직접 잡는다).
+   */
+  it("★null 은 출력에도 분모에도 안 들어간다 — 빈 칸을 「감춘 것」으로 세면 거짓말이 된다", () => {
+    // 상한(4)보다 **표시 가능한 키가 많은** 입력이라야 필터 유무가 결과를 가른다.
+    const out = summarizeParams({ a: 1, b: null, c: undefined, d: 2, e: 3, f: 4 });
+    expect(out, "★null 이 화면에 실렸다").not.toContain("null");
+    expect(out, "★undefined 가 화면에 실렸다").not.toContain("undefined");
+    expect(out).not.toContain("외 ");          // 표시 가능한 4키가 상한과 같으므로 버릴 게 없다
+    expect(out).toBe("a 1 · d 2 · e 3 · f 4"); // ★출력을 못 박는다(음성 단언만으로는 안 잠긴다)
   });
 });
 
