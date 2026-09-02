@@ -20,7 +20,8 @@ import { EvidencePanel } from "@/components/common/EvidencePanel";
 import { adaptEvidence } from "@/lib/evidence/adaptEvidence";
 import { AnalysisHistoryCard } from "@/components/common/AnalysisHistoryCard";
 import { optionsSummary } from "@/lib/use-analysis-history";
-import type { ParcelRow } from "@/lib/parcel-rows";
+import { parcelDataToRows, parcelIdentityAddresses, type ParcelRow } from "@/lib/parcel-rows";
+import { parcelDisplayAddress } from "@/lib/pnu";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { riskLevelStyle } from "@/lib/risk-level-style";
@@ -419,6 +420,10 @@ export function ComprehensiveAnalysisPanel() {
   const [parcels, setParcels] = useState<string[]>([]);
   // ★다필지 통합분석용 필지 상세(면적·용도지역·실효한도) — 백엔드 통합집계 전송 페이로드.
   const [parcelRows, setParcelRows] = useState<ParcelRow[]>([]);
+  /** 시뮬레이션 카드에 넘길 **대표주소** — `parcels` 와 **같은 형태**(PNU 파생 지번)여야 한다.
+   *  ★그러지 않으면 백엔드 `_merge` 가 대표주소를 **별개 필지로 승격**해 유령이 1건 늘고
+   *    (77 → 78), `primary_zone` 이 그 유령(`enriched[0]`)에서 나온다(독립 리뷰 실측). */
+  const [scenarioAddress, setScenarioAddress] = useState("");
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [loading, setLoading] = useState(false);
   // ★2단계(AI 해석) 진행 상태 — loading과 분리한다. 1단계 결과는 이미 화면에 있으므로
@@ -484,23 +489,35 @@ export function ComprehensiveAnalysisPanel() {
 
     const parcelList = siteAnalysis.parcels ?? [];
     if (parcelList.length > 0) {
-      setParcels(parcelList.map((p) => p.address).filter(Boolean));
-      setParcelRows(
-        parcelList
-          .filter((p) => (p.areaSqm ?? 0) > 0)
-          .map((p) => ({
-            address: p.address,
-            area_sqm: p.areaSqm ?? null,
-            zone_type: p.zoneCode ?? null,
-            farPct: null,
-            bcrPct: null,
-            farLegalPct: null,
-            bcrLegalPct: null,
-            // ★P1(감사): 경계 전송 — 서버 통합집계의 인접성(contiguous) 판정 재료.
-            geometry: p.geometry ?? null,
-          }))
+      // ★★2026-08-28 봉합 — 종전엔 `p.address` 를 **그대로** 썼다. 스토어 필지 주소는 지번이
+      //   없는 경우가 있어(예: "경기도 오산시 내삼미동") **77필지가 모두 같은 문자열**이 되고,
+      //   백엔드 `scenario_simulator._merge` 가 주소로 중복제거하며 **1필지로 붕괴**했다.
+      //   그 결과 86,755㎡ 부지가 **44㎡**(약 13평)로 시뮬레이션돼 「도시개발사업 1만㎡ 미달」 등
+      //   **개발방식 19건이 거짓 '불가'** 로 막혔다(라이브 재현: parcel_count=1 · total_area=44.0).
+      //
+      //   ★처방이 이미 저장소에 있었다 — `lib/parcel-rows.ts` 가 `parcelDisplayAddress` 로
+      //     **PNU 에서 지번을 파생**해 같은 동의 필지를 구분한다. 그 파일 주석이 이 결함을 그대로
+      //     적어 뒀다: *"여기서 지번이 빠지면 백엔드가 같은 동의 필지를 구분하지 못한다."*
+      //     ★정정(독립 리뷰): 처음 「형제 **3화면**」·「**이 패널만** 손수 복제」라 적었는데
+      //       **둘 다 거짓**이었다 — 실제 헬퍼 소비처는 **6화면**이고, `satong-map-selection.ts`
+      //       에도 같은 복제본이 있었다. **손으로 센 목록을 «전수»라 불렀다**(목록은 곧 상한이 된다).
+      //       → 소비처를 **소스에서 파생**해 검사하는 락을 뒀다
+      //         (`lib/__tests__/parcel-identity-addresses.contract.test.ts` S1~S3).
+      //     이 파일은 같은 모듈에서 **타입만** 임포트하고 빌더는 베껴 썼다(그건 참이다).
+      //
+      //   ★두 값은 의미가 다르므로 갈라서 만든다(한 헬퍼로 뭉치면 표시가 회귀한다):
+      //     · `parcels`    = 사용자가 **고른** 것 → 표시·렌더 게이트. 면적 유무로 거르지 않는다.
+      //     · `parcelRows` = 우리가 **보낼 수 있는** 것 → 면적>0(`parcelDataToRows` 의미론).
+      setParcels(parcelIdentityAddresses(parcelList));
+      setParcelRows(parcelDataToRows(parcelList));
+      // ★대표주소도 **같은 파생**을 거친다 — 원본(지번 없는 동 주소)을 그대로 넘기면
+      //   `parcels` 와 정체성이 갈려 백엔드가 **유령 필지**로 더한다.
+      const rep = parcelList.find((p) => p.address === mainAddr) ?? parcelList[0];
+      setScenarioAddress(
+        rep ? parcelDisplayAddress(rep.address, rep.pnu ?? null) : mainAddr,
       );
     } else if (mainAddr) {
+      setScenarioAddress(mainAddr);
       setParcels([mainAddr]);
       setParcelRows([
         {
@@ -724,7 +741,7 @@ export function ComprehensiveAnalysisPanel() {
           0㎡로 떨어뜨렸다(2026-08-19 실측). 같은 값을 두 소비처가 나눠 쓴다. */}
       {parcels.length > 1 && (
         <DevelopmentScenarioCard
-          address={address}
+          address={scenarioAddress || address}
           parcels={parcels}
           parcelRows={parcelRows}
           autoRunToken={pipelineRunToken}

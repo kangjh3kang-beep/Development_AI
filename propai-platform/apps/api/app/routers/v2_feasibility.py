@@ -1389,7 +1389,7 @@ class CashflowRequest(BaseModel):
     design_cost_ratio: float = 0.03
     discount_rate_annual: float = 0.06  # NPV 할인율(연)
     # R1(additive): integrated_tax_engine.calculate_all_taxes 키워드 입력(부분집합).
-    # 지정 시 38종 세금을 시점 매핑 주입해 summary에 after_tax_irr_annual_pct·total_tax_won 가산.
+    # 지정 시 28종 세금을 시점 매핑 주입해 summary에 after_tax_irr_annual_pct·total_tax_won 가산.
     # 미지정(None, 기본)이면 기존 세전 현금흐름과 완전 동일.
     tax_inputs: dict | None = None
 
@@ -1401,7 +1401,7 @@ def _build_cashflow(req: CashflowRequest) -> dict:
         npv_from_netflows,
     )
 
-    # ── R1 세후 IRR(additive): tax_inputs 지정 시에만 통합 세금엔진(38종) 주입 ──
+    # ── R1 세후 IRR(additive): tax_inputs 지정 시에만 통합 세금엔진(28종) 주입 ──
     tax_schedule = None
     if req.tax_inputs:
         import inspect

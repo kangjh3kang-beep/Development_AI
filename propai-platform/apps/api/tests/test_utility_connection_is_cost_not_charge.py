@@ -105,10 +105,17 @@ class TestConnectionCostMovedWithoutChangingTheAmount:
 
 
 class TestFireIsRemovedNotMoved:
-    def test_fire_is_not_in_connection_cost(self):
-        """★소방은 **이관 대상이 아니다** — 도급단가에 이미 포함(적산 실측 7.8배 격차)."""
+    def test_fire_is_not_priced_from_the_old_fabricated_rate(self):
+        """★2026-08-27 정정 — 소방은 **되살아났지만**(법정 분리 도급) **값은 아니다.**
+
+        초안은 *"소방은 도급단가에 포함이니 이관 대상이 아니다"* 를 단언했는데
+        **그 전제가 법으로 반증**됐다(소방시설공사업법 §21②). 지금 잠글 것은
+        *"항목이 없다"* 가 아니라 **"날조 단가가 없다"** 다.
+        """
         names = " ".join(i["name"] for i in UTILITY_CONNECTION_ITEMS)
-        assert "소방" not in names, "소방을 인입비로 옮기면 이중계상이 그대로 남는다"
+        assert "소방" not in names, "인입비 목록(단가 보유)에는 소방이 없다 — 보류 항목은 별도"
+        rates = [i["per_unit_won"] for i in UTILITY_CONNECTION_ITEMS]
+        assert 3_500 not in rates, "종전 날조 단가가 인입비로 스며들었다"
 
     def test_total_drop_equals_exactly_the_fire_amount(self):
         """★**총사업비 순변화 = 소방 제거분** — 그 외에는 아무것도 움직이지 않는다.
@@ -161,13 +168,21 @@ class TestEstimatesDeclareThemselves:
         )
         assert item["legal_note"].strip()
 
-    def test_rendered_items_are_labelled_estimate(self):
-        """★`confidence="estimate"` — 「고시값」과 구별되게."""
-        for i in calculate_utility_connection_cost(
-            total_households=HH, total_gfa_sqm=GFA,
-        )["items"]:
+    def test_priced_items_say_estimate_and_withheld_items_say_unavailable(self):
+        """★**두 모집단** — 단가가 있으면 `estimate`, 없으면 `unavailable`.
+
+        하나로 뭉치면 *"개산"* 과 *"산정 불가"* 가 구별되지 않는다(#913 이후 소방이 후자다).
+        """
+        items = calculate_utility_connection_cost(total_households=HH, total_gfa_sqm=GFA)["items"]
+        priced = [i for i in items if i["unit_price"] is not None]
+        withheld = [i for i in items if i["unit_price"] is None]
+        assert priced and withheld, f"두 모집단이 갈리지 않는다: {[i['code'] for i in items]}"
+        for i in priced:
             assert i["confidence"] == "estimate"
             assert i["qty_unit"] in {"세대", "㎡"}
+        for i in withheld:
+            assert i["confidence"] == "unavailable"
+            assert i["amount_won"] == 0
 
 
 class TestEveryCallSiteCarriesHouseholds:
@@ -199,8 +214,12 @@ class TestEveryCallSiteCarriesHouseholds:
                     continue
                 nm = getattr(n.func, "attr", None) or getattr(n.func, "id", None)
                 if nm == "calculate_total_construction_cost":
+                    # ★**이름이 아니라 값**을 들고 온다. 종전에는 `{k.arg …}` 로 **키워드
+                    #   이름만** 모아서, `total_households=0` 으로 바꾸는 변이가 **생존**했다
+                    #   (독립 렌즈 실증) — 그 변이가 되살리는 것이 `#913` 이 고쳤다고 선언한
+                    #   **총사업비 −55,642,000 / 15개 개발유형**이다.
                     out.append((str(p.relative_to(root)), n.lineno,
-                                {k.arg for k in n.keywords}))
+                                {k.arg: k.value for k in n.keywords}))
         return out
 
     def test_the_scanner_finds_call_sites(self):
@@ -215,6 +234,39 @@ class TestEveryCallSiteCarriesHouseholds:
             f"★인입비가 조용히 0이 되는 호출부: {missing} — "
             "총사업비가 새어 나간다(부담금에서는 빠지는데 공사비에 안 들어온다)"
         )
+
+    def test_the_value_is_a_real_variable_not_a_literal(self):
+        """★**이름이 있는 것과 값이 실리는 것은 다르다.**
+
+        `total_households=0` 은 키워드 **이름**을 만족시키면서 인입비를 **조용히 0** 으로
+        만든다 — 즉 `#913` 이 고쳤다고 선언한 결함을 그대로 되살린다. 이름만 보는 락은
+        그 변이를 **원리적으로** 못 잡는다(독립 렌즈가 SURVIVED 로 실증).
+        """
+        import ast
+
+        bad = []
+        for f, ln, kws in self._call_sites():
+            v = kws.get("total_households")
+            if v is None:
+                continue          # 위 테스트가 담당
+            if isinstance(v, ast.Constant):
+                bad.append(f"{f}:{ln} = {v.value!r}")
+        assert not bad, (
+            f"★세대수 자리에 **리터럴**이 들어갔다: {bad} — "
+            "이름은 있는데 값이 안 실린다(인입비가 조용히 0)"
+        )
+
+    def test_the_scanner_would_catch_a_literal(self):
+        """★대조군 — 검사기가 리터럴을 **실제로 잡는지** 증명한다(위 「0건」이 공허하지 않게)."""
+        import ast
+
+        tree = ast.parse("calculate_total_construction_cost(total_households=0)")
+        found = [
+            k for n in ast.walk(tree) if isinstance(n, ast.Call)
+            for k in n.keywords
+            if k.arg == "total_households" and isinstance(k.value, ast.Constant)
+        ]
+        assert len(found) == 1, "검사기 사망 — 리터럴을 심었는데 못 잡는다"
 
 
 class TestLedgerReconciles:
@@ -243,6 +295,90 @@ class TestLedgerReconciles:
         bd = construction_breakdown(calculate_total_construction_cost(
             total_gfa_sqm=GFA, building_type="apartment", total_households=HH,
         ))
-        for i in bd["utility_connection"]["items"]:
-            assert i["confidence"] == "estimate"
-            assert "출처 미확보" in (i.get("basis") or "")
+        rows = bd["utility_connection"]["items"]
+        assert rows, "★투사가 비었다"
+        for i in rows:
+            # ★개산이든 보류든 **사유는 반드시** 실린다 — 로그가 아니라 페이로드로.
+            assert i["confidence"] in {"estimate", "unavailable"}
+            assert (i.get("basis") or "").strip(), f"{i['code']}: 사유가 없다"
+
+
+class TestFireIsSeparatelyContractedNotIncluded:
+    """★★`#913` 의 소방 제거가 **틀렸다** — 법이 **분리 도급**을 명한다.
+
+    `#913` 은 소방(3,500원/㎡)을 *"건축 도급단가에 이미 포함"* 이라며 제거했다
+    (총사업비 −23,002,000). **법제처 원문이 정반대를 말한다**(2026-08-27 실측):
+
+        소방시설공사업법 §21②(신설 2020.6.9)
+          "소방시설공사는 **다른 업종의 공사와 분리하여 도급하여야 한다**" — 위반 시 **벌칙**
+        시행령 §11의2(예외)  재난·기밀·비해당·연면적 1천㎡ 이하 비상경보·대안/일괄/기술제안입찰·
+          국가첨단전략기술·**국가유산수리 및 재개발·재건축 등으로서 소방청장 인정**
+          → **일반 신축 개발사업은 예외 비해당 = 원칙(분리 도급) 적용**
+        시행령 §4 1호가  스프링클러설비등·옥내소화전·물분무등소화설비·제연설비
+
+    ★**내가 왜 틀렸나**: 적산 실적이 소방을 `electrical`/`mechanical` **내역서 안**에 두어
+      *"도급 안"* 으로 읽었다. **내역서 편성 ≠ 도급 편성**이다 — 같은 세트가 **승강기 공종을
+      갖고 있지 않은데** 그 건물에 승강기는 실재한다. *"별도 내역서가 없다"* 는
+      *"도급 안"* 을 **함의하지 않는다**(독립 리뷰가 그 반례를 찾았다).
+
+    ★**그러나 종전 값으로 되돌리지 않는다** — `3,500원/㎡` 은 출처 0건이고 적산 실적
+      (27,223원/㎡·재료비만) 대비 **7.8배 과소**다. **항목은 세우되 금액은 보류**한다.
+    """
+
+    @staticmethod
+    def _fire():
+        r = calculate_utility_connection_cost(total_households=HH, total_gfa_sqm=GFA)
+        return next(i for i in r["items"] if i["code"] == "U04"), r
+
+    def test_fire_item_exists_again(self):
+        """★항목이 **있어야** 한다 — 지우면 사용자는 누락 사실조차 모른다."""
+        fire, _ = self._fire()
+        assert fire["name"].strip()
+
+    def test_fire_is_withheld_not_fabricated(self):
+        """★있되 **금액은 보류** — 출처 없는 3,500원/㎡ 를 되살리지 않는다."""
+        fire, _ = self._fire()
+        assert fire["amount_won"] == 0
+        assert fire["unit_price"] is None
+        assert fire["confidence"] == "unavailable"
+        assert fire["surveyed"] is False
+        assert fire["amount_won"] != 3_500 * int(GFA), "종전 날조값이 되살아났다"
+
+    def test_fire_reason_names_the_separate_contracting_law(self):
+        """★사유가 **법정 분리 도급**을 말해야 한다 — 뭉뚱그리면 다음 사람이 또 지운다."""
+        fire, _ = self._fire()
+        text = (fire.get("basis") or "") + (fire.get("legal_note") or "")
+        for token in ("소방시설공사업법", "§21", "분리"):
+            assert token in text, f"사유에 '{token}' 이 없다"
+
+    def test_the_filter_itself_excludes_nonzero_withheld(self):
+        """★필터를 **합성 입력으로 직접** 태운다.
+
+        현재 보류 항목의 금액은 **항상 0** 이라, 실제 산출만 보면 필터를 지워도 합계가
+        안 바뀐다 — 변이가 **생존**했다. 0이 아닌 보류를 만들어 필터가 **실제로 거르는지** 본다.
+        """
+        from app.services.cost.utility_connection_cost import sum_priced_only
+
+        synthetic = [
+            {"code": "X1", "amount_won": 100, "confidence": "estimate"},
+            {"code": "X2", "amount_won": 999, "confidence": "unavailable"},  # ★0이 아니다
+        ]
+        assert sum_priced_only(synthetic) == 100, "보류 항목이 합계에 섞였다"
+        # ★반대 방향 — 전부 estimate 면 전부 센다(무조건 거르는 구현 탐지).
+        assert sum_priced_only(
+            [{"code": "Y", "amount_won": 7, "confidence": "estimate"}],
+        ) == 7
+
+    def test_withheld_does_not_enter_the_total(self):
+        """★보류 항목이 합계에 **섞이지 않는다** — 0으로 더하면 「계상했다」로 읽힌다."""
+        fire, r = self._fire()
+        assert "U04" in r["withheld_codes"]
+        assert r["total_won"] == sum(
+            i["amount_won"] for i in r["items"] if i["code"] != "U04"
+        )
+
+    def test_the_priced_siblings_still_count(self):
+        """★반대 모집단 — 단가가 있는 인입 3종은 **여전히 합계에 든다**(전부 보류로 만드는 구현 탐지)."""
+        _, r = self._fire()
+        assert r["total_won"] == 32_640_000
+        assert len(r["withheld_codes"]) == 1, f"보류가 늘었다: {r['withheld_codes']}"

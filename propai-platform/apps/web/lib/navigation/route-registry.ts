@@ -281,6 +281,22 @@ export const PRIMARY_ROUTE_REGISTRY: RouteRegistryItem[] = [
     apiDependencies: ["/market"],
   },
   {
+    // 실거래 신고내역 현황분석 — MOLIT 계약상태 6필드(해제·해제일·거래유형·등기일자·
+    // 매수/매도 법인개인)를 읽는 첫 소비 표면. 그동안 대시보드 안 **데이터 패널**로만 있어
+    // 카드 8개 아래(라이브 y≈2,921px)에 묻혀 있었다 — 형제 8개와 같이 **카드 + 전용 라우트**로 올린다.
+    // ★"필지별"이 아니다: 국토부 공개자료는 토지 거래 지번을 마스킹하므로 **법정동 단위** 집계다.
+    id: "realtx-report",
+    label: "실거래 신고내역",
+    sectionId: "market-acquisition",
+    parentId: "market-sales",
+    order: 12,
+    path: "/realtx-report",
+    status: "live",
+    scope: "global",
+    lifecyclePhase: "market",
+    apiDependencies: ["/market"],
+  },
+  {
     // 간편 분양성 조사 — 지번 1개로 주변시세·계획시설·입지·분양사례를 한 화면에 모은다.
     // ★새 분석엔진이 아니라 기존 셋(시장조사보고서·VWorld 도시계획시설·청약홈)의 **조립**이다.
     id: "quick-survey",

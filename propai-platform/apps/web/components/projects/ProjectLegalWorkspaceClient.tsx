@@ -15,6 +15,7 @@ import { parcelDataToRows, shouldSendParcels } from "@/lib/parcel-rows";
 import { IntegratedParcelsBadge } from "@/components/common/IntegratedParcelsBadge";
 import { resolveFarPct, resolveBcrPct } from "@/lib/zoning-ssot";
 import type { Locale } from "@/i18n/config";
+import { normalizePnu } from "@/lib/pnu";
 
 /* ── Response Types ── */
 
@@ -536,7 +537,7 @@ export function ProjectLegalWorkspaceClient({
       const effRows = parcelDataToRows(siteAnalysis?.parcels);
       const reqBody = (useLlm: boolean) => ({
         address: autoAddress,
-        pnu: (siteAnalysis?.pnu ?? "").trim() || undefined,
+        pnu: normalizePnu(siteAnalysis?.pnu) ?? undefined,
         use_llm: useLlm,
         ...(shouldSendParcels(effRows) ? { parcels: effRows } : {}),
       });
