@@ -214,3 +214,55 @@ describe("★배선 보강 — 변이 생존 2건을 봉합한다", () => {
     await waitFor(() => expect(count(), "★같은 필지 3행이 그대로 들어왔다").toBe(3), { timeout: 5000 });
   });
 });
+
+
+/**
+ * ★**이중 가드를 갈라 잠근다.** 위 ①·④ 는 처음 변이에서 **생존**했는데, 구멍이 아니라
+ * **3단계(보강 후 재중복제거)가 덮고 있었기** 때문이다 — 보강이 성공하면 목록 전체가 다시
+ * 접히므로, 입력 시점의 중복제거를 지워도 최종 수가 같다.
+ *
+ * 그런데 **보강이 실패하면 3단계는 돌지 않는다**(청크 예외 → `continue`, `setAddresses` 미호출).
+ * 그때는 입력 시점의 중복제거가 **유일한 가드**다. 그 경로를 따로 태운다.
+ */
+describe("★보강 실패 경로 — 3단계가 안 돌 때 입력 시점 가드가 유일하다", () => {
+  function failEnrich(parseRows?: Array<Record<string, unknown>>) {
+    postMock.mockImplementation((url: string) => {
+      if (String(url).includes("/zoning/parcels-info")) return Promise.reject(new Error("네트워크"));
+      if (String(url).includes("/zoning/parse-parcels")) return Promise.resolve({ parcels: parseRows ?? [] });
+      return Promise.resolve({ parcels: [] });
+    });
+  }
+
+  it("① 검색 추가 — 보강이 죽어도 표기만 다른 같은 필지는 안 늘어난다", async () => {
+    seed([{ address: 짧은, pnu: null, areaSqm: 100 }, { address: 동, pnu: PNU_A, areaSqm: 53 }]);
+    PICK.address = "상도동  211-204";
+    failEnrich();
+    const onChange = vi.fn();
+    render(<GlobalAddressSearch single={false} writeToContext onChange={onChange} />);
+    await waitFor(() => expect(count()).toBe(2));
+    fireEvent.click(screen.getByTestId("kakao-pick"));
+    // ★공허 진리 가드 — 「클릭이 아무 일도 안 했다」와 「중복이라 거부됐다」를 가른다.
+    //   중복 분기는 조기 반환 **전에** `onChange` 를 부른다(보강은 안 부른다 — 그것이 정상이다).
+    await waitFor(() => expect(onChange, "★핸들러가 실행조차 안 됐다 — 이 케이스는 공허하다").toHaveBeenCalled());
+    await waitFor(() => expect(count(), "★보강이 죽자 중복이 들어왔다").toBe(2), { timeout: 4000 });
+  });
+
+  it("④ 엑셀 — 보강이 죽어도 파일 안의 같은 필지 3행은 1필지다", async () => {
+    seed([{ address: 긴, pnu: null, areaSqm: 100 }, { address: 동, pnu: PNU_B, areaSqm: 684 }]);
+    failEnrich([
+      { address: 동, pnu: PNU_A, area_sqm: 53 },
+      { address: 동, pnu: PNU_A, area_sqm: 53 },
+      { address: 동, pnu: PNU_A, area_sqm: 53 },
+    ]);
+    render(<GlobalAddressSearch single={false} writeToContext />);
+    await waitFor(() => expect(count()).toBe(2));
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    expect(input).not.toBeNull();
+    fireEvent.change(input, { target: { files: [new File(["x"], "조서.xlsx")] } });
+    await waitFor(
+      () => expect(postMock.mock.calls.some((c) => String(c[0]).includes("/zoning/parse-parcels"))).toBe(true),
+      { timeout: 4000 },
+    );
+    await waitFor(() => expect(count(), "★같은 필지 3행이 그대로 들어왔다").toBe(3), { timeout: 5000 });
+  });
+});
