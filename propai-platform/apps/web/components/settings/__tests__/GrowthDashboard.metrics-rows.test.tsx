@@ -190,9 +190,49 @@ describe("★계약 — 인사이트 카드가 지표를 실제로 낸다", () =
     expect(screen.getByText("영향 파일")).toBeTruthy();
     expect(screen.getByText("2개")).toBeTruthy();           // affected_files 길이
     expect(screen.getByText("PR 상태")).toBeTruthy();
-    expect(screen.getByText("draft_only")).toBeTruthy();    // pr_status
+    // ★2026-08-27: 종전엔 raw `draft_only` 를 단언했는데, 그건 **결함을 기대값으로 고정**한
+    //   것이었다 — 라이브 53/53 이 `artifact_only` 인 채 영문으로 떴다(#808 과 같은 얼굴).
+    //   라벨로 바꾸되 **이 테스트의 원래 의도(값이 payload 에서 온다)를 약화시키지 않는다**:
+    //   고정 문구를 단언하면 상수 행이 그것을 흉내낼 수 있으므로, **두 payload 가 서로 다른
+    //   라벨을 낸다**를 같은 실행에서 확인한다.
+    expect(screen.getByText("PR 준비됨(봇 대기)")).toBeTruthy();   // draft_only
     // 안전 정보(자동 머지 없음)도 함께 — 이것만으로는 위 구멍을 못 막으므로 마지막에 둔다.
     expect(screen.getByText(/사람 승인 필요/)).toBeTruthy();
+  });
+
+  it("★PR 상태가 **payload 에 따라 갈린다** — 상수 문구가 아니다", () => {
+    // 두 모집단: 같은 타입인데 pr_status 만 다르면 화면 문구가 달라야 한다.
+    const a = render(
+      <InsightMetrics
+        insight={ins("improvement_proposal", {
+          ...REAL_PAYLOADS.improvement_proposal, pr_status: "draft_only",
+        })}
+      />,
+    );
+    const t1 = a.container.textContent ?? "";
+    a.unmount();
+    const b = render(
+      <InsightMetrics
+        insight={ins("improvement_proposal", {
+          ...REAL_PAYLOADS.improvement_proposal, pr_status: "artifact_only",
+        })}
+      />,
+    );
+    const t2 = b.container.textContent ?? "";
+    expect(t1).not.toBe(t2);
+    // ★라이브 53/53 이 이 값이다 — 운영자가 "왜 PR 이 없나"를 화면에서 알 수 있어야 한다.
+    expect(t2).toContain("토큰 없음");
+    // ★모르는 코드는 감추지 않고 원문 그대로(새 상태 신호를 숨기지 않는다).
+    const c = render(
+      <InsightMetrics
+        insight={ins("improvement_proposal", {
+          ...REAL_PAYLOADS.improvement_proposal, pr_status: "brand_new_state",
+        })}
+      />,
+    );
+    expect(c.container.textContent).toContain("brand_new_state");
+    c.unmount();
+    b.unmount();
   });
 
   it("★prompt_candidate 도 payload 에서 온 값을 낸다 — 두 타입은 payload 가 다르다", () => {
