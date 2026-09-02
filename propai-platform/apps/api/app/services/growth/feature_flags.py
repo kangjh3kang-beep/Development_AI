@@ -432,7 +432,8 @@ async def evaluate(db, *, now: datetime | None = None) -> dict[str, Any]:
     from sqlalchemy import text
 
     now = now or datetime.now(UTC)
-    summary: dict[str, Any] = {"candidates": 0, "applied": 0, "blocked": 0, "actions": []}
+    summary: dict[str, Any] = {"candidates": 0, "applied": 0, "closed": 0,
+                               "blocked": 0, "actions": []}
 
     candidates: list[dict[str, Any]] = []
     try:
@@ -468,13 +469,17 @@ async def evaluate(db, *, now: datetime | None = None) -> dict[str, Any]:
             })
 
         # ── (2) 피처 토글: quality_drop/error_cluster 가 critical 이면 보조기능 비활성 제안 ──
+        # ★`id` 를 함께 조회한다. 종전엔 `SELECT metrics_json` 뿐이라 **닫을 대상을
+        #   아예 모르는 상태**였다 — 후보를 만든 인사이트가 영원히 `open` 으로 남았다.
+        #   (`#886` 이 L0 에서 고친 것과 **같은 결함이 형제 파일에 남아 있었다.**)
         qrows = (await db.execute(text(
-            "SELECT metrics_json FROM platform_insights "
+            "SELECT id, metrics_json FROM platform_insights "
             "WHERE insight_type='quality_drop' AND severity IN ('warn','critical') "
             "  AND status='open' AND created_at >= :since LIMIT 50"
         ), {"since": now - timedelta(hours=6)})).fetchall()
         for r in qrows:
-            m = r[0] if isinstance(r[0], dict) else {}
+            _ins_id = r[0]
+            m = r[1] if isinstance(r[1], dict) else {}
             ftotal = int(m.get("feedback_total") or 0)
             vtotal = int(m.get("verify_total") or 0)
             down_pct = float(m.get("down_pct") or 0.0)
@@ -485,6 +490,8 @@ async def evaluate(db, *, now: datetime | None = None) -> dict[str, Any]:
                     "feature": "llm_narrative", "enabled": False,
                     "error_pct": down_pct,
                     "trigger_key": "feature:llm_narrative",
+                    # ★출처 인사이트를 들고 간다 — 이게 없으면 아래 단일 길목에서 닫을 수 없다.
+                    "insight_id": str(_ins_id),
                 })
 
         # ── (3) 프롬프트 A/B 자동채택: 후보(수동 PROMPT_AB_CANDIDATES ∪ read-back
@@ -555,6 +562,22 @@ async def evaluate(db, *, now: datetime | None = None) -> dict[str, Any]:
 
         if res.get("applied"):
             summary["applied"] += 1
+            # ★출처 인사이트를 **여기 한 번만** 닫는다.
+            #   위 디스패치는 분기가 셋이라 각 분기에 손으로 붙이면 반드시 하나를 빠뜨리고,
+            #   그 하나가 곧 **안 닫히는 경로**가 된다(`#886` 이 L0 에서 같은 이유로
+            #   호출부 단일 길목을 골랐다 — 그 판단을 그대로 따른다).
+            #   ★공용 헬퍼를 **재사용**한다. 복제하면 한쪽만 고쳐지는 형제가 또 생긴다.
+            #   `mark_insight_acted` 의 계약은 `params.insight_id` + `executed` 라
+            #   L1 의 평평한 후보/`applied` 를 그 모양으로 **번역**해 넘긴다.
+            #   `insight_id` 가 없는 종류(threshold_autotune·prompt_ab_adopt)는
+            #   헬퍼가 **0 을 돌려주고 아무것도 안 한다** — 그 둘은 인사이트 1행에
+            #   대응하는 조치가 아니라 연속 보정이라 닫을 대상이 없는 게 맞다.
+            closed = await healing_rules.mark_insight_acted(
+                db,
+                {"params": {"insight_id": cand.get("insight_id")}},
+                {"executed": True},
+            )
+            summary["closed"] = summary.get("closed", 0) + closed
         summary["actions"].append({"kind": kind, "trigger_key": tkey,
                                    "applied": bool(res.get("applied")),
                                    "action_id": res.get("action_id"),
