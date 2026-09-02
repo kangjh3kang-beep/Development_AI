@@ -442,7 +442,98 @@ async def flush_batch(db, limit: int = _FLUSH_LIMIT) -> int:
 _FLUSH_TASK_CTX_KEY = "growth_flush_task"
 
 
-def start_flush_loop(ctx: MutableMapping[str, Any], session_factory: Any) -> bool:
+#: 수집 상태를 **프로세스 경계 밖으로** 내보내는 설정 키. `scope` 로 프로세스를 가른다.
+#:
+#: ★**새 표면을 만들지 않는다** — `growth_last_run.*` 워터마크가 이미 쓰는 통로
+#:   (`schema_guard.set_setting` → `platform_settings` → `/growth/heal-log` 의 `active_flags`)를
+#:   그대로 탄다. 읽기 경로는 **한 줄도 안 바꾼다**.
+CAPTURE_STATUS_SETTING_KEY = "growth_capture"
+
+#: 발행 행의 수명. **TTL 이 이 설계의 세 번째 모집단을 만든다.**
+#:
+#: ★TTL 이 없으면 행이 **한 번 쓰이면 영영 안 사라진다**(`clear_setting` 은 치유 롤백 전용).
+#:   그러면 「워커가 죽었다」가 **「행 부재」로 나타나지 못하고** 낡은 값으로 남아
+#:   **「정상 유휴」와 구별되지 않는다** — 이 함수가 막으려던 바로 그 상태다.
+#: ★그리고 `/heal-log` 는 `ttl_expires_at IS NULL OR > now()` 로 거르므로,
+#:   TTL 이 지나면 행이 **스스로 목록에서 빠진다**(청소 코드가 필요 없다).
+#: ★주기의 **3배** — 한두 번 걸러도 안 사라지고, 정말 멈추면 곧 사라진다.
+_PUBLISH_TTL_S = 15
+
+#: 발행 한 번에 허용하는 시간. ★**관측이 배수의 임계경로에 있으면 안 된다** —
+#: 넘으면 그 주기 관측을 버리고 배수를 계속한다(관측 없음 < 배수 지연).
+_PUBLISH_TIMEOUT_S = 2.0
+
+
+async def publish_capture_status(session_factory: Any, *, scope: str) -> bool:
+    """이 프로세스의 `capture_status()` 를 `platform_settings` 에 발행한다. 성공 여부 반환.
+
+    ## ★왜 필요한가 — 큐가 **프로세스 로컬**이라 밖에서 안 보인다
+
+    `_QUEUE` 는 모듈 전역 deque 다. 그래서 arq 워커가 담은 이벤트의 깊이를 **API 프로세스가
+    볼 방법이 없었다** — `/growth/effectors` 의 `capture` 는 **API 자기 큐**만 말한다.
+    그 결과 *"워커가 안 비운다"* 와 *"워커가 비울 게 없다"* 가 **같은 관측(0)** 으로 보였다.
+
+    ## ★세 모집단으로 가른다 (둘로 만들면 표면이 죽은 것이 「정상 유휴」로 읽힌다)
+
+        깊이 0 · `at` 갱신됨   → 비울 게 없다(정상 유휴)
+        깊이 N · `at` 정지     → 안 비운다(고장)
+        ★**행 자체가 없음**    → 관측이 안 온다(워커·발행 부재)
+
+    ★**시각을 `payload` 안에 넣는 이유**: `/heal-log` 의 `active_flags` 는
+      `key·scope·value·ttl_expires_at·updated_by` 만 내보내고 **`updated_at` 은 안 준다**(실측).
+      `updated_at` 에 기대면 **밖에서 세 번째 칸을 못 가른다.**
+
+    ## ★★설계 제약 — **측정 대상으로 측정하지 않는다**
+
+    큐 깊이를 `record_event` 로 보고하면 **자기가 재려는 큐에 자기 관측을 넣는 순환**이 된다:
+      ①유실이 나면 **관측치가 먼저 사라지고**(가장 필요한 순간에 없다)
+      ②유휴일 때 *"비었다"* 와 *"관측이 안 왔다"* 를 **가르지 못한다**(판별력 자체의 문제).
+    → 그래서 **별도 통로**(`platform_settings`)로 낸다. 이 함수는 `record_event` 를 부르지 않는다.
+
+    ★발행 실패는 **삼킨다** — 관측이 배수를 죽이면 안 된다.
+    """
+    try:
+        from datetime import UTC, datetime, timedelta
+
+        from app.services.growth import schema_guard, stale_build_guard
+
+        raw = dict(capture_status())
+        # ★★**`at` 을 맨 앞에 둔다**(독립 적대 렌즈 실측 2026-09-02).
+        #   화면의 `summarizeParams` 는 **삽입 순서로 앞 4키만** 그린다(`parts.length >= 4` break).
+        #   종전엔 `at` 이 **16키 중 15번째**라 **화면에 아예 안 나왔고**, 보이는 4개 중 3개는
+        #   `max_queue`·`flush_limit`·`max_sustained_per_sec` = **정적 상수**였다.
+        #   그래서 「정상 유휴」와 「워커 사망」이 **화면에서 바이트 동일**했다 —
+        #   이 함수가 존재하는 이유가 그 둘을 가르는 것인데.
+        #   ★**범위 밖으로 뺀 프론트가 바로 그 전제가 검증되는 유일한 곳**이었다.
+        payload = {
+            "at": datetime.now(UTC).isoformat(),
+            "queue_depth": raw.get("queue_depth"),
+            "lost_total": raw.get("lost_total"),
+            # ★어느 빌드가 썼는지 — 형제 `analyzer.py` 가 같은 이유로 이미 싣는다.
+            #   낡은 스택이 같은 DB 를 공유하면 `(key, scope)` 가 같아 **같은 행을 덮어쓴다**
+            #   (`stale_build_guard` 가 실측 18일 사고로 기록해 둔 그 형태).
+            #   빌드 id 가 없으면 **누가 쓴 값인지 구별할 수 없다.**
+            "producer_build_id": stale_build_guard.running_build_id(),
+            **raw,
+        }
+        # ★내부 `scope`(계수기 범위)와 바깥 `scope`(프로세스)가 **같은 이름으로 충돌**했다.
+        #   같은 화면에 나란히 뜨는데 뜻이 다르다 → 안쪽 이름을 바꾼다.
+        if "scope" in payload:
+            payload["counter_scope"] = payload.pop("scope")
+
+        async with session_factory() as db:
+            return await schema_guard.set_setting(
+                db, CAPTURE_STATUS_SETTING_KEY, payload,
+                scope=scope, updated_by=f"growth-capture:{scope}",
+                ttl_expires_at=datetime.now(UTC) + timedelta(seconds=_PUBLISH_TTL_S),
+            )
+    except Exception as e:  # noqa: BLE001 — 관측 실패가 배수를 막지 않는다.
+        logger.warning("growth capture 상태 발행 실패(%s): %s", scope, str(e)[:160])
+        return False
+
+
+def start_flush_loop(ctx: MutableMapping[str, Any], session_factory: Any,
+                     *, publish_scope: str = "api") -> bool:
     """배수 루프를 띄워 `ctx` 에 담는다. 성공 여부 반환.
 
     ★워커(arq)는 `on_startup` 에서 이것을 부른다. **`arq` 없이 테스트 가능**하도록
@@ -461,6 +552,23 @@ def start_flush_loop(ctx: MutableMapping[str, Any], session_factory: Any) -> boo
                     await drain_until_empty(session_factory)
                 except Exception as e:  # noqa: BLE001 — 배수 실패가 루프를 죽이면 안 된다.
                     logger.warning("growth flush 루프 오류: %s", str(e)[:160])
+                # ★**배수 뒤에** 발행한다 — 방금 비운 결과가 실려야 「비울 게 없다」가 참이 된다.
+                #   배수가 실패해도 발행은 한다: 그때가 **깊이 N + 시각 갱신**(=쌓이는 중)이라는
+                #   가장 중요한 신호가 나오는 순간이다.
+                #
+                # ★★**관측이 배수를 늦추면 안 된다**(독립 적대 렌즈 실측 2026-09-02).
+                #   발행이 이 루프 **안**에 있으므로 느려지면 다음 배수가 그만큼 밀린다 —
+                #   실측: 발행 3초 지연 시 같은 창에서 **배수 5회 → 2회**.
+                #   그러면 보고된 깊이가 **보고 행위 자체가 만든 것**이 되어
+                #   「깊이 N = 쌓이는 중」이 **자기가 만든 거짓**이 된다.
+                #   → 상한을 건다. 넘으면 그 주기의 관측을 포기하고 **배수를 계속한다.**
+                try:
+                    await asyncio.wait_for(
+                        publish_capture_status(session_factory, scope=publish_scope),
+                        timeout=_PUBLISH_TIMEOUT_S,
+                    )
+                except Exception as e:  # noqa: BLE001 — 관측이 배수를 막지 않는다(TimeoutError 포함).
+                    logger.warning("growth capture 발행 지연·실패: %s", str(e)[:120])
 
         ctx[_FLUSH_TASK_CTX_KEY] = asyncio.create_task(_loop())
         return True
