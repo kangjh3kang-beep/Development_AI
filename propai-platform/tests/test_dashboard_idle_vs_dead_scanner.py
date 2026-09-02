@@ -100,6 +100,32 @@ def test_idle_is_not_reported_as_all_clear_either():
     assert "DEAD=0" in idle and "VIOL=1" not in idle
 
 
+def test_idle_does_not_fall_through_to_exit_zero():
+    """★★유휴가 `DEAD=0` 이면 **마지막 줄의 `exit 0`("모든 프로브 생존")로 떨어진다.**
+
+    첫 판이 정확히 그랬다 — 독립 리뷰(`development-ai-3c`)가 짚었다:
+    *"`exit 2` 를 안 내는 근거가 `exit 0` 을 내는 근거는 아니다."*
+
+    ★이 저장소가 `3` 을 `0` 에서 가른 이유(*"뭉치면 죽은 검사기가 초록으로 읽힌다"*)와
+      **같은 형태**이고, 나는 그 지적을 **다른 PR 에 하고 내 PR 에 넣었다**
+      (처방 범위 < 결함 범위). → 유휴는 `OBS=1` 로 **exit 4** 를 낸다.
+    """
+    src = _DASH.read_text(encoding="utf-8")
+    # ① 유휴 분기가 플래그를 세운다
+    idle_block = re.search(
+        'elif \\[ "\\$\\{ctrl:-0\\}" -eq 0 \\]; then(.*?)\\n  else\\n', src, re.DOTALL)
+    assert idle_block, "★유휴 분기를 못 찾았다 — 락이 낡았다"
+    assert "OBS=1" in idle_block.group(1),         "★유휴가 플래그를 안 세운다 → exit 0('모든 프로브 생존')로 떨어진다"
+    # ② 최종 판정이 그 플래그를 **exit 0 보다 먼저** 읽는다
+    tail = src[src.rindex('if [ "$DEAD"'):]
+    i_obs, i_zero = tail.find('"$OBS"'), tail.find('exit 0')
+    assert i_obs != -1, "★최종 판정이 OBS 를 안 읽는다(플래그가 장식이 된다)"
+    assert i_obs < i_zero, "★OBS 판정이 exit 0 뒤에 있다 — 도달 불가"
+    assert "exit 4" in tail, "★관측 이상 종료코드가 없다"
+    # ③ ★양성 대조군 — 기존 두 코드가 살아 있어야 한다(내가 갈아엎지 않았다)
+    assert "exit 3" in tail and "exit 2" in tail
+
+
 def test_idle_branch_does_not_invent_a_violation():
     """★`exit 2` 를 만들지 않는다 — `#868`(상시 빨강) 기각을 존중한다."""
     idle = _classify(alltime=2348, h24=0)
