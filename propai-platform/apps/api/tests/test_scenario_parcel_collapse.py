@@ -268,6 +268,25 @@ class Test형제미러패리티:
     def _names(ast, expr) -> set[str]:
         return {n.id for n in ast.walk(expr) if isinstance(n, ast.Name)}
 
+    def test_선별자가_결함이_지우는_필드를_표지로_쓰지_않는다(self) -> None:
+        """★이 파일이 겪은 사고 자체를 못 박는다.
+
+        종전 선별자는 표지가 `resolved_parcel_count` 였는데 **그 키가 빠진 것이 바로
+        `available_subset` 의 결함**이었다 — 즉 **결함 있는 dict 만 정확히 모집단에서 빠졌다.**
+
+        ★변이 «선별자를 옛 표지로 되돌리기» 는 **오늘은 생존한다** — 내가 그 표면에 필드를
+          넣어서 표지를 갖게 됐기 때문이다(도달 불가). 그래서 점수를 채우는 대신
+          **원리를 직접 단언**한다: 선별자는 **정직 키 중 어느 것도 표지로 쓰지 않는다.**
+          다음에 누가 표면을 하나 더 만들면서 정직 키를 빠뜨리면, 그때 이 단언이 값을 한다.
+        """
+        overlap = set(self._ROLE) & set(self._REQUIRED)
+        assert not overlap, (
+            f"선별자가 정직 키를 표지로 쓴다: {sorted(overlap)} — "
+            "그 키를 빠뜨린 표면(=결함)이 모집단에서 빠져 **결함만 감시를 피한다**"
+        )
+        # ★역할 표지는 **결함과 무관한 것**이어야 한다(면적·필지수는 site 의 정의다).
+        assert set(self._ROLE) == {"total_area_sqm", "parcel_count"}
+
     def test_site_표면을_실제로_찾았다(self) -> None:
         """★공허 진리 가드 — **3개 이상**이어야 한다(정상 ctx · 차단 ctx · 가용필지 subset)."""
         _ast, s = self._site_surfaces()
