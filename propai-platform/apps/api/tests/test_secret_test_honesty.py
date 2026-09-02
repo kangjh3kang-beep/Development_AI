@@ -203,65 +203,62 @@ def test_supported_key_does_not_take_the_unsupported_path(monkeypatch):
 
 
 def test_no_consumer_reads_the_moleg_key_from_settings_directly():
-    """★MOLEG 키를 **`settings` 계열에서 직접** 읽는 소비처가 없다.
+    """★MOLEG 키를 **설정 객체에서 직접** 읽는 지점이 **0개**다.
 
     시크릿 저장은 `os.environ` **만** 바꾸는데 `settings` 는 모듈 싱글턴(`@lru_cache`)이라
     **재동기화 경로가 0건**이다. 직접 읽으면 운영자가 화면에서 키를 바꿔도 **「저장됨」
     초록만 뜨고 아무것도 안 바뀐다** — **작동하지 않는 조작 수단**이다.
 
-    ## ★독립 제3 렌즈가 이 락의 두 구멍을 찾았다
+    ## ★판정 축이 **파일**이면 같은 파일의 형제 소비처가 무잠금이다 (제3 렌즈 M8)
 
-    · **범위가 좁았다** — `app/` 만 봤는데 `apps/api/` 에 **나란히 살아 있는 트리**가 있고
-      (`main.py` 가 `apps.api.routers` 를 **10건** 등록한다) 그 176 파일이 감시 밖이었다.
-      → `_API` 전체로 올린다(`tests/` 는 제외 — 픽스처가 일부러 옛 경로를 쓸 수 있다).
-    · **문자열 검사라 별칭 한 줄로 우회**됐다 — `get_settings()` 를 `cfg` 에 담아 읽으면
-      같은 결함인데 락은 초록이었다. → **`ast` 로 판정**한다(이 파일의 다른 락과 매체를 맞춘다).
+    첫 판은 *"이 파일이 `moleg_oc_key` 를 쓰면 정상"* 으로 **파일 단위 면제**를 뒀다.
+    그런데 `ordinance_service.py` 는 소비처가 **둘**(`_fetch_from_moleg_api` ·
+    `_fetch_ordinance_xml`)이라 **하나만 되돌려도** 다른 하나가 헬퍼를 쓰므로
+    **파일 전체가 면제**됐다 — 변이 M8 이 **SURVIVED** 했다.
 
-    ★**포지티브 판정**으로 뒤집는다 — *"`settings` 라는 이름을 쓰는가"* 가 아니라
-      *"`MOLEG_API_KEY` 를 읽으면서 `moleg_oc_key` 를 안 쓰는가"* 를 본다. 별칭에 강하다.
+    ★그러면 운영자가 키를 교체할 때 **한쪽 경로만 새 키를 쓴다**(HIGH-2 결함의 절반 부활).
+    ★★이건 이 PR 이 스스로 인용한 `#938` 의 교훈(*"축이 한 층 위면 그 아래는 무잠금"*)의
+      **재발**이다 — 봉합이 같은 형태의 새 구멍을 만들었다.
+
+    → **면제를 없앤다.** 읽기 지점 자체가 0개여야 한다(헬퍼 정의 파일은 basename 예외).
     """
     import ast as _ast
 
     offenders: list[str] = []
-    scanned = 0
-    for f in _API.rglob("*.py"):
-        rel = f.relative_to(_API)
-        if rel.parts[0] in {"tests", "__pycache__"} or f.name in {
-            "config.py", "moleg_drf_envelope.py", "secret_store.py"
-        }:
+    mentioned = 0
+    roots = [_API, _API.parents[1] / "scripts"]  # ★저장소 루트 scripts/ 도 범위에 넣는다
+    for root in roots:
+        if not root.exists():
             continue
-        src = f.read_text(encoding="utf-8")
-        if "MOLEG_API_KEY" not in src:
-            continue
-        scanned += 1
-        tree = _ast.parse(src)
-        # 문자열/속성 어디로 읽든 잡되, 같은 파일이 `moleg_oc_key` 를 쓰면 정상으로 본다.
-        # ★**설정 객체에서 읽는 것만** 위반이다. 키 **이름 문자열**(예: 내보낼 시크릿
-        #   목록의 원소)이나 `os.environ.get("MOLEG_API_KEY")` 는 정상이다 —
-        #   첫 판이 바 문자열까지 잡아 `export_scoped_secrets.py`(이름 목록)를
-        #   **위양성으로 신고**했다. **가드의 위양성도 결함이다**(§A-6).
-        reads = any(
-            (isinstance(n, _ast.Attribute) and n.attr == "MOLEG_API_KEY")
-            or (
-                isinstance(n, _ast.Call)
-                and isinstance(n.func, _ast.Name)
-                and n.func.id == "getattr"
-                and len(n.args) >= 2
-                and isinstance(n.args[1], _ast.Constant)
-                and n.args[1].value == "MOLEG_API_KEY"
-            )
-            for n in _ast.walk(tree)
-        )
-        uses_helper = any(
-            isinstance(n, _ast.Name) and n.id == "moleg_oc_key" for n in _ast.walk(tree)
-        )
-        if reads and not uses_helper:
-            offenders.append(str(rel))
+        for f in root.rglob("*.py"):
+            rel = f.relative_to(root)
+            if rel.parts[0] in {"tests", "__pycache__"} or f.name in {
+                "config.py", "moleg_drf_envelope.py", "secret_store.py"
+            }:
+                continue
+            src = f.read_text(encoding="utf-8")
+            if "MOLEG_API_KEY" not in src:
+                continue
+            mentioned += 1
+            for n in _ast.walk(_ast.parse(src)):
+                # ★**설정 객체 읽기만** 위반이다. 키 **이름 문자열**(내보낼 목록의 원소)이나
+                #   `os.environ.get("MOLEG_API_KEY")` 는 정상 — 첫 판이 바 문자열까지 잡아
+                #   `export_scoped_secrets.py` 를 **위양성으로 신고**했다(§A-6).
+                bad = (isinstance(n, _ast.Attribute) and n.attr == "MOLEG_API_KEY") or (
+                    isinstance(n, _ast.Call)
+                    and isinstance(n.func, _ast.Name)
+                    and n.func.id == "getattr"
+                    and len(n.args) >= 2
+                    and isinstance(n.args[1], _ast.Constant)
+                    and n.args[1].value == "MOLEG_API_KEY"
+                )
+                if bad:
+                    offenders.append(f"{f.name}:{n.lineno}")
     assert not offenders, (
-        f"MOLEG 키를 읽으면서 `moleg_oc_key()` 를 안 쓴다"
-        f"(관리 화면 저장이 무효가 된다): {offenders}")
-    # ★음성 대조군 — 조회기가 살아 있는가(대상이 0개면 위 단언이 공허하게 참이다).
-    assert scanned >= 3, f"MOLEG 를 언급하는 파일이 {scanned}개 — 조회기 사망 의심"
+        f"MOLEG 키를 설정 객체에서 직접 읽는 지점(관리 화면 저장이 무효가 된다): {offenders} — "
+        f"`moleg_oc_key()` 를 쓰라")
+    # ★음성 대조군 — 대상이 0개면 위 단언이 공허하게 참이다.
+    assert mentioned >= 3, f"MOLEG 를 언급하는 파일이 {mentioned}개 — 조회기 사망 의심"
 
 
 def test_runtime_key_change_takes_effect_without_restart(monkeypatch):

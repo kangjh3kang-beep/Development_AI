@@ -355,10 +355,10 @@ def _health_to_test_result(h: dict, what: str) -> dict:
 def _unsupported(name: str) -> dict[str, Any]:
     """전용 테스트가 없는 키의 응답 — **보류**이지 성공이 아니다.
 
-    ★`try` **밖**에 둔다. 안에 두면 `withheld()` 가 계약 위반(닫힌 어휘 밖 코드·빈 문구)에
-      던지는 `ValueError` 를 아래 광범위 `except` 가 **조용히 강등**해
-      `{"ok": False, "message": "테스트 실패: …"}` 로 나간다 — 시끄럽게 죽어야 할 것이
-      조용해진다(독립 리뷰 LOW-1).
+    ★**호출 지점**은 `try` **앞**의 게이트다(이 함수 정의 위치가 아니다). 종전 독스트링이
+      그 구분을 흐려 *"`try` 밖에 둔다"* 를 **정의 위치**로 오독하게 했고, 실제로는 호출이
+      `try` 안이라 `ValueError` 가 **조용히 강등**됐다(독립 제3 렌즈가 실행으로 확증).
+      정확한 설명은 **게이트 바로 위 주석**에 있다 — 여기 중복해 적지 않는다.
     ★문구 키를 `message` 로 두는 것은 **기존 응답 스키마를 지키기 위해서**다
       (`withheld` 기본은 `ok_basis`). 그래서 검증도 `validate_withheld_pair(..., text_field="message")`
       로 해야 하며, 락이 그것을 단언한다.
