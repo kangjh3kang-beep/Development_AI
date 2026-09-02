@@ -153,6 +153,21 @@ CATALOG: list[dict[str, Any]] = [
      "desc": "Supabase 대시보드 > Project Settings > API > 'Secret key'(=구 service_role) 값. 서버 업로드 전용·비공개. (구 이름 SUPABASE_SERVICE_ROLE_KEY 로 등록해도 동작)"},
     {"name": "PUBLIC_API_BASE", "label": "공개 API 베이스 URL(프록시 절대화)", "group": "스토리지·기타",
      "secret": False, "kind": "text"},
+
+    # ── 결제(PG) ────────────────────────────────────────────────────
+    # ★두 키는 **반드시 같은 환경의 짝**이어야 한다(둘 다 테스트, 또는 둘 다 라이브).
+    #   섞으면 토스가 FORBIDDEN_REQUEST / UNAUTHORIZED_KEY 로 거절한다 — 문서 명시.
+    #   `toss_payments.key_pairing_ok()` 가 호출 전에 그것을 잡고, 관리자 화면이 표시한다.
+    # ★클라이언트 키는 **공개키**다(브라우저가 쓴다) → secret=False. 비밀키는 서버 전용.
+    {"name": "TOSS_CLIENT_KEY", "label": "토스페이먼츠 클라이언트 키(공개)", "group": "결제(PG)",
+     "secret": False, "kind": "text", "guide_url": "https://developers.tosspayments.com/my/api-keys",
+     "desc": "개발자센터 > API 키 > '주문서형, 결제창형 연동 키'의 **클라이언트 키**. "
+             "브라우저가 결제창을 띄우는 데 쓰므로 공개돼도 안전합니다. "
+             "test_ 로 시작하면 테스트 키(실제 결제가 일어나지 않습니다)."},
+    {"name": "TOSS_SECRET_KEY", "label": "토스페이먼츠 시크릿 키(서버 전용·비공개)", "group": "결제(PG)",
+     "secret": True, "kind": "text", "guide_url": "https://developers.tosspayments.com/my/api-keys",
+     "desc": "같은 화면의 **시크릿 키**. 결제 승인·취소에 쓰이며 절대 외부에 노출하면 안 됩니다. "
+             "★클라이언트 키와 같은 환경(테스트/라이브)의 짝이어야 합니다."},
 ]
 
 _CATALOG_BY_NAME = {c["name"]: c for c in CATALOG}
