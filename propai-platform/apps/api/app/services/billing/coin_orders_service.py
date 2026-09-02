@@ -259,6 +259,19 @@ async def get_order_owner(db: AsyncSession, order_id: str) -> str | None:
     return str(r[0]) if r else None
 
 
+async def get_order_no(db: AsyncSession, order_id: str) -> str | None:
+    """주문번호 조회 — 사람이 읽는 번호(`CO…`). 부재 시 None.
+
+    ★uuid 는 토스에 보내는 값이고, `order_no` 는 **사람이 읽고 문의에 인용하는 값**이다.
+      둘을 뭉치지 않는다(형제 `get_order_owner` 와 같은 모양으로 둔다).
+    """
+    await ensure_schema(db)
+    r = (await db.execute(text(
+        "SELECT order_no FROM coin_orders WHERE id=:id"
+    ), {"id": order_id})).first()
+    return str(r[0]) if r else None
+
+
 # 전자상거래법 시행령 §6 대금결제·계약 기록 보존기간(5년) — 경과 후 구매자 PII 파기.
 LEGAL_RETENTION_DAYS = 5 * 365 + 1  # 5년(윤년 여유 1일)
 
@@ -287,12 +300,28 @@ async def purge_expired_buyer_pii(db: AsyncSession | None = None) -> dict[str, A
         res_paid = await db.execute(text(
             "UPDATE coin_orders SET buyer_name=NULL, buyer_email=NULL "
             "WHERE status='paid' AND (buyer_name IS NOT NULL OR buyer_email IS NOT NULL) "
-            "AND COALESCE(paid_at, created_at) < now() - make_interval(days => :d)"
+            # ★`make_interval(days => 1826)` 은 최악 케이스에서 **만 5년보다 하루 짧다**
+            # (5년 구간이 윤일을 2개 포함할 수 있다 — 예: 2024-02-01→2029-02-01 은 1827일).
+            # 달력 간격으로 재면 윤년과 무관하게 정확하다.
+            "AND COALESCE(paid_at, created_at) < now() - interval \'5 years\'"
         ), {"d": int(LEGAL_RETENTION_DAYS)})
         # (B) 미결제 + 탈퇴회원 소유 → 보존근거 없음, 즉시 파기(익명화 정합)
+        #
+        # ★★2026-08-27 — **부정형(`status <> 'paid'`)을 버렸다.**
+        #   그 조건은 "현재 paid 가 아닌 것"을 뜻하는데, **환불된 주문**(`refunded`)도 거기 들어간다.
+        #   그런데 환불 기록은 전자상거래법 시행령 §6① *"계약 또는 **청약철회 등**에 관한 기록"*
+        #   = **5년 보존 대상**이다. 즉 부정형을 그대로 두고 환불 상태를 추가하면
+        #   **§6 이 5년 보존을 요구하는 바로 그 기록을 즉시 지우게 된다.**
+        #   ★이 결함은 상태값을 추가하는 커밋이 **스스로 만든다** — 그래서 같은 커밋에서 막는다.
+        #
+        # ★진짜 잠금은 **`paid_at IS NULL`** 이다: 상태 이름을 뭐라 짓든
+        #   **한 번이라도 결제가 성립한 주문은 구조적으로 이 절에 들어올 수 없다.**
+        #   새 상태를 추가하는 다음 사람이 이 규율을 몰라도 기계가 막는다.
         res_unpaid = await db.execute(text(
             "UPDATE coin_orders SET buyer_name=NULL, buyer_email=NULL "
-            "WHERE status <> 'paid' AND (buyer_name IS NOT NULL OR buyer_email IS NOT NULL) "
+            "WHERE status IN ('pending','canceled','failed') "
+            "AND paid_at IS NULL "
+            "AND (buyer_name IS NOT NULL OR buyer_email IS NOT NULL) "
             "AND user_id IN (SELECT id::text FROM public.users WHERE deleted_at IS NOT NULL)"
         ))
         await db.commit()
