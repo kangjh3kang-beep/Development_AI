@@ -145,7 +145,7 @@ RC_UNTRUSTED=0
 RC_WHY=""
 _NL='
 '
-_wrapper=""; _script=""; _scriptfile=0; _longopt=0
+_wrapper=""; _script=""; _scriptfile=0
 _saw_prefix=0; _rc_altering=0; _state=scan; _skipnext=0; _had_pipefail=0
 for _a in "$@"; do
   if [ "$_skipnext" -eq 1 ]; then
@@ -172,7 +172,7 @@ for _a in "$@"; do
       case "$_a" in
         --)     _state=wantscript; continue ;;
         -o|+o)  _skipnext=1; continue ;;
-        --*)    _longopt=1; break ;;
+        --*)    continue ;;          # ★`-*c*` 보다 **먼저** 봐야 한다(--norc/--rcfile 이 c 를 품는다)
         -*c*)   _state=wantscript; continue ;;
         -*)     continue ;;
         *)      _scriptfile=1; break ;;
@@ -191,9 +191,7 @@ if [ "$_rc_altering" -eq 1 ]; then
   RC_WHY="rc 를 바꿀 수 있는 접두 래퍼(timeout 등)를 거친다 — 시간초과 rc(124)가 **거짓 CAUGHT** 가 된다"
 elif [ -n "$_wrapper" ] && [ "$_state" != done ]; then
   RC_UNTRUSTED=1
-  if [ "$_longopt" -eq 1 ]; then
-    RC_WHY="셸 래퍼에 롱옵션이 있어 '-c' 스크립트의 위치를 추측할 수 없다(--norc/--rcfile 등) — 판정하지 않는다"
-  elif [ "$_scriptfile" -eq 1 ]; then
+  if [ "$_scriptfile" -eq 1 ]; then
     RC_WHY="셸 래퍼가 **스크립트 파일**을 받는다 — 내용을 볼 수 없어 rc 가 테스트의 것인지 판정하지 않는다"
   else
     RC_WHY="셸 래퍼인데 '-c' 스크립트를 특정하지 못했다 — 무엇이 실행되는지 모르므로 판정하지 않는다"

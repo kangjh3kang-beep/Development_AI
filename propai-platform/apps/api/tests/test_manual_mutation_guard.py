@@ -339,6 +339,9 @@ _정당_형태 = [
     # ★`-o pipefail` 은 **명령줄**로 켜는 형태다(스크립트 접두가 아니다).
     ("-o pipefail 명령줄", ["bash", "-o", "pipefail", "-c",
                             "grep -q alpha target.txt | cat"]),
+    # ★C1 의 짝 — 롱옵션 자체는 rc 를 바꾸지 않는다. 막으면 **위양성**이다.
+    #   C1 을 고친 것은 `--*` 를 `-*c*` **앞에서** 보는 **순서**이지 차단이 아니었다.
+    ("--norc + 단일 명령", ["bash", "--norc", "-c", "grep -q alpha target.txt"]),
 ]
 
 
