@@ -16,6 +16,7 @@ from apps.api.app.services.land_intelligence.land_info_service import LandInfoSe
 from apps.api.app.services.zoning.auto_zoning_service import AutoZoningService
 from apps.api.app.utils.pnu import (
     address_resolution,
+    is_valid_pnu,
     jibun_from_pnu,
     parcel_display_address,
     pick_representative_parcel,
@@ -708,11 +709,11 @@ async def land_share(req: LandShareRequest):
     svc = LandShareService()
     pnu = (req.pnu or "").strip()
     addr = (req.address or "").strip()
-    if not (pnu and len(pnu) >= 19) and not addr:
+    if not is_valid_pnu(pnu) and not addr:
         return {"is_aggregate": False, "reason": "pnu(19자리) 또는 address가 필요합니다."}
     # 예외를 raw 500으로 흘리지 않고 무목업 정직 분기로 반환(가짜 생성 금지).
     try:
-        if pnu and len(pnu) >= 19:
+        if is_valid_pnu(pnu):
             return await svc.analyze_by_pnu(pnu)
         return await svc.analyze_by_address(addr)
     except Exception as e:  # noqa: BLE001
