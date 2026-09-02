@@ -16,6 +16,7 @@
  */
 
 import { Component, type ErrorInfo, type ReactNode } from "react";
+import { reportBoundaryError } from "@/lib/growth/report-boundary-error";
 
 interface HubErrorBoundaryProps {
   children: ReactNode;
@@ -52,6 +53,8 @@ export class HubErrorBoundary extends Component<HubErrorBoundaryProps, HubErrorB
       error?.message,
       errorInfo?.componentStack,
     );
+    // ★console.error 는 **브라우저에만** 남는다 — 성장루프는 한 건도 못 본다.
+    reportBoundaryError("projects-hub", error);
     this.setState((prev) => ({ errorCount: prev.errorCount + 1 }));
     // ★1회 자동복구: 첫 오류면 짧은 지연(hydration/바인딩 경합 진정) 뒤 자식을 자동 재마운트.
     //   '일시' 오류는 사용자 클릭 없이 자가치유하고, 재차 터지면 errorCount≥2로 영구 차단(폭주 방지).

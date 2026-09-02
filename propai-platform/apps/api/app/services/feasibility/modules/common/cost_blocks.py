@@ -60,6 +60,11 @@ def compute_construction_cost(inp: ModuleInput) -> dict[str, Any]:
     return calculate_total_construction_cost(
         total_gfa_sqm=inp.total_gfa_sqm,
         building_type=inp.building_type,
+        # ★인입 분담금(구 B05~B07)은 **세대수 기반**이다. 안 넘기면 조용히 0이 되고,
+        #   같은 커밋이 부담금에서는 빼면서 공사비에는 안 더해 **총사업비가 새어 나간다**
+        #   (독립 리뷰 실측: 15개 개발유형에서 -55,642,000). 같은 파일 `compute_taxes()` 는
+        #   이미 `total_households` 를 넘기고 있었다 — **한쪽만 넘기면 축이 갈린다.**
+        total_households=inp.total_households,
         unit_cost_per_sqm=inp.params.get("unit_cost_per_sqm"),
         cost_index_factor=inp.params.get("cost_index_factor", 1.0),
         floor_count_above=(int(inp.floors) if inp.floors else 0) or _param_int(inp, "floor_count_above") or None,

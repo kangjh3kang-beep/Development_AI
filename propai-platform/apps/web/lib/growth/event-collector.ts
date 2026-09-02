@@ -74,6 +74,24 @@ const FLUSH_INTERVAL_MS = 5_000; // 5초마다 자동 flush
 const FLUSH_THRESHOLD = 20; // 또는 20건 쌓이면 즉시 flush
 const MAX_BATCH = 100; // 백엔드 _MAX_BATCH 와 동일(1회 전송 상한)
 const RING_CAPACITY = 200; // 링버퍼 용량(폭주 시 오래된 것 폐기, 메모리 보호)
+/**
+ * ★**1회 전송 본문의 바이트 상한.**
+ *
+ * `navigator.sendBeacon` 과 `fetch(keepalive:true)` 는 **같은 64KiB 예산**을 공유한다
+ * (둘 다 Fetch 표준의 keepalive 요청 본문 한도를 쓴다). 그래서 본문이 그 한도를 넘으면
+ * **1차와 2차가 같은 이유로 실패**하고, 종전 구현은 그것을 `.catch(() => {})` 로 삼킨 뒤
+ * 이미 `splice()` 로 링에서 빼낸 배치를 되돌리지 않아 **조용한 전손**이 됐다.
+ *
+ * ★**이 값이 동시성을 보장하지는 않는다**(독립 리뷰 지적 — 종전 주석은 그렇게 읽혔다).
+ * keepalive 예산은 **출처당·동시 in-flight 합산**이라, `visibilitychange` 와 `pagehide` 가
+ * 각각 배치를 꺼내면 56,000 × 2 > 65,536 으로 **둘 다 실패할 수 있다.**
+ * 그 경우의 안전은 이 숫자가 아니라 **실패 시 링으로 되돌리는 것**(`restoreUnsent`)이 준다 —
+ * 브라우저가 `sendBeacon=false` 나 fetch 거부로 **알려 주고**, 우리는 다음 틱에 다시 보낸다.
+ * 즉 이 상수는 **처리량 최적화**이고, **무손실은 복원 경로가 보장한다.**
+ */
+const MAX_BODY_BYTES = 56_000;
+/** 이벤트 하나가 단독으로도 예산을 넘을 때 문자열 필드를 줄이는 상한(형제 `stack` 과 같은 축). */
+export const MAX_FIELD_CHARS = 2_000;
 const SESSION_KEY = "propai_growth_session"; // sessionStorage 세션 UUID 키
 
 // ── 샘플링 비율(설계서: page_view·web_vital 15%, js_error·api_error 100%) ──
@@ -86,7 +104,24 @@ const SAMPLE_RATES: Partial<Record<GrowthEventType, number>> = {
 };
 
 // ── PII 1차 마스킹 정규식 ────────────────────────────────────────────
-const EMAIL_RE = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
+/**
+ * ★수량자에 **상한이 있어야 한다** — 없으면 2차 백트래킹으로 메인 스레드가 멈춘다.
+ *
+ * 종전 `[a-zA-Z0-9._%+-]+@` 는 `@` 가 없는 긴 문자열에서 각 시작위치마다 끝까지 삼켰다가
+ * 되돌아온다. 실측(2026-08-28, node · 같은 입력 `"x".repeat(n)`):
+ *
+ *     n=4,000    무상한 15.1ms  →  상한 1.1ms
+ *     n=10,000   무상한 90.9ms  →  상한 3.1ms
+ *     n=50,000   무상한 **2,450.9ms**  →  상한 **14.6ms**   (168배)
+ *
+ * ★대조군: 같은 길이라도 `@` 가 있으면 무상한도 0.0ms 다 — 길이가 아니라 **백트래킹**이
+ *   원인이라는 증거다.
+ *
+ * 상한값은 RFC 5321 의 한도를 쓴다(local-part 64 · domain 255). 따라서 **RFC 유효한
+ * 이메일은 종전과 동일하게 전부 마스킹된다** — 탐지 동등성을 6개 입력으로 대조 확인했다.
+ * ★한계(정직하게): local-part 가 64자를 **넘는** RFC 무효 문자열은 앞부분 일부가 남는다.
+ */
+const EMAIL_RE = /[a-zA-Z0-9._%+-]{1,64}@[a-zA-Z0-9.-]{1,255}\.[a-zA-Z]{2,}/g;
 // 한국 휴대폰만 좁게 매칭(010/011/016/017/018/019 앵커, 총 10~11자리).
 // ⚠️ 이전 정규식은 일반 7자리+ 숫자열(가격·면적·좌표·PNU)까지 [phone]으로
 //    오마스킹했다. 휴대폰 앵커(01[016789])로 시작하는 번호만 마스킹한다.
@@ -97,6 +132,11 @@ const ADDRESS_RE = /[가-힣0-9]+(?:로|길)\s?\d+(?:-\d+)?(?:번길)?|\d+동\s?
 
 // ── 모듈 상태 ────────────────────────────────────────────────────────
 const ring: GrowthEvent[] = [];
+/**
+ * ★전송을 **포기해서 버린** 이벤트 수(누적). 전손은 정의상 DB 에 0행이라 사후 조회가
+ * 원리적으로 불가능하다 — 침묵을 관측 가능하게 만들려면 **보내는 쪽이 세는 수밖에 없다**.
+ */
+let droppedEvents = 0;
 let flushTimer: ReturnType<typeof setInterval> | null = null;
 let initialized = false;
 let cachedSessionId: string | null = null;
@@ -193,6 +233,28 @@ function maskString(value: string): string {
   }
 }
 
+/**
+ * ★**자르고 나서 마스킹한다** — 순서가 성능 계약이다.
+ *
+ * `maskString` 의 `EMAIL_RE`(`[a-zA-Z0-9._%+-]+@…`)는 `@` 가 없는 긴 문자열에서
+ * **2차 백트래킹**을 한다. 실측(2026-08-28, node):
+ *
+ *     1,000자 9.6ms · 2,000자 22.7ms · 4,000자 76.8ms · **10,000자 432ms**
+ *     (대조군: 같은 길이라도 `@` 가 있으면 0.0ms — 백트래킹이 원인이라는 증거)
+ *
+ * 종전은 `maskString(전체).slice(0, N)` 이라 **자르기 전에 전체를 스캔**했다. 즉 상한을
+ * 걸어도 비용은 안 줄었고, 무상한이던 `js_error.message` 는 **사용자 메인 스레드**를
+ * 초 단위로 멈출 수 있었다(10만자면 산술적으로 ~40초 규모).
+ *
+ * 자르는 창을 `cap` 보다 조금 넓게 잡아 마스킹한 뒤 최종 절단한다 — 경계에 걸친 이메일이
+ * **부분만 남아 노출되는 것**을 막기 위해서다(창 안에 온전히 들어오면 통째로 마스킹된다).
+ */
+const MASK_BOUNDARY_MARGIN = 256;
+
+function maskCapped(value: string, cap: number): string {
+  return maskString(value.slice(0, cap + MASK_BOUNDARY_MARGIN)).slice(0, cap);
+}
+
 /** payload(object) 의 문자열 값을 재귀 마스킹(얕은 깊이 제한으로 폭주 방지). */
 function maskPayload(input: unknown, depth = 0): unknown {
   if (input == null || depth > 4) return input;
@@ -247,7 +309,14 @@ export function trackEvent(type: GrowthEventType, props: TrackEventProps = {}): 
 
     ring.push(event);
     // 링버퍼 용량 초과 시 가장 오래된 항목 폐기(메모리 보호).
-    while (ring.length > RING_CAPACITY) ring.shift();
+    // ★이 축출도 **센다**. 종전에는 여기서 버린 것이 계수기에 안 잡혀, 계수기가
+    //   *"침묵을 관측 가능하게 한다"* 고 주장하면서 **가장 큰 침묵 채널**을 비워 뒀다
+    //   (독립 리뷰 실측: 1,000건 투입 시 수백 건 축출 · 폐기계수 0).
+    //   ★게다가 바이트 예산은 flush 당 배출량을 줄이므로 **이 채널의 압력을 올린다.**
+    while (ring.length > RING_CAPACITY) {
+      ring.shift();
+      droppedEvents += 1;
+    }
 
     if (ring.length >= FLUSH_THRESHOLD) {
       flush();
@@ -282,13 +351,134 @@ function endpointUrl(): string {
  * 링버퍼를 비우고 백엔드로 배치 전송.
  * sendBeacon 우선(언로드 안전), 실패 시 fetch keepalive 폴백. 전부 논블로킹.
  */
+/** 문자열의 UTF-8 바이트 길이. `TextEncoder` 가 없는 환경은 보수적으로 과대 추정한다. */
+function byteLength(text: string): number {
+  try {
+    if (typeof TextEncoder !== "undefined") return new TextEncoder().encode(text).length;
+  } catch {
+    /* noop */
+  }
+  // 폴백: 최악치(UTF-8 최대 4바이트/코드유닛)로 **과대** 추정한다.
+  // ★과소 추정은 절벽으로 되돌아가므로, 모르면 크게 잡는 쪽이 안전측이다.
+  return text.length * 4;
+}
+
+/**
+ * 이벤트 하나가 **단독으로도** 예산을 넘을 때 문자열 필드를 줄인다.
+ * 줄여도 못 담으면 `null` — 호출부가 **버린 것으로 세고**, 배치 전체를 잃지 않는다.
+ */
+function shrinkOversized(event: GrowthEvent): GrowthEvent | null {
+  try {
+    // ★**최상위만 훑으면 안 된다** — 형제 `maskPayload` 는 depth 4 까지 재귀하므로
+    //   중첩 페이로드는 이 저장소가 정상으로 취급하는 모양이다. 최상위만 줄이면
+    //   `{ detail: { blob: 60,000자 } }` 가 **줄이는 단계를 건너뛰고 곧장 폐기**된다
+    //   (독립 리뷰 실측: 전송 0건 · 폐기 1건).
+    const shrinkDeep = (v: unknown, depth: number): unknown => {
+      if (typeof v === "string") return v.length > MAX_FIELD_CHARS ? v.slice(0, MAX_FIELD_CHARS) : v;
+      if (depth >= 4 || v === null || typeof v !== "object") return v;
+      if (Array.isArray(v)) return v.map((x) => shrinkDeep(x, depth + 1));
+      const out: Record<string, unknown> = {};
+      for (const [k, x] of Object.entries(v as Record<string, unknown>)) out[k] = shrinkDeep(x, depth + 1);
+      return out;
+    };
+    const payload = event.payload;
+    // ★`payload` 가 없어도 **무조건 폐기하지 않는다** — 최상위 필드(`route` 등)만으로
+    //   예산을 넘는 경우가 있고, 그때도 폐기 전에 한 번은 재 봐야 한다.
+    const shrunk = payload ? (shrinkDeep(payload, 0) as Record<string, unknown>) : null;
+    const candidate: GrowthEvent = { ...event, payload: shrunk };
+    return byteLength(JSON.stringify({ events: [candidate] })) <= MAX_BODY_BYTES ? candidate : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 이벤트 하나의 전송 비용(바이트)을 **한 번만** 재고 기억한다.
+ *
+ * ★왜 캐시가 필요한가(2026-08-28 실측): 캐시가 없으면 `flush()` 가 돌 때마다 링에 남은
+ *   **모든** 이벤트를 다시 `JSON.stringify` + 인코딩한다. 링은 최대 200건이고 flush 는
+ *   5초마다 도는데, 대용량 오류(메시지 10,000자)가 쌓이면 그 재직렬화가 **사용자 메인
+ *   스레드**에서 반복된다. 전수 테스트에서 이 O(n²) 가 30초 타임아웃으로 드러났다
+ *   (단독 실행 417ms → 전수 실행 timeout). 이벤트는 만들어진 뒤 변경되지 않으므로
+ *   객체 동일성으로 캐시해도 안전하다.
+ */
+const costCache = new WeakMap<GrowthEvent, number>();
+
+function eventCost(event: GrowthEvent): number {
+  const cached = costCache.get(event);
+  if (cached !== undefined) return cached;
+  // 항목 하나의 증분(직렬화 + 구분자 1바이트).
+  let cost: number;
+  try {
+    cost = byteLength(JSON.stringify(event)) + 1;
+  } catch {
+    // 직렬화 불가는 배치 전체를 위협한다 — 예산을 넘는 값으로 쳐서 격리한다.
+    cost = MAX_BODY_BYTES + 1;
+  }
+  costCache.set(event, cost);
+  return cost;
+}
+
+/**
+ * 링 **앞쪽**에서 예산 안에 담기는 만큼만 꺼낸다(건수 상한 `MAX_BATCH` 도 함께 지킨다).
+ *
+ * ★종전은 건수만 보고 `splice(0, MAX_BATCH)` 했다 — 바이트를 아무도 안 봤다.
+ */
+function takeBatchWithinBudget(): GrowthEvent[] {
+  const batch: GrowthEvent[] = [];
+  // `{"events":[]}` 자체의 고정 비용.
+  let bytes = byteLength('{"events":[]}');
+
+  while (ring.length > 0 && batch.length < MAX_BATCH) {
+    const next = ring[0];
+    const cost = eventCost(next);
+
+    if (bytes + cost > MAX_BODY_BYTES) {
+      if (batch.length > 0) break; // 다음 배치로 넘긴다(전손 아님).
+      // 단독으로도 안 들어간다 — 줄여 보고, 그래도 안 되면 **그 한 건만** 버린다.
+      ring.shift();
+      const shrunk = shrinkOversized(next);
+      if (!shrunk) {
+        droppedEvents += 1;
+        continue;
+      }
+      batch.push(shrunk);
+      break;
+    }
+
+    ring.shift();
+    batch.push(next);
+    bytes += cost;
+  }
+  return batch;
+}
+
+/** 전송하지 못한 배치를 링 **앞**으로 되돌린다(순서 보존). 용량 초과분은 종전 정책대로 축출. */
+function restoreUnsent(batch: GrowthEvent[]): void {
+  try {
+    if (batch.length === 0) return;
+    ring.unshift(...batch);
+    while (ring.length > RING_CAPACITY) {
+      ring.shift();
+      droppedEvents += 1;
+    }
+  } catch {
+    /* noop */
+  }
+}
+
+/** 테스트·진단용: 전송을 포기해 버린 누적 건수. */
+export function getDroppedEventCount(): number {
+  return droppedEvents;
+}
+
 export function flush(): void {
   try {
     if (typeof window === "undefined") return;
     if (ring.length === 0) return;
 
-    // 1회 전송 상한(MAX_BATCH)만큼 꺼낸다.
-    const batch = ring.splice(0, MAX_BATCH);
+    // ★건수가 아니라 **바이트 예산** 안에서 꺼낸다.
+    const batch = takeBatchWithinBudget();
     if (batch.length === 0) return;
 
     const body = JSON.stringify({ events: batch });
@@ -314,10 +504,12 @@ export function flush(): void {
           body,
           keepalive: true,
         }).catch(() => {
-          /* 전송 실패는 무시(수집은 베스트에포트) */
+          // ★삼키지 않는다 — 링으로 되돌려 다음 틱에 재시도한다.
+          //   종전에는 여기서 사라졌고, 배치는 이미 링에서 빠진 뒤라 되돌릴 대상조차 없었다.
+          restoreUnsent(batch);
         });
       } catch {
-        /* noop */
+        restoreUnsent(batch);
       }
     }
   } catch {
@@ -364,11 +556,18 @@ function handleWindowError(event: ErrorEvent): void {
     trackEvent("js_error", {
       severity: "error",
       payload: {
-        message: maskString(String(event.message ?? "")),
-        filename: event.filename ?? null,
+        // ★상한이 **형제와 어긋나 있었다**: 같은 함수의 `stack` 은 2,000자, 형제 함수
+        //   `handleRejection` 의 `message` 는 1,000자인데 **이 줄만 무상한**이었다.
+        //   무상한 필드는 이벤트 하나로 전송 예산(`MAX_BODY_BYTES`)을 넘길 수 있고,
+        //   그때 종전 구현은 배치 전체를 조용히 잃었다.
+        message: maskCapped(String(event.message ?? ""), MAX_FIELD_CHARS),
+        // ★`filename` 은 **인라인 스크립트 오류에서 문서 URL 전체**가 된다(쿼리 포함).
+        //   이 앱은 지번을 쿼리에 싣는다(`registry-analysis?addr=${encodeURIComponent(jibun)}`)
+        //   — 형제 `message`·`stack` 은 전부 `maskString` 을 거치는데 **이 줄만 생것**이었다.
+        filename: event.filename ? maskCapped(String(event.filename), MAX_FIELD_CHARS) : null,
         lineno: event.lineno ?? null,
         colno: event.colno ?? null,
-        stack: event.error?.stack ? maskString(String(event.error.stack)).slice(0, 2000) : null,
+        stack: event.error?.stack ? maskCapped(String(event.error.stack), MAX_FIELD_CHARS) : null,
       },
     });
   } catch {
@@ -395,8 +594,8 @@ function handleRejection(event: PromiseRejectionEvent): void {
     trackEvent("promise_rejection", {
       severity: "error",
       payload: {
-        message: maskString(String(message ?? "")).slice(0, 1000),
-        stack: reason instanceof Error && reason.stack ? maskString(reason.stack).slice(0, 2000) : null,
+        message: maskCapped(String(message ?? ""), 1000),
+        stack: reason instanceof Error && reason.stack ? maskCapped(reason.stack, MAX_FIELD_CHARS) : null,
       },
     });
   } catch {
@@ -512,11 +711,13 @@ export function initEventCollector(): void {
         payload: {
           // ★절단 길이도 형제와 **같아야** 한다 — `analyzer.normalize_stack` 이 **메시지 전문**을
           //   sha1 해싱하므로, 조기/정식 경로의 자르는 길이가 다르면 같은 오류가 **다른 시그니처**로
-          //   군집된다(독립 리뷰 지적). `handleRejection`=1,000자 / `handleWindowError`=무절단.
-          message: isRejection ? maskString(e.m).slice(0, 1000) : maskString(e.m),
-          stack: e.s ? maskString(e.s).slice(0, 2000) : null,
+          //   군집된다(독립 리뷰 지적). `handleRejection`=1,000자 / `handleWindowError`=`MAX_FIELD_CHARS`.
+          // ★2026-08-28: `handleWindowError` 가 **무절단**이던 것을 `MAX_FIELD_CHARS` 로 막으면서
+          //   **이 줄도 같이** 바꾼다. 한쪽만 고치면 바로 위 주석이 경고하는 시그니처 분열이 난다.
+          message: isRejection ? maskCapped(e.m, 1000) : maskCapped(e.m, MAX_FIELD_CHARS),
+          stack: e.s ? maskCapped(e.s, MAX_FIELD_CHARS) : null,
           // 위치 정보는 `error` 경로에만 있다(형제 `handleRejection` 도 안 싣는다).
-          ...(isRejection ? {} : { filename: e.f, lineno: e.l, colno: e.c }),
+          ...(isRejection ? {} : { filename: e.f ? maskCapped(String(e.f), MAX_FIELD_CHARS) : null, lineno: e.l, colno: e.c }),
           // ★진단용 — 이 오류가 **수집기 등록 전**에 났다는 사실 자체가 정보다.
           //   `tMs` 로 얼마나 앞섰는지까지 남는다(실측 기준 #418 237ms vs 등록 307ms).
           early: true,

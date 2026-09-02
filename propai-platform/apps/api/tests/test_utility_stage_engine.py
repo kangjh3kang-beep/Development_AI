@@ -6,8 +6,6 @@ from app.services.tax.utility_stage_engine import (
     calculate_b02_school_site,
     calculate_b03_water_supply,
     calculate_b04_sewage,
-    calculate_b05_electricity,
-    calculate_b08_fire,
 )
 
 
@@ -139,36 +137,29 @@ class TestB02SchoolSite:
 
 
 class TestB03WaterSupply:
-    def test_oasan_reference(self):
-        """오산 1624세대 참조: 120만원/세대 × 1624 ≈ 19.49억."""
+    def test_withheld_without_sourced_rate(self):
+        """★종전 이 테스트는 *"오산 1624세대: 120만원/세대 × 1624 ≈ 19.49억"* 을 참조하며
+        `amount_won > 0` 만 단언했다 — 그 단가는 **출처 없는 생성값**이었고, 주석은
+        *"data에 typo(1,200,000원으로 해석)"* 라는 **낡은 사실**까지 담고 있었다.
+        단언이 `> 0` 이라 그 typo 를 **구별할 수도 없었다.**
+        """
         result = calculate_b03_water_supply(
-            sido_name="경기", sigungu_name="오산시",
-            total_households=1624,
+            sido_name="경기", sigungu_name="오산시", total_households=1624,
         )
-        # 경기_오산시 = 120_0000 (data에 typo — 1,200,000원으로 해석)
-        assert result["amount_won"] > 0
+        assert result["amount_won"] == 0
+        assert result["detail"]["confidence"] == "unavailable"
 
 
 class TestB04Sewage:
-    def test_basic(self):
+    def test_withheld_without_sourced_rate(self):
         result = calculate_b04_sewage(
-            sido_name="서울", sigungu_name="강남구",
-            total_households=500,
+            sido_name="서울", sigungu_name="강남구", total_households=500,
         )
-        # 서울: 180,000원/세대 × 500 = 9000만
-        assert result["amount_won"] == 90_000_000
+        assert result["amount_won"] == 0, "종전 90,000,000원은 원/세대 × 세대수 (차원 오류)"
+        assert result["detail"]["confidence"] == "unavailable"
+        assert "㎥/일" in result["detail"]["reason"]
 
 
-class TestB05Electricity:
-    def test_basic(self):
-        result = calculate_b05_electricity(total_households=1000)
-        assert result["amount_won"] == 250_000_000
-
-
-class TestB08Fire:
-    def test_basic(self):
-        result = calculate_b08_fire(total_gfa_sqm=100_000)
-        assert result["amount_won"] == 350_000_000
 
 
 class TestAllUtilityStage:
@@ -181,11 +172,14 @@ class TestAllUtilityStage:
             total_gfa_sqm=100_000,
         )
         assert result["stage"] == "construction"
-        assert result["applicable_count"] == 8
-        assert result["total_won"] > 0
+        # ★2026-08-27: 8종 → **4종**. B05~B08 은 부담금이 아니어서 빠졌다
+        #   (인입 3건은 cost/utility_connection_cost 로 이관 · 소방은 도급단가 포함이라 제거).
+        #   ★이 단언이 「법정 부담금만 남았는가」를 잠근다 — 새 항목이 들어오면 여기가 빨개진다.
+        assert result["applicable_count"] == 4
         codes = [it["code"] for it in result["items"]]
-        assert "B01" in codes
-        assert "B08" in codes
+        assert codes == ["B01", "B02", "B03", "B04"], f"법정 부담금 외가 섞였다: {codes}"
+        # ★반대 방향 — 공사비 성격 코드가 되돌아오면 안 된다.
+        assert not ({"B05", "B06", "B07", "B08"} & set(codes))
 
 
 class TestChargeLegalRefs:
@@ -203,7 +197,13 @@ class TestChargeLegalRefs:
             assert ref and ref.get("url"), f"{code}: legal_ref/url 누락"
             assert kw in (ref.get("law_name", "") + ref.get("title", "")), f"{code}: 근거 법령 불일치"
         # 법령키 없는 B05~B08은 legal_ref 미부착(오탐 방지).
-        assert "legal_ref" not in by_code["B05"]
+        # ★2026-08-27: 종전엔 *"B05 는 법령 근거가 없다"* 를 단언했다.
+        #   지금은 **항목 자체가 없다** — 법정 부담금이 아니어서 이 엔진에서 빠졌다.
+        #   ★「근거 없는 항목이 여기 있어도 된다」가 아니라 **「여기 있으면 안 된다」**가 계약이다.
+        assert "B05" not in by_code, "공사비 성격 항목이 부담금 엔진에 되돌아왔다"
+        assert all(by_code[c].get("legal_ref") for c in by_code), (
+            f"법령 근거 없는 부담금이 있다: {[c for c in by_code if not by_code[c].get('legal_ref')]}"
+        )
 
     def test_sale_c07_carries_legal_ref(self):
         from app.services.tax.sale_stage_engine import calculate_all_sale_stage

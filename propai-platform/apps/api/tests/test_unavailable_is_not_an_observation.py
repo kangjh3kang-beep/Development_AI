@@ -285,7 +285,17 @@ def test_the_gate_changes_notation_but_never_the_money():
 #   ★하한은 **게이트가 만지는 모집단**(부담금 행)에서만 뜬다. 처음엔 전체 `coverage.qty_pct`
 #     에 90 을 걸었는데, 그 픽스처는 토지비·공사비·분양수입이 비어 있어 **66.7%** 였다 —
 #     내가 잰 것(라이브 전체 95.5%)과 말하려는 것(부담금 게이트)이 **다른 모집단**이었다.
-_CHARGE_QTY_DROPPED_MAX = 1      # 실측: 미조회에서 빠지는 부담금 행은 **C07 하나**뿐
+# ★2026-08-27 상한 상향 1 → 3. 이 파일이 요구하는 대로 **왜 관측이 아닌지**를 적는다:
+#   · `charge_c07` 기반시설부담금 — 부담구역 **지정 여부 미조회**(종전 사유, 그대로)
+#   · `charge_b04` 하수도 원인자부담금 — ★**과표가 세대수가 아니다.**
+#     법정 과표는 **오수발생량(㎥/일)** 이고
+#     그 입력이 이 엔진에 없다. 종전에는 **세대수를 과표로 실어** 관측처럼 보였는데,
+#     **법 2 + 시행령 2** 에서 `'세대'` 출현 **0회**(★조례는 별개 — 울산 하수도 조례 §9② 는 세대별 정액 고시를 허용한다) 로 확인됐다.
+#     (`charge_b03` 상수도는 **축 자체가 미상**이라 이 모집단에 아예 들어오지 않는다 —
+#      실비·원가계산이라 `과표 × 요율` 구조가 아니다. `base_units_for("B03") == (None, None)`.)
+#     즉 종전의 「관측된 과표」는 **관측이 아니라 잘못된 축**이었다 —
+#     이 파일이 지난번에 *"그중 둘은 과표가 관측값(세대수 64)"* 이라 적은 판단의 **전제가 틀렸다.**
+_CHARGE_QTY_DROPPED_MAX = 2
 
 
 def test_the_gate_drops_exactly_one_charge_row_and_no_more():
@@ -299,7 +309,10 @@ def test_the_gate_drops_exactly_one_charge_row_and_no_more():
       그중 둘은 과표가 **관측값**(세대수 64)이었다. 칸 단위로 좁히자 **1행**이 됐다.
       이 수를 올리려면 **그 행의 과표가 왜 관측이 아닌지**를 여기에 적어라.
     """
-    for zone, expected_dropped in ((None, _CHARGE_QTY_DROPPED_MAX), (False, 0)):
+    # ★`zone=False`(부담구역 아님 = 조회했고 확정) 이면 C07 은 **확정 0** 이라 안 빠진다.
+    #   그러나 B03/B04 는 **부담구역 게이트와 무관**하게 과표(㎥/일) 미입력이라 항상 빠진다.
+    #   → 두 모집단이 `3` 과 `2` 로 갈린다. 같은 수면 이 파라미터가 아무것도 안 가른다.
+    for zone, expected_dropped in ((None, _CHARGE_QTY_DROPPED_MAX), (False, _CHARGE_QTY_DROPPED_MAX - 1)):
         rows = _charge_rows(_ledger_from_engine(in_infra_charge_zone=zone))
         applicable = [k for k in rows if base_units_for(k.replace("charge_", "").upper())[0]]
         assert len(applicable) >= 8, f"모집단 {len(applicable)}행 — 공허하다"
@@ -309,7 +322,10 @@ def test_the_gate_drops_exactly_one_charge_row_and_no_more():
             "게이트가 관측된 과표까지 지우고 있나?"
         )
         if zone is None:
-            assert dropped == ["charge_c07"], f"빠진 행이 C07 이 아니다: {dropped}"
+            assert sorted(dropped) == ["charge_b04", "charge_c07"], (
+                f"빠진 행 집합이 예상과 다르다: {sorted(dropped)} — "
+                "새 행이 늘었다면 그 과표가 왜 관측이 아닌지 위 상수 주석에 적어라"
+            )
 
     # 근거는 어느 방향으로도 100% — 근거 못 대는 행은 애초에 만들지 않는다.
     assert _ledger_from_engine(in_infra_charge_zone=None)["coverage"]["basis_pct"] == 100.0
