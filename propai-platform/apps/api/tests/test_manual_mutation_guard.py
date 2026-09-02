@@ -290,6 +290,15 @@ _판정불가_형태 = [
     ("★H6 스트립이 위험을 걷어냄", ["bash", "-c",
                                     "set -e | grep -q alpha target.txt; true"]),
     ("★LOW 공백뿐인 스크립트", ["bash", "-c", "\t"]),
+    # ── ★**변이를 유일하게 가르는 입력**(리뷰어 변이 MUT-A·MUT-C 가 첫 판에서 생존했다).
+    #   전용 락이 있어도 **폴백이 같은 답을 내면** 그 분기는 고정되지 않는다.
+    #   ★기대는 코드가 아니라 **셸에서 파생**했다: `bash -- -c` 는 실측상 **`-c` 라는 이름의
+    #     파일을 실행**한다(옵션이 아니다) — 그러므로 스크립트 파일로 보는 것이 옳다.
+    ("★MUT-A 판별: -- 뒤는 파일이다", ["bash", "--", "-c", "grep -q alpha target.txt"]),
+    ("★MUT-C 판별: set -o noglob", ["bash", "-c",
+                                     "set -o noglob; grep -q alpha target.txt | cat"]),
+    ("★MUT-C 판별: -o noglob 명령줄", ["bash", "-o", "noglob", "-c",
+                                       "grep -q alpha target.txt | cat"]),
 ]
 
 
