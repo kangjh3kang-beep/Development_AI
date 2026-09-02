@@ -83,7 +83,7 @@ async def test_three_populations_are_distinguishable() -> None:
     s1 = _Store()
     await cs.publish_capture_status(s1, scope="worker")
     p1 = _published(s1)
-    assert p1["depth"] == 0
+    assert p1["queue_depth"] == 0
     assert p1.get("at"), "★시각이 없다 — 「비울 게 없다」와 「멈췄다」를 못 가른다"
 
     # ② 깊이 N + 시각 있음(쌓이는 중)
@@ -92,10 +92,10 @@ async def test_three_populations_are_distinguishable() -> None:
         cs._QUEUE.append({"event_id": f"e{i}", "event_type": "t", "created_at": None})
     await cs.publish_capture_status(s2, scope="worker")
     p2 = _published(s2)
-    assert p2["depth"] == 7, "★깊이가 안 실린다 — 「안 비운다」를 말할 수 없다"
+    assert p2["queue_depth"] == 7, "★깊이가 안 실린다 — 「안 비운다」를 말할 수 없다"
 
     # ★①과 ②가 **실제로 갈렸는가**(두 모집단 대조 — 같지 않아야 한다)
-    assert p1["depth"] != p2["depth"], "★두 모집단이 안 갈렸다 = 공허한 초록"
+    assert p1["queue_depth"] != p2["queue_depth"], "★두 모집단이 안 갈렸다 = 공허한 초록"
 
     # ③ ★**관측이 끊기면 행이 스스로 사라진다** — TTL 이 그것을 만든다.
     #
@@ -152,8 +152,8 @@ async def test_payload_is_derived_from_capture_status_not_hand_listed() -> None:
     base = set(cs.capture_status())
     # ★판별 3종은 **짧은 이름**으로 실린다(jsonb 정렬에서 앞자리를 얻기 위해 — 위 참조).
     #   나머지는 원본 이름 그대로. `scope` 는 바깥 scope 와 충돌해 `counter_scope` 로 개명.
-    expected = (base - {"scope", "queue_depth", "lost_total"}) | {
-        "counter_scope", "at", "depth", "lost", "build",
+    expected = (base - {"scope"}) | {
+        "counter_scope", "at", "producer_build_id",
     }
     # ★대조군 — 파생이 죽으면(빈 집합) 아래가 공허해진다
     assert len(base) >= 5, f"★capture_status 파생이 죽었다: {base}"
@@ -350,8 +350,8 @@ def _render_cap() -> int:
 def _expected_payload_keys() -> set[str]:
     """발행 payload 의 키 — `capture_status()` 에서 **파생**한다."""
     base = set(cs.capture_status())
-    return (base - {"scope", "queue_depth", "lost_total"}) | {
-        "counter_scope", "at", "depth", "lost", "build",
+    return (base - {"scope"}) | {
+        "counter_scope", "at", "producer_build_id",
     }
 
 
@@ -459,7 +459,7 @@ async def test_the_discriminating_field_survives_the_dashboard_truncation() -> N
     piling = _published(s_pile)
 
     # ★대조군 — 두 모집단이 실제로 갈렸는가(안 갈렸으면 아래 비교가 공허하다)
-    assert idle["depth"] != piling["depth"], "★두 모집단이 안 갈렸다"
+    assert idle["queue_depth"] != piling["queue_depth"], "★두 모집단이 안 갈렸다"
 
     r_idle, r_piling = _render_like_dashboard(idle), _render_like_dashboard(piling)
     # ★대조군 — 렌더가 아무것도 안 만들면 아래 비교가 공허하다
@@ -469,7 +469,7 @@ async def test_the_discriminating_field_survives_the_dashboard_truncation() -> N
     )
     # ★그리고 **판별 필드 자체**가 잘려 나가지 않았는가
     assert "at " in r_idle, f"★시각이 화면에서 잘렸다: {r_idle}"
-    assert "depth " in r_piling, f"★깊이가 화면에서 잘렸다: {r_piling}"
+    assert "queue_depth " in r_piling, f"★깊이가 화면에서 잘렸다: {r_piling}"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -504,7 +504,7 @@ async def test_discriminating_fields_survive_a_full_storage_round_trip() -> None
     # ★대조군 — 화면 상한을 소스에서 못 읽었으면 아래가 공허하다
     assert cap >= 1, f"★화면 상한을 못 읽었다: {cap}(위반 아님)"
     assert "at" in visible, f"★시각이 왕복 뒤 잘렸다: {visible}"
-    assert "depth" in visible, f"★깊이가 왕복 뒤 잘렸다: {visible}"
+    assert "queue_depth" in visible, f"★깊이가 왕복 뒤 잘렸다: {visible}"
 
 
 @pytest.mark.asyncio
@@ -543,7 +543,7 @@ async def test_screen_either_shows_everything_or_says_how_many_it_hid() -> None:
     # ①전부 보인다 — 숨긴 것이 없고 판별 필드가 다 보인다
     wide = _render_like_dashboard(stored, cap=n + 5)
     assert "외 " not in wide, f"★다 보이는데 「외 N종」이 붙었다: {wide[-40:]}"
-    for k in ("at", "depth", "lost"):
+    for k in ("at", "queue_depth", "lost_total"):
         assert f"{k} " in wide, f"★{k} 가 안 보인다: {wide[:120]}"
 
     # ②잘렸다면 **몇 개 잘렸는지 말해야** 한다(조용한 절단 금지)
@@ -555,10 +555,22 @@ async def test_screen_either_shows_everything_or_says_how_many_it_hid() -> None:
     # ★대조군 — 두 갈래가 **실제로 다른 답**을 냈는가(안 갈리면 공허하다)
     assert wide != narrow, "★두 갈래가 같은 답을 냈다 = 상한 주입이 안 먹었다"
 
-    # ★그리고 **라이브 상한**에서 지금 조용히 잘리는 것이 없는지 따로 본다
+    # ★★**라이브 상한을 넘지 않는다** — 이 단언이 이 테스트의 진짜 상한 축이다.
+    #
+    #   ★종전에 여기 있던 단언은 **의도한 방향으로 실패할 수 없었다**:
+    #       assert live_cap >= n or "외 N종" in rendered
+    #     흉내는 **절대 조용하지 않으므로**(`외 N종` 을 스스로 만들어 붙인다)
+    #     오른쪽이 **항상 참**이었다. 실측: 키를 30개 늘려 상한 40 을 넘겨도 **SURVIVED**.
+    #     *"키가 늘면 시끄럽게 실패한다"* 고 적어 놓고 **실패할 수 없는 단언**을 썼다.
+    #
+    #   → 「말하는가」가 아니라 **「넘었는가」**를 본다. 넘는 순간 여기서 빨개진다.
+    #     그때의 옳은 처방은 **이름 길이 경주가 아니라** 렌더러의 **명시 선택**이다
+    #     (상한을 올리는 것은 임시방편이고, 올린 사람이 그 사실을 알고 올려야 한다).
     live_cap = _render_cap()
-    assert live_cap >= n or f"외 {n - live_cap}종" in _render_like_dashboard(stored), (
-        f"★라이브 상한 {live_cap} 에서 {n - live_cap}개가 조용히 잘린다"
+    assert n <= live_cap, (
+        f"★발행 키가 {n}개로 화면 상한 {live_cap} 을 넘었다.\n"
+        f"   화면은 「외 {n - live_cap}종」이라 말은 하지만, **무엇이 밀려났는지는 말하지 않는다.**\n"
+        f"   상한을 올리거나(임시방편) 렌더러가 판별 키를 **명시 선택**하게 하라."
     )
 
 
