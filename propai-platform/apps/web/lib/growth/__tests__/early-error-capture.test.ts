@@ -197,6 +197,177 @@ describe("이벤트 타입 — 형제와 **같은 이름**을 쓴다(군집이 �
   });
 });
 
+describe("★빌드 안전 — 보간 템플릿을 `+` 로 이으면 빌드가 좌변 꼬리를 버린다", () => {
+  /**
+   * ★**정확한 규칙**(독립 리뷰가 최소 재현으로 규명 · swc.minify + next 16.1.7):
+   *   상수 폴딩되는 `+` 체인에서 **누적된 좌변이 치환을 가진 템플릿**이고 **우변도 치환을 가진
+   *   템플릿**이면, **좌변의 마지막 치환 이후 꼬리가 통째로 버려진다.**
+   *
+   *   | 형태 | 결과 |
+   *   |---|---|
+   *   | `` `x${A}y` + `q${A}r` `` | ✘ **BAD** → `"x1q1r"`(`y` 가 사라진다) |
+   *   | `` `x${A}y` + `p` `` (우변 치환 없음) | ◎ OK |
+   *   | `` 'x1y' + `q${A}r` `` (좌변 치환 없음) | ◎ OK |
+   *   | `` `x${a}y` + `q${b}r` `` (**런타임** 보간 — 폴딩 불가) | ◎ OK |
+   *   | `` `${p1}${p2}` `` · `p1+p2` · `join("")` · `concat()` | ◎ OK |
+   *
+   * ★초판 서술(*"보간 없는 조각은 통째로 사라진다"*)은 **관측으로는 맞지만 규칙으로는 부정확**했다
+   *   — 첫 조각 `(function(){…` 은 치환이 없는데도 **살아남았다**. 사라지는 것은
+   *   「보간 없는 조각」이 아니라 **「좌변 꼬리 구간」**이다.
+   *
+   * ★★초판 락은 **선언 하나의 초기화식**만 봤다(대리). 리뷰가 그것을 통과하면서 산출물을 깨는
+   *   변이를 실증했다 — 중간 상수 안에서 잇고 초기화식은 `` `${_P1}` `` 로 두는 형태(880자 한 줄을
+   *   쪼개려는 후임이 **가장 먼저 할 리팩토링**). 그래서 **파일 전체**를 본다.
+   */
+  type Finding = { file: string; line: number; text: string };
+
+  /** 상수 폴딩 대상인 「치환 있는 템플릿」인가 — 식별자 보간만(런타임 보간은 폴딩되지 않아 안전). */
+  function isFoldableTemplate(n: TS.Node, ts: typeof import("typescript")): boolean {
+    if (ts.isNoSubstitutionTemplateLiteral(n)) return false; // 치환 없음 → 안전
+    if (ts.isTemplateExpression(n)) return n.templateSpans.length > 0;
+    if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+      // 누적 좌변: 어느 한쪽이라도 치환 템플릿이면 누적값은 치환을 갖는다
+      return isFoldableTemplate(n.left, ts) || isFoldableTemplate(n.right, ts);
+    }
+    return false;
+  }
+
+  function scan(file: string, src: string, ts: typeof import("typescript")): Finding[] {
+    const sf = ts.createSourceFile(file, src, ts.ScriptTarget.ES2022, true, /\.tsx$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+    const out: Finding[] = [];
+    const visit = (n: TS.Node): void => {
+      if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.PlusToken
+          && isFoldableTemplate(n.left, ts) && isFoldableTemplate(n.right, ts)) {
+        out.push({ file, line: sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1, text: n.getText(sf).replace(/\s+/g, " ").slice(0, 80) });
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(sf);
+    return out;
+  }
+
+  /** ★대상은 **파생**시킨다 — layout 이 인라인 `<script>` 로 넣는 상수의 **출처 모듈** 전부. */
+  async function targets(ts: typeof import("typescript"), readFileSync: typeof import("node:fs").readFileSync): Promise<string[]> {
+    const layout = "app/layout.tsx";
+    const sf = ts.createSourceFile(layout, readFileSync(layout, "utf8"), ts.ScriptTarget.ES2022, true, ts.ScriptKind.TSX);
+    const injected = new Set<string>();
+    const visitJsx = (n: TS.Node): void => {
+      if (ts.isJsxSelfClosingElement(n) || ts.isJsxOpeningElement(n)) {
+        for (const attr of n.attributes.properties) {
+          if (!ts.isJsxAttribute(attr) || attr.name.getText(sf) !== "dangerouslySetInnerHTML") continue;
+          const init = attr.initializer;
+          if (!init || !ts.isJsxExpression(init) || !init.expression || !ts.isObjectLiteralExpression(init.expression)) continue;
+          for (const prop of init.expression.properties) {
+            if (ts.isPropertyAssignment(prop) && prop.name.getText(sf) === "__html" && ts.isIdentifier(prop.initializer)) injected.add(prop.initializer.text);
+          }
+        }
+      }
+      ts.forEachChild(n, visitJsx);
+    };
+    visitJsx(sf);
+    // 그 식별자가 import 라면 그 모듈 파일도 대상에 넣는다(로컬 선언이면 layout 자신).
+    const files = new Set<string>([layout]);
+    for (const st of sf.statements) {
+      if (!ts.isImportDeclaration(st) || !st.importClause?.namedBindings) continue;
+      const nb = st.importClause.namedBindings;
+      if (!ts.isNamedImports(nb)) continue;
+      const spec = (st.moduleSpecifier as TS.StringLiteral).text;
+      for (const el of nb.elements) {
+        if (!injected.has(el.name.text)) continue;
+        files.add(spec.replace(/^@\//, "") + ".ts");
+      }
+    }
+    return [...files];
+  }
+
+  it("★layout 이 인라인하는 스크립트의 **출처 파일 전부**에서 위험 형태가 없다(파생형)", async () => {
+    const ts = (await import("typescript")).default;
+    const { readFileSync, existsSync } = await import("node:fs");
+    const files = (await targets(ts, readFileSync)).filter((f) => existsSync(f));
+
+    // ★양성 대조군을 **먼저** — 대상이 비면 아래 단언이 공허하다.
+    expect(files, "대상 파생이 죽었다 — layout 의 인라인 스크립트를 못 찾는다").toContain("app/layout.tsx");
+    expect(files.length, "부트스트랩 모듈이 대상에서 빠졌다").toBeGreaterThan(1);
+
+    const found = files.flatMap((f) => scan(f, readFileSync(f, "utf8"), ts));
+    expect(
+      found,
+      "보간 템플릿을 `+` 로 이었다 — 빌드가 **좌변의 마지막 치환 이후 꼬리**를 버린다(2026-08-27 실측).\n" +
+        "단일 리터럴로 쓰거나, 나눠야 하면 `[a, b].join(\"\")` 처럼 폴딩되지 않는 형태를 써라.",
+    ).toEqual([]);
+  });
+
+  it("★검사기 생존 — 위험 형태를 주면 실제로 잡는다(음성 대조군은 통과시킨다)", async () => {
+    const ts = (await import("typescript")).default;
+    // 파티션형: 위험/안전을 같은 검사기에 태워 **갈리는지** 본다.
+    const BAD = "const A=1; export const x = `p${A}q` + `r${A}s`;";
+    // ★**누적 좌변** — 3조각 이상. 재귀를 지우면 좌변이 BinaryExpression 이라 못 본다
+    //   (변이 R5 가 그 구멍을 실증했다: 재귀 제거 → SURVIVED).
+    const BAD3 = "const A=1; export const x = `p${A}q` + `plain` + `r${A}s`;";
+    const OK1 = "const A=1; export const x = `p${A}q` + `plain`;";      // 우변 치환 없음
+    const OK2 = "const A=1; export const x = `p${A}q${A}r`;";            // 단일 리터럴
+    const OK3 = "export const x = [`a`, `b`].join('');";                 // 폴딩 안 됨
+    expect(scan("bad.ts", BAD, ts).length, "위험 형태를 못 잡으면 이 락은 장식이다").toBe(1);
+    expect(
+      scan("bad3.ts", BAD3, ts).length,
+      "누적 좌변(3조각 이상)을 못 잡는다 — `isFoldableTemplate` 의 재귀가 죽었다",
+    ).toBeGreaterThan(0);
+    for (const [n, src] of [["OK1", OK1], ["OK2", OK2], ["OK3", OK3]] as const) {
+      expect(scan(`${n}.ts`, src, ts), `정상 코드를 막으면 그것도 결함이다(${n})`).toEqual([]);
+    }
+  });
+
+  it("★형제 `themeBootstrap` 도 안전한 형태다(이 규칙이 저장소 관행임을 확인)", async () => {
+    const ts = (await import("typescript")).default;
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync("app/layout.tsx", "utf8");
+    expect(src.includes("themeBootstrap"), "대조군이 죽었다").toBe(true);
+    expect(scan("app/layout.tsx", src, ts)).toEqual([]);
+  });
+});
+
+describe("★프로브 판정 — 양성/음성을 **둘 다** 태운다(신호 반전 방지)", () => {
+  /**
+   * ★독립 리뷰가 실증한 것: 초판 프로브는 `drain` 이 `closed=true` 로 닫은 뒤 카나리를 던져
+   *   **고쳐진 배포본에서도 `exit 1`("죽음")** 을 냈다. `verdict:true` 가 나오는 유일한 조건이
+   *   *"수집기가 안 돈 페이지"* 였다 — **신호가 반전돼 있었다.**
+   *   그리고 그때는 **양성 방향을 태울 수 없었다**(고친 빌드가 배포 전이라). 그래서 판정을
+   *   순수 함수로 꺼내 여기서 **파티션형**으로 잠근다.
+   */
+  it("★정상 — 수집기가 인계한 상태(closed=true)는 **살아 있다**", async () => {
+    const { decideEarlyCaptureVerdict } = await import("@/lib/hydration/probe-text.mjs");
+    expect(decideEarlyCaptureVerdict({
+      runtime: { exists: true, hasBuf: true, closed: true },
+      caught: { grew: false, thrown: false },   // ← 닫혔으니 카나리는 안 던진다
+    }), "이 케이스가 false 면 고쳐진 배포본을 '죽음'으로 오보한다").toBe(true);
+  });
+
+  it("정상 — 아직 안 닫혔는데 실제로 담기면 살아 있다", async () => {
+    const { decideEarlyCaptureVerdict } = await import("@/lib/hydration/probe-text.mjs");
+    expect(decideEarlyCaptureVerdict({
+      runtime: { exists: true, hasBuf: true, closed: false },
+      caught: { grew: true, thrown: true },
+    })).toBe(true);
+  });
+
+  it("★음성 — 전역이 없으면 죽음(빌드가 잘랐거나 미배포)", async () => {
+    const { decideEarlyCaptureVerdict } = await import("@/lib/hydration/probe-text.mjs");
+    // 실제 라이브 관측값(2026-08-27 · #893 배포본)이 정확히 이 모양이었다.
+    expect(decideEarlyCaptureVerdict({
+      runtime: { exists: false, hasBuf: false, closed: null },
+      caught: { grew: false, thrown: false },
+    })).toBe(false);
+  });
+
+  it("★음성 — 전역은 있는데 안 닫히고 담기지도 않으면 죽음", async () => {
+    const { decideEarlyCaptureVerdict } = await import("@/lib/hydration/probe-text.mjs");
+    expect(decideEarlyCaptureVerdict({
+      runtime: { exists: true, hasBuf: true, closed: false },
+      caught: { grew: false, thrown: true },
+    })).toBe(false);
+  });
+});
+
 describe("배선(소스) — 루트 layout 이 그 스크립트를 **실제로 렌더**한다", () => {
   /**
    * ★이 축이 없으면 "상수는 있는데 페이지에 안 실린" 상태가 **전부 초록**이다.

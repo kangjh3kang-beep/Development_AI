@@ -55,6 +55,11 @@ describe("Dashboard home navigation", () => {
     expect(screen.getByText("시장·분양 리포트").closest("a")).toHaveAttribute("href", "/en/market-insights");
     expect(screen.getByText("인허가 체크리스트").closest("a")).toHaveAttribute("href", "/en/permits");
     expect(screen.getByText("AI 설계 검토서").closest("a")).toHaveAttribute("href", "/en/design-audit");
+    // ★9번째 카드 — 종전에는 이 그리드 아래 **데이터 패널**이라 href 가 없었다(라이브 y≈2,921px).
+    expect(screen.getByText("실거래 신고내역 보고서").closest("a")).toHaveAttribute(
+      "href",
+      "/en/realtx-report",
+    );
     expect(screen.queryByText("투자 의사결정 브리프")).not.toBeInTheDocument();
     expect(screen.getByText("건축개요·CAD 계획도면").closest("a")).toHaveAttribute("href", "/en/design-studio");
     expect(

@@ -1,5 +1,6 @@
 "use client";
 
+import { parcelIdentityAddresses } from "@/lib/parcel-rows";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   formatPercent, formatPercentDelta, formatUpzoningFarRange, type UpzoningFarRange,
@@ -1075,7 +1076,7 @@ export default function SiteAnalysisPage() {
   // 개발방식 시뮬 카드에 넘길 필지 주소목록(string[]) — 통합SSOT(siteAnalysis.parcels)의
   //   각 필지 지번주소를 그대로 사용한다(대표 1필지 아님). 빈 주소는 거른다(가짜값 방지).
   const scenarioParcels = useMemo(
-    () => (isMultiParcel && ssotParcels ? ssotParcels.map((p) => p.address).filter(Boolean) : []),
+    () => (isMultiParcel && ssotParcels ? parcelIdentityAddresses(ssotParcels) : []),
     [isMultiParcel, ssotParcels],
   );
 

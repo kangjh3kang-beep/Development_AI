@@ -8,11 +8,17 @@
  *   ★그리고 직전 커밋의 계획서 잠금표는 그 프로브 행을 싣고 표 아래에
  *   *"전부 필수 CI(vitest)에서 돈다"* 라고 적었다 — **그 행에 대해서는 거짓**이었다.
  *   선언을 락으로 바꾼다: 판정에 쓰이는 세 함수를 여기서 태운다.
+ *
+ * ★**콜백 파라미터에 타입을 명시하는 이유**(2026-08-27 CI 실패로 배움): 이 모듈은 `.mjs` 라
+ *   타입 선언이 없어 반환값이 `any` 로 흐르고, 그 위 콜백 파라미터가 `TS7006(implicit any)` 이 된다.
+ *   ★로컬 `npx tsc --noEmit` 은 통과했는데 CI(`pnpm type-check` = `next typegen && tsc --noEmit
+ *   --incremental false`)에서 **빨갰다** — **같은 명령이 아니면 같은 게이트가 아니다.**
  */
 import { describe, expect, it } from "vitest";
 
 import {
-  countHydration, samePath, pickMutableText, decideControlVerdict, decideRunVerdict,
+  countHydration, relevantErrors, buildRunSample, isCollectorAlive, HYDRATION_RE,
+  samePath, pickMutableText, decideControlVerdict, decideRunVerdict,
 } from "@/lib/hydration/probe-text.mjs";
 
 describe("countHydration — 두 모드가 공유하는 계수 경로", () => {
@@ -36,6 +42,88 @@ describe("countHydration — 두 모드가 공유하는 계수 경로", () => {
       "[pageerror] PROBE_ALIVE",
       "[pageerror] Minified React error #418; …args[]=text",
     ])).toBe(1);
+  });
+});
+
+describe("relevantErrors — 계수와 진단 표시가 **같은 필터**를 쓴다", () => {
+  /**
+   * ★왜 이 함수가 생겼나(2026-08-27 실측): `run` 모드가 이 모듈의 **지역** 상수 `NOISE_RE` 를
+   *   자유 식별자로 참조한 채 남아 **실행 즉시 `ReferenceError`** 로 죽었다. `control` 모드는
+   *   그 줄을 지나지 않아 통과했고, 그래서 **측정 모드만 죽은 도구가 살아 있어 보였다.**
+   *   필터를 하나로 노출해 두 모드가 같은 통로를 쓰게 한다.
+   *   ★실행 가능성 자체는 여기서 못 잡는다 — 그건 `eslint.config.mjs` 의 `no-undef` 가 잡는다
+   *     (같은 규율을 두 곳에 두지 않는다).
+   */
+  const 잡음 = [
+    "[pageerror] PROBE_ALIVE",
+    "[console] Failed to load resource: the server responded with a status of 401 ()",
+    "[console] net::ERR_FAILED",
+    "[console] Access to resource blocked by CORS policy",
+  ];
+  const 진짜 = [
+    "[pageerror] Minified React error #418; …args[]=text",
+    "[console] TypeError: x is not a function",
+  ];
+
+  it("★두 모집단이 갈린다 — 잡음은 지워지고 나머지는 **남는다**", () => {
+    // 한쪽만 단언하면 "전부 지운다" 는 오구현이 초록이다(§D-19 양방향).
+    const out = relevantErrors([...잡음, ...진짜]);
+    expect(out).toEqual(진짜);
+  });
+
+  it("잡음만 주면 빈 배열", () => {
+    expect(relevantErrors(잡음)).toEqual([]);
+  });
+
+  it("★★잡음이면서 하이드레이션 서명을 가진 줄 — 이것이 없으면 정합 단언이 공허하다", () => {
+    /**
+     * ★이 케이스는 **변이 SURVIVED 를 보고 추가했다**: `countHydration` 이 `relevantErrors` 를
+     *   건너뛰고 직접 필터해도 기존 픽스처는 전부 초록이었다(두 필터가 **겹치지 않아서**).
+     *   실제 위험은 정확히 이 겹침이다 — 수집기 생존 신호(`PROBE_ALIVE`)를 **일부러 던진 에러**로
+     *   내보내므로, 그 문구가 하이드레이션 서명과 같은 줄에 실릴 수 있고 그러면
+     *   **대조군이 자기를 하이드레이션 오류로 오계수**한다(0 이어야 할 음성 대조군이 1 이 된다).
+     */
+    const 겹침 = ["[pageerror] PROBE_ALIVE — Text content does not match server-rendered HTML."];
+    expect(relevantErrors(겹침)).toEqual([]);   // 잡음이므로 걷힌다
+    expect(countHydration(겹침)).toBe(0);        // ★걷힌 뒤에 세므로 0
+  });
+
+  it("★countHydration 은 relevantErrors 를 통과한 것만 센다(두 함수의 정합)", () => {
+    const 입력 = [...잡음, ...진짜];
+    // 기대값을 손으로 쓰지 않고 **다른 경로로 파생**한다 — 손 계산은 두 함수가 어긋나도 맞을 수 있다.
+    // ★기대값을 **소스에서** 파생한다 — 초판은 이 정규식을 손으로 복사했는데(평행 선언),
+    //   그러면 `HYDRATION_RE` 를 정당하게 넓힐 때 이 테스트가 **위양성으로** 빨개진다
+    //   (독립 리뷰 MINOR-2). 이제 모듈이 export 하는 그 상수를 그대로 쓴다.
+    const 파생 = relevantErrors(입력).filter((e: string) => HYDRATION_RE.test(e)).length;
+    expect(countHydration(입력)).toBe(파생);
+    expect(파생).toBeGreaterThan(0); // 공허 진리 가드 — 0 이면 위 단언이 아무것도 안 본다
+  });
+});
+
+describe("buildRunSample / isCollectorAlive — 프로브 본문에서 옮겨 온 판정", () => {
+  /**
+   * ★왜 옮겼나(독립 리뷰 MAJOR-2): 프로브 본문의 판정은 **브라우저 없이는 태울 수 없어**
+   *   구조적으로 무잠금이다. 판정을 순수부로 옮기면 그 자리는 잠기고, 프로브에는
+   *   **호출 한 줄**만 남아 표면이 줄어든다.
+   */
+  const 잡음 = ["[pageerror] PROBE_ALIVE", "[console] net::ERR_FAILED"];
+  const 진짜 = ["[pageerror] A".padEnd(500, "x"), "[console] B", "[console] C", "[console] D"];
+
+  it("★두 모집단이 갈린다 — 잡음은 표본에서 빠지고 진짜는 남는다", () => {
+    const out = buildRunSample([...잡음, ...진짜]);
+    expect(out.every((x: string) => !x.includes("PROBE_ALIVE"))).toBe(true);
+    expect(out[1]).toBe("[console] B"); // 잡음이 안 걷혔다면 여기 잡음이 온다
+  });
+
+  it("표본은 3건·400자로 자른다 — 로그가 회차를 삼키지 않게", () => {
+    const out = buildRunSample([...진짜]);
+    expect(out).toHaveLength(3);
+    expect(out[0]).toHaveLength(400);
+  });
+
+  it("★`isCollectorAlive` — 이 판정이 거짓이면 그 회차의 '0건'은 근거가 아니다", () => {
+    expect(isCollectorAlive(["[console] x", "[pageerror] Error: PROBE_ALIVE"])).toBe(true);
+    expect(isCollectorAlive(["[console] x", "[console] y"])).toBe(false); // 파티션형 — 반대도 단언
   });
 });
 

@@ -35,7 +35,7 @@ from app.services.growth import analyzer as A
 
 def test_coverage_records_both_halves_and_the_floor():
     cov: dict = {}
-    A.note_coverage(cov, "latency_regression", judged=23, withheld=802, floor=20)
+    A.note_coverage(cov, "latency_regression", judged=23, withheld_count=802, floor=20)
     assert cov["latency_regression"] == {
         "judged": 23, "withheld": 802, "total": 825, "floor": 20,
         # ★전체 동등성을 **유지**한다(부분집합으로 약화하지 않는다) — 키가 조용히
@@ -46,13 +46,13 @@ def test_coverage_records_both_halves_and_the_floor():
 
 def test_coverage_is_a_noop_when_no_accumulator():
     """분석기를 단독 호출하는 기존 테스트가 깨지지 않아야 한다(무회귀)."""
-    A.note_coverage(None, "x", judged=1, withheld=1, floor=1)   # 예외가 나면 실패
+    A.note_coverage(None, "x", judged=1, withheld_count=1, floor=1)   # 예외가 나면 실패
 
 
 def test_total_is_derived_not_passed():
     """★`total` 을 인자로 받으면 judged+withheld 와 어긋나도 아무도 모른다."""
     cov: dict = {}
-    A.note_coverage(cov, "k", judged=0, withheld=5, floor=10)
+    A.note_coverage(cov, "k", judged=0, withheld_count=5, floor=10)
     assert cov["k"]["total"] == cov["k"]["judged"] + cov["k"]["withheld"]
 
 
@@ -252,7 +252,7 @@ async def _burn_analyze_window(monkeypatch, coverage_by_axis, insight_types):
 async def test_the_stamped_value_is_the_real_coverage_not_just_the_key(monkeypatch):
     """★키가 아니라 **값**을 단언한다 — `coverage` → `{}` 변이가 여기서 죽어야 한다."""
     got = await _burn_analyze_window(
-        monkeypatch, ("fallback_rate", {"judged": 3, "withheld": 802, "floor": 20}),
+        monkeypatch, ("fallback_rate", {"judged": 3, "withheld_count": 802, "floor": 20}),
         ["fallback_rate"])
     assert got, "인사이트가 하나도 INSERT 되지 않았다 — 이 단언이 공허하다"
     assert got[0]["analysis_coverage"] == {
@@ -268,7 +268,7 @@ async def test_every_insight_type_gets_the_stamp_not_just_some(monkeypatch):
     """★타입 분기로 박으면 새 타입이 자동 누락된다 — 값으로 확인한다(음성 단언 금지)."""
     types = ["fallback_rate", "quality_drop", "latency_regression", "error_cluster"]
     got = await _burn_analyze_window(
-        monkeypatch, ("fallback_rate", {"judged": 1, "withheld": 1, "floor": 10}), types)
+        monkeypatch, ("fallback_rate", {"judged": 1, "withheld_count": 1, "floor": 10}), types)
     assert len(got) == len(types)
     for row in got:
         assert row.get("analysis_coverage"), f"스탬프 누락: {row}"
