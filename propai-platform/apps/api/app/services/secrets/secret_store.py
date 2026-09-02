@@ -73,7 +73,10 @@ CATALOG: list[dict[str, Any]] = [
      "secret": True, "kind": "text", "guide_url": "https://www.vworld.kr",
      "desc": "부지분석·용도지역·필지·공시지가 핵심 데이터."},
     {"name": "MOLEG_API_KEY", "label": "법제처 DRF 인증키(OC · 자치법규/법령 본문)", "group": "공공데이터·지도",
-     "secret": False, "kind": "text", "guide_url": "https://open.law.go.kr",
+     # ★`secret: True` — `apps/api/scripts/export_scoped_secrets.py` 가 이미 이 키를
+     #   **스코프 시크릿으로 분류**하고 있다. `False` 로 두면 `/admin/secrets` 응답과
+     #   백업 목록에 **평문**으로 나가 두 층의 분류가 갈린다(독립 리뷰 MEDIUM-3).
+     "secret": True, "kind": "text", "guide_url": "https://open.law.go.kr",
      "desc": "법제처 국가법령정보 공동활용(DRF) OC 값. 도시계획조례 건폐율·용적률·경사도 "
              "실시간 조회에 쓴다. ★키 등록과 별개로 **호출 IP 등록**이 필요하며, 미등록이면 "
              "HTTP 200 으로 <Response><result>사용자 정보 검증에 실패…</result> 가 온다."},

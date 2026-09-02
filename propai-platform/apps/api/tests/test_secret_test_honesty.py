@@ -35,7 +35,7 @@ from pathlib import Path
 
 from app.routers import admin_secrets as AS
 from app.services.secrets import secret_store as SS
-from app.utils.withheld import NOT_APPLICABLE, is_withheld
+from app.utils.withheld import NOT_APPLICABLE, is_withheld, validate_withheld_pair
 
 _API = Path(__file__).resolve().parents[1]
 _ROUTER_SRC = _API / "app" / "routers" / "admin_secrets.py"
@@ -50,7 +50,10 @@ def frontend_testable() -> list[str]:
     src = _PANEL.read_text(encoding="utf-8")
     m = re.search(r"const TESTABLE_SECRETS:[^=]*=\s*\[(.*?)\];", src, re.S)
     assert m, "★프론트 TESTABLE_SECRETS 를 못 찾았다 — 조회기 사망(이름이 바뀌었나?)"
-    return _TS_ITEM.findall(m.group(1))
+    # ★주석을 걷어내고 본다 — 주석 속 대문자 토큰이 목록으로 세어지면 **정상 코드가 위반**이 된다.
+    body = re.sub(r"//[^\n]*", "", m.group(1))
+    body = re.sub(r"/\*.*?\*/", "", body, flags=re.S)
+    return _TS_ITEM.findall(body)
 
 
 def catalog_names() -> list[str]:
@@ -63,8 +66,13 @@ def test_extractors_are_alive_before_any_comparison():
     assert len(AS._TESTABLE_SECRETS) >= 3
     assert len(frontend_testable()) >= 3
     # ★원천과 결속 — 디스크에서 **독립 재계수**한 수와 같아야 한다(자기지시적 기대값 회피).
-    raw = len(re.findall(r'"[A-Z][A-Z0-9_]*",', _PANEL.read_text(encoding="utf-8")
-                         .split("const TESTABLE_SECRETS")[1].split("];")[0]))
+    # ★재계수도 **같은 표기 집합**으로 한다. 종전엔 `"KEY",`(쌍따옴표+트레일링 콤마)만 세서
+    #   따옴표 스타일 변경·마지막 콤마 제거·배열 안 주석 한 줄에 **정상 코드가 빨개졌다**
+    #   (독립 리뷰 MEDIUM-4 — 가드의 위양성도 결함이다).
+    body = _PANEL.read_text(encoding="utf-8").split("const TESTABLE_SECRETS")[1].split("];")[0]
+    body_nc = re.sub(r"//[^\n]*", "", body)          # 줄 주석 제거
+    body_nc = re.sub(r"/\*.*?\*/", "", body_nc, flags=re.S)  # 블록 주석 제거
+    raw = len(_TS_ITEM.findall(body_nc))
     assert raw == len(frontend_testable()), f"정규식 파생 {len(frontend_testable())} vs 재계수 {raw}"
     assert len(catalog_names()) >= 30, "카탈로그가 비었다 — 조회기 사망"
 
@@ -141,6 +149,11 @@ def test_unsupported_key_is_not_reported_as_success(monkeypatch):
     assert r["ok"] is None, "「모름」은 False 가 아니라 None 이어야 한다(실패와 구별)"
     assert r["ok_absent"] == NOT_APPLICABLE, "사유 코드가 닫힌 어휘가 아니다"
     assert is_withheld(r, "ok"), "보류 3종 세트를 만족하지 않는다"
+    # ★저장소 **표준 검증기**로도 통과해야 한다. `is_withheld` 는 문구를 **아예 안 보므로**
+    #   그것만 쓰면 「무언 보류 금지」가 이 자리에서 무잠금이다(독립 리뷰 MEDIUM-1).
+    #   문구를 `message` 에 실었으니(기존 스키마 유지) 검증도 그 키로 한다.
+    assert validate_withheld_pair(r, "ok", text_field="message") == [], (
+        "표준 검증기가 계약 위반을 신고한다")
     assert "테스트가 없습니다" in r["message"], "사람이 읽을 사유가 없다(무언 보류)"
 
 
@@ -179,3 +192,67 @@ def test_supported_key_does_not_take_the_unsupported_path(monkeypatch):
     r = asyncio.run(_call_route(monkeypatch, "TILKO_API_KEY"))
     assert "ok_absent" not in r, f"지원 키가 미지원 분기로 갔다: {r}"
     assert r["ok"] is True, f"지원 키가 실제 상태를 반영하지 않는다: {r}"
+
+
+# ---------------------------------------------------------------------------
+# ★HIGH-2 — 카탈로그 등재가 **작동하는 조작 수단**인가
+# ---------------------------------------------------------------------------
+
+
+def test_no_consumer_reads_the_moleg_key_from_settings_directly():
+    """★MOLEG 키를 **`settings` 에서 직접** 읽는 소비처가 없다(파생형 · 전 서비스).
+
+    시크릿 저장(`PUT /admin/secrets/{name}`)은 `os.environ` **만** 바꾸는데
+    `settings` 는 모듈 싱글턴(`@lru_cache`)이라 **재동기화 경로가 0건**이다.
+    직접 읽으면 운영자가 화면에서 키를 바꿔도 **「저장됨」 초록만 뜨고 아무것도 안 바뀐다**
+    — 즉 **작동하지 않는 조작 수단**을 준다(독립 리뷰 HIGH-2).
+
+    ★파생형이라 **새 소비처가 생겨도 자동으로 감시망**에 들어온다.
+    """
+    root = _API / "app"
+    offenders: list[str] = []
+    for f in root.rglob("*.py"):
+        if f.name in {"config.py", "moleg_drf_envelope.py", "secret_store.py"}:
+            continue
+        for i, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
+            code = line.split("#", 1)[0]
+            if "MOLEG_API_KEY" in code and ("settings" in code or "core_settings" in code):
+                offenders.append(f"{f.relative_to(root)}:{i}")
+    assert not offenders, (
+        f"MOLEG 키를 settings 에서 직접 읽는다(관리 화면 저장이 무효가 된다): {offenders}")
+    # 음성 대조군 — 조회기가 살아 있는가(반드시 있어야 할 것을 같은 방법으로 찾는다).
+    alive = [f for f in root.rglob("*.py") if "moleg_oc_key" in f.read_text(encoding="utf-8")]
+    assert len(alive) >= 3, f"moleg_oc_key 배선이 {len(alive)}곳 — 조회기 사망 의심"
+
+
+def test_runtime_key_change_takes_effect_without_restart(monkeypatch):
+    """★**두 모집단** — `os.environ` 갱신이 즉시 반영되고, 없으면 부팅 설정으로 떨어진다.
+
+    이것이 없으면 *"항상 settings 를 읽는 구현"* 이 위 소스 락만으로는 안 잡힌다
+    (소스에 `moleg_oc_key` 를 부르면서 그 안이 settings 만 볼 수도 있다).
+    """
+    from app.services.legal.moleg_drf_envelope import moleg_oc_key
+
+    monkeypatch.setenv("MOLEG_API_KEY", "runtime-updated-value")
+    assert moleg_oc_key() == "runtime-updated-value", "런타임 갱신이 반영되지 않는다"
+
+    monkeypatch.delenv("MOLEG_API_KEY", raising=False)
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "MOLEG_API_KEY", "boot-value", raising=False)
+    assert moleg_oc_key() == "boot-value", "환경변수가 없을 때 부팅 설정으로 안 떨어진다"
+
+    # ★빈 문자열이 부팅 설정을 **가리지 않는다**(경계를 양방향으로).
+    monkeypatch.setenv("MOLEG_API_KEY", "   ")
+    assert moleg_oc_key() == "boot-value", "빈 환경변수가 부팅 설정을 가린다"
+
+
+def test_moleg_is_marked_secret_so_it_is_not_shown_in_plaintext():
+    """★OC 값이 **평문으로 응답·화면에 뜨지 않는다**.
+
+    `secret: False` 면 `/admin/secrets` 와 `/backups` 가 **원문**을 그대로 싣는다.
+    `apps/api/scripts/export_scoped_secrets.py` 는 이 키를 이미 **스코프 시크릿으로 분류**하므로
+    두 층을 맞춘다(독립 리뷰 MEDIUM-3).
+    """
+    entry = next(c for c in SS.CATALOG if c["name"] == "MOLEG_API_KEY")
+    assert entry["secret"] is True

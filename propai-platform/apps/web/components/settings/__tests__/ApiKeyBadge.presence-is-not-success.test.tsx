@@ -45,6 +45,12 @@ const ITEMS = [
     secret: true, kind: "text", options: null, desc: null, guide_url: null,
     custom: false, is_set: false, source: null, masked: null,
   },
+  // ★전용 연결 테스트가 **있는** 키 — 「테스트 버튼」 축의 두 번째 모집단(2026-09-02 추가).
+  {
+    name: "TILKO_API_KEY", label: "틸코 API 키", group: "등기(부동산등기부)",
+    secret: true, kind: "text", options: null, desc: null, guide_url: null,
+    custom: false, is_set: true, source: "db", masked: "tk••••99",
+  },
 ];
 
 afterEach(() => {
@@ -99,5 +105,41 @@ describe("★존재 배지 — 초록(성공)으로 그리지 않는다", () => 
       screen.getByText(/값이 저장돼 있다는 뜻이며, 연결·인증을 확인한 것이 아닙니다/),
       "설정됨의 의미를 밝히는 문장이 화면에 없다",
     ).toBeTruthy();
+  });
+});
+
+/** 그 키 카드 **안의** 버튼 라벨들을 모은다(다른 카드와 섞이지 않게). */
+function buttonsOf(name: string): string[] {
+  const nameEl = screen.getByText(name);
+  const card = nameEl.closest("div.rounded-2xl, div[class*=\"rounded\"]") || nameEl.parentElement;
+  return Array.from(card?.querySelectorAll("button") || []).map((b) => (b.textContent || "").trim());
+}
+
+describe("★「테스트」 버튼 — 백엔드가 실제로 지원하는 키에만 그린다", () => {
+  /*
+   * 【왜 이 락이 따로 필요한가 (2026-09-02 · 독립 적대 리뷰 HIGH-1)】
+   *
+   * 백엔드에는 «상수가 분기에 실제로 소비되는가» 락이 있는데 **프론트에는 없었다** —
+   * `canTest` 를 옛 인라인 배열로 되돌려도 백엔드 락 8개가 전부 초록이었다(변이 SURVIVED).
+   *
+   * ★`#938` 에서 배운 것을 **한쪽에만** 적용한 것이다:
+   *   *"파생형으로 바꿔도 「축」이 한 단계 위면 그 아래는 무잠금"* —
+   *   여기서는 «상수가 존재한다» 까지만 보고 «그 상수를 화면이 쓴다» 를 안 봤다.
+   *
+   * ★소스 grep 이 아니라 **렌더**로 본다(이 파일 머리말의 그 이유와 같다).
+   */
+  it("★두 모집단 — 지원 키엔 「테스트」가 **있고**, 미지원 키엔 **없다**", async () => {
+    await renderPanel();
+    const testable = buttonsOf("TILKO_API_KEY");
+    const notTestable = buttonsOf("VWORLD_API_KEY");
+    expect(testable, `지원 키에 테스트 버튼이 없다: ${testable.join("·")}`).toContain("테스트");
+    expect(notTestable, `미지원 키에 테스트 버튼이 있다: ${notTestable.join("·")}`).not.toContain("테스트");
+  });
+
+  it("공허 진리 방지 — 두 카드가 실제로 그려졌고 버튼을 갖는다", async () => {
+    await renderPanel();
+    // 버튼이 0개면 위 `not.toContain` 이 **대상 부재로** 참이 된다.
+    expect(buttonsOf("TILKO_API_KEY").length).toBeGreaterThan(0);
+    expect(buttonsOf("VWORLD_API_KEY").length).toBeGreaterThan(0);
   });
 });

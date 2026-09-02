@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -336,6 +338,27 @@ def _health_to_test_result(h: dict, what: str) -> dict:
     return {"ok": False, "message": f"{what} 실호출 실패 [{et}] {err}".strip(), "detail": h}
 
 
+def _unsupported(name: str) -> dict[str, Any]:
+    """전용 테스트가 없는 키의 응답 — **보류**이지 성공이 아니다.
+
+    ★`try` **밖**에 둔다. 안에 두면 `withheld()` 가 계약 위반(닫힌 어휘 밖 코드·빈 문구)에
+      던지는 `ValueError` 를 아래 광범위 `except` 가 **조용히 강등**해
+      `{"ok": False, "message": "테스트 실패: …"}` 로 나간다 — 시끄럽게 죽어야 할 것이
+      조용해진다(독립 리뷰 LOW-1).
+    ★문구 키를 `message` 로 두는 것은 **기존 응답 스키마를 지키기 위해서**다
+      (`withheld` 기본은 `ok_basis`). 그래서 검증도 `validate_withheld_pair(..., text_field="message")`
+      로 해야 하며, 락이 그것을 단언한다.
+    """
+    return {
+        **withheld(
+            NOT_APPLICABLE,
+            "이 키는 전용 연결 테스트가 없습니다 — 값 저장 여부만 확인됩니다.",
+            field="ok", text_key="reason", text_field="message",
+        ),
+        "detail": {"name": name, "testable": sorted(_TESTABLE_SECRETS)},
+    }
+
+
 @router.post("/{name}/test")
 async def test_secret(
     name: str,
@@ -386,13 +409,6 @@ async def test_secret(
         # ★새 어휘를 만들지 않고 저장소 공용 계약을 쓴다(`app/utils/withheld.py`) —
         #   `ok=None` + 사유 코드 `not_applicable`. `None` 은 truthy 가 아니라 화면이
         #   성공으로 그릴 수 없고, 코드는 **기계가 센다**.
-        return {
-            **withheld(
-                NOT_APPLICABLE,
-                "이 키는 전용 연결 테스트가 없습니다 — 값 저장 여부만 확인됩니다.",
-                field="ok", text_key="reason", text_field="message",
-            ),
-            "detail": {"name": name, "testable": sorted(_TESTABLE_SECRETS)},
-        }
+        return _unsupported(name)
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "message": f"테스트 실패: {str(e)[:120]}"}
