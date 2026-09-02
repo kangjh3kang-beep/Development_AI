@@ -78,9 +78,38 @@ export function parcelDisplayAddress(
 export function parcelDedupKey(
   p: { pnu?: string | null; address?: string | null },
 ): string | null {
-  if (p.pnu && String(p.pnu).trim()) return `pnu:${String(p.pnu).trim()}`;
+  // ★PNU 칸에 **PNU 가 아닌 것**이 들어앉는 일이 실재한다 — 라이브 실측(2026-09-02):
+  //   프로젝트 20건 292필지 중 5건이 `'◀ 전성결'`(성명) · `'store-rep-용인시 …'`(합성 id).
+  //   생산자는 `satong-map-selection.ts` 의 `` `store-rep-${address}` `` 라 **주소가 같으면 값도 같다.**
+  //   유효성을 안 보면 그 가짜가 곧 **정체성**이 되어, 같은 동의 필지가 다시 한 건으로 접힌다
+  //   (이 파일이 생긴 바로 그 버그). 검증은 `normalizePnu` 한 곳에서만 한다 — 구현 두 벌 금지.
+  const pnu = normalizePnu(p.pnu == null ? "" : String(p.pnu));
+  if (pnu) return `pnu:${pnu}`;
   const addr = (p.address || "").trim().replace(/\s+/g, " ");
   return addr ? `addr:${addr}` : null;
+}
+
+/**
+ * **프로젝트 SSOT 필지**의 정체성 키 — 유효 PNU 가 있으면 그것, 없으면 **인덱스를 섞는다.**
+ *
+ * ★왜 주소로 떨어뜨리지 않나: 프로젝트 필지는 SSOT 가 **이미 서로 다른 필지**임을 보장한다.
+ *   그런데 주소가 동 단위로 같으면(`경기도 오산시 내삼미동` ×77) 주소 폴백이 전부 한 건으로
+ *   접는다 — 신고된 "필지 불러오기 (77) 인데 목록에 1건" 이 그것이다. 인덱스를 섞어 막는다.
+ *   대가: 불러오기를 두 번 누르면 PNU 없는 행이 중복될 수 있다 — 그건 **화면에 보이고 지울 수
+ *   있는** 문제이고, 조용히 사라지는 것보다 낫다(무음 손실 금지).
+ *
+ * ★★이 규칙이 함수인 이유: 종전에는 패널에 **인라인**으로 있었고 테스트는 그 규칙을
+ *   **재구현**해서 검사했다(`p.pnu ? … : …`). 그래서 «가짜 PNU 는 truthy 라 인덱스 탈출구를
+ *   건너뛴다» 는 결함이 **양쪽에 똑같이** 있었고 테스트는 초록이었다.
+ *   구현이 두 벌이면 한쪽만 고쳐진다 — 이 파일이 반복해서 배운 것이다.
+ */
+export function projectParcelIdentityKey(
+  p: { pnu?: string | null; address?: string | null },
+  index: number,
+): string {
+  const pnu = normalizePnu(p.pnu == null ? "" : String(p.pnu));
+  if (pnu) return `pnu:${pnu}`;
+  return `project-idx:${index}:${(p.address || "").trim()}`;
 }
 
 /**

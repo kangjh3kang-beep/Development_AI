@@ -25,6 +25,7 @@ import type {
   FeasibilityData,
 } from "@/store/useProjectContextStore";
 import type { NodeId } from "./types";
+import { normalizePnu } from "@/lib/pnu";
 
 /**
  * useNodeRunner가 ready 슬롯에서 모은 상류 컨텍스트.
@@ -234,12 +235,16 @@ export function buildNodeBody(
       else missing.push("address");
       // bcode는 SSOT에 별도 슬롯이 없으므로 pnu(19자리) 앞 10자리(=법정동코드)에서 파생한다.
       // 백엔드 _resolve는 bcode[:5]로 lawd_cd를 얻으므로 이 10자리 bcode면 충분(라이브 검증).
-      const bcode = pnu && pnu.length >= 10 ? pnu.slice(0, 10) : null;
-      if (pnu) body.pnu = pnu;
+      // ★유효한 19자리에서만 파생한다. 종전 가드는 `length >= 10` 이라(주석은 "19자리"라고
+      //   적으면서) `'store-rep-…'.slice(0,10)` = `"store-rep-"` 를 **법정동코드로 날조**했다
+      //   — 백엔드는 `bcode[:5]`=`"store"` 를 `lawd_cd` 로 쓴다.
+      const validPnu = normalizePnu(pnu);
+      const bcode = validPnu ? validPnu.slice(0, 10) : null;
+      if (validPnu) body.pnu = validPnu;
       // pnu가 없어도 bcode가 있으면 백엔드 bcode 경로로 200을 받는다(둘 다 보내도 무해).
       if (bcode) body.bcode = bcode;
       // pnu·bcode 모두 없으면 lawd_cd를 못 구해 백엔드가 400 → 사전에 needs-input 처리.
-      if (!pnu && !bcode) missing.push("pnu");
+      if (!validPnu && !bcode) missing.push("pnu");
       break;
     }
 

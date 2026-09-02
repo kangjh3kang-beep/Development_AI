@@ -11,6 +11,7 @@ import {
   parcelDisplayAddress,
   parcelJibunResolved,
   parcelShortLabel,
+  projectParcelIdentityKey,
 } from "./pnu";
 
 describe("jibunFromPnu", () => {
@@ -95,12 +96,13 @@ describe("parcelDedupKey — 프로덕션 버그의 회귀 잠금", () => {
 
 describe("프로젝트 불러오기 — PNU 가 없는 필지의 잔여 접힘", () => {
   /**
-   * ★`parcelDedupKey` 는 PNU 가 없으면 주소로 떨어진다. 붙여넣기 경로에서는 그게 옳지만,
-   *   **프로젝트 필지는 SSOT 가 이미 유일**하므로 같은 동이면 또 접힌다.
-   *   패널은 그 경우 인덱스를 섞어 접히지 않게 한다 — 그 규칙을 여기서 잠근다.
+   * ★★종전에는 이 자리에 패널 규칙의 **재구현**이 있었다
+   *   (`p.pnu ? parcelDedupKey(p) : \`project-idx:...\``).
+   *   그래서 «가짜 PNU 는 truthy 라 인덱스 탈출구를 건너뛴다» 는 결함이 **패널과 테스트에
+   *   똑같이** 들어 있었고 테스트는 초록이었다 — 모델을 태우면 모델의 버그는 안 보인다.
+   *   이제 **패널이 실제로 부르는 함수**를 태운다.
    */
-  const projectKey = (p: { pnu?: string | null; address?: string | null }, i: number) =>
-    p.pnu ? parcelDedupKey(p) : `project-idx:${i}:${(p.address || "").trim()}`;
+  const projectKey = projectParcelIdentityKey;
 
   it("PNU 없는 같은 동 필지 3건이 접히지 않는다", () => {
     const parcels = [
@@ -346,5 +348,82 @@ describe("joinAddressJibun — 동 이름에 숫자가 있어도 지번을 버�
     expect(addressHasJibun(b)).toBe(true);
     expect(addressHasJibun(c)).toBe(false);
     expect(new Set([a, b, c]).size).toBe(3);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// 2026-09-02 — PNU **칸에 PNU 가 아닌 것**이 들어앉은 채로 정체성이 판정되고 있었다.
+//
+// 라이브 실측(`/api/v1/projects` 20건 292필지): PNU 칸의 비-PNU 값 **5건(1.7%)**
+//   '◀ 전성결' · '◀ 전성결외 4인' · '◀ 김영효' · '◀ 더윙홀딩스'  ← 성명(토지조서 파싱 잔재)
+//   'store-rep-용인시 수지구 신봉동 56-1'                        ← 합성 id
+// 생산자는 `satong-map-selection.ts` 의 `store-rep-${address}` 라 **주소가 같으면 값도 같다.**
+//
+// ★세 모집단을 **다른 결과**로 가른다 — 같은 결과를 내면 배선을 끊어도 통과한다.
+// ────────────────────────────────────────────────────────────────────────────
+
+/** 라이브에서 실제로 관측된 오염값 + 형태가 다른 대표들. 하나라도 통과하면 정체성이 오염된다. */
+const 가짜PNU = [
+  "◀ 전성결",                                 // 실측 — 성명
+  "◀ 더윙홀딩스",                              // 실측 — 법인명
+  "store-rep-경기도 오산시 내삼미동",            // 실측 형태 — **주소 파생**이라 동이 같으면 값도 같다
+  "경기도 오산시 내삼미동",                      // 볼트 2026-08-20 — parcel.id(주소 정규화 문자열)
+  "413701100010467000",                       // 18자리(자릿수 미달)
+  "41370110001046700012",                     // 20자리(자릿수 초과)
+  "413701100010467000a",                      // 19자 이지만 숫자가 아니다
+] as const;
+
+describe("PNU 유효성이 정체성을 가른다 — 가짜 PNU 는 정체성이 아니다", () => {
+  it("★대조군 — 위 값들은 전부 normalizePnu 에서 탈락한다(픽스처 생존 확인)", () => {
+    for (const v of 가짜PNU) expect(normalizePnu(v)).toBeNull();
+    // 음성 대조 — 진짜는 통과해야 한다(전부 null 을 주는 죽은 검사기와 구별)
+    expect(normalizePnu("4137011000104670001")).toBe("4137011000104670001");
+  });
+
+  it("★모집단 A(진짜 PNU) — 같은 동 주소를 공유해도 서로 다른 필지로 갈린다", () => {
+    // 라이브 77필지 프로젝트의 실제 형태: 주소는 전부 동 단위로 같고 PNU 만 다르다.
+    const A = Array.from({ length: 77 }, (_, i) => ({
+      pnu: `413701100010${String(4670001 + i).padStart(7, "0")}`.slice(0, 19),
+      address: "경기도 오산시 내삼미동",
+    }));
+    expect(A.every((p) => normalizePnu(p.pnu) !== null)).toBe(true); // 픽스처가 진짜인지 먼저
+    expect(new Set(A.map((p) => parcelDedupKey(p))).size).toBe(77);
+    expect(new Set(A.map((p, i) => projectParcelIdentityKey(p, i))).size).toBe(77);
+  });
+
+  it("★모집단 B(가짜 PNU) — 정체성으로 쓰이지 않는다. dedupKey 는 **주소로** 떨어진다", () => {
+    const B = 가짜PNU.map((v) => ({ pnu: v, address: "경기도 오산시 내삼미동" }));
+    const keys = B.map((p) => parcelDedupKey(p));
+    // 가짜가 키가 되면 7종으로 갈린다 — 주소 폴백이 옳으므로 **1종**이어야 한다.
+    expect(new Set(keys).size).toBe(1);
+    expect(keys[0]).toBe("addr:경기도 오산시 내삼미동");
+    // ★A 와 B 가 같은 결과를 내지 않는다(배선을 끊으면 이 대비가 무너진다)
+    expect(new Set(keys).size).not.toBe(가짜PNU.length);
+  });
+
+  it("★★모집단 B — 프로젝트 경로에서는 **접히지 않는다**(77→1 재발 방지)", () => {
+    // 종전 결함: `p.pnu ?` 가 참/거짓만 봐서 가짜가 truthy → 인덱스 탈출구를 건너뛰고
+    //            `store-rep-<같은 동 주소>` 가 **전원 같은 키** → 77건이 1건으로 접혔다.
+    const 오염된77 = Array.from({ length: 77 }, () => ({
+      pnu: "store-rep-경기도 오산시 내삼미동", // 주소 파생이라 77건이 **모두 같은 값**
+      address: "경기도 오산시 내삼미동",
+    }));
+    const keys = 오염된77.map((p, i) => projectParcelIdentityKey(p, i));
+    expect(new Set(keys).size).toBe(77);
+    // 그리고 그 키는 **가짜 PNU 를 담고 있지 않다**(키에 새어 나가면 상류로 다시 흐른다)
+    expect(keys.every((k) => !k.includes("store-rep"))).toBe(true);
+  });
+
+  it("모집단 C(앵커 없음) — 지어내지 않는다. 기존 계약 유지", () => {
+    expect(parcelDedupKey({ pnu: "  ", address: "  " })).toBeNull();
+    expect(parcelDedupKey({})).toBeNull();
+    expect(projectParcelIdentityKey({ address: "경기도 오산시 내삼미동" }, 3))
+      .toBe("project-idx:3:경기도 오산시 내삼미동");
+  });
+
+  it("★진짜 PNU 는 공백이 섞여도 같은 정체성(정규화 전후 바이트 동일)", () => {
+    expect(parcelDedupKey({ pnu: " 4137011000104670001 " })).toBe("pnu:4137011000104670001");
+    expect(projectParcelIdentityKey({ pnu: "4137011000104670001" }, 0))
+      .toBe(projectParcelIdentityKey({ pnu: "4137011000104670001" }, 9));
   });
 });
