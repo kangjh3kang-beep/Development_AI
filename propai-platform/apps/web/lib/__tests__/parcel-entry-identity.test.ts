@@ -23,14 +23,15 @@ import {
 
 /** 같은 동, 서로 다른 필지 — 실제 신고 사례(오산 내삼미동 77필지)의 축소판. */
 const DONG = "경기도 오산시 내삼미동";
-const A1 = { pnu: "4137010200101140000", fullAddress: DONG };
-const A2 = { pnu: "4137010200104670000", fullAddress: DONG };
+type Row = { pnu: string | null; fullAddress: string };
+const A1: Row = { pnu: "4137010200101140000", fullAddress: DONG };
+const A2: Row = { pnu: "4137010200104670000", fullAddress: DONG };
 /** 같은 필지, 표기 두 가지 — 백엔드가 짧은 주소를 자동 해소하기 전/후. */
-const SHORT = { pnu: null, fullAddress: "상도동 211-204" };
-const LONG = { pnu: null, fullAddress: "서울특별시 동작구 상도동 211-204" };
+const SHORT: Row = { pnu: null, fullAddress: "상도동 211-204" };
+const LONG: Row = { pnu: null, fullAddress: "서울특별시 동작구 상도동 211-204" };
 /** `#941` 라이브 실측 오염값 — 생산자가 주소로 합성하므로 **주소가 같으면 값도 같다**. */
-const DIRTY1 = { pnu: `store-rep-${DONG}`, fullAddress: DONG };
-const DIRTY2 = { pnu: `store-rep-${DONG}`, fullAddress: DONG };
+const DIRTY1: Row = { pnu: `store-rep-${DONG}`, fullAddress: DONG };
+const DIRTY2: Row = { pnu: `store-rep-${DONG}`, fullAddress: DONG };
 
 describe("네 모집단이 서로 다른 결과를 낸다", () => {
   it("A 같은 동 주소 + 서로 다른 유효 PNU → **안 접힌다**", () => {
