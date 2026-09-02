@@ -20,6 +20,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const postMock = vi.fn();
 /** 검색 스텁이 무엇을 고를지 — 테스트마다 바꾼다(빈 div 스텁은 이 경로를 전혀 안 태운다). */
 const PICK = { address: "상도동 211-204" };
+/** 지도 다중선택이 넘길 필지들 — 테스트마다 바꾼다. */
+let MAP_PICK: unknown[] = [];
 vi.mock("@/lib/api-client", async (orig) => {
   const actual = await (orig as () => Promise<Record<string, unknown>>)();
   return { ...actual, apiClient: { ...(actual.apiClient as object), post: (...a: unknown[]) => postMock(...a), get: vi.fn() } };
@@ -45,8 +47,14 @@ vi.mock("@/components/ui/KakaoAddressSearch", () => ({
 }));
 vi.mock("next/dynamic", () => ({
   default: () =>
-    function S(props: { selectedParcels?: unknown[] }) {
-      return <div data-testid="map" data-parcels={String(props.selectedParcels?.length ?? 0)} />;
+    function S(props: { selectedParcels?: unknown[]; onPickMany?: (p: unknown[]) => void }) {
+      return (
+        <>
+          <div data-testid="map" data-parcels={String(props.selectedParcels?.length ?? 0)} />
+          {/* ★지도 다중선택 경로를 실제로 태운다 — 스텁이 콜백을 안 부르면 그 자리는 무잠금이다. */}
+          <button type="button" data-testid="map-pick-many" onClick={() => props.onPickMany?.(MAP_PICK)} />
+        </>
+      );
     },
 }));
 
@@ -67,6 +75,7 @@ const count = () => Number(screen.getByTestId("map").getAttribute("data-parcels"
 
 beforeEach(() => {
   PICK.address = 짧은;
+  MAP_PICK = [];
   postMock.mockReset();
   postMock.mockResolvedValue({ parcels: [] });   // 기본: 보강이 아무것도 안 바꾼다
 });
@@ -264,5 +273,67 @@ describe("★보강 실패 경로 — 3단계가 안 돌 때 입력 시점 가�
       { timeout: 4000 },
     );
     await waitFor(() => expect(count(), "★같은 필지 3행이 그대로 들어왔다").toBe(3), { timeout: 5000 });
+  });
+});
+
+
+describe("★남은 두 축 — 사용자 문구와 지도 경로", () => {
+  /**
+   * ★엑셀 파일내 중복제거(`dedupeByIdentity(entries)`)는 병합 헬퍼가 다시 접으므로
+   * **필지 수로는 변이가 안 잡힌다**(이중 가드). 그러나 그 자리는 사용자에게 보이는
+   * **「동일 필지 N행 통합」** 문구를 만든다 — 그 수가 곧 이 줄의 산출물이다.
+   */
+  it("④ 같은 필지 3행을 올리면 화면이 **「2행 통합」**이라고 말한다", async () => {
+    seed([{ address: 긴, pnu: null, areaSqm: 100 }, { address: 동, pnu: PNU_B, areaSqm: 684 }]);
+    postMock.mockImplementation((url: string) => {
+      if (String(url).includes("/zoning/parse-parcels"))
+        return Promise.resolve({ parcels: [
+          { address: 동, pnu: PNU_A, area_sqm: 53 },
+          { address: 동, pnu: PNU_A, area_sqm: 53 },
+          { address: 동, pnu: PNU_A, area_sqm: 53 },
+        ] });
+      return Promise.resolve({ parcels: [] });
+    });
+    render(<GlobalAddressSearch single={false} writeToContext />);
+    await waitFor(() => expect(count()).toBe(2));
+    fireEvent.change(document.querySelector('input[type="file"]') as HTMLInputElement,
+      { target: { files: [new File(["x"], "조서.xlsx")] } });
+    // ★3행 중 2행이 통합돼야 한다 — 수를 상수로 못 박지 않고 입력에서 파생시킨다.
+    const 올린행 = 3, 남을필지 = 1;
+    await screen.findByText(new RegExp(`동일 필지 ${올린행 - 남을필지}행 통합`));
+  });
+
+  it("④-b ★음성 대조군 — 중복이 없으면 통합 문구가 **안 뜬다**", async () => {
+    seed([{ address: 긴, pnu: null, areaSqm: 100 }]);
+    postMock.mockImplementation((url: string) => {
+      if (String(url).includes("/zoning/parse-parcels"))
+        return Promise.resolve({ parcels: [
+          { address: 동, pnu: PNU_A, area_sqm: 53 },
+          { address: 동, pnu: PNU_B, area_sqm: 684 },
+        ] });
+      return Promise.resolve({ parcels: [] });
+    });
+    render(<GlobalAddressSearch single={false} writeToContext />);
+    fireEvent.change(document.querySelector('input[type="file"]') as HTMLInputElement,
+      { target: { files: [new File(["x"], "조서.xlsx")] } });
+    await screen.findByText(/필지 등록/);          // 업로드가 실제로 끝났는가(공허 방지)
+    expect(document.body.textContent ?? "").not.toContain("행 통합");
+  });
+
+  it("⑤ 지도 다중선택 — 같은 동 주소라도 **PNU 가 다르면 둘 다 들어온다**", async () => {
+    // ★진입점은 **2필지 이상**일 때만 하이드레이션한다(`buildInitialAddressEntries`) —
+    //   1건만 심으면 목록이 0건이 되어 이 케이스가 공허해진다(첫 시도에서 그렇게 실패했다).
+    seed([{ address: 동, pnu: PNU_A, areaSqm: 53 }, { address: 긴, pnu: null, areaSqm: 100 }]);
+    // 목록에 이미 PNU_A 가 있다. 지도에서 PNU_A(중복)와 PNU_B(새 필지)를 함께 고른다.
+    MAP_PICK = [
+      { found: true, address: 동, pnu: PNU_A },
+      { found: true, address: 동, pnu: PNU_B },
+    ];
+    render(<GlobalAddressSearch single={false} writeToContext />);
+    await waitFor(() => expect(count()).toBe(2));
+    fireEvent.click(screen.getByTestId("map-pick-many"));
+    // 옛 코드(주소 Set)는 둘 다 «이미 있는 주소» 로 보고 **0건 추가**했다 → 2.
+    // 새 규칙은 PNU_B 만 새 필지로 본다 → 3.
+    await waitFor(() => expect(count(), "★같은 동 주소의 새 필지가 지도에서 안 들어왔다").toBe(3), { timeout: 4000 });
   });
 });
