@@ -12,6 +12,7 @@ from typing import Any
 import httpx
 
 from app.core.config import settings
+from app.utils.pnu import is_valid_pnu
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +105,7 @@ class BuildingRegistryService:
 
     async def get_building_by_pnu(self, pnu: str) -> dict[str, Any] | None:
         """PNU(19자리)에서 시군구코드/법정동코드/본번/부번을 추출하여 조회."""
-        if len(pnu) < 19:
+        if not is_valid_pnu(pnu):
             return None
 
         sigungu_cd = pnu[:5]
@@ -136,7 +137,7 @@ class BuildingRegistryService:
         if not settings.MOLIT_API_KEY:
             self.last_status = "no_key"
             return None, "no_key"
-        if len(pnu) < 19:
+        if not is_valid_pnu(pnu):
             self.last_status = "error"
             return None, "error"
         params = {
@@ -257,7 +258,7 @@ class BuildingRegistryService:
         반환: [{dong, ho, exclusive_area_sqm, purpose}] (전유부만, 호 단위 합산).
         키 미설정/실패/무자료 → None(가짜 생성 금지).
         """
-        if len(pnu) < 19 or not settings.MOLIT_API_KEY:
+        if not is_valid_pnu(pnu) or not settings.MOLIT_API_KEY:
             return None
 
         def _f(x: dict, k: str) -> float:

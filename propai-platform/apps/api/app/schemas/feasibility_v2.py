@@ -82,7 +82,7 @@ class SensitivityRequest(BaseModel):
 
 
 class TaxCalculateAllRequest(BaseModel):
-    """38종 세금 일괄 계산 요청."""
+    """28종 세금 일괄 계산 요청."""
     purchase_won: int = 0
     land_category: str = "land"
     house_count: int = 0

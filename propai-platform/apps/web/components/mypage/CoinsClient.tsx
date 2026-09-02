@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiClientError, apiClient, apiV1BaseUrl } from "@/lib/api-client";
+import { fromApiError } from "@/lib/payments/payment-error";
+import { openPaymentWindow, TossSdkError, type TossConfig } from "@/lib/payments/toss-sdk";
 import type { Locale } from "@/i18n/config";
 import {
   ENTRY_TYPE_LABELS,
@@ -9,6 +11,40 @@ import {
   ORDER_STATUS_LABELS,
   formatKrw,
 } from "./MyPageShell";
+
+/** 환불 응답 — ★「미사용분만」 정책을 화면이 설명할 수 있게 서버가 근거를 함께 준다. */
+type RefundResult = {
+  refunded_krw: number;
+  /** 이미 사용해 **돌려줄 수 없는** 금액 */
+  unrefundable_consumed_krw?: number;
+  partial?: boolean;
+};
+
+type Receipt = {
+  id: string;
+  event: string;
+  payment_key: string | null;
+  amount_krw: number | null;
+  toss_code: string | null;
+  toss_message: string | null;
+  created_at: string | null;
+};
+
+/** ★영수증 이벤트 라벨 — 백엔드 `payment_receipts.ALL_EVENTS` 와 1:1.
+ *  둘이 갈리면 화면에 영문 raw 가 뜬다(이 저장소가 라벨표에서 이미 겪은 결함).
+ *  파생형 테스트가 전수로 대조한다. */
+export const RECEIPT_EVENT_LABELS: Record<string, string> = {
+  requested: "승인 요청",
+  approved: "결제 승인됨",
+  rejected: "결제 거절됨",
+  unknown: "결과 미확정",
+  applied: "코인 지급 완료",
+  apply_failed: "★지급 실패(확인 필요)",
+  blocked: "요청 차단됨",
+  canceled: "환불 완료",
+  cancel_rejected: "환불 거절됨",
+  reconciled: "재조회로 확정",
+};
 
 type Package = { key: string; amount_krw: number; label: string };
 type PackagesResponse = {
@@ -74,6 +110,12 @@ export function CoinsClient({ locale }: { locale: Locale }) {
   const [ordersError, setOrdersError] = useState(false);
   const [ledgerError, setLedgerError] = useState(false);
   const [packagesError, setPackagesError] = useState(false);
+  // ★토스 결제 설정. `payment_mode === "toss"` 일 때만 결제창을 띄운다.
+  const [tossConfig, setTossConfig] = useState<TossConfig | null>(null);
+  // 선택한 주문의 영수증 타임라인 — 무엇이 언제 어떻게 됐는지.
+  const [receiptsFor, setReceiptsFor] = useState<string | null>(null);
+  const [receipts, setReceipts] = useState<Receipt[]>([]);
+  const [receiptsError, setReceiptsError] = useState(false);
   // ★요청 세대 카운터 — 필터 연속 전환 시 늦게 도착한 이전 요청 응답이 최신을 덮어쓰는 경합을
   //   차단한다(성장루프 LOW 수렴, Overview/Usage의 active 가드와 동일 취지).
   const reqSeqRef = useRef(0);
@@ -116,6 +158,16 @@ export function CoinsClient({ locale }: { locale: Locale }) {
 
   useEffect(() => {
     void apiClient
+      .get<TossConfig>("/billing/payments/toss/config", { useMock: false })
+      .then((c) => {
+        setTossConfig(c);
+        // ★단일 출처 — 설정 응답의 payment_mode 를 그대로 쓴다(별도 판정 금지).
+        if (c?.payment_mode) setPaymentMode(c.payment_mode);
+      })
+      .catch(() => {
+        /* 설정 조회 실패는 치명이 아니다 — 결제 버튼이 안 뜰 뿐이고, 그 사실은 화면에 보인다. */
+      });
+    apiClient
       .get<PackagesResponse & { payment_mode?: string }>("/billing/packages", { useMock: false })
       .then((p) => {
         setPackages(p);
@@ -152,6 +204,99 @@ export function CoinsClient({ locale }: { locale: Locale }) {
       await reload();
     } catch (error) {
       setNotice({ kind: "error", text: resolveErrorMessage(error, "주문 생성에 실패했습니다.") });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * ★주문 생성 → **결제창 열기**를 한 동작으로.
+   *
+   * 두 단계를 나누면 사용자가 "주문은 생겼는데 결제는 안 된" 상태를 만들고, 그게
+   * 미결제 주문 상한(5건)을 잡아먹는다. 실제로 옛 흐름이 그랬다.
+   */
+  const payWithToss = async () => {
+    setBusy(true);
+    setNotice(null);
+    try {
+      const body: { package_key: string; amount_krw?: number } = { package_key: selected };
+      if (selected === "custom") body.amount_krw = Number(customAmount || 0);
+      const order = await apiClient.post<Order & { payment_mode?: string }>("/billing/orders", {
+        body,
+        useMock: false,
+      });
+      if (!tossConfig) throw new TossSdkError("not_configured", "결제 설정을 불러오지 못했습니다.");
+      await openPaymentWindow({
+        config: tossConfig,
+        // ★토스에 보내는 값은 **uuid** 다(사람이 읽는 번호는 orderName 으로 간다).
+        orderId: order.id,
+        orderNo: order.order_no,
+        amount: order.amount_krw,
+        // ★`customerKey` 는 **PII 가 아니어야** 한다 — 이메일을 쓰면 지울 수 없는
+        //   네임스페이스에 묶인다. 주문 uuid 로 익명 결제 흐름을 쓴다.
+        customerKey: `propai-${order.id}`,
+        returnBase: `/${locale}/mypage/coins`,
+      });
+      // 여기서 리턴되면 결제창이 열린 것이다 — 이후는 리다이렉트가 이어받는다.
+      await reload();
+    } catch (error) {
+      const view =
+        error instanceof TossSdkError
+          ? { message: error.message, remediation: "잠시 후 다시 시도해 주세요." }
+          : fromApiError(error, "결제를 시작하지 못했습니다.");
+      setNotice({ kind: "error", text: `${view.message} ${view.remediation}` });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** 주문의 결제 처리 타임라인 — ★"결제했는데 왜 코인이 없나"를 사용자가 스스로 확인한다. */
+  const loadReceipts = async (id: string) => {
+    if (receiptsFor === id) {
+      setReceiptsFor(null);
+      return;
+    }
+    setReceiptsFor(id);
+    setReceipts([]);
+    setReceiptsError(false);
+    try {
+      const r = await apiClient.get<{ receipts: Receipt[] }>(
+        `/billing/orders/${id}/receipts`,
+        { useMock: false },
+      );
+      setReceipts(Array.isArray(r?.receipts) ? r.receipts : []);
+    } catch {
+      // ★조회 실패를 '내역 없음'으로 위장하지 않는다(이 파일의 기존 규율과 동일).
+      setReceiptsError(true);
+    }
+  };
+
+  const requestRefund = async (id: string, orderNo: string) => {
+    const reason = window.prompt(`주문 ${orderNo} 환불 사유를 입력해 주세요(2자 이상)`);
+    if (!reason || reason.trim().length < 2) return;
+    setBusy(true);
+    setNotice(null);
+    try {
+      const r = await apiClient.post<RefundResult>(`/billing/orders/${id}/refund`, {
+        body: { reason: reason.trim() },
+        useMock: false,
+      });
+      // ★부분 환불이면 **왜 이만큼인지** 말한다. 조용히 적게 돌려주면 사용자가 모른다.
+      const consumed = r.unrefundable_consumed_krw ?? 0;
+      setNotice({
+        kind: "info",
+        text:
+          consumed > 0
+            ? `미사용분 ${r.refunded_krw.toLocaleString("ko-KR")}원을 환불했습니다.` +
+              ` 이미 사용하신 ${consumed.toLocaleString("ko-KR")}원은 환불되지 않습니다.` +
+              ` 카드사에 따라 영업일 기준 3~4일이 걸릴 수 있습니다.`
+            : `${r.refunded_krw.toLocaleString("ko-KR")}원이 환불 처리되었습니다.` +
+              ` 카드사에 따라 영업일 기준 3~4일이 걸릴 수 있습니다.`,
+      });
+      await reload();
+    } catch (error) {
+      const v = fromApiError(error, "환불을 처리하지 못했습니다.");
+      setNotice({ kind: "error", text: `${v.message} ${v.remediation}` });
     } finally {
       setBusy(false);
     }
@@ -301,18 +446,45 @@ export function CoinsClient({ locale }: { locale: Locale }) {
             />
           </div>
         ) : null}
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => void createOrder()}
-          className="mt-4 rounded-full bg-[var(--accent-strong)] px-5 py-2.5 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
-        >
-          충전 주문 만들기
-        </button>
-        <p className="mt-2 text-xs leading-5 text-[var(--text-tertiary)]">
-          충전 코인은 1원 = 1코인으로 지급되며 월기본 소진 후 사용됩니다. 주문 생성 후 결제가
-          확인되면 잔액에 반영됩니다.
-        </p>
+        {/* ★결제 경로에 따라 **다른 버튼**을 낸다 — 죽은 버튼을 보여 주지 않는다.
+            (프로덕션에서 항상 501 이 나는 버튼을 감추는 기존 규율과 같은 취지) */}
+        {paymentMode === "toss" ? (
+          <div className="mt-4" data-testid="toss-pay">
+            <button
+              type="button"
+              disabled={busy || !tossConfig?.client_key}
+              onClick={() => void payWithToss()}
+              className="rounded-full bg-[var(--accent-strong)] px-5 py-2.5 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
+            >
+              카드·간편결제로 충전하기
+            </button>
+            {tossConfig?.test_mode ? (
+              // ★테스트 키면 실제 결제가 일어나지 않는다 — 숨기면 아무도 모른다.
+              <p className="mt-2 text-xs font-semibold text-[var(--status-warning)]">
+                테스트 모드입니다 — 실제로 결제되지 않습니다.
+              </p>
+            ) : null}
+            <p className="mt-2 text-xs leading-5 text-[var(--text-tertiary)]">
+              충전 코인은 1원 = 1코인으로 지급되며 월기본 소진 후 사용됩니다. 결제가 승인되면
+              즉시 잔액에 반영됩니다.
+            </p>
+          </div>
+        ) : (
+          <>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void createOrder()}
+              className="mt-4 rounded-full bg-[var(--accent-strong)] px-5 py-2.5 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
+            >
+              충전 주문 만들기
+            </button>
+            <p className="mt-2 text-xs leading-5 text-[var(--text-tertiary)]">
+              충전 코인은 1원 = 1코인으로 지급되며 월기본 소진 후 사용됩니다. 주문 생성 후 결제가
+              확인되면 잔액에 반영됩니다.
+            </p>
+          </>
+        )}
       </section>
 
       {/* 결제내역(주문) */}
@@ -385,6 +557,27 @@ export function CoinsClient({ locale }: { locale: Locale }) {
                             취소
                           </button>
                         </span>
+                      ) : o.status === "paid" || o.status === "refunded" ? (
+                        <span className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void loadReceipts(o.id)}
+                            className="rounded-full border border-[var(--line)] px-3 py-1 text-xs font-semibold text-[var(--text-secondary)] transition hover:bg-[var(--surface)]"
+                          >
+                            {receiptsFor === o.id ? "내역 닫기" : "처리내역"}
+                          </button>
+                          {/* ★환불은 결제 경로가 토스이고 아직 환불되지 않은 건에만. */}
+                          {o.status === "paid" && paymentMode === "toss" ? (
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => void requestRefund(o.id, o.order_no)}
+                              className="rounded-full border border-[var(--line)] px-3 py-1 text-xs font-semibold text-[var(--text-tertiary)] transition hover:bg-[var(--surface)] disabled:opacity-50"
+                            >
+                              환불 요청
+                            </button>
+                          ) : null}
+                        </span>
                       ) : (
                         <span className="text-xs text-[var(--text-tertiary)]">-</span>
                       )}
@@ -395,6 +588,42 @@ export function CoinsClient({ locale }: { locale: Locale }) {
             </table>
           </div>
         )}
+
+        {/* ★결제 처리 타임라인 — "결제했는데 왜 코인이 없나"를 사용자가 **스스로** 확인한다.
+            이게 없으면 모든 문의가 고객센터로 간다(진단 불가는 그 자체로 장애다). */}
+        {receiptsFor ? (
+          <div className="mt-4 rounded-lg border border-[var(--line)] bg-[var(--surface)] p-4"
+               data-testid="receipt-timeline">
+            <h3 className="text-sm font-semibold text-[var(--text-primary)]">결제 처리 내역</h3>
+            {receiptsError ? (
+              <p role="status" className="mt-2 text-sm text-[var(--status-error)]">
+                처리 내역을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.
+              </p>
+            ) : receipts.length === 0 ? (
+              <p className="mt-2 text-sm text-[var(--text-tertiary)]">기록이 없습니다.</p>
+            ) : (
+              <ol className="mt-3 space-y-2">
+                {receipts.map((r) => (
+                  <li key={r.id} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs">
+                    <span className="text-[var(--text-tertiary)]">
+                      {r.created_at ? new Date(r.created_at).toLocaleString("ko-KR") : "-"}
+                    </span>
+                    <span className="font-semibold text-[var(--text-primary)]">
+                      {RECEIPT_EVENT_LABELS[r.event] ?? r.event}
+                    </span>
+                    {/* ★사유를 버리지 않는다 — 이게 없으면 사용자도 조사자도 원인을 모른다. */}
+                    {r.toss_message ? (
+                      <span className="text-[var(--text-secondary)]">{r.toss_message}</span>
+                    ) : null}
+                    {r.toss_code ? (
+                      <span className="font-mono text-[var(--text-tertiary)]">{r.toss_code}</span>
+                    ) : null}
+                  </li>
+                ))}
+              </ol>
+            )}
+          </div>
+        ) : null}
       </section>
 
       {/* 코인내역(통합 타임라인) */}

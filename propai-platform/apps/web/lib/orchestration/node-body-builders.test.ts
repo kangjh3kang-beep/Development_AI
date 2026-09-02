@@ -679,3 +679,35 @@ describe("G4 계약 — SELLABLE_EFFICIENCY_BY_TYPE FE/BE 동치 고정(드리�
     expect(DEFAULT_SELLABLE_EFFICIENCY).toBe(0.75);
   });
 });
+
+// ────────────────────────────────────────────────────────────────────────────
+// 2026-09-02 — **가짜 PNU 가 법정동코드로 날조되던 자리.**
+// 종전 가드는 `pnu.length >= 10` 이었다(주석은 "pnu(19자리) 앞 10자리" 라고 적으면서).
+// 라이브 실측 오염값 `'store-rep-용인시 수지구 신봉동 56-1'` 은 26자라 그 가드를 통과하고
+// `.slice(0,10)` 이 `"store-rep-"` 를 만들었다 — 백엔드는 `bcode[:5]` = `"store"` 를
+// `lawd_cd` 로 쓴다. 즉 **없는 법정동으로 조회가 나간다.**
+// ★두 모집단을 가른다: 진짜는 bcode 를 **만들고**, 오염은 **만들지 않고 needs-input** 이다.
+// ────────────────────────────────────────────────────────────────────────────
+describe("★sales: bcode 는 **유효한 19자리 PNU** 에서만 파생한다", () => {
+  const 오염 = ["store-rep-용인시 수지구 신봉동 56-1", "◀ 전성결", "경기도 오산시 내삼미동"];
+
+  it("모집단 A(진짜 PNU) — pnu·bcode 가 실리고 missing 에 pnu 가 없다", () => {
+    const ctx: NodeBodyContext = { siteAnalysis: multiSite({ pnu: "1159010300101230000" }) };
+    const { body, missing } = buildNodeBody("sales", ctx, "p1");
+    expect(body.pnu).toBe("1159010300101230000");
+    expect(body.bcode).toBe("1159010300");
+    expect(missing).not.toContain("pnu");
+  });
+
+  it("★모집단 B(오염 PNU) — bcode 를 **지어내지 않고** needs-input 으로 정직하게 막는다", () => {
+    for (const bad of 오염) {
+      const ctx: NodeBodyContext = { siteAnalysis: multiSite({ pnu: bad }) };
+      const { body, missing } = buildNodeBody("sales", ctx, "p1");
+      expect(body.bcode).toBeUndefined();
+      expect(body.pnu).toBeUndefined();
+      expect(missing).toContain("pnu");
+      // ★오염 문자열의 조각이 body 어디에도 새지 않는다(bcode 이외의 경로로도)
+      expect(JSON.stringify(body)).not.toContain(bad.slice(0, 10));
+    }
+  });
+});
