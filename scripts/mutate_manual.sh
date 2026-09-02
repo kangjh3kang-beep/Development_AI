@@ -149,6 +149,16 @@ _NL='
 #   **셸인데 직접 명령으로 신뢰**된다(적대 리뷰 3차 실측: `rbash -c 'a; true'` → 거짓 SURVIVED).
 #   세 축: ①이름 ②심링크를 따라간 **실체** ③시스템 자신의 목록 `/etc/shells`.
 _resolved_shell=""
+# ★rc 를 **바꾸거나 버리는** 프로그램. **argv 층과 스크립트 문자열 층이 이 함수를 공유**한다 —
+#   3차에서 argv 층만 닫았더니 `bash -c 'script -qc …'` 한 겹으로 전부 우회됐다(4차 CRITICAL-2).
+#   ★`setsid` 는 실측상 rc 를 버린다(`setsid false` → **0**). 중립 목록에 두면 안 된다.
+#   ★이 목록은 **완전하지 않다** — 임의 실행파일은 원리적으로 알 수 없다(§부채·xfail).
+_rc_destroying() {
+  case "$(basename -- "${1:-}")" in
+    timeout|script|flock|xargs|retry|setsid) return 0 ;;
+  esac
+  return 1
+}
 _is_shell() {
   _n="$(basename -- "$1")"
   # ★**항상 실체까지 푼다.** 이름이 목록에 있다고 거기서 멈추면 `rbash`(→bash)의
@@ -189,14 +199,15 @@ for _a in "$@"; do
   fi
   case "$_state" in
     scan)
+      if _rc_destroying "$_a"; then
+        _saw_prefix=1; _rc_altering=1; continue
+      fi
       case "$(basename -- "$_a")" in
-        env|nohup|stdbuf|command|exec|setsid|nice|ionice)
+        # ★rc **중립** 접두 — rc 가 그대로 통과하므로 **신뢰 판정을 바꾸지 않는다**(투명).
+        #   종전엔 이 뒤에 셸이 없으면 fail-closed 였는데, 그러면 `env FOO=1 pytest` 처럼
+        #   **가장 흔한 정당 형태를 막는다**(4차 HIGH-2 실측 위양성).
+        env|nohup|stdbuf|command|exec|nice|ionice)
           _saw_prefix=1; continue ;;
-        # ★rc 를 **바꾸거나 버리는** 래퍼 — 셸을 끼워도 신뢰하지 않는다.
-        #   `timeout` 124 · `script` 는 `-e` 없이 자식 rc 를 **버리고 0** · `flock -n` 경합 시 1
-        #   · `xargs` 는 자식 rc 를 자기 규칙으로 바꾼다. ★이 목록은 **완전하지 않다**(§부채).
-        timeout|script|flock|xargs|retry)
-          _saw_prefix=1; _rc_altering=1; continue ;;
       esac
       if _is_shell "$_a"; then
         _wrapper="$_resolved_shell"; _state=shellargs; continue
@@ -238,15 +249,18 @@ elif [ -n "$_wrapper" ] && [ "$_state" != done ]; then
   else
     RC_WHY="셸 래퍼인데 '-c' 스크립트를 특정하지 못했다 — 무엇이 실행되는지 모르므로 판정하지 않는다"
   fi
-elif [ -z "$_wrapper" ] && [ "$_saw_prefix" -eq 1 ]; then
-  RC_UNTRUSTED=1
-  RC_WHY="접두 래퍼(env/nohup 등)를 거쳐 무엇이 실행되는지 특정하지 못했다 — 판정하지 않는다"
 elif [ -n "$_wrapper" ]; then
   _rest="$_script"
   # ★접두 `set …` 을 **반복해서** 걷는다. 단 그 절에 주석·명령치환이 있으면 **걷지 않는다**
   #   (걷어내면 그 안의 테스트까지 시야에서 사라져 위음성이 된다 — 적대 리뷰 M1 실측).
   while :; do
-    while :; do case "$_rest" in " "*) _rest="${_rest# }" ;; *) break ;; esac; done
+    while :; do
+      case "$_rest" in
+        " "*) _rest="${_rest# }" ;;
+        "	"*) _rest="${_rest#	}" ;;
+        *) break ;;
+      esac
+    done
     case "$_rest" in "set -"*) ;; *) break ;; esac
     _segA="${_rest%%;*}"; _segB="${_rest%%"$_NL"*}"
     if [ "$_segA" = "$_rest" ] && [ "$_segB" = "$_rest" ]; then break; fi
@@ -262,12 +276,14 @@ elif [ -n "$_wrapper" ]; then
     esac
     # ★부분문자열이 아니라 **낱말**로, 그리고 **부호**를 본다.
     _pf_prev=""
+    set -f          # ★비인용 순회라 `*`·`?` 가 cwd 에 글롭된다 — 판정이 작업디렉토리에 의존하면 안 된다
     for _w in $_seg; do
       if [ "$_w" = "pipefail" ]; then
         case "$_pf_prev" in -*o) _had_pipefail=1 ;; +*o) _had_pipefail=0 ;; esac
       fi
       _pf_prev="$_w"
     done
+    set +f
     _rest="$_tail"
   done
   # ★`sh`/`dash` 에는 `set -o pipefail` 이 없다 — 인정하면 「명령이 깨져서 CAUGHT」가 된다.
@@ -280,9 +296,9 @@ elif [ -n "$_wrapper" ]; then
       RC_UNTRUSTED=1
       RC_WHY="래퍼 스크립트가 비어 있다(공백뿐) — 테스트가 실행되지 않았는데 rc=0 이 나온다"
       ;;
-    *";"*|*"&"*|*"("*|*")"*|*"<"*|*">"*|*'`'*|*'$'*|*"!"*|*"#"*|*"$_NL"*)
+    *"||"*|*";"*|*"&"*|*"("*|*")"*|*"<"*|*">"*|*'`'*|*'$'*|*"!"*|*"#"*|*"$_NL"*)
       RC_UNTRUSTED=1
-      RC_WHY="래퍼 스크립트가 **단일 단순 명령이 아니다**(';' '&' '(' ')' '<' '>' 백틱 '\$' '!' '#' 개행 중 하나가 있다) — rc 가 테스트의 것이라고 보증할 수 없다"
+      RC_WHY="래퍼 스크립트가 **단일 단순 명령이 아니다**('||' ';' '&' '(' ')' '<' '>' 백틱 '\$' '!' '#' 개행 중 하나가 있다) — rc 가 테스트의 것이라고 보증할 수 없다"
       ;;
     *"|"*)
       if [ "$_had_pipefail" -eq 0 ]; then
@@ -291,6 +307,33 @@ elif [ -n "$_wrapper" ]; then
       fi
       ;;
   esac
+  # ★화이트리스트는 **모양만** 본다 — **명령 이름**도 봐야 한다(4차 CRITICAL-2).
+  #   `bash -c 'script -qc "…" /dev/null'` 은 메타문자가 없어 통과하는데 **rc 가 버려진다.**
+  #   argv 층과 **같은 함수**(`_rc_destroying`)를 쓴다 — 한 곳을 고치면 두 층이 따라온다.
+  #   ★`set --` 로 낱말을 뽑으면 `"$@"` 가 파괴되어 **테스트 실행 자체가 깨진다** — 쓰지 않는다.
+  if [ "$RC_UNTRUSTED" -eq 0 ]; then
+    _scan="$_rest"
+    while :; do
+      _one="${_scan%%|*}"
+      while :; do
+        case "$_one" in
+          " "*) _one="${_one# }" ;;
+          "	"*) _one="${_one#	}" ;;
+          *) break ;;
+        esac
+      done
+      _cmd="${_one%% *}"
+      if [ -n "$_cmd" ] && _rc_destroying "$_cmd"; then
+        RC_UNTRUSTED=1
+        RC_WHY="래퍼 스크립트가 **rc 를 바꾸거나 버리는 명령**($_cmd)을 부른다 — rc 가 테스트의 것이 아니다"
+        break
+      fi
+      case "$_scan" in
+        *"|"*) _scan="${_scan#*|}" ;;
+        *) break ;;
+      esac
+    done
+  fi
 fi
 if [ "$RC_UNTRUSTED" -eq 1 ] && [ -n "${MUTATE_ALLOW_SHELL:-}${MUTATE_ALLOW_PIPE:-}" ]; then
   echo "== 셸 래퍼 예외: ${MUTATE_ALLOW_SHELL:-${MUTATE_ALLOW_PIPE:-}} (호출자가 rc 보존을 선언) =="

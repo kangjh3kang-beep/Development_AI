@@ -299,6 +299,22 @@ _판정불가_형태 = [
                                      "set -o noglob; grep -q alpha target.txt | cat"]),
     ("★MUT-C 판별: -o noglob 명령줄", ["bash", "-o", "noglob", "-c",
                                        "grep -q alpha target.txt | cat"]),
+    # ── 4차 리뷰: ★**내가 판 「파이프 예외」에서 나왔다.** 예외를 하나 팔 때마다
+    #   그 자리가 다음 결함의 서식지가 된다.
+    ("★C1 || 는 파이프가 아니다(-o)", ["bash", "-o", "pipefail", "-c",
+                                       "grep -q alpha target.txt || true"]),
+    ("★C1 || 는 파이프가 아니다(set)", ["bash", "-c",
+                                        "set -o pipefail; grep -q alpha target.txt || true"]),
+    # ── 4차 리뷰 C2: 화이트리스트는 **모양만** 본다 — 명령 **이름**도 봐야 한다.
+    #   argv 층에서만 막았더니 `bash -c` 한 겹으로 전부 우회됐다(3차와 **같은 실수의 한 층 아래**).
+    ("★C2 스크립트 안의 script", ["bash", "-c",
+                                  'script -qc "grep -q alpha target.txt" /dev/null']),
+    ("★C2 스크립트 안의 xargs", ["bash", "-c",
+                                 "xargs -a /dev/null grep -q alpha target.txt"]),
+    ("★C2 스크립트 안의 timeout", ["bash", "-c", "timeout 1 sleep 3"]),
+    ("★C2 파이프 **뒤** 구간도 본다", ["bash", "-c",
+                                       "set -o pipefail; grep -q alpha target.txt | xargs true"]),
+    ("★setsid 는 rc 를 버린다", ["setsid", "grep", "-q", "alpha", "target.txt"]),
 ]
 
 
@@ -372,6 +388,11 @@ _정당_형태 = [
     ("--norc + 단일 명령", ["bash", "--norc", "-c", "grep -q alpha target.txt"]),
     # ★`rbash` 는 실체가 bash 이므로 **단일 명령이면 신뢰해야 한다** — 막으면 위양성이다.
     ("rbash + 단일 명령", ["rbash", "-c", "grep -q alpha target.txt"]),
+    # ★rc **중립** 접두는 **투명**하다 — 막으면 가장 흔한 정당 형태를 막는다(4차 HIGH-2).
+    ("env FOO=1 + 직접 명령", ["env", "FOO=1", "grep", "-q", "alpha", "target.txt"]),
+    ("nice -n 5 + 직접 명령", ["nice", "-n", "5", "grep", "-q", "alpha", "target.txt"]),
+    # ★선행 **탭**은 공백이다 — 「빈 스크립트」로 오진하면 안 된다(4차 MEDIUM-1).
+    ("선행 탭 + 단일 명령", ["bash", "-c", "\tgrep -q alpha target.txt"]),
 ]
 
 
@@ -471,12 +492,66 @@ def test_테스트가_낸_12_는_판정불가와_겹치므로_옮긴다(sandbox)
     assert r.returncode != 0, f"CAUGHT 인데 종료코드가 0 이다: rc={r.returncode}"
 
 
+def test_etc_shells_에만_있는_셸도_셸로_판정한다() -> None:
+    """★`/etc/shells` 파생 축이 **무잠금**이었다(적대 리뷰 4차 HIGH-1: 변이로 죽여도 초록).
+
+    이름 하드코딩 목록에 **없고** `/etc/shells` 에만 있는 항목을 **파일에서 파생**시켜 태운다.
+    ★그런 항목이 없으면 이 축은 이 호스트에서 **미측정**이다 — skip 으로 그렇게 말한다
+      (통과로 세지 않는다).
+    """
+    _이름목록 = ("sh", "bash", "zsh", "dash", "ksh", "ash", "mksh", "rbash",
+                 "busybox", "yash", "posh")
+    shells = pathlib.Path("/etc/shells")
+    if not shells.exists():
+        pytest.skip("/etc/shells 가 없다 — 이 축은 미측정")
+    후보 = [ln.strip() for ln in shells.read_text(encoding="utf-8").splitlines()
+            if ln.strip().startswith("/") and os.path.basename(ln.strip()) not in _이름목록
+            and os.access(ln.strip(), os.X_OK)]
+    if not 후보:
+        pytest.skip("/etc/shells 에 이름목록 밖 항목이 없다 — 이 축은 미측정")
+    # ★rc 파괴 목록과 겹치면 다른 이유로 12 가 나와 **공허한 통과**가 된다 — 제외한다.
+    후보 = [c for c in 후보
+            if os.path.basename(c) not in ("timeout", "script", "flock", "xargs",
+                                           "retry", "setsid")]
+    if not 후보:
+        pytest.skip("후보가 전부 rc 파괴 목록과 겹친다 — 이 축은 미측정")
+    대상 = 후보[0]
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        _git("init", "-q", cwd=root)
+        _git("config", "user.email", "t@t", cwd=root)
+        _git("config", "user.name", "t", cwd=root)
+        (root / "scripts").mkdir()
+        shutil.copy(_SCRIPT, root / "scripts" / "mutate_manual.sh")
+        os.chmod(root / "scripts" / "mutate_manual.sh", 0o755)
+        (root / "target.txt").write_text("alpha\nbeta\n", encoding="utf-8")
+        _git("add", "-A", cwd=root)
+        _git("commit", "-qm", "init", cwd=root)
+        r = _run(root, "target.txt", "s|alpha|ALPHA|",
+                 대상, "-c", "grep -q alpha target.txt; true")
+    assert r.returncode == 12, (
+        f"/etc/shells 에만 있는 {대상} 을 셸로 인식하지 못했다: rc={r.returncode}\n{r.stdout}")
+
+
 def test_판정_대상_수는_손으로_세지_않는다() -> None:
     """★계획서가 «28개 축»이라고 **손으로 셌는데 실제는 다르다**(적대 리뷰 3차 지적).
 
     수치를 **파일에서 파생**시켜 계획서와 대조한다 — 목록이 늘면 계획서도 같이 틀리게 된다.
     """
-    실제 = len(_판정불가_형태) + len(_정당_형태)
+    # ★종전엔 **내가 고른 두 표**만 셌다 — 축이 한 단계 위라 새 표(`_rc파괴_래퍼`)를 더해도
+    #   락이 통과했다(적대 리뷰 4차 실증). **파일의 모든 파라미터 표를 ast 로 파생**시킨다.
+    import ast as _ast
+
+    src = pathlib.Path(__file__).read_text(encoding="utf-8")
+    표 = {}
+    for _n in _ast.parse(src).body:
+        if not isinstance(_n, _ast.Assign) or not isinstance(_n.value, _ast.List):
+            continue
+        elts = _n.value.elts
+        if elts and all(isinstance(e, _ast.Tuple) and len(e.elts) == 2 for e in elts):
+            표[_n.targets[0].id] = len(elts)
+    assert len(표) >= 3, f"파라미터 표를 못 찾았다 — 추출기 의심: {표}"
+    실제 = sum(표.values())
     plan = (_REPO / "propai-platform" / "_workspace"
             / "PLAN_mutate_manual_rc_trust_layer_2026-09-02.md").read_text(encoding="utf-8")
     assert f"판정 대상 {실제}개" in plan, (
