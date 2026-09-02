@@ -155,11 +155,27 @@ def test_failure_reason_is_not_swallowed() -> None:
     assert ok["ok"] is True and "성공" in ok["message"]
 
 
-def test_generic_keys_keep_the_old_message() -> None:
-    """★두 모집단 — 전용 테스트가 없는 키는 종전 문구를 유지한다(전면 변경이 아니다)."""
+def test_generic_keys_are_withheld_not_falsely_green() -> None:
+    """★두 모집단 — 전용 테스트가 **없는** 키는 「보류」이지 성공이 아니다.
+
+    ## 이 단언이 왜 바뀌었나 (2026-09-02)
+
+    `#899` 시점의 원문은 *"종전 문구(`전용 테스트 미지원 키`)를 유지한다"* 였다.
+    그때는 **변경 범위를 LLM/이미지로 한정**한다는 뜻이었고 옳았다.
+
+    그런데 그 「종전 문구」는 `{"ok": True, "message": "값이 설정되어 있습니다(전용 테스트
+    미지원 키)."}` 였다 — **`#899` 자신이 고치려던 「값만 있어도 초록」의 마지막 잔여**다.
+    `#942` 가 그것을 `withheld(NOT_APPLICABLE)`(`ok=None` + 사유 코드)로 바꿨다.
+
+    ★**원 의도(두 모집단)는 그대로 지킨다** — LLM/이미지는 **실호출**, 그 외는 **보류**.
+      바뀐 것은 *"그 외"* 가 **초록이 아니게** 된 것뿐이다.
+    """
     code = _code()
-    assert "전용 테스트 미지원 키" in code, (
-        "전용 테스트가 없는 키의 폴백 문구가 사라졌다 — 이 변경은 LLM/이미지 키에만 적용된다."
+    assert "_unsupported(name)" in code, "미지원 키 분기가 사라졌다(두 모집단 중 하나가 없다)"
+    assert "NOT_APPLICABLE" in code, "미지원이 닫힌 어휘 사유 코드를 쓰지 않는다"
+    # ★음성 대조군 — **거짓 초록이 되살아나지 않았는지** 본다(이 파일의 존재 이유).
+    assert '"ok": True, "message": "값이 설정되어 있습니다' not in code, (
+        "미지원 키가 다시 `ok: True` 로 돌아갔다 — `#899`·`#942` 가 함께 지우던 그 결함이다"
     )
 
 
@@ -169,3 +185,72 @@ def test_regression_the_keys_that_were_falsely_green(env_name: str) -> None:
     assert env_name in _dict_literal("_LLM_KEY_PROVIDER"), (
         f"{env_name} 가 매핑에서 빠졌다 — 다시 '값만 있어도 초록'이 된다."
     )
+
+
+# ---------------------------------------------------------------------------
+# ★행위 락 — 이 파일이 **자기 계약을 자기 힘으로** 잠근다
+#
+#   동료 세션 `development-ai-88` 이 이 파일 **단독 실행**(8 passed · 기준선 rc=0)으로
+#   실측한 것: 아래 두 변이가 **SURVIVED** 였다.
+#
+#       A. `"ok": True` 를 withheld 뒤에 덮어씀(거짓 초록 부활)
+#       B. `NOT_APPLICABLE` → 닫힌 어휘 밖 문자열
+#
+#   둘 다 **식별자를 남기므로 소스 문자열 단언을 통과**한다. 전 스위트에서는 형제 락이
+#   잡으므로 «무잠금» 은 아니지만, **«이 파일이 자기 계약을 못 잠근다»** 는 참이다.
+#   ★형제에 기대는 락은 형제가 옮겨지거나 이름이 바뀌면 **조용히 장식이 된다.**
+#
+#   → 소스 단언은 그대로 두고 **행위 케이스 하나**를 더한다(엔드포인트를 실제로 태운다).
+# ---------------------------------------------------------------------------
+
+
+def test_unsupported_key_behavior_not_just_source_strings(monkeypatch) -> None:
+    """★**엔드포인트를 실제로 태워** 미지원 키가 「성공」이 아님을 확인한다.
+
+    소스에 `NOT_APPLICABLE`·`_unsupported` 라는 **이름이 있다**는 것과
+    **응답이 실제로 그 값을 낸다**는 것은 다른 명제다(위 두 변이가 그 간극을 실증했다).
+    """
+    import asyncio
+
+    from app.routers import admin_secrets as AS
+    from app.utils.withheld import NOT_APPLICABLE
+
+    async def _noop(current, db):  # noqa: ANN001 — 권한 검사만 우회
+        return None
+
+    monkeypatch.setattr(AS, "_require_admin", _noop)
+    monkeypatch.setenv("VWORLD_API_KEY", "dummy-value-for-test")
+    r = asyncio.run(AS.test_secret("VWORLD_API_KEY", current=object(), db=object()))
+
+    assert r["ok"] is None, f"미지원 키가 성공/실패로 단정됐다(보류여야 한다): {r['ok']!r}"
+    assert r.get("ok_absent") == NOT_APPLICABLE, f"닫힌 어휘 사유 코드가 아니다: {r}"
+    assert (r.get("message") or "").strip(), "무언 보류 — 사람이 읽을 사유가 없다"
+
+
+def test_supported_llm_key_takes_the_live_health_path(monkeypatch) -> None:
+    """★**두 번째 모집단** — LLM 키는 미지원 분기로 가지 않고 **실호출 경로**를 탄다.
+
+    이것이 없으면 *"항상 보류를 돌려주는 구현"* 이 위 락을 통과한다.
+    벤더로 실제 나가지 않게 `llm_health` 만 대역으로 바꾼다(분기 판정은 진짜가 돈다).
+    """
+    import asyncio
+
+    from app.routers import admin_secrets as AS
+
+    async def _noop(current, db):  # noqa: ANN001
+        return None
+
+    called: dict[str, str] = {}
+
+    async def _fake_llm_health(provider, model, current, db):  # noqa: ANN001
+        called["provider"] = provider
+        return {"ok": True, "provider": provider}
+
+    monkeypatch.setattr(AS, "_require_admin", _noop)
+    monkeypatch.setattr(AS, "llm_health", _fake_llm_health)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "dummy-value-for-test")
+    r = asyncio.run(AS.test_secret("ANTHROPIC_API_KEY", current=object(), db=object()))
+
+    assert called.get("provider") == "anthropic", f"LLM 실호출 경로를 안 탔다: {called}"
+    assert "ok_absent" not in r, f"LLM 키가 보류로 떨어졌다: {r}"
+    assert r["ok"] is True

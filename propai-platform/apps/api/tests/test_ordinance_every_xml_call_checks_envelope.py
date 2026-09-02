@@ -213,7 +213,11 @@ class _Client:
 @pytest.fixture(autouse=True)
 def _key(monkeypatch: pytest.MonkeyPatch) -> None:
     """키가 비면 함수가 **조기 반환**해 검증기까지 가지도 않는다(공허한 초록 차단)."""
-    monkeypatch.setattr(OS.settings, "MOLEG_API_KEY", "test-oc", raising=False)
+    # ★키는 이제 **호출 시점에 `os.environ` 을 먼저** 본다(`moleg_oc_key`) — 관리자 화면의
+    #   시크릿 저장이 `os.environ` 만 바꾸는데 `settings` 는 모듈 싱글턴이라 반영되지 않기
+    #   때문이다. 그래서 픽스처도 **실제 런타임 경로**를 태운다(종전엔 `OS.settings` 를 직접
+    #   갈아 끼워, 프로덕션이 안 쓰는 경로를 태우고 있었다).
+    monkeypatch.setenv("MOLEG_API_KEY", "test-oc")
 
 
 def _run(monkeypatch: pytest.MonkeyPatch, bodies: list[str], caplog):
