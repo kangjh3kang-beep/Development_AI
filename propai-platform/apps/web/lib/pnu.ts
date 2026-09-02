@@ -138,6 +138,25 @@ export function normalizePnu(value: string | null | undefined): string | null {
 }
 
 /**
+ * PNU → **법정동코드 10자리**(`bcode`). 유효한 19자리가 아니면 `null`.
+ *
+ * ## 왜 공용인가 (2026-09-02 — 같은 식이 **12벌** 있었다)
+ *
+ * `pnu.length >= 10 ? pnu.slice(0, 10) : ""` 가 `GlobalAddressSearch`(6) ·
+ * `PersonaPanel` · `node-body-builders` · `MarketInsightsWorkspaceClient`(가드 **없음**) 등에
+ * 흩어져 있었다. 길이 10 은 **PNU 를 판정하지 못한다** — 라이브 실측(292필지) 오염값
+ * `'store-rep-용인시 수지구 신봉동 56-1'`(26자)이 그 가드를 통과해 `.slice(0,10)` 이
+ * **`"store-rep-"` 를 법정동코드로 만들었다.** 백엔드는 `bcode[:5]` = `"store"` 를
+ * `lawd_cd` 로 쓴다 — **없는 법정동으로 조회가 나간다.**
+ *
+ * ★`>= 10` 이 아니라 **`isValidPnu`(19자리 숫자)** 로 판정한다. 구현은 여기 한 벌뿐이다.
+ */
+export function bcodeFromPnu(pnu: string | null | undefined): string | null {
+  const valid = normalizePnu(pnu);
+  return valid ? valid.slice(0, 10) : null;
+}
+
+/**
  * 한 토큰이 **지번(번지) 표기**인가 — `123` · `123-4` · `산12-3` · `114-1번지`.
  *
  * ★이 저장소의 **단일 판정**이다. 종전엔 같은 질문을 두 곳이 각자 답했고 규칙이 어긋나 있었다:

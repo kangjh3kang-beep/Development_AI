@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   addressHasJibun,
+  bcodeFromPnu,
   isJibunToken,
   joinAddressJibun,
   isValidPnu,
@@ -425,5 +426,45 @@ describe("PNU 유효성이 정체성을 가른다 — 가짜 PNU 는 정체성�
     expect(parcelDedupKey({ pnu: " 4137011000104670001 " })).toBe("pnu:4137011000104670001");
     expect(projectParcelIdentityKey({ pnu: "4137011000104670001" }, 0))
       .toBe(projectParcelIdentityKey({ pnu: "4137011000104670001" }, 9));
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// 2026-09-02 — `bcode`(법정동 10자리) 파생이 **12벌** 흩어져 있었고, 전부 `length >= 10` 으로
+// 판정했다. 길이 10 은 PNU 를 판정하지 못한다 — 오염값 `'store-rep-용인시 …'`(26자)이
+// 통과해 `.slice(0,10)` 이 **`"store-rep-"` 를 법정동코드로** 만들었고, 백엔드는
+// `bcode[:5]` = `"store"` 를 `lawd_cd` 로 쓴다(**없는 법정동으로 조회가 나간다**).
+// ────────────────────────────────────────────────────────────────────────────
+describe("bcodeFromPnu — 법정동코드는 **유효한 19자리**에서만 나온다", () => {
+  it("모집단 A(진짜) — 앞 10자리를 준다", () => {
+    expect(bcodeFromPnu("4137011000104670001")).toBe("4137011000");
+    expect(bcodeFromPnu(" 1159010200100010001 ")).toBe("1159010200"); // 공백 허용(normalizePnu 경유)
+  });
+
+  it("★모집단 B(오염·길이만 충족) — **지어내지 않고 null**", () => {
+    // 종전 가드 `length >= 10` 이 통과시키던 값들. 여기서 하나라도 문자열이 나오면
+    // 그 값이 그대로 `lawd_cd` 가 된다.
+    for (const bad of [
+      "store-rep-용인시 수지구 신봉동 56-1", // 26자 — 실측 오염값
+      "경기도 오산시 내삼미동",                // 11자 — 주소가 PNU 칸에
+      "413701100010467000",                  // 18자 — 자릿수 미달
+      "41370110001046700012",                // 20자 — 자릿수 초과
+      "413701100010467000a",                 // 19자이지만 숫자가 아니다
+    ]) {
+      expect(bcodeFromPnu(bad)).toBeNull();
+    }
+  });
+
+  it("모집단 C(없음) — null", () => {
+    expect(bcodeFromPnu(null)).toBeNull();
+    expect(bcodeFromPnu(undefined)).toBeNull();
+    expect(bcodeFromPnu("")).toBeNull();
+  });
+
+  it("★대조군 — 길이가 10 이상이라는 이유만으로는 통과하지 못한다(옛 가드와의 차)", () => {
+    const 옛가드통과 = (v: string) => v.length >= 10;
+    const bad = "store-rep-용인시 수지구 신봉동 56-1";
+    expect(옛가드통과(bad)).toBe(true);   // 옛 가드는 통과시켰다
+    expect(bcodeFromPnu(bad)).toBeNull(); // 지금은 막는다 — 이 대비가 곧 이 수정이다
   });
 });

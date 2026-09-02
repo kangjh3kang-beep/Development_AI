@@ -25,7 +25,7 @@ import type {
   FeasibilityData,
 } from "@/store/useProjectContextStore";
 import type { NodeId } from "./types";
-import { normalizePnu } from "@/lib/pnu";
+import { bcodeFromPnu, normalizePnu } from "@/lib/pnu";
 
 /**
  * useNodeRunner가 ready 슬롯에서 모은 상류 컨텍스트.
@@ -239,7 +239,7 @@ export function buildNodeBody(
       //   적으면서) `'store-rep-…'.slice(0,10)` = `"store-rep-"` 를 **법정동코드로 날조**했다
       //   — 백엔드는 `bcode[:5]`=`"store"` 를 `lawd_cd` 로 쓴다.
       const validPnu = normalizePnu(pnu);
-      const bcode = validPnu ? validPnu.slice(0, 10) : null;
+      const bcode = bcodeFromPnu(pnu);
       if (validPnu) body.pnu = validPnu;
       // pnu가 없어도 bcode가 있으면 백엔드 bcode 경로로 200을 받는다(둘 다 보내도 무해).
       if (bcode) body.bcode = bcode;

@@ -119,12 +119,13 @@ describe("★parcelDataToRows — 오염된 PNU 는 요청 본문에 싣지 않�
 //   커밋 메시지에만 적으면 드러나지 않으므로 초록 안에 남긴다.
 // ────────────────────────────────────────────────────────────────────────────
 describe("★부채 — 오염 PNU 무해화가 잠기지 않은 표면", () => {
+  // ✔해소(2026-09-02): LandShareModal 은 `components/operations/__tests__/LandShareModal.pnuValidity.test.tsx`
+  //   가 fetch 본문을 두 모집단으로 태운다(진짜→`{pnu}` · 오염→`{address}`).
+  // ✔부분해소: bcode 파생은 `bcodeFromPnu` 로 뽑아 `lib/pnu.test.ts` 가 직접 잠근다.
+  //   **12벌**이던 `pnu.length >= 10 ? pnu.slice(0,10)` 이 한 벌이 됐다.
   it.todo(
-    "LandShareModal: `/zoning/land-share` 요청이 오염 PNU 대신 주소로 떨어지는가 " +
-      "— 수정은 했으나 변이 M6(`length >= 19` 로 되돌림)이 SURVIVED. fetch 모킹 + 렌더가 필요하다",
-  );
-  it.todo(
-    "PersonaPanel: requestBody.bcode 가 오염 PNU 에서 파생되지 않는가 " +
-      "— 수정은 했으나 변이 M8(검증 제거)이 SURVIVED. useMemo 를 태우려면 스토어 주입 렌더가 필요하다",
+    "PersonaPanel: **배선** 축 — `requestBody.bcode` 가 실제로 `bcodeFromPnu` 를 경유하는가. " +
+      "파생 자체는 `lib/pnu.test.ts` 가 잠갔지만, 이 컴포넌트가 그것을 부른다는 것은 " +
+      "아직 어떤 테스트도 보지 않는다(스토어 주입 렌더 필요). ★오늘 같은 축에서 M3 이 SURVIVED 했다",
   );
 });
