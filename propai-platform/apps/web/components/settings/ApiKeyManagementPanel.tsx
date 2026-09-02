@@ -42,6 +42,33 @@ type ListResponse = { groups: string[]; items: SecretItem[] };
 /*  단일 키 카드                                                       */
 /* ------------------------------------------------------------------ */
 
+/**
+ * **전용 연결 테스트**가 구현된 키들 — 이 목록에 없으면 「테스트」 버튼을 그리지 않는다.
+ *
+ * ★원천은 백엔드 `apps/api/app/routers/admin_secrets.py` 의 `_TESTABLE_SECRETS` 이고,
+ * 그것은 **분기 셋에서 파생**된다(등기 · LLM · 이미지). 손 목록이 아니다.
+ *   종전엔 양쪽이 **각각 인라인 손목록**을 들고 있었고 **대조 락이 0건**이었다.
+ *   갈리면 이렇게 된다:
+ *     · 백엔드만 추가 → 화면에 버튼이 **안 뜬다**(기능이 있는데 닿지 않는다)
+ *     · 프론트만 추가 → 백엔드가 **「미지원」**을 돌려주고, 예전엔 그게 **`ok: true`** 였다
+ *   → `apps/api/tests/test_secret_test_honesty.py` 가 `ast` 로 양쪽을 파싱해 대조한다.
+ *
+ * ★모듈 상수로 둔 이유: 컴포넌트 안 인라인 배열은 **기계가 파생시킬 수 없다**.
+ */
+const TESTABLE_SECRETS: readonly string[] = [
+  // 등기(registry) — `RegistryService.live_status()` 실호출
+  "HYPHEN_HKEY",
+  "HYPHEN_USER_ID",
+  "REGISTRY_PROVIDER",
+  "TILKO_API_KEY",
+  // ★LLM/이미지 — `#899` 가 **백엔드에 실호출 테스트를 넣었는데 여기에 안 더해서**
+  //   그 테스트를 **사용자가 영영 쓸 수 없었다**(2026-09-02 실측: 백엔드 7키 ↔ 화면 4키).
+  //   그것이 이 상수를 백엔드와 대조하는 락을 만든 이유다.
+  "ANTHROPIC_API_KEY",
+  "OPENAI_API_KEY",
+  "GOOGLE_API_KEY",
+];
+
 function SecretCard({
   item,
   onSaved,
@@ -52,18 +79,10 @@ function SecretCard({
   const [value, setValue] = useState(item.kind === "select" ? (item.masked || "") : "");
   const [show, setShow] = useState(false);
   const [busy, setBusy] = useState<"" | "save" | "del" | "test">("");
-  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  // ★3상태다 — 「성공/실패」 2상태로 두면 **보류를 표현할 자리가 없어** 빨강으로 떨어진다.
+  const [msg, setMsg] = useState<{ tone: "ok" | "fail" | "withheld"; text: string } | null>(null);
 
-  const canTest = useMemo(
-    () =>
-      [
-        "HYPHEN_HKEY",
-        "HYPHEN_USER_ID",
-        "REGISTRY_PROVIDER",
-        "TILKO_API_KEY",
-      ].includes(item.name),
-    [item.name],
-  );
+  const canTest = useMemo(() => TESTABLE_SECRETS.includes(item.name), [item.name]);
 
   const save = useCallback(async () => {
     const v = value.trim();
@@ -74,11 +93,11 @@ function SecretCard({
       await apiClient.put(`/admin/secrets/${item.name}`, {
         body: { value: v },
       });
-      setMsg({ ok: true, text: "저장됨 (즉시 반영)" });
+      setMsg({ tone: "ok", text: "저장됨 (즉시 반영)" });
       if (item.kind !== "select") setValue("");
       onSaved();
     } catch (e) {
-      setMsg({ ok: false, text: errText(e, "저장 실패") });
+      setMsg({ tone: "fail", text: errText(e, "저장 실패") });
     } finally {
       setBusy("");
     }
@@ -90,10 +109,10 @@ function SecretCard({
     setMsg(null);
     try {
       await apiClient.delete(`/admin/secrets/${item.name}`);
-      setMsg({ ok: true, text: "삭제됨" });
+      setMsg({ tone: "ok", text: "삭제됨" });
       onSaved();
     } catch (e) {
-      setMsg({ ok: false, text: errText(e, "삭제 실패") });
+      setMsg({ tone: "fail", text: errText(e, "삭제 실패") });
     } finally {
       setBusy("");
     }
@@ -103,12 +122,22 @@ function SecretCard({
     setBusy("test");
     setMsg(null);
     try {
-      const r = await apiClient.post<{ ok: boolean; message: string }>(
-        `/admin/secrets/${item.name}/test`,
+      // ★`ok` 는 **`boolean | null`** 이다 — `null` 은 **보류**(전용 테스트가 없음)이지
+      //   실패가 아니다. 종전엔 타입이 `boolean` 이라 `!!null === false` 로 **빨강**이 됐다:
+      //   거짓 초록을 고치고 **거짓 빨강**을 얻는 자리였다(독립 리뷰 MEDIUM-2).
+      //   ★타입을 정직하게 적어 두면 다음 사람이 `!!r.ok` 자리에서 **tsc 에 걸린다.**
+      const r = await apiClient.post<{
+        ok: boolean | null;
+        message: string;
+        ok_absent?: string;
+      }>(`/admin/secrets/${item.name}/test`);
+      setMsg(
+        r.ok === null || r.ok === undefined
+          ? { tone: "withheld", text: r.message || "확인할 수 없습니다" }
+          : { tone: r.ok ? "ok" : "fail", text: r.message || (r.ok ? "연결 성공" : "연결 실패") },
       );
-      setMsg({ ok: !!r.ok, text: r.message || (r.ok ? "연결 성공" : "연결 실패") });
     } catch (e) {
-      setMsg({ ok: false, text: errText(e, "테스트 실패") });
+      setMsg({ tone: "fail", text: errText(e, "테스트 실패") });
     } finally {
       setBusy("");
     }
@@ -246,7 +275,11 @@ function SecretCard({
         {msg && (
           <p
             className={`mt-2 text-xs font-semibold ${
-              msg.ok ? "text-[var(--status-success)]" : "text-[var(--status-error)]"
+              msg.tone === "ok"
+                ? "text-[var(--status-success)]"
+                : msg.tone === "withheld"
+                  ? "text-[var(--text-secondary)]"
+                  : "text-[var(--status-error)]"
             }`}
           >
             {msg.text}
@@ -269,12 +302,13 @@ function AddCustomKey({ onAdded }: { onAdded: () => void }) {
   const [value, setValue] = useState("");
   const [secret, setSecret] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  // ★3상태다 — 「성공/실패」 2상태로 두면 **보류를 표현할 자리가 없어** 빨강으로 떨어진다.
+  const [msg, setMsg] = useState<{ tone: "ok" | "fail" | "withheld"; text: string } | null>(null);
 
   const submit = useCallback(async () => {
     const n = name.trim().toUpperCase();
     if (!n || !value.trim()) {
-      setMsg({ ok: false, text: "키 이름과 값을 입력하세요." });
+      setMsg({ tone: "fail", text: "키 이름과 값을 입력하세요." });
       return;
     }
     setBusy(true);
@@ -289,14 +323,14 @@ function AddCustomKey({ onAdded }: { onAdded: () => void }) {
           secret,
         },
       });
-      setMsg({ ok: true, text: `'${n}' 추가됨` });
+      setMsg({ tone: "ok", text: `'${n}' 추가됨` });
       setName("");
       setLabel("");
       setGroup("");
       setValue("");
       onAdded();
     } catch (e) {
-      setMsg({ ok: false, text: errText(e, "추가 실패") });
+      setMsg({ tone: "fail", text: errText(e, "추가 실패") });
     } finally {
       setBusy(false);
     }
@@ -380,7 +414,11 @@ function AddCustomKey({ onAdded }: { onAdded: () => void }) {
         {msg && (
           <p
             className={`mt-2 text-xs font-semibold ${
-              msg.ok ? "text-[var(--status-success)]" : "text-[var(--status-error)]"
+              msg.tone === "ok"
+                ? "text-[var(--status-success)]"
+                : msg.tone === "withheld"
+                  ? "text-[var(--text-secondary)]"
+                  : "text-[var(--status-error)]"
             }`}
           >
             {msg.text}
