@@ -505,16 +505,41 @@ async def publish_capture_status(session_factory: Any, *, scope: str) -> bool:
         #   그래서 「정상 유휴」와 「워커 사망」이 **화면에서 바이트 동일**했다 —
         #   이 함수가 존재하는 이유가 그 둘을 가르는 것인데.
         #   ★**범위 밖으로 뺀 프론트가 바로 그 전제가 검증되는 유일한 곳**이었다.
+        # ★★★**삽입 순서는 저장되면 사라진다 — `jsonb` 가 키를 재정렬한다.**
+        #
+        #   Postgres `jsonb` 는 삽입 순서를 **보존하지 않고 (키 길이, 바이트순)** 으로
+        #   정렬해 저장한다. 그래서 *"판별 필드를 앞에 넣는다"* 는 처방이 **저장을 통과하며
+        #   무효화됐다.** 라이브 실측(2026-09-02 12:41Z)이 예측과 **정확히 일치**했다:
+        #
+        #       at(2) · flushed(7) · requeued(8) · max_queue(9) · lost_total(10) · flush_limit(11)
+        #
+        #   → `queue_depth` 가 17키 중 **7번째**로 밀려 화면(앞 4키)에 **못 들었다.**
+        #     ①정상 유휴 vs ③워커 사망은 갈렸지만(`at` 이 2글자라 항상 첫째)
+        #     **①정상 유휴 vs ②쌓이는 중은 여전히 안 갈렸다** — 절반만 고쳐진 상태였다.
+        #
+        #   ★**정렬 규칙은 바꿀 수 없다. 바꿀 수 있는 것은 이름의 길이다.**
+        #     그래서 판별 3종을 **짧은 이름**으로 쓴다 — 길이가 곧 표시 우선순위다.
+        #     `at`(2) · `lost`(4) · `build`(5) · `depth`(5) → **앞 4키를 전부 진단 필드로** 채운다.
+        #
+        #   ★내 종전 락이 이것을 못 잡은 이유: **Python dict(삽입 순서)** 를 그려 봤고
+        #     **저장소를 왕복한 값이 아니었다.** 자문 —
+        #     *"내 락이 태우는 값이 저장소를 왕복한 값인가, 그 전의 값인가?"*
         payload = {
             "at": datetime.now(UTC).isoformat(),
-            "queue_depth": raw.get("queue_depth"),
-            "lost_total": raw.get("lost_total"),
-            # ★어느 빌드가 썼는지 — 형제 `analyzer.py` 가 같은 이유로 이미 싣는다.
+            # ★짧은 이름은 **표시 우선순위**다(위 참조). 뜻은 아래 긴 이름과 같다.
+            "depth": raw.get("queue_depth"),
+            "lost": raw.get("lost_total"),
+            "build": stale_build_guard.running_build_id(),
+            # ★`build` = 어느 빌드가 썼는지 — 형제 `analyzer.py` 가 같은 이유로 이미 싣는다.
             #   낡은 스택이 같은 DB 를 공유하면 `(key, scope)` 가 같아 **같은 행을 덮어쓴다**
             #   (`stale_build_guard` 가 실측 18일 사고로 기록해 둔 그 형태).
             #   빌드 id 가 없으면 **누가 쓴 값인지 구별할 수 없다.**
-            "producer_build_id": stale_build_guard.running_build_id(),
-            **raw,
+            #
+            # ★아래 `**raw` 는 **원본 전체**를 그대로 싣는다(하나도 안 버린다) —
+            #   짧은 이름은 **표시용 별칭**이고, 긴 이름은 API 로 읽는 쪽의 계약이다.
+            #   단 `queue_depth`·`lost_total` 은 위에서 짧은 이름으로 이미 실었으므로
+            #   **중복을 만들지 않기 위해** 뺀다(같은 사실이 두 이름으로 있으면 갈린다).
+            **{k: v for k, v in raw.items() if k not in ("queue_depth", "lost_total")},
         }
         # ★내부 `scope`(계수기 범위)와 바깥 `scope`(프로세스)가 **같은 이름으로 충돌**했다.
         #   같은 화면에 나란히 뜨는데 뜻이 다르다 → 안쪽 이름을 바꾼다.

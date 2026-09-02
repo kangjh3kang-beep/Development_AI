@@ -83,7 +83,7 @@ async def test_three_populations_are_distinguishable() -> None:
     s1 = _Store()
     await cs.publish_capture_status(s1, scope="worker")
     p1 = _published(s1)
-    assert p1["queue_depth"] == 0
+    assert p1["depth"] == 0
     assert p1.get("at"), "★시각이 없다 — 「비울 게 없다」와 「멈췄다」를 못 가른다"
 
     # ② 깊이 N + 시각 있음(쌓이는 중)
@@ -92,10 +92,10 @@ async def test_three_populations_are_distinguishable() -> None:
         cs._QUEUE.append({"event_id": f"e{i}", "event_type": "t", "created_at": None})
     await cs.publish_capture_status(s2, scope="worker")
     p2 = _published(s2)
-    assert p2["queue_depth"] == 7, "★깊이가 안 실린다 — 「안 비운다」를 말할 수 없다"
+    assert p2["depth"] == 7, "★깊이가 안 실린다 — 「안 비운다」를 말할 수 없다"
 
     # ★①과 ②가 **실제로 갈렸는가**(두 모집단 대조 — 같지 않아야 한다)
-    assert p1["queue_depth"] != p2["queue_depth"], "★두 모집단이 안 갈렸다 = 공허한 초록"
+    assert p1["depth"] != p2["depth"], "★두 모집단이 안 갈렸다 = 공허한 초록"
 
     # ③ ★**관측이 끊기면 행이 스스로 사라진다** — TTL 이 그것을 만든다.
     #
@@ -150,7 +150,11 @@ async def test_payload_is_derived_from_capture_status_not_hand_listed() -> None:
     #   + 발행이 덧붙이는 둘(`at` · `producer_build_id`).
     #   ★**손으로 나열하지 않는다** — `capture_status()` 에 키가 생기면 자동으로 태워진다.
     base = set(cs.capture_status())
-    expected = (base - {"scope"}) | {"counter_scope", "at", "producer_build_id"}
+    # ★판별 3종은 **짧은 이름**으로 실린다(jsonb 정렬에서 앞자리를 얻기 위해 — 위 참조).
+    #   나머지는 원본 이름 그대로. `scope` 는 바깥 scope 와 충돌해 `counter_scope` 로 개명.
+    expected = (base - {"scope", "queue_depth", "lost_total"}) | {
+        "counter_scope", "at", "depth", "lost", "build",
+    }
     # ★대조군 — 파생이 죽으면(빈 집합) 아래가 공허해진다
     assert len(base) >= 5, f"★capture_status 파생이 죽었다: {base}"
     assert got == expected, f"★계약 불일치 — 빠짐 {expected - got} · 남음 {got - expected}"
@@ -313,6 +317,43 @@ async def test_api_and_worker_do_not_clobber_each_other(monkeypatch) -> None:
 # **바이트 동일**한 문자열로 렌더됐다 — 이 기능이 존재하는 이유가 그 둘을 가르는 것인데.
 # ★**프론트를 「범위 밖」으로 뺐더니, 그 전제가 검증되는 유일한 곳을 뺀 것이었다.**
 # ═══════════════════════════════════════════════════════════════════════════
+def _as_stored(payload: dict) -> dict:
+    """**저장소를 왕복한 뒤의 키 순서**로 바꾼다 — `jsonb` 는 삽입 순서를 안 지킨다.
+
+    ★★이 함수가 없어서 **라이브에서 결함이 남았다**(2026-09-02 실측).
+      종전 렌더 락은 **Python dict(삽입 순서)** 를 그려 봤고, 그래서
+      *"판별 필드를 앞에 넣었다"* 가 초록이었다. 그런데 Postgres `jsonb` 는
+      **(키 길이, 바이트순)** 으로 재정렬해 저장하므로 그 처방이 **저장을 통과하며 무효화**됐다.
+
+    ★규칙이 맞다는 근거는 **라이브 실측**이다 — 예측과 실제가 정확히 일치했다:
+        at(2) · flushed(7) · requeued(8) · max_queue(9) · lost_total(10) · flush_limit(11)
+      (`test_jsonb_ordering_model_matches_the_measured_live_order` 가 이 규칙을 따로 잠근다.)
+
+    ★자문: *"내 락이 태우는 값이 **저장소를 왕복한 값**인가, 그 전의 값인가?"*
+    """
+    return {k: payload[k] for k in sorted(payload, key=lambda k: (len(k), k))}
+
+
+def test_jsonb_ordering_model_matches_the_measured_live_order() -> None:
+    """★위 모델이 **실제 관측**과 같은지 따로 잠근다 — 모델도 검증 대상이다.
+
+    아래는 2026-09-02 12:41Z 라이브 `/growth/heal-log` 에서 **실제로 관측된** 앞 6키다.
+    모델이 이것을 재현하지 못하면 위 렌더 락 전체가 **틀린 전제** 위에 선다.
+    """
+    observed_first_6 = ["at", "flushed", "requeued", "max_queue", "lost_total", "flush_limit"]
+    # 그 시점 payload 가 갖고 있던 키(짧은 이름 도입 **전** 판)
+    keys_then = [
+        "at", "queue_depth", "lost_total", "producer_build_id", "max_queue", "flush_limit",
+        "max_sustained_per_sec", "dropped_overflow", "dropped_after_retry", "requeued",
+        "flush_failures", "flushed", "cancelled_requeued", "consecutive_failures",
+        "max_flush_retry", "counter_scope", "loss_rate_pct",
+    ]
+    modeled = list(_as_stored(dict.fromkeys(keys_then, 0)))[:6]
+    assert modeled == observed_first_6, (
+        f"★jsonb 정렬 모델이 라이브 관측과 다르다\n  모델 {modeled}\n  관측 {observed_first_6}"
+    )
+
+
 def _render_like_dashboard(payload: dict) -> str:
     """`GrowthDashboard.summarizeParams` 의 규칙을 **소스에서 파생**해 흉내 낸다.
 
@@ -330,7 +371,7 @@ def _render_like_dashboard(payload: dict) -> str:
     cap = int(m.group(1))
 
     parts: list[str] = []
-    for k, v in payload.items():
+    for k, v in _as_stored(payload).items():
         if len(parts) >= cap:
             break
         if v is None:
@@ -365,7 +406,7 @@ async def test_the_discriminating_field_survives_the_dashboard_truncation() -> N
     piling = _published(s_pile)
 
     # ★대조군 — 두 모집단이 실제로 갈렸는가(안 갈렸으면 아래 비교가 공허하다)
-    assert idle["queue_depth"] != piling["queue_depth"], "★두 모집단이 안 갈렸다"
+    assert idle["depth"] != piling["depth"], "★두 모집단이 안 갈렸다"
 
     r_idle, r_piling = _render_like_dashboard(idle), _render_like_dashboard(piling)
     # ★대조군 — 렌더가 아무것도 안 만들면 아래 비교가 공허하다
@@ -375,4 +416,4 @@ async def test_the_discriminating_field_survives_the_dashboard_truncation() -> N
     )
     # ★그리고 **판별 필드 자체**가 잘려 나가지 않았는가
     assert "at " in r_idle, f"★시각이 화면에서 잘렸다: {r_idle}"
-    assert "queue_depth" in r_piling, f"★깊이가 화면에서 잘렸다: {r_piling}"
+    assert "depth " in r_piling, f"★깊이가 화면에서 잘렸다: {r_piling}"
