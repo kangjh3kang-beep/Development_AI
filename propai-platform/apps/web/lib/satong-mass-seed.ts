@@ -19,6 +19,8 @@
  */
 
 /** 인계 페이로드 — 계산에 실제로 쓰이는 것만 담는다(장식 필드 금지). */
+import { normalizePnu } from "@/lib/pnu";
+
 export type MassSeedHandoff = {
   /** 어느 필지에서 고른 안인가 — 다른 필지로 옮겨가면 적용하지 않기 위한 스테일 가드. */
   pnu: string | null;
@@ -148,8 +150,18 @@ export function massSeedAppliesTo(
 ): boolean {
   if (!h) return false;
 
-  const idMatch = h.pnu && current.pnu
-    ? h.pnu === current.pnu
+  // ★PNU 칸의 상태는 **셋**이다 — 「유효」·「없음」·「오염」. 종전엔 참/거짓만 봐서
+  //   「오염」이 「유효」로 취급됐다(라이브 실측 5/292: 성명·`store-rep-<주소>` 합성 id).
+  //   ★그렇다고 「오염」을 「없음」으로 뭉개서도 안 된다 — 이 가드의 목적은
+  //   *"다른 필지의 선택을 조용히 적용"* 을 막는 것이므로, 주소로 떨어뜨리면 동 단위 주소를
+  //   공유하는 **서로 다른 필지**에 시드가 과잉 적용된다. 오염이면 **판정 불가 = 미적용**.
+  const hPnu = normalizePnu(h.pnu);
+  const curPnu = normalizePnu(current.pnu);
+  const hDirty = !!(h.pnu && String(h.pnu).trim()) && !hPnu;
+  const curDirty = !!(current.pnu && String(current.pnu).trim()) && !curPnu;
+  if (hDirty || curDirty) return false;
+  const idMatch = hPnu && curPnu
+    ? hPnu === curPnu
     : h.address && current.address
       ? normalizeAddress(h.address) === normalizeAddress(current.address)
       : false;
