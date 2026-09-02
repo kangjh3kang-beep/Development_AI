@@ -17,6 +17,10 @@ import { describe, expect, it } from "vitest";
 import { stripLegacyApiKeys, SYSTEM_STORE_VERSION, useSystemStore } from "../useSystemStore";
 
 describe("★키 필드가 스토어에 없다", () => {
+  // ★**설명되는 생존**(점수 부풀리기 방지): 타입에만 `openaiApiKey: string` 을 되살리는
+  //   변이는 이 테스트에서 **SURVIVED** 한다 — 런타임 필드가 안 생기기 때문이다.
+  //   구멍이 아니라 **다른 층이 잡는다**: `pnpm type-check` 가 `TS2741`(초기화 누락)로 죽는다
+  //   (실측). CI 가 그 명령을 돌리므로 잠겨 있다. 여기서는 **런타임 상태**만 본다.
   it("상태에 키·키관련 메서드가 **하나도** 없다(파생형 — 손 목록 아님)", () => {
     const keys = Object.keys(useSystemStore.getState());
     const banned = keys.filter((k) => /apikey|hasvalidkey|getactiveapikey/i.test(k));
