@@ -131,17 +131,35 @@ git --no-pager diff --no-index --stat "$SNAP" "$FILE" 2>/dev/null | tail -1 | se
 #     어느 쪽이 실패해도 0 이 아니다). 위험한 방향이 **반대**다: `cd 없는디렉토리 && pytest` 는
 #     **테스트가 돌지도 않았는데 rc≠0** 이라 **거짓 CAUGHT** 를 만든다. 변이 점수를 부풀리는
 #     그 방향도 똑같이 결함이다(`sh -c 'set -o pipefail'` 이 dash 에서 내는 것과 같은 클래스).
+#   ★★★2026-09-02 3차 — **위험을 열거하는 방식을 버린다.**
+#     1차는 문자 `|` 하나, 2차는 `; & && || 개행` 목록이었다. 매번 **빠뜨린 형태가 거짓
+#     SURVIVED 로 새어** 나갔다(적대 리뷰 2회가 각각 8형태·8형태를 찾아냈다).
+#     **목록은 곧 상한이 된다** — 이 저장소가 반복해서 적은 그것이다.
+#     → **뒤집는다: 위험을 세지 않고 「단일 단순 명령의 모양」만 신뢰한다.**
+#       메타문자가 하나라도 있으면 **그 의미를 따지지 않고** 판정을 발행하지 않는다.
+#       (`2>&1` 처럼 실제로는 안전한 것도 막힌다 — 그것이 이 설계가 치르는 값이고,
+#        탈출구 `MUTATE_ALLOW_SHELL` 이 사유를 남기고 통과시킨다.)
+#   ★rc 를 **바꿀 수 있는** 접두 래퍼(`timeout`)는 셸을 끼워도 신뢰하지 않는다 —
+#     시간초과 rc(124)가 **거짓 CAUGHT** 가 된다. `&&` 를 막은 것과 같은 자다.
 RC_UNTRUSTED=0
 RC_WHY=""
 _NL='
 '
-_wrapper=""; _script=""; _scriptfile=0; _saw_prefix=0; _state=scan
+_wrapper=""; _script=""; _scriptfile=0; _longopt=0
+_saw_prefix=0; _rc_altering=0; _state=scan; _skipnext=0; _had_pipefail=0
 for _a in "$@"; do
+  if [ "$_skipnext" -eq 1 ]; then
+    _skipnext=0
+    case "$_a" in *pipefail*) _had_pipefail=1 ;; esac
+    continue
+  fi
   case "$_state" in
     scan)
       case "$(basename -- "$_a")" in
-        env|nohup|stdbuf|command|exec|setsid|nice|ionice|timeout)
+        env|nohup|stdbuf|command|exec|setsid|nice|ionice)
           _saw_prefix=1; continue ;;
+        timeout)
+          _saw_prefix=1; _rc_altering=1; continue ;;
         sh|bash|zsh|dash|ksh)
           _wrapper="$(basename -- "$_a")"; _state=shellargs; continue ;;
       esac
@@ -152,10 +170,12 @@ for _a in "$@"; do
       ;;
     shellargs)
       case "$_a" in
-        --)   _state=wantscript; continue ;;
-        -*c*) _state=wantscript; continue ;;
-        -*)   continue ;;
-        *)    _scriptfile=1; break ;;
+        --)     _state=wantscript; continue ;;
+        -o|+o)  _skipnext=1; continue ;;
+        --*)    _longopt=1; break ;;
+        -*c*)   _state=wantscript; continue ;;
+        -*)     continue ;;
+        *)      _scriptfile=1; break ;;
       esac
       ;;
     wantscript)
@@ -166,18 +186,25 @@ for _a in "$@"; do
       ;;
   esac
 done
-if [ -n "$_wrapper" ] && [ "$_state" != done ]; then
+if [ "$_rc_altering" -eq 1 ]; then
   RC_UNTRUSTED=1
-  if [ "$_scriptfile" -eq 1 ]; then
+  RC_WHY="rc 를 바꿀 수 있는 접두 래퍼(timeout 등)를 거친다 — 시간초과 rc(124)가 **거짓 CAUGHT** 가 된다"
+elif [ -n "$_wrapper" ] && [ "$_state" != done ]; then
+  RC_UNTRUSTED=1
+  if [ "$_longopt" -eq 1 ]; then
+    RC_WHY="셸 래퍼에 롱옵션이 있어 '-c' 스크립트의 위치를 추측할 수 없다(--norc/--rcfile 등) — 판정하지 않는다"
+  elif [ "$_scriptfile" -eq 1 ]; then
     RC_WHY="셸 래퍼가 **스크립트 파일**을 받는다 — 내용을 볼 수 없어 rc 가 테스트의 것인지 판정하지 않는다"
   else
-    RC_WHY="셸 래퍼인데 '-c' 스크립트를 특정하지 못했다(-lc/-ce/'-c --' 등) — 무엇이 실행되는지 모르므로 판정하지 않는다"
+    RC_WHY="셸 래퍼인데 '-c' 스크립트를 특정하지 못했다 — 무엇이 실행되는지 모르므로 판정하지 않는다"
   fi
 elif [ -z "$_wrapper" ] && [ "$_saw_prefix" -eq 1 ]; then
   RC_UNTRUSTED=1
-  RC_WHY="접두 래퍼(env/timeout/nohup 등)를 거쳐 무엇이 실행되는지 특정하지 못했다 — 판정하지 않는다"
+  RC_WHY="접두 래퍼(env/nohup 등)를 거쳐 무엇이 실행되는지 특정하지 못했다 — 판정하지 않는다"
 elif [ -n "$_wrapper" ]; then
-  _rest="$_script"; _had_pipefail=0
+  _rest="$_script"
+  # ★접두 `set …` 을 **반복해서** 걷는다. 단 그 절에 주석·명령치환이 있으면 **걷지 않는다**
+  #   (걷어내면 그 안의 테스트까지 시야에서 사라져 위음성이 된다 — 적대 리뷰 M1 실측).
   while :; do
     while :; do case "$_rest" in " "*) _rest="${_rest# }" ;; *) break ;; esac; done
     case "$_rest" in "set -"*) ;; *) break ;; esac
@@ -188,14 +215,21 @@ elif [ -n "$_wrapper" ]; then
     else
       _seg="$_segB"; _tail="${_rest#*"$_NL"}"
     fi
+    case "$_seg" in *"#"*|*'$'*|*'`'*|*"("*) break ;; esac
     case "$_seg" in *pipefail*) _had_pipefail=1 ;; esac
     _rest="$_tail"
   done
+  # ★`sh`/`dash` 에는 `set -o pipefail` 이 없다 — 인정하면 「명령이 깨져서 CAUGHT」가 된다.
   case "$_wrapper" in bash|zsh|ksh) ;; *) _had_pipefail=0 ;; esac
+  # ★화이트리스트 — 위험을 세지 않고 **단일 단순 명령의 모양**만 신뢰한다.
   case "$_rest" in
-    *";"*|*"&"*|*"||"*|*"$_NL"*)
+    "")
       RC_UNTRUSTED=1
-      RC_WHY="래퍼 스크립트가 명령을 이어 붙인다(';' · 개행 · '&&'/'&' · '||') — rc 가 테스트의 것이라고 보증할 수 없다"
+      RC_WHY="래퍼 스크립트가 비어 있다 — 테스트가 실행되지 않았는데 rc=0 이 나온다"
+      ;;
+    *";"*|*"&"*|*"("*|*")"*|*"<"*|*">"*|*'`'*|*'$'*|*"!"*|*"#"*|*"$_NL"*)
+      RC_UNTRUSTED=1
+      RC_WHY="래퍼 스크립트가 **단일 단순 명령이 아니다**(';' '&' '(' ')' '<' '>' 백틱 '\$' '!' '#' 개행 중 하나가 있다) — rc 가 테스트의 것이라고 보증할 수 없다"
       ;;
     *"|"*)
       if [ "$_had_pipefail" -eq 0 ]; then

@@ -236,39 +236,55 @@ def test_셸_래퍼_예외는_사유를_남기고_통과시킨다(sandbox) -> No
         f"예외 후 판정이 아예 안 나왔다: {r.stdout}")
 
 
-# ── 적대 리뷰(2026-09-02)가 연 구멍 — **내 첫 봉합이 새로 만든 거짓 SURVIVED** ────────
+# ── 적대 리뷰 2회가 연 구멍 — **위험을 열거하는 방식이 매번 샜다** ──────────────────
 #
-# ★이 절의 존재 이유: 위 `test_셸_래퍼면_판정을_발행하지_않는다` 를 통과시킨 첫 구현이
-#   **고치려던 결함 클래스를 새 경로로 다시 열었다**(§회귀망 D-16). 두 겹의 fail-open 이었다:
-#     ① `env bash -c` · `timeout 60 bash -c` 는 argv[0] 이 셸이 아니라 **case 에 안 걸렸고**
-#     ② `bash -lc` · `bash -c --` 는 `-c` 를 못 찾아 스크립트가 비면 **그냥 신뢰**했다
-#   그래서 **파이프를 실은 5형태가 「차단(12)」에서 「거짓 SURVIVED(0)」로** 열렸다.
-#   락이 19건 전부 초록인 채였다 — **그 축을 하나도 안 태웠기 때문**이다.
+# 1차 판정: 문자 `|` 하나          → `;`·`&&` 를 못 봤다
+# 2차 판정: `; & && || 개행` 목록  → 롱옵션·명령치환·`!`·주석 안 pipefail 을 못 봤다
+#   그 둘을 각각 **적대 리뷰가 8형태씩** 찾아냈다. **목록은 곧 상한이 된다.**
+# 3차(현재): **뒤집었다** — 위험을 세지 않고 **「단일 단순 명령의 모양」만 신뢰**한다.
+#   그래서 이 아래 표는 «막아야 할 것의 목록»이 아니라 **«설계가 이미 막는 것들의 증거»** 다.
+#   새 형태가 나와도 화이트리스트가 자동으로 막는다 — 표에 없어도.
 
-_거짓_SURVIVED_후보 = [
-    # (라벨, argv) — ★전부 **파이프를 실은** 형태다. 정답은 판정 불가(12).
-    ("bash -lc (옵션 결합)", ["bash", "-lc", "grep -q alpha target.txt | cat"]),
-    ("bash -c -- (이중 대시)", ["bash", "-c", "--", "grep -q alpha target.txt | cat"]),
+_판정불가_형태 = [
+    # ★전부 그라운드 트루스상 rc=0 이 불가능하다(변이 후 `grep -q alpha` 는 반드시 실패).
+    #   따라서 정답은 판정 불가(12)뿐이고 **rc=0/SURVIVED 는 어떤 경우에도 거짓**이다.
+    # ── 1차 리뷰가 찾은 것(옵션 결합·접두 래퍼·구분자)
+    ("bash -lc 옵션결합", ["bash", "-lc", "grep -q alpha target.txt | cat"]),
+    ("bash -c -- 이중대시", ["bash", "-c", "--", "grep -q alpha target.txt | cat"]),
     ("env 접두", ["env", "bash", "-c", "grep -q alpha target.txt | cat"]),
-    ("timeout 접두", ["timeout", "60", "bash", "-c", "grep -q alpha target.txt | cat"]),
     ("nohup 접두", ["nohup", "bash", "-c", "grep -q alpha target.txt | cat"]),
-    ("개행 구분자", ["bash", "-c", "grep -q alpha target.txt\ntrue"]),
-    ("단일 & (백그라운드)", ["bash", "-c", "grep -q alpha target.txt & wait"]),
     ("env FOO=1 접두", ["env", "FOO=1", "bash", "-c", "grep -q alpha target.txt | cat"]),
+    ("개행 구분자", ["bash", "-c", "grep -q alpha target.txt\ntrue"]),
+    ("단일 & 백그라운드", ["bash", "-c", "grep -q alpha target.txt & wait"]),
+    # ── 2차 리뷰가 찾은 것(★내 봉합이 새로 연 것들)
+    ("★C1 --norc 롱옵션", ["bash", "--norc", "-c", "grep -q alpha target.txt | cat"]),
+    ("★C1 --rcfile 롱옵션", ["bash", "--rcfile", "/dev/null", "-c",
+                             "grep -q alpha target.txt | cat"]),
+    ("★C1 --restricted 롱옵션", ["bash", "--restricted", "-c",
+                                 "grep -q alpha target.txt; true"]),
+    ("★C2 명령치환 $()", ["bash", "-c", "echo $(grep -q alpha target.txt)"]),
+    ("★C2 백틱", ["bash", "-c", "echo `grep -q alpha target.txt`"]),
+    ("★H1 ! 부정", ["bash", "-c", "! grep -q alpha target.txt"]),
+    ("★M1 주석 안 pipefail", ["bash", "-c",
+                              "set -e # pipefail; grep -q alpha target.txt | cat"]),
+    ("★M1 스트립될 절 안의 치환", ["bash", "-c",
+                                   "set -e $(grep -q alpha target.txt); true"]),
+    ("★M2 timeout 은 rc 를 바꾼다", ["timeout", "60", "bash", "-c",
+                                     "grep -q alpha target.txt"]),
+    ("★L1 빈 스크립트", ["bash", "-c", ""]),
+    # ── ★종전 xfail#1 — **닫혔다.** 명령이 환경변수에 실려도 스크립트에 `$` 가 남는다.
+    ("★환경변수에 실린 명령", ["env", "T=grep -q alpha target.txt; true",
+                               "bash", "-c", 'eval "$T"']),
 ]
 
 
-@pytest.mark.parametrize("라벨,argv", _거짓_SURVIVED_후보, ids=[x[0] for x in _거짓_SURVIVED_후보])
-def test_무엇이_실행되는지_특정_못하면_판정하지_않는다(sandbox, 라벨, argv) -> None:
-    """★fail-closed — **특정하지 못하면 판정을 발행하지 않는다.**
-
-    ★그라운드 트루스: 변이 `s|alpha|ALPHA|` 후 `grep -q alpha target.txt` 는 **반드시 실패**한다.
-      그러므로 `rc=0`/`SURVIVED` 는 **어떤 경우에도 정답이 아니다** — 거짓 SURVIVED 다.
-    """
+@pytest.mark.parametrize("라벨,argv", _판정불가_형태, ids=[x[0] for x in _판정불가_형태])
+def test_단일_단순_명령이_아니면_판정하지_않는다(sandbox, 라벨, argv) -> None:
+    """★fail-closed — **모양이 아니면 판정을 발행하지 않는다.**"""
     root, _ = sandbox
     r = _run(root, "target.txt", "s|alpha|ALPHA|", *argv)
     assert r.returncode == 12, (
-        f"[{라벨}] 특정 못 한 층에 판정을 발행했다: rc={r.returncode}\n{r.stdout}{r.stderr}")
+        f"[{라벨}] 판정을 발행했다: rc={r.returncode}\n{r.stdout}{r.stderr}")
     # ★판정어는 **줄 시작 앵커**로 본다(설명문 안의 낱말을 집지 않도록).
     assert not any(ln.startswith("SURVIVED") for ln in r.stdout.splitlines()), (
         f"[{라벨}] ★거짓 SURVIVED 를 발행했다: {r.stdout}")
@@ -286,35 +302,49 @@ def test_스크립트_파일을_받으면_내용을_못_보므로_판정하지_�
     assert r.returncode == 12, f"스크립트 파일을 신뢰했다: rc={r.returncode}\n{r.stdout}"
 
 
-def test_pipefail_은_그_셸이_지원할_때만_인정한다(sandbox) -> None:
-    """★`sh`/`dash` 에는 `set -o pipefail` 이 **없다** — 인정하면 「명령이 깨져서 CAUGHT」가 된다.
+# ★셸 목록(`sh|bash|zsh|dash|ksh`)은 **손 목록**이라 상한이 된다. 그래서 **호스트에 실재하는
+#   셸에서 파생**시켜 태운다 — zsh/ksh 가 설치되면 그날부터 자동으로 감시망에 들어온다.
+#   ★단 `bash` 는 다른 락이 이미 태우므로 여기서는 **나머지**만 본다(중복 방지).
+_설치된_비bash_셸 = [x for x in ("sh", "dash", "zsh", "ksh") if shutil.which(x)]
 
-    이 호스트의 `/bin/sh` 는 dash 이고, dash 는 특수 빌트인 오류로 **즉시 종료**한다(rc=2).
-    그것을 「파이프를 고쳤다」고 인정하면 **테스트가 돌지도 않았는데 CAUGHT** 가 나온다.
 
-    ★이 케이스는 **셸 목록 커버리지**도 같이 닫는다 — 다른 모든 락이 `bash` 로만 부르는 탓에
-      목록(`sh|bash|zsh|dash|ksh`)에서 `bash` 외를 빼도 아무것도 빨개지지 않았다(리뷰 변이 D3).
+@pytest.mark.parametrize("셸", _설치된_비bash_셸 or ["없음"])
+def test_pipefail_은_그_셸이_지원할_때만_인정한다(sandbox, 셸) -> None:
+    """★`sh`/`dash` 에는 `set -o pipefail` 이 **없다** — 인정하면 「명령이 깨져서 CAUGHT」다.
+
+    dash 는 특수 빌트인 오류로 **즉시 종료**한다(rc=2). 그것을 「파이프를 고쳤다」로 인정하면
+    **테스트가 돌지도 않았는데 CAUGHT** 가 된다.
     """
+    if 셸 == "없음":
+        pytest.skip("★비-bash 셸이 호스트에 없다 — 이 축은 미측정(계획서 §8-3)")
     root, _ = sandbox
     r = _run(root, "target.txt", "s|alpha|ALPHA|",
-             "sh", "-c", "set -o pipefail; grep -q alpha target.txt | cat")
-    assert r.returncode == 12, (
-        f"sh 의 pipefail 을 인정해 거짓 CAUGHT 를 냈다: rc={r.returncode}\n{r.stdout}{r.stderr}")
+             셸, "-c", "set -o pipefail; grep -q alpha target.txt | cat")
+    지원 = 셸 in ("bash", "zsh", "ksh")
+    if 지원:
+        assert r.returncode != 12, f"[{셸}] pipefail 을 지원하는데 막았다: {r.stdout}"
+    else:
+        assert r.returncode == 12, (
+            f"[{셸}] pipefail 을 인정해 거짓 CAUGHT 를 냈다: rc={r.returncode}\n{r.stdout}{r.stderr}")
 
 
 _정당_형태 = [
     # ★**두 번째 모집단** — 이것이 없으면 「전부 차단」이 만점이 된다. 정답은 CAUGHT.
+    ("단일 단순 명령", ["bash", "-c", "grep -q alpha target.txt"]),
+    ("-c -- 단일 명령", ["bash", "-c", "--", "grep -q alpha target.txt"]),
+    ("env 접두 + 단일 명령", ["env", "bash", "-c", "grep -q alpha target.txt"]),
     ("다중 set 접두", ["bash", "-c", "set -e; set -o pipefail; grep -q alpha target.txt | cat"]),
     ("개행 경계 접두", ["bash", "-c", "set -o pipefail\ngrep -q alpha target.txt | cat"]),
     ("결합 접두", ["bash", "-c", "set -euo pipefail; grep -q alpha target.txt | cat"]),
-    ("-c -- 단일 명령", ["bash", "-c", "--", "grep -q alpha target.txt"]),
-    ("env 접두 + 단일 명령", ["env", "bash", "-c", "grep -q alpha target.txt"]),
+    # ★`-o pipefail` 은 **명령줄**로 켜는 형태다(스크립트 접두가 아니다).
+    ("-o pipefail 명령줄", ["bash", "-o", "pipefail", "-c",
+                            "grep -q alpha target.txt | cat"]),
 ]
 
 
 @pytest.mark.parametrize("라벨,argv", _정당_형태, ids=[x[0] for x in _정당_형태])
 def test_정당한_형태는_그대로_판정한다(sandbox, 라벨, argv) -> None:
-    """★위양성 축 — 접두를 **한 번만** 걷으면 `set -e; set -o pipefail; …` 에 `;` 가 남아 막힌다."""
+    """★위양성 축 — 화이트리스트가 **정상까지 막으면** 그것도 결함이다."""
     root, _ = sandbox
     r = _run(root, "target.txt", "s|alpha|ALPHA|", *argv)
     합본 = r.stdout + r.stderr
@@ -326,34 +356,20 @@ def test_정당한_형태는_그대로_판정한다(sandbox, 라벨, argv) -> No
         f"[{라벨}] 명령이 깨져서 CAUGHT 가 됐다: {합본}")
 
 
-# ── ★잔존 구멍 — **부채를 초록 안에 보이게** 둔다(커밋 메시지에만 적으면 안 드러난다) ────
+# ── ★잔존 구멍 — **부채를 초록 안에 보이게** 둔다 ──────────────────────────────────
 #
-# `xfail(strict=True)` 라서 **누가 이 구멍을 닫으면 XPASS 로 빨개진다** — 그때 이 표시를
-# 지우라는 신호다(래칫). 지금 이것을 안 고치는 이유는 아래 각 사유에 적었다.
+# `xfail(strict=True)` 라서 **누가 이 구멍을 닫으면 XPASS 로 빨개진다**(래칫).
+# ★종전에 여기 있던 «환경변수에 실린 명령»은 3차 설계가 **닫았다** — 위 파생형 표로 옮겼다.
+#   그때 적었던 사유(*"닫으려면 설계를 바꿔야 한다"*)는 **틀렸다.** 설계를 바꾸니 닫혔다.
 
 
 @pytest.mark.xfail(
     strict=True,
-    reason="★미해소(실측 rc=0): 명령이 **환경변수에 실려** 스크립트 문자열이 `eval \"$T\"` 뿐이라 "
-           "구분자가 보이지 않는다. 변수 내용을 따라가려면 셸 의미론을 구현해야 하므로 "
-           "'문자열은 불투명하다'는 이 도구의 설계 선언과 충돌한다 — 닫으려면 설계를 바꿔야 한다.",
-)
-def test_부채_환경변수에_실린_명령은_아직_못_본다(sandbox) -> None:
-    root, _ = sandbox
-    r = subprocess.run(  # noqa: S603
-        ["bash", "scripts/mutate_manual.sh", "target.txt", "s|alpha|ALPHA|",
-         "env", "T=grep -q alpha target.txt; true", "bash", "-c", 'eval "$T"'],
-        cwd=root, capture_output=True, text=True,
-    )
-    assert r.returncode == 12, f"rc={r.returncode}"
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="★미해소(실측 rc=0): argv[0] 이 **임의 실행파일**(직접 만든 래퍼 스크립트)이면 "
-           "그 안에서 무엇을 하는지 이 도구는 볼 수 없다. 닫으려면 '알려진 접두 래퍼' 목록을 "
-           "넓혀야 하는데 **그것이 곧 손 목록**이라 상한이 된다(CLAUDE.md §수집·판정 규율). "
-           "대신 rc 를 못 믿는 래퍼를 쓸 때는 MUTATE_ALLOW_SHELL 로 **사유를 선언**하게 한다.",
+    reason="★미해소(실측 rc=0): argv[0] 이 **임의 실행파일**이면 그 안에서 무엇을 하는지 "
+           "이 도구는 볼 수 없다. `./mywrap` 뿐 아니라 `sudo`·`xargs`·`make`·`npx`·"
+           "`poetry run`·`uv run`·`python -m` 이 전부 이 구멍에 있고 훨씬 흔하다. "
+           "닫으려면 '알려진 접두 래퍼' 목록을 넓혀야 하는데 **그것이 곧 손 목록**이라 "
+           "상한이 된다 — 대신 MUTATE_ALLOW_SHELL 로 **사유를 선언**하게 한다.",
 )
 def test_부채_임의_실행파일_래퍼는_아직_못_본다(sandbox) -> None:
     root, _ = sandbox
