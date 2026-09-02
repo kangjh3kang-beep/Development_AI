@@ -325,18 +325,31 @@ def _render_like_dashboard(payload: dict) -> str:
     if not tsx.is_file():                       # 다른 배치에서도 안 죽게
         tsx = next(p for p in _SRC.parents if p.name == "apps") / "web" / "components" / "settings" / "GrowthDashboard.tsx"
     src = tsx.read_text(encoding="utf-8")
-    m = re.search(r"parts\.length\s*>=\s*(\d+)", src)
+    # ★상한이 **호출부마다 다르다** — 액션 `params` 는 기본값(4), 플래그 `value` 는
+    #   `FLAG_VALUE_RENDER_CAP`. 이 함수가 흉내 내는 것은 **플래그 표면**이므로 그쪽을 뽑는다.
+    #   종전 정규식(`parts.length >= (\d+)`)은 상한이 리터럴이던 시절의 것이라, 인자화된
+    #   뒤에는 아무것도 못 잡고 **판정을 거부**했다(그 거부가 옳았다 — 위반이 아니라 추출기 사망).
+    m = re.search(r"const\s+FLAG_VALUE_RENDER_CAP\s*=\s*(\d+)", src)
     assert m, "★화면의 키 상한을 못 찾았다 — 추출기가 죽었다(위반 아님)"
     cap = int(m.group(1))
 
+    # ★★**배선까지 확인한다** — 상한 상수가 있어도 플래그 소비처가 그것을 **안 넘기면**
+    #   이 흉내는 화면과 다른 것을 그린다(복제본 락이 조용히 어긋나는 형태).
+    assert re.search(r"summarizeParams\(f\.value,\s*FLAG_VALUE_RENDER_CAP\)", src), (
+        "★플래그 표면이 그 상한을 안 쓴다 — 이 흉내가 화면과 다른 것을 그린다(추출기 사망)"
+    )
+
     parts: list[str] = []
-    for k, v in payload.items():
+    shown = [(k, v) for k, v in payload.items() if v is not None]
+    for k, v in shown:
         if len(parts) >= cap:
             break
-        if v is None:
-            continue
         parts.append(f"{k} {json.dumps(v) if isinstance(v, (dict, list)) else v}")
-    return " · ".join(parts)
+    out = " · ".join(parts)
+    # ★잘라낸 몫을 **말한다** — 화면이 그렇게 바뀌었다(`GrowthDashboard.summarizeParams`).
+    #   이 흉내가 그것을 안 따라가면 "화면과 같다" 는 전제가 거짓이 된다.
+    rest = len(shown) - len(parts)
+    return f"{out} 외 {rest}종" if rest > 0 else out
 
 
 @pytest.mark.asyncio
