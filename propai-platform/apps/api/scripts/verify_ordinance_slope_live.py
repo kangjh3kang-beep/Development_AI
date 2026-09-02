@@ -16,7 +16,7 @@ OrdinanceService.resolve_slope_criteria(시군구 도시계획조례의 개발�
 키 요구사항 (★키 필요 — 라이브 검증 전제조건):
     - MOLEG_API_KEY 환경변수(법제처 DRF의 OC 파라미터 값). 미설정/플레이스홀더
       ('your-moleg-api-key', 'dummy-*')면 dry 모드로 안내 후 종료(네트워크 미호출).
-    - ordinance_service 는 settings.MOLEG_API_KEY 를 읽으므로, 이 스크립트가
+    - ordinance_service 는 moleg_oc_key()(env → settings)를 읽으므로, 이 스크립트가
       환경변수 값을 settings 에 주입한 뒤 서비스를 호출한다.
 
 운영 실행 절차 (2026-07-02 실검증 결과에 근거):
@@ -56,12 +56,16 @@ _PLACEHOLDER_KEYS = ("your-moleg-api-key", "dummy-moleg-api-key")
 
 
 def _resolve_api_key() -> str | None:
-    """유효한 MOLEG_API_KEY(OC)를 env → settings 순으로 찾는다. 없으면 None."""
-    from app.core.config import settings
+    """유효한 MOLEG_API_KEY(OC)를 찾는다(플레이스홀더면 `None`).
 
-    key = (os.environ.get("MOLEG_API_KEY") or "").strip()
-    if not key:
-        key = (getattr(settings, "MOLEG_API_KEY", "") or "").strip()
+    ★env → settings 순서는 **공용 함수에 있다**(`moleg_drf_envelope.moleg_oc_key`).
+      종전엔 이 스크립트가 **같은 로직을 손으로 복제**했다 — 복제본은 원본이 바뀌어도
+      안 따라오고, 그때부터 *"스크립트로 확인했다"* 가 프로덕션을 대변하지 못한다.
+      (2026-09-02 독립 리뷰가 이 파일을 짚었다.)
+    """
+    from app.services.legal.moleg_drf_envelope import moleg_oc_key
+
+    key = moleg_oc_key()
     if not key or key.lower() in _PLACEHOLDER_KEYS or key.lower().startswith("dummy"):
         return None
     return key
@@ -137,10 +141,10 @@ async def _main_async(args: argparse.Namespace) -> int:
         _print_dry_exit()
         return 2
 
-    # ordinance_service 는 settings.MOLEG_API_KEY 를 읽는다 → env 값 주입.
-    from app.core.config import settings
-
-    settings.MOLEG_API_KEY = api_key  # type: ignore[misc]
+    # ★`ordinance_service` 는 이제 `moleg_oc_key()`(env → settings)를 **호출 시점에** 읽는다.
+    #   그래서 `os.environ` 에 넣으면 충분하다 — 종전 주석은 *"settings 를 읽는다"* 였고
+    #   이 PR 로 **거짓이 됐다**(다음 사람이 그 문장을 근거로 판단한다 · 규율 §C-10).
+    os.environ["MOLEG_API_KEY"] = api_key
 
     from app.services.land_intelligence.ordinance_service import OrdinanceService
 

@@ -36,7 +36,44 @@ from __future__ import annotations
 import re
 from typing import Any
 
-__all__ = ["MolegDrfError", "drf_failure_reason", "raise_unless_expected"]
+__all__ = [
+    "MolegDrfError",
+    "drf_failure_reason",
+    "moleg_oc_key",
+    "raise_unless_expected",
+    "raise_unless_expected_xml",
+    "xml_failure_reason",
+]
+
+
+def moleg_oc_key() -> str:
+    """법제처 DRF 인증키(OC)를 **호출 시점에** 읽는다.
+
+    ## ★왜 `settings.MOLEG_API_KEY` 를 직접 읽으면 안 되나 (2026-09-02 · 적대 리뷰)
+
+    관리자 화면의 시크릿 저장(`PUT /admin/secrets/{name}`)은 `os.environ[name] = value`
+    **만** 한다. 그런데 `settings` 는 `app/core/config.py` 의 **모듈 싱글턴**이고
+    `get_settings()` 는 `@lru_cache` 라 **재동기화 경로가 0건**이다(전수 조회로 확인).
+
+    → 소비처가 `settings` 를 직접 읽으면 운영자가 화면에서 키를 바꿔도
+      **「저장됨」 초록만 뜨고 실제로는 아무것도 안 바뀐다** — 즉 **작동하지 않는 조작 수단**이다.
+      저장소가 이미 두 곳에 그 갭을 적어 뒀다:
+
+        app/core/observability.py  *"load_into_env() 가 os.environ 에 올리므로
+                                     **settings 에는 반영되지 않는다**"*
+        tests/test_base_interpreter_fewshot.py  *"관리자 시크릿으로 켜도 **재시작 전 무효**"*
+
+    ★그래서 **`os.environ` 을 먼저** 본다(런타임 갱신분) → 없으면 부팅 설정.
+      `base_interpreter._fewshot_enabled` 가 같은 이유로 같은 순서를 쓴다(저장소 선례).
+    ★**빈 문자열도 「없음」으로 본다** — `os.environ` 의 빈 값이 부팅 설정을 가리지 않게.
+    """
+    import os
+
+    from app.core.config import settings
+
+    return (os.getenv("MOLEG_API_KEY") or "").strip() or (
+        getattr(settings, "MOLEG_API_KEY", "") or ""
+    ).strip()
 
 #: 법제처가 사유를 싣는 관용 키(계열 ①②). 없으면 값이 문자열인 아무 키나 사유로 쓴다(계열 ③).
 _REASON_KEYS: tuple[str, ...] = ("result", "msg")

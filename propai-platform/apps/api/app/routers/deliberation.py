@@ -165,8 +165,8 @@ async def deliberation_baseline_staleness(user=Depends(get_current_user)) -> dic
                 "engine_configured": bool(get_settings().deliberation_engine_url)}
     meta = engine.get("meta") or {}
     try:
-        from app.core.config import settings as core_settings
-        if not getattr(core_settings, "MOLEG_API_KEY", ""):
+        from app.services.legal.moleg_drf_envelope import moleg_oc_key
+        if not moleg_oc_key():
             # 법제처 키 미설정 → 변경 감지 불가. 'not stale'(거짓 안심) 금지 → degrade 정직 표면화.
             return {"degraded": True, "reason": "monitor_key_missing",
                     "baseline_version": meta.get("version"),
