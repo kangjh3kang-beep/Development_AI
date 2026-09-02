@@ -19,7 +19,7 @@ import { AlertTriangle, Building2, CheckCircle2, FileSpreadsheet, Landmark, Laye
 import { KakaoAddressSearch, type KakaoAddressResult } from "@/components/ui/KakaoAddressSearch";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient, apiV1BaseUrl } from "@/lib/api-client";
-import { joinAddressJibun } from "@/lib/pnu";
+import { bcodeFromPnu, joinAddressJibun, normalizePnu } from "@/lib/pnu";
 import { scheduleSnapshotSync } from "@/lib/projectSync";
 import { preferredEntryAddress } from "@/lib/parcel-rows";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
@@ -95,8 +95,8 @@ export function buildInitialAddressEntries(opts: {
             bname: "",
             zonecode: "",
             // PNU 앞 10자리 = 법정동 코드(있으면 유도, 없으면 빈값).
-            bcode: pnu.length >= 10 ? pnu.slice(0, 10) : "",
-            pnu: pnu || undefined,
+            bcode: bcodeFromPnu(pnu) ?? "",
+            pnu: normalizePnu(pnu) ?? undefined,
             areaSqm: typeof p.areaSqm === "number" && p.areaSqm > 0 ? p.areaSqm : undefined,
             zoneCode: p.zoneCode ?? undefined,
           } as AddressEntry;
@@ -509,11 +509,12 @@ export function GlobalAddressSearch({
       // ★검증된 bcode만 형제전파 학습 — PNU 동반(실제 조회로 확정)만 신뢰한다.
       //   엑셀 입력 bcode는 양식 예시값(의정부 4115·강남 1168)이 1~2행에 남아 주소와 어긋날 수
       //   있어 형제 학습에서 제외(오염 전파 방지). PNU 없는 엑셀 bcode는 백엔드가 주소로 재해소.
-      const b = e.pnu && e.pnu.length >= 10 ? e.pnu.slice(0, 10) : "";
+      const b = bcodeFromPnu(e.pnu) ?? "";
       const src = e.fullAddress || e.jibunAddress || "";
       const sg = sigunguOf(src);
       const d = dongOf(src);
-      if (b && b.length >= 10 && sg && d && !sgDongBcode.has(`${sg}|${d}`)) sgDongBcode.set(`${sg}|${d}`, b.slice(0, 10));
+      // `b` 는 `bcodeFromPnu` 의 산출이라 "" 이거나 **정확히 10자**다 — 길이 재검사는 공허하다.
+      if (b && sg && d && !sgDongBcode.has(`${sg}|${d}`)) sgDongBcode.set(`${sg}|${d}`, b);
     }
     const bcodeFor = (e: AddressEntry): string => {
       const src = e.fullAddress || e.jibunAddress || "";
@@ -569,7 +570,7 @@ export function GlobalAddressSearch({
         const r = await apiClient.post<{ parcels: P[] }>("/zoning/parcels-info", {
           // area_input_sqm: 엑셀 입력 면적(비권위)을 함께 보내 백엔드가 공부상과 교차검증→괴리 시
           //   공부상 채택 + area_warning 생성하게 한다(_enrich_fill 신뢰루프 활성화).
-          body: { parcels: slice.map((e, i) => ({ __rid: i, address: e.fullAddress, jibun: e.jibunAddress || e.fullAddress, pnu: e.pnu, bcode: bcodeFor(e), area_input_sqm: e.areaInputSqm ?? e.areaSqm ?? null })) },
+          body: { parcels: slice.map((e, i) => ({ __rid: i, address: e.fullAddress, jibun: e.jibunAddress || e.fullAddress, pnu: normalizePnu(e.pnu) ?? undefined, bcode: bcodeFor(e), area_input_sqm: e.areaInputSqm ?? e.areaSqm ?? null })) },
           useMock: false, timeoutMs: 90000,
         });
         parcels = r.parcels || [];
@@ -687,14 +688,14 @@ export function GlobalAddressSearch({
         const zone = m?.zone_type ?? e.zoneCode ?? null;
         // 토지조서 SSOT(parcels) 배선용 필지별 데이터 — 보강(m) 우선, 로컬 entry 폴백.
         //   무목업: 없는 값은 빈 문자열(가짜 미생성). ownerType은 무료 API 미제공이라 항상 "".
-        const pnu = (m?.pnu ?? e.pnu) ?? "";
+        const pnu = normalizePnu(m?.pnu ?? e.pnu) ?? "";
         const address = (m?.address ?? e.fullAddress ?? e.jibunAddress) ?? "";
         const landCategory = (m?.jimok ?? e.jimok) ?? "";
         // 개발가능성 우선정렬용 특이부지 판정(지목 + 백엔드 게이트) — '대표' 선정의 핵심.
         const special = _isSpecialParcel({ jimok: landCategory, isSpecial: (m?.special_parcel ?? e.specialParcel)?.is_special });
         // ★K1: 대표(개발가능 필지)로 종합/시나리오 분석을 '재조준'하기 위해 bcode·지번도 함께 보존.
         //   (도로 등 특이부지가 입력 1번이라 분석이 거기 고정되던 근본버그 해소 — analysisAddress 보정.)
-        const bcode = (e.bcode || (pnu && pnu.length >= 10 ? pnu.slice(0, 10) : "")) ?? "";
+        const bcode = (e.bcode || (bcodeFromPnu(pnu) ?? "")) ?? "";
         const jibun = (e.jibunAddress || address) ?? "";
         return { area, status, zone, pnu, address, landCategory, special, bcode, jibun };
       })
@@ -760,8 +761,10 @@ export function GlobalAddressSearch({
       // ★토지조서 SSOT 배선: 다필지 배열을 기록해 LandSchedule·Registry 시드 useEffect가
       //   집계값이 아닌 실제 필지목록으로 표를 자동 복원하게 한다('절반만 배선된 SSOT' 해소).
       //   ParcelData 타입 정합(pnu/address/areaSqm/landCategory/ownerType), 누락필드는 "".
+      // ★여기가 **되쓰기** 지점이다 — 오염값을 그대로 넣으면 스토어가 오염을 스스로 재생산하고
+      //   («레거시 저장분이라 활성 생산이 아니다» 라는 서술이 이 파일에서는 거짓이 된다).
       parcels: valid.map((p) => ({
-        pnu: p.pnu,
+        pnu: normalizePnu(p.pnu) ?? "",
         address: p.address,
         areaSqm: p.area,
         landCategory: p.landCategory,
@@ -956,7 +959,7 @@ export function GlobalAddressSearch({
   // bcode는 PNU 앞 10자리로 구성(pickCandidate 패턴 동일).
   const handleMapPick = useCallback((parcel: ParcelAtPointResult) => {
     if (!parcel.found || !parcel.address) return;
-    const bcode = parcel.bcode || (parcel.pnu && parcel.pnu.length >= 10 ? parcel.pnu.slice(0, 10) : "");
+    const bcode = parcel.bcode || (bcodeFromPnu(parcel.pnu) ?? "");
     handleAddressSelect({
       fullAddress: parcel.address,
       jibunAddress: parcel.jibun || parcel.address,
@@ -983,7 +986,7 @@ export function GlobalAddressSearch({
       if (existingAddresses.has(fullAddress)) continue; // 이미 있으면 건너뜀
       existingAddresses.add(fullAddress);
 
-      const bcode = parcel.bcode || (parcel.pnu && parcel.pnu.length >= 10 ? parcel.pnu.slice(0, 10) : "");
+      const bcode = parcel.bcode || (bcodeFromPnu(parcel.pnu) ?? "");
       const entry: AddressEntry = {
         __uid: newUid(),
         fullAddress,
@@ -1025,7 +1028,7 @@ export function GlobalAddressSearch({
 
   // 후보 선택 → 필지로 추가(PNU 보유 시 bcode 직접 구성, 종합분석 재실행).
   const pickCandidate = useCallback((c: AddrCandidate) => {
-    const bcode = c.pnu && c.pnu.length >= 10 ? c.pnu.slice(0, 10) : "";
+    const bcode = bcodeFromPnu(c.pnu) ?? "";
     handleAddressSelect({
       fullAddress: c.address,
       jibunAddress: c.address,

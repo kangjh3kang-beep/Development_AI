@@ -9,7 +9,7 @@
  *          farLegalPct/bcrLegalPct(법정상한 — 보조).
  */
 import type { AddressEntry } from "@/components/common/GlobalAddressSearch";
-import { parcelDisplayAddress } from "@/lib/pnu";
+import { normalizePnu, parcelDisplayAddress } from "@/lib/pnu";
 
 /**
  * 필지 대표 주소 정규화(공용) — 지오코딩 성공률↑ + **PNU 로 지번 파생**.
@@ -117,7 +117,8 @@ export function parcelDataToRows(
       farPct: null, // 실효 용적/건폐는 store ParcelData에 없음(피커 경로에서만 풀데이터)
       bcrPct: null,
       // 특이부지 감지(지목)·인접성 판정(geometry)·정밀판정(pnu)용 — 보유 시에만 전달(무날조).
-      ...(p.pnu ? { pnu: p.pnu } : {}),
+      // ★유효한 것만 보낸다 — 가짜를 보내면 서버가 echo 하며 필지 보강이 조용히 죽는다.
+      ...(normalizePnu(p.pnu) ? { pnu: normalizePnu(p.pnu) as string } : {}),
       ...(p.landCategory ? { land_category: p.landCategory } : {}),
       ...(p.geometry ? { geometry: p.geometry } : {}),
     }));

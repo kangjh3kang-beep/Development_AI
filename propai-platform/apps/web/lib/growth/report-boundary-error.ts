@@ -25,6 +25,7 @@
 import {
   flush,
   initEventCollector,
+  MAX_FIELD_CHARS,
   trackEvent,
 } from "@/lib/growth/event-collector";
 
@@ -44,9 +45,13 @@ export function reportBoundaryError(
       severity: "error",
       payload: {
         scope,
-        message: error?.message ?? "",
+        // ★형제 비대칭 — `stack` 은 잘리는데 `message` 만 **무상한**이었다(독립 리뷰 지적).
+        //   `event-collector` 의 `handleWindowError` 가 정확히 같은 결함을 갖고 있었고,
+        //   그쪽만 고치면 이 파일이 **안 쓸린 형제**로 남는다. 무상한 필드는 이벤트 하나로
+        //   전송 예산을 넘겨 그 배치를 폐기 경로로 보낸다.
+        message: (error?.message ?? "").slice(0, MAX_FIELD_CHARS),
         digest: error?.digest ?? null,
-        stack: error?.stack ? error.stack.slice(0, 2000) : null,
+        stack: error?.stack ? error.stack.slice(0, MAX_FIELD_CHARS) : null,
       },
     });
 
