@@ -392,7 +392,7 @@ def test_jsonb_ordering_model_matches_the_measured_live_order() -> None:
     )
 
 
-def _render_like_dashboard(payload: dict) -> str:
+def _render_like_dashboard(payload: dict, cap: int | None = None) -> str:
     """`GrowthDashboard.summarizeParams` 의 규칙을 **소스에서 파생**해 흉내 낸다.
 
     ★상한(4)을 손으로 적지 않는다 — TSX 에서 뽑는다. 화면이 6개로 늘면 이 테스트도 따라간다.
@@ -402,7 +402,11 @@ def _render_like_dashboard(payload: dict) -> str:
     # ★**추출·배선 확인은 `_render_cap()` 하나가 한다** — 여기서 다시 뽑지 않는다.
     #   종전엔 이 파일에 추출기가 **둘**이었고 `#947` 이 상한을 인자화하자 **한쪽만 낡았다.**
     #   *"사본이 갈리면 하나가 낡는다"* 의 실증이 이 파일 자신이었다.
-    cap = _render_cap()
+    #
+    # ★상한은 기본적으로 **소스에서 파생**한다. 주입(`cap=`)은 **두 갈래를 다 태우기 위한 것**이고
+    #   화면 값을 우회하려는 것이 아니다 — 파생 경로는 아래 단언들이 그대로 태운다.
+    if cap is None:
+        cap = _render_cap()
 
     # ★**이 흉내가 잠그는 것과 안 잠그는 것**(변이 실측 2026-09-02 — 점수 부풀리기 방지):
     #     CAUGHT  상수 이름 변경 · **배선 제거** → 판정 거부(추출기 사망)
@@ -527,23 +531,32 @@ async def test_screen_either_shows_everything_or_says_how_many_it_hid() -> None:
     stored = _round_trip(_published(s))
     # ★분모는 **보여 줄 수 있었던 것**(non-null)이다 — 빈 칸을 섞으면 「숨긴 수」가 거짓이 된다.
     shown_keys = [k for k, v in stored.items() if v is not None]
-    cap = _render_cap()
-    rendered = _render_like_dashboard(stored)
 
     # ★대조군 — 모집단이 비면 아래가 공허하다
     assert len(shown_keys) >= 5, f"★보여 줄 키가 {len(shown_keys)}개뿐 — 파생이 죽었다(위반 아님)"
 
-    if cap >= len(shown_keys):
-        # ①전부 보인다 — 숨긴 것이 있으면 안 된다
-        assert "외 " not in rendered, f"★다 보이는데 「외 N종」이 붙었다: {rendered[-40:]}"
-        for k in ("at", "depth", "lost"):
-            assert f"{k} " in rendered, f"★{k} 가 안 보인다(cap={cap} · 키 {len(shown_keys)}): {rendered[:120]}"
-    else:
-        # ②잘렸다면 **몇 개 잘렸는지 말해야** 한다(조용한 절단 금지)
-        hidden = len(shown_keys) - cap
-        assert f"외 {hidden}종" in rendered, (
-            f"★{hidden}개를 숨기고도 **말하지 않는다**(조용한 절단): {rendered[-60:]}\n"
-            f"   화면이 버린 몫을 말하거나, 판별 키를 명시 선택해야 한다."
-        )
+    # ★★**두 갈래를 다 태운다** — 라이브 상한(40)이 키 수(17)보다 커서 ②갈래가
+    #   **도달 불가**였다(실측). **도달 불가한 갈래는 공허하다.** 그래서 상한을 주입해
+    #   양쪽을 같은 실행에서 본다.
+    n = len(shown_keys)
 
+    # ①전부 보인다 — 숨긴 것이 없고 판별 필드가 다 보인다
+    wide = _render_like_dashboard(stored, cap=n + 5)
+    assert "외 " not in wide, f"★다 보이는데 「외 N종」이 붙었다: {wide[-40:]}"
+    for k in ("at", "depth", "lost"):
+        assert f"{k} " in wide, f"★{k} 가 안 보인다: {wide[:120]}"
 
+    # ②잘렸다면 **몇 개 잘렸는지 말해야** 한다(조용한 절단 금지)
+    narrow = _render_like_dashboard(stored, cap=3)
+    assert f"외 {n - 3}종" in narrow, (
+        f"★{n - 3}개를 숨기고도 **말하지 않는다**(조용한 절단): {narrow[-60:]}"
+    )
+
+    # ★대조군 — 두 갈래가 **실제로 다른 답**을 냈는가(안 갈리면 공허하다)
+    assert wide != narrow, "★두 갈래가 같은 답을 냈다 = 상한 주입이 안 먹었다"
+
+    # ★그리고 **라이브 상한**에서 지금 조용히 잘리는 것이 없는지 따로 본다
+    live_cap = _render_cap()
+    assert live_cap >= n or f"외 {n - live_cap}종" in _render_like_dashboard(stored), (
+        f"★라이브 상한 {live_cap} 에서 {n - live_cap}개가 조용히 잘린다"
+    )
