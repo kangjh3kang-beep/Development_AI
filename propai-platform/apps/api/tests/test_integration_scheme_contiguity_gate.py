@@ -35,7 +35,7 @@ _SRC = pathlib.Path(inspect.getsourcefile(SS)).read_text(encoding="utf-8")
 
 
 def _ctx(*, integration_ok, area_sqm=5000.0, zone="제2종일반주거지역",
-         multi=True, station=True, region="서울특별시"):
+         multi=True, station=True, region="서울특별시", max_pair_m=30.0):
     """★기존 픽스처와 달리 `integration_feasible` 를 **실제로 False 로 만든다.**"""
     return {
         "total_area_sqm": area_sqm,
@@ -48,7 +48,8 @@ def _ctx(*, integration_ok, area_sqm=5000.0, zone="제2종일반주거지역",
         "region": region,
         "integration_feasible": integration_ok,
         "adjacency": {"contiguous": integration_ok, "components": 1 if integration_ok else 2,
-                      "note": "단일 필지" if integration_ok else "2개 그룹으로 분리"},
+                      "note": "단일 필지" if integration_ok else "2개 그룹으로 분리",
+                      "max_pair_distance_m_min": max_pair_m},
         "buildings": {}, "block_aging": {},
     }
 
@@ -127,7 +128,11 @@ def test_area_designation_states_the_real_axis():
     sim = DevelopmentScenarioSimulator()
     s = _map(sim._scenarios(_ctx(integration_ok=False)))["지구단위계획 연계"]
     notes = s["notes"] or ""
-    assert "§51" in notes or "§52" in notes, f"근거 조문이 사유에 없다: {notes!r}"
+    assert "§51" in notes, f"근거 조문이 사유에 없다: {notes!r}"
+    # ★MINOR 3 — §52 를 근거로 끌어오면 안 된다. §52①3호는 오히려 *"일단의 지역"* 이라
+    #   이 논지(인접 요건 없음)와 **반대로** 읽힐 수 있다. 근거는 §51(부재)과 §3의2(명문)뿐.
+    assert "§52" not in notes, f"§52 는 이 논지의 근거가 아니다: {notes!r}"
+    assert "§3의2" in notes, f"명문 허용 근거(도시개발법 §3의2)가 없다: {notes!r}"
     assert "관할 확인" in notes, f"저장소 기준선 문구(관할 확인)가 없다: {notes!r}"
     # ★종전 문구가 남아 있으면 회귀
     assert "통합개발 불가" not in notes, f"종전 판정 문구가 남았다: {notes!r}"
@@ -255,9 +260,11 @@ def test_combined_building_axis_is_eligible_zone():
     종전은 `if multi:` 만으로 「가능」을 줬다(대상지역 무관 = 과대허용).
     """
     sim = DevelopmentScenarioSimulator()
-    eligible = _map(sim._scenarios(_ctx(integration_ok=False, station=True)))["결합건축"]
+    # ★적격 축은 §77의15①**1호 상업지역**이다 — `station`(지하철 500m)은 2호「지정된
+    #   역세권개발구역」과 다른 모집단이라 적대 리뷰 J-1 로 축에서 뺐다.
+    eligible = _map(sim._scenarios(_ctx(integration_ok=False, zone="일반상업지역")))["결합건축"]
     not_eligible = _map(sim._scenarios(
-        _ctx(integration_ok=False, station=False, zone="제2종일반주거지역")))["결합건축"]
+        _ctx(integration_ok=False, station=True, zone="제2종일반주거지역")))["결합건축"]
     assert eligible["est_far"] is not None, "대상지역이면 용적 추정이 나와야 한다"
     assert not_eligible["est_far"] is None, (
         "상업·역세권이 아닌데 용적 추정이 나오면 대상지역 축이 안 걸린 것"
@@ -593,3 +600,104 @@ def test_zone_prohibits_apartment_partitions():
     assert SS.zone_prohibits_apartment("제3종일반주거지역") is False
     assert SS.zone_prohibits_apartment("일반상업지역") is False
     assert SS.zone_prohibits_apartment(None) is False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 9) 적대 리뷰 MAJOR 봉합 락
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_station_is_not_an_eligibility_axis_for_combined_building():
+    """★J-1 — `station`(지하철 500m)은 §77의15①2호 **「지정된 역세권개발구역」**이 아니다.
+
+    적격 축은 **1호 상업지역**만 측정된 것으로 둔다. 이 단언이 없으면 `com or station` 으로
+    되돌려도 초록이고, 그러면 서울 다필지 대부분에 `est_far = far×1.2` 가 붙는다
+    (그 값은 화면 표시이자 **추천 정렬 키**다).
+    """
+    sim = DevelopmentScenarioSimulator()
+    res = _map(sim._scenarios(_ctx(integration_ok=False, station=True,
+                                   zone="제2종일반주거지역")))["결합건축"]
+    assert res["est_far"] is None, (
+        f"역세권(500m)만으로 결합건축 용적 추정이 나왔다 — est_far={res['est_far']} "
+        "(§77의15①2호는 「지정된 역세권개발구역」이지 지하철 반경이 아니다)"
+    )
+    com = _map(sim._scenarios(_ctx(integration_ok=False, station=False,
+                                    zone="일반상업지역")))["결합건축"]
+    assert com["est_far"] is not None, "상업지역(1호)은 측정된 적격 축이어야 한다"
+
+
+def test_combined_building_100m_axis_is_actually_judged():
+    """★J-5 — 법정 축(100m)이 **판정에 들어간다**. 세 모집단이 갈려야 한다."""
+    sim = DevelopmentScenarioSimulator()
+    near = _map(sim._scenarios(_ctx(integration_ok=False, zone="일반상업지역",
+                                     max_pair_m=30.0)))["결합건축"]
+    far = _map(sim._scenarios(_ctx(integration_ok=False, zone="일반상업지역",
+                                    max_pair_m=450.0)))["결합건축"]
+    unknown = _map(sim._scenarios(_ctx(integration_ok=False, zone="일반상업지역",
+                                        max_pair_m=None)))["결합건축"]
+    assert near["applicable"] == "조건부", f"30m 는 요건 충족 — {near['applicable']}"
+    assert far["applicable"] == "불가", f"450m 는 100m 초과라 법정 미달 — {far['applicable']}"
+    assert "450" in (far["notes"] or ""), f"실측값이 사유에 없다: {far['notes']!r}"
+    # ★미측정을 「불가」로 만들지 않는다 — 양방향으로 건다.
+    assert unknown["applicable"] == "조건부", (
+        f"형상 미확보(미측정)를 불가로 만들면 안 된다 — {unknown['applicable']}"
+    )
+
+
+def test_distance_verdict_is_tri_state():
+    """순수함수 — 충족/미달/미측정 **세 상태**가 구별된다."""
+    assert SS.combined_building_distance_verdict({"max_pair_distance_m_min": 30.0}) == (True, 30.0)
+    assert SS.combined_building_distance_verdict({"max_pair_distance_m_min": 450.0}) == (False, 450.0)
+    assert SS.combined_building_distance_verdict({}) == (None, None)
+    assert SS.combined_building_distance_verdict(None) == (None, None)
+    # ★상수를 리터럴로 못 박는다(자기 상수를 단언하는 락 금지)
+    assert SS.COMBINED_BUILDING_MAX_DISTANCE_M == 100.0
+    # 경계 — 정확히 100m 는 "이내"라 충족
+    assert SS.combined_building_distance_verdict({"max_pair_distance_m_min": 100.0})[0] is True
+    assert SS.combined_building_distance_verdict({"max_pair_distance_m_min": 100.1})[0] is False
+
+
+def test_measured_zone_predicate_has_no_duplicate():
+    """★J-2 — 실측 판정 술어가 **한 곳에만** 있다(복제본이 남으면 드리프트한다)."""
+    assert SS.measured_zone_count([
+        {"zone": "제2종일반주거지역", "zone_source": "vworld"},
+        {"zone": "보전녹지지역", "zone_source": "keyword_inference"},
+        {"zone": None, "zone_source": "vworld"},
+    ]) == 1
+    assert SS.measured_zone_count([]) == 0
+    # 소스에 인라인 복제본이 남아 있으면 실패 — 술어 문자열을 세어 본다.
+    dup = _SRC.count('p.get("zone_source") != "keyword_inference"')
+    assert dup <= 2, (
+        f"실측 술어가 {dup}곳에 복제돼 있다 — `measured_zone_count`/`select_primary_zone` "
+        "두 곳(같은 함수 계열)을 넘으면 드리프트가 가능해진다"
+    )
+    assert "measured_zone_n" in _SRC, "`primary_zone_is_inferred` 가 단일 술어를 소비해야 한다"
+
+
+def test_gate_has_no_unreachable_reason_branch():
+    """★J-3 — 사유 없는 축이 들어오면 **시끄럽게 죽는다**(조용히 틀린 사유가 나가지 않는다)."""
+    assert "raise AssertionError(f\"인접성 게이트에 사유 없는 축" in _SRC, (
+        "도달 불가 else 가 조용한 폴백으로 남아 있다"
+    )
+    # 세 축이 모두 명시 분기를 갖는다(else 폴백에 기대지 않는다).
+    for name in _gate_set_literals():
+        assert f"scheme in {name}" in _SRC, f"{name} 에 대응하는 명시 분기가 없다"
+
+
+def test_small_site_asymmetry_is_declared_not_accidental():
+    """★J-4 — 같은 면적인데 **단일 1필지는 불가 · 비인접 2필지는 조건부**.
+
+    이 PR 이 만든 차이다(종전에는 인접성 게이트가 양쪽을 「불가」로 만들어 같았다).
+    `single_small = (not multi) and …` 이라 다필지는 이 하한을 **원리적으로 통과**한다.
+
+    ★**의도로 선언하고 잠근다** — 두 분기는 다른 것을 인코딩한다:
+      `single_small` 은 **규모**(단독으로 구역을 구성할 수 없음), 이 PR 의 게이트는 **인접성**
+      (법정 요건 아님). 규모 하한을 다필지로 확장하는 것은 **사용자가 신고하지 않은 모집단**의
+      동작을 바꾸고 기존 락 3건과 충돌하므로 **이 PR 범위 밖**이다.
+      이 단언은 그 비대칭이 **조용히 생기지 않게** 붙잡아 둔다 — 없어지면 여기서 빨개진다.
+    """
+    sim = DevelopmentScenarioSimulator()
+    single = _map(sim._scenarios(_ctx(integration_ok=True, multi=False, area_sqm=800.0)))
+    multi_np = _map(sim._scenarios(_ctx(integration_ok=False, multi=True, area_sqm=800.0)))
+    assert single["지구단위계획 연계"]["applicable"] == "불가", "단일 소규모 규모 하한은 유지"
+    assert multi_np["지구단위계획 연계"]["applicable"] == "조건부", "다필지는 규모 하한을 안 탄다"
+    assert single["단순 건축"]["applicable"] == "가능"

@@ -259,6 +259,36 @@ def zone_prohibits_apartment(zone: str | None) -> bool:
     return ("제1종일반주거" in z) or ("1종일반주거" in z)
 
 
+#: 위도 1도 ≈ 111km · 경도 1도는 위도에 따라 줄어든다(북위 37°에서 약 88.8km).
+#  평면 도(degree) 거리를 미터로 옮길 때 **작은 쪽**을 쓴다 — 과잉차단(있지도 않은 법정 위반을
+#  신고하는 것)을 피하기 위한 보수적 방향이다. 즉 이 값이 100m 를 넘으면 **어느 방위든** 넘는다.
+DEG_TO_M_MIN = 88_800.0
+#: 건축법 §77의15① — *"대지간의 최단거리가 100미터 이내"*.
+COMBINED_BUILDING_MAX_DISTANCE_M = 100.0
+
+
+def combined_building_distance_verdict(adjacency: dict[str, Any] | None) -> tuple[bool | None, float | None]:
+    """결합건축의 **거리 요건**을 판정한다 — (충족여부, 실측 최댓값m).
+
+    반환 `None` 은 **미측정**(형상 미확보·분석 실패)이고 「불가」가 아니다 — 양방향으로 건다.
+    """
+    d = (adjacency or {}).get("max_pair_distance_m_min")
+    if d is None:
+        return None, None
+    return (float(d) <= COMBINED_BUILDING_MAX_DISTANCE_M), float(d)
+
+
+def measured_zone_count(enriched: list[dict[str, Any]]) -> int:
+    """실측(추론 아님) 용도지역을 가진 필지 수. ★`select_primary_zone` 과 **같은 술어**를 쓴다.
+
+    적대 리뷰 J-2: 배선을 순수함수로 꺼낸 뒤에도 `simulate()` 안에 **인라인 복제본**이 남아
+    `primary_zone_is_inferred`(프론트 소비처 있음)를 조용히 죽일 수 있었다.
+    술어를 한 곳에 두면 드리프트가 **원리적으로** 불가능해진다.
+    """
+    return sum(1 for p in (enriched or [])
+               if p.get("zone") and p.get("zone_source") != "keyword_inference")
+
+
 def select_primary_zone(enriched: list[dict[str, Any]], site_zone_type: str = "") -> tuple[str, str]:
     """부지 대표 용도지역을 고르는 **배선 전체**를 순수함수로 꺼낸다.
 
@@ -272,6 +302,7 @@ def select_primary_zone(enriched: list[dict[str, Any]], site_zone_type: str = ""
         {"zone": p.get("zone"), "area": p.get("area")} for p in (enriched or [])
         if p.get("zone") and p.get("zone_source") != "keyword_inference"
     ]
+    assert len(measured) == measured_zone_count(enriched), "술어 드리프트"
     every = [{"zone": p.get("zone"), "area": p.get("area")} for p in (enriched or []) if p.get("zone")]
     zone, basis = dominant_zone_by_area(measured or every)
     if not zone:
@@ -401,10 +432,8 @@ class DevelopmentScenarioSimulator:
         # ★실측 용도지역을 추론값보다 앞세운다 — 종전 `zones[0]` 은 **첫 필지**를 쓰므로,
         #   1번 필지 주소만 해석에 실패해도 **지어낸 용도지역이 부지 전체의 기준**이 됐다.
         #   (면적가중 우세용도까지 가는 것은 별건 — 여기서는 '날조가 실측을 이기는' 역전만 막는다.)
-        zones_measured = [
-            p.get("zone") for p in enriched
-            if p.get("zone") and p.get("zone_source") != "keyword_inference"
-        ]
+        # ★인라인 복제본을 제거하고 `measured_zone_count` 한 곳으로 모은다(적대 리뷰 J-2).
+        measured_zone_n = measured_zone_count(enriched)
         zones = [p.get("zone") for p in enriched if p.get("zone")]
         # ★선두가 아니라 **면적가중 우세**를 쓴다. 실측(2026-09-02) — `zones=[제1종,제2종]` 부지에서
         #   `제1종` 이 선택돼 같은 응답의 `far_effective_blended`(면적가중)와 기준이 어긋났다.
@@ -546,7 +575,7 @@ class DevelopmentScenarioSimulator:
                     "area_is_partial": bool(unresolved) or requested_count > len(addrs),
                     "plan_limit_unknown": plan_unknown_agg,   # 형제 미러
                     "primary_zone": primary_zone, "primary_zone_basis": primary_zone_basis, "zones": zones,
-                    "primary_zone_is_inferred": bool(primary_zone) and not zones_measured,
+                    "primary_zone_is_inferred": bool(primary_zone) and measured_zone_n == 0,
                     "special_parcel_gate": special_gate,
                     "dev_act_permit_gate": dev_act_gate,
                 },
@@ -608,7 +637,7 @@ class DevelopmentScenarioSimulator:
             "plan_limit_unknown": plan_unknown_agg,
             "primary_zone": primary_zone, "primary_zone_basis": primary_zone_basis, "zones": zones,
             # 대표 용도지역이 조회값인지 추론값인지 — 추론값이면 화면이 단정하면 안 된다.
-            "primary_zone_is_inferred": bool(primary_zone) and not zones_measured,
+            "primary_zone_is_inferred": bool(primary_zone) and measured_zone_n == 0,
             # ★시나리오 산정 기준 = 실효 용적률(현행·조례 반영). 법정상한은 라벨 구분용으로 병기.
             "far_effective_blended": far_effective,
             "far_legal_blended": far_legal,
@@ -964,15 +993,21 @@ class DevelopmentScenarioSimulator:
                     x = parent[x]
                 return x
 
+            max_pair_deg = 0.0
             for a in range(n):
                 for b in range(a + 1, n):
-                    if polys[idx[a]].distance(polys[idx[b]]) <= TOL_DEG:
+                    d = polys[idx[a]].distance(polys[idx[b]])
+                    max_pair_deg = max(max_pair_deg, d)
+                    if d <= TOL_DEG:
                         parent[find(a)] = find(b)
             comps = len({find(i) for i in range(n)})
             return {
                 "contiguous": comps == 1,
                 "components": comps,
                 "checked": n,
+                # ★종전에는 쌍거리를 **계산하고 버렸다**(적대 리뷰 J-5). 결합건축의 법정 축
+                #   (§77의15① *"대지간의 최단거리가 100미터 이내"*)이 여기 있는데 쓰이지 않았다.
+                "max_pair_distance_m_min": round(max_pair_deg * DEG_TO_M_MIN, 1),
                 "note": "모든 필지가 맞닿아 통합개발 가능" if comps == 1
                 else f"{comps}개 그룹으로 분리 — 비인접 필지는 통합개발(합필/일단지) 불가",
             }
@@ -1331,17 +1366,24 @@ class DevelopmentScenarioSimulator:
                 #   지운다. **계약은 「근거와 후속 안내가 실린다」이지 「이 문장이다」가 아니다.**
                 if scheme in AREA_DESIGNATION_SCHEMES:
                     _why = ("구역지정형 사업 — 물리적 인접은 법정 요건이 아닙니다"
-                            "(국토계획법 §51·§52, 도시개발법 §3의2는 떨어진 지역의 결합지정을 명문 허용). "
+                            "(국토계획법 §51의 지구단위계획구역 지정 대상에 인접·연접 요건이 없고, "
+                            "도시개발법 §3의2는 서로 떨어진 지역의 결합지정을 명문으로 허용합니다). "
                             "구역 지정·편입 가능성은 관할 확인이 필요합니다.")
                 elif scheme in GARO_GUYEOK_SCHEMES:
                     _why = ("가로구역 요건 — 판정축은 필지 간 물리적 거리가 아니라 "
                             "폭 4m(일부 6m) 초과 도시계획시설도로의 관통 여부입니다"
                             "(소규모주택정비법 시행령 §3②). 현 분석은 그 축을 측정하지 못했습니다 — "
                             "관할 확인이 필요합니다.")
-                else:
+                elif scheme in HOUSING_COMPLEX_SCHEMES:
                     _why = ("주택단지 요건 — 판정축은 폭 20m 이상 일반도로·8m 이상 도시계획예정도로·"
                             "철도 등의 분리 여부입니다(주택법 §2 12호). 현 분석은 그 축을 측정하지 "
                             "못했습니다 — 관할 확인이 필요합니다.")
+                else:
+                    # ★도달 불가 — `INTEGRATION_SCHEMES` 가 위 세 집합의 합집합이므로.
+                    #   축을 추가하고 여기 분기를 잊으면 **조용히 틀린 사유**가 나가는 대신
+                    #   시끄럽게 죽는다(적대 리뷰 J-3: 종전 `else` 는 죽은 코드였는데
+                    #   주석이 현재형으로 서술해 살아 있는 축처럼 읽혔다).
+                    raise AssertionError(f"인접성 게이트에 사유 없는 축: {scheme}")
                 applicable = "조건부"
                 cons = [*(cons or []), "필지 비인접 — 구역 지정·편입 등 관할 확인 필요"]
                 notes = f"⚠ {adj_note}. {_why}"
@@ -1577,8 +1619,22 @@ class DevelopmentScenarioSimulator:
         #       1호 상업지역 · 2호 역세권개발구역 · 3호 주거환경개선사업 정비구역 · 4호 대통령령 지역.
         #     종전은 `if multi:` 만으로 「가능」을 줬다(대상지역 무관 = **과대허용**).
         #     인접 강등만 없애면 그 과대허용이 더 커지므로, 여기서 **대상지역 축을 세운다.**
-        _combined_eligible = com or station  # 1호 상업지역 · 2호 역세권(개발구역은 관할 확인 필요)
-        if multi and _combined_eligible:
+        #   ★적대 리뷰 J-1 반영 — `station` 을 적격 축에서 **뺀다.**
+        #     §77의15①2호는 *"「역세권의 개발 및 이용에 관한 법률」 제4조에 따라 **지정된**
+        #     역세권개발구역"* 인데, `near_station` 은 **지하철 500m 반경**이다(:399).
+        #     자릿수가 다른 모집단이라(지정 사례는 극소수 / 서울 시가지 상당 부분이 500m 안)
+        #     이것을 적격으로 쓰면 서울 다필지 대부분에 `est_far = far×1.2` 가 붙고,
+        #     그 값은 화면 표시이자 **추천 정렬 키**다. → **1호(상업지역)만 측정된 축**으로 두고
+        #     2·3·4호는 **미측정**으로 분류한다(모름이 유효값을 입지 않게).
+        _dist_ok, _dist_m = combined_building_distance_verdict(c.get("adjacency"))
+        _combined_eligible = com
+        if multi and _dist_ok is False:
+            # ★법정 요건 **명시 미달** — 대상지역과 무관하게 불가(§77의15① 100m).
+            add("결합건축", "불가", None, None,
+                [f"대지간 최단거리 {COMBINED_BUILDING_MAX_DISTANCE_M:.0f}m 이내(건축법 §77의15①)"],
+                [], [f"대지 간 최단거리 약 {_dist_m:,.0f}m — 100m 초과"],
+                f"결합건축은 대지간 최단거리 100m 이내여야 합니다(건축법 §77의15①) — 실측 약 {_dist_m:,.0f}m")
+        elif multi and _combined_eligible:
             add("결합건축", "조건부", (far or 0) * 1.2, 0,
                 ["2개 이상 대지 · 대지간 최단거리 100m 이내(건축법 §77의15①)",
                  "대상지역: 상업지역·역세권개발구역·주거환경개선 정비구역 등(§77의15① 각 호)",
