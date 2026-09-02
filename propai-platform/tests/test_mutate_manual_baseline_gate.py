@@ -49,7 +49,15 @@ def _run(tmp_path, *, test_rc: int, env=None, summary: str = "47 passed in 0.31s
     sh("git", "add", "-A")
     sh("git", "commit", "-q", "-m", "init")
 
+    # ★이 픽스처는 `bash -c "…; exit N"` 으로 **종료코드를 고정**한다 — 그것이 이 파일의
+    #   시험 대상(기준선 rc)이기 때문이다. 그런데 형제 가드(셸 래퍼 rc 신뢰 판정)는
+    #   `-c` 스크립트의 내용을 특정하지 못하면 **판정을 거부**한다(`exit 12`).
+    #   여기서는 **마지막 명령이 `exit N` 이라 rc 가 보존됨을 호출자가 안다** —
+    #   그래서 그 도구가 제공하는 탈출구로 **사유를 남기고** 통과시킨다.
+    #   ★사유가 출력에 남으므로, 이 예외를 쓴 사실이 조용히 묻히지 않는다.
     e = dict(os.environ)
+    e.setdefault("MUTATE_ALLOW_SHELL",
+                 "픽스처가 rc 를 고정한다(마지막 명령이 exit N) — 기준선 rc 축을 시험하는 파일")
     if env:
         e.update(env)
     # ★테스트 명령은 파이프 없이 고정 종료코드만 돌려준다(파이프 축과 섞이지 않게)
