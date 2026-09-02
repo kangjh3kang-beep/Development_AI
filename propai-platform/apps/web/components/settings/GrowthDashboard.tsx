@@ -396,7 +396,9 @@ type HealAction = {
 type ActiveFlag = {
   key: string;
   scope: string;
-  value: Record<string, unknown> | null;
+  /** ★dict 만이 아니다 — `growth_last_run.*` 워터마크는 ISO **문자열**이다.
+   *  백엔드가 종전에 문자열을 `null` 로 삼켜 「축이 도는가」를 못 보게 했다. */
+  value: Record<string, unknown> | string | number | boolean | null;
   ttl_expires_at: string | null;
   updated_by: string | null;
 };
@@ -435,8 +437,13 @@ function ttlRemaining(iso: string | null): string {
 }
 
 // params 객체를 "키 값 · 키 값" 요약(최대 4개). 중첩/긴 값은 절단.
-function summarizeParams(p: Record<string, unknown> | null): string {
-  if (!p) return "";
+function summarizeParams(
+  p: Record<string, unknown> | string | number | boolean | null,
+): string {
+  if (p === null || p === undefined) return "";
+  // ★스칼라(문자열 워터마크 등)는 **그대로 보여 준다** — 종전엔 이 값이 백엔드에서
+  //   null 로 삼켜져 화면에 아무것도 안 나왔다.
+  if (typeof p !== "object") return String(p);
   const parts: string[] = [];
   for (const [k, v] of Object.entries(p)) {
     if (parts.length >= 4) break;
@@ -614,7 +621,11 @@ function HealSection() {
                             {ttlRemaining(f.ttl_expires_at)}
                           </span>
                         </div>
-                        {f.value && summarizeParams(f.value) && (
+                        {/* ★`f.value &&` 는 `false`·`0` 을 **버린다** — 이 PR 이 백엔드에서
+                            고친 바로 그 결함(값은 있는데 화면에서 사라진다)을 이 PR 의
+                            새 코드가 프론트에서 재현하고 있었다(독립 적대 리뷰 2026-09-02).
+                            타입을 `boolean | number` 로 넓혀 놓고 이 가드를 안 고쳤다. */}
+                        {f.value != null && summarizeParams(f.value) && (
                           <p className="mt-2 text-xs text-[var(--text-hint)]">
                             <span className="cc-num text-[var(--text-secondary)]">
                               {summarizeParams(f.value)}

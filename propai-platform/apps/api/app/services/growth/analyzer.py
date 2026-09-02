@@ -32,7 +32,12 @@ import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from app.utils.withheld import INSUFFICIENT_COVERAGE, withheld
+from app.utils.withheld import (
+    ABSENT_REASONS,
+    INSUFFICIENT_COVERAGE,
+    is_withheld,
+    withheld,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -250,7 +255,7 @@ def note_coverage(
     # ★값 타입이 int 만이 아니다 — `judged_pct`(float|None) · `state`(str) 가 함께 들어간다.
     #   종전 `dict[str, int]` 는 거짓이었고 tsc 도 mypy 도 이 자리를 안 봤다.
     coverage: dict[str, dict[str, Any]] | None,
-    axis: str, *, judged: int, withheld: int, floor: int,
+    axis: str, *, judged: int, withheld_count: int, floor: int,
 ) -> None:
     """이번 분석에서 **몇 개를 판정했고 몇 개를 표본 부족으로 보류했는지** 적는다.
 
@@ -276,7 +281,7 @@ def note_coverage(
     """
     if coverage is None:
         return
-    total = judged + withheld
+    total = judged + withheld_count
     #: ★판정률의 정의 — **「모든 축이 무언가를 말한다」** 가 100% 다.
     #  `judged_pct` 는 *"임계로 분류할 수 있었던 비율"* 이라 **트래픽이 적으면 영원히 100%
     #  가 못 된다**. 트래픽이 적은 것은 결함이 아니다(라이브 실측: LLM 호출 자체가 적다).
@@ -285,7 +290,7 @@ def note_coverage(
     #: 판정률 — **임계로 분류한** 비율. `total==0`(축이 안 돎)이면 **`None`**:
     #  0.0 으로 두면 *"판정률 0%"* 가 되어 **축이 안 도는 것을 결함으로 오독**시킨다.
     judged_pct = round(100.0 * judged / total, 1) if total else None
-    #: 축이 아예 안 돈 것(`total==0`)과 표본이 부족한 것(`withheld>0`)은 **다른 사실**이다.
+    #: 축이 아예 안 돈 것(`total==0`)과 표본이 부족한 것(`withheld_count>0`)은 **다른 사실**이다.
     #  종전엔 둘 다 `judged=0` 이라 뭉개졌다. 이 세 값이 그 구분을 나른다.
     #
     #  ★**`coverage_pct` 는 넣지 않는다** — 독립 적대 리뷰(2026-08-27)가 반증했다.
@@ -294,9 +299,11 @@ def note_coverage(
     #    독립 정보량이 0이다. 계획서의 식 `(judged + withheld_reported)/total` 에서
     #    `withheld_reported`(보류의 인사이트 승격)가 **이 PR 에 없으므로** 그 식은 아직
     #    성립하지 않는다. **소비처 0인 상수를 싣지 않는다.**
-    state = "axis_idle" if total == 0 else ("judged" if withheld == 0 else "partial")
+    state = "axis_idle" if total == 0 else ("judged" if withheld_count == 0 else "partial")
     coverage[axis] = {
-        "judged": judged, "withheld": withheld,
+        # ★발행 키는 `withheld` 그대로다 — 이건 `metrics_json.analysis_coverage` 의
+        #   **계약**이라 개명하면 화면·API·기존 재고 행과 어긋난다. 파라미터만 바꿨다.
+        "judged": judged, "withheld": withheld_count,
         "total": total, "floor": floor,
         "judged_pct": judged_pct,
         "state": state,
@@ -633,13 +640,13 @@ async def _analyze_fallback_rate(db, w0, w1, coverage: dict[str, dict[str, Any]]
         by_service.setdefault(svc, {})[str(reason)] = int(n or 0)
 
     out: list[dict[str, Any]] = []
-    judged = withheld = 0
+    judged = withheld_n = 0
     for r in rows:
         service, fb, calls = r[0], int(r[1] or 0), int(r[2] or 0)
         # ★판정 가능 여부를 **분류 결과가 아니라 표본으로** 센다 — `sev is None` 은
         #   "표본 부족"과 "표본 충분하고 정상"을 뭉갠다(둘 다 None 이다).
         if calls < FALLBACK_MIN_CALLS:
-            withheld += 1
+            withheld_n += 1
         else:
             judged += 1
         sev, pct = _classify_fallback(fb, calls)
@@ -660,7 +667,7 @@ async def _analyze_fallback_rate(db, w0, w1, coverage: dict[str, dict[str, Any]]
                 "reasons": reasons, "top_reason": top,
             },
         })
-    note_coverage(coverage, "fallback_rate", judged=judged, withheld=withheld,
+    note_coverage(coverage, "fallback_rate", judged=judged, withheld_count=withheld_n,
                   floor=FALLBACK_MIN_CALLS)
     return out
 
@@ -765,13 +772,13 @@ async def _analyze_quality_drop(db, w0, w1, coverage: dict[str, dict[str, Any]] 
         a["ftotal"] += int(r[2] or 0)
 
     out: list[dict[str, Any]] = []
-    judged = withheld = 0
+    judged = withheld_n = 0
     for service, a in agg.items():
         # ★`sev is None` 으로 세면 "표본 부족"과 "표본 충분·정상"이 뭉개진다.
         #   `_classify_quality` 와 **같은 판정식**을 쓴다(하나를 고치면 다른 하나가 어긋나는
         #   것을 막기 위해 두 값 모두 QUALITY_MIN_SAMPLES 에 결속한다).
         if a["vtotal"] < QUALITY_MIN_SAMPLES and a["ftotal"] < QUALITY_MIN_SAMPLES:
-            withheld += 1
+            withheld_n += 1
         else:
             judged += 1
         sev, metrics = _classify_quality(
@@ -790,7 +797,7 @@ async def _analyze_quality_drop(db, w0, w1, coverage: dict[str, dict[str, Any]] 
                 "feedback_total": a["ftotal"], "down": a["down"], **metrics,
             },
         })
-    note_coverage(coverage, "quality_drop", judged=judged, withheld=withheld,
+    note_coverage(coverage, "quality_drop", judged=judged, withheld_count=withheld_n,
                   floor=QUALITY_MIN_SAMPLES)
     return out
 
@@ -892,12 +899,12 @@ async def _analyze_latency_regression(db, w0, w1, coverage: dict[str, dict[str, 
     baselines = {r[0]: float(r[1] or 0.0) for r in base_rows}
 
     out: list[dict[str, Any]] = []
-    judged = withheld = 0
+    judged = withheld_n = 0
     for key, vals in by_key.items():
         if len(vals) < LATENCY_MIN_SAMPLES:
             # ★행을 만들지 않는 것은 옳다(802개를 발행하면 소음이 는다). 다만
             #   **몇 개를 못 봤는지는 말해야** 한다 — 안 그러면 커버리지 3% 가 100% 로 읽힌다.
-            withheld += 1
+            withheld_n += 1
             continue
         judged += 1
         p95 = round(_percentile(vals, 95.0), 2)
@@ -918,7 +925,7 @@ async def _analyze_latency_regression(db, w0, w1, coverage: dict[str, dict[str, 
                 "prev_baseline_p95": baseline_p95,
             },
         })
-    note_coverage(coverage, "latency_regression", judged=judged, withheld=withheld,
+    note_coverage(coverage, "latency_regression", judged=judged, withheld_count=withheld_n,
                   floor=LATENCY_MIN_SAMPLES)
     return out
 
@@ -927,8 +934,66 @@ async def _analyze_latency_regression(db, w0, w1, coverage: dict[str, dict[str, 
 # narrative (규칙 기본 + 선택적 LLM)
 # ════════════════════════════════════════════════════════════════════════════
 
+def _metric_text(m: dict[str, Any], field: str, *, unit: str = "%") -> str:
+    """지표 한 칸 — **보류된 값을 숫자 자리에 그대로 흘리지 않는다.**
+
+    ★`#861` 이 `down_pct` 를 거짓 `0.0` 대신 `None` + 사유로 바꿨는데, 사람이 읽는
+      이 층이 그 `None` 을 **f-string 에 그대로** 넣어 `feedback down None%` 를 출력했다.
+      값을 정직하게 만든 수정이 **마지막 한 층에서 거짓말로 되돌아간** 것이다.
+      (형제 정답 기준선: `tests/test_rfi_register.py` 의 `assert "None%" not in …`)
+    """
+    if is_withheld(m, field):
+        return "미측정"
+    v = m.get(field)
+    return "미상" if v is None else f"{v}{unit}"
+
+
+def _withheld_note(m: dict[str, Any]) -> str:
+    """보류된 지표들의 **사유를 문장 끝에 한 번** 싣는다(같은 사유는 합친다).
+
+    ★사유는 이미 만들어져 DB 에 저장까지 된다(`<field>_basis`). 그런데 화면이 읽는
+      유일한 층인 narrative 에 **한 번도 실리지 않았다** — 「사유를 버렸다」(유료·비가역
+      산출물 규율의 세 번째 얼굴)와 같은 형태다. 진단 불가는 그 자체로 장애다.
+    """
+    by_basis: dict[str, list[str]] = {}
+    for key in list(m):
+        # ★변이 감사 기록(2026-08-27): 이 줄을 무력화하는 변이는 **생존한다.
+        #   구멍이 아니라 이중 가드**다 — 접미 검사를 지워도 아래 `is_withheld` 가
+        #   막는다(`"down_pct"[:-7] == "d"` → `m["d_absent"]` 없음 → skip).
+        #   이 줄은 **성능·명확성**을 위한 1차 필터이고 정합성은 아래가 지킨다.
+        #   (점수를 위해 억지 락을 만들지 않는다 — 도구가 그렇게 지시한다.)
+        if not key.endswith("_absent") or not m.get(key):
+            continue
+        field = key[: -len("_absent")]
+        if not is_withheld(m, field):
+            continue
+        # ★`_basis`(사람이 읽는 문장)가 없으면 **코드값이 그대로** 독자에게 갔다 —
+        #   예: "※ down_pct insufficient_coverage". 같은 파일이 아래에서 바로 그 결함
+        #   클래스를 지적해 두고(*"종전엔 영문 enum 그대로 나갔다"*) 이 경로만 남았다.
+        #   `withheld()` 는 쓰기 시점에 문장을 강제하지만 **읽기 시점엔 아무도 강제하지 않아**
+        #   저장된 옛 행·문장을 안 넣는 미래 생산자가 그대로 새어 나온다.
+        #   → 코드값이면 한국어 사전으로 바꾼다(사전에 없으면 원값 유지).
+        _code = m.get(key)
+        basis = str(m.get(f"{field}_basis") or ABSENT_REASONS.get(str(_code), _code))
+        by_basis.setdefault(basis, []).append(field)
+    if not by_basis:
+        return ""
+    parts = [f"{'·'.join(fields)} {basis}" for basis, fields in by_basis.items()]
+    return "  ※ " + " / ".join(parts)
+
+
 def _rule_narrative(ins: dict[str, Any]) -> str:
-    """규칙 기반 narrative(LLM 없이도 항상 채워지는 한국어 요약)."""
+    """규칙 기반 narrative(LLM 없이도 항상 채워지는 한국어 요약).
+
+    ★**보류 사유 부착은 여기 단일 길목에서 한 번만** 한다. 본문은 반환 지점이
+      일곱이라 거기에 손으로 붙이면 **반드시 하나를 빠뜨리고, 그 하나가 곧
+      사유가 사라지는 경로**가 된다(`#886` 이 같은 이유로 호출부 단일 길목을 골랐다).
+    """
+    return _rule_narrative_body(ins) + _withheld_note(ins.get("metrics_json") or {})
+
+
+def _rule_narrative_body(ins: dict[str, Any]) -> str:
+    """타입별 본문(사유 부착 전). 직접 부르지 말 것 — `_rule_narrative` 를 쓴다."""
     m = ins.get("metrics_json") or {}
     t = ins["insight_type"]
     sev = ins.get("severity")
@@ -963,8 +1028,8 @@ def _rule_narrative(ins: dict[str, Any]) -> str:
                 f"화면이 고지하고 있는지만 확인하세요.")
     if t == "quality_drop":
         return (f"[{sev}] {m.get('service')} 품질저하 — verify fail "
-                f"{m.get('fail_pct')}%/warn {m.get('warn_pct')}%, "
-                f"feedback down {m.get('down_pct')}%.")
+                f"{_metric_text(m, 'fail_pct')}/warn {_metric_text(m, 'warn_pct')}, "
+                f"feedback down {_metric_text(m, 'down_pct')}.")
     if t == "latency_regression":
         return (f"[{sev}] {m.get('key')} p95 {m.get('p95_ms')}ms "
                 f"(이전 baseline {m.get('prev_baseline_p95')}ms, 표본 {m.get('samples')}).")
