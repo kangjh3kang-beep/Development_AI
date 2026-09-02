@@ -45,7 +45,8 @@ type ListResponse = { groups: string[]; items: SecretItem[] };
 /**
  * **전용 연결 테스트**가 구현된 키들 — 이 목록에 없으면 「테스트」 버튼을 그리지 않는다.
  *
- * ★원천은 백엔드 `apps/api/app/routers/admin_secrets.py` 의 `_TESTABLE_SECRETS` 다.
+ * ★원천은 백엔드 `apps/api/app/routers/admin_secrets.py` 의 `_TESTABLE_SECRETS` 이고,
+ * 그것은 **분기 셋에서 파생**된다(등기 · LLM · 이미지). 손 목록이 아니다.
  *   종전엔 양쪽이 **각각 인라인 손목록**을 들고 있었고 **대조 락이 0건**이었다.
  *   갈리면 이렇게 된다:
  *     · 백엔드만 추가 → 화면에 버튼이 **안 뜬다**(기능이 있는데 닿지 않는다)
@@ -55,10 +56,17 @@ type ListResponse = { groups: string[]; items: SecretItem[] };
  * ★모듈 상수로 둔 이유: 컴포넌트 안 인라인 배열은 **기계가 파생시킬 수 없다**.
  */
 const TESTABLE_SECRETS: readonly string[] = [
+  // 등기(registry) — `RegistryService.live_status()` 실호출
   "HYPHEN_HKEY",
   "HYPHEN_USER_ID",
   "REGISTRY_PROVIDER",
   "TILKO_API_KEY",
+  // ★LLM/이미지 — `#899` 가 **백엔드에 실호출 테스트를 넣었는데 여기에 안 더해서**
+  //   그 테스트를 **사용자가 영영 쓸 수 없었다**(2026-09-02 실측: 백엔드 7키 ↔ 화면 4키).
+  //   그것이 이 상수를 백엔드와 대조하는 락을 만든 이유다.
+  "ANTHROPIC_API_KEY",
+  "OPENAI_API_KEY",
+  "GOOGLE_API_KEY",
 ];
 
 function SecretCard({

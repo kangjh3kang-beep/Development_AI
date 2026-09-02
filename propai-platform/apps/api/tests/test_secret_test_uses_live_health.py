@@ -155,11 +155,27 @@ def test_failure_reason_is_not_swallowed() -> None:
     assert ok["ok"] is True and "성공" in ok["message"]
 
 
-def test_generic_keys_keep_the_old_message() -> None:
-    """★두 모집단 — 전용 테스트가 없는 키는 종전 문구를 유지한다(전면 변경이 아니다)."""
+def test_generic_keys_are_withheld_not_falsely_green() -> None:
+    """★두 모집단 — 전용 테스트가 **없는** 키는 「보류」이지 성공이 아니다.
+
+    ## 이 단언이 왜 바뀌었나 (2026-09-02)
+
+    `#899` 시점의 원문은 *"종전 문구(`전용 테스트 미지원 키`)를 유지한다"* 였다.
+    그때는 **변경 범위를 LLM/이미지로 한정**한다는 뜻이었고 옳았다.
+
+    그런데 그 「종전 문구」는 `{"ok": True, "message": "값이 설정되어 있습니다(전용 테스트
+    미지원 키)."}` 였다 — **`#899` 자신이 고치려던 「값만 있어도 초록」의 마지막 잔여**다.
+    `#942` 가 그것을 `withheld(NOT_APPLICABLE)`(`ok=None` + 사유 코드)로 바꿨다.
+
+    ★**원 의도(두 모집단)는 그대로 지킨다** — LLM/이미지는 **실호출**, 그 외는 **보류**.
+      바뀐 것은 *"그 외"* 가 **초록이 아니게** 된 것뿐이다.
+    """
     code = _code()
-    assert "전용 테스트 미지원 키" in code, (
-        "전용 테스트가 없는 키의 폴백 문구가 사라졌다 — 이 변경은 LLM/이미지 키에만 적용된다."
+    assert "_unsupported(name)" in code, "미지원 키 분기가 사라졌다(두 모집단 중 하나가 없다)"
+    assert "NOT_APPLICABLE" in code, "미지원이 닫힌 어휘 사유 코드를 쓰지 않는다"
+    # ★음성 대조군 — **거짓 초록이 되살아나지 않았는지** 본다(이 파일의 존재 이유).
+    assert '"ok": True, "message": "값이 설정되어 있습니다' not in code, (
+        "미지원 키가 다시 `ok: True` 로 돌아갔다 — `#899`·`#942` 가 함께 지우던 그 결함이다"
     )
 
 

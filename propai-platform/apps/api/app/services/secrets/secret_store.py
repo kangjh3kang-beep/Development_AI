@@ -106,6 +106,10 @@ CATALOG: list[dict[str, Any]] = [
      "secret": True, "kind": "text", "guide_url": "https://console.anthropic.com"},
     {"name": "OPENAI_API_KEY", "label": "OpenAI API Key", "group": "AI(LLM)",
      "secret": True, "kind": "text", "guide_url": "https://platform.openai.com"},
+    # ★`#899` 가 `_LLM_KEY_PROVIDER` 에 매핑해 **백엔드는 실호출 테스트를 할 수 있는데
+    #   카탈로그에 없어 운영자가 등록조차 못 했다**(2026-09-02 실측 · `test_every_testable_key_is_in_the_catalog` 가 적발).
+    {"name": "GOOGLE_API_KEY", "label": "Google(Gemini) API Key", "group": "AI(LLM)",
+     "secret": True, "kind": "text", "guide_url": "https://aistudio.google.com/app/apikey"},
     {"name": "REPLICATE_API_TOKEN", "label": "Replicate API 토큰(AI 포토리얼 렌더)", "group": "AI(LLM)",
      "secret": True, "kind": "text", "guide_url": "https://replicate.com/account/api-tokens",
      "desc": "3D 뷰포트→포토리얼 렌더(ControlNet) 생성에 사용. 미설정 시 렌더 메뉴는 정직하게 '키 미설정' 안내(가짜 이미지 없음)."},

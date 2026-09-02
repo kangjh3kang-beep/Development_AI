@@ -37,7 +37,7 @@ router = APIRouter(prefix="/api/v1/admin/secrets", tags=["관리자·API키"])
 #    → `tests/test_secret_test_honesty.py` 가 `ast` 로 양쪽을 파싱해 대조한다.
 #  ★여기에 키를 **추가하면** 아래 분기도 함께 넣어야 한다. 안 넣으면 그 키는
 #    「미지원」으로 떨어지는데, 그 경로가 **거짓 초록을 내지 않는 것**이 이 파일의 계약이다.
-_TESTABLE_SECRETS: frozenset[str] = frozenset({
+_REGISTRY_TESTABLE: frozenset[str] = frozenset({
     "HYPHEN_HKEY",
     "HYPHEN_USER_ID",
     "REGISTRY_PROVIDER",
@@ -324,6 +324,20 @@ _IMAGE_KEY_PROVIDER: dict[str, str] = {
 }
 
 
+#: ★**전용 테스트가 실제로 구현된 키 전수** — 세 분기에서 **파생**한다.
+#
+#  종전엔 이 목록이 **손으로 적힌 4키**였고, 프론트(`ApiKeyManagementPanel.tsx`)도 **따로**
+#  같은 4키를 들고 있었다. 그런데 `#899` 가 LLM/이미지 실호출 분기를 더하면서 **백엔드는
+#  7키를 테스트할 수 있게 됐는데 화면은 여전히 4키만 버튼을 그렸다** — 즉 `#899` 가 만든
+#  실호출 테스트를 **사용자가 영영 쓸 수 없었다**(2026-09-02 실측).
+#
+#  ★**손 목록은 곧 상한이 된다.** 그래서 분기 셋에서 파생시킨다 — 넷째 분기가 생기면
+#    이 집합이 자동으로 커지고, 프론트 대조 락이 **화면을 따라오게 강제**한다.
+_TESTABLE_SECRETS: frozenset[str] = (
+    _REGISTRY_TESTABLE | frozenset(_LLM_KEY_PROVIDER) | frozenset(_IMAGE_KEY_PROVIDER)
+)
+
+
 def _health_to_test_result(h: dict, what: str) -> dict:
     """헬스 응답을 테스트 결과로. ★실패 **사유**를 버리지 않는다.
 
@@ -382,15 +396,11 @@ async def test_secret(
     # ★★게이트는 **세 분기 전부**를 본다 — `#899` 가 LLM/이미지 실호출 분기를 더했으므로
     #   「미지원」은 *등기 아님 AND LLM 아님 AND 이미지 아님* 이다. 한 축만 보면 LLM 키가
     #   보류로 **잘못 떨어진다**(두 변경이 같은 함수에 얹힌 자리라 특히 위험하다).
-    if (
-        name not in _TESTABLE_SECRETS
-        and name not in _LLM_KEY_PROVIDER
-        and name not in _IMAGE_KEY_PROVIDER
-    ):
+    if name not in _TESTABLE_SECRETS:
         return _unsupported(name)
 
     try:
-        if name in _TESTABLE_SECRETS:
+        if name in _REGISTRY_TESTABLE:
             from app.services.registry.registry_service import RegistryService
 
             # ★'테스트'는 실제 호출 가능 여부를 물어야 한다 — 키가 저장돼 있다는 이유로
