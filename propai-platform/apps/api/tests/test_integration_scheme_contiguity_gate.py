@@ -670,7 +670,23 @@ def test_measured_zone_predicate_has_no_duplicate():
         f"실측 술어가 {dup}곳에 복제돼 있다 — `measured_zone_count`/`select_primary_zone` "
         "두 곳(같은 함수 계열)을 넘으면 드리프트가 가능해진다"
     )
-    assert "measured_zone_n" in _SRC, "`primary_zone_is_inferred` 가 단일 술어를 소비해야 한다"
+    # ★소스 문자열이 아니라 **AST** 로 본다 — 변수명은 그대로 두고 계산만 바꾸는 변이가
+    #   문자열 검사를 통과했다(실측 SURVIVED). 「이름이 있다」가 아니라 「그 함수가 쓰인다」를 본다.
+    assigned_from = []
+    for n in ast.walk(ast.parse(_SRC)):
+        if (isinstance(n, ast.Assign) and len(n.targets) == 1
+                and isinstance(n.targets[0], ast.Name) and n.targets[0].id == "measured_zone_n"):
+            v = n.value
+            assigned_from.append(
+                v.func.id if isinstance(v, ast.Call) and isinstance(v.func, ast.Name) else type(v).__name__
+            )
+    assert assigned_from, "`measured_zone_n` 대입을 못 찾았다 — 수집기 사망"
+    assert set(assigned_from) == {"measured_zone_count"}, (
+        f"`measured_zone_n` 이 단일 술어가 아닌 것에서 나온다: {assigned_from} — "
+        "인라인 계산을 다시 넣으면 `primary_zone_is_inferred` 가 조용히 드리프트한다"
+    )
+    # 소비처가 실제로 그 변수를 쓰는지(꺼내 놓고 안 쓰면 무의미)
+    assert _SRC.count("measured_zone_n == 0") >= 2, "두 페이로드 모두 단일 술어를 소비해야 한다"
 
 
 def test_gate_has_no_unreachable_reason_branch():
