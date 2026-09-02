@@ -16,6 +16,7 @@ from apps.api.app.services.land_intelligence.land_info_service import LandInfoSe
 from apps.api.app.services.zoning.auto_zoning_service import AutoZoningService
 from apps.api.app.utils.pnu import (
     address_resolution,
+    bcode_from_pnu,
     is_valid_pnu,
     jibun_from_pnu,
     parcel_display_address,
@@ -650,7 +651,7 @@ async def geocode_query(req: GeocodeRequest):
         return {"found": False, "query": q,
                 "reason": "VWorld에서도 해당 주소/지번을 찾지 못했습니다. 지번 형식(예: 의정부동 224, 산 12-3)을 확인해 주세요."}
     pnu = geo.get("pnu")
-    bcode = (pnu[:10] if pnu and len(pnu) >= 10 else None)
+    bcode = bcode_from_pnu(pnu)
     return {
         "found": True,
         "query": q,
