@@ -33,7 +33,9 @@ import ast
 import re
 from pathlib import Path
 
+from app.core.config import settings as _settings  # ★수집 시점에 인스턴스화 고정(위 락 참조)
 from app.routers import admin_secrets as AS
+from app.services.legal.moleg_drf_envelope import moleg_oc_key
 from app.services.secrets import secret_store as SS
 from app.utils.withheld import NOT_APPLICABLE, is_withheld, validate_withheld_pair
 
@@ -66,14 +68,15 @@ def test_extractors_are_alive_before_any_comparison():
     assert len(AS._TESTABLE_SECRETS) >= 3
     assert len(frontend_testable()) >= 3
     # ★원천과 결속 — 디스크에서 **독립 재계수**한 수와 같아야 한다(자기지시적 기대값 회피).
-    # ★재계수도 **같은 표기 집합**으로 한다. 종전엔 `"KEY",`(쌍따옴표+트레일링 콤마)만 세서
-    #   따옴표 스타일 변경·마지막 콤마 제거·배열 안 주석 한 줄에 **정상 코드가 빨개졌다**
-    #   (독립 리뷰 MEDIUM-4 — 가드의 위양성도 결함이다).
+    # ★재계수는 **다른 매체**로 한다. 첫 판은 같은 정규식을 상위집합에 적용해
+    #   **구조적으로 실패 불가능**했다(독립 제3 렌즈 지적) — 「자기지시적 기대값 회피」를
+    #   적어 놓고 회피가 안 됐다. 여기서는 **줄 단위로 세어** 정규식과 다른 축을 쓴다.
     body = _PANEL.read_text(encoding="utf-8").split("const TESTABLE_SECRETS")[1].split("];")[0]
-    body_nc = re.sub(r"//[^\n]*", "", body)          # 줄 주석 제거
-    body_nc = re.sub(r"/\*.*?\*/", "", body_nc, flags=re.S)  # 블록 주석 제거
-    raw = len(_TS_ITEM.findall(body_nc))
-    assert raw == len(frontend_testable()), f"정규식 파생 {len(frontend_testable())} vs 재계수 {raw}"
+    body_nc = re.sub(r"//[^\n]*", "", body)
+    body_nc = re.sub(r"/\*.*?\*/", "", body_nc, flags=re.S)
+    by_line = [ln for ln in body_nc.splitlines() if re.search(r"[A-Z][A-Z0-9_]{2,}", ln)]
+    assert len(by_line) == len(frontend_testable()), (
+        f"정규식 파생 {len(frontend_testable())} vs 줄 단위 재계수 {len(by_line)} — 추출기가 일부를 놓친다")
     assert len(catalog_names()) >= 30, "카탈로그가 비었다 — 조회기 사망"
 
 
@@ -200,46 +203,89 @@ def test_supported_key_does_not_take_the_unsupported_path(monkeypatch):
 
 
 def test_no_consumer_reads_the_moleg_key_from_settings_directly():
-    """★MOLEG 키를 **`settings` 에서 직접** 읽는 소비처가 없다(파생형 · 전 서비스).
+    """★MOLEG 키를 **`settings` 계열에서 직접** 읽는 소비처가 없다.
 
-    시크릿 저장(`PUT /admin/secrets/{name}`)은 `os.environ` **만** 바꾸는데
-    `settings` 는 모듈 싱글턴(`@lru_cache`)이라 **재동기화 경로가 0건**이다.
-    직접 읽으면 운영자가 화면에서 키를 바꿔도 **「저장됨」 초록만 뜨고 아무것도 안 바뀐다**
-    — 즉 **작동하지 않는 조작 수단**을 준다(독립 리뷰 HIGH-2).
+    시크릿 저장은 `os.environ` **만** 바꾸는데 `settings` 는 모듈 싱글턴(`@lru_cache`)이라
+    **재동기화 경로가 0건**이다. 직접 읽으면 운영자가 화면에서 키를 바꿔도 **「저장됨」
+    초록만 뜨고 아무것도 안 바뀐다** — **작동하지 않는 조작 수단**이다.
 
-    ★파생형이라 **새 소비처가 생겨도 자동으로 감시망**에 들어온다.
+    ## ★독립 제3 렌즈가 이 락의 두 구멍을 찾았다
+
+    · **범위가 좁았다** — `app/` 만 봤는데 `apps/api/` 에 **나란히 살아 있는 트리**가 있고
+      (`main.py` 가 `apps.api.routers` 를 **10건** 등록한다) 그 176 파일이 감시 밖이었다.
+      → `_API` 전체로 올린다(`tests/` 는 제외 — 픽스처가 일부러 옛 경로를 쓸 수 있다).
+    · **문자열 검사라 별칭 한 줄로 우회**됐다 — `get_settings()` 를 `cfg` 에 담아 읽으면
+      같은 결함인데 락은 초록이었다. → **`ast` 로 판정**한다(이 파일의 다른 락과 매체를 맞춘다).
+
+    ★**포지티브 판정**으로 뒤집는다 — *"`settings` 라는 이름을 쓰는가"* 가 아니라
+      *"`MOLEG_API_KEY` 를 읽으면서 `moleg_oc_key` 를 안 쓰는가"* 를 본다. 별칭에 강하다.
     """
-    root = _API / "app"
+    import ast as _ast
+
     offenders: list[str] = []
-    for f in root.rglob("*.py"):
-        if f.name in {"config.py", "moleg_drf_envelope.py", "secret_store.py"}:
+    scanned = 0
+    for f in _API.rglob("*.py"):
+        rel = f.relative_to(_API)
+        if rel.parts[0] in {"tests", "__pycache__"} or f.name in {
+            "config.py", "moleg_drf_envelope.py", "secret_store.py"
+        }:
             continue
-        for i, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
-            code = line.split("#", 1)[0]
-            if "MOLEG_API_KEY" in code and ("settings" in code or "core_settings" in code):
-                offenders.append(f"{f.relative_to(root)}:{i}")
+        src = f.read_text(encoding="utf-8")
+        if "MOLEG_API_KEY" not in src:
+            continue
+        scanned += 1
+        tree = _ast.parse(src)
+        # 문자열/속성 어디로 읽든 잡되, 같은 파일이 `moleg_oc_key` 를 쓰면 정상으로 본다.
+        # ★**설정 객체에서 읽는 것만** 위반이다. 키 **이름 문자열**(예: 내보낼 시크릿
+        #   목록의 원소)이나 `os.environ.get("MOLEG_API_KEY")` 는 정상이다 —
+        #   첫 판이 바 문자열까지 잡아 `export_scoped_secrets.py`(이름 목록)를
+        #   **위양성으로 신고**했다. **가드의 위양성도 결함이다**(§A-6).
+        reads = any(
+            (isinstance(n, _ast.Attribute) and n.attr == "MOLEG_API_KEY")
+            or (
+                isinstance(n, _ast.Call)
+                and isinstance(n.func, _ast.Name)
+                and n.func.id == "getattr"
+                and len(n.args) >= 2
+                and isinstance(n.args[1], _ast.Constant)
+                and n.args[1].value == "MOLEG_API_KEY"
+            )
+            for n in _ast.walk(tree)
+        )
+        uses_helper = any(
+            isinstance(n, _ast.Name) and n.id == "moleg_oc_key" for n in _ast.walk(tree)
+        )
+        if reads and not uses_helper:
+            offenders.append(str(rel))
     assert not offenders, (
-        f"MOLEG 키를 settings 에서 직접 읽는다(관리 화면 저장이 무효가 된다): {offenders}")
-    # 음성 대조군 — 조회기가 살아 있는가(반드시 있어야 할 것을 같은 방법으로 찾는다).
-    alive = [f for f in root.rglob("*.py") if "moleg_oc_key" in f.read_text(encoding="utf-8")]
-    assert len(alive) >= 3, f"moleg_oc_key 배선이 {len(alive)}곳 — 조회기 사망 의심"
+        f"MOLEG 키를 읽으면서 `moleg_oc_key()` 를 안 쓴다"
+        f"(관리 화면 저장이 무효가 된다): {offenders}")
+    # ★음성 대조군 — 조회기가 살아 있는가(대상이 0개면 위 단언이 공허하게 참이다).
+    assert scanned >= 3, f"MOLEG 를 언급하는 파일이 {scanned}개 — 조회기 사망 의심"
 
 
 def test_runtime_key_change_takes_effect_without_restart(monkeypatch):
-    """★**두 모집단** — `os.environ` 갱신이 즉시 반영되고, 없으면 부팅 설정으로 떨어진다.
+    """★**두 경로를 서로 다른 값으로 가른다** — 같은 값이면 두 구현이 구별되지 않는다.
 
-    이것이 없으면 *"항상 settings 를 읽는 구현"* 이 위 소스 락만으로는 안 잡힌다
-    (소스에 `moleg_oc_key` 를 부르면서 그 안이 settings 만 볼 수도 있다).
+    ## 첫 판이 왜 공허했나 (독립 제3 렌즈가 실행으로 확증)
+
+    종전 락은 `setenv` 만 하고 `settings` 는 안 건드렸다. 그런데 `moleg_oc_key()` 가
+    `app.core.config` 를 **함수 안에서** 임포트하고, 이 PR 이 소비처들의 **모듈 최상단
+    임포트를 지웠기 때문에**, 락 파일만 돌리면 `app.core.config` 가 **`setenv` 이후에
+    최초 임포트**된다 → `BaseSettings` 가 그 env 값을 읽어 **`settings` 도 같은 값**이 된다.
+    → *"`settings` 만 읽는 구현"* 으로 되돌려도 **SURVIVED**(원 결함이 무잠금이었다).
+
+    ★그래서 **`settings` 를 모듈 최상단에서 먼저 임포트**해 인스턴스화 시점을 고정하고,
+      **env 와 settings 에 다른 값**을 넣어 어느 쪽을 읽는지가 **답으로 드러나게** 한다.
     """
-    from app.services.legal.moleg_drf_envelope import moleg_oc_key
+    monkeypatch.setattr(_settings, "MOLEG_API_KEY", "boot-value", raising=False)
+    monkeypatch.setenv("MOLEG_API_KEY", "runtime-value")
+    assert moleg_oc_key() == "runtime-value", (
+        "런타임 갱신이 반영되지 않는다 — `settings` 만 읽는 구현이다"
+        "(관리자 화면 저장이 무효가 된다)")
 
-    monkeypatch.setenv("MOLEG_API_KEY", "runtime-updated-value")
-    assert moleg_oc_key() == "runtime-updated-value", "런타임 갱신이 반영되지 않는다"
-
+    # ★없으면 부팅 설정으로 떨어진다(반대 방향).
     monkeypatch.delenv("MOLEG_API_KEY", raising=False)
-    from app.core.config import settings
-
-    monkeypatch.setattr(settings, "MOLEG_API_KEY", "boot-value", raising=False)
     assert moleg_oc_key() == "boot-value", "환경변수가 없을 때 부팅 설정으로 안 떨어진다"
 
     # ★빈 문자열이 부팅 설정을 **가리지 않는다**(경계를 양방향으로).
