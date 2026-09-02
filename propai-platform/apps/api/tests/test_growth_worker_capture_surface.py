@@ -83,7 +83,7 @@ async def test_three_populations_are_distinguishable() -> None:
     s1 = _Store()
     await cs.publish_capture_status(s1, scope="worker")
     p1 = _published(s1)
-    assert p1["queue_depth"] == 0
+    assert p1["depth"] == 0
     assert p1.get("at"), "★시각이 없다 — 「비울 게 없다」와 「멈췄다」를 못 가른다"
 
     # ② 깊이 N + 시각 있음(쌓이는 중)
@@ -92,10 +92,10 @@ async def test_three_populations_are_distinguishable() -> None:
         cs._QUEUE.append({"event_id": f"e{i}", "event_type": "t", "created_at": None})
     await cs.publish_capture_status(s2, scope="worker")
     p2 = _published(s2)
-    assert p2["queue_depth"] == 7, "★깊이가 안 실린다 — 「안 비운다」를 말할 수 없다"
+    assert p2["depth"] == 7, "★깊이가 안 실린다 — 「안 비운다」를 말할 수 없다"
 
     # ★①과 ②가 **실제로 갈렸는가**(두 모집단 대조 — 같지 않아야 한다)
-    assert p1["queue_depth"] != p2["queue_depth"], "★두 모집단이 안 갈렸다 = 공허한 초록"
+    assert p1["depth"] != p2["depth"], "★두 모집단이 안 갈렸다 = 공허한 초록"
 
     # ③ ★**관측이 끊기면 행이 스스로 사라진다** — TTL 이 그것을 만든다.
     #
@@ -150,7 +150,11 @@ async def test_payload_is_derived_from_capture_status_not_hand_listed() -> None:
     #   + 발행이 덧붙이는 둘(`at` · `producer_build_id`).
     #   ★**손으로 나열하지 않는다** — `capture_status()` 에 키가 생기면 자동으로 태워진다.
     base = set(cs.capture_status())
-    expected = (base - {"scope"}) | {"counter_scope", "at", "producer_build_id"}
+    # ★판별 3종은 **짧은 이름**으로 실린다(jsonb 정렬에서 앞자리를 얻기 위해 — 위 참조).
+    #   나머지는 원본 이름 그대로. `scope` 는 바깥 scope 와 충돌해 `counter_scope` 로 개명.
+    expected = (base - {"scope", "queue_depth", "lost_total"}) | {
+        "counter_scope", "at", "depth", "lost", "build",
+    }
     # ★대조군 — 파생이 죽으면(빈 집합) 아래가 공허해진다
     assert len(base) >= 5, f"★capture_status 파생이 죽었다: {base}"
     assert got == expected, f"★계약 불일치 — 빠짐 {expected - got} · 남음 {got - expected}"
@@ -313,31 +317,96 @@ async def test_api_and_worker_do_not_clobber_each_other(monkeypatch) -> None:
 # **바이트 동일**한 문자열로 렌더됐다 — 이 기능이 존재하는 이유가 그 둘을 가르는 것인데.
 # ★**프론트를 「범위 밖」으로 뺐더니, 그 전제가 검증되는 유일한 곳을 뺀 것이었다.**
 # ═══════════════════════════════════════════════════════════════════════════
-def _render_like_dashboard(payload: dict) -> str:
+def _dashboard_src() -> str:
+    tsx = next(q for q in _SRC.parents if q.name == "apps") / "web" / "components" / "settings" / "GrowthDashboard.tsx"
+    assert tsx.is_file(), f"★화면 소스를 못 찾았다: {tsx}(위반 아님)"
+    return tsx.read_text(encoding="utf-8")
+
+
+def _render_cap() -> int:
+    """플래그 표면의 키 상한을 **TSX 소스에서 파생**한다(손으로 안 적는다).
+
+    ★★**추출기는 하나여야 한다.** 리베이스 전 이 파일에는 상한 추출기가 **둘**이었고,
+      `#947` 이 상한을 인자화하자 **한쪽만 낡아** 「추출기가 죽었다」로 빨개졌다.
+      사본이 갈리면 하나가 낡는다 — 그 실증이 바로 이 함수였다. 그래서 합쳤다.
+
+    ★상한은 **호출부마다 다르다**: 액션 `params` 는 기본값, 플래그 `value` 는
+      `FLAG_VALUE_RENDER_CAP`. 이 파일이 흉내 내는 것은 **플래그 표면**이다.
+    """
+    import re
+
+    src = _dashboard_src()
+    m = re.search(r"const\s+FLAG_VALUE_RENDER_CAP\s*=\s*(\d+)", src)
+    assert m, "★화면의 키 상한을 못 찾았다 — 추출기가 죽었다(위반 아님)"
+    # ★★**배선까지 확인한다**(동료 세션 development-ai-62 가 건 축) — 상한 상수가 있어도
+    #   플래그 소비처가 그것을 **안 넘기면** 이 흉내는 화면과 **다른 것**을 그린다.
+    #   ★복제본 락을 없앨 수 없을 때, **어긋남을 감지하는 축**을 거는 것이 정답이다.
+    assert re.search(r"summarizeParams\(f\.value,\s*FLAG_VALUE_RENDER_CAP\)", src), (
+        "★플래그 표면이 그 상한을 안 쓴다 — 이 흉내가 화면과 다른 것을 그린다(추출기 사망)"
+    )
+    return int(m.group(1))
+
+
+def _expected_payload_keys() -> set[str]:
+    """발행 payload 의 키 — `capture_status()` 에서 **파생**한다."""
+    base = set(cs.capture_status())
+    return (base - {"scope", "queue_depth", "lost_total"}) | {
+        "counter_scope", "at", "depth", "lost", "build",
+    }
+
+
+def _as_stored(payload: dict) -> dict:
+    """**저장소를 왕복한 뒤의 키 순서**로 바꾼다 — `jsonb` 는 삽입 순서를 안 지킨다.
+
+    ★★이 함수가 없어서 **라이브에서 결함이 남았다**(2026-09-02 실측).
+      종전 렌더 락은 **Python dict(삽입 순서)** 를 그려 봤고, 그래서
+      *"판별 필드를 앞에 넣었다"* 가 초록이었다. 그런데 Postgres `jsonb` 는
+      **(키 길이, 바이트순)** 으로 재정렬해 저장하므로 그 처방이 **저장을 통과하며 무효화**됐다.
+
+    ★규칙이 맞다는 근거는 **라이브 실측**이다 — 예측과 실제가 정확히 일치했다:
+        at(2) · flushed(7) · requeued(8) · max_queue(9) · lost_total(10) · flush_limit(11)
+      (`test_jsonb_ordering_model_matches_the_measured_live_order` 가 이 규칙을 따로 잠근다.)
+
+    ★자문: *"내 락이 태우는 값이 **저장소를 왕복한 값**인가, 그 전의 값인가?"*
+    """
+    return {k: payload[k] for k in sorted(payload, key=lambda k: (len(k), k))}
+
+
+def test_jsonb_ordering_model_matches_the_measured_live_order() -> None:
+    """★위 모델이 **실제 관측**과 같은지 따로 잠근다 — 모델도 검증 대상이다.
+
+    아래는 2026-09-02 12:41Z 라이브 `/growth/heal-log` 에서 **실제로 관측된** 앞 6키다.
+    모델이 이것을 재현하지 못하면 위 렌더 락 전체가 **틀린 전제** 위에 선다.
+    """
+    observed_first_6 = ["at", "flushed", "requeued", "max_queue", "lost_total", "flush_limit"]
+    # 그 시점 payload 가 갖고 있던 키(짧은 이름 도입 **전** 판)
+    keys_then = [
+        "at", "queue_depth", "lost_total", "producer_build_id", "max_queue", "flush_limit",
+        "max_sustained_per_sec", "dropped_overflow", "dropped_after_retry", "requeued",
+        "flush_failures", "flushed", "cancelled_requeued", "consecutive_failures",
+        "max_flush_retry", "counter_scope", "loss_rate_pct",
+    ]
+    modeled = list(_as_stored(dict.fromkeys(keys_then, 0)))[:6]
+    assert modeled == observed_first_6, (
+        f"★jsonb 정렬 모델이 라이브 관측과 다르다\n  모델 {modeled}\n  관측 {observed_first_6}"
+    )
+
+
+def _render_like_dashboard(payload: dict, cap: int | None = None) -> str:
     """`GrowthDashboard.summarizeParams` 의 규칙을 **소스에서 파생**해 흉내 낸다.
 
     ★상한(4)을 손으로 적지 않는다 — TSX 에서 뽑는다. 화면이 6개로 늘면 이 테스트도 따라간다.
     """
     import json
-    import re
 
-    tsx = (_SRC.parents[2] / "web" / "components" / "settings" / "GrowthDashboard.tsx")
-    if not tsx.is_file():                       # 다른 배치에서도 안 죽게
-        tsx = next(p for p in _SRC.parents if p.name == "apps") / "web" / "components" / "settings" / "GrowthDashboard.tsx"
-    src = tsx.read_text(encoding="utf-8")
-    # ★상한이 **호출부마다 다르다** — 액션 `params` 는 기본값(4), 플래그 `value` 는
-    #   `FLAG_VALUE_RENDER_CAP`. 이 함수가 흉내 내는 것은 **플래그 표면**이므로 그쪽을 뽑는다.
-    #   종전 정규식(`parts.length >= (\d+)`)은 상한이 리터럴이던 시절의 것이라, 인자화된
-    #   뒤에는 아무것도 못 잡고 **판정을 거부**했다(그 거부가 옳았다 — 위반이 아니라 추출기 사망).
-    m = re.search(r"const\s+FLAG_VALUE_RENDER_CAP\s*=\s*(\d+)", src)
-    assert m, "★화면의 키 상한을 못 찾았다 — 추출기가 죽었다(위반 아님)"
-    cap = int(m.group(1))
-
-    # ★★**배선까지 확인한다** — 상한 상수가 있어도 플래그 소비처가 그것을 **안 넘기면**
-    #   이 흉내는 화면과 다른 것을 그린다(복제본 락이 조용히 어긋나는 형태).
-    assert re.search(r"summarizeParams\(f\.value,\s*FLAG_VALUE_RENDER_CAP\)", src), (
-        "★플래그 표면이 그 상한을 안 쓴다 — 이 흉내가 화면과 다른 것을 그린다(추출기 사망)"
-    )
+    # ★**추출·배선 확인은 `_render_cap()` 하나가 한다** — 여기서 다시 뽑지 않는다.
+    #   종전엔 이 파일에 추출기가 **둘**이었고 `#947` 이 상한을 인자화하자 **한쪽만 낡았다.**
+    #   *"사본이 갈리면 하나가 낡는다"* 의 실증이 이 파일 자신이었다.
+    #
+    # ★상한은 기본적으로 **소스에서 파생**한다. 주입(`cap=`)은 **두 갈래를 다 태우기 위한 것**이고
+    #   화면 값을 우회하려는 것이 아니다 — 파생 경로는 아래 단언들이 그대로 태운다.
+    if cap is None:
+        cap = _render_cap()
 
     # ★**이 흉내가 잠그는 것과 안 잠그는 것**(변이 실측 2026-09-02 — 점수 부풀리기 방지):
     #     CAUGHT  상수 이름 변경 · **배선 제거** → 판정 거부(추출기 사망)
@@ -347,7 +416,12 @@ def _render_like_dashboard(payload: dict) -> str:
     #   위 두 축은 **프론트 락**이 잡는다(`GrowthDashboard.flagValueTruncation.test.tsx` —
     #   17키가 다 보이는가 · 상한 초과 시 버린 수를 말하는가). 여기서 다시 잠그지 않는다.
     parts: list[str] = []
-    shown = [(k, v) for k, v in payload.items() if v is not None]
+    # ★두 축을 **합성**한다(양쪽 다 필요하다):
+    #   ①`_as_stored` — 저장소 왕복 후의 **jsonb 키 순서**(삽입 순서가 아니다)
+    #   ②`shown` 을 루프 **앞**에서 만든다 — 그래야 아래 `rest` 가 「보여 줄 수 있었는데
+    #     안 보여 준 수」가 된다. 루프 안에서 `continue` 하면 **빈 칸 수가 섞여** 거짓말이 된다
+    #     (동료 세션 development-ai-62 지적).
+    shown = [(k, v) for k, v in _as_stored(payload).items() if v is not None]
     for k, v in shown:
         if len(parts) >= cap:
             break
@@ -385,7 +459,7 @@ async def test_the_discriminating_field_survives_the_dashboard_truncation() -> N
     piling = _published(s_pile)
 
     # ★대조군 — 두 모집단이 실제로 갈렸는가(안 갈렸으면 아래 비교가 공허하다)
-    assert idle["queue_depth"] != piling["queue_depth"], "★두 모집단이 안 갈렸다"
+    assert idle["depth"] != piling["depth"], "★두 모집단이 안 갈렸다"
 
     r_idle, r_piling = _render_like_dashboard(idle), _render_like_dashboard(piling)
     # ★대조군 — 렌더가 아무것도 안 만들면 아래 비교가 공허하다
@@ -395,4 +469,139 @@ async def test_the_discriminating_field_survives_the_dashboard_truncation() -> N
     )
     # ★그리고 **판별 필드 자체**가 잘려 나가지 않았는가
     assert "at " in r_idle, f"★시각이 화면에서 잘렸다: {r_idle}"
-    assert "queue_depth" in r_piling, f"★깊이가 화면에서 잘렸다: {r_piling}"
+    assert "depth " in r_piling, f"★깊이가 화면에서 잘렸다: {r_piling}"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 7. ★★**저장소 왕복** — 리터럴 dict 로는 절대 안 잡히는 것을 잡는다
+#
+# 동료 세션 development-ai-62 와 왕복해 굳힌 축이다(그쪽 실측이 근거를 만들었다).
+# 내 종전 락은 **Python dict(삽입 순서)** 를 그려 봤고, 그래서
+# *"판별 필드를 앞에 넣었다"* 가 초록인 채 **라이브에서는 잘려 나갔다.**
+# ═══════════════════════════════════════════════════════════════════════════
+def _round_trip(payload: dict) -> dict:
+    """**저장 → 조회**를 흉내 낸다: 직렬화 → `jsonb` 키 재정렬 → 역직렬화.
+
+    ★리터럴 dict 를 그려 보는 것과 **결과가 다르다** — 그 차이가 이 파일이 존재하는 이유다.
+    """
+    import json as _json
+
+    return _as_stored(_json.loads(_json.dumps(payload, default=str)))
+
+
+@pytest.mark.asyncio
+async def test_discriminating_fields_survive_a_full_storage_round_trip() -> None:
+    """★**왕복 뒤에도** 판별 필드가 화면에 남는가 — 삽입 순서가 아니라 저장 결과로 본다.
+
+    되살리는 변이: 판별 필드 이름을 길게 되돌리면(`depth`→`queue_depth`) 죽는다.
+    """
+    s = _Store()
+    await cs.publish_capture_status(s, scope="worker")
+    stored = _round_trip(_published(s))
+
+    cap = _render_cap()
+    visible = [k for k in list(stored) if stored[k] is not None][:cap]
+    # ★대조군 — 화면 상한을 소스에서 못 읽었으면 아래가 공허하다
+    assert cap >= 1, f"★화면 상한을 못 읽었다: {cap}(위반 아님)"
+    assert "at" in visible, f"★시각이 왕복 뒤 잘렸다: {visible}"
+    assert "depth" in visible, f"★깊이가 왕복 뒤 잘렸다: {visible}"
+
+
+@pytest.mark.asyncio
+async def test_screen_either_shows_everything_or_says_how_many_it_hid() -> None:
+    """★★**파티션형 — 양방향으로 건다.** 상한만 걸면 하한이 0 으로 붕괴한다.
+
+    종전 이 락은 `안 보이는 키 <= 13` 한 방향이었다. 그런데 `#947` 이 상한을 **40** 으로
+    올리자 `17 − 40 = −23` 이라 **항상 참** — **판별력이 0** 이 됐다(동료 세션이 그 자리를
+    짚어 줬고, 나도 계산으로 확인했다).
+
+    ★이 저장소가 이름 붙여 둔 형태다: *"경계를 걸면 양방향으로"* — 상한만 걸었더니
+      하한이 0 으로 붕괴해 **프로덕션에서 대화 영역이 0px** 이 된 전례가 있다.
+
+    두 갈래가 **각각 다른 답**을 낸다:
+
+        cap >= 보여줄키수  →  숨긴 것이 **0** 이어야 한다(전부 보인다)
+        cap <  보여줄키수  →  숨긴 수가 **정확히 그 차이**이고, 화면이 **그 수를 말한다**
+
+    되살리는 변이: 상한을 다시 작게 하면 두 번째 갈래로 넘어가고, 그때 화면이
+    `외 N종` 을 안 말하면 죽는다.
+    """
+    s = _Store()
+    await cs.publish_capture_status(s, scope="worker")
+    stored = _round_trip(_published(s))
+    # ★분모는 **보여 줄 수 있었던 것**(non-null)이다 — 빈 칸을 섞으면 「숨긴 수」가 거짓이 된다.
+    shown_keys = [k for k, v in stored.items() if v is not None]
+
+    # ★대조군 — 모집단이 비면 아래가 공허하다
+    assert len(shown_keys) >= 5, f"★보여 줄 키가 {len(shown_keys)}개뿐 — 파생이 죽었다(위반 아님)"
+
+    # ★★**두 갈래를 다 태운다** — 라이브 상한(40)이 키 수(17)보다 커서 ②갈래가
+    #   **도달 불가**였다(실측). **도달 불가한 갈래는 공허하다.** 그래서 상한을 주입해
+    #   양쪽을 같은 실행에서 본다.
+    n = len(shown_keys)
+
+    # ①전부 보인다 — 숨긴 것이 없고 판별 필드가 다 보인다
+    wide = _render_like_dashboard(stored, cap=n + 5)
+    assert "외 " not in wide, f"★다 보이는데 「외 N종」이 붙었다: {wide[-40:]}"
+    for k in ("at", "depth", "lost"):
+        assert f"{k} " in wide, f"★{k} 가 안 보인다: {wide[:120]}"
+
+    # ②잘렸다면 **몇 개 잘렸는지 말해야** 한다(조용한 절단 금지)
+    narrow = _render_like_dashboard(stored, cap=3)
+    assert f"외 {n - 3}종" in narrow, (
+        f"★{n - 3}개를 숨기고도 **말하지 않는다**(조용한 절단): {narrow[-60:]}"
+    )
+
+    # ★대조군 — 두 갈래가 **실제로 다른 답**을 냈는가(안 갈리면 공허하다)
+    assert wide != narrow, "★두 갈래가 같은 답을 냈다 = 상한 주입이 안 먹었다"
+
+    # ★그리고 **라이브 상한**에서 지금 조용히 잘리는 것이 없는지 따로 본다
+    live_cap = _render_cap()
+    assert live_cap >= n or f"외 {n - live_cap}종" in _render_like_dashboard(stored), (
+        f"★라이브 상한 {live_cap} 에서 {n - live_cap}개가 조용히 잘린다"
+    )
+
+
+def test_the_axis_this_file_does_not_lock_is_locked_by_the_front_test() -> None:
+    """★★**이 파일이 안 잡는 축**을 명시하고, **그 축을 잡는 락이 실재함**을 확인한다.
+
+    ## 이 파일이 **안 잡는 것**
+
+    위 `_render_like_dashboard` 는 화면을 **파이썬으로 흉내 낸 사본**이다. 그래서
+    `외 N종` 접미를 **스스로 만들어 붙인다** — 즉 **TSX 에서 그 접미를 지워도 이 파일은
+    모른다.** 복제본 락의 남은 구멍이고, 여기서 잡을 수 없다.
+
+    ## 그 축은 **프론트 락**이 잡는다 (동료 세션 development-ai-62 가 실측)
+
+        외 N종 접미 제거(TSX)            → CAUGHT
+        rest 를 0 으로 고정(같은 축 다른 형태) → CAUGHT
+
+    ★**같은 축을 두 형태로** 넣은 것이 중요하다 — 하나만 넣으면 *"그 한 형태만 잡는 락"*
+      일 수 있다(문구를 지우는 것과 계산을 죽이는 것은 다르다).
+
+    ## ★왜 주석이 아니라 **테스트**인가
+
+    *"프론트 락이 잡는다"* 를 **주석으로만** 적으면 **그 파일이 사라져도 조용하다**
+    (동료 지적). 이 저장소 원장이 말하는 **산문 77%** 가 정확히 그 형태다 —
+    원칙은 적혀 있는데 **강제하는 것이 없다.**
+    → 그래서 **파일과 그 안의 테스트 이름까지** 여기서 확인한다.
+      프론트 락이 지워지거나 이름이 바뀌면 **이 파일이 빨개진다.**
+    """
+    front = (next(q for q in _SRC.parents if q.name == "apps")
+             / "web" / "components" / "settings" / "__tests__"
+             / "GrowthDashboard.flagValueTruncation.test.tsx")
+    assert front.is_file(), (
+        f"★내가 「저쪽이 잡는다」고 적은 락이 **사라졌다**: {front}\n"
+        "   그 축(절단을 말하는가)이 지금 **아무도 안 잡는다** — 여기서 잡거나, 그쪽을 되살려라."
+    )
+    src = front.read_text(encoding="utf-8")
+
+    # ★대조군 먼저 — 조회기가 살아 있나(빈 파일이면 아래가 공허하다)
+    assert "summarizeParams" in src or "flag" in src.lower(), "★프론트 락이 비었다(위반 아님)"
+
+    # 그 파일 안에서 **이 축을 잡는 테스트**가 실재하는가
+    for marker in ("상한 초과", "음성 대조군"):
+        assert marker in src, (
+            f"★프론트 락에서 「{marker}」 축이 사라졌다 — "
+            "절단을 말하는지 확인하는 쪽이 없어졌다"
+        )
