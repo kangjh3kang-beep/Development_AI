@@ -56,6 +56,14 @@ def test_withheld_metric_never_reaches_the_reader_as_none():
     ins = _quality_ins(fail=24, warn=5, verify_total=38, down=0, feedback_total=0)
     n = A._rule_narrative(ins)
     assert "None%" not in n and "None" not in n, n
+    # ★★**칸을 본다 — 문자열 전체가 아니라**(독립 적대 렌즈 재검증 2026-09-02).
+    #   `"미측정" in n` 은 **공허하다**: 프로덕션의 보류 사유 산문 자체가 그 낱말을 쓴다
+    #   (`analyzer.py` "…미달합니다(**미측정**이며 0% 가 아닙니다)"). 그래서 지표 칸을
+    #   `"미상"` 으로 바꾸는 변이를 넣어도 **이 단언은 통과**한다 — 사유 꼬리에서 낱말이
+    #   공급되기 때문이다. **내가 쓴 안내문이 내 단언을 공허하게 만든** 그 형태다.
+    assert A._metric_text(ins["metrics_json"], "down_pct") == "미측정", (
+        "★보류된 지표의 **칸**이 「미측정」이 아니다 — 문자열 어딘가의 낱말로는 못 잠근다"
+    )
     assert "미측정" in n
     # ★사유가 **실제로** 실렸는가 — 없으면 「말은 바꿨는데 이유는 여전히 버림」이다
     assert "표본" in n and "미달" in n, n
@@ -69,12 +77,13 @@ def test_judged_population_still_shows_the_real_number():
     n = A._rule_narrative(_quality_ins(fail=24, warn=5, verify_total=38,
                                        down=6, feedback_total=10))
     assert "60.0%" in n, n
-    # ★**산문이 아니라 칸을 본다**(독립 적대 렌즈 실측 2026-09-02).
-    #   종전엔 문자열 전체에 `"미측정" not in n` 이었는데, **프로덕션의 보류 사유 산문
-    #   자체가 그 낱말을 쓴다**("…미측정이며 0% 가 아닙니다"). 그래서 판정 게이트를
-    #   무력화하는 변이가 **이 락 단독 실행에서 SURVIVED** 였다 — 잡은 것은 옆의
-    #   파티션 락뿐이었고, 이 테스트는 그 축에 **아무것도 기여하지 않고 있었다.**
-    #   ★내가 쓴 안내문이 내 단언을 공허하게 만든 그 형태의 재발이다.
+    # ★**판정된 쪽도 칸으로 못 박는다**(음성 대조군의 강화).
+    #   ★★**귀속 정정**(렌즈 재검증 2026-09-02): 종전 주석은 *"이 락 단독 실행에서
+    #     SURVIVED"* 라고 적었는데 **거짓이었다** — 그 측정은 **위쪽
+    #     `test_withheld_metric_never_reaches_the_reader_as_none`** 에 대한 것이고,
+    #     이 테스트는 **판정된 경로**라 그 변이의 영향을 받지 않는다.
+    #     내가 렌즈의 측정을 **엉뚱한 테스트에 갖다 붙였다.** 공허했던 단언은 위쪽에 있고,
+    #     거기서 따로 고쳤다. 이 줄은 그 자체로는 유용하지만 **그 결함의 처방이 아니다.**
     assert A._metric_text(
         _quality_ins(fail=24, warn=5, verify_total=38, down=6, feedback_total=10)["metrics_json"],
         "down_pct",
@@ -314,3 +323,38 @@ async def test_heal_log_does_not_swallow_string_watermarks_END_TO_END(monkeypatc
     )
     # ②dict 도 **dict 그대로** 산다(과잉 교정이 아님을 같은 실행에서 증명)
     assert got["relax.molit"] == {"timeout_multiplier": 1.5}, "★dict 가 망가졌다(과잉 교정)"
+
+
+def test_absent_code_is_translated_not_leaked_as_raw_enum():
+    """★영문 enum 이 **한국어 독자에게 그대로** 가지 않는다 — 세 모집단.
+
+    `withheld()` 는 **쓰기 시점**에 사유 문장을 강제하지만 **읽기 시점엔 아무도 강제하지 않는다.**
+    그래서 `_basis` 가 없는 **저장된 옛 행**이나 문장을 안 넣는 미래 생산자는
+    코드값이 그대로 새어 나갔다 — 예: `※ down_pct insufficient_coverage`.
+
+    되살리는 변이: `ABSENT_REASONS.get(...)` 을 지우면 이 테스트가 죽는다
+    (종전에는 그 자리를 되돌려도 **17건 전부 초록**이었다 — 렌즈 실측).
+    """
+    from app.utils.withheld import ABSENT_REASONS
+
+    # ★대조군 0 — 사전이 살아 있나(비면 아래 단언이 공허하다)
+    assert ABSENT_REASONS, "★ABSENT_REASONS 가 비었다 — 조회기가 죽었다(위반 아님)"
+    korean = ABSENT_REASONS["insufficient_coverage"]
+
+    def _note(metrics):
+        return A._withheld_note(metrics)
+
+    # ①`_basis` 없음 + 알려진 코드 → **한국어 문장**으로 번역된다
+    n1 = _note({"down_pct": None, "down_pct_absent": "insufficient_coverage", "service": "x"})
+    assert "insufficient_coverage" not in n1, f"★영문 enum 이 그대로 새어 나갔다: {n1}"
+    assert korean in n1, f"★한국어 사유가 안 실렸다: {n1}"
+
+    # ②`_basis` 가 있으면 **그것이 이긴다**(과잉 교정이 아님 — 두 번째 모집단)
+    mine = "verify 표본 3건으로 최소 5건에 미달합니다."
+    n2 = _note({"down_pct": None, "down_pct_absent": "insufficient_coverage",
+                "down_pct_basis": mine, "service": "x"})
+    assert mine in n2 and korean not in n2, f"★명시 사유가 사전에 덮였다: {n2}"
+
+    # ③**모르는 코드**는 원값 유지(사전에 없다고 삼키지 않는다 — 세 번째 모집단)
+    n3 = _note({"down_pct": None, "down_pct_absent": "zzz_unknown_code", "service": "x"})
+    assert "zzz_unknown_code" in n3, f"★모르는 코드를 삼켰다: {n3}"
