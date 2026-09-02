@@ -145,12 +145,46 @@ RC_UNTRUSTED=0
 RC_WHY=""
 _NL='
 '
+# ★셸 판정을 **파생**시킨다 — 이름만 보면 `rbash`(→bash 심링크)·`ash`·`mksh` 가 새어 나가
+#   **셸인데 직접 명령으로 신뢰**된다(적대 리뷰 3차 실측: `rbash -c 'a; true'` → 거짓 SURVIVED).
+#   세 축: ①이름 ②심링크를 따라간 **실체** ③시스템 자신의 목록 `/etc/shells`.
+_resolved_shell=""
+_is_shell() {
+  _n="$(basename -- "$1")"
+  # ★**항상 실체까지 푼다.** 이름이 목록에 있다고 거기서 멈추면 `rbash`(→bash)의
+  #   pipefail 지원 여부를 **이름으로** 판정하게 되어 정상 사용을 막는다(실측: rbash 는
+  #   pipefail 을 실제로 지원한다 — 직접 실행 rc=1 확인).
+  _r="$(command -v -- "$1" 2>/dev/null)" || _r=""
+  if [ -n "$_r" ]; then
+    _rr="$(readlink -f -- "$_r" 2>/dev/null)" || _rr="$_r"
+  else
+    _rr=""
+  fi
+  _rn="${_rr:+$(basename -- "$_rr")}"
+  for _cand in "$_rn" "$_n"; do
+    [ -n "$_cand" ] || continue
+    case "$_cand" in
+      sh|bash|zsh|dash|ksh|ash|mksh|rbash|busybox|yash|posh)
+        _resolved_shell="$_cand"; return 0 ;;
+    esac
+  done
+  if [ -n "$_r" ] && [ -r /etc/shells ]; then
+    if grep -qxF -- "$_r" /etc/shells 2>/dev/null || grep -qxF -- "$_rr" /etc/shells 2>/dev/null; then
+      _resolved_shell="${_rn:-$_n}"; return 0
+    fi
+  fi
+  return 1
+}
 _wrapper=""; _script=""; _scriptfile=0
 _saw_prefix=0; _rc_altering=0; _state=scan; _skipnext=0; _had_pipefail=0
 for _a in "$@"; do
-  if [ "$_skipnext" -eq 1 ]; then
+  if [ "$_skipnext" != 0 ]; then
+    # ★부호를 본다 — `+o pipefail` 은 **끄는 것**인데 종전엔 켜는 것으로 셌다(리뷰 HIGH-4).
+    #   그리고 **부분문자열이 아니라 정확한 낱말**이어야 한다(`pipefailZZ` 가 통과했다 · HIGH-5).
+    if [ "$_a" = "pipefail" ]; then
+      [ "$_skipnext" = on ] && _had_pipefail=1 || _had_pipefail=0
+    fi
     _skipnext=0
-    case "$_a" in *pipefail*) _had_pipefail=1 ;; esac
     continue
   fi
   case "$_state" in
@@ -158,11 +192,15 @@ for _a in "$@"; do
       case "$(basename -- "$_a")" in
         env|nohup|stdbuf|command|exec|setsid|nice|ionice)
           _saw_prefix=1; continue ;;
-        timeout)
+        # ★rc 를 **바꾸거나 버리는** 래퍼 — 셸을 끼워도 신뢰하지 않는다.
+        #   `timeout` 124 · `script` 는 `-e` 없이 자식 rc 를 **버리고 0** · `flock -n` 경합 시 1
+        #   · `xargs` 는 자식 rc 를 자기 규칙으로 바꾼다. ★이 목록은 **완전하지 않다**(§부채).
+        timeout|script|flock|xargs|retry)
           _saw_prefix=1; _rc_altering=1; continue ;;
-        sh|bash|zsh|dash|ksh)
-          _wrapper="$(basename -- "$_a")"; _state=shellargs; continue ;;
       esac
+      if _is_shell "$_a"; then
+        _wrapper="$_resolved_shell"; _state=shellargs; continue
+      fi
       if [ "$_saw_prefix" -eq 1 ]; then
         case "$_a" in -*|*=*|[0-9]*) continue ;; esac
       fi
@@ -170,8 +208,12 @@ for _a in "$@"; do
       ;;
     shellargs)
       case "$_a" in
-        --)     _state=wantscript; continue ;;
-        -o|+o)  _skipnext=1; continue ;;
+        # ★`--` 를 여기서 만났다면 **`-c` 를 본 적이 없다** — 다음 인자는 스크립트 **파일**이다
+        #   (`bash -- runner.sh`). 종전엔 그것을 `-c` 문자열로 받아 **파일명을 검사**했고,
+        #   파일명엔 메타문자가 없으니 그대로 신뢰됐다(적대 리뷰 3차 CRITICAL-1).
+        --)     _scriptfile=1; break ;;
+        -o)     _skipnext=on;  continue ;;
+        +o)     _skipnext=off; continue ;;
         --*)    continue ;;          # ★`-*c*` 보다 **먼저** 봐야 한다(--norc/--rcfile 이 c 를 품는다)
         -*c*)   _state=wantscript; continue ;;
         -*)     continue ;;
@@ -213,17 +255,30 @@ elif [ -n "$_wrapper" ]; then
     else
       _seg="$_segB"; _tail="${_rest#*"$_NL"}"
     fi
-    case "$_seg" in *"#"*|*'$'*|*'`'*|*"("*) break ;; esac
-    case "$_seg" in *pipefail*) _had_pipefail=1 ;; esac
+    # ★스트립 가드는 **화이트리스트와 같은 집합**이어야 한다 — 약하면 위험이 스트립으로
+    #   시야에서 사라진다(`set -e | grep …; true` 가 통과했다 · 적대 리뷰 3차 HIGH-6).
+    case "$_seg" in
+      *"&"*|*"("*|*")"*|*"<"*|*">"*|*'`'*|*'$'*|*"!"*|*"#"*|*"|"*) break ;;
+    esac
+    # ★부분문자열이 아니라 **낱말**로, 그리고 **부호**를 본다.
+    _pf_prev=""
+    for _w in $_seg; do
+      if [ "$_w" = "pipefail" ]; then
+        case "$_pf_prev" in -*o) _had_pipefail=1 ;; +*o) _had_pipefail=0 ;; esac
+      fi
+      _pf_prev="$_w"
+    done
     _rest="$_tail"
   done
   # ★`sh`/`dash` 에는 `set -o pipefail` 이 없다 — 인정하면 「명령이 깨져서 CAUGHT」가 된다.
   case "$_wrapper" in bash|zsh|ksh) ;; *) _had_pipefail=0 ;; esac
   # ★화이트리스트 — 위험을 세지 않고 **단일 단순 명령의 모양**만 신뢰한다.
   case "$_rest" in
-    "")
+    ""|" "*|"	"*)
+      # ★리터럴 빈 문자열만 막으면 `bash -c $'\t'` 가 샌다(리뷰 LOW).
+      #   선행 공백은 위에서 이미 걷었으므로, 여기 남았다면 **공백뿐**이라는 뜻이다.
       RC_UNTRUSTED=1
-      RC_WHY="래퍼 스크립트가 비어 있다 — 테스트가 실행되지 않았는데 rc=0 이 나온다"
+      RC_WHY="래퍼 스크립트가 비어 있다(공백뿐) — 테스트가 실행되지 않았는데 rc=0 이 나온다"
       ;;
     *";"*|*"&"*|*"("*|*")"*|*"<"*|*">"*|*'`'*|*'$'*|*"!"*|*"#"*|*"$_NL"*)
       RC_UNTRUSTED=1
@@ -282,5 +337,13 @@ echo "== 원복 확인(작업트리 깨끗) =="
 #   그것을 CAUGHT/SURVIVED 로 해석한다 — 이 도구가 막으려는 그 일이다.
 if [ "${PIPE_INVALID:-0}" -eq 1 ]; then
   exit 12
+fi
+# ★테스트가 **진짜로 12** 를 내면 stdout 은 CAUGHT 인데 종료코드는 「판정 불가」와 같아진다.
+#   CLAUDE.md 가 *"12 를 실패로 읽지 마라"* 라고 선언했으므로, 종료코드만 읽는 호출자는
+#   **진짜 CAUGHT 를 판정 불가로 오독**한다 — 이 도구가 막으려는 그 일이다(리뷰 3차 MEDIUM).
+#   판정은 이미 stdout 에 있으므로 **충돌하는 값만** 1 로 옮긴다.
+if [ "$RC" -eq 12 ]; then
+  echo "  (참고: 테스트가 낸 rc=12 는 이 도구의 「판정 불가」와 겹치므로 종료코드를 1 로 옮긴다)"
+  exit 1
 fi
 exit "$RC"

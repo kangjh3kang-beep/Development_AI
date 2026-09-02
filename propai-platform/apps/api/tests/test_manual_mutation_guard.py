@@ -280,6 +280,16 @@ _판정불가_형태 = [
     # ── ★종전 xfail#1 — **닫혔다.** 명령이 환경변수에 실려도 스크립트에 `$` 가 남는다.
     ("★환경변수에 실린 명령", ["env", "T=grep -q alpha target.txt; true",
                                "bash", "-c", 'eval "$T"']),
+    # ── 3차 리뷰가 찾은 것(★역전을 **한 층에만** 걸어서 argv 층이 새고 있었다)
+    ("★C2 rbash(→bash 심링크) ;", ["rbash", "-c", "grep -q alpha target.txt; true"]),
+    ("★C2 rbash 파이프", ["rbash", "-c", "grep -q alpha target.txt | cat"]),
+    ("★H4 +o pipefail 은 끄는 것", ["bash", "+o", "pipefail", "-c",
+                                    "grep -q alpha target.txt | cat"]),
+    ("★H5 pipefailZZ 는 pipefail 아님", ["bash", "-c",
+                                         "set -e pipefailZZ; grep -q alpha target.txt | cat"]),
+    ("★H6 스트립이 위험을 걷어냄", ["bash", "-c",
+                                    "set -e | grep -q alpha target.txt; true"]),
+    ("★LOW 공백뿐인 스크립트", ["bash", "-c", "\t"]),
 ]
 
 
@@ -310,7 +320,11 @@ def test_스크립트_파일을_받으면_내용을_못_보므로_판정하지_�
 # ★셸 목록(`sh|bash|zsh|dash|ksh`)은 **손 목록**이라 상한이 된다. 그래서 **호스트에 실재하는
 #   셸에서 파생**시켜 태운다 — zsh/ksh 가 설치되면 그날부터 자동으로 감시망에 들어온다.
 #   ★단 `bash` 는 다른 락이 이미 태우므로 여기서는 **나머지**만 본다(중복 방지).
-_설치된_비bash_셸 = [x for x in ("sh", "dash", "zsh", "ksh") if shutil.which(x)]
+# ★종전엔 `("sh","dash","zsh","ksh")` 튜플과 교집합이라 **`rbash` 를 영원히 못 태웠다** —
+#   파생의 축이 한 단계 위에 있었다(적대 리뷰 3차). 후보를 넓히고 **실재하는 것만** 태운다.
+_셸_후보 = ("sh", "dash", "zsh", "ksh", "ash", "mksh", "rbash", "posh", "yash")
+_설치된_비bash_셸 = [x for x in _셸_후보 if shutil.which(x)]
+_PIPEFAIL_지원 = ("bash", "zsh", "ksh", "mksh", "rbash")
 
 
 @pytest.mark.parametrize("셸", _설치된_비bash_셸 or ["없음"])
@@ -325,7 +339,7 @@ def test_pipefail_은_그_셸이_지원할_때만_인정한다(sandbox, 셸) -> 
     root, _ = sandbox
     r = _run(root, "target.txt", "s|alpha|ALPHA|",
              셸, "-c", "set -o pipefail; grep -q alpha target.txt | cat")
-    지원 = 셸 in ("bash", "zsh", "ksh")
+    지원 = 셸 in _PIPEFAIL_지원
     if 지원:
         assert r.returncode != 12, f"[{셸}] pipefail 을 지원하는데 막았다: {r.stdout}"
     else:
@@ -347,6 +361,8 @@ _정당_형태 = [
     # ★C1 의 짝 — 롱옵션 자체는 rc 를 바꾸지 않는다. 막으면 **위양성**이다.
     #   C1 을 고친 것은 `--*` 를 `-*c*` **앞에서** 보는 **순서**이지 차단이 아니었다.
     ("--norc + 단일 명령", ["bash", "--norc", "-c", "grep -q alpha target.txt"]),
+    # ★`rbash` 는 실체가 bash 이므로 **단일 명령이면 신뢰해야 한다** — 막으면 위양성이다.
+    ("rbash + 단일 명령", ["rbash", "-c", "grep -q alpha target.txt"]),
 ]
 
 
@@ -388,3 +404,73 @@ def test_부채_임의_실행파일_래퍼는_아직_못_본다(sandbox) -> None
     _git("commit", "-qm", "wrap", cwd=root)
     r = _run(root, "target.txt", "s|alpha|ALPHA|", "./mywrap")
     assert r.returncode == 12, f"rc={r.returncode}"
+
+
+def test_이중대시_뒤는_스크립트_파일이지_c_문자열이_아니다(sandbox) -> None:
+    """★`bash -- runner.sh` — `-c` 를 본 적이 없으므로 그 인자는 **실행될 파일**이다.
+
+    종전엔 그것을 `-c` 문자열로 받아 **파일명을 검사**했고, 파일명엔 메타문자가 없으니
+    그대로 신뢰됐다. ★**전용 락(`test_스크립트_파일을_…`)이 바로 이 형태를 잠그는데
+    `--` 두 글자로 뚫렸다** — 락이 있다는 것과 그 락이 닫혀 있다는 것은 다르다.
+    """
+    root, _ = sandbox
+    (root / "runner.sh").write_text(
+        "#!/bin/bash\ngrep -q alpha target.txt\ntrue\n", encoding="utf-8")
+    os.chmod(root / "runner.sh", 0o755)
+    _git("add", "-A", cwd=root)
+    _git("commit", "-qm", "runner", cwd=root)
+    r = _run(root, "target.txt", "s|alpha|ALPHA|", "bash", "--", "runner.sh")
+    assert r.returncode == 12, f"'--' 로 스크립트 파일이 신뢰됐다: rc={r.returncode}\n{r.stdout}"
+
+
+_rc파괴_래퍼 = [
+    # ★rc 를 **버리거나 바꾸는** 래퍼. 셸을 끼워도 신뢰하면 안 된다.
+    ("script(-e 없으면 자식 rc 를 버린다)",
+     ["script", "-qc", "grep -q alpha target.txt", "/dev/null"]),
+    ("flock(경합 시 1 · rc 를 바꾼다)",
+     ["flock", "/tmp/mutate_manual_lock_probe.lock", "bash", "-c", "grep -q alpha target.txt"]),
+]
+
+
+@pytest.mark.parametrize("라벨,argv", _rc파괴_래퍼, ids=[x[0] for x in _rc파괴_래퍼])
+def test_rc_를_바꾸는_래퍼는_셸을_끼워도_신뢰하지_않는다(sandbox, 라벨, argv) -> None:
+    """★`timeout` 만 보고 있었다 — `script` 는 **이 호스트에 실재**하고 rc 를 버린다.
+
+    ★이 목록은 **완전하지 않다**(임의 바이너리의 rc 의미론은 알 수 없다 — 아래 xfail).
+      그래도 **측정된 것은 닫는다** — 「완전히 못 하니 아무것도 안 한다」가 아니다.
+    """
+    if not shutil.which(argv[0]):
+        pytest.skip(f"{argv[0]} 이 호스트에 없다 — 미측정")
+    root, _ = sandbox
+    r = _run(root, "target.txt", "s|alpha|ALPHA|", *argv)
+    assert r.returncode == 12, (
+        f"[{라벨}] rc 파괴 래퍼를 신뢰했다: rc={r.returncode}\n{r.stdout}{r.stderr}")
+
+
+def test_테스트가_낸_12_는_판정불가와_겹치므로_옮긴다(sandbox) -> None:
+    """★`CLAUDE.md` 가 *"12 를 실패로 읽지 마라"* 를 선언한 순간 **새 오독 경로**가 생겼다.
+
+    테스트가 **진짜로 rc=12** 를 내면 stdout 은 `CAUGHT` 인데 종료코드는 「판정 불가」와
+    같아진다 — 종료코드만 읽는 호출자는 **진짜 CAUGHT 를 판정 불가로 읽는다.**
+    ★문서를 고치면서 만든 결함이다. 처방은 **충돌하는 값만** 옮기는 것.
+    """
+    root, _ = sandbox
+    r = _run(root, "target.txt", "s|alpha|ALPHA|", "bash", "-c", "exit 12")
+    assert any(ln.startswith("CAUGHT") for ln in r.stdout.splitlines()), (
+        f"판정이 CAUGHT 가 아니다: {r.stdout}")
+    assert r.returncode != 12, "진짜 CAUGHT 가 판정 불가(12)와 같은 종료코드를 냈다"
+    assert r.returncode != 0, f"CAUGHT 인데 종료코드가 0 이다: rc={r.returncode}"
+
+
+def test_판정_대상_수는_손으로_세지_않는다() -> None:
+    """★계획서가 «28개 축»이라고 **손으로 셌는데 실제는 다르다**(적대 리뷰 3차 지적).
+
+    수치를 **파일에서 파생**시켜 계획서와 대조한다 — 목록이 늘면 계획서도 같이 틀리게 된다.
+    """
+    실제 = len(_판정불가_형태) + len(_정당_형태)
+    plan = (_REPO / "propai-platform" / "_workspace"
+            / "PLAN_mutate_manual_rc_trust_layer_2026-09-02.md").read_text(encoding="utf-8")
+    assert f"판정 대상 {실제}개" in plan, (
+        f"계획서가 선언한 축 수가 파일과 다르다 — 파일 기준 {실제}개. "
+        "계획서에 '판정 대상 N개' 를 파생값으로 적어라(손으로 세면 갈린다)"
+    )
