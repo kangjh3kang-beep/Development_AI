@@ -27,7 +27,7 @@ import httpx
 from sqlalchemy import text
 
 from app.core.config import settings
-from app.services.legal.moleg_drf_envelope import raise_unless_expected_xml
+from app.services.legal.moleg_drf_envelope import MolegDrfError, raise_unless_expected_xml
 
 logger = logging.getLogger(__name__)
 
@@ -1584,6 +1584,21 @@ class OrdinanceService:
                 #   대상없음 루트 `<Law>일치하는 자치법규가 없습니다`). 둘 다 `LawService` 가 아니다.
                 raise_unless_expected_xml(resp.text, expect=_ORDIN_TEXT_ROOTS)
                 return resp.text
+        except MolegDrfError as e:
+            # ★**전용 분기**로 가른다 — 뭉치면 다시 «침묵이 성공으로» 읽힌다.
+            #   헬퍼가 그것을 명문으로 요구한다(`MolegDrfError` 독스트링:
+            #   *"일반 예외와 다른 타입이어야 한다 … 뭉치면 다시 침묵이 성공으로 읽힌다"*).
+            # ★★**형제가 둘인데 처음엔 틀린 쪽을 근거로 댔다**(독립 적대 리뷰 지적):
+            #   · `_fetch_from_moleg_api` — 이 예외를 광범위 `except` 에 삼킨다(같이 틀렸다)
+            #   · `gosi_search_service` — **사유를 반환값에 싣는다**(옳은 쪽 · 정답 기준선)
+            #   여기서는 반환 타입이 `str | None` 이라 사유를 실을 자리가 없다.
+            #   **그래서 로그에서만이라도 「조회 실패」와 「조례 없음」을 가른다.**
+            #   ★사유가 **호출부까지** 닿게 하려면 `resolve_slope_criteria` 의 계약을 바꿔야 하고
+            #     그것은 별건이다 — 부채를 초록 안에 보이게 남겼다
+            #     (`test_ordinance_every_xml_call_checks_envelope.py::test_reason_should_reach_the_caller`).
+            logger.warning(
+                "법제처 조례 조회 실패(200-봉투 · 조례 부재 아님): %s (%s)", region_name, str(e)[:160])
+            return None
         except Exception as e:  # noqa: BLE001 — 외부 API 실패는 정직 폴백(None)
             logger.warning("법제처 API 조례 본문 조회 실패: %s (%s)", region_name, str(e))
             return None
