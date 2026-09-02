@@ -1205,6 +1205,10 @@ export function GrowthDashboard() {
   //   ★폴백은 종전 방식(페이지 집계)이다. 서버가 값을 안 주는 구버전 응답에서도 화면이 죽지
   //     않게 하되, **그 경우 값이 과소일 수 있다**는 것을 여기 적어 둔다.
   const serverCounts = actionableCounts;
+  // ★집계의 **출처**를 값과 함께 들고 다닌다 — 화면이 그것을 말해야 하기 때문이다(아래 고지).
+  //   `serverCounts` 가 `{}` 인 경우는 **서버가 세었는데 조치 대상이 0** 인 것이라 서버 출처다
+  //   (JS 에서 `{}` 는 truthy — 그래서 이 분기가 그대로 맞다).
+  const countsFromServer = Boolean(serverCounts);
   const severityCounts: Record<InsightSeverity, number> = { critical: 0, warn: 0, info: 0 };
   if (serverCounts) {
     severityCounts.critical = serverCounts.critical ?? 0;
@@ -1285,6 +1289,32 @@ export function GrowthDashboard() {
           </div>
         ))}
       </div>
+
+      {/* ★집계 출처 고지 — **폴백이 스스로 말한다**.
+          【왜】서버가 `actionable_counts` 를 안 보내면(구버전 API·롤백) 이 카드는 조용히
+          **현재 목록에서 센 값**으로 되돌아간다. 그건 `limit` 만큼만 센 것이라 실제보다 적다.
+          ★크기는 **이 화면이 실제로 보내는 쿼리**로 쟀다(`sort=severity&status=open&limit=200`,
+            2026-08-27 라이브): critical **74 vs 74(0%)** · warn **126 vs 487(74% 과소)** ·
+            **info 0 vs 2000(100% 과소)**. severity 정렬 200행은 critical·warn 으로 다 차서
+            **info 는 한 행도 안 온다** — 그래서 폴백은 info 를 **0** 으로 그린다.
+          그런데 **화면은 정상일 때와 똑같이 생겼다**: 사용자도 조사자도 구별할 수 없다.
+          【★활성 결함이 아니다】현재 서버는 그 키를 **항상** 싣는다(`growth.py` 응답 모델의
+          `default_factory=dict` + 구성 지점 1곳). ★**"롤백뿐"은 전수가 아니다**(독립 리뷰 실측):
+          `public/sw.js` 의 `apiNetworkFirst` 가 인증 GET 응답도 캐시하고 네트워크 실패 시 **캐시 본문**을
+          돌려주므로, 배포 직전 응답이 캐시에 남은 채 오프라인이면 그 키 없는 옛 응답이 올 수 있다
+          (창은 좁다 — `CACHE_NAME` 이 커밋 sha 라 `activate` 가 다른 캐시를 지운다).
+          어느 쪽이든 **잠복에 대한 예방**이다.
+          【문구】*"현재 목록"* 이라고만 쓰면 **과잉 설명**이다 — 폴백은 그중에서도
+          `status === "open"` **이면서 비조치 타입이 아닌 것**만 센다(위 `openInsights`).
+          목록에는 보이는데 숫자에는 안 들어가는 항목이 있으므로 그 좁힘을 문구에 적는다.
+          【관용】새 UI 를 만들지 않는다. 아래 목록의 절단 고지와 **같은 형태**를 쓴다
+          (형제를 안 보고 새로 만드는 것이 이 저장소가 반복해 데인 자리다). */}
+      {hasAny && !countsFromServer && (
+        <p className="text-xs font-semibold text-[var(--status-warning)]">
+          이 집계는 서버가 아니라 <b>현재 목록의 미확인·조치대상</b>만 셌습니다 — 목록에 없는 항목이 빠져
+          <b> 실제보다 적습니다</b>.
+        </p>
+      )}
 
       {/* 데이터 미축적 — 정직 표기(목업 금지) */}
       {!hasAny && (
