@@ -194,33 +194,42 @@ class Test배선:
 
 
 class Test형제미러패리티:
-    """★`simulate` 안의 **모든 site ctx** 가 같은 정직 키를 낸다 — 파생형.
+    """★`simulate` 안의 **모든 site 표면**이 같은 정직 키를 **같은 값으로** 낸다.
 
-    ## 왜 (2026-08-29 라이브 실측)
+    ## 왜 (2026-08~09 · 두 번 값을 치렀다)
 
-    `#933` 이 붕괴 필드를 **정상경로 ctx 에만** 넣고 **차단 경로(특이부지 → 개발 불가)의
-    형제 미러를 안 쓸었다.** 라이브에서 갈렸다:
+    ① `#933` 이 붕괴 필드를 **정상 경로 ctx 에만** 넣어, **차단 경로**(특이부지 → 「불가」)에서
+       침묵했다. **사용자가 신고한 44㎡ 화면이 정확히 그 경로**였다. → `#934` 가 봉합.
+    ② ★그런데 `#934` **자신이 무잠금**이었다(독립 리뷰 실측 · 재현 확인):
 
-        중복 주소 3건(→ addrs 1, 단일 경로)  : requested=3 collapsed=2 ✔
-        서로 다른 3건(→ addrs 3, 차단 경로)  : requested=**없음** collapsed=**없음** ✘
+           차단 ctx  collapsed → 0             **SURVIVED**
+           차단 ctx  requested → len(addrs)    **SURVIVED**
+           정상 ctx  requested → len(addrs)    **SURVIVED**
 
-    ★**사용자가 신고한 44㎡ 화면이 정확히 그 차단 경로**였다. 즉 «왜 막혔나»를 설명해야 할
-      바로 그 화면에서 붕괴 신호가 사라진다.
+       첫 판은 **키 존재**와 `area_is_partial` **값**만 봤다. 붕괴 두 필드의 **값**은
+       어느 락도 보지 않았다 — 「이름이 있다」를 보고 「값이 실린다」를 안 본 것이다.
 
-    ★★그 자리에 **경고가 이미 적혀 있었다**:
-      *"형제 미러 — 아래 정상경로 ctx 와 같은 정직 키를 낸다. 차단 경로에서 빠지면
-        정작 «왜 막혔나»를 설명해야 할 화면에서 신호가 사라진다."*
-      **산문으로 있던 경고를 락으로 바꾼다** — 다음 사람이 ctx 를 하나 더 만들어도 잡히게.
+    ③ ★★그리고 **세 번째 site 표면**(`available_subset`)이 있었는데
+       **선별자가 그것을 구조적으로 못 봤다**: 표지를 `resolved_parcel_count` 로 썼는데
+       **그 키가 빠진 것이 바로 그 표면의 결함**이라, **결함 있는 dict 만 정확히 모집단에서
+       빠졌다.** → 선별자를 **역할 기반**(`total_area_sqm` + `parcel_count` 를 함께 내는 dict)
+       으로 바꾼다. 「파생형으로 바꾼 것」과 「파생의 축이 옳은 것」은 다른 일이다.
+
+    ## 두 종류의 site 표면 — 판정이 다르다
+
+        계산형(ctx)   : 자기가 값을 만든다   → `requested_count`·`addrs` 를 **읽어야** 한다
+        중계형(subset): 하위 site 를 옮긴다  → **같은 이름의 키**를 그대로 실어야 한다
     """
 
-    #: site ctx 를 식별하는 표지(이 키가 있으면 그건 site ctx 다).
-    _MARKER = "resolved_parcel_count"
-    #: 모든 site ctx 가 함께 내야 하는 정직 키.
-    _REQUIRED = ("unresolved_parcels", "area_is_partial",
+    #: ★역할 기반 선별자 — 「면적과 필지수를 함께 내는 dict」가 site 표면이다.
+    #:   결함이 지우는 필드(정직 키)를 표지로 쓰지 않는다(그러면 결함만 빠져나간다).
+    _ROLE = ("total_area_sqm", "parcel_count")
+    #: 모든 site 표면이 함께 내야 하는 정직 키.
+    _REQUIRED = ("resolved_parcel_count", "unresolved_parcels", "area_is_partial",
                  "requested_parcel_count", "collapsed_parcel_count")
 
     @staticmethod
-    def _site_ctxs():
+    def _site_surfaces():
         import ast
         import inspect
 
@@ -235,37 +244,111 @@ class Test형제미러패리티:
         for node in ast.walk(fn):
             if not isinstance(node, ast.Dict):
                 continue
-            keys = {k.value for k in node.keys
-                    if isinstance(k, ast.Constant) and isinstance(k.value, str)}
-            if Test형제미러패리티._MARKER in keys:
-                out.append((keys, node))
+            pairs = {
+                k.value: v for k, v in zip(node.keys, node.values, strict=False)
+                if isinstance(k, ast.Constant) and isinstance(k.value, str)
+            }
+            if all(r in pairs for r in Test형제미러패리티._ROLE):
+                out.append(pairs)
         return ast, out
 
-    def test_site_ctx_를_실제로_찾았다(self) -> None:
-        """★공허 진리 가드 — 0개를 찾고 «위반 0» 이라 말하지 않는다.
+    @staticmethod
+    def _is_relay(ast, expr, key: str) -> bool:
+        """`<something>.get("<key>")` — 하위 site 를 **같은 이름으로** 옮기는 형태인가."""
+        return (
+            isinstance(expr, ast.Call)
+            and isinstance(expr.func, ast.Attribute)
+            and expr.func.attr == "get"
+            and len(expr.args) >= 1
+            and isinstance(expr.args[0], ast.Constant)
+            and expr.args[0].value == key
+        )
 
-        ★그리고 **2개 이상**이어야 한다. 1개면 이 테스트는 형제 미러를 보고 있지 않다
-        (그 형제가 사라졌거나, 내 탐색이 못 찾은 것이다 — 둘 다 알아야 한다).
+    @staticmethod
+    def _names(ast, expr) -> set[str]:
+        return {n.id for n in ast.walk(expr) if isinstance(n, ast.Name)}
+
+    def test_선별자가_결함이_지우는_필드를_표지로_쓰지_않는다(self) -> None:
+        """★이 파일이 겪은 사고 자체를 못 박는다.
+
+        종전 선별자는 표지가 `resolved_parcel_count` 였는데 **그 키가 빠진 것이 바로
+        `available_subset` 의 결함**이었다 — 즉 **결함 있는 dict 만 정확히 모집단에서 빠졌다.**
+
+        ★변이 «선별자를 옛 표지로 되돌리기» 는 **오늘은 생존한다** — 내가 그 표면에 필드를
+          넣어서 표지를 갖게 됐기 때문이다(도달 불가). 그래서 점수를 채우는 대신
+          **원리를 직접 단언**한다: 선별자는 **정직 키 중 어느 것도 표지로 쓰지 않는다.**
+          다음에 누가 표면을 하나 더 만들면서 정직 키를 빠뜨리면, 그때 이 단언이 값을 한다.
         """
-        _ast, ctxs = self._site_ctxs()
-        assert len(ctxs) >= 2, (
-            f"site ctx 를 {len(ctxs)}개만 찾았다 — 형제 미러(차단 경로)가 사라졌거나 탐색이 실패했다"
+        overlap = set(self._ROLE) & set(self._REQUIRED)
+        assert not overlap, (
+            f"선별자가 정직 키를 표지로 쓴다: {sorted(overlap)} — "
+            "그 키를 빠뜨린 표면(=결함)이 모집단에서 빠져 **결함만 감시를 피한다**"
+        )
+        # ★역할 표지는 **결함과 무관한 것**이어야 한다(면적·필지수는 site 의 정의다).
+        assert set(self._ROLE) == {"total_area_sqm", "parcel_count"}
+
+    def test_site_표면을_실제로_찾았다(self) -> None:
+        """★공허 진리 가드 — **3개 이상**이어야 한다(정상 ctx · 차단 ctx · 가용필지 subset)."""
+        _ast, s = self._site_surfaces()
+        assert len(s) >= 3, (
+            f"site 표면을 {len(s)}개만 찾았다 — 표면이 사라졌거나 선별자가 못 본다. "
+            "★결함이 지우는 필드를 표지로 쓰면 결함만 빠져나간다(2026-09 실측)"
         )
 
-    def test_모든_site_ctx_가_같은_정직키를_낸다(self) -> None:
-        _ast, ctxs = self._site_ctxs()
-        모자란곳 = [sorted(set(self._REQUIRED) - keys) for keys, _ in ctxs]
+    def test_모든_site_표면이_정직키를_낸다(self) -> None:
+        _ast, surfaces = self._site_surfaces()
+        모자란곳 = [sorted(set(self._REQUIRED) - set(p)) for p in surfaces]
         assert not any(모자란곳), (
-            f"site ctx 마다 정직 키가 다르다: {모자란곳} — "
-            "한 경로에서 빠지면 그 화면만 조용해진다(차단 경로가 바로 그 자리였다)"
+            f"site 표면마다 정직 키가 다르다: {모자란곳} — 한 표면에서 빠지면 그 화면만 조용해진다"
         )
 
-    def test_모든_site_ctx_의_부분집계가_두_경로를_읽는다(self) -> None:
-        """★키만 있고 **값이 한 경로만 읽으면** 붕괴는 여전히 침묵한다."""
-        ast, ctxs = self._site_ctxs()
-        for keys, node in ctxs:
-            expr = next(v for k, v in zip(node.keys, node.values, strict=False)
-                        if isinstance(k, ast.Constant) and k.value == "area_is_partial")
-            names = {n.id for n in ast.walk(expr) if isinstance(n, ast.Name)}
+    def test_요청수가_중복제거_후_값이_아니다(self) -> None:
+        """★M3·M5 를 죽인다 — `requested_count` → `len(addrs)` 로 바꾸면 **분모가 사라진다**.
+
+        키 존재만 보면 이 변이가 **원리적으로 탐지 불가**다(둘 다 Call 이라 «상수 아님」을 통과).
+        """
+        ast, surfaces = self._site_surfaces()
+        for p in surfaces:
+            e = p["requested_parcel_count"]
+            if self._is_relay(ast, e, "requested_parcel_count"):
+                continue                      # 중계형 — 하위 site 값을 그대로 옮긴다
+            assert "requested_count" in self._names(ast, e), (
+                "요청수가 전용 계수기에서 오지 않는다 — `len(addrs)` 면 중복제거 **후** 값이라 "
+                f"붕괴가 영원히 0이 된다: {ast.dump(e)[:90]}"
+            )
+            assert "addrs" not in self._names(ast, e), "요청수가 `addrs` 를 읽는다(중복제거 후)"
+
+    def test_붕괴수가_두_값의_차이다(self) -> None:
+        """★M2 를 죽인다 — 리터럴 `0` 이면 붕괴가 **영원히 없다**고 말한다."""
+        ast, surfaces = self._site_surfaces()
+        for p in surfaces:
+            e = p["collapsed_parcel_count"]
+            if self._is_relay(ast, e, "collapsed_parcel_count"):
+                continue
+            assert not isinstance(e, ast.Constant), "붕괴수가 상수다 — 재지 않고 지어낸다"
+            names = self._names(ast, e)
+            assert {"requested_count", "addrs"} <= names, (
+                f"붕괴수가 요청수·사용수를 둘 다 읽지 않는다: {sorted(names)}"
+            )
+
+    def test_부분집계가_두_경로를_읽는다(self) -> None:
+        """조회실패 경로와 붕괴 경로 **둘 다**. 하나만 읽으면 나머지가 조용해진다."""
+        ast, surfaces = self._site_surfaces()
+        for p in surfaces:
+            e = p["area_is_partial"]
+            if self._is_relay(ast, e, "area_is_partial"):
+                continue
+            names = self._names(ast, e)
             assert "unresolved" in names, f"조회실패 경로 누락: {sorted(names)}"
             assert "requested_count" in names, f"붕괴 경로 누락: {sorted(names)}"
+
+    def test_중계형_판별기_대조군(self) -> None:
+        """★판별기가 **양방향**인지 — 「전부 중계형」으로 읽으면 위 단언이 전부 공허해진다."""
+        import ast as _a
+
+        relay = _a.parse('x.get("area_is_partial")', mode="eval").body
+        compute = _a.parse('bool(unresolved) or requested_count > len(addrs)', mode="eval").body
+        wrong = _a.parse('x.get("other_key")', mode="eval").body
+        assert self._is_relay(_a, relay, "area_is_partial") is True
+        assert self._is_relay(_a, compute, "area_is_partial") is False
+        assert self._is_relay(_a, wrong, "area_is_partial") is False

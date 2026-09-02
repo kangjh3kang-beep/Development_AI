@@ -392,10 +392,24 @@ class DevelopmentScenarioSimulator:
                             avail_addrs[0], parcels=avail_addrs[1:], site=site, use_llm=False)
                         # 가용필지가 또 전면 차단이면(이중특이) None 처리 — 가짜 제시 금지.
                         if sub.get("scenarios"):
+                            _sub_site = sub.get("site") or {}
                             available_subset = {
                                 "parcels": avail_addrs,
                                 "parcel_count": len(avail_addrs),
-                                "total_area_sqm": (sub.get("site") or {}).get("total_area_sqm"),
+                                "total_area_sqm": _sub_site.get("total_area_sqm"),
+                                # ★★2026-09 — **세 번째 site 표면**이다. 종전엔 `total_area_sqm` 만
+                                #   복사하고 정직 필드를 **전부 버렸다**. 화면은 이 값을 **성공색**
+                                #   박스에 「가용 N필지 · X㎡」로 **단정** 표시한다 — 부분합인데
+                                #   부분합이라 말하지 않는 자리였다.
+                                #   ★그리고 형제 패리티 락이 이것을 **구조적으로 못 봤다**:
+                                #     선별자가 `resolved_parcel_count` 였는데 **그 키가 빠진 것이
+                                #     바로 결함**이라, 결함 있는 dict 만 정확히 모집단에서 빠졌다.
+                                #     («파생의 축» 때문에 파생형 스윕이 무력화된 형태)
+                                "resolved_parcel_count": _sub_site.get("resolved_parcel_count"),
+                                "unresolved_parcels": _sub_site.get("unresolved_parcels"),
+                                "requested_parcel_count": _sub_site.get("requested_parcel_count"),
+                                "collapsed_parcel_count": _sub_site.get("collapsed_parcel_count"),
+                                "area_is_partial": _sub_site.get("area_is_partial"),
                                 "scenarios": sub.get("scenarios"),
                                 "recommended": sub.get("recommended"),
                                 "pyeong_classification": sub.get("pyeong_classification"),
