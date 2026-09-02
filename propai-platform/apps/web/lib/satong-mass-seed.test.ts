@@ -87,19 +87,50 @@ describe("write/read — 만료·파손은 조용히 되살리지 않는다", ()
   });
 });
 
+// ★PNU 는 **19자리 숫자**다. 종전 픽스처의 `"p1"`/`"p2"` 는 PNU 가 아니어서, 정체성 판정이
+//   임의 문자열로도 동작한다는 사실을 가려 주고 있었다(픽스처가 결함을 숨긴 형태).
+const P1 = "4137011000104670001";
+const P2 = "4137011000104670002";
+
 describe("massSeedAppliesTo — ★다른 필지의 선택을 조용히 적용하지 않는다", () => {
   const H = (over: Partial<{ pnu: string | null; address: string | null; areaSqm: number | null }> = {}) => ({
-    pnu: "p1", address: "a1", areaSqm: 1000, targetFloors: 15,
+    pnu: P1, address: "a1", areaSqm: 1000, targetFloors: 15,
     optionLabel: "판상형 25°", savedAt: NOW, ...over,
   });
-  const CUR = (over: Record<string, unknown> = {}) => ({ pnu: "p1", address: "a1", areaSqm: 1000, ...over });
+  const CUR = (over: Record<string, unknown> = {}) => ({ pnu: P1, address: "a1", areaSqm: 1000, ...over });
 
   it("같은 PNU·같은 면적이면 적용한다", () => {
     expect(massSeedAppliesTo(H(), CUR({ address: "다른주소" }))).toBe(true);
   });
 
   it("★PNU가 다르면 적용하지 않는다(주소가 같아 보여도 PNU가 우선)", () => {
-    expect(massSeedAppliesTo(H(), CUR({ pnu: "p2" }))).toBe(false);
+    expect(massSeedAppliesTo(H(), CUR({ pnu: P2 }))).toBe(false);
+  });
+
+  // ────────────────────────────────────────────────────────────────────────
+  // 2026-09-02 — PNU 칸의 상태는 **셋**이다: 유효 · 없음 · **오염**.
+  //   종전 픽스처는 `"p1"`/`"p2"`(PNU 가 아닌 문자열)를 정체성으로 썼고, 코드도 참/거짓만
+  //   봐서 **오염이 유효로 취급**됐다. 라이브 실측(2026-09-02, 292필지): 오염 5건 —
+  //   `'◀ 전성결'`(성명) · `'store-rep-용인시 …'`(주소 파생 합성 id).
+  //   ★오염은 「없음」으로 뭉개지 않는다 — 주소로 떨어뜨리면 동 단위 주소를 공유하는
+  //   **서로 다른 필지**에 시드가 과잉 적용된다. 이 가드는 모르면 **미적용**이 옳다.
+  // ────────────────────────────────────────────────────────────────────────
+  it("★오염된 PNU 는 정체성이 아니다 — 주소가 같아도 적용하지 않는다(fail-closed)", () => {
+    for (const dirty of ["◀ 전성결", "store-rep-a1", "p1", "413701100010467000"]) {
+      // 수신측만 오염
+      expect(massSeedAppliesTo(H(), CUR({ pnu: dirty }))).toBe(false);
+      // 발신측만 오염
+      expect(massSeedAppliesTo(H({ pnu: dirty }), CUR())).toBe(false);
+      // 양쪽이 **같은 문자열로** 오염돼도 — 종전엔 `===` 로 참이 됐다
+      expect(massSeedAppliesTo(H({ pnu: dirty }), CUR({ pnu: dirty }))).toBe(false);
+    }
+  });
+
+  it("★대조군 — 「오염」과 「없음」은 다른 상태다(오염을 없음으로 뭉개면 이 대비가 무너진다)", () => {
+    // 없음 → 주소로 판정해서 **적용된다**
+    expect(massSeedAppliesTo(H({ pnu: null }), { address: "a1", areaSqm: 1000 })).toBe(true);
+    // 오염 → 같은 주소인데도 **적용되지 않는다**
+    expect(massSeedAppliesTo(H({ pnu: "store-rep-a1" }), { address: "a1", areaSqm: 1000 })).toBe(false);
   });
 
   it("PNU가 없으면 주소로 판정한다", () => {

@@ -249,8 +249,16 @@ def test_share_pct_uses_revenue_and_is_absent_without_it():
 #   09_LEGACY(실무 원본)는 수량 91% · 단가 79% · 근거 100% 다. 우리는 그보다 항목이 적고
 #   커버리지도 다르다. **숫자를 지어내 따라가지 않는다** — 대신 현재 수준을 하한으로 박아
 #   흘리면 빨개지게 한다. 이 수치를 올리는 것이 다음 작업의 정의다.
-_QTY_PCT_FLOOR = 100.0   # ★실측 8/8 — 금융·제경비를 항목화해 66.7 → 100 으로 올렸다
-_UNIT_PRICE_PCT_FLOOR = 100.0
+# ★2026-08-27 하한 조정 100.0 → 91.7. **커버리지가 떨어진 것이 아니라, 셀 수 없는 것을
+#   셀 수 있다고 하던 것을 그만둔 것**이다. B03 상수도는 과표 축이 **실비(원가계산)** 라
+#   `과표 × 요율` 구조가 아니다(수도법 시행령 §65③) — 종전에는 **세대수를 과표로 실어**
+#   커버리지 100% 를 만들고 있었다. 그 세대수는 **법정 과표가 아니었다.**
+#   ★이 하한을 다시 올리려면 **그 항목의 과표를 실제로 관측**해야 한다(추측으로 채우지 말 것).
+_QTY_PCT_FLOOR = 91.7
+# ★2026-08-27 하한 조정 — B03 상수도는 **요율 축이 없다**(실비·원가계산, 수도법 시행령 §65③).
+#   종전에는 출처 0건의 `원/세대` 단가를 실어 100% 를 만들고 있었다. 셀 수 없는 것을
+#   셀 수 있다고 하던 것을 그만둔 것이지 커버리지가 나빠진 것이 아니다.
+_UNIT_PRICE_PCT_FLOOR = 91.7
 _BASIS_PCT_FLOOR = 100.0
 
 
@@ -317,8 +325,13 @@ def _charges_result() -> dict:
     """단계별 세금엔진 산출 모양(과표·요율·사유·신뢰도를 **엔진이 준다**)."""
     return {
         "construction": {"items": [
-            {"code": "B03", "name": "상수도 원인자부담금", "amount_won": 45_000_000,
-             "base_won": 300, "rate": 150_000, "borne_by": "developer"},
+            # ★B04(하수도)를 쓴다 — 이 축은 **법정 차원이 확정**돼 있다(오수발생량 ㎥/일 ×
+            #   단위단가 원/㎥/일 · 하수도법 §61+시행령 §35 · 울산 조례 §24①4호).
+            #   종전에는 B03 을 `base_won=300, rate=150_000`(=옛 `원/세대` 날조 형태)로 썼는데,
+            #   B03 은 **축 자체가 미상**이라(실비·원가계산) 원장이 수량·단가를 싣지 않는다 —
+            #   즉 이 테스트의 목적(**압축이 엔진의 과표·요율을 버리지 않는가**)을 태울 수 없다.
+            {"code": "B04", "name": "하수도 원인자부담금", "amount_won": 60_000_000,
+             "base_won": 30, "rate": 2_000_000, "borne_by": "developer"},
             {"code": "B01", "name": "광역교통시설부담금", "amount_won": None,
              "base_won": None, "rate": None, "confidence": "unavailable",
              "detail": {"reason": "표준건축비 미설정 — 산정 불가"}},
@@ -333,8 +346,9 @@ def _charges_result() -> dict:
 def test_compact_preserves_base_rate_and_reason():
     """★과표·요율·사유가 **살아서** 나온다 — 버리면 원장의 「수량×단가」가 통째로 죽는다."""
     out = {i["code"]: i for i in compact_charge_items(_charges_result())}
-    assert out["B03"]["base_won"] == 300
-    assert out["B03"]["rate"] == 150_000
+    assert out["B04"]["base_won"] == 30
+    # ★압축은 엔진이 준 값을 만들지도 지우지도 않는다.
+    assert out["B04"]["rate"] == 2_000_000
     assert out["B01"]["reason"] == "표준건축비 미설정 — 산정 불가"
     assert out["B01"]["confidence"] == "unavailable"
 
@@ -353,8 +367,9 @@ def test_compact_output_feeds_the_ledger_end_to_end():
     items = compact_charge_items(_charges_result())
     led = build_legacy_ledger({"charges": {"total_won": 45_000_000, "items": items}})
     by_key = {i["key"]: i for s in led["sections"] for g in s["groups"] for i in g["items"]}
-    assert by_key["charge_b03"]["qty"] == 300, "압축이 과표를 흘렸다"
-    assert by_key["charge_b03"]["unit_price"] == 150_000, "압축이 요율을 흘렸다"
+    assert by_key["charge_b04"]["qty"] == 30, "압축이 과표를 흘렸다"
+    assert by_key["charge_b04"]["qty_unit"] == "㎥/일"
+    assert by_key["charge_b04"]["unit_price"] == 2_000_000, "압축이 요율을 흘렸다"
     assert "표준건축비 미설정" in (by_key["charge_b01"]["note"] or ""), "압축이 사유를 흘렸다"
     assert "charge_c01" not in by_key, "수분양자 부담분이 원장에 실렸다"
 
@@ -452,7 +467,8 @@ def test_charge_units_are_not_all_won():
          "base_won": 45_000, "rate": 0.02},
     ]}})
     by = {i["key"]: i for s in led["sections"] for g in s["groups"] for i in g["items"]}
-    assert by["charge_b03"]["qty_unit"] == "세대", "세대수를 「원」이라 불렀다"
+    # ★B03 은 축 미상이라 단위가 없다. **B04(하수도)** 가 법정 차원을 갖는 쪽이다.
+    assert by["charge_b03"]["qty_unit"] is None, "축 미상인데 단위를 붙였다"
     assert by["charge_b02"]["qty_unit"] == "원"
     assert by["charge_b01"]["qty_unit"] == "㎡"
     # ★두 모집단 — 셋이 같은 라벨이면 파생을 끊어도 통과한다.
@@ -596,7 +612,9 @@ def test_cost_ratio_basis_feeds_the_ledger_end_to_end():
 #   단위는 `원`·`㎡`·`세대` 처럼 **수를 세는 말**이고, 라벨은 *"무엇의 수량인가"* 라
 #   **다른 자리**에 있어야 한다.
 #   ★합성 픽스처는 이 결함을 못 잡는다 — 값이 그럴듯해 보이기 때문이다. **표기 규약을 단언**한다.
-_UNIT_VOCAB = {"원", "㎡", "세대", "평", "원(과표)"}
+# ★`㎥/일` 은 **복합 단위**다(체적/시간) — 라벨이 아니다.
+#   하수도법 §61·시행령 §35 의 오수발생량 과표가 그 차원이다(2026-08-27 차원 교정).
+_UNIT_VOCAB = {"원", "㎡", "세대", "평", "원(과표)", "㎥/일"}
 
 
 def test_qty_unit_is_a_unit_not_a_label():
@@ -609,10 +627,15 @@ def test_qty_unit_is_a_unit_not_a_label():
                 u = i["qty_unit"]
                 if u is None:
                     continue
-                # 단위는 짧고, 공백·연산기호를 포함하지 않는다.
+                # ★**선언된 어휘를 먼저 본다.** 종전에는 연산기호 휴리스틱이 먼저라
+                #   `㎥/일` 같은 **정당한 복합 단위**를 라벨로 오인해 막았다
+                #   (가드의 위양성도 결함이다 — 정상 코드를 막으면 그 가드는 곧 꺼진다).
+                if u in _UNIT_VOCAB:
+                    continue
+                # 어휘에 없는 것만 「라벨 냄새」로 판정한다 — 문장·연산식은 여전히 걸린다.
                 if len(u) > 6 or any(ch in u for ch in " +-/×"):
                     bad.append(f"{i['key']}: qty_unit={u!r}")
-                elif u not in _UNIT_VOCAB:
+                else:
                     bad.append(f"{i['key']}: 어휘에 없는 단위 {u!r} — 의도한 것이면 _UNIT_VOCAB 에 추가하라")
     assert not bad, "단위 자리에 라벨이 들어갔다(화면에 숫자와 붙어 나간다):\n" + "\n".join(bad)
 

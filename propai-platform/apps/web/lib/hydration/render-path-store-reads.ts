@@ -217,14 +217,28 @@ export function scanSource(file: string, source: string): RenderPathRead[] {
   const gateNames = new Set<string>();
   const storeMethodNames = new Set<string>();
   const collect = (n: ts.Node): void => {
-    if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.initializer && ts.isCallExpression(n.initializer)) {
+    if (ts.isVariableDeclaration(n) && n.initializer && ts.isCallExpression(n.initializer)) {
       const call = n.initializer;
       const callee = call.expression;
-      if (ts.isIdentifier(callee) && callee.text === "useHydrated") gateNames.add(n.name.text);
-      if (ts.isIdentifier(callee) && /^use[A-Z]\w*Store$/.test(callee.text) && call.arguments.length === 1) {
-        const arg = call.arguments[0];
-        if (ts.isArrowFunction(arg) && ts.isPropertyAccessExpression(arg.body) && !MUTATION_PREFIX.test(n.name.text)) {
-          storeMethodNames.add(n.name.text);
+      const isStoreHook = ts.isIdentifier(callee) && /^use[A-Z]\w*Store$/.test(callee.text);
+      if (ts.isIdentifier(n.name)) {
+        if (ts.isIdentifier(callee) && callee.text === "useHydrated") gateNames.add(n.name.text);
+        if (isStoreHook && call.arguments.length === 1) {
+          const arg = call.arguments[0];
+          if (ts.isArrowFunction(arg) && ts.isPropertyAccessExpression(arg.body) && !MUTATION_PREFIX.test(n.name.text)) {
+            storeMethodNames.add(n.name.text);
+          }
+        }
+      }
+      /**
+       * ★**구조분해**로 꺼낸 메서드 — `const { feasibilityCompleteness } = useXStore();`
+       *   2026-08-27 독립 리뷰가 이 사각을 실증했다: 같은 결함을 구조분해로 되살렸더니
+       *   래칫이 **SURVIVED** 였다. `get()` 은 **어떻게 꺼냈든** 라이브를 읽으므로 결함은 동일하다.
+       *   그리고 이 형태는 이 저장소의 **지배적 스타일**이다(`} = useFeasibilityV2Store();` 등).
+       */
+      if (isStoreHook && call.arguments.length === 0 && ts.isObjectBindingPattern(n.name)) {
+        for (const el of n.name.elements) {
+          if (ts.isIdentifier(el.name) && !MUTATION_PREFIX.test(el.name.text)) storeMethodNames.add(el.name.text);
         }
       }
     }

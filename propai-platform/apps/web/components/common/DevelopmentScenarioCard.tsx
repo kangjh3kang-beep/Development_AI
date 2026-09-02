@@ -50,6 +50,15 @@ type Scenario = {
   contribution_pct: number | null; requirements?: string[];
   pros?: string[]; cons?: string[]; notes?: string; magdo?: Magdo | null;
   buildable_types?: string[];
+  /**
+   * 현 용도지역에서 **법정 불허**인 용도(국토계획법 시행령 §71 별표). 백엔드가
+   * `buildable_types` 와 **분리해서** 보낸다 — 「건축 가능」 칩 목록에 경고를 섞으면
+   * 서로 모순되는 칩이 나란히 서기 때문이다.
+   * ★이 필드가 없으면 제1종일반주거 부지에서 *"주상복합 아파트"* 가 **경고 없이** 뜬다.
+   */
+  zone_use_constraint?: {
+    zones?: string[]; prohibited?: string[]; message?: string; legal_ref?: string;
+  } | null;
 };
 type SimResult = {
   site: {
@@ -57,6 +66,10 @@ type SimResult = {
     // ★총면적의 '분모' — 몇 필지 중 몇 필지가 실측인지. 미해석 필지는 0㎡로 합산되므로
     //   이 값 없이 total_area_sqm 만 보면 "원래 작은 부지"로 오독된다(2026-08-19 실측 결함).
     resolved_parcel_count?: number;
+    /** 중복제거 **전** 요청 필지 수 — `parcel_count` 만으로는 «원래 1필지» 와 «붕괴» 를 못 가른다. */
+    requested_parcel_count?: number;
+    /** 주소 문자열이 겹쳐 사라진 필지 수(지번 누락 등). >0 이면 이 부지는 요청보다 작게 계산됐다. */
+    collapsed_parcel_count?: number;
     unresolved_parcels?: { address?: string; reason?: string }[];
     area_is_partial?: boolean;
     primary_zone_is_inferred?: boolean;
@@ -205,7 +218,20 @@ export function DevelopmentScenarioCard({
             {site.total_area_sqm != null && <span className="text-[var(--text-secondary)]">{site.total_area_sqm.toLocaleString()}㎡</span>}
             {/* ★총면적의 분모 — 미해석 필지는 0㎡로 합산되므로, 몇 필지가 빠졌는지 같이 말한다.
                 이것이 없으면 "면적이 작아 개발방식이 불가"라는 결론만 보이고 이유가 안 보인다. */}
-            {site.area_is_partial && (
+            {/* ★붕괴는 **조회 실패와 다른 사실**이라 따로 말한다 — 종전 문구를 그대로 쓰면
+                「1필지 중 1필지만 조회됨」이라는 무의미한 말이 된다(붕괴 후엔 분모도 1이다).
+                2026-08-28: 77필지가 같은 주소 문자열이라 1필지 44㎡로 계산된 사고의 고지. */}
+            {(site.collapsed_parcel_count ?? 0) > 0 && (
+              <span
+                className="inline-flex items-center gap-1 rounded-lg border border-[var(--status-error)]/40 bg-[var(--status-error)]/10 px-2 py-0.5 font-bold text-[var(--status-error)]"
+                title={"필지 주소가 서로 겹쳐(지번 누락 등) 구분되지 않았습니다. 아래 개발방식 판정은 "
+                  + "축소된 면적 기준이므로 그대로 신뢰하지 마십시오."}
+              >
+                <AlertTriangle className="size-3.5" aria-hidden />
+                필지 주소 중복 — {site.requested_parcel_count ?? 0}필지 요청 중 {site.parcel_count ?? 0}필지만 구분됨
+              </span>
+            )}
+            {site.area_is_partial && (site.collapsed_parcel_count ?? 0) === 0 && (
               <span
                 className="inline-flex items-center gap-1 rounded-lg border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 px-2 py-0.5 font-bold text-[var(--status-warning)]"
                 title={(site.unresolved_parcels || []).map((u) => `${u.address ?? ""} — ${u.reason ?? ""}`).join("\n")}
@@ -449,6 +475,21 @@ export function DevelopmentScenarioCard({
                       <span key={j} className="rounded-md bg-[var(--accent-soft)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--accent-strong)]">{t}</span>
                     ))}
                   </div>
+                )}
+                {/* ★용도지역 법정 제약 — 「건축 가능」 칩과 **다른 스타일**로 그린다.
+                    적대 리뷰 실측: 백엔드가 이 고지를 만들어 보내는데 화면 소비처가 **0건**이라
+                    제1종일반주거 부지에서 아파트 제안이 **경고 없이** 나갔다.
+                    ★경고를 상품명 칩 자리에 섞는 것은 고친 것이 아니라 «문구로 덮은 것»이다. */}
+                {s.applicable !== "불가" && s.zone_use_constraint?.message && (
+                  <p className="mt-1.5 flex items-start gap-1 rounded-md bg-[var(--status-warning)]/10 px-2 py-1 text-[10px] font-semibold text-[var(--status-warning)]">
+                    <AlertTriangle className="mt-px size-3 shrink-0" aria-hidden />
+                    <span>
+                      {s.zone_use_constraint.message}
+                      {s.zone_use_constraint.legal_ref && (
+                        <span className="ml-1 font-normal opacity-80">({s.zone_use_constraint.legal_ref})</span>
+                      )}
+                    </span>
+                  </p>
                 )}
                 {s.applicable !== "불가" && (
                   <div className="mt-1.5 grid gap-1 text-[11px] md:grid-cols-2">

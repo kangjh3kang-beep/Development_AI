@@ -18,7 +18,11 @@ from typing import Any
 import httpx
 import structlog
 
-from app.core.config import settings
+from app.services.legal.moleg_drf_envelope import (
+    MolegDrfError,
+    moleg_oc_key,
+    raise_unless_expected,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -63,12 +67,19 @@ def _excerpts(text: str, query: str, ctx: int = 200, limit: int = 3) -> list[str
     return out
 
 
+#: `search_admrule` 이 **실제로 파싱하는** 루트키 — 아래 파싱 루프·폴백과 1:1.
+#: ★손 목록이 되지 않게 `tests/` 의 계약 테스트가 파싱 코드와 정합을 단언한다.
+SEARCH_ROOT_KEYS: tuple[str, ...] = ("AdmRulSearch", "admRulSearch", "LawSearch", "admrulSearch", "admrul")
+#: `fetch_admrule_text` 가 실제로 파싱하는 루트키.
+TEXT_ROOT_KEYS: tuple[str, ...] = ("AdmRulService",)
+
+
 class GosiSearchService:
     """고시 원문 타깃 검색(국가 행정규칙 본문 + 지역 첨부 on-demand)."""
 
     @staticmethod
     def _key() -> str:
-        return getattr(settings, "MOLEG_API_KEY", "") or ""
+        return moleg_oc_key()
 
     async def search_admrule(self, query: str, *, max_results: int = 5) -> dict[str, Any]:
         """국가 고시(행정규칙) 검색 — 법제처 DRF target=admrul. → {available, results:[{name,id,dept,date}]}."""
@@ -82,6 +93,15 @@ class GosiSearchService:
                     "query": query, "display": str(max_results), "sort": "date"})
                 r.raise_for_status()
                 data = r.json()
+            # ★법제처는 **오류도 HTTP 200** 으로 준다 — `raise_for_status()` 가 못 잡는다.
+            #   종전에는 이 봉투가 루트키 매칭에 실패해 `results=[]` 로 흘러
+            #   **`available=True`(=조회 성공·결과 0건)** 로 보고됐고,
+            #   `basic_building_cost.detect_gosi_update` 가 그것을 받아
+            #   **"확인했고 고시가 안 바뀌었다"** 고 단정했다(2026-08-27 라이브 실측).
+            raise_unless_expected(data, expect=SEARCH_ROOT_KEYS)
+        except MolegDrfError as e:
+            logger.warning("법제처 DRF 오류 봉투(200)", err=str(e)[:160])
+            return {"available": False, "reason": f"법제처 인증/권한 오류: {e}", "results": []}
         except Exception as e:  # noqa: BLE001
             logger.warning("법제처 고시 검색 실패", err=f"{type(e).__name__}: {str(e)[:120]}")
             return {"available": False, "reason": "법제처 API 호출 실패", "results": []}
@@ -123,9 +143,18 @@ class GosiSearchService:
                     "OC": key, "target": "admrul", "type": "JSON", "ID": str(admrul_id)})
                 r.raise_for_status()
                 data = r.json()
+            raise_unless_expected(data, expect=TEXT_ROOT_KEYS)
+        except MolegDrfError as e:
+            # ★종전에는 이 예외가 아래 `except Exception` 에 삼켜져 **종전과 바이트 동일한**
+            #   `{"found": False, "text": ""}` 을 돌려줬다 — 배선을 해 놓고 **관측 계약이
+            #   전혀 안 바뀌어서**, 소비처(`search_content`)가 *"본문을 읽었는데 키워드가 없다"* 와
+            #   *"본문을 못 읽었다"* 를 **구별할 수 없었다**(독립 리뷰 ①).
+            #   사유를 **반환값에** 싣는다 — 로그는 사용자에게 닿지 않는다.
+            logger.warning("법제처 고시 본문 실패(200-봉투)", err=str(e)[:160])
+            return {"found": False, "text": "", "reason": f"법제처 조회 실패: {e}"}
         except Exception as e:  # noqa: BLE001
             logger.warning("법제처 고시 본문 실패", err=f"{type(e).__name__}: {str(e)[:120]}")
-            return {"found": False, "text": ""}
+            return {"found": False, "text": "", "reason": f"법제처 호출 실패: {type(e).__name__}"}
         svc = data.get("AdmRulService") or {}
         text = _collect_admrule_text(svc)
         name = svc.get("행정규칙명") if isinstance(svc, dict) else None

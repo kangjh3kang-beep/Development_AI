@@ -98,7 +98,13 @@ def test_unknown_code_returns_none_not_a_guess():
     assert base_units_for("ZZ99") == (None, None)
     assert base_units_for(None) == (None, None)
     # 대조군 — 아는 코드는 값을 준다(전부 None 을 돌려주는 구현이 통과하지 않게).
-    assert base_units_for("B03") == ("세대", "원/세대")
+    # ★2026-08-27 차원 교정 — 하수도법 §61+시행령 §35(㎥/일)·수도법 시행령 §65①(사용량).
+    #   법·시행령·조례에서 「세대」 출현 0회(원문 실측). 종전 ("세대","원/세대")는 법정 차원이 아니었다.
+    # ★B03 상수도는 **축을 모른다고 선언**한다 — 실비(원가계산)라 과표×요율 구조가 아니다
+    #   (수도법 시행령 §65③). 「빼기」가 아니라 「(None, None) 로 선언」이 정답이다 —
+    #   빼면 「미등록」과 「모름 판정」이 구별되지 않는다.
+    assert base_units_for("B03") == (None, None)
+    assert "B03" in CHARGE_BASE_UNITS
 
 
 # ── 실엔진 → 압축 → 원장 **한 줄로 태운다** ───────────────────────────────────

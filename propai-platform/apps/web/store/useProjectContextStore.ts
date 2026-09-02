@@ -668,6 +668,86 @@ export interface FeasibilityCompleteness {
   pct: number; // 반영도(%) — 완료된 마지막 단계의 누적 가중치
 }
 
+/**
+ * 완성도 판정의 **입력만** 추린 형태 — 셀렉터가 이것만 구독하면 참조가 안정된다.
+ * (스토어 전체를 셀렉터로 돌려주면 매 렌더 새 객체라 무한 리렌더가 된다.)
+ */
+export interface FeasibilityCompletenessInputs {
+  landAreaSqm: number;
+  address: string;
+  totalGfaSqm: number;
+  totalConstructionCostWon: number;
+  totalRevenueWon: number;
+}
+
+/**
+ * ★렌더 경로에서 쓰는 **입력 셀렉터**. 하이드레이션 렌더의 셀렉터는 zustand 의
+ * **서버 스냅샷**(`getInitialState()`)을 보므로, 서버와 **같은 입력**을 얻는다.
+ * 그래서 아래 순수 판정을 붙이면 서버/클라가 **원리적으로 같은 것을 그린다.**
+ *
+ * ★왜 이 형태가 필요했나(2026-08-27 · 라이브 귀속): `FeasibilityEditorV2` 가 스토어 **메서드**
+ *   `feasibilityCompleteness()` 를 렌더 중 호출했는데, 그 메서드는 내부에서 `get()` 을 쓰므로
+ *   **재수화된 라이브 상태**를 읽어 서버 스냅샷을 우회했다. 결과: 서버 `0% · 부지 대기` /
+ *   클라 `60% · 부지 반영` → 프로덕션에서 `Minified React error #418 (args[]=text)`.
+ *   귀속은 세 모집단으로 갈랐다 — 무개변 1 · **그 블록 텍스트만 일치시키면 0** · 무관 개변 1.
+ */
+export function selectFeasibilityCompletenessInputs(
+  s: Pick<ProjectContextState, "siteAnalysis" | "designData" | "costData" | "feasibilityData">,
+): FeasibilityCompletenessInputs {
+  return {
+    // ★면적은 `effectiveLandAreaSqm`(SSOT) — raw `landAreaSqm` 금지.
+    //   같은 파일의 `stageCompletion` 이 그 규칙을 명문으로 적어 두고 지키는데
+    //   이 판정만 raw 를 읽고 있었다. 귀결(독립 리뷰 실측 · 7필지 164,823㎡ 픽스처):
+    //     `stageCompletion=done` · `projectCompleteness.site.done=true`
+    //     ↔ **`feasibilityCompleteness.site.done=false` · pct 0**
+    //   즉 프로젝트 허브는 「부지 완료」, 같은 사용자의 수지 화면은 「부지 대기 · 0%」였다.
+    //   ★더 나쁜 것은 **같은 컴포넌트**가 baseline 을 `effectiveLandAreaSqm` 로 호출한다는 점이다
+    //     (`FeasibilityEditorV2.tsx:160`) — **분석은 통합면적으로 도는데 배지만 0%** 였다.
+    landAreaSqm: effectiveLandAreaSqm(s.siteAnalysis) ?? 0,
+    address: s.siteAnalysis?.address ?? "",
+    totalGfaSqm: s.designData?.totalGfaSqm ?? 0,
+    totalConstructionCostWon: s.costData?.totalConstructionCostWon ?? 0,
+    totalRevenueWon: s.feasibilityData?.totalRevenueWon ?? 0,
+  };
+}
+
+/**
+ * **수지 완성도 판정은 여기 한 곳뿐이다** — 스토어 메서드도 이 함수를 경유한다.
+ * 판정을 복제하면 두 사본이 어긋나 같은 화면이 같은 단계를 두고 반대로 말한다.
+ *
+ * ★단 **「이 저장소에 완성도 판정이 하나뿐」이라는 뜻이 아니다**(초판 주석이 그렇게 읽혔고
+ *   독립 리뷰가 실측으로 반증했다 — §C-11 *"면역을 거짓 주장하지 마라"*). `stageCompletion` ·
+ *   `projectCompleteness` 는 **다른 축**(단계 완료 등급)을 판정하는 별도 SSOT 다.
+ *   **공유해야 하는 것은 「판정」이 아니라 「면적의 출처」** 이고, 그것은 위 입력 셀렉터가
+ *   `effectiveLandAreaSqm` 을 쓰는 것으로 맞췄다.
+ */
+export function computeFeasibilityCompleteness(
+  i: FeasibilityCompletenessInputs,
+): FeasibilityCompleteness {
+  // 단계별 실데이터 반영 판정(무목업): 값이 존재해야 done.
+  // ★부지 done은 "수치 확보(landAreaSqm>0)" 기준. 주소만 있고 면적이 없으면
+  // 수지 baseline이 0이라 실제로는 미반영 → done=false(거짓 30% 제거).
+  const siteDone = i.landAreaSqm > 0;
+  // 주소만 확보된 부분 상태(면적 미확보) — 화면에서 "주소만(부분)"으로 정직 표시 가능.
+  const siteAddressOnly = !siteDone && !!i.address;
+  const designDone = i.totalGfaSqm > 0;
+  const costDone = i.totalConstructionCostWon > 0;
+  const financeDone = i.totalRevenueWon > 0;
+  const stages: FeasibilityCompletenessStage[] = [
+    { key: "site", label: "부지", done: siteDone, partial: siteAddressOnly, weightPct: 30 },
+    { key: "design", label: "설계", done: designDone, weightPct: 60 },
+    { key: "cost", label: "공사비", done: costDone, weightPct: 85 },
+    { key: "finance", label: "금융", done: financeDone, weightPct: 100 },
+  ];
+  // 반영도 = 연속으로 완료된 마지막 단계의 누적 가중치(중간 누락 시 직전까지).
+  let pct = 0;
+  for (const st of stages) {
+    if (!st.done) break;
+    pct = st.weightPct;
+  }
+  return { stages, pct };
+}
+
 /* ── 프로젝트 전체 완성도 파생 모델 ──
    수지 투입(부지/설계/공사비/금융)에 더해 감사 지적 단계(법규/ESG/인허가)까지 포함해
    프로젝트 전주기 완성도를 산출한다. 무목업: 각 단계 done은 해당 store 데이터(또는
@@ -1796,41 +1876,10 @@ export const useProjectContextStore = create<ProjectContextState>()(
         return ups.every((up) => isModuleReady(s, up));
       },
 
-      feasibilityCompleteness: () => {
-        const s = get();
-        // 단계별 실데이터 반영 판정(무목업): 값이 존재해야 done.
-        // ★부지 done은 "수치 확보(landAreaSqm>0)" 기준. 주소만 있고 면적이 없으면
-        // 수지 baseline이 0이라 실제로는 미반영 → done=false(거짓 30% 제거).
-        const siteDone = !!(
-          s.siteAnalysis?.landAreaSqm && s.siteAnalysis.landAreaSqm > 0
-        );
-        // 주소만 확보된 부분 상태(면적 미확보) — 화면에서 "주소만(부분)"으로 정직 표시 가능.
-        const siteAddressOnly = !siteDone && !!s.siteAnalysis?.address;
-        const designDone = !!(
-          s.designData?.totalGfaSqm && s.designData.totalGfaSqm > 0
-        );
-        const costDone = !!(
-          s.costData?.totalConstructionCostWon &&
-          s.costData.totalConstructionCostWon > 0
-        );
-        const financeDone = !!(
-          s.feasibilityData?.totalRevenueWon &&
-          s.feasibilityData.totalRevenueWon > 0
-        );
-        const stages: FeasibilityCompletenessStage[] = [
-          { key: "site", label: "부지", done: siteDone, partial: siteAddressOnly, weightPct: 30 },
-          { key: "design", label: "설계", done: designDone, weightPct: 60 },
-          { key: "cost", label: "공사비", done: costDone, weightPct: 85 },
-          { key: "finance", label: "금융", done: financeDone, weightPct: 100 },
-        ];
-        // 반영도 = 연속으로 완료된 마지막 단계의 누적 가중치(중간 누락 시 직전까지).
-        let pct = 0;
-        for (const st of stages) {
-          if (!st.done) break;
-          pct = st.weightPct;
-        }
-        return { stages, pct };
-      },
+      // ★판정은 모듈 스코프의 `computeFeasibilityCompleteness` 한 곳뿐이다.
+      //   여기서 다시 쓰면 사본이 갈린다(그리고 렌더 경로는 이 메서드가 아니라 셀렉터를 쓴다).
+      feasibilityCompleteness: () =>
+        computeFeasibilityCompleteness(selectFeasibilityCompletenessInputs(get())),
 
       projectCompleteness: () => {
         // ★단일 판정에서 파생한다 — 종전엔 여기서 done 조건을 **다시 한 번 손으로 썼고**,
