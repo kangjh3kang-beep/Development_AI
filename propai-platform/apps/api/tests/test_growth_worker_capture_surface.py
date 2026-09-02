@@ -317,17 +317,33 @@ async def test_api_and_worker_do_not_clobber_each_other(monkeypatch) -> None:
 # **바이트 동일**한 문자열로 렌더됐다 — 이 기능이 존재하는 이유가 그 둘을 가르는 것인데.
 # ★**프론트를 「범위 밖」으로 뺐더니, 그 전제가 검증되는 유일한 곳을 뺀 것이었다.**
 # ═══════════════════════════════════════════════════════════════════════════
-#: 화면에 **안 보이는** 키의 현재 개수. ★이 수를 올릴 때는 **왜 안전한지**를 적어라.
-#: (지금은 유실 신호 6종을 포함해 13개가 안 보인다 — 동료 세션이 렌더러 층에서 잡고 있다.)
-_KNOWN_HIDDEN = 13
+def _dashboard_src() -> str:
+    tsx = next(q for q in _SRC.parents if q.name == "apps") / "web" / "components" / "settings" / "GrowthDashboard.tsx"
+    assert tsx.is_file(), f"★화면 소스를 못 찾았다: {tsx}(위반 아님)"
+    return tsx.read_text(encoding="utf-8")
 
 
 def _render_cap() -> int:
-    """화면이 그리는 키 개수를 **TSX 소스에서 파생**한다(손으로 안 적는다)."""
+    """플래그 표면의 키 상한을 **TSX 소스에서 파생**한다(손으로 안 적는다).
+
+    ★★**추출기는 하나여야 한다.** 리베이스 전 이 파일에는 상한 추출기가 **둘**이었고,
+      `#947` 이 상한을 인자화하자 **한쪽만 낡아** 「추출기가 죽었다」로 빨개졌다.
+      사본이 갈리면 하나가 낡는다 — 그 실증이 바로 이 함수였다. 그래서 합쳤다.
+
+    ★상한은 **호출부마다 다르다**: 액션 `params` 는 기본값, 플래그 `value` 는
+      `FLAG_VALUE_RENDER_CAP`. 이 파일이 흉내 내는 것은 **플래그 표면**이다.
+    """
     import re
-    tsx = next(q for q in _SRC.parents if q.name == "apps") / "web" / "components" / "settings" / "GrowthDashboard.tsx"
-    m = re.search(r"parts\.length\s*>=\s*(\d+)", tsx.read_text(encoding="utf-8"))
-    assert m, "★화면 상한을 못 찾았다 — 추출기가 죽었다(위반 아님)"
+
+    src = _dashboard_src()
+    m = re.search(r"const\s+FLAG_VALUE_RENDER_CAP\s*=\s*(\d+)", src)
+    assert m, "★화면의 키 상한을 못 찾았다 — 추출기가 죽었다(위반 아님)"
+    # ★★**배선까지 확인한다**(동료 세션 development-ai-62 가 건 축) — 상한 상수가 있어도
+    #   플래그 소비처가 그것을 **안 넘기면** 이 흉내는 화면과 **다른 것**을 그린다.
+    #   ★복제본 락을 없앨 수 없을 때, **어긋남을 감지하는 축**을 거는 것이 정답이다.
+    assert re.search(r"summarizeParams\(f\.value,\s*FLAG_VALUE_RENDER_CAP\)", src), (
+        "★플래그 표면이 그 상한을 안 쓴다 — 이 흉내가 화면과 다른 것을 그린다(추출기 사망)"
+    )
     return int(m.group(1))
 
 
@@ -382,24 +398,35 @@ def _render_like_dashboard(payload: dict) -> str:
     ★상한(4)을 손으로 적지 않는다 — TSX 에서 뽑는다. 화면이 6개로 늘면 이 테스트도 따라간다.
     """
     import json
-    import re
 
-    tsx = (_SRC.parents[2] / "web" / "components" / "settings" / "GrowthDashboard.tsx")
-    if not tsx.is_file():                       # 다른 배치에서도 안 죽게
-        tsx = next(p for p in _SRC.parents if p.name == "apps") / "web" / "components" / "settings" / "GrowthDashboard.tsx"
-    src = tsx.read_text(encoding="utf-8")
-    m = re.search(r"parts\.length\s*>=\s*(\d+)", src)
-    assert m, "★화면의 키 상한을 못 찾았다 — 추출기가 죽었다(위반 아님)"
-    cap = int(m.group(1))
+    # ★**추출·배선 확인은 `_render_cap()` 하나가 한다** — 여기서 다시 뽑지 않는다.
+    #   종전엔 이 파일에 추출기가 **둘**이었고 `#947` 이 상한을 인자화하자 **한쪽만 낡았다.**
+    #   *"사본이 갈리면 하나가 낡는다"* 의 실증이 이 파일 자신이었다.
+    cap = _render_cap()
 
+    # ★**이 흉내가 잠그는 것과 안 잠그는 것**(변이 실측 2026-09-02 — 점수 부풀리기 방지):
+    #     CAUGHT  상수 이름 변경 · **배선 제거** → 판정 거부(추출기 사망)
+    #     SURVIVED 상한 40→4     — 이 테스트의 단언은 «유휴 ≠ 쌓임» 이고 `at`(2글자)이 항상
+    #                              첫째라 상한이 4여도 둘은 갈린다. **구멍이 아니라 범위 밖**이다
+    #     SURVIVED `외 N종` 제거 — 상한 40 에 17키라 여기서는 절단 자체가 안 난다
+    #   위 두 축은 **프론트 락**이 잡는다(`GrowthDashboard.flagValueTruncation.test.tsx` —
+    #   17키가 다 보이는가 · 상한 초과 시 버린 수를 말하는가). 여기서 다시 잠그지 않는다.
     parts: list[str] = []
-    for k, v in _as_stored(payload).items():
+    # ★두 축을 **합성**한다(양쪽 다 필요하다):
+    #   ①`_as_stored` — 저장소 왕복 후의 **jsonb 키 순서**(삽입 순서가 아니다)
+    #   ②`shown` 을 루프 **앞**에서 만든다 — 그래야 아래 `rest` 가 「보여 줄 수 있었는데
+    #     안 보여 준 수」가 된다. 루프 안에서 `continue` 하면 **빈 칸 수가 섞여** 거짓말이 된다
+    #     (동료 세션 development-ai-62 지적).
+    shown = [(k, v) for k, v in _as_stored(payload).items() if v is not None]
+    for k, v in shown:
         if len(parts) >= cap:
             break
-        if v is None:
-            continue
         parts.append(f"{k} {json.dumps(v) if isinstance(v, (dict, list)) else v}")
-    return " · ".join(parts)
+    out = " · ".join(parts)
+    # ★잘라낸 몫을 **말한다** — 화면이 그렇게 바뀌었다(`GrowthDashboard.summarizeParams`).
+    #   이 흉내가 그것을 안 따라가면 "화면과 같다" 는 전제가 거짓이 된다.
+    rest = len(shown) - len(parts)
+    return f"{out} 외 {rest}종" if rest > 0 else out
 
 
 @pytest.mark.asyncio
@@ -476,28 +503,47 @@ async def test_discriminating_fields_survive_a_full_storage_round_trip() -> None
     assert "depth" in visible, f"★깊이가 왕복 뒤 잘렸다: {visible}"
 
 
-def test_a_flag_that_outgrows_the_screen_fails_loudly_instead_of_truncating() -> None:
-    """★★**조용한 절단을 시끄러운 실패로** 바꾼다.
+@pytest.mark.asyncio
+async def test_screen_either_shows_everything_or_says_how_many_it_hid() -> None:
+    """★★**파티션형 — 양방향으로 건다.** 상한만 걸면 하한이 0 으로 붕괴한다.
 
-    화면(`summarizeParams`)은 앞 N키만 그리고 **버린 몫을 말하지 않는다**(형제 `fmtReasons`
-    는 *"외 N종"* 으로 말한다 — 같은 파일 260줄 위. §29 *"없는 게 아니라 불일치"*).
+    종전 이 락은 `안 보이는 키 <= 13` 한 방향이었다. 그런데 `#947` 이 상한을 **40** 으로
+    올리자 `17 − 40 = −23` 이라 **항상 참** — **판별력이 0** 이 됐다(동료 세션이 그 자리를
+    짚어 줬고, 나도 계산으로 확인했다).
 
-    ★그래서 **키를 하나 더 넣는 순간 판별 필드가 조용히 밀려난다** — 이름 길이 경주다.
-      실측: `at·lost·build·depth` 상태에서 **4글자 키 하나만** 추가돼도 `depth` 가 밀린다.
-      그리고 **지금과 똑같이 아무도 안 알아챈다.**
+    ★이 저장소가 이름 붙여 둔 형태다: *"경계를 걸면 양방향으로"* — 상한만 걸었더니
+      하한이 0 으로 붕괴해 **프로덕션에서 대화 영역이 0px** 이 된 전례가 있다.
 
-    → 이 테스트는 그 순간을 **시끄럽게** 만든다. 여기서 빨개지면 둘 중 하나를 하라:
-        ① 판별 필드 이름을 더 짧게 (임시방편 — 경주는 계속된다)
-        ② ★렌더러가 **판별 키를 명시 선택**하게 (근본 — 동료 세션이 그 층을 잡고 있다)
+    두 갈래가 **각각 다른 답**을 낸다:
 
-    ★이 락은 **문제를 고치지 않는다. 조용한 것을 시끄럽게 만들 뿐이다.** 그 구분을 적어 둔다.
+        cap >= 보여줄키수  →  숨긴 것이 **0** 이어야 한다(전부 보인다)
+        cap <  보여줄키수  →  숨긴 수가 **정확히 그 차이**이고, 화면이 **그 수를 말한다**
+
+    되살리는 변이: 상한을 다시 작게 하면 두 번째 갈래로 넘어가고, 그때 화면이
+    `외 N종` 을 안 말하면 죽는다.
     """
-    published = set(_expected_payload_keys())
+    s = _Store()
+    await cs.publish_capture_status(s, scope="worker")
+    stored = _round_trip(_published(s))
+    # ★분모는 **보여 줄 수 있었던 것**(non-null)이다 — 빈 칸을 섞으면 「숨긴 수」가 거짓이 된다.
+    shown_keys = [k for k, v in stored.items() if v is not None]
     cap = _render_cap()
-    hidden = len(published) - cap
-    assert hidden <= _KNOWN_HIDDEN, (
-        f"★화면에 안 보이는 키가 {hidden}개로 늘었다(허용 {_KNOWN_HIDDEN}).\n"
-        f"   화면은 앞 {cap}키만 그리고 **버린 몫을 말하지 않는다.**\n"
-        f"   판별 필드가 조용히 밀려났을 수 있다 — 렌더러의 명시 선택으로 옮기거나,\n"
-        f"   이 상한을 올리려면 **왜 안전한지**를 여기 적어라."
-    )
+    rendered = _render_like_dashboard(stored)
+
+    # ★대조군 — 모집단이 비면 아래가 공허하다
+    assert len(shown_keys) >= 5, f"★보여 줄 키가 {len(shown_keys)}개뿐 — 파생이 죽었다(위반 아님)"
+
+    if cap >= len(shown_keys):
+        # ①전부 보인다 — 숨긴 것이 있으면 안 된다
+        assert "외 " not in rendered, f"★다 보이는데 「외 N종」이 붙었다: {rendered[-40:]}"
+        for k in ("at", "depth", "lost"):
+            assert f"{k} " in rendered, f"★{k} 가 안 보인다(cap={cap} · 키 {len(shown_keys)}): {rendered[:120]}"
+    else:
+        # ②잘렸다면 **몇 개 잘렸는지 말해야** 한다(조용한 절단 금지)
+        hidden = len(shown_keys) - cap
+        assert f"외 {hidden}종" in rendered, (
+            f"★{hidden}개를 숨기고도 **말하지 않는다**(조용한 절단): {rendered[-60:]}\n"
+            f"   화면이 버린 몫을 말하거나, 판별 키를 명시 선택해야 한다."
+        )
+
+

@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,10 +23,26 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.audit import audit_admin_action
 from app.services.billing.billing_service import is_super_admin
 from app.services.secrets import secret_store
+from app.utils.withheld import NOT_APPLICABLE, withheld
 from apps.api.auth.jwt_handler import CurrentUser, get_current_user
 from apps.api.database.session import get_db
 
 router = APIRouter(prefix="/api/v1/admin/secrets", tags=["관리자·API키"])
+
+#: **전용 연결 테스트**가 실제로 구현된 키들.
+#
+#  ★상수로 꺼낸 이유: 프론트(`ApiKeyManagementPanel.tsx` 의 `TESTABLE_SECRETS`)가
+#    **같은 목록을 따로** 들고 있는데 대조 락이 **0건**이었다. 인라인 집합 리터럴이면
+#    기계가 파생시킬 수 없어 두 목록이 조용히 갈린다.
+#    → `tests/test_secret_test_honesty.py` 가 `ast` 로 양쪽을 파싱해 대조한다.
+#  ★여기에 키를 **추가하면** 아래 분기도 함께 넣어야 한다. 안 넣으면 그 키는
+#    「미지원」으로 떨어지는데, 그 경로가 **거짓 초록을 내지 않는 것**이 이 파일의 계약이다.
+_REGISTRY_TESTABLE: frozenset[str] = frozenset({
+    "HYPHEN_HKEY",
+    "HYPHEN_USER_ID",
+    "REGISTRY_PROVIDER",
+    "TILKO_API_KEY",
+})
 
 
 async def _require_admin(current: CurrentUser, db: AsyncSession) -> None:
@@ -306,6 +324,20 @@ _IMAGE_KEY_PROVIDER: dict[str, str] = {
 }
 
 
+#: ★**전용 테스트가 실제로 구현된 키 전수** — 세 분기에서 **파생**한다.
+#
+#  종전엔 이 목록이 **손으로 적힌 4키**였고, 프론트(`ApiKeyManagementPanel.tsx`)도 **따로**
+#  같은 4키를 들고 있었다. 그런데 `#899` 가 LLM/이미지 실호출 분기를 더하면서 **백엔드는
+#  7키를 테스트할 수 있게 됐는데 화면은 여전히 4키만 버튼을 그렸다** — 즉 `#899` 가 만든
+#  실호출 테스트를 **사용자가 영영 쓸 수 없었다**(2026-09-02 실측).
+#
+#  ★**손 목록은 곧 상한이 된다.** 그래서 분기 셋에서 파생시킨다 — 넷째 분기가 생기면
+#    이 집합이 자동으로 커지고, 프론트 대조 락이 **화면을 따라오게 강제**한다.
+_TESTABLE_SECRETS: frozenset[str] = (
+    _REGISTRY_TESTABLE | frozenset(_LLM_KEY_PROVIDER) | frozenset(_IMAGE_KEY_PROVIDER)
+)
+
+
 def _health_to_test_result(h: dict, what: str) -> dict:
     """헬스 응답을 테스트 결과로. ★실패 **사유**를 버리지 않는다.
 
@@ -318,6 +350,27 @@ def _health_to_test_result(h: dict, what: str) -> dict:
     et = h.get("error_type") or "unknown"
     err = str(h.get("error") or "")[:160]
     return {"ok": False, "message": f"{what} 실호출 실패 [{et}] {err}".strip(), "detail": h}
+
+
+def _unsupported(name: str) -> dict[str, Any]:
+    """전용 테스트가 없는 키의 응답 — **보류**이지 성공이 아니다.
+
+    ★**호출 지점**은 `try` **앞**의 게이트다(이 함수 정의 위치가 아니다). 종전 독스트링이
+      그 구분을 흐려 *"`try` 밖에 둔다"* 를 **정의 위치**로 오독하게 했고, 실제로는 호출이
+      `try` 안이라 `ValueError` 가 **조용히 강등**됐다(독립 제3 렌즈가 실행으로 확증).
+      정확한 설명은 **게이트 바로 위 주석**에 있다 — 여기 중복해 적지 않는다.
+    ★문구 키를 `message` 로 두는 것은 **기존 응답 스키마를 지키기 위해서**다
+      (`withheld` 기본은 `ok_basis`). 그래서 검증도 `validate_withheld_pair(..., text_field="message")`
+      로 해야 하며, 락이 그것을 단언한다.
+    """
+    return {
+        **withheld(
+            NOT_APPLICABLE,
+            "이 키는 전용 연결 테스트가 없습니다 — 값 저장 여부만 확인됩니다.",
+            field="ok", text_key="reason", text_field="message",
+        ),
+        "detail": {"name": name, "testable": sorted(_TESTABLE_SECRETS)},
+    }
 
 
 @router.post("/{name}/test")
@@ -335,9 +388,21 @@ async def test_secret(
     if not val:
         return {"ok": False, "message": "값이 설정되지 않았습니다."}
 
+    # ★**미지원 분기를 `try` 밖으로.** 종전 주석은 *"`try` 밖에 둔다"* 고 적었는데 그건
+    #   **함수 정의** 위치였고 **호출은 `try` 안**이었다 — 정의 위치는 예외 전파와 무관하다.
+    #   그래서 `withheld()` 의 계약 위반(`ValueError`)이 아래 광범위 `except` 에 **조용히
+    #   강등**되는 상태가 그대로였다(독립 제3 렌즈가 실행으로 확증).
+    #   ★**면역을 거짓 주장하지 않는다**(규율 §C-11) — 이 PR 의 주제가 바로 그것이다.
+    # ★★게이트는 **세 분기 전부**를 본다 — `#899` 가 LLM/이미지 실호출 분기를 더했으므로
+    #   「미지원」은 *등기 아님 AND LLM 아님 AND 이미지 아님* 이다. 한 축만 보면 LLM 키가
+    #   보류로 **잘못 떨어진다**(두 변경이 같은 함수에 얹힌 자리라 특히 위험하다).
+    if name not in _TESTABLE_SECRETS:
+        return _unsupported(name)
+
     try:
-        if name in {"HYPHEN_HKEY", "HYPHEN_USER_ID", "REGISTRY_PROVIDER", "TILKO_API_KEY"}:
+        if name in _REGISTRY_TESTABLE:
             from app.services.registry.registry_service import RegistryService
+
             # ★'테스트'는 실제 호출 가능 여부를 물어야 한다 — 키가 저장돼 있다는 이유로
             #   초록을 띄우면, 벤더가 권한 없다고 거절하는 상태를 사용자가 알 수 없다.
             st = await RegistryService().live_status()
@@ -347,13 +412,10 @@ async def test_secret(
             return {"ok": ok,
                     "message": st.get("message") or f"등기 공급자: {st.get('provider')}",
                     "detail": st}
-        # ★LLM/이미지 키도 **실호출로** 판정한다(2026-08-27).
+        # ★LLM/이미지 키도 **실호출로** 판정한다(`#899`).
         #   종전엔 여기로 떨어져 `ok: True · "값이 설정되어 있습니다"` 를 돌려줬다 —
-        #   화면은 그것을 **초록 「연결 성공」** 으로 그린다. 그러면 키가 401(무효)이거나
+        #   화면은 그것을 **초록 「연결 성공」** 으로 그린다. 키가 401(무효)이거나
         #   402/429(크레딧·레이트)여도 관리자는 **성공으로 읽는다.**
-        #   ★바로 위 주석이 이미 그 원칙을 적어 뒀는데(「키가 저장돼 있다는 이유로 초록을
-        #     띄우면 벤더가 거절하는 상태를 사용자가 알 수 없다」) **등기 키에만** 적용돼 있었다.
-        #   진단 도구(`/admin/secrets/llm-health`·`image-health`)는 **이미 있었고 소비처가 0** 이었다.
         prov = _LLM_KEY_PROVIDER.get(name)
         if prov:
             r = await llm_health(provider=prov, model=None, current=current, db=db)
@@ -362,6 +424,7 @@ async def test_secret(
         if prov:
             r = await image_health(provider=prov, model=None, current=current, db=db)
             return _health_to_test_result(r, f"이미지({prov})")
-        return {"ok": True, "message": "값이 설정되어 있습니다(전용 테스트 미지원 키)."}
+        # ★도달 불가 — 위 게이트가 이미 걸렀다. 방어로 남기되 **성공으로 위장하지 않는다.**
+        return _unsupported(name)
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "message": f"테스트 실패: {str(e)[:120]}"}

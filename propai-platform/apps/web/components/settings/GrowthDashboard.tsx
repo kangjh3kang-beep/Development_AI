@@ -139,6 +139,34 @@ function num(v: unknown): number | null {
 function str(v: unknown): string | null {
   return typeof v === "string" && v.trim() ? v : null;
 }
+/** metrics_json 의 문자열 배열(예: `triggers`). 배열이 아니면 빈 배열. */
+function arr(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && !!x.trim()) : [];
+}
+/**
+ * 지연 발화 **축 코드 → 한글**.
+ *
+ * 원천은 백엔드 `app/services/growth/analyzer.py` 의 `_LATENCY_TRIGGER_LABELS` 이고
+ * 값을 만드는 곳은 같은 파일의 `triggers = [...]` 다. 어긋나면 화면에 영문 raw
+ * (`ratio`/`absolute`)가 그대로 샌다 — **`apps/api/tests/test_latency_trigger_label_parity.py`
+ * 가 `ast` 로 양쪽을 파싱해 대조한다**(형제 `REASON_LABELS` 와 같은 형식으로 락 파일명을 적는다).
+ * ★그 락은 라벨표끼리만이 아니라 **생산자(`triggers = [...]`)까지 세 번째 모집단**으로 태운다 —
+ *   라벨표끼리만 맞추면 **둘 다 틀린 경우**를 못 잡기 때문이다.
+ *
+ * ★이 주석은 한때 **없는 락을 있다고 단언**했다(적대 리뷰가 실증: 백엔드에 세 번째 축을
+ *   추가해도 프론트 89건이 전부 초록이었다). 면역을 적을 때는 **그 면역이 실재하는지**
+ *   확인하고 적는다 — 없는 면역을 적는 것이 없는 것보다 나쁘다.
+ * ★★그 뒤 만든 첫 락도 **정규식이 파이썬 표기법을 재구현**한 것이라, 세 번째 키만
+ *   작은따옴표로 쓰면 **조용히 통과**했다(실측). 그래서 판정을 `ast` 파서로 옮겼다 —
+ *   ***"내 락이 태우는 것이 프로덕션 코드인가, 복제본인가?"***
+ *
+ * ★모르는 코드는 **감추지 않고 원문 그대로** 보여준다(REASON_LABELS 와 같은 원칙) —
+ *   숨기면 "새 축이 생겼다"는 가장 중요한 신호가 조용히 사라진다.
+ */
+const LATENCY_TRIGGER_LABELS: Record<string, string> = {
+  ratio: "비율(기준선 대비)",
+  absolute: "절대편차(평소값 대비)",
+};
 function pct(v: number | null): string {
   return v === null ? "-" : `${(v <= 1 ? v * 100 : v).toFixed(1)}%`;
 }
@@ -248,13 +276,35 @@ export function InsightMetrics({ insight }: { insight: GrowthInsight }) {
       break;
     }
     case "latency_regression": {
-      // 백엔드 키(analyzer.py): key(route|service) / p95_ms / prev_baseline_p95.
+      // 백엔드 키(analyzer.py): key(route|service) / p95_ms / prev_baseline_p95
+      //                        / triggers / typical_p95 / typical_windows.
       const p95 = num(m.p95_ms ?? m.p95);
       const baseline = num(m.prev_baseline_p95 ?? m.baseline_ms ?? m.baseline);
       const key = str(m.key ?? m.route);
       if (key) rows.push({ label: "경로", value: key });
       if (p95 !== null) rows.push({ label: "p95 지연", value: `${Math.round(p95).toLocaleString("ko-KR")}ms` });
       if (baseline !== null) rows.push({ label: "기준선", value: `${Math.round(baseline).toLocaleString("ko-KR")}ms` });
+      // ★**어느 축이 울렸는가.** 없으면 절대편차 단독 발화가 `p95 33,000ms /
+      //   기준선 23,524ms` = 1.40배로 보여, 비율 임계(1.5배) **미만**인데 warn 이 붙은
+      //   것으로 읽힌다 — 화면만 보고는 왜 울렸는지 알 수 없다.
+      const trigs = arr(m.triggers);
+      if (trigs.length > 0) {
+        rows.push({
+          label: "발화 축",
+          value: trigs.map((x) => LATENCY_TRIGGER_LABELS[x] ?? x).join(", "),
+        });
+        // ★`typical_p95` 가 없으면 **0ms 로 그리지 않는다** — 「모름」을 유효값으로
+        //   위장하는 순간 「평소가 0ms 인 경로」라는 관측이 되어 버린다.
+        const typical = num(m.typical_p95);
+        const windows = num(m.typical_windows);
+        rows.push({
+          label: "평소값",
+          value:
+            typical !== null
+              ? `${Math.round(typical).toLocaleString("ko-KR")}ms`
+              : `판정 불가(이력 ${windows !== null ? windows : "?"}건)`,
+        });
+      }
       break;
     }
     case "recurring_verify_error": {
@@ -436,25 +486,67 @@ function ttlRemaining(iso: string | null): string {
   return `${Math.floor(hr / 24)}일 ${hr % 24}시간 남음`;
 }
 
-// params 객체를 "키 값 · 키 값" 요약(최대 4개). 중첩/긴 값은 절단.
-function summarizeParams(
+/** 액션 `params` 표시 상한. 라이브 200건 실측 키 분포 `{3:2, 4:198}` — 오늘은 안 문다. */
+const ACTION_PARAMS_RENDER_CAP = 4;
+
+/**
+ * 플래그 `value` 표시 상한.
+ *
+ * ★**의미 경계가 아니라 렌더 안전 경계다.** 어떤 키가 「중요한지」를 정하지 않는다 —
+ * 넘으면 **반드시 `외 N종` 으로 말한다**(아래 `summarizeParams`). 즉 이 상한은
+ * 무한 렌더만 막고, **조용히 감추지는 못한다.**
+ */
+const FLAG_VALUE_RENDER_CAP = 40;
+
+/**
+ * params/flag 객체를 `"키 값 · 키 값"` 요약. 중첩/긴 값은 절단.
+ *
+ * 【무엇이 있었나 · 라이브 실측 2026-09-02】
+ * 상한이 **4로 고정**이었고 **버린 몫을 말하지 않았다.** 그런데 이 함수가 그리는
+ * `f.value` 는 Postgres `jsonb` 에서 온다 — **`jsonb` 는 삽입 순서를 보존하지 않고
+ * (키 길이, 바이트순)으로 정렬한다.** 그래서 화면에 무엇이 보이는지가 의미가 아니라
+ * **키 이름의 철자 길이**로 정해지고 있었다(아무도 의도하지 않았고 어디에도 안 적혀 있었다).
+ *
+ * 실측 — `/growth/heal-log?limit=200`:
+ *
+ *     growth_capture(worker) 17키 · 보임 4 · ★조용히 버림 12
+ *     growth_capture(api)    17키 · 보임 4 · ★조용히 버림 13
+ *     버려진 것 중: lost_total · loss_rate_pct · queue_depth · dropped_overflow
+ *                   · dropped_after_retry · flush_failures · consecutive_failures
+ *
+ * 즉 **유실·실패 신호가 통째로 안 보였다.** 음성 대조군 — 같은 응답의
+ * `prompt_candidates`(3키)·`threshold.fallback_warn_pct`(4키)는 버림 0 이었다.
+ *
+ * 【처방】①플래그 상한을 올려 **버림 자체를 없애고**(버림이 0 이면 jsonb 순서는 무의미하다)
+ * ②남는 절단은 **반드시 말한다.** 문구는 형제 `fmtReasons`(위 177~189줄)와 **동형**이다 —
+ * 그 함수는 *"★잘라낸 몫을 **말한다** — 안 적으면 상위 N 종이 전부인 줄로 읽는다
+ * (묵시적 상한 금지)"* 라고 **주석으로 원칙을 적어 두고 있었다.** 원칙은 있었고
+ * **락이 없어서** 형제가 그것을 어겼다.
+ *
+ * ★손으로 고른 「우선순위 키 목록」은 쓰지 않는다 — 목록은 곧 상한이 되고, 새 진단 키가
+ * 생기면 자동으로 누락된다.
+ */
+export function summarizeParams(
   p: Record<string, unknown> | string | number | boolean | null,
+  max: number = ACTION_PARAMS_RENDER_CAP,
 ): string {
   if (p === null || p === undefined) return "";
   // ★스칼라(문자열 워터마크 등)는 **그대로 보여 준다** — 종전엔 이 값이 백엔드에서
   //   null 로 삼켜져 화면에 아무것도 안 나왔다.
   if (typeof p !== "object") return String(p);
+  // null/undefined 는 표시 대상이 아니므로 **분모에서도 뺀다** — 안 그러면 `외 N종` 의 N 이
+  // 「보여 줄 수 있었는데 안 보여 준 수」가 아니라 「빈 칸 수」가 섞여 거짓말이 된다.
+  const shown = Object.entries(p).filter(([, v]) => v !== null && v !== undefined);
   const parts: string[] = [];
-  for (const [k, v] of Object.entries(p)) {
-    if (parts.length >= 4) break;
-    let val: string;
-    if (v === null || v === undefined) continue;
-    else if (typeof v === "object") val = JSON.stringify(v);
-    else val = String(v);
+  for (const [k, v] of shown) {
+    if (parts.length >= max) break;
+    let val: string = typeof v === "object" ? JSON.stringify(v) : String(v);
     if (val.length > 24) val = `${val.slice(0, 24)}…`;
     parts.push(`${k} ${val}`);
   }
-  return parts.join(" · ");
+  // ★잘라낸 몫을 **말한다**(형제 fmtReasons 와 동형 · 묵시적 상한 금지).
+  const rest = shown.length - parts.length;
+  return rest > 0 ? `${parts.join(" · ")} 외 ${rest}종` : parts.join(" · ");
 }
 
 function HealSection() {
@@ -625,10 +717,10 @@ function HealSection() {
                             고친 바로 그 결함(값은 있는데 화면에서 사라진다)을 이 PR 의
                             새 코드가 프론트에서 재현하고 있었다(독립 적대 리뷰 2026-09-02).
                             타입을 `boolean | number` 로 넓혀 놓고 이 가드를 안 고쳤다. */}
-                        {f.value != null && summarizeParams(f.value) && (
+                        {f.value != null && summarizeParams(f.value, FLAG_VALUE_RENDER_CAP) && (
                           <p className="mt-2 text-xs text-[var(--text-hint)]">
                             <span className="cc-num text-[var(--text-secondary)]">
-                              {summarizeParams(f.value)}
+                              {summarizeParams(f.value, FLAG_VALUE_RENDER_CAP)}
                             </span>
                           </p>
                         )}
