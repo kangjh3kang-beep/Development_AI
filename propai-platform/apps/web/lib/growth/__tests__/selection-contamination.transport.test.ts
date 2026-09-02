@@ -35,6 +35,8 @@ describe("★전송 — 관측이 collector 를 지나 본문에 실린다", () 
   it("event_type·surface·service 가 전송 본문에 그대로 있다", () => {
     const sent: string[] = [];
     // sendBeacon 을 **없는 것으로** 만들어 fetch 폴백을 강제한다(Blob 은 동기로 못 읽는다).
+    // ★단 *"그래서 이 층을 못 태운다"* 는 **오추론**이다 — **비동기로는 읽을 수 있다**
+    //   (`__tests__/_read-blob.ts` · `transport-sendbeacon.test.ts` 참조). 그 오추론이 실제로 부채를 만들었다.
     vi.stubGlobal("navigator", { ...globalThis.navigator, sendBeacon: undefined });
     vi.stubGlobal("fetch", ((_url: string, init?: RequestInit) => {
       sent.push(String(init?.body ?? ""));

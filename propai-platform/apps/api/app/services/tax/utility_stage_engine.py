@@ -1,13 +1,15 @@
-"""공사단계 세금 엔진 — B01~B08 (8종).
+"""공사단계 부담금 엔진 — B01~B04 (4종).
 
-B01: 광역교통부담금
+B01: 광역교통시설부담금
 B02: 학교용지부담금
 B03: 상수도 원인자부담금
 B04: 하수도 원인자부담금
-B05: 전기인입부담금
-B06: 도시가스인입부담금
-B07: 통신인입부담금
-B08: 소방시설부담금
+
+★2026-08-28 교정 — 종전 헤더는 **1행에서 «B01~B08 (8종)» 이라 하고 222행에서
+  «B05~B08 은 부담금이 아니어서 제거됐다» 고 말하는 자기모순**이었다(`#913`).
+  B05 전기·B06 가스·B07 통신·B08 소방은 **부담금이 아니라 공사비**이며
+  `construction_cost.utility_connection` 의 U01~U04 로 옮겼다.
+  ★U04(소방)는 **소방시설공사업법 §21② 분리 도급 의무**라 도급단가에 포함되지 않는다(`#918`).
 """
 
 from __future__ import annotations
@@ -219,61 +221,22 @@ def calculate_b04_sewage(
     }
 
 
-def calculate_b05_electricity(
-    *,
-    total_households: int,
-    per_hh_won: int = 250_000,
-) -> dict[str, Any]:
-    """B05 전기인입부담금."""
-    amount = per_hh_won * total_households
-    return {
-        "code": "B05", "name": "전기인입부담금",
-        "base_won": total_households, "rate": per_hh_won,
-        "amount_won": amount,
-    }
-
-
-def calculate_b06_gas(
-    *,
-    total_households: int,
-    per_hh_won: int = 180_000,
-) -> dict[str, Any]:
-    """B06 도시가스인입부담금."""
-    amount = per_hh_won * total_households
-    return {
-        "code": "B06", "name": "도시가스인입부담금",
-        "base_won": total_households, "rate": per_hh_won,
-        "amount_won": amount,
-    }
-
-
-def calculate_b07_telecom(
-    *,
-    total_households: int,
-    per_hh_won: int = 80_000,
-) -> dict[str, Any]:
-    """B07 통신인입부담금."""
-    amount = per_hh_won * total_households
-    return {
-        "code": "B07", "name": "통신인입부담금",
-        "base_won": total_households, "rate": per_hh_won,
-        "amount_won": amount,
-    }
-
-
-def calculate_b08_fire(
-    *,
-    total_gfa_sqm: float,
-    per_sqm_won: int = 3_500,
-) -> dict[str, Any]:
-    """B08 소방시설부담금."""
-    amount = int(total_gfa_sqm * per_sqm_won)
-    return {
-        "code": "B08", "name": "소방시설부담금",
-        "base_won": int(total_gfa_sqm), "rate": per_sqm_won,
-        "amount_won": amount,
-    }
-
+# ── ★B05~B08 은 **부담금이 아니어서 여기서 제거**됐다(2026-08-27) ──────────────
+#
+#   · **전기·가스·통신 인입** — 한전 **공급약관**·도시가스 **공급규정**·사업자 계약에 따른
+#     비용이지 법정 부담금이 아니다. 원문 실측: 전기사업법에 `시설부담금` **0회**
+#     (§51 「부담금」은 **전력산업기반부담금** = 전기 사용자 부과, 별개).
+#     → `app/services/cost/utility_connection_cost.py` 로 **공사비 이관**(금액 불변).
+#
+#   · **소방(구 B08 `3,500원/㎡`)** — 「소방시설 설치 및 관리에 관한 법률」에 `부담금`·`분담금`
+#     **0회**(대조군 `'소방'` 887회). 그리고 저장소 **적산 실적**으로 재니 소방공사는
+#     **27,223원/㎡(재료비만)** 로 코드값의 **7.8배**였다 — `3,500원/㎡` 는 소방공사비가
+#     될 수 없고, 실제 소방공사는 **직접공사비 도급단가에 이미 포함**돼 있다.
+#     → **이관하지 않고 제거**(이중계상). 상세·한계는 `utility_connection_cost` 머리말.
+#
+#   ★저장소가 절반은 알고 있었다 — `budget_template._CHARGES` 의 note 가
+#     *"한전 **시설분담금**(코드 B05)"*·*"도시가스 **공급규정**(코드 B06)"* 이라 적는다.
+#     **라벨만 「부담금」이었다.**
 
 def calculate_all_utility_stage(
     *,
@@ -309,10 +272,6 @@ def calculate_all_utility_stage(
             sido_name=sido_name, sigungu_name=sigungu_name,
             total_households=total_households,
         ),
-        calculate_b05_electricity(total_households=total_households),
-        calculate_b06_gas(total_households=total_households),
-        calculate_b07_telecom(total_households=total_households),
-        calculate_b08_fire(total_gfa_sqm=total_gfa_sqm),
     ]
 
     # 각 부담금에 법령 근거(근거+링크·evidence) 부착 — DRY 일괄(개별 함수 미수정·verified URL).

@@ -17,6 +17,7 @@ from typing import Any
 
 from app.foundation.parcel.batch import queue_policy
 from app.foundation.parcel.contracts.batch import BatchItemResult, ItemStatus
+from app.utils.pnu import is_valid_pnu
 
 
 def resolve_pnu_status(pnu: str, parcel: dict | None, chars: dict | None) -> BatchItemResult:
@@ -27,7 +28,7 @@ def resolve_pnu_status(pnu: str, parcel: dict | None, chars: dict | None) -> Bat
     - 필지 형상은 있으나 면적·용도 등 핵심값이 비어 보정이 필요하면 AMBIGUOUS(need_geocode 유사)
     - 외부에서 아무것도 못 찾으면 NOT_FOUND(failed)
     """
-    if not pnu or len(str(pnu).strip()) < 19:
+    if not is_valid_pnu(pnu):
         return BatchItemResult(
             pnu=str(pnu), status=ItemStatus.NOT_FOUND,
             reason="PNU 형식 오류(19자리 아님) — 가짜 생성 없이 미확정 표기.",

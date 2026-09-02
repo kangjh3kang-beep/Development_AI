@@ -195,9 +195,13 @@ async def get_status(db: AsyncSession, user_id: Any) -> dict[str, Any]:
     monthly_base, topup = float(row[4]), float(row[5])
     rate = await get_usd_krw_rate()
     metered = is_metered_tier(tier)
-    remaining = max(0.0, budget - billed)
-    base_remaining = max(0.0, monthly_base - billed)             # 월기본 잔여
-    topup_remaining = topup - max(0.0, billed - monthly_base)    # 충전 잔여(월기본 초과분 차감)
+    # ★표시도 게이트와 **같은 함수**를 쓴다 — 옛 코드는 여기서 충전분을 한 번 더 빼서
+    #   화면이 잔여를 절반으로 보여 줬다(복제된 식이 갈라지는 것을 구조로 막는다).
+    _rem = compute_remaining(billed=billed, monthly_base=monthly_base, topup=topup)
+    remaining = float(_rem["total_remaining"])
+    base_remaining = float(_rem["base_remaining"])
+    topup_remaining = float(_rem["topup_remaining"])
+    capacity = float(_rem["capacity"])
     meta = await _meta(db, user_id)
     acount = int(meta[1]) if meta else 0
     sfee = float(meta[2]) if meta else 0.0
@@ -212,8 +216,8 @@ async def get_status(db: AsyncSession, user_id: Any) -> dict[str, Any]:
         "budget_krw": round(budget),
         "billed_krw": round(billed),
         "remaining_krw": round(remaining),
-        "usage_pct": round(billed / budget * 100, 1) if budget > 0 else 0,
-        "blocked": (metered and billed >= budget) or team_limited,
+        "usage_pct": round(billed / capacity * 100, 1) if capacity > 0 else 0,
+        "blocked": (metered and bool(_rem["exhausted"])) or team_limited,
         "team_limited": team_limited,
         # 월기본/충전 코인 분리
         "monthly_base_krw": round(monthly_base),
@@ -241,6 +245,55 @@ async def team_limit_exceeded(db: AsyncSession, user_id: Any) -> bool:
         return False
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 잔액 산정 — ★**한 곳**에서만 정의한다(2026-08-27 수정)
+# ─────────────────────────────────────────────────────────────────────────────
+def compute_remaining(
+    *, billed: float, monthly_base: float, topup: float
+) -> dict[str, float | bool]:
+    """이번 주기의 잔액을 계산한다. **모든 소비처가 이 함수를 쓴다.**
+
+    ## ★왜 이 함수가 생겼나 (같은 결함이 세 얼굴로 있었다)
+
+    `users.topup_krw` 컬럼은 **이미 차감된 순액**이다 — `record_usage_usd` 가 매 사용마다
+    `topup_krw = GREATEST(0, topup_krw - draw)` 로 줄인다(`:290`).
+    그런데 세 곳이 **거기서 또 뺐다**:
+
+    | 자리 | 옛 식 | 결과 |
+    |---|---|---|
+    | 차단 게이트 | `billed >= budget` | 충전액의 **50%** 에서 차단 |
+    | 상태 표시 | `(metered and billed >= budget)` | 같은 값(복제본) |
+    | 충전 잔여 | `topup - max(0, billed - monthly_base)` | **절반으로 표시** |
+
+    `billed = base + s`, `topup = topup₀ - s` 이므로 `billed >= base + topup`
+    ⇔ `2s >= topup₀` ⇔ **`s >= topup₀/2`**.
+
+    ★**실측 확증(대조군 포함)**: `topup>0` 이면 정확히 50% 에서 차단되고,
+      `topup=0` 이면 `base` 에서 차단된다(정상) — 대조군이 갈렸으므로 시뮬 편향이 아니다.
+
+    ★사용자가 **낸 돈의 절반을 쓰지 못했다.** 결제 연동으로 실제 돈이 들어오기 전에
+      반드시 고쳐야 한다 — 아니면 유료 결제가 곧 절반의 손실이 된다.
+
+    Returns:
+        base_remaining: 월 기본 제공 잔여
+        topup_remaining: 충전 잔여(= 컬럼값 그대로. **다시 빼지 않는다**)
+        total_remaining: 합계
+        capacity: 이번 주기의 총 한도(사용률 분모)
+        exhausted: 둘 다 소진됐는가 — ★차단 판정의 **유일한** 근거
+    """
+    base_remaining = max(0.0, monthly_base - billed)
+    topup_remaining = max(0.0, topup)          # ★컬럼이 이미 순액이다
+    drawn_from_topup = max(0.0, billed - monthly_base)
+    return {
+        "base_remaining": base_remaining,
+        "topup_remaining": topup_remaining,
+        "total_remaining": base_remaining + topup_remaining,
+        # 총 한도 = 월기본 + (남은 충전 + 이미 쓴 충전) — 사용률의 정직한 분모
+        "capacity": monthly_base + topup_remaining + drawn_from_topup,
+        "exhausted": base_remaining <= 0 and topup_remaining <= 0,
+    }
+
+
 async def is_blocked(db: AsyncSession, user_id: Any) -> bool:
     row = await ensure_cycle(db, user_id)
     # ★팀 멤버 한도 초과는 구독 여부와 무관하게 차단(팀장이 설정한 개인 상한).
@@ -248,8 +301,13 @@ async def is_blocked(db: AsyncSession, user_id: Any) -> bool:
         return True
     if not row:
         return False
-    tier, billed, budget = row[0], row[1], row[2]
-    return is_metered_tier(tier) and billed >= budget
+    tier, billed = row[0], row[1]
+    monthly_base, topup = row[3], row[4]
+    if not is_metered_tier(tier):
+        return False
+    # ★`budget`(row[2]) 을 쓰지 않는다 — 그 컬럼은 소진분이 이미 빠진 값이라
+    #   `billed` 와 비교하면 같은 소진을 두 번 센다(위 compute_remaining 독스트링).
+    return bool(compute_remaining(billed=billed, monthly_base=monthly_base, topup=topup)["exhausted"])
 
 
 async def record_usage_usd(
@@ -460,8 +518,11 @@ async def get_balance(db: AsyncSession, user_id: Any) -> dict[str, Any]:
     tier, billed = row[0], float(row[1])
     cycle = row[3]
     monthly_base, topup = float(row[4]), float(row[5])
-    base_remaining = max(0.0, monthly_base - billed)
-    topup_remaining = max(0.0, topup - max(0.0, billed - monthly_base))
+    # ★네 번째 형제 — `get_status`/`is_blocked` 와 **같은 이중차감**이 여기에도 있었다.
+    #   스윕으로 찾았다(파생형 식 검색). 이제 셋 다 같은 함수를 쓴다.
+    _rem = compute_remaining(billed=billed, monthly_base=monthly_base, topup=topup)
+    base_remaining = float(_rem["base_remaining"])
+    topup_remaining = float(_rem["topup_remaining"])
     # ★비과금 등급(super_admin 등 TIER_BILLING 미포함)은 코인 게이트 면제(무제한).
     #   백엔드 하드게이트(is_blocked)는 이미 면제하나, 프론트 소프트게이트가 잔액 0원으로
     #   '분석 시작'을 막던 것을 해소한다. unlimited=True로 프론트가 무제한 처리.

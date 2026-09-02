@@ -28,6 +28,8 @@ let sent: string[] = [];
 beforeEach(() => {
   sent = [];
   vi.stubGlobal("navigator", { ...globalThis.navigator, sendBeacon: undefined });
+  // ★*"그래서 이 층을 못 태운다"* 는 **오추론**이다 — **비동기로는 읽을 수 있다**
+  //   (`__tests__/_read-blob.ts` · `transport-sendbeacon.test.ts`). 그 오추론이 부채를 만들었다.
   vi.stubGlobal("fetch", ((_u: string, init?: RequestInit) => {
     sent.push(String(init?.body ?? ""));
     return Promise.resolve({ ok: true } as Response);

@@ -35,6 +35,7 @@ import { buildAnalysisParcelAddrs } from "@/lib/parcel-rows";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { DEVELOPABILITY_LABEL, resolveFarPct, resolveBcrPct, specialFactorLabels } from "@/lib/zoning-ssot";
 import type { Locale } from "@/i18n/config";
+import { normalizePnu } from "@/lib/pnu";
 
 type MethodResult = {
   method: string;
@@ -145,7 +146,7 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
       const r = await apiClient.post<PermitAnalysis>("/permits/ai-analysis", {
         body: {
           address: target,
-          pnu: siteAnalysis?.pnu || undefined,
+          pnu: normalizePnu(siteAnalysis?.pnu) ?? undefined,
           site: siteAnalysis?.address === target ? siteAnalysis : undefined,
           parcels: parcels.length > 1 ? parcels : undefined,
           use_llm: useLlm,
@@ -172,7 +173,8 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
   // 히스토리 대상(현재 입력) + 변동감지 시그니처 파트 — run() 내부와 동일한 필지 폴백 규칙을 미러링.
   //   백엔드 계약과 동일 순서: [address, pnu||"", parcelCount, useLlm, options요약(인허가는 옵션 없음→"")].
   const historyAddress = addr || siteAnalysis?.address || "";
-  const historyPnu = siteAnalysis?.pnu || "";
+  // ★오염값이 시그니처에 섞이면 변동감지가 「달라졌다」로 오작동하고, :306 에서 자식으로도 흐른다.
+  const historyPnu = normalizePnu(siteAnalysis?.pnu) ?? "";
   const historySignatureParts = useMemo(() => {
     // ★run()이 실제 보내는 목록과 동일 SSOT(buildAnalysisParcelAddrs) — 손수 미러링하면
     //   시그니처와 분석 대상이 어긋나 변동감지가 오작동(중복 제거 규칙까지 일치해야 한다).

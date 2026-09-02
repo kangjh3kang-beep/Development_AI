@@ -5,7 +5,7 @@ import httpx
 import structlog
 
 from app.core.config import settings
-from app.services.legal.moleg_drf_envelope import raise_unless_expected
+from app.services.legal.moleg_drf_envelope import moleg_oc_key, raise_unless_expected
 
 logger = structlog.get_logger()
 
@@ -150,7 +150,7 @@ class RegulationMonitorService:
         cutoff = datetime.now() - timedelta(days=days_back)
 
         async def _one(client: httpx.AsyncClient, law: dict) -> dict | None:
-            params = {"OC": settings.MOLEG_API_KEY, "target": "law", "type": "JSON", "ID": law["id"]}
+            params = {"OC": moleg_oc_key(), "target": "law", "type": "JSON", "ID": law["id"]}
             resp = await client.get(f"{settings.MOLEG_BASE_URL}/lawService.do", params=params)
             resp.raise_for_status()  # 非200(429·5xx) → 예외(조용한 skip 금지=거짓 not-stale 차단)
             payload = resp.json()

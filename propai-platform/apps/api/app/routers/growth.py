@@ -383,7 +383,24 @@ class ActiveFlagOut(BaseModel):
 
     key: str
     scope: str
-    value: dict | None = None
+    #: ★`dict` 만 받으면 **문자열 워터마크가 통째로 `None` 으로 위장**된다.
+    #  `growth_last_run.{analyze,heal,correct,improve}` 는 `schedule.py` 가
+    #  `now.isoformat()` 로 **평문 문자열**을 쓴다(`compute_due`). 종전 라우터는
+    #  `value=fr[2] if isinstance(fr[2], dict) else None` 이라 그 넷을 전부 `None` 으로
+    #  내보냈다 — 운영자가 *"성장 축이 도는가"* 를 물을 때 **가장 먼저 보는 값**이
+    #  「한 번도 안 돌았다」와 **구별 불가**했다(실측: 활성 플래그 6건 중 4건이 위장).
+    #: ★★**쓰기 쪽 선언과 같아야 한다**(독립 적대 리뷰 실측 2026-09-02).
+    #  이 줄이 `SettingIn.value`(아래 `PUT /settings` 본문)보다 **좁으면**, 쓰기가 받아 준
+    #  값을 읽기가 **거부**한다 — `ActiveFlagOut(...)` 은 엔드포인트 본문 안이라
+    #  `response_model` 경고가 아니라 **처리되지 않은 예외 = HTTP 500** 이다.
+    #  그러면 `actions`·`active_flags`·`total` 이 **함께** 죽어 이 PR 이 읽히게 만들려던
+    #  진단 화면 전체가 사라진다.
+    #  ★실측(쓰기가 받는 여섯 타입을 읽기에 태움):
+    #      str ◎ · dict ◎ · **list → ValidationError(500)** · **int → 5 가 5.0 으로 변형**
+    #      · float ◎ · bool ◎
+    #  → `SettingIn.value` 와 **같은 순서·같은 집합**으로 맞춘다(int 를 float 앞에 둬야
+    #    정수가 정수로 남는다). 두 줄이 갈리면 다시 이 사고가 난다.
+    value: dict | list | str | int | float | bool | None = None
     ttl_expires_at: datetime | None = None
     updated_by: str | None = None
 
@@ -469,7 +486,8 @@ async def heal_log(
     active_flags = [
         ActiveFlagOut(
             key=fr[0], scope=fr[1],
-            value=fr[2] if isinstance(fr[2], dict) else None,
+            # 원값을 **그대로** 내보낸다(형변환·삼킴 금지 — 위 필드 주석 참조).
+            value=fr[2],
             ttl_expires_at=fr[3], updated_by=fr[4],
         )
         for fr in flag_rows
@@ -964,3 +982,27 @@ async def promote_learning_example(
         example_id=str(row[0]), status=str(row[1]),
         rights_acknowledged=rights_acknowledged,
     )
+
+
+@router.get("/effectors")
+async def effector_firing(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """효과기가 **실제로 발화했는가** — 선언(`effector_reach`) × 실측(`platform_events`).
+
+    ## 왜 이 라우트가 필요한가
+
+    `effector_reach` 표는 *"이 효과기가 동작하면 어디까지 닿는가"* 를 적는다.
+    그런데 **"동작한 적이 있는가"** 는 어디에도 없었다. 그래서 표만 읽으면
+    `threshold_relax` 를 보고 *"제품에 닿는 효과기가 살아 있다"* 고 읽는데,
+    실제로는 며칠째 조용할 수 있고 **그것을 알 방법이 없었다**(라이브 실측 66시간).
+
+    ★**진단하지 판정하지 않는다.** `reach=NONE` 인 효과기가 영원히 발화하지 않는 것이
+    정상일 수 있다. 사실(`total`·`last_fired_at`·`hours_since`)과 라벨(`state`)을 함께
+    주고, 라벨에 동의하지 않을 수 있게 **원값을 항상 싣는다**.
+    """
+    from app.services.growth import effector_firing as _ef
+
+    await _require_admin(request, db)
+    return await _ef.firing_status(db)

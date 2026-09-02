@@ -44,6 +44,7 @@ import {
   auditVerdict,
 } from "./auditAnnotation";
 import { UseLlmToggle } from "@/components/common/UseLlmToggle";
+import { normalizePnu } from "@/lib/pnu";
 
 /* ── 스테퍼 정의 ── */
 
@@ -336,7 +337,7 @@ export function DesignAuditWorkspace({
   const site = usingProject
     ? {
         address: siteAnalysis?.address ?? "",
-        pnu: siteAnalysis?.pnu ?? null,
+        pnu: normalizePnu(siteAnalysis?.pnu),
         // ★용도지역은 SSOT 리더(resolveDominantZone)로 읽는다 — 다필지 통합 대표(우세) 용도지역
         //   우선, 없으면 단일 zoneCode(직독 대신 단일 계약으로 통합·백엔드 zone_type 봉합).
         zoneCode: resolveDominantZone(siteAnalysis),
@@ -427,7 +428,7 @@ export function DesignAuditWorkspace({
           site: {
             project_id: usingProject ? projectId : null,
             address: site.address || null,
-            pnu: site.pnu || null,
+            pnu: normalizePnu(site.pnu),
             // 백엔드 run()이 zone_type←zone_code 폴백으로 봉합(용도지역이 한도의존 엔진에 도달).
             zone_code: site.zoneCode || null,
             sigungu: site.sigungu || null,

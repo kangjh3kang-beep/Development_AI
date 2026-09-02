@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { trackEvent } from "@/lib/growth/event-collector";
+import { reportBoundaryError } from "@/lib/growth/report-boundary-error";
 import { tryRecoverFromChunkError } from "@/lib/chunk-recovery";
 
 export default function DashboardError({
@@ -16,19 +16,7 @@ export default function DashboardError({
     // ★배포 직후 열려 있던 탭의 청크 404 는 사용자가 고칠 것이 없다 — 세션당 1회 자동 복구.
     //   복구했으면 곧 페이지가 갈리므로 이 아래는 의미가 없다(루프 방지는 헬퍼가 한다).
     if (tryRecoverFromChunkError(error)) return;
-    try {
-      trackEvent("js_error", {
-        severity: "error",
-        payload: {
-          scope: "dashboard-error",
-          message: error?.message ?? "",
-          digest: error?.digest ?? null,
-          stack: error?.stack ? error.stack.slice(0, 2000) : null,
-        },
-      });
-    } catch {
-      /* noop */
-    }
+    reportBoundaryError("dashboard-error", error);
   }, [error]);
 
   return (

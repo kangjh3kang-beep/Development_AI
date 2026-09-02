@@ -5,7 +5,10 @@
 항목 dict 의 키 이름이 `base_won` 이라 **전부 「원」인 것처럼 읽힌다.** 실제로는 셋이다:
 
     int(total_gfa_sqm)      → ㎡     (B01 · B08 · C07 · C08)
-    total_households        → 세대   (B05 · B06 · B07)   ★B03·B04 는 아래 참조
+    total_households        → 세대   (B02 일부)
+    ★B05~B08 은 **표에서 제거**됐다(2026-08-27) — 부담금이 아니라 공사비여서
+      utility_stage_engine 에서 빠졌다. 인입 3건은 cost/utility_connection_cost 로 이관,
+      소방은 직접공사비 도급단가에 이미 포함(적산 실적 실측 27,223원/㎡ vs 코드 3,500원/㎡)이라 제거.
     total_sale_amount_won   → 원     (B02 · C01~C06)
 
 표시층이 `base_won` 을 전부 `"원(과표)"` 로 라벨링했더니 **「300원 과표 × 140,000 요율」**
@@ -26,7 +29,6 @@ __all__ = ["CHARGE_BASE_UNITS", "base_units_for"]
 CHARGE_BASE_UNITS: dict[str, tuple[str, str]] = {
     # 연면적 기준 — base_won = int(total_gfa_sqm)
     "B01": ("㎡", "부과율"),          # utility_stage_engine.py:89  (광역교통시설)
-    "B08": ("㎡", "원/㎡"),           # utility_stage_engine.py:243 (소방시설)
     "C07": ("㎡", "원/㎡"),           # sale_stage_engine.py:151    (기반시설)
     "C08": ("㎡", "원/㎡"),           # sale_stage_engine.py:166    (에너지절약)
     # 세대 기준 — base_won = total_households
@@ -45,9 +47,6 @@ CHARGE_BASE_UNITS: dict[str, tuple[str, str]] = {
     # ★B04 하수도 — 오수발생량(㎥/일) × 단위단가(원/㎥/일).
     #   근거: 하수도법 §61①+시행령 §35① · 울산시 하수도 사용 조례 §24①4호 원문.
     "B04": ("㎥/일", "원/㎥/일"),
-    "B05": ("세대", "원/세대"),        # utility_stage_engine.py:201 (전기인입)
-    "B06": ("세대", "원/세대"),        # utility_stage_engine.py:215 (도시가스인입)
-    "B07": ("세대", "원/세대"),        # utility_stage_engine.py:229 (통신인입)
     # 금액 기준 — base_won = total_sale_amount_won
     "B02": ("원", "요율"),            # utility_stage_engine.py:131 (학교용지)
     "C01": ("원", "세율"),            # sale_stage_engine.py:48     (부가가치세)

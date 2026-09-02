@@ -82,6 +82,7 @@ type MarketReportResponse = MarketReport & {
 // 기존 도메인 셀렉터(SGIS/KOSIS market 서브모듈)·buildOptionsPayload·/market/report 흐름은 불변.
 // 이 패널은 별도 store(propai-orchestration)·별도 실행경로라 기존 과금/실행과 결선되지 않는다.
 import { OrchestratorPanel } from "@/components/orchestration/OrchestratorPanel";
+import { bcodeFromPnu, normalizePnu } from "@/lib/pnu";
 
 // PDF/PPTX 바이너리 다운로드용 API 베이스 (api-client 로직 미러)
 function marketApiBase(): string {
@@ -523,9 +524,12 @@ export function MarketInsightsWorkspaceClient() {
   // 실제 분석 대상 주소 — 버튼 클릭으로 확정된 값만 지도/산출에 전달.
   const address = runAddress;
   // ── 다필지 SSOT 파생 ──
-  const mapPnu = runStoreParcels.length > 0
-    ? ((runStoreParcels[0]?.pnu as string) || "")
-    : ((siteAnalysis?.pnu as string) || "");
+  // ★유효성을 여기서 건다 — 이 값은 ①`bcode` 로 파생돼 지도 두 곳에 들어가고
+  //   ②백엔드 요청 본문의 `pnu` 로 나간다. PNU 칸의 오염값(라이브 5/292: 성명·`store-rep-…`)이
+  //   그대로 흐르면 **없는 법정동으로 조회가 나가고** 서버는 가짜 PNU 를 echo 한다.
+  const mapPnu = normalizePnu(
+    runStoreParcels.length > 0 ? (runStoreParcels[0]?.pnu as string) : (siteAnalysis?.pnu as string),
+  ) ?? "";
   // 등록된 전 필지 주소(구획도 통합 경계용).
   const runParcelAddrs = useMemo(
     () => runStoreParcels.map((p) => p.address ?? "").filter(Boolean),
@@ -537,7 +541,7 @@ export function MarketInsightsWorkspaceClient() {
     [runStoreParcels],
   );
   // P4-B 인구밀도: bcode(법정동 10자리) = PNU 앞 10자리. 동시표시 토글(지연로드).
-  const mapBcode = mapPnu.slice(0, 10);
+  const mapBcode = bcodeFromPnu(mapPnu) ?? "";
   const [showDensity, setShowDensity] = useState(false);
   // 권역 순이동 코로플레스(시군구 발산 지도) 지연로드 토글 — 인구이동망 패널 하단.
   const [showMigrationMap, setShowMigrationMap] = useState(false);

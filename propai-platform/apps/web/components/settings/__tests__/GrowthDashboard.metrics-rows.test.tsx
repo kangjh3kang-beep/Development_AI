@@ -51,7 +51,9 @@ const REAL_PAYLOADS: Record<string, Record<string, unknown>> = {
   // analyzer.py:_analyze_quality_drop (**metrics 스프레드 포함)
   quality_drop: { service: "avm", verify_total: 50, fail: 12, warn: 3, feedback_total: 20, down: 8, fail_pct: 24.0, warn_pct: 6.0, down_pct: 40.0 },
   // analyzer.py:_analyze_latency_regression
-  latency_regression: { key: "/api/v1/y", p95_ms: 2200.0, samples: 40, baseline_p95: 2200.0, prev_baseline_p95: 900.0 },
+  // ★`triggers`·`typical_p95`·`typical_windows` 를 **빠뜨리지 않는다** — 픽스처가 계약보다
+  //   좁으면 그 필드를 쓰는 코드가 테스트에서만 통과한다(이 파일 머리말이 적어 둔 그 함정).
+  latency_regression: { key: "/api/v1/y", p95_ms: 2200.0, samples: 40, baseline_p95: 2200.0, prev_baseline_p95: 900.0, triggers: ["ratio"], typical_p95: 1500.0, typical_windows: 9 },
   latency_baseline: { key: "/api/v1/y", p95_ms: 900.0, samples: 40, baseline_p95: 900.0, prev_baseline_p95: null },
   // analyzer.py:_analyze_recurring_verify_errors
   recurring_verify_error: { service: "legal", issue_type: "missing_citation", count: 40, per_hour: 1.7, high_count: 9 },
@@ -84,6 +86,67 @@ describe("★계약 — 인사이트 카드가 지표를 실제로 낸다", () =
       ).toBeTruthy();
     },
   );
+
+  /* ------------------------------------------------------------------ *
+   * ★지연 카드가 **어느 축이 울렸는지** 말한다 — 소비처 0 을 끝낸 자리의 락
+   *
+   *   절대편차 **단독** 발화는 화면에 `p95 33,000ms / 기준선 23,524ms` = **1.40배**로
+   *   나간다. 비율 임계는 1.5배이므로 **임계 미만인 수치 옆에 `warn`** 이 붙는다 —
+   *   축을 말하지 않으면 사람이 왜 울렸는지 알 방법이 없다(진단 불가는 장애다).
+   *
+   *   ★백엔드만 고치고 이 락이 없으면 **프론트를 통째로 되돌려도 전부 초록**이다.
+   *     그것이 이 저장소가 반복해 데인 형태다("몇 개 층에 넣었나").
+   * ------------------------------------------------------------------ */
+  const latencyWith = (over: Record<string, unknown>) =>
+    ins("latency_regression", { ...REAL_PAYLOADS.latency_regression, ...over });
+
+  it("★두 모집단 — 비율 단독과 절대편차 단독이 **서로 다른** 축을 말한다", () => {
+    // 한쪽만 단언하면 "항상 같은 문구를 붙이는 구현"이 통과한다.
+    const r = render(<InsightMetrics insight={latencyWith({ triggers: ["ratio"] })} />);
+    // ★**라벨을 정확 일치로** 단언한다 — 값만 보면 라벨을 지우는 변이가 생존한다(실측).
+    expect(screen.getByText("발화 축")).toBeTruthy();
+    expect(r.container.textContent).toContain("비율(기준선 대비)");
+    expect(r.container.textContent).not.toContain("절대편차");
+    r.unmount();
+
+    const a = render(<InsightMetrics insight={latencyWith({ triggers: ["absolute"] })} />);
+    expect(screen.getByText("발화 축")).toBeTruthy();
+    expect(a.container.textContent).toContain("절대편차(평소값 대비)");
+    expect(a.container.textContent).not.toContain("비율(기준선 대비)");
+  });
+
+  it("★평소값이 **실린다** — 키만 있고 값이 안 실리는 것을 막는다", () => {
+    render(<InsightMetrics insight={latencyWith({ triggers: ["absolute"], typical_p95: 23524.0 })} />);
+    // ★★`toContain("평소값")` 은 **공허했다** — 축 라벨 `절대편차(평소값 대비)` 가
+    //   그 부분문자열을 이미 갖고 있어, 평소값 **행을 통째로 지워도 초록**이었다(실측).
+    //   내가 쓴 문구가 내 단언을 무력화한 것 — 라벨은 **정확 일치 노드**로 본다.
+    expect(screen.getByText("평소값")).toBeTruthy();
+    expect(screen.getByText("23,524ms")).toBeTruthy();
+  });
+
+  it("★「모름」을 **0ms 로 위장하지 않는다** — 평소가 0ms 인 경로라는 관측이 되어 버린다", () => {
+    render(
+      <InsightMetrics insight={latencyWith({ triggers: ["absolute"], typical_p95: null, typical_windows: 2 })} />,
+    );
+    expect(screen.getByText(/판정 불가\(이력 2건\)/)).toBeTruthy();
+    // ★부분문자열로 보지 않는다 — `not.toContain("0ms")` 는 같은 카드의 **`2,200ms`**
+    //   안의 `0ms` 를 집어 **정상 렌더를 위반으로 신고**한다(실측으로 걸렸다).
+    //   값 노드와 **정확히 일치**하는지로 판정한다.
+    expect(screen.queryByText("0ms")).toBeNull();
+    // 양성 대조군 — 조회기가 살아 있는지(값 노드를 실제로 집을 수 있는지) 먼저 증명한다.
+    expect(screen.getByText("2,200ms")).toBeTruthy();
+  });
+
+  it("음성 대조군 — 발화가 아니면(`triggers` 빈 목록) 축 행이 **없다**", () => {
+    // 이것이 없으면 "항상 축 행을 그리는 구현"이 위 락을 전부 통과한다.
+    const { container } = render(<InsightMetrics insight={latencyWith({ triggers: [] })} />);
+    expect(container.textContent).not.toContain("발화 축");
+  });
+
+  it("모르는 축 코드는 **감추지 않고 원문 그대로** — 새 축이 조용히 사라지는 것을 막는다", () => {
+    const { container } = render(<InsightMetrics insight={latencyWith({ triggers: ["brand_new_axis"] })} />);
+    expect(container.textContent).toContain("brand_new_axis");
+  });
 
   it("★폴백률 카드가 **사유**를 말한다 — 이게 없으면 무엇부터 고칠지 모른다", () => {
     render(<InsightMetrics insight={ins("fallback_rate", REAL_PAYLOADS.fallback_rate)} />);
@@ -127,9 +190,49 @@ describe("★계약 — 인사이트 카드가 지표를 실제로 낸다", () =
     expect(screen.getByText("영향 파일")).toBeTruthy();
     expect(screen.getByText("2개")).toBeTruthy();           // affected_files 길이
     expect(screen.getByText("PR 상태")).toBeTruthy();
-    expect(screen.getByText("draft_only")).toBeTruthy();    // pr_status
+    // ★2026-08-27: 종전엔 raw `draft_only` 를 단언했는데, 그건 **결함을 기대값으로 고정**한
+    //   것이었다 — 라이브 53/53 이 `artifact_only` 인 채 영문으로 떴다(#808 과 같은 얼굴).
+    //   라벨로 바꾸되 **이 테스트의 원래 의도(값이 payload 에서 온다)를 약화시키지 않는다**:
+    //   고정 문구를 단언하면 상수 행이 그것을 흉내낼 수 있으므로, **두 payload 가 서로 다른
+    //   라벨을 낸다**를 같은 실행에서 확인한다.
+    expect(screen.getByText("PR 준비됨(봇 대기)")).toBeTruthy();   // draft_only
     // 안전 정보(자동 머지 없음)도 함께 — 이것만으로는 위 구멍을 못 막으므로 마지막에 둔다.
     expect(screen.getByText(/사람 승인 필요/)).toBeTruthy();
+  });
+
+  it("★PR 상태가 **payload 에 따라 갈린다** — 상수 문구가 아니다", () => {
+    // 두 모집단: 같은 타입인데 pr_status 만 다르면 화면 문구가 달라야 한다.
+    const a = render(
+      <InsightMetrics
+        insight={ins("improvement_proposal", {
+          ...REAL_PAYLOADS.improvement_proposal, pr_status: "draft_only",
+        })}
+      />,
+    );
+    const t1 = a.container.textContent ?? "";
+    a.unmount();
+    const b = render(
+      <InsightMetrics
+        insight={ins("improvement_proposal", {
+          ...REAL_PAYLOADS.improvement_proposal, pr_status: "artifact_only",
+        })}
+      />,
+    );
+    const t2 = b.container.textContent ?? "";
+    expect(t1).not.toBe(t2);
+    // ★라이브 53/53 이 이 값이다 — 운영자가 "왜 PR 이 없나"를 화면에서 알 수 있어야 한다.
+    expect(t2).toContain("토큰 없음");
+    // ★모르는 코드는 감추지 않고 원문 그대로(새 상태 신호를 숨기지 않는다).
+    const c = render(
+      <InsightMetrics
+        insight={ins("improvement_proposal", {
+          ...REAL_PAYLOADS.improvement_proposal, pr_status: "brand_new_state",
+        })}
+      />,
+    );
+    expect(c.container.textContent).toContain("brand_new_state");
+    c.unmount();
+    b.unmount();
   });
 
   it("★prompt_candidate 도 payload 에서 온 값을 낸다 — 두 타입은 payload 가 다르다", () => {
