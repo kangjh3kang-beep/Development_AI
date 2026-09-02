@@ -123,6 +123,11 @@ def test_CLAUDE_md_가_선언한_종료코드와_구현이_일치한다() -> Non
     assert "exit 10" in doc and "exit 11" in doc, (
         "CLAUDE.md 가 종료코드를 선언하지 않는다 — 실패를 어떻게 읽을지 알 수 없다"
     )
+    # ★12(판정 불가)가 **가장 오독되기 쉽다** — 비영 종료라 "CAUGHT" 로 읽힌다.
+    #   그런데 뜻은 정반대다: "아직 아무것도 알아내지 못했다".
+    assert "exit 12" in doc, (
+        "CLAUDE.md 가 **판정 불가(12)** 를 선언하지 않는다 — 비영 종료가 CAUGHT 로 오독된다"
+    )
 
 
 def test_셸_래퍼면_판정을_발행하지_않는다(sandbox) -> None:
