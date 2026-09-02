@@ -18,6 +18,8 @@ import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const postMock = vi.fn();
+/** 검색 스텁이 무엇을 고를지 — 테스트마다 바꾼다(빈 div 스텁은 이 경로를 전혀 안 태운다). */
+const PICK = { address: "상도동 211-204" };
 vi.mock("@/lib/api-client", async (orig) => {
   const actual = await (orig as () => Promise<Record<string, unknown>>)();
   return { ...actual, apiClient: { ...(actual.apiClient as object), post: (...a: unknown[]) => postMock(...a), get: vi.fn() } };
@@ -34,7 +36,7 @@ vi.mock("@/components/ui/KakaoAddressSearch", () => ({
       data-testid="kakao-pick"
       onClick={() =>
         props.onSelect?.({
-          fullAddress: "상도동 211-204", roadAddress: "", jibunAddress: "상도동 211-204",
+          fullAddress: PICK.address, roadAddress: "", jibunAddress: PICK.address,
           zonecode: "", sido: "", sigungu: "", bname: "", buildingName: "", bcode: "",
         })
       }
@@ -64,6 +66,7 @@ const count = () => Number(screen.getByTestId("map").getAttribute("data-parcels"
 
 
 beforeEach(() => {
+  PICK.address = 짧은;
   postMock.mockReset();
   postMock.mockResolvedValue({ parcels: [] });   // 기본: 보강이 아무것도 안 바꾼다
 });
@@ -142,5 +145,72 @@ describe("★B 모집단(3단계) — 보강이 표기를 수렴시킨 뒤 중�
     await waitFor(() => expect(count()).toBe(2));
     fireEvent.click(screen.getByTestId("kakao-pick"));   // 이미 있는 짧은 표기와 **같은 필지**
     await waitFor(() => expect(count(), "★같은 필지가 또 추가됐다").toBe(2));
+  });
+});
+
+
+describe("★배선 보강 — 변이 생존 2건을 봉합한다", () => {
+  /**
+   * ★①은 처음에 **생존**했다. 픽스처가 «같은 문자열» 이라 옛 주소 비교도 같은 결과를 냈다 —
+   * **두 모집단이 안 갈렸다.** 표기만 다른 **같은 필지**로 바꿔야 규칙이 드러난다.
+   */
+  it("① 표기만 다른 같은 필지는 추가되지 않는다(옛 `===` 는 추가했다)", async () => {
+    seed([{ address: 짧은, pnu: null, areaSqm: 100 }, { address: 동, pnu: PNU_A, areaSqm: 53 }]);
+    PICK.address = "상도동  211-204";        // ★공백만 다르다 — 같은 필지다
+    render(<GlobalAddressSearch single={false} writeToContext />);
+    await waitFor(() => expect(count()).toBe(2));
+    fireEvent.click(screen.getByTestId("kakao-pick"));
+    // 옛 코드(`a.fullAddress === entry.fullAddress`)는 문자열이 달라 **3건**이 됐다.
+    await waitFor(() => expect(count(), "★표기만 다른 같은 필지가 또 추가됐다").toBe(2));
+  });
+
+  /**
+   * ★③도 처음에 **생존**했다 — 엑셀 병합 경로가 어떤 테스트에서도 태워지지 않았다.
+   * 파일 입력을 실제로 흔들어 `handleExcelUpload` → `/zoning/parse-parcels` 를 태운다.
+   */
+  async function uploadExcel(rows: Array<Record<string, unknown>>) {
+    postMock.mockImplementation((url: string) => {
+      if (String(url).includes("/zoning/parse-parcels")) return Promise.resolve({ parcels: rows });
+      return Promise.resolve({ parcels: [] });
+    });
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    expect(input, "★파일 입력을 못 찾았다 — 이 케이스는 공허하다").not.toBeNull();
+    fireEvent.change(input, { target: { files: [new File(["x"], "조서.xlsx")] } });
+    await waitFor(
+      () => expect(postMock.mock.calls.some((c) => String(c[0]).includes("/zoning/parse-parcels")),
+        "★파싱 요청이 안 나갔다").toBe(true),
+      { timeout: 4000 },
+    );
+  }
+
+  it("③ ★기존 필지가 **같은 주소라는 이유로 지워지지 않는다**(PNU 가 다르면 다른 필지)", async () => {
+    seed([{ address: 동, pnu: PNU_B, areaSqm: 684 }, { address: 긴, pnu: null, areaSqm: 100 }]);
+    render(<GlobalAddressSearch single={false} writeToContext />);
+    await waitFor(() => expect(count()).toBe(2));
+    // 업로드분은 **같은 동 주소**지만 **다른 PNU** — 옛 코드는 기존 PNU_B 행을 주소가 같다는
+    // 이유로 버렸다(접힘). 새 규칙은 서로 다른 필지로 본다.
+    await uploadExcel([{ address: 동, pnu: PNU_A, area_sqm: 53 }]);
+    await waitFor(() => expect(count(), "★같은 동 주소라는 이유로 기존 필지가 사라졌다").toBe(3), { timeout: 5000 });
+  });
+
+  it("③-b ★음성 대조군 — 정말 같은 필지면 기존분은 안 남는다(과잉 보존 금지)", async () => {
+    seed([{ address: 동, pnu: PNU_A, areaSqm: 53 }, { address: 긴, pnu: null, areaSqm: 100 }]);
+    render(<GlobalAddressSearch single={false} writeToContext />);
+    await waitFor(() => expect(count()).toBe(2));
+    await uploadExcel([{ address: 동, pnu: PNU_A, area_sqm: 53 }]);   // 같은 PNU = 같은 필지
+    await waitFor(() => expect(count(), "★같은 필지가 두 건으로 남았다").toBe(2), { timeout: 5000 });
+  });
+
+  it("④ 엑셀 파일 안의 중복(공유지분 다중행)은 1필지로 정리된다", async () => {
+    seed([{ address: 긴, pnu: null, areaSqm: 100 }, { address: 동, pnu: PNU_B, areaSqm: 684 }]);
+    render(<GlobalAddressSearch single={false} writeToContext />);
+    await waitFor(() => expect(count()).toBe(2));
+    // 같은 필지가 소유자별로 3행 — 분석 목록은 **필지 단위**다.
+    await uploadExcel([
+      { address: 동, pnu: PNU_A, area_sqm: 53 },
+      { address: 동, pnu: PNU_A, area_sqm: 53 },
+      { address: 동, pnu: PNU_A, area_sqm: 53 },
+    ]);
+    await waitFor(() => expect(count(), "★같은 필지 3행이 그대로 들어왔다").toBe(3), { timeout: 5000 });
   });
 });
