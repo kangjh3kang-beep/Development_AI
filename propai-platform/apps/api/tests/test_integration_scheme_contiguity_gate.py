@@ -977,6 +977,19 @@ def test_absorption_rule_prevents_over_restriction():
     ])
     assert kept == ["제1종일반주거지역"], f"330㎡ 초과면 각 부분에 각 규정 — {kept}"
 
+    # ★②-b **두 모집단을 가른다** — 흡수가 일어나도 **남는 제한**은 살아야 한다.
+    #   이 케이스가 없으면 `restricted = []`(흡수 시 통째로 비우기)라는 틀린 구현이 통과한다
+    #   (실측 SURVIVED). 흡수되는 것이 유일한 제한 지역이면 두 구현의 답이 같기 때문이다.
+    mixed = SS.apartment_restricted_zones([
+        {"zone": "제1종전용주거지역", "area": 300.0},      # 최소 → 흡수(≤330㎡)
+        {"zone": "제1종일반주거지역", "area": 5_000.0},    # 흡수 안 됨 → **남아야 한다**
+        {"zone": "제2종일반주거지역", "area": 80_000.0},   # 최대
+    ])
+    assert "제1종일반주거지역" in mixed, (
+        f"흡수와 무관한 제한까지 사라졌다 — {mixed} (흡수는 **가장 작은 부분 하나**만이다)"
+    )
+    assert "제1종전용주거지역" not in mixed, f"흡수된 자투리가 남았다 — {mixed}"
+
     # ③ 단일 용도지역이면 흡수 여지가 없다
     assert SS.apartment_restricted_zones([{"zone": "제1종일반주거지역", "area": 50.0}]) == [
         "제1종일반주거지역"]
