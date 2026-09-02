@@ -21,6 +21,8 @@ from urllib.parse import urlencode
 
 import structlog
 
+from app.utils.pnu import is_valid_pnu
+
 logger = structlog.get_logger()
 
 # 씬 규모(±half_m 정사각). 지형 메시·항공 커버·주변 bbox 공통 기준.
@@ -199,7 +201,7 @@ async def _enrich_neighbor_heights(neighbors: list[dict[str, Any]]) -> None:
     - 실패/무자료/국외IP차단: 기존 9m 추정 유지(estimated=true). in-place 갱신.
     """
     candidates = [
-        n for n in neighbors if (n.get("pnu") or "") and len(str(n.get("pnu"))) >= 19
+        n for n in neighbors if is_valid_pnu(n.get("pnu"))
     ]
     candidates.sort(key=lambda n: n.get("_dist", 1e9))
     targets = candidates[:NEIGHBOR_REGISTRY_TOP_N]
