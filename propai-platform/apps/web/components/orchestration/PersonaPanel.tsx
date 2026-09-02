@@ -495,7 +495,7 @@ export function PersonaPanel({ projectId, runDisabled = false }: PersonaPanelPro
   const requestBody = useMemo<PersonaRequestBody>(() => {
     // ★유효한 19자리에서만 파생한다(가짜 PNU 가 `"store-rep-"` 을 법정동코드로 만들었다).
     const pnu = normalizePnu(siteAnalysis?.pnu);
-    const bcode = siteAnalysis?.pnu && siteAnalysis.pnu.length >= 10 ? siteAnalysis.pnu.slice(0, 10) : null;
+    const bcode = bcodeFromPnu(siteAnalysis?.pnu);
     const parcels =
       siteAnalysis?.parcels
         ?.map((p) => p.address)
