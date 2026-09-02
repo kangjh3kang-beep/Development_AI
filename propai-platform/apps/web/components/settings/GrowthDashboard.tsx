@@ -621,7 +621,11 @@ function HealSection() {
                             {ttlRemaining(f.ttl_expires_at)}
                           </span>
                         </div>
-                        {f.value && summarizeParams(f.value) && (
+                        {/* ★`f.value &&` 는 `false`·`0` 을 **버린다** — 이 PR 이 백엔드에서
+                            고친 바로 그 결함(값은 있는데 화면에서 사라진다)을 이 PR 의
+                            새 코드가 프론트에서 재현하고 있었다(독립 적대 리뷰 2026-09-02).
+                            타입을 `boolean | number` 로 넓혀 놓고 이 가드를 안 고쳤다. */}
+                        {f.value != null && summarizeParams(f.value) && (
                           <p className="mt-2 text-xs text-[var(--text-hint)]">
                             <span className="cc-num text-[var(--text-secondary)]">
                               {summarizeParams(f.value)}

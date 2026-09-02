@@ -640,13 +640,13 @@ async def _analyze_fallback_rate(db, w0, w1, coverage: dict[str, dict[str, Any]]
         by_service.setdefault(svc, {})[str(reason)] = int(n or 0)
 
     out: list[dict[str, Any]] = []
-    judged = withheld = 0
+    judged = withheld_n = 0
     for r in rows:
         service, fb, calls = r[0], int(r[1] or 0), int(r[2] or 0)
         # ★판정 가능 여부를 **분류 결과가 아니라 표본으로** 센다 — `sev is None` 은
         #   "표본 부족"과 "표본 충분하고 정상"을 뭉갠다(둘 다 None 이다).
         if calls < FALLBACK_MIN_CALLS:
-            withheld += 1
+            withheld_n += 1
         else:
             judged += 1
         sev, pct = _classify_fallback(fb, calls)
@@ -667,7 +667,7 @@ async def _analyze_fallback_rate(db, w0, w1, coverage: dict[str, dict[str, Any]]
                 "reasons": reasons, "top_reason": top,
             },
         })
-    note_coverage(coverage, "fallback_rate", judged=judged, withheld_count=withheld,
+    note_coverage(coverage, "fallback_rate", judged=judged, withheld_count=withheld_n,
                   floor=FALLBACK_MIN_CALLS)
     return out
 
@@ -772,13 +772,13 @@ async def _analyze_quality_drop(db, w0, w1, coverage: dict[str, dict[str, Any]] 
         a["ftotal"] += int(r[2] or 0)
 
     out: list[dict[str, Any]] = []
-    judged = withheld = 0
+    judged = withheld_n = 0
     for service, a in agg.items():
         # ★`sev is None` 으로 세면 "표본 부족"과 "표본 충분·정상"이 뭉개진다.
         #   `_classify_quality` 와 **같은 판정식**을 쓴다(하나를 고치면 다른 하나가 어긋나는
         #   것을 막기 위해 두 값 모두 QUALITY_MIN_SAMPLES 에 결속한다).
         if a["vtotal"] < QUALITY_MIN_SAMPLES and a["ftotal"] < QUALITY_MIN_SAMPLES:
-            withheld += 1
+            withheld_n += 1
         else:
             judged += 1
         sev, metrics = _classify_quality(
@@ -797,7 +797,7 @@ async def _analyze_quality_drop(db, w0, w1, coverage: dict[str, dict[str, Any]] 
                 "feedback_total": a["ftotal"], "down": a["down"], **metrics,
             },
         })
-    note_coverage(coverage, "quality_drop", judged=judged, withheld_count=withheld,
+    note_coverage(coverage, "quality_drop", judged=judged, withheld_count=withheld_n,
                   floor=QUALITY_MIN_SAMPLES)
     return out
 
@@ -899,12 +899,12 @@ async def _analyze_latency_regression(db, w0, w1, coverage: dict[str, dict[str, 
     baselines = {r[0]: float(r[1] or 0.0) for r in base_rows}
 
     out: list[dict[str, Any]] = []
-    judged = withheld = 0
+    judged = withheld_n = 0
     for key, vals in by_key.items():
         if len(vals) < LATENCY_MIN_SAMPLES:
             # ★행을 만들지 않는 것은 옳다(802개를 발행하면 소음이 는다). 다만
             #   **몇 개를 못 봤는지는 말해야** 한다 — 안 그러면 커버리지 3% 가 100% 로 읽힌다.
-            withheld += 1
+            withheld_n += 1
             continue
         judged += 1
         p95 = round(_percentile(vals, 95.0), 2)
@@ -925,7 +925,7 @@ async def _analyze_latency_regression(db, w0, w1, coverage: dict[str, dict[str, 
                 "prev_baseline_p95": baseline_p95,
             },
         })
-    note_coverage(coverage, "latency_regression", judged=judged, withheld_count=withheld,
+    note_coverage(coverage, "latency_regression", judged=judged, withheld_count=withheld_n,
                   floor=LATENCY_MIN_SAMPLES)
     return out
 

@@ -211,7 +211,7 @@ def test_emitted_coverage_key_is_still_the_contract_name():
     assert "withheld_count" not in cov["ax"], "파라미터 이름이 payload 로 새어 나갔다"
 
 
-def test_no_analyzer_parameter_shadows_a_module_level_import():
+def test_no_analyzer_name_shadows_a_module_level_import():
     """★**파생형 · AST** — `analyzer.py` 의 **전 함수**를 잠근다(이 한 함수만이 아니라).
 
     문자열 검사로는 못 한다 — 이 파일의 설명 문장에 그대로 걸린다(§판정은 파서로).
@@ -236,7 +236,16 @@ def test_no_analyzer_parameter_shadows_a_module_level_import():
             imported |= {(a.asname or a.name.split(".")[0]) for a in node.names}
     assert imported, "임포트를 하나도 못 찾았다 — 파서가 죽었다(공허한 참 방지)"
 
+    # ★★**파라미터만 보면 절반이다**(독립 적대 리뷰 실측 2026-09-02).
+    #   종전 이 락은 `args` 만 읽어서 **지역 대입 그림자**를 못 봤다 — 실제로 같은 파일에
+    #   `withheld = ...` 지역 대입이 **3함수 6줄** 살아 있었고, 그중 하나는 보류 지표를
+    #   **생산하는** 함수(`_analyze_quality_drop`)라 그 헬퍼의 가장 유력한 미래 호출부였다.
+    #   락 이름이 *"전 함수를 잠근다"* 였는데 실제로는 *"전 함수의 **파라미터**"* 였다.
+    #   → **대입(Store)까지** 센다. 둘 다 같은 사고(헬퍼가 이름으로 가려짐)를 낸다.
     offenders: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store) and node.id in imported:
+            offenders.append(f"지역대입 {node.id} @{node.lineno}")
     for node in ast.walk(tree):
         if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
             continue
@@ -286,12 +295,39 @@ async def test_heal_log_does_not_swallow_string_watermarks_END_TO_END(monkeypatc
 
     monkeypatch.setattr(gr, "_require_admin", _ok_admin)
 
+    # ★★**모집단을 손으로 고르지 않는다 — 쓰기 쪽 선언에서 파생한다.**
+    #   (독립 적대 리뷰 실측 2026-09-02) 종전 이 테스트는 `str`·`dict` **둘만** 손으로 골랐다.
+    #   그런데 쓰기 쪽 `SettingIn.value` 는 **여섯 타입**을 받는다. 손 목록이 **상한**이 되어
+    #   `list` 가 **HTTP 500**(ValidationError)을, `int` 가 **float 로 변형**되는 것을
+    #   둘 다 못 봤다 — 이 저장소가 반복해서 데인 *"손으로 나열한 목록이 곧 상한"* 이다.
+    #   → **쓰기 타입에서 표본을 만든다.** 쓰기가 한 타입을 더 받게 되면 이 테스트가
+    #     **자동으로** 그것을 태운다(새 타입이 감시망에 저절로 들어온다).
+    import typing as _t
+
+    from app.routers.growth import SettingIn
+
+    _writer_types = {
+        a for a in _t.get_args(SettingIn.model_fields["value"].annotation)
+        if a is not type(None)
+    }
+    # ★대조군 — 파생이 죽으면 아래가 공허해진다(빈 집합도 "전부 통과"다)
+    assert len(_writer_types) >= 5, f"★쓰기 타입 파생이 죽었다: {_writer_types}"
+
+    _sample = {dict: {"timeout_multiplier": 1.5}, list: ["a", "b"], str: "s",
+               int: 5, float: 1.5, bool: True}
+    missing = _writer_types - set(_sample)
+    assert not missing, f"★쓰기가 새 타입을 받는데 표본이 없다: {missing} — 표본을 추가하라"
+
     watermark = "2026-08-27T06:05:00+00:00"
     flag_rows = [
         # ★모집단 A — 평문 문자열 워터마크(`schedule.py` 가 isoformat() 로 쓴다)
         ("growth_last_run.analyze", "global", watermark, None, "growth-scheduler"),
         # ★모집단 B — dict 값(종전 구현이 유일하게 통과시키던 것)
         ("relax.molit", "global", {"timeout_multiplier": 1.5}, None, "healer"),
+    ] + [
+        # ★모집단 C — **쓰기가 받는 나머지 전부**(파생). 하나라도 읽기가 거부하면 500 이다.
+        (f"writer.{t.__name__}", "global", _sample[t], None, "w")
+        for t in sorted(_writer_types, key=lambda x: x.__name__)
     ]
 
     class _Res:
@@ -313,8 +349,19 @@ async def test_heal_log_does_not_swallow_string_watermarks_END_TO_END(monkeypatc
     out = await gr.heal_log(request=object(), db=_Db())
     got = {f.key: f.value for f in out.active_flags}
 
-    # ★대조군 먼저 — 두 모집단이 실제로 응답에 들어왔나(공허한 초록 방지)
-    assert set(got) == {"growth_last_run.analyze", "relax.molit"}, f"★플래그가 안 실렸다: {got}"
+    # ★대조군 먼저 — 모집단이 실제로 응답에 들어왔나(공허한 초록 방지)
+    expected = {"growth_last_run.analyze", "relax.molit"} | {
+        f"writer.{t.__name__}" for t in _writer_types
+    }
+    assert set(got) == expected, f"★플래그가 안 실렸다: {set(got) ^ expected}"
+
+    # ★쓰기가 받는 **모든** 타입이 읽기에서 살아 나온다 — 하나라도 거부하면 엔드포인트가
+    #   통째로 500 이라 actions·active_flags·total 이 **함께** 사라진다.
+    for t in _writer_types:
+        assert got[f"writer.{t.__name__}"] == _sample[t], (
+            f"★쓰기가 받는 {t.__name__} 가 읽기에서 변형·거부됐다: "
+            f"{got[f'writer.{t.__name__}']!r} != {_sample[t]!r}"
+        )
 
     # ①문자열이 **문자열 그대로** 살아 나온다 — 여기가 종전 결함 자리
     assert got["growth_last_run.analyze"] == watermark, (
