@@ -62,10 +62,56 @@ CLAIM_SECTIONS: tuple[tuple[str, str], ...] = (
 
 #: 차원 표기(`2D`·`3D`·`4D`)는 **개수가 아니다** — 숫자 검사 전에 걷어낸다.
 #: ★이 면제가 죽으면(대상이 사라지면) `test_dimension_exemption_is_live` 가 실패한다.
-#:   죽은 면제를 초록으로 남기지 않기 위해서다.
-_DIMENSION = re.compile(r"\b\d+\s?D\b")
-LOCALES: tuple[str, ...] = ("ko", "en", "zh-CN")
+#: ★`\b` 를 쓰지 않는다 — `3D建模` 처럼 **한자가 바로 붙으면 경계가 성립하지 않아** 면제가
+#:   조용히 죽는다(zh-CN 번역자가 공백을 빼는 순간). 앞뒤로 **숫자·라틴문자만** 배제한다.
+_DIMENSION = re.compile(r"(?<![0-9A-Za-z])\d+\s?[Dd](?![A-Za-z0-9])")
+
+#: ★CJK 수사 — `re.findall(r"\d+")` 는 **한자 숫자를 보지 못한다.** 독립 리뷰가 이 통로로
+#:   폐기된 「229개 시군구 조례 실시간」 주장을 zh-CN 에 되살렸는데 **19건 전부 초록**이었다.
+#:   락 독스트링이 *"언어 무관"* 이라 단언하고 있었으므로 그 단언 자체가 거짓이었다.
+#:   판정할 수 없는 표기는 **통과시키지 않고 거부**한다(모르는 것을 초록으로 두지 않는다).
+#:   ★단순히 「수사 한 글자라도 있으면 거부」는 **위양성**이다 — `一键计算`(원클릭)·`一体化`·
+#:     `下一阶段`(다음 단계)처럼 수사가 **낱말의 일부**인 경우가 흔하다(실측: 전체 1,478
+#:     문자열 중 10건). 그래서 **수사 2자 이상 연속** 또는 **수사 + 계수 단위**만 본다.
+#:     양성 대조군: `三十八`·`二二九`·`十种` 은 잡히고 `一键`·`一体` 는 안 잡힌다.
+#:     ★한계: `十` 단독처럼 계수 단위 없는 한 글자 주장은 여전히 안 보인다(축 안 실측 0건).
+_CJK_NUM_CHARS = "〇零一二三四五六七八九十百千万億两"
+_CJK_COUNTERS = "种個个項项개종가지단계階阶級级"
+_CJK_NUMERAL = re.compile(
+    rf"[{_CJK_NUM_CHARS}]{{2,}}|[{_CJK_NUM_CHARS}][{_CJK_COUNTERS}]"
+)
+
+
+def _unbacked_numbers(text: str) -> set[int]:
+    """문구가 주장하는 정수 중 **코드에서 파생되지 않은 것**.
+
+    ★`_derived_counts()` 를 **여기 한 자리에서만** 부른다. 종전에는 판정이 테스트 본문에
+      인라인돼 있어서, `allowed` 를 리터럴 `{15, 28, 4}` 로 바꾸는 변이가 **19건 전부 초록**으로
+      **생존**했다(독립 리뷰 실측). 이 락의 요점이 *"문구를 코드에 결속시키는 것"* 인데
+      **결속을 끊어도 아무것도 죽지 않았다** — 변이를 함수 안에만 넣으면 배선은 무잠금이다.
+      단일 호출부로 모아야 `test_판정이_파생값에_실제로_실린다` 가 그것을 태울 수 있다.
+    """
+    allowed = set(_derived_counts().values())
+    return {int(n) for n in re.findall(r"\d+", _judgeable(text))} - allowed
+
+
+def _judgeable(text: str) -> str:
+    """숫자 판정에 쓸 문자열 — 차원 표기를 **판정 단계에서도** 걷어낸다.
+
+    ★종전에는 **키를 고를 때만** 걷어내고 판정에서는 안 걷어냈다. 그래서 `3D` 를 품은
+      문자열에 **정당한** 개수를 넣으면 락이 **거짓 위반**을 냈다(가드의 위양성도 결함이다).
+      면제는 **한 자리**에서만 정의한다.
+    """
+    return _DIMENSION.sub("", text)
 _WEB = pathlib.Path(__file__).resolve().parents[2] / "web" / "public" / "locales"
+
+#: ★로케일도 **파생**한다. 종전에는 손으로 적은 3개였고, 독립 리뷰가 그것을 깼다:
+#:   `LOCALES` 를 `("ko",)` 로 줄이면 **빨개지지 않고 단언 8개가 조용히 사라진다**
+#:   (수집기 생존 락의 기대값이 `len(LOCALES) * ...` 라 **변이와 함께 줄어든다**).
+#:   *"빨강 개수가 아니라 통과 수를 대조하라 — 수집 실패는 조용하다"* 의 정확한 사례.
+LOCALES: tuple[str, ...] = tuple(
+    sorted(d.name for d in _WEB.iterdir() if d.is_dir() and (d / "common.json").exists())
+)
 
 
 def _derived_counts() -> dict[str, int]:
@@ -113,7 +159,7 @@ def _claim_keys(locale: str = "ko") -> list[str]:
             if not isinstance(node, dict):
                 continue
             val = node.get(leaf)
-            if isinstance(val, str) and re.search(r"\d", _DIMENSION.sub("", val)):
+            if isinstance(val, str) and re.search(r"\d", _judgeable(val)):
                 keys.append(f"{section}.{name}.{leaf}")
     return sorted(keys)
 
@@ -146,6 +192,20 @@ class TestDerivationIsAlive:
         assert _stage_groups({"A01", "B01", "C01", "D01", "E01"}) == 5
         # 같은 군의 코드가 늘어도 군 수는 안 변한다(개수를 세는 게 아니라 군을 센다).
         assert _stage_groups({"A01", "A02", "A03"}) == 1
+
+    def test_로케일_집합이_디스크와_일치한다(self):
+        """★`LOCALES` 를 파생으로 바꿨어도 **그것만으로는 안 잠긴다.**
+
+        수집기 생존 락의 기대값이 `len(LOCALES) * …` 라 **자기지시적**이다 — `LOCALES` 를
+        `("ko",)` 로 하드코딩하면 기대값도 같이 줄어 **초록**이다(실측: 변이 SURVIVED).
+        그래서 **디스크에서 독립적으로 다시 세어** 대조한다. 상수를 상수로 단언하지 않는다.
+        """
+        디스크 = {d.name for d in _WEB.iterdir() if d.is_dir() and (d / "common.json").exists()}
+        assert set(LOCALES) == 디스크, (
+            f"LOCALES 가 디스크와 다르다 — 화면 {sorted(LOCALES)} vs 디스크 {sorted(디스크)}. "
+            "로케일이 조용히 빠지면 그 언어의 단언이 **빨개지지 않고 사라진다**"
+        )
+        assert len(LOCALES) >= 3, f"로케일이 {len(LOCALES)}개뿐이다(ko·en·zh-CN 최소): {LOCALES}"
 
     def test_claim_keys_are_derived_not_a_hand_list(self):
         """★축에서 파생됐는지 — 손 목록으로 되돌리면 여기서 걸린다."""
@@ -184,21 +244,47 @@ class TestDerivationIsAlive:
 class TestEveryClaimedNumberIsDerived:
     @pytest.mark.parametrize(("locale", "key", "text"), _claim_strings())
     def test_numbers_in_claim_are_code_derived(self, locale, key, text):
-        allowed = set(_derived_counts().values())
-        numbers = {int(n) for n in re.findall(r"\d+", text)}
-        unbacked = numbers - allowed
+        judgeable = _judgeable(text)
+        assert not _CJK_NUMERAL.search(judgeable), (
+            f"[{locale}] {key} 에 **한자 수사**가 있다 — 이 락은 아라비아 숫자만 판정할 수 있어 "
+            f"그 주장을 **볼 수 없다**(판정 불가를 초록으로 두지 않는다). 문구: {text[:70]}"
+        )
+        unbacked = _unbacked_numbers(text)
         assert not unbacked, (
             f"[{locale}] {key} 가 코드에 없는 수치를 주장한다: {sorted(unbacked)} "
-            f"(파생 가능한 값: {sorted(allowed)}) — 문구: {text[:70]}"
+            f"(파생 가능한 값: {sorted(_derived_counts().values())}) — 문구: {text[:70]}"
         )
 
     def test_the_check_can_actually_fail(self):
-        """★음성 대조군 — 위반을 심어 **잡히는지** 본다(공허한 초록 방지)."""
-        allowed = set(_derived_counts().values())
+        """★음성 대조군 — 위반을 심어 **잡히는지** 본다(공허한 초록 방지).
+
+        ★리뷰 지적으로 **판정 로직을 인라인 재구현하지 않고** 실제 함수를 태운다 —
+          종전에는 재구현이라 본문을 무력화해도 이 대조군이 초록이었다.
+        """
         planted = "15개 개발유형, 38종 세무, 전국 229개 시군구 실시간"
-        unbacked = {int(n) for n in re.findall(r"\d+", planted)} - allowed
+        unbacked = _unbacked_numbers(planted)
         assert unbacked, "★검사기 사망 — 옛 문구(38·229)를 심었는데 위반으로 안 잡힌다"
         assert 229 in unbacked and 38 in unbacked
+
+    def test_판정이_파생값에_실제로_실린다(self, monkeypatch):
+        """★배선 락 — 파생값을 흔들면 **같은 문구의 판정이 따라 바뀌어야** 한다.
+
+        독립 리뷰가 `allowed` 리터럴 변이로 **19건 전부 초록**을 만들었다. 이름(파생값을
+        «부른다»)이 아니라 **값이 실리는지**를 두 모집단으로 본다.
+        """
+        문구 = "15개 개발유형 x 28종"
+        # 모집단 A — 실제 파생값에서는 위반 없음
+        assert _unbacked_numbers(문구) == set()
+        # 모집단 B — 파생값을 흔들면 **같은 문구가 위반이 된다**
+        monkeypatch.setitem(
+            __import__("sys").modules[__name__].__dict__,
+            "_derived_counts", lambda: {"흔든값": 7},
+        )
+        assert _unbacked_numbers(문구) == {15, 28}, (
+            "★파생값을 바꿨는데 판정이 안 바뀐다 — 판정이 코드에 결속돼 있지 않다"
+        )
+        # 흔든 값이 **실제로 실리는지**(허용 방향도 함께 — 한쪽만 보면 반쪽이다)
+        assert _unbacked_numbers("7개") == set()
 
 
 class TestRetiredClaimsDoNotReturn:
@@ -213,3 +299,87 @@ class TestRetiredClaimsDoNotReturn:
         """★대조군 — 파일을 실제로 읽고 있는지(빈 문자열을 훑고 「없음」이라 하지 않게)."""
         raw = (_WEB / "ko" / "common.json").read_text(encoding="utf-8")
         assert len(raw) > 1000 and "개발유형" in raw, "★스캐너가 파일을 못 읽는다"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# ★랜딩 페이지 스탯 — **선언은 스스로를 검증하지 않는다**
+#
+# `WhySection.tsx` 헤더가 *"스탯 수치는 전부 코드베이스에서 실측 검증한 값만 사용
+# (무근거 수치 0)"* 이라고 **선언**하고 있었는데, 락이 없어서 재보니 **셋 중 둘이 틀렸다**:
+#   · `11` 종 지도 레이어  → 실제 `LAYERS` **12**
+#   · `6`  종 AI 리포트    → 실제 `creationProducts` **9**(생성 허브 9번째 카드)
+# 게다가 주석이 가리킨 경로마저 틀렸다(`page.tsx` ↔ 실제 `DashboardHome.tsx`).
+#
+# ★i18n 축과 **다른 매체**다(하드코딩 .tsx). 그래서 축을 넓히지 않고 **여기에 따로** 잠근다.
+# ──────────────────────────────────────────────────────────────────────────────
+_WEBROOT = pathlib.Path(__file__).resolve().parents[2] / "web"
+
+
+def _bracketed_array(source: str, anchor: str) -> str:
+    """`anchor` 뒤의 `[` 부터 **괄호 균형**으로 배열 본문을 떼어 낸다.
+
+    ★고정 길이 창으로 자르지 않는다 — 이 저장소는 고정 창이 **옆 표를 읽어** 「없는 결함」을
+      만든 전례가 있다. 경계는 **문법**으로 정한다.
+    """
+    m = re.search(anchor, source)
+    assert m, f"앵커를 못 찾았다(수집기 사망): {anchor}"
+    # ★`index("[", m.start())` 로 찾으면 **타입 표기의 `[]`** 를 집는다
+    #   (`const LAYERS: SatongLayer[] = [` → 빈 배열을 떼어 내 개수가 0 이 된다).
+    #   실제로 이 락을 처음 쓸 때 그렇게 0 을 얻었고, **대조군(«파생값 > 0»)이 잡았다.**
+    #   그래서 앵커가 `= [` 까지 포함하도록 요구하고 그 끝에서 시작한다.
+    start = source.index("[", m.end() - 1)
+    depth = 0
+    for i in range(start, len(source)):
+        if source[i] == "[":
+            depth += 1
+        elif source[i] == "]":
+            depth -= 1
+            if depth == 0:
+                return source[start : i + 1]
+    raise AssertionError(f"괄호가 닫히지 않았다: {anchor}")
+
+
+def _landing_stats() -> dict[str, int]:
+    """랜딩 스탯이 주장하는 값을 **원천에서 파생**한다."""
+    layers = _bracketed_array(
+        (_WEBROOT / "components/precheck/SatongMapShell.tsx").read_text(encoding="utf-8"),
+        r"\bLAYERS\s*(?::[^=]*)?=\s*\[",
+    )
+    products = _bracketed_array(
+        (_WEBROOT / "components/dashboard/DashboardHome.tsx").read_text(encoding="utf-8"),
+        r"const creationProducts\s*(?::[^=]*)?=\s*\[",
+    )
+    renderers = sorted(
+        p.name
+        for p in (
+            pathlib.Path(__file__).resolve().parents[1] / "app/services/report/render"
+        ).glob("*_renderer.py")
+    )
+    return {
+        "map_layers": len(re.findall(r'^\s*id:\s*"', layers, re.M)),
+        "creation_products": len(re.findall(r'^\s*routeId:\s*"', products, re.M)),
+        "report_formats": len(renderers),
+    }
+
+
+class TestLandingStatsAreDerived:
+    def test_수집기가_살아있다(self) -> None:
+        """★대조군 — 파생이 죽으면 아래 일치 단언이 «0 == 0» 으로 공허해진다."""
+        d = _landing_stats()
+        for k, v in d.items():
+            assert v > 0, f"★{k} 파생 실패(수집기 사망): {d}"
+        # 괄호 균형 파서가 실제로 자르고 있는지(전체 파일을 통째로 반환하지 않는지)
+        src = (_WEBROOT / "components/precheck/SatongMapShell.tsx").read_text(encoding="utf-8")
+        arr = _bracketed_array(src, r"\bLAYERS\s*[:=]")
+        assert 0 < len(arr) < len(src), "★파서가 파일 전체를 반환한다 — 경계가 안 잡혔다"
+
+    def test_랜딩_스탯이_코드와_일치한다(self) -> None:
+        why = (_WEBROOT / "components/marketing/WhySection.tsx").read_text(encoding="utf-8")
+        주장 = [int(v) for v in re.findall(r'^\s*value:\s*"(\d+)"', why, re.M)]
+        assert len(주장) == 3, f"★스탯 카드 3장을 기대했는데 {len(주장)}개 — 수집기 사망"
+        d = _landing_stats()
+        기대 = [d["map_layers"], d["creation_products"], d["report_formats"]]
+        assert 주장 == 기대, (
+            f"랜딩 스탯이 코드와 어긋난다 — 화면 {주장} vs 코드 {기대}. "
+            "배열이 늘었으면 문구를 함께 고쳐라(수치는 선언이 아니라 파생이다)"
+        )

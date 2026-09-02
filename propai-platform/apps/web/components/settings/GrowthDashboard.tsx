@@ -139,8 +139,72 @@ function num(v: unknown): number | null {
 function str(v: unknown): string | null {
   return typeof v === "string" && v.trim() ? v : null;
 }
+/** metrics_json 의 문자열 배열(예: `triggers`). 배열이 아니면 빈 배열. */
+function arr(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && !!x.trim()) : [];
+}
+/**
+ * 지연 발화 **축 코드 → 한글**.
+ *
+ * 원천은 백엔드 `app/services/growth/analyzer.py` 의 `_LATENCY_TRIGGER_LABELS` 이고
+ * 값을 만드는 곳은 같은 파일의 `triggers = [...]` 다. 어긋나면 화면에 영문 raw
+ * (`ratio`/`absolute`)가 그대로 샌다 — **`apps/api/tests/test_latency_trigger_label_parity.py`
+ * 가 `ast` 로 양쪽을 파싱해 대조한다**(형제 `REASON_LABELS` 와 같은 형식으로 락 파일명을 적는다).
+ * ★그 락은 라벨표끼리만이 아니라 **생산자(`triggers = [...]`)까지 세 번째 모집단**으로 태운다 —
+ *   라벨표끼리만 맞추면 **둘 다 틀린 경우**를 못 잡기 때문이다.
+ *
+ * ★이 주석은 한때 **없는 락을 있다고 단언**했다(적대 리뷰가 실증: 백엔드에 세 번째 축을
+ *   추가해도 프론트 89건이 전부 초록이었다). 면역을 적을 때는 **그 면역이 실재하는지**
+ *   확인하고 적는다 — 없는 면역을 적는 것이 없는 것보다 나쁘다.
+ * ★★그 뒤 만든 첫 락도 **정규식이 파이썬 표기법을 재구현**한 것이라, 세 번째 키만
+ *   작은따옴표로 쓰면 **조용히 통과**했다(실측). 그래서 판정을 `ast` 파서로 옮겼다 —
+ *   ***"내 락이 태우는 것이 프로덕션 코드인가, 복제본인가?"***
+ *
+ * ★모르는 코드는 **감추지 않고 원문 그대로** 보여준다(REASON_LABELS 와 같은 원칙) —
+ *   숨기면 "새 축이 생겼다"는 가장 중요한 신호가 조용히 사라진다.
+ */
+const LATENCY_TRIGGER_LABELS: Record<string, string> = {
+  ratio: "비율(기준선 대비)",
+  absolute: "절대편차(평소값 대비)",
+};
 function pct(v: number | null): string {
   return v === null ? "-" : `${(v <= 1 ? v * 100 : v).toFixed(1)}%`;
+}
+
+/**
+ * 판정 커버리지(`metrics_json.analysis_coverage`) → 화면 문구.
+ *
+ * ★왜 필요한가(라이브 실측 2026-08-27): 조치 탐지기들이 **조용한 이유**가
+ * *"문제가 없어서"* 가 아니라 *"판정할 표본이 하한에 못 미쳐서"* 인 경우가 있다 —
+ * `fallback_rate judged=0/2 (하한 10)`. 그 사실은 **데이터에는 있었고 화면에는 없었다.**
+ * 운영자가 open 3,188건을 보면서 **폴백 탐지가 지금 눈이 멀었다**는 것을 알 수 없었다.
+ *
+ * ★문구 설계: `judged=7/23` 을 **"7건이 옳다"로 읽히게 하지 않는다.**
+ *   커버리지는 *"몇 축을 판정했는가"* 이지 *"판정이 맞는가"* 가 아니다
+ *   (볼트 2026-08-26: 커버리지가 거짓 행에 `judged` 도장을 찍어 **개선이 결함을 강화**한 전례).
+ *   그래서 **모수와 하한을 함께** 적고, `judged=0` 은 **「판정 불가」로 명시**한다.
+ */
+export function coverageRows(cov: unknown): { label: string; value: string }[] {
+  if (!cov || typeof cov !== "object" || Array.isArray(cov)) return [];
+  const out: { label: string; value: string }[] = [];
+  for (const [axis, raw] of Object.entries(cov as Record<string, unknown>)) {
+    if (!raw || typeof raw !== "object") continue;
+    const v = raw as Record<string, unknown>;
+    const judged = num(v.judged);
+    const total = num(v.total);
+    const floor = num(v.floor);
+    if (judged === null || total === null) continue;
+    const floorTxt = floor === null ? "" : ` · 하한 ${floor}`;
+    // ★두 모집단을 문구로 가른다 — 판정 불가와 부분 판정은 다른 상태다.
+    const value =
+      total === 0
+        ? `대상 없음${floorTxt}`
+        : judged === 0
+          ? `판정 불가 — 0/${total} 표본 부족${floorTxt}`
+          : `${judged}/${total} 축 판정${floorTxt}`;
+    out.push({ label: axis, value });
+  }
+  return out;
 }
 /**
  * LLM 실패 **사유 코드 → 한글**.
@@ -153,6 +217,35 @@ function pct(v: number | null): string {
  * ★모르는 코드는 **감추지 않고 원문 그대로** 보여준다. 숨기면 분포 합이 틀어지고,
  *   "새 실패 유형이 생겼다"는 가장 중요한 신호가 조용히 사라진다.
  */
+/**
+ * 자동 PR 파이프라인 상태 코드 → 한글.
+ *
+ * ★왜 필요한가(라이브 실측 2026-08-27): `improvement_proposal` **53건 전부**가
+ * `pr_status="artifact_only"` 인데 화면은 그 **영문 원문을 그대로** 찍었다.
+ * `artifact_only` 의 뜻은 *"`GH_TOKEN` 이 없어 PR 을 만들지 못하고 아티팩트만 남겼다"* 인데,
+ * 운영자는 그것이 **정상 축약인지 장애인지** 알 수 없다.
+ * ★이건 `#808`(인사이트 7종이 라벨 없이 raw 로 떴다)과 **같은 결함 클래스**다 —
+ *   그때 고친 것은 `insight_type` 축이고, 이 축은 남아 있었다.
+ *
+ * 원천은 `tasks/growth_pr_task._mark_pr_status` 호출부 4종 + `improvement_agent.py:204`
+ * 초기값 1종이고, `tests/test_insight_metrics_key_coverage.py` 가 그 집합과 대조한다.
+ *
+ * ★모르는 코드는 **감추지 않고 원문 그대로** 보여준다 — 새 상태가 생겼다는 신호를
+ *   숨기면 그것이 가장 조용한 결함이 된다(REASON_LABELS 와 같은 규율).
+ */
+const PR_STATUS_LABELS: Record<string, string> = {
+  draft_only: "PR 준비됨(봇 대기)",
+  artifact_only: "PR 미생성 — 토큰 없음(제안만 보관)",
+  pr_created: "Draft PR 생성됨",
+  pr_failed: "PR 생성 실패",
+  rejected_path: "거부 — 허용 경로 밖 파일",
+};
+
+/** 상태 코드 → 한글. 모르는 코드는 **원문 그대로**(숨기지 않는다). */
+export function prStatusLabel(code: string): string {
+  return PR_STATUS_LABELS[code] ?? code;
+}
+
 const REASON_LABELS: Record<string, string> = {
   timeout: "타임아웃",
   parse: "응답 파싱 실패",
@@ -248,13 +341,35 @@ export function InsightMetrics({ insight }: { insight: GrowthInsight }) {
       break;
     }
     case "latency_regression": {
-      // 백엔드 키(analyzer.py): key(route|service) / p95_ms / prev_baseline_p95.
+      // 백엔드 키(analyzer.py): key(route|service) / p95_ms / prev_baseline_p95
+      //                        / triggers / typical_p95 / typical_windows.
       const p95 = num(m.p95_ms ?? m.p95);
       const baseline = num(m.prev_baseline_p95 ?? m.baseline_ms ?? m.baseline);
       const key = str(m.key ?? m.route);
       if (key) rows.push({ label: "경로", value: key });
       if (p95 !== null) rows.push({ label: "p95 지연", value: `${Math.round(p95).toLocaleString("ko-KR")}ms` });
       if (baseline !== null) rows.push({ label: "기준선", value: `${Math.round(baseline).toLocaleString("ko-KR")}ms` });
+      // ★**어느 축이 울렸는가.** 없으면 절대편차 단독 발화가 `p95 33,000ms /
+      //   기준선 23,524ms` = 1.40배로 보여, 비율 임계(1.5배) **미만**인데 warn 이 붙은
+      //   것으로 읽힌다 — 화면만 보고는 왜 울렸는지 알 수 없다.
+      const trigs = arr(m.triggers);
+      if (trigs.length > 0) {
+        rows.push({
+          label: "발화 축",
+          value: trigs.map((x) => LATENCY_TRIGGER_LABELS[x] ?? x).join(", "),
+        });
+        // ★`typical_p95` 가 없으면 **0ms 로 그리지 않는다** — 「모름」을 유효값으로
+        //   위장하는 순간 「평소가 0ms 인 경로」라는 관측이 되어 버린다.
+        const typical = num(m.typical_p95);
+        const windows = num(m.typical_windows);
+        rows.push({
+          label: "평소값",
+          value:
+            typical !== null
+              ? `${Math.round(typical).toLocaleString("ko-KR")}ms`
+              : `판정 불가(이력 ${windows !== null ? windows : "?"}건)`,
+        });
+      }
       break;
     }
     case "recurring_verify_error": {
@@ -267,6 +382,10 @@ export function InsightMetrics({ insight }: { insight: GrowthInsight }) {
       if (issue) rows.push({ label: "오류 유형", value: issue });
       if (perHour !== null) rows.push({ label: "시간당", value: `${perHour.toLocaleString("ko-KR")}건` });
       if (count !== null) rows.push({ label: "총 검출", value: count.toLocaleString("ko-KR") });
+      // ★주석이 계약으로 열거한 5키 중 high_count 만 그려지지 않았다(2026-08-27 실측).
+      //   '계산오류 18건 중 심각 18건' 처럼 **심각 비중이 그 항목의 무게**인데 화면에 없었다.
+      const high = num(m.high_count);
+      if (high !== null) rows.push({ label: "그중 심각", value: high.toLocaleString("ko-KR") });
       break;
     }
     case "latency_baseline": {
@@ -332,7 +451,7 @@ export function InsightMetrics({ insight }: { insight: GrowthInsight }) {
       const prStatus = str(m.pr_status);
       if (conf !== null) rows.push({ label: "신뢰도", value: pct(conf) });
       if (files !== null) rows.push({ label: "영향 파일", value: `${files.toLocaleString("ko-KR")}개` });
-      if (prStatus) rows.push({ label: "PR 상태", value: prStatus });
+      if (prStatus) rows.push({ label: "PR 상태", value: prStatusLabel(prStatus) });
       // ★자동 머지가 **꺼져 있다**는 사실이 이 카드의 안전 정보다 — 사람 승인 없이는
       //   아무것도 반영되지 않는다는 것을 화면이 말해야 한다.
       rows.push({ label: "반영", value: "사람 승인 필요(자동 머지 없음)" });
@@ -353,6 +472,12 @@ export function InsightMetrics({ insight }: { insight: GrowthInsight }) {
     default:
       break;
   }
+
+  // ★타입별 switch **밖**에서 붙인다 — analyzer 가 커버리지를 **전 타입에** 박은 이유가
+  //   "타입별 손수 분기는 새 타입을 자동으로 누락시킨다"(analyzer.py:468~479)이기 때문이다.
+  //   그 방어를 소비 쪽에서 무너뜨리지 않으려면 여기도 타입을 몰라야 한다.
+  const covRows = coverageRows((m as Record<string, unknown>).analysis_coverage);
+  for (const r of covRows) rows.push({ label: `판정 ${r.label}`, value: r.value });
 
   if (rows.length === 0) return null;
   return (
@@ -396,7 +521,9 @@ type HealAction = {
 type ActiveFlag = {
   key: string;
   scope: string;
-  value: Record<string, unknown> | null;
+  /** ★dict 만이 아니다 — `growth_last_run.*` 워터마크는 ISO **문자열**이다.
+   *  백엔드가 종전에 문자열을 `null` 로 삼켜 「축이 도는가」를 못 보게 했다. */
+  value: Record<string, unknown> | string | number | boolean | null;
   ttl_expires_at: string | null;
   updated_by: string | null;
 };
@@ -434,20 +561,67 @@ function ttlRemaining(iso: string | null): string {
   return `${Math.floor(hr / 24)}일 ${hr % 24}시간 남음`;
 }
 
-// params 객체를 "키 값 · 키 값" 요약(최대 4개). 중첩/긴 값은 절단.
-function summarizeParams(p: Record<string, unknown> | null): string {
-  if (!p) return "";
+/** 액션 `params` 표시 상한. 라이브 200건 실측 키 분포 `{3:2, 4:198}` — 오늘은 안 문다. */
+const ACTION_PARAMS_RENDER_CAP = 4;
+
+/**
+ * 플래그 `value` 표시 상한.
+ *
+ * ★**의미 경계가 아니라 렌더 안전 경계다.** 어떤 키가 「중요한지」를 정하지 않는다 —
+ * 넘으면 **반드시 `외 N종` 으로 말한다**(아래 `summarizeParams`). 즉 이 상한은
+ * 무한 렌더만 막고, **조용히 감추지는 못한다.**
+ */
+const FLAG_VALUE_RENDER_CAP = 40;
+
+/**
+ * params/flag 객체를 `"키 값 · 키 값"` 요약. 중첩/긴 값은 절단.
+ *
+ * 【무엇이 있었나 · 라이브 실측 2026-09-02】
+ * 상한이 **4로 고정**이었고 **버린 몫을 말하지 않았다.** 그런데 이 함수가 그리는
+ * `f.value` 는 Postgres `jsonb` 에서 온다 — **`jsonb` 는 삽입 순서를 보존하지 않고
+ * (키 길이, 바이트순)으로 정렬한다.** 그래서 화면에 무엇이 보이는지가 의미가 아니라
+ * **키 이름의 철자 길이**로 정해지고 있었다(아무도 의도하지 않았고 어디에도 안 적혀 있었다).
+ *
+ * 실측 — `/growth/heal-log?limit=200`:
+ *
+ *     growth_capture(worker) 17키 · 보임 4 · ★조용히 버림 12
+ *     growth_capture(api)    17키 · 보임 4 · ★조용히 버림 13
+ *     버려진 것 중: lost_total · loss_rate_pct · queue_depth · dropped_overflow
+ *                   · dropped_after_retry · flush_failures · consecutive_failures
+ *
+ * 즉 **유실·실패 신호가 통째로 안 보였다.** 음성 대조군 — 같은 응답의
+ * `prompt_candidates`(3키)·`threshold.fallback_warn_pct`(4키)는 버림 0 이었다.
+ *
+ * 【처방】①플래그 상한을 올려 **버림 자체를 없애고**(버림이 0 이면 jsonb 순서는 무의미하다)
+ * ②남는 절단은 **반드시 말한다.** 문구는 형제 `fmtReasons`(위 177~189줄)와 **동형**이다 —
+ * 그 함수는 *"★잘라낸 몫을 **말한다** — 안 적으면 상위 N 종이 전부인 줄로 읽는다
+ * (묵시적 상한 금지)"* 라고 **주석으로 원칙을 적어 두고 있었다.** 원칙은 있었고
+ * **락이 없어서** 형제가 그것을 어겼다.
+ *
+ * ★손으로 고른 「우선순위 키 목록」은 쓰지 않는다 — 목록은 곧 상한이 되고, 새 진단 키가
+ * 생기면 자동으로 누락된다.
+ */
+export function summarizeParams(
+  p: Record<string, unknown> | string | number | boolean | null,
+  max: number = ACTION_PARAMS_RENDER_CAP,
+): string {
+  if (p === null || p === undefined) return "";
+  // ★스칼라(문자열 워터마크 등)는 **그대로 보여 준다** — 종전엔 이 값이 백엔드에서
+  //   null 로 삼켜져 화면에 아무것도 안 나왔다.
+  if (typeof p !== "object") return String(p);
+  // null/undefined 는 표시 대상이 아니므로 **분모에서도 뺀다** — 안 그러면 `외 N종` 의 N 이
+  // 「보여 줄 수 있었는데 안 보여 준 수」가 아니라 「빈 칸 수」가 섞여 거짓말이 된다.
+  const shown = Object.entries(p).filter(([, v]) => v !== null && v !== undefined);
   const parts: string[] = [];
-  for (const [k, v] of Object.entries(p)) {
-    if (parts.length >= 4) break;
-    let val: string;
-    if (v === null || v === undefined) continue;
-    else if (typeof v === "object") val = JSON.stringify(v);
-    else val = String(v);
+  for (const [k, v] of shown) {
+    if (parts.length >= max) break;
+    let val: string = typeof v === "object" ? JSON.stringify(v) : String(v);
     if (val.length > 24) val = `${val.slice(0, 24)}…`;
     parts.push(`${k} ${val}`);
   }
-  return parts.join(" · ");
+  // ★잘라낸 몫을 **말한다**(형제 fmtReasons 와 동형 · 묵시적 상한 금지).
+  const rest = shown.length - parts.length;
+  return rest > 0 ? `${parts.join(" · ")} 외 ${rest}종` : parts.join(" · ");
 }
 
 function HealSection() {
@@ -614,10 +788,14 @@ function HealSection() {
                             {ttlRemaining(f.ttl_expires_at)}
                           </span>
                         </div>
-                        {f.value && summarizeParams(f.value) && (
+                        {/* ★`f.value &&` 는 `false`·`0` 을 **버린다** — 이 PR 이 백엔드에서
+                            고친 바로 그 결함(값은 있는데 화면에서 사라진다)을 이 PR 의
+                            새 코드가 프론트에서 재현하고 있었다(독립 적대 리뷰 2026-09-02).
+                            타입을 `boolean | number` 로 넓혀 놓고 이 가드를 안 고쳤다. */}
+                        {f.value != null && summarizeParams(f.value, FLAG_VALUE_RENDER_CAP) && (
                           <p className="mt-2 text-xs text-[var(--text-hint)]">
                             <span className="cc-num text-[var(--text-secondary)]">
-                              {summarizeParams(f.value)}
+                              {summarizeParams(f.value, FLAG_VALUE_RENDER_CAP)}
                             </span>
                           </p>
                         )}
@@ -1102,6 +1280,10 @@ export function GrowthDashboard() {
   //   ★폴백은 종전 방식(페이지 집계)이다. 서버가 값을 안 주는 구버전 응답에서도 화면이 죽지
   //     않게 하되, **그 경우 값이 과소일 수 있다**는 것을 여기 적어 둔다.
   const serverCounts = actionableCounts;
+  // ★집계의 **출처**를 값과 함께 들고 다닌다 — 화면이 그것을 말해야 하기 때문이다(아래 고지).
+  //   `serverCounts` 가 `{}` 인 경우는 **서버가 세었는데 조치 대상이 0** 인 것이라 서버 출처다
+  //   (JS 에서 `{}` 는 truthy — 그래서 이 분기가 그대로 맞다).
+  const countsFromServer = Boolean(serverCounts);
   const severityCounts: Record<InsightSeverity, number> = { critical: 0, warn: 0, info: 0 };
   if (serverCounts) {
     severityCounts.critical = serverCounts.critical ?? 0;
@@ -1182,6 +1364,32 @@ export function GrowthDashboard() {
           </div>
         ))}
       </div>
+
+      {/* ★집계 출처 고지 — **폴백이 스스로 말한다**.
+          【왜】서버가 `actionable_counts` 를 안 보내면(구버전 API·롤백) 이 카드는 조용히
+          **현재 목록에서 센 값**으로 되돌아간다. 그건 `limit` 만큼만 센 것이라 실제보다 적다.
+          ★크기는 **이 화면이 실제로 보내는 쿼리**로 쟀다(`sort=severity&status=open&limit=200`,
+            2026-08-27 라이브): critical **74 vs 74(0%)** · warn **126 vs 487(74% 과소)** ·
+            **info 0 vs 2000(100% 과소)**. severity 정렬 200행은 critical·warn 으로 다 차서
+            **info 는 한 행도 안 온다** — 그래서 폴백은 info 를 **0** 으로 그린다.
+          그런데 **화면은 정상일 때와 똑같이 생겼다**: 사용자도 조사자도 구별할 수 없다.
+          【★활성 결함이 아니다】현재 서버는 그 키를 **항상** 싣는다(`growth.py` 응답 모델의
+          `default_factory=dict` + 구성 지점 1곳). ★**"롤백뿐"은 전수가 아니다**(독립 리뷰 실측):
+          `public/sw.js` 의 `apiNetworkFirst` 가 인증 GET 응답도 캐시하고 네트워크 실패 시 **캐시 본문**을
+          돌려주므로, 배포 직전 응답이 캐시에 남은 채 오프라인이면 그 키 없는 옛 응답이 올 수 있다
+          (창은 좁다 — `CACHE_NAME` 이 커밋 sha 라 `activate` 가 다른 캐시를 지운다).
+          어느 쪽이든 **잠복에 대한 예방**이다.
+          【문구】*"현재 목록"* 이라고만 쓰면 **과잉 설명**이다 — 폴백은 그중에서도
+          `status === "open"` **이면서 비조치 타입이 아닌 것**만 센다(위 `openInsights`).
+          목록에는 보이는데 숫자에는 안 들어가는 항목이 있으므로 그 좁힘을 문구에 적는다.
+          【관용】새 UI 를 만들지 않는다. 아래 목록의 절단 고지와 **같은 형태**를 쓴다
+          (형제를 안 보고 새로 만드는 것이 이 저장소가 반복해 데인 자리다). */}
+      {hasAny && !countsFromServer && (
+        <p className="text-xs font-semibold text-[var(--status-warning)]">
+          이 집계는 서버가 아니라 <b>현재 목록의 미확인·조치대상</b>만 셌습니다 — 목록에 없는 항목이 빠져
+          <b> 실제보다 적습니다</b>.
+        </p>
+      )}
 
       {/* 데이터 미축적 — 정직 표기(목업 금지) */}
       {!hasAny && (

@@ -24,7 +24,7 @@ import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { useLandScheduleStore, type LandRow } from "@/store/useLandScheduleStore";
 import { useRegistryAnalysisStore } from "@/store/useRegistryAnalysisStore";
-import { addressHasJibun, parcelDisplayAddress, parcelJibunResolved } from "@/lib/pnu";
+import { addressHasJibun, normalizePnu, parcelDisplayAddress, parcelJibunResolved } from "@/lib/pnu";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import type { Locale } from "@/i18n/config";
 
@@ -126,7 +126,10 @@ export function RegistryAnalysisWorkspaceClient({ locale }: { locale: Locale }) 
       //   특정 필지를 분석하면서 대표 PNU 를 보내면 5필지 전부에 대표필지의 소유구분이 조회돼
       //   공유 스토어(토지조서)의 사유지/국공유지 집계가 오염된다. 면적도 마찬가지 —
       //   개별 필지 조회에 통합면적을 실으면 그 필지 면적이 통합값으로 write-back 돼 과대해진다.
-      const parcelPnu = isPerParcel ? (row?.pnu || undefined) : (siteAnalysis?.pnu || undefined);
+      // ★유료 발급(1,200원/필지) 경로다 — 오염된 PNU 를 보내면 백엔드가 `effective_pnu=pnu` 로
+      //   그것을 최우선 사용해 **실패가 예정된 유료 호출**이 나간다. 유효한 것만 싣고,
+      //   아니면 주소 경로로 떨어뜨린다(주소는 위에서 지번 보유를 이미 검사했다).
+      const parcelPnu = normalizePnu(isPerParcel ? row?.pnu : siteAnalysis?.pnu) ?? undefined;
       const parcelZone = isPerParcel ? (row?.zone_code || undefined) : (siteAnalysis?.zoneCode || undefined);
       // 면적 힌트: 특정 필지면 그 필지 면적(row.area_sqm), 대표 단일이면 유효면적(통합 우선).
       const parcelArea = isPerParcel

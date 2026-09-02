@@ -37,7 +37,7 @@ import httpx
 
 sys.path.insert(0, "/app")
 
-from app.core.config import settings  # noqa: E402
+from app.services.legal.moleg_drf_envelope import moleg_oc_key
 from app.services.land_intelligence.ordinance_service import (  # noqa: E402
     MOLEG_ORDIN_LIST_URL,
     MOLEG_ORDIN_TEXT_URL,
@@ -55,7 +55,7 @@ async def list_ordinances(client: httpx.AsyncClient, max_pages: int = 5) -> list
     for page in range(1, max_pages + 1):
         r = await client.get(
             MOLEG_ORDIN_LIST_URL,
-            params={"OC": settings.MOLEG_API_KEY, "target": "ordin", "type": "XML",
+            params={"OC": moleg_oc_key(), "target": "ordin", "type": "XML",
                     "query": "도시계획 조례", "display": "100", "page": str(page)},
         )
         r.raise_for_status()
@@ -141,7 +141,7 @@ async def main() -> int:
             try:
                 r = await client.get(
                     MOLEG_ORDIN_TEXT_URL,
-                    params={"OC": settings.MOLEG_API_KEY, "target": "ordin",
+                    params={"OC": moleg_oc_key(), "target": "ordin",
                             "type": "XML", "ID": oid},
                 )
                 r.raise_for_status()
