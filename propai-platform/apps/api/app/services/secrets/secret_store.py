@@ -72,6 +72,11 @@ CATALOG: list[dict[str, Any]] = [
     {"name": "VWORLD_API_KEY", "label": "V-World 인증키", "group": "공공데이터·지도",
      "secret": True, "kind": "text", "guide_url": "https://www.vworld.kr",
      "desc": "부지분석·용도지역·필지·공시지가 핵심 데이터."},
+    {"name": "MOLEG_API_KEY", "label": "법제처 DRF 인증키(OC · 자치법규/법령 본문)", "group": "공공데이터·지도",
+     "secret": False, "kind": "text", "guide_url": "https://open.law.go.kr",
+     "desc": "법제처 국가법령정보 공동활용(DRF) OC 값. 도시계획조례 건폐율·용적률·경사도 "
+             "실시간 조회에 쓴다. ★키 등록과 별개로 **호출 IP 등록**이 필요하며, 미등록이면 "
+             "HTTP 200 으로 <Response><result>사용자 정보 검증에 실패…</result> 가 온다."},
     {"name": "MOLIT_API_KEY", "label": "공공데이터포털 인증키(국토부 실거래/G2B)", "group": "공공데이터·지도",
      "secret": True, "kind": "text", "guide_url": "https://www.data.go.kr",
      "desc": "실거래가·나라장터(G2B) 등 data.go.kr 공통 키."},

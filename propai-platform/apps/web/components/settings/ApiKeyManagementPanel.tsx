@@ -42,6 +42,25 @@ type ListResponse = { groups: string[]; items: SecretItem[] };
 /*  단일 키 카드                                                       */
 /* ------------------------------------------------------------------ */
 
+/**
+ * **전용 연결 테스트**가 구현된 키들 — 이 목록에 없으면 「테스트」 버튼을 그리지 않는다.
+ *
+ * ★원천은 백엔드 `apps/api/app/routers/admin_secrets.py` 의 `_TESTABLE_SECRETS` 다.
+ *   종전엔 양쪽이 **각각 인라인 손목록**을 들고 있었고 **대조 락이 0건**이었다.
+ *   갈리면 이렇게 된다:
+ *     · 백엔드만 추가 → 화면에 버튼이 **안 뜬다**(기능이 있는데 닿지 않는다)
+ *     · 프론트만 추가 → 백엔드가 **「미지원」**을 돌려주고, 예전엔 그게 **`ok: true`** 였다
+ *   → `apps/api/tests/test_secret_test_honesty.py` 가 `ast` 로 양쪽을 파싱해 대조한다.
+ *
+ * ★모듈 상수로 둔 이유: 컴포넌트 안 인라인 배열은 **기계가 파생시킬 수 없다**.
+ */
+const TESTABLE_SECRETS: readonly string[] = [
+  "HYPHEN_HKEY",
+  "HYPHEN_USER_ID",
+  "REGISTRY_PROVIDER",
+  "TILKO_API_KEY",
+];
+
 function SecretCard({
   item,
   onSaved,
@@ -54,16 +73,7 @@ function SecretCard({
   const [busy, setBusy] = useState<"" | "save" | "del" | "test">("");
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
-  const canTest = useMemo(
-    () =>
-      [
-        "HYPHEN_HKEY",
-        "HYPHEN_USER_ID",
-        "REGISTRY_PROVIDER",
-        "TILKO_API_KEY",
-      ].includes(item.name),
-    [item.name],
-  );
+  const canTest = useMemo(() => TESTABLE_SECRETS.includes(item.name), [item.name]);
 
   const save = useCallback(async () => {
     const v = value.trim();

@@ -21,10 +21,26 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.audit import audit_admin_action
 from app.services.billing.billing_service import is_super_admin
 from app.services.secrets import secret_store
+from app.utils.withheld import NOT_APPLICABLE, withheld
 from apps.api.auth.jwt_handler import CurrentUser, get_current_user
 from apps.api.database.session import get_db
 
 router = APIRouter(prefix="/api/v1/admin/secrets", tags=["관리자·API키"])
+
+#: **전용 연결 테스트**가 실제로 구현된 키들.
+#
+#  ★상수로 꺼낸 이유: 프론트(`ApiKeyManagementPanel.tsx` 의 `TESTABLE_SECRETS`)가
+#    **같은 목록을 따로** 들고 있는데 대조 락이 **0건**이었다. 인라인 집합 리터럴이면
+#    기계가 파생시킬 수 없어 두 목록이 조용히 갈린다.
+#    → `tests/test_secret_test_honesty.py` 가 `ast` 로 양쪽을 파싱해 대조한다.
+#  ★여기에 키를 **추가하면** 아래 분기도 함께 넣어야 한다. 안 넣으면 그 키는
+#    「미지원」으로 떨어지는데, 그 경로가 **거짓 초록을 내지 않는 것**이 이 파일의 계약이다.
+_TESTABLE_SECRETS: frozenset[str] = frozenset({
+    "HYPHEN_HKEY",
+    "HYPHEN_USER_ID",
+    "REGISTRY_PROVIDER",
+    "TILKO_API_KEY",
+})
 
 
 async def _require_admin(current: CurrentUser, db: AsyncSession) -> None:
@@ -336,7 +352,7 @@ async def test_secret(
         return {"ok": False, "message": "값이 설정되지 않았습니다."}
 
     try:
-        if name in {"HYPHEN_HKEY", "HYPHEN_USER_ID", "REGISTRY_PROVIDER", "TILKO_API_KEY"}:
+        if name in _TESTABLE_SECRETS:
             from app.services.registry.registry_service import RegistryService
             # ★'테스트'는 실제 호출 가능 여부를 물어야 한다 — 키가 저장돼 있다는 이유로
             #   초록을 띄우면, 벤더가 권한 없다고 거절하는 상태를 사용자가 알 수 없다.
@@ -362,6 +378,21 @@ async def test_secret(
         if prov:
             r = await image_health(provider=prov, model=None, current=current, db=db)
             return _health_to_test_result(r, f"이미지({prov})")
-        return {"ok": True, "message": "값이 설정되어 있습니다(전용 테스트 미지원 키)."}
+        # ★**거짓 초록을 내지 않는다.** 바로 위 분기의 주석이 이미 그것을 금지하고 있는데
+        #   (*"키가 저장돼 있다는 이유로 초록을 띄우면 …"*), 종전엔 이 줄이 `ok: True` 를
+        #   돌려주어 **같은 파일이 자기 원칙을 두 줄 뒤에서 어겼다.**
+        #   `#932` 가 **화면**의 존재 배지에서 성공색을 걷어냈는데, **API 응답에는 그대로**
+        #   남아 있던 형제 미러다.
+        # ★새 어휘를 만들지 않고 저장소 공용 계약을 쓴다(`app/utils/withheld.py`) —
+        #   `ok=None` + 사유 코드 `not_applicable`. `None` 은 truthy 가 아니라 화면이
+        #   성공으로 그릴 수 없고, 코드는 **기계가 센다**.
+        return {
+            **withheld(
+                NOT_APPLICABLE,
+                "이 키는 전용 연결 테스트가 없습니다 — 값 저장 여부만 확인됩니다.",
+                field="ok", text_key="reason", text_field="message",
+            ),
+            "detail": {"name": name, "testable": sorted(_TESTABLE_SECRETS)},
+        }
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "message": f"테스트 실패: {str(e)[:120]}"}
