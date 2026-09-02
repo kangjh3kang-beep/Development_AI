@@ -201,8 +201,13 @@ def test_adjacency_note_does_not_pre_judge():
         f"인접성 관측이 「통합개발 …불가」로 **단정**한다: {hit.group(0)!r} — "
         "판정은 각 개발방식이 자기 축으로 한다(구역지정형은 인접이 법정 요건이 아니다)"
     )
-    # ★음성 대조군 — 관측 자체는 남아야 한다(과잉 억제 방지)
-    assert "분리" in note, f"인접성 관측이 통째로 사라졌다: {note!r}"
+    # ★음성 대조군 — 관측 자체는 남아야 한다(과잉 억제 방지).
+    #   ★`"분리" in note` 로는 약하다 — `"분리됨"` 같은 **내용 없는 문구**가 통과한다(실측 SURVIVED).
+    #   관측은 «몇 개로 갈렸는가»와 «무엇이 불가한가»를 **둘 다** 말해야 한다.
+    assert f"{far['components']}개" in note, f"분리 개수가 없다: {note!r}"
+    assert ("합필" in note) or ("일단지" in note), (
+        f"무엇이 불가한지(합필/일단지 통합)를 말하지 않는다: {note!r}"
+    )
     # 인접 케이스는 분리 문구가 없어야 한다(두 모집단)
     near = DevelopmentScenarioSimulator._adjacency(
         [{"geometry": _sq(127.0, 37.5)}, {"geometry": _sq(127.00005, 37.5)}])
