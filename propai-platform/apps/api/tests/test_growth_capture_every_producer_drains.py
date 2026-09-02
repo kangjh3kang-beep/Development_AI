@@ -311,3 +311,58 @@ def test_every_producing_entrypoint_drains_periodically_AND_on_shutdown() -> Non
 
     # ★공허 진리 가드 — 하나도 안 봤으면 위 단언은 전부 무의미하다.
     assert checked >= 2, f"★담는 진입점을 {checked}개만 검사했다 — 폐포 계산이 죽었다(위반 아님)"
+
+
+def _drain_implementations() -> dict[str, str]:
+    """**배수를 직접 구현한** 함수를 파생한다 — `flush_batch` 를 **루프 안에서** 부르는 함수.
+
+    ★배수 구현이 여럿이면 **하나가 낡는다.** 실제로 셋이었다:
+      `apps/api/main.py` 의 주기 루프 · 그 파일의 종료 flush · `growth_tasks._flush_async`.
+      셋 중 하나는 상한이 리터럴 `500` 으로 굳어 `_FLUSH_LIMIT` 과 따로 놀았다.
+    ★그리고 *"배수 로직은 하나뿐"* 이라는 **주석이 그 상태로 존재했다** — 산문은 갈리는 것을
+      막지 못한다. 그래서 **파생형 락**으로 바꾼다.
+    """
+    out: dict[str, str] = {}
+    for f in _APPS.rglob("*.py"):
+        if "/tests/" in f.as_posix():
+            continue
+        try:
+            tree = ast.parse(f.read_text(encoding="utf-8"))
+        except (SyntaxError, UnicodeDecodeError):
+            continue
+        parent: dict[ast.AST, ast.AST] = {}
+        for node in ast.walk(tree):
+            for child in ast.iter_child_nodes(node):
+                parent[child] = node
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for c in ast.walk(fn):
+                if not isinstance(c, ast.Call):
+                    continue
+                nm = getattr(c.func, "attr", getattr(c.func, "id", None))
+                if nm != "flush_batch":
+                    continue
+                cur = parent.get(c)
+                while cur is not None and cur is not fn:
+                    if isinstance(cur, (ast.While, ast.For, ast.AsyncFor)):
+                        out[fn.name] = f.as_posix()
+                        break
+                    cur = parent.get(cur)
+    return out
+
+
+def test_there_is_exactly_one_drain_implementation() -> None:
+    """★배수 **구현**은 하나뿐이어야 한다 — 주석이 아니라 파서로 잠근다.
+
+    되살리는 변이: 어느 파일에든 `for … : flush_batch(...)` 루프를 하나 더 만들면 죽는다.
+    """
+    impls = _drain_implementations()
+    # ★양성 대조군 — 정본을 못 찾으면 "하나뿐"은 공허하다(0개도 "하나 이하"다).
+    assert "drain_until_empty" in impls, (
+        f"★배수 정본을 못 찾았다 — 추출기가 죽었다(위반 아님): {impls}"
+    )
+    assert set(impls) == {"drain_until_empty"}, (
+        f"★배수 구현이 여럿이다: {impls}\n"
+        f"   사본이 갈리면 하나가 낡는다 — 상한이 리터럴로 굳는 것이 그 실례다."
+    )
