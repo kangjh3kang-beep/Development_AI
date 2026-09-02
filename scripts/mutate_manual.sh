@@ -153,6 +153,14 @@ _resolved_shell=""
 #   3차에서 argv 층만 닫았더니 `bash -c 'script -qc …'` 한 겹으로 전부 우회됐다(4차 CRITICAL-2).
 #   ★`setsid` 는 실측상 rc 를 버린다(`setsid false` → **0**). 중립 목록에 두면 안 된다.
 #   ★이 목록은 **완전하지 않다** — 임의 실행파일은 원리적으로 알 수 없다(§부채·xfail).
+# ★rc **중립** 접두 — rc 가 그대로 통과한다. argv 층과 스크립트 문자열 층이 **같은 목록**을
+#   보게 함수로 뺀다(5차 리뷰 CRITICAL-1: 함수는 공유했는데 **먹이는 입력이 두 층에서 달랐다**).
+_rc_neutral_prefix() {
+  case "$(basename -- "${1:-}")" in
+    env|nohup|stdbuf|command|exec|nice|ionice) return 0 ;;
+  esac
+  return 1
+}
 _rc_destroying() {
   case "$(basename -- "${1:-}")" in
     timeout|script|flock|xargs|retry|setsid) return 0 ;;
@@ -202,13 +210,11 @@ for _a in "$@"; do
       if _rc_destroying "$_a"; then
         _saw_prefix=1; _rc_altering=1; continue
       fi
-      case "$(basename -- "$_a")" in
-        # ★rc **중립** 접두 — rc 가 그대로 통과하므로 **신뢰 판정을 바꾸지 않는다**(투명).
-        #   종전엔 이 뒤에 셸이 없으면 fail-closed 였는데, 그러면 `env FOO=1 pytest` 처럼
-        #   **가장 흔한 정당 형태를 막는다**(4차 HIGH-2 실측 위양성).
-        env|nohup|stdbuf|command|exec|nice|ionice)
-          _saw_prefix=1; continue ;;
-      esac
+      # ★rc **중립** 접두는 **투명**하다(신뢰 판정을 바꾸지 않는다) — 막으면
+      #   `env FOO=1 pytest` 같은 가장 흔한 정당 형태를 막는다(4차 HIGH-2).
+      if _rc_neutral_prefix "$_a"; then
+        _saw_prefix=1; continue
+      fi
       if _is_shell "$_a"; then
         _wrapper="$_resolved_shell"; _state=shellargs; continue
       fi
@@ -287,7 +293,7 @@ elif [ -n "$_wrapper" ]; then
     _rest="$_tail"
   done
   # ★`sh`/`dash` 에는 `set -o pipefail` 이 없다 — 인정하면 「명령이 깨져서 CAUGHT」가 된다.
-  case "$_wrapper" in bash|zsh|ksh) ;; *) _had_pipefail=0 ;; esac
+  case "$_wrapper" in bash|zsh|ksh|mksh|rbash) ;; *) _had_pipefail=0 ;; esac
   # ★화이트리스트 — 위험을 세지 않고 **단일 단순 명령의 모양**만 신뢰한다.
   case "$_rest" in
     ""|" "*|"	"*)
@@ -315,18 +321,34 @@ elif [ -n "$_wrapper" ]; then
     _scan="$_rest"
     while :; do
       _one="${_scan%%|*}"
-      while :; do
-        case "$_one" in
-          " "*) _one="${_one# }" ;;
-          "	"*) _one="${_one#	}" ;;
-          *) break ;;
-        esac
+      # ★argv 층과 **같은 규칙**으로 명령 낱말을 찾는다 — 종전엔 «공백으로 자른 첫 낱말» 하나만
+      #   봐서 `env script …` · `nice timeout …` · 탭 구분이 전부 검사를 비껴갔다(5차 CRITICAL-1).
+      #   `for` 는 IFS 로 쪼개므로 **탭·개행도 구분자**다.
+      _cmd=""
+      set -f
+      for _w in $_one; do
+        case "$_w" in *=*) continue ;; esac        # VAR=값 대입은 명령이 아니다
+        if _rc_neutral_prefix "$_w"; then continue; fi
+        _cmd="$_w"; break
       done
-      _cmd="${_one%% *}"
-      if [ -n "$_cmd" ] && _rc_destroying "$_cmd"; then
-        RC_UNTRUSTED=1
-        RC_WHY="래퍼 스크립트가 **rc 를 바꾸거나 버리는 명령**($_cmd)을 부른다 — rc 가 테스트의 것이 아니다"
-        break
+      set +f
+      if [ -n "$_cmd" ]; then
+        # ★**해석하지 못하면 신뢰하지 않는다**(fail-closed). 종전엔 이름을 못 알아보면
+        #   그냥 신뢰해서 `"script"` · `sc""ript` 가 통과했다 — 이 도구가 스스로 선언한
+        #   *"무엇이 실행되는지 특정하지 못하면 판정하지 않는다"* 와 **정반대**였다.
+        #   ★**명령 낱말만** 본다 — 인자의 따옴표(`grep -q "alpha" f`)는 정상이다.
+        case "$_cmd" in
+          *\'*|*\"*|*\\*)
+            RC_UNTRUSTED=1
+            RC_WHY="래퍼 스크립트의 **명령 이름에 인용부호/이스케이프**가 있어 무엇을 부르는지 특정할 수 없다 — 판정하지 않는다"
+            break
+            ;;
+        esac
+        if _rc_destroying "$_cmd"; then
+          RC_UNTRUSTED=1
+          RC_WHY="래퍼 스크립트가 **rc 를 바꾸거나 버리는 명령**($_cmd)을 부른다 — rc 가 테스트의 것이 아니다"
+          break
+        fi
       fi
       case "$_scan" in
         *"|"*) _scan="${_scan#*|}" ;;

@@ -315,6 +315,22 @@ _판정불가_형태 = [
     ("★C2 파이프 **뒤** 구간도 본다", ["bash", "-c",
                                        "set -o pipefail; grep -q alpha target.txt | xargs true"]),
     ("★setsid 는 rc 를 버린다", ["setsid", "grep", "-q", "alpha", "target.txt"]),
+    # ── 5차 리뷰: ★**함수는 공유했는데 먹이는 입력이 두 층에서 달랐다.**
+    ("★5C1 env + script", ["bash", "-c",
+                           'env script -qc "grep -q alpha target.txt" /dev/null']),
+    ("★5C1 nice + timeout", ["bash", "-c", "nice timeout 1 sleep 3"]),
+    ("★5C1 VAR= 대입 + timeout", ["bash", "-c", "env PYTHONPATH=. timeout 1 sleep 3"]),
+    ("★5C1 탭 구분자", ["bash", "-c", "timeout\t1\tsleep\t3"]),
+    # ★해석 못 하면 **신뢰하지 않는다** — 종전엔 이름을 못 알아보면 그냥 신뢰했다.
+    ("★5C1 인용된 명령이름", ["bash", "-c",
+                              '"script" -qc "grep -q alpha target.txt" /dev/null']),
+    ("★5C1 분할 인용", ["bash", "-c",
+                        'sc""ript -qc "grep -q alpha target.txt" /dev/null']),
+    # ── 5차 HIGH-1: `basename` 정규화 축이 **양쪽 루트 무잠금**이었다(경로 수식 행 0건).
+    ("★5H1 절대경로(스크립트 안)", ["bash", "-c",
+                                    '/usr/bin/script -qc "grep -q alpha target.txt" /dev/null']),
+    ("★5H1 절대경로(argv 접두)", ["/usr/bin/timeout", "60", "grep", "-q", "alpha",
+                                  "target.txt"]),
 ]
 
 
@@ -350,9 +366,12 @@ def test_스크립트_파일을_받으면_내용을_못_보므로_판정하지_�
 _셸_후보 = ("sh", "dash", "zsh", "ksh", "ash", "mksh", "rbash", "posh", "yash")
 _설치된_비bash_셸 = [x for x in _셸_후보 if shutil.which(x)]
 _PIPEFAIL_지원 = ("bash", "zsh", "ksh", "mksh", "rbash")
+# ★`parametrize` 원천은 **이름**이어야 파생 축이 그것을 셀 수 있다. `A or B` 같은 식으로 두면
+#   추출기가 «파생 불가» 로 판정을 거부한다(실제로 그렇게 잡혔다 — 락이 제 역할을 했다).
+_셸_파라미터 = _설치된_비bash_셸 or ["없음"]
 
 
-@pytest.mark.parametrize("셸", _설치된_비bash_셸 or ["없음"])
+@pytest.mark.parametrize("셸", _셸_파라미터)
 def test_pipefail_은_그_셸이_지원할_때만_인정한다(sandbox, 셸) -> None:
     """★`sh`/`dash` 에는 `set -o pipefail` 이 **없다** — 인정하면 「명령이 깨져서 CAUGHT」다.
 
@@ -393,6 +412,9 @@ _정당_형태 = [
     ("nice -n 5 + 직접 명령", ["nice", "-n", "5", "grep", "-q", "alpha", "target.txt"]),
     # ★선행 **탭**은 공백이다 — 「빈 스크립트」로 오진하면 안 된다(4차 MEDIUM-1).
     ("선행 탭 + 단일 명령", ["bash", "-c", "\tgrep -q alpha target.txt"]),
+    # ★**명령 낱말만** 본다 — 인자의 따옴표는 정상이다(막으면 큰 위양성).
+    ("인자에 따옴표", ["bash", "-c", 'grep -q "alpha" target.txt']),
+    ("스크립트 안 rc중립 접두", ["bash", "-c", "env grep -q alpha target.txt"]),
 ]
 
 
@@ -534,27 +556,56 @@ def test_etc_shells_에만_있는_셸도_셸로_판정한다() -> None:
 
 
 def test_판정_대상_수는_손으로_세지_않는다() -> None:
-    """★계획서가 «28개 축»이라고 **손으로 셌는데 실제는 다르다**(적대 리뷰 3차 지적).
+    """★계획서 수치를 **파일에서 파생**시켜 대조한다. 이 락은 **두 번 뚫렸다**:
 
-    수치를 **파일에서 파생**시켜 계획서와 대조한다 — 목록이 늘면 계획서도 같이 틀리게 된다.
+    · 4차 — 축이 «내가 고른 두 표» 라 새 표를 더해도 통과
+    · 5차 — 축을 «List-of-2-tuple» 로 한 칸 내렸지만 **모든 parametrize 원천**은 아니었고,
+            게다가 **존재 검사**(`in plan`)라 문서 **두 곳 중 한 곳만 낡아도** 통과했다
+    → 축을 **`@pytest.mark.parametrize` 데코레이터**로 내리고, 문서는 **전수 대조**한다.
     """
-    # ★종전엔 **내가 고른 두 표**만 셌다 — 축이 한 단계 위라 새 표(`_rc파괴_래퍼`)를 더해도
-    #   락이 통과했다(적대 리뷰 4차 실증). **파일의 모든 파라미터 표를 ast 로 파생**시킨다.
     import ast as _ast
+    import re as _re
 
     src = pathlib.Path(__file__).read_text(encoding="utf-8")
-    표 = {}
-    for _n in _ast.parse(src).body:
-        if not isinstance(_n, _ast.Assign) or not isinstance(_n.value, _ast.List):
+    tree = _ast.parse(src)
+    리터럴표 = {}
+    for _n in tree.body:
+        if isinstance(_n, _ast.Assign) and isinstance(_n.value, (_ast.List, _ast.Tuple)):
+            리터럴표[_n.targets[0].id] = len(_n.value.elts)
+    # ★호스트에 따라 개수가 달라지는 원천은 계획서 수치에 넣을 수 없다 — 이름을 명시한다.
+    호스트의존 = {"_설치된_비bash_셸", "_셸_파라미터"}
+    본원천 = set()
+    합 = 0
+    for _n in _ast.walk(tree):
+        if not isinstance(_n, _ast.FunctionDef):
             continue
-        elts = _n.value.elts
-        if elts and all(isinstance(e, _ast.Tuple) and len(e.elts) == 2 for e in elts):
-            표[_n.targets[0].id] = len(elts)
-    assert len(표) >= 3, f"파라미터 표를 못 찾았다 — 추출기 의심: {표}"
-    실제 = sum(표.values())
+        for deco in _n.decorator_list:
+            if not (isinstance(deco, _ast.Call)
+                    and _ast.unparse(deco.func).endswith("parametrize")):
+                continue
+            원천 = deco.args[1]
+            이름 = 원천.id if isinstance(원천, _ast.Name) else None
+            if 이름 in 호스트의존:
+                continue
+            if 이름 is not None:
+                assert 이름 in 리터럴표, (
+                    f"parametrize 원천 {이름} 이 리터럴 표가 아니다 — 호스트의존이면 "
+                    "이 테스트의 `호스트의존` 집합에 이름을 적어라"
+                )
+                if 이름 not in 본원천:
+                    본원천.add(이름)
+                    합 += 리터럴표[이름]
+            else:
+                assert isinstance(원천, (_ast.List, _ast.Tuple)), (
+                    "parametrize 원천이 이름도 리터럴도 아니다 — 파생 불가")
+                합 += len(원천.elts)
+    assert len(본원천) >= 3, f"parametrize 원천을 못 찾았다 — 추출기 의심: {본원천}"
+
     plan = (_REPO / "propai-platform" / "_workspace"
             / "PLAN_mutate_manual_rc_trust_layer_2026-09-02.md").read_text(encoding="utf-8")
-    assert f"판정 대상 {실제}개" in plan, (
-        f"계획서가 선언한 축 수가 파일과 다르다 — 파일 기준 {실제}개. "
-        "계획서에 '판정 대상 N개' 를 파생값으로 적어라(손으로 세면 갈린다)"
-    )
+    적힌 = _re.findall(r"판정 대상 (\d+)개", plan)
+    assert 적힌, "계획서에 '판정 대상 N개' 가 없다 — 수치를 파생값으로 적어라"
+    assert len(set(적힌)) == 1, (
+        f"계획서의 '판정 대상 N개' 가 서로 다르다({적힌}) — 한 곳만 고치면 나머지가 낡는다")
+    assert int(적힌[0]) == 합, (
+        f"계획서가 선언한 축 수({적힌[0]})가 파일 파생값({합})과 다르다")
