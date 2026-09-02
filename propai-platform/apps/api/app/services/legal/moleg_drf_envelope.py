@@ -33,6 +33,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 __all__ = ["MolegDrfError", "drf_failure_reason", "raise_unless_expected"]
@@ -76,6 +77,41 @@ def drf_failure_reason(payload: Any, *, expect: tuple[str, ...]) -> str | None:
     if parts:
         return " / ".join(parts)
     return f"기대 루트키 {list(expect)} 없음 (수신 키: {sorted(map(str, payload))[:6]})"
+
+
+def xml_failure_reason(text: str, *, expect: tuple[str, ...]) -> str | None:
+    """XML 응답판 — `expect` 루트태그가 **하나도 없으면** 실패 사유를, 있으면 `None`.
+
+    ★왜 형제가 필요한가(2026-08-28 실측): 위 JSON 판은 `isinstance(payload, dict)` 라
+    **JSON 전용**인데, 조례 조회(`ordinance_service`)는 `type=XML` 로 부른다. 그래서
+    형제 둘(`regulation_monitor`·`gosi_search_service`)이 200-실패를 잡는 동안
+    **조례 경로만 무방비**였고, 광범위한 `except Exception: return None` 이 그것을 삼켜
+    화면에는 *"조례를 확인하지 못해 법정상한 잠정 적용"* 으로 나갔다(= 낙관 방향 폴백).
+
+    법제처 XML 실패 봉투 실측:
+        <Response><result>사용자 정보 검증에 실패하였습니다.</result><msg>…</msg></Response>
+    """
+    if not isinstance(text, str) or not text.strip():
+        return "응답 본문이 비어 있다"
+    if any(f"<{k}" in text for k in expect):
+        return None
+    parts: list[str] = []
+    # ★형제(JSON 판)의 `_REASON_KEYS` 에서 **파생**시킨다. 손으로 나열하면 두 판이 갈리고,
+    #   이 저장소의 교훈대로 **목록이 곧 상한**이 된다(독립 리뷰 지적).
+    for tag in (*_REASON_KEYS, "resultMsg"):
+        m = re.search(rf"<{tag}>(.*?)</{tag}>", text, re.S)
+        if m and m.group(1).strip():
+            parts.append(m.group(1).strip())
+    if parts:
+        return " / ".join(parts)
+    return f"기대 루트태그 {list(expect)} 없음 (본문 앞 120자: {text.strip()[:120]!r})"
+
+
+def raise_unless_expected_xml(text: str, *, expect: tuple[str, ...]) -> None:
+    """XML 응답에 `expect` 루트태그가 없으면 `MolegDrfError` 로 **시끄럽게** 죽는다."""
+    reason = xml_failure_reason(text, expect=expect)
+    if reason is not None:
+        raise MolegDrfError(reason)
 
 
 def raise_unless_expected(payload: Any, *, expect: tuple[str, ...]) -> None:

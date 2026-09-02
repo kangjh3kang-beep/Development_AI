@@ -16,6 +16,7 @@
 
 import { Component, Suspense, type ReactNode } from "react";
 import dynamic from "next/dynamic";
+import { reportBoundaryError } from "@/lib/growth/report-boundary-error";
 
 /* ── 공용 폴백 UI ── */
 function MapFallback({
@@ -61,8 +62,11 @@ class MapErrorBoundary extends Component<
   }
 
   // 에러를 이 경계 안에 가둔다(라우트 error.tsx로 전파 안 됨 = 네비 멈춤 없음).
-  componentDidCatch() {
-    /* 콘솔 노이즈 방지: 폴백 렌더로 충분. 필요 시 로깅 훅 추가 지점. */
+  // ★그래서 **여기서 보고하지 않으면 아무도 보고하지 않는다** — 상위 `error.tsx` 는 이 오류를
+  //   구조적으로 볼 수 없다(가두는 것이 이 경계의 목적이다). 지도·타일은 이 플랫폼에서 가장
+  //   자주 깨지는 표면인데, 초판은 인자조차 받지 않아 오류 객체를 통째로 버렸다.
+  componentDidCatch(error: Error) {
+    reportBoundaryError("map-shell", error);
   }
 
   // 재시도 = 이 경계만 다시 마운트(부모 라우팅 불간섭).

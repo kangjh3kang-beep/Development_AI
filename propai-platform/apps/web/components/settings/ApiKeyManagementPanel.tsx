@@ -127,8 +127,18 @@ function SecretCard({
                 </span>
               )}
               {item.is_set ? (
-                <span className="flex items-center gap-1 rounded-full bg-[var(--status-success)]/10 px-2 py-0.5 text-[11px] font-bold text-[var(--status-success)]">
-                  <span className="h-1.5 w-1.5 rounded-full bg-[var(--status-success)]" />
+                /* ★**존재를 「정상」으로 그리지 않는다.**
+                   `is_set` 은 `bool(cur) or in_db`(secret_store.py) — **값이 있다**는 뜻일 뿐
+                   연결을 확인한 것이 아니다. 종전엔 이것을 `--status-success`(초록 점 포함)로
+                   그려서 관리자가 **「정상 연결됨」으로 읽었다**.
+                   ★이 화면에서 실제로 연결을 확인하는 키는 4개뿐이고(테스트 버튼이 그 넷에만
+                   렌더된다) 나머지 55개에 대해 관리자가 보는 초록은 **바로 이 배지**였다.
+                   → 중립색으로 내린다. 초록은 **확인된 것**에만 쓴다. */
+                <span
+                  className="flex items-center gap-1 rounded-full bg-[var(--text-secondary)]/10 px-2 py-0.5 text-[11px] font-bold text-[var(--text-secondary)]"
+                  title="값이 저장돼 있다는 뜻입니다. 연결·인증을 확인한 것은 아닙니다."
+                >
+                  <span className="h-1.5 w-1.5 rounded-full bg-[var(--text-secondary)]" />
                   설정됨{item.source === "env" ? " (.env)" : ""}
                 </span>
               ) : (
@@ -430,6 +440,13 @@ export function ApiKeyManagementPanel() {
             {data && (
               <span className="cc-num font-semibold text-[var(--text-primary)]">
                 {setCount}/{data.items?.length ?? 0} 설정됨
+              </span>
+            )}
+            {data && (
+              /* ★「설정됨」이 무엇을 뜻하는지 화면이 스스로 말한다 —
+                 색만 내리면 다음 사람이 다시 초록으로 올린다. */
+              <span className="block text-[11px] text-[var(--text-tertiary)]">
+                「설정됨」은 값이 저장돼 있다는 뜻이며, 연결·인증을 확인한 것이 아닙니다.
               </span>
             )}
           </p>
