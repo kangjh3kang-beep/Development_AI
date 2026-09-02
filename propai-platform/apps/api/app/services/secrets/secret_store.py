@@ -72,6 +72,14 @@ CATALOG: list[dict[str, Any]] = [
     {"name": "VWORLD_API_KEY", "label": "V-World 인증키", "group": "공공데이터·지도",
      "secret": True, "kind": "text", "guide_url": "https://www.vworld.kr",
      "desc": "부지분석·용도지역·필지·공시지가 핵심 데이터."},
+    {"name": "MOLEG_API_KEY", "label": "법제처 DRF 인증키(OC · 자치법규/법령 본문)", "group": "공공데이터·지도",
+     # ★`secret: True` — `apps/api/scripts/export_scoped_secrets.py` 가 이미 이 키를
+     #   **스코프 시크릿으로 분류**하고 있다. `False` 로 두면 `/admin/secrets` 응답과
+     #   백업 목록에 **평문**으로 나가 두 층의 분류가 갈린다(독립 리뷰 MEDIUM-3).
+     "secret": True, "kind": "text", "guide_url": "https://open.law.go.kr",
+     "desc": "법제처 국가법령정보 공동활용(DRF) OC 값. 도시계획조례 건폐율·용적률·경사도 "
+             "실시간 조회에 쓴다. ★키 등록과 별개로 **호출 IP 등록**이 필요하며, 미등록이면 "
+             "HTTP 200 으로 <Response><result>사용자 정보 검증에 실패…</result> 가 온다."},
     {"name": "MOLIT_API_KEY", "label": "공공데이터포털 인증키(국토부 실거래/G2B)", "group": "공공데이터·지도",
      "secret": True, "kind": "text", "guide_url": "https://www.data.go.kr",
      "desc": "실거래가·나라장터(G2B) 등 data.go.kr 공통 키."},
@@ -98,6 +106,10 @@ CATALOG: list[dict[str, Any]] = [
      "secret": True, "kind": "text", "guide_url": "https://console.anthropic.com"},
     {"name": "OPENAI_API_KEY", "label": "OpenAI API Key", "group": "AI(LLM)",
      "secret": True, "kind": "text", "guide_url": "https://platform.openai.com"},
+    # ★`#899` 가 `_LLM_KEY_PROVIDER` 에 매핑해 **백엔드는 실호출 테스트를 할 수 있는데
+    #   카탈로그에 없어 운영자가 등록조차 못 했다**(2026-09-02 실측 · `test_every_testable_key_is_in_the_catalog` 가 적발).
+    {"name": "GOOGLE_API_KEY", "label": "Google(Gemini) API Key", "group": "AI(LLM)",
+     "secret": True, "kind": "text", "guide_url": "https://aistudio.google.com/app/apikey"},
     {"name": "REPLICATE_API_TOKEN", "label": "Replicate API 토큰(AI 포토리얼 렌더)", "group": "AI(LLM)",
      "secret": True, "kind": "text", "guide_url": "https://replicate.com/account/api-tokens",
      "desc": "3D 뷰포트→포토리얼 렌더(ControlNet) 생성에 사용. 미설정 시 렌더 메뉴는 정직하게 '키 미설정' 안내(가짜 이미지 없음)."},

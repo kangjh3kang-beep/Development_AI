@@ -6,6 +6,7 @@ import {
   BarChart3,
   Clock,
   DraftingCompass,
+  FileSearch,
   Layers3,
   Scale,
   Search,
@@ -13,7 +14,6 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { DashboardProjectLoader } from "@/components/dashboard/DashboardProjectLoader";
-import { RealtxReportPanel } from "@/components/dashboard/RealtxReportPanel";
 import { HeroMotionLayer } from "@/components/dashboard/HeroMotionLayer";
 import { OnboardingWizard } from "@/components/onboarding/OnboardingWizard";
 import { SatongMapShell } from "@/components/precheck/SatongMapShell";
@@ -116,6 +116,32 @@ const creationProducts: CreationProduct[] = [
     result: "건축개요, CAD 계획도면, 법규 적합성",
     time: "약 4분",
     tone: "lime",
+  },
+  {
+    // ★9번째 카드 — 종전에는 이 그리드 **아래**에 데이터 패널로만 있어 라이브에서 y≈2,921px
+    //   (페이지 높이 4,256px)에 묻혔다. 스크롤 없이는 보이지 않아 "생성허브에 없다"로 읽혔다.
+    //   형제 8개와 같은 형태(카드 → 전용 라우트 `/realtx-report`)로 올린다.
+    // ★"필지별"이라고 쓰지 않는다 — 국토부 공개자료는 토지 거래 지번을 마스킹하므로
+    //   서버 집계 단위가 **법정동**이다. 화면이 백엔드보다 더 말하면 그 자체가 거짓이다.
+    title: "실거래 신고내역 보고서",
+    routeId: "realtx-report",
+    icon: FileSearch,
+    // ★**등기·법인을 말하지 않는다** — 이 패널은 `prop_type: "land"` 고정인데(RealtxReportPanel:67,117)
+    //   MOLIT **토지** 응답 원문에는 `rgstDate`·`buyerGbn`·`slerGbn` 이 **아예 없다**
+    //   (원문 키 실측: land 16키 ✘ / apt 32키 ◎ · 대조군 `cdealType` 양쪽 존재 —
+    //    `tasks/realtx_sync_task.py:88-108`). 집계는 그 필드가 비면 세지 않으므로 land 에서
+    //   **항상 0** 이다. 라이브 확인(2026-08-27 · 강남구 6개월):
+    //     registered=0 · registered_pct=0.0 · corporate_buyer=0 · corporate_seller=0
+    //     cancelled=1 · direct=52 · brokered=9 · share_deals=45   ← 이 넷은 실제로 나온다
+    //   ★「0%」를 광고하면 사용자가 그것을 **관측**으로 읽는다 — 실제는 **원천 필드 부재**다.
+    //   초판은 여기에 "등기 현황"·"등기 비율, 법인 거래"를 적었고 독립 리뷰가 잡았다.
+    intent: "프로젝트 필지의 실거래 신고내역을 법정동 단위로 모아 해제·직거래·지분 거래를 정리합니다.",
+    inputs: "토지조서에 필지가 담긴 프로젝트",
+    result: "해제·직거래·지분 비율, 거래 목록 (PDF·PPTX·DOCX)",
+    // ★실측값이다(추정 아님): 1시군구 6콜 0.81초 · 3시군구 18콜 1.14초.
+    //   조회는 `(시군구, 월)` 로 접히므로 필지 수와 무관하다(응답 `meta.molit_calls`).
+    time: "약 5초",
+    tone: "coral",
   },
 ] as const;
 
@@ -275,10 +301,6 @@ export function DashboardHome({ locale }: { locale: string }) {
           })}
         </div>
 
-        {/* ★생성허브 안의 **데이터 패널** — 링크 카드가 아니라 여기서 직접 그린다.
-            선례: 같은 페이지의 <SatongMapShell/>(위) · <DashboardProjectLoader/>(아래).
-            `#837` 이 보존한 계약상태 6필드의 **첫 소비 표면**이다 — 그전엔 읽는 화면이 0곳이었다. */}
-        <RealtxReportPanel />
       </section>
 
       <section className="min-w-0 space-y-3 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-strong)] p-4">

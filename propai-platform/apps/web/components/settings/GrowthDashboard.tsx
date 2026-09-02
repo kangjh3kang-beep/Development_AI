@@ -139,6 +139,34 @@ function num(v: unknown): number | null {
 function str(v: unknown): string | null {
   return typeof v === "string" && v.trim() ? v : null;
 }
+/** metrics_json 의 문자열 배열(예: `triggers`). 배열이 아니면 빈 배열. */
+function arr(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && !!x.trim()) : [];
+}
+/**
+ * 지연 발화 **축 코드 → 한글**.
+ *
+ * 원천은 백엔드 `app/services/growth/analyzer.py` 의 `_LATENCY_TRIGGER_LABELS` 이고
+ * 값을 만드는 곳은 같은 파일의 `triggers = [...]` 다. 어긋나면 화면에 영문 raw
+ * (`ratio`/`absolute`)가 그대로 샌다 — **`apps/api/tests/test_latency_trigger_label_parity.py`
+ * 가 `ast` 로 양쪽을 파싱해 대조한다**(형제 `REASON_LABELS` 와 같은 형식으로 락 파일명을 적는다).
+ * ★그 락은 라벨표끼리만이 아니라 **생산자(`triggers = [...]`)까지 세 번째 모집단**으로 태운다 —
+ *   라벨표끼리만 맞추면 **둘 다 틀린 경우**를 못 잡기 때문이다.
+ *
+ * ★이 주석은 한때 **없는 락을 있다고 단언**했다(적대 리뷰가 실증: 백엔드에 세 번째 축을
+ *   추가해도 프론트 89건이 전부 초록이었다). 면역을 적을 때는 **그 면역이 실재하는지**
+ *   확인하고 적는다 — 없는 면역을 적는 것이 없는 것보다 나쁘다.
+ * ★★그 뒤 만든 첫 락도 **정규식이 파이썬 표기법을 재구현**한 것이라, 세 번째 키만
+ *   작은따옴표로 쓰면 **조용히 통과**했다(실측). 그래서 판정을 `ast` 파서로 옮겼다 —
+ *   ***"내 락이 태우는 것이 프로덕션 코드인가, 복제본인가?"***
+ *
+ * ★모르는 코드는 **감추지 않고 원문 그대로** 보여준다(REASON_LABELS 와 같은 원칙) —
+ *   숨기면 "새 축이 생겼다"는 가장 중요한 신호가 조용히 사라진다.
+ */
+const LATENCY_TRIGGER_LABELS: Record<string, string> = {
+  ratio: "비율(기준선 대비)",
+  absolute: "절대편차(평소값 대비)",
+};
 function pct(v: number | null): string {
   return v === null ? "-" : `${(v <= 1 ? v * 100 : v).toFixed(1)}%`;
 }
@@ -248,13 +276,35 @@ export function InsightMetrics({ insight }: { insight: GrowthInsight }) {
       break;
     }
     case "latency_regression": {
-      // 백엔드 키(analyzer.py): key(route|service) / p95_ms / prev_baseline_p95.
+      // 백엔드 키(analyzer.py): key(route|service) / p95_ms / prev_baseline_p95
+      //                        / triggers / typical_p95 / typical_windows.
       const p95 = num(m.p95_ms ?? m.p95);
       const baseline = num(m.prev_baseline_p95 ?? m.baseline_ms ?? m.baseline);
       const key = str(m.key ?? m.route);
       if (key) rows.push({ label: "경로", value: key });
       if (p95 !== null) rows.push({ label: "p95 지연", value: `${Math.round(p95).toLocaleString("ko-KR")}ms` });
       if (baseline !== null) rows.push({ label: "기준선", value: `${Math.round(baseline).toLocaleString("ko-KR")}ms` });
+      // ★**어느 축이 울렸는가.** 없으면 절대편차 단독 발화가 `p95 33,000ms /
+      //   기준선 23,524ms` = 1.40배로 보여, 비율 임계(1.5배) **미만**인데 warn 이 붙은
+      //   것으로 읽힌다 — 화면만 보고는 왜 울렸는지 알 수 없다.
+      const trigs = arr(m.triggers);
+      if (trigs.length > 0) {
+        rows.push({
+          label: "발화 축",
+          value: trigs.map((x) => LATENCY_TRIGGER_LABELS[x] ?? x).join(", "),
+        });
+        // ★`typical_p95` 가 없으면 **0ms 로 그리지 않는다** — 「모름」을 유효값으로
+        //   위장하는 순간 「평소가 0ms 인 경로」라는 관측이 되어 버린다.
+        const typical = num(m.typical_p95);
+        const windows = num(m.typical_windows);
+        rows.push({
+          label: "평소값",
+          value:
+            typical !== null
+              ? `${Math.round(typical).toLocaleString("ko-KR")}ms`
+              : `판정 불가(이력 ${windows !== null ? windows : "?"}건)`,
+        });
+      }
       break;
     }
     case "recurring_verify_error": {
@@ -396,7 +446,9 @@ type HealAction = {
 type ActiveFlag = {
   key: string;
   scope: string;
-  value: Record<string, unknown> | null;
+  /** ★dict 만이 아니다 — `growth_last_run.*` 워터마크는 ISO **문자열**이다.
+   *  백엔드가 종전에 문자열을 `null` 로 삼켜 「축이 도는가」를 못 보게 했다. */
+  value: Record<string, unknown> | string | number | boolean | null;
   ttl_expires_at: string | null;
   updated_by: string | null;
 };
@@ -434,20 +486,67 @@ function ttlRemaining(iso: string | null): string {
   return `${Math.floor(hr / 24)}일 ${hr % 24}시간 남음`;
 }
 
-// params 객체를 "키 값 · 키 값" 요약(최대 4개). 중첩/긴 값은 절단.
-function summarizeParams(p: Record<string, unknown> | null): string {
-  if (!p) return "";
+/** 액션 `params` 표시 상한. 라이브 200건 실측 키 분포 `{3:2, 4:198}` — 오늘은 안 문다. */
+const ACTION_PARAMS_RENDER_CAP = 4;
+
+/**
+ * 플래그 `value` 표시 상한.
+ *
+ * ★**의미 경계가 아니라 렌더 안전 경계다.** 어떤 키가 「중요한지」를 정하지 않는다 —
+ * 넘으면 **반드시 `외 N종` 으로 말한다**(아래 `summarizeParams`). 즉 이 상한은
+ * 무한 렌더만 막고, **조용히 감추지는 못한다.**
+ */
+const FLAG_VALUE_RENDER_CAP = 40;
+
+/**
+ * params/flag 객체를 `"키 값 · 키 값"` 요약. 중첩/긴 값은 절단.
+ *
+ * 【무엇이 있었나 · 라이브 실측 2026-09-02】
+ * 상한이 **4로 고정**이었고 **버린 몫을 말하지 않았다.** 그런데 이 함수가 그리는
+ * `f.value` 는 Postgres `jsonb` 에서 온다 — **`jsonb` 는 삽입 순서를 보존하지 않고
+ * (키 길이, 바이트순)으로 정렬한다.** 그래서 화면에 무엇이 보이는지가 의미가 아니라
+ * **키 이름의 철자 길이**로 정해지고 있었다(아무도 의도하지 않았고 어디에도 안 적혀 있었다).
+ *
+ * 실측 — `/growth/heal-log?limit=200`:
+ *
+ *     growth_capture(worker) 17키 · 보임 4 · ★조용히 버림 12
+ *     growth_capture(api)    17키 · 보임 4 · ★조용히 버림 13
+ *     버려진 것 중: lost_total · loss_rate_pct · queue_depth · dropped_overflow
+ *                   · dropped_after_retry · flush_failures · consecutive_failures
+ *
+ * 즉 **유실·실패 신호가 통째로 안 보였다.** 음성 대조군 — 같은 응답의
+ * `prompt_candidates`(3키)·`threshold.fallback_warn_pct`(4키)는 버림 0 이었다.
+ *
+ * 【처방】①플래그 상한을 올려 **버림 자체를 없애고**(버림이 0 이면 jsonb 순서는 무의미하다)
+ * ②남는 절단은 **반드시 말한다.** 문구는 형제 `fmtReasons`(위 177~189줄)와 **동형**이다 —
+ * 그 함수는 *"★잘라낸 몫을 **말한다** — 안 적으면 상위 N 종이 전부인 줄로 읽는다
+ * (묵시적 상한 금지)"* 라고 **주석으로 원칙을 적어 두고 있었다.** 원칙은 있었고
+ * **락이 없어서** 형제가 그것을 어겼다.
+ *
+ * ★손으로 고른 「우선순위 키 목록」은 쓰지 않는다 — 목록은 곧 상한이 되고, 새 진단 키가
+ * 생기면 자동으로 누락된다.
+ */
+export function summarizeParams(
+  p: Record<string, unknown> | string | number | boolean | null,
+  max: number = ACTION_PARAMS_RENDER_CAP,
+): string {
+  if (p === null || p === undefined) return "";
+  // ★스칼라(문자열 워터마크 등)는 **그대로 보여 준다** — 종전엔 이 값이 백엔드에서
+  //   null 로 삼켜져 화면에 아무것도 안 나왔다.
+  if (typeof p !== "object") return String(p);
+  // null/undefined 는 표시 대상이 아니므로 **분모에서도 뺀다** — 안 그러면 `외 N종` 의 N 이
+  // 「보여 줄 수 있었는데 안 보여 준 수」가 아니라 「빈 칸 수」가 섞여 거짓말이 된다.
+  const shown = Object.entries(p).filter(([, v]) => v !== null && v !== undefined);
   const parts: string[] = [];
-  for (const [k, v] of Object.entries(p)) {
-    if (parts.length >= 4) break;
-    let val: string;
-    if (v === null || v === undefined) continue;
-    else if (typeof v === "object") val = JSON.stringify(v);
-    else val = String(v);
+  for (const [k, v] of shown) {
+    if (parts.length >= max) break;
+    let val: string = typeof v === "object" ? JSON.stringify(v) : String(v);
     if (val.length > 24) val = `${val.slice(0, 24)}…`;
     parts.push(`${k} ${val}`);
   }
-  return parts.join(" · ");
+  // ★잘라낸 몫을 **말한다**(형제 fmtReasons 와 동형 · 묵시적 상한 금지).
+  const rest = shown.length - parts.length;
+  return rest > 0 ? `${parts.join(" · ")} 외 ${rest}종` : parts.join(" · ");
 }
 
 function HealSection() {
@@ -614,10 +713,14 @@ function HealSection() {
                             {ttlRemaining(f.ttl_expires_at)}
                           </span>
                         </div>
-                        {f.value && summarizeParams(f.value) && (
+                        {/* ★`f.value &&` 는 `false`·`0` 을 **버린다** — 이 PR 이 백엔드에서
+                            고친 바로 그 결함(값은 있는데 화면에서 사라진다)을 이 PR 의
+                            새 코드가 프론트에서 재현하고 있었다(독립 적대 리뷰 2026-09-02).
+                            타입을 `boolean | number` 로 넓혀 놓고 이 가드를 안 고쳤다. */}
+                        {f.value != null && summarizeParams(f.value, FLAG_VALUE_RENDER_CAP) && (
                           <p className="mt-2 text-xs text-[var(--text-hint)]">
                             <span className="cc-num text-[var(--text-secondary)]">
-                              {summarizeParams(f.value)}
+                              {summarizeParams(f.value, FLAG_VALUE_RENDER_CAP)}
                             </span>
                           </p>
                         )}
@@ -732,9 +835,258 @@ function HealSection() {
 
 /* ------------------------------------------------------------------ */
 /*  메인 컴포넌트                                                       */
+
+/* ------------------------------------------------------------------ */
+/* 효과기 발화 — 선언(effector_reach) × 실측(platform_events)            */
 /* ------------------------------------------------------------------ */
 
-type GrowthTab = "insights" | "heal";
+type EffectorRow = {
+  key: string;
+  declared_reach: string | null;
+  total: number;
+  last_fired_at: string | null;
+  hours_since: number | null;
+  state: string;
+  evidence?: string;
+  missing?: string;
+};
+
+type EffectorStatus = {
+  effectors: EffectorRow[];
+  undeclared: EffectorRow[];
+  dormant_hours: number;
+  telemetry_since?: string;
+  /** ★수집 파이프라인 건강 — 이 값이 나쁘면 위 표 전체를 믿을 수 없다. */
+  capture?: {
+    queue_depth: number;
+    max_queue: number;
+    max_sustained_per_sec: number;
+    requeued: number;
+    flush_failures: number;
+    lost_total: number;
+    /** ★분모가 0 이면 `null` — **0 이 아니다**(거짓 안심 방지). */
+    loss_rate_pct: number | null;
+    /** ★계수의 범위 — `process_local` 이면 재시작 시 0 이라 **하한**이다. */
+    scope?: string;
+  };
+  summary: {
+    declared: number;
+    never_fired: number;
+    dormant: number;
+    active: number;
+    undeclared: number;
+    product_reaching_declared: number;
+    product_reaching_active: number;
+    product_reaching_max_hours_since: number | null;
+    product_reaching_never_fired: number;
+  };
+};
+
+/** ★상태 라벨 — 백엔드 `ALL_STATES` 와 1:1. 갈리면 화면에 영문 raw 가 뜬다. */
+export const EFFECTOR_STATE_LABELS: Record<string, string> = {
+  never_fired: "★한 번도 발화 없음",
+  dormant: "휴면",
+  active: "발화 중",
+  undeclared: "표에 없음(선언 누락)",
+};
+
+/** `reach` 가 무엇을 뜻하는지 — 코드만 아는 말을 화면에 그대로 내지 않는다. */
+const REACH_LABELS: Record<string, string> = {
+  product: "제품에 닿음",
+  self: "성장엔진 자기자신만",
+  none: "읽는 곳 없음",
+};
+
+function EffectorSection() {
+  const [data, setData] = useState<EffectorStatus | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const load = useCallback(async () => {
+    setIsLoading(true);
+    setError("");
+    try {
+      const res = await apiClient.get<EffectorStatus>("/growth/effectors", { useMock: false });
+      setData(res);
+    } catch (e) {
+      // ★조회 실패를 '효과기 없음'으로 위장하지 않는다.
+      const d = (e as { payload?: { detail?: unknown } })?.payload?.detail;
+      setError(typeof d === "string" ? d : "효과기 발화 현황을 불러오지 못했습니다.");
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  if (isLoading) {
+    return <p className="text-sm text-[var(--text-tertiary)]">불러오는 중…</p>;
+  }
+  if (error) {
+    return (
+      <p role="alert" className="rounded-lg bg-[rgba(220,38,38,0.1)] p-3 text-sm text-[var(--status-error)]">
+        {error}
+      </p>
+    );
+  }
+  if (!data) return null;
+
+  const s = data.summary;
+  return (
+    <div className="space-y-4" data-testid="effector-firing">
+      {/* ★가장 중요한 한 줄 — 선언과 실제가 갈리는가. */}
+      <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] p-4">
+        <p className="text-sm text-[var(--text-primary)]">
+          제품에 닿는 효과기{" "}
+          <strong>{s.product_reaching_active}</strong> / {s.product_reaching_declared} 발화 중
+          {s.product_reaching_max_hours_since !== null ? (
+            // ★임계 없는 사실 — 라벨(휴면/발화중)에 동의하지 않을 수 있게 원값을 보여 준다.
+            <span className="text-[var(--text-tertiary)]">
+              {" "}· 최장 침묵 {s.product_reaching_max_hours_since.toLocaleString("ko-KR")}시간
+            </span>
+          ) : null}
+        </p>
+        <p className="mt-1 text-xs text-[var(--text-tertiary)]">
+          선언 {s.declared}종 · 발화 중 {s.active} · 휴면 {s.dormant} ·{" "}
+          <span className={s.never_fired > 0 ? "font-semibold text-[var(--status-warning)]" : ""}>
+            한 번도 없음 {s.never_fired}
+          </span>
+          {/* ★과대주장 방지 — 「한 번도 없음」이 **무엇에 대해** 0건인지 밝힌다. */}
+          {data.telemetry_since ? (
+            <span data-testid="telemetry-since"> ({data.telemetry_since} 계측 시작 이후)</span>
+          ) : null}
+          {s.undeclared > 0 ? (
+            <span className="font-semibold text-[var(--status-error)]">
+              {" "}· ★표에 없는 액션 {s.undeclared}
+            </span>
+          ) : null}
+          {" "}· 휴면 기준 {data.dormant_hours}시간
+        </p>
+      </div>
+
+      {/* ★수집 건강 — **표보다 먼저** 온다. 입력이 새고 있으면 아래 표 전체가 거짓이다. */}
+      {data.capture ? (
+        <div
+          className={`rounded-xl border p-4 ${
+            data.capture.lost_total > 0
+              ? "border-[var(--status-error)] bg-[rgba(220,38,38,0.08)]"
+              : "border-[var(--line)] bg-[var(--surface-muted)]"
+          }`}
+          data-testid="capture-health"
+        >
+          <p className="text-sm text-[var(--text-primary)]">
+            수집 파이프라인{" "}
+            {data.capture.lost_total > 0 ? (
+              <strong className="text-[var(--status-error)]">
+                ★{data.capture.lost_total.toLocaleString("ko-KR")}건 유실
+              </strong>
+            ) : (
+              <span className="text-[var(--status-success)]">유실 없음</span>
+            )}
+            {/* ★분모가 0 이면 유실률을 **말하지 않는다** — "0%" 는 거짓 안심이다. */}
+            {data.capture.loss_rate_pct !== null ? (
+              <span className="text-[var(--text-tertiary)]">
+                {" "}({data.capture.loss_rate_pct}%)
+              </span>
+            ) : (
+              <span className="text-[var(--text-tertiary)]"> (아직 적재 없음 — 유실률 판정 불가)</span>
+            )}
+          </p>
+          <p className="mt-1 text-xs text-[var(--text-tertiary)]">
+            {/* ★필드마다 testid — 전역 toContain 은 **값을 서로 바꿔치기해도** 통과한다.
+                (같은 파일이 효과기 행에서 이미 고친 결함인데 이 패널에서 재발했다) */}
+            큐 <span data-testid="cap-queue">{data.capture.queue_depth.toLocaleString("ko-KR")}</span>/
+            <span data-testid="cap-max">{data.capture.max_queue.toLocaleString("ko-KR")}</span> ·
+            지속 처리 천장{" "}
+            <span data-testid="cap-ceiling">{data.capture.max_sustained_per_sec}</span>건/초 ·
+            되돌림{" "}
+            <span data-testid="cap-requeued">{data.capture.requeued.toLocaleString("ko-KR")}</span>
+            건(유실 아님) · flush 실패{" "}
+            <span data-testid="cap-failures">
+              {data.capture.flush_failures.toLocaleString("ko-KR")}
+            </span>
+            회
+          </p>
+          {/* ★「유실 없음」이 **어떤 범위**의 말인지 밝힌다 — 프로세스 로컬이라
+              재시작하면 0 이 된다. 안 밝히면 그 0 이 거짓 안심이 된다. */}
+          {data.capture.scope === "process_local" ? (
+            <p className="mt-1 text-xs text-[var(--text-tertiary)]" data-testid="capture-scope">
+              ★이 수치는 <strong>현재 프로세스 기준</strong>입니다 — 재시작하면 0 으로
+              돌아가고 워커가 여럿이면 워커마다 다릅니다. 실제 유실은 이 값{" "}
+              <strong>이상</strong>입니다.
+            </p>
+          ) : null}
+          {data.capture.lost_total > 0 ? (
+            <p className="mt-2 text-xs font-semibold text-[var(--status-error)]">
+              ★유실이 있으면 아래 표의 「한 번도 발화 없음」·「휴면」을 믿을 수 없습니다 —
+              발화하지 않은 것과 발화 기록이 사라진 것이 같은 0 으로 보입니다.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[640px] text-sm">
+          <thead>
+            <tr className="border-b border-[var(--line)] text-left text-xs text-[var(--text-tertiary)]">
+              <th className="py-2 pr-3 font-medium">효과기</th>
+              <th className="py-2 pr-3 font-medium">선언된 도달범위</th>
+              <th className="py-2 pr-3 font-medium">발화</th>
+              <th className="py-2 pr-3 font-medium">최근</th>
+              <th className="py-2 font-medium">상태</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[var(--line)]">
+            {[...data.effectors, ...data.undeclared].map((r) => (
+              <tr key={r.key} data-testid={`effector-row-${r.key}`}>
+                <td className="py-2 pr-3 font-mono text-xs text-[var(--text-primary)]">{r.key}</td>
+                <td className="py-2 pr-3 text-xs">
+                  {r.declared_reach ? REACH_LABELS[r.declared_reach] ?? r.declared_reach : "—"}
+                </td>
+                <td className="py-2 pr-3">{r.total.toLocaleString("ko-KR")}건</td>
+                <td className="py-2 pr-3 text-xs text-[var(--text-tertiary)]">
+                  {/* ★라벨과 함께 **원값**을 낸다. */}
+                  {r.hours_since !== null
+                    ? `${r.hours_since.toLocaleString("ko-KR")}시간 전`
+                    : "—"}
+                </td>
+                <td className="py-2">
+                  <span
+                    data-testid={`effector-state-${r.key}`}
+                    className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                      r.state === "active"
+                        ? "bg-[rgba(13,148,136,0.12)] text-[rgb(15,118,110)]"
+                        : r.state === "never_fired" || r.state === "undeclared"
+                          ? "bg-[rgba(220,38,38,0.12)] text-[var(--status-error)]"
+                          : "bg-[rgba(217,119,6,0.12)] text-[rgb(146,64,14)]"
+                    }`}
+                  >
+                    {EFFECTOR_STATE_LABELS[r.state] ?? r.state}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <p className="text-xs leading-5 text-[var(--text-tertiary)]">
+        ★발화 0건이 곧 결함은 아닙니다 — 「읽는 곳 없음」인 효과기가 영원히 발화하지 않는 것이
+        정상일 수 있습니다. 이 표는 <strong>사실과 판단 근거</strong>를 줄 뿐이고 판단은 사람이 합니다.
+        <br />
+        ★「한 번도 발화 없음」은 <strong>세 가지를 구별하지 못합니다</strong> — ①조건이 아직 안 맞음
+        ②정상이라 발생할 일이 없었음 ③구조적으로 발화 불가(배선 결함). 처방이 서로 다르므로
+        0건을 보면 <strong>그 효과기의 경로를 직접 따라가야</strong> 합니다.
+      </p>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+
+type GrowthTab = "insights" | "heal" | "effectors";
 
 export function GrowthDashboard() {
   const [tab, setTab] = useState<GrowthTab>("insights");
@@ -1157,8 +1509,18 @@ export function GrowthDashboard() {
         <button type="button" onClick={() => setTab("heal")} className={tabBtn("heal")}>
           자가치유 현황
         </button>
+        {/* ★「닿는다」는 선언과 「발화했다」는 사실을 대조하는 자리. */}
+        <button type="button" onClick={() => setTab("effectors")} className={tabBtn("effectors")}>
+          효과기 발화
+        </button>
       </div>
-      {tab === "insights" ? renderInsights() : <HealSection />}
+      {tab === "insights" ? (
+        renderInsights()
+      ) : tab === "heal" ? (
+        <HealSection />
+      ) : (
+        <EffectorSection />
+      )}
     </div>
   );
 }

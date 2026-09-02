@@ -7,6 +7,7 @@ import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { TrustBadge } from "@/components/common/TrustBadge";
 import { DataSourceNotice } from "@/components/ui/DataSourceNotice";
 import { apiClient, ApiClientError } from "@/lib/api-client";
+import { normalizePnu } from "@/lib/pnu";
 
 /* ── Types ── */
 
@@ -271,7 +272,7 @@ export function BankReadyReportBuilder() {
       site_analysis: siteAnalysis
         ? {
             address: siteAnalysis.address,
-            pnu: siteAnalysis.pnu,
+            pnu: normalizePnu(siteAnalysis.pnu) ?? undefined,
             // ★다필지면 통합 면적 — 은행제출 보고서 사업규모가 통합 부지 기준이 되도록.
             land_area_sqm: effectiveLandAreaSqm(siteAnalysis),
             estimated_value: siteAnalysis.estimatedValue,
@@ -384,7 +385,7 @@ export function BankReadyReportBuilder() {
           selected_sections: Array.from(selectedSections),
           template,
           project_id: projectId || undefined,
-          pnu: siteAnalysis?.pnu || undefined,
+          pnu: normalizePnu(siteAnalysis?.pnu) ?? undefined,
           address: siteAnalysis?.address || undefined,
         },
         useMock: false,
@@ -440,7 +441,7 @@ export function BankReadyReportBuilder() {
             selected_sections: Array.from(selectedSections),
             template,
             project_id: projectId || undefined,
-            pnu: siteAnalysis?.pnu || undefined,
+            pnu: normalizePnu(siteAnalysis?.pnu) ?? undefined,
             address: siteAnalysis?.address || undefined,
           }),
         },

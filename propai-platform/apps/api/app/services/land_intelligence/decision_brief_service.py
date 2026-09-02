@@ -29,6 +29,7 @@ from typing import Any
 import structlog
 
 from app.services.common import analysis_cache
+from app.utils.pnu import is_valid_pnu
 
 logger = structlog.get_logger(__name__)
 
@@ -431,7 +432,7 @@ class DecisionBriefService:
             pnu = str(site_raw.get("pnu") or "").strip()
             _addr = site_raw.get("address")
             payload: dict[str, Any] = {
-                "pnu": pnu if len(pnu) == 19 else "",
+                "pnu": pnu if is_valid_pnu(pnu) else "",
                 "address": _addr if isinstance(_addr, str) and _addr.strip() else None,
             }
             dump = build_input_dump(payload)
