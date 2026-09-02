@@ -339,15 +339,33 @@ def _render_like_dashboard(payload: dict) -> str:
     return " · ".join(parts)
 
 
-def test_the_discriminating_field_survives_the_dashboard_truncation() -> None:
+@pytest.mark.asyncio
+async def test_the_discriminating_field_survives_the_dashboard_truncation() -> None:
     """★①정상 유휴와 ②쌓이는 중이 **화면에서 서로 다르게** 보인다.
 
-    되살리는 변이: payload 에서 `at` 을 뒤로 밀면(예: `**raw` 를 앞에 두면)
-    앞 4키가 정적 상수로 채워져 두 모집단이 **같은 문자열**이 된다 → 죽는다.
+    ★★**프로덕션이 만든 payload 를 태운다 — 손으로 만든 dict 가 아니다.**
+      종전 이 테스트는 리터럴 dict 를 그려 봤다. 그래서 프로덕션에서 `at` 을 통째로
+      빼는 변이가 **SURVIVED** 했다(내 변이 배터리가 잡았다) — 락이 **사본**을 태우고
+      있었고, 정작 **키 순서를 만드는 코드**는 한 번도 안 태웠다.
+      ★이 파일이 잡으려는 결함이 바로 그것(판별 필드가 순서 때문에 잘림)인데
+        **순서를 만드는 쪽을 안 보고 있었다.**
+
+    되살리는 변이: payload 에서 `at` 을 빼거나 뒤로 밀면 앞 4키가 정적 상수로 채워져
+    두 모집단이 **같은 문자열**이 된다 → 죽는다.
     """
-    idle = {"at": "2026-09-02T08:00:00+00:00", "queue_depth": 0, "lost_total": 0,
-            "max_queue": 10000, "flush_limit": 500, "counter_scope": "process_local"}
-    piling = dict(idle, at="2026-09-02T08:00:05+00:00", queue_depth=412)
+    # ★프로덕션 경로로 두 모집단을 **실제로 만든다**
+    s_idle = _Store()
+    await cs.publish_capture_status(s_idle, scope="worker")
+    idle = _published(s_idle)
+
+    s_pile = _Store()
+    for i in range(412):
+        cs._QUEUE.append({"event_id": f"e{i}", "event_type": "t", "created_at": None})
+    await cs.publish_capture_status(s_pile, scope="worker")
+    piling = _published(s_pile)
+
+    # ★대조군 — 두 모집단이 실제로 갈렸는가(안 갈렸으면 아래 비교가 공허하다)
+    assert idle["queue_depth"] != piling["queue_depth"], "★두 모집단이 안 갈렸다"
 
     r_idle, r_piling = _render_like_dashboard(idle), _render_like_dashboard(piling)
     # ★대조군 — 렌더가 아무것도 안 만들면 아래 비교가 공허하다
