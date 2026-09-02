@@ -99,6 +99,17 @@ describe("isSameParcel — 중복제거 키 동일성과 **다른** 판정이다
     expect(isSameParcel({ pnu: A1.pnu, address: DONG }, { pnu: null, address: DONG })).toBe(true);
   });
 
+  /**
+   * ★독립 리뷰(동료 세션)가 제기한 반대편: *"`||` 를 `&&` 로 바꾸면 **PNU 없는 필지**에서
+   * 중복제거가 아예 안 되는 것 아니냐"*. 그분 실측으로 **292필지 중 77건이 PNU 없는**
+   * 모집단이라 값이 큰 지적이다. 설계상 닫혀 있지만 **닫혀 있음을 재서 잠근다** —
+   * `isSameParcel` 은 단순 `&&` 가 아니라 «둘 다 있을 때만 PNU 가 결정» 이다.
+   */
+  it("★둘 다 PNU 없음 + 같은 주소 → 같은 필지다(중복제거가 열리지 않는다)", () => {
+    expect(isSameParcel({ pnu: null, address: DONG }, { pnu: null, address: DONG })).toBe(true);
+    expect(dedupeByIdentity([{ pnu: null, fullAddress: DONG }, { pnu: null, fullAddress: DONG }])).toHaveLength(1);
+  });
+
   it("★빈 주소는 «판단 불가» 이지 «같음» 이 아니다", () => {
     expect(isSameParcel({ pnu: null, address: "" }, { pnu: null, address: "" })).toBe(false);
   });
