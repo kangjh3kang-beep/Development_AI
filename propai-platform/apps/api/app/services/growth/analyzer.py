@@ -32,7 +32,12 @@ import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from app.utils.withheld import INSUFFICIENT_COVERAGE, is_withheld, withheld
+from app.utils.withheld import (
+    ABSENT_REASONS,
+    INSUFFICIENT_COVERAGE,
+    is_withheld,
+    withheld,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -962,7 +967,14 @@ def _withheld_note(m: dict[str, Any]) -> str:
         field = key[: -len("_absent")]
         if not is_withheld(m, field):
             continue
-        basis = str(m.get(f"{field}_basis") or m.get(key))
+        # ★`_basis`(사람이 읽는 문장)가 없으면 **코드값이 그대로** 독자에게 갔다 —
+        #   예: "※ down_pct insufficient_coverage". 같은 파일이 아래에서 바로 그 결함
+        #   클래스를 지적해 두고(*"종전엔 영문 enum 그대로 나갔다"*) 이 경로만 남았다.
+        #   `withheld()` 는 쓰기 시점에 문장을 강제하지만 **읽기 시점엔 아무도 강제하지 않아**
+        #   저장된 옛 행·문장을 안 넣는 미래 생산자가 그대로 새어 나온다.
+        #   → 코드값이면 한국어 사전으로 바꾼다(사전에 없으면 원값 유지).
+        _code = m.get(key)
+        basis = str(m.get(f"{field}_basis") or ABSENT_REASONS.get(str(_code), _code))
         by_basis.setdefault(basis, []).append(field)
     if not by_basis:
         return ""

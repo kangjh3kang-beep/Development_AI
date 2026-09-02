@@ -2,8 +2,16 @@
 
 ## 왜 이 셋이 한 파일인가
 
-세 결함은 파일도 층도 다르지만 **뿌리가 하나**다:
+**1·2 번은 뿌리가 하나**다:
 **사유·상태가 만들어져 저장까지 되는데, 사람이 읽는 마지막 층에서 버려지거나 가려진다.**
+
+★★**3번은 그 뿌리가 아니다**(독립 적대 렌즈 실측 2026-09-02 · AST 확인).
+  `note_coverage` 는 가려진 이름 `withheld` 를 **본문에서 한 번도 값으로 쓰지 않는다**(전수 0건).
+  실제 `withheld()` 호출 3건은 **파라미터가 없는 다른 함수**(`_classify_quality`)에 있다.
+  즉 3번은 **만들어졌다가 버려진 것이 아니라 「아직 터지지 않은 잠복 위험」**이고,
+  이것 때문에 **틀린 출력이 나간 적은 없다.**
+  → *"같은 뿌리 3건"* 이라고 뭉치면 리뷰어가 **하나를 표본으로 보고 일반화**한다.
+    1·2 를 고쳐도 3 은 아무것도 말해 주지 않는다. **묶지 않고 따로 적는다.**
 
 | # | 어디서 | 무엇이 사라졌나 |
 |---|---|---|
@@ -61,6 +69,16 @@ def test_judged_population_still_shows_the_real_number():
     n = A._rule_narrative(_quality_ins(fail=24, warn=5, verify_total=38,
                                        down=6, feedback_total=10))
     assert "60.0%" in n, n
+    # ★**산문이 아니라 칸을 본다**(독립 적대 렌즈 실측 2026-09-02).
+    #   종전엔 문자열 전체에 `"미측정" not in n` 이었는데, **프로덕션의 보류 사유 산문
+    #   자체가 그 낱말을 쓴다**("…미측정이며 0% 가 아닙니다"). 그래서 판정 게이트를
+    #   무력화하는 변이가 **이 락 단독 실행에서 SURVIVED** 였다 — 잡은 것은 옆의
+    #   파티션 락뿐이었고, 이 테스트는 그 축에 **아무것도 기여하지 않고 있었다.**
+    #   ★내가 쓴 안내문이 내 단언을 공허하게 만든 그 형태의 재발이다.
+    assert A._metric_text(
+        _quality_ins(fail=24, warn=5, verify_total=38, down=6, feedback_total=10)["metrics_json"],
+        "down_pct",
+    ) == "60.0%", "★판정된 지표의 칸이 숫자가 아니다"
     assert "미측정" not in n
     assert "※" not in n, "보류가 없는데 사유 꼬리가 붙었다(과잉)"
 
@@ -185,9 +203,19 @@ def test_emitted_coverage_key_is_still_the_contract_name():
 
 
 def test_no_analyzer_parameter_shadows_a_module_level_import():
-    """★**파생형 · AST** — 이 결함 클래스 전체를 잠근다(이 한 함수만이 아니라).
+    """★**파생형 · AST** — `analyzer.py` 의 **전 함수**를 잠근다(이 한 함수만이 아니라).
 
     문자열 검사로는 못 한다 — 이 파일의 설명 문장에 그대로 걸린다(§판정은 파서로).
+
+    ★★**범위를 사실대로 좁혀 적는다**(독립 적대 렌즈 실측 2026-09-02).
+      종전 문구는 *"이 결함 클래스 **전체**를 잠근다"* 였는데 **거짓이었다** — 이 락은
+      `analyzer.py` **한 파일**만 읽는다. 같은 규칙을 `apps/api/app` 전체(809파일)에
+      돌리면 **10건**이 나온다.
+      ★그리고 그중 일부는 **결함이 아니다** — `unit_mix_optimizer._optimize_slsqp(np, minimize)`
+        는 지연 임포트한 모듈을 호출부가 넘기는 **의도된 의존성 주입**이다.
+        즉 이 규칙을 저장소 전역에 그대로 걸면 **위양성을 낸다**(위양성도 결함이다).
+      → 넓히려면 **DI 허용 목록과 사유**가 함께 있어야 한다. 그 전까지는 **범위를 정직하게**
+        적고, 넓히는 것은 별건으로 둔다.
     """
     src = (_API / "app" / "services" / "growth" / "analyzer.py").read_text(encoding="utf-8")
     tree = ast.parse(src)
@@ -215,3 +243,74 @@ def test_metric_text_partitions_withheld_from_merely_missing(field, expect):
     """★보류(사유 있음)와 **그냥 없음**은 다른 말이어야 한다 — 뭉치면 진단이 안 된다."""
     m = {"down_pct": None, "down_pct_absent": "insufficient_coverage"}
     assert A._metric_text(m, field) == expect
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ★★L11 — **라우터를 실제로 태운다**(독립 적대 렌즈 실측 2026-09-02)
+#
+# 위 L7 은 호출 지점의 **AST 모양**(`value=` 인자가 `Subscript` 인가)만 본다.
+# 렌즈가 **한 줄 위에서 강제 변환**하는 변이를 넣자 **40건 전부 초록**이었다:
+#
+#     for fr in [(r[0], r[1], r[2] if isinstance(r[2], dict) else None, ...) for r in flag_rows]
+#
+# 호출 지점은 여전히 `value=fr[2]` 라 모양 검사는 통과하는데, 모든
+# `growth_last_run.*` 워터마크가 다시 `None` 이 된다 — **이 PR 이 고쳤다고 선언한 그 상태**다.
+#
+# ★그리고 실측: `heal_log` 를 **실행하는 테스트가 저장소에 0건**이었다(파서로 확인 ·
+#   대조군으로 같은 스캐너가 다른 호출들을 찾음). 유일한 「히트」는 독스트링 산문이었다.
+#   → *"부른다를 잠그면 아무것도 안 잠긴다 — **행위**를 태워라."*
+# ═══════════════════════════════════════════════════════════════════════════
+@pytest.mark.asyncio
+async def test_heal_log_does_not_swallow_string_watermarks_END_TO_END(monkeypatch) -> None:
+    """★엔드포인트를 **실행**해 문자열 워터마크가 살아 나오는지 본다.
+
+    두 모집단을 **같은 실행에서** 태운다 — 문자열은 문자열로 살고, dict 는 dict 로 산다.
+    한쪽만 보면 *"전부 통과시키는 구현"* 과 *"올바른 구현"* 이 구별되지 않는다.
+
+    되살리는 변이: 라우터 어디서든 `isinstance(..., dict) else None` 강제 변환을 넣으면 죽는다
+    (호출 지점이든 **그 위 한 줄이든** — 모양이 아니라 결과를 보므로).
+    """
+    from app.routers import growth as gr
+
+    async def _ok_admin(request, db):        # 관리자 가드는 이 테스트의 대상이 아니다
+        return "admin"
+
+    monkeypatch.setattr(gr, "_require_admin", _ok_admin)
+
+    watermark = "2026-08-27T06:05:00+00:00"
+    flag_rows = [
+        # ★모집단 A — 평문 문자열 워터마크(`schedule.py` 가 isoformat() 로 쓴다)
+        ("growth_last_run.analyze", "global", watermark, None, "growth-scheduler"),
+        # ★모집단 B — dict 값(종전 구현이 유일하게 통과시키던 것)
+        ("relax.molit", "global", {"timeout_multiplier": 1.5}, None, "healer"),
+    ]
+
+    class _Res:
+        def __init__(self, rows=None, scalar=0):
+            self._rows, self._scalar = rows or [], scalar
+        def fetchall(self): return self._rows
+        def scalar(self): return self._scalar
+
+    class _Db:
+        def __init__(self): self.n = 0
+        async def execute(self, *a, **k):
+            self.n += 1
+            if self.n == 1:
+                return _Res(scalar=0)          # COUNT(*)
+            if self.n == 2:
+                return _Res(rows=[])           # heal_action 이력(이 테스트의 대상 아님)
+            return _Res(rows=flag_rows)        # platform_settings 활성 플래그
+
+    out = await gr.heal_log(request=object(), db=_Db())
+    got = {f.key: f.value for f in out.active_flags}
+
+    # ★대조군 먼저 — 두 모집단이 실제로 응답에 들어왔나(공허한 초록 방지)
+    assert set(got) == {"growth_last_run.analyze", "relax.molit"}, f"★플래그가 안 실렸다: {got}"
+
+    # ①문자열이 **문자열 그대로** 살아 나온다 — 여기가 종전 결함 자리
+    assert got["growth_last_run.analyze"] == watermark, (
+        "★문자열 워터마크가 삼켜졌다 — 운영자가 「축이 도는가」를 "
+        "「한 번도 안 돌았다」와 구별할 수 없게 된다"
+    )
+    # ②dict 도 **dict 그대로** 산다(과잉 교정이 아님을 같은 실행에서 증명)
+    assert got["relax.molit"] == {"timeout_multiplier": 1.5}, "★dict 가 망가졌다(과잉 교정)"
