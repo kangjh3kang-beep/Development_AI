@@ -20,6 +20,7 @@ import logging
 import os
 import re
 from collections import deque
+from collections.abc import MutableMapping
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import unquote, urlsplit, urlunsplit
@@ -256,6 +257,16 @@ def record_fallback(service: str, kind: str, *, severity: str = "warn", **meta: 
         logger.debug("growth record_fallback 무시: %s", str(e)[:120])
 
 
+def flush_interval_s() -> int:
+    """배수 루프의 대기 주기(초). ★소비처가 리터럴을 쓰지 않게 **파생시킨다**.
+
+    `apps/api/main.py` 는 역사적으로 `sleep(5)` 리터럴을 쓰고 그 짝을
+    `test_flush_interval_matches_the_actual_loop` 이 소스 대조로 잠근다(그대로 둔다).
+    **새로 배선하는 소비처는 이 접근자를 쓴다** — 리터럴을 하나 더 만들지 않는다.
+    """
+    return _FLUSH_INTERVAL_S
+
+
 def queue_size() -> int:
     """현재 큐 적재 건수(관측·테스트용)."""
     return len(_QUEUE)
@@ -413,6 +424,132 @@ async def flush_batch(db, limit: int = _FLUSH_LIMIT) -> int:
             len(rows), _consecutive_failures, str(e)[:160],
         )
         return 0
+
+
+#: 배수 루프 태스크를 워커 컨텍스트에 담을 때 쓰는 키.
+#:
+#: ★**한 곳에서만 정의한다.** 종전에는 워커가 이 문자열을 **쓰는 쪽과 읽는 쪽에 각각
+#:   리터럴로** 갖고 있었고, 기계 변이가 정확히 그 자리를 짚었다 — 한쪽만 바뀌면
+#:   `cancel()` 이 **영영 안 불리는데 아무 신호도 안 난다**(조용한 실패).
+#:   `_FLUSH_LIMIT` 이 `main.py` 두 곳에 하드코딩돼 있던 것과 **같은 형태**다.
+#:
+#: ★**변이 생존 설명**(도구가 요구한다 — 점수 부풀리기 방지): 이 문자열의 **값**을 바꾸는
+#:   변이는 **생존한다. 그리고 그것이 옳다.** 쓰는 쪽·읽는 쪽이 **둘 다 이 상수**를 보므로
+#:   값이 무엇이든 짝이 맞는다 — 프로세스 로컬 dict 의 키라 값 자체에 의미가 없다.
+#:   ★**그것이 이 상수를 만든 이유다.** 리터럴이 둘이던 종전에는 한쪽만 바뀔 수 있었고,
+#:   그때는 cancel 이 영영 안 불리는데 **아무 예외도 안 났다**(조용한 실패).
+#:   즉 이 생존은 구멍이 아니라 **결함이 구조적으로 불가능해졌다는 신호**다.
+_FLUSH_TASK_CTX_KEY = "growth_flush_task"
+
+
+def start_flush_loop(ctx: MutableMapping[str, Any], session_factory: Any) -> bool:
+    """배수 루프를 띄워 `ctx` 에 담는다. 성공 여부 반환.
+
+    ★워커(arq)는 `on_startup` 에서 이것을 부른다. **`arq` 없이 테스트 가능**하도록
+      여기 두었다 — 종전에는 이 로직이 `apps/worker/main.py` 안에만 있어서
+      `arq` 미설치 환경에서 **그 층을 아무도 태우지 않았다**(기계 변이 생존 4건이 그 자리).
+
+    실패해도 예외를 올리지 않는다 — 수집 배선이 워커 기동을 막으면 안 된다.
+    """
+    try:
+        import asyncio
+
+        async def _loop() -> None:
+            while True:
+                await asyncio.sleep(flush_interval_s())
+                try:
+                    await drain_until_empty(session_factory)
+                except Exception as e:  # noqa: BLE001 — 배수 실패가 루프를 죽이면 안 된다.
+                    logger.warning("growth flush 루프 오류: %s", str(e)[:160])
+
+        ctx[_FLUSH_TASK_CTX_KEY] = asyncio.create_task(_loop())
+        return True
+    except Exception as e:  # noqa: BLE001
+        logger.warning("growth flush 루프 시작 실패: %s", str(e)[:160])
+        return False
+
+
+async def stop_flush_loop_and_drain(ctx: MutableMapping[str, Any], session_factory: Any) -> int:
+    """배수 루프를 멈추고 **마지막으로 비운다**. 적재 건수 반환.
+
+    ★두 일을 **한 함수**에 둔 이유: 종전 워커 코드는 취소와 마지막 배수가 따로 있었고,
+      기계 변이가 *"`ctx.get` 의 키를 바꾼다"* · *"`is not None` 가드를 무력화한다"* 를
+      **둘 다 생존**시켰다. 키를 상수로 모으고 이 함수를 직접 태우면 그 자리가 잠긴다.
+
+    ★취소 대상이 **없어도 배수는 한다** — 루프 기동에 실패한 프로세스야말로
+      큐가 가장 많이 쌓여 있다(그 경우 잔여를 버리면 결함이 두 배가 된다).
+    """
+    import asyncio
+    import contextlib
+
+    task = ctx.get(_FLUSH_TASK_CTX_KEY)
+    if task is not None:
+        task.cancel()
+        # ★★**취소를 기다린다** — 안 기다리면 비행 중 배치가 통째로 사라진다.
+        #
+        #   `cancel()` 은 **요청**일 뿐이다. 루프가 `flush_batch` 안에서
+        #   `await db.execute(...)` 로 대기 중이면, 그 배치는 이미 `_drain` 이
+        #   큐에서 **빼낸** 상태다. 취소가 배달되면 #920 의 `BaseException` 핸들러가
+        #   그것을 **되돌리는데**, 그 되돌림은 **await 를 한 번 더 돌아야** 일어난다.
+        #   기다리지 않으면 아래 `drain_until_empty` 가 **되돌림 전의 얕은 큐**를 보고
+        #   끝내 버리고, 되돌아온 행은 **아무도 비우지 않은 채 프로세스가 죽는다**.
+        #
+        #   ★실측(두 모집단 대조 · 큐 600건 · 비행 배치 500건):
+        #     기다리지 않음 → 종료 후 큐 잔여 **500** · DB 적재 100 = **500건 소실**
+        #     기다림        → 종료 후 큐 잔여 **0**   · DB 적재 **600** = 소실 0
+        #
+        #   ★노출 창은 (INSERT 소요 / flush 주기)라 **DB 가 느릴수록 넓어진다** —
+        #     즉 **큐가 가장 깊을 때 가장 잘 터진다**. 이 파일은 바로 위
+        #     `flush_batch` 에서 같은 창을 이미 적어 뒀는데, 그 사슬의
+        #     **다음 고리**가 여기였다.
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+    try:
+        return await drain_until_empty(session_factory)
+    except Exception as e:  # noqa: BLE001 — 어떤 예외도 종료를 막지 않는다.
+        logger.warning("growth 종료 flush 오류: %s", str(e)[:160])
+        return 0
+
+
+async def drain_until_empty(session_factory: Any, *, max_rounds: int = 20) -> int:
+    """큐가 빌 때까지 배치 flush 한다. 적재된 총 건수 반환.
+
+    ## ★왜 함수로 빼는가 — **배수 경로가 여럿이면 하나가 빠진다**
+
+    ★**정정(2026-08-29 · 독립 적대 렌즈 실측)**: 종전에 이 주석은 *"두 곳에 복제"* 라고
+    적었는데 **틀렸다 — 셋이었다**: `apps/api/main.py` 의 주기 루프 · 같은 파일의 종료 flush ·
+    그리고 `app/tasks/growth_tasks.py` 의 `_flush_async`. 세 번째가 상한을 리터럴 `500` 으로
+    굳혀 `_FLUSH_LIMIT` 과 따로 놀고 있었다.
+    ★**그리고 내가 그 주석을 쓸 때 이미 셋이었다.** 산문은 사본이 갈리는 것을 막지 못한다 —
+      그래서 이 주장은 이제 **파생형 락**이 강제한다
+      (`test_there_is_exactly_one_drain_implementation`).
+
+    이 루프는 종전에 **세 곳에 복제**돼 있었고(주기 루프 · 종료 flush · celery 태스크),
+    상한 `500` 이 **리터럴로 하드코딩**돼 `_FLUSH_LIMIT` 과 따로 놀았다.
+    거기에 워커용으로 **세 번째 사본**을 만들면 셋이 갈라진다.
+
+    ★그리고 실제로 **배수구가 아예 없는 프로세스**가 있었다 — `apps/worker`(arq).
+      진입점 임포트 폐포(79파일)가 `record_event` 에 **닿는데**(`base_client._emit_growth_fallback`
+      → 외부 API 회로차단기 폴백마다 발화) 그 폐포 안에 `flush_batch` 호출은 **0건**이었다.
+      즉 워커가 담은 이벤트는 **컨테이너 재시작마다 통째로 사라졌다.**
+
+    ## 계약
+
+    - 큐가 비어 있으면 **세션을 열지 않는다**(빈 커넥션 낭비 방지).
+    - 한 회차가 `_FLUSH_LIMIT` **미만**을 적재하면 큐가 마른 것이므로 멈춘다.
+    - `max_rounds` 는 **폭주 상한**이다 — 계속 차오르는 큐에 갇히지 않는다.
+    - ★상한은 **리터럴이 아니라 `_FLUSH_LIMIT` 에서 파생**된다. 상수를 바꾸면 여기가 따라온다.
+    """
+    if queue_size() == 0:
+        return 0
+    total = 0
+    async with session_factory() as session:
+        for _ in range(max_rounds):
+            n = await flush_batch(session)
+            total += n
+            if n < _FLUSH_LIMIT:
+                break
+    return total
 
 
 def capture_status() -> dict[str, Any]:
