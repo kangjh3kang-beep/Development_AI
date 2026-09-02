@@ -362,7 +362,7 @@ def test_downgrade_lands_on_conditional_not_merely_not_impossible():
     # 인접 시 「가능」이던 게이트 대상만 고른다(파생) — 이미 조건부인 것은 변화가 안 보인다.
     gate = set().union(*_gate_set_literals().values())
     was_possible = sorted(k for k in gate if k in ok and ok[k]["applicable"] == "가능")
-    assert was_possible, f"「가능」이던 게이트 대상이 0개 — 픽스처가 모집단을 못 만든다"
+    assert was_possible, "「가능」이던 게이트 대상이 0개 — 픽스처가 모집단을 못 만든다"
     for k in was_possible:
         assert bad[k]["applicable"] == "조건부", (
             f"{k}: 비인접이면 **조건부**여야 한다 — 실제 {bad[k]['applicable']!r} "
