@@ -848,7 +848,13 @@ class _RecordingFactory:
                 if outer.delay:
                     import asyncio as _a
                     await _a.sleep(outer.delay)
-                outer.loaded.append(len(params or []))
+                # ★★**적재만 센다 — 아무 실행이나 세지 않는다.**
+                #   종전엔 `execute` 의 **파라미터 개수**를 「적재 건수」로 썼다. 그것은
+                #   대리 변수였고, 같은 세션을 쓰는 **두 번째 호출자**(수집 상태 발행)가
+                #   생기자 곧바로 오염됐다(실측: `[120, 5]` — 5 는 발행 INSERT 의 인자 수).
+                #   → 대상 테이블로 가른다. 이제 이 값은 **platform_events 에 넣은 행 수**다.
+                if "platform_events" in str(a[0] if a else ""):
+                    outer.loaded.append(len(params or []))
 
             async def commit(self):
                 return None

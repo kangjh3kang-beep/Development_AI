@@ -442,7 +442,62 @@ async def flush_batch(db, limit: int = _FLUSH_LIMIT) -> int:
 _FLUSH_TASK_CTX_KEY = "growth_flush_task"
 
 
-def start_flush_loop(ctx: MutableMapping[str, Any], session_factory: Any) -> bool:
+#: 수집 상태를 **프로세스 경계 밖으로** 내보내는 설정 키. `scope` 로 프로세스를 가른다.
+#:
+#: ★**새 표면을 만들지 않는다** — `growth_last_run.*` 워터마크가 이미 쓰는 통로
+#:   (`schema_guard.set_setting` → `platform_settings` → `/growth/heal-log` 의 `active_flags`)를
+#:   그대로 탄다. 읽기 경로는 **한 줄도 안 바꾼다**.
+CAPTURE_STATUS_SETTING_KEY = "growth_capture"
+
+
+async def publish_capture_status(session_factory: Any, *, scope: str) -> bool:
+    """이 프로세스의 `capture_status()` 를 `platform_settings` 에 발행한다. 성공 여부 반환.
+
+    ## ★왜 필요한가 — 큐가 **프로세스 로컬**이라 밖에서 안 보인다
+
+    `_QUEUE` 는 모듈 전역 deque 다. 그래서 arq 워커가 담은 이벤트의 깊이를 **API 프로세스가
+    볼 방법이 없었다** — `/growth/effectors` 의 `capture` 는 **API 자기 큐**만 말한다.
+    그 결과 *"워커가 안 비운다"* 와 *"워커가 비울 게 없다"* 가 **같은 관측(0)** 으로 보였다.
+
+    ## ★세 모집단으로 가른다 (둘로 만들면 표면이 죽은 것이 「정상 유휴」로 읽힌다)
+
+        깊이 0 · `at` 갱신됨   → 비울 게 없다(정상 유휴)
+        깊이 N · `at` 정지     → 안 비운다(고장)
+        ★**행 자체가 없음**    → 관측이 안 온다(워커·발행 부재)
+
+    ★**시각을 `payload` 안에 넣는 이유**: `/heal-log` 의 `active_flags` 는
+      `key·scope·value·ttl_expires_at·updated_by` 만 내보내고 **`updated_at` 은 안 준다**(실측).
+      `updated_at` 에 기대면 **밖에서 세 번째 칸을 못 가른다.**
+
+    ## ★★설계 제약 — **측정 대상으로 측정하지 않는다**
+
+    큐 깊이를 `record_event` 로 보고하면 **자기가 재려는 큐에 자기 관측을 넣는 순환**이 된다:
+      ①유실이 나면 **관측치가 먼저 사라지고**(가장 필요한 순간에 없다)
+      ②유휴일 때 *"비었다"* 와 *"관측이 안 왔다"* 를 **가르지 못한다**(판별력 자체의 문제).
+    → 그래서 **별도 통로**(`platform_settings`)로 낸다. 이 함수는 `record_event` 를 부르지 않는다.
+
+    ★발행 실패는 **삼킨다** — 관측이 배수를 죽이면 안 된다.
+    """
+    try:
+        from datetime import UTC, datetime
+
+        from app.services.growth import schema_guard
+
+        payload = dict(capture_status())
+        # ★`at` 은 **payload 안에** 둔다(위 참조). 발행 시각이자 「이 프로세스가 살아 있다」는 신호.
+        payload["at"] = datetime.now(UTC).isoformat()
+        async with session_factory() as db:
+            return await schema_guard.set_setting(
+                db, CAPTURE_STATUS_SETTING_KEY, payload,
+                scope=scope, updated_by=f"growth-capture:{scope}",
+            )
+    except Exception as e:  # noqa: BLE001 — 관측 실패가 배수를 막지 않는다.
+        logger.warning("growth capture 상태 발행 실패(%s): %s", scope, str(e)[:160])
+        return False
+
+
+def start_flush_loop(ctx: MutableMapping[str, Any], session_factory: Any,
+                     *, publish_scope: str = "api") -> bool:
     """배수 루프를 띄워 `ctx` 에 담는다. 성공 여부 반환.
 
     ★워커(arq)는 `on_startup` 에서 이것을 부른다. **`arq` 없이 테스트 가능**하도록
@@ -461,6 +516,10 @@ def start_flush_loop(ctx: MutableMapping[str, Any], session_factory: Any) -> boo
                     await drain_until_empty(session_factory)
                 except Exception as e:  # noqa: BLE001 — 배수 실패가 루프를 죽이면 안 된다.
                     logger.warning("growth flush 루프 오류: %s", str(e)[:160])
+                # ★**배수 뒤에** 발행한다 — 방금 비운 결과가 실려야 「비울 게 없다」가 참이 된다.
+                #   배수가 실패해도 발행은 한다: 그때가 **깊이 N + 시각 갱신**(=쌓이는 중)이라는
+                #   가장 중요한 신호가 나오는 순간이다.
+                await publish_capture_status(session_factory, scope=publish_scope)
 
         ctx[_FLUSH_TASK_CTX_KEY] = asyncio.create_task(_loop())
         return True
