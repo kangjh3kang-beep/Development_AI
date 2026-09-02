@@ -13,6 +13,7 @@ import structlog
 from app.services.ai.llm_failure import classify_failure as _classify_failure
 from app.services.ai.llm_failure import failure_reason as _failure_reason
 from app.services.common.exc_detail import exc_detail
+from app.utils.pnu import is_valid_pnu
 
 logger = structlog.get_logger(__name__)
 
@@ -353,7 +354,11 @@ class RegistryAnalysisService:
             vworld = VWorldService()
             owner_type = None
             land_area = land_category = official_price = zone_type = None
-            effective_pnu = pnu
+            # ★유효한 PNU 만 외부 조회에 쓴다. 종전엔 검증이 없어 PNU 칸의 오염값
+            #   (라이브 실측: 성명 `'◀ 전성결'` · `'store-rep-…'`)이 그대로
+            #   `vworld.get_land_info()` 로 나갔다 — 실패가 예정된 외부 호출이고,
+            #   주소가 있으면 아래 `AutoZoningService` 가 **진짜 PNU 를 준다**.
+            effective_pnu = pnu if is_valid_pnu(pnu) else None
             if address:
                 az = await AutoZoningService().analyze_by_address(address)
                 effective_pnu = effective_pnu or az.get("pnu")
