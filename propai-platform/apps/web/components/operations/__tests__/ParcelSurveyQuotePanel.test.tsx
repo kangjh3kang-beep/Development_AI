@@ -212,6 +212,21 @@ describe("★배선 — 프로젝트 필지 불러오기가 오염된 PNU 로 �
     expect(parcels.some((p) => typeof p.pnu === "string" && p.pnu.includes("store-rep"))).toBe(false);
   });
 
+  it("★중복제거가 실제로 작동한다 — 같은 필지를 두 번 담지 않는다", async () => {
+    // 적대 리뷰 실측: `if (existing.has(k)) continue;` 를 무력화해도 **초록**이었다
+    // (변이 `if (false && existing.has(k))` → 11 passed SURVIVED). 접힘만 잠그고
+    // **접혀야 할 것이 접히는지**는 아무도 안 봤다 — 두 모집단 중 한쪽이 비어 있었다.
+    const 같은PNU = "4137011000104670001";
+    프로젝트필지주입([
+      { address: 동주소, pnu: 같은PNU },
+      { address: 동주소, pnu: 같은PNU }, // ★같은 필지가 두 번 온다(SSOT 중복)
+      { address: 동주소, pnu: "4137011000104670002" },
+    ]);
+    render(<ParcelSurveyQuotePanel locale="ko" />);
+    const parcels = await 불러오기후_견적필지();
+    expect(parcels.length).toBe(2); // 3행이 들어왔지만 서로 다른 필지는 2건
+  });
+
   it("★음성 대조 — 진짜 PNU 는 요청 본문에 **실려 나간다**(과잉 제거가 아님을 가른다)", async () => {
     프로젝트필지주입([{ address: 동주소, pnu: "4137011000104670001" }]);
     render(<ParcelSurveyQuotePanel locale="ko" />);

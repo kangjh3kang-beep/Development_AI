@@ -19,7 +19,7 @@ import { AlertTriangle, Building2, CheckCircle2, FileSpreadsheet, Landmark, Laye
 import { KakaoAddressSearch, type KakaoAddressResult } from "@/components/ui/KakaoAddressSearch";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient, apiV1BaseUrl } from "@/lib/api-client";
-import { bcodeFromPnu, joinAddressJibun } from "@/lib/pnu";
+import { bcodeFromPnu, joinAddressJibun, normalizePnu } from "@/lib/pnu";
 import { scheduleSnapshotSync } from "@/lib/projectSync";
 import { preferredEntryAddress } from "@/lib/parcel-rows";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
@@ -96,7 +96,7 @@ export function buildInitialAddressEntries(opts: {
             zonecode: "",
             // PNU 앞 10자리 = 법정동 코드(있으면 유도, 없으면 빈값).
             bcode: bcodeFromPnu(pnu) ?? "",
-            pnu: pnu || undefined,
+            pnu: normalizePnu(pnu) ?? undefined,
             areaSqm: typeof p.areaSqm === "number" && p.areaSqm > 0 ? p.areaSqm : undefined,
             zoneCode: p.zoneCode ?? undefined,
           } as AddressEntry;
@@ -570,7 +570,7 @@ export function GlobalAddressSearch({
         const r = await apiClient.post<{ parcels: P[] }>("/zoning/parcels-info", {
           // area_input_sqm: 엑셀 입력 면적(비권위)을 함께 보내 백엔드가 공부상과 교차검증→괴리 시
           //   공부상 채택 + area_warning 생성하게 한다(_enrich_fill 신뢰루프 활성화).
-          body: { parcels: slice.map((e, i) => ({ __rid: i, address: e.fullAddress, jibun: e.jibunAddress || e.fullAddress, pnu: e.pnu, bcode: bcodeFor(e), area_input_sqm: e.areaInputSqm ?? e.areaSqm ?? null })) },
+          body: { parcels: slice.map((e, i) => ({ __rid: i, address: e.fullAddress, jibun: e.jibunAddress || e.fullAddress, pnu: normalizePnu(e.pnu) ?? undefined, bcode: bcodeFor(e), area_input_sqm: e.areaInputSqm ?? e.areaSqm ?? null })) },
           useMock: false, timeoutMs: 90000,
         });
         parcels = r.parcels || [];
@@ -688,7 +688,7 @@ export function GlobalAddressSearch({
         const zone = m?.zone_type ?? e.zoneCode ?? null;
         // 토지조서 SSOT(parcels) 배선용 필지별 데이터 — 보강(m) 우선, 로컬 entry 폴백.
         //   무목업: 없는 값은 빈 문자열(가짜 미생성). ownerType은 무료 API 미제공이라 항상 "".
-        const pnu = (m?.pnu ?? e.pnu) ?? "";
+        const pnu = normalizePnu(m?.pnu ?? e.pnu) ?? "";
         const address = (m?.address ?? e.fullAddress ?? e.jibunAddress) ?? "";
         const landCategory = (m?.jimok ?? e.jimok) ?? "";
         // 개발가능성 우선정렬용 특이부지 판정(지목 + 백엔드 게이트) — '대표' 선정의 핵심.
@@ -761,8 +761,10 @@ export function GlobalAddressSearch({
       // ★토지조서 SSOT 배선: 다필지 배열을 기록해 LandSchedule·Registry 시드 useEffect가
       //   집계값이 아닌 실제 필지목록으로 표를 자동 복원하게 한다('절반만 배선된 SSOT' 해소).
       //   ParcelData 타입 정합(pnu/address/areaSqm/landCategory/ownerType), 누락필드는 "".
+      // ★여기가 **되쓰기** 지점이다 — 오염값을 그대로 넣으면 스토어가 오염을 스스로 재생산하고
+      //   («레거시 저장분이라 활성 생산이 아니다» 라는 서술이 이 파일에서는 거짓이 된다).
       parcels: valid.map((p) => ({
-        pnu: p.pnu,
+        pnu: normalizePnu(p.pnu) ?? "",
         address: p.address,
         areaSqm: p.area,
         landCategory: p.landCategory,

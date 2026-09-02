@@ -389,7 +389,15 @@ describe("PNU 유효성이 정체성을 가른다 — 가짜 PNU 는 정체성�
     }));
     expect(A.every((p) => normalizePnu(p.pnu) !== null)).toBe(true); // 픽스처가 진짜인지 먼저
     expect(new Set(A.map((p) => parcelDedupKey(p))).size).toBe(77);
-    expect(new Set(A.map((p, i) => projectParcelIdentityKey(p, i))).size).toBe(77);
+    // ★★「77종」만 단언하면 **공허하다** — `project-idx:${i}` 폴백이 인덱스만으로 77종을 보장하므로
+    //   `projectParcelIdentityKey` 가 PNU 를 **통째로 무시해도** 초록이었다(적대 리뷰 실측 SURVIVED).
+    //   그래서 **키가 어디서 나왔는지**를 못 박는다: 진짜 PNU 면 `pnu:` 축이어야 한다.
+    const keysA = A.map((p, i) => projectParcelIdentityKey(p, i));
+    expect(new Set(keysA).size).toBe(77);
+    expect(keysA.every((k) => k.startsWith("pnu:"))).toBe(true);
+    expect(keysA.some((k) => k.startsWith("project-idx:"))).toBe(false);
+    // 그리고 **인덱스와 무관**해야 한다 — 같은 필지를 다른 인덱스로 물어도 같은 키다.
+    expect(projectParcelIdentityKey(A[0], 0)).toBe(projectParcelIdentityKey(A[0], 76));
   });
 
   it("★모집단 B(가짜 PNU) — 정체성으로 쓰이지 않는다. dedupKey 는 **주소로** 떨어진다", () => {
@@ -466,5 +474,28 @@ describe("bcodeFromPnu — 법정동코드는 **유효한 19자리**에서만 �
     const bad = "store-rep-용인시 수지구 신봉동 56-1";
     expect(옛가드통과(bad)).toBe(true);   // 옛 가드는 통과시켰다
     expect(bcodeFromPnu(bad)).toBeNull(); // 지금은 막는다 — 이 대비가 곧 이 수정이다
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// ★적대 리뷰 실측(2026-09-02) — **보내는 값이 「검증한 값」에 결속돼 있지 않았다.**
+//   `{ pnu: normalizePnu(p.pnu) }` 를 `{ pnu: p.pnu }` 로 바꿔도 초록이었다.
+//   원인: 픽스처에 **「유효하지만 정규화가 필요한」 모집단**이 없어서, 검증 결과와 원본이
+//   항상 같은 문자열이었다 — 두 식이 갈리는 입력이 하나도 없으면 배선은 잠기지 않는다.
+//   → 공백이 섞인 유효 PNU 를 표준 픽스처로 둔다. 소비처 테스트가 이것을 쓴다.
+// ────────────────────────────────────────────────────────────────────────────
+export const PNU_유효_공백포함 = " 4137011000104670001 ";
+export const PNU_유효_정규화후 = "4137011000104670001";
+
+describe("★정규화가 필요한 유효값 — 검증한 값과 원본이 갈린다", () => {
+  it("정규화 전후가 **다른 문자열**이다(이 대비가 없으면 배선 락이 공허하다)", () => {
+    expect(PNU_유효_공백포함).not.toBe(PNU_유효_정규화후);
+    expect(normalizePnu(PNU_유효_공백포함)).toBe(PNU_유효_정규화후);
+  });
+
+  it("파생·정체성 모두 **정규화된 값**을 낸다(원본을 그대로 흘리지 않는다)", () => {
+    expect(parcelDedupKey({ pnu: PNU_유효_공백포함 })).toBe(`pnu:${PNU_유효_정규화후}`);
+    expect(projectParcelIdentityKey({ pnu: PNU_유효_공백포함 }, 3)).toBe(`pnu:${PNU_유효_정규화후}`);
+    expect(bcodeFromPnu(PNU_유효_공백포함)).toBe(PNU_유효_정규화후.slice(0, 10));
   });
 });

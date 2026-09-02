@@ -48,6 +48,13 @@ describe("LandShareModal — /zoning/land-share 요청은 유효한 PNU 만 싣�
     expect(body.address).toBe("경기도 오산시 내삼미동 467-1");
   });
 
+  it("★모집단 A\'(유효하지만 공백 포함) — **검증한 값**이 나간다(원본이 아니다)", async () => {
+    // 적대 리뷰 실측: 이 모집단이 없어서 `{pnu: normalizePnu(pnu)}` → `{pnu}` 변이가 SURVIVED 했다.
+    const body = await 요청본문(" 4137011000104670001 ");
+    expect(body.pnu).toBe("4137011000104670001");
+    expect(body.pnu).not.toBe(" 4137011000104670001 ");
+  });
+
   it("모집단 C(없음) — 주소로 나간다(기존 계약 유지)", async () => {
     const body = await 요청본문(null);
     expect(body.pnu).toBeUndefined();

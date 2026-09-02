@@ -102,6 +102,16 @@ describe("★parcelDataToRows — 오염된 PNU 는 요청 본문에 싣지 않�
     expect(rows[0].pnu).toBe("4137011000104670001");
   });
 
+  it("★모집단 A'(유효하지만 공백 포함) — **검증한 값**이 실린다(원본이 아니다)", () => {
+    // 적대 리뷰 실측: 이 모집단이 없어서 `{pnu: normalizePnu(p.pnu)}` → `{pnu: p.pnu}` 변이가
+    // **SURVIVED** 했다. 두 식이 갈리는 입력이 하나도 없으면 배선은 잠기지 않는다.
+    const rows = parcelDataToRows([
+      { address: "경기도 오산시 내삼미동", areaSqm: 53, pnu: " 4137011000104670001 " },
+    ]);
+    expect(rows[0].pnu).toBe("4137011000104670001"); // 공백이 제거된 값
+    expect(rows[0].pnu).not.toBe(" 4137011000104670001 ");
+  });
+
   it("★모집단 B(오염 PNU) — pnu **키가 아예 없다**(null 로도 싣지 않는다)", () => {
     for (const bad of 오염) {
       const rows = parcelDataToRows([

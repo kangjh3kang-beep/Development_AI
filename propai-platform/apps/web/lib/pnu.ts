@@ -140,11 +140,18 @@ export function normalizePnu(value: string | null | undefined): string | null {
 /**
  * PNU → **법정동코드 10자리**(`bcode`). 유효한 19자리가 아니면 `null`.
  *
- * ## 왜 공용인가 (2026-09-02 — 같은 식이 **12벌** 있었다)
+ * ## 왜 공용인가 (2026-09-02 — 같은 파생이 **9벌** 있었다)
  *
- * `pnu.length >= 10 ? pnu.slice(0, 10) : ""` 가 `GlobalAddressSearch`(6) ·
- * `PersonaPanel` · `node-body-builders` · `MarketInsightsWorkspaceClient`(가드 **없음**) 등에
- * 흩어져 있었다. 길이 10 은 **PNU 를 판정하지 못한다** — 라이브 실측(292필지) 오염값
+ * ★수를 **파생으로** 못 박는다(적대 리뷰가 종전 서술 「12벌」을 반증했다 — 근거 없는 수였다):
+ *
+ *     git grep -nE 'pnu[^ ]*\.slice\(0, ?10\)|Pnu\.slice\(0, ?10\)' \
+ *       -- propai-platform/apps/web | grep -viE '\.test\.|__tests__'
+ *
+ * `GlobalAddressSearch` **6** · `PersonaPanel` 1 · `node-body-builders` 1 ·
+ * `MarketInsightsWorkspaceClient` 1 = **9**(+ `GlobalAddressSearch:516` 의 재확인 1).
+ * ★그리고 **「전부 `length >= 10`」이 아니다** — `MarketInsightsWorkspaceClient` 는
+ * `mapPnu.slice(0, 10)` 으로 **가드가 아예 없었다.** 8벌이 `>= 10`, 1벌이 무가드다.
+ * 길이 10 은 **PNU 를 판정하지 못한다** — 라이브 실측(292필지) 오염값
  * `'store-rep-용인시 수지구 신봉동 56-1'`(26자)이 그 가드를 통과해 `.slice(0,10)` 이
  * **`"store-rep-"` 를 법정동코드로 만들었다.** 백엔드는 `bcode[:5]` = `"store"` 를
  * `lawd_cd` 로 쓴다 — **없는 법정동으로 조회가 나간다.**
