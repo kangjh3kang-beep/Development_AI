@@ -351,7 +351,32 @@ def test_type1_residential_excludes_apartment():
     types = DevelopmentScenarioSimulator._buildable_types("제1종일반주거지역", "단순 건축")
     assert "아파트" not in types, f"제1종에 아파트가 있으면 법정 불허를 허용하는 것 — {types}"
     assert any("연립" in t or "다세대" in t for t in types), f"공동주택(아파트 제외)은 가능 — {types}"
-    assert any("4층" in t for t in types), f"4층 이하 제한이 표면에 없다 — {types}"
+    # ★층수 제약은 **칩이 아니라** `zone_use_constraint` 가 싣는다 — 칩은 「지을 수 있는 것」만이다
+    #   (적대 리뷰 4차 MINOR 1: `"(4층 이하)"` 가 「건축 가능」 칩이 되면 매달린 수식어가 된다).
+    assert not any("4층" in t for t in types), f"층수 제약이 칩에 남았다 — {types}"
+    _got = _constraint_map(zone="제1종일반주거지역", area_sqm=12000.0)
+    _msg = (_got["단순 건축"].get("zone_use_constraint") or {}).get("message", "")
+    assert "4층" in _msg, f"층수 제약이 어디에도 없다 — {_msg!r}"
+
+
+def test_constraint_is_attached_even_when_no_apartment_is_proposed():
+    """★제약은 **부지의 성질**이지 특정 제안의 성질이 아니다.
+
+    종전에는 `proposes_apartment` 일 때만 달았다. 그러면 아파트가 제안되지 **않는** 경로
+    (제1종 + 지구단위계획·청년주택·단순건축 등)에서 **「왜 아파트가 없는지」가 화면에서
+    통째로 사라진다** — 적대 리뷰 4차 실측(12,000㎡ 4건 · 300㎡ 7건).
+    """
+    got = _constraint_map(zone="제1종일반주거지역", area_sqm=12000.0)
+    no_apt = [k for k, v in got.items()
+              if not SS.proposes_apartment(v.get("buildable_types") or [])]
+    assert no_apt, "아파트 미제안 방식이 0개 — 픽스처가 모집단을 못 만든다"
+    missing = [k for k in no_apt if not (got[k].get("zone_use_constraint") or {}).get("message")]
+    assert not missing, (
+        f"아파트를 제안하지 않는다는 이유로 제약이 사라진 방식: {missing} — "
+        "사용자는 「왜 아파트가 없는지」를 볼 수 없다"
+    )
+    clean = _constraint_map(zone="제2종일반주거지역", area_sqm=12000.0)
+    assert not [k for k, v in clean.items() if v.get("zone_use_constraint")]
 
 
 def test_type2_residential_includes_apartment():
@@ -642,21 +667,38 @@ def test_constraint_is_not_pasted_into_buildable_types():
     #   이 PR 의 신규 코드가 `"(4층 이하 — 아파트 불가)"` 를 칩에 넣었고 **락이 통과**시켰다
     #   (적대 리뷰 3차 MAJOR 2 — 내가 같은 파일에서 금지한 형태를 내가 저질렀다).
     #   → **닫힌 토큰 집합**으로 속성을 잠근다.
-    _NEGATIVE_TOKENS = ("불가", "불허", "제외", "금지", "제한됨", "안 됨")
-    seen = 0
     for k, v in got.items():
-        for t in (v.get("buildable_types") or []):
-            seen += 1
-            bad = [x for x in _NEGATIVE_TOKENS if x in t]
-            assert not bad, (
-                f"{k}: 「건축 가능」 칩에 부정 문구가 섞였다 — {t!r} (토큰 {bad}). "
-                "프론트가 이 목록의 모든 원소를 같은 악센트 칩으로 그리므로 "
-                "*아파트* 와 *아파트 불가* 가 나란히 선다"
-            )
         if v.get("zone_use_constraint"):
             joined = " ".join(v.get("cons") or [])
             assert SS.APARTMENT_PROHIBITED_MARK in joined, f"{k}: cons 에 제약이 없다"
-    assert seen >= 20, f"검사한 칩이 {seen}개 — 대상이 없으면 위 단언이 공허하다"
+
+    # ★**허용 어휘(allowlist)** 로 잠근다 — 금칙어 목록은 «목록이 곧 상한» 이라
+    #   `아파트 안됨`·`아파트 미허용` 같은 새 표기가 그대로 통과한다(적대 리뷰 4차 MINOR 2).
+    #   칩은 유한 집합이므로 **전 용도지역×전 방식으로 파생**해 그 집합 자체를 검사한다.
+    D = DevelopmentScenarioSimulator
+    _ZONES = ("제1종일반주거지역", "제2종일반주거지역", "제3종일반주거지역", "제1종전용주거지역",
+              "준주거지역", "일반상업지역", "준공업지역", "계획관리지역", "자연녹지지역")
+    universe: set[str] = set()
+    for z in _ZONES:
+        for sc in sorted(_add_scheme_names()):
+            universe.update(D._buildable_types(z, sc))
+    assert len(universe) >= 25, f"칩 어휘가 {len(universe)}종 — 수집기 사망"
+    offenders = sorted(
+        t for t in universe
+        if any(x in t for x in ("불가", "불허", "제외", "금지", "안됨", "안 됨",
+                                "미허용", "제한", "필요", "층 이하", "층이하"))
+    )
+    # ★허용 예외와 **사유** — 이 둘은 «못 짓는다» 가 아니라 «어떤 절차·범위로 짓는다» 다.
+    #   새 항목이 여기 들어오면 판단을 강제당한다(§36 죽은 면제도 실패시킨다).
+    _ALLOWED_QUALIFIERS = {"(개발행위허가 필요)", "근린생활(제한적)"}
+    unexpected = [t for t in offenders if t not in _ALLOWED_QUALIFIERS]
+    assert not unexpected, (
+        f"「건축 가능」 칩에 제약·부정 표현이 섞였다: {unexpected} — "
+        "프론트가 모든 원소를 같은 악센트 칩으로 그리므로 모순된 칩이 나란히 선다"
+    )
+    assert universe >= _ALLOWED_QUALIFIERS, (
+        f"허용 예외가 실재하지 않는다(죽은 면제): {sorted(_ALLOWED_QUALIFIERS - universe)}"
+    )
 
 
 def test_apartment_detector_ignores_its_own_negative_label():

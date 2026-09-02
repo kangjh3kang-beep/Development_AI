@@ -48,6 +48,9 @@ const SITE = {
   total_area_sqm: 12000,
 };
 
+/** 백엔드가 보내는 「건축 가능」 목록 — 락이 **이 값과 결속**한다(존재 단언은 공허해진다). */
+const BUILDABLE = ["주상복합 아파트", "오피스텔", "상가"];
+
 const CONSTRAINT = {
   zones: ["제1종일반주거지역"],
   prohibited: ["아파트"],
@@ -69,7 +72,7 @@ function reply(withConstraint: boolean) {
         pros: ["용적 상향"],
         cons: [],
         notes: "역세권 활성화",
-        buildable_types: ["주상복합 아파트", "오피스텔", "상가"],
+        buildable_types: [...BUILDABLE],
         ...(withConstraint ? { zone_use_constraint: CONSTRAINT } : {}),
       },
     ],
@@ -109,10 +112,16 @@ describe("용도지역 법정 제약 고지", () => {
 
     const label = await screen.findByText("건축 가능");
     const chips = Array.from(label.parentElement?.querySelectorAll("span") ?? [])
-      .map((el) => el.textContent ?? "")
+      // ★`.trim()` 이 없으면 라벨 자신이 필터를 통과한다 — 아이콘 때문에 `textContent` 가
+      //   `" 건축 가능"`(앞 공백)이라 `!== "건축 가능"` 이 참이 되기 때문이다.
+      //   그러면 `chips` 가 **영원히 최소 1개**라 아래 존재 단언이 **그 자체로 공허**해진다
+      //   (실측: 칩을 0개 렌더해도 초록 / 라벨 공백을 지우면 CAUGHT).
+      //   ★공허진리를 막으려고 쓴 가드가 공허했다 — 이 PR 이 고친다고 선언한 결함 클래스다.
+      .map((el) => (el.textContent ?? "").trim())
       .filter((t) => t && t !== "건축 가능");
 
-    expect(chips.length).toBeGreaterThan(0); // 대상 존재 단언(공허 진리 방지)
+    // ★존재 단언이 아니라 **픽스처와 결속**시킨다 — 0개·누락·주입을 한 번에 잡는다.
+    expect(chips).toEqual(BUILDABLE);
     for (const t of chips) {
       // 닫힌 토큰 집합 — 상수 하나의 부재가 아니라 **속성**을 잠근다.
       for (const bad of ["불가", "불허", "제외", "금지"]) {

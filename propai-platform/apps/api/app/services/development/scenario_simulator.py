@@ -251,7 +251,12 @@ ZONE_BASIS_NONE = "none"
 #: `buildable_types` 안에 넣지 않는다 — 프론트가 그 리스트의 **모든 원소를 「건축 가능」 칩**으로
 #  같은 악센트 색에 그린다(`DevelopmentScenarioCard.tsx`). 경고를 상품명 자리에 넣으면
 #  **서로 모순되는 두 칩이 나란히** 서고, 그건 결함을 고친 것이 아니라 **문구로 덮은 것**이다.
-#  → 전용 필드 `zone_use_constraint` 로 내보내고, 소비되기 전까지는 `cons`(부정 목록)에도 싣는다.
+#  → 전용 필드 `zone_use_constraint` 로 내보내고 **카드가 경고 스타일로 렌더**한다
+#    (`DevelopmentScenarioCard.tsx` · 프론트 락 3건).
+#  ★`cons` 에도 싣지만 **화면 소비처는 0** 이다(형제 필드 `pros`·`requirements`·`notes` 는 렌더됨).
+#    한때 이 주석이 *"소비되기 전까지는 `cons` 에도 싣는다"* 고 적었는데 **그 임시 경로도 죽어
+#    있었다** — 정직 신호를 만들어 놓고 **도달을 확인하지 않은** 것이다(적대 리뷰 3차).
+#    지금 `cons` 를 유지하는 이유는 **다른 소비처**(PDF·LLM 요약)가 그 필드를 읽기 때문이다.
 APARTMENT_PROHIBITED_MARK = "현 용도지역은 아파트 불허 — 용도지역 변경(종상향) 등 별도 절차 전제"
 #: 아파트가 **불허**임을 말하는 부정 라벨(검출기가 자기 라벨을 「아파트 제안」으로 세면 위양성).
 _APARTMENT_NEGATIVE_MARKERS = ("아파트 불가", "아파트 불허")
@@ -319,6 +324,11 @@ def combined_building_distance_verdict(adjacency: dict[str, Any] | None) -> tupl
     if d is None:
         return None, None
     return (float(d) <= COMBINED_BUILDING_MAX_DISTANCE_M), float(d)
+
+
+def _low_rise_only(zones: list[str]) -> bool:
+    """제1종일반주거의 **층수 제한**([별표 4] 1호 머리 — 4층 이하 · 단지형은 5층 이하)."""
+    return any(("제1종일반주거" in z) or ("1종일반주거" in z) for z in (zones or []))
 
 
 def apartment_restricted_zones(enriched: list[dict[str, Any]]) -> list[str]:
@@ -1801,15 +1811,23 @@ class DevelopmentScenarioSimulator:
             _s["buildable_types"] = self._buildable_types(_zone, _s.get("scheme", ""))
             # ★M-4 — 경고를 `buildable_types`(프론트가 「건축 가능」 칩으로 그린다)에 섞지 않고
             #   **전용 필드 + `cons`**(부정 목록)로 낸다.
-            if _restricted_zones and proposes_apartment(_s["buildable_types"]):
+            #   ★제안 여부와 **무관하게** 붙인다. 종전에는 `proposes_apartment` 일 때만 달았는데,
+            #     그러면 **아파트가 제안되지 않는 경로**(제1종 + 지구단위계획·청년주택·단순건축 등)
+            #     에서 **「왜 아파트가 없는지」가 화면에서 통째로 사라진다**(적대 리뷰 4차 실측).
+            #     제약은 부지의 성질이지 특정 제안의 성질이 아니다.
+            if _restricted_zones:
                 _zlist = ", ".join(dict.fromkeys(_restricted_zones))
                 _msg = f"{_zlist}: {APARTMENT_PROHIBITED_MARK}"
+                if _low_rise_only(_restricted_zones):
+                    _msg += " · 4층 이하(단지형 연립·다세대는 5층 이하)"
                 _s["zone_use_constraint"] = {
                     "zones": list(dict.fromkeys(_restricted_zones)),
                     "prohibited": ["아파트"],
                     "message": _msg,
                     "legal_ref": "국토계획법 시행령 §71①3호 [별표 4] 1호 나목 — 공동주택(아파트를 제외한다)",
                 }
+                # ★`cons` 는 **현재 화면 소비처가 0** 이다(전용 렌더가 `zone_use_constraint` 를 읽는다).
+                #   그래도 싣는 것은 다른 소비처(PDF·LLM 요약)가 `cons` 를 읽기 때문이다.
                 _s["cons"] = [*(_s.get("cons") or []), _msg]
             # 시나리오↔규범 일치(가산) — 각 사업방식의 근거법령 verified 딥링크 부착(소비처 옵셔널).
             _s["legal_refs"] = _scheme_legal_refs(_s.get("scheme", ""))
@@ -1875,9 +1893,10 @@ class DevelopmentScenarioSimulator:
             # ★칩 목록에는 **지을 수 있는 것**만 넣는다. 프론트가 이 리스트의 모든 원소를
             #   「건축 가능」 라벨 아래 같은 악센트 칩으로 그리므로, 여기에 *"아파트 불가"* 를
             #   넣으면 **「건축 가능」 → 「아파트 불가」** 라는 모순된 칩이 선다.
-            #   불허 사실은 `zone_use_constraint` 가 싣는다(같은 파일 위 주석이 금지한 형태를
-            #   내 신규 코드가 저질렀던 자리 — 적대 리뷰 3차 MAJOR 2).
-            base = ["연립/다세대(빌라)", "단독주택", "근린생활", "(4층 이하)"]
+            #   불허 사실도 **층수 제약도** `zone_use_constraint` 가 싣는다.
+            #   ★`"(4층 이하)"` 를 여기 두는 것도 같은 위반이다 — 그건 **지을 수 있는 것이 아니라
+            #     제약**이라 「건축 가능」 칩이 되면 매달린 수식어가 된다(적대 리뷰 4차 MINOR 1).
+            base = ["연립/다세대(빌라)", "단독주택", "근린생활"]
         elif "주거" in z:  # 제2·3종 일반주거 및 그 밖의 주거계
             # [별표 5](제2종) 1호 나목은 *"「건축법 시행령」 별표 1 제2호의 공동주택"* 으로
             # **제외 문구가 없다** → 아파트 허용. 제3종도 같다([별표 6]).
