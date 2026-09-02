@@ -516,7 +516,15 @@ async def drain_until_empty(session_factory: Any, *, max_rounds: int = 20) -> in
 
     ## ★왜 함수로 빼는가 — **배수 경로가 여럿이면 하나가 빠진다**
 
-    이 루프는 종전에 `apps/api/main.py` **두 곳에 복제**돼 있었고(주기 루프 · 종료 flush),
+    ★**정정(2026-08-29 · 독립 적대 렌즈 실측)**: 종전에 이 주석은 *"두 곳에 복제"* 라고
+    적었는데 **틀렸다 — 셋이었다**: `apps/api/main.py` 의 주기 루프 · 같은 파일의 종료 flush ·
+    그리고 `app/tasks/growth_tasks.py` 의 `_flush_async`. 세 번째가 상한을 리터럴 `500` 으로
+    굳혀 `_FLUSH_LIMIT` 과 따로 놀고 있었다.
+    ★**그리고 내가 그 주석을 쓸 때 이미 셋이었다.** 산문은 사본이 갈리는 것을 막지 못한다 —
+      그래서 이 주장은 이제 **파생형 락**이 강제한다
+      (`test_there_is_exactly_one_drain_implementation`).
+
+    이 루프는 종전에 **세 곳에 복제**돼 있었고(주기 루프 · 종료 flush · celery 태스크),
     상한 `500` 이 **리터럴로 하드코딩**돼 `_FLUSH_LIMIT` 과 따로 놀았다.
     거기에 워커용으로 **세 번째 사본**을 만들면 셋이 갈라진다.
 
