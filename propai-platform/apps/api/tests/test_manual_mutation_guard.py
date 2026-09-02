@@ -125,17 +125,112 @@ def test_CLAUDE_md_가_선언한_종료코드와_구현이_일치한다() -> Non
     )
 
 
-def test_파이프가_있으면_경고한다(sandbox) -> None:
-    """★이 저장소가 반복해서 데인 함정 — `cmd | tail` 은 **끝 명령의 종료코드**를 준다.
+def test_셸_래퍼면_판정을_발행하지_않는다(sandbox) -> None:
+    """★rc 를 못 믿는 층은 **셸 래퍼**다 — 파이프는 그 한 형태일 뿐이다.
 
-    그러면 테스트가 실패해도 rc=0 이라 이 하네스가 **CAUGHT 를 SURVIVED 로 보고**한다.
-    실제로 이 도구의 **첫 실사용에서 그 일이 났다**(2026-08-21) — 도구는 정확했고 호출이 틀렸다.
-    도구가 호출자의 셸 문자열을 다 알 수는 없으니 **보이면 시끄럽게 경고**한다.
+    ## 종전 탐지가 **거꾸로**였다 (2026-09-02 실증)
+
+    이 도구는 `"$@"` 로 **execvp 직접 실행**한다 — **셸을 거치지 않는다.**
+    그런데 탐지는 **인자열 전체에서 문자 `|` 하나만** 봤다. 그래서 층이 섞였다:
+
+        bash -c "pytest | tail"     → 잡힘        (맞다)
+        bash -c "pytest; tail"      → **못 잡음**  ← 거짓 SURVIVED(격리 저장소 실증)
+        bash -c "pytest && tail"    → **못 잡음**
+        grep -qE 'a|b' file (직접)  → 잡힘        ← **리터럴인데 차단**(위양성)
+
+    ★**같은 문자 하나로 성질이 다른 두 층을 판정**하고 있었다.
+
+    ★★형태를 넓히는 것(`*[";|&"]*`)으로는 안 된다 —
+      `set -o pipefail; pytest | tail` 은 **안전**하고 `pytest; tail` 은 **위험**한데
+      **같은 `;`** 다. 못 가르는 것을 가르는 척하면 위양성과 위음성을 **동시에** 낸다.
+      → 셸 스크립트 문자열은 **불투명**하다고 인정하고 그 층이면 판정을 발행하지 않는다.
     """
     root, _ = sandbox
+    # ① 파이프 형태 — 종전에도 잡혔다(회귀 방지)
     r = _run(root, "target.txt", "s|alpha|ALPHA|", "bash", "-c", "false | tail -1")
+    assert r.returncode == 12, f"파이프 래퍼가 판정 불가(12)가 아니다: rc={r.returncode}"
+    # ② ★세미콜론 — **종전엔 못 잡았다**(거짓 SURVIVED 의 자리)
+    r2 = _run(root, "target.txt", "s|alpha|ALPHA|", "bash", "-c", "false; true")
+    assert r2.returncode == 12, f"';' 래퍼가 판정 불가가 아니다: rc={r2.returncode}"
+    # ★판정어는 **줄 시작 앵커**로 본다. 부분문자열로 보면 판정 불가 **설명문 안의**
+    #   "CAUGHT 가 SURVIVED 로 보고된다" 를 집어 **정상 동작을 위반으로 신고**한다
+    #   (실제로 이 단언이 그렇게 한 번 빨개졌다 — 내가 쓴 문구가 내 검사를 무력화한 형태).
+    assert not any(ln.startswith("SURVIVED") for ln in r2.stdout.splitlines()), (
+        f"못 믿는 rc 로 판정을 발행했다: {r2.stdout}")
+    # ③ ★`&&` — 같은 층
+    r3 = _run(root, "target.txt", "s|alpha|ALPHA|", "bash", "-c", "false && true")
+    assert r3.returncode == 12, f"'&&' 래퍼가 판정 불가가 아니다: rc={r3.returncode}"
+
+
+def test_직접_argv_의_리터럴_파이프는_위험이_아니다(sandbox) -> None:
+    """★**두 번째 모집단** — 이것이 없으면 「전부 차단」이 만점이 된다.
+
+    `"$@"` 는 셸을 안 거치므로 인자 안의 `|`(예: `grep -E 'a|b'`)는 **파이프가 아니다**.
+    종전엔 그것도 차단해 **정상 사용을 막았다**(위양성도 결함이다 · 규율 §A-6).
+    """
+    root, _ = sandbox
+    # 변이가 들어가면 grep 이 실패한다 → 정상적으로 CAUGHT 판정이 나와야 한다.
+    r = _run(root, "target.txt", "s|alpha|ALPHA|", "grep", "-qE", "alpha|zzz_nope", "target.txt")
     합본 = r.stdout + r.stderr
-    assert "파이프" in 합본, f"파이프 경고가 없다: {합본}"
-    # ★음성 대조군 — 파이프가 없으면 경고하지 않아야 한다(위양성 방지).
-    r2 = _run(root, "target.txt", "s|alpha|ALPHA|", "true")
-    assert "파이프" not in (r2.stdout + r2.stderr), "파이프가 없는데 경고한다(위양성)"
+    assert r.returncode != 12, f"리터럴 '|' 를 판정 불가로 막았다(위양성): {합본}"
+    assert any(ln.startswith("CAUGHT") for ln in r.stdout.splitlines()), (
+        f"정상 판정이 안 나왔다: {합본}")
+    # ★거짓 CAUGHT 가드 — 명령이 깨져서 rc≠0 이 된 것이 아님을 확인한다.
+    assert not any(w in 합본 for w in ("usage:", "unrecognized", "Wrong expression")), (
+        f"명령이 깨져서 CAUGHT 가 됐다(변이가 잡힌 게 아니다): {합본}")
+
+
+def test_단일_단순_명령_래퍼는_신뢰한다(sandbox) -> None:
+    """★**세 번째 모집단** — 래퍼라고 다 위험한 것이 아니다.
+
+    `bash -c 'grep -q X f'` 처럼 **단일 단순 명령**이면 rc 는 그 명령의 것이다.
+    ★이 저장소의 **기존 락**(`propai-platform/tests/test_mutate_manual_pipe_verdict.py`)이
+      모든 호출을 `bash -c` 로 감싸므로, 래퍼를 통째로 막으면 **그 락 4건이 깨진다**
+      (내 첫 설계가 실제로 그랬다 — **테스트 루트가 둘**이라 한쪽만 보고 초록으로 읽었다).
+    """
+    root, _ = sandbox
+    r = _run(root, "target.txt", "s|alpha|ALPHA|", "bash", "-c", "grep -q alpha target.txt")
+    assert r.returncode != 12, f"단일 명령 래퍼를 막았다(위양성): {r.stdout}{r.stderr}"
+    assert any(ln.startswith(("CAUGHT", "SURVIVED")) for ln in r.stdout.splitlines()), (
+        f"정상 판정이 안 나왔다: {r.stdout}")
+
+
+def test_pipefail_접두는_걷어내고_판정한다(sandbox) -> None:
+    """★같은 `;` 를 **위치로** 가른다 — 문자 하나로는 못 하던 것.
+
+        set -o pipefail; cmd | tail   → 나머지에 ';' 없음 · '|' 는 pipefail 이 고침 → 신뢰
+        set -o pipefail; cmd; tail    → 나머지에 ';' 있음                          → 판정 불가
+    """
+    root, _ = sandbox
+    ok = _run(root, "target.txt", "s|alpha|ALPHA|",
+              "bash", "-c", "set -o pipefail; grep -q alpha target.txt | cat")
+    assert ok.returncode != 12, f"pipefail 로 막았는데 판정 불가다: {ok.stdout}"
+    bad = _run(root, "target.txt", "s|alpha|ALPHA|",
+               "bash", "-c", "set -o pipefail; grep -q alpha target.txt; true")
+    assert bad.returncode == 12, (
+        f"pipefail 접두가 ';' 위험까지 면제했다(종전 결함): rc={bad.returncode}")
+
+
+def test_셸_래퍼_예외는_사유를_남기고_통과시킨다(sandbox) -> None:
+    """★차단하되 **길을 준다** — 이 저장소 관행(`REVIEW_EXEMPT` 동형).
+
+    사유 없는 탈출구는 곧 기본값이 되므로, **사유를 출력에 남긴다.**
+    """
+    import os
+
+    root, _ = sandbox
+    env = {**os.environ, "MUTATE_ALLOW_SHELL": "rc 보존 확인함"}
+    r = subprocess.run(  # noqa: S603
+        # ★`bash -c "false"` 는 **단일 단순 명령**이라 이제 정당하게 신뢰된다 —
+        #   예외가 필요한 형태(명령을 잇는 것)로 써야 이 락이 공허하지 않다.
+        ["bash", "scripts/mutate_manual.sh", "target.txt", "s|alpha|ALPHA|",
+         "bash", "-c", "false; true"],
+        cwd=root, capture_output=True, text=True, env=env,
+    )
+    assert r.returncode != 12, f"예외를 선언했는데 여전히 판정 불가다: {r.stdout}{r.stderr}"
+    assert "rc 보존 확인함" in r.stdout, "예외 사유가 출력에 안 남는다(사유 없는 탈출구 금지)"
+    # ★이 락의 축은 «예외가 통하고 **사유가 남는가**» 다 — 어느 판정이 나오는지가 아니다.
+    #   `false; true` 의 rc 는 0 이라 **SURVIVED 가 정상**이다(예외는 «내가 책임진다» 는 뜻이고,
+    #   그래서 못 믿는 rc 가 그대로 통과한다 — 그것이 탈출구의 대가다).
+    assert any(ln.startswith(("CAUGHT", "SURVIVED")) for ln in r.stdout.splitlines()), (
+        f"예외 후 판정이 아예 안 나왔다: {r.stdout}")
