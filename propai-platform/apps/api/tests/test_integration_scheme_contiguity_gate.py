@@ -637,12 +637,26 @@ def test_constraint_is_not_pasted_into_buildable_types():
     그건 고친 것이 아니라 **문구로 덮은 것**이다. 전용 필드 + `cons` 로 낸다.
     """
     got = _constraint_map(zone="제1종일반주거지역", area_sqm=12000.0)
+    # ★종전 락은 `APARTMENT_PROHIBITED_MARK not in t` — **상수 하나의 부재**였다.
+    #   그건 대리 변수이지 «부정 문구가 칩에 없다»는 **속성**이 아니다. 그 틈으로
+    #   이 PR 의 신규 코드가 `"(4층 이하 — 아파트 불가)"` 를 칩에 넣었고 **락이 통과**시켰다
+    #   (적대 리뷰 3차 MAJOR 2 — 내가 같은 파일에서 금지한 형태를 내가 저질렀다).
+    #   → **닫힌 토큰 집합**으로 속성을 잠근다.
+    _NEGATIVE_TOKENS = ("불가", "불허", "제외", "금지", "제한됨", "안 됨")
+    seen = 0
     for k, v in got.items():
         for t in (v.get("buildable_types") or []):
-            assert SS.APARTMENT_PROHIBITED_MARK not in t, f"{k}: 경고가 칩 목록에 섞였다 — {t!r}"
+            seen += 1
+            bad = [x for x in _NEGATIVE_TOKENS if x in t]
+            assert not bad, (
+                f"{k}: 「건축 가능」 칩에 부정 문구가 섞였다 — {t!r} (토큰 {bad}). "
+                "프론트가 이 목록의 모든 원소를 같은 악센트 칩으로 그리므로 "
+                "*아파트* 와 *아파트 불가* 가 나란히 선다"
+            )
         if v.get("zone_use_constraint"):
             joined = " ".join(v.get("cons") or [])
             assert SS.APARTMENT_PROHIBITED_MARK in joined, f"{k}: cons 에 제약이 없다"
+    assert seen >= 20, f"검사한 칩이 {seen}개 — 대상이 없으면 위 단언이 공허하다"
 
 
 def test_apartment_detector_ignores_its_own_negative_label():
@@ -656,14 +670,27 @@ def test_apartment_detector_ignores_its_own_negative_label():
     assert SS.proposes_apartment(["연립/다세대(빌라)", "(4층 이하 — 아파트 불가)"]) is False
     assert SS.proposes_apartment([SS.APARTMENT_PROHIBITED_MARK]) is False
     assert SS.proposes_apartment([]) is False
-    # 전수 — 제1종에서 검출기가 세는 수가 실제 아파트 제안 수와 같아야 한다.
+    # ★합성 모집단으로 **필터의 존재**를 잠근다.
+    #   종전에는 «검출기 < 순진» 을 프로덕션 목록으로 비교했는데, MAJOR-2 를 고치면서
+    #   칩에서 부정 라벨을 뺐더니 **걸러낼 위양성이 사라져 12 == 12** 가 됐다.
+    #   즉 그 단언은 **이제 존재하지 않는 결함에 결속**돼 있었다(결함이 사라지면 락도 죽는다).
+    #   → 필터가 살아 있는지는 **합성 입력**으로 보고, 프로덕션 목록은 아래 별도 단언으로 본다.
+    polluted = ["주상복합 아파트", "(4층 이하 — 아파트 불가)", SS.APARTMENT_PROHIBITED_MARK]
+    assert SS.proposes_apartment(polluted) is True, "진짜 제안이 섞이면 True 여야 한다"
+    assert SS.proposes_apartment(polluted[1:]) is False, (
+        "부정 라벨만 남으면 False 여야 한다 — 필터가 죽었다"
+    )
+
+    # ★프로덕션 목록에는 **부정 라벨이 아예 없어야** 한다(MAJOR-2 봉합의 회귀 방지).
     D = DevelopmentScenarioSimulator
     schemes = sorted(_add_scheme_names())
-    flagged = [x for x in schemes if SS.proposes_apartment(D._buildable_types("제1종일반주거지역", x))]
-    naive = [x for x in schemes
-             if any("아파트" in t for t in D._buildable_types("제1종일반주거지역", x))]
-    assert len(flagged) < len(naive), (
-        f"부정 라벨 배제가 아무것도 걸러내지 못했다(검출기={len(flagged)} 순진={len(naive)})"
+    polluted_schemes = [
+        x for x in schemes
+        if any(m in t for t in D._buildable_types("제1종일반주거지역", x)
+               for m in SS._APARTMENT_NEGATIVE_MARKERS)
+    ]
+    assert not polluted_schemes, (
+        f"「건축 가능」 목록에 부정 라벨이 되살아났다: {polluted_schemes}"
     )
 
 

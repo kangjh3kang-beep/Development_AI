@@ -50,6 +50,15 @@ type Scenario = {
   contribution_pct: number | null; requirements?: string[];
   pros?: string[]; cons?: string[]; notes?: string; magdo?: Magdo | null;
   buildable_types?: string[];
+  /**
+   * 현 용도지역에서 **법정 불허**인 용도(국토계획법 시행령 §71 별표). 백엔드가
+   * `buildable_types` 와 **분리해서** 보낸다 — 「건축 가능」 칩 목록에 경고를 섞으면
+   * 서로 모순되는 칩이 나란히 서기 때문이다.
+   * ★이 필드가 없으면 제1종일반주거 부지에서 *"주상복합 아파트"* 가 **경고 없이** 뜬다.
+   */
+  zone_use_constraint?: {
+    zones?: string[]; prohibited?: string[]; message?: string; legal_ref?: string;
+  } | null;
 };
 type SimResult = {
   site: {
@@ -466,6 +475,21 @@ export function DevelopmentScenarioCard({
                       <span key={j} className="rounded-md bg-[var(--accent-soft)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--accent-strong)]">{t}</span>
                     ))}
                   </div>
+                )}
+                {/* ★용도지역 법정 제약 — 「건축 가능」 칩과 **다른 스타일**로 그린다.
+                    적대 리뷰 실측: 백엔드가 이 고지를 만들어 보내는데 화면 소비처가 **0건**이라
+                    제1종일반주거 부지에서 아파트 제안이 **경고 없이** 나갔다.
+                    ★경고를 상품명 칩 자리에 섞는 것은 고친 것이 아니라 «문구로 덮은 것»이다. */}
+                {s.applicable !== "불가" && s.zone_use_constraint?.message && (
+                  <p className="mt-1.5 flex items-start gap-1 rounded-md bg-[var(--status-warning)]/10 px-2 py-1 text-[10px] font-semibold text-[var(--status-warning)]">
+                    <AlertTriangle className="mt-px size-3 shrink-0" aria-hidden />
+                    <span>
+                      {s.zone_use_constraint.message}
+                      {s.zone_use_constraint.legal_ref && (
+                        <span className="ml-1 font-normal opacity-80">({s.zone_use_constraint.legal_ref})</span>
+                      )}
+                    </span>
+                  </p>
                 )}
                 {s.applicable !== "불가" && (
                   <div className="mt-1.5 grid gap-1 text-[11px] md:grid-cols-2">
