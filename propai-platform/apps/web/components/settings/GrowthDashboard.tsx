@@ -486,25 +486,67 @@ function ttlRemaining(iso: string | null): string {
   return `${Math.floor(hr / 24)}일 ${hr % 24}시간 남음`;
 }
 
-// params 객체를 "키 값 · 키 값" 요약(최대 4개). 중첩/긴 값은 절단.
-function summarizeParams(
+/** 액션 `params` 표시 상한. 라이브 200건 실측 키 분포 `{3:2, 4:198}` — 오늘은 안 문다. */
+const ACTION_PARAMS_RENDER_CAP = 4;
+
+/**
+ * 플래그 `value` 표시 상한.
+ *
+ * ★**의미 경계가 아니라 렌더 안전 경계다.** 어떤 키가 「중요한지」를 정하지 않는다 —
+ * 넘으면 **반드시 `외 N종` 으로 말한다**(아래 `summarizeParams`). 즉 이 상한은
+ * 무한 렌더만 막고, **조용히 감추지는 못한다.**
+ */
+const FLAG_VALUE_RENDER_CAP = 40;
+
+/**
+ * params/flag 객체를 `"키 값 · 키 값"` 요약. 중첩/긴 값은 절단.
+ *
+ * 【무엇이 있었나 · 라이브 실측 2026-09-02】
+ * 상한이 **4로 고정**이었고 **버린 몫을 말하지 않았다.** 그런데 이 함수가 그리는
+ * `f.value` 는 Postgres `jsonb` 에서 온다 — **`jsonb` 는 삽입 순서를 보존하지 않고
+ * (키 길이, 바이트순)으로 정렬한다.** 그래서 화면에 무엇이 보이는지가 의미가 아니라
+ * **키 이름의 철자 길이**로 정해지고 있었다(아무도 의도하지 않았고 어디에도 안 적혀 있었다).
+ *
+ * 실측 — `/growth/heal-log?limit=200`:
+ *
+ *     growth_capture(worker) 17키 · 보임 4 · ★조용히 버림 12
+ *     growth_capture(api)    17키 · 보임 4 · ★조용히 버림 13
+ *     버려진 것 중: lost_total · loss_rate_pct · queue_depth · dropped_overflow
+ *                   · dropped_after_retry · flush_failures · consecutive_failures
+ *
+ * 즉 **유실·실패 신호가 통째로 안 보였다.** 음성 대조군 — 같은 응답의
+ * `prompt_candidates`(3키)·`threshold.fallback_warn_pct`(4키)는 버림 0 이었다.
+ *
+ * 【처방】①플래그 상한을 올려 **버림 자체를 없애고**(버림이 0 이면 jsonb 순서는 무의미하다)
+ * ②남는 절단은 **반드시 말한다.** 문구는 형제 `fmtReasons`(위 177~189줄)와 **동형**이다 —
+ * 그 함수는 *"★잘라낸 몫을 **말한다** — 안 적으면 상위 N 종이 전부인 줄로 읽는다
+ * (묵시적 상한 금지)"* 라고 **주석으로 원칙을 적어 두고 있었다.** 원칙은 있었고
+ * **락이 없어서** 형제가 그것을 어겼다.
+ *
+ * ★손으로 고른 「우선순위 키 목록」은 쓰지 않는다 — 목록은 곧 상한이 되고, 새 진단 키가
+ * 생기면 자동으로 누락된다.
+ */
+export function summarizeParams(
   p: Record<string, unknown> | string | number | boolean | null,
+  max: number = ACTION_PARAMS_RENDER_CAP,
 ): string {
   if (p === null || p === undefined) return "";
   // ★스칼라(문자열 워터마크 등)는 **그대로 보여 준다** — 종전엔 이 값이 백엔드에서
   //   null 로 삼켜져 화면에 아무것도 안 나왔다.
   if (typeof p !== "object") return String(p);
+  // null/undefined 는 표시 대상이 아니므로 **분모에서도 뺀다** — 안 그러면 `외 N종` 의 N 이
+  // 「보여 줄 수 있었는데 안 보여 준 수」가 아니라 「빈 칸 수」가 섞여 거짓말이 된다.
+  const shown = Object.entries(p).filter(([, v]) => v !== null && v !== undefined);
   const parts: string[] = [];
-  for (const [k, v] of Object.entries(p)) {
-    if (parts.length >= 4) break;
-    let val: string;
-    if (v === null || v === undefined) continue;
-    else if (typeof v === "object") val = JSON.stringify(v);
-    else val = String(v);
+  for (const [k, v] of shown) {
+    if (parts.length >= max) break;
+    let val: string = typeof v === "object" ? JSON.stringify(v) : String(v);
     if (val.length > 24) val = `${val.slice(0, 24)}…`;
     parts.push(`${k} ${val}`);
   }
-  return parts.join(" · ");
+  // ★잘라낸 몫을 **말한다**(형제 fmtReasons 와 동형 · 묵시적 상한 금지).
+  const rest = shown.length - parts.length;
+  return rest > 0 ? `${parts.join(" · ")} 외 ${rest}종` : parts.join(" · ");
 }
 
 function HealSection() {
@@ -675,10 +717,10 @@ function HealSection() {
                             고친 바로 그 결함(값은 있는데 화면에서 사라진다)을 이 PR 의
                             새 코드가 프론트에서 재현하고 있었다(독립 적대 리뷰 2026-09-02).
                             타입을 `boolean | number` 로 넓혀 놓고 이 가드를 안 고쳤다. */}
-                        {f.value != null && summarizeParams(f.value) && (
+                        {f.value != null && summarizeParams(f.value, FLAG_VALUE_RENDER_CAP) && (
                           <p className="mt-2 text-xs text-[var(--text-hint)]">
                             <span className="cc-num text-[var(--text-secondary)]">
-                              {summarizeParams(f.value)}
+                              {summarizeParams(f.value, FLAG_VALUE_RENDER_CAP)}
                             </span>
                           </p>
                         )}
