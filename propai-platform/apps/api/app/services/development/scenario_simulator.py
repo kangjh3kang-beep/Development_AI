@@ -321,6 +321,55 @@ def combined_building_distance_verdict(adjacency: dict[str, Any] | None) -> tupl
     return (float(d) <= COMBINED_BUILDING_MAX_DISTANCE_M), float(d)
 
 
+def apartment_restricted_zones(enriched: list[dict[str, Any]]) -> list[str]:
+    """부지에서 **아파트가 법정 불허**인 용도지역 목록 — ★국토계획법 **§84①** 을 반영한다.
+
+    §84① 원문: *"…각 용도지역등에 걸치는 부분 중 **가장 작은 부분의 규모가 대통령령으로 정하는
+    규모 이하**인 경우에는 … **그 밖의 건축 제한 등에 관한 사항은 그 대지 중 가장 넓은 면적이
+    속하는 용도지역등에 관한 규정을 적용**한다."*
+
+    ★따라서 **전수 판정은 과잉 억제**다 — 제1종 자투리가 **330㎡ 이하**면 그 부분은
+    가장 넓은 용도지역(예: 제2종)에 **흡수**되어 아파트가 가능하다.
+    반대로 **330㎡ 초과**면 §84① 이 적용되지 않아 각 부분에 각각의 규정이 적용되므로,
+    그 제1종 부분은 여전히 아파트 불허다.
+
+    흡수 규칙은 새로 만들지 않고 기존 `mixed_zone_limits`(§84·시행령 §94)를 **재사용**한다.
+
+    Returns:
+        불허 용도지역명 목록(중복 제거·면적 큰 순). 빈 목록이면 제약 없음.
+    """
+    named = [p for p in (enriched or []) if p.get("zone")]
+    if not named:
+        return []
+    agg: dict[str, float | None] = {}
+    for p in named:
+        z = str(p["zone"]).strip()
+        a = p.get("area")
+        if z not in agg:
+            agg[z] = float(a) if a else None
+        elif a and agg[z] is not None:
+            agg[z] += float(a)
+
+    restricted = [z for z in agg if zone_prohibits_apartment(z)]
+    if not restricted:
+        return []
+    if len(agg) < 2:
+        return restricted  # 단일 용도지역이면 흡수 여지가 없다
+    if not all(v for v in agg.values()):
+        # ★면적 미확보 — 흡수 여부를 판정할 수 없다. **불허 쪽으로 남긴다**(고지가 사라지는 것보다
+        #   낫다). 이 선택은 §84① 을 「적용하지 않는다」가 아니라 「판정 불가」다.
+        return restricted
+
+    from app.services.zoning.legal_zone_limits import mixed_zone_limits
+
+    mix = mixed_zone_limits([{"zone_type": z, "area_sqm": a} for z, a in agg.items()])
+    absorbed = mix.get("absorbed")
+    if absorbed and absorbed in restricted:
+        # 가장 작은 부분이 330㎡ 이하로 흡수됐다 → 그 부분의 건축 제한은 적용되지 않는다.
+        restricted = [z for z in restricted if z != absorbed]
+    return sorted(restricted, key=lambda z: -(agg[z] or 0.0))
+
+
 def measured_zone_count(enriched: list[dict[str, Any]]) -> int:
     """실측(추론 아님) 용도지역을 가진 필지 수. ★`select_primary_zone` 과 **같은 술어**를 쓴다.
 
@@ -618,6 +667,8 @@ class DevelopmentScenarioSimulator:
                     "area_is_partial": bool(unresolved) or requested_count > len(addrs),
                     "plan_limit_unknown": plan_unknown_agg,   # 형제 미러
                     "primary_zone": primary_zone, "primary_zone_basis": primary_zone_basis, "zones": zones,
+            # ★§84① 흡수를 반영한 아파트 불허 용도지역(면적이 여기서만 보인다).
+            "apartment_restricted_zones": apartment_restricted_zones(enriched),
                     "primary_zone_is_inferred": bool(primary_zone) and measured_zone_n == 0,
                     "special_parcel_gate": special_gate,
                     "dev_act_permit_gate": dev_act_gate,
@@ -679,6 +730,8 @@ class DevelopmentScenarioSimulator:
             #   더 비싼 오답(불허 용도 추천)이 조용히 나간다.
             "plan_limit_unknown": plan_unknown_agg,
             "primary_zone": primary_zone, "primary_zone_basis": primary_zone_basis, "zones": zones,
+            # ★§84① 흡수를 반영한 아파트 불허 용도지역(면적이 여기서만 보인다).
+            "apartment_restricted_zones": apartment_restricted_zones(enriched),
             # 대표 용도지역이 조회값인지 추론값인지 — 추론값이면 화면이 단정하면 안 된다.
             "primary_zone_is_inferred": bool(primary_zone) and measured_zone_n == 0,
             # ★시나리오 산정 기준 = 실효 용적률(현행·조례 반영). 법정상한은 라벨 구분용으로 병기.
@@ -1739,8 +1792,11 @@ class DevelopmentScenarioSimulator:
         #   RC-2(면적가중)를 고치자 RC-3(제1종 분리)의 발화 조건이 지워진 것 — 둘이 서로를
         #   가린다고 적어 놓고 **같이 고쳤더니 한쪽이 다른 쪽을 껐다.**
         #   → 제약은 **부지에 존재하는 모든 용도지역**으로 판정한다(한 필지라도 불허면 고지).
-        _zones_all = [z for z in (c.get("zones") or []) if z] or ([_zone] if _zone else [])
-        _restricted_zones = [z for z in _zones_all if zone_prohibits_apartment(z)]
+        #   ★§84① 흡수(330㎡ 이하 자투리)는 `simulate()` 에서 면적을 보고 판정해 넘겨준다.
+        #     여기서 `zones` 이름만으로 전수 판정하면 **1㎡ 자투리가 부지 전체를 막는다**(과잉 억제).
+        _restricted_zones = [z for z in (c.get("apartment_restricted_zones") or []) if z]
+        if _restricted_zones is None:
+            _restricted_zones = []
         for _s in S:
             _s["buildable_types"] = self._buildable_types(_zone, _s.get("scheme", ""))
             # ★M-4 — 경고를 `buildable_types`(프론트가 「건축 가능」 칩으로 그린다)에 섞지 않고

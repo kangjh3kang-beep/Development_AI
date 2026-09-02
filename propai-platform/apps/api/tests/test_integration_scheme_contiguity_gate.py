@@ -42,6 +42,10 @@ def _ctx(*, integration_ok, area_sqm=5000.0, zone="제2종일반주거지역",
         "primary_zone": zone,
         # ★부지에 실재하는 용도지역 전부 — 우세만 보면 혼재 부지에서 제약이 꺼진다(M-5).
         "zones": list(zones) if zones is not None else [zone],
+        # ★§84① 흡수를 반영한 불허 목록은 `simulate()` 가 **면적을 보고** 판정해 넘긴다.
+        #   픽스처는 그 결과를 흉내 낸다 — 판정 자체는 `apartment_restricted_zones()` 락이 태운다.
+        "apartment_restricted_zones": [z for z in (list(zones) if zones is not None else [zone])
+                                       if SS.zone_prohibits_apartment(z)],
         "far_effective_blended": 200,
         "far_legal_blended": 250,
         "multi": multi,
@@ -946,3 +950,55 @@ def test_adjacency_producer_reports_real_pair_distance():
     assert d_near < 50.0, f"맞닿은 두 필지가 {d_near}m — 과대보고"
     # ★상수 변경 탐지 — 0.005도(경도)는 88,800 기준 약 444m 다.
     assert 380.0 < d_far < 520.0, f"도→미터 변환이 바뀌었다 — {d_far}m (기대 약 444m)"
+
+
+def test_absorption_rule_prevents_over_restriction():
+    """★국토계획법 **§84①** — 가장 작은 부분이 **330㎡ 이하**면 그 부분의 **건축 제한은
+    적용되지 않고** 가장 넓은 용도지역 규정을 따른다.
+
+    원문: *"…가장 작은 부분의 규모가 대통령령으로 정하는 규모 이하인 경우에는 …
+    **그 밖의 건축 제한 등에 관한 사항은 그 대지 중 가장 넓은 면적이 속하는 용도지역등에 관한
+    규정을 적용**한다."*
+
+    ★전수 판정(이름만 보기)은 **과잉 억제**다 — 1㎡ 짜리 제1종 자투리가 8만㎡ 부지 전체에
+    아파트 불허를 붙인다. 두 모집단이 **갈려야** 한다.
+    """
+    # ① 흡수됨(300㎡ ≤ 330㎡) → 제약 **없음**
+    absorbed = SS.apartment_restricted_zones([
+        {"zone": "제1종일반주거지역", "area": 300.0},
+        {"zone": "제2종일반주거지역", "area": 80_000.0},
+    ])
+    assert absorbed == [], f"330㎡ 이하 자투리는 흡수돼 제약이 없어야 한다 — {absorbed}"
+
+    # ② 흡수 안 됨(400㎡ > 330㎡) → 제약 **있음**
+    kept = SS.apartment_restricted_zones([
+        {"zone": "제1종일반주거지역", "area": 400.0},
+        {"zone": "제2종일반주거지역", "area": 80_000.0},
+    ])
+    assert kept == ["제1종일반주거지역"], f"330㎡ 초과면 각 부분에 각 규정 — {kept}"
+
+    # ③ 단일 용도지역이면 흡수 여지가 없다
+    assert SS.apartment_restricted_zones([{"zone": "제1종일반주거지역", "area": 50.0}]) == [
+        "제1종일반주거지역"]
+    # ④ 제한 대상이 없으면 빈 목록
+    assert SS.apartment_restricted_zones([
+        {"zone": "제2종일반주거지역", "area": 100.0},
+        {"zone": "제3종일반주거지역", "area": 900.0}]) == []
+    # ⑤ ★면적 미확보 — 흡수를 판정할 수 없으면 **불허 쪽으로 남긴다**(고지가 사라지는 것보다 낫다)
+    assert SS.apartment_restricted_zones([
+        {"zone": "제1종일반주거지역", "area": None},
+        {"zone": "제2종일반주거지역", "area": 900.0}]) == ["제1종일반주거지역"]
+    assert SS.apartment_restricted_zones([]) == []
+
+
+def test_simulate_computes_restriction_from_areas_not_names():
+    """배선 — `simulate()` 가 **면적을 보고** 판정해 ctx 로 넘기는가(이름 전수가 아니라)."""
+    assert "apartment_restricted_zones(enriched)" in _SRC, (
+        "`simulate()` 가 면적 기반 판정을 호출하지 않는다"
+    )
+    # `_scenarios` 는 소비만 한다 — 거기서 이름으로 다시 판정하면 §84① 흡수가 무시된다.
+    i = _SRC.index("def _scenarios(")
+    body = _SRC[i:]
+    assert "zone_prohibits_apartment(z) for z in" not in body, (
+        "`_scenarios` 가 이름으로 재판정하고 있다 — §84① 흡수가 무시된다"
+    )
