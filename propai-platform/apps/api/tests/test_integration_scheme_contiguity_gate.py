@@ -167,8 +167,46 @@ def test_area_designation_states_the_real_axis():
         f"「통합개발 …불가」 단정이 남아 있다: {contradiction.group(0)!r} — "
         "바로 뒤 문장이 «법정 요건이 아니다» 라고 말하므로 한 문장 안에서 모순된다"
     )
-    # ★음성 대조군 — 「합필/일단지 통합은 불가」는 **사실**이므로 남아야 한다(과잉 억제 방지).
-    assert "합필" in notes or "일단지" in notes, f"인접성 관측 자체가 사라졌다: {notes!r}"
+    # ★인접성 **관측 자체**는 남아야 한다(과잉 억제 방지) — 다만 픽스처가 `note` 를 손으로
+    #   넣으므로 여기서 그 문구를 단언하면 **픽스처를 검사**하는 꼴이다. 생산자를 따로 태운다.
+    assert "그룹으로 분리" in notes, f"인접성 관측이 사라졌다: {notes!r}"
+
+
+def test_adjacency_note_does_not_pre_judge():
+    """★생산자(`_adjacency`)가 **「통합개발 불가」로 단정하지 않는다**.
+
+    라이브 실측(2026-09-03 · 배포 후): 게이트는 「조건부」로 고쳤는데 **그 앞에 붙는
+    인접성 문구**가 여전히 *"비인접 필지는 통합개발(합필/일단지) 불가"* 라고 단정해,
+    사용자 화면에 **한 문장 안의 모순**이 나갔다:
+
+        "⚠ …통합개발(합필/일단지) 불가. 구역지정형 사업 — 물리적 인접은 법정 요건이 아닙니다…"
+
+    ★`#940` 이 판정어는 고쳤는데 **그 앞 문장은 안 고쳤다** — 「처방을 적용한 범위 ≠ 결함이
+      사는 범위」(CLAUDE.md §D-20). 그리고 당시 락이 `"통합개발 불가"` **정확일치**라
+      `"통합개발(합필/일단지) 불가"` 를 **통과시켰다**.
+    """
+    pytest.importorskip("shapely")
+
+    def _sq(lon, lat, d=0.00002):
+        return {"type": "Polygon", "coordinates": [[
+            [lon, lat], [lon + d, lat], [lon + d, lat + d], [lon, lat + d], [lon, lat]]]}
+
+    import re as _re
+    far = DevelopmentScenarioSimulator._adjacency(
+        [{"geometry": _sq(127.0, 37.5)}, {"geometry": _sq(127.005, 37.5)}])
+    note = far.get("note") or ""
+    assert far.get("contiguous") is False, f"비인접 픽스처가 아니다 — {far}"
+    hit = _re.search(r"통합개발[^.]{0,20}불가", note)
+    assert not hit, (
+        f"인접성 관측이 「통합개발 …불가」로 **단정**한다: {hit.group(0)!r} — "
+        "판정은 각 개발방식이 자기 축으로 한다(구역지정형은 인접이 법정 요건이 아니다)"
+    )
+    # ★음성 대조군 — 관측 자체는 남아야 한다(과잉 억제 방지)
+    assert "분리" in note, f"인접성 관측이 통째로 사라졌다: {note!r}"
+    # 인접 케이스는 분리 문구가 없어야 한다(두 모집단)
+    near = DevelopmentScenarioSimulator._adjacency(
+        [{"geometry": _sq(127.0, 37.5)}, {"geometry": _sq(127.00005, 37.5)}])
+    assert near.get("contiguous") is True and "분리" not in (near.get("note") or "")
 
 
 def test_garo_guyeok_axis_is_road_not_distance():
