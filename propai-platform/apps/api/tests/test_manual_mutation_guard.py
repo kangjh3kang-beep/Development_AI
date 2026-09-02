@@ -324,3 +324,43 @@ def test_정당한_형태는_그대로_판정한다(sandbox, 라벨, argv) -> No
     # ★거짓 CAUGHT 가드 — 셸이 깨져서 rc≠0 이 된 것이 아님을 확인한다.
     assert not any(w in 합본 for w in ("Illegal option", "unrecognized", "command not found")), (
         f"[{라벨}] 명령이 깨져서 CAUGHT 가 됐다: {합본}")
+
+
+# ── ★잔존 구멍 — **부채를 초록 안에 보이게** 둔다(커밋 메시지에만 적으면 안 드러난다) ────
+#
+# `xfail(strict=True)` 라서 **누가 이 구멍을 닫으면 XPASS 로 빨개진다** — 그때 이 표시를
+# 지우라는 신호다(래칫). 지금 이것을 안 고치는 이유는 아래 각 사유에 적었다.
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="★미해소(실측 rc=0): 명령이 **환경변수에 실려** 스크립트 문자열이 `eval \"$T\"` 뿐이라 "
+           "구분자가 보이지 않는다. 변수 내용을 따라가려면 셸 의미론을 구현해야 하므로 "
+           "'문자열은 불투명하다'는 이 도구의 설계 선언과 충돌한다 — 닫으려면 설계를 바꿔야 한다.",
+)
+def test_부채_환경변수에_실린_명령은_아직_못_본다(sandbox) -> None:
+    root, _ = sandbox
+    r = subprocess.run(  # noqa: S603
+        ["bash", "scripts/mutate_manual.sh", "target.txt", "s|alpha|ALPHA|",
+         "env", "T=grep -q alpha target.txt; true", "bash", "-c", 'eval "$T"'],
+        cwd=root, capture_output=True, text=True,
+    )
+    assert r.returncode == 12, f"rc={r.returncode}"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="★미해소(실측 rc=0): argv[0] 이 **임의 실행파일**(직접 만든 래퍼 스크립트)이면 "
+           "그 안에서 무엇을 하는지 이 도구는 볼 수 없다. 닫으려면 '알려진 접두 래퍼' 목록을 "
+           "넓혀야 하는데 **그것이 곧 손 목록**이라 상한이 된다(CLAUDE.md §수집·판정 규율). "
+           "대신 rc 를 못 믿는 래퍼를 쓸 때는 MUTATE_ALLOW_SHELL 로 **사유를 선언**하게 한다.",
+)
+def test_부채_임의_실행파일_래퍼는_아직_못_본다(sandbox) -> None:
+    root, _ = sandbox
+    (root / "mywrap").write_text(
+        "#!/bin/sh\ngrep -q alpha target.txt\ntrue\n", encoding="utf-8")
+    os.chmod(root / "mywrap", 0o755)
+    _git("add", "-A", cwd=root)
+    _git("commit", "-qm", "wrap", cwd=root)
+    r = _run(root, "target.txt", "s|alpha|ALPHA|", "./mywrap")
+    assert r.returncode == 12, f"rc={r.returncode}"
