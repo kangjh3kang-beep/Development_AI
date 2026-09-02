@@ -866,3 +866,47 @@ def test_gate_membership_is_locked_by_behavior_not_by_classification():
         f"비게이트로 선언해 놓고 인접성이 판정/사유를 바꾸는 방식: {leaked} — "
         "게이트에서 지우고 표로 옮기는 것만으로는 계약이 성립하지 않는다"
     )
+
+
+def test_buildable_types_derive_from_the_site_zone_not_a_constant():
+    """★MUT-16 — `_zone = c.get("primary_zone")` 를 **고정값으로 바꿔도** 종전 락은 초록이었다.
+
+    제약 부착만 보고 **목록 내용이 부지 용도지역에서 나오는지**를 안 봤기 때문이다.
+    두 모집단이 **다른 목록**을 내야 한다.
+    """
+    t1 = _constraint_map(zone="제1종일반주거지역", area_sqm=12000.0)["단순 건축"]["buildable_types"]
+    t2 = _constraint_map(zone="제2종일반주거지역", area_sqm=12000.0)["단순 건축"]["buildable_types"]
+    assert t1 != t2, f"제1종과 제2종이 같은 목록 — 용도지역이 배선에서 끊겼다: {t1}"
+    assert not SS.proposes_apartment(t1), f"제1종 단순건축에 아파트가 있다 — [별표 4] 위반: {t1}"
+    assert SS.proposes_apartment(t2), f"제2종 단순건축에 아파트가 없다 — [별표 5]는 허용: {t2}"
+    # 상업지역도 갈려야 한다(분기가 통째로 죽는 변이 차단)
+    tc = _constraint_map(zone="일반상업지역", area_sqm=12000.0)["단순 건축"]["buildable_types"]
+    assert tc != t1 and tc != t2, f"상업지역이 주거와 같은 목록 — 분기가 죽었다: {tc}"
+
+
+#: 각 축의 **원소 수**를 리터럴로 못 박는다. ★행동 락은 「그 픽스처에서 발화하는 방식」만 볼 수
+#  있어, 발화하지 않는 방식을 게이트 밖으로 옮기면 **행동이 안 바뀌어 통과**한다(MUT-11 실측).
+#  크기를 못 박으면 이관이 **양쪽에서** 걸린다. 값을 바꾸려면 사유를 함께 고치게 된다.
+_AXIS_SIZES = {
+    "AREA_DESIGNATION_SCHEMES": 11,   # 구역지정형 — 인접성으로 「불가」를 만들지 않는다
+    "GARO_GUYEOK_SCHEMES": 2,         # 가로구역형 — 축은 폭 4m/6m 초과 도로 관통
+    "HOUSING_COMPLEX_SCHEMES": 0,     # 주택단지형 — ★의도적 공집합(근거 조문 미확인)
+}
+
+
+def test_axis_sizes_are_pinned():
+    """★MUT-11 — 게이트에서 지우고 비게이트 표에 상용구 사유로 옮기면 44건 전부 초록이었다.
+
+    행동 락의 사각(발화하지 않는 방식)을 **크기 고정**으로 덮는다.
+    """
+    sets = _gate_set_literals()
+    assert set(sets) == set(_AXIS_SIZES), (
+        f"축 구성이 바뀌었다 — 코드 {sorted(sets)} vs 선언 {sorted(_AXIS_SIZES)}. "
+        "축을 더하거나 빼면 사유와 크기를 여기 함께 적어라"
+    )
+    for name, want in _AXIS_SIZES.items():
+        assert len(sets[name]) == want, (
+            f"{name} 원소 수 {len(sets[name])} ≠ 선언 {want} — "
+            f"현재 {sorted(sets[name])}. 이관·삭제는 사유와 함께 여기도 고쳐라"
+        )
+    assert len(NON_GATED_WITH_REASON) == len(_add_scheme_names()) - sum(_AXIS_SIZES.values())
