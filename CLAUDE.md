@@ -157,6 +157,17 @@
 
        python3 scripts/mutate_changed.py --tests <테스트 경로>
 
+   ★2026-08-27 — **base 오염 봉합.** 종전 기본 base 는 움직이는 `origin/main` 이었고
+   `_changed_files` 는 **두-점** diff 라(워킹트리를 봐야 해서 의도적이다), `origin/main` 이
+   내 HEAD 보다 앞서면 **남이 머지한 파일까지 변이 대상**이 됐다. 실측: 한 브랜치에서
+   26변이·생존 9 중 **5건이 남의 파일** · 다른 대조군에서 **두-점 10파일 ↔ 공통조상 0파일**.
+   → 이제 도구가 base 를 **공통 조상까지 낮추고** 해석된 sha 를 **실행 출력에 찍는다**.
+   `--base $(git merge-base origin/main HEAD)` 를 손으로 줄 필요가 **없다**.
+   ★변이 증거를 인용할 때는 **출력의 `base:` 줄을 함께** 옮겨라 — 그것이 안 적혀 있어서
+   이 오염이 몇 세션 동안 조용했다. 잠금: `propai-platform/apps/api/tests/test_mutation_base_isolation.py`.
+   ★남은 한계(부채): **`git add` 하지 않은 새 파일은 변이 대상 0건**이다(`git diff` 가
+   untracked 를 안 본다). 같은 파일의 `xfail` 로 초록 안에 드러나 있다.
+
    ★2026-08-07 — **부분 해소.** `#586` 이후 **러너는** 테스트 확장자로 고르고
    (`.ts/.tsx` → vitest), 변경 파일 수집도 `.ts/.tsx` 를 포함한다. 남은 한계는 **탐색**이다:
      · `_guess_tests` 는 `tests/test_*.py` 만 본다 → 프론트는 자동으로 짝을 못 찾는다

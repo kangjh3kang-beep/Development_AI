@@ -1,20 +1,28 @@
 /**
  * Why — paper 섹션. H2 + 검증된 스탯 카드 3장 + 실사진 그리드.
  *
- * ★ 스탯 수치는 전부 코드베이스에서 실측 검증한 값만 사용(무근거 수치 0):
- *   • 11 = 지도 데이터 레이어(components/precheck/SatongMapShell.tsx LAYERS 배열: 11종)
- *   • 6  = AI 리포트/산출물 종수(app/[locale]/(dashboard)/page.tsx creationProducts: 6종)
- *   • 3  = 보고서 출력 포맷(apps/api/app/services/report/render: pdf/docx/pptx 렌더러 3종)
+ * ★ 스탯 수치는 전부 코드베이스에서 파생 검증한 값만 사용(무근거 수치 0):
+ *   • 12 = 지도 데이터 레이어(components/precheck/SatongMapShell.tsx LAYERS 배열)
+ *   • 9  = AI 리포트/산출물 종수(components/dashboard/DashboardHome.tsx creationProducts)
+ *   • 3  = 보고서 출력 포맷(apps/api/app/services/report/{pdf,docx,pptx}_renderer.py)
+ *
+ * ★2026-08-28 교정 — 위 «무근거 수치 0» 은 **선언이었고 락이 없었다.** 재보니 셋 중 **둘이 틀렸다**:
+ *   · 11 → 실제 LAYERS **12** 개
+ *   · 6  → 실제 creationProducts **9** 개(생성 허브 9번째 카드가 들어왔다)
+ *   그리고 위 경로 자체가 틀렸다(`page.tsx` 가 아니라 `DashboardHome.tsx`).
+ *   ★**선언은 스스로를 검증하지 않는다.** 이제
+ *   `apps/api/tests/test_ui_capability_claims_are_backed_by_code.py` 가 이 세 수를
+ *   **배열에서 파생해** 잠근다 — 배열이 늘면 이 파일이 빨개진다.
  */
 const stats = [
   {
-    value: "11",
+    value: "12",
     unit: "종",
     label: "지도 데이터 레이어",
     desc: "지적·용도지역·공시지가·실거래·경공매·POI까지 한 지도에서 겹쳐 봅니다.",
   },
   {
-    value: "6",
+    value: "9",
     unit: "종",
     label: "AI 리포트",
     desc: "후보지 진단서·사업성·시장·인허가·설계·건축개요를 산출물 단위로 생성합니다.",

@@ -9,6 +9,7 @@ import { AiTokenUsageDashboard } from "@/components/settings/AiTokenUsageDashboa
 import { WebhookManagementPanel } from "@/components/settings/WebhookManagementPanel";
 import { SubscriptionPanel } from "@/components/settings/SubscriptionPanel";
 import { GrowthDashboard } from "@/components/settings/GrowthDashboard";
+import { RealtxLayer2StatusPanel } from "@/components/settings/RealtxLayer2StatusPanel";
 
 /* ------------------------------------------------------------------ */
 /*  Tab definition                                                    */
@@ -112,18 +113,12 @@ export default function SettingsPage() {
   const isAdmin = useIsAdmin();
   const {
     llmProvider,
-    openaiApiKey,
-    anthropicApiKey,
     llmModel,
     setLLMProvider,
-    setOpenAIApiKey,
-    setAnthropicApiKey,
     setLLMModel,
-    hasValidKey,
   } = useSystemStore();
 
   const [isMounted, setIsMounted] = useState(false);
-  const [showKey, setShowKey] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">(
     "idle",
   );
@@ -223,7 +218,15 @@ export default function SettingsPage() {
       {activeTab === "ai-usage" && <AiTokenUsageDashboard />}
 
       {/* 성장 분석 — 관리자 전용(이 페이지는 isAdmin 게이트 통과 후에만 렌더). */}
-      {activeTab === "growth" && isAdmin && <GrowthDashboard />}
+      {activeTab === "growth" && isAdmin && (
+        <>
+          <GrowthDashboard />
+          {/* ★실거래 2층 관측 — 수집이 조용히 멈추는 것을 여기서 본다.
+              이 배선이 없으면 라우트가 「소비처 0」이 되어, 그 결함을 고치겠다는
+              PR 이 같은 결함을 한 층 위에서 재발시킨다(orphan_routes 래칫이 적발). */}
+          <RealtxLayer2StatusPanel />
+        </>
+      )}
 
       {activeTab === "webhooks" && <WebhookManagementPanel />}
 
@@ -310,66 +313,12 @@ export default function SettingsPage() {
                 </div>
               </div>
 
-              <div className="space-y-3">
-                <label className="cc-label">
-                  {llmProvider === "openai" ? "OpenAI" : "Anthropic"} API Key
-                </label>
-                <div className="relative">
-                  <input
-                    type={showKey ? "text" : "password"}
-                    value={
-                      llmProvider === "openai" ? openaiApiKey : anthropicApiKey
-                    }
-                    onChange={(e) =>
-                      llmProvider === "openai"
-                        ? setOpenAIApiKey(e.target.value)
-                        : setAnthropicApiKey(e.target.value)
-                    }
-                    placeholder={
-                      llmProvider === "openai" ? "sk-..." : "sk-ant-..."
-                    }
-                    className="w-full rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-muted)] py-4 pl-6 pr-14 text-sm font-mono placeholder:text-[var(--text-hint)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-strong)]/50 focus:border-[var(--accent-strong)] transition-all text-[var(--text-primary)]"
-                  />
-                  <button
-                    onClick={() => setShowKey(!showKey)}
-                    className="absolute right-4 top-1/2 -translate-y-1/2 text-[var(--text-hint)] hover:text-[var(--text-primary)] transition-colors"
-                  >
-                    {showKey ? (
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        width="20"
-                        height="20"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24" />
-                        <path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68" />
-                        <path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61" />
-                        <line x1="2" x2="22" y1="2" y2="22" />
-                      </svg>
-                    ) : (
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        width="20"
-                        height="20"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
-                        <circle cx="12" cy="12" r="3" />
-                      </svg>
-                    )}
-                  </button>
-                </div>
-              </div>
+              {/* ★사용자 API 키 입력칸을 제거했다(2026-08-28).
+                  이 앱은 **서버 공통 키**로 LLM 을 호출한다(`llm_provider.get_llm()` 은
+                  `api_key` 인자 자체가 없다). 여기 넣은 키는 어디에도 쓰이지 않은 채
+                  localStorage 에 평문으로 남기만 했고, 화면은 길이 10자 이상이면
+                  초록 "Connected" 라고 말했다. 받지 않는 것이 옳다 —
+                  쓰지 않을 시크릿을 받는 것 자체가 결함이다. */}
 
               <div className="space-y-3">
                 <label className="cc-label">
@@ -415,13 +364,12 @@ export default function SettingsPage() {
 
             <div className="pt-8 border-t border-[var(--line)] flex justify-between items-center">
               <div className="flex items-center gap-3">
-                <div
-                  className={`h-3 w-3 rounded-full ${hasValidKey() ? "bg-[var(--status-success)] animate-pulse shadow-[0_0_10px_rgba(16,185,129,0.5)]" : "bg-[var(--status-error)]"}`}
-                />
+                {/* ★"Connected" 는 **사용자 키가 연결됐다**는 뜻으로 읽혔는데, 그 키는
+                    어디에도 쓰이지 않았다. 여기서 말할 수 있는 사실은 **어느 프로바이더·모델을
+                    쓰도록 골라 뒀는가** 뿐이다(호출은 서버 공통 키로 나간다). */}
+                <div className="h-3 w-3 rounded-full bg-[var(--text-secondary)]" />
                 <span className="cc-label text-[var(--text-hint)]">
-                  {hasValidKey()
-                    ? `Connected — ${llmProvider === "openai" ? "OpenAI" : "Anthropic"} ${llmModel === "auto" ? "(자동 모델)" : llmModel}`
-                    : "API 키를 입력해 주세요"}
+                  {`서버 공통 키 사용 — ${llmProvider === "openai" ? "OpenAI" : "Anthropic"} ${llmModel === "auto" ? "(자동 모델)" : llmModel}`}
                 </span>
               </div>
 

@@ -9,10 +9,11 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, CheckCircle2, ShieldCheck, XCircle, type LucideIcon } from "lucide-react";
+import { CheckCircle2, ShieldCheck, XCircle } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import { FeedbackWidget } from "@/components/growth/FeedbackWidget";
 import { verificationCacheKey } from "@/lib/verification-cache-key";
+import { resolveVerdictMeta } from "@/lib/verification-verdict";
 
 function hashStr(s: string): string {
   let h = 0;
@@ -32,11 +33,6 @@ type VerifyResult = {
   calc_pass_rate?: number | null;
 };
 
-const VERDICT_META: Record<string, { label: string; cls: string; icon: LucideIcon }> = {
-  pass: { label: "검증 통과", cls: "border-[var(--status-success)]/30 bg-[var(--status-success)]/10 text-[var(--status-success)]", icon: CheckCircle2 },
-  warn: { label: "주의", cls: "border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 text-[var(--status-warning)]", icon: AlertTriangle },
-  fail: { label: "오류 발견", cls: "border-[var(--status-error)]/30 bg-[var(--status-error)]/10 text-[var(--status-error)]", icon: XCircle },
-};
 const SEV_CLS: Record<string, string> = {
   high: "text-[var(--status-error)]", medium: "text-[var(--status-warning)]", low: "text-[var(--text-tertiary)]",
 };
@@ -133,7 +129,9 @@ export function VerificationBadge({
 
   if (!context) return null;
 
-  const meta = result ? (VERDICT_META[result.verdict] || VERDICT_META.warn) : null;
+  // ★미지 판정을 warn 으로 접지 않는다 — verdict 는 LLM 자유 JSON 이고 백엔드 정규화가 없다.
+  //   표기 흔들림("FAIL")은 복원하고, 진짜 모르는 값은 중립 + 원값으로 표기한다.
+  const meta = result ? resolveVerdictMeta(result.verdict) : null;
 
   return (
     <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-2.5">

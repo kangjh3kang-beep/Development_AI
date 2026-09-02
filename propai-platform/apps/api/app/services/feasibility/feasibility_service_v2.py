@@ -12,6 +12,7 @@ from typing import Any
 from app.services.feasibility.aggregation_engine import compare_scenarios
 from app.services.feasibility.modules.base_module import ModuleInput, ModuleOutput
 from app.services.feasibility.modules.module_assembler import get_module, list_modules
+from app.services.tax.regional_tax_data import looks_like_sido, sido_short_or_empty
 
 logger = logging.getLogger(__name__)
 
@@ -677,8 +678,18 @@ class FeasibilityServiceV2:
             official_price_per_sqm=official_price_per_sqm or 1_500_000,
             price_multiplier=1.1,
             building_type=self._get_building_type(dev_type),
-            sido_name=region,
-            sigungu_name="",
+            # ★축 교정(형제 스윕) — `region` 은 이 코드베이스에서 **시군구**로 쓰인다
+            #   (바로 위 `local_ordinance={"sigungu": region}` 이 그 증거다). 그것을
+            #   `sido_name` 에 직결하면 B01 광역교통이 대도시권을 **비대도시권으로 오판**한다.
+            #   시·도는 주소에서 공용 해석기로 뽑는다(못 뽑으면 빈 문자열 — 지어내지 않는다).
+            #   ※ `precheck_service._build_band_module_input` 과 **같은 처방**이다.
+            sido_name=sido_short_or_empty(address),
+            # ★`region` 은 **과부하 필드**다 — 이 저장소에서 호출부마다 뜻이 다르다:
+            #   `rough-scenario` 는 **시군구**("동구")를, `integrated_recommender` 는
+            #   **시도**("경기도")를 같은 이름으로 넘긴다. 스키마 주석은 *"시도명"* 이라 적는다.
+            #   그러므로 *"region 은 시군구다"* 라고 **찍으면 절반이 틀린다** —
+            #   값이 **시·도로 해석되면 시군구 칸에 넣지 않는다**(축 날조 방지).
+            sigungu_name=("" if looks_like_sido(region) else (region or "")),
             project_months=self._get_type_project_months(dev_type),
             discount_rate=0.08,
             equity_won=equity_won or 0,

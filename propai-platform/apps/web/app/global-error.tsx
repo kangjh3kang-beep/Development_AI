@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { trackEvent } from "@/lib/growth/event-collector";
+import { reportBoundaryError } from "@/lib/growth/report-boundary-error";
 import { tryRecoverFromChunkError } from "@/lib/chunk-recovery";
 
 export default function GlobalError({
@@ -16,19 +16,10 @@ export default function GlobalError({
     // ★배포 직후 열려 있던 탭의 청크 404 는 사용자가 고칠 것이 없다 — 세션당 1회 자동 복구.
     //   복구했으면 곧 페이지가 갈리므로 이 아래는 의미가 없다(루프 방지는 헬퍼가 한다).
     if (tryRecoverFromChunkError(error)) return;
-    try {
-      trackEvent("js_error", {
-        severity: "error",
-        payload: {
-          scope: "global-error",
-          message: error?.message ?? "",
-          digest: error?.digest ?? null,
-          stack: error?.stack ? error.stack.slice(0, 2000) : null,
-        },
-      });
-    } catch {
-      /* noop */
-    }
+    // ★공용 보고기를 쓴다 — 여기서 trackEvent 를 직접 부르면 **배달되지 않는다.**
+    //   이 파일은 <html> 을 렌더한다 = 루트 레이아웃을 대체한다 = AppStateBridge 가 없다 =
+    //   initEventCollector() 가 안 돌았다 = flush 구동자가 하나도 없다(실측 배달 0건).
+    reportBoundaryError("global-error", error);
   }, [error]);
 
   return (

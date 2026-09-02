@@ -47,135 +47,163 @@
 #       ★이 둘은 **의도된 super_admin 운영 진단 엔드포인트**다(PLAN_image_generation_inc2-4.md
 #       가 `curl` 사용례를 싣고 있다). 화면 배선 대상이 아니므로 **갚을 부채가 아니다** —
 #       프론트 소비 0 이 정상인 항목으로 여기 남긴다.
-/access/assess
-/api/v1/admin/sales-rls/apply
-/api/v1/admin/sales-rls/rollback
-/api/v1/admin/sales-rls/status
-/api/v1/admin/secrets/backups/{backup_id}/restore
-/api/v1/admin/secrets/image-health
-/api/v1/admin/secrets/llm-health
-/api/v1/agents/domain/multi-analysis
-/api/v1/agents/domain/run
-/api/v1/agents/orchestrate
-/api/v1/agents/specialist/dispatch
-/api/v1/ai-costs/budget
-/api/v1/ai-costs/budget-gate/{endpoint:path}
-/api/v1/ai-costs/dashboard
-/api/v1/analysis-ledger/admin/set-quota
-/api/v1/analysis-ledger/delete-chain
-/api/v1/analysis-ledger/prune
-/api/v1/analysis-ledger/usage
-/api/v1/analysis-ledger/verify-all
-/api/v1/api-keys
-/api/v1/api-keys/{key_id}
-/api/v1/auction/analyze
-/api/v1/auction/items/{item_id}
-/api/v1/auction/listings/{listing_id}
-/api/v1/auction/opportunities
-/api/v1/auction/sync
-/api/v1/avm/estimate
-/api/v1/billing/admin/orders/{order_id}/confirm
-/api/v1/billing/admin/set-tier
-/api/v1/billing/quote
-/api/v1/bim/analyze
-/api/v1/blockchain/escrow/direct-pay
-/api/v1/blockchain/escrow/dispute
-/api/v1/blockchain/escrow/fund
-/api/v1/blockchain/escrow/refund
-/api/v1/blockchain/escrow/release
-/api/v1/blockchain/escrow/resolve
-/api/v1/boq-auto/master/items
-/api/v1/building-compliance/auto-correct
-/api/v1/compliance/screening
-/api/v1/contractors/register
-/api/v1/cost-intelligence/material-prices/refresh
-/api/v1/cost/admin/ingest-public-prices
-/api/v1/dashboard/activity/recent
-/api/v1/dashboard/portfolio/timeline
-/api/v1/deliberation/analyze/async
-/api/v1/deliberation/analyze/task/{run_id}
-/api/v1/deliberation/scenario-matrix
-/api/v1/design-audit/run
-/api/v1/design-gen/seed/aihub
-/api/v1/design-gen/seed/aihub/list
-/api/v1/design-references/from-design
-/api/v1/design/bim/analyze
-/api/v1/design/report/stream
-/api/v1/development-methods/evaluate
-/api/v1/drawing/calculate-area
-/api/v1/drawing/export-dxf
-/api/v1/drawing/floor-plan
-/api/v1/drawing/site-plan
-/api/v1/energy/kepco/calculate
-/api/v1/esg/assessment
-/api/v1/esg/lcc/calculate
-/api/v1/esign/request
-/api/v1/external/parcel/merge
-/api/v1/finance/monte-carlo
-/api/v1/gresb/benchmarks
-/api/v1/kdx/metrics
-/api/v1/kdx/webhook
-/api/v1/land-price/price-trend
-/api/v1/land-price/rone-status
-/api/v1/land-price/rone-test
-/api/v1/lifecycle/construction/safety-plan
-/api/v1/lifecycle/disaster-risk/assess
-/api/v1/lifecycle/lifecycle-opt/replacement-schedule
-/api/v1/lifecycle/procurement/eoq
-/api/v1/lifecycle/supervision/evm
-/api/v1/market-ai/ask
-/api/v1/market-ai/tools
-/api/v1/mass-templates/collect
-/api/v1/mass-templates/collect-region
-/api/v1/notifications/alimtalk
-/api/v1/parking/recognize
-/api/v1/permits/compliance-check
-/api/v1/permits/submissions/{submission_id}/status
-/api/v1/portals/market-data/{region_code}
-/api/v1/portals/post-all
-/api/v1/portals/{portal_id}/post
-/api/v1/rates/history
-/api/v1/rates/refresh
-/api/v1/regulation/check
-/api/v1/regulation/gosi/search
-/api/v1/reports/stream/{project_id}
-/api/v1/safety/analyze-frame
-/api/v1/safety/analyze-stream
-/api/v1/sre/dashboard
-/api/v1/system/integration/status
-/api/v1/tax/calculate
-/api/v1/webhooks
-/api/v1/webhooks/{webhook_id}
-/api/v1/webhooks/{webhook_id}/deliveries
-/api/v1/webhooks/{webhook_id}/test
-/api/v1/webrtc/sessions
-/api/v1/webrtc/sessions/active
-/api/v1/webrtc/sessions/ice-candidate
-/api/v1/webrtc/sessions/offer
-/api/v1/zoning/special-parcels
-/api/v2/collaboration/invites/{token}/accept
-/api/v2/feasibility/finalize
-/api/v2/feasibility/optimize
-/api/v2/pipeline/report/pdf-from-ledger
-/bank-report/sections
-/basis/assess
-/basis/{run_id}
-/basis/{run_id}/approve
-/c2r/ping
-/data-integrity/field-audit-status
-/data-integrity/freshness/{source_name}
-/data-integrity/refresh/{source_name}
-/data-integrity/status
-/g2b/sync
-/growth/settings
-/growth/settings/{key}/rollback
-/registry/cleanup
-/registry/land-schedule/import
-/registry/status
-/registry/tilko/realty
-/registry/tilko/search
-/registry/tilko/status
-/senior/consult-multi
-/similar-market
-/survey/coordinate/contract
-/survey/coordinate/reconcile
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# 【★2026-08-26 — 형식이 바뀌었다: `경로 <TAB> 종류 <TAB> 사유`】
+#
+# 종전에는 **경로만** 있었다. 그래서 `/api/v1/auction/sync`(라우트 자신이 summary 에
+# "(관리/cron)" 이라고 적어 둔 **정당한 운영용**)와 `/api/v1/auction/opportunities`
+# (소비처가 양쪽 다 0인 **구 트리 잔재**)가 **나란히 서서 구별되지 않았다.**
+# 132 건이 한 덩어리라 *"이 중 몇 건이 진짜 부채인가"* 에 아무도 답할 수 없었다.
+#
+# 【★사유를 유추로 채우지 않는다 — 그건 이 저장소가 이미 데인 결함이다】
+# 대부분은 `unclassified` 다. **아직 안 봤다는 뜻이지 문제없다는 뜻이 아니다.**
+# 기계로 분류하려고 *"핸들러가 정의 파일 밖에서 참조되는가"* 를 재 봤더니 37건이
+# 나왔는데, **표본 10건이 전부 위양성**이었다(4건은 로그 문자열·독스트링·
+# `from urllib.parse import quote` 같은 임포트 · 6건은 **동명의 다른 함수 정의**).
+# → **싼 기계 신호는 없다.** 한 건씩 코드를 열어야 하고, 연 사람만 사유를 적는다.
+#
+# 【종류(닫힌 어휘 — 래칫이 강제한다)】
+#   admin-cron      운영·배치 전용. 프론트 소비처가 없는 것이 **정상**이다
+#   internal        백엔드 내부/서버간 호출 전용
+#   legacy-suspect  소비처 0 이고 구 트리·구 계약. **삭제 후보이나 미확정**
+#   debt            배선해야 하는데 안 됐다 — **진짜 부채**
+#   unclassified    ★아직 안 봤다. 유추 금지. 이 수는 **늘어날 수 없다**(래칫)
+#
+# 【고칠 때】한 건을 열어 확인했으면 `unclassified` 를 실제 종류로 바꾸고 **무엇을 보고
+# 그렇게 판단했는지**(`파일:줄`)를 사유에 적어라. 사유 없는 비-unclassified 는 실패한다.
+#
+# ★**`unclassified` 행의 사유 칸은 일부러 비워 둔다.** 종전엔 상용구 한 줄이 들어 있었는데
+#   그것이 **31자**라 근거 검사 임계(20자)를 넘어, **파일을 열지 않고 종류만 뒤집어도**
+#   락이 통과했다(적대 리뷰 실측). 비워 두면 종류를 바꾸는 순간 사유가 비어 **반드시 걸린다**.
+#   즉 이 빈칸은 누락이 아니라 **장치**다.
+# ─────────────────────────────────────────────────────────────────────────────
+#
+/access/assess	unclassified	
+/api/v1/admin/sales-rls/apply	unclassified	
+/api/v1/admin/sales-rls/rollback	unclassified	
+/api/v1/admin/sales-rls/status	unclassified	
+/api/v1/admin/secrets/backups/{backup_id}/restore	unclassified	
+/api/v1/admin/secrets/image-health	unclassified	
+/api/v1/admin/secrets/llm-health	unclassified	
+/api/v1/agents/domain/multi-analysis	unclassified	
+/api/v1/agents/domain/run	unclassified	
+/api/v1/agents/orchestrate	unclassified	
+/api/v1/agents/specialist/dispatch	unclassified	
+/api/v1/ai-costs/budget	unclassified	
+/api/v1/ai-costs/budget-gate/{endpoint:path}	unclassified	
+/api/v1/ai-costs/dashboard	unclassified	
+/api/v1/analysis-ledger/admin/set-quota	unclassified	
+/api/v1/analysis-ledger/delete-chain	unclassified	
+/api/v1/analysis-ledger/prune	unclassified	
+/api/v1/analysis-ledger/usage	unclassified	
+/api/v1/analysis-ledger/verify-all	unclassified	
+/api/v1/api-keys	unclassified	
+/api/v1/api-keys/{key_id}	unclassified	
+/api/v1/auction/analyze	unclassified	
+/api/v1/auction/items/{item_id}	unclassified	
+/api/v1/auction/listings/{listing_id}	unclassified	
+/api/v1/auction/opportunities	legacy-suspect	소비처 0 을 양쪽에서 확인했다 — 백엔드에서 list_opportunities 를 부르는 곳은 이 라우트뿐(routers/auction.py:148), 프론트 auction/opportunities 실행줄 0건(대조군: auction/watchlist 는 프론트 3파일에서 잡힌다). 구 트리 apps/api/services/auction_service.py:158 의 AuctionService 를 쓰는데 현행 경로는 app/services/auction 의 AuctionStep1Service 다 — 삭제 후보이나 **미확정**
+/api/v1/auction/sync	admin-cron	라우트 자신의 summary 가 "경공매 동기화(관리/cron)" 라고 선언한다(routers/auction.py:342). 예약 실행 경로는 app/tasks/auction_sync_task.py 가 서비스를 직접 부른다 — 프론트 소비처가 없는 것이 정상
+/api/v1/avm/estimate	unclassified	
+/api/v1/billing/admin/set-tier	unclassified	
+/api/v1/billing/payments/toss/webhook	internal	토스페이먼츠 서버가 부르는 웹훅 — 프론트가 부르면 안 된다(외부 호출이라 인증을 걸 수 없다). 본문을 신뢰하지 않고 재조회로 확정한다: apps/api/routers/billing.py:697 · apps/api/app/services/billing/toss_orders_service.py:1030
+/api/v1/billing/quote	unclassified	
+/api/v1/bim/analyze	unclassified	
+/api/v1/blockchain/escrow/direct-pay	unclassified	
+/api/v1/blockchain/escrow/dispute	unclassified	
+/api/v1/blockchain/escrow/fund	unclassified	
+/api/v1/blockchain/escrow/refund	unclassified	
+/api/v1/blockchain/escrow/release	unclassified	
+/api/v1/blockchain/escrow/resolve	unclassified	
+/api/v1/boq-auto/master/items	unclassified	
+/api/v1/building-compliance/auto-correct	unclassified	
+/api/v1/compliance/screening	unclassified	
+/api/v1/contractors/register	unclassified	
+/api/v1/cost-intelligence/material-prices/refresh	unclassified	
+/api/v1/cost/admin/ingest-public-prices	unclassified	
+/api/v1/dashboard/activity/recent	unclassified	
+/api/v1/dashboard/portfolio/timeline	unclassified	
+/api/v1/deliberation/analyze/async	unclassified	
+/api/v1/deliberation/analyze/task/{run_id}	unclassified	
+/api/v1/deliberation/scenario-matrix	unclassified	
+/api/v1/design-audit/run	unclassified	
+/api/v1/design-gen/seed/aihub	unclassified	
+/api/v1/design-gen/seed/aihub/list	unclassified	
+/api/v1/design-references/from-design	unclassified	
+/api/v1/design/bim/analyze	unclassified	
+/api/v1/design/report/stream	unclassified	
+/api/v1/development-methods/evaluate	unclassified	
+/api/v1/drawing/calculate-area	unclassified	
+/api/v1/drawing/export-dxf	unclassified	
+/api/v1/drawing/floor-plan	unclassified	
+/api/v1/drawing/site-plan	unclassified	
+/api/v1/energy/kepco/calculate	unclassified	
+/api/v1/esg/assessment	unclassified	
+/api/v1/esg/lcc/calculate	unclassified	
+/api/v1/esign/request	unclassified	
+/api/v1/external/parcel/merge	unclassified	
+/api/v1/finance/monte-carlo	unclassified	
+/api/v1/gresb/benchmarks	unclassified	
+/api/v1/kdx/metrics	unclassified	
+/api/v1/kdx/webhook	unclassified	
+/api/v1/land-price/price-trend	unclassified	
+/api/v1/land-price/rone-status	unclassified	
+/api/v1/land-price/rone-test	unclassified	
+/api/v1/lifecycle/construction/safety-plan	unclassified	
+/api/v1/lifecycle/disaster-risk/assess	unclassified	
+/api/v1/lifecycle/lifecycle-opt/replacement-schedule	unclassified	
+/api/v1/lifecycle/procurement/eoq	unclassified	
+/api/v1/lifecycle/supervision/evm	unclassified	
+/api/v1/market-ai/ask	unclassified	
+/api/v1/market-ai/tools	unclassified	
+/api/v1/mass-templates/collect	unclassified	
+/api/v1/mass-templates/collect-region	unclassified	
+/api/v1/notifications/alimtalk	unclassified	
+/api/v1/parking/recognize	unclassified	
+/api/v1/permits/compliance-check	unclassified	
+/api/v1/permits/submissions/{submission_id}/status	unclassified	
+/api/v1/portals/market-data/{region_code}	unclassified	
+/api/v1/portals/post-all	unclassified	
+/api/v1/portals/{portal_id}/post	unclassified	
+/api/v1/rates/history	unclassified	
+/api/v1/rates/refresh	unclassified	
+/api/v1/regulation/check	unclassified	
+/api/v1/regulation/gosi/search	unclassified	
+/api/v1/reports/stream/{project_id}	unclassified	
+/api/v1/safety/analyze-frame	unclassified	
+/api/v1/safety/analyze-stream	unclassified	
+/api/v1/sre/dashboard	unclassified	
+/api/v1/system/integration/status	unclassified	
+/api/v1/tax/calculate	unclassified	
+/api/v1/webrtc/sessions	unclassified	
+/api/v1/webrtc/sessions/active	unclassified	
+/api/v1/webrtc/sessions/ice-candidate	unclassified	
+/api/v1/webrtc/sessions/offer	unclassified	
+/api/v1/zoning/special-parcels	unclassified	
+/api/v2/collaboration/invites/{token}/accept	unclassified	
+/api/v2/feasibility/finalize	unclassified	
+/api/v2/feasibility/optimize	unclassified	
+/api/v2/pipeline/report/pdf-from-ledger	unclassified	
+/bank-report/sections	unclassified	
+/basis/assess	unclassified	
+/basis/{run_id}	unclassified	
+/basis/{run_id}/approve	unclassified	
+/c2r/ping	unclassified	
+/data-integrity/field-audit-status	unclassified	
+/data-integrity/freshness/{source_name}	unclassified	
+/data-integrity/refresh/{source_name}	unclassified	
+/data-integrity/status	unclassified	
+/g2b/sync	unclassified	
+/growth/settings	unclassified	
+/growth/settings/{key}/rollback	unclassified	
+/registry/cleanup	unclassified	
+/registry/land-schedule/import	unclassified	
+/registry/status	unclassified	
+/registry/tilko/realty	unclassified	
+/registry/tilko/search	unclassified	
+/registry/tilko/status	unclassified	
+/senior/consult-multi	unclassified	
+/similar-market	unclassified	
+/survey/coordinate/contract	unclassified	
+/survey/coordinate/reconcile	unclassified	
