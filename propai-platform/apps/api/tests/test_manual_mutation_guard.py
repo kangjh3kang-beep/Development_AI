@@ -234,3 +234,93 @@ def test_셸_래퍼_예외는_사유를_남기고_통과시킨다(sandbox) -> No
     #   그래서 못 믿는 rc 가 그대로 통과한다 — 그것이 탈출구의 대가다).
     assert any(ln.startswith(("CAUGHT", "SURVIVED")) for ln in r.stdout.splitlines()), (
         f"예외 후 판정이 아예 안 나왔다: {r.stdout}")
+
+
+# ── 적대 리뷰(2026-09-02)가 연 구멍 — **내 첫 봉합이 새로 만든 거짓 SURVIVED** ────────
+#
+# ★이 절의 존재 이유: 위 `test_셸_래퍼면_판정을_발행하지_않는다` 를 통과시킨 첫 구현이
+#   **고치려던 결함 클래스를 새 경로로 다시 열었다**(§회귀망 D-16). 두 겹의 fail-open 이었다:
+#     ① `env bash -c` · `timeout 60 bash -c` 는 argv[0] 이 셸이 아니라 **case 에 안 걸렸고**
+#     ② `bash -lc` · `bash -c --` 는 `-c` 를 못 찾아 스크립트가 비면 **그냥 신뢰**했다
+#   그래서 **파이프를 실은 5형태가 「차단(12)」에서 「거짓 SURVIVED(0)」로** 열렸다.
+#   락이 19건 전부 초록인 채였다 — **그 축을 하나도 안 태웠기 때문**이다.
+
+_거짓_SURVIVED_후보 = [
+    # (라벨, argv) — ★전부 **파이프를 실은** 형태다. 정답은 판정 불가(12).
+    ("bash -lc (옵션 결합)", ["bash", "-lc", "grep -q alpha target.txt | cat"]),
+    ("bash -c -- (이중 대시)", ["bash", "-c", "--", "grep -q alpha target.txt | cat"]),
+    ("env 접두", ["env", "bash", "-c", "grep -q alpha target.txt | cat"]),
+    ("timeout 접두", ["timeout", "60", "bash", "-c", "grep -q alpha target.txt | cat"]),
+    ("nohup 접두", ["nohup", "bash", "-c", "grep -q alpha target.txt | cat"]),
+    ("개행 구분자", ["bash", "-c", "grep -q alpha target.txt\ntrue"]),
+    ("단일 & (백그라운드)", ["bash", "-c", "grep -q alpha target.txt & wait"]),
+    ("env FOO=1 접두", ["env", "FOO=1", "bash", "-c", "grep -q alpha target.txt | cat"]),
+]
+
+
+@pytest.mark.parametrize("라벨,argv", _거짓_SURVIVED_후보, ids=[x[0] for x in _거짓_SURVIVED_후보])
+def test_무엇이_실행되는지_특정_못하면_판정하지_않는다(sandbox, 라벨, argv) -> None:
+    """★fail-closed — **특정하지 못하면 판정을 발행하지 않는다.**
+
+    ★그라운드 트루스: 변이 `s|alpha|ALPHA|` 후 `grep -q alpha target.txt` 는 **반드시 실패**한다.
+      그러므로 `rc=0`/`SURVIVED` 는 **어떤 경우에도 정답이 아니다** — 거짓 SURVIVED 다.
+    """
+    root, _ = sandbox
+    r = _run(root, "target.txt", "s|alpha|ALPHA|", *argv)
+    assert r.returncode == 12, (
+        f"[{라벨}] 특정 못 한 층에 판정을 발행했다: rc={r.returncode}\n{r.stdout}{r.stderr}")
+    # ★판정어는 **줄 시작 앵커**로 본다(설명문 안의 낱말을 집지 않도록).
+    assert not any(ln.startswith("SURVIVED") for ln in r.stdout.splitlines()), (
+        f"[{라벨}] ★거짓 SURVIVED 를 발행했다: {r.stdout}")
+
+
+def test_스크립트_파일을_받으면_내용을_못_보므로_판정하지_않는다(sandbox) -> None:
+    """`bash runner.sh` — `-c` 가 없다. **파일 내용은 이 도구가 볼 수 없다.**"""
+    root, _ = sandbox
+    (root / "runner.sh").write_text(
+        "#!/bin/bash\ngrep -q alpha target.txt\ntrue\n", encoding="utf-8")
+    os.chmod(root / "runner.sh", 0o755)
+    _git("add", "-A", cwd=root)
+    _git("commit", "-qm", "runner", cwd=root)
+    r = _run(root, "target.txt", "s|alpha|ALPHA|", "bash", "runner.sh")
+    assert r.returncode == 12, f"스크립트 파일을 신뢰했다: rc={r.returncode}\n{r.stdout}"
+
+
+def test_pipefail_은_그_셸이_지원할_때만_인정한다(sandbox) -> None:
+    """★`sh`/`dash` 에는 `set -o pipefail` 이 **없다** — 인정하면 「명령이 깨져서 CAUGHT」가 된다.
+
+    이 호스트의 `/bin/sh` 는 dash 이고, dash 는 특수 빌트인 오류로 **즉시 종료**한다(rc=2).
+    그것을 「파이프를 고쳤다」고 인정하면 **테스트가 돌지도 않았는데 CAUGHT** 가 나온다.
+
+    ★이 케이스는 **셸 목록 커버리지**도 같이 닫는다 — 다른 모든 락이 `bash` 로만 부르는 탓에
+      목록(`sh|bash|zsh|dash|ksh`)에서 `bash` 외를 빼도 아무것도 빨개지지 않았다(리뷰 변이 D3).
+    """
+    root, _ = sandbox
+    r = _run(root, "target.txt", "s|alpha|ALPHA|",
+             "sh", "-c", "set -o pipefail; grep -q alpha target.txt | cat")
+    assert r.returncode == 12, (
+        f"sh 의 pipefail 을 인정해 거짓 CAUGHT 를 냈다: rc={r.returncode}\n{r.stdout}{r.stderr}")
+
+
+_정당_형태 = [
+    # ★**두 번째 모집단** — 이것이 없으면 「전부 차단」이 만점이 된다. 정답은 CAUGHT.
+    ("다중 set 접두", ["bash", "-c", "set -e; set -o pipefail; grep -q alpha target.txt | cat"]),
+    ("개행 경계 접두", ["bash", "-c", "set -o pipefail\ngrep -q alpha target.txt | cat"]),
+    ("결합 접두", ["bash", "-c", "set -euo pipefail; grep -q alpha target.txt | cat"]),
+    ("-c -- 단일 명령", ["bash", "-c", "--", "grep -q alpha target.txt"]),
+    ("env 접두 + 단일 명령", ["env", "bash", "-c", "grep -q alpha target.txt"]),
+]
+
+
+@pytest.mark.parametrize("라벨,argv", _정당_형태, ids=[x[0] for x in _정당_형태])
+def test_정당한_형태는_그대로_판정한다(sandbox, 라벨, argv) -> None:
+    """★위양성 축 — 접두를 **한 번만** 걷으면 `set -e; set -o pipefail; …` 에 `;` 가 남아 막힌다."""
+    root, _ = sandbox
+    r = _run(root, "target.txt", "s|alpha|ALPHA|", *argv)
+    합본 = r.stdout + r.stderr
+    assert r.returncode != 12, f"[{라벨}] 정당한 형태를 막았다(위양성): {합본}"
+    assert any(ln.startswith("CAUGHT") for ln in r.stdout.splitlines()), (
+        f"[{라벨}] 정상 판정이 안 나왔다: {합본}")
+    # ★거짓 CAUGHT 가드 — 셸이 깨져서 rc≠0 이 된 것이 아님을 확인한다.
+    assert not any(w in 합본 for w in ("Illegal option", "unrecognized", "command not found")), (
+        f"[{라벨}] 명령이 깨져서 CAUGHT 가 됐다: {합본}")

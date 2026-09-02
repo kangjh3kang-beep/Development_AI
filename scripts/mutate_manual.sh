@@ -122,41 +122,89 @@ git --no-pager diff --no-index --stat "$SNAP" "$FILE" 2>/dev/null | tail -1 | se
 #       set -o pipefail; cmd | tail   → 나머지에 `;` 없음 · `|` 는 pipefail 이 고침 → **안전**
 #       set -o pipefail; cmd; tail    → 나머지에 `;` 있음                          → **위험**
 #     같은 `;` 를 위치로 가른다 — 문자 하나로는 못 하던 것을 **구조로** 한다.
+#   ★★fail-closed 가 이 판정의 뼈대다. 구판은 **두 겹으로 fail-open** 이었다:
+#     ①`env bash -c` · `timeout 60 bash -c` 는 argv[0] 이 셸이 아니라 **case 에 걸리지도 않았고**
+#     ②`bash -lc` · `bash -c --` 는 `-c` 를 못 찾아 `_script` 가 비면 **그냥 신뢰**했다.
+#     그 결과 **파이프를 실은 5형태가 「차단」에서 「거짓 SURVIVED」로** 열렸다(적대 리뷰 실측).
+#     → 무엇이 실행되는지 **특정하지 못하면 판정하지 않는다.**
+#   ★`&&` 를 위험에 넣는 이유는 「실패를 가린다」가 **아니다**(가리지 못한다 — `a && b` 의 rc 는
+#     어느 쪽이 실패해도 0 이 아니다). 위험한 방향이 **반대**다: `cd 없는디렉토리 && pytest` 는
+#     **테스트가 돌지도 않았는데 rc≠0** 이라 **거짓 CAUGHT** 를 만든다. 변이 점수를 부풀리는
+#     그 방향도 똑같이 결함이다(`sh -c 'set -o pipefail'` 이 dash 에서 내는 것과 같은 클래스).
 RC_UNTRUSTED=0
 RC_WHY=""
-case "$(basename -- "${1:-}")" in
-  sh|bash|zsh|dash|ksh)
-    # `-c` 다음 인자가 스크립트다.
-    _script=""; _next=0
-    for _a in "$@"; do
-      if [ "$_next" -eq 1 ]; then _script="$_a"; break; fi
-      [ "$_a" = "-c" ] && _next=1
-    done
-    if [ -n "$_script" ]; then
-      # ★접두 `set -o pipefail`(및 -e/-u 조합)을 걷어낸다 — 그것은 명령 연결이 아니다.
-      _rest="$_script"
-      _had_pipefail=0
-      case "$_rest" in
-        "set -"*"pipefail"*";"*)
-          _had_pipefail=1
-          _rest="${_rest#*;}"
-          ;;
+_NL='
+'
+_wrapper=""; _script=""; _scriptfile=0; _saw_prefix=0; _state=scan
+for _a in "$@"; do
+  case "$_state" in
+    scan)
+      case "$(basename -- "$_a")" in
+        env|nohup|stdbuf|command|exec|setsid|nice|ionice|timeout)
+          _saw_prefix=1; continue ;;
+        sh|bash|zsh|dash|ksh)
+          _wrapper="$(basename -- "$_a")"; _state=shellargs; continue ;;
       esac
-      case "$_rest" in
-        *";"*|*"&&"*|*"||"*)
-          RC_UNTRUSTED=1
-          RC_WHY="래퍼 스크립트가 명령을 이어 붙인다(';' 또는 '&&'/'||') — rc 는 **마지막 명령**의 것이다"
-          ;;
-        *"|"*)
-          if [ "$_had_pipefail" -eq 0 ]; then
-            RC_UNTRUSTED=1
-            RC_WHY="래퍼 스크립트에 파이프가 있는데 'set -o pipefail' 이 없다 — rc 는 **끝 명령**의 것이다"
-          fi
-          ;;
+      if [ "$_saw_prefix" -eq 1 ]; then
+        case "$_a" in -*|*=*|[0-9]*) continue ;; esac
+      fi
+      break
+      ;;
+    shellargs)
+      case "$_a" in
+        --)   _state=wantscript; continue ;;
+        -*c*) _state=wantscript; continue ;;
+        -*)   continue ;;
+        *)    _scriptfile=1; break ;;
       esac
+      ;;
+    wantscript)
+      case "$_a" in
+        --) continue ;;
+        *)  _script="$_a"; _state=done; break ;;
+      esac
+      ;;
+  esac
+done
+if [ -n "$_wrapper" ] && [ "$_state" != done ]; then
+  RC_UNTRUSTED=1
+  if [ "$_scriptfile" -eq 1 ]; then
+    RC_WHY="셸 래퍼가 **스크립트 파일**을 받는다 — 내용을 볼 수 없어 rc 가 테스트의 것인지 판정하지 않는다"
+  else
+    RC_WHY="셸 래퍼인데 '-c' 스크립트를 특정하지 못했다(-lc/-ce/'-c --' 등) — 무엇이 실행되는지 모르므로 판정하지 않는다"
+  fi
+elif [ -z "$_wrapper" ] && [ "$_saw_prefix" -eq 1 ]; then
+  RC_UNTRUSTED=1
+  RC_WHY="접두 래퍼(env/timeout/nohup 등)를 거쳐 무엇이 실행되는지 특정하지 못했다 — 판정하지 않는다"
+elif [ -n "$_wrapper" ]; then
+  _rest="$_script"; _had_pipefail=0
+  while :; do
+    while :; do case "$_rest" in " "*) _rest="${_rest# }" ;; *) break ;; esac; done
+    case "$_rest" in "set -"*) ;; *) break ;; esac
+    _segA="${_rest%%;*}"; _segB="${_rest%%"$_NL"*}"
+    if [ "$_segA" = "$_rest" ] && [ "$_segB" = "$_rest" ]; then break; fi
+    if [ ${#_segA} -le ${#_segB} ]; then
+      _seg="$_segA"; _tail="${_rest#*;}"
+    else
+      _seg="$_segB"; _tail="${_rest#*"$_NL"}"
     fi
-    ;;
-esac
+    case "$_seg" in *pipefail*) _had_pipefail=1 ;; esac
+    _rest="$_tail"
+  done
+  case "$_wrapper" in bash|zsh|ksh) ;; *) _had_pipefail=0 ;; esac
+  case "$_rest" in
+    *";"*|*"&"*|*"||"*|*"$_NL"*)
+      RC_UNTRUSTED=1
+      RC_WHY="래퍼 스크립트가 명령을 이어 붙인다(';' · 개행 · '&&'/'&' · '||') — rc 가 테스트의 것이라고 보증할 수 없다"
+      ;;
+    *"|"*)
+      if [ "$_had_pipefail" -eq 0 ]; then
+        RC_UNTRUSTED=1
+        RC_WHY="래퍼 스크립트에 파이프가 있는데 'set -o pipefail' 이 없다(또는 그 셸이 지원하지 않는다) — rc 는 **끝 명령**의 것이다"
+      fi
+      ;;
+  esac
+fi
 if [ "$RC_UNTRUSTED" -eq 1 ] && [ -n "${MUTATE_ALLOW_SHELL:-}${MUTATE_ALLOW_PIPE:-}" ]; then
   echo "== 셸 래퍼 예외: ${MUTATE_ALLOW_SHELL:-${MUTATE_ALLOW_PIPE:-}} (호출자가 rc 보존을 선언) =="
   RC_UNTRUSTED=0
