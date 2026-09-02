@@ -339,6 +339,13 @@ def _render_like_dashboard(payload: dict) -> str:
         "★플래그 표면이 그 상한을 안 쓴다 — 이 흉내가 화면과 다른 것을 그린다(추출기 사망)"
     )
 
+    # ★**이 흉내가 잠그는 것과 안 잠그는 것**(변이 실측 2026-09-02 — 점수 부풀리기 방지):
+    #     CAUGHT  상수 이름 변경 · **배선 제거** → 판정 거부(추출기 사망)
+    #     SURVIVED 상한 40→4     — 이 테스트의 단언은 «유휴 ≠ 쌓임» 이고 `at`(2글자)이 항상
+    #                              첫째라 상한이 4여도 둘은 갈린다. **구멍이 아니라 범위 밖**이다
+    #     SURVIVED `외 N종` 제거 — 상한 40 에 17키라 여기서는 절단 자체가 안 난다
+    #   위 두 축은 **프론트 락**이 잡는다(`GrowthDashboard.flagValueTruncation.test.tsx` —
+    #   17키가 다 보이는가 · 상한 초과 시 버린 수를 말하는가). 여기서 다시 잠그지 않는다.
     parts: list[str] = []
     shown = [(k, v) for k, v in payload.items() if v is not None]
     for k, v in shown:
