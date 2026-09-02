@@ -156,7 +156,19 @@ def test_area_designation_states_the_real_axis():
     assert "§3의2" in notes, f"명문 허용 근거(도시개발법 §3의2)가 없다: {notes!r}"
     assert "관할 확인" in notes, f"저장소 기준선 문구(관할 확인)가 없다: {notes!r}"
     # ★종전 문구가 남아 있으면 회귀
-    assert "통합개발 불가" not in notes, f"종전 판정 문구가 남았다: {notes!r}"
+    # ★종전 락은 `"통합개발 불가"` **정확일치**였다. 실제 문구는
+    #   `"통합개발(합필/일단지) 불가"` 라 **통과**했고, 라이브 화면에
+    #   *"…통합개발(합필/일단지) 불가. 구역지정형 사업 — 물리적 인접은 법정 요건이
+    #   아닙니다…"* 라는 **한 문장 안의 모순**이 나갔다(2026-09-03 실측).
+    #   → **속성**을 잠근다: 「통합개발」을 「불가」로 단정하는 표현이 **어떤 형태로도** 없어야 한다.
+    import re as _re
+    contradiction = _re.search(r"통합개발[^.]{0,20}불가", notes)
+    assert not contradiction, (
+        f"「통합개발 …불가」 단정이 남아 있다: {contradiction.group(0)!r} — "
+        "바로 뒤 문장이 «법정 요건이 아니다» 라고 말하므로 한 문장 안에서 모순된다"
+    )
+    # ★음성 대조군 — 「합필/일단지 통합은 불가」는 **사실**이므로 남아야 한다(과잉 억제 방지).
+    assert "합필" in notes or "일단지" in notes, f"인접성 관측 자체가 사라졌다: {notes!r}"
 
 
 def test_garo_guyeok_axis_is_road_not_distance():
