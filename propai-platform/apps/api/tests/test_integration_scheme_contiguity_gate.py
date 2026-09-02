@@ -426,3 +426,44 @@ def test_zone_fallback_paths_are_wired():
     assert dominant_zone_by_area(rows)[0] == "제2종일반주거지역"
     # 전부 비어 있으면 빈 문자열 + none — 조용히 첫 값을 지어내지 않는다.
     assert dominant_zone_by_area([{"zone": None, "area": 5.0}]) == ("", SS.ZONE_BASIS_NONE)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 7) 용도지역 **배선** — 판단이 아니라 «어느 모집단을 주는가»
+#    ★기계 변이가 `simulate()` 인라인 두 줄을 생존시켜, 순수함수로 꺼내 잠근다.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_measured_zones_win_over_inferred():
+    """실측이 있으면 **추론은 모집단에서 빠진다** — 지어낸 값이 실측을 이기지 않는다."""
+    enriched = [
+        {"zone": "보전녹지지역", "area": 9000.0, "zone_source": "keyword_inference"},
+        {"zone": "제2종일반주거지역", "area": 100.0, "zone_source": "vworld"},
+    ]
+    zone, basis = SS.select_primary_zone(enriched)
+    assert zone == "제2종일반주거지역", f"추론(9,000㎡)이 실측(100㎡)을 이겼다 — {zone}"
+    assert basis == "single_zone"
+
+
+def test_falls_back_to_all_rows_when_nothing_measured():
+    """실측이 하나도 없으면 **추론 포함 전체**로 판단한다(그 줄을 지우면 여기서 깨진다)."""
+    enriched = [
+        {"zone": "제1종일반주거지역", "area": 100.0, "zone_source": "keyword_inference"},
+        {"zone": "제2종일반주거지역", "area": 900.0, "zone_source": "keyword_inference"},
+    ]
+    zone, basis = SS.select_primary_zone(enriched)
+    assert zone == "제2종일반주거지역", f"전체 폴백이 끊겼다 — {zone}"
+    assert basis == "area_weighted"
+
+
+def test_falls_back_to_site_zone_type_when_no_parcel_zone():
+    """필지에 용도지역이 하나도 없으면 호출자가 준 값 — 그때 근거는 `none`."""
+    assert SS.select_primary_zone([], "제3종일반주거지역") == ("제3종일반주거지역", "none")
+    assert SS.select_primary_zone([{"zone": None, "area": 1.0}], "준주거지역") == ("준주거지역", "none")
+    assert SS.select_primary_zone([], "") == ("", "none")
+
+
+def test_simulate_uses_the_extracted_wiring():
+    """배선이 `simulate()` 안에서 **실제로 호출**되는지(꺼내 놓고 안 쓰면 무의미)."""
+    assert "select_primary_zone(enriched" in _SRC
+    # ★인라인 복제본이 남으면 두 경로가 갈린다 — 종전 인라인 표식이 사라졌는지 확인.
+    assert "dominant_zone_by_area(_measured_rows or _all_rows)" not in _SRC

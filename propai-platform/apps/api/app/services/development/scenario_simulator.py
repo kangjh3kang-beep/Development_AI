@@ -245,6 +245,26 @@ ZONE_BASIS_NO_AREA = "first_parcel_no_area"
 ZONE_BASIS_NONE = "none"
 
 
+def select_primary_zone(enriched: list[dict[str, Any]], site_zone_type: str = "") -> tuple[str, str]:
+    """부지 대표 용도지역을 고르는 **배선 전체**를 순수함수로 꺼낸다.
+
+    ★기계 변이(`scripts/mutate_changed.py`)가 이 배선의 두 줄(`_all_rows` 대입 · `if not
+      primary_zone` 폴백)을 **생존**시켰다 — `simulate()` 안에 인라인이라 태울 방법이 없었다.
+      판단은 `dominant_zone_by_area` 가, **어느 모집단을 줄지**는 여기가 정한다.
+
+    우선순위: ①실측 용도지역(추론 제외) → ②전체(추론 포함) → ③호출자가 준 `site.zone_type`.
+    """
+    measured = [
+        {"zone": p.get("zone"), "area": p.get("area")} for p in (enriched or [])
+        if p.get("zone") and p.get("zone_source") != "keyword_inference"
+    ]
+    every = [{"zone": p.get("zone"), "area": p.get("area")} for p in (enriched or []) if p.get("zone")]
+    zone, basis = dominant_zone_by_area(measured or every)
+    if not zone:
+        return (site_zone_type or ""), ZONE_BASIS_NONE
+    return zone, basis
+
+
 def dominant_zone_by_area(rows: list[dict[str, Any]]) -> tuple[str, str]:
     """면적가중 **우세** 용도지역을 고른다 — ★「첫 필지」가 아니다.
 
@@ -375,14 +395,7 @@ class DevelopmentScenarioSimulator:
         # ★선두가 아니라 **면적가중 우세**를 쓴다. 실측(2026-09-02) — `zones=[제1종,제2종]` 부지에서
         #   `제1종` 이 선택돼 같은 응답의 `far_effective_blended`(면적가중)와 기준이 어긋났다.
         #   실측 용도지역(추론 제외) 우선순위는 종전 그대로 유지한다.
-        _measured_rows = [
-            {"zone": p.get("zone"), "area": p.get("area")} for p in enriched
-            if p.get("zone") and p.get("zone_source") != "keyword_inference"
-        ]
-        _all_rows = [{"zone": p.get("zone"), "area": p.get("area")} for p in enriched if p.get("zone")]
-        primary_zone, primary_zone_basis = dominant_zone_by_area(_measured_rows or _all_rows)
-        if not primary_zone:
-            primary_zone, primary_zone_basis = (site.get("zone_type") or ""), ZONE_BASIS_NONE
+        primary_zone, primary_zone_basis = select_primary_zone(enriched, site.get("zone_type") or "")
         near_station = (subway_m is not None and subway_m <= 500) or any(
             "역세권" in (p.get("zone") or "") for p in enriched
         )
