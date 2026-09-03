@@ -384,7 +384,7 @@ def test_sh_는_bash_구문으로_검사한다(tmp_path):
         encoding="utf-8")
     sh("git", "add", "-A")
     sh("git", "commit", "-q", "-m", "init")
-    r = subprocess.run(  # noqa: S603
+    r = subprocess.run(
         ["bash", str(_TOOL), "tool.sh", 's|-gt 0 ]]|-gt 0 ]|',
          "python3", "-m", "pytest", "t.py", "-q"],
         cwd=repo, capture_output=True, text=True, check=False,
@@ -414,7 +414,7 @@ def test_요약이_stderr_로_나와도_개수를_읽는다(tmp_path):
         "sys.exit(0)\n", encoding="utf-8")
     sh("git", "add", "-A")
     sh("git", "commit", "-q", "-m", "init")
-    r = subprocess.run(  # noqa: S603
+    r = subprocess.run(
         ["bash", str(_TOOL), "mod.py", "s|MARKER|GONE|", "python3", "runner.py"],
         cwd=repo, capture_output=True, text=True, check=False,
     )
@@ -440,7 +440,7 @@ def test_개수는_모든_매치의_최대값으로_읽는다(tmp_path):
         "sys.exit(0)\n", encoding="utf-8")
     sh("git", "add", "-A")
     sh("git", "commit", "-q", "-m", "init")
-    r = subprocess.run(  # noqa: S603
+    r = subprocess.run(
         ["bash", str(_TOOL), "mod.py", "s|MARKER = 1|MARKER = 2|", "python3", "runner.py"],
         cwd=repo, capture_output=True, text=True, check=False,
     )
