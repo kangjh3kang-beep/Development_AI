@@ -31,7 +31,11 @@ import { join } from "node:path";
 import { render } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import { SATONG_MAP_SHELL_LAYERS, defaultControlsByLayer } from "@/components/precheck/SatongMapShell";
+import {
+  SATONG_MAP_SHELL_LAYERS,
+  defaultControlsByLayer,
+  initialLayerControls,
+} from "@/components/precheck/SatongMapShell";
 import {
   SATONG_SELECTION_LABEL_CONTROL_IDS,
   satongSelectionLabelsVisible,
@@ -187,51 +191,49 @@ describe("C 기본값(값) — 함수를 **실행해서** 판정에 먹인다", 
     expect(satongSelectionLabelsVisible(st(defaultControlsByLayer()))).toBe(true);
   });
 
-  it("★그 기본값이 실제로 useState 초기화자로 쓰인다(배선)", () => {
-    // ★모양이 아니라 **관계**를 본다(2026-09-03 · 리뷰 minor-1 + 동료 세션이 **독립적으로**
-    //   같은 줄을 짚었다). 종전 락은 긴 제네릭을 **정확 일치**로 찾았다:
-    //       /useState<SatongMapLayerState\["controlsByLayer"\]>\(\(\) => defaultControlsByLayer\(\)\)/
-    //   prettier 가 줄바꿈만 해도 · 타입 별칭을 도입해도 **계약은 그대로인데 빨개진다.**
-    //   ***계약이 그대로인데 락이 깨졌으면 깨진 쪽은 락이다.*** 가드의 위양성도 결함이다.
+  it("★★초기 상태를 **실행해서** 잰다 — 화면이 처음 뜰 때 실제로 켜져 있는가", () => {
+    // ★#959 실측: 종전 락은 소스 **모양**이었고, 관계로 바꾸니
+    //   `() => ({ ...defaultControlsByLayer(), cadastre: [] })` 가 **SURVIVED** 했다
+    //   (관계는 유지한 채 계약만 깬다). 위양성을 고치다 **위음성을 새로 만든 것**이다.
+    //   동료 세션이 «관계로 바꾼 뒤에도 그 관계를 유지하며 계약을 깨는 변이가 있는지
+    //   물어 보라» 고 조언해 재 봤고, 실제로 샜다.
+    //   → 초기화자를 이름 있는 값으로 빼고 **실행해서** 잰다. 모양에 불변이고 위음성이 없다.
+    expect(satongSelectionLabelsVisible(st(initialLayerControls()))).toBe(true);
+  });
+
+  it("★그 초기화자가 실제로 useState 에 연결돼 있다(배선)", () => {
+    // 여기만 소스를 본다 — 「무엇이 초기값인가」는 위에서 값으로 쟀고, 남은 것은
+    // 「그 값이 상태로 쓰이는가」뿐이다. ★모양이 아니라 **관계**를 본다: 같은 선언문 안에
+    // `useState` 와 `initialLayerControls` 가 함께 있는가(서식·제네릭 표기에 불변).
     const src = __stripCommentsForScan(
       readFileSync(join(process.cwd(), "components/precheck/SatongMapShell.tsx"), "utf8"),
       "SatongMapShell.tsx",
     );
-    // 관계 = 「같은 선언문 안에」 useState 와 defaultControlsByLayer 가 함께 있다.
-    //   문장 단위로 자르므로 서식·제네릭 표기에 불변이고, **다른 상태의 useState** 가
-    //   우연히 통과하지도 않는다(같은 문장이어야 한다).
-    const stmts = src.split(";");
-    const wired = stmts.filter(
-      (st) => /\buseState\b/.test(st) && /\bdefaultControlsByLayer\s*\(/.test(st),
-    );
+    const wired = src
+      .split(";")
+      .filter((st_) => /\buseState\b/.test(st_) && /\binitialLayerControls\b/.test(st_));
     expect(wired).toHaveLength(1);
-    // ★그리고 그것이 **layerControls** 라는 이름으로 잡힌다 — 배선의 다음 칸과 이어진다.
     expect(wired[0]).toMatch(/\blayerControls\b/);
     // 그 상태가 layerState 로 흘러간다.
     expect(src).toMatch(/controlsByLayer:\s*layerControls/);
   });
 
-  // ★설명 가능한 생존(변이 점수 부풀리기 방지): `SatongMapShell.tsx` 의 그 선언을 **서식만**
-  //   바꾸는 변이는 이 락에서 **SURVIVED 가 정답**이다 — 계약이 그대로이므로 빨개지면 안 된다.
-  //   실측 대조(2026-09-03): 종전의 모양 기반 정규식은 그 서식 변경본에 **매치 실패**(위양성),
-  //   관계 기반은 **매치 성공**. 배선을 끊는 변이는 여전히 CAUGHT 다.
-  it("★위 락이 서식 변화에 **깨지지 않는다**(위양성 대조군)", () => {
-    // 계약을 유지한 채 서식만 바꾼 합성 소스에서 같은 판정이 나와야 한다.
+  // ★설명 가능한 생존(변이 점수 부풀리기 방지): 그 선언을 **서식만** 바꾸는 변이는
+  //   이 락에서 **SURVIVED 가 정답**이다 — 계약이 그대로이므로 빨개지면 안 된다.
+  //   실측(2026-09-04): 종전 모양 기반 정규식은 서식 변경본에 **매치 실패**(위양성),
+  //   관계 기반은 **매치 성공**. 계약을 깨는 변이는 위 값 테스트가 잡는다.
+  it("★위 배선 락이 서식 변화에 **깨지지 않는다**(위양성 대조군)", () => {
     const reformatted = `
       const [layerControls, setLayerControls] = useState<
         SatongMapLayerState["controlsByLayer"]
-      >(() => defaultControlsByLayer());
+      >(initialLayerControls);
       const mapLayerState = { controlsByLayer: layerControls };
     `;
-    const wired = reformatted
-      .split(";")
-      .filter((st) => /\buseState\b/.test(st) && /\bdefaultControlsByLayer\s*\(/.test(st));
-    expect(wired).toHaveLength(1);
-    // ★음성 대조군 — 배선을 끊으면(초기값을 리터럴로) 0건이 된다.
-    const unwired = `const [layerControls, setLayerControls] = useState({});`
-      .split(";")
-      .filter((st) => /\buseState\b/.test(st) && /\bdefaultControlsByLayer\s*\(/.test(st));
-    expect(unwired).toHaveLength(0);
+    const hit = (src: string) =>
+      src.split(";").filter((st_) => /\buseState\b/.test(st_) && /\binitialLayerControls\b/.test(st_));
+    expect(hit(reformatted)).toHaveLength(1);
+    // ★음성 대조군 — 배선을 끊으면 0건이 된다.
+    expect(hit(`const [layerControls, setLayerControls] = useState({});`)).toHaveLength(0);
   });
 });
 

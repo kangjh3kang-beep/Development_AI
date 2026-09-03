@@ -657,6 +657,14 @@ export function defaultControlsByLayer(): SatongMapLayerState["controlsByLayer"]
   };
 }
 
+/**
+ * 레이어 컨트롤 **초기 상태**. `useState` 가 이 함수를 그대로 받는다(호출하지 않는다 —
+ * lazy initializer). ★테스트가 **실행해서 값으로** 재도록 export 한다(#959).
+ */
+export const initialLayerControls = (): SatongMapLayerState["controlsByLayer"] =>
+  defaultControlsByLayer();
+
+
 function parseGeocodeToParcel(
   query: string,
   response: GeocodeResponse,
@@ -854,7 +862,13 @@ export function SatongMapShell({
   const [useLlm, setUseLlm] = useState(true);
   const [focusTarget, setFocusTarget] = useState<{ lat: number; lon: number; label?: string } | null>(null);
   const [enabledLayers, setEnabledLayers] = useState<Set<SatongMapLayerId>>(() => new Set(["cadastre"]));
-  const [layerControls, setLayerControls] = useState<SatongMapLayerState["controlsByLayer"]>(() => defaultControlsByLayer());
+  // ★초기화자를 **이름 있는 값**으로 뺀다(#959). 종전에는 인라인 화살표였고, 락이 그것을
+  //   **소스 모양**으로 잠갔다 — 모양 락은 서식에 깨지고(위양성), 관계 락으로 바꾸니
+  //   `() => ({ ...defaultControlsByLayer(), cadastre: [] })` 처럼 **관계는 유지한 채 계약을
+  //   깨는** 변이가 샜다(위음성). 값으로 빼면 테스트가 **실행해서** 잴 수 있다.
+  const [layerControls, setLayerControls] = useState<SatongMapLayerState["controlsByLayer"]>(
+    initialLayerControls,
+  );
   const [activeLayerId, setActiveLayerId] = useState<SatongMapLayerId | null>(null);
   const [isOutputDockOpen, setIsOutputDockOpen] = useState(true);
   // ★UX 트랙 B4 — 착지 페이지(분석/시장/토지조서)는 같은 지도셸이 반복 렌더돼 매번 첫 화면을
