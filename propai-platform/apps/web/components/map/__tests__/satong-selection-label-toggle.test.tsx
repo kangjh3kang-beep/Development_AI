@@ -123,6 +123,32 @@ describe("B 배선(행위) — 컴포넌트가 판정**값**을 위임 인자로
     expect(visibleArgs()).not.toContain(true);
   });
 
+  it("★★임계의 입력(zoom)이 컴포넌트의 실제 줌에 배선돼 있다", () => {
+    // ★변이 실측(2026-09-04): `zoom: mapZoom` 을 `zoom: 30` 으로 바꿔도 **SURVIVED** 였고,
+    //   deps 에서 `mapZoom` 을 빼도 **SURVIVED** 였다. 임계를 버짓에서 **파생**시켜 놓고
+    //   ★**그 파생의 입력이 배선됐는지**를 안 쟀다 — 파생 락은 파생식만 지킨다.
+    //   jsdom 은 Leaflet 을 못 띄워 `mapZoom` 이 12 에 고정되므로 값으로는 못 가른다
+    //   (30 도 12 도 그냥 number 다). 그래서 이 두 칸만 소스로 본다 — **관계**로.
+    //   린트(`react-hooks/exhaustive-deps`)가 deps 쪽을 잡기는 하지만(실측 경고 2→3,
+    //   예산 2 = 여유 0), 그 봉쇄는 **무관한 기존 경고 2건이 그대로 있어야** 성립한다.
+    //   ★우연한 봉쇄를 잠금으로 세지 않는다.
+    const src = __stripCommentsForScan(
+      readFileSync(join(process.cwd(), "components/map/SatongMultiMap.tsx"), "utf8"),
+      "SatongMultiMap.tsx",
+    );
+    // ① 계획 호출이 컴포넌트의 줌 상태를 넘긴다(리터럴이 아니라 그 식별자).
+    const call = src.match(/planSelectionLabels\(\{[\s\S]*?\}\)/);
+    expect(call).toBeTruthy(); // 대조군 — 호출이 실재한다
+    expect(call![0]).toMatch(/zoom:\s*mapZoom\b/);
+
+    // ② 그 이펙트의 deps 배열에 mapZoom 이 있다 — 없으면 줌이 바뀌어도 임계가 안 바뀐다.
+    //    ★모양이 아니라 **관계**: selectionLabelsOn 이 든 그 배열을 찾아 같은 배열을 본다.
+    const depsArrays = [...src.matchAll(/\}, \[([^\]]*)\]\);/g)].map((m) => m[1]);
+    const theOne = depsArrays.filter((a) => /\bselectionLabelsOn\b/.test(a));
+    expect(theOne).toHaveLength(1); // 대조군 — 그 배열이 정확히 하나 잡힌다
+    expect(theOne[0]).toMatch(/\bmapZoom\b/);
+  });
+
   it("★렌더 위임도 실제로 일어난다 — 계획만 세우고 안 그리면 화면이 안 바뀐다", async () => {
     renderSpy.mockClear();
     const { SatongMultiMap } = await import("@/components/map/SatongMultiMap");
