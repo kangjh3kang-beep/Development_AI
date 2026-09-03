@@ -49,6 +49,9 @@ def test_scanner_alive_we_found_paths_to_check() -> None:
     got = _paths_locked_outside_platform()
     assert got, ("★루트 스위트에서 `scripts/…` 참조를 하나도 못 찾았다. 파생이 죽었는지 확인하라 "
                  "(락이 실제로 그 경로를 안 태우게 됐다면 이 테스트를 지워도 된다).")
+    # ★집합 전체만 보면 «특정 대상이 감시망에서 빠지는» **부분 공허**를 못 잡는다
+    #   (3차 리뷰 실측: 한 파생 경로를 죽여도 다른 파일의 리터럴이 대신 채워 SURVIVED).
+    assert "scripts/coord.sh" in got, f"★이 PR 이 잠그는 그 스크립트가 파생 집합에 없다: {sorted(got)}"
 
 
 def test_ci_path_filter_matches_every_locked_script() -> None:

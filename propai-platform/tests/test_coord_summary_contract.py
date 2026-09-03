@@ -257,7 +257,9 @@ def test_summary_n_gate_is_a_shape_not_a_blacklist(value: str, ok: bool, tmp_pat
         assert _NOTE_CANARY in p.stdout.decode("utf-8"), f"★{value!r} 에서 출력이 비었다"
     else:
         assert p.returncode == 2, f"★{value!r} 을 거부하지 않았다 rc={p.returncode}(무성 사망 위험)"
-        assert b"" in p.stderr and "판정 거부" in p.stderr.decode("utf-8", "replace"), \
+        # ★첫 판은 `b"" in p.stderr` 를 붙였는데 **항상 참**이었다(빈 바이트는 무엇에나 포함).
+        #   이 저장소가 경계하는 「공허 진리」 표기 그대로라 지웠다.
+        assert "판정 거부" in p.stderr.decode("utf-8", "replace"), \
             f"★{value!r} 거부 사유가 stderr 에 없다"
 
 
@@ -350,7 +352,9 @@ def test_debt_precondition_released_area_is_in_the_board(tmp_path: Path) -> None
 @pytest.mark.xfail(reason="★미구현 부채: 짝짓기(진짜 미해제 계산). 2026-08-27 구현이 자기 양성 "
                           "대조군에 실패했다(확실한 자기 쌍조차 못 맺음 · RELEASE 1줄이 CLAIM 둘을 "
                           "닫음). 되살리려면 **그 대조군부터** 통과시켜라. ★상환하면 이 표식이 "
-                          "XPASS(strict) 로 **발화한다** — 전제는 앞 테스트로 분리했다.",
+                          "XPASS(strict) 로 **발화한다** — 전제는 앞 테스트로 분리했다. "
+                          "★단 상환 시 **전제 테스트도 함께 갱신**해야 한다(짝짓기가 돌면 해제된 "
+                          "영역이 덤프에서 빠지므로 전제의 「덤프에 있다」가 거짓이 된다).",
                    strict=True)
 def test_debt_unreleased_claims_are_actually_computed(tmp_path: Path) -> None:
     seg = _section(_out("summary", _board(tmp_path, pairs=2)), "summary", "cr")
@@ -359,8 +363,9 @@ def test_debt_unreleased_claims_are_actually_computed(tmp_path: Path) -> None:
 
 @pytest.mark.xfail(reason="★미해소 부채: 여러 줄 NOTE 의 이어지는 줄이 요약에 안 나온다(그 줄에 "
                           "`- [NOTE]` 표지가 없다). ★상환 경로: `- [NOTE]` 다음 줄부터 다음 `- [` "
-                          "전까지를 함께 낸다. **단 표지 문자열을 품은 줄은 제외**해야 ⑧앵커 락과 "
-                          "충돌하지 않는다 — 2판은 이 제약을 안 적어 상환 경로가 락을 깼다.",
+                          "전까지를 함께 낸다. ★**실제로 막는 제약은 「표지 문자열을 품은 줄 제외」 "
+                          "하나뿐이다** — 픽스처가 오염 줄을 빈 줄 뒤에 두는 것은 보호가 아니다"
+                          "(그 규칙은 빈 줄에서 멈추지 않는다. 3차 리뷰가 실행해 확인).",
                    strict=True)
 def test_debt_multiline_note_continuation_is_visible(tmp_path: Path) -> None:
     assert _CONT_CANARY in _section(_out("summary", _board(tmp_path)), "summary", "note")
@@ -368,7 +373,54 @@ def test_debt_multiline_note_continuation_is_visible(tmp_path: Path) -> None:
 
 @pytest.mark.xfail(reason="★미측정 부채: 6개 세션이 동시에 `>>` 로 추가한다. 4KiB 미만 단일 "
                           "`printf` 는 실무상 원자적이나 **재지 않았다**. 긴 NOTE 는 초과할 수 있다. "
-                          "이 표식은 동시 추가 무결성을 재는 테스트가 생기면 발화한다.",
+                          "★이것은 `it.todo` 성격이다 — 본문이 무조건 실패라 **coord.sh 변경으로는 "
+                          "XPASS 하지 않는다**. 동시 추가를 재는 테스트를 **새로 써야** 발화한다.",
                    strict=True)
 def test_debt_concurrent_append_atomicity(tmp_path: Path) -> None:
     pytest.fail("동시 추가 원자성은 아직 측정하지 않았다")
+
+
+# ───────────── ★MAJOR-1 · MAJOR-2 — 적대 리뷰 3차가 찾은 두 축 ─────────────
+
+def test_new_board_creation_is_announced_but_append_is_quiet(tmp_path: Path) -> None:
+    r"""★MAJOR-1 — writer 는 보드를 **만들 수 있어야** 하므로(reader 는 `require_board` 가 거부)
+    「새로 만들었다」 stderr 경고가 **writer 쪽 유령 보드의 유일한 방어**다. 그런데 3판에서
+    그 줄을 지워도 전 스위트가 초록이었다(변이 `/보드를 \*\*새로 만들었다\*\*/d` → SURVIVED).
+
+    ★**두 모집단**: 신규 생성은 **알리고**, 기존 보드 append 는 **조용하다.**
+    한쪽만 보면 «항상 경고» 도 «항상 침묵» 도 통과한다.
+    """
+    d = tmp_path / "coordination"
+    env = {"PATH": "/usr/bin:/bin:/usr/local/bin", "COORD_DIR": str(d),
+           "HOME": str(Path.home()), "LANG": "en_US.UTF-8"}
+
+    def claim(area: str) -> str:
+        r = subprocess.run(["bash", str(_SCRIPT), "claim", area], cwd=str(_REPO), env=env,
+                           capture_output=True, timeout=60, check=False)
+        assert r.returncode == 0, f"claim 실패: {r.stderr.decode(errors='replace')[:300]}"
+        return r.stderr.decode("utf-8", "replace")
+
+    first, second = claim("영역A"), claim("영역B")
+    assert "새로 만들었다" in first, "★신규 보드를 만들면서 알리지 않았다(유령 보드가 조용해진다)"
+    assert "새로 만들었다" not in second, \
+        f"★기존 보드에 append 하면서도 「새로 만들었다」고 말한다(경고가 상시라 무시된다): {second!r}"
+
+
+def test_empty_coord_dir_is_refused_not_silently_real_board(tmp_path: Path) -> None:
+    """★MAJOR-2 — `COORD_DIR=""` 는 `${VAR:-…}` 의 `:-` 때문에 **미설정으로 취급**돼
+    파생 경로(=**실 공유 보드**)로 떨어진다.
+
+    ★가설이 아니라 **사고**다: 2026-09-04 적대 리뷰의 프로브가 정확히 그렇게 해서 공유 보드에
+    **30줄을 오염**시켰고, 그 세션은 권한 때문에 **스스로 지우지도 못했다**(내가 지웠다).
+    ★「격리하려는 의도」와 「실 보드에 쓰기」가 **같은 모양**이 되는 것이 이 결함의 핵심이다.
+    """
+    for cmd in ("summary", "status", "note"):
+        r = subprocess.run(["bash", str(_SCRIPT), cmd, "zz"], cwd=str(_REPO),
+                           env={"PATH": "/usr/bin:/bin:/usr/local/bin", "COORD_DIR": "",
+                                "HOME": str(Path.home()), "LANG": "en_US.UTF-8"},
+                           capture_output=True, timeout=60, check=False)
+        assert r.returncode == 2, f"★{cmd}: 빈 COORD_DIR 을 거부하지 않았다 rc={r.returncode}"
+        assert "비어 있다" in r.stderr.decode("utf-8", "replace"), f"★{cmd}: 거부 사유가 없다"
+    # ★반대편(파티션) — 정상 경로는 여전히 동작한다. 「전부 거부」가 만점이 되지 않게.
+    ok = _run("summary", _board(tmp_path), expect_rc=0)
+    assert _NOTE_CANARY in ok.stdout.decode("utf-8"), "★정상 COORD_DIR 까지 막았다(위양성)"

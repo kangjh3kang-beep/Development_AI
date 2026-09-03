@@ -6,6 +6,16 @@ set -euo pipefail
 
 # 보드는 우리 저장소의 공유 git 디렉토리(git-common-dir) 안에 둔다 — 모든 워크트리가 공유하면서
 # 정확히 이 저장소에만 스코프되고, git이 추적하지 않아(브랜치무관·머지충돌 0) 라이브 상태에 적합.
+# ★★`COORD_DIR` 이 **설정됐는데 비어 있으면 거부**한다.
+#   `${COORD_DIR:-…}` 의 `:-` 는 **빈 값을 미설정으로** 보아 파생 경로(=**실 공유 보드**)로 떨어진다.
+#   `COORD_DIR=$OOPS_UNSET` 같은 흔한 오타가 «격리된 임시 보드에 쓰고 있다» 는 착각과 함께
+#   **실 보드에 조용히 append** 된다 — 2026-09-04 적대 리뷰의 프로브가 정확히 그렇게 해서
+#   공유 보드에 30줄을 오염시켰고, 그 세션은 권한 때문에 **스스로 지우지도 못했다.**
+#   ★「격리하려는 의도」와 「실 보드에 쓰기」가 **같은 모양**이 되는 것이 이 결함의 핵심이다.
+if [ -n "${COORD_DIR+x}" ] && [ -z "$COORD_DIR" ]; then
+  echo "★COORD_DIR 이 설정됐는데 비어 있다 — 실 공유 보드로 조용히 떨어지는 것을 막는다(판정 거부)" >&2
+  exit 2
+fi
 BOARD_DIR="${COORD_DIR:-$(cd "$(git rev-parse --git-common-dir)" && pwd)/coordination}"
 BOARD="$BOARD_DIR/BOARD.md"
 BRANCH="$(git branch --show-current 2>/dev/null || echo '?')"
@@ -34,7 +44,6 @@ stamp() { date '+%Y-%m-%d %H:%M'; }
 ensure_board() {
   mkdir -p "$BOARD_DIR"
   [ -f "$BOARD" ] && return 0
-  echo "★보드를 **새로 만들었다**: $BOARD (이 실행 이전 기록은 없다)" >&2
   {
     echo "# 멀티세션 협업 보드 (공유 · 브랜치 무관)"
     echo
@@ -42,6 +51,12 @@ ensure_board() {
     echo
     echo "## 자동 로그 (coord.sh — claim/release/note, 최신이 아래)"
   } > "$BOARD"
+  # ★생성이 **성공한 뒤에** 알린다. 첫 판은 이 줄이 `> "$BOARD"` **앞**에 있어, BOARD 가
+  #   디렉토리·끊긴 심링크일 때 «만들었다» 를 찍고 rc=1 로 죽었다(적대 리뷰 실측).
+  # ★writer 는 보드를 만들 수 있어야 하므로(reader 는 `require_board` 가 거부) **이 경고가
+  #   writer 쪽 유령 보드의 유일한 방어**다. 그래서 두 모집단으로 잠갔다
+  #   (`test_new_board_creation_is_announced_but_append_is_quiet`).
+  echo "★보드를 **새로 만들었다**: $BOARD (이 실행 이전 기록은 없다)" >&2
 }
 
 require_board() {
