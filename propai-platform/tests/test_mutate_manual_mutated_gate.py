@@ -41,7 +41,7 @@ _신_스크레이퍼 = r"grep -oE '^::VERDICT=[A-Z]+' %s | tail -1"
 
 def _repo(tmp_path):
     repo = tmp_path / "repo"
-    repo.mkdir()
+    repo.mkdir(parents=True)
     sh = lambda *a: subprocess.run(a, cwd=repo, check=True, capture_output=True)
     sh("git", "init", "-q")
     sh("git", "config", "user.email", "t@t")
@@ -193,7 +193,169 @@ def test_판정어를_안내문에서_집지_않는다(tmp_path):
             if "::VERDICT=" in ln and ln.strip().startswith("echo")]
     언급 = [ln for ln in 본문.splitlines()
             if "::VERDICT=" in ln and not ln.strip().startswith("echo")]
-    assert len(발행) >= 4, f"판정 토큰 발행 지점이 너무 적다 — 추출기 의심: {len(발행)}"
+    # ★종전엔 `>= 4` 였다 — **손으로 고른 하한이 상한이 됐다.** 실제 발행은 6개라
+    #   **두 개를 지워도 초록**이었고, 적대 리뷰가 그 둘(exit 14·15 경로)을 정확히 지웠다.
+    # ★★그렇다고 «발행 수 == 예약 수 + 2» 도 틀렸다 — 12 와 16 은 **한 블록을 공유**한다.
+    #   **소스 개수로는 이 성질을 표현할 수 없다.** 그래서 여기서는 «오염 없음»만 보고,
+    #   «모든 경로가 토큰을 낸다»는 아래 `test_모든_판정불가_경로가_토큰을_낸다` 가
+    #   **실행으로** 잠근다(행위 락이 소스 락보다 이 축에 맞다).
+    assert len(발행) >= 3, f"판정 토큰 발행 지점이 너무 적다 — 추출기 의심: {len(발행)}"
     assert not 언급, (
         "안내문·주석에 `::VERDICT=` 가 있다 — 그 순간 이 토큰도 오염된다:\n"
         + "\n".join(언급))
+
+
+def _예약_종료코드() -> set[str]:
+    """도구가 **한 줄에서 선언한** 예약 코드 집합을 파생한다.
+
+    ★손으로 세지 않는다 — 종전 락의 하한 4가 **상한이 되어** 두 경로가 무잠금이었다.
+    """
+    import re as _re
+
+    본문 = _TOOL.read_text(encoding="utf-8")
+    m = _re.search(r'^RESERVED_EXITS="([0-9 ]+)"', 본문, _re.M)
+    assert m, "도구가 `RESERVED_EXITS` 를 선언하지 않는다 — 파생 불가"
+    코드 = set(m.group(1).split())
+    assert len(코드) >= 4, f"예약 코드가 너무 적다 — 추출기 의심: {코드}"
+    return 코드
+
+
+def test_예약_종료코드는_문서와_구현이_일치한다() -> None:
+    """★`CLAUDE.md` 가 선언하지 않은 예약 코드가 있으면 **비영 종료가 CAUGHT 로 오독**된다.
+
+    종전 계약 테스트는 `"exit 10"`·`"exit 11"`·`"exit 12"` **세 문자열만** 요구했다 —
+    목록형이라 **새 코드가 문서 없이 통과**했다(16 이 그 통로로 들어왔다).
+    """
+    repo = _TOOL.resolve().parents[1]
+    doc = (repo / "CLAUDE.md").read_text(encoding="utf-8")
+    빠진 = sorted(c for c in _예약_종료코드() if f"exit {c}" not in doc)
+    assert not 빠진, (
+        f"`CLAUDE.md` 가 예약 코드를 선언하지 않는다: {빠진} — "
+        "종료코드만 읽는 호출자가 그 값을 **판정으로 오독**한다")
+
+
+def test_테스트가_예약코드를_내면_판정과_겹치지_않게_옮긴다(tmp_path):
+    """★**파생형**으로 전수를 태운다 — 종전엔 12 만 옮겼고 13·14·15·16 은 충돌했다."""
+    repo, sh = _repo(tmp_path)
+    (repo / "mod.py").write_text("MARKER = 1\n", encoding="utf-8")
+    (repo / "runner.py").write_text(
+        "import sys, pathlib\n"
+        'src = pathlib.Path("mod.py").read_text()\n'
+        'print("3 passed in 0.01s")\n'
+        'sys.exit(0 if "MARKER = 1" in src else int(sys.argv[1]))\n',
+        encoding="utf-8")
+    sh("git", "add", "-A")
+    sh("git", "commit", "-q", "-m", "init")
+    for 코드 in sorted(_예약_종료코드()):
+        if 코드 == "5":
+            continue
+        r = subprocess.run(  # noqa: S603
+            ["bash", str(_TOOL), "mod.py", "s|MARKER = 1|MARKER = 2|",
+             "python3", "runner.py", 코드],
+            cwd=repo, capture_output=True, text=True, check=False,
+        )
+        구, 신 = _긁기(r.stdout)
+        assert 신 == "::VERDICT=CAUGHT", f"[rc={코드}] 판정이 CAUGHT 가 아니다: {신}"
+        assert str(r.returncode) not in _예약_종료코드(), (
+            f"[테스트 rc={코드}] 도구가 **예약 코드 {r.returncode}** 를 그대로 냈다 — "
+            "진짜 CAUGHT 가 판정 불가로 오독된다")
+
+
+def test_구문검사는_변이_전에도_잰다(tmp_path):
+    """★**검사기가 원래 못 읽는 대상**과 **변이가 깬 것**을 가른다(적대 리뷰 CRITICAL-2).
+
+    두 모집단을 같은 실행 형태로 태운다 — 이것이 없으면 「전부 판정 불가」가 만점이 된다.
+    """
+    repo, sh = _repo(tmp_path)
+    # ★변이 전에도 bash -n 이 실패하는 파일 → **축을 끄고 정상 판정**해야 한다
+    (repo / "bad.sh").write_text(
+        "#!/bin/bash\nVAL=1\nif [[ $VAL -eq 1 ; then :; fi\n", encoding="utf-8")
+    (repo / "test_bad.py").write_text(
+        "import subprocess\n"
+        'def test_x(): assert subprocess.run(["grep","-q","VAL=1","bad.sh"]).returncode == 0\n',
+        encoding="utf-8")
+    sh("git", "add", "-A")
+    sh("git", "commit", "-q", "-m", "init")
+    r = subprocess.run(  # noqa: S603
+        ["bash", str(_TOOL), "bad.sh", "s|VAL=1|VAL=2|",
+         "python3", "-m", "pytest", "test_bad.py", "-q"],
+        cwd=repo, capture_output=True, text=True, check=False,
+    )
+    합 = r.stdout + r.stderr
+    assert "축을 끈다" in 합, f"변이 전에도 실패했는데 축을 안 껐다:\n{합}"
+    assert r.returncode != 16, f"검사기가 못 읽는 대상을 「변이가 깼다」로 판정했다: rc={r.returncode}"
+    구, 신 = _긁기(r.stdout)
+    assert 신 in ("::VERDICT=CAUGHT", "::VERDICT=SURVIVED"), f"정상 판정이 안 나왔다: {신}"
+
+
+def test_기준선을_건너뛰어도_개수_축은_산다(tmp_path):
+    """★`MUTATE_SKIP_BASELINE` 에서 **같은 입력이 정반대 판정**으로 뒤집혔다(리뷰 HIGH-1)."""
+    repo, sh = _repo(tmp_path)
+    (repo / "mod.py").write_text("MARKER = 1\n", encoding="utf-8")
+    (repo / "runner.py").write_text(_러너, encoding="utf-8")
+    (repo / "nocount.py").write_text("import sys\nprint('done')\nsys.exit(0)\n", encoding="utf-8")
+    sh("git", "add", "-A")
+    sh("git", "commit", "-q", "-m", "init")
+    e = dict(os.environ, MUTATE_SKIP_BASELINE="락이 기준선 없이도 축이 사는지 시험한다")
+    r = subprocess.run(  # noqa: S603
+        ["bash", str(_TOOL), "mod.py", "s|MARKER|GONE|", "python3", "runner.py"],
+        cwd=repo, capture_output=True, text=True, env=e, check=False,
+    )
+    _, 신 = _긁기(r.stdout)
+    assert 신 == "::VERDICT=UNDECIDED", f"기준선을 건너뛰자 축이 꺼졌다: {신} (rc={r.returncode})"
+    # ★**두 번째 모집단** — 개수를 **안 찍는** 러너까지 막으면 그것도 결함이다
+    r2 = subprocess.run(  # noqa: S603
+        ["bash", str(_TOOL), "mod.py", "s|MARKER|GONE|", "python3", "nocount.py"],
+        cwd=repo, capture_output=True, text=True, env=e, check=False,
+    )
+    _, 신2 = _긁기(r2.stdout)
+    assert 신2 == "::VERDICT=SURVIVED", (
+        f"개수를 안 찍는 러너까지 막았다(위양성): {신2} (rc={r2.returncode})")
+
+
+def _판정불가_유발(repo, sh, 코드: str, env=None):
+    """예약 코드 `코드` 경로를 **실제로 유발**한다. (경로마다 조건이 다르다)"""
+    (repo / "mod.py").write_text("MARKER = 1\n", encoding="utf-8")
+    if 코드 == "16":   # 변이가 구문을 깬다
+        (repo / "mod.py").write_text('V = "x"\n', encoding="utf-8")
+        (repo / "t.py").write_text("from mod import V\ndef test_v(): assert V == 'x'\n",
+                                   encoding="utf-8")
+        argv, sedx, tgt = ["python3", "-m", "pytest", "t.py", "-q"], 's|V = "x"|V = "x|', "mod.py"
+    elif 코드 == "12":  # 셸 래퍼라 rc 를 못 믿는다
+        (repo / "t.py").write_text("from mod import MARKER\ndef test_m(): assert MARKER == 1\n",
+                                   encoding="utf-8")
+        argv, sedx, tgt = ["bash", "-c", "python3 -m pytest t.py -q; true"], "s|1|2|", "mod.py"
+    elif 코드 == "14":  # 기준선에서 수집 0건(pytest rc=5)
+        (repo / "t.py").write_text("def test_m(): assert True\n", encoding="utf-8")
+        argv, sedx, tgt = ["python3", "-m", "pytest", "t.py", "-q", "-k", "zzz_none"], "s|1|2|", "mod.py"
+    elif 코드 == "13":  # 기준선이 이미 빨갛다
+        (repo / "t.py").write_text("def test_m(): assert False\n", encoding="utf-8")
+        argv, sedx, tgt = ["python3", "-m", "pytest", "t.py", "-q"], "s|1|2|", "mod.py"
+    else:              # 15: 기준선 rc=0 인데 통과 0건
+        (repo / "runner15.py").write_text(
+            "import sys\nprint('0 passed in 0.01s')\nsys.exit(0)\n", encoding="utf-8")
+        argv, sedx, tgt = ["python3", "runner15.py"], "s|1|2|", "mod.py"
+    sh("git", "add", "-A")
+    sh("git", "commit", "-q", "-m", f"case{코드}")
+    return subprocess.run(  # noqa: S603
+        ["bash", str(_TOOL), tgt, sedx, *argv],
+        cwd=repo, capture_output=True, text=True,
+        env=dict(os.environ, **(env or {})), check=False,
+    )
+
+
+def test_모든_판정불가_경로가_토큰을_낸다(tmp_path):
+    """★**행위 락** — 「5경로 전부 짝지었다」는 선언을 실행으로 태운다.
+
+    종전 락은 **소스 개수 하한**이라 두 경로(14·15)의 토큰을 지워도 초록이었다
+    (적대 리뷰 M7·M8 이 정확히 그 둘을 지웠다). 소스 개수로는 «12 와 16 이 한 블록을
+    공유한다» 를 표현할 수 없으므로, **각 경로를 실제로 유발**해서 본다.
+    """
+    미달 = []
+    for 코드 in sorted(_예약_종료코드()):
+        repo, sh = _repo(tmp_path / f"c{코드}")
+        r = _판정불가_유발(repo, sh, 코드)
+        _, 신 = _긁기(r.stdout + r.stderr)
+        if str(r.returncode) != 코드 or 신 != "::VERDICT=UNDECIDED":
+            미달.append(f"exit {코드}: 실제 rc={r.returncode} 토큰={신}")
+    assert not 미달, "판정 불가 경로가 토큰·rc 짝을 안 이룬다:\n  " + "\n  ".join(미달)
