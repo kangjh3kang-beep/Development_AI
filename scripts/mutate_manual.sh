@@ -147,6 +147,47 @@ else
   echo "  기준선 초록 · **통과 $BASE_PASSED 건** — 판정이 유효하다."
 fi
 
+# ★이 도구가 **예약한 종료코드** — 「판정 불가」를 뜻한다(테스트의 rc 가 아니다).
+#   재배치·문서·락이 **전부 이 한 줄에서 파생**된다. 코드를 늘리면 셋이 같이 따라온다.
+RESERVED_EXITS="12 13 14 15 16"
+
+_syntax_report=""
+_syntax_ok() {
+  case "$1" in
+    *.py)
+      # ★`python3 -m py_compile` 은 대상 옆에 `__pycache__` 를 **만든다.**
+      #   그것을 지우려고 `find . -name __pycache__ -exec rm -rf` 를 쓰면
+      #   **호출자의 작업 디렉토리 전체**를 훑는다 — 이 도구의 범위 밖 파괴다.
+      #   → 캐시를 **아예 안 만들도록** 출력 경로를 임시파일로 준다.
+      #   ★`mktemp` 실패를 **조용히 넘기지 않는다** — 빈 경로가 넘어가면 `py_compile` 이
+      #     `FileNotFoundError` 로 죽고, 그것이 **거짓 「구문 깨짐」**이 된다.
+      _pyc="$(mktemp)" || {
+        _syntax_report="구문 검사: ★건너뜀(mktemp 실패) — 이 축은 **미측정**"; return 0; }
+      if python3 -c 'import py_compile,sys; py_compile.compile(sys.argv[1], cfile=sys.argv[2], doraise=True)' \
+           "$1" "$_pyc" >/dev/null 2>&1; then
+        rm -f "$_pyc"; _syntax_report="구문 검사: py_compile 통과"; return 0
+      fi
+      rm -f "$_pyc"; _syntax_report="구문 검사: py_compile **실패**"; return 1 ;;
+    *.js|*.mjs|*.cjs)
+      if command -v node >/dev/null 2>&1; then
+        if node --check "$1" 2>/dev/null; then _syntax_report="구문 검사: node --check 통과"; return 0; fi
+        _syntax_report="구문 검사: node --check **실패**"; return 1
+      fi
+      _syntax_report="구문 검사: ★건너뜀(node 없음) — 이 축은 **미측정**"; return 0 ;;
+    *.sh|*.bash)
+      # ★`sh -n` 은 **dash** 다(이 호스트 실측). dash 는 `[[ … ]` 같은 **bash 구문오류를
+      #   놓친다** — 그러면 이 도구가 고치겠다고 선언한 **거짓 CAUGHT 가 그대로 살아 있고**,
+      #   그 위에 「구문 검사 통과」가 찍혀 다음 사람이 **더 확신한다**(적대 리뷰 CRITICAL-1).
+      #   반대로 저장소 `.sh` **6/35** 는 변이 없이도 `sh -n` 이 실패한다(bash 확장 사용) —
+      #   그것들은 **어떤 변이를 넣어도 판정 불가**가 됐다.
+      if bash -n "$1" 2>/dev/null; then _syntax_report="구문 검사: bash -n 통과"; return 0; fi
+      _syntax_report="구문 검사: bash -n **실패**"; return 1 ;;
+    *)
+      # ★`.ts`/`.tsx` 는 값싼 체커가 없다(tsc 는 프로젝트 설정이 필요하다).
+      _syntax_report="구문 검사: ★건너뜀(확장자 미지원) — 이 축은 **미측정**"; return 0 ;;
+  esac
+}
+
 SNAP="$(mktemp)"
 cp "$FILE" "$SNAP"
 
@@ -160,6 +201,16 @@ restore() {
   rm -f "$SNAP"
 }
 trap restore EXIT   # 중간에 끊겨도 반드시 원복(Ctrl-C·오류 포함)
+
+# ── ★구문 축의 **기준선** — 변이 **전에** 원본을 잰다 ────────────────────────
+#   ★`$SNAP` 으로 재면 안 된다: 스냅샷은 `mktemp` 산물이라 **확장자가 없고**,
+#     그러면 `_syntax_ok` 가 «모르는 확장자» 분기로 빠져 **항상 통과**한다 —
+#     기준선이 통째로 무력화된다(설계 중 실제로 그렇게 썼다가 잡았다).
+# ★`set -e` 아래에서 함수가 1을 반환하면 **판정 대신 스크립트가 죽는다.**
+#   볼트가 `#924` 에서 적어 둔 그 함정(`grep` 0건 exit 1)과 같은 자리다 —
+#   설계 중 실제로 밟았고, pep695 실행이 **기준선 직후 조용히 멈추는** 것으로 드러났다.
+if _syntax_ok "$FILE"; then _SYNTAX_BASE_OK=0; else _SYNTAX_BASE_OK=1; fi
+_SYNTAX_BASE_REPORT="$_syntax_report"
 
 # ── ②§B8 주입 확인 — grep 이 아니라 내용 비교 ────────────────────────────────
 sed -i "$SED_EXPR" "$FILE"
@@ -478,38 +529,21 @@ PIPE_SEEN="$RC_UNTRUSTED"
 #
 # ★모르는 확장자는 **검사하지 않고, 그렇게 출력한다.** 조용히 건너뛰면
 #   «검사했는데 통과» 로 오독된다(이 저장소가 반복해 데인 「침묵 = 이상 없음」).
-_syntax_report=""
-_syntax_ok() {
-  case "$1" in
-    *.py)
-      # ★`python3 -m py_compile` 은 대상 옆에 `__pycache__` 를 **만든다.**
-      #   그것을 지우려고 `find . -name __pycache__ -exec rm -rf` 를 쓰면
-      #   **호출자의 작업 디렉토리 전체**를 훑는다 — 이 도구의 범위 밖 파괴다.
-      #   → 캐시를 **아예 안 만들도록** 출력 경로를 임시파일로 준다.
-      if python3 -c 'import py_compile,sys; py_compile.compile(sys.argv[1], cfile=sys.argv[2], doraise=True)' \
-           "$1" "$(mktemp)" >/dev/null 2>&1; then
-        _syntax_report="구문 검사: py_compile 통과"
-        return 0
-      fi
-      _syntax_report="구문 검사: py_compile **실패**"
-      return 1 ;;
-    *.js|*.mjs|*.cjs)
-      if command -v node >/dev/null 2>&1; then
-        if node --check "$1" 2>/dev/null; then _syntax_report="구문 검사: node --check 통과"; return 0; fi
-        _syntax_report="구문 검사: node --check **실패**"; return 1
-      fi
-      _syntax_report="구문 검사: ★건너뜀(node 없음) — 이 축은 **미측정**"; return 0 ;;
-    *.sh|*.bash)
-      if sh -n "$1" 2>/dev/null; then _syntax_report="구문 검사: sh -n 통과"; return 0; fi
-      _syntax_report="구문 검사: sh -n **실패**"; return 1 ;;
-    *)
-      # ★`.ts`/`.tsx` 는 값싼 체커가 없다(tsc 는 프로젝트 설정이 필요하다).
-      _syntax_report="구문 검사: ★건너뜀(확장자 미지원) — 이 축은 **미측정**"; return 0 ;;
-  esac
-}
+# ★★구문 축에도 **기준선**을 둔다 — 이 도구의 뼈대(`#924`)가 «전제를 재고 나서 판정한다» 인데
+#   **새로 넣은 구문 축만 변이 후 한 번**이었다. 그러면 «검사기가 원래 그 파일을 못 읽는다» 와
+#   «변이가 깼다» 를 **구별할 수단이 없다**(적대 리뷰 CRITICAL-2).
+#   실측 두 형태:
+#     · `.sh` 6/35 가 변이 없이 `sh -n` 실패(bash 확장) → 어떤 변이든 판정 불가
+#     · `py_compile`(3.10)이 PEP 695(`class C[M]:`)를 못 읽는다 → 러너가 3.12 면 그 틈이 열린다
+#   ★**이름을 열거하지 않고** 닫는다: 변이 **전**에 실패하면 그 축을 **끄고 그렇게 말한다.**
 MUT_BROKEN=0
-if ! _syntax_ok "$FILE"; then MUT_BROKEN=1; fi
-echo "== ${_syntax_report} =="
+if [ "$_SYNTAX_BASE_OK" -ne 0 ]; then
+  echo "== 구문 검사: ★축을 끈다 — **변이 전에도** 실패했다(${_SYNTAX_BASE_REPORT}) =="
+  echo "   검사기가 이 대상을 읽지 못하는 것이지 변이가 깬 것이 아니다. **이 축은 미측정.**"
+else
+  if ! _syntax_ok "$FILE"; then MUT_BROKEN=1; fi
+  echo "== ${_syntax_report} (변이 전 기준선: 통과) =="
+fi
 
 # ── 테스트 실행 ─────────────────────────────────────────────────────────────
 echo "== 변이 상태에서 테스트 =="
@@ -530,6 +564,10 @@ cat "$MUT_LOG"
 MUT_PASSED=$(grep -oE '[0-9]+ passed' "$MUT_LOG" 2>/dev/null \
                | grep -oE '^[0-9]+' | sort -rn | head -1 || true)
 MUT_PASSED=${MUT_PASSED:-0}
+# ★러너가 **개수를 찍기는 하는가** — 이걸 안 보면 「개수를 안 찍는 러너」와
+#   「0건 통과」가 같아진다. 전자에서 축을 켜면 **모든 rc=0 이 판정 불가**가 된다(위양성).
+MUT_HAS_COUNT=0
+grep -qE '[0-9]+ passed' "$MUT_LOG" 2>/dev/null && MUT_HAS_COUNT=1 || true
 # ★로그를 지우기 **전에** 요약을 담는다 — 판정 분기에서는 파일이 이미 없다.
 MUT_SUMMARY=$(grep -aE 'Tests |Test Files |[0-9]+ (passed|skipped|failed|xfailed|deselected)' \
                 "$MUT_LOG" 2>/dev/null | tail -3 | sed 's/^/    /' || true)
@@ -557,7 +595,7 @@ elif [ "$PIPE_SEEN" -eq 1 ]; then
   echo "    · 래퍼가 꼭 필요하고 rc 를 보존했다면(마지막 명령이 테스트이거나 RC 를 명시 보존)"
   echo "      MUTATE_ALLOW_SHELL=\"사유\" 로 다시 실행하라(사유가 출력에 남는다)."
   PIPE_INVALID=1
-elif [ "$RC" -eq 0 ] && [ "${BASE_PASSED:-0}" -gt 0 ] && [ "$MUT_PASSED" -eq 0 ]; then
+elif [ "$RC" -eq 0 ] && [ "$MUT_HAS_COUNT" -eq 1 ] && [ "$MUT_PASSED" -eq 0 ]; then
   # ── ⑥ ★개수 축 — **rc 만으로는 러너에 따라 한 칸이 샌다**
   #
   # 동료 `development-ai-23` 실측(2026-09-03, 88 님 경유): **vitest 에는 pytest `rc=5`
@@ -568,7 +606,7 @@ elif [ "$RC" -eq 0 ] && [ "${BASE_PASSED:-0}" -gt 0 ] && [ "$MUT_PASSED" -eq 0 ]
   # ★기준선은 통과가 있었는데(BASE_PASSED>0) 변이 후 **통과가 0건인데 rc=0** 이면,
   #   그건 «변이가 살아남았다» 가 아니라 **«아무것도 안 돌았다»** 다.
   #   (진짜 CAUGHT 는 통과 0건이어도 **rc≠0** 이므로 이 분기에 안 온다.)
-  echo "판정 불가(무효) — 변이 후 **통과 0건인데 rc=0** 이다(기준선 통과 ${BASE_PASSED}건)."
+  echo "판정 불가(무효) — 변이 후 **통과 0건인데 rc=0** 이다(기준선 통과 ${BASE_PASSED:-미측정}건)."
   echo "  rc 는 초록인데 실제로는 **아무것도 실행되지 않았다.**"
   echo "  가장 흔한 원인: vitest -t / pytest -k 표현식이 **아무것도 고르지 않았다**"
   echo "                 (vitest 는 전부 skip 이어도 rc=0 이라 조용하다)"
@@ -617,12 +655,15 @@ fi
 if [ "${PIPE_INVALID:-0}" -eq 1 ]; then
   exit 12
 fi
-# ★테스트가 **진짜로 12** 를 내면 stdout 은 CAUGHT 인데 종료코드는 「판정 불가」와 같아진다.
-#   CLAUDE.md 가 *"12 를 실패로 읽지 마라"* 라고 선언했으므로, 종료코드만 읽는 호출자는
-#   **진짜 CAUGHT 를 판정 불가로 오독**한다 — 이 도구가 막으려는 그 일이다(리뷰 3차 MEDIUM).
-#   판정은 이미 stdout 에 있으므로 **충돌하는 값만** 1 로 옮긴다.
-if [ "$RC" -eq 12 ]; then
-  echo "  (참고: 테스트가 낸 rc=12 는 이 도구의 「판정 불가」와 겹치므로 종료코드를 1 로 옮긴다)"
-  exit 1
-fi
+# ★테스트가 **도구 예약 코드**를 그대로 내면 stdout 은 CAUGHT 인데 종료코드는 「판정 불가」와
+#   같아진다 — 종료코드만 읽는 호출자가 **진짜 CAUGHT 를 판정 불가로 오독**한다.
+#   ★종전엔 **12 만** 옮겼다(목록형). 그러면 예약 코드를 하나 늘릴 때마다 충돌이 하나 생긴다 —
+#     실제로 16 을 추가하며 같은 자를 자기 추가분에 안 댔다(적대 리뷰 HIGH-2).
+#     → **집합을 한 곳에서 선언하고 파생**시킨다. `RESERVED_EXITS` 는 락도 여기서 파생한다.
+for _rv in $RESERVED_EXITS; do
+  if [ "$RC" -eq "$_rv" ]; then
+    echo "  (참고: 테스트가 낸 rc=$RC 는 이 도구의 예약 코드와 겹치므로 종료코드를 1 로 옮긴다)"
+    exit 1
+  fi
+done
 exit "$RC"
