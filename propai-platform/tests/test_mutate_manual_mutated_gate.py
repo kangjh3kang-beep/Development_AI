@@ -73,7 +73,7 @@ def test_구문을_깬_변이는_CAUGHT_로_세지_않는다(tmp_path):
     r = subprocess.run(
         ["bash", str(_TOOL), "mod.py", 's|return "big"|return "big|',
          "python3", "-m", "pytest", "test_mod.py", "-q"],
-        cwd=repo, capture_output=True, text=True,
+        cwd=repo, capture_output=True, text=True, check=False,
     )
     합 = r.stdout + r.stderr
     assert r.returncode == 16, f"구문 깬 변이를 판정했다: rc={r.returncode}\n{합}"
@@ -94,7 +94,7 @@ def test_정상_변이는_그대로_판정한다(tmp_path):
     r = subprocess.run(
         ["bash", str(_TOOL), "mod.py", "s|x > 5|x > 999|",
          "python3", "-m", "pytest", "test_mod.py", "-q"],
-        cwd=repo, capture_output=True, text=True,
+        cwd=repo, capture_output=True, text=True, check=False,
     )
     합 = r.stdout + r.stderr
     assert r.returncode == 1, f"정상 변이를 판정하지 못했다: rc={r.returncode}\n{합}"
@@ -127,7 +127,7 @@ def test_통과_0건인데_rc0_이면_판정하지_않는다(tmp_path):
     sh("git", "commit", "-q", "-m", "init")
     r = subprocess.run(
         ["bash", str(_TOOL), "mod.py", "s|MARKER|GONE|", "python3", "runner.py"],
-        cwd=repo, capture_output=True, text=True,
+        cwd=repo, capture_output=True, text=True, check=False,
     )
     합 = r.stdout + r.stderr
     assert r.returncode == 16, f"통과 0건 + rc=0 을 SURVIVED 로 판정했다: rc={r.returncode}\n{합}"
@@ -146,7 +146,7 @@ def test_통과가_유지되면_정상_SURVIVED_다(tmp_path):
     # ★MARKER 를 **남기는** 변이 → 러너는 계속 "2 passed" → 정답은 SURVIVED
     r = subprocess.run(
         ["bash", str(_TOOL), "mod.py", "s|MARKER = 1|MARKER = 2|", "python3", "runner.py"],
-        cwd=repo, capture_output=True, text=True,
+        cwd=repo, capture_output=True, text=True, check=False,
     )
     합 = r.stdout + r.stderr
     assert r.returncode == 0, f"정상 SURVIVED 를 막았다: rc={r.returncode}\n{합}"
@@ -172,7 +172,7 @@ def test_판정불가_경로는_모두_토큰과_rc_가_짝을_이룬다(tmp_pat
     r = subprocess.run(
         ["bash", str(_TOOL), "mod.py", "s|5000|5_000|",
          "bash", "-c", f"printf '%s\\n' {shlex.quote('3 passed in 0.1s')}; exit 1"],
-        cwd=repo, capture_output=True, text=True, env=e,
+        cwd=repo, capture_output=True, text=True, env=e, check=False,
     )
     assert r.returncode == 13, f"빨간 기준선이 13 이 아니다: {r.returncode}\n{r.stdout}{r.stderr}"
     구, 신 = _긁기(r.stdout + r.stderr)
