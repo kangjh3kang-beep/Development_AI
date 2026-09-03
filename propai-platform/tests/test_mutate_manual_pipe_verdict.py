@@ -53,8 +53,21 @@ def repo(tmp_path: Path) -> Path:
 
 
 def _run(repo: Path, test_cmd: str, env_extra: dict | None = None):
+    """도구를 돌린다.
+
+    ★**기준선 게이트를 명시적으로 건너뛴다.** 이 파일의 락은 «변이 후 rc 를 어떻게
+    판정하는가» 를 시험하므로 **기준선이 빨간 것이 정상**이다(예: `grep -q "VALUE = 2"`
+    는 변이 **전에는 당연히 실패**한다). 게이트를 그냥 두면 판정 자체가 발행되지 않아
+    이 파일 전체가 «판정 줄 없음» 으로 죽는다 — 결함이 아니라 **두 규율이 만난 자리**다.
+
+    ★건너뛴 실행의 CAUGHT 를 «변이를 잡았다» 의 근거로 인용하면 안 되는데, 이 파일은
+    그렇게 쓰지 않는다 — **판정 문자열의 형태**만 본다(`SURVIVED —`/`CAUGHT —`/`판정 불가`).
+    호출자가 `MUTATE_SKIP_BASELINE` 을 덮어쓰면 그 의도를 따른다.
+    """
     import os
-    env = {**os.environ, **(env_extra or {})}
+    env = {**os.environ,
+           "MUTATE_SKIP_BASELINE": "락이 의도한 빨간 기준선(이 파일은 판정 형태만 본다)",
+           **(env_extra or {})}
     return subprocess.run(
         ["bash", str(TOOL), "t.py", "s/VALUE = 1/VALUE = 2/", "bash", "-c", test_cmd],
         cwd=repo, capture_output=True, text=True, env=env,

@@ -53,8 +53,26 @@ def sandbox():
 
 
 def _run(root: pathlib.Path, *args: str) -> subprocess.CompletedProcess[str]:
+    """도구를 돌린다.
+
+    ★**기준선 게이트를 명시적으로 건너뛴다.** 이 파일의 락은 `true`/`false` 처럼
+    **아무 케이스도 실행하지 않는 명령**을 일부러 쓴다 — 시험 대상이 «판정을 어떻게
+    발행하는가» 이지 «몇 건이 통과했는가» 가 아니기 때문이다.
+
+    형제 가드(`#924` 의 개수 축)는 *"기준선에서 통과한 케이스가 0건이면 판정 불가"*
+    로 거부한다(`exit 15`) — **그 판단은 옳다**(`pytest -k` 가 아무것도 안 고르면
+    rc=0 이라 전부 거짓 SURVIVED 가 된다). 다만 **이 파일의 시험 조건과 충돌**할 뿐이라
+    도구가 제공한 탈출구로 **사유를 남기고** 통과시킨다.
+
+    ★호출자가 `MUTATE_SKIP_BASELINE` 을 넘기면 그 의도를 따른다(개수 축 자체를
+    시험하려는 락이 덮어쓸 수 있어야 한다).
+    """
+    env = {**os.environ}
+    env.setdefault("MUTATE_SKIP_BASELINE",
+                   "락이 true/false 를 쓴다 — 이 파일은 판정 발행 형태만 본다")
     return subprocess.run(
-        ["bash", "scripts/mutate_manual.sh", *args], cwd=root, capture_output=True, text=True
+        ["bash", "scripts/mutate_manual.sh", *args],
+        cwd=root, capture_output=True, text=True, env=env,
     )
 
 
@@ -224,7 +242,11 @@ def test_셸_래퍼_예외는_사유를_남기고_통과시킨다(sandbox) -> No
     import os
 
     root, _ = sandbox
-    env = {**os.environ, "MUTATE_ALLOW_SHELL": "rc 보존 확인함"}
+    # ★이 케이스는 `_run` 을 안 거치므로 기준선 탈출구를 **직접** 선언한다
+    #   (사유는 `_run` 독스트링 참조 — `false; true` 도 케이스를 하나도 안 돌린다).
+    env = {**os.environ,
+           "MUTATE_ALLOW_SHELL": "rc 보존 확인함",
+           "MUTATE_SKIP_BASELINE": "락이 false; true 를 쓴다 — 판정 발행 형태만 본다"}
     r = subprocess.run(  # noqa: S603
         # ★`bash -c "false"` 는 **단일 단순 명령**이라 이제 정당하게 신뢰된다 —
         #   예외가 필요한 형태(명령을 잇는 것)로 써야 이 락이 공허하지 않다.
