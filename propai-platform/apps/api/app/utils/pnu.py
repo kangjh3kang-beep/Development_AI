@@ -17,18 +17,68 @@ from __future__ import annotations
 
 import re
 
-_PNU_RE = re.compile(r"^\d{19}$")
+# ★`\d` 가 아니라 `[0-9]` 다. 파이썬 정규식의 `\d` 는 **유니코드 십진수를 포함**해서
+#   전각(`１２３…`)·아랍-인도(`١٢٣…`) 숫자 19자가 **통과한다**. 실측(2026-09-02):
+#     `'１２３４５６７８９０１２３４５６７８９'` → `\d{19}` 통과 → `sigungu_cd='１２３４５'` 가
+#     **MOLIT 건축물대장 API 인자**로 나간다.
+#   ★이 함정은 **이 저장소가 이미 알고 있었다** — `app/services/agents/engine_inputs.py:24` 의
+#   `_pnu19` 가 독스트링에 *"19자리 **ASCII** 숫자만 통과 — 전각/유니코드 숫자 등 비규격은 빈값"*
+#   이라고 **이름으로** 적어 두고 `isascii() and isdigit()` 로 막고 있었다.
+#   형제를 훑지 않고 더 약한 쪽을 SSOT 로 채택할 뻔했다(§회귀망 29).
+_PNU_RE = re.compile(r"^[0-9]{19}$")
 
 
 def is_valid_pnu(pnu: str | None) -> bool:
-    return bool(pnu) and bool(_PNU_RE.match(str(pnu).strip()))
+    """**소비될 그 문자열 그대로** 판정한다 — 공백을 벗겨 주지 않는다.
+
+    ★종전엔 `str(pnu).strip()` 로 판정했는데, **소비처는 원본을 슬라이싱**한다.
+      실측: `' 4137011000104670001 '` → 판정 통과 · 소비 `[:5]` = `' 4137'`
+      → 시군구·법정동·본번·부번이 **전부 한 칸 밀린다.** 거부보다 나쁘다 —
+      그럴듯한 코드로 **다른 필지를 조회**하고 조용히 틀린다.
+      판정한 문자열과 소비하는 문자열이 다르면 그 판정은 아무것도 보증하지 않는다.
+
+    공백을 벗겨서 쓰고 싶으면 `normalize_pnu()` 를 쓰고 **그 반환값을 소비**하라.
+    """
+    return bool(pnu) and bool(_PNU_RE.match(str(pnu)))
+
+
+def normalize_pnu(pnu: str | None) -> str | None:
+    """공백을 벗긴 뒤 판정해 **소비 가능한 문자열**을 돌려준다(아니면 `None`).
+
+    ★프론트 `apps/web/lib/pnu.ts` 의 `normalizePnu` 와 같은 계약이다 — 이 파일이
+      스스로를 "백엔드 미러" 라 선언하므로 **두 절반(엄격 판정 + 정규화)을 모두** 갖춘다.
+    ★가짜를 지우는 것이지 없는 값을 지어내지 않는다(무날조).
+    """
+    s = str(pnu).strip() if pnu is not None else ""
+    return s if is_valid_pnu(s) else None
+
+
+def bcode_from_pnu(pnu: str | None) -> str | None:
+    """PNU → **법정동코드 10자리**. 유효한 19자리가 아니면 `None`.
+
+    ★프론트 `apps/web/lib/pnu.ts` 의 `bcodeFromPnu` 와 같은 계약이다.
+    ★`len(pnu) >= 10` 으로 자르면 안 된다 — 라이브 오염값 `'store-rep-…'`(26자)이 통과해
+      `"store-rep-"` 를 **법정동코드로 날조**한다.
+    """
+    s = normalize_pnu(pnu)
+    return s[:10] if s else None
+
+
+def lawd_cd_from_pnu(pnu: str | None) -> str | None:
+    """PNU → **시군구코드 5자리**(`lawd_cd`). 유효한 19자리가 아니면 `None`.
+
+    ★`len(pnu) >= 5` 로 자르던 자리들이 있었다 — 오염값이 통과해 `'store'` 가
+      시군구코드로 외부 API 에 나간다. 자를 값은 **검증한 값**이어야 한다.
+    """
+    s = normalize_pnu(pnu)
+    return s[:5] if s else None
 
 
 def jibun_from_pnu(pnu: str | None) -> str | None:
     """PNU 에서 '467-1' / '산12' 형태의 지번을 만든다. 본번이 0이면 지번이 없다고 본다."""
-    if not is_valid_pnu(pnu):
+    s = normalize_pnu(pnu)
+    if s is None:
         return None
-    s = str(pnu).strip()
     mountain = s[10] == "2"
     bon = int(s[11:15])
     bu = int(s[15:19])

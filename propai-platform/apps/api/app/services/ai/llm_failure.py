@@ -64,6 +64,11 @@ def honest_llm_fallback(
 #   `error_type`(예외 클래스명)을 **항상 함께** 싣는다. 그러면 `other` 안에서도 타입별로
 #   셀 수 있어, 분류표가 낡아도 새 유형이 조용히 묻히지 않는다(목록형이 상한이 되는 것을 막는다).
 _REASON_BY_TYPE = {
+    # ★모델이 폐기된 실패 — 라이브 실측(2026-08-27): google 카탈로그 3모델이 전부
+    #   404 "no longer available to new users". 종전엔 `other` 로 떨어져
+    #   ①대시보드에서 「기타」로만 보이고 ②**재시도 대상**이 되어 볼 때마다 LLM 을 다시 샀다.
+    "NotFoundError": "model_gone",
+    "NotFound": "model_gone",
     "TimeoutError": "timeout",
     "ReadTimeout": "timeout",
     "ConnectTimeout": "timeout",
@@ -80,6 +85,11 @@ _REASON_BY_TYPE = {
 # 메시지로만 갈리는 것들(프로바이더가 예외 타입을 뭉뚱그려 던지는 경우가 많다).
 # 앞에서부터 먼저 맞는 것을 쓴다 — 순서가 곧 우선순위다.
 _REASON_BY_TEXT: tuple[tuple[str, tuple[str, ...]], ...] = (
+    # ★`auth` 보다 **앞**에 둔다 — google 404 본문에 "not available" 같은 표현이 섞여도
+    #   권한 문제로 오분류되지 않게. 순서가 곧 우선순위다(위 주석 참조).
+    ("model_gone", ("404", "no longer available", "is not found", "not found for api",
+                    "model not found", "does not exist", "has been deprecated",
+                    "is not supported for")),
     ("rate_limit", ("rate limit", "rate_limit", "too many requests", "429")),
     ("overloaded", ("overloaded", "529", "capacity")),
     # ★실제 문구로 맞춘다 — Anthropic 은 `invalid x-api-key`(하이픈)를 쓴다.
@@ -125,6 +135,11 @@ _DETERMINISTIC = frozenset({
     "shape",           # 파싱은 됐는데 구조가 계약과 다름
     "bad_request",     # 요청 자체가 거부됨(모델·파라미터)
     "content_filter",  # 정책 거부 — 같은 본문이면 반복된다
+    # ★모델이 폐기된 것은 **재시도해도 영원히 같다.** `other`(모르는 것)와 다르다 —
+    #   우리는 이것을 **라이브에서 정확히 관측**했다(google 3모델 404, 2026-08-27).
+    #   위 「모르면 일시로 본다」는 보수 규칙은 *모르는 것*에만 적용된다.
+    #   여기 두지 않으면 죽은 모델을 고른 사용자가 **볼 때마다 LLM 을 다시 산다.**
+    "model_gone",
 })
 
 

@@ -19,6 +19,14 @@ from typing import Any
 
 import structlog
 
+from app.utils.land_characteristics import (
+    co_owner_summary,
+    is_shared_parcel,
+    ledger_fields,
+    project_land_characteristics,
+)
+from app.utils.pnu import is_valid_pnu
+
 logger = structlog.get_logger(__name__)
 
 # 양식 컬럼(순서·헤더 = 플랫폼 표준). 필수=소재지(주소). 나머지는 있으면 정확도↑.
@@ -38,6 +46,11 @@ TEMPLATE_COLUMNS = [
     ("시행자지정동의(O/X)", "X"),
     ("비고", "← 예시행(삭제 후 작성). 면적·지목은 비우면 자동조회"),
 ]
+async def _noop() -> None:
+    """주입 객체에 그 메서드가 없을 때 gather 자리를 채운다(예외를 만들지 않는다)."""
+    return None
+
+
 _MAX_ROWS = 500  # 업로드 행 상한(과도 방지)
 _GEOCODE_CONCURRENCY = 8  # VWorld 재시도(백오프) 보호하에 상향 — 대량 엑셀 처리 가속
 
@@ -398,7 +411,7 @@ def _row_issues(p: dict[str, Any]) -> list[str]:
     if jb and not _JIBUN_RE.match(jb):
         issues.append("jibun_format")
     pnu = p.get("pnu")
-    if pnu and (len(pnu) != 19 or not pnu.isdigit()):
+    if pnu and not is_valid_pnu(pnu):
         issues.append("pnu_format")
     st = p.get("status")
     if st in _UNRESOLVED_STATUSES:
@@ -932,7 +945,7 @@ class ParcelExcelService:
                 structure_notes.append(f"집계/합계 추정 행 제외: {_row_summary or f'{excluded_n}번째 제외행'}")
                 continue
 
-            pnu = pnu_raw if len(pnu_raw) == 19 else (_pnu_from_bcode(bcode, jibun) if bcode else None)
+            pnu = pnu_raw if is_valid_pnu(pnu_raw) else (_pnu_from_bcode(bcode, jibun) if bcode else None)
             status = "ok" if pnu else ("need_geocode" if address else "failed")
             p: dict[str, Any] = {
                 "address": address or None, "jibun": jibun or None,
@@ -1263,7 +1276,7 @@ class ParcelExcelService:
                             cands = await vworld.search_address(query, size=8)
                     except Exception:  # noqa: BLE001
                         cands = []
-                    cand_pnus = [str(c.get("pnu") or "") for c in cands if len(str(c.get("pnu") or "")) == 19]
+                    cand_pnus = [str(c.get("pnu") or "") for c in cands if is_valid_pnu(c.get("pnu"))]
                     bcodes = {cp[:10] for cp in cand_pnus}
                     if len(bcodes) == 1 and cand_pnus:
                         # 단일 법정동 수렴 → 최적 후보(첫 후보=검색 best match)로 확정.
@@ -1316,10 +1329,31 @@ class ParcelExcelService:
         async def one(i: int) -> None:
             p = parcels[i]
             async with sem:
-                try:
-                    lc = await vworld.get_land_characteristics(p["pnu"])
-                except Exception:  # noqa: BLE001
-                    lc = None
+                # ★병렬로 부르되 **실패는 서로 격리한다**(부분성 1급).
+                #   ★종전 초안은 둘을 한 try 로 묶어, **대장 호출이 실패하면 토지특성까지 버렸다** —
+                #     그러면 면적·용도지역 보강이 통째로 죽는다(회귀 6건으로 드러났다).
+                #     `return_exceptions=True` 로 각자의 실패가 상대를 죽이지 않게 한다.
+                #   ★`get_land_ledger_list` 가 없는 주입 객체(구 스텁)도 있으므로 `getattr` 로 본다.
+                _lfn = getattr(vworld, "get_land_ledger_list", None)
+                _res = await asyncio.gather(
+                    vworld.get_land_characteristics(p["pnu"]),
+                    _lfn(p["pnu"]) if _lfn is not None else _noop(),
+                    return_exceptions=True,
+                )
+                lc = _res[0] if not isinstance(_res[0], BaseException) else None
+                ledger = _res[1] if not isinstance(_res[1], BaseException) else None
+                # ★공유일 때만 연명부를 부른다(단독소유가 다수 — 전 필지 호출은 낭비).
+                co_owners = None
+                _cfn = getattr(vworld, "get_co_owner_list", None)
+                if _cfn is not None and is_shared_parcel(ledger):
+                    try:
+                        co_owners = await _cfn(p["pnu"])
+                    except Exception:  # noqa: BLE001
+                        co_owners = None
+            # ★대장·연명부는 **토지특성 성패와 무관하게** 실린다 — 토지특성이 없다고
+            #   대장까지 버리면 "확인 못 함"과 "해당 없음"이 뭉개진다.
+            p.update(ledger_fields(ledger))
+            p.update(co_owner_summary(co_owners))
             if not isinstance(lc, dict):
                 return
             # ★면적 교차검증(신뢰루프): 입력 면적(엑셀)이 있으면 공부상(VWorld 토지특성)과 대조.
@@ -1346,6 +1380,14 @@ class ParcelExcelService:
                 p["zone_type"] = lc["zone_type"]
             if lc.get("official_price_per_sqm"):
                 p["official_price_per_sqm"] = int(lc["official_price_per_sqm"])
+            # ★원천이 주는 나머지 공부 항목도 버리지 않는다(2026-09-03).
+            #   종전엔 면적·지목·용도지역·공시지가 넷만 취하고 `road_side`(맹지 판정의 축)·
+            #   `terrain_*`·`land_use_situation` 을 **버렸다**. 배치 파이프도 같은 것을 버렸는데
+            #   한쪽만 넓히면 **두 파이프의 필드 집합이 갈라진다** — 그래서 **공용 투영**을 쓴다.
+            #   ★기존 키는 위에서 이미 정한 값을 **덮지 않는다**(엑셀 입력·교차검증 결과 보존).
+            for _k, _v in project_land_characteristics(lc).items():
+                if _v not in (None, "") and p.get(_k) in (None, ""):
+                    p[_k] = _v
 
         await asyncio.gather(*[one(i) for i in targets], return_exceptions=True)
 
@@ -1415,11 +1457,11 @@ class ParcelExcelService:
                 "address": str(it.get("address") or "").strip(),
                 "jibun": str(it.get("jibun") or "").strip(),
                 "bcode": str(it.get("bcode") or "").strip(),
-                "pnu": pnu if len(pnu) == 19 else None,
+                "pnu": pnu if is_valid_pnu(pnu) else None,
                 "area_sqm": area_in if (area_in and area_in > 0) else None,
                 "zone_type": None, "jimok": None,
                 "official_price_per_sqm": None,
-                "status": "ok" if len(pnu) == 19 else "pending",
+                "status": "ok" if is_valid_pnu(pnu) else "pending",
             })
 
         need_geocode = [i for i, p in enumerate(parcels) if not p["pnu"]]

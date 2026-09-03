@@ -117,10 +117,20 @@ def test_idle_does_not_fall_through_to_exit_zero():
     assert idle_block, "★유휴 분기를 못 찾았다 — 락이 낡았다"
     assert "OBS=1" in idle_block.group(1),         "★유휴가 플래그를 안 세운다 → exit 0('모든 프로브 생존')로 떨어진다"
     # ② 최종 판정이 그 플래그를 **exit 0 보다 먼저** 읽는다
-    tail = src[src.rindex('if [ "$DEAD"'):]
-    i_obs, i_zero = tail.find('"$OBS"'), tail.find('exit 0')
-    assert i_obs != -1, "★최종 판정이 OBS 를 안 읽는다(플래그가 장식이 된다)"
-    assert i_obs < i_zero, "★OBS 판정이 exit 0 뒤에 있다 — 도달 불가"
+    #
+    # ★**모양이 아니라 위치로 찾는다.** 첫 판은 `src.rindex('if [ "$DEAD"')` 로 **리터럴 모양**을
+    #   집었는데, 그 사이 main 이 판정부를 `verdict_exit()` 함수로 추출하면서 그 줄이
+    #   `if [ "${DEAD:-0}" -eq 1 ]` 로 바뀌어 **락이 ValueError 로 터졌다**(2026-09-03 실측).
+    #   락이 지키려는 것은 «판정 순서» 이지 «그 줄의 철자» 가 아니다 — 리팩토링이 계약을
+    #   바꾸지 않았는데 락이 깨지면 그것은 락의 결함이다. 그래서 두 형태를 다 받는다.
+    dead_tests = list(re.finditer(r'if \[ "\$\{?DEAD(?::-0)?\}?"', src))
+    assert dead_tests, "★최종 판정 블록을 못 찾았다 — 락이 낡았다(공허한 초록 방지)"
+    tail = src[dead_tests[-1].start():]
+    m_obs = re.search(r'"\$\{?OBS(?::-0)?\}?"', tail)
+    i_zero = tail.find('exit 0')
+    assert m_obs, "★최종 판정이 OBS 를 안 읽는다(플래그가 장식이 된다)"
+    assert i_zero != -1, "★판정부에 exit 0 이 없다 — 락이 낡았다"
+    assert m_obs.start() < i_zero, "★OBS 판정이 exit 0 뒤에 있다 — 도달 불가"
     assert "exit 4" in tail, "★관측 이상 종료코드가 없다"
     # ③ ★양성 대조군 — 기존 두 코드가 살아 있어야 한다(내가 갈아엎지 않았다)
     assert "exit 3" in tail and "exit 2" in tail

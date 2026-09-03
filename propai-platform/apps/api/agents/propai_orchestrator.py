@@ -24,6 +24,7 @@ from packages.schemas.enums import AgentStepName
 from packages.schemas.events import AgentStepEvent
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.utils.pnu import lawd_cd_from_pnu
 from apps.api.config import get_settings
 from apps.api.metrics import AGENT_COMPLETION, AGENT_STEP_DURATION
 
@@ -107,7 +108,7 @@ class PropAIOrchestrator:
             "land_use_zone": land_use.get("land_use_zone", ""),
             "far_limit": land_use.get("far_limit", 0),
             "bcr_limit": land_use.get("bcr_limit", 0),
-            "lawd_cd": pnu[:5] if len(pnu) >= 5 else "",
+            "lawd_cd": lawd_cd_from_pnu(pnu) or "",
         }
 
     async def _fetch_project_info(self, project_id: UUID) -> dict:

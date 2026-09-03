@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useEffect } from "react";
+
+import { apiClient, ApiClientError } from "@/lib/api-client";
 import { Card, CardContent } from "@propai/ui";
 
 /* ------------------------------------------------------------------ */
@@ -16,13 +18,53 @@ type UsageItem = {
   unit: string;
 };
 
+/**
+ * 백엔드 `GET /billing/status` 계약(`app/core/billing.public_status`) **그대로**.
+ *
+ * ★2026-08-27 — 이 패널은 `MOCK_PLAN` 을 렌더했고, 그 안의 사용량이
+ *   `프로젝트 2/3개 · API 호출 347/500회 · AI 분석 18/30회 · 스토리지 156/500MB`
+ *   였다. **백엔드에는 그런 건수 쿼터가 없다** — 과금 모델은 **예산(원) 기반**이다.
+ *   과금 화면의 숫자가 허구인 것은 특히 나쁘다(사용자가 그것으로 판단한다).
+ *   → 지어낸 4행은 **지웠고**, 서버가 실제로 주는 값만 그린다.
+ *
+ * ★플랜 **설명·기능 목록**은 서버가 주지 않는다 — 그건 정적 마케팅 문구이므로
+ *   UI 상수로 남긴다. **가짜 데이터와 정적 문구는 다르다.**
+ */
+type BillingStatus = {
+  tier: string | null;
+  tier_label: string | null;
+  metered: boolean | null;
+  fee_krw: number | null;
+  included_budget_krw: number | null;
+  budget_krw: number | null;
+  billed_krw: number | null;
+  remaining_krw: number | null;
+  usage_pct: number | null;
+  blocked: boolean | null;
+  service_fee_krw: number | null;
+};
+
+/** 서버 오류를 사람 말로 — ★상태코드를 삼키지 않는다. */
+function describeErr(e: unknown, fallback: string): string {
+  if (e instanceof ApiClientError) {
+    if (e.status === 401 || e.status === 403) return "권한이 없습니다. 다시 로그인해 주세요.";
+    const d =
+      typeof e.payload === "object" && e.payload !== null && "detail" in e.payload
+        ? String((e.payload as { detail: unknown }).detail)
+        : "";
+    return d || `${fallback} (HTTP ${e.status})`;
+  }
+  return fallback;
+}
+
 type PlanInfo = {
   tier: PlanTier;
   name: string;
   price: string;
   description: string;
   features: string[];
-  usage: UsageItem[];
+  /** ★카탈로그는 사용량을 갖지 않는다 — 사용량은 서버(`/billing/status`)에서 온다. */
+  usage?: UsageItem[];
 };
 
 /* ------------------------------------------------------------------ */
@@ -76,22 +118,39 @@ const PLAN_DEFINITIONS: Record<PlanTier, Omit<PlanInfo, "usage">> = {
 };
 
 /* ------------------------------------------------------------------ */
-/*  Mock current plan data                                            */
+/*  정적 플랜 카탈로그(마케팅 문구) — **사용자 상태가 아니다**            */
 /* ------------------------------------------------------------------ */
 
-const MOCK_PLAN: PlanInfo = {
-  ...PLAN_DEFINITIONS.free,
-  usage: [
-    { label: "프로젝트", current: 2, limit: 3, unit: "개" },
-    { label: "API 호출", current: 347, limit: 500, unit: "회" },
-    { label: "AI 분석", current: 18, limit: 30, unit: "회" },
-    { label: "스토리지", current: 156, limit: 500, unit: "MB" },
-  ],
-};
+/**
+ * ★종전 `MOCK_PLAN` 은 여기에 **지어낸 사용량 4행**을 붙였다:
+ *   `프로젝트 2/3개 · API 호출 347/500회 · AI 분석 18/30회 · 스토리지 156/500MB`.
+ *   백엔드에는 그런 **건수 쿼터가 없다**(과금은 예산(원) 기반). 지웠다.
+ * ★설명·기능 목록은 서버가 주지 않는 **정적 마케팅 문구**라 그대로 둔다 —
+ *   가짜 데이터와 정적 문구는 다르다.
+ */
+const PLAN_CATALOG = PLAN_DEFINITIONS;
 
 /* ------------------------------------------------------------------ */
 /*  UsageBar component                                                */
 /* ------------------------------------------------------------------ */
+
+/**
+ * 서버가 준 **예산(원)** 을 사용량 막대로. ★없는 값은 **행을 만들지 않는다** —
+ * 종전 목업이 지어낸 건수 쿼터(프로젝트/API/AI/스토리지)는 백엔드에 존재하지 않는다.
+ */
+function budgetUsage(b: BillingStatus | null): UsageItem[] {
+  if (!b) return [];
+  const rows: UsageItem[] = [];
+  const budget = b.budget_krw ?? b.included_budget_krw;
+  if (typeof b.billed_krw === "number" && typeof budget === "number" && budget > 0) {
+    rows.push({ label: "이번 달 사용액", current: b.billed_krw, limit: budget, unit: "원" });
+  }
+  if (typeof b.service_fee_krw === "number" && b.service_fee_krw > 0
+      && typeof budget === "number" && budget > 0) {
+    rows.push({ label: "서비스 사용료", current: b.service_fee_krw, limit: budget, unit: "원" });
+  }
+  return rows;
+}
 
 function UsageBar({ item }: { item: UsageItem }) {
   const pct = Math.min((item.current / item.limit) * 100, 100);
@@ -135,12 +194,46 @@ function UsageBar({ item }: { item: UsageItem }) {
 
 export function SubscriptionPanel() {
   const [plan, setPlan] = useState<PlanInfo | null>(null);
+  const [billing, setBilling] = useState<BillingStatus | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    setPlan(MOCK_PLAN);
-    setIsLoading(false);
+    let alive = true;
+    (async () => {
+      try {
+        const st = await apiClient.get<BillingStatus>("/billing/status");
+        if (!alive) return;
+        setBilling(st);
+        // ★현재 등급은 **서버가 정한다** — 화면이 고르지 않는다.
+        //   설명·기능 목록만 정적 카탈로그에서 가져온다(마케팅 문구).
+        const tier = (st?.tier ?? "free") as PlanTier;
+        setPlan(PLAN_CATALOG[tier] ?? PLAN_CATALOG.free);
+        setError("");
+      } catch (e) {
+        if (!alive) return;
+        setBilling(null);
+        setPlan(null);
+        setError(describeErr(e, "요금제 정보를 불러오지 못했습니다."));
+      } finally {
+        if (alive) setIsLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
   }, []);
+
+  if (!isLoading && error) {
+    return (
+      <p
+        role="alert"
+        className="rounded-xl bg-[var(--status-error)]/10 px-3 py-2 text-xs text-[var(--status-error)]"
+      >
+        {error}
+      </p>
+    );
+  }
 
   if (isLoading || !plan) {
     return (
@@ -213,8 +306,11 @@ export function SubscriptionPanel() {
           <p className="cc-label mb-5">
             이번 달 사용량
           </p>
-          <div className="space-y-5">
-            {(plan.usage ?? []).map((item) => (
+          {/* ★락이 **이 영역만** 검사할 수 있게 표식을 준다 — 플랜 기능 목록의
+              마케팅 문구("API 호출 월 500회")와 **사용자 실사용 숫자**는 다르다.
+              범위를 안 나누면 락이 정적 문구를 가짜 데이터로 신고한다(첫 실행에서 그랬다). */}
+          <div className="space-y-5" data-testid="billing-usage">
+            {budgetUsage(billing).map((item) => (
               <UsageBar key={item.label} item={item} />
             ))}
           </div>

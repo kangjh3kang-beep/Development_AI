@@ -4,6 +4,7 @@
 무결성 검증·CSV 내보내기 추가. 스펙=docs/design/MYPAGE_SAAS_SPEC_2026-07-17.md.
 """
 
+import logging
 import math
 import uuid as _uuid
 
@@ -23,6 +24,7 @@ from apps.api.auth.jwt_handler import CurrentUser, get_current_user
 from apps.api.config import Settings, get_settings
 from apps.api.database.session import get_db
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/billing", tags=["구독·과금"])
 
 
@@ -266,7 +268,8 @@ async def list_packages(settings: Settings = Depends(get_settings)):
             "max_krw": coin_orders_service.CUSTOM_MAX_KRW,
             "unit_krw": coin_orders_service.CUSTOM_UNIT_KRW,
         },
-        "payment_mode": "simulated" if settings.billing_simulated_payments else "manual_only",
+        # ★단일 리졸버 — 세 번째 값(`toss`)이 생겨도 여기가 갈라지지 않는다.
+        "payment_mode": resolve_payment_mode(settings),
     }
 
 
@@ -320,7 +323,7 @@ async def create_order(
     except ValueError as e:  # 방어적(위에서 이미 검증됨)
         raise HTTPException(status_code=400, detail=str(e)) from None
     # 프론트가 다음 행동을 정직하게 안내하도록 결제 경로 상태를 함께 반환.
-    order["payment_mode"] = "simulated" if settings.billing_simulated_payments else "manual_only"
+    order["payment_mode"] = resolve_payment_mode(settings)
     return order
 
 
@@ -479,3 +482,379 @@ async def export_my_coin_ledger(
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": 'attachment; filename="coin_history.csv"'},
     )
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 토스페이먼츠 결제 (2026-08-27)
+#
+# 설계 근거는 `_workspace/PLAN_toss_payments_integration_2026-08-27.md`.
+# 이 절이 지키는 것 세 가지:
+#   ① **클라이언트를 믿지 않는다** — 금액·소유자는 서버 저장값으로만 판정
+#   ② **HTTP 200 ≠ 승인** — `status == "DONE"` 만이 「돈이 움직였다」
+#   ③ **모르는 것은 모른다고 말한다** — 미확정을 실패로 접지 않는다
+# ═════════════════════════════════════════════════════════════════════════════
+from app.services.billing import (  # noqa: E402
+    payment_receipts,
+    revenue_service,
+    toss_orders_service,
+    toss_payments,
+)
+
+
+def resolve_payment_mode(settings: Settings) -> str:
+    """현재 결제 경로 — ★**이 함수가 유일한 판정처**다.
+
+    옛 코드는 `"simulated" if settings.billing_simulated_payments else "manual_only"` 를
+    **두 곳에 복제**해 뒀다. 세 번째 값을 넣는 순간 그 복제가 갈라진다.
+
+    ★**상호배제**(보안 렌즈 C3): 시뮬레이션 self-confirm 은 **결제 없이 코인을 만든다.**
+      토스가 켜져 있는데 그것도 켜져 있으면 결제 게이트가 통째로 우회된다
+      (`POST /orders/{id}/confirm` 한 번에 무료 충전). 그래서 **토스가 우선**이고,
+      토스가 켜지면 시뮬레이션은 **꺼진 것으로 취급**한다.
+    """
+    if toss_payments.is_configured():
+        return "toss"
+    if settings.billing_simulated_payments:
+        return "simulated"
+    return "manual_only"
+
+
+class TossConfirmRequest(BaseModel):
+    """결제창 인증 후 리다이렉트가 넘겨 준 값.
+
+    ★`amount` 를 받되 **쓰지 않는다** — 서버 저장값과 **대조만** 한다.
+      (문서가 요구하는 위변조 검증. 값 자체는 신뢰 대상이 아니다)
+    """
+
+    order_id: str = Field(..., min_length=6, max_length=64)
+    payment_key: str = Field(..., min_length=1, max_length=200)
+    amount: int = Field(..., ge=0)
+
+
+class RefundRequest(BaseModel):
+    reason: str = Field(..., min_length=2, max_length=200)
+    #: None = 남은 전액. 부분 환불은 남은 결제금액 이내.
+    amount: int | None = Field(default=None, ge=1)
+    #: 가상계좌 환불 전용. ★키 이름은 `bank` 다(`bankCode` 아님 — 응답과 비대칭).
+    refund_receive_account: dict[str, str] | None = None
+
+
+def _payment_error(exc: Exception) -> HTTPException:
+    """결제 예외 → HTTP. ★**사유와 조치를 반드시 실어 보낸다.**
+
+    이 저장소가 데인 형태: *"폴백이 failure_reason 을 싣는데 화면 소비처 0건"*.
+    그래서 여기서 버리면 사용자도 조사자도 원인을 모른다.
+    """
+    if isinstance(exc, toss_orders_service.PaymentRejectedError):
+        return HTTPException(
+            status_code=exc.http_status,
+            detail={
+                "code": exc.code,
+                "message": exc.message,
+                "remediation": exc.remediation,
+                "retryable": exc.retryable,
+                "outcome": "rejected",
+            },
+        )
+    if isinstance(exc, toss_orders_service.PaymentPendingError):
+        # ★202 — 실패가 아니다. 가상계좌 안내를 그대로 실어 사용자가 입금할 수 있게 한다.
+        return HTTPException(
+            status_code=202,
+            detail={
+                "code": exc.status,
+                "message": str(exc),
+                "remediation": "안내된 계좌로 입금하시면 자동으로 충전됩니다.",
+                "outcome": "pending",
+                "virtual_account": exc.virtual_account,
+                "due_date": exc.due_date,
+            },
+        )
+    if isinstance(exc, toss_orders_service.PaymentUnresolvedError):
+        # ★409 — "실패"라고 말하지 않는다. 중복 결제를 유도하면 안 된다.
+        return HTTPException(
+            status_code=409,
+            detail={
+                "code": "PAYMENT_UNRESOLVED",
+                "message": str(exc),
+                "remediation": "중복 결제하지 마시고 충전 내역을 확인하신 뒤 고객센터로 문의해 주세요.",
+                "outcome": "unresolved",
+                "receipt_id": exc.receipt_id,
+                "order_no": exc.order_no,
+            },
+        )
+    raise exc
+
+
+@router.get("/payments/toss/config")
+async def toss_config(
+    current: CurrentUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+):
+    """결제창을 띄우는 데 필요한 **공개** 설정.
+
+    ★`client_key` 는 공개키다(브라우저가 쓴다). **시크릿 키는 절대 나가지 않는다.**
+    ★경로가 `/billing/` 아래라 서비스워커의 `API_NO_STORE_PATTERNS` 에 걸려 캐시되지 않는다
+      — 키를 교체했는데 옛 키가 재생되는 사고를 막는다(보안 렌즈 M6 실측).
+    """
+    mode = resolve_payment_mode(settings)
+    return {
+        "payment_mode": mode,
+        "client_key": toss_payments.client_key() if mode == "toss" else None,
+        # ★테스트 키면 실제 결제가 일어나지 않는다 — 화면이 그것을 크게 알려야 한다.
+        "test_mode": toss_payments.is_test_mode() if mode == "toss" else None,
+    }
+
+
+@router.post("/payments/toss/confirm")
+async def confirm_toss(
+    req: TossConfirmRequest,
+    current: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    """결제 승인 — 리다이렉트로 돌아온 결제를 서버가 확정한다.
+
+    ★`amount` 를 받지만 **토스로 보내는 값은 서버 저장값**이다.
+    ★활성계정 가드는 다른 코인 변이와 **같은 통로**를 쓴다(형제와 어긋나지 않게).
+    """
+    if resolve_payment_mode(settings) != "toss":
+        raise HTTPException(status_code=501, detail="카드 결제가 설정되지 않았습니다.")
+    oid = _valid_uuid_or_404(req.order_id)
+    await _require_active_user(db, current)
+    try:
+        return await toss_orders_service.confirm_toss_payment(
+            db,
+            order_id=oid,
+            payment_key=req.payment_key,
+            claimed_amount=int(req.amount),
+            current_user_id=str(current.user_id),
+        )
+    except (
+        toss_orders_service.PaymentRejectedError,
+        toss_orders_service.PaymentPendingError,
+        toss_orders_service.PaymentUnresolvedError,
+    ) as e:
+        raise _payment_error(e) from e
+
+
+@router.get("/orders/{order_id}/receipts")
+async def order_receipts(
+    order_id: str,
+    current: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """내 주문의 **결제 처리 타임라인** — 무엇이 언제 어떻게 됐는지.
+
+    ★사용자가 *"결제했는데 왜 코인이 없나"* 를 **스스로 확인**할 수 있게 한다.
+      이게 없으면 모든 문의가 고객센터로 간다.
+    """
+    oid = _valid_uuid_or_404(order_id)
+    owner = await coin_orders_service.get_order_owner(db, oid)
+    # ★소유자 불일치도 404 — 존재 여부가 새면 주문 열거의 단서가 된다.
+    if owner is None or str(owner) != str(current.user_id):
+        raise HTTPException(status_code=404, detail="주문을 찾을 수 없습니다.")
+    return {"order_id": oid, "receipts": await payment_receipts.list_for_order(db, oid)}
+
+
+@router.post("/orders/{order_id}/refund")
+async def refund_my_order(
+    order_id: str,
+    req: RefundRequest,
+    current: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    """사용자 셀프 환불 — ★**남아 있는 코인 범위 안에서만.**
+
+    이미 쓴 코인은 환불하지 않는다(없는 것을 돌려줄 수 없다). 그 경우 사유와 함께
+    거절하고 고객센터로 안내한다 — 조용히 적게 환불하면 사용자가 모른다.
+    """
+    if resolve_payment_mode(settings) != "toss":
+        raise HTTPException(status_code=501, detail="카드 결제가 설정되지 않았습니다.")
+    oid = _valid_uuid_or_404(order_id)
+    await _require_active_user(db, current)
+    order_no = await coin_orders_service.get_order_no(db, oid)
+    if order_no is None:
+        raise HTTPException(status_code=404, detail="주문을 찾을 수 없습니다.")
+    try:
+        return await toss_orders_service.refund_toss_payment(
+            db,
+            order_no=order_no,
+            reason=req.reason,
+            amount=req.amount,
+            actor_id=str(current.user_id),
+            is_admin=False,
+            refund_receive_account=req.refund_receive_account,
+        )
+    except (
+        toss_orders_service.PaymentRejectedError,
+        toss_orders_service.PaymentUnresolvedError,
+    ) as e:
+        raise _payment_error(e) from e
+
+
+@router.post("/payments/toss/webhook")
+async def toss_webhook(body: dict, db: AsyncSession = Depends(get_db)):
+    """토스 웹훅 — ★**본문을 데이터로 쓰지 않는다.**
+
+    ## 왜 본문을 안 믿나 (보안 렌즈 CRITICAL)
+
+    토스 v2 의 결제/입금 웹훅에는 **서명이 없다**(서명 헤더는 `payout.changed`·
+    `seller.changed` 에만 붙는다 — 법령 렌즈가 원문에서 확인). 이 엔드포인트는 토스가
+    부르므로 **인증을 걸 수 없다.** 따라서 본문을 그대로 믿으면:
+
+        POST /billing/payments/toss/webhook
+        {"data": {"orderId": "<남의 주문>", "status": "DONE", "paymentKey": "아무거나"}}
+
+    **누구나 무한히 코인을 만들 수 있다.**
+
+    ## 그래서 본문은 **「뭔가 바뀌었다」는 신호로만** 쓴다
+
+    `paymentKey`(또는 `orderId`)만 꺼내고, **우리 시크릿 키로 토스에 다시 물어** 진실을
+    확인한다. 조작된 본문은 재조회에서 죽는다(존재하지 않는 결제 = 404).
+
+    ★**항상 200 을 돌려준다.** 오류를 돌려주면 토스가 최대 7회 재전송한다(3일 19시간).
+      그리고 유효/무효를 응답으로 구별해 주면 그 자체가 탐지 도구가 된다.
+    """
+    data = body.get("data") if isinstance(body.get("data"), dict) else {}
+    payment_key = str(data.get("paymentKey") or body.get("paymentKey") or "").strip()
+    order_id = str(data.get("orderId") or body.get("orderId") or "").strip()
+    event_type = str(body.get("eventType") or ("DEPOSIT_CALLBACK" if body.get("secret") else ""))
+
+    await payment_receipts.record(
+        event=payment_receipts.EVENT_RECONCILED,
+        order_id=order_id or None,
+        payment_key=payment_key or None,
+        toss_code=event_type or "WEBHOOK",
+        toss_message="웹훅 수신 — 본문은 신호로만 사용",
+        raw=body,
+    )
+    try:
+        await toss_orders_service.reconcile_from_webhook(
+            db, payment_key=payment_key or None, order_id=order_id or None
+        )
+    except Exception:  # noqa: BLE001 — 웹훅 응답은 언제나 200 이어야 한다
+        logger.exception("토스 웹훅 처리 실패 — order_id=%s", order_id)
+    return {"ok": True}
+
+
+# ── 관리자 결제·매출 관리 ─────────────────────────────────────────────────────
+async def _require_super_admin(db: AsyncSession, current: CurrentUser) -> None:
+    """★`tier` 로 판정한다 — `role` 은 가입 시 전원이 자기 테넌트의 admin 이 되므로
+    role 기반이면 **전원 통과**한다(`admin_secrets.py` 가 같은 근거를 적어 뒀다)."""
+    if not await billing_service.is_super_admin(db, current.user_id):
+        raise HTTPException(status_code=403, detail="관리자 권한이 필요합니다.")
+
+
+@router.get("/admin/payments/health")
+async def admin_payment_health(
+    current: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    """결제 연동 진단 — ★**키 값은 절대 반환하지 않는다**(존재·길이·환경만).
+
+    ★`billing_simulated_payments` 가 켜져 있으면 **크게 경고**한다 —
+      그 상태는 결제 없이 코인이 만들어지는 경로가 열려 있다는 뜻이다.
+    """
+    await _require_super_admin(db, current)
+    cfg = toss_payments.config_status()
+    warnings: list[str] = []
+    if cfg["configured"] and not cfg["key_pairing_ok"]:
+        warnings.append(
+            "★클라이언트 키와 시크릿 키가 다른 환경(테스트/라이브)입니다 — 결제가 거절됩니다."
+        )
+    if cfg["configured"] and cfg["test_mode"]:
+        warnings.append("★테스트 키를 사용 중입니다 — 실제 결제가 일어나지 않습니다.")
+    if settings.billing_simulated_payments:
+        warnings.append(
+            "★시뮬레이션 결제가 켜져 있습니다 — 결제 없이 코인이 충전될 수 있습니다."
+            " 운영 환경에서는 반드시 끄세요."
+        )
+    if not cfg["configured"]:
+        warnings.append(
+            "결제 키가 설정되지 않았습니다. 관리자 > API 키 > 「결제(PG)」에서 등록하세요."
+        )
+    return {
+        **cfg,
+        "payment_mode": resolve_payment_mode(settings),
+        "simulated_payments_enabled": bool(settings.billing_simulated_payments),
+        "warnings": warnings,
+    }
+
+
+@router.get("/admin/payments/revenue")
+async def admin_revenue(
+    days: int = 30,
+    current: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """매출 관리 — 요약·일별추이·경로별·실패사유·상위결제자를 한 번에."""
+    await _require_super_admin(db, current)
+    d = max(1, min(int(days), 365))
+    return {
+        "summary": await revenue_service.summary(db, days=d),
+        "daily": await revenue_service.daily(db, days=d),
+        "by_provider": await revenue_service.by_provider(db, days=d),
+        "failure_reasons": await revenue_service.failure_reasons(db, days=d),
+        "top_payers": await revenue_service.top_payers(db, days=d),
+        # ★관리자가 환불을 집행하는 목록. 이게 없으면 관리자 환불 API 는 도달 불가다.
+        "recent_orders": await revenue_service.recent_orders(db, days=d),
+        # ★매출과 **같은 응답**에 미해결 건을 싣는다 — 따로 두면 아무도 안 본다.
+        "unresolved": await payment_receipts.list_unresolved(db, limit=50),
+    }
+
+
+@router.post("/admin/payments/{order_id}/reconcile")
+async def admin_reconcile(
+    order_id: str,
+    current: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """★정합성 회복 — 「승인은 됐는데 코인이 안 들어간」 건을 **토스에 다시 물어** 바로잡는다.
+
+    이것이 `payment_receipts` 가 존재하는 이유다. 영수증이 없으면 이 복구가 불가능하다.
+    """
+    await _require_super_admin(db, current)
+    oid = _valid_uuid_or_404(order_id)
+    result = await toss_orders_service.reconcile_order(db, order_id=oid, actor_id=str(current.user_id))
+    from app.core.audit import audit_admin_action
+
+    await audit_admin_action(
+        db, actor_id=str(current.user_id), action="billing.payment_reconcile",
+        target=oid, detail=result,
+    )
+    return result
+
+
+@router.post("/admin/orders/{order_id}/refund")
+async def admin_refund_order(
+    order_id: str,
+    req: RefundRequest,
+    current: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """관리자 대리 환불 — 감사 로그를 남긴다."""
+    await _require_super_admin(db, current)
+    oid = _valid_uuid_or_404(order_id)
+    order_no = await coin_orders_service.get_order_no(db, oid)
+    if order_no is None:
+        raise HTTPException(status_code=404, detail="주문을 찾을 수 없습니다.")
+    try:
+        result = await toss_orders_service.refund_toss_payment(
+            db, order_no=order_no, reason=req.reason, amount=req.amount,
+            actor_id=str(current.user_id), is_admin=True,
+            refund_receive_account=req.refund_receive_account,
+        )
+    except (
+        toss_orders_service.PaymentRejectedError,
+        toss_orders_service.PaymentUnresolvedError,
+    ) as e:
+        raise _payment_error(e) from e
+    from app.core.audit import audit_admin_action
+
+    await audit_admin_action(
+        db, actor_id=str(current.user_id), action="billing.order_refund",
+        target=oid, detail=result,
+    )
+    return result

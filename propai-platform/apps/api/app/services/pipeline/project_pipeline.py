@@ -14,6 +14,8 @@ from typing import Any
 import structlog
 from pydantic import BaseModel, Field
 
+from app.utils.pnu import is_valid_pnu
+
 logger = structlog.get_logger(__name__)
 
 # ── Payload 인터페이스: 모듈 간 데이터 전달 계약 ──
@@ -1076,7 +1078,7 @@ class ProjectPipeline:
         # 0. PNU가 이미 있으면 VWORLD 데이터 API로 면적/공시지가 직접 조회
         # (지오코딩 없이 데이터 API만 호출 — Railway 해외 IP에서도 동작)
         existing_pnu = (result.get("pnu_codes") or [None])[0]
-        if existing_pnu and len(existing_pnu) >= 19:
+        if is_valid_pnu(existing_pnu):
             try:
                 import httpx
 
@@ -1840,7 +1842,7 @@ class ProjectPipeline:
                 far_limit=site.max_far if site.max_far else None,
             )
             payload: dict[str, Any] = {
-                "pnu": pnu if (pnu and len(str(pnu)) == 19 and str(pnu).isdigit()) else "",
+                "pnu": pnu if is_valid_pnu(pnu) else "",
                 "address": site.address or state.address or "",
                 "calc_targets": [
                     {"target": "building_area"},

@@ -325,7 +325,7 @@ export function siteAnalysisToSelection(
     {
       id: siteAnalysis.pnu || `store-rep-${address}`,
       address,
-      pnu: siteAnalysis.pnu ?? null,
+      pnu: normalizePnu(siteAnalysis.pnu),
       lat: fallbackCoord?.lat ?? null,
       lon: fallbackCoord?.lon ?? null,
       areaSqm: siteAnalysis.repLandAreaSqm ?? siteAnalysis.landAreaSqm ?? null,

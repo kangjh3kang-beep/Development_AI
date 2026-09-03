@@ -26,8 +26,11 @@ from typing import Any
 import httpx
 from sqlalchemy import text
 
-from app.core.config import settings
-from app.services.legal.moleg_drf_envelope import raise_unless_expected_xml
+from app.services.legal.moleg_drf_envelope import (
+    MolegDrfError,
+    moleg_oc_key,
+    raise_unless_expected_xml,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -697,7 +700,7 @@ class OrdinanceService:
         self, sido: str, sigungu: str | None, zone_type: str, *, jurisdiction: str | None = None
     ) -> dict[str, Any] | None:
         """법제처 API로 도시계획조례 실시간 조회. jurisdiction=정규화 관할명(특별시/광역시는 시 본청)."""
-        api_key = getattr(settings, "MOLEG_API_KEY", "") or ""
+        api_key = moleg_oc_key()
         if not api_key:
             return None
 
@@ -1535,7 +1538,7 @@ class OrdinanceService:
         기존 _fetch_from_moleg_api 와 동일한 2단 호출(목록 검색 → 본문 조회) 규약.
         API 키 미설정·조회 실패는 None(호출부가 정직 폴백).
         """
-        api_key = getattr(settings, "MOLEG_API_KEY", "") or ""
+        api_key = moleg_oc_key()
         if not api_key:
             return None
 
@@ -1555,6 +1558,17 @@ class OrdinanceService:
                     },
                 )
                 resp.raise_for_status()
+                # ★형제 미러(`_fetch_from_moleg_api`)에 이미 있던 봉투 검사가 **여기엔 없었다.**
+                #   법제처 DRF 는 인증/IP 실패를 **HTTP 200** 으로 돌려주므로
+                #   `raise_for_status()` 가 발화하지 않고, `_parse_ordin_id` 가 `None` 을 내며,
+                #   아래 광범위 `except` 가 그것을 삼켜 **`resolve_slope_criteria` 는
+                #   "이 지자체는 경사도 조례가 없다 → 국가기준 25도"** 로 읽는다.
+                #   즉 **조회 실패가 「조례 미보유」로 오귀속**된다(라이브 실측: 틀린 OC →
+                #   HTTP 200 · 루트 `<Response><result>사용자 정보 검증에 실패하였습니다.`).
+                # ★★**안 바뀌는 것도 적는다**(형제와 동일): 반환값은 여전히 `None` 이고
+                #   화면 폴백도 그대로다. 바뀐 것은 ①감지 ②파싱 차단 ③사유 로그다.
+                #   호출부가 *"조회 실패"* 와 *"조례 없음"* 을 **구분하게 만드는 것은 별건**이다.
+                raise_unless_expected_xml(resp.text, expect=_ORDIN_LIST_ROOTS)
                 ordin_id = self._parse_ordin_id(resp.text, region_name)
             if not ordin_id:
                 return None
@@ -1569,7 +1583,25 @@ class OrdinanceService:
                     },
                 )
                 resp.raise_for_status()
+                # ★형제 미러 — 본문 조회도 같은 봉투를 받는다(라이브: 인증실패 루트 `<Response>`,
+                #   대상없음 루트 `<Law>일치하는 자치법규가 없습니다`). 둘 다 `LawService` 가 아니다.
+                raise_unless_expected_xml(resp.text, expect=_ORDIN_TEXT_ROOTS)
                 return resp.text
+        except MolegDrfError as e:
+            # ★**전용 분기**로 가른다 — 뭉치면 다시 «침묵이 성공으로» 읽힌다.
+            #   헬퍼가 그것을 명문으로 요구한다(`MolegDrfError` 독스트링:
+            #   *"일반 예외와 다른 타입이어야 한다 … 뭉치면 다시 침묵이 성공으로 읽힌다"*).
+            # ★★**형제가 둘인데 처음엔 틀린 쪽을 근거로 댔다**(독립 적대 리뷰 지적):
+            #   · `_fetch_from_moleg_api` — 이 예외를 광범위 `except` 에 삼킨다(같이 틀렸다)
+            #   · `gosi_search_service` — **사유를 반환값에 싣는다**(옳은 쪽 · 정답 기준선)
+            #   여기서는 반환 타입이 `str | None` 이라 사유를 실을 자리가 없다.
+            #   **그래서 로그에서만이라도 「조회 실패」와 「조례 없음」을 가른다.**
+            #   ★사유가 **호출부까지** 닿게 하려면 `resolve_slope_criteria` 의 계약을 바꿔야 하고
+            #     그것은 별건이다 — 부채를 초록 안에 보이게 남겼다
+            #     (`test_ordinance_every_xml_call_checks_envelope.py::test_reason_should_reach_the_caller`).
+            logger.warning(
+                "법제처 조례 조회 실패(200-봉투 · 조례 부재 아님): %s (%s)", region_name, str(e)[:160])
+            return None
         except Exception as e:  # noqa: BLE001 — 외부 API 실패는 정직 폴백(None)
             logger.warning("법제처 API 조례 본문 조회 실패: %s (%s)", region_name, str(e))
             return None

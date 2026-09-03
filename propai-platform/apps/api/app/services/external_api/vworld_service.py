@@ -1,6 +1,7 @@
 import asyncio
 import math
 import re
+from typing import Any
 
 import httpx
 import structlog
@@ -69,6 +70,32 @@ def _wgs84_area_to_sqm(area_deg2: float, center_lat: float) -> float:
 #     **연초 1~5월엔 당해연도 데이터가 없다**(실측: 2027·2028 은 None).
 #     그래서 현재연도부터 **내림차순 폴백**한다.
 LAND_PRICE_MAX_LOOKBACK = 3  # 역행 상한 — 없는 필지에서 무한 외부호출을 막는다
+
+
+
+def _find_pnu_rows(payload: Any) -> list[dict] | None:
+    """응답 어디에 있든 **`pnu` 를 가진 dict 들의 리스트**를 찾는다(래퍼 이름 미지 대응).
+
+    ★래퍼 키를 지어내지 않기 위한 것이다. 못 찾으면 `None` — **빈 리스트로 뭉개지 않는다**
+      (`None`=형태 미인식/실패 · `[]`=조회 성공·0건. 둘은 다른 사실이다).
+    """
+    if isinstance(payload, list):
+        if payload and all(isinstance(x, dict) for x in payload) and any("pnu" in x for x in payload):
+            return [x for x in payload if isinstance(x, dict)]
+        for x in payload:
+            found = _find_pnu_rows(x)
+            if found is not None:
+                return found
+        return None
+    if isinstance(payload, dict):
+        if "pnu" in payload and not any(isinstance(v, (dict, list)) for v in payload.values()):
+            return [payload]  # 단건이 dict 로 오는 경우
+        for v in payload.values():
+            found = _find_pnu_rows(v)
+            if found is not None:
+                return found
+    return None
+
 
 
 def _current_year() -> int:
@@ -669,6 +696,102 @@ class VWorldService:
 
     # ── VWORLD NED API (공시지가, 토지이용계획) ──
     NED_BASE_URL = "https://api.vworld.kr/ned/data"
+
+    async def get_land_ledger_list(self, pnu: str) -> list[dict] | None:
+        """**토지임야목록조회**(NED `ladfrlList`) — 토지대장/임야대장의 목록 항목.
+
+        ## 왜 이것이 필요했나 (2026-09-03)
+
+        나는 *"토지대장 원천이 저장소에 0건"* 이라고 계획서에 적었다. **그것은 저장소를 뒤진
+        결과였지 「원천이 없다」는 뜻이 아니었다** — 사용자가 VWorld API 카탈로그에서
+        `ladfrlList` 를 찾아 줬다. **「0건」은 조회 결과이지 결론이 아니다**(또 밟았다).
+
+        `getLandCharacteristics`(토지특성)와 **다른 것을 준다**:
+          · `regstrSeCodeNm` — **대장구분**(토지대장 / 임야대장)
+          · `posesnSeCodeNm` — **소유구분**(개인·법인·국유·공유…)  ★토지작업의 1차 분류축
+          · `cnrsPsnCo`      — **소유(공유)인수**  ★공유자가 많을수록 협의매수가 어렵다
+          · `lastUpdtDt`     — **데이터기준일자**  ★시점 문서이므로 표면에 실어야 한다
+          · `mnnmSlno`       — 지번
+        소유자 **성명은 주지 않는다**(개인정보 제외 API) — 그건 등기부(유료) 소관이다.
+
+        ## ★응답 래퍼 키는 **미측정**이다
+
+        NED 계열은 응답을 서로 다른 래퍼로 감싼다(`landCharacteristicss.field` ·
+        `indvdLandPrices.field` …). `ladfrlList` 의 래퍼 이름은 **문서에서 확인하지 못했다.**
+        그래서 **이름을 지어내지 않고 구조로 찾는다** — `pnu` 를 가진 dict 들의 리스트를
+        재귀로 찾는다. 못 찾으면 **`None`(하드 실패)** 이지 `[]`(조회 성공·0건)가 아니다.
+        ★그 둘을 뭉개면 "조회 못 함"이 "확인 결과 없음"으로 읽힌다(이 파일이 이미 겪은 사고).
+        """
+        if not settings.VWORLD_API_KEY:
+            return None
+        try:
+            async with httpx.AsyncClient(timeout=12.0, headers=self.HEADERS) as client:
+                resp = await client.get(
+                    f"{self.NED_BASE_URL}/ladfrlList",
+                    params={
+                        "key": settings.VWORLD_API_KEY,
+                        "pnu": pnu,
+                        "format": "json",
+                        "numOfRows": "10",
+                        "pageNo": "1",
+                    },
+                )
+                resp.raise_for_status()
+                rows = _find_pnu_rows(resp.json())
+                if rows is None:
+                    logger.warning("토지임야목록 응답 형태 미인식", pnu=pnu)
+                    return None
+                return rows
+        except (httpx.HTTPError, ValueError) as e:
+            logger.error("토지임야목록 조회 실패: %s (%s)", pnu, str(e)[:200])
+            return None
+
+    async def get_co_owner_list(self, pnu: str) -> list[dict] | None:
+        """**공유지연명목록조회**(NED `cnrdlnList`) — 한 필지를 여러 명이 공유할 때 그 **구성**.
+
+        ## 왜 `cnrsPsnCo`(공유인 수)만으로는 부족한가
+
+        `ladfrlList` 는 *"공유인 5명"* 까지만 말한다. 그 5명이 **법인 2 + 개인 3** 인지
+        **국유 1 + 개인 4** 인지는 말하지 않는다. **그 차이가 매입 전략을 바꾼다**:
+
+          · 전원 개인      → 개별 협의
+          · 법인 포함      → 이사회·주총 절차
+          · ★**국·공유 포함** → 협의매수가 아니라 **공유재산법 절차**(다른 법이다)
+
+        **「수」와 「구성」은 다른 사실이다.** 수만 보고 전략을 세우면 국공유 지분을 놓친다.
+
+        ## 반환 계약 — 3분기(뭉개지 않는다)
+
+          `None` : 조회 실패/형태 미인식 — **"확인 못 함"**
+          `[]`   : 조회 성공·공유자 0건 — **"확인 결과 공유 아님"**
+          `[..]` : 공유자 N건
+
+        ★소유자 **성명은 주지 않는다**(개인정보 제외 API). 주는 것은 `cnrsPsnSn`(공유인일련번호)와
+        `posesnSeCodeNm`(소유구분)이다 — **구성만 알고 신원은 모른다.** 그것이 이 API 의 설계다.
+        """
+        if not settings.VWORLD_API_KEY:
+            return None
+        try:
+            async with httpx.AsyncClient(timeout=12.0, headers=self.HEADERS) as client:
+                resp = await client.get(
+                    f"{self.NED_BASE_URL}/cnrdlnList",
+                    params={
+                        "key": settings.VWORLD_API_KEY,
+                        "pnu": pnu,
+                        "format": "json",
+                        "numOfRows": "1000",  # 공유자 전원(상한 1000)
+                        "pageNo": "1",
+                    },
+                )
+                resp.raise_for_status()
+                rows = _find_pnu_rows(resp.json())
+                if rows is None:
+                    logger.warning("공유지연명 응답 형태 미인식", pnu=pnu)
+                    return None
+                return rows
+        except (httpx.HTTPError, ValueError) as e:
+            logger.error("공유지연명 조회 실패: %s (%s)", pnu, str(e)[:200])
+            return None
 
     async def get_individual_land_price(self, pnu: str, year: int | None = None) -> dict | None:
         """PNU 기반 개별공시지가 조회.
