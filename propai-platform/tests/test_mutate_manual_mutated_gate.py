@@ -213,7 +213,7 @@ def _예약_종료코드() -> set[str]:
     import re as _re
 
     본문 = _TOOL.read_text(encoding="utf-8")
-    m = _re.search(r'^RESERVED_EXITS="([0-9 ]+)"', 본문, _re.M)
+    m = _re.search(r'^RESERVED_EXITS="([0-9 ]+)"', 본문, _re.MULTILINE)
     assert m, "도구가 `RESERVED_EXITS` 를 선언하지 않는다 — 파생 불가"
     코드 = set(m.group(1).split())
     assert len(코드) >= 4, f"예약 코드가 너무 적다 — 추출기 의심: {코드}"
@@ -249,13 +249,15 @@ def test_테스트가_예약코드를_내면_판정과_겹치지_않게_옮긴�
     for 코드 in sorted(_예약_종료코드()):
         if 코드 == "5":
             continue
-        r = subprocess.run(  # noqa: S603
+        r = subprocess.run(
             ["bash", str(_TOOL), "mod.py", "s|MARKER = 1|MARKER = 2|",
              "python3", "runner.py", 코드],
             cwd=repo, capture_output=True, text=True, check=False,
         )
         구, 신 = _긁기(r.stdout)
         assert 신 == "::VERDICT=CAUGHT", f"[rc={코드}] 판정이 CAUGHT 가 아니다: {신}"
+        # ★구 스크레이퍼도 같은 판정을 읽어야 한다(호환은 두 모집단으로만 증명된다)
+        assert 구 == "CAUGHT", f"[rc={코드}] 구 스크레이퍼 호환이 깨졌다: {구}"
         assert str(r.returncode) not in _예약_종료코드(), (
             f"[테스트 rc={코드}] 도구가 **예약 코드 {r.returncode}** 를 그대로 냈다 — "
             "진짜 CAUGHT 가 판정 불가로 오독된다")
@@ -276,7 +278,7 @@ def test_구문검사는_변이_전에도_잰다(tmp_path):
         encoding="utf-8")
     sh("git", "add", "-A")
     sh("git", "commit", "-q", "-m", "init")
-    r = subprocess.run(  # noqa: S603
+    r = subprocess.run(
         ["bash", str(_TOOL), "bad.sh", "s|VAL=1|VAL=2|",
          "python3", "-m", "pytest", "test_bad.py", "-q"],
         cwd=repo, capture_output=True, text=True, check=False,
@@ -286,6 +288,8 @@ def test_구문검사는_변이_전에도_잰다(tmp_path):
     assert r.returncode != 16, f"검사기가 못 읽는 대상을 「변이가 깼다」로 판정했다: rc={r.returncode}"
     구, 신 = _긁기(r.stdout)
     assert 신 in ("::VERDICT=CAUGHT", "::VERDICT=SURVIVED"), f"정상 판정이 안 나왔다: {신}"
+    # ★축을 껐어도 **판정은 나와야** 한다 — 구 스크레이퍼가 빈 값이면 그 자체가 회귀다
+    assert 구 in ("CAUGHT", "SURVIVED"), f"축을 껐는데 구 스크레이퍼가 판정을 못 읽었다: {구}"
 
 
 def test_기준선을_건너뛰어도_개수_축은_산다(tmp_path):
@@ -297,14 +301,14 @@ def test_기준선을_건너뛰어도_개수_축은_산다(tmp_path):
     sh("git", "add", "-A")
     sh("git", "commit", "-q", "-m", "init")
     e = dict(os.environ, MUTATE_SKIP_BASELINE="락이 기준선 없이도 축이 사는지 시험한다")
-    r = subprocess.run(  # noqa: S603
+    r = subprocess.run(
         ["bash", str(_TOOL), "mod.py", "s|MARKER|GONE|", "python3", "runner.py"],
         cwd=repo, capture_output=True, text=True, env=e, check=False,
     )
     _, 신 = _긁기(r.stdout)
     assert 신 == "::VERDICT=UNDECIDED", f"기준선을 건너뛰자 축이 꺼졌다: {신} (rc={r.returncode})"
     # ★**두 번째 모집단** — 개수를 **안 찍는** 러너까지 막으면 그것도 결함이다
-    r2 = subprocess.run(  # noqa: S603
+    r2 = subprocess.run(
         ["bash", str(_TOOL), "mod.py", "s|MARKER|GONE|", "python3", "nocount.py"],
         cwd=repo, capture_output=True, text=True, env=e, check=False,
     )
@@ -337,7 +341,7 @@ def _판정불가_유발(repo, sh, 코드: str, env=None):
         argv, sedx, tgt = ["python3", "runner15.py"], "s|1|2|", "mod.py"
     sh("git", "add", "-A")
     sh("git", "commit", "-q", "-m", f"case{코드}")
-    return subprocess.run(  # noqa: S603
+    return subprocess.run(
         ["bash", str(_TOOL), tgt, sedx, *argv],
         cwd=repo, capture_output=True, text=True,
         env=dict(os.environ, **(env or {})), check=False,
