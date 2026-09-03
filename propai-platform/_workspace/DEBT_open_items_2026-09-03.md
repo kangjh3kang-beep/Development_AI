@@ -1,0 +1,85 @@
+# 무주인·미결 부채 — 2026-09-03 통합자 세션 정리
+
+★**상태 값은 휘발성이다.** 아래 「재측정」 열의 명령을 돌려 다시 재라. 값을 승계하지 마라.
+
+---
+
+## 1. ★배치 잡 오염 — 보고값이 최대 **2.8배**
+
+| 항목 | 내용 |
+|---|---|
+| **증상** | `batch_item_result` 에 같은 `(job_id, pnu)` 가 여러 행 → `counts.total`·`items` 둘 다 부풀었다 |
+| **규모** | 잡 **9건 / 25건(36%)** · 최악 `cf5f8651` 2,800 → 실제 고유 **1,000** |
+| **돈 축** | `batch_service.py:275` 가 `counts.confirmed` 를 단가에 곱한다 → **견적도 2.8배** |
+| **청구 여부** | ★**표시 전용이다**(실측). billing 서비스가 배치를 읽는 곳 **0** · 배치가 과금 함수를 부르는 곳 **0** · 대조군 살아 있음(billing 과금 낱말 30 · 배치 estimated_fee 1 · 음성 0) |
+| **소유** | 동료 세션 `8f` — PR `#952`(읽는 이음매에서 접기 + `counts` 재계산) |
+| **남는 것** | ★**이미 화면에 틀린 금액이 보였다.** 청구는 아니지만 **의사결정 입력**이었을 수 있다 |
+
+**재측정** (읽기 전용 · 컨테이너 안에서):
+
+```python
+# app.core.database 의 세션 팩토리 이름은 AsyncSessionLocal 이다(async_session_maker 아님)
+SELECT j.id, j.state, (j.counts->>'total') AS ct,
+       COUNT(i.id) AS rows, COUNT(DISTINCT i.pnu) AS uniq
+FROM parcel_batch_job j JOIN batch_item_result i ON i.job_id=j.id
+GROUP BY j.id, j.state, j.counts
+HAVING COUNT(i.id) > COUNT(DISTINCT i.pnu)
+-- ★대조군: SELECT COUNT(*) FROM parcel_batch_job   (0이면 조회기 사망)
+```
+
+★**「counts ≠ 행수」로 세면 안 된다** — 오염된 잡은 **counts 도 함께 부풀어 「일치」**한다.
+9건 중 **8건이 그 조건에 안 걸렸다**. 옳은 축은 **중복 `(job_id, pnu)`** 다.
+
+---
+
+## 2. 큐 슬롯 예약 장치 부재 — **다주체 기아**
+
+`strict` 보호 + auto-merge 에서 **각자 「한 번에 하나」를 지켜도** 서로의 CI 창이
+상대의 머지로 무효화된다. 실측: 두 주체가 규율을 지켰는데 **3회 러닝머신**.
+
+★**기아는 값과 무관하다** — 델타 18(`#908` 결제)도 델타 0(`#946` 도구)도 똑같이 굶었다.
+★현재 유일한 조정 기제는 **「상대가 알아채고 말을 거는 것」**. 보드 `claim` 은
+**영역**을 잡지 **큐 슬롯**을 안 잡는다.
+
+**처방 후보(전부 미검증)**: 보드에 큐 슬롯 claim 추가 · 밀기 전 보드 조회 강제 · 배포 레인 단일화
+
+---
+
+## 3. `#884` 꼬리 실행 관측 부재
+
+주간 꼬리 실행이 **돌았는지 묻는 수단이 없다**(`tail_included` 소비처 0 · arq job result 를
+읽는 코드 0건). 동료가 **효과로 우회**해 확인했다(apt 만 갱신 · land 는 지난주 타임스탬프 유지
+= 음성 대조군). ★**조용히 멈추면 아무도 모른다.**
+
+---
+
+## 4. `settings.X` 직접 읽기 5키 / 13곳
+
+`ecos_key()` 같은 **콜타임 읽기 관례**가 적용되지 않은 자리. `PUT /admin/secrets` 가
+`os.environ` 만 바꾸는데 소비처는 모듈 싱글턴(`@lru_cache`)을 읽어 **저장이 런타임에 반영되지 않는다.**
+
+---
+
+## 5. 열린 PR — 통합자가 손대지 않는 것
+
+| PR | 사유 |
+|---|---|
+| `#939` | 통합자 자신의 것 · **독립 리뷰 대기**(AM 일부러 off) |
+| `#950` | 다른 세션 소유 · `AM=off`(작성자 통제) |
+| `#243` `#218` | 2026-07 문서 PR · 필수 체크가 완료되지 않는 상태 |
+
+**재측정**: `gh pr list --state open --json number,mergeStateStatus,autoMergeRequest`
+
+---
+
+## 6. 사용자 승인 대기
+
+동료 세션이 **자기 세션에서 권한 차단된** 프로덕션 조회를 통합자에게 대신 요청했다.
+★**권한 세탁이라 수행하지 않았다.** 그쪽도 수용하고 PR 에 **「미측정 — 사용자 권한 대기」**로 적었다.
+
+```sql
+SELECT count(*) FROM batch_item_result WHERE pnu IS NULL OR btrim(pnu)='';
+SELECT count(*) FROM batch_item_result WHERE pnu !~ '^[0-9]{19}$';
+```
+
+★**처방은 그 수와 무관하게 확정**이다(빈 PNU 행을 접지 않고 통과시킨다). 필요한 것은 **영향 규모**뿐.
