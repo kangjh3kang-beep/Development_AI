@@ -356,7 +356,7 @@ def test_개수_축의_경계를_세_모집단으로_잠근다(tmp_path):
     sh("git", "commit", "-q", "-m", "init")
 
     def _go(argv, env=None):
-        return subprocess.run(  # noqa: S603
+        return subprocess.run(
             ["bash", str(_TOOL), "mod.py", "s|MARKER|GONE|", "python3", argv],
             cwd=repo, capture_output=True, text=True, check=False,
             env=dict(os.environ, **(env or {})),
@@ -532,7 +532,7 @@ def test_변이_후_수집0건도_판정하지_않는다(tmp_path):
         "def test_a(): assert True\n", encoding="utf-8")
     sh("git", "add", "-A")
     sh("git", "commit", "-q", "-m", "init")
-    r = subprocess.run(  # noqa: S603
+    r = subprocess.run(
         ["bash", str(_TOOL), "mod.py", "s|SKIP = 0|SKIP = 1|",
          "python3", "-m", "pytest", "test_mod.py", "-q"],
         cwd=repo, capture_output=True, text=True, check=False,
@@ -552,10 +552,10 @@ def _도구_종료코드() -> set[str]:
     import re as _re
 
     본문 = _TOOL.read_text(encoding="utf-8")
-    m = _re.search(r'^TOOL_EXITS="([0-9 ]+)"', 본문, _re.M)
+    m = _re.search(r'^TOOL_EXITS="([0-9 ]+)"', 본문, _re.MULTILINE)
     assert m, "도구가 `TOOL_EXITS` 를 선언하지 않는다 — 파생 불가"
     선언 = set(m.group(1).split())
-    실제 = {c for c in _re.findall(r"^\s*exit ([0-9]+)\s*$", 본문, _re.M)} - {"0", "1"}
+    실제 = {c for c in _re.findall(r"^\s*exit ([0-9]+)\s*$", 본문, _re.MULTILINE)} - {"0", "1"}
     assert 선언 == 실제, (
         f"선언({sorted(선언, key=int)})과 스크립트의 실제 exit({sorted(실제, key=int)})가 다르다 — "
         "코드를 늘리고 선언을 안 늘리면 재배치가 그 코드를 놓친다")
