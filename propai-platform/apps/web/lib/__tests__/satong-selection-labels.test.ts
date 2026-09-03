@@ -11,7 +11,6 @@ import {
   SATONG_LABEL_BUDGET,
   SATONG_LABEL_BUDGET_MID,
   SATONG_LABEL_BUDGET_NEAR,
-  satongLabelBudget,
 } from "@/lib/satong-map-labels";
 import {
   planSelectionLabels,

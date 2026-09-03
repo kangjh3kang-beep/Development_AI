@@ -49,12 +49,7 @@ import {
   type SampleBasis,
   type SampleBasisRaw,
 } from "@/lib/market/comparable-sample";
-import {
-  bindSatongLabel,
-  planSatongLabels,
-  satongLabelBudget,
-  satongLabelLOD,
-} from "@/lib/satong-map-labels";
+import { bindSatongLabel, planSatongLabels, satongLabelBudget } from "@/lib/satong-map-labels";
 import { planSelectionLabels, renderSelectionLabels } from "@/lib/satong-selection-labels";
 import type { SiteLayoutOverlay } from "@/lib/site-layout";
 import {
