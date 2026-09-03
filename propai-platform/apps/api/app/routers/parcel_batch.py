@@ -20,7 +20,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
 from app.foundation.parcel.batch.batch_service import BatchService
 from app.foundation.parcel.batch.job_store import DbJobStore
-from app.foundation.parcel.contracts.batch import BatchInput, BatchResult
+from app.foundation.parcel.contracts.batch import BatchInput, BatchResult, JobState
 from app.services.auth.auth_service import get_current_user
 
 logger = logging.getLogger(__name__)
@@ -81,6 +81,15 @@ async def submit_batch(
     # (브로커 미가동 시 Celery delay 가 ~20s 블록하므로, 플래그로 게이팅해 submit 즉시 응답 보장.
     #  제미나이 인프라트랙에서 워커·Redis 준비 후 PARCEL_BATCH_USE_CELERY=1 로 컷오버.)
     import os
+
+    # ★이미 끝난 잡을 멱등으로 돌려받았으면 **다시 돌리지 않는다**(2026-09-03 실측).
+    #   종전엔 `submit` 이 기존 잡을 반환해도 실행을 무조건 예약해, 같은 입력 재제출마다
+    #   외부 조회가 다시 나가고 결과가 중복됐다(라이브: `total=2` → 재제출 `total=4`).
+    #   ★`run()` 자체도 멱등으로 고쳤지만(batch_service: 시작 시 items 비움) 그것은 **정확성**이고,
+    #     이 가드는 **비용**이다 — 206필지면 외부 호출 206건이 통째로 낭비된다. 서로를 대신하지 못한다.
+    if job.state in (JobState.COMPLETE, JobState.PARTIAL):
+        return {"job_id": job.id, "state": job.state.value, "snapshot_id": job.snapshot_id}
+
     enqueued = False
     if os.getenv("PARCEL_BATCH_USE_CELERY", "").strip() in ("1", "true", "yes", "on"):
         enqueued = _enqueue_celery(job.id)

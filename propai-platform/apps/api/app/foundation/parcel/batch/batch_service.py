@@ -192,6 +192,16 @@ class BatchService:
                 return record
 
             record.job.state = JobState.RUNNING
+            # ★재실행 중복 봉합(2026-09-03 실측) — `run_chunks` 는 언제나 `target_pnus` **전체**를
+            #   다시 돈다(부분 재개 의미가 없다). 그런데 `on_chunk` 이 `items.extend` 로 덧붙이므로,
+            #   같은 잡에 run() 이 두 번 돌면 **결과가 중복**되고 `counts` 가 부풀어 오른다.
+            #   라이브 실측: 같은 입력 2건 재제출 → 같은 job_id(멱등 ◎)인데
+            #                `total=2·고유=2` → `total=**4**·고유=2`. 누적은 `3→6→9→12→15` 로 이어졌다.
+            #   ★분모가 틀리면 그 위의 **모든 비율**이 틀린다(맹지 비율·미조회 비율·공시가액 총액).
+            #   ★라우터에서 재실행을 막는 것만으로는 부족하다 — **Celery 재시도**가 남는다.
+            #     그래서 `run()` 자체를 **구성상 멱등**으로 만든다(시작 시 비운다).
+            record.items = []
+            record.recompute_counts()
             await self.store.save(record)
 
             async def on_chunk(results: list[BatchItemResult]) -> None:
