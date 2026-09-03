@@ -9,12 +9,23 @@ set -euo pipefail
 BOARD_DIR="${COORD_DIR:-$(cd "$(git rev-parse --git-common-dir)" && pwd)/coordination}"
 BOARD="$BOARD_DIR/BOARD.md"
 BRANCH="$(git branch --show-current 2>/dev/null || echo '?')"
-mkdir -p "$BOARD_DIR"
 
-# 요약에 실을 최근 건수. 보드는 계속 자라므로 값이 아니라 꼬리를 본다.
+# `summary` 에 실을 최근 건수.
+# ★검증한다 — 비수치를 그냥 통과시키면 `tail -n abc` 가 실패하고 폴백이 그것을 **「(없음)」으로
+#   뭉갠다**. 보드에 노트가 수천 건 있는데 「없음」이 나오는 것이 가장 나쁜 실패다(§26 위음성).
 SUMMARY_N="${COORD_SUMMARY_N:-12}"
+case "$SUMMARY_N" in
+  ''|*[!0-9]*|0) echo "★COORD_SUMMARY_N 이 양의 정수가 아니다: '$SUMMARY_N' — 판정 거부" >&2; exit 2 ;;
+esac
 
-if [ ! -f "$BOARD" ]; then
+stamp() { date '+%Y-%m-%d %H:%M'; }
+
+# ── 보드 생성은 **쓰는 명령에서만** 한다 ──
+# ★`summary`/`status` 가 보드를 만들면, `COORD_DIR` 이 틀렸을 때 **빈 유령 보드를 만들어 놓고
+#   자신 있게 "(없음)" 을 보고**한다 — 조회가 대상을 못 찾은 것을 "0건"으로 읽는 그 실패다.
+ensure_board() {
+  mkdir -p "$BOARD_DIR"
+  [ -f "$BOARD" ] && return 0
   {
     echo "# 멀티세션 협업 보드 (공유 · 브랜치 무관)"
     echo
@@ -22,37 +33,74 @@ if [ ! -f "$BOARD" ]; then
     echo
     echo "## 자동 로그 (coord.sh — claim/release/note, 최신이 아래)"
   } > "$BOARD"
-fi
+}
 
-stamp() { date '+%Y-%m-%d %H:%M'; }
+require_board() {
+  [ -f "$BOARD" ] || { echo "★보드가 없다: $BOARD — 조회 대상 부재를 「0건」으로 읽지 않는다(판정 거부)" >&2; exit 3; }
+  [ -r "$BOARD" ] || { echo "★보드를 읽을 수 없다: $BOARD — 판정 거부" >&2; exit 3; }
+}
 
-# 계산된 요약 절 — ★보드 전문을 뱉지 않는다.
-#
-# ★왜 전문을 안 뱉나: `status` 는 보드를 통째로 `cat` 한다(2026-09-03 실측 10,005줄). 그런데
-#   보드 **본문에 절 제목이 그대로 인용돼 있다**(같은 날 실측: 문자열 `미해제 CLAIM` 이 본문에 11회).
-#   그래서 하류에서 `sed -n '/<제목>/,$p'` 로 절을 자르면 **첫 발생**에서 잘려 보드 후반이 절에
-#   섞여 들어간다 — 동료 세션이 그 때문에 「NOTE 685건이 보인다」로 **틀리게** 읽었고, 마지막
-#   발생으로 다시 자르고 나서야 자기 부채 3건이 **전부 0건**임을 확인했다.
-#   `summary` 는 본문을 출력하지 않으므로 그 충돌이 **구조적으로** 일어날 수 없다.
+# ── 조회기 사망과 진짜 0건을 **가른다** ──
+# ★이 저장소는 정확히 이 결함 때문에 `tests/_scan_guard.py` 를 만들었고 `ScannerDeadError` 를
+#   `AssertionError` 와 **다른 예외로** 던진다("뭉치면 「검사기가 죽었다」가 「깨끗하다」로 읽힌다").
+#   그 규율을 이 스크립트도 지킨다: grep rc 1 = 진짜 0건 · rc>1 = 사망(시끄럽게 죽는다).
+board_grep() {  # $1=ERE  → 번호 붙은 매칭 줄을 stdout 으로
+  local out rc
+  out="$(grep -nE "$1" "$BOARD")" && rc=0 || rc=$?
+  if [ "$rc" -gt 1 ]; then
+    echo "★조회기 사망(grep rc=$rc) — 「0건」과 구분한다. 결과를 신뢰하지 마라." >&2
+    exit 3
+  fi
+  [ -n "$out" ] || { echo "(없음 — 조회기는 생존했고 실제로 0건이다)"; return 0; }
+  printf '%s\n' "$out"
+}
+
+# ── 문자 단위 절단(+ 표식) ──
+# ★`cut -c` 를 쓰지 않는다. GNU coreutils 의 `cut -c` 는 **바이트 기반**이라 한글을 문자 중간에서
+#   잘라 **깨진 UTF-8** 을 뱉는다(실측: 240바이트 절단 시 라이브 보드 NOTE 1,780건 중 1,369건이
+#   잘리고 그중 **533건이 파손**). 이 스크립트가 새로 보이게 만든 바로 그 노트가 깨지는 셈이다.
+#   `awk substr` 도 구현에 따라 바이트 기반이라 같은 함정이다. → python3 으로 문자 단위로 자른다.
+# ★python3 이 없으면 **자르지 않는다** — 자르다 깨뜨리느니 길게 두는 편이 낫다(fail-safe).
+truncate_chars() {
+  local lim="$1"
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c '
+import sys
+lim = int(sys.argv[1])
+for ln in sys.stdin:
+    ln = ln.rstrip("\n")
+    sys.stdout.write(ln if len(ln) <= lim else ln[:lim] + " …[잘림]")
+    sys.stdout.write("\n")
+' "$lim"
+  else
+    cat
+  fi
+}
+
+# ── 계산된 요약 절 — ★보드 전문을 뱉지 않는다 ──
+# ★왜 전문을 안 뱉나: 보드 **본문이 절 제목을 그대로 인용**하고 있다. 그래서 하류에서
+#   `sed -n '/<제목>/,$p'` 로 절을 자르면 **첫 발생**에서 잘려 엉뚱한 구간을 읽는다 — 동료 세션이
+#   실제로 그 때문에 노트 건수를 틀리게 읽었다. `summary` 는 본문을 출력하지 않으므로 그 충돌이
+#   **구조적으로** 일어날 수 없다.
+# ★수치를 여기 박지 않는다(휘발성이다). 재측정:
+#     grep -cE '^- \[NOTE\]' "$BOARD" ; grep -cE '^- \[(CLAIM|RELEASE)\]' "$BOARD"
+#     grep -c '미해제 CLAIM' "$BOARD"          # 본문이 절 제목을 인용하는 횟수
 print_summary() {
   echo "=== CLAIM/RELEASE 로그 — 최근 ${SUMMARY_N}건 (시간순 · 최신이 아래) ==="
   # ★제목에 「미해제」라고 쓰지 않는다 — 이 절은 **짝짓기를 하지 않는다.**
-  #   종전 제목은 `미해제 CLAIM(편집 중인 공유영역)` 이었고 주석은 필터를 선언했는데 코드에는
-  #   필터가 없어 RELEASE 까지 전부 덤프했다(2026-09-03 실측 1,224줄). 제목이 사실과 달랐다.
-  #   ★짝짓기를 여기서 되살리지 마라: 2026-08-27 에 구현됐고 **자기 양성 대조군에 실패**했다
+  #   짝짓기를 여기서 되살리지 마라: 2026-08-27 에 구현됐고 **자기 양성 대조군에 실패**했다
   #   (확실한 자기 쌍조차 못 맺음 · **RELEASE 1줄이 CLAIM 둘을 닫는** 실례). 그 파생 수치는
-  #   8개 세션에 뿌려진 뒤 **철회**됐다. 계산하지 않는 것을 계산한다고 말하지 않는다.
-  grep -nE '^- \[(CLAIM|RELEASE)\]' "$BOARD" | tail -n "$SUMMARY_N" | cut -c1-240 || echo "(없음)"
-  echo "  ↳ 이 절은 최근 ${SUMMARY_N}건만이다. 전문: grep -nE '^- \[(CLAIM|RELEASE)\]' \"\$BOARD\""
+  #   여러 세션에 뿌려진 뒤 **철회**됐다. 계산하지 않는 것을 계산한다고 말하지 않는다.
+  board_grep '^- \[(CLAIM|RELEASE)\]' | tail -n "$SUMMARY_N" | truncate_chars 240
+  echo "  ↳ 최근 ${SUMMARY_N}건만이고 줄이 길면 잘린다. 전문: grep -nE '^- \[(CLAIM|RELEASE)\]' \"\$BOARD\""
   echo
   echo "=== 최근 NOTE — 최근 ${SUMMARY_N}건 (시간순 · 최신이 아래) ==="
-  # ★NOTE 는 보드에서 **가장 많은 종류**인데(2026-09-03 실측 NOTE 1,772 · CLAIM 641 · RELEASE 547)
-  #   종전 요약 절은 `\[(CLAIM|RELEASE)\]` 만 grep 해 **한 건도 안 보였다.** CLAUDE.md 는 인계 공유를
-  #   `coord.sh note` 로 하라고 지시하는데 **그 공유가 요약 화면에서 사라지고 있었다.**
+  # ★NOTE 는 보드에서 가장 많은 종류인데 종전 요약 절은 `\[(CLAIM|RELEASE)\]` 만 grep 해
+  #   **한 건도 안 보였다.** CLAUDE.md 는 인계 공유를 `coord.sh note` 로 하라고 지시하는데
+  #   **그 공유가 요약 화면에서 사라지고 있었다.**
   # ★여러 줄 NOTE 는 **첫 줄만** 나온다 — 이어지는 줄에는 `- [NOTE]` 표지가 없기 때문이다.
-  #   이것은 의도된 절단이며, 그래서 행번호와 전문 조회 방법을 함께 인쇄한다.
-  grep -nE '^- \[NOTE\]' "$BOARD" | tail -n "$SUMMARY_N" | cut -c1-240 || echo "(없음)"
-  echo "  ↳ 여러 줄 노트는 첫 줄만 보인다. 전문: sed -n '<행번호>,+40p' \"\$BOARD\""
+  board_grep '^- \[NOTE\]' | tail -n "$SUMMARY_N" | truncate_chars 240
+  echo "  ↳ 여러 줄 노트는 첫 줄만, 긴 줄은 잘린다. 전문: sed -n '<행번호>,+40p' \"\$BOARD\""
 }
 
 cmd="${1:-status}"
@@ -60,16 +108,27 @@ shift || true
 
 case "$cmd" in
   status)
+    ensure_board
     echo "=== 워크트리 / 브랜치 ==="
     git worktree list
     echo
     echo "=== 공유 보드: $BOARD ==="
     cat "$BOARD"
     echo
-    print_summary
+    # ★이 절은 **종전 그대로**다(제목·전량 출력·무절단). 문서화된 소비자가 있다 —
+    #   인계서들이 "★자르지 마라 — NOTE 줄에 배포 요청이 숨는다" 라고 명시한다.
+    #   그래서 `status` 는 후방호환을 유지하고, 요약은 `summary` 로 **따로** 낸다.
+    echo "=== 미해제 CLAIM(편집 중인 공유영역) ==="
+    echo "  ※이 절은 짝짓기를 하지 않는다 — CLAIM 과 RELEASE 를 **전부** 인쇄한다(제목과 다르다)."
+    echo "  ※간결한 요약은 'coord.sh summary'."
+    board_grep '\[(CLAIM|RELEASE)\]'
+    echo
+    # ★신설 — 종전에는 NOTE 가 여기서 **한 건도** 안 보였다. 절단하지 않는다(위 소비자 주석 참조).
+    echo "=== 최근 NOTE (최근 ${SUMMARY_N}건 · 무절단) ==="
+    board_grep '^- \[NOTE\]' | tail -n "$SUMMARY_N"
     ;;
   summary)
-    # 보드 전문 없이 계산된 절만 — 하류 슬라이싱이 본문과 충돌할 수 없다(위 print_summary 주석).
+    require_board   # ★조회 명령은 보드를 만들지 않는다(유령 보드 방지)
     echo "=== 워크트리 / 브랜치 ==="
     git worktree list
     echo
@@ -79,16 +138,19 @@ case "$cmd" in
     ;;
   claim)
     [ $# -ge 1 ] || { echo "사용: coord.sh claim <영역>" >&2; exit 1; }
+    ensure_board
     printf -- '- [CLAIM] %s <- %s (%s)\n' "$1" "$BRANCH" "$(stamp)" >> "$BOARD"
     echo "claimed: $1 <- $BRANCH"
     ;;
   release)
     [ $# -ge 1 ] || { echo "사용: coord.sh release <영역>" >&2; exit 1; }
+    ensure_board
     printf -- '- [RELEASE] %s <- %s (%s)\n' "$1" "$BRANCH" "$(stamp)" >> "$BOARD"
     echo "released: $1"
     ;;
   note)
     [ $# -ge 1 ] || { echo "사용: coord.sh note <내용>" >&2; exit 1; }
+    ensure_board
     printf -- '- [NOTE] %s %s: %s\n' "$(stamp)" "$BRANCH" "$*" >> "$BOARD"
     echo "noted."
     ;;
