@@ -215,3 +215,46 @@
     mutated_gate 14 · baseline_gate 13 · pipe_verdict 7 · guard 78 + 1 xfailed = 112 + 1
     변이 **8/8 CAUGHT** — 리뷰어가 생존시킨 6종 전부 포함
     ★M2 는 첫 시도에서 **주입 실패**(앵커가 두 곳에 존재) → 유일 앵커로 재주입해 CAUGHT
+
+
+---
+
+## 7. ★이 레인의 **구조적 위험** — 도구는 `scripts/`, 락은 `propai-platform/tests/`
+
+동료 `development-ai-3a` 가 자기 PR 의 2차 적대 리뷰에서 찾아 공유했고, **내가 직접 재서 확증**했다.
+
+### 실측 (`origin/main` 의 `ci.yml:43`)
+
+    if grep -qE '^(propai-platform/|\.github/workflows/ci\.yml$)' <<<"$FILES"; then
+      platform=true
+    else
+      platform=false     # ← Backend (pytest) 잡이 **skip**
+
+    scripts/mutate_manual.sh 단독 → **platform=false**
+    #957 전체            → platform=true (우연히 `propai-platform/tests/` 를 건드림)
+
+★**GitHub 은 skip 된 필수 잡을 「충족」으로 계수한다.** 즉 **도구만 고치는 PR 은
+락이 한 번도 안 돌고 초록으로 머지된다** — 이 저장소 표현으로
+*"면제를 남기면 락은 skip 이라 무잠금"* 의 **CI 판**이다.
+
+### 이 PR 은 안전하다 — 그런데 **다음 PR 이 위험하다**
+
+`#957` 은 `propai-platform/` 을 건드려 통과한다. 위험한 것은 **rc 판별 한 줄만 고치는**
+후속 커밋이다. **이 도구의 락은 전부 `propai-platform/tests/` 에 있고 도구는 `scripts/` 에 있다** —
+정확히 그 이음매다.
+
+### 처방은 `3a` 의 `#958` 에 있다 (중복 구현하지 않는다)
+
+    필터를 `^(propai-platform/|scripts/|\.github/workflows/ci\.yml$)` 로 확장
+    + 파생형 락(루트 스위트 테스트에서 `scripts/…` 참조를 **긁어** 필터와 대조)
+    + 음성 축(`README.md`·`docs/` 는 매치되면 안 됨 — 전부 매치하면 검사가 무의미)
+
+★**`#958` 착지 전까지는 도구만 고치는 커밋을 내지 않는다.** 내야 하면
+`propai-platform/` 아래 파일을 한 줄이라도 함께 건드려 `platform=true` 를 만든다.
+
+### ★일반화
+
+> **락과 대상이 다른 경로에 있으면, 「그 경로가 CI 감시 안에 있는가」를 따로 물어야 한다.**
+> 락이 있다는 것과 **락이 도는 것**은 다르다. 이 저장소는 pytest 의
+> `testpaths`(로컬 986 vs CI 10,344)와 ruff 의 `working-directory` 로 **같은 형태를 두 번** 겪었다 —
+> 이번이 **세 번째**이고 매체만 달랐다(경로 필터).
