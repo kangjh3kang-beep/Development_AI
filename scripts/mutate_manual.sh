@@ -80,6 +80,7 @@ else
     echo "  변이와 무관하게 rc≠0 이므로 **거짓 CAUGHT** 가 된다." >&2
     echo "  ★이건 기준선이 빨간 것이 아니라 **러너가 아무것도 안 고른 것**이다." >&2
     echo "  확인할 것: -k 표현식 오타 · 테스트 파일 경로 · 이름 변경 · working-directory" >&2
+    echo "::VERDICT=UNDECIDED"
     exit 14
   fi
   if [ "$BASE_RC" -ne 0 ]; then
@@ -95,6 +96,7 @@ else
     echo "    · 테스트 범위를 좁혀라(그 변이가 실제로 태우는 파일만)" >&2
     echo "    · 정말 의도한 것이면  MUTATE_SKIP_BASELINE=\"사유\"  로 다시 실행하라" >&2
     rm -f "$BASE_LOG"
+    echo "::VERDICT=UNDECIDED"
     exit 13
   fi
 
@@ -137,6 +139,7 @@ else
       | tail -3 | sed 's/^/    /' >&2 || true
     echo "  대상이 정말 전부 xfail/skip 이면  MUTATE_SKIP_BASELINE=\"사유\"  로 다시 실행하라" >&2
     rm -f "$BASE_LOG"
+    echo "::VERDICT=UNDECIDED"
     exit 15
   fi
   rm -f "$BASE_LOG"
@@ -460,6 +463,54 @@ if [ "$RC_UNTRUSTED" -eq 1 ] && [ -n "${MUTATE_ALLOW_SHELL:-}${MUTATE_ALLOW_PIPE
 fi
 PIPE_SEEN="$RC_UNTRUSTED"
 
+# ── ★변이가 **대상을 깼는지** 먼저 본다 ─────────────────────────────────────
+#
+# ★2026-09-03 — 동료 `development-ai-88` 이 **도구를 실사용하다** 밟았고 내가 재현했다:
+#   `sed` 가 구문을 깨면 pytest 는 rc=2 를 내고, 이 도구는 그것을 **CAUGHT** 로 찍는다.
+#
+#     구문 깬 변이  → "CAUGHT — 변이가 잡혔다(rc=2)"
+#     정상 변이     → "CAUGHT — 변이가 잡혔다(rc=1)"    ← **형태가 같다**
+#
+#   **테스트가 돌지도 않았는데 CAUGHT** 다 = 변이 점수 부풀림 = 「없는 락이 있다」고 믿게 된다.
+#
+# ★★`#924` 의 기준선 게이트로는 **원리적으로 못 잡는다** — 기준선은 초록이었고,
+#   **원인이 변이 자신**이다. 「전」에 거는 판별은 「후」에도 같은 뜻을 갖는다.
+#
+# ★모르는 확장자는 **검사하지 않고, 그렇게 출력한다.** 조용히 건너뛰면
+#   «검사했는데 통과» 로 오독된다(이 저장소가 반복해 데인 「침묵 = 이상 없음」).
+_syntax_report=""
+_syntax_ok() {
+  case "$1" in
+    *.py)
+      # ★`python3 -m py_compile` 은 대상 옆에 `__pycache__` 를 **만든다.**
+      #   그것을 지우려고 `find . -name __pycache__ -exec rm -rf` 를 쓰면
+      #   **호출자의 작업 디렉토리 전체**를 훑는다 — 이 도구의 범위 밖 파괴다.
+      #   → 캐시를 **아예 안 만들도록** 출력 경로를 임시파일로 준다.
+      if python3 -c 'import py_compile,sys; py_compile.compile(sys.argv[1], cfile=sys.argv[2], doraise=True)' \
+           "$1" "$(mktemp)" >/dev/null 2>&1; then
+        _syntax_report="구문 검사: py_compile 통과"
+        return 0
+      fi
+      _syntax_report="구문 검사: py_compile **실패**"
+      return 1 ;;
+    *.js|*.mjs|*.cjs)
+      if command -v node >/dev/null 2>&1; then
+        if node --check "$1" 2>/dev/null; then _syntax_report="구문 검사: node --check 통과"; return 0; fi
+        _syntax_report="구문 검사: node --check **실패**"; return 1
+      fi
+      _syntax_report="구문 검사: ★건너뜀(node 없음) — 이 축은 **미측정**"; return 0 ;;
+    *.sh|*.bash)
+      if sh -n "$1" 2>/dev/null; then _syntax_report="구문 검사: sh -n 통과"; return 0; fi
+      _syntax_report="구문 검사: sh -n **실패**"; return 1 ;;
+    *)
+      # ★`.ts`/`.tsx` 는 값싼 체커가 없다(tsc 는 프로젝트 설정이 필요하다).
+      _syntax_report="구문 검사: ★건너뜀(확장자 미지원) — 이 축은 **미측정**"; return 0 ;;
+  esac
+}
+MUT_BROKEN=0
+if ! _syntax_ok "$FILE"; then MUT_BROKEN=1; fi
+echo "== ${_syntax_report} =="
+
 # ── 테스트 실행 ─────────────────────────────────────────────────────────────
 echo "== 변이 상태에서 테스트 =="
 set +e
@@ -467,7 +518,20 @@ set +e
 RC=$?
 set -e
 
-if [ "$PIPE_SEEN" -eq 1 ]; then
+if [ "$MUT_BROKEN" -eq 1 ]; then
+  # ★변이가 **대상을 깼다** — 잡힌 것이 아니라 **잴 수 없게 된 것**이다.
+  echo "판정 불가(무효) — **변이가 대상 파일의 구문을 깼다**(rc=$RC)."
+  echo "  테스트는 변이를 잡은 것이 아니라 **파일을 읽지 못한 것**이다."
+  echo "  ★이 rc 를 CAUGHT 로 세면 변이 점수가 부풀려진다(없는 락이 있다고 믿게 된다)."
+  echo "  sed 표현식을 고쳐 **구문이 유지되는 변이**로 다시 시도하라."
+  MUT_INVALID=1
+elif [ "$RC" -eq 5 ]; then
+  # ★pytest rc=5 = **수집 0건**. `#924` 가 **기준선**에 대해 이미 가른 축을,
+  #   **변이 후**에도 대칭으로 건다 — 원인이 변이여도 뜻은 같다("못 돌았다").
+  echo "판정 불가(무효) — 변이 후 테스트가 **0건 수집**됐다(pytest rc=5)."
+  echo "  변이가 수집을 깼다면 그것은 **잡힌 것이 아니다.**"
+  MUT_INVALID=1
+elif [ "$PIPE_SEEN" -eq 1 ]; then
   # ★판정을 발행하지 않는다 — 못 믿는 값으로 SURVIVED/CAUGHT 를 찍으면 그것이 증거로 인용된다.
   echo "판정 불가(무효) — rc=$RC 를 신뢰할 수 없다: ${RC_WHY}"
   echo "  셸 스크립트의 rc 는 **마지막 명령의 것**이다: 'pytest ...; tail -1' 처럼 쓰면"
@@ -485,6 +549,19 @@ elif [ "$RC" -eq 0 ]; then
 else
   echo "CAUGHT — 변이가 잡혔다(rc=$RC)."
 fi
+# ★기계 판독용 토큰 — **본문·안내문에 절대 쓰이지 않는 형태**다.
+#   ★왜: 88 과 내가 **각각** 자기 설명문을 자기 검사기가 집는 사고를 냈다
+#     (내 안내문의 *"CAUGHT 가 SURVIVED 로 보고된다"* · 88 의 테스트 주석).
+#     앵커(`^`)는 **증상**을 막고 이 토큰은 **원인**을 막는다.
+#   ★기존 `CAUGHT`/`SURVIVED` 줄은 **지우지 않는다** — 이미 그것을 긁는 소비자가 있다.
+#     더하는 것은 안전하고 지우는 것은 아니다.
+if [ "${MUT_INVALID:-0}" -eq 1 ] || [ "${PIPE_INVALID:-0}" -eq 1 ]; then
+  echo "::VERDICT=UNDECIDED"
+elif [ "$RC" -eq 0 ]; then
+  echo "::VERDICT=SURVIVED"
+else
+  echo "::VERDICT=CAUGHT"
+fi
 
 # trap 이 원복한다. 원복 결과는 아래에서 다시 확인한다.
 restore
@@ -497,6 +574,9 @@ echo "== 원복 확인(작업트리 깨끗) =="
 
 # ★판정 불가는 **성공도 실패도 아니다.** 오염된 RC 를 그대로 돌려주면 호출 스크립트가
 #   그것을 CAUGHT/SURVIVED 로 해석한다 — 이 도구가 막으려는 그 일이다.
+if [ "${MUT_INVALID:-0}" -eq 1 ]; then
+  exit 16
+fi
 if [ "${PIPE_INVALID:-0}" -eq 1 ]; then
   exit 12
 fi
