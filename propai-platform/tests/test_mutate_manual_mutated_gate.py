@@ -109,13 +109,20 @@ def test_정상_변이는_그대로_판정한다(tmp_path):
 #   그래서 **개수를 찍는 가짜 러너**로 태운다 — vitest 의 «빈 선택도 rc=0» 을 재현한다.
 #   ★`#924` 교훈: 출력이 없는 가짜 러너는 개수 축을 통째로 우회한다. 이 러너는 **찍는다.**
 
-_러너 = r"""
-import sys, pathlib
-src = pathlib.Path("mod.py").read_text()
-# 변이 전에는 2건 통과, 변이 후에는 **0건 통과인데 rc=0** (vitest 빈 선택 재현)
-print("2 passed in 0.01s" if "MARKER" in src else "0 passed in 0.01s")
-sys.exit(0)
-"""
+# ★★**지어낸 상수가 결함을 비껴갔다**(적대 리뷰 2차 CRITICAL-1).
+#   나는 빈 선택 출력을 `"0 passed"` 라고 **지어냈는데**, 진짜 vitest 는 `passed` 를
+#   **한 번도 안 찍는다**. 그 실측은 `#924` 가 이미 해 뒀고
+#   (*"빈 선택 출력에 `N passed` 가 있나 → **관측 0건**"*),
+#   **문자열까지 형제 락 `test_mutate_manual_baseline_gate.py:208` 에 들어 있었다.**
+#   → 그 실측값을 **그대로 가져다 쓴다.** 형제를 먼저 보라(CLAUDE.md §29).
+_VITEST_GREEN = " Test Files  1 passed (1)\n      Tests  15 passed (15)"
+_VITEST_ALL_SKIPPED = " Test Files  1 skipped (1)\n      Tests  15 skipped (15)"
+_러너 = (
+    "import sys, pathlib\n"
+    'src = pathlib.Path("mod.py").read_text()\n'
+    f'print({_VITEST_GREEN!r} if "MARKER" in src else {_VITEST_ALL_SKIPPED!r})\n'
+    "sys.exit(0)\n"
+)
 
 
 def test_통과_0건인데_rc0_이면_판정하지_않는다(tmp_path):
@@ -216,7 +223,42 @@ def _예약_종료코드() -> set[str]:
     m = _re.search(r'^RESERVED_EXITS="([0-9 ]+)"', 본문, _re.MULTILINE)
     assert m, "도구가 `RESERVED_EXITS` 를 선언하지 않는다 — 파생 불가"
     코드 = set(m.group(1).split())
-    assert len(코드) >= 4, f"예약 코드가 너무 적다 — 추출기 의심: {코드}"
+    # ★`>= 4` 는 **손으로 쓴 하한**이었고 집합은 5개다 — 정확히 하나를 조용히 지울 수 있었다
+    #   (「하한이 상한이 된다」가 **한 층 위에서 재발**했다 · 적대 리뷰 2차 HIGH-1).
+    #   → 하한을 **스크립트에서 파생**시킨다.
+    실제 = _판정불가_exit_코드(본문)
+    assert 코드 == 실제, (
+        f"선언({sorted(코드)})과 **실제 판정 불가 경로**({sorted(실제)})가 다르다 — "
+        "경로를 늘리고 선언을 안 늘리면 재배치·문서·락이 **전부** 그 코드를 놓친다")
+    return 코드
+
+
+def _판정불가_exit_코드(본문: str) -> set[str]:
+    """★**역방향 파생** — 스크립트에서 «`::VERDICT=UNDECIDED` 를 내고 exit 하는» 코드를 긁는다.
+
+    종전 단언은 전부 **선언 → (문서·행위)** 한 방향이었다. 그래서 선언을 줄이거나
+    새 경로를 선언 없이 추가해도 **초록**이었다(리뷰 변이 M2·M3 생존).
+    """
+    import re as _re
+
+    코드 = set()
+    줄 = 본문.splitlines()
+    for k, ln in enumerate(줄):
+        m = _re.match(r"\s*exit ([0-9]+)\s*$", ln)
+        if not m:
+            continue
+        # 그 exit **직전 몇 줄** 안에 UNDECIDED 토큰을 내는 곳이 있으면 판정 불가 경로다
+        앞 = "\n".join(줄[max(0, k - 6):k])
+        if "::VERDICT=UNDECIDED" in 앞:
+            코드.add(m.group(1))
+    # 공유 블록(12·16)은 토큰이 한 곳이라 위 스캔으로 안 잡힌다 — 그 둘은 재배치 루프에서 파생
+    m2 = _re.search(r'if \[ "\$\{MUT_INVALID:-0\}" -eq 1 \]; then\n\s*exit ([0-9]+)', 본문)
+    if m2:
+        코드.add(m2.group(1))
+    m3 = _re.search(r'if \[ "\$\{PIPE_INVALID:-0\}" -eq 1 \]; then\n\s*exit ([0-9]+)', 본문)
+    if m3:
+        코드.add(m3.group(1))
+    assert len(코드) >= 3, f"판정 불가 경로를 못 찾았다 — 추출기 의심: {코드}"
     return 코드
 
 
@@ -246,9 +288,10 @@ def test_테스트가_예약코드를_내면_판정과_겹치지_않게_옮긴�
         encoding="utf-8")
     sh("git", "add", "-A")
     sh("git", "commit", "-q", "-m", "init")
-    for 코드 in sorted(_예약_종료코드()):
-        if 코드 == "5":
-            continue
+    # ★충돌이 사는 모집단은 **「도구가 내는 모든 코드」** 다 — 「판정 불가」 부분집합이 아니다
+    #   (리뷰 2차 MEDIUM-1: 10·11·64·70·71 이 그대로 새어 나갔다. 70/71 은 「원복 실패」라
+    #    깨끗한 트리를 두고 사람을 수색시킨다).
+    for 코드 in sorted(_도구_종료코드(), key=int):
         r = subprocess.run(
             ["bash", str(_TOOL), "mod.py", "s|MARKER = 1|MARKER = 2|",
              "python3", "runner.py", 코드],
@@ -258,9 +301,9 @@ def test_테스트가_예약코드를_내면_판정과_겹치지_않게_옮긴�
         assert 신 == "::VERDICT=CAUGHT", f"[rc={코드}] 판정이 CAUGHT 가 아니다: {신}"
         # ★구 스크레이퍼도 같은 판정을 읽어야 한다(호환은 두 모집단으로만 증명된다)
         assert 구 == "CAUGHT", f"[rc={코드}] 구 스크레이퍼 호환이 깨졌다: {구}"
-        assert str(r.returncode) not in _예약_종료코드(), (
-            f"[테스트 rc={코드}] 도구가 **예약 코드 {r.returncode}** 를 그대로 냈다 — "
-            "진짜 CAUGHT 가 판정 불가로 오독된다")
+        assert str(r.returncode) not in _도구_종료코드(), (
+            f"[테스트 rc={코드}] 도구가 **도구 코드 {r.returncode}** 를 그대로 냈다 — "
+            "호출자가 그것을 도구 신호로 오독한다")
 
 
 def test_구문검사는_변이_전에도_잰다(tmp_path):
@@ -292,29 +335,53 @@ def test_구문검사는_변이_전에도_잰다(tmp_path):
     assert 구 in ("CAUGHT", "SURVIVED"), f"축을 껐는데 구 스크레이퍼가 판정을 못 읽었다: {구}"
 
 
-def test_기준선을_건너뛰어도_개수_축은_산다(tmp_path):
-    """★`MUTATE_SKIP_BASELINE` 에서 **같은 입력이 정반대 판정**으로 뒤집혔다(리뷰 HIGH-1)."""
+def test_개수_축의_경계를_세_모집단으로_잠근다(tmp_path):
+    """★이 축은 **원리적 한계**가 있다 — 그것까지 잠근다.
+
+    종전 이 테스트는 *"기준선을 건너뛰어도 개수 축은 산다"* 였고 **초록이었다.**
+    그런데 그것은 **내가 지어낸 픽스처**(`"0 passed"`) 덕이었다 — 진짜 vitest 빈 선택은
+    `passed` 를 **한 번도 안 찍는다**(형제 락 `baseline_gate.py:208` 의 실측값).
+    실측값을 넣으니 **B 는 원리적으로 못 고친다**는 것이 드러났다.
+
+    세 모집단:
+      A 기준선 측정 + vitest 빈 선택   → **UNDECIDED**(주 경로 · 이것이 이 축의 표적)
+      B SKIP_BASELINE + vitest 빈 선택 → **SURVIVED**(가를 정보가 없다 · 도구가 **말해야** 한다)
+      C SKIP_BASELINE + 개수 안 찍는 러너 → **SURVIVED**(위양성 축)
+    """
     repo, sh = _repo(tmp_path)
     (repo / "mod.py").write_text("MARKER = 1\n", encoding="utf-8")
     (repo / "runner.py").write_text(_러너, encoding="utf-8")
     (repo / "nocount.py").write_text("import sys\nprint('done')\nsys.exit(0)\n", encoding="utf-8")
     sh("git", "add", "-A")
     sh("git", "commit", "-q", "-m", "init")
-    e = dict(os.environ, MUTATE_SKIP_BASELINE="락이 기준선 없이도 축이 사는지 시험한다")
-    r = subprocess.run(
-        ["bash", str(_TOOL), "mod.py", "s|MARKER|GONE|", "python3", "runner.py"],
-        cwd=repo, capture_output=True, text=True, env=e, check=False,
-    )
-    _, 신 = _긁기(r.stdout)
-    assert 신 == "::VERDICT=UNDECIDED", f"기준선을 건너뛰자 축이 꺼졌다: {신} (rc={r.returncode})"
-    # ★**두 번째 모집단** — 개수를 **안 찍는** 러너까지 막으면 그것도 결함이다
-    r2 = subprocess.run(
-        ["bash", str(_TOOL), "mod.py", "s|MARKER|GONE|", "python3", "nocount.py"],
-        cwd=repo, capture_output=True, text=True, env=e, check=False,
-    )
-    _, 신2 = _긁기(r2.stdout)
-    assert 신2 == "::VERDICT=SURVIVED", (
-        f"개수를 안 찍는 러너까지 막았다(위양성): {신2} (rc={r2.returncode})")
+
+    def _go(argv, env=None):
+        return subprocess.run(  # noqa: S603
+            ["bash", str(_TOOL), "mod.py", "s|MARKER|GONE|", "python3", argv],
+            cwd=repo, capture_output=True, text=True, check=False,
+            env=dict(os.environ, **(env or {})),
+        )
+
+    # ── A: 주 경로. ★`MUT_HAS_COUNT` 만 게이트로 쓰면 **여기가 죽는다**(리뷰 2차 CRITICAL-1)
+    a = _go("runner.py")
+    _, 신a = _긁기(a.stdout)
+    assert 신a == "::VERDICT=UNDECIDED", (
+        f"[A 주 경로] 기준선을 쟀는데 개수 축이 안 돌았다: {신a} (rc={a.returncode})\n"
+        "★진짜 vitest 빈 선택엔 `passed` 가 없다 — `MUT_HAS_COUNT` 만 보면 여기가 샌다")
+
+    # ── B: ★원리적 한계. 판정은 SURVIVED 지만 **도구가 그 한계를 말해야** 한다
+    b = _go("runner.py", {"MUTATE_SKIP_BASELINE": "락이 경계를 잠근다"})
+    _, 신b = _긁기(b.stdout)
+    assert 신b == "::VERDICT=SURVIVED", f"[B] 예상 밖 판정: {신b}"
+    assert "개수 축이 약해진다" in (b.stdout + b.stderr), (
+        "기준선을 건너뛰면 개수 축이 약해지는데 **말하지 않는다** — "
+        "그 실행의 SURVIVED 를 근거로 쓰게 된다")
+
+    # ── C: 위양성 축. 개수를 **안 찍는** 러너까지 막으면 그것도 결함이다
+    c = _go("nocount.py", {"MUTATE_SKIP_BASELINE": "위양성 축"})
+    _, 신c = _긁기(c.stdout)
+    assert 신c == "::VERDICT=SURVIVED", f"[C] 개수를 안 찍는 러너를 막았다(위양성): {신c}"
+
 
 
 def _판정불가_유발(repo, sh, 코드: str, env=None):
@@ -337,7 +404,7 @@ def _판정불가_유발(repo, sh, 코드: str, env=None):
         argv, sedx, tgt = ["python3", "-m", "pytest", "t.py", "-q"], "s|1|2|", "mod.py"
     else:              # 15: 기준선 rc=0 인데 통과 0건
         (repo / "runner15.py").write_text(
-            "import sys\nprint('0 passed in 0.01s')\nsys.exit(0)\n", encoding="utf-8")
+            f"import sys\nprint({_VITEST_ALL_SKIPPED!r})\nsys.exit(0)\n", encoding="utf-8")
         argv, sedx, tgt = ["python3", "runner15.py"], "s|1|2|", "mod.py"
     sh("git", "add", "-A")
     sh("git", "commit", "-q", "-m", f"case{코드}")
@@ -409,7 +476,7 @@ def test_요약이_stderr_로_나와도_개수를_읽는다(tmp_path):
         "import sys, pathlib\n"
         'src = pathlib.Path("mod.py").read_text()\n'
         '# ★요약을 **stderr** 로 낸다(실제 러너 중에 그런 것이 있다)\n'
-        'print("2 passed in 0.01s" if "MARKER" in src else "0 passed in 0.01s",'
+        f'print({_VITEST_GREEN!r} if "MARKER" in src else {_VITEST_ALL_SKIPPED!r},'
         ' file=sys.stderr)\n'
         "sys.exit(0)\n", encoding="utf-8")
     sh("git", "add", "-A")
@@ -448,3 +515,48 @@ def test_개수는_모든_매치의_최대값으로_읽는다(tmp_path):
     assert 신 == "::VERDICT=SURVIVED", (
         f"통과가 3건 있는데 개수 축이 발화했다(최소값을 쓰면 이렇게 된다): {신} "
         f"(rc={r.returncode})")
+
+
+def test_변이_후_수집0건도_판정하지_않는다(tmp_path):
+    """★HIGH-2 — 계획서 §2-1 (b) 축이 **통째로 무잠금**이었다(그 6줄을 지워도 초록).
+
+    변이가 **수집을 깨면** pytest 는 rc=5 를 낸다. 그건 «잡힌 것»이 아니라 «못 돈 것»이다.
+    origin/main 은 이것을 **CAUGHT(rc=5)** 로 찍는다 = 변이 점수 부풀림.
+    """
+    repo, sh = _repo(tmp_path)
+    (repo / "mod.py").write_text("SKIP = 0\n", encoding="utf-8")
+    # ★변이가 `SKIP = 1` 로 만들면 모듈레벨 skip 이 발화해 **수집 0건**이 된다
+    (repo / "test_mod.py").write_text(
+        "import pytest\nfrom mod import SKIP\n"
+        "if SKIP:\n    pytest.skip('전부 건너뜀', allow_module_level=True)\n"
+        "def test_a(): assert True\n", encoding="utf-8")
+    sh("git", "add", "-A")
+    sh("git", "commit", "-q", "-m", "init")
+    r = subprocess.run(  # noqa: S603
+        ["bash", str(_TOOL), "mod.py", "s|SKIP = 0|SKIP = 1|",
+         "python3", "-m", "pytest", "test_mod.py", "-q"],
+        cwd=repo, capture_output=True, text=True, check=False,
+    )
+    합 = r.stdout + r.stderr
+    _, 신 = _긁기(r.stdout)
+    assert 신 == "::VERDICT=UNDECIDED", (
+        f"변이가 수집을 깼는데 판정을 발행했다: {신} (rc={r.returncode})\n{합}")
+    assert r.returncode == 16, f"rc 가 16 이 아니다: {r.returncode}"
+
+
+def _도구_종료코드() -> set[str]:
+    """도구가 선언한 `TOOL_EXITS` 를 파생하고, **스크립트의 실제 `exit` 와 집합 동일**을 단언한다.
+
+    ★역방향까지 봐야 «코드를 늘리고 선언을 안 늘림» 이 잡힌다(리뷰 2차 HIGH-1 의 형태).
+    """
+    import re as _re
+
+    본문 = _TOOL.read_text(encoding="utf-8")
+    m = _re.search(r'^TOOL_EXITS="([0-9 ]+)"', 본문, _re.M)
+    assert m, "도구가 `TOOL_EXITS` 를 선언하지 않는다 — 파생 불가"
+    선언 = set(m.group(1).split())
+    실제 = {c for c in _re.findall(r"^\s*exit ([0-9]+)\s*$", 본문, _re.M)} - {"0", "1"}
+    assert 선언 == 실제, (
+        f"선언({sorted(선언, key=int)})과 스크립트의 실제 exit({sorted(실제, key=int)})가 다르다 — "
+        "코드를 늘리고 선언을 안 늘리면 재배치가 그 코드를 놓친다")
+    return 선언
