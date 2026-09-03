@@ -188,13 +188,46 @@ describe("C 기본값(값) — 함수를 **실행해서** 판정에 먹인다", 
   });
 
   it("★그 기본값이 실제로 useState 초기화자로 쓰인다(배선)", () => {
+    // ★모양이 아니라 **관계**를 본다(2026-09-03 · 리뷰 minor-1 + 동료 세션이 **독립적으로**
+    //   같은 줄을 짚었다). 종전 락은 긴 제네릭을 **정확 일치**로 찾았다:
+    //       /useState<SatongMapLayerState\["controlsByLayer"\]>\(\(\) => defaultControlsByLayer\(\)\)/
+    //   prettier 가 줄바꿈만 해도 · 타입 별칭을 도입해도 **계약은 그대로인데 빨개진다.**
+    //   ***계약이 그대로인데 락이 깨졌으면 깨진 쪽은 락이다.*** 가드의 위양성도 결함이다.
     const src = __stripCommentsForScan(
       readFileSync(join(process.cwd(), "components/precheck/SatongMapShell.tsx"), "utf8"),
       "SatongMapShell.tsx",
     );
-    expect(src).toMatch(/useState<SatongMapLayerState\["controlsByLayer"\]>\(\(\) => defaultControlsByLayer\(\)\)/);
-    // 그리고 그 상태가 layerState 로 흘러간다.
+    // 관계 = 「같은 선언문 안에」 useState 와 defaultControlsByLayer 가 함께 있다.
+    //   문장 단위로 자르므로 서식·제네릭 표기에 불변이고, **다른 상태의 useState** 가
+    //   우연히 통과하지도 않는다(같은 문장이어야 한다).
+    const stmts = src.split(";");
+    const wired = stmts.filter(
+      (st) => /\buseState\b/.test(st) && /\bdefaultControlsByLayer\s*\(/.test(st),
+    );
+    expect(wired).toHaveLength(1);
+    // ★그리고 그것이 **layerControls** 라는 이름으로 잡힌다 — 배선의 다음 칸과 이어진다.
+    expect(wired[0]).toMatch(/\blayerControls\b/);
+    // 그 상태가 layerState 로 흘러간다.
     expect(src).toMatch(/controlsByLayer:\s*layerControls/);
+  });
+
+  it("★위 락이 서식 변화에 **깨지지 않는다**(위양성 대조군)", () => {
+    // 계약을 유지한 채 서식만 바꾼 합성 소스에서 같은 판정이 나와야 한다.
+    const reformatted = `
+      const [layerControls, setLayerControls] = useState<
+        SatongMapLayerState["controlsByLayer"]
+      >(() => defaultControlsByLayer());
+      const mapLayerState = { controlsByLayer: layerControls };
+    `;
+    const wired = reformatted
+      .split(";")
+      .filter((st) => /\buseState\b/.test(st) && /\bdefaultControlsByLayer\s*\(/.test(st));
+    expect(wired).toHaveLength(1);
+    // ★음성 대조군 — 배선을 끊으면(초기값을 리터럴로) 0건이 된다.
+    const unwired = `const [layerControls, setLayerControls] = useState({});`
+      .split(";")
+      .filter((st) => /\buseState\b/.test(st) && /\bdefaultControlsByLayer\s*\(/.test(st));
+    expect(unwired).toHaveLength(0);
   });
 });
 
