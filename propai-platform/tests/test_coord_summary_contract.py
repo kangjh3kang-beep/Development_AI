@@ -144,16 +144,25 @@ def test_env_knob_is_actually_wired(tmp_path: Path) -> None:
 
 # ───────────────── 리뷰어 M2/M3: 행두 앵커 ─────────────────
 
-def test_anchors_reject_mid_line_matches(tmp_path: Path) -> None:
-    """★M2/M3 — 앵커를 지워도 1판은 초록이었다. 본문이 표지를 **인용**하면 오염된다."""
+@pytest.mark.parametrize("marker,section", [("NOTE", "note"), ("CLAIM", "cr")])
+def test_anchors_reject_mid_line_matches(marker: str, section: str, tmp_path: Path) -> None:
+    """★M2/M3 — 앵커를 지워도 초록이었다. 본문이 표지를 **인용**하면 오염된다.
+
+    ★2판 재실행에서 **M3(CLAIM/RELEASE 앵커 제거)가 또 SURVIVED** 했다 — 1판·2판 모두
+    **NOTE 절만** 봤기 때문이다. 파생의 축이 「표지 하나」였고 모집단은 「표지 전부」였다.
+    → 두 표지를 모두 태운다.
+    """
     b = _board(tmp_path)
     t = b.read_text(encoding="utf-8")
-    b.write_text(t + "규약대로 - [NOTE] 표기로 남기라고 적힌 인용줄 오염카나리_zzz\n", encoding="utf-8")
+    b.write_text(t + f"규약대로 - [{marker}] 표기로 남기라고 적힌 인용줄 오염카나리_zzz\n",
+                 encoding="utf-8")
+    out = _out("summary", b)
+    seg = _note_section(out) if section == "note" else \
+        out[out.index("=== CLAIM/RELEASE 로그"):out.index("=== 최근 NOTE")]
     assert_absent(
-        _note_section(_out("summary", b)),
-        pattern="오염카나리_zzz", positive_control=_NOTE_CANARY,
-        reason="행두 앵커가 없어 본문 중간의 인용된 표지까지 NOTE 로 집었다.",
-        where="coord.sh summary · NOTE 절")
+        seg, pattern="오염카나리_zzz", positive_control="↳",
+        reason=f"행두 앵커가 없어 본문 중간에 인용된 [{marker}] 표지까지 집었다.",
+        where=f"coord.sh summary · {section} 절")
 
 
 # ───────────────── 리뷰어 M10: 제목 정직성(전체 출력) ─────────────────
@@ -273,3 +282,17 @@ def test_debt_unreleased_claims_are_actually_computed(tmp_path: Path) -> None:
                    strict=True)
 def test_debt_multiline_note_continuation_is_visible(tmp_path: Path) -> None:
     assert _CONT_CANARY in _note_section(_out("summary", _board(tmp_path)))
+
+
+def test_summary_header_line_count_is_real(tmp_path: Path) -> None:
+    """★M9 — 헤더의 `(N줄)` 을 `echo 0` 으로 바꿔도 초록이었다(2판 재실행에서 SURVIVED).
+
+    ★작은 값이라도 **아무것도 안 잠그면 장식**이다. 게다가 이 수는 사람이 「보드가 얼마나
+    자랐나」를 판단하는 데 쓰므로 거짓이면 오도한다.
+    """
+    b = _board(tmp_path, notes=7, pairs=3)
+    want = len(b.read_text(encoding="utf-8").splitlines())
+    out = _out("summary", b)
+    m = re.search(r"\((\d+)줄", out)
+    assert m, f"★헤더에 줄수 표기가 없다:\n{out[:400]}"
+    assert int(m.group(1)) == want, f"★헤더 줄수가 거짓이다(표기 {m.group(1)} · 실제 {want})"
