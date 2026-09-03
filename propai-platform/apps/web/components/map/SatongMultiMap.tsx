@@ -2439,7 +2439,7 @@ export function SatongMultiMap({
     };
   }, [mapReady, layoutOverlay, layoutNorthLightSetbackM, layoutNorthLightHeightM]);
 
-  // ── 선택 필지(연결 프로젝트·staged·pending) 식별 라벨 — 전역 라벨 버짓·줌 LOD 무관 항상 표시 ──
+  // ── 선택 필지(연결 프로젝트·staged·pending) 식별 라벨 ──
   //   ★PR#329 R1 리뷰(LOW1) 반영: 홈 초기 진입(줌 12)은 hover-only LOD라 시장/POI/개발계획
   //   상시 라벨이 0개인데, 사용자가 지도를 연 '목적'인 선택 필지 자체까지 사라지면 첫인상이
   //   빈 지도가 된다. 이 라벨은 labelPlan(전역 48/16/0 버짓) 대상이 아닌 별도 always-on
@@ -2450,6 +2450,15 @@ export function SatongMultiMap({
   //   **하나로만** 끌 수 있게 했다(satongSelectionLabelsVisible). 레이어 게이트와는 여전히
   //   독립이다 — 지적 레이어를 안 켜도 라벨은 나온다. 그리고 그 컨트롤을 **선언하지 않는**
   //   호출부(3/6 실측)에서는 끄는 UI 가 없으므로 종전대로 항상 표시한다.
+  //   ★★2026-09-04 정정 ②: 위 첫 줄이 **「전역 라벨 버짓·줌 LOD 무관」** 이라고 선언하고
+  //   있었다 — 그 면제가 **이 결함의 근본**이었다. `lib/satong-map-labels.ts` 는
+  //   *"겹침 방지는 **버짓 상한**+**선택 라벨 줌 롤업**이 담당한다"* 고 적어 두었는데,
+  //   선택 트랙만 버짓을 면제받아 **z≥15 에서 206필지면 두 기전 중 어느 것도 발화하지
+  //   않았다.** 이제 개수 축은 버짓을 따른다(`planSelectionLabels` 가 `satongLabelBudget`
+  //   에서 임계를 **파생**한다). ★면제의 원래 의도(«레이어를 안 켜도 필지가 식별되게»)는
+  //   집계 칩이 계속 지킨다 — 칩이 「선택 N필지」를 말하므로 빈 지도가 되지 않는다.
+  //   ★남은 면제는 **배분**뿐이다: 이 트랙은 여전히 `planSatongLabels` 의 레이어별 배분을
+  //   받지 않는다(다른 트랙의 라벨을 밀어내지 않는다). 그것은 의도된 면제다.
   //   시각 마커(폴리곤·staged 초록점)는 다른 이펙트가 이미 그리므로, 여기서는 투명 앵커
   //   포인트에 라벨만 부착한다(중복 마커 방지).
   const selectionLabelLayerRef = useRef<any>(null);
@@ -2469,6 +2478,7 @@ export function SatongMultiMap({
     const plan = planSelectionLabels({
       visible: selectionLabelsOn,
       rollup: selectionRollup,
+      zoom: mapZoom,
       features: overlayFeatures,
       representativePoint: geometryRepresentativePoint,
       // ★PNU 로 지번을 파생한 **뒤** 줄인다 — 먼저 줄이면 동 단위 주소에서 지번을 붙일
@@ -2487,7 +2497,7 @@ export function SatongMultiMap({
       try { group?.remove?.(); } catch { /* noop */ }
       if (selectionLabelLayerRef.current === group) selectionLabelLayerRef.current = null;
     };
-  }, [mapReady, overlayFeatures, selectionRollup, selectionLabelsOn]);
+  }, [mapReady, overlayFeatures, selectionRollup, selectionLabelsOn, mapZoom]);
 
 
   // ── 거리재기 — 측정 모드 동기화·측정점/폴리라인/누적거리 렌더·모드 UX·ESC ──

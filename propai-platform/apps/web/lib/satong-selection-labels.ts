@@ -19,7 +19,7 @@
  *   종전 코드는 그룹을 만든 뒤 `points.length === 0` 이면 반환해 **보이지 않는 빈 그룹**을
  *   남겼다(리뷰가 지적). 계획이 앞서면 그 경로 자체가 사라진다.
  */
-import { bindSatongLabel } from "@/lib/satong-map-labels";
+import { bindSatongLabel, satongLabelBudget } from "@/lib/satong-map-labels";
 
 export type SelectionLabelAnchor = { lat: number; lon: number; label: string };
 
@@ -48,6 +48,12 @@ export type PlanSelectionLabelsArgs = {
   visible: boolean;
   /** 줌 LOD 롤업 여부(hover-only 구간). */
   rollup: boolean;
+  /**
+   * 현재 줌. **개수 롤업 임계를 여기서 파생**한다(`satongLabelBudget(zoom)`).
+   * ★임계를 리터럴로 두지 않는 이유: 그러면 버짓 상수가 장식이 되고, 다른 트랙과
+   *   겹침 정책이 갈린다. 이 저장소는 «목록은 곧 상한» 을 반복 실측했다.
+   */
+  zoom: number;
   features: SelectionLabelFeature[];
   /** 좌표가 없는 피처의 대표점 — 주입(순수 유지). */
   representativePoint: (geometry: unknown) => { lat: number; lon: number } | null | undefined;
@@ -72,7 +78,14 @@ export function planSelectionLabels(args: PlanSelectionLabelsArgs): SelectionLab
   // ★줌 롤업(U-라벨 파일업): 줌아웃 다필지에서 주소 라벨을 전부 상시 표시하면 한 점에
   //   겹겹이 쌓인다. 집계 칩 1개로 접고, 줌인에서만 필지별 짧은 지번을 단다.
   //   단일 필지는 어느 줌에서도 개별 라벨(초기 진입 식별 — PR#329 LOW1 의도 유지).
-  if (args.rollup && points.length > 1) {
+  // ★개수 롤업(2026-09-04 · 사용자 신고 206필지):
+  //   `lib/satong-map-labels.ts` 는 *"겹침 방지는 **버짓 상한**+**선택 라벨 줌 롤업**이
+  //   담당한다"* 고 적어 두었는데, **선택 트랙만 버짓을 면제**받고 있었다(PR#329 LOW1 —
+  //   «레이어를 하나도 안 켜도 필지가 식별되게»). 그래서 z≥15 에서 206필지를 고르면
+  //   **두 기전 중 어느 것도 발화하지 않았다.** 면제의 의도(식별)는 집계 칩이 계속 지키므로,
+  //   개수 축만 되돌린다. ★임계는 **버짓에서 파생**한다 — 새 숫자를 지어내지 않는다.
+  const overBudget = points.length > satongLabelBudget(args.zoom);
+  if ((args.rollup || overBudget) && points.length > 1) {
     const lat = points.reduce((s, e) => s + e.lat, 0) / points.length;
     const lon = points.reduce((s, e) => s + e.lon, 0) / points.length;
     // ★정직표기: 면적은 라벨이 세는 피처와 **같은 모집단**으로 합산하고, 결측이 하나라도
