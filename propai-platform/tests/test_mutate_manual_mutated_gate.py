@@ -363,3 +363,88 @@ def test_모든_판정불가_경로가_토큰을_낸다(tmp_path):
         if str(r.returncode) != 코드 or 신 != "::VERDICT=UNDECIDED":
             미달.append(f"exit {코드}: 실제 rc={r.returncode} 토큰={신}")
     assert not 미달, "판정 불가 경로가 토큰·rc 짝을 안 이룬다:\n  " + "\n  ".join(미달)
+
+
+def test_sh_는_bash_구문으로_검사한다(tmp_path):
+    """★M1 봉합 — 「검사기가 못 읽음」과 「변이가 깸」을 **가르는 입력**이 필요하다.
+
+    종전 락(`test_구문검사는_변이_전에도_잰다`)은 **변이 전에도 실패하는** 파일만 썼다.
+    그러면 «항상 깨졌다고 답하는 검사기» 변이가 **같은 결과**(축 꺼짐)를 내서 생존한다.
+    → **변이 전 통과 · 변이 후 실패**인 `.sh` 를 태운다.
+
+    ★그리고 이 케이스는 `sh -n`(dash)로는 **잡히지 않는다** — dash 는 `[[ … ]` 를
+      명령어로 읽어 통과시킨다. `bash -n` 이어야 잡힌다(적대 리뷰 CRITICAL-1).
+    """
+    repo, sh = _repo(tmp_path)
+    (repo / "tool.sh").write_text(
+        "#!/usr/bin/env bash\nX=1\nif [[ $X -gt 0 ]]; then :; fi\n", encoding="utf-8")
+    (repo / "t.py").write_text(
+        "import subprocess\n"
+        'def test_x(): assert subprocess.run(["bash","-n","tool.sh"]).returncode == 0\n',
+        encoding="utf-8")
+    sh("git", "add", "-A")
+    sh("git", "commit", "-q", "-m", "init")
+    r = subprocess.run(  # noqa: S603
+        ["bash", str(_TOOL), "tool.sh", 's|-gt 0 ]]|-gt 0 ]|',
+         "python3", "-m", "pytest", "t.py", "-q"],
+        cwd=repo, capture_output=True, text=True, check=False,
+    )
+    합 = r.stdout + r.stderr
+    assert "축을 끈다" not in 합, f"변이 전엔 통과했는데 축을 껐다:\n{합}"
+    assert r.returncode == 16, (
+        f"bash 구문을 깬 변이를 판정했다: rc={r.returncode}\n{합}\n"
+        "★`sh -n`(dash)은 이걸 놓친다 — `bash -n` 이어야 한다")
+    _, 신 = _긁기(r.stdout)
+    assert 신 == "::VERDICT=UNDECIDED", f"토큰이 판정 불가가 아니다: {신}"
+
+
+def test_요약이_stderr_로_나와도_개수를_읽는다(tmp_path):
+    """★M5 봉합 — 변이 실행에서 `2>&1` 을 지우면 **stderr 러너의 개수를 못 읽는다.**
+
+    그러면 개수 축이 조용히 꺼져 «통과 0건인데 rc=0» 이 `SURVIVED` 로 샌다.
+    """
+    repo, sh = _repo(tmp_path)
+    (repo / "mod.py").write_text("MARKER = 1\n", encoding="utf-8")
+    (repo / "runner.py").write_text(
+        "import sys, pathlib\n"
+        'src = pathlib.Path("mod.py").read_text()\n'
+        '# ★요약을 **stderr** 로 낸다(실제 러너 중에 그런 것이 있다)\n'
+        'print("2 passed in 0.01s" if "MARKER" in src else "0 passed in 0.01s",'
+        ' file=sys.stderr)\n'
+        "sys.exit(0)\n", encoding="utf-8")
+    sh("git", "add", "-A")
+    sh("git", "commit", "-q", "-m", "init")
+    r = subprocess.run(  # noqa: S603
+        ["bash", str(_TOOL), "mod.py", "s|MARKER|GONE|", "python3", "runner.py"],
+        cwd=repo, capture_output=True, text=True, check=False,
+    )
+    _, 신 = _긁기(r.stdout)
+    assert 신 == "::VERDICT=UNDECIDED", (
+        f"stderr 요약을 못 읽어 개수 축이 꺼졌다: {신} (rc={r.returncode})")
+
+
+def test_개수는_모든_매치의_최대값으로_읽는다(tmp_path):
+    """★M2 봉합 — `sort -rn`(최대)과 `sort -n`(최소)을 **가르는 입력**.
+
+    러너가 범주를 나눠 찍으면 «0 passed» 줄이 함께 나올 수 있다
+    (예: 파일 단위 요약과 케이스 단위 요약). 그때 **최소값을 쓰면 정상 실행을 막는다.**
+    ★이 락은 「최대값이 옳다」를 고정한다 — 최소값으로 바꾸면 이 케이스가 빨개진다.
+    """
+    repo, sh = _repo(tmp_path)
+    (repo / "mod.py").write_text("MARKER = 1\n", encoding="utf-8")
+    (repo / "runner.py").write_text(
+        "import sys\n"
+        '# ★두 범주를 찍는다: 한쪽은 0, 다른 쪽은 3 — **실제로 3건이 통과**했다\n'
+        'print("0 passed in 0.00s")\n'
+        'print("3 passed in 0.01s")\n'
+        "sys.exit(0)\n", encoding="utf-8")
+    sh("git", "add", "-A")
+    sh("git", "commit", "-q", "-m", "init")
+    r = subprocess.run(  # noqa: S603
+        ["bash", str(_TOOL), "mod.py", "s|MARKER = 1|MARKER = 2|", "python3", "runner.py"],
+        cwd=repo, capture_output=True, text=True, check=False,
+    )
+    _, 신 = _긁기(r.stdout)
+    assert 신 == "::VERDICT=SURVIVED", (
+        f"통과가 3건 있는데 개수 축이 발화했다(최소값을 쓰면 이렇게 된다): {신} "
+        f"(rc={r.returncode})")
