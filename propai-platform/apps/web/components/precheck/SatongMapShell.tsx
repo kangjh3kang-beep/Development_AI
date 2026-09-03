@@ -634,7 +634,12 @@ function statusClass(status: LayerStatus): string {
   return "bg-[var(--status-warning)]/15 text-[var(--status-warning)]";
 }
 
-function defaultControlsByLayer(): SatongMapLayerState["controlsByLayer"] {
+/**
+ * ★export 하는 이유(#954 적대 리뷰 M-3): 「기본은 켜져 있다」를 **함수 본문 텍스트**로
+ *   잠갔더니 `useState(() => ({...defaultControlsByLayer(), cadastre: []}))` 변이가 통과했다.
+ *   본문은 그대로인데 **초기값이 뒤집힌다.** 테스트가 이 함수를 **실행해서 값으로** 재도록 연다.
+ */
+export function defaultControlsByLayer(): SatongMapLayerState["controlsByLayer"] {
   return {
     cadastre: ["boundary", "selected"],
     zoning: ["land-use"],

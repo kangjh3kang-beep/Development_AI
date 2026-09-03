@@ -50,6 +50,7 @@ import {
   type SampleBasisRaw,
 } from "@/lib/market/comparable-sample";
 import { bindSatongLabel, planSatongLabels, satongLabelLOD } from "@/lib/satong-map-labels";
+import { planSelectionLabels, renderSelectionLabels } from "@/lib/satong-selection-labels";
 import type { SiteLayoutOverlay } from "@/lib/site-layout";
 import {
   clearLayoutOverlay,
@@ -2458,65 +2459,32 @@ export function SatongMultiMap({
   const selectionLabelsOn = satongSelectionLabelsVisible(layerState);
 
   useEffect(() => {
-    const map = mapRef.current;
-    const L = window.L;
-    if (!mapReady || !map || !L) return;
-
-    if (selectionLabelLayerRef.current) {
-      try { selectionLabelLayerRef.current.remove(); } catch { /* noop */ }
-      selectionLabelLayerRef.current = null;
-    }
-    if (overlayFeatures.length === 0) return;
-    // ★게이트는 teardown **뒤**에 둔다 — 앞에 두면 토글을 끄는 순간 기존 라벨이
-    //   철거되지 않고 화면에 남는다(끈 것처럼 보이지 않는다).
-    if (!selectionLabelsOn) return;
-
-    const group = L.layerGroup().addTo(map);
+    // ★`if (!mapReady) return` 조기반환을 두지 않는다 — 형제 `lib/satong-layout-overlay` 와
+    //   **같은 이유**다: 그 반환이 있으면 jsdom(Leaflet 미초기화 → mapReady=false)에서
+    //   **위임 호출 자체가 일어나지 않아** 토글 배선을 행위로 잠글 수 없다. 실제로 #954 적대
+    //   리뷰가 `satongSelectionLabelsVisible(layerState) || true` 변이를 넣었는데 소스 문자열
+    //   락 전부가 초록이었다(이름은 있고 **값이 안 실린다**). renderSelectionLabels 가
+    //   `!L || !map` 을 안전 처리하므로 조기반환은 중복 가드이기도 하다.
+    //   mapReady 는 deps 에 남겨 지도가 준비되는 순간 재실행되게 한다.
+    const plan = planSelectionLabels({
+      visible: selectionLabelsOn,
+      rollup: selectionRollup,
+      features: overlayFeatures,
+      representativePoint: geometryRepresentativePoint,
+      // ★PNU 로 지번을 파생한 **뒤** 줄인다 — 먼저 줄이면 동 단위 주소에서 지번을 붙일
+      //   자리가 사라져 같은 동의 필지가 지도에서 전부 같은 라벨이 된다.
+      shortLabel: (f) => parcelShortLabel(f.address, f.pnu, f.pnu || "필지"),
+    });
+    const group = renderSelectionLabels({
+      L: window.L,
+      map: mapRef.current,
+      previousLayer: selectionLabelLayerRef.current,
+      plan,
+    }) as { remove?: () => void } | null;
     selectionLabelLayerRef.current = group;
 
-    const points = overlayFeatures
-      .map((feature) => ({
-        feature,
-        point:
-          feature.lat != null && feature.lon != null
-            ? { lat: feature.lat, lon: feature.lon }
-            : geometryRepresentativePoint(feature.geometry),
-      }))
-      .filter((e): e is { feature: (typeof overlayFeatures)[number]; point: { lat: number; lon: number } } => !!e.point);
-    if (points.length === 0) return;
-
-    const makeAnchor = (lat: number, lon: number) =>
-      L.circleMarker([lat, lon], { radius: 0, opacity: 0, fillOpacity: 0, interactive: false }).addTo(group);
-
-    // ★줌 롤업(U-라벨 파일업): 줌아웃(hover-only LOD)에서 다필지 주소 라벨을 전부 상시
-    //   표시하면 한 점에 겹겹이 쌓인다(12필지 주소 파일업). 줌아웃+다필지에서는 집계 칩
-    //   1개("선택 N필지 · 합산㎡")로 롤업하고, 줌인(z≥15)에서만 필지별 '짧은 지번' 라벨을
-    //   단다. 단일 필지는 어느 줌에서도 개별 라벨(초기 진입 식별 — PR#329 LOW1 의도 유지).
-    if (selectionRollup && points.length > 1) {
-      const centroid = {
-        lat: points.reduce((s, e) => s + e.point.lat, 0) / points.length,
-        lon: points.reduce((s, e) => s + e.point.lon, 0) / points.length,
-      };
-      // ★정직표기(R1 M1): 면적은 라벨이 세는 피처(points)와 같은 모집단으로 합산하고,
-      //   결측이 하나라도 있으면 부분합을 전체합처럼 보이게 하지 않도록 면적 표기를 생략한다.
-      const hasAllAreas = points.every((e) => (e.feature.areaSqm ?? 0) > 0);
-      const totalArea = points.reduce((s, e) => s + (e.feature.areaSqm || 0), 0);
-      const label = `선택 ${points.length}필지${hasAllAreas && totalArea > 0 ? ` · ${Math.round(totalArea).toLocaleString()}㎡` : ""}`;
-      bindSatongLabel(makeAnchor(centroid.lat, centroid.lon), label, { permanent: true, offsetY: 2 });
-    } else {
-      points.forEach(({ feature, point }) => {
-        bindSatongLabel(
-          makeAnchor(point.lat, point.lon),
-          // ★PNU 로 지번을 파생한 **뒤** 줄인다 — 먼저 줄이면 동 단위 주소에서 지번을 붙일
-          //   자리가 사라져 같은 동의 필지가 지도에서 전부 같은 라벨이 된다.
-          parcelShortLabel(feature.address, feature.pnu, feature.pnu || "필지"),
-          { permanent: true, offsetY: 2 },
-        );
-      });
-    }
-
     return () => {
-      try { group.remove(); } catch { /* noop */ }
+      try { group?.remove?.(); } catch { /* noop */ }
       if (selectionLabelLayerRef.current === group) selectionLabelLayerRef.current = null;
     };
   }, [mapReady, overlayFeatures, selectionRollup, selectionLabelsOn]);
