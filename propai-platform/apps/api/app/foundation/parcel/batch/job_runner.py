@@ -17,10 +17,22 @@ from typing import Any
 
 from app.foundation.parcel.batch import queue_policy
 from app.foundation.parcel.contracts.batch import BatchItemResult, ItemStatus
+from app.utils.land_characteristics import (
+    co_owner_summary,
+    is_shared_parcel,
+    ledger_fields,
+    project_land_characteristics,
+)
 from app.utils.pnu import is_valid_pnu
 
 
-def resolve_pnu_status(pnu: str, parcel: dict | None, chars: dict | None) -> BatchItemResult:
+def resolve_pnu_status(
+    pnu: str,
+    parcel: dict | None,
+    chars: dict | None,
+    ledger: list[dict] | None = None,
+    co_owners: list[dict] | None = None,
+) -> BatchItemResult:
     """단일 필지 해석 결과를 status 로 분류한다.
 
     ParcelExcelService 와 동일한 정신:
@@ -40,10 +52,13 @@ def resolve_pnu_status(pnu: str, parcel: dict | None, chars: dict | None) -> Bat
             pnu=pnu,
             status=ItemStatus.CONFIRMED,
             area_sqm=float(chars.get("area_sqm") or 0),
+            # ★원천이 주는 필드를 버리지 않는다 — 투영은 **공용 함수 한 곳**이다
+            #   (excel 파이프와 같은 집합을 쓰게 해 두 파이프가 갈라지지 않게 한다).
             record_ref={
                 "source": "land_characteristics",
-                "land_category": chars.get("land_category", ""),
-                "zone_type": chars.get("zone_type", ""),
+                **project_land_characteristics(chars),
+                **ledger_fields(ledger),
+                **co_owner_summary(co_owners),
             },
         )
 
@@ -93,11 +108,33 @@ class JobRunner:
         """
         vw = self._vw()
         try:
-            chars = await vw.get_land_characteristics(pnu)
+            # ★토지특성(공부 항목)과 토지임야목록(대장구분·소유구분·**공유인수**·기준일자)은
+            #   **서로 다른 것**을 준다. 둘을 **병렬**로 부른다 — 순차로 부르면 필지당 지연이 2배다.
+            #   ★외부 호출은 필지당 1건 늘어난다(트래픽 상한 999,999,999/일). **지연은 늘지 않는다.**
+            #   ★`get_land_ledger_list` 가 없는 주입 객체(테스트 스텁·구 페이크)도 있으므로
+            #     `getattr` 로 **있으면 부른다** — 없다고 배치 전체를 죽이지 않는다.
+            _ledger_fn = getattr(vw, "get_land_ledger_list", None)
+            if _ledger_fn is not None:
+                chars, ledger = await asyncio.gather(
+                    vw.get_land_characteristics(pnu),
+                    _ledger_fn(pnu),
+                    return_exceptions=False,
+                )
+            else:
+                chars, ledger = await vw.get_land_characteristics(pnu), None
+            # ★공유자 연명부는 **공유일 때만** 부른다 — `cnrsPsnCo <= 1` 이면 부를 이유가 없다.
+            #   전 필지에 세 번째 외부 호출을 넣으면 대부분이 낭비다(단독소유가 다수).
+            #   ★`cnrsPsnCo` 를 못 읽으면(대장 조회 실패 등) **부르지 않는다** — 그 경우
+            #     record_ref 에 대장 필드 자체가 없어 "확인 못 함"이 이미 드러난다.
+            co_owners = None
+            _co_fn = getattr(vw, "get_co_owner_list", None)
+            if _co_fn is not None and is_shared_parcel(ledger):
+                co_owners = await _co_fn(pnu)
+
             parcel = None
             if not (chars and (chars.get("area_sqm") or 0) > 0):
                 parcel = await vw.get_parcel_by_pnu(pnu)
-            return resolve_pnu_status(pnu, parcel, chars)
+            return resolve_pnu_status(pnu, parcel, chars, ledger, co_owners)
         except Exception as exc:  # noqa: BLE001 - 개별 실패는 격리(전체 실패 금지)
             return BatchItemResult(
                 pnu=pnu, status=ItemStatus.ERROR, reason=f"처리 오류: {exc}",
