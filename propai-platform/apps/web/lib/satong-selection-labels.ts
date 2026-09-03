@@ -108,8 +108,17 @@ export type RenderSelectionLabelsArgs = {
 };
 
 /**
- * 계획을 그린다. ★이전 레이어 정리는 **무조건 먼저** 한다 — 계획이 `hidden`/`empty` 여도.
- *   그래서 «게이트를 teardown 앞에 두면 낡은 라벨이 남는다» 같은 **순서 의존이 없다.**
+ * 계획을 그린다.
+ *
+ * ★★`previousLayer` 정리는 **방어적 경로이고, 프로덕션에서는 도달하지 않는다.**
+ *   (2026-09-03 2차 적대 리뷰 실측 — 그리고 나는 **정반대를 이 자리에 적었었다.**)
+ *   유일한 프로덕션 호출부는 `SatongMultiMap` 의 라벨 이펙트인데, React 가 deps 변경 시
+ *   **이전 클린업을 먼저** 돌리고 그 클린업이 ref 를 null 로 만든다 → 여기 도달할 때
+ *   `previousLayer` 는 **항상 null** 이다. 낡은 라벨을 실제로 걷어내는 것은 **그 클린업**이다.
+ *   ★그러므로 *"이 정리가 순서 의존을 없앤다"* 는 **틀린 주장이었다.** 지웠다.
+ *   이 경로를 남기는 이유는 ①이 모듈이 다른 호출부에서 재사용될 때의 안전망 ②`!L||!map`
+ *   구간에서 이전 레이어가 남는 것을 막는 것뿐이다 — **변이가 생존해도 구멍이 아니다.**
+ *   실제 잠금은 `satong-selection-label-toggle.test.tsx` 의 **언마운트** 케이스에 있다.
  * ★`!L || !map` 이면 그리지 않고 정리만 한다(jsdom 안전 — 형제 모듈과 같은 계약).
  */
 export function renderSelectionLabels(args: RenderSelectionLabelsArgs): unknown {
