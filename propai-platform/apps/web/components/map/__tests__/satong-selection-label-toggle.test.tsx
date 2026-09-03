@@ -31,7 +31,11 @@ import { join } from "node:path";
 import { render } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import { SATONG_MAP_SHELL_LAYERS, defaultControlsByLayer } from "@/components/precheck/SatongMapShell";
+import {
+  SATONG_MAP_SHELL_LAYERS,
+  defaultControlsByLayer,
+  initialLayerControls,
+} from "@/components/precheck/SatongMapShell";
 import { satongLabelBudget } from "@/lib/satong-map-labels";
 import {
   SATONG_SELECTION_LABEL_CONTROL_IDS,
@@ -252,14 +256,49 @@ describe("C 기본값(값) — 함수를 **실행해서** 판정에 먹인다", 
     expect(satongSelectionLabelsVisible(st(defaultControlsByLayer()))).toBe(true);
   });
 
-  it("★그 기본값이 실제로 useState 초기화자로 쓰인다(배선)", () => {
+  it("★★초기 상태를 **실행해서** 잰다 — 화면이 처음 뜰 때 실제로 켜져 있는가", () => {
+    // ★#959 실측: 종전 락은 소스 **모양**이었고, 관계로 바꾸니
+    //   `() => ({ ...defaultControlsByLayer(), cadastre: [] })` 가 **SURVIVED** 했다
+    //   (관계는 유지한 채 계약만 깬다). 위양성을 고치다 **위음성을 새로 만든 것**이다.
+    //   동료 세션이 «관계로 바꾼 뒤에도 그 관계를 유지하며 계약을 깨는 변이가 있는지
+    //   물어 보라» 고 조언해 재 봤고, 실제로 샜다.
+    //   → 초기화자를 이름 있는 값으로 빼고 **실행해서** 잰다. 모양에 불변이고 위음성이 없다.
+    expect(satongSelectionLabelsVisible(st(initialLayerControls()))).toBe(true);
+  });
+
+  it("★그 초기화자가 실제로 useState 에 연결돼 있다(배선)", () => {
+    // 여기만 소스를 본다 — 「무엇이 초기값인가」는 위에서 값으로 쟀고, 남은 것은
+    // 「그 값이 상태로 쓰이는가」뿐이다. ★모양이 아니라 **관계**를 본다: 같은 선언문 안에
+    // `useState` 와 `initialLayerControls` 가 함께 있는가(서식·제네릭 표기에 불변).
     const src = __stripCommentsForScan(
       readFileSync(join(process.cwd(), "components/precheck/SatongMapShell.tsx"), "utf8"),
       "SatongMapShell.tsx",
     );
-    expect(src).toMatch(/useState<SatongMapLayerState\["controlsByLayer"\]>\(\(\) => defaultControlsByLayer\(\)\)/);
-    // 그리고 그 상태가 layerState 로 흘러간다.
+    const wired = src
+      .split(";")
+      .filter((st_) => /\buseState\b/.test(st_) && /\binitialLayerControls\b/.test(st_));
+    expect(wired).toHaveLength(1);
+    expect(wired[0]).toMatch(/\blayerControls\b/);
+    // 그 상태가 layerState 로 흘러간다.
     expect(src).toMatch(/controlsByLayer:\s*layerControls/);
+  });
+
+  // ★설명 가능한 생존(변이 점수 부풀리기 방지): 그 선언을 **서식만** 바꾸는 변이는
+  //   이 락에서 **SURVIVED 가 정답**이다 — 계약이 그대로이므로 빨개지면 안 된다.
+  //   실측(2026-09-04): 종전 모양 기반 정규식은 서식 변경본에 **매치 실패**(위양성),
+  //   관계 기반은 **매치 성공**. 계약을 깨는 변이는 위 값 테스트가 잡는다.
+  it("★위 배선 락이 서식 변화에 **깨지지 않는다**(위양성 대조군)", () => {
+    const reformatted = `
+      const [layerControls, setLayerControls] = useState<
+        SatongMapLayerState["controlsByLayer"]
+      >(initialLayerControls);
+      const mapLayerState = { controlsByLayer: layerControls };
+    `;
+    const hit = (src: string) =>
+      src.split(";").filter((st_) => /\buseState\b/.test(st_) && /\binitialLayerControls\b/.test(st_));
+    expect(hit(reformatted)).toHaveLength(1);
+    // ★음성 대조군 — 배선을 끊으면 0건이 된다.
+    expect(hit(`const [layerControls, setLayerControls] = useState({});`)).toHaveLength(0);
   });
 });
 
