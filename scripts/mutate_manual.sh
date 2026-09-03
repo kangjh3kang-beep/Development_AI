@@ -513,11 +513,27 @@ echo "== ${_syntax_report} =="
 
 # ── 테스트 실행 ─────────────────────────────────────────────────────────────
 echo "== 변이 상태에서 테스트 =="
+# ★출력을 로그로 받는다 — **개수 축**을 쓰려면 필요하다(아래 ⑥). 기준선과 같은 방식이다.
+#   ★파이프(`| tee`)를 쓰지 않는다 — rc 가 파이프 끝의 것이 되어 이 도구가 막으려는
+#     바로 그 오염이 된다(dash 에는 `PIPESTATUS`·`pipefail` 이 없다).
+#   ★대가: 이 실행은 **실시간 스트리밍이 아니다.** 끝난 뒤 통째로 찍는다.
+MUT_LOG="$(mktemp)"
 set +e
-"$@"
+"$@" >"$MUT_LOG" 2>&1
 RC=$?
 set -e
+cat "$MUT_LOG"
 
+# ★`#924` 와 **같은 관용구**를 쓴다: 모든 매치의 **최대값**(줄 위치를 가정하지 않는다) ·
+#   `|| true` 는 **파이프 끝에 하나만**(grep 은 0건일 때 exit 1 이고, 명령치환 대입의
+#   종료코드는 파이프 마지막 명령의 것이라 `set -e` 가 판정 대신 스크립트를 죽인다).
+MUT_PASSED=$(grep -oE '[0-9]+ passed' "$MUT_LOG" 2>/dev/null \
+               | grep -oE '^[0-9]+' | sort -rn | head -1 || true)
+MUT_PASSED=${MUT_PASSED:-0}
+# ★로그를 지우기 **전에** 요약을 담는다 — 판정 분기에서는 파일이 이미 없다.
+MUT_SUMMARY=$(grep -aE 'Tests |Test Files |[0-9]+ (passed|skipped|failed|xfailed|deselected)' \
+                "$MUT_LOG" 2>/dev/null | tail -3 | sed 's/^/    /' || true)
+rm -f "$MUT_LOG"
 if [ "$MUT_BROKEN" -eq 1 ]; then
   # ★변이가 **대상을 깼다** — 잡힌 것이 아니라 **잴 수 없게 된 것**이다.
   echo "판정 불가(무효) — **변이가 대상 파일의 구문을 깼다**(rc=$RC)."
@@ -525,12 +541,9 @@ if [ "$MUT_BROKEN" -eq 1 ]; then
   echo "  ★이 rc 를 CAUGHT 로 세면 변이 점수가 부풀려진다(없는 락이 있다고 믿게 된다)."
   echo "  sed 표현식을 고쳐 **구문이 유지되는 변이**로 다시 시도하라."
   MUT_INVALID=1
-elif [ "$RC" -eq 5 ]; then
-  # ★pytest rc=5 = **수집 0건**. `#924` 가 **기준선**에 대해 이미 가른 축을,
-  #   **변이 후**에도 대칭으로 건다 — 원인이 변이여도 뜻은 같다("못 돌았다").
-  echo "판정 불가(무효) — 변이 후 테스트가 **0건 수집**됐다(pytest rc=5)."
-  echo "  변이가 수집을 깼다면 그것은 **잡힌 것이 아니다.**"
-  MUT_INVALID=1
+# ★순서가 중요하다 — 아래 분기들은 **`RC` 를 읽는다.** rc 를 믿을 수 없으면
+#   그 판정들이 **사유를 틀리게** 낸다(판정은 같아도 다음 사람이 엉뚱한 곳을 고친다).
+#   그래서 「rc 를 믿을 수 있나」를 **rc 를 쓰는 것보다 먼저** 묻는다.
 elif [ "$PIPE_SEEN" -eq 1 ]; then
   # ★판정을 발행하지 않는다 — 못 믿는 값으로 SURVIVED/CAUGHT 를 찍으면 그것이 증거로 인용된다.
   echo "판정 불가(무효) — rc=$RC 를 신뢰할 수 없다: ${RC_WHY}"
@@ -544,6 +557,30 @@ elif [ "$PIPE_SEEN" -eq 1 ]; then
   echo "    · 래퍼가 꼭 필요하고 rc 를 보존했다면(마지막 명령이 테스트이거나 RC 를 명시 보존)"
   echo "      MUTATE_ALLOW_SHELL=\"사유\" 로 다시 실행하라(사유가 출력에 남는다)."
   PIPE_INVALID=1
+elif [ "$RC" -eq 0 ] && [ "${BASE_PASSED:-0}" -gt 0 ] && [ "$MUT_PASSED" -eq 0 ]; then
+  # ── ⑥ ★개수 축 — **rc 만으로는 러너에 따라 한 칸이 샌다**
+  #
+  # 동료 `development-ai-23` 실측(2026-09-03, 88 님 경유): **vitest 에는 pytest `rc=5`
+  # (수집 0건) 등가물이 없다.** `-t` 필터가 아무것도 못 골라도 `4 passed | 4 skipped`
+  # 형태로 **조용히 rc=0** 이다. 그래서 `#924` 가 **기준선**에서 겪은 한계가 **변이 후에도**
+  # 그대로다 — rc 축만으로는 «전부 SURVIVED» 로 샌다.
+  #
+  # ★기준선은 통과가 있었는데(BASE_PASSED>0) 변이 후 **통과가 0건인데 rc=0** 이면,
+  #   그건 «변이가 살아남았다» 가 아니라 **«아무것도 안 돌았다»** 다.
+  #   (진짜 CAUGHT 는 통과 0건이어도 **rc≠0** 이므로 이 분기에 안 온다.)
+  echo "판정 불가(무효) — 변이 후 **통과 0건인데 rc=0** 이다(기준선 통과 ${BASE_PASSED}건)."
+  echo "  rc 는 초록인데 실제로는 **아무것도 실행되지 않았다.**"
+  echo "  가장 흔한 원인: vitest -t / pytest -k 표현식이 **아무것도 고르지 않았다**"
+  echo "                 (vitest 는 전부 skip 이어도 rc=0 이라 조용하다)"
+  echo "  변이 후 요약:"
+  printf '%s\n' "$MUT_SUMMARY"
+  MUT_INVALID=1
+elif [ "$RC" -eq 5 ]; then
+  # ★pytest rc=5 = **수집 0건**. `#924` 가 **기준선**에 대해 이미 가른 축을,
+  #   **변이 후**에도 대칭으로 건다 — 원인이 변이여도 뜻은 같다("못 돌았다").
+  echo "판정 불가(무효) — 변이 후 테스트가 **0건 수집**됐다(pytest rc=5)."
+  echo "  변이가 수집을 깼다면 그것은 **잡힌 것이 아니다.**"
+  MUT_INVALID=1
 elif [ "$RC" -eq 0 ]; then
   echo "SURVIVED — 변이를 넣었는데 테스트가 통과했다. 그 자리는 잠겨 있지 않다."
 else
