@@ -41,6 +41,7 @@ import {
   type SatongMapLayerState,
   type VWorldBaseLayer,
   zoneColor,
+  satongSelectionLabelsVisible,
 } from "@/lib/satong-map-layers";
 import {
   noSampleReason,
@@ -2441,13 +2442,20 @@ export function SatongMultiMap({
   //   ★PR#329 R1 리뷰(LOW1) 반영: 홈 초기 진입(줌 12)은 hover-only LOD라 시장/POI/개발계획
   //   상시 라벨이 0개인데, 사용자가 지도를 연 '목적'인 선택 필지 자체까지 사라지면 첫인상이
   //   빈 지도가 된다. 이 라벨은 labelPlan(전역 48/16/0 버짓) 대상이 아닌 별도 always-on
-  //   트랙이다 — 상위 오버레이 색칠 이펙트(showCadastre 등 토글 게이트)와도 독립적이라,
+  //   트랙이다 — 상위 오버레이 색칠 이펙트(showCadastre 등 레이어 게이트)와도 독립적이라,
   //   레이어 토글을 하나도 켜지 않은 상태(초기 연결 직후)에도 필지가 식별된다.
+  //   ★2026-09-03 정정: 「모든 토글과 독립」은 더 이상 참이 아니다. 다필지(실측 206필지)
+  //   선택 시 지번 라벨이 지도를 덮어 가독성이 무너진다는 신고를 받아, 「선택 필지」 컨트롤
+  //   **하나로만** 끌 수 있게 했다(satongSelectionLabelsVisible). 레이어 게이트와는 여전히
+  //   독립이다 — 지적 레이어를 안 켜도 라벨은 나온다. 그리고 그 컨트롤을 **선언하지 않는**
+  //   호출부(3/6 실측)에서는 끄는 UI 가 없으므로 종전대로 항상 표시한다.
   //   시각 마커(폴리곤·staged 초록점)는 다른 이펙트가 이미 그리므로, 여기서는 투명 앵커
   //   포인트에 라벨만 부착한다(중복 마커 방지).
   const selectionLabelLayerRef = useRef<any>(null);
   // 롤업 여부만 dep로 — LOD 임계(z=15) 교차 시에만 라벨 재부착(줌마다 teardown 낭비 방지 — R1 L2).
   const selectionRollup = satongLabelLOD(mapZoom) === "hover-only";
+  // 「선택 필지」 컨트롤(기본 ON). 컨트롤을 선언하지 않는 호출부에서는 항상 true.
+  const selectionLabelsOn = satongSelectionLabelsVisible(layerState);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -2459,6 +2467,9 @@ export function SatongMultiMap({
       selectionLabelLayerRef.current = null;
     }
     if (overlayFeatures.length === 0) return;
+    // ★게이트는 teardown **뒤**에 둔다 — 앞에 두면 토글을 끄는 순간 기존 라벨이
+    //   철거되지 않고 화면에 남는다(끈 것처럼 보이지 않는다).
+    if (!selectionLabelsOn) return;
 
     const group = L.layerGroup().addTo(map);
     selectionLabelLayerRef.current = group;
@@ -2508,7 +2519,7 @@ export function SatongMultiMap({
       try { group.remove(); } catch { /* noop */ }
       if (selectionLabelLayerRef.current === group) selectionLabelLayerRef.current = null;
     };
-  }, [mapReady, overlayFeatures, selectionRollup]);
+  }, [mapReady, overlayFeatures, selectionRollup, selectionLabelsOn]);
 
 
   // ── 거리재기 — 측정 모드 동기화·측정점/폴리라인/누적거리 렌더·모드 UX·ESC ──
