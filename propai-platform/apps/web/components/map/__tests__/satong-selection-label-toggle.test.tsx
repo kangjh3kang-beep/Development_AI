@@ -139,6 +139,25 @@ describe("B 배선(행위) — 컴포넌트가 판정**값**을 위임 인자로
     const arg = (planSpy.mock.calls as unknown as [{ budget: number }][])[0][0];
     // 기대값을 리터럴로 박지 않는다 — 양쪽을 **각각 파생**시켜 대조한다.
     expect(arg.budget).toBe(satongLabelBudget(SATONG_INITIAL_ZOOM));
+
+    // ★★값 단언만으로는 **원리적으로 못 잡는 변이**가 있다(2026-09-04 실측):
+    //   `budget: selectionLabelBudget * 2` 가 **SURVIVED**. jsdom 은 Leaflet 을 못 띄워
+    //   `mapZoom` 이 초기값에 고정되고, **그 줌의 버짓이 0** 이라 `0 * 2 === 0` —
+    //   곱셈의 **흡수원소**라 도달 가능한 유일한 상태에서 두 구현이 같은 값을 낸다.
+    //   ★리뷰어의 원안은 두 파생값(`rollup` ↔ `zoom`)의 **교차 검증**이었는데,
+    //   MAJOR-5(죽은 항)를 고치며 `rollup` 을 없애면서 **그 교차축도 함께 없앴다.**
+    //   → 남은 한 칸만 소스로 본다: **대입문의 우변이 정확히 그 파생 호출인가.**
+    //   공백 정규화라 서식에는 관대하고, 산술이 붙으면 죽는다.
+    const src = __stripCommentsForScan(
+      readFileSync(join(process.cwd(), "components/map/SatongMultiMap.tsx"), "utf8"),
+      "SatongMultiMap.tsx",
+    );
+    const stmt = src
+      .split(";")
+      .map((x) => x.replace(/\s+/g, " ").trim())
+      .filter((x) => /\bconst selectionLabelBudget =/.test(x));
+    expect(stmt).toHaveLength(1); // 대조군 — 그 대입이 정확히 하나 있다
+    expect(stmt[0]).toBe("const selectionLabelBudget = satongLabelBudget(mapZoom)");
   });
 
   it("★그 버짓이 이펙트 deps 에 실려 있다 — 없으면 줌 대역이 바뀌어도 안 바뀐다", () => {
