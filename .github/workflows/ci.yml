@@ -40,7 +40,11 @@ jobs:
             echo "platform=true" >> "$GITHUB_OUTPUT"; exit 0
           fi
           head -50 <<<"$FILES" || true
-          if grep -qE '^(propai-platform/|\.github/workflows/ci\.yml$)' <<<"$FILES"; then
+          # ★`scripts/` 를 포함한다 — 루트 계약 스위트가 `scripts/*.sh` 를 태우는데
+          #   이 필터에 없어서, 그 스크립트만 고친 PR 은 잡이 **skip** 되고 GitHub 은
+          #   skip 을 **필수 충족으로 계수**했다(fail-open 무검증 머지).
+          #   잠금: propai-platform/tests/test_ci_path_filter_covers_locked_scripts.py
+          if grep -qE '^(propai-platform/|scripts/|\.github/workflows/ci\.yml$)' <<<"$FILES"; then
             echo "platform=true" >> "$GITHUB_OUTPUT"
           else
             echo "platform=false" >> "$GITHUB_OUTPUT"
