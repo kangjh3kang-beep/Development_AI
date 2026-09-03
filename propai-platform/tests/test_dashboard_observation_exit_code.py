@@ -128,9 +128,62 @@ def test_multi_route_burst_is_wired_to_the_observation_flag() -> None:
         "동시다발 버스트가 관측 플래그를 켜지 않는다 — 판정 함수는 잠겼지만 배선이 없다:\n" + "\n".join(block)
 
 
+def _unconditional_obs_lines(lines: list[str]) -> list[str]:
+    """`OBS=1` 중 **조건 블록 안에 있지 않은** 것을 고른다.
+
+    판정: 그 줄보다 **들여쓰기가 작은 가장 가까운 윗줄**이 `if`/`elif` 를 여는가.
+    (셸에서 조건부 실행의 실제 구조가 그것이다.)
+    """
+    bad = []
+    for i, ln in enumerate(lines):
+        if ln.strip() != "OBS=1":
+            continue
+        ind = len(ln) - len(ln.lstrip())
+        if ind == 0:
+            bad.append(ln)
+            continue
+        for prev in reversed(lines[:i]):
+            if not prev.strip():
+                continue
+            pind = len(prev) - len(prev.lstrip())
+            if pind < ind:
+                if not prev.lstrip().startswith(("if ", "elif ")):
+                    bad.append(ln)
+                break
+        else:
+            bad.append(ln)
+    return bad
+
+
 def test_observation_flag_is_not_forced_on_elsewhere() -> None:
-    """★반대 방향 — `OBS=1` 이 무조건 켜지면 계기판이 **상시 4** 가 되어 3 과 같은 문제가 된다."""
-    tops = [ln for ln in _code_lines() if ln.strip() == "OBS=1"]
-    assert len(tops) == 1, f"OBS=1 이 여러 곳에서 켜진다(상시 4 위험): {tops}"
-    init = [ln for ln in _code_lines() if ln.strip().startswith("OBS=0")]
+    """★반대 방향 — `OBS=1` 이 무조건 켜지면 계기판이 **상시 4** 가 되어 3 과 같은 문제가 된다.
+
+    ★★**대리 변수를 잠그면 속성은 안 잠긴다.** 종전 단언은 `len(tops) == 1` 로 **개수**를 셌는데,
+    그것은 "무조건 켜지지 않는다"의 **대리 변수**일 뿐이다. 2026-09-03 합성으로 실측하니
+    **양방향으로 틀렸다**:
+
+        무조건 `OBS=1` 이 **단 1개**       → 종전 락 **통과**  (의도를 못 잡는다 · 위음성)
+        조건부 `OBS=1` 이 **2개**          → 종전 락 **실패**  (정상 코드를 막는다 · 위양성)
+
+    실제로 위양성이 발생했다 — 성장루프 **유휴**(판정 불가)와 동시다발 **버스트**(외부 원인)는
+    서로 다른 관측 이상이고 **둘 다 조건부**인데, 개수 단언이 둘의 공존을 막았다.
+    → **속성 자체**를 단언한다: 모든 `OBS=1` 은 `if`/`elif` 블록 안에 있다.
+    """
+    lines = _code_lines()
+    tops = [ln for ln in lines if ln.strip() == "OBS=1"]
+    assert tops, "★OBS=1 이 하나도 없다 — 관측 이상 축이 통째로 죽었다(공허한 초록 방지)"
+    bad = _unconditional_obs_lines(lines)
+    assert not bad, f"★OBS=1 이 조건 없이 켜진다(상시 4 위험): {bad}"
+    init = [ln for ln in lines if ln.strip().startswith("OBS=0")]
     assert init, "OBS 초기화가 없다 — 미설정이면 `${OBS:-0}` 에 기대게 되어 배선이 조용히 죽는다"
+
+
+def test_the_unconditional_detector_actually_discriminates() -> None:
+    """★위 판정기의 **양성·음성 대조군** — 이것이 없으면 "항상 []" 를 반환해도 초록이다."""
+    assert _unconditional_obs_lines(["OBS=0", "OBS=1"]) == ["OBS=1"], \
+        "★최상위 무조건 OBS=1 을 못 잡는다"
+    assert _unconditional_obs_lines(["  while x; do", "    OBS=1", "  done"]) == ["    OBS=1"], \
+        "★조건이 아닌 블록(루프) 안의 OBS=1 을 못 잡는다"
+    assert _unconditional_obs_lines(
+        ["  if x; then", "    OBS=1", "  fi", "  elif y; then", "    OBS=1", "  fi"]) == [], \
+        "★정상적인 조건부 OBS=1 을 위반으로 신고한다(위양성)"
