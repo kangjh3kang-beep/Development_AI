@@ -43,6 +43,14 @@ describe("① 판정 — 두 모집단이 실제로 갈린다", () => {
     expect(satongSelectionLabelsVisible(st({ zoning: ["land-use"] }))).toBe(true);
   });
 
+  it("★닫힌 집합의 **내용**을 못 박는다 — 자기지시 루프만으로는 못 잡는다", () => {
+    // 실측 2026-09-03: 집합에서 "selected-parcel" 을 지우는 변이를 ①만으로 판정하니
+    // **SURVIVED** 였다 — 아래 `for (const id of SATONG_...)` 루프가 집합과 **함께 깎여**
+    // 단언이 조용히 사라지기 때문이다(전체 실행에서는 ②가 잡았다 = 형제 락의 공).
+    // 기대값을 집합에서 파생시키지 않고 **리터럴로** 적어야 그 축이 실제로 잠긴다.
+    expect([...SATONG_SELECTION_LABEL_CONTROL_IDS].sort()).toEqual(["selected", "selected-parcel"]);
+  });
+
   it("두 어휘를 모두 인정한다(selected · selected-parcel)", () => {
     for (const id of SATONG_SELECTION_LABEL_CONTROL_IDS) {
       expect(satongSelectionLabelsVisible(st({ cadastre: [id] }))).toBe(true);
