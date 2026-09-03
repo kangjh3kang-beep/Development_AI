@@ -199,10 +199,68 @@ def build_report_model_from_land(data: dict[str, Any]) -> ReportModel:
     priced_n = sum(1 for p in parcels if (p.get("official_price_per_sqm") and p.get("area_sqm")))
     val_str = (f"{_won(tot_val)} (공시지가 확보 {priced_n}/{n}필지 기준)" if tot_val
                else f"{fmt_value(None)} (공시지가 미확보)")
+    # ★아래 3집계는 신규(2026-09-03). 종전 §2 는 총면적·용도지역·공시가액만 냈다.
+    #   ★**모든 값에 「미상」 분모를 함께 낸다** — 미상을 「해당 없음」에 합치면
+    #     그 자체가 관측이 되어 사용자가 "확인 결과 없음"으로 읽는다.
+    #     실제 위험 실측: 도로접면 미상 40 · 맹지 10 이면 «10/206=4.9%»(미상을 접도로 셈)와
+    #     «10/166=6.0%(미상 제외)~50/206=24.3%(최악)» 이 **최대 5배** 갈린다.
+    jimok_dist: dict[str, int] = {}
+    jimok_unknown = 0
+    for p in parcels:
+        j = str(p.get("jimok") or "").strip()
+        if j:
+            jimok_dist[j] = jimok_dist.get(j, 0) + 1
+        else:
+            jimok_unknown += 1
+    jimok_str = ", ".join(f"{j} {c}필지" for j, c in sorted(jimok_dist.items(), key=lambda x: -x[1]))
+    if jimok_unknown:
+        jimok_str = f"{jimok_str or '—'} (미상 {jimok_unknown}필지)"
+
+    # 면적 통계 — 0/None 은 「미상」이지 「0㎡」가 아니다.
+    _areas = [float(p["area_sqm"]) for p in parcels
+              if isinstance(p.get("area_sqm"), (int, float)) and float(p["area_sqm"]) > 0]
+    area_stat = (
+        f"평균 {_sqm(sum(_areas) / len(_areas))} · 최소 {_sqm(min(_areas))} · 최대 {_sqm(max(_areas))}"
+        f" (산정 {len(_areas)}/{n}필지)" if _areas else fmt_value(None)
+    )
+
+    # ★맹지 — 판정은 **기존 SSOT** `access_basis_service._is_maengji` 를 재사용한다.
+    #   그 판정기는 `road_contact`·`road_side`·도로폭 **3축**을 본다. 여기서 문자열 1축으로
+    #   다시 짜면 **같은 이름의 두 판정이 다른 답**을 내게 된다(저장소 반복 결함).
+    from app.services.access.access_basis_service import _is_maengji
+
+    _road_known = [p for p in parcels
+                   if str(p.get("road_side") or "").strip() or p.get("road_contact") is not None]
+    _blind = [p for p in _road_known if _is_maengji(p)]
+    _unknown = n - len(_road_known)
+    # ★「미상 제외」는 **실제로 제외한 것이 있을 때만** 붙인다.
+    #   미상 0 인데 그 문구를 달면 "뭔가 빠졌다"로 읽혀 그 자체가 거짓 신호가 된다.
+    _blind_pct = f"{len(_blind) / len(_road_known) * 100:.1f}%" if _road_known else ""
+    blind_str = (
+        f"{len(_blind)}필지 / 접도 {len(_road_known) - len(_blind)}필지"
+        + (f" / 미상 {_unknown}필지" if _unknown else "")
+        + (f" ({_blind_pct}{' · 미상 제외' if _unknown else ''})" if _blind_pct else "")
+    ) if _road_known or _unknown else fmt_value(None)
+
+    # ★공유·국공유 — 「수」가 아니라 **구성**이다. 국·공유 지분이 섞이면 협의매수가 아니라
+    #   **공유재산법 절차**라 매입 전략이 통째로 달라진다. 그래서 **따로** 낸다.
+    _shared = [p for p in parcels if (p.get("co_owner_count") or 0) > 1]
+    _public = [p for p in _shared if p.get("has_public_share")]
+    _co_unknown = sum(1 for p in parcels if "co_owner_count" not in p)
+    share_str = (
+        f"공유 {len(_shared)}필지"
+        + (f" (★국·공유 지분 포함 {len(_public)}필지)" if _public else "")
+        + (f" / 미확인 {_co_unknown}필지" if _co_unknown else "")
+    ) if (_shared or _co_unknown) else "공유 없음"
+
     sections.append(Section(title="2. 토지정보 집계", blocks=[
         KVTableBlock(rows=[
             ("총 대지면적", _sqm(tot_area)),
+            ("필지 면적 분포", area_stat),
+            ("지목 분포", jimok_str or fmt_value(None)),
             ("용도지역 분포", zone_str or fmt_value(None)),
+            ("맹지(도로 미접)", blind_str),
+            ("공유 필지", share_str),
             ("개별공시지가 기준 추정 토지가액", val_str),
         ]),
     ]))
