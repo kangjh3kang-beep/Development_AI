@@ -25,13 +25,19 @@ from __future__ import annotations
 import os
 import re
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _scan_guard import assert_absent  # noqa: E402
+# ★형제 관례를 따른다 — `tests._scan_guard` **패키지 임포트**
+#   (`test_scan_guard_self.py:12` · `apps/api/tests/test_deploy_prune_window_contract.py:31`).
+#   그러면 `sys.path` 조작도 린트 억제 지시도 필요 없다. 첫 판은 둘 다 썼다 —
+#   ★옳은 패턴이 **바로 옆에 있었는데** 안 봤다.
+#   ★★그리고 그 **억제 지시의 이름을 이 주석에 적었더니** ruff 가 그것을 실제 지시로 읽어
+#     경고를 냈다. 이름을 바꿔 설명하려다 **또 적어서 또 걸렸다**(재귀).
+#     → 그래서 이 주석은 그 토큰을 **한 번도 적지 않는다.**
+#     「주석에 적은 예시가 다음 검사의 위양성이 된다」의 가장 짧은 실례다.
+from tests._scan_guard import assert_absent
 
 _REPO = Path(__file__).resolve().parents[2]
 _SCRIPT = _REPO / "scripts" / "coord.sh"
@@ -77,7 +83,7 @@ def _run(cmd: str, board: Path, *, env_extra: dict | None = None, expect_rc: int
            "COORD_DIR": str(board.parent), "HOME": str(Path.home()), "LANG": "en_US.UTF-8"}
     env.update(env_extra or {})
     p = subprocess.run(["bash", str(_SCRIPT), cmd], cwd=str(_REPO), env=env,
-                       capture_output=True, timeout=120)
+                       capture_output=True, timeout=120, check=False)
     if expect_rc is not None:
         assert p.returncode == expect_rc, (
             f"coord.sh {cmd} rc={p.returncode}(기대 {expect_rc})\n{p.stderr.decode(errors='replace')[:600]}")
@@ -314,7 +320,7 @@ def test_round_trip_writer_to_reader(tmp_path: Path) -> None:
                  ["claim", "왕복영역_zzz"],
                  ["release", "왕복영역_zzz"]):
         r = subprocess.run(["bash", str(_SCRIPT), *args], cwd=str(_REPO), env=env,
-                           capture_output=True, timeout=60)
+                           capture_output=True, timeout=60, check=False)
         assert r.returncode == 0, f"★writer 실패: {args} — {r.stderr.decode(errors='replace')[:300]}"
     assert board.exists(), "★writer 가 보드를 안 만들었다"
     out = _out("summary", board)
