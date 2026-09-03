@@ -32,6 +32,7 @@ import { render } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { SATONG_MAP_SHELL_LAYERS, defaultControlsByLayer } from "@/components/precheck/SatongMapShell";
+import { satongLabelBudget } from "@/lib/satong-map-labels";
 import {
   SATONG_SELECTION_LABEL_CONTROL_IDS,
   satongSelectionLabelsVisible,
@@ -123,35 +124,37 @@ describe("B 배선(행위) — 컴포넌트가 판정**값**을 위임 인자로
     expect(visibleArgs()).not.toContain(true);
   });
 
-  it("★★임계의 입력(zoom)이 컴포넌트의 실제 줌에 배선돼 있다", () => {
-    // ★변이 실측(2026-09-04): `zoom: mapZoom` 을 `zoom: 30` 으로 바꿔도 **SURVIVED** 였고,
-    //   deps 에서 `mapZoom` 을 빼도 **SURVIVED** 였다. 임계를 버짓에서 **파생**시켜 놓고
-    //   ★**그 파생의 입력이 배선됐는지**를 안 쟀다 — 파생 락은 파생식만 지킨다.
-    //   jsdom 은 Leaflet 을 못 띄워 `mapZoom` 이 12 에 고정되므로 값으로는 못 가른다
-    //   (30 도 12 도 그냥 number 다). 그래서 이 두 칸만 소스로 본다 — **관계**로.
-    //   린트(`react-hooks/exhaustive-deps`)가 deps 쪽을 잡기는 하지만(실측 경고 2→3,
-    //   예산 2 = 여유 0), 그 봉쇄는 **무관한 기존 경고 2건이 그대로 있어야** 성립한다.
-    //   ★우연한 봉쇄를 잠금으로 세지 않는다.
+  it("★★컴포넌트가 넘긴 버짓이 **자기 줌에서 파생된 값**이다 — 이름이 아니라 **값**으로", async () => {
+    // ★적대 리뷰 MAJOR-1 실측: 종전 락은 소스에서 `zoom:\s*mapZoom` 을 찾았고,
+    //   `zoom: mapZoom * 2` 가 **64파일 469건 전부를 통과**했다(버짓 0 → 96 = 결함 부활).
+    //   ★그리고 내가 적은 사유(*"jsdom 에선 값으로 못 가른다"*)가 **거짓**이었다 —
+    //   같은 파일의 `visibleArgs()` 가 이미 스파이에서 **값을 읽고** 있었다.
+    //   같은 객체에 실리는 `budget` 도 당연히 값으로 읽힌다. **못 하는 게 아니라 안 한 것.**
+    // ★자기 안에서 렌더한다 — 앞 케이스의 렌더에 기대면 **순서 의존**이 되고,
+    //   `-t` 로 이 케이스만 단독 실행할 때 `calls[0]` 이 undefined 가 된다(실측).
+    planSpy.mockClear();
+    // 정적 임포트를 피해 vi.mock 호이스팅과 섞이지 않게 한다.
+    const { SatongMultiMap, SATONG_INITIAL_ZOOM } = await import("@/components/map/SatongMultiMap");
+    render(<SatongMultiMap layerState={st({ cadastre: ["boundary", "selected"] })} />);
+    const arg = (planSpy.mock.calls as unknown as [{ budget: number }][])[0][0];
+    // 기대값을 리터럴로 박지 않는다 — 양쪽을 **각각 파생**시켜 대조한다.
+    expect(arg.budget).toBe(satongLabelBudget(SATONG_INITIAL_ZOOM));
+  });
+
+  it("★그 버짓이 이펙트 deps 에 실려 있다 — 없으면 줌 대역이 바뀌어도 안 바뀐다", () => {
+    // ★MAJOR-2: 한때 `mapZoom` 자체를 deps 에 넣었는데, 그러면 **매 zoomend 마다** 라벨을
+    //   통째로 다시 만든다(그 자리 주석이 명시적으로 금지한 것). 버짓은 **계단함수**라
+    //   종전과 같은 재부착 빈도를 유지한다.
     const src = __stripCommentsForScan(
       readFileSync(join(process.cwd(), "components/map/SatongMultiMap.tsx"), "utf8"),
       "SatongMultiMap.tsx",
     );
-    // ① 계획 호출이 컴포넌트의 줌 상태를 넘긴다(리터럴이 아니라 그 식별자).
-    const call = src.match(/planSelectionLabels\(\{[\s\S]*?\}\)/);
-    expect(call).toBeTruthy(); // 대조군 — 호출이 실재한다
-    expect(call![0]).toMatch(/zoom:\s*mapZoom\b/);
-
-    // ② 그 이펙트의 deps 배열에 mapZoom 이 있다 — 없으면 줌이 바뀌어도 임계가 안 바뀐다.
-    //    ★모양이 아니라 **관계**: selectionLabelsOn 이 든 그 배열을 찾아 같은 배열을 본다.
-    // ★공백에 관대하게(2026-09-04 실측): 종전 `/\}, \[/` 는 `}` 와 `[` 사이 **줄바꿈 하나**로
-    //   빨개졌다 — 계약은 그대로인데. **#959 에서 고친 그 결함을 새 자리에서 다시 만든 것**이다.
-    //   ★가드와 판정이 같은 수집기를 쓰므로 눈이 멀지는 않았다(개수 단언이 fail-closed 로 터진다).
-    //   동료 세션이 *"가드의 수집기가 판정기보다 좁으면 가드도 같이 눈이 먼다"* 고 짚어 줘서
-    //   재 봤고, 여기서는 **눈먼 게 아니라 위양성**이었다 — 그것도 결함이다.
     const depsArrays = [...src.matchAll(/\}\s*,\s*\[([^\]]*)\]\s*\)\s*;/g)].map((m) => m[1]);
     const theOne = depsArrays.filter((a) => /\bselectionLabelsOn\b/.test(a));
     expect(theOne).toHaveLength(1); // 대조군 — 그 배열이 정확히 하나 잡힌다
-    expect(theOne[0]).toMatch(/\bmapZoom\b/);
+    expect(theOne[0]).toMatch(/\bselectionLabelBudget\b/);
+    // ★음성 대조군 — 원시 줌이 다시 들어오면 재부착 불변식이 깨진다.
+    expect(theOne[0]).not.toMatch(/\bmapZoom\b/);
   });
 
   it("★렌더 위임도 실제로 일어난다 — 계획만 세우고 안 그리면 화면이 안 바뀐다", async () => {

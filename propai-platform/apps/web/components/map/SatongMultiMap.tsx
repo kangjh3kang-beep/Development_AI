@@ -49,7 +49,12 @@ import {
   type SampleBasis,
   type SampleBasisRaw,
 } from "@/lib/market/comparable-sample";
-import { bindSatongLabel, planSatongLabels, satongLabelLOD } from "@/lib/satong-map-labels";
+import {
+  bindSatongLabel,
+  planSatongLabels,
+  satongLabelBudget,
+  satongLabelLOD,
+} from "@/lib/satong-map-labels";
 import { planSelectionLabels, renderSelectionLabels } from "@/lib/satong-selection-labels";
 import type { SiteLayoutOverlay } from "@/lib/site-layout";
 import {
@@ -85,6 +90,13 @@ declare global {
 }
 
 /** 백엔드 /zoning/parcel-at-point 응답 형태 */
+/**
+ * 지도 초기 줌. ★상수로 빼는 이유(#960 리뷰 MAJOR-1): 테스트가 «컴포넌트가 넘긴 버짓이
+ * **자기 줌에서 파생된 값인가**» 를 **값으로** 재려면 그 줌을 알아야 한다. 리터럴을 테스트에
+ * 박으면 초기 줌을 바꿀 때 계약이 그대로인데 빨개진다.
+ */
+export const SATONG_INITIAL_ZOOM = 12;
+
 export interface ParcelAtPointResult {
   found: boolean;
   pnu?: string;
@@ -1250,7 +1262,7 @@ export function SatongMultiMap({
   const [detailPopupOpen, setDetailPopupOpen] = useState(false);
   // 현재 줌 레벨 — 라벨 LOD(z≥17 전체 / 15~16 상위 N / <15 hover-only) 판정 입력.
   //   zoomend 에서만 갱신하고, 임계(15·17) 교차 시에만 버짓이 바뀌어 라벨 이펙트가 재부착된다.
-  const [mapZoom, setMapZoom] = useState(12);
+  const [mapZoom, setMapZoom] = useState(SATONG_INITIAL_ZOOM);
   // 실거래 fitBounds 1회성 가드 — 라벨 재부착(줌 교차)로 이펙트가 재실행돼도 사용자 줌을 덮지 않게.
   const lastMarketFitKeyRef = useRef("");
   const baseLayerRef = useRef<any>(null);
@@ -2462,8 +2474,12 @@ export function SatongMultiMap({
   //   시각 마커(폴리곤·staged 초록점)는 다른 이펙트가 이미 그리므로, 여기서는 투명 앵커
   //   포인트에 라벨만 부착한다(중복 마커 방지).
   const selectionLabelLayerRef = useRef<any>(null);
-  // 롤업 여부만 dep로 — LOD 임계(z=15) 교차 시에만 라벨 재부착(줌마다 teardown 낭비 방지 — R1 L2).
-  const selectionRollup = satongLabelLOD(mapZoom) === "hover-only";
+  // ★**버짓만** dep로 — 버짓은 계단함수(z 15·17·18 에서만 변함)라, 종전의 «롤업 여부만 dep»
+  //   와 **같은 재부착 빈도**를 유지한다(R1 L2: 줌마다 teardown 낭비 방지).
+  //   ★2026-09-04 적대 리뷰 MAJOR-2: 한때 `mapZoom` 을 직접 deps 에 넣었는데, 그러면 **매
+  //   zoomend 마다** 라벨을 통째로 다시 만든다 — 위 주석이 명시적으로 피하려던 그것이다.
+  //   내 계획서는 **그 주석을 근거로 인용하면서** 그것을 깼다(§D20 적용 범위 ≠ 결함 범위).
+  const selectionLabelBudget = satongLabelBudget(mapZoom);
   // 「선택 필지」 컨트롤(기본 ON). 컨트롤을 선언하지 않는 호출부에서는 항상 true.
   const selectionLabelsOn = satongSelectionLabelsVisible(layerState);
 
@@ -2477,8 +2493,7 @@ export function SatongMultiMap({
     //   mapReady 는 deps 에 남겨 지도가 준비되는 순간 재실행되게 한다.
     const plan = planSelectionLabels({
       visible: selectionLabelsOn,
-      rollup: selectionRollup,
-      zoom: mapZoom,
+      budget: selectionLabelBudget,
       features: overlayFeatures,
       representativePoint: geometryRepresentativePoint,
       // ★PNU 로 지번을 파생한 **뒤** 줄인다 — 먼저 줄이면 동 단위 주소에서 지번을 붙일
@@ -2497,7 +2512,7 @@ export function SatongMultiMap({
       try { group?.remove?.(); } catch { /* noop */ }
       if (selectionLabelLayerRef.current === group) selectionLabelLayerRef.current = null;
     };
-  }, [mapReady, overlayFeatures, selectionRollup, selectionLabelsOn, mapZoom]);
+  }, [mapReady, overlayFeatures, selectionLabelsOn, selectionLabelBudget]);
 
 
   // ── 거리재기 — 측정 모드 동기화·측정점/폴리라인/누적거리 렌더·모드 UX·ESC ──
