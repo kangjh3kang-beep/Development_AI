@@ -158,6 +158,18 @@ describe("B 배선(행위) — 컴포넌트가 판정**값**을 위임 인자로
       .filter((x) => /\bconst selectionLabelBudget =/.test(x));
     expect(stmt).toHaveLength(1); // 대조군 — 그 대입이 정확히 하나 있다
     expect(stmt[0]).toBe("const selectionLabelBudget = satongLabelBudget(mapZoom)");
+
+    // ★★그리고 **호출부**도 본다. 첫 시도에서 나는 위 대입문만 잠갔는데, 변이는
+    //   `budget: selectionLabelBudget * 2` 로 **호출부**에 있었다 — **결함이 사는 자리가
+    //   아닌 곳에 락을 걸었다**(§D20). 대입이 옳아도 넘길 때 곱하면 그만이다.
+    const call = src.match(/planSelectionLabels\(\{[\s\S]*?\}\)/);
+    expect(call).toBeTruthy(); // 대조군 — 그 호출이 실재한다
+    const budgetProp = call![0]
+      .split(",")
+      .map((x) => x.replace(/\s+/g, " ").trim())
+      .filter((x) => x.startsWith("budget:"));
+    expect(budgetProp).toHaveLength(1);
+    expect(budgetProp[0]).toBe("budget: selectionLabelBudget");
   });
 
   it("★그 버짓이 이펙트 deps 에 실려 있다 — 없으면 줌 대역이 바뀌어도 안 바뀐다", () => {
