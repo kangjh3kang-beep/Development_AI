@@ -15,7 +15,7 @@
  * 【이 락】서버 응답을 목킹해 페이지를 렌더하고, **그려진 요율 칸 수 == 응답의 평면 숫자 키 수**
  * 를 단언한다. 위 두 변이는 여기서 즉시 빨개진다.
  */
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const getMock = vi.fn();
@@ -63,9 +63,6 @@ beforeEach(() => {
 });
 
 /** 요율 칸 = `Field` 가 그리는 숫자 입력. 라벨이 아니라 **입력 개수**로 센다. */
-function feeInputCount(): number {
-  return document.querySelectorAll("input.cc-num").length;
-}
 
 /** 요율 입력 칸 = `Field` 가 그리는 `input.cc-num`. 라벨이 아니라 **입력 개수**로 센다. */
 function numInputs(): number {
