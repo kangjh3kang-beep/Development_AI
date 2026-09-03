@@ -143,7 +143,12 @@ describe("B 배선(행위) — 컴포넌트가 판정**값**을 위임 인자로
 
     // ② 그 이펙트의 deps 배열에 mapZoom 이 있다 — 없으면 줌이 바뀌어도 임계가 안 바뀐다.
     //    ★모양이 아니라 **관계**: selectionLabelsOn 이 든 그 배열을 찾아 같은 배열을 본다.
-    const depsArrays = [...src.matchAll(/\}, \[([^\]]*)\]\);/g)].map((m) => m[1]);
+    // ★공백에 관대하게(2026-09-04 실측): 종전 `/\}, \[/` 는 `}` 와 `[` 사이 **줄바꿈 하나**로
+    //   빨개졌다 — 계약은 그대로인데. **#959 에서 고친 그 결함을 새 자리에서 다시 만든 것**이다.
+    //   ★가드와 판정이 같은 수집기를 쓰므로 눈이 멀지는 않았다(개수 단언이 fail-closed 로 터진다).
+    //   동료 세션이 *"가드의 수집기가 판정기보다 좁으면 가드도 같이 눈이 먼다"* 고 짚어 줘서
+    //   재 봤고, 여기서는 **눈먼 게 아니라 위양성**이었다 — 그것도 결함이다.
+    const depsArrays = [...src.matchAll(/\}\s*,\s*\[([^\]]*)\]\s*\)\s*;/g)].map((m) => m[1]);
     const theOne = depsArrays.filter((a) => /\bselectionLabelsOn\b/.test(a));
     expect(theOne).toHaveLength(1); // 대조군 — 그 배열이 정확히 하나 잡힌다
     expect(theOne[0]).toMatch(/\bmapZoom\b/);
