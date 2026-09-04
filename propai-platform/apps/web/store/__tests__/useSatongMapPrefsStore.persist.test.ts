@@ -66,6 +66,30 @@ describe("★★기본값 커버리지 — **내가 실제로 낸 결함**을 �
     expect(missing).toEqual(["auction", "presale", "roadview"]);
   });
 
+  it("★★기본값 **내용**을 통째로 못 박는다 — 커버리지 락은 「있다/없다」만 본다", () => {
+    // ★2026-09-04 변이 실측: 커버리지 락을 넣고도 `poi` 를 5개 → 2개로 줄이는 변이가
+    //   **SURVIVED** 했다. 키는 그대로 있으니 «없는 레이어» 집합이 안 변한다.
+    //   ★그런데 그것이 **내가 실제로 낸 두 번째 결함**이다(상권·공원·병원을 지웠다).
+    //
+    //   내용을 «파생» 시킬 방법은 없다 — 어떤 컨트롤을 기본으로 켤지는 **제품 판단**이고,
+    //   선언된 컨트롤 전부를 켜는 것도 아니다(`land-use-wide` 등은 의도적으로 꺼져 있다).
+    //   → **골든 스냅샷**으로 못 박는다. 바꾸려면 **여기를 함께 고쳐야** 하고, 그것이
+    //     «이 값들은 누군가 이유를 갖고 넣은 것» 이라는 사실을 다음 사람에게 강제로 알린다.
+    //   ★원본 주석이 그 이유를 적고 있다 — *"개발 실무 기본값(레인G 권고) — 아파트만 보이던
+    //     종전 하드코딩 대신 토지·상업업무용을 기본 포함해…"*
+    expect(defaultSatongMapControls()).toEqual({
+      cadastre: ["boundary", "selected"],
+      zoning: ["land-use"],
+      "official-price": ["unit-price"],
+      age: ["building-age"],
+      transactions: ["kind-trade", "type-apt", "type-land", "type-commercial"],
+      poi: ["station", "school", "commerce", "park", "hospital"],
+      development: ["facilities"],
+      terrain: ["base"],
+      capacity: ["far-headroom"],
+    });
+  });
+
   it("★역방향 — 기본값 키에 **레이어가 아닌 것**이 없다(오타·유령 키)", () => {
     const layerIds = new Set(SATONG_MAP_SHELL_LAYERS.map((l) => l.id as string));
     const ghosts = Object.keys(defaultSatongMapControls()).filter((k) => !layerIds.has(k));
