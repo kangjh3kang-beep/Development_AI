@@ -365,10 +365,7 @@ function accountScopedStoreHooks(): string[] {
     // 훅 이름. ★`matchAll` — 한 파일에 스토어가 둘이면 첫 것만 집던 결함(2차 리뷰 MAJOR-2).
     //   ★그리고 여러 export 형태를 본다: `export const useX = create` ·
     //     `export const useX: T = create` · `const useX = create` + `export { useX }`.
-    const names = [
-      ...src.matchAll(/export const (use[A-Za-z0-9_]*)\s*(?::[^=]+)?=\s*create/g),
-      ...src.matchAll(/^const (use[A-Za-z0-9_]*)\s*(?::[^=]+)?=\s*create/gm),
-    ].map((m) => m[1]);
+    const names = hookNamesFrom(src);
     // ★**계정별이라고 분류해 놓고 이름을 못 뽑으면 조용히 흘리지 않는다**(2차 리뷰 MAJOR-2:
     //   초판은 `if (m) out.push(...)` 라 **else 가 없었다** — 분류된 파일이 소리 없이 사라졌고,
     //   하한 가드가 «>= 4» 라 다섯 번째가 그 형태면 4 에 머물러 통과했다).
@@ -383,6 +380,19 @@ function accountScopedStoreHooks(): string[] {
   return out.sort();
 }
 
+/**
+ * ★수집기의 **형태 인식**을 합성 입력으로 잠근다(2026-09-04 · 2차 리뷰 MAJOR-2).
+ *   경화(throw·matchAll·여러 export 형태)는 **다섯 번째 스토어가 실재해야** 변이로 잡힌다 —
+ *   지금은 없으므로 그 경화가 «설명 가능한 생존» 이 된다. 그래서 **패턴 자체**를 태운다.
+ *   `hookNamesFrom` 은 수집기와 **같은 정규식**을 쓴다(두 곳에 적으면 갈린다).
+ */
+export function hookNamesFrom(src: string): string[] {
+  return [
+    ...src.matchAll(/export const (use[A-Za-z0-9_]*)\s*(?::[^=]+)?=\s*create/g),
+    ...src.matchAll(/^const (use[A-Za-z0-9_]*)\s*(?::[^=]+)?=\s*create/gm),
+  ].map((m) => m[1]);
+}
+
 /** 계정별 어댑터를 쓰는 **파일 수** — 위 수집기와 **다른 경로**로 센다(교차검증용). */
 function accountScopedStoreFileCount(): number {
   const dir = join(WEB_ROOT, "store");
@@ -394,6 +404,27 @@ function accountScopedStoreFileCount(): number {
   }
   return n;
 }
+
+describe("★수집기의 형태 인식 — 합성 입력으로 잠근다(2차 리뷰 MAJOR-2)", () => {
+  it("A 표준형", () => {
+    expect(hookNamesFrom('export const useA = create<S>()(persist(...))')).toEqual(["useA"]);
+  });
+  it("★B 타입 주석형 — 초판이 놓치던 형태", () => {
+    expect(hookNamesFrom('export const useB: UseBoundStore<S> = create(...)')).toEqual(["useB"]);
+  });
+  it("★C 나중 export 형 — 초판이 놓치던 형태", () => {
+    expect(hookNamesFrom('const useC = create<S>()(...)\nexport { useC };')).toEqual(["useC"]);
+  });
+  it("★D 한 파일 두 스토어 — 초판은 첫 것만 집었다", () => {
+    expect(
+      hookNamesFrom('export const useD1 = create(...)\nexport const useD2 = create(...)'),
+    ).toEqual(["useD1", "useD2"]);
+  });
+  it("★음성 대조군 — create 가 아닌 것은 안 집는다", () => {
+    expect(hookNamesFrom('export const useNot = something(...)')).toEqual([]);
+    expect(hookNamesFrom('const helper = create(...)')).toEqual([]); // use 접두가 아니다
+  });
+});
 
 describe("파생형 — 모든 persist 스토어는 **와이프되거나 계정별이거나** 둘 중 하나다", () => {
   type StoreInfo = { file: string; key: string | null; scoped: boolean };
