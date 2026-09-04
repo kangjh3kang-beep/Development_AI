@@ -50,6 +50,11 @@ import {
   type SampleBasisRaw,
 } from "@/lib/market/comparable-sample";
 import { bindSatongLabel, planSatongLabels, satongLabelBudget } from "@/lib/satong-map-labels";
+import {
+  summarizeMarketViewport,
+  marketOffscreenNote,
+  type MarketViewportBounds,
+} from "@/lib/satong-market-viewport";
 import { planSelectionLabels, renderSelectionLabels } from "@/lib/satong-selection-labels";
 import type { SiteLayoutOverlay } from "@/lib/site-layout";
 import {
@@ -1258,6 +1263,11 @@ export function SatongMultiMap({
   // 현재 줌 레벨 — 라벨 LOD(z≥17 전체 / 15~16 상위 N / <15 hover-only) 판정 입력.
   //   zoomend 에서만 갱신하고, 임계(15·17) 교차 시에만 버짓이 바뀌어 라벨 이펙트가 재부착된다.
   const [mapZoom, setMapZoom] = useState(SATONG_INITIAL_ZOOM);
+  // 현재 뷰포트 경계 — 실거래 마커의 "화면 밖 N곳" 고지 입력.
+  //   ★줌만으로는 판정할 수 없다(pan 만 해도 마커가 나간다). moveend·zoomend 양쪽에서 갱신한다.
+  //   ★null = **아직 못 쟀다**. 0 으로 폴백하지 않는다 — 그러면 "재 봤고 전부 보인다"와
+  //     구별되지 않는다(summarizeMarketViewport 가 같은 규약을 지킨다).
+  const [mapViewBounds, setMapViewBounds] = useState<MarketViewportBounds | null>(null);
   // 실거래 fitBounds 1회성 가드 — 라벨 재부착(줌 교차)로 이펙트가 재실행돼도 사용자 줌을 덮지 않게.
   const lastMarketFitKeyRef = useRef("");
   const baseLayerRef = useRef<any>(null);
@@ -1906,6 +1916,23 @@ export function SatongMultiMap({
         setMapZoom(map.getZoom());
         // 줌 변경 → 라벨 LOD 재판정(임계 교차 시에만 버짓이 바뀌어 라벨이 재부착된다).
         map.on("zoomend", () => setMapZoom(map.getZoom()));
+        // 뷰포트 경계 동기화 — 마커가 화면을 벗어났는지 고지하기 위한 입력.
+        //   ★참조를 보존한다(값이 같으면 prev 반환) — moveend 마다 새 객체를 만들면
+        //     이것을 dep 로 쓰는 useMemo 가 매번 재계산돼 참조 churn 이 된다.
+        const syncViewBounds = () => {
+          try {
+            const b = map.getBounds();
+            const next: MarketViewportBounds = {
+              south: b.getSouth(), west: b.getWest(), north: b.getNorth(), east: b.getEast(),
+            };
+            setMapViewBounds((prev) =>
+              prev && prev.south === next.south && prev.west === next.west
+                && prev.north === next.north && prev.east === next.east ? prev : next);
+          } catch { /* noop */ }
+        };
+        syncViewBounds();
+        map.on("moveend", syncViewBounds);
+        map.on("zoomend", syncViewBounds);
         // ★상세팝업 양보 계약 배선. Leaflet 은 팝업이 하나만 열리므로(autoClose 기본 true)
         //   open/close 를 그대로 boolean 으로 쓴다. 지도 파괴 시 리스너도 함께 사라진다.
         map.on("popupopen", () => setDetailPopupOpen(true));
@@ -2650,6 +2677,15 @@ export function SatongMultiMap({
     for (const entry of marketRenderPlan) out[entry.type] = entry.groups.length;
     return out;
   }, [marketRenderPlan]);
+  // ★"실거래 N곳"은 **생성한** 마커 수라 화면 밖으로 나간 것을 말하지 않는다(무음 절단).
+  //   실측(2026-09-04): z15 에서 6/6 이 보이다가 지적 배율(z17)에서 5/6 이 뷰포트를 벗어났고,
+  //   나간 것이 전부 원거리라 그 원거리가 전부 아파트였다 → 사용자에겐 "아파트만 안 나온다"로
+  //   보였다. 유형 분기는 코드에 없다. 그래서 고지도 유형이 아니라 **뷰포트 축**으로 한다.
+  const marketViewport = useMemo(
+    () => summarizeMarketViewport(marketRenderPlan, mapViewBounds),
+    [marketRenderPlan, mapViewBounds],
+  );
+  const marketOffscreenText = marketOffscreenNote(marketViewport);
   const presaleMappableCount = useMemo(
     () => (showPresale ? (presaleItems ?? []).filter((i) => !!i.lat && !!i.lon).length : 0),
     [showPresale, presaleItems],
@@ -3691,6 +3727,14 @@ export function SatongMultiMap({
                 {marketNote && (
                   <span className="inline-flex rounded-full bg-white/92 px-3 py-1.5 text-[11px] font-black text-slate-700 shadow">
                     {marketNote}
+                  </span>
+                )}
+                {marketOffscreenText && (
+                  <span
+                    className="inline-flex rounded-full bg-white/92 px-3 py-1.5 text-[11px] font-black text-amber-700 shadow"
+                    data-testid="market-offscreen-note"
+                  >
+                    {marketOffscreenText}
                   </span>
                 )}
                 {presaleAuctionNote && (
