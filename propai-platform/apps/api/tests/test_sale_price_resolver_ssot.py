@@ -299,14 +299,79 @@ def test_exclusive_ratio_comes_from_the_declared_ssot() -> None:
     assert "불일치" not in note3, f"일치인데 불일치라 적는다: {note3}"
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "★M-3 부채 — 세 번째 출처 `avm` 이 **같은 단위 결함**을 갖는다: "
-    "`predicted_won / (84.0㎡ / 평)` 은 **전용 기준 매매가**인데 공급 기준 분양가와 섞인다. "
-    "이 PR 은 `molit_real` 만 고쳤다 — **모집단이 3인데 2로 셌다.** "
-    "MLflow 모델 미등록이면 휴면이라 라이브 발화 여부는 **미측정**."))
-def test_debt_avm_source_uses_supply_area_basis() -> None:
+def test_every_blended_source_is_on_the_supply_price_basis() -> None:
+    """★M-3 **해소** — 블렌딩되는 **세 출처 전부**가 같은 축(공급 기준 신축 분양가)이다.
+
+    초판은 `molit_real` 만 고치고 **`avm` 을 빠뜨렸다** — **모집단이 3인데 2로 셌다**.
+    AVM 도 MOLIT `area_m2`(전용) + `price_10k_won`(매매)로 학습하므로 **같은 단위 결함**이었다.
+
+    ★라이브 실측(2026-09-05): 이 출처는 **휴면**이다(`_avm_source` → `None` · 모델 미등록,
+      `stage=fallback`). 그래도 고쳤다 — **모델을 등록하는 순간 발화하는 지뢰**이고,
+      그때는 «왜 분양가가 튀었나» 를 이 자리에서 찾기 어렵다.
+    """
     src = _REVAL.read_text(encoding="utf-8")
-    assert "_AVM_REF_AREA_SQM" not in src or "전용률" in src.split("_avm_source")[1][:1200]
+    # ★`split("_avm_source")` 는 **호출부**를 잡는다(정의부보다 먼저 나온다) — 내 첫 판이
+    #   그래서 위양성을 냈다. **정의부**를 앵커로 삼는다.
+    assert "async def _avm_source" in src, "조회기 사망 — 정의부를 못 찾는다"
+    # ★고정 창(`[:2500]`)을 쓰지 않는다 — 정의부 155행 ↔ 변환 226행이라 **잘렸다**.
+    #   *절단된 창은 「없다」고 확신 있게 답한다.* 경계를 **다음 메서드**로 잡는다.
+    body = src.split("async def _avm_source", 1)[1]
+    nxt = body.find("\n    async def ")
+    avm = body if nxt < 0 else body[:nxt]
+    assert len(avm) > 800, f"창이 너무 짧다 — 경계를 잘못 잡았다({len(avm)}자)"
+    # ★공용 변환을 **경유**하는가(세 번째 산식을 만들지 않았는가)
+    assert "_exclusive_ratio_for" in avm, "avm 출처가 전용률 변환을 안 거친다"
+    assert "_new_build_premium" in avm, "avm 출처가 신축 프리미엄을 안 거친다"
+    # ★근거가 표면까지 실리는가
+    assert "공급 평당가" in avm, "변환 사실이 note 에 안 실린다"
+
+    # ★★프리미엄 상수의 **정의가 한 곳**인가 — 접근자를 두고도 복제하면 소용없다
+    import ast
+    defs = []
+    for f in _api_py_files():
+        try:
+            tree = ast.parse(f.read_text(encoding="utf-8"))
+        except SyntaxError:
+            continue
+        for n in ast.walk(tree):
+            if isinstance(n, ast.Assign) and any(
+                    isinstance(t, ast.Name) and t.id == "_PREMIUM" for t in n.targets):
+                defs.append(f.name)
+    assert defs == ["suggest.py"], f"신축 프리미엄이 여러 곳에 정의됐다: {defs}"
+
+
+def test_stubs_must_tolerate_new_kwargs() -> None:
+    """★**스텁 kwargs 함정** — 이 저장소에서 오늘만 **세 번** 났다.
+
+    소비처가 인자를 늘리면 스텁이 `TypeError` 를 내는데, `revalue()` 의 `except Exception`
+    이 그것을 **삼켜 출처가 조용히 빠진다.** 그러면 테스트는 **실패가 아니라 다른 것을 잰다**
+    (실측: 29,000,000 기대 자리에 30,000,000 · 30,000,000 기대 자리에 28,000,000).
+
+    → 출처 스텁은 **`**kw` 를 받아야 한다**. 소스 검사로 강제한다.
+    """
+    import re
+
+    src = (_API / "tests" / "test_avm_train.py").read_text(encoding="utf-8")
+    # ★축을 **정확히** 잡는다: `MarketRevaluationService` 의 **출처 메서드**를 대체하는
+    #   스텁만이 대상이다. 이름 패턴으로 넓게 잡았더니 AVM **내부** 스텁
+    #   (`_fake_load`·`_fake_comps`·`_fake_features`·`_fake_spatial`)까지 걸렸다 —
+    #   그것들은 소비처가 아니라 **다른 계약**이다. ★위양성도 결함이다.
+    targets = set(re.findall(
+        r'monkeypatch\.setattr\(\s*MarketRevaluationService,\s*"(_[a-z_]+source[a-z_]*)"', src))
+    assert targets, "조회기 사망 — 출처 스텁 배선을 하나도 못 찾았다"
+
+    bad = []
+    for name in sorted(targets):
+        # 그 배선이 쓰는 스텁 함수들의 시그니처만 본다
+        for sig in re.findall(r"async def (_fake_\w+)\(self[^)]*\)", src):
+            pass
+        for m in re.finditer(r"async def (_fake_\w+)\(self([^)]*)\)", src):
+            fn, params = m.group(1), m.group(2)
+            wired = re.search(
+                rf'monkeypatch\.setattr\(\s*MarketRevaluationService,\s*"[^"]+",\s*{fn}\b', src)
+            if wired and "**kw" not in params:
+                bad.append(f"{fn}({params.strip(', ')})")
+    assert not bad, f"새 kwargs 를 못 받는 **출처 스텁**이 있다(조용히 출처가 빠진다): {bad}"
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -127,7 +127,9 @@ class MarketRevaluationService:
         #    모델 미등록·로드 실패·예측 실패 등 어떤 실패에도 기존 동작 완전 동일(graceful).
         if include_avm:
             try:
-                avm = await self._avm_source(address=address, lawd_cd=lawd_cd)
+                avm = await self._avm_source(
+                    address=address, lawd_cd=lawd_cd,
+                    dev_type=dev_type, building_type=building_type)
                 if avm and avm["price_per_pyeong"] > 0:
                     sources.append(avm)
             except Exception as e:  # noqa: BLE001
@@ -150,7 +152,10 @@ class MarketRevaluationService:
             "sale_price_source": _blend_label(sources, has_avm, price),
         }
 
-    async def _avm_source(self, *, address: str, lawd_cd: str | None) -> dict[str, Any] | None:
+    async def _avm_source(
+        self, *, address: str, lawd_cd: str | None,
+        dev_type: str = "M01", building_type: str | None = None,
+    ) -> dict[str, Any] | None:
         """레거시 AVM(MLflow 등록 모델)으로 평당가를 추정해 블렌딩 소스로 반환한다.
 
         새 서빙 코드가 아니라 레거시 `AVMService`의 모델 로드(Production→Staging)·
@@ -204,7 +209,28 @@ class MarketRevaluationService:
         if predicted_won <= 0:
             return None
 
-        price_per_pyeong = predicted_won / (_AVM_REF_AREA_SQM / _PYEONG)
+        # ★★AVM 도 **전용면적 기준 기존아파트 매매가**다 — MOLIT `area_m2`(전용) +
+        #   `price_10k_won`(매매)로 학습·비교한다. 그런데 이 블렌딩의 다른 출처는
+        #   **공급면적 기준 신축 분양가**다(`regional`·`molit_real`).
+        #   즉 `molit_real` 에서 고친 **바로 그 단위 불일치**가 여기 그대로 남아 있었다 —
+        #   **모집단이 3인데 2로 세고 고쳤다**(적대 리뷰 M-3).
+        #
+        # ★라이브 실측(2026-09-05): 이 출처는 지금 **휴면**이다 —
+        #   `_avm_source` 반환 `None` · 모델 미등록(`stage=fallback`).
+        #   그래도 고치는 이유: **누가 모델을 등록하는 순간 발화하는 지뢰**이고,
+        #   그때는 «왜 분양가가 튀었나» 를 이 자리에서 찾기 어렵다.
+        #
+        # ★환산은 **공용 헬퍼를 경유**한다 — 여기서 다시 쓰면 그것이 **세 번째 산식**이 되고,
+        #   세 산식은 반드시 갈린다(이 PR 이 고치는 결함의 정확한 형태).
+        from app.services.feasibility.sale_price_resolver import (
+            _exclusive_ratio_for,
+            _new_build_premium,
+        )
+
+        exclusive_pp = predicted_won / (_AVM_REF_AREA_SQM / _PYEONG)
+        ratio, ratio_note = _exclusive_ratio_for(dev_type, building_type)
+        premium = _new_build_premium()
+        price_per_pyeong = exclusive_pp * ratio * premium
         confidence = int(round(
             svc._calculate_confidence(len(real_comps), svc._model_stage) * 100,
         ))
@@ -213,7 +239,9 @@ class MarketRevaluationService:
             "price_per_pyeong": round(price_per_pyeong),
             "confidence": confidence, "weight": _AVM_WEIGHT,
             "count": len(real_comps),
-            "note": f"XGBoost {svc._model_stage} 모델, 전용 {_AVM_REF_AREA_SQM:.0f}㎡ 환산 평당가",
+            "note": (f"XGBoost {svc._model_stage} 모델, 전용 {_AVM_REF_AREA_SQM:.0f}㎡ 기준 "
+                     f"{round(exclusive_pp):,}원/평 × {ratio_note} × 신축 프리미엄 {premium} "
+                     f"→ 공급 평당가"),
         }
 
     async def _molit_sale_price_source(

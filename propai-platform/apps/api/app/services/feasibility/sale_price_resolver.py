@@ -94,6 +94,16 @@ def _safe_building_type(svc: Any, dev_type: str) -> str:
         return ""
 
 
+def _new_build_premium() -> float:
+    """신축 분양 프리미엄(기존 재고 매매가 → 신축 분양가). **정의는 `pricing.suggest` 하나다.**
+
+    ★접근자를 두는 이유: 다른 모듈이 `1.15` 를 다시 적으면 그것이 **두 번째 산식**이 되고,
+      이 PR 이 고치는 결함이 정확히 그 형태다. 상수를 복제하지 말고 **이 함수를 불러라.**
+    """
+    from app.services.sales.pricing.suggest import _PREMIUM
+    return float(_PREMIUM["base"])
+
+
 #: 실거래 표본 하한. 미만이면 실거래를 **쓰지 않고** 지역 시세로 폴백한다.
 #: ★n=1 도 중앙값을 내므로, 하한이 없으면 「실거래 기반」이라는 라벨이 날조가 된다.
 _MIN_TRADE_SAMPLES = 5
