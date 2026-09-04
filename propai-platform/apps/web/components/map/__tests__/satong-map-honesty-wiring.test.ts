@@ -296,3 +296,66 @@ describe("거리 1급시민화 — 표시 캡은 가까운 순으로 남긴다(2
   });
 });
 
+
+/**
+ * ── 실거래 「화면 밖 N곳」 고지 배선 (2026-09-04) ──────────────────────────────
+ *
+ * ★왜: 범례는 `실거래 N곳`으로 **생성한** 마커 수만 말했다. 라이브 실측에서 z15 에 6/6
+ *   보이던 마커가 지적 배율(z17)에서 5/6 이탈했고, 이탈한 것이 전부 원거리라 그 원거리가
+ *   전부 아파트였다 → 사용자에겐 "아파트만 안 나온다"로 보였다(신고 본체).
+ *   유형 분기는 코드에 없다. 그래서 고지는 **뷰포트 축**이어야 한다.
+ *
+ * ★이 락이 막는 것: 순수함수(`satong-market-viewport.test.ts` 9건)는 잠겨 있어도
+ *   **배선을 끊으면 아무 테스트도 실패하지 않는다** — 이 저장소가 반복해서 데인 자리다.
+ *   그래서 ①집계 입력 ②문구 파생 ③렌더 ④**두 이벤트** 를 각각 건다.
+ *
+ * ★한계: 소스 수준 검사이지 런타임 증명이 아니다(위 형제 블록과 같은 한계).
+ */
+describe("정직 배선 — 실거래 마커가 화면을 벗어나면 **말한다**", () => {
+  const FILE = "components/map/SatongMultiMap.tsx";
+  const strippedLines = () =>
+    __stripCommentsForScan(readFileSync(resolve(process.cwd(), FILE), "utf-8"), FILE).split("\n");
+
+  it("★집계는 **살아있는 뷰포트 경계**를 먹는다(상수·null 고정이면 영영 0곳)", () => {
+    // scope 가 mustContain 을 함의하지 않는다 — summarizeMarketViewport(plan, null) 이
+    // 문법적으로 가능하므로 이 단언은 공허하지 않다.
+    assertWiredThrough({
+      file: FILE,
+      scope: /summarizeMarketViewport\(/,
+      mustContain: "mapViewBounds",
+      minMatches: 1,
+    });
+  });
+
+  it("★고지 문구는 집계 결과에서 파생된다(리터럴 문자열로 대체 금지)", () => {
+    assertWiredThrough({
+      file: FILE,
+      scope: /marketOffscreenNote\(/,
+      mustContain: "marketViewport",
+      minMatches: 1,
+    });
+  });
+
+  it("★경계는 moveend·zoomend **양쪽**에서 갱신된다 — 줌만 걸면 pan 이 통째로 샌다", () => {
+    const lines = strippedLines();
+    const bound = lines.filter((t) => /map\.on\("(moveend|zoomend)", syncViewBounds\)/.test(t));
+    // 두 모집단을 각각 단언한다 — 합계만 보면 같은 이벤트를 두 번 걸어도 통과한다.
+    expect(bound.filter((t) => t.includes("moveend"))).toHaveLength(1);
+    expect(bound.filter((t) => t.includes("zoomend"))).toHaveLength(1);
+  });
+
+  it("★고지가 실제로 렌더된다 — 조건·요소·위치를 함께 건다(형제 블록의 3중 교훈)", () => {
+    const lines = strippedLines();
+    const cond = lineOf(lines, /\{marketOffscreenText && \(/);
+    const el = lineOf(lines, /data-testid="market-offscreen-note"/);
+    const note = lineOf(lines, /\{marketNote\}/);
+    // ①조건 존재 ②요소 존재
+    expect(cond).toBeGreaterThan(0);
+    expect(el).toBeGreaterThan(0);
+    // ③위치 — 실거래 노트와 **같은 도크** 안(그 뒤)이어야 한다. 엉뚱한 가지로 옮기면
+    //    조건 줄은 남은 채 사용자에게 영영 안 보인다(형제 블록에서 실제로 겪은 형태).
+    expect(el).toBeGreaterThan(note);
+    // ④조건이 요소보다 앞 — 조건을 떼고 무조건 렌더하면 "화면 밖 0곳"이 상시 노출된다.
+    expect(cond).toBeLessThan(el);
+  });
+});
