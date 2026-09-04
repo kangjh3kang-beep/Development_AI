@@ -14,9 +14,27 @@
  *   내비로 돌아오면(재마운트) 상속 선택이 사용자 소유로 영구 오분류됐다 — 원 버그리포트 재현.
  *   ownerProjectId를 세션 미러 payload에도 함께 영속해 재마운트를 넘어 살아남게 했다.
  *
+ * ★★B+(2026-09-04 · 사용자 결정) — **계약 ②·⑥ 을 교체했다.**
+ *   종전 ②는 *"사용자 소유는 보존된다"* 였다. 지금은 **비운다 — 대신 되돌릴 수 있다.**
+ *   근거: R1 이 기각된 이유는 「비웠다」가 아니라 **「되돌릴 수 없다」**였다. 비가역성을
+ *   없애면 두 계약이 충돌하지 않는다. 그리고 「비울지 말지」를 판정하려면 **소유권을 추론**
+ *   해야 하는데 그 추론이 R2·R2b 의 버그 둘을 냈다.
+ *   ★소유권 자체는 **남긴다** — `inheritedFromOtherProject`(교차 프로젝트 오염 고지)가
+ *     여전히 소비한다. 「비우기 판정」에서만 안 쓴다.
+ *     (초판에 *"write-only 가 되니 걷어낸다"* 고 적었다가 **소비 체인을 한 홉만 따라가서**
+ *      틀렸다 — ref → 미러 → `inheritedFromOtherProject` 로 이어진다.)
+ *   ★고지는 가른다 — 상속분은 **재연결로 복구되므로 되돌리기 실익이 없다**(사용자 지적).
+ *     판정에는 **비우기 직전의 `projectId` 유무**만 쓴다(추론이 아니라 관측).
+ *
+ * ★★그리고 원 신고를 실제로 덮는 것은 **상태 기반 안내**다.
+ *   신고 화면은 `connectTarget` 이 **초기값 "new"** 였고, 네이티브 <select> 는 같은 값을
+ *   다시 골라도 `onChange` 가 **안 뜬다** — **핸들러가 아예 안 돈다.**
+ *   이벤트 기반 고지(이 파일이 종전에 잠근 것)로는 **원리적으로** 덮을 수 없다.
+ *
  * 이 스위트가 고정하는 계약:
  *   ① 프로젝트에서 상속된 선택 → 드롭다운 전환 시 비워진다(원 버그리포트 재현 봉합).
- *   ② 사용자가 직접 담은 선택(같은 지역, 가드 미발화) → 드롭다운 전환에도 보존된다(R2 신규 손실 방지).
+ *   ②(B+) 사용자가 직접 담은 선택도 **비워지고, 되돌리기로 복원된다**.
+ *   ②-b 상태 기반 안내가 **전환 이벤트 없이도** 보인다 + 음성 대조군(선택 0이면 없다).
  *   ③ 지도 staged 폴리곤 청소 신호(clearSignal)는 소유권과 무관하게 항상 증가한다(R1b 결정 유지).
  *   ④ sessionStorage(satong_map_selection) 미러도 확정목록을 비울 때 함께 제거된다(실제 게이트).
  *   ⑤ 무음 금지 — 실제로 비웠을 때만 connectNotice로 고지한다.
@@ -190,7 +208,9 @@ describe("SatongMapShell 연결 대상 전환 — 소유권 판별(R2)", () => {
     // 지도 staged 폴리곤 청소 신호 증가(WP-M2 대칭)
     expect(capturedMapPropsRef.current?.clearSignal).toBeGreaterThan(clearSignalBefore);
     // 무음 금지 — 고지 문구
-    expect(screen.getByText("연결 대상을 바꿔 선택 필지를 비웠습니다.")).toBeInTheDocument();
+    // ★문구를 못 박지 않는다 — **산문은 다듬을 때마다 깨지는 취약한 락**이다.
+    //   계약은 「무음이 아니다」와 「몇 건을 비웠는지 말한다」이다.
+    expect(screen.getByText(/비웠습니다/)).toBeInTheDocument();
   });
 
   it("드롭다운을 '프로젝트 연결 안 함(약식 분석)'으로 바꿔도 동일하게 비워진다", () => {
@@ -206,7 +226,9 @@ describe("SatongMapShell 연결 대상 전환 — 소유권 판별(R2)", () => {
     expect(screen.queryByText("청진동 1")).not.toBeInTheDocument();
     expect(screen.getByText(/필지 선택 0건/)).toBeInTheDocument();
     expect(window.sessionStorage.getItem(SATONG_MAP_SELECTION_KEY)).toBeNull();
-    expect(screen.getByText("연결 대상을 바꿔 선택 필지를 비웠습니다.")).toBeInTheDocument();
+    // ★문구를 못 박지 않는다 — **산문은 다듬을 때마다 깨지는 취약한 락**이다.
+    //   계약은 「무음이 아니다」와 「몇 건을 비웠는지 말한다」이다.
+    expect(screen.getByText(/비웠습니다/)).toBeInTheDocument();
   });
 
   it("비울 확정 선택도 staged도 없으면 무음 유지 — 불필요한 고지 남발 방지", () => {
@@ -229,7 +251,7 @@ describe("SatongMapShell 연결 대상 전환 — 소유권 판별(R2)", () => {
     });
 
     expect(
-      screen.queryByText("연결 대상을 바꿔 선택 필지를 비웠습니다."),
+      screen.queryByText(/비웠습니다/),
     ).not.toBeInTheDocument();
   });
 
@@ -260,7 +282,7 @@ describe("SatongMapShell 연결 대상 전환 — 소유권 판별(R2)", () => {
 
     expect(capturedMapPropsRef.current?.clearSignal).toBeGreaterThan(clearSignalBefore);
     expect(
-      screen.queryByText("연결 대상을 바꿔 선택 필지를 비웠습니다."),
+      screen.queryByText(/비웠습니다/),
     ).not.toBeInTheDocument();
   });
 
@@ -294,7 +316,7 @@ describe("SatongMapShell 연결 대상 전환 — 소유권 판별(R2)", () => {
     ).toBeInTheDocument();
     // 확정목록 비움 고지와는 다른 문구다 — 혼동 방지.
     expect(
-      screen.queryByText("연결 대상을 바꿔 선택 필지를 비웠습니다."),
+      screen.queryByText(/비웠습니다/),
     ).not.toBeInTheDocument();
   });
 
@@ -355,14 +377,97 @@ describe("SatongMapShell 연결 대상 전환 — 소유권 판별(R2)", () => {
       fireEvent.change(select, { target: { value: "new" } });
     });
 
-    // ★survived=true — 방금 사용자가 직접 담은 선택은 소유권이 사용자에게 있어 지워지지 않는다.
-    //   (R1의 "무조건 clearParcels()"였다면 이 단언이 실패했을 시나리오.)
+    // ★★계약 교체(B+ · 2026-09-04 사용자 결정) — 종전 R2 계약은 *"사용자 소유는 보존된다"* 였다.
+    //   지금은 **비운다. 대신 되돌릴 수 있다.**
+    //
+    //   왜 바꿨나: R1("무조건 비움")이 기각된 이유는 「비웠다」가 아니라 **「되돌릴 수 없다」**
+    //   였다. 비가역성을 없애면 두 계약이 충돌하지 않는다. 그리고 「비울지 말지」를 판정하려면
+    //   **소유권을 추론**해야 하는데, 그 추론이 R2·R2b 의 버그 둘을 냈다.
+    //   ★사용자 지적: *"새 프로젝트를 생성하니 기존 프로젝트는 따로 있는데 왜 되돌리기가?"*
+    //     → 상속분은 재연결로 복구되므로 실익이 없다. **그래서 고지를 가른다**(아래 대조군).
+    expect(screen.queryByTitle(/서울특별시 동작구 상도동 456/)).not.toBeInTheDocument();
+    expect(screen.getByText(/비웠습니다/)).toBeInTheDocument();
+
+    // ★비우기가 **세 매체**를 지웠음을 먼저 확인한다(대조군 — 지운 적이 없으면 복원 단언이 공허하다).
+    expect(useProjectContextStore.getState().siteAnalysis?.parcelCount ?? 0).toBe(0);
+    expect(window.sessionStorage.getItem(SATONG_MAP_SELECTION_KEY)).toBeNull();
+
+    // ★되돌리기가 실제로 복원한다 — 「버튼이 있다」가 아니라 **「눌렀더니 돌아온다」**를 본다.
+    const undo = screen.getByTestId("restore-cleared-selection");
+    act(() => {
+      fireEvent.click(undo);
+    });
     expect(screen.getByTitle(/서울특별시 동작구 상도동 456/)).toBeInTheDocument();
     expect(screen.getByText(/필지 선택 2건/)).toBeInTheDocument();
-    // 확정목록을 비우지 않았으므로 "선택 필지를 비웠습니다" 고지는 없다.
-    expect(
-      screen.queryByText("연결 대상을 바꿔 선택 필지를 비웠습니다."),
-    ).not.toBeInTheDocument();
+
+    // ★★**부분 복원 금지** — 화면만 돌아오고 스토어·세션미러가 비어 있으면, 화면엔 필지가
+    //   있는데 산출물이 **빈 선택으로 도는** 조합이 된다(이 저장소가 「유령 패널」로 데인 형태).
+    //   비우기가 만진 매체를 **전부** 되돌리는지 각각 태운다.
+    expect(useProjectContextStore.getState().siteAnalysis?.parcelCount ?? 0).toBe(2);
+    const mirror = window.sessionStorage.getItem(SATONG_MAP_SELECTION_KEY);
+    expect(mirror).toContain("상도동 456");
+  });
+
+  it("★상태 기반 안내 — 이벤트가 없어도 보인다(원 신고 화면의 유일한 처방)", () => {
+    // 원 신고 화면은 `connectTarget` 이 **초기값 "new"** 였다. 네이티브 <select> 는 같은 값을
+    // 다시 골라도 onChange 가 **안 뜬다** → 이벤트 기반 고지로는 원리적으로 덮을 수 없다.
+    // ★신고 시나리오 그대로 — **연결 프로젝트 없이** 사용자가 직접 담는다(엑셀/지도).
+    //   미러만 심는 방식은 `restorable`(연결 프로젝트 또는 같은 SPA 세션) 조건 때문에
+    //   복원되지 않는다 — 내 첫 시도가 그래서 틀렸다.
+    render(<SatongMapShell locale="ko" />);
+    act(() => {
+      capturedMapPropsRef.current?.onPickMany?.([
+        {
+          found: true,
+          address: "경기도 오산시 내삼미동 356-1",
+          pnu: "4137011000103560001",
+          lat: 37.1,
+          lon: 127.0,
+        },
+      ]);
+    });
+    // ★전환 이벤트를 **한 번도 일으키지 않고** 안내가 보여야 한다.
+    expect(screen.getByTestId("new-project-selection-hint")).toBeInTheDocument();
+    expect(screen.getByTestId("clear-selection-inline")).toBeInTheDocument();
+  });
+
+  it("★되돌리기가 **최신** 선택을 복원한다 — 길이가 같고 내용만 바뀐 경우(낡은 스냅샷 방지)", () => {
+    // ★이 축은 **lint 래칫이 먼저 잡았다**. 의존성이 `selectedParcels.length` 였는데
+    //   지금은 그 배열을 **스냅샷으로 캡처**하므로, 길이가 같고 **내용만 바뀌면**
+    //   낡은 배열을 잡아 「그 전 선택」을 복원한다. 경고가 아니라 **실제 결함**이었다.
+    render(<SatongMapShell locale="ko" />);
+    const pick = (address: string, pnu: string) =>
+      act(() => {
+        capturedMapPropsRef.current?.onPickMany?.([
+          { found: true, address, pnu, lat: 37.1, lon: 127.0 },
+        ]);
+      });
+
+    // ★**같은 PNU 를 다시 담는다** — `addParcels` 가 키로 병합하므로 **길이는 1로 그대로**이고
+    //   **내용만** 갱신된다(실제로는 `parcels-info` 2차 보강이 이 모양이다).
+    //   `.length` 의존이면 이 갱신에 콜백이 **재생성되지 않아** 낡은 배열을 캡처한다.
+    pick("경기도 오산시 내삼미동 356-1", "4137011000103560001");
+    expect(screen.getByTitle(/내삼미동 356-1/)).toBeInTheDocument();
+    pick("경기도 오산시 내삼미동 357-1", "4137011000103560001");
+    // 같은 키로 병합됐으므로 옛 주소는 사라지고 새 주소만 남는다(길이는 1로 그대로).
+    expect(screen.getByTitle(/내삼미동 357-1/)).toBeInTheDocument();
+    expect(screen.queryByTitle(/내삼미동 356-1/)).not.toBeInTheDocument();
+
+    const select = screen.getByRole("combobox");
+    act(() => {
+      fireEvent.change(select, { target: { value: "none" } });
+    });
+    act(() => {
+      fireEvent.click(screen.getByTestId("restore-cleared-selection"));
+    });
+    // ★복원된 것은 **방금 것(357-1)**이어야 한다 — 낡은 스냅샷이면 356-1 이 돌아온다.
+    expect(screen.getByTitle(/내삼미동 357-1/)).toBeInTheDocument();
+    expect(screen.queryByTitle(/내삼미동 356-1/)).not.toBeInTheDocument();
+  });
+
+  it("★음성 대조군 — 선택이 없으면 그 안내가 없다(항상 보이는 구현과 구별)", () => {
+    render(<SatongMapShell locale="ko" />);
+    expect(screen.queryByTestId("new-project-selection-hint")).not.toBeInTheDocument();
   });
 });
 
@@ -463,7 +568,9 @@ describe("SatongMapShell 세션 미러 소유권 영속(R2b HIGH — PROBE_P3, �
     //   시드와 동일하게 소유권을 인식해 상속 선택을 비운다.
     expect(screen.getByText(/필지 선택 0건/)).toBeInTheDocument();
     expect(window.sessionStorage.getItem(SATONG_MAP_SELECTION_KEY)).toBeNull();
-    expect(screen.getByText("연결 대상을 바꿔 선택 필지를 비웠습니다.")).toBeInTheDocument();
+    // ★문구를 못 박지 않는다 — **산문은 다듬을 때마다 깨지는 취약한 락**이다.
+    //   계약은 「무음이 아니다」와 「몇 건을 비웠는지 말한다」이다.
+    expect(screen.getByText(/비웠습니다/)).toBeInTheDocument();
   });
 
   it("PROBE_P3-B: 사용자 소유 선택(ownerProjectId=null)을 세션 미러에 심고 재마운트 → 드롭다운 전환에도 보존된다", () => {
@@ -490,11 +597,19 @@ describe("SatongMapShell 세션 미러 소유권 영속(R2b HIGH — PROBE_P3, �
       fireEvent.change(select, { target: { value: "new" } });
     });
 
-    // ★survived=true — 사용자 소유로 기록된 선택은 재마운트 뒤에도 지워지지 않는다.
+    // ★★계약 교체(B+) — 재마운트를 넘어온 선택도 **비운다. 대신 되돌릴 수 있다.**
+    //   ★R2b 가 잠갔던 것은 「재마운트 후 소유권이 살아남는가」였는데, 비우기가 더 이상
+    //   소유권을 안 보므로 그 축은 **비우기에 대해서는** 사라진다. 소유권 자체는 남는다 —
+    //   `inheritedFromOtherProject`(교차 프로젝트 오염 고지)가 여전히 소비한다.
+    expect(screen.queryByTitle(/서울특별시 동작구 상도동 456/)).not.toBeInTheDocument();
+    const undoB = screen.getByTestId("restore-cleared-selection");
+    act(() => {
+      fireEvent.click(undoB);
+    });
     expect(screen.getByTitle(/서울특별시 동작구 상도동 456/)).toBeInTheDocument();
     expect(screen.getByText(/필지 선택 1건/)).toBeInTheDocument();
     expect(
-      screen.queryByText("연결 대상을 바꿔 선택 필지를 비웠습니다."),
+      screen.queryByText(/비웠습니다/),
     ).not.toBeInTheDocument();
   });
 });
