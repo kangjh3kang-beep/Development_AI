@@ -40,7 +40,7 @@ export const Avatar = forwardRef<HTMLSpanElement, AvatarProps>(
         )}
       >
         {showFallback ? (
-          <span className="font-medium text-[var(--muted)]">{initials}</span>
+          <span className="font-medium text-[var(--text-tertiary)]">{initials}</span>
         ) : (
           <img
             src={src}

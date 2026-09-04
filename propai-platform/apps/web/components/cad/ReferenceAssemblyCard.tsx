@@ -1,5 +1,7 @@
 "use client";
 
+import { formatPercent } from "@/lib/formatters";
+
 import { useCallback, useState } from "react";
 import DOMPurify from "dompurify";
 import { AlertTriangle } from "lucide-react";
@@ -288,8 +290,8 @@ export function ReferenceAssemblyCard({ item, siteContext, onApply }: ReferenceA
                 <div className="mt-2 grid grid-cols-4 gap-2">
                   <PreviewMetric label="세대" value={`${result.summary.total_units}`} />
                   <PreviewMetric label="층수" value={`${result.summary.num_floors}F`} />
-                  <PreviewMetric label="건폐율" value={`${result.summary.bcr_percent.toFixed(0)}%`} />
-                  <PreviewMetric label="용적률" value={`${result.summary.far_percent.toFixed(0)}%`} />
+                  <PreviewMetric label="건폐율" value={formatPercent(result.summary.bcr_percent)} />
+                  <PreviewMetric label="용적률" value={formatPercent(result.summary.far_percent)} />
                 </div>
               )}
 

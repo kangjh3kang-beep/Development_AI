@@ -18,7 +18,11 @@ from database.models.feasibility_vcs import FeasibilityBranch, FeasibilityCommit
 def compute_sha(data: dict[str, Any]) -> str:
     """스냅샷 데이터 -> SHA1 해시."""
     serialized = json.dumps(data, sort_keys=True, default=str)
-    return hashlib.sha1(serialized.encode()).hexdigest()
+    # ★보안 해시가 아니다 — git 의 커밋 ID 처럼 **스냅샷을 가리키는 식별자**다.
+    #   위조 방어가 목적이면 여기서 끝나지 않는다(원장은 별도 해시체인이 담당).
+    #   `usedforsecurity=False` 는 그 사실을 **코드로 선언**해 SAST 가 매번 같은 곳을
+    #   지적하며 진짜 결함을 가리는 것을 막는다.
+    return hashlib.sha1(serialized.encode(), usedforsecurity=False).hexdigest()
 
 
 class FeasibilityVCSDB:

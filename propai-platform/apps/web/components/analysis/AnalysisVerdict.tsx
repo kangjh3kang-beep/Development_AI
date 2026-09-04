@@ -14,6 +14,7 @@
 import { Sparkles } from "lucide-react";
 import { useMemo, useState } from "react";
 import { VerificationBadge } from "@/components/common/VerificationBadge";
+import { MarkdownLite } from "@/components/common/MarkdownLite";
 
 /** 해석 입력: 단순 문자열, 라벨 매핑된 섹션 배열, 또는 자유 레코드 모두 지원. */
 export type Interpretation =
@@ -176,9 +177,7 @@ export function AnalysisVerdict({
                     className="rounded-lg border border-[var(--accent-strong)]/15 bg-[var(--accent-soft)] p-3"
                   >
                     <p className="mb-1 text-[11px] font-bold text-[var(--accent-strong)]">{r.label}</p>
-                    <p className="whitespace-pre-wrap text-[12px] leading-relaxed text-[var(--text-secondary)]">
-                      {r.text}
-                    </p>
+                    <MarkdownLite text={r.text} className="text-[12px] text-[var(--text-secondary)]" />
                   </div>
                 ))}
                 <p className="text-[10px] text-[var(--text-hint)]">AI 생성 · Claude · 참고용</p>

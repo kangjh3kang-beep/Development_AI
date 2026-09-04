@@ -10,9 +10,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { AlertTriangle } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
+import { fetchAllProjects } from "@/lib/projects-fetch";
 import { ProjectPresaleMap, type PresaleMarker } from "@/components/presale/ProjectPresaleMap";
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
 
 type Item = {
   house_manage_no: string; pblanc_no: string; name: string; address: string;
@@ -38,10 +38,10 @@ type FeedItem = {
 type Prefs = { phone: string; sms_enabled: boolean; kakao_enabled: boolean; inapp_enabled: boolean };
 
 const STATUS_STYLE: Record<string, string> = {
-  접수중: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
+  접수중: "bg-[var(--status-success)]/15 text-[var(--status-success)] border-[var(--status-success)]/30",
   접수예정: "bg-sky-500/15 text-sky-400 border-sky-500/30",
   마감: "bg-zinc-500/15 text-zinc-400 border-zinc-500/30",
-  미정: "bg-amber-500/15 text-amber-400 border-amber-500/30",
+  미정: "bg-[var(--status-warning)]/15 text-[var(--status-warning)] border-[var(--status-warning)]/30",
 };
 const eok = (man?: number | null) => {
   if (!man || man <= 0) return "-";
@@ -137,7 +137,7 @@ export default function SalesInfoPage() {
           {loading && <div className="py-10 text-center text-sm text-[var(--text-secondary)]">분양정보 불러오는 중…</div>}
 
           {!loading && list && !list.available && (
-            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-[var(--text-secondary)]">
+            <div className="rounded-xl border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 px-4 py-3 text-sm text-[var(--text-secondary)]">
               <AlertTriangle className="mr-1.5 inline size-4 align-text-bottom" aria-hidden />{list.note || "분양정보를 불러올 수 없습니다."} <span className="text-[var(--text-hint)]">(청약홈 분양정보 API 활용신청·키 설정 후 표시됩니다)</span>
             </div>
           )}
@@ -220,7 +220,7 @@ function DetailModal({ detail, loading, onClose }: { detail: any; loading: boole
         {loading && <div className="py-10 text-center text-sm text-[var(--text-secondary)]">상세 불러오는 중…</div>}
 
         {!loading && !hasBasic && detail.available === false && (
-          <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-[var(--text-secondary)]"><AlertTriangle className="mr-1.5 inline size-4 align-text-bottom" aria-hidden />{detail.note || "상세 정보를 불러올 수 없습니다."}</div>
+          <div className="rounded-xl border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 px-4 py-3 text-sm text-[var(--text-secondary)]"><AlertTriangle className="mr-1.5 inline size-4 align-text-bottom" aria-hidden />{detail.note || "상세 정보를 불러올 수 없습니다."}</div>
         )}
 
         {!loading && (hasBasic || detail.available !== false) && (
@@ -313,8 +313,9 @@ function MonitorTab({ onOpenDetail }: { onOpenDetail: (it: any) => void }) {
   const [mapLoading, setMapLoading] = useState(false);
 
   useEffect(() => {
-    apiClient.get<{ items?: ProjectSummary[] } | ProjectSummary[]>("/projects?page=1&page_size=50", { useMock: false })
-      .then((r: any) => setProjects(r.items || r.data || (Array.isArray(r) ? r : [])))
+    // ★page_size=50 고정도 51번째부터 같은 결함이다 — 페이지 순회 SSOT 경유.
+    fetchAllProjects<ProjectSummary>((path) => apiClient.get<unknown>(path, { useMock: false }))
+      .then((r) => setProjects(r.items))
       .catch(() => { /* 비로그인/없음 */ });
   }, []);
 
@@ -416,7 +417,7 @@ function MonitorTab({ onOpenDetail }: { onOpenDetail: (it: any) => void }) {
                 <span className="font-medium text-[var(--text-primary)]">{it.label}</span>
                 <span className="ml-2 text-xs text-[var(--text-hint)]">{[it.area || "전국", it.sigungu, it.keyword, it.min_households ? `${it.min_households}세대+` : ""].filter(Boolean).join(" · ")}</span>
               </div>
-              <button onClick={() => removeInterest(it.id)} disabled={busy} className="shrink-0 rounded-md border border-rose-500/30 px-2 py-1 text-[11px] font-bold text-rose-400 disabled:opacity-50">삭제</button>
+              <button onClick={() => removeInterest(it.id)} disabled={busy} className="shrink-0 rounded-md border border-[var(--status-error)]/30 px-2 py-1 text-[11px] font-bold text-[var(--status-error)] disabled:opacity-50">삭제</button>
             </div>
           ))}
         </div></section>

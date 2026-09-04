@@ -5,7 +5,7 @@
 ## 1. 현재 배포 상태 (그라운드 트루스)
 - **백엔드 라이브**: origin/main = `08fdfce1` (활성=8001). ssh `ubuntu@168.110.125.89 'bash ~/deploy.sh'`. /health degraded=redis만(정상).
 - **프론트 라이브**: `propai-v335-ssot-senior-capillary` (4t8t.net 확인). A1 158.179.174.207.
-- ★프론트 배포 함정 재확인: `pgrep -f "docker.*build web"`는 **자기 ssh 명령 문자열을 매칭하는 거짓양성** → 실빌드 판정은 `ps -eo etimes,comm | grep next` 또는 `pgrep -fa "docker-compose build"`로. A1 ARM 빌드 ~10-15분. 외부 `curl https://4t8t.net/sw.js | grep CACHE_NAME`로 착지 확인.
+- ★프론트 배포 함정 재확인: `pgrep -f "docker.*build web"`는 **자기 ssh 명령 문자열을 매칭하는 거짓양성** → 실빌드 판정은 `ps -eo etimes,comm | grep next` 또는 `pgrep -fa "docker-compose build"`로. A1 ARM 빌드 ~10-15분. 외부 `curl https://4t8t.net/sw.js | grep -m1 '^const CACHE_NAME'`로 착지 확인(★줄 시작 앵커 필수 — 없으면 주석의 예시값을 집는다. CLAUDE.md §회귀망 G-28).
 
 ## 2. 이번 세션 완료·배포 (전부 라이브 검증)
 

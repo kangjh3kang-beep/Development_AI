@@ -14,8 +14,9 @@
 //    (호출측이 needs-input으로 정직 고지). 0 강제 금지.
 //  - 면적은 반드시 effectiveLandAreaSqm(통합면적 우선)으로 읽어 다필지 일관성을 지킨다.
 
+import { siteDerivedFeasibilityFields } from "@/lib/feasibility-seed";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
-import { resolveFarPct, resolveBcrPct } from "@/lib/zoning-ssot";
+import { resolveFarPct, resolveBcrPct, resolveFarWithBasis } from "@/lib/zoning-ssot";
 import { PYEONG_SQM } from "@/lib/formatters";
 import type {
   SiteAnalysisData,
@@ -24,6 +25,7 @@ import type {
   FeasibilityData,
 } from "@/store/useProjectContextStore";
 import type { NodeId } from "./types";
+import { bcodeFromPnu, normalizePnu } from "@/lib/pnu";
 
 /**
  * useNodeRunner가 ready 슬롯에서 모은 상류 컨텍스트.
@@ -71,20 +73,26 @@ function safeDevelopmentType(v: unknown): string | null {
  * 분양수입이 부풀려진다. 그래서 연면적에 전용률을 곱해 "전용면적"으로 환산한 뒤 전용단가와 곱한다.
  *
  * ★무목업(정직 표기): 아래 값은 임의 가정이 아니라 이 플랫폼 백엔드가 이미 쓰는 표준 전용률이다
- *  (apps/api/app/services/pipeline/project_pipeline.py:89 _SELLABLE_EFFICIENCY_BY_TYPE,
+ *  (정본: apps/api/app/services/feasibility/unit_standards.py SELLABLE_EFFICIENCY_BY_BUILDING_TYPE,
  *   design_v61.py:347 efficiency_pct 기본 75.0). 백엔드 sellable_area = GFA × 전용률 산식과 동일.
  *  설계(design)가 실제 전용률(efficiencyPct)을 환류하면 그 실값을 우선 쓰고(아래 sale/feasibility),
  *  미확보일 때만 이 표준값으로 폴백한다 — 추정임을 정직히 표기.
+ *
+ * ★(G4→P2 수렴 완료) FE/BE 계약: 백엔드 정본은 apps/api/app/services/feasibility/unit_standards.py의
+ *  SELLABLE_EFFICIENCY_BY_BUILDING_TYPE/get_sellable_efficiency로 수렴됐고(P2, project_pipeline은
+ *  import 소비), FE는 교차언어라 이 미러를 유지한다(자동 동기화 없음). 한쪽 변경 시 반대쪽 상수와 두 계약 테스트
+ *  (node-body-builders.test.ts의 "G4 계약" describe·apps/api/tests/test_sellable_efficiency_contract.py)를
+ *  함께 갱신할 것. export는 그 계약 테스트가 실값을 직접 대조하기 위함(런타임 동작 불변).
  */
-const SELLABLE_EFFICIENCY_BY_TYPE: Record<string, number> = {
+export const SELLABLE_EFFICIENCY_BY_TYPE: Record<string, number> = {
   아파트: 0.75,
   다세대주택: 0.78,
   오피스텔: 0.7,
   공동주택: 0.76,
   근린생활시설: 0.7,
 };
-/** 유형 미상 시 표준 전용률(백엔드 _SELLABLE_EFFICIENCY_BY_TYPE 기본값 0.75와 동일). */
-const DEFAULT_SELLABLE_EFFICIENCY = 0.75;
+/** 유형 미상 시 표준 전용률(백엔드 unit_standards.DEFAULT_SELLABLE_EFFICIENCY 0.75와 동일. G4 계약 대상). */
+export const DEFAULT_SELLABLE_EFFICIENCY = 0.75;
 
 /**
  * 연면적→전용면적 환산에 쓸 전용률(0~1)을 결정한다.
@@ -196,6 +204,24 @@ export function buildNodeBody(
       if (zc) body.zone_code = zc;
       const floor = positiveInt(design?.floorCount);
       if (floor != null) body.floor_count = floor;
+      // ★WP-U2a(실효FAR SSOT 관통): 부지분석 실효 한도(통합>실효>법정)를 설계엔진 B1 계약
+      //   (ordinance_far_pct/bcr_pct)으로 주입. 종전엔 이 design 노드만 미주입이라 파이프라인
+      //   설계 run이 엔진 자체 static 한도만 썼다(같은 파일 audit 노드 limit·설계스튜디오
+      //   CadBimIntegrationPanel B1과 이중 진실). 엔진이 min(법정 static, 주입 실효)로
+      //   클램프하므로 이 주입은 하향(과대 방지)만 가능하다(가짜 상향 불가).
+      //   미확보 시 미주입 — 백엔드 기존 폴백 유지(무회귀·무날조).
+      const farRes = resolveFarWithBasis(site);
+      if (farRes && farRes.value > 0) {
+        body.ordinance_far_pct = farRes.value;
+        // 근거 정직 전파(additive) — 실효/통합 계층이면 SSOT(calc_effective_far) 산정 성공
+        //   (reliable=true), 법정상한 폴백(national)이면 false. farBasis 라벨
+        //   (예 "구조상한(건폐율×층수)")은 있을 때만 동봉(무날조).
+        body.far_reliable = farRes.basis !== "national";
+        const fb = nonEmptyStr(site?.farBasis);
+        if (fb) body.far_basis = fb;
+      }
+      const bcrLim = positiveNum(resolveBcrPct(site));
+      if (bcrLim != null) body.ordinance_bcr_pct = bcrLim;
       break;
     }
 
@@ -209,12 +235,16 @@ export function buildNodeBody(
       else missing.push("address");
       // bcode는 SSOT에 별도 슬롯이 없으므로 pnu(19자리) 앞 10자리(=법정동코드)에서 파생한다.
       // 백엔드 _resolve는 bcode[:5]로 lawd_cd를 얻으므로 이 10자리 bcode면 충분(라이브 검증).
-      const bcode = pnu && pnu.length >= 10 ? pnu.slice(0, 10) : null;
-      if (pnu) body.pnu = pnu;
+      // ★유효한 19자리에서만 파생한다. 종전 가드는 `length >= 10` 이라(주석은 "19자리"라고
+      //   적으면서) `'store-rep-…'.slice(0,10)` = `"store-rep-"` 를 **법정동코드로 날조**했다
+      //   — 백엔드는 `bcode[:5]`=`"store"` 를 `lawd_cd` 로 쓴다.
+      const validPnu = normalizePnu(pnu);
+      const bcode = bcodeFromPnu(pnu);
+      if (validPnu) body.pnu = validPnu;
       // pnu가 없어도 bcode가 있으면 백엔드 bcode 경로로 200을 받는다(둘 다 보내도 무해).
       if (bcode) body.bcode = bcode;
       // pnu·bcode 모두 없으면 lawd_cd를 못 구해 백엔드가 400 → 사전에 needs-input 처리.
-      if (!pnu && !bcode) missing.push("pnu");
+      if (!validPnu && !bcode) missing.push("pnu");
       break;
     }
 
@@ -240,14 +270,30 @@ export function buildNodeBody(
         safeDevelopmentType(feas?.developmentType) ?? DEFAULT_DEVELOPMENT_TYPE;
       if (landAreaSqm != null) body.total_land_area_sqm = landAreaSqm;
       else missing.push("total_land_area_sqm");
-      const gfa = positiveNum(design?.totalGfaSqm);
+      // 설계 SSOT 우선, 없으면 개략수지가 산정한 GFA(feasibilityData.totalGfaSqm) 폴백 —
+      //   설계 전 단계에서도 개략수지 base로 수지·리스크 시뮬이 이어지게 한다(실데이터만, 무날조).
+      const gfa = positiveNum(design?.totalGfaSqm) ?? positiveNum(feas?.totalGfaSqm);
       if (gfa != null) body.total_gfa_sqm = gfa;
       else missing.push("total_gfa_sqm");
       const bt = nonEmptyStr(design?.buildingType);
       if (bt) body.building_type = bt;
+      // ★부지 파생 시드(2026-08-26) — 위 주석이 `official_price_per_sqm?` 를 **계약으로 선언**해
+      //   놓고 이 파일에서 대입이 **0건**이었다(대조군: `body.` 대입 31건). 그래서 오케스트레이션
+      //   으로 돌린 수지는 **공시지가 0** 으로 토지비를 잡았다. 형제(`ModuleInputForm`)는 이미
+      //   올바르게 보내고 있었다 — 정답이 옆에 있었다(§29).
+      //   ★세 경로가 같은 산출처를 쓰게 공용 헬퍼를 경유한다(각자 고치면 네 번째가 또 빠진다).
+      {
+        const seed = siteDerivedFeasibilityFields(site);
+        if (seed.officialPricePerSqm != null) body.official_price_per_sqm = seed.officialPricePerSqm;
+        if (seed.sidoName != null) body.sido_name = seed.sidoName;
+        // ★B03·B04(상하수도 원인자부담금)가 읽는 시군구 조례 키. 안 보내면 조용히 unavailable.
+        if (seed.sigunguName != null) body.sigungu_name = seed.sigunguName;
+      }
       // (Phase C-2) ★분양수입 폐루프: 매출단가·세대수·세대(전용)면적을 채워 수지가 실거래 기반으로 계산되게 한다.
-      //  근거(코드 확정): 백엔드 revenue = (total_households × sale_ratio) × avg_area_pyeong(평) × avg_sale_price_per_pyeong(원/평)
-      //   (revenue_engine.calculate_sale_revenue / revenue_block.compute_revenue). 면적에 전용률을 별도로 곱하지 않는다.
+      //  ★D1 규약(2026-07-16 갱신): avg_area_pyeong = '전용면적 평'(전 생산처 통일). 백엔드
+      //   revenue_block이 매출 곱 시 공급평(전용÷전용률, unit_standards SSOT)으로 환산하므로
+      //   여기서는 전용평을 그대로 보낸다(이중 환산 금지). 종전 "전용률 별도 곱하지 않는다"
+      //   계약은 '프론트에서'라는 의미로 유지 — 환산 책임이 백엔드 소비처로 명확해졌다.
       //   ★sale_ratio는 "분양세대/전체세대 비율(세대수 분할)"이지 면적효율이 아니다(기본 1.0). 따라서 면적기준 정합은 우리가 직접 맞춰야 한다.
       //  셋 중 하나라도 0이면 분양수입=0(백엔드는 avg_area_pyeong 폴백이 없음) → 환류만으로는 효과가 없으므로 세대수·면적도 동반 채운다.
       //  모두 optional(미확보 시 미주입=백엔드 기본 0 → 종전과 동일 동작, 무회귀·needs-input 유지).
@@ -255,9 +301,18 @@ export function buildNodeBody(
       //   ★이 단가는 "전용면적 기준 평당 실거래가"다(MOLIT excluUseAr=전용면적으로 정규화 — molit_client.py:369,
       //    market_report_service._per_pyeong_stat). 따라서 곱하는 면적도 "전용면적 평"이어야 기준이 일치한다.
       const salePriceWon = positiveNum(feas?.salePricePerPyeongWon);
-      if (salePriceWon != null) body.avg_sale_price_per_pyeong = salePriceWon;
-      // ② 세대수: 설계(BIM 매스)가 산출한 총세대수. 없으면 미주입(백엔드 0 → 분양수입 0, 종전과 동일).
-      const households = positiveInt(design?.unitCount);
+      if (salePriceWon != null) {
+        body.avg_sale_price_per_pyeong = salePriceWon;
+        // ★D1-R1(단가 basis 계약): 이 단가는 MOLIT 실거래(전용면적 excluUseAr) 기준 —
+        //   백엔드 revenue_block이 공급 환산을 건너뛰고 전용면적 그대로 곱하도록 명시.
+        //   (미명시 기본 "supply"면 ÷전용률 환산으로 매출 +33% 과대 — 리뷰 라이브 재현)
+        body.price_basis = "exclusive";
+      }
+      // ② 세대수: 설계(BIM 매스)가 산출한 총세대수 우선, 없으면 개략수지 세대수 가정
+      //   (feasibilityData.totalHouseholds, GFA÷유형 표준 전용면적)으로 폴백 — avg_area_pyeong
+      //   산식(GFA×전용률÷세대수)에서 세대수가 소거되므로 매출은 GFA×전용률×단가로 개략수지
+      //   기준을 재현한다(설계 전 단계에서 매출=0 오탐 방지). 둘 다 없으면 미주입(백엔드 0, 무회귀).
+      const households = positiveInt(design?.unitCount) ?? positiveInt(feas?.totalHouseholds);
       if (households != null) body.total_households = households;
       // ③ 세대 평균 "전용"면적(평): 연면적(GFA)에 전용률을 곱해 전용면적으로 환산한 뒤 세대수로 나눈다.
       //    ★면적기준 정합(HIGH 결함 수정): 종전엔 연면적(공용·주차 포함)을 그대로 세대수로 나눠 전용단가와 곱해

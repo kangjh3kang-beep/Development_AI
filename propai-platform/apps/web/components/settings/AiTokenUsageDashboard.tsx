@@ -14,6 +14,7 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { Card, CardContent } from "@propai/ui";
 import { apiClient, ApiClientError } from "@/lib/api-client";
+import { llmServiceLabel } from "@/lib/llm-service-labels";
 
 type ServiceUsage = { service: string; tokens: number; cost_krw: number };
 type DailyUsage = { date: string; tokens: number; cost_krw: number };
@@ -37,25 +38,10 @@ type Balance = {
   topup_krw: number;
   topup_remaining: number;
   used_this_cycle_krw: number;
-  markup_pct: number;
   cycle_start: string | null;
   unlimited?: boolean; // 비과금 등급(super_admin 등) — 코인 무제한
 };
 
-const SERVICE_LABELS: Record<string, string> = {
-  site_analysis: "부지분석 AI",
-  market: "시장·시세 AI",
-  feasibility: "수지분석 AI",
-  esg: "ESG/탄소 AI",
-  permit: "인허가 AI",
-  cost: "공사비 AI",
-  design: "설계 AI",
-  tax: "세금분석 AI",
-  avm: "자동감정평가 (AVM)",
-  report: "보고서 AI",
-  digital_twin: "디지털트윈 AI",
-  llm: "기타 LLM",
-};
 
 const SERVICE_COLORS: Record<string, string> = {
   site_analysis: "bg-[var(--chart-1)]",
@@ -153,7 +139,7 @@ export function AiTokenUsageDashboard() {
 
   if (error) {
     return (
-      <div className="rounded-2xl border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-8 text-center text-sm text-[var(--spot)]">
+      <div className="rounded-2xl border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-8 text-center text-sm text-[var(--status-warning)]">
         {error}
       </div>
     );
@@ -257,7 +243,7 @@ export function AiTokenUsageDashboard() {
                     <div key={svc.service} className="space-y-1">
                       <div className="flex items-center justify-between text-sm">
                         <span className="font-medium text-[var(--text-primary)]">
-                          {SERVICE_LABELS[svc.service] ?? svc.service}
+                          {llmServiceLabel(svc.service)}
                         </span>
                         <span className="cc-num text-[var(--text-secondary)]">
                           {svc.tokens.toLocaleString("ko-KR")} 토큰 &middot; {won(svc.cost_krw)}

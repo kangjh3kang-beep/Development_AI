@@ -1,6 +1,6 @@
 import { Card, CardContent, Badge, Button } from "@propai/ui";
 import { motion } from "framer-motion";
-import { Gem, Landmark, Sparkles, Target, TrendingDown, TrendingUp, Wallet } from "lucide-react";
+import { Gem, Landmark, Target, TrendingDown, TrendingUp, Wallet } from "lucide-react";
 import { useParams } from "next/navigation";
 import {
   Bar,
@@ -58,7 +58,28 @@ function Term({ children, definition }: { children: React.ReactNode; definition:
 const TERM_DEFINITIONS = {
   ROI: "투자자본수익률 (Return on Investment): 투자액 대비 순이익 비율을 나타내는 지표입니다.",
   NPV: "순현재가치 (Net Present Value): 미래에 발생할 현금흐름을 현재 가치로 환산하여 투자 타당성을 평가하는 지표입니다.",
+  // ★소소잔여(D6-부속): IRR·회수기간·DSCR 산출 전제를 KPI 옆 인라인으로 —
+  //   분양대금은 W5 분할 유입 표준 스케줄이 기본(종전 "조기 유입" 문구는 stale).
+  IRR: "내부수익률 (Internal Rate of Return): 월별 무차입 현금흐름의 연환산 수익률입니다. 분양대금은 분할 유입 표준 스케줄(계약금 10%·중도금 60% 균등·잔금 30% 정산월)이 반영됩니다.",
+  PAYBACK: "회수기간: 누적 현금흐름이 최저점(최대 자금투입) 이후 0 이상으로 회복되는 시점(개월)입니다.",
+  DSCR: "부채상환커버리지 (Debt Service Coverage Ratio): 연 순임대수입 ÷ 연 금융비 근사 — 임대형 사업에서만 산출됩니다.",
 };
+
+// ── ★소소잔여: special_detail 알려진 키 한글 라벨(미지 키는 raw 정직 유지) ──
+const SPECIAL_KEY_LABELS: Record<string, string> = {
+  proportional_rate: "비례율",
+  existing_value_won: "종전자산 평가액",
+  excess_gain_won: "재건축 초과이익",
+  "reconstruction_levy.name": "부담금 항목",
+  "reconstruction_levy.amount_won": "재건축부담금",
+  "dcf.npv_won": "소득접근 DCF 가치",
+  "dcf.pv_noi_won": "NOI 현재가치 합",
+  "dcf.terminal_value_won": "매각가치(터미널)",
+  "dcf.pv_terminal_won": "매각가치 현재가치",
+  "dcf.hold_years": "보유기간(년)",
+};
+// R1-LOW: 내부코드("D05")·형제 필드와 중복 수치(base_won=excess_gain_won)는 표시 생략.
+const SPECIAL_KEY_SKIP = new Set(["reconstruction_levy.code", "reconstruction_levy.base_won"]);
 
 /* ── WP-S 신뢰 블록(옵셔널·additive) — /calculate 응답의 evidence[]·legal_refs[] ── */
 
@@ -147,7 +168,7 @@ export function FeasibilityResultView() {
 
   if (!result) {
     return (
-      <Card className="rounded-[3rem] border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)] shadow-none">
+      <Card className="rounded-[var(--radius-2xl)] border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)] shadow-none">
         <CardContent className="p-16 text-center flex flex-col items-center gap-6">
           <div className="h-20 w-20 rounded-3xl bg-[var(--surface-strong)] flex items-center justify-center text-[var(--text-hint)] shadow-[var(--shadow-lg)] border border-[var(--line)]">
              <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg>
@@ -171,11 +192,63 @@ export function FeasibilityResultView() {
     { id: "rate", label: "사업 수익률", value: `${result.profit_rate_pct.toFixed(1)}%`, color: "text-cyan-500", icon: Target },
     { id: "roi", label: <Term definition={TERM_DEFINITIONS.ROI}>ROI</Term>, value: `${result.roi_pct.toFixed(1)}%`, color: "text-indigo-500", icon: Landmark },
     { id: "npv", label: <Term definition={TERM_DEFINITIONS.NPV}>NPV</Term>, value: formatWon(result.npv_won), color: "text-[var(--text-primary)]", icon: Gem },
+    // ★W3(additive): 월별 DCF 지표 — 백엔드 미산출(null)이면 정직하게 "—" 표기.
+    ...(result.cashflow_summary
+      ? [
+          { id: "irr", label: <Term definition={TERM_DEFINITIONS.IRR}>IRR(연)</Term>, value: result.cashflow_summary.irr_pct != null ? `${result.cashflow_summary.irr_pct.toFixed(1)}%` : "—", color: "text-emerald-500", icon: TrendingUp },
+          { id: "payback", label: <Term definition={TERM_DEFINITIONS.PAYBACK}>회수기간</Term>, value: result.cashflow_summary.payback_month != null ? `${result.cashflow_summary.payback_month}개월` : "—", color: "text-amber-500", icon: Target },
+          ...(result.cashflow_summary.dscr != null
+            ? [{ id: "dscr", label: <Term definition={TERM_DEFINITIONS.DSCR}>DSCR</Term>, value: `${result.cashflow_summary.dscr.toFixed(2)}x`, color: "text-sky-500", icon: Landmark }]
+            : []),
+        ]
+      : []),
   ];
 
   const costData = Object.entries(result.cost_breakdown_won)
     .filter(([, v]) => v > 0)
     .map(([name, value]) => ({ name, value }));
+
+  // ── ★W4(감사 프론트 고아): tax_detail·special_detail 렌더 준비 ──
+  // 백엔드가 채워 반환하는데 어떤 화면도 렌더하지 않던 필드 — 세금 4단계 요약과
+  // 모듈 특화 상세를 정직 표기(값 부재 시 섹션 자체 미렌더·하위호환).
+  const TAX_STAGE_LABELS: Record<string, string> = {
+    acquisition: "취득단계", construction: "공사단계", sale: "분양단계", disposal: "양도단계",
+  };
+  const taxDetail = (result.tax_detail ?? {}) as {
+    grand_total_won?: number;
+    summary_by_stage?: Record<string, number>;
+  } & Record<string, { items?: { code?: string; name?: string; amount_won?: number }[] } | unknown>;
+  const taxStages = Object.entries(taxDetail.summary_by_stage ?? {})
+    .filter(([k]) => TAX_STAGE_LABELS[k])
+    .map(([k, total]) => {
+      const stage = taxDetail[k] as { items?: { code?: string; name?: string; amount_won?: number }[] } | undefined;
+      const items = (Array.isArray(stage?.items) ? stage.items : [])
+        .filter((it) => (it.amount_won ?? 0) > 0)
+        .sort((a, b) => (b.amount_won ?? 0) - (a.amount_won ?? 0));
+      return { key: k, label: TAX_STAGE_LABELS[k], total: Number(total ?? 0), items };
+    });
+  const specialEntries = Object.entries(result.special_detail ?? {}).flatMap(([k, v]) => {
+    if (typeof v === "number") {
+      return [{ key: k, value: k.endsWith("_won") ? formatWon(v) : v.toLocaleString() }];
+    }
+    if (typeof v === "string" && v) return [{ key: k, value: v }];
+    if (v && typeof v === "object") {
+      // R1-LOW: M08 소득 DCF 미채택(NOI 미입력 → npv 0) 시 dcf 그룹 자체를 생략 —
+      // 백엔드가 npv_basis에서 '소득접근 보존' 표기를 제거한 케이스에서 0값 나열이
+      // 소득평가가 존재하는 듯 오독시키는 것 방지(백엔드 income_dcf 판정과 동일 게이트).
+      if (k === "dcf" && (((v as Record<string, unknown>).npv_won as number) || 0) <= 0) return [];
+      // 1단계 평탄화 — 숫자/문자만(객체는 정직하게 생략).
+      return Object.entries(v as Record<string, unknown>)
+        .filter(([, sv]) => typeof sv === "number" || (typeof sv === "string" && sv))
+        .map(([sk, sv]) => ({
+          key: `${k}.${sk}`,
+          value: typeof sv === "number" ? (sk.endsWith("_won") ? formatWon(sv) : sv.toLocaleString()) : String(sv),
+        }));
+    }
+    return [];
+  })
+    .filter((e) => !SPECIAL_KEY_SKIP.has(e.key))
+    .map((e) => ({ ...e, label: SPECIAL_KEY_LABELS[e.key] ?? e.key }));
 
   // WP-S 산출 근거(옵셔널 가드) — 스토어 타입에 없는 가산 필드는 안전하게 좁혀 읽는다.
   // 구버전 응답(evidence/legal_refs 부재)이면 빈 배열 → 패널 미렌더(기존 화면 무손상).
@@ -193,27 +266,30 @@ export function FeasibilityResultView() {
     { label: "세전 이익", value: formatWon(result.net_profit_won), basis: "총 수입 − 총 비용" },
     { label: "사업 수익률", value: `${result.profit_rate_pct.toFixed(1)}%`, basis: "세전 이익 ÷ 총 수입 × 100" },
     { label: "ROI", value: `${result.roi_pct.toFixed(1)}%`, basis: "세전 이익 ÷ 총 사업비 × 100 — 투입자본 대비 수익률" },
-    { label: "NPV", value: formatWon(result.npv_won), basis: "기간별 현금흐름을 할인율로 현재가치 환산한 순현재가치(할인율·기간은 입력 가정)" },
+    { label: "NPV", value: formatWon(result.npv_won), basis: result.cashflow_summary?.npv_basis ?? "기간별 현금흐름을 할인율로 현재가치 환산한 순현재가치(할인율·기간은 입력 가정)" },
+    ...(result.cashflow_summary?.dscr != null
+      ? [{ label: "DSCR", value: `${result.cashflow_summary.dscr.toFixed(2)}x`, basis: result.cashflow_summary.dscr_basis ?? "" }]
+      : []),
   ];
 
   return (
     <div className="space-y-12 animate-premium-fade">
       {/* ── Summary Hero Scorecard ── */}
-      <div className="relative overflow-hidden rounded-[3.5rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-10 shadow-[var(--shadow-2xl)]">
+      <div className="relative overflow-hidden rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-10 shadow-[var(--shadow-2xl)]">
          <div className="absolute top-0 right-0 -mr-20 -mt-20 h-64 w-64 rounded-full bg-[var(--accent-strong)] opacity-[0.05] blur-[100px]" />
          <div className="absolute bottom-0 left-0 -ml-20 -mb-20 h-64 w-64 rounded-full bg-blue-500/5 blur-[100px]" />
          
          <div className="relative z-10 grid items-center gap-10 lg:grid-cols-[1fr_auto_1.2fr]">
             {/* Left: Grade Indicator */}
             <div className="flex items-center gap-10">
-               <div className={`relative flex h-32 w-32 items-center justify-center rounded-[2.5rem] text-5xl font-[1000] ${GRADE_COLORS[result.grade] ?? "bg-slate-700"} ring-8 ring-[var(--line-strong)]/50`}>
+               <div className={`relative flex h-32 w-32 items-center justify-center rounded-[var(--radius-xl)] text-5xl font-[1000] ${GRADE_COLORS[result.grade] ?? "bg-slate-700"} ring-8 ring-[var(--line-strong)]/50`}>
                   {result.grade}
                   <div className="absolute -bottom-2 -right-2 flex h-10 w-10 items-center justify-center rounded-2xl bg-[var(--surface)] text-[10px] font-black text-[var(--accent-strong)] shadow-lg border border-[var(--line-strong)]">
                     AI
                   </div>
                </div>
                <div className="space-y-2">
-                  <div className="inline-flex items-center gap-2 rounded-full border border-[var(--accent-strong)]/20 bg-[var(--accent-soft)] px-3 py-1 text-[10px] font-black uppercase tracking-[0.2em] text-[var(--accent-strong)]">
+                  <div className="inline-flex items-center gap-2 rounded-full border border-[var(--accent-strong)]/20 bg-[var(--accent-soft)] px-3 py-1 label-caps text-[var(--accent-strong)]">
                     Real-time Analysis
                   </div>
                   <h3 className="text-3xl font-[1000] tracking-tight text-[var(--text-primary)] leading-tight">{result.module_name}</h3>
@@ -232,14 +308,14 @@ export function FeasibilityResultView() {
             {/* Right: Primary ROI Gauge Result */}
             <div className="flex flex-wrap items-center gap-12 lg:justify-end">
                <div className="flex flex-col">
-                  <span className="text-[10px] font-black uppercase tracking-[0.3em] text-[var(--text-hint)] mb-2">Expected ROI</span>
+                  <span className="label-caps text-[var(--text-hint)] mb-2">Expected ROI</span>
                   <div className="flex items-baseline gap-2">
                      <span className="text-6xl font-[1000] text-[var(--accent-strong)] tracking-tighter">{result.roi_pct.toFixed(2)}</span>
                      <span className="text-xl font-black text-[var(--accent-strong)] opacity-60">%</span>
                   </div>
                </div>
                <div className="flex flex-col">
-                  <span className="text-[10px] font-black uppercase tracking-[0.3em] text-[var(--text-hint)] mb-2">Net Value (NPV)</span>
+                  <span className="label-caps text-[var(--text-hint)] mb-2">Net Value (NPV)</span>
                   <div className="flex items-baseline gap-2">
                      <span className="text-3xl font-[1000] text-[var(--text-primary)] tracking-tight">{formatWon(result.npv_won)}</span>
                   </div>
@@ -258,7 +334,7 @@ export function FeasibilityResultView() {
             transition={{ delay: i * 0.05 }}
             className="flex"
           >
-            <Card className="group flex-1 rounded-[2.5rem] border-[var(--line-strong)] bg-[var(--surface-strong)] transition-all duration-500 hover:scale-[1.05] hover:shadow-[var(--shadow-2xl)] hover:border-[var(--accent-strong)]/30 overflow-hidden">
+            <Card className="group flex-1 rounded-[var(--radius-xl)] border-[var(--line-strong)] bg-[var(--surface-strong)] transition-all duration-500 hover:scale-[1.05] hover:shadow-[var(--shadow-2xl)] hover:border-[var(--accent-strong)]/30 overflow-hidden">
               <CardContent className="p-8">
                 <div className="mb-6 flex items-center justify-between">
                    <div className={`h-10 w-10 rounded-2xl bg-[var(--surface-soft)] flex items-center justify-center shadow-[var(--shadow-sm)] border border-[var(--line)] ${kpi.color}`}>
@@ -282,7 +358,7 @@ export function FeasibilityResultView() {
           <div className="h-2 w-10 rounded-full bg-[var(--accent-strong)]" />
           <h4 className="text-xl font-[1000] tracking-tighter text-[var(--text-primary)] uppercase">Financial Sensitivity Matrix</h4>
         </div>
-        <Card className="rounded-[3.5rem] border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-2xl)] overflow-hidden">
+        <Card className="rounded-[var(--radius-2xl)] border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-2xl)] overflow-hidden">
           <CardContent className="p-10">
             <FeasibilitySimulationWidget projectId={projectId} dictionary={simulationDict} />
           </CardContent>
@@ -290,9 +366,9 @@ export function FeasibilityResultView() {
       </section>
 
       {/* ── Charts Section ── */}
-      <div className="grid gap-8 lg:grid-cols-[1fr_480px]">
+      <div className="grid gap-8">
         {/* Cost Breakdown Chart */}
-        <Card className="rounded-[3.5rem] border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-2xl)] overflow-hidden">
+        <Card className="rounded-[var(--radius-2xl)] border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-2xl)] overflow-hidden">
           <CardContent className="p-12">
             <div className="mb-10 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
@@ -334,7 +410,7 @@ export function FeasibilityResultView() {
                     ))}
                   </Pie>
                   <Tooltip 
-                    contentStyle={{ borderRadius: '2rem', border: '1px solid var(--line-strong)', backgroundColor: 'var(--surface)', boxShadow: 'var(--shadow-2xl)', padding: '1.5rem', fontWeight: 'bold' }}
+                    contentStyle={{ borderRadius: "var(--radius-lg)", border: '1px solid var(--line-strong)', backgroundColor: 'var(--surface)', boxShadow: 'var(--shadow-2xl)', padding: '1.5rem', fontWeight: 'bold' }}
                     itemStyle={{ color: 'var(--text-primary)' }}
                     formatter={(v) => [formatWon(Number(v ?? 0)), '비용 규모']}
                   />
@@ -350,33 +426,63 @@ export function FeasibilityResultView() {
 
             {/* 산출 근거(WP-S evidence[]+legal_refs[]) — 항목이 없으면(구버전 응답) 자동 미표시. */}
             <EvidencePanel title="산출 근거" items={evidenceItems} className="mt-8" />
+
+            {/* ── ★W4: 세금 상세(4단계) — 종전 미렌더 고아 필드의 정직 표기 ── */}
+            {taxStages.length > 0 && (
+              <div className="mt-8 rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-6">
+                <div className="mb-4 flex items-center justify-between">
+                  <h5 className="text-sm font-black text-[var(--text-primary)]">제세공과금 상세 (4단계)</h5>
+                  {typeof taxDetail.grand_total_won === "number" && (
+                    <span className="text-xs font-black text-[var(--text-secondary)]">합계 {formatWon(taxDetail.grand_total_won)}</span>
+                  )}
+                </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  {taxStages.map((st) => (
+                    <div key={st.key} className="rounded-xl border border-[var(--line)] bg-[var(--surface)] p-4">
+                      <div className="mb-2 flex items-center justify-between">
+                        <span className="text-[11px] font-black text-[var(--text-secondary)]">{st.label}</span>
+                        <span className="text-[11px] font-black text-[var(--text-primary)]">{formatWon(st.total)}</span>
+                      </div>
+                      {st.items.length > 0 ? (
+                        <ul className="space-y-1">
+                          {st.items.slice(0, 6).map((it) => (
+                            <li key={`${st.key}-${it.code}`} className="flex items-center justify-between text-[11px] text-[var(--text-secondary)]">
+                              <span>{it.name ?? it.code}</span>
+                              <span className="cc-num">{formatWon(it.amount_won ?? 0)}</span>
+                            </li>
+                          ))}
+                          {st.items.length > 6 && (
+                            <li className="text-[10px] text-[var(--text-hint)]">외 {st.items.length - 6}건</li>
+                          )}
+                        </ul>
+                      ) : (
+                        <p className="text-[10px] text-[var(--text-hint)]">부과 항목 없음</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* ── ★W4: 모듈 특화 상세(special_detail) — 종전 미렌더 고아 필드 ── */}
+            {specialEntries.length > 0 && (
+              <div className="mt-6 rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-6">
+                <h5 className="mb-3 text-sm font-black text-[var(--text-primary)]">모듈 특화 상세</h5>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {specialEntries.map((e) => (
+                    <div key={e.key} className="flex items-center justify-between rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-[11px]">
+                      <span className="text-[var(--text-secondary)]">{e.label}</span>
+                      <span className="cc-num font-semibold text-[var(--text-primary)]">{e.value}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
-
-        {/* AI Insight Card */}
-        <div className="flex flex-col gap-8">
-           <Card className="relative flex-1 overflow-hidden rounded-[3.5rem] border-none bg-gradient-to-br from-[var(--accent-strong)] to-blue-600 p-1 text-white shadow-[var(--shadow-2xl)]">
-              <CardContent className="relative z-10 h-full rounded-[3.4rem] bg-[var(--surface-strong)]/80 p-10 backdrop-blur-3xl flex flex-col border border-white/10">
-                 <div className="mb-10 flex h-14 w-14 items-center justify-center rounded-3xl bg-[var(--surface)] shadow-[var(--shadow-lg)] border border-[var(--line-strong)]">
-                    <Sparkles className="size-7 animate-bounce-subtle" aria-hidden />
-                 </div>
-                 <h4 className="text-3xl font-[1000] tracking-tighter text-[var(--text-primary)] mb-4">AI 총평 및 전략 포인트</h4>
-                 <p className="flex-1 text-base leading-[1.8] text-[var(--text-secondary)] font-bold italic underline decoration-[var(--line)] underline-offset-8">
-                    해당 부지의 개발 시나리오는 <span className="text-[var(--accent-strong)] font-black italic underline decoration-[var(--accent-strong)]/30 underline-offset-4">'상업 복합 시설'</span> 일 때 가장 높은 NPV를 보입니다. 
-                    특히 주변 성수역 시세 상승률이 연평균 12%를 상회하고 있어, 준공 후 매각 차익(Capital Gain) 비중을 높이는 전략이 유효합니다.
-                 </p>
-                 <div className="mt-12 pt-8 border-t border-[var(--line-strong)]">
-                    <p className="text-[10px] font-black uppercase tracking-[0.4em] text-[var(--text-hint)] mb-4">AI Investment Viability Score</p>
-                    <div className="flex items-center gap-6">
-                       <div className="h-3 flex-1 rounded-full bg-[var(--line)] overflow-hidden p-0.5 border border-[var(--line-strong)]">
-                          <div className="h-full w-[92%] bg-gradient-to-r from-[var(--accent-strong)] to-blue-400 rounded-full shadow-[var(--shadow-glow)]" />
-                       </div>
-                       <span className="text-2xl font-[1000] italic text-[var(--text-primary)] tracking-tighter">92 <span className="text-xs font-black opacity-40">PT</span></span>
-                    </div>
-                 </div>
-              </CardContent>
-           </Card>
-        </div>
+        {/* AI 총평 카드 제거(무목업) — 데이터 출처 없이 "성수역 12%·92PT"를 상수로 렌더하던 블록.
+           FeasibilityResult 에 총평/점수 필드가 없고, 실제 AI 산출물은 같은 탭의
+           AIRecommendationPanel(/feasibility/recommendations 응답)이 담당한다. */}
       </div>
     </div>
   );

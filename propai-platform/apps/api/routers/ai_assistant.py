@@ -121,29 +121,40 @@ def _sse(payload: dict) -> str:
 
 
 async def _plain_chat_text(msgs: list) -> str:
-    """단발 채팅(폴백) — 에이전트 미가용 시 기존 동작. 계측 단일경유 부착."""
+    """단발 채팅(폴백) — 에이전트 미가용 시 기존 동작. 계측 단일경유 부착.
+
+    ★max_tokens는 llm_provider 기본값(4096)을 따른다(과거 1024 하드코딩이 문장 중간에서
+    조용히 절단됨). 그래도 절단(다른 프로바이더 등)이 감지되면 정직 고지를 덧붙인다.
+    """
+    from app.services.ai.assistant_agent import _TRUNCATION_NOTICE, _is_truncated
     from app.services.ai.base_interpreter import record_llm_response_billing
     from app.services.ai.llm_provider import get_llm
 
-    llm = get_llm(timeout=30.0, max_tokens=1024)
+    llm = get_llm(timeout=30.0)
     resp = await llm.ainvoke(msgs)
     with contextlib.suppress(Exception):
         await record_llm_response_billing(llm, resp, service="ai_assistant")
-    return resp.content if isinstance(resp.content, str) else str(resp.content)
+    text = resp.content if isinstance(resp.content, str) else str(resp.content)
+    if _is_truncated(resp):
+        text += _TRUNCATION_NOTICE
+    return text
 
 
 async def _plain_chat_stream(msgs: list):
-    """단발 스트리밍(폴백) — 텍스트 청크를 yield. 종료 시 계측 단일경유."""
+    """단발 스트리밍(폴백) — 텍스트 청크를 yield. 종료 시 계측 단일경유 + 절단 정직 고지."""
+    from app.services.ai.assistant_agent import _TRUNCATION_NOTICE, _is_truncated
     from app.services.ai.base_interpreter import record_llm_response_billing
     from app.services.ai.llm_provider import get_llm
 
-    llm = get_llm(timeout=60.0, max_tokens=1024)
+    llm = get_llm(timeout=60.0)
     agg = None
     async for chunk in llm.astream(msgs):
         text = _chunk_text(chunk)
         if text:
             yield text
         agg = chunk if agg is None else agg + chunk
+    if agg is not None and _is_truncated(agg):
+        yield _TRUNCATION_NOTICE
     with contextlib.suppress(Exception):
         await record_llm_response_billing(llm, agg, service="ai_assistant")
 

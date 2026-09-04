@@ -10,6 +10,8 @@ import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
 import { LegalRefChip } from "@/components/common/LegalRefChip";
 import { NumberInput } from "@/components/common/NumberInput";
 import { SiteDataGate } from "@/components/projects/SiteDataGate";
+// 배선 캠페인 1차(ESG 클러스터 5건) — additive 마운트. 기존 GRESB/LCA 흐름은 무수정.
+import { EsgExtendedPanelsSection } from "@/components/projects/EsgExtendedPanelsSection";
 import type { Locale } from "@/i18n/config";
 
 /* ── Response Types ── */
@@ -447,7 +449,7 @@ export function ProjectEsgWorkspaceClient({
       <Card className="rounded-[var(--radius-2xl)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
         <CardContent className="p-8">
           <div className="flex flex-wrap items-center gap-3">
-            <span className="rounded-full bg-[rgba(14,116,144,0.1)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--accent-strong)]">
+            <span className="rounded-full bg-[rgba(14,116,144,0.1)] px-4 py-2 label-caps text-[var(--accent-strong)]">
               {labels.heroTitle}
             </span>
             <span className="rounded-full border border-[var(--line)] px-4 py-2 text-xs font-medium text-[var(--text-secondary)]">
@@ -471,7 +473,7 @@ export function ProjectEsgWorkspaceClient({
             </div>
           ) : null}
           {workspaceError ? (
-            <div className="mt-6 rounded-[var(--radius-xl)] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-5 text-sm leading-7 text-[var(--spot)]">
+            <div className="mt-6 rounded-[var(--radius-xl)] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-5 text-sm leading-7 text-[var(--status-warning)]">
               {workspaceError}
             </div>
           ) : null}
@@ -491,7 +493,7 @@ export function ProjectEsgWorkspaceClient({
       {/* ── LCA Section ── */}
       <Card>
         <CardContent className="p-6">
-          <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+          <p className="label-caps text-[var(--text-tertiary)]">
             {labels.lcaFormTitle}
           </p>
           <form className="mt-4 grid gap-4" onSubmit={handleLcaSubmit}>
@@ -556,7 +558,7 @@ export function ProjectEsgWorkspaceClient({
       {/* LCA Results */}
       <Card>
         <CardContent className="p-6">
-          <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+          <p className="label-caps text-[var(--text-tertiary)]">
             {labels.lcaResultTitle}
           </p>
           {lcaResult ? (
@@ -612,7 +614,7 @@ export function ProjectEsgWorkspaceClient({
               ) : null}
               {lcaResult.material_breakdown?.length > 0 && (
                 <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
-                  <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+                  <p className="label-caps text-[var(--text-tertiary)]">
                     {labels.materialBreakdownLabel}
                   </p>
                   <div className="mt-3 grid gap-3">
@@ -683,7 +685,7 @@ export function ProjectEsgWorkspaceClient({
         {/* ── EPD Carbon Footprint ── */}
         <Card>
           <CardContent className="p-6">
-            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+            <p className="label-caps text-[var(--text-tertiary)]">
               {labels.epdFormTitle}
             </p>
             <form className="mt-4 grid gap-3" onSubmit={handleEpdSubmit}>
@@ -762,7 +764,7 @@ export function ProjectEsgWorkspaceClient({
 
             {/* EPD Results */}
             <div className="mt-6">
-              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+              <p className="label-caps text-[var(--text-tertiary)]">
                 {labels.epdResultTitle}
               </p>
               {epdResult ? (
@@ -813,7 +815,7 @@ export function ProjectEsgWorkspaceClient({
         {/* ── Low-Carbon Alternatives ── */}
         <Card>
           <CardContent className="p-6">
-            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+            <p className="label-caps text-[var(--text-tertiary)]">
               {labels.alternativesFormTitle}
             </p>
             <form className="mt-4 grid gap-3" onSubmit={handleAltSubmit}>
@@ -845,7 +847,7 @@ export function ProjectEsgWorkspaceClient({
 
             {/* Alternatives Results */}
             <div className="mt-6">
-              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+              <p className="label-caps text-[var(--text-tertiary)]">
                 {labels.altResultTitle}
               </p>
               {altResult ? (
@@ -903,6 +905,11 @@ export function ProjectEsgWorkspaceClient({
       </div>
       </>
       )}
+
+      {/* 배선 캠페인 1차(ESG 클러스터 5건, additive) — RE100/LCC/EU Taxonomy/기후리스크/
+          에너지인증. 기본 접힘(AdvancedDrawer), 부지 데이터 게이트와 무관하게 항상 노출
+          (일부 라우터는 project_id·부지 프리필 없이도 독립 동작). */}
+      <EsgExtendedPanelsSection projectId={projectId} />
     </section>
   );
 }
@@ -913,7 +920,7 @@ export function ProjectEsgWorkspaceClient({
 function MetricTile({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-[var(--radius-xl)] bg-[var(--surface)] p-4">
-      <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+      <p className="label-caps text-[var(--text-tertiary)]">
         {label}
       </p>
       <p className="mt-2 text-sm font-semibold text-[var(--text-primary)]">

@@ -1,13 +1,17 @@
 """F-Parcel 배치 Celery 태스크.
 
-run_batch(job_id): 동기 래퍼로 asyncio.run(BatchService(DbJobStore...).run(job_id)).
+run_batch(job_id): 동기 래퍼로 run_async_batch(lambda: _go()) — _go() 안에서
+BatchService(DbJobStore...).run(job_id) 을 돌리고 결과를 요약해 돌려준다.
+★`run_async_batch` 는 **팩토리**를 받는다(코루틴 객체가 아니라) — 재시도 경로에서
+코루틴을 두 번 await 하는 사고를 막기 위해서다. 위 표기를 인자 그대로 읽지 말 것.
 celery 미설치/미가동 시에도 import 가 깨지지 않도록 안전 폴백(try/except).
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
+
+from app.tasks._async_batch import run_async_batch
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +29,8 @@ def _get_celery_app():
 def run_batch(job_id: str) -> dict:
     """배치 잡을 동기 컨텍스트에서 실행한다(Celery 워커 진입점).
 
-    내부적으로 async BatchService.run 을 asyncio.run 으로 구동한다.
+    내부적으로 async BatchService.run 을 `run_async_batch` 로 구동한다
+    (루프 종료 전 커넥션 풀 정리 — 2026-08-08 누수 사고 대응).
     """
     from app.foundation.parcel.batch.batch_service import BatchService
     from app.foundation.parcel.batch.job_store import DbJobStore
@@ -42,7 +47,7 @@ def run_batch(job_id: str) -> dict:
             "counts": record.job.counts.model_dump(),
         }
 
-    result = asyncio.run(_go())
+    result = run_async_batch(lambda: _go())
     logger.info("배치 잡 실행 완료: %s (%s)", job_id, result.get("state"))
     return result
 

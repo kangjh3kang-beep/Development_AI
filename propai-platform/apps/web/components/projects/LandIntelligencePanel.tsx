@@ -1,15 +1,18 @@
 "use client";
 
+import { IntegrityWarnings, type IntegrityWarning } from "@/components/ui/IntegrityWarnings";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { AlertTriangle } from "lucide-react";
 import { useAIAnalyze, useAIReady } from "@/lib/ai-analyze-client";
 import { analyzeLocally } from "@/lib/kr-building-regulations";
 import { apiClient } from "@/lib/api-client";
+import { idempotencyHeaders } from "@/lib/idempotency";
 import { getCachedAnalysis, setCachedAnalysis, TTL_30D, TTL_7D, TTL_3D } from "@/lib/analysis-fetch-cache";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { resolveLandArea, landAreaBasisNote } from "@/lib/site-area";
 import {
-  DEVELOPABILITY_LABEL,
+  developabilityText,
   resolveFarPct,
   resolveBcrPct,
   specialFactorLabels,
@@ -24,6 +27,10 @@ import {
 } from "@/components/projects/SpecialParcelLegalPrelim";
 import { UseLlmToggle } from "@/components/common/UseLlmToggle";
 import type { BackendLegalRef } from "@/lib/evidence/adaptEvidence";
+import {
+  resolveCharacteristicStatus,
+  UNKNOWN_CHARACTERISTIC_LABEL,
+} from "@/lib/land-characteristic-status";
 
 // ── Icons ──
 const Icons = {
@@ -145,6 +152,9 @@ type IntegratedAnalysisResponse = {
     [key: string]: unknown;
   }> | null;
   warnings?: string[] | null;
+  // ★법정초과 가드 결과(additive) — 백엔드가 `warnings` **바로 옆 줄**에 싣는데
+  //   프론트 타입에 없어 소비할 수 없었다(그래서 렌더도 0이었다).
+  integrity_warnings?: IntegrityWarning[] | null;
 };
 
 type TransactionItem = {
@@ -255,13 +265,6 @@ interface LandIntelligencePanelProps {
   data: Record<string, string | undefined>;
 }
 
-// ── Status badge colors ──
-const statusColors: Record<string, string> = {
-  safe: "text-emerald-400 bg-emerald-500/10 border-emerald-500/20",
-  warning: "text-amber-400 bg-amber-500/10 border-amber-500/20",
-  danger: "text-red-400 bg-red-500/10 border-red-500/20",
-};
-
 // ── Bottom Tab Pages ──
 type BottomTab = "pnu" | "price" | "transaction" | "gis";
 
@@ -308,6 +311,12 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
   // ── Project context store ──
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
   const updateSiteAnalysis = useProjectContextStore((s) => s.updateSiteAnalysis);
+
+  // ── 면적 기준(basis) 해석 — 값과 함께 "무엇을 근거로 한 면적인지"를 얻는다(lib/site-area SSOT). ──
+  //   ★이 패널 안에서 면적을 보여 주는 곳이 셋(요약줄·특성표·토지가액)인데 전부 대표 1필지
+  //     응답을 읽고 있었다. 파생을 최상단에 두어 **세 곳이 같은 값·같은 기준**을 쓰게 한다.
+  const resolvedArea = useMemo(() => resolveLandArea(siteAnalysis), [siteAnalysis]);
+  const areaBasisNote = useMemo(() => landAreaBasisNote(siteAnalysis), [siteAnalysis]);
 
   // ── Zoning API state ──
   const [zoningData, setZoningData] = useState<ZoningAnalysisResponse | null>(null);
@@ -368,9 +377,12 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
       setZoningLoading(true);
       setZoningError(null);
       try {
+        // ★가장 많이 쓰이는 유료 경로(land_analysis) — 재전송이면 이중청구된다.
+        const zoningBody = { address: data!.address!.trim() };
         const res = await apiClient.post<ZoningAnalysisResponse>("/zoning/analyze", {
           useMock: false,
-          body: { address: data!.address!.trim() },
+          body: zoningBody,
+          headers: idempotencyHeaders("zoning.analyze", zoningBody),
         });
         if (!cancelled) {
           setZoningData(res);
@@ -636,11 +648,20 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
     if (zoningData.zone_type) {
       chars.push({ label: "용도지역", value: zoningData.zone_type, status: "safe" });
     }
-    if (zoningData.land_area_sqm != null) {
+    // ★면적 기준 SSOT(R1) — zoningData 는 대표 1필지 응답이다. 다필지에서 이 표만 대표면적을
+    //   보여 주면 같은 패널의 요약줄(통합)과 갈린다. 값·기준을 리졸버 하나에서 가져온다.
+    const charArea = resolvedArea.valueSqm ?? zoningData.land_area_sqm;
+    if (charArea != null) {
+      const basisSuffix =
+        resolvedArea.basis === "integrated"
+          ? ` (통합 ${resolvedArea.parcelCount}필지)`
+          : resolvedArea.basis === "representative"
+            ? " (대표필지)"
+            : "";
       chars.push({
         label: "면적",
-        value: `${zoningData.land_area_sqm.toLocaleString()}m²`,
-        status: zoningData.land_area_sqm >= 200 ? "safe" : "warning",
+        value: `${charArea.toLocaleString()}m²${basisSuffix}`,
+        status: charArea >= 200 ? "safe" : "warning",
       });
     }
     if (zoningData.zone_limits?.max_height_m != null) {
@@ -655,7 +676,6 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
     // Fill up to 4 items with special district info
     // (백엔드 부분응답·404 프로젝트에서 배열 필드가 누락될 수 있어 무가드 .length 크래시 방지)
     const specialDistricts = zoningData.special_districts ?? [];
-    const zoningWarnings = zoningData.warnings ?? [];
     if (chars.length < 4 && specialDistricts.length > 0) {
       chars.push({
         label: "특별구역",
@@ -663,16 +683,16 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
         status: "warning",
       });
     }
-    // Pad with warnings from zoning data
-    if (chars.length < 4 && zoningWarnings.length > 0) {
-      chars.push({
-        label: "주의사항",
-        value: zoningWarnings[0].slice(0, 30),
-        status: "danger",
-      });
-    }
+    // ★경고(warnings)를 여기서 '특성칩 패딩'으로 쓰던 코드를 제거했다(2026-08-22).
+    //   종전: if (chars.length < 4 && warnings.length > 0) → warnings[0].slice(0, 30)
+    //   ①칩이 4개면 경고가 통째로 사라지고 ②원문이 30자에서 잘리고 ③aiData.characteristics가
+    //   있으면 이 배열 자체가 버려졌다. 실측상 "용도지역이 주소 키워드 추론값입니다"는
+    //   pnu·면적이 null이라 칩이 적을 때만 **우연히** 보이던 상태였다.
+    //   경고는 아래 '용도지역 데이터 경고' 배너가 전담한다(조건부·절단 없음).
     return chars.length > 0 ? chars : null;
-  }, [zoningData]);
+    // resolvedArea 는 면적 행의 값·기준을 결정하므로 의존에 포함한다(누락 시 다필지 보강이
+    //   끝나도 표가 옛 대표면적으로 고착된다 — 종전 결함의 재발 경로).
+  }, [zoningData, resolvedArea]);
 
   // Determine data source for scenarios
   // 각 시나리오에 tentative(선행절차 전제 잠정)·tentativeReason을 전파해, 렌더에서 확신 % 대신
@@ -820,10 +840,13 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
       value: c.value,
       status: c.status as "safe" | "warning" | "danger",
     })) || zoningCharacteristics || localResult?.characteristics || [
-      { label: "경사도", value: "—", status: "safe" as const },
-      { label: "접도 상태", value: "—", status: "safe" as const },
-      { label: "지형", value: "—", status: "safe" as const },
-      { label: "높이 제한", value: "—", status: "warning" as const },
+      // ★값이 "—"(모름)인데 status 를 safe 로 주면 **초록 3칸**이 된다 — 이 PR 이 선언한
+      //   「모름을 그 타입의 유효값으로 표현하지 않는다」에 스스로 걸리던 자리다.
+      //   표에 없는 status 이므로 중립 + "확인 불가"로 렌더된다.
+      { label: "경사도", value: "—", status: "unknown" as const },
+      { label: "접도 상태", value: "—", status: "unknown" as const },
+      { label: "지형", value: "—", status: "unknown" as const },
+      { label: "높이 제한", value: "—", status: "unknown" as const },
     ],
     summary: aiData?.summary || localResult?.summary || null,
     // ── 용적/건폐 한도: 실효 우선(법정상한을 실효처럼 표시하던 결함 교정) ──
@@ -857,7 +880,11 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
       zoningData?.zone_limits?.max_far_pct ?? null,
     heightLimit: zoningData?.zone_limits?.max_height_m ?? localResult?.heightLimit,
     officialPricePerSqm: zoningData?.official_price_per_sqm ?? null,
-    landAreaSqm: zoningData?.land_area_sqm ?? null,
+    // ★면적 기준 SSOT(R1) — zoningData 는 /zoning/comprehensive 의 **대표 1필지** 응답이다.
+    //   다필지 부지에서 이 값을 그대로 쓰면 이 패널은 대표필지 면적을, 통합 경로를 쓰는 다른
+    //   패널(사업개요·건축가능범위)은 통합면적을 보여 준다 — 같은 이름으로 다른 값이 나온다.
+    //   store SSOT 를 우선 쓰고, store 에 면적이 아예 없을 때만 API 대표값으로 폴백한다.
+    landAreaSqm: resolvedArea.valueSqm ?? zoningData?.land_area_sqm ?? null,
   };
 
   // ── 특이부지 게이트 — API 응답 우선, 없으면 store(specialParcel) 폴백. is_special일 때만 카드 렌더. ──
@@ -917,16 +944,16 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
 
   // ── Data source label ──
   const dataSourceLabel = useMemo(() => {
-    if (isAnalyzing || deepAnalysisLoading) return { dot: "bg-amber-400 animate-pulse", text: "AI 분석 중...", color: "text-amber-400" };
-    if (deepAnalysisResult || aiData) return { dot: "bg-emerald-400", text: "AI 분석 완료", color: "text-emerald-400" };
+    if (isAnalyzing || deepAnalysisLoading) return { dot: "bg-[var(--status-warning)] animate-pulse", text: "AI 분석 중...", color: "text-[var(--status-warning)]" };
+    if (deepAnalysisResult || aiData) return { dot: "bg-[var(--status-success)]", text: "AI 분석 완료", color: "text-[var(--status-success)]" };
     if (hasZoningApi) return { dot: "bg-teal-400", text: "실시간 API 연동 완료", color: "text-teal-400" };
-    if (zoningError || txError || scenarioError) return { dot: "bg-amber-400", text: "API 연결 실패 — 로컬 추정 표시 중", color: "text-amber-400" };
+    if (zoningError || txError || scenarioError) return { dot: "bg-[var(--status-warning)]", text: "API 연결 실패 — 로컬 추정 표시 중", color: "text-[var(--status-warning)]" };
     if (localResult) return { dot: "bg-blue-400", text: "로컬 추정값 (백엔드 연결 필요)", color: "text-blue-400" };
     return { dot: "bg-slate-400", text: "대기 중", color: "text-[var(--accent-strong)]" };
   }, [isAnalyzing, deepAnalysisLoading, deepAnalysisResult, aiData, hasZoningApi, localResult]);
 
   return (
-    <div className="relative w-full rounded-[3rem] border border-[var(--line)] bg-[var(--surface-strong)] shadow-[var(--shadow-xl)] overflow-hidden">
+    <div className="relative w-full rounded-[var(--radius-2xl)] border border-[var(--line)] bg-[var(--surface-strong)] shadow-[var(--shadow-xl)] overflow-hidden">
       {/* ── Background Decorations (pointer-events-none) ── */}
       <div className="absolute inset-0 pointer-events-none">
         <div className="absolute inset-0 opacity-40 bg-gradient-to-br from-blue-900/20 via-slate-800/30 to-emerald-900/20" />
@@ -941,7 +968,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
           <motion.div
             initial={{ x: -20, opacity: 0 }}
             animate={{ x: 0, opacity: 1 }}
-            className="glass rounded-[2rem] p-5 md:p-6 lg:p-7 border border-[var(--line-strong)] shadow-[var(--shadow-xl)]"
+            className="glass rounded-[var(--radius-lg)] p-5 md:p-6 lg:p-7 border border-[var(--line-strong)] shadow-[var(--shadow-xl)]"
           >
             {/* Header */}
             <div className="flex items-center gap-3 mb-5">
@@ -950,7 +977,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
               </div>
               <div>
                 <h4 className="text-lg font-black text-[var(--text-primary)] tracking-tight">지능형 입지 분석</h4>
-                <p className="text-[10px] font-black uppercase tracking-[0.2em] flex items-center gap-1">
+                <p className="label-caps flex items-center gap-1">
                   <span className={`inline-block h-1.5 w-1.5 rounded-full ${dataSourceLabel.dot}`} />
                   <span className={dataSourceLabel.color}>{dataSourceLabel.text}</span>
                 </p>
@@ -986,7 +1013,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
                     {zoningLoading && <span className="text-[8px] text-[var(--text-hint)]">조회 중...</span>}
                   </div>
                   <div className="rounded-xl bg-[var(--surface-muted)] p-4 border border-[var(--line)] text-center">
-                    <p className="text-[9px] font-black text-emerald-400 uppercase tracking-widest mb-1">
+                    <p className="text-[9px] font-black text-[var(--status-success)] uppercase tracking-widest mb-1">
                       용적률 {analysis.isEffectiveFar ? "(실효)" : "(법정상한)"}
                     </p>
                     <p className="text-2xl font-black text-[var(--text-primary)]">
@@ -1050,7 +1077,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
                             )}
                         </div>
                         <div className="rounded-lg bg-[var(--surface-soft)] p-2.5 text-center border border-[var(--line)]">
-                          <p className="text-[8px] font-black text-emerald-400 uppercase tracking-widest mb-0.5">용적률(통합실효)</p>
+                          <p className="text-[8px] font-black text-[var(--status-success)] uppercase tracking-widest mb-0.5">용적률(통합실효)</p>
                           <p className="text-base font-black text-[var(--text-primary)]">
                             {integratedData.integrated?.blended_far_eff_pct != null
                               ? `${integratedData.integrated.blended_far_eff_pct}%`
@@ -1203,6 +1230,12 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
                         </div>
                       )}
 
+                      {/* ★법정초과 가드(integrity_warnings) — `warnings` **바로 옆 줄**에 실려 오는데
+                          렌더가 없어 검출돼도 화면에 안 나왔다(2026-08-24 실측: 프론트 소비처 0).
+                          가드가 신뢰도를 강등하며 붙이는 문구가 *"integrity_warnings 참조"* 라
+                          **화면에 없는 것을 참조하라**고 말하고 있었다. */}
+                      <IntegrityWarnings items={integratedData.integrity_warnings} />
+
                       {/* 필지별 상세(per_parcel) — 통합 산출근거 추적용. 토글(기본 접힘). 실효(법정)·특이·상태 정직표기. */}
                       {(integratedData.per_parcel?.length ?? 0) > 0 && (
                         <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-soft)]">
@@ -1244,7 +1277,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
                                       {metrics.length > 0 && <span>{metrics.join(" · ")}</span>}
                                       {isSpecial && p.special_parcel?.developability && (
                                         <span className="rounded-full bg-[color-mix(in_srgb,var(--status-warning)_12%,transparent)] px-1.5 py-0.5 font-black text-[var(--status-warning)]">
-                                          특이 · {DEVELOPABILITY_LABEL[p.special_parcel.developability] ?? p.special_parcel.developability}
+                                          특이 · {developabilityText(p.special_parcel.developability)}
                                         </span>
                                       )}
                                       {p.status && p.status !== "ok" && (
@@ -1280,7 +1313,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
                     <Icons.AlertCircle />
                     특이부지{specialParcel.factors.length > 0 ? ` · ${specialParcel.factors.join(" · ")}` : ""}
                     {specialParcel.developability && (
-                      <span className="normal-case tracking-normal"> — {DEVELOPABILITY_LABEL[specialParcel.developability] ?? specialParcel.developability}</span>
+                      <span className="normal-case tracking-normal"> — {developabilityText(specialParcel.developability)}</span>
                     )}
                   </p>
                   {specialParcel.honest && (
@@ -1365,12 +1398,21 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
                   </div>
                 ) : (
                   <div className="grid grid-cols-2 gap-2">
-                    {analysis.characteristics.slice(0, 4).map((c, i) => (
-                      <div key={i} className={`flex flex-col gap-1 rounded-lg border p-2 ${statusColors[c.status] || statusColors.safe}`}>
-                        <span className="text-[9px] font-black uppercase tracking-tighter opacity-80">{c.label}</span>
-                        <span className="text-xs font-bold">{c.value}</span>
-                      </div>
-                    ))}
+                    {analysis.characteristics.slice(0, 4).map((c, i) => {
+                      // ★미지 status 를 safe(초록)로 접지 않는다 — 생산자가 검증 0의 LLM JSON 이라
+                      //   표에 실재하는 danger 가 초록으로 가려졌다. 이 칩은 색 단독 신호이므로
+                      //   중립색만으로는 부족하고 글자로도 「모른다」를 말한다.
+                      const statusChip = resolveCharacteristicStatus(c.status);
+                      return (
+                        <div key={i} className={`flex flex-col gap-1 rounded-lg border p-2 ${statusChip.cls}`}>
+                          <span className="text-[9px] font-black uppercase tracking-tighter opacity-80">{c.label}</span>
+                          <span className="text-xs font-bold">{c.value}</span>
+                          {statusChip.unknown && (
+                            <span className="text-[9px] font-medium opacity-90">{UNKNOWN_CHARACTERISTIC_LABEL}</span>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -1378,10 +1420,31 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
 
             {/* Zoning API Error */}
             {zoningError && (
-              <div className="mt-3 rounded-xl bg-amber-500/10 border border-amber-500/20 p-3">
-                <p className="text-xs text-amber-400 font-medium flex items-center gap-1.5">
+              <div className="mt-3 rounded-xl bg-[var(--status-warning)]/10 border border-[var(--status-warning)]/20 p-3">
+                <p className="text-xs text-[var(--status-warning)] font-medium flex items-center gap-1.5">
                   <Icons.AlertCircle />{zoningError}
                 </p>
+              </div>
+            )}
+
+            {/* 용도지역 데이터 경고 — 백엔드 warnings 원문 전량(절단·조건부 없음).
+                ★keyword_inference(주소 키워드 추론값)처럼 **수치의 신뢰도를 바꾸는** 고지가
+                여기로 온다. 특성칩 파이프라인(aiData 우선·slice(0,4))과 독립이어야 한다. */}
+            {(zoningData?.warnings?.length ?? 0) > 0 && (
+              <div
+                data-testid="zoning-warnings"
+                className="mt-3 rounded-xl bg-[var(--status-warning)]/10 border border-[var(--status-warning)]/20 p-3"
+              >
+                <p className="text-[9px] font-black text-[var(--status-warning)] mb-1.5 uppercase tracking-widest flex items-center gap-1.5">
+                  <Icons.AlertCircle />용도지역 데이터 경고 · {zoningData?.warnings?.length}건
+                </p>
+                <ul className="space-y-1">
+                  {(zoningData?.warnings ?? []).map((w, i) => (
+                    <li key={i} className="text-xs text-[var(--status-warning)] font-medium break-keep">
+                      {w}
+                    </li>
+                  ))}
+                </ul>
               </div>
             )}
 
@@ -1394,8 +1457,8 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
 
             {/* AI Summary */}
             {(aiData?.summary || deepAnalysisResult) && (
-              <div className="mt-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 p-3">
-                <p className="text-[9px] font-black text-emerald-400 mb-1 uppercase tracking-widest">AI 종합 분석</p>
+              <div className="mt-3 rounded-xl bg-[var(--status-success)]/10 border border-[var(--status-success)]/20 p-3">
+                <p className="text-[9px] font-black text-[var(--status-success)] mb-1 uppercase tracking-widest">AI 종합 분석</p>
                 <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
                   {aiData?.summary || (deepAnalysisResult?.recommendations?.[0]
                     ? (() => {
@@ -1428,7 +1491,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
             initial={{ x: 20, opacity: 0 }}
             animate={{ x: 0, opacity: 1 }}
             transition={{ delay: 0.15 }}
-            className="glass rounded-[2rem] p-5 md:p-6 lg:p-7 border border-[var(--line-strong)] shadow-[var(--shadow-xl)]"
+            className="glass rounded-[var(--radius-lg)] p-5 md:p-6 lg:p-7 border border-[var(--line-strong)] shadow-[var(--shadow-xl)]"
           >
             <div className="flex items-center justify-between mb-6">
               <h4 className="text-lg font-black text-[var(--text-primary)] tracking-tight">
@@ -1437,9 +1500,9 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
                  isScenarioReal ? "실제 분석 기반 시나리오" : "법규 기반 개발 시나리오"}
               </h4>
               <div className={`h-2 w-2 rounded-full ${
-                scenarioLoading ? "bg-amber-500 animate-pulse" :
-                isScenarioReal && isScenarioTentative ? "bg-amber-500 shadow-[0_0_10px_rgba(245,158,11,0.9)]" :
-                isScenarioReal ? "bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,1)]" :
+                scenarioLoading ? "bg-[var(--status-warning)] animate-pulse" :
+                isScenarioReal && isScenarioTentative ? "bg-[var(--status-warning)] shadow-[0_0_10px_rgba(245,158,11,0.9)]" :
+                isScenarioReal ? "bg-[var(--status-success)] shadow-[0_0_10px_rgba(16,185,129,1)]" :
                 hasData ? "bg-blue-500" : "bg-slate-500"
               } animate-pulse`} />
             </div>
@@ -1486,7 +1549,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
                           잠정
                         </span>
                       ) : (
-                        <span className={`text-2xl font-black ${s.score >= 80 ? "text-emerald-400" : s.score >= 50 ? "text-amber-400" : "text-red-400"}`}>
+                        <span className={`text-2xl font-black ${s.score >= 80 ? "text-[var(--status-success)]" : s.score >= 50 ? "text-[var(--status-warning)]" : "text-red-400"}`}>
                           {s.score}%
                         </span>
                       )}
@@ -1511,7 +1574,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
                 )}
 
                 {scenarioError && (
-                  <p className="text-[10px] text-amber-400 text-center mt-2 flex items-center justify-center gap-1">
+                  <p className="text-[10px] text-[var(--status-warning)] text-center mt-2 flex items-center justify-center gap-1">
                     <Icons.AlertCircle />API 시나리오 조회 실패 — 로컬 추정값 표시 중
                   </p>
                 )}
@@ -1524,7 +1587,7 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
             initial={{ y: 20, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             transition={{ delay: 0.3 }}
-            className="glass rounded-[2rem] p-5 border border-[var(--line)] bg-[var(--surface-muted)]"
+            className="glass rounded-[var(--radius-lg)] p-5 border border-[var(--line)] bg-[var(--surface-muted)]"
           >
             <div className="flex items-center gap-3 mb-3">
               <div className="h-8 w-8 flex items-center justify-center rounded-lg bg-[var(--line)] text-[var(--text-tertiary)]">
@@ -1537,9 +1600,14 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
             <div className="px-2">
               <p className="text-sm font-bold text-[var(--text-secondary)]">{displayAddress}</p>
               {hasData && (
-                <p className="text-[10px] text-emerald-400 mt-1 font-bold">
+                <p className="text-[10px] text-[var(--status-success)] mt-1 font-bold">
                   {analysis.zoning.current} · 건폐율 {analysis.buildingCoverageMax}%{analysis.isEffectiveBcr ? "(실효)" : "(법정상한)"} · 용적률 {analysis.floorAreaRatioMax}%{analysis.isEffectiveFar ? "(실효)" : "(법정상한)"}
                   {analysis.landAreaSqm != null && ` · ${analysis.landAreaSqm.toLocaleString()}m²`}
+                  {areaBasisNote && (
+                    <span data-area-basis={resolvedArea.basis} className="text-[var(--text-hint)]">
+                      {" "}({areaBasisNote})
+                    </span>
+                  )}
                   {specialParcel && <span className="inline-flex items-center gap-1 text-[var(--status-warning)]"> · <AlertTriangle className="size-3" aria-hidden />특이부지</span>}
                 </p>
               )}
@@ -1629,9 +1697,18 @@ export function LandIntelligencePanel({ projectId, data }: LandIntelligencePanel
                       <span className="text-sm text-[var(--text-secondary)]">원/m²</span>
                     </div>
                     {analysis.landAreaSqm != null && (
-                      <p className="text-[10px] text-[var(--text-hint)]">
+                      <p className="text-[10px] text-[var(--text-hint)]" data-land-value-basis={resolvedArea.basis}>
                         추정 토지가액: {(analysis.officialPricePerSqm * analysis.landAreaSqm).toLocaleString()}원
                         ({analysis.landAreaSqm.toLocaleString()}m² 기준)
+                        {/* ★다필지 통합면적에 **대표필지 공시지가**를 곱한 개략치다. 필지마다 공시지가가
+                            다르므로 정확한 합산이 아니다 — 그 사실을 숨기지 않는다(정밀도 위장 금지).
+                            종전엔 이 줄이 **대표필지 면적**으로 계산돼, 통합 부지 가액을 통합면적 대비
+                            대표면적 비율만큼 과소표시했다. 면적을 통합으로 바로잡되 근사임을 밝힌다. */}
+                        {resolvedArea.basis === "integrated" && (
+                          <span className="block text-[var(--status-warning)]">
+                            개략치 — 대표필지 공시지가를 통합면적에 곱한 값입니다(필지별 공시지가 합산 아님)
+                          </span>
+                        )}
                       </p>
                     )}
                   </div>

@@ -1,5 +1,7 @@
 "use client";
 
+import { formatPercent } from "@/lib/formatters";
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, LayoutGrid, Mic, Sparkles, Sun } from "lucide-react";
 import { apiClient, ApiClientError } from "@/lib/api-client";
@@ -11,6 +13,7 @@ import { getZoningList, zoningToCode } from "@/lib/kr-building-regulations";
 import { resolveBcrPct, resolveDominantZone, resolveFarPct } from "@/lib/zoning-ssot";
 import { ReferenceAssemblyCard } from "@/components/cad/ReferenceAssemblyCard";
 import { AnnotatedSitePlanCard } from "@/components/cad/AnnotatedSitePlanCard";
+import { InspectorGrid } from "@/components/common/InspectorGrid";
 import {
   annotatedGeometryFor,
   buildLegalFindings,
@@ -354,7 +357,12 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
 
   // ── 부지 컨텍스트 기반 폼 상태 ──
   const [siteArea, setSiteArea] = useState(500);
-  const [zoneCode, setZoneCode] = useState("2R");
+  // ★1-tick 경합 봉합(자연녹지 프로젝트에 "2R" 라벨 혼재): 하드코딩 초기값("2R")으로 마운트되면,
+  //   아래 컨텍스트 주입 useEffect가 반영되기 전 첫 렌더에서 이 초기값으로 legal-limits(zone_code=2R)가
+  //   1회 호출돼 잘못된 용도지역 한도가 잠깐 노출됐다(다른 SSOT 기반 라벨과 혼재). ctx가 마운트 시점에
+  //   이미 있으면(흔한 케이스 — siteAnalysis가 스토어에 먼저 채워진 뒤 진입) lazy 초기화로 첫 렌더부터
+  //   정확한 zoneCode를 쓴다(ctx 부재 시엔 기존과 동일하게 "2R" 폴백).
+  const [zoneCode, setZoneCode] = useState(() => ctxZone ?? "2R");
   const [editedArea, setEditedArea] = useState(false);
   const [editedZone, setEditedZone] = useState(false);
   const [autoArea, setAutoArea] = useState(false);
@@ -725,7 +733,7 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
   const legalVerdict = single ? complianceVerdict(single.compliance) : null;
 
   return (
-    <div className="rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-6 lg:p-8">
+    <div className="@container rounded-[var(--radius-lg)] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-6 @2xl:p-8">
       {/* 헤더 */}
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
@@ -739,7 +747,10 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
         </p>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[1fr_1.1fr]">
+      {/* @container(패널 루트) 기준 2열 분할 — 뷰포트가 아니라 이 패널이 놓인 칸의 실제 폭에
+          반응한다. CAD/BIM 통합 엔진의 좁은 임베드 폭에서도 우측 액션 컬럼이 과도하게 눌려
+          "Top3 설계안 생성" 버튼 글자가 잘리던 문제를 구조적으로 차단(좁으면 세로 스택). */}
+      <div className="grid gap-6 @2xl:grid-cols-[1fr_1.1fr]">
         {/* ── 좌: 자연어 + 슬라이더 입력 ── */}
         <div className="flex flex-col gap-6">
           {/* 1) 자연어 입력 */}
@@ -1091,13 +1102,15 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
 
         {/* ── 우: 생성 액션 + 결과 ── */}
         <div className="flex flex-col gap-4">
-          {/* 생성 버튼 2종 */}
-          <div className="grid grid-cols-2 gap-3">
+          {/* 생성 버튼 2종 — InspectorGrid(auto-fit minmax)로 '칸의 실제 폭'에 반응. 각 버튼
+              최소 10rem을 보장해, 좁은 임베드에서 버튼이 반토막 나며 "생성" 글자가 잘리던
+              현상을 차단한다(폭이 모자라면 세로로 자연 스택). text-center로 줄바꿈시에도 정렬 유지. */}
+          <InspectorGrid minItemRem={10} gap={3}>
             <button
               type="button"
               onClick={handleAlternatives}
               disabled={altLoading}
-              className="rounded-2xl bg-[var(--accent-strong)] px-4 py-4 text-sm font-black text-white shadow-[var(--shadow-lg)] transition-opacity disabled:opacity-40"
+              className="rounded-2xl bg-[var(--accent-strong)] px-4 py-4 text-center text-sm font-black text-white shadow-[var(--shadow-lg)] transition-opacity disabled:opacity-40"
             >
               {altLoading ? "설계안 생성 중…" : "Top3 설계안 생성"}
             </button>
@@ -1105,11 +1118,11 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
               type="button"
               onClick={handleSingle}
               disabled={singleLoading}
-              className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface)] px-4 py-4 text-sm font-black text-[var(--text-primary)] transition-colors hover:bg-[var(--surface-soft)] disabled:opacity-40"
+              className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface)] px-4 py-4 text-center text-sm font-black text-[var(--text-primary)] transition-colors hover:bg-[var(--surface-soft)] disabled:opacity-40"
             >
               {singleLoading ? "자동설계 중…" : "단일 자동설계"}
             </button>
-          </div>
+          </InspectorGrid>
 
           {(altError || singleError) && (
             <p className="text-xs font-bold text-[var(--status-error)]" role="alert">
@@ -1123,6 +1136,33 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
               <AlertTriangle className="size-3.5" aria-hidden />{altWarning}
             </p>
           )}
+
+          {/* 빈 상태(C) — 아직 아무 설계안도 생성/선택되지 않았을 때, 큰 결과 컬럼이 빈 채로
+              방치되지 않도록 안내 플레이스홀더를 표시한다. 로딩/에러/결과 어느 것도 없을 때만
+              노출(무날조: 가짜 카드 금지). 생성 후에는 실제 결과 카드가 이 자리를 대체한다. */}
+          {!altLoading &&
+            !singleLoading &&
+            !single &&
+            selectedRank == null &&
+            alternatives.length === 0 &&
+            !evaluation &&
+            similar.length === 0 && (
+              <div className="grid min-h-[16rem] place-items-center rounded-2xl border border-dashed border-[var(--line)] bg-[var(--surface)] p-8 text-center">
+                <div className="max-w-xs">
+                  <span className="mx-auto grid size-12 place-items-center rounded-full border border-[var(--line)] bg-[var(--surface-soft)] text-[var(--text-tertiary)]">
+                    <Sparkles className="size-5" aria-hidden />
+                  </span>
+                  <p className="mt-3 text-sm font-black text-[var(--text-primary)]">
+                    아직 생성된 설계안이 없습니다
+                  </p>
+                  <p className="mt-1.5 text-[12px] font-semibold leading-5 text-[var(--text-hint)]">
+                    왼쪽에서 원하는 설계를 말·슬라이더로 정한 뒤{" "}
+                    <span className="font-black text-[var(--accent-strong)]">Top3 설계안 생성</span>을
+                    누르면, 법규 검증을 통과한 설계안이 여기에 표시됩니다.
+                  </p>
+                </div>
+              </div>
+            )}
 
           {/* 검증·다각평가(P5) — 법규 위반 + 4관점 점수(전부 커널값 기반) */}
           {evaluation && <EvaluationCard ev={evaluation} />}
@@ -1200,7 +1240,7 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
           {single && (
             <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-4">
               <div className="mb-2 flex items-center justify-between">
-                <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[var(--text-hint)]">
+                <span className="label-caps text-[var(--text-hint)]">
                   단일 자동설계
                 </span>
                 <div className="flex items-center gap-1.5">
@@ -1292,8 +1332,8 @@ export function GenerativeDesignPanel({ projectId, onApplied }: GenerativeDesign
                     <div className="grid grid-cols-4 gap-2">
                       <Metric label="세대" value={`${alt.summary.total_units}`} />
                       <Metric label="층수" value={`${alt.summary.num_floors}F`} />
-                      <Metric label="건폐율" value={`${alt.summary.bcr_percent.toFixed(0)}%`} />
-                      <Metric label="용적률" value={`${alt.summary.far_percent.toFixed(0)}%`} />
+                      <Metric label="건폐율" value={formatPercent(alt.summary.bcr_percent)} />
+                      <Metric label="용적률" value={formatPercent(alt.summary.far_percent)} />
                     </div>
 
                     {/* W-A: 목표(슬라이더) 미달 시 바인딩 제약 — 응답에 있을 때만 표시(정직) */}
@@ -1483,8 +1523,8 @@ function SummaryRow({
       <Metric label="세대" value={`${summary.total_units}`} />
       <Metric label="층수" value={`${summary.num_floors}F`} />
       <Metric label="높이" value={`${summary.building_height_m.toFixed(0)}m`} />
-      <Metric label="건폐율" value={`${summary.bcr_percent.toFixed(0)}%`} />
-      <Metric label="용적률" value={`${summary.far_percent.toFixed(0)}%`} />
+      <Metric label="건폐율" value={formatPercent(summary.bcr_percent)} />
+      <Metric label="용적률" value={formatPercent(summary.far_percent)} />
       <Metric label="주차" value={`${summary.parking_count}`} />
     </div>
   );
@@ -1620,7 +1660,7 @@ function MixBar({
               width: `${(d.ratio_pct / total) * 100}%`,
               background: palette[i % palette.length],
             }}
-            title={`${d.name} ${Math.round(d.ratio_pct)}%`}
+            title={`${d.name} ${formatPercent(d.ratio_pct)}`}
           />
         ))}
       </div>
@@ -1631,7 +1671,7 @@ function MixBar({
               className="inline-block h-2 w-2 rounded-sm"
               style={{ background: palette[i % palette.length] }}
             />
-            {d.code} {Math.round(d.ratio_pct)}%
+            {d.code} {formatPercent(d.ratio_pct)}
           </span>
         ))}
       </div>

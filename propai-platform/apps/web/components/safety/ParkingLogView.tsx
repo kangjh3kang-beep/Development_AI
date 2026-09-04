@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { Card, CardContent, CardTitle } from "@propai/ui";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
+import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { apiClient } from "@/lib/api-client";
 import type { ParkingDashboardData, ParkingRecord } from "@/components/cad/types";
 
@@ -13,8 +14,17 @@ const EVENT_BADGE: Record<ParkingRecord["event_type"], { bg: string; text: strin
   exit: { bg: "bg-sky-500/10", text: "text-sky-400", label: "출차" },
 };
 
+// ★P2-3: 기존에는 실패 시 조용히 null만 반환해 사용자에게 아무 안내가 없었다(정직 원칙 위반).
+// 최소 에러 상태만 additive로 추가 — 다른 워크스페이스와 동일한 에러카드 재사용.
+function extractErrorMessage(error: unknown) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return "요청 실패.";
+}
+
 export function ParkingLogView() {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["parking", "dashboard"],
     queryFn: () => apiClient.get<ParkingDashboardData>("/parking/dashboard"),
     refetchInterval: 15_000,
@@ -34,6 +44,20 @@ export function ParkingLogView() {
 
   if (isLoading) {
     return <SkeletonLoader count={2} itemClassName="h-48" />;
+  }
+
+  if (isError) {
+    return (
+      <WorkspaceQueryErrorCard
+        title="주차 관제 데이터를 불러오지 못했습니다."
+        description="네트워크 상태를 확인한 뒤 다시 시도하세요."
+        message={extractErrorMessage(error)}
+        actionLabel="다시 시도"
+        onRetry={() => {
+          void refetch();
+        }}
+      />
+    );
   }
 
   if (!data) return null;

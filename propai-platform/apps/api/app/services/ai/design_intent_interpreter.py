@@ -114,7 +114,7 @@ class DesignIntentInterpreter(BaseInterpreter):
 
         raw: dict[str, str] = {}
         try:
-            raw = await self._invoke(prompt, cache_data={"t": text, "a": site_area_sqm, "z": zone_code})
+            raw = await self._invoke_or_empty(prompt, cache_data={"t": text, "a": site_area_sqm, "z": zone_code})
         except Exception as e:  # noqa: BLE001 — LLM 실패는 폴백으로 흡수
             logger.warning("설계 의도 LLM 파싱 실패, 규칙기반 폴백", error=str(e)[:120])
 

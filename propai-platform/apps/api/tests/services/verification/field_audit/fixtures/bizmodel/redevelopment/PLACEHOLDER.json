@@ -1,0 +1,11 @@
+{
+  "_meta": {
+    "seed_id": "K3_K10_PLACEHOLDER",
+    "biz_model": "재개발",
+    "status": "PLACEHOLDER — 미채움(정직표기).",
+    "planned_defect": "K3 비례율<100↔분담금 정합 불변식 부재 / K10 정비구역 지정요건(노후도·호수밀도) 미검증. urban.py 비례율 존재하나 verdict 미대조.",
+    "planned_phase": "Phase G/1+ (권원 correctness·정비 도메인). W0 범위 밖.",
+    "honesty": "2차 층화축 scaffold. 실입력·현행assert 미채움 — 착수 시 수도권 재개발 실주소로 채운다.",
+    "filled": false
+  }
+}

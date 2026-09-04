@@ -104,6 +104,8 @@ def extract_user_profile(naver_data: dict) -> dict:
         "provider_id": provider_id,
         "email": email,
         "nickname": nickname,
+        # 네이버는 계정 이메일을 자체 검증한 뒤에만 제공하므로 존재=검증으로 취급한다.
+        "email_verified": bool(email),
     }
 
 

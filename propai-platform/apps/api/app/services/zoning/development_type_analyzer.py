@@ -280,13 +280,19 @@ def analyze(
     from .auto_zoning_service import ZONE_LIMITS
 
     zone_limits = ZONE_LIMITS.get(zone_type, {})
-    legal_far: float = zone_limits.get("max_far") or 200.0
-    legal_bcr: float = zone_limits.get("max_bcr") or 60.0
+    # ★무날조(WP-U1d): ZONE_LIMITS 미매칭 zone(개발제한구역 등 비도시계획 용도구역·오전달
+    # 지목)에 과거 `or 200.0`/`or 60.0`으로 법정값을 발명해 max_gfa(최대 연면적)까지
+    # 날조했다(실측: 개발제한구역 1000㎡ → 2000㎡ 발명). 미확인이면 None(미산정) 정직 유지 —
+    # 프론트(AllowedBuildingsCard·DesignGenPanel 등)는 `number | null` 계약으로 표기만 생략.
+    legal_far: float | None = zone_limits.get("max_far")
+    legal_bcr: float | None = zone_limits.get("max_bcr")
     # 실효값(조례·인센티브 반영)이 전달되면 우선 사용, 없으면 법정값 폴백(회귀 0).
-    max_far: float = effective_far_pct if effective_far_pct is not None else legal_far
-    max_bcr: float = effective_bcr_pct if effective_bcr_pct is not None else legal_bcr
-    max_gfa_sqm = land_area_sqm * (max_far / 100)
-    max_gfa_legal_sqm = land_area_sqm * (legal_far / 100)
+    max_far: float | None = effective_far_pct if effective_far_pct is not None else legal_far
+    max_bcr: float | None = effective_bcr_pct if effective_bcr_pct is not None else legal_bcr
+    max_gfa_sqm = round(land_area_sqm * (max_far / 100), 1) if max_far is not None else None
+    max_gfa_legal_sqm = (
+        round(land_area_sqm * (legal_far / 100), 1) if legal_far is not None else None
+    )
 
     allowed_types: list[dict[str, Any]] = []
     for item in raw_allowed:
@@ -297,7 +303,7 @@ def analyze(
             "type_code": item["type_code"],
             "conditions": item.get("conditions", ""),
             "recommended": is_recommended,
-            "max_gfa_sqm": round(max_gfa_sqm, 1),
+            "max_gfa_sqm": max_gfa_sqm,  # 사전 반올림 완료(미확인 시 None — 무날조)
             "remarks": f"최소 대지면적 {min_area}㎡ 필요" if min_area > 0 and not is_recommended else "",
         })
 
@@ -322,11 +328,12 @@ def analyze(
         "zone_type": zone_type,
         "land_area_sqm": land_area_sqm,
         # 실효 기준(조례·인센티브 반영). effective_* 미전달 시 법정값과 동일(회귀 0).
-        "max_gfa_sqm": round(max_gfa_sqm, 1),
+        # 한도 미확인 시 None(미산정) — 임의 200/60 기준 연면적을 발명하지 않는다(무날조).
+        "max_gfa_sqm": max_gfa_sqm,
         "max_bcr_pct": max_bcr,
         "max_far_pct": max_far,
         # 법정 상한(additive) — 화면이 실효/법정을 함께 표기할 수 있게 보존.
-        "max_gfa_legal_sqm": round(max_gfa_legal_sqm, 1),
+        "max_gfa_legal_sqm": max_gfa_legal_sqm,
         "max_bcr_legal_pct": legal_bcr,
         "max_far_legal_pct": legal_far,
         "is_effective_applied": effective_far_pct is not None or effective_bcr_pct is not None,

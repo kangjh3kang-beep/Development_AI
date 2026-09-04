@@ -1,0 +1,272 @@
+{
+ "dominant_zone": "제2종일반주거지역",
+ "dominant_basis": "area_weighted",
+ "zone_mix": [
+  {
+   "zone": "제2종일반주거지역",
+   "area_sqm": 11533.0,
+   "share_pct": 100.0,
+   "bcr_legal": 60.0,
+   "far_legal": 250.0,
+   "bcr_eff": 60.0,
+   "far_eff": 250.0
+  }
+ ],
+ "per_parcel": [
+  {
+   "pnu": "4137011000104670001",
+   "address": "경기도 오산시 내삼미동",
+   "area_sqm": 53.0,
+   "zone_type": "제2종일반주거지역",
+   "land_category": "답",
+   "bcr_eff_pct": 60.0,
+   "far_eff_pct": 250.0,
+   "bcr_legal_pct": 60,
+   "far_legal_pct": 250,
+   "far_basis": "법정상한 적용(조례 미확인)",
+   "special_parcel": {
+    "is_special": true,
+    "developability": "CONDITIONAL",
+    "resolvable": "YES",
+    "severity_label": "조건부 가능(인허가·전용·협의 선행)",
+    "factors": [
+     "농지(답)"
+    ],
+    "honest_disclosure": "인허가·전용·협의 등 선행절차 통과를 조건으로 한 잠정치입니다(확정 아님). 개발가능성: 조건부 가능(인허가·전용·협의 선행). 선행절차가 확정되기 전의 개발규모·수익성은 참고용이며 단정이 아닙니다. 참고: 농지전용 시 농지보전부담금(농지법 제38조)이 부과됩니다.",
+    "warning": "[특이부지] 농지(답): 지목이 답(으)로 농지에 해당해, 개발을 위해서는 농지전용허가가 필요합니다(농지보전부담금 부과)."
+   },
+   "analysis_status": "analyzed",
+   "status": "ok",
+   "reason": null
+  },
+  {
+   "pnu": "4137011000104930031",
+   "address": "경기도 오산시 내삼미동",
+   "area_sqm": 684.0,
+   "zone_type": "제2종일반주거지역",
+   "land_category": "답",
+   "bcr_eff_pct": 60.0,
+   "far_eff_pct": 250.0,
+   "bcr_legal_pct": 60,
+   "far_legal_pct": 250,
+   "far_basis": "법정상한 적용(조례 미확인)",
+   "special_parcel": {
+    "is_special": true,
+    "developability": "CONDITIONAL",
+    "resolvable": "YES",
+    "severity_label": "조건부 가능(인허가·전용·협의 선행)",
+    "factors": [
+     "농지(답)"
+    ],
+    "honest_disclosure": "인허가·전용·협의 등 선행절차 통과를 조건으로 한 잠정치입니다(확정 아님). 개발가능성: 조건부 가능(인허가·전용·협의 선행). 선행절차가 확정되기 전의 개발규모·수익성은 참고용이며 단정이 아닙니다. 참고: 농지전용 시 농지보전부담금(농지법 제38조)이 부과됩니다.",
+    "warning": "[특이부지] 농지(답): 지목이 답(으)로 농지에 해당해, 개발을 위해서는 농지전용허가가 필요합니다(농지보전부담금 부과)."
+   },
+   "analysis_status": "analyzed",
+   "status": "ok",
+   "reason": null
+  },
+  {
+   "pnu": "4137011000104930035",
+   "address": "경기도 오산시 내삼미동",
+   "area_sqm": 876.0,
+   "zone_type": "제2종일반주거지역",
+   "land_category": "답",
+   "bcr_eff_pct": 60.0,
+   "far_eff_pct": 250.0,
+   "bcr_legal_pct": 60,
+   "far_legal_pct": 250,
+   "far_basis": "법정상한 적용(조례 미확인)",
+   "special_parcel": {
+    "is_special": true,
+    "developability": "CONDITIONAL",
+    "resolvable": "YES",
+    "severity_label": "조건부 가능(인허가·전용·협의 선행)",
+    "factors": [
+     "농지(답)"
+    ],
+    "honest_disclosure": "인허가·전용·협의 등 선행절차 통과를 조건으로 한 잠정치입니다(확정 아님). 개발가능성: 조건부 가능(인허가·전용·협의 선행). 선행절차가 확정되기 전의 개발규모·수익성은 참고용이며 단정이 아닙니다. 참고: 농지전용 시 농지보전부담금(농지법 제38조)이 부과됩니다.",
+    "warning": "[특이부지] 농지(답): 지목이 답(으)로 농지에 해당해, 개발을 위해서는 농지전용허가가 필요합니다(농지보전부담금 부과)."
+   },
+   "analysis_status": "analyzed",
+   "status": "ok",
+   "reason": null
+  },
+  {
+   "pnu": "4137011000104570000",
+   "address": "경기도 오산시 내삼미동",
+   "area_sqm": 843.0,
+   "zone_type": "제2종일반주거지역",
+   "land_category": "답",
+   "bcr_eff_pct": 60.0,
+   "far_eff_pct": 250.0,
+   "bcr_legal_pct": 60,
+   "far_legal_pct": 250,
+   "far_basis": "법정상한 적용(조례 미확인)",
+   "special_parcel": {
+    "is_special": true,
+    "developability": "CONDITIONAL",
+    "resolvable": "YES",
+    "severity_label": "조건부 가능(인허가·전용·협의 선행)",
+    "factors": [
+     "농지(답)"
+    ],
+    "honest_disclosure": "인허가·전용·협의 등 선행절차 통과를 조건으로 한 잠정치입니다(확정 아님). 개발가능성: 조건부 가능(인허가·전용·협의 선행). 선행절차가 확정되기 전의 개발규모·수익성은 참고용이며 단정이 아닙니다. 참고: 농지전용 시 농지보전부담금(농지법 제38조)이 부과됩니다.",
+    "warning": "[특이부지] 농지(답): 지목이 답(으)로 농지에 해당해, 개발을 위해서는 농지전용허가가 필요합니다(농지보전부담금 부과)."
+   },
+   "analysis_status": "analyzed",
+   "status": "ok",
+   "reason": null
+  },
+  {
+   "pnu": "4137011000104580000",
+   "address": "경기도 오산시 내삼미동",
+   "area_sqm": 364.0,
+   "zone_type": "제2종일반주거지역",
+   "land_category": "답",
+   "bcr_eff_pct": 60.0,
+   "far_eff_pct": 250.0,
+   "bcr_legal_pct": 60,
+   "far_legal_pct": 250,
+   "far_basis": "법정상한 적용(조례 미확인)",
+   "special_parcel": {
+    "is_special": true,
+    "developability": "CONDITIONAL",
+    "resolvable": "YES",
+    "severity_label": "조건부 가능(인허가·전용·협의 선행)",
+    "factors": [
+     "농지(답)"
+    ],
+    "honest_disclosure": "인허가·전용·협의 등 선행절차 통과를 조건으로 한 잠정치입니다(확정 아님). 개발가능성: 조건부 가능(인허가·전용·협의 선행). 선행절차가 확정되기 전의 개발규모·수익성은 참고용이며 단정이 아닙니다. 참고: 농지전용 시 농지보전부담금(농지법 제38조)이 부과됩니다.",
+    "warning": "[특이부지] 농지(답): 지목이 답(으)로 농지에 해당해, 개발을 위해서는 농지전용허가가 필요합니다(농지보전부담금 부과)."
+   },
+   "analysis_status": "analyzed",
+   "status": "ok",
+   "reason": null
+  },
+  {
+   "pnu": "4137011000103560001",
+   "address": "경기도 오산시 내삼미동",
+   "area_sqm": 1937.0,
+   "zone_type": "제2종일반주거지역",
+   "land_category": "답",
+   "bcr_eff_pct": 60.0,
+   "far_eff_pct": 250.0,
+   "bcr_legal_pct": 60,
+   "far_legal_pct": 250,
+   "far_basis": "법정상한 적용(조례 미확인)",
+   "special_parcel": {
+    "is_special": true,
+    "developability": "CONDITIONAL",
+    "resolvable": "YES",
+    "severity_label": "조건부 가능(인허가·전용·협의 선행)",
+    "factors": [
+     "농지(답)"
+    ],
+    "honest_disclosure": "인허가·전용·협의 등 선행절차 통과를 조건으로 한 잠정치입니다(확정 아님). 개발가능성: 조건부 가능(인허가·전용·협의 선행). 선행절차가 확정되기 전의 개발규모·수익성은 참고용이며 단정이 아닙니다. 참고: 농지전용 시 농지보전부담금(농지법 제38조)이 부과됩니다.",
+    "warning": "[특이부지] 농지(답): 지목이 답(으)로 농지에 해당해, 개발을 위해서는 농지전용허가가 필요합니다(농지보전부담금 부과)."
+   },
+   "analysis_status": "analyzed",
+   "status": "ok",
+   "reason": null
+  },
+  {
+   "pnu": "4137011000104600001",
+   "address": "경기도 오산시 내삼미동",
+   "area_sqm": 3028.0,
+   "zone_type": "제2종일반주거지역",
+   "land_category": "답",
+   "bcr_eff_pct": 60.0,
+   "far_eff_pct": 250.0,
+   "bcr_legal_pct": 60,
+   "far_legal_pct": 250,
+   "far_basis": "법정상한 적용(조례 미확인)",
+   "special_parcel": {
+    "is_special": true,
+    "developability": "CONDITIONAL",
+    "resolvable": "YES",
+    "severity_label": "조건부 가능(인허가·전용·협의 선행)",
+    "factors": [
+     "농지(답)"
+    ],
+    "honest_disclosure": "인허가·전용·협의 등 선행절차 통과를 조건으로 한 잠정치입니다(확정 아님). 개발가능성: 조건부 가능(인허가·전용·협의 선행). 선행절차가 확정되기 전의 개발규모·수익성은 참고용이며 단정이 아닙니다. 참고: 농지전용 시 농지보전부담금(농지법 제38조)이 부과됩니다.",
+    "warning": "[특이부지] 농지(답): 지목이 답(으)로 농지에 해당해, 개발을 위해서는 농지전용허가가 필요합니다(농지보전부담금 부과)."
+   },
+   "analysis_status": "analyzed",
+   "status": "ok",
+   "reason": null
+  },
+  {
+   "pnu": "4137011000104590001",
+   "address": "경기도 오산시 내삼미동",
+   "area_sqm": 3748.0,
+   "zone_type": "제2종일반주거지역",
+   "land_category": "답",
+   "bcr_eff_pct": 60.0,
+   "far_eff_pct": 250.0,
+   "bcr_legal_pct": 60,
+   "far_legal_pct": 250,
+   "far_basis": "법정상한 적용(조례 미확인)",
+   "special_parcel": {
+    "is_special": true,
+    "developability": "CONDITIONAL",
+    "resolvable": "YES",
+    "severity_label": "조건부 가능(인허가·전용·협의 선행)",
+    "factors": [
+     "농지(답)"
+    ],
+    "honest_disclosure": "인허가·전용·협의 등 선행절차 통과를 조건으로 한 잠정치입니다(확정 아님). 개발가능성: 조건부 가능(인허가·전용·협의 선행). 선행절차가 확정되기 전의 개발규모·수익성은 참고용이며 단정이 아닙니다. 참고: 농지전용 시 농지보전부담금(농지법 제38조)이 부과됩니다.",
+    "warning": "[특이부지] 농지(답): 지목이 답(으)로 농지에 해당해, 개발을 위해서는 농지전용허가가 필요합니다(농지보전부담금 부과)."
+   },
+   "analysis_status": "analyzed",
+   "status": "ok",
+   "reason": null
+  }
+ ],
+ "integrated": {
+  "total_area_sqm": 11533.0,
+  "blended_bcr_eff_pct": 60.0,
+  "blended_far_eff_pct": 250.0,
+  "blended_bcr_legal_pct": 60.0,
+  "blended_far_legal_pct": 250.0,
+  "far_basis_note": "8개 필지는 조례 실효 용적률 미확보로 법정상한을 폴백 적용했습니다(실효치는 조례 확정 시 하향될 수 있음).",
+  "integrated_gfa_sqm": 28832.5,
+  "integrated_footprint_sqm": 6919.8,
+  "gfa_basis": "per_parcel_effective_sum"
+ },
+ "scenario": {
+  "status": "tentative",
+  "disclosure": "필지 인접성이 미확정(형상 데이터 부족)이라 통합 시나리오는 잠정치입니다(확정 아님). 지적도 형상 확보 후 통합개발 가능 여부를 확정하십시오.",
+  "recommendations": [],
+  "site": {
+   "total_area_sqm": 11533.0,
+   "zone_type": "제2종일반주거지역",
+   "far": 250.0,
+   "bcr": 60.0,
+   "zone_basis": "representative_parcel"
+  },
+  "top3": {
+   "zone_type": "자연녹지지역",
+   "zone_limits": {
+    "max_bcr_pct": 20,
+    "max_far_pct": 100,
+    "max_height_m": null,
+    "max_floors": 4,
+    "zone_key": "자연녹지지역",
+    "legal_basis": "국토의 계획 및 이용에 관한 법률 제78조",
+    "effective_height_m": 12.0,
+    "height_basis": "국토계획법 시행령 별표 — 녹지지역 4층 이하(실효 높이≈12.0m = 4층×3.0m 층고 근사)"
+   },
+   "land_area_sqm": 11533.0,
+   "parcel_count": 1,
+   "effective_far_pct": 80.0,
+   "zone_basis": "single"
+  }
+ },
+ "parcel_count": 8,
+ "adjacency": {
+  "contiguous": null,
+  "components": null,
+  "note": "형상(geometry) 데이터 부족 — 인접성 확인 불가(통합개발 가능 여부 미확정)"
+ },
+ "_request_parcel_count": 8
+}

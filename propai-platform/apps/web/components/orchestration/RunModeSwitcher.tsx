@@ -72,7 +72,7 @@ export function RunModeSwitcher({ value, onChange }: RunModeSwitcherProps) {
             ? "cursor-not-allowed opacity-50"
             : active
               ? "bg-[var(--accent-strong)] text-white"
-              : "text-[var(--text-secondary)] hover:bg-[var(--surface-card)]";
+              : "text-[var(--text-secondary)] hover:bg-[var(--surface-strong)]";
           return (
             <button
               key={tab.mode}

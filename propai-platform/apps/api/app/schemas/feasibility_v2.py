@@ -20,7 +20,13 @@ class FeasibilityCalculateRequest(BaseModel):
     building_type: str = "apartment"
     total_households: int = 0
     avg_sale_price_per_pyeong: float = 0
+    # ★D1 규약 확정(2026-07-16): '전용면적 평' — 전 생산처 통일(프론트 폼 라벨과 일치).
+    #   매출 곱(공급평 시세 단가)은 revenue_block이 전용률(unit_standards SSOT)로 공급 환산,
+    #   세금(C01 전용 85㎡ 판정)은 전용 그대로 사용.
     avg_area_pyeong: float = 0
+    # 평당 단가의 면적 기준: "supply"(공급 시세, 기본) | "exclusive"(전용 기준 실거래 —
+    # orchestration 폐루프가 명시). base_module.ModuleInput.price_basis 계약과 동일.
+    price_basis: str = "supply"
     sale_ratio: float = Field(ge=0, le=1, default=1.0)
     bridge_amount_won: int = 0
     pf_amount_won: int = 0
@@ -31,6 +37,7 @@ class FeasibilityCalculateRequest(BaseModel):
     discount_rate: float = 0.08
     equity_won: int = 0
     params: dict[str, Any] = {}
+    with_senior: bool = False  # ★opt-in: 시니어 회계사(K-IFRS) 자문 첨부(LLM 비용 유발이라 기본 off)
     use_llm: bool = True  # AI 내러티브(수지 해석) 포함 여부(사용자 선택). /calculate는 규칙기반이라 무영향.
 
 
@@ -75,7 +82,7 @@ class SensitivityRequest(BaseModel):
 
 
 class TaxCalculateAllRequest(BaseModel):
-    """38종 세금 일괄 계산 요청."""
+    """28종 세금 일괄 계산 요청."""
     purchase_won: int = 0
     land_category: str = "land"
     house_count: int = 0
@@ -161,7 +168,13 @@ class MonteCarloResponse(BaseModel):
     p50: float
     p95: float
     probability_positive: float
+    # convergence_ratio 는 변동계수 CV(σ/|μ|) — '수렴'이 아니라 결과 분포의 고유 리스크 지표다.
+    #   (이름이 오해를 부르나 하위호환 위해 유지. 실제 수렴 여부는 converged/standard_error_ratio 참조.)
     convergence_ratio: float
+    # ── 수렴 지표(엔진이 이미 산출하나 스키마 미선언으로 드롭되던 것을 additive 노출) ──
+    #   standard_error_ratio = σ/(√N·|μ|)(표준오차 비율), converged = SE비율 < 0.01(표본 충분·안정).
+    standard_error_ratio: float | None = None
+    converged: bool | None = None
     n_simulations: int
     histogram: list[dict[str, Any]] = []
     # ── 실수지 모드 메타(additive — 기본값은 기존 변수합 동작 의미 유지) ──
@@ -203,3 +216,41 @@ class ModuleListResponse(BaseModel):
 class RecommendationResponse(BaseModel):
     """AI 권고 응답."""
     recommendations: list[dict[str, Any]]
+
+
+class BudgetLineItem(BaseModel):
+    """예산-실적 라인아이템 (설계도 §13)."""
+    group: str = "기타"
+    label: str = ""
+    budget_won: float = 0
+    disbursements: list[dict[str, Any]] = []  # [{amount_won, date?, memo?, evidence?}] append-only
+
+
+class BudgetExecutionRequest(BaseModel):
+    """예산 대비 실적(집행) 계산 요청.
+
+    project_id 제공 시 영속된 집행 이벤트(disbursement_events 원장)를 라인아이템에 병합해
+    실시간 갱신값을 계산한다(키 = group::label). 미제공이면 요청 내 disbursements만 사용(무상태).
+    """
+    line_items: list[BudgetLineItem] = []
+    project_id: str | None = None
+
+
+class DisburseRequest(BaseModel):
+    """집행 이벤트 append 요청 (설계도 §13 원장). line_item_key = group::label."""
+    project_id: str
+    line_item_key: str
+    amount_won: int
+    group_name: str = ""
+    label: str = ""
+    event_date: str | None = None
+    memo: str | None = None
+    evidence: str | None = None
+
+
+class BudgetExecutionResponse(BaseModel):
+    """예산-실적 롤업 응답 — 항목별 + 그룹별·총계 + 초과집행 목록."""
+    lines: list[dict[str, Any]] = []
+    groups: dict[str, Any] = {}
+    total: dict[str, Any] = {}
+    over_budget_items: list[str] = []

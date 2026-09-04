@@ -19,7 +19,6 @@ U5 오케스트레이터(design_audit_orchestrator)는 지연 임포트 — 미�
 from __future__ import annotations
 
 import json
-import re
 import uuid as _uuid
 from datetime import UTC
 from typing import Any
@@ -31,6 +30,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.common.job_store import JobStore
+from app.services.design_audit.numeric import finite_float
 from apps.api.auth.jwt_handler import CurrentUser, get_current_user
 from apps.api.database.session import get_db
 
@@ -57,8 +58,13 @@ _DDL = [
         inputs jsonb,
         findings jsonb,
         blindspot jsonb,
+        sections jsonb,
         created_at timestamptz NOT NULL DEFAULT now()
     )""",
+    # ★기존 테이블 무중단 마이그레이션(alembic 금지·런타임 DDL): CREATE TABLE IF NOT EXISTS는
+    #   기존 테이블에 컬럼을 추가하지 못하므로 ADD COLUMN IF NOT EXISTS로 sections를 보강한다.
+    #   sections 미영속 시 prior_comparison·s1_samples·인센티브가 재조회·PDF에서 소실되던 결함 수정.
+    "ALTER TABLE design_audits ADD COLUMN IF NOT EXISTS sections jsonb",
     "CREATE INDEX IF NOT EXISTS idx_design_audits_user ON design_audits(user_id)",
     "CREATE INDEX IF NOT EXISTS idx_design_audits_project ON design_audits(project_id)",
 ]
@@ -93,19 +99,21 @@ async def _save_audit(
     inputs: Any,
     findings: Any,
     blindspot: Any,
+    sections: Any = None,
 ) -> str:
     await ensure_schema(db)
     audit_id = str(_uuid.uuid4())
     await db.execute(
         sa_text(
-            "INSERT INTO design_audits(id, project_id, user_id, overall, inputs, findings, blindspot) "
+            "INSERT INTO design_audits"
+            "(id, project_id, user_id, overall, inputs, findings, blindspot, sections) "
             "VALUES (:i, :p, :u, CAST(:o AS jsonb), CAST(:inp AS jsonb), "
-            "CAST(:f AS jsonb), CAST(:b AS jsonb))"
+            "CAST(:f AS jsonb), CAST(:b AS jsonb), CAST(:s AS jsonb))"
         ),
         {
             "i": audit_id, "p": project_id, "u": str(user_id),
             "o": _dump(overall), "inp": _dump(inputs),
-            "f": _dump(findings), "b": _dump(blindspot),
+            "f": _dump(findings), "b": _dump(blindspot), "s": _dump(sections),
         },
     )
     await db.commit()
@@ -122,8 +130,8 @@ async def _load_audit(db: AsyncSession, audit_id: str, *, user_id: Any) -> dict[
     row = (
         await db.execute(
             sa_text(
-                "SELECT id, project_id, user_id, overall, inputs, findings, blindspot, created_at "
-                "FROM design_audits WHERE id=:i AND user_id=:u"
+                "SELECT id, project_id, user_id, overall, inputs, findings, blindspot, "
+                "sections, created_at FROM design_audits WHERE id=:i AND user_id=:u"
             ),
             {"i": audit_id, "u": str(user_id)},
         )
@@ -137,7 +145,8 @@ async def _load_audit(db: AsyncSession, audit_id: str, *, user_id: Any) -> dict[
         "inputs": _maybe_json(row[4]),
         "findings": _maybe_json(row[5]),
         "blindspot": _maybe_json(row[6]),
-        "created_at": row[7].isoformat() if row[7] else None,
+        "sections": _maybe_json(row[7]),
+        "created_at": row[8].isoformat() if row[8] else None,
     }
 
 
@@ -158,23 +167,70 @@ def _get_orchestrator():
     return DesignAuditOrchestrator()
 
 
-# ── 설계개요 결정론 추출(extract-brief) ──────────────────────────────────────
+# ── 설계개요 추출(extract-brief) — 정본 brief_extractor 위임 ──────────────────
+# ★DA-1 완성 추출기(brief_extractor.extract_brief: value·quote·confidence·평환산·
+#   정규식 폴백, 오케스트레이터 표준 키 total_floor_area_sqm·building_height_m)를 위임
+#   사용한다. 라우터 자체 정규식(gfa_sqm/height_m 등 비표준 키 + {ok,brief:{}} 반환)은
+#   프론트 fields[] 계약과 절단돼 항상 0필드였던 결함을 제거하고, 응답을 프론트 계약
+#   fields[{key,label,value,unit,quote,confidence,source}]로 직렬화한다.
 
-# 결정론 정규식 — 수치는 원문에 실재하는 값만 추출(가짜값·LLM 추정 금지).
-_BRIEF_PATTERNS: dict[str, tuple[str, str]] = {
-    # key: (정규식, 단위 라벨) — 그룹1이 수치.
-    "land_area_sqm": (r"대지\s*면적[^\d]{0,12}([\d,]+(?:\.\d+)?)\s*(?:㎡|m2|m²)", "㎡"),
-    "gfa_sqm": (r"연\s*면적[^\d]{0,12}([\d,]+(?:\.\d+)?)\s*(?:㎡|m2|m²)", "㎡"),
-    "building_area_sqm": (r"건축\s*면적[^\d]{0,12}([\d,]+(?:\.\d+)?)\s*(?:㎡|m2|m²)", "㎡"),
-    "bcr_pct": (r"건폐율[^\d]{0,12}([\d,]+(?:\.\d+)?)\s*%", "%"),
-    "far_pct": (r"용적률[^\d]{0,12}([\d,]+(?:\.\d+)?)\s*%", "%"),
-    "floors_above": (r"지상\s*(\d+)\s*층", "층"),
-    "floors_below": (r"지하\s*(\d+)\s*층", "층"),
-    "units": (r"(?:총\s*)?(\d{1,5})\s*세대", "세대"),
-    "height_m": (r"(?:최고\s*)?높이[^\d]{0,12}([\d,]+(?:\.\d+)?)\s*m", "m"),
-    "parking": (r"주차[^\d]{0,12}(\d{1,5})\s*대", "대"),
+# 표준 키 → 표시 단위(프론트 그리드 표기용, 추출 값에는 미포함 — 표기 단위만).
+_BRIEF_UNITS: dict[str, str | None] = {
+    "zone_type": None,
+    "land_area_sqm": "㎡",
+    "building_area_sqm": "㎡",
+    "total_floor_area_sqm": "㎡",
+    "bcr_pct": "%",
+    "far_pct": "%",
+    "building_height_m": "m",
+    "floors_above": "층",
+    "floors_below": "층",
+    "units": "세대",
+    "parking": "대",
+    "building_use": None,
 }
-_ZONE_RE = re.compile(r"(제\s*\d\s*종\s*[가-힣]*주거지역|[가-힣]{2,8}(?:주거|상업|공업|녹지)지역)")
+
+# _BRIEF_UNITS에서 단위가 있는 키만 수치 파라미터(zone_type·building_use는 문자열 — unit=None).
+_NUMERIC_PARAM_KEYS: frozenset[str] = frozenset(
+    k for k, unit in _BRIEF_UNITS.items() if unit is not None
+)
+
+
+def _coerce_numeric(v: Any) -> Any:
+    """숫자로 변환 가능하면 변환(정수면 int, 아니면 float) — 아니면 원문 그대로(무날조).
+
+    ★R1 HIGH-2 — bool은 숫자로 취급하지 않고(True==1 오염 방지), NaN/Inf는 finite_float
+    (오케스트레이터 _num과 공용 코어)로 걸러 원문을 그대로 보존한다. 가드 없이 float("inf")를
+    통과시키면 8~9엔진 오케스트레이션을 전부 끝낸 뒤 응답 JSON 직렬화 단계에서
+    `ValueError: Out of range float values are not JSON compliant`로 500이 나던 결함(라이브
+    재현: {"params":{"units":"inf"}}) — 변환 전에는 문자열로 남아 정상이었으므로 이 정규화가
+    신규 유입시킨 실패 모드였다.
+    """
+    if isinstance(v, bool) or not isinstance(v, str):
+        return v
+    f = finite_float(v.strip())
+    if f is None:
+        return v  # 비수치·NaN·Inf — 원문 보존(무날조·JSON 비적합 값 유입 차단)
+    return int(f) if f.is_integer() else f
+
+
+def _normalize_numeric_params(params: dict[str, Any]) -> dict[str, Any]:
+    """설계개요 params의 수치 항목(대지면적·용적률·층수·세대수 등)을 한 번에 숫자로 정규화.
+
+    ★근원 봉합(design-audit 배관 봉합 QA 레인B): brief 추출값·수동입력 <input>은 모두
+    문자열(예: floors_above="5")로 들어오는데, 오케스트레이터 엔진 중 일부(change_risk)가
+    이를 _num() 없이 그대로 비교/산술에 써서 'str'과 'int' 비교 TypeError로 죽고 그 예외를
+    삼켜 'skipped'로 위장 표시하던 결함류를 이 흡수 지점에서 차단한다. ★정정(R1 LOW) — 이
+    흡수 지점은 /run-upload(브리프·수동입력이 brief.fields[]/payload.params로 들어오는 경로)만
+    커버한다. 직접 JSON으로 /run을 호출하는 경로(RunRequest.params)는 이 함수를 거치지 않는다
+    (실효 차이는 없음 — 오케스트레이터 쪽 _num()/_num_int_preserving() 이중 안전이 진입 경로와
+    무관하게 change_risk를 보호한다). 숫자로 변환 불가한 값(빈 문자열·비수치 텍스트)은 원문
+    그대로 두어 이후 엔진의 정직한 skipped 판정을 그대로 따른다(임의값 발명 금지).
+    """
+    for key in _NUMERIC_PARAM_KEYS:
+        if key in params:
+            params[key] = _coerce_numeric(params[key])
+    return params
 
 
 def _extract_pdf_text(data: bytes) -> str:
@@ -190,35 +246,45 @@ def _extract_pdf_text(data: bytes) -> str:
         return ""
 
 
-def _parse_brief(source_text: str) -> dict[str, Any]:
-    """설계개요 결정론 추출 — 원문에 실재하는 수치만 반환(없으면 키 자체를 생략)."""
-    brief: dict[str, Any] = {}
-    for key, (pattern, _unit) in _BRIEF_PATTERNS.items():
-        m = re.search(pattern, source_text)
-        if not m:
+def _serialize_brief_fields(extracted: dict[str, Any]) -> list[dict[str, Any]]:
+    """brief_extractor.extract_brief 출력({fields:{key:{value,quote,confidence}|None}})을
+    프론트 계약 fields[{key,label,value,unit,quote,confidence,source}]로 직렬화한다.
+
+    원문 근거 없는 필드(None)는 생략한다(날조 금지 — 누락 필드는 프론트에서 직접 입력).
+    """
+    from app.services.design_audit.brief_extractor import BRIEF_FIELDS
+
+    fields_map = extracted.get("fields") or {}
+    out: list[dict[str, Any]] = []
+    for key, label in BRIEF_FIELDS.items():
+        rec = fields_map.get(key)
+        if not isinstance(rec, dict) or rec.get("value") in (None, ""):
             continue
-        token = m.group(1).replace(",", "")
-        try:
-            value = float(token)
-        except ValueError:
-            continue
-        brief[key] = int(value) if value == int(value) and "." not in m.group(1) else value
-    zone = _ZONE_RE.search(source_text)
-    if zone:
-        brief["zone_type"] = re.sub(r"\s+", "", zone.group(1))
-    return brief
+        out.append({
+            "key": key,
+            "label": label,
+            "value": rec.get("value"),
+            "unit": _BRIEF_UNITS.get(key),
+            "quote": rec.get("quote"),
+            "confidence": rec.get("confidence"),
+            "source": "extracted",
+        })
+    return out
 
 
 @router.post("/extract-brief")
 async def extract_brief(
     file: UploadFile | None = File(None),
     text: str = Form(""),
+    use_llm: bool = Form(True),
     current: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """설계개요(대지/연면적·건폐/용적률·층수·세대 등) 결정론 추출.
+    """설계개요(대지/연면적·건폐/용적률·층수·세대 등) 추출 — 정본 brief_extractor 위임.
 
     입력: PDF 파일(file) 또는 텍스트(text) — 둘 다 있으면 텍스트를 우선 결합.
-    추출은 정규식 결정론(가짜값 금지) — 원문에 없는 필드는 생략하고 정직하게 안내.
+    추출은 LLM 우선(원문 인용·confidence 동반) → 실패 시 한국어 라벨 정규식 폴백(가짜값 금지).
+    응답은 프론트 계약 fields[{key,label,value,unit,quote,confidence,source}] — 원문에 없는
+    필드는 생략(누락 필드는 프론트에서 직접 입력).
     """
     source_text = (text or "").strip()
     pdf_note: str | None = None
@@ -227,9 +293,22 @@ async def extract_brief(
         if data:
             if len(data) > _MAX_PDF_BYTES:
                 raise HTTPException(status_code=413, detail="파일이 너무 큽니다(최대 25MB).")
-            extracted = _extract_pdf_text(data)
-            if extracted.strip():
-                source_text = (source_text + "\n" + extracted).strip()
+            # ★공용 콘텐츠 검증(WP-H 세션2 전역 스윕·fail-closed) — PDF 텍스트 추출 전에 실행/스크립트
+            # 위장·MIME 위장·경로순회·폴리글랏 압축폭탄을 차단한다. 실측 계열은 pdf 로 화이트리스트.
+            from app.services.security.content_inspection import (
+                http_status_for,
+                inspect_upload,
+            )
+
+            _v = inspect_upload(data, file.filename or "", file.content_type, expected_kinds={"pdf"})
+            if not _v.allowed:
+                raise HTTPException(
+                    status_code=http_status_for(_v.code),
+                    detail=f"업로드가 거부되었습니다: {_v.reason}",
+                )
+            extracted_text = _extract_pdf_text(data)
+            if extracted_text.strip():
+                source_text = (source_text + "\n" + extracted_text).strip()
             else:
                 pdf_note = "PDF 텍스트 추출 불가(스캔본·암호화 또는 추출기 미설치) — 텍스트로 직접 입력하세요."
 
@@ -237,16 +316,21 @@ async def extract_brief(
         return {
             "ok": False,
             "message": pdf_note or "추출할 텍스트가 없습니다. PDF 파일 또는 텍스트를 입력하세요.",
-            "brief": {},
+            "fields": [],
         }
 
-    brief = _parse_brief(source_text)
+    from app.services.design_audit.brief_extractor import extract_brief as _extract_brief_fields
+
+    extracted = await _extract_brief_fields(source_text, use_llm=use_llm)
+    fields = _serialize_brief_fields(extracted)
     return {
         "ok": True,
-        "brief": brief,
-        "fields_found": len(brief),
+        "fields": fields,
+        "fields_found": len(fields),
+        "source": extracted.get("source"),
         "text_chars": len(source_text),
-        "note": "정규식 결정론 추출 — 원문에 없는 필드는 생략됩니다. 누락 필드는 직접 입력하세요.",
+        "note": extracted.get("note")
+        or "원문에 없는 필드는 생략됩니다 — 누락 필드는 아래 그리드에서 직접 입력하세요.",
         **({"pdf_note": pdf_note} if pdf_note else {}),
     }
 
@@ -316,11 +400,18 @@ async def _execute_run(
         run_kwargs["rooms"] = req.rooms
 
     # Phase 1 성장루프: 직전 design_audit prior read(best-effort).
-    # write(record_design_audit)가 tenant+project_id 키만 쓰므로 read도 동일 키로 같은 체인 매칭.
+    # ★write(record_design_audit, 하단)가 site의 pnu/address를 원장 체인키로 담으므로
+    #   read도 **동일 pnu/address**로 조회해야 같은 체인이 매칭된다(_chain_where: pnu 우선 →
+    #   address_norm → 둘 다 없으면 NULL 체인). 과거엔 read가 tenant+project_id만 써서
+    #   pnu 보유 심사(주경로 — 프론트가 site.pnu/address 전송)는 위쪽 write가 pnu 체인에 적재해도
+    #   read는 계속 NULL 체인만 조회 → prior_comparison이 영구 미매칭(항상 공란)이었다.
+    _run_site = req.site if isinstance(req.site, dict) else {}
     from app.services.ledger.prior_context import load_prior
     _prior = await load_prior(
         analysis_type="design_audit",
         tenant_id=str(getattr(current, "tenant_id", "") or "") or None,
+        pnu=(_run_site.get("pnu") or None),
+        address=(_run_site.get("address") or None),
         project_id=req.project_id,
     )
     if _prior:
@@ -339,7 +430,16 @@ async def _execute_run(
 
     overall = result.get("overall")
     findings = result.get("findings") or []
-    derived_signals = result.get("derived_signals") or {}
+    sections_raw = result.get("sections") if isinstance(result.get("sections"), dict) else {}
+    # ★오케스트레이터 정본 스키마 정렬(과거 라우터는 모킹 _FAKE_RESULT의 derived_signals/
+    #   engine_status/zone_limits 키를 읽어 실엔진 산출과 절단됐다 — derived_signals 항상 {}).
+    #   실 U5는 params_used·limits·sections·engines를 낸다. derived_signals는 이를 근거로 합성한다
+    #   (blindspot citation_gate 수치 그라운딩 + PDF S7 효율지표 재구성). 무날조 — 실데이터만.
+    derived_signals: dict[str, Any] = dict(result.get("params_used") or {})
+    _eff = sections_raw.get("efficiency_metrics")
+    if _eff is not None:
+        derived_signals["efficiency_metrics"] = _eff
+    verdict_str = overall.get("verdict") if isinstance(overall, dict) else None
 
     # DA-4 사각지대(AI) — 전체 실패 시 생략(무중단, blindspot=None).
     blindspot: dict[str, Any] | None = None
@@ -381,12 +481,18 @@ async def _execute_run(
             inputs=inputs,
             findings=findings,
             blindspot=blindspot,
+            # ★sections 영속(런타임 DDL 컬럼) — prior_comparison·s1_samples·인센티브가
+            #   재조회·PDF 재구성에서 소실되던 결함 수정(조회 시 _load_audit이 함께 반환).
+            sections=sections_raw or None,
         )
     except Exception as e:  # noqa: BLE001 — 저장 실패해도 결과 반환(무중단)
         logger.warning("design_audits 저장 실패 — 결과는 반환", error=str(e)[:120])
 
     # Phase 0 unit d: design_audit raw 결과를 원장 단일 SSOT에 best-effort 일원화(실패 무중단).
-    # _save_audit가 commit하므로 audit_id 행은 영속 → backlink 안전. RunRequest엔 pnu 없음(pnu 미전달).
+    # _save_audit가 commit하므로 audit_id 행은 영속 → backlink 안전.
+    # ★원장 스코프: site의 pnu/address를 전달해 수동주소 심사가 단일 NULL 체인에 섞이는 것을 막는다
+    #   (ledger_adapters.record_design_audit이 이미 pnu/address를 받게 설계됨 — 배선만 봉합).
+    #   read(load_prior, 위쪽)와 동일 site(_run_site)를 재사용 — read/write 체인키 대칭 유지.
     ledger_wb: dict[str, Any] | None = None   # 성장루프 조인키(ledger_hash) 노출용 append 결과
     try:
         from app.services.ledger.ledger_adapters import record_design_audit
@@ -395,40 +501,139 @@ async def _execute_run(
             result=result, audit_id=audit_id,
             tenant_id=str(getattr(current, "tenant_id", "") or "") or None,
             project_id=req.project_id,
+            pnu=(_run_site.get("pnu") or None),
+            address=(_run_site.get("address") or None),
             created_by=str(getattr(current, "user_id", "") or "") or None,
         )
     except Exception as e:  # noqa: BLE001
         logger.warning("원장 배선 append 실패(design_audit)", err=str(e)[:160])
 
-    # 중심엔진 수렴 관측(shadow, 기본 off·fire-and-forget·무중단): 종합 verdict + 체크별 current/limit를 엔진과 대조.
+    # 중심엔진 수렴 관측(shadow) + 감사 표면화: 종합 verdict + 체크별 current/limit를 엔진과 대조.
+    # ★로드맵③(07-17 사용자 승격 결정) — deliberation_surface_in_audit 는 이제 **기본 True** 이며
+    #   전역 shadow 게이트(deliberation_shadow_enabled — 타 도메인 관측 정책·DEPLOY_RUNBOOK 관례상
+    #   기본 False 유지)와 **독립적으로(OR)** 감사 경로를 연다. 표면화 경로는 shadow_compare 를
+    #   **대기**(bounded — timeout=deliberation_shadow_engine_timeout_s ≤5s)해 deliberation_result 를
+    #   응답에 additive 동봉한다. 끄려면 배포 env DELIBERATION_SURFACE_IN_AUDIT=false.
+    deliberation_result: dict[str, Any] | None = None
     try:
         from apps.api.config import get_settings
 
-        if get_settings().deliberation_shadow_enabled:  # gate-first(off면 매퍼/스케줄 미발생)
+        _settings = get_settings()
+        _surface = getattr(_settings, "deliberation_surface_in_audit", False)
+        # ※동기 /run-upload 경로에선 표면화 대기(≤deliberation_shadow_engine_timeout_s=5s)가 응답
+        #   지연으로 더해진다 — 주 UI 경로는 잡(/run-upload/jobs, 백그라운드)이라 수용(R1 검토).
+        #   지연이 문제면 env DELIBERATION_SURFACE_IN_AUDIT=false 로 즉시 끌 수 있다.
+        if _settings.deliberation_shadow_enabled or _surface:  # 감사 한정 자립 게이트(OR)
             from app.services.deliberation import shadow_integration, shadow_mappers
 
             _tid = str(getattr(current, "tenant_id", "") or "") or None
-            shadow_integration.observe(  # 비차단 — 엔진 RTT가 심사 응답을 막지 않음
-                "design_audit", _tid, shadow_mappers.design_audit({"overall": overall, "findings": findings}))
+            _mapped = shadow_mappers.design_audit({"overall": overall, "findings": findings})
+            if _surface and _mapped and _tid:
+                _verdict, _payload, _value = _mapped
+                deliberation_result = await shadow_integration.shadow_compare(
+                    tenant_id=_tid, domain="design_audit",
+                    platform_verdict=_verdict, engine_payload=_payload, platform_value=_value,
+                    # 감사 표면화는 전역 shadow 게이트와 독립(OR) — 내부 재게이트 우회(감사 한정).
+                    force_engine_call=True,
+                )
+            else:
+                # 표면화 불가(매핑/테넌트 부재) 또는 shadow-only 모드 — 기존 비차단 관측(fire-and-forget).
+                shadow_integration.observe("design_audit", _tid, _mapped)
     except Exception as e:  # noqa: BLE001 — 관측은 심사 흐름 절대 방해 금지
         logger.warning("shadow 관측 실패(design_audit)", err=str(e)[:120])
+        deliberation_result = None
 
     # ★성장루프 조인키: 원장 content_hash 를 응답 최상위 `ledger_hash` 로 노출(공용 헬퍼 — 프론트 피드백 키잉).
     from app.services.ledger.analysis_ledger_service import attach_ledger_hash
-    return attach_ledger_hash({
+    resp_body: dict[str, Any] = {
         "ok": True,
         "audit_id": audit_id,
         "saved": audit_id is not None,
         "overall": overall,
+        # ★프론트(AuditReportView.verdict)는 문자열을 기대한다 — overall(dict)의 verdict만 표면화.
+        "verdict": verdict_str,
         "findings": findings,
         "derived_signals": derived_signals,
         "blindspot": blindspot,
-        # additive — 오케스트레이터 원자료(섹션 구성용, 미존재 시 None)
+        # additive — 오케스트레이터 원자료(섹션 구성용, 미존재 시 None). ★실 U5 정본 키로 정렬:
+        #   engine_status←engines, zone_limits←limits(과거 죽은 키를 실 산출과 봉합).
         "sections_raw": result.get("sections"),
-        "engine_status": result.get("engine_status"),
-        "zone_limits": result.get("zone_limits"),
+        "engine_status": result.get("engines"),
+        "zone_limits": result.get("limits"),
         "disclaimer": _DISCLAIMER,
-    }, ledger_wb)
+    }
+    # ★게이트 off(기본값) 또는 관측 생략 시 이 키는 아예 추가되지 않는다 — 응답 바이트가 기존과 동일.
+    if deliberation_result is not None:
+        resp_body["deliberation_result"] = deliberation_result
+    return attach_ledger_hash(resp_body, ledger_wb)
+
+
+# ★design_review_service.CHECKED_ITEMS는 건폐율·용적률만 판정한다(그 서비스 자신의 정직한
+#   스코프 한정 — design_review_service.py:20). 그런데 라우터가 그 서비스의 not_checked_items를
+#   그대로 화면에 실으면, 실제로는 다른 엔진(solar_envelope·parking·bl_rules)이 검사하고
+#   findings로 결과까지 떠 있는 항목(일조·주차·피난·방화)까지 "미검사"로 표기되는 거짓 각주가
+#   생긴다(라이브 재현: 8건 중 4건 거짓). 여기서 실제 판정 가능 여부로 차감해 교정한다.
+#
+# ★R1 HIGH-1 — 최초 봉합은 "엔진이 실행됐는지"(status != skipped)만 보고 차감했는데, 이는
+#   반대 방향으로 거짓화했다: rules8은 min_setback_m=0.0(SSOT 부재로 하드코딩, 검증기가
+#   "distance < 0.0"은 항상 거짓이라 이격거리 위반을 원천적으로 낼 수 없다)·height_rule_active
+#   조건 없이 max_height=inf 대체(높이 미입력 시 룰 비활성)라 "엔진이 돌았다"가 "그 룰을 실제로
+#   판정했다"를 의미하지 않는다(리뷰어 실증: 세트백 0m·높이 무제한인데 위반 []). 이제는 각 엔진
+#   섹션이 명시로 방출하는 판정-가능 플래그(rules8.height_rule_active/setback_evaluated,
+#   solar_envelope.height_evaluated)와 finding.status 화이트리스트로만 판정하고, 엔진 이름
+#   매핑으로 뭉뚱그리지 않는다. status가 없거나(None) 화이트리스트 밖이면 '실행됨'으로 보지
+#   않는다(LOW-⑦) — 단 bl_rules의 info는 "설계도서에서 확인 필요"(판정 불가)라는 화이트리스트
+#   상의 유효 상태이지만 피난·방화는 pass/fail(실제 판정)일 때만 차감한다(LOW-⑧, 항목별 예외).
+_STATUS_EXECUTED = frozenset({"pass", "fail", "warning", "info"})
+
+
+def _engine_finding_status(findings: list[dict[str, Any]], engine: str) -> str | None:
+    """해당 엔진 finding의 status — 화이트리스트(_STATUS_EXECUTED) 밖·None·부재는 None(미실행 취급)."""
+    for f in findings:
+        if isinstance(f, dict) and f.get("engine") == engine:
+            status = f.get("status")
+            return status if status in _STATUS_EXECUTED else None
+    return None
+
+
+def _reconcile_not_checked_items(
+    not_checked_items: list[str],
+    findings: list[dict[str, Any]],
+    sections_raw: dict[str, Any] | None,
+) -> list[str]:
+    """design_review_service의 좁은 시야로 인한 거짓 '미검사' 각주를, "그 룰을 실제로 판정
+    가능했는지"(엔진 실행 여부가 아니라) 기준으로 차감한다.
+
+    - 주차장_설치기준: parking finding이 실제 판정(스킵 아님)을 냈으면 커버.
+    - 피난시설_적합/방화구획_적합: bl_rules가 pass/fail(확정 판정)일 때만 커버 — info("설계도서
+      에서 확인 필요")는 판정 불가라는 정직한 신호이므로 커버하지 않는다.
+    - 높이제한_준수: rules8 섹션의 height_rule_active(실측 max_height 존재)가 True일 때만.
+    - 일조권_준수: solar_envelope 섹션의 height_evaluated(적용 zone + 높이 입력 둘 다 실재)가
+      True일 때만 — 미적용 zone이거나 높이 미입력이면 trivial PASS(판정 아님)라 커버하지 않는다.
+    - 이격거리_준수: rules8 섹션의 setback_evaluated가 True일 때만(현재 min_setback_m SSOT
+      부재로 항상 False — 실제 데이터 경로가 생기기 전까지 상시 미검사 유지가 정직하다).
+    - 장애인_편의시설·에너지절약_기준: 8엔진 어디에도 없음 — 항상 미검사로 정직 유지.
+    """
+    if not not_checked_items:
+        return not_checked_items
+    raw = sections_raw if isinstance(sections_raw, dict) else {}
+    rules8_section = raw.get("rules8") if isinstance(raw.get("rules8"), dict) else {}
+    solar_section = raw.get("solar_envelope") if isinstance(raw.get("solar_envelope"), dict) else {}
+
+    covered: set[str] = set()
+    if _engine_finding_status(findings, "parking") is not None:
+        covered.add("주차장_설치기준")
+    if _engine_finding_status(findings, "bl_rules") in {"pass", "fail"}:
+        covered.add("피난시설_적합")
+        covered.add("방화구획_적합")
+    if rules8_section.get("height_rule_active"):
+        covered.add("높이제한_준수")
+    if solar_section.get("height_evaluated"):
+        covered.add("일조권_준수")
+    if rules8_section.get("setback_evaluated"):
+        covered.add("이격거리_준수")
+
+    return [item for item in not_checked_items if item not in covered]
 
 
 def _build_report_sections(resp: dict[str, Any]) -> list[dict[str, Any]]:
@@ -461,46 +666,131 @@ def _build_report_sections(resp: dict[str, Any]) -> list[dict[str, Any]]:
         if isinstance(gw, list) and gw:
             g_warnings = gw
 
+    # design_review 원자료(파라미터 법규검토) — pass_rate 정직화(not_checked_items) surface.
+    # ★design_review_service가 검사한 항목(건폐율·용적률)만 판정하고 나머지(일조·주차·피난 등)는
+    #   not_checked로 분리해 반환한다(pass_rate 오도 제거) — 이 원자료를 s5에 실어 프론트에 전달.
+    design_review_raw = raw.get("design_review") if isinstance(raw, dict) else None
+    not_checked_items = (
+        design_review_raw.get("not_checked_items")
+        if isinstance(design_review_raw, dict)
+        else None
+    )
+    if not_checked_items:
+        not_checked_items = _reconcile_not_checked_items(not_checked_items, findings, raw)
+
     if findings:
         s5: dict[str, Any] = {
             "id": "s5",
             "title": "공학·법규 검증 (8룰)",
-            "status": resp.get("overall"),
+            "status": resp.get("verdict"),
             "findings": findings,
         }
         if g_finger:
             s5["grammar"] = g_finger
+        if not_checked_items:
+            s5["not_checked_items"] = not_checked_items
         sections.append(s5)
     elif g_finger:
         # findings 없이 grammar 핑거만 실재 — S5를 grammar 전용으로 생성(빈 섹션 아님)
         sections.append({
             "id": "s5",
             "title": "공학·법규 검증 (8룰)",
-            "status": resp.get("overall"),
+            "status": resp.get("verdict"),
             "grammar": g_finger,
         })
     s1 = raw.get("s1_samples") if isinstance(raw, dict) else None
     if s1:
+        # 프론트 CaseComparisonBlock 계약({available·sample_count·far/bcr_position·vs_median_pp·note})은
+        # s1_samples.comparison(DesignReviewService.compare_with_nearby_cases 출력)에 담긴다 — 있으면 언랩.
+        case_comparison = (
+            s1.get("comparison") if isinstance(s1, dict) and s1.get("comparison") else s1
+        )
         sections.append({
             "id": "s1",
             "title": "유사·인근 사례 비교",
-            "case_comparison": s1,
+            "case_comparison": case_comparison,
         })
+    # ★S4/S7 형상 불일치 봉합 — 오케스트레이터 원자료는 dict({effective_far,
+    #   donation_simulation, upzoning} / {efficiency_pct, ...})인데 예전엔 그 dict를 그대로
+    #   {"incentives": s4}/{"evidence": eff}로 실어 프론트 Array.isArray(...)가 항상 false가
+    #   됐다(항상 빈 섹션). report_sections 공용 헬퍼(웹·PDF 공용)로 배열 계약으로 정규화한다.
     s4 = raw.get("s4_incentives") if isinstance(raw, dict) else None
     if s4:
-        sections.append({
-            "id": "s4",
-            "title": "적용 가능 법규·정책 인센티브",
-            "incentives": s4,
-        })
+        from app.services.design_audit.report_sections import s4_incentives_to_web
+
+        s4_web = s4_incentives_to_web(s4)
+        # ★레인C(R2, MEDIUM 봉합) — upzoning.data_gaps(규제구역 데이터 미수집 등 정직 고지)를
+        #   S4 섹션에 additive로 표면화한다. 종전엔 raw 원자료(sections_raw)에만 존재해 화면
+        #   어디서도 렌더되지 않았다("필드는 최종표면까지 추적" 원칙 재발 — JSON에만 존재).
+        #   S5의 not_checked_items와 동일한 표기 관례를 재사용한다(신규 UI 패턴 아님).
+        #   ★레인B(s4_incentives_to_web — 배열 형상 정규화) 위에 얹는다. 원본 dict를 그대로
+        #   싣던 예전 코드(레인C 초판)로 되돌리면 레인B의 형상 봉합이 파괴되므로 절대 금지.
+        s4_upzoning = s4.get("upzoning") if isinstance(s4, dict) else None
+        s4_data_gaps = s4_upzoning.get("data_gaps") if isinstance(s4_upzoning, dict) else None
+        has_data_gaps = isinstance(s4_data_gaps, list) and bool(s4_data_gaps)
+        if s4_web or has_data_gaps:
+            section_s4: dict[str, Any] = {
+                "id": "s4",
+                "title": "적용 가능 법규·정책 인센티브",
+                **s4_web,
+            }
+            if has_data_gaps:
+                section_s4["data_gaps"] = s4_data_gaps
+            sections.append(section_s4)
     eff = raw.get("efficiency_metrics") if isinstance(raw, dict) else None
     if eff:
-        sections.append({
-            "id": "s7",
-            "title": "설계 효율 지표",
-            "evidence": eff,
-        })
-    bs_items = (blindspot or {}).get("blindspots") if isinstance(blindspot, dict) else None
+        from app.services.design_audit.report_sections import efficiency_metrics_to_evidence
+
+        eff_evidence = efficiency_metrics_to_evidence(eff)
+        if eff_evidence:
+            sections.append({
+                "id": "s7",
+                "title": "설계 효율 지표",
+                "evidence": eff_evidence,
+            })
+
+    # ★permit 섹션 표면화 — _run_permit이 반환하는 sections["permit"]
+    #   ({feasibility, dev_type_basis, analysis})을 라우터가 한 번도 읽지 않아
+    #   PermitAnalysisService의 인허가 환경분석·senior_consultation(도시계획·심의·법무
+    #   3도메인 시니어 자문)이 계산되고도 0픽셀이었다(라이브 재현).
+    permit_raw = raw.get("permit") if isinstance(raw, dict) else None
+    if isinstance(permit_raw, dict) and permit_raw:
+        feasibility = (
+            permit_raw.get("feasibility") if isinstance(permit_raw.get("feasibility"), dict) else {}
+        )
+        analysis = (
+            permit_raw.get("analysis") if isinstance(permit_raw.get("analysis"), dict) else None
+        )
+        summary_parts = [
+            p for p in (feasibility.get("reason"), permit_raw.get("dev_type_basis")) if p
+        ]
+        senior = analysis.get("senior_consultation") if isinstance(analysis, dict) else None
+        # ★R1 MEDIUM③ — senior_consultation이 dict라는 이유만으로 실으면, verdict='unavailable'
+        #   이거나 consultations가 빈 배열인 경우(SeniorVerdictCard는 이때 null을 렌더)에도
+        #   섹션이 만들어져 헤더만 있고 본문 0픽셀인 케이스가 생긴다 — consultations에 실제
+        #   도메인(agent_key 보유)이 1건 이상 있을 때만 표면화한다(빈 카드 노이즈 방지).
+        senior_consultations = (
+            senior.get("consultations") if isinstance(senior, dict) else None
+        )
+        has_senior = (
+            isinstance(senior, dict)
+            and senior.get("verdict") != "unavailable"
+            and isinstance(senior_consultations, list)
+            and any(isinstance(c, dict) and c.get("agent_key") for c in senior_consultations)
+        )
+        if summary_parts or has_senior:
+            permit_section: dict[str, Any] = {"id": "permit", "title": "인허가 가능성·환경분석"}
+            if summary_parts:
+                permit_section["summary"] = " · ".join(str(p) for p in summary_parts)
+            if has_senior:
+                permit_section["senior_consultation"] = senior
+            sections.append(permit_section)
+    # ★로드맵③ — deliberation_result는 표면화 게이트(deliberation_surface_in_audit)가 켜졌을 때만
+    #   _execute_run 응답에 존재한다(off·구서버는 키 자체가 없어 기존과 동일 — additive).
+    deliberation_result = resp.get("deliberation_result")
+
+    # ★blindspot 정본 키는 items(generate_blindspot 출력) — 과거 'blindspots'를 읽어 S6가 항상 비었다.
+    bs_items = (blindspot or {}).get("items") if isinstance(blindspot, dict) else None
     if bs_items:
         s6: dict[str, Any] = {
             "id": "s6",
@@ -510,14 +800,26 @@ def _build_report_sections(resp: dict[str, Any]) -> list[dict[str, Any]]:
         if g_warnings:
             s6["grammar_warnings"] = g_warnings
             s6["grammar_note"] = "grammar 경고는 결정론 문법검증 결과(AI 추정 아님)"
+        if deliberation_result:
+            s6["deliberation_result"] = deliberation_result
         sections.append(s6)
     elif g_warnings:
         # blindspot 없이 grammar 경고만 실재 — 'AI 추정' 라벨 없이 정직 표기
-        sections.append({
+        s6 = {
             "id": "s6",
             "title": "심의 예상 쟁점·사각지대",
             "grammar_warnings": g_warnings,
             "grammar_note": "결정론 문법검증(LDK 오픈·연결성·채광) 경고 — AI 추정 아님",
+        }
+        if deliberation_result:
+            s6["deliberation_result"] = deliberation_result
+        sections.append(s6)
+    elif deliberation_result:
+        # blindspot·grammar 경고 모두 없지만 심의엔진 표면화 결과만 실재 — S6를 그 결과만으로 생성.
+        sections.append({
+            "id": "s6",
+            "title": "심의 예상 쟁점·사각지대",
+            "deliberation_result": deliberation_result,
         })
     return sections
 
@@ -556,6 +858,21 @@ async def _ingest_dxf_upload(dxf_file: UploadFile) -> dict[str, Any] | None:
     if len(data) > _MAX_DXF_BYTES:
         raise HTTPException(status_code=413, detail="DXF 파일이 너무 큽니다(최대 20MB).")
 
+    # ★공용 콘텐츠 검증(WP-H 세션2 전역 스윕·fail-closed) — parse_dxf_to_shapes(공용 파서) 전에
+    # 실행/스크립트 위장·MIME 위장·경로순회·폴리글랏 압축폭탄을 차단한다. ★expected_kinds
+    # 미지정(WP-H 세션2 CI 회귀 수정 — CSV/parcel_excel과 동일 정책): DXF는 강한 매직바이트가
+    # 없는 텍스트 포맷이라 정상 파일도 매직판별 실패로 415 과대거부될 수 있다. 형식 판정(손상/
+    # 비DXF)은 parse_dxf_to_shapes 가 맡아 422 로 정직 거부한다(가짜 기하 금지) — 여기서는
+    # exe/스크립트·활성콘텐츠·경로순회·압축폭탄만 차단한다.
+    from app.services.security.content_inspection import http_status_for, inspect_upload
+
+    _v = inspect_upload(data, dxf_file.filename or "", dxf_file.content_type)
+    if not _v.allowed:
+        raise HTTPException(
+            status_code=http_status_for(_v.code),
+            detail=f"업로드가 거부되었습니다: {_v.reason}",
+        )
+
     from app.services.cad.dxf_import_service import parse_dxf_to_shapes
 
     try:
@@ -568,26 +885,18 @@ async def _ingest_dxf_upload(dxf_file: UploadFile) -> dict[str, Any] | None:
     return distribute(parse_result)
 
 
-@router.post("/run-upload")
-async def run_design_audit_upload(
-    payload: str = Form(..., description="실행 페이로드 JSON 문자열(site/brief/drawing)"),
-    ifc_file: UploadFile | None = File(None),
-    dxf_file: UploadFile | None = File(None),
-    current: CurrentUser = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-) -> dict[str, Any]:
-    """설계심사 실행(multipart) — 프론트 4단 스테퍼 진입점.
+async def _prepare_upload_run_request(
+    payload: str,
+    ifc_file: UploadFile | None,
+    dxf_file: UploadFile | None,
+) -> tuple[RunRequest, dict[str, Any] | None]:
+    """payload(JSON 문자열)+ifc_file?+dxf_file? → RunRequest + dxf_import 메타(있으면).
 
-    /run(JSON)과 동일 본체를 공유하고, ①payload(JSON 문자열) 파싱
-    ②brief.fields[{key,value}] → params dict 변환 ③IFC 업로드를 임시파일로
-    저장해 ifc_file_url로 전달만 추가한다. 응답에 프론트 계약 별칭
-    (id·verdict·sections)을 가산한다(/run 응답 키도 전부 포함 — additive).
-
-    UP4(WI-6) additive — dxf_file 수용: parse_dxf_to_shapes(20MB·.dxf 검증,
-    파싱 실패 422) → cad_upload_hub.distribute로 design_raw→geometry,
-    rooms→RunRequest.rooms, params_hint→brief 미입력 항목만 보완(기존값 우선·
-    덮어쓰기 금지). 적용 내역은 응답 dxf_import 키로 투명 보고(additive).
-    payload의 geometry/rooms 직접 입력은 DXF보다 우선한다(덮어쓰기 금지).
+    /run-upload(동기)·/run-upload/jobs(비동기 잡 제출, UP5·로드맵②) 공용 전처리 —
+    ①payload 파싱 ②brief.fields[{key,value}] → params dict 변환 ③IFC 임시파일 저장
+    ④DXF 파싱·허브 분배(UP4)까지만 담당하고, 무거운 오케스트레이터 실행(_execute_run)은
+    호출부(동기 라우트 또는 백그라운드 잡)에 맡긴다. payload의 geometry/rooms 직접 입력은
+    DXF 산출보다 우선한다(덮어쓰기 금지).
     """
     import json as _json
 
@@ -608,6 +917,9 @@ async def run_design_audit_upload(
     # params를 직접 주는 호출(JSON /run 형태 페이로드)도 수용
     if isinstance(body.get("params"), dict):
         params.update({k: v for k, v in body["params"].items() if v is not None})
+    # ★brief.fields·수동입력 <input>은 문자열이라 흡수 지점에서 한 번에 숫자로 정규화
+    #   (개별 엔진의 산발적 _num 방어에 의존하지 않음 — 근원 봉합).
+    params = _normalize_numeric_params(params)
 
     ifc_file_url: str | None = body.get("ifc_file_url")
     if ifc_file is not None and ifc_file.filename:
@@ -615,6 +927,23 @@ async def run_design_audit_upload(
 
         data = await ifc_file.read()
         if data:
+            # ★공용 콘텐츠 검증(WP-H 세션2 전역 스윕·fail-closed) — 신뢰 안 되는 바이트를 디스크
+            # (tempfile)에 쓰기 전에 실행/스크립트 위장·MIME 위장·경로순회·폴리글랏 압축폭탄을
+            # 차단한다. ★expected_kinds 미지정(WP-H 세션2 CI 회귀 수정 — CSV/parcel_excel과 동일
+            # 정책): IFC(STEP)는 강한 매직바이트가 없는 텍스트 포맷이라("ISO-10303-21" 헤더
+            # 휴리스틱만 존재) 정상 파일도 매직판별 실패로 415 과대거부될 수 있다. 형식 판정은
+            # 다운스트림 IFC 파서가 맡고, 여기서는 exe/스크립트·활성콘텐츠·경로순회·압축폭탄만 차단.
+            from app.services.security.content_inspection import (
+                http_status_for,
+                inspect_upload,
+            )
+
+            _v = inspect_upload(data, ifc_file.filename or "", ifc_file.content_type)
+            if not _v.allowed:
+                raise HTTPException(
+                    status_code=http_status_for(_v.code),
+                    detail=f"업로드가 거부되었습니다: {_v.reason}",
+                )
             tmp = tempfile.NamedTemporaryFile(suffix=".ifc", delete=False)
             tmp.write(data)
             tmp.close()
@@ -671,13 +1000,17 @@ async def run_design_audit_upload(
         use_llm=bool(body.get("use_llm", True)),
         use_verification_retry=bool(body.get("use_verification_retry", True)),
     )
-    resp = await _execute_run(req, current, db)
+    return req, dxf_import
 
-    # 프론트(AuditReportView) 계약 별칭 — 기존 키 전부 유지(additive)
+
+def _finalize_upload_response(resp: dict[str, Any], dxf_import: dict[str, Any] | None) -> dict[str, Any]:
+    """_execute_run 원응답 → 프론트(AuditReportView) 계약 별칭 additive 가산(동기·잡 실행 공용).
+
+    verdict는 _execute_run이 이미 문자열로 표면화했다(overall dict 재대입 금지 — .trim() 크래시 방지).
+    """
     from datetime import datetime
 
     resp["id"] = resp.get("audit_id")
-    resp["verdict"] = resp.get("overall")
     resp["sections"] = _build_report_sections(resp)
     resp["generated_at"] = datetime.now(UTC).isoformat()
     if dxf_import is not None:
@@ -685,7 +1018,176 @@ async def run_design_audit_upload(
     return resp
 
 
+@router.post("/run-upload")
+async def run_design_audit_upload(
+    payload: str = Form(..., description="실행 페이로드 JSON 문자열(site/brief/drawing)"),
+    ifc_file: UploadFile | None = File(None),
+    dxf_file: UploadFile | None = File(None),
+    current: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """설계심사 실행(multipart, 동기) — 프론트 4단 스테퍼 진입점(구버전 호환·직접 API 호출용).
+
+    /run(JSON)과 동일 본체를 공유하고, ①payload(JSON 문자열) 파싱
+    ②brief.fields[{key,value}] → params dict 변환 ③IFC 업로드를 임시파일로
+    저장해 ifc_file_url로 전달만 추가한다. 응답에 프론트 계약 별칭
+    (id·verdict·sections)을 가산한다(/run 응답 키도 전부 포함 — additive).
+
+    UP4(WI-6) additive — dxf_file 수용: parse_dxf_to_shapes(20MB·.dxf 검증,
+    파싱 실패 422) → cad_upload_hub.distribute로 design_raw→geometry,
+    rooms→RunRequest.rooms, params_hint→brief 미입력 항목만 보완(기존값 우선·
+    덮어쓰기 금지). 적용 내역은 응답 dxf_import 키로 투명 보고(additive).
+    payload의 geometry/rooms 직접 입력은 DXF보다 우선한다(덮어쓰기 금지).
+
+    ★로드맵② — 심사(수 분급)를 탭 종료·리로드에도 견디게 하려면 POST /run-upload/jobs(비동기
+    잡 제출)+GET /run-upload/jobs/{id}(폴링)를 쓴다(DesignAuditWorkspace가 실제 사용하는 경로).
+    이 동기 엔드포인트는 다른 소비처(직접 API 호출·테스트) 호환을 위해 그대로 유지한다(무회귀).
+    """
+    req, dxf_import = await _prepare_upload_run_request(payload, ifc_file, dxf_file)
+    resp = await _execute_run(req, current, db)
+    return _finalize_upload_response(resp, dxf_import)
+
+
+# ── UP5(로드맵②) — run-upload 비동기 잡 제출/폴링(모바일·탭 종료·리로드 내구성) ──────────
+#
+# 조사 결과 두 기존 인프라 중 어느 쪽도 그대로 맞지 않아 등기 권리분석(registry.py)의
+# 경량 패턴을 재사용한다:
+#  · design-runs(WP-L, app/services/cad/design_run_job.py) — "승인차원(DRAFT/APPROVED)"·
+#    "실행차원(QUEUED/RUNNING/...)" **상태 전이 API**다. 사전에 존재하는 run_id 행(design_run_store
+#    가 별도 경로로 persist)에 대해 상태만 옮길 뿐, 그 상태를 실제로 채우는 실행 큐·워커가 없다
+#    (누군가 /job POST로 RUNNING→SUCCEEDED를 스스로 보고해야 한다). design_audit은 매 실행마다
+#    신규 1회성 장기작업(job_id)을 그 자리에서 발급해야 하므로 이 계약과 맞지 않는다.
+#  · registry.py의 `_JOBS`(in-memory dict) + `asyncio.create_task` 제출/폴링 패턴(/registry/
+#    analyze/jobs) — 등기 권리분석(CODEF ~50s)의 "긴 동기요청 대신 제출+폴링"과 동일 문제
+#    (모바일 백그라운드·탭 종료 시 단일 장기 POST 유실)라서 그대로 재사용 가능. design_audit
+#    잡은 db 세션이 필요하므로(design_audits 저장·원장 append) 요청 스코프 세션 대신
+#    AsyncSessionLocal()로 독립 세션을 연다(app/tasks/* 백그라운드 태스크 관행과 동일).
+#
+# 무거운 실행(orchestrator.run, 수 분급)만 백그라운드로 넘기고, 파싱·DXF/IFC 검증(빠른 동기
+# 구간)은 제출 요청에서 즉시 수행해 422/413 등 입력 오류를 바로 반환한다(잡 큐에 넣고서야
+# 실패를 알게 되는 것을 방지).
+
+# ★공용 잡 스토어(Redis 우선·인메모리 폴백) — R1 잔여 봉합: 블루그린 컷오버 중 in-flight 잡을
+#   신 컨테이너가 폴링할 때 404 나던 프로세스 경계 단절을, Redis 설정 시 SETEX 공유로 봉합한다.
+#   인메모리 백킹은 기존 _AUDIT_JOBS(테스트가 직접 조작하는 전역 dict)를 그대로 재사용해 폴백
+#   경로 동작을 바이트까지 보존한다(무악화·무회귀). Redis 미가용 환경(테스트 등)은 인메모리 폴백.
+_AUDIT_JOBS: dict[str, dict[str, Any]] = {}
+_AUDIT_JOB_TTL = 3600  # 잡 보관 TTL(초) — Redis SETEX 만료·인메모리 lazy 프루닝 공용
+_AUDIT_STORE = JobStore(
+    "job:design_audit:", memory_backing=_AUDIT_JOBS, default_ttl_s=_AUDIT_JOB_TTL
+)
+
+
+async def _audit_job_set(job_id: str, **fields: Any) -> None:
+    """job_id 항목을 병합 갱신(user_id 등 기존 필드 보존) — 공용 스토어 경유(get→merge→put).
+
+    put은 교체(replace) 계약이므로 소유 필드(user_id)를 보존하려면 여기서 병합한다.
+    """
+    cur = dict(await _AUDIT_STORE.get(job_id) or {})
+    cur.update(fields)
+    await _AUDIT_STORE.put(job_id, cur, _AUDIT_JOB_TTL)
+
+
+async def _run_audit_upload_job(
+    job_id: str,
+    req: RunRequest,
+    dxf_import: dict[str, Any] | None,
+    current: CurrentUser,
+) -> None:
+    """/run-upload/jobs 백그라운드 실행 — 요청 스코프 db(Depends(get_db))는 응답 반환과 함께
+    닫히므로 재사용하지 않고, 독립 세션(AsyncSessionLocal)을 새로 연다. CurrentUser는 상태값만
+    담은 Pydantic 스냅샷이라 요청 종료 후에도 안전하게 재사용 가능하다.
+    """
+    await _audit_job_set(job_id, status="running")
+    try:
+        from apps.api.database.session import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as db:
+            resp = await _execute_run(req, current, db)
+        resp = _finalize_upload_response(resp, dxf_import)
+        await _audit_job_set(job_id, status="done", result=resp)
+    except Exception as e:  # noqa: BLE001 — 잡 실패는 상태로 표면화(무음 유실 금지, 심사 큐 자체는 무중단)
+        logger.warning("설계심사 잡 실행 실패", job_id=job_id, error=str(e)[:200])
+        await _audit_job_set(job_id, status="error", error=str(e)[:200])
+
+
+@router.post("/run-upload/jobs")
+async def submit_design_audit_upload_job(
+    payload: str = Form(..., description="실행 페이로드 JSON 문자열(site/brief/drawing)"),
+    ifc_file: UploadFile | None = File(None),
+    dxf_file: UploadFile | None = File(None),
+    current: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """설계심사 실행(비동기 잡 제출) — /run-upload와 동일 입력을 받아 즉시 job_id를 반환한다
+    (모바일·탭 종료·리로드에도 견디는 진행 — DesignAuditWorkspace 실행 진입점).
+
+    파싱·DXF/IFC 검증은 이 요청에서 즉시 수행(오류는 여기서 바로 422/413)하고, 무거운 심사
+    실행만 백그라운드로 넘긴다. 진행은 GET /run-upload/jobs/{id}로 폴링한다.
+    """
+    req, dxf_import = await _prepare_upload_run_request(payload, ifc_file, dxf_file)
+    job_id = _uuid.uuid4().hex
+    # 프루닝은 스토어가 put 시 lazy 수행(별도 _prune 호출 불필요).
+    await _AUDIT_STORE.put(
+        job_id, {"status": "pending", "user_id": str(current.user_id)}, _AUDIT_JOB_TTL
+    )
+    # ★태스크 강참조 보관(R1 P2) — 미보관 create_task 는 GC 유실로 잡이 조용히 사라질 수 있다.
+    from app.services.common.bg_tasks import create_tracked_task
+
+    create_tracked_task(_run_audit_upload_job(job_id, req, dxf_import, current))
+    return {"job_id": job_id, "status": "pending"}
+
+
+@router.get("/run-upload/jobs/{job_id}")
+async def get_design_audit_upload_job(
+    job_id: str,
+    current: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """작업 상태(pending/running/done/error) + 완료 시 결과(=/run-upload 응답과 동일 형태) 조회.
+
+    본인 소유 작업만(타인 job_id·미존재·만료 모두 404 동일 취급 — _load_audit의 IDOR 방지
+    관행과 동일: 존재 비노출).
+    """
+    j = await _AUDIT_STORE.get(job_id)
+    if not j or j.get("user_id") != str(current.user_id):
+        raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다(만료되었거나 잘못된 ID).")
+    return {"status": j["status"], "result": j.get("result"), "error": j.get("error")}
+
+
 # ── 조회·PDF ─────────────────────────────────────────────────────────────────
+
+
+@router.get("")
+async def list_design_audits(
+    current: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    limit: int = 20,
+    project_id: str | None = None,
+) -> dict[str, Any]:
+    """본인 소유 설계심사 이력 목록(최신순) — 요약 필드만(overall·project_id·생성시각).
+
+    project_id 지정 시 해당 프로젝트로 한정한다. 소유권(user_id) 필터로 타인 행은 제외.
+    """
+    await ensure_schema(db)
+    clamped = max(1, min(limit, 100))
+    sql = (
+        "SELECT id, project_id, overall, created_at FROM design_audits WHERE user_id=:u "
+        + ("AND project_id=:p " if project_id else "")
+        + "ORDER BY created_at DESC LIMIT :l"
+    )
+    params: dict[str, Any] = {"u": str(current.user_id), "l": clamped}
+    if project_id:
+        params["p"] = project_id
+    rows = (await db.execute(sa_text(sql), params)).fetchall()
+    audits = [
+        {
+            "id": str(r[0]),
+            "project_id": r[1],
+            "overall": _maybe_json(r[2]),
+            "created_at": r[3].isoformat() if r[3] else None,
+        }
+        for r in rows
+    ]
+    return {"ok": True, "audits": audits, "count": len(audits)}
 
 
 @router.get("/{audit_id}")

@@ -12,6 +12,7 @@ from typing import Any
 import httpx
 
 from app.core.config import settings
+from app.utils.pnu import is_valid_pnu
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +105,7 @@ class BuildingRegistryService:
 
     async def get_building_by_pnu(self, pnu: str) -> dict[str, Any] | None:
         """PNU(19자리)에서 시군구코드/법정동코드/본번/부번을 추출하여 조회."""
-        if len(pnu) < 19:
+        if not is_valid_pnu(pnu):
             return None
 
         sigungu_cd = pnu[:5]
@@ -115,17 +116,30 @@ class BuildingRegistryService:
 
         return await self.get_building_info(sigungu_cd, bjdong_cd, bun, ji)
 
-    async def get_title_by_pnu(self, pnu: str) -> dict[str, Any] | None:
-        """PNU 기반 표제부(getBrTitleInfo) 조회 — 사용승인일·구조·세대수가 충실.
+    async def get_title_with_status_by_pnu(self, pnu: str) -> tuple[dict[str, Any] | None, str]:
+        """PNU 기반 표제부(getBrTitleInfo) 조회 — (파싱결과, 상태) 튜플 반환판.
 
         총괄표제부(getBrBasisOulnInfo)가 사용승인일을 비워두는 경우가 많아,
         노후도·세대수 산정에는 표제부를 사용한다.
 
         멸실여부·미준공(공사중) 여부도 표제부 상태 필드로 best-effort 판정한다.
-        키 미설정/호출실패/무자료 시 None(가짜데이터 생성 금지).
+        키 미설정/호출실패/무자료 시 (None, status)(가짜데이터 생성 금지).
+
+        상태값: no_key/unauthorized/error/no_data/ok.
+
+        ★리뷰(MEDIUM2) — 구조적 병렬안전: 상위(auto_zoning.py)가 asyncio.gather로 여러 필지를
+          동시 조회하며 각 호출 직후 상태를 읽는다. 종전엔 공유 인스턴스의 self.last_status(가변
+          속성)를 읽었는데, 현재는 호출↔읽기 사이 await가 없어 race-free하지만 향후 그 구간에
+          await 하나만 삽입돼도 다른 필지의 상태로 오염될 수 있는 비국소적 취약점이었다. 상태를
+          반환값에 직접 실어 그 취약점을 구조적으로 제거한다. self.last_status 는 하위호환
+          레거시 소비처(get_title_by_pnu 위임 호출부)를 위해 계속 갱신한다.
         """
-        if len(pnu) < 19 or not settings.MOLIT_API_KEY:
-            return None
+        if not settings.MOLIT_API_KEY:
+            self.last_status = "no_key"
+            return None, "no_key"
+        if not is_valid_pnu(pnu):
+            self.last_status = "error"
+            return None, "error"
         params = {
             "serviceKey": settings.MOLIT_API_KEY,
             "sigunguCd": pnu[:5], "bjdongCd": pnu[5:10],
@@ -135,13 +149,33 @@ class BuildingRegistryService:
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
                 resp = await client.get(f"{BASE_URL}/getBrTitleInfo", params=params)
+                # 401/403 또는 'Unauthorized' 본문 → 미승인(활용신청 필요)
+                if resp.status_code in (401, 403) or resp.text.strip().lower().startswith("unauthorized"):
+                    self.last_status = "unauthorized"
+                    logger.warning("표제부 API 미승인(활용신청 필요): %s", resp.status_code)
+                    return None, "unauthorized"
                 resp.raise_for_status()
                 items = (resp.json().get("response", {}).get("body", {})
                          .get("items", {}) or {}).get("item")
-            return self._parse_title_items(items)
+            parsed = self._parse_title_items(items)
+            status = "ok" if parsed else "no_data"  # no_data=조회성공·무건축물(나대지 추정)
+            self.last_status = status
+            return parsed, status
         except Exception as e:  # noqa: BLE001
+            self.last_status = "error"
             logger.warning("표제부 조회 실패: %s (%s)", pnu, str(e))
-            return None
+            return None, "error"
+
+    async def get_title_by_pnu(self, pnu: str) -> dict[str, Any] | None:
+        """PNU 기반 표제부 조회(레거시 하위호환) — dict|None 만 반환한다.
+
+        기존 소비처(scene_service·land_info_service·parcel_excel_service·scenario_simulator·
+        land_share_service 등)의 반환 계약을 그대로 유지하기 위한 얇은 위임 래퍼. 상태가 필요한
+        새 소비처(gather 병렬 조회 후 상태 분기)는 get_title_with_status_by_pnu 를 직접 쓴다
+        (리뷰 MEDIUM2 — auto_zoning.py 가 사용).
+        """
+        parsed, _status = await self.get_title_with_status_by_pnu(pnu)
+        return parsed
 
     async def _list_by_bjdong(
         self, endpoint: str, sigungu_cd: str, bjdong_cd: str, *, max_rows: int = 300, max_pages: int = 3,
@@ -224,7 +258,7 @@ class BuildingRegistryService:
         반환: [{dong, ho, exclusive_area_sqm, purpose}] (전유부만, 호 단위 합산).
         키 미설정/실패/무자료 → None(가짜 생성 금지).
         """
-        if len(pnu) < 19 or not settings.MOLIT_API_KEY:
+        if not is_valid_pnu(pnu) or not settings.MOLIT_API_KEY:
             return None
 
         def _f(x: dict, k: str) -> float:
@@ -334,6 +368,12 @@ class BuildingRegistryService:
             "ground_floors": int(_f(main, "grndFlrCnt")),
             "underground_floors": int(_f(main, "ugrndFlrCnt")),
             "total_area_sqm": _f(main, "totArea"),
+            # ★WS-D 개발여력 — 현황 용적률의 정직한 분모는 '주된 동'이 아니라 **전 동 합계**다
+            #   (주된 동만 쓰면 다동 필지의 현황이 과소 → 개발여력 과대낙관 방향 오류).
+            "total_area_sqm_all": round(sum(_f(r, "totArea") for r in rows), 1),
+            # numOfRows=10 캡 — rows가 10에 도달하면 절단 가능성이 있어 합계를 신뢰할 수 없다
+            # (절단=합계 과소=여력 과대낙관). 소비처는 True면 현황FAR 미상(None) 처리할 것.
+            "dong_truncated": len(rows) >= 10,
             "plat_area_sqm": _f(main, "platArea"),   # 대지면적(공동주택 대지지분 산정 기준)
             "household_count": int(_f(main, "hhldCnt")),
             "ho_count": int(_f(main, "hoCnt")),

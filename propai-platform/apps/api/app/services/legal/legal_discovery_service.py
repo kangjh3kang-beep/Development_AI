@@ -198,17 +198,14 @@ class LegalDiscoveryService:
             from app.services.ai.llm_provider import get_llm
 
             ctx = json.dumps(context, ensure_ascii=False, indent=2)
-            llm = get_llm(timeout=60, max_tokens=2000)
+            llm = get_llm(service="legal_discovery", timeout=60, max_tokens=2000)
             resp = await llm.ainvoke([
                 SystemMessage(content=_SYSTEM + GROUNDING_RULE),
                 HumanMessage(content=_TMPL.format(context=ctx)),
             ])
             await record_llm_response_billing(llm, resp, service="legal_discovery")
-            raw = (resp.content if hasattr(resp, "content") else str(resp)).strip()
-            if raw.startswith("```"):
-                raw = raw.split("```")[1]
-                raw = raw[4:] if raw.lower().startswith("json") else raw
-            data = json.loads(raw.strip())
+            from app.services.ai.llm_json import parse_llm_json
+            data = parse_llm_json(resp.content if hasattr(resp, "content") else str(resp))
             return data if isinstance(data, list) else []
         except Exception as e:  # noqa: BLE001 — LLM 실패는 빈 결과(graceful·무목업).
             logger.warning("법령탐색 LLM 실패", err=f"{type(e).__name__}: {str(e)[:120]}")

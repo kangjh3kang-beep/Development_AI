@@ -19,6 +19,7 @@
 import { BarChart3, Home, Users, Wallet } from "lucide-react";
 import type { DataSource } from "./marketTypes";
 import { DataSourceBadge } from "./DataSourceBadge";
+import { formatManwon as man, formatYm } from "@/lib/formatters";
 
 /* ------------------------------------------------------------------ */
 /*  raw_data 타입 (백엔드 P2 스키마)                                   */
@@ -48,12 +49,23 @@ export interface RawTrendPoint {
   mom_pct: number | null; // 전월대비% (첫 항목 null)
 }
 
+/** 경쟁 단지 집계 행 — 주변 실거래를 단지명별로 묶은 것(백엔드 /market/report 산출). */
+export interface RawCompetitorComplex {
+  name?: string;
+  deal_count?: number;
+  avg_per_pyeong_manwon?: number | null;
+  price_basis?: string;
+  recent_deal_ym?: string | null;
+  build_year?: number | null;
+}
+
 export interface RawRealEstate {
   trade_table: RawTradeRow[];
   rent_table: RawRentRow[];
   trend_series: RawTrendPoint[];
   source: string;
   data_source: DataSource | string;
+  competitor_complexes?: RawCompetitorComplex[];
 }
 
 export interface RawPopulation {
@@ -93,17 +105,6 @@ export interface RawData {
 /* ------------------------------------------------------------------ */
 /*  헬퍼 (이 컴포넌트 내부 전용 — 기존 formatPrice 패턴 참고)          */
 /* ------------------------------------------------------------------ */
-
-/** 만원 단위 금액 → "N억 N,NNN만원". 값이 없거나 0 이하면 "-". */
-function man(v?: number | null): string {
-  if (v == null || v <= 0) return "-";
-  if (v >= 10000) {
-    const uk = Math.floor(v / 10000);
-    const rest = v % 10000;
-    return rest > 0 ? `${uk}억 ${rest.toLocaleString()}만원` : `${uk}억원`;
-  }
-  return `${v.toLocaleString()}만원`;
-}
 
 /** 평당가(만원/평) → "N,NNN만원/평". null이면 "-". */
 function perPyeong(v: number | null): string {
@@ -274,11 +275,11 @@ export function RawDataTables({ raw, section }: { raw: RawData | undefined; sect
                     // 전월대비: +면 상승(성공색)·-면 하락(위험색)·null이면 "-"(첫 항목).
                     const mom = r.mom_pct;
                     const momColor =
-                      mom == null ? "var(--text-tertiary)" : mom > 0 ? "var(--status-success)" : mom < 0 ? "var(--status-danger)" : "var(--text-secondary)";
+                      mom == null ? "var(--text-tertiary)" : mom > 0 ? "var(--status-success)" : mom < 0 ? "var(--status-error)" : "var(--text-secondary)";
                     const momText = mom == null ? "-" : `${mom > 0 ? "+" : ""}${mom.toLocaleString(undefined, { maximumFractionDigits: 1 })}%`;
                     return (
                       <tr key={i}>
-                        <td className="sa-di-num" style={{ textAlign: "left", color: "var(--text-secondary)" }}>{r.ym}</td>
+                        <td className="sa-di-num" style={{ textAlign: "left", color: "var(--text-secondary)" }}>{formatYm(r.ym)}</td>
                         <td className="sa-di-num">{perPyeong(r.per_pyeong_manwon)}</td>
                         <td className="sa-di-num" style={{ color: momColor, fontWeight: 700 }}>{momText}</td>
                       </tr>
@@ -469,7 +470,7 @@ export function RawDataTables({ raw, section }: { raw: RawData | undefined; sect
               {inc.bracket_ratio && Object.keys(inc.bracket_ratio).length > 0 ? (
                 <ul className="space-y-1.5 text-xs text-[var(--text-secondary)]">
                   {Object.entries(inc.bracket_ratio).map(([k, v]) => (
-                    <li key={k} className="flex items-center justify-between border-b border-[var(--line-light)] pb-1">
+                    <li key={k} className="flex items-center justify-between border-b border-[var(--line-subtle)] pb-1">
                       <span>{k}</span>
                       <span className="font-bold text-[var(--text-primary)]">{pct(Number(v))}</span>
                     </li>

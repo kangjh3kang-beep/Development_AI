@@ -115,7 +115,7 @@ export function LegalDiscoveryCard({ address }: { address?: string | null }) {
           {loading ? "탐색 중…" : data ? "다시 탐색" : "관련법령 탐색"}
         </button>
       </div>
-      {error && <p className="mt-2 text-[11px] text-[var(--danger,#dc2626)]">{error}</p>}
+      {error && <p className="mt-2 text-[11px] text-[var(--status-error)]">{error}</p>}
       {data && (
         <div className="mt-2.5 space-y-2.5">
           {cv && (

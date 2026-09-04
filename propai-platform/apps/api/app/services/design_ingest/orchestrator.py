@@ -232,8 +232,16 @@ def _aggregate_parcels(req: DesignRequest) -> dict | None:
                 "_far_basis": "조례 실효" if s_eff.far_source == "ordinance" else "법정상한(조례 미확보)",
             })
             sp_inputs.append({
+                # ★같은 필지가 두 곳에 서로 다른 형상으로 들어가면 안 된다. 바로 위 enriched는
+                #   zone_type을 `zn or zc`(용도지역 코드 폴백)로 채우는데 여기만 `zn or ""`라,
+                #   zone_code만 제공된 다필지 요청에서 **집계는 "용도지역 확보"인데 게이트는
+                #   "지목·용도지역 전무"** 가 됐다. 그 비대칭이 미분석 판정을 깨워 정상 필지까지
+                #   통째로 잠정 강등시킨다. 형상을 맞춘다.
+                #   ※요청 최상위(req.land_category·special_districts)를 필지로 상속시키는 안도
+                #     검토했으나, 그 상속이 산출을 바꾸는 시나리오를 만들지 못해(zone_code 기본값이
+                #     있어 게이트 판정이 그 전에 갈린다) **추측으로 코드를 늘리지 않았다.**
                 "land_category": p.get("land_category") or "",
-                "zone_type": zn or "",
+                "zone_type": zn or zc or "",
                 "special_districts": list(p.get("special_districts") or []),
                 "area_sqm": area,  # 면적임계 규제(소방PBD·하수도 원인자부담·소규모환경평가) 단일경로 패리티
                 "pnu": p.get("pnu"), "address": p.get("address"),
@@ -408,9 +416,12 @@ async def _interpret_proposal(site: SiteContext, candidate: dict) -> dict | None
         # 빈 dict(LLM 실패) 또는 내용 없음 → 정직 None.
         if not result or not any(str(v).strip() for v in result.values()):
             return None
-        # ★JSON 파싱 실패 폴백({fallback_key: 원문 한 덩어리})을 정상 해석으로 노출 금지(무목업·정직).
-        #   fallback_key 외 실내용 섹션이 하나도 없으면 LLM 출력 형식 실패로 보고 None.
-        if not any(k != interp.fallback_key and str(v).strip() for k, v in result.items()):
+        # ★R1 R2(근원 봉합): BaseInterpreter._invoke가 이제 폴백-only 결과를 빈 dict로 강등하므로
+        #   (base_interpreter.py, is_fallback_only SSOT) 여기 도달하는 result는 이미 안전하다.
+        #   아래 재판정은 이중 방어(무해·삭제 불필요 — result가 부분적으로 채워진 뒤에도 안전망 유지).
+        from app.services.ai.base_interpreter import is_fallback_only
+
+        if is_fallback_only(result, interp.fallback_key):
             return None
         return {"sections": result, "input": payload}
     except Exception as e:  # noqa: BLE001 — 해석 실패가 생성 결과를 깨면 안 됨

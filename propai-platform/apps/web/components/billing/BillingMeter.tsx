@@ -50,7 +50,6 @@ type Balance = {
   topup_krw: number;
   topup_remaining: number;
   used_this_cycle_krw: number;
-  markup_pct: number;
   cycle_start: string | null;
   unlimited?: boolean; // 비과금 등급(super_admin 등) — 코인 무제한
 };
@@ -101,6 +100,9 @@ export function BillingMeter({ compact = false }: { compact?: boolean }) {
   const [modalOpen, setModalOpen] = useState(false);
   const [topupAmount, setTopupAmount] = useState(30000);
   const [paying, setPaying] = useState(false);
+  // 레거시 직접충전(/topup)은 프로덕션에서 403(무결제 자가증액 차단) — 실패를 무음으로 삼키지
+  // 않고 신규 마이페이지 코인 충전으로 안내한다(성장루프 MEDIUM 수렴).
+  const [topupError, setTopupError] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -121,10 +123,15 @@ export function BillingMeter({ compact = false }: { compact?: boolean }) {
 
   useEffect(() => { load(); }, [load]);
   // 페이지 이동 시 모달 자동 닫힘 — 대시보드 레이아웃이 유지돼 모달이 남던 문제 방어.
-  useEffect(() => { setModalOpen(false); }, [pathname]);
+  useEffect(() => { setModalOpen(false); setTopupError(false); }, [pathname]);
+
+  // 마이페이지 코인 충전 링크(로케일 접두 유지).
+  const locale = (pathname?.split("/")[1] || "ko");
+  const coinsHref = `/${locale}/mypage/coins`;
 
   const handleTopup = async () => {
     setPaying(true);
+    setTopupError(false);
     try {
       const s = await apiClient.post<Status>("/billing/topup", {
         body: { amount_krw: topupAmount },
@@ -135,7 +142,8 @@ export function BillingMeter({ compact = false }: { compact?: boolean }) {
       apiClient.get<Balance>("/billing/balance", { useMock: false }).then(setBalance).catch(() => { /* noop */ });
       setModalOpen(false);
     } catch {
-      /* noop */
+      // 무음 실패 금지 — 신규 코인 충전 주문(마이페이지)으로 안내.
+      setTopupError(true);
     } finally {
       setPaying(false);
     }
@@ -155,7 +163,7 @@ export function BillingMeter({ compact = false }: { compact?: boolean }) {
     const soaked = remaining <= 0;
     return (
       <>
-        <div className={`rounded-xl border ${soaked ? "border-amber-500/40" : "border-[var(--line-strong)]"} bg-[var(--surface-soft)] ${compact ? "p-3" : "p-4"}`}>
+        <div className={`rounded-xl border ${soaked ? "border-[var(--status-warning)]/40" : "border-[var(--line-strong)]"} bg-[var(--surface-soft)] ${compact ? "p-3" : "p-4"}`}>
           <MonitorBadge />
           <div className="flex items-center justify-between gap-2 mb-2">
             <span className="text-xs font-bold text-[var(--text-secondary)]">● 일반회원 (무료)</span>
@@ -165,11 +173,11 @@ export function BillingMeter({ compact = false }: { compact?: boolean }) {
             </button>
           </div>
           <div className="h-2 w-full rounded-full bg-[var(--surface-muted)] overflow-hidden">
-            <div className="h-full rounded-full transition-all" style={{ width: `${quota ? (used / quota) * 100 : 100}%`, backgroundColor: soaked ? "#f59e0b" : "var(--accent-strong)" }} />
+            <div className="h-full rounded-full transition-all" style={{ width: `${quota ? (used / quota) * 100 : 100}%`, backgroundColor: soaked ? "var(--status-warning)" : "var(--accent-strong)" }} />
           </div>
           <div className="mt-1.5 text-[10px] text-[var(--text-hint)]">
             {soaked
-              ? <span className="text-amber-500 font-bold">무료 토지분석을 모두 사용했습니다 · 구독 시 계속 이용</span>
+              ? <span className="text-[var(--status-warning)] font-bold">무료 토지분석을 모두 사용했습니다 · 구독 시 계속 이용</span>
               : <span>무료 토지분석 잔여 <b className="text-[var(--text-secondary)]">{remaining}</b> / {quota}회</span>}
           </div>
         </div>
@@ -179,7 +187,7 @@ export function BillingMeter({ compact = false }: { compact?: boolean }) {
   }
 
   const pct = Math.min(100, status.usage_pct || 0);
-  const barColor = status.blocked ? "#ef4444" : pct >= 80 ? "#f59e0b" : "var(--accent-strong)";
+  const barColor = status.blocked ? "var(--status-error)" : pct >= 80 ? "var(--status-warning)" : "var(--accent-strong)";
   // 코인 잔액(월기본 + 충전) — /billing/balance 실데이터. 소진 임박(85%+) 경고.
   const totalRemaining = balance
     ? (balance.monthly_base_remaining || 0) + (balance.topup_remaining || 0)
@@ -188,7 +196,7 @@ export function BillingMeter({ compact = false }: { compact?: boolean }) {
 
   return (
     <>
-      <div className={`rounded-xl border ${status.blocked || lowBalance ? "border-amber-500/40" : "border-[var(--line-strong)]"} bg-[var(--surface-soft)] ${compact ? "p-3" : "p-4"}`}>
+      <div className={`rounded-xl border ${status.blocked || lowBalance ? "border-[var(--status-warning)]/40" : "border-[var(--line-strong)]"} bg-[var(--surface-soft)] ${compact ? "p-3" : "p-4"}`}>
         <MonitorBadge />
         <div className="flex items-center justify-between gap-2 mb-2">
           <span className="flex items-center gap-1.5 text-xs font-bold text-[var(--text-secondary)]">
@@ -215,7 +223,7 @@ export function BillingMeter({ compact = false }: { compact?: boolean }) {
         </div>
         <div className="mt-1.5 flex items-center justify-between text-[10px] text-[var(--text-hint)]">
           <span>{balance?.unlimited ? "관리자 · 코인 차감 없음" : `코인 ${won(status.billed_krw)} 사용 / ${won(status.budget_krw)}`}</span>
-          <span className={status.blocked ? "text-red-500 font-bold" : lowBalance ? "text-amber-500 font-bold" : ""}>
+          <span className={status.blocked ? "text-red-500 font-bold" : lowBalance ? "text-[var(--status-warning)] font-bold" : ""}>
             {balance?.unlimited ? "무제한" : status.blocked ? "코인 소진 · 추가결제" : `잔여 ${won(totalRemaining)}`}
           </span>
         </div>
@@ -226,7 +234,7 @@ export function BillingMeter({ compact = false }: { compact?: boolean }) {
           </div>
         )}
         {lowBalance && (
-          <p className="mt-1 text-[10px] font-bold text-amber-500">코인 소진 임박 · 충전을 권장합니다</p>
+          <p className="mt-1 text-[10px] font-bold text-[var(--status-warning)]">코인 소진 임박 · 충전을 권장합니다</p>
         )}
       </div>
 
@@ -238,6 +246,15 @@ export function BillingMeter({ compact = false }: { compact?: boolean }) {
             <p className="mt-1 text-xs text-[var(--text-secondary)]">
               {status.tier_label} 구독 · 현재 잔여 {won(status.remaining_krw)}. 충전 금액을 선택하세요.
             </p>
+            {topupError && (
+              <div role="status" className="mt-3 rounded-xl border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 px-3 py-2.5 text-xs text-amber-700">
+                이 화면의 직접 충전은 더 이상 지원되지 않습니다.{" "}
+                <Link href={coinsHref} className="font-bold underline underline-offset-2" onClick={() => setModalOpen(false)}>
+                  마이페이지 코인 충전
+                </Link>
+                에서 결제해 주세요.
+              </div>
+            )}
             <div className="mt-4 grid grid-cols-2 gap-2">
               {TOPUP_PRESETS.map((amt) => (
                 <button key={amt} onClick={() => setTopupAmount(amt)}
@@ -286,11 +303,11 @@ function MonitorBadge() {
   const locale = pathname?.split("/")[1] || "ko";
   return (
     <Link href={`/${locale}/sales-info`}
-      className="mb-2 flex items-center justify-between gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5 text-[10px] font-bold text-amber-500 hover:opacity-90">
+      className="mb-2 flex items-center justify-between gap-2 rounded-lg border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 px-2.5 py-1.5 text-[10px] font-bold text-[var(--status-warning)] hover:opacity-90">
       <span className="flex items-center gap-1.5">
         <span className="relative flex h-2 w-2">
-          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75" />
-          <span className="relative inline-flex h-2 w-2 rounded-full bg-amber-500" />
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--status-warning)] opacity-75" />
+          <span className="relative inline-flex h-2 w-2 rounded-full bg-[var(--status-warning)]" />
         </span>
         분양 모니터링 {n}건
       </span>

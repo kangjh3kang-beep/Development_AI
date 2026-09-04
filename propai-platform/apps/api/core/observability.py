@@ -89,8 +89,14 @@ def init_langsmith() -> dict:
         or ""
     ).strip()
 
-    # tracing 플래그: 환경변수(런타임 시크릿) 우선, 없으면 설정값.
-    tracing = _truthy(os.environ.get("LANGSMITH_TRACING")) or bool(settings.langsmith_tracing)
+    # tracing 플래그: 환경변수(런타임 시크릿) 우선, 없으면 설정값. LangSmith 표준
+    # `LANGSMITH_TRACING` 과 LangChain 표준 `LANGCHAIN_TRACING_V2` 를 **둘 다** 활성 토글로 인정한다
+    # (운영자가 둘 중 무엇을 켜든 동일 동작 — 실측 기반 토글). 기본 OFF: 셋 다 미설정이면 비활성.
+    tracing = (
+        _truthy(os.environ.get("LANGSMITH_TRACING"))
+        or _truthy(os.environ.get("LANGCHAIN_TRACING_V2"))
+        or bool(settings.langsmith_tracing)
+    )
 
     if not tracing or not key:
         _LANGSMITH_ENABLED = False

@@ -71,7 +71,8 @@ def _stub_land_service(monkeypatch, *, zoning_result, land_char=None, land_use=N
     async def _land_use(pnu):
         return list(land_use) if land_use else []
 
-    async def _ordinance(addr, zone):
+    async def _ordinance(addr, zone, force_refresh=False, pnu=None, resolved_sigungu=None):
+        # ★프로덕션 호출 시그니처(pnu=·resolved_sigungu=)를 수용 — TypeError 침묵 삼킴 방지.
         return {}
 
     monkeypatch.setattr(svc.zoning, "analyze_by_address", _zoning)

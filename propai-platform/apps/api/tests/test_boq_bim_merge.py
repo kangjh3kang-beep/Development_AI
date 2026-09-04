@@ -133,3 +133,26 @@ class TestBimEdgeCases:
         out = merge_bim(d, [_bim("A04", "m2", 250.0)])
         assert out["badges"]["confidence"] == "낮음(n=1)"
         assert out["provenance"]["sample_count"] == 1
+
+
+class TestTierDistributionW33:
+    """W3-3(P9) — merge_bim 이 부착하는 Q1~Q4 등급(사실 재-표기, qty_source 기반)."""
+
+    def test_항목별_tier_부착(self):
+        d = _draft([_item("우레탄 방수", "m2", 100.0)])
+        out = merge_bim(d, [_bim("A04", "m2", 250.0)])
+        it = _items_out(out)[0]
+        assert it["tier"] == "Q1_MEASURED"  # qty_source='bim'으로 교체된 항목
+
+    def test_bim_merge_summary에_tier_distribution(self):
+        d = _draft([
+            _item("우레탄 방수", "m2", 100.0),                     # bim 매칭 → Q1
+            _item("가설국기게양시설", "식", 1.0, id="건축-2"),      # parametric → Q2
+            _item("창호 유리", "m2", 50.0, id="건축-3", qty_source="user"),  # user → Q1
+        ])
+        out = merge_bim(d, [_bim("A04", "m2", 250.0)])
+        td = out["summary"]["bim_merge"]["tier_distribution"]
+        by_tier = td["by_tier"]
+        assert by_tier["Q1_MEASURED"]["count"] == 2  # bim 1건 + user 1건
+        assert by_tier["Q2_PARAMETRIC"]["count"] == 1
+        assert td["dominant_tier"] == "Q1_MEASURED"

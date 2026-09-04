@@ -1,6 +1,10 @@
 "use client";
 
+import { parcelIdentityAddresses } from "@/lib/parcel-rows";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  formatPercent, formatPercentDelta, formatUpzoningFarRange, type UpzoningFarRange,
+} from "@/lib/formatters"; // 비율 표기 SSOT
 import { useParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import { motion, AnimatePresence } from "framer-motion";
@@ -9,6 +13,7 @@ import { ModuleCommandStrip } from "@/components/layout/ModuleCommandStrip";
 import { NextStageCta } from "@/components/projects/NextStageCta";
 import { LandIntelligencePanel } from "@/components/projects/LandIntelligencePanel";
 import { DevelopmentScenarioCard } from "@/components/common/DevelopmentScenarioCard";
+import { UpzoningFarRangeNotice, UpzoningFarRangeValue } from "@/components/common/UpzoningFarRange";
 import { LandProfileCard } from "@/components/projects/LandProfileCard";
 import { UtilizationMaximizerCard } from "@/components/projects/UtilizationMaximizerCard";
 import { UpzoningScenarioList } from "@/components/projects/UpzoningScenarioList";
@@ -20,8 +25,15 @@ import { TerrainAnalysisPanel } from "@/components/terrain/TerrainAnalysisPanel"
 import { EnvironmentAnalysisPanel } from "@/components/environment/EnvironmentAnalysisPanel";
 import { isValidLocale, type Locale } from "@/i18n/config";
 import { isMockMode } from "@/lib/runtime-mode";
+import {
+  effectiveLandAreaSqm,
+  resolveLandArea,
+  hasParcelRows,
+  landAreaBasisNote,
+} from "@/lib/site-area";
 import { useDictionary } from "@/hooks/use-dictionary";
 import { apiClient } from "@/lib/api-client";
+import { idempotencyHeaders } from "@/lib/idempotency";
 import { useProjectContextStore, type SiteAnalysisData } from "@/store/useProjectContextStore";
 import { analysisSignature } from "@/lib/use-analysis-cache";
 import { farLimitForZone, bcrLimitForZone } from "@/lib/kr-building-regulations";
@@ -112,6 +124,62 @@ type FarBasisDetail = {
   조례확인필요?: boolean;
 };
 
+/** 조건이 충족되면 열릴 수 있는 값 — **적용값이 아니다**(`applied: false`).
+ *  아는 것(법정·조례 기본값)과 모르는 것(조건 충족 여부)을 섞지 않기 위해 별도 계약이다. */
+type ConditionalCeiling = {
+  condition?: string | null;
+  zone_type?: string | null;
+  bcr_ceiling_pct?: number | null;
+  far_ceiling_pct?: number | null;
+  applied?: boolean;
+  note?: string | null;
+  requires?: string[] | null;
+};
+type OrdinanceConditionalItem = {
+  kind?: string | null;          // "bcr" | "far"
+  value?: number | null;
+  article?: string | null;
+  article_title?: string | null;
+  condition_key?: string | null;
+  why?: string | null;
+  /** '그 밖에 용도지구·구역 등' 은 나열형이라 **항목마다 값이 다르다**.
+   *  어느 항목으로 매칭됐는지 밝히지 않으면 사용자가 근거를 확인할 수 없다. */
+  matched_district?: string | null;   // 부지의 실제 지정명(예: 자연취락지구)
+  matched_option?: string | null;     // 조례가 적은 항목명(예: 취락지구)
+  /** 이 부지가 걸친 지구 수. 2 이상이면 **어느 것이 적용되는지 우리가 정하지 않았다**
+   *  — 용도지구 경합 우선순위는 법·조례 소관이다. 화면은 그 사실을 밝힌다. */
+  overlap_count?: number | null;
+};
+/** 조례 별표가 **HWP 첨부로만** 제공돼 수치를 읽지 못한 경우 — 사유와 원문 링크.
+ *  ★값이 아니라 **사유**다. 이게 없으면 화면은 "조례 확인 필요"라고만 말하고,
+ *  사용자는 조례가 없거나 용도지역이 틀렸다고 의심한다(실측: 울산·창원). */
+type OrdinanceAttachmentOnly = {
+  reason?: string | null;
+  attachment_url?: string | null;
+  ordinance_name?: string | null;
+  requires?: string[] | null;
+};
+/** 계획이 한도·**용도**를 정하는 구역인데 그 계획 내용을 확보하지 못했다(#705).
+ *  ★셋 중 **가장 비싼 경고**다 — 수치만이 아니라 **용도 추천도 미검증**이라고 말한다.
+ *    백엔드 주석: *"수치에만 경고를 붙이면 정작 더 비싼 오답(불허 용도 추천)이 그대로 나간다."*
+ *  ★2026-08-21 까지 이 계약은 화면 소비처가 **0** 이었다. 게다가 생산자(`special_districts`)가
+ *    주소 문자열 휴리스틱이라 **발화 자체가 불가능**했다(#742 에서 실측값 배선으로 수정). */
+type PlanLimitUnknown = {
+  districts?: string[] | null;
+  applied?: boolean;
+  reason?: string | null;
+  /** 계획이 지배하는 범위 — 건폐율·용적률만이 아니라 **건축물 용도제한·높이**까지. */
+  governs?: string[] | null;
+  requires?: string[] | null;
+  note?: string | null;
+};
+type OrdinanceConditional = {
+  matched?: OrdinanceConditionalItem[] | null;
+  unmatched_site?: OrdinanceConditionalItem[] | null;
+  undecidable?: OrdinanceConditionalItem[] | null;
+  applied?: boolean;
+};
+
 type EffectiveFarData = {
   effective_far_pct?: number | null;
   effective_bcr_pct?: number | null;
@@ -120,6 +188,14 @@ type EffectiveFarData = {
   ordinance_confirmed?: boolean;
   legal_min_far_pct?: number | null;
   legal_max_far_pct?: number | null;
+  /** 법 제75조의3 조건부 법정상한(성장관리계획구역 등) — 가능 상한. */
+  conditional_ceiling?: ConditionalCeiling | null;
+  /** 조례 조건부 값 × 부지 조건 매칭 — 후보. */
+  ordinance_conditional?: OrdinanceConditional | null;
+  /** 조례 별표가 첨부(HWP)뿐이라 수치 미확보 — 사유·원문 링크. */
+  ordinance_attachment_only?: OrdinanceAttachmentOnly | null;
+  /** 계획이 한도·용도를 정하는 구역인데 계획 내용 미확보(#705). */
+  plan_limit_unknown?: PlanLimitUnknown | null;
 };
 
 // 종상향/종변경 잠재 시나리오(예상치 — 현행과 분리)
@@ -140,7 +216,8 @@ type UpzoningScenario = {
   is_estimate?: boolean;
 };
 
-type PotentialFarRange = { min_pct?: number | null; max_pct?: number | null; note?: string } | null;
+// 백엔드 potential_far_range 계약 — 붕괴 판정(is_collapsed)·정직 고지(honest_disclosure)까지 포함.
+type PotentialFarRange = UpzoningFarRange;
 
 type UpzoningData = {
   current_zone?: string;
@@ -201,10 +278,60 @@ function formatPriceKr(amount10k: number | null | undefined): string {
 // 종상향 시나리오 근거법령 렌더(verified 딥링크·죽은 링크 금지)는 공용 UpzoningScenarioList로 이관.
 
 // ── L3 Enhanced Cards Component ──
-function L3EnhancedCards({
+// ★export 이유: 이 안의 실효용적률 계층·조건부 후보 블록은 **조건부 렌더**라
+//   소스 검사로는 잠기지 않는다(주석처리+임포트유지 변이에 뚫린다 — 이 저장소 실측 2회).
+//   렌더 결과를 보려면 컴포넌트에 닿아야 하므로 이름을 내보낸다(페이지 default export 무변경).
+/** 고시 결손 고지 — 우리 데이터가 모르는 **최근 지구단위계획구역 결정고시**.
+ *  ★값이 아니라 **확인 요청**이다. 대조는 휴리스틱이라 "틀렸다"고 말하지 않는다.
+ *  결손이 없거나 목록을 전건 확보하지 못하면 백엔드가 `null` 을 낸다(단정 금지). */
+export type GosiCoverageNotice = {
+  reason?: string | null;
+  items?: { date?: string | null; gosino?: string | null; title?: string | null }[] | null;
+  window_start?: string | null;
+  list_url?: string | null;
+  applied?: boolean;
+  /** 고시 원문 PDF 에서 읽은 용적률·건폐율 **후보**. 적용값이 아니다 —
+   *  한 구역 안에서도 획지마다 값이 다르다(실측: 양산2구역 200%·180%). */
+  limits_note?: string | null;
+};
+
+
+/** 고시 결손 고지를 **지연 로드**한다.
+ *  ★분석 인라인이 아니다: 라이브 실측 지연이 2~16초라(시군구별 고시목록 전건 페이징)
+ *    본 분석을 붙잡으면 안 된다. 화면이 그린 뒤 따로 불러 붙인다.
+ *  ★실패하면 **조용히 아무것도 안 붙인다** — 이 고지는 "확인 요청"이라 없다고 해서
+ *    사용자가 잘못된 값을 보는 것이 아니다(있으면 더 나은 것이지 없으면 틀린 것이 아니다). */
+function useGosiCoverage(pnu?: string | null) {
+  const [notice, setNotice] = useState<GosiCoverageNotice | null>(null);
+  useEffect(() => {
+    const code = (pnu || "").trim();
+    // ★PNU 하나만 필요하다. 좌표를 요구했다면 이 훅은 **한 번도 실행되지 않았을 것**이다
+    //   — `SiteAnalysisData` 에는 zoneCode·address·pnu 뿐이고 lat/lon 이 없다(실측).
+    if (code.length < 5) return;
+    let alive = true;
+    apiClient
+      .get<{ notice?: GosiCoverageNotice | null }>(
+        `/api/v1/regulation/gosi/coverage?pnu=${encodeURIComponent(code)}`
+      )
+      .then((r) => {
+        if (alive) setNotice(r?.notice ?? null);
+      })
+      .catch(() => {
+        /* 조용히 무시 — 위 주석 참조 */
+      });
+    return () => {
+      alive = false;
+    };
+  }, [pnu]);
+  return notice;
+}
+
+export function L3EnhancedCards({
   l3Data,
   siteAnalysis,
+  gosiCoverage = null,
 }: {
+  gosiCoverage?: GosiCoverageNotice | null;
   l3Data: L3SiteData | null;
   siteAnalysis: SiteAnalysisData | null;
 }) {
@@ -220,6 +347,8 @@ function L3EnhancedCards({
   const upzoning = l3Data?.upzoning;
   const upScenarios = upzoning?.scenarios ?? l3Data?.upzoning_scenarios ?? [];
   const potentialRange = upzoning?.potential_far_range ?? l3Data?.potential_far_range ?? null;
+  // 종상향 범위 표기(붕괴 판정·정직 고지) — 형제 화면과 같은 표기 SSOT를 쓴다.
+  const upFarRange = formatUpzoningFarRange(potentialRange);
   const upInterp = l3Data?.upzoning_interpretation;
   const grave = l3Data?.grave_registry;
 
@@ -235,10 +364,18 @@ function L3EnhancedCards({
   const hasAnyData = tx || infra || bldg || hasFarTier || hasUpzoning || hasGraveInfo || hasAllowedBuildings;
   if (!hasAnyData) return null;
 
-  // 헬퍼: 용적률 퍼센트 안전 포맷
-  const pct = (v: number | null | undefined): string => (v == null ? "—" : `${Math.round(v)}%`);
+  // 헬퍼: 용적률 퍼센트 표기 — 공용 포매터에 위임한다(로컬 규칙 금지).
+  //   ★종전에는 `Math.round(v)`라 실효 79.6%가 "80%"가 되어 **바로 옆 법정 80%와 같아 보였다**
+  //     — 이 화면이 설명하려는 격차 자체가 사라진다(#530이 종합분석에서 봉합한 것과 같은 결함).
+  //   ★`v == null → "—"`도 0과 구분이 안 됐다. 비율에서 0은 유효 측정값이다.
+  const pct = (v: number | null | undefined): string => formatPercent(v);
   // far_basis_detail에서 zone_limits로 폴백한 법정/조례 추출(데이터·호출 무변경, 표시만)
   const fbd = effFar?.far_basis_detail;
+  // 조건부 후보 — 위 ①~④ 계층(적용값)과 **분리해서** 렌더한다(아래 주석 참조).
+  const condCeiling = effFar?.conditional_ceiling ?? null;
+  const ordCond = effFar?.ordinance_conditional ?? null;
+  const ordAttach = effFar?.ordinance_attachment_only ?? null;
+  const planUnknown = effFar?.plan_limit_unknown ?? null;
   const legalMin = fbd?.법정범위?.min_far_pct ?? effFar?.legal_min_far_pct ?? null;
   const legalMax =
     fbd?.법정범위?.max_far_pct ??
@@ -281,7 +418,7 @@ function L3EnhancedCards({
               <p className="text-[9px] font-bold text-indigo-400 uppercase tracking-widest">법정범위 → 조례 → 계획상한 → 인센티브</p>
             </div>
             {ordinanceNeedCheck && (
-              <span className="shrink-0 rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[8px] font-black uppercase tracking-wider text-amber-400">
+              <span className="shrink-0 rounded-full border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 px-2.5 py-1 text-[8px] font-black uppercase tracking-wider text-[var(--status-warning)]">
                 조례 확인 필요
               </span>
             )}
@@ -298,9 +435,9 @@ function L3EnhancedCards({
             </div>
             <div className="hidden sm:flex items-center text-[var(--text-hint)] font-black">→</div>
             {/* 조례 적용값 */}
-            <div className={`flex-1 rounded-xl border p-4 ${ordinanceConfirmed ? "border-emerald-500/30 bg-emerald-500/5" : "border-dashed border-[var(--line)] bg-[var(--surface-muted)]"}`}>
+            <div className={`flex-1 rounded-xl border p-4 ${ordinanceConfirmed ? "border-[var(--status-success)]/30 bg-[var(--status-success)]/5" : "border-dashed border-[var(--line)] bg-[var(--surface-muted)]"}`}>
               <p className="text-[8px] font-black text-[var(--text-hint)] uppercase tracking-wider mb-1">② 조례 적용 (지자체)</p>
-              <p className={`text-base font-black ${ordinanceConfirmed ? "text-emerald-400" : "text-[var(--text-hint)] italic"}`}>
+              <p className={`text-base font-black ${ordinanceConfirmed ? "text-[var(--status-success)]" : "text-[var(--text-hint)] italic"}`}>
                 {ordinanceConfirmed && ordinanceFarVal != null ? pct(ordinanceFarVal) : "확인 필요"}
               </p>
             </div>
@@ -320,7 +457,7 @@ function L3EnhancedCards({
                 <div className="hidden sm:flex items-center text-[var(--text-hint)] font-black">→</div>
                 <div className="flex-1 rounded-xl border border-purple-500/30 bg-purple-500/5 p-4">
                   <p className="text-[8px] font-black text-[var(--text-hint)] uppercase tracking-wider mb-1">④ 인센티브 완화율</p>
-                  <p className="text-base font-black text-purple-400">+{Math.round(incentiveRatio)}%</p>
+                  <p className="text-base font-black text-purple-400">{formatPercentDelta(incentiveRatio)}</p>
                 </div>
               </>
             )}
@@ -338,6 +475,195 @@ function L3EnhancedCards({
               <p className="text-[10px] font-bold text-[var(--text-secondary)] sm:text-right max-w-md">근거: {farFinalBasis}</p>
             )}
           </div>
+          {/* ★★계획이 지배하는 구역인데 그 계획을 못 읽었다(#705) — **가장 비싼 경고**.
+              위 ①~④ 계층과 아래 수치·개발방식·**용도 제안**이 전부 그 계획을 반영하지
+              못한 조례·법정 기준값이라는 사실을 말한다. 수치에만 경고를 붙이면 정작 더
+              비싼 오답(**불허 용도 추천**)이 그대로 나간다 — 그래서 `governs` 를 함께 보인다.
+              ★이 계약은 2026-08-21 까지 화면 소비처가 0이었고, 생산자(`special_districts`)가
+              주소 문자열 휴리스틱이라 발화 자체가 불가능했다(#742 에서 실측 배선으로 수정). */}
+          {planUnknown && (planUnknown.districts?.length ?? 0) > 0 && (
+            <div
+              data-testid="plan-limit-unknown"
+              className="mt-4 rounded-xl border-2 border-[var(--status-warning)]/50 bg-[var(--status-warning)]/10 p-4"
+            >
+              <p className="text-[10px] font-black text-[var(--status-warning)] mb-2">
+                {planUnknown.districts?.join(" · ")} — <span className="underline">이 계획이 아래 값보다 우선합니다</span>
+              </p>
+              {planUnknown.reason && (
+                <p className="text-[11px] font-bold leading-relaxed text-[var(--text-secondary)]">
+                  {planUnknown.reason.replace(/\*\*/g, "")}
+                </p>
+              )}
+              {(planUnknown.governs?.length ?? 0) > 0 && (
+                <p className="mt-2 text-[10px] font-bold text-[var(--text-secondary)]">
+                  이 계획이 정하는 것:{" "}
+                  {planUnknown.governs?.map((g) => (
+                    <span
+                      key={g}
+                      className="mr-1 inline-block rounded border border-[var(--status-warning)]/40 px-1.5 py-0.5 text-[9px] font-black text-[var(--status-warning)]"
+                    >
+                      {g}
+                    </span>
+                  ))}
+                </p>
+              )}
+              {/* ★용도까지 미검증이라는 것이 이 고지의 핵심 — 수치 경고만 남기면 안 된다. */}
+              <p className="mt-2 text-[10px] font-black text-[var(--status-warning)]">
+                아래 수치와 개발방식·용도 제안은 이 계획을 반영하지 못했습니다 — 고시 확인 전까지
+                상한으로도, 허용용도로도 단정하지 마십시오.
+              </p>
+              {(planUnknown.requires ?? []).map((rq, i) => (
+                <p key={`pr${i}`} className="mt-1 text-[10px] text-[var(--text-tertiary)]">
+                  · {rq.replace(/\*\*/g, "")}
+                </p>
+              ))}
+            </div>
+          )}
+          {/* ★고시 결손 — 화면이 "지구단위계획 없음"을 **사실처럼** 말하던 자리.
+              조회가 성공했다고 해서 답이 최신인 것은 아니다: 실제로 오산 내삼미동은
+              지구단위계획구역 신규 결정고시(2025-12-23)가 우리 데이터에 없어
+              자연녹지 법정 80%가 지배 한도인 양 표시됐다.
+              ★"틀렸다"가 아니라 **"확인되지 않는다"** 라고 말한다 — 대조는 휴리스틱이고,
+              사용자가 할 수 있는 다음 행동(원문 확인)을 주는 것이 목적이다. */}
+          {gosiCoverage?.reason && (
+            <div
+              data-testid="gosi-coverage-notice"
+              className="mt-4 rounded-xl border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/5 p-4"
+            >
+              <p className="text-[10px] font-black text-[var(--status-warning)] mb-2">
+                최근 고시 확인 필요 — <span className="underline">우리 데이터에서 확인되지 않는 고시가 있습니다</span>
+              </p>
+              <p className="text-[11px] font-bold leading-relaxed text-[var(--text-secondary)]">
+                {gosiCoverage.reason.replace(/\*\*/g, "")}
+              </p>
+              {(gosiCoverage.items ?? []).slice(0, 3).map((it, i) => (
+                <p key={`gc${i}`} className="mt-1 text-[10px] text-[var(--text-tertiary)]">
+                  · {it.date} {it.gosino}
+                  {it.title ? ` — ${it.title}` : ""}
+                </p>
+              ))}
+              {/* ★고시 원문에서 읽은 수치 — **후보**다. 여러 세션 인계서가 이 항목을
+                  "사용자 입력 전제"로 못 박아 뒀지만 실측하니 기계로 읽힌다(6건 중 5건).
+                  다만 스캔본·도면뿐인 고시는 못 읽으므로 **있을 때만** 나온다. */}
+              {gosiCoverage.limits_note && (
+                <p
+                  data-testid="gosi-limits-note"
+                  className="mt-2 rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] px-2.5 py-2 text-[10px] font-bold leading-relaxed text-[var(--text-secondary)]"
+                >
+                  {gosiCoverage.limits_note}
+                </p>
+              )}
+              {gosiCoverage.window_start && (
+                <p className="mt-1.5 text-[9px] text-[var(--text-hint)]">
+                  확인 범위: {gosiCoverage.window_start.slice(0, 4)}-
+                  {gosiCoverage.window_start.slice(4, 6)}-{gosiCoverage.window_start.slice(6, 8)} 이후 고시
+                  {" "}· 이 범위 밖은 확인하지 않았습니다
+                </p>
+              )}
+              {gosiCoverage.list_url && (
+                <a
+                  href={gosiCoverage.list_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-2.5 inline-flex items-center gap-1 rounded-lg border border-[var(--status-warning)]/40 px-2.5 py-1.5 text-[10px] font-black text-[var(--status-warning)] transition-colors hover:bg-[var(--status-warning)]/10"
+                >
+                  토지이음에서 고시 원문 확인 ↗
+                </a>
+              )}
+            </div>
+          )}
+          {/* ★조례 수치 미확보의 **사유** — 값이 아니라 사유를 낸다.
+              종전엔 ② 조례 적용이 "확인 필요"라고만 말했다. 그러면 사용자는 *조례가 없거나
+              용도지역이 틀렸다*고 의심한다 — 실제 원인은 **우리가 그 별표(HWP 첨부)를 읽지
+              못한다**이고, 사용자가 할 수 있는 다음 행동(원문 열람)도 완전히 다르다.
+              백엔드(#718)는 이 사유를 만들어 놓고도 **소비처가 0**이라 화면에 닿지 못했다.
+              ★조건부 완화 후보 박스와 **분리한다**: 저건 "열릴 수 있는 값"이고 이건
+              "왜 값을 모르는가"다 — 같은 박스에 놓으면 후보값처럼 읽힌다. */}
+          {ordAttach && (
+            <div
+              data-testid="ordinance-attachment-only"
+              className="mt-4 rounded-xl border border-[var(--accent-strong)]/30 bg-[var(--accent-soft)] p-4"
+            >
+              <p className="text-[10px] font-black text-[var(--accent-strong)] mb-2">
+                조례 수치 미확보 — <span className="underline">별표가 첨부파일(HWP)입니다</span>
+              </p>
+              {ordAttach.reason && (
+                <p className="text-[11px] font-bold leading-relaxed text-[var(--text-secondary)]">
+                  {ordAttach.reason.replace(/\*\*/g, "")}
+                </p>
+              )}
+              <p className="mt-1.5 text-[10px] font-bold text-[var(--text-tertiary)]">
+                위 ② 조례 적용이 비어 있고 최종값이 법정상한인 것은 <span className="font-black">이 사유 때문</span>입니다
+                — 조례가 없거나 용도지역이 틀린 것이 아닙니다.
+              </p>
+              {(ordAttach.requires ?? []).map((rq, i) => (
+                <p key={`rq${i}`} className="mt-1 text-[10px] text-[var(--text-tertiary)]">
+                  · {rq}
+                </p>
+              ))}
+              {ordAttach.attachment_url && (
+                <a
+                  href={ordAttach.attachment_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-2.5 inline-flex items-center gap-1 rounded-lg border border-[var(--accent-strong)]/40 px-2.5 py-1.5 text-[10px] font-black text-[var(--accent-strong)] transition-colors hover:bg-[var(--accent-strong)]/10"
+                >
+                  별표 원문 열기{ordAttach.ordinance_name ? ` — ${ordAttach.ordinance_name}` : ""} ↗
+                </a>
+              )}
+            </div>
+          )}
+          {/* ★조건부 완화 후보 — **계층 카드로 넣지 않는다**. 위 ①~④는 '적용된 값'이고
+              이것은 '조건이 충족되면 열릴 수 있는 값'이라, 같은 줄에 놓으면 적용값으로 읽힌다.
+              조례는 `용도지역 → 값 하나`가 아니라 `용도지역 × 조건 → 값들`이다(오산시
+              자연녹지 = 6개 조). 그 값을 숨기면 사용자가 완화 여지를 영영 모르고,
+              적용값처럼 보이면 근거 없는 단정이 된다 — 그래서 **보이되 적용하지 않는다**. */}
+          {(condCeiling || (ordCond?.matched?.length ?? 0) > 0 || (ordCond?.undecidable?.length ?? 0) > 0) && (
+            <div className="mt-4 rounded-xl border border-dashed border-[var(--status-warning)]/40 bg-[var(--status-warning)]/5 p-4">
+              <p className="text-[10px] font-black text-[var(--status-warning)] mb-2">
+                조건부 완화 후보 — <span className="underline">적용값이 아닙니다</span>
+              </p>
+              {condCeiling && (
+                <p className="text-[11px] font-bold text-[var(--text-secondary)] mb-1.5">
+                  {condCeiling.note}
+                </p>
+              )}
+              {(ordCond?.matched ?? []).map((m, i) => (
+                <p key={`m${i}`} className="text-[11px] font-bold text-[var(--text-secondary)] mb-1">
+                  조례 {m.article}
+                  {m.article_title ? `(${m.article_title})` : ""} —{" "}
+                  {m.kind === "bcr" ? "건폐율" : "용적률"} {m.value}%
+                  {/* ★어느 지정으로 매칭됐는지 밝힌다. 이 조문은 나열형이라 **항목마다 값이
+                      다르다**(오산 제46조: 취락 40 · 자연공원 60 · 산업단지 80). 항목을 안
+                      밝히면 사용자가 왜 이 수치인지 확인할 길이 없다. */}
+                  {m.matched_district && (
+                    <span className="font-medium text-[var(--text-tertiary)]">
+                      {" "}· 근거: 이 부지가 <span className="font-black text-[var(--text-secondary)]">{m.matched_district}</span>
+                      {m.matched_option && m.matched_option !== m.matched_district
+                        ? `(조례 '${m.matched_option}' 항목)`
+                        : ""}
+                    </span>
+                  )}
+                  {/* ★겹침을 숨기지 않는다 — 필지는 흔히 여러 지구에 걸친다(실측 8~20건).
+                      어느 것이 적용되는지는 법·조례 소관이라 **우리가 정하지 않는다**. */}
+                  {(m.overlap_count ?? 1) > 1 && (
+                    <span className="font-black text-[var(--status-warning)]">
+                      {" "}· 이 부지는 {m.overlap_count}개 지구에 걸칩니다 — 어느 것이 우선하는지는 확인이 필요합니다
+                    </span>
+                  )}
+                  <span className="font-medium text-[var(--text-tertiary)]">
+                    {" "}· 이 부지가 해당 조건에 속합니다(고시·계획 본문 확인 필요)
+                  </span>
+                </p>
+              ))}
+              {(ordCond?.undecidable?.length ?? 0) > 0 && (
+                <p className="text-[10px] text-[var(--text-tertiary)] mt-1.5">
+                  판정 보류 {ordCond?.undecidable?.length}건 — 건축물 용도·연혁 등 설계가 정해져야
+                  판정되는 조건입니다(예: {ordCond?.undecidable?.[0]?.article}).
+                </p>
+              )}
+            </div>
+          )}
           {farSources && farSources.length > 0 && (
             <p className="mt-2 text-[9px] text-[var(--text-hint)]">데이터 출처: {farSources.join(" · ")}</p>
           )}
@@ -358,8 +684,8 @@ function L3EnhancedCards({
           </div>
 
           {/* ★예상치 고지 */}
-          <div className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3">
-            <p className="text-[11px] font-black text-amber-400 leading-relaxed">
+          <div className="mb-4 rounded-xl border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 p-3">
+            <p className="text-[11px] font-black text-[var(--status-warning)] leading-relaxed">
               예상치 — 도시·군관리계획 결정 및 인허가를 전제로 한 잠재 시나리오이며, 실현을 보장하지 않습니다.
             </p>
           </div>
@@ -375,14 +701,25 @@ function L3EnhancedCards({
             </div>
             <div className="rounded-xl border border-dashed border-purple-500/40 bg-purple-500/5 p-4">
               <p className="text-[8px] font-black text-purple-400/70 uppercase tracking-wider mb-1">잠재 (예상치 · 미확정)</p>
+              {/* ★상·하한이 같으면 `예상 용적률 150.0% ~ 150.0%`가 찍혔다 — 범위가 아닌데
+                  범위처럼 보여 "그 위는 안 된다"로 읽힌다. 붕괴 판정·고지는 백엔드 계약에서
+                  오고, 표기는 formatUpzoningFarRange 한 곳에서 결정한다(형제 화면과 동일 문구). */}
               <p className="text-sm font-black text-purple-400">
-                {potentialRange?.min_pct != null && potentialRange?.max_pct != null
-                  ? `예상 용적률 ${pct(potentialRange.min_pct)} ~ ${pct(potentialRange.max_pct)}`
-                  : "잠재 시나리오 검토"}
+                {upFarRange.text === "미확보" ? (
+                  "잠재 시나리오 검토"
+                ) : (
+                  <>
+                    예상 용적률 <UpzoningFarRangeValue range={potentialRange} />
+                  </>
+                )}
               </p>
               {potentialRange?.note && (
                 <p className="text-[10px] font-bold text-[var(--text-secondary)] mt-0.5">{potentialRange.note}</p>
               )}
+              <UpzoningFarRangeNotice
+                range={potentialRange}
+                className="text-[10px] font-bold leading-relaxed text-[var(--text-secondary)] mt-1"
+              />
             </div>
           </div>
 
@@ -716,6 +1053,8 @@ export default function SiteAnalysisPage() {
   // 사용자 명시 액션(새 분석/분석 시작) 추적 — 컨텍스트 자동진입이 사용자 의도를 덮어쓰지 않게 한다.
   const [userInitiated, setUserInitiated] = useState(false);
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
+  // ★지연 로드(본 분석을 붙잡지 않는다 — 실측 2~16초)
+  const gosiCoverage = useGosiCoverage(siteAnalysis?.pnu);
   const ctxProjectId = useProjectContextStore((s) => s.projectId);
   const updateSiteAnalysis = useProjectContextStore((s) => s.updateSiteAnalysis);
   // 분석캐시(영속·프로젝트별) 조회/저장 — comprehensive(L3) 결과를 재진입 시 복원하는 안전경로.
@@ -730,13 +1069,43 @@ export default function SiteAnalysisPage() {
   //   parcelCount>1 이고 실제 필지목록(parcels)이 2개 이상일 때만 '다필지'로 본다.
   //   (단일/유효<2는 통합 개발방식 카드를 띄우지 않는다 — 단일필지엔 미표시.)
   const ssotParcels = siteAnalysis?.parcels ?? null;
-  const isMultiParcel =
-    (siteAnalysis?.parcelCount ?? 1) > 1 && (ssotParcels?.length ?? 0) > 1;
+  // ★판정 SSOT(R1): 여기서 필요한 것은 "다필지인가"가 아니라 **"필지별 행을 손에 쥐고 있는가"**다
+  //   (아래 scenarioParcels 가 필지 주소목록을 실제로 꺼내 쓴다). lib/site-area 의 hasParcelRows 로
+  //   일원화한다 — 종전의 손수 조건식은 같은 질문을 파일마다 다르게 물어 온 8벌 중 하나였다.
+  const isMultiParcel = hasParcelRows(siteAnalysis);
   // 개발방식 시뮬 카드에 넘길 필지 주소목록(string[]) — 통합SSOT(siteAnalysis.parcels)의
   //   각 필지 지번주소를 그대로 사용한다(대표 1필지 아님). 빈 주소는 거른다(가짜값 방지).
   const scenarioParcels = useMemo(
-    () => (isMultiParcel && ssotParcels ? ssotParcels.map((p) => p.address).filter(Boolean) : []),
+    () => (isMultiParcel && ssotParcels ? parcelIdentityAddresses(ssotParcels) : []),
     [isMultiParcel, ssotParcels],
+  );
+
+  // ── 면적 기준(basis) 해석 — 값만이 아니라 "무엇을 근거로 한 면적인지"를 함께 얻는다(R1 기준 SSOT). ──
+  //   왜: 값만 던지면 한 화면이 대표필지 면적을, 다른 화면이 통합면적을 똑같이 "대지면적"이라
+  //   부르며 보여 줄 수 있다 — 사용자는 어느 숫자도 믿을 수 없게 된다. 값에 기준을 붙여 그 차이를
+  //   숨기지 않고 말한다(값을 지우는 게 아니라 등급을 붙이는 이 캠페인의 원칙과 같다).
+  //   store 에 siteAnalysis 가 아직 없는 찰나에는 로컬 시드 면적을 같은 리졸버에 통과시켜
+  //   **우회 경로를 만들지 않는다**(raw 를 화면이 직접 읽으면 SSOT 가 다시 갈린다).
+  const areaResolved = useMemo(
+    () =>
+      resolveLandArea(
+        siteAnalysis ?? {
+          landAreaSqm: siteData?.landAreaSqm ? Number(siteData.landAreaSqm) : null,
+        },
+      ),
+    [siteAnalysis, siteData?.landAreaSqm],
+  );
+  // 기준 고지문은 공용함수(landAreaBasisNote)에서 파생한다 — 문구를 화면마다 손으로 쓰면
+  //   한 화면만 고치고 형제 화면이 옛 문구로 남는다. 필지 수는 세는데 목록이 없는 상태
+  //   (#773 이 고친 "등록 7필지인데 단일 필지라고 단언"과 같은 형태)도 그 함수가 고지한다.
+  const areaBasisNote = useMemo(
+    () =>
+      landAreaBasisNote(
+        siteAnalysis ?? {
+          landAreaSqm: siteData?.landAreaSqm ? Number(siteData.landAreaSqm) : null,
+        },
+      ),
+    [siteAnalysis, siteData?.landAreaSqm],
   );
 
   // 주소 단일화: 바인딩 완료 후 컨텍스트에 주소가 있으면 재입력 없이 결과로 자동진입하고
@@ -750,7 +1119,12 @@ export default function SiteAnalysisPage() {
     if (!addr) return;
     const nextPnu = siteAnalysis?.pnu ?? undefined;
     const nextZone = siteAnalysis?.zoneCode ?? undefined;
-    const nextLandAreaSqm = siteAnalysis?.landAreaSqm != null ? String(siteAnalysis.landAreaSqm) : undefined;
+    // ★면적은 effectiveLandAreaSqm(SSOT) — raw landAreaSqm 금지.
+    //   분석은 다필지로 통일한다(단일주소 분석 = 필지 1개인 다필지). 따라서 이 화면의 시드도
+    //   대표필지 면적이 아니라 유효 면적(다필지면 통합)이어야 ContextHeader·인허가 등 다른 표면과
+    //   같은 숫자가 된다.
+    const effArea = effectiveLandAreaSqm(siteAnalysis);
+    const nextLandAreaSqm = effArea != null ? String(effArea) : undefined;
     // ★#185 렌더루프 가드: 값이 실제로 바뀔 때만 setState. 자식(LandIntelligencePanel·AutoZoningBadge)이
     //   /zoning/analyze 결과로 updateSiteAnalysis를 호출하면 이 useEffect가 재실행되는데, 매번 '새'
     //   siteData 객체를 setState하면 자식 리렌더→재호출 순환으로 렌더가 폭주한다(Minified React #185).
@@ -762,7 +1136,10 @@ export default function SiteAnalysisPage() {
         : { address: addr, pnu: nextPnu, zoneType: nextZone, landAreaSqm: nextLandAreaSqm },
     );
     setStage((s) => (s === "result" ? s : "result"));
-  }, [isBound, userInitiated, siteAnalysis?.address, siteAnalysis?.pnu, siteAnalysis?.zoneCode, siteAnalysis?.landAreaSqm]);
+    // ★유효면적이 의존하는 축은 raw landAreaSqm 하나가 아니다 — 다필지 통합면적
+    //   (landAreaSqmTotal)·필지수(parcelCount)가 바뀌면 시드도 갱신돼야 한다(누락 시 옛 면적 고착).
+  }, [isBound, userInitiated, siteAnalysis?.address, siteAnalysis?.pnu, siteAnalysis?.zoneCode,
+      siteAnalysis?.landAreaSqm, siteAnalysis?.landAreaSqmTotal, siteAnalysis?.parcelCount]);
 
   // 결과 단계 진입 시 프로젝트의 최신 설계(design_versions) 존재 여부를 조회.
   // 백엔드 /digital-twin/scene은 design_version_id 경로로 glb URL(/design/{id}/bim/model.glb)을
@@ -974,6 +1351,8 @@ export default function SiteAnalysisPage() {
       }>("/zoning/analyze", {
         useMock: false,
         body: { address },
+        // ★유료 경로(land_analysis) — 재전송이면 이중청구된다.
+        headers: idempotencyHeaders("zoning.analyze", { address }),
       });
 
       const resolvedAddress = zoningResult.address || address;
@@ -1103,8 +1482,8 @@ export default function SiteAnalysisPage() {
             exit={{ opacity: 0, y: -40, filter: "blur(20px)" }}
             className="mx-auto w-full max-w-5xl"
           >
-            <div className="rounded-2xl sm:rounded-[2.5rem] lg:rounded-[4.5rem] p-1.5 border border-[var(--line)] bg-[var(--surface-soft)] overflow-hidden group shadow-[var(--shadow-2xl)]">
-               <div className="rounded-xl sm:rounded-[2.2rem] lg:rounded-[4.2rem] p-6 sm:p-10 lg:p-20 bg-[var(--surface-strong)]/80 backdrop-blur-3xl transition-all group-hover:bg-[var(--surface-strong)]/60 border border-[var(--line-strong)]">
+            <div className="rounded-2xl sm:rounded-[var(--radius-xl)] lg:rounded-[var(--radius-2xl)] p-1.5 border border-[var(--line)] bg-[var(--surface-soft)] overflow-hidden group shadow-[var(--shadow-2xl)]">
+               <div className="rounded-xl sm:rounded-[var(--radius-lg)] lg:rounded-[var(--radius-2xl)] p-6 sm:p-10 lg:p-20 bg-[var(--surface-strong)]/80 backdrop-blur-3xl transition-all group-hover:bg-[var(--surface-strong)]/60 border border-[var(--line-strong)]">
                   <SiteInitiator onInitiate={handleInitiate} loading={false} />
                </div>
             </div>
@@ -1124,7 +1503,7 @@ export default function SiteAnalysisPage() {
               <motion.div
                 animate={{ scale: [1, 1.05, 1] }}
                 transition={{ duration: 2, repeat: Infinity }}
-                className="relative flex h-64 w-64 items-center justify-center rounded-[4rem] bg-[var(--surface-strong)] border border-[var(--line-strong)] shadow-[var(--shadow-2xl)] backdrop-blur-3xl overflow-hidden"
+                className="relative flex h-64 w-64 items-center justify-center rounded-[var(--radius-2xl)] bg-[var(--surface-strong)] border border-[var(--line-strong)] shadow-[var(--shadow-2xl)] backdrop-blur-3xl overflow-hidden"
               >
                  <div className="absolute inset-0 bg-[var(--accent-strong)]/5 animate-pulse" />
                  <Icons.Brain width={112} height={112} strokeWidth={1} />
@@ -1168,21 +1547,32 @@ export default function SiteAnalysisPage() {
             className="w-full flex flex-col gap-16"
           >
             {/* Context Summary Bar */}
-            <div className="flex flex-col lg:flex-row lg:items-center justify-between rounded-2xl sm:rounded-[2rem] lg:rounded-[4rem] bg-[var(--surface-strong)] p-6 sm:p-8 lg:p-10 lg:px-14 border border-[var(--line-strong)] backdrop-blur-3xl shadow-[var(--shadow-2xl)] gap-6 sm:gap-8">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between rounded-2xl sm:rounded-[var(--radius-lg)] lg:rounded-[var(--radius-2xl)] bg-[var(--surface-strong)] p-6 sm:p-8 lg:p-10 lg:px-14 border border-[var(--line-strong)] backdrop-blur-3xl shadow-[var(--shadow-2xl)] gap-6 sm:gap-8">
                <div className="flex items-center gap-8">
-                  <div className="flex h-20 w-20 items-center justify-center rounded-[2rem] bg-[var(--accent-strong)]/10 text-[var(--accent-strong)] border border-[var(--accent-strong)]/20 shadow-[var(--shadow-glow)]">
+                  <div className="flex h-20 w-20 items-center justify-center rounded-[var(--radius-lg)] bg-[var(--accent-strong)]/10 text-[var(--accent-strong)] border border-[var(--accent-strong)]/20 shadow-[var(--shadow-glow)]">
                     <Icons.Map width={40} height={40} strokeWidth={1.5} />
                   </div>
                   <div className="space-y-1">
-                    <p className="text-[10px] font-black uppercase tracking-[0.4em] text-[var(--text-hint)]">분석 대상 부지</p>
+                    <p className="label-caps text-[var(--text-hint)]">분석 대상 부지</p>
                     <p className="text-xl sm:text-2xl lg:text-3xl font-[1000] text-[var(--text-primary)] tracking-tighter italic">
                       {siteData.address || "분석 대상 주소를 입력하세요"}
                     </p>
                     {siteData.zoneType && (
                       <p className="text-sm font-bold text-[var(--accent-strong)]">
                         {siteData.zoneType}
-                        {siteData.landAreaSqm && ` · ${Number(siteData.landAreaSqm).toLocaleString()}m²`}
+                        {/* ★면적은 기준 SSOT(resolveLandArea)로만 읽는다 — 로컬 siteData.landAreaSqm 을
+                            직접 읽으면 '새 분석'이 실은 대표 1필지 면적을 통합면적인 양 보여 준다. */}
+                        {areaResolved.valueSqm != null &&
+                          ` · ${areaResolved.valueSqm.toLocaleString()}m²`}
                         {siteData.landCategory && ` · ${siteData.landCategory}`}
+                      </p>
+                    )}
+                    {areaBasisNote && (
+                      <p
+                        data-area-basis={areaResolved.basis}
+                        className="text-xs font-semibold text-[var(--text-secondary)]"
+                      >
+                        {areaBasisNote}
                       </p>
                     )}
                   </div>
@@ -1198,7 +1588,7 @@ export default function SiteAnalysisPage() {
 
             {/* API 연결 실패 안내 */}
             {analysisError && (
-              <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 p-5 text-sm text-amber-600 dark:text-amber-400 font-medium">
+              <div className="rounded-2xl border border-[var(--status-warning)]/20 bg-[var(--status-warning)]/5 p-5 text-sm text-amber-600 dark:text-[var(--status-warning)] font-medium">
                 {analysisError}
               </div>
             )}
@@ -1229,7 +1619,7 @@ export default function SiteAnalysisPage() {
               initial={{ opacity: 0, y: 40 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.2 }}
-              className="rounded-2xl sm:rounded-[2.5rem] lg:rounded-[4.5rem] border border-[var(--line-strong)] bg-[var(--surface-strong)]/50 p-4 sm:p-8 lg:p-14 shadow-[var(--shadow-2xl)] backdrop-blur-xl"
+              className="rounded-2xl sm:rounded-[var(--radius-xl)] lg:rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)]/50 p-4 sm:p-8 lg:p-14 shadow-[var(--shadow-2xl)] backdrop-blur-xl"
             >
               <LandIntelligencePanel projectId={id} data={siteData} />
             </motion.div>
@@ -1258,7 +1648,7 @@ export default function SiteAnalysisPage() {
             )}
 
             {/* ── L3 Enhanced Cards: 실거래가, 건축물대장, 인프라 ── */}
-            <L3EnhancedCards l3Data={l3Data} siteAnalysis={siteAnalysis} />
+            <L3EnhancedCards l3Data={l3Data} siteAnalysis={siteAnalysis} gosiCoverage={gosiCoverage} />
 
             {/* ── 주변 실거래가(지도) — 반경원·매매/전월세·유형필터·마커 상세 ── */}
             {siteData.address && (
@@ -1288,7 +1678,7 @@ export default function SiteAnalysisPage() {
               projectId={id}
               address={siteData.address}
               pnu={siteData.pnu}
-              areaSqm={siteData.landAreaSqm ? Number(siteData.landAreaSqm) : undefined}
+              areaSqm={areaResolved.valueSqm ?? undefined}
             />
           </motion.div>
         )}

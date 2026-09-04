@@ -34,6 +34,20 @@ services:
     restart: always
     environment:
       - NEXT_PUBLIC_API_URL=http://localhost:8000
+      # ★config 발산 정합(PR#329 R2): server-only VWORLD_API_KEY 필수 — 사통맵 타일
+      #   프록시(vworld-wmts-proxy.ts·vworld-wms-proxy.ts)가 이 값이 없으면 503을
+      #   반환해 기저지도(Base/Satellite/Hybrid)·지적 WMS가 전면 회색이 된다.
+      #   root docker-compose.yml(web 서비스, safe-deploy 경로)은 env_file:.env로
+      #   이미 주입되지만, 이 prod compose는 누락돼 있었다 — 동일 .env 값을 명시 주입한다.
+      - VWORLD_API_KEY=${VWORLD_API_KEY}
+      # ★★2026-08-17 (A② 릴레이 1순위 승격) — **이 값이 비면 지도가 전면 사망한다.**
+      #   타일 프록시가 158→VWorld 직접 대신 **api(168) 릴레이를 주 경로**로 쓴다.
+      #   릴레이 오리진은 `vworldApiFallbackOrigin()` 이 이 변수 하나에서만 파생하고,
+      #   비면 null 을 반환한다 — 종전엔 그래도 "직접 경로로 정직 503" 에 그쳤지만
+      #   릴레이가 주 경로가 된 뒤로는 **폴백이 없다**.
+      #   실제로 158 컨테이너에는 앰비언트로만 존재하고 이 compose 에는 **선언이 없었다**
+      #   (실측) — 선언 없는 의존은 다음 재생성 때 조용히 사라진다.
+      - NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL}
     ports:
       - "3000:3000"
     networks:

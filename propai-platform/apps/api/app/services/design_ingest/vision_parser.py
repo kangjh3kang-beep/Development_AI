@@ -8,7 +8,7 @@
 - 키 미설정·LLM 실패·JSON 불량 → 숫자를 **지어내지 않고** 파일명 휴리스틱 메타만 채운 뒤
   meta.warnings + meta['vision']='unavailable'|'failed'로 정직 고지한다.
 - LLM이 읽지 못한 값은 null → None(추정 금지). 비상식 값(음수·과대)은 거부한다(할루시네이션 가드).
-- 모델 ID는 get_llm() 한 곳에서만 결정한다(llm_provider 단일출처).
+- 모델 ID는 get_llm(service="design_ingest", ) 한 곳에서만 결정한다(llm_provider 단일출처).
 - 토큰 계측(BaseInterpreter 단일경유)은 분석 인터프리터 대상이며, 인제스트-타임 비전 계측은 후속.
 """
 
@@ -214,8 +214,12 @@ async def parse_drawing_with_vision(content: bytes, filename: str, fmt: str) -> 
 
         from app.services.ai.llm_provider import get_llm
 
-        llm = get_llm(provider="anthropic", max_tokens=1500, timeout=40.0)
+        llm = get_llm(service="design_ingest", provider="anthropic", max_tokens=1500, timeout=40.0)
         resp = await llm.ainvoke([HumanMessage(content=blocks)])
+        # 계측: BaseInterpreter 밖 직접 호출도 동일하게 토큰·과금 기록(best-effort) —
+        # 유일한 무계측 직접호출이라 캡 절단 감사(output==캡 대조)의 사각이었다.
+        from app.services.ai.base_interpreter import record_llm_response_billing
+        await record_llm_response_billing(llm, resp, service="design_ingest")
         data = _parse_json(_message_text(resp))
     except Exception as e:  # noqa: BLE001 — best-effort 비전, 실패는 정직 고지
         logger.warning("design_ingest 비전 파싱 실패(%s): %s", fmt, str(e)[:160])

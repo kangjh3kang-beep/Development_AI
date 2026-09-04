@@ -13,8 +13,8 @@ import { salesApi } from "@/lib/salesApi";
 interface Finding { key: string; severity: "critical" | "high" | "medium"; count: number; title: string; detail: string }
 
 const SEV: Record<string, { cls: string; label: string }> = {
-  critical: { cls: "border-rose-500/40 bg-rose-500/10 text-rose-300", label: "심각" },
-  high: { cls: "border-amber-500/40 bg-amber-500/10 text-amber-300", label: "주의" },
+  critical: { cls: "border-[var(--status-error)]/40 bg-[var(--status-error)]/10 text-rose-300", label: "심각" },
+  high: { cls: "border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 text-amber-300", label: "주의" },
   medium: { cls: "border-sky-500/40 bg-sky-500/10 text-sky-300", label: "확인" },
 };
 
@@ -54,7 +54,7 @@ export default function IntegrityGuard({ siteCode }: { siteCode: string }) {
       )}
 
       {ok === true && (
-        <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-5 text-center">
+        <div className="rounded-xl border border-[var(--status-success)]/40 bg-[var(--status-success)]/10 p-5 text-center">
           <CheckCircle2 className="mx-auto size-8 text-emerald-300" aria-hidden />
           <p className="mt-1 text-sm font-bold text-emerald-300">무결성 위반 없음 — 1호1계약·배분·보증·가격 정상</p>
         </div>

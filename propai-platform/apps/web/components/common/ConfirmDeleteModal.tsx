@@ -7,9 +7,13 @@
  * 삭제 버튼이 활성화된다. 되돌릴 수 없는 삭제(프로젝트 등)에 사용.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+
+import { useModalFocus } from "@/hooks/useModalFocus";
 import { AlertTriangle, Check } from "lucide-react";
+
+import { DISMISS_Z, useDismissible } from "@/lib/satong-dismiss";
 
 type ConfirmDeleteModalProps = {
   open: boolean;
@@ -32,6 +36,14 @@ export function ConfirmDeleteModal({
   onCancel,
 }: ConfirmDeleteModalProps) {
   const [input, setInput] = useState("");
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  // ★모달 포커스 생명주기(초기 포커스·트랩·복귀). ESC 는 별개 계약(registerDismissible)이라
+  //   여기서 다루지 않는다 — 두 곳에서 처리하면 한 번 눌러 둘이 닫힌다(#697 이 겪은 결함).
+  // ★훅은 **early return 앞**에 둔다. 아래 `if (!open) return null` 뒤에 두면 조건부 호출이
+  //   되어 렌더마다 훅 순서가 달라진다(react-hooks/rules-of-hooks 가 잡아 줬다).
+  //   대신 `open` 을 그대로 넘겨 닫힘 상태에서는 훅이 스스로 아무것도 하지 않게 한다.
+  useModalFocus(dialogRef, open);
   const [copied, setCopied] = useState(false);
 
   // 열릴 때마다 입력 초기화
@@ -41,6 +53,16 @@ export function ConfirmDeleteModal({
       setCopied(false);
     }
   }, [open, name]);
+
+  // ESC 로 취소 — **조정기로 이관**(종전에는 아래 입력의 onKeyDown 이었다).
+  // 종전 결함: 사용자가 '복사' 버튼이나 본문을 클릭해 포커스가 입력에서 벗어나면 ESC 가
+  //   아무 일도 하지 않았다(핸들러가 입력에만 붙어 있었다).
+  // ★정정(R2) — 초판 주석은 "문서 뷰어 모달 위에 겹쳐 열리는 경로가 실재한다"고 적었으나
+  //   **거짓이다**: 이 확인창의 소비처는 `components/projects/ProjectsOverviewClient.tsx`
+  //   하나뿐이고(전수 확인), 문서뷰어 쪽 삭제는 확인창 없이 바로 지운다.
+  //   그래도 한 칸 위(`nestedOverModal`)로 등록한다 — 되돌릴 수 없는 삭제를 확인하는 창은
+  //   무엇 위에 뜨든 가장 먼저 닫혀야 하고, 단독으로 열려도 최댓값이라 동작은 같다.
+  useDismissible(DISMISS_Z.nestedOverModal, open, onCancel);
 
   if (!open || typeof document === "undefined") return null;
 
@@ -73,6 +95,8 @@ export function ConfirmDeleteModal({
       aria-modal="true"
     >
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         className="w-full max-w-md rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-6 shadow-[var(--shadow-2xl)]"
         onClick={(e) => e.stopPropagation()}
       >
@@ -106,7 +130,8 @@ export function ConfirmDeleteModal({
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && match) onConfirm();
-            if (e.key === "Escape") onCancel();
+            // ESC 는 여기서 처리하지 않는다 — 위 `useDismissible` 이 포커스와 무관하게 받는다.
+            // (여기 남겨 두면 같은 keydown 에 onCancel 이 두 번 불린다.)
           }}
           placeholder="위 이름을 그대로 입력하세요"
           className="mt-3 w-full rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 py-2.5 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"

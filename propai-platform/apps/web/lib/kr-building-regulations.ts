@@ -460,12 +460,15 @@ export function bcrLimitForZone(zoning?: string | null): number | null {
 }
 
 /**
- * 용적률 기반 최대 연면적 계산
+ * 용적률 기반 최대 연면적 계산.
+ *
+ * ★레인C(P2) 무날조: 용도지역 매칭 실패 시 과거엔 임의 배율(250%)을 지어냈다 — 근거 없는
+ * 수치라 제거하고 null(산출 불가)을 반환한다. 호출부가 값을 만들지 말고 "미상"으로 정직 처리.
  */
-export function calcMaxGrossArea(landArea: number, zoning: string): number {
+export function calcMaxGrossArea(landArea: number, zoning: string): number | null {
   const key = normalizeZoning(zoning);
   const spec = key ? ZONING_DB[key] : null;
-  if (!spec) return landArea * 2.5; // 기본 250%
+  if (!spec) return null;
   return landArea * (spec.floorAreaRatioMax / 100);
 }
 

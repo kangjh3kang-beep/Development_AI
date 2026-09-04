@@ -1,0 +1,29 @@
+{
+  "_meta": {
+    "seed_id": "G4",
+    "title": "시세 공시지가×1.2 폴백(실거래 comparable 부재)",
+    "land_attrs": {"jimok": "임야", "zone": "자연녹지지역", "sanji_gubun": null},
+    "tier": "B",
+    "phase": "0/W2-1",
+    "defect": "Section 3 시세가 실거래 원/㎡ comparable 없이 공시지가×지역배수(폴백 1.2)로 산출 → 방법론 편향(임야·특수물건에서 오차 큼).",
+    "w1_target": "실거래 원/㎡ comparable(desk_appraisal cross_validate) 배선. methodology 태그 필수. 폴백 1.2는 양쪽 데이터 부재시만 정직표기. 계층 B(경고+배지·비차단).",
+    "synthetic": true,
+    "honesty": "W0 합성 fixture — 라이브 시세 미수집. 계획 §2.2 G4(MARKET_MULTIPLIER_MAP 폴백1.2·comparable 부재) 서술에 충실한 구조 시드."
+  },
+  "ctx": {"address": "경상북도 포항시 남구 호미곶면 대보리 산 1", "zone_type": "자연녹지지역", "pnu": "4711025032xxxxxxx"},
+  "input": {
+    "zone_type": "자연녹지지역",
+    "market": {
+      "official_price_per_sqm": 45000,
+      "market_price_per_sqm": 54000,
+      "price_method": "공시지가×1.2",
+      "comparable_used": false,
+      "comparables": []
+    }
+  },
+  "current_baseline": {
+    "field": "market.price_method",
+    "observed": "공시지가×1.2",
+    "note": "comparable_used=false → 실거래 미사용. market_price_per_sqm = 45000×1.2 = 54000(폴백 배수)."
+  }
+}

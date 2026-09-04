@@ -85,47 +85,56 @@ async def run_etl_public_data(ctx: dict[str, Any]) -> dict[str, Any]:
     return {"status": "completed", "collected_at": now.isoformat(), **stats}
 
 
+# 보존기간 정리 대상(테이블명, DELETE 조건). ★테이블명은 실존 스키마와 일치해야 한다 —
+# 'ai_usage_logs'는 존재한 적 없는 legacy 명칭(실테이블=llm_usage_log, billing_service가
+# 멱등 생성)이었고, 단일 트랜잭션 구조라 이 한 건의 UndefinedTable 실패가 refresh_tokens
+# 삭제까지 롤백시키고 webhook_deliveries 정리를 영영 막았다(2026-07-22 운영 실측).
+_RETENTION_TARGETS: list[tuple[str, str]] = [
+    ("refresh_tokens", "expires_at < NOW()"),
+    # ★1830일(5년): llm_usage_log는 순수 로그가 아니라 사용자향 재무 명세의 소스다 —
+    #   코인내역 타임라인·CSV 내보내기(coin_ledger_service get_timeline/export_rows)가
+    #   최대 1830일 윈도우를 계약하므로 보존기간을 그 상한에 정렬(R1 게이트 반영).
+    #   90일이면 잔액·원장 무결성은 불변이나 명세에서 AI사용 차감 항목만 조용히 소실된다.
+    ("llm_usage_log", "created_at < NOW() - INTERVAL '1830 days'"),
+    ("webhook_deliveries", "created_at < NOW() - INTERVAL '30 days'"),
+]
+
+
 async def run_cleanup_expired(ctx: dict[str, Any]) -> dict[str, Any]:
-    """만료 데이터 정리 태스크.
+    """만료 데이터 정리 태스크 — 대상별 독립 트랜잭션(한 대상의 실패·부재가 다른 정리를 막지 않게).
 
     1. 만료된 리프레시 토큰 삭제
-    2. 90일 이상 된 AI 사용 로그 아카이브
-    3. 임시 파일 정리
+    2. 1830일(5년·명세 내보내기 상한) 초과 LLM 사용 로그 삭제(llm_usage_log)
+    3. 30일 이상 웹훅 배송 기록 삭제
     """
+    from sqlalchemy import text
+
     from apps.api.database.session import AsyncSessionLocal
 
     logger.info("만료 데이터 정리 시작")
 
-    deleted: dict[str, int] = {}
+    deleted: dict[str, int | str] = {}
 
-    async with AsyncSessionLocal() as db:
-        from sqlalchemy import text
+    for table, cond in _RETENTION_TARGETS:
+        try:
+            async with AsyncSessionLocal() as db:
+                # 테이블 부재(신규 환경·지연 생성)는 오류가 아니라 정직 스킵.
+                exists = await db.execute(
+                    text("SELECT to_regclass(:qualified)"),
+                    {"qualified": f"public.{table}"},
+                )
+                if exists.scalar() is None:
+                    deleted[table] = "skipped_no_table"
+                    logger.warning("정리 대상 테이블 없음 — 건너뜀", table=table)
+                    continue
+                result = await db.execute(
+                    text(f"DELETE FROM {table} WHERE {cond}")  # noqa: S608 — 상수 목록 유래
+                )
+                await db.commit()
+                deleted[table] = result.rowcount or 0
+        except Exception as e:  # noqa: BLE001 — 개별 대상 실패는 기록 후 다음 대상 계속
+            deleted[table] = f"error:{type(e).__name__}"
+            logger.warning("정리 실패 — 다음 대상 계속", table=table, err=str(e)[:100])
 
-        # 만료 리프레시 토큰 삭제
-        result = await db.execute(
-            text("DELETE FROM refresh_tokens WHERE expires_at < NOW()")
-        )
-        deleted["refresh_tokens"] = result.rowcount or 0
-
-        # 90일 이상 AI 사용 로그 (soft-delete)
-        result = await db.execute(
-            text(
-                "DELETE FROM ai_usage_logs "
-                "WHERE created_at < NOW() - INTERVAL '90 days'"
-            )
-        )
-        deleted["ai_usage_logs"] = result.rowcount or 0
-
-        # 30일 이상 웹훅 배송 기록 삭제
-        result = await db.execute(
-            text(
-                "DELETE FROM webhook_deliveries "
-                "WHERE created_at < NOW() - INTERVAL '30 days'"
-            )
-        )
-        deleted["webhook_deliveries"] = result.rowcount or 0
-
-        await db.commit()
-
-    logger.info("만료 데이터 정리 완료", **deleted)
+    logger.info("만료 데이터 정리 완료", deleted=deleted)
     return {"status": "completed", "deleted": deleted}

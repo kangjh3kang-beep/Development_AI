@@ -26,6 +26,7 @@ import { apiClient } from "@/lib/api-client";
 import { BankReadyReportBuilder } from "@/components/report/BankReadyReportBuilder";
 import { EvidencePanel } from "@/components/common/EvidencePanel";
 import type { EvidenceItem, EvidenceLegalRef } from "@/components/common/EvidencePanel";
+import { MarkdownLite } from "@/components/common/MarkdownLite";
 
 /* ── 공사비 estimate-overview 응답(필요 필드만) ── */
 interface CostOverview {
@@ -42,6 +43,31 @@ interface CostOverview {
 
 /* ── 설계해설(DesignInterpreter 6섹션) ── */
 type DesignAi = Record<string, string> | null;
+
+// DesignInterpreter가 실제로 채우는 6개 섹션 키(design_interpreter.py expected_keys와 동일).
+const DESIGN_AI_SECTION_KEYS = [
+  "design_overview", "mass_strategy", "floor_efficiency",
+  "compliance_review", "circulation_core", "improvement",
+] as const;
+
+/** 백엔드 JSON 파싱이 실패해 원문 텍스트가 한 키에 그대로 뭉쳐 담긴 폴백을 방어적으로 재판정.
+ *  (백엔드 is_fallback_only 가드가 1차 방어선 — 이제는 BaseInterpreter._invoke 반환 직전에서
+ *  실행되므로 정상 경로로는 이 함수가 발동할 일이 없다. 이 함수는 배포 전 캐시된 구버전 응답 등에
+ *  대한 프론트 2차 방어선으로만 남긴다.) 한 섹션 값 안에 다른 섹션명이 리터럴 키(`"mass_strategy"`
+ *  등)로 2개 이상 등장하면, 그 섹션 하나에 6개 키 JSON 전체가 문자열째 들어간 것으로 판단한다.
+ *  ★한계(의도적 미해결): fallback_key를 expected_keys 밖의 별도 센티널 키(예: `_raw`)로 분리하면
+ *  이 휴리스틱 자체가 불필요해진다. 다만 fallback_key가 이미 "정상 섹션 이름"과 같은 키(예:
+ *  design_overview)를 겸하는 계약이 design_interpreter.py 등 여러 인터프리터에 퍼져 있어, 분리하려면
+ *  백엔드 스키마·9개 인터프리터·프론트 소비처를 동시에 바꿔야 한다(파급 큼). 근원 봉합(base
+ *  degrade)으로 실질 위험은 이미 제거됐으므로 이번 라운드에서는 보류한다. */
+export function looksLikeRawDesignAiFallback(ai: DesignAi): boolean {
+  if (!ai) return false;
+  return Object.values(ai).some((v) => {
+    if (typeof v !== "string") return false;
+    const hits = DESIGN_AI_SECTION_KEYS.filter((k) => v.includes(`"${k}"`)).length;
+    return hits >= 2;
+  });
+}
 
 /** 설계 buildingType(한글/임의) → estimate-overview building_type 코드 매핑(CostEstimationClient와 동일 규칙). */
 function mapBuildingType(bt?: string | null): string {
@@ -67,9 +93,9 @@ function fmtKrw(won?: number | null): string {
 /** ESG 탄소집약도(㎡당 kgCO2) → 쉬운 등급 라벨(낮을수록 우수). 임계는 표시용 가이드. */
 function carbonGrade(perSqm?: number | null): { label: string; tone: string } | null {
   if (perSqm == null || perSqm <= 0) return null;
-  if (perSqm <= 500) return { label: "우수", tone: "text-emerald-400 border-emerald-400/30 bg-emerald-400/10" };
-  if (perSqm <= 800) return { label: "양호", tone: "text-amber-400 border-amber-400/30 bg-amber-400/10" };
-  return { label: "개선필요", tone: "text-rose-400 border-rose-400/30 bg-rose-400/10" };
+  if (perSqm <= 500) return { label: "우수", tone: "text-[var(--status-success)] border-[var(--status-success)]/30 bg-[var(--status-success)]/10" };
+  if (perSqm <= 800) return { label: "양호", tone: "text-[var(--status-warning)] border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10" };
+  return { label: "개선필요", tone: "text-[var(--status-error)] border-[var(--status-error)]/30 bg-[var(--status-error)]/10" };
 }
 
 /* ── FAR/BCR 법규 근거(신뢰 레이어·additive) ──
@@ -120,9 +146,13 @@ interface Props {
   projectId: string;
   /** 스튜디오가 이미 받아온 설계해설(있으면 재호출 없이 표면화만). */
   designAi: DesignAi;
+  /** 해설이 생성된 시점 이후 설계(연면적 등)가 바뀌어 최신 KPI와 어긋났는지(간단 배지용). */
+  designAiStale?: boolean;
+  /** "재생성" 버튼 클릭 핸들러(호스트가 없으면 버튼 미표시). */
+  onRegenerateDesignAi?: () => void;
 }
 
-export function DesignOutcomeSummary({ projectId, designAi }: Props) {
+export function DesignOutcomeSummary({ projectId, designAi, designAiStale, onRegenerateDesignAi }: Props) {
   // ── SSOT(모세혈관 스토어) ── 설계·공사비·수지·환경은 단일 진실원을 읽는다.
   const designData = useProjectContextStore((s) => s.designData);
   const costData = useProjectContextStore((s) => s.costData);
@@ -280,7 +310,9 @@ export function DesignOutcomeSummary({ projectId, designAi }: Props) {
     ["circulation_core", "동선·코어"],
     ["improvement", "개선 제안"],
   ];
-  const hasAi = !!designAi && aiSections.some(([k]) => designAi[k]);
+  // ★파싱 실패 원문 폴백은 정상 해설로 취급하지 않는다(라이브 실측: raw JSON 노출 방지).
+  const isRawFallback = looksLikeRawDesignAiFallback(designAi);
+  const hasAi = !!designAi && !isRawFallback && aiSections.some(([k]) => designAi[k]);
 
   return (
     <div className="flex flex-col gap-5">
@@ -359,8 +391,8 @@ export function DesignOutcomeSummary({ projectId, designAi }: Props) {
                 roiPct == null
                   ? "text-[var(--text-hint)]"
                   : roiPct >= 0
-                    ? "text-emerald-400"
-                    : "text-rose-400"
+                    ? "text-[var(--status-success)]"
+                    : "text-[var(--status-error)]"
               }
             />
             {/* NPV */}
@@ -368,7 +400,7 @@ export function DesignOutcomeSummary({ projectId, designAi }: Props) {
               label="NPV"
               value={npvWon != null ? fmtKrw(npvWon) : "—"}
               hint={npvWon == null ? "수지분석 필요" : npvWon >= 0 ? "사업성 양호" : "사업성 주의"}
-              tone={npvWon == null ? "text-[var(--text-hint)]" : npvWon >= 0 ? "text-emerald-400" : "text-rose-400"}
+              tone={npvWon == null ? "text-[var(--text-hint)]" : npvWon >= 0 ? "text-[var(--status-success)]" : "text-[var(--status-error)]"}
             />
           </div>
 
@@ -380,7 +412,7 @@ export function DesignOutcomeSummary({ projectId, designAi }: Props) {
             </p>
           )}
           {costError && (
-            <p className="-mt-2 px-2 text-[11px] font-bold text-amber-400">{costError}</p>
+            <p className="-mt-2 px-2 text-[11px] font-bold text-[var(--status-warning)]">{costError}</p>
           )}
           {/* 수지/ROI가 아직 없으면 무목업: 수지분석 화면으로 유도(가짜 ROI 금지). */}
           {!costLoading && roiPct == null && (
@@ -400,7 +432,7 @@ export function DesignOutcomeSummary({ projectId, designAi }: Props) {
 
           {/* ── ② 환경분석 인라인(ESG 배지) ── */}
           <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] px-5 py-3.5">
-            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[var(--accent-strong)]">환경분석 · ESG</span>
+            <span className="label-caps text-[var(--accent-strong)]">환경분석 · ESG</span>
             {esgData?.totalCarbonPerSqm || esgData?.embodiedCarbonKg ? (
               <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-xs">
                 {cGrade && (
@@ -441,9 +473,24 @@ export function DesignOutcomeSummary({ projectId, designAi }: Props) {
           {/* ── ③ 설계해설(쉬운 한국어) — DesignInterpreter 6섹션 표면화 ── */}
           {hasAi && designAi && (
             <div className="rounded-2xl border border-indigo-400/20 bg-[var(--surface-soft)] px-5 py-4">
-              <div className="mb-3 flex items-center gap-2">
+              <div className="mb-3 flex flex-wrap items-center gap-2">
                 <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-indigo-400" />
                 <p className="text-[9px] font-black uppercase tracking-[0.3em] text-indigo-300">설계 해설 · 왜 이런 설계인가 · Claude</p>
+                {/* ★stale 배지(간단 표시 수준) — 해설 생성 이후 설계(연면적 등)가 바뀌면 재생성 유도 */}
+                {designAiStale && (
+                  <span className="flex items-center gap-2 rounded-full border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 px-2.5 py-0.5 text-[9px] font-bold text-[var(--status-warning)]">
+                    최신 설계와 불일치 · 재생성 필요
+                    {onRegenerateDesignAi && (
+                      <button
+                        type="button"
+                        onClick={onRegenerateDesignAi}
+                        className="underline decoration-dotted underline-offset-2 hover:text-amber-300"
+                      >
+                        재생성
+                      </button>
+                    )}
+                  </span>
+                )}
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
                 {aiSections
@@ -451,11 +498,28 @@ export function DesignOutcomeSummary({ projectId, designAi }: Props) {
                   .map(([k, label]) => (
                     <div key={k} className="rounded-xl border border-[var(--line)] bg-[var(--surface-strong)] px-4 py-3">
                       <p className="mb-1 text-[9px] font-black uppercase tracking-widest text-indigo-300/80">{label}</p>
-                      <p className="whitespace-pre-wrap text-[12px] leading-relaxed text-[var(--text-secondary)]">{designAi[k]}</p>
+                      <MarkdownLite text={designAi[k]} className="text-[12px] text-[var(--text-secondary)]" />
                     </div>
                   ))}
               </div>
               <p className="mt-3 text-[9px] text-[var(--text-hint)]">AI 생성 · 비전문가용 쉬운 해설 · 참고용</p>
+            </div>
+          )}
+
+          {/* ── ③' 파싱 실패 폴백(원문 JSON/절단 텍스트)을 raw로 노출하지 않고 정직 고지 ── */}
+          {designAi && isRawFallback && (
+            <div className="rounded-2xl border border-dashed border-[var(--status-warning)]/40 bg-[var(--status-warning)]/5 px-5 py-4 text-center">
+              <p className="text-xs font-bold text-[var(--status-warning)]">해설 생성이 불완전합니다 — 재생성이 필요합니다</p>
+              <p className="mt-1 text-[11px] text-[var(--text-hint)]">AI 응답이 중간에 잘리거나 형식이 어긋나 원문을 표시하지 않았습니다.</p>
+              {onRegenerateDesignAi && (
+                <button
+                  type="button"
+                  onClick={onRegenerateDesignAi}
+                  className="mt-3 rounded-full border border-[var(--status-warning)]/50 px-4 py-1.5 text-[11px] font-black uppercase tracking-widest text-[var(--status-warning)] transition-colors hover:bg-[var(--status-warning)]/10"
+                >
+                  설계 해설 재생성
+                </button>
+              )}
             </div>
           )}
         </>

@@ -28,7 +28,7 @@ export function AnalysisCacheStatus({
 }) {
   if (isStale) {
     return (
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2">
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 px-3 py-2">
         <p className="flex items-start gap-1.5 text-xs text-amber-200">
           <RefreshCw className="mt-0.5 size-3.5 shrink-0" aria-hidden />
           <span>
@@ -39,7 +39,7 @@ export function AnalysisCacheStatus({
         <button
           onClick={onRerun}
           disabled={busy}
-          className="h-8 whitespace-nowrap rounded-lg bg-amber-500 px-4 text-xs font-black text-black hover:opacity-90 disabled:opacity-50"
+          className="h-8 whitespace-nowrap rounded-lg bg-[var(--status-warning)] px-4 text-xs font-black text-black hover:opacity-90 disabled:opacity-50"
         >
           {busy ? "분석 중…" : rerunLabel}
         </button>
@@ -48,7 +48,7 @@ export function AnalysisCacheStatus({
   }
   if (isFresh) {
     return (
-      <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5">
+      <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-[var(--status-success)]/30 bg-[var(--status-success)]/10 px-3 py-1.5">
         <span className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-300">
           <CheckCircle2 className="size-3.5" aria-hidden /> 검증된 분석 재사용
         </span>

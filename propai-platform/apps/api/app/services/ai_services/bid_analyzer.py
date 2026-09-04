@@ -30,10 +30,12 @@ CONSTRUCTION_COST_PER_PYEONG: dict[str, int] = {
 }
 _DEFAULT_COST_PER_PYEONG = 6_000_000
 
-# 구조유형 보정계수 (StandardQuantityEstimator.STRUCTURE_FACTORS와 동일 개념)
-_STRUCTURE_FACTORS: dict[str, float] = {
-    "RC": 1.00, "SRC": 1.15, "SC": 1.10, "PC": 0.92, "목구조": 0.70,
-}
+# 구조유형 '비용' 보정계수 — 공용 SSOT(overview_estimator.STRUCT_COST_FACTOR) 별칭.
+# ★후속 스윕(2026-07-15 감사): 종전에는 StandardQuantityEstimator.STRUCTURE_FACTORS
+#   (골조 '물량' 보정계수, PC 0.92·목구조 0.70)를 평당공사비(비용) 승수로 혼용했다 —
+#   물리 축이 다르다(물량≠비용). 비용계수 SSOT(PC 0.95·목구조 0.85, 적산·수지와 동일)로
+#   교정. 값 수정은 overview_estimator에서(여기 재정의 금지).
+from app.services.cost.overview_estimator import STRUCT_COST_FACTOR as _STRUCTURE_FACTORS
 
 # 지역 보정계수 (평당공사비)
 _REGION_COST_FACTORS: list[tuple[str, float]] = [

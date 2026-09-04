@@ -1,0 +1,27 @@
+{
+  "_meta": {
+    "seed_id": "G1",
+    "title": "호미곶 군사 통제보호구역·방공기지 위해성 과소평가",
+    "land_attrs": {"jimok": "임야", "zone": "자연녹지지역", "sanji_gubun": null},
+    "tier": "A",
+    "phase": "0/W1-1",
+    "defect": "risk_keywords 사전에 '통제보호구역·제한보호구역·방공기지' 키워드 부재 → 규제목록에 해당 규제가 있어도 종합리스크가 저평가된다(비행안전은 '보통'으로만 매핑). 협의개발 거의 불가한 통제보호를 낮은 리스크로 오도.",
+    "w1_target": "cross_field 불변식 'regulations에 보호구역 → risk_level ≥ 높음'. protection_zone_severity SSOT 신설. 변이(키워드 제거)시 FAIL.",
+    "synthetic": true,
+    "honesty": "W0 합성 fixture — 라이브 analyze() 출력 미수집(하네스 환경 DB/API 부재). 현행 risk_keywords(comprehensive_analysis_service:1645) baseline에 충실한 구조 시드. W1 착수 시 호미곶 실주소 재분석 라이브값으로 교체.",
+    "w1_status": "CAUGHT — W1-1 cross_field.G1(protection_zone_severity SSOT) 등록으로 harness가 이 buggy 시드(risk 낮음)를 P0 finding으로 잡는다(W0 blind→flip). 근본수정 후 소비처(_research_dev_plans)는 통제보호+방공 → 리스크 '높음'을 산출(단위실증).",
+    "w1_expected": {"harness_fires": true, "harness_finding_code": "G1_PROTECTION_ZONE_RISK_FLOOR", "root_fix_risk_level": "높음", "floor": "높음"}
+  },
+  "ctx": {"address": "경상북도 포항시 남구 호미곶면 대보리 산 1", "zone_type": "자연녹지지역", "pnu": "4711025032xxxxxxx"},
+  "input": {
+    "zone_type": "자연녹지지역",
+    "regulations": ["통제보호구역", "방공기지", "비행안전구역 제6구역"],
+    "risk": {"risk_level": "낮음", "risk_factors": []},
+    "special_parcel": {"jimok": "임야", "보전산지_여부": null, "note": "NEEDS_OFFICIAL_SURVEY"}
+  },
+  "current_baseline": {
+    "field": "risk.risk_level",
+    "observed": "낮음",
+    "note": "규제목록에 '통제보호구역'·'방공기지'가 있으나 risk_keywords 미등재로 미반영 → 낮음 유지(과소평가)."
+  }
+}

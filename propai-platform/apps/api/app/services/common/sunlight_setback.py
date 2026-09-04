@@ -17,6 +17,36 @@ NORTH_SETBACK_HEIGHT_THRESHOLD_M = 10.0
 NORTH_SETBACK_MIN_LOW_M = 1.5
 
 
+# ── 적용 범위(건축법 §61 — 전용·일반주거지역) ────────────────────────────────────
+# ★R1 HIGH-2 봉합: 이 판정이 저장소에 **네 벌** 있었다(auto_design_engine.SUNLIGHT_ZONES ·
+#   massing_strategy._NORTH_LIGHT_ZONE_KEYWORDS · solar_envelope_service._NORTH_LIGHT_ZONES ·
+#   site_layout_service). 게다가 실제로 **발산**했다 — 코드형("2R","1R")을 한쪽만 인식해
+#   같은 필지가 지도에서는 정북 적용, 일조 인벨로프에서는 미적용으로 갈렸다(프론트가
+#   `zoneType`에 `zoneCode`를 넣는 경로가 여러 곳이라 실제로 도달한다).
+#   이 모듈 docstring이 이미 "전 분석엔진은 이 모듈을 경유한다"고 선언하므로 여기로 모은다.
+_NORTH_LIGHT_ZONE_CODES = frozenset({"1R", "2R", "3R"})
+# ★오탐 방지(R1 MEDIUM-3): "제2종근린생활시설"·"제2종지구단위계획구역"처럼 **주거가 아닌**
+#   문자열이 "종"만으로 걸리면, 지도에 법적 금지구역을 잘못 칠한다. '주거'를 요구한다.
+_NORTH_LIGHT_ZONE_KEYWORDS = ("전용주거", "일반주거")
+
+
+def north_light_applies(zone_type: str | None) -> bool:
+    """정북일조(건축법 §61)가 적용되는 용도지역인가 — **단일 판정 출처**.
+
+    한글 명칭과 엔진 코드(1R/2R/3R) 양쪽을 받는다(호출자마다 어느 쪽을 주는지 일정하지 않다).
+
+    ★판정 불가(빈 값)면 **False**를 돌려준다. 모르는 상태에서 '적용'으로 흘리면 없는 제약을
+      보여주고, '미적용'으로 흘리면 있는 제약을 감춘다. 소비처는 이 False를 "적용 안 함"이
+      아니라 **"판정 못 함"**으로 구분해 고지해야 한다(이 함수는 그 구분을 하지 않는다).
+    """
+    z = (zone_type or "").strip()
+    if not z:
+        return False
+    if z.upper() in _NORTH_LIGHT_ZONE_CODES:
+        return True
+    return any(k in z for k in _NORTH_LIGHT_ZONE_KEYWORDS)
+
+
 def required_north_setback_m(height_m: float, base_setback_m: float = 0.0) -> float:
     """건물(부분) 높이에 필요한 정북방향 최소 이격거리(m).
 

@@ -10,9 +10,10 @@ delay)에 더해 시/도 배치 사이에도 추가 sleep을 둬 서버부하·I
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
+
+from app.tasks._async_batch import run_async_batch
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +128,7 @@ async def _sync_all_regions() -> dict:
 
 def sync_onbid_auctions() -> dict:
     """경공매 전국 동기화(Celery 진입점). 매일 04:00 실행(beat_schedule)."""
-    return asyncio.run(_sync_all_regions())
+    return run_async_batch(lambda: _sync_all_regions())
 
 
 _celery_app = _get_celery_app()

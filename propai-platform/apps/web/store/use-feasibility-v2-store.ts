@@ -44,6 +44,21 @@ export interface FeasibilityResult {
   cost_breakdown_won: Record<string, number>;
   tax_detail: Record<string, unknown>;
   special_detail: Record<string, unknown>;
+  // ★P4②: 시니어 회계사(K-IFRS) 자문 — with_senior opt-in 시에만 채워짐(기본 {}).
+  //   구조는 공용 evidence 계약(SeniorVerdictCard의 SeniorConsultation과 동일).
+  //   타입은 소비처(에디터)에서 SeniorConsultation으로 단언 — store가 컴포넌트 타입에
+  //   역의존하지 않도록 unknown 유지.
+  senior_accountant_review?: unknown;
+  // ★W3(100% 캠페인, additive): 월별 DCF 요약 — npv_won은 이 기저로 산출됨.
+  cashflow_summary?: {
+    npv_won?: number | null;
+    irr_pct?: number | null;
+    payback_month?: number | null;
+    dscr?: number | null;
+    dscr_basis?: string;
+    npv_basis?: string;
+    assumptions?: string[];
+  } | null;
   // baseline(추정) 응답에만 존재 — /calculate 결과는 미포함.
   is_baseline?: boolean;
   confidence?: string;
@@ -97,6 +112,11 @@ export interface ModuleInfo {
 interface FeasibilityV2State {
   // 입력
   input: Partial<FeasibilityInput>;
+  // 이 input 이 어느 프로젝트에 속하는지(프로젝트 스코핑) — 이 스토어는 전역 단일이라
+  //   프로젝트를 전환해도 이전 프로젝트의 input 이 남는다. 투자분석 등 다른 화면이 이 input 을
+  //   리스크 시뮬 base 로 재사용할 때, boundProjectId 와 현재 projectId 가 다르면 '남의 프로젝트
+  //   데이터'이므로 신뢰하지 않도록 하는 표식(무목업: 다른 프로젝트 실데이터 오표시 방지).
+  boundProjectId: string | null;
   // 결과
   result: FeasibilityResult | null;
   comparisonResults: FeasibilityResult[];
@@ -114,10 +134,17 @@ interface FeasibilityV2State {
   activeTab: "input" | "result" | "montecarlo" | "version" | "tax";
   // 액션
   setInput: (patch: Partial<FeasibilityInput>) => void;
+  // 현재 input 을 특정 프로젝트에 바인딩(수지 에디터가 프로젝트 로드 시 호출).
+  bindProject: (projectId: string) => void;
   setSelectedModule: (code: string) => void;
   setActiveTab: (tab: FeasibilityV2State["activeTab"]) => void;
+  // ★P4②: 시니어 회계 자문(K-IFRS) opt-in — LLM 비용이 발생하므로 기본 false(과금 정책).
+  withSenior: boolean;
+  setWithSenior: (v: boolean) => void;
   // opts.constructionCostOverrideWon: 공사비 정밀분석 결과를 엔진에 주입(3자 수치 정합).
-  calculate: (opts?: { constructionCostOverrideWon?: number | null }) => Promise<void>;
+  // opts.withSenior: 호출별 자문 강제 지정 — ★자동 재계산 경로는 반드시 false를 넘겨
+  //   사용자 명시 클릭 없이 유료 LLM 자문이 반복 과금되는 누수를 차단한다(리뷰 R1-P1).
+  calculate: (opts?: { constructionCostOverrideWon?: number | null; withSenior?: boolean }) => Promise<void>;
   // 부지 데이터만으로 시장표준 추정(baseline) 수지를 1회 산출해 즉시 표시.
   runBaseline: (input: FeasibilityBaselineInput) => Promise<void>;
   compareMulti: (inputs: FeasibilityInput[]) => Promise<void>;
@@ -156,6 +183,7 @@ const DEFAULT_INPUT: Partial<FeasibilityInput> = {
 export const useFeasibilityV2Store = create<FeasibilityV2State>()(
   immer((set, get) => ({
     input: { ...DEFAULT_INPUT },
+    boundProjectId: null,
     result: null,
     comparisonResults: [],
     monteCarloResult: null,
@@ -165,12 +193,29 @@ export const useFeasibilityV2Store = create<FeasibilityV2State>()(
     selectedModule: "M06",
     isCalculating: false,
     error: null,
+    withSenior: false,
+    setWithSenior: (v) =>
+      set((s) => {
+        s.withSenior = v;
+      }),
     baselineNeedsInput: false,
     activeTab: "input",
 
     setInput: (patch) =>
       set((s) => {
         Object.assign(s.input, patch);
+      }),
+
+    // 다른 프로젝트로 바뀌면 이전 프로젝트 input 이 남지 않도록 초기화 후 바인딩(오염 방지).
+    bindProject: (projectId) =>
+      set((s) => {
+        if (s.boundProjectId !== projectId) {
+          s.input = { ...DEFAULT_INPUT };
+          s.result = null;
+          s.monteCarloResult = null;
+          s.baselineNeedsInput = false;
+        }
+        s.boundProjectId = projectId;
       }),
 
     setSelectedModule: (code) =>
@@ -201,7 +246,9 @@ export const useFeasibilityV2Store = create<FeasibilityV2State>()(
             : {}),
         };
         const res = await apiClient.postV2<FeasibilityResult>("/feasibility/calculate", {
-          body: { ...base, params } as Record<string, unknown>,
+          // with_senior: K-IFRS 자문 opt-in — 호출별 override(자동 경로=false 강제)가
+          //   스토어 토글보다 우선(유료 LLM 반복 과금 차단, 리뷰 R1-P1).
+          body: { ...base, params, with_senior: opts?.withSenior ?? get().withSenior } as Record<string, unknown>,
         });
         set((s) => {
           s.result = res;
@@ -335,7 +382,9 @@ export const useFeasibilityV2Store = create<FeasibilityV2State>()(
 
     reset: () =>
       set((s) => {
+        s.withSenior = false;
         s.input = { ...DEFAULT_INPUT };
+        s.boundProjectId = null;
         s.result = null;
         s.comparisonResults = [];
         s.monteCarloResult = null;

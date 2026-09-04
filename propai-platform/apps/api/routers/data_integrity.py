@@ -44,3 +44,20 @@ async def trigger_refresh(source_name: str):
     """특정 데이터 소스 수동 갱신 트리거."""
     # This would trigger the ETL for the specific source
     return {"message": f"'{source_name}' 갱신이 요청되었습니다.", "status": "queued"}
+
+
+@router.get("/field-audit-status")
+async def get_field_audit_status():
+    """자가검증(field_audit) 레이어의 등록/활성 상태 조회 — 배포 회귀 가드(진단 전용).
+
+    배포된 백엔드에서 analyze() 주경로의 field_audit 부착이 무성(silent) 회귀했는지
+    스모크로 즉시 assert하기 위한 관측전용 엔드포인트. 분석을 실행하지 않고(부작용 0)
+    등록 규칙 상태만 introspect한다. 무인증 공개 — 배포후 스모크가 서버에서 curl로 확인.
+
+    반환 예: {"enabled": true, "rules_registered": 8, "rule_ids": ["G1_PROTECTION_ZONE_RISK", ...]}.
+    """
+    try:
+        from apps.api.app.services.verification.field_audit import runner
+    except ImportError:
+        from app.services.verification.field_audit import runner
+    return runner.audit_status()

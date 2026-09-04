@@ -343,6 +343,73 @@ export function G2BBidAnalysisModal({
               </section>
             )}
 
+            {/* QTO 세부내역 (물량산출) */}
+            {result.qto && (
+              <section className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-4">
+                <h3 className="text-sm font-black text-[var(--text-primary)] mb-2">
+                  물량산출 세부내역 {result.qto.length > 0 ? `(${result.qto.length}건)` : ""}
+                </h3>
+                {result.qto.length > 0 ? (
+                  <div className="max-h-56 overflow-y-auto rounded-lg border border-[var(--line)]/60">
+                    <table className="w-full text-xs">
+                      <thead className="sticky top-0 bg-[var(--surface-strong)]">
+                        <tr className="text-[var(--text-tertiary)]">
+                          <th className="px-2 py-1.5 text-left font-bold">공종코드</th>
+                          <th className="px-2 py-1.5 text-left font-bold">항목</th>
+                          <th className="px-2 py-1.5 text-right font-bold">물량</th>
+                          <th className="px-2 py-1.5 text-left font-bold">단위</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {result.qto.map((q, i) => (
+                          <tr key={`${q.work_code}-${i}`} className="border-t border-[var(--line)]/40">
+                            <td className="px-2 py-1.5 font-mono text-[var(--text-tertiary)]">{q.work_code || "-"}</td>
+                            <td className="px-2 py-1.5 text-[var(--text-primary)]">{q.item_name || "-"}</td>
+                            <td className="px-2 py-1.5 text-right font-mono text-[var(--text-secondary)]">
+                              {q.quantity != null ? q.quantity.toLocaleString(undefined, { maximumFractionDigits: 1 }) : "-"}
+                            </td>
+                            <td className="px-2 py-1.5 text-[var(--text-hint)]">{q.unit || "-"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="text-xs text-[var(--text-hint)]">물량산출 세부내역이 없습니다.</p>
+                )}
+              </section>
+            )}
+
+            {/* 시장동향 (인근 유사공종 낙찰가율 피드) */}
+            {result.market_feed && (
+              <section className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-4">
+                <h3 className="text-sm font-black text-[var(--text-primary)] mb-2">시장동향 (인근 유사공종 낙찰가율)</h3>
+                {result.market_feed.region_avg != null && (
+                  <div className="text-sm text-[var(--text-secondary)] mb-2">
+                    지역 평균 낙찰가율 <b className="text-[var(--text-primary)] font-mono">{fmtPct(result.market_feed.region_avg)}</b>
+                    {result.market_feed.region_std != null && (
+                      <span className="ml-2 text-[var(--text-hint)]">표준편차 {fmtPct(result.market_feed.region_std)}</span>
+                    )}
+                  </div>
+                )}
+                {result.market_feed.items && result.market_feed.items.length > 0 ? (
+                  <div className="max-h-40 overflow-y-auto space-y-1">
+                    {result.market_feed.items.map((it, i) => (
+                      <div
+                        key={i}
+                        className="flex items-center justify-between text-xs text-[var(--text-secondary)] border-t border-[var(--line)]/40 pt-1 first:border-t-0 first:pt-0"
+                      >
+                        <span>{it.stat_period} · {it.bid_type}</span>
+                        <span className="font-mono text-[var(--text-primary)]">{fmtPct(it.avg_award_rate)}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-[var(--text-hint)]">인근 낙찰가율 통계 데이터가 없습니다.</p>
+                )}
+              </section>
+            )}
+
             {/* 용도지역 + 법규 + ESG */}
             <section className="grid md:grid-cols-3 gap-2">
               {result.zoning && (

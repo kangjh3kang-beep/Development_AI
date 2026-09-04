@@ -66,7 +66,7 @@ export function BuildCostCard({ address, landAreaSqm, zone }: { address?: string
           {loading ? "추정 중…" : cost ? "다시 추정" : "건축비 추정"}
         </button>
       </div>
-      {error && <p className="mt-2 text-[11px] text-[var(--danger,#dc2626)]">{error}</p>}
+      {error && <p className="mt-2 text-[11px] text-[var(--status-error)]">{error}</p>}
       {cost && (
         <>
           <div className="mt-2.5 grid grid-cols-3 gap-2 text-center text-[11px]">

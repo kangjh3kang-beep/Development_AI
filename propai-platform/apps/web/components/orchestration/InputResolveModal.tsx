@@ -15,7 +15,8 @@
  * 색상 토큰만 사용(하드코딩 금지).
  */
 
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { DISMISS_Z, useDismissible } from "@/lib/satong-dismiss";
 import { NODES } from "@/lib/orchestration/node-registry";
 import type {
   AnalysisNode,
@@ -23,15 +24,30 @@ import type {
   SsotInputSpec,
 } from "@/lib/orchestration/types";
 import type { ResolveInputsResult } from "@/store/useOrchestrationStore";
+import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { useModalFocus } from "@/hooks/useModalFocus";
 
 const BY_ID: Record<NodeId, AnalysisNode> = Object.fromEntries(
   NODES.map((n) => [n.id, n]),
 ) as Record<NodeId, AnalysisNode>;
 
-/** 입력 슬롯 → 사람이 읽는 라벨. */
-function slotLabel(input: SsotInputSpec): string {
+/** 입력 슬롯 → 사람이 읽는 라벨. (LOW-1 테스트: 순수함수 — InputResolveModal.test.ts) */
+export function slotLabel(input: SsotInputSpec): string {
   const f = input.field ? `.${input.field}` : "";
   return input.manualPrompt || `${input.slot}${f}`;
+}
+
+/**
+ * (LOW-1) ready 슬롯이 "실제 SSOT 값 확보"인지, 아니면 readyCheck가 항상 true인
+ * 자기슬롯 파생환류(예: feasibility 노드의 feasibilityData — 있으면 쓰고 없어도 게이트
+ * 하지 않는 옵셔널 입력)인지 구분한다. 항상-ready 슬롯은 readyCheck가 무조건 통과하므로
+ * ready 배열에 들어오지만, 실제 store 값이 null이면 "확보됨(✓)"이 거짓 표시가 된다.
+ * 다른 readyCheck(hasSite 등)는 통과 조건 자체가 슬롯 실값 존재이므로, 이 검사가
+ * 특정 슬롯을 하드코딩하지 않고도 일반적으로 안전하게 동작한다.
+ */
+function hasRealSlotValue(input: SsotInputSpec): boolean {
+  const s = useProjectContextStore.getState() as unknown as Record<string, unknown>;
+  return s[input.slot] != null;
 }
 
 export interface InputResolveModalProps {
@@ -57,9 +73,18 @@ export function InputResolveModal({
   onAutoRunUpstream,
   onManualSubmit,
 }: InputResolveModalProps) {
+  const bodyRef = useRef<HTMLDivElement>(null);
   const node = BY_ID[nodeId];
   const { ready, missing, autoCandidates } = resolution;
   const [manual, setManual] = useState<Record<string, string>>({});
+
+  // ESC 로 닫기 — 화면 층위(z-[800])와 같은 칸으로 해제 순서를 등록한다.
+  useDismissible(DISMISS_Z.appModal, Boolean(node), onClose);
+
+  // ★포커스 생명주기 — 열림 판정은 ESC 계약과 **같은 식**(`Boolean(node)`)을 쓴다.
+  //   미룬 사유였던 *"동적 필드 수"* 는 문제가 아니다: 훅이 **DOM 순서의 첫 포커스 가능
+  //   요소**를 고르므로 미해결 입력이 몇 개든 일관된다.
+  useModalFocus(bodyRef, Boolean(node));
 
   if (!node) return null;
 
@@ -73,14 +98,27 @@ export function InputResolveModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-[color-mix(in_srgb,var(--bg-primary)_70%,transparent)] p-4"
+      /* ★z-[800] = 층위 계약의 모달 칸(lib/satong-map-z.ts 의 SATONG_CONTENT_Z.appModal).
+         이 모달을 렌더하는 화면은 둘뿐이고(MarketInsightsWorkspaceClient · OrchestrateWorkspaceClient),
+         그중 **market-insights 가 지도를 함께 그린다**(SatongMapShell + 실거래·필지·인구·이동 지도).
+         z-50 이던 종전에는 지도 오버레이가 백드롭을 관통해 **모달 위로** 떠 있었다 —
+         칩바 z-[380]·레이어 레일 z-[420]·팝오버 z-[430], SATONG_UI_Z 400~500(인라인).
+         지도 래퍼가 스태킹 컨텍스트를 만들지 않아 이들이 **루트에서** 모달과 경쟁하고,
+         백드롭이 뷰포트 전체라 좌표도 실제로 겹친다.
+         ★정정(2026-08-07): 종전 주석은 "본문 sticky ContextHeader(600)도 관통했다"고 적었으나
+           **거짓**이다 — z-[600] ContextHeader 는 `showContextHeader` 게이트 안에만 있고(기본 false),
+           이 모달의 두 화면 어디에도 켜져 있지 않다(market-insights 는 위에서 자체 ContextHeader 를
+           렌더하므로 **의도적으로** 안 켠다). 근거를 실측 없이 적었고, 독립 검증이 잡았다.
+         사다리 잠금: __tests__/layer-ladder.contract.test.tsx */
+      className="fixed inset-0 z-[800] flex items-center justify-center bg-[color-mix(in_srgb,var(--background)_70%,transparent)] p-4"
       role="dialog"
       aria-modal="true"
       aria-label={`${node.label} 입력 확인`}
       onClick={onClose}
     >
       <div
-        className="w-full max-w-md rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[var(--surface-card)] p-5 shadow-[var(--shadow-lg)]"
+        ref={bodyRef}
+        className="w-full max-w-md rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-5 shadow-[var(--shadow-lg)]"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-3 flex items-start justify-between gap-2">
@@ -105,12 +143,26 @@ export function InputResolveModal({
           <div className="mb-3 rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3">
             <p className="mb-1.5 text-[11px] font-bold text-[var(--text-secondary)]">확보된 입력</p>
             <ul className="space-y-1">
-              {ready.map((r) => (
-                <li key={manualKey(r)} className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
-                  <span className="text-[var(--accent-strong)]">✓</span>
-                  {slotLabel(r)}
-                </li>
-              ))}
+              {ready.map((r) => {
+                // (LOW-1) 항상-ready 슬롯(readyCheck 무조건 true)이 실제로는 비어 있으면
+                // ✓(확보됨)로 오인 표시하지 않고 중립 표기로 정직화한다.
+                const confirmed = hasRealSlotValue(r);
+                return (
+                  <li key={manualKey(r)} className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
+                    <span className={confirmed ? "text-[var(--accent-strong)]" : "text-[var(--text-hint)]"}>
+                      {confirmed ? "✓" : "–"}
+                    </span>
+                    <span>
+                      {slotLabel(r)}
+                      {!confirmed && (
+                        <span className="ml-1 text-[10px] text-[var(--text-hint)]">
+                          (선택 입력 — 미확보 시 기본값)
+                        </span>
+                      )}
+                    </span>
+                  </li>
+                );
+              })}
             </ul>
           </div>
         )}
@@ -161,7 +213,7 @@ export function InputResolveModal({
                       setManual((prev) => ({ ...prev, [manualKey(m)]: e.target.value }))
                     }
                     placeholder={m.manualPrompt || slotLabel(m)}
-                    className="w-full rounded-lg border border-[var(--line-strong)] bg-[var(--surface-card)] px-3 py-2 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-hint)] focus:border-[var(--accent-strong)] focus:outline-none"
+                    className="w-full rounded-lg border border-[var(--line-strong)] bg-[var(--surface-strong)] px-3 py-2 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-hint)] focus:border-[var(--accent-strong)] focus:outline-none"
                   />
                 ))}
                 <button

@@ -98,7 +98,7 @@ class TestOrdinanceLimitsAdapter:
         from app.services.land_intelligence import ordinance_service
         from apps.api.routers import drawing
 
-        async def _fake(self, address, zone_type):  # noqa: ANN001
+        async def _fake(self, address, zone_type, **_kwargs):  # noqa: ANN001 — additive 파라미터 수용
             return {"effective_bcr": 50.0, "effective_far": 170.0, "source": "지자체 조례",
                     "sigungu": "강남구", "legal_basis": "서울특별시 도시계획 조례"}
 
@@ -114,7 +114,7 @@ class TestOrdinanceLimitsAdapter:
         from app.services.land_intelligence import ordinance_service
         from apps.api.routers import drawing
 
-        async def _fake(self, address, zone_type):  # noqa: ANN001
+        async def _fake(self, address, zone_type, **_kwargs):  # noqa: ANN001 — additive 파라미터 수용
             return {"effective_bcr": 60.0, "effective_far": 250.0, "source": "지자체 조례",
                     "sigungu": "강남구"}
 
@@ -128,7 +128,7 @@ class TestOrdinanceLimitsAdapter:
         from app.services.land_intelligence import ordinance_service
         from apps.api.routers import drawing
 
-        async def _boom(self, address, zone_type):  # noqa: ANN001
+        async def _boom(self, address, zone_type, **_kwargs):  # noqa: ANN001
             raise RuntimeError("postgres://secret@host/db connection refused")
 
         monkeypatch.setattr(ordinance_service.OrdinanceService, "get_ordinance_limits", _boom)
@@ -263,7 +263,7 @@ class TestOrdinanceZoneMapping:
 
         seen: dict[str, str] = {}
 
-        async def _fake(self, address, zone_type):  # noqa: ANN001
+        async def _fake(self, address, zone_type, **_kwargs):  # noqa: ANN001 — additive 파라미터 수용
             seen["zone_type"] = zone_type
             return {"effective_bcr": 20.0, "effective_far": 100.0, "source": "지자체 조례"}
 

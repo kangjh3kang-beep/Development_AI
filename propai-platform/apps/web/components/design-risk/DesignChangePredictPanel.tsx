@@ -12,6 +12,7 @@
 
 import { useMemo, useState, type FormEvent } from "react";
 import { ApiClientError, apiClient } from "@/lib/api-client";
+import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { NumberInput } from "@/components/common/NumberInput";
@@ -29,12 +30,12 @@ const CATEGORY_META: Record<
 > = {
   법규초과: {
     label: "법규 초과",
-    cls: "border-rose-500/30 bg-rose-500/10 text-rose-400",
+    cls: "border-[var(--status-error)]/30 bg-[var(--status-error)]/10 text-[var(--status-error)]",
     hint: "건폐율·용적률·높이 등 법정 한도를 넘었습니다.",
   },
   누락: {
     label: "필수 요소 누락",
-    cls: "border-amber-500/30 bg-amber-500/10 text-amber-400",
+    cls: "border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 text-[var(--status-warning)]",
     hint: "주차·계단·승강기 등 법정 필수 항목이 빠졌습니다.",
   },
   간섭정합: {
@@ -50,12 +51,12 @@ const SEVERITY_META: Record<
 > = {
   high: {
     label: "심각",
-    cls: "border-rose-500/30 bg-rose-500/10 text-rose-400",
+    cls: "border-[var(--status-error)]/30 bg-[var(--status-error)]/10 text-[var(--status-error)]",
     icon: "●",
   },
   warn: {
     label: "주의",
-    cls: "border-amber-500/30 bg-amber-500/10 text-amber-400",
+    cls: "border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 text-[var(--status-warning)]",
     icon: "●",
   },
   info: {
@@ -120,6 +121,9 @@ export function DesignChangePredictPanel({ projectId }: { projectId: string }) {
     height_m: undefined,
     parking: undefined,
     units: undefined,
+    // land_area_sqm 은 여기서 시드하지 않는다 — 제출 시점에 주입(아래 handleSubmit).
+    //   이 초기화는 최초 마운트에만 실행되므로, 프로젝트가 나중에 로드되면 면적이 영영 비어
+    //   백엔드 대표필지 폴백이 되살아난다. 사용자 편집 필드도 아니라 state 에 둘 이유가 없다.
   }));
   const [useLlm, setUseLlm] = useState(false);
 
@@ -154,6 +158,15 @@ export function DesignChangePredictPanel({ projectId }: { projectId: string }) {
         designParams[k] = v;
       }
     });
+
+    // ★대지면적은 제출 시점에 유효면적(다필지=통합)으로 주입한다 — 항상 최신 컨텍스트 반영.
+    //   미전송하면 백엔드가 대표주소로 재조회해 **대표필지 1개 면적**으로 채우고(_augment_from_site),
+    //   통합 GFA 를 그 면적으로 나눠 용적률을 과대 산정 → 허위 '법규초과' 경고가 난다.
+    //   무목업: 미확보면 주입하지 않는다(0 강제 금지 — 백엔드 계약이 gt=0 이라 0 은 422).
+    const landAreaSqm = effectiveLandAreaSqm(siteAnalysis);
+    if (typeof landAreaSqm === "number" && landAreaSqm > 0) {
+      designParams.land_area_sqm = landAreaSqm;
+    }
 
     setLoading(true);
     try {
@@ -225,7 +238,7 @@ export function DesignChangePredictPanel({ projectId }: { projectId: string }) {
       {/* Header + Form */}
       <div className="rounded-[var(--radius-2xl)] border border-[var(--line)] bg-[var(--surface-strong)] p-6 shadow-[var(--shadow-lg)]">
         <div className="flex flex-wrap items-center gap-3">
-          <span className="rounded-full bg-[var(--accent-soft)] px-4 py-1.5 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--accent-strong)]">
+          <span className="rounded-full bg-[var(--accent-soft)] px-4 py-1.5 label-caps text-[var(--accent-strong)]">
             설계변경 사전예측
           </span>
           <span className="rounded-full border border-[var(--line)] px-3 py-1 text-[10px] font-medium text-[var(--text-tertiary)]">
@@ -325,7 +338,7 @@ export function DesignChangePredictPanel({ projectId }: { projectId: string }) {
             </p>
           ) : null}
           {error ? (
-            <p className="rounded-[var(--radius-md)] border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-400">
+            <p className="rounded-[var(--radius-md)] border border-[var(--status-error)]/30 bg-[var(--status-error)]/10 p-3 text-sm text-[var(--status-error)]">
               {error}
             </p>
           ) : null}
@@ -334,8 +347,8 @@ export function DesignChangePredictPanel({ projectId }: { projectId: string }) {
 
       {/* ok:false */}
       {okFalseError ? (
-        <div className="rounded-[var(--radius-2xl)] border border-amber-500/30 bg-amber-500/10 p-6">
-          <p className="text-sm font-semibold text-amber-400">예측 불가</p>
+        <div className="rounded-[var(--radius-2xl)] border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 p-6">
+          <p className="text-sm font-semibold text-[var(--status-warning)]">예측 불가</p>
           <p className="mt-2 text-sm leading-7 text-[var(--text-secondary)]">
             {okFalseError}
           </p>
@@ -386,7 +399,7 @@ export function DesignChangePredictPanel({ projectId }: { projectId: string }) {
           {/* 필터 */}
           {risks.length > 0 ? (
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--text-tertiary)]">
+              <span className="label-caps text-[var(--text-tertiary)]">
                 필터
               </span>
               <FilterChip
@@ -422,7 +435,7 @@ export function DesignChangePredictPanel({ projectId }: { projectId: string }) {
 
           {/* 리스크 리스트(카테고리 그룹) */}
           {risks.length === 0 ? (
-            <div className="rounded-[var(--radius-2xl)] border border-emerald-500/30 bg-emerald-500/10 p-6 text-sm leading-7 text-emerald-400">
+            <div className="rounded-[var(--radius-2xl)] border border-[var(--status-success)]/30 bg-[var(--status-success)]/10 p-6 text-sm leading-7 text-[var(--status-success)]">
               예측된 설계변경 리스크가 없습니다. (입력 범위 내 — 상세 설계 시 재검토
               권장)
             </div>

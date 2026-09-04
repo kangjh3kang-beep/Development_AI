@@ -1,0 +1,32 @@
+{
+  "_meta": {
+    "seed_id": "G2",
+    "title": "대보리 학교 POI 과카운트(모학교 미병합)",
+    "land_attrs": {"jimok": "임야", "zone": "자연녹지지역", "sanji_gubun": null},
+    "tier": "A",
+    "phase": "0/W1-2",
+    "defect": "POI 수집이 대보초등학교의 본교·운동장·병설유치원·체육관·분교를 각각 raw append → 사실상 1개교(대보초)가 5개교로 집계. 입지점수·학군 서술이 과대.",
+    "w1_target": "dedup_school_cluster() 이름정규화(운동장·체육관·병설·분교 접미 제거)+좌표근접 모학교 병합. cross_field 'school_n = dedup 고유 모학교 수'. 대보초 5→1.",
+    "synthetic": true,
+    "honesty": "W0 합성 fixture — 라이브 kakao_local POI 미수집. 계획 §2.2 G2(학교 5→1 대보초) 서술에 충실한 구조 시드. W1 착수 시 대보리 실 POI 라이브값으로 교체."
+  },
+  "ctx": {"address": "경상북도 포항시 남구 호미곶면 대보리", "zone_type": "자연녹지지역", "pnu": "4711025032xxxxxxx"},
+  "input": {
+    "zone_type": "자연녹지지역",
+    "poi": {
+      "schools": [
+        {"name": "대보초등학교", "x": 129.56, "y": 36.07},
+        {"name": "대보초등학교 운동장", "x": 129.5601, "y": 36.0701},
+        {"name": "대보초등학교병설유치원", "x": 129.5602, "y": 36.0702},
+        {"name": "대보초등학교 체육관", "x": 129.5603, "y": 36.0703},
+        {"name": "대보초등학교 구만분교", "x": 129.561, "y": 36.071}
+      ],
+      "school_count": 5
+    }
+  },
+  "current_baseline": {
+    "field": "poi.school_count",
+    "observed": 5,
+    "note": "동일 모학교(대보초)의 부속시설·분교가 개별 카운트 → 5개교(실제 1개교)."
+  }
+}

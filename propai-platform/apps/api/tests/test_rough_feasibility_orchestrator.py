@@ -135,10 +135,26 @@ async def test_margin_20pct_field(monkeypatch):
     # 실분양수입 기반 net_profit·roi 도 별도 존재(마진과 분리)
     assert summary["net_profit_won"] == summary["total_revenue_won"] - summary["total_cost_won"]
     assert summary["grade"] in "ABCDEF"
-    # 총사업비 = 토지+공사+금융+제경비(취득세는 토지비에 포함 — tax 이중계상 없음)
+    # 총사업비 = 토지+공사+금융+제경비+부담금(B/C단계 시행사 부담).
+    # (종전 불변식 '토지+공사+금융+제경비'는 부담금 상시-0 결함을 그대로 고정한 것 — 교정.
+    #  취득세는 토지비에 포함돼 charges_won에 미포함(이중계상 없음))
     cb = out["cost_breakdown"]
+    assert cb["charges_won"] is not None and cb["charges_won"] > 0
     assert (cb["land_won"] + cb["construction_won"] + cb["finance_won"] + cb["other_won"]
-            == summary["total_cost_won"])
+            + cb["charges_won"] == summary["total_cost_won"])
+    # charges 블록 정합: 합계 = 공사단계 + 분양단계, 수분양자 부담분은 합계에서 제외 확인
+    charges = out["charges"]
+    assert charges["total_won"] == cb["charges_won"]
+    assert charges["total_won"] == charges["construction_stage_won"] + charges["sale_stage_won"]
+    buyer_items_sum = sum(
+        it["amount_won"] for it in charges["items"] if it.get("borne_by") == "buyer"
+    )
+    assert charges["buyer_borne_total_won"] == buyer_items_sum
+    assert charges["total_won"] + buyer_items_sum == sum(it["amount_won"] for it in charges["items"])
+    # 리뷰 P2-2: C01 부가세 면세기준은 '전용 85㎡' — M06 표준 전용 84㎡는 면세여야 한다.
+    # (공급면적 112㎡를 잘못 전달하면 분양수입의 ~2.4%가 날조 과세로 계상됨)
+    c01 = next(it for it in charges["items"] if it["code"] == "C01")
+    assert c01["amount_won"] == 0
 
 
 @pytest.mark.asyncio
@@ -350,6 +366,52 @@ async def test_multiparcel_seeds_integrated_area(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_a2_usable_adopted_for_gfa_gross_for_land_cost(monkeypatch):
+    """★A-2(배선 P1 — usable 면적 전파) 회귀 — GFA/개발규모는 usable(land_area_effective_sqm),
+    토지비 산정은 gross(total_area_sqm) 채택(comprehensive_analysis_service F2/P0-2(c)와 동일
+    이원화 원칙 — test_f2_land_cost_gross_basis.py 스타일). 도로 지목 혼입 다필지:
+    gross=2000㎡(대 1600+도로 400), usable=1600㎡(도로 제외)."""
+    integrated = {
+        "total_area_sqm": 2000.0, "land_area_effective_sqm": 1600.0,
+        "dominant_zone": "제3종일반주거지역", "blended_far_eff_pct": 200.0, "parcel_count": 2,
+    }
+    _stub_happy(monkeypatch, integrated=integrated)
+
+    # 실제 토지비 계산(land_cost_engine)까지는 타되, _resolve_land_cost가 받은 land_area 인자를
+    # 스파이로 캡쳐해 '토지비는 gross로 호출됐다'를 산식 복제 없이 검증한다.
+    land_cost_calls: list[float] = []
+    orig_resolve = orch._resolve_land_cost
+
+    async def _spy_resolve_land_cost(*, address, land_area, official_price, land_price_reliable):
+        land_cost_calls.append(land_area)
+        return await orig_resolve(
+            address=address, land_area=land_area, official_price=official_price,
+            land_price_reliable=land_price_reliable,
+        )
+
+    monkeypatch.setattr(orch, "_resolve_land_cost", _spy_resolve_land_cost)
+
+    out = await orch.build_rough_scenario(
+        address="서울특별시 강남구 역삼동 736",
+        parcels=[{"area_sqm": 1600, "land_category": "대"}, {"area_sqm": 400, "land_category": "도로"}],
+    )
+
+    # GFA/개발규모(land_area_sqm) = usable(1600) 채택.
+    assert out["inputs"]["land_area_sqm"] == 1600.0
+    assert out["inputs"]["gfa_sqm"] == 3200.0  # 1600 * 200 / 100
+
+    # 이원화 근거 additive 노출(양 면적 병기).
+    basis = out["inputs"]["land_area_basis"]
+    assert basis["gross_sqm"] == 2000.0
+    assert basis["usable_sqm"] == 1600.0
+    assert basis["gfa_sqm_basis"] == "usable"
+    assert basis["land_cost_basis"] == "gross"
+
+    # 토지비 산정에는 gross(2000)가 전달됐다 — usable(1600) 아님(취득원가 축소 방지).
+    assert land_cost_calls == [2000.0]
+
+
+@pytest.mark.asyncio
 async def test_dev_type_specified_uses_it(monkeypatch):
     """dev_type 지정 시 해당 유형 사용(자동 Top1 대체 아님)."""
     async def _fake_auto(**kwargs):
@@ -513,6 +575,22 @@ async def test_medium6_construction_months_floor_guard(monkeypatch):
     assert "construction_months" in out["overrides_applied"]
     assert out["cashflow"] is not None
     assert len(out["cashflow"]["monthly_rows"]) > 0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ★H1(QA REQUEST CHANGES): 세대수 가정(total_households) additive 노출
+# ─────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+async def test_h1_total_households_assumed_positive(monkeypatch):
+    """세대수 가정(GFA÷유형 표준 전용면적, unit_standards SSOT)이 inputs에 양수로 노출된다.
+
+    프론트(STEP3 리스크시뮬)가 이 값을 세대수 SSOT 폴백으로 소비해, 설계 확정 전에도
+    avg_area_pyeong 산식(세대수가 소거됨)으로 매출이 0으로 오탐하지 않게 한다.
+    """
+    _stub_happy(monkeypatch)
+    out = await orch.build_rough_scenario(address="서울특별시 강남구 역삼동 736")
+    assert isinstance(out["inputs"]["total_households"], int)
+    assert out["inputs"]["total_households"] > 0
 
 
 # ─────────────────────────────────────────────────────────────────────────────

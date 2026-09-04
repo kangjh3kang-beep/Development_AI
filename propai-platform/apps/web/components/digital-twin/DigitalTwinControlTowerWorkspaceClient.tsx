@@ -8,6 +8,11 @@ import { Button, Card, CardContent, CardTitle, Input, Select } from "@propai/ui"
 import { NumberInput } from "@/components/common/NumberInput";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { ApiClientError, apiClient } from "@/lib/api-client";
+import { fetchAllProjects } from "@/lib/projects-fetch";
+import {
+  maintenanceAnomalyInitialValues,
+  buildMaintenanceAnomalyBody,
+} from "@/lib/workspace-extended-panels";
 import type { Locale } from "@/i18n/config";
 
 type ProjectSummary = { id: string; name: string; total_area_sqm: number | null };
@@ -34,6 +39,19 @@ type PermitResponse = {
   progress_pct: number;
   submission_reference: string;
   missing_required_documents: string[];
+};
+// ★배선 캠페인 3차(routers/maintenance.py) — MaintenanceAnomalyResponse 계약 1:1
+// (packages/schemas/models.py:1189). 이 카드는 조회 없이 실행-즉시-표시(GET latest 없음
+// — 백엔드에 이력 조회 엔드포인트가 없으므로 다른 3개 DIMENSION과 달리 useQuery 미사용).
+type MaintenanceAnomalyResponse = {
+  alert_id: string;
+  project_id: string;
+  anomaly_score: number;
+  remaining_useful_life_days: number | null;
+  hvac_efficiency_score: number | null;
+  severity: string;
+  recommendation: string;
+  work_order_id: string | null;
 };
 
 const buildingTypes = [
@@ -117,15 +135,27 @@ export function DigitalTwinControlTowerWorkspaceClient({
     submitToSeumter: "true",
     submittedDocumentIds: "BA-01, BA-02, BA-03, BA-04, BA-05",
   });
-  const [pending, setPending] = useState<"status" | "risk" | "permit" | null>(null);
+  const [pending, setPending] = useState<"status" | "risk" | "permit" | "maintenance" | null>(null);
+  // ★배선 캠페인 3차 — 예지보전 이상감지(무날조: SSOT 프리필 없음, 백엔드 Field default와 동일값).
+  const [maintenanceForm, setMaintenanceForm] = useState(() => maintenanceAnomalyInitialValues());
+  const [maintenanceResult, setMaintenanceResult] = useState<MaintenanceAnomalyResponse | null>(null);
 
   const projectsQuery = useQuery({
     queryKey: ["projects", "digital-twin-control-tower"],
     enabled: canUseLiveApi,
-    queryFn: () =>
-      apiClient.get<PaginatedResponse<ProjectSummary>>("/projects?page=1&page_size=20", {
-        useMock: false,
-      }),
+    // ★page_size=20 고정은 21번째부터를 **선택 목록에서 지운다**(서버 total 은 그보다 크다).
+    //   페이지 순회 SSOT 를 경유해 전 페이지를 모은다.
+    queryFn: async (): Promise<PaginatedResponse<ProjectSummary>> => {
+      const all = await fetchAllProjects<ProjectSummary>((path) =>
+        apiClient.get<unknown>(path, { useMock: false }),
+      );
+      return {
+        items: all.items,
+        page: 1,
+        page_size: all.items.length,
+        has_next: all.truncated,
+      };
+    },
   });
 
   useEffect(() => {
@@ -254,9 +284,32 @@ export function DigitalTwinControlTowerWorkspaceClient({
     }
   }
 
+  async function handleMaintenance(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setWorkspaceError("");
+    if (!activeProjectId) return setWorkspaceError("A real project UUID is required.");
+    // ★MaintenanceAnomalyRequest.equipment_name/equipment_type은 백엔드 기본값이 없는
+    // 필수 필드다(lib/workspace-extended-panels.ts 초기값 주석 참조) — 422 대신 선제 안내.
+    if (!maintenanceForm.equipmentName.trim() || !maintenanceForm.equipmentType.trim()) {
+      return setWorkspaceError("Equipment name and type are required.");
+    }
+    setPending("maintenance");
+    try {
+      const response = await apiClient.post<MaintenanceAnomalyResponse>("/maintenance/detect-anomaly", {
+        useMock: false,
+        body: buildMaintenanceAnomalyBody(maintenanceForm, { projectId: activeProjectId }),
+      });
+      setMaintenanceResult(response);
+    } catch (error) {
+      setWorkspaceError(errorMessage(error));
+    } finally {
+      setPending(null);
+    }
+  }
+
   return (
     <section className="grid gap-10 font-sans">
-      <Card className="cc-bracketed rounded-[3.5rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-2xl)] overflow-hidden group">
+      <Card className="cc-bracketed rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-2xl)] overflow-hidden group">
         <CardContent className="p-10 lg:p-14 relative">
           <div className="absolute -right-20 -top-20 h-64 w-64 rounded-full bg-[var(--accent-strong)]/10 blur-[80px] transition-all duration-1000 group-hover:scale-150" />
           <div className="cc-grid-bg opacity-40" />
@@ -268,7 +321,7 @@ export function DigitalTwinControlTowerWorkspaceClient({
           <div className="relative z-10 flex flex-wrap items-center gap-4">
             <span className="cc-meta">DIGITAL TWIN · CONTROL TOWER</span>
             {runtime.mode === "live" ? <span className="cc-live"><i />LIVE TELEMETRY</span> : <span className="cc-chip-data">HISTORICAL REPLAY</span>}
-            <span className="rounded-full border border-[var(--accent-strong)]/30 bg-[var(--accent-soft)] px-5 py-2 text-[10px] font-black uppercase tracking-[0.3em] text-[var(--accent-strong)] backdrop-blur-md">
+            <span className="rounded-full border border-[var(--accent-strong)]/30 bg-[var(--accent-soft)] px-5 py-2 label-caps text-[var(--accent-strong)] backdrop-blur-md">
               <span className="mr-2 inline-block h-2 w-2 rounded-full bg-[var(--accent-strong)] animate-pulse" />
               v53.2 CONTROL TOWER
             </span>
@@ -288,16 +341,26 @@ export function DigitalTwinControlTowerWorkspaceClient({
                 value={selectedProjectId}
                 onValueChange={(value) => setSelectedProjectId(value)}
                 options={projectsQuery.data?.items?.map((project) => ({ label: project.name, value: project.id })) ?? []}
-                className="h-16 rounded-[2rem] border-[var(--line-strong)] bg-[var(--surface-soft)]/50 px-8 font-bold"
+                className="h-16 rounded-[var(--radius-lg)] border-[var(--line-strong)] bg-[var(--surface-soft)]/50 px-8 font-bold"
               />
             </div>
             <div className="space-y-3">
-              <label className="ml-5 text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">Manual Override (UUID)</label>
-              <Input 
-                value={manualProjectId} 
-                onChange={(event) => setManualProjectId(event.target.value)} 
-                placeholder="00000000-0000-0000-0000-000000000000" 
-                className="h-16 rounded-[2rem] border-[var(--line-strong)] bg-[var(--surface-soft)]/50 px-8 font-mono text-sm"
+              {/* ★종전에는 `<label>` 에 `htmlFor` 가, `<Input>` 에 `id` 가 없어 둘이
+                  **연결되지 않았다** — 스크린리더에는 이름 없는 입력이었고, 이름으로
+                  요소를 찾는 e2e 도 영원히 못 찾았다(실측 2026-08-16).
+                  `Input` 의 `label` prop 을 쓰면 연결은 컴포넌트가 보장한다. */}
+              <label
+                htmlFor="dt-manual-project-id"
+                className="ml-5 block text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]"
+              >
+                Manual Override (UUID)
+              </label>
+              <Input
+                id="dt-manual-project-id"
+                value={manualProjectId}
+                onChange={(event) => setManualProjectId(event.target.value)}
+                placeholder="00000000-0000-0000-0000-000000000000"
+                className="h-16 rounded-[var(--radius-lg)] border-[var(--line-strong)] bg-[var(--surface-soft)]/50 px-8 font-mono text-sm"
               />
             </div>
           </div>
@@ -314,7 +377,7 @@ export function DigitalTwinControlTowerWorkspaceClient({
               <motion.p 
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="mt-6 ml-5 text-sm font-black text-[var(--spot)] uppercase tracking-widest animate-pulse"
+                className="mt-6 ml-5 text-sm font-black text-[var(--status-error)] uppercase tracking-widest animate-pulse"
               >
                 [SYSTEM_ERROR] {workspaceError}
               </motion.p>
@@ -335,10 +398,10 @@ export function DigitalTwinControlTowerWorkspaceClient({
 
       <div className="grid gap-8 xl:grid-cols-3">
         {/* --- Digital Twin Status --- */}
-        <Card className="rounded-[4rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-xl)] overflow-hidden">
-          <CardContent className="p-10 lg:p-12 border-t-8 border-[var(--info)]">
-            <p className="text-[10px] font-black uppercase tracking-[0.4em] text-[var(--text-hint)]">DIMENSION_01</p>
-            <CardTitle className="mt-3 text-2xl font-[1000] tracking-tighter italic text-[var(--text-primary)]">Digital Twin Status<span className="text-[var(--info)]">.</span></CardTitle>
+        <Card className="rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-xl)] overflow-hidden">
+          <CardContent className="p-10 lg:p-12 border-t-8 border-[var(--status-info)]">
+            <p className="label-caps text-[var(--text-hint)]">DIMENSION_01</p>
+            <CardTitle className="mt-3 text-2xl font-[1000] tracking-tighter italic text-[var(--text-primary)]">Digital Twin Status<span className="text-[var(--status-info)]">.</span></CardTitle>
             
             <form className="mt-8 grid gap-4" onSubmit={handleStatus}>
               <Select label="Building type" value={statusForm.buildingType} onValueChange={(value) => setStatusForm((current) => ({ ...current, buildingType: value }))} options={buildingTypes} className="h-14 rounded-2xl border-[var(--line)] bg-[var(--surface-soft)]" />
@@ -349,7 +412,7 @@ export function DigitalTwinControlTowerWorkspaceClient({
                 <Input type="number" value={statusForm.sensorCount} onChange={(event) => setStatusForm((current) => ({ ...current, sensorCount: event.target.value }))} placeholder="Sens" className="h-14 rounded-2xl px-2 text-center border-[var(--line)] bg-[var(--surface-soft)] font-mono" />
                 <Input type="number" value={statusForm.onlineSensorCount} onChange={(event) => setStatusForm((current) => ({ ...current, onlineSensorCount: event.target.value }))} placeholder="Online" className="h-14 rounded-2xl px-2 text-center border-[var(--line)] bg-[var(--surface-soft)] font-mono" />
               </div>
-              <Button type="submit" disabled={!canUseLiveApi || pending === "status"} className="h-14 rounded-2xl bg-[var(--info-strong)] text-white font-black uppercase tracking-widest shadow-[var(--shadow-glow)] mt-2">
+              <Button type="submit" disabled={!canUseLiveApi || pending === "status"} className="h-14 rounded-2xl bg-[var(--status-info)] text-[var(--saas-ink)] font-black uppercase tracking-widest shadow-[var(--shadow-glow)] mt-2">
                 {pending === "status" ? "UPDATING..." : "COMMIT SNAPSHOT"}
               </Button>
             </form>
@@ -359,13 +422,13 @@ export function DigitalTwinControlTowerWorkspaceClient({
                 <WorkspaceQueryErrorCard title="Status Unavailable" description="..." message={errorMessage(statusQuery.error)} actionLabel="Retry" onRetry={() => void statusQuery.refetch()} />
               ) : statusQuery.data ? (
                 <div className="grid gap-3">
-                  <Stat label="Operational Status" value={statusQuery.data.status} color="text-[var(--info)]" />
+                  <Stat label="Operational Status" value={statusQuery.data.status} color="text-[var(--status-info)]" />
                   <Stat label="Readiness Index" value={`${statusQuery.data.operational_readiness_score.toFixed(1)}%`} />
                   <Stat label="EUI Benchmark" value={`${statusQuery.data.eui_grade} / ${statusQuery.data.eui.toFixed(1)}`} />
                   <Stat label="Sensor Health" value={`${(statusQuery.data.sensor_health_ratio * 100).toFixed(1)}%`} />
                   <div className="rounded-2xl bg-[var(--surface-soft)] p-4 flex items-center justify-between border border-[var(--line-subtle)]">
                     <span className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">ANOMALY_LEVEL</span>
-                    <span className={`text-xs font-black uppercase tracking-widest ${statusQuery.data.highest_anomaly_severity === 'critical' ? 'text-[var(--spot)]' : 'text-[var(--text-secondary)]'}`}>
+                    <span className={`text-xs font-black uppercase tracking-widest ${statusQuery.data.highest_anomaly_severity === 'critical' ? 'text-[var(--status-error)]' : 'text-[var(--text-secondary)]'}`}>
                        {statusQuery.data.highest_anomaly_severity}
                     </span>
                   </div>
@@ -378,9 +441,9 @@ export function DigitalTwinControlTowerWorkspaceClient({
         </Card>
 
         {/* --- Unified Risk Engine --- */}
-        <Card className="rounded-[4rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-xl)] overflow-hidden">
+        <Card className="rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-xl)] overflow-hidden">
           <CardContent className="p-10 lg:p-12 border-t-8 border-[var(--accent-strong)]">
-            <p className="text-[10px] font-black uppercase tracking-[0.4em] text-[var(--text-hint)]">DIMENSION_02</p>
+            <p className="label-caps text-[var(--text-hint)]">DIMENSION_02</p>
             <CardTitle className="mt-3 text-2xl font-[1000] tracking-tighter italic text-[var(--text-primary)]">Unified Risk Engine<span className="text-[var(--accent-strong)]">.</span></CardTitle>
             
             <form className="mt-8 grid gap-4" onSubmit={handleRisk}>
@@ -425,10 +488,10 @@ export function DigitalTwinControlTowerWorkspaceClient({
         </Card>
 
         {/* --- Permit Readiness --- */}
-        <Card className="rounded-[4rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-xl)] overflow-hidden">
-          <CardContent className="p-10 lg:p-12 border-t-8 border-[var(--success)]">
-            <p className="text-[10px] font-black uppercase tracking-[0.4em] text-[var(--text-hint)]">DIMENSION_03</p>
-            <CardTitle className="mt-3 text-2xl font-[1000] tracking-tighter italic text-[var(--text-primary)]">Permit Lifecycle<span className="text-[var(--success)]">.</span></CardTitle>
+        <Card className="rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-xl)] overflow-hidden">
+          <CardContent className="p-10 lg:p-12 border-t-8 border-[var(--status-success)]">
+            <p className="label-caps text-[var(--text-hint)]">DIMENSION_03</p>
+            <CardTitle className="mt-3 text-2xl font-[1000] tracking-tighter italic text-[var(--text-primary)]">Permit Lifecycle<span className="text-[var(--status-success)]">.</span></CardTitle>
             
             <form className="mt-8 grid gap-4" onSubmit={handlePermit}>
               <Select label="Permit type" value={permitForm.permitType} onValueChange={(value) => setPermitForm((current) => ({ ...current, permitType: value }))} options={permitTypes} className="h-14 rounded-2xl border-[var(--line)] bg-[var(--surface-soft)]" />
@@ -440,7 +503,7 @@ export function DigitalTwinControlTowerWorkspaceClient({
                 <Select label="Sm" value={permitForm.submitToSeumter} onValueChange={(value) => setPermitForm((current) => ({ ...current, submitToSeumter: value }))} options={yesNo} className="h-14 rounded-2xl border-[var(--line)] bg-[var(--surface-soft)]" />
               </div>
               <Input value={permitForm.submittedDocumentIds} onChange={(event) => setPermitForm((current) => ({ ...current, submittedDocumentIds: event.target.value }))} placeholder="Doc IDs (e.g. BA-01, BA-02)" className="h-14 rounded-2xl border-[var(--line)] bg-[var(--surface-soft)]" />
-              <Button type="submit" disabled={!canUseLiveApi || pending === "permit"} className="h-14 rounded-2xl bg-[var(--success-strong)] text-white font-black uppercase tracking-widest shadow-[0_0_20px_rgba(var(--success-rgb),0.3)] mt-2">
+              <Button type="submit" disabled={!canUseLiveApi || pending === "permit"} className="h-14 rounded-2xl bg-[var(--status-success)] text-[var(--saas-ink)] font-black uppercase tracking-widest shadow-[0_0_20px_color-mix(in_srgb,var(--status-success)_30%,transparent)] mt-2">
                 {pending === "permit" ? "SUBMITTING..." : "INIT_LIFECYCLE"}
               </Button>
             </form>
@@ -450,7 +513,7 @@ export function DigitalTwinControlTowerWorkspaceClient({
                 <WorkspaceQueryErrorCard title="Permit Sync Error" description="..." message={errorMessage(permitQuery.error)} actionLabel="Retry" onRetry={() => void permitQuery.refetch()} />
               ) : permitQuery.data ? (
                 <div className="grid gap-3">
-                  <Stat label="Current Status" value={permitQuery.data.status} color="text-[var(--success)]" />
+                  <Stat label="Current Status" value={permitQuery.data.status} color="text-[var(--status-success)]" />
                   <Stat label="Current Stage" value={permitQuery.data.current_stage} />
                   <Stat label="Readiness Index" value={`${permitQuery.data.readiness_score.toFixed(1)}%`} />
                   <div className="space-y-2 p-5 rounded-2xl bg-[var(--surface-soft)] border border-[var(--line-subtle)]">
@@ -463,7 +526,7 @@ export function DigitalTwinControlTowerWorkspaceClient({
                         initial={{ width: 0 }}
                         animate={{ width: `${permitQuery.data.progress_pct}%` }}
                         transition={{ duration: 1, ease: "circOut" }}
-                        className="h-full bg-[var(--success)] shadow-[0_0_10px_var(--success)]" 
+                        className="h-full bg-[var(--status-success)] shadow-[0_0_10px_var(--status-success)]" 
                       />
                     </div>
                   </div>
@@ -471,12 +534,54 @@ export function DigitalTwinControlTowerWorkspaceClient({
                     <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)] mb-2">METADATA</p>
                     <p className="text-xs font-bold text-[var(--text-secondary)] italic truncate antialiased">REF: {permitQuery.data.submission_reference}</p>
                     {permitQuery.data.missing_required_documents?.length ? (
-                      <p className="mt-2 text-[10px] font-black text-[var(--spot)] uppercase tracking-tight antialiased animate-pulse"> MISSING: {permitQuery.data.missing_required_documents.join(", ")}</p>
+                      <p className="mt-2 text-[10px] font-black text-[var(--status-error)] uppercase tracking-tight antialiased animate-pulse"> MISSING: {permitQuery.data.missing_required_documents.join(", ")}</p>
                     ) : null}
                   </div>
                 </div>
               ) : (
                 <Empty title="진행 중인 항목이 없습니다" body="첫 인허가 패키지를 제출하면 실시간 추적이 시작됩니다." />
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* --- Predictive Maintenance(배선 캠페인 3차, additive) --- */}
+        <Card className="rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-xl)] overflow-hidden">
+          <CardContent className="p-10 lg:p-12 border-t-8 border-[var(--status-warning)]">
+            <p className="label-caps text-[var(--text-hint)]">DIMENSION_04</p>
+            <CardTitle className="mt-3 text-2xl font-[1000] tracking-tighter italic text-[var(--text-primary)]">Predictive Maintenance<span className="text-[var(--status-warning)]">.</span></CardTitle>
+
+            <form className="mt-8 grid gap-4" onSubmit={handleMaintenance}>
+              <Input value={maintenanceForm.equipmentName} onChange={(event) => setMaintenanceForm((current) => ({ ...current, equipmentName: event.target.value }))} placeholder="Equipment name(예: AHU-3)" className="h-14 rounded-2xl border-[var(--line)] bg-[var(--surface-soft)]" />
+              <Input value={maintenanceForm.equipmentType} onChange={(event) => setMaintenanceForm((current) => ({ ...current, equipmentType: event.target.value }))} placeholder="Equipment type(예: hvac)" className="h-14 rounded-2xl border-[var(--line)] bg-[var(--surface-soft)]" />
+              <Input value={maintenanceForm.location} onChange={(event) => setMaintenanceForm((current) => ({ ...current, location: event.target.value }))} placeholder="Location(선택)" className="h-14 rounded-2xl border-[var(--line)] bg-[var(--surface-soft)]" />
+              <div className="grid gap-3 grid-cols-3">
+                <Input type="number" value={maintenanceForm.vibrationMmS} onChange={(event) => setMaintenanceForm((current) => ({ ...current, vibrationMmS: event.target.value }))} placeholder="Vib mm/s" className="h-14 rounded-2xl px-2 text-center border-[var(--line)] bg-[var(--surface-soft)] font-mono" />
+                <Input type="number" value={maintenanceForm.temperatureC} onChange={(event) => setMaintenanceForm((current) => ({ ...current, temperatureC: event.target.value }))} placeholder="Temp °C" className="h-14 rounded-2xl px-2 text-center border-[var(--line)] bg-[var(--surface-soft)] font-mono" />
+                <Input type="number" value={maintenanceForm.energyEfficiencyRatio} onChange={(event) => setMaintenanceForm((current) => ({ ...current, energyEfficiencyRatio: event.target.value }))} placeholder="Efficiency" className="h-14 rounded-2xl px-2 text-center border-[var(--line)] bg-[var(--surface-soft)] font-mono" />
+              </div>
+              <Button type="submit" disabled={!canUseLiveApi || pending === "maintenance"} className="h-14 rounded-2xl bg-[var(--status-warning)] text-[var(--saas-ink)] font-black uppercase tracking-widest shadow-[var(--shadow-glow)] mt-2">
+                {pending === "maintenance" ? "ANALYZING..." : "DETECT_ANOMALY"}
+              </Button>
+            </form>
+
+            <div className="mt-10 pt-8 border-t border-[var(--line)]">
+              {maintenanceResult ? (
+                <div className="grid gap-3">
+                  <Stat label="Anomaly Score" value={maintenanceResult.anomaly_score.toFixed(2)} color="text-[var(--status-warning)]" />
+                  <Stat label="Severity" value={maintenanceResult.severity} />
+                  <Stat label="Remaining Useful Life" value={maintenanceResult.remaining_useful_life_days != null ? `${maintenanceResult.remaining_useful_life_days}d` : "-"} />
+                  <Stat label="HVAC Efficiency" value={maintenanceResult.hvac_efficiency_score != null ? maintenanceResult.hvac_efficiency_score.toFixed(1) : "-"} />
+                  <div className="rounded-2xl bg-[var(--surface-soft)] p-5 border border-[var(--line-subtle)]">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)] mb-2">RECOMMENDATION</p>
+                    <p className="text-xs font-bold leading-relaxed text-[var(--text-secondary)]">{maintenanceResult.recommendation}</p>
+                  </div>
+                  {maintenanceResult.work_order_id ? (
+                    <Stat label="Work Order" value={maintenanceResult.work_order_id} color="text-[var(--status-warning)]" />
+                  ) : null}
+                </div>
+              ) : (
+                <Empty title="NO_ANOMALY_RUN" body="Submit equipment telemetry to run predictive maintenance detection." />
               )}
             </div>
           </CardContent>
@@ -500,7 +605,7 @@ function Empty({ title, body }: { title: string; body: string }) {
     <div className="rounded-3xl border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)]/30 p-8 text-center flex flex-col items-center gap-4">
        <div className="h-12 w-12 rounded-2xl bg-[var(--surface-strong)] flex items-center justify-center text-[var(--text-hint)] grayscale opacity-50"><RadioTower className="size-6" aria-hidden /></div>
        <div className="space-y-1">
-         <p className="text-xs font-black uppercase tracking-[0.2em] text-[var(--text-hint)]">{title}</p>
+         <p className="label-caps text-[var(--text-hint)]">{title}</p>
          <p className="text-[10px] font-medium leading-relaxed text-[var(--text-hint)]/60 italic">{body}</p>
        </div>
     </div>

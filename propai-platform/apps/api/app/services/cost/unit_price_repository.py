@@ -1,4 +1,4 @@
-"""단가 SSOT(Single Source Of Truth) 저장소.
+"""단가 SSOT(Single Source Of Truth) 저장소 — P1 단가 4계층 리졸버.
 
 material_unit_prices(DB)에서 공종 단가를 조회하고, DB가 비었거나 조회 실패 시
 하드코딩 fallback(price_source="fallback")으로 회귀한다.
@@ -6,9 +6,19 @@ material_unit_prices(DB)에서 공종 단가를 조회하고, DB가 비었거나
 ★회귀 0 보장: fallback 값은 standard_quantity_estimator.UNIT_PRICES_2026 와 동일.
   → DB 비었을 때 전환 전과 정확히 동일한 단가가 반환된다(전후 산출 불변).
 
+해석 순서(4계층, tier 필드로 표기):
+  T1_public   — price_source가 '표준시장단가'로 시작하는 행(material_code="PUB-<KEY>",
+                public_price_ingest가 조달청 가격정보로 주입). 최우선.
+  T2_standard — 기존 표준품셈 시드(material_code, _KEY_TO_MATERIAL_CODE 매핑).
+  T3_fallback — 내장 UNIT_PRICES_2026 하드코딩.
+  actual      — 미보유(null). 이 저장소는 실적단가를 보유하지 않음(get_price는 항상
+                T1/T2/T3 중 하나를 반환하거나, fallback조차 없는 키는 None).
+
 DB 단가가 있으면(시드/관리자 갱신) DB값을 우선 사용하되, fallback 키별로 매핑되는
-대표 material_code 가 존재할 때만 DB값으로 대체한다. 단가에는 출처·기준연도·지역을 부착.
-순수 조회 — 쓰기 없음(시드는 cost_tables_bootstrap 담당).
+대표 material_code 가 존재할 때만 DB값으로 대체한다. 단가에는 출처·기준연도·지역·tier를 부착.
+순수 조회 — 시드/주입은 별도 모듈(cost_tables_bootstrap·public_price_ingest) 담당.
+
+KOSIS 시점보정(escalate_to_current)은 opt-in — 기본 False(자동 적용 금지, 검증 전 값 변형 방지).
 """
 
 from __future__ import annotations
@@ -36,10 +46,62 @@ _FALLBACK_BASIS_YEAR = 2026
 _FALLBACK_SOURCE = "fallback"
 _FALLBACK_REGION = "경기도"
 
+# T1(공공고시) price_source 접두 — public_price_ingest가 부착("표준시장단가 2026상" 등).
+_PUBLIC_SOURCE_PREFIX = "표준시장단가"
+
+
+def _public_code(key: str) -> str:
+    """단가 SSOT 키 → T1 공공고시 material_code(public_price_ingest.normalize_item과 동일 규칙)."""
+    return f"PUB-{key.upper()}"
+
+
+# 단위 정규화(T1 안전가드용) — boq_price_join._UNIT_ALIASES와 동일 규칙.
+#   ★boq_price_join이 이 모듈을 import하므로 역-import는 순환참조 → 로컬 정의로 회피.
+_UNIT_ALIASES: dict[str, str] = {
+    "m2": "m2", "㎡": "m2", "m²": "m2", "sqm": "m2", "제곱미터": "m2",
+    "m3": "m3", "㎥": "m3", "m³": "m3", "cum": "m3", "루베": "m3", "입방미터": "m3",
+    "ton": "ton", "t": "ton", "톤": "ton", "mt": "ton",
+}
+
+
+def _norm_unit(u: Any) -> str:
+    s = str(u or "").strip().lower().replace(" ", "")
+    return _UNIT_ALIASES.get(s, s)
+
 # ── 수지경로 ₩/㎡ 개산단가 SSOT(construction_cost_engine 일원화) ──
 # 적산경로(자재별 단가)와 별개로, 수지경로는 건물유형별 ₩/㎡ 개산단가를 쓴다.
 # 이를 단일 출처(이 모듈)로 일원화한다. 값은 기존 상수와 100% 동일(회귀 0).
 # code = "DIRECT_SQM_<building_type>"(material_unit_prices.material_code 호환).
+#: ★**포함 범위(scope)** — 이 단가가 **무엇을 덮는가**.
+#:
+#: **포함(의도)**: 건축 도급 직접공사비 — 골조·조적·방수·창호·마감 + 기계설비 + 전기설비.
+#: **제외(의도)**: 간접공사비(설계·감리·예비비·일반관리비 — `calculate_indirect_cost` 별도) ·
+#:          토지비 · 금융비 · 제세금 · **공급자 인입 분담금**(한전·도시가스사·통신사) ·
+#:          ★**소방시설공사**(아래 — **법정 분리 도급**).
+#:
+#: ★★**정정(2026-08-27) — `#916` 의 서술이 소방에 대해 틀렸다.**
+#:   `#916` 은 *"기계설비(**소화설비 포함**)·전기설비(**소방전기 포함**)"* 라고 적어
+#:   **소방을 이 단가 안에** 두었고, `#913` 은 그 전제로 소방 항목을 **제거**했다
+#:   (총사업비 −23,002,000). **법이 정반대를 말한다**(법제처 원문 실측):
+#:
+#:     **소방시설공사업법 §21②**(신설 2020.6.9)
+#:       *"소방시설공사는 **다른 업종의 공사와 분리하여 도급하여야 한다.**"* — 위반 시 **벌칙**.
+#:     **시행령 §11의2**(예외) — 재난·기밀·소방시설공사 비해당·연면적 1천㎡ 이하 비상경보·
+#:       대안/일괄/기술제안입찰·국가첨단전략기술·**국가유산수리 및 재개발·재건축 등으로서
+#:       소방청장이 인정**하는 경우. → **일반 신축 개발사업은 예외 비해당 = 원칙 적용.**
+#:     **시행령 §4 1호가** — 스프링클러설비등·옥내소화전·물분무등소화설비·제연설비.
+#:
+#:   ★따라서 **소방은 이 단가 밖**이고, 별도 계상이 옳다
+#:   (`cost/utility_connection_cost.FIRE_PROTECTION_ITEM` — 단가 미확보라 **보류**).
+#:
+#: ★**내가 왜 틀렸나** — 적산 실적이 소방을 `electrical`/`mechanical` **내역서 안**에 두어
+#:   *"도급 안"* 으로 읽었다. **내역서 편성 ≠ 도급 편성**이다. 같은 세트가 **승강기 공종을
+#:   갖고 있지 않은데** 그 건물에 승강기는 실재한다(건축 내역서에 「엘리베이터후크」·
+#:   「ELEV홀 타일」). 즉 *"별도 내역서가 없다"* 는 *"도급 안"* 을 **함의하지 않는다.**
+#:
+#: ★**미측정**: 이 단가(2,400,000원/㎡)의 **숫자 출처**는 여전히 대량 생성 커밋 `2b776933` 이고,
+#:   그것이 위 「포함」 범위에서 파생됐다는 증거는 **없다.** 위 포함/제외는 **의도**이지
+#:   그 상수의 실측된 범위가 아니다.
 _DIRECT_SQM_FALLBACK: dict[str, int] = {
     "apartment": 2_400_000,
     "officetel": 2_600_000,
@@ -110,7 +172,7 @@ class UnitPriceRepository:
                 await _ensure_cost_tables(db)
                 rows = (await db.execute(text(
                     "SELECT material_code, spec, unit, material_price, labor_price, expense_price, "
-                    "price_basis_year, price_source, region FROM material_unit_prices "
+                    "price_basis_year, price_source, region, source_url FROM material_unit_prices "
                     "WHERE is_current = true"))).all()
                 for r in rows:
                     out[r[0]] = {
@@ -120,6 +182,7 @@ class UnitPriceRepository:
                         "price_basis_year": int(r[6] or _FALLBACK_BASIS_YEAR),
                         "price_source": r[7] or "표준품셈2025",
                         "region": r[8] or _FALLBACK_REGION,
+                        "source_url": r[9] if len(r) > 9 else None,
                     }
         except Exception as e:  # noqa: BLE001
             logger.warning("단가DB 조회 실패 — fallback 사용", err=str(e)[:160])
@@ -127,30 +190,102 @@ class UnitPriceRepository:
         self._db_cache = out
         return out
 
-    async def get_price(self, key: str) -> dict[str, Any] | None:
-        """공종 키(concrete/rebar/...)의 단가를 DB 우선, 미존재 시 fallback 으로 반환.
+    async def get_price(
+        self, key: str, *, escalate_to_current: bool = False
+    ) -> dict[str, Any] | None:
+        """공종 키(concrete/rebar/...)의 단가를 T1(공공고시)→T2(표준품셈)→T3(fallback) 순으로 반환.
 
-        ★DB가 비어 있으면 fallback(UNIT_PRICES_2026)을 그대로 반환 → 회귀 0.
+        ★DB가 비어 있으면 fallback(UNIT_PRICES_2026)을 그대로 반환 → 회귀 0(기존 키 전부 불변).
+        추가 키(additive, 기존 소비처 무영향): tier·source_url·basis_date·(opt-in)escalated.
+        escalate_to_current=True 일 때만 KOSIS 건설공사비지수 보정계수를 부착한다(기본 미적용).
         """
         fb = fallback_price(key)
         if fb is None:
             return None
-        code = _KEY_TO_MATERIAL_CODE.get(key)
-        if not code:
-            return fb
         db = await self._load_db()
-        row = db.get(code)
-        if not row:
-            return fb
-        # DB값 우선(출처/기준연도/지역 부착). spec/unit은 fallback 유지(품셈 항목명 일관).
-        return {
-            "key": key,
-            "spec": fb["spec"], "unit": fb["unit"],
-            "mat_unit": row["mat_unit"], "labor_unit": row["labor_unit"], "exp_unit": row["exp_unit"],
-            "price_source": row["price_source"],
-            "price_basis_year": row["price_basis_year"],
-            "region": row["region"],
+
+        # T1: 공공고시 표준시장단가(price_source가 _PUBLIC_SOURCE_PREFIX로 시작하는 행) — 최우선.
+        pub_row = db.get(_public_code(key))
+        if pub_row and str(pub_row.get("price_source") or "").startswith(_PUBLIC_SOURCE_PREFIX):
+            # ★T1 안전가드: 공공단가가 (a)노무비 분해 없이(labor_unit=0) 총단가를 재료비 슬롯에만 싣거나,
+            #   (b)단위가 표준 기대단위(fb["unit"])와 불일치하면, 하류 원가계산서(OriginCostCalculator)가
+            #   간접노무비(직접노무비×14.4%)·4대보험·퇴직공제 등 법정 노무성 제비율을 **오직 labor_unit에서만**
+            #   파생하므로 노무=0이면 제비율이 통째로 소실되거나, 물량×엉뚱단가로 금액을 왜곡한다. 이 경우 T1을
+            #   건너뛰고 분해·단위가 정합한 T2/T3로 폴백한다(왜곡단가보다 정합단가가 무목업·정확성에 부합).
+            #   ★경비(exp)만 분해되고 노무=0이어도 제비율은 소실되므로 반드시 labor_unit>0를 요구한다.
+            #   조달청 ingest가 노무비 분해·단위를 갖추면 이 가드를 통과해 자동 재활성된다.
+            _lab = float(pub_row.get("labor_unit") or 0)
+            _exp = float(pub_row.get("exp_unit") or 0)
+            _pu, _fu = _norm_unit(pub_row.get("unit")), _norm_unit(fb["unit"])
+            if _lab > 0 and _pu and _fu and _pu == _fu:
+                result = {
+                    "key": key,
+                    "spec": pub_row.get("spec") or fb["spec"], "unit": pub_row.get("unit") or fb["unit"],
+                    "mat_unit": pub_row["mat_unit"], "labor_unit": pub_row["labor_unit"],
+                    "exp_unit": pub_row["exp_unit"],
+                    "price_source": pub_row["price_source"],
+                    "price_basis_year": pub_row["price_basis_year"],
+                    "region": pub_row["region"],
+                    "tier": "T1_public",
+                    "source_url": pub_row.get("source_url"),
+                    "basis_date": f"{pub_row['price_basis_year']}-01-01",
+                }
+                return await self._maybe_escalate(result, escalate_to_current)
+            logger.warning(
+                "t1_public_price_skipped_unsafe",
+                key=key, labor_unit=_lab, exp_unit=_exp, pub_unit=_pu, expected_unit=_fu,
+            )
+
+        # T2: 기존 표준품셈 시드(대표 material_code 매핑 존재 시).
+        # ★T2 안전가드(2026-07-15 감사 적산2 봉합 — T1 가드와 대칭): 노무비(labor_unit) 0/NULL
+        #   행은 '실단가 0원'이 아니라 결측으로 취급해 T3(fallback)로 폴백한다 — 하류 원가계산서의
+        #   법정 제비율(간접노무비 14.4%·4대보험 등)이 오직 labor_unit에서 파생되므로 노무=0이면
+        #   제비율이 통째로 소실된다. (mat=0·labor>0 행은 채택 — 재료비 축은 별도 검증 항목.)
+        code = _KEY_TO_MATERIAL_CODE.get(key)
+        row = db.get(code) if code else None
+        if row and float(row.get("labor_unit") or 0) <= 0:
+            logger.warning(
+                "t2_standard_price_skipped_unsafe",
+                key=key, mat_unit=float(row.get("mat_unit") or 0),
+                labor_unit=float(row.get("labor_unit") or 0),
+            )
+            row = None
+        if row:
+            result = {
+                "key": key,
+                "spec": fb["spec"], "unit": fb["unit"],
+                "mat_unit": row["mat_unit"], "labor_unit": row["labor_unit"], "exp_unit": row["exp_unit"],
+                "price_source": row["price_source"],
+                "price_basis_year": row["price_basis_year"],
+                "region": row["region"],
+                "tier": "T2_standard",
+                "source_url": row.get("source_url"),
+                "basis_date": f"{row['price_basis_year']}-01-01",
+            }
+            return await self._maybe_escalate(result, escalate_to_current)
+
+        # T3: 내장 하드코딩 fallback(항상 가용 — DB 완전 공백에도 회귀 0).
+        result = {
+            **fb, "tier": "T3_fallback", "source_url": None,
+            "basis_date": f"{fb['price_basis_year']}-01-01",
         }
+        return await self._maybe_escalate(result, escalate_to_current)
+
+    @staticmethod
+    async def _maybe_escalate(price: dict[str, Any], escalate: bool) -> dict[str, Any]:
+        """opt-in KOSIS 건설공사비지수 시점보정 — 실패/미가용 시 원본 그대로(무날조)."""
+        if not escalate:
+            return price
+        try:
+            from app.services.cost.cost_index_service import escalation_factor
+
+            base_ym = f"{int(price.get('price_basis_year') or _FALLBACK_BASIS_YEAR)}01"
+            factor_info = await escalation_factor(base_ym)
+            if factor_info.get("confidence") == "live":
+                return {**price, "escalated": factor_info}
+        except Exception:  # noqa: BLE001 — 보정 실패해도 원본 단가는 손상 없이 반환
+            pass
+        return price
 
     async def get_direct_sqm(self, building_type: str) -> int:
         """수지경로 ₩/㎡ 개산단가 — DB(material_code=DIRECT_SQM_<type>) 우선, 미존재 시 fallback.
@@ -169,11 +304,11 @@ class UnitPriceRepository:
                 return int(row["mat_unit"])
         return fb
 
-    async def get_prices(self) -> dict[str, dict[str, Any]]:
-        """전체 fallback 키의 단가 묶음(DB 우선)."""
+    async def get_prices(self, *, escalate_to_current: bool = False) -> dict[str, dict[str, Any]]:
+        """전체 fallback 키의 단가 묶음(T1→T2→T3 우선순위). escalate_to_current는 opt-in."""
         out: dict[str, dict[str, Any]] = {}
         for key in UNIT_PRICES_2026:
-            p = await self.get_price(key)
+            p = await self.get_price(key, escalate_to_current=escalate_to_current)
             if p:
                 out[key] = p
         return out

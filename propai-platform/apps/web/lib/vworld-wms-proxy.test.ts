@@ -1,0 +1,335 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { __resetDirectProbeForTest, proxyVWorldWms } from "./vworld-wms-proxy";
+
+/**
+ * ★전제를 **명시**한다(2026-08-17 릴레이 1순위 승격 이후 필수).
+ *
+ * 이 파일의 케이스들은 **직접 경로(158→VWorld)를 태우는 것**을 전제로 쓰였다.
+ * 릴레이가 1순위가 된 뒤로는 그 전제가 자동으로 성립하지 않는다 — 회복 탐색 간격
+ * (`DIRECT_RECOVERY_PROBE_MS`) 안이면 요청이 릴레이로 새고, 그러면 여기 단언들이
+ * **다른 층을 검사하게 된다**(상류 URL·키 주입·스머글링 방지가 전부 관측 불가).
+ * 종전엔 이 전제가 **어디에도 적혀 있지 않았다** — 그 상태로 두면 앰비언트 하나로
+ * 파일 전체 의미가 바뀌고도 초록이다.
+ * → 매 케이스 시작에 프로브를 열어 **직접 경로를 강제**한다.
+ * ※릴레이 1순위 자체의 배선은 `__tests__/vworld-relay-primary.test.ts` 가 잠근다.
+ */
+beforeEach(() => {
+  __resetDirectProbeForTest();
+});
+
+const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47];
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+});
+
+function stubFetch(handler: (url: string) => Response) {
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => handler(String(url))));
+}
+
+// Leaflet WMS(`L.tileLayer.wms`)가 조립하는 GetMap 쿼리(키·domain 없음)를 모사한다.
+function leafletWmsQuery(layers = "lp_pa_cbnd_bubun,lp_pa_cbnd_bonbun"): URLSearchParams {
+  return new URLSearchParams({
+    service: "WMS",
+    request: "GetMap",
+    layers,
+    styles: layers,
+    format: "image/png",
+    transparent: "true",
+    // ★2026-07-17: 프론트가 version 1.3.0을 명시(VWorld WMS는 1.3.0만 허용 —
+    //   1.1.1은 INVALID_RANGE로 거부됨). 1.3.0에서 Leaflet은 srs 대신 crs를 보낸다.
+    version: "1.3.0",
+    width: "256",
+    height: "256",
+    crs: "EPSG:3857",
+    bbox: "14135029,4518899,14137474,4521344",
+  });
+}
+
+describe("vworld-wms-proxy", () => {
+  it("★API 키는 서버측에서 주입되고 클라이언트 쿼리엔 없다 → 상류 URL에만 key/domain 이 붙는다", async () => {
+    vi.stubEnv("VWORLD_API_KEY", "SECRET-KEY");
+    let requested = "";
+    stubFetch((url) => {
+      requested = url;
+      return new Response(new Uint8Array(PNG_MAGIC).buffer, {
+        status: 200,
+        headers: { "content-type": "image/png" },
+      });
+    });
+    const incoming = leafletWmsQuery();
+    expect(incoming.has("key")).toBe(false); // 클라이언트 요청엔 키 없음
+
+    const res = await proxyVWorldWms(incoming);
+    expect(res.status).toBe(200);
+    expect(requested).toContain("https://api.vworld.kr/req/wms?");
+    expect(requested).toContain("key=SECRET-KEY"); // 서버측 주입
+    expect(requested).toContain("domain=www.4t8t.net");
+    expect(requested).toContain("lp_pa_cbnd");
+  });
+
+  it("★PR#329 R1: NEXT_PUBLIC_VWORLD_API_KEY(공개키) 로는 폴백하지 않는다 — 서버 전용 키만 인정", async () => {
+    vi.stubEnv("VWORLD_API_KEY", "");
+    vi.stubEnv("NEXT_PUBLIC_VWORLD_API_KEY", "PUBLIC-KEY-SHOULD-NOT-BE-USED");
+    const res = await proxyVWorldWms(leafletWmsQuery());
+    expect(res.status).toBe(503); // 공개키가 설정돼 있어도 서버 전용 키가 없으면 정직 실패
+  });
+
+  it("허용되지 않은 WMS 레이어는 400으로 거부한다(화이트리스트 밖 임의 레이어)", async () => {
+    vi.stubEnv("VWORLD_API_KEY", "SECRET-KEY");
+    stubFetch(() => new Response(new Uint8Array(PNG_MAGIC).buffer, { status: 200, headers: { "content-type": "image/png" } }));
+    const res = await proxyVWorldWms(leafletWmsQuery("LT_C_EVIL_LAYER"));
+    expect(res.status).toBe(400);
+  });
+
+  it("★규제 오버레이 5종은 허용·다중 조인도 canonical 그대로 통과(2026-07-17 채증)", async () => {
+    vi.stubEnv("VWORLD_API_KEY", "SECRET-KEY");
+    let requested = "";
+    stubFetch((url) => {
+      requested = url;
+      return new Response(new Uint8Array(PNG_MAGIC).buffer, { status: 200, headers: { "content-type": "image/png" } });
+    });
+    const res = await proxyVWorldWms(leafletWmsQuery("lt_c_upisuq171,lt_c_uq123"));
+    expect(res.status).toBe(200);
+    // canonical 순서는 화이트리스트 정의 순서 — 요청 순서와 무관하게 고정.
+    expect(requested).toContain("LAYERS=lt_c_upisuq171%2Clt_c_uq123");
+  });
+
+  it("용도지역(lt_c_uq111)은 2026-07-17부터 허용 — 전국 지적편집도 오버레이(land-use-wide)", async () => {
+    vi.stubEnv("VWORLD_API_KEY", "SECRET-KEY");
+    let requested = "";
+    stubFetch((url) => {
+      requested = url;
+      return new Response(new Uint8Array(PNG_MAGIC).buffer, { status: 200, headers: { "content-type": "image/png" } });
+    });
+    const res = await proxyVWorldWms(leafletWmsQuery("lt_c_uq111"));
+    expect(res.status).toBe(200);
+    expect(requested).toContain("LAYERS=lt_c_uq111");
+  });
+
+  it("빈 LAYERS 는 400", async () => {
+    vi.stubEnv("VWORLD_API_KEY", "SECRET-KEY");
+    const res = await proxyVWorldWms(leafletWmsQuery(""));
+    expect(res.status).toBe(400);
+  });
+
+  it("★PR#329 R1 MEDIUM1(재현 완료): 중복 LAYERS 키 스머글링(?LAYERS=허용&LAYERS=차단)은 400 — 상류에 요청조차 안 보낸다", async () => {
+    vi.stubEnv("VWORLD_API_KEY", "SECRET-KEY");
+    let called = false;
+    stubFetch(() => {
+      called = true;
+      return new Response(new Uint8Array(PNG_MAGIC).buffer, { status: 200, headers: { "content-type": "image/png" } });
+    });
+    // URLSearchParams는 문자열 생성자로만 진짜 중복 키를 만들 수 있다(객체 리터럴은 키가 유일).
+    const incoming = new URLSearchParams(
+      "service=WMS&request=GetMap&LAYERS=lp_pa_cbnd_bubun&LAYERS=LT_C_EVIL_LAYER&format=image/png",
+    );
+    const res = await proxyVWorldWms(incoming);
+    expect(res.status).toBe(400);
+    expect(called).toBe(false); // 검증 실패 시 상류 fetch 자체를 하지 않는다
+  });
+
+  it("★PR#329 R1 MEDIUM1(재현 완료): 대소문자 변형 스머글링(?layers=차단&LAYERS=허용)도 400", async () => {
+    vi.stubEnv("VWORLD_API_KEY", "SECRET-KEY");
+    let called = false;
+    stubFetch(() => {
+      called = true;
+      return new Response(new Uint8Array(PNG_MAGIC).buffer, { status: 200, headers: { "content-type": "image/png" } });
+    });
+    const incoming = new URLSearchParams(
+      "service=WMS&request=GetMap&layers=LT_C_EVIL_LAYER&LAYERS=lp_pa_cbnd_bubun&format=image/png",
+    );
+    const res = await proxyVWorldWms(incoming);
+    expect(res.status).toBe(400);
+    expect(called).toBe(false);
+  });
+
+  it("정당한 대소문자 변형(Layers=…)은 통과하고, 상류엔 검증된 canonical 값만 단일 전달된다(원본 재전달 금지)", async () => {
+    vi.stubEnv("VWORLD_API_KEY", "SECRET-KEY");
+    let requested = "";
+    stubFetch((url) => {
+      requested = url;
+      return new Response(new Uint8Array(PNG_MAGIC).buffer, { status: 200, headers: { "content-type": "image/png" } });
+    });
+    const incoming = new URLSearchParams(
+      "service=WMS&request=GetMap&Layers=lp_pa_cbnd_bubun,lp_pa_cbnd_bonbun&format=image/png",
+    );
+    const res = await proxyVWorldWms(incoming);
+    expect(res.status).toBe(200);
+    const url = new URL(requested);
+    // 상류 URL엔 canonical LAYERS 파라미터가 정확히 1개만 존재 — 원본 "Layers" 키가 그대로
+    // 새어나가 중복/미검증 값이 함께 전달되지 않는다.
+    expect(url.searchParams.getAll("LAYERS")).toEqual(["lp_pa_cbnd_bubun,lp_pa_cbnd_bonbun"]);
+    expect(url.searchParams.has("Layers")).toBe(false);
+  });
+
+  it("★200+XML(coverage — FileNotFound/제공영역 문구)은 투명 PNG로 대체(지도 깨짐 방지)", async () => {
+    vi.stubEnv("VWORLD_API_KEY", "SECRET-KEY");
+    stubFetch(() =>
+      new Response(
+        '<?xml version="1.0"?><ServiceExceptionReport>FileNotFound: 서비스 제공영역이 아닙니다</ServiceExceptionReport>',
+        { status: 200, headers: { "content-type": "text/xml;charset=UTF-8" } },
+      ),
+    );
+    const res = await proxyVWorldWms(leafletWmsQuery());
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("image/png");
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    expect(Array.from(bytes.slice(0, 4))).toEqual(PNG_MAGIC);
+  });
+
+  it("★PR#329 R1 MEDIUM2: 200+XML(인증/권한 오류 — coverage 문구 없음)은 503으로 승격(무음 흡수 금지)", async () => {
+    vi.stubEnv("VWORLD_API_KEY", "SECRET-KEY");
+    stubFetch(() =>
+      new Response(
+        '<?xml version="1.0"?><ServiceExceptionReport><ServiceException code="INVALID_KEY">인증에 실패했습니다</ServiceException></ServiceExceptionReport>',
+        { status: 200, headers: { "content-type": "text/xml;charset=UTF-8" } },
+      ),
+    );
+    const res = await proxyVWorldWms(leafletWmsQuery());
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body.error).toContain("XML exception");
+    // ★2026-07-17: ServiceException code가 오류 메시지에 표면화된다 — "(auth/unknown)"
+    //   뭉뚱그림 탓에 INVALID_RANGE(파라미터 오류)가 "키 미설정"으로 오독된 사고 재발 방지.
+    expect(body.error).toContain("INVALID_KEY");
+  });
+
+  it("★근본원인 회귀(2026-07-17): INVALID_RANGE(WMS VERSION 오류)도 code가 그대로 표면화된다", async () => {
+    vi.stubEnv("VWORLD_API_KEY", "SECRET-KEY");
+    stubFetch(() =>
+      new Response(
+        '<?xml version="1.0" encoding="UTF-8" ?><ServiceExceptionReport version="1.3.0"><ServiceException code="INVALID_RANGE">VERSION 파라미터의 값이 유효한 범위를 넘었습니다. 유효한 파라미터 값의 범위 : [1.3.0], 입력한 파라미터 값 : 1.1.1</ServiceException></ServiceExceptionReport>',
+        { status: 200, headers: { "content-type": "application/xml;charset=UTF-8" } },
+      ),
+    );
+    const res = await proxyVWorldWms(leafletWmsQuery());
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body.error).toContain("INVALID_RANGE");
+  });
+
+  it("★V1 선 스타일: STYLES가 '각 레이어+_line' 집합이면 유지, 임의 스타일은 canonical로 강제", async () => {
+    vi.stubEnv("VWORLD_API_KEY", "SECRET-KEY");
+    let requested = "";
+    stubFetch((url) => {
+      requested = url;
+      return new Response(new Uint8Array(PNG_MAGIC).buffer, { status: 200, headers: { "content-type": "image/png" } });
+    });
+    const q = new URLSearchParams(
+      "service=WMS&request=GetMap&layers=lp_pa_cbnd_bubun,lp_pa_cbnd_bonbun&styles=lp_pa_cbnd_bubun_line,lp_pa_cbnd_bonbun_line&version=1.3.0&crs=EPSG:3857&bbox=1,2,3,4&width=64&height=64",
+    );
+    expect((await proxyVWorldWms(q)).status).toBe(200);
+    const u = new URL(requested);
+    expect(u.searchParams.get("STYLES")).toBe("lp_pa_cbnd_bubun_line,lp_pa_cbnd_bonbun_line");
+    expect(u.searchParams.get("LAYERS")).toBe("lp_pa_cbnd_bubun,lp_pa_cbnd_bonbun"); // 레이어는 항상 채움명
+
+    const evil = new URLSearchParams(
+      "service=WMS&request=GetMap&layers=lp_pa_cbnd_bubun&styles=EVIL_STYLE&version=1.3.0&crs=EPSG:3857&bbox=1,2,3,4&width=64&height=64",
+    );
+    await proxyVWorldWms(evil);
+    expect(new URL(requested).searchParams.get("STYLES")).toBe("lp_pa_cbnd_bubun"); // canonical 강제
+  });
+
+  it("★키-오류 페일오버(2026-07-17 프로드 INCORRECT_KEY): 로컬 키가 키무효로 거부되면 api로 재중계한다", async () => {
+    vi.stubEnv("VWORLD_API_KEY", "STALE-LOCAL-KEY");
+    vi.stubEnv("NEXT_PUBLIC_API_BASE_URL", "https://api.4t8t.net");
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      urls.push(String(url));
+      if (urls.length === 1) {
+        return new Response(
+          '<?xml version="1.0"?><ServiceExceptionReport><ServiceException code="INCORRECT_KEY">잘못된 인증키입니다.</ServiceException></ServiceExceptionReport>',
+          { status: 200, headers: { "content-type": "text/xml;charset=UTF-8" } },
+        );
+      }
+      return new Response(new Uint8Array(PNG_MAGIC).buffer, { status: 200, headers: { "content-type": "image/png" } });
+    }));
+    const res = await proxyVWorldWms(leafletWmsQuery());
+    expect(res.status).toBe(200);
+    expect(urls).toHaveLength(2);
+    expect(urls[0]).toContain("api.vworld.kr/req/wms"); // 1차: 로컬 키 직행
+    expect(urls[1]).toContain("https://api.4t8t.net/api/v1/tiles/vworld/wms?"); // 2차: 관리자 키(api) 재중계
+    expect(urls[1]).not.toContain("key=");
+  });
+
+  it("★파라미터 오류(INVALID_RANGE)는 페일오버하지 않는다 — 재시도 무의미, 503 유지", async () => {
+    vi.stubEnv("VWORLD_API_KEY", "SECRET-KEY");
+    vi.stubEnv("NEXT_PUBLIC_API_BASE_URL", "https://api.4t8t.net");
+    let calls = 0;
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      calls += 1;
+      return new Response(
+        '<?xml version="1.0"?><ServiceExceptionReport><ServiceException code="INVALID_RANGE">VERSION</ServiceException></ServiceExceptionReport>',
+        { status: 200, headers: { "content-type": "application/xml" } },
+      );
+    }));
+    const res = await proxyVWorldWms(leafletWmsQuery());
+    expect(res.status).toBe(503);
+    expect(calls).toBe(1);
+  });
+
+  it("키 미설정 + API base 미설정 시 503(정직 강등 근거 — 추측 중계 금지)", async () => {
+    vi.stubEnv("VWORLD_API_KEY", "");
+    vi.stubEnv("NEXT_PUBLIC_VWORLD_API_KEY", "");
+    vi.stubEnv("NEXT_PUBLIC_API_BASE_URL", "");
+    const res = await proxyVWorldWms(leafletWmsQuery());
+    expect(res.status).toBe(503);
+  });
+
+  it("★WS-B2: 키 미설정 + API base 설정 시 api 타일 프록시로 중계(키는 api가 주입 — URL에 없음)", async () => {
+    vi.stubEnv("VWORLD_API_KEY", "");
+    vi.stubEnv("NEXT_PUBLIC_VWORLD_API_KEY", "");
+    vi.stubEnv("NEXT_PUBLIC_API_BASE_URL", "https://api.4t8t.net/api/v1");
+    let requested = "";
+    stubFetch((url) => {
+      requested = url;
+      return new Response(new Uint8Array(PNG_MAGIC).buffer, { status: 200, headers: { "content-type": "image/png" } });
+    });
+    const res = await proxyVWorldWms(leafletWmsQuery());
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("image/png");
+    // /api/v1 꼬리는 정규화되어 1번만 등장 + 키/도메인은 api측 주입(URL에 없음)
+    expect(requested).toBe(`https://api.4t8t.net/api/v1/tiles/vworld/wms?${leafletWmsQuery().toString()}`);
+    expect(requested).not.toContain("key=");
+  });
+
+  it("★WS-B2: api 폴백 fetch 실패 시 **정직 강등**(무음 금지 + 회색지도 금지)", async () => {
+    vi.stubEnv("VWORLD_API_KEY", "");
+    vi.stubEnv("NEXT_PUBLIC_API_BASE_URL", "https://api.4t8t.net");
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("ECONNREFUSED"); }));
+    const res = await proxyVWorldWms(leafletWmsQuery());
+
+    // ★★2026-08-18 계약 변경 — 이 케이스는 종전 `503 JSON` 을 단언했다.
+    //   그 계약의 목적은 "무음 회색타일 금지"(실패를 조용히 삼키지 않는다)였는데
+    //   **503 은 목적의 절반만 달성했다**: 실패는 드러나지만 Leaflet 이 tileerror 로만
+    //   처리해 **지도 전체가 회색**이 된다. 2026-08-16 17:58~17:59 실장애에서 사용자가
+    //   본 것이 정확히 그것이고 이유를 알 수 없었다(원인은 168 의 상류가 2분간 죽은 것).
+    //
+    //   → 새 계약: **투명타일 200 + 강등 헤더.** 지도는 살고(필지·오버레이 유지),
+    //     강등은 헤더로 **관측 가능**하다(진단 프로브가 읽어 정직 배너를 띄운다).
+    //   ★이것은 후퇴가 아니다 — 종전보다 **더 많이** 지킨다:
+    //       무음 금지 ✔(헤더) · 회색지도 금지 ✔(투명타일) · 폭주 금지 ✔(음성 캐시)
+    //     "200 이면 무음"이라는 우려는 아래 헤더 단언이 막는다 — 헤더가 빠지면 이 케이스가 죽는다.
+    expect(res.status, "503 이면 지도가 회색이 된다 — 실장애의 사용자 경험").toBe(200);
+    expect(res.headers.get("content-type")).toContain("image/png");
+    expect(
+      res.headers.get("X-VWorld-Degraded"),
+      "강등 헤더가 없으면 배너가 뜰 수 없다 — 무음 강등이 된다",
+    ).toContain("relay-unreachable");
+    expect(res.headers.get("cache-control") ?? "", "no-store 면 팬마다 폭주한다").not.toContain(
+      "no-store",
+    );
+  });
+
+  it("상류 4xx/5xx 는 503 JSON 으로 승격(무음 회색타일 금지)", async () => {
+    vi.stubEnv("VWORLD_API_KEY", "SECRET-KEY");
+    stubFetch(() => new Response("nope", { status: 403 }));
+    const res = await proxyVWorldWms(leafletWmsQuery());
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body.error).toContain("upstream");
+  });
+});

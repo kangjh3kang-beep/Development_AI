@@ -1,0 +1,183 @@
+diff --git a/propai-platform/apps/api/app/integrations/g2b_client.py b/propai-platform/apps/api/app/integrations/g2b_client.py
+index 6b05d189..3a3b4c92 100644
+--- a/propai-platform/apps/api/app/integrations/g2b_client.py
++++ b/propai-platform/apps/api/app/integrations/g2b_client.py
+@@ -35,9 +35,18 @@ AWARD_OPERATIONS: dict[str, str] = {
+     "외자": "getScsbidListSttusFrgcpt",
+ }
+ 
++PRICE_OPERATIONS: dict[str, str] = {
++    "건축": "getPriceInfoListFcltyCmmnMtrilBildng",
++    "토목": "getPriceInfoListFcltyCmmnMtrilEngrk",
++    "기계설비": "getPriceInfoListFcltyCmmnMtrilMchnEqp",
++    "전기통신": "getPriceInfoListFcltyCmmnMtrilElctyIrmc",
++    "종합": "getPriceInfoListFcltyCmmnMtrilTotal",
++}
++
+ G2B_BASE_URL = "http://apis.data.go.kr/1230000"
+ BID_SERVICE_PATH = "/ad/BidPublicInfoService"
+ AWARD_SERVICE_PATH = "/as/ScsbidInfoService"
++PRICE_SERVICE_PATH = "/ao/PriceInfoService"
+ 
+ 
+ class G2BRateLimiter:
+@@ -224,6 +233,56 @@ class G2BClient:
+             items.extend(result)
+         return items
+ 
++    # ──────────────────────────────────────────
++    # 가격정보 (단가) 조회
++    # ──────────────────────────────────────────
++
++    async def fetch_material_prices(
++        self,
++        category: str = "건축",
++        start_date: str | None = None,
++        end_date: str | None = None,
++        page: int = 1,
++        num_rows: int = 999,
++    ) -> list[dict[str, Any]]:
++        """시설공통자재 가격정보를 조회한다."""
++        operation = PRICE_OPERATIONS.get(category)
++        if not operation:
++            raise ValueError(f"지원하지 않는 가격정보 분야: {category}. 가능: {list(PRICE_OPERATIONS.keys())}")
++
++        if not await self._limiter.acquire():
++            return []
++
++        # 가격정보 API에서 inqryBgnDt, inqryEndDt 사용 시 (최근 180일 기본)
++        if not start_date or not end_date:
++            start_date = (datetime.utcnow() - timedelta(days=180)).strftime("%Y%m%d%H%M")
++            end_date = datetime.utcnow().strftime("%Y%m%d%H%M")
++
++        params = {
++            "serviceKey": self._service_key,
++            "pageNo": str(page),
++            "numOfRows": str(num_rows),
++            "inqryDiv": "1",
++            "inqryBgnDt": start_date,
++            "inqryEndDt": end_date,
++            "type": "json",
++        }
++
++        url = f"{G2B_BASE_URL}{PRICE_SERVICE_PATH}/{operation}"
++        client = await self._get_client()
++
++        try:
++            resp = await client.get(url, params=params)
++            resp.raise_for_status()
++            data = resp.json()
++            return self._extract_items(data)
++        except httpx.HTTPStatusError as exc:
++            logger.error("G2B 가격정보 API 오류 (HTTP %d): %s", exc.response.status_code, exc)
++            return []
++        except Exception as exc:
++            logger.error("G2B 가격정보 API 호출 실패: %s", exc)
++            return []
++
+     # ──────────────────────────────────────────
+     # 유틸리티
+     # ──────────────────────────────────────────
+diff --git a/propai-platform/apps/api/app/routers/g2b_bid.py b/propai-platform/apps/api/app/routers/g2b_bid.py
+index 9c1464ed..96687871 100644
+--- a/propai-platform/apps/api/app/routers/g2b_bid.py
++++ b/propai-platform/apps/api/app/routers/g2b_bid.py
+@@ -90,6 +90,15 @@ async def sync_g2b(
+     finally:
+         await client.close()
+ 
++@router.post("/sync-prices", response_model=dict, summary="조달청 가격정보 동기화 (자재단가)")
++async def sync_g2b_prices(
++    db: AsyncSession = Depends(get_db)
++):
++    """조달청 시설공통자재 가격정보 API를 호출하여 내부 단가 테이블(material_unit_prices)에 동기화한다."""
++    from app.services.cost.g2b_price_sync_service import G2BPriceSyncService
++    sync_service = G2BPriceSyncService(db)
++    return await sync_service.sync_material_prices()
++
+ 
+ # ──────────────────────────────────────────
+ # 입찰 공고
+diff --git a/propai-platform/apps/api/app/tasks/g2b_sync_task.py b/propai-platform/apps/api/app/tasks/g2b_sync_task.py
+index 528ded3f..74551bfa 100644
+--- a/propai-platform/apps/api/app/tasks/g2b_sync_task.py
++++ b/propai-platform/apps/api/app/tasks/g2b_sync_task.py
+@@ -151,3 +151,22 @@ async def rebuild_award_stats(ctx: dict) -> dict:
+         await db.commit()
+         logger.info("G2B 낙찰가율 통계 %d건 재집계 완료", count)
+         return {"status": "ok", "stats_count": count}
++
++async def sync_material_prices(ctx: dict) -> dict:
++    """조달청 자재 단가를 주기적으로 수집하여 DB에 저장한다."""
++    service_key = _get_service_key()
++    if not service_key:
++        return {"status": "skipped", "reason": "missing_service_key"}
++
++    from app.core.database import async_session_factory
++    from app.services.cost.g2b_price_sync_service import G2BPriceSyncService
++
++    try:
++        async with async_session_factory() as db:
++            service = G2BPriceSyncService(db)
++            result = await service.sync_material_prices()
++            logger.info("G2B 자재 단가 수집 완료: %s", result)
++            return result
++    except Exception as e:
++        logger.exception("G2B 자재 단가 수집 중 오류")
++        return {"status": "error", "reason": str(e)}
+diff --git a/propai-platform/apps/web/components/map/SatongMultiMap.tsx b/propai-platform/apps/web/components/map/SatongMultiMap.tsx
+index a64ad903..4f37995b 100644
+--- a/propai-platform/apps/web/components/map/SatongMultiMap.tsx
++++ b/propai-platform/apps/web/components/map/SatongMultiMap.tsx
+@@ -298,12 +298,13 @@ function createOfficialBaseMapLayer(
+   //   (타일 실측: Hybrid=PNG RGBA 투명채널, Base=불투명 팔레트). 단독으로 깔면 밝은 배경에
+   //   라벨만 뜨는 유령지도가 됨 → 항공뷰는 Satellite(베이스)+Hybrid(오버레이) 두 장을 합성한다.
+   //   텍스트/라벨이 폴리곤(overlayPane, 400) 위로 올라오도록 overlay 타일은 labelPane(450)에 그린다.
+-  if (baseLayer === "Hybrid") {
+-    const sat = makeTile("Satellite");
++  //   사용자가 일반지도(Base)나 회색지도(gray)를 볼 때도 폴리곤에 텍스트가 덮이지 않도록 Hybrid를 위에 얹어준다.
++  if (baseLayer === "Hybrid" || baseLayer === "Base" || baseLayer === "gray") {
++    const base = makeTile(baseLayer === "Hybrid" ? "Satellite" : baseLayer);
+     const overlay = makeTile("Hybrid", "labelPane");
+-    sat.on("tileload", () => onTileState("ready"));
+-    sat.on("tileerror", () => onTileState("error"));
+-    return L.layerGroup([sat, overlay]);
++    base.on("tileload", () => onTileState("ready"));
++    base.on("tileerror", () => onTileState("error"));
++    return L.layerGroup([base, overlay]);
+   }
+ 
+   const vworld = makeTile(baseLayer);
+diff --git a/propai-platform/apps/worker/main.py b/propai-platform/apps/worker/main.py
+index 0e01715d..5eb5163b 100644
+--- a/propai-platform/apps/worker/main.py
++++ b/propai-platform/apps/worker/main.py
+@@ -163,6 +163,11 @@ async def g2b_rebuild_stats(ctx: dict[str, Any]) -> dict[str, Any]:
+     return await rebuild_award_stats(ctx)
+ 
+ 
++async def g2b_sync_prices(ctx: dict[str, Any]) -> dict[str, Any]:
++    """조달청 시설자재 단가 주기적 동기화."""
++    from app.tasks.g2b_sync_task import sync_material_prices
++    return await sync_material_prices(ctx)
++
+ class WorkerSettings:
+     """arq 워커 설정."""
+ 
+@@ -180,6 +185,7 @@ class WorkerSettings:
+         g2b_sync_bids,
+         g2b_sync_awards,
+         g2b_rebuild_stats,
++        g2b_sync_prices,
+     ]
+ 
+     cron_jobs = [
+@@ -198,6 +204,8 @@ class WorkerSettings:
+         cron(g2b_sync_awards, hour=21, minute=0),
+         # 매주 월 22:00 UTC: 낙찰가율 통계 재집계
+         cron(g2b_rebuild_stats, weekday="mon", hour=22, minute=0),
++        # 매일 20:00 UTC(= KST 05:00): 조달청 시설자재 단가 동기화
++        cron(g2b_sync_prices, hour=20, minute=0),
+     ]
+ 
+     on_startup = startup

@@ -645,53 +645,7 @@ class TestDroneIoTServiceMethods:
         assert result["detections"] == []
 
 
-# ═══════════════════════════════════════════
-# ChatbotService (57 stmts, 33 missed)
-# ═══════════════════════════════════════════
-
-
-class TestChatbotServiceStatic:
-    def test_session_title(self):
-        from apps.api.services.chatbot_service import ChatbotService
-
-        assert ChatbotService._session_title("investment") == "Investment advisory"
-        assert ChatbotService._session_title("construction") == "Construction advisory"
-
-    def test_token_estimate(self):
-        from apps.api.services.chatbot_service import ChatbotService
-
-        assert ChatbotService._token_estimate("hello world") >= 3
-        assert ChatbotService._token_estimate("") >= 1
-
-    def test_reply_investment(self):
-        from apps.api.services.chatbot_service import ChatbotService
-
-        reply, actions = ChatbotService._reply("investment", "What is the current cap rate?")
-        assert "investment" in reply
-        assert len(actions) == 3
-
-    def test_reply_general(self):
-        from apps.api.services.chatbot_service import ChatbotService
-
-        reply, actions = ChatbotService._reply("unknown_domain", "hello")
-        assert "general" not in reply or "unknown_domain" in reply
-        assert len(actions) == 3
-
-    def test_reply_truncates_long_content(self):
-        from apps.api.services.chatbot_service import ChatbotService
-
-        long_content = "word " * 200
-        reply, _ = ChatbotService._reply("design", long_content)
-        assert len(reply) < len(long_content) * 2
-
-    def test_domain_actions_keys(self):
-        from apps.api.services.chatbot_service import _DOMAIN_ACTIONS
-
-        assert "investment" in _DOMAIN_ACTIONS
-        assert "construction" in _DOMAIN_ACTIONS
-        assert "design" in _DOMAIN_ACTIONS
-        assert "regulation" in _DOMAIN_ACTIONS
-        assert "general" in _DOMAIN_ACTIONS
+# ChatbotService 커버리지 삭제됨(2026-07-12 — chatbot_service.py 자체 삭제, TRIAGE_wiring_p2 참조)
 
 
 # ═══════════════════════════════════════════

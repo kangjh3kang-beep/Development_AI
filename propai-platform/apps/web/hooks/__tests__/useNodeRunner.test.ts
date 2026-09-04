@@ -25,6 +25,7 @@ import {
 import { useOrchestrationStore } from "@/store/useOrchestrationStore";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { buildNodeBody, type NodeBodyContext } from "@/lib/orchestration/node-body-builders";
+import { lintNodeRegistry } from "@/scripts/lint-node-registry";
 
 function resetData(): void {
   useProjectContextStore.setState({
@@ -555,5 +556,71 @@ describe("sales → feasibility 폐루프(적정분양가 환류)", () => {
     }, "p1");
     // 단가 미주입 → 백엔드 기본 0(종전과 동일 동작, 무회귀).
     expect(body.avg_sale_price_per_pyeong).toBeUndefined();
+  });
+});
+
+// (G1) DAG 수지 노드 C-1/C-2 환류 dead-path 해소 — feasibility 노드 ssotInputs에
+// feasibilityData(항상-ready 옵셔널 슬롯)를 추가해, useNodeRunner의 실제 실행 경로(resolveInputs→
+// context 조립→buildNodeBody)에서 developmentType·salePricePerPyeongWon이 실제로 전달되는지 검증한다.
+// 위 "recommend → feasibility 폐루프"·"sales → feasibility 폐루프" 테스트는 buildNodeBody를 ctx를
+// 수동 조립해 직접 호출해 이 dead-path를 못 잡았다(블루프린트 G1 근거) — 이 블록은 runNode("feasibility")를
+// 실제로 실행해 그 간극을 메운다.
+describe("G1 — feasibility 노드 자기참조 환류(ssotInputs.feasibilityData 항상-ready 슬롯)", () => {
+  it("(a) feasibilityData에 developmentType·salePricePerPyeongWon이 있으면 실행 경로에서 body에 반영(M06 기본 아님)", async () => {
+    useProjectContextStore.getState().updateSiteAnalysis({ address: "서울", landAreaSqm: 800 });
+    useProjectContextStore.getState().updateDesignData({
+      totalGfaSqm: 3000, floorCount: 10, buildingType: "공동주택", unitCount: 40, bcr: 55, far: 240,
+    });
+    // recommend/sales가 남긴 파생 환류값을 전용 세터로 시드(updatedAt.feasibility 미오염 — 실제 배선과 동일).
+    useProjectContextStore.getState().setRecommendedDevType("M03");
+    useProjectContextStore.getState().setSalesPricePerPyeong(111_610_000);
+
+    request.mockResolvedValueOnce({ totalRevenueWon: 5_000_000_000, totalCostWon: 4_000_000_000 });
+    post.mockResolvedValueOnce({}); // /expert-panel/analyze(feasibility expertPanel:true)
+    post.mockResolvedValueOnce({ verdict: "pass" }); // /verify/analysis
+
+    const { result } = renderHook(() => useNodeRunner());
+    const res = await result.current.runNode("feasibility");
+
+    expect(res.state).toBe("done");
+    expect(request).toHaveBeenCalledTimes(1);
+    const [, opts] = request.mock.calls[0];
+    const body = (opts as { body: Record<string, unknown> }).body;
+    // ★dead-path 해소 확인: 실행 경로에서 조립된 body가 기본값(M06)이 아니라 환류값을 반영.
+    expect(body.development_type).toBe("M03");
+    expect(body.avg_sale_price_per_pyeong).toBe(111_610_000);
+  });
+
+  it("(b) feasibilityData 부재여도 needs-input/grounding-unavailable로 게이트하지 않고 기존과 동일 body(M06 폴백)", async () => {
+    useProjectContextStore.getState().updateSiteAnalysis({ address: "서울", landAreaSqm: 800 });
+    useProjectContextStore.getState().updateDesignData({
+      totalGfaSqm: 3000, floorCount: 10, buildingType: "공동주택", unitCount: 40, bcr: 55, far: 240,
+    });
+    // feasibilityData는 시드하지 않음(resetData가 null로 초기화한 상태 그대로).
+
+    request.mockResolvedValueOnce({ totalRevenueWon: 5_000_000_000, totalCostWon: 4_000_000_000 });
+    post.mockResolvedValueOnce({}); // expert-panel
+    post.mockResolvedValueOnce({ verdict: "pass" }); // verify
+
+    const { result } = renderHook(() => useNodeRunner());
+    const res = await result.current.runNode("feasibility");
+
+    // ★과거 "매출 입력 제거" 의도 보존: feasibilityData 부재가 needs-input/skipped-unavailable을
+    // 유발하지 않는다(항상-ready readyCheck).
+    expect(res.state).toBe("done");
+    const [, opts] = request.mock.calls[0];
+    const body = (opts as { body: Record<string, unknown> }).body;
+    expect(body.development_type).toBe("M06"); // 백엔드 표준 기본값 폴백(무회귀)
+    expect(body.avg_sale_price_per_pyeong).toBeUndefined(); // 단가 미확보 → 미주입(0 강제 금지)
+  });
+
+  it("(c) feasibilityData를 자기 ssotInputs로 추가해도 그래프 간선은 upstream 기준 — 순환 없음(lint-node-registry [E1] 무위반)", () => {
+    // dependency-graph.ts(computeClosure/topoSort)와 lint-node-registry([E1])는 모두 node.upstream만
+    // 간선으로 쓰고 ssotInputs는 미참조한다(코드 대조: dependency-graph.ts 27-42행). 따라서 feasibility의
+    // ssotInputs에 자기 출력 슬롯(feasibilityData)을 추가해도 사이클이 아니다 — 실 레지스트리 전체가
+    // 위반 0(사이클 포함)임을 직접 재확인한다(lint-node-registry.test.ts와 별개로 이 dead-path 수정
+    // 지점에서도 명시적으로 고정).
+    const { errors } = lintNodeRegistry();
+    expect(errors).toEqual([]);
   });
 });

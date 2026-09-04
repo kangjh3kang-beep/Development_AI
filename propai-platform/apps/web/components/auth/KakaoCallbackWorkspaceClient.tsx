@@ -17,8 +17,12 @@ type TokenResponse = {
 type KakaoCallbackWorkspaceClientProps = {
   locale: Locale;
   code: string | null;
+  state: string | null;
   redirectUri: string | null;
 };
+
+// 로그인 시작(login-url) 단계에서 보관한 state — 콜백에서 일치 검증(CSRF/세션고정 방지).
+const KAKAO_STATE_KEY = "kakao_oauth_state";
 
 type CallbackLabels = {
   brand: string;
@@ -30,6 +34,7 @@ type CallbackLabels = {
   goNow: string;
   errorTitle: string;
   error: string;
+  stateMismatch: string;
   missingParams: string;
   openDashboard: string;
   backToLogin: string;
@@ -47,6 +52,7 @@ const LABELS: Record<Locale, CallbackLabels> = {
     goNow: "지금 이동",
     errorTitle: "로그인하지 못했어요",
     error: "카카오 로그인을 완료하지 못했습니다. 잠시 후 다시 시도해 주세요.",
+    stateMismatch: "보안 검증에 실패했어요. 로그인을 처음부터 다시 시도해 주세요.",
     missingParams: "로그인 정보가 올바르지 않습니다. 처음부터 다시 시도해 주세요.",
     openDashboard: "대시보드로 이동",
     backToLogin: "로그인 다시 시도",
@@ -61,6 +67,7 @@ const LABELS: Record<Locale, CallbackLabels> = {
     goNow: "Go now",
     errorTitle: "Sign-in failed",
     error: "We couldn't complete the Kakao login. Please try again shortly.",
+    stateMismatch: "Security check failed. Please start the login over.",
     missingParams: "The sign-in info is invalid. Please start over.",
     openDashboard: "Open dashboard",
     backToLogin: "Try again",
@@ -75,6 +82,7 @@ const LABELS: Record<Locale, CallbackLabels> = {
     goNow: "立即进入",
     errorTitle: "登录失败",
     error: "无法完成 Kakao 登录，请稍后重试。",
+    stateMismatch: "安全校验失败，请重新登录。",
     missingParams: "登录信息无效，请重新开始。",
     openDashboard: "进入仪表盘",
     backToLogin: "重试",
@@ -115,11 +123,13 @@ function resolveApiErrorMessage(error: unknown, fallback: string) {
 export function KakaoCallbackWorkspaceClient({
   locale,
   code,
+  state,
   redirectUri,
 }: KakaoCallbackWorkspaceClientProps) {
   const router = useRouter();
   const labels = LABELS[locale] || LABELS["ko"];
-  const hasRequiredParams = Boolean(code);
+  // ★code와 state 둘 다 필수(fail-closed) — state 생략만으로 CSRF 대조를 건너뛰지 못하게 한다.
+  const hasRequiredParams = Boolean(code && state);
   const [requestState, setRequestState] = useState<{
     status: "loading" | "success" | "error";
     errorMessage?: string;
@@ -135,6 +145,20 @@ export function KakaoCallbackWorkspaceClient({
     let active = true;
 
     const run = async () => {
+      // ★CSRF/세션고정 방지(fail-closed): 이 브라우저가 로그인을 개시했다는 증거(sessionStorage
+      //  보관 state)가 반드시 존재하고 콜백 state와 일치해야만 교환한다. 보관값이 없거나(피해자가
+      //  로그인을 시작하지 않았는데 공격자 콜백링크를 연 경우) 불일치면 차단 — 공격자는 피해자
+      //  브라우저의 same-origin sessionStorage에 값을 심을 수 없으므로 로그인 CSRF가 성립하지 않는다.
+      let savedState: string | null = null;
+      try {
+        savedState = window.sessionStorage.getItem(KAKAO_STATE_KEY);
+      } catch {
+        // sessionStorage 접근 불가(프라이빗 모드·차단) → fail-closed(무한로딩 방지, 아래 가드가 차단).
+      }
+      if (!savedState || savedState !== state) {
+        if (active) setRequestState({ status: "error", errorMessage: labels.stateMismatch });
+        return;
+      }
       try {
         // ★카카오는 콜백 URL에 redirect_uri를 붙여주지 않는다(code만 전달) →
         //  쿼리파라미터(redirectUri)는 실제 플로우에서 거의 항상 null이다.
@@ -145,6 +169,7 @@ export function KakaoCallbackWorkspaceClient({
         const tokens = await apiClient.post<TokenResponse>("/auth/kakao/callback", {
           body: {
             code,
+            state,
             redirect_uri: effectiveRedirectUri,
           },
           useMock: false,
@@ -154,6 +179,7 @@ export function KakaoCallbackWorkspaceClient({
           return;
         }
 
+        window.sessionStorage.removeItem(KAKAO_STATE_KEY);
         persistTokens(tokens);
         setRequestState({ status: "success" });
       } catch (error) {
@@ -173,7 +199,7 @@ export function KakaoCallbackWorkspaceClient({
     return () => {
       active = false;
     };
-  }, [code, hasRequiredParams, labels.error, redirectUri, locale]);
+  }, [code, state, hasRequiredParams, labels.error, labels.stateMismatch, redirectUri, locale]);
 
   // ★인증 성공 시 자동으로 홈(대시보드)으로 이동 — 성공화면에 멈춰 "오류처럼" 보이는 문제 해결.
   //  세션 저장(persistTokens) 직후 약간의 지연으로 성공 메시지를 보여준 뒤 전환한다.
@@ -228,8 +254,7 @@ export function KakaoCallbackWorkspaceClient({
         <div
           className="mx-auto flex h-16 w-16 items-center justify-center rounded-full border-2"
           style={{ borderColor: orb.ring, backgroundColor: orb.fill }}
-          role="status"
-          aria-live="polite"
+          aria-hidden
         >
           {status === "loading" ? (
             <span
@@ -252,7 +277,8 @@ export function KakaoCallbackWorkspaceClient({
           {labels.brand}
         </p>
         <h1 className="mt-1.5 text-2xl font-bold text-[var(--text-primary)]">{title}</h1>
-        <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">{desc}</p>
+        {/* 상태 문구를 live region으로 — 로딩→성공/보안오류 전이를 스크린리더가 고지(구글·네이버 정합). */}
+        <p role="status" aria-live="polite" className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">{desc}</p>
 
         {/* 성공: 자동이동 안내 + 즉시 이동 / 오류: 다시 시도 */}
         {status === "success" ? (

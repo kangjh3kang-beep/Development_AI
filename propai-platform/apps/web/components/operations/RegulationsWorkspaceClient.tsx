@@ -8,8 +8,8 @@
  * AI 통합 해석, 필지 구획도를 함께 제공한다. (POST /regulation/analyze)
  */
 
-import { useCallback, useEffect, useState } from "react";
-import { Bot, Landmark, Search } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Bot, FileDown, Landmark, Search } from "lucide-react";
 import { Card, CardContent, Input } from "@propai/ui";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { entriesToParcelRows, parcelDataToRows, shouldSendParcels, type ParcelRow } from "@/lib/parcel-rows";
@@ -27,6 +27,8 @@ import { AnalysisVerdict } from "@/components/analysis/AnalysisVerdict";
 import { SeniorVerdictCard, type SeniorConsultation } from "@/components/analysis/SeniorVerdictCard";
 import { VisionBanner } from "@/components/common/VisionBanner";
 import { RegulationHierarchyView, type RegResult } from "@/components/regulation/RegulationHierarchyView";
+import { AnalysisHistoryCard } from "@/components/common/AnalysisHistoryCard";
+import { optionsSummary } from "@/lib/use-analysis-history";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import type { Locale } from "@/i18n/config";
@@ -45,6 +47,14 @@ export function RegulationsWorkspaceClient({ locale }: { locale: Locale }) {
   const [result, setResult] = useState<RegResult | null>(null);
   // 다필지 통합(공용): 피커가 올린 전 필지 → 면적가중 통합 규제분석을 백엔드로(2필지↑만 전송).
   const [parcelRows, setParcelRows] = useState<ParcelRow[]>([]);
+  // WP-R3: run 시점 필지 주소 스냅샷(구획도 정합용) — 대표주소 1개만 넘겨 다필지 구획도가
+  //   누락되던 버그 봉합(MarketInsights runParcelAddrs 정답 기준선과 동일 패턴).
+  const [runParcelAddrs, setRunParcelAddrs] = useState<string[]>([]);
+  // 법규 검토서 다운로드(PDF/PPTX/DOCX) — 방금 받은 result를 body로 전송해 재분석·LLM 재호출 0.
+  const [reportBusy, setReportBusy] = useState<"" | "pdf" | "pptx" | "docx">("");
+  const [reportError, setReportError] = useState("");
+  // 히스토리 카드 재조회 신호 — run() 완료 시 증가시켜 AnalysisHistoryCard가 새 항목을 반영한다.
+  const [historyRefreshTick, setHistoryRefreshTick] = useState(0);
 
   // 프로젝트 선택 시 주소(ProjectAddressInput→setAddr)에 더해 PNU도 입력칸에 자동 채움.
   // ProjectAddressInput이 선택 프로젝트의 pnu를 컨텍스트(siteAnalysis.pnu)에 기록하므로,
@@ -62,7 +72,9 @@ export function RegulationsWorkspaceClient({ locale }: { locale: Locale }) {
     const targetPnu = pnu.trim() || siteAnalysis?.pnu || undefined;
     // 다필지: 피커가 올린 필지 우선, 없으면 프로젝트 컨텍스트 필지(면적만)로 통합면적 반영.
     const effRows = parcelRows.length > 0 ? parcelRows : parcelDataToRows(siteAnalysis?.parcels);
-    setLoading(true); setError(""); setLlmGated(false); setResult(null);
+    // WP-R3: 구획도에 넘길 필지 주소 스냅샷을 run 시점에 확정(비동기 이후 상태 변경과 무관하게 고정).
+    const snapshotAddrs = effRows.map((r) => (r.address ?? "").trim()).filter(Boolean);
+    setLoading(true); setError(""); setLlmGated(false); setResult(null); setRunParcelAddrs([]);
     try {
       let r: RegResult;
       try {
@@ -83,12 +95,64 @@ export function RegulationsWorkspaceClient({ locale }: { locale: Locale }) {
         }
       }
       setResult(r);
+      setHistoryRefreshTick((t) => t + 1);
+      // WP-R3 parity: 백엔드가 echo한 실제 사용 필지 목록(parcels_used)을 최우선 권위목록으로,
+      //   없으면 run 시점 클라 스냅샷을 구획도에 사용(단일 권위목록 — 클라 재파생 드리프트 제거).
+      const usedAddrs = (r.parcels_used ?? [])
+        .map((p) => (p.address ?? "").trim())
+        .filter(Boolean);
+      setRunParcelAddrs(usedAddrs.length > 0 ? usedAddrs : snapshotAddrs);
     } catch {
       setError("규제 분석에 실패했습니다. 잠시 후 다시 시도하세요.");
     } finally {
       setLoading(false);
     }
   }, [addr, pnu, useLlm, siteAnalysis, parcelRows]);
+
+  // 히스토리 대상(현재 입력 기준 — run() 내부와 동일 폴백 규칙)과 변동감지 시그니처 파트.
+  //   백엔드 계약과 동일 순서: [address, pnu||"", parcelCount, useLlm, options요약(규제 분석은 옵션 없음→"")].
+  //   parcelCount는 run()의 effRows와 동일 출처. 백엔드(regulation.py) `len(_rows) or 1`을
+  //   그대로 미러(`|| 1`) — parcels 미전송(단일필지)이어도 백엔드는 1로 적재하므로 0이면 오탐.
+  const historyAddress = addr || siteAnalysis?.address || "";
+  const historyPnu = pnu.trim() || siteAnalysis?.pnu || "";
+  const historyParcelCount = (parcelRows.length > 0 ? parcelRows : parcelDataToRows(siteAnalysis?.parcels)).length;
+  const historySignatureParts = useMemo(
+    () => [historyAddress, historyPnu, String(historyParcelCount || 1), String(useLlm), optionsSummary(undefined)],
+    [historyAddress, historyPnu, historyParcelCount, useLlm],
+  );
+
+  // 법규 검토서 다운로드(PDF/PPTX/DOCX) — 통합 보고서 생성엔진 경유. 방금 화면에 받은 result를
+  //   그대로 body로 보내 백엔드가 재분석·LLM 재호출 없이 '조립'만 하게 한다(과금·지연 0).
+  const downloadReport = useCallback(async (fmt: "pdf" | "pptx" | "docx") => {
+    if (!result) return;
+    setReportBusy(fmt);
+    setReportError("");
+    try {
+      const token = (typeof window !== "undefined" && localStorage.getItem("propai_access_token")) || "";
+      const res = await fetch(`${regulationApiBase()}/regulation/report?format=${fmt}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ result, address: result.address }),
+      });
+      // 성공=바이너리(attachment), 실패=4xx(JSON) — blob 침묵 오염 차단(정직 표기).
+      if (!res.ok || (res.headers.get("content-type") || "").includes("json")) {
+        setReportError("검토서 생성에 실패했습니다.");
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const safeName = (result.address || "규제").replace(/[\\/:*?"<>|]/g, "_");
+      a.download = `법규검토서_${safeName}.${fmt}`;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      setReportError("검토서 다운로드에 실패했습니다.");
+    } finally {
+      setReportBusy("");
+    }
+  }, [result]);
 
   return (
     <div className="grid grid-cols-1 gap-6 min-w-0">
@@ -150,6 +214,20 @@ export function RegulationsWorkspaceClient({ locale }: { locale: Locale }) {
         </CardContent>
       </Card>
 
+      {/* 분석 히스토리 — ★result 조건 밖(실행 전·리로드 직후에도 접근 가능해야 한다 —
+          W5 실동선 검증에서 result 내부 배치로 새로고침 후 카드가 소실되는 결함 적발). */}
+      {historyAddress ? (
+        <AnalysisHistoryCard
+          analysisType="regulation"
+          address={historyAddress}
+          pnu={historyPnu || null}
+          currentSignatureParts={historySignatureParts}
+          onReanalyze={run}
+          reanalyzing={loading}
+          refreshSignal={historyRefreshTick}
+        />
+      ) : null}
+
       {result && (
         <>
           {/* 다필지 통합 고지 — 결과가 N필지 통합면적·우세용도 기준임을 명시(근거·투명성). */}
@@ -173,8 +251,42 @@ export function RegulationsWorkspaceClient({ locale }: { locale: Locale }) {
           {/* 종합 규제 계층·정량 한도·영향도·LLM 통합 해석 (공용 렌더) */}
           <RegulationHierarchyView result={result} locale={locale} />
 
-          {/* 필지 구획도 */}
-          <ParcelBoundaryMap parcels={[result.address]} />
+          {/* 법규 검토서 다운로드(PDF/PPTX/DOCX) — 방금 받은 분석 결과를 그대로 문서화(재분석 0). */}
+          <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <p className="inline-flex items-center gap-1.5 text-sm font-black text-[var(--accent-strong)]">
+                  <FileDown className="size-4" aria-hidden />법규 검토서 다운로드
+                </p>
+              </div>
+              <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                부지·용도지역 요약, 법정·조례·실효 한도, AI 해석, 규제 계층, 근거 법령을 한 문서로 내려받습니다.
+              </p>
+              <div className="mt-4 flex flex-wrap items-center gap-2">
+                {([["pdf", "PDF"], ["pptx", "PPT"], ["docx", "Word"]] as const).map(([fmt, label]) => (
+                  <button
+                    key={fmt}
+                    onClick={() => void downloadReport(fmt)}
+                    disabled={reportBusy !== ""}
+                    className="inline-flex h-10 items-center gap-1.5 rounded-xl bg-[var(--accent-strong)] px-5 text-sm font-black text-white hover:opacity-90 disabled:opacity-50"
+                  >
+                    <FileDown className="size-4" aria-hidden />
+                    {reportBusy === fmt ? `${label} 생성 중…` : label}
+                  </button>
+                ))}
+                {reportError && (
+                  <span className="text-xs font-semibold text-[var(--status-error)]">{reportError}</span>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* 필지 구획도 — 다필지면 run 시점 전 필지(runParcelAddrs), 단일이면 대표주소. primaryZone은
+              분석 확정 용도지역(SSOT)으로 첫 필지 오버레이(구획도-분석 용도 정합). */}
+          <ParcelBoundaryMap
+            parcels={runParcelAddrs.length > 0 ? runParcelAddrs : [result.address]}
+            primaryZone={result.zone_type}
+          />
 
           {/* 전문가 패널 검증 */}
           <ExpertPanelCard
@@ -186,4 +298,16 @@ export function RegulationsWorkspaceClient({ locale }: { locale: Locale }) {
       )}
     </div>
   );
+}
+
+// API 오리진(버전 prefix 포함) — 바이너리(검토서) 다운로드는 apiClient(JSON 파서)를 못 쓰므로
+// 원시 fetch 를 쓴다. MarketInsightsWorkspaceClient.marketApiBase 동형(peer 컨벤션 미러).
+function regulationApiBase(): string {
+  if (typeof window !== "undefined") {
+    const h = window.location.hostname;
+    if (h === "4t8t.net" || h === "www.4t8t.net" || h.endsWith(".pages.dev") || h === "propai.kr") {
+      return "https://api.4t8t.net/api/v1";
+    }
+  }
+  return "/api/proxy";
 }

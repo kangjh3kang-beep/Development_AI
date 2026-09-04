@@ -87,12 +87,24 @@ function loadDaumPostcodeScript(): Promise<void> {
     scriptLoading = true;
 
     const script = document.createElement("script");
-    script.src = "//t1.daumcdn.net/mapjsapi/bundle/postcode/prod/postcode.v2.js";
+    // ★`//` 프로토콜 상대 URL 이었다 — 명시적으로 https 를 쓴다(다운그레이드 여지 제거).
+    script.src = "https://t1.daumcdn.net/mapjsapi/bundle/postcode/prod/postcode.v2.js";
     script.async = true;
     script.onload = () => {
       scriptLoaded = true;
       scriptLoading = false;
       loadCallbacks.forEach((cb) => cb());
+      loadCallbacks.length = 0;
+    };
+    // ★종전에 `onerror` 가 **없었다.** 그래서 스크립트를 못 받으면
+    //   ①쌓아 둔 `resolve` 가 영원히 안 불려 `await` 가 **무한 대기**하고
+    //   ②`scriptLoading` 이 true 로 굳어 **페이지를 새로고침하기 전엔 재시도도 못 했다.**
+    //   화면에는 빈 상자만 남고 아무 안내가 없었다 — 이 저장소가 반복해서 데인 "조용한 실패".
+    //   정답 기준선은 `lib/kakao-map.ts` 다: 상태를 되돌려 **다음 시도를 허용**한다.
+    script.onerror = () => {
+      scriptLoading = false;
+      script.remove(); // 실패한 태그를 남기지 않는다(다음 시도가 새로 붙인다).
+      loadCallbacks.forEach((cb) => cb()); // 대기자를 깨운다 — 무한 대기 방지.
       loadCallbacks.length = 0;
     };
     document.head.appendChild(script);
@@ -140,7 +152,14 @@ export function KakaoAddressSearch({
       await loadDaumPostcodeScript();
       if (cancelled || !boxRef.current) return;
       const daum = (window as any).daum;
-      if (!daum?.Postcode) return;
+      if (!daum?.Postcode) {
+        // ★종전엔 여기서 **아무 말 없이** 반환해 빈 상자만 남았다.
+        boxRef.current.innerHTML =
+          '<p style="padding:16px;font-size:12px;line-height:1.6">' +
+          "주소 검색 서비스를 불러오지 못했습니다.<br/>네트워크를 확인하고 다시 열어 주세요." +
+          "</p>";
+        return;
+      }
       boxRef.current.innerHTML = "";
       new daum.Postcode({
         oncomplete: (data: DaumPostcodeData) => {

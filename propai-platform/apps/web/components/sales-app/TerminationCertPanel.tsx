@@ -276,7 +276,7 @@ function IssuerView({ api }: { api: SalesApi }) {
   return (
     <div className="space-y-5">
       {err && (
-        <div className="rounded-xl border border-rose-400/40 bg-rose-500/10 px-4 py-3 text-sm font-semibold text-rose-300">
+        <div className="rounded-xl border border-[var(--status-error)]/40 bg-[var(--status-error)]/10 px-4 py-3 text-sm font-semibold text-rose-300">
           {err}
         </div>
       )}
@@ -425,7 +425,7 @@ function IssuerView({ api }: { api: SalesApi }) {
         </div>
 
         {issueResult && (
-          <div className="mt-3 rounded-xl border border-emerald-400/40 bg-emerald-500/10 px-4 py-3 text-sm font-semibold text-emerald-300">
+          <div className="mt-3 rounded-xl border border-[var(--status-success)]/40 bg-[var(--status-success)]/10 px-4 py-3 text-sm font-semibold text-emerald-300">
             {issueResult}
           </div>
         )}
@@ -596,9 +596,9 @@ function FreelancerView({ api, siteCode }: { api: SalesApi; siteCode: string }) 
 
   const statusBadge = (s: string) => {
     const map: Record<string, { label: string; cls: string }> = {
-      PENDING: { label: "신청중", cls: "bg-amber-500/15 text-amber-300" },
-      ISSUED: { label: "발급완료", cls: "bg-emerald-500/15 text-emerald-300" },
-      REJECTED: { label: "반려", cls: "bg-rose-500/15 text-rose-300" },
+      PENDING: { label: "신청중", cls: "bg-[var(--status-warning)]/15 text-amber-300" },
+      ISSUED: { label: "발급완료", cls: "bg-[var(--status-success)]/15 text-emerald-300" },
+      REJECTED: { label: "반려", cls: "bg-[var(--status-error)]/15 text-rose-300" },
     };
     const m = map[s] ?? { label: s, cls: "bg-[var(--accent-soft)] text-[var(--accent-strong)]" };
     return <span className={`rounded-md px-2 py-0.5 text-[10px] font-bold ${m.cls}`}>{m.label}</span>;
@@ -611,7 +611,7 @@ function FreelancerView({ api, siteCode }: { api: SalesApi; siteCode: string }) 
   return (
     <div className="space-y-5">
       {err && (
-        <div className="rounded-xl border border-rose-400/40 bg-rose-500/10 px-4 py-3 text-sm font-semibold text-rose-300">
+        <div className="rounded-xl border border-[var(--status-error)]/40 bg-[var(--status-error)]/10 px-4 py-3 text-sm font-semibold text-rose-300">
           {err}
         </div>
       )}
@@ -649,7 +649,7 @@ function FreelancerView({ api, siteCode }: { api: SalesApi; siteCode: string }) 
                   <p className="truncate text-sm font-bold text-[var(--text-primary)]">{h.site_name}</p>
                   <p className="text-xs text-[var(--text-tertiary)]">{fmtPeriod(h.period_start, h.period_end)}</p>
                   {h.active && (
-                    <span className="mt-1 inline-block rounded-md bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-bold text-emerald-300">
+                    <span className="mt-1 inline-block rounded-md bg-[var(--status-success)]/15 px-1.5 py-0.5 text-[10px] font-bold text-emerald-300">
                       재직중
                     </span>
                   )}

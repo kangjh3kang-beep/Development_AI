@@ -16,7 +16,12 @@ from typing import Any
 import httpx
 import structlog
 
+from app.services.external_api.poi_dedup import dedup_school_cluster
+
 logger = structlog.get_logger(__name__)
+
+# 학교 카테고리(모학교 병합 대상) — 본교·운동장·병설유치원·분교 부속을 1개교로 dedup한다.
+_SCHOOL_CATEGORY = "SC4"
 
 _BASE = "https://dapi.kakao.com/v2/local/search/category.json"
 _KEYWORD = "https://dapi.kakao.com/v2/local/search/keyword.json"
@@ -191,7 +196,14 @@ class KakaoLocalService:
             if r is None:
                 out[code] = {"label": label, "count": 0, "nearest_m": None, "items": [], "unavailable": True}
             else:
-                out[code] = {"label": label, **r}
+                entry = {"label": label, **r}
+                # ★학교(SC4)는 모학교 병합(G2 근원봉합): 본교·운동장·병설유치원·분교 부속을 1개교로
+                #   dedup하고 count를 고유 모학교 수로 교정(raw total_count는 부속 포함 과카운트).
+                if code == _SCHOOL_CATEGORY and isinstance(entry.get("items"), list):
+                    deduped = dedup_school_cluster(entry["items"])
+                    entry["items"] = deduped
+                    entry["count"] = len(deduped)
+                out[code] = entry
         return {"available": True, "radius_m": radius, "center": {"lat": lat, "lon": lon}, "categories": out}
 
     async def keyword_group_inventory(

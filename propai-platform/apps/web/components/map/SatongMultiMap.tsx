@@ -15,27 +15,68 @@
  * 좌표 주의: Leaflet은 [lat, lng] 순, GeoJSON은 [lng, lat] 순이라 변환이 필요하다.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { AlertTriangle, Building2, Home, LandPlot, MapPin, Ruler, Search, X } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import {
   AGE_LEGEND_ITEMS,
+  CAPACITY_LEGEND_ITEMS,
+  MARKET_TYPE_COLORS,
+  MARKET_TYPE_LABELS,
+  capacityColor,
   ageColor,
   ageLabel,
+  geometryRepresentativePoint,
   hasSatongLayer,
   hasSatongLayerControl,
   mergeSatongMapFeatures,
   priceColor,
   priceManPyeong,
   pricePyeongOnly,
+  resolveRegulationWmsLayerChunks,
   resolveVWorldBaseLayer,
   satongMapFeatureKey,
+  type DominantConstraint,
   type SatongMapFeature,
   type SatongMapLayerState,
   type VWorldBaseLayer,
   zoneColor,
+  satongSelectionLabelsVisible,
 } from "@/lib/satong-map-layers";
+import {
+  noSampleReason,
+  selectMappableGroups,
+  type SampleBasis,
+  type SampleBasisRaw,
+} from "@/lib/market/comparable-sample";
+import { bindSatongLabel, planSatongLabels, satongLabelLOD } from "@/lib/satong-map-labels";
+import { planSelectionLabels, renderSelectionLabels } from "@/lib/satong-selection-labels";
+import type { SiteLayoutOverlay } from "@/lib/site-layout";
+import {
+  clearLayoutOverlay,
+  renderLayoutOverlay,
+} from "@/lib/satong-layout-overlay";
+import { registerDismissible } from "@/lib/satong-dismiss";
+import { SATONG_PANE_Z, SATONG_POPUP_YIELD, SATONG_UI_Z } from "@/lib/satong-map-z";
+
+/** 측정 해제는 **표면이 아니다** — 열린 표면이 하나도 없을 때만 ESC 차례가 오도록 최하위. */
+const MEASURE_DISMISS_Z = -1;
+import { clampClickMenuPosition, findFeatureAtPoint } from "@/lib/satong-click-menu";
+import { addressHasJibun, joinAddressJibun, normalizePnu, parcelDisplayAddress, parcelShortLabel } from "@/lib/pnu";
+import {
+  formatAreaSqm,
+  formatDistance,
+  polygonAreaSqm,
+  totalDistanceMeters,
+  type MeasurePoint,
+} from "@/lib/satong-measure";
 import { useMapFullscreen } from "@/hooks/useMapFullscreen";
+import { loadLeaflet } from "@/lib/leaflet-loader";
+import {
+  shouldShowFetchFailureNotice,
+  shouldShowMarketDetails,
+  shouldShowRadiusControl,
+} from "@/lib/market/market-radius";
 
 declare global {
   interface Window {
@@ -76,8 +117,9 @@ export interface SatongMultiMapProps {
   focusTarget?: { lat: number; lon: number; label?: string } | null;
   /** 검색된 필지를 지도에 자동으로 선택 표시 */
   autoPreviewFocus?: boolean;
-  /** 지도 높이(px), 기본 360 */
-  height?: number;
+  /** 지도 높이(px 숫자 또는 CSS 길이 문자열 — 예: clamp()), 기본 360.
+   *  ★UX 트랙 D3: 숫자 하위호환 유지 + 반응형 clamp() 문자열 허용(SatongMapShell이 전달). */
+  height?: number | string;
   /** 통합 지도 화면에서 외곽 설명/배경을 줄이는 표시 모드 */
   chrome?: "default" | "immersive";
   /** 통합 필지 입력 패널에서 확정된 실제 선택 필지. geometry가 없으면 boundary API로 보강한다. */
@@ -88,6 +130,10 @@ export interface SatongMultiMapProps {
   readOnly?: boolean;
   /** 주변 실거래/분양 등 시장 데이터 마커를 같은 엔진 위에 표시한다. */
   marketPayload?: SatongMarketPayload | null;
+  /** 실거래 반경(수동). `null` = 자동(희소하면 백엔드가 넓힌다). */
+  marketRadiusM?: number | null;
+  /** 반경 칩 선택 — `null` 을 주면 자동으로 되돌린다. */
+  onMarketRadiusChange?: (m: number | null) => void;
   marketLayer?: SatongMarketLayerState;
   /** 교통·편의 POI(지하철·학교·상권·공원·병원) 마커 — /site-score/poi-infra 응답. */
   poiPayload?: SatongPoiPayload | null;
@@ -98,6 +144,20 @@ export interface SatongMultiMapProps {
   /** 경계 API(/zoning/parcel-boundaries)가 보강한 필지 속성(면적·용도·좌표·경계) 역전파 —
    *  부모가 선택목록·SSOT에 병합해 다필지 통합분석이 면적을 받도록 한다. */
   onBoundaryEnriched?: (features: SatongMapFeature[]) => void;
+  /** 경계보강 진행상태 통지 — 부모(Shell)가 "좌표 확인 중" 노트를 실패 시 정직 강등하는 데 쓴다. */
+  onBoundaryStatusChange?: (status: "idle" | "loading" | "ready" | "error") => void;
+  /** W3 배치 미리보기 오버레이 — 서버 산정 GeoJSON(건축가능 영역 + 선택 대안의 동 풋프린트).
+   *  ★기하를 여기서 만들지 않는다: null이면 아무것도 그리지 않는다(가짜 배치 금지). */
+  layoutOverlay?: SiteLayoutOverlay | null;
+  /** ★W3-b 정북 밴드 툴팁용 — 선택 대안의 이격·높이(수치는 서버 산출, 여기선 전달만). */
+  layoutNorthLightSetbackM?: number | null;
+  layoutNorthLightHeightM?: number | null;
+  /** 분양 상태 노트(좌표 대기·조회 실패 등) — 설정 시 건수 라벨 대신 표기(정직원칙).
+   *  ★marketLayer 객체에 넣지 않고 별도 prop으로 받는다 — 노트만 바뀔 때 마커 이펙트가
+   *  전체 재생성되던 낭비(리뷰 LOW)를 차단. */
+  presaleNote?: string | null;
+  /** 경매 상태 노트(로그인 필요·권한 없음·좌표 대기 등) — 위와 동일 규약. */
+  auctionNote?: string | null;
   /** 보기 전용 지도에서 필지 폴리곤/마커 클릭 시 기존 화면과 연동한다. */
   onFeatureClick?: (feature: SatongMapFeature) => void;
   /** 기존 구획도/토지조서 상태색 호환. 키는 주소. */
@@ -106,11 +166,33 @@ export interface SatongMultiMapProps {
   featureStatusLabels?: Record<string, string>;
   /** 기존 구획도 하이라이트 주소 호환. */
   highlightFeatureAddress?: string;
+  /** 부모(Shell) "초기화"(clearParcels) 신호 — 증가할 때마다 지도 staged·녹색 폴리곤·pending을
+   *  청소한다(WP-M2). 종전엔 목록만 비고 지도엔 잔존했다. undefined면 무동작(하위호환). */
+  clearSignal?: number;
+  /** ★R2(MEDIUM): staged(확정 [완료] 전, 녹색으로 찍어둔) 필지 개수 역전파 — 부모(Shell)는
+   *  이 내부 상태를 원래 볼 수 없어 "확정 선택은 0건인데 지도엔 임시 선택이 남는" 상황을
+   *  무음으로 지나쳤다. staged 길이가 바뀔 때마다 통지한다(개수만 — 배열 자체는 전달 안 함). */
+  onStagedCountChange?: (count: number) => void;
+  /** 하단 도크 우측 슬롯 — 베이스맵 스위처 등 부모 소유 컨트롤을 도크 flow 안에 배치한다.
+   *  ★겹침 구조 진단(2026-07-17): 독립 absolute 섬(스위처 bottom-20 right-4)과 칩 행의
+   *  암묵 예약값(max-w calc 152px)이 겹침의 근원 — 같은 flex 행에 흘리면 겹침이 문법적으로
+   *  불가능하고 예약값 자체가 사라진다. 슬롯이 있으면 도크는 칩이 없어도 항상 렌더된다. */
+  bottomDockSlot?: ReactNode;
+  /** 우상단 슬롯 — 레이어 레일·팝오버 등 부모 소유 오버레이를 지도 래퍼 '안'에 배치한다.
+   *  ★풀스크린 소실 결함(2026-07-29 감사): 풀스크린은 이 컴포넌트 내부 래퍼에
+   *  `fixed inset-0 z-[9990]`을 입히는데, 셸이 소유한 레일(z-420)·팝오버(z-430)·활성
+   *  레이어 배지(z-380)는 그 래퍼의 '형제'라 전부 뒤로 깔려 사라졌다 — 큰 화면에서
+   *  레이어를 보려고 누르는 버튼이 정작 레이어 제어를 없애는 모순이었다.
+   *  같은 결함을 하단 선택바에서 이미 고친 선례(래퍼 안으로 이동)를 셸 오버레이에 전파한다.
+   *  계약은 bottomDockSlot과 동일 — 부모가 JSX를 넘기면 자식이 자기 래퍼 안에 렌더한다. */
+  topRightSlot?: ReactNode;
 }
 
 type BoundaryFeature = {
   pnu: string;
   address: string;
+  /** 입력 주소 원본 — address 는 지번이 붙어 보강된다(매칭용 키). */
+  input_address?: string | null;
   area_sqm?: number | null;
   zone_type?: string | null;
   zone_type_2?: string | null;
@@ -118,7 +200,22 @@ type BoundaryFeature = {
   official_price_per_sqm?: number | null;
   built_year?: number | null;
   building_age_years?: number | null;
+  // 노후도 무자료 사유(no_building/lookup_failed/skipped_bulk) — 값 있으면 null(WP-M3).
+  age_status?: string | null;
+  /** WS-D 개발여력 — 서버 산정 실효/현황 용적률(%). 미상 None. */
+  effective_far_pct?: number | null;
+  /** 법정 한도·근거 계층 — 실효값이 '왜 그 값인지'를 화면이 말하기 위한 재료(2026-08-23). */
+  legal_far_pct?: number | null;
+  far_basis?: string | null;
+  current_far_pct?: number | null;
+  effective_bcr_pct?: number | null;
+  total_floor_area_sqm?: number | null;
+  /** W1 지배 제약(서버 산정 — regulation/dominant_constraint). 제약 0건이면 null. */
+  dominant_constraint?: DominantConstraint | null;
   geometry?: any;
+  // 서버가 대표좌표를 줄 경우 대비(additive) — 없으면 geometry 대표점으로 파생한다.
+  lat?: number | null;
+  lon?: number | null;
 };
 
 type BoundaryResponse = {
@@ -146,6 +243,31 @@ export type SatongMarketGroup = {
   avg_price_10k?: number;
   avg_deposit_10k?: number;
   avg_monthly_10k?: number;
+  /** ★P2(실무 판단정보) — robust_price_stats(백엔드 이상치 제거 통계) 결과. 매매만 해당. */
+  min_price_10k?: number;
+  max_price_10k?: number;
+  excluded_outliers?: number;
+  /** ★P2 — 토지 매매(getRTMSDataSvcLandTrade) 전용 지목·용도지역. 종전엔 파싱만 되고
+   *  그룹핑 단계에서 폐기됐다(nearby_map_service._group_trade). 없으면 undefined(무날조). */
+  build_year?: number;
+  jimok?: string;
+  land_use?: string;
+  /**
+   * ★백엔드가 **보내고 있었는데 타입에 없어서** 프론트가 쓸 수 없던 필드.
+   *
+   * `located`(정밀 좌표) · `approximate`(동 대표점) · `unlocated`(좌표 미확보).
+   * 백엔드 주석이 명시하듯 소비처가 `lat is null` 로 **추론**하게 두면 전부 오염된다 —
+   * 계약으로 받는다. 특히 `unlocated` 는 국토부 지번 마스킹분이라 지도에 못 찍지만
+   * **거래 내용은 살아 있다**(목록으로 낸다).
+   * ★같은 형태의 결함이 이미 있었다(2026-08-13 `sample_basis` 선언 누락 TS2345).
+   */
+  location_status?: "located" | "approximate" | "unlocated";
+  /**
+   * 중심(선택 필지)으로부터의 거리(m). 백엔드가 **이미 계산해 놓고 버리던** 값이다
+   * (분양 그룹은 처음부터 싣고 있었다 — 같은 응답 안의 선례).
+   * ★거리가 표시 캡의 정렬 1순위가 됐으므로(가까운 순으로 남긴다) 화면도 그 근거를 보여야 한다.
+   */
+  distance_m?: number | null;
   deals?: SatongMarketDeal[];
 };
 
@@ -154,15 +276,32 @@ export type SatongMarketCategory = {
   type?: string;
   kind?: string;
   count?: number;
+  /** ★P1(절단 정직 고지) — 카테고리별 마커 상한(28)에 걸려 응답에서 빠진 그룹 수. */
+  capped_count?: number;
   groups?: SatongMarketGroup[];
+  /**
+   * 표본이 무엇인지(위치확인·미확인·마스킹 건수). 백엔드가 **이미 보내고 있었는데**
+   * 이 타입에 선언이 없어 프론트가 존재를 모르고 있었다(2026-08-12).
+   * 그래서 "실거래 0건"의 사유를 말할 재료를 손에 쥐고도 내부 용어만 늘어놓았다.
+   */
+  sample_basis?: SampleBasisRaw;
 };
 
 export type SatongMarketPayload = {
   center: { lat: number | null; lon: number | null; address?: string } | null;
   radius_m?: number;
+  /** 요청 반경(에코). `radius_m` 이 확대된 유효 반경일 수 있어 원본을 따로 받는다. */
+  radius_requested_m?: number;
+  /** 반경이 자동 확대됐는가 — **조용히 넓히지 않는다**는 계약. */
+  radius_expanded?: boolean;
   categories?: Record<string, SatongMarketCategory>;
   fetch_failed?: boolean;
   note?: string;
+  /** ★P1(절단 정직 고지) — 백엔드가 이미 산출하지만 종전엔 프론트가 표면화하지 않던 필드들. */
+  radius_applied?: boolean;
+  geocode_precut_count?: number;
+  coords_unresolved_count?: number;
+  radius_filtered_out_count?: number;
 };
 
 /** /site-score/poi-infra 응답(부분집합) — 카테고리별 POI 항목(좌표 포함). */
@@ -189,6 +328,156 @@ export type SatongPoiPayload = {
 // POI 컨트롤(역·학교·상권·공원·병원) → Kakao Local 카테고리 코드 매핑.
 //   백엔드 poi_inventory 수집 코드(SW8 지하철·SC4 학교·MT1 마트·CS2 편의점·BK9 은행·
 //   HP8 병원·PM9 약국·PARK 공원 키워드)와 정합 — 미수집 코드는 넣지 않는다(무날조).
+/**
+ * ★VWorld WMTS의 **유효 줌 범위**(라이브 실측 2026-08-01):
+ *   z5 → `503 InvalidParameterValue/tilematrix` · z6~z19 → 200 · z20·z21 → 503.
+ *
+ * 지도·타일 어디에도 `minZoom`이 없어 z0까지 축소가 허용됐고, 축소하는 순간 전 타일이
+ * 503이 되어 "기본지도 로드 실패" 전체 스크림이 떴다. 역설적으로 규제/지적편집도 WMS를
+ * 켜 두면 그쪽 `minZoom:7`이 Leaflet 지도 하한을 올려 이 버그가 **가려졌다** —
+ * "레이어를 끄면 지도가 깨진다"는 반직관적 재현 조건이었다.
+ */
+export const VWORLD_TILE_MIN_ZOOM = 6;
+export const VWORLD_TILE_MAX_ZOOM = 19;
+
+/**
+ * 연속지적도(WMS)가 **실제로 그려지기 시작하는** 최소 줌.
+ *
+ * ★추정이 아니라 실측이다. **1,784B 는 완전투명 PNG**(불투명 0픽셀)로, 200 OK 라
+ *   오류로도 안 잡힌다 — 그래서 바이트가 아니라 **불투명 픽셀 수**로 판정한다.
+ *
+ * ── 2026-08-15 재측정: 18 → **17** (사용자 신고 "더 낮은 배율에서도 나와야 하지 않나")
+ *   프로덕션 프록시(/tiles/vworld/wms)로 타일격자 정렬 BBOX·256px·불투명픽셀 집계.
+ *   **6지역 × 2스타일 전부 z17 에서 렌더**되고 z16 은 전부 빈 타일이었다:
+ *
+ *     지역          z16(채움)   z17(채움)        z18(채움)
+ *     오산 내삼미동   1,784B/0   27,390B/65536   15,856B/65536
+ *     강남 역삼      1,784B/0   19,506B/65536   12,884B/65536
+ *     호미곶 대보리   1,784B/0   37,286B/65536   29,141B/65536
+ *     제주 애월      1,784B/0   42,413B/65536   18,425B/65536
+ *     의정부동       1,784B/0   18,729B/65536   21,045B/65536
+ *     강원 인제(산간) 1,784B/0   40,214B/65536   29,393B/65536
+ *
+ *   항공뷰가 쓰는 **_line 스타일도 동일**(z16 빈 타일 · z17 렌더): 오산 17,445B/8183 ·
+ *   강남 11,832B/5541 · 호미곶 21,708B/13194. (선이라 부분 불투명이 정상)
+ *
+ *   ★종전 주석은 "z17 1,784B"라고 적었다. 지금은 6지역 전부 z17 이 렌더된다 —
+ *     상류가 바뀐 것인지 그때 측정이 어긋난 것인지는 **확정하지 못했다**(가능한 원인:
+ *     BBOX 가 타일격자에 정렬되지 않았을 수 있다). 확정된 것은 **현재 z17 이 나온다**는 것뿐이다.
+ *     → 이 상수는 상류 사정에 딸린 값이다. **주기적으로 재라.**
+ *
+ * z16 이하에서는 아무리 기다려도 지적선이 나오지 않는다. 그 배율에서 타일을 계속
+ * 요청하면 사용자는 **설명 없는 빈 지도**를 보고, 상류에는 헛요청이 쌓여 간헐 502 노출만
+ * 커진다. 그래서 레이어 하한을 여기 맞추고, 그 아래에서는 "오류"가 아니라 **안내**를 띄운다.
+ *
+ * ★재측정 방법(값을 바꾸려면 먼저 재라):
+ *   GetMap 을 **타일격자에 정렬된** BBOX(한 변 = 40075016.686 / 2^z)로 호출하고,
+ *   응답 PNG 의 **불투명 픽셀 수**를 센다(바이트만 보면 스타일별 편차에 속는다).
+ *   불투명 0 이면 그 배율은 빈 타일이다. 채움·_line 두 스타일을 **모두** 재고,
+ *   도심·산간·도서를 **여러 지역** 재라(지역 편차가 있으면 임계를 못 내린다).
+ */
+export const CADASTRE_MIN_ZOOM = 17;
+
+/**
+ * 저배율 안내 문구 — **오류가 아니다**. 이 문구는 진짜 오류 노트를 덮지 않는다.
+ *
+ * ★"확대하세요"로 끝내지 않고 **이 배율에서 무엇을 해 볼 수 있는지**를 말한다.
+ *   저배율은 "아무것도 없는 상태"가 아니다 — 막다른 안내는 사용자를 더 헤매게 한다.
+ *
+ * ★★2026-08-15 정정 — 종전 문구는 "용도지역 레이어가 **표시됩니다**"라고 **단정**했고,
+ *   그 단정이 **호미곶면에서 거짓**이었다. 이 파일이 바로 아랫줄에서 스스로 세운 규칙
+ *   ("늘 참인 것만 말한다")을 lt_c_upisuq161 에는 적용하고 **lt_c_uq111 에는 적용하지 않았다** —
+ *   uq111 도 똑같이 지역 편차가 있는데 재보지 않고 늘 참이라고 가정한 것이다.
+ *
+ *   실측(불투명 픽셀 · 타일격자 정렬 BBOX):
+ *     호미곶 대보리a·대보리b·강사리 3개 지점 — 지적 z17 렌더(65536)인데 **용도지역 z11~17 전부 빈 타일**
+ *     같은 포항 시내 z15 65536 · 오산 내삼미(비도시) 65536 · 양평 서종(비도시) 65536
+ *     → 좌표 오류도 도시/비도시 구분도 아닌 **국지적 데이터 구멍**이다.
+ *   ※종전 주석의 "호미곶 z15 용도지역 4,892B"는 현재 재현되지 않는다(상류 변화인지 당시
+ *     측정 오류인지는 확정 못 함). 어느 쪽이든 **단정형 문구를 지탱하지 못한다.**
+ *
+ *   → 그래서 **단정("표시됩니다") 대신 권유("확인해 보세요")** 로 바꾼다. 권유는 지역에
+ *     데이터가 없어도 거짓이 되지 않으면서, 막다른 안내도 아니다.
+ *   ★교훈: 안내에 레이어를 넣기 전에 **그 레이어를 여러 지역에서 재라.** 한 지역에서
+ *     그려지는 것은 "늘 참"이 아니다.
+ */
+export const CADASTRE_ZOOM_HINT =
+  `지적도는 z${CADASTRE_MIN_ZOOM} 이상에서 제공됩니다 — 확대하면 지번·경계가 표시됩니다`
+  + " (이 배율에서는 용도지역 레이어를 확인해 보세요)";
+
+/**
+ * ★선택이 **너무 멀리 흩어져** 지적도와 함께 볼 수 없을 때의 안내.
+ *
+ *   왜 따로 두는가 — 일반 안내(`CADASTRE_ZOOM_HINT`)는 *"확대하면 지번·경계가 표시됩니다"* 라고
+ *   말한다. 그런데 선택 필지가 15km 떨어져 있으면 **어떤 배율에서도 전체를 함께 볼 수 없다.**
+ *   즉 그 안내는 이 상황에서 **막다른 안내**다 — 이 파일이 스스로 세운 규칙("막다른 안내를
+ *   하지 않는다 · 이 배율에서 해 볼 것을 말한다")을 다중·원거리 선택에서만 어기고 있었다.
+ *   그 규칙은 계약 테스트로 잠겨 있었지만 **다중선택 시나리오가 0건**이라 빠져나갔다.
+ *
+ *   ★판정은 `map.getZoom()` 이 아니라 **선택 자체의 이격**으로 한다 — 줌만 보면 사용자가
+ *     손으로 축소한 경우와 구분하지 못해, 원인이 아닌 안내를 하게 된다.
+ */
+export const SPREAD_HINT_PREFIX = "선택한 필지가 서로 약 ";
+
+export function cadastreSpreadHint(spreadKm: number): string {
+  const km = spreadKm >= 10 ? Math.round(spreadKm) : Math.round(spreadKm * 10) / 10;
+  return (
+    `${SPREAD_HINT_PREFIX}${km}km 떨어져 있어 지적도와 전체 선택을 한 화면에서 함께 볼 수 없습니다`
+    + " — 필지를 눌러 개별로 확대해 보세요"
+  );
+}
+
+/** z{CADASTRE_MIN_ZOOM} 화면이 담는 대략 폭(km) — 웹메르카토르 기준(위도 37.5·1000px).
+ *  ★정밀한 값이 아니라 **자릿수 판정용**이다. 선택 이격이 이 폭을 넘으면 어떤 조작으로도
+ *    지적도와 전체 선택을 **동시에** 볼 수 없다. */
+export const CADASTRE_VIEW_WIDTH_KM = 0.95;
+
+/** 두 좌표의 거리(km) — 하버사인. 선택 이격 판정 전용(표시용 근사). */
+export function haversineKm(
+  a: { lat: number; lon: number },
+  b: { lat: number; lon: number },
+): number {
+  const R = 6371.0088;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const p1 = toRad(a.lat);
+  const p2 = toRad(b.lat);
+  const dp = p2 - p1;
+  const dl = toRad(b.lon - a.lon);
+  const h =
+    Math.sin(dp / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+/** 좌표를 가진 선택 필지들의 **최대 이격**(km). 좌표가 2개 미만이면 `null`(미상 ≠ 0). */
+/** 이격을 보고 **어느 안내를 쓸지 고르는 판단** — 순수 함수로 꺼내 둔다.
+ *  ★왜: 처음엔 이 판단이 effect 안 삼항식이었는데, 변이 검증에서 그 분기를 통째로 없애도
+ *    테스트가 **전부 초록**이었다(재료만 잠그고 판단은 안 잠근 상태). 판단을 함수로 꺼내면
+ *    런타임 테스트가 그것을 직접 태울 수 있다. */
+export function cadastreHintFor(spreadKm: number | null): string {
+  return spreadKm != null && spreadKm > CADASTRE_VIEW_WIDTH_KM
+    ? cadastreSpreadHint(spreadKm)
+    : CADASTRE_ZOOM_HINT;
+}
+
+export function selectionSpreadKm(
+  points: ReadonlyArray<{ lat?: number | null; lon?: number | null }>,
+): number | null {
+  const pts = points
+    .filter((p): p is { lat: number; lon: number } =>
+      typeof p?.lat === "number" && typeof p?.lon === "number")
+    .map((p) => ({ lat: p.lat, lon: p.lon }));
+  if (pts.length < 2) return null;
+  let max = 0;
+  for (let i = 0; i < pts.length; i += 1) {
+    for (let j = i + 1; j < pts.length; j += 1) {
+      const d = haversineKm(pts[i], pts[j]);
+      if (d > max) max = d;
+    }
+  }
+  return max;
+}
+
+
 const POI_CONTROL_CODES: Record<string, string[]> = {
   station: ["SW8"],
   school: ["SC4"],
@@ -196,9 +485,8 @@ const POI_CONTROL_CODES: Record<string, string[]> = {
   park: ["PARK"],
   hospital: ["HP8", "PM9"],
 };
-// 마커 텍스트 상시노출 정책: 레이어별 마커 수가 이 값 이하일 때만 라벨을 permanent(상시)로 표시.
-//   초과(밀집) 시 라벨이 겹쳐 지도를 가리므로 hover 툴팁으로 강등(예: POI 83곳 → hover 유지).
-const TOOLTIP_PERMANENT_MAX = 32;
+// 마커 상시 라벨 노출 정책은 satong-map-labels 로 이관됨(전역 버짓 + 줌 LOD 단일 판정).
+//   종전 레이어별 `개수 ≤ 32` 독립 판정(합산 ~160개 살포)을 planSatongLabels 로 대체한다.
 
 const POI_CONTROL_COLORS: Record<string, string> = {
   station: "#0ea5e9",   // 하늘 — 역
@@ -250,36 +538,18 @@ export type SatongAuctionItem = {
 
 export type SatongMarketLayerState = {
   kind?: "trade" | "rent";
-  type?: string;
+  /** ★다중 유형 표시(분석품질 레인G P0) — 켜진 유형 전부를 동시 순회해 유형별 색상 마커를
+   *  그린다(POI 이펙트와 동형). 비었거나 undefined면 표시 유형 없음(레이어 OFF와 동일). */
+  types?: string[];
   showPresale?: boolean;
   presaleItems?: SatongPresaleItem[] | null;
   showAuction?: boolean;
   auctionItems?: SatongAuctionItem[] | null;
+  // 상태 노트(presaleNote/auctionNote)는 SatongMultiMapProps의 별도 prop — 객체에 접어 넣으면
+  // 노트 변경마다 marketLayer identity가 바뀌어 마커 이펙트가 전체 재실행된다(리뷰 LOW).
 };
 
 /** Leaflet CDN 단일 로딩 (AuctionItemsMap과 동일 패턴) */
-let leafletLoading: Promise<void> | null = null;
-function loadLeaflet(): Promise<void> {
-  if (typeof window === "undefined") return Promise.reject(new Error("no window"));
-  if (window.L) return Promise.resolve();
-  if (leafletLoading) return leafletLoading;
-  leafletLoading = new Promise((resolve, reject) => {
-    if (!document.querySelector("link[data-leaflet]")) {
-      const css = document.createElement("link");
-      css.rel = "stylesheet";
-      css.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
-      css.setAttribute("data-leaflet", "1");
-      document.head.appendChild(css);
-    }
-    const script = document.createElement("script");
-    script.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
-    script.async = true;
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error("Leaflet 로드 실패"));
-    document.head.appendChild(script);
-  });
-  return leafletLoading;
-}
 
 /** buildOverlayNotes 입력 — 오버레이 이펙트에서 집계한 레이어별 표시 상태. */
 export interface OverlayNoteCounts {
@@ -291,7 +561,39 @@ export interface OverlayNoteCounts {
   priceCount: number;
   showAge: boolean;
   ageCount: number;
+  /** WS-D 개발여력 — 미지정(구 호출부·테스트)이면 종전 문구와 동일(무회귀). */
+  showCapacity?: boolean;
+  capacityCount?: number;
   markerCount: number;
+  // 노후도 무자료 사유 세분화(WP-M3) — ageCount=0일 때 "나대지 N·미준공 P·조회실패 M·대량생략 K"로 고지.
+  //   미지정(구 호출부·테스트)이면 종전과 동일하게 단일 "노후도 무자료"로 폴백(무회귀).
+  ageNoBuilding?: number;
+  // ★리뷰(MEDIUM1): 건물이 실재하나(building_name 등 존재) 사용승인일 미기재(미준공 등)로 연식
+  //   계산 불가한 경우 — 'no_building'(나대지)과 구분한다. 건물 있는 땅을 나대지로 오표기하면
+  //   정직성 위배(M3 취지 정면 위배)이므로 별도 사유값으로 분리.
+  ageNoApprovalDate?: number;
+  ageLookupFailed?: number;
+  ageSkippedBulk?: number;
+}
+
+/** 노후도 무자료 사유 세분 문구(공용) — "나대지추정 3·미준공 2·조회실패 9·대량생략 41". 사유 0건이면 "".
+ *  ★"나대지"가 아니라 "나대지**추정**"이다(2026-08-23) — 백엔드가 이 상태(`no_building`)를
+ *    분류하는 근거는 건축물대장 **무자료**이고, 같은 근거에서 연면적은 보수적으로 `None` 으로
+ *    둔다(집합건물 대지권 비대표지번·대장 미등재·생성지연에서도 무자료가 나온다).
+ *    한 시스템이 같은 사실을 두고 여기서는 단정하고 저기서는 모른다고 하면 안 된다
+ *    — 필지 상세 팝오버도 "나대지 추정(건축물대장 무자료)" 으로 함께 맞췄다. */
+export function buildAgeGapDetail(counts: {
+  ageNoBuilding?: number;
+  ageNoApprovalDate?: number;
+  ageLookupFailed?: number;
+  ageSkippedBulk?: number;
+}): string {
+  const parts: string[] = [];
+  if (counts.ageNoBuilding) parts.push(`나대지추정 ${counts.ageNoBuilding}`);
+  if (counts.ageNoApprovalDate) parts.push(`미준공 ${counts.ageNoApprovalDate}`);
+  if (counts.ageLookupFailed) parts.push(`조회실패 ${counts.ageLookupFailed}`);
+  if (counts.ageSkippedBulk) parts.push(`대량생략 ${counts.ageSkippedBulk}`);
+  return parts.join("·");
 }
 
 /**
@@ -304,9 +606,203 @@ export function buildOverlayNotes(counts: OverlayNoteCounts): string {
   if (counts.showCadastre) notes.push(counts.cadastreCount ? `지적 ${counts.cadastreCount}건` : "지적 무자료");
   if (counts.showZoning) notes.push(counts.zoningCount ? `용도지역 ${counts.zoningCount}건` : "용도지역 무자료");
   if (counts.showPrice) notes.push(counts.priceCount ? `공시지가 ${counts.priceCount}건` : "공시지가 무자료");
-  if (counts.showAge) notes.push(counts.ageCount ? `노후도 ${counts.ageCount}건` : "노후도 무자료");
+  if (counts.showAge) {
+    if (counts.ageCount) {
+      notes.push(`노후도 ${counts.ageCount}건`);
+    } else {
+      const detail = buildAgeGapDetail(counts);
+      notes.push(detail ? `노후도 무자료(${detail})` : "노후도 무자료");
+    }
+  }
+  if (counts.showCapacity) notes.push(counts.capacityCount ? `개발여력 ${counts.capacityCount}건` : "개발여력 무자료(실효·현황 용적률 필요)");
   if (counts.markerCount) notes.push(`좌표 ${counts.markerCount}건`);
+  const covered = buildChoroplethOverlapNote(counts);
+  if (covered) notes.push(covered);
   return notes.join(" · ");
+}
+
+/**
+ * 지도 상태줄용 "왜 실거래가 하나도 안 나오나" 문장.
+ *
+ * ★재구현하지 않는다 — `noSampleReason` 은 **백엔드와 글자까지 같아야** 하고 공유 골든
+ *   (`__tests__/fixtures/no-sample-reason.cases.json`)이 그 값을 잠그고 있다. 여기서는
+ *   카테고리별 `sample_basis` 를 **합산**해 그 함수에 넘기기만 한다.
+ *
+ * ★합산이 안전한 이유: located/unlocated/masked 는 전부 **거래 건수**이고 카테고리끼리
+ *   서로소다(한 거래가 두 카테고리에 들지 않는다). 단위가 다른 group 계열은 더하지 않는다.
+ */
+export function buildMaskedSampleReason(payload: SatongMarketPayload): string {
+  const cats = Object.values(payload.categories || {});
+  let located = 0, approximate = 0, unlocated = 0, capped = 0, masked = 0, maskedGroups = 0;
+  for (const c of cats) {
+    const b = c?.sample_basis;
+    if (!b) continue;
+    located += b.located_count ?? 0;
+    approximate += b.approximate_count ?? 0;
+    unlocated += b.unlocated_count ?? 0;
+    capped += b.capped_count ?? 0;
+    masked += b.masked_jibun_count ?? 0;
+    maskedGroups += b.masked_jibun_group_count ?? 0;
+  }
+  // 가려진 것도 위치 미확인도 없으면 굳이 사유를 지어내지 않는다(그냥 거래가 없는 것이다).
+  if (masked === 0 && unlocated === 0) return "";
+  const basis: SampleBasis = {
+    scope: payload.radius_applied ? "radius" : "sigungu",
+    radiusApplied: !!payload.radius_applied,
+    radiusM: payload.radius_m ?? null,
+    locatedCount: located,
+    approximateCount: approximate,
+    unlocatedCount: unlocated,
+    cappedCount: capped,
+    maskedJibunCount: masked,
+    maskedJibunGroupCount: maskedGroups,
+  };
+  return noSampleReason(basis);
+}
+
+/** 채움 색상으로 같은 필지를 칠하는 레이어들 — **그리는 순서**대로 나열한다(뒤가 앞을 덮는다). */
+export type UnlocatedMarketRow = {
+  key: string; label: string; count: number; avg: number | null; type: string;
+};
+
+/**
+ * ★지도에 **못 찍는** 실거래를 목록용으로 모은다 — 응답에 있는데 화면에 없던 것.
+ *
+ * 국토부가 단독·토지·상업 지번을 `2**` 로 가려 보내면 좌표를 찍을 수 없다(원천 한계).
+ * 백엔드는 그것을 **버리지 않고** `location_status:"unlocated"` 로 보존해 왔는데
+ * (`반경 밖으로 단정하지 않는다 — 무날조`), 지도는 **건수만** 표시하고 내용을 버렸다.
+ * 실측(제천 모산동 123-1·10km): 56그룹 **476건** — 그중 토지매매만 **362건**이다.
+ * 토지 개발자에게 가장 중요한 데이터가 100% 보이지 않았다(또 하나의 "소비처 0").
+ *
+ * ★좌표를 **지어내지 않는다.** 동 대표점으로 찍으면 같은 동 필지가 한 점에 몰려
+ *   "위치가 확인된 거래"로 오독된다 — 그래서 지도가 아니라 **목록**으로 낸다.
+ * ★`approximate`(동 대표점)는 **포함하지 않는다** — 그건 이미 지도에 찍혀 있다.
+ */
+export function collectUnlocatedMarketGroups(
+  payload: SatongMarketPayload | null | undefined,
+): UnlocatedMarketRow[] {
+  const out: UnlocatedMarketRow[] = [];
+  for (const [type, cat] of Object.entries(payload?.categories ?? {})) {
+    for (const g of cat?.groups ?? []) {
+      if (g?.location_status !== "unlocated") continue;
+      out.push({
+        key: `${type}:${g.name ?? ""}:${g.jibun ?? ""}`,
+        label: [g.dong, g.jibun].filter(Boolean).join(" ") || g.name || "(주소 미상)",
+        count: g.count ?? 0,
+        avg: typeof g.avg_price_10k === "number" ? g.avg_price_10k : null,
+        type,
+      });
+    }
+  }
+  return out.sort((a, b) => b.count - a.count);
+}
+
+/**
+ * 반경 선택지 — `null` 은 **자동**(희소하면 백엔드가 사다리로 넓힌다).
+ *
+ * ★지방 필지 실측에서 3km 로도 부족했다(제천 모산동: 3km 40개 / 10km 118개) —
+ *   형제(`NearbyTransactionsMap`)의 500m/1km/3km 보다 위쪽을 넓게 잡는다.
+ */
+const MARKET_RADIUS_CHOICES: ReadonlyArray<{ label: string; value: number | null }> = [
+  { label: "자동", value: null },
+  { label: "1km", value: 1000 },
+  { label: "3km", value: 3000 },
+  { label: "5km", value: 5000 },
+  { label: "10km", value: 10000 },
+];
+
+/** 위치 미확인 목록 표시 상한 — 초과분은 **건수를 명시**하고 생략한다(무음 절단 금지). */
+const UNLOCATED_LIST_LIMIT = 12;
+
+const CHOROPLETH_PAINT_ORDER = ["용도지역", "공시지가", "개발여력", "노후도"] as const;
+
+/**
+ * 코로플레스 겹침 고지 — "N건 있다는데 화면엔 없다"의 정체를 말한다.
+ *
+ * ★왜 (2026-08-12 사용자 지적 "공시지가가 지도에 안 나온다"):
+ *   데이터도 있었고 **실제로 칠해지고 있었다**(priceCount 는 폴리곤을 그린 뒤에만 증가한다).
+ *   문제는 같은 폴리곤에 용도지역(0.34) → 공시지가(0.42) → 개발여력(0.50) → 노후도 순으로
+ *   **채움을 덧칠**한다는 것이다. 코로플레스는 원리적으로 **한 번에 하나만 보인다** —
+ *   뒤에 그린 것이 앞을 완전히 가린다.
+ *
+ *   그런데 상태줄은 "공시지가 2건"이라고만 해서, 사용자는 **데이터가 나오는데 왜 안 보이나**로
+ *   읽는다. 숫자는 맞고 화면은 비어 보이니 시스템 결함으로 보일 수밖에 없다.
+ *
+ * ★여기서는 '고지'만 한다. 색상 레이어를 라디오(상호배타)로 바꿀지는 UX 결정이라
+ *   지도 소유 세션 판단으로 남긴다 — 고지는 되돌리기 쉽고, 배타 전환은 그렇지 않다.
+ */
+export function buildChoroplethOverlapNote(counts: OverlayNoteCounts): string {
+  // ★"켜져 있다"가 아니라 **실제로 칠해졌다**를 기준으로 센다(적대검증에서 반례 2건 적발).
+  //   ① 마지막 레이어가 0건이면 화면에 보이는 색은 그 아래 것이다 — 켜짐만 보면 **틀린
+  //      레이어를 지목**한다(공시지가 2건 + 노후도 0건 → "화면 색은 노후도"라고 말했다).
+  //   ② 0건인 레이어를 "가려짐"이라고 말하면 **가릴 것이 없는데 가려졌다**고 하는 것이다.
+  //   정직 표기를 고치려는 안내가 스스로 거짓말을 하면 없느니만 못하다.
+  const painted = [
+    counts.showZoning && counts.zoningCount ? "용도지역" : null,
+    counts.showPrice && counts.priceCount ? "공시지가" : null,
+    counts.showCapacity && counts.capacityCount ? "개발여력" : null,
+    counts.showAge && counts.ageCount ? "노후도" : null,
+  ].filter((x): x is string => x != null);
+  if (painted.length < 2) return "";
+  // 그리는 순서의 **마지막** 것이 화면에 보이는 색이다.
+  const visible = CHOROPLETH_PAINT_ORDER.filter((name) => painted.includes(name)).at(-1);
+  const hidden = painted.filter((name) => name !== visible);
+  // ★조사(는/은)를 붙이지 않는다 — 앞말 받침에 따라 갈리는데 레이어명이 늘면 또 틀린다
+  //   ("용도지역는"이 실제로 나왔다). 목록형으로 적어 문법 의존을 없앤다.
+  return `색상 레이어 ${painted.length}개 겹침 — 화면 색은 ${visible}(가려짐: ${hidden.join("·")})`;
+}
+
+/** 선택 상태 SSOT 멤버십 키(공용) — pnu 우선, 없으면 주소 정규화(공백 축약) 폴백.
+ *  Shell parcelKey(pnu||normalizeKey(address))와 동일 규약 — selectedParcels(프로젝트 필지)와
+ *  staged/pending(지도 선택)을 같은 기준으로 대조해 이중 등록·중복 카운트를 차단한다(WP-M2). */
+export function parcelMembershipKey(p: { pnu?: string | null; address?: string | null }): string {
+  const pnu = (p.pnu || "").trim();
+  if (pnu) return pnu;
+  return (p.address || "").trim().replace(/\s+/g, " ");
+}
+
+/**
+ * 경계 조회 준비 판정(WP-M3 재조회 루프 제거) — 순수 함수.
+ *
+ * 종전 hasAllGeometryAndMetadata 는 필지마다 `buildingAgeYears != null` 을 요구했다. 나대지(연식
+ * 없음이 정상)가 1필지라도 있으면 항상 false → 재마운트마다 전체 경계(45s)를 재조회하는 루프였다.
+ * 여기서는 (1) geometry 존재 + (2) 노후도 '조회 시도됨'(age 값이 있거나 ageStatus 로 시도 흔적)만
+ * 요구한다 — 나대지는 ageStatus 로 '시도됨'을 표시하므로 재조회 없이 준비 완료로 판정된다.
+ */
+export function selectionBoundaryReady(
+  parcels: Array<Pick<SatongMapFeature, "geometry" | "buildingAgeYears" | "ageStatus">>,
+): boolean {
+  if (!parcels.length) return false;
+  return parcels.every(
+    (p) => !!p.geometry && (p.buildingAgeYears != null || p.ageStatus != null),
+  );
+}
+
+/**
+ * ★WP-M2 리뷰(HIGH) 방어선 — pnu/주소 키 이중성 보강.
+ *
+ * 시드 필지(엑셀·지오코딩)는 pnu 미확보 상태로 selectedParcels 에 들어오는 경우가 있다. 이후
+ * boundary 보강이 real pnu 를 채워 넣기까지(비동기 왕복) 짧은 과도기 동안, autoStage(프로젝트
+ * 연결 시 focusTarget→같은 지점 재조회)가 parcelMembershipKey 로만 판정하면 "기등록 필지를
+ * 새 staged로" 오카운트할 수 있다(주된 치유는 SatongMapShell.handleBoundaryEnriched의 pnu 승격 —
+ * healParcelPnu). 이 함수는 그 과도기를 메우는 2차 방어선: autoStage 는 항상 selectedParcels 의
+ * 좌표(focusTarget)와 '정확히 같은 지점'을 재조회하므로(같은 float 값), 매우 좁은 허용오차
+ * (기본 1e-5도≈1.1m — 지적 필지 간 간격보다 훨씬 좁아 인접한 '다른' 필지를 오탐하지 않는다)로
+ * "같은 지점 재조회"만 잡아낸다. 수동 지도 클릭(비-autoStage)에는 적용하지 않는다.
+ */
+export function isSameSpotAsAny(
+  lat: number,
+  lon: number,
+  parcels: Array<{ lat?: number | null; lon?: number | null }>,
+  epsilonDeg = 1e-5,
+): boolean {
+  return parcels.some(
+    (p) =>
+      typeof p.lat === "number" &&
+      typeof p.lon === "number" &&
+      Math.abs(p.lat - lat) < epsilonDeg &&
+      Math.abs(p.lon - lon) < epsilonDeg,
+  );
 }
 
 /** [MAP-007] 기반 타일 실패 오버레이 내용. null이면 오버레이를 띄우지 않는다. */
@@ -331,6 +827,44 @@ export function buildTileFailureNotice(
   };
 }
 
+/**
+ * 타일 성공/실패를 누적해 '배경지도가 실제로 안 보이는가'를 판정한다.
+ *
+ * ★실결함(라이브 실측): 종전엔 타일 이벤트마다 상태를 그대로 덮어써(마지막 이벤트가 승리)
+ *   뷰포트 36개 중 1개만 실패해도 "기본지도 타일 로드 실패" 배너가 떴다. 지도는 멀쩡히
+ *   보이는데 실패 문구가 상시 노출돼, 사용자가 정상 화면을 장애로 오인했다.
+ *   개별 실패는 흔하다(빈 영역·일시 타임아웃) — 판정은 **비율**로 해야 한다.
+ */
+export function makeTileStateAggregator(
+  onState: (state: "ready" | "error") => void,
+  opts: { minSamples?: number; failureRatio?: number; window?: number } = {},
+): (ok: boolean) => void {
+  const minSamples = opts.minSamples ?? 6;      // 표본이 적을 때 단발 실패로 단정하지 않는다
+  const failureRatio = opts.failureRatio ?? 0.5; // 절반 이상 실패해야 '배경지도 미표시'
+  // ★최근 N건만 본다(2026-08-13 추가). 종전에는 **누적**만 해서 감쇠가 없었다 —
+  //   상류(VWorld) 간헐 장애가 끝나 타일이 다시 떠도, 장애 중 쌓인 실패가 분모에 남아
+  //   배너가 오래 버텼다. 실제 로직으로 회복 비용을 계산해 보면:
+  //     실패 10건 → 해제까지 성공 11건 · 30건 → 31건 · 60건 → 61건 · 120건 → 121건
+  //   지도 한 화면이 10~20타일이므로 긴 장애 뒤에는 **팬을 10여 번** 해야 배너가 사라진다.
+  //   그동안 사용자는 지도가 정상 복귀했는데도 빨간 배너를 보고 '재시도'를 누르게 된다.
+  //   윈도를 두면 회복이 **장애 길이와 무관하게 일정**해진다.
+  const window = opts.window ?? 24;
+  const recent: boolean[] = [];
+  return (success: boolean) => {
+    recent.push(success);
+    if (recent.length > window) recent.shift();
+    const total = recent.length;
+    const ok = recent.filter(Boolean).length;
+    const fail = total - ok;
+    // 성공이 하나라도 있으면 지도는 그려지고 있다 — 표본이 쌓이기 전엔 ready 우선.
+    if (total < minSamples) {
+      onState(ok > 0 ? "ready" : "error");
+      return;
+    }
+    onState(fail / total >= failureRatio ? "error" : "ready");
+  };
+}
+
 function createOfficialBaseMapLayer(
   L: any,
   baseLayer: VWorldBaseLayer,
@@ -342,7 +876,10 @@ function createOfficialBaseMapLayer(
   const makeTile = (layerName: string, pane?: string) =>
     L.tileLayer(`/tiles/vworld/wmts/${layerName}/{z}/{y}/{x}.png`, {
       attribution: "VWorld · 국토교통부 공간정보 오픈플랫폼",
-      maxZoom: 19,
+      maxZoom: VWORLD_TILE_MAX_ZOOM,
+      // ★유효 줌 하한(6) 명시 — 없으면 z0까지 축소가 허용돼 전 타일이 503이 되고
+      //   "기본지도 로드 실패" 전체 스크림이 뜬다(라이브 실측: z5 → 503 tilematrix).
+      minZoom: VWORLD_TILE_MIN_ZOOM,
       crossOrigin: true,
       ...(pane ? { pane } : {}),
     });
@@ -351,17 +888,21 @@ function createOfficialBaseMapLayer(
   //   (타일 실측: Hybrid=PNG RGBA 투명채널, Base=불투명 팔레트). 단독으로 깔면 밝은 배경에
   //   라벨만 뜨는 유령지도가 됨 → 항공뷰는 Satellite(베이스)+Hybrid(오버레이) 두 장을 합성한다.
   //   텍스트/라벨이 폴리곤(overlayPane, 400) 위로 올라오도록 overlay 타일은 labelPane(450)에 그린다.
-  if (baseLayer === "Hybrid") {
-    const sat = makeTile("Satellite");
+  //   사용자가 일반지도(Base)나 회색지도(white — VWorld tiletype 정본, UI 라벨 "회색")를
+  //   볼 때도 폴리곤에 텍스트가 덮이지 않도록 Hybrid 라벨 타일을 labelPane에 함께 얹는다.
+  if (baseLayer === "Hybrid" || baseLayer === "Base" || baseLayer === "white") {
+    const base = makeTile(baseLayer === "Hybrid" ? "Satellite" : baseLayer);
     const overlay = makeTile("Hybrid", "labelPane");
-    sat.on("tileload", () => onTileState("ready"));
-    sat.on("tileerror", () => onTileState("error"));
-    return L.layerGroup([sat, overlay]);
+    const track = makeTileStateAggregator(onTileState);
+    base.on("tileload", () => track(true));
+    base.on("tileerror", () => track(false));
+    return L.layerGroup([base, overlay]);
   }
 
   const vworld = makeTile(baseLayer);
-  vworld.on("tileload", () => onTileState("ready"));
-  vworld.on("tileerror", () => onTileState("error"));
+  const track = makeTileStateAggregator(onTileState);
+  vworld.on("tileload", () => track(true));
+  vworld.on("tileerror", () => track(false));
   return vworld;
 }
 
@@ -404,7 +945,8 @@ function escapeHtml(value: string | number | null | undefined): string {
 }
 
 function pointResultToFeature(parcel: ParcelAtPointResult): SatongMapFeature {
-  const address = parcel.address || parcel.jibun || parcel.pnu || "지도 선택 필지";
+  // 형제 스윕 — 소재지·지번 분리 응답을 결합한다(`||` 는 지번을 통째로 버린다. lib/pnu 주석).
+  const address = joinAddressJibun(parcel.address, parcel.jibun, parcel.pnu || "지도 선택 필지");
   return {
     id: parcel.pnu || address,
     pnu: parcel.pnu ?? null,
@@ -422,11 +964,23 @@ function pointResultToFeature(parcel: ParcelAtPointResult): SatongMapFeature {
   };
 }
 
-function boundaryFeatureToMapFeature(feature: BoundaryFeature): SatongMapFeature {
+/** 경계 응답(snake_case) → 런타임 필드(camelCase) 변환 — **서버 값이 화면으로 들어오는 유일한 문**.
+ *  ★export 하는 이유: 이 매핑이 실서버 경로인데 종전에는 **아무 테스트도 태우지 않았다**
+ *    (변이로 확인: 필드 매핑 줄을 지워도 전부 초록이었다). 컴포넌트를 통째로 띄우지 않고
+ *    순수 함수로 잠글 수 있게 공개한다 — 한 줄이 빠지면 그 값은 화면에 **영영 안 온다**. */
+export function boundaryFeatureToMapFeature(feature: BoundaryFeature): SatongMapFeature {
+  // 좌표는 서버가 준 값만 통과시킨다(현재 /zoning/parcel-boundaries는 per-feature 좌표 없음).
+  // ★대표점(경계상자 중심) 파생좌표는 여기서 만들지 않는다 — 만들면 역전파(onBoundaryEnriched)를
+  //   타고 프로젝트 SSOT(/analysis·산출물)의 정본 필지좌표로 영속돼, 근사좌표가 "좌표미상" 분기를
+  //   전역에서 우회한다(리뷰 MEDIUM). 좌표 앵커(분양·경매·개발계획)의 자기치유는
+  //   resolveSelectionAnchor 규칙②가 geometry에서 앵커 해석 시점에 임시 계산하므로 이것으로 충분.
   return {
     id: feature.pnu || feature.address,
     pnu: feature.pnu ?? null,
     address: feature.address || feature.pnu || "필지",
+    inputAddress: feature.input_address ?? null,
+    lat: typeof feature.lat === "number" ? feature.lat : null,
+    lon: typeof feature.lon === "number" ? feature.lon : null,
     areaSqm: feature.area_sqm ?? null,
     zoneType: feature.zone_type ?? null,
     zoneType2: feature.zone_type_2 ?? null,
@@ -434,6 +988,15 @@ function boundaryFeatureToMapFeature(feature: BoundaryFeature): SatongMapFeature
     officialPricePerSqm: feature.official_price_per_sqm ?? null,
     builtYear: feature.built_year ?? null,
     buildingAgeYears: feature.building_age_years ?? null,
+    ageStatus: feature.age_status ?? null,
+    effectiveFarPct: feature.effective_far_pct ?? null,
+    legalFarPct: feature.legal_far_pct ?? null,
+    farBasis: feature.far_basis ?? null,
+    currentFarPct: feature.current_far_pct ?? null,
+    effectiveBcrPct: feature.effective_bcr_pct ?? null,
+    // ★W1 지배 제약 — 여기가 데이터 유입점(경계 응답만 이 값을 가진다). 이 한 줄이 빠지면
+    //   필지 상세 배너가 조용히 사라진다(순수함수 테스트로는 안 잡히는 배선층).
+    dominantConstraint: feature.dominant_constraint ?? null,
     geometry: feature.geometry,
     source: "boundary",
   };
@@ -443,7 +1006,7 @@ function featurePopupHtml(feature: SatongMapFeature, statusLabel?: string): stri
   return [
     `<div style="padding:10px 12px;font-size:12px;line-height:1.6;min-width:200px;">`,
     feature.zoneType ? `<div style="margin-bottom:6px;"><span style="background:#0e7490;color:#fff;padding:3px 8px;border-radius:6px;font-weight:900;font-size:11.5px;letter-spacing:-0.2px;">용도지역: ${escapeHtml(feature.zoneType)}</span></div>` : "",
-    `<b>${escapeHtml(feature.address || feature.pnu || "필지")}</b>${statusLabel ? ` <span style="color:#0e7490">[${escapeHtml(statusLabel)}]</span>` : ""}`,
+    `<b>${escapeHtml(parcelDisplayAddress(feature.address, feature.pnu) || feature.pnu || "필지")}</b>${statusLabel ? ` <span style="color:#0e7490">[${escapeHtml(statusLabel)}]</span>` : ""}`,
     feature.areaSqm ? `<br/>면적: ${Math.round(feature.areaSqm).toLocaleString()}㎡ (${toP(feature.areaSqm)}평)` : "",
     feature.jimok ? `<br/>지목: ${escapeHtml(feature.jimok)}` : "",
     feature.officialPricePerSqm ? `<br/>공시지가: ${escapeHtml(priceManPyeong(feature.officialPricePerSqm))}` : "",
@@ -455,8 +1018,14 @@ function featurePopupHtml(feature: SatongMapFeature, statusLabel?: string): stri
 function won(man?: number): string {
   if (!man || man <= 0) return "-";
   if (man >= 10000) {
-    const eok = Math.floor(man / 10000);
-    const rest = Math.round((man % 10000) / 1000);
+    let eok = Math.floor(man / 10000);
+    let rest = Math.round((man % 10000) / 1000);
+    // ★R1 발견(발견즉시 수정): 9,900만대 반올림 시 rest=10이 되어 "4.10억"으로 오표기 —
+    //   자리올림해 "5억"으로 정직 표기.
+    if (rest >= 10) {
+      eok += 1;
+      rest = 0;
+    }
     return rest > 0 ? `${eok}.${rest}억` : `${eok}억`;
   }
   return `${Math.round(man).toLocaleString()}만`;
@@ -466,14 +1035,8 @@ function pyeongFromM2(m2?: number): string {
   return m2 && m2 > 0 ? `${(m2 / 3.305785).toFixed(1)}평` : "-";
 }
 
-const MARKET_TYPE_COLORS: Record<string, string> = {
-  apt: "#14b8a6",
-  villa: "#3b82f6",
-  house: "#f59e0b",
-  officetel: "#8b5cf6",
-  land: "#65a30d",
-  commercial: "#ec4899",
-};
+// ★색상 SSOT 통합(분석품질 레인G): MARKET_TYPE_COLORS는 lib/satong-map-layers.ts로 승격됐다
+//   (NearbyTransactionsMap.TRADE_TYPES와 공용 — 한 곳 수정이 두 소비처에 전파).
 
 const PRESALE_STATUS_COLORS: Record<string, string> = {
   분양중: "#ef4444",
@@ -493,6 +1056,35 @@ function marketPopupHtml(group: SatongMarketGroup, kind: "trade" | "rent"): stri
     kind === "trade"
       ? `평균 ${won(group.avg_price_10k)} · 평균 ${pyeong}`
       : `보증금 ${won(group.avg_deposit_10k)}${group.avg_monthly_10k ? ` / 월 ${Math.round(group.avg_monthly_10k).toLocaleString()}만` : ""} · 평균 ${pyeong}`;
+  // ★P2(실무 판단정보) — 백엔드가 이미 산출한 값(robust_price_stats·건축년도·지목·용도지역)을
+  //   표면화한다(신규 API 호출 0). 매매(trade)에서만 의미 있는 필드(전월세는 보증금/월세 축이 별개).
+  const perSqmMan = kind === "trade" && avgArea > 0 && group.avg_price_10k
+    ? Math.round((group.avg_price_10k / avgArea) * 10) / 10
+    : null;
+  const perSqmLine = perSqmMan
+    ? `<div style="font-size:11px;color:#475569;">㎡당 ${perSqmMan.toLocaleString()}만원</div>`
+    : "";
+  // ★거리 표기 — 표시 캡이 **가까운 순**으로 남기므로, 사용자가 그 근거를 볼 수 있어야 한다.
+  //   "반경 안/밖" 이분법 대신 실제 거리를 주면 사용자가 스스로 유효성을 판단한다.
+  const distLine =
+    typeof group.distance_m === "number"
+      ? `<div style="font-size:11px;color:#475569;">선택 필지에서 ${
+          group.distance_m >= 1000
+            ? `${Math.round(group.distance_m / 100) / 10}km`
+            : `${group.distance_m}m`
+        }</div>`
+      : "";
+  const rangeLine =
+    kind === "trade" && (group.min_price_10k || group.max_price_10k)
+      ? `<div style="font-size:11px;color:#475569;">최저 ${won(group.min_price_10k)} ~ 최고 ${won(group.max_price_10k)}${group.excluded_outliers ? ` · 이상치 ${group.excluded_outliers}건 제외` : ""}</div>`
+      : "";
+  const attrLine = [
+    group.build_year ? `${group.build_year}년 준공` : "",
+    group.jimok ? `지목 ${escapeHtml(group.jimok)}` : "",
+    group.land_use ? `용도지역 ${escapeHtml(group.land_use)}` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
   const dealRows = (group.deals ?? [])
     .slice(0, 4)
     .map((deal) => {
@@ -507,7 +1099,11 @@ function marketPopupHtml(group: SatongMarketGroup, kind: "trade" | "rent"): stri
     `<div style="min-width:210px;max-width:280px;padding:8px 10px;font-size:12px;line-height:1.5;">`,
     `<b>${escapeHtml(group.name)}</b>`,
     `<div style="color:#64748b;font-size:11px;">${escapeHtml([group.dong, group.jibun].filter(Boolean).join(" "))} · ${escapeHtml(group.count)}건</div>`,
+    attrLine ? `<div style="color:#64748b;font-size:11px;">${attrLine}</div>` : "",
     `<div style="margin:6px 0;color:#0f172a;">${escapeHtml(priceLine)}</div>`,
+    perSqmLine,
+    distLine,
+    rangeLine,
     dealRows,
     `</div>`,
   ].join("");
@@ -551,10 +1147,52 @@ function auctionPopupHtml(item: SatongAuctionItem): string {
   ].join("");
 }
 
+/** 시장(실거래) 마커 렌더 계획 항목 — 유형 1개가 실제로 그릴 좌표확보 그룹 목록. */
+export interface MarketRenderEntry {
+  type: string;
+  color: string;
+  groups: SatongMarketGroup[];
+  cappedCount: number;
+}
+
+/**
+ * ★다중 유형 렌더 계획을 순수 함수로 분리(POI 이펙트와 동형 계약을 window.L 목업 없이
+ * 회귀 테스트하기 위한 추출 — 이 파일의 관례: Leaflet을 직접 건드리는 이펙트는 스모크만,
+ * "무엇을 그릴지" 결정 로직은 순수 함수로 빼서 단위테스트한다. buildOverlayNotes·
+ * planSatongLabels와 동일 패턴).
+ *
+ * marketLayer.types 배열 순서대로 켜진 유형 전부에 대해 항목을 만든다 — 이 배열의 길이가
+ * 곧 "실제로 순회될 유형 수"라, 회귀(예: 첫 유형만 순회)가 있으면 length가 줄어들어
+ * 테스트가 즉시 실패한다. center 미확보·조회 실패 시 빈 배열(무표시)을 반환한다.
+ */
+export function resolveMarketRenderPlan(
+  payload: SatongMarketPayload | null | undefined,
+  types: string[],
+  kind: "trade" | "rent",
+): MarketRenderEntry[] {
+  if (!payload?.center?.lat || !payload?.center?.lon || payload.fetch_failed) return [];
+  return types.map((type) => {
+    const category = payload.categories?.[`${type}_${kind}`];
+    return {
+      type,
+      color: MARKET_TYPE_COLORS[type] || "#2563eb",
+      // ★W1-b — 종전엔 여기서 `!!g.lat && !!g.lon` 로 **셀렉터를 로컬 재구현**하고 있었다.
+      //   지금은 결과가 우연히 같지만, 판정 기준이 두 곳에 있으면 한쪽이 바뀔 때 조용히
+      //   갈라진다. 지도 마커는 "좌표가 있으면 찍는다"가 맞으므로(개략 좌표도 점으로는 유효)
+      //   집계용 `selectLocatedGroups` 가 아니라 **마커 전용 셀렉터**를 쓴다 — 두 기준이
+      //   다르다는 사실 자체를 공용 모듈에 박아 다음 사람이 헷갈리지 않게 한다.
+      groups: selectMappableGroups(category as never) as MarketRenderEntry["groups"],
+      cappedCount: category?.capped_count ?? 0,
+    };
+  });
+}
+
 // ★기본값 배열을 매 렌더 새로 만들지 않도록 모듈 상수로 고정한다. selectedParcels prop 을
 //   생략한 소비처(NearbyTransactionsMap 등)에서 기본값 [] 가 매 렌더 새 참조가 되어, 이를
 //   dep 로 쓰는 boundary effect 가 무한 재실행되던 근본(참조 churn)을 차단한다.
 const EMPTY_SELECTED_PARCELS: SatongMapFeature[] = [];
+// marketLayer.types 생략 소비처(하위호환) 대비 — 위와 동일한 참조 churn 방지 규약.
+const EMPTY_MARKET_TYPES: string[] = [];
 
 export function SatongMultiMap({
   onPick,
@@ -566,22 +1204,38 @@ export function SatongMultiMap({
   selectedParcels = EMPTY_SELECTED_PARCELS,
   layerState,
   readOnly = false,
+  bottomDockSlot,
+  topRightSlot,
   marketPayload = null,
+  marketRadiusM = null,
+  onMarketRadiusChange,
   marketLayer,
   poiPayload = null,
   developmentPayload = null,
   onCenterChange,
+  layoutOverlay,
+  layoutNorthLightSetbackM,
+  layoutNorthLightHeightM,
   onBoundaryEnriched,
+  onBoundaryStatusChange,
+  presaleNote = null,
+  auctionNote = null,
   onFeatureClick,
   featureStatusColors,
   featureStatusLabels,
   highlightFeatureAddress,
+  clearSignal,
+  onStagedCountChange,
 }: SatongMultiMapProps) {
   const mapEl = useRef<HTMLDivElement | null>(null);
   const onCenterChangeRef = useRef(onCenterChange);
   onCenterChangeRef.current = onCenterChange;
   const onBoundaryEnrichedRef = useRef(onBoundaryEnriched);
   onBoundaryEnrichedRef.current = onBoundaryEnriched;
+  const onStagedCountChangeRef = useRef(onStagedCountChange);
+  onStagedCountChangeRef.current = onStagedCountChange;
+  const onBoundaryStatusChangeRef = useRef(onBoundaryStatusChange);
+  onBoundaryStatusChangeRef.current = onBoundaryStatusChange;
   const moveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mapRef = useRef<any>(null);
   const {
@@ -591,6 +1245,14 @@ export function SatongMultiMap({
     wrapperRef,
   } = useMapFullscreen(mapRef, { mode: "css" });
   const [mapReady, setMapReady] = useState(false);
+  /** 상세정보팝업(Leaflet bindPopup)이 열려 있나 — 수동적 크롬 양보 트리거.
+   *  ★z 로는 못 이긴다(격리된 컨테이너 안). SATONG_POPUP_YIELD 주석 참조. */
+  const [detailPopupOpen, setDetailPopupOpen] = useState(false);
+  // 현재 줌 레벨 — 라벨 LOD(z≥17 전체 / 15~16 상위 N / <15 hover-only) 판정 입력.
+  //   zoomend 에서만 갱신하고, 임계(15·17) 교차 시에만 버짓이 바뀌어 라벨 이펙트가 재부착된다.
+  const [mapZoom, setMapZoom] = useState(12);
+  // 실거래 fitBounds 1회성 가드 — 라벨 재부착(줌 교차)로 이펙트가 재실행돼도 사용자 줌을 덮지 않게.
+  const lastMarketFitKeyRef = useRef("");
   const baseLayerRef = useRef<any>(null);
   const overlayLayerRef = useRef<any>(null);
   const marketLayerRef = useRef<any>(null);
@@ -605,9 +1267,86 @@ export function SatongMultiMap({
   const [boundaryFeatures, setBoundaryFeatures] = useState<SatongMapFeature[]>([]);
   const [overlayNote, setOverlayNote] = useState("");
   const [marketNote, setMarketNote] = useState("");
-  const [presaleAuctionNote, setPresaleAuctionNote] = useState("");
+  // ★P1(범례) — 유형별 표시 건수(범례 렌더용). 켜진 유형(marketTypes)을 키로 항상 채운다
+  //   (0건도 명시 — "안 켜짐"과 "켜졌지만 무자료"를 구분하는 정직 표기).
+  const [marketTypeCounts, setMarketTypeCounts] = useState<Record<string, number>>({});
+  const [marketLegendOpen, setMarketLegendOpen] = useState(false);
   const [poiNote, setPoiNote] = useState("");
   const [developmentNote, setDevelopmentNote] = useState("");
+  // ★PR#329 R1 리뷰(MEDIUM2) 반영: 지적 WMS 타일 실패(키 미설정·상류 인증오류 등)를
+  //   무음 회색지도로 남기지 않고 다른 레이어 노트와 동일한 칩 체계로 표면화한다.
+  const [cadastreTileNote, setCadastreTileNote] = useState("");
+
+  // I9 자가진단: 지적 오류 배지 클릭 → 프록시 1회 프로브로 실제 원인(code)을 배지에 표면화.
+  //   #347/#354가 프록시 오류에 ServiceException code를 담으므로, 배지만으로 '키/도메인/
+  //   파라미터/네트워크'를 현장에서 즉시 구분할 수 있다(서버 로그 접근 불요).
+  const diagnoseBusyRef = useRef(false);
+  const lastAutoDiagnoseAtRef = useRef(0);
+  const aerialViewRef = useRef(false);
+  const autoDiagnoseRef = useRef<(() => void) | null>(null);
+  const diagnoseCadastreTiles = useCallback(async () => {
+    if (diagnoseBusyRef.current) return; // 연타 가드(R1)
+    diagnoseBusyRef.current = true;
+    setCadastreTileNote("지적 프록시 진단 중…");
+    try {
+      // ★R1(SW 캐시 오진): fetch cache:no-store는 브라우저 HTTP 캐시만 통제하고 서비스워커
+      //   Cache Storage(staleWhileRevalidate)는 우회하지 못한다 — 과거 성공본이 '정상' 오진을
+      //   만들 수 있어 타임스탬프 캐시버스터로 SW 캐시 키를 매번 미스시킨다(항상 라이브).
+      // ★R1 M2: 프로브는 부설과 '같은 스타일'을 써야 한다 — 선 스타일만 실패하는 경우를
+      //   채움 프로브가 "정상"으로 오진하지 않게 활성 뷰 모드와 일원화.
+      const probeStyles = aerialViewRef.current
+        ? "lp_pa_cbnd_bubun_line,lp_pa_cbnd_bonbun_line"
+        : "lp_pa_cbnd_bubun,lp_pa_cbnd_bonbun";
+      const probe =
+        "/tiles/vworld/wms?service=WMS&request=GetMap&layers=lp_pa_cbnd_bubun,lp_pa_cbnd_bonbun" +
+        `&styles=${probeStyles}&format=image/png&transparent=true&version=1.3.0` +
+        `&width=64&height=64&crs=EPSG:3857&bbox=14134000,4518000,14136000,4520000&_ts=${Date.now()}`;
+      const resp = await fetch(probe, { cache: "no-store" });
+      const contentType = resp.headers.get("content-type") || "";
+      // ★★강등 판정은 "200 + image/" **앞에** 둔다(2026-08-18).
+      //   정직 강등은 회색 지도를 피하려고 **투명타일(200 image/png)** 을 준다 —
+      //   아래 정상 분기가 먼저 걸리면 프로브가 강등을 **"정상"으로 오진**한다(거짓 초록).
+      //   그래서 강등 헤더를 가장 먼저 본다. `<img>` 는 헤더를 못 읽지만 이 프로브는 읽는다.
+      // ★헤더명은 `lib/vworld-wms-proxy.ts` 의 `VWORLD_DEGRADED_HEADER` 가 정본이다.
+      //   여기서 **import 하지 않고 리터럴을 쓴다** — 그 모듈은 서버 전용(Buffer·process.env)이라
+      //   클라이언트 컴포넌트가 import 하면 번들로 끌려온다.
+      //   대신 두 곳이 어긋나지 않게 `lib/__tests__/degraded-header-parity.test.ts` 가 묶는다.
+      const degraded = resp.headers.get("X-VWorld-Degraded");
+      if (degraded) {
+        // ★관측된 사실만 말한다 — 복구 방법을 안내하지 않는다(#677: 없는 복구 경로 금지).
+        //   실장애(2026-08-16)의 원인은 릴레이 목적지의 **상류가 2분간 죽은 것**이었고
+        //   사용자가 할 수 있는 조치는 없었다. "다시 시도하세요" 는 거짓 안내가 된다.
+        setCadastreTileNote("지도 타일 서버에 일시적으로 닿지 않습니다 — 필지·오버레이는 그대로 표시됩니다");
+        return;
+      }
+      if (resp.ok && contentType.startsWith("image/")) {
+        setCadastreTileNote("지적 프록시 정상 — 지도를 이동/새로고침해도 안 보이면 줌·영역을 확인하세요");
+        return;
+      }
+      const body = await resp.json().catch(() => null);
+      const errText: string = body?.error ?? `HTTP ${resp.status}`;
+      // 긴 원문 대신 원인 코드만 요약 — 키 무효(INVALID/INCORRECT_KEY)면 복구 경로 안내.
+      const code = /\(([A-Z_/]+)\)/.exec(errText)?.[1];
+      const keyFault = code === "INVALID_KEY" || code === "INCORRECT_KEY";
+      setCadastreTileNote(
+        `지적 타일 오류 — ${code ?? errText}${keyFault ? " · 인증키 무효(관리자 화면에 유효 키 등록 시 자동 복구)" : ""}`,
+      );
+    } catch {
+      setCadastreTileNote("지적 타일 조회 실패 — 네트워크 오류(진단)");
+    } finally {
+      diagnoseBusyRef.current = false;
+    }
+  }, []);
+
+  // tileerror 자동진단 배선 — 60초 스로틀(연속 타일 실패의 프로브 폭주 방지).
+  useEffect(() => {
+    autoDiagnoseRef.current = () => {
+      const now = Date.now();
+      if (now - lastAutoDiagnoseAtRef.current < 60_000) return;
+      lastAutoDiagnoseAtRef.current = now;
+      void diagnoseCadastreTiles();
+    };
+  }, [diagnoseCadastreTiles]);
 
   // 조회 상태
   const [status, setStatus] = useState<"idle" | "loading" | "found" | "notfound" | "error">("idle");
@@ -621,14 +1360,40 @@ export function SatongMultiMap({
   // staged: 사용자가 [＋추가]로 확정한 필지 목록
   const [staged, setStaged] = useState<ParcelAtPointResult[]>([]);
 
+  // ★R2(MEDIUM): staged 개수 역전파 — 부모(Shell)가 "확정 선택 0건인데 지도엔 임시 선택이
+  //   남아있다"를 판별해 무음 정리를 피하게 한다. ref로 콜백을 받아 매 렌더 재구독 없이 통지.
+  useEffect(() => {
+    onStagedCountChangeRef.current?.(staged.length);
+  }, [staged.length]);
+
+  // ── 지도 클릭 팝오버(단일 팝오버 계약 — 디자인컴프) & 거리재기 ──
+  //   클릭 즉시 필지조회 대신 그 지점에 액션 메뉴 1개를 띄운다(오클릭 API 호출 절감 +
+  //   색깔점/색면 오클릭으로 필지선택이 발동하던 혼선 제거). x/y = 지도 컨테이너 픽셀 좌표.
+  //   w/h = 클릭 시점의 지도 컨테이너 크기(렌더 중 ref 접근 금지 — 클릭 핸들러에서 캡처).
+  const [clickMenu, setClickMenu] = useState<{
+    lat: number; lon: number; x: number; y: number; w: number; h: number;
+  } | null>(null);
+  const [measureOn, setMeasureOn] = useState(false);
+  // 측정 모드(I6): distance=폴리라인 누적거리 / area=폴리곤 면적(등장방형 신발끈 — satong-measure).
+  const [measureMode, setMeasureMode] = useState<"distance" | "area">("distance");
+  const measureOnRef = useRef(false);
+  const [measurePoints, setMeasurePoints] = useState<MeasurePoint[]>([]);
+  const measureLayerRef = useRef<any>(null);
+  // 노후도 범례 접기(기본 접힘) — 하단 도크 과점 해소(U1).
+  const [legendOpen, setLegendOpen] = useState(false);
+  // 팝오버 좌표 복사 피드백 — 복사한 좌표 문자열(현재 팝오버와 일치할 때만 '복사됨' 표시).
+  const [copiedCoord, setCopiedCoord] = useState<string | null>(null);
+  // I4 저줌 안내(jootek 패턴): 라벨이 롤업되는 줌(<15)에서 "확대하면 표시" 안내+원클릭 확대.
+  const [zoomHintDismissed, setZoomHintDismissed] = useState(false);
+
   // 선택 필지 및 staged 필지 통합 평균 노후도 계산
   const avgAge = useMemo(() => {
     const allFeatures = new Map<string, { buildingAgeYears?: number | null }>();
-    
+
     boundaryFeatures.forEach((p) => {
       if (p.id) allFeatures.set(p.id, { buildingAgeYears: p.buildingAgeYears });
     });
-    
+
     staged.forEach((s) => {
       const id = s.pnu || s.address || s.jibun || "staged";
       allFeatures.set(id, { buildingAgeYears: s.building_age_years });
@@ -642,6 +1407,23 @@ export function SatongMultiMap({
     const sum = validAges.reduce((a, b) => a + b, 0);
     return Math.round((sum / validAges.length) * 10) / 10;
   }, [boundaryFeatures, staged]);
+
+  // ★WP-M3: 노후도 무자료 사유 세분 집계 — 연식이 없는 필지만 age_status로 나눈다
+  //   (나대지 / 미준공(리뷰 MEDIUM1) / 조회실패 / 대량생략). 칩 문구와 범례 무자료 표기의 단일 출처.
+  const ageStatusCounts = useMemo(() => {
+    let ageNoBuilding = 0;
+    let ageNoApprovalDate = 0;
+    let ageLookupFailed = 0;
+    let ageSkippedBulk = 0;
+    boundaryFeatures.forEach((f) => {
+      if (f.buildingAgeYears != null) return; // 연식 있음 → 무자료 아님
+      if (f.ageStatus === "no_building") ageNoBuilding += 1;
+      else if (f.ageStatus === "no_approval_date") ageNoApprovalDate += 1;
+      else if (f.ageStatus === "lookup_failed") ageLookupFailed += 1;
+      else if (f.ageStatus === "skipped_bulk") ageSkippedBulk += 1;
+    });
+    return { ageNoBuilding, ageNoApprovalDate, ageLookupFailed, ageSkippedBulk };
+  }, [boundaryFeatures]);
   // staged 필지별 폴리곤 레이어 — pnu → Leaflet layerGroup
   const stagedLayersRef = useRef<Map<string, any>>(new Map());
 
@@ -665,6 +1447,20 @@ export function SatongMultiMap({
         .join("||"),
     [selectedParcels],
   );
+  // ★WP-M2 선택 상태 SSOT: 프로젝트 필지(selectedParcels)의 멤버십 키 집합. autoStage·확인카드·
+  //   CTA 이중표기·reconcile 이펙트가 모두 이 하나로 "이미 등록됨"을 판정한다(칩 12 vs 완료 1 봉합).
+  const selectedMembershipKeys = useMemo(
+    () => new Set(selectedParcels.map(parcelMembershipKey).filter(Boolean)),
+    [selectedParcels],
+  );
+  // queryParcel(안정 useCallback)이 최신 멤버십을 deps 없이 읽도록 ref 병행 — 지도 재생성 방지.
+  const selectedMembershipKeysRef = useRef(selectedMembershipKeys);
+  selectedMembershipKeysRef.current = selectedMembershipKeys;
+  // ★WP-M2 리뷰(HIGH) 방어선: 좌표 근접(isSameSpotAsAny) 판정용 원본 selectedParcels ref —
+  //   pnu 미확보 시드 필지도 lat/lon은 갖고 있을 수 있어(검색·엑셀 지오코딩), 키 불일치 과도기에도
+  //   "같은 지점 재조회"를 잡아낸다.
+  const selectedParcelsRef = useRef(selectedParcels);
+  selectedParcelsRef.current = selectedParcels;
   const baseLayerMode = useMemo(() => resolveVWorldBaseLayer(layerState), [layerState]);
   const overlayFeatures = useMemo(
     () => mergeSatongMapFeatures([
@@ -674,6 +1470,12 @@ export function SatongMultiMap({
     ]),
     [boundaryFeatures, pending, staged],
   );
+  // ★지적 안내 effect 는 deps 가 [mapReady, showCadastreTile, aerialView] 라 선택을 직접
+  //   참조할 수 없다(참조하면 선택이 바뀔 때마다 타일 레이어가 재생성된다). 최신 선택을
+  //   ref 로 흘려보내 zoomend 핸들러가 **그 시점의** 이격을 볼 수 있게 한다.
+  const overlayFeaturesRef = useRef<SatongMapFeature[]>([]);
+  overlayFeaturesRef.current = overlayFeatures;
+
   const priceRange = useMemo(() => {
     const prices = overlayFeatures
       .map((feature) => feature.officialPricePerSqm ?? 0)
@@ -689,6 +1491,31 @@ export function SatongMultiMap({
     onPickManyRef.current = onPickMany;
   }, [onPickMany]);
 
+  // addStagedLayer(useCallback [])가 최신 onFeatureClick을 보도록 ref 경유(onPickRef 관례).
+  const onFeatureClickRef = useRef(onFeatureClick);
+  /**
+   * ★필지 상세 **중복 표면** 상호배제 (2026-08-17 — 라이브 실측이 진단을 바꿨다).
+   *
+   * 라이브(`포항시 호미곶면 대보리 산1-1`)에서 폴리곤을 클릭하니 **같은 필지 정보를 담은
+   * 표면 둘**이 동시에 열렸다 — Leaflet 팝업과 셸의 필지 상세 패널(z-430). 그리고 뒤엣것이
+   * 앞엣것을 덮었다(elementFromPoint 3점 전부 `rival`).
+   *
+   * 즉 이건 **층위 문제가 아니라 중복 문제**다. z 를 어떻게 조정해도 "같은 내용을 두 번
+   * 그리는" 사실은 남는다. 그래서 **상세를 맡는 쪽이 있으면 지도는 팝업을 열지 않는다.**
+   *
+   * 판정 기준은 `onFeatureClick` **프롭의 존재**다 — 그 콜백을 준 부모는 곧 상세를
+   * 자기가 렌더하겠다고 선언한 것이다. 프롭이 없으면(임베드·읽기전용 사용처) 지도가
+   * 스스로 팝업을 띄워야 정보가 사라지지 않는다.
+   */
+  const featureDetailOwnedByParent = !!onFeatureClick;
+  const featureDetailOwnedRef = useRef(featureDetailOwnedByParent);
+  useEffect(() => {
+    featureDetailOwnedRef.current = featureDetailOwnedByParent;
+  }, [featureDetailOwnedByParent]);
+  useEffect(() => {
+    onFeatureClickRef.current = onFeatureClick;
+  }, [onFeatureClick]);
+
   useEffect(() => {
     stagedRef.current = staged;
   }, [staged]);
@@ -697,30 +1524,50 @@ export function SatongMultiMap({
     focusTargetRef.current = focusTarget;
   }, [focusTarget]);
 
-  /* eslint-disable react-hooks/set-state-in-effect -- VWorld boundary fetch status is synchronized from an external API effect. */
+
   useEffect(() => {
     if (!selectedParcels.length) {
       // ★빈 선택 시 boundaryFeatures/status 를 '변화가 있을 때만' 갱신한다. 매번 새 [] 를
       //   setState 하면 참조가 바뀌어 불필요 리렌더가 발생한다(무한 업데이트 방지).
       setBoundaryFeatures((prev) => (prev.length ? [] : prev));
       setBoundaryStatus((prev) => (prev === "idle" ? prev : "idle"));
+      onBoundaryStatusChangeRef.current?.("idle");
       return;
     }
-    const hasAllGeometryAndMetadata = selectedParcels.every((parcel) => !!parcel.geometry && parcel.buildingAgeYears != null);
+    // ★WP-M3: 준비 판정을 selectionBoundaryReady 로 위임 — 나대지(연식 null) 1필지에 의한
+    //   전체 경계 재조회 루프 제거(geometry 존재 + '노후도 조회 시도됨'이면 준비 완료).
+    const hasAllGeometryAndMetadata = selectionBoundaryReady(selectedParcels);
     if (hasAllGeometryAndMetadata) {
       setBoundaryFeatures(mergeSatongMapFeatures(selectedParcels));
       setBoundaryStatus("ready");
+      onBoundaryStatusChangeRef.current?.("ready");
+      return;
+    }
+    // ★경계 조회에 **필지를 특정할 수 있는 것만** 보낸다(2026-08-20 라이브 실측 근거).
+    //   ① 가짜 PNU(주소 합성문자열)를 그대로 보내면 서버가 그걸 echo 하고
+    //      area 0 · zone null · geometry null · age_status "lookup_failed" 로 **보강이 죽는다**.
+    //   ② PNU 없이 **동 단위 주소**만 보내면 서버가 임의의 한 필지(예: 114-1)로 **수렴**시킨다 —
+    //      같은 동 77필지가 전부 그 한 필지로 보강되는 **조용한 오답**(라벨이 같은 것보다 나쁘다).
+    //   그래서 진짜 PNU 가 있거나 주소에 지번이 붙은 필지만 요청한다. 나머지는 보강하지 않고
+    //   정직하게 미해석으로 둔다(무날조). 좌표를 가진 필지는 상위(Shell)의 좌표 기반
+    //   자가치유(/zoning/parcel-at-point)가 따로 해석한다.
+    const resolvable = selectedParcels
+      .map((parcel) => ({ pnu: normalizePnu(parcel.pnu), address: parcel.address }))
+      .filter((parcel) => !!parcel.pnu || addressHasJibun(parcel.address));
+    if (resolvable.length === 0) {
+      // 요청할 대상이 없다 — 선택은 그대로 두고 "더 받아올 게 없음" 으로 종료(무한 로딩 금지).
+      setBoundaryFeatures(mergeSatongMapFeatures(selectedParcels));
+      setBoundaryStatus("ready");
+      onBoundaryStatusChangeRef.current?.("ready");
       return;
     }
     let alive = true;
     setBoundaryStatus("loading");
+    onBoundaryStatusChangeRef.current?.("loading");
     apiClient
       .post<BoundaryResponse>("/zoning/parcel-boundaries", {
         body: {
-          parcels: selectedParcels.map((parcel) => ({
-            pnu: parcel.pnu,
-            address: parcel.address,
-          })),
+          parcels: resolvable,
         },
         useMock: false,
         timeoutMs: 45000,
@@ -730,6 +1577,7 @@ export function SatongMultiMap({
         const fromBoundary = (response.features ?? []).map(boundaryFeatureToMapFeature);
         setBoundaryFeatures(mergeSatongMapFeatures([...selectedParcels, ...fromBoundary]));
         setBoundaryStatus("ready");
+        onBoundaryStatusChangeRef.current?.("ready");
         // ★P1(감사): 경계 API가 받아온 면적·용도·좌표·경계를 부모(Shell)로 역전파 —
         //   종전엔 지도 내부 상태(dead-end)에만 남아, 검색 등록 필지가 면적 없음 →
         //   통합분석이 침묵 단일 격하되는 원인이었다.
@@ -739,12 +1587,14 @@ export function SatongMultiMap({
         if (!alive) return;
         setBoundaryFeatures(mergeSatongMapFeatures(selectedParcels));
         setBoundaryStatus("error");
+        // 부모(Shell)가 "좌표 확인 중" 노트를 "확인 실패"로 정직 강등할 수 있도록 통지.
+        onBoundaryStatusChangeRef.current?.("error");
       });
     return () => {
       alive = false;
     };
   }, [selectedParcelKey, selectedParcels]);
-  /* eslint-enable react-hooks/set-state-in-effect */
+
 
   /** pending 레이어(임시 마커·폴리곤) 지도에서 제거 */
   const clearPendingLayer = useCallback(() => {
@@ -783,20 +1633,25 @@ export function SatongMultiMap({
 
     const layer = L.layerGroup().addTo(map);
 
-    // 선택됨 — 녹색 폴리곤
+    // 선택 확정 — primary 블루 폴리곤(디자인컴프: 선택 필지 = primary. 종전 녹색 교체)
     if (parcel.geometry) {
       const rings = geoJsonToLeafletRings(parcel.geometry);
       if (rings.length > 0) {
         L.polygon(rings, {
-          color: "#22c55e", weight: 2.5, fillColor: "#22c55e", fillOpacity: 0.28,
-        }).addTo(layer);
+          color: "#135bec", weight: 2.5, fillColor: "#135bec", fillOpacity: 0.24,
+          bubblingMouseEvents: false, // 확정 필지 재클릭이 지점 팝오버를 열지 않게(R1 L3)
+        })
+          // 확정 필지 클릭 = 상세 패널(WS-C) — 레이어 토글 없이도 상세 접근 가능한 통로.
+          .on("click", () => onFeatureClickRef.current?.(pointResultToFeature(parcel)))
+          .addTo(layer);
       }
     }
 
-    // 중심 마커(녹색)
+    // 중심 마커(primary)
     if (parcel.lat != null && parcel.lon != null) {
       L.circleMarker([parcel.lat, parcel.lon], {
-        radius: 7, color: "#22c55e", weight: 2.5, fillColor: "#22c55e", fillOpacity: 0.9,
+        radius: 7, color: "#135bec", weight: 2.5, fillColor: "#135bec", fillOpacity: 0.9,
+        bubblingMouseEvents: false,
       }).addTo(layer);
     }
 
@@ -855,6 +1710,7 @@ export function SatongMultiMap({
       const notFoundLayer = L.layerGroup().addTo(map);
       L.circleMarker([lat, lon], {
         radius: 7, color: "#ef4444", weight: 2, fillColor: "#ef4444", fillOpacity: 0.3,
+        bubblingMouseEvents: false, // X 클릭 = 사유 팝업만(지점 팝오버 동시 표출 방지 — R1 L3)
       }).bindPopup(`<div style="font-size:12px;max-width:200px;">${msg}</div>`, { maxWidth: 220 }).openPopup().addTo(notFoundLayer);
       pendingLayerRef.current = notFoundLayer;
       return;
@@ -862,6 +1718,14 @@ export function SatongMultiMap({
 
     // 이미 staged에 있는 필지인지 확인(ref로 읽어 deps 오염 방지)
     const alreadyStaged = stagedRef.current.some((s) => s.pnu && s.pnu === result.pnu);
+    // ★WP-M2: 프로젝트에 이미 등록된 필지인지도 확인 — autoStage(프로젝트 연결 시 첫 필지
+    //   focusTarget)가 기등록 필지를 staged에 재등록해 "1필지 추가"가 뜨던 원천을 차단한다.
+    //   ★리뷰(HIGH) 방어선: 멤버십 키(pnu/주소)가 boundary 치유 전 과도기에 불일치할 수 있어,
+    //   autoStage 한정으로 "정확히 같은 지점 재조회"도 함께 검사한다(주된 치유는 Shell의
+    //   healParcelPnu — pnu 승격). 수동 클릭에는 좌표검사를 적용하지 않는다(인접 다른 필지 오탐 방지).
+    const alreadyRegistered =
+      selectedMembershipKeysRef.current.has(parcelMembershipKey(result)) ||
+      (opts.autoStage === true && isSameSpotAsAny(lat, lon, selectedParcelsRef.current));
 
     setStatus("found");
     setStatusMsg("");
@@ -870,7 +1734,9 @@ export function SatongMultiMap({
     result.lon = lon;
 
     if (opts.autoStage) {
-      if (!alreadyStaged) {
+      // 기등록(selectedParcels 멤버) 또는 기staged면 재등록하지 않는다 — 기등록 필지는 경계
+      //   오버레이가 이미 그리므로 별도 staged 녹색 레이어도 불필요(이중 표시 방지).
+      if (!alreadyStaged && !alreadyRegistered) {
         setStaged((prev) => {
           if (result.pnu && prev.some((s) => s.pnu === result.pnu)) return prev;
           return [...prev, result];
@@ -893,8 +1759,10 @@ export function SatongMultiMap({
     if (result.geometry && !alreadyStaged) {
       const rings = geoJsonToLeafletRings(result.geometry);
       if (rings.length > 0) {
+        // 확인 대기(pending) = 점선 파랑 — 확정(primary 실선)과 시각 구분.
         const poly = L.polygon(rings, {
-          color: "#3b82f6", weight: 2.5, fillColor: "#3b82f6", fillOpacity: 0.22,
+          color: "#3b82f6", weight: 2.5, fillColor: "#3b82f6", fillOpacity: 0.22, dashArray: "6 4",
+          bubblingMouseEvents: false, // 확인 대기 필지 재클릭 = 무동작(팝오버 중복 방지 — R1 L3)
         }).addTo(layer);
         // 폴리곤 경계에 맞춰 지도 이동
         try { map.fitBounds(poly.getBounds(), { padding: [40, 40], maxZoom: 17 }); } catch { /* noop */ }
@@ -904,6 +1772,7 @@ export function SatongMultiMap({
     // 중심점 마커(폴리곤 없을 때도 위치 표시)
     L.circleMarker([lat, lon], {
       radius: 7, color: "#3b82f6", weight: 2.5, fillColor: "#3b82f6", fillOpacity: 0.8,
+      bubblingMouseEvents: false,
     }).addTo(layer);
 
     // 하위호환: 단일 모드(onPick만, onPickMany 없음)에서만 즉시 호출.
@@ -965,6 +1834,37 @@ export function SatongMultiMap({
     onPickManyRef.current?.(staged);
   }, [staged]);
 
+  // ★WP-M2 reconcile: selectedParcels(프로젝트 필지)에 편입된 staged 항목을 청소한다.
+  //   완료(onPickMany)→부모가 addParcels→selectedParcels 증가→여기서 해당 staged를 제거하고
+  //   임시 녹색 레이어도 걷어 이중 카운트/이중 표시를 없앤다(경계 오버레이가 대신 그린다).
+  //   ★리뷰(MEDIUM3): removeStagedLayer(Leaflet DOM 조작) 부수효과를 setState 업데이터 밖으로
+  //   뺐다 — 업데이터는 React가 재호출(StrictMode 이중호출 등)할 수 있어 순수해야 한다. 최신
+  //   staged는 이미 동기화된 stagedRef(위 useEffect)로 읽고, 변화가 있을 때만 setStaged(값)로
+  //   직접 세팅한다(업데이터 함수 자체를 쓰지 않음).
+
+  useEffect(() => {
+    const prevStaged = stagedRef.current;
+    const toRemove: string[] = [];
+    const keep = prevStaged.filter((s) => {
+      const matched = selectedMembershipKeys.has(parcelMembershipKey(s));
+      if (matched && s.pnu) toRemove.push(s.pnu);
+      return !matched;
+    });
+    if (keep.length === prevStaged.length) return; // 변화 없음 — setState·레이어 조작 생략
+    toRemove.forEach((pnu) => removeStagedLayer(pnu));
+    setStaged(keep);
+  }, [selectedMembershipKeys, removeStagedLayer]);
+
+  // ★WP-M2 초기화 배선: 부모(Shell) clearParcels가 clearSignal을 증가시키면 지도 staged·폴리곤·
+  //   pending을 함께 청소한다(종전엔 목록만 비고 지도엔 잔존). 초기값과 같으면 무동작(마운트 무해).
+  const lastClearSignalRef = useRef(clearSignal ?? 0);
+  useEffect(() => {
+    const sig = clearSignal ?? 0;
+    if (sig === lastClearSignalRef.current) return;
+    lastClearSignalRef.current = sig;
+    handleClearAll();
+  }, [clearSignal, handleClearAll]);
+
   // Leaflet 지도 초기화 (컴포넌트 마운트 시 1회)
   useEffect(() => {
     let alive = true;
@@ -977,29 +1877,63 @@ export function SatongMultiMap({
         const map = L.map(mapEl.current, {
           center: [37.5665, 126.978],
           zoom: 12,
+          // ★지도 자체에도 하한을 건다 — 타일 레이어의 minZoom은 "그 레이어를 켰을 때"만
+          //   지도 하한을 올린다. 레이어를 다 끄면 하한이 사라져 축소 시 배경이 깨졌다.
+          minZoom: VWORLD_TILE_MIN_ZOOM,
+          maxZoom: VWORLD_TILE_MAX_ZOOM,
           scrollWheelZoom: true,
           attributionControl: false,
+          zoomControl: false, // 아래에서 좌하단으로 재부착(디자인컴프: 줌 좌하단)
         });
+        L.control.zoom({ position: "bottomleft" }).addTo(map);
 
         // 텍스트/라벨 레이어가 폴리곤(overlayPane, 400) 위로 올라오도록 커스텀 Pane 생성
         const labelPane = map.createPane("labelPane");
-        labelPane.style.zIndex = "450";
+        labelPane.style.zIndex = String(SATONG_PANE_Z.label);
         labelPane.style.pointerEvents = "none";
         L.control.attribution({ prefix: false, position: "bottomright" })
           .addTo(map)
           .addAttribution("VWorld · 국토교통부 공간정보 오픈플랫폼");
         mapRef.current = map;
         setMapReady(true);
+        setMapZoom(map.getZoom());
+        // 줌 변경 → 라벨 LOD 재판정(임계 교차 시에만 버짓이 바뀌어 라벨이 재부착된다).
+        map.on("zoomend", () => setMapZoom(map.getZoom()));
+        // ★상세팝업 양보 계약 배선. Leaflet 은 팝업이 하나만 열리므로(autoClose 기본 true)
+        //   open/close 를 그대로 boolean 으로 쓴다. 지도 파괴 시 리스너도 함께 사라진다.
+        map.on("popupopen", () => setDetailPopupOpen(true));
+        map.on("popupclose", () => setDetailPopupOpen(false));
         const focus = focusTargetRef.current;
         if (focus) {
           map.setView([focus.lat, focus.lon], 17);
         }
 
-        // 지도 클릭 → 필지 조회
+        // 지도 클릭 → 단일 팝오버(필지 선택·정보/거리재기) — 디자인컴프 계약.
+        //   종전 '클릭 즉시 필지조회'는 팝오버의 [필지 선택·정보] 액션으로 이동(오클릭 시
+        //   불필요한 /zoning/parcel-at-point 호출도 함께 제거). 거리재기 모드에선 클릭이
+        //   측정점 추가로 전환된다.
         map.on("click", (e: any) => {
           if (readOnly) return;
-          isMapClickSelectionRef.current = true;
-          void queryParcel(e.latlng.lat, e.latlng.lng);
+          if (measureOnRef.current) {
+            setMeasurePoints((prev) => {
+              // Leaflet은 dblclick 전에 click을 2회 발화(알려진 동작) — 동일 좌표 중복점 스킵(R1 L1).
+              const last = prev[prev.length - 1];
+              if (last && Math.abs(last.lat - e.latlng.lat) < 1e-9 && Math.abs(last.lon - e.latlng.lng) < 1e-9) {
+                return prev;
+              }
+              return [...prev, { lat: e.latlng.lat, lon: e.latlng.lng }];
+            });
+            return;
+          }
+          const pt = map.latLngToContainerPoint(e.latlng);
+          const size = map.getSize();
+          setClickMenu({ lat: e.latlng.lat, lon: e.latlng.lng, x: pt.x, y: pt.y, w: size.x, h: size.y });
+        });
+        // 팝오버는 지도 조작 시작과 함께 닫는다(고정 픽셀 앵커라 이동 시 어긋남 방지).
+        map.on("movestart zoomstart", () => setClickMenu(null));
+        // 더블클릭 = 측정 종료(측정 중 doubleClickZoom은 별도 이펙트에서 비활성).
+        map.on("dblclick", () => {
+          if (measureOnRef.current) setMeasureOn(false);
         });
 
         // 지도 이동 완료 → 현재 중심 통지(선택필지 없을 때 지역레이어 폴백 앵커). 디바운스+
@@ -1022,6 +1956,11 @@ export function SatongMultiMap({
         });
       })
       .catch(() => {
+        // ★언마운트 뒤에는 상태를 건드리지 않는다. 같은 파일 :1486 은 이미 이렇게 하는데
+        //   여기만 빠져 있었다(형제 누락). 종전엔 CDN <script> 가 jsdom 에서 load/error 를
+        //   **영원히 안 내보내** 이 가지가 한 번도 실행되지 않아 드러나지 않았다 —
+        //   번들 import 로 바꾸자 즉시 터졌다("소비처 0"이 아니라 "검증된 적 없음"이었다).
+        if (!alive) return;
         setStatus("error");
         setStatusMsg("지도 로딩에 실패했습니다.");
       });
@@ -1040,11 +1979,10 @@ export function SatongMultiMap({
       setMapReady(false);
       // staged 레이어 맵도 초기화(지도가 사라지면 참조 불필요)
       stagedLayers.clear();
-      leafletLoading = null; // 다음 마운트에서 재로딩 가능하도록 초기화
     };
   }, [queryParcel, readOnly]);
 
-  /* eslint-disable react-hooks/set-state-in-effect -- Tile loading status comes from Leaflet/VWorld tile lifecycle. */
+
   useEffect(() => {
     const map = mapRef.current;
     const L = window.L;
@@ -1067,6 +2005,126 @@ export function SatongMultiMap({
   // VWorld 연속지적도 전체 오버레이 타일 (showCadastre 활성화 시 지도 전체 렌더)
   const cadastreTileRef = useRef<any>(null);
   const showCadastreTile = hasSatongLayer(layerState, "cadastre");
+  // V1: 항공(위성·하이브리드) 뷰 여부 — 지적을 '선 스타일'로 전환(채움은 항공 가독 저해).
+  //   boolean 파생으로 dep을 좁혀 동일 범주 내 베이스 전환(Base↔gray 등)의 재부설을 막는다(R1 L1).
+  const aerialView = baseLayerMode === "Satellite" || baseLayerMode === "Hybrid";
+  useEffect(() => {
+    aerialViewRef.current = aerialView;
+  }, [aerialView]);
+
+  // ── 전국 지적편집도(용도지역 LT_C_UQ111) 오버레이 — jootek/카카오 지적편집도 패리티 ──
+  //   기존 '용도지역'은 선택 필지만 색칠 → land-use-wide 컨트롤을 켜면 화면 전체를
+  //   VWorld 용도지역 색상으로 덮는다(프록시 화이트리스트에 2026-07-17 허용).
+  const zoningWideTileRef = useRef<any>(null);
+  const [zoningWideNote, setZoningWideNote] = useState("");
+  const showZoningWide =
+    hasSatongLayer(layerState, "zoning") && hasSatongLayerControl(layerState, "zoning", "land-use-wide");
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const L = window.L;
+    if (!mapReady || !map || !L) return;
+    if (zoningWideTileRef.current) {
+      try { map.removeLayer(zoningWideTileRef.current); } catch { /* noop */ }
+      zoningWideTileRef.current = null;
+    }
+    if (!showZoningWide) {
+      setZoningWideNote("");
+      return;
+    }
+    const tile = L.tileLayer.wms("/tiles/vworld/wms", {
+      layers: "lt_c_uq111",
+      styles: "lt_c_uq111",
+      format: "image/png",
+      transparent: true,
+      version: "1.3.0", // VWorld WMS는 1.3.0만 허용(#347 채증)
+      opacity: 0.55, // 베이스맵 지형·도로가 비치게(전면 오버레이의 가독 균형)
+      zIndex: 3, // 베이스 타일 위, 폴리곤(overlayPane)·라벨 pane 아래
+      maxZoom: 19,
+      minZoom: 7,
+      attribution: "VWorld 용도지역(지적편집도)",
+    });
+    tile.on("tileerror", () => setZoningWideNote("지적편집도 타일 조회 실패 — 지적 배지의 자가진단으로 원인 확인"));
+    tile.on("tileload", () => setZoningWideNote((prev) => (prev ? "" : prev)));
+    tile.addTo(map);
+    zoningWideTileRef.current = tile;
+    return () => {
+      try { map.removeLayer(tile); } catch { /* noop */ }
+      if (zoningWideTileRef.current === tile) zoningWideTileRef.current = null;
+    };
+  }, [mapReady, showZoningWide]);
+
+
+  // ── 규제 오버레이(지구단위·개발행위 제한·상수원·교육환경·고도지구) — WMS 다중 레이어 ──
+  //   zoning 플레이스홀더 컨트롤의 잠금 해제(2026-07-17 — GetCapabilities+GetMap 매트릭스
+  //   채증 후 활성화). 활성 컨트롤들을 콤마 조인한 한 장의 WMS 타일로 부설한다(조합이
+  //   바뀌면 재부설). 매핑 SSOT는 satong-map-layers.REGULATION_WMS_BY_CONTROL.
+  // ★근본수정(CRITICAL) — VWorld WMS는 GetMap당 **4레이어가 상한**이다(라이브 사다리 실측:
+  //   1·2·3·4개 200 / 5개 503 INVALID_RANGE, 종류·순서·줌 무관). 규제 컨트롤이 정확히
+  //   5개라 다 켜면 한 요청에 5레이어가 실려 **잘 되던 4개까지 함께 죽었다**(all-or-nothing).
+  //   청크(≤4)마다 별도 타일 레이어를 부설해 실패를 청크 단위로 격리한다.
+  const regulationTilesRef = useRef<any[]>([]);
+  const [regulationNote, setRegulationNote] = useState("");
+  const regulationWmsChunks = useMemo(
+    () => resolveRegulationWmsLayerChunks(layerState),
+    [layerState],
+  );
+  // 이펙트 의존성용 안정 키(배열 identity churn 방지).
+  const regulationWmsKey = regulationWmsChunks.join("|");
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const L = window.L;
+    if (!mapReady || !map || !L) return;
+    for (const t of regulationTilesRef.current) {
+      try { map.removeLayer(t); } catch { /* noop */ }
+    }
+    regulationTilesRef.current = [];
+    if (regulationWmsChunks.length === 0) {
+      setRegulationNote("");
+      return;
+    }
+    // 실패는 **청크 단위**로 센다 — 한 청크가 죽어도 나머지는 살아 있으므로
+    // "전부 실패"와 "일부 실패"를 구분해 고지해야 한다(종전엔 한 장이라 구분 불가).
+    const failed = new Set<string>();
+    const tiles: any[] = regulationWmsChunks.map((layers) => {
+      const tile = L.tileLayer.wms("/tiles/vworld/wms", {
+        layers,
+        styles: layers, // VWorld는 레이어명과 동명 스타일 사용(uq111 관례 동일)
+        format: "image/png",
+        transparent: true,
+        version: "1.3.0", // VWorld WMS는 1.3.0만 허용(#347 채증)
+        opacity: 0.6,
+        zIndex: 4, // z 스케일: zoningWide(3) < 규제(4) < 지적선(5) — 채움이 지적선을 못 덮는다
+        maxZoom: 19,
+        minZoom: 7,
+        attribution: "VWorld 규제(도시계획·보호구역)",
+      });
+      tile.on("tileerror", () => {
+        failed.add(layers);
+        setRegulationNote(
+          failed.size >= regulationWmsChunks.length
+            ? "규제 오버레이 타일 조회 실패 — 아래 자가진단으로 원인 확인"
+            : `규제 오버레이 일부(${failed.size}/${regulationWmsChunks.length}) 조회 실패`,
+        );
+      });
+      tile.on("tileload", () => {
+        failed.delete(layers);
+        setRegulationNote((prev) => (failed.size === 0 && prev ? "" : prev));
+      });
+      tile.addTo(map);
+      return tile;
+    });
+    regulationTilesRef.current = tiles;
+    return () => {
+      for (const t of tiles) {
+        try { map.removeLayer(t); } catch { /* noop */ }
+      }
+      regulationTilesRef.current = regulationTilesRef.current.filter((t) => !tiles.includes(t));
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- regulationWmsKey가 청크 배열의 안정 키다.
+  }, [mapReady, regulationWmsKey]);
+
 
   useEffect(() => {
     const map = mapRef.current;
@@ -1078,48 +2136,99 @@ export function SatongMultiMap({
       cadastreTileRef.current = null;
     }
 
-    if (showCadastreTile) {
-      const apiKey = process.env.NEXT_PUBLIC_VWORLD_API_KEY || "E98ECD12-DB7F-3993-B043-E34B03229126";
-      // 1. 용도지역지구 WMS 타일 (LT_C_UQ111 — 주거/상업/공업/녹지 색상)
-      const zoningTile = L.tileLayer.wms("https://api.vworld.kr/req/wms", {
-        layers: "LT_C_UQ111",
-        styles: "LT_C_UQ111",
-        format: "image/png",
-        transparent: true,
-        maxZoom: 19,
-        minZoom: 10,
-        opacity: 0.55,
-        key: apiKey,
-        domain: "www.4t8t.net",
-      });
-
-      // 2. 연속지적도 WMS 타일 (LP_PA_CBND_BUDB, LP_PA_CBND_BONB — 경계선 및 지번)
-      const cadastreTile = L.tileLayer.wms("https://api.vworld.kr/req/wms", {
-        layers: "LP_PA_CBND_BUDB,LP_PA_CBND_BONB",
-        styles: "LP_PA_CBND_BUDB,LP_PA_CBND_BONB",
-        format: "image/png",
-        transparent: true,
-        maxZoom: 19,
-        minZoom: 10,
-        key: apiKey,
-        domain: "www.4t8t.net",
-        attribution: "VWorld 연속지적도·용도지역",
-      });
-
-      const group = L.layerGroup([zoningTile, cadastreTile]).addTo(map);
-      cadastreTileRef.current = group;
+    if (!showCadastreTile) {
+      setCadastreTileNote("");
+      return;
     }
 
+    // ★WP-M5: 연속지적도만 프론트 서버 프록시(/tiles/vworld/wms) 경유로 부설한다.
+    //   (1) API 키를 브라우저 번들에 노출하지 않는다 — 키·domain 은 프록시가 서버측에서 주입.
+    //       (종전 하드코딩 폴백 키 + api.vworld.kr 직결 = 자기 원칙(타일 프록시) 위반이었다.)
+    //   (2) 용도지역 WMS(LT_C_UQ111)는 여기서 함께 깔지 않는다 — '용도지역' 레이어 소관
+    //       (의미 1:1). 지적 토글에 겹쳐 부설하면 위성 가림·표현 중복을 유발했다.
+    // ★V1(R1 블로킹 → 라이브 매트릭스 재채증): _line은 '레이어'가 아니라 '스타일'이다 —
+    //   LAYERS=_line은 XML 오류, LAYERS=채움+STYLES=_line이 image/png(항공 위 경계선 룩).
+    //   위성·하이브리드에서만 선 스타일, 일반/회색은 채움 스타일.
+    const cadastreLayers = "lp_pa_cbnd_bubun,lp_pa_cbnd_bonbun";
+    const cadastreStyles = aerialView
+      ? "lp_pa_cbnd_bubun_line,lp_pa_cbnd_bonbun_line"
+      : cadastreLayers;
+    const cadastreTile = L.tileLayer.wms("/tiles/vworld/wms", {
+      layers: cadastreLayers,
+      styles: cadastreStyles,
+      format: "image/png",
+      transparent: true,
+      // ★근본원인 수정(2026-07-17 라이브 채증): VWorld WMS는 VERSION 1.3.0만 허용한다 —
+      //   1.1.1은 키 검증보다도 먼저 INVALID_RANGE로 거부된다("유효한 파라미터 값의 범위:
+      //   [1.3.0]"). Leaflet 기본값이 1.1.1이라 version 미지정 시 지적 타일 전체가 실패했고,
+      //   프록시 분류기가 이 XML을 auth로 승격해 "키 미설정" 오해 메시지가 표시됐다.
+      //   1.3.0에서는 Leaflet이 SRS 대신 CRS 파라미터를 전송한다(정상 — VWorld 수용).
+      version: "1.3.0",
+      // ★z 스케일(2026-07-18 R1 MAJOR 반영): zoningWide=3 < regulation=4 < cadastre=5.
+      //   종전 지적=4는 규제 오버레이(4)와 동률 — 같은 pane에서 동률 z는 DOM 삽입 순서로
+      //   갈려, 나중에 켠 규제 채움(opacity .6)이 기본-온 지적선을 덮었다(불변식 위반).
+      //   지적선은 모든 채움 오버레이 '위'가 계약이므로 5로 승격.
+      zIndex: 5,
+      maxZoom: 19,
+      // ★minZoom 은 **실측값**이다(종전 10 은 근거가 없었다). 임계 아래에서는 완전투명
+      //   타일이 200 OK 로 오므로 오류로도 안 잡힌다 — 그걸 계속 요청하면 ①사용자는
+      //   설명 없이 빈 지도를 보고 ②상류에 헛요청을 보내 502 노출만 커진다.
+      //   ★근거(지역·배율·불투명 픽셀)와 재측정 절차는 **CADASTRE_MIN_ZOOM 독스트링 한 곳**에만
+      //     둔다. 여기에 배율 숫자도 바이트 표도 복제하지 마라 — 2026-08-15 재측정으로
+      //     독스트링은 갱신됐는데 이 자리와 아래 syncZoomNote 의 복제본 두 개가 옛 임계를
+      //     그대로 들고 남았고, 다음 세션이 그 낡은 숫자를 근거로 **정상인 임계를 되돌리려다**
+      //     판정이 하루 늦어졌다(2026-08-16 독립 재측정으로 독스트링 표가 그대로 재현돼 종결).
+      //     복제 금지는 cadastre-zoom-contract 테스트가 잠근다.
+      minZoom: CADASTRE_MIN_ZOOM,
+      attribution: "VWorld 연속지적도",
+    });
+    // ★PR#329 R1 리뷰(MEDIUM2) 반영: 종전엔 tileerror 핸들러가 없어 키 미설정/상류 오류
+    //   시 지도가 빈 채로(무노트) 남았다(무목업 원칙 위반). 실패를 관측 가능한 노트로
+    //   표면화하고, 이후 로드가 성공하면(부분 성공 포함) 노트를 지운다.
+    cadastreTile.on("tileerror", () => {
+      // 모호한 고정 문구 대신 자동진단으로 실원인 코드를 표면화(60초 스로틀 — 타일 다발 오류 대비).
+      setCadastreTileNote((prev) => prev || "지적 타일 오류 — 원인 진단 중…");
+      autoDiagnoseRef.current?.();
+    });
+    cadastreTile.on("tileload", () => {
+      setCadastreTileNote((prev) => (prev ? "" : prev));
+    });
+    cadastreTile.addTo(map);
+    cadastreTileRef.current = cadastreTile;
+
+    // ★"안 보임"을 "오류"로 말하지 않는다(2026-08-12).
+    //   CADASTRE_MIN_ZOOM 아래에서는 상류가 빈 타일을 주는 **정상 동작**이라 tileerror 도
+    //   안 뜨고, 사용자는 아무 설명 없이 빈 지도를 본다. 그 상태를 오류가 아니라 **안내**로
+    //   표면화한다. (배율 숫자를 여기 적지 마라 — 상수만 가리킨다. 종전엔 적어 놨다가
+    //   임계 재측정 때 이 자리만 낡아 남았다.)
+    //   ★진짜 오류 노트를 덮지 않는다 — 안내 문구일 때만 갈아끼운다.
+    const syncZoomNote = () => {
+      const below = map.getZoom() < CADASTRE_MIN_ZOOM;
+      // ★원인이 **선택 이격**이면 일반 안내는 막다른 안내가 된다(확대해도 전체를 못 본다).
+      //   판정은 줌이 아니라 선택 자체의 이격으로 한다 — 줌만 보면 사용자가 손으로 축소한
+      //   경우와 구분하지 못해 원인이 아닌 안내를 하게 된다.
+      const hint = cadastreHintFor(selectionSpreadKm(overlayFeaturesRef.current ?? []));
+      // ★두 안내를 **한 줄에서** 판정한다 — 자기 안내 목록이 여러 줄로 흩어지면 배선 락이
+      //   첫 줄만 보고 나머지를 놓친다(실제로 그렇게 통과했다).
+      const isOwnHint = (v: string) => v === CADASTRE_ZOOM_HINT || v.startsWith(SPREAD_HINT_PREFIX);
+      setCadastreTileNote((prev) => {
+        if (below) return prev && !isOwnHint(prev) ? prev : hint;
+        return isOwnHint(prev) ? "" : prev;
+      });
+    };
+    syncZoomNote();
+    map.on("zoomend", syncZoomNote);
+
     return () => {
+      map.off("zoomend", syncZoomNote);
       if (cadastreTileRef.current) {
         try { map.removeLayer(cadastreTileRef.current); } catch { /* noop */ }
         cadastreTileRef.current = null;
       }
     };
-  }, [mapReady, showCadastreTile]);
-  /* eslint-enable react-hooks/set-state-in-effect */
+  }, [mapReady, showCadastreTile, aerialView]);
 
-  /* eslint-disable react-hooks/set-state-in-effect -- Overlay notes are derived from imperative Leaflet layer rendering. */
+
   useEffect(() => {
     const map = mapRef.current;
     const L = window.L;
@@ -1134,7 +2243,8 @@ export function SatongMultiMap({
     const showZoning = hasSatongLayer(layerState, "zoning") && hasSatongLayerControl(layerState, "zoning", "land-use");
     const showPrice = hasSatongLayer(layerState, "official-price") && hasSatongLayerControl(layerState, "official-price", "unit-price");
     const showAge = hasSatongLayer(layerState, "age") && hasSatongLayerControl(layerState, "age", "building-age");
-    const needsOverlay = showCadastre || showZoning || showPrice || showAge;
+    const showCapacity = hasSatongLayer(layerState, "capacity") && hasSatongLayerControl(layerState, "capacity", "far-headroom");
+    const needsOverlay = showCadastre || showZoning || showPrice || showAge || showCapacity;
 
     if (!needsOverlay || overlayFeatures.length === 0) {
       // ★레이어는 켜졌는데 그릴 필지가 0 → 침묵 blank 대신 명확 안내(활성배지-무반영 모순 해소).
@@ -1148,6 +2258,7 @@ export function SatongMultiMap({
     let cadastreCount = 0;
     let zoningCount = 0;
     let priceCount = 0;
+    let capacityCount = 0;
     let ageCount = 0;
     let markerCount = 0;
 
@@ -1162,12 +2273,19 @@ export function SatongMultiMap({
 	    const drawPolygon = (style: Record<string, unknown>) => {
 	      if (!hasGeometry) return;
         const resolvedStyle = {
+          // 색면 클릭이 지도 클릭(팝오버)으로 번지지 않게 — 색면 클릭 = 자기 정보 팝업만(U6).
+          bubblingMouseEvents: false,
           ...style,
           ...(statusColor ? { color: statusColor, fillColor: statusColor } : {}),
-          ...(isHighlighted ? { color: "#ef4444", weight: 4, fillOpacity: 0.5 } : {}),
+          // 하이라이트(선택 강조) = primary 블루 — 디자인컴프 정합(#ef4444 에러적색은 컴프 위반).
+          ...(isHighlighted ? { color: "#135bec", weight: 4, fillOpacity: 0.5 } : {}),
         };
-	      const polygon = L.polygon(rings, resolvedStyle).bindPopup(popup, { maxWidth: 280 }).addTo(group);
-        polygon.on("click", () => onFeatureClick?.(feature));
+	      const polygonBase = L.polygon(rings, resolvedStyle);
+	      // 상세를 부모가 맡으면 팝업을 걸지 않는다(중복 표면 상호배제 — 위 주석 참조).
+	      const polygon = (featureDetailOwnedRef.current
+	        ? polygonBase
+	        : polygonBase.bindPopup(popup, { maxWidth: 280 })).addTo(group);
+        polygon.on("click", () => onFeatureClickRef.current?.(feature));
 	      try { bounds.extend(polygon.getBounds()); } catch { /* noop */ }
 	    };
 
@@ -1204,6 +2322,14 @@ export function SatongMultiMap({
         });
       }
 
+      if (showCapacity && hasGeometry) {
+        const color = capacityColor(feature.effectiveFarPct, feature.currentFarPct);
+        if (color) {
+          capacityCount += 1;
+          drawPolygon({ color, weight: 2.5, fillColor: color, fillOpacity: 0.5 });
+        }
+      }
+
       if (showAge && hasGeometry && feature.buildingAgeYears != null) {
         ageCount += 1;
         const color = ageColor(feature.buildingAgeYears);
@@ -1217,13 +2343,17 @@ export function SatongMultiMap({
 
       if (!hasGeometry && feature.lat != null && feature.lon != null) {
         markerCount += 1;
-        L.circleMarker([feature.lat, feature.lon], {
+        const circle = L.circleMarker([feature.lat, feature.lon], {
           radius: 8,
           color: "#1d4ed8",
           weight: 2,
           fillColor: "#bfdbfe",
           fillOpacity: 0.95,
-        }).bindPopup(popup, { maxWidth: 280 }).on("click", () => onFeatureClick?.(feature)).addTo(group);
+          bubblingMouseEvents: false, // 점 클릭 = 정보 팝업만(지도 클릭 팝오버로 미전파 — U6)
+        });
+        // 같은 규칙 — 형제를 함께 고친다(한쪽만 고치면 대체 마커 경로에서 중복이 남는다).
+        (featureDetailOwnedRef.current ? circle : circle.bindPopup(popup, { maxWidth: 280 }))
+          .on("click", () => onFeatureClickRef.current?.(feature)).addTo(group);
         bounds.extend([feature.lat, feature.lon]);
       }
     });
@@ -1237,7 +2367,14 @@ export function SatongMultiMap({
       priceCount,
       showAge,
       ageCount,
+      showCapacity,
+      capacityCount,
       markerCount,
+      // 노후도 0건일 때 사유 세분("나대지 N·미준공 P·조회실패 M·대량생략 K") — 정직 무자료 고지(WP-M3).
+      ageNoBuilding: ageStatusCounts.ageNoBuilding,
+      ageNoApprovalDate: ageStatusCounts.ageNoApprovalDate,
+      ageLookupFailed: ageStatusCounts.ageLookupFailed,
+      ageSkippedBulk: ageStatusCounts.ageSkippedBulk,
     }));
 
     const fitKey = overlayFeatures.map(satongMapFeatureKey).join("||");
@@ -1256,19 +2393,291 @@ export function SatongMultiMap({
       if (overlayLayerRef.current === group) overlayLayerRef.current = null;
 	    };
 	  }, [
+    ageStatusCounts,
     featureStatusColors,
     featureStatusLabels,
     highlightFeatureAddress,
     layerState,
     mapReady,
-    onFeatureClick,
+    // ★onFeatureClick은 deps에서 제외한다 — 이벤트 시점에만 호출되므로 stale closure가
+    //   불가능하고(onFeatureClickRef 경유), 넣어두면 소비처가 인라인 함수를 넘기는 순간
+    //   렌더마다 identity가 바뀌어 필지 폴리곤·마커·팝업이 전량 파괴·재생성됐다.
+    //   실제로 LandScheduleClient는 필지 클릭 → setHighlight → 리렌더 → 전량 재생성이었다.
+    //   한 곳(여기)을 고치면 소비처 5곳이 함께 낫는다.
     overlayFeatures,
     priceRange.max,
     priceRange.min,
   ]);
-  /* eslint-enable react-hooks/set-state-in-effect */
 
-  /* eslint-disable react-hooks/set-state-in-effect -- Market markers are rendered into an imperative Leaflet layer group. */
+
+  // ── W3 배치 미리보기 오버레이(건축가능 영역 + 선택 대안의 동 풋프린트) ──────────────
+  //  ★기하는 전부 서버 산정(cad/site_layout_service)이다. 여기서 동을 배치하거나 세트백을
+  //    계산하지 않는다 — layoutOverlay가 null이면 아무것도 그리지 않는다(가짜 배치 금지).
+  //  전용 layerGroup 1개를 만들고 payload가 바뀔 때마다 통째로 갈아끼운다(부분 갱신 시
+  //  이전 대안의 동이 남아 두 대안이 겹쳐 보이는 오도가 생긴다).
+  const layoutLayerRef = useRef<any>(null);
+  useEffect(() => {
+    // ★그리기·정리 로직은 lib/satong-layout-overlay(순수·L 주입)에 있다 — jsdom이 Leaflet을
+    //   초기화하지 못해 effect 내부 로직에 테스트가 닿지 못했고, "이전 레이어 제거+cleanup"을
+    //   지우는 변이가 1550건을 전부 통과했다(R1 실증). 추출로 가짜 L 검증이 가능해졌다.
+    // ★`if (!mapReady) return` 조기반환을 두지 않는다: renderLayoutOverlay가 이미 `!L || !map`을
+    //   안전 처리(그리지 않고 이전 레이어만 정리)하므로 중복 가드이고, 그 조기반환이 있으면
+    //   jsdom(Leaflet 미초기화 → mapReady=false)에서 **위임 호출 자체가 발생하지 않아** 배선
+    //   테스트가 불가능하다 — R2가 "위임 블록을 지워도 90건 전부 통과"로 실증한 잔여 갭.
+    //   mapReady는 deps에 남겨 지도가 준비되는 순간 재실행되게 한다.
+    const map = mapRef.current;
+    const L = window.L;
+    layoutLayerRef.current = renderLayoutOverlay({
+      L, map, previousLayer: layoutLayerRef.current, overlay: layoutOverlay,
+      toRings: geoJsonToLeafletRings,
+      northLightSetbackM: layoutNorthLightSetbackM,
+      northLightHeightM: layoutNorthLightHeightM,
+    });
+    return () => {
+      clearLayoutOverlay(mapRef.current, layoutLayerRef.current);
+      layoutLayerRef.current = null;
+    };
+  }, [mapReady, layoutOverlay, layoutNorthLightSetbackM, layoutNorthLightHeightM]);
+
+  // ── 선택 필지(연결 프로젝트·staged·pending) 식별 라벨 — 전역 라벨 버짓·줌 LOD 무관 항상 표시 ──
+  //   ★PR#329 R1 리뷰(LOW1) 반영: 홈 초기 진입(줌 12)은 hover-only LOD라 시장/POI/개발계획
+  //   상시 라벨이 0개인데, 사용자가 지도를 연 '목적'인 선택 필지 자체까지 사라지면 첫인상이
+  //   빈 지도가 된다. 이 라벨은 labelPlan(전역 48/16/0 버짓) 대상이 아닌 별도 always-on
+  //   트랙이다 — 상위 오버레이 색칠 이펙트(showCadastre 등 레이어 게이트)와도 독립적이라,
+  //   레이어 토글을 하나도 켜지 않은 상태(초기 연결 직후)에도 필지가 식별된다.
+  //   ★2026-09-03 정정: 「모든 토글과 독립」은 더 이상 참이 아니다. 다필지(실측 206필지)
+  //   선택 시 지번 라벨이 지도를 덮어 가독성이 무너진다는 신고를 받아, 「선택 필지」 컨트롤
+  //   **하나로만** 끌 수 있게 했다(satongSelectionLabelsVisible). 레이어 게이트와는 여전히
+  //   독립이다 — 지적 레이어를 안 켜도 라벨은 나온다. 그리고 그 컨트롤을 **선언하지 않는**
+  //   호출부(3/6 실측)에서는 끄는 UI 가 없으므로 종전대로 항상 표시한다.
+  //   시각 마커(폴리곤·staged 초록점)는 다른 이펙트가 이미 그리므로, 여기서는 투명 앵커
+  //   포인트에 라벨만 부착한다(중복 마커 방지).
+  const selectionLabelLayerRef = useRef<any>(null);
+  // 롤업 여부만 dep로 — LOD 임계(z=15) 교차 시에만 라벨 재부착(줌마다 teardown 낭비 방지 — R1 L2).
+  const selectionRollup = satongLabelLOD(mapZoom) === "hover-only";
+  // 「선택 필지」 컨트롤(기본 ON). 컨트롤을 선언하지 않는 호출부에서는 항상 true.
+  const selectionLabelsOn = satongSelectionLabelsVisible(layerState);
+
+  useEffect(() => {
+    // ★`if (!mapReady) return` 조기반환을 두지 않는다 — 형제 `lib/satong-layout-overlay` 와
+    //   **같은 이유**다: 그 반환이 있으면 jsdom(Leaflet 미초기화 → mapReady=false)에서
+    //   **위임 호출 자체가 일어나지 않아** 토글 배선을 행위로 잠글 수 없다. 실제로 #954 적대
+    //   리뷰가 `satongSelectionLabelsVisible(layerState) || true` 변이를 넣었는데 소스 문자열
+    //   락 전부가 초록이었다(이름은 있고 **값이 안 실린다**). renderSelectionLabels 가
+    //   `!L || !map` 을 안전 처리하므로 조기반환은 중복 가드이기도 하다.
+    //   mapReady 는 deps 에 남겨 지도가 준비되는 순간 재실행되게 한다.
+    const plan = planSelectionLabels({
+      visible: selectionLabelsOn,
+      rollup: selectionRollup,
+      features: overlayFeatures,
+      representativePoint: geometryRepresentativePoint,
+      // ★PNU 로 지번을 파생한 **뒤** 줄인다 — 먼저 줄이면 동 단위 주소에서 지번을 붙일
+      //   자리가 사라져 같은 동의 필지가 지도에서 전부 같은 라벨이 된다.
+      shortLabel: (f) => parcelShortLabel(f.address, f.pnu, f.pnu || "필지"),
+    });
+    const group = renderSelectionLabels({
+      L: window.L,
+      map: mapRef.current,
+      previousLayer: selectionLabelLayerRef.current,
+      plan,
+    }) as { remove?: () => void } | null;
+    selectionLabelLayerRef.current = group;
+
+    return () => {
+      try { group?.remove?.(); } catch { /* noop */ }
+      if (selectionLabelLayerRef.current === group) selectionLabelLayerRef.current = null;
+    };
+  }, [mapReady, overlayFeatures, selectionRollup, selectionLabelsOn]);
+
+
+  // ── 거리재기 — 측정 모드 동기화·측정점/폴리라인/누적거리 렌더·모드 UX·ESC ──
+  useEffect(() => {
+    measureOnRef.current = measureOn;
+  }, [measureOn]);
+
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const L = window.L;
+    if (!mapReady || !map || !L) return;
+    if (measureLayerRef.current) {
+      try { measureLayerRef.current.remove(); } catch { /* noop */ }
+      measureLayerRef.current = null;
+    }
+    if (measurePoints.length === 0) return;
+
+    const group = L.layerGroup().addTo(map);
+    measureLayerRef.current = group;
+    const latlngs = measurePoints.map((p) => [p.lat, p.lon] as [number, number]);
+    latlngs.forEach((ll) => {
+      L.circleMarker(ll, {
+        radius: 4, color: "#135bec", weight: 2, fillColor: "#ffffff", fillOpacity: 1,
+        interactive: false, // 측정점이 다음 클릭(점 추가)을 가로채지 않게
+      }).addTo(group);
+    });
+    if (measureMode === "area" && latlngs.length >= 3) {
+      // 면적재기(I6): 채움 폴리곤 + 중심 면적 라벨(둘레는 칩에서 병기).
+      L.polygon(latlngs, {
+        color: "#135bec", weight: 3, dashArray: "6 6", fillColor: "#135bec", fillOpacity: 0.12,
+        interactive: false,
+      }).addTo(group);
+      const centroid: [number, number] = [
+        measurePoints.reduce((s, p) => s + p.lat, 0) / measurePoints.length,
+        measurePoints.reduce((s, p) => s + p.lon, 0) / measurePoints.length,
+      ];
+      const anchor = L.circleMarker(centroid, {
+        radius: 0, opacity: 0, fillOpacity: 0, interactive: false,
+      }).addTo(group);
+      bindSatongLabel(anchor, formatAreaSqm(polygonAreaSqm(measurePoints)), { permanent: true, offsetY: 0 });
+    } else if (latlngs.length >= 2) {
+      L.polyline(latlngs, { color: "#135bec", weight: 3, dashArray: "6 6", interactive: false }).addTo(group);
+      // 누적 거리 라벨 — 마지막 점 위 상시 표시(순수계산 satong-measure).
+      const anchor = L.circleMarker(latlngs[latlngs.length - 1], {
+        radius: 0, opacity: 0, fillOpacity: 0, interactive: false,
+      }).addTo(group);
+      bindSatongLabel(anchor, `누적 ${formatDistance(totalDistanceMeters(measurePoints))}`, { permanent: true, offsetY: -10 });
+    }
+    return () => {
+      try { group.remove(); } catch { /* noop */ }
+      if (measureLayerRef.current === group) measureLayerRef.current = null;
+    };
+  }, [mapReady, measurePoints, measureMode]);
+
+
+  // 측정 모드 UX — 더블클릭줌 비활성(더블클릭=종료 제스처와 충돌)·크로스헤어 커서.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!mapReady || !map) return;
+    if (measureOn) {
+      try { map.doubleClickZoom.disable(); } catch { /* noop */ }
+      if (mapEl.current) mapEl.current.style.cursor = "crosshair";
+    } else {
+      try { map.doubleClickZoom.enable(); } catch { /* noop */ }
+      if (mapEl.current) mapEl.current.style.cursor = "";
+    }
+  }, [mapReady, measureOn]);
+
+  // ESC 단계적 해제 — ①팝오버 닫기 → ②측정 종료 → ③측정 결과 지우기.
+  //
+  // ★2026-08-17 — **조정기를 거친다**(lib/satong-dismiss). 종전에는 이 리스너가 셸의
+  //   레일·베이스맵 팝오버 ESC 와 같은 keydown 에 조율 없이 함께 발화해, 사용자가 한 번
+  //   눌렀는데 **둘이 사라졌다**(라이브 실측: clickMenu 470 + role=dialog 430 동시 개방 →
+  //   ESC 1회에 둘 다 닫힘). 이제 z(SSOT rung)가 가장 큰 표면 하나만 닫힌다.
+  // ★단계 ②③(측정)은 **표면이 아니다** — 아주 낮은 z 로 등록해 "열린 표면이 없을 때만"
+  //   차례가 오게 한다. 종전 우선순위(①→②→③)가 그대로 보존된다.
+  useEffect(() => {
+    if (!clickMenu) return;
+    return registerDismissible(SATONG_UI_Z.clickMenu, () => setClickMenu(null));
+  }, [clickMenu]);
+
+  useEffect(() => {
+    if (!measureOn && measurePoints.length === 0) return;
+    return registerDismissible(MEASURE_DISMISS_Z, () => {
+      if (measureOn) { setMeasureOn(false); return; }
+      setMeasurePoints([]);
+    });
+  }, [measureOn, measurePoints.length]);
+
+  // 클릭 지점의 오버레이 피처(용도지역·공시지가·노후도 색면) — 팝오버 헤더 정보(레이캐스팅).
+  const clickMenuFeature = useMemo(() => {
+    if (!clickMenu) return null;
+    return findFeatureAtPoint(clickMenu.lat, clickMenu.lon, overlayFeatures, (f) =>
+      geoJsonToLeafletRings(f.geometry),
+    );
+  }, [clickMenu, overlayFeatures]);
+
+  // marketLayer에서 마커 이펙트가 실제로 읽는 원시값·참조만 뽑아 구독을 협소화한다(리뷰 LOW) —
+  //   marketLayer 객체 identity가 바뀌어도(다른 필드 갱신) 아래 값이 같으면 마커를 다시 그리지
+  //   않아, 분양 items 도착이 실거래 마커 재생성·재fitBounds를 유발하던 낭비를 끊는다.
+  const marketKind = marketLayer?.kind ?? "trade";
+  // 실거래 라벨 총액/평당 토글(jootek 패리티) — transactions 레이어의 unit-price 컨트롤.
+  const pricePerPyeongOn = hasSatongLayerControl(layerState, "transactions", "unit-price");
+  // ★다중 유형 표시(분석품질 레인G P0): 켜진 유형 전부를 순회해 유형별 색상 마커를 동시에
+  //   그린다(POI 이펙트와 동형 — SatongMultiMap:2185-2226 패턴 이식). 종전엔 marketLayer.type
+  //   단일값만 받아 `${type}_${kind}` 카테고리 1개만 소비하고 나머지 9종을 버렸다.
+  const marketTypes = marketLayer?.types ?? EMPTY_MARKET_TYPES;
+
+  /**
+   * ★지도에 **못 찍는** 실거래를 목록으로 되살린다 — 응답에 있는데 화면에 없던 것.
+   *
+   * 국토부가 단독·토지·상업 지번을 `2**` 로 가려 보내면 좌표를 찍을 수 없다(원천 한계).
+   * 백엔드는 그것을 **버리지 않고** `location_status:"unlocated"` 로 보존해 왔는데
+   * (`반경 밖으로 단정하지 않는다 — 무날조`), 지도는 **건수만** 표시하고 내용을 버렸다.
+   * 실측(제천 모산동 123-1·10km): 56그룹 **476건** — 그중 토지매매만 **362건**이다.
+   * 토지 개발자에게 가장 중요한 데이터가 100% 보이지 않았다(또 하나의 "소비처 0").
+   *
+   * ★좌표를 **지어내지 않는다.** 동 대표점으로 찍으면 같은 동 필지가 한 점에 몰려
+   *   "위치가 확인된 거래"로 오독된다 — 그래서 지도가 아니라 **목록**으로 낸다.
+   */
+  const unlocatedMarketGroups = useMemo(() => collectUnlocatedMarketGroups(marketPayload), [marketPayload]);
+  const showPresale = !!marketLayer?.showPresale;
+  const presaleItems = marketLayer?.presaleItems ?? null;
+  const showAuction = !!marketLayer?.showAuction;
+  const auctionItems = marketLayer?.auctionItems ?? null;
+
+  // ── 라벨(상시 툴팁) 시스템 — 레이어별 후보 수 집계 → 전역 버짓 배분(줌 LOD) ──
+  //   각 레이어는 자기 몫(permanentLimit)만큼만 선두 마커에 상시 라벨을 붙이고 나머지는 hover.
+  //   ★후보 수는 '실제로 렌더될 라벨'만 센다(레이어 off → 0). 합산이 버짓(48/16/0)을 넘지 않는다.
+  // ★P3(라벨 폭주 대응): market은 유형별로 별도 카운트해 아래 labelPlan에서 유형별 서브슬롯
+  //   (`market:${type}`)으로 분할한다 — 유형 하나가 전역 버짓을 독식해 다른 유형이 전부 hover로
+  //   강등되는 것을 막는다(클러스터링 미도입 — 판단 근거는 커밋/보고 참조).
+  const marketRenderPlan = useMemo(
+    () => resolveMarketRenderPlan(marketPayload, marketTypes, marketKind),
+    [marketPayload, marketKind, marketTypes],
+  );
+  const marketTypeMappableCounts = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const entry of marketRenderPlan) out[entry.type] = entry.groups.length;
+    return out;
+  }, [marketRenderPlan]);
+  const presaleMappableCount = useMemo(
+    () => (showPresale ? (presaleItems ?? []).filter((i) => !!i.lat && !!i.lon).length : 0),
+    [showPresale, presaleItems],
+  );
+  const auctionMappableCount = useMemo(
+    () => (showAuction ? (auctionItems ?? []).filter((i) => !!i.lat && !!i.lon).length : 0),
+    [showAuction, auctionItems],
+  );
+  const poiMappableCount = useMemo(() => {
+    if (!poiPayload || poiPayload.available === false) return 0;
+    const cats = poiPayload.categories || {};
+    let total = 0;
+    for (const [control, codes] of Object.entries(POI_CONTROL_CODES)) {
+      if (!hasSatongLayerControl(layerState, "poi", control)) continue;
+      for (const code of codes) {
+        total += (cats[code]?.items || []).filter(
+          (item) => typeof item.lat === "number" && typeof item.lon === "number",
+        ).length;
+      }
+    }
+    return total;
+  }, [poiPayload, layerState]);
+  const devMappableCount = useMemo(
+    () =>
+      (developmentPayload?.facilities || []).filter(
+        (f) => typeof f.lat === "number" && typeof f.lon === "number",
+      ).length,
+    [developmentPayload],
+  );
+  const labelPlan = useMemo(
+    () =>
+      planSatongLabels(mapZoom, [
+        // market 슬롯을 유형별 서브슬롯으로 분할(P3) — 상대 우선순위(다른 레이어 대비)는
+        // 종전과 동일하게 이 위치에서 소비하되, market 내부에서는 유형별로 공평 분배된다.
+        ...marketTypes.map((type) => ({ id: `market:${type}`, count: marketTypeMappableCounts[type] ?? 0 })),
+        { id: "presale", count: presaleMappableCount },
+        { id: "auction", count: auctionMappableCount },
+        { id: "poi", count: poiMappableCount },
+        { id: "development", count: devMappableCount },
+      ]),
+    [mapZoom, marketTypes, marketTypeMappableCounts, presaleMappableCount, auctionMappableCount, poiMappableCount, devMappableCount],
+  );
+  const presaleLabelLimit = labelPlan.presale ?? 0;
+  const auctionLabelLimit = labelPlan.auction ?? 0;
+  const poiLabelLimit = labelPlan.poi ?? 0;
+  const devLabelLimit = labelPlan.development ?? 0;
+
+
   useEffect(() => {
     const map = mapRef.current;
     const L = window.L;
@@ -1281,18 +2690,17 @@ export function SatongMultiMap({
 
     if (!marketPayload?.center?.lat || !marketPayload?.center?.lon || marketPayload.fetch_failed) {
       setMarketNote(marketPayload?.fetch_failed ? marketPayload.note || "실거래 공공데이터 조회 실패" : "");
+      setMarketTypeCounts({});
       return;
     }
 
     const group = L.layerGroup().addTo(map);
     marketLayerRef.current = group;
     const bounds = L.latLngBounds([]);
-    const kind = marketLayer?.kind ?? "trade";
-    const type = marketLayer?.type ?? "apt";
-    const category = marketPayload.categories?.[`${type}_${kind}`];
-    const groups = category?.groups ?? [];
-    const typeColor = MARKET_TYPE_COLORS[type] || "#2563eb";
+    const kind = marketKind;
     let marketCount = 0;
+    let cappedTotal = 0;
+    const byType: Record<string, number> = {};
 
     bounds.extend([marketPayload.center.lat, marketPayload.center.lon]);
     L.circleMarker([marketPayload.center.lat, marketPayload.center.lon], {
@@ -1301,6 +2709,7 @@ export function SatongMultiMap({
       weight: 3,
       fillColor: "#ffffff",
       fillOpacity: 0.95,
+      bubblingMouseEvents: false, // 점 클릭 = 정보 팝업만(U6)
     })
       .bindPopup(`<div style="padding:8px 10px;font-size:12px;"><b>분석 대상지</b><br/>${escapeHtml(marketPayload.center.address || "")}</div>`)
       .addTo(group);
@@ -1314,32 +2723,114 @@ export function SatongMultiMap({
         fillColor: "#14b8a6",
         fillOpacity: 0.05,
         dashArray: "6 6",
+        interactive: false, // 반경 링이 지도 클릭(필지 팝오버)을 가로채지 않게
       }).addTo(group);
     }
 
-    groups.forEach((item) => {
-      if (!item.lat || !item.lon) return;
-      marketCount += 1;
-      const radius = Math.min(18, 7 + Math.round(Math.sqrt(Math.max(1, item.count)) * 1.5));
-      L.circleMarker([item.lat, item.lon], {
-        radius,
-        color: "#ffffff",
-        weight: 2,
-        fillColor: typeColor,
-        fillOpacity: 0.9,
-      })
-        .bindTooltip(`<div class="font-bold text-[10.5px] bg-white/95 px-2 py-1 rounded shadow-sm border border-slate-200">${escapeHtml(item.name || "실거래")}</div>`, { permanent: groups.filter((g) => g.lat && g.lon).length <= TOOLTIP_PERMANENT_MAX, direction: "top", offset: [0, -radius], className: "bg-transparent border-none shadow-none" })
-        .bindPopup(marketPopupHtml(item, kind), { maxWidth: 300 })
-        .addTo(group);
-      bounds.extend([item.lat, item.lon]);
-    });
+    // ★POI 이펙트(:2205-2245 부근)와 동형 — 켜진 유형(marketRenderPlan, 순수함수로 추출돼
+    //   회귀 테스트됨) 전부를 순회하며 유형별 색상 마커를 동시에 그린다. 라벨 상시 표시는
+    //   유형별 서브슬롯(labelPlan[`market:${type}`])으로 공평 배분(P3 — 한 유형이 전역 라벨
+    //   버짓을 독식하지 않게).
+    for (const entry of marketRenderPlan) {
+      const { type, color: typeColor, groups } = entry;
+      const typeLabelLimit = labelPlan[`market:${type}`] ?? 0;
+      cappedTotal += entry.cappedCount;
+      let typeShown = 0;
 
-    // 분양·경매 노트는 독립 이펙트(presaleAuctionNote)가 담당 — 실거래만 여기서.
-    setMarketNote(marketCount ? `실거래 ${marketCount}곳` : "실거래 무자료");
+      groups.forEach((item) => {
+        const ordinal = typeShown;
+        typeShown += 1;
+        marketCount += 1;
+        const radius = Math.min(18, 7 + Math.round(Math.sqrt(Math.max(1, item.count)) * 1.5));
+        const marker = L.circleMarker([item.lat, item.lon], {
+          radius,
+          color: "#ffffff",
+          weight: 2,
+          fillColor: typeColor,
+          fillOpacity: 0.9,
+          // ★U6 근본수정: L.Path(circleMarker) 기본 bubblingMouseEvents=true 라 점 클릭이
+          //   지도 click으로 번져 필지선택(현 팝오버)이 함께 발동했다. 점 클릭 = 정보 팝업만.
+          bubblingMouseEvents: false,
+        })
+          .bindPopup(marketPopupHtml(item, kind), { maxWidth: 300 })
+          .addTo(group);
+        // 정보 상시화(2026-07-17): 라벨에 평균가를 병기 — hover 없이도 핵심값이 보이게(jootek 가격 pill).
+        // ★R1 #2: 팝업과 동일 공용 포맷터 won() 재사용 — 억미만 "0.4억" 어색 표기·라벨/팝업 불일치 제거.
+        // 총액/평당 토글(실거래 unit-price 컨트롤 — jootek '총액/평당' 패리티): 평당가는
+        // avg_price_10k(만원)/평(avg_area_m2/3.305785). 면적 결측 시 총액 폴백(정직).
+        const perPyeong =
+          pricePerPyeongOn && item.avg_price_10k && item.avg_area_m2 && item.avg_area_m2 > 0
+            ? Math.round(item.avg_price_10k / (item.avg_area_m2 / 3.305785))
+            : null;
+        const priceTag =
+          kind === "trade" && item.avg_price_10k
+            ? perPyeong
+              ? ` ${perPyeong.toLocaleString()}만/평`
+              : ` ${won(item.avg_price_10k)}${pricePerPyeongOn ? "·총액" : ""}` // 평당 불가(면적결측) 혼재 명시(R1 #4)
+            : "";
+        bindSatongLabel(marker, `${item.name || "실거래"}${priceTag}`, { permanent: ordinal < typeLabelLimit, offsetY: radius });
+        bounds.extend([item.lat, item.lon]);
+      });
+
+      if (typeShown) byType[type] = typeShown;
+    }
+    setMarketTypeCounts(byType);
+
+    // ★P1(절단 정직 고지) — 백엔드가 이미 반환하는 좌표미확보·반경밖·상한초과·지오코딩
+    //   사전컷 건수를 표면화한다(무음 절단 금지 — #459 ComparableSet "수집=선정+제외" 항등
+    //   선례와 동일 원칙). ★R1 후속(레인G R2 항목4): geocode_precut_count가 타입 선언만
+    //   되고 표면화 누락돼 있었다(대형 시군구 콜드로드에서 가장 큰 절단 계층일 수 있음).
+    const cutParts: string[] = [];
+    if ((marketPayload.geocode_precut_count ?? 0) > 0) {
+      cutParts.push(`지오코딩 전 사전컷 ${marketPayload.geocode_precut_count}건 생략`);
+    }
+    if ((marketPayload.coords_unresolved_count ?? 0) > 0) {
+      cutParts.push(`좌표미확보 ${marketPayload.coords_unresolved_count}건 제외`);
+    }
+    // radius_applied===false(중심좌표는 있으나 radius_m 미확보 등)면 반경 필터 자체가
+    // 미적용 상태다 — radius_filtered_out_count가 0이어도 "반경 내 상위 N건"이 아니라
+    // "전체"가 표시 중임을 정직하게 고지한다(선언만 되고 미소비이던 필드를 실사용).
+    if (marketPayload.radius_applied === false) {
+      cutParts.push("반경 필터 미적용(전체 표시 중)");
+    } else if ((marketPayload.radius_filtered_out_count ?? 0) > 0) {
+      cutParts.push(`반경밖 ${marketPayload.radius_filtered_out_count}건 제외`);
+    }
+    // ★확대했으면 **반드시 말한다.** 조용히 넓히면 사용자는 10km 떨어진 거래를 '주변'으로
+    //   읽는다 — 그건 이 결함을 고치면서 더 나쁜 오도를 만드는 것이다.
+    //   요청값과 유효값을 **둘 다** 보여, 무엇이 바뀌었는지 화면만 보고 알 수 있게 한다.
+    if (marketPayload.radius_expanded && marketPayload.radius_m) {
+      const reqKm = ((marketPayload.radius_requested_m ?? 1000) / 1000).toFixed(
+        (marketPayload.radius_requested_m ?? 1000) % 1000 === 0 ? 0 : 1,
+      );
+      const effKm = (marketPayload.radius_m / 1000).toFixed(marketPayload.radius_m % 1000 === 0 ? 0 : 1);
+      cutParts.unshift(`반경 ${reqKm}km 내 거래가 적어 ${effKm}km 로 넓혀 표시`);
+    }
+    if (cappedTotal > 0) {
+      cutParts.push(`유형별 상한초과 ${cappedTotal}건 생략`);
+    }
+    // ★표시할 거래가 하나도 없으면 **왜 없는지**를 말한다(2026-08-12 사용자 지적).
+    //   종전 문구는 "실거래 무자료 · 사전컷 67건 생략 · 좌표미확보 47건 제외 · 반경밖 301건 제외"
+    //   였는데, 이건 **우리 파이프라인 내부 용어**라 사용자가 원인을 알 수 없다. 실제 원인은
+    //   국토부 공개자료가 **지번을 가려서**(예: 2**, 3**) 제공해 좌표를 찍을 수 없다는 것이다.
+    //   ★같은 사유 문장이 이미 있다 — 탁상감정은 comparable_skipped_reason 으로 정확히
+    //     말하고 있었고, 프론트에도 noSampleReason 이 **백엔드와 글자까지 일치하도록**
+    //     공유 골든으로 잠겨 있다. 지도만 그 통로를 안 쓰고 있었다(코드는 있는데 소비처 없음).
+    //   → 재구현하지 않고 그 공용 함수를 부른다.
+    const maskedReason = marketCount === 0 ? buildMaskedSampleReason(marketPayload) : "";
+    setMarketNote(
+      [
+        marketCount ? `실거래 ${marketCount}곳` : "실거래 무자료",
+        ...(maskedReason ? [maskedReason] : cutParts),
+      ].join(" · "),
+    );
 
     // ★선택필지가 있을 때만 fitBounds(선택 대상지로 이동). 선택 없이 지도중심으로 탐색(브라우즈
     //   모드)할 땐 fitBounds 금지 — 사용자가 보던 화면을 유지하고, moveend→재조회 루프를 끊는다.
-    if (bounds.isValid() && selectedParcels.length > 0) {
+    //   ★fit-key 1회성 가드: 라벨 재부착(줌 임계 교차)로 이 이펙트가 재실행돼도 같은 대상지엔
+    //     다시 fit 하지 않아 사용자 줌을 덮지 않는다.
+    const marketFitKey = `${marketPayload.center.lat},${marketPayload.center.lon}|${kind}|${marketTypes.join(",")}|${selectedParcelKey}`;
+    if (bounds.isValid() && selectedParcels.length > 0 && marketFitKey !== lastMarketFitKeyRef.current) {
+      lastMarketFitKeyRef.current = marketFitKey;
       try { map.fitBounds(bounds, { padding: [44, 44], maxZoom: 15 }); } catch { /* noop */ }
     }
 
@@ -1347,10 +2838,9 @@ export function SatongMultiMap({
       try { group.remove(); } catch { /* noop */ }
       if (marketLayerRef.current === group) marketLayerRef.current = null;
     };
-  }, [mapReady, marketLayer, marketPayload]);
-  /* eslint-enable react-hooks/set-state-in-effect */
+  }, [mapReady, marketKind, marketTypes, marketPayload, marketRenderPlan, labelPlan, selectedParcelKey, selectedParcels.length, pricePerPyeongOn]);
 
-  /* eslint-disable react-hooks/set-state-in-effect -- Presale/auction markers are rendered into an imperative Leaflet layer group. */
+
   useEffect(() => {
     // ★P0-1: 분양·경매 렌더를 실거래(marketPayload) 이펙트에서 독립 분리.
     //   종전엔 market 이펙트 내부에 있어 실거래 레이어 OFF(기본값)거나 nearby-map 실패 시
@@ -1364,21 +2854,19 @@ export function SatongMultiMap({
       presaleAuctionLayerRef.current = null;
     }
 
-    const showPresale = !!marketLayer?.showPresale;
-    const showAuction = !!marketLayer?.showAuction;
     if (!showPresale && !showAuction) {
-      setPresaleAuctionNote("");
       return;
     }
 
     const group = L.layerGroup().addTo(map);
     presaleAuctionLayerRef.current = group;
 
-    let presaleCount = 0;
     if (showPresale) {
-      (marketLayer?.presaleItems ?? []).forEach((item) => {
+      let presaleShown = 0;
+      (presaleItems ?? []).forEach((item) => {
         if (!item.lat || !item.lon) return;
-        presaleCount += 1;
+        const ordinal = presaleShown;
+        presaleShown += 1;
         const status = item.status || "미정";
         const color = PRESALE_STATUS_COLORS[status] || PRESALE_STATUS_COLORS["미정"];
         const icon = L.divIcon({
@@ -1387,18 +2875,19 @@ export function SatongMultiMap({
           iconSize: [22, 22],
           iconAnchor: [11, 11],
         });
-        L.marker([item.lat, item.lon], { icon })
-          .bindTooltip(`<div class="font-bold text-[10.5px] bg-white/95 px-2 py-1 rounded shadow-sm border border-slate-200">${escapeHtml(item.name || "분양")}</div>`, { permanent: (marketLayer?.presaleItems?.length ?? 0) <= TOOLTIP_PERMANENT_MAX, direction: "top", offset: [0, -11], className: "bg-transparent border-none shadow-none" })
+        const marker = L.marker([item.lat, item.lon], { icon })
           .bindPopup(presalePopupHtml(item), { maxWidth: 300 })
           .addTo(group);
+        bindSatongLabel(marker, item.name || "분양", { permanent: ordinal < presaleLabelLimit, offsetY: 11 });
       });
     }
 
-    let auctionCount = 0;
     if (showAuction) {
-      (marketLayer?.auctionItems ?? []).forEach((item) => {
+      let auctionShown = 0;
+      (auctionItems ?? []).forEach((item) => {
         if (!item.lat || !item.lon) return;
-        auctionCount += 1;
+        const ordinal = auctionShown;
+        auctionShown += 1;
         const status = item.status || "진행";
         const color = AUCTION_STATUS_COLORS[status] || AUCTION_STATUS_COLORS["진행"];
         const icon = L.divIcon({
@@ -1407,27 +2896,20 @@ export function SatongMultiMap({
           iconSize: [24, 24],
           iconAnchor: [12, 12],
         });
-        L.marker([item.lat, item.lon], { icon })
-          .bindTooltip(`<div class="font-bold text-[10.5px] bg-white/95 px-2 py-1 rounded shadow-sm border border-slate-200">경매물건</div>`, { permanent: (marketLayer?.auctionItems?.length ?? 0) <= TOOLTIP_PERMANENT_MAX, direction: "top", offset: [0, -12], className: "bg-transparent border-none shadow-none" })
+        const marker = L.marker([item.lat, item.lon], { icon })
           .bindPopup(auctionPopupHtml(item), { maxWidth: 300 })
           .addTo(group);
+        bindSatongLabel(marker, "경매물건", { permanent: ordinal < auctionLabelLimit, offsetY: 12 });
       });
     }
-
-    const notes = [
-      showPresale ? (presaleCount ? `분양 ${presaleCount}곳` : "분양 무자료") : "",
-      showAuction ? (auctionCount ? `경매 ${auctionCount}곳` : "경매 무자료") : "",
-    ].filter(Boolean);
-    setPresaleAuctionNote(notes.join(" · "));
 
     return () => {
       try { group.remove(); } catch { /* noop */ }
       if (presaleAuctionLayerRef.current === group) presaleAuctionLayerRef.current = null;
     };
-  }, [mapReady, marketLayer]);
-  /* eslint-enable react-hooks/set-state-in-effect */
+  }, [mapReady, showPresale, presaleItems, showAuction, auctionItems, presaleLabelLimit, auctionLabelLimit]);
 
-  /* eslint-disable react-hooks/set-state-in-effect -- POI markers are rendered into an imperative Leaflet layer group. */
+
   useEffect(() => {
     const map = mapRef.current;
     const L = window.L;
@@ -1453,19 +2935,8 @@ export function SatongMultiMap({
     poiLayerRef.current = group;
     let poiCount = 0;
 
-    // 상시라벨 여부 — 켜진 컨트롤의 유효(좌표有) 마커 총수 기준(밀집 시 hover 강등).
-    let poiTotalForLabel = 0;
-    for (const [control, codes] of Object.entries(POI_CONTROL_CODES)) {
-      if (!hasSatongLayerControl(layerState, "poi", control)) continue;
-      for (const code of codes) {
-        poiTotalForLabel += (cats[code]?.items || []).filter(
-          (item) => typeof item.lat === "number" && typeof item.lon === "number",
-        ).length;
-      }
-    }
-    const poiPermanent = poiTotalForLabel <= TOOLTIP_PERMANENT_MAX;
-
     // 컨트롤(역·학교·상권·공원·병원)별로 켜진 것만 렌더 — 컨트롤 상태는 layerState가 SSOT.
+    //   상시 라벨은 선두 poiLabelLimit 개만(전역 버짓 배분·줌 LOD), 나머지는 hover 강등.
     for (const [control, codes] of Object.entries(POI_CONTROL_CODES)) {
       if (!hasSatongLayerControl(layerState, "poi", control)) continue;
       const color = POI_CONTROL_COLORS[control] || "#0ea5e9";
@@ -1474,15 +2945,20 @@ export function SatongMultiMap({
         const label = cats[code]?.label || code;
         for (const item of items) {
           if (typeof item.lat !== "number" || typeof item.lon !== "number") continue;
+          const ordinal = poiCount;
           poiCount += 1;
-          L.circleMarker([item.lat, item.lon], {
-            radius: 5,
-            color,
-            weight: 2,
-            fillColor: "#ffffff",
-            fillOpacity: 0.9,
-          })
-            .bindTooltip(`<div class="font-bold text-[10.5px] bg-white/95 px-2 py-1 rounded shadow-sm border border-slate-200">${escapeHtml(item.name || label)}</div>`, { permanent: poiPermanent, direction: "top", offset: [0, -5], className: "bg-transparent border-none shadow-none" })
+          // ★WP-M3: POI는 '흰 코어+색 링+흰 헤일로' 도넛(타겟) 형태로 그린다. POI_CONTROL_COLORS가
+          //   AGE_RAMP(노후도 폴리곤)와 팔레트가 겹쳐 '색 점=노후도'로 오인되던 문제를, 색이 아닌
+          //   형태(링)로 분리한다. 노후도는 채워진 폴리곤, POI는 속 빈 링 → 시각 구분이 명확.
+          // ★리뷰(LOW): 렌더 실제 크기(content-box 14px + border 3px×2=6px = 20px)와
+          //   iconSize/anchor를 일치시킨다(종전 17/8.5는 3px 과소평가 — 앵커가 1.5px 어긋났다).
+          const icon = L.divIcon({
+            className: "",
+            html: `<div style="width:14px;height:14px;border-radius:50%;background:#ffffff;border:3px solid ${escapeHtml(color)};box-shadow:0 0 0 1.5px #ffffff,0 1px 3px rgba(15,23,42,.35);"></div>`,
+            iconSize: [20, 20],
+            iconAnchor: [10, 10],
+          });
+          const marker = L.marker([item.lat, item.lon], { icon })
             .bindPopup(
               `<div style="padding:6px 9px;font-size:12px;line-height:1.5;">` +
                 `<b>${escapeHtml(item.name || label)}</b>` +
@@ -1491,6 +2967,7 @@ export function SatongMultiMap({
               { maxWidth: 260 },
             )
             .addTo(group);
+          bindSatongLabel(marker, item.name || label, { permanent: ordinal < poiLabelLimit, offsetY: 10 });
         }
       }
     }
@@ -1500,10 +2977,9 @@ export function SatongMultiMap({
       try { group.remove(); } catch { /* noop */ }
       if (poiLayerRef.current === group) poiLayerRef.current = null;
     };
-  }, [mapReady, poiPayload, layerState]);
-  /* eslint-enable react-hooks/set-state-in-effect */
+  }, [mapReady, poiPayload, layerState, poiLabelLimit]);
 
-  /* eslint-disable react-hooks/set-state-in-effect -- Development-facility markers are rendered into an imperative Leaflet layer group. */
+
   useEffect(() => {
     const map = mapRef.current;
     const L = window.L;
@@ -1523,21 +2999,19 @@ export function SatongMultiMap({
     const group = L.layerGroup().addTo(map);
     developmentLayerRef.current = group;
     let devCount = 0;
-    // 상시라벨 여부 — 유효(좌표有) 시설 수 기준(밀집 시 hover 강등, 예: 67건 → hover).
-    const devPermanent =
-      facilities.filter((fac) => typeof fac.lat === "number" && typeof fac.lon === "number").length <=
-      TOOLTIP_PERMANENT_MAX;
+    // 상시 라벨은 선두 devLabelLimit 개만(전역 버짓 배분·줌 LOD), 나머지는 hover 강등(예: 67건 밀집).
     for (const fac of facilities) {
       if (typeof fac.lat !== "number" || typeof fac.lon !== "number") continue;
+      const ordinal = devCount;
       devCount += 1;
-      L.circleMarker([fac.lat, fac.lon], {
+      const marker = L.circleMarker([fac.lat, fac.lon], {
         radius: 6,
         color: "#7c3aed",       // 보라 — 개발계획(도시계획시설)
         weight: 2,
         fillColor: "#ede9fe",
         fillOpacity: 0.9,
+        bubblingMouseEvents: false, // 점 클릭 = 정보 팝업만(U6)
       })
-        .bindTooltip(`<div class="font-bold text-[10.5px] bg-white/95 px-2 py-1 rounded shadow-sm border border-slate-200">${escapeHtml(fac.name || "개발계획")}</div>`, { permanent: devPermanent, direction: "top", offset: [0, -6], className: "bg-transparent border-none shadow-none" })
         .bindPopup(
           `<div style="padding:6px 9px;font-size:12px;line-height:1.5;">` +
             `<b>${escapeHtml(fac.name || "(명칭 미상)")}</b>` +
@@ -1547,6 +3021,7 @@ export function SatongMultiMap({
           { maxWidth: 260 },
         )
         .addTo(group);
+      bindSatongLabel(marker, fac.name || "개발계획", { permanent: ordinal < devLabelLimit, offsetY: 6 });
     }
     // 좌표 미상 시설(마커 불가)도 정직 집계 — 목록엔 있으나 지도에 못 찍는 건수를 구분 고지.
     const noCoord = facilities.length - devCount;
@@ -1560,8 +3035,8 @@ export function SatongMultiMap({
       try { group.remove(); } catch { /* noop */ }
       if (developmentLayerRef.current === group) developmentLayerRef.current = null;
     };
-  }, [mapReady, developmentPayload]);
-  /* eslint-enable react-hooks/set-state-in-effect */
+  }, [mapReady, developmentPayload, devLabelLimit]);
+
 
   useEffect(() => {
     const map = mapRef.current;
@@ -1571,20 +3046,44 @@ export function SatongMultiMap({
     const key = `${focusLat.toFixed(7)},${focusLon.toFixed(7)}`;
     if (lastAutoFocusKeyRef.current === key) return;
     lastAutoFocusKeyRef.current = key;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- Auto-preview intentionally queries parcel data after focusing the imperative map.
+
     void queryParcel(focusLat, focusLon, { autoStage: true });
   }, [autoPreviewFocus, focusLat, focusLon, queryParcel, readOnly]);
 
-  // staged 합산 면적 계산
-  const totalAreaSqm = staged.reduce((acc, p) => acc + (p.area_sqm ?? 0), 0);
+  // ★WP-M2 CTA 이중표기: 신규(=staged∖selectedParcels)와 총(=selectedParcels+신규)을 분리 집계.
+  //   "지적 12건(칩)"↔"완료 1필지(CTA)" 혼란의 원천을 CTA에서 "신규 N · 총 M"으로 못박는다.
+  const newStaged = useMemo(
+    () => staged.filter((s) => !selectedMembershipKeys.has(parcelMembershipKey(s))),
+    [staged, selectedMembershipKeys],
+  );
+  const newCount = newStaged.length;
+  const totalCount = selectedMembershipKeys.size + newCount;
+  // ★UX 트랙 B2: 신규 staged 합산 면적 표기는 하단 바에서 제거됐다(대지면적 SSOT는
+  //   ContextHeader로 흡수) — 여기서도 더 이상 계산하지 않는다(죽은 계산 금지).
 
-  // pending이 이미 staged에 있는지 여부(확인 카드 표시용)
+  // pending이 이미 staged에 있는지 / 프로젝트에 이미 등록됐는지(확인 카드 표시용)
   const pendingAlreadyStaged = pending?.pnu
     ? staged.some((s) => s.pnu === pending.pnu)
+    : false;
+  const pendingAlreadyRegistered = pending
+    ? selectedMembershipKeys.has(parcelMembershipKey(pending))
     : false;
 
   // [MAP-007] 기반 타일 실패 오버레이(순수 판정) — error일 때만 메시지+재시도 노출
   const tileFailureNotice = buildTileFailureNotice(tileStatus);
+
+  // 분양·경매 노트(렌더 파생) — 상태 노트 prop(좌표 대기·로그인 필요·조회 실패)이 오면 건수
+  // 라벨보다 우선해 '무자료'와 '아직 조회 못함/권한 없음'을 구분한다(정직원칙). 건수는 items에서
+  // 직접 계산(마커 렌더와 동일 좌표 필터) — 상태 경유로 1커밋 늦게 따라오던 깜빡임 제거.
+  // 노트만 바뀔 땐 마커 이펙트가 돌지 않는다(리뷰 LOW 해소).
+  const countMappable = (items: Array<{ lat?: number | null; lon?: number | null }> | null) =>
+    (items ?? []).filter((item) => !!item.lat && !!item.lon).length;
+  const presaleCount = showPresale ? countMappable(presaleItems) : 0;
+  const auctionCount = showAuction ? countMappable(auctionItems) : 0;
+  const presaleAuctionNote = [
+    showPresale ? presaleNote || (presaleCount ? `분양 ${presaleCount}곳` : "분양 무자료") : "",
+    showAuction ? auctionNote || (auctionCount ? `경매 ${auctionCount}곳` : "경매 무자료") : "",
+  ].filter(Boolean).join(" · ");
 
   return (
     <div
@@ -1593,11 +3092,28 @@ export function SatongMultiMap({
           ? "flex flex-col gap-2"
           : "flex flex-col gap-2 rounded-xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-3"
       }
+      /* ★상세정보팝업 양보 계약(SATONG_POPUP_YIELD)의 **트리거**. 사용자 신고 "팝업이 가려진다".
+         Leaflet 팝업은 격리된 .leaflet-container 안이라 **z 로는 크롬을 못 이긴다**
+         (라이브 실측: popup pane 계산 z = 1, 컨테이너 isolate/0). 그래서 팝업이 열리면
+         수동적 크롬이 물러난다. 감쇄 규칙은 globals.css 한 곳에만 둔다.
+
+         ★왜 지도 래퍼가 아니라 **여기(컴포넌트 루트)** 인가 — 2026-08-18.
+         종전엔 아래 `wrapperClass("relative")` 래퍼에 붙였다. 그러면 CSS 자손 선택자가
+         래퍼 **안**의 크롬만 닿는다. 실제로 이 지도를 쓰는 화면들은 지도의 **형제**로
+         오버레이를 얹는다(실측: NearbyTransactionsMap 6개 · ZoningSignalMap 1개 ·
+         ParcelBoundaryMap 1개). 형제는 자손 선택자에 **원리적으로** 안 걸려 계약 밖이었다.
+         트리거를 루트로 올리면 globals.css 의 형제 결합자(`~`)가 그 형제들에 닿는다.
+         래퍼 안쪽 크롬은 여전히 루트의 자손이라 **기존 동작은 그대로**다.
+
+         ★값을 "true"/"false" 로 **항상** 렌더한다(종전엔 닫힘일 때 속성 자체가 없었다).
+         속성이 없으면 "루트에 트리거가 붙는다"는 사실을 테스트가 관측할 수 없다.
+         CSS 는 `="true"` 만 매치하므로 "false" 는 화면에 영향이 없다. */
+      {...{ [SATONG_POPUP_YIELD.wrapperAttr]: detailPopupOpen ? "true" : "false" }}
     >
       {/* 안내 메시지 */}
       {chrome === "default" && !readOnly && (
         <p className="text-[11px] font-semibold text-[var(--text-secondary)]">
-          지도를 클릭하면 해당 필지가 확인 카드로 표시됩니다. [＋추가]로 선택 목록에 담고 [완료]로 등록하세요.
+          지도를 클릭하면 선택·정보·거리재기 메뉴가 열립니다. [필지 선택·정보] → [＋추가]로 담고 [완료]로 등록하세요.
           {focusTarget?.label && <span className="ml-1 text-[var(--accent-strong)]">검색 위치: {focusTarget.label}</span>}
           <span className="ml-1 text-[var(--text-hint)]">(건물 외곽선이나 도로도 선택 가능, 지목은 카드에서 확인)</span>
         </p>
@@ -1618,13 +3134,12 @@ export function SatongMultiMap({
       )}
 
       {/* Leaflet 지도 캔버스 — useMapFullscreen 래퍼 */}
-      <div ref={wrapperRef} className={wrapperClass("relative")}>
-        {/* Leaflet Zoom Control 상단 칩바 겹침 방지 CSS */}
+      <div
+        ref={wrapperRef}
+        className={wrapperClass("relative")}
+      >
+        {/* 줌 컨트롤은 좌하단(디자인컴프) — 상단 칩바 겹침 CSS 불필요. ping은 마커 애니메이션용. */}
         <style jsx global>{`
-          .leaflet-top.leaflet-left {
-            top: 56px !important;
-            left: 12px !important;
-          }
           @keyframes ping {
             75%, 100% {
               transform: scale(2);
@@ -1642,12 +3157,16 @@ export function SatongMultiMap({
           }}
         />
 
+        {/* 부모 소유 우상단 오버레이(레이어 레일·팝오버) — 래퍼 '안'이라 풀스크린에서도 남는다. */}
+        {topRightSlot}
+
         {/* 풀스크린 버튼 */}
         <button
           type="button"
           onClick={toggleMapFullscreen}
           title={isMapFullscreen ? "전체화면 종료" : "전체화면"}
-          className="absolute right-2 top-2 z-[400] rounded-lg border border-[var(--line-strong)] bg-[var(--surface)]/90 p-1.5 text-[var(--text-secondary)] shadow hover:bg-[var(--surface-muted)] transition-colors"
+          className="absolute right-2 top-2 grid size-11 place-items-center rounded-lg border border-[var(--line-strong)] bg-[var(--surface)]/90 text-[var(--text-secondary)] shadow hover:bg-[var(--surface-muted)] transition-colors"
+          style={{ zIndex: SATONG_UI_Z.fullscreenButton }}
           aria-label="전체화면"
         >
           {isMapFullscreen ? (
@@ -1659,42 +3178,532 @@ export function SatongMultiMap({
           )}
         </button>
 
-        {(tileStatus === "error" || boundaryStatus === "loading" || boundaryStatus === "error" || overlayNote || marketNote || presaleAuctionNote || poiNote || developmentNote) && (
-          <div className={`pointer-events-none absolute left-3 z-[410] max-w-[calc(100%-96px)] space-y-1 transition-all duration-300 ${isMapFullscreen ? "bottom-16" : "bottom-3"}`}>
-            {overlayNote && (
-              <span className="inline-flex rounded-full bg-white/92 px-3 py-1.5 text-[11px] font-black text-slate-700 shadow">
-                {overlayNote}
+        {/* ── V2 측정 rail(VWorld 공식 프로토타입 패턴) — 팝오버 진입과 병행하는 상시 도구 ── */}
+        {!readOnly && (
+          <div
+            // ★위치 이력(재발 방지): 우상단→셸 레이어 레일(right-4 top-20)과 겹침(R1 M1) →
+            //   좌하단 bottom-28로 이동 → ★다시 줌 컨트롤과 중첩(2026-07-17 라이브 신고).
+            //   근본원인: 이 absolute의 기준은 지도가 아니라 '래퍼'(하단 완료바 포함 — :2536
+            //   배너 주석과 동일 함정)라, bottom-28(112px)이 지도 기준으로는 완료바 높이만큼
+            //   내려앉아(≈50px) 지도 기준 10~78px의 줌 '+' 버튼을 정확히 덮었다.
+            //   → 좌중앙(top-1/2) 앵커로 이동: 줌(좌하단)·레이어 레일(우측)·저줌 배너(하단)·
+            //   완료바(하단) 어느 것과도 세로 대역이 겹치지 않는 유일한 좌측 슬롯.
+            //   ★정직 고지(R1): 앵커 공식은 완료바 유무에 불변이지만 **충돌무결성은 높이
+            //   의존**이다 — 지도 높이 H<약 282px면 rail 하단이 줌 '+'와 재중첩한다(rail은
+            //   래퍼 중앙 비례·줌은 지도 바닥 고정 오프셋이라). 현행 비-readOnly 콜러 최소
+            //   높이 500 → 안전 마진 ≥69px. 새 콜러는 500px 미만 높이 배치 금지.
+            //   ★UX 트랙 D1 추가고지(정직): 아래 두 버튼이 터치 44px 하한 준수를 위해
+            //   size-9(36px)→size-11(44px)로 커져 rail 총높이가 늘었다(버튼당 +8px×2).
+            //   위 282px·69px 수치는 그 이전 측정값 그대로다 — 방향(margin 감소)만
+            //   정직 기재하고 재측정 전까지 과대확신하지 않는다. 500px 하한 자체(D3의
+            //   clamp 하한과 동일 계약)는 이 변경으로 낮아지지 않았으므로 충돌 회피
+            //   여유는 여전히 양수로 유지된다.
+            //   left-4=16px — DESIGN.md B3.1:218
+            //   "플로팅 컨트롤 가장자리 16~24px 이격" 충족(종전 left-3=12px는 미달).
+            className="pointer-events-auto absolute left-4 top-1/2 flex -translate-y-1/2 flex-col gap-1 rounded-xl border border-[var(--border-muted)] bg-[var(--glass-bg)] p-1 shadow-lg backdrop-blur"
+            style={{ zIndex: SATONG_UI_Z.fullscreenButton }}
+          >
+            <button
+              type="button"
+              aria-label="거리재기 도구"
+              aria-pressed={measureOn && measureMode === "distance"}
+              title="거리재기 — 지도 클릭으로 점 추가, 더블클릭/ESC 종료"
+              onClick={() => {
+                if (measureOn && measureMode === "distance") { setMeasureOn(false); return; } // 재클릭=종료(R1 L4)
+                setMeasureMode("distance");
+                setMeasurePoints([]);
+                setMeasureOn(true);
+              }}
+              className={`grid size-11 place-items-center rounded-lg border transition ${
+                measureOn && measureMode === "distance"
+                  ? "border-[var(--accent-strong)] bg-[var(--accent-strong)]/15 text-[var(--accent-strong)]"
+                  : "border-transparent text-[var(--text-secondary)] hover:border-[var(--line-strong)]"
+              }`}
+            >
+              <Ruler className="size-4" aria-hidden />
+            </button>
+            <button
+              type="button"
+              aria-label="면적재기 도구"
+              aria-pressed={measureOn && measureMode === "area"}
+              title="면적재기 — 점 3개 이상, 더블클릭/ESC 종료"
+              onClick={() => {
+                if (measureOn && measureMode === "area") { setMeasureOn(false); return; } // 재클릭=종료(R1 L4)
+                setMeasureMode("area");
+                setMeasurePoints([]);
+                setMeasureOn(true);
+              }}
+              className={`grid size-11 place-items-center rounded-lg border transition ${
+                measureOn && measureMode === "area"
+                  ? "border-[var(--accent-strong)] bg-[var(--accent-strong)]/15 text-[var(--accent-strong)]"
+                  : "border-transparent text-[var(--text-secondary)] hover:border-[var(--line-strong)]"
+              }`}
+            >
+              <LandPlot className="size-4" aria-hidden />
+            </button>
+          </div>
+        )}
+
+        {/* ── 지도 클릭 팝오버(단일 팝오버 — 디자인컴프) : 필지 선택·정보 / 거리재기 / 닫기 + 출처 푸터 ── */}
+        {clickMenu && !readOnly && (() => {
+          const pos = clampClickMenuPosition(
+            { x: clickMenu.x, y: clickMenu.y },
+            { width: clickMenu.w, height: clickMenu.h },
+            // ★w-64(256px)·좌표행 추가 반영 — 컨테이너 실측과 동기 유지(어긋나면 화면 밖 클램프 오차).
+            { width: 256, height: 232 },
+          );
+          const subInfo = [
+            clickMenuFeature?.zoneType || null,
+            clickMenuFeature?.officialPricePerSqm
+              ? `공시 ${Math.round(clickMenuFeature.officialPricePerSqm).toLocaleString()}원/㎡`
+              : null,
+            clickMenuFeature?.buildingAgeYears != null ? `노후 ${clickMenuFeature.buildingAgeYears}년` : null,
+          ].filter(Boolean);
+          const coordText = `${clickMenu.lat.toFixed(6)}, ${clickMenu.lon.toFixed(6)}`;
+          return (
+            <div
+              // ★DESIGN.md 정합(2026-07-17): L3 팝오버=blur 24px(B4:239 — 종전 기본
+              //   backdrop-blur 8px는 위반) · 라운드 12px(:290) · w-64 — 좌표 잘림 원천 해소.
+              className="pointer-events-auto absolute w-64 -translate-x-1/2 overflow-hidden rounded-xl border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] shadow-xl backdrop-blur-xl"
+              style={{ left: pos.left, top: pos.top, zIndex: SATONG_UI_Z.clickMenu }}
+              role="menu"
+              aria-label="지도 지점 메뉴"
+            >
+              <div className="border-b border-[var(--border-muted)] px-3 py-2">
+                {/* label-caps 시그니처(B2 — 패널 최상단) — 팝업 성격을 한눈에.
+                    ★라벨은 피처 '존재'로 판정(R1 m2) — address 유무로 가르면 피처는 매치됐는데
+                    주소 보강만 늦은 경우 "지도 지점" 라벨 아래 용도지역·공시가가 떠 모순된다. */}
+                <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--on-surface-muted)]">
+                  {clickMenuFeature ? "필지" : "지도 지점"}
+                </p>
+                {clickMenuFeature?.address && (
+                  <p className="mt-0.5 truncate text-[13px] font-semibold text-[var(--text-primary)]">
+                    {parcelShortLabel(clickMenuFeature.address, clickMenuFeature.pnu)}
+                  </p>
+                )}
+                {subInfo.length > 0 && (
+                  <p className="mt-0.5 truncate text-[11px] text-[var(--text-secondary)]">
+                    {subInfo.join(" · ")}
+                  </p>
+                )}
+                {/* 좌표행 — 수치는 data-mono(B2). 복사 라벨은 고정("복사")·좌표는 이 행이 정본
+                    → 종전 "좌표 복사 (37.30...)" 버튼 내 좌표 중복이 w-56에서 잘리던 결함 해소. */}
+                <div className="mt-1 flex items-center gap-1.5">
+                  <span className="truncate font-mono text-[11px] text-[var(--text-secondary)]" title={coordText}>
+                    {coordText}
+                  </span>
+                  <button
+                    type="button"
+                    aria-label={`좌표 복사 (${coordText})`}
+                    className="shrink-0 rounded-full bg-[var(--surface-muted)] px-2 py-0.5 text-[10px] font-bold text-[var(--text-secondary)] transition hover:text-[var(--text-primary)]"
+                    onClick={() => {
+                      // ★R1: clipboard 미지원이면 옵셔널 체이닝이 조용히 단락되므로 성공 표기를
+                      //   해선 안 되고, writeText Promise 거부(권한/포커스)도 삼키면 거짓 성공이
+                      //   된다 — 실제 resolve 후에만 '복사됨' 표기(정직).
+                      const writing = navigator.clipboard?.writeText?.(coordText);
+                      if (!writing) return;
+                      writing.then(() => setCopiedCoord(coordText)).catch(() => { /* 거부 — 무표기 */ });
+                    }}
+                  >
+                    {copiedCoord === coordText ? "복사됨 ✓" : "복사"}
+                  </button>
+                </div>
+              </div>
+              <button
+                type="button"
+                role="menuitem"
+                className="block w-full px-3 py-2 text-left text-[13px] font-medium text-[var(--text-primary)] transition hover:bg-[var(--surface-muted)]"
+                onClick={() => {
+                  isMapClickSelectionRef.current = true;
+                  void queryParcel(clickMenu.lat, clickMenu.lon);
+                  setClickMenu(null);
+                }}
+              >
+                <span className="inline-flex items-center gap-1.5"><MapPin className="size-3.5 text-[var(--text-secondary)]" aria-hidden />이 필지 선택·정보</span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="block w-full px-3 py-2 text-left text-[13px] font-medium text-[var(--text-primary)] transition hover:bg-[var(--surface-muted)]"
+                onClick={() => {
+                  setMeasureMode("distance");
+                  setMeasurePoints([{ lat: clickMenu.lat, lon: clickMenu.lon }]);
+                  setMeasureOn(true);
+                  setClickMenu(null);
+                }}
+              >
+                <span className="inline-flex items-center gap-1.5"><Ruler className="size-3.5 text-[var(--text-secondary)]" aria-hidden />거리재기 시작</span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="block w-full px-3 py-2 text-left text-[13px] font-medium text-[var(--text-primary)] transition hover:bg-[var(--surface-muted)]"
+                onClick={() => {
+                  setMeasureMode("area");
+                  setMeasurePoints([{ lat: clickMenu.lat, lon: clickMenu.lon }]);
+                  setMeasureOn(true);
+                  setClickMenu(null);
+                }}
+              >
+                <span className="inline-flex items-center gap-1.5"><LandPlot className="size-3.5 text-[var(--text-secondary)]" aria-hidden />면적재기 시작</span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="block w-full px-3 py-2 text-left text-xs font-semibold text-[var(--text-hint)] transition hover:bg-[var(--surface-muted)]"
+                onClick={() => setClickMenu(null)}
+              >
+                닫기 <span className="font-mono text-[10px]">(ESC)</span>
+              </button>
+              {/* 출처 푸터 — 디자인컴프 '팝업 출처 푸터' 계약 */}
+              <p className="border-t border-[var(--border-muted)] px-3 py-1.5 font-mono text-[9px] text-[var(--text-hint)]">
+                출처 VWorld · 국토교통부 공간정보
+              </p>
+            </div>
+          );
+        })()}
+
+        {/* 거리재기 상태 칩 — 측정 중 안내/누적거리, 종료 후 결과 유지+지우기 */}
+        {(measureOn || measurePoints.length > 0) && (
+          <div
+            className="pointer-events-auto absolute left-1/2 top-14 flex -translate-x-1/2 items-center gap-2 rounded-full border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] px-3 py-1.5 shadow-lg backdrop-blur"
+            style={{ zIndex: SATONG_UI_Z.clickMenu }}
+          >
+            {/* #359 아이콘 규약(lucide) + 측정 모드(I6) 병합 */}
+            <span className="inline-flex items-center gap-1 text-[11px] font-black text-[var(--text-primary)]">
+              {measureMode === "area" ? (
+                <LandPlot className="size-3.5 shrink-0" aria-hidden />
+              ) : (
+                <Ruler className="size-3.5 shrink-0" aria-hidden />
+              )}
+              {measureOn
+                ? `${measureMode === "area" ? "면적재기" : "거리재기"} — 클릭: 점 추가 · 더블클릭/ESC: 종료`
+                : "측정 결과"}
+              {measureMode === "area"
+                ? measurePoints.length >= 3
+                  ? ` · ${formatAreaSqm(polygonAreaSqm(measurePoints))} · 둘레 ${formatDistance(
+                      totalDistanceMeters([...measurePoints, measurePoints[0]]),
+                    )}`
+                  : " · 점 3개 이상 필요" // R1: 면적 라벨 아래 거리값 표기 혼동 방지
+                : measurePoints.length >= 2
+                  ? ` · ${formatDistance(totalDistanceMeters(measurePoints))}`
+                  : ""}
+            </span>
+            {measureOn ? (
+              <button
+                type="button"
+                onClick={() => setMeasureOn(false)}
+                className="rounded-full bg-[var(--accent-strong)]/10 px-2 py-0.5 text-[11px] font-black text-[var(--accent-strong)]"
+              >
+                종료
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setMeasurePoints([])}
+                className="rounded-full bg-[var(--surface-muted)] px-2 py-0.5 text-[11px] font-black text-[var(--text-secondary)]"
+              >
+                지우기
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* ── 좌하단 코너 도크 — 노후도 범례 + 상태 칩을 세로로 자동 스택(좌표 충돌·겹침 제거 · S5).
+             종전엔 칩(bottom-3)과 범례(bottom-16)가 별개 absolute라 풀스크린(둘 다 bottom-16)에서
+             정면 충돌했다. 한 도크에 담아 flex-col 로 흘려 물리적 겹침을 구조적으로 없앤다. ── */}
+        {(bottomDockSlot != null || hasSatongLayer(layerState, "age") || tileStatus === "error" || boundaryStatus === "loading" || boundaryStatus === "error" || overlayNote || marketNote || presaleAuctionNote || poiNote || developmentNote || cadastreTileNote || zoningWideNote || regulationNote || (overlayFeatures.length > 0 && mapZoom < 15 && !zoomHintDismissed)) && (
+          <div
+            // left-14: 줌 컨트롤이 좌하단으로 이동(디자인컴프)해 도크를 오른쪽으로 비켜 세운다.
+            // ★겹침 해소(2026-07-17): 세로 스택이 지도·팝업을 여러 줄 가리던 것을 가로 1줄
+            //   (wrap 최소화)로 재배치 — 하단 배경정보 가림 면적을 구조적으로 축소.
+            // ★겹침 근본해소(2026-07-17 라이브 신고): 하단 완료바는 비풀스크린에서도 래퍼
+            //   '내부' flow 요소(지도 아래)라 bottom-3(래퍼 바닥) 앵커는 완료바 밴드와 정면
+            //   충돌했다 — 두 모드 모두 bottom-16으로 완료바 위에 분리.
+            // ★도크 단일화(2026-07-17 구조 진단): 종전 max-w-[calc(100%-152px)]는 우측
+            //   스위처 섬(bottom-20 right-4)을 위한 암묵 예약이었는데 스위처 실폭(≈192px — 3×w-14+간격+패딩)이
+            //   152px를 초과해 칩이 스위처 밑으로 파고들었다 — 스위처를 bottomDockSlot으로
+            //   같은 flex 행에 흘려(right-3까지 전폭) 예약값 자체를 제거. flow 안에서는
+            //   겹침이 문법적으로 불가능하다.
+            data-testid="satong-bottom-dock"
+            className={"pointer-events-none absolute bottom-16 left-14 right-3 flex flex-row flex-wrap items-end gap-1.5 transition-all duration-300"}
+            style={{ zIndex: SATONG_UI_Z.cornerDock }}
+            {...{ [SATONG_POPUP_YIELD.passiveAttr]: SATONG_POPUP_YIELD.passiveValue }}
+          >
+            {/* I4 저줌 안내(jootek 패턴) — 라벨 줌 롤업 구간에서 정보가 '숨은 게 아니라 접힘'임을
+                알리고 원클릭 확대 제공. 닫으면 세션 내 재표시 안 함. */}
+            {overlayFeatures.length > 0 && mapZoom < 15 && !zoomHintDismissed && (
+              <span className="pointer-events-auto inline-flex w-fit items-center gap-1.5 rounded-full border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] px-3 py-1.5 text-[11px] font-black text-[var(--text-primary)] shadow backdrop-blur">
+                확대하면 필지·마커 상세 라벨이 표시됩니다
+                <button
+                  type="button"
+                  onClick={() => { try { mapRef.current?.setZoom(16); } catch { /* noop */ } }}
+                  className="rounded-full bg-[var(--accent-strong)]/10 px-2 py-0.5 text-[var(--accent-strong)]"
+                >
+                  확대
+                </button>
+                <button type="button" onClick={() => setZoomHintDismissed(true)} aria-label="확대 안내 닫기" className="text-[var(--text-hint)]">
+                  <X className="size-3" aria-hidden />
+                </button>
               </span>
             )}
-            {marketNote && (
-              <span className="inline-flex rounded-full bg-white/92 px-3 py-1.5 text-[11px] font-black text-slate-700 shadow">
-                {marketNote}
-              </span>
+            {/* WS-D 개발여력 범례 — capacity 레이어 on + 산정 가능 필지가 있을 때만 노출
+                (무자료는 overlayNote "개발여력 무자료(실효·현황 용적률 필요)"가 정직 고지 —
+                램프만 띄우면 '색=여력' 오인 조장·노후도 범례와 동일 원칙). */}
+            {hasSatongLayer(layerState, "capacity") && hasSatongLayerControl(layerState, "capacity", "far-headroom") &&
+              overlayFeatures.some((f) => capacityColor(f.effectiveFarPct, f.currentFarPct) != null) && (
+              <div
+                /* ★침묵 데드존 봉합 — 이 카드는 표시 전용(자식이 전부 p·span)인데
+                   pointer-events-auto가 있어 그 면적 위의 지도 클릭(=주 인터랙션인 필지
+                   선택)이 무음으로 소실됐다. 오류도 로그도 없어 탐지가 사실상 불가능하다.
+                   규칙: pointer-events-auto는 인터랙티브 요소 자신에게만. */
+                className="w-fit max-w-[240px] rounded-xl border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] p-2 shadow-lg backdrop-blur">
+                <p className="mb-1 text-[10px] font-extrabold text-[var(--text-primary)]">개발여력 = (실효−현황)/실효 용적률</p>
+                <div className="flex flex-col gap-0.5">
+                  {CAPACITY_LEGEND_ITEMS.map((item) => (
+                    <span key={item.label} className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-[var(--text-secondary)]">
+                      <span className="inline-block size-2.5 rounded-sm" style={{ backgroundColor: item.color }} />
+                      {item.label}
+                    </span>
+                  ))}
+                </div>
+              </div>
             )}
-            {presaleAuctionNote && (
-              <span className="inline-flex rounded-full bg-white/92 px-3 py-1.5 text-[11px] font-black text-slate-700 shadow">
-                {presaleAuctionNote}
-              </span>
+
+            {/* 노후도 범례 (age 레이어 on일 때) — ★WP-M3: 노후도 자료(avgAge)가 있을 때만 5색
+                램프를 노출한다. 자료 0건이면 5색 램프가 '색=노후도' 오인을 조장하므로, "건물 정보
+                없음"과 무자료 사유(나대지/조회실패/대량생략)만 정직 표기한다. */}
+            {/* ★U1(범례 과점): 기본은 1줄 칩으로 접고, 클릭 시에만 5색 램프 카드를 펼친다.
+                무자료(avgAge=null)면 카드 대신 정직 칩 1줄만 — 하단 도크 과점을 구조적으로 제거. */}
+            {hasSatongLayer(layerState, "age") && (
+              avgAge === null ? (
+                <span
+                /* ★표시 전용(아이콘+텍스트) — 부모가 pointer-events-none이므로 여기서
+                   auto를 주면 그 면적만 지도 클릭을 삼킨다(데드존). 제거한다. */
+                className="inline-flex w-fit items-center gap-1 rounded-full bg-[var(--glass-bg-strong)] px-3 py-1.5 text-[11px] font-bold text-[var(--text-secondary)] shadow">
+                  <Building2 className="size-3" aria-hidden />
+                  노후도 — 건물 정보 없음
+                  {buildAgeGapDetail(ageStatusCounts) ? ` · ${buildAgeGapDetail(ageStatusCounts)}` : ""}
+                </span>
+              ) : legendOpen ? (
+                <div className="pointer-events-auto w-fit min-w-[155px] max-w-[240px] rounded-xl border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] p-2.5 shadow-lg backdrop-blur">
+                  <button
+                    type="button"
+                    onClick={() => setLegendOpen(false)}
+                    className="mb-1.5 flex w-full items-center justify-between gap-2 text-[11px] font-extrabold text-[var(--text-primary)]"
+                    aria-expanded
+                  >
+                    <span className="inline-flex items-center gap-1"><Building2 className="size-3" aria-hidden />건물 노후도 구분</span>
+                    <span aria-hidden>▾</span>
+                  </button>
+                  <div className="flex flex-col gap-1 text-[10.5px] border-b border-[var(--border-muted)] pb-2 mb-2">
+                    {AGE_LEGEND_ITEMS.map((item) => (
+                      <div key={item.label} className="flex items-center gap-1.5 font-semibold text-[var(--text-primary)]">
+                        <span className="h-3 w-3 rounded-sm border border-black/10 shadow-xs" style={{ backgroundColor: item.color }} />
+                        <span>{item.label}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="text-[10px] font-bold text-[var(--text-secondary)] flex flex-col gap-0.5">
+                    <span>선택 필지 평균 노후도</span>
+                    <span className="text-xs font-black text-rose-600">{avgAge}년</span>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setLegendOpen(true)}
+                  aria-expanded={false}
+                  className="pointer-events-auto inline-flex w-fit items-center gap-1 rounded-full bg-[var(--glass-bg-strong)] px-3 py-1.5 text-[11px] font-black text-[var(--text-primary)] shadow"
+                >
+                  <Building2 className="size-3" aria-hidden />노후도 범례 · 평균 <span className="text-rose-600">{avgAge}년</span>
+                  <span aria-hidden>▸</span>
+                </button>
+              )
             )}
-            {poiNote && (
-              <span className="inline-flex rounded-full bg-white/92 px-3 py-1.5 text-[11px] font-black text-slate-700 shadow">
-                {poiNote}
-              </span>
+            {/* 실거래 유형 범례(P1) — 노후도 범례와 동일한 접기/펼침 + 무자료 정직 패턴 재사용.
+                ★유형 다중 표시(P0)로 마커 색상이 6종까지 섞일 수 있어, 색상 SSOT
+                (MARKET_TYPE_COLORS/MARKET_TYPE_LABELS)로 유형별 표시 건수를 범례화한다. */}
+            {/* ★게이트는 **레이어가 켜졌는가**만 본다(2026-08-23).
+                종전엔 `marketPayload && !fetch_failed` 였는데, 그러면 **조회가 실패한 순간
+                이 블록이 통째로 사라지고 그 안의 반경 선택도 같이 사라졌다.**
+                반경은 조회를 **다시 시키는** 수단이라, 실패했을 때야말로 남아 있어야 한다.
+                게다가 고른 반경(`marketRadiusM`)은 부모 상태로 **그대로 남아** 같은 반경으로
+                계속 재조회 → 같은 실패 → **새로고침 말고는 빠져나갈 길이 없었다.**
+                유형 목록·위치미확인처럼 **응답이 있어야 뜻이 있는 것**만 안쪽에서 가린다. */}
+            {(shouldShowRadiusControl({ marketTypeCount: marketTypes.length, hasRadiusHandler: Boolean(onMarketRadiusChange) })
+              || shouldShowMarketDetails(marketPayload)) && marketTypes.length > 0 && (
+              marketLegendOpen ? (
+                <div className="pointer-events-auto w-fit min-w-[155px] max-w-[240px] rounded-xl border border-[var(--border-muted)] bg-[var(--glass-bg-strong)] p-2.5 shadow-lg backdrop-blur">
+                  <button
+                    type="button"
+                    onClick={() => setMarketLegendOpen(false)}
+                    className="mb-1.5 flex w-full items-center justify-between gap-2 text-[11px] font-extrabold text-[var(--text-primary)]"
+                    aria-expanded
+                  >
+                    <span className="inline-flex items-center gap-1"><Home className="size-3" aria-hidden />실거래 유형</span>
+                    <span aria-hidden>▾</span>
+                  </button>
+                  {/* ★반경 선택(형제 패리티) — `NearbyTransactionsMap` 은 이미 갖고 있었다.
+                      ★"자동"은 1km 로 조회 후 희소하면 백엔드가 넓히는 모드이고, 값을 고르면
+                        **그 값이 그대로 적용**된다(고른 값과 적용값이 달라지면 컨트롤이 거짓말이 된다). */}
+                  {shouldShowRadiusControl({ marketTypeCount: marketTypes.length, hasRadiusHandler: Boolean(onMarketRadiusChange) }) && onMarketRadiusChange && (
+                    <div className="mb-2">
+                      {/* ★변이검증 생존 정직 고지: 아래 className·key 등 **표현 계층**은
+                          잠그지 않는다. Tailwind 클래스 문자열을 단언하면 정상적인 스타일
+                          변경이 전부 빨강이 되고(가드의 위양성도 결함), 잠금 가치보다 비용이 크다.
+                          잠근 것은 **행위**다 — 선택지 렌더·핸들러 호출·프롭 배선·기본값·type="button". */}
+                      <p className="mb-1 text-[10px] font-black text-[var(--text-secondary)]">조회 반경</p>
+                      <div className="flex flex-wrap gap-1">
+                        {MARKET_RADIUS_CHOICES.map((r) => {
+                          const active = marketRadiusM === r.value;
+                          return (
+                            <button
+                              key={r.label}
+                              type="button"
+                              onClick={() => onMarketRadiusChange(r.value)}
+                              aria-pressed={active}
+                              className={`rounded-full px-2 py-0.5 text-[10px] font-bold transition-colors ${
+                                active
+                                  ? "bg-[var(--accent-strong)] text-white"
+                                  : "bg-[var(--surface-muted)] text-[var(--text-secondary)]"
+                              }`}
+                            >
+                              {r.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {marketRadiusM == null && (
+                        <p className="mt-1 text-[10px] font-semibold text-[var(--text-tertiary)]">
+                          자동 — 1km 내 거래가 적으면 넓혀서 보여줍니다.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  {shouldShowFetchFailureNotice(marketPayload) && (
+                    <p className="mb-2 rounded-lg bg-[color:color-mix(in_srgb,var(--status-error)_10%,transparent)] px-2 py-1.5 text-[10px] font-semibold leading-snug text-[var(--status-error)]">
+                      실거래를 불러오지 못했습니다. 반경을 좁히면 성공할 수 있습니다.
+                    </p>
+                  )}
+                  <div className="flex flex-col gap-1 text-[10.5px]">
+                    {shouldShowMarketDetails(marketPayload) && marketTypes.map((type) => (
+                      <div key={type} className="flex items-center gap-1.5 font-semibold text-[var(--text-primary)]">
+                        <span className="h-3 w-3 rounded-full border border-black/10 shadow-xs" style={{ backgroundColor: MARKET_TYPE_COLORS[type] || "#2563eb" }} />
+                        <span>{MARKET_TYPE_LABELS[type] || type}</span>
+                        {/* ★정직 표기: 켜졌지만 0건인 유형도 숨기지 않고 0건으로 명시(무음 금지) */}
+                        <span className="ml-auto text-[var(--text-secondary)]">{marketTypeCounts[type] ?? 0}건</span>
+                      </div>
+                    ))}
+                  </div>
+                  {/* ★지도에 못 찍는 실거래 — 버리지 않고 목록으로 낸다(좌표는 지어내지 않는다). */}
+                  {shouldShowMarketDetails(marketPayload) && unlocatedMarketGroups.length > 0 && (
+                    <div className="mt-2 border-t border-[var(--line)] pt-2">
+                      <p className="text-[10.5px] font-black text-[var(--text-primary)]">
+                        위치 미확인 {unlocatedMarketGroups.reduce((n, g) => n + g.count, 0)}건
+                      </p>
+                      <p className="mt-0.5 text-[10px] font-semibold leading-snug text-[var(--text-tertiary)]">
+                        국토부가 지번을 가려(예: 2**) 제공해 지도에 찍을 수 없습니다 — 거래 내용은 아래에 있습니다.
+                      </p>
+                      <ul className="mt-1 flex max-h-40 flex-col gap-0.5 overflow-y-auto text-[10px]">
+                        {unlocatedMarketGroups.slice(0, UNLOCATED_LIST_LIMIT).map((g) => (
+                          <li key={g.key} className="flex items-center gap-1.5 text-[var(--text-secondary)]">
+                            <span className="truncate font-semibold text-[var(--text-primary)]">{g.label}</span>
+                            <span className="ml-auto shrink-0">{g.count}건</span>
+                            {g.avg != null && (
+                              <span className="shrink-0 tabular-nums">{Math.round(g.avg).toLocaleString()}만</span>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                      {/* ★절단을 조용히 하지 않는다 — 목록 상한에 걸린 그룹 수를 명시한다. */}
+                      {unlocatedMarketGroups.length > UNLOCATED_LIST_LIMIT && (
+                        <p className="mt-1 text-[10px] font-semibold text-[var(--text-tertiary)]">
+                          외 {unlocatedMarketGroups.length - UNLOCATED_LIST_LIMIT}개 그룹 생략(목록 상한)
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setMarketLegendOpen(true)}
+                  aria-expanded={false}
+                  className="pointer-events-auto inline-flex w-fit items-center gap-1 rounded-full bg-[var(--glass-bg-strong)] px-3 py-1.5 text-[11px] font-black text-[var(--text-primary)] shadow"
+                >
+                  <Home className="size-3" aria-hidden />실거래 범례 · {marketTypes.length}유형
+                  <span aria-hidden>▸</span>
+                </button>
+              )
             )}
-            {developmentNote && (
-              <span className="inline-flex rounded-full bg-white/92 px-3 py-1.5 text-[11px] font-black text-slate-700 shadow">
-                {developmentNote}
-              </span>
+            {/* 상태 칩 — 가로 1줄(겹침 해소) */}
+            {(tileStatus === "error" || boundaryStatus === "loading" || boundaryStatus === "error" || overlayNote || marketNote || presaleAuctionNote || poiNote || developmentNote || cadastreTileNote || zoningWideNote || regulationNote) && (
+              <div className="flex flex-row flex-wrap items-end gap-1.5">
+                {cadastreTileNote && (
+                  // I9: 배지 = 자가진단 버튼 — 클릭 시 프록시 프로브로 실제 오류 code 표면화.
+                  <button
+                    type="button"
+                    onClick={() => void diagnoseCadastreTiles()}
+                    title={`${cadastreTileNote} — 클릭: 재진단`}
+                    className="pointer-events-auto inline-flex w-fit max-w-[380px] rounded-full bg-amber-50/95 px-3 py-1.5 text-left text-[11px] font-black text-amber-800 shadow transition hover:bg-amber-100"
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      {cadastreTileNote} <Search className="size-3 shrink-0" aria-hidden />
+                    </span>
+                  </button>
+                )}
+                {zoningWideNote && (
+                  <span className="inline-flex rounded-full bg-amber-50/95 px-3 py-1.5 text-[11px] font-black text-amber-800 shadow">
+                    {zoningWideNote}
+                  </span>
+                )}
+                {regulationNote && (
+                  <span className="inline-flex rounded-full bg-amber-50/95 px-3 py-1.5 text-[11px] font-black text-amber-800 shadow">
+                    {regulationNote}
+                  </span>
+                )}
+                {overlayNote && (
+                  <span className="inline-flex rounded-full bg-white/92 px-3 py-1.5 text-[11px] font-black text-slate-700 shadow">
+                    {overlayNote}
+                  </span>
+                )}
+                {marketNote && (
+                  <span className="inline-flex rounded-full bg-white/92 px-3 py-1.5 text-[11px] font-black text-slate-700 shadow">
+                    {marketNote}
+                  </span>
+                )}
+                {presaleAuctionNote && (
+                  <span className="inline-flex rounded-full bg-white/92 px-3 py-1.5 text-[11px] font-black text-slate-700 shadow">
+                    {presaleAuctionNote}
+                  </span>
+                )}
+                {poiNote && (
+                  <span className="inline-flex rounded-full bg-white/92 px-3 py-1.5 text-[11px] font-black text-slate-700 shadow">
+                    {poiNote}
+                  </span>
+                )}
+                {developmentNote && (
+                  <span className="inline-flex rounded-full bg-white/92 px-3 py-1.5 text-[11px] font-black text-slate-700 shadow">
+                    {developmentNote}
+                  </span>
+                )}
+                {boundaryStatus === "loading" && (
+                  <span className="inline-flex rounded-full bg-blue-50/95 px-3 py-1.5 text-[11px] font-black text-blue-700 shadow">
+                    VWorld 필지 경계 보강 중
+                  </span>
+                )}
+                {boundaryStatus === "error" && (
+                  <span className="inline-flex rounded-full bg-amber-50/95 px-3 py-1.5 text-[11px] font-black text-amber-800 shadow">
+                    일부 필지 경계 보강 실패 · 확보된 실데이터만 표시
+                  </span>
+                )}
+              </div>
             )}
-            {boundaryStatus === "loading" && (
-              <span className="inline-flex rounded-full bg-blue-50/95 px-3 py-1.5 text-[11px] font-black text-blue-700 shadow">
-                VWorld 필지 경계 보강 중
-              </span>
-            )}
-            {boundaryStatus === "error" && (
-              <span className="inline-flex rounded-full bg-amber-50/95 px-3 py-1.5 text-[11px] font-black text-amber-800 shadow">
-                일부 필지 경계 보강 실패 · 확보된 실데이터만 표시
-              </span>
+            {/* 우측 슬롯(베이스맵 스위처 등 부모 소유) — ml-auto로 같은 행 우측 정렬, 공간이
+                부족하면 flex-wrap이 자기 행으로 내린다(칩과의 겹침이 문법적으로 불가능). */}
+            {bottomDockSlot != null && (
+              <div className="pointer-events-auto ml-auto shrink-0 self-end">{bottomDockSlot}</div>
             )}
           </div>
         )}
@@ -1702,7 +3711,7 @@ export function SatongMultiMap({
         {/* [MAP-007] 기반 타일 실패 — 중앙 반투명 오버레이 + 재시도(로딩/실패 구분 명시).
             pointer-events는 카드에만 허용해 지도 조작·기존 오버레이 확인은 계속 가능하다. */}
         {tileFailureNotice && (
-          <div className="pointer-events-none absolute inset-0 z-[420] flex items-center justify-center rounded-lg bg-slate-900/40">
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-lg bg-slate-900/40" style={{ zIndex: SATONG_UI_Z.tileFailure }}>
             <div className="pointer-events-auto flex max-w-[calc(100%-48px)] flex-col items-center gap-2 rounded-xl border border-rose-300/70 bg-white/95 px-4 py-3 text-center shadow-lg">
               <span className="text-[12px] font-bold leading-snug text-rose-700">
                 {tileFailureNotice.message}
@@ -1718,30 +3727,6 @@ export function SatongMultiMap({
           </div>
         )}
 
-        {/* 노후도 범례 레전드 UI - 좌하단 이동 및 겹침 방지 */}
-        {hasSatongLayer(layerState, "age") && (
-          <div className="absolute bottom-16 left-3 z-[410] rounded-xl border border-slate-200 bg-white/95 p-2.5 shadow-lg backdrop-blur min-w-[155px]">
-            <div className="mb-1.5 text-[11px] font-extrabold text-slate-800">🏢 건물 노후도 구분</div>
-            <div className="flex flex-col gap-1 text-[10.5px] border-b border-slate-100 pb-2 mb-2">
-              {AGE_LEGEND_ITEMS.map((item) => (
-                <div key={item.label} className="flex items-center gap-1.5 font-semibold text-slate-700">
-                  <span className="h-3 w-3 rounded-sm border border-black/10 shadow-xs" style={{ backgroundColor: item.color }} />
-                  <span>{item.label}</span>
-                </div>
-              ))}
-            </div>
-            {/* 선택 필지 평균 노후도 추가 */}
-            <div className="text-[10px] font-bold text-slate-500 flex flex-col gap-0.5">
-              <span>선택 필지 평균 노후도</span>
-              {avgAge !== null ? (
-                <span className="text-xs font-black text-rose-600">{avgAge}년</span>
-              ) : (
-                <span className="font-semibold text-slate-400">건물 정보 없음</span>
-              )}
-            </div>
-          </div>
-        )}
-
         {/* 초기 안내 오버레이(아직 클릭 전) */}
         {!readOnly && !tileFailureNotice && status === "idle" && staged.length === 0 && overlayFeatures.length === 0 && !marketPayload && (
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-lg">
@@ -1753,13 +3738,13 @@ export function SatongMultiMap({
 
         {/* ── 확인 카드 오버레이 — 조회 완료 후 사용자가 추가/취소를 결정하는 카드 ── */}
         {!readOnly && status === "found" && pending && (
-          <div className="absolute bottom-16 left-1/2 z-[500] -translate-x-1/2 w-[calc(100%-32px)] max-w-sm">
+          <div className="absolute bottom-16 left-1/2 -translate-x-1/2 w-[calc(100%-32px)] max-w-sm" style={{ zIndex: SATONG_UI_Z.confirmCard }}>
             <div className="rounded-xl border border-[var(--line-strong)] bg-[var(--surface)]/95 p-3 shadow-[var(--shadow-lg)] backdrop-blur-sm">
               {/* 필지 요약 정보 */}
               <div className="mb-2 space-y-0.5">
                 <p className="text-[12px] font-bold text-[var(--text-primary)] leading-snug">
-                  {/* 주소 또는 PNU 표시 */}
-                  {pending.address || pending.jibun || pending.pnu}
+                  {/* 주소+지번 결합 표시(`||` 는 분리 응답의 지번을 버린다 — lib/pnu 주석) */}
+                  {joinAddressJibun(pending.address, pending.jibun, pending.pnu || "")}
                 </p>
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-[var(--text-secondary)]">
                   {/* 면적(㎡·평) */}
@@ -1782,7 +3767,20 @@ export function SatongMultiMap({
               </div>
 
               {/* 버튼 영역 */}
-              {pendingAlreadyStaged ? (
+              {pendingAlreadyRegistered && !pendingAlreadyStaged ? (
+                // ★WP-M2: 프로젝트에 이미 등록된 필지 → "이미 등록됨" 배지·닫기만(재등록 불가).
+                //   staged에 담지 않으므로 "1필지 추가" 오카운트가 생기지 않는다.
+                <div className="flex items-center gap-2">
+                  <span className="flex-1 text-[11px] font-bold text-emerald-500">이미 등록됨(선택 필지)</span>
+                  <button
+                    type="button"
+                    onClick={handleCancelPending}
+                    className="rounded-lg border border-[var(--line-strong)] bg-[var(--surface-muted)] px-3 py-1.5 text-[11px] font-bold text-[var(--text-secondary)] hover:bg-[var(--surface)] transition-colors"
+                  >
+                    닫기
+                  </button>
+                </div>
+              ) : pendingAlreadyStaged ? (
                 // 이미 staged에 있는 필지 → 제거 옵션 표시
                 <div className="flex items-center gap-2">
                   <span className="flex-1 text-[11px] font-bold text-emerald-500">이미 선택됨</span>
@@ -1827,44 +3825,45 @@ export function SatongMultiMap({
           ★P1(감사): 풀스크린 래퍼 '내부'로 이동 — 종전엔 래퍼 밖이라 풀스크린(z-9990) 중
           완료/전체취소가 가려져 필지 등록이 불가했다. 풀스크린일 땐 하단 오버레이로 표시. ── */}
       {!readOnly && (
-      <div className={isMapFullscreen
-        ? "absolute inset-x-3 bottom-3 z-[460] flex items-center gap-2 rounded-lg border border-[var(--line)] bg-[var(--surface-secondary)]/95 px-3 py-2 shadow-xl backdrop-blur"
-        : "mt-2 flex items-center gap-2 rounded-lg border border-[var(--line)] bg-[var(--surface-muted)]/60 px-3 py-2"}>
-        {/* 선택 현황 */}
+      <div
+        className={isMapFullscreen
+          ? "absolute inset-x-3 bottom-3 flex items-center gap-2 rounded-lg border border-[var(--line)] bg-[var(--surface-secondary)]/95 px-3 py-2 shadow-xl backdrop-blur"
+          : "mt-2 flex items-center gap-2 rounded-lg border border-[var(--line)] bg-[var(--surface-muted)]/60 px-3 py-2"}
+        style={isMapFullscreen ? { zIndex: SATONG_UI_Z.bottomBar } : undefined}
+      >
+        {/* 선택 현황 — ★WP-M2 이중표기: 신규(이번에 담은 것)와 총(프로젝트 포함) 분리 표기.
+            프로젝트 연결 직후엔 신규 0·총 12로 보여 "지적 12 vs 완료 1" 혼란을 없앤다.
+            ★UX 트랙 B2: 면적 문구는 여기서 제거 — 대지면적 SSOT는 ContextHeader(지도셸 상단
+            sticky)로 흡수됐다. 필지 수 카운트는 지도 조작 직후 즉시 피드백이라 그대로 유지. */}
         <div className="flex-1 text-[11px]">
-          {staged.length > 0 ? (
+          {totalCount > 0 ? (
             <span className="font-bold text-[var(--text-primary)]">
-              선택 <span className="text-[var(--accent-strong)]">{staged.length}필지</span>
-              {totalAreaSqm > 0 && (
-                <span className="ml-1.5 font-normal text-[var(--text-secondary)]">
-                  · 합산 {Math.round(totalAreaSqm).toLocaleString()}㎡ ({toP(totalAreaSqm)}평)
-                </span>
-              )}
+              신규 <span className="text-[var(--accent-strong)]">{newCount}</span> · 총 <span className="text-[var(--accent-strong)]">{totalCount}필지</span>
             </span>
           ) : (
             <span className="text-[var(--text-hint)]">아직 선택된 필지 없음</span>
           )}
         </div>
 
-        {/* 전체취소 버튼 — staged가 있을 때만 활성 */}
-        {staged.length > 0 && (
+        {/* 전체취소 버튼 — 신규 staged가 있을 때만 활성 */}
+        {newCount > 0 && (
           <button
             type="button"
             onClick={handleClearAll}
-            className="rounded-lg border border-[var(--line-strong)] px-2.5 py-1.5 text-[10px] font-bold text-[var(--text-secondary)] hover:border-red-400/50 hover:text-red-500 hover:bg-red-500/10 transition-colors"
+            className="inline-flex min-h-11 items-center justify-center rounded-lg border border-[var(--line-strong)] px-2.5 py-1.5 text-[10px] font-bold text-[var(--text-secondary)] hover:border-red-400/50 hover:text-red-500 hover:bg-red-500/10 transition-colors"
           >
             전체취소
           </button>
         )}
 
-        {/* 완료 버튼 — staged가 있을 때만 활성(없으면 비활성 스타일) */}
+        {/* 완료 버튼 — 신규가 있을 때만 활성. 라벨에 신규·총을 함께 표기(이중 카운트 봉합). */}
         <button
           type="button"
-          disabled={staged.length === 0}
+          disabled={newCount === 0}
           onClick={handleComplete}
-          className="rounded-lg bg-[var(--accent-strong)] px-3 py-1.5 text-[11px] font-bold text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 transition-opacity"
+          className="inline-flex min-h-11 items-center justify-center rounded-lg bg-[var(--accent-strong)] px-3 py-1.5 text-[11px] font-bold text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 transition-opacity"
         >
-          완료({staged.length}필지 등록)
+          {totalCount > 0 ? `완료(신규 ${newCount} · 총 ${totalCount}필지)` : "지도에서 필지 선택"}
         </button>
       </div>
       )}

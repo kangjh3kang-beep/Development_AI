@@ -227,6 +227,16 @@ class UpzoningPotentialAnalyzer:
         key = normalize_zone_name(zone_type) or (zone_type or "")
         area = float(land_area_sqm or 0)
         blockers = self._blockers(special_districts)
+        # ★레인C(P0) — special_districts가 None(미수집)이면 "확인 결과 규제구역 없음"([])과
+        #   구분해 정직하게 표기한다. 개발제한구역·상수원보호구역 등은 이 데이터 없이는
+        #   차단사유(blocked_reasons)에 전혀 반영되지 않으므로, blockers=[]가 "종상향 제약
+        #   없음"으로 오독되지 않도록 data_gaps로 별도 명시한다(무날조 — 값을 만들지 않음).
+        data_gaps: list[str] = []
+        if special_districts is None:
+            data_gaps.append(
+                "규제구역(개발제한구역·상수원보호구역·문화재보호구역 등) 데이터 미수집 — "
+                "종상향 차단사유(blocked_reasons)가 이 분석에 반영되지 않았을 수 있습니다(별도 확인 필요)."
+            )
 
         targets = UPZONE_TARGETS.get(key, [])
         path_keys = ZONE_PATHS.get(key, [])
@@ -242,6 +252,7 @@ class UpzoningPotentialAnalyzer:
                     "개별 도시·군관리계획·지구단위계획 변경 가능성은 지자체 확인이 필요합니다(예상치 미산출)."
                 ),
                 "disclaimer": self._disclaimer(),
+                "data_gaps": data_gaps,
                 "marker": SCENARIO_MARKER,
             }
 
@@ -256,7 +267,29 @@ class UpzoningPotentialAnalyzer:
             low_far, high_far, far_source = _target_far_pct(
                 target_zone, sigungu, ordinance_far_resolver
             )
-            feasibility, reason, conditions = self._grade(
+            # ★★범위 복원 — 종전엔 후보를 **하나만** 고르고 끝나, 상·하한이 같은 숫자가 됐다.
+            #   화면엔 "예상 상한 150.0~150.0%" 로 찍혔고, 개발사는 그것을 **"그 위는 안 된다"**
+            #   로 읽는다. 실제로는 `UPZONE_TARGETS["자연녹지지역"]` 에 제2종일반주거지역이
+            #   index 1 로 **이미 들어 있었다**(2026-08-19 사용자 지적 — 도시개발법으로 2종
+            #   상향이 가능한데 어떤 경로도 150% 를 넘지 못했다).
+            #   모델의 **보수성이 사실로 표시되던 것**이 결함의 본체다. 후보 전체를 훑어
+            #   범위로 낸다: 하한=보수 1단계, 상한=최대 후보.
+            cands: list[dict] = []
+            for tz in targets:
+                c_low, c_high, c_src = _target_far_pct(tz, sigungu, ordinance_far_resolver)
+                cands.append({
+                    "target_zone": tz,
+                    "expected_far_pct_low": round(c_low) if c_low is not None else None,
+                    "expected_far_pct_high": round(c_high) if c_high is not None else None,
+                    "expected_far_source": c_src,
+                })
+            _highs = [c["expected_far_pct_high"] for c in cands
+                      if c["expected_far_pct_high"] is not None]
+            # 상향 여지의 상한(최대 후보). ★하한은 최상위에서 쓰지 않는다 — 최상위 low/high 는
+            #   `target_zone` 한 곳에 대해 내부 정합해야 하고, 후보 합집합의 하한을 섞으면
+            #   다시 라벨과 값이 어긋난다(후보별 하한은 `target_zone_candidates` 에 있다).
+            range_high = max(_highs) if _highs else None
+            feasibility, reason, conditions, blocked_reasons = self._grade(
                 pkey, path, area, near_station, near_station_m,
                 adjacency_contiguous, parcel_count, key, blockers,
             )
@@ -264,12 +297,45 @@ class UpzoningPotentialAnalyzer:
                 "path": path["label"],
                 "path_key": pkey,
                 "target_zone": target_zone,
+                # ★★2026-08-19 교정 — 라벨과 값은 **같은 용도지역**을 가리켜야 한다.
+                #   직전 판은 상·하한을 **후보 전체의 합집합**(low=최소후보·high=최대후보)에서
+                #   냈다. 그런데 `target_zone` 은 여전히 대표 후보 하나였다. 결과:
+                #     target=제2종일반주거지역(법정 150~250)  ·  high=300  ← **법정상한 초과**
+                #     source='지자체 도시계획조례(목표지역)'  ·  high=200  ← **조례값 150 초과**
+                #   플랫폼 자신의 `check_against_legal` 이 '법정한도초과 high' 로 판정한다.
+                #   이 저장소가 "자연녹지 200%" 사고 이후 막아 온 **날조 클래스**다 —
+                #   출처를 붙인 채 그 출처를 넘는 값은 근거가 아니라 거짓 근거다.
+                #   ★그러므로 최상위 3필드는 **대표 후보 하나에 대해 내부 정합**하게 낸다
+                #     (`_target_far_pct` 가 이미 `min(조례, 법정)` 을 하고 있다 — 합집합
+                #      덮어쓰기가 그 min 을 무력화하고 있었을 뿐이다).
                 "expected_far_pct_low": round(low_far) if low_far is not None else None,
                 "expected_far_pct_high": round(high_far) if high_far is not None else None,
                 "expected_far_source": far_source,
+                # 후보별 상세 — 각 항목은 **자기 용도지역의 범위**만 담는다(내부 정합).
+                "target_zone_candidates": cands,
+                "target_zone_max": (cands[-1]["target_zone"] if cands else None),
+                # ★상향 여지는 **지우지 않는다** — 다만 그 값이 어느 용도지역의 것인지
+                #   라벨과 함께 낸다. 종전엔 이 숫자가 `expected_far_pct_high` 로 올라가
+                #   `target_zone` 라벨과 어긋났다(위 주석). 소비처(화면)는 이 쌍을 읽어
+                #   "최대 제3종일반주거지역 상향 시 300%" 처럼 **용도지역을 밝혀** 표시한다.
+                "upside_far_pct_high": range_high,
+                "upside_far_zone": (
+                    next((c["target_zone"] for c in reversed(cands)
+                          if c["expected_far_pct_high"] == range_high), None)
+                    if range_high is not None else None
+                ),
+                "upside_far_source": (
+                    next((c["expected_far_source"] for c in reversed(cands)
+                          if c["expected_far_pct_high"] == range_high), None)
+                    if range_high is not None else None
+                ),
                 "conditions": conditions,
                 "feasibility": feasibility,
                 "feasibility_reason": reason,
+                # ★P0 additive: 가능성을 강등시킨 구조적 사유(비연접 파편 필지·규제구역 등)를
+                # 별도 배열로 명시 — feasibility_reason(자유서술)과 달리 프론트가 배지/경고로
+                # 그대로 렌더할 수 있는 사유 목록이다(빈 배열=강등 사유 없음).
+                "blocked_reasons": blocked_reasons,
                 "legal_basis": path["legal_basis"],
                 # verified law.go.kr 딥링크(레지스트리 단일출처). 프론트 LegalRefChip가
                 # url_status='verified'는 클릭 링크, 'pending'/빈값은 텍스트 폴백(죽은 링크 금지).
@@ -285,13 +351,14 @@ class UpzoningPotentialAnalyzer:
         scenarios.sort(key=lambda s: (rank.get(s["feasibility"], 3),
                                       -(s.get("expected_far_pct_high") or 0)))
 
-        far_range = self._potential_range(scenarios)
+        far_range = self._potential_range(scenarios, key, targets)
         return {
             "current_zone": key or zone_type,
             "scenarios": scenarios,
             "potential_far_range": far_range,
             "summary": self._summary(key, scenarios, far_range, blockers),
             "disclaimer": self._disclaimer(),
+            "data_gaps": data_gaps,
             "marker": SCENARIO_MARKER,
         }
 
@@ -311,9 +378,10 @@ class UpzoningPotentialAnalyzer:
         self, pkey: str, path: dict, area: float, near_station: bool,
         near_station_m: float | None, adjacency: bool | None, parcel_count: int,
         zone: str, blockers: list[str],
-    ) -> tuple[str, str, list[str]]:
+    ) -> tuple[str, str, list[str], list[str]]:
         conditions: list[str] = []
         reasons: list[str] = []
+        blocked_reasons: list[str] = []
         score = 0  # +가산/-감산 → 상/중/하
 
         # 1) 면적요건
@@ -358,6 +426,9 @@ class UpzoningPotentialAnalyzer:
             elif adjacency is False:
                 score -= 1
                 reasons.append("필지 비인접(통합개발 제약)")
+                blocked_reasons.append(
+                    "비연접 파편 필지 — 지구단위계획 구역(일단의 토지) 성립 불확실"
+                )
             else:
                 reasons.append("인접성 미확인 — 현장/지적도 확인필요")
 
@@ -384,6 +455,9 @@ class UpzoningPotentialAnalyzer:
         if blockers:
             score -= 2
             reasons.append("규제구역(" + ", ".join(blockers) + ") — 종상향 제약")
+            blocked_reasons.append(
+                f"규제구역({', '.join(blockers)}) — 해제·완화 선행 없이는 종상향 불가"
+            )
 
         if score >= 1:
             grade = "상"
@@ -391,8 +465,14 @@ class UpzoningPotentialAnalyzer:
             grade = "중"
         else:
             grade = "하"
+        # ★확정 강등(P0): 비연접 파편 필지는 감점(-1)만으론 '중'까지만 내려가 종상향 가능성이
+        # 여전히 남아있는 것처럼 보일 위험이 있다(라이브 재현: 파편 9필지+개발제한구역 혼합에서
+        # "가능성 상·1순위" 산출). 인접성 불충족은 지구단위계획 등 '일단의 토지' 성립 요건
+        # 자체가 흔들리는 구조적 결격이므로, 점수와 무관하게 등급을 '하'로 확정 강등한다.
+        if parcel_count >= 2 and adjacency is False:
+            grade = "하"
         reason = "; ".join(reasons) or "보유 데이터로 등급화(전제 충족 시)"
-        return grade, reason, conditions
+        return grade, reason, conditions, blocked_reasons
 
     @staticmethod
     def _blockers(special_districts: list[Any] | None) -> list[str]:
@@ -426,18 +506,200 @@ class UpzoningPotentialAnalyzer:
         return base
 
     @staticmethod
-    def _potential_range(scenarios: list[dict]) -> dict[str, Any] | None:
-        highs = [s["expected_far_pct_high"] for s in scenarios
-                 if s.get("expected_far_pct_high") and s["feasibility"] in ("상", "중")]
-        if not highs:
-            highs = [s["expected_far_pct_high"] for s in scenarios if s.get("expected_far_pct_high")]
-        if not highs:
+    def _potential_range(
+        scenarios: list[dict],
+        zone: str = "",
+        mapped_targets: list[str] | None = None,
+    ) -> dict[str, Any] | None:
+        """시나리오들의 예상 용적률 상한을 모아 '범위'를 낸다.
+
+        ★이 함수가 내는 값은 **범위가 아닐 수 있다.** 대표 목표 용도지역 선정(_pick_target)이
+          보수적이라 여러 경로가 같은 목표를 가리키면 min_pct 와 max_pct 가 **같은 값**이 된다
+          (실측: 자연녹지·계획관리·준공업 등은 항상 붕괴). 그때 화면이 `150~150%` 라고 적으면
+          개발사는 "그 위는 안 된다"로 읽지만, 실제 의미는 "우리가 한 경로만 봤다"이다.
+          그래서 붕괴 사실(is_collapsed)과 그 사유(honest_disclosure)를 **계약으로** 실어보낸다.
+          소비처가 min==max 를 스스로 눈치채게 두면 그것은 계약이 아니라 우연이다.
+
+        Args:
+            scenarios: analyze()가 만든 시나리오 목록.
+            zone: 현행 용도지역명(고지 문구에 사용).
+            mapped_targets: 이 용도지역에 매핑된 상향 후보 전체(UPZONE_TARGETS).
+                이번 산출에 **반영되지 않은** 후보를 정직하게 밝히는 데 쓴다(값은 만들지 않음).
+        """
+        graded = [s for s in scenarios
+                  if s.get("expected_far_pct_high") and s["feasibility"] in ("상", "중")]
+        if not graded:
+            graded = [s for s in scenarios if s.get("expected_far_pct_high")]
+        if not graded:
             return None
-        return {
-            "min_pct": min(highs),
-            "max_pct": max(highs),
+
+        highs = [s["expected_far_pct_high"] for s in graded]
+        lo, hi = min(highs), max(highs)
+        collapsed = lo == hi
+
+        # 이번 산출에 실제로 반영된 목표 용도지역(입력 순서 유지·중복 제거).
+        considered: list[str] = []
+        for s in graded:
+            tz = s.get("target_zone")
+            if tz and tz not in considered:
+                considered.append(tz)
+
+        # ★R1 교정 — "평가해서 '하'로 판정했다"와 "아예 산출하지 않았다"는 **다른 말**이다.
+        #   종전에는 미반영 후보를 `graded`(상/중만) 기준으로 뺐다. 그래서 시나리오가 실제로
+        #   산출됐고 화면 목록에도 렌더되는 '하' 경로의 목표까지 "미산출 — 별도 확인 필요"로
+        #   둔갑했다(실측 3케이스: 1종일반→3종일반300하 · 2종일반→준주거500하 · 준주거→일반상업1300하).
+        #   확정된 부정 판정을 '열린 가능성'으로 격상시키는 낙관 과표시라, 이 PR 이 고치겠다고
+        #   선언한 결함 클래스 그 자체다. 두 축을 갈라 각각의 사실을 말한다.
+        produced: list[str] = []          # 산출된 값이 실제로 실린 목표(가능성 등급 무관)
+        upside_zones: list[str] = []      # 대표 목표보다 높은 상향 후보(#700 upside 축)
+        upside_far: dict[str, float] = {}  # 그 후보의 예상 용적률 — 문장에 값을 직접 싣는다
+        for s in scenarios:
+            tz = s.get("target_zone")
+            if tz and tz not in produced:
+                produced.append(tz)
+            # ★#700(머지됨) 이후 — 대표 목표 외의 후보도 `target_zone_candidates` 에 **각자의
+            #   용적률과 함께 실린다**. 그 값은 화면(UpzoningScenarioList)이 "최대 〈지역〉
+            #   상향 시 N%" 로 렌더한다. 그러므로 그 목표를 "미산출"이라 말하면 **같은 카드에서
+            #   목록과 고지가 싸운다**(실측 3케이스: 자연녹지→2종일반 250 · 제1종전용→1종일반
+            #   200 · 준공업→근린상업 900).
+            #   ★후보 전체를 무조건 넣지 않는다 — `expected_far_pct_high` 가 None 인 후보는
+            #     `_target_far_pct` 가 법정한도를 못 찾은 것이라 **정말 아무 값도 산출되지
+            #     않았다**(source='미상'). 그것까지 '산출됨'으로 치면 미산출 고지가 영영 죽는다.
+            for c in (s.get("target_zone_candidates") or []):
+                ctz = c.get("target_zone")
+                if ctz and c.get("expected_far_pct_high") is not None and ctz not in produced:
+                    produced.append(ctz)
+            # 화면이 실제로 그 줄을 그리는 조건과 **같은 조건**으로 모은다(추정 금지 —
+            # UpzoningScenarioList 는 upside_high > expected_high 일 때만 렌더한다).
+            uz, uh = s.get("upside_far_zone"), s.get("upside_far_pct_high")
+            if uz and uh is not None and uh > (s.get("expected_far_pct_high") or 0):
+                prev = upside_far.get(uz)
+                if prev is None or uh > prev:
+                    upside_far[uz] = uh
+                if uz not in upside_zones:
+                    upside_zones.append(uz)
+        # ① 미산출 — 매핑은 돼 있는데 시나리오 자체가 없다(진짜 "확인 필요").
+        #    `mapped_targets`(UPZONE_TARGETS)에서 파생하므로 카탈로그가 늘면 자동 반영된다.
+        unconsidered = [t for t in (mapped_targets or []) if t not in produced]
+        # ② 평가 후 제외 — 산출은 됐으나 가능성 '하'라 범위에서 빠졌다(부정 판정이지 미산출이 아니다).
+        excluded: list[dict[str, Any]] = []
+        seen_excluded: set[str] = set()
+        for s in scenarios:
+            tz = s.get("target_zone")
+            if not tz or tz in considered or tz in seen_excluded:
+                continue
+            # ★등급을 **확인하고** 담는다. 종전엔 "considered 에 없다"만 보고 담으면서 문구는
+            #   가능성 '하'를 하드코딩했다. graded 에서 빠지는 길은 두 가지다 —
+            #   ①가능성 '하'  ②expected_far_pct_high 가 falsy(0/None). ②로 빠진 상/중 경로가
+            #   "'하'로 평가되어"라 표기되고 "(예상 0%)"까지 노출된다(주입으로 실증).
+            #   ★현 프로덕션 배선에서는 ②가 **도달 불가**다: 조례 resolver
+            #   (far_tier_service `if z and z.get("far")`)가 0 을 걸러 None 을 주고, 매핑된
+            #   전 목표 용도지역이 법정 max_far_pct 를 보유한다. 그래서 이 가드의 변이는
+            #   어떤 테스트도 죽이지 못한다(설명된 생존 — 잠재 결함에 대한 선제 가드).
+            if s.get("feasibility") != "하":
+                continue
+            seen_excluded.add(tz)
+            excluded.append({
+                "target_zone": tz,
+                "expected_far_pct_high": s.get("expected_far_pct_high"),
+                "feasibility": s.get("feasibility"),
+            })
+        # ★세 축은 **배타**여야 한다 — 한 용도지역에 두 문장이 붙으면 고지가 자기 말을 겹쳐 쓴다.
+        #   실측: 2종일반 비역세권의 준주거는 upside(최대 500% 렌더)이면서 동시에 '하' 제외
+        #   대상이었다. 둘 다 참이지만, 더 구체적인 쪽('하'로 평가 + 값 + 목록 참조)만 남긴다.
+        _excluded_zones = {e["target_zone"] for e in excluded}
+        upside_zones = [z for z in upside_zones
+                        if z not in considered and z not in _excluded_zones]
+
+        out: dict[str, Any] = {
+            "min_pct": lo,
+            "max_pct": hi,
+            "is_collapsed": collapsed,
+            "scenario_count": len(graded),
+            "considered_target_zones": considered,
+            "unconsidered_target_zones": unconsidered,
+            # 화면에 "최대 〈지역〉 상향 시 N%" 로 이미 보이는 목표(#700 축) — 미산출이 아니다.
+            "upside_target_zones": upside_zones,
+            # 평가 결과 '하'로 범위에서 빠진 목표 — "미산출"과 섞어 쓰지 않는다.
+            "excluded_by_feasibility": excluded,
+            "honest_disclosure": None,
             "note": "가능성 상/중 시나리오의 예상 용적률 상한 범위(예상치·목표지역 기준).",
         }
+        if not collapsed:
+            return out
+
+        # ── 붕괴 — '범위'라고 부르지 않고, 왜 한 값인지 밝힌다 ──
+        out["note"] = "가능성 상/중 시나리오의 예상 용적률 상한 — 단일 값(범위 미산출)."
+        head = (
+            f"검토한 경로 {len(graded)}건의 예상 용적률 상한이 모두 {hi:.0f}%로 같아 "
+            f"범위가 산출되지 않았습니다. {hi:.0f}%는 상향 가능한 최댓값이 아니라 "
+            f"본 분석이 검토한 경로의 예상치입니다."
+        )
+        # ★사유는 **절(clause) 조립**이다 — 한 가지에 몰아 쓰면 "미산출"과 "평가 결과 하"가
+        #   다시 섞인다. 각 절은 자기가 아는 사실만 말한다.
+        clauses: list[str] = []
+        if len(considered) == 1:
+            clauses.append(f" 검토한 경로가 모두 같은 목표 용도지역('{considered[0]}')을 가리켰습니다.")
+        else:
+            # ★현 카탈로그에서는 도달 불가다(2026-08-19 실측 — UPZONE_TARGETS 전수를 돌려도
+            #   '목표는 다른데 예상 상한만 같은' 조합이 나오지 않는다). 목표지역 조례가 두
+            #   용도지역에 같은 상한을 주면 발화하므로 방어로 남긴다 — 그래서 이 가지의
+            #   문구 변이는 어떤 테스트도 죽이지 못한다(설명된 생존).
+            clauses.append(
+                f" 목표 용도지역은 서로 달랐으나({', '.join(considered)}) 예상 상한이 "
+                f"모두 같았습니다 — 목표지역 조례 상한이 같은 값에서 걸린 결과입니다."
+            )
+        if upside_zones:
+            # ★모순을 침묵으로 덮지 않고 **적극적으로 해소**한다 — #700 이 산출해 화면이 보여주는
+            #   값을 고지가 직접 말한다("미산출"이 아니라 "함께 산출됐고 값은 이것").
+            #   ★"별도 표시됩니다"처럼 **화면 동작을 단언하지 않는다**: 소비처마다 목록 렌더가
+            #     다르다(site-analysis·설계감사는 UpzoningScenarioList 로 그 줄을 그리지만,
+            #     종합분석 패널은 자체 목록이고 AutoRecommendPanel 은 목록 자체가 없다).
+            #     백엔드가 보증할 수 없는 것을 단정하면 그 문장이 화면마다 참·거짓이 갈린다.
+            listed_up = ", ".join(
+                f"'{z}'(예상 {upside_far[z]:.0f}%)" if z in upside_far else f"'{z}'"
+                for z in upside_zones
+            )
+            clauses.append(
+                f" 더 높은 상향 후보 {listed_up}도 함께 산출됐습니다 — 범위 산출에는 대표 목표만"
+                f" 반영했으며, 실제 도달 용적률은 상향 단계에 따라 달라집니다."
+            )
+        if excluded:
+            # ★"미산출"이라 말하지 않는다. 이건 평가를 마친 **부정 판정**이고, 같은 카드의
+            #   시나리오 목록에 등급·사유와 함께 이미 렌더된다(목록과 고지가 싸우면 안 된다).
+            listed = ", ".join(
+                f"'{e['target_zone']}'(예상 {e['expected_far_pct_high']:.0f}%)"
+                if e.get("expected_far_pct_high") is not None else f"'{e['target_zone']}'"
+                for e in excluded
+            )
+            clauses.append(
+                f" {listed}은(는) 가능성 '하'로 평가되어 범위 산출에서 제외됐습니다"
+                f"(미산출이 아니라 평가 결과입니다 — 사유는 아래 시나리오 목록 참조)."
+            )
+        if unconsidered:
+            # ★#700 머지 후 이 절은 **현 카탈로그의 라이브 경로에서 도달 불가**다(실측 2026-08-20:
+            #   전수 20케이스 unconsidered 0건 · 매핑된 전 목표가 법정 max_far_pct 를 보유해
+            #   `target_zone_candidates` 에 값이 실린다). 남기는 이유는 둘이다 —
+            #   ①법정한도를 못 찾는 목표가 카탈로그에 추가되면 즉시 발화한다(그때 "미산출"이 참).
+            #   ②`_potential_range` 는 #700 이전 형상(candidates 없음)의 페이로드도 받는다.
+            #   그래서 이 절의 변이는 라이브 픽스처로는 죽지 않는다(설명된 생존) — 대신 아래
+            #   테스트가 `_potential_range` 를 직접 태워 두 형상을 가른다.
+            clauses.append(
+                f" 매핑된 상향 후보 중 {', '.join(unconsidered)}은(는) 이번 산출에 "
+                f"반영되지 않았습니다 — 그 단계의 상향 여지는 미산출이며 별도 확인이 필요합니다."
+            )
+        # ★조건을 **실제 매핑 개수**에 결속한다. 종전엔 "excluded·unconsidered 가 비었으면"
+        #   이라고만 봤는데, #700 이후 후보가 2개여도 둘 다 산출되면 그 조건이 참이 되어
+        #   "후보가 하나뿐"이라는 **거짓**이 나온다(자연녹지는 후보 2개다).
+        if (not excluded and not unconsidered and not upside_zones
+                and len(considered) == 1 and len(mapped_targets or []) <= 1):
+            clauses.append(
+                f" 현행 '{zone or '해당 용도지역'}'에 매핑된 상향 후보가 "
+                f"'{considered[0]}' 하나뿐이라 비교할 다른 목표가 없었습니다 — "
+                f"그보다 높은 단계의 상향 여지는 미산출이며 별도 확인이 필요합니다."
+            )
+        out["honest_disclosure"] = head + "".join(clauses)
+        return out
 
     @staticmethod
     def _summary(zone: str, scenarios: list[dict], far_range: dict | None, blockers: list[str]) -> str:
@@ -448,9 +710,25 @@ class UpzoningPotentialAnalyzer:
             f"현행 '{zone}'에서 종상향/종변경 잠재 시나리오 {len(scenarios)}건을 예상치로 검토했습니다(실현 보장 아님)."
         ]
         if far_range:
-            parts.append(
-                f"가능성 상/중 경로 기준 예상 용적률 상한은 약 {far_range['min_pct']:.0f}~{far_range['max_pct']:.0f}%입니다."
-            )
+            # ★붕괴(min==max) 시 "약 150~150%"는 '그 위는 없다'로 읽힌다 — 범위인 척하지 않고,
+            #   왜 한 값인지(honest_disclosure)를 서술문에도 그대로 싣는다. 화면만 고치고
+            #   문장이 계속 "150~150%"라고 말하면 같은 오독이 남는다.
+            if far_range.get("is_collapsed"):
+                parts.append(
+                    far_range.get("honest_disclosure")
+                    # ★`or` 뒤는 **도달 불가 방어**다 — _potential_range 는 붕괴 시 항상
+                    #   honest_disclosure 를 채운다. 그래서 이 문자열의 변이는 죽지 않는다
+                    #   (설명된 생존). 남기는 이유: 외부에서 만든 far_range 가 들어와도
+                    #   서술문이 값을 통째로 빠뜨리지 않게 하기 위함.
+                    or (
+                        f"가능성 상/중 경로 기준 예상 용적률 상한은 약 {far_range['max_pct']:.0f}% "
+                        "한 값으로만 산출됐습니다(범위 미산출)."
+                    )
+                )
+            else:
+                parts.append(
+                    f"가능성 상/중 경로 기준 예상 용적률 상한은 약 {far_range['min_pct']:.0f}~{far_range['max_pct']:.0f}%입니다."
+                )
         parts.append(
             f"가장 유력한 경로는 '{top['path']}'(목표 {top['target_zone']}, 가능성 {top['feasibility']})입니다."
         )

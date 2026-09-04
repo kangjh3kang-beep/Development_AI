@@ -42,9 +42,22 @@ class Settings(BaseSettings):
     deliberation_engine_read_timeout_s: float = 30.0       # 순수 결정론 입력(동기)
     deliberation_engine_async_read_timeout_s: float = 60.0  # 네트워크 의존 입력
     deliberation_async_result_timeout_s: float = 900.0      # 비동기 task 결과 대기 상한(초과→async_timeout degrade)
-    deliberation_shadow_enabled: bool = False               # 중심엔진 수렴 shadow 비교 적재(기본 off·운영 무중단)
+    # 중심엔진 수렴(shadow) 관측 — 도메인 분석(design_audit·building_compliance 등)이 플랫폼 자체 판정과
+    # 엔진 판정을 best-effort로 대조해 divergence를 `shadow_comparison`에 적재한다(관측 전용·판정값 무변경).
+    # ★기본 False가 정본: 코드 기본값은 끄고, 운영에서 배포 env(DELIBERATION_SHADOW_ENABLED=true)로만 켠다
+    #   (관측이 도메인 응답을 지연/파괴하지 않도록 운영 판단 하에 활성화). shadow OFF/엔진 미설정/매핑 부적합/
+    #   임의 실패는 모두 무전파(None) — 도메인 흐름 무중단. 켜는 절차·승격 게이트: docs/DEPLOY_RUNBOOK.md +
+    #   docs/CENTRAL_ENGINE_STAGE3_PROMOTION.md(§1 운영 활성화, §2 승격 게이트).
+    deliberation_shadow_enabled: bool = False
     deliberation_shadow_engine_timeout_s: float = 5.0       # shadow 엔진 호출 상한(관측이 도메인 응답 지연 금지)
     deliberation_monitor_timeout_s: float = 20.0            # baseline-staleness 법제처 모니터 호출 상한(hang→degrade)
+    # 로드맵③(설계심사 감사 표면화) — 위 deliberation_shadow_enabled 와 별개·독립(OR) 게이트.
+    # True 면 design_audit 응답에 엔진 판정(deliberation_result)이 additive 동봉된다(대기 호출 —
+    # bounded by deliberation_shadow_engine_timeout_s ≤5s·실패/타임아웃=None 무중단).
+    # ★기본 True 승격(2026-07-17 사용자 운영 결정) — 감사 경로 한정이며 전역 shadow 정책
+    # (deliberation_shadow_enabled=False 정본·DEPLOY_RUNBOOK)은 불변. 끄려면 배포 env
+    # DELIBERATION_SURFACE_IN_AUDIT=false.
+    deliberation_surface_in_audit: bool = True
 
     @field_validator("debug", mode="before")
     @classmethod
@@ -126,6 +139,35 @@ class Settings(BaseSettings):
     # ── Redis ──
     redis_url: str = "redis://localhost:6379/0"
     redis_cache_url: str = "redis://localhost:6379/1"
+
+    # ── 이메일 발송(회원 시스템: 비밀번호 재설정·이메일 인증·탈퇴 안내) ──
+    # console(기본): 실발송 없이 서버 로그 출력(무날조 — dev 모드 명시).
+    # smtp: 표준 SMTP(TLS). sendgrid: SendGrid v3 API. 키는 서버 .env(deploy.sh 재배포로 반영).
+    email_provider: str = Field(
+        default="console", description="이메일 발송 방식: console | smtp | sendgrid"
+    )
+    email_from: str = Field(
+        default="사통팔땅 <no-reply@4t8t.net>", description="발신자 표기"
+    )
+    email_smtp_host: str = ""
+    email_smtp_port: int = 587
+    email_smtp_user: str = ""
+    email_smtp_password: str = ""
+    email_sendgrid_api_key: str = Field(
+        default="", validation_alias=AliasChoices("email_sendgrid_api_key", "SENDGRID_API_KEY")
+    )
+    # 재설정/인증 링크 생성용 프론트 베이스 URL(HTTPS)
+    frontend_base_url: str = Field(
+        default="https://4t8t.net", description="이메일 링크(재설정·인증) 생성 베이스 URL"
+    )
+
+    # ── 코인 충전 결제(마이페이지) ──
+    # ★기본 false(fail-closed): 사용자 self-confirm(시뮬레이션 결제)은 개발/데모 전용.
+    #   프로덕션 지급 경로는 관리자 수동 확정(super_admin) 또는 후속 PG(토스) 웹훅만.
+    billing_simulated_payments: bool = Field(
+        default=False,
+        description="충전 주문 self-confirm(시뮬레이션) 허용 — dev/demo 전용, 프로덕션 금지",
+    )
 
     # ── GraphQL(Hasura) ──
     # ★FastAPI 앱은 Hasura를 직접 소비하지 않는다(전 코드 grep 소비처 0). Hasura는 별도

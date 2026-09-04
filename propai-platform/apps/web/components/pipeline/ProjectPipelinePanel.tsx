@@ -10,12 +10,14 @@ import { currentUserId } from "@/lib/projectSync";
 import { useProjectStore as useProjectListStore } from "@/store/useProjectStore";
 import { useUiReset } from "@/store/useUiReset";
 import { apiClient } from "@/lib/api-client";
+import { idempotencyHeaders } from "@/lib/idempotency";
 import { parcelDataToRows, shouldSendParcels } from "@/lib/parcel-rows";
 import { GlobalAddressSearch, type AddressEntry } from "@/components/common/GlobalAddressSearch";
 import { PipelineResultDetail } from "./PipelineResultDetail";
 import { ProjectCompareView } from "./ProjectCompareView";
 import { SiteAnalysisDetail } from "./SiteAnalysisDetail";
 import { writePreCheckHandoff } from "@/components/precheck/handoff";
+import { preferredEntryAddress } from "@/lib/parcel-rows";
 
 // 대시보드(비프로젝트) 체험 모드에서 노출/실행 가능한 단계 — 부지분석 + 약식 수지만.
 // 나머지(설계·공사비·세무·ESG·보고서)는 잠금 → 프로젝트 생성 시 제공(구독 전환 관문).
@@ -323,7 +325,7 @@ function statusIcon(status: PipelineStageStatus["status"]) {
   switch (status) {
     case "completed":
       return (
-        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-400 text-xs font-bold">
+        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[var(--status-success)]/20 text-[var(--status-success)] text-xs font-bold">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
         </span>
       );
@@ -637,6 +639,11 @@ export function ProjectPipelinePanel({
           totalRevenueWon: (feas.total_revenue_won as number) ?? null,
           profitRatePct: (feas.profit_rate_pct as number) ?? null,
           grade: (feas.grade as string) ?? null,
+              // ★정밀도는 **모른다고 명시**한다 — 이 산출 엔진은 정밀도 등급을 계산하지 않는다
+          //   (백엔드 실측: 해당 서비스에 precision 산출 0건). 생략하면 merge 패치라
+          //   직전 개략수지의 `"E"` 가 남아 배지 `개략(추정) — 설계 미반영` 이 이 결과 위에
+          //   **거짓으로** 뜬다. `null` 이면 화면은 "정밀도 미표기"로 정직하게 남는다.
+          precision: null,
         });
         markStageComplete("feasibility");
       }
@@ -673,7 +680,7 @@ export function ProjectPipelinePanel({
         address: addr,
         completedAt: new Date().toISOString(),
         result,
-        addresses: allAddresses.length > 0 ? allAddresses.map((a) => a.fullAddress) : [addr],
+        addresses: allAddresses.length > 0 ? allAddresses.map((a) => preferredEntryAddress(a)) : [addr],
         // ★대시보드(quick)는 projectId 태깅 금지 — store에 묻은 stale projectId로 태깅돼
         //  무태깅 필터에서 본인 이력이 전부 숨겨지던 근본원인 차단. 프로젝트 모드만 태깅.
         projectId: projectMode ? (projectId || undefined) : undefined,
@@ -745,7 +752,7 @@ export function ProjectPipelinePanel({
     setAllAddresses(entries);
     if (entries.length > 0) {
       // 대표 주소 설정 (첫 번째 필지)
-      setAddress(entries[0]!.fullAddress);
+      setAddress(preferredEntryAddress(entries[0]!));
     } else {
       setAddress("");
     }
@@ -800,6 +807,8 @@ export function ProjectPipelinePanel({
 
       // 백엔드 진행 단계 호출 (부지분석만)
       const result = await apiClient.postV2<PipelineRunResponse>("/pipeline/run", {
+        // ★단계마다 과금하므로 재실행이면 여러 건이 한꺼번에 이중청구된다.
+        headers: idempotencyHeaders("pipeline.run", { address: address.trim(), projectId }),
         body: {
           address: address.trim(),
           project_id: projectId,
@@ -868,6 +877,8 @@ export function ProjectPipelinePanel({
       const parcelRowsForFull = parcelDataToRows(siteAnalysis?.parcels);
 
       const result = await apiClient.postV2<PipelineRunResponse>("/pipeline/run", {
+        // ★단계마다 과금하므로 재실행이면 여러 건이 한꺼번에 이중청구된다.
+        headers: idempotencyHeaders("pipeline.run", { address: address.trim(), projectId }),
         body: {
           address: address.trim(),
           project_id: projectId,
@@ -1085,7 +1096,7 @@ export function ProjectPipelinePanel({
           </svg>
           진행 단계으로 돌아가기
         </button>
-        <PipelineResultDetail result={lastResult} onRerun={handleRerun} addresses={allAddresses.map((a) => a.fullAddress)} />
+        <PipelineResultDetail result={lastResult} onRerun={handleRerun} addresses={allAddresses.map((a) => preferredEntryAddress(a))} />
       </div>
     );
   }
@@ -1114,7 +1125,7 @@ export function ProjectPipelinePanel({
 
   /* ── Pipeline View (default) ── */
   return (
-    <section className="rounded-2xl sm:rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] shadow-[var(--shadow-xl)] overflow-hidden transition-all relative">
+    <section className="rounded-2xl sm:rounded-[var(--radius-lg)] border border-[var(--line-strong)] bg-[var(--surface-soft)] shadow-[var(--shadow-xl)] overflow-hidden transition-all relative">
       {/* 외부 CDN 텍스처 제거 — 로컬 CSS 도트 패턴으로 대체(외부 네트워크 의존 0, currentColor라 다크모드 자동 대응) */}
       <div
         className="absolute inset-0 opacity-[0.02] pointer-events-none"
@@ -1177,7 +1188,7 @@ export function ProjectPipelinePanel({
                 <p>선택된 주소: <span className="text-[var(--accent-strong)]">{address}</span></p>
               ) : (
                 // 대량 필지: 전체 주소를 콤마로 나열하지 않고 대표 + "외 N필지"로 간결 표기(가독성).
-                <p>선택된 필지: <span className="text-[var(--accent-strong)]">{allAddresses.length}개</span> — {(allAddresses[0]?.jibunAddress || allAddresses[0]?.fullAddress || address)}{allAddresses.length > 1 ? ` 외 ${allAddresses.length - 1}필지` : ""}</p>
+                <p>선택된 필지: <span className="text-[var(--accent-strong)]">{allAddresses.length}개</span> — {(allAddresses[0] ? preferredEntryAddress(allAddresses[0]) : address)}{allAddresses.length > 1 ? ` 외 ${allAddresses.length - 1}필지` : ""}</p>
               )}
             </div>
           )}
@@ -1371,7 +1382,7 @@ export function ProjectPipelinePanel({
                 </span>
 
                 {/* Status */}
-                <span className={`text-xs font-medium ${stage.status === "completed" ? "text-emerald-400" :
+                <span className={`text-xs font-medium ${stage.status === "completed" ? "text-[var(--status-success)]" :
                     stage.status === "running" ? "text-[var(--accent-strong)]" :
                       stage.status === "failed" ? "text-red-400" :
                         "text-[var(--text-hint)]"
@@ -1404,7 +1415,7 @@ export function ProjectPipelinePanel({
                     <p className="text-xs text-red-400 mb-2">{stage.error}</p>
                   )}
                   {stage.stage === "site_analysis" ? (
-                    <SiteAnalysisDetail data={stage.data} parcels={allAddresses.map((a) => a.fullAddress)} />
+                    <SiteAnalysisDetail data={stage.data} parcels={allAddresses.map((a) => preferredEntryAddress(a))} />
                   ) : (
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                       {Object.entries(stage.data)
@@ -1622,7 +1633,7 @@ export function ProjectPipelinePanel({
 
                     {/* Profit rate badge */}
                     {typeof profitRate === "number" && (
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shrink-0">
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[var(--status-success)]/10 text-[var(--status-success)] border border-[var(--status-success)]/20 shrink-0">
                         {profitRate.toFixed(1)}%
                       </span>
                     )}

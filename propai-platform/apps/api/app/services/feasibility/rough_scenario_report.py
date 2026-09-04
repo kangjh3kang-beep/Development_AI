@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import re
 from datetime import datetime
 from typing import Any
 
@@ -47,6 +48,7 @@ from app.services.report.render.model import (
     Series,
     fmt_value,
 )
+from app.services.report.render.publish_gate import check_publishable
 from app.services.report.render.tokens import SIGNAL
 from app.services.senior_agents.consultation_hook import attach_senior_consultation_multi
 
@@ -400,8 +402,102 @@ def _cashflow_blocks(scenario: dict[str, Any]) -> list[Any]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# 값–라벨 정합 (R2)
+# ─────────────────────────────────────────────────────────────────────────────
+def _margin_is_met(scenario: dict[str, Any]) -> bool | None:
+    """목표 마진이 **실제로 달성됐는가** — 실제 분양수입이 목표매출에 닿았는지로만 판정한다.
+
+    ★`developer_profit_won`(총사업비 × 마진율) 자체로는 달성 여부를 알 수 없다 —
+      그 값은 매출을 보지 않으므로 **언제나 양수**다. 그래서 그 숫자만 크게 보여 주면
+      순이익이 마이너스인 사업도 성과처럼 읽힌다.
+
+    판정 근거가 없으면 `None` — 모르는 것을 "충족"으로도 "미달"로도 말하지 않는다(무목업).
+    """
+    summ = scenario.get("summary") or {}
+    margin = scenario.get("margin") or {}
+    rev = summ.get("total_revenue_won")
+    target = margin.get("target_revenue_won")
+    if not isinstance(rev, (int, float)) or not isinstance(target, (int, float)):
+        return None
+    return rev >= target
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # ④ 정본 ReportModel 조립(전문 사업성 IM 목차)
 # ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# 정밀도 고지 (R1-b) — 개략수지 페이로드의 등급을 보고서까지 나른다
+# ─────────────────────────────────────────────────────────────────────────────
+def _precision_block(scenario: dict[str, Any]) -> NarrativeBlock | None:
+    """개략수지의 정밀도 등급을 **읽는 사람의 말**로 옮긴 고지 블록(없으면 None).
+
+    ★값을 지우지 않는다 — 등급을 붙인다. 이 캠페인의 처방이 "할루시네이션 제거"가 아니라
+      "정밀도 위장 제거"인 이유다. 숫자는 정직하게 계산됐고, 문제는 그 숫자가 **무엇으로
+      만들어졌는지** 말하지 않은 것이었다.
+
+    ★등급이 `None`(미표기)이어도 **침묵하지 않는다** — "판정할 수 없다"는 것도 정보다.
+      침묵하면 읽는 사람은 확정치로 읽는다.
+    """
+    label = scenario.get("precision_label")
+    basis = str(scenario.get("precision_basis") or "").strip()
+    if not label:
+        return None
+    grade = scenario.get("precision")
+    if grade == "E":
+        head = (
+            "이 보고서의 수치는 **개략(추정)** 입니다 — 설계 산출물이 아직 없어 "
+            "부지 정보만으로 추정한 값이며, 확정 판단의 근거가 될 수 없습니다."
+        )
+    elif grade is None:
+        head = (
+            "이 보고서의 수치는 **정밀도를 판정할 수 없습니다** — 입력 중 등급을 확인하지 "
+            "못한 것이 있습니다. 확정치로 읽지 마십시오."
+        )
+    else:
+        head = f"이 보고서의 수치 정밀도: **{label}**."
+    paragraphs = [head]
+    if basis:
+        paragraphs.append(f"근거: {basis}")
+    # 입력별 등급이 있으면 무엇이 낮은지 그대로 보여 준다(합성 결과만으로는 알 수 없다).
+    inputs = scenario.get("precision_inputs")
+    if isinstance(inputs, dict) and inputs:
+        _ko = {"gfa": "연면적", "land_cost": "토지비", "sale_price": "분양단가"}
+        _lab = {"E": "개략(추정)", "D": "설계기반", "V": "확인됨", None: "미표기"}
+        parts = [
+            f"{_ko.get(k, k)} {_lab.get(v, str(v))}"
+            for k, v in inputs.items()
+        ]
+        if parts:
+            paragraphs.append("입력별 정밀도: " + " · ".join(parts))
+    return NarrativeBlock(title="정밀도 고지", paragraphs=paragraphs)
+
+
+def _merge_basis_note(basis: Any, note: Any) -> str | None:
+    """근거 + 사유를 **한 칸**으로 합친다. 마크다운 강조는 **인쇄본에서 걷어낸다**.
+
+    ★열을 늘리지 않는 이유: `DataTableBlock` 에 `col_widths` 가 없어 열이 하나 늘면
+      전 열이 균등 재분배되고, 실측으로 **금액 칸이 50.3pt → 31.8pt** 가 되어 금액이
+      세 줄로 쪼개졌다(독립 적대 리뷰 발견). 인쇄본을 고치려다 인쇄본을 깰 뻔했다.
+
+    ★`**미조회**` 의 별표를 걷는 이유: 응답 `reason` 은 화면(마크다운 렌더)을 겨냥해
+      쓰여 있는데, PDF 는 그것을 **별표째** 찍는다. 매체가 다르면 표기도 다르다.
+    """
+    parts = [str(x).strip() for x in (basis, note) if x]
+    if not parts:
+        # ★**도달 불가 방어**(변이 SURVIVED — 점수 부풀리기 방지를 위해 사유를 적는다).
+        #   원장은 **근거 없는 행을 아예 만들지 않는다**(`legacy_ledger._item` 이 `basis`
+        #   또는 `structural_basis` 중 하나를 항상 채우고, `coverage.basis_pct == 100%`
+        #   락이 그것을 보증한다). 소계 행은 이 함수를 타지 않고 `None` 을 직접 넣는다.
+        #   그래도 남겨 두는 이유: 이 함수가 다른 표에 재사용될 때 `""` 셀을 만들지 않기 위함.
+        return None
+    return _strip_md_emphasis(" · ".join(parts))
+
+
+def _strip_md_emphasis(text: str) -> str:
+    """`**강조**` → `강조`. 인쇄본 전용(화면은 마크다운을 실제로 렌더한다)."""
+    return re.sub(r"\*{1,3}(.+?)\*{1,3}", r"\1", text)
+
+
 def build_rough_scenario_report_model(
     scenario: dict[str, Any],
     *,
@@ -447,6 +543,16 @@ def build_rough_scenario_report_model(
     if grade:
         exec_blocks.append(GradeBadgeBlock(
             grade=_GRADE_TO_BADGE.get(grade.upper(), "normal"), label=f"사업성 등급 {grade}"))
+    # ★정밀도 고지 — **등급 배지 바로 다음**에 둔다(R1-b).
+    #
+    #   왜 여기인가: 이 보고서의 부제는 "은행/투자자 제출용" 이고, 첫 화면이 "사업성 등급 F" 다.
+    #   그 등급이 **설계 산출물 없이 대지면적×실효용적률로 만든 개략치**에서 나왔다는 사실이
+    #   같은 자리에 없으면, 읽는 사람은 확정 판정으로 받아들인다.
+    #   개략수지 페이로드는 이미 등급을 싣고 있었는데(#770) **보고서 경계에서 소실**됐다 —
+    #   고친 자리의 형제를 스윕하지 않으면 정직 표기 체계가 한 화면에서만 산다.
+    _prec_block = _precision_block(scenario)
+    if _prec_block is not None:
+        exec_blocks.append(_prec_block)
     tiles = _decision_tiles(summ)
     if tiles:
         exec_blocks.append(KPITileBlock(tiles=tiles))
@@ -515,10 +621,20 @@ def build_rough_scenario_report_model(
     feas_rows: list[tuple[str, Any]] = [
         (_FEAS_ROW_LABELS.get(k, k), v) for k, v in feas_content.items()
     ]
+    # ★값–라벨 정합(R2): `developer_profit_won` 은 `총사업비 × 마진율` 이라 **매출을 전혀
+    #   보지 않는다** — 구조상 언제나 양수다. 그것을 "개발이익"이라 부르면, 순이익이 마이너스인
+    #   사업의 보고서에서도 성과처럼 읽힌다.
+    #   ★이 저장소는 같은 개념을 다른 곳에서 *"개발이익 = 분양수입 − 총투입원가"* 로 정의한다
+    #   (`ai/feasibility_interpreter` 프롬프트). 한 저장소가 같은 이름을 두 뜻으로 쓰면
+    #   읽는 사람이 어느 쪽도 믿을 수 없다. 값은 지우지 않고 **이름을 목표로 바로잡는다.**
+    _margin_met = _margin_is_met(scenario)
     feas_rows += [
-        ("개발이익(마진, 원)", margin.get("developer_profit_won")),
+        ("목표 개발이익(총사업비 × 마진율, 원)", margin.get("developer_profit_won")),
         ("마진율(총사업비 대비, %)", margin.get("rate_pct")),
         ("목표매출(역산, 원)", margin.get("target_revenue_won")),
+        # 목표 옆에 **실제**를 둔다 — 종전엔 순이익이 다른 표에 있어 대조가 안 됐다.
+        ("실제 순이익(원)", summ.get("net_profit_won")),
+        ("마진 충족여부", "충족" if _margin_met else ("미달" if _margin_met is False else None)),
     ]
     feas_blocks: list[Any] = [KVTableBlock(rows=feas_rows)]
     if any(cost_bd.get(k) is not None for k in ("land_won", "construction_won", "finance_won", "other_won")):
@@ -532,6 +648,87 @@ def build_rough_scenario_report_model(
                 ["총사업비", summ.get("total_cost_won")],
             ],
             numeric_cols=[1], total_row=True, title="총사업비 구성"))
+
+    # ── ★간략 수지 원장(실무 양식) — 인쇄·제출본에도 싣는다(2026-08-26) ────────────
+    #   위 「총사업비 구성」은 **축별 합계 5줄**이다. 실무 수지표는 **행마다 「수량 × 단가 =
+    #   금액」과 근거**를 요구하고, 이 산출물의 본래 용도가 **인쇄·제출**이다.
+    #   원장이 화면에만 있고 PDF/DOCX/PPTX 에 없으면 **가장 필요한 자리에서 빠진다.**
+    #   ★값을 다시 계산하지 않는다 — 응답에 이미 실린 `legacy_ledger` 를 옮길 뿐이다.
+    ledger = scenario.get("legacy_ledger") or {}
+    # ★제원 — 원본 양식은 표 **위**에 사업 제원을 둔다. 인쇄본에서 특히 필요하다
+    #   (읽는 사람이 "어느 사업의 수지인가"를 먼저 확인한다).
+    _hdr = ledger.get("header") or []
+    if _hdr:
+        feas_blocks.append(KVTableBlock(rows=[
+            (f"{h['label']}({h['unit']})" if h.get("unit") else h["label"], h["value"])
+            for h in _hdr
+        ]))
+    ledger_rows: list[list[Any]] = []
+    for sec in ledger.get("sections") or []:
+        for g in sec.get("groups") or []:
+            for it in g.get("items") or []:
+                qty, price = it.get("qty"), it.get("unit_price")
+                # ★라벨은 괄호로 떼어 놓는다 — 단위 자리에 넣으면 숫자에 문장이 달라붙는다.
+                _lbl = f"({it['qty_label']}) " if it.get("qty_label") else ""
+                calc = (
+                    f"{_lbl}{qty:,.0f}{it.get('qty_unit') or ''} × {price:,.4g}"
+                    f"{(' ' + it['unit_price_unit']) if it.get('unit_price_unit') else ''}"
+                    if qty is not None and price is not None else None
+                )
+                ledger_rows.append([
+                    f"{sec.get('label')} · {g.get('label')}",
+                    it.get("label"),
+                    it.get("amount_won"),
+                    it.get("share_pct"),
+                    calc,
+                    # ★사유를 **「근거」 칸에 합친다 — 열을 늘리지 않는다.**
+                    #   `note` 는 「신뢰도 unavailable — …미조회…」 처럼 **그 행이 왜 공란인지**를
+                    #   말하는 유일한 자리이고, 화면(`LegacyLedgerTable.tsx`)은 렌더하는데
+                    #   인쇄본에는 없어서 **제출용 PDF 에서만 사유가 통째로 사라졌다.**
+                    #
+                    #   ★★**7번째 열로 넣었다가 되돌렸다**(독립 적대 리뷰가 잡았다).
+                    #     `DataTableBlock` 에는 `col_widths` 가 없어 열을 늘리면 폭이 **균등
+                    #     재분배**된다 — 실측: 금액 칸 50.3pt → **31.8pt** 로 좁아져
+                    #     `9,541,093,804` 가 **세 줄로 쪼개졌다**(표 높이 1022 → 1470pt).
+                    #     **인쇄본을 고치려던 변경이 인쇄본의 금액 열을 무너뜨렸다.**
+                    #     → 열 수를 유지하면 폭 회귀가 **원리적으로 불가능**하다.
+                    _merge_basis_note(it.get("basis"), it.get("note")),
+                ])
+            if g.get("subtotal_won") is not None:
+                ledger_rows.append([
+                    f"{sec.get('label')} · {g.get('label')}", "소계",
+                    g.get("subtotal_won"), g.get("share_pct"), None, None,
+                ])
+    if ledger_rows:
+        feas_blocks.append(DataTableBlock(
+            headers=["구분", "항목", "금액(원)", "구성비(%)", "산출내역(수량 × 단가)", "근거·비고"],
+            rows=ledger_rows, numeric_cols=[2, 3],
+            title="간략 수지 원장 (실무 양식 — 수량 × 단가 · 근거)"))
+        # ★검산 결과도 함께 — 표만 싣고 「이 합계가 맞는지」를 빼면 읽는 사람이 확인할 길이 없다.
+        checks = ledger.get("checks") or []
+        if checks:
+            feas_blocks.append(DataTableBlock(
+                headers=["검산 항목", "원장(원)", "엔진(원)", "차이(원)", "판정", "무엇을 보증하나"],
+                rows=[[c.get("label"), c.get("ledger_won"), c.get("engine_won"),
+                       c.get("diff_won"), c.get("verdict"), c.get("note")] for c in checks],
+                numeric_cols=[1, 2, 3],
+                title="합계 전파 점검 (엔진 값 자체의 정오는 보지 않음)"))
+        cov = ledger.get("coverage") or {}
+        if cov.get("items"):
+            # ★`NarrativeBlock` 이 정본이다 — 처음 쓴 `ParagraphBlock` 은 **존재하지 않는
+            #   클래스**였고, 모듈 import 는 성공해서 그 오류가 안 드러났다(함수 내부 NameError).
+            #   `claim_type="FACT"` — 이것은 해석이 아니라 **측정된 커버리지**다.
+            feas_blocks.append(NarrativeBlock(claim_type="FACT", paragraphs=[
+                f"원장 {cov['items']}행 중 수량·단가가 원리적으로 존재하는 "
+                f"{cov.get('qty_applicable_items')}행 기준 — 수량 {cov.get('qty_pct')}% · "
+                f"단가 {cov.get('unit_price_pct')}% · 근거 {cov.get('basis_pct')}%(전 행 기준).",
+                "산출 근거가 없는 항목은 0원이 아니라 공란으로 표기합니다(값을 지어내지 않음). "
+                "수량·단가가 공란인 행은 「비고」에 사유가 있습니다 — **미조회(잠정)** 와 "
+                "**조회했고 해당 없음(확정 0원)** 은 다릅니다. "
+                "이 원장은 산출 엔진을 참조만 하며, 위 「합계 전파 점검」은 원장이 엔진 값을 "
+                "옮기다 흘렸는지만 봅니다 — 엔진 값 자체의 정오는 보지 않습니다.",
+            ]))
+
     sections.append(Section(section_no=5, title="개략 사업수지 (20% 마진)", blocks=feas_blocks))
 
     # ── ⑥ 월별 현금흐름(DCF·NPV·IRR·회수기간) ──
@@ -601,13 +798,20 @@ def _model_to_json(
     ai_included: bool,
     ai_note: str,
 ) -> dict[str, Any]:
-    """정본 ReportModel + 원천 데이터 → 구조화 JSON 보고서(정직 플래그 포함)."""
+    """정본 ReportModel + 원천 데이터 → 구조화 JSON 보고서(정직 플래그 포함).
+
+    ★W1-C(R2) 게이트 스코프 결정: 이 경로는 render_report(바이너리 포맷 전용 hard-block)를
+    거치지 않는다 — JSON은 프리뷰/구조화 소비 채널로 간주해 **절대 차단하지 않는다**. 대신
+    check_publishable 을 직접 호출해 violations/warnings 를 "gate" 필드로 정직하게 동봉한다
+    (engine.py render_report 의 스코프 결정 문서 참조).
+    """
     opinion_label, opinion_reason = _investment_opinion(scenario, consultation)
     toc: list[str] = []
     if model.exec_summary is not None:
         toc.append(model.exec_summary.title)
     for s in model.sections:
         toc.append(f"{s.section_no}. {s.title}" if s.section_no else s.title)
+    gate = check_publishable(model)
     return {
         "meta": dataclasses.asdict(model.meta),
         "toc": toc,
@@ -618,8 +822,22 @@ def _model_to_json(
         "senior_consultation": consultation,
         "summary": scenario.get("summary"),
         "degraded_notes": scenario.get("degraded_notes") or [],
+        # ★정밀도 등급 — 구조화 소비처(프론트·다른 보고서)도 등급 없이 숫자만 받지 않게 한다.
+        #   종전엔 이 경계에서 등급이 소실돼, 같은 수치가 화면에선 "개략" 보고서에선 확정으로 읽혔다.
+        "precision": {
+            "grade": scenario.get("precision"),
+            "label": scenario.get("precision_label"),
+            "basis": scenario.get("precision_basis"),
+            "inputs": scenario.get("precision_inputs"),
+        },
         # ★정직 플래그: AI 시니어 서술 포함 여부·사유를 숨기지 않는다.
         "honesty": {"use_llm": use_llm, "ai_included": ai_included, "ai_note": ai_note},
+        # ★W1-C(R2): JSON은 게이트를 절대 차단하지 않되(위 docstring), 발견된 위반/경고는
+        #   정보성으로 그대로 노출한다(호출부가 UI 경고 배지 등에 활용 가능).
+        "gate": {
+            "violations": [{"code": v.code, "message": v.message} for v in gate.violations],
+            "warnings": [{"code": v.code, "message": v.message} for v in gate.warnings],
+        },
     }
 
 

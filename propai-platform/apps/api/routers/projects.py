@@ -6,7 +6,7 @@ CRUD + 상태 전환 + 소프트 삭제.
 from datetime import UTC, datetime  # noqa: F401 (UTC는 하위호환 re-export)
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from packages.schemas.enums import ProjectStatus
 from packages.schemas.models import (
@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import idempotency
 from apps.api.auth.jwt_handler import CurrentUser, get_current_user
 from apps.api.auth.rbac import RequirePermission  # noqa: F401 (다른 자원에서 사용 가능)
 from apps.api.database.models.project import Project
@@ -31,6 +32,49 @@ from apps.api.services.audit_service import record_audit
 UTC = UTC
 
 router = APIRouter()
+
+# 멱등 저장소의 엔드포인트 네임스페이스 — 키 공간을 다른 엔드포인트와 섞지 않는다.
+_EP_CREATE_PROJECT = "POST /projects"
+
+
+def create_request_fingerprint(body: ProjectCreateRequest) -> dict[str, str]:
+    """생성 요청의 **논리 지문** — 같은 프로젝트의 재전송이면 같아야 한다.
+
+    ★왜 주소만 보는가(순수 함수로 꺼내 둔 이유):
+      전체 본문을 지문에 넣으면, **나중에 도착한 면적이 실린 재전송**이 "다른 요청"으로 판정돼
+      422 가 된다. 그 재전송은 실재한다 — `syncFromBackend` 의 고아 마이그레이션은 로컬 레코드의
+      `area` 문자열에서 면적을 만들고, 최초 생성은 `effectiveLandAreaSqm` 을 쓴다(값이 갈린다).
+      같은 프로젝트를 다시 보낸 것인데 거부하면, 그 레코드는 **영원히 서버에 도달하지 못한다.**
+
+      이름도 보지 않는다 — 고아 마이그레이션은 `name || address` 로 이름을 만들기 때문에
+      최초 생성의 이름과 갈릴 수 있다.
+
+      키 오사용 방어는 남는다: **키가 클라이언트 생성 고유 id** 라, 같은 키에 다른 주소가 오면
+      그것은 진짜로 다른 프로젝트다.
+
+    ★이 판단을 함수로 꺼낸 이유: 핸들러 안 한 줄로 두면 어떤 테스트도 이것을 직접 태우지 못한다.
+    """
+    return {"address": body.address or ""}
+
+
+def is_idempotency_conflict(look) -> bool:
+    """같은 키인데 다른 요청인가 — 422 로 거부할 상황."""
+    return look.state == idempotency.STATE_CONFLICT
+
+
+def resolve_idempotent_replay(look):
+    """★재생 **판단** — 저장된 응답이 있으면 그것을 돌려주고(재실행 0), 없으면 `None`(정상 실행).
+
+    왜 함수로 꺼내는가: 이 판단을 핸들러 안 `if` 두 줄로 두었더니 **변이가 살아남았다** —
+    `if replay is not None:` 을 `if False:` 로 바꿔도 테스트가 전부 초록이었다(소스 검사가
+    `.to_response()` 라는 **문자열만** 봤기 때문). 중복 생성을 막는 바로 그 분기가 무잠금이었다.
+
+    본문이 없는 저장(대형이라 미저장)은 `None` 을 돌려 **정상 실행으로 떨어뜨린다** —
+    빈 응답을 재생하면 클라이언트가 프로젝트 id 를 못 받는다.
+    """
+    if look.state != idempotency.STATE_REPLAY or look.stored is None:
+        return None
+    return look.stored.to_response()
 
 # 유효한 상태 전환 맵
 _VALID_TRANSITIONS: dict[str, list[str]] = {
@@ -90,19 +134,32 @@ async def _get_project_or_404(
 
 @router.get("/{project_id}/operations/status")
 async def get_operations_status(project_id: UUID) -> dict:
-    """프로젝트 운영 현황."""
+    """프로젝트 운영 현황 — **수집원이 아직 없다는 사실을 정직하게 알린다.**
+
+    ★2026-08-16 — 종전 구현은 `project_id` 를 **에코만 하고 DB 조회 0** 인 채
+      입주율 92.5·유지보수 87·에너지 "1+"·만족도 4.2·IoT 센서 45/48 을 **리터럴로** 돌려줬다.
+      `current_user`·`db` 의존성조차 없었다.
+
+    ★대조 실험(프로덕션 실측): 성격이 전혀 다른 두 프로젝트가 **바이트 단위로 같은 값**을 냈다.
+        458d7c86…(역삼동 736 · 강남 상업지)   → 입주율 92.5 · 센서 45/48
+        49b59c62…(산 1-1 외 1필지 · 147,074㎡ 임야) → 입주율 92.5 · 센서 45/48
+      개발되지 않은 임야에 "입주율 92.5%" 와 "IoT 센서 45개 온라인" 이 붙는다.
+
+    ★그런데 이 화면은 **지금 뜨지 않는다**(프론트가 `kpis` 를 배열로 가정 →
+      `TypeError: kpis.map is not a function`). 즉 **고장이 거짓말을 가리고 있었다** —
+      크래시만 고치면 그때부터 거짓 지표가 사용자에게 보인다. 그래서 **함께** 고친다.
+
+    센서·입주·만족도의 **수집원이 아직 연동되지 않았다**. 없는 것을 지어내지 않고
+    `available=False` + 사유로 알린다. 배열 3종은 프론트 계약에 맞춘 **빈 배열**이다
+    (형태 불일치로 인한 크래시를 구조적으로 없앤다).
+    """
     return {
         "project_id": str(project_id),
-        "kpis": {
-            "occupancy_rate_pct": 92.5,
-            "maintenance_score": 87,
-            "energy_efficiency_grade": "1+",
-            "tenant_satisfaction": 4.2,
-        },
-        "active_maintenance_requests": 3,
-        "upcoming_inspections": 2,
-        "iot_sensors_online": 45,
-        "iot_sensors_total": 48,
+        "available": False,
+        "reason": "운영 지표(입주·유지보수·센서) 수집원이 아직 연동되지 않았습니다",
+        "kpis": [],
+        "maintenance": [],
+        "sensors": [],
     }
 
 
@@ -149,8 +206,52 @@ async def create_project(
     request: Request,
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> ProjectResponse:
-    """프로젝트를 생성한다."""
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+):
+    """프로젝트를 생성한다 — `Idempotency-Key` 로 재전송 안전.
+
+    ## 왜 필요한가(실물)
+
+    프로덕션에 이름·주소·필지집합이 **완전히 같은 중복 프로젝트가 2쌍** 있다. 그리고 클라이언트에는
+    같은 프로젝트를 두 번 POST 할 수 있는 경로가 실측으로 둘 있었다:
+
+    - `#815` — 생성 `await` 창에 동기화가 끼어들어 "고아"로 오판(같은 탭 안에서만 막았다)
+    - `#822` — 목록이 20건에서 잘려 **이미 있는 프로젝트를 "백엔드에 없다"고 오판**
+
+    둘 다 **클라이언트 쪽 처방**이라 다른 탭·다른 기기·재설치에는 닿지 않는다.
+    서버가 같은 키를 기억하면 그 경로가 **전부** 닫힌다.
+
+    ## 계약
+
+    같은 `(테넌트·엔드포인트·키)` + 같은 요청지문이면 **처음 응답을 그대로 재생**한다(재실행 0).
+    같은 키인데 지문이 다르면 422(키 오사용). 키가 없으면 종전과 **완전히 동일**하게 동작한다.
+
+    ★요청지문은 **주소만** 본다. 전체 본문을 지문에 넣으면, 나중에 도착한 면적이 실린
+      재전송(`syncFromBackend` 의 고아 마이그레이션)이 **다른 요청**으로 판정돼 422 가 된다 —
+      같은 프로젝트를 재전송한 것인데 거부하게 된다. 그 경로는 실제로 본문이 다르다(실측:
+      최초 생성은 `effectiveLandAreaSqm`, 재전송은 로컬 레코드의 `area` 문자열).
+    """
+    tenant_id = str(current_user.tenant_id) if current_user.tenant_id else None
+    key = idempotency.normalize_key(idempotency_key)
+    request_hash = idempotency.compute_request_hash(create_request_fingerprint(body))
+
+    if key:
+        look = await idempotency.lookup(
+            db=db,
+            key=key,
+            tenant_id=tenant_id,
+            endpoint=_EP_CREATE_PROJECT,
+            request_hash=request_hash,
+        )
+        if is_idempotency_conflict(look):
+            raise HTTPException(
+                status_code=422,
+                detail="같은 Idempotency-Key 가 다른 요청에 재사용되었습니다.",
+            )
+        replay = resolve_idempotent_replay(look)
+        if replay is not None:
+            return replay  # 처음 응답 그대로 재생 — 두 번째 프로젝트를 만들지 않는다
+
     project = Project(
         tenant_id=current_user.tenant_id,
         name=body.name,
@@ -176,7 +277,23 @@ async def create_project(
     await db.commit()
     await db.refresh(project)
     PROJECT_CREATED.inc()
-    return _to_response(project)
+
+    response = _to_response(project)
+    if key:
+        # 성공 응답을 키로 기억한다 — 다음 재전송이 이 바이트를 그대로 재생한다.
+        # ★실패는 저장하지 않는다: 실패한 생성은 **다시 시도돼야** 한다.
+        await idempotency.save(
+            db=db,
+            key=key,
+            tenant_id=tenant_id,
+            endpoint=_EP_CREATE_PROJECT,
+            request_hash=request_hash,
+            response_status=status.HTTP_201_CREATED,
+            body=response.model_dump_json().encode("utf-8"),
+            media_type="application/json",
+            run_id=str(project.id),
+        )
+    return response
 
 
 @router.get("/{project_id}", response_model=ProjectResponse)

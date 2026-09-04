@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Card, CardContent, Input } from "@propai/ui";
 import { useFeasibilityV2Store, type FeasibilityInput } from "@/store/use-feasibility-v2-store";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { siteDerivedFeasibilityFields } from "@/lib/feasibility-seed";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { motion } from "framer-motion";
 import { NumberInput as CommaInput } from "@/components/common/NumberInput";
@@ -67,7 +68,7 @@ function NumberInput({
 }
 
 export function ModuleInputForm() {
-  const { input, setInput, calculate, isCalculating, selectedModule, commitVersion } =
+  const { input, setInput, calculate, isCalculating, selectedModule, commitVersion, withSenior, setWithSenior } =
     useFeasibilityV2Store();
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
   const designData = useProjectContextStore((s) => s.designData);
@@ -93,14 +94,14 @@ export function ModuleInputForm() {
     const put = (k: keyof FeasibilityInput, v: number | string, cond: boolean) => {
       if (cond && !editedFields.has(k)) (patch as Record<string, unknown>)[k] = v;
     };
-    const land = effectiveLandAreaSqm(siteAnalysis) ?? 0;
+    // ★공용 헬퍼 경유(2026-08-26) — 같은 규칙을 세 곳이 각자 만들다 오케스트레이션 경로가 빠졌다.
+    const seed = siteDerivedFeasibilityFields(siteAnalysis);
     const gfa = seededGfa();
-    const officialP = siteAnalysis?.officialPrices?.[0]?.pricePerSqm ?? 0;
-    const sido = siteAnalysis?.address ? siteAnalysis.address.split(" ")[0] : "";
-    put("total_land_area_sqm", land, land > 0);
+    put("total_land_area_sqm", seed.totalLandAreaSqm ?? 0, seed.totalLandAreaSqm != null);
     put("total_gfa_sqm", gfa, gfa > 0);
-    put("official_price_per_sqm", officialP, officialP > 0);
-    put("sido_name", sido, !!sido);
+    put("official_price_per_sqm", seed.officialPricePerSqm ?? 0, seed.officialPricePerSqm != null);
+    put("sido_name", seed.sidoName ?? "", seed.sidoName != null);
+    put("sigungu_name", seed.sigunguName ?? "", seed.sigunguName != null);
     if (Object.keys(patch).length > 0) setInput(patch);
     // editedFields는 의도적으로 의존성에서 제외(최신값을 클로저로 참조, 자동시드 무한루프 방지).
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -125,12 +126,12 @@ export function ModuleInputForm() {
   const loadFromSiteAnalysis = useCallback(() => {
     if (!siteAnalysis) return;
     const patch: Partial<FeasibilityInput> = {};
-    const land = effectiveLandAreaSqm(siteAnalysis);
-    if (land) patch.total_land_area_sqm = land;
-    if (siteAnalysis.address) patch.sido_name = siteAnalysis.address.split(" ")[0] || "";
-    if (siteAnalysis.officialPrices?.[0]?.pricePerSqm) {
-      patch.official_price_per_sqm = siteAnalysis.officialPrices[0].pricePerSqm;
-    }
+    // ★자동시드와 **같은 산출처**를 쓴다 — 종전엔 같은 규칙이 이 파일 안에서만 두 번 복제돼 있었다.
+    const seed = siteDerivedFeasibilityFields(siteAnalysis);
+    if (seed.totalLandAreaSqm != null) patch.total_land_area_sqm = seed.totalLandAreaSqm;
+    if (seed.sidoName != null) patch.sido_name = seed.sidoName;
+    if (seed.sigunguName != null) patch.sigungu_name = seed.sigunguName;
+    if (seed.officialPricePerSqm != null) patch.official_price_per_sqm = seed.officialPricePerSqm;
     setInput(patch);
   }, [siteAnalysis, setInput]);
 
@@ -175,7 +176,18 @@ export function ModuleInputForm() {
           <h3 className="text-lg font-semibold text-[var(--text-primary)]">
             {selectedModule} 입력 항목
           </h3>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {/* ★P4②: 시니어 회계 자문(K-IFRS) opt-in — LLM 비용 발생이라 기본 off(과금 정책). */}
+            <label className="flex cursor-pointer items-center gap-1.5 text-[11px] font-semibold text-[var(--text-secondary)]" title="계산 시 시니어 회계사(K-IFRS·세무·리스크) 검토 의견을 함께 산출합니다 — AI 비용이 발생합니다">
+              <input
+                type="checkbox"
+                checked={withSenior}
+                disabled={isCalculating}
+                onChange={(e) => setWithSenior(e.target.checked)}
+                className="h-3.5 w-3.5 accent-[var(--accent-strong)]"
+              />
+              회계 자문(K-IFRS)
+            </label>
             {siteAnalysis?.address && (
               <Button variant={"outline" as any} size="sm" onClick={loadFromSiteAnalysis} className="text-xs">
                 부지분석 데이터 반영
@@ -212,7 +224,7 @@ export function ModuleInputForm() {
             <select
               value={input.land_category ?? "land"}
               onChange={(e) => setInput({ land_category: e.target.value })}
-              className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-blue-400 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+              className="rounded-xl border border-[var(--line-strong)] bg-[var(--surface-secondary)] px-3 py-2.5 text-sm text-[var(--text-primary)] outline-none transition focus:border-[var(--accent-strong)]"
             >
               {LAND_CATEGORIES.map((c) => (
                 <option key={c.value} value={c.value}>{c.label}</option>
@@ -225,7 +237,7 @@ export function ModuleInputForm() {
             <select
               value={input.building_type ?? "apartment"}
               onChange={(e) => setInput({ building_type: e.target.value })}
-              className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-blue-400 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+              className="rounded-xl border border-[var(--line-strong)] bg-[var(--surface-secondary)] px-3 py-2.5 text-sm text-[var(--text-primary)] outline-none transition focus:border-[var(--accent-strong)]"
             >
               {BUILDING_TYPES.map((t) => (
                 <option key={t.value} value={t.value}>{t.label}</option>

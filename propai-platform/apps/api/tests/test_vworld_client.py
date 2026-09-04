@@ -81,6 +81,14 @@ class TestClientConfig:
     def test_base_url(self):
         assert VWorldClient.base_url == "https://api.vworld.kr"
 
+    def test_snapshot_enabled_on(self):
+        # W2-1: 스파이크에서 BaseAPIClient 경유가 확인된 실사용 커넥터 — SourceSnapshot ON.
+        assert VWorldClient.snapshot_enabled is True
+
+    def test_snapshot_source_meta(self):
+        assert VWorldClient.source_name
+        assert VWorldClient.authority_grade == "OFFICIAL"
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])

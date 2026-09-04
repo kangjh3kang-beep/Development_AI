@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import logging
 
+from app.tasks._async_batch import run_async_batch
+
 logger = logging.getLogger(__name__)
 
 
@@ -49,19 +51,11 @@ def run_learning() -> dict:
     """L3 자가학습 주간 배치. Beat 일요일 04:00 호출.
 
     반환: {"cycle": {...}, "prompt_candidates": {...}}. 동기 진입점(Celery 워커)에서
-    asyncio.run 으로 구동. best-effort: 어떤 예외도 워커를 죽이지 않는다.
+    `run_async_batch` 로 구동(루프 종료 전 커넥션 정리). best-effort: 어떤 예외도 워커를 죽이지 않는다.
     """
-    import asyncio
 
     try:
-        result = asyncio.run(_learn_async())
-    except RuntimeError:
-        # 이미 이벤트 루프가 도는 환경 — 새 루프로 격리(flush/analyze/heal 선례 동일).
-        loop = asyncio.new_event_loop()
-        try:
-            result = loop.run_until_complete(_learn_async())
-        finally:
-            loop.close()
+        result = run_async_batch(lambda: _learn_async())
     except Exception as e:  # noqa: BLE001
         logger.warning("run_learning 실패: %s", str(e)[:160])
         return {"cycle": {}, "prompt_candidates": {}, "error": str(e)[:160]}

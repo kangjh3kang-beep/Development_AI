@@ -129,7 +129,7 @@ export default function PriceGroupingPanel({ siteCode, roundId, onChanged }: { s
       {/* ★[iter-3 warning 배너] 원가구성 경고(흡수금지·왜곡·음수clamp) 정직 노출 — Σ구성≠분양가·
           VAT 과세표준 과소합산 신호. 운영자가 원가구성 비율(합=1)·정액 설정을 점검하도록 안내. */}
       {warnings.length > 0 && (
-        <div className="mb-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5">
+        <div className="mb-2 rounded-lg border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 px-2.5 py-1.5">
           <p className="flex items-center gap-1.5 text-[11px] font-bold text-amber-600"><AlertTriangle className="size-3.5 shrink-0" aria-hidden />원가구성 경고 — 분양가 합과 구성요소 합이 어긋날 수 있습니다(원가구성 비율 합=1 점검)</p>
           <ul className="mt-1 space-y-0.5">
             {warnings.map((w, i) => (
@@ -156,7 +156,7 @@ export default function PriceGroupingPanel({ siteCode, roundId, onChanged }: { s
         <span className="text-[var(--text-hint)]">빠른선택:</span>
         {lines.map((ln) => <button key={`l${ln}`} onClick={() => selectBy((u) => u.line === ln)} className="rounded-md border border-[var(--line)] px-2 py-0.5 text-[var(--text-secondary)] hover:border-[var(--accent-strong)]">{ln}라인</button>)}
         {aspects.map((a) => <button key={`a${a}`} onClick={() => selectBy((u) => u.aspect === a)} className="rounded-md border border-[var(--line)] px-2 py-0.5 text-[var(--text-secondary)] hover:border-[var(--accent-strong)]">{a}</button>)}
-        <button onClick={() => setSel(new Set())} className="rounded-md border border-rose-500/30 px-2 py-0.5 text-rose-500">선택해제</button>
+        <button onClick={() => setSel(new Set())} className="rounded-md border border-[var(--status-error)]/30 px-2 py-0.5 text-[var(--status-error)]">선택해제</button>
       </div>
 
       {/* 그리드(동→층 내림차순, 셀=호 클릭, 층 라벨 클릭=층 전체) */}

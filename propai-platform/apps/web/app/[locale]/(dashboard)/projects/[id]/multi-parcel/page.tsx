@@ -9,24 +9,36 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { developabilityLabel } from "@/lib/zoning-ssot";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import {
   Map as MapIcon, Layers, Building2, Link2, Scissors, HelpCircle, AlertTriangle,
   CheckCircle2, RefreshCw, ArrowRight, ListTree, Lightbulb, ExternalLink, MousePointerClick, ChevronDown,
+  FileText,
 } from "lucide-react";
 import { dynamicMap } from "@/components/common/MapShell";
 import type { ParcelBoundaryMap as ParcelBoundaryMapType } from "@/components/map/ParcelBoundaryMap";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import {
+  resolveRegistrationEvidence,
+  shouldSuppressSingleParcelClaim,
+} from "@/lib/multiparcel-registration-evidence";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { apiClient } from "@/lib/api-client";
 import { PYEONG_SQM } from "@/lib/formatters";
 import { GlobalAddressSearch } from "@/components/common/GlobalAddressSearch";
 import { ParcelExportButton } from "@/components/projects/ParcelExportButton";
+import { parcelDisplayAddress } from "@/lib/pnu";
 import {
   MultiParcelAttributeMatrix,
   resolveMultiParcelReport,
 } from "@/components/projects/MultiParcelAttributeMatrix";
+import {
+  mapMultiParcelReportResponse,
+  type MultiParcelReportResponse,
+} from "@/lib/multi-parcel-report";
+import { formatDominantZone } from "@/lib/zoning/dominant-zone";
 
 const ParcelBoundaryMap = dynamicMap<React.ComponentProps<typeof ParcelBoundaryMapType>>(
   () => import("@/components/map/ParcelBoundaryMap"),
@@ -78,13 +90,17 @@ const num = (v: number | null | undefined, suffix = ""): string =>
 const pct = (v: number | null | undefined): string => (v == null ? "—" : `${v}%`);
 
 // 개발가능성 게이트 → 한국어 라벨·색.
+// ★라벨 문구는 공용 SSOT(zoning-ssot.developabilityLabel)만 쓴다. 종전에는 여기에 4종만 아는
+//   로컬 맵이 따로 있어서, SSOT가 아는 NEEDS_OFFICIAL_SURVEY·UNKNOWN 같은 값이 **원시 코드
+//   그대로** "개발가능성: NEEDS_OFFICIAL_SURVEY" 로 굵게 렌더됐다(임야 필지가 정확히 이 구멍).
+//   색(tone)만 이 화면의 관심사라 여기 남긴다.
 function devLabel(d?: string | null): { text: string; tone: "ok" | "warn" | "bad" } {
-  switch ((d || "").toUpperCase()) {
-    case "POSSIBLE": return { text: "개발 가능", tone: "ok" };
-    case "CONDITIONAL": case "PRECONDITION": return { text: "조건부(선행절차)", tone: "warn" };
-    case "BLOCKED": return { text: "개발 제약", tone: "bad" };
-    default: return { text: d || "미상", tone: "warn" };
-  }
+  const { text, known } = developabilityLabel(d);
+  const code = (d || "").toUpperCase();
+  const tone: "ok" | "warn" | "bad" =
+    code === "POSSIBLE" ? "ok" : code === "BLOCKED" || code === "RESTRICTED" ? "bad" : "warn";
+  if (!text) return { text: "미상", tone: "warn" };
+  return { text: known ? text : `${text} (설명 준비 중)`, tone };
 }
 // 시나리오 상태 → 한국어 라벨·색.
 function scnLabel(s?: string): { text: string; tone: "ok" | "warn" | "bad" } {
@@ -97,9 +113,9 @@ function scnLabel(s?: string): { text: string; tone: "ok" | "warn" | "bad" } {
 }
 
 const toneCls: Record<"ok" | "warn" | "bad", string> = {
-  ok: "border-emerald-500/30 bg-emerald-500/10 text-emerald-400",
-  warn: "border-amber-500/30 bg-amber-500/10 text-amber-400",
-  bad: "border-rose-500/30 bg-rose-500/10 text-rose-400",
+  ok: "border-[var(--status-success)]/30 bg-[var(--status-success)]/10 text-[var(--status-success)]",
+  warn: "border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 text-[var(--status-warning)]",
+  bad: "border-[var(--status-error)]/30 bg-[var(--status-error)]/10 text-[var(--status-error)]",
 };
 
 function Metric({ label, value, sub }: { label: string; value: string; sub?: string }) {
@@ -117,6 +133,9 @@ export default function MultiParcelPage() {
   const locale = (params?.locale as string) || "ko";
   const id = params?.id as string;
   const site = useProjectContextStore((s) => s.siteAnalysis);
+  // ★활성 슬라이스가 0 으로 무너져도 **영속 스냅샷은 살아 있다**(라이브 실측: 활성 0 · 스냅샷 2).
+  //   읽기만 한다 — 하이드레이션 근본은 스토어 쪽(#779·#781) 영역이다.
+  const snapSite = useProjectContextStore((s) => (id ? s.snapshots[id]?.siteAnalysis ?? null : null));
   const ssotParcels = site?.parcels ?? null;
   const effArea = effectiveLandAreaSqm(site);
 
@@ -124,6 +143,12 @@ export default function MultiParcelPage() {
   const [data, setData] = useState<IntegratedResp | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  // ── S5 다필지 종합 보고(build_multi_parcel_report 오펀 배선·★G2) — 접힘, 온디맨드 호출 ──
+  const [s5Open, setS5Open] = useState(false);
+  const [s5Data, setS5Data] = useState<MultiParcelReportResponse | null>(null);
+  const [s5Loading, setS5Loading] = useState(false);
+  const [s5Error, setS5Error] = useState("");
 
   // 통합 구획도 입력: 다필지 주소 배열(없으면 대표 주소).
   const mapAddresses = useMemo(() => {
@@ -135,6 +160,17 @@ export default function MultiParcelPage() {
   }, [ssotParcels, site?.address]);
 
   const isMulti = mapAddresses.length >= 2;
+  // ★등록 필지 수(parcelCount)와 필지 목록(parcels)이 어긋나는 상태를 잡는다(2026-08-23).
+  //   라이프사이클 헤더는 parcelCount 로 "외 N필지"를 말하는데, 이 화면은 parcels 배열만 보고
+  //   목록이 비면 대표 주소 1개로 폴백한다 — 그 상태에서 "단일 필지입니다"라고 단언하면
+  //   **거짓 표시**다(사용자 신고: "다필지를 넣었는데 단필지만 분석된다").
+  //   두 신호가 어긋나면 단언하지 말고 **그 사실과 고치는 방법**을 말한다.
+  //   ★2026-08-24 — 처음엔 **활성 슬라이스의 `parcelCount` 만** 봤는데, 그 필드가 바로
+  //   결함이 무너뜨리는 값이라 **라이브에서 한 번도 발화하지 않았다**(수용시험 실패).
+  //   붕괴를 견디는 증거(영속 스냅샷)를 함께 본다 — 헬퍼에 근거와 실측을 적어 두었다.
+  const evidence = resolveRegistrationEvidence(site, snapSite);
+  const registeredCount = evidence.registeredCount;
+  const countMismatch = shouldSuppressSingleParcelClaim(evidence, isMulti);
   const key = mapAddresses.join("||");
   const proj = (p: string) => `/${locale}/projects/${id}/${p}`;
 
@@ -161,6 +197,28 @@ export default function MultiParcelPage() {
     if (!isMulti) return;
     void run();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+
+  // S5 종합 보고 — 별도 엔드포인트(무거운 조립)라 자동 실행하지 않고 접힘 섹션에서 온디맨드 호출.
+  // 필지 구성이 바뀌면 이전 선택의 stale 보고가 남지 않도록 초기화만 한다(재조회는 사용자 클릭).
+  const runS5 = useCallback(async () => {
+    if (mapAddresses.length === 0 || s5Loading) return;
+    setS5Loading(true); setS5Error("");
+    try {
+      const r = await apiClient.post<MultiParcelReportResponse>("/zoning/multi-parcel-report", {
+        body: { parcels: mapAddresses.map((address) => ({ address })) },
+        useMock: false, timeoutMs: 90000,
+      });
+      setS5Data(r ?? null);
+    } catch {
+      setS5Error("다필지 종합 보고 호출에 실패했습니다. 잠시 후 재시도하세요.");
+    } finally {
+      setS5Loading(false);
+    }
+  }, [mapAddresses, s5Loading]);
+
+  useEffect(() => {
+    setS5Data(null); setS5Error("");
   }, [key]);
 
   // ── 부지 미확정 — 바로 필지 검색/지도클릭/엑셀로 선택(SSOT 기록) ──
@@ -260,8 +318,25 @@ export default function MultiParcelPage() {
             )}
           </div>
 
+          {/* ★등록 N필지인데 목록이 비었다 — "단일 필지"라고 단언하지 않는다(거짓 표시 방지) */}
+          {countMismatch && (
+            <div
+              data-testid="parcel-count-mismatch"
+              className="rounded-2xl border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 p-4 text-xs leading-relaxed text-[var(--text-secondary)]"
+            >
+              <p className="font-bold text-[var(--status-warning)]">
+                이 프로젝트는 {registeredCount}필지로 등록됐으나 필지 목록을 불러오지 못했습니다.
+              </p>
+              <p className="mt-1">
+                그래서 아래 구획도·집계는 <b>대표 1필지 기준</b>입니다 — 통합분석(면적가중 건폐·용적,
+                통합 GFA, 인접성)은 실행되지 않았습니다. 위 “필지 선택/변경”에서 필지를 다시 지정하면
+                통합분석이 실행됩니다.
+              </p>
+            </div>
+          )}
+
           {/* 단일 필지 — 통합분석 미적용 정직고지 */}
-          {!isMulti && (
+          {!isMulti && !countMismatch && (
             <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-4 text-xs leading-relaxed text-[var(--text-secondary)]">
               <p className="font-bold text-[var(--text-primary)]">단일 필지입니다.</p>
               <p className="mt-1">통합분석(면적가중 건폐·용적, 통합 GFA, 인접성)은 <b>2개 이상</b>의 필지를 선택했을 때 실행됩니다.
@@ -272,7 +347,7 @@ export default function MultiParcelPage() {
             </div>
           )}
 
-          {error && <p className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-400">{error}</p>}
+          {error && <p className="rounded-xl border border-[var(--status-error)]/30 bg-[var(--status-error)]/10 px-3 py-2 text-[11px] text-[var(--status-error)]">{error}</p>}
           {isMulti && loading && !data && (
             <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-6 text-center text-xs text-[var(--text-hint)]">통합 용도·건폐·용적·인접성 집계 중…</div>
           )}
@@ -285,7 +360,7 @@ export default function MultiParcelPage() {
                 <div className="grid grid-cols-2 gap-2">
                   <Metric label="통합 대지면적" value={integ?.total_area_sqm != null ? `${num(integ.total_area_sqm)}㎡` : "—"}
                     sub={integ?.total_area_sqm != null ? `${num(integ.total_area_sqm / PYEONG_SQM)}평` : undefined} />
-                  <Metric label="대표 용도지역" value={data.dominant_zone || "혼재/미상"}
+                  <Metric label="대표 용도지역" value={formatDominantZone(data.dominant_zone, { fallback: "혼재/미상", mixedLabel: "혼재(분리검토 필요)" }).label}
                     sub={data.zone_mix && data.zone_mix.length >= 2 ? `혼재 ${data.zone_mix.length}종` : undefined} />
                   <Metric label="면적가중 건폐율" value={pct(integ?.blended_bcr_eff_pct)}
                     sub={integ?.blended_bcr_legal_pct != null ? `법정 ${integ.blended_bcr_legal_pct}%` : undefined} />
@@ -350,6 +425,63 @@ export default function MultiParcelPage() {
                 </div>
               </section>
 
+              {/* 3.5) 다필지 종합 보고(S5, 접힘) — build_multi_parcel_report 오펀 배선(★G2).
+                  usable 3계층 명세·§84 걸침 판정·제외 시나리오(what-if)·시니어 종합 리뷰를
+                  버튼 클릭 시 별도 엔드포인트(/zoning/multi-parcel-report)로 온디맨드 조회한다. */}
+              <section className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = !s5Open;
+                    setS5Open(next);
+                    if (next && !s5Data && !s5Loading) void runS5();
+                  }}
+                  className="flex w-full items-center justify-between text-left"
+                >
+                  <span className="inline-flex items-center gap-1.5 text-[11px] font-black uppercase tracking-wide text-[var(--text-secondary)]">
+                    <FileText className="size-3.5" aria-hidden /> 다필지 종합 보고(S5)
+                  </span>
+                  <ChevronDown className={`size-3.5 text-[var(--text-hint)] transition ${s5Open ? "rotate-180" : ""}`} aria-hidden />
+                </button>
+                {s5Open && (
+                  <div className="mt-3">
+                    {s5Loading && (
+                      <p className="text-[11px] text-[var(--text-hint)]">usable 3계층·§84 걸침·제외 시나리오·시니어 리뷰 조립 중…</p>
+                    )}
+                    {s5Error && (
+                      <p className="rounded-xl border border-[var(--status-error)]/30 bg-[var(--status-error)]/10 px-3 py-2 text-[11px] text-[var(--status-error)]">{s5Error}</p>
+                    )}
+                    {!s5Loading && !s5Error && s5Data && (
+                      <>
+                        <MultiParcelAttributeMatrix
+                          report={mapMultiParcelReportResponse(s5Data) ?? {}}
+                          perParcel={s5Data.matrix ?? data.per_parcel}
+                        />
+                        {(s5Data.honest_limitations?.length ?? 0) > 0 && (
+                          <div className="mt-2 rounded-xl border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/5 p-2.5">
+                            <p className="mb-1 inline-flex items-center gap-1 text-[10px] font-bold text-[var(--status-warning)]">
+                              <AlertTriangle className="size-3" aria-hidden /> 정직 한계 고지
+                            </p>
+                            <ul className="list-disc space-y-0.5 pl-4 text-[10px] leading-relaxed text-[var(--text-secondary)]">
+                              {s5Data.honest_limitations!.map((n, i) => <li key={i}>{n}</li>)}
+                            </ul>
+                          </div>
+                        )}
+                      </>
+                    )}
+                    {!s5Loading && !s5Error && !s5Data && (
+                      <button
+                        type="button"
+                        onClick={() => void runS5()}
+                        className="mt-1 inline-flex items-center gap-1 rounded-lg bg-[var(--accent-strong)] px-2.5 py-1 text-[11px] font-bold text-white transition hover:opacity-90"
+                      >
+                        종합 보고 불러오기
+                      </button>
+                    )}
+                  </div>
+                )}
+              </section>
+
               {/* 4) 필지별 내역(실 per_parcel) */}
               {data.per_parcel && data.per_parcel.length > 0 && (
                 <section className="rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-3">
@@ -363,7 +495,9 @@ export default function MultiParcelPage() {
                       return (
                         <li key={(p.pnu || p.address || "") + i} className="rounded-lg border border-[var(--line)] bg-[var(--surface)] px-2.5 py-2">
                           <div className="flex items-center justify-between gap-2">
-                            <span className="truncate text-[11px] font-bold text-[var(--text-primary)]">{p.address || p.pnu || `필지 ${i + 1}`}</span>
+                            {/* ★동 단위 주소만 저장된 필지는 목록이 전부 같은 글자로 보인다 — PNU 에서 지번을 파생해
+                                구분 가능하게 한다(공용 헬퍼: 표기 규칙이 화면마다 갈라지지 않게). */}
+                            <span className="truncate text-[11px] font-bold text-[var(--text-primary)]" title={parcelDisplayAddress(p.address, p.pnu) || undefined}>{parcelDisplayAddress(p.address, p.pnu) || p.pnu || `필지 ${i + 1}`}</span>
                             <span className="shrink-0 text-[10px] text-[var(--text-hint)]">{p.area_sqm != null ? `${num(p.area_sqm)}㎡` : "면적 미상"}</span>
                           </div>
                           <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-[var(--text-secondary)]">
@@ -371,7 +505,7 @@ export default function MultiParcelPage() {
                             {p.land_category && <span>· {p.land_category}</span>}
                             {p.bcr_eff_pct != null && <span>· 건폐 {p.bcr_eff_pct}%</span>}
                             {p.far_eff_pct != null && <span>· 용적 {p.far_eff_pct}%</span>}
-                            {spBad && <span className="rounded bg-amber-500/15 px-1 py-0.5 font-bold text-amber-500">{sp?.label || "특이부지"}</span>}
+                            {spBad && <span className="rounded bg-[var(--status-warning)]/15 px-1 py-0.5 font-bold text-[var(--status-warning)]">{sp?.label || "특이부지"}</span>}
                           </div>
                         </li>
                       );
@@ -382,8 +516,8 @@ export default function MultiParcelPage() {
 
               {/* 경고(정직 degrade) */}
               {data.warnings && data.warnings.length > 0 && (
-                <section className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3">
-                  <p className="mb-1 inline-flex items-center gap-1 text-[11px] font-bold text-amber-500"><AlertTriangle className="size-3.5" aria-hidden /> 데이터 유의사항</p>
+                <section className="rounded-xl border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/5 p-3">
+                  <p className="mb-1 inline-flex items-center gap-1 text-[11px] font-bold text-[var(--status-warning)]"><AlertTriangle className="size-3.5" aria-hidden /> 데이터 유의사항</p>
                   <ul className="list-disc space-y-0.5 pl-4 text-[10px] leading-relaxed text-[var(--text-secondary)]">
                     {data.warnings.map((w, i) => <li key={i}>{w}</li>)}
                   </ul>

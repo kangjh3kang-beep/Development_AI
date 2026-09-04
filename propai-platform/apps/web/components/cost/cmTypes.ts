@@ -18,7 +18,12 @@ export interface BoqItem {
   qto_source: string; // bim(±5%) | derived(±12%)
   standard_unit_price?: number | null;
   market_unit_price?: number | null;
+  /** T5 정직화: market_unit_price 출처("simulation" = 결정론 시뮬레이션, 실시세 API 아님). */
+  market_unit_price_source?: string | null;
   actual_unit_price?: number | null;
+  /** P2 T2: 공종분류 SSOT 대공종(work_breakdown) — 매핑 없으면 null(정직). */
+  wb_code?: string | null;
+  wb_name?: string | null;
 }
 
 /** BOQ 요약(직접·간접·총·신뢰등급). */
@@ -49,6 +54,23 @@ export interface BoqResponse {
   ai_cost_analysis?: string | null;
 }
 
+/** GET /{pid}/estimates 목록 1건(요약) — T5 저장된 적산 목록. */
+export interface BoqEstimateListItem {
+  estimate_id: string;
+  building_type: string;
+  structure_type: string;
+  total_gfa_sqm: number;
+  total_won: number;
+  confidence_grade: string;
+  created_at: string;
+}
+
+/** GET /{pid}/estimates 응답. */
+export interface BoqEstimatesListResponse {
+  ok: boolean;
+  items: BoqEstimateListItem[];
+}
+
 /** 단가 SSOT 3중(D4) 항목. */
 export interface UnitPriceItem {
   code: string;
@@ -60,6 +82,15 @@ export interface UnitPriceItem {
   source: string;
   basis_year: number | null;
   region?: string | null;
+  /** T5 정직화: market 값 출처("simulation" = KCCI 결정론 시뮬레이션, 실시세 API 아님). */
+  market_source?: string | null;
+  /** P1 T4: 단가 4계층 리졸버 tier(T1_public/T2_standard/T3_fallback). */
+  tier?: string | null;
+  source_url?: string | null;
+  /** P2 T4: 재료/노무/경비 3분해(표준단가 프리필용, additive). */
+  mat_unit?: number | null;
+  labor_unit?: number | null;
+  exp_unit?: number | null;
 }
 
 /** GET /unit-prices 응답. */
@@ -156,7 +187,11 @@ export interface BillingRegisterResponse {
   anomalies_triggered: BillingAnomaly[];
 }
 
-/** POST /{pid}/billing 요청. */
+/**
+ * POST /{pid}/billing 요청 — 백엔드 cost.py BillingRegisterRequest 미러.
+ * 기간은 단일 `period` 문자열이 아니라 period_from/period_to 날짜 범위 계약이다
+ * (progress_billings 의 DATE 컬럼에 저장 → 반드시 YYYY-MM-DD 완전한 날짜).
+ */
 export interface BillingRegisterRequest {
   round: number;
   work_type: string;
@@ -166,7 +201,10 @@ export interface BillingRegisterRequest {
   unit_price?: number;
   contract_unit_price?: number;
   progress_pct: number;
-  period: string;
+  /** 청구 기간 시작일(YYYY-MM-DD). 백엔드는 optional 이지만 UI 는 항상 채워 보낸다. */
+  period_from?: string;
+  /** 청구 기간 종료일(YYYY-MM-DD). */
+  period_to?: string;
 }
 
 /** 대안설계 요청 변형 입력. */
@@ -178,4 +216,90 @@ export interface AlternativeVariantInput {
     floor_count_below?: number;
     total_gfa_sqm?: number;
   };
+}
+
+/* ── P4 T1 — 절감 시나리오 Top-N ──────────────────────────────────────────── */
+
+/** 절감 후보의 영향 공종 1건(WB 브리지 병기). */
+export interface SavingAffectedItem {
+  name: string;
+  wb_code?: string | null;
+  wb_name?: string | null;
+  delta_amount: number;
+}
+
+/** 절감 시나리오 후보 1건(랭킹된 결과). */
+export interface SavingCandidate {
+  label: string;
+  rationale: string;
+  overrides: Record<string, string | number>;
+  total: number;
+  delta: number;
+  delta_pct: number;
+  savings: number;
+  affected_work_types: string[];
+  affected: SavingAffectedItem[];
+  tradeoff: string;
+}
+
+/** POST /{pid}/saving-scenarios 응답. */
+export interface SavingScenariosResponse {
+  ok: boolean;
+  project_id: string;
+  base_total: number;
+  top_n: number;
+  evaluated_count: number;
+  saving_count: number;
+  candidates: SavingCandidate[];
+  note?: string;
+}
+
+/* ── P4 T2 — 설계변경 예측공사비 ──────────────────────────────────────────── */
+
+/** 몬테카를로 추가공사비 밴드(base 대비 총액 분포). */
+export interface ChangeForecastMcBand {
+  base_total: number;
+  p10: number;
+  p50: number;
+  p90: number;
+  mean: number;
+  std: number;
+}
+
+/** 리스크 1건 → 공종(WB) delta 시나리오. */
+export interface ChangeForecastScenario {
+  risk_item: string;
+  risk_category?: string | null;
+  severity?: string | null;
+  wb_targets: string[];
+  wb_names: (string | null)[];
+  wb_base_amount: number;
+  delta_pct_low: number;
+  delta_pct_high: number;
+  delta_low: number;
+  delta_high: number;
+  basis: string;
+}
+
+/** POST /{pid}/change-forecast 응답. */
+export interface ChangeForecastResponse {
+  ok: boolean;
+  project_id: string;
+  base_total: number;
+  mc_band: ChangeForecastMcBand;
+  scenarios: ChangeForecastScenario[];
+  data_gaps: string[];
+  note?: string;
+}
+
+/** POST /{pid}/change-forecast 요청 risks[] 항목(design_change_predictor risks[]와 동일 계약). */
+export interface ChangeForecastRiskInput {
+  category?: string;
+  item: string;
+  severity?: string;
+  current?: string | null;
+  limit?: string | null;
+  detail?: string;
+  remedy?: string;
+  est_impact?: string | null;
 }

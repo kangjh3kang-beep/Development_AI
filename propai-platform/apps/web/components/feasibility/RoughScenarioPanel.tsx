@@ -16,13 +16,39 @@
  * '데이터 없음'으로 정직 표기하고 가짜 0 을 만들지 않는다.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { apiClient } from "@/lib/api-client";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import {
+  ComposedChart,
+  Bar,
+  Line,
+  Cell,
+  XAxis,
+  YAxis,
+  Tooltip,
+  Legend,
+  CartesianGrid,
+  ReferenceLine,
+  ResponsiveContainer,
+} from "recharts";
+import { apiClient, resolveApiOrigin } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { parcelDataToRows, shouldSendParcels } from "@/lib/parcel-rows";
 import { regionFromAddress } from "@/lib/region";
 import { ProjectSwitcher } from "@/components/common/ProjectSwitcher";
+import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
+import { roughResultToFeasibilityPatch } from "@/components/feasibility/rough-scenario-commit";
+import { IntegrityWarnings, type IntegrityWarning } from "@/components/ui/IntegrityWarnings";
+import { DataSourceNotice } from "@/components/ui/DataSourceNotice";
+import { AnalysisHistoryCard } from "@/components/common/AnalysisHistoryCard";
+import { optionsSummary } from "@/lib/use-analysis-history";
+import LegacyLedgerTable, { type LegacyLedger } from "./LegacyLedgerTable";
+
+/** Nexus label-caps(DESIGN.md B2) — 인풋 상단 소형 라벨. Space Grotesk 대문자 트래킹. */
+const labelCapsCls =
+  "text-[11px] font-bold uppercase tracking-[0.06em] text-[var(--text-tertiary)]";
+const labelCapsStyle = { fontFamily: "var(--font-display)" } as const;
 
 /* ── 백엔드 /feasibility/rough-scenario 응답 계약(1:1) ── */
 interface RsInputs {
@@ -35,6 +61,8 @@ interface RsInputs {
   saleable_area_pyeong: number | null;
   parcel_count: number | null;
   project_months: number | null;
+  // 세대수 가정(GFA÷유형 표준 전용면적) — 설계 확정 전 리스크시뮬 base 재계산용(백엔드 additive).
+  total_households?: number | null;
 }
 interface RsLandCost {
   total_won: number | null;
@@ -61,6 +89,8 @@ interface RsCostBreakdown {
   construction_won: number | null;
   finance_won: number | null;
   other_won: number | null;
+  /** 부담금(B공사+C분양 단계 시행사 부담) — 백엔드 6b 계상. 구버전 응답은 미존재(옵셔널 소비). */
+  charges_won?: number | null;
 }
 interface RsMargin {
   developer_profit_won: number | null;
@@ -114,7 +144,14 @@ interface RoughScenarioResult {
   cashflow: { monthly_rows: RsCashflowRow[]; summary: RsCashflowSummary } | null;
   overrides_applied: string[];
   degraded_notes: string[];
+  // ★법정초과 가드 결과(additive · rough_feasibility_orchestrator:798) — 타입에 없어
+  //   소비가 불가능했다(2026-08-24). `degraded_notes` 와 **다른 배열**이다.
+  integrity_warnings?: IntegrityWarning[] | null;
   special_parcel?: { honest_disclosure?: string | null } | null;
+  // ★간략 수지 원장(additive · legacy_ledger.py) — 축별 합계만으로는 실무 수지표가 읽히지
+  //   않아, 행마다 「수량 × 단가 = 금액」과 근거를 붙이고 검산 결과를 함께 싣는다.
+  //   ★타입에 안 넣으면 **소비가 불가능하다** — 바로 위 integrity_warnings 가 그 전례다.
+  legacy_ledger?: LegacyLedger | null;
 }
 
 /* ── 표기 헬퍼 — 값 없으면 null 반환(호출부가 '데이터 없음' 정직표기) ── */
@@ -165,6 +202,7 @@ function SourceBadge({ source }: { source: string | null | undefined }) {
   } else if (ESTIMATE_SOURCE_TOKENS.some((t) => s.includes(t))) {
     variant = "warning";
   }
+
   return (
     <span className={`sa-chip sa-chip--${variant}`} title={`데이터 출처: ${s}`}>
       {label}
@@ -211,10 +249,19 @@ type OverrideBaseline = Partial<Record<OverrideKey, number | null>>;
 const inputCls =
   "h-9 w-full rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]";
 
-export function RoughScenarioPanel({ projectId }: { projectId?: string }) {
+// ★Next.js 16 CSR bailout 가드: 아래 Inner 가 useSearchParams()(prefillSaleSupplyWon 퍼널
+//   #398)를 쓰므로, 이 컴포넌트를 렌더하는 페이지(analytics/investment 등)의 정적 프리렌더가
+//   Suspense 경계 없이는 실패한다. 컴포넌트 자체를 Suspense 로 감싸 페이지별 누락을 원천 차단.
+function RoughScenarioPanelInner({ projectId }: { projectId?: string }) {
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
   const feasibilityData = useProjectContextStore((s) => s.feasibilityData);
+  const searchParams = useSearchParams();
   const ctxProjectId = useProjectContextStore((s) => s.projectId);
+  const updateFeasibilityData = useProjectContextStore((s) => s.updateFeasibilityData);
+  // ★인플라이트 프로젝트 전환 오염 가드(보강): 요청을 보낸 "시점"의 프로젝트를 기억해뒀다가
+  //   커밋 시점에 대조한다. result.project_id 가드만으로는 약식(프로젝트 미확정) 요청처럼
+  //   응답에 project_id가 없는 경우를 못 걸러 레이스가 남는다.
+  const requestProjectRef = useRef<string | null>(null);
 
   // 부지 컨텍스트 프리필(주소는 수정 가능 — 요구 ①).
   const [address, setAddress] = useState(siteAnalysis?.address ?? "");
@@ -226,6 +273,65 @@ export function RoughScenarioPanel({ projectId }: { projectId?: string }) {
   const [form, setForm] = useState<Partial<Record<OverrideKey, string>>>({});
   const [baseline, setBaseline] = useState<OverrideBaseline>({});
   const [showOverrides, setShowOverrides] = useState(false);
+  // 히스토리 카드 재조회 신호 — generateBase/recalcWithOverrides 성공 시 증가시켜 AnalysisHistoryCard가
+  //   새 항목을 반영한다(다른 표면과 동일한 refreshSignal tick 관례).
+  const [historyRefreshTick, setHistoryRefreshTick] = useState(0);
+  // ★W4(감사 고아 엔드포인트): 개략수지→시니어 보고서(/rough-scenario/report) 다운로드 상태.
+  //   백엔드가 pdf/pptx/docx 3포맷을 지원 → 어떤 포맷이 생성 중인지 문자열로 추적(시장 ReportActionsBar 패턴 미러).
+  const [reportFmt, setReportFmt] = useState<"" | "pdf" | "pptx" | "docx">("");
+  const [reportError, setReportError] = useState<string | null>(null);
+
+  // ★W4: 백엔드 보고서 엔진(/rough-scenario/report — BankReady·통합 보고서 정본 조합)이
+  //   프론트 호출 0건 고아였다. 현재 시나리오를 그대로 전달해 재계산 없이 보고서를 받는다.
+  //   백엔드는 pdf/pptx/docx 3포맷 지원(v2_feasibility.py RoughScenarioReportRequest.format).
+  //   use_llm=false 기본(과금 정책 — AI 서술 없이 정직 고지 포함 보고서).
+  const downloadReport = useCallback(async (fmt: "pdf" | "pptx" | "docx") => {
+    if (!result) return;
+    setReportFmt(fmt);
+    setReportError(null);
+    try {
+      const token =
+        (typeof window !== "undefined" && localStorage.getItem("propai_access_token")?.trim()) || "";
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 120_000);
+      let res: Response;
+      try {
+        res = await fetch(`${resolveApiOrigin()}/api/v2/feasibility/rough-scenario/report`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({ scenario: result, use_llm: false, format: fmt }),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeout);
+      }
+      if (!res.ok) {
+        // 오류 사유 보존 — 백엔드 {detail}(422 재생성/생성 실패 등)을 읽어 실제 원인을 표기.
+        let detail = "";
+        try {
+          const body = (await res.json()) as { detail?: string };
+          detail = body?.detail || "";
+        } catch { /* JSON 아니면 상태코드만 */ }
+        throw new Error(detail || `보고서 생성 실패 (${res.status})`);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `rough-scenario-report-${new Date().toISOString().slice(0, 10)}.${fmt}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setReportError(e instanceof Error ? e.message : "보고서 생성 실패");
+    } finally {
+      setReportFmt("");
+    }
+  }, [result]);
 
   // 프로젝트 전환(컨텍스트 주소 변경) 시 주소 필드를 그 프로젝트로 재적재하고 이전 결과를 비운다.
   const lastCtxAddrRef = useRef<string | null>(siteAnalysis?.address ?? null);
@@ -241,6 +347,19 @@ export function RoughScenarioPanel({ projectId }: { projectId?: string }) {
     }
   }, [siteAnalysis?.address]);
 
+  // 결과 산출 시 모세혈관(feasibilityData) 반영 — 이 SSOT를 STEP 2 투자수익성 요약과
+  //   STEP 3 리스크 시뮬 base 조립(buildNodeBody)이 읽는다(페이지 계약: 앞 단계 결과 이어받기).
+  //   ★인플라이트 오염 가드: 응답의 project_id가 있고 현재 컨텍스트 프로젝트와 다르면
+  //   (요청 후 프로젝트 전환) 남의 프로젝트 SSOT를 덮지 않도록 커밋하지 않는다.
+  useEffect(() => {
+    if (!result) return;
+    if (result.project_id && ctxProjectId && result.project_id !== ctxProjectId) return;
+    // 요청 시점 프로젝트와 현재 프로젝트가 다르면(인플라이트 중 전환·약식→프로젝트 포함) 커밋 금지.
+    if (requestProjectRef.current !== ((projectId || ctxProjectId) ?? null)) return;
+    const patch = roughResultToFeasibilityPatch(result);
+    if (patch) updateFeasibilityData(patch);
+  }, [result, ctxProjectId, updateFeasibilityData, projectId]);
+
   // 컨텍스트에서 파생되는 입력(통합면적·다필지·자기자본).
   const landArea = useMemo(() => effectiveLandAreaSqm(siteAnalysis), [siteAnalysis]);
   const parcelRows = useMemo(
@@ -248,9 +367,12 @@ export function RoughScenarioPanel({ projectId }: { projectId?: string }) {
     [siteAnalysis?.parcels],
   );
   const equityWon = useMemo(() => {
+    // 자동파생(총사업비×비율) 자기자본은 재전송하지 않는다 — 1차/2차 생성 결과가 달라지는
+    // 비멱등 방지. 사용자가 직접 입력한 값(equityIsManual)만 백엔드에 실어보낸다.
+    if (feasibilityData?.equityIsManual !== true) return undefined;
     const e = feasibilityData?.equityWon;
     return typeof e === "number" && e > 0 ? e : undefined;
-  }, [feasibilityData?.equityWon]);
+  }, [feasibilityData?.equityWon, feasibilityData?.equityIsManual]);
 
   /** rough-scenario 요청 body 조립(공용) — 다필지는 2필지↑일 때만 첨부(무회귀). */
   const buildBody = useCallback(
@@ -267,7 +389,19 @@ export function RoughScenarioPanel({ projectId }: { projectId?: string }) {
     [address, parcelRows, projectId, ctxProjectId, equityWon],
   );
 
-  /** 기본 개략수지 생성(요구 ③④⑤⑥⑦) — overrides 없이 호출하고 2차 수정 기준값을 시드. */
+  // ★아이디어#4(지불여력→개략수지 원클릭 퍼널) read 끝 봉합: PricingBandPanel CTA가
+  //   URL 파라미터 prefillSaleSupplyWon(원/평·**공급면적 기준**, CTA에서 전용→공급 변환 완료 —
+  //   rough_feasibility_orchestrator.py:494 override와 동일 basis)로 1회 핸드오프한 값을 읽어
+  //   기본 생성 시 overrides.sale_price_per_pyeong로 프리필한다. 공유 스토어 슬롯은 basis 혼재라
+  //   쓰지 않고, 축이 명시된 전용 파라미터만 소비한다(무변환 — CTA가 이미 공급 basis로 확정).
+  const marketAffordPricePerPyeongWon = useMemo(() => {
+    const raw = searchParams?.get("prefillSaleSupplyWon");
+    if (!raw) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? Math.round(n) : null;
+  }, [searchParams]);
+
+  /** 기본 개략수지 생성(요구 ③④⑤⑥⑦) — market 지불여력 프리필(있으면)만 얹어 호출하고 2차 수정 기준값을 시드. */
   const generateBase = useCallback(async () => {
     if (!address.trim()) {
       setError("주소가 없습니다. 프로젝트를 선택하거나 주소를 입력하세요.");
@@ -276,10 +410,16 @@ export function RoughScenarioPanel({ projectId }: { projectId?: string }) {
     setBusy("base");
     setError(null);
     try {
+      requestProjectRef.current = (projectId || ctxProjectId) ?? null;
+      const prefillOverrides: Record<string, number> = {};
+      if (marketAffordPricePerPyeongWon != null && marketAffordPricePerPyeongWon > 0) {
+        prefillOverrides.sale_price_per_pyeong = marketAffordPricePerPyeongWon;
+      }
       const r = await apiClient.postV2<RoughScenarioResult>("/feasibility/rough-scenario", {
-        body: buildBody(),
+        body: buildBody(prefillOverrides),
       });
       setResult(r);
+      setHistoryRefreshTick((t) => t + 1);
       // 2차 수정 기준값(원값) 시드 — 공사기간/분양시작은 백엔드 기본식과 동일하게 근사.
       const pm = r.inputs.project_months ?? 30;
       const cm = Math.max(6, pm - 6);
@@ -305,7 +445,18 @@ export function RoughScenarioPanel({ projectId }: { projectId?: string }) {
     } finally {
       setBusy("");
     }
-  }, [address, buildBody]);
+  }, [address, buildBody, projectId, ctxProjectId, marketAffordPricePerPyeongWon]);
+
+  // 프리필 출처 배지용 — 응답이 실제로 market-affordability 프리필값을 반영했는지 "읽기"로만
+  // 판정(별도 상태 없이 result/스토어 실값 비교 — 2차 수정으로 값이 바뀌면 자동으로 꺼진다).
+  const marketPrefillSourced = useMemo(
+    () =>
+      !!result &&
+      result.overrides_applied.includes("sale_price_per_pyeong") &&
+      marketAffordPricePerPyeongWon != null &&
+      result.revenue.sale_price_per_pyeong === marketAffordPricePerPyeongWon,
+    [result, marketAffordPricePerPyeongWon],
+  );
 
   /** 변경된 override 만 추출(원값과 다르고 유효 숫자인 키). */
   const buildOverrides = useCallback((): Record<string, number> => {
@@ -334,19 +485,46 @@ export function RoughScenarioPanel({ projectId }: { projectId?: string }) {
     setBusy("override");
     setError(null);
     try {
+      requestProjectRef.current = (projectId || ctxProjectId) ?? null;
       const r = await apiClient.postV2<RoughScenarioResult>("/feasibility/rough-scenario", {
         body: buildBody(overrides),
       });
       setResult(r); // 기준값(baseline)은 유지 — 계속 원값 대비 변경을 하이라이트.
+      setHistoryRefreshTick((t) => t + 1);
     } catch (e) {
       setError(e instanceof Error ? e.message : "재계산에 실패했습니다.");
     } finally {
       setBusy("");
     }
-  }, [address, buildBody, buildOverrides]);
+  }, [address, buildBody, buildOverrides, projectId, ctxProjectId]);
 
   const inp = result?.inputs;
+
+  // ── 값–라벨 정합(R2) 파생 ─────────────────────────────────────────────────
+  // ★`margin.developer_profit_won` 은 `총사업비 × 마진율` 이라 **매출을 보지 않는다** —
+  //   구조상 언제나 양수다. 그것이 달성됐는지는 **실제 분양수입이 목표매출에 닿았는지**로만
+  //   판정할 수 있다. 판정 근거가 없으면(둘 중 하나라도 null) `null` — 모르면 모른다고 둔다.
+  const marginMet: boolean | null =
+    result?.summary.total_revenue_won != null && result?.margin.target_revenue_won != null
+      ? result.summary.total_revenue_won >= result.margin.target_revenue_won
+      : null;
+  // 순이익은 **부호**가 곧 좋고 나쁨이다. 미확보면 색을 입히지 않는다(없는 판정을 색으로 말하지 않는다).
+  const netTone: StatTone =
+    result?.summary.net_profit_won == null
+      ? "muted"
+      : result.summary.net_profit_won < 0
+        ? "negative"
+        : "positive";
   const cf = result?.cashflow;
+
+  // 히스토리 변동감지 시그니처 파트 — 백엔드 계약과 동일 순서: [address, pnu||"", parcelCount, useLlm, options요약].
+  //   parcelCount는 buildBody가 실제 전송하는 parcelRows(2필지↑일 때만 전송)와 동일 출처(|| 1 폴백).
+  //   개략수지는 AI 서술을 쓰지 않는 결정론 산정(보고서 다운로드도 use_llm=false 고정)이라
+  //   useLlm은 항상 "false"로 고정한다(다른 표면의 use_llm 계약과 동형 유지 목적).
+  const historySignatureParts = useMemo(
+    () => [address, siteAnalysis?.pnu ?? "", String(parcelRows.length || 1), "false", optionsSummary(undefined)],
+    [address, siteAnalysis?.pnu, parcelRows.length],
+  );
 
   return (
     <div className="flex flex-col gap-6">
@@ -358,16 +536,20 @@ export function RoughScenarioPanel({ projectId }: { projectId?: string }) {
           </div>
           {/* 공용 프로젝트 선택기 — 선택 시 컨텍스트(주소·다필지·용도·면적) 자동 적재 */}
           <ProjectSwitcher />
-          {/* 주소 직접 수정(요구 ① '수정 가능') */}
-          <label className="block text-xs font-semibold text-[var(--text-secondary)]">
-            분석 주소
-            <input
-              value={address}
-              onChange={(e) => setAddress(e.target.value)}
-              placeholder="예) 서울특별시 강남구 역삼동 737"
-              className={`${inputCls} mt-1`}
-            />
-          </label>
+          {/* 주소 직접 수정(요구 ① '수정 가능') — 공용 주소검색 바(전 모듈 표준).
+              ★종전 bare <input> 은 검색 수단이 아예 없어 지번을 찾을 수 없었다(사용자 실버그).
+              ★single 금지: single 은 Daum 단독 렌더(GlobalAddressSearch:1305)라 "의정부동 224"·산·농지·
+                맹지 같은 지번을 못 찾는다(:203 주석이 명시). 기본(다필지) 모드의 VWorld 지번 자동완성이
+                이들을 커버하고, 이 패널은 다필지(parcelRows·shouldSendParcels)가 본업이라 계약도 맞다.
+              writeToContext 는 기본 true 유지 — 여기 주소는 그 프로젝트의 실제 분석 주소다.
+              프로젝트 선택은 위 ProjectSwitcher 가 담당하므로 picker 만 숨긴다. */}
+          <ProjectAddressInput
+            value={address}
+            onChange={setAddress}
+            label="분석 주소"
+            placeholder="예) 의정부동 224, 산 12-3, 판교역로 166"
+            hideProjectPicker
+          />
           {/* 적재된 컨텍스트 요약(전송될 값) */}
           <div className="sa-di-tiles sa-di-tiles--4">
             <div className="sa-di-tile">
@@ -419,6 +601,9 @@ export function RoughScenarioPanel({ projectId }: { projectId?: string }) {
       {result && (
         <>
           {/* ── degraded 정직표기(무목업) ── */}
+          {/* ★법정초과 가드 — degraded_notes(값을 못 구한 축) 와 성격이 다르다.
+              이쪽은 "값은 나왔는데 법정상한을 넘고 완화근거가 없다"는 신호다. */}
+          <IntegrityWarnings items={result.integrity_warnings} className="mb-2" />
           {result.degraded_notes.length > 0 && (
             <section className="rounded-xl border border-[color-mix(in_srgb,var(--status-warning)_36%,transparent)] bg-[color-mix(in_srgb,var(--status-warning)_10%,transparent)] p-4">
               <p className="mb-1.5 flex items-center gap-1.5 text-xs font-bold text-[var(--status-warning)]">
@@ -485,6 +670,19 @@ export function RoughScenarioPanel({ projectId }: { projectId?: string }) {
               source={result.revenue.source}
             />
           </div>
+          {/* ★아이디어#4 read 끝 봉합 — 분양단가가 시장 지불여력 상한(PricingBandPanel CTA)에서
+              프리필되었음을 정직 고지(출처 배지 대체 — 백엔드 source는 "user_override"로만
+              내려와 이 문구가 없으면 사용자가 왜 원값이 바뀌었는지 알 수 없다). */}
+          {marketPrefillSourced && (
+            <p
+              data-testid="market-prefill-notice"
+              className="-mt-2 text-[11px] font-semibold text-[var(--accent-strong)]"
+            >
+              ※ 분양단가(원/평)가 시장 지불여력 상한에서 프리필되었습니다 — 지불여력 상한은 미분양
+              회피 하한 시나리오(시장 실현가 아님)이며, 「실데이터로 2차 수정」에서 직접 조정할 수
+              있습니다.
+            </p>
+          )}
 
           {/* ── 20% 마진(개발이익) 카드(요구) ── */}
           <section className="sa-di-block">
@@ -496,19 +694,39 @@ export function RoughScenarioPanel({ projectId }: { projectId?: string }) {
                 </span>
               </div>
               <div className="mt-3 sa-di-stats">
-                <Stat label="개발이익(마진)" text={eok(result.margin.developer_profit_won)} accent />
+                {/* ★값–라벨 정합(R2): 이 값은 `총사업비 × 마진율` 이라 **매출을 전혀 보지 않는다**
+                    — 구조상 언제나 양수다. 그래서 "개발이익"이라 부르며 강조색으로 그리면,
+                    순이익이 마이너스인 사업에서도 **성과처럼** 읽힌다.
+                    ★이 저장소는 같은 개념을 다른 곳에서 *"개발이익 = 분양수입 − 총투입원가"* 로
+                    정의한다(`feasibility_interpreter` 프롬프트). 이름을 **목표**로 바로잡아
+                    그 정의와 충돌하지 않게 한다. 값은 지우지 않는다 — 라벨을 고친다. */}
+                <Stat
+                  label={`목표 개발이익(마진 ${pctStr(result.margin.rate_pct, 0) ?? "—"})`}
+                  text={
+                    result.margin.developer_profit_won == null
+                      ? null
+                      : `${eok(result.margin.developer_profit_won)}${
+                          marginMet == null ? "" : marginMet ? " · 충족" : " · 미달"
+                        }`
+                  }
+                  // ★색만으로 전달하지 않는다 — 위 text 에 '충족/미달' 이라는 **말**을 함께 담았다.
+                  //   달성하지 못한 목표를 성과의 색으로 그리지 않는다.
+                  tone={marginMet == null ? "muted" : marginMet ? "positive" : "negative"}
+                />
                 <Stat label="목표매출(역산)" text={eok(result.margin.target_revenue_won)} />
                 <Stat label="예상 분양수입" text={eok(result.summary.total_revenue_won)} />
+                {/* ★목표(위)와 **실제**(아래)를 같은 카드에 둔다 — 종전엔 순이익이 다른 섹션에
+                    있어 "목표 831억"과 "순이익 −2,936억"이 한눈에 대조되지 않았다. */}
                 <Stat
-                  label="마진 충족여부"
+                  label="실제 순이익"
                   text={
-                    result.summary.total_revenue_won != null &&
-                    result.margin.target_revenue_won != null
-                      ? result.summary.total_revenue_won >= result.margin.target_revenue_won
-                        ? "충족"
-                        : "미달"
-                      : null
+                    result.summary.net_profit_won == null
+                      ? null
+                      : `${eok(result.summary.net_profit_won)}${
+                          result.summary.net_profit_won < 0 ? " · 손실" : ""
+                        }`
                   }
+                  tone={netTone}
                 />
               </div>
             </div>
@@ -535,7 +753,19 @@ export function RoughScenarioPanel({ projectId }: { projectId?: string }) {
               <div className="mt-3 sa-di-stats">
                 <Stat label="총사업비" text={eok(result.summary.total_cost_won)} />
                 <Stat label="총수입" text={eok(result.summary.total_revenue_won)} />
-                <Stat label="순이익" text={eok(result.summary.net_profit_won)} accent />
+                {/* ★손실을 강조색으로 그리지 않는다(값–라벨 정합) — 부호로 색을 정하고
+                    '손실' 이라는 말을 함께 쓴다. 같은 파일의 월별 현금흐름이 이미 쓰는 관례다. */}
+                <Stat
+                  label="순이익"
+                  text={
+                    result.summary.net_profit_won == null
+                      ? null
+                      : `${eok(result.summary.net_profit_won)}${
+                          result.summary.net_profit_won < 0 ? " · 손실" : ""
+                        }`
+                  }
+                  tone={netTone}
+                />
                 <Stat label="ROI" text={pctStr(result.summary.roi_pct)} />
               </div>
               <div className="mt-3 sa-di-stats">
@@ -550,9 +780,49 @@ export function RoughScenarioPanel({ projectId }: { projectId?: string }) {
                 <DataRow label="공사비" text={eok(result.cost_breakdown.construction_won)} />
                 <DataRow label="금융비" text={eok(result.cost_breakdown.finance_won)} />
                 <DataRow label="제경비(기타)" text={eok(result.cost_breakdown.other_won)} />
+                <DataRow label="부담금(공사·분양단계)" text={eok(result.cost_breakdown.charges_won)} />
               </div>
+              {/* ★위 5줄은 축별 합계다. 아래 원장은 **행마다 「수량 × 단가 = 금액」과 근거**를
+                  붙이고, 맨 아래에서 **합계가 맞는지 스스로 확인한 결과**를 보인다. */}
+              {result.legacy_ledger && (
+                <div className="mt-4">
+                  <LegacyLedgerTable ledger={result.legacy_ledger} />
+                </div>
+              )}
             </div>
           </section>
+
+          {/* ── ★W4: 시니어 사업성 보고서 — 고아 엔드포인트 배선(PDF/PPT/DOCX 3포맷) ── */}
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={() => downloadReport("pdf")}
+              disabled={!!reportFmt}
+              className="rounded-xl bg-[var(--accent-strong)] px-5 py-2.5 text-xs font-black text-white shadow-[var(--shadow-glow)] hover:opacity-90 disabled:opacity-50"
+            >
+              {reportFmt === "pdf" ? "PDF 생성 중…" : "사업성 보고서 PDF"}
+            </button>
+            <button
+              type="button"
+              onClick={() => downloadReport("pptx")}
+              disabled={!!reportFmt}
+              className="rounded-xl border border-[var(--line-strong)] px-5 py-2.5 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)] disabled:opacity-50"
+            >
+              {reportFmt === "pptx" ? "PPT 생성 중…" : "PPT"}
+            </button>
+            <button
+              type="button"
+              onClick={() => downloadReport("docx")}
+              disabled={!!reportFmt}
+              className="rounded-xl border border-[var(--line-strong)] px-5 py-2.5 text-xs font-bold text-[var(--text-secondary)] hover:border-[var(--accent-strong)] disabled:opacity-50"
+            >
+              {reportFmt === "docx" ? "DOCX 생성 중…" : "DOCX"}
+            </button>
+            <span className="text-[10px] text-[var(--text-tertiary)]">
+              현재 개략수지 그대로 보고서화(재계산 없음·AI 서술 미포함 — 추가 LLM 과금 없음)
+            </span>
+            {reportError && <span className="text-[11px] text-[var(--status-error,#ef4444)]">{reportError}</span>}
+          </div>
 
           {/* ── ⑧ 2차 사용자 수정(overrides) ── */}
           <section className="sa-di-block">
@@ -587,9 +857,11 @@ export function RoughScenarioPanel({ projectId }: { projectId?: string }) {
                   {OVERRIDE_FIELDS.map((f) => {
                     const changed = changedKeys.has(f.key);
                     return (
-                      <label key={f.key} className="block text-xs text-[var(--text-secondary)]">
+                      <label key={f.key} className="block">
                         <span className="flex items-center gap-1.5">
-                          {f.label}
+                          <span className={labelCapsCls} style={labelCapsStyle}>
+                            {f.label}
+                          </span>
                           {changed && <span className="sa-dot sa-dot--info" title="원값과 다름(반영 예정)" />}
                         </span>
                         <input
@@ -650,6 +922,11 @@ export function RoughScenarioPanel({ projectId }: { projectId?: string }) {
                     <Stat label="최대 자금소요(peak)" text={eok(cf.summary.peak_negative_cashflow)} />
                     <Stat label="자금 회수월" text={moStr(cf.summary.payback_month ?? result.summary.payback_month)} />
                   </div>
+                  {/* ★로드맵④: 월별 현금흐름 추세 차트(순현금 막대 + 누적 곡선) — 아래 표와 동일 배열(monthly_rows) 재사용(재계산 0). */}
+                  <div>
+                    <p className="sa-di-eyebrow mb-2">현금흐름 추세 · CHART</p>
+                    <MonthlyCashflowChart rows={cf.monthly_rows} />
+                  </div>
                   <div className="max-h-[360px] overflow-auto rounded-lg border border-[var(--line)]">
                     <table className="sa-di-table w-full">
                       <thead className="sticky top-0 bg-[var(--surface-soft)]">
@@ -707,7 +984,30 @@ export function RoughScenarioPanel({ projectId }: { projectId?: string }) {
               )}
             </div>
           </section>
+
+          {/* 공공데이터 고지(DESIGN.md B1) — 개략수지 전체 데이터 뷰 하단 출처·참고용 문구 */}
+          <DataSourceNotice source="국토교통부 실거래가 · 조달청 공사비 지수 등 공공데이터" />
         </>
+      )}
+
+      {/* 분석 히스토리 — 결과 섹션 뒤(원장 조회 옵셔널 소비 + 입력변동 감지 시 재분석 제안).
+          onReanalyze=generateBase(기본 개략수지 재산정 — 2차 수정 overrides는 재적용하지 않는다).
+          ★P1(R1 REVISE): pnu는 항상 null로 고정한다 — rough(WRITE, v2_feasibility.py
+          record_user_analysis 호출)는 pnu를 전달하지 않는 address-스코프 체인이라(project_id 스코프인
+          VCS-result의 별도 "feasibility_vcs" 체인과 의도적으로 분리), read가 siteAnalysis?.pnu를
+          쓰면(과거 코드) _chain_where가 pnu 우선 조건으로 바뀌어 WRITE가 쌓은 address-스코프 행(pnu
+          IS NULL)과 영영 매칭되지 않았다(주 진입경로=pnu 보유 상태에서 히스토리 상시 공란).
+          pnu 보유 여부와 무관하게 null 고정이 WRITE와의 유일한 정합 선택. */}
+      {address && (
+        <AnalysisHistoryCard
+          analysisType="feasibility"
+          address={address}
+          pnu={null}
+          currentSignatureParts={historySignatureParts}
+          onReanalyze={() => void generateBase()}
+          reanalyzing={busy === "base"}
+          refreshSignal={historyRefreshTick}
+        />
       )}
     </div>
   );
@@ -735,13 +1035,47 @@ function Tile({
   );
 }
 
-function Stat({ label, text, accent }: { label: string; text: string | null; accent?: boolean }) {
+/**
+ * 지표 한 칸.
+ *
+ * ★`tone` 이 필요한 이유(값–라벨 정합):
+ * 종전엔 헤드라인 지표에 `accent` 를 **무조건** 걸었다. 그래서 순이익이 **−2,936억(손실)** 이어도
+ * 강조색으로 그려졌다 — 사용자는 색을 **좋고 나쁨**으로 읽는데, 코드는 그것을 **중요함**으로
+ * 썼다. 같은 파일 안에 이미 부호별 색상 선례가 있었는데(월별 현금흐름의 `net < 0`)
+ * 헤드라인만 예외였다.
+ *
+ * ★색만으로 심각도를 전달하지 않는다 — 호출부가 `text` 에 **말**(손실·미달)을 함께 담는다.
+ */
+type StatTone = "accent" | "positive" | "negative" | "muted";
+
+const TONE_COLOR: Record<StatTone, string | undefined> = {
+  accent: "var(--data-accent)",
+  positive: "var(--status-success)",
+  negative: "var(--status-error)",
+  muted: undefined,
+};
+
+function Stat({
+  label,
+  text,
+  accent,
+  tone,
+}: {
+  label: string;
+  text: string | null;
+  /** 하위호환 — 기존 호출부는 그대로 둔다(무회귀). `tone` 이 있으면 그쪽이 우선. */
+  accent?: boolean;
+  tone?: StatTone;
+}) {
+  const resolved: StatTone | null = tone ?? (accent ? "accent" : null);
+  const color = resolved ? TONE_COLOR[resolved] : undefined;
   return (
     <div className="sa-di-stat">
       <span className="sa-di-stat__label">{label}</span>
       <span
         className="sa-di-stat__value"
-        style={accent && text != null ? { color: "var(--data-accent)" } : undefined}
+        data-tone={resolved ?? undefined}
+        style={color && text != null ? { color } : undefined}
       >
         <Val text={text} />
       </span>
@@ -796,5 +1130,92 @@ function CostBlock({
         )}
       </div>
     </section>
+  );
+}
+
+/**
+ * 월별 현금흐름 추세 차트 — 순현금(막대·부호별 색) + 누적 현금흐름(라인).
+ * DCF 표(cf.monthly_rows)와 동일 배열을 소비해 재계산하지 않는다(표=상세, 차트=보조 추세).
+ * 단위는 억(원/1e8). 색상은 테마 토큰만 사용(DemographicPanel 관례 미러).
+ */
+function MonthlyCashflowChart({ rows }: { rows: RsCashflowRow[] }) {
+  const data = rows.map((r) => ({
+    month: r.month,
+    net: (r.net ?? r.inflow - r.outflow) / 1e8,
+    cumulative: r.cumulative / 1e8,
+  }));
+  return (
+    <ResponsiveContainer width="100%" height={260}>
+      <ComposedChart data={data} margin={{ top: 8, right: 12, left: 4, bottom: 4 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" vertical={false} />
+        <XAxis
+          dataKey="month"
+          tick={{ fontSize: 11, fill: "var(--text-secondary)" }}
+          axisLine={{ stroke: "var(--line)" }}
+          tickLine={false}
+          label={{
+            value: "개월",
+            position: "insideBottomRight",
+            offset: -2,
+            fontSize: 10,
+            fill: "var(--text-tertiary)",
+          }}
+        />
+        <YAxis
+          tick={{ fontSize: 11, fill: "var(--text-secondary)" }}
+          axisLine={false}
+          tickLine={false}
+          width={48}
+          tickFormatter={(v: number) => `${v}억`}
+        />
+        <Tooltip
+          cursor={{ fill: "color-mix(in srgb, var(--accent-strong) 8%, transparent)" }}
+          contentStyle={{
+            background: "var(--surface-strong)",
+            border: "1px solid var(--line-strong)",
+            borderRadius: "var(--r-card)",
+            fontSize: 12,
+          }}
+          formatter={(v, name) => [
+            `${Number(v).toLocaleString(undefined, { maximumFractionDigits: 1 })}억`,
+            name,
+          ]}
+          labelFormatter={(m) => `${m}개월차`}
+        />
+        <ReferenceLine y={0} stroke="var(--line-strong)" />
+        <Bar dataKey="net" name="순현금" radius={[2, 2, 0, 0]} maxBarSize={22}>
+          {data.map((d, i) => (
+            <Cell
+              key={i}
+              fill={
+                d.net < 0
+                  ? "var(--status-error)"
+                  : "color-mix(in srgb, var(--accent-strong) 55%, transparent)"
+              }
+            />
+          ))}
+        </Bar>
+        <Line
+          type="monotone"
+          dataKey="cumulative"
+          name="누적"
+          stroke="var(--accent-strong)"
+          strokeWidth={2}
+          dot={false}
+        />
+        <Legend wrapperStyle={{ fontSize: 11 }} />
+      </ComposedChart>
+    </ResponsiveContainer>
+  );
+}
+
+// 공개 export — useSearchParams(Inner)를 Suspense 경계로 감싸 정적 프리렌더 안전화.
+// (fallback=null: 이 패널은 클라이언트 하이드레이션 직후 즉시 렌더되고 searchParams 는
+//  클라이언트에서만 값이 있어, 프리렌더 시 빈 상태 잠깐만 노출 — 시각 회귀 없음.)
+export function RoughScenarioPanel(props: { projectId?: string }) {
+  return (
+    <Suspense fallback={null}>
+      <RoughScenarioPanelInner {...props} />
+    </Suspense>
   );
 }

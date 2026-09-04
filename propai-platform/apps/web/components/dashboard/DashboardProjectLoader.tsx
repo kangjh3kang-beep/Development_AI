@@ -50,7 +50,7 @@ export function DashboardProjectLoader({ locale }: { locale: string }) {
         {[1, 2].map((i) => (
           <div
             key={i}
-            className="h-[200px] animate-pulse rounded-[2rem] bg-[var(--surface-soft)] border border-[var(--line)]"
+            className="h-[200px] animate-pulse rounded-[var(--radius-lg)] bg-[var(--surface-soft)] border border-[var(--line)]"
           />
         ))}
       </div>
@@ -60,7 +60,7 @@ export function DashboardProjectLoader({ locale }: { locale: string }) {
   // 빈상태 — 진행 중 프로젝트가 없을 때 프로젝트 생성 유도(목업 대체).
   if (cards.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center gap-4 rounded-[2rem] border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)] px-8 py-14 text-center">
+      <div className="flex flex-col items-center justify-center gap-4 rounded-[var(--radius-lg)] border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)] px-8 py-14 text-center">
         <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--accent-soft)] text-[var(--accent-strong)]">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9.5 12 4l9 5.5" /><path d="M5 11v8a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-8" /></svg>
         </div>

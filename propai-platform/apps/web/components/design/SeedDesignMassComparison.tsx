@@ -4,6 +4,11 @@ import { useState, useMemo, useEffect } from "react";
 import { motion } from "framer-motion";
 import { AlertTriangle, Building2, Info, Landmark, Layers, Loader2, MapPin } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
+import {
+  massSeedAppliesTo,
+  readMassSeedHandoff,
+  type MassSeedHandoff,
+} from "@/lib/satong-mass-seed";
 import { zoningToCode } from "@/lib/kr-building-regulations";
 
 // 정북일조 단계후퇴 층별 프로파일(백엔드 north_step_profile 항목과 1:1).
@@ -50,11 +55,22 @@ type SeedDesignResponse = {
   regional_typical_mass: MassResult | null;
   mass_reference: MassReference | null;
   applied_limit_source?: "site_analysis_effective_limits" | "engine_zone_defaults" | string;
+  /** ★W4: 사통맵에서 고른 배치안 층수를 상한으로 반영한 매스(인계가 없으면 null). */
+  map_seeded_mass?: MassResult | null;
+  map_seed?: {
+    target_floors: number;
+    option_label?: string | null;
+    /** ★서버가 결과로 판정한 실제 적용 여부 — false면 반영된 척하지 않는다. */
+    applied?: boolean;
+    not_applied_reason?: string | null;
+  } | null;
   note?: string | null;
 };
 
 type Props = {
   address: string;
+  /** ★사통맵 인계 대조용 강한 식별자 — 없으면 주소(정규화)로 떨어진다(R1 MEDIUM-1). */
+  pnu?: string | null;
   landAreaSqm: number;
   /** 한글 용도지역명 또는 코드 — zoningToCode로 엔진 키 변환 */
   zoning: string;
@@ -62,6 +78,9 @@ type Props = {
   floorHeightM?: number;
   effectiveFarPct?: number | null;
   effectiveBcrPct?: number | null;
+  /** ★WP-U2a: 실효 용적률 산정 근거 라벨(far_tier SSOT far_basis — 예 "구조상한(건폐율×층수)").
+   *  effectiveFarPct와 함께 백엔드로 정직 전파(메타 additive·수치 무영향). */
+  farBasis?: string | null;
   /** 다른 주소의 잔류 분석 등으로 비활성화해야 할 때 */
   disabled?: boolean;
 };
@@ -184,12 +203,14 @@ function MassCard({
  */
 export function SeedDesignMassComparison({
   address,
+  pnu,
   landAreaSqm,
   zoning,
   buildingUse,
   floorHeightM,
   effectiveFarPct,
   effectiveBcrPct,
+  farBasis,
   disabled,
 }: Props) {
   const [loading, setLoading] = useState(false);
@@ -197,6 +218,23 @@ export function SeedDesignMassComparison({
   const [data, setData] = useState<SeedDesignResponse | null>(null);
 
   const zoneCode = useMemo(() => zoningToCode(zoning), [zoning]);
+
+  // ★W4 매스 시드 인계 — 사통맵에서 "이 안으로 설계 시작"으로 넘어온 선택.
+  //   ①만료·형태 파손은 read가 null로 걸러내고 ②부지가 다르면 적용하지 않는다(스테일 가드).
+  //   effect로 읽는 이유: sessionStorage는 서버 렌더에 없어 초기 렌더에서 읽으면 하이드레이션
+  //   불일치가 난다. 부지가 바뀌면 다시 판정한다.
+  const [massSeed, setMassSeed] = useState<MassSeedHandoff | null>(null);
+  /** ★R2 MEDIUM-1: 인계는 있는데 **이 부지와 일치하지 않아** 적용하지 않은 경우. 침묵하면
+   *  사용자는 "이 안으로 설계 시작"을 누른 뒤 아무 신호도 못 받는다. */
+  const [rejectedSeed, setRejectedSeed] = useState<MassSeedHandoff | null>(null);
+  useEffect(() => {
+    const h = readMassSeedHandoff(Date.now());
+    // ★R1 MEDIUM-1: pnu를 넘기지 않아 강한 식별자 분기가 프로덕션에서 죽어 있었다(주소 원문
+    //   비교로만 떨어짐). ★R1 HIGH-3: 면적까지 넘겨 다필지 합산 부지를 걸러낸다.
+    const ok = massSeedAppliesTo(h, { pnu, address, areaSqm: landAreaSqm });
+    setMassSeed(ok ? h : null);
+    setRejectedSeed(!ok && h ? h : null);
+  }, [address, pnu, landAreaSqm]);
   const canFetch = !disabled && !!address && landAreaSqm > 0;
   // 미지원/미인식 용도지역 → 백엔드가 기본값 기준으로 추정함을 정직 고지.
   const zoneFallback = !zoneCode && !!zoning;
@@ -220,8 +258,24 @@ export function SeedDesignMassComparison({
       // 한글→엔진 키 변환 성공 시에만 전달(실패 시 백엔드 기본값에 위임 — 잘못된 한글 주입 방지).
       if (zoneCode) body.zone_code = zoneCode;
       if (floorHeightM && floorHeightM > 0) body.floor_height_m = floorHeightM;
-      if (effectiveFarPct && effectiveFarPct > 0) body.effective_far_pct = effectiveFarPct;
+      if (effectiveFarPct && effectiveFarPct > 0) {
+        body.effective_far_pct = effectiveFarPct;
+        // ★WP-U2a: 실효값은 부지분석 SSOT(calc_effective_far) 산출일 때만 이 prop으로 오므로
+        //   reliable=true, 근거 라벨(farBasis)은 있을 때만 동봉(무날조·메타 additive).
+        body.far_reliable = true;
+        if (farBasis) body.far_basis = farBasis;
+      }
       if (effectiveBcrPct && effectiveBcrPct > 0) body.effective_bcr_pct = effectiveBcrPct;
+      // ★W4: 사통맵에서 고른 배치안 인계. **같은 부지일 때만** 싣는다 — 다른 필지의 선택을
+      //   조용히 시드로 쓰면 사용자는 "지도에서 고른 대로"라고 믿는데 실제로는 다른 땅의
+      //   선택이 반영된다(W2에서 같은 클래스의 결함을 겪었다). 만료분도 read가 걸러낸다.
+      // ★R1 LOW-1: 만료는 **요청 시점에** 다시 판정한다. 마운트 때 한 번만 보면 탭을 오래
+      //   열어둔 뒤 조회할 때 만료된 인계가 그대로 전송된다.
+      const fresh = massSeed && readMassSeedHandoff(Date.now()) ? massSeed : null;
+      if (fresh) {
+        body.map_target_floors = fresh.targetFloors;
+        body.map_option_label = fresh.optionLabel;
+      }
       const res = await apiClient.post<SeedDesignResponse>("/mass-templates/seed-design", { body });
       setData(res);
     } catch (e) {
@@ -272,7 +326,7 @@ export function SeedDesignMassComparison({
 
       {/* 미지원 용도지역 정직 고지(M1) — 엔진 키가 없어 기본(제2종 일반주거) 기준으로 추정됨. */}
       {zoneFallback && (
-        <p className="mb-3 inline-flex items-start gap-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5 text-[11px] leading-relaxed text-amber-500">
+        <p className="mb-3 inline-flex items-start gap-1.5 rounded-xl border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 px-3.5 py-2.5 text-[11px] leading-relaxed text-[var(--status-warning)]">
           <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden />
           이 용도지역({zoning})은 설계엔진 코드가 없어 <b className="mx-0.5">기본(제2종 일반주거)</b> 기준으로 추정합니다 — 실제 한도와 다를 수 있습니다.
         </p>
@@ -283,6 +337,25 @@ export function SeedDesignMassComparison({
           <AlertTriangle className="size-3.5" aria-hidden />
           {error}
         </p>
+      )}
+
+      {/* ★R2 MEDIUM-1: 부지 불일치로 인계를 쓰지 않았다는 사실을 조회 전에도 알린다
+          (조회해야만 알 수 있으면 사용자는 그 사이 계속 "반영됐겠지"라고 믿는다). */}
+      {rejectedSeed && (
+        <div className="mb-4 rounded-xl border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 px-3.5 py-3 text-[11px] leading-relaxed text-[var(--text-hint)]">
+          <p className="font-bold text-[var(--status-warning)]">
+            사통맵에서 고른 안({rejectedSeed.optionLabel} · {rejectedSeed.targetFloors}층)은 이
+            부지에 적용하지 않았습니다
+          </p>
+          <p className="mt-1">
+            고른 안은{" "}
+            {rejectedSeed.areaSqm
+              ? `${Math.round(rejectedSeed.areaSqm).toLocaleString()}㎡ 단일 필지`
+              : "면적이 확인되지 않은 필지"}{" "}
+            기준이고, 지금 설계 부지는 {Math.round(landAreaSqm).toLocaleString()}㎡입니다. 다른
+            부지의 층수를 잘못 적용하지 않기 위해 반영하지 않습니다.
+          </p>
+        </div>
       )}
 
       {data && (
@@ -296,6 +369,20 @@ export function SeedDesignMassComparison({
               mass={data.legal_max_mass}
               emptyNote="법정 한도 산출 불가"
             />
+            {data.map_seeded_mass ? (
+              <MassCard
+                title="지도에서 고른 안"
+                badge={
+                  data.map_seed?.option_label
+                    ? `${data.map_seed.option_label} · ${data.map_seed.target_floors}층 상한`
+                    : "사통맵 선택 시드"
+                }
+                icon={<Building2 className="size-4" aria-hidden />}
+                accent="#f59e0b"
+                mass={data.map_seeded_mass}
+                emptyNote="선택한 배치안으로는 매스를 산출하지 못했습니다."
+              />
+            ) : null}
             <MassCard
               title="지역 실측 전형"
               badge={ref ? `${ref.region} ${ref.building_type} 실측 중앙값` : "지역 실측 시드"}
@@ -305,6 +392,42 @@ export function SeedDesignMassComparison({
               emptyNote="이 지역 같은 종류 실측 매스가 아직 없습니다(법정 최대만 제공)."
             />
           </div>
+
+          {/* ★R1 HIGH-1 봉합 — 시드가 **적용되지 않았을 때**는 침묵하지 않고 그 사실을 알린다.
+              종전엔 미적용이어도 카드가 뜨고 "반영했다"고 고지해, 5층을 고른 사용자가 38층을
+              '고른 안'으로 읽는 표기 사기가 됐다. */}
+          {data.map_seed && data.map_seed.applied === false ? (
+            <div className="rounded-xl border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 px-3.5 py-3 text-[11px] leading-relaxed text-[var(--text-hint)]">
+              <p className="font-bold text-[var(--status-warning)]">
+                지도에서 고른 안({data.map_seed.option_label ?? "배치안"} ·{" "}
+                {data.map_seed.target_floors}층)은 이 부지 설계에 반영되지 않았습니다
+              </p>
+              <p className="mt-1">
+                {data.map_seed.not_applied_reason ??
+                  "이 용도지역·매스 형식에서는 층수 시드가 반영되지 않습니다."}{" "}
+                아래 매스는 지도 선택과 무관하게 산정된 값입니다.
+              </p>
+            </div>
+          ) : null}
+
+          {/* ★W4 정직 고지 — "지도에서 고른 안"이 무엇을 반영하고 무엇을 반영하지 않는지.
+              층수가 상한으로만 작용한다는 사실을 밝히지 않으면 사용자는 이 카드를
+              "내가 고른 대로 지어진다"로 읽는다. */}
+          {data.map_seeded_mass && data.map_seed ? (
+            <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] px-3.5 py-3 text-[11px] leading-relaxed text-[var(--text-hint)]">
+              <p className="font-bold text-[var(--text-secondary)]">
+                지도 선택 시드: {data.map_seed.option_label ?? "배치안"} · {data.map_seed.target_floors}층
+              </p>
+              <p className="mt-1">
+                고른 안의 <b>층수만</b> 상한으로 반영했습니다 — 법정·조례 한도가 더 엄격하면
+                한도가 적용되므로 이 시드가 용량을 부풀리지 않습니다. <b>동수·동 배치 도형·
+                인동간격은 반영되지 않았습니다</b>(설계엔진이 풋프린트를 시드로 받지 않습니다).
+                ★지도의 &quot;N동 M층&quot;은 여러 동에 나눈 층수이고 여기 매스는 단일 동 기준이라,
+                같은 층수라도 총 연면적은 다를 수 있습니다. 또한 이 시드는 <b>이 비교 카드에만</b>
+                반영되며, 같은 화면의 자동설계·CAD 생성 패널은 아직 지도 선택을 받지 않습니다.
+              </p>
+            </div>
+          ) : null}
 
           {ref && (
             <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] px-3.5 py-3 text-[11px] leading-relaxed text-[var(--text-hint)]">

@@ -1,0 +1,320 @@
+{
+ "radius_m": 1000,
+ "geocode_precut_count": 1767,
+ "groups_evaluated_count": 554,
+ "coords_unresolved_count": 36,
+ "radius_filtered_out_count": 307,
+ "categories": {
+  "apt_trade": {
+   "label": "아파트 매매",
+   "groups": [
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {}
+   ],
+   "capped_group_count": 0,
+   "precut": {
+    "groups_before": 243,
+    "groups_cut": 163
+   }
+  },
+  "villa_trade": {
+   "label": "연립다세대 매매",
+   "groups": [
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {}
+   ],
+   "capped_group_count": 9,
+   "precut": {
+    "groups_before": 200,
+    "groups_cut": 120
+   }
+  },
+  "house_trade": {
+   "label": "단독다가구 매매",
+   "groups": [
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {}
+   ],
+   "capped_group_count": 0,
+   "precut": {
+    "groups_before": 13,
+    "groups_cut": 0
+   }
+  },
+  "officetel_trade": {
+   "label": "오피스텔 매매",
+   "groups": [
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {}
+   ],
+   "capped_group_count": 6,
+   "precut": {
+    "groups_before": 94,
+    "groups_cut": 14
+   }
+  },
+  "land_trade": {
+   "label": "토지 매매",
+   "groups": [
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {}
+   ],
+   "capped_group_count": 0,
+   "precut": {
+    "groups_before": 11,
+    "groups_cut": 0
+   }
+  },
+  "commercial_trade": {
+   "label": "상업업무용 매매",
+   "groups": [
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {}
+   ],
+   "capped_group_count": 0,
+   "precut": {
+    "groups_before": 73,
+    "groups_cut": 0
+   }
+  },
+  "apt_rent": {
+   "label": "아파트 전월세",
+   "groups": [
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {}
+   ],
+   "capped_group_count": 17,
+   "precut": {
+    "groups_before": 440,
+    "groups_cut": 360
+   }
+  },
+  "villa_rent": {
+   "label": "연립다세대 전월세",
+   "groups": [
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {}
+   ],
+   "capped_group_count": 26,
+   "precut": {
+    "groups_before": 1139,
+    "groups_cut": 1059
+   }
+  },
+  "house_rent": {
+   "label": "단독다가구 전월세",
+   "groups": [
+    {}
+   ],
+   "capped_group_count": 0,
+   "precut": {
+    "groups_before": 13,
+    "groups_cut": 0
+   }
+  },
+  "officetel_rent": {
+   "label": "오피스텔 전월세",
+   "groups": [
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {}
+   ],
+   "capped_group_count": 15,
+   "precut": {
+    "groups_before": 131,
+    "groups_cut": 51
+   }
+  }
+ },
+ "_provenance": "라이브 실측 2026-08-25 · POST /api/v1/zoning/nearby-map · 서울특별시 강남구 역삼동 736 · radius_m=1000 — 합성 아님. ★capped_group_count 포함(표시 상한을 잔차가 아니라 실제 카운터로 쓴다)."
+}

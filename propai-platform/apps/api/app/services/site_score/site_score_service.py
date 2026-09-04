@@ -15,9 +15,24 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.services.external_api.poi_dedup import dedup_school_cluster
 from app.services.verification.calc_ledger import _deep_find, _num
 
 # 연구기반 사전가중(합=1.0). 접근성·상권 비중↑(15분도시·MCDA 근거).
+# ★등급 발행 커버리지 하한 — 6개 지표 중 최소 몇 개를 확보해야 **등급을 말할 수 있는가**.
+#
+# 화면 감사 실측(2026-08-24): `covered=1 / total_features=6` 인데 `grade="D"` 가 단정돼
+# 나갔다. 6개 중 1개만 확보한 상태는 "입지가 나쁘다"가 아니라 **"아직 모른다"** 인데,
+# D 는 사용자에게 **최하 등급**으로 읽힌다 — 모름이 나쁨으로 둔갑한다.
+#
+# ★가중 재정규화가 이 결함을 키운다: 누락 지표를 빼고 남은 것에 가중을 몰아주므로
+#   1개만 있어도 점수가 정상처럼 나오고 등급표가 그대로 적용된다.
+#
+# 3 = 과반(6개 중)에 못 미치더라도 **서로 다른 성격의 지표 셋**(예: 교통·상권·지가)이
+# 모이면 상대 비교가 의미를 갖기 시작하는 지점. 이 값을 올리면 보류가 늘고, 내리면
+# 근거 없는 단정이 늘어난다.
+GRADE_COVERAGE_FLOOR: int = 3
+
 WEIGHTS: dict[str, float] = {
     "transit": 0.24,    # 대중교통 접근성
     "commerce": 0.20,   # 상권 활력
@@ -73,8 +88,9 @@ def compute_site_score(context: Any, region_baseline: dict[str, float] | None = 
     nsub = infra.get("nearest_subway") if isinstance(infra.get("nearest_subway"), dict) else None
     subway_m = _num((nsub or {}).get("distance_m")) if nsub else _deep_find(context, ("subway_distance_m",))
 
-    # 학교: 최근접 거리 + 개수
-    schools = infra.get("schools") if isinstance(infra.get("schools"), list) else None
+    # 학교: 최근접 거리 + 개수 (★모학교 병합 G2 — 부속·분교 개별집계로 인한 학군 보너스 과대 차단)
+    schools_raw = infra.get("schools") if isinstance(infra.get("schools"), list) else None
+    schools = dedup_school_cluster(schools_raw) if schools_raw else None
     school_m = None
     school_n = 0
     if schools:
@@ -141,7 +157,14 @@ def compute_site_score(context: Any, region_baseline: dict[str, float] | None = 
         add("landprice", int(landprice), n, note)
 
     if not factors:
+        # ★계약 일관성 — 등급이 없는 두 경로(0개 / 하한 미달)가 **같은 키 모양**을 내야
+        #   소비처가 한 가지 방법으로 다룰 수 있다(키가 갈리면 한쪽만 처리하게 된다).
         return {"score": None, "grade": None, "factors": [],
+                "grade_basis": (
+                    f"판정 보류 — 입지 지표를 하나도 확보하지 못했습니다"
+                    f"(등급 발행 최소 {GRADE_COVERAGE_FLOOR}/{len(WEIGHTS)}개)."
+                ),
+                "covered": 0, "total_features": len(WEIGHTS),
                 "message": "입지 점수 산출에 필요한 데이터(교통·상권·실거래·용도지역 등)가 부족합니다.",
                 "weight_basis": WEIGHT_BASIS}
 
@@ -155,12 +178,35 @@ def compute_site_score(context: Any, region_baseline: dict[str, float] | None = 
         score += f["contribution"]
     score = round(score, 1)
 
-    grade = ("A+" if score >= 90 else "A" if score >= 80 else "B+" if score >= 70
-             else "B" if score >= 60 else "C" if score >= 45 else "D")
+    # ★커버리지 하한 미달이면 **등급을 발행하지 않는다**(점수는 참고로 남긴다).
+    #   정답이 '값'이 아니라 '보류'일 수 있다 — 같은 원칙을 탁상감정 신뢰도에도 적용했다.
+    # ★2026-08-25 네이밍 정렬 — 종전 `grade_withheld_reason` 은 **이단아**였다.
+    #   이 저장소의 확립된 관용은 **`X_basis`** 다(실측: `legal_basis` 293 · `far_basis` 135
+    #   · `sample_basis` 18 · `gfa_basis` 16 · `price_basis` 12 · `area_basis` 11 …).
+    #   뜻도 그쪽이 낫다 — **값이 어디서 왔는지**를 항상 말하므로 발행/보류 **양쪽**을 덮는다.
+    #   (`_withheld_reason` 은 보류일 때만 채워져, 발행된 값의 근거는 아무도 말하지 않았다.)
+    #   ★프론트 소비처 0건일 때 바꾼다 — 지금은 싸고 나중엔 비싸다.
+    _covered = ", ".join(_FNAME.get(f["key"], f["key"]) for f in factors)
+    if len(factors) < GRADE_COVERAGE_FLOOR:
+        grade = None
+        grade_basis = (
+            f"판정 보류 — 입지 지표 {len(factors)}/{len(WEIGHTS)}개만 확보했습니다"
+            f"(등급 발행 최소 {GRADE_COVERAGE_FLOOR}개). 확보한 지표: {_covered}"
+            ". 점수는 확보분만으로 계산한 참고값입니다."
+        )
+    else:
+        grade = ("A+" if score >= 90 else "A" if score >= 80 else "B+" if score >= 70
+                 else "B" if score >= 60 else "C" if score >= 45 else "D")
+        # ★발행했을 때도 **근거를 말한다** — 종전엔 이 자리가 비어 있었다(보류일 때만 채움).
+        grade_basis = (
+            f"입지 지표 {len(factors)}/{len(WEIGHTS)}개 확보(발행 최소 {GRADE_COVERAGE_FLOOR}개) "
+            f"→ 점수 {score} 기준 등급 {grade}. 확보한 지표: {_covered}."
+        )
     factors.sort(key=lambda x: x["contribution"], reverse=True)
 
     return {
         "score": score, "grade": grade,
+        "grade_basis": grade_basis,
         "factors": factors,
         "covered": len(factors), "total_features": len(WEIGHTS),
         "weight_basis": WEIGHT_BASIS,

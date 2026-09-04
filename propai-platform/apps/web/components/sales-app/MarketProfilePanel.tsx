@@ -268,7 +268,7 @@ export default function MarketProfilePanel() {
 
   return (
     <div className="space-y-4">
-      <div className="rounded-xl border border-amber-400/30 bg-amber-500/10 px-4 py-2.5 text-xs font-semibold text-amber-200">
+      <div className="rounded-xl border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 px-4 py-2.5 text-xs font-semibold text-amber-200">
         ⓘ 실적·자격 등 모든 항목은 <b>본인이 직접 기재</b>합니다. 타인에게 표시될 때 &quot;자기기재&quot;로 안내되며,
         허위 기재 시 불이익을 받을 수 있습니다.
       </div>

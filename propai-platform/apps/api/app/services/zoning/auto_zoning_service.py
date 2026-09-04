@@ -6,6 +6,8 @@ import logging
 import re
 from typing import Any
 
+import structlog
+
 from ..external_api.vworld_service import VWorldService
 
 logger = logging.getLogger(__name__)
@@ -59,6 +61,50 @@ ZONE_LIMITS = {
 }
 
 
+def land_analysis_charged(result: Any) -> bool:
+    """토지분석을 **실제로 수행했는가**. `land_analysis` 과금은 이 판정이 참일 때만 한다.
+
+    ★2026-08-16 신설 — 종전 라우트(`routers/auto_zoning.py`)는 **`result` 를 한 번도 보지
+      않고** 무조건 2,000원을 청구했다. `cached` 판정도 `status` 판정도 중복 방지도 없었다.
+
+    ★추정이 아니라 **원장 실측**이다. `billing/ledger` 에 `land_analysis` **18건 · 36,000원**
+      이 찍혀 있고, 사람이 낼 수 없는 간격으로 군집한다:
+          2026-08-15 12:27:21 · 12:29:17              (116초)
+          2026-08-02 22:12:49 · 22:13:42 · 22:15:00   ( 53초 ·  78초)
+          2026-07-22 05:49:41 · 05:49:57 · 05:51:30   ( 16초 ·  93초)
+      16초 만에 서로 다른 부지분석 3건을 돌리는 사람은 없다.
+
+    ★같은 결함 클래스가 등기에서 이미 **두 번** 났다(`routers/registry.py` 의 `issued_count`
+      ·`analysis_charged`). 그 처방을 이식한다 — **성공을 증명하지 못하면 과금하지 않는다**
+      (화이트리스트). 블랙리스트는 새 실패 상태가 생겨도 가드가 따라오지 않는다.
+
+    판정 — **실조회로 용도지역이 확정된 경우만** 과금한다:
+      · `cached` 는 과금하지 않는다. 오늘 이 경로에 서버 캐시는 없지만 **게이트를 미리 둔다**
+        — 등기가 정확히 이 순서로 당했다(캐시를 나중에 넣으며 돈 가드를 안 고쳐 적중마다
+        재청구). 캐시를 넣는 사람이 가드를 같이 고쳐야 함을 모르는 쪽이 기본값이면 안 된다.
+      · `pnu` 가 없으면 **필지 실조회 자체가 없었다**(VWorld 키 미설정·지오코딩 실패 시
+        `pnu=None` 으로 조기 return 한다 — 이 파일 `AutoZoningService.analyze_by_address` 참조).
+      · `zone_source == "keyword_inference"` 는 과금하지 않는다. 이 코드가 스스로
+        `ZONE_INFERENCE_WARNING`("실조회 확인 필요")을 붙여 **추론값임을 사용자에게 고지**
+        하는 결과다. 고지해 놓고 실조회와 같은 값을 받을 수는 없다.
+        ※이 한 줄은 **매출 방향에 영향**을 준다(추론 응답 무과금). 의도적 판단이며 리뷰 대상.
+
+    ★남은 부채(이 PR 범위 밖·초록 안에 보이게 남김): 위 군집이 보여주는 **동일 주소 재청구**는
+      이 판정만으로 막히지 않는다(둘 다 성공한 실조회다). 서버 결과 캐시 또는 (사용자·주소)
+      중복창 설계가 필요하고 TTL·창 길이는 제품 결정이다 →
+      `tests/test_land_analysis_charging.py` 의 skip 테스트로 부채를 가시화했다.
+    """
+    if not isinstance(result, dict):
+        return False
+    if result.get("cached"):
+        return False
+    if not result.get("pnu"):
+        return False
+    if str(result.get("zone_source") or "") == "keyword_inference":
+        return False
+    return bool(result.get("zone_type"))
+
+
 def build_zone_limits(zone_key: str, limits: dict) -> dict:
     """ZONE_LIMITS 항목 → 표준 zone_limits 페이로드(공용 빌더, SSOT 단일경유).
 
@@ -84,6 +130,64 @@ def build_zone_limits(zone_key: str, limits: dict) -> dict:
             f"(실효 높이≈{eff}m = {max_floors}층×3.0m 층고 근사)"
         )
     return payload
+
+
+#: 용도지역 출처 관측의 **구별된** event_type (2026-08-23).
+#  ★F4a 거버넌스: 이 플랫폼엔 인간 개입 없는 자동 변이 루프가 있다 —
+#    verify_result → analyzer._analyze_quality_drop → down_pct
+#    → growth.feature_flags 가 llm_narrative 를 **자동 비활성화**.
+#  관측을 그 신호에 흘리면 "용도지역 출처"라는 correctness 관측이 **서술기능을 끄는**
+#  카테고리 오류가 된다. field_audit_observation 선례대로 구별된 타입으로만 emit 하고,
+#  severity·recommended_action 을 담지 않아 조치신호로 소비될 수 없게 한다.
+ZONE_SOURCE_OBSERVATION_EVENT = "zone_source_observation"
+
+
+def _log_zone_source(result: dict, address: str) -> None:
+    """용도지역 출처를 구조화 로그로 남긴다 — keyword_inference 빈도를 재기 위한 계측.
+
+    ★왜 있나: 이 값이 어디에도 로깅되지 않아 *"VWorld 실패로 용도지역을 지어낸 응답이
+    몇 건 나갔나"* 를 원리적으로 잴 수 없었다(2026-08-22 실측 — 라이브 grep 0건은
+    부재가 아니라 계측 부재였다). 성공 경로도 남겨야 **분모**를 알 수 있다.
+
+    지어낸 경우(keyword_inference)는 warning, 실조회는 info 로 낸다.
+    """
+    zone_source = result.get("zone_source")
+    inferred = zone_source == "keyword_inference"
+    log = structlog.get_logger(__name__)
+    (log.warning if inferred else log.info)(
+        "용도지역 출처 계측",
+        zone_source=zone_source,
+        inferred=inferred,
+        # 지어낸 값이 무엇이었는지 남겨야 원인 추적이 된다(지어내기는 주소 문자열에서 나온다).
+        zone_type=result.get("zone_type"),
+        has_pnu=bool(result.get("pnu")),
+        address=address,
+    )
+
+    # ── 영속 관측(platform_events) ────────────────────────────────────────────
+    # ★structlog 만으로는 **빈도를 잴 수 없다**: docker logs 는 배포마다 컨테이너가
+    #   바뀌면 사라지고(json-file 드라이버), 이 저장소는 하루에도 여러 번 배포한다.
+    #   실측(2026-08-23) — 계측을 넣은 다음 날 읽어 보니 **총 1건**(25분치 창)이었다.
+    #   platform_events 는 살아 있다(api_call 169,326건 · 최신 당일).
+    # ★주소는 담지 않는다 — 개인정보 성격이고, 선례(field_audit)도 차원 힌트만 담는다.
+    # ★지연 import: 성장 모듈이 없는 환경에서도 분석 경로가 죽지 않아야 한다
+    #   (growth_telemetry 와 동일 관례). 수집 실패는 절대 호출경로로 전파하지 않는다.
+    try:
+        from app.services.growth import capture_service
+
+        capture_service.record_event(ZONE_SOURCE_OBSERVATION_EVENT, {
+            "surface": "api",
+            "service": "auto_zoning",
+            "payload": {
+                "zone_source": zone_source,
+                "inferred": inferred,
+                "has_pnu": bool(result.get("pnu")),
+                # 차원 힌트(값 아님) — 지어낸 용도지역이 무엇이었는지 상관분석용.
+                "zone_type": result.get("zone_type"),
+            },
+        })
+    except Exception:  # noqa: BLE001 — 관측이 분석을 깨뜨리면 안 된다.
+        pass
 
 
 class AutoZoningService:
@@ -136,6 +240,7 @@ class AutoZoningService:
             result["special_districts"] = self._detect_special_districts(
                 str(result.get("zone_type") or ""), address
             )
+            _log_zone_source(result, address)
             return result
 
         # Step 2: PNU -> 필지 정보 (면적, 지목, 용도지역)
@@ -176,6 +281,11 @@ class AutoZoningService:
                         result["zone_type_secondary"] = lc["zone_type_2"]
                     # 접도(도로접면) → 대표 도로폭(m). estimate_road_width_m 재사용(DRY·NED 실데이터).
                     # 시니어 심의 접도 CSP·건축법 44조 적합성 입력원(미확보 시 미설정·무목업).
+                    # ★road_width_source 동반 필수 — 이 경로는 기하 실측 없이 '도로접면' 범주를
+                    #   대표값으로 환산할 뿐이다(광대로→40m 등). 출처를 함께 싣지 않으면 하류
+                    #   (dev_act_permit_gate._eval_road)가 실측과 구분하지 못해 근거 문구에
+                    #   "접도 도로폭 40m"를 실측인 양 표기한다(표기사기). land_info_service는
+                    #   같은 필드에 'cadastral_road_parcel'(지적 실측)을 싣는다 — 계약 동일 유지.
                     road_side = lc.get("road_side")
                     if road_side:
                         # lazy import — land_info_service↔auto_zoning 순환참조 회피.
@@ -186,6 +296,7 @@ class AutoZoningService:
                         rw = estimate_road_width_m(road_side)
                         if rw is not None:
                             result["road_width_m"] = rw
+                            result["road_width_source"] = "road_side_estimate"
             except Exception as e:  # noqa: BLE001
                 result["warnings"].append(f"토지특성 조회 실패: {str(e)}")
 
@@ -205,6 +316,7 @@ class AutoZoningService:
             result.get("zone_type", ""), address
         )
 
+        _log_zone_source(result, address)
         return result
 
     def _normalize_zone_name(self, raw_zone: str) -> str:

@@ -5,23 +5,52 @@ prefix: /api/v1/design
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import json
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+import structlog
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+)
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import idempotency  # WP-L: Idempotency-Key 재전송 안전(뮤테이팅 커맨드)
+from app.core.charge_guard import charge_once
 from app.services.auth.auth_service import get_current_user, get_current_user_optional
 from app.services.cad import design_run_cache  # 설계 매스 input_hash 멱등 캐시(시간절감)
 from app.services.cad.design_contract import build_mass_contract  # C2R 계약 부착 공용 헬퍼
-from app.services.cad.provenance import compute_input_hash  # 결정적 입력 지문(int/float·키순서 정규화)
+from app.services.cad.provenance import (  # 결정적 입력 지문·run_id·콘텐츠 해시(int/float·키순서 정규화)
+    compute_input_hash,
+    make_run_id,
+    sha256_hex,
+)
+from app.services.cad.sheet_frame import (  # WP-F 도면틀 표준(표제란·시트매니페스트·필수시트)
+    apply_title_block_dxf,
+    apply_title_block_svg,
+    build_sheet_manifest,
+    build_title_block,
+    required_sheet_codes,
+)
 from app.services.drawing.design_alternative_selector import DesignAlternativeSelector
 from app.services.drawing.svg_drawing_service import SVGDrawingService
+from app.services.report.submission_bundle import (  # WP-F 제출 번들 컴파일러
+    RequiredSheetsMissingError,
+    build_submission_bundle,
+)
 from apps.api.database.session import get_db
 
+logger = structlog.get_logger()
 router = APIRouter(prefix="/api/v1/design", tags=["v61 설계도면"])
 svg_service = SVGDrawingService()
 alt_selector = DesignAlternativeSelector()
@@ -82,6 +111,23 @@ class DrawingSetRequest(BaseModel):
     drawing_type: str = "floor_plan"
 
 
+class SubmissionBundleRequest(DrawingSetRequest):
+    """WP-F 심의·인허가 제출 번들 생성 요청 — 도면 파라미터(상속) + 발행일·축척·포함옵션.
+
+    ★무목업: issue_date(발행일)는 서버 now()가 아니라 '요청 파라미터'로만 받는다. 미상 시 표제란 공란.
+    """
+    issue_date: str | None = Field(
+        None, description="발행일(YYYY-MM-DD 등) — 명시 인자. 미상 시 표제란 공란(now() 금지)",
+    )
+    scale: str = Field("N.T.S.", description="도면 축척 표기(예: 1:100). 미상 시 N.T.S.")
+    include_dxf: bool = Field(True, description="필수시트 DXF 동봉 여부(부가물 — 없어도 SVG로 필수시트 충족)")
+    include_report: bool = Field(True, description="설계요약 보고서 PDF 동봉 여부")
+    include_boq: bool = Field(True, description="공내역서(BOQ) xlsx 동봉 여부")
+    households: int | None = Field(
+        None, ge=0, description="세대수(BOQ 세대당 원단위 — 미상 시 연면적 원단위만)",
+    )
+
+
 class CADSaveRequest(BaseModel):
     """도면 저장 요청. 편집된 CAD 좌표(points/lines/surfaces)를 영속화한다."""
     drawing_code: str = "CAD-EDIT"
@@ -104,6 +150,10 @@ class CADSaveRequest(BaseModel):
     building_width_m: float | None = None
     building_depth_m: float | None = None
     floor_height_m: float | None = None
+    # ★WP-E R1(무낙관잠금 봉합·If-Match 의미론): 저장 직전 사용자가 '내가 본 최신 버전'을 함께
+    #   보내면, 서버 현재 최신 버전과 다를 때(다른 사람이 그새 저장) 409로 거부한다(무음 덮어쓰기
+    #   금지 = lost-update 방지). 미전달(None)이면 기존 동작(항상 MAX+1) 유지 — 점진 도입·하위호환.
+    expected_version: int | None = None
 
 
 class PhotorealRenderRequest(BaseModel):
@@ -169,6 +219,11 @@ class BimGenerateRequest(BaseModel):
     #   None=법정상한 기준(기존 동작 100% 불변 — 하위호환).
     ordinance_far_pct: float | None = Field(None, gt=0, description="부지분석 SSOT 실효 용적률(%)")
     ordinance_bcr_pct: float | None = Field(None, gt=0, le=100, description="부지분석 SSOT 실효 건폐율(%)")
+    # ★WP-U2a(실효FAR 근거 정직 전파·additive): ordinance_far_pct가 far_tier SSOT
+    #   (calc_effective_far) 산출 실효치일 때 그 산정 근거 라벨(예 "구조상한(건폐율×층수)")과
+    #   신뢰 플래그. 수치 산출에는 무영향 — 산출물 메타(rule_trace·applied_limits)로만 전파.
+    far_basis: str | None = Field(None, description="실효 용적률 산정 근거(far_tier SSOT far_basis)")
+    far_reliable: bool | None = Field(None, description="실효 용적률 SSOT 산정 성공 여부(정직 표기)")
     # ★B2(특이부지 게이트 전 경로 패리티) — 있으면 학교용지·GB·농지·산지·맹지 등 특이요인을 검사해
     #   응답에 경고만 additive 부착(차단 아님). 컨텍스트가 전혀 없으면 게이트 자체를 생략한다
     #   (정직 — 무날조). pnu는 현재 판정에 쓰이지 않고 추적용 메타로 echo만 된다.
@@ -193,6 +248,8 @@ class FullDrawingSetResponse(BaseModel):
     project_id: str
     drawings: dict[str, DrawingInfo]
     drawing_count: int
+    # WP-F(additive): 시트 매니페스트(번호·이름·포맷·sha256·필수·존재) — 기존 필드 무회귀.
+    sheet_manifest: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class DrawingSaveResponse(BaseModel):
@@ -203,6 +260,11 @@ class DrawingSaveResponse(BaseModel):
     svg_length: int
     layer_count: int
     status: str
+    # ★후속④(design-run 승인 흐름 표면화): 저장 시 design_run이 실제 영속되면 그 실키(run_id)와
+    #   승인차원 status(DRAFT/APPROVED)를 additive 동봉한다. 프론트는 이 run_id로
+    #   POST /design-runs/{run_id}/approve(명시 인간승인)를 호출해 승인 흐름을 표면화한다.
+    #   미영속(매스치수 부재로 스킵/영속 실패) 시 None(정직) — 기존 응답 필드는 무변경(하위호환).
+    design_run: dict[str, Any] | None = None
 
 
 class AlternativeSelectionResponse(BaseModel):
@@ -226,16 +288,14 @@ class PermitDocsResponse(BaseModel):
 
 # ── 엔드포인트 ──
 
-@router.post("/{project_id}/generate-full-set", response_model=FullDrawingSetResponse)
-async def generate_full_drawing_set(project_id: str, req: DrawingSetRequest):
-    """전체 도면 세트를 일괄 생성한다 (B-01~C-03).
+def _inject_unit_mix(
+    project_data: dict[str, Any], *, building_use: str, unit_types: list[str] | None
+) -> None:
+    """실제 세대믹스(AutoDesignEngine)를 산출해 project_data['units']에 주입(데이터 있으면).
 
-    building_use·unit_types가 주어지면 AutoDesignEngine으로 실제 평형믹스(세대배치)를
-    산출해 기준층 평면도를 실제 세대 분할로 그린다(미전달 시 generic 균등분할 폴백).
+    generate-full-set·submission-bundle 공용 헬퍼 — 기준층 평면도를 실제 세대분할로 그리기 위함.
+    산출 실패(엔진 미배포·입력 부족 등)는 조용히 통과(generic 균등분할 폴백 — 기존 동작 보존·무회귀).
     """
-    project_data = req.model_dump()
-
-    # ── 실제 세대믹스 산출 → 기준층 평면도에 주입(데이터 있으면) ──
     try:
         from app.services.cad.auto_design_engine import AutoDesignEngineService
 
@@ -251,13 +311,26 @@ async def generate_full_drawing_set(project_id: str, req: DrawingSetRequest):
             "building_footprint_sqm": _bw * _bd,        # compute_unit_layout 필수 입력
             "total_floor_area_sqm": _bw * _bd * _nf,    # compute_core_layout 필수 입력
         }
-        core_layout = svc.compute_core_layout(mass, req.building_use)
+        core_layout = svc.compute_core_layout(mass, building_use)
         unit_layout = svc.compute_unit_layout(
-            mass, core_layout, req.unit_types or ["59A", "84A"], req.building_use,
+            mass, core_layout, unit_types or ["59A", "84A"], building_use,
         )
         project_data["units"] = unit_layout.get("units")
     except Exception:  # noqa: BLE001 — 산출 실패해도 generic 분할로 도면 생성
         pass
+
+
+@router.post("/{project_id}/generate-full-set", response_model=FullDrawingSetResponse)
+async def generate_full_drawing_set(project_id: str, req: DrawingSetRequest):
+    """전체 도면 세트를 일괄 생성한다 (B-01~C-03).
+
+    building_use·unit_types가 주어지면 AutoDesignEngine으로 실제 평형믹스(세대배치)를
+    산출해 기준층 평면도를 실제 세대 분할로 그린다(미전달 시 generic 균등분할 폴백).
+    """
+    project_data = req.model_dump()
+    _inject_unit_mix(
+        project_data, building_use=req.building_use, unit_types=req.unit_types
+    )
 
     drawings = svg_service.generate_full_drawing_set(project_data)
     return {
@@ -265,6 +338,8 @@ async def generate_full_drawing_set(project_id: str, req: DrawingSetRequest):
         "drawings": {code: {"svg_length": len(svg), "has_content": bool(svg)}
                      for code, svg in drawings.items()},
         "drawing_count": len(drawings),
+        # WP-F(additive): 시트 매니페스트 — 기존 drawings/drawing_count 필드는 불변.
+        "sheet_manifest": build_sheet_manifest(drawings),
     }
 
 
@@ -549,13 +624,49 @@ async def save_drawing(
             }
         tenant_id = row[0]
 
-        # 현재 최대 버전 +1 (raw — ORM 컬럼 불일치 우회)
+        # ★WP-E R1(무낙관잠금 레이스 봉합): 같은 프로젝트+design_type의 동시 저장을 트랜잭션
+        #   advisory lock으로 직렬화한다(analysis_ledger append 선례 재사용). 이 락이 없으면
+        #   두 요청이 같은 MAX(version)을 읽어 같은 next_ver를 이중 발번하는 lost-update가 난다.
+        #   락은 커밋/롤백 시 자동 해제(프로세스 스코프·신규 스키마 0).
+        #   ★권고③(64bit 상향): hashtext(::int4→bigint 캐스트)는 32bit라 서로 다른 키가 같은
+        #     락으로 뭉칠 충돌 확률이 크다 → hashtextextended(키, 0)의 64bit 해시가 목표(신키).
+        #   ★분리 리뷰 MEDIUM(전환기 레이스 봉합): 배포는 블루그린이라 신·구 파드가 잠시 혼재한다
+        #     (WORKTREES.md·safe-deploy). 이 전환창 동안 구파드는 여전히 구키(32bit hashtext)로만
+        #     잠그므로, 신키만 쓰면 신파드끼리는 직렬화돼도 신-구 파드 간에는 서로 다른 락 공간이라
+        #     상호배제가 깨진다(레이스 재발). 그래서 과도기엔 **두 키 모두** 고정 순서(구키 먼저)로
+        #     연속 획득한다 — 구키가 최소공통분모라 신·구 파드가 뒤섞여도 구키에서 만나 직렬화된다.
+        #     신키는 32bit보다 넓은 공간으로 오탐충돌만 줄인다(있으면 더 안전, 없어도 구키가 방어).
+        #     ★순서 고정 이유(데드락 방지): 두 세션이 반대 순서로 락을 걸면 상호대기(deadlock)가
+        #     날 수 있다 — 항상 구키→신키 순서만 쓰면 원형대기가 성립하지 않는다.
+        #     ★차기 릴리스에서 구키(hashtext) 획득 제거 예정(신키 단독 운영 — 전체 파드가 신키
+        #     배포분으로 롤아웃 완료된 뒤). version_number 유니크 제약(DB 레벨 이중방어)은 WP-M
+        #     (alembic 헤드 병합) 이후 별도 alembic 마이그레이션으로 다룬다 — 이 WP는 애플리케이션
+        #     레벨 직렬화(advisory lock)만 담당하고 스키마 변경은 하지 않는다(제약 준수).
+        await db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:lk)::bigint)"),  # 구키(32bit) — 먼저.
+            {"lk": f"design_versions:{pid}:cad_2d"},
+        )
+        await db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:lk, 0))"),  # 신키(64bit) — 다음.
+            {"lk": f"design_versions:{pid}:cad_2d"},
+        )
+        # 현재 최대 버전 (raw — ORM 컬럼 불일치 우회)
         ver_row = (await db.execute(
             text("SELECT COALESCE(MAX(version_number),0) FROM design_versions "
                  "WHERE project_id = :pid AND design_type = 'cad_2d'"),
             {"pid": str(pid)},
         )).first()
-        next_ver = int(ver_row[0]) + 1 if ver_row else 1
+        current_ver = int(ver_row[0]) if ver_row else 0
+        # ★If-Match 의미론(하위호환): expected_version이 오면 서버 현재 최신과 대조해 불일치 시
+        #   409로 거부한다(무음 덮어쓰기 금지). 미제공(None)이면 기존 동작(항상 MAX+1) 유지.
+        if req.expected_version is not None and req.expected_version != current_ver:
+            await db.rollback()  # advisory lock 즉시 해제(다른 대기 저장이 지연되지 않게).
+            raise HTTPException(
+                status_code=409,
+                detail=(f"버전 충돌: expected_version={req.expected_version}이(가) 현재 최신 "
+                        f"버전({current_ver})과 다릅니다. 최신본을 다시 불러온 뒤 저장하세요."),
+            )
+        next_ver = current_ver + 1
 
         design_payload: dict[str, Any] = {
             "drawing_code": req.drawing_code,
@@ -578,6 +689,31 @@ async def save_drawing(
             design_payload["building_depth_m"] = req.building_depth_m
         if req.floor_height_m is not None:
             design_payload["floor_height_m"] = req.floor_height_m
+        # ★WP-D 세션3(additive·raw SQL·스키마 불변): 완전한 매스(폭·깊이·층수 3필드)가 있으면
+        #   design_data_json 내부에 BimIR provenance 스탬프를 함께 저장한다. 신규 컬럼 없음 —
+        #   JSON 내부 additive 키 'bimir'만 추가한다(기존 스키마·저장본 shape 불변). 저장값은
+        #   4-스칼라 정체(bimir_version·element_count·design_input_hash·run_id)뿐이며, 전체 BimIR
+        #   직렬화(대용량·현 소비처 없음)는 세션4 잔여로 남긴다(write-path 기아 방지). design_input_hash는
+        #   provenance compute_input_hash와 동일 계약이라, 이 행을 재현·중복제거·병합의 결정적 앵커로 쓴다.
+        if (
+            req.building_width_m is not None
+            and req.building_depth_m is not None
+            and req.floor_count is not None
+        ):
+            try:
+                from app.services.bim.ifc_to_gltf_service import bimir_meta_from_mass
+
+                _stamp_mass: dict[str, Any] = {
+                    "building_width_m": req.building_width_m,
+                    "building_depth_m": req.building_depth_m,
+                    "num_floors": req.floor_count,
+                }
+                # floor_height_m은 None이면 키를 넣지 않는다(어댑터 기본 3.0 적용 — float(None) 크래시 회피).
+                if req.floor_height_m is not None:
+                    _stamp_mass["floor_height_m"] = req.floor_height_m
+                design_payload["bimir"] = bimir_meta_from_mass(_stamp_mass)
+            except Exception:  # noqa: BLE001 — 스탬프 실패가 저장을 막지 않는다(예외격리)
+                pass
         design_json = json.dumps(design_payload, ensure_ascii=False)
 
         await db.execute(
@@ -595,11 +731,44 @@ async def save_drawing(
              "dj": design_json, "notes": f"CAD 편집 저장 v{next_ver}"},
         )
         await db.commit()
+
+        # ★WP-E: design_run 영속(DRAFT) — 도면 커밋 후 별도 best-effort 트랜잭션으로 설계 실행의
+        #   통일 앵커(bare 기하)·표면해시(save_stamp)·기하해시를 design_runs에 기록한다. 완전한
+        #   매스(폭·깊이·층수)가 있을 때만 기록하고, 실패해도 이미 커밋된 도면은 안전하다(예외격리).
+        design_run_info: dict[str, Any] | None = None
+        if (
+            req.building_width_m is not None
+            and req.building_depth_m is not None
+            and req.floor_count is not None
+        ):
+            with contextlib.suppress(Exception):  # 영속 실패가 저장 응답을 막지 않음(예외격리).
+                from app.services.cad import design_run_store
+
+                _stamp = design_payload.get("bimir") if isinstance(design_payload.get("bimir"), dict) else {}
+                _run = await design_run_store.persist_design_run(
+                    db=db, tenant_id=str(tenant_id), project_id=str(pid),
+                    building_width_m=req.building_width_m, building_depth_m=req.building_depth_m,
+                    num_floors=req.floor_count, floor_height_m=req.floor_height_m,
+                    surface="save_stamp", surface_hash=(_stamp or {}).get("design_input_hash"),
+                    compiler_version=(_stamp or {}).get("bimir_version"),
+                    metrics={"floor_count": req.floor_count, "building_height_m": req.building_height_m},
+                )
+                # ★후속④: persist_design_run 반환 계약(design_run_store.py:318-324 — run_id·status 등)의
+                #   실키(run_id)·승인차원 status만 응답에 additive 동봉한다. 프론트가 이 run_id로
+                #   /design-runs/{run_id}/approve(인간승인)를 호출해 승인 흐름을 표면화한다. run_id가
+                #   있을 때만 세팅(없으면 None 유지 — 정직). status는 신규 DRAFT 또는 보존된 기존 승인.
+                if isinstance(_run, dict) and _run.get("run_id"):
+                    design_run_info = {"run_id": _run["run_id"], "status": _run.get("status")}
         return {
             "project_id": project_id, "drawing_code": req.drawing_code,
             "drawing_type": req.drawing_type, "svg_length": len(req.svg_content),
             "layer_count": len(req.layers), "status": f"saved(v{next_ver})",
+            "design_run": design_run_info,
         }
+    except HTTPException:
+        # ★409(버전 충돌) 등 의도된 HTTP 응답은 아래 generic 핸들러가 500으로 변환하지 않도록
+        #   먼저 그대로 전파한다(HTTPException도 Exception 하위형이므로 순서가 중요).
+        raise
     except Exception as e:  # noqa: BLE001
         await db.rollback()
         import structlog
@@ -717,6 +886,220 @@ async def export_dxf(project_id: str, req: DrawingSetRequest):
         return Response(content=b"DXF_PLACEHOLDER", media_type="application/dxf")
 
 
+# WP-F: 필수시트(sheet_frame.required_sheet_codes) → DXF 생성기 매핑. export_dxf 위의
+# dtype 분기와 동일 서비스 호출(재발명 금지) — 시트코드별로 알맞은 도면종류만 뽑아 쓴다.
+def _dxf_bytes_for_sheet(cad_service: Any, code: str, req: SubmissionBundleRequest) -> bytes | None:
+    """시트 코드(B-01 등) → 해당 DXF bytes. 미지원 코드는 None(정직 — SVG만 번들에 포함)."""
+    if code == "B-01":
+        return cad_service.create_site_plan_dxf(
+            site_width_m=req.site_width_m, site_depth_m=req.site_depth_m,
+            building_width_m=req.building_width_m, building_depth_m=req.building_depth_m,
+            parking_count=req.parking_count,
+        )
+    if code == "B-02-STD":
+        return cad_service.create_detailed_floor_plan_dxf(
+            building_width_m=req.building_width_m, building_depth_m=req.building_depth_m,
+            floor_count=req.floor_count, unit_width_m=req.unit_width_m,
+        )
+    if code == "B-03":
+        return cad_service.create_section_drawing_dxf(
+            building_width_m=req.building_width_m, building_depth_m=req.building_depth_m,
+            floor_count=req.floor_count, floor_height_m=req.floor_height_m,
+            basement_floors=req.basement_floors,
+        )
+    if code == "B-04-F":
+        return cad_service.create_elevation_drawing_dxf(
+            building_width_m=req.building_width_m, building_depth_m=req.building_depth_m,
+            floor_count=req.floor_count, floor_height_m=req.floor_height_m,
+            unit_width_m=req.unit_width_m, view="front",
+        )
+    if code == "B-04-S":
+        return cad_service.create_elevation_drawing_dxf(
+            building_width_m=req.building_width_m, building_depth_m=req.building_depth_m,
+            floor_count=req.floor_count, floor_height_m=req.floor_height_m,
+            unit_width_m=req.unit_width_m, view="side",
+        )
+    return None
+
+
+def _build_submission_report_model(
+    project_id: str, req: SubmissionBundleRequest, *, run_id: str | None,
+) -> Any:
+    """제출 번들 동봉용 설계요약 보고서 ReportModel 조립(산식 계산 0 — 기하 입력값 그대로 표기).
+
+    ★재사용: report.render 정본 모델·렌더러(PDF)를 그대로 쓴다(신규 PDF 라이브러리 0).
+    """
+    from app.services.report.render.model import KVTableBlock, ReportMeta, ReportModel, Section
+
+    overview = Section(section_no=1, title="설계 개요", blocks=[
+        KVTableBlock(rows=[
+            ("프로젝트", req.project_name),
+            ("대지폭(m)", req.site_width_m),
+            ("대지깊이(m)", req.site_depth_m),
+            ("건물폭(m)", req.building_width_m),
+            ("건물깊이(m)", req.building_depth_m),
+            ("층수", req.floor_count),
+            ("지하층수", req.basement_floors),
+            ("층고(m)", req.floor_height_m),
+            ("주차대수", req.parking_count),
+            ("용도지역", req.zone_code),
+            ("건물용도", req.building_use),
+        ]),
+    ])
+    provenance = Section(section_no=2, title="근거", blocks=[
+        KVTableBlock(rows=[("run_id", run_id), ("축척", req.scale), ("발행일", req.issue_date)]),
+    ])
+    return ReportModel(
+        meta=ReportMeta(
+            title="설계 제출 번들 — 설계요약 보고서",
+            project_address=req.project_name,
+            doc_no=project_id,
+            generated_at=req.issue_date or None,  # ★now() 금지 — 명시 인자만(미상 시 정직 공란)
+        ),
+        sections=[overview, provenance],
+    )
+
+
+@router.post("/{project_id}/submission-bundle", response_class=Response)
+async def generate_submission_bundle(
+    project_id: str,
+    req: SubmissionBundleRequest,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+):
+    """심의·인허가 제출 번들(zip)을 생성한다 — 도면(SVG/DXF)+보고서 PDF+BOQ xlsx 단일 zip.
+
+    도면틀(타이틀블록)을 모든 시트에 additive로 씌우고, 필수시트(sheet_frame 표준) 100%
+    충족을 강제한다 — 미충족 시 422 + 누락 목록(무음 부분산출 금지). 매니페스트(파일별
+    sha256·run_id/input_hash)는 zip 내부 manifest.json 에 동봉(전수 대조 가능).
+    인증 필수(무인증 401) + 프로젝트 tenant 소유권 검사(불일치 403 — 비UUID/데모는 검사 생략).
+
+    ★WP-L Idempotency-Key: 같은 키+같은 요청이면 재생성 없이 처음 zip을 그대로 재생(재전송 안전).
+      같은 키인데 다른 요청이면 422(키 오사용). 산출은 결정적이라(now()/uuid 0) 캐시본과 동치.
+    """
+    await _assert_project_owned(project_id, db, user)
+
+    project_data = req.model_dump()
+    _inject_unit_mix(project_data, building_use=req.building_use, unit_types=req.unit_types)
+
+    # ── provenance(결정적) — 요청 입력 그대로에서 파생. now()/uuid 미사용. ──
+    input_hash = compute_input_hash(project_data)
+    run_id = make_run_id(input_hash)
+
+    # ── WP-L 멱등 재생 판정(키 있을 때만) ──
+    # ★request_hash는 산출물에 영향을 주는 요청 필드 전체를 반영해야 한다. input_hash(=기하 앵커
+    #   compute_input_hash)는 표제란 cosmetic(축척·발행일)을 제외하므로, scale/issue_date만 다른
+    #   요청이 같은 키로 오면 낡은 표제란 zip이 재생된다(리뷰 MEDIUM). 명시 편입해 봉합.
+    _bundle_req_hash = idempotency.compute_request_hash(
+        {"input_hash": input_hash, "scale": req.scale, "issue_date": req.issue_date or ""}
+    )
+    _idem_tenant = str(getattr(user, "tenant_id", "") or "") or None
+    _idem_key = idempotency.normalize_key(idempotency_key)
+    if _idem_key:
+        _look = await idempotency.lookup(
+            db=db, key=_idem_key, tenant_id=_idem_tenant,
+            endpoint="submission-bundle", request_hash=_bundle_req_hash,
+        )
+        if _look.state == idempotency.STATE_CONFLICT:
+            raise HTTPException(
+                status_code=422,
+                detail="같은 Idempotency-Key가 다른 요청에 재사용되었습니다.",
+            )
+        if _look.state == idempotency.STATE_REPLAY and _look.stored is not None:
+            _replay = _look.stored.to_response()
+            if _replay is not None:
+                return _replay  # 처음 zip 그대로 재생(재생성 0)
+
+    # ── 1) 도면 SVG 산출 + 표제란(additive) 부착 ──
+    raw_drawings = svg_service.generate_full_drawing_set(project_data)
+    tb_scale, tb_date = req.scale, (req.issue_date or "")
+    drawings_svg: dict[str, str] = {}
+    for code, svg in raw_drawings.items():
+        if not svg:
+            continue
+        content_hash = sha256_hex(svg)  # 프레임 전 순수 도면 콘텐츠 지문(표제란 표기용)
+        tb = build_title_block(
+            code, project_name=req.project_name, scale=tb_scale,
+            issue_date=tb_date, content_hash=content_hash,
+        )
+        drawings_svg[code] = apply_title_block_svg(svg, tb)
+
+    # ── 2) DXF(옵션) — 필수시트만 부가로 생성 + 표제란 부착(실패해도 SVG로 필수시트는 충족) ──
+    drawings_dxf: dict[str, bytes] = {}
+    if req.include_dxf:
+        try:
+            from app.services.cad.parametric_cad_service import ParametricCADService
+
+            cad_service = ParametricCADService()
+            for code in required_sheet_codes():
+                if not raw_drawings.get(code):
+                    continue
+                dxf_bytes = _dxf_bytes_for_sheet(cad_service, code, req)
+                if not dxf_bytes:
+                    continue
+                tb = build_title_block(
+                    code, project_name=req.project_name, scale=tb_scale, issue_date=tb_date,
+                    content_hash=sha256_hex(raw_drawings[code]),
+                )
+                drawings_dxf[code] = apply_title_block_dxf(dxf_bytes, tb)
+        except Exception as exc:  # noqa: BLE001 — DXF는 부가물(SVG로 필수시트 이미 충족):
+            # ezdxf 미설치(ImportError)뿐 아니라 특정 시트 치수 조합에서의 예상 밖 예외까지 폭넓게
+            # 흡수해, 부가 산출물 실패가 번들 전체를 500으로 끌고 내려가지 않게 한다(무음은 아님 —
+            # 원인을 반드시 로깅). 필수시트는 이미 SVG로 충족돼 있으므로 산출 거부 사유가 아니다.
+            logger.warning("submission_bundle_dxf_generation_failed", project_id=project_id, error=str(exc))
+
+    # ── 3) 보고서 PDF(옵션) — ReportModel 정본 렌더러 재사용(산식 계산 0) ──
+    report_pdf: bytes | None = None
+    if req.include_report:
+        from app.services.report.render import render_report
+
+        model = _build_submission_report_model(project_id, req, run_id=run_id)
+        report_pdf, _mime, _ext = render_report(model, "pdf")
+
+    # ── 4) BOQ xlsx(옵션) — boq_parametric_engine(초안) → boq_excel_export(엑셀), 재사용 ──
+    boq_xlsx: bytes | None = None
+    if req.include_boq:
+        from app.services.cost.boq_excel_export import build_xlsx
+        from app.services.cost.boq_parametric_engine import generate_draft
+
+        gfa = req.building_width_m * req.building_depth_m * req.floor_count
+        draft = generate_draft({"gfa_sqm": gfa, "households": req.households})
+        boq_xlsx = build_xlsx(draft, priced=False)
+
+    # ── 5) 번들 컴파일 — 필수시트 미충족 시 RequiredSheetsMissingError(422 정직 거부) ──
+    try:
+        zip_bytes, _manifest = build_submission_bundle(
+            project_id=project_id,
+            project_name=req.project_name,
+            issue_date=tb_date,
+            drawings_svg=drawings_svg,
+            drawings_dxf=drawings_dxf,
+            report_pdf=report_pdf,
+            boq_xlsx=boq_xlsx,
+            provenance={"run_id": run_id, "input_hash": input_hash},
+        )
+    except RequiredSheetsMissingError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"message": "필수시트 미충족 — 산출 거부", "missing": exc.missing},
+        ) from exc
+
+    # ── WP-L: 성공 zip을 키로 기억(다음 재전송이 재생성 없이 이 바이트를 재생) ──
+    if _idem_key:
+        await idempotency.save(
+            db=db, key=_idem_key, tenant_id=_idem_tenant, endpoint="submission-bundle",
+            request_hash=_bundle_req_hash, response_status=200, body=zip_bytes,
+            media_type="application/zip", run_id=run_id,
+        )
+
+    return Response(
+        content=zip_bytes,
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename={project_id}_submission_bundle.zip"},
+    )
+
+
 @router.get("/{project_id}/drawings/export-edited-dxf", response_class=Response)
 async def export_edited_dxf(
     project_id: str,
@@ -831,6 +1214,21 @@ async def import_dxf(
     if len(data) > _MAX_DXF_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="DXF가 너무 큽니다(최대 20MB).")
 
+    # ★공용 콘텐츠 검증(WP-H 세션2 전역 스윕·fail-closed) — 파싱 전에 실행/스크립트 위장·
+    # MIME 위장·경로순회·폴리글랏 압축폭탄을 차단한다. ★expected_kinds 미지정(CSV/parcel_excel과
+    # 동일 정책 — WP-H 세션2 CI 회귀 수정): DXF는 강한 매직바이트가 없는 텍스트 포맷이라
+    # (ASCII DXF는 "0\nSECTION" 류 휴리스틱만 존재) 정상 파일도 매직판별 실패로 415 과대거부될
+    # 수 있다. 형식 판정은 다운스트림 parse_dxf_to_shapes(파서, 손상 시 422)가 맡고, 여기서는
+    # exe/스크립트·활성콘텐츠·경로순회·압축폭탄만 차단한다(형식 화이트리스트 생략, 그 외 방어 동일).
+    from app.services.security.content_inspection import http_status_for, inspect_upload
+
+    _verdict = inspect_upload(data, filename, file.content_type)
+    if not _verdict.allowed:
+        raise HTTPException(
+            status_code=http_status_for(_verdict.code),
+            detail=f"업로드가 거부되었습니다: {_verdict.reason}",
+        )
+
     from app.services.cad.dxf_import_service import parse_dxf_to_shapes
 
     try:
@@ -918,6 +1316,55 @@ def _attach_special_parcel_gate(mass: dict[str, Any], req: BimGenerateRequest) -
         area_sqm=req.land_area_sqm,
         pnu=req.pnu,
     )
+    # ── WP-B: 개발행위허가 절차게이트(국토계획법 §56~58) additive 부착 ──
+    #   설계생성 진입점(매스 SSOT)에도 개발행위허가 대상 여부·기준을 동봉해, 녹지·비도시 부지가
+    #   허가 판정 없이 설계로 진행되던 과대낙관을 봉합한다(build_special_parcel_gate와 동일 패턴·
+    #   실패 graceful None). zone_name(한글명)이 있으면 우선(더 정확한 용도지역).
+    try:
+        from app.services.permit.dev_act_permit_gate import build_dev_act_permit_gate
+
+        mass["dev_act_permit_gate"] = build_dev_act_permit_gate(
+            zone_type=zone_type,
+            land_category=req.land_category,
+            area_sqm=req.land_area_sqm,
+            special_districts=req.special_districts,
+            pnu=req.pnu,
+        )
+    except Exception:  # noqa: BLE001 — 게이트 실패가 매스 산출(주 경로)을 깨면 안 됨(best-effort)
+        mass["dev_act_permit_gate"] = None
+
+    # ── WP-A: 접도·도로 기반(P4) access_basis additive 부착 ──
+    #   설계생성 진입점(매스 SSOT)에도 접도 판정(legal/physical/emergency 3상태)을 동봉한다.
+    #   이 진입점엔 도로 실데이터(road_side·road_contact 등)가 없어 대부분 정직하게 미확정
+    #   (REQUIRES_AUTHORITY_CONFIRMATION)으로 응답하지만, build_dev_act_permit_gate와 동일하게
+    #   실패는 graceful None으로 흡수한다(best-effort, 주 경로 무손상).
+    try:
+        from app.services.access.access_basis_service import build_access_basis_gate
+
+        mass["access_basis"] = build_access_basis_gate(
+            zone_type=zone_type,
+            land_category=req.land_category,
+            special_districts=req.special_districts,
+            pnu=req.pnu,
+        )
+    except Exception:  # noqa: BLE001 — 게이트 실패가 매스 산출(주 경로)을 깨면 안 됨(best-effort)
+        mass["access_basis"] = None
+
+    # ── WP-G: 부지기반(P7) 게이트 스냅샷 additive 부착 ──
+    #   설계생성 진입점(매스 SSOT)에 P0 자동판정을 자동 결선한다. access_status는 위 access_basis
+    #   (권위 서비스 실산출값)를 그대로 넘긴다 — dev_act_status와 동일하게 caller 자기신고가 아닌
+    #   server_derived 신뢰경계다. basis_status는 항상 ADVISORY로 고정된다(AUTHORIZED는
+    #   /api/v1/basis/{run_id}/approve 인간승인 API 전용 — 이 자동경로에서는 절대 도달하지 않는다).
+    try:
+        from app.services.basis.site_basis_service import gate_design_entry
+
+        dev_act_status = (mass.get("dev_act_permit_gate") or {}).get("status")
+        access_status = (mass.get("access_basis") or {}).get("status")
+        mass["site_basis_gate"] = gate_design_entry(
+            dev_act_status=dev_act_status, access_status=access_status,
+        )
+    except Exception:  # noqa: BLE001 — 게이트 실패가 매스 산출(주 경로)을 깨면 안 됨(best-effort)
+        mass["site_basis_gate"] = None
     return mass
 
 
@@ -962,6 +1409,11 @@ def _request_fingerprint(req: BimGenerateRequest) -> dict[str, Any]:
         # ★B1: 부지분석 실효 한도(조례) — 자동산출 분기의 min(법정,조례,목표) 클램프 결과에 영향.
         "ordinance_far_pct": req.ordinance_far_pct,
         "ordinance_bcr_pct": req.ordinance_bcr_pct,
+        # ★WP-U2a: 실효 근거 메타 — build_mass_contract의 rule_trace(basis 문구·far_basis 키)가
+        #   캐시되는 mass 안에 실리므로, 누락 시 근거만 다른 요청이 같은 열쇠로 충돌해 남의 근거
+        #   문구를 돌려주는 캐시오염이 된다(ordinance_*와 동일 이유).
+        "far_basis": req.far_basis,
+        "far_reliable": req.far_reliable,
         # ★B2: 특이부지 게이트 입력 — mass["special_parcel"](경고)에 영향.
         "land_category": req.land_category,
         "special_districts": sorted(req.special_districts) if req.special_districts else None,
@@ -969,6 +1421,64 @@ def _request_fingerprint(req: BimGenerateRequest) -> dict[str, Any]:
         # ★B2(독립리뷰 CRITICAL): 게이트가 zone_name을 zone_code보다 우선 소비 — 결과를 바꾸는 입력.
         "zone_name": getattr(req, "zone_name", None),
     }
+
+
+def _attach_design_basis(mass: dict[str, Any], req: BimGenerateRequest) -> None:
+    """★WP-E 세션2(P9 Program·Constraint 정형화) — options를 DesignBasis로 파싱해 매스에 부착.
+
+    무엇을(쉬운 설명): 흩어진 options(building_use·unit_types·zone_code·목표한도)를 정형 스키마
+      (program_items + hard/soft 제약)로 승격하고, 산출된 매스 지표(far_pct·bcr_pct·높이·층수)로
+      hard(법정·물리)/soft(선호) 제약을 판정해 결과를 mass에 additive로 붙인다:
+        mass["design_basis"]      = 정형 계약(프로그램·제약)
+        mass["basis_evaluation"]  = 판정 결과(satisfied·unsat_reasons·soft_warnings·unevaluated)
+      hard 위반(unsat_reasons)이 있으면 무음으로 넘기지 않고 구조화 사유를 남긴다(Unsat Core 최소사상).
+
+    ★무회귀(additive·폴백 유지): 이 함수는 mass에 키를 추가만 한다 — 기존 키·산출을 바꾸지 않는다.
+      임계값·지표가 없으면 그 제약은 unevaluated로 정직 표기(근거 없는 거부 금지). 이 함수의 어떤
+      실패도 매스 산출(주 경로)을 깨지 않는다(예외격리 — 미부착=기존 options dict 경로 유지·폴백).
+    ★실제 산출 거부는 대표 소비처(generate_bim_model)가 settings.DESIGN_BASIS_ENFORCE=True일 때만 한다.
+    """
+    try:
+        from app.services.cad.auto_design_engine import AutoDesignEngineService
+        from app.services.cad.design_basis import (
+            build_design_basis_from_options,
+            extract_metrics_from_mass,
+        )
+
+        # 법정 한도는 정본(get_legal_limits)에서만 받는다(무날조 — 임계값 날조 금지).
+        legal = AutoDesignEngineService.get_legal_limits(req.zone_code)
+        basis = build_design_basis_from_options(
+            building_use=req.building_use,
+            unit_types=req.unit_types,
+            legal_limits=legal,
+            # 조례 실효 한도(있을 때만)를 선호(soft) 목표로 넘긴다 — 위반해도 경고만(기존 동작 불변).
+            target_far_percent=req.ordinance_far_pct,
+            target_bcr_percent=req.ordinance_bcr_pct,
+        )
+        evaluation = basis.evaluate(extract_metrics_from_mass(mass))
+        mass["design_basis"] = basis.model_dump(mode="json")
+        mass["basis_evaluation"] = evaluation.model_dump(mode="json")
+        if evaluation.unsat_reasons:  # 무음 퇴화 금지 — hard 위반은 로그로도 남긴다.
+            import structlog
+
+            structlog.get_logger().warning(
+                "design_basis hard 위반",
+                zone=req.zone_code, use=req.building_use,
+                codes=[u.constraint_code for u in evaluation.unsat_reasons],
+                enforce=_design_basis_enforce_enabled(),
+            )
+    except Exception:  # noqa: BLE001 — DesignBasis 부착 실패가 매스 산출을 막지 않음(폴백=기존 경로).
+        pass
+
+
+def _design_basis_enforce_enabled() -> bool:
+    """DesignBasis hard 위반 시 산출 거부를 실제로 강제할지(기본 False=그림자·무회귀)."""
+    try:
+        from app.core.config import settings
+
+        return bool(getattr(settings, "DESIGN_BASIS_ENFORCE", False))
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def _resolve_mass(req: BimGenerateRequest) -> dict[str, Any]:
@@ -995,6 +1505,8 @@ def _resolve_mass(req: BimGenerateRequest) -> dict[str, Any]:
         result["_cache_hit"] = True
         return result
     # 미스: 실제 산출 → clean 깊은 복사본을 캐시에 저장(저장본엔 _cache_hit 없음) → 반환본만 마킹.
+    #   ★DesignBasis 부착(WP-E)은 _resolve_mass_uncached(정본 빌더) 내부에서 하므로 여기선 손대지
+    #     않는다 — 캐시/무캐시 결과가 완전히 동일하게 유지된다(cache 투명성 계약·무회귀).
     mass = _resolve_mass_uncached(req)
     design_run_cache.put(key, copy.deepcopy(mass))
     mass["_cache_hit"] = False
@@ -1005,9 +1517,10 @@ def _resolve_mass_uncached(req: BimGenerateRequest) -> dict[str, Any]:
     """요청에서 건축 매스를 확정한다. 매스 직접입력 우선, 없으면 대지정보로 자동산출.
 
     확정된 매스에 실내 요소(코어·복도·창호)를 _enrich_interior로 보강하고,
-    C2R 계약(envelope_result·geometry_invariants·rule_trace)을 부착한다(전 분기 공용·additive).
+    C2R 계약(envelope_result·geometry_invariants·rule_trace)+DesignBasis(WP-E 정형 프로그램·제약)를
+    부착한다(전 분기 공용·additive).
 
-    ★이 함수는 _resolve_mass(캐시 래퍼)가 호출한다. 로직·반환은 캐시 도입 전과 100% 동일하다(무회귀).
+    ★이 함수는 _resolve_mass(캐시 래퍼)가 호출한다. 결정적 부착이라 캐시/무캐시 결과가 100% 동일하다.
     """
     if req.building_width_m and req.building_depth_m and req.floor_count:
         mass = {
@@ -1023,6 +1536,7 @@ def _resolve_mass_uncached(req: BimGenerateRequest) -> dict[str, Any]:
         # ★특이부지 게이트(B2) additive 부착 — 이 분기는 조례 실효한도(B1) 적용 대상이 아니다
         #   (SiteInput/법정한도 자체를 안 쓰는 명시치수 분기이므로 조례 클램프가 개입할 여지가 없음).
         _attach_special_parcel_gate(mass, req)
+        _attach_design_basis(mass, req)  # ★WP-E 정형 근거 부착(대표 소비경로·additive·예외격리).
         return mass
     # 자동 산출: AutoDesignEngine(대지면적+용도지역 → 최적 매스)
     if req.land_area_sqm:
@@ -1060,6 +1574,9 @@ def _resolve_mass_uncached(req: BimGenerateRequest) -> dict[str, Any]:
             #   미제공(None) 시 클램프 미적용=법정상한 기준(기존 동작 100% 불변).
             ordinance_far_percent=req.ordinance_far_pct,
             ordinance_bcr_percent=req.ordinance_bcr_pct,
+            # ★WP-U2a: 실효 근거 메타(있을 때만 값) — rule_trace·applied_limits로 정직 전파.
+            far_basis=req.far_basis,
+            far_reliable=req.far_reliable,
         )
         legal = svc.get_legal_limits(req.zone_code)
         eff = svc.compute_effective_site(site)
@@ -1074,6 +1591,7 @@ def _resolve_mass_uncached(req: BimGenerateRequest) -> dict[str, Any]:
         mass["compliance"] = contract  # additive — mass dict에 부착(/mass·/layout·/bim 응답이 동봉)
         # ★특이부지 게이트(B2) additive 부착 — 학교용지·GB·농지·산지·맹지 등 경고만(차단 아님).
         _attach_special_parcel_gate(mass, req)
+        _attach_design_basis(mass, req)  # ★WP-E 정형 근거 부착 — 이 분기는 far/bcr 지표가 있어 법정 hard 실평가.
         return mass
     # 최종 폴백: 합리적 기본값
     mass = {
@@ -1085,6 +1603,7 @@ def _resolve_mass_uncached(req: BimGenerateRequest) -> dict[str, Any]:
     _attach_mass_contract(mass, req)
     # ★특이부지 게이트(B2) additive 부착 — 폴백 분기도 컨텍스트가 있으면 동일하게 판정(전 경로 패리티).
     _attach_special_parcel_gate(mass, req)
+    _attach_design_basis(mass, req)  # ★WP-E 정형 근거 부착(전 경로 패리티·additive·예외격리).
     return mass
 
 
@@ -1105,6 +1624,27 @@ async def generate_bim_model(project_id: str, req: BimGenerateRequest):
     from app.services.bim.ifc_generator_service import build_ifc_from_mass
 
     mass = _resolve_mass(req)
+
+    # ★WP-E 하드게이트(대표 소비처): DesignBasis hard(법정·물리) 위반이면 무음 퇴화 대신 산출을
+    #   거부하고 구조화 Unsat 사유를 반환한다(계획서 게이트 "Hard 위반 산출 0"). 기본 shadow
+    #   (DESIGN_BASIS_ENFORCE=False)에서는 거부하지 않는다(무회귀 — 위반 사유는 mass에 부착만).
+    #   ★견고화: "is False" 대신 "is not True"로 비교한다 — 부착이 부분 손상돼 satisfied 키가
+    #     None/누락이면(정상 True/False가 아니면) ENFORCE 모드에서는 "판정불명=미충족"으로 보수
+    #     처리해 거부한다(무음 통과 방지). shadow(기본값)에서는 이 분기 자체가 평가되지 않는다.
+    _eval = mass.get("basis_evaluation") if isinstance(mass, dict) else None
+    if (
+        _design_basis_enforce_enabled()
+        and isinstance(_eval, dict)
+        and _eval.get("satisfied") is not True
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": "DesignBasis hard 제약 위반으로 설계 산출을 거부합니다(무음 퇴화 금지).",
+                "unsat_reasons": _eval.get("unsat_reasons", []),
+                "soft_warnings": _eval.get("soft_warnings", []),
+            },
+        )
 
     # ── 무거운계산 캐시 열쇠: mass캐시와 같은 결정적 핑거프린트지만 "bim:" prefix로 네임스페이스 분리 ──
     #   (mass캐시 값은 매스 dict, bim캐시 값은 해석/ifc길이 묶음 — 같은 열쇠로 섞이면 안 되므로 prefix).
@@ -1155,7 +1695,12 @@ async def generate_bim_model(project_id: str, req: BimGenerateRequest):
                 "building_use": req.building_use,
                 **units_data,
             })
-            if isinstance(interp, dict) and interp:
+            # ★R1 R2(근원 봉합): BaseInterpreter._invoke가 이제 폴백-only 결과를 빈 dict로 강등하므로
+            #   (base_interpreter.py, is_fallback_only SSOT) interp는 이미 안전하다. 아래 재판정은
+            #   이중 방어(무해·삭제 불필요) — design_ingest/orchestrator.py._interpret_proposal과 동일 판정.
+            from app.services.ai.base_interpreter import is_fallback_only
+
+            if isinstance(interp, dict) and interp and not is_fallback_only(interp, DesignInterpreter.fallback_key):
                 ai_interpretation = interp
         except Exception as e:  # noqa: BLE001
             import structlog
@@ -1172,6 +1717,21 @@ async def generate_bim_model(project_id: str, req: BimGenerateRequest):
         }))
         bim_cache_hit = False
 
+    # ★WP-D 세션3(additive): BimIR 정체·provenance 메타 부착 — glb_url이 가리키는 산출물의
+    #   BimIR 정체(bimir_version·element_count·design_input_hash·run_id)를 JSON에도 표기한다.
+    #   mass는 항상 신선 산출(캐시 히트여도 위에서 재해석)이라 메타도 신선하다. 순수 계산
+    #   (ifcopenshell 불필요)이라 캐시 밖에서 저렴하게 산출. 실패해도 모델은 정상 반환(예외격리).
+    bimir_meta: dict[str, Any] | None
+    try:
+        from app.services.bim.ifc_to_gltf_service import bimir_meta_from_mass
+
+        bimir_meta = bimir_meta_from_mass(mass)
+    except Exception as e:  # noqa: BLE001
+        import structlog
+
+        structlog.get_logger().warning("BimIR 메타 산출 스킵", error=str(e)[:120])
+        bimir_meta = None
+
     return {
         "project_id": project_id,
         "mass": {
@@ -1182,6 +1742,8 @@ async def generate_bim_model(project_id: str, req: BimGenerateRequest):
             "building_height_m": round(int(mass["num_floors"]) * mass.get("floor_height_m", req.floor_height_m), 2),
             "bcr_pct": mass.get("bcr_pct"),
             "far_pct": mass.get("far_pct"),
+            # ★백로그②(연면적·비율 소스 혼입) — /mass와 동일 계약(mass.get 그대로 통과). additive.
+            "total_floor_area_sqm": mass.get("total_floor_area_sqm"),
             "total_units": mass.get("total_units"),
         },
         "ai_interpretation": ai_interpretation,
@@ -1195,6 +1757,13 @@ async def generate_bim_model(project_id: str, req: BimGenerateRequest):
         # ★캐시 적중 표기(additive·무날조) — /bim의 cached는 '무거운계산(LLM/IFC) 캐시 적중'을 의미한다
         #   (mass._cache_hit이 아님). 동일 설계입력 2회째면 LLM/IFC를 생략하고 캐시값을 즉시 반환(True).
         "cached": bim_cache_hit,
+        # ★BimIR 정체·provenance(additive·세션3) — bimir_version·element_count·design_input_hash·run_id.
+        #   design_input_hash는 provenance compute_input_hash와 동일 계약(이중 해시 발산 방지). 산출 불가 시 None.
+        "bimir": bimir_meta,
+        # ★DesignBasis 판정 동봉(additive·생성허브 100%) — _attach_design_basis 가 mass 내부에만 부착하던
+        #   basis_evaluation(unsat_reasons·soft_warnings)을 응답에 직렬화한다. 종전엔 어떤 응답에도 실리지
+        #   않아 "법규 적합성" 판정 근거가 프론트에서 보이지 않았다(WP-E 완결 자산 미표면). 미산출=None(정직).
+        "basis_evaluation": mass.get("basis_evaluation"),
     }
 
 
@@ -1224,6 +1793,12 @@ async def compute_design_mass(project_id: str, req: BimGenerateRequest):
         "setback_m": setback,
         "bcr_pct": mass.get("bcr_pct"),
         "far_pct": mass.get("far_pct"),
+        # ★백로그②(연면적·비율 소스 혼입) 근본수정 — bcr_pct/far_pct는 이 total_floor_area_sqm
+        #   (매스엔진이 실제 산출한 연면적) 기준으로 계산됐는데, 종전엔 이 필드를 직렬화하지 않아
+        #   프론트가 연면적만 designData(목표값)로 별도 조회해 "연면적=A소스, 비율=B소스" 혼입이
+        #   생겼다(CadBimIntegrationPanel "적용 건축개요" 패널). 이 값을 그대로 공개해 프론트가
+        #   bcr_pct/far_pct와 동일 소스로 연면적을 표시할 수 있게 한다(additive·무회귀).
+        "total_floor_area_sqm": mass.get("total_floor_area_sqm"),
         "total_units": mass.get("total_units"),
         "unit_width_m": round(float(mass.get("unit_width_m", 8.0)), 2),
         # ★podium-tower 매스(고FAR 상업지 주상복합) — 3D를 저층 podium+고층 tower 2-volume으로
@@ -1243,20 +1818,29 @@ async def compute_design_mass(project_id: str, req: BimGenerateRequest):
 
 @router.post("/{project_id}/bim/model.glb", response_class=Response)
 async def get_bim_glb(project_id: str, req: BimGenerateRequest):
-    """3D BIM 모델을 glTF binary(.glb)로 반환한다 — 프론트 useGLTF가 직접 로드."""
-    from app.services.bim.ifc_generator_service import build_ifc_from_mass
-    from app.services.bim.ifc_to_gltf_service import IfcToGltfService
+    """3D BIM 모델을 glTF binary(.glb)로 반환한다 — 프론트 useGLTF가 직접 로드.
+
+    ★WP-D 세션3 배선: glb 산출을 BimIR 경유(bimir_from_mass→build_gltf_from_bimir)로 흐르게 하되,
+      실패 시 기존 직접 경로로 폴백한다(공용 헬퍼 glb_from_mass_with_bimir·무회귀). BimIR 정체/
+      provenance는 응답 헤더(X-BIMIR-*)로 additive 표기한다(glb 바이트는 불변).
+    """
+    from app.services.bim.ifc_to_gltf_service import (
+        bimir_meta_to_headers,
+        glb_from_mass_with_bimir,
+    )
 
     mass = _resolve_mass(req)
     try:
-        ifc_bytes = build_ifc_from_mass(mass, project_name=req.project_name)
-        glb = IfcToGltfService().convert(ifc_bytes)
+        glb, bimir_meta = glb_from_mass_with_bimir(mass, project_name=req.project_name)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"BIM 모델 생성 실패: {str(e)[:120]}") from e
     return Response(
         content=glb,
         media_type="model/gltf-binary",
-        headers={"Content-Disposition": f"inline; filename={project_id}.glb"},
+        headers={
+            "Content-Disposition": f"inline; filename={project_id}.glb",
+            **bimir_meta_to_headers(bimir_meta),
+        },
     )
 
 
@@ -1348,8 +1932,10 @@ async def get_bim_glb_get(
     행이 없으면 쿼리/기본 폴백 매스(_resolve_mass)로 절차생성한다(가짜 금지·정직한 매스).
     ETag/Cache-Control로 동일 매스 재요청을 캐시한다.
     """
-    from app.services.bim.ifc_generator_service import build_ifc_from_mass
-    from app.services.bim.ifc_to_gltf_service import IfcToGltfService
+    from app.services.bim.ifc_to_gltf_service import (
+        bimir_meta_to_headers,
+        glb_from_mass_with_bimir,
+    )
 
     # IDOR 차단: 소유 일치 사용자만 저장 매스를 받고, 무인증/타tenant/행없음은 폴백 절차매스로 강등.
     mass = await _load_mass_from_design_version(design_version_id, db, user)
@@ -1368,15 +1954,16 @@ async def get_bim_glb_get(
         mass = _resolve_mass(fallback_req)
         bim_source = "fallback-procedural"
 
+    # ★WP-D 세션3 배선: glb 산출을 BimIR 경유로(실패 시 직접 경로 폴백·공용 헬퍼). 무회귀.
     try:
-        ifc_bytes = build_ifc_from_mass(mass, project_name=project_name)
-        glb = IfcToGltfService().convert(ifc_bytes)
+        glb, bimir_meta = glb_from_mass_with_bimir(mass, project_name=project_name)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=f"BIM 모델 생성 실패: {str(e)[:120]}") from e
 
     import hashlib
 
-    etag = '"' + hashlib.sha1(glb).hexdigest()[:16] + '"'  # noqa: S324 — 캐시 검증용(비보안)
+    # ★보안 해시가 아니다 — HTTP **ETag**(캐시 검증자)다. 아래 인자로 그 사실을 선언한다.
+    etag = '"' + hashlib.sha1(glb, usedforsecurity=False).hexdigest()[:16] + '"'  # noqa: S324 — 캐시 검증용(비보안)
     return Response(
         content=glb,
         media_type="model/gltf-binary",
@@ -1385,6 +1972,7 @@ async def get_bim_glb_get(
             "ETag": etag,
             "Cache-Control": "public, max-age=300",
             "X-BIM-Source": bim_source,  # 정직표기: 소유본 복원 vs 폴백 절차매스
+            **bimir_meta_to_headers(bimir_meta),  # BimIR 정체·provenance(additive)
         },
     )
 
@@ -1468,6 +2056,9 @@ async def render_photoreal(
     project_id: str,
     req: PhotorealRenderRequest,
     db: AsyncSession = Depends(get_db),
+    # ★`request` 를 뒤쪽에 둔다 — 앞에 넣으면 위치인자 호출부가 조용히 밀린다
+    #   (이 세션에서 tilko_realty 가 그렇게 깨졌다). FastAPI 는 애노테이션으로 주입한다.
+    request: Request = None,  # type: ignore[assignment]
     user=Depends(get_current_user_optional),
 ):
     """3D 뷰포트 이미지를 ControlNet으로 포토리얼 렌더(비파괴 — 원본 3D 불변).
@@ -1493,14 +2084,21 @@ async def render_photoreal(
 
     # 렌더 성공 시에만 사용료 차감(로그인 사용자일 때만; best-effort — 실패해도 결과 제공).
     # ★프로바이더 무관 동일 과금코드(photoreal_render) — INC2는 단일 코드(신규 과금 추가 금지).
+    # ★재전송 안전 — 유료 AI 렌더라 더블서브밋이 **그대로 이중청구**된다.
+    #   익명(user=None)은 과금 자체가 없으므로 가드도 걸지 않는다(빈 스코프 공유 방지).
     charged = None
     if user is not None:
-        try:
-            await billing_service.load_config(db)
-            c = await billing_service.charge_service(db, user.id, "photoreal_render")
-            charged = c.get("charged_krw")
-        except Exception:  # noqa: BLE001
-            pass
+        async with charge_once(
+            request, endpoint="photoreal_render", payload=req,
+            tenant_id=getattr(user, "tenant_id", None), user_id=getattr(user, "id", None),
+        ) as guard:
+            if guard.billable:
+                try:
+                    await billing_service.load_config(db)
+                    c = await billing_service.charge_service(db, user.id, "photoreal_render")
+                    charged = c.get("charged_krw")
+                except Exception:  # noqa: BLE001
+                    pass
 
     # 프로바이더별 성공 반환형이 다르다(replicate=image_url / openai·google=image_base64).
     # 둘 중 있는 것을 그대로 전달(소비처는 image_base64 우선, 없으면 image_url 사용).
@@ -1520,6 +2118,9 @@ async def render_concept(
     project_id: str,
     req: ConceptRenderRequest,
     db: AsyncSession = Depends(get_db),
+    # ★`request` 를 뒤쪽에 둔다 — 앞에 넣으면 위치인자 호출부가 조용히 밀린다
+    #   (이 세션에서 tilko_realty 가 그렇게 깨졌다). FastAPI 는 애노테이션으로 주입한다.
+    request: Request = None,  # type: ignore[assignment]
     user=Depends(get_current_user_optional),
 ):
     """텍스트→컨셉 조감도/투시도(text2img). 3D가 없어도 설명만으로 컨셉 이미지 생성.
@@ -1545,14 +2146,21 @@ async def render_concept(
 
     # 생성 성공 시에만 사용료 차감(로그인 사용자일 때만; best-effort — 실패해도 결과 제공).
     # ★concept_render 과금코드 — 관리자 미설정 시 0원=무료(미설정무료 정책).
+    # ★재전송 안전 — 유료 AI 렌더라 더블서브밋이 **그대로 이중청구**된다.
+    #   익명(user=None)은 과금 자체가 없으므로 가드도 걸지 않는다(빈 스코프 공유 방지).
     charged = None
     if user is not None:
-        try:
-            await billing_service.load_config(db)
-            c = await billing_service.charge_service(db, user.id, "concept_render")
-            charged = c.get("charged_krw")
-        except Exception:  # noqa: BLE001
-            pass
+        async with charge_once(
+            request, endpoint="concept_render", payload=req,
+            tenant_id=getattr(user, "tenant_id", None), user_id=getattr(user, "id", None),
+        ) as guard:
+            if guard.billable:
+                try:
+                    await billing_service.load_config(db)
+                    c = await billing_service.charge_service(db, user.id, "concept_render")
+                    charged = c.get("charged_krw")
+                except Exception:  # noqa: BLE001
+                    pass
 
     # 프로바이더별 성공 반환형이 다르다(replicate=image_url / openai·google=image_base64).
     # 둘 중 있는 것을 그대로 전달(소비처는 image_base64 우선, 없으면 image_url 사용).

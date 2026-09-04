@@ -63,7 +63,14 @@ class MaterialUnitPrice(Base):
 
 
 class BimQuantity(Base):
-    """BIM IFC 물량 산출 (공종코드 매핑)."""
+    """BIM IFC 물량 산출 (공종코드 매핑).
+
+    ★PR#315 H2(전역 전파방지 — ORM 이중정의 split-brain 해소): bim_quantities 테이블은
+    이 클래스와 apps.api.database.models.v61_cost.BimQuantity(TenantMixin, tenant_id 有)
+    양쪽에 중복 정의돼 있었다. 정본은 후자로 확정 — 모든 쓰기 경로(analyze_ifc·
+    generate_ifc_from_design·upload_ifc)는 app.services.cost.bim_quantity_writer.
+    replace_bim_quantities 공용 헬퍼(정본 ORM 사용)를 경유한다. 이 클래스로 bim_quantities
+    를 직접 write 하지 말 것 — 하위호환/읽기전용 참조용으로만 유지한다."""
     __tablename__ = "bim_quantities"
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)

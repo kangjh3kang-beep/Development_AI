@@ -4,9 +4,11 @@
  * Phase 1-A — 현장 2차비번 설정/변경 모달(can_manage 권한자 전용).
  * POST /sales/sites/{id}/password { password }. 400(짧음)·403(권한없음) 안내.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CheckCircle2, Wrench } from "lucide-react";
 import { apiClient, ApiClientError } from "@/lib/api-client";
+import { DISMISS_Z, useDismissible } from "@/lib/satong-dismiss";
+import { useModalFocus } from "@/hooks/useModalFocus";
 
 interface Props {
   siteId: string;
@@ -21,6 +23,7 @@ export default function SitePasswordModal({ siteId, open, onClose, onDone }: Pro
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [done, setDone] = useState(false);
+  const bodyRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (open) {
@@ -30,6 +33,13 @@ export default function SitePasswordModal({ siteId, open, onClose, onDone }: Pro
       setDone(false);
     }
   }, [open]);
+
+  // ESC 로 닫기 — SiteEnterModal 과 같은 관례(열림 동안만 등록 · 입력은 열 때마다 초기화됨).
+  useDismissible(DISMISS_Z.appModal, open, onClose);
+
+  // ★포커스 생명주기 — ESC 와 별개 계약. 이 표면엔 `autoFocus` 가 **없어서**(실측)
+  //   훅이 빼앗을 저자 지정 포커스가 없다. 첫 포커스 가능 요소는 새 비밀번호 입력창이다.
+  useModalFocus(bodyRef, open);
 
   if (!open) return null;
 
@@ -71,6 +81,7 @@ export default function SitePasswordModal({ siteId, open, onClose, onDone }: Pro
       aria-label="현장 비밀번호 설정"
     >
       <div
+        ref={bodyRef}
         className="w-full max-w-sm overflow-hidden rounded-t-2xl border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-md)] sm:rounded-2xl"
         onClick={(e) => e.stopPropagation()}
       >

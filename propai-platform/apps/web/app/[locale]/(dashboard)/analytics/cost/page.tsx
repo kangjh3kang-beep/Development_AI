@@ -5,12 +5,14 @@ import { CostEstimationClient } from "@/components/analytics/CostEstimationClien
 import { CostAlternativesPanel } from "@/components/cost/CostAlternativesPanel";
 import { BoqDetailTable } from "@/components/cost/BoqDetailTable";
 import { BillingDashboard } from "@/components/cost/BillingDashboard";
+import { BudgetExecutionPanel } from "@/components/feasibility/BudgetExecutionPanel";
 
 const TABS = [
   ["overview", "단계별 분석"],
   ["boq", "상세 내역서(BOQ)"],
   ["alternatives", "대안 설계 원가비교"],
   ["billing", "기성·실적관리(EVM)"],
+  ["budget", "예산-실적 집행"],
 ] as const;
 type TabKey = (typeof TABS)[number][0];
 
@@ -24,7 +26,7 @@ export default function CostPage() {
           <span className="cc-meta">COST · ESTIMATION CONSOLE</span>
           <span className="cc-live"><i />LIVE</span>
         </div>
-        <h1 className="text-3xl font-black tracking-tight text-[var(--text-primary)]">공사비 분석</h1>
+        <h1 className="text-3xl font-black tracking-tight text-[var(--text-primary)]">적산·공사비 관리</h1>
       </div>
 
       <div className="flex flex-wrap gap-2 border-b border-[var(--line)] pb-1">
@@ -44,8 +46,8 @@ export default function CostPage() {
       </div>
 
       {tab === "overview" && (
-        /* 단계별 통합 워크플로우: 프로젝트정보(자동연동)→개략산정→리스크시뮬레이션→BIM정밀적산 연계 */
-        <CostEstimationClient />
+        /* 5단계 통합 허브: 기준정보→물량·개산→적산리스트→AI분석→보고서·수지반영(타 탭 이동 콜백 주입) */
+        <CostEstimationClient onNavigateTab={setTab} />
       )}
 
       {/* CM Phase1 — 상세 내역서(BOQ)·단가 3중(D4)·AI 해설 */}
@@ -56,6 +58,9 @@ export default function CostPage() {
 
       {/* CM — D2 기성고 EVM + 과다청구 이상탐지 */}
       {tab === "billing" && <BillingDashboard />}
+
+      {/* §13 — 예산 대비 실적(기지출/미지출) 실시간 집행 추적 */}
+      {tab === "budget" && <BudgetExecutionPanel />}
     </div>
   );
 }

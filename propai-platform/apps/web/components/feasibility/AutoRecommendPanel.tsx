@@ -15,12 +15,17 @@ import { useParams, useRouter } from "next/navigation";
 import { TiltCard } from "@/components/ui/TiltCard";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
+import { formatUpzoningFarRange, type UpzoningFarRange } from "@/lib/formatters"; // 종상향 범위 계약(표기는 UpzoningFarRange 공용 컴포넌트)
+import { parcelAddressList } from "@/lib/parcel-rows";
 import { useFeasibilityV2Store } from "@/store/use-feasibility-v2-store";
 import { apiClient } from "@/lib/api-client";
 import { GlobalAddressSearch } from "@/components/common/GlobalAddressSearch";
 import { DevelopmentScenarioCard } from "@/components/common/DevelopmentScenarioCard";
+import { UpzoningFarRangeNotice, UpzoningFarRangeValue } from "@/components/common/UpzoningFarRange";
 import { NumberInput } from "@/components/common/NumberInput";
 import { BusinessModelRefineModal } from "./BusinessModelRefineModal";
+import { preferredEntryAddress } from "@/lib/parcel-rows";
+import { upzoningReachClause } from "@/lib/formatters";
 
 /* ── Types ── */
 
@@ -82,10 +87,17 @@ interface AutoRecommendApiResponse {
   all_results: BackendRecommendItem[];
   total_types_analyzed: number;
   ai_interpretation?: FeasibilityInterpretation | null;
+  // ★P3(침묵 폴백 정직화): 백엔드 가정치 폴백(면적 1000㎡·용적률 250%·공시지가 150만원/㎡)
+  //   사용 시에만 채워지는 정직 고지 — 있으면 반드시 렌더한다(orphan 금지).
+  area_disclosure?: string | null;
+  far_disclosure?: string | null;
+  land_price_disclosure?: string | null;
   // ★P1 미래속성(종상향 잠재) — 현행 추천에 더해 종상향 시 잠재 용적률(예상치·확정 아님).
   upzoning_potential?: {
     current_far_pct?: number;
-    potential_far_range?: { min_pct?: number | null; max_pct?: number | null; note?: string } | null;
+    // ★붕괴 계약(is_collapsed·honest_disclosure)까지 받는다 — 이 필드가 없으면
+    //   프론트는 min===max를 혼자 추측할 수밖에 없고, 그건 계약이 아니라 우연이다.
+    potential_far_range?: UpzoningFarRange;
     scenarios?: Record<string, unknown>[] | null;
     summary?: string | null;
     disclaimer?: string | null;
@@ -159,15 +171,15 @@ const REGIONS = [
 ] as const;
 
 const GRADE_COLORS: Record<string, string> = {
-  A: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
+  A: "bg-[var(--status-success)]/15 text-[var(--status-success)] border-[var(--status-success)]/30",
   B: "bg-blue-500/15 text-blue-400 border-blue-500/30",
-  C: "bg-amber-500/15 text-amber-400 border-amber-500/30",
+  C: "bg-[var(--status-warning)]/15 text-[var(--status-warning)] border-[var(--status-warning)]/30",
   D: "bg-orange-500/15 text-orange-400 border-orange-500/30",
   F: "bg-red-500/15 text-red-400 border-red-500/30",
 };
 
 const PERMIT_COLORS: Record<string, string> = {
-  "매우쉬움": "bg-emerald-500/15 text-emerald-400",
+  "매우쉬움": "bg-[var(--status-success)]/15 text-[var(--status-success)]",
   "쉬움": "bg-green-500/15 text-green-400",
   "보통": "bg-yellow-500/15 text-yellow-400",
   "어려움": "bg-red-500/15 text-red-400",
@@ -253,6 +265,14 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
     if (eff && eff > 0 && !landArea) {
       setLandArea(eff.toString());
     }
+    // ★다필지 배선 절단 근본수정(2026-07-19 전역 스윕): 복원 effect가 address·landArea·region은
+    //   챙기면서 parcels만 누락해, 다필지 컨텍스트로 진입 시 parcels=[] → 개발방식(Development
+    //   ScenarioCard) 블록이 통째로 사라졌다. landArea를 통합면적으로 미리 채우는 것 자체가
+    //   다필지 계승 의도이므로 parcels도 같은 규약(로컬 미입력일 때만)으로 동기화한다.
+    if (parcels.length === 0) {
+      const storeAddrs = parcelAddressList(site.parcels);
+      if (storeAddrs.length > 1) setParcels(storeAddrs);
+    }
     if (site.address) {
       const match = REGIONS.find((r) => site.address!.includes(r) || site.address!.includes(r.replace("특별시","").replace("광역시","").replace("도","")));
       if (match) setRegion(match);
@@ -269,8 +289,12 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
   const [analysisCount, setAnalysisCount] = useState(0);
   // ★P1: 종상향 잠재(미래 토지속성) — 현행 추천과 분리 표기(예상치·확정 아님).
   const [upzoning, setUpzoning] = useState<UpzoningPotential>(null);
+  // ★P3: 백엔드 가정치 폴백 정직 고지(있을 때만 배너 렌더).
+  const [disclosures, setDisclosures] = useState<string[]>([]);
   // ★100% 완성: 종상향 시 추천 사업방식(IntegratedRecommender 2축 랭킹의 종상향 후보) — 실랭킹 반영.
   const [upzoningRanked, setUpzoningRanked] = useState<OptimalRankedCandidate[]>([]);
+  // 종상향 범위 붕괴 판정(문장 조사 선택용) — 표기 자체는 UpzoningFarRange 공용 컴포넌트가 한다.
+  const upFarRange = formatUpzoningFarRange(upzoning?.potential_far_range);
   const [showFullTable, setShowFullTable] = useState(false);
 
   // Modal state
@@ -293,6 +317,7 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
     setUpzoning(null);
     setUpzoningRanked([]);
     setAiInterpretation(null);
+    setDisclosures([]);
 
     // Simulate progress
     progressRef.current = setInterval(() => {
@@ -327,6 +352,10 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
       setAnalysisCount(response.total_types_analyzed ?? mappedAll.length);
       setUpzoning(response.upzoning_potential ?? null);
       setAiInterpretation(response.ai_interpretation ?? null);
+      setDisclosures(
+        [response.area_disclosure, response.far_disclosure, response.land_price_disclosure]
+          .filter((d): d is string => typeof d === "string" && d.length > 0),
+      );
 
       // ★100% 완성: 종상향이 '실제 추천 사업방식'으로 랭킹에 반영되도록 IntegratedRecommender(2축)를
       //   ★fire-and-forget(메인 로딩을 막지 않음·외부수집 별도) — 종상향(far_basis='종상향') 후보를 비동기 surface.
@@ -392,6 +421,10 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
         totalRevenueWon: selectedModel.total_revenue_won,
         profitRatePct: selectedModel.profit_rate_pct,
         grade: selectedModel.grade,
+        // ★정밀도는 **모른다고 명시**한다 — Top3 추천 시뮬레이션은 정밀도 등급을
+        //   계산하지 않는다(백엔드 실측: precision 산출 0건). 생략하면 merge 패치라
+        //   직전 개략수지의 `"E"` 가 남아 배지가 이 결과 위에 **거짓으로** 뜬다.
+        precision: null,
       });
 
       // ── 선택한 건축개요를 설계 스토어에 저장 → 설계 스튜디오(CAD/BIM)가 동일 개요로 생성(정합) ──
@@ -495,7 +528,7 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
 
       {/* ── Input Form (체험/모달 모드) ── */}
       {!embedded && (
-      <div className="rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-8 shadow-[var(--shadow-xl)]">
+      <div className="rounded-[var(--radius-lg)] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-8 shadow-[var(--shadow-xl)]">
         <div className="flex flex-col gap-6">
           {/* Row 1: Address + Region */}
           <div className="flex flex-col gap-4 lg:flex-row">
@@ -508,7 +541,7 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
                 writeToContext={false}
                 onChange={(entries) => {
                   if (entries.length > 0) {
-                    const next = entries[0].jibunAddress || entries[0].fullAddress;
+                    const next = preferredEntryAddress(entries[0]);
                     // 새 주소 입력 시 이전 추천결과 무효화(stale 표시 방지 — SSOT 정합).
                     if (next && next !== address) {
                       setTopModels([]); setAllModels([]); setAiInterpretation(null); setError(null);
@@ -520,7 +553,7 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
                       if (matchedRegion) setRegion(matchedRegion);
                     }
                   }
-                  setParcels(entries.map((e) => e.jibunAddress || e.fullAddress || e.roadAddress).filter(Boolean));
+                  setParcels(entries.map((e) => preferredEntryAddress(e)).filter(Boolean));
                 }}
                 placeholder="주소 검색 · 다필지는 엑셀로 일괄 등록"
               />
@@ -589,7 +622,7 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.95 }}
-            className="rounded-2xl border border-rose-500/20 bg-rose-500/10 p-5 text-sm font-bold text-rose-400 flex items-center gap-3"
+            className="rounded-2xl border border-[var(--status-error)]/20 bg-[var(--status-error)]/10 p-5 text-sm font-bold text-[var(--status-error)] flex items-center gap-3"
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <circle cx="12" cy="12" r="10" />
@@ -632,6 +665,20 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
 
       {/* ── Top 3 Cards ── */}
       <AnimatePresence>
+        {/* ★P3: 가정치 폴백 정직 고지 — 백엔드가 disclosure를 보낸 경우에만 노출(무목업). */}
+        {topModels.length > 0 && disclosures.length > 0 && (
+          <div className="rounded-2xl border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 px-5 py-4">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[var(--status-warning)]" />
+              <div className="space-y-1">
+                {disclosures.map((d) => (
+                  <p key={d} className="text-xs leading-5 text-[var(--text-secondary)] break-keep">{d}</p>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
         {topModels.length > 0 && (
           <motion.div
             initial={{ opacity: 0, y: 30 }}
@@ -648,19 +695,19 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
                 <TiltCard
                   key={model.type_code}
                   glowColor={style.glow}
-                  className="rounded-[2.5rem]"
+                  className="rounded-[var(--radius-xl)]"
                 >
                   <motion.div
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.1 * (idx + 1) }}
-                    className={`relative flex flex-col gap-6 rounded-[2.5rem] border-2 ${style.border} ${style.bg} p-8 backdrop-blur-xl shadow-[var(--shadow-xl)] h-full`}
+                    className={`relative flex flex-col gap-6 rounded-[var(--radius-xl)] border-2 ${style.border} ${style.bg} p-8 backdrop-blur-xl shadow-[var(--shadow-xl)] h-full`}
                   >
                     {/* Rank Badge */}
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
                         <span className="text-2xl">{style.emoji}</span>
-                        <span className={`text-[10px] font-[1000] uppercase tracking-[0.4em] ${style.accent}`}>
+                        <span className={`label-caps ${style.accent}`}>
                           {style.label}
                         </span>
                       </div>
@@ -740,21 +787,27 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
 
       {/* ── ★P1 미래속성: 종상향 잠재(현행 추천과 분리·예상치) ── */}
       {upzoning?.potential_far_range && (upzoning.potential_far_range.max_pct ?? 0) > (upzoning.current_far_pct ?? 0) && (
-        <div className="rounded-[2rem] border border-amber-500/30 bg-amber-500/5 p-6">
+        <div className="rounded-[var(--radius-lg)] border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/5 p-6">
           <div className="mb-2 flex items-center gap-2">
-            <TrendingUp className="size-5 text-amber-400" aria-hidden />
+            <TrendingUp className="size-5 text-[var(--status-warning)]" aria-hidden />
             <h3 className="text-base font-black text-[var(--text-primary)]">미래 토지속성 — 종상향 잠재(예상치)</h3>
           </div>
           <p className="text-sm text-[var(--text-secondary)]">
             현행 실효 용적률 <b className="text-[var(--text-primary)]">{upzoning.current_far_pct}%</b> 기준 추천입니다.
             종상향(역세권·지구단위 등) 시 잠재 용적률은{" "}
-            <b className="text-amber-400">
-              {upzoning.potential_far_range.min_pct === upzoning.potential_far_range.max_pct
-                ? `${upzoning.potential_far_range.max_pct}%`
-                : `${upzoning.potential_far_range.min_pct}~${upzoning.potential_far_range.max_pct}%`}
+            <b className="text-[var(--status-warning)]">
+              <UpzoningFarRangeValue range={upzoning.potential_far_range} />
             </b>
-            까지 가능하며, 이 경우 더 고밀·고수익 건축유형이 추천될 수 있습니다.
+            {/* ★붕괴면 "…까지 가능하며"가 거짓이 된다 — 그 값은 도달 상한이 아니라 한 경로의
+                예상치다. 조사(助詞)까지 판정에 맞춘다(문장이 숫자보다 오래 기억된다). */}
+            {upzoningReachClause(upFarRange.collapsed)}
           </p>
+          {/* ★붕괴(상·하한 동값) 시 백엔드가 실어보낸 정직 고지 — "이 값이 상향 최댓값"이라는
+              오독을 막는다. 프론트가 문구를 지어내지 않는다(근거를 아는 쪽만 만든다). */}
+          <UpzoningFarRangeNotice
+            range={upzoning.potential_far_range}
+            className="mt-1.5 text-xs leading-relaxed text-[var(--status-warning)]"
+          />
           {upzoning.summary && (
             <p className="mt-1.5 text-xs leading-relaxed text-[var(--text-tertiary)]">{upzoning.summary}</p>
           )}
@@ -767,16 +820,16 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
       {/* ★100% 완성: 종상향이 '실제 추천 사업방식'으로 랭킹 반영(IntegratedRecommender 2축의 종상향 후보).
           ★배너(upzoning_potential)와 독립 — 두 엔진(calc_upzoning vs IntegratedRecommender) 판정이 달라도 노출. */}
       {upzoningRanked.length > 0 && (
-        <div className="rounded-[2rem] border border-amber-500/30 bg-amber-500/5 p-6">
+        <div className="rounded-[var(--radius-lg)] border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/5 p-6">
           <div className="mb-2 flex items-center gap-2">
-            <TrendingUp className="size-5 text-amber-400" aria-hidden />
+            <TrendingUp className="size-5 text-[var(--status-warning)]" aria-hidden />
             <h3 className="text-base font-black text-[var(--text-primary)]">종상향 시 추천 사업방식(수익순·잠재)</h3>
           </div>
           <div className="space-y-1.5">
             {upzoningRanked.map((c) => (
               <div key={`${c.method ?? ""}-${c.target_zone ?? ""}-${c.applied_far_pct ?? ""}`} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--line)] bg-[var(--surface-strong)] px-3 py-2">
                 <span className="flex items-center gap-2">
-                  <span className="text-[10px] font-bold text-amber-400">종상향</span>
+                  <span className="text-[10px] font-bold text-[var(--status-warning)]">종상향</span>
                   <span className="text-[12px] font-bold text-[var(--text-primary)]">{c.type_name || c.method}</span>
                   {c.applied_far_pct != null && (
                     <span className="text-[10px] text-[var(--text-tertiary)]">용적 {c.applied_far_pct}%</span>
@@ -799,7 +852,7 @@ export function AutoRecommendPanel({ onClose, isModal = false, embedded = false 
 
       {/* ── LLM(Claude) 사업성 종합 해석 ── */}
       {aiInterpretation && (
-        <div className="rounded-[2rem] border border-blue-500/30 bg-blue-500/5 p-6 shadow-[var(--shadow-lg)]">
+        <div className="rounded-[var(--radius-lg)] border border-blue-500/30 bg-blue-500/5 p-6 shadow-[var(--shadow-lg)]">
           <div className="flex items-center gap-2 mb-4">
             <Brain className="size-5 text-blue-400" aria-hidden />
             <h3 className="text-base font-black text-[var(--text-primary)]">
@@ -965,7 +1018,7 @@ function FeasAiSection({
       className={`rounded-xl p-4 ${
         emphasis
           ? "md:col-span-2 bg-blue-500/10 border border-blue-500/30"
-          : "bg-[var(--surface-muted)]/40 border border-[var(--border)]"
+          : "bg-[var(--surface-muted)]/40 border border-[var(--line)]"
       }`}
     >
       <div className="flex items-center gap-1.5 mb-1.5">

@@ -20,7 +20,7 @@ export function TenantRoutingTable() {
   };
 
   return (
-    <div className="w-full overflow-hidden rounded-[2.5rem] border border-[var(--line-strong)] bg-[var(--surface-muted)]/50 backdrop-blur-xl shadow-[var(--shadow-xl)]">
+    <div className="w-full overflow-hidden rounded-[var(--radius-xl)] border border-[var(--line-strong)] bg-[var(--surface-muted)]/50 backdrop-blur-xl shadow-[var(--shadow-xl)]">
       <div className="overflow-x-auto custom-scrollbar">
         <table className="w-full text-left text-sm text-[var(--text-secondary)]">
           <thead className="bg-[var(--surface-strong)] text-xs uppercase tracking-[0.2em] text-[var(--text-tertiary)] border-b border-[var(--line-strong)]">

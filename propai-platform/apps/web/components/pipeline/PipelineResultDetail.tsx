@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiClient } from "@/lib/api-client";
 import { VerificationBadge } from "@/components/common/VerificationBadge";
 import { FieldSourceBadge } from "@/components/common/FieldSourceBadge";
+import { MarkdownLite } from "@/components/common/MarkdownLite";
 import {
   useProjectContextStore,
   type CostData,
@@ -219,6 +220,12 @@ interface StoreFieldEntry {
 const STORE_FIELD_MAP: Record<string, StoreFieldEntry> = {
   "site_analysis.land_area_sqm": { module: "siteAnalysis", storeField: "landAreaSqm" },
   "cost.total_construction_cost": { module: "cost", storeField: "totalConstructionCostWon" },
+  // ★2026-08-26 — 이 두 필드는 위 `fields` 에서 **`editable: true`** 인데 맵에 없어
+  //   **세션 한정**으로만 동작했다(새로고침·재실행에 사라짐). `feasibility` 가 이제
+  //   `ProvenanceModule` 안이므로 영속 + 수동값 보호가 성립한다.
+  //   ★이 항목이 없으면 아래 가드는 **아무도 쓰지 않는 맵**을 읽는다 — 정의만 하고 소비처 0.
+  "feasibility.total_cost_won": { module: "feasibility", storeField: "totalCostWon" },
+  "feasibility.total_revenue_won": { module: "feasibility", storeField: "totalRevenueWon" },
 };
 const storeFieldKey = (stage: string, field: string) => `${stage}.${field}`;
 
@@ -234,9 +241,9 @@ interface ExecKPI {
 }
 
 const EXEC_KPIS: ExecKPI[] = [
-  { label: "수익률", key: "profit_rate_pct", source: "feasibility", unit: "%", format: fmtPct, color: "text-emerald-400" },
+  { label: "수익률", key: "profit_rate_pct", source: "feasibility", unit: "%", format: fmtPct, color: "text-[var(--status-success)]" },
   { label: "총사업비", key: "total_cost_won", source: "feasibility", unit: "", format: fmtNum, color: "text-[var(--accent-strong)]" },
-  { label: "순이익", key: "net_profit_won", source: "feasibility", unit: "", format: fmtNum, color: "text-emerald-400" },
+  { label: "순이익", key: "net_profit_won", source: "feasibility", unit: "", format: fmtNum, color: "text-[var(--status-success)]" },
   { label: "탄소밀도", key: "total_carbon_per_sqm", source: "esg_carbon", unit: "kgCO\u2082/m\u00B2", format: fmtPct, color: "text-yellow-400" },
   { label: "법규준수", key: "compliance_pass", source: "report", unit: "", format: (v) => String(v ?? "-"), color: "text-blue-400" },
 ];
@@ -337,6 +344,7 @@ export function PipelineResultDetail({ result, onRerun, addresses }: PipelineRes
   // 셀렉터 단위 구독으로 불필요 리렌더 최소화(기존 ProjectPipelinePanel 패턴과 동일).
   const updateSiteAnalysis = useProjectContextStore((s) => s.updateSiteAnalysis);
   const updateCostData = useProjectContextStore((s) => s.updateCostData);
+  const updateFeasibilityData = useProjectContextStore((s) => s.updateFeasibilityData);
   const revertFieldToAuto = useProjectContextStore((s) => s.revertFieldToAuto);
   // 마운트 시 시드 복원·배지 출처 판정은 현재 manualFields 스냅을 구독해 반영한다.
   const manualFields = useProjectContextStore((s) => s.manualFields);
@@ -463,6 +471,17 @@ export function PipelineResultDetail({ result, onRerun, addresses }: PipelineRes
   // STORE_FIELD_MAP에 등록된 핵심 필드는 store에 source:"user"로 영속한다(이탈 시 소실 해소).
   // siteAnalysis는 partial patch, cost는 full replace이므로 현재 store costData 위에 병합한다.
   const persistFieldToStore = useCallback((entry: StoreFieldEntry, value: unknown) => {
+    // ★모듈별 손수 분기다 — 새 모듈을 맵에 넣어도 **여기에 가지를 안 치면 아무 일도 안 일어난다**
+    //   (조용한 미배선). 그래서 맨 끝에 **미배선 감지**를 둔다: 맵에 있는데 여기서 처리 못 하면
+    //   개발 중 시끄럽게 실패시킨다. `feasibility` 를 추가하며 이 함정을 실제로 밟았다.
+    if (entry.module === "feasibility") {
+      // merge patch 계약 — 단일 키만 갱신(나머지 보존). user stamp 로 자동 재실행 덮어쓰기 차단.
+      updateFeasibilityData(
+        { [entry.storeField]: value } as Parameters<typeof updateFeasibilityData>[0],
+        { source: "user" },
+      );
+      return;
+    }
     if (entry.module === "siteAnalysis") {
       // partial patch — 단일 키만 갱신(나머지 보존). store는 Partial<SiteAnalysisData> 수용.
       updateSiteAnalysis(
@@ -486,8 +505,15 @@ export function PipelineResultDetail({ result, onRerun, addresses }: PipelineRes
         source: "overview",
       };
       updateCostData({ ...base, [entry.storeField]: value } as CostData, { source: "user" });
+      return;
     }
-  }, [updateSiteAnalysis, updateCostData]);
+    // ★미배선 감지 — 맵에 넣고 가지를 안 친 상태를 **조용히 넘기지 않는다**.
+    if (process.env.NODE_ENV !== "production") {
+      console.error(
+        `[PipelineResultDetail] STORE_FIELD_MAP 에 '${entry.module}' 가 있는데 persistFieldToStore 가 처리하지 못한다 — 편집이 조용히 사라진다.`,
+      );
+    }
+  }, [updateSiteAnalysis, updateCostData, updateFeasibilityData]);
 
   const setFieldOverride = useCallback((sourceStage: string, fieldKey: string, value: unknown) => {
     setOverrides((prev) => ({
@@ -507,10 +533,24 @@ export function PipelineResultDetail({ result, onRerun, addresses }: PipelineRes
     for (const [flatKey, entry] of Object.entries(STORE_FIELD_MAP)) {
       const prov = st.getFieldProvenance(entry.module, entry.storeField);
       if (prov?.source !== "user") continue;
-      const dataRec =
-        entry.module === "siteAnalysis"
-          ? (st.siteAnalysis as Record<string, unknown> | null)
-          : (st.costData as Record<string, unknown> | null);
+      // ★이항 삼항식이었다 — `siteAnalysis` 가 아니면 **무조건 costData** 라, 맵에 세 번째
+      //   모듈을 넣는 순간 **엉뚱한 데이터를 읽는다**(feasibility 를 넣으며 실제로 밟았다).
+      //   모듈 → 데이터의 대응을 **표로 파생**시켜 새 모듈이 조용히 오독되지 않게 한다.
+      const MODULE_DATA: Partial<Record<ProvenanceModule, Record<string, unknown> | null>> = {
+        siteAnalysis: st.siteAnalysis as Record<string, unknown> | null,
+        cost: st.costData as Record<string, unknown> | null,
+        feasibility: st.feasibilityData as Record<string, unknown> | null,
+      };
+      const dataRec = MODULE_DATA[entry.module];
+      if (dataRec === undefined) {
+        // 맵에 있는데 여기 대응이 없다 — 조용히 넘기지 않는다(위 persistFieldToStore 와 같은 규율).
+        if (process.env.NODE_ENV !== "production") {
+              console.error(
+            `[PipelineResultDetail] MODULE_DATA 에 '${entry.module}' 대응이 없다 — 시드 복원이 조용히 건너뛴다.`,
+          );
+        }
+        continue;
+      }
       const val = dataRec?.[entry.storeField];
       if (val == null) continue;
       const dot = flatKey.indexOf(".");
@@ -528,7 +568,7 @@ export function PipelineResultDetail({ result, onRerun, addresses }: PipelineRes
       });
     }
     // 마운트 1회 — store 액션 정체성은 안정적이라 의존성 비포함(시드 복원은 진입 시 1회만).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+
   }, []);
 
   const hasOverrides = Object.keys(overrides).length > 0;
@@ -602,7 +642,7 @@ export function PipelineResultDetail({ result, onRerun, addresses }: PipelineRes
   const grade = getFieldValue("feasibility", "grade");
 
   return (
-    <section className="rounded-2xl sm:rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] shadow-[var(--shadow-xl)] overflow-hidden transition-all">
+    <section className="rounded-2xl sm:rounded-[var(--radius-lg)] border border-[var(--line-strong)] bg-[var(--surface-soft)] shadow-[var(--shadow-xl)] overflow-hidden transition-all">
       {/* ── Header ── */}
       <div className="px-6 py-5 sm:px-8 sm:py-6 border-b border-[var(--line)] bg-gradient-to-r from-[var(--accent-strong)]/5 to-transparent">
         <div className="flex items-center gap-3 mb-1">
@@ -647,7 +687,7 @@ export function PipelineResultDetail({ result, onRerun, addresses }: PipelineRes
               핵심 요약
             </h3>
             {typeof profitRate === "number" && typeof grade === "string" && (
-              <span className="ml-auto text-xs font-bold px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+              <span className="ml-auto text-xs font-bold px-3 py-1 rounded-full bg-[var(--status-success)]/10 text-[var(--status-success)] border border-[var(--status-success)]/20">
                 수익률 {fmtPct(profitRate)}% ({String(grade)}등급)
               </span>
             )}
@@ -692,7 +732,7 @@ export function PipelineResultDetail({ result, onRerun, addresses }: PipelineRes
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="inline-flex items-center gap-1.5 text-[11px] font-black uppercase tracking-widest text-[var(--accent-strong)]"><IconPin /> 종합 의견</span>
                   {og ? <span className="rounded-full bg-[var(--accent-soft)] px-2.5 py-0.5 text-[11px] font-black text-[var(--accent-strong)]">종합등급 {String(og)}</span> : null}
-                  {risk ? <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-0.5 text-[11px] font-bold text-amber-500">리스크 {String(risk)}</span> : null}
+                  {risk ? <span className="rounded-full border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 px-2.5 py-0.5 text-[11px] font-bold text-[var(--status-warning)]">리스크 {String(risk)}</span> : null}
                 </div>
                 {rec ? <p className="mt-2 text-sm leading-relaxed text-[var(--text-primary)]">{String(rec)}</p> : null}
               </div>
@@ -862,7 +902,7 @@ export function PipelineResultDetail({ result, onRerun, addresses }: PipelineRes
               {narr.map((n, i) => (
                 <div key={i} className="rounded-xl border border-[var(--accent-strong)]/15 bg-[var(--accent-soft)]/30 p-4">
                   <p className="mb-1 text-[11px] font-black uppercase tracking-widest text-[var(--accent-strong)]">{n.label}</p>
-                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-[var(--text-secondary)]">{n.text}</p>
+                  <MarkdownLite text={n.text} className="text-sm text-[var(--text-secondary)]" />
                 </div>
               ))}
               {isLoading && (
@@ -873,9 +913,9 @@ export function PipelineResultDetail({ result, onRerun, addresses }: PipelineRes
                 </div>
               )}
               {hasErr && (
-                <div className="flex items-center gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-400">
+                <div className="flex items-center gap-3 rounded-xl border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 p-3 text-xs text-[var(--status-warning)]">
                   <span>해석 생성이 길어지고 있습니다 — 잠시 후 재시도하면 (서버에 생성·캐시된) 결과가 즉시 표시됩니다.</span>
-                  <button onClick={() => fetchNarr(stg, true, true)} className="rounded-md border border-amber-500/40 px-2.5 py-1 font-bold hover:bg-amber-500/10">↻ 재시도</button>
+                  <button onClick={() => fetchNarr(stg, true, true)} className="rounded-md border border-[var(--status-warning)]/40 px-2.5 py-1 font-bold hover:bg-[var(--status-warning)]/10">↻ 재시도</button>
                 </div>
               )}
             </div>

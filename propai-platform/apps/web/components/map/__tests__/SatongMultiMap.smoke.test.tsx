@@ -36,7 +36,7 @@ describe("SatongMultiMap 스모크", () => {
     render(<SatongMultiMap />);
 
     expect(
-      screen.getByText(/지도를 클릭하면 해당 필지가 확인 카드로 표시됩니다/),
+      screen.getByText(/지도를 클릭하면 선택·정보·거리재기 메뉴가 열립니다/),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "전체화면" })).toBeInTheDocument();
   });

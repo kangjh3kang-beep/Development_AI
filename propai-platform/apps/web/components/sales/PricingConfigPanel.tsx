@@ -120,7 +120,7 @@ export default function PricingConfigPanel({
           {/* ★[iter-4 warning 배너] 재생성/AI제안의 원가구성 경고(흡수금지·왜곡·음수clamp) 정직 노출 —
               Σ구성≠분양가·VAT 과세표준 과소합산 신호. PriceGroupingPanel 과 동일 디자인. */}
           {warnings.length > 0 && (
-            <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5">
+            <div className="rounded-lg border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 px-2.5 py-1.5">
               <p className="flex items-center gap-1.5 text-[11px] font-bold text-amber-600"><AlertTriangle className="size-3.5 shrink-0" aria-hidden />원가구성 경고 — 분양가 합과 구성요소 합이 어긋날 수 있습니다(원가구성 비율 합=1 점검)</p>
               <ul className="mt-1 space-y-0.5">
                 {warnings.map((w, i) => (
@@ -179,7 +179,7 @@ export default function PricingConfigPanel({
                     <option value="RATE">비율(%)</option><option value="FIXED">정액(원)</option>
                   </select>
                   <input type="number" step="0.01" defaultValue={w.value} placeholder="0.05=+5%" className={`${fcls} w-28`} onBlur={(e) => { w.value = Number(e.target.value); void saveWeight(w); }} />
-                  <button onClick={() => delWeight(w.id)} className="h-7 w-7 rounded-md border border-rose-500/30 text-rose-500">✕</button>
+                  <button onClick={() => delWeight(w.id)} className="h-7 w-7 rounded-md border border-[var(--status-error)]/30 text-[var(--status-error)]">✕</button>
                 </div>
               ))}
               {weights.length === 0 && <p className="text-xs text-[var(--text-hint)]">가중치 없음(기준가만 적용). 예: 층 15 / 비율 / 0.05 = 15층 +5%.</p>}
@@ -206,7 +206,7 @@ export default function PricingConfigPanel({
                   <label className="flex items-center gap-1 text-xs text-[var(--text-secondary)]">
                     <input type="checkbox" defaultChecked={c.vat_applicable} onChange={(e) => { c.vat_applicable = e.target.checked; void saveComp(c); }} /> VAT
                   </label>
-                  <button onClick={() => delComp(c.id)} className="h-7 w-7 rounded-md border border-rose-500/30 text-rose-500">✕</button>
+                  <button onClick={() => delComp(c.id)} className="h-7 w-7 rounded-md border border-[var(--status-error)]/30 text-[var(--status-error)]">✕</button>
                 </div>
               ))}
               {comps.length === 0 && <p className="text-xs text-[var(--text-hint)]">구성 없음. 예: 토지비 비율 0.3(VAT X) + 건축비 비율 0.7(VAT O).</p>}

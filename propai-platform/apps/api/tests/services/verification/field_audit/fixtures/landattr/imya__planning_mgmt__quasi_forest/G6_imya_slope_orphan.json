@@ -1,0 +1,184 @@
+{
+  "_meta": {
+    "seed_id": "G6",
+    "title": "임야(준보전산지) 수집가능 경사도(DEM) 미획득 — 개발행위 판단 근거 불완전",
+    "land_attrs": {
+      "jimok": "임야",
+      "zone": "계획관리지역",
+      "sanji_gubun": "준보전산지"
+    },
+    "tier": "A",
+    "phase": "0/W3-3",
+    "defect": "임야/산지 후보 필지인데 '수집가능한' 경사도(SRTM/DEM 결정값)가 미획득(forest_facts.평균경사도_pct=None)이면, terrain_service 재수집으로 채울 수 있는 완전성 갭인데도 조용히 None으로 남아 개발행위허가 경사도 기준(dev_act_permit_gate _eval_slope) 판정을 막는다. ★실측필요(임목축적_per_ha 등 산림청 현장조사)의 None과 반드시 구분한다 — 실측필요 None은 정직 미획득(finding 아님).",
+    "w3_target": "terrain_coverage.TERRAIN_SLOPE_COLLECTION_GAP: 임야/산지 후보(special_parcel.factors[].forest_facts 노출)인데 수집가능 경사도(평균경사도_pct)가 None이면 P1 갭 finding 표면화(expected=수집가능 경사도 획득·observed=미획득(None)). 근본봉합=_fetch_terrain_facts DEM 실수집(comprehensive:265). 실측필요(입목축적)는 stocking 키로 격리 — 규칙이 일절 안 읽음.",
+    "regression_note": "★이전 G6 fixture는 스파이크 추정 shape(forest_preliminary_assessment.slope_degree·rendered_in_ui)라 정본 코드와 불일치했다(W3-3 재확증에서 적발). 실 shape는 special_parcel.factors[].forest_facts.평균경사도_pct다 — detect_special_parcel 실호출로 재작성.",
+    "synthetic": true,
+    "honesty": "W3 합성 fixture — 라이브 terrain 미수집. special_parcel은 detect_special_parcel(정본 함수)의 실제 반환(실 shape)이며 입력만 합성이다(scratchpad/build_g6.py로 정본 venv에서 생성). 수집가능 경사도(평균경사도_pct)=None·실측필요 임목축적(입목축적_per_ha)=110.0 present로 '수집가능 미획득만 갭'을 실증.",
+    "w3_status": "CAUGHT — W3-3 terrain_coverage.TERRAIN_SLOPE_COLLECTION_GAP 등록으로 harness가 이 시드(임야+수집가능 경사도 None)를 P1 finding으로 잡는다(W0 blind→flip). P1 비차단이라 is_valid 불변.",
+    "w3_expected": {
+      "harness_fires": true,
+      "harness_finding_code": "TERRAIN_SLOPE_COLLECTION_GAP",
+      "severity": "P1",
+      "is_valid": true
+    }
+  },
+  "ctx": {
+    "address": "경상북도 포항시 남구 호미곶면 구만리 산 30",
+    "zone_type": "계획관리지역",
+    "pnu": "4711025033xxxxxxx"
+  },
+  "input": {
+    "zone_type": "계획관리지역",
+    "land_category": "임야",
+    "special_parcel": {
+      "is_special": true,
+      "developability": "NEEDS_OFFICIAL_SURVEY",
+      "severity_label": "공식 산림조사 필요(참고안 — 확정 아님)",
+      "resolvable": "YES",
+      "factors": [
+        {
+          "category": "임야(산지)",
+          "developability": "NEEDS_OFFICIAL_SURVEY",
+          "forest_facts": {
+            "보전산지_여부": null,
+            "산지구분": "준보전산지",
+            "평균경사도_pct": null,
+            "표고비율_pct": null,
+            "입목축적_per_ha": 110.0,
+            "관할평균_입목축적_per_ha": 95.0,
+            "임상": null,
+            "official_data_source": "산림청 임업정보 커넥터(합성)"
+          },
+          "official_survey_required": true,
+          "blocking_unknown": true,
+          "implications": [
+            "지목이 임야로, 개발을 위해서는 산지전용허가가 필요하며 경사도·표고·입목축적 기준을 충족해야 합니다.",
+            "★확정 판단에는 산림청 공식 조사데이터가 필요합니다(현재 미확보 — 아래 항목은 공식조사로 산정해야 하며 아직 계산되지 않았습니다):",
+            "  · 평균경사도 — 지자체 조례상 산지전용 허용 기준(통상 평균경사도 25도 또는 30도 이하)에 부합하는지 공식 평균경사도조사서로 확인해야 합니다.",
+            "  · 입목축적 — ha당 입목축적이 관할 시군구 평균 대비 일정 배수(예: 150% 이하) 이내인지 산림조사서로 확인해야 합니다.",
+            "  · 보전산지 포함 여부 — 보전산지(임업용·공익용)가 포함되면 전용이 크게 제한되므로 산지구분 확인이 선행됩니다.",
+            "  · 660㎡ 미만 등 소규모 예외 해당 여부도 공식 자료로 판정해야 합니다.",
+            "이 항목들은 아직 실제로 계산되지 않았으며, 공식 산림조사 확보 전까지는 참고용 예비안만 제시합니다(확정 아님).",
+            "대체산림자원조성비가 부과됩니다."
+          ],
+          "legal_basis": [
+            "산지관리법 제14조(산지전용허가)",
+            "대체산림자원조성비"
+          ],
+          "legal_ref_keys": [
+            "forest_conversion",
+            "forest_replacement_charge",
+            "forest_land_classification"
+          ],
+          "permit_prerequisites": [
+            "산지전용허가",
+            "경사도/표고/입목축적 검토",
+            "산림조사서·평균경사도조사서 작성(산림기술사 등 자격)",
+            "대체산림자원조성비 산정"
+          ],
+          "preliminary_assessment": {
+            "slope": null,
+            "stocking": {
+              "judgment": "예비 적합 가능성",
+              "입목축적_비율_pct": 115.8,
+              "criteria": "관할 시군구 평균 입목축적의 150% 이하",
+              "formula": "비율 = 필지 입목축적(110.0㎥/ha) ÷ 관할평균(95.0㎥/ha) × 100 = 115.8%",
+              "legal_basis": [
+                "산지관리법 시행령 제20조 별표4(산지전용허가기준 — 임목축적)"
+              ],
+              "legal_ref_keys": [
+                "forest_permit_criteria"
+              ],
+              "source": "산림청 임업정보 커넥터(합성)",
+              "limitations": [
+                "API 조회값 — 공식 산림조사서 아님(확정판정 불가)",
+                "예비판정은 참고용이며 developability(NEEDS_OFFICIAL_SURVEY)를 변경하지 않음"
+              ]
+            },
+            "slope_skip_reason": "평균경사도(DEM terrain_facts) 미확보 — 경사도 예비판정 생략(무날조)",
+            "disclaimer": "예비판정(참고용) — 확정 아님. DEM·API 조회값은 공식 평균경사도조사서·산림조사서가 아니므로 developability(NEEDS_OFFICIAL_SURVEY)는 변경되지 않으며, 확정판정은 공식조사 확보 후에만 가능합니다."
+          },
+          "charge_notice": {
+            "charge_name": "대체산림자원조성비",
+            "notice": "산지전용허가 시 대체산림자원조성비가 부과됩니다(산지관리법 제19조 — (연도별 고시 단가 + 개별공시지가×1%) × 전용면적).",
+            "formula": "대체산림자원조성비 = (연도별 고시 단가[원/㎡] + 개별공시지가 × 1%) × 전용면적",
+            "legal_ref_keys": [
+              "forest_replacement_charge"
+            ],
+            "estimate": null,
+            "estimate_note": "연도별 고시 단가(산림청 '대체산림자원조성비 부과기준' 고시) 미주입 — 추정액 미산출(산식만 고지, 무날조)"
+          },
+          "resolvable": "YES",
+          "resolution_paths": [
+            "산지전용허가 + 대체산림자원조성비 납부",
+            "경사도·표고·입목축적 기준 충족"
+          ],
+          "alternatives": [
+            "전용비용 반영",
+            "기준 초과 구역 제외(부분개발)"
+          ],
+          "legal_refs": [
+            {
+              "key": "forest_conversion",
+              "law_name": "산지관리법",
+              "article": "제14조",
+              "title": "산지전용허가",
+              "url": "https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%82%B0%EC%A7%80%EA%B4%80%EB%A6%AC%EB%B2%95/%EC%A0%9C14%EC%A1%B0",
+              "url_status": "verified"
+            },
+            {
+              "key": "forest_replacement_charge",
+              "law_name": "산지관리법",
+              "article": "제19조",
+              "title": "대체산림자원조성비",
+              "url": "https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%82%B0%EC%A7%80%EA%B4%80%EB%A6%AC%EB%B2%95/%EC%A0%9C19%EC%A1%B0",
+              "url_status": "verified"
+            },
+            {
+              "key": "forest_land_classification",
+              "law_name": "산지관리법",
+              "article": "제4조",
+              "title": "산지의 구분(보전산지·준보전산지)",
+              "url": "https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%82%B0%EC%A7%80%EA%B4%80%EB%A6%AC%EB%B2%95/%EC%A0%9C4%EC%A1%B0",
+              "url_status": "verified"
+            }
+          ]
+        }
+      ],
+      "zone_category_mismatch": null,
+      "warnings": [
+        "[특이부지] 임야(산지): 지목이 임야로, 개발을 위해서는 산지전용허가가 필요하며 경사도·표고·입목축적 기준을 충족해야 합니다."
+      ],
+      "development_caveat": "공식 산림데이터(산지구분·보전산지 여부·평균경사도·입목축적) 미확보 — 산지전용 확정 판단 불가, 참고용 예비안입니다(확정 아님). 산림조사서·평균경사도조사서 등 공식 조사가 필요합니다. 개발가능성: 공식 산림조사 필요(참고안 — 확정 아님). 선행절차가 확정되기 전의 개발규모·수익성은 참고용이며 단정이 아닙니다.",
+      "honest_disclosure": "공식 산림데이터(산지구분·보전산지 여부·평균경사도·입목축적) 미확보 — 산지전용 확정 판단 불가, 참고용 예비안입니다(확정 아님). 산림조사서·평균경사도조사서 등 공식 조사가 필요합니다. 개발가능성: 공식 산림조사 필요(참고안 — 확정 아님). 선행절차가 확정되기 전의 개발규모·수익성은 참고용이며 단정이 아닙니다. 참고: 산지전용 시 대체산림자원조성비(산지관리법 제19조)가 부과됩니다.",
+      "note": "특이부지 감지(규칙기반). 실제 개발가능 여부·선행절차는 토지이용계획확인원·도시계획 결정도 열람으로 확정하십시오.",
+      "forest_preliminary_assessment": {
+        "slope": null,
+        "stocking": {
+          "judgment": "예비 적합 가능성",
+          "입목축적_비율_pct": 115.8,
+          "criteria": "관할 시군구 평균 입목축적의 150% 이하",
+          "formula": "비율 = 필지 입목축적(110.0㎥/ha) ÷ 관할평균(95.0㎥/ha) × 100 = 115.8%",
+          "legal_basis": [
+            "산지관리법 시행령 제20조 별표4(산지전용허가기준 — 임목축적)"
+          ],
+          "legal_ref_keys": [
+            "forest_permit_criteria"
+          ],
+          "source": "산림청 임업정보 커넥터(합성)",
+          "limitations": [
+            "API 조회값 — 공식 산림조사서 아님(확정판정 불가)",
+            "예비판정은 참고용이며 developability(NEEDS_OFFICIAL_SURVEY)를 변경하지 않음"
+          ]
+        },
+        "slope_skip_reason": "평균경사도(DEM terrain_facts) 미확보 — 경사도 예비판정 생략(무날조)",
+        "disclaimer": "예비판정(참고용) — 확정 아님. DEM·API 조회값은 공식 평균경사도조사서·산림조사서가 아니므로 developability(NEEDS_OFFICIAL_SURVEY)는 변경되지 않으며, 확정판정은 공식조사 확보 후에만 가능합니다."
+      }
+    }
+  },
+  "current_baseline": {
+    "field": "special_parcel.factors[].forest_facts.평균경사도_pct",
+    "observed": null,
+    "note": "수집가능 경사도(DEM 평균경사도_pct)가 None(미획득)인데 임목축적(실측필요)은 110.0 present — terrain_coverage 미등록 시 갭이 finding으로 표면화되지 않음. W3-3: TERRAIN_SLOPE_COLLECTION_GAP가 표면화(→ 근본봉합=_fetch_terrain_facts DEM 실수집). 실측필요(입목축적) None은 갭 아님(구분 유지)."
+  }
+}

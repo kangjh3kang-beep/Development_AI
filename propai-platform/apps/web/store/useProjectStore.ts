@@ -1,7 +1,11 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { apiClient } from '@/lib/api-client';
+import { fetchAllProjects, selectOrphans } from "@/lib/projects-fetch";
+import { migratePaidArtifacts } from "@/lib/paid-artifact-migration";
+import { projectCreateHeaders } from "@/lib/project-create-key";
 import { createDebouncedStorage } from '@/lib/debounced-storage';
+import { purgeProjectLocalData } from "@/lib/project-lifecycle";
 
 type ProjectStatus = 'draft' | 'planning' | 'design' | 'permit' | 'construction' | 'completed' | 'archived';
 
@@ -54,6 +58,53 @@ type ProjectState = {
   updateProject: (id: string, updates: Partial<Project>) => void;
 };
 
+/**
+ * **서버 생성이 진행 중인 로컬 프로젝트 id** — 중복 생성 경합 차단.
+ *
+ * ## 무엇이 있었나(실측)
+ *
+ * 두 생성 경로 모두 이 순서다:
+ *
+ *     addProject(...)            → **비UUID** 로컬 레코드가 생긴다(주소 포함)
+ *     await POST /projects       → ★이 창 동안 레코드는 "고아"로 보인다
+ *     updateProject(id → UUID)   → 비로소 UUID 가 된다
+ *
+ * 그런데 `syncFromBackend` 는 *"비UUID 이고 주소가 백엔드 목록에 없으면 고아"* 로 보고
+ * **POST 로 다시 만든다.** 그 동기화는 마운트마다 여러 화면에서 발화한다 —
+ * `await` 창에 겹치면 **같은 프로젝트가 두 번 생성된다.**
+ * 실물: 이름·주소·필지수(77)가 완전히 같은 **중복 프로젝트 2건**이 프로덕션에 있다.
+ *
+ * ★주소 문자열 중복제거로는 못 막는다 — 그 창에서는 백엔드 목록에 **아직 없기 때문**이다.
+ *
+ * ## 범위(정직 표기)
+ *
+ * 이 레지스트리는 **같은 탭** 안에서만 유효하다. 다른 탭·기기에서 동시에 같은 프로젝트를
+ * 만드는 경우는 **서버측 멱등키**가 있어야 막는다(별건).
+ */
+const _creatingLocalIds = new Set<string>();
+
+/** 서버 생성 시작을 알린다 — 이 id 는 그동안 "고아"로 취급되지 않는다. */
+export function markProjectCreating(localId: string): void {
+  if (localId) _creatingLocalIds.add(localId);
+}
+
+/** 성공·실패 **양쪽 모두** 호출한다. 실패한 건은 다시 고아가 되어 다음 동기화가 재시도한다. */
+export function unmarkProjectCreating(localId: string): void {
+  if (localId) _creatingLocalIds.delete(localId);
+}
+
+/** 테스트·진단용 — 현재 인플라이트 개수. */
+export function _creatingCount(): number {
+  return _creatingLocalIds.size;
+}
+
+/** 테스트 전용 초기화. ★개별 해제를 루프로 흉내 내지 마라 — 빈 id 는 no-op 이라
+ *  `while(count>0) unmark("")` 같은 정리는 **테스트가 실패했을 때만 무한루프**가 된다
+ *  (변이 검증이 필요한 바로 그 순간에 하네스가 멈춘다 — 실제로 겪었다). */
+export function __resetProjectCreating(): void {
+  _creatingLocalIds.clear();
+}
+
 export const useProjectStore = create<ProjectState>()(
   persist(
     (set, get) => ({
@@ -91,23 +142,27 @@ export const useProjectStore = create<ProjectState>()(
         if (get().syncing) return;
         set({ syncing: true });
         try {
-          const res = await apiClient.get<{ items?: BackendProject[] }>("/projects", {
-            useMock: false,
-            timeoutMs: 30000,
-          });
-          const backend = (res.items || []).map(_mapBackend);
+          // ★페이지를 끝까지 걷는다. 종전엔 파라미터 없이 한 번만 불러 **최신 20건**만 받고
+          //   그것으로 로컬 목록을 통째로 교체했다(서버 기본 page_size=20).
+          //   프로덕션 실측(2026-08-25): total=24 · has_next=true → 오래된 4건이 사라졌다.
+          const fetched = await fetchAllProjects<BackendProject>((path) =>
+            apiClient.get<unknown>(path, { useMock: false, timeoutMs: 30000 }),
+          );
+          const backend = fetched.items.map(_mapBackend);
+          const listComplete = !fetched.truncated;
           // 주소 기준 중복제거(백엔드 + 로컬 누적 중복) — 동일 주소 중복 마이그레이션 방지
           const seen = new Set(
             backend.map((p) => p.address.trim()).filter(Boolean),
           );
-          const orphans: Project[] = [];
-          for (const p of get().projects) {
-            const a = p.address.trim();
-            if (!_isUuid(p.id) && a && !seen.has(a)) {
-              seen.add(a);
-              orphans.push(p);
-            }
-          }
+          // ★고아 판정은 순수 함수로 꺼냈다 — 루프 안에 두면 어떤 테스트도 그 **판단**을
+          //   직접 태우지 못한다(재료만 잠그면 분기를 통째로 지워도 초록이 된다).
+          //   목록이 불완전하면 판정 자체를 하지 않는다: 잘려서 안 보일 뿐인 프로젝트를
+          //   "백엔드에 없다"고 오판하면 같은 프로젝트를 **다시 만든다**.
+          const orphans = selectOrphans(get().projects, seen, {
+            listComplete,
+            isUuid: _isUuid,
+            inFlight: _creatingLocalIds,
+          });
           const migrated: Project[] = [];
           for (const o of orphans) {
             try {
@@ -118,6 +173,10 @@ export const useProjectStore = create<ProjectState>()(
                   address: o.address || undefined,
                   ...(areaNum > 0 ? { total_area_sqm: areaNum } : {}),
                 },
+                // ★최초 생성과 **같은 키**(로컬 id)다 — 이 재전송이 서버에서 재생으로 처리돼
+                //   같은 프로젝트가 두 번 만들어지지 않는다. 클라이언트 가드가 못 닿는
+                //   다른 탭·기기까지 이 한 줄이 덮는다.
+                headers: projectCreateHeaders(o.id),
                 useMock: false,
                 timeoutMs: 30000,
               });
@@ -126,7 +185,26 @@ export const useProjectStore = create<ProjectState>()(
               migrated.push(o); // 실패 시 로컬 유지(다음 동기화에 재시도)
             }
           }
-          set({ projects: [...backend, ...migrated] });
+          // ★유료 산출물 승계 — 목록을 **끝까지 받은 이 자리**가 유일하게 옳은 시점이다.
+          //   귀속 규칙이 "이 사용자가 볼 수 있는 프로젝트 id" 를 재료로 쓰는데, 그 목록은
+          //   여기서야 확정된다. 절단이면 판단이 **미룸**으로 떨어져 다음 동기화에 다시 온다
+          //   (불완전한 목록으로 귀속하면 오래된 프로젝트의 유료 렌더가 전부 남의 것이 된다).
+          try {
+            migratePaidArtifacts({
+              visibleProjectIds: new Set(backend.map((p) => p.id)),
+              truncated: !listComplete,
+            });
+          } catch { /* 승계 실패는 조용히 넘긴다 — 레거시 원본은 그대로라 다음에 다시 시도된다 */ }
+          if (listComplete) {
+            set({ projects: [...backend, ...migrated] });
+          } else {
+            // ★상한에 걸려 전체를 못 받았다 — **모르는 것을 지우지 않는다.**
+            //   백엔드가 준 것으로 덮되, 그 목록에 없는 로컬 레코드는 "삭제됐다"고 단정할 수
+            //   없으므로 남긴다(이 결함의 증상이 정확히 "있는 것이 사라진다"였다).
+            const backendIds = new Set(backend.map((p) => p.id));
+            const keptLocal = get().projects.filter((p) => !backendIds.has(p.id));
+            set({ projects: [...backend, ...keptLocal] });
+          }
         } catch {
           // 오프라인/실패 — 기존 로컬 목록 유지
         } finally {
@@ -135,6 +213,11 @@ export const useProjectStore = create<ProjectState>()(
       },
       deleteProject: async (id) => {
         set((state) => ({ projects: state.projects.filter((p) => p.id !== id) }));
+        // ★생명주기 트리거 — 목록에서 지우는 것만으로는 프로젝트가 사라지지 않는다.
+        //   분석 스냅샷(snapshots[id])·토지조서(byProject[id])·활성 컨텍스트가 남고,
+        //   그중 snapshots 는 CTX_KEYS 라 **매 syncUp 마다 서버로 재업로드**된다 →
+        //   다음 syncDown 이 다시 내려 준다(삭제가 동기화로 되돌려진다).
+        purgeProjectLocalData(id);
         if (_isUuid(id)) {
           try {
             await apiClient.delete(`/projects/${id}`, { useMock: false, timeoutMs: 30000 });

@@ -61,7 +61,12 @@ __all__ = [
     "build_report_model_from_bank",
     "build_report_model_from_land",
     "build_report_model_from_appraisal",
+    "build_report_model_from_appraisal_multi",
     "build_report_model_from_design_audit",
+    "build_report_model_from_cost_estimation",
+    "build_report_model_from_regulation",
+    "build_report_model_from_market",
+    "build_report_model_from_registry_rights",
 ]
 
 
@@ -109,6 +114,17 @@ def build_report_model_from_land(data: dict) -> ReportModel:
     return _build(data)
 
 
+def build_report_model_from_registry_rights(items: list, **kwargs) -> ReportModel:
+    """다필지 등기 권리분석 결과 → 정본 ReportModel(어댑터).
+
+    새 PDF 경로를 만들지 않고 이 엔진을 태운다 — 표지·정직 채움도·승인등급·미검증 단정
+    경고가 전부 따라온다. 미분석 필지는 **숨기지 않고 §미분석 섹션**으로 드러난다.
+    """
+    from .registry_rights_adapter import build_report_model_from_registry_rights as _build
+
+    return _build(items, **kwargs)
+
+
 def build_report_model_from_appraisal(data: dict, **kwargs) -> ReportModel:
     """탁상감정 보고서(appraisal) → 정본 ReportModel(어댑터). 기존 build_desk_appraisal_pdf 이관."""
     from .appraisal_adapter import build_report_model_from_appraisal as _build
@@ -116,8 +132,45 @@ def build_report_model_from_appraisal(data: dict, **kwargs) -> ReportModel:
     return _build(data, **kwargs)
 
 
+def build_report_model_from_appraisal_multi(
+    results: list, *, addresses: list, ai_sections: dict | None = None, omitted_count: int = 0
+) -> ReportModel:
+    """다필지 탁상감정 보고서(appraisal) → 정본 ReportModel(어댑터).
+
+    대표(첫 성공) 필지 단건 상세 + 맨 앞 '0. 다필지 추정 총괄' 섹션(additive)."""
+    from .appraisal_adapter import build_report_model_from_appraisal_multi as _build
+
+    return _build(results, addresses=addresses, ai_sections=ai_sections, omitted_count=omitted_count)
+
+
 def build_report_model_from_design_audit(data: dict) -> ReportModel:
     """설계심사 보고서(design_audit) → 정본 ReportModel(어댑터). 기존 build_design_audit_pdf 이관."""
     from .design_audit_adapter import build_report_model_from_design_audit as _build
 
     return _build(data)
+
+
+def build_report_model_from_cost_estimation(data: dict) -> ReportModel:
+    """적산(공사비 견적) 결과 → 정본 ReportModel(어댑터). 가용 산출만 조립(부재 섹션 생략)."""
+    from .cost_estimation_adapter import build_report_model_from_cost_estimation as _build
+
+    return _build(data)
+
+
+def build_report_model_from_regulation(result: dict, *, address: str = "") -> ReportModel:
+    """규제 종합 분석(regulation) 결과 → 정본 ReportModel(어댑터·법규 검토서).
+
+    프론트가 방금 받은 result 를 그대로 넘겨(재분석·LLM 재호출 0) 법규 검토서로 조립한다."""
+    from .regulation_adapter import build_report_model_from_regulation as _build
+
+    return _build(result, address=address)
+
+
+def build_report_model_from_market(report: dict) -> ReportModel:
+    """시장조사보고서(market_report_service) 결과 → 정본 ReportModel(어댑터).
+
+    기존 MarketReportService.to_pdf/to_pptx/to_docx 가 각자 재구현하던 표지·Executive Summary·
+    8섹션 구성을 이 어댑터로 일원화한다(산식 복제 0 — report dict 값을 그대로 조립)."""
+    from .market_adapter import build_report_model_from_market as _build
+
+    return _build(report)

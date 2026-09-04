@@ -146,12 +146,13 @@ def test_redevelopment_formula_dimension():
     assert "권리가액" in prop.judgment
 
 
-# ── 6종 spec 누적(금융·세무·회계·설계·BIM·심의) ──
+# ── 7종 spec 누적(금융·세무·회계·설계·BIM·심의·적산(QS)) ──
 
 _EXPECTED_KEYS = {
     "senior_urban_planner", "senior_financial_advisor", "senior_architect",
     "senior_bim_specialist", "senior_deliberation_member", "senior_tax_advisor",
     "senior_accountant", "senior_legal_scrivener", "senior_appraiser",
+    "senior_quantity_surveyor",
 }
 
 
@@ -250,6 +251,25 @@ def test_deliberation_spec_domain_facts():
     assert "동시" in rules["delib.multi_clause_csp"].judgment
 
 
+def test_qs_spec_domain_facts():
+    spec = get_senior_agent("senior_quantity_surveyor")
+    rules = {r.rule_id: r for r in spec.decision_rules}
+    # 기본형건축비 기준선 편차 임계(15%/30%)
+    assert "15%" in rules["qs.baseline_deviation"].judgment and "30%" in rules["qs.baseline_deviation"].judgment
+    # 일반관리비율(6%)·이윤율(15%) 법정 상한
+    rate = rules["qs.indirect_rate_compliance"]
+    assert "6%" in rate.judgment and "15%" in rate.judgment and "BLOCK" in rate.judgment
+    # 단가 tier 신뢰도(T3 50%)
+    assert "50%" in rules["qs.unit_price_reliability"].judgment
+    # 예비비율(3%) — 몬테카를로 리스크모델 인용
+    contingency = rules["qs.contingency_reserve"]
+    assert "3%" in contingency.judgment and "몬테카를로" in contingency.basis
+    # 공종구성비 이상(60%)
+    assert "60%" in rules["qs.category_composition"].judgment
+    assert "적산" in spec.license_gate or "원가계산사" in spec.license_gate
+    assert "최종" in spec.license_gate and "책임" in spec.license_gate
+
+
 # ── SeniorOrchestrator(자문 라우팅·게이팅 코어) ──
 
 def _orch():
@@ -262,6 +282,9 @@ def test_orchestrator_route_domain_and_key():
     assert o.route("금융") == "senior_financial_advisor"
     assert o.route("urban") == "senior_urban_planner"
     assert o.route("BIM") == "senior_bim_specialist"
+    assert o.route("적산") == "senior_quantity_surveyor"
+    assert o.route("cost") == "senior_quantity_surveyor"
+    assert o.route("시공") == "senior_quantity_surveyor"
     # 이미 키면 그대로 통과
     assert o.route("senior_tax_advisor") == "senior_tax_advisor"
     # 미해당
@@ -439,6 +462,23 @@ def test_orchestrator_urban_evaluation():
     assert ev["urban.redevelopment_proportion"]["verdict"] == "WARN"  # 비례율 95%
     assert ev["urban.redevelopment_proportion"]["value"] == 95.0
     assert "분담금" in ev["urban.redevelopment_proportion"]["detail"]
+
+
+def test_orchestrator_qs_evaluation():
+    o = _orch()
+    # 일반관리비율 7%(>6% 상한) → BLOCK, 예비비율 1%(<3%) → WARN
+    c = o.consult("적산", context={"inputs": {
+        "general_mgmt_rate": 0.07, "profit_rate": 0.15,
+        "contingency_reserve_won": 1_000_000, "total_project_cost_won": 100_000_000,
+    }})
+    ev = {e["rule_id"]: e for e in c.evaluations}
+    assert ev["qs.general_mgmt_cap"]["verdict"] == "BLOCK"
+    assert ev["qs.profit_cap"]["verdict"] == "PASS"  # 15% == 상한 → 초과 아님
+    assert ev["qs.contingency_reserve"]["verdict"] == "WARN"
+    assert c.overall_verdict == "BLOCK"
+    # 골든사례 0 → junior_assist(정직 콜드스타트)
+    assert c.agent_key == "senior_quantity_surveyor"
+    assert "보조" in c.maturity
 
 
 def test_orchestrator_architect_evaluation_reuses_setback_helper():

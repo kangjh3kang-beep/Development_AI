@@ -32,6 +32,15 @@ const FIELD_LABELS: Array<[keyof EngineFields, string]> = [
   ["embedder_semantic", "의미 임베더"],
 ];
 
+// ★정직 3상 표기 — true=live(연결), false=mock(폴백), null/부재=미확인(구버전 엔진이 필드 미보고).
+//   과거 `value ? "live" : "mock"`는 null(미보고)까지 "mock"으로 오표기해 실 PostGIS 가동을 mock으로 왜곡했다.
+//   null과 false는 의미가 다르므로(미확인 ≠ 폴백) 라벨·색을 분리한다.
+function fieldState(value: boolean | null | undefined): { text: string; cls: string } {
+  if (value === true) return { text: "live", cls: "text-emerald-500" };
+  if (value === false) return { text: "mock", cls: "text-amber-500" };
+  return { text: "미확인", cls: "text-[var(--text-tertiary)]" }; // null/undefined = 엔진 미보고(구버전)
+}
+
 export function EngineHealthCard() {
   const [view, setView] = useState<View>({ phase: "loading" });
 
@@ -64,14 +73,17 @@ export function EngineHealthCard() {
       </div>
       {view.phase === "ok" && view.engine && (
         <ul className="relative z-10 mt-3 flex flex-wrap gap-2">
-          {FIELD_LABELS.map(([key, label]) => (
-            <li
-              key={key}
-              className="rounded-full border border-[var(--line)] bg-[var(--surface-muted)] px-2.5 py-0.5 text-[11px] text-[var(--text-secondary)]"
-            >
-              {label}: {view.engine?.[key] ? "live" : "mock"}
-            </li>
-          ))}
+          {FIELD_LABELS.map(([key, label]) => {
+            const st = fieldState(view.engine?.[key]);
+            return (
+              <li
+                key={key}
+                className="rounded-full border border-[var(--line)] bg-[var(--surface-muted)] px-2.5 py-0.5 text-[11px] text-[var(--text-secondary)]"
+              >
+                {label}: <span className={`font-semibold ${st.cls}`}>{st.text}</span>
+              </li>
+            );
+          })}
         </ul>
       )}
       {view.phase === "degraded" && (

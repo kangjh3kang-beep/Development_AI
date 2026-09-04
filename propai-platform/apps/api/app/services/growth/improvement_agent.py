@@ -136,7 +136,12 @@ def _rule_diagnosis(insight: dict[str, Any]) -> str:
     if itype == "heal_escalation":
         return (f"자동치유 무효 에스컬레이션({m.get('action_type')}/{m.get('trigger_key')}) — "
                 f"근본원인 수동 점검 필요(반복 조치로 해소 안 됨).")
-    return f"critical 인사이트({itype}) — 사람 진단 필요."
+    # ★표시명을 쓴다 — 종전엔 `{itype}` 를 그대로 끼워 사용자 화면에 영문 enum 이
+    #   나갔다(라이브 실측: *"critical 인사이트(recurring_verify_error) — 사람 진단 필요."*).
+    #   명시 분기는 2종뿐인데 카탈로그는 11종이라 **9종이 이 폴백으로 샜다.**
+    from app.services.growth.insight_types import insight_label
+
+    return f"critical 인사이트({insight_label(itype)}) — 사람 진단 필요."
 
 
 async def _llm_proposal(insight: dict[str, Any], source_path: str | None,
@@ -145,7 +150,7 @@ async def _llm_proposal(insight: dict[str, Any], source_path: str | None,
     try:
         from app.services.ai.llm_provider import get_llm
 
-        llm = get_llm(timeout=40, max_tokens=1500)
+        llm = get_llm(service="growth_improve", timeout=40, max_tokens=1500)
         ctx = {
             "insight_type": insight.get("insight_type"),
             "severity": insight.get("severity"),
@@ -347,7 +352,7 @@ async def _llm_prompt_candidate(service: str, samples: dict[str, Any]) -> dict[s
     try:
         from app.services.ai.llm_provider import get_llm
 
-        llm = get_llm(timeout=40, max_tokens=1200)
+        llm = get_llm(service="growth_improve", timeout=40, max_tokens=1200)
         prompt = (
             "너는 LLM 프롬프트 엔지니어다. 아래 service 의 분석 출력이 사용자 교정·검증 "
             "실패로 품질이 낮다. 실패 표본을 근거로 **프롬프트 개선안 후보**를 작성하라. "

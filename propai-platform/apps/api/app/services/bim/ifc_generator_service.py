@@ -22,9 +22,12 @@ IfcExtrudedAreaSolid로 압출해 표현한다.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
+
+if TYPE_CHECKING:  # 타입 힌트 전용 — 런타임 import 회피
+    from app.services.bim.bimir_schema import BimModel
 
 logger = structlog.get_logger()
 
@@ -482,6 +485,12 @@ def build_ifc_from_mass(mass: dict[str, Any], project_name: str = "PropAI Projec
     """AutoDesignEngine 매스(+선택 core_layout) dict로 IFC를 생성하는 편의 함수.
 
     mass에 core_positions·corridor_width_m·windows_per_side가 있으면 실내 요소도 압출.
+
+    ★PR#315 M3(전역 전파방지): wall_thickness_m·slab_thickness_m 는 generate()가 이미
+    지원하는 파라미터인데도 이 편의 함수가 forwarding 하지 않아 mass dict에 값을 넣어도
+    조용히 무시되던 결함을 봉합한다(additive — 기본값은 generate()의 기존 기본값 0.2와
+    동일해 무회귀). 예: 벽두께가 구조형식(RC/비RC)에 따라 달라지는 호출부는 이제
+    mass["wall_thickness_m"]로 실제 압출·BaseQuantities에 반영된다.
     """
     return IfcGeneratorService().generate(
         building_width_m=float(mass.get("building_width_m", 10.0)),
@@ -489,6 +498,8 @@ def build_ifc_from_mass(mass: dict[str, Any], project_name: str = "PropAI Projec
         num_floors=int(mass.get("num_floors", 5)),
         floor_height_m=float(mass.get("floor_height_m", 3.0)),
         project_name=project_name,
+        wall_thickness_m=float(mass.get("wall_thickness_m", 0.2)),
+        slab_thickness_m=float(mass.get("slab_thickness_m", 0.2)),
         cores=mass.get("core_positions"),
         core_size_m=float(mass.get("core_size_m", 5.0)),
         corridor_width_m=float(mass.get("corridor_width_m", 0.0)),
@@ -498,3 +509,27 @@ def build_ifc_from_mass(mass: dict[str, Any], project_name: str = "PropAI Projec
         balconies=bool(mass.get("balconies", False)),
         unit_doors=bool(mass.get("unit_doors", False)),
     )
+
+
+def build_ifc_from_bimir(model: BimModel, project_name: str = "PropAI Project") -> bytes:
+    """BimIR(propai.bimir/1.0) → IFC (WP-D 소비처 전환·대표 1곳).
+
+    ★무회귀: 기존 build_ifc_from_mass(매스 dict 직접 경로)는 그대로 둔다. 이 함수는 '추가' 경로로,
+      BimIR에서 매스를 복원(mass_from_bimir)해 동일한 build_ifc_from_mass로 넘긴다.
+    ★구조 동등성: mass_from_bimir(bimir_from_mass(mass)) == mass (왕복 무손실)이므로, 이 BimIR 경로는
+      기존 매스 경로와 '동일 파라미터'로 generate()를 호출한다 → 동일 IFC(요소·기하 동일).
+      (IFC의 GlobalId는 ifcopenshell.guid.new()로 매 호출 랜덤이라 바이트 동일은 불가 — 구조 동등이 정답.)
+
+    glb/QTO의 BimIR 소비 전환은 다음 세션 범위다(이 세션은 IFC 대표 1곳만).
+    """
+    # ★선행조건: 이 경로는 매스 기원 IR 전용 — cad/ingest 기원 IR을 넣으면 매스 키가 없어
+    #   10×10 기본값으로 무음 퇴화 산출되므로 명시적으로 거부한다(정직 실패).
+    if model.source_kind != "mass_geometry":
+        raise ValueError(
+            f"build_ifc_from_bimir는 mass_geometry 기원 IR 전용입니다(입력={model.source_kind!r}) — "
+            "cad/ingest 기원 IR의 IFC 산출 전환은 WP-D 후속 세션 범위"
+        )
+    from app.services.bim.bimir_adapters import mass_from_bimir
+
+    mass = mass_from_bimir(model)
+    return build_ifc_from_mass(mass, project_name=project_name)

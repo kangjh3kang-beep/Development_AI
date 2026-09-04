@@ -63,7 +63,7 @@ export function AgentTimeline({
       </CardHeader>
       <CardContent className="grid gap-5 pt-0 xl:grid-cols-[0.95fr_1.05fr]">
         <div className="rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--surface-soft)] px-5 py-5">
-          <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+          <p className="label-caps text-[var(--text-tertiary)]">
             {labels.connectionTitle}
           </p>
           <p className="mt-3 text-lg font-semibold text-[var(--text-primary)]">
@@ -77,15 +77,15 @@ export function AgentTimeline({
           {(snapshot.stages ?? []).map((stage, index) => (
             <li
               key={stage.id}
-              className="grid gap-3 rounded-[1.35rem] border border-[var(--line)] bg-[var(--surface-soft)] px-5 py-4 md:grid-cols-[auto_1fr]"
+              className="grid gap-3 rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface-soft)] px-5 py-4 md:grid-cols-[auto_1fr]"
             >
               <div className="flex items-start gap-3">
                 <span
                   className={`mt-1 flex h-8 w-8 items-center justify-center rounded-full text-sm font-semibold ${
                     stage.status === "completed"
-                      ? "bg-[var(--accent)] text-[#ffffff]"
+                      ? "bg-[var(--accent-strong)] text-[#ffffff]"
                       : stage.status === "active"
-                        ? "bg-[var(--spot)] text-[#ffffff]"
+                        ? "bg-[var(--accent-strong)] text-[#ffffff]"
                         : "bg-[var(--surface-muted)] text-[var(--text-primary)]"
                   }`}
                 >

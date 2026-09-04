@@ -21,6 +21,8 @@ import { useState } from "react";
 import { apiV1BaseUrl } from "@/lib/api-client";
 import { LegalRefChip } from "@/components/common/LegalRefChip";
 import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
+import { UpzoningScenarioList, type UpzoningScenarioView } from "@/components/projects/UpzoningScenarioList";
+import { SeniorVerdictCard, type SeniorConsultation } from "@/components/analysis/SeniorVerdictCard";
 
 /* ── 보고서 타입(방어적 — 백엔드 결손 필드 graceful 수용) ── */
 
@@ -36,15 +38,22 @@ export interface AuditLegalRef {
 export interface AuditFinding {
   item?: string | null;
   label?: string | null;
-  status?: string | null; // pass|warn|fail|적합|조건부|부적합 등
+  // ★실 U5 오케스트레이터 정본 키(과거 프론트가 item/label·legal_ref·recommendation만 읽어
+  //   3열 전부 "—"였다) — check_id·engine·legal_refs[]·improvement·note를 함께 수용.
+  check_id?: string | null;
+  engine?: string | null;
+  status?: string | null; // pass|warning|fail|skipped|info|적합|조건부|부적합 등
   severity?: string | null;
   current?: string | number | null;
   limit?: string | number | null;
   unit?: string | null;
   recommendation?: string | null;
   correction?: string | null;
+  improvement?: string | null;
+  note?: string | null;
   legal_ref?: AuditLegalRef | null;
   legal_ref_key?: string | null;
+  legal_refs?: AuditLegalRef[] | null;
 }
 
 export interface AuditCasePosition {
@@ -80,9 +89,15 @@ export interface AuditIncentive {
 export interface AuditBlindSpot {
   topic?: string | null;
   note?: string | null;
-  /** 0~1 또는 0~100 — 표기 시 정규화. 없으면 수치 미표기(가짜값 금지). */
-  confidence?: number | null;
+  // ★blindspot 정본 항목(generate_blindspot.items)은 {claim, basis, confidence, citation_gate}.
+  //   과거 프론트는 topic/note만 읽어 항목이 "—"로 비었다 — claim/basis도 수용.
+  claim?: string | null;
+  basis?: string | null;
+  /** 0~1·0~100 수치 또는 high|medium|low 문자열 — 표기 시 정규화. 없으면 미표기(가짜값 금지). */
+  confidence?: number | string | null;
   needs_expert?: boolean | null;
+  /** 결정론 인용검문 결과 — gated=true면 미근거 인용 치환됨(전문가 확인 필요 신호). */
+  citation_gate?: { gated?: boolean | null; reasons?: string[] | null } | null;
 }
 
 export interface AuditEvidence {
@@ -93,6 +108,16 @@ export interface AuditEvidence {
   legal_ref_key?: string | null;
 }
 
+/** 로드맵③ — 중심엔진 shadow 판정(설정 게이트가 켜졌을 때만 백엔드가 동봉·기본 미존재).
+ * shadow_integration.shadow_compare 반환 계약과 1:1(engine_verdict: compliant|needs_review|
+ * non_compliant|null — 3값). matched=false면 플랫폼 자체 판정과 엔진 판정이 갈렸다는 뜻(참고 신호). */
+export interface AuditDeliberationResult {
+  engine_verdict?: string | null;
+  platform_verdict?: string | null;
+  matched?: boolean | null;
+  divergence_score?: number | null;
+}
+
 export interface AuditSection {
   id?: string | null; // "S1"~"S7"
   title?: string | null;
@@ -101,9 +126,26 @@ export interface AuditSection {
   findings?: AuditFinding[] | null;
   case_comparison?: AuditCaseComparison | null;
   incentives?: AuditIncentive[] | null;
+  // ★S4 종상향/종변경 잠재 시나리오 — far_tier_service.calc_upzoning().scenarios[]를
+  //   report_sections.s4_incentives_to_web()가 그대로 통과시킨다(기존 완성 컴포넌트
+  //   UpzoningScenarioList가 소비하는 snake_case 계약과 동일).
+  upzoning_scenarios?: UpzoningScenarioView[] | null;
+  upzoning_summary?: string | null;
   blind_spots?: AuditBlindSpot[] | null;
   evidence?: AuditEvidence[] | null;
   legal_refs?: AuditLegalRef[] | null;
+  // ★permit 섹션(인허가 가능성·환경분석) — PermitAnalysisService.analyze()가 첨부하는
+  //   시니어 자문(도시계획·심의·법무 3도메인) 표준계약. SeniorVerdictCard(공용 카드) 재사용.
+  senior_consultation?: SeniorConsultation | null;
+  // ★pass_rate 정직화(design_review_service) — 이 파라미터 검토가 실제 검사하지 않은
+  //   항목(일조·주차·피난 등)의 한글 라벨 목록. 있을 때만 "미검사 N항목"으로 표시(정직).
+  not_checked_items?: string[] | null;
+  // ★레인C(R2) — S4(인센티브) upzoning.data_gaps 표면화. 규제구역 등 데이터 미수집으로
+  //   종상향 차단사유가 반영되지 않았을 수 있다는 정직 고지(있을 때만·not_checked_items와
+  //   동형 계약 — 신규 UI 패턴 아님).
+  data_gaps?: string[] | null;
+  // 로드맵③ additive — 게이트 off·구서버는 항상 undefined(기존 렌더 그대로).
+  deliberation_result?: AuditDeliberationResult | null;
 }
 
 export interface DesignAuditReport {
@@ -153,7 +195,8 @@ function verdictTone(v?: string | null): VerdictTone {
   if (!s) return "unknown";
   if (["적합", "compliant", "pass", "ok", "통과"].includes(s)) return "pass";
   if (
-    ["조건부", "조건부 적합", "조건부적합", "conditional", "warn", "주의", "correction_required"].includes(s)
+    // ★실 U5 status 어휘 "warning" 포함(과거 "warn"만 있어 실엔진 warning이 unknown으로 샜다).
+    ["조건부", "조건부 적합", "조건부적합", "conditional", "warn", "warning", "주의", "correction_required"].includes(s)
   )
     return "conditional";
   if (["부적합", "non_compliant", "noncompliant", "fail", "불가", "critical"].includes(s))
@@ -163,6 +206,15 @@ function verdictTone(v?: string | null): VerdictTone {
 
 /** finding.status → 칩 스타일/라벨 — 미지의 값은 원문 그대로(정직). */
 function findingChip(status?: string | null): { label: string; cls: string } {
+  const s = (status ?? "").trim().toLowerCase();
+  // 실 U5 비판정 status — 검사 못 함/정보성은 판정 색이 아닌 중립 표기(정직).
+  if (s === "skipped") return { label: "생략", cls: VERDICT_META.unknown.chip };
+  if (s === "not_checked") return { label: "미검사", cls: VERDICT_META.unknown.chip };
+  if (s === "info")
+    return {
+      label: "정보",
+      cls: "border-[var(--status-info)]/40 bg-[var(--status-info)]/10 text-[var(--status-info)]",
+    };
   const tone = verdictTone(status);
   if (tone === "unknown") {
     return {
@@ -173,6 +225,29 @@ function findingChip(status?: string | null): { label: string; cls: string } {
   // findings 표는 간결 라벨(적합/조건부/부적합)을 쓴다.
   const label = tone === "pass" ? "적합" : tone === "conditional" ? "조건부" : "부적합";
   return { label, cls: VERDICT_META[tone].chip };
+}
+
+/** 엔진 코드 → 사람이 읽는 검사 항목 라벨(실 U5 finding.engine 기준 — 비전문가 대행 표기). */
+const ENGINE_LABEL: Record<string, string> = {
+  rules8: "법규 8룰(건폐·용적·높이·이격)",
+  design_review: "설계 파라미터 법규검토",
+  solar_envelope: "정북일조 인벨로프",
+  parking: "법정 주차",
+  permit: "인허가 가능성",
+  change_risk: "설계변경 리스크",
+  incentives: "인센티브·종상향",
+  case_compare: "인근 인허가 사례",
+  grammar: "평면 문법(LDK·연결성·채광)",
+  bl_rules: "피난·방화(건축법 §34/§46/§35)",
+};
+
+/** finding의 '검사 항목' 라벨 — item/label 우선, 없으면 engine 라벨, 최후 check_id(정직). */
+function findingItemLabel(f: AuditFinding): string {
+  if (f.item?.trim()) return f.item.trim();
+  if (f.label?.trim()) return f.label.trim();
+  const eng = (f.engine ?? "").toString();
+  if (ENGINE_LABEL[eng]) return ENGINE_LABEL[eng];
+  return (f.check_id ?? "—").toString();
 }
 
 /* ── 값/근거 헬퍼 ── */
@@ -339,6 +414,127 @@ function AuditPdfDownload({ auditId }: { auditId: string }) {
   );
 }
 
+/** 로드맵⑤ — 제출번들(zip) 다운로드용 실 기하값. 미보유 항목은 백엔드 SubmissionBundleRequest
+ * 기본값(대지폭·깊이 등)에 위임한다(프론트가 값을 지어내지 않음 — 무날조). */
+export interface AuditBundleContext {
+  buildingWidthM?: number | null;
+  buildingDepthM?: number | null;
+  floorCount?: number | null;
+  buildingUse?: string | null;
+  zoneCode?: string | null;
+  projectName?: string | null;
+  unitTypes?: string[] | null;
+  households?: number | null;
+}
+
+/** 제출번들(zip) 다운로드 — design_v61.py POST /{project_id}/submission-bundle 소비.
+ *
+ * CadBimIntegrationPanel.exportSubmissionBundle(직전 캠페인 구현) 패턴을 미러: 인증 Bearer
+ * 토큰 동봉 raw fetch(blob) + 422(필수시트 미충족) 등 실패 사유를 그대로 노출(무음 실패 금지).
+ * bundleContext가 없으면(설계 스튜디오 매스 미보유 — 도면세트 없음) 버튼을 비활성화한다.
+ */
+function AuditSubmissionBundleDownload({
+  projectId,
+  bundleContext,
+}: {
+  projectId: string;
+  bundleContext: AuditBundleContext;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function download() {
+    setBusy(true);
+    setError("");
+    try {
+      const token =
+        typeof window !== "undefined"
+          ? window.localStorage.getItem("propai_access_token") ?? ""
+          : "";
+      const res = await fetch(
+        `${apiV1BaseUrl()}/design/${encodeURIComponent(projectId)}/submission-bundle`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({
+            // 실보유 기하값만 전송 — 미보유(대지폭·깊이 등)는 생략해 백엔드 선언 기본값에 위임.
+            building_width_m: bundleContext.buildingWidthM ?? undefined,
+            building_depth_m: bundleContext.buildingDepthM ?? undefined,
+            floor_count: bundleContext.floorCount ?? undefined,
+            building_use: bundleContext.buildingUse ?? undefined,
+            zone_code: bundleContext.zoneCode ?? undefined,
+            project_name: bundleContext.projectName ?? undefined,
+            unit_types:
+              bundleContext.unitTypes && bundleContext.unitTypes.length > 0
+                ? bundleContext.unitTypes
+                : undefined,
+            households: bundleContext.households ?? undefined,
+            // 제출번들 전용(SubmissionBundleRequest) — 발행일은 클라이언트 명시 인자(서버 now() 금지 계약).
+            issue_date: new Date().toISOString().slice(0, 10),
+            include_dxf: true,
+            include_report: true,
+            include_boq: true,
+          }),
+          signal: AbortSignal.timeout(120000),
+        },
+      );
+      if (!res.ok) {
+        // 백엔드 거부(4xx)는 사유를 그대로 노출(무날조). 필수시트 미충족(422)은 detail.missing[] 동봉.
+        let msg = `제출번들 생성 실패 (HTTP ${res.status})`;
+        try {
+          const j = await res.json();
+          const detail = (j as { detail?: unknown })?.detail;
+          if (typeof detail === "string" && detail.trim()) {
+            msg = detail.trim();
+          } else if (detail && typeof detail === "object") {
+            const d = detail as { message?: unknown; missing?: unknown };
+            const head =
+              typeof d.message === "string" && d.message.trim() ? d.message.trim() : msg;
+            const missing = Array.isArray(d.missing)
+              ? d.missing.filter((x): x is string => typeof x === "string")
+              : [];
+            msg = missing.length > 0 ? `${head} — 누락 시트: ${missing.join(", ")}` : head;
+          }
+        } catch {
+          /* JSON 아님 — 기본 메시지 유지 */
+        }
+        if (res.status === 401) msg = `로그인이 필요합니다 — ${msg}`;
+        throw new Error(msg);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `${bundleContext.projectName || "PropAI"}_제출번들.zip`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "제출번들 생성에 실패했습니다. 잠시 후 다시 시도하세요.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <button
+        type="button"
+        onClick={() => void download()}
+        disabled={busy}
+        className="rounded-xl border border-[var(--accent-strong)]/50 bg-transparent px-4 py-2 text-xs font-black text-[var(--accent-strong)] hover:bg-[var(--accent-soft)] disabled:opacity-50"
+      >
+        {busy ? "준비 중…" : "제출번들(zip) ↓"}
+      </button>
+      {error && <span className="text-[11px] font-semibold text-[var(--status-error)]">{error}</span>}
+    </div>
+  );
+}
+
 /* ── 섹션 본문 블록 ── */
 
 function FindingsTable({
@@ -364,12 +560,21 @@ function FindingsTable({
         <tbody>
           {findings.map((f, i) => {
             const chip = findingChip(f.status);
+            // 법령 근거: 실 U5는 legal_refs[](레지스트리 레코드 배열) — 있으면 다중 칩, 없으면
+            // 단일 legal_ref/legal_ref_key 폴백(과거 계약 하위호환). 백엔드 legal_refs 증발 봉합.
+            const directRefs = Array.isArray(f.legal_refs)
+              ? f.legal_refs.filter((r) => r?.law_name?.trim())
+              : [];
             const ref = resolveLegalRef(f.legal_ref, f.legal_ref_key, pools);
-            const recommendation = f.recommendation ?? f.correction;
+            // 개선안: recommendation/correction(구계약) → improvement(실 U5) → note 순.
+            // ★note 가산 — 예: permit_feasibility는 허가 가능(improvement 없음)이어도
+            //   note에 "주용도 미입력 — 공동주택 일반분양(M06) 가정" 같은 판정 전제가 담긴다.
+            //   그 사유가 폴백 체인에 없어 화면에서 '왜 M06인지' 전혀 보이지 않던 결함 수정.
+            const recommendation = f.recommendation ?? f.correction ?? f.improvement ?? f.note;
             return (
               <tr key={i} className="border-b border-[var(--line)] last:border-b-0 align-top">
                 <td className="py-2 pr-3 font-semibold text-[var(--text-primary)]">
-                  {f.item || f.label || "—"}
+                  {findingItemLabel(f)}
                 </td>
                 <td className="py-2 pr-3">
                   <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-bold ${chip.cls}`}>
@@ -382,7 +587,15 @@ function FindingsTable({
                 <td className="cc-num py-2 pr-3 text-[var(--text-secondary)]">
                   {fmtVal(f.limit, f.unit)}
                 </td>
-                <td className="py-2 pr-3">{legalRefChip(ref, `ref-${i}`) ?? <span className="text-[var(--text-hint)]">—</span>}</td>
+                <td className="py-2 pr-3">
+                  {directRefs.length > 0 ? (
+                    <div className="flex flex-wrap gap-1">
+                      {directRefs.map((r, j) => legalRefChip(r, `ref-${i}-${j}`))}
+                    </div>
+                  ) : (
+                    legalRefChip(ref, `ref-${i}`) ?? <span className="text-[var(--text-hint)]">—</span>
+                  )}
+                </td>
                 <td className="py-2 text-[var(--text-secondary)]">
                   {recommendation?.trim() || "—"}
                 </td>
@@ -481,16 +694,27 @@ function IncentiveCards({
   );
 }
 
+/** confidence: high|medium|low 문자열 라벨(실 U5 blindspot 항목). */
+const CONF_LABEL: Record<string, string> = { high: "높음", medium: "보통", low: "낮음" };
+
 function BlindSpotList({ spots }: { spots: AuditBlindSpot[] }) {
   return (
     <div className="grid gap-2">
       {spots.map((b, i) => {
-        // confidence 0~1/0~100 표기 변형 정규화 — 수치 없으면 미표기(가짜값 금지).
+        // confidence 정규화 — high|medium|low 문자열 또는 0~1/0~100 수치. 없으면 미표기(가짜값 금지).
         const raw = b.confidence;
-        const pct =
-          raw != null && Number.isFinite(raw)
-            ? Math.round(raw <= 1 ? raw * 100 : raw)
-            : null;
+        let confDisplay: string | null = null;
+        if (typeof raw === "string" && CONF_LABEL[raw.trim().toLowerCase()]) {
+          confDisplay = `확신도 ${CONF_LABEL[raw.trim().toLowerCase()]}`;
+        } else if (typeof raw === "number" && Number.isFinite(raw)) {
+          confDisplay = `확신도 ${Math.round(raw <= 1 ? raw * 100 : raw)}%`;
+        }
+        // 실 U5 항목은 claim/basis — topic/note(구계약) 우선, 없으면 claim/basis로 폴백.
+        const mainText = b.topic?.trim() || b.claim?.trim() || "—";
+        const detail =
+          b.note?.trim() || (b.basis?.trim() ? `근거: ${b.basis.trim()}` : null);
+        // 인용검문 치환(citation_gate.gated) 또는 명시적 needs_expert면 '전문가 확인 필요'.
+        const needsExpert = b.needs_expert ?? b.citation_gate?.gated ?? false;
         return (
           <div
             key={i}
@@ -503,21 +727,21 @@ function BlindSpotList({ spots }: { spots: AuditBlindSpot[] }) {
               >
                 AI 추정
               </span>
-              {pct != null && (
+              {confDisplay != null && (
                 <span className="text-[10px] font-bold text-[var(--text-tertiary)]">
-                  확신도 {pct}%
+                  {confDisplay}
                 </span>
               )}
-              {b.needs_expert && (
+              {needsExpert && (
                 <span className="inline-flex items-center rounded-full border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/15 px-1.5 py-0.5 text-[9px] font-bold leading-none text-[var(--status-warning)]">
                   전문가 확인 필요
                 </span>
               )}
-              <p className="text-[12px] font-bold text-[var(--text-primary)]">{b.topic || "—"}</p>
+              <p className="text-[12px] font-bold text-[var(--text-primary)]">{mainText}</p>
             </div>
-            {b.note?.trim() && (
+            {detail && (
               <p className="mt-1 text-[11px] leading-relaxed text-[var(--text-secondary)]">
-                {b.note.trim()}
+                {detail}
               </p>
             )}
           </div>
@@ -527,15 +751,68 @@ function BlindSpotList({ spots }: { spots: AuditBlindSpot[] }) {
   );
 }
 
+/* ── 로드맵③ — 심의엔진(shadow) 판정 블록 ──
+ * SeniorVerdictCard(components/analysis)는 senior_consultation 계약(evaluations[]·citations[]
+ * 다중 도메인 자문)전용이라 이 shadow 비교 결과(엔진 3값 verdict + divergence, 세부 근거·인용
+ * 없음)와 데이터 모양이 다르다 — 억지로 끼워 맞추면 evaluations/citations를 날조해야 해서
+ * 재사용하지 않고, 이 파일에 이미 있는 판정 배지 언어(VERDICT_META)를 그대로 재사용한다(보고서
+ * 전체와 시각적으로 일관). */
+
+const DELIB_VERDICT_LABEL: Record<string, string> = {
+  compliant: "통과", needs_review: "조건부", non_compliant: "보류",
+};
+
+function deliberationTone(v?: string | null): VerdictTone {
+  const s = (v ?? "").trim().toLowerCase();
+  if (s === "compliant") return "pass";
+  if (s === "needs_review") return "conditional";
+  if (s === "non_compliant") return "fail";
+  return "unknown";
+}
+
+function DeliberationVerdictBlock({ result }: { result: AuditDeliberationResult }) {
+  const ev = (result.engine_verdict ?? "").trim().toLowerCase();
+  const tone = deliberationTone(ev);
+  const meta = VERDICT_META[tone];
+  const label = DELIB_VERDICT_LABEL[ev] ?? (result.engine_verdict?.trim() || "판정 불가");
+  return (
+    <div className={`rounded-xl border p-3 ${meta.hero}`}>
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="text-[11px] font-bold text-[var(--text-secondary)]">
+          심의엔진 판정(중심엔진 shadow 관측)
+        </p>
+        <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${meta.chip}`}>
+          {label}
+        </span>
+        {result.matched === false && (
+          <span className="rounded-full border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/15 px-1.5 py-0.5 text-[9px] font-bold text-[var(--status-warning)]">
+            플랫폼 판정과 상이
+          </span>
+        )}
+      </div>
+      <p className="mt-1 text-[11px] text-[var(--text-hint)]">
+        참고용 관측치입니다 — 운영이 표면화 설정을 켰을 때만 표시되며, 플랫폼 자체 판정을
+        대체하지 않습니다.
+      </p>
+    </div>
+  );
+}
+
 /* ── 메인 뷰 ── */
 
 export function AuditReportView({
   report,
   onReset,
+  projectId,
+  bundleContext,
 }: {
   report: DesignAuditReport;
   /** "다시 심사" — 부모가 보고서를 닫고 스테퍼로 복귀. */
   onReset?: () => void;
+  /** 로드맵⑤ — 제출번들(zip) 대상 프로젝트 ID. 실 프로젝트(수동주소 심사가 아님)일 때만 전달. */
+  projectId?: string | null;
+  /** 실 도면세트(설계 스튜디오 매스) 보유 시에만 전달 — 없으면 버튼 자체를 표시하지 않는다(정직). */
+  bundleContext?: AuditBundleContext | null;
 }) {
   const sections = Array.isArray(report.sections) ? report.sections : [];
   // 첫 섹션 기본 펼침 — 나머지는 아코디언 토글.
@@ -594,6 +871,11 @@ export function AuditReportView({
                 보고서 ID 없음 — PDF 다운로드 미제공
               </span>
             )}
+            {/* 로드맵⑤ — 제출번들(zip). 실 프로젝트+실 도면세트(설계 스튜디오 매스) 보유 시에만
+                버튼 자체를 노출한다(비활성 버튼 대신 정직 생략 — PDF 다운로드 관행과 동일). */}
+            {projectId && bundleContext && (
+              <AuditSubmissionBundleDownload projectId={projectId} bundleContext={bundleContext} />
+            )}
             {onReset && (
               <button
                 type="button"
@@ -628,15 +910,27 @@ export function AuditReportView({
           const pools = [sec.legal_refs, report.legal_refs];
           const findings = Array.isArray(sec.findings) ? sec.findings : [];
           const incentives = Array.isArray(sec.incentives) ? sec.incentives : [];
+          const upzoningScenarios = Array.isArray(sec.upzoning_scenarios) ? sec.upzoning_scenarios : [];
           const blindSpots = Array.isArray(sec.blind_spots) ? sec.blind_spots : [];
           const evidence = Array.isArray(sec.evidence) ? sec.evidence : [];
+          // ★R1 MEDIUM③ — verdict만으로는 부족(consultations가 빈 배열이면 SeniorVerdictCard가
+          //   null을 렌더해 헤더만 있고 본문 0픽셀이 된다) — 실 도메인 1건 이상 보유 여부까지 확인.
+          const hasSeniorConsultation =
+            !!sec.senior_consultation &&
+            sec.senior_consultation.verdict !== "unavailable" &&
+            (sec.senior_consultation.consultations?.length ?? 0) > 0;
+          const dataGaps = Array.isArray(sec.data_gaps) ? sec.data_gaps : [];
           const hasBody =
             !!sec.summary?.trim() ||
             findings.length > 0 ||
             !!sec.case_comparison ||
             incentives.length > 0 ||
+            upzoningScenarios.length > 0 ||
             blindSpots.length > 0 ||
-            evidence.length > 0;
+            evidence.length > 0 ||
+            hasSeniorConsultation ||
+            dataGaps.length > 0 ||
+            !!sec.deliberation_result; // 로드맵③ — 게이트 off·구서버는 항상 falsy(회귀 없음)
           return (
             <section
               key={i}
@@ -681,11 +975,54 @@ export function AuditReportView({
                     </p>
                   )}
                   {findings.length > 0 && <FindingsTable findings={findings} pools={pools} />}
+                  {Array.isArray(sec.not_checked_items) && sec.not_checked_items.length > 0 && (
+                    <p
+                      className="text-[11px] text-[var(--text-hint)]"
+                      title={sec.not_checked_items.join(", ")}
+                    >
+                      ※ 미검사 {sec.not_checked_items.length}항목(파라미터 검토 범위 밖 — 별도
+                      확인 필요): {sec.not_checked_items.join(", ")}
+                    </p>
+                  )}
+                  {/* ★레인C(R2) — upzoning.data_gaps 표면화(리뷰어 지적: JSON에만 존재하던 결함
+                      봉합). not_checked_items와 동일한 정직 고지 톤 유지. */}
+                  {dataGaps.length > 0 && (
+                    <div className="grid gap-1">
+                      {dataGaps.map((gap, gi) => (
+                        <p
+                          key={gi}
+                          className="rounded-lg border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/[0.06] px-3 py-2 text-[11px] leading-relaxed text-[var(--status-warning)]"
+                        >
+                          ※ {gap}
+                        </p>
+                      ))}
+                    </div>
+                  )}
                   {sec.case_comparison && <CaseComparisonBlock comparison={sec.case_comparison} />}
                   {incentives.length > 0 && (
                     <IncentiveCards incentives={incentives} pools={pools} />
                   )}
+                  {/* 종상향/종변경 잠재 시나리오 — 기존 완성 컴포넌트 재사용(저실현 강등·접기 내장) */}
+                  {upzoningScenarios.length > 0 && (
+                    <div className="grid gap-2">
+                      {sec.upzoning_summary?.trim() && (
+                        <p className="text-[11px] text-[var(--text-hint)]">{sec.upzoning_summary.trim()}</p>
+                      )}
+                      <UpzoningScenarioList scenarios={upzoningScenarios} />
+                    </div>
+                  )}
                   {blindSpots.length > 0 && <BlindSpotList spots={blindSpots} />}
+                  {/* 인허가 시니어 자문(도시계획·심의·법무) — 공용 카드 재사용(자문 미가용 시 카드 자체가 null).
+                      ★hasSeniorConsultation(verdict·consultations 길이 조건 포함)과 렌더 기준 통일. */}
+                  {hasSeniorConsultation && (
+                    <SeniorVerdictCard
+                      consultation={sec.senior_consultation}
+                      title="인허가 시니어 자문"
+                    />
+                  )}
+                  {sec.deliberation_result && (
+                    <DeliberationVerdictBlock result={sec.deliberation_result} />
+                  )}
                   {evidence.length > 0 && (
                     <EvidencePanel
                       title="산출 근거"

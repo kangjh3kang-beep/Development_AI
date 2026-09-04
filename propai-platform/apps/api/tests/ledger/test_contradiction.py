@@ -69,6 +69,57 @@ def test_detect_contradictions_empty_when_no_prior():
     assert C.detect_contradictions(None, {"payload": {"x": 1}})["has_contradiction"] is False
 
 
+def test_group_normalizes_array_index_to_star():
+    assert C._normalize_key("upzoning.scenarios[0].expected_far_pct_low") == \
+        "upzoning.scenarios[*].expected_far_pct_low"
+    assert C._normalize_key("upzoning.scenarios[12].far") == "upzoning.scenarios[*].far"
+    assert C._normalize_key("a.b.c") == "a.b.c"  # 인덱스 없는 키는 그대로
+
+
+def test_groups_collapse_scenario_array_leaves():
+    """★표시 폭발 해소: scenarios[0..9] 20개 leaf(각 필드 10개씩)가 그룹 2개로 압축된다."""
+    scenarios_prior = [
+        {"expected_far_pct_low": 100.0, "expected_far_pct_high": 150.0} for _ in range(10)
+    ]
+    scenarios_current = [
+        {"expected_far_pct_low": 200.0, "expected_far_pct_high": 300.0} for _ in range(10)
+    ]
+    prior = {"payload": {"upzoning": {"scenarios": scenarios_prior}}}
+    current = {"payload": {"upzoning": {"scenarios": scenarios_current}}}
+    res = C.detect_contradictions(prior, current, rel_threshold=0.10)
+
+    # 기존 leaf 단위 배열은 그대로 20건(하위호환 — 국소패치 없이 additive만 추가).
+    assert len(res["contradictions"]) == 20
+    # 그룹은 필드 패턴별 1~2개로 압축된다(같은 자리+같은 변화폭이므로 묶임).
+    assert 1 <= len(res["groups"]) <= 2
+    for g in res["groups"]:
+        assert g["leaf_count"] == 10
+        assert g["key_pattern"].endswith("expected_far_pct_low") or \
+            g["key_pattern"].endswith("expected_far_pct_high")
+        assert "[*]" in g["key_pattern"]
+        assert len(g["sample_keys"]) <= 3
+    assert res["group_counts"]["high"] + res["group_counts"]["medium"] + res["group_counts"]["low"] \
+        == len(res["groups"])
+    assert res["max_severity_by_group"] in ("high", "medium", "low")
+
+
+def test_groups_keep_distinct_values_separate():
+    """서로 다른 prev/now(진짜 다른 leaf)는 그룹이 합쳐지지 않는다(무손실 압축)."""
+    prior = {"payload": {"scenarios": [{"far": 100.0}, {"far": 120.0}]}}
+    current = {"payload": {"scenarios": [{"far": 200.0}, {"far": 260.0}]}}
+    res = C.detect_contradictions(prior, current, rel_threshold=0.10)
+    assert len(res["contradictions"]) == 2
+    assert len(res["groups"]) == 2  # 값이 다르므로 묶이지 않음
+    assert all(g["leaf_count"] == 1 for g in res["groups"])
+
+
+def test_groups_empty_when_no_contradictions():
+    res = C.detect_contradictions(None, {"payload": {"x": 1}})
+    assert res["groups"] == []
+    assert res["group_counts"] == {"low": 0, "medium": 0, "high": 0}
+    assert res["max_severity_by_group"] is None
+
+
 def test_compare_with_prior_adds_contradictions_keeping_status_changes():
     # T3: design_audit seed(_compare_with_prior)에 모순 플래그 additive 합류(기존 키 불변)
     from app.services.design_audit.design_audit_orchestrator import _compare_with_prior
@@ -80,3 +131,13 @@ def test_compare_with_prior_adds_contradictions_keeping_status_changes():
     assert out["contradictions"]["has_contradiction"] is True
     assert out["contradictions"]["max_severity"] == "high"
     assert out["prior_verdict"] == "적합"   # 기존 키 불변
+
+
+def test_groups_absorb_float_jitter():
+    """부동소수 지터(139.6 vs 139.60000000000002)가 같은 그룹으로 흡수된다(4자리 반올림 키)."""
+    prior = {"payload": {"scenarios": [{"far": 139.6}, {"far": 139.60000000000002}]}}
+    current = {"payload": {"scenarios": [{"far": 100.0}, {"far": 100.00000000000001}]}}
+    res = C.detect_contradictions(prior, current, rel_threshold=0.10)
+    assert len(res["contradictions"]) == 2      # leaf는 전량 보존(무손실)
+    assert len(res["groups"]) == 1              # 그룹은 지터 무시하고 1개로 압축
+    assert res["groups"][0]["leaf_count"] == 2

@@ -11,6 +11,7 @@ backlink(audit_id/task_id)로 역추적. analysis_type은 read 성장루프 키(
 """
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 from app.services.ledger import analysis_ledger_service as ledger
@@ -289,19 +290,94 @@ def user_analysis_to_ledger(kind: str, summary: dict[str, Any]) -> dict[str, Any
     return payload
 
 
+# ── 변동감지 계약: input_signature/signature_parts 단일 소유자 ────────────────
+#   프론트(apps/web/lib/use-analysis-cache.ts: analysisSignature)는 여러 입력 파트를 "|"로
+#   조인해 재분석 필요 여부(stale)를 판정한다. 과거엔 프론트가 이 파트를 자체 계산해 서버 산식과
+#   3중 불일치가 나던 문제(design_ingest 계열과 동일 계보) — 서버가 동일 순서의 파트 배열
+#   자체를 원장 summary에 실어(signature_parts) 프론트는 "|".join(parts)만 하면 되게 일원화한다.
+#   순서 고정: [address_norm, pnu, parcel_count, use_llm, options_summary].
+
+def _options_summary(options: dict[str, Any] | None) -> str:
+    """옵션 dict → 결정적 요약 문자열(키 정렬 — 삽입 순서 무관, 중첩 dict/list 안전).
+
+    비-dict·빈 dict는 빈 문자열(옵션 없음과 동일 취급 — 가짜 파트 금지).
+    """
+    if not isinstance(options, dict) or not options:
+        return ""
+
+    def _fmt(v: Any) -> str:
+        if isinstance(v, dict):
+            return "{" + ",".join(f"{k}:{_fmt(v2)}" for k, v2 in sorted(v.items())) + "}"
+        if isinstance(v, (list, tuple)):
+            return "[" + ",".join(_fmt(v2) for v2 in v) + "]"
+        return str(v)
+
+    return ",".join(f"{k}={_fmt(v)}" for k, v in sorted(options.items()))
+
+
+def build_signature_parts(
+    *, address: str | None, pnu: str | None = None,
+    parcel_count: int | None = None, use_llm: Any = None,
+    options: dict[str, Any] | None = None,
+    extra_parts: list[str] | None = None,
+) -> list[str]:
+    """변동감지 파츠(순서 고정) — 프론트 analysisSignature(...).join('|')와 1:1 대응.
+
+    호출부(market_report·regulation·permits 등)는 재료(address/pnu/parcel_count/use_llm/options)만
+    넘기면 되고, 조합 산식은 여기 한 곳에서만 정의한다(단일 소유자 — 산식 불일치 근절).
+    address 정규화는 analysis_ledger_service._norm_addr을 그대로 재사용(체인키 정규화와 동일 규칙).
+
+    extra_parts(옵션·additive): 기본 5파트 뒤에 그대로 이어붙이는 호출부 전용 추가 파트(예:
+    market_report의 필지세트 지문). 기본 계약 순서(0~4)는 불변 — 프론트 변동감지 비교는 이
+    파트를 재계산할 수 없으므로 idx5+는 비교에서 제외한다(use-analysis-history.ts 계약 참고).
+    """
+    parts = [
+        ledger._norm_addr(address),
+        pnu or "",
+        str(parcel_count or 0),
+        str(bool(use_llm)),
+        _options_summary(options),
+    ]
+    if extra_parts:
+        parts.extend(extra_parts)
+    return parts
+
+
+def build_input_signature(parts: list[str]) -> str:
+    """signature_parts → 짧은 결정적 해시(sha256 앞 16자, analysis_cache._key 관행과 동형)."""
+    raw = "|".join(parts)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
 async def record_user_analysis(
     *, analysis_type: str, summary: dict[str, Any], kind: str | None = None,
     tenant_id: str | None = None, project_id: str | None = None,
     pnu: str | None = None, address: str | None = None,
     source: str | None = None, created_by: str | None = None,
+    parcel_count: int | None = None, use_llm: Any = None,
+    options: dict[str, Any] | None = None,
+    extra_parts: list[str] | None = None,
 ) -> dict[str, Any]:
     """표시 엔드포인트 응답 요약을 원장에 best-effort 적재(append_analysis가 예외 흡수·멱등).
 
     반환값을 attach_ledger_hash(response, wb)에 넘기면 응답 최상위 `ledger_hash`가 노출된다.
+
+    parcel_count/use_llm/options 중 하나라도 전달되면(=호출부가 변동감지 재료를 넘기면) 표준키
+    `input_signature`/`signature_parts`를 summary에 부착한다(additive — 미전달 기존 호출부는
+    무회귀, 키 자체가 생기지 않는다). 이미 summary에 같은 키가 있으면 그대로 보존(setdefault).
+
+    extra_parts: build_signature_parts에 그대로 위임(예: market_report 필지세트 지문 6번째 파트).
     """
+    _summary = dict(summary)
+    if parcel_count is not None or use_llm is not None or options is not None or extra_parts:
+        parts = build_signature_parts(
+            address=address, pnu=pnu, parcel_count=parcel_count, use_llm=use_llm, options=options,
+            extra_parts=extra_parts)
+        _summary.setdefault("signature_parts", parts)
+        _summary.setdefault("input_signature", build_input_signature(parts))
     return await ledger.append_analysis(
         analysis_type=analysis_type,
-        payload=user_analysis_to_ledger(kind or analysis_type, summary),
+        payload=user_analysis_to_ledger(kind or analysis_type, _summary),
         tenant_id=tenant_id, project_id=project_id, pnu=pnu, address=address,
         source=source or analysis_type, created_by=created_by,
     )

@@ -64,15 +64,35 @@ jobs:
           pip install "gdal==$(gdal-config --version)"
           pip install -r apps/api/requirements.txt
 
-      - uses: pnpm/action-setup@v3
-        with:
-          version: 9
+      # ★pnpm 은 외부 액션이 아니라 **corepack** 으로 켠다(2026-08-18).
+      #   `pnpm/action-setup` 은 codeload 에서 tar 를 받는데 그 다운로드가 **429(Too Many
+      #   Requests)** 로 실패해 `Set up job` 단계에서 죽었다 — 같은 날 PR 3건(#684·#687·#688)이
+      #   **코드가 검사되지도 못한 채** 빨갰다(실측: 실패 job 로그 37줄 · 429 4건 ·
+      #   tsc/eslint/vitest 진입 흔적 **0**).
+      # ★형제 패턴: `propai-platform/Dockerfile.web:4` 가 이미 `corepack enable` 을 쓴다.
+      # ★★버전 고정에는 **한정이 붙는다** — corepack 은 **cwd 에서 위로 올라가며**
+      #   `package.json` 의 `packageManager` 를 찾는다. 이 레포는 **루트에 package.json 이 없고**
+      #   `propai-platform/package.json` 에만 `pnpm@9.0.0` 이 있다. 따라서
+      #   **`working-directory: propai-platform` 에서 pnpm 을 부를 때만** 9.0.0 이 보장된다.
+      #   레포 루트에서 pnpm 을 부르면 corepack 이 **latest 를 내려받는다**
+      #   (실측: `pnpm-11.22.0.tgz` — 루트에서 `pnpm config set` 을 돌렸다가 그렇게 됐다).
+      #   → 루트에서 pnpm 을 부르는 스텝을 추가하지 마라.
+      - name: Enable pnpm (corepack)
+        run: corepack enable
 
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: pnpm
-          cache-dependency-path: propai-platform/pnpm-lock.yaml
+          # ★`cache: pnpm` 은 **제거했다**(2026-08-18 · #689 2차 실패 교훈).
+          #   `actions/setup-node` 의 pnpm 캐시는 셋업 때 `pnpm store path` 로 경로를 잡고
+          #   **post 에서 그 경로의 존재를 검증**하는데, corepack 경로에서 실제 설치 위치와
+          #   갈려 post 가 죽었다(`Path Validation Error: … do(es) not exist`).
+          #   경로를 `pnpm config set store-dir` 로 고정해 보려다 **더 나빠졌다** —
+          #   그 명령이 레포 루트에서 돌아 corepack 이 latest(11.22.0)를 받고,
+          #   `--global` 이 PATH 검사로 exit 1 을 내 **본체까지 막혔다.**
+          #   → 이 PR 의 목적은 **429 의존 제거**이고 그건 달성됐다(1차 실행에서 본체 전부 success).
+          #     캐시는 별건에서 `actions/cache` 로 경로를 **명시**해 되살린다 —
+          #     그때 store 경로는 `propai-platform` 안에서 `pnpm store path` 로 얻어야 한다.
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -88,12 +108,22 @@ jobs:
           JWT_SECRET_KEY: e2e-test-secret-key-not-for-prod
           ENVIRONMENT: test
         run: |
-          PYTHONPATH=. python -m uvicorn main:app --host 0.0.0.0 --port 8000 &
+          # ★`PYTHONPATH=.` 만으로는 뜨지 않는다 — `apps/api/main.py:17` 이
+          #   `from packages.schemas.models import HealthResponse` 를 하는데 `packages/` 는
+          #   `propai-platform/` 아래(= 여기서 두 단계 위)에 있다. `.` 은 `apps/api` 뿐이라
+          #   `ModuleNotFoundError: No module named 'packages'` 로 죽었다.
+          #   (재현: `cd apps/api && PYTHONPATH=. python -c "import packages"` → 동일 오류.
+          #    `PYTHONPATH=.:../..` 이면 임포트 성공.)
+          PYTHONPATH=.:../.. python -m uvicorn main:app --host 0.0.0.0 --port 8000 > /tmp/api-start.log 2>&1 &
           for i in $(seq 1 45); do
             if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
               echo "API server ready (${i}s)"; break
             fi
-            if [ "$i" -eq 45 ]; then echo "API server start failed"; exit 1; fi
+            if [ "$i" -eq 45 ]; then
+              # ★실패하면 **왜** 죽었는지 로그를 남긴다 — 종전엔 "start failed" 한 줄뿐이라
+              #   6일 동안 원인을 모른 채 붉었다(원인은 위 한 줄이었다).
+              echo "API server start failed — 아래는 uvicorn 출력:"; tail -50 /tmp/api-start.log; exit 1
+            fi
             sleep 2
           done
 

@@ -159,6 +159,9 @@ def calculate_rental_revenue(
         return result
 
     # 레거시 방식 (평당 단가 입력) — 보증금 제외, 월세만 자본환원
+    # ★필드 계약(갭 감사 정합): annual_rent_won = 관리비 차감 후·공실 차감 전 연임대료.
+    #   레거시 입력엔 관리비 항목이 없어(평당 월세만) gross=net — 신규 경로(annual_net_rent)와
+    #   동일 의미로 취급한다. 프론트는 이 키를 '연 순임대료(공실 전)'로 소비할 것.
     total_area = rental_units * avg_area_pyeong
     total_deposit = int(total_area * avg_deposit_per_pyeong)
     annual_rent = int(total_area * avg_monthly_rent_per_pyeong * 12)
@@ -174,7 +177,12 @@ def calculate_rental_revenue(
         "annual_rent_won": annual_rent,
         "annual_net_rent_won": annual_rent_after_vacancy,
         "capitalized_value_won": capitalized,
-        "total_revenue_won": total_deposit + capitalized,
+        # ★갭 감사(2026-07-15) P1 봉합: 보증금은 환급 부채라 수입이 아니다 — docstring·
+        #   신규 경로(total_revenue=capitalized)와 동일 계약. 종전 `total_deposit + capitalized`는
+        #   보증금 제외 수정이 신규 경로에만 반영되고 유일한 활성 소비처(revenue_block —
+        #   레거시 평당단가 방식만 호출)에는 미도달해 임대수입이 ~2배 과대됐다.
+        #   보증금은 total_deposit_won으로 별도 반환(현금흐름·정보용).
+        "total_revenue_won": capitalized,
     }
     result["_metadata"] = metadata.to_dict()
     return result

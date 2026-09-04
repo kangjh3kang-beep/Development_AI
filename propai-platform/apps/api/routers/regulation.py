@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.billing_deps import enforce_llm_quota
+from app.services.land_intelligence.parcel_normalize import ParcelsIn
 from apps.api.auth.jwt_handler import CurrentUser
 from apps.api.auth.rbac import RequirePermission
 from apps.api.database.session import get_db
@@ -35,7 +36,8 @@ class RegulationAnalyzeRequest(BaseModel):
     # 다필지 통합 개발 시 필지 목록(2개 이상이면 면적가중 통합면적·우세용도로 보정).
     #   행 계약(프론트 전송 키): {address, area_sqm, zone_type, farPct, bcrPct, farLegalPct, bcrLegalPct}.
     #   미전달/1필지면 기존 단일필지 동작 그대로(무회귀).
-    parcels: list[dict] | None = None
+    #   ★공용 정규화(ParcelsIn): str[]/dict[] 양 shape → canonical dict[](무음 no-op 제거).
+    parcels: ParcelsIn | None = None
 
 
 @router.post(
@@ -52,7 +54,12 @@ async def analyze_regulation(body: RegulationAnalyzeRequest) -> dict:
     """
     import re as _re
 
-    from app.services.common.analysis_cache import _key, cache_get, cache_put
+    from app.services.common.analysis_cache import (
+        _key,
+        cache_get,
+        cache_put,
+        llm_fallback_stale,
+    )
     from app.services.regulation.regulation_analysis_service import (
         RegulationAnalysisService,
     )
@@ -82,10 +89,12 @@ async def analyze_regulation(body: RegulationAnalyzeRequest) -> dict:
     )
     cache_key = _key(addr, str(pnu), str(body.use_llm), _parcels_sig)
 
-    # 저장본이 있고 재분석 요청이 아니면 즉시 반환
+    # 저장본이 있고 재분석 요청이 아니면 즉시 반환.
+    # ★단, LLM 폴백("AI 해석 일시 미제공")이 박제된 캐시는 유예(5분) 경과 시 miss로
+    #   취급해 재분석 → 성공 시 upsert로 덮어써 자가치유(폴백 영속화 결함 봉합).
     if not body.refresh:
         cached = await cache_get("regulation_analyze", cache_key)
-        if cached is not None:
+        if cached is not None and not (body.use_llm and llm_fallback_stale(cached)):
             return cached
 
     # 실제 분석 실행 → 저장 → 반환. parcels>=2면 서비스가 통합면적·우세용도로 보정.
@@ -107,6 +116,8 @@ async def analyze_regulation(body: RegulationAnalyzeRequest) -> dict:
                 "limits": _limits if isinstance(_limits, dict) else None,
             },
             pnu=pnu, address=addr, source="regulation",
+            # ★변동감지 표준키(input_signature/signature_parts) 재료 — 단일 소유자(ledger_adapters)에서 조합.
+            parcel_count=len(_rows) or 1, use_llm=body.use_llm,
         )
         if isinstance(result, dict):
             result = attach_ledger_hash(result, wb)
@@ -114,6 +125,58 @@ async def analyze_regulation(body: RegulationAnalyzeRequest) -> dict:
         pass
     await cache_put("regulation_analyze", cache_key, result)
     return result
+
+
+class RegulationReportRequest(BaseModel):
+    """법규 검토서 다운로드 요청 — 프론트가 방금 받은 /analyze 결과를 그대로 실어 재분석·LLM 재호출 0.
+
+    ``result``: /regulation/analyze 응답 dict(부지 요약·정량 한도·계층·영향도·AI 해석·근거) 그대로.
+    ``address``: 표지 소재지 표기용(없으면 result.address 폴백).
+    """
+
+    result: dict
+    address: str | None = None
+
+
+@router.post("/report", summary="법규 검토서 다운로드(PDF/PPTX/DOCX)")
+async def regulation_report(body: RegulationReportRequest, format: str = "pdf"):
+    """법규 검토서 다운로드(PDF/PPTX/DOCX) — 통합 보고서 생성엔진 경유.
+
+    ★재분석 0: 프론트가 화면에 이미 받은 /analyze 결과(body.result)를 그대로 '조립'만 한다
+      (LLM 재호출·네트워크 0 → 과금·지연 없음). 산식은 어댑터에서 만들지 않는다(값 배치만).
+    파일 다운로드 계약: 성공=200 + 바이너리(attachment), 실패=4xx(200+error JSON 금지).
+    기존 /land-price/desk-appraisal/pdf 패턴 미러.
+    """
+    # ★무인증 렌더 엔드포인트 자기 DoS 방어(R1 P3) — 정상 /analyze 결과는 수십 KB 급이므로
+    #   2MB 상한이면 실사용 무영향. 초과는 413(조립 거부·서버 자원 보호).
+    import json as _json
+
+    from fastapi import HTTPException
+
+    if len(_json.dumps(body.result, ensure_ascii=False)) > 2_000_000:
+        raise HTTPException(status_code=413, detail="result payload too large (2MB 상한)")
+    from fastapi import HTTPException
+    from fastapi.responses import Response
+
+    from app.services.report.render import (
+        build_report_model_from_regulation,
+        render_report,
+    )
+
+    result = body.result if isinstance(body.result, dict) else {}
+    if not result:
+        raise HTTPException(status_code=400, detail="법규 분석 결과가 필요합니다.")
+    fmt = (format or "pdf").lower()
+    if fmt not in {"pdf", "pptx", "docx"}:
+        raise HTTPException(status_code=400, detail="지원하지 않는 포맷입니다(pdf/pptx/docx).")
+
+    address = (body.address or result.get("address") or "").strip()
+    model = build_report_model_from_regulation(result, address=address)
+    data, media_type, ext = render_report(model, fmt)
+    return Response(
+        content=data, media_type=media_type,
+        headers={"Content-Disposition": f"attachment; filename=propai_regulation_report.{ext}"},
+    )
 
 
 @router.post("/check", response_model=RegulationCheckResponse)
@@ -144,6 +207,26 @@ async def gosi_search(
     """국가 고시(행정규칙) 본문을 법제처 DRF로 검색·발췌(파일 다운로드 없이). 지역 결정고시는 토지이음."""
     from app.services.legal.gosi_search_service import GosiSearchService
     return await GosiSearchService().search_content(q, max_results=max(1, min(max_results, 5)))
+
+
+# ── 고시 결손 탐지(우리 데이터가 모르는 최근 지구단위계획 결정고시) ──
+@router.get("/gosi/coverage", summary="최근 지구단위계획 결정고시 중 우리 데이터에 없는 것")
+async def gosi_coverage(
+    pnu: str,
+    current_user: CurrentUser = Depends(RequirePermission("regulation", "read")),
+) -> dict:
+    """토지이음 고시목록 × VWorld 실재 대조 → **결손을 지목**한다.
+
+    ★화면이 "지구단위계획 없음"을 사실처럼 보여 주던 자리를 메운다(실제 사고: 오산 내삼미동
+      제2025-274호 미반영으로 자연녹지 80%를 지배 한도인 양 답함).
+    ★조회가 무겁다(실측 2~16초) — 분석 인라인이 아니라 **화면이 지연 호출**하고,
+      시군구 단위로 캐시한다(신선도는 하루 단위로 바뀌지 않는다).
+    ★입력은 **PNU 하나**다. 화면(`SiteAnalysisData`)이 좌표를 갖고 있지 않아서,
+      좌표를 요구하면 이 엔드포인트는 **한 번도 호출되지 않는다**(소비처 0).
+    ★결손이 없거나 목록을 전건 확보하지 못하면 `notice: null` — 아무것도 단정하지 않는다.
+    """
+    from app.services.legal.gosi_coverage_service import gosi_coverage_for_pnu
+    return await gosi_coverage_for_pnu(pnu)
 
 
 # ── LLM 관련법령 탐색 + 정본 교차검증 ──

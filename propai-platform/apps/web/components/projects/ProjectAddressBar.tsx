@@ -3,6 +3,7 @@
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import { useHydrated } from "@/hooks/useHydrated";
 
 /**
  * 프로젝트 하위 페이지에 현재 분석 대상 주소를 상시 표시하는 바.
@@ -15,9 +16,13 @@ export function ProjectAddressBar() {
   const complianceData = useProjectContextStore((s) => s.complianceData);
   // Phase3(additive): 완성도% 칩 — projectCompleteness 셀렉터(Read-only)로 정직 표기.
   const projectCompleteness = useProjectContextStore((s) => s.projectCompleteness);
+  // ★persist(localStorage) 파생값은 **재수화 이후에만** 렌더에 쓴다 — 서버엔 그 저장소가 없어
+  //   서버/클라가 다른 것을 그리면 하이드레이션이 깨진다(prod 에선 `Minified React error #418`).
+  //   같은 결함을 `LifecycleProgressRail` 에서 먼저 잡았고, 이 파일은 **같은 레이아웃의 형제**다.
+  const hydrated = useHydrated();
 
   // 주소가 없으면 안내 메시지 표시
-  if (!siteAnalysis?.address) {
+  if (!hydrated || !siteAnalysis?.address) {
     return (
       <Link
         href={`/${locale}/projects/${id}/site-analysis`}
@@ -43,7 +48,8 @@ export function ProjectAddressBar() {
     );
   }
 
-  const completenessPct = projectCompleteness().pct;
+  const { pct: completenessPct, doneCount: completenessDone, total: completenessTotal } =
+    projectCompleteness();
 
   return (
     <Link
@@ -94,9 +100,14 @@ export function ProjectAddressBar() {
         </span>
       )}
 
-      {/* 완성도% 칩(Phase3·additive) — 실데이터 기준 진행률 */}
-      <span className="ml-auto inline-flex items-center gap-1 rounded-full border border-[var(--accent-strong)]/40 bg-[var(--accent-soft)] px-2 py-0.5 text-[11px] font-bold text-[var(--accent-strong)]">
-        완성도 {completenessPct}%
+      {/* 완성도% 칩 — ★분모를 함께 말한다. 같은 화면의 라이프사이클 레일은 **11단계** 기준
+          진행률을 보여 주는데 이 칩은 **7단계**(수치가 필요한 분석) 기준이라, 벌거벗은 "%"만
+          두면 두 숫자가 모순처럼 보인다(사용자가 실제로 그렇게 읽었다). 무엇을 세는지 밝힌다. */}
+      <span
+        className="ml-auto inline-flex items-center gap-1 rounded-full border border-[var(--accent-strong)]/40 bg-[var(--accent-soft)] px-2 py-0.5 text-[11px] font-bold text-[var(--accent-strong)]"
+        title={`분석 ${completenessTotal}단계 중 ${completenessDone}단계에서 수치가 확보됐습니다(라이프사이클 진행률과 분모가 다릅니다).`}
+      >
+        분석 완성도 {completenessDone}/{completenessTotal} · {completenessPct}%
       </span>
 
       {/* 변경 힌트 */}

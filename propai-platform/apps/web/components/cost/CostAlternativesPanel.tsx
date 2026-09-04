@@ -20,6 +20,8 @@ import {
 } from "recharts";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { ChangeForecastCard } from "@/components/cost/ChangeForecastCard";
+import { SavingScenariosCard } from "@/components/cost/SavingScenariosCard";
 import type {
   AlternativesResponse,
   AlternativeVariantInput,
@@ -138,6 +140,18 @@ export function CostAlternativesPanel({ projectId: projectIdProp }: { projectId?
     ];
   }, [result]);
 
+  // P4 T3: 절감 Top-N·설계변경 예측 카드가 공유하는 기준안 params(입력 폼 재사용 — 중복 폼 금지).
+  const baseParams = useMemo(
+    () => ({
+      building_type: bt,
+      total_gfa_sqm: Number(gfa) || 0,
+      floor_count_above: Number(floorsAbove) || 1,
+      floor_count_below: Number(floorsBelow) || 0,
+      structure_type: structure,
+    }),
+    [bt, gfa, floorsAbove, floorsBelow, structure],
+  );
+
   return (
     <section className="grid gap-5">
       <div>
@@ -221,7 +235,7 @@ export function CostAlternativesPanel({ projectId: projectIdProp }: { projectId?
             <button
               onClick={() => setVariants((p) => p.filter((_, idx) => idx !== i))}
               disabled={variants.length <= 1}
-              className="rounded-lg border border-[var(--line-strong)] px-3 py-2 text-[11px] font-bold text-rose-400 hover:border-rose-400/60 disabled:opacity-40"
+              className="rounded-lg border border-[var(--line-strong)] px-3 py-2 text-[11px] font-bold text-[var(--status-error)] hover:border-[var(--status-error)]/60 disabled:opacity-40"
             >
               삭제
             </button>
@@ -237,13 +251,13 @@ export function CostAlternativesPanel({ projectId: projectIdProp }: { projectId?
         >
           {loading ? "원가비교 중…" : "대안설계 원가비교 실행"}
         </button>
-        {err && <span className="text-xs font-semibold text-rose-400">{err}</span>}
+        {err && <span className="text-xs font-semibold text-[var(--status-error)]">{err}</span>}
       </div>
 
       {result && (
         <>
           <div className="flex flex-wrap items-center gap-2">
-            <span className="rounded bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold text-amber-400">추정 (±12%)</span>
+            <span className="rounded bg-[var(--status-warning)]/15 px-2 py-0.5 text-[10px] font-bold text-[var(--status-warning)]">추정 (±12%)</span>
             <span className="rounded bg-[var(--surface-muted)] px-2 py-0.5 text-[10px] font-bold text-[var(--text-tertiary)]">전문 적산사 검토 권장</span>
           </div>
 
@@ -264,7 +278,7 @@ export function CostAlternativesPanel({ projectId: projectIdProp }: { projectId?
                     contentStyle={{
                       background: "var(--surface-strong)",
                       border: "1px solid var(--line-strong)",
-                      borderRadius: 12,
+                      borderRadius: "var(--r-panel)",
                       fontSize: 12,
                     }}
                     formatter={(v) => [fmtKrw(Number(v)), "총공사비"]}
@@ -273,7 +287,7 @@ export function CostAlternativesPanel({ projectId: projectIdProp }: { projectId?
                     {chartData.map((d, i) => (
                       <Cell
                         key={i}
-                        fill={d.isBase ? "var(--accent-strong)" : d.delta < 0 ? "#10b981" : "#f43f5e"}
+                        fill={d.isBase ? "var(--accent-strong)" : d.delta < 0 ? "var(--status-success)" : "var(--status-error)"}
                       />
                     ))}
                     <LabelList
@@ -301,7 +315,7 @@ export function CostAlternativesPanel({ projectId: projectIdProp }: { projectId?
                 <div key={i} className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-strong)] p-4">
                   <p className="text-[11px] font-bold text-[var(--text-secondary)]">{v.label}</p>
                   <p className="mt-1.5 text-xl font-[1000] text-[var(--text-primary)]">{fmtKrw(v.total)}</p>
-                  <p className={`mt-1 text-sm font-[1000] ${better ? "text-emerald-400" : "text-rose-400"}`}>
+                  <p className={`mt-1 text-sm font-[1000] ${better ? "text-[var(--status-success)]" : "text-[var(--status-error)]"}`}>
                     {better ? "이 설계로 바꾸면 " : "이 설계로 바꾸면 "}
                     {fmtDelta(v.delta)} ({v.delta_pct >= 0 ? "+" : ""}{v.delta_pct}%)
                   </p>
@@ -325,6 +339,10 @@ export function CostAlternativesPanel({ projectId: projectIdProp }: { projectId?
           )}
         </>
       )}
+
+      {/* P4 T3: 절감 Top-N·설계변경 예측 — 위 기준안 입력을 그대로 재사용(무과금·결정론). */}
+      <SavingScenariosCard projectId={projectId} baseParams={baseParams} />
+      <ChangeForecastCard projectId={projectId} baseParams={baseParams} />
     </section>
   );
 }

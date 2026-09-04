@@ -90,7 +90,7 @@ class DigitalTwinInterpreter(BaseInterpreter):
         user_prompt = USER_PROMPT_TEMPLATE.format(
             analysis_json=json.dumps(compact, ensure_ascii=False, indent=2),
         )
-        return await self._invoke(user_prompt, cache_data=compact, evidence_data=data)
+        return await self._invoke_or_empty(user_prompt, cache_data=compact, evidence_data=data)
 
     def _evidence(self, data: dict) -> str | None:
         """P3: 대상지 주소 기반 지역 시세 벤치마크 주입(가용 시)."""

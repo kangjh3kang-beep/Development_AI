@@ -178,10 +178,14 @@ describe("MultiParcelAttributeMatrix — 표시(전 계약 필드)", () => {
     expect(matrix.textContent).toContain("대");
     expect(matrix.textContent).toContain("임야");
     expect(matrix.textContent).toContain("도로");
-    // 게이트 배지: 일상(POSSIBLE 기본)=가능 / NEEDS_OFFICIAL_SURVEY=공식조사 필요 / BLOCKED=차단
+    // 게이트 배지: 일상(POSSIBLE 기본)=가능 / NEEDS_OFFICIAL_SURVEY / BLOCKED=차단
+    // ★2026-08-02: 라벨 문구를 공용 SSOT(zoning-ssot.DEVELOPABILITY_LABEL)로 수렴시키면서
+    //   "공식조사 필요" → "공식 산림조사 필요(참고안 — 확정 아님)"로 바뀐다. SSOT 쪽이 무엇을
+    //   조사해야 하는지(산림)를 명시해 더 정확하고, 다른 화면과 같은 말을 쓰게 된다.
     expect(screen.getByTestId("mpx-gate-0").textContent).toContain("가능");
-    expect(screen.getByTestId("mpx-gate-1").textContent).toContain("공식조사 필요");
-    expect(screen.getByTestId("mpx-gate-2").textContent).toContain("차단");
+    expect(screen.getByTestId("mpx-gate-1").textContent).toContain("산림조사 필요");
+    // BLOCKED도 SSOT 문구를 따른다("차단" → "개발 불가" — 사용자에게 결과를 직접 말한다).
+    expect(screen.getByTestId("mpx-gate-2").textContent).toContain("개발 불가");
     // 면적 미확보 필지 — 수치 날조 없이 '미상'
     expect(screen.getByTestId("mpx-area-3").textContent).toContain("미상");
     expect(matrix.textContent).not.toContain("NaN");
@@ -313,5 +317,41 @@ describe("MultiParcelAttributeMatrix — 데이터 부재 시 미표시(추정 �
     expect(matrix.textContent).toContain("서울 B동 10");
     expect(matrix.textContent).toContain("330");
     expect(screen.getByTestId("mpx-gate-0").textContent).toContain("조건부");
+  });
+});
+
+// ── 2026-08-02 R1 봉합: 게이트 배지 라벨 SSOT 수렴 + 미분석 과대표시 차단 ──────
+//
+// 종전 이 파일에는 6종만 아는 로컬 switch 맵이 있었고, `UNKNOWN`·
+// `REQUIRES_AUTHORITY_CONFIRMATION`·`RESTRICTED` 가 빠져 default로 떨어지며 **원시 코드가
+// 그대로 렌더**됐다. 특히 `UNKNOWN` 은 미분석 필지 강등으로 최근 파이프라인에 들어온 값이라
+// 구멍이 바로 열려 있었다(같은 캠페인의 두 PR이 서로의 구멍을 만든 셈).
+
+describe("게이트 배지 — 원시 코드 미노출 + 미분석 과대표시 차단", () => {
+  it("★로컬 맵에 없던 코드도 한국어 라벨로 나온다(원시 enum 미노출)", () => {
+    render(<MultiParcelAttributeMatrix report={fullReport} perParcel={[
+      { pnu: "1", address: "임야", area_sqm: 400, land_category: "임야",
+        developability: "NEEDS_OFFICIAL_SURVEY" },
+      { pnu: "2", address: "접도미확정", area_sqm: 300, land_category: "대",
+        developability: "REQUIRES_AUTHORITY_CONFIRMATION" },
+    ] as MatrixParcelLike[]} />);
+    const matrix = screen.getByTestId("mpx-matrix");
+    expect(matrix.textContent).not.toContain("REQUIRES_AUTHORITY_CONFIRMATION");
+    expect(screen.getByTestId("mpx-gate-1").textContent).toContain("관할 확인 필요");
+  });
+
+  it("★미분석 필지를 '가능'으로 표시하지 않는다", () => {
+    // 게이트 값이 비어 있으면 기존 계약상 '가능'으로 떨어지던 구멍 — analysis_status를 존중한다.
+    render(<MultiParcelAttributeMatrix report={fullReport} perParcel={[
+      { pnu: "1", address: "미분석 필지", area_sqm: 600, analysis_status: "unanalyzed" },
+    ] as MatrixParcelLike[]} />);
+    expect(screen.getByTestId("mpx-gate-0").textContent).toContain("판정 불가(미분석)");
+  });
+
+  it("★오탐 0 — 정상 필지는 종전대로 '가능'", () => {
+    render(<MultiParcelAttributeMatrix report={fullReport} perParcel={[
+      { pnu: "1", address: "정상", area_sqm: 400, land_category: "대", developability: "POSSIBLE" },
+    ] as MatrixParcelLike[]} />);
+    expect(screen.getByTestId("mpx-gate-0").textContent).toContain("가능");
   });
 });

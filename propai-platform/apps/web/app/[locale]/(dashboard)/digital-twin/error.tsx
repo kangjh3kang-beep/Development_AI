@@ -1,5 +1,9 @@
 "use client";
 
+import { useEffect } from "react";
+import { reportBoundaryError } from "@/lib/growth/report-boundary-error";
+import { tryRecoverFromChunkError } from "@/lib/chunk-recovery";
+
 // 디지털 트윈 3D 뷰어 화면 전용 에러 경계.
 // 이 화면 안에서만 에러를 가두므로, 사이드바·다른 메뉴 이동은 막히지 않는다.
 // "다시 시도"는 이 영역만 reset 한다.
@@ -10,6 +14,13 @@ export default function DigitalTwinError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  useEffect(() => {
+    // ★배포 직후 열려 있던 탭의 청크 404 는 사용자가 고칠 것이 없다 — 세션당 1회 자동 복구.
+    //   복구했으면 곧 페이지가 갈리므로 이 아래는 의미가 없다(루프 방지는 헬퍼가 한다).
+    if (tryRecoverFromChunkError(error)) return;
+    reportBoundaryError("dashboard-digital-twin-error", error);
+  }, [error]);
+
   return (
     <div className="flex flex-col items-center justify-center min-h-[60vh] gap-6 p-8">
       <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-red-500/10 text-red-400">

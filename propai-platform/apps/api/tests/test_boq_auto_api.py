@@ -8,7 +8,10 @@
 - POST /api/v1/boq-auto/draft/apply-cost — 드래프트 summary + boq_builder(모킹) 개산 연동
 
 병렬 구현(B2) 격리: _get_draft_module / _get_build_boq 모킹(design_audit 테스트 규약).
-인증: 기존 cost 라우터(app/routers/cost.py)와 동일 — 무인증 패턴(경량 앱 마운트).
+인증: 무상태 계산 엔드포인트(summary/draft/export/apply-cost)는 무인증. 단 /draft/from-project
+는 project_id 로 타 프로젝트 BIM 실측물량을 조회하므로 인증 필수(IDOR 방지, 형제 cost 라우터
+와 동일 계약) — 경량 앱에 get_current_user/get_db 를 dependency_overrides 로 스텁한다
+(테스트 project_id 는 비-UUID → assert_project_owned 가 db 미접근·조기 통과).
 """
 
 import io
@@ -26,6 +29,16 @@ from app.routers.boq_auto import router  # noqa: E402
 
 _app = FastAPI()
 _app.include_router(router)
+
+# /draft/from-project 인증+소유권(IDOR 방지) — 경량 앱엔 인증 미들웨어가 없으므로 스텁.
+from types import SimpleNamespace  # noqa: E402
+
+from app.services.auth.auth_service import get_current_user  # noqa: E402
+from apps.api.database.session import get_db  # noqa: E402
+
+_app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(tenant_id="t-test", id="u-test")
+_app.dependency_overrides[get_db] = lambda: None  # 비-UUID project_id → 소유권검사 db 미접근
+
 client = TestClient(_app)
 
 BASE = "/api/v1/boq-auto"

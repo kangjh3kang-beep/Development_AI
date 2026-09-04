@@ -21,6 +21,7 @@
  * 신호등은 의미색 토큰(emerald/amber/rose = status-success/warning/error)을 재사용한다.
  */
 
+import { IntegrityWarnings } from "@/components/ui/IntegrityWarnings";
 import { useState } from "react";
 import { AlertTriangle } from "lucide-react";
 import { apiClient, ApiClientError } from "@/lib/api-client";
@@ -392,6 +393,10 @@ function InstantResult({
               ))}
             </ul>
           )}
+          {/* ★법정초과 가드(integrity_warnings) — 백엔드가 계속 보내고 있었는데 타입에도 없고
+              렌더도 없었다(2026-08-24 실측: 프론트 소비처 0). 위 data_quality 경고와 **다른
+              배열**이다 — 이쪽은 "법정상한을 넘었는데 완화근거가 확인되지 않는다"는 신호다. */}
+          <IntegrityWarnings items={data.integrity_warnings} className="mt-2" />
         </section>
       )}
 

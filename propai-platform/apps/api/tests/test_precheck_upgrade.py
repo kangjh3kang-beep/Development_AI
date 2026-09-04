@@ -78,15 +78,15 @@ class TestLegalLimitsBackwardCompat:
 
 class TestExtractSigungu:
     def test_extract_gu(self):
-        assert _extract_sigungu_from_address("서울특별시 강남구 역삼동 123") == "강남구"
+        assert _run(_extract_sigungu_from_address("서울특별시 강남구 역삼동 123")) == "강남구"
 
     def test_special_metro_excluded(self):
         # '서울특별시'는 시군구가 아님 → 다음 '강남구'를 잡는다.
-        assert _extract_sigungu_from_address("부산광역시 해운대구 우동") == "해운대구"
+        assert _run(_extract_sigungu_from_address("부산광역시 해운대구 우동")) == "해운대구"
 
     def test_none_when_no_match(self):
-        assert _extract_sigungu_from_address("") is None
-        assert _extract_sigungu_from_address(None) is None
+        assert _run(_extract_sigungu_from_address("")) is None
+        assert _run(_extract_sigungu_from_address(None)) is None
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -272,11 +272,11 @@ class TestEvidence:
 class TestFeasibilityBand:
     def _band(self):
         legal = _run(_legal_limits("제2종일반주거지역"))
-        return _build_feasibility_band(
+        return _run(_build_feasibility_band(
             best_code="M06", zone_type="제2종일반주거지역", legal=legal,
             area_sqm=1000.0, address="서울특별시 강남구 역삼동 123",
             official_price_per_sqm=4_120_000, quantitative_reliable=True,
-        )
+        ))
 
     def test_band_built(self):
         band = self._band()
@@ -331,26 +331,26 @@ class TestFeasibilityBand:
 
     def test_no_band_when_no_best(self):
         legal = _run(_legal_limits("제2종일반주거지역"))
-        band = _build_feasibility_band(
+        band = _run(_build_feasibility_band(
             best_code=None, zone_type="제2종일반주거지역", legal=legal,
             area_sqm=1000.0, address="서울", quantitative_reliable=True,
-        )
+        ))
         assert band is None
 
     def test_no_band_when_unreliable(self):
         legal = _run(_legal_limits("제2종일반주거지역"))
-        band = _build_feasibility_band(
+        band = _run(_build_feasibility_band(
             best_code="M06", zone_type="제2종일반주거지역", legal=legal,
             area_sqm=1000.0, address="서울", quantitative_reliable=False,
-        )
+        ))
         assert band is None
 
     def test_no_band_when_no_area(self):
         legal = _run(_legal_limits("제2종일반주거지역"))
-        band = _build_feasibility_band(
+        band = _run(_build_feasibility_band(
             best_code="M06", zone_type="제2종일반주거지역", legal=legal,
             area_sqm=None, address="서울", quantitative_reliable=True,
-        )
+        ))
         assert band is None
 
 
@@ -366,8 +366,10 @@ class TestResponseShapeAdditive:
         async def _fake_analyze(self, address):  # noqa: ANN001
             return zoning_payload
 
-        async def _fake_ordinance(self, address, zone_type):  # noqa: ANN001
+        async def _fake_ordinance(self, address, zone_type, force_refresh=False, pnu=None, resolved_sigungu=None):  # noqa: ANN001
             # 조례 미확인(법정상한 폴백) — 외부 호출 없이 결정론.
+            # ★프로덕션이 pnu=/resolved_sigungu= 키워드로 호출하므로 fake 도 수용해야
+            #   TypeError 가 광역 except 에 삼켜져 조례 경로가 침묵 미실행되는 것을 막는다.
             return {"sigungu": "강남구", "ordinance_far": None, "ordinance_bcr": None}
 
         monkeypatch.setattr(

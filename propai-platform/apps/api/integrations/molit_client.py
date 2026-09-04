@@ -7,6 +7,7 @@ AVM 서비스의 비교 사례 데이터 소스.
 """
 
 import re
+from datetime import datetime
 from typing import Any
 
 import structlog
@@ -43,6 +44,37 @@ _RENT_ENDPOINTS: dict[str, str] = {
 # operation 'getRTMSDataSvc...' → 경로 '/1613000/{service}/{operation}' (service = operation[3:]).
 # 응답은 _type=json 파라미터로 JSON, 필드명은 영문(dealAmount/excluUseAr/aptNm/umdNm 등).
 _RTMS_HOST_PATH = "/1613000"
+
+
+# ── 실거래 캐시 TTL — 과거 월은 오래 들고 있는다 ─────────────────────────────
+#
+# ★★2026-08-06 실측 배경: 토지 통계는 **30개월 창**이 필요하다(6개월로는 강남조차 동 단위가
+# 무너진다 — 전처리 후 36건). 그런데 30개월 × 여러 지역을 매번 조회하면 **일일 쿼터**에
+# 걸린다(`HTTP 429 × 60건` 실측). 속도는 문제가 아니었다(병렬 30회 0.7초).
+#
+# ★해법의 근거: 실거래는 **확정 신고분**이라 지난 달들의 내용은 거의 변하지 않는다.
+# 변할 수 있는 것은 (a)지연 신고 (b)계약 해제 반영(`cdealType`)이고, 둘 다 **최근 몇 달**에
+# 몰린다. 그래서 최근 구간만 짧게 들고, 나머지는 길게 캐시해 쿼터를 아낀다.
+#
+# ★경계(6개월)는 **보수적 추정**이지 측정값이 아니다 — 과거 월이 실제로 얼마나 변하는지는
+# 재보지 못했다(측정하려던 시점에 쿼터가 소진됐다). 지연 신고·해제가 6개월을 넘겨 반영되면
+# 그만큼 낡은 값을 보게 된다. 더 짧게 잡는 쪽이 안전한 방향이고, 실측이 생기면 조정해야 한다.
+_RECENT_MONTHS_SHORT_TTL = 6
+_TTL_RECENT = 86_400        # 1일 — 아직 움직일 수 있는 구간
+_TTL_SETTLED = 2_592_000    # 30일 — 사실상 확정된 구간
+
+
+def _deal_ymd_ttl(deal_ymd: str, *, now: "datetime | None" = None) -> int:
+    """`YYYYMM` 이 얼마나 지났는지로 캐시 수명을 정한다. 파싱 실패 시 **짧은 쪽**(안전)."""
+    try:
+        year, month = int(str(deal_ymd)[:4]), int(str(deal_ymd)[4:6])
+        if not (1 <= month <= 12):
+            return _TTL_RECENT
+    except (TypeError, ValueError):
+        return _TTL_RECENT
+    ref = now or datetime.now()
+    elapsed = (ref.year - year) * 12 + (ref.month - month)
+    return _TTL_SETTLED if elapsed > _RECENT_MONTHS_SHORT_TTL else _TTL_RECENT
 
 
 def _rtms_path(operation: str) -> str:
@@ -139,7 +171,8 @@ class MolitClient(BaseAPIClient):
                     "pageNo": str(page), "numOfRows": str(num_rows), "_type": "json",
                 },
                 cache_key=f"{cache_ns}:{lawd_cd}:{deal_ymd}:{num_rows}:p{page}",
-                cache_ttl=86400,
+                # ★과거 월은 길게 — 30개월 창을 매번 새로 받으면 쿼터가 버티지 못한다.
+                cache_ttl=_deal_ymd_ttl(deal_ymd),
             )
             items = parse(data)
             all_items.extend(items)
@@ -422,13 +455,52 @@ class MolitClient(BaseAPIClient):
                     # 토지 매매(getRTMSDataSvcLandTrade) 전용 — 지목/용도지역(없으면 빈값)
                     "jimok": str(g("jimok", "지목", "")),
                     "land_use": str(g("landUse", "용도지역", "")),
+                    # ★★2026-08-06 실측으로 추가 — 원천이 주는데 **우리가 버리던** 필드.
+                    #   MOLIT 토지 매매는 `shareDealingType`("지분"/공백)으로 **지분거래**를
+                    #   구분해 준다. 우리는 이걸 읽지 않아 지분과 일반을 **한 통에 섞어** 왔다.
+                    #   ★라이브 실측(3지역·30개월 3,113건): 지분 비율이 지역마다 크고
+                    #   단가 차이도 **방향이 제각각**이다 — 강남 0.27배 · 해운대 0.65배 ·
+                    #   포항북 2.14배(일반 대비 지분 중앙값). 즉 섞으면 그 값은 무의미하다.
+                    #   ★여기서는 **읽어서 보존만** 한다(무날조) — 제외·가중은 소비처 판단이고,
+                    #   무엇이 섞여 있는지 말할 수 있는 것이 먼저다.
+                    "share_dealing_type": str(g("shareDealingType", "거래구분", "")).strip(),
+                    # ── 계약 상태·소유권 (2026-08-26) ────────────────────────────
+                    # ★같은 결함이 이 파일에서 두 번째다. `molit_client.py:56` 주석은
+                    #   캐시 TTL 근거로 **`cdealType` 을 이미 언급**하고 있었다
+                    #   (*"변할 수 있는 것은 지연 신고와 계약 해제 반영(cdealType)"*).
+                    #   **알면서 파싱하지 않았다** — 위 `share_dealing_type` 과 같은 얼굴이다.
+                    #
+                    # ★라이브 원문 실측(강남·용인수지·서울중구 × 3개월 **3,482건**):
+                    #     cdealType  공백 3,414 · **'O' 68건(1.95%)**
+                    #     dealingGbn 중개거래 3,381 · 직거래 101
+                    #     rgstDate   공백 2,430 · 있음 1,052(30.2%)
+                    #     buyerGbn   개인 3,475 · 법인 7
+                    # ★해제 건 평균이 정상 대비 **+11.5%**(고가 편향). 전체 평균 왜곡은
+                    #   **+0.22%** 로 작지만 — 과장하지 않는다 — **개별 표시가 거짓**이고
+                    #   소표본(AVM·탁상감정 반경 표본)에서 증폭된다.
+                    #
+                    # ★★정상 건은 `' '`(**스페이스**)다. `strip()` 없이 truthy 로 보면
+                    #   **전건이 해제**가 된다.
+                    #
+                    # ★원칙은 형제 그대로 — **읽어서 보존만 한다(무날조).**
+                    #   해제 건도 **행을 버리지 않는다**; 제외·가중은 **소비처 판단**이다.
+                    "cancel_type": str(g("cdealType", "해제여부", "")).strip(),
+                    "cancel_date": str(g("cdealDay", "해제사유발생일", "")).strip(),
+                    "is_cancelled": bool(str(g("cdealType", "해제여부", "")).strip()),
+                    "dealing_type": str(g("dealingGbn", "거래유형", "")).strip(),
+                    # 3층(소유권 추적) 재료 — **별도 등기 API 없이 같은 응답**에 있다.
+                    "registered_date": str(g("rgstDate", "등기일자", "")).strip(),
+                    "buyer_type": str(g("buyerGbn", "매수자", "")).strip(),
+                    "seller_type": str(g("slerGbn", "매도자", "")).strip(),
                 })
             # (Fix #2·감사 HIGH) 수집 검증 게이트 — 정의만 돼 있고 소비처 0건이던 TransactionRecord
-            # 스키마를 실수집 경로에 배선. 가격<=0·면적(0~1000)·층(-5~120) 위반행을 드롭한다
+            # 스키마를 실수집 경로에 배선. 가격<=0·**유형별 면적상한**·층(-5~120) 위반행을 드롭한다
+            # (★면적상한은 유형별이다 — 아파트 1000㎡ / 토지는 절대상한만. 종전 일괄 1000㎡ 는
+            #  라이브 실측에서 **정상 토지거래의 60%(68/114)를 드롭**했다).
             # (무목업: 가짜 생성 없이 드롭만, 드롭 사실은 로그로 관측).
             from app.services.data_validation.validator import validate_transactions
 
-            validated, vreport = validate_transactions(result)
+            validated, vreport = validate_transactions(result, prop_type=prop_type)
             if vreport["dropped"]:
                 logger.warning(
                     "실거래 스키마 검증 드롭",

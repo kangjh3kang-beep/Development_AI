@@ -11,6 +11,37 @@ logger = logging.getLogger(__name__)
 
 
 # --- 실거래가 검증 스키마 ---
+#: 유형과 무관한 **절대** 면적 상한(㎡). 이보다 크면 어떤 유형이든 원본 오류로 본다.
+#: 5㎢ — 저장소 선례(`design_ingest/vision_parser._MAX_AREA_SQM = 5_000_000.0`, "초대형 단지도 포함")와 정렬.
+_ABSOLUTE_MAX_AREA_SQM = 5_000_000.0
+
+#: 유형별 면적 상한(㎡). **아파트 기준값을 토지에 적용하면 정상 거래가 대량 드롭된다.**
+#:
+#: ★라이브 실측(2026-08-26 · MOLIT 토지 원본 41370/202607 **114행**):
+#:     면적 > 1000㎡ 인 행 = **68/114 = 60%** (범위 1,031~10,763㎡ · 중앙 1,795㎡)
+#:   즉 종전 1000㎡ 상한은 **정상 토지거래의 60%를 "이상치"로 버리고 있었다.**
+#:   토지는 필지 하나가 수만 ㎡ 인 것이 정상이다(같은 날 실측한 프로젝트 필지 147,074㎡).
+#:
+#: ★집합주택(아파트·연립·오피스텔)은 **전용면적**이라 1000㎡ 상한이 타당하다 — 그대로 둔다.
+_MAX_AREA_SQM_BY_PROP_TYPE: dict[str, float] = {
+    "apt": 1000.0,
+    "villa": 1000.0,
+    "officetel": 1000.0,
+    "house": 50_000.0,        # 단독·다가구는 대지면적이라 전용면적보다 크다
+    "land": _ABSOLUTE_MAX_AREA_SQM,       # 토지 — 상한을 두지 않는다(절대 상한만)
+    "commercial": _ABSOLUTE_MAX_AREA_SQM,  # 상업·업무용 필지도 같다
+}
+
+
+def max_area_sqm_for(prop_type: str) -> float:
+    """유형별 면적 상한(㎡) — 순수 함수.
+
+    ★모르는 유형은 **집합주택 기준(가장 좁은 상한)** 으로 접는다. 넓게 여는 쪽으로 폴백하면
+      오타 하나가 검증을 통째로 무력화한다(fail-safe 방향).
+    """
+    return _MAX_AREA_SQM_BY_PROP_TYPE.get((prop_type or "").strip().lower(), 1000.0)
+
+
 class TransactionRecord(BaseModel):
     """국토부 실거래가 레코드 검증."""
     deal_date: str  # YYYYMMDD
@@ -32,7 +63,10 @@ class TransactionRecord(BaseModel):
     @field_validator("area_sqm")
     @classmethod
     def validate_area(cls, v):
-        if v <= 0 or v > 1000:  # 1000m² 초과 = 이상치
+        # ★상한은 **유형과 무관한 절대 상한**만 여기서 본다. 유형별 상한은
+        #   `validate_transactions(prop_type=...)` 가 건다 — 이 모델은 prop_type 을 모른다.
+        #   종전엔 여기에 1000㎡ 가 박혀 있어 **토지 거래의 60%가 드롭**됐다(§ 아래 실측).
+        if v <= 0 or v > _ABSOLUTE_MAX_AREA_SQM:
             raise ValueError(f"면적 범위 초과: {v}m²")
         return v
 
@@ -175,6 +209,8 @@ def validate_transactions(
     rows: list[dict],
     region: str = "",
     recent_prices: list[int] | None = None,
+    *,
+    prop_type: str = "apt",
 ) -> tuple[list[dict], dict]:
     """외부 실거래가 원본행을 TransactionRecord 스키마로 검증·필터하고, recent_prices가 있으면
     AnomalyDetector(IQR)로 이상치를 플래그한다.
@@ -200,6 +236,14 @@ def validate_transactions(
             )
         except (ValidationError, ValueError, TypeError) as e:
             dropped_detail.append({"row": row, "error": str(e).split("\n")[0]})
+            continue
+        # ★유형별 면적 상한 — 모델은 **절대 상한**만 보고, 유형 판단은 여기서 한다.
+        #   (모델은 prop_type 을 모른다. 종전엔 모델에 1000㎡ 가 박혀 토지 60%가 드롭됐다.)
+        _cap = max_area_sqm_for(prop_type)
+        if rec.area_sqm > _cap:
+            dropped_detail.append(
+                {"row": row, "error": f"면적 범위 초과({prop_type}): {rec.area_sqm}m² > {_cap:.0f}m²"},
+            )
             continue
         out = dict(row)
         if recent_prices and len(recent_prices) >= 5:

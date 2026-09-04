@@ -20,7 +20,7 @@ import type {
   SiteAnalysisData,
   ProjectContextState,
 } from "@/store/useProjectContextStore";
-import { effectiveLandAreaSqm } from "@/lib/site-area";
+import { effectiveLandAreaSqm, resolveLandArea } from "@/lib/site-area";
 import { resolveDominantZone } from "@/lib/zoning-ssot";
 import { normalizeZoning } from "@/lib/kr-building-regulations";
 import type { PipelineStep } from "@/components/common/AnalysisPipelineStepbar";
@@ -30,6 +30,9 @@ export interface ContextHeaderInput {
   projectId: string | null;
   projectName: string;
   siteAnalysis: SiteAnalysisData | null;
+  /** 설계 산출(designData) — 부지분석에 용도지역이 없을 때 설계 폼이 쓴 용도지역으로 폴백하기 위한
+   *  최소 입력(옵셔널·하위호환). 미전달이면 종전과 동일하게 siteAnalysis만으로 파생(무회귀). */
+  designData?: { zoneCode?: string | null } | null;
 }
 
 /** ContextHeader 표시용 파생 결과 — 미확보 값은 전부 null(무목업). */
@@ -44,8 +47,24 @@ export interface ContextHeaderData {
   pnu: string | null;
   /** 용도지역 표시 라벨(정규화된 정식 한글, 정규화 실패 시 원문 코드, 미확보 시 null). */
   zoneLabel: string | null;
-  /** 유효 대지면적(㎡·다필지면 통합면적) — 미확보 시 null. */
+  /** 용도지역 출처: "site"=부지분석 확정, "design"=설계 폼 직접 입력(폴백), null=미확보. */
+  zoneSource: "site" | "design" | null;
+  /** 유효 대지면적(㎡) — 미확보 시 null. ★"다필지면 통합면적"이 **항상 참은 아니다**: 아래 basis 참조. */
   landAreaSqm: number | null;
+  /**
+   * 위 면적이 **무엇으로 만들어졌는가** — SSOT(`resolveLandArea`)가 이미 계산해 두는 값인데
+   * 헤더가 여태 **버리고 있었다.**
+   *
+   * ★왜 중요한가: 다필지인데 통합면적을 아직 못 구하면 SSOT 는 **대표 1필지 면적**을 돌려주고
+   *   `basis="representative"` 로 강등을 사실대로 알린다. 그런데 헤더는 `isMultiParcel` 만 보고
+   *   *"다필지 통합면적(유효필지 N필지 합계)"* 라고 **단정**했다 — 33필지 프로젝트에 대표
+   *   1필지 면적(543㎡)을 띄우면서 "N필지 합계"라고 말한 실물이 프로덕션에 있다.
+   *   이 파일이 바로 옆 용도지역 항목에서 *"거짓 근거는 근거 없음보다 나쁘다"* 라고 적어 두고,
+   *   면적 축에서 같은 잘못을 하고 있었다.
+   */
+  landAreaBasis: ReturnType<typeof resolveLandArea>["basis"];
+  /** 이 값들이 확정된 시각(ISO). 미확보면 null — **가짜 시각을 만들지 않는다**. */
+  fetchedAt: string | null;
   /** 유효 필지 수(다필지 판정용). 단일/미확보면 1 또는 null. */
   parcelCount: number | null;
   /** 다필지 통합 여부(parcelCount >= 2). */
@@ -75,6 +94,21 @@ export function zoneDisplayLabel(zoneCode: string | null | undefined): string | 
  * - 용도지역: resolveDominantZone(통합 dominant > 단일 zoneCode) 후 표시 라벨 정규화.
  * - hasContext: 프로젝트 선택 또는 주소 확보 중 하나라도 있으면 true(무목업 안내 분기).
  */
+/**
+ * 근거 문자열에 **기준 시각**을 덧붙인다 — `"…근거 (2026-08-24 기준)"`.
+ *
+ * ★새 UI 를 만들지 않는다: 이미 있는 근거 표면을 재사용한다(레이아웃 위험 0).
+ * ★**임의 임계(며칠이면 낡음)를 두지 않는다** — 낡음 판정은 사람이 한다. 시스템은 **사실만** 말한다.
+ * ★값이 없으면 **아무것도 덧붙이지 않는다**(무목업 — 가짜 시각 금지).
+ */
+export function withAsOf(basis: string, fetchedAt: string | null | undefined): string {
+  if (!basis || !fetchedAt) return basis;
+  const d = new Date(fetchedAt);
+  if (Number.isNaN(d.getTime())) return basis;   // 파싱 실패도 무목업 — 원문 유지
+  const ymd = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return `${basis} (${ymd} 기준)`;
+}
+
 export function deriveContextHeaderData(ctx: ContextHeaderInput): ContextHeaderData {
   const sa = ctx.siteAnalysis;
   const address = str(sa?.address);
@@ -85,8 +119,20 @@ export function deriveContextHeaderData(ctx: ContextHeaderInput): ContextHeaderD
       ? sa.parcelCount
       : null;
   const isMultiParcel = (parcelCount ?? 1) > 1;
-  const zoneLabel = zoneDisplayLabel(resolveDominantZone(sa));
+  // 용도지역: 부지분석(SSOT) 확정 우선 → 없으면 설계 폼이 쓴 용도지역(designData.zoneCode)으로 폴백.
+  //   부지분석에 용도지역이 없고 사용자가 설계에서 직접 입력한 경우에도 "용도지역 —"이 아니라 실제
+  //   값을 "직접 입력" 배지와 함께 보여 준다(무날조 — 폴백값이 없으면 그대로 null).
+  const siteZoneLabel = zoneDisplayLabel(resolveDominantZone(sa));
+  const designZoneLabel = zoneDisplayLabel(ctx.designData?.zoneCode);
+  const zoneLabel = siteZoneLabel ?? designZoneLabel;
+  const zoneSource: ContextHeaderData["zoneSource"] = siteZoneLabel
+    ? "site"
+    : designZoneLabel
+      ? "design"
+      : null;
   const landAreaSqm = effectiveLandAreaSqm(sa);
+  // ★값과 **그 값이 무엇인지**를 함께 들고 나온다(SSOT 가 이미 계산한 것을 버리지 않는다).
+  const landAreaBasis = resolveLandArea(sa).basis;
   const hasContext = !!(ctx.projectId || address || projectName);
 
   return {
@@ -95,9 +141,17 @@ export function deriveContextHeaderData(ctx: ContextHeaderInput): ContextHeaderD
     address,
     pnu,
     zoneLabel,
+    zoneSource,
     landAreaSqm,
+    landAreaBasis,
     parcelCount,
     isMultiParcel,
+    // ★기준 시각(as-of) — 이 값들이 **언제** 확정된 것인지 화면이 말할 수 있게 한다.
+    //   라이브 실측(2026-08-24): 헤더가 저장 스냅샷의 `자연녹지지역` 을 단정하는 동안
+    //   같은 페이지의 용도별 구성은 서버 판정으로 **제2종일반주거 91%** 를 보여 주고 있었다.
+    //   값이 **틀린 것**은 전제 감사(#813)가 잡는다 — 여기서 고치는 것은
+    //   **언제 것인지 말하지 않는 것**이다(둘은 다른 결함이다).
+    fetchedAt: typeof sa?.fetchedAt === "string" ? sa.fetchedAt : null,
   };
 }
 

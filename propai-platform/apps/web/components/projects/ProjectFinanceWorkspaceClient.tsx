@@ -9,10 +9,10 @@ import { NumberInput } from "@/components/common/NumberInput";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
-import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { AnalysisVerdict } from "@/components/analysis/AnalysisVerdict";
 import { DevelopmentFinancePanel } from "@/components/analytics/DevelopmentFinancePanel";
 import { EvidencePanel } from "@/components/common/EvidencePanel";
+import { UnderwritingSection } from "@/components/projects/UnderwritingSection";
 import type { Locale } from "@/i18n/config";
 
 type ProjectResponse = {
@@ -71,6 +71,7 @@ type Labels = {
   formTitle: string;
   addressLabel: string;
   areaLabel: string;
+  areaHint: string;
   buildingAgeLabel: string;
   floorLabel: string;
   totalFloorsLabel: string;
@@ -117,7 +118,8 @@ const EN_LABELS: Labels = {
   projectUpdatedLabel: "Updated",
   formTitle: "Finance analysis input",
   addressLabel: "Address",
-  areaLabel: "Area (sqm)",
+  areaLabel: "Exclusive area (sqm)",
+  areaHint: "Apartment unit exclusive area — e.g. 59, 84",
   buildingAgeLabel: "Building age (years)",
   floorLabel: "Floor",
   totalFloorsLabel: "Total floors",
@@ -166,7 +168,8 @@ const KO_LABELS: Labels = {
   projectUpdatedLabel: "수정일",
   formTitle: "금융분석 입력",
   addressLabel: "주소",
-  areaLabel: "면적 (㎡)",
+  areaLabel: "전용면적 (㎡)",
+  areaHint: "아파트 세대 전용면적 — 예: 59, 84",
   buildingAgeLabel: "건물 연식 (년)",
   floorLabel: "층",
   totalFloorsLabel: "총층수",
@@ -295,11 +298,10 @@ export function ProjectFinanceWorkspaceClient({
     setForm((current) => ({
       ...current,
       address: current.address || projectQuery.data.address || "",
-      areaSqm:
-        current.areaSqm ??
-        (projectQuery.data.total_area_sqm != null
-          ? projectQuery.data.total_area_sqm
-          : null),
+      // ★area_sqm 프리필 금지: /avm 의 area_sqm 은 '아파트 세대 전용면적(㎡)'인데
+      //   projects.total_area_sqm 은 '연면적(GFA)'이라 축이 다르다. 연면적을 넣으면
+      //   MOLIT 실거래 ±15㎡ 매칭이 전멸→CTGAN 합성 폴백으로 빠져 시세가 왜곡된다.
+      //   무목업 원칙: 전용면적은 빈값으로 두고 사용자가 직접 입력하도록 유도한다(주소만 프리필).
     }));
   }, [projectQuery.data]);
 
@@ -309,8 +311,10 @@ export function ProjectFinanceWorkspaceClient({
     setForm((current) => ({
       ...current,
       address: current.address || siteAnalysis.address || "",
-      // ★다필지면 통합 면적 — 금융 산정이 통합 부지 기준이 되도록.
-      areaSqm: current.areaSqm ?? effectiveLandAreaSqm(siteAnalysis),
+      // ★area_sqm 프리필 금지: /avm 의 area_sqm 은 '아파트 세대 전용면적(㎡)'이라
+      //   부지분석의 토지면적(effectiveLandAreaSqm)과 축이 다르다. 토지면적을 넣으면
+      //   ±15㎡ 실거래 매칭이 전멸→합성 폴백으로 시세가 왜곡된다. 전용면적은 사용자 입력으로
+      //   두고 주소·PNU 만 프리필한다(무목업=빈값 유도).
       pnu: current.pnu || siteAnalysis.pnu || "",
     }));
   }, [siteAnalysis]);
@@ -398,7 +402,7 @@ export function ProjectFinanceWorkspaceClient({
       <Card className="rounded-[var(--radius-2xl)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
         <CardContent className="p-4 sm:p-6 lg:p-8">
           <div className="flex flex-wrap items-center gap-3">
-            <span className="rounded-full bg-[rgba(14,116,144,0.1)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--accent-strong)]">
+            <span className="rounded-full bg-[rgba(14,116,144,0.1)] px-4 py-2 label-caps text-[var(--accent-strong)]">
               {labels.heroTitle}
             </span>
             <span className="rounded-full border border-[var(--line)] px-4 py-2 text-xs font-medium text-[var(--text-secondary)]">
@@ -435,7 +439,7 @@ export function ProjectFinanceWorkspaceClient({
             </div>
           ) : null}
           {workspaceError ? (
-            <div className="mt-6 rounded-[var(--radius-xl)] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-5 text-sm leading-7 text-[var(--spot)]">
+            <div className="mt-6 rounded-[var(--radius-xl)] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-5 text-sm leading-7 text-[var(--status-warning)]">
               {workspaceError}
             </div>
           ) : null}
@@ -449,7 +453,7 @@ export function ProjectFinanceWorkspaceClient({
         <CardContent className="grid gap-5 p-6 lg:grid-cols-[0.95fr_1.05fr]">
           <div className="grid gap-3">
             <div>
-              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+              <p className="label-caps text-[var(--text-tertiary)]">
                 {labels.contextTitle}
               </p>
               <CardTitle className="mt-2 text-xl">{labels.contextHint}</CardTitle>
@@ -458,13 +462,13 @@ export function ProjectFinanceWorkspaceClient({
               <SkeletonLoader count={1} itemClassName="h-28" />
             ) : (
               <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
-                <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+                <p className="label-caps text-[var(--text-tertiary)]">
                   {labels.projectIdLabel}
                 </p>
                 <p className="mt-2 break-all text-sm font-semibold text-[var(--text-primary)]">
                   {projectId}
                 </p>
-                <p className="mt-4 text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+                <p className="mt-4 label-caps text-[var(--text-tertiary)]">
                   {labels.projectNameLabel}
                 </p>
                 <p className="mt-2 text-sm text-[var(--text-secondary)]">
@@ -490,7 +494,7 @@ export function ProjectFinanceWorkspaceClient({
 
           <Card className="bg-[var(--surface-soft)] shadow-none">
             <CardContent className="p-5">
-              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+              <p className="label-caps text-[var(--text-tertiary)]">
                 {labels.formTitle}
               </p>
               <form className="mt-4 grid gap-3" onSubmit={handleSubmit}>
@@ -501,18 +505,22 @@ export function ProjectFinanceWorkspaceClient({
                   placeholder={labels.addressLabel}
                 />
                 <div className="grid gap-3 md:grid-cols-2">
-                  <NumberInput
-                    allowDecimal
-                    value={form.areaSqm}
-                    onChange={(n) =>
-                      setForm((current) => ({
-                        ...current,
-                        areaSqm: n,
-                      }))
-                    }
-                    placeholder={labels.areaLabel}
-                    className="flex h-11 w-full rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
-                  />
+                  <div>
+                    <NumberInput
+                      allowDecimal
+                      value={form.areaSqm}
+                      onChange={(n) =>
+                        setForm((current) => ({
+                          ...current,
+                          areaSqm: n,
+                        }))
+                      }
+                      placeholder={labels.areaLabel}
+                      className="flex h-11 w-full rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
+                    />
+                    {/* ★전용면적 도움말: AVM 은 세대 전용면적(㎡)으로 실거래를 매칭한다. */}
+                    <p className="mt-1 text-[11px] text-[var(--text-hint)]">{labels.areaHint}</p>
+                  </div>
                   <NumberInput
                     value={form.jeonsePrice}
                     onChange={(n) =>
@@ -596,7 +604,7 @@ export function ProjectFinanceWorkspaceClient({
       <div className="grid gap-6 xl:grid-cols-2">
         <Card>
           <CardContent className="p-6">
-            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+            <p className="label-caps text-[var(--text-tertiary)]">
               {labels.avmTitle}
             </p>
             {avmResult ? (
@@ -677,7 +685,7 @@ export function ProjectFinanceWorkspaceClient({
 
         <Card>
           <CardContent className="p-6">
-            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+            <p className="label-caps text-[var(--text-tertiary)]">
               {labels.jeonseTitle}
             </p>
             {riskResult ? (
@@ -702,7 +710,7 @@ export function ProjectFinanceWorkspaceClient({
                   </p>
                 </div>
                 <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
-                  <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+                  <p className="label-caps text-[var(--text-tertiary)]">
                     {labels.jeonseFactorsLabel}
                   </p>
                   {riskResult.factors?.length ? (
@@ -734,6 +742,10 @@ export function ProjectFinanceWorkspaceClient({
           </CardContent>
         </Card>
       </div>
+
+      {/* 배선 캠페인 2차(underwriting, additive) — 투자 언더라이팅(리스크·추천·수익성).
+          기본 접힘(AdvancedDrawer), 기존 수지/전세리스크 흐름과 무관하게 항상 노출. */}
+      <UnderwritingSection projectId={projectId} />
     </section>
   );
 }
@@ -795,8 +807,8 @@ function JeonseRiskPatterns({
 }) {
   const LEVEL_STYLES: Record<string, { bg: string; text: string; border: string }> = {
     "높음": { bg: "bg-red-500/10", text: "text-red-500", border: "border-red-500/20" },
-    "중간": { bg: "bg-amber-500/10", text: "text-amber-500", border: "border-amber-500/20" },
-    "낮음": { bg: "bg-emerald-500/10", text: "text-emerald-500", border: "border-emerald-500/20" },
+    "중간": { bg: "bg-[var(--status-warning)]/10", text: "text-[var(--status-warning)]", border: "border-[var(--status-warning)]/20" },
+    "낮음": { bg: "bg-[var(--status-success)]/10", text: "text-[var(--status-success)]", border: "border-[var(--status-success)]/20" },
   };
 
   return (
@@ -846,7 +858,7 @@ function MetricTile({
 }) {
   return (
     <div className="rounded-[var(--radius-xl)] bg-[var(--surface)] p-4">
-      <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+      <p className="label-caps text-[var(--text-tertiary)]">
         {label}
       </p>
       <p className="mt-2 text-sm font-semibold text-[var(--text-primary)]">

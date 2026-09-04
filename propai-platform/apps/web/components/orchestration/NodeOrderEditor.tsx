@@ -36,7 +36,7 @@ export function NodeOrderEditor({ order, onChange }: NodeOrderEditorProps) {
   if (!order.length) return null;
 
   return (
-    <div className="rounded-xl border border-[var(--line-strong)] bg-[var(--surface-card)] p-3">
+    <div className="rounded-xl border border-[var(--line-strong)] bg-[var(--surface-strong)] p-3">
       <p className="mb-2 text-[11px] font-semibold text-[var(--text-secondary)]">
         실행 순서 — ▲▼로 조정(상류가 앞이어야 안정적입니다)
       </p>

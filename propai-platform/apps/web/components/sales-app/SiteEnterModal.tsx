@@ -10,6 +10,8 @@ import { useRouter } from "next/navigation";
 import { LockKeyhole } from "lucide-react";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 import { storeSiteToken } from "@/lib/salesApi";
+import { useModalFocus } from "@/hooks/useModalFocus";
+import { DISMISS_Z, useDismissible } from "@/lib/satong-dismiss";
 import type { Locale } from "@/i18n/config";
 
 export interface EnterResponse {
@@ -38,6 +40,7 @@ export default function SiteEnterModal({ locale, siteId, siteName, open, onClose
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (open) {
@@ -47,6 +50,16 @@ export default function SiteEnterModal({ locale, siteId, siteName, open, onClose
       setTimeout(() => inputRef.current?.focus(), 50);
     }
   }, [open, siteId]);
+
+  // ESC 로 닫기 — 열려 있는 동안만 등록한다(닫힌 모달이 ESC 를 가로채지 않게).
+  // ★비밀번호를 입력하던 중 ESC 를 누르면 입력은 사라진다. 이 모달은 열릴 때마다 입력을
+  //   초기화하므로(위 effect) 종전에도 보존되지 않던 값이고, 새로 잃는 것은 없다.
+  useDismissible(DISMISS_Z.appModal, open, onClose);
+
+  // ★포커스 생명주기(초기 포커스·Tab 트랩·복귀) — ESC 와 **별개 계약**이다.
+  //   이 표면의 첫 포커스 가능 요소는 위 `inputRef` 비밀번호 입력창 **자신**이라
+  //   훅의 초기 포커스와 저자 의도가 일치한다(빼앗는 회귀가 아니다).
+  useModalFocus(bodyRef, open);
 
   if (!open) return null;
 
@@ -84,6 +97,7 @@ export default function SiteEnterModal({ locale, siteId, siteName, open, onClose
       aria-label="현장 진입"
     >
       <div
+        ref={bodyRef}
         className="w-full max-w-sm overflow-hidden rounded-t-2xl border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-md)] sm:rounded-2xl"
         onClick={(e) => e.stopPropagation()}
       >

@@ -549,7 +549,11 @@ async def generate_ai_remedies(
             info=summary.get("info", 0),
             risks_json=_json.dumps(compact["risks"], ensure_ascii=False, indent=2),
         )
-        result = await interp._invoke(prompt, cache_data=compact)
+        # ★백로그①(2026-07-22): _invoke_or_empty로 전환 — fallback_key="priority_actions"
+        # 하나만 채워진 JSON 파싱 실패 폴백(원문 뭉치)이 정상 결과로 오인돼 그대로 병합되던
+        # 경로를 차단한다. 폴백-only면 {}가 반환되고, 아래 `if result:`가 false가 되어
+        # 룰기반 fallback(위에서 이미 구성)으로 안전하게 강등된다.
+        result = await interp._invoke_or_empty(prompt, cache_data=compact)
         if result:
             # 누락 키는 폴백으로 채움(부분 성공 보호).
             for k, v in fallback.items():

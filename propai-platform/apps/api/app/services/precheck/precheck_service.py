@@ -24,6 +24,7 @@ from app.services.feasibility.permit_validator import (
     get_permit_complexity,
     get_permitted_types,
 )
+from app.services.tax.regional_tax_data import sido_short_or_empty
 from app.services.zoning.auto_zoning_service import ZONE_LIMITS, AutoZoningService
 from app.services.zoning.special_parcel import detect_special_parcel
 
@@ -49,8 +50,10 @@ def _normalize_zone(zone_type: str) -> str:
     return key
 
 
-async def _legal_limits(zone_type: str | None, address: str | None = None) -> dict[str, Any]:
-    """용도지역 → 법정 건폐율/용적률/높이 한도(국토계획법 제78조) + 조례 실효값(가산).
+async def _legal_limits(
+    zone_type: str | None, address: str | None = None, pnu: str | None = None,
+) -> dict[str, Any]:
+    """용도지역 → 법정 건폐율/용적률/높이 한도(국토계획법 제78조) + 실효값(SSOT, 가산).
 
     기존 반환 키(bcr_pct/far_pct/height_m/source)는 전부 보존한다(_area_checks·프론트 무영향).
     address가 주어지면 OrdinanceService로 조례 실효값을 조회해 applicable_limits_for로
@@ -58,15 +61,27 @@ async def _legal_limits(zone_type: str | None, address: str | None = None) -> di
       applied_bcr_pct / applied_far_pct / ordinance_confirmed / far_source /
       sigungu / legal_ref_keys(법령 원문링크 근거키 목록).
     조례 조회 실패·미확인 시 법정상한으로 폴백(현행 동작과 동일값), ordinance_confirmed=False.
+
+    ★실효 용적률 SSOT 단일화(WP-U1b): 최종 적용값(applied_far_pct/applied_bcr_pct)은
+    far_tier_service.calc_effective_far(법정범위→조례→계획상한→인센티브→**구조상한**)를
+    단일경유해 산정한다 — 재계산 금지·소비만. 과거 이 경로는 applicable_limits_for
+    (법정→조례 min)까지만 적용하고 구조상한(건폐율×층수)을 누락해 자연녹지(건폐 20%×4층
+    =80% < 법정 100%)를 100%로 과대표시했다(90초진단 과대낙관 — "2026-06-19 산/임야
+    과대표시" 버그클래스). 수지(feasibility_v2:302)·종합(comprehensive:427)·규제(PR#333)·
+    인허가(PR#334) 표면과 교차 일치. 가산 키:
+      far_basis(실효 산정근거) / far_reliable(SSOT 산정 성공 여부) /
+      structural_cap_pct / floor_cap / floor_cap_basis.
+    SSOT 산정 실패 시 applicable_limits_for 값 유지 + far_reliable=False(정직강등 —
+    침묵 폴백으로 과대값이 '실효'로 승격되지 않게 신뢰도 신호를 함께 내린다).
     """
     if not zone_type:
         return {"bcr_pct": None, "far_pct": None, "height_m": None, "source": "미확인",
-                "legal_ref_keys": []}
+                "legal_ref_keys": [], "far_basis": None, "far_reliable": False}
     key = _normalize_zone(zone_type)
     limits = ZONE_LIMITS.get(key)
     if not limits:
         return {"bcr_pct": None, "far_pct": None, "height_m": None, "source": "법정한도 미매핑",
-                "legal_ref_keys": []}
+                "legal_ref_keys": [], "far_basis": None, "far_reliable": False}
 
     legal: dict[str, Any] = {
         "bcr_pct": limits.get("max_bcr"),
@@ -79,7 +94,7 @@ async def _legal_limits(zone_type: str | None, address: str | None = None) -> di
     # ── 조례 실효값 적용(가산) — applicable_limits_for 경유(새 산식 0) ──
     # 법령 한도 근거키는 항상 부착(zone 매칭 시), 조례 적용은 확인된 경우에만 표기.
     ref_keys: list[str] = ["far_limit", "bcr_limit"]
-    sigungu = _extract_sigungu_from_address(address)
+    sigungu = await _extract_sigungu_from_address(address, pnu)
     legal["sigungu"] = sigungu
     legal["ordinance_confirmed"] = False
     legal["applied_bcr_pct"] = legal["bcr_pct"]
@@ -92,7 +107,10 @@ async def _legal_limits(zone_type: str | None, address: str | None = None) -> di
             from app.services.land_intelligence.ordinance_service import OrdinanceService
 
             ord_result = await asyncio.wait_for(
-                OrdinanceService().get_ordinance_limits(address, zone_type),
+                # resolved_sigungu: 위에서 이미 해석한 값 하향 전달 — 동일주소 중복 지오코딩 방지.
+                OrdinanceService().get_ordinance_limits(
+                    address, zone_type, pnu=pnu, resolved_sigungu=sigungu,
+                ),
                 timeout=_ORDINANCE_TIMEOUT,
             )
             regulation_payload = ord_result
@@ -130,16 +148,77 @@ async def _legal_limits(zone_type: str | None, address: str | None = None) -> di
                 if ok not in ref_keys:
                     ref_keys.append(ok)
 
+    # ── ★실효 용적률 SSOT 단일경유(WP-U1b) — calc_effective_far(구조상한 포함) 소비 ──
+    # 위 applicable_limits_for는 법정→조례→계획 계층만 산정하고 구조상한(건폐율×층수)을
+    # 모른다. 최종 적용값은 SSOT가 min(…, 구조상한)까지 확정한 값을 그대로 소비한다.
+    # 층수제한 없는 zone(제2종일반주거 250%·일반상업 1300% 등)은 structural_cap=None으로
+    # 완전 무영향(값 불변). 산정 실패 시 위 값 유지 + far_reliable=False(정직강등).
+    legal["far_basis"] = None
+    legal["far_reliable"] = False
+    # ★R1 리뷰 MEDIUM-3(2026-07-23): applicable_limits_for가 이제 4번째 계층(구조상한)을
+    # 자체 반환하므로, SSOT(calc_effective_far) 실패 폴백 시에도 이 값을 기본으로 채운다 —
+    # 그렇지 않으면 위에서 이미 applied_far_pct=80(구조상한 반영)으로 정해졌는데
+    # structural_cap_pct=None이라 소비처가 "구조상한 없음"으로 오독하는 자기모순이 생긴다.
+    # far_reliable은 여전히 False(calc_effective_far 미경유='실효' 확정 아님) — 아래에서
+    # SSOT가 성공하면 그 최종 확정치로 다시 덮어써 정합을 유지한다.
+    legal["structural_cap_pct"] = applied.get("structural_cap_pct") if applied else None
+    legal["floor_cap"] = applied.get("floor_cap") if applied else None
+    legal["floor_cap_basis"] = applied.get("floor_cap_basis") if applied else None
+    try:
+        from app.services.land_intelligence.far_tier_service import calc_effective_far
+
+        eff = calc_effective_far(
+            {
+                # 법정한도는 SSOT가 용도지역 라벨(legal_limits_for)로 재확인한다 — 여기 값은 보조.
+                "zone_limits": {"max_bcr_pct": legal["bcr_pct"], "max_far_pct": legal["far_pct"]},
+                # OrdinanceService 결과(flat)를 local_ordinance로 주입 — PR#334와 동일 패턴.
+                "local_ordinance": regulation_payload if isinstance(regulation_payload, dict) else {},
+                # precheck는 plan payload(지구단위계획 상한) 미수집 — 빈 리스트(기존과 동일,
+                # 계획상한은 상향 계층이므로 미반영은 보수적/정직 방향. 과대낙관 없음).
+                "special_districts": [],
+            },
+            key,
+            0,
+        )
+        _eff_far = eff.get("effective_far_pct")
+        if _eff_far is not None and float(_eff_far) > 0:
+            legal["applied_far_pct"] = float(_eff_far)  # 실효(구조상한 포함) — 재계산 금지·소비만
+            legal["far_reliable"] = True
+        _eff_bcr = eff.get("effective_bcr_pct")
+        if _eff_bcr is not None and float(_eff_bcr) > 0:
+            legal["applied_bcr_pct"] = float(_eff_bcr)
+        legal["far_basis"] = eff.get("far_basis")
+        legal["structural_cap_pct"] = eff.get("structural_cap_pct")
+        legal["floor_cap"] = eff.get("floor_cap")
+        legal["floor_cap_basis"] = eff.get("floor_cap_basis")
+        # 구조상한이 최종 바인딩되면 far_source도 정직 갱신 — "법정상한 적용" 문구가 80% 값과
+        # 모순되지 않게(수치-서술 불일치 방지). 조례 확인 필요 여부는 기존 문구를 보존해 이어붙인다.
+        if legal["far_basis"] == "구조상한(건폐율×층수)":
+            _suffix = "" if legal.get("ordinance_confirmed") else " · 조례 확인 필요"
+            legal["far_source"] = (
+                f"구조상한(건폐율×{legal['floor_cap']}층) 적용{_suffix}"
+            )
+    except Exception:  # noqa: BLE001 — SSOT 실패 시 법정/조례 값 유지(far_reliable=False 정직강등)
+        pass
+
     legal["legal_ref_keys"] = ref_keys
     return legal
 
 
-def _extract_sigungu_from_address(address: str | None) -> str | None:
-    """주소 문자열에서 시군구명을 정직 추출(조례 url 치환용).
+async def _extract_sigungu_from_address(
+    address: str | None, pnu: str | None = None,
+) -> str | None:
+    """주소 문자열에서 시군구명을 정직 추출(조례 url 치환용 + 조례 캐시 매칭 키).
 
-    특별시/광역시(시군구 아님)는 건너뛰고 첫 시군구 토큰을 반환한다. 모든 후보를
-    순회(finditer)하므로 '서울특별시 강남구 …'에서 '강남구'를 정확히 잡는다.
-    추출 실패 시 None(레지스트리에 sigungu 미전달 → 조례 url_status='pending').
+    (a) 정규식 우선(기존 동작 무변경) — 특별시/광역시(시군구 아님)는 건너뛰고 첫 시군구
+    토큰을 반환한다. 모든 후보를 순회(finditer)하므로 '서울특별시 강남구 …'에서 '강남구'를
+    정확히 잡는다.
+    (b) 정규식 실패 시 PNU 폴백 — '의정부동 224'처럼 시/군/구 토큰 자체가 없는 동 단위
+    주소는 (a)가 항상 None이 되어 정적 조례캐시(ORDINANCE_CACHE)에 이미 있는 정답을 못 찾고
+    법정상한으로 과대 폴백한다(2026-07-17 조례 미반영 근본원인). ordinance_service의 공용
+    헬퍼(resolve_region_via_pnu_fallback — VWorld 재지오코딩 refined.structure 재사용,
+    코드→명칭 표 새로 발명 없음)로 폴백한다.
+    (c) 그래도 실패 시 기존 동작(None → 레지스트리에 sigungu 미전달, 조례 url_status='pending').
     """
     addr = str(address or "")
     if not addr:
@@ -148,7 +227,15 @@ def _extract_sigungu_from_address(address: str | None) -> str | None:
         cand = m.group(1)
         if "특별" not in cand and "광역" not in cand:
             return cand
-    return None
+    try:
+        from app.services.land_intelligence.ordinance_service import (
+            resolve_region_via_pnu_fallback,
+        )
+        fb = await resolve_region_via_pnu_fallback(addr, pnu)
+        return fb.get("sigungu")
+    except Exception:  # noqa: BLE001 — 폴백 실패는 기존 동작(None) 보존
+        return None
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -333,12 +420,26 @@ def _build_evidence(
 
     evidence: list[dict] = []
 
-    # (1) 적용 용적률 트레이스(법정 vs 조례 min).
+    # (1) 적용 용적률 트레이스 — SSOT(calc_effective_far) 산정값 소비.
+    #     min() 인자에 실제 바인딩 후보(법정·조례·구조상한)를 정직 나열한다. 과거엔
+    #     min(법정,조례)만 표기해 구조상한(건폐율×층수)으로 낮아진 값을 설명하지 못했다.
     far_legal_fmt = _fmt_pct(far_legal)
     applied_far_fmt = _fmt_pct(applied_far)
+    structural_cap_fmt = _fmt_pct(legal.get("structural_cap_pct"))
+    structurally_bound = (
+        legal.get("far_basis") == "구조상한(건폐율×층수)" and structural_cap_fmt is not None
+    )
     if far_legal_fmt:
-        if ordinance_confirmed and applied_far_fmt and applied_far_fmt != far_legal_fmt:
-            formula = f"적용 용적률 = min(법정상한 {far_legal_fmt}, {sigungu} 조례 {applied_far_fmt})"
+        bound_parts = [f"법정상한 {far_legal_fmt}"]
+        if ordinance_confirmed and legal.get("ordinance_far_pct") is not None:
+            bound_parts.append(f"{sigungu} 조례 {_fmt_pct(legal.get('ordinance_far_pct'))}")
+        if structurally_bound:
+            bound_parts.append(
+                f"구조상한 {structural_cap_fmt}"
+                f"(건폐율 {_fmt_pct(legal.get('applied_bcr_pct'))}×{legal.get('floor_cap')}층)"
+            )
+        if applied_far_fmt and applied_far_fmt != far_legal_fmt and len(bound_parts) > 1:
+            formula = f"적용 용적률 = min({', '.join(bound_parts)})"
             result = applied_far_fmt
             keys = [k for k in ref_keys if k in ("far_limit", "ordinance_far")]
         else:
@@ -410,10 +511,17 @@ def _area_checks(area_sqm: float | None, legal: dict[str, Any]) -> list[dict[str
 
     면적이 있으면 법정한도 존재 여부로 정보성 pass, 없으면 warn("면적 미입력").
     실제 배치설계 전이므로 정량 위반은 단정하지 않고 한도값을 안내한다.
+
+    ★최대 건축면적/연면적은 **적용(실효) 한도**(applied_*, SSOT calc_effective_far 소비값)로
+    산정한다 — 과거엔 법정상한으로 계산해 자연녹지(실효 80%)의 최대 연면적을 법정 100%
+    기준으로 25% 과대 안내했다(동일 버그클래스 파일 내 스윕). 실효가 법정과 다르면
+    산정근거(far_basis)와 법정상한을 함께 정직 표기한다.
     """
     checks: list[dict[str, str]] = []
-    bcr = legal.get("bcr_pct")
-    far = legal.get("far_pct")
+    bcr_legal = legal.get("bcr_pct")
+    far_legal = legal.get("far_pct")
+    bcr = legal.get("applied_bcr_pct") if legal.get("applied_bcr_pct") is not None else bcr_legal
+    far = legal.get("applied_far_pct") if legal.get("applied_far_pct") is not None else far_legal
     height = legal.get("height_m")
 
     if area_sqm:
@@ -422,16 +530,21 @@ def _area_checks(area_sqm: float | None, legal: dict[str, Any]) -> list[dict[str
             checks.append({
                 "rule": "건폐율",
                 "status": "pass",
-                "detail": f"법정 건폐율 {bcr}% → 1층 최대 건축면적 약 {buildable:,}㎡",
+                "detail": f"적용 건폐율 {bcr:g}% → 1층 최대 건축면적 약 {buildable:,}㎡",
             })
         else:
             checks.append({"rule": "건폐율", "status": "warn", "detail": "법정 건폐율 한도 미매핑"})
         if far is not None:
             gfa = round(area_sqm * far / 100.0)
+            far_note = ""
+            if far_legal is not None and float(far) != float(far_legal):
+                far_note = (
+                    f" ({legal.get('far_basis') or '조례/구조상한'} 반영 — 법정상한 {far_legal:g}%)"
+                )
             checks.append({
                 "rule": "용적률",
                 "status": "pass",
-                "detail": f"법정 용적률 {far}% → 연면적 최대 약 {gfa:,}㎡",
+                "detail": f"적용 용적률 {far:g}% → 연면적 최대 약 {gfa:,}㎡{far_note}",
             })
         else:
             checks.append({"rule": "용적률", "status": "warn", "detail": "법정 용적률 한도 미매핑"})
@@ -553,10 +666,29 @@ async def run_instant_precheck(
             "sources": sources,
         }
 
-    # ── 2) 법정 한도(조례 실효값 가산) + 후보 개발방식 ──
-    legal = await _legal_limits(zone_type, address)
+    # ── 2) 법정 한도(실효값 SSOT 가산) + 후보 개발방식 ──
+    legal = await _legal_limits(zone_type, address, pnu=resolved_pnu)
     permitted_codes = get_permitted_types(zone_type)
     area_checks = _area_checks(resolved_area, legal)
+
+    # ── ★A-3/G8 법정초과 경량 가드 확산 — comprehensive analyze()의 P0-3 패턴을 공용
+    #   헬퍼(hotpath_guard)로 실효율 카드(legal_limits.applied_*_pct)에도 적용(additive).
+    #   regulation_payload: legal이 이미 ordinance_confirmed(실제 조례 취득 여부)를 판정해뒀으므로
+    #   그 신호를 재사용한다(허위 조례 생성 아님·산식복제 0).
+    from app.services.verification.hotpath_guard import apply_legal_hotpath_guard
+
+    _guard_reg_payload = (
+        {"local_ordinance": {"source": "조례",
+                              "effective_far": legal.get("ordinance_far_pct"),
+                              "effective_bcr": legal.get("ordinance_bcr_pct")}}
+        if legal.get("ordinance_confirmed") else None
+    )
+    integrity_warnings = apply_legal_hotpath_guard(
+        {},  # 응답 splice는 return dict에서 직접 처리 — 이 dict는 헬퍼 계약 충족용(미사용)
+        zone_type=zone_type, bcr_pct=legal.get("applied_bcr_pct"), far_pct=legal.get("applied_far_pct"),
+        regulation_payload=_guard_reg_payload,
+        confidence_target=legal,
+    )
 
     # 후보군: 허용된 코드 우선, 불허는 제외(계약은 "해당 용도지역 후보").
     # 단 전부 불허(녹지 등)면 대표 후보 일부를 fail로 보여 변별.
@@ -623,7 +755,7 @@ async def run_instant_precheck(
         used_sources=sources, quantitative_reliable=quantitative_reliable,
         ordinance_confirmed=bool(legal.get("ordinance_confirmed")),
     )
-    feasibility_band = _build_feasibility_band(
+    feasibility_band = await _build_feasibility_band(
         best_code=best, zone_type=zone_type, legal=legal,
         area_sqm=resolved_area, address=address,
         official_price_per_sqm=official_price,
@@ -702,6 +834,8 @@ async def run_instant_precheck(
         "special_parcel": special_parcel,
         # 선택적 LLM 다변량 해석(가산) — use_llm=False면 None(기본). 인터프리터 실패도 None.
         "ai_interpretation": ai_interpretation,
+        # ★A-3/G8(additive) — 법정초과 경량 가드 검출 시만 채워짐(빈 배열=검출 없음, 기존 키 불변).
+        "integrity_warnings": integrity_warnings,
     }
 
 
@@ -715,14 +849,20 @@ async def _llm_one_liner(
 
         from app.services.ai.llm_provider import get_llm
 
-        llm = get_llm()
+        llm = get_llm(service="precheck", )
         system = SystemMessage(content=(
             "너는 부동산 개발 인허가 사전검토 전문가다. 사실에 근거해 1문장(80자 이내)으로만 "
             "핵심 결론을 한국어로 답하라. 수치 추정·과장 금지."
         ))
+        # ★적용(실효) 한도를 그라운딩 — 법정상한(자연녹지 100%)을 그대로 주면 LLM 요약이
+        #   과대낙관한다. 실효값+산정근거를 명시해 상향 재해석을 차단한다(PR#334 동일 패턴).
+        _bcr = legal.get("applied_bcr_pct") if legal.get("applied_bcr_pct") is not None else legal.get("bcr_pct")
+        _far = legal.get("applied_far_pct") if legal.get("applied_far_pct") is not None else legal.get("far_pct")
         human = HumanMessage(content=(
-            f"부지: {address} / 용도지역: {zone_type} / 법정 건폐율 {legal.get('bcr_pct')}% "
-            f"용적률 {legal.get('far_pct')}% / 사전검토 결과 적합 {n_pass}·주의 {n_warn}·불가 {n_fail}건"
+            f"부지: {address} / 용도지역: {zone_type} / 적용 건폐율 {_bcr}% "
+            f"적용 용적률 {_far}%(산정근거: {legal.get('far_basis') or '법정/조례 상한'} — "
+            "이미 실효치이므로 상향 낙관 금지)"
+            f" / 사전검토 결과 적합 {n_pass}·주의 {n_warn}·불가 {n_fail}건"
             + (f" / 최우선 후보: {best_name}." if best_name else ".")
             + " 한 문장 요약."
         ))
@@ -752,7 +892,7 @@ _BAND_ASSUMPTIONS: dict[str, dict[str, float]] = {
 }
 
 
-def _build_band_module_input(
+async def _build_band_module_input(
     *,
     best_code: str,
     zone_type: str,
@@ -769,7 +909,9 @@ def _build_band_module_input(
     from app.services.feasibility.modules.base_module import ModuleInput
 
     svc = FeasibilityServiceV2()
-    # 적용 용적률(조례 실효값 우선) 우선, 없으면 법정상한, 그래도 없으면 유형 일반값.
+    # 적용 용적률 = SSOT(calc_effective_far) 실효값(_legal_limits가 applied_far_pct로 소비 —
+    # 구조상한(건폐율×층수) 포함). 없으면 법정상한, 그래도 없으면 유형 일반값.
+    # 과거엔 applied가 min(법정,조례)까지만이라 자연녹지 수지밴드 연면적이 100%/80%=25% 과대였다.
     applied_far = legal.get("applied_far_pct") or legal.get("far_pct")
     typical_far = svc._get_type_typical_far(best_code)
     effective_far = min(float(applied_far), typical_far) if applied_far else typical_far
@@ -778,7 +920,11 @@ def _build_band_module_input(
     eff_ratio = svc._get_type_efficiency_ratio(best_code)
     avg_unit_area = svc._get_type_avg_unit_area(best_code)
     total_hh = max(1, int(total_gfa * eff_ratio / avg_unit_area))
-    region = (legal.get("sigungu") or _extract_sigungu_from_address(address) or "서울")
+    # ★두 값을 **가른다** — 종전엔 하나로 뭉쳐 `"서울"` 폴백까지 시군구로 흘렀다.
+    #   `sigungu_real` : 실제로 확인된 시군구(없으면 빈 문자열 — 지어내지 않는다)
+    #   `region`       : 분양가 보정용 폴백 포함 값(종전 동작 그대로 — 무회귀)
+    sigungu_real = (legal.get("sigungu") or await _extract_sigungu_from_address(address) or "")
+    region = sigungu_real or "서울"
 
     inp = ModuleInput(
         development_type=best_code,
@@ -786,20 +932,29 @@ def _build_band_module_input(
         total_gfa_sqm=total_gfa,
         total_households=total_hh,
         avg_sale_price_per_pyeong=svc._get_regional_price(best_code, region, address or ""),
-        avg_area_pyeong=(avg_unit_area / eff_ratio) / 3.305785,
+        # ★D1 규약: 전용평(공급 환산은 revenue_block 담당 — 매출 라운드트립 무회귀).
+        avg_area_pyeong=avg_unit_area / 3.305785,
         sale_ratio=0.95 if best_code not in ("M14", "M15") else 0.0,
         official_price_per_sqm=official_price_per_sqm,
         price_multiplier=1.1,
         building_type=svc._get_building_type(best_code),
-        sido_name=region,
-        sigungu_name="",
+        # ★축 교정 — `region` 은 `_extract_sigungu_from_address` 가 낸 **시군구**다
+        #   ("동구"·"강남구"). 종전에는 그것을 `sido_name` 에 직결하고 `sigungu_name` 은
+        #   빈 채로 뒀다 = **두 칸이 모두 틀렸다.** 시군구를 시도로 읽은 B01 광역교통은
+        #   울산(대도시권)을 "동구 — 대도시권 아님"으로 판정해 침묵 미부과했다.
+        #   시·도는 주소에서 **공용 해석기**로 뽑는다(못 뽑으면 빈 문자열 — 지어내지 않는다).
+        sido_name=sido_short_or_empty(address),
+        # ★`region` 은 실패 시 `"서울"` 로 **지어낸 폴백**이 섞인다(위 934행). 분양가 보정에는
+        #   종전부터 그렇게 쓰였지만(무회귀), **시군구 칸에는 지어낸 값을 넣지 않는다** —
+        #   축을 바로잡는 자리에서 그 축에 날조를 남기면 다음 사람이 관측으로 읽는다.
+        sigungu_name=sigungu_real,
         project_months=svc._get_type_project_months(best_code),
         discount_rate=0.08,
     )
     return svc, inp
 
 
-def _build_feasibility_band(
+async def _build_feasibility_band(
     *,
     best_code: str | None,
     zone_type: str | None,
@@ -824,7 +979,7 @@ def _build_feasibility_band(
     if not official_price_per_sqm or official_price_per_sqm <= 0:
         return None
     try:
-        svc, base_inp = _build_band_module_input(
+        svc, base_inp = await _build_band_module_input(
             best_code=best_code, zone_type=zone_type, legal=legal,
             area_sqm=float(area_sqm), address=address,
             official_price_per_sqm=official_price_per_sqm,

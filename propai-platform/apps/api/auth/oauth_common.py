@@ -49,6 +49,30 @@ def _slugify_tenant_name(value: str) -> str:
     return slug[:84].strip("-") or "tenant"
 
 
+# 탈퇴 후 재가입 유예일(확정 정책 §7-1) — services.auth_tokens.REJOIN_GRACE_DAYS와 동일값.
+# (순환 import 방지를 위해 상수만 복제하지 않고 지연 import로 단일 출처를 유지한다.)
+def _rejoin_grace_days() -> int:
+    from apps.api.services.auth_tokens import REJOIN_GRACE_DAYS
+    return REJOIN_GRACE_DAYS
+
+
+def _raise_if_in_rejoin_grace(rows: list[User]) -> None:
+    """탈퇴 유예(30일) 중인 계정이면 정직한 안내로 차단. 유예 경과면 통과(재가입 허용)."""
+    grace_days = _rejoin_grace_days()
+    now = datetime.now(UTC)
+    for row in rows:
+        deleted_at = row.deleted_at
+        if deleted_at is None:
+            continue
+        if deleted_at.tzinfo is None:
+            deleted_at = deleted_at.replace(tzinfo=UTC)
+        if now < deleted_at + timedelta(days=grace_days):
+            raise OAuthError(
+                f"탈퇴한 계정입니다. 탈퇴 후 {grace_days}일이 지나야 다시 가입할 수 있습니다.",
+                status_code=403,
+            )
+
+
 async def _build_unique_tenant_slug(db: AsyncSession, base_value: str) -> str:
     base_slug = _slugify_tenant_name(base_value)
     candidate = base_slug
@@ -81,28 +105,52 @@ async def get_or_create_oauth_user(
     provider_id = profile["provider_id"]
     nickname = profile.get("nickname") or f"{provider}_{provider_id}"
 
-    # 1. OAuth 매핑 사용자 우선 조회
+    # 1. OAuth 매핑 사용자 우선 조회 — 탈퇴(deleted_at) 행 제외.
+    #    탈퇴 계정은 소셜 경로로도 로그인 불가(스펙 §5.4). 유예(30일) 중이면 정직 안내,
+    #    유예 경과면 매칭에서 제외되어 신규 계정 생성 경로로 진행(재가입 허용 §7-1).
     result = await db.execute(
         select(User).where(
             User.oauth_provider == provider,
             User.oauth_id == provider_id,
         )
     )
-    oauth_user = result.scalar_one_or_none()
+    matched_rows = list(result.scalars().all())
+    oauth_user = next((u for u in matched_rows if u.deleted_at is None), None)
     if oauth_user is not None:
+        if not oauth_user.is_active:
+            raise OAuthError("이용이 제한된 계정입니다. 관리자에게 문의해 주세요.", status_code=403)
         return oauth_user
+    _raise_if_in_rejoin_grace(matched_rows)
 
-    # 2. 기존 사용자 조회 (이메일 기반) — 동일 이메일이면 기존 계정에 소셜 식별자 연결(병합)
+    # 2. 기존 사용자 조회 (이메일 기반) — 동일 이메일이면 기존 계정에 소셜 식별자 연결(병합).
+    #    ★계정 탈취 차단: provider가 **검증한 이메일**(email_verified)일 때만 병합한다.
+    #    미검증 이메일로의 자동 병합을 허용하면, 공격자가 자신의 소셜 계정에 피해자 이메일을
+    #    미검증 상태로 등록해 피해자 계정을 탈취할 수 있다(전형적 OAuth 미검증 이메일 취약점).
+    #    탈퇴 행은 병합 대상에서 제외(유예 중이면 정직 안내).
     if profile.get("email"):
         result = await db.execute(
             select(User).where(User.email == profile["email"])
         )
-        existing = result.scalar_one_or_none()
+        email_rows = list(result.scalars().all())
+        existing = next((u for u in email_rows if u.deleted_at is None), None)
         if existing is not None:
+            if not existing.is_active:
+                raise OAuthError("이용이 제한된 계정입니다. 관리자에게 문의해 주세요.", status_code=403)
+            if not profile.get("email_verified"):
+                # 미검증 이메일 → 자동 병합 거부(계정 탈취 방지). 기존 방식 로그인 후 연동 유도.
+                logger.warning(
+                    "미검증 소셜 이메일의 기존계정 자동병합 차단",
+                    provider=provider, provider_id=provider_id,
+                )
+                raise OAuthError(
+                    "이미 가입된 이메일입니다. 기존 방식으로 로그인한 뒤 계정 설정에서 소셜 연동을 진행해 주세요.",
+                    status_code=409,
+                )
             existing.oauth_provider = provider
             existing.oauth_id = provider_id
             await db.flush()
             return existing
+        _raise_if_in_rejoin_grace(email_rows)
 
     # 3. 신규 사용자용 개인 테넌트 생성
     tenant_name = f"{nickname} 워크스페이스"

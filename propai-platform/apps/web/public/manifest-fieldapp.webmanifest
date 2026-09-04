@@ -1,0 +1,37 @@
+{
+  "id": "/ko/sales/sites",
+  "name": "사통팔땅 분양 현장앱",
+  "short_name": "분양 현장앱",
+  "description": "분양 현장 영업·수납·조직 관리 모바일 워크스페이스",
+  "lang": "ko",
+  "start_url": "/ko/sales/sites",
+  "scope": "/ko/sales",
+  "display": "standalone",
+  "display_override": ["standalone", "browser"],
+  "background_color": "#f6f7fb",
+  "theme_color": "#2a2e3b",
+  "categories": ["business", "productivity"],
+  "prefer_related_applications": false,
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-maskable.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "내 분양 현장",
+      "short_name": "현장",
+      "url": "/ko/sales/sites",
+      "description": "현장 선택·진입 화면을 엽니다."
+    }
+  ]
+}

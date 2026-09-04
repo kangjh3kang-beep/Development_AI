@@ -346,6 +346,25 @@ function extractErrorMessage(error: unknown, authMessage: string) {
   return authMessage || "요청 실패.";
 }
 
+/**
+ * ★정직 고지 — 이 워크스페이스의 "분석" 4종(정비·피드백·만족도·자산)은 **서버를 부르지 않는다.**
+ *   위 입력 폼의 값으로 **브라우저에서 산술**해 결과를 만든다(각 실행부에 `setTimeout` 지연만 있다).
+ *   백엔드에는 해당 라우터가 없다(DB 테이블만 존재). 그러므로 결과 옆에 그 사실을 밝힌다 —
+ *   무목업·정직 표기 원칙(CLAUDE.md)에 따라 **추정을 분석으로 보이게 하지 않는다.**
+ *   실측 경위: e2e 트리아지에서 클릭 후 API 요청 0건을 관측(2026-08-13).
+ */
+function LocalEstimateNotice() {
+  return (
+    <p
+      role="note"
+      data-testid="local-estimate-notice"
+      className="mt-2 rounded-[var(--radius-lg)] border border-[var(--line)] bg-[var(--surface-soft)] px-3 py-2 text-[11px] leading-relaxed text-[var(--text-tertiary)]"
+    >
+      위 입력값으로 <b>브라우저에서 계산한 간이 추정</b>입니다 — 센서 실시간 연동이나 서버 예측모델을 사용하지 않습니다.
+    </p>
+  );
+}
+
 export function OperationsIntelligenceWorkspaceClient({
   locale,
   sections = ["maintenance", "tenant", "asset"],
@@ -560,7 +579,7 @@ export function OperationsIntelligenceWorkspaceClient({
         <Card className="rounded-[var(--radius-2xl)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
           <CardContent className="p-8">
             <div className="flex flex-wrap items-center gap-3">
-              <span className="rounded-full bg-[rgba(14,116,144,0.1)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--accent-strong)]">
+              <span className="rounded-full bg-[rgba(14,116,144,0.1)] px-4 py-2 label-caps text-[var(--accent-strong)]">
                 {labels.heroTitle}
               </span>
               <span className="rounded-full border border-[var(--line)] px-4 py-2 text-xs font-medium text-[var(--text-secondary)]">
@@ -604,7 +623,7 @@ export function OperationsIntelligenceWorkspaceClient({
         <CardContent className="grid gap-5 p-6 lg:grid-cols-[1.3fr_0.7fr]">
           <div className="grid gap-3">
             <div>
-              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+              <p className="label-caps text-[var(--text-tertiary)]">
                 {labels.projectTitle}
               </p>
               <CardTitle className="mt-2 text-xl">
@@ -654,7 +673,7 @@ export function OperationsIntelligenceWorkspaceClient({
             />
           </div>
           <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
-            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+            <p className="label-caps text-[var(--text-tertiary)]">
               {labels.selectedProjectLabel}
             </p>
             <p className="mt-3 text-sm font-semibold text-[var(--text-primary)]">
@@ -712,7 +731,7 @@ export function OperationsIntelligenceWorkspaceClient({
                 <span className="cc-meta">MAINTENANCE · PREDICTIVE</span>
                 <span className="cc-live"><i />MONITOR</span>
               </div>
-              <p className="relative z-10 mt-2 text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+              <p className="relative z-10 mt-2 label-caps text-[var(--text-tertiary)]">
                 {labels.maintenanceTitle}
               </p>
               <form className="relative z-10 mt-5 grid gap-3" onSubmit={handleMaintenance}>
@@ -800,6 +819,7 @@ export function OperationsIntelligenceWorkspaceClient({
               </Button>
             </form>
 
+            {maintenanceResult ? <LocalEstimateNotice /> : null}
             {maintenanceResult ? (
               <div className="relative z-10 mt-5 grid gap-4 md:grid-cols-2">
                 <MetricTile
@@ -847,7 +867,7 @@ export function OperationsIntelligenceWorkspaceClient({
             {showTenant ? (
               <Card>
                 <CardContent className="p-6">
-                  <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+                  <p className="label-caps text-[var(--text-tertiary)]">
                     {labels.tenantTitle}
                   </p>
 
@@ -999,10 +1019,15 @@ export function OperationsIntelligenceWorkspaceClient({
                   </div>
 
                   {(feedbackResult || satisfactionResult) && (
-                    <div className="mt-5 grid gap-4 md:grid-cols-2">
+                    <>
+                      {/* 고지는 결과 **묶음당 1개**이고 결과 그리드 **바깥**이다. 그리드의
+                          직계 자식으로 넣으면 격자 칸을 하나 차지하고, 두 결과가 함께 있을 때
+                          같은 문장이 두 번 보인다(#634 R1 — 정비·자산과 같은 자리로 통일). */}
+                      <LocalEstimateNotice />
+                      <div className="mt-5 grid gap-4 md:grid-cols-2">
                       {feedbackResult ? (
                         <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
-                          <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+                          <p className="label-caps text-[var(--text-tertiary)]">
                             {labels.sentimentLabel}
                           </p>
                           <p className="mt-3 text-lg font-semibold text-[var(--text-primary)]">
@@ -1019,7 +1044,7 @@ export function OperationsIntelligenceWorkspaceClient({
                       ) : null}
                       {satisfactionResult ? (
                         <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
-                          <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+                          <p className="label-caps text-[var(--text-tertiary)]">
                             {labels.gradeLabel}
                           </p>
                           <p className="mt-3 text-lg font-semibold text-[var(--text-primary)]">
@@ -1035,7 +1060,8 @@ export function OperationsIntelligenceWorkspaceClient({
                           </p>
                         </div>
                       ) : null}
-                    </div>
+                      </div>
+                    </>
                   )}
                 </CardContent>
               </Card>
@@ -1045,7 +1071,7 @@ export function OperationsIntelligenceWorkspaceClient({
                 <CardContent className="p-6">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
-                      <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+                      <p className="label-caps text-[var(--text-tertiary)]">
                         {labels.assetTitle}
                       </p>
                       <CardTitle className="mt-2 text-xl">
@@ -1079,7 +1105,8 @@ export function OperationsIntelligenceWorkspaceClient({
                     </Button>
                   </form>
 
-                  {assetResult ? (
+                  {assetResult ? <LocalEstimateNotice /> : null}
+            {assetResult ? (
                     <div className="mt-5 space-y-4">
                       <div className="grid gap-4 md:grid-cols-2">
                         <MetricTile
@@ -1121,7 +1148,7 @@ export function OperationsIntelligenceWorkspaceClient({
                       </div>
 
                       <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
-                        <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+                        <p className="label-caps text-[var(--text-tertiary)]">
                           {labels.recommendationsLabel}
                         </p>
                         <div className="mt-3 space-y-3">

@@ -20,9 +20,14 @@ import inspect
 import io
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.services.auth.auth_service import get_current_user
+from app.services.auth.project_ownership import assert_project_owned
+from apps.api.database.session import get_db
 
 router = APIRouter(prefix="/api/v1/boq-auto", tags=["BOQ 자동화"])
 
@@ -130,11 +135,23 @@ async def _load_project_bim(project_id: str) -> list[dict[str, Any]]:
     """프로젝트 BIM 물량(bim_quantities)을 자체 세션으로 조회 — 기존 cost._load_bim_quantities 재사용.
 
     DB/모듈 실패·미존재 시 빈 리스트(정직) → merge_bim 이 parametric 그대로 유지.
+
+    ★부트스트랩 선행(신규 DB 조용한 폴백 방지): 쿼리 전 _ensure_cost_tables 로
+      bim_quantities 테이블을 멱등 생성한다. 없으면 SELECT 가 예외 → except 로 삼켜져
+      'BIM 0건'으로 조용히 퇴화하던 결함을, 테이블 보장 후 조회로 교정한다(진짜 0건과 구분).
+    ★PR#315 L2(구 동작 보존): ensure 자체가 실패해도(예: DDL 권한 없음) SELECT 는 별도로
+      시도한다 — 테이블이 이미 존재하는 배포에서는 ensure 실패와 무관하게 조회가 성공해야
+      한다(부트스트랩 도입 전 동작과 동일하게 유지).
     """
     try:
         from app.core.database import async_session_factory
         from app.routers.cost import _load_bim_quantities  # 기존 자산 무수정 재사용
+        from app.services.cost.cost_tables_bootstrap import _ensure_cost_tables
         async with async_session_factory() as db:
+            try:
+                await _ensure_cost_tables(db)  # bim_quantities 테이블 멱등 보장(쿼리 전)
+            except Exception:  # noqa: BLE001 — ensure 실패해도 기존재 테이블이면 SELECT는 성공 가능(L2)
+                pass
             return await _load_bim_quantities(db, project_id)
     except Exception:  # noqa: BLE001 — DB 실패 시 BIM 0건(가짜값 금지·parametric 폴백)
         return []
@@ -373,11 +390,19 @@ async def export_priced_draft(req: BoqDraftRequest) -> StreamingResponse:
 
 
 @router.post("/draft/from-project", summary="프로젝트 BIM 실측 물량 우선 병합 드래프트(N2)")
-async def create_from_project_draft(req: BoqFromProjectRequest) -> dict[str, Any]:
+async def create_from_project_draft(
+    req: BoqFromProjectRequest,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+) -> dict[str, Any]:
     """generate_draft → merge_bim(프로젝트 BIM 물량 1:1 정합 시 실측치 우선).
 
     BIM 0건이면 parametric 그대로 + bim_merge 안내(가짜값 금지). 우선순위 user>bim>parametric.
+
+    ★인증 필수 + 프로젝트 tenant 소유권 검증(IDOR 방지) — 형제 cost 라우터(라우터레벨 인증)와
+    동일 계약. project_id로 타 프로젝트 BIM 실측물량을 무인증 조회하던 IDOR를 표준 헬퍼로 봉합.
     """
+    await assert_project_owned(req.project_id, db, user)  # tenant 불일치 → 403
     mod = _get_draft_module()
     draft = await _invoke_draft_fn(mod.generate_draft, req)
     bim_rows = await _load_project_bim(req.project_id)

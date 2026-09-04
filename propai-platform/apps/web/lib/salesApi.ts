@@ -111,7 +111,10 @@ export function salesSiteApi(siteId: string) {
 // 현장 컨텍스트가 없는 호출(현장목록/시행사 투영)
 export const salesGlobal = {
   get: <T,>(p: string) => apiClient.get<T>(`/sales${p}`),
-  post: <T,>(p: string, body?: Body) => apiClient.post<T>(`/sales${p}`, { body }),
+  // ★`headers` 를 받는다 — 과금 경로(예: /provision)는 재전송 안전 키를 붙여야 한다.
+  //   래퍼가 헤더를 안 받으면 호출부가 apiClient 를 직접 쓰게 되고 규칙이 갈라진다.
+  post: <T,>(p: string, body?: Body, headers?: Record<string, string>) =>
+    apiClient.post<T>(`/sales${p}`, headers ? { body, headers } : { body }),
 };
 
 export const won = (n: number) =>

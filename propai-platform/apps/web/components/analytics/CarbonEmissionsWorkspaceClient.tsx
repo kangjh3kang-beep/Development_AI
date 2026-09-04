@@ -1,12 +1,14 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { AlertTriangle } from "lucide-react";
 import { Card, CardContent, Button } from "@propai/ui";
 import { formatCurrencyCompact } from "@/lib/formatters";
 import { NumberInput } from "@/components/common/NumberInput";
 import { apiClient } from "@/lib/api-client";
 import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
+import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { carbonResultToEsgPatch } from "./carbon-result-to-esg-patch";
 
 // ★자재 선택 목록 — 백엔드 EPD Korea Database(EPD_KOREA_DATABASE) 등록 키와 동일하게 맞춘다.
 //   (목록 외 자재는 백엔드가 산출에서 제외하므로, 등록된 자재명만 노출해 누락을 막는다.)
@@ -130,6 +132,14 @@ export function CarbonEmissionsWorkspaceClient({
 }) {
   const t: Labels = { ...DEFAULT_LABELS, ...dictionary };
 
+  // (G3) SSOT 배선 — 계산 성공 시 프로젝트가 연결된 경우에만 esgData.embodiedCarbonKg에 커밋.
+  const projectId = useProjectContextStore((s) => s.projectId);
+  const updateEsgData = useProjectContextStore((s) => s.updateEsgData);
+  // ★인플라이트 프로젝트 전환 오염 가드(RoughScenarioPanel PR#224 패턴 재사용): 분석을 "요청한
+  //   시점"의 프로젝트를 기억해뒀다가 커밋 시점에 대조한다. 응답이 늦게 와서 그사이 프로젝트가
+  //   바뀌었으면(레이스) 남의 프로젝트 SSOT를 덮지 않도록 커밋을 건너뛴다.
+  const requestProjectRef = useRef<string | null>(null);
+
   const [materials, setMaterials] = useState<{ name: string; quantity_kg: number }[]>([]);
   const [newName, setNewName] = useState("");
   const [newQty, setNewQty] = useState<number | null>(null);
@@ -140,6 +150,33 @@ export function CarbonEmissionsWorkspaceClient({
   const [error, setError] = useState<string | null>(null);
   // 대안 조회 중인 자재명(중복 클릭 방지·로딩 표시).
   const [altLoading, setAltLoading] = useState<string | null>(null);
+  // (G3/B-4) 커밋 실제 여부 3분기 — 배너가 이 상태만 보고 정직 표기한다(binary projectId 추측 금지).
+  //  "done"=updateEsgData 실행됨 / "skipped"=가드(인플라이트 전환) 또는 patch null로 스킵 /
+  //  "waiting"=projectId 부재(프로젝트 연결 대기).
+  const [committed, setCommitted] = useState<"done" | "skipped" | "waiting" | null>(null);
+
+  // (G3/B-4) 계산 결과 → esgData SSOT 커밋 — 실제로 무엇이 일어났는지(done/skipped/waiting)를
+  // committed state에 기록해, 배너가 추측(binary projectId) 대신 실커밋 결과를 그대로 표시한다.
+  useEffect(() => {
+    if (!result) return;
+    if (!projectId) {
+      setCommitted("waiting"); // 프로젝트 미연결 → SSOT 비접촉(연결 대기)
+      return;
+    }
+    // 요청 시점 프로젝트와 현재 프로젝트가 다르면(인플라이트 중 전환) 커밋 금지 — 정직 스킵.
+    if (requestProjectRef.current !== projectId) {
+      setCommitted("skipped");
+      return;
+    }
+    const prevEsgData = useProjectContextStore.getState().esgData;
+    const patch = carbonResultToEsgPatch(result, prevEsgData);
+    if (patch) {
+      updateEsgData(patch, { source: "auto" });
+      setCommitted("done");
+    } else {
+      setCommitted("skipped"); // patch null(반영할 변경 없음 등) → 정직 스킵
+    }
+  }, [result, projectId, updateEsgData]);
 
   const addMaterial = () => {
     if (!newName || !newQty) return;
@@ -158,8 +195,11 @@ export function CarbonEmissionsWorkspaceClient({
 
   const runAnalysis = async () => {
     if (materials.length === 0) return;
+    // ★요청 시점 프로젝트 스냅샷(인플라이트 전환 가드) — 응답 커밋 시 이 값과 대조한다.
+    requestProjectRef.current = projectId;
     setIsAnalyzing(true);
     setError(null);
+    setCommitted(null); // 새 분석 시작 — 이전 커밋 배너 초기화(이번 결과의 committed useEffect가 재산정)
     try {
       // ★실제 백엔드 호출 — EPD Korea Database 기반 탄소발자국 산출(클라이언트 하드코딩 GWP 제거).
       //   body = { material_list: [{ name, quantity_kg }] } (EPDRequest 계약).
@@ -277,10 +317,10 @@ export function CarbonEmissionsWorkspaceClient({
   return (
     <div className="space-y-8">
       {/* Hero */}
-      <div className="rounded-[2.5rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-10 shadow-[var(--shadow-xl)]">
+      <div className="rounded-[var(--radius-xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-10 shadow-[var(--shadow-xl)]">
         <div className="flex items-center gap-3 mb-4">
-          <span className="flex h-3 w-3 rounded-full bg-emerald-500 animate-pulse" />
-          <span className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-600">
+          <span className="flex h-3 w-3 rounded-full bg-[var(--status-success)] animate-pulse" />
+          <span className="label-caps text-emerald-600">
             EPD Carbon · ISO 21930
           </span>
           <span className="rounded-lg bg-[var(--surface-soft)] px-3 py-1 text-[10px] font-bold text-[var(--text-hint)] uppercase">
@@ -296,7 +336,7 @@ export function CarbonEmissionsWorkspaceClient({
       </div>
 
       {/* Input Section */}
-      <Card className="rounded-[2rem] border-[var(--line)] shadow-sm">
+      <Card className="rounded-[var(--radius-lg)] border-[var(--line)] shadow-sm">
         <CardContent className="p-8 space-y-6">
           <div className="flex items-center justify-between">
             <h3 className="text-xs font-black uppercase tracking-[0.3em] text-[var(--text-hint)]">
@@ -351,7 +391,7 @@ export function CarbonEmissionsWorkspaceClient({
                   className="flex items-center justify-between rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-5 py-3"
                 >
                   <div className="flex items-center gap-4">
-                    <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                    <span className="h-2 w-2 rounded-full bg-[var(--status-success)]" />
                     <span className="text-sm font-bold text-[var(--text-primary)]">{m.name}</span>
                   </div>
                   <div className="flex items-center gap-4">
@@ -360,7 +400,7 @@ export function CarbonEmissionsWorkspaceClient({
                     </span>
                     <button
                       onClick={() => removeMaterial(i)}
-                      className="text-[10px] font-bold text-rose-500 hover:text-rose-600 uppercase"
+                      className="text-[10px] font-bold text-[var(--status-error)] hover:text-rose-600 uppercase"
                     >
                       {t.removeBtn}
                     </button>
@@ -380,7 +420,7 @@ export function CarbonEmissionsWorkspaceClient({
 
           {/* 오류·무자료 정직 표기 (가짜 데이터 대체 금지) */}
           {error && (
-            <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+            <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800 dark:border-[var(--status-warning)]/30 dark:bg-[var(--status-warning)]/10 dark:text-amber-300">
               {error}
             </div>
           )}
@@ -390,24 +430,42 @@ export function CarbonEmissionsWorkspaceClient({
       {/* Results */}
       {result && (
         <>
+          {/* (G3/B-4) SSOT 반영 안내 — 실커밋 여부(committed) 3분기로 정직 표기(무오염·무추측). */}
+          {committed === "done" && (
+            <div className="rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-xs font-bold text-emerald-800 dark:border-[var(--status-success)]/30 dark:bg-[var(--status-success)]/10 dark:text-emerald-300">
+              연결된 프로젝트의 ESG 데이터(embodiedCarbonKg)에 반영되었습니다.
+            </div>
+          )}
+          {committed === "skipped" && (
+            <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-xs font-bold text-amber-800 dark:border-[var(--status-warning)]/30 dark:bg-[var(--status-warning)]/10 dark:text-amber-300">
+              ESG 데이터에 반영되지 않았습니다 — 분석 도중 프로젝트가 전환되었거나, 반영할 변경사항이
+              없어 건너뛰었습니다.
+            </div>
+          )}
+          {committed === "waiting" && (
+            <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-3 text-xs font-medium text-[var(--text-secondary)]">
+              프로젝트 연결 시 ESG SSOT에 반영됩니다.
+            </div>
+          )}
+
           {/* Summary Cards */}
           <div className="grid gap-4 md:grid-cols-3">
-            <div className="rounded-[2rem] border border-emerald-500/20 bg-emerald-500/5 p-8">
-              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-600">{t.totalLabel}</p>
+            <div className="rounded-[var(--radius-lg)] border border-[var(--status-success)]/20 bg-[var(--status-success)]/5 p-8">
+              <p className="label-caps text-emerald-600">{t.totalLabel}</p>
               <p className="mt-3 text-4xl font-[1000] tracking-tighter text-[var(--text-primary)]">
                 {formatCurrencyCompact(result.total_carbon_footprint_kgco2e)}
               </p>
               <p className="mt-1 text-xs font-bold text-[var(--text-tertiary)]">kgCO₂eq</p>
             </div>
-            <div className="rounded-[2rem] border border-[var(--line)] bg-[var(--surface)] p-8">
-              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[var(--text-hint)]">{t.materialsLabel}</p>
+            <div className="rounded-[var(--radius-lg)] border border-[var(--line)] bg-[var(--surface)] p-8">
+              <p className="label-caps text-[var(--text-hint)]">{t.materialsLabel}</p>
               <p className="mt-3 text-4xl font-[1000] tracking-tighter text-[var(--text-primary)]">
                 {result.materials_assessed}
               </p>
               <p className="mt-1 text-xs font-bold text-[var(--text-tertiary)]">items analyzed</p>
             </div>
-            <div className="rounded-[2rem] border border-[var(--line)] bg-[var(--surface)] p-8">
-              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[var(--text-hint)]">{t.standardLabel}</p>
+            <div className="rounded-[var(--radius-lg)] border border-[var(--line)] bg-[var(--surface)] p-8">
+              <p className="label-caps text-[var(--text-hint)]">{t.standardLabel}</p>
               <p className="mt-3 text-xl font-[1000] tracking-tighter text-[var(--text-primary)]">
                 {result.standard}
               </p>
@@ -420,7 +478,7 @@ export function CarbonEmissionsWorkspaceClient({
 
           {/* Scope Breakdown */}
           {scopeData && (
-            <Card className="rounded-[2rem] border-[var(--line)] shadow-sm">
+            <Card className="rounded-[var(--radius-lg)] border-[var(--line)] shadow-sm">
               <CardContent className="p-8 space-y-6">
                 <h3 className="text-xs font-black uppercase tracking-[0.3em] text-[var(--text-hint)]">{t.scopeTitle}</h3>
                 {/* ★정직 고지: EPD는 자재 내재탄소(A1~A3=대부분 Scope 3)를 측정한다. 아래 Scope 1/2/3 분해는
@@ -431,9 +489,9 @@ export function CarbonEmissionsWorkspaceClient({
                 </p>
                 <div className="space-y-4">
                   {[
-                    { label: t.scope1, value: scopeData.scope1, pct: 5, color: "bg-amber-500" },
+                    { label: t.scope1, value: scopeData.scope1, pct: 5, color: "bg-[var(--status-warning)]" },
                     { label: t.scope2, value: scopeData.scope2, pct: 15, color: "bg-blue-500" },
-                    { label: t.scope3, value: scopeData.scope3, pct: 80, color: "bg-emerald-500" },
+                    { label: t.scope3, value: scopeData.scope3, pct: 80, color: "bg-[var(--status-success)]" },
                   ].map((s) => (
                     <div key={s.label} className="space-y-1">
                       <div className="flex items-center justify-between">
@@ -456,7 +514,7 @@ export function CarbonEmissionsWorkspaceClient({
           )}
 
           {/* Breakdown Table */}
-          <Card className="rounded-[2rem] border-[var(--line)] shadow-sm">
+          <Card className="rounded-[var(--radius-lg)] border-[var(--line)] shadow-sm">
             <CardContent className="p-8 space-y-6">
               <h3 className="text-xs font-black uppercase tracking-[0.3em] text-[var(--text-hint)]">{t.breakdownTitle}</h3>
               <div className="space-y-3">
@@ -492,7 +550,7 @@ export function CarbonEmissionsWorkspaceClient({
                       </div>
                       <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--surface-soft)]">
                         <div
-                          className={`h-full transition-all duration-500 ${isNeg ? "bg-blue-500" : "bg-rose-400"}`}
+                          className={`h-full transition-all duration-500 ${isNeg ? "bg-blue-500" : "bg-[var(--status-error)]"}`}
                           style={{ width: `${pct}%` }}
                         />
                       </div>
@@ -511,7 +569,7 @@ export function CarbonEmissionsWorkspaceClient({
                             alternatives[b.material].alternatives.map((alt) => (
                               <div
                                 key={alt.alternative_name}
-                                className="flex items-center justify-between rounded-xl bg-emerald-50 dark:bg-emerald-500/5 px-4 py-2 border border-emerald-200 dark:border-emerald-500/10"
+                                className="flex items-center justify-between rounded-xl bg-emerald-50 dark:bg-[var(--status-success)]/5 px-4 py-2 border border-emerald-200 dark:border-[var(--status-success)]/10"
                               >
                                 <span className="text-xs font-bold text-emerald-800 dark:text-emerald-300">
                                   {alt.alternative_name}

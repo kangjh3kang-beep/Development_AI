@@ -9,18 +9,19 @@ import React, { useState, useMemo, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { motion } from "framer-motion";
-import { AlertTriangle, Check, CheckCircle2, Lightbulb } from "lucide-react";
+import { AlertTriangle, Check, CheckCircle2, ChevronDown, Info, Lightbulb } from "lucide-react";
 import { useAIAnalyze, useAIReady, extractStructuredFromText, cleanFenceText } from "@/lib/ai-analyze-client";
 import { getZoningSpec, calcMaxGrossArea, calcParkingRequired, normalizeZoning, getZoningList } from "@/lib/kr-building-regulations";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
-import { resolveFarPct, resolveBcrPct } from "@/lib/zoning-ssot";
-import { resolveCanonicalFloors } from "@/lib/design-ssot";
+import { resolveFarPct, resolveBcrPct, resolveFarWithBasis, resolveBcrWithBasis } from "@/lib/zoning-ssot";
+import { resolveCanonicalFloors, hasSiteBasis as computeHasSiteBasis } from "@/lib/design-ssot";
 import { contractCanonicalFloors } from "@/lib/design-contract";
 import { useProjectStore } from "@/store/useProjectStore";
 import { NumberInput } from "@/components/common/NumberInput";
 import { InspectorGrid } from "@/components/common/InspectorGrid";
 import { AdvancedDrawer } from "@/components/common/AdvancedDrawer";
+import { MarkdownLite } from "@/components/common/MarkdownLite";
 import { SolarEnvelopeCard } from "@/components/projects/SolarEnvelopeCard";
 import { SeedDesignMassComparison } from "@/components/design/SeedDesignMassComparison";
 
@@ -430,6 +431,10 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
   const [canvasView, setCanvasView] = useState<"2d" | "3d">("2d");
   // ②③ 일조 인벨로프 결과 리프트 — 상단 '예상 층수' 카드를 실무 권장 범위로 배선(ceil(FAR/BCR) 날조 제거).
   const [envResult, setEnvResult] = useState<EnvLift | null>(null);
+  // ★Pillar A(중복 제거): '직접 조정(고급)' 서랍이 열리면 확정 칩(읽기전용 요약)을 숨긴다 —
+  //   같은 값(대지면적·용도지역·건물용도)이 칩과 서랍 입력필드에 동시 2벌 노출되던 혼란 제거.
+  //   서랍(폼)은 그대로 마운트 유지되므로 편집 중 포커스 상실 없음(무회귀).
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   // ② projectId 변경 시 폼 기본값 리셋 — 이전 프로젝트의 시드/입력값 잔류 차단.
   const prevProjectRef = useRef(effectiveProjectId);
@@ -439,6 +444,10 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
     setForm({ ...DEFAULT_FORM });
     setZoneEdited(false);
     setUserEdited(false);
+    // ★리뷰 LOW-MEDIUM: '직접 조정(고급)' 서랍을 연 채 프로젝트를 전환하면 새 프로젝트의
+    //   확정 칩이 advancedOpen=true 잔류로 계속 숨겨진 채 서랍만 보이는 경계 상태가 됐다.
+    //   폼 리셋과 함께 서랍도 접어 칩·서랍 동시숨김 상태를 새 프로젝트 기준으로 초기화한다.
+    setAdvancedOpen(false);
   }, [effectiveProjectId]);
 
   // 부지분석(SSOT)에서 대지면적·용도지역을 시드한다. 용도지역은 변형 표기
@@ -493,6 +502,11 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
   //   타이핑 중 포커스 상실이 없다(서랍 안 NumberInput은 키 입력마다 onChange라 이 분리가 필수).
   const layoutSeeded = isSiteMatched && seededLandAreaSqm != null;
   // '부지분석 자동' vs '직접 수정' 배지는 칩 렌더에서 !userEdited로 직접 분기한다(별도 변수 불필요).
+  // ★준비상태 술어 정합(레일 hasSiteBasis와 모순 제거·PR#316 리뷰 M2) — 종전엔 콘솔이 자체 판정
+  //   (layoutSeeded=면적만+isSameSite 퍼지매칭)을 써 레일(DesignWorkspace.hasSiteBasis=면적>0+
+  //   용도지역+addressTokenMismatch)과 "제3의 술어"로 갈라져 있었다. 이제 두 화면이 공용 함수
+  //   lib/design-ssot.hasSiteBasis를 그대로 호출해 구조적으로 divergence를 차단한다(공용화).
+  const siteBasisComplete = computeHasSiteBasis(siteAnalysis, projectRecord?.address);
 
   const localCalc = useMemo(() => {
     const area = Number(form.landArea) || 0;
@@ -503,25 +517,32 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
     // ★SSOT 읽기 통일: resolveFarPct(통합 > 실효 > 법정)로 일원화 — 다필지에서는 통합 실효가
     //   대표 1필지 실효를 대체한다(인벨로프 카드·사업개요와 일관). 주소 불일치 잔류 스냅샷이 다른
     //   부지값을 구동하지 않도록 일치(또는 미실행) 시에만 적용. 미확보 시 법정상한 폴백 — 무회귀.
-    const resolvedFar = resolveFarPct(siteAnalysis);
+    const resolvedFarRes = resolveFarWithBasis(siteAnalysis);
     const effFarPct =
-      siteMatch !== "mismatch" && resolvedFar != null && resolvedFar > 0
-        ? resolvedFar
+      siteMatch !== "mismatch" && resolvedFarRes != null && resolvedFarRes.value > 0
+        ? resolvedFarRes.value
         : null;
     const farUsed = effFarPct ?? spec.floorAreaRatioMax; // 적용 용적률(%) — 실효 우선, 법정 폴백
-    const farIsEffective = effFarPct != null;            // 실효값 적용 여부(라벨·근거 표기용)
-    const maxGross = effFarPct != null ? area * (effFarPct / 100) : calcMaxGrossArea(area, effectiveZoning);
+    // ★실효 여부는 값 존재가 아니라 basis 로 판정 — resolveFarPct 는 법정상한(national)도 값으로
+    //   돌려주므로 `!= null` 판정은 법정폴백을 "실효"로 오표기한다(R1 P2 — CadBim/seed 의
+    //   basis !== "national" 술어와 상반 라벨이 나던 모순 봉합. 판정 술어를 전 표면 동일하게).
+    const farIsEffective = effFarPct != null && resolvedFarRes!.basis !== "national";
+    // calcMaxGrossArea가 null을 반환하는 경우(용도지역 매칭 실패)는 위 spec 가드(:514 `!spec`이면
+    // 조기 return null)가 동일 zoning 값으로 이미 걸러 도달 불가 — ?? 0은 타입 방어용(무날조: 250%
+    // 임의배율 대신 산출불가 0, 실사용 경로에서 실제로 트리거되지 않음).
+    const maxGross = effFarPct != null ? area * (effFarPct / 100) : (calcMaxGrossArea(area, effectiveZoning) ?? 0);
     const parking = calcParkingRequired(maxGross, form.buildingUse);
     // 실효 건폐율 우선: FAR과 동일하게 resolveBcrPct(통합 > 실효 > 법정)가 있으면 법정상한
     // (buildingCoverageMax) 대신 사용. 주소 불일치 잔류 스냅샷 방지를 위해 siteMatch !== "mismatch"
     // 조건 동일하게 적용. 미확보 시 법정상한 폴백 — 무회귀.
-    const resolvedBcr = resolveBcrPct(siteAnalysis);
+    const resolvedBcrRes = resolveBcrWithBasis(siteAnalysis);
     const effBcrPct =
-      siteMatch !== "mismatch" && resolvedBcr != null && resolvedBcr > 0
-        ? resolvedBcr
+      siteMatch !== "mismatch" && resolvedBcrRes != null && resolvedBcrRes.value > 0
+        ? resolvedBcrRes.value
         : null;
     const bcrUsed = effBcrPct ?? spec.buildingCoverageMax;  // 적용 건폐율(%) — 실효 우선, 법정 폴백
-    const bcrIsEffective = effBcrPct != null;               // 실효값 적용 여부(라벨·근거 표기용)
+    // ★FAR 과 동일 — basis 기준 판정(법정폴백을 실효로 오표기 금지, R1 P2).
+    const bcrIsEffective = effBcrPct != null && resolvedBcrRes!.basis !== "national";
     const buildableArea = area * (bcrUsed / 100);
     const minFloorsFromFar = farUsed > 0 ? Math.ceil(maxGross / buildableArea) : 1;
     const heightPerFloor = Number(form.floorHeight) || 3.3;
@@ -560,12 +581,15 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
     form.floorHeight,
     effectiveZoning,
     form.buildingUse,
-    siteAnalysis?.integratedFarEffPct,
-    siteAnalysis?.integratedBcrEffPct,
-    siteAnalysis?.effectiveFarPct,
-    siteAnalysis?.effectiveBcrPct,
-    siteAnalysis?.nationalFarPct,
-    siteAnalysis?.nationalBcrPct,
+    // ★React Compiler 정합(react-hooks/preserve-manual-memoization): resolveFarWithBasis·
+    //   resolveBcrWithBasis 가 siteAnalysis 객체 전체를 인자로 받아 내부에서
+    //   integrated/effective/national FAR·BCR + ordinance + parcels 필드를 읽는다. 그래서
+    //   컴파일러가 추론하는 의존성은 개별 서브필드가 아니라 siteAnalysis 전체다. 서브필드만
+    //   나열하면 "inferred less specific"로 판정돼 최적화가 스킵되고 CI 가 error 로 막힌다.
+    //   siteAnalysis 전체를 의존성으로 두면 추론과 정확히 일치한다. 계산은 siteAnalysis 의
+    //   순수 함수라 결과값은 불변이며(불변 업데이트 규약상 서브필드 변경=참조 변경, 재계산은
+    //   상위집합), 종전 deps 가 누락했던 ordinance·parcels 변화도 함께 반영해 정합성이 오른다.
+    siteAnalysis,
     siteMatch,
   ]);
 
@@ -664,14 +688,19 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
 
   // 부지분석에 계산을 구동할 실데이터(면적 또는 용도지역)가 있는가 — designData 기록 게이트.
   const hasRealSiteData = !!(siteAnalysis && (((siteAnalysis.landAreaSqm ?? 0) > 0) || siteAnalysis.zoneCode));
-  const seedEffectiveFarPct =
-    siteMatch !== "mismatch"
-      ? (siteAnalysis?.integratedFarEffPct ?? siteAnalysis?.effectiveFarPct ?? siteAnalysis?.ordinance?.effectiveFar ?? null)
-      : null;
-  const seedEffectiveBcrPct =
-    siteMatch !== "mismatch"
-      ? (siteAnalysis?.integratedBcrEffPct ?? siteAnalysis?.effectiveBcrPct ?? siteAnalysis?.ordinance?.effectiveBcr ?? null)
-      : null;
+  // ★SSOT 일원화(국소 리졸버 제거): 종전엔 이 두 값만 ordinance.effectiveFar/effectiveBcr를 직접
+  //   읽어(3순위 폴백) "지역 실측 전형 매스 비교" 카드에만 실효 80%가 반영되고, 나머지 화면
+  //   (자동계산 칩·법규 체크리스트·MetricBar·CAD/BIM)은 공용 리졸버(3단만 지원)라 법정 100%로
+  //   낙하했다. 이제 공용 리졸버(resolveFarWithBasis — 4단: 통합>실효>법정>조례실효, 다필지는
+  //   조례 계층 자동 스킵)를 그대로 호출한다(중복 로직 제거·SSOT 일원화).
+  //   단, 이 두 값은 "법정상한 그대로"를 실효값으로 오인 표기하지 않도록 basis=national(법정폴백)은
+  //   여전히 제외한다 — SeedDesignMassComparison이 이 값을 받으면 far_reliable=true·백엔드
+  //   applied_limit_source="site_analysis_effective_limits"("조례·계획 실효 한도 반영" 배지)로
+  //   승격하므로, 법정상한을 그대로 흘려보내면 "실효 반영"이라는 거짓 배지가 뜬다(무날조 유지).
+  const farRes = siteMatch !== "mismatch" ? resolveFarWithBasis(siteAnalysis) : null;
+  const seedEffectiveFarPct = farRes && farRes.basis !== "national" ? farRes.value : null;
+  const bcrRes = siteMatch !== "mismatch" ? resolveBcrWithBasis(siteAnalysis) : null;
+  const seedEffectiveBcrPct = bcrRes && bcrRes.basis !== "national" ? bcrRes.value : null;
 
   // 설계 산출값(연면적·층수·건폐율·용적률·용도)을 컨텍스트 store에 기록.
   // BIM(ProjectBimWorkspaceClient)이 designData.totalGfaSqm을 쓰도록 하여
@@ -713,12 +742,33 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
           residentialGfaSqm: null,       // 부지 기반 단계는 주거전용 분해 없음 → null(무날조)
         }
       : null;
+    // ★H1(PR#316 리뷰): zoneCode는 "실제 출처가 있을 때만" 기록한다. effectiveZoning은 계산용
+    //   변수라 부지분석도 사용자 편집도 없으면 DEFAULT_FORM.zoning("제2종일반주거지역")으로 조용히
+    //   낙하한다(계산은 그래도 진행하기 위한 설계) — 이 계산용 폴백값을 그대로 zoneCode로 기록하면
+    //   `|| null`이 절대 발화하지 않아(문자열이 항상 채워짐) ContextHeader가 "제2종일반주거지역 ·
+    //   직접 입력"으로 사용자가 고른 적 없는 하드코딩 기본값을 확정값처럼 날조 노출한다(자연녹지
+    //   FAR 100%를 제2종 250%로 오도). 부지분석 확정(siteZone) 또는 사용자가 실제로 용도지역
+    //   필드를 편집한 값(userZone·zoneEdited 게이트)만 기록 — 둘 다 없으면 null(ContextHeader "—").
+    // ★R2(PR#316 리뷰): 기록 우선순위는 계산(effectiveZoning:483 — zoneEdited 최우선)과 정합해야
+    //   한다. 사용자값을 부지값보다 먼저 둔다 — 부지 자동감지("제2종일반주거 250%")를 사용자가
+    //   "자연녹지 100%"로 직접 정정했는데 기록이 여전히 부지값을 쓰면, 계산은 사용자 정정을
+    //   반영해 GFA를 낮췄는데 ContextHeader는 정정 전 부지값을 표기해 칩(설계값)과 헤더가
+    //   모순되고 과대 오도가 재발한다.
+    const siteZoneForRecord = isSiteMatched ? normalizeZoning(siteAnalysis?.zoneCode) : null;
+    const userZoneForRecord = zoneEdited ? normalizeZoning(form.zoning) : null;
     const next = {
       totalGfaSqm: calc.maxGrossArea,
       floorCount,
       bcr: calc.buildingCoverage,
       far: calc.floorAreaRatio,
+      // ★설계스튜디오 실효FAR 전파 봉합: far가 실제 실효값(통합/실효/조례)인지, 아니면 법정폴백
+      //   (national)인지를 designData에 함께 기록한다. 종전엔 이 값이 far 숫자로만 store에
+      //   영속돼(설계 산출 SSOT 단일 출처), CAD/BIM·MetricBar 등 하류 소비처가 "법정 100%가
+      //   확정 실효값"인지 "실효 미확보 폴백"인지 구분할 방법이 없었다. false여도 far는 그대로
+      //   기록(최소 침습 — 값 자체는 유지하고 플래그만 동반해 하류가 정직 배지로 구분).
+      farIsEffective: calc.farIsEffective,
       buildingType: form.buildingUse,
+      zoneCode: userZoneForRecord ?? siteZoneForRecord ?? null,
       massGeom,
     };
     const cur = useProjectContextStore.getState().designData;
@@ -727,8 +777,10 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
       cur != null &&
       cur.totalGfaSqm === next.totalGfaSqm &&
       cur.floorCount === next.floorCount &&
+      cur.zoneCode === next.zoneCode &&
       cur.bcr === next.bcr &&
       cur.far === next.far &&
+      (cur.farIsEffective ?? false) === next.farIsEffective &&
       cur.buildingType === next.buildingType &&
       curMassW === (massGeom?.buildingWidthM ?? null);
     if (unchanged) return;
@@ -737,6 +789,10 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
   }, [
     calc,
     form.buildingUse,
+    isSiteMatched,
+    siteAnalysis?.zoneCode,
+    zoneEdited,
+    form.zoning,
     updateDesignData,
     markStageComplete,
     siteMatch,
@@ -778,7 +834,14 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
   //    항상 고급 서랍 안에 둔다(미입력 시 기본 3.0 폴백은 기존대로).
   const floorHeightField = (
     <div className="min-w-0">
-      <label className="cc-label mb-2 block whitespace-nowrap">층고 (m)</label>
+      {/* ⓘ 쉬운 설명(F2) — 전문 파라미터를 비전문가도 이해하도록 hover 툴팁으로 부연(easy 토글과 별개로 상시). */}
+      <label
+        className="cc-label mb-2 flex items-center gap-1 whitespace-nowrap"
+        title="한 층의 바닥부터 위층 바닥까지 높이(m). 층수·건물 높이 환산의 기준이 됩니다. 기본 3.0m."
+      >
+        층고 (m)
+        <Info className="size-3 text-[var(--text-hint)]" aria-hidden />
+      </label>
       <NumberInput allowDecimal placeholder="3.0"
         value={form.floorHeight === "" ? null : Number(form.floorHeight)}
         onChange={(n) => {
@@ -793,7 +856,12 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
   );
 
   return (
-    <div className="space-y-8">
+    // @container: 이 스튜디오가 놓인 '칸의 실제 폭'에 반응한다(뷰포트 아님). 설계 스튜디오
+    //   통합 작업면(DesignWorkspace)의 좁은 중앙 뷰포트에 임베드돼도, 아래 2열 분할이
+    //   컨테이너 폭 기준으로만 펼쳐져 인스펙터 컬럼이 굶지 않는다 → 한글 캡션이 1글자 세로로
+    //   무너지던 현상을 구조적으로 차단(InspectorGrid의 '전역 표준'을 최상위 분할에도 적용).
+    //   전폭(프로젝트 설계 페이지)에선 종전처럼 2열로 펼쳐진다(무회귀).
+    <div className="@container space-y-8">
       <motion.div initial={{ y: -20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="flex flex-wrap items-start justify-between gap-3">
         <div>
         <div className="flex flex-wrap items-center gap-3">
@@ -810,8 +878,8 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
       </motion.div>
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
         {siteMatch === "match" && siteAnalysis?.address && (
-          <p className="text-xs text-emerald-500 mt-2 flex flex-wrap items-center gap-1.5">
-            <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
+          <p className="text-xs text-[var(--status-success)] mt-2 flex flex-wrap items-center gap-1.5">
+            <span className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--status-success)]" />
             {/* 다필지(parcelCount>1)면 통합 필지수·통합 대지면적을 정직 표기 — 설계 계산이
                 대표 1필지가 아니라 통합 면적(landAreaSqm=Σ) 기준임을 명확히 한다.
                 단일필지는 종전과 동일(주소·용도지역만) — 무회귀. */}
@@ -821,7 +889,7 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
           </p>
         )}
         {siteMatch === "mismatch" && (
-          <p className="text-xs text-amber-500 mt-2 flex flex-wrap items-center gap-1.5">
+          <p className="text-xs text-[var(--status-warning)] mt-2 flex flex-wrap items-center gap-1.5">
             <AlertTriangle className="size-3.5" aria-hidden />
             부지분석 데이터가 다른 주소({siteAnalysis?.address})의 결과입니다 — 현 프로젝트
             {projectRecord?.address ? `(${projectRecord.address})` : ""} 기준 재분석이 필요합니다
@@ -837,7 +905,7 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
         )}
         {/* 특이부지 경고 — 학교용지·개발제한·농지·맹지 등은 일반 설계 산출이 부정확할 수 있음 */}
         {siteMatch !== "mismatch" && siteAnalysis?.specialParcel?.isSpecial && (
-          <div className="mt-3 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3.5 py-2.5 text-xs text-amber-500">
+          <div className="mt-3 rounded-xl border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 px-3.5 py-2.5 text-xs text-[var(--status-warning)]">
             <p className="flex flex-wrap items-center gap-1.5 font-bold">
               <AlertTriangle className="size-3.5" aria-hidden />
               특이부지 감지
@@ -845,7 +913,7 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
               {siteAnalysis.specialParcel.factors?.length ? ` (${siteAnalysis.specialParcel.factors.join(", ")})` : ""}
             </p>
             {siteAnalysis.specialParcel.honest && (
-              <p className="mt-1 leading-snug text-amber-500/90">{siteAnalysis.specialParcel.honest}</p>
+              <p className="mt-1 leading-snug text-[var(--status-warning)]/90">{siteAnalysis.specialParcel.honest}</p>
             )}
             <p className="mt-1 leading-snug text-[var(--text-hint)]">
               아래 자동 산출값은 일반 용도지역 가정 기반이라 실제와 다를 수 있습니다 — 부지분석의 특이부지 진단을 우선 검토하세요.
@@ -858,9 +926,9 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
           좌측(인스펙터): 입력 + 결과 패널들을 순서대로. 큰 화면에서는 독립 스크롤.
           우측(캔버스): 활성 매싱안의 대형 2D 배치도 + 핵심 지표 + 3D 핸드오프. 큰 화면에서는 sticky 고정.
           작은 화면에서는 1열로 자연스럽게 세로 스택(종전과 동일). */}
-      <div className="grid grid-cols-1 gap-8 xl:grid-cols-[minmax(0,1fr)_minmax(0,30rem)]">
+      <div className="grid grid-cols-1 gap-8 @4xl:grid-cols-[minmax(0,1fr)_minmax(0,30rem)]">
         {/* 좌측 인스펙터 — 입력·결과 패널(스크롤). 큰 화면에서 독립 스크롤로 우측 캔버스와 분리. */}
-        <div className="min-w-0 space-y-6 xl:max-h-[calc(100vh-12rem)] xl:overflow-y-auto xl:pr-2">
+        <div className="min-w-0 space-y-6 @4xl:max-h-[calc(100vh-12rem)] @4xl:overflow-y-auto @4xl:pr-2">
 
       <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.1 }} className="glass rounded-3xl p-6 border border-[var(--line-strong)]">
         <div className="mb-6 flex items-center gap-2.5">
@@ -873,7 +941,10 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
             언마운트/포커스 상실이 없다. 칩 값은 '현재값'(편집 반영)을 보여주고, 편집은 서랍에서 한다. */}
         {layoutSeeded ? (
           <>
-            {/* 확정 칩 3개 — 현재 적용값(편집하면 즉시 반영). 아직 미수정이면 '부지분석 자동' 배지. */}
+            {/* 확정 칩 3개 — 현재 적용값(편집하면 즉시 반영). 아직 미수정이면 '부지분석 자동' 배지.
+                ★Pillar A: 아래 '직접 조정(고급)' 서랍이 열리면(advancedOpen) 이 칩을 숨겨 같은 값이
+                칩·서랍에 동시 2벌 노출되지 않게 한다(어느 쪽이 정본인지 혼란 제거). */}
+            {!advancedOpen && (
             <InspectorGrid minItemRem={9}>
               {[
                 { label: "대지면적", value: `${Math.round(form.landArea ? Number(form.landArea) : seededLandAreaSqm!).toLocaleString()} ㎡` },
@@ -893,9 +964,20 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
                 </div>
               ))}
             </InspectorGrid>
+            )}
             {/* 직접 조정(고급) — 펼치면 편집 폼 4필드 그대로. 폼은 layoutSeeded 동안 항상 이 서랍 안에
-                머무르므로(편집해도 부모 불변) 타이핑 중 포커스가 유지된다. */}
-            <AdvancedDrawer label="직접 조정(고급)" className="mt-4">
+                머무르므로(편집해도 부모 불변) 타이핑 중 포커스가 유지된다. onOpenChange로 열림 상태를
+                끌어올려 위 확정 칩을 숨긴다(동시 2벌 노출 제거·Pillar A).
+                ★리뷰 LOW-MEDIUM 후속: AdvancedDrawer는 비제어(내부 open state 자체 소유) —
+                key={effectiveProjectId}로 프로젝트 전환 시 강제 리마운트해야 서랍의 내부 open이
+                리셋된다. key 없이 위 리셋 effect의 setAdvancedOpen(false)만 쓰면 '끌어올린 값'만
+                닫힘으로 바뀌고 서랍 자체는 열린 채 남아 칩+서랍이 다시 동시 노출되는 새 결함이 생긴다. */}
+            <AdvancedDrawer
+              key={effectiveProjectId}
+              label="직접 조정(고급)"
+              className="mt-4"
+              onOpenChange={setAdvancedOpen}
+            >
               <InspectorGrid minItemRem={12}>
                 {landAreaField}
                 {zoningField}
@@ -923,9 +1005,14 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
             키 유무와 무관하게 연동 사실은 알린다(키 없으면 등록 후 가능 안내). */}
         {layoutSeeded && (
           <p className="mt-4 text-[11px] leading-snug text-[var(--text-hint)]">
-            {isReady
-              ? "부지분석 연동됨 — 심층 분석을 실행하면 AI 설계 의견이 추가됩니다."
-              : "부지분석 연동됨 — API 키 등록 후 심층 분석으로 AI 설계 의견을 추가할 수 있습니다."}
+            {/* 용도지역까지 확보돼야 "부지분석 연동됨"(레일의 '현재 부지 기준'과 정합). 면적만 있고
+                용도지역이 없으면 레일이 "부지분석 대기"이므로, 콘솔도 "면적만 연동 · 용도지역 확인
+                필요"로 정직히 구분해 같은 화면 모순 표기를 없앤다(무날조). */}
+            {!siteBasisComplete
+              ? "부지 면적만 연동됨 — 용도지역을 확인·입력하면 부지 기준이 확정됩니다."
+              : isReady
+                ? "부지분석 연동됨 — 심층 분석을 실행하면 AI 설계 의견이 추가됩니다."
+                : "부지분석 연동됨 — API 키 등록 후 심층 분석으로 AI 설계 의견을 추가할 수 있습니다."}
           </p>
         )}
         <button onClick={handleAIAnalyze} disabled={isPending || !isReady || !form.landArea}
@@ -939,12 +1026,14 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
       {siteAnalysis?.address && (
         <SeedDesignMassComparison
           address={siteAnalysis.address}
+          pnu={siteAnalysis?.pnu ?? null}
           landAreaSqm={Number(form.landArea) || effectiveLandAreaSqm(siteAnalysis) || 0}
           zoning={effectiveZoning}
           buildingUse={form.buildingUse}
           floorHeightM={Number(form.floorHeight) || 3}
           effectiveFarPct={seedEffectiveFarPct}
           effectiveBcrPct={seedEffectiveBcrPct}
+          farBasis={siteMatch !== "mismatch" ? siteAnalysis?.farBasis ?? null : null}
           disabled={siteMatch === "mismatch"}
         />
       )}
@@ -961,16 +1050,40 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
             </div>
           )}
 
+          {/* ⑤ 섹션 미니 목차(앵커) — 좁은 중앙 프레임에서 2열 분리가 발화 못해 결과가 길게 세로
+              스택될 때, 원하는 섹션으로 바로 점프해 과적 스크롤을 완화한다. 실제 존재하는 섹션만
+              노출(조건부 섹션은 있을 때만 — 무날조). */}
+          <nav aria-label="설계 결과 섹션 목차" className="flex flex-wrap gap-1.5">
+            {[
+              { id: "ds-compliance", label: "법규 적합" },
+              ...(isSiteMatched && (siteAnalysis?.pnu || siteAnalysis?.landAreaSqm)
+                ? [{ id: "ds-solar", label: "일조 볼륨" }]
+                : []),
+              { id: "ds-area", label: "면적" },
+              { id: "ds-setback", label: "이격거리" },
+              { id: "ds-massing", label: "매싱 대안" },
+              ...(aiEff?.summary ? [{ id: "ds-ai", label: "AI 의견" }] : []),
+            ].map((t) => (
+              <a
+                key={t.id}
+                href={`#${t.id}`}
+                className="rounded-full border border-[var(--line)] bg-[var(--surface-muted)] px-2.5 py-1 text-[11px] font-semibold text-[var(--text-secondary)] transition-colors hover:border-[var(--accent-strong)] hover:text-[var(--accent-strong)]"
+              >
+                {t.label}
+              </a>
+            ))}
+          </nav>
+
           {/* 자동계산 칩 — 칩은 폭이 좁아도 무방하므로 칸 최소폭 7rem(컨테이너 실폭 반응).
               넓으면 종전처럼 4열, 좁아지면 2열→1열로 우아하게 접힘. */}
           <InspectorGrid minItemRem={7}>
             {[
               { label: "건폐율", val: `${calc.buildingCoverage}%`, sub: calc.bcrIsEffective ? `실효(법정상한 ${calc.bcrLegalMax}%)` : `법정상한 ${calc.bcrLegalMax}%`, color: "text-blue-400" },
-              { label: "용적률", val: `${calc.floorAreaRatio}%`, sub: calc.farIsEffective ? `실효(법정상한 ${calc.farLegalMax}%)` : `법정상한 ${calc.farLegalMax}%`, color: "text-emerald-400" },
+              { label: "용적률", val: `${calc.floorAreaRatio}%`, sub: calc.farIsEffective ? `실효(법정상한 ${calc.farLegalMax}%)` : `법정상한 ${calc.farLegalMax}%`, color: "text-[var(--status-success)]" },
               // 예상 층수 — 정본(canonicalFloors) 기준. 폴백도 산술하한(maxFloors) 대신 정본→권장(recFloors).
               // 산술하한은 sub에 '근거'로만 작게 부기해 정본 층수와 구분(무날조 투명성).
               { label: "예상 층수", val: expectedFloors?.val ?? (canonicalFloors != null ? `${canonicalFloors}층` : `${calc.recFloors}층`), sub: `${expectedFloors?.sub ?? `${calc.maxHeight}m (${calc.heightNote})`} · 산술하한 ${calc.maxFloors}층(건폐율 만충)`, color: "text-purple-400" },
-              { label: "주차 대수", val: `${calc.parking}대`, sub: "주차장법 기준", color: "text-amber-400" },
+              { label: "주차 대수", val: `${calc.parking}대`, sub: "주차장법 기준", color: "text-[var(--status-warning)]" },
             ].map((k) => (
               <div key={k.label} className="cc-panel cc-interactive min-w-0 p-5 text-center">
                 <p className={`cc-label ${k.color} mb-2`}>{k.label}</p>
@@ -982,12 +1095,20 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
           </InspectorGrid>
 
           {/* 법규 적합 체크리스트 — 적용값이 법정 한도 이내인지 한눈에 */}
-          <div className="cc-panel p-6">
+          <div id="ds-compliance" className="cc-panel scroll-mt-4 p-6">
             <div className="mb-3 flex items-center gap-2.5">
               <span className="cc-label text-[var(--text-secondary)]">COMPLIANCE CHECK</span>
               <h3 className="text-sm font-black text-[var(--text-primary)]">법규 적합 체크리스트</h3>
             </div>
             {easy && <p className="mb-2 text-[11px] text-[var(--accent-strong)]">적용 설계값이 법으로 정한 한도 안에 들어오는지 확인합니다. ✓면 통과예요.</p>}
+            {/* ★정직 배지 — 실효 한도(통합/실효/조례·구조상한)를 확보하지 못해 법정상한으로
+                폴백했음을 명시(조용한 100% 확정 오인 방지). 실효 확보 시엔 표시하지 않는다(무회귀). */}
+            {(!calc.farIsEffective || !calc.bcrIsEffective) && (
+              <p className="mb-3 inline-flex items-start gap-1.5 rounded-lg border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 px-3 py-2 text-[11px] leading-relaxed text-[var(--status-warning)]">
+                <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                실효 한도 미산정 — 법정상한 기준(부지분석 실행 시 정밀화)
+              </p>
+            )}
             {/* ★무날조: 적용값 vs 법정상한을 '실제 비교'한다. 적용 건폐율/용적률은 종상향·인센티브로
                 법정상한을 넘을 수 있으므로(실효값) 항상 '적합'으로 단정하지 않고 실비교로 적합/초과를 가린다.
                 종전 자가비교(적용=한도) 행은 제거. 높이는 법정 제한이 없으면(상업·준주거) '제한 없음'으로 정직 표기. */}
@@ -1013,9 +1134,18 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
             </div>
           </div>
 
-          {/* 일조 · 건축가능 볼륨(정북일조 + 동지 일영) — 부지분석 연동(주소 일치) 시 */}
+          {/* 일조 · 건축가능 볼륨(정북일조 + 동지 일영) — 부지분석 연동(주소 일치) 시.
+              ⑤ 과적 완화: 가장 키가 큰 심층 섹션이라 기본 접힘(details)으로 두고, 필요 시 펼친다.
+              ★SolarEnvelopeCard는 details가 접혀 있어도 마운트가 유지되므로(useEffect on mount)
+              envResult 리프트(예상 층수·정본 층수 배선)는 접힘과 무관하게 그대로 동작한다(무회귀). */}
           {isSiteMatched && (siteAnalysis?.pnu || siteAnalysis?.landAreaSqm) && (
-            <div>
+            <details id="ds-solar" className="group cc-panel scroll-mt-4 p-4">
+              <summary className="flex cursor-pointer list-none items-center gap-2.5 [&::-webkit-details-marker]:hidden">
+                <span className="cc-label text-[var(--text-secondary)]">SUNLIGHT · ENVELOPE</span>
+                <h3 className="text-sm font-black text-[var(--text-primary)]">일조 · 건축가능 볼륨 (심층)</h3>
+                <ChevronDown className="ml-auto size-4 text-[var(--text-tertiary)] transition-transform group-open:rotate-180" aria-hidden />
+              </summary>
+              <div className="mt-3">
               {easy && <p className="mb-2 text-[11px] text-[var(--accent-strong)]">{EASY["일조"]}</p>}
               <SolarEnvelopeCard
                 address={siteAnalysis?.address || undefined}
@@ -1027,10 +1157,11 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
                 floorHeightM={form.floorHeight ? Number(form.floorHeight) : undefined}
                 onResult={(r) => setEnvResult(r)}
               />
-            </div>
+              </div>
+            </details>
           )}
 
-          <div className="grid grid-cols-2 gap-4">
+          <div id="ds-area" className="grid scroll-mt-4 grid-cols-2 gap-4">
             <div className="cc-panel cc-interactive p-5">
               <p className="cc-label text-cyan-400 mb-1">최대 연면적</p>
               <p className="cc-num cc-num--data text-3xl font-black">{calc.maxGrossArea.toLocaleString()} <span className="text-sm">㎡</span></p>
@@ -1041,7 +1172,7 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
             </div>
           </div>
 
-          <div className="cc-panel p-6">
+          <div id="ds-setback" className="cc-panel scroll-mt-4 p-6">
             <div className="mb-3 flex flex-wrap items-center gap-2.5">
               <span className="cc-label text-[var(--text-secondary)]">SETBACK</span>
               <h3 className="text-sm font-black text-[var(--text-primary)]">건축선 이격거리</h3>
@@ -1049,7 +1180,7 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
               {aiEff?.setbacks ? (
                 <span className="rounded-full bg-[var(--accent-soft)] px-2 py-0.5 text-[10px] font-bold text-[var(--accent-strong)]">AI 분석 산출값</span>
               ) : (
-                <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold text-amber-500">기본 가정치</span>
+                <span className="rounded-full bg-[var(--status-warning)]/10 px-2 py-0.5 text-[10px] font-bold text-[var(--status-warning)]">기본 가정치</span>
               )}
             </div>
             <div className="grid grid-cols-3 gap-4 text-center">
@@ -1071,7 +1202,7 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
             )}
           </div>
 
-          <div className="cc-panel p-6">
+          <div id="ds-massing" className="cc-panel scroll-mt-4 p-6">
             <div className="mb-1 flex items-center gap-2.5">
               <span className="cc-label text-[var(--text-secondary)]">MASSING · OPTIONS</span>
               <h3 className="text-lg font-black text-[var(--text-primary)]">매싱 대안 비교</h3>
@@ -1133,9 +1264,11 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
           </div>
 
           {aiEff?.summary && (
-            <div className="glass rounded-2xl p-6 border border-blue-500/20 bg-blue-500/5">
+            <div id="ds-ai" className="glass scroll-mt-4 rounded-2xl p-6 border border-blue-500/20 bg-blue-500/5">
               <h3 className="text-lg font-black text-blue-400 mb-2">AI 설계 의견</h3>
-              <p className="text-sm text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed">{aiEff.summary}</p>
+              {/* ★마크다운 원문 덤프 해소 — LLM 응답의 ##·**·--- 기호를 원문 노출하지 않고
+                  안전 렌더러(MarkdownLite)로 제목·굵게·목록·구분선으로 서식화(무XSS·break-keep). */}
+              <MarkdownLite text={aiEff.summary} className="text-sm text-[var(--text-secondary)]" />
             </div>
           )}
 
@@ -1143,7 +1276,7 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
           {aiResult && !aiEff && aiCleanText && (
             <div className="glass rounded-2xl p-6 border border-[var(--line)]">
               <h3 className="text-sm font-black text-[var(--text-primary)] mb-2">AI 설계 결과</h3>
-              <p className="text-sm text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed">{aiCleanText}</p>
+              <MarkdownLite text={aiCleanText} className="text-sm text-[var(--text-secondary)]" />
             </div>
           )}
         </motion.div>
@@ -1153,7 +1286,7 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
             큰 화면에서 좌측 스크롤과 무관하게 항상 보이도록 고정. 작은 화면에서는 좌측 아래로 흐른다.
             ★WebGL/Three.js 3D 캔버스를 여기 직접 마운트하지 않는다 — 2D(MassingDiagram=SVG) 전용.
             기존 lazy 3D는 'draw' 스텝에서만 마운트(컨텍스트 고갈 방지)하며, 여기선 버튼으로 핸드오프만 한다. */}
-        <div className="min-w-0 xl:sticky xl:top-6 xl:h-[calc(100vh-12rem)]">
+        <div className="min-w-0 @4xl:sticky @4xl:top-6 @4xl:h-[calc(100vh-12rem)]">
           <div className="cc-panel flex h-full flex-col gap-4 overflow-hidden p-5">
             <div className="flex items-center gap-2.5">
               <span className="cc-label text-[var(--text-secondary)]">CANVAS · {canvasView === "3d" ? "3D 입체" : "2D 평면"}</span>
@@ -1193,8 +1326,10 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
                   })}
                 </div>
 
-                {/* 대형 미리보기 — 2D는 MassingDiagram(배치평면), 3D는 MassingAxon3D(축측투영 입체·SVG). */}
-                <div className="flex flex-1 items-center justify-center rounded-2xl border border-[var(--line)] bg-[var(--surface-muted)] p-4">
+                {/* 대형 미리보기 — 2D는 MassingDiagram(배치평면), 3D는 MassingAxon3D(축측투영 입체·SVG).
+                    min-h로 최소 높이만 보장하고, 좁은 임베드(1열)에선 100vh 강제 높이가 없어 거대 공백을
+                    만들지 않는다(전폭 2열에선 부모 h-full로 종전처럼 확장). */}
+                <div className="flex min-h-[16rem] flex-1 items-center justify-center rounded-2xl border border-[var(--line)] bg-[var(--surface-muted)] p-4">
                   <div className="h-full w-full">
                     {canvasView === "2d" ? (
                       <MassingDiagram name={activeMassing.active.name} active geom={activeMassing.geom} />
@@ -1215,8 +1350,9 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
                   </p>
                 )}
 
-                {/* 핵심 지표 칩 — 활성안 기준. 무날조: calc/envResult 실값만, 없으면 "—". */}
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                {/* 핵심 지표 칩 — 활성안 기준. 무날조: calc/envResult 실값만, 없으면 "—".
+                    ★칸 실폭 기준(@container): 좁은 임베드 칸에선 2열, 넓으면 3열(뷰포트 sm: 대신 @sm:) */}
+                <div className="grid grid-cols-2 gap-2 @sm:grid-cols-3">
                   {[
                     { label: "층수", val: activeMassing.floors != null ? `${activeMassing.floors}층` : "—" },
                     { label: "건축면적", val: calc.buildableArea != null ? `${Math.round(calc.buildableArea).toLocaleString()}㎡` : "—" },
@@ -1248,7 +1384,7 @@ export function DesignStudio({ projectId, onOpen3D }: { projectId?: string; onOp
               </>
             ) : (
               // designData(부지면적·용도지역) 게이트 미충족 — 안내 플레이스홀더.
-              <div className="flex flex-1 items-center justify-center rounded-2xl border border-dashed border-[var(--line)] bg-[var(--surface-muted)] p-6 text-center">
+              <div className="flex min-h-[16rem] flex-1 items-center justify-center rounded-2xl border border-dashed border-[var(--line)] bg-[var(--surface-muted)] p-6 text-center">
                 <p className="text-sm leading-snug text-[var(--text-hint)]">
                   부지면적·용도지역을 입력하면<br />매싱 미리보기가 표시됩니다
                 </p>

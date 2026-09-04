@@ -10,8 +10,10 @@ from __future__ import annotations
 import io
 import os
 import re
+import tempfile
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import structlog
@@ -41,6 +43,9 @@ _PERMIT_CHECKLISTS = {
         {"id": "BA-05", "name": "토지이용계획확인서", "required": True, "description": "용도지역 확인"},
         {"id": "BA-06", "name": "지적측량성과도", "required": True, "description": "경계측량 결과"},
         {"id": "BA-07", "name": "건축사 설계도서", "required": True, "description": "건축사 서명 날인"},
+        # ★building_area_sqm 파라미터의 실질 소비 축은 '대지면적'이다(이 BA-08 트리거가 유일 소비처 —
+        #   건축법 §42 조경 요건은 대지면적 기준). 이름이 건축면적을 암시하므로, 향후 '건축면적/연면적'
+        #   기준 조건부 서류를 추가할 땐 같은 파라미터를 재사용하지 말고 별도 인자를 신설할 것(축 혼동 방지).
         {"id": "BA-08", "name": "조경계획서", "required": False, "description": "대지면적 200㎡ 이상 시"},
         {"id": "BA-09", "name": "교통영향평가서", "required": False, "description": "연면적 기준 해당 시"},
         {"id": "BA-10", "name": "환경영향평가서", "required": False, "description": "일정 규모 이상 시"},
@@ -264,7 +269,9 @@ class PermitPackageService:
 
         # 파일 경로에 들어갈 project_id 는 경로조작('../') 차단을 위해 안전문자만 남긴다.
         safe_id = re.sub(r"[^0-9A-Za-z가-힣_-]", "_", str(project_id))[:64] or "package"
-        final_path = f"/tmp/permit_{safe_id}.pdf"
+        # ★`/tmp` 고정 문자열을 쓰지 않는다 — 고정 경로는 다른 프로세스가 미리
+        #   심볼릭 링크를 걸어 둘 수 있고, TMPDIR 로 위치를 옮길 수도 없다.
+        final_path = str(Path(tempfile.gettempdir()) / f"permit_{safe_id}.pdf")
         pdf_path: str | None
         try:
             # 반환하는 경로가 실존 파일이 되도록 실제로 기록한다(빈 약속 금지).

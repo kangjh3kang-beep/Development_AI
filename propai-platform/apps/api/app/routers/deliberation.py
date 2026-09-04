@@ -165,8 +165,8 @@ async def deliberation_baseline_staleness(user=Depends(get_current_user)) -> dic
                 "engine_configured": bool(get_settings().deliberation_engine_url)}
     meta = engine.get("meta") or {}
     try:
-        from app.core.config import settings as core_settings
-        if not getattr(core_settings, "MOLEG_API_KEY", ""):
+        from app.services.legal.moleg_drf_envelope import moleg_oc_key
+        if not moleg_oc_key():
             # 법제처 키 미설정 → 변경 감지 불가. 'not stale'(거짓 안심) 금지 → degrade 정직 표면화.
             return {"degraded": True, "reason": "monitor_key_missing",
                     "baseline_version": meta.get("version"),
@@ -526,13 +526,37 @@ def _compat_fields(result: dict[str, Any] | None) -> dict[str, Any]:
     return {"complianceScore": compliance_score, "finalStatus": final_status,
             "findings": findings, "sections": sections,
             "skipped": result.get("skipped") or [],
-            "snapshot_id": result.get("snapshot_id"), "input_hash": result.get("input_hash")}
+            "snapshot_id": result.get("snapshot_id"), "input_hash": result.get("input_hash"),
+            # ★2026-08-16 — 엔진 원시 계약의 **공학지표(L3-B)·유사사례(L4)·정성평가(L3-C)** 를
+            #   평면으로 함께 노출한다. 종전에는 이 셋이 빠져 있어 소비처
+            #   `DeliberationResultPanel.tsx:195` 가 `result?.sim_metrics` 를 최상위에서 읽고
+            #   **항상 빈 배열**을 받았다 — 프로덕션 `/deliberation-review` 화면의 세 섹션이
+            #   늘 비어 있었다(계산·직렬화는 정상이고 **평면화 목록에서만 누락**).
+            #
+            #   ★대조: 형제 소비처 `DeliberationConsole.tsx:277` 은 **중첩 경로**로 읽어 정상이었다.
+            #   같은 데이터의 두 소비처가 서로 다른 계약을 가정했고, 평면화가 한쪽만 만족시켰다.
+            #
+            #   ★이 셋은 미배포 3커밋(#319·#326·#420) **이전부터** 엔진 계약에 있다(전수 확인:
+            #   세 커밋 diff 에 `sim_metrics` 0건). 즉 **돌고 있는 엔진이 이미 주고 있고**,
+            #   심의엔진 재배포와 무관하게 이 층만 고치면 화면이 채워진다.
+            "sim_metrics": result.get("sim_metrics") or [],
+            "precedent": result.get("precedent"),
+            "qualitative": result.get("qualitative") or []}
 
 
-@router.post("/analyze")
-async def deliberation_analyze(payload: dict = Body(...), user=Depends(get_current_user)) -> dict[str, Any]:
-    """심의분석 — 인증·미러 정규화·완전 선검증·(결정론)멱등·엔진 프록시·무결성/테넌트 가드·감사. 엔진 무수정(HTTP)."""
-    tenant = _tenant(user)
+async def run_deliberation_analysis(
+    payload: dict[str, Any], user: Any, *, tenant: str | None = None
+) -> dict[str, Any]:
+    """심의분석 공용 실행 — 미러 정규화·완전 선검증·(결정론)멱등·엔진 프록시·무결성/테넌트 가드·감사(append-only).
+
+    ★공용화(D3·감사 이중잣대 제거): BFF 라우터(POST /analyze)와 파이프라인(DESIGN_REVIEW STEP)이 **모두**
+    이 함수를 경유해 engine_run_binding 결속 + 해시체인 감사원장 기록을 강제한다. 과거 파이프라인은
+    `_engine_post_analyze`를 직접 호출해 결속·감사 없이 판정을 산출했다(무감사 우회) — 이제 두 경로가 동일
+    계약(멱등·무결성·테넌트 격리·감사 fail-closed)을 공유한다. 입력오류=422, 감사 미기록=502(감사 없는 권위
+    판정 제공 금지). 엔진 무수정(HTTP). tenant 미지정 시 user에서 파생.
+    """
+    if tenant is None:
+        tenant = _tenant(user)
     try:
         dump = build_input_dump(payload)
     except ValidationError as exc:  # 클라이언트 입력오류만 422 — 미러/덤프 내부 버그는 500으로 전파(위장 금지)
@@ -624,6 +648,12 @@ async def deliberation_analyze(payload: dict = Body(...), user=Depends(get_curre
     return {"degraded": False, "reused": False, "deterministic": deterministic, "run_id": run_id,
             "result": result, "audit_degraded": ad, "audit_skipped": sk,
             "status": "ok", **_compat_fields(result)}
+
+
+@router.post("/analyze")
+async def deliberation_analyze(payload: dict = Body(...), user=Depends(get_current_user)) -> dict[str, Any]:
+    """심의분석 BFF — 인증 후 공용 실행(run_deliberation_analysis)에 위임. 결속·감사 계약은 파이프라인과 공유."""
+    return await run_deliberation_analysis(payload, user)
 
 
 @router.get("/analyze/{run_id}")
@@ -789,12 +819,12 @@ async def deliberation_analyze_task(run_id: str, user=Depends(get_current_user))
 
 # ── 시나리오 매트릭스(BE-4) — 하나의 부지에 다경우수(overrides) 결정론 비교 ────────────────────
 #
-# 아래 헬퍼는 기존 `deliberation_analyze()`(§analyze BFF)의 흐름을 그대로 재현하되, 시나리오 1건이
+# 아래 헬퍼는 공용 실행(`run_deliberation_analysis`, =analyze BFF 흐름)을 그대로 재현하되, 시나리오 1건이
 # 실패해도 전체 요청을 raise로 죽이지 않고 그 시나리오만 unavailable로 강등한다(배치 특성상 부분
 # 실패가 정상). build_input_dump·prevalidate·analysis_input_hash·content_input_hash·
 # is_deterministic_path·binding_service.lookup/insert·_engine_post_analyze·_engine_get_analysis·
 # _integrity_ok·_record_audit·_get_degrade_reason·_breaker는 기존 함수를 그대로 호출(복제 없음) —
-# 새로 생기는 것은 이 함수의 제어흐름(호출 순서) 자체뿐이며, `deliberation_analyze()`는 무수정이다.
+# 새로 생기는 것은 이 함수의 제어흐름(호출 순서) 자체뿐이며, 공용 실행 로직(결속·감사)은 무수정이다.
 
 _SCENARIO_CONCURRENCY = 4  # 엔진 동시부하·circuit breaker 고려 — asyncio.gather 무제한 동시성 금지
 _SCENARIO_BUDGET_MULTIPLIER = 3.0  # 전체 예산 가드 = 단일 read timeout × 배수(ceil(캡/동시성)+여유 근사)

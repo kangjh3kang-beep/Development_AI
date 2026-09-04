@@ -16,11 +16,19 @@ from __future__ import annotations
 import math
 from typing import Any
 
+import structlog
+
 from app.services.common.sunlight_setback import max_height_for_north_distance_m
 from app.services.permit.building_code_rules import ZONE_DEFAULTS
-from app.services.zoning.legal_zone_limits import legal_limits_for
+from app.services.zoning.legal_zone_limits import legal_limits_for, structural_cap_for
+
+logger = structlog.get_logger(__name__)
 
 # 정북일조 적용 용도지역(전용/일반주거). 준주거·상업·공업은 통상 미적용/완화.
+# ★수렴 예정(2026-07-31) — 지정 SSOT는 `app/services/common/sunlight_setback.north_light_applies()`.
+#   이 튜플은 **현재 그것과 발산 중**이다: "종"만으로 참이 되어 비주거를 오판하고, 코드형("2R")은
+#   놓친다. 전환하면 이 모듈 출력이 바뀌므로 별건 티켓. 발산 현황은
+#   `tests/test_north_light_zone_divergence.py`가 박제한다.
 _NORTH_LIGHT_ZONES = ("전용주거", "일반주거", "1종", "2종", "3종", "제1종", "제2종", "제3종")
 
 # ★녹지지역 층수 제한(자연녹지 4층 등)은 SSOT(legal_limits_for → ZONE_LIMITS.max_floors)에서
@@ -189,7 +197,9 @@ def _zone_limits(zone: str) -> dict[str, Any]:
         if k in (zone or "") or (zone or "") in k:
             return v
     # 최종 폴백: 미매칭 용도지역은 보수적 추정(과대 금지 — 녹지를 250%로 부풀리던 사고 차단).
-    return {"max_bcr": 60, "max_far": 200, "max_height": 0}
+    # ★P3 후속 스윕: 가정치 사용 사실을 소비처가 식별하도록 far_reliable 마커를 함께 반환
+    #   (compute_buildable_envelope가 assumptions로 정직 전파 — 값은 유지·무회귀).
+    return {"max_bcr": 60, "max_far": 200, "max_height": 0, "far_reliable": False}
 
 
 def _comfort_bcr_divisors(massing_objective: dict[str, Any] | None) -> tuple[float, float]:
@@ -236,6 +246,14 @@ def compute_buildable_envelope(
     lim = _zone_limits(zone)
     bcr = (bcr_limit_pct if bcr_limit_pct is not None else lim.get("max_bcr", 60)) / 100.0
     far = (far_limit_pct if far_limit_pct is not None else lim.get("max_far", 250)) / 100.0
+    # ★P3 후속 스윕(정직 표기): 호출자가 상한을 명시하지 않았고 용도지역이 권위 테이블·
+    #   ZONE_DEFAULTS 모두 미매칭이라 200% 보수 가정치를 쓴 경우 — 값은 유지(무회귀)하되
+    #   assumptions에 표준 문구(far_fallback SSOT)로 고지한다.
+    far_assumption_note: str | None = None
+    if far_limit_pct is None and lim.get("far_reliable") is False:
+        from app.services.land_intelligence.far_fallback import far_fallback_disclosure
+
+        far_assumption_note = far_fallback_disclosure(lim.get("max_far", 200))
     fh = max(2.4, floor_height_m)
     # ★건축유형별 쾌적 건폐율 분모(권장 층수 = 현실 용적률% ÷ 쾌적 건폐율%). 기본 30/20
     #   (low/high)을 보존하되, objective가 있으면 유형별로 조정(무회귀 — None=기본).
@@ -262,9 +280,15 @@ def compute_buildable_envelope(
         if zone_max_floors and bcr > 0 and floors_by_far > zone_max_floors:
             # ★층수 제한이 용적률보다 강한 제약(녹지 4층 등): 현실 연면적 = 건폐율 바닥 × 제한층수.
             #   예) 자연녹지 건폐20%·4층 → 현실 용적률 80%(=20%×4) < 법정 100%. 법정 대신 이 값을 채택.
+            #   ★R1 리뷰 MEDIUM 전역스윕(2026-07-23): 이 산식(건폐율×층수)을 여기서 인라인
+            #   복제하지 않고 legal_zone_limits.structural_cap_for(far_tier_service·
+            #   design-audit과 동일 SSOT)에 위임한다 — 단위는 퍼센트(bcr×100)로 변환해 전달하고
+            #   결과(퍼센트)를 다시 비율로 환산한다. 헬퍼가 None을 반환하면(비정상 입력 등)
+            #   기존 산식으로 안전 폴백(무회귀).
             floors = zone_max_floors
             realistic_gfa = bcr_footprint * floors
-            realistic_far = bcr * floors
+            _cap_pct, _cap_floor, _cap_basis = structural_cap_for(zone, bcr * 100.0)
+            realistic_far = (_cap_pct / 100.0) if _cap_pct is not None else (bcr * floors)
             binding = "층수제한"
         else:
             floors = floors_by_far
@@ -297,9 +321,11 @@ def compute_buildable_envelope(
         return {
             "applies_north_light": False,
             "zone": zone, "bcr_pct": round(bcr * 100, 1),
-            "far_pct": round(far * 100, 1),                       # 법정 용적률 상한
+            # ★"법정"이라 단정하지 않는다 — 호출자가 `far_limit_pct`(실효)를 넘기면 이 값은
+            #   법정 상한이 아니라 **적용 한도**다. 라벨링은 라우터가 요청 유무로 가른다.
+            "far_pct": round(far * 100, 1),                       # 적용 용적률(법정 또는 호출자 실효)
             "realistic_far_pct": round(realistic_far * 100, 1),   # 현실 용적률(층수제한 반영)
-            "far_gfa_sqm": round(far_gfa),                        # 법정 상한 연면적
+            "far_gfa_sqm": round(far_gfa),                        # 적용 용적률 기준 허용 연면적
             "envelope_gfa_sqm": round(realistic_gfa),
             "effective_gfa_sqm": round(realistic_gfa),            # ★연동 소비처가 쓰는 현실 연면적
             "binding": binding,
@@ -332,6 +358,7 @@ def compute_buildable_envelope(
             "assumptions": [
                 "정북일조 미적용 용도지역 — 용적률/건폐율만 적용",
                 "가로구역별 최고높이 별도 확인 필요",
+                *([far_assumption_note] if far_assumption_note else []),
             ],
         }
 
@@ -396,7 +423,7 @@ def compute_buildable_envelope(
         winter_daylight_continuous_min=None,
     )
 
-    return {
+    result = {
         "applies_north_light": True,
         "min_building_spacing_m": min_spacing_080,        # 동간 채광거리 권고(0.8H)
         "min_building_spacing_blank_wall_m": min_spacing_050,  # 무창벽 0.5H
@@ -439,5 +466,76 @@ def compute_buildable_envelope(
             "10m 초과 H≤2d 보수 근사·도로사선 미적용",
             "arithmetic_min_floors=건폐율 만충 산술 하한(법적 개념 아님)",
             "recommended_*·floors_at_*·senior_architect_review=실무 추정/근사(계단식 단면)",
+            *([far_assumption_note] if far_assumption_note else []),
         ],
     }
+
+    # ── W3-2: exact solid Envelope(additive·병행 필드) ──────────────────────────
+    #   기존 2D 근사(위 200분할 스트립 적분)와 별개로, footprint×정북사선 half-space를
+    #   해석적으로 교차한 exact solid 체적·층별 slice·제약별 차감체적·3종(conservative/
+    #   base/conditional)을 병행 노출한다. 기존 키(envelope_gfa_sqm 등)는 절대 건드리지
+    #   않고 신규 키 exact_envelope만 additive로 붙인다(무회귀 — best-effort, 실패 시 생략).
+    try:
+        from app.services.cad.exact_envelope import build_exact_envelope
+
+        zone_setback_m = None
+        for k, v in ZONE_DEFAULTS.items():
+            if k in (zone or "") or (zone or "") in k:
+                zone_setback_m = v.get("setback_m")
+                break
+        exact = build_exact_envelope(
+            {"width_m": W, "depth_m": D},
+            {
+                "side_setback_m": side_setback_m,
+                "floor_height_m": fh,
+                "height_limit_m": lim.get("max_height") or None,
+                "zone_min_setback_m": zone_setback_m,
+            },
+        )
+        if "error" not in exact:
+            variants = exact["variants"]
+            exact_base = variants["base"]
+            # ── R1 MEDIUM 수정: 기존 단일 필드(vs_2d_strip_approx_gfa_sqm_diff)는 '2D 근사
+            #   대비 차이'라고 표기했지만 실측 분해 결과 그 값(예: -5,751.5)의 대부분은 exact
+            #   모델 자신의 층별 이산화(floor-top 보수적 채택) 때문이었고, 진짜 방법론 차이
+            #   (같은 물리적 envelope를 다른 구적법으로 적분한 차이)는 +51㎡/0.012% 수준으로
+            #   사실상 일치했다. 하나의 필드로 뭉치면 '2D 근사가 5,751㎡나 틀렸다'는 오독을
+            #   유발하므로 두 필드로 정직 분리한다(additive — 기존 값 유지, 신규 필드만 추가).
+            exact_volume_equiv_gfa = (exact_base["volume_m3"] / fh) if exact_base["volume_m3"] is not None else None
+            exact_volume_vs_2d_diff = (
+                round(exact_volume_equiv_gfa - envelope_gfa, 1) if exact_volume_equiv_gfa is not None else None
+            )
+            exact_floorstack_vs_volume_diff = (
+                round(exact_base["gfa_sqm"] - exact_volume_equiv_gfa, 1)
+                if exact_base["gfa_sqm"] is not None and exact_volume_equiv_gfa is not None
+                else None
+            )
+            result["exact_envelope"] = {
+                "volume_m3": exact_base["volume_m3"],
+                "gfa_sqm": exact_base["gfa_sqm"],
+                "max_height_m": exact_base["max_height_m"],
+                "num_floors": exact_base["num_floors"],
+                "floors": exact_base["floors"],
+                "round_trip_error_pct": exact_base.get("round_trip_error_pct"),
+                "variants": {
+                    k: {
+                        "volume_m3": v["volume_m3"], "gfa_sqm": v["gfa_sqm"], "max_height_m": v["max_height_m"],
+                        "unbounded": v.get("unbounded", False),
+                    }
+                    for k, v in variants.items()
+                },
+                "constraint_contributions": exact["constraint_contributions"],
+                # 진짜 방법론 차이(volume/층고 − 2D 스트립근사 GFA) — 같은 물리적 envelope를
+                # exact 해석적분 vs 200분할 스트립적분으로 각각 구한 값의 순수 대조(거의 0에 근접).
+                "exact_volume_vs_2d_gfa_diff": exact_volume_vs_2d_diff,
+                # 층별 이산화 보수화분(exact 모델 자신의 floor-stack GFA − 같은 모델의 volume 기반
+                # 등가 GFA) — 층마다 그 층 최상단(가장 좁은 단면)을 채택하는 계단식 근사가 만드는
+                # 손실. 2D 근사와의 차이가 아니라 exact 모델 내부의 이산화 보수화다.
+                "exact_floorstack_vs_2d_gfa_diff": exact_floorstack_vs_volume_diff,
+                "approximation": exact["approximation"],
+                "assumptions": exact["assumptions"],
+            }
+    except Exception as exc:  # noqa: BLE001 — exact envelope 실패해도 기존 2D 근사 결과 무손상
+        logger.warning("exact_envelope_wiring_failed", error=str(exc), zone=zone)
+
+    return result

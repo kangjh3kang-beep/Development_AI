@@ -5,7 +5,7 @@
 # FastAPI Core
 fastapi==0.115.0
 uvicorn[standard]==0.32.0
-python-multipart==0.0.12
+python-multipart==0.0.31  # CVE 7건 해소(0.0.12→0.0.31). fastapi 요구는 >=0.0.7 이라 안전
 httpx==0.27.2
 aiohttp==3.10.10
 
@@ -20,6 +20,7 @@ geoalchemy2==0.15.2
 redis==5.2.0
 celery==5.3.6
 flower==2.0.1
+arq>=0.25  # apps/worker/main.py(arq 워커·cron)가 사용 — 미선언 시 워커 부팅 크래시(requirements.txt P0-1과 동일 함정)
 
 # AI/ML (경량만)
 scikit-learn==1.5.2
@@ -58,6 +59,10 @@ svgwrite==1.4.3
 
 # Documents
 reportlab==4.2.5
+# ★PDF **검증용**(런타임 아님) — 보고서 꼬리말·본문이 실제로 한글로 그려지는지
+#   추출해 확인하는 회귀망이 이것을 쓴다. 없으면 그 락이 통째로 skip 되고,
+#   "모든 PDF 꼬리말이 두부" 회귀를 **아무도 못 잡는다**(2026-08-26 실측).
+pypdf==6.16.2
 pymupdf==1.24.10  # 해촉증명서 PDF→PNG/JPEG 래스터(순수 wheel·시스템의존 0)
 python-pptx==1.0.2
 python-docx==1.1.2
@@ -68,15 +73,27 @@ matplotlib==3.9.2  # 구획도 PNG export(parcel_boundary_export.export_png) —
 
 # Security
 bcrypt>=4.0.0,<5.0.0
-PyJWT==2.9.0
+# ★PyJWT 제거 — 실행코드가 쓰지 않는데 CVE 12건을 물고 있었다(#720).
+#   #720 은 `requirements.txt` 에서만 지웠는데 **프로덕션이 쓰는 파일은 이 파일**이다
+#   (`Dockerfile.oracle:20` → `COPY apps/api/requirements.oracle.txt ./requirements.txt`).
+#   그래서 배포 후에도 라이브 컨테이너에 `PyJWT 2.9.0` 이 그대로 있었다(2026-08-21 실측).
+#   JWT 는 `python-jose` 를 쓴다(아래) — 그 사실은 테스트가 잠근다.
 cryptography==43.0.3
-python-jose[cryptography]==3.3.0
+python-jose[cryptography]==3.5.0  # ★3.4.0 미만 금지 — 3.3.0 에 **알고리즘 혼동**(OpenSSH ECDSA 키, PYSEC-2024-232)이 있다
+                                  # ★3.5.0 이 하한이 된 이유는 **pyasn1** 이다: 3.4.0 은 `pyasn1<0.5.0,>=0.4.1` 로 캡을 걸어
+                                  #   0.4.8 을 강제했고 그 버전에 PYSEC-2026-2263/3455/3456/3457 4건이 있다.
+                                  #   3.5.0 의 제약은 `pyasn1>=0.5.0` 이라 0.6.4 로 해석된다(pip --dry-run 실측).
+                                  #   ★고칠 자리가 **여기(jose)** 인 이유: 3.4.0 을 두고 `pyasn1==0.6.4` 를 직접
+                                  #     적는 길은 **해석 불가**였다(`ResolutionImpossible` 실측). 3.5.0 으로 올린
+                                  #     **지금은 그 핀도 해석은 된다** — 그래도 적지 마라. pyasn1 대역을 정하는 것은
+                                  #     jose 의 제약이고, 직접 핀은 jose 를 내릴 때 **조용히 어긋난다**.
+                                  #     `tests/test_auth_lib_minimum_version.py` 가 직접 핀을 막는다.
 passlib==1.7.4
 
 # HTTP / Utils
 pydantic[email]==2.9.2
 pydantic-settings==2.6.1
-python-dotenv==1.0.1
+python-dotenv==1.2.2  # CVE 1건 해소(1.0.1→1.2.2)
 tenacity==9.0.0
 structlog==24.4.0
 pytz==2024.2
@@ -98,7 +115,15 @@ qdrant-client==1.11.3
 ifcopenshell==0.8.4
 pygltflib==1.16.5
 
-# v62 분양관리 데스크 지명매칭 — 전화 정규화 + 이름 유사도(경량). FCM/PyMuPDF는 기능 활성화 시 추가.
+# v62 분양관리 데스크 지명매칭 — 전화 정규화 + 이름 유사도(경량). FCM은 기능 활성화 시 추가.
+
+# ★PyMuPDF — 고시 원문 PDF 에서 용적률·건폐율을 읽는다(gosi_coverage_service).
+#   【왜 여기 적는가 — 2026-08-21 실측】프로덕션 컨테이너엔 1.24.10 이 **이미 설치돼 있는데
+#   `pip show` 의 `Required-by:` 가 비어 있다** — 아무도 의존하지 않는다. 즉 이 파일로
+#   깨끗이 재빌드하면 **사라지고**, 그러면 고시 수치 추출이 조용히 죽는다
+#   (코드는 ImportError 를 잡아 '수치 없음'으로 안전하게 닫히므로 **아무도 모른다**).
+#   #724 가 데인 형태 그대로다: 처방이 프로덕션이 **쓰지 않는 파일**에 있었다.
+PyMuPDF==1.24.10
 phonenumbers==8.13.48
 rapidfuzz==3.10.1
 

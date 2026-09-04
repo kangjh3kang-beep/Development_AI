@@ -5,10 +5,11 @@ from __future__ import annotations
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app.core.billing_deps import enforce_llm_quota
+from app.services.land_intelligence.parcel_normalize import ParcelsIn
 from app.services.ledger import analysis_ledger_service as ledger
 from app.services.pipeline.project_pipeline import (
     PipelineStage,
@@ -35,7 +36,7 @@ class PipelineRunRequest(BaseModel):
     # 다필지 통합 개발 시 필지목록(2개 이상이면 site stage가 면적가중 통합면적·우세용도로 산출).
     #   행 계약은 /analysis/comprehensive와 동일(camelCase/snake 양형 수용 — build_integrated_context 정규화).
     #   미전달/1필지면 기존 단일주소 동작 그대로(무회귀).
-    parcels: list[dict[str, Any]] | None = None
+    parcels: ParcelsIn | None = None  # ★공용 정규화: str[]/dict[] → canonical dict[](무음 no-op 제거)
 
 
 class StageRerunRequest(BaseModel):
@@ -49,7 +50,7 @@ class StageRerunRequest(BaseModel):
         description="해당 단계에 주입할 사용자 수정값 (예: {\"max_far\": 250})",
     )
     # 다필지 통합 — run과 동일 계약(재실행도 통합면적 유지).
-    parcels: list[dict[str, Any]] | None = None
+    parcels: ParcelsIn | None = None  # ★공용 정규화: str[]/dict[] → canonical dict[](무음 no-op 제거)
     stage_overrides: dict[str, dict[str, Any]] = Field(
         default_factory=dict,
         description=(
@@ -122,7 +123,7 @@ def _merge_parcels_into_options(options: dict | None, parcels: list | None) -> d
     # ★전수감사 보강: 전체 파이프라인(LLM 단계 포함) — 익명 always-LLM 접근 차단 위해 인증도 부착.
     dependencies=[Depends(get_current_user), Depends(enforce_llm_quota)],
 )
-async def run_pipeline(req: PipelineRunRequest):
+async def run_pipeline(request: Request, req: PipelineRunRequest):
     """주소 입력으로 전체 파이프라인 실행."""
     pipeline = ProjectPipeline()
     result = await pipeline.run(
@@ -142,12 +143,20 @@ async def run_pipeline(req: PipelineRunRequest):
         if uid:
             ran = [s.stage for s in stages if s.status == "completed" and (s.duration_ms or 0) > 0]
             if ran:
+                from app.core.charge_guard import charge_once
                 from app.core.database import async_session_factory
                 from app.services.billing import billing_service
 
-                async with async_session_factory() as _db:
-                    for stage_name in ran:
-                        await billing_service.charge_service(_db, uid, f"stage:{stage_name}")
+                # ★재전송 안전 — 단계마다 과금하므로 재실행이면 **여러 건이 한꺼번에** 이중청구된다.
+                #   테넌트는 이 경로에서 얻을 수 없어 사용자 스코프만 쓴다(uid 로 키 공간이 갈린다).
+                async with charge_once(
+                    request, endpoint="pipeline.run", payload=req,
+                    tenant_id=None, user_id=uid,
+                ) as guard:
+                    if guard.billable:
+                        async with async_session_factory() as _db:
+                            for stage_name in ran:
+                                await billing_service.charge_service(_db, uid, f"stage:{stage_name}")
     except Exception:  # noqa: BLE001
         pass
 
@@ -575,7 +584,7 @@ async def interpret_stage(req: InterpretRequest) -> dict[str, Any]:
     "/report",
     response_model=PipelineReport,
     # ★전수감사 보강: 전체 파이프라인(LLM 포함) 실행 — 인증+한도게이트 부착(/run과 동일 계약).
-    # ★잔여 백로그: /report/pdf·/rerun-stage 등 파이프라인 재실행 라우트도 동일 게이트 스윕 권장.
+    # (백로그였던 /report/pdf·/rerun-stage 게이트 스윕 완료 — 동일 계약 부착됨.)
     dependencies=[Depends(get_current_user), Depends(enforce_llm_quota)],
 )
 async def generate_report(req: PipelineRunRequest):
@@ -618,7 +627,12 @@ def _normalize_result(result: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-@router.post("/report/pdf", summary="통합 보고서 PDF 다운로드(결과 제공 시 재실행 없음)")
+@router.post(
+    "/report/pdf",
+    summary="통합 보고서 PDF 다운로드(결과 제공 시 재실행 없음)",
+    # ★인증+한도게이트(형제 /report·/report/pdf-from-ledger와 동일 계약) — 무인증 재실행·LLM 소비 방지.
+    dependencies=[Depends(get_current_user), Depends(enforce_llm_quota)],
+)
 async def generate_report_pdf(req: ReportPdfRequest):
     """통합 분석 보고서를 PDF로 생성. result가 있으면 그것으로(즉시), 없으면 파이프라인 실행."""
     from fastapi.responses import Response
@@ -746,7 +760,11 @@ async def generate_report_pdf_from_ledger(
     )
 
 
-@router.post("/rerun-stage")
+@router.post(
+    "/rerun-stage",
+    # ★인증+한도게이트(형제 엔드포인트와 동일 계약) — 무인증 파이프라인 재실행·LLM 소비 방지.
+    dependencies=[Depends(get_current_user), Depends(enforce_llm_quota)],
+)
 async def rerun_stage(req: StageRerunRequest):
     """특정 단계만 재실행.
 

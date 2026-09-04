@@ -182,6 +182,11 @@ def test_baseline_staleness_degrades_when_key_missing(monkeypatch):
         return _meta_env(), "ok"
     monkeypatch.setattr(delib, "_engine_get_zone_limits", _eng)
     from app.core.config import settings as cs
+    # ★키 「없음」은 **env 와 settings 양쪽**을 비워야 성립한다. `deliberation` 이 이제
+    #   `moleg_oc_key()`(env → settings)를 읽으므로, `settings` 만 비우면 **셸·컨테이너에
+    #   MOLEG_API_KEY 가 있을 때 degrade 분기가 안 타고 법제처로 실호출 60건**이 나간다
+    #   (2026-09-02 독립 리뷰가 대조군으로 실측: origin/main 통과 / 이 브랜치 실패).
+    monkeypatch.delenv("MOLEG_API_KEY", raising=False)
     monkeypatch.setattr(cs, "MOLEG_API_KEY", "")
     app = _app()
     app.dependency_overrides[get_current_user] = lambda: _FakeUser()
@@ -199,6 +204,7 @@ def test_baseline_staleness_success_reports_stale(monkeypatch):
     monkeypatch.setattr(delib, "_engine_get_zone_limits", _eng)
     from app.core.config import settings as cs
     from app.services.regulation_monitor.regulation_monitor import RegulationMonitorService
+    monkeypatch.setenv("MOLEG_API_KEY", "key")
     monkeypatch.setattr(cs, "MOLEG_API_KEY", "key")
     monkeypatch.setattr(RegulationMonitorService, "check_law_updates", _changed)
     app = _app()
@@ -217,6 +223,7 @@ def test_baseline_staleness_monitor_failure_degrades(monkeypatch):
     monkeypatch.setattr(delib, "_engine_get_zone_limits", _eng)
     from app.core.config import settings as cs
     from app.services.regulation_monitor.regulation_monitor import RegulationMonitorService
+    monkeypatch.setenv("MOLEG_API_KEY", "key")
     monkeypatch.setattr(cs, "MOLEG_API_KEY", "key")
     monkeypatch.setattr(RegulationMonitorService, "check_law_updates", _boom)
     app = _app()
@@ -235,6 +242,7 @@ def test_baseline_staleness_not_stale_is_inconclusive_not_false_clear(monkeypatc
     monkeypatch.setattr(delib, "_engine_get_zone_limits", _eng)
     from app.core.config import settings as cs
     from app.services.regulation_monitor.regulation_monitor import RegulationMonitorService
+    monkeypatch.setenv("MOLEG_API_KEY", "key")
     monkeypatch.setattr(cs, "MOLEG_API_KEY", "key")
     monkeypatch.setattr(RegulationMonitorService, "check_law_updates", _no_change)
     app = _app()
@@ -260,6 +268,7 @@ def test_baseline_staleness_times_out_to_degrade(monkeypatch):
                         lambda: SimpleNamespace(deliberation_monitor_timeout_s=0.05, deliberation_engine_url="x"))
     from app.core.config import settings as cs
     from app.services.regulation_monitor.regulation_monitor import RegulationMonitorService
+    monkeypatch.setenv("MOLEG_API_KEY", "key")
     monkeypatch.setattr(cs, "MOLEG_API_KEY", "key")
     monkeypatch.setattr(RegulationMonitorService, "check_law_updates", _slow)
     app = _app()
@@ -274,6 +283,7 @@ async def test_check_law_updates_surfaces_total_failure(monkeypatch):
 
     from app.core.config import settings as cs
     from app.services.regulation_monitor import regulation_monitor as rm
+    monkeypatch.setenv("MOLEG_API_KEY", "key")
     monkeypatch.setattr(cs, "MOLEG_API_KEY", "key")
 
     class _Resp:

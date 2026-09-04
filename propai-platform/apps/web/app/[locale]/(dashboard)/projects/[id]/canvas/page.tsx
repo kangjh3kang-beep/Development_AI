@@ -23,6 +23,7 @@ import { AutoZoningBadge } from "@/components/projects/AutoZoningBadge";
 import { BuildableEnvelopeCard } from "@/components/projects/BuildableEnvelopeCard";
 import { SolarPlacementCard } from "@/components/projects/SolarPlacementCard";
 import { DevelopmentScenarioCard } from "@/components/common/DevelopmentScenarioCard";
+import { parcelIdentityAddresses } from "@/lib/parcel-rows";
 import { ParcelExportButton } from "@/components/projects/ParcelExportButton";
 import { GlobalAddressSearch } from "@/components/common/GlobalAddressSearch";
 import { PreCheckInstantPanel } from "@/components/precheck/PreCheckInstantPanel";
@@ -250,7 +251,7 @@ export default function SiteCanvasPage() {
               <>
                 <DevelopmentScenarioCard
                   address={site?.address ?? undefined}
-                  parcels={(ssotParcels ?? []).map((p) => p.address).filter((a): a is string => !!a && a.trim().length > 0)}
+                  parcels={parcelIdentityAddresses(ssotParcels)}
                 />
                 <DrillCta to={proj("permit")}>인허가 진단·로드맵 상세</DrillCta>
               </>

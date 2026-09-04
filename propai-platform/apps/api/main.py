@@ -22,7 +22,7 @@ from slowapi.middleware import SlowAPIMiddleware
 from apps.api.app.routers.bank_report import router as bank_report_router
 from apps.api.app.routers.uploads import router as uploads_router
 from apps.api.config import get_settings
-from apps.api.database.init_qdrant import check_qdrant_health, init_qdrant_collections
+from apps.api.database.init_qdrant import init_qdrant_collections
 from apps.api.exceptions import register_exception_handlers
 from apps.api.logging_config import get_logger, setup_logging
 from apps.api.metrics import DB_POOL_SIZE
@@ -45,7 +45,6 @@ from apps.api.routers import (
     blockchain,
     building_compliance,
     cad_correction,
-    chatbot,
     climate,
     compliance,
     construction,
@@ -78,7 +77,6 @@ from apps.api.routers import (
     market_ai,
     market_report,
     marketing,
-    monte_carlo,
     notifications,
     parking,
     permit_cases,
@@ -171,6 +169,42 @@ except ImportError:
         from app.routers.c2r import router as c2r_router
     except ImportError:
         c2r_router = None
+
+# 접도·도로 기반(access_basis) — P4 legal/physical/emergency 3상태 (자체 prefix="/access")
+try:
+    from apps.api.app.routers.access import router as access_router
+except ImportError:
+    try:
+        from app.routers.access import router as access_router
+    except ImportError:
+        access_router = None
+
+# 측량·좌표 계약(CoordinateContract) — DXF↔GIS 좌표 정합 검증 (자체 prefix="/survey/coordinate")
+try:
+    from apps.api.app.routers.survey_coordinate import router as survey_coordinate_router
+except ImportError:
+    try:
+        from app.routers.survey_coordinate import router as survey_coordinate_router
+    except ImportError:
+        survey_coordinate_router = None
+
+# 부지기반(site basis) 게이트·상태머신 — P7 ADVISORY/AUTHORIZED 분리 (자체 prefix="/basis")
+try:
+    from apps.api.app.routers.basis import router as basis_router
+except ImportError:
+    try:
+        from app.routers.basis import router as basis_router
+    except ImportError:
+        basis_router = None
+
+# 설계 실행(design-run) 커맨드 — WP-L: 승인차원(approve·멱등)·실행차원(job/cancel) (자체 prefix="/design-runs")
+try:
+    from apps.api.app.routers.design_runs import router as design_runs_router
+except ImportError:
+    try:
+        from app.routers.design_runs import router as design_runs_router
+    except ImportError:
+        design_runs_router = None
 
 # 나라장터(G2B) 공공입찰 (자체 prefix="/g2b")
 try:
@@ -424,26 +458,40 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # 자가성장 엔진 — 텔레메트리 큐 → platform_events 인프로세스 주기 flush.
     # Celery Beat(5초)가 정본이지만, Celery 미배포 환경에서도 적재되도록
     # _presale_monitor_loop 와 동일한 asyncio 폴백을 둔다(단일 워커 1개 루프).
-    async def _growth_flush_loop() -> None:
-        from app.services.growth import capture_service
-        from apps.api.database.session import AsyncSessionLocal
+    # ★**루프도 공용 헬퍼 하나로.** 종전에는 이 파일이 자기 루프를 따로 갖고 있어
+    #   워커와 **두 벌**이었다 — 사본이 갈리면 한쪽만 낡는다(상한 `500` 이 리터럴로
+    #   굳어 `_FLUSH_LIMIT` 과 따로 놀던 것이 그 실례다).
+    #   ★그리고 취소·종료배수 규율(취소를 **기다린다** · 대상이 없어도 **배수는 한다**)이
+    #     헬퍼 안에 있으므로, 이 파일이 그것을 **다시 구현하지 않아야** 같이 지켜진다.
+    from app.services.growth import capture_service as _gcap
+    from apps.api.database.session import AsyncSessionLocal as _GAS
+
+    app.state.growth_flush_ctx = {}
+    _gcap.start_flush_loop(app.state.growth_flush_ctx, _GAS)
+
+    # 전역 아웃박스(outbox_event) 디스패처 — 인프로세스 폴백(P15 A4).
+    # 정본은 arq 워커(apps/worker/main.py dispatch_outbox)지만, 운영 Micro 는 uvicorn 1워커만
+    # 돌고 arq/Redis 가 없어 아웃박스가 발행되지 않는다. _growth_flush_loop 와 동일한 asyncio
+    # 폴백으로 같은 코어(run_outbox_dispatch_until_empty)를 주기 호출한다. arq 와 동시 구동돼도
+    # mark_published 원자 가드(1승)+소비처 멱등이 중복 발행을 1회로 접으므로 안전하다.
+    # ENV OUTBOX_INPROCESS_DISPATCH=0 으로 끌 수 있다(arq 전용 배포 시).
+    async def _outbox_dispatch_loop() -> None:
+        import os as _os2
+        if _os2.getenv("OUTBOX_INPROCESS_DISPATCH", "1") in ("0", "false", "False"):
+            return
+        from app.tasks.outbox_dispatch_task import run_outbox_dispatch_until_empty
+        await _asyncio.sleep(30)  # 부팅 안정화 후 시작.
         while True:
-            await _asyncio.sleep(5)
+            await _asyncio.sleep(10)  # 10초 폴링 주기.
             try:
-                if capture_service.queue_size() == 0:
-                    continue
-                async with AsyncSessionLocal() as _s:
-                    for _ in range(20):
-                        n = await capture_service.flush_batch(_s)
-                        if n < 500:
-                            break
+                await run_outbox_dispatch_until_empty(None)
             except Exception as e:  # noqa: BLE001
-                logger.warning("growth flush 루프 오류: %s", str(e)[:160])
+                logger.warning("outbox 디스패치 루프 오류: %s", str(e)[:160])
 
     try:
-        app.state.growth_flush_task = _asyncio.create_task(_growth_flush_loop())
+        app.state.outbox_dispatch_task = _asyncio.create_task(_outbox_dispatch_loop())
     except Exception:  # noqa: BLE001
-        logger.warning("growth flush 루프 시작 실패")
+        logger.warning("outbox 디스패치 루프 시작 실패")
 
     # 자가성장 엔진 — analyze/heal/correct/learn 주기 잡 인프로세스 스케줄러(Path B).
     # 운영 Micro 는 uvicorn --workers 1 만 돌고 Celery worker/beat·Redis 가 없어
@@ -485,23 +533,88 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         except Exception:  # noqa: BLE001
             pass
 
+    async def _growth_due_map(sched) -> dict[str, bool]:
+        """잡별로 "지금 돌려야 하는가"를 DB 워터마크로 판정한다.
+
+        ★읽기·쓰기·판정은 전부 `schedule.compute_due` 에 있다. 여기는 **세션을 열어 넘기는
+          것만** 한다 — 로직이 이 클로저 안에 있으면 **아무 테스트도 그것을 못 태운다**
+          (실측: 변이 검증에서 그 15줄이 통째로 생존했다).
+
+        ★DB 를 못 읽으면 **경고를 남긴다.** 종전 스케줄러는 문제가 생겨도 조용히 넘어가서
+          "돌고 있는데 아무 일도 안 일어남"과 "정상"이 구분되지 않았다.
+        """
+        from datetime import UTC, datetime
+
+        from app.services.growth import schema_guard
+        from apps.api.database.session import AsyncSessionLocal
+
+        try:
+            async with AsyncSessionLocal() as _s:
+                return await sched.compute_due(_s, schema_guard, datetime.now(UTC))
+        except Exception as e:  # noqa: BLE001
+            # ★조용히 넘어가지 않는다 — 이러면 엔진 전면 정지가 정상과 같은 모양이 된다.
+            logger.warning("growth 스케줄 판정 실패(이번 틱 건너뜀): %s", str(e)[:160])
+            return {}
+
+    async def _growth_mark_run(job_name: str) -> None:
+        """잡을 **실제로 돌린 뒤** 워터마크를 갱신한다.
+
+        ★실행 전이 아니라 후에 적는다. 먼저 적으면 도중에 죽었을 때 "돌았다"고 남아
+          다음 주기까지 건너뛴다.
+        """
+        from datetime import UTC, datetime
+
+        from app.services.growth import schedule as _sched
+        from app.services.growth import schema_guard
+        from apps.api.database.session import AsyncSessionLocal
+
+        try:
+            async with AsyncSessionLocal() as _s:
+                await schema_guard.set_setting(
+                    _s, _sched.watermark_key(job_name),
+                    datetime.now(UTC).isoformat(), updated_by="growth-scheduler",
+                )
+        except Exception as e:  # noqa: BLE001
+            # 여기서 실패하면 그 잡이 다음 틱에 또 돈다(멈추는 것보다는 낫다). 다만 조용히 두지 않는다.
+            logger.warning("growth 워터마크 기록 실패(%s): %s", job_name, str(e)[:160])
+
     async def _growth_run_locked(job_name: str, coro_factory) -> None:
         """advisory lock 획득 시에만 async 코어를 1회 실행한다(잡 단위 격리).
 
         coro_factory(session) -> awaitable. 한 세션 안에서 lock→실행→unlock 을 묶어
         다른 워커와 상호배제. 어떤 예외도 스케줄러를 죽이지 않는다(잡별 try/except).
         """
+        from app.services.growth import stale_build_guard
         from apps.api.database.session import AsyncSessionLocal
+
+        # ★낡은 스택 차단(2026-08-25) — advisory lock 은 **동시 실행만** 막는다.
+        #   스케줄은 platform_settings 워터마크로 정해지는데 두 스택이 그것을 공유하므로,
+        #   잔재 스택이 먼저 도착하면 **정상적으로 락을 얻어** 옛 코드로 돌고 워터마크를 옮긴다.
+        #   상호배제는 성공했고 틀린 쪽이 이겼다. 그래서 락 **앞**에 빌드 게이트를 둔다.
+        #   ★모든 잡(analyze/heal/correct/learn/improve)이 이 함수를 지나므로 길목은 여기 하나다.
+        allowed, why = stale_build_guard.growth_writes_allowed()
+        if not allowed:
+            # ★무언 거부 금지 — 거부는 "엔진 정지"와 "정상"을 같은 모양으로 만든다.
+            logger.warning("growth 잡 거부(낡은 스택 판단): job=%s 사유=%s", job_name, why)
+            return
+
         key = _GROWTH_LOCK_KEYS[job_name]
         try:
             async with AsyncSessionLocal() as _s:
                 got = await _growth_try_lock(_s, key)
                 if not got:
-                    logger.debug("growth 스케줄러 skip(다른 워커 보유): %s", job_name)
+                    # ★종전엔 debug 라 운영 로그에 안 남았다. 그런데 이 분기는 두 가지를
+                    #   **같은 모양으로** 삼킨다 — ①다른 워커가 들고 있다(정상)
+                    #   ②lock 조회 자체가 실패했다(`_growth_try_lock` 의 except → False).
+                    #   ②면 전 잡이 무기한 건너뛰는데 아무도 모른다. info 로 올려 최소한
+                    #   흔적을 남긴다(진짜 구분은 별건 — `_growth_try_lock` 이 예외를 알려야 한다).
+                    logger.info("growth 스케줄러 skip(lock 미획득): %s", job_name)
                     return
                 try:
                     res = await coro_factory()
                     logger.info("growth 인프로세스 잡 완료", job=job_name, result=str(res)[:200])
+                    # ★실행에 성공했을 때만 워터마크를 옮긴다(실패하면 다음 틱에 재시도).
+                    await _growth_mark_run(job_name)
                 finally:
                     await _growth_unlock(_s, key)
         except Exception as e:  # noqa: BLE001 — 한 잡 실패가 다른 잡·앱을 깨지 않게.
@@ -518,14 +631,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         await _asyncio.sleep(120)  # 부팅 안정화 후 시작(flush 루프보다 늦게).
 
-        tick = 0  # 60초 단위 카운터.
+        # ★종전엔 `tick` 이라는 **인메모리 카운터**로 주기를 셌다. 그 변수는 컨테이너가
+        #   새로 뜨면 0으로 돌아가고 **밀린 잡을 따라잡지도 못했다.** 이 저장소는 배포마다
+        #   컨테이너를 새로 만들기 때문에, `learn`(7일)·`improve`(24h)는 그만큼 연속으로
+        #   살아 있어야 발화하는 셈이었다 — 즉 **사실상 한 번도 못 돌았을 가능성이 높다.**
+        #   그런데 스케줄러는 돌고 로그도 남아 겉보기엔 정상이라 아무도 몰랐다.
+        #   → 마지막 실행 시각을 DB(`platform_settings`)에 적고 **경과 시간**으로 판정한다.
+        #     재시작을 넘고, 밀렸으면 다음 틱에 바로 따라잡는다.
+        from app.services.growth import schedule as _growth_sched
+
         while True:
             try:
-                run_analyze = (tick % 60 == 0)   # 매시(60분).
-                run_heal = (tick % 10 == 0)      # 10분.
-                run_correct = (tick % 15 == 0)   # 15분.
-                run_learn = (tick % 10080 == 0 and tick > 0)  # 주간(7일=10080분).
-                run_improve = (tick % 1440 == 0 and tick > 0)  # 일배치(24h=1440분) — L2 개선제안.
+                due = await _growth_due_map(_growth_sched)
+                run_analyze = due.get("analyze", False)
+                run_heal = due.get("heal", False)
+                run_correct = due.get("correct", False)
+                run_learn = due.get("learn", False)
+                run_improve = due.get("improve", False)
 
                 # 순서 보장: analyze 를 먼저 끝낸 뒤 heal/correct 가 최신 인사이트를 본다.
                 if run_analyze:
@@ -552,7 +674,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     await _growth_run_locked("improve", growth_tasks._improve_async)
             except Exception as e:  # noqa: BLE001 — 루프 자체는 절대 죽지 않게.
                 logger.warning("growth 스케줄러 틱 오류: %s", str(e)[:160])
-            tick += 1
             await _asyncio.sleep(60)  # 1분 틱.
 
     if _os.getenv("GROWTH_INPROCESS_SCHED", "1") != "0":
@@ -576,22 +697,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     _st = getattr(app.state, "growth_scheduler_task", None)
     if _st is not None:
         _st.cancel()
-    _gt = getattr(app.state, "growth_flush_task", None)
-    if _gt is not None:
-        _gt.cancel()
-        # 루프 cancel 직후 마지막 동기 flush 1회 — 종료 시 큐 잔여 이벤트 유실 방지.
-        # best-effort: 어떤 예외도 종료를 막지 않는다.
-        try:
-            from app.services.growth import capture_service
-            from apps.api.database.session import AsyncSessionLocal
-            if capture_service.queue_size() > 0:
-                async with AsyncSessionLocal() as _fs:
-                    for _ in range(20):
-                        n = await capture_service.flush_batch(_fs)
-                        if n < 500:
-                            break
-        except Exception as e:  # noqa: BLE001
-            logger.warning("growth 종료 flush 오류: %s", str(e)[:160])
+    # ★**중첩을 푼다** — 종전에는 마지막 배수가 `if _gt is not None:` **안**에 있어서
+    #   루프 기동에 실패한 프로세스는 **살아서도 안 비우고 죽을 때도 안 비웠다**.
+    #   그 프로세스야말로 큐가 가장 깊다 — 결함이 두 배가 되는 자리다.
+    #   헬퍼는 취소 대상이 없어도 배수하고, 취소를 **기다린 뒤** 배수한다.
+    try:
+        from app.services.growth import capture_service as _gcap2
+        from apps.api.database.session import AsyncSessionLocal as _GAS2
+
+        await _gcap2.stop_flush_loop_and_drain(
+            getattr(app.state, "growth_flush_ctx", {}), _GAS2
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("growth 종료 flush 오류: %s", str(e)[:160])
     logger.info("PropAI API 종료")
 
 
@@ -645,6 +763,14 @@ async def _inject_user_context(request, call_next):
 # 예외 핸들러 등록
 register_exception_handlers(app)
 
+# WP-L: RFC 9457 problem+json 핸들러 additive 등록 — 신규 C2R 표면(access·survey/coordinate·basis·
+# design-runs·submission-bundle)에만 opt-in 적용. 그 밖 경로는 FastAPI 기본 핸들러에 위임(무회귀).
+try:
+    from apps.api.app.core.problem_details import register_problem_handlers
+except ImportError:
+    from app.core.problem_details import register_problem_handlers
+register_problem_handlers(app)
+
 # Rate Limiting 등록 (SlowAPIMiddleware → 모든 엔드포인트에 default_limits 적용)
 app.state.limiter = limiter
 app.add_middleware(SlowAPIMiddleware)
@@ -664,40 +790,18 @@ app.include_router(create_latest_redirect_router())
 
 @app.get("/health", response_model=HealthResponse, tags=["시스템"])
 async def health_check() -> HealthResponse:
-    """헬스체크. 의존 서비스 상태를 함께 반환한다."""
-    from apps.api.database.session import engine
+    """헬스체크. 의존 서비스 상태를 함께 반환한다.
 
-    services: dict[str, str] = {}
+    각 의존처 점검에 개별 상한을 건다(``health_probe.PROBE_TIMEOUT_S``). 초과하면 그
+    의존처만 ``timeout`` 으로 표기하고 나머지 점검은 계속한다 — 응답은 항상 상한 안에서
+    끝난다. 같은 점검을 ``/api/v1/system/health/full`` 도 쓰므로 공용 통로로 뺐다.
+    """
+    from apps.api.app.core.health_probe import collect_service_health, overall_status
 
-    # PostgreSQL 연결 확인
-    try:
-        async with engine.connect() as conn:
-            await conn.execute(__import__("sqlalchemy").text("SELECT 1"))
-        services["postgres"] = "healthy"
-    except Exception as e:
-        db_url = str(engine.url)
-        masked = db_url.split("@")[-1] if "@" in db_url else db_url
-        logger.error("PostgreSQL health check failed", host=masked, error=str(e)[:200])
-        services["postgres"] = "unhealthy"
-
-    # Redis 연결 확인
-    try:
-        import redis.asyncio as aioredis
-        r = aioredis.from_url(settings.redis_url)
-        await r.ping()
-        await r.aclose()
-        services["redis"] = "healthy"
-    except Exception:
-        services["redis"] = "unhealthy"
-
-    # Qdrant 확인
-    qdrant_ok = await check_qdrant_health()
-    services["qdrant"] = "healthy" if qdrant_ok else "unhealthy"
-
-    overall = "healthy" if all(v == "healthy" for v in services.values()) else "degraded"
+    services = await collect_service_health()
 
     return HealthResponse(
-        status=overall,
+        status=overall_status(services),
         version=settings.app_version,
         services=services,
     )
@@ -773,7 +877,7 @@ app.include_router(maintenance.router, prefix="/api/v1/maintenance", tags=["main
 app.include_router(tenant.router, prefix="/api/v1/tenant", tags=["tenant-experience"])
 app.include_router(digital_twin.router, prefix="/api/v1/digital-twin", tags=["digital-twin"])
 app.include_router(portals.router, prefix="/api/v1/portals", tags=["portals"])
-app.include_router(chatbot.router, prefix="/api/v1/chatbot", tags=["chatbot"])
+# chatbot 라우터 삭제됨(2026-07-12 — 결정론 캔드 리플라이, 전역 AIAssistant 실LLM과 중복·열등)
 app.include_router(auction.router, prefix="/api/v1/auction", tags=["auction"])
 app.include_router(contractors.router, prefix="/api/v1/contractors", tags=["contractors"])
 
@@ -793,7 +897,7 @@ app.include_router(facility_reservations.router, prefix="/api/v1/facilities", ta
 # LCC 생애주기비용 + EU Taxonomy 라우터
 app.include_router(lcc.router, prefix="/api/v1/lcc", tags=["LCC 생애주기비용"])
 app.include_router(eu_taxonomy.router, prefix="/api/v1/eu-taxonomy", tags=["EU Taxonomy"])
-app.include_router(monte_carlo.router, prefix="/api/v1/monte-carlo", tags=["Monte Carlo 시뮬레이션"])
+# monte_carlo 라우터 삭제됨(독립 표면 잉여 — MC는 finance.py·project_dashboard·/cost/{id}/monte-carlo로 노출)
 app.include_router(development_methods.router, prefix="/api/v1/development-methods", tags=["개발기획 자동화"])
 app.include_router(cost_intelligence.router, prefix="/api/v1/cost-intelligence", tags=["cost-intelligence"])
 app.include_router(contracts.router, prefix="/api/v1/contracts", tags=["contracts"])
@@ -968,9 +1072,20 @@ try:
 except Exception as e:
     logger.warning("app/routers/mass_templates 로드 실패", error=str(e))
 
+# VWorld 타일 프록시(WS-B2): /api/v1/tiles/vworld/{wms,wmts/...} — 관리자 등록 키
+# (platform_secrets→load_into_env)가 web 컨테이너에 전달되지 않는 구조 결함의 폴백 통로.
+# web 타일 프록시가 로컬 VWORLD_API_KEY 부재 시 여기로 중계한다(레이어 화이트리스트 동일).
+try:
+    from app.routers.vworld_tiles import router as vworld_tiles_router
+
+    app.include_router(vworld_tiles_router, prefix="/api/v1", tags=["VWorld 타일 프록시"])
+except Exception as e:
+    logger.warning("app/routers/vworld_tiles 로드 실패", error=str(e))
+
 # 프론트가 호출하나 미마운트였던 app/routers(자체 prefix 보유, 기존 라우트와 경로
-# 충돌 0·대상경로 미존재 라이브확인). 프론트 호출 없는 agents/v2_tax는
-# 표면 확대 방지로 미마운트(필요시 추후). 각각 독립 try로 격리.
+# 충돌 0·대상경로 미존재 라이브확인). 프론트 호출 없는 agents는
+# 표면 확대 방지로 미마운트(필요시 추후). v2_tax는 삭제됨(2026-07-12 정리 — v1 tax와
+# 기능 중복 死모듈, TRIAGE_wiring_p2_2026-07-11.md G7 삭제후보). 각각 독립 try로 격리.
 # ★rates 추가(2026-07-03): BimCostDashboard.tsx가 /api/v1/rates/current(법정요율)를 호출하는데
 #   미마운트라 런타임 404였음 — stale 전제 정정(정찰 F1). cost는 위 g2b 블록에서 이미 마운트됨.
 for _mod, _attr, _tag in [
@@ -1013,3 +1128,15 @@ if comprehensive_analysis_router is not None:
 if c2r_router is not None:
     # C2R: 라우터 자체 prefix="/c2r" → /api/v1/c2r/brief·/api/v1/c2r/render
     app.include_router(c2r_router, prefix="/api/v1")
+if access_router is not None:
+    # 접도·도로 기반(P4): 라우터 자체 prefix="/access" → /api/v1/access/assess
+    app.include_router(access_router, prefix="/api/v1")
+if survey_coordinate_router is not None:
+    # 측량·좌표 계약: 자체 prefix="/survey/coordinate" → /api/v1/survey/coordinate/contract·/reconcile
+    app.include_router(survey_coordinate_router, prefix="/api/v1")
+if basis_router is not None:
+    # 부지기반 게이트(P7): 자체 prefix="/basis" → /api/v1/basis/assess·/{run_id}/approve·/{run_id}
+    app.include_router(basis_router, prefix="/api/v1")
+if design_runs_router is not None:
+    # 설계 실행 커맨드(WP-L): 자체 prefix="/design-runs" → /api/v1/design-runs/{run_id}/approve·/cancel·/job
+    app.include_router(design_runs_router, prefix="/api/v1")

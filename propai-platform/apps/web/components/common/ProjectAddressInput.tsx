@@ -13,7 +13,8 @@
 
 import { useEffect } from "react";
 import { GlobalAddressSearch, type AddressEntry } from "@/components/common/GlobalAddressSearch";
-import { preferredEntryAddress } from "@/lib/parcel-rows";
+import { parcelAddressList, preferredEntryAddress } from "@/lib/parcel-rows";
+import { useHydrated } from "@/hooks/useHydrated";
 import { useProjectStore } from "@/store/useProjectStore";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 
@@ -70,6 +71,7 @@ export function ProjectAddressInput({
   single = false,
 }: ProjectAddressInputProps) {
   void _multi; // 호환용(무시) — 항상 다필지 UI
+  const hydrated = useHydrated();
   const projects = useProjectStore((s) => s.projects);
   const snapshots = useProjectContextStore((s) => s.snapshots);
   const setProject = useProjectContextStore((s) => s.setProject);
@@ -99,16 +101,49 @@ export function ProjectAddressInput({
     if (!id) return;
     const p = projects.find((x) => x.id === id);
     if (!p) return;
-    // setProject가 해당 프로젝트의 이전 분석 스냅샷을 복원한다.
+    // setProject가 해당 프로젝트의 이전 분석 스냅샷을 복원한다(동기 set — 직후 getState로 읽을 수 있다).
     setProject(p.id, p.name, p.status);
-    // 스냅샷이 없거나(미분석) 비어 있는 항목은 프로젝트 레코드 값으로 보강.
+
+    // 스냅샷이 없거나(미분석) 비어 있는 항목**만** 프로젝트 레코드 값으로 보강한다.
+    //
+    // ★이 가드가 없으면(종전 코드) 복원 스냅샷의 정확한 면적을 프로젝트 레코드 p.area 로 무조건
+    //   덮어써 면적이 갈라진다 — 실측된 상도동 사례: 스냅샷 landAreaSqmTotal=3,059(정답)인데
+    //   p.area=11,465(대지지분 미적용 원면적 합계 = 11,229+236)가 landAreaSqm 에만 기록돼
+    //   landAreaSqm(11,465) ≠ landAreaSqmTotal(3,059) 분기가 발생했다. 그 결과 effectiveLandAreaSqm
+    //   을 쓰는 ContextHeader 는 3,059 를, raw 를 읽는 표면은 11,465 를 보여줬다(같은 화면 두 숫자).
+    //   게다가 이 값은 scheduleSnapshotSync 로 서버 스냅샷에까지 영속된다.
+    //   ※두 필드에 독립 writer 가 있는 게 구조적 원인이다(여기는 landAreaSqm 단독,
+    //     ProjectAnalysisSummary 는 landAreaSqmTotal 단독). 아래처럼 '빈 값일 때만' 쓰면
+    //     이미 확보된 분석 결과를 레코드 값이 침범하지 못한다.
+    const restoredSA = useProjectContextStore.getState().siteAnalysis;
     const areaNum = p.area ? Number(String(p.area).replace(/[^0-9.]/g, "")) : null;
+    const shouldSeedArea =
+      areaNum != null && areaNum > 0 && (restoredSA?.landAreaSqm ?? null) == null;
     updateSiteAnalysis({
       address: p.address,
-      pnu: p.pnu || null,
-      ...(areaNum && areaNum > 0 ? { landAreaSqm: areaNum } : {}),
+      // pnu 도 빈 값으로 복원값을 지우지 않는다(p.pnu 미보유 프로젝트에서 || null 이 클로버함).
+      ...(p.pnu ? { pnu: p.pnu } : {}),
+      ...(shouldSeedArea ? { landAreaSqm: areaNum } : {}),
     });
+
+    // ★다필지 하이드레이션 — 복원된 스냅샷의 전 필지를 호스트로 전파한다.
+    //
+    // 이게 없으면: 사통맵에서 5필지로 등록한 프로젝트를 골라도 호스트는 대표주소 1개만 받아
+    // 화면(인테이크 목록·구획도·통합 종합분석)이 1필지로 렌더된다. 반면 ContextHeader 는
+    // store 의 sa.parcelCount 를 직접 읽어 "통합 5필지"를 표시하므로 같은 화면에서 숫자가 갈린다.
+    // 더 위험한 것은 규모 판정이다 — 1필지(446평)와 통합(925평)은 권고 개발방식 자체가 달라진다.
+    // (satong-map-selection.ts 가 parcelCount 와 parcels[] 를 함께 기록하므로 배열은 권위 출처다.)
+    const restored = useProjectContextStore.getState().siteAnalysis;
+    const restoredAddrs = parcelAddressList(restored?.parcels);
+    // 대표주소를 항상 선두에 고정하고 중복 제거(호스트 계약: all[0]=대표, 나머지=추가필지).
+    const all = [p.address, ...restoredAddrs.filter((a) => a && a !== p.address)].filter(Boolean);
     onChange(p.address);
+    // ★단일필지여도 **반드시** 호출한다 — 호출을 건너뛰면 호스트의 extra 가 '이전 프로젝트'의
+    //   필지로 남아 교차오염이 된다(5필지 A → 1필지 B 전환 시 B 화면에 A 의 4필지가 잔류해
+    //   "5개 필지 통합" 날조·B 구획도에 A 필지 렌더·A 필지로 유료 등기조회 발주·인허가 분석이
+    //   두 프로젝트를 혼합). 호스트 계약(setAddr(all[0]); setExtra(all.slice(1)))이 단일필지에서
+    //   extra=[] 로 정확히 정리하므로, 항상 호출하는 것이 유일하게 안전하다.
+    onParcelsChange?.(all);
   };
 
   const handleAddressChange = (entries: AddressEntry[]) => {
@@ -130,7 +165,15 @@ export function ProjectAddressInput({
         <span className="text-xs font-bold uppercase tracking-widest text-[var(--text-tertiary)]">
           {label}
         </span>
-        {!hideProjectPicker && pickerProjects.length > 0 && (
+        {/* ★재수화 이후에만 그린다 — `pickerProjects` 는 `localStorage`(zustand persist)에서
+            파생되므로 **서버는 항상 빈 배열**이다. 그대로 조건에 쓰면 서버는 이 노드를 안 그리고
+            브라우저는 그려 **하이드레이션 불일치**(React #418)가 난다.
+            ★로컬 프로덕션 빌드 변이로 확정했다(2026-08-25): 이 조건을 무력화하면 `/ko/regulations`
+              의 #418 이 1→0 이 되고, 같은 배치의 다른 라우트(양성 대조군)는 1 을 유지했다.
+            ★사용자 가시 동작은 바뀌지 않는다 — 서버 HTML 에는 애초에 이 노드가 없었고,
+              사용자가 보는 것은 재수화 이후 화면이다. 그래서 제품 결정이 아니라 렌더 시점 교정이다.
+            전례: `hooks/useHydrated` 독스트링의 2026-08-13 `LifecycleProgressRail` 사고와 같은 형태. */}
+        {hydrated && !hideProjectPicker && pickerProjects.length > 0 && (
           <div className="flex max-w-[60%] items-center gap-2">
             {pickerLabel && (
               <span className="shrink-0 text-[11px] font-bold text-[var(--text-tertiary)]">{pickerLabel}</span>
@@ -163,6 +206,8 @@ export function ProjectAddressInput({
         single={single}
         initialAddress={value || undefined}
         placeholder={placeholder}
+        // 라벨은 `<span>` 이라 입력과 연결되지 않았다 — 접근 가능한 이름을 직접 준다.
+        ariaLabel={label}
         disabled={disabled}
         writeToContext={writeToContext}
         onChange={handleAddressChange}

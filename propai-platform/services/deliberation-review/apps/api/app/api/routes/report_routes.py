@@ -4,9 +4,10 @@
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from app.api.deps import require_token
 from app.core.errors import EvidenceMissing
 from app.contracts.report import ReviewReport
 from app.render.checklist import to_checklist
@@ -28,8 +29,10 @@ class BuildResponse(BaseModel):
     dashboard: dict
 
 
-@router.post("/build", response_model=BuildResponse)
+@router.post("/build", response_model=BuildResponse, dependencies=[Depends(require_token)])
 def build_report(req: BuildRequest) -> BuildResponse:
+    # ★보안: 임의 항목으로 보고서 빌더를 구동(연산 DoS 표면)하므로 analyze와 동일 베어러 토큰 요구.
+    #   API_TOKEN 미설정(dev)=개방, 설정 시 'Bearer <token>' 필요.
     try:
         report = ReportBuilder().build(
             req.items, snapshot_id=req.snapshot_id, model_version=req.model_version

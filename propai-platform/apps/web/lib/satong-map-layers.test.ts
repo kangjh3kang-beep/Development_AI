@@ -1,9 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  geometryRepresentativePoint,
   hasSatongLayer,
   hasSatongLayerControl,
+  capacityColor,
+  capacityRatio,
   mergeSatongMapFeatures,
+  REGULATION_WMS_BY_CONTROL,
+  resolveRegulationWmsLayerChunks,
+  resolveSelectionAnchor,
   resolveVWorldBaseLayer,
   satongMapFeatureKey,
   zoneColor,
@@ -31,6 +37,17 @@ describe("satong-map-layers", () => {
       controlsByLayer: { terrain: ["satellite"] },
     };
     expect(resolveVWorldBaseLayer(ignoredWhenDisabled)).toBe("Base");
+  });
+
+  it("★회색 컨트롤(id=gray)은 VWorld tiletype 정본 'white'로 해석한다", () => {
+    // 2026-07-17 결함: 전송값이 "gray"였고 그 값은 상류에 실존하지 않아
+    // (InvalidParameterValue/locator=tiletype) 회색 선택 시 배경지도가 통째로 미표시됐다.
+    // ★컨트롤 id("gray")와 전송값("white")은 별개 네임스페이스 — 이 단언이 그 경계를 고정한다.
+    const gray: SatongMapLayerState = {
+      enabledLayerIds: ["cadastre", "terrain"],
+      controlsByLayer: { terrain: ["gray"] },
+    };
+    expect(resolveVWorldBaseLayer(gray)).toBe("white");
   });
 
   it("레이어와 세부 컨트롤 활성 상태를 분리해 판정한다", () => {
@@ -80,5 +97,142 @@ describe("satong-map-layers", () => {
     expect(zoneColor("제2종일반주거지역", 0)).toBe("#14b8a6");
     expect(zoneColor("일반상업지역", 0)).toBe("#ec4899");
     expect(zoneColor("자연녹지지역", 0)).toBe("#65a30d");
+  });
+
+  it("GeoJSON 경계의 대표점(경계상자 중심)을 [lat, lon]으로 파생한다", () => {
+    // GeoJSON 좌표는 [lng, lat] 순 — 반환은 {lat, lon}으로 뒤집혀야 한다.
+    const polygon = {
+      type: "Polygon",
+      coordinates: [[[127.0, 37.0], [127.2, 37.0], [127.2, 37.4], [127.0, 37.4], [127.0, 37.0]]],
+    };
+    expect(geometryRepresentativePoint(polygon)).toEqual({ lat: 37.2, lon: 127.1 });
+
+    const multi = {
+      type: "MultiPolygon",
+      coordinates: [[[[126.0, 36.0], [126.4, 36.0], [126.4, 36.2], [126.0, 36.2], [126.0, 36.0]]]],
+    };
+    const pt = geometryRepresentativePoint(multi);
+    expect(pt?.lat).toBeCloseTo(36.1);
+    expect(pt?.lon).toBeCloseTo(126.2);
+
+    // 비정상 입력은 null(무날조) — 가짜 좌표를 만들지 않는다.
+    expect(geometryRepresentativePoint(null)).toBeNull();
+    expect(geometryRepresentativePoint({ type: "Point", coordinates: [127, 37] })).toBeNull();
+    expect(geometryRepresentativePoint({ type: "Polygon", coordinates: [[["a", "b"]]] })).toBeNull();
+  });
+
+  it("좌표 앵커를 ①좌표 필지 ②경계 대표점 ③(무선택시) 지도중심 순으로 해석한다", () => {
+    const mapCenter = { lat: 37.5665, lon: 126.978 };
+    const geom = {
+      type: "Polygon",
+      coordinates: [[[127.0, 37.0], [127.2, 37.0], [127.2, 37.4], [127.0, 37.4], [127.0, 37.0]]],
+    };
+
+    // ① 좌표 보유 필지가 최우선 — 첫 필지가 좌표 없어도 뒤 필지의 좌표를 쓴다(첫필지 단선 해소).
+    //    ★주소·PNU는 좌표와 같은 앵커 필지의 것 — 첫 필지 주소와 조합되던 불일치 차단.
+    expect(
+      resolveSelectionAnchor(
+        [
+          { lat: null, lon: null, address: "서울 종로구 청진동 1", pnu: "p-first" },
+          { lat: 37.7446, lon: 127.0469, address: "경기 의정부시 의정부동 224", pnu: "p-anchor" },
+        ],
+        mapCenter,
+      ),
+    ).toEqual({
+      lat: 37.7446,
+      lon: 127.0469,
+      source: "parcel",
+      address: "경기 의정부시 의정부동 224",
+      pnu: "p-anchor",
+    });
+
+    // ② 좌표는 없지만 경계가 있으면 대표점 — 엑셀 PNU행이 경계보강 후 자동으로 살아나는 경로.
+    expect(
+      resolveSelectionAnchor(
+        [{ lat: null, lon: null, geometry: geom, address: "경계필지", pnu: "p-geo" }],
+        mapCenter,
+      ),
+    ).toEqual({ lat: 37.2, lon: 127.1, source: "boundary", address: "경계필지", pnu: "p-geo" });
+
+    // ③ 선택이 아예 없을 때만 지도중심 폴백(브라우즈 모드) — 필지가 없으므로 주소도 null.
+    expect(resolveSelectionAnchor([], mapCenter)).toEqual({
+      lat: 37.5665,
+      lon: 126.978,
+      source: "map-center",
+      address: null,
+      pnu: null,
+    });
+
+    // 선택이 있는데 좌표·경계가 전무하면 null — 엉뚱한 지도중심 조회 역전 차단(기존 계약).
+    expect(
+      resolveSelectionAnchor([{ lat: null, lon: null, address: "무좌표", pnu: null }], mapCenter),
+    ).toBeNull();
+    // 무선택 + 지도중심도 없으면 null(정직).
+    expect(resolveSelectionAnchor([], null)).toBeNull();
+  });
+});
+
+// ★`resolveRegulationWmsLayers`(단일 문자열)는 삭제됐다 — 청크를 되붙이면 5레이어 문자열이
+//   되어 VWorld 503(INVALID_RANGE)을 재생산하는 지뢰였다. 이 블록이 지키던 계약(빈 상태·
+//   정본 레이어명·정의 순서)은 **그대로 유지**하되 청크 API 기준으로 옮긴다(약화 없음).
+describe("resolveRegulationWmsLayerChunks — 규제 오버레이(플레이스홀더 잠금 해제)", () => {
+  const st = (controls: string[]) => ({
+    enabledLayerIds: ["zoning" as const],
+    controlsByLayer: { zoning: controls },
+  });
+
+  it("활성 컨트롤이 없으면 빈 문자열(타일 미부설)", () => {
+    expect(resolveRegulationWmsLayerChunks(st(["land-use"]))).toEqual([]);
+    expect(resolveRegulationWmsLayerChunks(undefined)).toEqual([]);
+  });
+
+  it("zoning 레이어가 꺼져 있으면 컨트롤이 남아 있어도 빈 문자열", () => {
+    expect(
+      resolveRegulationWmsLayerChunks({ enabledLayerIds: [], controlsByLayer: { zoning: ["development-limit"] } }),
+    ).toEqual([]);
+  });
+
+  it("★단일·다중 컨트롤 → 정본 소문자 레이어명 콤마 조인(정의 순서 고정)", () => {
+    // 2026-07-17 GetCapabilities+GetMap 매트릭스 채증 정본명 — 대문자·축약 회귀 금지(#366 계열).
+    expect(resolveRegulationWmsLayerChunks(st(["development-limit"]))).toEqual(["lt_c_upisuq171"]);
+    expect(resolveRegulationWmsLayerChunks(st(["height-district", "development-limit"]))).toEqual([
+      "lt_c_upisuq171,lt_c_uq123", // 선택 순서가 아니라 사전 정의 순서
+    ]);
+    expect(
+      resolveRegulationWmsLayerChunks(st(["district-unit", "water-protect", "edu-protect"])),
+    ).toEqual(["lt_c_upisuq161,lt_c_um710,lt_c_uo101"]);
+  });
+
+  it("★매핑 어휘 폐쇄 — Shell 컨트롤 id·프록시 화이트리스트와 1:1(무음 드리프트 방지)", () => {
+    expect(Object.keys(REGULATION_WMS_BY_CONTROL).sort()).toEqual(
+      ["development-limit", "district-unit", "edu-protect", "height-district", "water-protect"],
+    );
+    expect(Object.values(REGULATION_WMS_BY_CONTROL).every((l) => l === l.toLowerCase())).toBe(true);
+  });
+});
+
+describe("capacityRatio / capacityColor — WS-D 개발여력(무날조 계약)", () => {
+  it("실효·현황 중 하나라도 None이면 null(색칠 금지 — 미상은 회색 아님·무색)", () => {
+    expect(capacityRatio(null, 50)).toBeNull();
+    expect(capacityRatio(200, null)).toBeNull();
+    expect(capacityRatio(0, 0)).toBeNull(); // 실효 0/미상 — 분모 불가
+    expect(capacityColor(undefined, 10)).toBeNull();
+  });
+
+  it("여력비 = (실효−현황)/실효 — 나대지(현황 0)는 여력 100%", () => {
+    expect(capacityRatio(200, 0)).toBe(1);
+    expect(capacityRatio(200, 100)).toBe(0.5);
+    expect(capacityRatio(200, 180)).toBeCloseTo(0.1);
+  });
+
+  it("★한도 초과(현황>실효)는 클램프하지 않고 별색(보라) — '여력 없음'과 다른 정보", () => {
+    expect(capacityRatio(200, 260)).toBeCloseTo(-0.3);
+    expect(capacityColor(200, 260)).toBe("#a855f7");
+  });
+
+  it("램프 구간 매핑(5단) — 경계값 검증", () => {
+    expect(capacityColor(100, 95)).toBe("#e2e8f0");  // 5% 여력 → 최하단
+    expect(capacityColor(100, 0)).toBe("#166534");   // 100% → 최상단(1.0 인덱스 클램프)
+    expect(capacityColor(100, 50)).toBe("#4ade80");  // 50% → 중간
   });
 });

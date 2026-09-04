@@ -26,6 +26,60 @@ def npv_from_netflows(netflows: list[float] | None, discount_rate_annual: float)
     return round(npv)
 
 
+def irr_annual_pct_from_netflows(cashflows: list[float]) -> float | None:
+    """월별 순현금흐름 리스트에서 연환산 IRR을 이분법으로 계산한다(순수 파이썬).
+
+    ★W3-1(수익 KPI): 종전 CashflowGenerator._irr_from_netflows 사설(private) 산식을
+    npv_from_netflows와 동일하게 모듈 레벨로 승격 — Equity IRR(return_kpi.py)이 프로젝트
+    IRR과 '동일 산식'을 재사용하도록 한다(신규 IRR 알고리즘 0, 계산 로직 이동만).
+    """
+    try:
+        # 부호 변화(유출→유입)가 없으면 IRR 정의 불가
+        if not any(c < 0 for c in cashflows) or not any(c > 0 for c in cashflows):
+            return None
+
+        def npv_at(rate: float) -> float:
+            return sum(cf / (1 + rate) ** i for i, cf in enumerate(cashflows))
+
+        # npv(0)=순현금합. 부호 기준으로 0에서 bracket을 키워 주근(主根)만 탐색
+        # (극단 음수 rate에서 말기 현금흐름이 발산해 가짜 근을 잡는 문제 회피).
+        base = npv_at(0.0)
+        if abs(base) < 1.0:
+            return 0.0
+        if base > 0:  # IRR>0: 0에서 위로
+            lo, hi = 0.0, 0.01
+            ok = False
+            for _ in range(80):
+                if npv_at(hi) < 0:
+                    ok = True
+                    break
+                hi = min(hi * 1.5, 10.0)
+            if not ok:
+                return None  # 월 IRR>1000% 수준 — 비정상
+        else:  # IRR<0: 0에서 아래로
+            lo, hi = -0.01, 0.0
+            ok = False
+            for _ in range(80):
+                if npv_at(lo) > 0:
+                    ok = True
+                    break
+                lo = max(lo * 1.5, -0.99)
+            if not ok:
+                return None
+        # lo: npv>0, hi: npv<0 → 이분법
+        for _ in range(200):
+            mid = (lo + hi) / 2
+            if npv_at(mid) > 0:
+                lo = mid
+            else:
+                hi = mid
+        monthly_irr = (lo + hi) / 2
+        annual_irr = (1 + monthly_irr) ** 12 - 1
+        return round(annual_irr * 100, 2)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 class CashflowGenerator:
     """프로젝트 현금흐름 자동 생성기.
 
@@ -45,6 +99,15 @@ class CashflowGenerator:
         equity_ratio: float = 0.3,        # 자기자본 비율
         design_months: int = 3,           # 설계 기간
         design_cost_ratio: float = 0.03,  # 설계비 비율 (공사비 대비)
+        # ★W3-R1-HIGH-2(additive): 소프트비 총액 직접 주입 — 지정 시 내부 3% 설계비 계상을
+        #   '대체'하고(모듈 total_other_cost_won에 설계·감리가 포함돼 이중계상 방지) 유출을
+        #   설계 시작~공사 종료에 균등 분산한다. None(기본)=기존 동작 완전 동일(무회귀).
+        soft_cost_won: float | None = None,
+        # ★W5(2026-07-16 승인): 분양대금 유입 스케줄 — "installment"(기본): 계약금 10%
+        #   (분양기간·초기집중) + 중도금 60%(분양개시 익월~공사종료 균등) + 잔금 30%(정산월,
+        #   기존 잔여 로직). 종전 "front_loaded"(전액 분양기간 유입)는 IRR을 비현실적으로
+        #   끌어올렸다(W3 R2 잔여 — 조기 유입 가정). 옵션으로 종전 동작 유지 가능.
+        revenue_schedule: str = "installment",
         tax_schedule: dict[str, Any] | None = None,  # R1: 세금 시점 주입(additive, None=기존 동작)
     ) -> dict[str, Any]:
         """월별 현금흐름을 생성한다.
@@ -88,7 +151,15 @@ class CashflowGenerator:
         settlement_months = 3
         total_months = construction_end + settlement_months + 1
 
-        design_cost = construction_cost * design_cost_ratio
+        # soft_cost_won 지정 시 설계비 슬롯을 소프트비 총액으로 대체(라벨·유출기간도 확장).
+        if soft_cost_won is not None:
+            design_cost = float(soft_cost_won)
+            soft_spread_end = construction_end  # 설계 시작(월1)~공사 종료 균등 분산
+            soft_label = "소프트비(설계·감리·제경비)"
+        else:
+            design_cost = construction_cost * design_cost_ratio
+            soft_spread_end = design_months
+            soft_label = "설계비"
         total_project_cost = land_cost + design_cost + construction_cost
 
         # ── 자금 구조 ──
@@ -101,10 +172,34 @@ class CashflowGenerator:
             construction_cost, construction_months
         )
 
-        # 분양수입 월별 분배
-        monthly_revenue = self._revenue_distribution(
-            total_revenue, sale_duration_months
-        )
+        # 분양수입 월별 분배 — W5: 분할 유입(계약 10·중도 60·잔금 30)이 기본.
+        # ※퇴화 경계(리뷰 R1-MEDIUM-2): 분양개시가 공사종료 직전(ss≥cm−1)이면 중도금
+        #   슬롯이 정산월 밖으로 밀려 수입 대부분이 잔금 balloon으로 후행(후분양 형태로
+        #   퇴화 — 총액 보존·IRR 보수 방향이라 안전하나 '균등 중도금' 의도는 소멸).
+        if revenue_schedule not in ("installment", "front_loaded"):
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "revenue_schedule 미지정값 '%s' — front_loaded로 폴백(수치 대변동 파라미터 오타 주의)",
+                revenue_schedule,
+            )
+        if revenue_schedule == "installment":
+            # 계약금 10%: 분양기간 초기집중 분포(청약·계약 시점).
+            down = self._revenue_distribution(total_revenue * 0.10, sale_duration_months)
+            # 중도금 60%: 분양개시 익월 ~ 공사종료 균등(중도금 회차 근사).
+            mid_end_rel = max(1, construction_end - sale_abs_start)
+            monthly_revenue = [0.0] * (mid_end_rel + 1)
+            for i, v in enumerate(down):
+                if i < len(monthly_revenue):
+                    monthly_revenue[i] += v
+            mid_span = mid_end_rel  # 1..mid_end_rel
+            for i in range(1, mid_end_rel + 1):
+                monthly_revenue[i] += (total_revenue * 0.60) / mid_span
+            # 잔금 30%: 스케줄 밖 잔여 → 정산월(기존 잔여 로직)이 일괄 수령.
+        else:
+            monthly_revenue = self._revenue_distribution(
+                total_revenue, sale_duration_months
+            )
 
         # ── R1: 세금 시점 매핑 (tax_schedule 미지정 시 전부 0 — 기존 동작 완전 동일) ──
         tax_by_month: list[float] = [0.0] * total_months
@@ -152,11 +247,11 @@ class CashflowGenerator:
                 inflow += bridge_loan_amount
                 items.append("브릿지론 실행")
 
-            # ── Phase 1: 설계 (Month 1 ~ design_months) ──
-            if 1 <= month <= design_months:
-                monthly_design = design_cost / design_months
+            # ── Phase 1: 설계/소프트비 (Month 1 ~ soft_spread_end) ──
+            if 1 <= month <= soft_spread_end:
+                monthly_design = design_cost / max(1, soft_spread_end)
                 outflow += monthly_design
-                items.append("설계비")
+                items.append(soft_label)
 
             # ── 브릿지론 → PF 전환 (시공 시작 시) ──
             if month == construction_start:
@@ -197,7 +292,9 @@ class CashflowGenerator:
             interest_total += interest
 
             # ── Phase 3: 분양수입 (정산월 전까지만 — 잔금에서 일괄 정산) ──
-            if sale_abs_start <= month <= min(sale_abs_end, construction_end):
+            # W5: 분할 스케줄은 공사종료까지 이어지므로 상한=construction_end
+            # (front_loaded는 len(monthly_revenue)=분양기간이라 ri<len 가드로 종전 동일).
+            if sale_abs_start <= month <= construction_end:
                 ri = month - sale_abs_start
                 if ri < len(monthly_revenue):
                     rev = monthly_revenue[ri]
@@ -265,9 +362,9 @@ class CashflowGenerator:
         # (rows의 net은 대출 드로/상환·자기자본 포함이라 IRR 폭증 → 의미있는 사업 IRR은 무차입 기준)
         unlevered = [0.0] * total_months
         unlevered[0] -= land_cost
-        for m in range(1, design_months + 1):
+        for m in range(1, soft_spread_end + 1):
             if m < total_months:
-                unlevered[m] -= design_cost / max(1, design_months)
+                unlevered[m] -= design_cost / max(1, soft_spread_end)
         for ci in range(len(monthly_construction)):
             m = construction_start + ci
             if m < total_months:
@@ -332,7 +429,7 @@ class CashflowGenerator:
             },
         }
 
-        return {
+        result = {
             "rows": rows,
             "summary": summary,
             "phases": phases,
@@ -340,6 +437,12 @@ class CashflowGenerator:
             #   유입을 포함해 NPV가 과대되므로, IRR과 동일한 이 unlevered 스트림으로 NPV를 낸다.
             "unlevered_netflows": [round(x) for x in unlevered],
         }
+        # R1(additive): tax_schedule 지정 시에만 세금 차감 무차입 스트림도 노출 — 부담금·세금을
+        # 총사업비에 계상하는 호출자(개략수지)가 NPV를 IRR과 동일한 세후 기저로 낼 수 있게 한다.
+        # None이면 키 자체가 없어 기존 소비자 계약 불변.
+        if tax_schedule is not None:
+            result["after_tax_netflows"] = [round(x) for x in after_tax_netflows]
+        return result
 
     def _s_curve_distribution(self, total: float, months: int) -> list[float]:
         """S-커브 기반 공사비 월별 분배.
@@ -471,52 +574,13 @@ class CashflowGenerator:
         return "정산"
 
     def _irr_from_netflows(self, cashflows: list[float]) -> float | None:
-        """월별 순현금흐름 리스트에서 연환산 IRR을 이분법으로 계산한다(순수 파이썬)."""
-        try:
-            # 부호 변화(유출→유입)가 없으면 IRR 정의 불가
-            if not any(c < 0 for c in cashflows) or not any(c > 0 for c in cashflows):
-                return None
+        """월별 순현금흐름 리스트에서 연환산 IRR을 이분법으로 계산한다(순수 파이썬).
 
-            def npv_at(rate: float) -> float:
-                return sum(cf / (1 + rate) ** i for i, cf in enumerate(cashflows))
-
-            # npv(0)=순현금합. 부호 기준으로 0에서 bracket을 키워 주근(主根)만 탐색
-            # (극단 음수 rate에서 말기 현금흐름이 발산해 가짜 근을 잡는 문제 회피).
-            base = npv_at(0.0)
-            if abs(base) < 1.0:
-                return 0.0
-            if base > 0:  # IRR>0: 0에서 위로
-                lo, hi = 0.0, 0.01
-                ok = False
-                for _ in range(80):
-                    if npv_at(hi) < 0:
-                        ok = True
-                        break
-                    hi = min(hi * 1.5, 10.0)
-                if not ok:
-                    return None  # 월 IRR>1000% 수준 — 비정상
-            else:  # IRR<0: 0에서 아래로
-                lo, hi = -0.01, 0.0
-                ok = False
-                for _ in range(80):
-                    if npv_at(lo) > 0:
-                        ok = True
-                        break
-                    lo = max(lo * 1.5, -0.99)
-                if not ok:
-                    return None
-            # lo: npv>0, hi: npv<0 → 이분법
-            for _ in range(200):
-                mid = (lo + hi) / 2
-                if npv_at(mid) > 0:
-                    lo = mid
-                else:
-                    hi = mid
-            monthly_irr = (lo + hi) / 2
-            annual_irr = (1 + monthly_irr) ** 12 - 1
-            return round(annual_irr * 100, 2)
-        except Exception:  # noqa: BLE001
-            return None
+        ★W3-1(수익 KPI): 실제 산식은 모듈 레벨 irr_annual_pct_from_netflows로 이관(위임) —
+        Equity IRR(return_kpi.py)이 '신규 IRR 알고리즘'이 아니라 이 산식을 그대로 재사용하게
+        한다. 기존 호출부(본 클래스·테스트의 private 메서드 직접호출)는 완전 동일 동작.
+        """
+        return irr_annual_pct_from_netflows(cashflows)
 
 
 def build_tax_schedule_from_integrated(

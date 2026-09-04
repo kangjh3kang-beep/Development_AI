@@ -13,12 +13,33 @@ from typing import Any
 
 import structlog
 
+from app.services.regulation.protection_zone_severity import severity_for, severity_rank
+from app.services.zoning.district_regime import is_detailed_urban_plan
+
 logger = structlog.get_logger(__name__)
 
 # 적용규제 영향도 분류(district name 키워드)
 _HIGH = ["토지거래", "개발제한", "군사시설", "비행안전", "문화재", "정화구역", "상수원", "수변구역"]
+# ★여기의 "성장관리"는 **의도된 부분일치**다 — 바로 옆 "과밀억제"와 함께 수도권정비계획법
+#   3권역의 영향도(중)를 매기려는 자리이고, 국토계획법 성장관리계획구역도 같은 '중'이라
+#   두 제도가 같은 값을 낸다. 규제계층 분류(:아래 is_detailed_urban_plan)와 달리 여기서는
+#   갈라도 결과가 같으므로 그대로 둔다. 갈라야 하는 자리는 district_regime 을 쓸 것.
 _MID = ["과밀억제", "지구단위", "재정비촉진", "정비구역", "고도지구", "방화지구", "경관지구",
         "최고높이", "리모델링", "역세권", "성장관리", "지구단위계획구역"]
+
+
+def _severity_to_impact(severity: str) -> str:
+    """protection_zone_severity(낮음~극히 높음) → 규제 영향도(상/중/하).
+
+    높음·극히 높음 → 상, 중간·보통 → 중, 낮음 → 하. 제한보호(중간)는 '상'이 아니라 '중'으로
+    분류돼 협의개발 가능한 정상사업을 죽이지 않는다(M4 과잉교정 회피).
+    """
+    r = severity_rank(severity)
+    if r >= 3:      # 높음 이상
+        return "상"
+    if r >= 1:      # 보통·중간
+        return "중"
+    return "하"
 
 
 def _impact(name: str) -> str:
@@ -28,6 +49,11 @@ def _impact(name: str) -> str:
     for k in _MID:
         if k in name:
             return "중"
+    # ★SSOT 보강(근원봉합) — _HIGH/_MID에 없던 보호구역(통제보호·제한보호·방공기지·방공유도탄)을
+    #   protection_zone_severity로 분류한다. 기존 _HIGH/_MID 우선이라 다른 규제는 무회귀.
+    sev = severity_for(name)
+    if sev is not None:
+        return _severity_to_impact(sev)
     return "하"
 
 
@@ -44,7 +70,7 @@ _USER_TMPL = """\
 - 용도지역: {zone_type}{zone_2}
 - 대지면적: {area}㎡
 - 건폐율 한도(법정/조례/실효): {bcr}
-- 용적률 한도(법정/조례/실효): {far}
+- 용적률 한도(법정/조례/실효): {far}{far_basis}
 - 적용 규제·지구·구역: {districts}
 
 ## 출력 JSON 스키마
@@ -117,6 +143,79 @@ class RegulationAnalysisService:
         # ── 정량 한도 ──
         limits = self._limits(zl)
 
+        # ── WP-R1: 실효 용적률/건폐율 = far_tier_service SSOT 단일경유 소비(재계산 금지) ──
+        # comp["effective_far"]는 collect_comprehensive가 이미 calc_effective_far로 산정한
+        #   '구조상한 반영 실효치'(자연녹지 = 건폐 20% × 4층 = 80%). zone_limits(zl)엔
+        #   effective_far_pct 키가 없어 _limits가 법정(100%)으로 폴백하므로, 여기서 SSOT값으로
+        #   effective 슬롯을 덮어써 "실효 100%" 오표기(설계 스튜디오와 데이터원 발산)를 봉합한다.
+        #   다필지 통합은 면적가중 blended 실효치(각 필지 calc_effective_far 경유·이미 클램프)가 우선.
+        _eff = comp.get("effective_far")
+        eff = _eff if isinstance(_eff, dict) else None
+        eff_far_pct = eff.get("effective_far_pct") if eff else None
+        eff_bcr_pct = eff.get("effective_bcr_pct") if eff else None
+        if integrated:
+            if integrated.get("blended_far_eff_pct") is not None:
+                eff_far_pct = float(integrated["blended_far_eff_pct"])
+            if integrated.get("blended_bcr_eff_pct") is not None:
+                eff_bcr_pct = float(integrated["blended_bcr_eff_pct"])
+        if eff_far_pct is not None and isinstance(limits.get("far"), dict):
+            limits["far"]["effective"] = eff_far_pct
+        if eff_bcr_pct is not None and isinstance(limits.get("bcr"), dict):
+            limits["bcr"]["effective"] = eff_bcr_pct
+        # ★적대리뷰 반영(HIGH): eff(구조상한 structural_cap_pct/floor_cap/floor_cap_basis/far_basis)는
+        #   '대표(첫) 필지' 단일존 계산치다. 다필지 혼합(integrated 성공)은 effective(far/bcr)를 면적가중
+        #   blended로 이미 덮어썼으므로, 대표필지의 구조상한을 그 옆에 그대로 노출하면 "실효 건폐율
+        #   40%(blended) × 4층(대표) = 80%(대표)" 같은 가시적 산술 거짓이 재유입된다(far_tier_service.
+        #   rebuild_legal_basis_annotations의 "139.6% vs 200%" 전례와 동일 클래스). integrated가 None일
+        #   때만(진짜 단일필지 또는 통합실패 폴백 — 이 경우 eff_far_pct/eff_bcr_pct는 대표값 그대로라
+        #   구조상한과 정합) 구조상한 상세를 노출한다(정직 — 다필지 혼합은 미표시가 안전).
+        # ★근거체인 절단 수정(2026-07-19 라이브 신고 — AI 검증이 "far.effective=80 근거 미명시"
+        #   경고): 위 가드는 혼합존의 산술 거짓(blended 40%×대표 4층=대표 80%)을 막으려는 것인데,
+        #   **동질존**(zone_mix 1종 — 예: 12필지 전부 자연녹지)까지 근거를 숨겨 실효 80%가
+        #   무근거 하드코딩처럼 보였다. 동질존에선 면적가중 blended = 단일존 실효치라 구조상한
+        #   (건폐×층수상한)·far_basis가 전체 집합에 그대로 유효 — 산술 거짓이 성립하지 않는다.
+        _zone_mix = integrated.get("zone_mix") if isinstance(integrated, dict) else None
+        _uniform_zone = (
+            bool(_zone_mix)
+            and all(z.get("zone") for z in _zone_mix if isinstance(z, dict))
+            and len({z.get("zone") for z in _zone_mix if isinstance(z, dict)}) == 1
+        )
+        # ★R1 하드닝(MAJOR): 동질존이어도 **시군구가 다르면** 필지별 조례 BCR이 달라
+        #   blended(면적가중)가 대표필지 구조상한과 발산할 수 있다(예: blended 19%×4층 문구에
+        #   대표 80%가 붙는 산술 거짓 — 이 가드가 원래 봉인하려던 결함 클래스). 동질존 표시는
+        #   blended가 대표 구조상한 산식과 ε(0.5%p) 내로 정합할 때만 허용하고, 발산하면 기존
+        #   안전 동작(미표시=정직)으로 폴백한다.
+        _struct_consistent = True
+        if integrated and _uniform_zone and eff:
+            _cap = eff.get("structural_cap_pct")
+            _fc = eff.get("floor_cap")
+            if _cap is not None and _fc and eff_bcr_pct is not None:
+                _struct_consistent = abs(float(eff_bcr_pct) * float(_fc) - float(_cap)) <= 0.5
+            if _struct_consistent and _cap is not None and eff_far_pct is not None:
+                _struct_consistent = abs(float(_cap) - float(eff_far_pct)) <= 0.5
+        _show_structural = bool(eff) and (not integrated or (_uniform_zone and _struct_consistent))
+        # 구조상한(건폐율×층수) 근거를 높이 카드 칩으로 노출(층수제한 zone만) — 레지스트리 단일출처.
+        floor_cap = eff.get("floor_cap") if (eff and _show_structural) else None
+        # 근거 텍스트를 응답 표면에 명시(additive) — AI 검증·프론트·전문가 패널이 동일 근거를 본다.
+        #   far.effective_basis: "건폐 20%×4층=80% 구조상한(시행령 별표17)" 류의 산정 근거.
+        #   height.basis: zl(height_basis) 우선, 없으면 구조상한 근거(floor_cap_basis)로 보충.
+        if _show_structural and eff:
+            _fb = eff.get("far_basis")
+            if _fb and isinstance(limits.get("far"), dict):
+                limits["far"]["effective_basis"] = _fb
+            _fcb = eff.get("floor_cap_basis")
+            if _fcb and isinstance(limits.get("height"), dict) and not limits["height"].get("basis"):
+                limits["height"]["basis"] = _fcb
+        if floor_cap and isinstance(limits.get("height"), dict):
+            try:
+                from app.services.legal.legal_reference_registry import get_legal_refs
+
+                _hrefs = get_legal_refs(["green_zone_floor_cap"])
+                if _hrefs:
+                    limits["height"]["legal_ref"] = _hrefs[0]
+            except Exception:  # noqa: BLE001 — 근거 칩 부착 실패는 높이 표기 무손상
+                pass
+
         # ── 적용 규제 전수(영향도) ──
         districts = []
         seen = set()
@@ -142,8 +241,13 @@ class RegulationAnalysisService:
 
         # 신뢰 레이어(additive): 계층 각 노드에 법령링크(legal_refs) 가산 + 한도 근거 트레이스(evidence).
         # zone_type 미확정 시 해당 노드 legal_refs는 빈 배열(가짜 링크 금지). url은 레지스트리 출력만.
-        self._attach_node_legal_refs(hierarchy, zone_type, sigungu, zl)
-        evidence = self._build_evidence(zone_type, limits, sigungu)
+        # WP-R2: 개별 규제 레벨은 legal_refs_for_districts(지역지구별 규제법령집) 단일경유로 부착하고,
+        #   상위법령 레벨엔 §77/§78(bcr_law/far_law)·녹지 층수상한(green_zone_floor_cap)을 가산한다.
+        self._attach_node_legal_refs(
+            hierarchy, zone_type, sigungu, zl, districts=districts, has_floor_cap=bool(floor_cap),
+        )
+        # 구조상한 evidence 행도 동일 게이트(_show_structural) — 다필지 혼합엔 eff(대표필지) 미전달.
+        evidence = self._build_evidence(zone_type, limits, sigungu, eff if _show_structural else None)
 
         land_category = lr.get("land_category") or lc.get("land_category")
 
@@ -171,6 +275,32 @@ class RegulationAnalysisService:
         # is_special일 때만 부착(무목업) — 일상 부지면 키 자체를 넣지 않아 하위호환·무회귀.
         if special_parcel:
             result["special_parcel"] = special_parcel
+
+        # WP-R1: effective_far 통과키(구조상한 실체) — 프론트/근거패널이 소비(가산·옵셔널·무회귀).
+        #   층수제한 없는 zone은 structural_cap_pct/floor_cap이 None(자연스레 미표기).
+        #   다필지 혼합(_show_structural=False)은 대표필지 전용 구조상한/근거를 실지 않는다(정직 —
+        #   blended effective_far_pct/effective_bcr_pct 헤드라인만 남기고 산술 불일치 필드는 생략).
+        if eff:
+            result["effective_far"] = {
+                "effective_far_pct": eff_far_pct,
+                "effective_bcr_pct": eff_bcr_pct,
+                "structural_cap_pct": eff.get("structural_cap_pct") if _show_structural else None,
+                "floor_cap": eff.get("floor_cap") if _show_structural else None,
+                "floor_cap_basis": eff.get("floor_cap_basis") if _show_structural else None,
+                "far_basis": eff.get("far_basis") if _show_structural else None,
+            }
+
+        # ── WP-R3 parity: 실제 사용된 필지 목록(주소+PNU) echo — 구획도/패널이 단일 권위목록 소비 ──
+        #   다필지(2필지↑)면 전달된 행을, 아니면 해결된 단일 필지를 실어 클라 재파생 드리프트를 제거한다.
+        _used: list[dict] = []
+        if len(_rows) >= 2:
+            for p in _rows:
+                _a = (p.get("address") or "").strip()
+                if _a:
+                    _used.append({"address": _a, "pnu": p.get("pnu") or None})
+        if not _used:
+            _used = [{"address": address, "pnu": comp.get("pnu") or pnu}]
+        result["parcels_used"] = _used
 
         # 다필지 통합 적용 사실(있으면) — 프론트가 "통합 N필지 기준" 표기에 사용.
         #   parcels 미전달/1필지면 키 자체를 생략(단일 경로 무회귀).
@@ -203,14 +333,33 @@ class RegulationAnalysisService:
                     bcr_actual=_bcr.get("effective"), bcr_limit=_bcr.get("legal") or _bcr.get("effective"),
                     height_actual=_hgt.get("value"), height_limit=_hgt.get("value"),
                 )
+                # 데이터 완결도 신호(정직 confidence): 건폐/용적/높이 3축 중 확보된 축 비율.
+                # ★R1 MINOR-1: 0도 '확보된 값'이다 — `or` 폴백은 0을 결측 취급(0-falsy)하므로
+                #   is not None 기준으로 통일(3축 동일 정책).
+                def _first_known(*vals):
+                    return next((v for v in vals if v is not None), None)
+                _axes = (_first_known(_bcr.get("effective"), _bcr.get("legal")),
+                         _first_known(_far.get("effective"), _far.get("legal")),
+                         _hgt.get("value"))
+                _completeness = sum(1 for a in _axes if a is not None) / len(_axes)
+                # 풍성화(사용자 신고 '시니어 분석 빈약'): IRAC 체인(쟁점→규칙[법령 근거]→적용→결론)
+                # 동봉 — 결정론·무LLM이라 지연/비용 0. 프론트 SeniorVerdictCard가 렌더.
                 result["senior_consultation"] = attach_senior_consultation_multi(
                     ["deliberation", "urban", "legal"], _sr_inputs,
+                    include_reasoning=True,
+                    context_signals={"data_completeness": _completeness},
                 )
             except Exception:  # noqa: BLE001 — 시니어 자문 첨부 실패는 규제 분석 무손상
                 pass
 
         if use_llm:
-            result["ai"] = await self._llm(address, zone_type, zone_2, area, limits, districts)
+            # WP-R1: 실효 용적률 근거(구조상한 등)를 프롬프트에 주입 → AI가 "실효 80%(4층 제한 바인딩)" 서술.
+            #   다필지 혼합(_show_structural=False)은 대표필지 전용 근거문구를 주입하지 않는다(AI가
+            #   blended 헤드라인 옆에 대표필지 근거를 잘못 서술하는 것을 방지 — 근거 없음이 정직).
+            _far_basis = eff.get("far_basis") if (eff and _show_structural) else None
+            result["ai"] = await self._llm(
+                address, zone_type, zone_2, area, limits, districts, far_basis=_far_basis,
+            )
         else:
             result["ai"] = None
         return result
@@ -307,8 +456,12 @@ class RegulationAnalysisService:
             {"name": "도시·군기본계획 / 도시·군관리계획", "ref": "-",
              "desc": "용도지역·기반시설·도시계획시설 등 상위 공간계획"},
         ]
+        # ★판별은 공용 SSOT(district_regime)로만 한다 — 부분일치 `"성장관리" in name` 은
+        #   수도권정비계획법 **성장관리권역**(제6조제1항제2호·제8조 행위제한)을 국토계획법
+        #   **성장관리계획구역**(제75조의2 완화근거)으로 오인해, 경기 성장관리권역 필지 전역에
+        #   *"지구단위계획 등 세부 도시관리계획"* 이라는 틀린 설명을 붙였다(2026-08-19 라이브 실측).
         for d in districts:
-            if any(k in d["name"] for k in ["지구단위", "재정비촉진", "정비구역", "도시개발", "성장관리"]):
+            if is_detailed_urban_plan(d["name"]):
                 plans.append({"name": d["name"], "ref": d.get("code", ""),
                               "desc": "지구단위계획 등 세부 도시관리계획(별도 지침 적용)"})
 
@@ -340,15 +493,21 @@ class RegulationAnalysisService:
     #   지구단위→district_unit_plan, 조례→ordinance_bcr/ordinance_far.
     # ─────────────────────────────────────────────────────────────────────────
     @staticmethod
-    def _level_ref_keys(level_name: str, zone_known: bool, has_du_plan: bool) -> list[str]:
+    def _level_ref_keys(
+        level_name: str, zone_known: bool, has_du_plan: bool, has_floor_cap: bool = False,
+    ) -> list[str]:
         """계층 레벨명 → 부착할 레지스트리 근거키 목록(중복 없는 순서 보존).
 
         zone_type 미확정(zone_known=False) 시 zone 종속 한도 근거는 부착하지 않는다
         (건폐/용적/용도 한도는 용도지역이 있어야 의미 있음 → 빈 배열로 정직 표기).
         """
         if level_name == "상위법령":
-            # 용도지역 행위제한·건폐율·용적률(국토계획법/시행령) + 건축 한도 + 주차 기준.
-            base = ["zone_use", "bcr_limit", "far_limit", "bldg_far", "parking_min"]
+            # 용도지역 행위제한 + 건폐율/용적률(법률 §77/§78=bcr_law/far_law, 시행령 §84/§85=bcr_limit/
+            #   far_limit) + 건축 한도 + 주차 기준. WP-R2: 법률 조문 링크(§77/§78)가 미배선이던 갭 봉합.
+            base = ["zone_use", "bcr_law", "far_law", "bcr_limit", "far_limit", "bldg_far", "parking_min"]
+            # 녹지 등 층수제한 zone은 구조상한(별표15~17 4층) 근거키를 함께 부착(높이 근거 정합).
+            if has_floor_cap:
+                base.append("green_zone_floor_cap")
             return base if zone_known else ["parking_min"]
         if level_name == "도시·군계획 / 지구단위계획":
             # 지구단위계획 근거는 해당 구역이 실제 있을 때만(가짜 링크 방지).
@@ -359,46 +518,68 @@ class RegulationAnalysisService:
         return []
 
     def _attach_node_legal_refs(
-        self, hierarchy: list[dict], zone_type: str, sigungu: str, zl: dict
+        self, hierarchy: list[dict], zone_type: str, sigungu: str, zl: dict,
+        districts: list[dict] | None = None, has_floor_cap: bool = False,
     ) -> None:
         """hierarchy 각 level dict에 legal_refs[]를 in-place 가산(기존 필드 무손상).
 
         - zone_type 미확정 → zone 종속 노드 legal_refs 빈 배열(할루시네이션 링크 금지).
         - 조례 노드는 sigungu를 전달해 조례명·url을 치환(미상이면 url_status='pending').
-        - URL은 전적으로 get_legal_refs 출력만 사용한다(여기서 URL 조립 금지).
+        - 개별 적용 규제·지구·구역 레벨은 legal_refs_for_districts(지역지구별 규제법령집)로 부착
+          (WP-R2: 현재 [] 반환이던 갭 봉합 — 상대보호구역/비행안전/토지거래 등 개별법 조문 링크).
+        - URL은 전적으로 get_legal_refs/legal_refs_for_districts 출력만 사용한다(여기서 URL 조립 금지).
         - 부착 중 예외가 나도 원본 계층은 그대로 둔다(graceful).
         """
         zone_known = bool(zone_type and str(zone_type).strip())
+        # ★같은 판별자 재사용 — 여기서 True 가 되면 국토계획법 제52조(지구단위계획) 조문이
+        #   그 계층에 부착된다. 수도권 성장관리권역에 지구단위계획 조문을 붙이던 결함을 봉합.
         has_du_plan = any(
-            isinstance(it, dict) and any(
-                k in str(it.get("name", ""))
-                for k in ("지구단위", "재정비촉진", "정비구역", "도시개발", "성장관리")
-            )
+            isinstance(it, dict) and is_detailed_urban_plan(it.get("name", ""))
             for lv in hierarchy
             if lv.get("level") == "도시·군계획 / 지구단위계획"
             for it in (lv.get("items") or [])
         )
         sgg = sigungu if (sigungu and str(sigungu).strip() and str(sigungu).strip() != "미확인") else None
         try:
-            from app.services.legal.legal_reference_registry import get_legal_refs
+            from app.services.legal.legal_reference_registry import (
+                get_legal_refs,
+                legal_refs_for_districts,
+            )
         except Exception:  # noqa: BLE001
             return
+        _dist_names = [
+            d.get("name") for d in (districts or [])
+            if isinstance(d, dict) and d.get("name")
+        ]
         for lv in hierarchy:
             if not isinstance(lv, dict):
                 continue
-            keys = self._level_ref_keys(lv.get("level", ""), zone_known, has_du_plan)
+            level_name = lv.get("level", "")
             try:
-                lv.setdefault("legal_refs", get_legal_refs(keys, sigungu=sgg) if keys else [])
+                if level_name == "개별 적용 규제·지구·구역":
+                    refs = (
+                        legal_refs_for_districts(_dist_names, sigungu=sgg).get("refs", [])
+                        if _dist_names else []
+                    )
+                    lv.setdefault("legal_refs", refs)
+                else:
+                    keys = self._level_ref_keys(level_name, zone_known, has_du_plan, has_floor_cap)
+                    lv.setdefault("legal_refs", get_legal_refs(keys, sigungu=sgg) if keys else [])
             except Exception:  # noqa: BLE001
                 lv.setdefault("legal_refs", [])
 
     @staticmethod
-    def _build_evidence(zone_type: str, limits: dict, sigungu: str) -> list[dict]:
+    def _build_evidence(
+        zone_type: str, limits: dict, sigungu: str, eff: dict | None = None,
+    ) -> list[dict]:
         """건폐/용적 한도 산출 트레이스(EvidencePanel 소비 구조).
 
         {label, value, basis, legal_ref_key}. 법정 상한 + (조례 실효값이 다르면) 조례 적용값을
         트레이스한다. zone_type 미확정 시 빈 배열. basis는 legal_zone_limits의 법정근거 문구를
         사용(레지스트리 단일출처 원문링크는 legal_ref_key로 프론트가 결합).
+
+        WP-R1: eff(far_tier_service SSOT)에 구조상한(건폐율×층수)이 실려오면 "건폐 20%×4층=80%"의
+        물리 상한 트레이스 1건을 가산해, 법정 100% 옆에 실효 80%의 실체를 근거패널에 노출한다.
         """
         if not (zone_type and str(zone_type).strip()):
             return []
@@ -454,19 +635,52 @@ class RegulationAnalysisService:
                 "label": "조례 적용 용적률", "value": ord_far,
                 "basis": f"{zone_key} · {sgg} 도시계획 조례(실효값)", "legal_ref_key": "ordinance_far",
             })
+        # WP-R1: 구조상한(건폐율×층수) 실효 트레이스 — 층수제한 zone(녹지 등)에서 실효 용적률의 실체.
+        #   법정 100% 표기 옆에 "실효 건폐율×4층=80%"의 물리 상한을 근거패널에 노출한다(과대표시 차단).
+        _eff = eff if isinstance(eff, dict) else {}
+        structural_cap = _pct(_eff.get("structural_cap_pct"))
+        floor_cap = _eff.get("floor_cap")
+        if structural_cap and floor_cap:
+            eff_bcr = _pct(bcr.get("effective")) or "-"
+            floor_basis = _eff.get("floor_cap_basis") or "국토계획법 시행령 별표15~17 두문(4층 이하)"
+            evidence.append({
+                "label": "구조상한 실효 용적률", "value": structural_cap,
+                "basis": (f"{zone_key} · 실효 건폐율 {eff_bcr} × {floor_cap}층 = {structural_cap} "
+                          f"({floor_basis})"),
+                "legal_ref_key": "green_zone_floor_cap",
+            })
         return evidence
 
     async def _llm(
         self, address: str, zone: str, zone2: str, area: Any,
-        limits: dict, districts: list[dict],
+        limits: dict, districts: list[dict], far_basis: str | None = None,
     ) -> dict[str, Any]:
+        # 초기화 단계를 호출 단계와 분리 — get_llm의 키 미설정 ValueError가 'parse'로
+        # 오분류되던 결함 교정(사유 정직성: import/provider/timeout/parse 각자 자리).
         try:
             from langchain_core.messages import HumanMessage, SystemMessage
 
             from app.services.ai.base_interpreter import GROUNDING_RULE
             from app.services.ai.llm_provider import get_llm
-
+        except Exception as e:  # noqa: BLE001
+            logger.warning("규제 LLM 모듈 로드 실패, 폴백", err=f"{type(e).__name__}: {str(e)[:100]}")
+            return self._llm_fallback(zone, districts, "import")
+        try:
+            # ★max_tokens 4096: 이 프롬프트의 자연 응답이 2,200~2,600+ 토큰(한국어 6필드 JSON)이라
+            #   2500 캡에서는 약 절반이 JSON 중간 절단→파싱 실패→폴백 강등이었다(2026-07-22
+            #   llm_usage_log 실측: output==2500 캡 도달 호출만 정확히 실패). 절단 호출도
+            #   과금은 전액 발생하므로 여유 캡이 비용상으로도 이득이다.
+            #   timeout 90: 실측 생성속도(~64tok/s)로 상한 근접 생성 시 60s 초과 소지 —
+            #   절단 실패가 타임아웃 실패로 라벨만 바뀌지 않게 expert_panel(90s) 관례 정합.
+            llm = get_llm(service="regulation", timeout=90, max_tokens=4096)
+        except Exception as e:  # noqa: BLE001 — 키 미설정·모델 구성 오류 등
+            logger.warning("규제 LLM 초기화 실패, 폴백", err=f"{type(e).__name__}: {str(e)[:100]}")
+            return self._llm_fallback(zone, districts, "provider")
+        resp = None
+        try:
             bcr = limits["bcr"]; far = limits["far"]
+            # WP-R1: 실효 용적률 근거 문구(구조상한 등)를 프롬프트에 병기 → AI가 실효치를 정확히 서술.
+            far_basis_note = f" — 실효 근거: {far_basis}" if far_basis else ""
             user = _USER_TMPL.format(
                 address=address,
                 zone_type=zone or "미상",
@@ -474,31 +688,52 @@ class RegulationAnalysisService:
                 area=round(area) if area else "-",
                 bcr=f"{bcr.get('legal') or '-'}/{bcr.get('ordinance') or '-'}/{bcr.get('effective') or '-'}",
                 far=f"{far.get('legal') or '-'}/{far.get('ordinance') or '-'}/{far.get('effective') or '-'}",
+                far_basis=far_basis_note,
                 districts=", ".join(f"{d['name']}({d['impact']})" for d in districts[:20]) or "-",
             )
-            llm = get_llm(timeout=60, max_tokens=2500)
             resp = await llm.ainvoke(
                 [SystemMessage(content=_SYSTEM + GROUNDING_RULE), HumanMessage(content=user)]
             )
             # 계측: BaseInterpreter 밖 직접 호출도 동일하게 토큰·과금 기록(best-effort)
             from app.services.ai.base_interpreter import record_llm_response_billing
             await record_llm_response_billing(llm, resp, service="regulation")
-            raw = (resp.content if hasattr(resp, "content") else str(resp)).strip()
-            if raw.startswith("```"):
-                raw = raw.split("```")[1]
-                raw = raw[4:] if raw.lower().startswith("json") else raw
-                raw = raw.strip()
-            data = json.loads(raw)
+            from app.services.ai.llm_json import parse_llm_json
+            data = parse_llm_json(resp.content if hasattr(resp, "content") else str(resp))
+            if not isinstance(data, dict):
+                raise json.JSONDecodeError("JSON 객체가 아닌 응답", doc="", pos=0)
             data["generated"] = True
             return data
         except Exception as e:  # noqa: BLE001
-            logger.warning("규제 LLM 해석 실패, 폴백", err=str(e)[:100])
-            return {
-                "generated": False,
-                "summary": f"{zone or '미상'} 기준 적용 규제를 계층별로 정리했습니다. AI 통합 해석은 일시적으로 제공되지 않습니다.",
-                "key_constraints": [d["name"] for d in districts if d["impact"] == "상"][:4],
-                "dev_impact": "용도지역 허용용도와 조례 강화 한도, 중첩 규제를 우선 확인하세요.",
-                "strategies": ["지구단위계획·조례 확인", "영향도 높은 규제 사전 협의"],
-                "opportunities": [],
-                "risks": [d["name"] for d in districts if d["impact"] in ("상", "중")][:3],
-            }
+            # 폴백 사유 표면화(정직) — "일시 미제공"만으론 라이브 진단 불가. ★R1: 원 클래스명은
+            # 프로바이더 fingerprint 소지 → coarse 분류만 노출(진단성 유지·내부정보 최소화).
+            # ★절단(truncated)을 'parse'와 구분 — 잘린 JSON은 파서 문제가 아니라 캡 부족이며,
+            #   섞어 두면 이번처럼(#411) 파서 수리로 오진단하게 된다(절단감지 SSOT=llm_json).
+            from app.services.ai.llm_json import is_truncated
+            reason = (
+                "timeout" if "Timeout" in type(e).__name__
+                else "truncated" if (
+                    isinstance(e, json.JSONDecodeError) and is_truncated(resp))
+                else "parse" if isinstance(e, json.JSONDecodeError)
+                # KeyError는 limits["bcr"]/["far"] 등 입력 데이터 결손 — 파서 사유가 아니라
+                # 'data'로 정직 분류(사유가 수리 방향을 가리키게: parse→파서, data→상류 수집).
+                else "data" if isinstance(e, KeyError)
+                else "provider"
+            )
+            logger.warning("규제 LLM 해석 실패, 폴백",
+                           reason=reason, err=f"{type(e).__name__}: {str(e)[:100]}")
+            return self._llm_fallback(zone, districts, reason)
+
+    @staticmethod
+    def _llm_fallback(zone: str, districts: list[dict], reason: str) -> dict[str, Any]:
+        """LLM 미가용 시의 정직 폴백(구조 요약) + coarse 사유."""
+        return {
+            "generated": False,
+            "fallback_reason": reason,
+            # ★"일시적"이라고 단정하지 않는다 — 그 표기가 영구 실패를 일시 장애로 위장한다.
+            "summary": f"{zone or '미상'} 기준 적용 규제를 계층별로 정리했습니다. AI 통합 해석은 생성하지 못했습니다.",
+            "key_constraints": [d["name"] for d in districts if d["impact"] == "상"][:4],
+            "dev_impact": "용도지역 허용용도와 조례 강화 한도, 중첩 규제를 우선 확인하세요.",
+            "strategies": ["지구단위계획·조례 확인", "영향도 높은 규제 사전 협의"],
+            "opportunities": [],
+            "risks": [d["name"] for d in districts if d["impact"] in ("상", "중")][:3],
+        }

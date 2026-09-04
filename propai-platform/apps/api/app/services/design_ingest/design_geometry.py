@@ -164,10 +164,14 @@ ALLOWED_USES_BY_ZONE: dict[str, list[str]] = {
     # 공업 — 공장·물류·지원시설(주거는 제한적).
     "준공업지역": ["공장", "물류시설", "지식산업센터", "제1종근린생활시설", "제2종근린생활시설", "업무시설"],
 }
-# zone_code(7종) → 한글명 별칭(site_context_from_zone 코드 경로 호환).
+# zone_code → 한글명 별칭(site_context_from_zone 코드 경로 호환).
+# ★프론트 정본(apps/web/lib/kr-building-regulations.ts _LABEL_TO_CODE)이 실제 발행하는
+#   코드는 일반상업=GC·준공업=QI다 — 과거 표기(CC/SI)는 하위호환으로 함께 유지.
+#   (PR#282 리뷰 적발: 2종 발산으로 GC/QI 리졸브가 무음 no-op이었음)
 _ZONE_CODE_ALIAS: dict[str, str] = {
     "1R": "제1종일반주거지역", "2R": "제2종일반주거지역", "3R": "제3종일반주거지역",
-    "QR": "준주거지역", "CC": "일반상업지역", "NC": "근린상업지역", "SI": "준공업지역",
+    "QR": "준주거지역", "CC": "일반상업지역", "GC": "일반상업지역",
+    "NC": "근린상업지역", "SI": "준공업지역", "QI": "준공업지역",
 }
 
 

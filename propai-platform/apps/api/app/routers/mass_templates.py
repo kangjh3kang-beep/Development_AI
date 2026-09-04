@@ -184,6 +184,10 @@ class SeedDesignRequest(BaseModel):
     floor_height_m: float = Field(3.0, gt=0, description="층고(m)")
     effective_far_pct: float | None = Field(None, gt=0, description="부지분석 SSOT 실효 용적률(법정·조례·계획상한 반영)")
     effective_bcr_pct: float | None = Field(None, gt=0, le=100, description="부지분석 SSOT 실효 건폐율(법정·조례·계획상한 반영)")
+    # ★WP-U2a(실효FAR 근거 정직 전파·additive): effective_far_pct의 산정 근거 라벨
+    #   (far_tier SSOT far_basis — 예 "구조상한(건폐율×층수)")과 신뢰 플래그. 수치 무영향(메타 전파만).
+    far_basis: str | None = Field(None, description="실효 용적률 산정 근거(far_tier SSOT far_basis)")
+    far_reliable: bool | None = Field(None, description="실효 용적률 SSOT 산정 성공 여부(정직 표기)")
     # ★B2(특이부지 게이트 전 경로 패리티) — 있으면 학교용지·GB·농지·산지·맹지 등 특이요인을 검사해
     #   응답에 경고만 additive 부착(차단 아님). 컨텍스트 없으면 게이트 생략(정직 — 무날조).
     pnu: str | None = Field(None, description="필지 PNU(특이부지 게이트 참고 메타)")
@@ -191,12 +195,51 @@ class SeedDesignRequest(BaseModel):
     special_districts: list[str] | None = Field(
         None, description="특별구역(개발제한구역·문화재·군사·상수원 등) — 특이부지 게이트 입력",
     )
+    # ★W4(사통맵 매스 시드 인계·additive): 지도에서 사용자가 **직접 고른 배치안**의 층수를
+    #   설계 시드로 받는다. 엔진에서 target_floors는 min(FAR한도, 높이한도, target_floors)의
+    #   **상한(SOFT LE)으로만** 작용하므로, 이 값이 용량을 부풀리는 일은 구조적으로 불가능하다
+    #   (법정 한도를 넘길 수 없음). 미전달이면 이 매스를 만들지 않는다(무날조 — null 반환).
+    map_target_floors: int | None = Field(
+        None, gt=0, le=200, description="사통맵에서 고른 배치안의 층수(설계 시드 — 상한으로만 작용)",
+    )
+    map_option_label: str | None = Field(
+        None, max_length=60, description="고른 배치안 표기(예 '판상형 25°') — 출처 표시용, 계산 무영향",
+    )
+
+
+FLOOR_SEED_NOT_APPLIED_REASON = (
+    "이 용도지역·매스 형식(예 포디움-타워)에서는 층수 시드가 반영되지 않습니다."
+)
+
+
+def _floor_seed_status(mass: dict | None, target_floors: int | None) -> dict:
+    """층수 시드가 **실제로 물렸는지 결과로** 판정한다(엔진 내부 분기를 믿지 않는다).
+
+    ★왜 공용 헬퍼인가(R2 HIGH-1 / CLAUDE.md 버그수정 기본정책): 처음엔 지도 시드 경로에만
+      가드를 달았는데, **같은 함수 8줄 위**의 `regional_typical_mass`가 정확히 같은 결함을
+      갖고 있었다 — 중앙값 5층 레퍼런스로 일반상업지역을 산정하면 22층이 나오는데 응답 note는
+      "층수는 중앙값까지만 반영해 과도한 고층화를 방지합니다"라고 주장했다. 한 곳만 고치면
+      형제가 계속 거짓말한다. 판정을 여기로 모아 한 곳을 고치면 전역이 따라오게 한다.
+
+    `target_floors`는 `min(...)`에 참여하는 **상한**이므로, 물렸다면 산출 층수는 시드 이하다.
+    아니라면 어떤 경로(예 포디움-타워가 `num_floors`를 사후 덮어씀)에서 무시된 것이다.
+    """
+    if not target_floors or not mass:
+        return {"target_floors": target_floors, "applied": False, "not_applied_reason": None}
+    floors = mass.get("num_floors")
+    applied = isinstance(floors, (int, float)) and floors <= target_floors
+    return {
+        "target_floors": int(target_floors),
+        "applied": bool(applied),
+        "not_applied_reason": None if applied else FLOOR_SEED_NOT_APPLIED_REASON,
+    }
 
 
 def _compute_mass(
     *, land_area_sqm: float, zone_code: str, building_use: str, floor_height_m: float,
     target_far: float | None = None, target_bcr: float | None = None,
     ordinance_far: float | None = None, ordinance_bcr: float | None = None,
+    far_basis: str | None = None, far_reliable: bool | None = None,
     daylight_step: bool = True, target_floors: int | None = None,
 ) -> dict:
     """AutoDesignEngine으로 최적 매스 산정(target_far/bcr 주입 시 min(법정,목표) 클램프).
@@ -213,6 +256,8 @@ def _compute_mass(
         site_area_sqm=land_area_sqm, zone_code=zone_code, building_use=building_use,
         floor_height_m=floor_height_m, target_far_percent=target_far, target_bcr_percent=target_bcr,
         ordinance_far_percent=ordinance_far, ordinance_bcr_percent=ordinance_bcr,
+        # ★WP-U2a: 실효 근거 메타(수치 무영향) — applied_limits·rule_trace 정직 전파.
+        far_basis=far_basis, far_reliable=far_reliable,
         daylight_step=daylight_step, target_floors=target_floors,
     )
     legal = svc.get_legal_limits(zone_code)
@@ -238,6 +283,8 @@ async def seed_design(
         "land_area_sqm": body.land_area_sqm, "zone_code": body.zone_code,
         "building_use": body.building_use, "floor_height_m": body.floor_height_m,
         "ordinance_far": body.effective_far_pct, "ordinance_bcr": body.effective_bcr_pct,
+        # ★WP-U2a: 실효 근거 메타 동반 전달(법정최대·지역전형 두 매스 모두 동일 표기).
+        "far_basis": body.far_basis, "far_reliable": body.far_reliable,
     }
     legal_mass = _compute_mass(**common)
 
@@ -258,6 +305,7 @@ async def seed_design(
     )
 
     regional_mass = None
+    regional_floor_seed = _floor_seed_status(None, None)
     if targets:
         # ★실측 median 층수까지 반영(nuance 해소): 단계후퇴로 일조 하드캡(3층) 해제 + target_floors=median으로
         #   전형 층수 상한. 건폐/용적 시드와 함께 '지역 실측 전형'(예 5층·저밀)을 산출.
@@ -267,10 +315,34 @@ async def seed_design(
             **common, target_far=targets["target_far_percent"], target_bcr=targets["target_bcr_percent"],
             target_floors=target_floors,
         )
+        # ★R2 HIGH-1: 지도 시드와 **동일한 오라클**로 판정한다. 매스 자체는 건폐/용적 시드로
+        #   여전히 의미가 있으므로 null로 만들지 않되(지도 시드와 다른 점), **층수 상한이 물리지
+        #   않았다면 "중앙값까지만 반영" 주장을 하지 않는다**(아래 note 조건부).
+        regional_floor_seed = _floor_seed_status(regional_mass, target_floors)
+    # ★W4: 지도에서 고른 배치안 시드(additive). 지역 통계와 **독립**이라 mass_reference가 없어도
+    #   산출된다 — 사용자가 직접 고른 안이므로 근거가 '지역 중앙값'이 아니라 '본인 선택'이다.
+    map_seeded_mass = None
+    map_seed = None
+    if body.map_target_floors:
+        _tf = int(body.map_target_floors)
+        _m = _compute_mass(**common, target_floors=_tf)
+        _status = _floor_seed_status(_m, _tf)
+        map_seed = {**_status, "option_label": body.map_option_label}
+        # ★지도 시드는 매스의 **존재 이유 자체**가 "고른 안"이므로, 반영 안 됐으면 내주지
+        #   않는다(내주면 소비처가 '고른 안'으로 표시한다). 지역 전형은 건폐/용적 시드로
+        #   독립적 의미가 있어 매스는 유지하고 주장만 거둔다 — 그래서 처리가 다르다.
+        map_seeded_mass = _m if _status["applied"] else None
+
     return {
         "region": region,
         "legal_max_mass": legal_mass,
         "regional_typical_mass": regional_mass,   # 실측 전형 시드 결과(없으면 None)
+        # ★W4(additive): 사통맵에서 고른 배치안 층수를 상한으로 반영한 매스(미전달이면 None).
+        "map_seeded_mass": map_seeded_mass,
+        "map_seed": map_seed,
+        # ★R2 HIGH-1(additive): 지역 실측 전형의 **층수 상한이 실제로 물렸는지**. false면
+        #   아래 note가 "중앙값까지만 반영" 주장을 하지 않는다(형제 필드의 표기 사기 봉합).
+        "regional_floor_seed": regional_floor_seed,
         "mass_reference": mass_ref,               # 시드 출처(provenance)
         # ★특이부지 게이트(additive·B2) — 학교용지·GB·농지·산지 등 경고(컨텍스트 없으면 None).
         "special_parcel": special_parcel,
@@ -279,10 +351,24 @@ async def seed_design(
             if body.effective_far_pct or body.effective_bcr_pct
             else "engine_zone_defaults"
         ),
-        "note": ("legal_max_mass·regional_typical_mass 모두 정북일조 단계후퇴(법 61조) 해석. "
-                 "부지분석 실효 한도(effective_far_pct/effective_bcr_pct)가 전달되면 "
-                 "지자체 도시계획조례·계획상한을 반영한 min(법정, 조례/계획, 목표) 기준으로 산정. "
-                 "regional_typical_mass=이 지역 같은 종류 실측 중앙값(건폐/용적/층수)을 설계엔진에 "
-                 "시드한 전형 매스(층수=median까지·과도 고층화 방지). "
-                 "실측 매스 없으면 None(적용 한도 최대만). 엔진이 min(법정,조례/계획,목표) 클램프(가짜 상향 없음)."),
+        # ★WP-U2a(additive): 실효 용적률 산정 근거·신뢰 플래그(far_tier SSOT far_basis —
+        #   예 "구조상한(건폐율×층수)"). 호출자가 안 보내면 None(무날조·기존 소비처 무회귀).
+        "applied_far_basis": body.far_basis,
+        "applied_far_reliable": body.far_reliable,
+        "note": ("법정 최대·지역 실측 전형 매스 모두 정북일조 단계후퇴(건축법 61조) 해석입니다. "
+                 "부지분석에서 확인된 실효 한도가 있으면 법정상한·조례·계획상한 중 가장 엄격한 "
+                 "기준으로 산정합니다. 지역 실측 전형 매스는 같은 지역·같은 용도의 건축물대장 실측 "
+                 "통계 중앙값(건폐율·용적률)을 설계엔진에 반영한 결과입니다. "
+                 + ("층수도 중앙값까지만 반영해 과도한 고층화를 방지합니다. "
+                    if regional_floor_seed.get("applied")
+                    else ("이 용도지역·매스 형식에서는 층수 상한이 적용되지 않아 층수는 "
+                          "중앙값을 초과할 수 있습니다(건폐율·용적률 시드만 반영). ")
+                    if regional_floor_seed.get("target_floors") else "") +
+                 "지역 실측 통계를 확보하지 못하면 지역 실측 "
+                 "전형 매스는 제공되지 않고 법정 최대 매스만 제공됩니다. 사통맵에서 고른 배치안을 "
+                 "넘긴 경우 그 층수를 **상한으로만** 반영한 매스를 함께 제공합니다(법정 한도를 넘겨 "
+                 "부풀리지 않으며, 한도가 더 엄격하면 한도가 이깁니다). 층수 시드가 실제로 반영되지 "
+                 "않는 용도지역·매스 형식에서는 반영된 척하지 않고 미반영 사유만 알립니다. "
+                 "산정 엔진은 법정상한·조례상한·"
+                 "목표치 중 가장 엄격한 값으로 클램프하며 임의로 상향하지 않습니다."),
     }

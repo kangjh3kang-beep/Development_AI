@@ -123,7 +123,7 @@ export function DevelopmentFinancePanel() {
               type="button"
               onClick={() => void compute()}
               disabled={busy}
-              className="h-9 shrink-0 rounded-lg border border-[var(--border)] px-4 text-sm font-semibold text-[var(--text-primary)] disabled:opacity-50"
+              className="h-9 shrink-0 rounded-lg border border-[var(--line)] px-4 text-sm font-semibold text-[var(--text-primary)] disabled:opacity-50"
             >
               {busy ? "산정 중…" : "재계산"}
             </button>

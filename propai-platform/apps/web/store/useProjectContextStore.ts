@@ -1,10 +1,14 @@
 import { create } from "zustand";
+import { isJibunToken } from "@/lib/pnu";
 import { persist } from "zustand/middleware";
 import { createDebouncedStorage } from "@/lib/debounced-storage";
+import { healPhantomAreaAggregates } from "@/lib/site-analysis-invariants";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { resolveEquityWon, DEFAULT_EQUITY_RATIO_PCT } from "@/lib/finance/leverage";
 import type { DecisionBrief } from "@/components/projects/decision-brief-types";
 import type { DesignCompliance } from "@/lib/design-contract";
+// F-4: 절감 시나리오/설계변경 예측 카드의 원 응답 타입 재구현 금지 — cmTypes.ts SSOT 재사용(type-only import).
+import type { SavingScenariosResponse, ChangeForecastResponse } from "@/components/cost/cmTypes";
 
 /* ── Types ── */
 
@@ -137,6 +141,10 @@ interface SiteAnalysisData {
   dominantZoneCode?: string | null;     // 통합 대표(우세) 용도지역(dominant_zone)
 
   upzoningPotentialFarHigh?: number | null;  // 종상향 잠재 상한 용적률(%) (potential_far_range 상단)
+  // ★그 '상한'이 실은 한 값뿐인가(potential_far_range.is_collapsed). 붕괴면 이 숫자는
+  //   '도달 가능한 최댓값'이 아니라 '검토한 경로들의 예상치가 한 값으로 모인 것'이다
+  //   — 라벨이 그렇게 말해야 한다. ("단일 경로"라 쓰지 않는다: 경로는 여럿이고 목표가 하나다.)
+  upzoningFarRangeCollapsed?: boolean | null;
   upzoningFeasibilityTop?: string | null;    // 최상 가능성 등급('상'/'중'/'하') — 없으면 null
   // 종상향 per-scenario 상세(미래 토지특성 SSOT) — comprehensive 산출 보존(additive·옵셔널).
   // 미확보(단일 analyze 경로 등) 시 부재/null → buildLandProfile이 집계값으로 폴백(무목업).
@@ -174,6 +182,17 @@ interface DesignData {
   buildingType: string | null;
   bcr: number | null;
   far: number | null;
+  // ★설계스튜디오 실효FAR 전파 봉합(additive) — far가 실제 실효값(통합/실효/조례·구조상한)
+  //   근거로 산정됐는지(true), 아니면 실효 미확보로 법정상한(national)에 폴백한 값인지(false)를
+  //   함께 기록한다. 미확보(구 스냅샷 등)면 undefined — 하류는 "실효 여부 불명"으로 취급(무날조).
+  //   하류(MetricBar·CadBimIntegrationPanel 등)가 "조용한 법정 100% 확정"처럼 보이는 걸 막고
+  //   정직 배지("법정상한 기준")를 표기하는 근거로 쓴다.
+  farIsEffective?: boolean | null;
+  // 설계가 계산에 사용한 용도지역(정규화 코드/한글). 부지분석(siteAnalysis)에 용도지역이 없고
+  //   사용자가 설계 폼에서 직접 입력/시드한 경우, 상단 ContextHeader가 "용도지역 —"으로만 뜨던
+  //   문제를 해소하기 위한 폴백 소스(ContextHeader가 siteAnalysis 용도지역 부재 시 이 값을 "직접
+  //   입력" 배지와 함께 표기). 옵셔널/nullable — 구 스냅샷·persist 왕복 무손상. 미확보면 null(무날조).
+  zoneCode?: string | null;
   // 세대 구성(도면·해석·수지 다운스트림의 "데이터 없음" 해소용 SSOT)
   unitCount?: number | null;        // 총 세대수
   unitTypes?: string[] | null;      // 평형 구성(예: ["59A","84A"])
@@ -215,6 +234,18 @@ interface FeasibilityData {
   totalRevenueWon: number | null;
   profitRatePct: number | null;
   grade: string | null;
+  // ★정밀도 등급(2026-08-23 · #770) — 이 수지가 **무엇으로 만들어졌는지**.
+  //   "E"=개략(대지면적×실효용적률로 GFA 를 추정 — 설계 미반영) · "D"=설계기반 · "V"=확인됨.
+  //   undefined = 미표기(구 스냅샷 또는 백엔드가 안 보낸 경우).
+  //
+  //   왜 필요한가: 화면에 `설계 "분석 전"` · `공사비 "분석 전"` 인데
+  //   `총사업비 4,157.7억 · 등급 F` 가 나란히 있었다. 계산은 정직한 **개략치**인데
+  //   화면이 확정치와 똑같이 보여 줘서 사용자가 "분석 전인데 왜 숫자가 있나"로 읽었다.
+  //   값을 지우는 게 아니라 **등급을 붙여** 그 혼란을 끊는다.
+  //   optional·하위호환(persist round-trip 보존·기존 소비처 무영향).
+  precision?: "E" | "D" | "V" | null;
+  precisionLabel?: string | null;
+  precisionBasis?: string | null;
   // 투자수익성(ROI 뷰) 정합용 — 옵셔널·하위호환. reader 무영향, persist round-trip 보존.
   // equityWon: 자기자본 절대액(원). 사용자/에디터 직접입력 우선, 없으면 총사업비×equityRatioPct 자동산출.
   equityWon?: number | null;
@@ -245,7 +276,37 @@ interface FeasibilityData {
   // ★stamp 주의: setSalesPricePerPyeong로만 patch하며 updatedAt.feasibility를 건드리지 않는다
   // (파생 sales가 feasibility staleness를 오염시켜 수지 노드가 영영 skipped-fresh되는 함정 회피).
   salePricePerPyeongWon?: number | null;
+  // 개략수지(rough-scenario)가 산정한 연면적(㎡) — 설계 확정 전 수지·리스크 시뮬 base 조립용 폴백.
+  // 설계 SSOT(designData.totalGfaSqm)가 있으면 그쪽이 항상 우선한다(bodyBuilder에서 설계 우선 폴백).
+  // optional·하위호환(구 스냅샷=undefined → bodyBuilder 미주입 → 기존 결측 게이트 동작, 무회귀).
+  totalGfaSqm?: number | null;
+  // 개략수지 세대수 가정(GFA÷유형 표준 전용면적, 백엔드 unit_standards 관례) — 설계 확정 전
+  // 리스크 시뮬 base의 매출 재계산용 폴백. 설계 SSOT(designData.unitCount)가 항상 우선.
+  totalHouseholds?: number | null;
 }
+
+/** `grade` 와 `precision` 은 **같이 오거나 같이 없다**(판별 유니온).
+ *
+ *  왜 타입으로 묶는가 — `updateFeasibilityData` 는 **merge 패치**라 빠뜨린 키가 남는다.
+ *  `precision` 을 **비우는 writer 가 전수 0** 이었으므로, 개략수지(E) 뒤에 정밀 수지로
+ *  재계산하면 새 `grade` 만 갱신되고 `precision` 은 `"E"` 로 남아 배지
+ *  `개략(추정) — 설계 미반영` 이 **설계 반영된 결과 위에 거짓으로** 뜬다.
+ *  (`#794` 가 고친 "배지가 안 뜬다"의 **반대 방향**이다.)
+ *
+ *  ★목록·소스 스캔이 아니라 타입인 이유: 이 저장소의 스윕·파생형 수집기·조건부 타입이
+ *    차례로 **`patch.grade = …` 매퍼 형태**를 놓쳤다(하루 세 번). 판별 유니온은 리터럴도
+ *    매퍼 대입도 컴파일 타임에 막으므로 **표현 형태에 의존하지 않는다** — 새 writer 도 자동으로 걸린다.
+ *
+ *  ★`precision: null` 은 회피가 아니라 **정직한 답**이다: 그 산출 엔진이 정밀도를 계산하지
+ *    않으면 화면은 "정밀도 미표기"로 남아야 하고, 그게 백엔드 자신의 폴백 라벨과 같다.
+ *    반대로 모르는 값에 `"E"` 를 붙이면 이 축이 자살한다. */
+type FeasibilityPatchBase = Omit<Partial<FeasibilityData>, "grade" | "precision">;
+export type FeasibilityPatch =
+  | (FeasibilityPatchBase & { grade?: never; precision?: never })
+  | (FeasibilityPatchBase & {
+      grade: string | null;
+      precision: "E" | "D" | "V" | null;
+    });
 
 // 공사비 분석 결과(건축개요 기반) — 수지·사업성과 단일 데이터원으로 연동.
 interface CostData {
@@ -259,7 +320,20 @@ interface CostData {
   indirectWon: number | null;
   rangeMinWon: number | null;
   rangeMaxWon: number | null;
-  source: string | null; // overview | bim | boq (boq = 적산 합계 1방향 주입)
+  source: string | null; // overview | bim | boq | saving_scenario (적산 합계 1방향 주입)
+  // ── P5 추가(additive·옵셔널·무회귀): 기존 호출부(BoqDetailTable.applyToFeasibility 등)는
+  //    이 3필드를 채우지 않아도 계속 동작한다(full-replace 계약이지만 optional). ──
+  qtoSource?: string | null; // "bim" | "derived" — 백엔드 qto_source 그대로(물량 산출 정밀도 근거)
+  priceTierSummary?: string | null; // 사람이 읽는 단가출처 요약(예: "표준 8·DB 3·fallback 1")
+  baselineDeviationPct?: number | null; // 기본형건축비 대비 편차(%) — baseline_check.deviation_pct
+  // ── F-4 추가(additive·옵셔널·무회귀): 절감 시나리오(SavingScenariosCard)·설계변경 예측
+  //    (ChangeForecastCard) 카드의 원 응답 전체 — 적산 보고서(⑤)가 조립 시 그대로 동봉한다.
+  //    전용 setter(setCostSavingScenarios/setCostChangeForecast)로만 patch하며 updatedAt.cost는
+  //    stamp하지 않는다(카드 재조회가 수지·금융 staleness를 오염시키지 않도록 —
+  //    setRecommendedDevType/setSalesPricePerPyeong과 동일한 안전 패턴). updateCostData(다른
+  //    호출부의 full replace)는 호출측이 명시하지 않으면 이 두 필드를 이전 값 그대로 이어간다.
+  costSavingScenarios?: SavingScenariosResponse | null;
+  costChangeForecast?: ChangeForecastResponse | null;
 }
 
 interface EsgData {
@@ -299,7 +373,13 @@ export type ProvenanceModule =
   | "cost"
   | "design"
   | "tax"
-  | "esg";
+  | "esg"
+  // ★2026-08-26 편입 — 종전엔 수지가 **보호 밖**이라 백엔드 파이프라인 재실행이
+  //   사용자가 손으로 넣은 수지값을 **조용히 덮었다**(`ProjectPipelinePanel` 이
+  //   updateFeasibilityData 를 호출하는데 가드가 없었다). 보호되던 것은 `equityWon` 하나뿐이고,
+  //   그것도 provenance 가 아니라 `equityIsManual` 이라는 **전용 플래그**였다.
+  //   노드 레지스트리는 이 사실을 `provenanceGuarded: false` 로 정직하게 적어 두고 있었다.
+  | "feasibility";
 type ManualFieldsMap = Partial<
   Record<ProvenanceModule, Record<string, FieldProvenance>>
 >;
@@ -336,6 +416,7 @@ export type AnalysisCacheKind =
   | "terrain"
   | "environment"
   | "avm"
+  | "deskAppraisal" // 부지분석 탁상감정(토지가치) 캐시 — 구 "avm" 캐시와 별도 키(자연 무시).
   | "digitalTwin"
   | "l3";
 export interface AnalysisCacheEntry {
@@ -479,7 +560,10 @@ export interface ProjectContextState {
   ) => void;
   // merge 패치 — 부분 writer(UnitMix/AutoRecommend)가 기존 totalCostWon 등을 보존하도록
   // 기존 feasibilityData 위에 병합한다. 전체 객체를 넘기던 기존 호출도 동일하게 동작.
-  updateFeasibilityData: (data: Partial<FeasibilityData>) => void;
+  updateFeasibilityData: (
+    data: FeasibilityPatch,
+    meta?: { source?: FieldSource },
+  ) => void;
   // (Phase C-1) 추천 개발방식 코드(M01~M15)만 feasibilityData.developmentType에 부분패치.
   // ★updateFeasibilityData와 달리 updatedAt.feasibility를 stamp하지 않는다 —
   //  파생(recommend) 노드가 수지 staleness를 오염시켜 수지 노드가 영영 skipped-fresh되는
@@ -501,6 +585,11 @@ export interface ProjectContextState {
   // auto: user 플래그 키의 이전값을 보존한 채 교체(merge 가드).
   // user: 이전값과 달라진 비null 키만 stamp(미변경 키까지 동결하면 자동 환류 무력화).
   updateCostData: (data: CostData, meta?: { source?: FieldSource }) => void;
+  // F-4: 절감 시나리오/설계변경 예측 카드의 원 응답만 부분패치 — updatedAt.cost는 stamp하지 않는다
+  // (setRecommendedDevType/setSalesPricePerPyeong과 동일한 안전 패턴 — 카드 재조회가 수지·금융
+  // staleness를 오염시키지 않도록). null 전달 시 해당 필드를 지운다(카드 초기화 등).
+  setCostSavingScenarios: (data: SavingScenariosResponse | null) => void;
+  setCostChangeForecast: (data: ChangeForecastResponse | null) => void;
   // full replace + provenance(WP-V) — updateCostData와 동일 merge 가드 규칙.
   // meta 옵셔널(미전달 = "auto") — 기존 호출 무수정 호환.
   updateEsgData: (data: EsgData, meta?: { source?: FieldSource }) => void;
@@ -545,6 +634,21 @@ export interface ProjectContextState {
   // 라이프사이클 단계 id(LIFECYCLE_STAGES 11종)별 "실데이터 존재" 판정(무목업·읽기전용).
   // true=실데이터 있음(완료 표시), false=없음, undefined=전용 데이터 없는 단계(배지 미표시).
   // 진행레일/파이프라인이 completedStages가 비어도 실데이터 기준으로 완료를 표시하도록 단일소비.
+  /**
+   * ★단계 완료 등급 SSOT — "이 단계가 끝났는가"에 답하는 **단 하나의 판정**.
+   *
+   * 왜 3등급인가(쉬운 설명):
+   * 종전엔 답이 예/아니오 둘뿐이라, 주소만 입력한 부지가 **"부지분석 완료"** 로 셈해졌다.
+   * 그건 이 캠페인이 고치는 '정밀도 위장'과 같은 병이다 — **아직 아무 수치도 없는데
+   * 끝난 것처럼 보인다.** 그렇다고 "미완료"로만 두면 사용자가 한 일이 사라진다.
+   * 그래서 `partial`(진행 중)을 두어 **한 일은 인정하되 끝났다고 말하지 않는다**.
+   *
+   *   done    — 그 단계의 **수치**가 확보됐다(다음 단계가 이 값을 받아 쓸 수 있다)
+   *   partial — 시작은 했으나 수치가 없다(예: 주소만 있고 면적 미확보)
+   *   none    — 아무것도 없다
+   *   undefined — 이 단계는 store 로 판정하지 않는다(report·operations) → 배지 미표시
+   */
+  stageCompletion: (stageId: string) => StageCompletion | undefined;
   stageHasData: (stageId: string) => boolean | undefined;
 }
 
@@ -564,10 +668,93 @@ export interface FeasibilityCompleteness {
   pct: number; // 반영도(%) — 완료된 마지막 단계의 누적 가중치
 }
 
+/**
+ * 완성도 판정의 **입력만** 추린 형태 — 셀렉터가 이것만 구독하면 참조가 안정된다.
+ * (스토어 전체를 셀렉터로 돌려주면 매 렌더 새 객체라 무한 리렌더가 된다.)
+ */
+export interface FeasibilityCompletenessInputs {
+  landAreaSqm: number;
+  address: string;
+  totalGfaSqm: number;
+  totalConstructionCostWon: number;
+  totalRevenueWon: number;
+}
+
+/**
+ * ★렌더 경로에서 쓰는 **입력 셀렉터**. 하이드레이션 렌더의 셀렉터는 zustand 의
+ * **서버 스냅샷**(`getInitialState()`)을 보므로, 서버와 **같은 입력**을 얻는다.
+ * 그래서 아래 순수 판정을 붙이면 서버/클라가 **원리적으로 같은 것을 그린다.**
+ *
+ * ★왜 이 형태가 필요했나(2026-08-27 · 라이브 귀속): `FeasibilityEditorV2` 가 스토어 **메서드**
+ *   `feasibilityCompleteness()` 를 렌더 중 호출했는데, 그 메서드는 내부에서 `get()` 을 쓰므로
+ *   **재수화된 라이브 상태**를 읽어 서버 스냅샷을 우회했다. 결과: 서버 `0% · 부지 대기` /
+ *   클라 `60% · 부지 반영` → 프로덕션에서 `Minified React error #418 (args[]=text)`.
+ *   귀속은 세 모집단으로 갈랐다 — 무개변 1 · **그 블록 텍스트만 일치시키면 0** · 무관 개변 1.
+ */
+export function selectFeasibilityCompletenessInputs(
+  s: Pick<ProjectContextState, "siteAnalysis" | "designData" | "costData" | "feasibilityData">,
+): FeasibilityCompletenessInputs {
+  return {
+    // ★면적은 `effectiveLandAreaSqm`(SSOT) — raw `landAreaSqm` 금지.
+    //   같은 파일의 `stageCompletion` 이 그 규칙을 명문으로 적어 두고 지키는데
+    //   이 판정만 raw 를 읽고 있었다. 귀결(독립 리뷰 실측 · 7필지 164,823㎡ 픽스처):
+    //     `stageCompletion=done` · `projectCompleteness.site.done=true`
+    //     ↔ **`feasibilityCompleteness.site.done=false` · pct 0**
+    //   즉 프로젝트 허브는 「부지 완료」, 같은 사용자의 수지 화면은 「부지 대기 · 0%」였다.
+    //   ★더 나쁜 것은 **같은 컴포넌트**가 baseline 을 `effectiveLandAreaSqm` 로 호출한다는 점이다
+    //     (`FeasibilityEditorV2.tsx:160`) — **분석은 통합면적으로 도는데 배지만 0%** 였다.
+    landAreaSqm: effectiveLandAreaSqm(s.siteAnalysis) ?? 0,
+    address: s.siteAnalysis?.address ?? "",
+    totalGfaSqm: s.designData?.totalGfaSqm ?? 0,
+    totalConstructionCostWon: s.costData?.totalConstructionCostWon ?? 0,
+    totalRevenueWon: s.feasibilityData?.totalRevenueWon ?? 0,
+  };
+}
+
+/**
+ * **수지 완성도 판정은 여기 한 곳뿐이다** — 스토어 메서드도 이 함수를 경유한다.
+ * 판정을 복제하면 두 사본이 어긋나 같은 화면이 같은 단계를 두고 반대로 말한다.
+ *
+ * ★단 **「이 저장소에 완성도 판정이 하나뿐」이라는 뜻이 아니다**(초판 주석이 그렇게 읽혔고
+ *   독립 리뷰가 실측으로 반증했다 — §C-11 *"면역을 거짓 주장하지 마라"*). `stageCompletion` ·
+ *   `projectCompleteness` 는 **다른 축**(단계 완료 등급)을 판정하는 별도 SSOT 다.
+ *   **공유해야 하는 것은 「판정」이 아니라 「면적의 출처」** 이고, 그것은 위 입력 셀렉터가
+ *   `effectiveLandAreaSqm` 을 쓰는 것으로 맞췄다.
+ */
+export function computeFeasibilityCompleteness(
+  i: FeasibilityCompletenessInputs,
+): FeasibilityCompleteness {
+  // 단계별 실데이터 반영 판정(무목업): 값이 존재해야 done.
+  // ★부지 done은 "수치 확보(landAreaSqm>0)" 기준. 주소만 있고 면적이 없으면
+  // 수지 baseline이 0이라 실제로는 미반영 → done=false(거짓 30% 제거).
+  const siteDone = i.landAreaSqm > 0;
+  // 주소만 확보된 부분 상태(면적 미확보) — 화면에서 "주소만(부분)"으로 정직 표시 가능.
+  const siteAddressOnly = !siteDone && !!i.address;
+  const designDone = i.totalGfaSqm > 0;
+  const costDone = i.totalConstructionCostWon > 0;
+  const financeDone = i.totalRevenueWon > 0;
+  const stages: FeasibilityCompletenessStage[] = [
+    { key: "site", label: "부지", done: siteDone, partial: siteAddressOnly, weightPct: 30 },
+    { key: "design", label: "설계", done: designDone, weightPct: 60 },
+    { key: "cost", label: "공사비", done: costDone, weightPct: 85 },
+    { key: "finance", label: "금융", done: financeDone, weightPct: 100 },
+  ];
+  // 반영도 = 연속으로 완료된 마지막 단계의 누적 가중치(중간 누락 시 직전까지).
+  let pct = 0;
+  for (const st of stages) {
+    if (!st.done) break;
+    pct = st.weightPct;
+  }
+  return { stages, pct };
+}
+
 /* ── 프로젝트 전체 완성도 파생 모델 ──
    수지 투입(부지/설계/공사비/금융)에 더해 감사 지적 단계(법규/ESG/인허가)까지 포함해
    프로젝트 전주기 완성도를 산출한다. 무목업: 각 단계 done은 해당 store 데이터(또는
    완료 단계 기록) 유무로만 판정. 가중치 균등(7단계, 각 1/7) → 완료 비율(%). */
+/** 단계 완료 등급 — 예/아니오 둘로는 "주소만 있는 부지"를 정직하게 말할 수 없다. */
+export type StageCompletion = "done" | "partial" | "none";
+
 export type ProjectCompletenessKey =
   | "site"
   | "design"
@@ -792,7 +979,9 @@ function extractAddressTokens(
       if (norm.length < 2) continue;
       dong.push(norm);
       const next = words[i + 1];
-      if (bunji == null && next && /^산?\d+(-\d+)?(번지)?$/.test(next)) {
+      // ★지번 토큰 판정은 lib/pnu.isJibunToken 한 곳 — 종전엔 이 정규식과 addressHasJibun 이
+      //   각자 답해 `(번지)` 인정 여부가 어긋나 있었다(구현 두 벌 금지).
+      if (bunji == null && next && isJibunToken(next)) {
         bunji = next.replace(/번지$/, "").replace(/^산/, "");
       }
       continue;
@@ -800,6 +989,20 @@ function extractAddressTokens(
   }
   if (sigungu.length === 0 && dong.length === 0) return null;
   return { sigungu, dong, bunji };
+}
+
+/** 시군구·법정동 토큰만으로 지역 불일치를 판정(번지 비교 제외) — addressTokenMismatch·
+    addressRegionMismatch가 공유하는 내부 산식(산식 복제 금지, 여기 한 곳만 고친다). */
+function tokensRegionMismatch(ta: AddressTokens, tb: AddressTokens): boolean {
+  if (ta.sigungu.length > 0 && tb.sigungu.length > 0) {
+    const setB = new Set(tb.sigungu);
+    if (!ta.sigungu.some((t) => setB.has(t))) return true; // 시군구 전부 불일치
+  }
+  if (ta.dong.length > 0 && tb.dong.length > 0) {
+    const setB = new Set(tb.dong);
+    if (!ta.dong.some((t) => setB.has(t))) return true; // 법정동 전부 불일치
+  }
+  return false;
 }
 
 /** 두 주소의 핵심 토큰(시군구·법정동·번지)이 명백히 불일치하면 true.
@@ -811,16 +1014,24 @@ export function addressTokenMismatch(
   const ta = extractAddressTokens(a);
   const tb = extractAddressTokens(b);
   if (!ta || !tb) return false;
-  if (ta.sigungu.length > 0 && tb.sigungu.length > 0) {
-    const setB = new Set(tb.sigungu);
-    if (!ta.sigungu.some((t) => setB.has(t))) return true; // 시군구 전부 불일치
-  }
-  if (ta.dong.length > 0 && tb.dong.length > 0) {
-    const setB = new Set(tb.dong);
-    if (!ta.dong.some((t) => setB.has(t))) return true; // 법정동 전부 불일치
-    if (ta.bunji && tb.bunji && ta.bunji !== tb.bunji) return true; // 같은 동, 다른 번지
+  if (tokensRegionMismatch(ta, tb)) return true;
+  if (ta.dong.length > 0 && tb.dong.length > 0 && ta.bunji && tb.bunji && ta.bunji !== tb.bunji) {
+    return true; // 같은 동, 다른 번지
   }
   return false;
+}
+
+/** 지역 단위(시군구·법정동) 불일치만 판정 — 번지 차이는 무시한다.
+ *  지도에서 인접 필지를 프로젝트에 추가하는 정상 워크플로우가 '불일치'로 오판되지 않게,
+ *  사통맵 교차오염 가드 전용으로 쓴다(번지까지 엄격한 addressTokenMismatch는 setProject 오염가드 유지). */
+export function addressRegionMismatch(
+  a: string | null | undefined,
+  b: string | null | undefined,
+): boolean {
+  const ta = extractAddressTokens(a);
+  const tb = extractAddressTokens(b);
+  if (!ta || !tb) return false;
+  return tokensRegionMismatch(ta, tb);
 }
 
 /** 오염 스냅샷 정화 — siteAnalysis와 그 파생(designData)을 null로, completedStages에서
@@ -1031,7 +1242,27 @@ export const useProjectContextStore = create<ProjectContextState>()(
           : prev.snapshots;
         // 대상 프로젝트의 이전 분석이 있으면 복원, 없으면 초기화.
         // 구 hydrated 스냅샷 shape 호환을 위해 모든 필드에 ?? 폴백을 둔다.
-        const snap = snapshots[id];
+        const rawSnap = snapshots[id];
+        // ★전환 분기 오염 가드 — 같은 함수의 **같은 id 재바인딩 분기에는 이 검사가 있는데**
+        //   실제 프로젝트 전환에는 없었다(형제 비대칭). 그래서 `snapshots[id]` 에 다른 지역의
+        //   분석이 실려 있으면 전환하는 순간 **무검사로 복원**돼, 헤더가 "프로젝트 A · 주소 B"
+        //   처럼 갈린 상태를 그대로 그렸다(사용자 신고 화면의 기전).
+        //   ★판별자는 **지역 단위**(`addressRegionMismatch`)를 쓴다 — 번지까지 엄격하게 보면
+        //     "인접 필지를 추가해 대표 번지가 바뀐" 정상 작업의 캐시까지 날려 사용자가 한 분석을
+        //     잃는다. 막으려는 것은 **다른 지역**이 실려 오는 것이다.
+        //   ★산식·정화는 복제하지 않는다 — 기존 `purifyPollutedSnapshot` 을 그대로 태운다.
+        const snapSiteAddress = (
+          (rawSnap?.siteAnalysis as { address?: unknown } | null | undefined)?.address
+        );
+        const snapPolluted =
+          !!address &&
+          typeof snapSiteAddress === "string" &&
+          addressRegionMismatch(address, snapSiteAddress);
+        const snap = snapPolluted
+          ? (purifyPollutedSnapshot(
+              rawSnap as unknown as Record<string, unknown>,
+            ) as unknown as typeof rawSnap)
+          : rawSnap;
         const seededSite: SiteAnalysisData | null = address
           ? {
               estimatedValue: null,
@@ -1166,7 +1397,11 @@ export const useProjectContextStore = create<ProjectContextState>()(
             if (Object.keys(guarded).length === 0) return {};
             patch = guarded;
           }
-          const mergedSiteAnalysis = {
+          // ★자가치유(2026-08-23): 필지 목록이 없는데 그 목록에서 파생된 면적 집계만 남은
+          //   상태는 구성상 있을 수 없다 — 있으면 유령이다. 정상 경로에서는 아무것도 하지
+          //   않고 **같은 참조를 그대로 돌려주므로**(리렌더 연쇄 없음) 여기 둬도 비용이 없다.
+          //   근본(쓰기/지우기 비대칭)은 satong-map-selection 에서 고쳤고, 이건 두 번째 방어선.
+          const mergedSiteAnalysis = healPhantomAreaAggregates({
             ...(state.siteAnalysis ?? {
               estimatedValue: null,
               landAreaSqm: null,
@@ -1175,7 +1410,7 @@ export const useProjectContextStore = create<ProjectContextState>()(
               pnu: null,
             }),
             ...patch,
-          } as SiteAnalysisData;
+          }) as SiteAnalysisData;
           const next: Partial<ProjectContextState> = {
             siteAnalysis: mergedSiteAnalysis,
             updatedAt: stampedAt(state, "siteAnalysis"),
@@ -1258,8 +1493,29 @@ export const useProjectContextStore = create<ProjectContextState>()(
         });
       },
 
-      updateFeasibilityData: (data) => {
+      updateFeasibilityData: (data, meta) => {
+        const source: FieldSource = meta?.source ?? "auto";
         set((state) => {
+          const flagged = state.manualFields?.feasibility ?? {};
+          const prevRec = state.feasibilityData
+            ? (state.feasibilityData as unknown as Record<string, unknown>)
+            : null;
+          // ★사용자 수동값 보호(2026-08-26). `cost` 와 형태가 **다르다** — 저쪽은 full replace 라
+          //   flagged 키를 이전값으로 되돌리지만, 여기는 **merge patch** 라 들어온 `data` 안의
+          //   flagged 키만 되돌리면 된다(안 들어온 키는 어차피 이전값이 남는다).
+          //   auto 경로에서만 되돌린다 — user 가 스스로 고치는 것은 막지 않는다.
+          const guardedData: Record<string, unknown> = { ...data };
+          if (source === "auto" && prevRec) {
+            for (const key of Object.keys(flagged)) {
+              // ★`key in guardedData` 는 **이중 가드**다 — 없어도 결과는 같다.
+              //   flagged 키가 들어온 patch 에 없으면 `guardedData[key] = prevRec[key]` 는
+              //   **이전값을 그대로 다시 넣는 것**이고, merge(`{...prev, ...guardedData}`)의
+              //   결과가 동일하다. 변이로 이 조건을 지워도 테스트가 초록인 것은 **구멍이 아니라
+              //   무연산**이기 때문이다(2026-08-26 변이 M6 SURVIVED — 설명 가능한 생존).
+              //   그래도 남겨 둔다: **의도를 읽히게** 한다("들어온 것만 되돌린다").
+              if (key in guardedData && key in prevRec) guardedData[key] = prevRec[key];
+            }
+          }
           // merge: 기존값 보존 후 patch 적용(부분 writer가 totalCostWon을 null로 덮지 않도록).
           const merged = {
             totalCostWon: null,
@@ -1267,7 +1523,7 @@ export const useProjectContextStore = create<ProjectContextState>()(
             profitRatePct: null,
             grade: null,
             ...(state.feasibilityData ?? {}),
-            ...data,
+            ...guardedData,
           } as FeasibilityData;
           // ★자기자본 자동 환류(공용 규칙, resolveEquityWon 단일 계약):
           //   총사업비가 나오면 자기자본이 없어도 equityRatioPct(기본 10%)로 자동 산출해 채운다
@@ -1294,8 +1550,27 @@ export const useProjectContextStore = create<ProjectContextState>()(
               totalCostWon: merged.totalCostWon,
               equityRatioPct: ratio,
             });
+          // ★user 경로에서 **stamp** 한다 — 이것이 없으면 위 가드가 읽을 flagged 가 영원히 비어
+          //   가드가 **장식**이 된다(행위 락이 정확히 이 상태를 잡았다: 소스 검사였으면 통과했다).
+          //   형제 `cost` 와 같은 규칙: null 은 "데이터 없음"이라 보호 대상이 아니고,
+          //   이전값과 같은 키는 stamp 하지 않는다(미변경 필드를 user 로 동결하면 이후 자동 환류가
+          //   통째로 무력화된다).
+          const nextManual = (() => {
+            if (source !== "user") return null;
+            const now = Date.now();
+            const stamped: Record<string, FieldProvenance> = { ...flagged };
+            for (const [key, value] of Object.entries(data)) {
+              if (value == null) continue;
+              if (prevRec && value === prevRec[key]) continue;
+              stamped[key] = { source: "user", updatedAt: now };
+            }
+            return stamped;
+          })();
           return withSnap(state, {
             feasibilityData: merged,
+            ...(nextManual
+              ? { manualFields: { ...(state.manualFields ?? {}), feasibility: nextManual } }
+              : {}),
             updatedAt: stampedAt(state, "feasibility"),
           });
         });
@@ -1392,15 +1667,29 @@ export const useProjectContextStore = create<ProjectContextState>()(
           const prevRec = state.costData
             ? (state.costData as unknown as Record<string, unknown>)
             : null;
+          // F-4(전역전파방지): costSavingScenarios/costChangeForecast는 이 액션의 관할이 아니다
+          // (전용 setter로만 채워짐) — 호출측(BoqDetailTable.applyToFeasibility·calc() 재실행 등
+          // 기존/향후 모든 updateCostData 호출부)이 명시하지 않으면 이전 값을 그대로 이어간다.
+          // 개산 재실행·BOQ/절감안 반영 같은 다른 full-replace 호출이 카드가 채운 보고서용
+          // 원응답을 조용히 지우던 결함을 이 한 곳에서 막는다(공용화 수정 — 개별 호출부 무수정).
+          const base: Record<string, unknown> = { ...data };
+          if (prevRec) {
+            if (!("costSavingScenarios" in data) && prevRec.costSavingScenarios !== undefined) {
+              base.costSavingScenarios = prevRec.costSavingScenarios;
+            }
+            if (!("costChangeForecast" in data) && prevRec.costChangeForecast !== undefined) {
+              base.costChangeForecast = prevRec.costChangeForecast;
+            }
+          }
           const next: Partial<ProjectContextState> = {
-            costData: data,
+            costData: base as unknown as CostData,
             updatedAt: stampedAt(state, "cost"),
           };
           if (source === "auto") {
             // merge 가드 — full replace이되 user 플래그 키는 이전값 보존(auto 덮어쓰기 차단).
             const flaggedKeys = Object.keys(flagged);
             if (prevRec && flaggedKeys.length > 0) {
-              const merged = { ...data } as unknown as Record<string, unknown>;
+              const merged = { ...base } as Record<string, unknown>;
               for (const key of flaggedKeys) {
                 if (key in prevRec) merged[key] = prevRec[key];
               }
@@ -1424,6 +1713,41 @@ export const useProjectContextStore = create<ProjectContextState>()(
             };
           }
           return withSnap(state, next);
+        });
+      },
+      // F-4: 절감 시나리오 원응답만 부분패치 — updatedAt.cost 미변경(수지·금융 staleness 오염 회피).
+      setCostSavingScenarios: (data) => {
+        set((state) => {
+          if ((state.costData?.costSavingScenarios ?? null) === data) return {};
+          return withSnap(state, {
+            // merge: costSavingScenarios만 덮고 총액·직접/간접 등 기존 공사비 슬롯은 보존.
+            costData: {
+              totalConstructionCostWon: null, perSqmWon: null, perPyeongWon: null,
+              abovegroundWon: null, undergroundWon: null, landscapeWon: null,
+              directWon: null, indirectWon: null, rangeMinWon: null, rangeMaxWon: null,
+              source: null,
+              ...(state.costData ?? {}),
+              costSavingScenarios: data,
+            } as CostData,
+            // ★updatedAt 미변경 — 카드 재조회가 수지·금융 staleness를 stamp하지 않는다.
+          });
+        });
+      },
+      // F-4: 설계변경 예측 원응답만 부분패치 — updatedAt.cost 미변경(수지·금융 staleness 오염 회피).
+      setCostChangeForecast: (data) => {
+        set((state) => {
+          if ((state.costData?.costChangeForecast ?? null) === data) return {};
+          return withSnap(state, {
+            costData: {
+              totalConstructionCostWon: null, perSqmWon: null, perPyeongWon: null,
+              abovegroundWon: null, undergroundWon: null, landscapeWon: null,
+              directWon: null, indirectWon: null, rangeMinWon: null, rangeMaxWon: null,
+              source: null,
+              ...(state.costData ?? {}),
+              costChangeForecast: data,
+            } as CostData,
+            // ★updatedAt 미변경 — 카드 재조회가 수지·금융 staleness를 stamp하지 않는다.
+          });
         });
       },
 
@@ -1552,126 +1876,92 @@ export const useProjectContextStore = create<ProjectContextState>()(
         return ups.every((up) => isModuleReady(s, up));
       },
 
-      feasibilityCompleteness: () => {
-        const s = get();
-        // 단계별 실데이터 반영 판정(무목업): 값이 존재해야 done.
-        // ★부지 done은 "수치 확보(landAreaSqm>0)" 기준. 주소만 있고 면적이 없으면
-        // 수지 baseline이 0이라 실제로는 미반영 → done=false(거짓 30% 제거).
-        const siteDone = !!(
-          s.siteAnalysis?.landAreaSqm && s.siteAnalysis.landAreaSqm > 0
-        );
-        // 주소만 확보된 부분 상태(면적 미확보) — 화면에서 "주소만(부분)"으로 정직 표시 가능.
-        const siteAddressOnly = !siteDone && !!s.siteAnalysis?.address;
-        const designDone = !!(
-          s.designData?.totalGfaSqm && s.designData.totalGfaSqm > 0
-        );
-        const costDone = !!(
-          s.costData?.totalConstructionCostWon &&
-          s.costData.totalConstructionCostWon > 0
-        );
-        const financeDone = !!(
-          s.feasibilityData?.totalRevenueWon &&
-          s.feasibilityData.totalRevenueWon > 0
-        );
-        const stages: FeasibilityCompletenessStage[] = [
-          { key: "site", label: "부지", done: siteDone, partial: siteAddressOnly, weightPct: 30 },
-          { key: "design", label: "설계", done: designDone, weightPct: 60 },
-          { key: "cost", label: "공사비", done: costDone, weightPct: 85 },
-          { key: "finance", label: "금융", done: financeDone, weightPct: 100 },
-        ];
-        // 반영도 = 연속으로 완료된 마지막 단계의 누적 가중치(중간 누락 시 직전까지).
-        let pct = 0;
-        for (const st of stages) {
-          if (!st.done) break;
-          pct = st.weightPct;
-        }
-        return { stages, pct };
-      },
+      // ★판정은 모듈 스코프의 `computeFeasibilityCompleteness` 한 곳뿐이다.
+      //   여기서 다시 쓰면 사본이 갈린다(그리고 렌더 경로는 이 메서드가 아니라 셀렉터를 쓴다).
+      feasibilityCompleteness: () =>
+        computeFeasibilityCompleteness(selectFeasibilityCompletenessInputs(get())),
 
       projectCompleteness: () => {
-        const s = get();
-        // 무목업: 각 단계 done은 실데이터(또는 완료 단계 기록)로만 판정.
-        const siteDone = !!(
-          s.siteAnalysis?.landAreaSqm && s.siteAnalysis.landAreaSqm > 0
-        );
-        const siteAddressOnly = !siteDone && !!s.siteAnalysis?.address;
-        const designDone = !!(
-          s.designData?.totalGfaSqm && s.designData.totalGfaSqm > 0
-        );
-        const costDone = !!(
-          s.costData?.totalConstructionCostWon &&
-          s.costData.totalConstructionCostWon > 0
-        );
-        // 법규: 적합판정 또는 법령허브 산출(한도/근거)이 채워졌는가(Fix #1 — 환류 단선 해소).
-        const complianceDone = complianceHasData(s.complianceData);
-        // 금융: finance 단계가 산출(updatedAt stamp)되었는가. 별도 데이터 필드가
-        // 없으므로 staleness 타임스탬프를 done 신호로 사용(무목업: 실제 산출 시에만 stamp).
-        const financeDone = !!s.updatedAt.finance;
-        // ESG: 탄소 산출 결과가 채워졌는가.
-        const esgDone = !!(
-          s.esgData &&
-          ((s.esgData.totalCarbonPerSqm ?? 0) > 0 ||
-            (s.esgData.embodiedCarbonKg ?? 0) > 0)
-        );
-        // 인허가: 전용 데이터 필드가 없어 완료 단계 기록으로 판정(무목업).
-        const permitDone = s.completedStages.includes("permit");
-
-        const stages: ProjectCompletenessStage[] = [
-          { key: "site", label: "부지", done: siteDone, partial: siteAddressOnly },
-          { key: "design", label: "설계", done: designDone },
-          { key: "cost", label: "공사비", done: costDone },
-          { key: "compliance", label: "법규", done: complianceDone },
-          { key: "finance", label: "금융", done: financeDone },
-          { key: "esg", label: "ESG", done: esgDone },
-          { key: "permit", label: "인허가", done: permitDone },
+        // ★단일 판정에서 파생한다 — 종전엔 여기서 done 조건을 **다시 한 번 손으로 썼고**,
+        //   그 사본이 stageHasData 와 어긋나 같은 화면이 같은 단계를 두고 반대로 말했다.
+        //   완성도 7단계는 라이프사이클 11단계의 **부분집합**이며(라벨은 짧게), 이 표가
+        //   유일한 대응이다. 판정 자체는 stageCompletion 한 곳에만 있다.
+        const c = get().stageCompletion;
+        const KEY_TO_STAGE: Array<[ProjectCompletenessKey, string, string]> = [
+          ["site", "site-analysis", "부지"],
+          ["design", "design", "설계"],
+          ["cost", "construction", "공사비"],
+          ["compliance", "legal", "법규"],
+          ["finance", "finance", "금융"],
+          ["esg", "esg", "ESG"],
+          ["permit", "permit", "인허가"],
         ];
+        const stages: ProjectCompletenessStage[] = KEY_TO_STAGE.map(
+          ([key, stageId, label]) => {
+            const grade = c(stageId);
+            return { key, label, done: grade === "done", partial: grade === "partial" };
+          },
+        );
         const total = stages.length;
         const doneCount = stages.filter((st) => st.done).length;
         const pct = total > 0 ? Math.round((doneCount / total) * 100) : 0;
         return { stages, doneCount, total, pct };
       },
 
-      stageHasData: (stageId) => {
+      stageCompletion: (stageId) => {
         const s = get();
-        // 라이프사이클 단계 id(LIFECYCLE_STAGES)별 실데이터 유무를 store 값만으로 판정.
-        // 매핑 없는 종합·운영 단계(report/operations)는 undefined(배지 미표시).
         switch (stageId) {
-          case "site-analysis":
-            return !!(
-              (s.siteAnalysis?.landAreaSqm && s.siteAnalysis.landAreaSqm > 0) ||
-              s.siteAnalysis?.address ||
-              s.siteAnalysis?.zoneCode
-            );
+          case "site-analysis": {
+            // ★면적은 effectiveLandAreaSqm(SSOT) — raw landAreaSqm 금지.
+            //   다필지에서 통합면적만 확보된 상태를 raw 로 읽으면 "면적 없음"이 되어
+            //   이미 확보된 부지가 미완료로 셈해진다(면적 SSOT 규칙은 store 안에서도 같다).
+            const area = effectiveLandAreaSqm(s.siteAnalysis);
+            if (area != null && area > 0) return "done";
+            // 주소·용도지역만 있는 상태 — 시작은 했으나 **하류가 쓸 수치가 없다**.
+            //   이걸 done 으로 세면 "부지분석 완료"인데 설계·수지가 못 도는 모순이 생긴다.
+            if (s.siteAnalysis?.address || s.siteAnalysis?.zoneCode) return "partial";
+            return "none";
+          }
           case "legal":
-            return complianceHasData(s.complianceData);
+            return complianceHasData(s.complianceData) ? "done" : "none";
           case "design":
           case "bim":
-            return !!(s.designData?.totalGfaSqm && s.designData.totalGfaSqm > 0);
+            return s.designData?.totalGfaSqm && s.designData.totalGfaSqm > 0 ? "done" : "none";
           case "construction":
-            return !!(
-              s.costData?.totalConstructionCostWon &&
+            return s.costData?.totalConstructionCostWon &&
               s.costData.totalConstructionCostWon > 0
-            );
+              ? "done"
+              : "none";
           case "feasibility":
-            return !!(
-              s.feasibilityData?.totalRevenueWon &&
+            return s.feasibilityData?.totalRevenueWon &&
               s.feasibilityData.totalRevenueWon > 0
-            );
+              ? "done"
+              : "none";
           case "finance":
-            return !!s.updatedAt.finance;
+            // 별도 데이터 필드가 없어 산출 타임스탬프를 done 신호로 쓴다(무목업: 실제 산출 시에만 stamp).
+            return s.updatedAt.finance ? "done" : "none";
           case "esg":
-            return !!(
-              s.esgData &&
+            return s.esgData &&
               ((s.esgData.totalCarbonPerSqm ?? 0) > 0 ||
                 (s.esgData.embodiedCarbonKg ?? 0) > 0)
-            );
+              ? "done"
+              : "none";
           // permit: 전용 데이터 필드가 없어 완료 단계 기록으로만 판정(무목업).
           case "permit":
-            return s.completedStages.includes("permit");
+            return s.completedStages.includes("permit") ? "done" : "none";
           // report/operations 등 종합·운영 단계는 배지 미표시(undefined).
           default:
             return undefined;
         }
+      },
+
+      /**
+       * 단계에 **데이터가 있는가**(완료 여부가 아니다). 이름 그대로의 뜻으로만 쓴다 —
+       * 이걸 '완료'로 읽은 것이 위 두 화면이 갈린 원인이었다. 완료 판정은 `stageCompletion`.
+       */
+      stageHasData: (stageId) => {
+        const c = get().stageCompletion(stageId);
+        return c === undefined ? undefined : c !== "none";
       },
     }),
     {

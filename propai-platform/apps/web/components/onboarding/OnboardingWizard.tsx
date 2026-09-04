@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useModalFocusWhileMounted } from "@/hooks/useModalFocus";
 
 const STORAGE_KEY = "propai_onboarding_completed";
 
@@ -102,6 +103,17 @@ const variants = {
 };
 
 export function OnboardingWizard() {
+  const bodyRef = useRef<HTMLDivElement>(null);
+
+  // ★화면 전체를 덮는 모달 칸(z-[800]) 표면인데 ARIA 선언이 없어, ESC·포커스 계약이
+  //   이 표면을 **수집조차 못 하고 있었다**(선언 누락이 곧 계약 회피였다).
+  //   → `role="dialog"`/`aria-modal` 과 포커스 트랩을 붙인다.
+  //
+  // ★단 **ESC 는 붙이지 않는다** — 이 위저드는 `onClose` 가 없고 "건너뛰기"가 곧
+  //   `handleComplete`(다시 안 뜸)다. ESC 를 닫기로 연결하면 **실수로 한 번 누른 사용자가
+  //   온보딩을 영영 못 보게** 된다. 그건 접근성이 아니라 제품 결정이라 여기서 정하지 않고,
+  //   ESC 계약의 면제 목록에 **사유와 함께** 남긴다.
+  useModalFocusWhileMounted(bodyRef);
   const [visible, setVisible] = useState(false);
   const [currentStep, setCurrentStep] = useState(0);
   const [direction, setDirection] = useState(1);
@@ -148,12 +160,18 @@ export function OnboardingWizard() {
   const isLast = currentStep === STEPS.length - 1;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="시작 안내"
+      className="fixed inset-0 z-[800] flex items-center justify-center bg-black/60 backdrop-blur-sm"
+    >
       <motion.div
+        ref={bodyRef}
         initial={{ scale: 0.9, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         exit={{ scale: 0.9, opacity: 0 }}
-        className="relative w-full max-w-lg mx-4 overflow-hidden rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface)] shadow-2xl"
+        className="relative w-full max-w-lg mx-4 overflow-hidden rounded-[var(--radius-lg)] border border-[var(--line-strong)] bg-[var(--surface)] shadow-2xl"
       >
         {/* Progress dots */}
         <div className="flex items-center justify-center gap-2 pt-8">

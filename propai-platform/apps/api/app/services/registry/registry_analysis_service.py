@@ -5,11 +5,15 @@
 권리관계를 구조화해 제공한다. LLM 실패 시 graceful 폴백.
 """
 
-import json
 import time
 from typing import Any
 
 import structlog
+
+from app.services.ai.llm_failure import classify_failure as _classify_failure
+from app.services.ai.llm_failure import failure_reason as _failure_reason
+from app.services.common.exc_detail import exc_detail
+from app.utils.pnu import is_valid_pnu
 
 logger = structlog.get_logger(__name__)
 
@@ -41,7 +45,17 @@ def _cache_key(address: str | None, pnu: str | None, realty_type: str | None,
                dong: str | None, ho: str | None) -> str:
     """페이지·호출부와 무관하게 동일 필지는 동일 키. 주소(정규화) 우선, realty 기본 토지(2)."""
     base = _norm_addr(address) or (pnu or "")
-    return f"{base}|{realty_type or '2'}|{dong or ''}|{ho or ''}"
+    # ★★스키마 버전을 키에 넣는다. 없으면 **프롬프트 스키마를 늘려도 옛 캐시가 그대로 반환**되어
+    #   새 필드가 영영 비고, 소비처는 그것을 "자료 없음"으로 읽는다(이 저장소가 이미 겪은
+    #   '폴백 캐시 박제' 결함 클래스). 스키마를 바꿀 때마다 이 값을 올린다.
+    #   v2: ownership.ownership_history 추가(주택법 §22 상속 보유기간 합산 근거)
+    # ★변이 도구가 이 접두 삭제를 **생존**으로 보고한다(설명 가능한 생존):
+    #   캐시 키는 **DB/Redis 왕복**이 있어야 효과가 관측되는데 단위 테스트는 그 층을 안 태운다.
+    #   여기에 문자열을 복창하는 락(`assert key.startswith("v2|")`)을 만들면 **동어반복**이라
+    #   스키마를 바꾸고 버전을 안 올리는 진짜 실수를 못 잡는다.
+    #   대신 규율을 코드에 남긴다: **스키마를 바꾸면 이 값을 올린다.** 안 올리면 옛 캐시가
+    #   새 필드 없이 반환되고 소비처가 그것을 "자료 없음"으로 읽는다(폴백 캐시 박제).
+    return f"v2|{base}|{realty_type or '2'}|{dong or ''}|{ho or ''}"
 
 
 async def _db_cache_get(key: str) -> dict[str, Any] | None:
@@ -57,7 +71,7 @@ async def _db_cache_get(key: str) -> dict[str, Any] | None:
             if row and row[0] and (time.time() - float(row[1] or 0)) < _ANALYZE_DB_TTL:
                 return row[0]
     except Exception as e:  # noqa: BLE001
-        logger.warning("등기분석 DB캐시 조회 실패", err=str(e)[:80])
+        logger.warning("등기분석 DB캐시 조회 실패", err=exc_detail(e, limit=80))
     return None
 
 
@@ -75,9 +89,98 @@ async def _db_cache_put(key: str, result: dict[str, Any]) -> None:
                 "VALUES (:k, CAST(:v AS jsonb), now()) "
                 "ON CONFLICT (key) DO UPDATE SET result = EXCLUDED.result, created_at = now()"),
                 {"k": key, "v": _json.dumps(result, ensure_ascii=False, default=str)})
+            # ★만료행을 **물리적으로** 지운다. 종전엔 TTL 을 읽기에서만 걸어, 읽히지 않는
+            #   등기부 사본(소유자명·발급 PDF 서명 URL)이 이 표에 **무기한** 쌓였다.
+            #   `app/core/charge_idempotency.py` 가 경고한 "30일 TTL 삭제를 우회하는 사본"과
+            #   같은 형태다 — 캐시를 늘리면서 그 결함을 함께 남기지 않는다.
+            await db.execute(
+                text("DELETE FROM registry_analysis_cache "
+                     "WHERE created_at < now() - make_interval(secs => :ttl)"),
+                {"ttl": _ANALYZE_DB_TTL})
             await db.commit()
     except Exception as e:  # noqa: BLE001
-        logger.warning("등기분석 DB캐시 저장 실패", err=str(e)[:80])
+        logger.warning("등기분석 DB캐시 저장 실패", err=exc_detail(e, limit=80))
+
+
+# ── 발급 원본 캐시 — **돈이 들어간 산출물**을 분석 성공/실패와 분리해 보관 ──────────────
+#
+# ★왜 필요한가(2026-08-24 실측). 분석 캐시는 `_cache_success` 로 **성공만** 저장한다. LLM 이
+#   실패하면 캐시 미스가 되고, 다음 시도는 `RegistryService.get_one()` 을 **다시** 부른다.
+#   그 층에는 캐시가 없다(실측: `registry_service.py` 에 cache 참조 0건). 즉 등기부가
+#   **다시 발급되고 민원캐시가 다시 차감된다** — 사용자에게는 1,200원을 안 받는데
+#   (`analysis_charged` 가 막는다) **선불 잔액은 탄다.**
+#
+#   `app/core/charge_idempotency.py` 는 자기 근거로 *"읽기는 기존 캐시가 흡수하므로 외부
+#   발급이 다시 나가지도 않는다"* 고 적어 두었다. **실패 경로에서 그 전제가 깨진다.**
+#   여기서 그 전제를 참으로 만든다.
+#
+# ★무엇을 보관하나: 발급이 **성공한 경우**(reg.status=="ok") 그 산출물 — 본문 텍스트·출처·
+#   `fetched` 메타(PDF 서명 URL 포함). 발급이 실패한 경우는 보관하지 않는다(받은 것이 없으므로
+#   재시도가 다시 발급하는 것이 옳다).
+#
+# ★★영속하지 않는다 — **인메모리 전용(6시간)**. 이유는 둘이고, 둘 다 캐시 적중률보다 무겁다:
+#   ① **개인정보**: 여기 담기는 것은 등기부 **본문 전문**(소유자·근저당권자 등)이다.
+#      `charge_idempotency.py` 가 이미 경고했다 — *"저장 대상이 등기부 전문이고 만료도
+#      프루닝도 없어 30일 TTL 삭제를 우회하는 사본이 무기한 쌓인다"*. 그 결함을 캐시를
+#      늘리면서 새로 만들지 않는다. 기존 표가 보관하는 것은 **파생물**(`land`·`ai`)이지
+#      본문이 아니다 — 그 선을 넘지 않는다.
+#   ② **신선도**: 등기부는 시점 문서다. 6시간은 7일보다 안전하다.
+#   ★정직한 한계: 워커가 여러 개면 재사용은 **프로세스 단위**다. 다른 워커로 간 요청은
+#     다시 발급한다 — 반복 조회의 낭비는 거의 사라지지만 0은 아니다.
+#
+# ★신선도 비교(참고): 성공 분석은 인메모리 6시간 / DB 7일로 이미 캐시된다. 등기부는 변하지만, 이
+#   플랫폼은 이미 성공한 분석을 7일간 캐시로 돌려주고 있다 — 실패 건만 매번 새로 발급하던
+#   것이 오히려 비대칭이었다. 새 신선도 위험을 만드는 게 아니라 **기존 정책에 맞추는** 것이다.
+#   그래도 재사용 사실과 발급 시각은 응답에 실어 화면이 말할 수 있게 한다.
+#
+# ★굳어붙지 않게: 발급본이 쓸모없었던 경우(이미지 PDF 등)도 재사용되므로, 호출측이
+#   `force_reissue=True` 로 **명시적으로** 새 발급을 요청할 수 있다(돈이 드는 행위라 기본 아님).
+_SOURCE_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+
+
+def _source_key(cache_key: str) -> str:
+    return f"src|{cache_key}"
+
+
+async def _source_cache_get(key: str) -> dict[str, Any] | None:
+    hit = _SOURCE_CACHE.get(key)
+    if hit and (time.time() - hit[0]) < _ANALYZE_TTL:
+        return hit[1]
+    return None
+
+
+async def _source_cache_put(key: str, payload: dict[str, Any]) -> None:
+    _SOURCE_CACHE[key] = (time.time(), payload)
+
+
+# ── 결정론적 실패 기억 — **같은 실패를 다시 사지 않는다** ──────────────────────
+#
+# ★왜(2026-08-25). 실패한 분석은 캐시하지 않는다(자가치유). 그런데 **결정론적** 실패는
+#   회복되지 않으므로, 그 설계가 "볼 때마다 LLM 을 다시 사는" 결과를 낳는다 —
+#   등기 재발급 누수와 **같은 얼굴**이고 축만 다르다(벤더 발급 → LLM 토큰).
+#   실측 사례: 긴 등기부의 응답 절단(`parse`)은 같은 본문이면 매번 같은 자리에서 실패한다.
+#
+# ★일시 실패는 **절대 기억하지 않는다**(타임아웃·과부하·잔액). 그걸 기억하면 회복을 막는다.
+#   `llm_failure.is_retry_worthwhile` 이 그 판정의 단일 출처다.
+#
+# ★TTL 을 짧게(30분) 둔다 — 근본을 고쳐 배포해도 사용자가 오래 갇히지 않게. 그래도 갇히면
+#   `force_reissue=True` 가 모든 기억을 건너뛴다.
+_FAILURE_TTL = 30 * 60.0
+_FAILURE_MEMO: dict[str, tuple[float, dict[str, Any]]] = {}
+
+
+def _failure_memo_get(key: str) -> dict[str, Any] | None:
+    hit = _FAILURE_MEMO.get(key)
+    if not hit:
+        return None
+    if (time.time() - hit[0]) >= _FAILURE_TTL:
+        _FAILURE_MEMO.pop(key, None)
+        return None
+    return hit[1]
+
+
+def _failure_memo_put(key: str, ai: dict[str, Any]) -> None:
+    _FAILURE_MEMO[key] = (time.time(), ai)
 
 
 async def peek_analyze_cache(
@@ -127,7 +230,8 @@ _TMPL = """\
     "acquisition_date": "소유권 취득일(등기원인일/접수일)",
     "acquisition_cause": "취득 원인(매매·상속·증여 등)",
     "acquisition_price": "거래가액(매매시, 기재 있으면)",
-    "ownership_period": "현 소유자 보유기간(취득일~현재 추정)"
+    "ownership_period": "현 소유자 보유기간(취득일~현재 추정)",
+    "ownership_history": [{{"date": "접수일/등기원인일", "cause": "이전 원인(매매·상속·증여 등)", "owner": "취득자", "predecessor": "전 소유자(기재 있으면)", "share": "지분"}}]
   }},
   "provisional_registration": {{"exists": true/false, "detail": "가등기 내용(있으면)"}},
   "seizure": [{{"type": "압류|가압류|경매개시|가처분", "holder": "권리자", "detail": "내용", "date": "일자"}}],
@@ -141,6 +245,11 @@ _TMPL = """\
   "safety_grade": "안전|주의|위험",
   "summary": "한줄 요약"
 }}
+
+★`ownership.ownership_history` 는 **갑구의 소유권 이전 등기를 오래된 것부터 순서대로** 담는다.
+  상속으로 취득한 경우 「주택법」 제22조가 **피상속인의 소유기간을 합산**하도록 정하므로,
+  전 소유자(`predecessor`)와 그 취득일을 알 수 있으면 반드시 함께 적는다.
+  ★등기 내용에 없는 것은 만들지 말고 해당 항목을 생략한다(추정 금지).
 """
 
 
@@ -165,8 +274,24 @@ def _derive_ownership(ai: dict[str, Any] | None) -> dict[str, Any]:
     return {"ownership_form": form, "owner_count": len(owners), "owners": owners}
 
 
+def _has_registry_entries(text: str) -> bool:
+    """등기사항(갑구·을구 등) 본문이 실제로 담겼는지 — 머리말만 있는 텍스트와 구별.
+
+    왜 필요한가: 구조화 텍스트가 "소유자(요약): 홍길동" 한 줄이어도 '비어있지 않다'는
+    이유로 PDF 전문 그라운딩이 스킵되면, 근저당·압류가 통째로 빠진 껍데기 권리분석이
+    나온다(하이픈 이관 후 실제로 그렇게 동작했다). 등기사항 줄("[갑구] …")의 존재로 판정한다.
+    """
+    # 실제 등기부 전문은 전각 괄호(【갑구】)를 쓰고, 우리가 구성한 요약은 반각([갑구])을 쓴다.
+    # 둘 다 '등기사항 있음'으로 본다 — 프로바이더 제공 전문을 빈 것으로 오판하면 안 된다.
+    return any(ln.startswith(("[", "【")) for ln in (text or "").splitlines())
+
+
 def _registry_text_from_codef(reg: dict[str, Any]) -> str:
-    """CODEF 등기부 응답(구조화)에서 분석용 텍스트 구성."""
+    """CODEF 등기부 응답(구조화)에서 분석용 텍스트 구성.
+
+    하이픈 응답에는 resRegisterEntriesList가 없어 머리말(소유자·관할등기소)만 남는다 —
+    그 경우 _has_registry_entries가 False가 되어 호출부가 PDF 전문으로 그라운딩한다.
+    """
     parts: list[str] = []
     if reg.get("doc_title"):
         parts.append(f"문서: {reg['doc_title']}")
@@ -229,7 +354,11 @@ class RegistryAnalysisService:
             vworld = VWorldService()
             owner_type = None
             land_area = land_category = official_price = zone_type = None
-            effective_pnu = pnu
+            # ★유효한 PNU 만 외부 조회에 쓴다. 종전엔 검증이 없어 PNU 칸의 오염값
+            #   (라이브 실측: 성명 `'◀ 전성결'` · `'store-rep-…'`)이 그대로
+            #   `vworld.get_land_info()` 로 나갔다 — 실패가 예정된 외부 호출이고,
+            #   주소가 있으면 아래 `AutoZoningService` 가 **진짜 PNU 를 준다**.
+            effective_pnu = pnu if is_valid_pnu(pnu) else None
             if address:
                 az = await AutoZoningService().analyze_by_address(address)
                 effective_pnu = effective_pnu or az.get("pnu")
@@ -260,7 +389,7 @@ class RegistryAnalysisService:
                 "note": "공부상 소유구분·토지특성(소유자 성명·지분은 등기부 분석 결과 참조)",
             }
         except Exception as e:  # noqa: BLE001
-            logger.warning("토지정보 조회 실패", err=str(e)[:80])
+            logger.warning("토지정보 조회 실패", err=exc_detail(e, limit=80))
             return None
 
     async def analyze(
@@ -272,13 +401,22 @@ class RegistryAnalysisService:
         dong: str | None = None,
         ho: str | None = None,
         land_hint: dict[str, Any] | None = None,
+        force_reissue: bool = False,
     ) -> dict[str, Any]:
+        """등기부를 조회·해석한다.
+
+        Args:
+            force_reissue: True 면 **모든 캐시를 건너뛰고 새로 발급**한다. 돈이 드는 행위라
+                기본값은 False — 호출측이 명시적으로 요청할 때만 켠다. 발급본이 쓸모없었던
+                경우(이미지 PDF 등)에 갇히지 않기 위한 탈출구다.
+        """
         import asyncio
 
         # 캐시 조회(직접 입력 텍스트는 매번 다를 수 있어 캐시 제외) — 정규화 키 + DB 영속 공유
         cache_key = None
         if not (registry_text and registry_text.strip()):
             cache_key = _cache_key(address, pnu, realty_type, dong, ho)
+        if cache_key and not force_reissue:
             hit = _ANALYZE_CACHE.get(cache_key)
             if hit and (time.time() - hit[0]) < _ANALYZE_TTL and _cache_success(hit[1]):
                 return {**hit[1], "cached": True}
@@ -290,6 +428,9 @@ class RegistryAnalysisService:
         origin = None
         source = None
         fetched_meta = None
+        # 우리가 '머리말 요약'만 합성해 둔 상태인가(= 등기사항 없음). 문자열에서 되짚지 않고
+        # 만든 시점에 표시한다 — 수동 입력·프로바이더 제공 전문을 빈 것으로 오판하지 않기 위해.
+        thin_summary = False
 
         async def _resolve_land() -> dict[str, Any] | None:
             # 공부(지목/용도지역/공시지가/소유구분/면적)는 항상 조회하고,
@@ -308,17 +449,38 @@ class RegistryAnalysisService:
             source = registry_text.strip()[:8000]
             origin = "manual"
         else:
-            # CODEF 등 연동 조회 시도 — 토지정보 조회와 병렬 실행(독립적, 지연 단축)
-            from app.services.registry.registry_service import RegistryService
+            # ★★이미 발급받은 등기부가 있으면 **다시 발급하지 않는다.**
+            #   발급은 민원캐시(선불 잔액)를 차감하는데, 분석 캐시는 성공만 저장하므로
+            #   LLM 이 실패한 필지는 볼 때마다 재발급돼 돈이 샜다(2026-08-24 실측).
+            #   여기서 재사용하면 재시도는 **해석만** 다시 한다(자가치유는 그대로 유지).
+            src_key = _source_key(cache_key) if cache_key else None
+            reused = await _source_cache_get(src_key) if (src_key and not force_reissue) else None
+            if reused:
+                land = await _resolve_land()
+                source = reused.get("source") or ""
+                origin = reused.get("origin")
+                thin_summary = bool(reused.get("thin_summary"))
+                fetched_meta = dict(reused.get("fetched") or {})
+                # 재사용 사실과 발급 시각을 **응답에 싣는다** — 화면이 "언제 발급분인지"를
+                #   말할 수 있어야 한다. 조용히 옛 등기부를 보여 주면 그게 곧 거짓이 된다.
+                fetched_meta["reused_issue"] = True
+                fetched_meta["issued_at"] = reused.get("issued_at")
+                reg = None
+            else:
+                # CODEF 등 연동 조회 시도 — 토지정보 조회와 병렬 실행(독립적, 지연 단축)
+                from app.services.registry.registry_service import RegistryService
 
-            land, reg = await asyncio.gather(
-                _resolve_land(),
-                RegistryService().get_one(
-                    pnu=pnu, address=address, realty_type=realty_type, dong=dong, ho=ho
-                ),
-            )
-            st = reg.get("status")
-            if st == "ok":
+                land, reg = await asyncio.gather(
+                    _resolve_land(),
+                    RegistryService().get_one(
+                        pnu=pnu, address=address, realty_type=realty_type, dong=dong, ho=ho,
+                        # ★아래 층에도 전달한다 — 위 캐시만 건너뛰면 발급 캐시가 그대로
+                        #   옛 등기부를 돌려줘 "새로 발급"이 조용히 무시된다.
+                        force_reissue=force_reissue,
+                    ),
+                )
+            st = reg.get("status") if reg is not None else "ok"
+            if st == "ok" and reg is not None:
                 # apick 등은 추출 텍스트(registry_text)를 직접 제공 → 그대로 LLM 분석.
                 # CODEF는 구조화 JSON → _registry_text_from_codef로 텍스트 구성.
                 if reg.get("registry_text"):
@@ -326,11 +488,15 @@ class RegistryAnalysisService:
                     origin = reg.get("origin") or "apick"
                 else:
                     source = _registry_text_from_codef(reg)
-                    origin = "codef"
+                    # 출처는 실제 프로바이더를 그대로 — 하이픈 결과를 codef로 오표기하지 않는다.
+                    origin = reg.get("origin") or "codef"
+                    # 등기사항 없이 머리말만 나온 경우 표시(아래 PDF 그라운딩이 성공하면 해제)
+                    thin_summary = not _has_registry_entries(source)
                 # 발급 PDF는 서버(비공개 버킷)에 저장하고 만료 URL로 전달(TTL 자동삭제)
                 # + ★PDF 그라운딩: 구조화 텍스트(xlsx)가 비어 PDF만 확보된 경우, PDF 본문에서 직접
                 #   텍스트를 추출해 분석 소스로 사용(권리분석이 'PDF 미분석'으로 통째 누락되던 갭 해소).
-                #   추출 실패(이미지 PDF 등) 시 source는 그대로 비어 아래 'empty' 정직 처리.
+                #   추출 실패(이미지 PDF 등) 시 source에는 머리말 요약만 남는데, 그 상태는
+                #   thin_summary로 표시해 아래에서 'empty'로 정직 처리한다(껍데기 분석 금지).
                 pdf_url = None
                 b64 = reg.get("pdf_base64")
                 if b64:
@@ -338,24 +504,46 @@ class RegistryAnalysisService:
                         import base64 as _b64
 
                         pdf_bytes = _b64.b64decode(b64)
-                        if not (source and source.strip()):
+                        # ★'비어있지 않음'이 아니라 '등기사항이 실제로 담겼는가'로 판정한다.
+                        #   머리말 한 줄(소유자 요약)만 있는 경우도 PDF 전문으로 그라운딩해야
+                        #   갑구·을구(근저당·압류)가 분석에 들어간다.
+                        if not _has_registry_entries(source):
                             pdf_text = _pdf_to_text(pdf_bytes)
                             if pdf_text:
                                 source = pdf_text
                                 origin = f"{reg.get('origin') or 'apick'}+pdf"
+                                thin_summary = False  # 전문 확보 — 껍데기 아님
 
                         from apps.api.services.storage_service import upload_registry_pdf
 
                         up = await upload_registry_pdf(pdf_bytes, ttl_days=30)
                         pdf_url = up.get("url")
                     except Exception as e:  # noqa: BLE001
-                        logger.warning("등기부 PDF 처리 실패", err=str(e)[:80])
+                        logger.warning("등기부 PDF 처리 실패", err=exc_detail(e, limit=80))
                 fetched_meta = {
                     "owner": reg.get("owner"), "registry_office": reg.get("registry_office"),
                     "doc_title": reg.get("doc_title"), "has_pdf": reg.get("has_pdf"),
                     "pdf_url": pdf_url,
+                    # 어느 구분의 물건을 열람했는지 + 요청한 구분/동·호로 좁히지 못한 경우의 고지.
+                    # 최종 표면까지 전달해야 "다른 물건을 조회했는데 조용히 성공"이 되지 않는다.
+                    "realty_gubun": reg.get("realty_gubun"),
+                    "select_note": reg.get("select_note"),
                 }
-            else:
+                # ★★발급이 성공했다 = **돈이 나갔다**. 해석이 뒤에서 실패하더라도 이 산출물은
+                #   보관한다 — 그래야 재시도가 재발급하지 않는다(민원캐시 재차감 차단).
+                #   발급이 실패한 경우는 여기 오지 않으므로 보관되지 않는다(받은 게 없으니
+                #   재시도가 새로 발급하는 것이 옳다).
+                if src_key:
+                    import datetime as _dt
+
+                    await _source_cache_put(src_key, {
+                        "source": source,
+                        "origin": origin,
+                        "thin_summary": thin_summary,
+                        "fetched": fetched_meta,
+                        "issued_at": _dt.datetime.now(_dt.UTC).isoformat(timespec="seconds"),
+                    })
+            elif reg is not None:
                 # 등기부 데이터 미확보 — 토지정보는 제공 + 직접 입력 유도
                 return {
                     "status": st or "not_available",
@@ -367,11 +555,46 @@ class RegistryAnalysisService:
                     "ai": None,
                 }
 
-        if not source:
+        if not source or thin_summary:
+            # ★머리말(소유자 요약)만 확보된 상태로 권리분석을 돌리면 근저당·압류가 '기재 없음'이
+            #   되어 거짓 '안전' 등급이 나오고 캐시에 박힌다. 분석하지 않고 정직하게 반환한다.
+            # ★원인을 **데이터가 말하는 대로** 고른다(라이브 실측 2026-08-24).
+            #   종전엔 `thin_summary` 면 무조건 *"발급 PDF가 이미지 형식이면 텍스트 추출이
+            #   되지 않습니다"* 라고 안내했다. 그런데 같은 응답이 `has_pdf=False` 인 경우가 있다 —
+            #   **PDF 가 아예 없는데** 사용자에게 *"당신 PDF 형식 탓"* 이라 말하고 직접 입력을
+            #   시킨 것이다. 발급 자체가 안 된 것과, 발급은 됐는데 텍스트가 안 뽑히는 것은
+            #   **원인도 처방도 다르다**(전자는 기다리거나 관리자 확인, 후자는 직접 입력).
+            _has_pdf = bool((fetched_meta or {}).get("has_pdf"))
+            if not thin_summary:
+                _msg = "분석할 등기부 내용이 없습니다."
+            elif _has_pdf:
+                _msg = ("등기부 본문(갑구·을구)을 확보하지 못했습니다. "
+                        "발급 PDF가 이미지 형식이면 텍스트 추출이 되지 않습니다 — "
+                        "등기부등본 내용을 직접 입력하시면 분석해 드립니다.")
+            else:
+                _msg = ("등기부가 **발급되지 않았습니다**(PDF 없음) — 소유자 요약만 확보돼 "
+                        "권리분석(근저당·압류 등)을 할 수 없습니다. 등기 발급 연동 상태를 "
+                        "관리자에게 확인하시거나, 등기부등본 내용을 직접 입력하시면 분석해 드립니다.")
             return {"status": "empty", "origin": origin, "land": land,
-                    "message": "분석할 등기부 내용이 없습니다.", "ai": None}
+                    "fetched": fetched_meta,
+                    "message": _msg,
+                    "ai": None}
 
-        ai = await self._llm(address, source)
+        # ★같은 문서가 같은 이유로 계속 실패한다면 **다시 사지 않는다**(LLM 토큰).
+        #   기억은 결정론적 실패에만 남으므로, 일시 실패는 여기 걸리지 않고 그대로 재시도된다.
+        memo = _failure_memo_get(cache_key) if (cache_key and not force_reissue) else None
+        if memo is not None:
+            # ★시도하지 않았음을 **밝힌다.** 안 하고 한 척하면 그 자체가 거짓이다.
+            ai = {**memo, "remembered_failure": True}
+        else:
+            ai = await self._llm(address, source)
+            if cache_key and not ai.get("generated"):
+                from app.services.ai.llm_failure import is_retry_worthwhile
+
+                # 분류는 폴백이 실어 보낸 것을 **그대로** 쓴다(문자열에서 다시 캐지 않는다).
+                cls = str(ai.get("failure_class") or "other")
+                if not is_retry_worthwhile(cls):
+                    _failure_memo_put(cache_key, ai)
         # 등기 기반 소유형태(공동/단독)·소유자목록을 공부 카드(land)에 보강
         deriv = _derive_ownership(ai)
         if deriv:
@@ -410,22 +633,32 @@ class RegistryAnalysisService:
             # 계측: BaseInterpreter 밖 직접 호출도 동일하게 토큰·과금 기록(best-effort)
             from app.services.ai.base_interpreter import record_llm_response_billing
             await record_llm_response_billing(llm, resp, service="registry")
-            raw = (resp.content if hasattr(resp, "content") else str(resp)).strip()
-            if raw.startswith("```"):
-                raw = raw.split("```")[1]
-                raw = raw[4:] if raw.lower().startswith("json") else raw
-            data = json.loads(raw.strip())
+            from app.services.ai.llm_json import coerce_llm_text, parse_llm_json
+            raw = coerce_llm_text(resp.content if hasattr(resp, "content") else str(resp)).strip()
+            data = parse_llm_json(raw)  # 공용 관대 파서(프리앰블·후행 설명 허용) — 파서 SSOT
             data["generated"] = True
             return data
         except Exception as e:  # noqa: BLE001
             # ★진단성: 타입명 + 응답 head를 남겨 '잘린 JSON/비-JSON/LLM오류'를 구분 가능하게.
             logger.warning("등기 권리분석 LLM 실패, 폴백",
-                           err=f"{type(e).__name__}: {str(e)[:100]}", raw_head=(raw or "")[:180])
+                           err=f"{type(e).__name__}: {exc_detail(e, limit=100)}", raw_head=(raw or "")[:180])
+            # ★성장루프 **분자**: 이 실패가 집계되지 않아, 등기 권리분석이 통째로 죽어도
+            #   `fallback_rate` 인사이트가 한 번도 뜨지 않았다(2026-08-24 실장애 — 사용자가
+            #   화면을 보고 알려 줄 때까지 아무도 몰랐다). 성공(분모)은 위 과금 헬퍼가 남긴다.
+            from app.services.ai.base_interpreter import record_llm_failure
+            record_llm_failure("registry", e)
             return {
                 "generated": False,
                 "ownership": {}, "provisional_registration": {"exists": None},
                 "seizure": [], "mortgage": [], "other_rights": [],
                 "right_to_demand_sale": {"possible": "판단보류", "reason": "등기 내용 확인 필요"},
-                "rights_analysis": "AI 권리분석은 일시적으로 제공되지 않습니다. 등기부 내용을 확인하세요.",
+                # ★"일시적"이라고 단정하지 않는다 — 그 표기가 결정론적 영구 실패를
+                #   일시 장애로 위장해 오래 숨긴 전례가 있다(2026-08-21 LLM 계층 사망).
+                "rights_analysis": "AI 권리분석을 생성하지 못했습니다. 등기부 내용을 직접 확인하세요.",
+                "failure_reason": _failure_reason(e),
+                # ★분류는 **실제 예외가 있는 이 자리**에서 한다. 나중에 문자열만 보고 다시
+                #   분류하면 타입이 지워져(`Exception("JSONDecodeError: …")`) 메시지에
+                #   타입명이 우연히 들어 있어야만 맞는다 — 운에 기대는 판정이 된다.
+                "failure_class": _classify_failure(e),
                 "risks": [], "safety_grade": "주의", "summary": "분석 불가",
             }

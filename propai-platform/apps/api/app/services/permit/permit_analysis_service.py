@@ -9,7 +9,6 @@
 - LLM 실패 시 규칙기반 폴백(graceful)
 """
 
-import json
 from typing import Any
 
 import structlog
@@ -41,7 +40,10 @@ _SYSTEM = """\
    상업지역에서 '공동주택 건축 불가'로 단정하지 말 것(주거용적률 제한·용도용적제는 규모 제약일 뿐 금지 아님).
 5. 용적률은 '지자체 조례(실효 용적률)'를 법정상한보다 우선 적용한다. 부지정보의 '용적률 한도'와
    '지자체 조례'가 다르면 조례값을 기준으로 판정하고, 그 근거를 명시한다.
-6. 반드시 JSON만 출력(마크다운·설명문 금지)."""
+6. 부지정보의 '용적률 한도(실효)'는 이미 산정근거(법정·조례·구조상한 등)를 반영한 최종 실효치다.
+   특히 산정근거가 '구조상한(건폐율×층수)'이면 녹지지역 4층 이하 등 층수제한으로 실효 용적률이
+   법정 범위 상한보다 낮아진 것이므로, 그 값을 상향해 낙관적으로 재해석하지 말 것(과대낙관 금지).
+7. 반드시 JSON만 출력(마크다운·설명문 금지)."""
 
 _USER_TMPL = """\
 아래 부지정보를 바탕으로 각 개발방식의 인허가 가능성을 분석해 JSON으로만 답하세요.
@@ -50,7 +52,7 @@ _USER_TMPL = """\
 - 주소: {address}
 - 용도지역: {zone_type}
 - 건폐율 한도: {max_bcr}%
-- 용적률 한도: {max_far}%
+- 용적률 한도(실효): {max_far}% (산정근거: {far_basis})
 - 대지면적: {land_area_sqm}㎡
 - 지자체 조례: {ordinance}
 - 특별지구/지정: {special}
@@ -84,7 +86,7 @@ _MULTI_SYSTEM = """\
 1. 국토계획법 시행령 제84조(둘 이상 용도지역 걸친 대지): 가장 작은 부분이 330㎡ 이하이면
    과반 또는 가중 큰 용도지역 기준 적용 가능. 그 외에는 각 용도지역 면적비율에 따른
    '가중평균 용적률'을 적용한다. (법정 통합 용적률 = Σ(필지면적×용적률한도)/Σ필지면적)
-2. 최고 용적률 상향 수단: 지구단위계획(용적률 인센티브), 결합건축(건축법 제77조의4),
+2. 최고 용적률 상향 수단: 지구단위계획(용적률 인센티브), 결합건축(건축법 제77조의15),
    특별건축구역(건축법 제69조), 공공기여(기부채납) 연동 상향, 용도지역 변경(종상향),
    역세권·도시정비형 재개발 등. 각 수단의 적용 가능성·전제조건을 명시.
 3. 데이터에 있는 수치만 사용. 가정은 명시. 과장·허위 금지. JSON만 출력."""
@@ -104,7 +106,7 @@ _MULTI_TMPL = """\
   "optimal_far": "현실적으로 인허가 가능한 최적 용적률(%) — 법정+통상 인센티브 반영" 숫자,
   "max_far": "모든 상향수단 적용 시 이론적 최고 용적률(%)" 숫자,
   "far_rationale": "최적·최고 용적률 산정 근거(가중평균 계산 + 상향수단별 적용가능성, 4~6문장)",
-  "far_key_laws": ["근거 법령/조문 3~5개(국토계획법 시행령 제84조, 건축법 제77조의4 결합건축 등)"],
+  "far_key_laws": ["근거 법령/조문 3~5개(국토계획법 시행령 제84조, 건축법 제77조의15 결합건축 등)"],
   "integration_issues": ["다필지 통합개발 인허가 문제점 2~4개(합필요건·용도지역 경계·조례 등)"],
   "integration_solutions": ["해결방안 2~4개"]
 }}
@@ -133,8 +135,16 @@ class PermitAnalysisService:
             "address": address,
             "zone_type": site.get("zone_type"),
             "max_bcr": site.get("max_bcr"),
-            "max_far": site.get("max_far"),
+            "max_far": site.get("max_far"),  # 실효(구조상한 포함) 용적률 — SSOT 단일경유
             "land_area_sqm": site.get("land_area_sqm"),
+            # 실효 용적률 근거·신뢰성 정직 전파(예 "구조상한(건폐율×층수)"). 소비처(프론트/시니어
+            # 자문)가 자연녹지 80%가 조례가 아닌 층수제한(4층)에서 왔음을 정직 표기하도록 additive.
+            "far_basis": site.get("far_basis"),
+            "far_reliable": site.get("far_reliable"),
+            "legal_max_far": site.get("legal_max_far"),
+            "structural_cap_pct": site.get("structural_cap_pct"),
+            "floor_cap": site.get("floor_cap"),
+            "floor_cap_basis": site.get("floor_cap_basis"),
             # 특이부지 게이트(가산) — None이면 일상부지. 정직 고지/할루시네이션 방지.
             "special_parcel": site.get("special_parcel"),
         }
@@ -180,31 +190,83 @@ class PermitAnalysisService:
         return result
 
     async def _enrich_site(self, address: str, site: dict[str, Any]) -> dict[str, Any]:
-        """부지정보 보강(미제공 시 AutoZoningService)."""
+        """부지정보 보강(미제공 시 AutoZoningService).
+
+        ★실효 용적률 SSOT 단일화(WP-U1): 실효 용적률을 자체 재계산(min(법정,조례))하지 않고
+        far_tier_service.calc_effective_far(법정범위→조례→계획상한→인센티브→구조상한 계층)를
+        단일경유한다. 이 헬퍼는 **구조상한(건폐율×층수)**을 마지막 계층으로 씌워, 자연/생산녹지
+        (건폐 20%×4층=80% < 법정 100%) 등에서 실효 용적률을 80%로 정직 산정한다 —
+        수지(feasibility_v2)·종합(comprehensive)·규제(regulation) 표면과 동일(교차 일치).
+        과거 이 경로는 구조상한을 누락해 자연녹지를 100%로 과대표시, 인허가 가능성을 과대낙관했다
+        (site_hallucination_guard·green_zone_dev_coverage 정책 위반 — "2026-06-19 산/임야 과대표시"
+        버그클래스). 층수제한이 없는 zone(제2종일반주거 250%·일반상업 1300% 등)은
+        _structural_cap_for가 (None,None,None)을 반환해 완전 무영향(안 낮아짐).
+        """
+        # 이미 실효 용적률이 주입된 site(설계엔진 등 SSOT 소비처)는 재계산하지 않고 소비한다.
         if site.get("zone_type") and site.get("max_far"):
             return self._attach_special_parcel(site)
         try:
             from app.services.zoning.auto_zoning_service import AutoZoningService
 
             az = await AutoZoningService().analyze_by_address(address)
+            zone_type = az.get("zone_type") or ""
             zl = az.get("zone_limits") or {}
             legal_far = zl.get("max_far_pct") or zl.get("max_far")
-            # 조례 SSOT: 실효 용적률(min(법정,조례))을 max_far 로 사용해 프롬프트 헤더와 조례문구의
-            # 불일치(예 1300 vs 900)를 제거. ordinance_service 단일경로(zoning/regulation 공용).
-            eff_far, eff_bcr = legal_far, (zl.get("max_bcr_pct") or zl.get("max_bcr"))
+            # 폴백 기본값(SSOT 산정 실패 시): 조례 미반영 법정값. far_reliable=False로 정직 표기.
+            eff_far = legal_far
+            eff_bcr = zl.get("max_bcr_pct") or zl.get("max_bcr")
+            far_basis: str | None = None
+            far_reliable = False
+            structural_cap_pct = floor_cap = floor_cap_basis = None
+
+            # 조례(실효) 한도를 OrdinanceService로 조회해 local_ordinance로 주입한다(빈값이면 법정 폴백).
+            # ★정답 기준선(feasibility_service_v2:302·comprehensive:427)과 동일 경로: OrdinanceService
+            #   조회 결과를 그대로 calc_effective_far에 넘겨 계층 산정에 반영한다.
+            ordinance: dict[str, Any] = {}
             try:
                 from app.services.land_intelligence.ordinance_service import OrdinanceService
-                _o = await OrdinanceService().get_ordinance_limits(address, az.get("zone_type") or "")
-                if isinstance(_o, dict) and _o.get("effective_far"):
-                    eff_far = _o.get("effective_far")
-                    eff_bcr = _o.get("effective_bcr") or eff_bcr
-            except Exception:  # noqa: BLE001
+                _o = await OrdinanceService().get_ordinance_limits(address, zone_type)
+                if isinstance(_o, dict):
+                    ordinance = _o
+            except Exception:  # noqa: BLE001 — 조회 실패 시 법정 폴백
                 pass
+
+            # ── 실효 용적률 SSOT 단일경유(구조상한 포함) — 재계산 금지, 소비만 ──
+            try:
+                from app.services.land_intelligence.far_tier_service import calc_effective_far
+                eff = calc_effective_far(
+                    {
+                        "zone_limits": zl,
+                        "special_districts": az.get("special_districts") or [],
+                        "local_ordinance": ordinance,
+                    },
+                    zone_type,
+                    float(az.get("land_area_sqm") or 0) or 0,
+                )
+                _eff_far = eff.get("effective_far_pct")
+                if _eff_far is not None and _eff_far > 0:
+                    eff_far = float(_eff_far)  # 실효(구조상한 포함) 용적률
+                    far_reliable = True
+                _eff_bcr = eff.get("effective_bcr_pct")
+                if _eff_bcr is not None and _eff_bcr > 0:
+                    eff_bcr = float(_eff_bcr)
+                far_basis = eff.get("far_basis")
+                structural_cap_pct = eff.get("structural_cap_pct")
+                floor_cap = eff.get("floor_cap")
+                floor_cap_basis = eff.get("floor_cap_basis")
+            except Exception:  # noqa: BLE001 — 산정 실패 시 법정 폴백 유지(far_reliable=False)
+                pass
+
             site = {
                 "zone_type": az.get("zone_type"),
                 "max_bcr": eff_bcr,
-                "max_far": eff_far,  # 실효(조례 반영) 용적률
+                "max_far": eff_far,  # 실효(구조상한 포함) 용적률 — SSOT calc_effective_far 단일경유
                 "legal_max_far": legal_far,
+                "far_basis": far_basis,  # 실효 산정 근거(예 "구조상한(건폐율×층수)") — 정직 전파
+                "far_reliable": far_reliable,
+                "structural_cap_pct": structural_cap_pct,
+                "floor_cap": floor_cap,
+                "floor_cap_basis": floor_cap_basis,
                 "land_area_sqm": az.get("land_area_sqm"),
                 "land_category": az.get("land_category"),  # 지목(특이부지 감지 입력)
                 "special_districts": az.get("special_districts"),
@@ -325,6 +387,9 @@ class PermitAnalysisService:
     @staticmethod
     def _blended_far(parcels: list[dict[str, Any]]) -> float | None:
         """면적가중평균 용적률(국토계획법 시행령 제84조). 면적 누락 시 단순평균."""
+        # TODO(계약표준화 후속): 정본 _aggregate_integrated_zoning(면적가중 blended_far_*_pct)
+        #   위임 검토 — 값 산출 경로 변경이라 이번(계약 shape 정규화) 라운드 제외.
+        #   scenario_simulator._blended_far 와 동일 산식이 3벌 존재(정본 일원화 대상).
         weighted = [(p["land_area_sqm"], p["max_far"]) for p in parcels if p.get("max_far")]
         if not weighted:
             return None
@@ -342,12 +407,13 @@ class PermitAnalysisService:
             from app.services.ai.base_interpreter import GROUNDING_RULE
             from app.services.ai.llm_provider import get_llm
 
-            llm = get_llm(timeout=70, max_tokens=4000)
+            llm = get_llm(service="permit", timeout=70, max_tokens=4000)
             user = _USER_TMPL.format(
                 address=address,
                 zone_type=site.get("zone_type") or "미상",
                 max_bcr=site.get("max_bcr") or "-",
                 max_far=site.get("max_far") or "-",
+                far_basis=site.get("far_basis") or "법정/조례 상한",
                 land_area_sqm=site.get("land_area_sqm") or "-",
                 ordinance=ordinance,
                 special=", ".join(site.get("special_districts") or []) if isinstance(site.get("special_districts"), list) else (site.get("special_districts") or "-"),
@@ -358,12 +424,8 @@ class PermitAnalysisService:
             # 계측: BaseInterpreter 밖 직접 호출도 동일하게 토큰·과금 기록(best-effort)
             from app.services.ai.base_interpreter import record_llm_response_billing
             await record_llm_response_billing(llm, resp, service="permit")
-            raw = (resp.content if hasattr(resp, "content") else str(resp)).strip()
-            if raw.startswith("```"):
-                raw = raw.split("```")[1]
-                raw = raw[4:] if raw.lower().startswith("json") else raw
-                raw = raw.strip()
-            data = json.loads(raw)
+            from app.services.ai.llm_json import parse_llm_json
+            data = parse_llm_json(resp.content if hasattr(resp, "content") else str(resp))
             if not isinstance(data.get("methods"), list):
                 raise ValueError("methods 누락")
             data["ai"] = True
@@ -407,7 +469,9 @@ class PermitAnalysisService:
             from app.services.ai.base_interpreter import GROUNDING_RULE
             from app.services.ai.llm_provider import get_llm
 
-            llm = get_llm(timeout=70, max_tokens=2500)
+            # ★max_tokens 4000: 단일필지 _llm_analyze(4000)와 동일 캡 — 2500은 다필지 한국어
+            #   JSON 절단→파싱 실패→폴백 강등 위험(규제분석 2500 캡 절단 실측과 동일 클래스).
+            llm = get_llm(service="permit", timeout=70, max_tokens=4000)
             user = _MULTI_TMPL.format(
                 n=len(parcels),
                 total_area=round(total_area) if total_area else "-",
@@ -420,12 +484,8 @@ class PermitAnalysisService:
             # 계측: BaseInterpreter 밖 직접 호출도 동일하게 토큰·과금 기록(best-effort)
             from app.services.ai.base_interpreter import record_llm_response_billing
             await record_llm_response_billing(llm, resp, service="permit")
-            raw = (resp.content if hasattr(resp, "content") else str(resp)).strip()
-            if raw.startswith("```"):
-                raw = raw.split("```")[1]
-                raw = raw[4:] if raw.lower().startswith("json") else raw
-                raw = raw.strip()
-            data = json.loads(raw)
+            from app.services.ai.llm_json import parse_llm_json
+            data = parse_llm_json(resp.content if hasattr(resp, "content") else str(resp))
             data["ai"] = True
             # 용적률 3종은 숫자 또는 None으로 정규화(LLM이 "데이터 없음" 등 문자열 반환 대비)
             for k in ("blended_far", "optimal_far", "max_far"):
@@ -452,7 +512,7 @@ class PermitAnalysisService:
             ),
             "far_key_laws": [
                 "국토의 계획 및 이용에 관한 법률 시행령 제84조(둘 이상 용도지역 걸친 대지)",
-                "건축법 제77조의4(결합건축)",
+                "건축법 제77조의15(결합건축)",
             ],
             "integration_issues": ["합필 요건·용도지역 경계 정합·조례 확인 필요"],
             "integration_solutions": ["지구단위계획 수립 검토 후 통합 용적률 상향 협의"],

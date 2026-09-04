@@ -60,4 +60,13 @@ export interface DesignParamsInput {
   height_m?: number;
   parking?: number;
   units?: number;
+  /**
+   * 대지면적(㎡) — ★다필지면 통합면적(effectiveLandAreaSqm)을 보낸다.
+   *
+   * 미전송하면 백엔드가 대표주소로 재조회해 **대표필지 1개 면적**으로 채우고
+   * (routers/design_risk.py 의 `_augment_from_site`), 그 면적으로 용적률을 역산
+   * (`far = gfa/land_area*100`)하므로 "통합 GFA ÷ 대표필지 면적" = 용적률 대폭 과대 →
+   * 허위 '법규초과' 경고가 난다. 백엔드 계약(design_risk.py:44)이 이미 이 필드를 받는다.
+   */
+  land_area_sqm?: number;
 }

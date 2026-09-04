@@ -41,9 +41,9 @@ class JobState(StrEnum):
     RUNNING = "running"
     PARTIAL = "partial"      # 처리 끝났으나 일부 미확정(부분 성공)
     COMPLETE = "complete"    # 모든 필지 CONFIRMED
-    FAILED = "failed"
+    FAILED = "failed"        # 실행 중 예외로 종료(BatchService.run이 저장 — 사유는 BatchResult.error)
     CANCELLED = "cancelled"
-    EXPIRED = "expired"
+    EXPIRED = "expired"      # ★미구현: TTL 스윕 배치가 없어 이 상태로 전이되는 경로가 아직 없다(스코프 제한).
 
 
 class BatchInput(BaseModel):
@@ -170,6 +170,7 @@ class BatchResult(BaseModel):
     items: list[BatchItemResult]
     aggregate: BatchAggregate
     pending: list[str] = Field(default_factory=list)   # 미처리/미확정 pnu 목록(INV-M4)
+    error: str | None = None            # state=failed 일 때 실패 사유(정직 보존, 500자 캡)
     outliers: list[dict[str, Any]] = Field(default_factory=list)  # 신뢰루프: 면적 이상치 필지(검토 권고)
     fee_per_unit_krw: float = 0.0       # 필지당 단가(관리자 설정·미설정 0=무료)
     estimated_fee_krw: float = 0.0      # 예상 사용료 = 단가 × 확정 필지수(0=무료)

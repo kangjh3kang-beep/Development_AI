@@ -24,8 +24,50 @@ from typing import Any
 # 심각도 순위(높을수록 제약 큼) — 여러 특이요인 중 최댓값을 부지 종합 게이트로 채택.
 #   NEEDS_OFFICIAL_SURVEY = CONDITIONAL과 같은 '잠정' 등급(값 2). 공식 산림데이터 미확보로
 #   확정 설계는 막되(참고안만), CONDITIONAL과 동일 심각도로 취급한다(기존 값 불변).
+#   REQUIRES_AUTHORITY_CONFIRMATION(WP-A 접도·도로 access_basis) = 법정 접도 근거를 데이터로
+#   확정할 수 없음(도로접면·도로폭 미상 등) — CONDITIONAL과 같은 '잠정' 급(값 2)으로, 확정 PASS를
+#   막고 관할 확인을 전제로만 진행시킨다(기존 값 불변 — 추가 전용).
+# ★UNKNOWN(판정 불가)도 등재한다(2026-08-02). 없으면 `_RANK.get(dev, 0)`이 0을 돌려줘
+#   **POSSIBLE과 동급**이 되고, 여러 요인 중 가장 심각한 것을 고르는 max() 비교에서 판정 불가가
+#   항상 밀린다 — '모르는 것'이 '문제 없음'과 같은 무게가 되는, 게이트 집합과 동일한 결함 클래스.
+# '미분석' 표식 값의 SSOT — 면적 3계층(usable_area)과 반드시 같은 문자열이어야 한다.
+#   양쪽이 각자 리터럴을 쓰면 한쪽만 바뀌었을 때 표식이 조용히 안 걸린다.
+_UNANALYZED = "unanalyzed"
+# '분석함' 쪽도 명시한다 — 표식 부재를 '분석됨'으로 읽으면 '아무도 판정 안 함'과 구분이 안 된다.
+_ANALYZED = "analyzed"
+
 _RANK = {"POSSIBLE": 0, "CAUTION": 1, "CONDITIONAL": 2, "NEEDS_OFFICIAL_SURVEY": 2,
-         "PRECONDITION": 3, "BLOCKED": 4}
+         "REQUIRES_AUTHORITY_CONFIRMATION": 2, "UNKNOWN": 2, "PRECONDITION": 3, "BLOCKED": 4}
+
+# 개발가능성 등급 → 사용자 문구(일반 개발가능성 도메인).
+#
+# ★도메인을 섞지 않는다: 같은 토큰이 도메인마다 다른 뜻이라 접도(access_basis_service)의
+#   문구와 **일부러 다르다**(예: POSSIBLE = 여기선 "개발 가능", 접도에선 "접도 가능").
+#   하나로 합치면 한쪽이 오역을 생산한다(2026-08-02 W4 교훈 14 — 평면 사전 금지).
+#
+# ★키 집합은 _RANK와 같아야 한다. 등급을 _RANK에만 추가하고 여기 빠뜨리면 그 등급이
+#   화면에 **원시 enum 그대로** 나간다(종전 폴백이 `.get(gate, gate)`였다). 불변식 테스트가
+#   두 집합의 일치를 잠근다 — _RANK는 이 맵과 무관하게 유지되는 **독립 오라클**이다.
+_SEVERITY_LABEL_BY_GATE: dict[str, str] = {
+    "POSSIBLE": "개발 가능",
+    "CAUTION": "사전확인 필요",
+    "CONDITIONAL": "조건부 가능(인허가·전용·협의 선행)",
+    "NEEDS_OFFICIAL_SURVEY": "공식 산림조사 필요(참고안 — 확정 아님)",
+    "REQUIRES_AUTHORITY_CONFIRMATION": "관할 확인 필요(접도 근거 미확정)",
+    "UNKNOWN": "판정 불가(정보 미확인)",
+    "PRECONDITION": "중대한 선행절차 필수(도시계획시설 폐지·용도변경 등)",
+    "BLOCKED": "원칙적 개발 불가",
+}
+
+
+def _severity_label(gate: str | None) -> str:
+    """등급 문구. 미등재는 이름을 지어내지 않되 원시 코드만 던지지도 않는다."""
+    key = str(gate or "").strip().upper()
+    if not key:
+        return ""
+    label = _SEVERITY_LABEL_BY_GATE.get(key)
+    return label if label else f"{key} (설명 준비 중)"
+
 
 
 def _factor_legal_refs(legal_ref_keys: list[str] | None) -> list[dict]:
@@ -62,8 +104,17 @@ GATE_BLOCK_RESOLVABLE = {"NO"}
 # NEEDS_OFFICIAL_SURVEY(임야/산지 공식 산림데이터 미확보)도 잠정으로 분류한다 —
 #   gate_decision()이 "TENTATIVE"를 반환해 소비처가 '참고안(확정 아님)'으로 안전하게 다룬다.
 #   (확정 % / 확정 설계 없음 — 공식 산림조사서·경사도조사 확보 전까지 예비안만.)
-GATE_TENTATIVE_DEVELOPABILITY = {"PRECONDITION", "CONDITIONAL", "NEEDS_OFFICIAL_SURVEY"}
-GATE_TENTATIVE_RESOLVABLE = {"CONDITIONAL"}
+# REQUIRES_AUTHORITY_CONFIRMATION(WP-A 접도·도로) — 법정 접도 근거를 데이터로 확정 불가 시,
+#   확정 PASS를 막고 '관할 확인 전제 잠정'으로 강등한다("법정도로 근거 없는 PASS 0" 게이트).
+# ★2026-08-02 추가 — UNKNOWN('판정 불가': 지목·용도지구 미확인이라 특이성 자체를 못 본 상태).
+#   종전에는 이 값이 BLOCK에도 TENTATIVE에도 없어 gate_decision()이 **"PASS"(일상 개발부지 —
+#   특이 없음)** 를 돌려줬다. 즉 '모르는 것'을 '문제 없음'으로 단정했다. 다필지 detect 경로는
+#   미분석을 이미 UNKNOWN으로 **정직하게 고지**하는데(auto_zoning 라우터), 정작 게이트가 그
+#   신호를 안 읽어 확신 %·확정 면적이 그대로 산출됐다. TENTATIVE(잠정)로 강등해 소비처가
+#   '참고안(확정 아님)'으로 다루게 한다.
+GATE_TENTATIVE_DEVELOPABILITY = {"PRECONDITION", "CONDITIONAL", "NEEDS_OFFICIAL_SURVEY",
+                                 "REQUIRES_AUTHORITY_CONFIRMATION", "UNKNOWN"}
+GATE_TENTATIVE_RESOLVABLE = {"CONDITIONAL", "UNKNOWN"}
 
 
 def gate_decision(developability: str | None, resolvable: str | None) -> str:
@@ -95,6 +146,10 @@ def tentative_marker(developability: str | None, resolvable: str | None, severit
         # 임야/산지 — 공식 산림데이터(산림청 조사) 미확보. 확정 설계 불가, 참고용 예비안만.
         head = ("공식 산림데이터(산지구분·보전산지 여부·평균경사도·입목축적) 미확보 — 산지전용 확정 판단 "
                 "불가, 참고용 예비안입니다(확정 아님). 산림조사서·평균경사도조사서 등 공식 조사가 필요합니다.")
+    elif dev == "REQUIRES_AUTHORITY_CONFIRMATION":
+        # WP-A 접도·도로 — 법정 접도 근거(도로접면·도로폭·현황도로 인정)를 데이터로 확정할 수 없음.
+        head = ("법정 접도·도로 근거를 현재 데이터로 확정할 수 없어(도로접면·도로폭·현황도로 인정 여부 "
+                "미상 등) 관할 지자체·도로관리청 확인이 필요한 잠정 상태입니다(확정 아님).")
     elif dev == "CONDITIONAL" or res == "CONDITIONAL":
         # CONDITIONAL(인허가·전용·협의) 또는 해결가능성 조건부(예: 맹지·진입로 확보) — 동일하게 조건부 잠정.
         head = "인허가·전용·협의 등 선행절차 통과를 조건으로 한 잠정치입니다(확정 아님)."
@@ -248,33 +303,75 @@ def _rule_by_land_category(cat: str) -> dict[str, Any] | None:
 #   기존 _rule_by_* 와 동일 패턴(legal_basis+permit_prerequisites+developability, _RANK 게이트).
 #   지목·면적 무관, zone_type이 녹지계열이면 발동. 보전녹지는 원칙적 제한(PRECONDITION)으로 차등.
 # ──────────────────────────────────────────────────────────────────────────
-def _rule_by_dev_act_permit(result: dict) -> dict[str, Any] | None:
+def _rule_by_dev_act_permit(
+    result: dict, *, include_non_urban: bool = False
+) -> dict[str, Any] | None:
     """개발행위허가(국토계획법 §56) 선행/병행 게이트 — 도시지역 내 녹지계열에서 발동.
 
     자연녹지·생산녹지 → CONDITIONAL(개발행위허가·형질변경 통과 조건부 가능),
     보전녹지 → PRECONDITION(개발 원칙적 제한 — 더 강한 선행절차 전제).
     녹지계열이 아니면 None(주거·상업·공업 등 일상 도시지역은 게이트 안 함 — 과탐 방지).
+
+    include_non_urban=True(WP-B 개발행위허가 절차게이트 전용 요청):
+      비도시지역(관리·농림·자연환경보전)도 발동한다. 이 지역들은 도시지역이 아니라서
+      '건축물 건축' 자체가 개발행위허가 대상이기 때문이다(자연녹지 과대낙관 버그의 확장 봉합).
+      보전관리·자연환경보전 → PRECONDITION(보전 성격), 그 외(계획/생산관리·농림) → CONDITIONAL.
+    ★기본값 False면 기존 detect_special_parcel 경로는 녹지만 감지한다(바이트 동일 — 회귀 0).
     """
     zone = str(result.get("zone_type") or "")
-    if _zone_family(zone) != "녹지":
-        return None
-    # 자연/생산/보전 세분(미상 녹지는 보수적으로 자연녹지 취급 — CONDITIONAL).
+    family = _zone_family(zone)
     z = zone.replace(" ", "")
-    if "보전녹지" in z:
-        developability = "PRECONDITION"
-        head = (
-            "보전녹지지역은 자연환경·경관 보전 목적으로 개발이 원칙적으로 제한되며, 건축 전 "
-            "개발행위허가(국토계획법 §56)·토지형질변경 통과가 선행되어야 합니다(허용 범위가 매우 좁음)."
+    is_green = family == "녹지"
+    # 비도시(관리·농림·자연환경보전)는 게이트 서비스가 명시적으로 요청할 때만 발동(과탐 방지).
+    is_non_urban = include_non_urban and family in ("관리", "농림", "자연환경보전")
+    if not (is_green or is_non_urban):
+        return None
+    if is_green:
+        # 자연/생산/보전 세분(미상 녹지는 보수적으로 자연녹지 취급 — CONDITIONAL).
+        category = "개발행위허가 선행/병행(도시지역 녹지)"
+        if "보전녹지" in z:
+            developability = "PRECONDITION"
+            head = (
+                "보전녹지지역은 자연환경·경관 보전 목적으로 개발이 원칙적으로 제한되며, 건축 전 "
+                "개발행위허가(국토계획법 §56)·토지형질변경 통과가 선행되어야 합니다(허용 범위가 매우 좁음)."
+            )
+        else:
+            developability = "CONDITIONAL"
+            kind = "생산녹지지역" if "생산녹지" in z else ("자연녹지지역" if "자연녹지" in z else "녹지지역")
+            head = (
+                f"{kind}은 도시지역 내 녹지로, 밀도한도(건폐율·용적률) 충족만으로 개발이 확정되지 않습니다. "
+                "건축 전 개발행위허가(국토계획법 §56)·토지형질변경이 선행/병행되어야 합니다."
+            )
+        caveat = (
+            "도시지역 내 녹지는 건축 전 개발행위허가(규모·경사도·연접개발·도로/배수 기준) "
+            "선행/병행 필요. 개발가능 여부는 개발행위허가 판정 전제."
         )
     else:
-        developability = "CONDITIONAL"
-        kind = "생산녹지지역" if "생산녹지" in z else ("자연녹지지역" if "자연녹지" in z else "녹지지역")
-        head = (
-            f"{kind}은 도시지역 내 녹지로, 밀도한도(건폐율·용적률) 충족만으로 개발이 확정되지 않습니다. "
-            "건축 전 개발행위허가(국토계획법 §56)·토지형질변경이 선행/병행되어야 합니다."
+        # 비도시(관리·농림·자연환경보전) — 건축물 건축 자체가 개발행위허가 대상.
+        category = "개발행위허가 선행/병행(비도시지역)"
+        if family == "자연환경보전" or "보전관리" in z:
+            developability = "PRECONDITION"
+            kind = "자연환경보전지역" if family == "자연환경보전" else "보전관리지역"
+            head = (
+                f"{kind}은 보전 목적으로 개발이 원칙적으로 제한되며, 건축 전 개발행위허가"
+                "(국토계획법 §56)·토지형질변경(및 농지·산지전용) 통과가 선행되어야 합니다(허용 범위가 좁음)."
+            )
+        else:
+            developability = "CONDITIONAL"
+            kind = ("농림지역" if family == "농림"
+                    else ("생산관리지역" if "생산관리" in z
+                          else ("계획관리지역" if "계획관리" in z else "관리지역")))
+            head = (
+                f"{kind}은 비도시지역으로, 밀도한도(건폐율·용적률) 충족만으로 개발이 확정되지 않습니다. "
+                "건축물 건축 자체가 개발행위허가(국토계획법 §56) 대상이며 토지형질변경(및 농지·산지전용)이 "
+                "선행/병행되어야 합니다."
+            )
+        caveat = (
+            "비도시지역(관리·농림·자연환경보전) 건축은 개발행위허가(규모·경사도·연접개발·도로/배수 기준) "
+            "선행/병행 필요. 개발가능 여부는 개발행위허가 판정 전제."
         )
     return {
-        "category": "개발행위허가 선행/병행(도시지역 녹지)",
+        "category": category,
         "developability": developability,
         "implications": [
             head,
@@ -292,10 +389,7 @@ def _rule_by_dev_act_permit(result: dict) -> dict[str, Any] | None:
             "개발행위허가(국토계획법 §56)·토지형질변경 병행 필요",
             "개발행위허가기준(§58) 충족 확인 — 규모 상한·평균경사도·연접개발·도로/배수 기반시설",
         ],
-        "caveat": (
-            "도시지역 내 녹지는 건축 전 개발행위허가(규모·경사도·연접개발·도로/배수 기준) "
-            "선행/병행 필요. 개발가능 여부는 개발행위허가 판정 전제."
-        ),
+        "caveat": caveat,
     }
 
 
@@ -485,12 +579,229 @@ def _rule_by_road(result: dict) -> dict[str, Any] | None:
     if rc is False or (isinstance(rw, (int, float)) and rw == 0):
         return {
             "category": "맹지(도로 미접)", "developability": "CONDITIONAL",
+            # ★해결경로 판정 코드 — 이름에 "도로"가 들어간다는 이유만으로 '도시계획시설 도로
+            #   폐지' 분기에 먹히던 사고를 끊는다(맹지는 도로를 없애는 게 아니라 만드는 문제다).
+            "resolution_key": "ROAD_NO_ACCESS",
             "implications": ["도로에 접하지 않는 맹지로, 건축법상 접도의무(4m 이상 도로에 2m 이상 접함) 미충족 시 건축허가가 불가합니다.",
                              "진입로(사도/지역권) 확보가 선행되어야 합니다."],
             "legal_basis": ["건축법 제44조(대지와 도로의 관계)"],
             "permit_prerequisites": ["진입도로 확보(사도 개설·지역권 설정)", "현황도로 인정 여부 확인"],
         }
     return None
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# WP-A 접도·도로 세분 판정 룰군(가산) — 기존 _rule_by_road(§44 맹지)·_rule_by_road_law(도로법)와
+#   같은 패턴(legal_basis+permit_prerequisites+developability, _RANK 게이트)으로 도로 접근의
+#   세분 상태(막다른 도로 폭·자루형 대지 통로·소방/공사차량 접근폭)를 판정한다.
+#   ★신설 아님·재발명 아님: 기존 룰을 대체하지 않고, access_basis 조립자(access_basis_service)가
+#   함께 호출해 3상태(legal/physical/emergency)로 합성한다. 신호(값)가 없으면 None(과탐 방지·정직).
+#   판정 불가(폭/길이 미상 등)는 REQUIRES_AUTHORITY_CONFIRMATION(확정 PASS 금지·관할 확인 전제).
+# ──────────────────────────────────────────────────────────────────────────
+
+# 막다른 도로 길이별 최소 너비(건축법 시행령 제3조의3) — (길이 하한 m, 필요 너비 m).
+#   길이 10m 미만 → 2m, 10m 이상 35m 미만 → 3m, 35m 이상 → 6m(도시지역이 아닌 읍·면 지역은 4m).
+_DEAD_END_WIDTH_TIERS: tuple[tuple[float, float], ...] = (
+    (35.0, 6.0),   # 35m 이상 → 6m
+    (10.0, 3.0),   # 10m 이상 35m 미만 → 3m
+    (0.0, 2.0),    # 10m 미만 → 2m
+)
+
+
+def _access_road_width(result: dict) -> float | None:
+    """접한 도로의 폭(m) 추정 — road_width_m/road_width 우선, 없으면 road_side(도로접면) 하한.
+
+    ★0(도로 미접)을 보존한다(0을 falsy로 흘려 맹지를 놓치지 않도록 None 판별만 대체).
+    road_side 라벨(광대/중로/소로/세로(가)/세로(불)/맹지)은 토지이음 보강의 하한폭 표를 재사용한다.
+    """
+    rw = result.get("road_width_m")
+    if rw is None:
+        rw = result.get("road_width")
+    w = _num(rw)
+    if w is not None:
+        return w
+    side = result.get("road_side")
+    if side:
+        try:
+            from app.services.legal.tojieum_supplement import _road_width
+
+            est, _label = _road_width(str(side))
+            if est is not None:
+                return float(est)
+        except Exception:  # noqa: BLE001 — 보강 실패는 폭 미상(None)으로 정직 degrade.
+            return None
+    return None
+
+
+def _rule_by_cul_de_sac(result: dict) -> dict[str, Any] | None:
+    """막다른 도로 길이별 최소 너비(건축법 시행령 제3조의3) 판정 — 접한 도로가 막다른 도로일 때.
+
+    막다른 도로 신호(dead_end_road 플래그 또는 road_type/도로명에 '막다른')가 있을 때만 발동한다.
+    길이별 필요 너비를 실측 도로폭과 비교해, 미달=CONDITIONAL·충족=CAUTION·폭 미상=
+    REQUIRES_AUTHORITY_CONFIRMATION(확정 PASS 금지)로 고지한다. 신호 없으면 None(과탐 방지).
+    """
+    blob = (str(result.get("road_type") or "") + " "
+            + str(result.get("abutting_road_name") or ""))
+    is_dead_end = result.get("dead_end_road") is True or "막다른" in blob or "막다른도로" in blob.replace(" ", "")
+    if not is_dead_end:
+        return None
+    # ★0 보존(첫 non-None). 폴백 의미: road_length_m은 '접한 도로의 길이'라 막다른 도로
+    #   전체 길이와 다를 수 있음 — dead_end_length_m 미상 시의 보수적 근사로만 쓴다(비-PASS 방향).
+    length = _first_num_keep_zero(result.get("dead_end_length_m"), result.get("road_length_m"))
+    # 도시지역이 아닌 읍·면 지역은 35m 이상에서 4m로 완화(시행령 제3조의3 단서).
+    is_town = result.get("is_urban_area") is False or result.get("is_eup_myeon") is True
+    if length is None:
+        req_w: float | None = None
+        length_note = "막다른 도로 길이 미상 — 필요 너비(2/3/6m) 확정 불가"
+    else:
+        req_w = next(w for lo, w in _DEAD_END_WIDTH_TIERS if length >= lo)
+        if is_town and length >= 35.0:
+            req_w = 4.0
+        length_note = (f"막다른 도로 길이 {length:g}m → 시행령 제3조의3상 필요 너비 {req_w:g}m"
+                       + ("(도시지역 외 읍·면)" if is_town and length >= 35.0 else ""))
+    width = _access_road_width(result)
+    if width is None:
+        developability = "REQUIRES_AUTHORITY_CONFIRMATION"
+        head = (f"접한 도로가 막다른 도로로 확인되나 도로폭이 미상입니다 — {length_note}. "
+                "실측 도로폭(현황측량·지적도)과 관할 지자체 확인 전까지 접도요건 충족을 단정할 수 없습니다.")
+    elif req_w is None:
+        developability = "REQUIRES_AUTHORITY_CONFIRMATION"
+        head = (f"접한 도로가 막다른 도로(폭 약 {width:g}m)이나 길이가 미상이라 필요 너비를 확정할 수 "
+                "없습니다 — 막다른 도로 전체 길이 확인이 필요합니다.")
+    elif width + 1e-6 >= req_w:
+        developability = "CAUTION"
+        head = (f"접한 도로가 막다른 도로(폭 약 {width:g}m)이며 {length_note}을 충족하는 것으로 "
+                "추정됩니다(실측·지자체 확인 권장).")
+    else:
+        developability = "CONDITIONAL"
+        head = (f"접한 도로가 막다른 도로(폭 약 {width:g}m)로 {length_note}에 미달합니다 — "
+                "건축선 후퇴 또는 도로 확보(폭원 확대)가 선행/병행되어야 접도요건을 충족합니다.")
+    return {
+        "category": "막다른 도로(길이별 최소 너비)",
+        "developability": developability,
+        "resolution_key": "ROAD_DEAD_END",
+        "implications": [
+            head,
+            "막다른 도로는 그 길이에 따라 최소 너비가 정해집니다(건축법 시행령 제3조의3): "
+            "길이 10m 미만 2m, 10~35m 3m, 35m 이상 6m(도시지역 외 읍·면 4m).",
+        ],
+        "legal_basis": [
+            "건축법 제44조(대지와 도로의 관계)",
+            "건축법 시행령 제3조의3(지형적 조건 등에 따른 도로의 구조와 너비)",
+        ],
+        "legal_ref_keys": ["road_relation", "road_structure_width"],
+        "permit_prerequisites": [
+            "막다른 도로 전체 길이·현황 도로폭 실측(현황측량·지적도)",
+            "길이별 필요 너비 미달 시 건축선 후퇴 또는 도로 확보 검토",
+        ],
+    }
+
+
+def _rule_by_flag_lot(result: dict) -> dict[str, Any] | None:
+    """자루형(旗竿) 대지 통로부 판정 — 도로에 좁은 통로(자루목)로만 접하는 대지.
+
+    자루형 신호(flag_lot 플래그 또는 lot_shape에 '자루'/'flag')가 있을 때만 발동한다. 통로부
+    너비(access_corridor_width_m)를 건축법 접도의무(2m 이상)와 비교하되, 자루형 통로 최소너비는
+    지자체 건축조례가 별도로 정하므로(전국 단일기준 없음) 정직하게 조례 확인을 전제로 고지한다.
+    통로폭 미상은 REQUIRES_AUTHORITY_CONFIRMATION(확정 PASS 금지).
+    """
+    shape_blob = (str(result.get("lot_shape") or "") + " "
+                  + str(result.get("parcel_shape") or "")).replace(" ", "")
+    is_flag = (result.get("flag_lot") is True or "자루" in shape_blob
+               or "flag" in shape_blob.lower() or "기단" in shape_blob)
+    if not is_flag:
+        return None
+    corridor = _first_num_keep_zero(result.get("access_corridor_width_m"), result.get("corridor_width_m"))
+    # 건축법 §44 접도의무 하한(2m). 자루형 통로 최소너비는 지자체 건축조례로 상향(통상 3m 이상)될 수 있음.
+    MIN_CONTACT_M = 2.0
+    if corridor is None:
+        developability = "REQUIRES_AUTHORITY_CONFIRMATION"
+        head = ("자루형(旗竿) 대지로 도로에 좁은 통로(자루목)로만 접하나 통로부 너비가 미상입니다 — "
+                "통로부 실측(현황측량)과 관할 지자체 건축조례(자루형 대지 통로 최소너비) 확인이 필요합니다.")
+    elif corridor + 1e-6 < MIN_CONTACT_M:
+        developability = "CONDITIONAL"
+        head = (f"자루형 대지의 통로부 너비가 약 {corridor:g}m로 건축법 접도의무(도로에 2m 이상 접함)에 "
+                "미달할 소지가 큽니다 — 통로부 폭원 확보(인접 필지 편입·매입)가 선행되어야 합니다.")
+    else:
+        developability = "CONDITIONAL"
+        head = (f"자루형 대지의 통로부 너비가 약 {corridor:g}m입니다 — 건축법 접도의무(2m)는 충족 추정이나 "
+                "자루형 대지 통로 최소너비는 지자체 건축조례로 별도(통상 3m 이상) 규정될 수 있어 조례 확인이 "
+                "필요합니다(소방·응급 접근폭은 별도 검토).")
+    return {
+        "category": "자루형(旗竿) 대지 통로부",
+        "developability": developability,
+        "resolution_key": "LOT_FLAG_CORRIDOR",
+        "implications": [
+            head,
+            "자루형 대지는 통로부(자루목)가 도로에 접하는 폭으로 접도의무를 판단하며, 통로 최소너비·길이 "
+            "기준은 지자체 건축조례에 따라 달라집니다.",
+        ],
+        "legal_basis": [
+            "건축법 제44조(대지와 도로의 관계)",
+            "지자체 건축조례(자루형 대지 통로 최소너비 — 시·군·구별)",
+        ],
+        "legal_ref_keys": ["road_relation"],
+        "permit_prerequisites": [
+            "통로부(자루목) 너비·길이 실측(현황측량)",
+            "관할 지자체 건축조례상 자루형 대지 통로 최소너비 확인",
+        ],
+    }
+
+
+def _rule_by_emergency_access(result: dict) -> dict[str, Any] | None:
+    """소방·응급·공사차량 접근폭 판정 — 소방자동차 통행·소방활동 공간 확보 여부.
+
+    소방차 접근폭(fire_truck_access_width_m) 신호가 있거나, 대형 건축(소방활동 대상 규모)일 때
+    발동한다. 소방자동차 통행 가능 폭(통상 4m 이상)에 미달=CONDITIONAL, 충족=CAUTION,
+    폭 미상+대형=REQUIRES_AUTHORITY_CONFIRMATION로 고지한다. 소형·신호 없으면 None(과탐 방지).
+    """
+    width = _first_num_keep_zero(result.get("fire_truck_access_width_m"), result.get("emergency_access_width_m"))
+    gfa = _num(result.get("total_floor_area_sqm")) or _num(result.get("gfa_sqm")) \
+        or _num(result.get("max_gfa_sqm"))
+    floors = _num(result.get("floors")) or _num(result.get("floor_count")) \
+        or _num(result.get("ground_floors"))
+    explicit = result.get("emergency_access_required") is True
+    # 소방활동 대상 규모(보수적): 연면적 1만㎡↑ 또는 지상 6층↑(소방차 접근·소방활동 공간 확보 중요).
+    _EMS_GFA_SQM = 10_000.0
+    _EMS_FLOORS = 6
+    is_large = (gfa is not None and gfa >= _EMS_GFA_SQM) or (floors is not None and floors >= _EMS_FLOORS)
+    if width is None and not (explicit or is_large):
+        return None  # 소형·신호 없음 — 과탐 방지(정직 미판정)
+    # 소방자동차 통행 가능 폭(보수적 하한 4m). 대형·고층은 회차·전용구역 등 추가 확보가 필요할 수 있음.
+    MIN_FIRE_WIDTH_M = 4.0
+    if width is None:
+        developability = "REQUIRES_AUTHORITY_CONFIRMATION"
+        head = ("소방활동이 중요한 규모(대형·고층)이나 소방차 접근로 폭이 미상입니다 — 소방자동차 통행·회차 "
+                "공간(접근로 폭·활동 공간) 확보 여부를 관할 소방서 사전협의로 확인해야 합니다.")
+    elif width + 1e-6 < MIN_FIRE_WIDTH_M:
+        developability = "CONDITIONAL"
+        head = (f"소방차 접근로 폭이 약 {width:g}m로 소방자동차 통행 가능 폭(통상 4m 이상)에 미달할 소지가 "
+                "있습니다 — 접근로 확보 또는 소방활동 공간 대책이 선행/병행되어야 합니다.")
+    else:
+        developability = "CAUTION"
+        head = (f"소방차 접근로 폭이 약 {width:g}m로 소방자동차 통행 가능 폭(4m)은 확보 추정입니다 — "
+                "대형·고층은 회차 공간·소방자동차 전용구역 등 추가 확보 여부를 관할 소방서와 확인하세요.")
+    return {
+        "category": "소방·응급·공사차량 접근",
+        "developability": developability,
+        # ★"소방"이 들어간다는 이유로 '성능위주설계(PBD) 심의' 분기에 먹히던 사고를 끊는다
+        #   — 여기서 필요한 건 규모 임계 심의가 아니라 진입로 폭·회차공간 확보다.
+        "resolution_key": "ACCESS_EMERGENCY_VEHICLE",
+        "implications": [
+            head,
+            "소방자동차 통행·소방활동 공간(접근로 폭·회차 공간)은 화재 시 인명안전의 전제로, 관할 소방서 "
+            "사전협의로 확정합니다(공사차량 진출입 동선도 함께 검토).",
+        ],
+        "legal_basis": [
+            "소방기본법(소방활동·소방자동차 전용구역 등)",
+            "소방시설 설치 및 관리에 관한 법률(소방 사전검토·협의)",
+        ],
+        "legal_ref_keys": ["fire_performance_design"],
+        "permit_prerequisites": [
+            "소방자동차 접근로 폭·회차 공간·전용구역 확보 여부 확인",
+            "관할 소방서 사전협의(소방활동 공간·공사차량 동선)",
+        ],
+    }
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -514,6 +825,20 @@ def _num(v) -> float | None:
         return float(v)
     except (TypeError, ValueError):
         return None
+
+
+def _first_num_keep_zero(*vals) -> float | None:
+    """여러 후보 중 첫 번째로 숫자 해석되는 값을 반환 — ★0.0을 보존한다.
+
+    `_num(a) or _num(b)` 패턴은 0(예: 접근폭 0m = 접근 전무의 최강 신호)을 falsy로
+    흘려 소실시킨다. 이 헬퍼는 None 여부로만 건너뛰어 0을 살린다(도로폭 0-보존 규율과 동일).
+    ※기존 `_first_num(result, keys)`(:1090)는 가격·면적용이라 양수만 취함(0 배제) — 별개 의미론.
+    """
+    for v in vals:
+        n = _num(v)
+        if n is not None:
+            return n
+    return None
 
 
 def _rule_by_fire_performance(result: dict) -> dict[str, Any] | None:
@@ -982,20 +1307,16 @@ def detect_special_parcel(
 
     # 각 요인에 대안·해결방안·해결가능성(resolvable)을 부착.
     for f in factors:
-        f.update(_resolution_for(f.get("category", ""), f.get("developability", "")))
+        f.update(_resolution_for(
+            f.get("category", ""), f.get("developability", ""), f.get("resolution_key"),
+        ))
         # verified 법령링크(레지스트리 단일출처) — 프론트가 LegalRefChip로 클릭 링크/텍스트 폴백.
         #   legal_ref_keys가 없는 요인은 빈 리스트(legal_basis 텍스트로만 정직 표기).
         f["legal_refs"] = _factor_legal_refs(f.get("legal_ref_keys"))
 
     # 종합 게이트 = 가장 제약 큰 요인.
     gate = max(factors, key=lambda f: _RANK.get(f.get("developability", "POSSIBLE"), 0))["developability"]
-    label = {
-        "BLOCKED": "원칙적 개발 불가",
-        "PRECONDITION": "중대한 선행절차 필수(도시계획시설 폐지·용도변경 등)",
-        "CONDITIONAL": "조건부 가능(인허가·전용·협의 선행)",
-        "NEEDS_OFFICIAL_SURVEY": "공식 산림조사 필요(참고안 — 확정 아님)",
-        "CAUTION": "사전확인 필요", "POSSIBLE": "개발 가능",
-    }.get(gate, gate)
+    label = _severity_label(gate)
 
     warnings: list[str] = [f"[특이부지] {f['category']}: {f['implications'][0]}" for f in factors]
     if mismatch:
@@ -1063,9 +1384,76 @@ def detect_special_parcel(
 _RES_RANK = {"NO": 0, "CONDITIONAL": 1, "YES": 2}
 
 
-def _resolution_for(category: str, developability: str) -> dict[str, Any]:
-    """특이요인별 대안·해결방안 + 해결가능성(resolvable: YES/CONDITIONAL/NO)."""
+# ── 해결경로 판정 코드 표(생산자가 심는 resolution_key → 해결경로) ──────────────────
+#
+# ★왜 코드로 판정하는가(2026-08-03 적발):
+#   해결경로를 요인 이름(한국어)의 **부분문자열**로 골랐더니, 이름이 겹치는 요인이 엉뚱한
+#   분기에 먹혔다. 실측된 오답 4건:
+#     - "맹지(도로 미접)"          → "도시계획시설(도로) **폐지**·변경"  (도로가 없어서 문제인데 없애라고 했다)
+#     - "막다른 도로(길이별 최소 너비)" → 같은 폐도 경로            (정답은 폭원 확보·건축선 후퇴)
+#     - "소방·응급·공사차량 접근"    → "성능위주설계(PBD) 심의"      (정답은 진입로 폭·회차공간 확보)
+#     - "자루형(旗竿) 대지 통로부"   → 기본값 "관계기관 협의"        (해결경로가 사실상 없었다)
+#   이 값들은 화면의 "이 제약을 푸는 방법" 카드로 그대로 나간다 — 틀린 전문가 조언이다.
+#
+#   같은 처방을 이미 한 번 썼다(#526: 판정 키와 화면 문구 분리). 이름은 사람이 읽는 것이고
+#   판정은 코드로 한다. 이름을 더 쉬운 말로 바꿔도 해결경로가 바뀌지 않는다.
+#
+#   ※ 이 표에 없는 요인은 종전 이름 기반 분기를 그대로 탄다(무회귀). 코드는 additive다.
+_RESOLUTION_BY_KEY: dict[str, dict[str, Any]] = {
+    "ROAD_NO_ACCESS": {
+        "resolvable": "CONDITIONAL",
+        "resolution_paths": ["진입도로 확보(인접 필지 매입·사도개설·지역권 설정)",
+                             "현황도로 인정 협의(허가권자 도로지정·공고)"],
+        "alternatives": ["접도 가능한 인접 필지 추가 편입", "맹지 필지 제외"],
+    },
+    "ROAD_DEAD_END": {
+        "resolvable": "CONDITIONAL",
+        "resolution_paths": ["막다른 도로 길이별 최소 너비 확보(건축법 시행령 제3조의3)",
+                             "건축선 후퇴·사도 개설로 폭원 확대",
+                             "허가권자 도로지정·공고 협의"],
+        "alternatives": ["확보 가능한 폭원에 맞춰 규모·용도 조정", "접도 여건이 나은 인접 필지 편입"],
+    },
+    "LOT_FLAG_CORRIDOR": {
+        "resolvable": "CONDITIONAL",
+        "resolution_paths": ["통로부(자루목) 최소너비 확보 — 지자체 건축조례 기준 확인",
+                             "통로부 소유권·지역권 확보", "소방 진입 가능 폭·회차 여건 확인"],
+        "alternatives": ["통로 폭 확보가 가능한 인접 필지 편입", "통로부 기준 충족 규모로 계획 조정"],
+    },
+    "ACCESS_EMERGENCY_VEHICLE": {
+        "resolvable": "CONDITIONAL",
+        "resolution_paths": ["소방자동차 진입로 폭·회차 공간 확보", "관할 소방서 사전협의",
+                             "건축물 규모에 맞는 소방활동 공간 확보"],
+        "alternatives": ["진입 여건에 맞춘 규모·동선 조정", "대체 진출입 동선 확보"],
+    },
+}
+
+
+# 코드가 없는 구 payload용 이름 힌트 → 같은 표의 키. **가장 구체적인 것부터** 본다
+# (일반 "도로" 분기보다 먼저 걸려야 하므로 이름 기반 체인보다 앞에서 조회한다).
+_KEY_BY_NAME_HINT: tuple[tuple[str, str], ...] = (
+    ("맹지", "ROAD_NO_ACCESS"),
+    ("막다른", "ROAD_DEAD_END"),
+    ("자루형", "LOT_FLAG_CORRIDOR"),
+    ("소방·응급", "ACCESS_EMERGENCY_VEHICLE"),
+)
+
+
+def _resolution_for(
+    category: str, developability: str, resolution_key: str | None = None,
+) -> dict[str, Any]:
+    """특이요인별 대안·해결방안 + 해결가능성(resolvable: YES/CONDITIONAL/NO).
+
+    판정 순서: ①생산자가 심은 resolution_key(코드) ②없으면 종전 이름 기반 분기.
+    코드가 있으면 이름이 무엇이든 그 해결경로가 이긴다.
+    """
+    if resolution_key and resolution_key in _RESOLUTION_BY_KEY:
+        return dict(_RESOLUTION_BY_KEY[resolution_key])
     c = category or ""
+    # 코드가 없는 구 payload(저장된 옛 분석 결과)도 같은 표로 보낸다 — 해결경로 지식이
+    # 두 군데로 갈리지 않게 이름 힌트는 **판정만** 하고 내용은 위 표에서 가져온다.
+    for hint, key in _KEY_BY_NAME_HINT:
+        if hint in c:
+            return dict(_RESOLUTION_BY_KEY[key])
     if "학교" in c or "공원" in c or "유원지" in c or "체육" in c:
         return {"resolvable": "CONDITIONAL",
                 "resolution_paths": ["도시계획시설 폐지/변경(도시·군관리계획 변경 입안·결정)",
@@ -1529,21 +1917,34 @@ def _aggregate_integrated_zoning(
     integrated_gfa_val = round(integrated_gfa, 2) if gfa_area_used else None
     integrated_footprint_val = round(integrated_footprint, 2) if gfa_area_used else None
 
-    # far_basis_note: 조례 미확보로 법정폴백된 필지 수(_far_basis가 법정 신호일 때).
+    # far_basis_note: 조례 미확보 법정폴백(legal_fallback)·용도 미확인 제외(zone_unmatched) 필지 수.
     #   far_tier_service의 far_basis 문자열에 '법정'이 들어가면 조례 미반영 폴백으로 본다.
+    #   ★P0-1: far_basis="zone_unmatched"는 법정 SSOT에서도 zone_type을 못 찾아(예: 개발제한구역
+    #   등 비도시계획 구역) calc_effective_far가 eff/legal을 아예 None으로 정직 반환한 필지다
+    #   (과거엔 여기서 60%/200% 하드코딩 폴백 → 자연녹지+개발제한구역 혼재 시 139.6% 오염 재현
+    #   케이스의 근본원인). 위 _blended가 이미 가중에서 제외하므로, 여기서는 사유를 별도로
+    #   명시해 '결측'과 '용도 미확인'을 구분한다(정직 표기).
     legal_fallback = 0
+    zone_unmatched = 0
     for p in parcels:
         if (p.get("zone_type") or "").strip():
             basis = str(p.get("_far_basis") or "")
-            if not basis or "법정" in basis:
+            if basis == "zone_unmatched":
+                zone_unmatched += 1
+            elif not basis or "법정" in basis:
                 legal_fallback += 1
+    note_parts: list[str] = []
     if legal_fallback:
-        far_basis_note = (
+        note_parts.append(
             f"{legal_fallback}개 필지는 조례 실효 용적률 미확보로 법정상한을 폴백 적용했습니다"
             "(실효치는 조례 확정 시 하향될 수 있음)."
         )
-    else:
-        far_basis_note = "전 필지 조례 실효 용적률 반영(법정폴백 없음)."
+    if zone_unmatched:
+        note_parts.append(
+            f"용도 미확인 {zone_unmatched}개 필지(예: 개발제한구역 등 비도시계획 구역)는 법정 "
+            "상한을 산출하지 못해 면적가중에서 제외했습니다(임의 수치 미생성)."
+        )
+    far_basis_note = " ".join(note_parts) if note_parts else "전 필지 조례 실효 용적률 반영(법정폴백 없음)."
 
     return {
         "parcel_count": len(parcels),
@@ -1646,6 +2047,34 @@ def _multi_parcel_addons(
     }
 
 
+def is_unanalyzed_parcel(p: dict) -> bool:
+    """'미분석' 필지인가 — 지목·용도지구·용도지역이 **전부** 없어 특이성 판정 자체가 불가한 상태.
+
+    ★이 판정의 SSOT다(2026-08-02). 종전에는 `/special-parcels` 라우터 안에만 있었고, 그 결과
+      면적 3계층 정산이 끝난 **뒤에야** 표식이 붙어 소비처가 영원히 못 봤다. 라우터를 우회해
+      `detect_multi_parcel()`을 직접 부르는 호출부(integrated_recommender·persona runner·
+      design_ingest·decision_brief)도 있어서, 판정이 라우터에 있으면 그쪽은 아예 적용되지 않는다.
+
+    '없음'과 '판정 불가'는 다르다 — 신호가 하나도 없으면 "특이 제약 없음"이 아니라 "못 봤음"이다.
+    """
+    if not isinstance(p, dict):
+        return False
+
+    def _any(*keys: str) -> bool:
+        """별칭 중 하나라도 값이 있으면 '신호 있음'."""
+        return any(p.get(k) for k in keys)
+
+    # ★별칭까지 본다(2026-08-05 R3 H-3): 프론트·지도픽이 실제로 쓰는 camelCase 키
+    #   (zoneCode·zoneType·landCategory·jimok·specialDistricts)를 못 보면, **신호를 가진
+    #   정상 필지를 '못 봤음'으로 오판**한다. 이 함수를 부르는 경로 중 정규화를 거치지 않는
+    #   곳(detect_multi_parcel 직접 호출부·compute_usable_area 직호출)이 있어서, 방어선이
+    #   "호출부가 우연히 snake 키를 쓴다"에 의존하고 있었다.
+    has_category = _any("land_category", "landCategory", "jimok")
+    has_districts = _any("special_districts", "specialDistricts")
+    has_zone = _any("zone_type", "zoneType", "zone_code", "zoneCode")
+    return not has_category and not has_districts and not has_zone
+
+
 def detect_multi_parcel(
     parcels: list[dict],
     *,
@@ -1669,24 +2098,61 @@ def detect_multi_parcel(
     per: list[dict[str, Any]] = []
     for i, p in enumerate(parcels or []):
         sp = detect_special_parcel(p)
-        per.append({
+        entry: dict[str, Any] = {
             "index": i, "pnu": p.get("pnu"), "address": p.get("address"),
             "land_category": p.get("land_category"),
             "area_sqm": _first_num(p, _AREA_KEYS),  # additive — usable 3계층·matrix 재료
             "special": sp,  # None 이면 일상필지
-        })
+        }
+        # ★미분석 표식은 **여기서** 심는다(2026-08-02 봉합). 종전에는 라우터가 이 함수의
+        #   **반환 후**에 심었는데, 면적 3계층 정산(compute_usable_area)은 이 함수 **안에서**
+        #   이미 끝난 뒤였다 — 순서 역전이라 소비처가 표식을 영원히 못 봤고, 미분석 필지 면적이
+        #   그대로 '확정 개발가능'에 합산됐다. 판정을 SSOT로 끌어와야 이 함수를 직접 쓰는 다른
+        #   호출부(integrated_recommender·persona runner 등 라우터 우회 경로)도 함께 따라온다.
+        #   ★판정은 **양방향으로** 선언한다(2026-08-03). 미분석일 때만 표식을 심으면, 표식이
+        #     없는 것이 "분석됨"인지 "아무도 판정 안 함"인지 구분되지 않는다. 그 모호함 때문에
+        #     하류(면적 3계층)가 표식 없는 입력을 스스로 판정하려다, 이 entry가 zone_type을
+        #     싣지 않는다는 이유로 **정상 필지를 미분석으로 오판**했다(지목이 빈 필지에서 발현).
+        #     원본 p로 판정한 결과를 그대로 실어 보내면 하류가 다시 추측할 일이 없다.
+        entry["analysis_status"] = _UNANALYZED if is_unanalyzed_parcel(p) else _ANALYZED
+        per.append(entry)
 
     specials = [x for x in per if x["special"]]
+    # ★미분석 필지가 하나라도 있으면 "특이 없음"이라고 단정할 수 없다(2026-08-02 봉합).
+    #   특이성을 **못 본** 것이지 **없는** 것이 아니다. 종전에는 이 판정이 라우터에만 있어,
+    #   detect_multi_parcel()을 직접 부르는 경로(integrated_recommender·persona runner·
+    #   design_ingest·decision_brief)에서는 무정보 필지에도 그대로 POSSIBLE/PASS가 나왔다.
+    unanalyzed = [x for x in per if x.get("analysis_status") == _UNANALYZED]
+
     if not specials:
-        out = {"parcel_count": len(per), "special_count": 0, "developability": "POSSIBLE",
-               "resolvable": "YES", "blocking_parcels": [], "per_parcel": per,
-               "honest_disclosure": "전 필지가 일상적 개발부지로 특이 제약이 없습니다.",
-               "summary": f"{len(per)}개 필지 모두 특이사항 없음 — 통상 개발 가능."}
+        if unanalyzed:
+            out = {
+                "parcel_count": len(per), "special_count": 0,
+                "developability": "UNKNOWN", "resolvable": "UNKNOWN",
+                "blocking_parcels": [], "per_parcel": per,
+                "honest_disclosure": (
+                    f"{len(unanalyzed)}개 필지의 지목·용도지구가 미확인(미분석)이라 특이부지 판정이 "
+                    "불가합니다. 지목·구역 정보를 확보한 뒤 다시 분석하세요 — 제약이 없다는 뜻이 "
+                    "아닙니다."
+                ),
+                "summary": (
+                    f"판정 불가 — {len(unanalyzed)}/{len(per)}개 필지 미분석(지목·구역 미확인)."
+                ),
+            }
+        else:
+            out = {"parcel_count": len(per), "special_count": 0, "developability": "POSSIBLE",
+                   "resolvable": "YES", "blocking_parcels": [], "per_parcel": per,
+                   "honest_disclosure": "전 필지가 일상적 개발부지로 특이 제약이 없습니다.",
+                   "summary": f"{len(per)}개 필지 모두 특이사항 없음 — 통상 개발 가능."}
         out.update(_multi_parcel_addons(parcels, per, [], refresh_fn, roadside_strip_commercial))
         return out
 
     # 사업 전체 게이트 = 가장 제약 큰 필지.
     gate = max(specials, key=lambda x: _RANK.get(x["special"]["developability"], 0))["special"]["developability"]
+    # ★미분석 필지가 섞여 있으면 게이트를 최소 '판정 불가'까지 올린다 — 특이 필지가 따로 있어도
+    #   미분석분의 제약 유무는 여전히 못 본 상태이므로, 그보다 가벼운 게이트로 단정하지 않는다.
+    if unanalyzed and _RANK.get(gate, 0) < _RANK["UNKNOWN"]:
+        gate = "UNKNOWN"
     worst_res = min((_RES_RANK.get(x["special"]["resolvable"], 2) for x in specials), default=2)
     resolvable = {0: "NO", 1: "CONDITIONAL", 2: "YES"}[worst_res]
     blocking = [{"pnu": x["pnu"], "land_category": x["land_category"],
@@ -1793,13 +2259,23 @@ def build_multi_parcel_report(
         i = x.get("index")
         src = items[i] if isinstance(i, int) and 0 <= i < len(items) else {}
         sp = x.get("special") if isinstance(x.get("special"), dict) else {}
-        dev = sp.get("developability") or "POSSIBLE"
-        res = sp.get("resolvable") or "YES"
+        # ★미분석 필지를 "가능"으로 덮지 않는다. 종전에는 신호가 없으면 무조건 POSSIBLE/YES로
+        #   폴백해, 못 본 필지가 매트릭스에서 **일상 개발부지(가능·PASS)** 로 표기됐다.
+        #   면적 3계층은 같은 필지를 conditional로 세는데 판정 칸만 "가능"이라 표면끼리 모순이었다.
+        #   '신호 부재'는 '가능'이 아니라 '판정 불가'다 — 더 제약이 큰 쪽을 택한다(약화 금지).
+        _unanalyzed = str(x.get("analysis_status") or "").strip().lower() == _UNANALYZED
+        dev = sp.get("developability") or ("UNKNOWN" if _unanalyzed else "POSSIBLE")
+        res = sp.get("resolvable") or ("UNKNOWN" if _unanalyzed else "YES")
+        if _unanalyzed and _RANK.get(dev, 0) < _RANK["UNKNOWN"]:
+            dev, res = "UNKNOWN", "UNKNOWN"
         matrix.append({
             "index": i, "pnu": x.get("pnu"), "address": x.get("address"),
             "land_category": x.get("land_category"),
             "zone_type": src.get("zone_type"),
             "area_sqm": x.get("area_sqm"),
+            # ★프론트 "판정 불가(미분석)" 배지가 읽는 키 — 종전에는 이 표면에서 탈락해
+            #   배지가 한 번도 뜨지 않는 죽은 코드였다(정직 신호를 만들어놓고 안 실어 보냄).
+            "analysis_status": x.get("analysis_status"),
             "developability": dev, "resolvable": res,
             "gate": gate_decision(dev, res),
             "usable_tier": tier_by_index.get(i),

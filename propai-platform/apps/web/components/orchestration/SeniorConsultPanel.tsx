@@ -270,7 +270,7 @@ export function SeniorConsultPanel() {
                   className={`rounded-xl border p-3 text-left transition-colors ${
                     active
                       ? "border-[var(--accent-strong)] bg-[color-mix(in_srgb,var(--accent-strong)_8%,transparent)]"
-                      : "border-[var(--line-strong)] bg-[var(--surface-card)] hover:border-[var(--accent-strong)]"
+                      : "border-[var(--line-strong)] bg-[var(--surface-strong)] hover:border-[var(--accent-strong)]"
                   }`}
                 >
                   <span className="flex items-center justify-between gap-2">
@@ -330,13 +330,13 @@ export function SeniorConsultPanel() {
                       value={cur}
                       onChange={(e) => setVal(e.target.value)}
                       placeholder="미입력"
-                      className="w-full min-w-0 rounded-lg border border-[var(--line-strong)] bg-[var(--surface-card)] px-2.5 py-1.5 text-[12px] text-[var(--text-primary)]"
+                      className="w-full min-w-0 rounded-lg border border-[var(--line-strong)] bg-[var(--surface-strong)] px-2.5 py-1.5 text-[12px] text-[var(--text-primary)]"
                     />
                   ) : (
                     <select
                       value={cur}
                       onChange={(e) => setVal(e.target.value)}
-                      className="w-full min-w-0 rounded-lg border border-[var(--line-strong)] bg-[var(--surface-card)] px-2.5 py-1.5 text-[12px] text-[var(--text-primary)]"
+                      className="w-full min-w-0 rounded-lg border border-[var(--line-strong)] bg-[var(--surface-strong)] px-2.5 py-1.5 text-[12px] text-[var(--text-primary)]"
                     >
                       <option value="">미입력</option>
                       {selectOpts.map((o) => (
@@ -363,7 +363,7 @@ export function SeniorConsultPanel() {
       )}
 
       {result && (
-        <div className="grid gap-3 rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[var(--surface-card)] p-4">
+        <div className="grid gap-3 rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-4">
           {/* 헤더: 이름 + 성숙도 + 신뢰도 + 종합판정 */}
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex flex-wrap items-center gap-2">
@@ -396,7 +396,7 @@ export function SeniorConsultPanel() {
                 type="button"
                 onClick={() => consult(selectedKey)}
                 disabled={running}
-                className="rounded-lg border border-[var(--line-strong)] bg-[var(--surface-card)] px-2.5 py-1 text-[11px] font-bold text-[var(--text-primary)] transition-colors hover:border-[var(--accent-strong)] disabled:opacity-50"
+                className="rounded-lg border border-[var(--line-strong)] bg-[var(--surface-strong)] px-2.5 py-1 text-[11px] font-bold text-[var(--text-primary)] transition-colors hover:border-[var(--accent-strong)] disabled:opacity-50"
               >
                 다시 자문
               </button>
@@ -547,7 +547,7 @@ export function SeniorConsultPanel() {
                 {result.citations.map((c, i) => (
                   <span
                     key={i}
-                    className="rounded-full border border-[var(--line-strong)] bg-[var(--surface-card)] px-2 py-0.5 text-[10px] text-[var(--text-secondary)]"
+                    className="rounded-full border border-[var(--line-strong)] bg-[var(--surface-strong)] px-2 py-0.5 text-[10px] text-[var(--text-secondary)]"
                   >
                     {c}
                   </span>

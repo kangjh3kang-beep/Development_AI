@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { AuctionItemsMap, type AuctionMapItem } from "@/components/auction/AuctionItemsMap";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
@@ -8,8 +8,11 @@ import { Construction, Landmark, Map, Search, Trophy } from "lucide-react";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { AuctionMonitorPanel } from "@/components/auction/AuctionMonitorPanel";
+import { FREE_REQUERY_DAYS } from "@/lib/registry-analyze";
 import { ApiClientError, apiClient, resolveApiOrigin } from "@/lib/api-client";
+import { useModalFocus, useModalFocusWhileMounted } from "@/hooks/useModalFocus";
 import { analyzeRegistry } from "@/lib/registry-analyze";
+import { DISMISS_Z, useDismissible, useDismissibleWhileMounted } from "@/lib/satong-dismiss";
 import { writePreCheckHandoff } from "@/components/precheck/handoff";
 import { useRouter } from "next/navigation";
 import type { Locale } from "@/i18n/config";
@@ -320,11 +323,14 @@ export function AuctionWorkspace({ locale }: AuctionWorkspaceProps) {
   const [rankingView, setRankingView] = useState<"list" | "map">("list");
 
   // --- 탭 A: 내 경공매 ---
+  // ★skipSessionExpiry(이 파일 공통): /auction/*는 RBAC 게이트 — 라이브 모드 미인증 401이
+  //   전역 세션만료 처리(토큰 와이프+로그인 하드 리다이렉트)를 발동해, extractErrorMessage의
+  //   인라인 "로그인 필요" 안내를 선점하던 것을 옵트아웃한다(사통맵 경매 레이어와 동일 규약, PR#271).
   const myQuery = useQuery({
     queryKey: ["auction", "my"],
     enabled: canUseLiveApi && activeTab === "my",
     queryFn: () =>
-      apiClient.get<MyAuctionResponse>("/auction/my?group_by=project"),
+      apiClient.get<MyAuctionResponse>("/auction/my?group_by=project", { skipSessionExpiry: true }),
   });
 
   // --- 탭 B: 조건검색 ---
@@ -347,7 +353,7 @@ export function AuctionWorkspace({ locale }: AuctionWorkspaceProps) {
         land_max: f.land_max,
         pbct_stat: f.pbct_stat,
       });
-      return apiClient.get<BidResultsResponse>(`/auction/bid-results${qs}`);
+      return apiClient.get<BidResultsResponse>(`/auction/bid-results${qs}`, { skipSessionExpiry: true });
     },
   });
 
@@ -355,12 +361,12 @@ export function AuctionWorkspace({ locale }: AuctionWorkspaceProps) {
   const filtersQuery = useQuery({
     queryKey: ["auction", "filters"],
     enabled: canUseLiveApi && activeTab === "search",
-    queryFn: () => apiClient.get<SavedFilter[]>("/auction/filters"),
+    queryFn: () => apiClient.get<SavedFilter[]>("/auction/filters", { skipSessionExpiry: true }),
   });
 
   const saveFilterMutation = useMutation({
     mutationFn: (payload: { name: string; params: Record<string, string> }) =>
-      apiClient.post<SavedFilter>("/auction/filters", { body: payload }),
+      apiClient.post<SavedFilter>("/auction/filters", { body: payload, skipSessionExpiry: true }),
     onSuccess: () => {
       setSaveName("");
       setSaveError("");
@@ -373,7 +379,7 @@ export function AuctionWorkspace({ locale }: AuctionWorkspaceProps) {
 
   const deleteFilterMutation = useMutation({
     mutationFn: (filterId: string) =>
-      apiClient.delete<void>(`/auction/filters/${filterId}`),
+      apiClient.delete<void>(`/auction/filters/${filterId}`, { skipSessionExpiry: true }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["auction", "filters"] });
     },
@@ -386,6 +392,7 @@ export function AuctionWorkspace({ locale }: AuctionWorkspaceProps) {
     queryFn: () =>
       apiClient.get<RankingResponse>(
         `/auction/ranking${buildSearchParams({ by: rankingBy, page: 1, page_size: 30 })}`,
+        { skipSessionExpiry: true },
       ),
   });
 
@@ -675,7 +682,7 @@ export function AuctionWorkspace({ locale }: AuctionWorkspaceProps) {
               </div>
             </div>
             {saveError ? (
-              <p className="mt-2 text-xs font-bold text-[var(--spot)]">{saveError}</p>
+              <p className="mt-2 text-xs font-bold text-[var(--status-error)]">{saveError}</p>
             ) : null}
           </form>
 
@@ -698,7 +705,7 @@ export function AuctionWorkspace({ locale }: AuctionWorkspaceProps) {
                     type="button"
                     aria-label={`${filter.name} 삭제`}
                     onClick={() => deleteFilterMutation.mutate(filter.filter_id)}
-                    className="text-[var(--text-hint)] hover:text-[var(--spot)]"
+                    className="text-[var(--text-hint)] hover:text-[var(--status-error)]"
                   >
                     ✕
                   </button>
@@ -1016,7 +1023,17 @@ function safeNumber(value: unknown): number | null {
   return value;
 }
 
-function DetailModal({
+/**
+ * 물건 상세 모달 — **`export` 하는 이유는 렌더 경로 때문이다**(2026-08-23).
+ *
+ * 이 표면은 `FOCUS_UNWIRED` 에 *"단독 렌더에 목록 조회·지도 목이 필요하다"* 는 사유로
+ * 남아 있었다. **그 사유는 거짓이었다** — 이 컴포넌트가 받는 것은 `item`·`locale`·`onClose`
+ * 뿐이고, 자체 상세조회는 `enabled: canFetchDetail` 로 꺼진다(키가 없는 item 을 주면 그만).
+ * 워크스페이스도, 목록도, 지도도 필요 없다. **막고 있던 것은 `export` 하나였다.**
+ *
+ * ★부채 사유를 물려받아 믿지 말고 재라 — 이 저장소가 반복해 데인 형태다.
+ */
+export function DetailModal({
   item,
   locale,
   onClose,
@@ -1042,6 +1059,7 @@ function DetailModal({
           // ONBID가 토지면적/이미지를 안 주면 PNU로 NED 토지특성·항공뷰 보강.
           ...(itemPnu ? { pnu: itemPnu } : {}),
         })}`,
+        { skipSessionExpiry: true },
       ),
   });
 
@@ -1088,14 +1106,34 @@ function DetailModal({
   const mainImage = galleryImages[safeImgIdx] ?? null;
   // 이미지 확대(라이트박스) 열림 여부 — 메인 사진을 누르면 전체화면으로 크게 본다.
   const [zoomOpen, setZoomOpen] = useState(false);
+
+  // ── 포커스 생명주기 ────────────────────────────────────────────────────────
+  //  상세 모달은 **마운트 자체가 열림**이다(부모가 `selected` 일 때만 렌더한다) → WhileMounted.
+  //  라이트박스는 `zoomOpen` 이라는 **열림 인자**가 있다 → 인자를 받는 쪽.
+  //  ★두 트랩은 겹친다(라이트박스가 상세 모달 **안에** 렌더된다). 훅의 중첩 양보 규칙이
+  //    안쪽에 소유권을 주며, 그 동작은 이 파일의 전용 스펙이 실제 Tab 으로 태운다.
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const zoomRef = useRef<HTMLDivElement | null>(null);
+  useModalFocusWhileMounted(bodyRef);
+  useModalFocus(zoomRef, zoomOpen);
   const prevBids = Array.isArray(detail?.prev_bids) ? detail!.prev_bids! : [];
 
-  // 라이트박스에서 키보드로 닫기(Esc)·좌우 이동(←/→) 지원.
+  // 상세 모달을 ESC 로 닫기 — **종전에는 ESC 가 아무 일도 하지 않았다**(배경 클릭·✕ 뿐이었다).
+  // 이 모달은 부모가 선택된 물건이 있을 때만 마운트한다.
+  useDismissibleWhileMounted(DISMISS_Z.appModal, onClose);
+
+  // 라이트박스도 ESC 로 닫기 — **자체 window 리스너에서 조정기로 이관**(2026-08-18).
+  // ★라이트박스는 이 상세 모달 **위에** 뜬다. 종전에는 ESC 한 번에 라이트박스만 닫혔지만
+  //   그건 상세 모달에 ESC 가 아예 없었기 때문이고, 위에서 상세에도 ESC 를 주는 순간
+  //   같은 keydown 에 둘 다 닫히게 된다. 그래서 라이트박스를 한 칸 위로 등록해
+  //   **ESC 1회 = 라이트박스만 닫힘**을 값으로 선언한다(페인트 z 는 둘 다 z-[800] 로 같다).
+  useDismissible(DISMISS_Z.nestedOverModal, zoomOpen && Boolean(mainImage), () => setZoomOpen(false));
+
+  // 라이트박스 좌우 이동(←/→). ESC 는 위 조정기가 받는다.
   useEffect(() => {
     if (!zoomOpen) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setZoomOpen(false);
-      else if (e.key === "ArrowRight") setImgIdx((i) => Math.min(i + 1, galleryImages.length - 1));
+      if (e.key === "ArrowRight") setImgIdx((i) => Math.min(i + 1, galleryImages.length - 1));
       else if (e.key === "ArrowLeft") setImgIdx((i) => Math.max(i - 1, 0));
     };
     window.addEventListener("keydown", onKey);
@@ -1246,12 +1284,14 @@ function DetailModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      className="fixed inset-0 z-[800] flex items-center justify-center bg-black/50 p-4"
       role="dialog"
       aria-modal="true"
       onClick={onClose}
     >
+      {/* ★ref 는 백드롭이 아니라 **대화상자 본체**에 단다(백드롭에 달면 트랩 범위가 배경까지 된다). */}
       <div
+        ref={bodyRef}
         className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-3xl border border-[var(--line-strong)] bg-[var(--surface-strong)] p-6 shadow-[var(--shadow-2xl)]"
         onClick={(e) => e.stopPropagation()}
       >
@@ -1282,7 +1322,6 @@ function DetailModal({
                   className="group flex h-full w-full cursor-zoom-in items-center justify-center"
                   aria-label="사진 확대해서 보기"
                 >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
                   {/* max-h/max-w로 '원본 크기까지만' 표시 — h-full w-full로 강제 채우면 지적도 같은
                       저해상도 원본이 과하게 확대돼 뭉개진다(깨짐의 근본원인). 작은 이미지는 또렷하게
                       가운데 정렬되고, 큰 이미지만 컨테이너에 맞춰 줄어든다(레터박스). */}
@@ -1347,7 +1386,8 @@ function DetailModal({
             배경/✕ 클릭·Esc로 닫고, 사진이 여러 장이면 ‹ › 또는 ←/→ 로 넘긴다. */}
         {zoomOpen && mainImage ? (
           <div
-            className="fixed inset-0 z-[70] flex items-center justify-center bg-black/90 p-4"
+            ref={zoomRef}
+            className="fixed inset-0 z-[800] flex items-center justify-center bg-black/90 p-4"
             role="dialog"
             aria-modal="true"
             aria-label="물건 사진 확대 보기"
@@ -1419,7 +1459,7 @@ function DetailModal({
           </p>
         ) : null}
         {canFetchDetail && detailQuery.isError ? (
-          <p className="mb-3 rounded-xl bg-[var(--surface-soft)] px-4 py-2 text-[11px] font-bold text-[var(--spot)]">
+          <p className="mb-3 rounded-xl bg-[var(--surface-soft)] px-4 py-2 text-[11px] font-bold text-[var(--status-error)]">
             상세 불러오기 실패 — 목록 기준 정보만 표시합니다. (
             {extractErrorMessage(detailQuery.error)})
           </p>
@@ -1581,7 +1621,7 @@ function DetailModal({
                 말소기준권리·인수권리·근저당·압류·가등기를 AI(법무사·변호사 관점)가 분석합니다.
               </p>
               <p className="mt-0.5 text-[11px] font-bold text-[var(--accent-strong)]">
-                권리분석 건당 2,000원 (동일 물건 재조회는 무료)
+                권리분석 건당 2,000원 (성공한 분석은 {FREE_REQUERY_DAYS}일 이내 재조회 무료)
               </p>
             </div>
             <div className="flex shrink-0 gap-2">
@@ -1607,7 +1647,7 @@ function DetailModal({
             <p className="mt-3 text-[11px] font-bold text-[var(--text-hint)]">{regProgress}</p>
           ) : null}
           {regErr ? (
-            <p className="mt-3 rounded-lg bg-[var(--surface-soft)] px-3 py-2 text-[11px] font-bold text-[var(--spot)]">
+            <p className="mt-3 rounded-lg bg-[var(--surface-soft)] px-3 py-2 text-[11px] font-bold text-[var(--status-error)]">
               {regErr}
             </p>
           ) : null}
@@ -1645,8 +1685,8 @@ function DetailModal({
                 </div>
               ) : null}
               {regResult.ai.risks?.length ? (
-                <div className="rounded-lg border border-[var(--spot)]/30 bg-[var(--spot)]/10 px-3 py-2">
-                  <p className="sa-di-eyebrow mb-1 !text-[var(--spot)]">위험요소</p>
+                <div className="rounded-lg border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 px-3 py-2">
+                  <p className="sa-di-eyebrow mb-1 !text-[var(--status-warning)]">위험요소</p>
                   <ul className="list-disc space-y-0.5 pl-4 text-[var(--text-primary)]">
                     {regResult.ai.risks.map((r, i) => (
                       <li key={i}>{r}</li>

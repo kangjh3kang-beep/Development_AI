@@ -16,11 +16,15 @@ import time
 from datetime import datetime
 from typing import Any
 
+from ...utils.pnu import lawd_cd_from_pnu
+from ..data_validation.price_stats import robust_price_stats
 from ..external_api.building_registry_service import BuildingRegistryService
 from ..external_api.commercial_area_service import CommercialAreaService
 from ..external_api.molit_service import MOLITService
+from ..external_api.poi_dedup import dedup_school_cluster
 from ..external_api.vworld_service import VWorldService
 from ..zoning.auto_zoning_service import ZONE_INFERENCE_WARNING, AutoZoningService
+from ..zoning.legal_zone_limits import _is_confirmed_ordinance_source
 from .ordinance_service import OrdinanceService
 
 logger = logging.getLogger(__name__)
@@ -348,6 +352,14 @@ class LandInfoService:
             "building_detail": None,
             "official_prices": [],
             "land_use_plan": None,
+            # ★기본값을 "unavailable"(미확인)로 둔다 — 실제 판정은 PNU 해석에 성공한 경우에만
+            #   도달하므로(`if effective_pnu is not None:` 블록 안), 기본값이 없으면 PNU 미해석
+            #   필지에서 **키 자체가 빠지고** 소비처가 "확인 완료"로 낙관 폴백한다(R3 MEDIUM).
+            #   "조회를 시도조차 못 했다"는 미확인이지 "규제 없음"이 아니다.
+            "land_use_plan_status": "unavailable",
+            # ★`special_districts` 가 실측인지 키워드 추론인지 — 소비처가 구분할 수 있게.
+            #   실조회 전엔 추론값이므로 기본을 그렇게 표기한다(뭉개지 않는다).
+            "special_districts_source": "keyword_inference",
             "local_ordinance": None,
             "nearby_transactions": None,
             "infrastructure": None,
@@ -457,6 +469,19 @@ class LandInfoService:
                 if not result.get("land_area_sqm") and land_char.get("area_sqm"):
                     result["land_area_sqm"] = land_char["area_sqm"]
 
+            # ★토지이용계획 조회 성패를 정직 플래그로 남긴다(additive — 기존 키 무변경).
+            #   result["land_use_plan"]은 **비어있지 않은 목록일 때만** 채워지므로, 그것이 None인
+            #   상태가 "조회 실패"인지 "확인 완료·규제 0건"인지 소비처가 구분할 수 없다.
+            #   _fetch_land_use_plan은 그 구분(None=하드 실패 / []=규제 없음)을 이미 보존하는데
+            #   여기서 뭉개졌다 — 구분이 없으면 소비처(지배 제약 등)가 조회 실패를 "규제 없는
+            #   깨끗한 필지"로 표기하는 무음 낙관이 된다.
+            #   ★판정은 `is None`이 아니라 **isinstance(list)**여야 한다: 위 gather가
+            #   return_exceptions=True라 land_use에 Exception 인스턴스가 담길 수 있고, 그러면
+            #   `is None` 검사가 그것을 "ok"(확인 완료)로 흘려보낸다 — 실패를 성공으로 표기하는
+            #   정반대 방향의 오류다. 바로 아래 소비 가드(`isinstance(land_use, list)`)와 같은
+            #   기준으로 맞춘다: list(빈 목록 포함)=확정된 답 / None·Exception=미확인.
+            result["land_use_plan_status"] = "ok" if isinstance(land_use, list) else "unavailable"
+
             # 토지이용계획 (VWORLD NED — 중첩 규제 전부 포함)
             if isinstance(land_use, list) and land_use:
                 # districts에서 확정된 용도지역으로 채움 — 추론 선점값(keyword_inference)도
@@ -468,6 +493,41 @@ class LandInfoService:
                     result["zone_limits"] = self._zone_limits_for(district_zone)
                     result["zone_source"] = "vworld_ned_land_use"
                     result["warnings"] = _strip_zone_inference_warning(result.get("warnings"))
+                # ★★`special_districts` 를 **실측 designation 으로 채운다**(원 인계서 P2).
+                #   【무엇이 틀렸나 — 2026-08-21 실측】종전 값은 `AutoZoningService.
+                #   _detect_special_districts(zone_type, address)` 가 만든 **문자열 키워드
+                #   휴리스틱**이다: 주소나 용도지역명에 "지구단위" 라는 **글자**가 있어야 채워진다.
+                #   실제 주소에 그런 글자는 없으므로 사실상 **항상 빈 목록**이었다.
+                #
+                #   【그래서 무엇이 죽어 있었나 — 캠페인 계약 셋이 통째로】
+                #   `special_districts` 는 조례 캠페인 세 계층의 **공통 입력**이다:
+                #     · `plan_limit_unknown`(#705) — 계획이 한도·용도를 정하는데 수치 미확보 고지
+                #     · `conditional_ceiling`(#704) — 법 §75의3 조건부 법정상한
+                #     · `ordinance_conditional`(#711) — 조례 조건부 값 × 부지 조건 매칭
+                #   입력이 항상 비어 있으니 셋 다 화면 경로에서 **한 번도 발화하지 못했다**.
+                #   실측: 오산 수청동 569(PNU 4137010800105690000)는 VWorld 가
+                #   `지구단위계획구역` 을 **2건** 주는데 `collect_comprehensive` 는 0건을 냈다.
+                #
+                #   ★`land_use`(VWorld NED 실조회 결과)가 바로 여기 있다 — 같은 함수 안에서
+                #   `land_use_plan.districts` 로 이미 싣고 있었다. 소비처만 연결하면 된다.
+                #   ★행 모양을 바꾸지 않고 그대로 넘긴다: 소비처는 전부 `district_regime._norm`
+                #   (`district_name` → `name` 순)으로 읽으므로 원본 dict 가 그대로 통한다.
+                #   ★실조회가 있을 때만 덮는다 — 없으면 종전 휴리스틱 값을 유지해 무회귀.
+                #   ★★행 모양 호환 — 소비처가 **두 가지 키**를 쓴다(#742 직후 전역 스윕에서 적발).
+                #     · 백엔드·`district_regime._norm` 계열: `district_name` → `name` 순으로 읽음(안전)
+                #     · 그러나 **프론트 일부는 `name` 만** 읽는다:
+                #         `LandIntelligencePanel:666  specialDistricts.map(d => d.name)`  ← 폴백 없음
+                #         `SiteAnalysisDetail:1989    obj(d).name || d`                    ← 객체가 그대로 출력
+                #       종전 휴리스틱 행이 `{name, bonus_far}` 모양이라 그렇게 굳어 있었다.
+                #     14개 소비처를 감사해 "아무도 name 을 안 읽는다"를 증명하는 것보다
+                #     **두 키를 다 싣는 편이 안전하다** — 원본은 건드리지 않고 복사해서 채운다.
+                result["special_districts"] = [
+                    ({**d, "name": d.get("name") or d.get("district_name")}
+                     if isinstance(d, dict) else d)
+                    for d in land_use
+                ]
+                result["special_districts_source"] = "vworld_ned_land_use"
+
                 lup_zone = result.get("zone_type") or district_zone
                 result["land_use_plan"] = {
                     "zone_type": lup_zone,
@@ -618,15 +678,24 @@ class LandInfoService:
         if result["zone_type"]:
             try:
                 ordinance_result = await self.ordinance.get_ordinance_limits(
-                    address, result["zone_type"]
+                    address, result["zone_type"], pnu=effective_pnu,
                 )
                 result["local_ordinance"] = ordinance_result
 
                 # 조례 실효값으로 zone_limits 업데이트
+                # ★정직성 가드(2026-07-22 라이브 결함, live-fix①): ordinance_result["effective_*"]는
+                #   조례 미확보(source="법정상한") 폴백 시에도 항상 채워진다(national_* 값 그대로).
+                #   이를 무조건 ordinance_*_pct에 얹으면 legal_zone_limits._extract_ordinance_far가
+                #   "명시적 조례 신호"로 오인해 far_basis_detail.조례값.confirmed=True로 승격시킨다
+                #   (라이브 재현: 용인시 수지구 자연녹지 — 법정상한 100%가 조례값·확정으로 표시).
+                #   project_pipeline._site_trust_adapter가 이미 쓰는 정답 패턴(source가 실제
+                #   조례/법제처 확정출처일 때만 ordinance_*_pct 주입)을 여기도 동일 적용한다
+                #   (무날조·정직표기 — 수치는 그대로, '확정' 오표기만 제거).
                 if result["zone_limits"] and ordinance_result:
-                    if ordinance_result.get("effective_bcr"):
+                    _ord_confirmed_src = _is_confirmed_ordinance_source(ordinance_result.get("source"))
+                    if _ord_confirmed_src and ordinance_result.get("effective_bcr"):
                         result["zone_limits"]["ordinance_bcr_pct"] = ordinance_result["effective_bcr"]
-                    if ordinance_result.get("effective_far"):
+                    if _ord_confirmed_src and ordinance_result.get("effective_far"):
                         result["zone_limits"]["ordinance_far_pct"] = ordinance_result["effective_far"]
                     result["zone_limits"]["ordinance_source"] = ordinance_result.get("source", "")
                     result["zone_limits"]["ordinance_legal_basis"] = ordinance_result.get("legal_basis", "")
@@ -682,13 +751,20 @@ class LandInfoService:
             logger.warning("토지대장 조회 실패: %s (%s)", pnu, str(e))
             return None
 
-    async def _fetch_land_use_plan(self, pnu: str) -> list[dict[str, Any]]:
-        """토지이용계획 조회 (VWORLD NED — 중첩 규제 전부)."""
+    async def _fetch_land_use_plan(self, pnu: str) -> list[dict[str, Any]] | None:
+        """토지이용계획 조회 (VWORLD NED — 중첩 규제 전부).
+
+        ★레인C(R2b) — get_land_use_plan의 None(하드 실패)/[](확인 완료·규제 없음) 구분을
+        그대로 투과한다(뭉개지 않음). 이 함수의 유일 소비처(_collect_comprehensive_impl:463)는
+        `isinstance(land_use, list) and land_use`로 이미 None/[] 모두 "실데이터 없음"과 동일하게
+        graceful 처리하므로 무회귀 — 다만 신호 자체는 보존해 향후 소비처가 구분해 쓸 수 있다.
+        """
         try:
             return await self.vworld.get_land_use_plan(pnu)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — get_land_use_plan은 내부에서 이미 예외를 삼키므로
+            # 이 분기는 사실상 도달하지 않지만(예: import 실패 등 극단 상황) 방어적으로 유지.
             logger.warning("토지이용계획 조회 실패: %s (%s)", pnu, str(e))
-            return []
+            return None
 
     async def _fetch_land_characteristics(self, pnu: str) -> dict[str, Any] | None:
         """토지특성 조회 (VWORLD NED — 면적·지목·용도지역·이용상황)."""
@@ -745,7 +821,9 @@ class LandInfoService:
     async def _fetch_official_price(self, pnu: str) -> dict[str, Any] | None:
         """개별공시지가 조회 (VWORLD NED)."""
         try:
-            return await self.vworld.get_individual_land_price(pnu, year=2025)
+            # ★기준연도 하드코딩 제거(2026-08-22) — 최신 공시연도를 서비스가 해석한다.
+            #   종전 year=2025 는 VWorld 가 2026년치를 주는데도 옛 값을 쓰게 했다.
+            return await self.vworld.get_individual_land_price(pnu)
         except Exception as e:
             logger.warning("공시지가 조회 실패: %s (%s)", pnu, str(e))
             return None
@@ -959,11 +1037,15 @@ class LandInfoService:
                     pass
 
             if prices:
+                # ★대표통계(이상치 제거): 토지 지분·정정 등 미미거래(예 4만원)·초고가가 최저/최고/
+                #   평균을 왜곡하던 문제 수정. count는 원시 유효건수 정직 유지, excluded 투명 표기.
+                _stats = robust_price_stats(prices)
                 result[label] = {
-                    "avg_price_10k": round(sum(prices) / len(prices)),
-                    "max_price_10k": max(prices),
-                    "min_price_10k": min(prices),
-                    "count": len(prices),
+                    "avg_price_10k": _stats["avg"],
+                    "max_price_10k": _stats["max"],
+                    "min_price_10k": _stats["min"],
+                    "count": _stats["count"],
+                    "excluded_outliers": _stats["excluded"],
                     "data_source": live_source,
                     "items": [
                         {
@@ -1173,6 +1255,11 @@ class LandInfoService:
             except Exception as e:
                 logger.debug("학교 검색 실패 (시도 %d): %s", attempt + 1, str(e))
 
+        # ★모학교 병합(G2 근원봉합): 본교·운동장·병설유치원·체육관·분교 등 부속을 1개 모학교로
+        #   dedup해 과카운트를 원천 차단(공용 SSOT). 이후 이 목록을 소비하는 입지점수·학군서술·
+        #   market_report가 모두 고유 모학교 수를 쓴다.
+        infra["schools"] = dedup_school_cluster(infra["schools"])
+
         # ── 생활 인프라 POI 확장 (병원/마트/편의점/공원/버스/IC) ──
         # 각 카테고리를 반경 내에서 검색해 최근접순 상위 N개를 수집한다.
         # 개별 카테고리 실패는 무시하고 나머지를 계속 수집한다.
@@ -1248,8 +1335,8 @@ class LandInfoService:
     def _extract_lawd_cd(address: str, pnu: str | None) -> str | None:
         """주소 또는 PNU에서 법정동코드(5자리)를 추출."""
         # PNU 앞 5자리 = 시군구코드
-        if pnu and len(pnu) >= 5:
-            return pnu[:5]
+        if lawd_cd_from_pnu(pnu):
+            return lawd_cd_from_pnu(pnu)
 
         # 주소 기반 매핑 (서울 주요 구)
         district_map: dict[str, str] = {
@@ -1311,7 +1398,16 @@ class LandInfoService:
                     break
             else:
                 if name:
-                    regulations.append({"name": name, "restriction": "해당 지구/구역 관련 법규 확인 필요"})
+                    # ★SSOT 보강(근원봉합) — 로컬 regulation_map 미등재 보호구역을 인지(land_use 경로와 동형).
+                    from app.services.regulation.protection_zone_severity import severity_for
+                    sev = severity_for(name)
+                    if sev is not None:
+                        regulations.append({
+                            "name": name,
+                            "restriction": f"보호·규제구역 행위제한(개발 리스크 {sev}) — 관계기관 협의 필요",
+                        })
+                    else:
+                        regulations.append({"name": name, "restriction": "해당 지구/구역 관련 법규 확인 필요"})
         return regulations
 
     def _extract_regulations_from_land_use(self, land_use_items: list[dict[str, Any]]) -> list[dict[str, str]]:
@@ -1344,8 +1440,18 @@ class LandInfoService:
                     regulations.append({"name": name, "restriction": restriction})
                     matched = True
                     break
-            if not matched and "지역" not in name and "도시" not in name:
-                # 용도지역/도시지역은 규제가 아니므로 제외
-                regulations.append({"name": name, "restriction": "관련 법규 확인 필요"})
+            if not matched:
+                # ★SSOT 보강(근원봉합) — 로컬 regulation_map에 없던 보호구역(통제보호·제한보호·방공기지·
+                #   방공유도탄·상수원보호 등)을 protection_zone_severity로 인지해 리스크 수준을 표기한다
+                #   (종전엔 '관련 법규 확인 필요' 일반문구로 누락). 용도지역/도시지역은 규제가 아니라 제외.
+                from app.services.regulation.protection_zone_severity import severity_for
+                sev = severity_for(name)
+                if sev is not None:
+                    regulations.append({
+                        "name": name,
+                        "restriction": f"보호·규제구역 행위제한(개발 리스크 {sev}) — 관계기관 협의 필요",
+                    })
+                elif "지역" not in name and "도시" not in name:
+                    regulations.append({"name": name, "restriction": "관련 법규 확인 필요"})
         return regulations
 

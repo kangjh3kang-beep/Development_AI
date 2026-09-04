@@ -11,6 +11,8 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.billing_deps import enforce_llm_quota
+from app.services.land_intelligence.parcel_normalize import ParcelsIn
 from apps.api.auth.jwt_handler import CurrentUser
 from apps.api.auth.rbac import RequirePermission
 from apps.api.database.session import get_db
@@ -20,6 +22,13 @@ from apps.api.services.development_method_service import (
 )
 
 router = APIRouter()
+
+
+async def _enforce_llm_if_needed(db: AsyncSession, use_llm: bool) -> None:
+    """use_llm=True일 때만 LLM 한도 게이트 적용(무과금 경로는 통과) — personas.py/cost.py 선례와 동일 계약."""
+    if not use_llm:
+        return
+    await enforce_llm_quota(db)
 
 
 # ── 요청/응답 스키마 ──
@@ -194,7 +203,13 @@ class ScenarioSimRequest(BaseModel):
     """개발 시나리오 시뮬레이션 요청 (인증 불필요·부지 공개데이터 기반)."""
 
     address: str
-    parcels: list[str] | None = None  # 다필지 통합 시뮬레이션
+    # ★공용 정규화 `ParcelsIn` — `str[]`(주소배열)과 `dict[]`(면적·용도지역 보유 필지객체)
+    #   양 shape 를 받아 canonical dict[] 로 수렴한다. 새 계약을 만들지 않고
+    #   `/analysis/comprehensive`(dc995343)와 **같은 입력구**를 쓴다.
+    #   ★왜 dict 가 필요한가(2026-08-19 실측): 주소만 받으면 백엔드가 면적을 **재파생**하는데,
+    #     주소가 해석되지 않으면 `land_area_sqm=None` 이라 그 필지가 0㎡ 로 빠진다. 호출자는
+    #     이미 우리 API 로 받은 면적을 갖고 있으므로, 그것을 넘기면 재파생 자체가 불필요하다.
+    parcels: ParcelsIn | None = None  # 다필지 통합 시뮬레이션(주소배열 또는 필지객체)
     site: dict[str, Any] | None = None
     use_llm: bool = True
 
@@ -222,13 +237,18 @@ class OptimalRecommendRequest(BaseModel):
 
     addresses: list[str]
     parcel_subset_policy: str = "전체"
+    # (P1 B-1 G6) DevelopmentMethodInterpreter(LLM) 실무 해석 부착 여부. 기본 false=무과금
+    # (personas.py/cost.py 선례와 동일 계약 — opt-in일 때만 enforce_llm_quota 게이트 적용).
+    use_llm: bool = False
 
 
 @router.post(
     "/optimal-recommend",
     summary="다필지 통합 → 특이부지 게이트 → 개발방식별 현행 실효용적률 기준 수지 순위",
 )
-async def optimal_recommend(body: OptimalRecommendRequest) -> dict[str, Any]:
+async def optimal_recommend(
+    body: OptimalRecommendRequest, db: AsyncSession = Depends(get_db)
+) -> dict[str, Any]:
     """다필지 주소를 통합해 특이부지 게이트(할루시네이션 차단)를 통과한 경우에만,
     허용 개발유형별로 현행 실효용적률 기준 수지를 평가하고 순위를 반환한다.
 
@@ -244,6 +264,24 @@ async def optimal_recommend(body: OptimalRecommendRequest) -> dict[str, Any]:
     addrs = [a for a in (body.addresses or []) if a and a.strip()]
     if not addrs:
         raise HTTPException(status_code=400, detail="주소가 1개 이상 필요합니다.")
-    return await IntegratedRecommender().recommend(
+    result = await IntegratedRecommender().recommend(
         addresses=addrs, parcel_subset_policy=body.parcel_subset_policy
     )
+
+    # (P1 B-1 G6) DevelopmentMethodInterpreter(LLM) 실무 해석 — use_llm=True일 때만 시도
+    # (과금 게이트 적용). project_pipeline._attach_all_ai 패턴: try/except 무해,
+    # 응답에 ai_interpretation만 additive(실패해도 ranked 등 기존 결과는 무손상).
+    if body.use_llm:
+        await _enforce_llm_if_needed(db, body.use_llm)
+        try:
+            from app.services.ai.development_method_interpreter import (
+                DevelopmentMethodInterpreter,
+            )
+
+            interp = await DevelopmentMethodInterpreter().generate_interpretation(result)
+            if isinstance(interp, dict) and interp:
+                result["ai_interpretation"] = interp
+        except Exception:  # noqa: BLE001 — 해석 실패는 추천 결과를 손상하지 않는다(graceful).
+            pass
+
+    return result

@@ -68,3 +68,32 @@ def get_exclusive_ratio(dev_type: str) -> float:
 def get_typical_far_pct(dev_type: str) -> float:
     """유형별 전형 용적률(%). 미등록 유형은 250% 보수 폴백."""
     return TYPICAL_FAR_PCT.get(dev_type, DEFAULT_TYPICAL_FAR_PCT)
+
+
+# ── 건물유형별 분양(전용)면적 / 연면적(GFA) 비율 (P2 전용률 정본 수렴, 2026-07-11) ──
+# ★위 EXCLUSIVE_AREA_RATIO/get_exclusive_ratio(전용/공급, M코드)와는 분모가 다른
+# 별개 물리량이므로 절대 병합 금지(값도 상이 — 예: 오피스텔 0.55 vs 0.70). 연면적(GFA)은
+# 주차장 등 기타공용면적을 포함하므로, "분양(전용)면적÷연면적" 비율이 "전용면적÷공급면적"
+# 전용률보다 통상 낮게 나온다.
+#
+# 정본: 이 표가 유일 소스 — project_pipeline._run_design은 여기서 get_sellable_efficiency를
+# import해 사용한다(구 자체 이중정의 _SELLABLE_EFFICIENCY_BY_TYPE는 제거됨).
+# 프론트 미러(apps/web/lib/orchestration/node-body-builders.ts의
+# SELLABLE_EFFICIENCY_BY_TYPE)는 교차언어라 import 불가 — 값 동기는
+# tests/test_sellable_efficiency_contract.py ↔ node-body-builders.test.ts의
+# "G4 계약" describe로 고정한다. 한쪽을 바꾸면 반드시 반대쪽과 두 계약 테스트를 함께 갱신할 것.
+SELLABLE_EFFICIENCY_BY_BUILDING_TYPE: dict[str, float] = {
+    "아파트": 0.75,
+    "다세대주택": 0.78,
+    "오피스텔": 0.70,
+    "공동주택": 0.76,
+    "근린생활시설": 0.70,
+}
+
+# 유형 미상 시 기본 분양/연면적 비율 — 프론트 DEFAULT_SELLABLE_EFFICIENCY와 동치 계약(위 주석 참조).
+DEFAULT_SELLABLE_EFFICIENCY: float = 0.75
+
+
+def get_sellable_efficiency(building_type: str) -> float:
+    """건물유형별 분양(전용)/연면적(GFA) 비율. 미등록 유형은 표준 0.75 보수 폴백."""
+    return SELLABLE_EFFICIENCY_BY_BUILDING_TYPE.get(building_type, DEFAULT_SELLABLE_EFFICIENCY)

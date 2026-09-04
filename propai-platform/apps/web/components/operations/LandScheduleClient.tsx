@@ -6,12 +6,14 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, BarChart3, Building2, FileText, Folder, FolderTree, Home, Info, Search, TrendingUp } from "lucide-react";
+import type { SatongMapLayerState } from "@/lib/satong-map-layers";
+import { AlertTriangle, BarChart3, Building2, FileText, Folder, FolderTree, Home, Info, LandPlot, Search, TrendingUp } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { Card, CardContent } from "@propai/ui";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { ProjectSwitcher } from "@/components/common/ProjectSwitcher";
 import { NumberInput } from "@/components/common/NumberInput";
+import { landRatio, type LandRatio } from "@/lib/land-ratio";
 import dynamic from "next/dynamic";
 const SatongMapShellDynamic = dynamic(
   () => import("@/components/precheck/SatongMapShell").then((m) => m.SatongMapShell),
@@ -25,11 +27,13 @@ import { DeskAppraisalModal } from "@/components/operations/DeskAppraisalModal";
 import { LandShareModal, type LandShareUnit } from "@/components/operations/LandShareModal";
 import { analyzeRegistry } from "@/lib/registry-analyze";
 import { EvidencePanel } from "@/components/common/EvidencePanel";
+import { DataSourceNotice } from "@/components/ui/DataSourceNotice";
 import { adaptEvidence, type BackendEvidence, type BackendLegalRef } from "@/lib/evidence/adaptEvidence";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { useLandScheduleStore, type LandRow, BIZ_METHODS, BIZ_METHOD_PRESETS, DEFAULT_BIZ_METHOD } from "@/store/useLandScheduleStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import type { Locale } from "@/i18n/config";
+import { parcelDisplayAddress, parcelJibunResolved } from "@/lib/pnu";
 
 const EMPTY_ROWS: LandRow[] = []; // zustand v5: 안정적 참조(매 렌더 새 [] 반환→무한루프 방지)
 
@@ -53,7 +57,7 @@ const parseNum = (s: string): number | null => {
   return digits === "" ? null : Number(digits);
 };
 
-function Bar({ label, ratio, color }: { label: string; ratio: number; color: string }) {
+function Bar({ label, ratio, color, sub }: { label: string; ratio: number; color: string; sub?: string }) {
   const pct = Math.round(ratio * 100);
   return (
     <div>
@@ -61,8 +65,14 @@ function Bar({ label, ratio, color }: { label: string; ratio: number; color: str
       <div className="mt-1 h-2 rounded-full bg-[var(--surface-strong)]">
         <div className="h-2 rounded-full" style={{ width: `${pct}%`, background: color }} />
       </div>
+      {sub && <p className="mt-1 text-[10px] text-[var(--text-hint)]">{sub}</p>}
     </div>
   );
+}
+
+/** 진행바 보조문구 — 면적 축 옆에 건수(소유자 수 요건 근사)를 병기한다. */
+function ratioSub(r: LandRatio): string {
+  return `필지 ${r.matchedCount}/${r.totalCount}건 · ${Math.round(r.countRatio * 100)}%`;
 }
 
 export function LandScheduleClient({ locale }: { locale: Locale }) {
@@ -106,6 +116,35 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
   }, [projectId, updateRow]);
   const [busy, setBusy] = useState<string | null>(null);
   const [highlight, setHighlight] = useState("");
+
+  // ★identity churn 봉합: 아래 3개를 JSX에 인라인으로 두면 렌더마다 새 참조가 생겨
+  //   SatongMultiMap의 오버레이·경계 effect가 전량 재실행된다. 특히 selectedParcels는
+  //   경계 POST(타임아웃 45초)의 deps라, 필지를 클릭할 때마다(=setHighlight로 리렌더)
+  //   요청이 새로 발화하고 취소도 되지 않아 누적됐다.
+  const mapSelectedParcels = useMemo(
+    () => rows.filter((r) => r.jibun).map((r, i) => ({
+      id: r.id || `land-${i}`,
+      address: r.jibun,
+      pnu: r.pnu ?? null,
+      areaSqm: r.area_sqm ?? null,
+      zoneType: r.zone_code ?? null,
+      source: "search" as const,
+    })),
+    [rows],
+  );
+  const mapLayerState: SatongMapLayerState = useMemo(
+    () => ({
+      // ★as const 필수 — useMemo로 빼면 리터럴 타입이 string[]으로 넓어져
+      //   SatongMapLayerId[] 계약을 만족하지 못한다(JSX 인라인일 땐 문맥 추론으로 통과했다).
+      enabledLayerIds: ["cadastre", "zoning", "official-price", "age", "transactions"] as const,
+      controlsByLayer: {},
+    }),
+    [],
+  );
+  const handleMapFeatureClick = useCallback(
+    (feat: { address?: string | null }) => setHighlight(feat.address ?? ""),
+    [],
+  );
   // 안내 메시지: kind=info(설명·결과, 비경고)·warn(주의·실패). 충실한 설명을 비경고 톤으로.
   const [notice, setNotice] = useState<{ kind: "info" | "warn"; text: string } | null>(null);
   // 적정 매입가 추정 산출 근거(EvidencePanel) — 백엔드 build_evidence_block 출력(가산 필드).
@@ -137,16 +176,12 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
     const area = rows.reduce((a, r) => a + (r.area_sqm || 0), 0);
     const priv = rows.filter((r) => r.owner_type === "사유지").reduce((a, r) => a + (r.area_sqm || 0), 0);
     const pub = rows.filter((r) => r.owner_type === "국공유지").reduce((a, r) => a + (r.area_sqm || 0), 0);
-    const contracted = rows.filter((r) => r.contracted).length;
-    const useC = rows.filter((r) => r.land_use_consent).length;
-    const distC = rows.filter((r) => r.district_consent).length;
-    const operC = rows.filter((r) => r.operator_consent).length;
     const expSum = rows.reduce((a, r) => a + (r.expected_price || 0), 0);
     const purSum = rows.reduce((a, r) => a + (r.purchase_price || 0), 0);
     const exclArea = rows.reduce((a, r) => a + (r.exclusive_area_sqm || 0), 0); // 세대 전유면적 합(집합건물)
-    return { n, area, priv, pub, contracted, useC, distC, operC, expSum, purSum, exclArea,
-      contractRatio: n ? contracted / n : 0, useRatio: n ? useC / n : 0, distRatio: n ? distC / n : 0,
-      operRatio: n ? operC / n : 0 };
+    // 확보율은 면적 가중(법정 축) — 건수 기준은 큰 필지 미확보를 가린다. lib/land-ratio 참조.
+    const contract = landRatio(rows, (r) => !!r.contracted);
+    return { n, area, priv, pub, expSum, purSum, exclArea, contract };
   }, [rows]);
 
   // 소유구분 문자열 → 사유지/국공유지 매핑
@@ -166,16 +201,39 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
     const parcels = siteAnalysis?.parcels;
     
     if (parcels && parcels.length) {
+      // ★한 행이 **여러 필지에 중복 매칭**되지 않게 소비한 행을 표시한다(2026-08-20).
+      //   같은 동의 필지는 주소가 전부 같아, 주소 폴백 매칭이 77필지 전부를 **첫 행 하나**에
+      //   물린다 → 결과 배열의 모든 행이 **같은 id** 를 갖는다(React key 충돌 + id 로 행을
+      //   찾는 갱신이 엉뚱한 행을 덮어쓴다 — 아래 지번 치유 이펙트가 실제로 그렇게 깨졌다).
+      const usedRowIds = new Set<string>();
       const merged = parcels.map((p) => {
-        const existing = currentRows.find((r) => (p.pnu && r.pnu === p.pnu) || (r.jibun.trim() === p.address.trim()));
+        // ★PNU 우선 매칭은 그대로. 주소 폴백은 **옛 라벨(주소만)과 새 라벨(주소+지번)** 을
+        //   둘 다 인식해야 한다 — 안 그러면 기존 행이 안 잡혀 사용자가 입력한 소유자·매입가가
+        //   새 행으로 갈아치워진다(무음 손실).
+        const newLabel = parcelDisplayAddress(p.address, p.pnu).trim();
+        const existing = currentRows.find(
+          (r) =>
+            !usedRowIds.has(r.id) &&
+            ((p.pnu && r.pnu === p.pnu) || r.jibun.trim() === p.address.trim() || r.jibun.trim() === newLabel),
+        );
         if (existing) {
+          usedRowIds.add(existing.id);
+          // ★PNU 는 여기서 채운다(등기·대지지분 조회의 정체성). **지번 라벨 치유는 여기 없다** —
+          //   이 병합은 재시드(`rows.length < parcelCount`)일 때만 돌아서, 실제 신고 상태
+          //   (행 77 · 필지 77)에서는 **호출되지 않는다**. 치유는 재시드 게이트와 독립된
+          //   아래 `staleJibunFixes` 이펙트 한 곳이 담당한다(구현 두 벌 금지).
           return {
             ...existing,
+            pnu: existing.pnu || p.pnu || null,
             area_sqm: p.areaSqm ?? existing.area_sqm,
             owner_type: toOwnerType(p.ownerType) || existing.owner_type,
           };
         }
-        return mk(p.address, p.areaSqm ?? null, p.ownerType, p.pnu);
+        // ★★지번 칸에 **지번이 아니라 주소**가 들어가던 자리다.
+        //   `p.pnu` 를 이미 4번째 인자로 넘기면서도 지번을 파생하지 않아, 동 단위 주소만
+        //   저장된 프로젝트에서는 77행이 전부 "경기도 오산시 내삼미동" 이 됐다.
+        //   이 칸은 **사용자가 편집하고 엑셀·등기분석으로 흘러가는 값**이라 표시만의 문제가 아니다.
+        return mk(parcelDisplayAddress(p.address, p.pnu), p.areaSqm ?? null, p.ownerType, p.pnu);
       });
       setRows(projectId, merged);
     } else if (siteAnalysis?.address) {
@@ -186,7 +244,8 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
           area_sqm: effectiveLandAreaSqm(siteAnalysis) ?? existing.area_sqm,
         }]);
       } else {
-        setRows(projectId, [mk(siteAnalysis.address ?? "", effectiveLandAreaSqm(siteAnalysis), "", siteAnalysis.pnu)]);
+        setRows(projectId, [mk(parcelDisplayAddress(siteAnalysis.address ?? "", siteAnalysis.pnu),
+          effectiveLandAreaSqm(siteAnalysis), "", siteAnalysis.pnu)]);
       }
     }
   }, [projectId, siteAnalysis, setRows]);
@@ -244,6 +303,36 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, siteAnalysis]);
+
+  // ── 지번 라벨 자가치유(★재시드 게이트와 **독립**) ─────────────────────────────
+  //  위 재시드는 `rows.length >= parcelCount` 면 아예 돌지 않는다. 실제 신고 프로젝트가
+  //  정확히 그 상태였다(행 77 · 필지 77) — 그래서 병합 안에 치유를 넣어 봐야 **호출되지
+  //  않는다**. 옛 라벨로 굳은 행은 재시드 여부와 무관하게 고쳐져야 한다.
+  //
+  //  ★행↔필지 대응은 **위치(index)** 로 잡는다. 같은 동의 필지는 주소가 전부 같아
+  //  주소 매칭이 첫 행으로 몰린다(77행이 1행으로 접히던 결함과 같은 뿌리). 시드가 필지
+  //  순서 그대로 행을 만들므로 개수가 같을 때만 위치 대응이 성립한다 — 다르면 손대지 않는다.
+  //  ★사용자가 손댄 값은 건드리지 않는다: 지번 칸이 **시드 당시 값(주소 원본) 그대로**일 때만.
+  const staleJibunFixes = useMemo(() => {
+    const parcels = siteAnalysis?.parcels;
+    if (!projectId || !parcels?.length || rows.length !== parcels.length) return [];
+    const fixes: Array<{ id: string; jibun: string; pnu: string | null }> = [];
+    rows.forEach((r, i) => {
+      const p = parcels[i];
+      if (!p || r.parent_id) return;
+      if (r.jibun.trim() !== (p.address ?? "").trim()) return; // 사용자 편집 또는 이미 치유됨
+      const label = parcelDisplayAddress(p.address, p.pnu).trim();
+      if (!label || label === r.jibun.trim()) return; // 파생할 지번이 없다 → 지어내지 않는다
+      fixes.push({ id: r.id, jibun: label, pnu: p.pnu || null });
+    });
+    return fixes;
+  }, [projectId, rows, siteAnalysis]);
+  useEffect(() => {
+    // 치유가 성공하면 다음 렌더에서 fixes 가 비어 루프가 멈춘다(라벨이 더는 주소 원본이 아니다).
+    for (const fix of staleJibunFixes) {
+      updateRow(projectId, fix.id, { jibun: fix.jibun, pnu: fix.pnu });
+    }
+  }, [staleJibunFixes, projectId, updateRow]);
 
   // 등기분석으로 행 자동채움(소유자·지분·소유구분·면적). 등기 실패 시에도 공부정보는 채움.
   const autofill = useCallback(async (r: LandRow) => {
@@ -536,8 +625,18 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
 
   return (
     <div className="grid min-w-0 grid-cols-1 gap-6">
-      {/* 사통팔땅 전역 싱글 통합지도 워크스페이스 (대시보드와 100% 동일한 필지 입력 + 멀티지도 엔진) */}
-      <SatongMapShellDynamic locale={locale} />
+      {/* 사통팔땅 전역 싱글 통합지도 워크스페이스 (대시보드와 100% 동일한 필지 입력 + 멀티지도 엔진).
+          ★UX 트랙 B4: 착지 페이지라 기본 접힘(defaultCollapsed) — 요약 1줄+"지도 열기" 토글.
+          ★UX 트랙 B2: 내부 ContextHeader 활성화(showContextHeader) — 집계를 한 곳으로 흡수. */}
+      {/* ★hasTarget 주입 — 이 화면에서 "대상"은 주소가 아니라 **편입토지 행**이다.
+          주소만 있고 행이 0건이면 셸이 접힌 채 남아, 아래 빈 상태 안내("상단 통합 지도의
+          지번·주소 검색…으로 등록하세요")가 **접힌 컨트롤을 가리키는** 모순이 됐다. */}
+      <SatongMapShellDynamic
+        locale={locale}
+        defaultCollapsed
+        showContextHeader
+        hasTarget={rows.length > 0}
+      />
       <Card className="cc-bracketed overflow-hidden rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
         <i className="cc-bracket cc-bracket--tl" />
         <i className="cc-bracket cc-bracket--tr" />
@@ -668,7 +767,7 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
                 </thead>
                 <tbody>
                   {rows.map((r, i) => (
-                    <tr key={r.id} className={`border-b border-[var(--line)]/50 ${r.parent_id ? "bg-[var(--surface-soft)]/40" : ""} ${highlight && highlight === r.jibun ? "bg-[var(--accent-soft)]" : ""}`}>
+                    <tr key={r.id} className={`border-b border-[var(--line)]/50 ${r.parent_id ? "bg-[var(--surface-soft)]/40" : ""} ${highlight && highlight === r.jibun ? "bg-[var(--accent-soft)] border-l-2 border-l-[var(--accent-strong)]" : ""}`}>
                       <td className="px-1.5 py-1">
                         <button onClick={() => setHighlight(r.jibun)} title="지도에서 강조" className="flex items-center gap-1">
                           <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: rowStatus(r).color }} />
@@ -676,7 +775,20 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
                         </button>
                       </td>
                       <td className={`px-1.5 py-1 min-w-[160px] ${r.parent_id ? "pl-4" : ""}`}>
-                        <input title={r.jibun || "지번"} className={inputCls} value={r.jibun} onChange={(e) => updateRow(projectId, r.id, { jibun: e.target.value })} />
+                        <input data-testid="land-row-jibun" title={r.jibun || "지번"} className={`${inputCls} cc-num`} value={r.jibun} onChange={(e) => updateRow(projectId, r.id, { jibun: e.target.value })} />
+                        {/* ★정직 표기(무날조): 지번(번지)을 확보하지 못한 행을 조용히 두지 않는다.
+                            동 단위 주소는 지오코딩하면 임의의 한 필지로 수렴해 모든 행이 같은
+                            오답이 된다(라이브 실측) — 그래서 채우지 않고 **사실을 말한다**.
+                            세대행(parent_id)은 라벨이 "…동 …호" 라 이 판정 대상이 아니다. */}
+                        {!r.parent_id && !parcelJibunResolved({ address: r.jibun, pnu: r.pnu }) && (
+                          <div
+                            data-testid="land-row-jibun-unresolved"
+                            className="mt-0.5 text-[9px] font-bold text-[var(--status-warning)]"
+                            title="번지가 없어 필지를 특정할 수 없습니다. 지번(번지)을 입력하거나 지도에서 필지를 선택하세요."
+                          >
+                            지번 미확인
+                          </div>
+                        )}
                         {/* S3 케이스 배지: 토지/단일건물/공동주택 자동분류 */}
                         {r.parcel_case && !r.unit_label && (
                           <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[9px]">
@@ -685,7 +797,7 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
                             ) : r.parcel_case === "building" ? (
                               <span className="inline-flex items-center gap-1 rounded bg-[var(--surface-strong)] px-1 py-0.5 font-semibold text-[var(--text-secondary)]"><Home className="size-3" aria-hidden />단일건물</span>
                             ) : (
-                              <span className="rounded bg-[var(--surface-strong)] px-1 py-0.5 font-semibold text-[var(--text-secondary)]">🟩 토지</span>
+                              <span className="inline-flex items-center gap-1 rounded bg-[var(--surface-strong)] px-1 py-0.5 font-semibold text-[var(--text-secondary)]"><LandPlot className="size-3" aria-hidden />토지</span>
                             )}
                             {r.zone_code && <span className="text-[var(--text-hint)]">{r.zone_code}</span>}
                           </div>
@@ -694,11 +806,11 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
                       <td className="px-1.5 py-1 min-w-[90px]"><input title={r.owner || "소유자"} className={inputCls} value={r.owner} onChange={(e) => updateRow(projectId, r.id, { owner: e.target.value })} /></td>
                       <td className="px-1.5 py-1 w-16"><input title={r.share || "지분"} className={inputCls} value={r.share} onChange={(e) => updateRow(projectId, r.id, { share: e.target.value })} /></td>
                       <td className="px-1.5 py-1 w-20">
-                        <NumberInput allowDecimal title={r.area_sqm != null ? `${r.area_sqm.toLocaleString()}㎡ (집합건물 세대행은 대지지분)` : "면적(대지)"} className={inputCls} value={r.area_sqm} onChange={(n) => updateRow(projectId, r.id, { area_sqm: n })} />
+                        <NumberInput allowDecimal title={r.area_sqm != null ? `${r.area_sqm.toLocaleString()}㎡ (집합건물 세대행은 대지지분)` : "면적(대지)"} className={`${inputCls} cc-num`} value={r.area_sqm} onChange={(n) => updateRow(projectId, r.id, { area_sqm: n })} />
                         {r.area_sqm != null && r.area_sqm > 0 && <div className="mt-0.5 text-right text-[9px] text-[var(--text-hint)]">{(r.area_sqm / 3.305785).toFixed(2)}평</div>}
                       </td>
                       <td className="px-1.5 py-1 w-20">
-                        <NumberInput allowDecimal title={r.exclusive_area_sqm != null ? `${r.exclusive_area_sqm.toLocaleString()}㎡ 세대 전유면적` : "세대 전유면적(집합건물)"} placeholder="—" className={inputCls} value={r.exclusive_area_sqm ?? null} onChange={(n) => updateRow(projectId, r.id, { exclusive_area_sqm: n })} />
+                        <NumberInput allowDecimal title={r.exclusive_area_sqm != null ? `${r.exclusive_area_sqm.toLocaleString()}㎡ 세대 전유면적` : "세대 전유면적(집합건물)"} placeholder="—" className={`${inputCls} cc-num`} value={r.exclusive_area_sqm ?? null} onChange={(n) => updateRow(projectId, r.id, { exclusive_area_sqm: n })} />
                         {r.exclusive_area_sqm != null && r.exclusive_area_sqm > 0 && <div className="mt-0.5 text-right text-[9px] text-[var(--text-hint)]">{(r.exclusive_area_sqm / 3.305785).toFixed(2)}평</div>}
                       </td>
                       <td className="px-1.5 py-1 w-24">
@@ -707,17 +819,17 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
                         </select>
                       </td>
                       <td className="px-1.5 py-1 w-36">
-                        <input title={r.expected_price ? `${r.expected_price.toLocaleString()}원` : "매입예정가"} className={`${inputCls} text-right`} inputMode="numeric" value={fmtNum(r.expected_price)} onChange={(e) => updateRow(projectId, r.id, { expected_price: parseNum(e.target.value) })} />
+                        <input title={r.expected_price ? `${r.expected_price.toLocaleString()}원` : "매입예정가"} className={`${inputCls} cc-num text-right`} inputMode="numeric" value={fmtNum(r.expected_price)} onChange={(e) => updateRow(projectId, r.id, { expected_price: parseNum(e.target.value) })} />
                         <div className="mt-0.5 flex flex-wrap items-center gap-1">
                           <button onClick={() => estimatePrice(r)} disabled={!!busy} title="공시지가×지역 시세보정 기반 적정 매입가(수정가능)" className="cursor-pointer rounded bg-[var(--accent-soft)] px-1 py-0.5 text-[9px] font-bold text-[var(--accent-strong)] disabled:opacity-50">적정</button>
                           <button onClick={() => setModalRow(r)} title="예상 시세 추정 상세(5방법 비교·건물/임대·신뢰도 게이지·리포트 PDF) — 감정평가 아님" className="cursor-pointer rounded border border-[var(--accent-strong)]/40 px-1 py-0.5 text-[9px] font-bold text-[var(--accent-strong)] disabled:opacity-50">상세추정</button>
                         </div>
                       </td>
-                      <td className="px-1.5 py-1 w-28"><input title={r.purchase_price ? `${r.purchase_price.toLocaleString()}원` : "매입가"} className={`${inputCls} text-right`} inputMode="numeric" value={fmtNum(r.purchase_price)} onChange={(e) => updateRow(projectId, r.id, { purchase_price: parseNum(e.target.value) })} /></td>
-                      <td className="px-1.5 py-1 text-center"><input type="checkbox" checked={r.contracted} onChange={(e) => updateRow(projectId, r.id, { contracted: e.target.checked })} /></td>
+                      <td className="px-1.5 py-1 w-28"><input title={r.purchase_price ? `${r.purchase_price.toLocaleString()}원` : "매입가"} className={`${inputCls} cc-num text-right`} inputMode="numeric" value={fmtNum(r.purchase_price)} onChange={(e) => updateRow(projectId, r.id, { purchase_price: parseNum(e.target.value) })} /></td>
+                      <td className="px-1.5 py-1 text-center"><input type="checkbox" className="accent-[var(--accent-strong)]" checked={r.contracted} onChange={(e) => updateRow(projectId, r.id, { contracted: e.target.checked })} /></td>
                       {consentTypes.map((c) => (
                         <td key={c.id} className="px-1.5 py-1 text-center">
-                          <input type="checkbox" title={`${c.label} 동의`} checked={consentVal(r, c.id)} onChange={(e) => setConsentVal(r, c.id, e.target.checked)} />
+                          <input type="checkbox" className="accent-[var(--accent-strong)]" title={`${c.label} 동의`} checked={consentVal(r, c.id)} onChange={(e) => setConsentVal(r, c.id, e.target.checked)} />
                         </td>
                       ))}
                       <td className="px-1.5 py-1 whitespace-nowrap">
@@ -773,13 +885,12 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
                 ))}
               </div>
               <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <Bar label="확보비율(계약확정)" ratio={agg.contractRatio} color="var(--status-success)" />
-                {/* 사업방식 동의 항목별 동의율(동적) */}
+                <Bar label="확보비율(계약확정 · 면적)" ratio={agg.contract.areaRatio} color="var(--status-success)" sub={ratioSub(agg.contract)} />
+                {/* 사업방식 동의 항목별 동의율(동적) — 면적 가중이 법정 축, 건수는 병기. */}
                 {consentTypes.map((c, ci) => {
-                  const denom = rows.length || 1;
-                  const got = rows.filter((r) => consentVal(r, c.id)).length;
+                  const r = landRatio(rows, (row) => consentVal(row, c.id));
                   const palette = ["var(--status-info)", "var(--data-accent)", "var(--status-warning)", "var(--accent-strong)", "var(--status-success)"];
-                  return <Bar key={c.id} label={`${c.label} 동의율`} ratio={got / denom} color={palette[ci % palette.length]} />;
+                  return <Bar key={c.id} label={`${c.label} 동의율 (면적)`} ratio={r.areaRatio} color={palette[ci % palette.length]} sub={ratioSub(r)} />;
                 })}
               </div>
               <div className="mt-4 flex flex-wrap gap-4 text-xs">
@@ -789,35 +900,26 @@ export function LandScheduleClient({ locale }: { locale: Locale }) {
                   <span className="text-[var(--text-secondary)]">세대 전유면적 합(집합건물): <b className="cc-num text-[var(--text-primary)]">{Math.round(agg.exclArea).toLocaleString()}㎡</b></span>
                 )}
               </div>
+              <DataSourceNotice source="부지분석 · 개별공시지가 · 등기부등본" note="집계는 등록 필지 기준 · 참고용" />
             </CardContent>
           </Card>
 
           {/* 구획도 (필지 전체) — 계약/동의 상태색상 + 행 클릭 하이라이트 */}
           <div>
-            <div className="mb-2 flex flex-wrap gap-3 text-[11px]">
-              <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full bg-[var(--status-success)]" />계약완료</span>
-              <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full bg-[var(--status-warning)]" />동의(미계약)</span>
-              <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full bg-[var(--status-error)]" />미동의·미계약</span>
+            <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px]">
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--status-success)]/40 bg-[color-mix(in_srgb,var(--status-success)_10%,transparent)] px-2 py-0.5 font-semibold text-[var(--status-success)]"><span className="inline-block h-2 w-2 rounded-full bg-[var(--status-success)]" />계약완료</span>
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--status-warning)]/40 bg-[color-mix(in_srgb,var(--status-warning)_10%,transparent)] px-2 py-0.5 font-semibold text-[var(--status-warning)]"><span className="inline-block h-2 w-2 rounded-full bg-[var(--status-warning)]" />동의(미계약)</span>
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--status-error)]/40 bg-[color-mix(in_srgb,var(--status-error)_10%,transparent)] px-2 py-0.5 font-semibold text-[var(--status-error)]"><span className="inline-block h-2 w-2 rounded-full bg-[var(--status-error)]" />미동의·미계약</span>
               <span className="text-[var(--text-hint)]">· 표의 번호/지도 필지 클릭 시 상호 강조</span>
             </div>
             <SatongMultiMapDynamic
               height={500}
-              selectedParcels={rows.filter((r) => r.jibun).map((r, i) => ({
-                id: r.id || `land-${i}`,
-                address: r.jibun,
-                pnu: r.pnu ?? null,
-                areaSqm: r.area_sqm ?? null,
-                zoneType: r.zone_code ?? null,
-                source: "search" as const,
-              }))}
+              selectedParcels={mapSelectedParcels}
               featureStatusColors={statusColors}
               featureStatusLabels={statusLabels}
               highlightFeatureAddress={highlight}
-              onFeatureClick={(feat) => setHighlight(feat.address)}
-              layerState={{
-                enabledLayerIds: ["cadastre", "zoning", "official-price", "age", "transactions"],
-                controlsByLayer: {},
-              }}
+              onFeatureClick={handleMapFeatureClick}
+              layerState={mapLayerState}
             />
           </div>
         </>

@@ -12,7 +12,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from typing import Any, TypedDict
 
@@ -47,7 +46,9 @@ _EXPERT_DEEP_TMPL = """\
 """
 
 _EXPERT_SYSTEM = ("당신은 한국 부동산개발 분야의 해당 전문가입니다. 제시된 원본 자료에 근거해서만 "
-                  "분석하고, 자료에 없는 수치를 지어내지 않습니다. JSON만 출력.")
+                  "분석하고, 자료에 없는 수치를 지어내지 않습니다. 실효 한도와 법정 한도가 다르면 "
+                  "그 원인은 자료의 [실효 한도 근거] 블록(far_basis)으로만 설명하고, 근거 없이 "
+                  "'조례 실효치'로 단정하지 않습니다. JSON만 출력.")
 
 _VERIFY_SYSTEM = ("당신은 분석 검증관입니다. 전문가 주장이 제공된 '원본 자료'에 실제 근거가 있는지만 "
                   "냉정하게 대조합니다. 자료에 없는 수치·사실은 hallucination으로 표시. JSON만 출력.")
@@ -85,12 +86,8 @@ _SYNTH_TMPL = """\
 """
 
 
-def _strip_json(raw: str) -> str:
-    raw = (raw or "").strip()
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        raw = raw[4:] if raw.lower().startswith("json") else raw
-    return raw.strip()
+# 관대 JSON 추출은 공용 파서(llm_json) SSOT로 일원화 — 프리앰블·후행 설명 허용.
+from app.services.ai.llm_json import parse_llm_json  # noqa: E402
 
 
 async def _experts_node(state: PanelState) -> dict[str, Any]:
@@ -104,13 +101,13 @@ async def _experts_node(state: PanelState) -> dict[str, Any]:
         user = _EXPERT_DEEP_TMPL.format(role=r["role"], lens=r["lens"],
                                         subject=state["subject"], address=state.get("address") or "대상지",
                                         context=state["ctx"])
-        llm = get_llm(timeout=60, max_tokens=1000)
+        llm = get_llm(service="expert_panel", timeout=60, max_tokens=1000)
         resp = await llm.ainvoke([SystemMessage(content=_EXPERT_SYSTEM + GROUNDING_RULE), HumanMessage(content=user)])
         # 계측: BaseInterpreter 밖 직접 호출도 동일하게 토큰·과금 기록(best-effort)
         from app.services.ai.base_interpreter import record_llm_response_billing
         await record_llm_response_billing(llm, resp, service="expert_panel")
         try:
-            d = json.loads(_strip_json(resp.content if hasattr(resp, "content") else str(resp)))
+            d = parse_llm_json(resp.content if hasattr(resp, "content") else str(resp))
             d.setdefault("role", r["role"])
             return d
         except Exception:  # noqa: BLE001
@@ -134,12 +131,12 @@ async def _verify_node(state: PanelState) -> dict[str, Any]:
         for e in experts
     )
     user = _VERIFY_TMPL.format(context=state["ctx"], claims=claims)
-    llm = get_llm(timeout=60, max_tokens=1200)
+    llm = get_llm(service="expert_panel", timeout=60, max_tokens=1200)
     try:
         resp = await llm.ainvoke([SystemMessage(content=_VERIFY_SYSTEM), HumanMessage(content=user)])
         from app.services.ai.base_interpreter import record_llm_response_billing
         await record_llm_response_billing(llm, resp, service="expert_panel")
-        report = json.loads(_strip_json(resp.content if hasattr(resp, "content") else str(resp)))
+        report = parse_llm_json(resp.content if hasattr(resp, "content") else str(resp))
     except Exception:  # noqa: BLE001
         report = {"verified": [], "overall_confidence": None, "notes": "검증 일시 불가"}
     return {"verification_report": report}
@@ -167,13 +164,13 @@ async def _synth_node(state: PanelState) -> dict[str, Any]:
     user = _SYNTH_TMPL.format(subject=state["subject"], address=state.get("address") or "대상지",
                              opinions=opinions, verify_notes=report.get("notes", ""),
                              confidence=report.get("overall_confidence"))
-    llm = get_llm(timeout=70, max_tokens=2000)
+    llm = get_llm(service="expert_panel", timeout=70, max_tokens=2000)
     synth: dict[str, Any] = {}
     try:
         resp = await llm.ainvoke([SystemMessage(content=_SYNTH_SYSTEM + GROUNDING_RULE), HumanMessage(content=user)])
         from app.services.ai.base_interpreter import record_llm_response_billing
         await record_llm_response_billing(llm, resp, service="expert_panel")
-        synth = json.loads(_strip_json(resp.content if hasattr(resp, "content") else str(resp)))
+        synth = parse_llm_json(resp.content if hasattr(resp, "content") else str(resp))
     except Exception:  # noqa: BLE001
         synth = {}
     verification = synth.get("verification", {}) or {}

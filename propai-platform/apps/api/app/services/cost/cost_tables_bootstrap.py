@@ -41,6 +41,10 @@ _DDL_MATERIAL_UQ = (
     "CREATE UNIQUE INDEX IF NOT EXISTS uq_material_unit_prices_code "
     "ON material_unit_prices(material_code)"
 )
+# P1 단가 4계층 리졸버(T1 공공고시) — 기존 배포 테이블에도 멱등 보강(신규 컬럼, 기존 데이터 무영향).
+_DDL_MATERIAL_SOURCE_URL = (
+    "ALTER TABLE material_unit_prices ADD COLUMN IF NOT EXISTS source_url varchar(500)"
+)
 
 _DDL_COST_WORK_TYPES = (
     "CREATE TABLE IF NOT EXISTS cost_work_types ("
@@ -67,6 +71,7 @@ _DDL_BIM_QUANTITIES = (
     "CREATE TABLE IF NOT EXISTS bim_quantities ("
     "  id bigserial PRIMARY KEY,"
     "  project_id uuid NOT NULL,"
+    "  tenant_id uuid,"  # PR#315 H2: 정본 ORM(TenantMixin)과 물리스키마 정합 — nullable(백필 금지)
     "  ifc_global_id varchar(100),"
     "  ifc_object_type varchar(100),"
     "  ifc_object_name varchar(300),"
@@ -81,6 +86,11 @@ _DDL_BIM_QUANTITIES = (
     "  created_at timestamptz DEFAULT now(),"
     "  updated_at timestamptz DEFAULT now()"
     ")"
+)
+# PR#315 H2: 기존 배포 테이블(CREATE IF NOT EXISTS 로 스킵되는 경우)에도 멱등 보강.
+# nullable 추가 — NOT NULL 백필은 운영 리스크라 금지(기존 행 무영향, 신규 행부터 채움).
+_DDL_BIM_QUANTITIES_TENANT = (
+    "ALTER TABLE bim_quantities ADD COLUMN IF NOT EXISTS tenant_id uuid"
 )
 
 _DDL_PROGRESS_BILLINGS = (
@@ -146,18 +156,27 @@ _DDL_COST_ESTIMATE_ITEM = (
     "  sort_order int DEFAULT 0"
     ")"
 )
+# ★값은 저장하면서 **그 값이 무엇인지는 안 저장했다** — `market_unit_price` 는 KCCI
+#   **결정론 시뮬레이션**(실시세 API 아님)인데 그 사실이 저장/복원에서 소실됐다.
+#   `boq_builder` 는 `market_unit_price_source` 를 정직하게 만들어 내보내는데 여기서 버려졌다.
+#   기존 배포 테이블에도 멱등 보강(nullable — 기존 행 무영향, 신규 행부터 채움).
+#   선례: 바로 위 `_DDL_MATERIAL_SOURCE_URL`·`_DDL_BIM_QUANTITIES_TENANT` 와 같은 형태다.
+_DDL_COST_ESTIMATE_ITEM_MARKET_SRC = (
+    "ALTER TABLE cost_estimate_item ADD COLUMN IF NOT EXISTS market_unit_price_source varchar(50)"
+)
+
 _DDL_COST_ESTIMATE_ITEM_IDX = (
     "CREATE INDEX IF NOT EXISTS idx_cost_estimate_item_estimate "
     "ON cost_estimate_item(estimate_id, sort_order)"
 )
 
 _ALL_DDL = (
-    _DDL_MATERIAL_UNIT_PRICES, _DDL_MATERIAL_UQ,
+    _DDL_MATERIAL_UNIT_PRICES, _DDL_MATERIAL_UQ, _DDL_MATERIAL_SOURCE_URL,
     _DDL_COST_WORK_TYPES, _DDL_WORK_TYPE_UQ,
-    _DDL_BIM_QUANTITIES,
+    _DDL_BIM_QUANTITIES, _DDL_BIM_QUANTITIES_TENANT,
     _DDL_PROGRESS_BILLINGS,
     _DDL_COST_ESTIMATE, _DDL_COST_ESTIMATE_IDX,
-    _DDL_COST_ESTIMATE_ITEM, _DDL_COST_ESTIMATE_ITEM_IDX,
+    _DDL_COST_ESTIMATE_ITEM, _DDL_COST_ESTIMATE_ITEM_MARKET_SRC, _DDL_COST_ESTIMATE_ITEM_IDX,
 )
 
 _ENSURED = False  # 프로세스 내 1회 보장(중복 DDL 방지 — 멱등하지만 호출 절감)

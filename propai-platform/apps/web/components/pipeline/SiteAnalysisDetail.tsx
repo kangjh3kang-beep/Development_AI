@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { apiClient } from "@/lib/api-client"; // 다필지 지번별 용도지역·법규한도 조회(/zoning/parcels-info)
-import { PYEONG_SQM } from "@/lib/formatters";
+import { formatArea } from "@/lib/formatters"; // 면적 표기 SSOT(UX A2) — 로컬 중복 formatArea/sqmToPyeong 대체
 import { dynamicMap } from "@/components/common/MapShell";
 import type { NearbyTransactionsMap as NearbyTransactionsMapType } from "@/components/map/NearbyTransactionsMap";
 import type { ParcelBoundaryMap as ParcelBoundaryMapType } from "@/components/map/ParcelBoundaryMap";
@@ -46,15 +46,6 @@ interface SiteAnalysisDetailProps {
 }
 
 /* ── Helpers ── */
-
-function sqmToPyeong(sqm: number): string {
-  return (sqm / PYEONG_SQM).toFixed(1);
-}
-
-function formatArea(sqm: unknown): string {
-  if (typeof sqm !== "number" || sqm <= 0) return "-";
-  return `${sqm.toLocaleString("ko-KR")} m² (${sqmToPyeong(sqm)}평)`;
-}
 
 function formatWon(value: unknown): string {
   if (typeof value !== "number" || value <= 0) return "-";
@@ -167,14 +158,17 @@ function Tile({
   value,
   accent = false,
   text = false,
+  muted = false,
 }: {
   label: string;
   value: string;
   accent?: boolean;
   text?: boolean;
+  /** 미확정값(조례 폴백 등) — "확인 필요" 정직 표기 스타일(live-fix① R2). accent와 배타적. */
+  muted?: boolean;
 }) {
   return (
-    <div className={`sa-di-tile${accent ? " sa-di-tile--accent" : ""}`}>
+    <div className={`sa-di-tile${accent && !muted ? " sa-di-tile--accent" : ""}${muted ? " sa-di-tile--muted" : ""}`}>
       <span className="sa-di-tile__label">{label}</span>
       <span className={`sa-di-tile__value${text ? " sa-di-tile__value--text" : ""}`}>{value || "-"}</span>
     </div>
@@ -734,7 +728,7 @@ function ParcelLandOverviewSummary({
                 )}
                 {parcels.length - 1}필지 ·{" "}
                 {sumArea > 0
-                  ? <>통합 {parcels.length}필지 합계 <span style={{ color: "var(--accent-strong)", fontWeight: 700 }}>{sumArea.toLocaleString("ko-KR")}㎡ ({sqmToPyeong(sumArea)}평)</span></>
+                  ? <>통합 {parcels.length}필지 합계 <span style={{ color: "var(--accent-strong)", fontWeight: 700 }}>{formatArea(sumArea)}</span></>
                   : "통합 면적은 면적이 확보된 필지가 없어 산출 불가"}
               </p>
 
@@ -1480,6 +1474,16 @@ export function SiteAnalysisDetail({ data, hideInterpretation = false, parcels }
   const nationalFar = n(ef.national_far_pct ?? zoning.national_far ?? data.national_far);
   const ordinanceBcr = n(ef.ordinance_bcr_pct ?? zoning.ordinance_bcr ?? data.ordinance_bcr);
   const ordinanceFar = n(ef.ordinance_far_pct ?? zoning.ordinance_far ?? data.ordinance_far);
+  // ★정직가드(2026-07-22, live-fix① R2 — R1 리뷰 확정): 이 타일은 종전 ordinance_confirmed
+  //   체크 없이 값이 있으면(법정상한 폴백값 포함) 무조건 "조례 용적률(지자체)"로 표시해,
+  //   바로 아래 "출처: 법정상한" 문구와 자기모순을 일으켰다(용인 자연녹지 재현). 백엔드
+  //   SSOT(calc_effective_far)는 이제 미확정 시 ordinance_*_pct를 None으로 반환하지만,
+  //   구버전 캐시 응답(zoning.ordinance_far/data.ordinance_far 폴백)까지 방어하기 위해
+  //   ordinance_confirmed 필드 자체를 명시 게이트로 별도 확인한다(주 카드 site-analysis/
+  //   page.tsx와 동일 관례). 필드 부재(레거시 응답)는 기존 동작 보존(값 존재=신뢰).
+  const ordinanceConfirmedRaw = ef.ordinance_confirmed;
+  const ordinanceConfirmed =
+    typeof ordinanceConfirmedRaw === "boolean" ? ordinanceConfirmedRaw : ordinanceFar != null;
   const effectiveBcr = n(ef.effective_bcr_pct ?? zoning.effective_bcr ?? data.max_bcr ?? data.effective_bcr);
   const effectiveFar = n(ef.effective_far_pct ?? zoning.effective_far ?? data.max_far ?? data.effective_far);
   const heightLimit = n(zoning.height_limit ?? data.height_limit);
@@ -1637,8 +1641,20 @@ export function SiteAnalysisDetail({ data, hideInterpretation = false, parcels }
               {zoneType && <Tile label="용도지역" value={zoneType} text />}
               {nationalBcr != null && <Tile label="법정 건폐율 (국토계획법)" value={formatPct(nationalBcr)} />}
               {nationalFar != null && <Tile label="법정 용적률 (국토계획법)" value={formatPct(nationalFar)} />}
-              {ordinanceBcr != null && <Tile label="조례 건폐율 (지자체)" value={formatPct(ordinanceBcr)} />}
-              {ordinanceFar != null && <Tile label="조례 용적률 (지자체)" value={formatPct(ordinanceFar)} />}
+              {(ordinanceBcr != null || nationalBcr != null) && (
+                <Tile
+                  label="조례 건폐율 (지자체)"
+                  value={ordinanceConfirmed && ordinanceBcr != null ? formatPct(ordinanceBcr) : "확인 필요"}
+                  muted={!(ordinanceConfirmed && ordinanceBcr != null)}
+                />
+              )}
+              {(ordinanceFar != null || nationalFar != null) && (
+                <Tile
+                  label="조례 용적률 (지자체)"
+                  value={ordinanceConfirmed && ordinanceFar != null ? formatPct(ordinanceFar) : "확인 필요"}
+                  muted={!(ordinanceConfirmed && ordinanceFar != null)}
+                />
+              )}
               {effectiveBcr != null && <Tile label="실효 건폐율" value={formatPct(effectiveBcr)} accent />}
               {effectiveFar != null && <Tile label="실효 용적률" value={formatPct(effectiveFar)} accent />}
               {heightLimit != null && heightLimit > 0 && <Tile label="높이제한" value={`${heightLimit}m`} />}
@@ -1672,8 +1688,8 @@ export function SiteAnalysisDetail({ data, hideInterpretation = false, parcels }
           <div
             className="flex flex-wrap items-center justify-between gap-2 rounded-lg px-3 py-2.5 text-[11px]"
             style={{
-              background: "var(--surface-2, rgba(255,255,255,0.04))",
-              border: "1px solid var(--border-accent, rgba(180,197,255,0.25))",
+              background: "var(--surface-soft)",
+              border: "1px solid color-mix(in srgb, var(--accent-strong) 25%, transparent)",
               color: "var(--text-secondary)",
             }}
           >
@@ -1932,10 +1948,31 @@ export function SiteAnalysisDetail({ data, hideInterpretation = false, parcels }
                 <div className="space-y-1">
                   {landUseRegs.map((reg, i) => {
                     const r = obj(reg);
+                    // ★저촉 상태(포함/저촉/접함)를 함께 보인다 — 이름만 보이면 **제약의 크기를
+                    //   알 수 없다.** 2026-08-20 라이브 실측(오산 내삼미동 741): 규제구역 11건에
+                    //   상태가 3종이었다 — 포함 7 · 접함 3 · 저촉 1. 그런데 화면은 11건 모두를
+                    //   같은 경고 점으로 나열해, 단지 **접함**인 공원·보전녹지가 필지를 **포함**하는
+                    //   도로구역과 구분되지 않았다. 개발자에게 그 차이는 사업 성립 여부를 가른다.
+                    //   백엔드는 `conflict_status` 를 계속 내보내고 있었고 **화면만 버리고 있었다**.
+                    const conflict = s(r.conflict_status || r.conflictStatus);
+                    // 접함 = 필지 밖(제약 아님) → 경고를 낮춘다. 포함·저촉은 실제 제약이다.
+                    //   ★모르는 값은 낮추지 않는다 — 새 상태값이 생겨도 경고가 조용히 사라지면 안 된다.
+                    const isAdjacent = conflict === "접함";
                     return (
                       <div key={i} className="flex items-center gap-2 text-[11px]">
-                        <span className="sa-dot sa-dot--warning shrink-0" style={{ width: "0.375rem", height: "0.375rem" }} />
+                        <span
+                          className={`sa-dot ${isAdjacent ? "sa-dot--muted" : "sa-dot--warning"} shrink-0`}
+                          style={{ width: "0.375rem", height: "0.375rem" }}
+                        />
                         <span className="text-[var(--text-primary)]">{s(r.district_name || r.districtName || r.name || reg)}</span>
+                        {conflict && (
+                          <span
+                            className={isAdjacent ? "text-[var(--text-hint)]" : "text-[var(--status-warning)]"}
+                            title="필지와 규제구역의 관계 — 포함(구역 안) · 저촉(일부 걸침) · 접함(경계 인접)"
+                          >
+                            {conflict}
+                          </span>
+                        )}
                       </div>
                     );
                   })}

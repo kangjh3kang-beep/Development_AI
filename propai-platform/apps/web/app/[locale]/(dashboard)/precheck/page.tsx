@@ -29,11 +29,11 @@ export default async function PreCheckPage({ params, searchParams }: PreCheckPag
 
   return (
     <div className="grid grid-cols-1 gap-6 min-w-0">
-      {/* 생성허브 공용 대상 컨텍스트 헤더(additive) — 어느 프로젝트·토지 대상 분석인지 상시 표시.
-          sitePipeline=true: 부지분석 SSOT(수집=주소·면적, 검증=근거트레이스, 전문가=특이부지·종상향)
-          에서 분석 3단계 실제 상태를 자동 파생해 함께 표시(deriveSitePipelineSteps). */}
-      <ContextHeader sitePipeline />
-      <SatongMapShell locale={locale} />
+      {/* ★UX 트랙 B2: ContextHeader는 이제 SatongMapShell 내부에서 sticky로 렌더한다
+          (showContextHeader 명시 — sitePipeline 설정은 종전 외부 렌더와 동일) — 여기서
+          별도로 또 렌더하면 같은 화면에 정확히 같은 헤더가 두 번 뜬다. 중복 제거(무회귀:
+          표시 내용은 동일). */}
+      <SatongMapShell locale={locale} showContextHeader />
     </div>
   );
 }

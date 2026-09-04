@@ -1,0 +1,11 @@
+{
+  "_meta": {
+    "seed_id": "K5_PLACEHOLDER",
+    "biz_model": "지방소멸",
+    "status": "PLACEHOLDER — 미채움(정직표기).",
+    "planned_defect": "K5 흡수율/미분양 부재 → 지방 100% 분양 환상. '인구감소지역 100% 분양가정 → finding' 불변식 부재.",
+    "planned_phase": "Phase G/1+ (인구동향·흡수율 manifest). W0 범위 밖.",
+    "honesty": "2차 층화축 scaffold. 실입력·현행assert 미채움 — 착수 시 인구감소지역 실주소로 채운다.",
+    "filled": false
+  }
+}

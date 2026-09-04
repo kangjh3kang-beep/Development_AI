@@ -4,13 +4,25 @@ import asyncio
 import logging
 import re
 
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.billing_deps import enforce_llm_quota
+from app.core.database import get_db
+from app.services.land_intelligence.parcel_normalize import ParcelsIn
 from apps.api.app.services.land_intelligence.land_info_service import LandInfoService
 from apps.api.app.services.zoning.auto_zoning_service import AutoZoningService
+from apps.api.app.utils.pnu import (
+    address_resolution,
+    bcode_from_pnu,
+    is_valid_pnu,
+    jibun_from_pnu,
+    parcel_display_address,
+    pick_representative_parcel,
+    sigungu_spread,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -358,8 +370,27 @@ def _build_pnu_from_bcode(bcode: str, jibun_address: str) -> str | None:
     return f"{bcode}{is_mountain}{main_num}{sub_num}"
 
 
+def _classify_age_status(
+    bldg: dict | None, lookup_state: str, building_age_years: int | None,
+) -> str | None:
+    """건축물 노후도 무자료 사유 분류(순수함수, 외부호출 없음) — WP-M3 + 리뷰(MEDIUM1) 반영.
+
+    - building_age_years 산출 성공 → None(=ok, 무자료 아님).
+    - 표제부 레코드(bldg)가 존재(건물 실재)하는데 연식만 산출 불가(사용승인일 미기재·미준공 등)
+      → 'no_approval_date'. ★리뷰(MEDIUM1): 종전엔 이 경우도 'no_building'(나대지)으로 표기해
+      건물 있는 땅을 나대지로 오표기했다(정직성 위배·M3 취지 정면 위배) — 별도 사유로 분리한다.
+    - bldg 없음(None) + lookup_state='no_data'(조회성공·무건축물) → 'no_building'(나대지 추정).
+    - bldg 없음 + lookup_state가 그 외(no_key/unauthorized/error) → 'lookup_failed'(조회실패).
+    """
+    if building_age_years is not None:
+        return None
+    if isinstance(bldg, dict):
+        return "no_approval_date"
+    return "no_building" if lookup_state == "no_data" else "lookup_failed"
+
+
 @router.post("/analyze", dependencies=[Depends(enforce_llm_quota)])
-async def analyze_zoning(req: ZoningAnalyzeRequest):
+async def analyze_zoning(request: Request, req: ZoningAnalyzeRequest):
     """주소 기반 자동 용도지역 감지 및 법적 한도 매핑.
 
     구조화 분석 결과에 SiteAnalysisInterpreter(LLM) 해석을 ai_interpretation으로
@@ -472,6 +503,19 @@ async def analyze_zoning(req: ZoningAnalyzeRequest):
             result.setdefault("upzoning_scenarios", upzoning.get("scenarios", []))
             result.setdefault("potential_far_range", upzoning.get("potential_far_range"))
 
+        # ── ★A-3/G8 법정초과 경량 가드 확산 — comprehensive analyze()의 P0-3 패턴을 공용
+        #   헬퍼(hotpath_guard)로 이 응답 표면(실효율 effective_far_tier)에도 적용(additive).
+        #   result 자체가 local_ordinance·zone_limits를 담고 있어 완화근거 판정에 그대로 재사용된다.
+        from app.services.verification.hotpath_guard import apply_legal_hotpath_guard
+
+        apply_legal_hotpath_guard(
+            result,
+            zone_type=zt, bcr_pct=effective_far_tier.get("effective_bcr_pct"),
+            far_pct=effective_far_tier.get("effective_far_pct"),
+            regulation_payload=result, plan_payload=result.get("special_districts"),
+            confidence_target=effective_far_tier,
+        )
+
         interp = await SiteAnalysisInterpreter().generate_interpretation(interp_input)
         if isinstance(interp, dict) and interp:
             result["ai_interpretation"] = interp
@@ -480,18 +524,30 @@ async def analyze_zoning(req: ZoningAnalyzeRequest):
 
         structlog.get_logger().warning("부지분석 AI 해석 스킵", error=str(e)[:120])
 
-    # 서비스 사용료(LLM 별개): 토지분석 1건 차감(로그인 사용자, best-effort)
+    # 서비스 사용료(LLM 별개): 토지분석 1건 차감(로그인 사용자, best-effort).
+    # ★2026-08-16 — 종전에는 `result` 를 **보지 않고** 무조건 청구했다(원장 18건·36,000원,
+    #   16초 간격 재청구 군집). 판정은 공용 층(`auto_zoning_service.land_analysis_charged`)에
+    #   두고 여기서는 호출만 한다 — 라우트별로 판정을 넣으면 **다음 호출부가 또 샌다**.
     try:
         from app.core.request_context import get_current_user_id
+        from app.services.zoning.auto_zoning_service import land_analysis_charged
 
         uid = get_current_user_id()
-        if uid:
+        if uid and land_analysis_charged(result):
+            from app.core.charge_guard import charge_once
             from app.core.database import async_session_factory
             from app.services.billing import billing_service
 
-            async with async_session_factory() as _db:
-                charge = await billing_service.charge_service(_db, uid, "land_analysis")
-            result["service_charge"] = charge  # 프론트 표시용(차감/무료/잔여)
+            # ★재전송 안전 — 토지분석은 가장 많이 쓰이는 유료 경로다.
+            #   테넌트는 이 경로에서 못 얻어 사용자 스코프만 쓴다.
+            async with charge_once(
+                request, endpoint="zoning.analyze", payload=req,
+                tenant_id=None, user_id=uid,
+            ) as guard:
+                if guard.billable:
+                    async with async_session_factory() as _db:
+                        charge = await billing_service.charge_service(_db, uid, "land_analysis")
+                    result["service_charge"] = charge  # 프론트 표시용(차감/무료/잔여)
     except Exception:  # noqa: BLE001
         pass
 
@@ -511,7 +567,7 @@ async def special_parcels_check(body: dict):
     한 필지라도 통상 절차로 해결 불가능(개발제한구역·공공기반시설 등)하면 사업 전체를 '개발 불가'로
     정직 고지하여 무리한 개발규모 산정(할루시네이션)을 차단한다.
     """
-    from app.services.zoning.special_parcel import detect_multi_parcel
+    from app.services.zoning.special_parcel import detect_multi_parcel, is_unanalyzed_parcel
 
     parcels = body.get("parcels") or []
     if not isinstance(parcels, list) or not parcels:
@@ -528,8 +584,10 @@ async def special_parcels_check(body: dict):
                 p = {**(await AutoZoningService().analyze_by_address(p["address"])), **p}
             except Exception:  # noqa: BLE001 — 개별 실패는 정직하게 미분석으로 둠
                 p.setdefault("warnings", []).append("분석 실패(주소 해석 불가)")
-        # ★미분석 식별: 지목·구역 정보가 전혀 없으면 특이성 '판정 불가'(없음 아님).
-        if not p.get("land_category") and not p.get("special_districts") and not p.get("zone_type"):
+        # ★미분석 식별은 SSOT(special_parcel.is_unanalyzed_parcel)를 쓴다 — 라우터가 자체 판정을
+        #   갖고 있으면 detect_multi_parcel을 직접 부르는 다른 호출부에 적용되지 않고, 표식이
+        #   면적 정산보다 늦게 붙어 소비처가 못 본다(2026-08-02 순서 역전 봉합).
+        if is_unanalyzed_parcel(p):
             unanalyzed_idx.append(i)
         elif not p.get("land_category"):
             # ★리뷰 MEDIUM: 지목만 없는 필지 — 임야·학교용지 등 지목 기반 게이트가 침묵
@@ -539,23 +597,13 @@ async def special_parcels_check(body: dict):
         enriched.append(p)
 
     result = detect_multi_parcel(enriched)
-    # ★P0(완성도 감사·무날조): 미분석 필지를 "특이 제약 없음"으로 단정하던 관대 폴백 제거.
-    #   지목·구역 미확인 필지는 특이성 '판정 불가'로 정직 고지하고 개발가능 단정을 강등한다.
+    # ★미분석 필지의 표식·게이트 강등·정직 고지는 **SSOT(detect_multi_parcel)가 이미 처리**한다
+    #   (2026-08-02 순서 역전 봉합). 여기서 중복 판정하지 않는다 — 종전에는 이 블록이 함수
+    #   **반환 후**에 표식을 심어 면적 3계층 정산이 그걸 못 봤고, 라우터를 우회하는 호출부에는
+    #   아예 적용되지 않았다. 이 라우터는 API 응답용 카운트와 부분 미분석 경고만 덧붙인다.
     if unanalyzed_idx:
         result["unanalyzed_count"] = len(unanalyzed_idx)
-        for i in unanalyzed_idx:
-            if i < len(result.get("per_parcel") or []):
-                result["per_parcel"][i]["analysis_status"] = "unanalyzed"
-        if result.get("special_count", 0) == 0:
-            # 특이 미검출이 '데이터 부재' 때문일 수 있음 — 단정 문구를 판정불가로 교체.
-            result["developability"] = "UNKNOWN"
-            result["resolvable"] = "UNKNOWN"  # ★리뷰: YES 잔존 시 UNKNOWN과 모순 — 정합화
-            result["honest_disclosure"] = (
-                f"{len(unanalyzed_idx)}개 필지의 지목·용도지구가 미확인(미분석)이라 특이부지 판정이 "
-                "불가합니다. analyze:true로 실분석하거나 지목·구역 정보를 제공하세요."
-            )
-            result["summary"] = f"판정 불가 — {len(unanalyzed_idx)}/{len(enriched)}개 필지 미분석(지목·구역 미확인)."
-        else:
+        if result.get("special_count", 0) > 0:
             result.setdefault("warnings", []).append(
                 f"{len(unanalyzed_idx)}개 필지는 미분석(지목·구역 미확인) — 특이성 누락 가능."
             )
@@ -603,7 +651,7 @@ async def geocode_query(req: GeocodeRequest):
         return {"found": False, "query": q,
                 "reason": "VWorld에서도 해당 주소/지번을 찾지 못했습니다. 지번 형식(예: 의정부동 224, 산 12-3)을 확인해 주세요."}
     pnu = geo.get("pnu")
-    bcode = (pnu[:10] if pnu and len(pnu) >= 10 else None)
+    bcode = bcode_from_pnu(pnu)
     return {
         "found": True,
         "query": q,
@@ -662,11 +710,11 @@ async def land_share(req: LandShareRequest):
     svc = LandShareService()
     pnu = (req.pnu or "").strip()
     addr = (req.address or "").strip()
-    if not (pnu and len(pnu) >= 19) and not addr:
+    if not is_valid_pnu(pnu) and not addr:
         return {"is_aggregate": False, "reason": "pnu(19자리) 또는 address가 필요합니다."}
     # 예외를 raw 500으로 흘리지 않고 무목업 정직 분기로 반환(가짜 생성 금지).
     try:
-        if pnu and len(pnu) >= 19:
+        if is_valid_pnu(pnu):
             return await svc.analyze_by_pnu(pnu)
         return await svc.analyze_by_address(addr)
     except Exception as e:  # noqa: BLE001
@@ -678,7 +726,9 @@ async def land_share(req: LandShareRequest):
 class ParcelBoundariesRequest(BaseModel):
     """필지 경계(구획도) 요청 — 단필지/다필지."""
 
-    parcels: list[dict] = []  # [{pnu?, address?, bcode?, jibun_address?}]
+    # ★공용 정규화(ParcelsIn): str[]/dict[] → canonical dict[]. merge 보존이라 jibun/bcode 등
+    #   enrich_parcel_list 가 필지 식별에 쓰는 원본 키는 유지된다(무손실·str 요소 crash 방지).
+    parcels: ParcelsIn = []  # [{pnu?, address?, bcode?, jibun_address?}]
     address: str | None = None  # 단일 주소 단축 입력
     pnu: str | None = None
 
@@ -768,6 +818,14 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
         jimok = land_use_situation = terrain = None
         building_name = main_purpose = use_approval_date = None
         built_year = building_age_years = None
+        total_floor_area_sqm = None  # 전 동 연면적 합(현황 용적률 분모 — WS-D 개발여력)
+        # 노후도 무자료 사유 표면화(WP-M3, 리뷰 MEDIUM1 반영): no_building(나대지·연식없음) /
+        #   no_approval_date(건물은 실재하나 사용승인일 미기재·미준공) / lookup_failed(키·인증·
+        #   호출오류) / skipped_bulk(41필지+ 대량생략). 값이 있으면(연식 산출됨) None(=ok).
+        #   분류는 _classify_age_status(순수함수)가 단일 판정한다.
+        #   auto_zoning.py의 침묵 생략(enable_building_age=False)을 프론트 칩("나대지 N·조회실패 M")이
+        #   구분 고지하도록 additive로 내보낸다(계약 확장·기존 필드 무변경).
+        age_status = None
         if isinstance(lc_res, dict):
             lc_area = float(lc_res.get("area_sqm") or 0)
             zone_type = lc_res.get("zone_type") or None
@@ -781,9 +839,14 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
             land_use_situation = lc_res.get("land_use_situation") or None  # 이용상황
             terrain = lc_res.get("terrain_form") or lc_res.get("terrain_height") or None  # 형상·지세
         # 건축물 노후도: 건축물대장 표제부 사용승인일 기반. 키/무자료/대량은 None(가짜 생성 금지).
-        if enable_building_age:
+        if not enable_building_age:
+            age_status = "skipped_bulk"  # 41필지+ 대량 요청 → 표제부 조회 생략(예산 보호)
+        else:
             try:
-                bldg = await building_registry.get_title_by_pnu(pnu)
+                # ★리뷰(MEDIUM2): last_status(공유 가변속성) 대신 (파싱결과, 상태) 튜플을 직접
+                #   받는다 — gather 병렬 호출 직후 공유 인스턴스 속성을 읽는 비국소적 취약점을
+                #   구조적으로 제거(향후 이 사이에 await가 추가돼도 상태 오염 불가능).
+                bldg, lookup_state = await building_registry.get_title_with_status_by_pnu(pnu)
                 if isinstance(bldg, dict):
                     building_name = bldg.get("building_name") or None
                     main_purpose = bldg.get("main_purpose") or None
@@ -793,8 +856,24 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
                         built_year = int(year_str)
                         if 1800 <= built_year <= current_year:
                             building_age_years = current_year - built_year
+                    # ★WS-D 현황 연면적 — 전 동 합계(total_area_sqm_all)만 채택.
+                    #   dong_truncated(10동 캡 도달)면 합계 과소=여력 과대낙관 위험 → 미상(None) 유지.
+                    _tfa = bldg.get("total_area_sqm_all")
+                    if _tfa and not bldg.get("dong_truncated"):
+                        total_floor_area_sqm = round(float(_tfa), 1)
+                elif lookup_state == "no_data":
+                    # ★R1 MAJOR 반영 — no_data는 '측정'이 아니라 '추정'이다(서비스 계층 표기와
+                    #   일치: "나대지 추정"). 집합건물 대지권 비대표지번·대장 미등재·생성지연·
+                    #   커버리지 갭에서도 빈 items가 오므로, 0을 단정하면 실재 건물 필지가
+                    #   "여력 100%(거의 빈 땅)"로 과대낙관 표시된다 — 이 기능이 잡으려는 바로
+                    #   그 방향오류. **나대지 양성증거(토지특성 이용상황에 '나지')가 있을 때만**
+                    #   0을 채택하고, 그 외 no_data는 미상(None=무색+무자료 고지)으로 정직 강등.
+                    if land_use_situation and "나지" in str(land_use_situation):
+                        total_floor_area_sqm = 0.0
+                    # else: None 유지(미상)
+                age_status = _classify_age_status(bldg, lookup_state, building_age_years)
             except Exception:  # noqa: BLE001
-                pass
+                age_status = "lookup_failed"
         # 권위 우선: 토지대장(lc_area) → 지적등록(li_area)
         area_sqm = lc_area or li_area
         area_source = "토지대장(토지특성)" if lc_area else ("지적도 등록면적" if li_area else "미확인")
@@ -824,7 +903,16 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
             "_coords": coords if (coords and coords.get("lat") and coords.get("lon")) else None,
             "_area_sqm": area_sqm,
             "pnu": pnu,
-            "address": address,
+            # ★입력 주소를 그대로 되돌려주면 동 단위 입력이 동 단위로 나가, 소비처(토지조서·
+            #   사통맵 라벨)에서 **모든 필지가 같은 글자**가 된다(2026-08-18 사용자 신고: 77필지
+            #   전부 "경기도 오산시 내삼미동"). 지번을 붙일 정보(PNU)는 바로 위에서 해석했다.
+            "address": parcel_display_address(address, pnu),
+            # 지번 단독 필드 — 소비처가 주소 파싱 없이 쓰도록(엑셀·PDF 열).
+            "jibun": jibun_from_pnu(pnu),
+            # ★입력 주소 원본을 남긴다 — 프론트 boundary 병합(healParcelPnu)은 pnu 미확보
+            #   씨드를 **주소로** 찾는다. address 를 보강하면 그 키가 어긋나 치유가 끊긴다
+            #   (표시를 고치다 배선을 끊는 형태). 매칭은 이 원본으로, 표시는 address 로.
+            "input_address": address,
             "area_sqm": round(area_sqm, 1),
             # 면적 교차검증 결과(출처·신뢰도·메모) — 프론트가 검증배지로 표기.
             "area_source": area_source,
@@ -844,6 +932,11 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
             "use_approval_date": use_approval_date,
             "built_year": built_year,
             "building_age_years": building_age_years,
+            "age_status": age_status,  # 노후도 무자료 사유(no_building/no_approval_date/lookup_failed/skipped_bulk) — 값 있으면 None
+            # ── WS-D 개발여력(선택필지 MVP) — 현황 용적률 원료. 미상은 None(무날조·낙관 금지) ──
+            "total_floor_area_sqm": total_floor_area_sqm,
+            "current_far_pct": (round(total_floor_area_sqm / area_sqm * 100, 1)
+                                if total_floor_area_sqm is not None and area_sqm > 0 else None),
             "geometry": geometry,
         }
 
@@ -854,11 +947,37 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
     )
 
     features: list[dict] = []
+    # ★탈락을 침묵시키지 않는다(2026-08-23) — `#772` 가 build_integrated_context 에서 봉합한
+    #   같은 침묵이 이 형제 함수에 남아 있었다(규율 §6 "고친 자리의 형제·미러를 스윕한다" 미이행분).
+    #   종전 `if not isinstance(r, dict): continue` 는 **두 경로**를 함께 삼켰다:
+    #     ① `_resolve_one` 의 `return None` — PNU 를 끝내 못 찾은 필지
+    #     ② `return_exceptions=True` 가 담아 온 예외
+    #   입력 N 개를 넣었는데 출력이 M 개여도 **어디로 갔는지 알 방법이 없었다** — 그래서
+    #   "필지를 넣었는데 구획도에 안 나온다"는 신고가 오면 탈락인지 다른 원인인지 가릴 수 없었다.
+    #   ★계약은 안 바꾼다: `features` 의 의미는 그대로이고, 계수를 **추가**만 한다(소비처 무회귀).
+    dropped: list[dict] = []
     total_area = 0.0
     lat_sum = lon_sum = 0.0
     coord_n = 0
-    for r in results:
+    # ★zip 이 성립하는 근거: asyncio.gather 는 **입력 순서대로** 결과를 돌려준다(완료 순서가
+    #   아니다). 그래서 items[i] 와 results[i] 가 같은 필지다 — 탈락한 입력을 특정할 수 있다.
+    #   ★`strict=True` 가 필요하다: 길이가 어긋나면 zip 은 **조용히 짧은 쪽에서 끊는다** —
+    #     그러면 탈락을 세려고 만든 이 루프가 정작 **탈락을 침묵**시킨다(고치려던 것과 같은 결함).
+    #     asyncio.gather 는 입력 수만큼 돌려주므로 이 불변식은 구성상 성립하고, 깨지면 그때는
+    #     조용한 오답보다 시끄러운 실패가 낫다.
+    for it, r in zip(items, results, strict=True):
         if not isinstance(r, dict):
+            _addr = str(it.get("address") or it.get("jibun_address") or "").strip()
+            if isinstance(r, BaseException):
+                _reason, _detail = "lookup_error", type(r).__name__
+            else:
+                # `_resolve_one` 이 None 을 돌려준 유일한 경로 = PNU 미확보(지오코딩·점조회 모두 실패)
+                _reason, _detail = "pnu_unresolved", None
+            dropped.append({"address": _addr, "pnu": it.get("pnu"), "reason": _reason, "detail": _detail})
+            logger.warning(
+                "[parcel-boundaries] 필지 탈락 — address=%s pnu=%s reason=%s detail=%s",
+                _addr or "(주소없음)", it.get("pnu"), _reason, _detail,
+            )
             continue
         coords = r.pop("_coords", None)
         area_sqm = r.pop("_area_sqm", 0.0)
@@ -939,6 +1058,16 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
     # ── 다필지 종합분석 — 필지별 속성·형질 차이 + 통합 지표(개발사업분석 기반) ──
     integrated_analysis = None
     if features:
+        # ★실효한도 SSOT 수렴(7번째 표면) — parcels-info/land-report/integrated-analysis와 동일하게
+        #   calc_effective_far(법정범위→조례→계획상한→구조상한)를 공용헬퍼(_enrich_effective_and_special)
+        #   경유해 필지별로 부착한다. 과거엔 아래 면적가중 블록이 zone_limits(법정상한)를 그대로
+        #   가중해, 자연녹지처럼 구조상한(건폐율×층수) 대상 용도지역의 통합 실질치가 법정상한
+        #   (예: 100%)으로 과대표시됐다 — 다른 6표면(규제·인허가·90초진단·파이프라인·수지·종합)과
+        #   불일치하는 재계산이었다. 재계산 금지·소비만.
+        #   ★with_dominant_constraint=True — 지배 제약(W1 배너)을 **소비하는 유일한 표면**이라
+        #     여기서만 NED 토지이용계획 1콜/필지 비용을 낸다(다른 3소비처 무비용·무변경).
+        await _enrich_effective_and_special(features, with_dominant_constraint=True)
+
         zone_set = sorted({f["zone_type"] for f in features if f.get("zone_type")})
         jimok_set = sorted({f["jimok"] for f in features if f.get("jimok")})
         priced = [(f["official_price_per_sqm"], f.get("area_sqm") or 0)
@@ -955,15 +1084,17 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
             notes.append("필지 비인접 — 통합개발 제약(분리개발 또는 진입로 확보 검토)")
         elif adjacency.get("contiguous") is True and len(features) >= 2:
             notes.append("필지 인접 — 통합개발 가능(합필·공동개발 검토)")
-        # ── 면적가중 실질 건폐율·용적률 + 가능 건축규모(개발사업분석 핵심) ──
+        # ── 면적가중 실효(SSOT) 건폐율·용적률 + 가능 건축규모(개발사업분석 핵심) ──
         #  필지별 용도지역 한도가 다르면 단순 적용 불가 → 면적가중으로 통합 실질치를 산정한다.
-        #  통합 건축면적 = Σ(필지면적×건폐율), 통합 연면적 = Σ(필지면적×용적률) → 합을 총면적으로 나눠 실질%.
-        lim = [(f.get("area_sqm") or 0, (f.get("zone_limits") or {})) for f in features]
-        a_for_limit = sum(a for a, zl in lim if a and zl.get("max_bcr_pct"))
-        buildable_area = sum(a * (zl.get("max_bcr_pct") or 0) / 100 for a, zl in lim)
-        total_gfa = sum(a * (zl.get("max_far_pct") or 0) / 100 for a, zl in lim)
-        eff_bcr = round(buildable_area / a_for_limit * 100, 1) if a_for_limit else None
-        eff_far = round(total_gfa / a_for_limit * 100, 1) if a_for_limit else None
+        #  산식은 /zoning/integrated-analysis와 동일한 순수함수(_aggregate_integrated_zoning)를
+        #  단일경유한다(로직 복제 금지) — 통합 건축면적/연면적도 이 함수의 SSOT 집계값을 그대로 쓴다.
+        from app.services.zoning.special_parcel import _aggregate_integrated_zoning
+
+        _agg = _aggregate_integrated_zoning(features)
+        eff_bcr = _agg.get("blended_bcr_eff_pct")
+        eff_far = _agg.get("blended_far_eff_pct")
+        buildable_area = _agg.get("integrated_footprint_sqm") or 0
+        total_gfa = _agg.get("integrated_gfa_sqm") or 0
 
         # ── 개발가능방법 + 최적추진방안 제안(총면적·인접성·용도혼재 기반) ──
         methods: list[str] = []
@@ -992,6 +1123,16 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
             "total_area_pyeong": round(total_area / 3.305785, 1),
             "zone_types": zone_set,
             "zone_mixed": len(zone_set) > 1,        # ★용도지역 혼재 여부(종합분석 핵심)
+            # ★우세 용도지역을 **보낸다**(2026-08-24). `_aggregate_integrated_zoning` 이 이미
+            #   면적합산 max 로 산출하고(동률 ±5% 또는 규제성격 상이면 "mixed_review_required"),
+            #   이 엔드포인트만 그것을 응답에 안 실었다 — **계산해 놓고 안 보내는** 형태다
+            #   (`_far_legal` 과 같은 계열). 프론트는 그동안 `first.zoneType` 을 "dominant" 라
+            #   불렀는데, 실측 사례에서 그 값이 **면적 우세와 반대**였다
+            #   (자연녹지 4,576㎡·79% vs 보전관리 1,205㎡·21% 인데 보전관리를 표시).
+            #   ★프론트가 재계산하지 않는다 — 산식은 여기 하나뿐이다(로직 복제 금지).
+            "dominant_zone": _agg.get("dominant_zone"),
+            "dominant_basis": _agg.get("dominant_basis"),
+            "zone_mix": _agg.get("zone_mix"),
             "jimoks": jimok_set,
             "official_price_min": min(pvals) if pvals else None,
             "official_price_max": max(pvals) if pvals else None,
@@ -1009,11 +1150,51 @@ async def parcel_boundaries(req: ParcelBoundariesRequest):
             "notes": notes,
         }
 
+    # _enrich_effective_and_special가 부착한 내부 전용 키(_bcr_eff 등)는 features 응답 계약에
+    # 없던 필드라 노출하지 않는다(응답 필드명 유지 — 프론트 무변경).
+    for _f in features:
+        # ★WS-D — 필지별 실효FAR(7계층 min)을 공개 필드로 표면화(내부 키는 계속 스트립).
+        #   미산정은 None(무날조) — 프론트 개발여력 = (실효−현황)/실효는 두 값 모두 있을 때만.
+        if _f.get("_far_eff") is not None:
+            _f["effective_far_pct"] = _f["_far_eff"]
+        # I7 패널 규제요약 — 실효 건폐율도 동일 규약으로 공개(미산정 None 무날조).
+        if _f.get("_bcr_eff") is not None:
+            _f["effective_bcr_pct"] = _f["_bcr_eff"]
+        # ★법정 한도와 **근거 계층**도 같은 규약으로 공개한다(2026-08-23 · 사용자 신고).
+        #   종전엔 실효값만 나가서, 보전관리지역 필지에 "실효 용적률 60%" 만 보이고
+        #   그것이 **법정 80% 를 제천시 조례가 60% 로 깎은 값**이라는 사실이 어디에도 없었다.
+        #   → 사용자는 값이 틀렸다고 신고했지만 값은 정확했다. 틀린 것은 **근거의 부재**다.
+        #   ★값을 바꾸지 않는다 — 이미 맞는 값에 **왜 그 값인지**를 붙일 뿐이다.
+        if _f.get("_far_legal") is not None:
+            _f["legal_far_pct"] = _f["_far_legal"]
+        if _f.get("_bcr_legal") is not None:
+            _f["legal_bcr_pct"] = _f["_bcr_legal"]
+        if _f.get("_far_basis"):
+            _f["far_basis"] = _f["_far_basis"]
+        # ★W1 지배 제약 — 필지 상세 배너용 공개 필드로 승격. 제약이 없으면 헬퍼가 None을
+        #   돌려주므로 키는 항상 실리되 값이 None이다(프론트는 None이면 배너 미렌더 —
+        #   빈 배너 금지). 아래 "_" 스트립보다 먼저 승격해야 값이 살아남는다.
+        _f["dominant_constraint"] = _f.get("_dominant_constraint")
+        # ★R1 HIGH(W2-2 R2 봉합): 종전 고정 튜플 denylist는 _enrich_effective_and_special가
+        #   새 내부키(_far_basis_detail·_ordinance — W2-2)를 부착할 때마다 이 목록을 사람이
+        #   같이 갱신해야 하는 구조라, 실제로 신규 키가 이 응답(features[])으로 새는 회귀가
+        #   났다(내부키는 전부 접두어 "_" 규약을 공유). 접두어 스트립으로 표준화해 향후
+        #   내부키 추가를 이 목록 갱신 없이 자동으로 커버한다(전역 전파방지 — 공용 규약화).
+        for _k in [k for k in _f if k.startswith("_")]:
+            _f.pop(_k, None)
+
     return {
         "features": features,
         "center": center,
         "total_area_sqm": round(total_area, 1),
         "parcel_count": len(features),
+        # ★입력 대비 결과를 **응답이 스스로 말한다**(2026-08-23). 종전에는 `parcel_count`(=해석
+        #   성공 수)만 있어서, 6 을 넣고 5 가 나와도 화면은 "5필지"라고만 했다 — 사용자에게는
+        #   "필지가 사라졌다"로 보이고, 우리에게는 **빈도도 사유도 없는** 침묵이었다.
+        #   `dropped` 가 비어 있으면 정상이다(빈 배열은 "탈락 없음"이라는 **양성 정보**다).
+        "requested_count": len(items),
+        "resolved_count": len(features),
+        "dropped": dropped,
         "integrated_analysis": integrated_analysis,  # ★다필지 종합분석(속성·형질 차이+통합지표)
         "adjacency": adjacency,
         "neighbors": neighbors,            # A+D: 주변 필지·도로(연회색/도로색) 벡터 지적도
@@ -1077,12 +1258,20 @@ async def parcel_boundaries_export(req: ParcelExportRequest):
 
 
 def _parcel_adjacency(geoms: list) -> dict:
-    """필지 폴리곤 인접성(연결요소) 판정 — shapely."""
+    """필지 폴리곤 인접성(연결요소) 판정 — shapely.
+
+    ★W2-5 R1(HIGH-1) 톨러런스 SSOT 일원화: 인접 판정 톨러런스(~6m)와 술어(겹침·접촉·근접)는
+    app.services.zoning.parcel_graph.is_parcel_adjacent 를 그대로 사용한다(이 함수가 정답
+    기준선이었고, ParcelGraph(W2-5)의 간선 판정을 그 기준에 맞춰 통일했다 — 이제 두 표면은
+    같은 상수·같은 술어 하나만 참조하므로 서로 다른 기준으로 갈라질 수 없다).
+    """
     present = [g for g in geoms if g]
     if len(present) < 2:
         return {"contiguous": True, "components": 1, "note": "단일 필지"}
     try:
         from shapely.geometry import shape
+
+        from app.services.zoning.parcel_graph import is_parcel_adjacent
 
         polys = []
         for g in geoms:
@@ -1093,7 +1282,6 @@ def _parcel_adjacency(geoms: list) -> dict:
         idx = [i for i, p in enumerate(polys) if p is not None]
         if len(idx) < 2:
             return {"contiguous": None, "components": None, "note": "형상 데이터 부족 — 인접성 확인 불가"}
-        tol = 0.00006  # ~6m
         n = len(idx)
         parent = list(range(n))
 
@@ -1105,7 +1293,7 @@ def _parcel_adjacency(geoms: list) -> dict:
 
         for a in range(n):
             for b in range(a + 1, n):
-                if polys[idx[a]].distance(polys[idx[b]]) <= tol:
+                if is_parcel_adjacent(polys[idx[a]], polys[idx[b]]):
                     parent[find(a)] = find(b)
         comps = len({find(i) for i in range(n)})
         return {
@@ -1126,6 +1314,10 @@ class NearbyMapRequest(BaseModel):
     jibun_address: str | None = None
     radius_m: int = 1000
     months: int = 3
+    # ★적응형 반경(opt-in) — 지도만 켠다. 켜면 반경 내 렌더 가능 마커가 임계 미만일 때
+    #   **이미 확보된 좌표만으로** 사다리(1/3/5/10km)를 걸어 유효 반경을 넓힌다(추가 호출 0).
+    #   탁상감정·AVM·시세 경로는 끄고 둔다 — 표본 반경을 조용히 바꾸면 그쪽 고지 문구가 거짓이 된다.
+    auto_expand_radius: bool = False
 
 
 @router.post("/nearby-map")
@@ -1173,15 +1365,24 @@ async def nearby_transactions_map(req: NearbyMapRequest):
         return {"error": "법정동코드(LAWD_CD) 결정 불가 — 주소/pnu 확인 필요",
                 "center": None, "categories": {}}
 
-    # sigungu 힌트(지오코딩 폴백용): 주소 앞 2토큰
-    parts = (req.address or "").split()
-    sigungu_hint = " ".join(parts[:2]) if len(parts) >= 2 else (parts[0] if parts else "")
+    # ★W2 근본수정 — 종전엔 "주소 앞 2토큰"이라 **3레벨 시군구가 통째로 잘렸다**:
+    #   "경상북도 포항시 남구 …" → "경상북도 포항시"(남구 소실).
+    #   성남시 분당구 · 수원시 영통구 · 창원시 의창구 · 고양시 덕양구 · 천안시 서북구 …
+    #   특례시·행정시가 **전부** 같은 방식으로 깨진다. 잘린 힌트로 만든 지오코딩 질의는
+    #   존재하지 않는 주소가 되어 영구 실패한다(라이브: 호미곶 전 카테고리 located=0).
+    #   ★실측 확증: VWorld 는 시군구가 틀리면 정확히 실패한다 —
+    #     "강남구 대치동 316" → OK / "서초구 대치동 316" → FAIL / "송파구 …" → FAIL.
+    from apps.api.app.services.land_intelligence.nearby_map_service import (
+        sigungu_hint_from_address,
+    )
+    sigungu_hint = sigungu_hint_from_address(req.address or "")
 
     service = NearbyMapService()
     return await service.build(
         address=req.address, lawd_cd=lawd_cd,
         months=req.months, radius_m=req.radius_m, sigungu_hint=sigungu_hint,
         center_hint=center_hint,
+        auto_expand_radius=req.auto_expand_radius,
     )
 
 
@@ -1221,7 +1422,9 @@ def _zone_legal_limits(zone: str | None) -> tuple[int | None, int | None]:
     return (ZONE_LIMITS[key]["max_bcr"], ZONE_LIMITS[key]["max_far"])
 
 
-async def _enrich_effective_and_special(enriched: list[dict]) -> None:
+async def _enrich_effective_and_special(
+    enriched: list[dict], *, with_dominant_constraint: bool = False,
+) -> None:
     """enrich_parcel_list 결과 각 필지에 실효 용적률/건폐율(조례 반영)+특이부지 게이트를 in-place 부착.
 
     ★parcels-info·land-report 공용(단일출처) — 두 소비처가 far_pct/bcr_pct(실효)·
@@ -1229,6 +1432,12 @@ async def _enrich_effective_and_special(enriched: list[dict]) -> None:
     각 dict에 채우는 키: bcr_legal/far_legal·bcr_eff/far_eff·far_basis·special.
     calc_effective_far는 순수 동기 함수(이벤트루프 미접촉)라 async 핸들러에서 await 없이 안전.
     OrdinanceService.get_ordinance_limits만 async → await. 무목업: 실패는 법정값 폴백(정직).
+
+    with_dominant_constraint: W1 지배 제약(_dominant_constraint) 산출 여부. **opt-in**인 이유는
+      지배 제약이 UD802/803(용도지구·용도구역)만으로는 성립하지 않고 NED 토지이용계획
+      (getLandUseAttr — 군사·비행안전·상수원 등 개별법 지역지구)이 필요해 PNU당 외부콜이
+      1건 더 붙기 때문이다. 이 값을 실제로 화면에 쓰는 표면(지도 경계 응답)만 비용을 낸다.
+      나머지 3소비처(parcels-info·integrated-analysis·land-report)는 완전 무변경·무비용.
     """
     from apps.api.app.services.land_intelligence.far_tier_service import calc_effective_far
     from apps.api.app.services.land_intelligence.ordinance_service import OrdinanceService
@@ -1245,7 +1454,7 @@ async def _enrich_effective_and_special(enriched: list[dict]) -> None:
             return None
         # 지역 키: OrdinanceService 와 동일한 시군구 추출을 캐시키로 사용(주소 전체 대신 시군구).
         try:
-            region = ord_svc._extract_region(addr)  # noqa: SLF001 — 캐시키 일관성용 내부 추출 재사용
+            region = await ord_svc._extract_region(addr)  # noqa: SLF001 — 캐시키 일관성용 내부 추출 재사용
             region_key = f"{region.get('sido') or ''}|{region.get('sigungu') or ''}"
         except Exception:  # noqa: BLE001
             region_key = addr.strip()
@@ -1283,6 +1492,41 @@ async def _enrich_effective_and_special(enriched: list[dict]) -> None:
         for pnu, names in await asyncio.gather(*[_districts(x) for x in dict.fromkeys(_pnus)]):
             districts_by_pnu[pnu] = names
 
+    # ── ★R1 HIGH-2 봉합: 지배 제약용 designation 우주(NED 토지이용계획) 별도 수집 ──
+    #   위 _districts는 VWorld UD802/UD803 = **국토계획법 용도지구/용도구역**만 준다. 군사시설
+    #   보호구역·통제보호구역·비행안전구역·상수원보호구역 등은 **개별법 지역지구**라 그 두
+    #   레이어에 없다(vworld_service.get_land_use_districts 실측). 그래서 이 값만으로 지배 제약을
+    #   만들면 대표 케이스(호미곶 군사 통제보호구역)에서 배너가 조용히 비어 있게 된다 —
+    #   종합분석 경로가 쓰는 NED getLandUseAttr(get_land_use_plan)이 그 명칭들을 주는 출처다.
+    #   ★두 표면이 **같은 designation 우주**를 보게 하는 것이 이 수집의 목적(표면 발산 차단).
+    #   ★기존 _sd(detect_special_parcel 게이트 입력)에는 합류시키지 않는다 — 게이트 입력이 넓어지면
+    #     4소비처의 developability 판정이 바뀌어 이 PR 범위를 넘는 행위 변경이 된다(별건 티켓).
+    ned_districts_by_pnu: dict[str, list[str] | None] = {}
+    if with_dominant_constraint:
+        _dc_pnus = [str(p.get("pnu")) for p in enriched if p.get("pnu")]
+        if _dc_pnus:
+            from apps.api.app.services.external_api.vworld_service import VWorldService as _VW2
+            _vw2 = _VW2()
+            _sem2 = asyncio.Semaphore(8)  # UD802/803 수집과 동일 동시성 캡
+
+            async def _ned(pnu: str) -> tuple[str, list[str] | None]:
+                try:
+                    async with _sem2:
+                        raw = await asyncio.wait_for(_vw2.get_land_use_plan(pnu), timeout=6.0)
+                    if raw is None:
+                        return pnu, None  # 하드 실패 — 미확인(빈목록과 구분·무음 낙관 금지)
+                    return pnu, [
+                        str(d.get("district_name") or "").strip()
+                        for d in raw
+                        if isinstance(d, dict) and (d.get("district_name") or "").strip()
+                    ]
+                except Exception:  # noqa: BLE001 — 실패는 미확인(None)
+                    return pnu, None
+            for pnu, names in await asyncio.gather(
+                *[_ned(x) for x in dict.fromkeys(_dc_pnus)]
+            ):
+                ned_districts_by_pnu[pnu] = names
+
     for p in enriched:
         zone = p.get("zone_type")
         bcr_legal, far_legal = _zone_legal_limits(zone)
@@ -1296,6 +1540,8 @@ async def _enrich_effective_and_special(enriched: list[dict]) -> None:
         bcr_eff = bcr_legal
         far_eff = far_legal
         far_basis = None
+        far_basis_detail = None  # ★W2-2: 필드수준 계보(법정범위/조례값/최종근거) — additive.
+        ordinance = None  # ★W2-2: 조례 원본(source/provenance) — 아래에서 p에 그대로 보존.
         if zone:
             ordinance = await _ordinance_for(p.get("address") or p.get("jibun"), zone)
             try:
@@ -1312,6 +1558,12 @@ async def _enrich_effective_and_special(enriched: list[dict]) -> None:
                 if eff.get("effective_bcr_pct") is not None:
                     bcr_eff = eff.get("effective_bcr_pct")
                 far_basis = eff.get("far_basis")
+                # ★W2-2(v4.0 [필드수준 계보]): 종전엔 far_basis(문자열)만 남기고 far_basis_detail
+                #   (법정범위/조례값/최종근거 계층)과 ordinance(출처·provenance)를 여기서 버려서
+                #   land-report 어댑터까지 계보가 한 번도 도달하지 못했다(절단점 — W2-2 스파이크
+                #   실측). 두 값을 함께 보존해 소비처(land_adapter)가 LineageRef 를 채울 수 있게
+                #   한다 — 계산 자체는 그대로(재구현 없음), additive 보존만 추가.
+                far_basis_detail = eff.get("far_basis_detail")
             except Exception:  # noqa: BLE001 — 실효 산출 실패는 법정값 유지(무손상)
                 pass
 
@@ -1353,12 +1605,50 @@ async def _enrich_effective_and_special(enriched: list[dict]) -> None:
         p["_bcr_eff"] = bcr_eff
         p["_far_eff"] = far_eff
         p["_far_basis"] = far_basis
+        # ★W2-2(v4.0 [필드수준 계보]): far_basis_detail·ordinance 를 보존해 소비처(land-report)가
+        #   LineageRef 를 채울 수 있게 한다(계산 재사용 — 새 계산 아님). 기존 소비자는 이 키를
+        #   모르므로 무해(additive).
+        p["_far_basis_detail"] = far_basis_detail
+        p["_ordinance"] = ordinance
         p["_special"] = special
+        # ★사통맵 v2 W1 — 지배 제약 한 줄 + 높이 상한. 위에서 이미 확보한 구역 실값(_sd)과
+        #   필지 geometry만 쓰므로 **추가 외부콜 0**. 이 공용 헬퍼에 두면 4개 소비처
+        #   (parcel-boundaries·parcels-info·integrated-analysis·land-report)가 같은 판정을
+        #   공유한다(표면별 재구현 금지 — 전역 전파방지). 공개 노출은 소비처가 선택하며
+        #   W1은 지도 경계 응답만 승격한다(아래 features 승격부).
+        #   경사도(slope_pct)는 이 경로에 terrain 조회가 없어 미전달 → 경사도 항목 미생성.
+        #   W2(경사도 필지별 표시)에서 terrain_facts가 붙으면 여기 한 인자만 채우면 된다.
+        if with_dominant_constraint:
+            try:
+                from app.services.regulation.dominant_constraint import build_for_parcel
+
+                # NED 토지이용계획(개별법 지역지구 — 군사·비행안전 등) + UD802/803(용도지구·구역)
+                #   합집합. 순서 보존 dedup(dict.fromkeys) — 어느 한쪽이 미확인(None)이어도 나머지로
+                #   판정한다(무음 0건 금지: 둘 다 미확인이면 아래에서 None → 배너 미표시).
+                _ned = ned_districts_by_pnu.get(str(p.get("pnu") or ""))
+                _dc_regs = list(dict.fromkeys([*(_ned or []), *(_sd or [])]))
+                # ★무음 낙관 차단: NED None(하드 실패)과 [](규제 0건)을 구분해 전달한다.
+                #   ★R2 HIGH: 종전 OR 논리(하나라도 성공하면 verified)는 **부분 실패를 다시
+                #   무음 낙관으로 되돌렸다**. 재현: NED 실패(None) + UD802/803 성공(["자연녹지지역"]
+                #   — 보호구역 매치 0건) → verified=True → build_for_parcel이 None → 배너 소실.
+                #   그런데 군사·비행안전을 주는 유일한 출처가 바로 그 실패한 NED다(HIGH-2의 근거).
+                #   **합집합이 완전하려면 두 출처가 모두 성공해야 한다** → AND. 하나라도 미확인이면
+                #   목록은 반쪽이고, 반쪽으로 "확인 완료"라 말하는 것이 정확히 이 결함 클래스다.
+                p["_dominant_constraint"] = build_for_parcel(
+                    regulations=_dc_regs,
+                    zone_type=zone,
+                    geometry=p.get("geometry"),
+                    slope_pct=None,
+                    designations_verified=(_ned is not None and _sd is not None),
+                )
+            except Exception:  # noqa: BLE001 — 지배 제약 산출 실패는 필지 보강 무손상(미표기)
+                p["_dominant_constraint"] = None
 
 
 class ParcelsInfoRequest(BaseModel):
     """다필지 토지정보 일괄 보강 요청 — 개별등록·엑셀 공통."""
-    parcels: list[dict] = []  # [{address?, jibun?, pnu?, bcode?}]
+    # ★공용 정규화(ParcelsIn): str[]/dict[] → canonical dict[](merge 보존 — jibun/bcode 유지).
+    parcels: ParcelsIn = []  # [{address?, jibun?, pnu?, bcode?}]
 
 
 @router.post("/parcels-info")
@@ -1410,7 +1700,8 @@ class IntegratedAnalysisRequest(BaseModel):
     equity_won: 시나리오 위임(auto_recommend_top3)용 자기자본(미지정 시 서비스 기본).
     use_llm: 기본 false(무과금). True일 때만 시나리오 AI 내러티브 포함(규칙기반 통합집계는 무과금).
     """
-    parcels: list[dict] = []
+    # ★공용 정규화(ParcelsIn): str[]/dict[] → canonical dict[](merge 보존 — jibun/bcode/geometry 유지).
+    parcels: ParcelsIn = []
     equity_won: int | None = None
     use_llm: bool = False
 
@@ -1430,6 +1721,7 @@ async def integrated_analysis(req: IntegratedAnalysisRequest):
         _aggregate_integrated_zoning,
         detect_multi_parcel,
         gate_decision,
+        is_unanalyzed_parcel,
     )
     from apps.api.app.services.land_intelligence.parcel_excel_service import ParcelExcelService
 
@@ -1439,6 +1731,8 @@ async def integrated_analysis(req: IntegratedAnalysisRequest):
         raise HTTPException(400, "parcels(필지 배열)가 필요합니다.")
 
     warnings: list[str] = []
+    # 시나리오 단계에서 발견한 용도지역 불일치 — integrity_warnings 생성 후 합류시킨다.
+    zone_mismatch_warnings: list[str] = []
     items = raw_parcels[:120]  # 1회 상한(대량은 클라가 분할 호출)
 
     # ── 1) enrich_parcel_list 보강(면적·용도지역·지목·공시지가). 입력 override는 보강 후 우선 적용.
@@ -1500,6 +1794,16 @@ async def integrated_analysis(req: IntegratedAnalysisRequest):
             "bcr_legal_pct": p.get("_bcr_legal"), "far_legal_pct": p.get("_far_legal"),
             "far_basis": p.get("_far_basis"),
             "special_parcel": p.get("_special"),
+            # ★미분석 표식 — 프론트 "판정 불가(미분석)" 배지가 읽는 키. 이 응답은 다필지 감지
+            #   결과를 그대로 싣지 않고 **자체 재조립본**이라, 여기에 안 실으면 배지가 발현되지
+            #   않는다(형제 표면인 multi-parcel-report matrix도 같은 키를 싣는다 — 대칭).
+            #   판정은 SSOT(is_unanalyzed_parcel)에 위임한다.
+            # ★양방향 선언 — 형제 표면(build_multi_parcel_report matrix)과 대칭.
+            #   부재가 "분석됨"인지 "아무도 판정 안 함"인지 구분되지 않으면 하류가 추측한다.
+            "analysis_status": (
+                p.get("analysis_status")
+                or ("unanalyzed" if is_unanalyzed_parcel(p) else "analyzed")
+            ),
             "status": p.get("status", "ok"), "reason": p.get("reason"),
         })
 
@@ -1561,10 +1865,36 @@ async def integrated_analysis(req: IntegratedAnalysisRequest):
             from app.services.feasibility.feasibility_service_v2 import FeasibilityServiceV2
 
             # 대표 주소·시군구: 첫 개발가능 필지 주소를 site 라벨로, 시군구는 _extract_sigungu.
-            # ★위임(auto_recommend_top3)에는 '통합면적(total_area)'만 입력으로 반영된다. zone_type/한도는
-            #   위임 내부에서 대표주소로 재도출되므로, 아래 dominant_zone·blended_*는 '표시·검증용'(위임 미주입)이며
-            #   site.zone_basis='representative_parcel'로 실계산 기준이 대표필지임을 명시한다(표시값↔실계산 구분).
-            rep_addr = next((p.get("address") for p in enriched if p.get("address")), "")
+            # ★★근본수정(2026-08-24 라이브 실측) — 종전엔 위임에 '통합면적'만 넘기고 zone_type/한도는
+            #   **위임 내부가 대표주소로 재도출**하게 뒀다. 그 결과 한 응답 안에서 용도지역이 3번 갈렸다:
+            #     dominant_zone=제2종일반주거(area_weighted) · site=제2종일반주거 ·
+            #     **top3=자연녹지(far 100/bcr 20)** ← 실제 수지가 이걸로 계산됐다.
+            #   원인 둘이 겹쳤다:
+            #     ① 위임이 `parcels` 를 받으면 `build_integrated_context` 로 **면적가중 우세용도**를
+            #        채택하는 경로를 이미 갖고 있는데(zone_basis='integrated_dominant'), 호출부가
+            #        그 인자를 **안 넘겼다** — 이 저장소가 반복한 *"정의만 하고 소비처 0"*.
+            #     ② 재도출 입력인 `rep_addr` 가 **번지 없는 동 단위 주소**("경기도 오산시 내삼미동")라
+            #        지오코딩이 엉뚱한 필지를 집었다. 그래서 `zone_basis='representative_parcel'` 이라는
+            #        라벨도 **거짓**이었다 — 대표(첫) 필지조차 제2종일반주거였다.
+            #   → `parcels=enriched` 를 넘겨 위임이 **우리가 이미 보강한 실제 용도지역**을 쓰게 한다.
+            #     통합면적(land_area_sqm 스칼라)은 그대로 우선하므로 면적 경로는 무변경이다.
+            # ★D8(2026-08-24 화면감사) — 종전엔 **첫 필지**의 주소를 그대로 집었다. 그 값이
+            #   번지 없는 동 단위("경기도 오산시 내삼미동")면 아래 `region` 추출과 위임 내부
+            #   지오코딩이 **엉뚱한 필지**를 집는다. 실제로 그 탓에 `zone_basis` 라벨까지
+            #   거짓이 됐다(위 주석 ②).
+            #   ★없는 걸 새로 만든 게 아니다 — `parcel_display_address` 는 **이미 있었고
+            #     같은 파일 :901 · :2240 이 쓰고 있었다.** 여기만 raw 였다(§29 불일치).
+            rep_parcel = pick_representative_parcel(enriched)
+            rep_addr = (
+                parcel_display_address(rep_parcel.get("address"), rep_parcel.get("pnu"))
+                if rep_parcel else ""
+            )
+            # ★해상도를 **값과 함께** 싣는다 — "주소가 없다"와 "있는데 지오코딩하기엔 거칠다"는
+            #   다른 상태이고, 후자는 조회가 **성공하고 틀린 값**을 주므로 더 위험하다.
+            rep_resolution = address_resolution(
+                rep_parcel.get("address") if rep_parcel else None,
+                rep_parcel.get("pnu") if rep_parcel else None,
+            )
             # 시군구 미추출 시 ""(주소 시도 추론에 양보) — "서울" 폴백은 지방 부지 분양가를 서울가로 과대.
             region = _extract_sigungu({"address": rep_addr}) or ""
             site = {
@@ -1572,13 +1902,20 @@ async def integrated_analysis(req: IntegratedAnalysisRequest):
                 "zone_type": dominant_zone,
                 "far": integrated_zoning.get("blended_far_eff_pct"),
                 "bcr": integrated_zoning.get("blended_bcr_eff_pct"),
-                "zone_basis": "representative_parcel",  # 위임 수지는 대표 용도 기준(통합 blended는 표시·검증용)
+                # zone_basis 는 **위임이 실제로 쓴 기준**으로 아래에서 덮어쓴다(하드코딩 라벨 금지 —
+                # 종전 'representative_parcel' 은 실계산과 달라 거짓 라벨이었다).
+                "zone_basis": None,
+                # ★대표 주소를 **믿어도 되는지**를 소비처가 알 수 있게 함께 싣는다.
+                "address_resolution": rep_resolution,
             }
             kwargs: dict = {
                 "address": rep_addr,
                 "land_area_sqm": total_area,
                 "region": region,
                 "use_llm": req.use_llm,
+                # ★보강한 필지 목록을 그대로 넘긴다 — 위임이 면적가중 우세용도를 채택한다.
+                #   (2필지 미만이면 위임 내부에서 무시되므로 단일필지 경로는 무변경.)
+                "parcels": enriched,
             }
             if req.equity_won is not None:
                 kwargs["equity_won"] = req.equity_won
@@ -1586,6 +1923,42 @@ async def integrated_analysis(req: IntegratedAnalysisRequest):
             # 신뢰블록 additive 부착(zone_type/zone_limits 보유 → 법령링크·근거 트레이스).
             if isinstance(top3, dict):
                 _attach_trust_blocks(top3)
+
+                # ── zone_basis: 위임이 **실제로 쓴 기준**을 그대로 싣는다(하드코딩 라벨 금지).
+                site["zone_basis"] = top3.get("zone_basis") or "single"
+
+                # ★★전제 감사 — **변형관계 레지스트리**로 일임한다(2026-08-24).
+                #   종전엔 여기에 용도지역 불일치 **하나만** 손으로 박아 뒀다. 그러면 다음
+                #   불일치(면적 출처·필지수 보존…)는 또 손으로 박아야 하고, 결국 빠진다 —
+                #   이 저장소가 반복한 *"사람이 센 목록이 곧 상한이 된다"*(§A-4).
+                #   → `premise_audit` 레지스트리에 관계를 등록하면 **호출부 수정 없이** 감시망에 든다.
+                #   ★값을 고치지 않는다. 위반은 **말한다**(고지 + status 강등).
+                from app.services.zoning import premise_audit
+
+                _audit_ctx = {
+                    "dominant_zone": dominant_zone,
+                    "zone_mix": integrated_zoning.get("zone_mix"),
+                    "per_parcel": enriched,
+                    "integrated": {"total_area_sqm": total_area},
+                    "scenario": {"top3": top3},
+                    "_request_parcel_count": len(enriched),
+                }
+                _audit = premise_audit.audit(_audit_ctx)
+                scenario["premise_audit"] = {
+                    "checked": _audit["checked"],
+                    "registered": _audit["registered"],
+                    "violations": _audit["violations"],
+                }
+                if _audit["violations"]:
+                    for _v in _audit["violations"]:
+                        _msg = f"[{_v['title']}] {_v['detail']}"
+                        warnings.append(_msg)
+                        zone_mismatch_warnings.append(_msg)
+                    scenario["status"] = "tentative"
+                    scenario["disclosure"] = (
+                        (scenario.get("disclosure") or "")
+                        + " " + " ".join(v["detail"] for v in _audit["violations"])
+                    )
             scenario["site"] = site
             scenario["top3"] = top3
         except Exception as e:  # noqa: BLE001 — 위임 실패는 시나리오 degrade(정직), 통합집계는 유지.
@@ -1616,6 +1989,12 @@ async def integrated_analysis(req: IntegratedAnalysisRequest):
             # 시군구: 대표(첫 유효주소) 필지 주소로 도출(조례 용적률 resolver 입력).
             up_addr = next((p.get("address") for p in enriched if p.get("address")), "")
             up_sigungu = _extract_sigungu({"address": up_addr})
+            # ★D8 전역 스윕이 드러낸 인접 결함(2026-08-25) — 조례 시군구를 **첫 필지**에서
+            #   뽑아 전체에 쓴다. 필지가 시군구를 걸치면 나머지에 **틀린 조례**가 적용된다.
+            #   실측(같은 용도지역·면적, 시군구만 변경): 오산시 250% · 성남시 280% ·
+            #   강남구 250% · 미확보 300%(법정 폴백=과대) → **30%p 격차**.
+            #   ★숫자를 몰래 고르지 않는다 — **누구의 조례인지 말한다**(걸칠 때만).
+            up_spread = sigungu_spread(enriched)
             # 통합 special_districts 집계(규제/특수구역 → 종상향 제약). 필지별 합집합(중복 제거).
             agg_sd: list = []
             for p in enriched:
@@ -1640,11 +2019,93 @@ async def integrated_analysis(req: IntegratedAnalysisRequest):
             if isinstance(upzoning, dict):
                 upzoning_scenarios = upzoning.get("scenarios", []) or []
                 potential_far_range = upzoning.get("potential_far_range")
+                # 걸쳐 있을 때만 고지한다(정상 케이스에 경고를 붙이면 그것도 결함이다).
+                upzoning["sigungu_basis"] = {
+                    "applied": up_sigungu,
+                    "spread_count": up_spread["count"],
+                    "spread_names": up_spread["names"],
+                }
+                if up_spread["disclosure"]:
+                    upzoning["sigungu_disclosure"] = up_spread["disclosure"]
         except Exception as e:  # noqa: BLE001 — 종상향 산출 실패는 통합집계를 손상하지 않는다(정직 null).
             logger.warning("통합 종상향(upzoning) 산출 실패: %s", str(e)[:160])
             upzoning = {}
             upzoning_scenarios = []
             potential_far_range = None
+
+    integrated_block = {
+        "total_area_sqm": total_area,
+        "blended_bcr_eff_pct": integrated_zoning.get("blended_bcr_eff_pct"),
+        "blended_far_eff_pct": integrated_zoning.get("blended_far_eff_pct"),
+        "blended_bcr_legal_pct": integrated_zoning.get("blended_bcr_legal_pct"),
+        "blended_far_legal_pct": integrated_zoning.get("blended_far_legal_pct"),
+        "far_basis_note": integrated_zoning.get("far_basis_note"),
+        "integrated_gfa_sqm": integrated_zoning.get("integrated_gfa_sqm"),
+        "integrated_footprint_sqm": integrated_zoning.get("integrated_footprint_sqm"),
+        "gfa_basis": integrated_zoning.get("gfa_basis"),
+    }
+
+    # ── ★A-3/G8 법정초과 경량 가드 확산 — 통합(면적가중) 실효율 응답 표면에도 적용(additive) ──
+    #   comprehensive analyze()의 P0-3 패턴을 공용 헬퍼(hotpath_guard)로 확산 배선. regulation_payload:
+    #   필지 중 하나라도 실효 FAR가 실제 조례 취득(far_basis="조례")이면 그 신호를 local_ordinance로
+    #   전달한다(허위 조례 생성 아님 — 이미 보유한 far_basis를 그대로 재사용, 산식복제 0).
+    #   ★QA MEDIUM 수정: 이 표면의 값은 dominant(대표/우세) 단일 zone이 아니라 면적가중 블렌드
+    #   (blended_far_eff_pct)다. dominant zone의 단일 법정상한과 비교하면 정당한 혼합용도
+    #   (예: 2종일반 250%+준주거 400% 블렌드 290%)도 오탐(false "high")한다 — legal_far_pct/
+    #   legal_bcr_pct override로 비교 기준을 같은 면적가중 법정 블렌드(blended_*_legal_pct)로
+    #   맞춘다(hotpath_guard._check_against_blended_legal 참조). 진짜 오염(eff블렌드>legal블렌드)은
+    #   여전히 검출된다.
+    from app.services.verification.hotpath_guard import apply_legal_hotpath_guard
+
+    _guard_reg_payload = (
+        {"local_ordinance": {"source": "조례",
+                              "effective_far": integrated_block["blended_far_eff_pct"],
+                              "effective_bcr": integrated_block["blended_bcr_eff_pct"]}}
+        if any(p.get("_far_basis") == "조례" for p in enriched) else None
+    )
+    integrity_warnings = apply_legal_hotpath_guard(
+        {},  # 응답 splice는 아래서 별도 처리 — 이 dict는 헬퍼 계약 충족용(미사용)
+        zone_type=dominant_zone,
+        bcr_pct=integrated_block["blended_bcr_eff_pct"], far_pct=integrated_block["blended_far_eff_pct"],
+        regulation_payload=_guard_reg_payload,
+        confidence_target=integrated_block,
+        legal_far_pct=integrated_block["blended_far_legal_pct"],
+        legal_bcr_pct=integrated_block["blended_bcr_legal_pct"],
+    )
+    # 시나리오 단계의 용도지역 불일치를 무결성 경고에 합류(화면이 한 곳에서 읽는다).
+    integrity_warnings = list(integrity_warnings or []) + zone_mismatch_warnings
+
+    # ── ★W2-5(ParcelGraph) 인접 그래프·핵심필지·N-1 시나리오(additive) ──
+    #   enriched는 이미 pnu/geometry/area_sqm/_far_eff(실효용적률)를 보유하므로 변형 없이 그대로
+    #   투입한다(build_parcel_graph가 road_frontage/road_contact·effective_far_pct/_far_eff 등
+    #   여러 별칭을 알아서 흡수 — 여기서 재매핑 불필요). 실패는 정직 degrade(집계 손상 금지).
+    parcel_graph_summary: dict = {"status": "unavailable"}
+    try:
+        from app.services.zoning.parcel_graph import build_parcel_graph
+
+        _pg = build_parcel_graph(enriched)
+        _road_dep = _pg.get("road_dependency") or {}
+        parcel_graph_summary = {
+            "status": _pg.get("status"),
+            "component_count": _pg.get("component_count"),
+            "articulation_points": _pg.get("articulation_points"),
+            "critical_parcels": _pg.get("critical_parcels"),
+            "landlocked_risk": {
+                # ★W2-5 R1(MEDIUM-2): status가 "unknown(...)"이면 confirmed_pnus 가 빈 배열이어도
+                # '맹지 없음'이 아니라 접도정보 미보유로 판정을 유보했다는 뜻이다(오독 차단).
+                "status": _road_dep.get("status"),
+                "confirmed_pnus": _road_dep.get("landlocked_pnus"),
+                "unknown_pnus": _road_dep.get("unknown_landlocked_pnus"),
+            },
+            "n_minus_1": _pg.get("n_minus_1"),
+            "geometry_unknown_pnus": _pg.get("geometry_unknown_pnus"),
+            "note": _pg.get("note"),
+            "basis": _pg.get("basis"),
+        }
+        warnings.extend(_pg.get("warnings") or [])
+    except Exception as e:  # noqa: BLE001 — 그래프 산출 실패는 통합집계를 손상하지 않는다(정직 degrade).
+        logger.warning("ParcelGraph 산출 실패: %s", str(e)[:160])
+        parcel_graph_summary = {"status": "unavailable", "note": "인접 그래프 산출에 실패했습니다."}
 
     return {
         "parcel_count": integrated_zoning.get("parcel_count"),
@@ -1652,17 +2113,7 @@ async def integrated_analysis(req: IntegratedAnalysisRequest):
         "zone_mix": integrated_zoning.get("zone_mix"),
         "dominant_zone": dominant_zone,
         "dominant_basis": integrated_zoning.get("dominant_basis"),
-        "integrated": {
-            "total_area_sqm": total_area,
-            "blended_bcr_eff_pct": integrated_zoning.get("blended_bcr_eff_pct"),
-            "blended_far_eff_pct": integrated_zoning.get("blended_far_eff_pct"),
-            "blended_bcr_legal_pct": integrated_zoning.get("blended_bcr_legal_pct"),
-            "blended_far_legal_pct": integrated_zoning.get("blended_far_legal_pct"),
-            "far_basis_note": integrated_zoning.get("far_basis_note"),
-            "integrated_gfa_sqm": integrated_zoning.get("integrated_gfa_sqm"),
-            "integrated_footprint_sqm": integrated_zoning.get("integrated_footprint_sqm"),
-            "gfa_basis": integrated_zoning.get("gfa_basis"),
-        },
+        "integrated": integrated_block,
         "adjacency": adjacency,
         "developability": developability,
         "resolvable": resolvable,
@@ -1675,7 +2126,86 @@ async def integrated_analysis(req: IntegratedAnalysisRequest):
         "potential_far_range": potential_far_range,
         "per_parcel": per_parcel,
         "warnings": warnings,
+        # ★A-3/G8(additive) — 법정초과 경량 가드 검출 시만 채워짐(빈 배열=검출 없음, 기존 키 불변).
+        "integrity_warnings": integrity_warnings,
+        # ★W2-5(ParcelGraph, additive) — 인접 그래프·핵심필지·N-1 시나리오 요약. 기하 미확보/상한
+        #   초과는 status로 정직 표기(무회귀 — 기존 키는 전혀 건드리지 않음).
+        "parcel_graph": parcel_graph_summary,
     }
+
+
+class MultiParcelReportRequest(BaseModel):
+    """다필지 통합 최종 보고(S5) 요청 — /integrated-analysis와 동일한 필지 입력 계약(additive).
+
+    parcels: [{pnu?, address?, jibun?, bcode?, area_sqm?, land_category?, zone_type?, geometry?}]
+    roadside_strip_commercial: 도로변 띠모양 상업지역 §84 걸침 임계 660㎡ 적용(기본 False=330㎡).
+    """
+    # ★공용 정규화(ParcelsIn): str[]/dict[] → canonical dict[](merge 보존 — jibun/bcode/geometry 유지).
+    parcels: ParcelsIn = []
+    roadside_strip_commercial: bool = False
+
+
+@router.post("/multi-parcel-report")
+async def multi_parcel_report(req: MultiParcelReportRequest):
+    """다필지 통합분석 최종 보고(S5) — build_multi_parcel_report 오펀 배선(★G2, additive 전용 엔드포인트).
+
+    special_parcel.py:build_multi_parcel_report는 usable 3계층·§84 걸침·제외 시나리오(what-if)·
+    시니어 리뷰까지 조립하는 완성 함수였으나 프로덕션 소비처가 없었다(오펀). 이 엔드포인트는
+    /integrated-analysis와 동일한 보강 파이프라인(enrich_parcel_list → _enrich_effective_and_special
+    — 둘 다 기존 함수 재사용·산식복제 0)을 거친 뒤 build_multi_parcel_report 한 번으로 최종 보고를
+    조립해 반환한다. /integrated-analysis 자체의 응답·로직은 전혀 건드리지 않는다(별도 엔드포인트 —
+    블라스트 반경 최소화).
+    무목업: 필지 0건은 400(정직 안내). 1건(다필지가 아님)은 차단하지 않고 그대로 산출하되
+    build_multi_parcel_report 결과에 '단일 필지라 통합·§84 걸침·제외 시나리오는 해당사항 없음'
+    정직 고지를 additive로 덧붙인다(값 날조·강제 차단 둘 다 하지 않음).
+    """
+    from app.services.zoning.special_parcel import build_multi_parcel_report
+    from apps.api.app.services.land_intelligence.parcel_excel_service import ParcelExcelService
+
+    raw_parcels = req.parcels or []
+    if not isinstance(raw_parcels, list) or not raw_parcels:
+        from fastapi import HTTPException
+        raise HTTPException(400, "parcels(필지 배열)가 필요합니다.")
+
+    items = raw_parcels[:120]  # 1회 상한(대량은 클라가 분할 호출) — /integrated-analysis와 동일 상한.
+
+    # ── 1) enrich_parcel_list 보강(면적·용도지역·지목·공시지가) + 입력 override 우선 병합(정직).
+    #     /integrated-analysis 2)단계와 동일 로직(공용 헬퍼 추출 없이 동일 순서로 재현 — 산식복제 아님,
+    #     동일 기존 함수 2개를 같은 순서로 호출하는 조립일 뿐).
+    enriched = await ParcelExcelService().enrich_parcel_list(items, with_building=True)
+    for src, p in zip(items, enriched, strict=False):
+        if src.get("zone_type") and not p.get("zone_type"):
+            p["zone_type"] = src["zone_type"]
+        lc = src.get("land_category") or p.get("jimok")
+        if lc:
+            p.setdefault("land_category", lc)
+        if src.get("geometry") is not None:
+            p["geometry"] = src["geometry"]
+        if src.get("area_sqm") and not p.get("area_sqm"):
+            p["area_sqm"] = src["area_sqm"]
+
+    # ── 2) 필지별 실효(조례)+법정+특이 게이트 in-place 부착(공용 헬퍼 — integrated-analysis·land-report와 동일).
+    await _enrich_effective_and_special(enriched)
+
+    # ── 3) build_multi_parcel_report가 읽는 land_category 키로 정렬(jimok→land_category).
+    report_input: list[dict] = []
+    for p in enriched:
+        report_input.append({
+            **p,
+            "land_category": p.get("land_category") or p.get("jimok"),
+        })
+
+    report = build_multi_parcel_report(
+        report_input, roadside_strip_commercial=req.roadside_strip_commercial)
+
+    if len(report_input) < 2:
+        # 단일 필지 — S5는 '다필지' 종합 보고이나 build_multi_parcel_report 자체는 단일 필지도
+        # 안전 산출(usable/verification/matrix 정상, straddle/exclusion만 자연히 미해당)하므로
+        # 차단하지 않고 정직 고지만 추가한다.
+        report["honest_limitations"].append(
+            "단일 필지 입력 — 다필지 통합(§84 걸침·인접성·제외 시나리오)은 해당사항이 없습니다.")
+
+    return report
 
 
 class ParcelAtPointRequest(BaseModel):
@@ -1745,7 +2275,10 @@ async def parcel_at_point(req: ParcelAtPointRequest):
             bcr, far = ZONE_LIMITS[key]["max_bcr"], ZONE_LIMITS[key]["max_far"]
     return {
         "found": True, "pnu": pnu,
-        "address": pp.get("address") or "", "jibun": pp.get("address") or "",
+        # ★종전: jibun 에 address 를 **그대로 복제**해 지번 칸이 동 단위 주소였다.
+        #   소비처는 "jibun 이 있으니 지번이 있다"고 읽어 보강 기회를 잃는다.
+        "address": parcel_display_address(pp.get("address"), pnu),
+        "jibun": jibun_from_pnu(pnu) or "",
         "bcode": pnu[:10], "area_sqm": area_sqm, "zone_type": zone_type, "jimok": jimok,
         "bcr_pct": bcr, "far_pct": far, "geometry": pp.get("geometry"),
         "official_price_per_sqm": official_price_per_sqm,
@@ -1793,7 +2326,8 @@ async def development_facilities(req: DevelopmentFacilitiesRequest):
 class LandReportRequest(BaseModel):
     """토지분석보고서 PDF 생성 요청 — 토지조서 필지 목록."""
     project_name: str = "토지분석보고서"
-    parcels: list[dict] = []  # [{address?, jibun?, pnu?, bcode?}]
+    # ★공용 정규화(ParcelsIn): str[]/dict[] → canonical dict[](merge 보존 — jibun/bcode 유지).
+    parcels: ParcelsIn = []  # [{address?, jibun?, pnu?, bcode?}]
 
 
 @router.post("/land-report")
@@ -1832,6 +2366,9 @@ async def land_report(req: LandReportRequest, format: str = "pdf"):
             "jimok": p.get("jimok"), "official_price_per_sqm": p.get("official_price_per_sqm"),
             "parcel_case": "aggregate" if is_agg else ("building" if bld else "land"),
             "building": bld, "status": p.get("status", "ok"), "reason": p.get("reason"),
+            # ★W2-2(v4.0 [필드수준 계보]): 실효 용적률의 계보(법정범위/조례값/최종근거)+조례
+            #   출처를 land_adapter 로 그대로 실어 보낸다(additive — 기존 렌더 로직 무회귀).
+            "far_basis_detail": p.get("_far_basis_detail"), "ordinance": p.get("_ordinance"),
         })
         # 집합건물은 세대 대지지분 상세 부착(전유부 전수).
         if is_agg and p.get("pnu"):
@@ -1857,18 +2394,29 @@ async def land_report(req: LandReportRequest, format: str = "pdf"):
 
 
 @router.post("/parse-parcels")
-async def parse_parcels(file: UploadFile = File(...)):
+async def parse_parcels(
+    file: UploadFile = File(...),
+    use_llm: bool = Form(True),
+    db: AsyncSession = Depends(get_db),
+):
     """업로드된 토지조서 엑셀/CSV → 필지 목록(주소·PNU·bcode·면적·지목·소유구분) 추출.
 
     PNU 우선순위: PNU열 > 법정동코드+지번 구성 > 주소 지오코딩. 무자료/실패는 status로 정직 표기.
-    표준 양식은 규칙기반 컬럼감지(LLM 미사용). ★비표준 양식이라 규칙기반이 필수컬럼을 못 찾을
-    때만 LLM 에이전트가 컬럼을 1회 분류(헤더 시그니처 캐시로 재호출 방지). LLM 토큰은
-    _record_llm_billing으로 계측·귀속(service=parcel_excel_column_detect). 과금 정책상 컬럼분류는
-    저비용 보조기능으로 별도 차감 게이트 없음(관리자 미설정 시 무료 원칙).
+    표준 양식은 규칙기반 컬럼감지(LLM 미사용). ★비표준 양식이라 규칙기반 신뢰도가 낮을 때만
+    (필수컬럼 부재 또는 유효행<50%) LLM 에이전트가 표 구조(시트선택·헤더행·전치·복합셀분해·
+    컬럼역할)를 한 번의 질의로 분류(헤더 시그니처 캐시로 재호출 방지)하고, 결정론 검증에 실패한
+    행만 최대 2회 선별 재질의한다(원문 부분문자열만 채택 — 환각 차단). LLM 토큰은
+    _record_llm_billing으로 계측·귀속.
+    ★과금 게이트 정합(P0 CostInterpreter/personas.py 선례와 동일 계약): use_llm=True(기본값 —
+    기존 동작 보존)일 때만 enforce_llm_quota 적용(과금은 관리자가 analysis_modules에 설정한
+    경우에만·미설정은 무료). use_llm=False면 규칙기반만 동작(LLM 0호출·무과금·실패는 정직 사유표기).
     """
     from apps.api.app.services.land_intelligence.parcel_excel_service import (
         ParcelExcelService,
     )
+
+    if use_llm:
+        await enforce_llm_quota(db)
 
     try:
         raw = await file.read()
@@ -1876,4 +2424,19 @@ async def parse_parcels(file: UploadFile = File(...)):
         return {"error": f"파일 읽기 실패: {str(e)[:120]}", "parcels": []}
     if not raw:
         return {"error": "빈 파일입니다.", "parcels": []}
-    return await ParcelExcelService().parse(raw, file.filename or "upload.xlsx")
+
+    # ★공용 콘텐츠 검증(WP-H 세션2 전역 스윕·fail-closed) — openpyxl 파싱 전에 압축폭탄(xlsx=zip
+    # 계열, 폴리글랏 포함)·실행/스크립트 위장·MIME 위장·경로순회를 차단한다. 이 경로는 CSV 도
+    # 받으므로 형식 화이트리스트(expected_kinds)는 걸지 않는다(CSV 는 매직바이트가 없어 미인식 →
+    # 화이트리스트 시 정상 CSV 가 거부됨). 아카이브 폭탄 검사는 expected_kinds 무관하게 동작한다.
+    from fastapi import HTTPException
+
+    from app.services.security.content_inspection import http_status_for, inspect_upload
+
+    _verdict = inspect_upload(raw, file.filename or "", file.content_type)
+    if not _verdict.allowed:
+        raise HTTPException(
+            status_code=http_status_for(_verdict.code),
+            detail=f"업로드가 거부되었습니다: {_verdict.reason}",
+        )
+    return await ParcelExcelService().parse(raw, file.filename or "upload.xlsx", use_llm=use_llm)

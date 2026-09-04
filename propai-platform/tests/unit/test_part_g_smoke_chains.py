@@ -5,7 +5,6 @@ from uuid import uuid4
 
 from apps.api.database.models.phase_g_operations import Contractor
 from apps.api.services.auction_service import AuctionService
-from apps.api.services.chatbot_service import ChatbotService
 from apps.api.services.contractor_service import ContractorService
 from apps.api.services.investor_report_service import InvestorReportService
 from apps.api.services.portals_service import PortalsService
@@ -55,11 +54,7 @@ class TestPartGSmokeChains:
         assert portal_defaults["views"] > 0
         assert portal_defaults["ctr"] > 0
 
-    def test_chatbot_auction_contractors_chain(self) -> None:
-        reply, actions = ChatbotService._reply(
-            "investment",
-            "Review the lien structure and execution plan for this auction case.",
-        )
+    def test_auction_contractors_chain(self) -> None:
         analysis = AuctionService._analysis_snapshot(
             appraised_value_krw=1_200_000_000,
             minimum_bid_krw=860_000_000,
@@ -85,8 +80,6 @@ class TestPartGSmokeChains:
             contractor=contractor,
         )
 
-        assert "investment" in reply
-        assert len(actions) == 3
         assert analysis["investment_score"] > 60
         assert analysis["expected_margin_krw"] >= 0
         assert score > 70

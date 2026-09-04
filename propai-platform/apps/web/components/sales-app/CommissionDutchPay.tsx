@@ -26,6 +26,7 @@ import { salesApi, won } from "@/lib/salesApi";
 import { ApiClientError } from "@/lib/api-client";
 import { NumberInput } from "@/components/common/NumberInput";
 import { TrustBadge } from "@/components/common/TrustBadge";
+import { nodeTypeLabel } from "@/components/sales-app/roleConfig";
 
 // ── 타입(백엔드 응답 스키마 정합) ─────────────────────────────────────────────
 type Basis = "RATIO" | "AMOUNT";
@@ -102,25 +103,19 @@ interface DraftParticipant {
 }
 
 // ── 표시 상수 ────────────────────────────────────────────────────────────────
-const NODE_TYPE_LABEL: Record<string, string> = {
-  AGENCY: "분양대행사",
-  SUBAGENCY: "대대행",
-  GM_DIRECTOR: "총괄본부장",
-  DIRECTOR: "본부장",
-  TEAM_LEADER: "팀장",
-  MEMBER: "팀원",
-};
+// node_type 라벨은 roleConfig.nodeTypeLabel SSOT 소비(조직도·수수료와 동일 표기). 과거 로컬
+// 상수(분양대행사/대대행/총괄본부장/본부장/팀원)는 조직도(대행본사/이사/직원)와 갈라져 제거.
 
 const STATUS_META: Record<AgreementStatus, { label: string; cls: string }> = {
-  pending: { label: "동의 대기", cls: "border-amber-400/40 bg-amber-500/10 text-amber-300" },
-  confirmed: { label: "확정 완료", cls: "border-emerald-400/40 bg-emerald-500/10 text-emerald-300" },
-  rejected: { label: "거부됨", cls: "border-rose-400/40 bg-rose-500/10 text-rose-300" },
+  pending: { label: "동의 대기", cls: "border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 text-amber-300" },
+  confirmed: { label: "확정 완료", cls: "border-[var(--status-success)]/40 bg-[var(--status-success)]/10 text-emerald-300" },
+  rejected: { label: "거부됨", cls: "border-[var(--status-error)]/40 bg-[var(--status-error)]/10 text-rose-300" },
 };
 
 const CONSENT_META: Record<ConsentStatus, { label: string; cls: string; dot: string }> = {
-  consented: { label: "동의", cls: "text-emerald-300", dot: "bg-emerald-400" },
-  pending: { label: "대기", cls: "text-amber-300", dot: "bg-amber-400" },
-  rejected: { label: "거부", cls: "text-rose-300", dot: "bg-rose-400" },
+  consented: { label: "동의", cls: "text-emerald-300", dot: "bg-[var(--status-success)]" },
+  pending: { label: "대기", cls: "text-amber-300", dot: "bg-[var(--status-warning)]" },
+  rejected: { label: "거부", cls: "text-rose-300", dot: "bg-[var(--status-error)]" },
 };
 
 const fcls =
@@ -133,7 +128,7 @@ let _draftSeq = 0;
 const newDraftKey = () => `d${++_draftSeq}`;
 
 function nodeLabel(n: OrgNode): string {
-  const t = NODE_TYPE_LABEL[n.node_type] ?? n.node_type;
+  const t = nodeTypeLabel(n.node_type);
   return n.display_name ? `${n.display_name} (${t})` : t;
 }
 
@@ -450,12 +445,12 @@ export default function CommissionDutchPay({ siteCode }: { siteCode: string }) {
 
       {/* 알림/에러 */}
       {err && (
-        <div className="rounded-xl border border-rose-400/40 bg-rose-500/10 px-4 py-2.5 text-sm font-semibold text-rose-300">
+        <div className="rounded-xl border border-[var(--status-error)]/40 bg-[var(--status-error)]/10 px-4 py-2.5 text-sm font-semibold text-rose-300">
           {err}
         </div>
       )}
       {notice && !err && (
-        <div className="rounded-xl border border-emerald-400/40 bg-emerald-500/10 px-4 py-2.5 text-sm font-semibold text-emerald-300">
+        <div className="rounded-xl border border-[var(--status-success)]/40 bg-[var(--status-success)]/10 px-4 py-2.5 text-sm font-semibold text-emerald-300">
           {notice}
         </div>
       )}
@@ -500,7 +495,7 @@ export default function CommissionDutchPay({ siteCode }: { siteCode: string }) {
               {editTargetId ? "분배 변경(재동의 필요)" : "새 더치페이 합의"}
             </h4>
             {editTargetId && (
-              <span className="rounded-md border border-amber-400/40 bg-amber-500/10 px-2 py-0.5 text-[11px] font-bold text-amber-300">
+              <span className="rounded-md border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 px-2 py-0.5 text-[11px] font-bold text-amber-300">
                 변경 시 전원 재동의 필요
               </span>
             )}
@@ -611,7 +606,7 @@ export default function CommissionDutchPay({ siteCode }: { siteCode: string }) {
                 <button
                   type="button"
                   onClick={() => removeDraft(d.key)}
-                  className="text-rose-400 hover:text-rose-300"
+                  className="text-[var(--status-error)] hover:text-rose-300"
                   aria-label="참여자 제거"
                 >
                   ✕
@@ -630,8 +625,8 @@ export default function CommissionDutchPay({ siteCode }: { siteCode: string }) {
             <div
               className={`flex flex-wrap items-center gap-3 rounded-xl border px-4 py-2.5 text-sm font-bold ${
                 draftSums.ok
-                  ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-300"
-                  : "border-rose-400/40 bg-rose-500/10 text-rose-300"
+                  ? "border-[var(--status-success)]/40 bg-[var(--status-success)]/10 text-emerald-300"
+                  : "border-[var(--status-error)]/40 bg-[var(--status-error)]/10 text-rose-300"
               }`}
             >
               {basis === "RATIO" ? (
@@ -716,10 +711,10 @@ export default function CommissionDutchPay({ siteCode }: { siteCode: string }) {
                 <div
                   className={`h-full rounded-full transition-all ${
                     a.status === "rejected"
-                      ? "bg-rose-400"
+                      ? "bg-[var(--status-error)]"
                       : cp.all_consented
-                        ? "bg-emerald-400"
-                        : "bg-amber-400"
+                        ? "bg-[var(--status-success)]"
+                        : "bg-[var(--status-warning)]"
                   }`}
                   style={{ width: `${a.status === "rejected" ? 100 : pct}%` }}
                 />
@@ -762,14 +757,14 @@ export default function CommissionDutchPay({ siteCode }: { siteCode: string }) {
                       <button
                         onClick={() => decide(a.id, "consent")}
                         disabled={busy}
-                        className="rounded-lg bg-emerald-500/90 px-4 py-2 text-sm font-black text-white disabled:opacity-50"
+                        className="rounded-lg bg-[var(--status-success)]/90 px-4 py-2 text-sm font-black text-white disabled:opacity-50"
                       >
                         ✓ 내 분배에 동의
                       </button>
                       <button
                         onClick={() => decide(a.id, "reject")}
                         disabled={busy}
-                        className="rounded-lg border border-rose-400/50 px-4 py-2 text-sm font-bold text-rose-300 disabled:opacity-50"
+                        className="rounded-lg border border-[var(--status-error)]/50 px-4 py-2 text-sm font-bold text-rose-300 disabled:opacity-50"
                       >
                         ✕ 거부
                       </button>
@@ -789,7 +784,7 @@ export default function CommissionDutchPay({ siteCode }: { siteCode: string }) {
 
                   {/* 무결성(해시체인) */}
                   {view.ledger?.content_hash && (
-                    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/5 px-3 py-2">
+                    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--status-success)]/30 bg-[var(--status-success)]/5 px-3 py-2">
                       <span className="text-[11px] font-bold text-emerald-300">
                         해시체인 봉인 v{view.ledger.version}
                       </span>

@@ -156,7 +156,7 @@ class FeasibilityInterpreter(BaseInterpreter):
             recommendations_json=json.dumps(compact, ensure_ascii=False, indent=2),
         )
 
-        return await self._invoke(
+        return await self._invoke_or_empty(
             user_prompt, cache_data=compact, evidence_data=recommend_data
         )
 

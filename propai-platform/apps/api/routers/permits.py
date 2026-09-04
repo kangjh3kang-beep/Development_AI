@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.billing_deps import enforce_llm_quota
+from app.services.land_intelligence.parcel_normalize import ParcelsIn
 from apps.api.auth.jwt_handler import CurrentUser
 from apps.api.auth.rbac import RequirePermission
 from apps.api.database.session import get_db
@@ -32,7 +33,9 @@ class ComplianceCheckRequest(BaseModel):
     # 다필지 통합 개발 시 필지 목록(2개 이상이면 면적가중 통합면적·우세용도로 보정).
     #   행 계약(프론트 전송 키): {address, area_sqm, zone_type, farPct, bcrPct, farLegalPct, bcrLegalPct}.
     #   미전달/1필지면 기존 단일필지 동작 그대로(무회귀).
-    parcels: list[dict] | None = None
+    #   ★공용 정규화(ParcelsIn): str[]/dict[] 양 shape → canonical dict[](무음 no-op 제거).
+    #   ※ /permits/ai-analysis 의 list[str] parcels(주소배열)는 별개 계약 — 변경 대상 아님.
+    parcels: ParcelsIn | None = None
 
 
 class ComplianceItemResult(BaseModel):
@@ -471,7 +474,12 @@ async def ai_permit_analysis(
     첫 호출만 느리고, 이후 같은 입력은 저장본을 즉시 반환한다.
     req.refresh=True 를 보내면 재분석 후 저장본을 덮어쓴다.
     """
-    from app.services.common.analysis_cache import _key, cache_get, cache_put
+    from app.services.common.analysis_cache import (
+        _key,
+        cache_get,
+        cache_put,
+        llm_fallback_stale,
+    )
     from app.services.permit.permit_analysis_service import PermitAnalysisService
 
     if not req.address or not req.address.strip():
@@ -482,10 +490,12 @@ async def ai_permit_analysis(
     parcels_str = ",".join(sorted(req.parcels or []))
     cache_key = _key(addr, str(req.pnu), str(req.use_llm), parcels_str)
 
-    # 저장본이 있고 재분석 요청이 아니면 즉시 반환
+    # 저장본이 있고 재분석 요청이 아니면 즉시 반환.
+    # ★단, LLM 폴백(ai=False)이 박제된 캐시는 유예(5분) 경과 시 miss로 취급해 재분석
+    #   → 성공 시 upsert로 덮어써 자가치유(규제분석과 동일 결함 클래스 공용 봉합).
     if not req.refresh:
         cached = await cache_get("permit_ai_analysis", cache_key)
-        if cached is not None:
+        if cached is not None and not (req.use_llm and llm_fallback_stale(cached)):
             return cached
 
     # 실제 분석 실행 → 저장 → 반환
@@ -539,6 +549,8 @@ async def ai_permit_analysis(
             tenant_id=str(getattr(current_user, "tenant_id", "") or "") or None,
             pnu=req.pnu or None, address=addr,
             source="permit_ai",
+            # ★변동감지 표준키(input_signature/signature_parts) 재료 — 단일 소유자(ledger_adapters)에서 조합.
+            parcel_count=len(req.parcels or []) or 1, use_llm=req.use_llm,
         )
         result = attach_ledger_hash(result, wb)
     except Exception:  # noqa: BLE001 — 원장 적재 실패해도 분석 결과 무손상

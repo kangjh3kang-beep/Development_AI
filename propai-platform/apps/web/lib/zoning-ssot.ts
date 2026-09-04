@@ -22,7 +22,12 @@ import type {
 } from "@/store/useProjectContextStore";
 
 // 응답 타입은 느슨하게(필요한 키만 옵셔널 정의). 모든 키가 옵셔널 — 구버전/부분 응답 무손상.
-type FarRange = { min_pct?: number | null; max_pct?: number | null } | null | undefined;
+type FarRange = {
+  min_pct?: number | null;
+  max_pct?: number | null;
+  // 상·하한이 같은 한 값(범위 미산출) — 백엔드 potential_far_range 계약.
+  is_collapsed?: boolean | null;
+} | null | undefined;
 
 type EffectiveFar = {
   national_far_pct?: number | null;
@@ -173,6 +178,7 @@ export function mapUpzoning(resp: unknown): Partial<SiteAnalysisData> {
   const patch: Partial<SiteAnalysisData> = {};
   if (resp == null || typeof resp !== "object") {
     patch.upzoningPotentialFarHigh = null;
+    patch.upzoningFarRangeCollapsed = null;
     patch.upzoningFeasibilityTop = null;
     patch.upzoningScenarios = null;
     return patch;
@@ -183,6 +189,12 @@ export function mapUpzoning(resp: unknown): Partial<SiteAnalysisData> {
   const range = r.upzoning?.potential_far_range ?? r.potential_far_range;
   patch.upzoningPotentialFarHigh =
     range != null && typeof range === "object" ? (num(range.max_pct) ?? null) : null;
+  // ★그 상한이 '한 값뿐'인지도 같이 나른다 — 이 신호가 없으면 화면이 단일 경로 예상치를
+  //   "도달 가능한 최댓값"으로 단정하게 된다(범위 붕괴 정직표기).
+  patch.upzoningFarRangeCollapsed =
+    range != null && typeof range === "object" && typeof range.is_collapsed === "boolean"
+      ? range.is_collapsed
+      : null;
 
   // 최상 가능성 등급 — upzoning.scenarios 우선, 동봉된 upzoning_scenarios 폴백. 없으면 null.
   patch.upzoningFeasibilityTop =
@@ -281,6 +293,7 @@ export function guardMultiParcelRich(
   delete out.farBasis;
   // 단일유래 종상향 — 통합 면적 기준 integrated.upzoning이 진실원천(대표필지 과소판정 차단).
   delete out.upzoningPotentialFarHigh;
+  delete out.upzoningFarRangeCollapsed;
   delete out.upzoningFeasibilityTop;
   delete out.upzoningScenarios;
   // 단일유래 접도 도로폭 — 대표 1필지의 도로접면이라 통합부지 접도와 무관(시니어 심의 접도 CSP 오염 차단).
@@ -309,29 +322,108 @@ type ResolvableSite = {
   nationalFarPct?: number | null;
   nationalBcrPct?: number | null;
   zoneCode?: string | null;
+  // 4번째 계층(ordinance) + 다필지 판정용(아래 resolveFarWithBasis 배경 설명 참조).
+  ordinance?: { effectiveFar?: number | null; effectiveBcr?: number | null } | null;
+  parcels?: unknown[] | null;
 } | null | undefined;
 
+/* ── 용적률/건폐율 리졸버 + '근거(basis)' 동봉(KPI 정직 라벨용) ──
+ *
+ * 배경(무라벨 표시 버그): MetricBar가 `designData?.far ?? resolveFarPct(siteAnalysis)`로 폴백해
+ *   부지값을 보여줄 때, 그 값이 "종상향·조례 반영 실효(effective)"인지 "용도지역 법정상한(national)"
+ *   인지 구분 없이 숫자만 표기했다. 그 결과 자연녹지(법정 100%)를 그대로 100%로 보여 주면서, 옆
+ *   카드(층수클램프 실효 80%)와 모순처럼 읽혔다. 이 리졸버가 값과 함께 **어느 계층에서 왔는지**를
+ *   반환해, 소비처가 "법정상한" vs "실효"를 정직하게 배지로 구분 표기하게 한다(SSOT — 값과 근거를
+ *   한 곳에서 함께 도출). 무목업: 어떤 값도 없으면 null.
+ */
+export type LimitBasis = "integrated" | "effective" | "national" | "ordinance";
+
+/* ── 4번째 계층(ordinance) — DesignStudio 매스카드 전용 국소 폴백을 SSOT로 승격 ──
+ *
+ * 배경(부분 반영 버그): DesignStudio.tsx의 seedEffectiveFarPct/seedEffectiveBcrPct(지역 실측
+ *   전형 매스 비교 카드 전용)만 `siteAnalysis.ordinance.effectiveFar/effectiveBcr`를 3순위
+ *   폴백으로 봤고, 이 공용 리졸버(자동계산 칩·법규 체크리스트·MetricBar·CAD/BIM 등 전역 소비처)는
+ *   보지 않았다. 그 결과 자연녹지 실효 80%(구조상한)가 그 카드에만 반영되고 나머지 화면은
+ *   법정 100%로 조용히 낙하했다(같은 화면 모순 표기). 이 계층을 리졸버에 흡수해 모든 소비처가
+ *   같은 값을 보게 한다(SSOT 일원화 — 국소 중복 폴백은 DesignStudio.tsx에서 제거).
+ *
+ * ★다필지 오염 가드(위임 관계 명시): ordinance는 GlobalAddressSearch.tsx가 매 주소검색마다
+ *   대표 1필지 유래로 기록하는데(다필지 가드 없음 — 그 파일은 타 세션 claim이라 본 작업에서는
+ *   손대지 않는다), site-analysis/page.tsx의 승격 경로는 이미 다필지를 가드하지만 두 쓰기
+ *   경로가 공존해 완전 차단이 아니다. 근본적 쓰기측 오염 차단은 별도 세션 소관이므로, 이
+ *   리졸버(읽기측)에서 방어적으로 다필지(parcels.length>1)면 이 계층을 건너뛴다(PR#302 원칙 —
+ *   대표필지 값이 통합값을 이기지 못하게). 단일필지에서만 활성화(무회귀).
+ */
+function isMultiParcelSite(site: ResolvableSite): boolean {
+  return !!site && Array.isArray(site.parcels) && site.parcels.length > 1;
+}
+
+/** 실효 용적률(%) + 근거 계층. 통합(blended) > 단일 실효 > 법정 상한 > 조례·구조상한 실효 순. 미확보 시 null. */
+export function resolveFarWithBasis(
+  site: ResolvableSite,
+): { value: number; basis: LimitBasis } | null {
+  if (!site) return null;
+  const integrated = num(site.integratedFarEffPct);
+  if (integrated != null) return { value: integrated, basis: "integrated" };
+  const effective = num(site.effectiveFarPct);
+  if (effective != null) return { value: effective, basis: "effective" };
+  const national = num(site.nationalFarPct);
+  if (national != null) return { value: national, basis: "national" };
+  // 4단계: 조례·구조상한 실효(단일필지만 — 다필지는 대표필지 오염 방지로 건너뜀).
+  //   0은 "미해결 잠정 시드"(OrdinanceData 기본값)일 수 있어 >0만 채택(무목업).
+  if (!isMultiParcelSite(site)) {
+    const ordinanceFar = num(site.ordinance?.effectiveFar);
+    if (ordinanceFar != null && ordinanceFar > 0) return { value: ordinanceFar, basis: "ordinance" };
+  }
+  return null;
+}
+
+/** 실효 건폐율(%) + 근거 계층. resolveFarWithBasis와 동형(통합 > 실효 > 법정 > 조례실효). 미확보 시 null. */
+export function resolveBcrWithBasis(
+  site: ResolvableSite,
+): { value: number; basis: LimitBasis } | null {
+  if (!site) return null;
+  const integrated = num(site.integratedBcrEffPct);
+  if (integrated != null) return { value: integrated, basis: "integrated" };
+  const effective = num(site.effectiveBcrPct);
+  if (effective != null) return { value: effective, basis: "effective" };
+  const national = num(site.nationalBcrPct);
+  if (national != null) return { value: national, basis: "national" };
+  if (!isMultiParcelSite(site)) {
+    const ordinanceBcr = num(site.ordinance?.effectiveBcr);
+    if (ordinanceBcr != null && ordinanceBcr > 0) return { value: ordinanceBcr, basis: "ordinance" };
+  }
+  return null;
+}
+
+/** 근거 계층 → 정직 라벨. 법정상한만 "법정상한", 조례·구조상한 실효는 별도 라벨, 나머지(통합/실효)는 "실효"(무날조). */
+export function limitBasisLabel(basis: LimitBasis): string {
+  if (basis === "national") return "법정상한";
+  if (basis === "ordinance") return "조례·구조상한 실효";
+  return "실효";
+}
+
 // 실효 용적률(%) — 통합(blended) > 단일 실효 > 법정 상한 순. 미확보 시 undefined.
+//   근거가 필요하면 resolveFarWithBasis를 쓴다(이 함수는 값만·하위호환).
 export function resolveFarPct(site: ResolvableSite): number | undefined {
-  if (!site) return undefined;
-  return (
-    num(site.integratedFarEffPct) ??
-    num(site.effectiveFarPct) ??
-    num(site.nationalFarPct)
-  );
+  return resolveFarWithBasis(site)?.value;
 }
 
 // 실효 건폐율(%) — resolveFarPct와 동형(통합 > 실효 > 법정). 미확보 시 undefined.
 export function resolveBcrPct(site: ResolvableSite): number | undefined {
-  if (!site) return undefined;
-  return (
-    num(site.integratedBcrEffPct) ??
-    num(site.effectiveBcrPct) ??
-    num(site.nationalBcrPct)
-  );
+  return resolveBcrWithBasis(site)?.value;
 }
 
-// 대표(우세) 용도지역 — 통합 dominant_zone 우선, 없으면 단일 zoneCode. 미확보 시 null.
+// 대표 용도지역 — `dominantZoneCode` 가 있으면 그것, 없으면 `zoneCode`. 미확보 시 null.
+//
+// ★이름이 "dominant" 지만 **면적 우세를 보증하지 않는다**(2026-08-24 정정). 종전에는
+//   `dominantZoneCode` 자체가 선택 시점에 **첫 필지 값**으로 채워져 있어, 이 함수가
+//   돌려주는 값이 면적 우세와 **반대**인 경우가 실재했다(자연녹지 79% vs 보전관리 21%
+//   인데 보전관리를 반환). 지금은 혼재 선택이 그 필드를 **비우므로** 이 함수는 혼재에서
+//   `zoneCode`(=대표 필지)를 돌려준다 — **대표값이라는 사실은 참이다**.
+//   ★진짜 면적 우세는 서버 `_aggregate_integrated_zoning.dominant_zone` 뿐이고,
+//     그것은 동률(±5%)·규제성격 상이면 "mixed_review_required" 로 **판정을 보류**한다.
+//     이 함수는 그 판정을 대신하지 않는다.
 export function resolveDominantZone(site: ResolvableSite): string | null {
   if (!site) return null;
   return str(site.dominantZoneCode) ?? str(site.zoneCode);
@@ -495,7 +587,48 @@ export const DEVELOPABILITY_LABEL: Record<string, string> = {
   CONDITIONAL: "조건부 가능",
   // 임야/산지 — 공식 산림데이터 미확보로 확정 판단 불가(참고용 예비안만). 원 enum 노출 금지.
   NEEDS_OFFICIAL_SURVEY: "공식 산림조사 필요(참고안 — 확정 아님)",
+  // 접도·도로 — 법정 접도 근거를 데이터로 확정할 수 없어 관할 확인을 전제로만 진행.
+  REQUIRES_AUTHORITY_CONFIRMATION: "관할 확인 필요(접도 근거 미확정)",
+  // 지목·용도지구 미확인 — '제약 유무를 못 봤다'는 뜻이지 '제약 없음'이 아니다.
+  UNKNOWN: "판정 불가(정보 미확인)",
   PRECONDITION: "선행절차 필요",
   RESTRICTED: "제한적",
   BLOCKED: "개발 불가",
 };
+
+/**
+ * 개발가능성 게이트 → 사용자 라벨. **미등재 코드는 이름을 지어내지 않는다.**
+ *
+ * 등재된 값이면 한국어 라벨을, 아니면 원문을 그대로 돌려주고 `known:false`로 알린다.
+ * 소비처는 이 플래그를 보고 "설명이 아직 준비되지 않았다"를 함께 표기해야 한다 —
+ * 원문을 조용히 뿌리면 사용자가 `NEEDS_OFFICIAL_SURVEY` 같은 코드를 그대로 보게 되고,
+ * 그럴듯한 말을 지어내면 없는 의미를 만든다. 둘 다 하지 않는다.
+ */
+export function developabilityLabel(code?: string | null): { text: string; known: boolean } {
+  const key = String(code ?? "").trim().toUpperCase();
+  if (!key) return { text: "", known: false };
+  const label = DEVELOPABILITY_LABEL[key];
+  return label ? { text: label, known: true } : { text: key, known: false };
+}
+
+/**
+ * 화면에 **그대로 넣을 수 있는** 개발가능성 문자열.
+ *
+ * ★왜 필요한가(2026-08-05 실측): 소비처 여러 곳이 `DEVELOPABILITY_LABEL[code] ?? code` 로
+ *   맵을 직접 뒤지고 있었다. 지금은 맵이 등급 전부를 덮어 누수가 없지만, **등급이 하나만
+ *   늘어도 그 순간 여러 화면이 동시에 `NEEDS_OFFICIAL_SURVEY` 같은 원시 코드를 뿌린다.**
+ *   같은 폴백 문장을 소비처마다 다시 쓰게 두지 않으려고 여기 한 곳에 둔다.
+ *
+ * 미등재 코드는 이름을 지어내지 않되 원문만 던지지도 않는다 — "(설명 준비 중)"을 붙여
+ * **아직 설명이 준비되지 않았다는 사실**을 함께 말한다(무날조 + 정직 표기).
+ *
+ * ※`severity_label` 같은 **백엔드가 준 다른 한국어 라벨로 폴백하는 소비처**는 이 함수를
+ *   쓰지 않아도 된다(land-profile·PermitAiWorkspaceClient·AutoZoningBadge). 그쪽은 미등재
+ *   시 원시 코드가 아니라 더 구체적인 문구로 떨어지므로 이미 안전하다 — 바꾸면 오히려
+ *   덜 구체적인 문구가 된다.
+ */
+export function developabilityText(code?: string | null): string {
+  const { text, known } = developabilityLabel(code);
+  if (!text) return "";
+  return known ? text : `${text} (설명 준비 중)`;
+}

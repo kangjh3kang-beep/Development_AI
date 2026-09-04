@@ -289,11 +289,38 @@ async def buildable_envelope(req: EnvelopeRequest):
         far_pct = result.get("far_pct")
         bcr_pct = result.get("bcr_pct")
         dc_m = result.get("daylight_ceiling_m")
+        # ★한도의 **출처**를 라벨에 반영한다 — 호출자가 실효 한도를 넘겼는데 "법정"이라
+        #   부르면 **틀린 법령 인용**이 된다(라이브 실측 2026-08-24: 일반상업 3필지 혼재
+        #   프로젝트에서 `법정 건폐율 = 25.7%` 로 표시됐다. 일반상업 법정 건폐율은 80% 이고,
+        #   25.7% 는 같은 화면이 "통합 건폐/용적(**실효**)"이라 부르는 면적가중값이다).
+        #
+        #   근거가 **없는 것**보다 **틀린 근거**가 나쁘다 — 읽는 사람이 조문을 확인하러 갔다가
+        #   숫자가 안 맞으면 그 뒤의 모든 값을 의심하게 된다.
+        #
+        #   판정은 추측하지 않는다: 요청에 한도가 실려 왔으면(`bcr_limit_pct`/`far_limit_pct`)
+        #   그것은 호출자가 계산한 **적용(실효) 한도**이고, 없으면 서비스가 용도지역 표에서
+        #   가져온 **법정 상한**이다(solar_envelope `legal.get("max_bcr_pct")`).
+        _bcr_from_caller = req.bcr_limit_pct is not None
+        _far_from_caller = req.far_limit_pct is not None
         result.setdefault("evidence", [
             {"label": "용적률 허용 연면적", "value": f"{round(result.get('far_gfa_sqm') or 0):,}㎡",
-             "basis": f"대지면적 × 용적률 {far_pct if far_pct is not None else '—'}%", "legal_ref_key": "far_limit"},
-            {"label": "법정 건폐율", "value": f"{bcr_pct if bcr_pct is not None else '—'}%",
-             "basis": "용도지역 안에서의 건폐율(국토계획법 시행령 제84조)", "legal_ref_key": "bcr_limit"},
+             "basis": (
+                 f"대지면적 × 적용 용적률 {far_pct if far_pct is not None else '—'}%"
+                 " — 조례·다필지 반영 실효값(법정 상한이 아님)"
+                 if _far_from_caller
+                 else f"대지면적 × 법정 용적률 {far_pct if far_pct is not None else '—'}%"
+             ),
+             # ★실효값에는 법령 링크를 달지 않는다 — 그 조문은 이 숫자를 만들지 않는다.
+             **({} if _far_from_caller else {"legal_ref_key": "far_limit"})},
+            {"label": "적용 건폐율(실효)" if _bcr_from_caller else "법정 건폐율",
+             "value": f"{bcr_pct if bcr_pct is not None else '—'}%",
+             "basis": (
+                 "조례·다필지 반영 실효 건폐율 — 법정 상한이 아니며,"
+                 " 법정 상한은 국토계획법 시행령 제84조가 정한다"
+                 if _bcr_from_caller
+                 else "용도지역 안에서의 건폐율(국토계획법 시행령 제84조)"
+             ),
+             **({} if _bcr_from_caller else {"legal_ref_key": "bcr_limit"})},
             {"label": "일조 규제 높이 한도", "value": (f"{dc_m}m" if dc_m is not None else "—"),
              "basis": "정북방향 인접대지경계선 일조 사선제한(건축법 제61조·시행령 제86조)",
              "legal_ref_key": "daylight_height_dec"},
