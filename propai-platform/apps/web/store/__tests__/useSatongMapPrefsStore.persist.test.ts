@@ -11,6 +11,7 @@ import { accountScopedKey } from "@/lib/account-scope";
 import { satongSelectionLabelsVisible } from "@/lib/satong-map-layers";
 import {
   SATONG_MAP_PREFS_STORE_KEY,
+  defaultEnabledLayerIds,
   defaultSatongMapControls,
   useSatongMapPrefs,
 } from "@/store/useSatongMapPrefsStore";
@@ -19,7 +20,10 @@ const KEY = accountScopedKey(SATONG_MAP_PREFS_STORE_KEY);
 
 beforeEach(() => {
   window.localStorage.clear();
-  useSatongMapPrefs.setState({ controlsByLayer: defaultSatongMapControls() });
+  useSatongMapPrefs.setState({
+    controlsByLayer: defaultSatongMapControls(),
+    enabledLayerIds: defaultEnabledLayerIds(),
+  });
 });
 
 describe("기본값 — 사용자 요구 「기본은 나타나도록」", () => {
@@ -262,8 +266,80 @@ describe("★★하이드레이션 identity — 저장분이 없으면 **참조�
   });
 });
 
+describe("★★레이어 활성 상태 — 사용자 신고의 **남은 절반**", () => {
+  const ids = () => useSatongMapPrefs.getState().enabledLayerIds;
+
+  it("기본은 지적도 하나(첫 방문 = 종전과 동일 · 회귀 아님)", () => {
+    expect(ids()).toEqual(["cadastre"]);
+  });
+
+  it("★계약 ① — `cadastre` 는 꺼지지 않는다(기반 레이어)", () => {
+    useSatongMapPrefs.getState().toggleLayerEnabled("cadastre");
+    expect(ids()).toContain("cadastre");
+  });
+
+  it("★★계약 ② identity — **변화가 없으면 같은 참조**(«깜빡임의 근원» 방어 이식)", () => {
+    const before = ids();
+    useSatongMapPrefs.getState().ensureLayerEnabled("cadastre"); // 이미 켜져 있다
+    expect(ids()).toBe(before); // ★같은 참조
+    useSatongMapPrefs.getState().toggleLayerEnabled("cadastre"); // 못 끈다 = 변화 없음
+    expect(ids()).toBe(before);
+  });
+
+  it("★대칭 — **변화가 있으면 다른 참조**(한쪽만 재면 「항상 같은 참조」가 만점)", () => {
+    const before = ids();
+    useSatongMapPrefs.getState().ensureLayerEnabled("zoning");
+    expect(ids()).not.toBe(before);
+    expect(ids()).toContain("zoning");
+  });
+
+  it("켜고 끄기가 대칭이다", () => {
+    useSatongMapPrefs.getState().toggleLayerEnabled("poi");
+    expect(ids()).toContain("poi");
+    useSatongMapPrefs.getState().toggleLayerEnabled("poi");
+    expect(ids()).not.toContain("poi");
+  });
+
+  it("★★영속 — 켠 레이어가 재수화 후에도 살아 있다", async () => {
+    window.localStorage.setItem(
+      KEY,
+      JSON.stringify({ state: { enabledLayerIds: ["cadastre", "zoning"] }, version: 1 }),
+    );
+    await useSatongMapPrefs.persist.rehydrate();
+    expect(ids()).toEqual(["cadastre", "zoning"]);
+  });
+
+  it("★★대칭 — **끈 것도 꺼진 채로** 돌아온다(사용자 신고 그 자체)", async () => {
+    // 종전에는 새로고침하면 무조건 기본으로 돌아갔다.
+    window.localStorage.setItem(
+      KEY,
+      JSON.stringify({ state: { enabledLayerIds: ["cadastre"] }, version: 1 }),
+    );
+    await useSatongMapPrefs.persist.rehydrate();
+    expect(ids()).toEqual(["cadastre"]);
+    expect(ids()).not.toContain("zoning");
+  });
+
+  it("★저장분은 **그대로 존중**한다 — 기본값과 합치지 않는다(의도된 절충)", async () => {
+    // ★`controlsByLayer` 와 **성질이 다르다**: 여기 담긴 것은 «사용자가 켠 것» 이라,
+    //   기본값과 합치면 사용자가 **끈 레이어가 되살아난다.**
+    //   귀결: 새 레이어가 추가돼도 기존 사용자에게 자동으로 안 켜진다(계획서 §3).
+    window.localStorage.setItem(
+      KEY,
+      JSON.stringify({ state: { enabledLayerIds: ["zoning"] }, version: 1 }),
+    );
+    await useSatongMapPrefs.persist.rehydrate();
+    expect(ids()).toEqual(["zoning"]); // cadastre 가 **자동으로 안 붙는다**
+  });
+
+  it("resetEnabledLayers 가 기본으로 되돌린다", () => {
+    useSatongMapPrefs.getState().ensureLayerEnabled("poi");
+    useSatongMapPrefs.getState().resetEnabledLayers();
+    expect(ids()).toEqual(defaultEnabledLayerIds());
+  });
+});
+
 describe("★부채 — 초록 안에서 보이게 둔다(§C-13)", () => {
-  it.todo("enabledLayers(레이어를 켰는지 자체)도 영속한다 — 지금은 같은 툴바의 절반만 영속된다");
   it.todo("resetControlsByLayer 를 UI 에 노출한다 — 현재 소비처 0(툴바로 되돌릴 수 있어 막다른 상태는 아니다)");
   it.todo("selected ↔ selected-parcel 어휘 통합 시 저장분 마이그레이션 — migrate 는 지금 통과다");
 });

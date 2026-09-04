@@ -31,6 +31,21 @@ import type { SatongMapLayerState } from "@/lib/satong-map-layers";
  * 실저장키는 `createAccountScopedStorage` 가 `__<uid>` 를 붙여 만든다 → 계정 전환 시 안 섞인다.
  */
 export type SatongMapPrefsState = {
+  /**
+   * 켜져 있는 레이어. ★`Set` 이 아니라 **배열**인 이유: `Set` 은 `JSON.stringify` 로 `{}` 가
+   * 되어 영속되지 않는다. 소비처는 `useMemo` 로 `Set` 을 파생한다(9곳이 `.has()` 를 쓴다).
+   */
+  enabledLayerIds: SatongMapLayerState["enabledLayerIds"];
+  /**
+   * 레이어를 켜고 끈다. ★`cadastre` 는 **기반 레이어라 끄지 않는다**(종전 계약 이식).
+   * ★변화가 없으면 **같은 배열 참조**를 돌려준다 — 그러지 않으면 소비처의 `useMemo` 가
+   *   재계산돼 `mapLayerState` identity 가 바뀌고, 그걸 deps 로 쓰는 오버레이·POI effect 가
+   *   **전량 파괴·재생성**된다(저장소가 «깜빡임의 근원» 이라 적은 그 축).
+   */
+  toggleLayerEnabled: (id: SatongMapLayerState["enabledLayerIds"][number]) => void;
+  /** 켜져 있지 않으면 켠다. ★이미 켜져 있으면 **같은 배열 참조**(종전 조기반환 이식). */
+  ensureLayerEnabled: (id: SatongMapLayerState["enabledLayerIds"][number]) => void;
+  resetEnabledLayers: () => void;
   controlsByLayer: SatongMapLayerState["controlsByLayer"];
   setControlsByLayer: (
     next:
@@ -77,11 +92,36 @@ export function defaultSatongMapControls(): SatongMapLayerState["controlsByLayer
  * persist 이름. 실저장키는 `propai-satong-map-prefs__<uid>`.
  * ★레거시 공유키가 **없다**(신규 스토어) — 그래서 이름 승계 고민이 없다.
  */
+/**
+ * 기본으로 켜져 있는 레이어 — 지적도 하나(종전 `new Set(["cadastre"])` 그대로).
+ * ★`cadastre` 는 기반 레이어라 끄지 못한다(`toggleLayerEnabled` 가 지킨다).
+ */
+export function defaultEnabledLayerIds(): SatongMapLayerState["enabledLayerIds"] {
+  return ["cadastre"];
+}
+
 export const SATONG_MAP_PREFS_STORE_KEY = "propai-satong-map-prefs";
 
 export const useSatongMapPrefs = create<SatongMapPrefsState>()(
   persist(
     (set) => ({
+      enabledLayerIds: defaultEnabledLayerIds(),
+      toggleLayerEnabled: (id) =>
+        set((s) => {
+          const has = s.enabledLayerIds.includes(id);
+          if (has && id === "cadastre") return s; // ★기반 레이어 — 못 끈다(변화 없음 = 같은 참조)
+          return {
+            enabledLayerIds: has
+              ? s.enabledLayerIds.filter((x) => x !== id)
+              : [...s.enabledLayerIds, id],
+          };
+        }),
+      ensureLayerEnabled: (id) =>
+        set((s) =>
+          // ★이미 켜져 있으면 **같은 참조** — 종전 `if (prev.has(layerId)) return prev;` 의 이식.
+          s.enabledLayerIds.includes(id) ? s : { enabledLayerIds: [...s.enabledLayerIds, id] },
+        ),
+      resetEnabledLayers: () => set({ enabledLayerIds: defaultEnabledLayerIds() }),
       controlsByLayer: defaultSatongMapControls(),
       setControlsByLayer: (next) =>
         set((s) => ({
@@ -129,10 +169,24 @@ export const useSatongMapPrefs = create<SatongMapPrefsState>()(
         //   → 저장분이 없으면 **현재 참조를 그대로** 돌려준다. 있으면 그때만 새로 만든다.
         //   ★함수 등 **알려진 키만** 취한다(리뷰 minor 5): `...p` 는 손으로 편집된 저장분의
         //     아무 키나 덮어써서 액션까지 갈아 끼울 수 있었다.
-        if (!p.controlsByLayer) return current;
+        const hasControls = !!p.controlsByLayer;
+        const hasLayers = Array.isArray(p.enabledLayerIds);
+        // ★저장분이 아무것도 없으면 **현재 참조 그대로**(2차 리뷰 MAJOR-1 — hydrate 는 저장분이
+        //   없어도 merge+set 을 무조건 부르므로, 여기서 새 객체를 만들면 **전 사용자**가
+        //   identity 교체를 겪는다).
+        if (!hasControls && !hasLayers) return current;
         return {
           ...current,
-          controlsByLayer: { ...defaultSatongMapControls(), ...p.controlsByLayer },
+          // ★`controlsByLayer` 는 **레이어 단위로 기본값 위에 덮는다** — 새 레이어가 추가되면
+          //   기존 사용자도 그 기본 컨트롤을 받아야 한다(«capacity 키 부재» 사고의 영속판 방지).
+          ...(hasControls
+            ? { controlsByLayer: { ...defaultSatongMapControls(), ...p.controlsByLayer } }
+            : {}),
+          // ★★`enabledLayerIds` 는 **성질이 다르다** — 여기 담긴 것은 «사용자가 켠 것» 이다.
+          //   기본값과 합치면 사용자가 **끈 레이어가 되살아난다.** 그래서 **저장분을 그대로**
+          //   존중한다. 귀결: 새 레이어가 추가돼도 기존 사용자에게 **자동으로 켜지지 않는다.**
+          //   그 절충을 계획서 §3 에 적었고 아래 락이 고정한다.
+          ...(hasLayers ? { enabledLayerIds: p.enabledLayerIds } : {}),
         };
       },
     },
