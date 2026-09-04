@@ -56,7 +56,12 @@ vi.mock("@/lib/api-client", async (importOriginal) => {
 
 
 import { accountScopedKey } from "@/lib/account-scope";
-import { SATONG_MAP_PREFS_STORE_KEY, defaultSatongMapControls, useSatongMapPrefs } from "@/store/useSatongMapPrefsStore";
+import {
+  SATONG_MAP_PREFS_STORE_KEY,
+  defaultEnabledLayerIds,
+  defaultSatongMapControls,
+  useSatongMapPrefs,
+} from "@/store/useSatongMapPrefsStore";
 
 const KEY = accountScopedKey(SATONG_MAP_PREFS_STORE_KEY);
 
@@ -68,7 +73,11 @@ describe("컴포넌트 → 저장 배선", () => {
   beforeEach(() => {
     // ★순서가 중요하다 — `setState` 자체가 persist 쓰기를 예약하므로 **뒤에** 지운다.
     //   (처음에 반대로 썼다가 음성 대조군이 «렌더만 해도 저장됐다» 로 깨졌다.)
-    useSatongMapPrefs.setState({ controlsByLayer: defaultSatongMapControls() });
+    useSatongMapPrefs.setState({
+      controlsByLayer: defaultSatongMapControls(),
+      enabledLayerIds: defaultEnabledLayerIds(),
+      enabledLayersCustomized: false,
+    });
     window.dispatchEvent(new Event("pagehide"));
     window.localStorage.clear();
   });
@@ -92,6 +101,41 @@ describe("컴포넌트 → 저장 배선", () => {
     const raw = window.localStorage.getItem(KEY);
     expect(raw, "화면 클릭이 저장까지 닿지 않았다").toBeTruthy();
     expect(JSON.parse(raw!).state.controlsByLayer.cadastre).not.toContain("selected");
+  });
+
+  it("★★화면에서 **레이어를 켜면** 계정별 키에 그 상태가 저장된다(적대 리뷰 MAJOR-1)", () => {
+    // ★리뷰 실측: 셸의 파생 Set·`mapLayerState`·memo deps 를 끊는 변이 3종이
+    //   이 PR 의 락 **4파일 63건을 전부 통과**했다. 스토어는 완벽히 영속하는데 셸이
+    //   그것을 무시해도 초록이었다 — «부른다» 를 잠그면 아무것도 안 잠긴다.
+    //   → 형제 케이스(컨트롤)와 **같은 모양**으로 레이어 활성 축을 태운다.
+    render(<SatongMapShell locale="ko" />);
+    openLayerPopover();
+    fireEvent.click(screen.getByRole("button", { name: "용도지역" }));
+
+    // 꺼짐="지도에 표시" · 켜짐="지도 표시 중" — 둘 다 잡는다.
+    const enableBtn = screen.getByRole("button", { name: /지도.*표시/ });
+    // ★이 버튼은 `aria-pressed` 를 노출한다(컨트롤 버튼과 달리) — 화면 상태로 대조군을 잡는다.
+    expect(enableBtn).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(enableBtn);
+    expect(enableBtn).toHaveAttribute("aria-pressed", "true");
+
+    // ①배선: 클릭이 스토어에 닿았다
+    expect(useSatongMapPrefs.getState().enabledLayerIds).toContain("zoning");
+    // ②영속: 프로덕션 플러시 경로를 태운다
+    window.dispatchEvent(new Event("pagehide"));
+    const raw = window.localStorage.getItem(KEY);
+    expect(raw, "화면 클릭이 저장까지 닿지 않았다").toBeTruthy();
+    const st = JSON.parse(raw!).state;
+    expect(st.enabledLayerIds).toContain("zoning");
+    // ③«골랐다» 표시 — 이게 없으면 재수화가 저장분을 무시한다(MAJOR-3 봉합)
+    expect(st.enabledLayersCustomized).toBe(true);
+
+    // ★★④**그 값이 지도까지 내려간다**(리뷰 변이 B: `mapLayerState` 를 끊어도 통과했다).
+    //   스토어·저장소만 보면 «스토어를 잠갔다» 일 뿐 «화면에 닿는다» 가 아니다.
+    const lastMapProps = capturedMapProps.at(-1) as { layerState?: { enabledLayerIds?: string[] } };
+    expect(lastMapProps?.layerState?.enabledLayerIds, "지도에 layerState 가 안 내려간다").toContain(
+      "zoning",
+    );
   });
 
   it("★음성 대조군 — 아무것도 안 누르면 저장하지 않는다", () => {
