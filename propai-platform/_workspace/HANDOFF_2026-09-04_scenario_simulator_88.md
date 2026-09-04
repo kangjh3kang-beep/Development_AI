@@ -112,10 +112,31 @@ grep -n 'dominant_zone = "mixed_review_required"' propai-platform/apps/api/app/s
 grep -rn "validate_withheld_pair" propai-platform/apps/api/app --include=*.py | grep -v withheld.py
 ```
 ★검증기는 있는데 **`special_parcel`·`scenario_simulator` 가 그 검사를 안 탄다.**
-**소비처 6곳 파급**이라 별건으로 남겼다. 검증기를 배선하면 위반이 드러난다.
+**소비처 6곳 파급**이라 별건으로 남겼다.
+
+★★**정정(09 접지 실측 2026-09-05) — 「검증기를 배선하면 된다」는 범위가 다르다.**
+진짜 뿌리는 **`select_primary_zone` 이 사유를 이미 내는데 소비처가 안 읽는 것**이다:
+
+    select_primary_zone([])  →  zone=''  basis='none'      ← 용도지역 **조회 실패**
+    _is_residential('') = False   _is_commercial('') = False
+    → :1870 `not res and not com` = True
+    ⇒ **「모름」이 「녹지·공업 등 비주거·비상업 용도지역」과 같은 답을 받는다**
+    ⇒ 주거 시나리오 **7종이 사유 없이 조용히 빠진다**
+    (판정 지점 9곳: 1628·1641·1661·1717·1739·1750·1772·1778·1789 · 정의 467·471)
+
+★**`#972` 는 이 축을 못 덮는다**(그 브랜치에서 직접 태워 확인):
+
+    혼재 보류(#972 대상)   21종 · 추진가능 16   ← 회복(`zones` 에 주거가 있으므로)
+    ★조회 실패(zone='')    20종 · 추진가능 12   ← **여전히 깨짐**(pool 이 통째로 빔)
+
+`#972` 가 세운 것은 **「보류 ≠ 불가」**, 이 축은 **「모름 ≠ 아님」** — **같은 규율의 다른 축**이다.
+소유: `development-ai-09`(2026-09-05 claim).
 
 ### ④ 세 번째 `primary_zone` 구현
-`integrated_recommender/orchestrator.py:453 _primary_zone` — **순수 argmax**(혼재 처리 없음)이고
+`app/services/development/integrated_recommender/orchestrator.py:453 _primary_zone`
+★**초판은 경로를 `integrated_recommender/orchestrator.py` 로 적었는데 그건 없는 경로다**(09 정정).
+**인계서의 틀린 경로는 다음 사람에게 「없다」로 읽힌다.**
+— **순수 argmax**(혼재 처리 없음)이고
 그 값이 `development_method_interpreter.py:59` 의 **LLM 프롬프트**로 들어간다.
 ★즉 «형제와 일치시켰다» 는 **3개 구현 중 2개**만 정렬한 것이다.
 
