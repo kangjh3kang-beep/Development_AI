@@ -39,7 +39,7 @@ vi.mock("@/lib/api-client", () => ({
 import { DevelopmentScenarioCard } from "@/components/common/DevelopmentScenarioCard";
 // ★기대 문구를 **테스트에 적지 않고 계약에서 파생**시킨다. 여기에 한글을 다시 적으면
 //   그 사본이 계약과 갈릴 때 **테스트가 옛 문구를 정답으로 못 박는다**.
-import { ABSENT_REASONS } from "@/lib/withheld/absent-reasons";
+import { ABSENT_CODES, ABSENT_REASONS, ABSENT_SHORT } from "@/lib/withheld/absent-reasons";
 
 const ADDR = "서울특별시 동작구 상도동 211-376";
 const ZONE = "제2종일반주거지역";
@@ -76,14 +76,26 @@ async function runCard() {
 }
 
 describe("보류 사유 도달 — `primary_zone_absent`", () => {
-  it("★보류면 **왜** 보류인지가 화면에 뜬다(종전에는 「용도미상」만 떴다)", async () => {
-    reply({ primary_zone: null, primary_zone_basis: "ambiguous", primary_zone_absent: "ambiguous" });
+  // ★**양성 방향도 어휘 전수**다. 첫 판은 `ambiguous` 하나만 태웠고, 그래서 툴팁에 박힌
+  //   `ambiguous` 전용 산문이 **7종 전부에 붙는** 결함을 못 봤다(적대 리뷰 MEDIUM-1).
+  //   *"이 단언이 초록일 때 **반대로 틀린 구현**도 초록인가"* — 한 코드만 보면 초록이었다.
+  it.each(ABSENT_CODES)("★보류(%s)면 **왜** 보류인지가 화면에 뜬다 — 칩·툴팁이 서로 모순되지 않는다", async (code) => {
+    reply({ primary_zone: null, primary_zone_basis: code, primary_zone_absent: code });
     await runCard();
 
-    // 계약에서 파생한 문구 — 테스트가 문구를 지어내지 않는다.
-    expect(await screen.findByText(ABSENT_REASONS.ambiguous)).toBeTruthy();
+    // 칩은 짧은 라벨 — 계약에서 파생한다(테스트가 문구를 지어내지 않는다).
+    const chip = await screen.findByText(ABSENT_SHORT[code]);
+    // ★툴팁은 **같은 코드의** 긴 문구여야 한다. 여기가 종전에 `ambiguous` 산문으로 고정돼
+    //   `source_unavailable` 일 때 «조회 못 함» 옆에서 «판정 안 함» 이라 단정했다.
+    expect(chip.getAttribute("title")).toBe(ABSENT_REASONS[code]);
+    // ★다른 코드의 문구가 새어 들어오지 않는다(한 사유를 다른 사유의 이름으로 부르지 않는다).
+    for (const other of ABSENT_CODES) {
+      if (other === code) continue;
+      expect(chip.getAttribute("title"), `${code} 칩이 ${other} 문구를 달았다`)
+        .not.toBe(ABSENT_REASONS[other]);
+    }
     // ★raw 코드가 사용자에게 맨몸으로 나가지 않는다(이 모듈군의 존재 이유).
-    expect(document.body.textContent ?? "").not.toContain("ambiguous");
+    expect(document.body.textContent ?? "").not.toContain(code);
     // 값 자리는 종전 폴백 그대로다 — 사유는 **별도 칩**이지 이름 대체가 아니다.
     expect(screen.getAllByText("용도미상").length).toBeGreaterThan(0);
   });
@@ -95,8 +107,10 @@ describe("보류 사유 도달 — `primary_zone_absent`", () => {
     expect(screen.getAllByText(ZONE).length).toBeGreaterThan(0);
     expect(screen.queryByText("용도미상")).toBeNull();
     // ★어휘 **전체**를 훑는다 — 「ambiguous 만 안 뜬다」는 목록형이라 상한이 된다.
-    for (const prose of Object.values(ABSENT_REASONS)) {
-      expect(screen.queryByText(prose), `정상 화면에 보류 사유가 떴다: ${prose}`).toBeNull();
+    //   긴 문구·짧은 라벨 **양쪽** 축을 본다(한 축만 보면 다른 축으로 샌다).
+    for (const code of ABSENT_CODES) {
+      expect(screen.queryByText(ABSENT_REASONS[code]), `정상 화면에 사유가 떴다: ${code}`).toBeNull();
+      expect(screen.queryByText(ABSENT_SHORT[code]), `정상 화면에 짧은 라벨이 떴다: ${code}`).toBeNull();
     }
   });
 
@@ -106,8 +120,9 @@ describe("보류 사유 도달 — `primary_zone_absent`", () => {
 
     expect(screen.getAllByText("용도미상").length).toBeGreaterThan(0);
     expect(document.body.textContent ?? "").not.toContain("zzz_not_in_vocabulary");
-    for (const prose of Object.values(ABSENT_REASONS)) {
-      expect(screen.queryByText(prose)).toBeNull();
+    for (const code of ABSENT_CODES) {
+      expect(screen.queryByText(ABSENT_REASONS[code])).toBeNull();
+      expect(screen.queryByText(ABSENT_SHORT[code])).toBeNull();
     }
   });
 });

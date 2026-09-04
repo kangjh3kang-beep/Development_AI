@@ -62,6 +62,18 @@ export interface DominantZoneDisplay {
    *   섞으면 호출부가 문자열을 다시 쪼개게 되고, 그 쪼개기가 다음 결함의 자리가 된다.
    */
   reason?: string;
+  /**
+   * 같은 사유의 **짧은 형태**(칩 안에 들어갈 크기). `reason` 과 **항상 짝**으로 나온다.
+   *
+   * ★왜 둘 다 필요한가(적대 리뷰 2026-09-04 · MEDIUM-1): 첫 봉합은 칩에 긴 문구를 넣고
+   *   툴팁에는 **`ambiguous` 전용 산문**(*"용도지역을 하나로 판정하지 않았습니다…"*)을
+   *   **조건 없이** 붙였다. 그런데 `reason` 은 **닫힌 어휘 7종 전부**에서 붙으므로,
+   *   `source_unavailable`(원천 조회 실패)일 때 칩과 툴팁이 **서로 모순**됐다 —
+   *   *"조회하지 못했습니다"* 옆에서 툴팁이 *"판정하지 않았습니다"* 라고 **단정**한다.
+   *   ★내가 고친다고 선언한 결함 클래스(한 사유를 다른 사유의 이름으로 부름)를
+   *     **내 신규 코드가 재발**시킨 것이다. → 두 형태를 **둘 다 코드에서 파생**시킨다.
+   */
+  reasonShort?: string;
 }
 
 /**
@@ -96,7 +108,12 @@ export function formatDominantZone(
     //   `dataAbsentReason` 과 같은 규율). 값이 있는데 사유가 붙어 있으면 그건 백엔드의
     //   계약 위반이고, `validate_withheld_pair` 가 **거기서** 잡을 일이지 화면이 덮을 일이 아니다.
     const reason = resolveAbsentLabel(absent);
-    return reason ? { label: fallback, withheld: true, reason } : { label: fallback, withheld: true };
+    const reasonShort = resolveAbsentLabel(absent, { variant: "short" });
+    // ★둘은 **같은 코드에서** 나오므로 함께 있거나 함께 없다. 한쪽만 붙는 상태를 만들지 않는다
+    //   — 호출부가 «짧은 게 없으면 긴 걸 쓰자» 같은 폴백을 지어내기 시작하는 자리다.
+    return reason && reasonShort
+      ? { label: fallback, withheld: true, reason, reasonShort }
+      : { label: fallback, withheld: true };
   }
   return { label: trimmed, withheld: false };
 }

@@ -55,12 +55,6 @@ def _fmt_won_man(v: Any) -> str:
 #: 보류 사유 → 문서에 찍을 짧은 말. ★`"—"` 하나로 뭉개지 않는다 —
 #: 면적 결측 열이 이미 `"—"` 를 쓰므로, 같은 글리프를 쓰면 「해제라 해당 없음」과
 #: 「원천이 가림」이 구별되지 않는다(이 저장소가 `0㎡ × 0원/㎡` 로 값을 치른 형태).
-_PP_ABSENT_SHORT = {
-    # ★"해제" 금지 — **상태 열이 이미 그 말을 한다**(화면과 같은 이유).
-    "not_applicable": "해당없음",
-    "masked_by_source": "원천미제공",
-    "source_unavailable": "조회실패",
-}
 
 
 def _fmt_per_pyeong(t: dict[str, Any]) -> str:
@@ -71,10 +65,20 @@ def _fmt_per_pyeong(t: dict[str, Any]) -> str:
         #   1만원/평 미만(지방 임야 등)은 정수로 만들면 **0 이 된다**.
         return f"{v:,.0f}" if v >= 1 else f"{v:g}"
     code = str(t.get("price_per_pyeong_10k_absent") or "").strip()
-    # ★덮지 않은 코드는 **공용 어휘로 떨어진다** — `"—"` 는 **사유 코드 자체가 없을 때**만이다.
-    #   종전엔 이 맵이 모집단이라 생산자가 내는 `insufficient_coverage` 가 `"—"` 가 됐다
-    #   (화면 `RealtxReportPanel.tsx` 에 **같은 결함이 있었다** — 형제 미러를 함께 고친다).
-    return _PP_ABSENT_SHORT.get(code) or ABSENT_SHORT.get(code, "—")
+    # ★사유는 **공용 어휘 하나**에서 나온다 — `"—"` 는 **사유 코드 자체가 없을 때**만이다.
+    #   종전엔 이 파일이 **자기 3종 목록**을 갖고 있어 생산자가 내는 `insufficient_coverage`
+    #   가 `"—"` 로 떨어져 사유가 소실됐다(화면 `RealtxReportPanel.tsx` 에 **같은 결함**).
+    #
+    # ★★적대 리뷰가 잡은 것(2026-09-04): 첫 봉합은 그 3종 목록을 **오버라이드로 남겨** 두고
+    #   *"열 고유 문구는 계속 존중한다"* 고 선언했다. **거짓이었다** — 세 항목이 공용 어휘와
+    #   **글자까지 동일**해서(측정: 차집합 공집합) 그 맵은 **잉여**였고, 지워도 테스트가
+    #   전부 초록이었다(변이 SURVIVED). **선언은 있는데 그것을 가르는 입력이 없었다.**
+    #   → 지웠다. 열 고유 문구가 정말 필요해지면 **그때 소비처와 같은 커밋에서** 넣는다.
+    #
+    # ★이 열의 설계 판단은 `ABSENT_SHORT` 로 옮겼다: `not_applicable` 을 **"해제"라고 쓰지
+    #   않는다** — 상태 열이 이미 그 말을 하므로 두 열이 같은 말을 하면 정보가 0이 된다.
+    #   그 계약은 화면 락 D14 가 **렌더 결과로** 고정한다(문구가 아니라 «두 열이 다르다»를).
+    return ABSENT_SHORT.get(code, "—")
 
 
 def _tx_row(t: dict[str, Any]) -> list[Any]:

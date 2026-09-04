@@ -11,6 +11,8 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { ABSENT_REASONS, ABSENT_SHORT } from "@/lib/withheld/absent-reasons";
+
 import {
   MIXED_REVIEW_SENTINEL,
   formatDominantZone,
@@ -65,9 +67,12 @@ describe("formatDominantZone — `_absent` 코드로 **왜** 보류인지 말한
   it("★두 모집단이 같은 실행에서 갈린다 — 사유가 있으면 말하고, 없으면 종전 그대로다", () => {
     const withCode = formatDominantZone(null, { fallback: "용도미상", absent: "ambiguous" });
     const without = formatDominantZone(null, { fallback: "용도미상" });
-    // 있는 쪽: 사유가 붙는다
-    expect(withCode.reason).toBeTruthy();
-    expect(withCode.reason).toMatch(/단일화/);
+    // 있는 쪽: 사유가 붙는다. ★문구를 테스트에 적지 않고 **계약에서 파생**한다 —
+    //   첫 판은 `toMatch(/단일화/)` 로 산문 조각을 못 박아, SSOT 문구를 다듬으면
+    //   위양성으로 깨지는 취약한 락이었다(적대 리뷰 MINOR-4).
+    expect(withCode.reason).toBe(ABSENT_REASONS.ambiguous);
+    // ★짧은 형태는 **짝**으로 나온다 — 한쪽만 붙는 상태를 만들면 호출부가 폴백을 지어낸다.
+    expect(withCode.reasonShort).toBe(ABSENT_SHORT.ambiguous);
     // 없는 쪽: **종전과 바이트 동일** — 이것이 회귀가 아니라는 근거다
     expect(without).toEqual({ label: "용도미상", withheld: true });
     expect("reason" in without).toBe(false);
@@ -86,6 +91,7 @@ describe("formatDominantZone — `_absent` 코드로 **왜** 보류인지 말한
     for (const bad of ["zzz_not_in_vocabulary", "", null, undefined, 7]) {
       const r = formatDominantZone(null, { fallback: "용도미상", absent: bad });
       expect(r, `어휘 밖 ${String(bad)} 에 사유를 지어냈다`).toEqual({ label: "용도미상", withheld: true });
+      expect("reasonShort" in r).toBe(false);
     }
   });
 
@@ -96,10 +102,23 @@ describe("formatDominantZone — `_absent` 코드로 **왜** 보류인지 말한
     expect(r).toEqual({ label: "제2종일반주거지역", withheld: false });
   });
 
+  /**
+   * ★**의도된 동작이고, 그 대가를 여기 적어 둔다**(적대 리뷰 MINOR-3 — 어느 문서도 안 적었다).
+   *
+   * 두 계약이 **동시에** 오면(값 자리에 센티널 + `_absent` 코드) 구판이 먼저 반환하므로
+   * **`_absent` 사유는 버려진다.** 그래도 이렇게 두는 이유: 센티널이 값 자리에 있다는 것은
+   * **백엔드가 아직 구판 경로**라는 뜻이고, 그 경로의 문구(`혼재(분리검토 필요)…`)가
+   * 그 상황을 더 정확히 말한다. 두 사유를 겹쳐 그리면 칩이 두 개 서서 서로를 반박한다.
+   * ★**반증 조건**: 같은 필드가 센티널과 `_absent` 를 **동시에** 내는 생산자가 실제로
+   *   생기면 이 판단을 다시 재라 — 현재는 그런 생산자가 **0건**이다(`withheld.py` 가
+   *   센티널을 금지어로 등재했고 `validate_withheld_pair` 가 그것을 위반으로 신고한다).
+   */
   it("센티널 경로는 `absent` 가 있어도 **종전 문구 그대로** — 구판 계약이 우선한다", () => {
     const r = formatDominantZone(MIXED_REVIEW_SENTINEL, { absent: "ambiguous" });
     expect(r.label).toMatch(/판정하지 않았습니다/);
     expect(r.label).not.toContain(MIXED_REVIEW_SENTINEL);
+    expect(r.reason).toBeUndefined();
+    expect(r.reasonShort).toBeUndefined();
   });
 
   /**

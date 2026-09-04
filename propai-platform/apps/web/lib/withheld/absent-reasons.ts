@@ -21,8 +21,15 @@
  * `source_unavailable` 은 그 필드에서 **죽은 라벨**이었다. **목록은 곧 상한이 된다** —
  * 생산자에 코드가 하나 늘면 소비자는 **조용히** 침묵한다(빨개지지 않는다).
  *
- * ★그래서 처방은 *"목록을 늘려라"* 가 아니라 **"덮지 않은 코드에도 말할 것이 있게 하라"** 다.
- *   열별 짧은 문구는 `overrides` 로 계속 존중하되, 덮이지 않으면 **공용 문구로 떨어진다.**
+ * ★그래서 처방은 *"목록을 늘려라"* 가 아니라 **"어휘를 한 곳에 두라"** 다.
+ *
+ * ★★**첫 봉합은 여기서 한 번 더 틀렸다**(적대 리뷰 2026-09-04). 열별 짧은 문구를
+ *   `overrides` 로 계속 받게 해 놓고 *"열 고유 문구는 존중한다"* 고 선언했는데, 실제
+ *   오버라이드 세 항목이 **공용 어휘와 글자까지 동일**해서(차집합 공집합) **잉여**였다.
+ *   지워도 모든 락이 초록이었다(변이 SURVIVED). 즉 **선언은 있는데 그것을 가르는 입력이
+ *   없었다** — 이 PR 이 고친다고 선언한 바로 그 결함 클래스(선언 ≠ 소비)를 스스로 재발시켰다.
+ *   → `overrides` 를 **없앴다.** 열 고유 문구가 정말 필요해지면 **그때 소비처와 같은
+ *   커밋에서** 다시 넣는다(쓰이지 않는 확장점은 다음 사람에게 «존중되고 있다»로 읽힌다).
  *
  * ★기존 락(`tests/test_withheld_value_contract.py`)은 **생산자 축**만 잠갔다 —
  *   *"코드가 어휘 안인가"*. **소비자가 그 코드를 이름 붙일 수 있는가**는 안 봤다(한쪽만 건 단언).
@@ -83,20 +90,17 @@ export function isAbsentCode(code: unknown): code is AbsentCode {
  * 코드를 화면 문구로 바꾼다.
  *
  * @param code      백엔드가 실은 `X_absent` 값(무엇이 와도 안전하다).
- * @param overrides 열·화면 고유의 짧은 문구. **덮은 코드만** 이것을 쓰고,
- *                  덮지 않은 코드는 `table` 이면 `ABSENT_SHORT`, 아니면 `ABSENT_REASONS` 로 떨어진다.
- *                  ★그래서 **생산자에 코드가 늘어도 `"—"` 가 나오지 않는다.**
+ * @param variant   `short` 는 표 한 칸용, `long`(기본)은 칩·툴팁용.
+ *                  ★어느 쪽이든 **어휘 전체를 덮는다** — 그래서 생산자에 코드가 늘어도
+ *                    `"—"` 가 나오지 않는다.
  * @returns 문구, 또는 **어휘 밖·빈 값이면 `null`**.
  *          ★`null` 을 문구로 뭉개지 않는다 — 「사유가 없다」와 「모르는 사유다」는 다른 사실이고,
  *            호출부가 그 둘을 다르게 그릴 수 있어야 한다.
  */
 export function resolveAbsentLabel(
   code: unknown,
-  options?: { overrides?: Partial<Record<AbsentCode, string>>; variant?: "short" | "long" },
+  options?: { variant?: "short" | "long" },
 ): string | null {
   if (!isAbsentCode(code)) return null;
-  const { overrides, variant = "long" } = options ?? {};
-  const override = overrides?.[code];
-  if (override) return override;
-  return variant === "short" ? ABSENT_SHORT[code] : ABSENT_REASONS[code];
+  return (options?.variant ?? "long") === "short" ? ABSENT_SHORT[code] : ABSENT_REASONS[code];
 }

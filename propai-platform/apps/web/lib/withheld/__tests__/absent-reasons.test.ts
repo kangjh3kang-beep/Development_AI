@@ -31,15 +31,15 @@ describe("resolveAbsentLabel — 어휘 안의 코드에는 **반드시** 이름
     }
   });
 
-  it("★부분 덮어쓰기가 나머지를 침묵시키지 않는다 — 종전 결함을 되살리는 변이", () => {
-    // 실거래 단가 열이 실제로 갖고 있던 부분 목록(3종). 생산자는 insufficient_coverage 도 낸다.
-    const partial = { not_applicable: "해당없음", masked_by_source: "원천미제공" } as const;
-    expect(resolveAbsentLabel("not_applicable", { overrides: partial, variant: "short" })).toBe("해당없음");
-    // ★덮지 않은 코드가 **공용 어휘로 떨어진다** — 종전에는 여기가 `"—"` 였다.
-    expect(resolveAbsentLabel("insufficient_coverage", { overrides: partial, variant: "short" }))
+  it("★종전 결함이 살던 코드가 이제 이름을 갖는다(부분 목록 시절엔 `\"—\"` 였다)", () => {
+    // 실거래 단가 열은 not_applicable · masked_by_source · source_unavailable 3종만 알았고,
+    // 생산자가 내는 insufficient_coverage 는 그 목록 밖이라 침묵했다.
+    // ★적대 리뷰(2026-09-04) 이후 «부분 덮어쓰기» 확장점 자체를 없앴다 — 오버라이드 세 항목이
+    //   공용 어휘와 글자까지 같아 **잉여**였고(지워도 락 전부 초록), 쓰이지 않는 확장점은
+    //   다음 사람에게 «존중되고 있다» 로 읽힌다. 그래서 축을 «어휘 전수» 로 바꿔 잠근다.
+    expect(resolveAbsentLabel("insufficient_coverage", { variant: "short" }))
       .toBe(ABSENT_SHORT.insufficient_coverage);
-    expect(resolveAbsentLabel("insufficient_coverage", { overrides: partial, variant: "short" }))
-      .not.toBeNull();
+    expect(resolveAbsentLabel("insufficient_coverage")).toBe(ABSENT_REASONS.insufficient_coverage);
   });
 
   it("★음성 대조군 — 어휘 밖·빈 값은 `null` 이다(모르는 것을 지어내지 않는다)", () => {

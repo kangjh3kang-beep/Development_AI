@@ -240,14 +240,17 @@ export function DevelopmentScenarioCard({
             {/* ★**왜** 보류인지를 사용자에게 도달시킨다. 종전에는 백엔드가 사유 코드를
                 실어 보내는데 화면 소비처가 0건이라 **사유가 버려졌다** — 사용자도 조사자도
                 원인을 알 수 없었다(「진단 불가는 그 자체로 장애다」). */}
-            {zoneDisplay.reason && (
+            {zoneDisplay.reasonShort && (
               <span
                 className="inline-flex items-center gap-1 rounded-lg border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 px-2 py-0.5 font-bold text-[var(--status-warning)]"
-                title={"용도지역을 하나로 판정하지 않았습니다. 아래 개발방식 판정은 "
-                  + "단일 용도지역을 전제하지 않으므로, 필지별 용도지역을 함께 확인하십시오."}
+                /* ★칩도 툴팁도 **사유 코드에서 파생**한다. 첫 판은 툴팁에 `ambiguous` 전용
+                   산문을 **조건 없이** 박아, `source_unavailable`(원천 조회 실패)일 때
+                   칩과 툴팁이 서로 **모순**됐다(적대 리뷰 MEDIUM-1). 조건 없는 단정은
+                   참일 때도 검증 불가라, 참인 것과 거짓인 것이 **같은 모양**이 된다. */
+                title={zoneDisplay.reason}
               >
                 <HelpCircle className="size-3.5" aria-hidden />
-                {zoneDisplay.reason}
+                {zoneDisplay.reasonShort}
               </span>
             )}
             {/* ★용도지역이 조회값이 아니라 주소에서 추론한 값이면 단정하지 않는다(무날조 표기). */}

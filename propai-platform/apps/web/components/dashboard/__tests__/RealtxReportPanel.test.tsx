@@ -247,12 +247,17 @@ describe("만원/평 열 — 정밀도와 보류", () => {
     //   같은 행의 「등기일자」 칸이 정당하게 `"—"` 라 정상 코드를 결함으로 신고했다.
     //   («위양성도 결함이다» — 가드가 정상을 막으면 그것도 고칠 대상이다.)
     //   그래서 **열 번호도 손으로 적지 않고 헤더에서 파생**시킨다(열이 바뀌면 락이 따라온다).
-    const heads = Array.from(document.querySelectorAll("thead th"))
-      .map((el) => (el.textContent ?? "").trim());
-    const col = heads.indexOf("만원/평");
-    expect(col, `헤더에서 「만원/평」 열을 찾지 못했다 — 판정 거부. 헤더: ${JSON.stringify(heads)}`)
-      .toBeGreaterThanOrEqual(0);
-    const cells = Array.from(document.querySelectorAll("tbody tr"))
+    //   ★그리고 스코프를 **그 표까지** 좁힌다 — `document` 전체에서 헤더를 이으면 표가
+    //     둘 이상일 때 인덱스가 밀려 **엉뚱한 열을 검사하며 초록**이 된다(적대 리뷰 MINOR-1).
+    //     오늘은 표가 하나뿐이라 결과가 같지만, «오늘 맞다» 는 락의 근거가 아니다.
+    const head = Array.from(document.querySelectorAll("thead th"))
+      .find((el) => (el.textContent ?? "").trim() === "만원/평");
+    expect(head, "헤더에서 「만원/평」 열을 찾지 못했다 — 판정 거부").toBeTruthy();
+    const table = head!.closest("table");
+    expect(table, "「만원/평」 헤더가 속한 표를 찾지 못했다 — 판정 거부").toBeTruthy();
+    const col = Array.from(head!.parentElement!.children).indexOf(head!);
+    expect(col).toBeGreaterThanOrEqual(0);
+    const cells = Array.from(table!.querySelectorAll("tbody tr"))
       .map((tr) => (tr.querySelectorAll("td")[col]?.textContent ?? "").trim())
       .filter((t) => t.length > 0);
     // ★공허 진리 가드 — 행이 0개면 아래 «—가 없다» 가 그 자체로 참이 된다.
