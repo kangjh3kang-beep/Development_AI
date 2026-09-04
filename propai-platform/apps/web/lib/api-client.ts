@@ -108,6 +108,53 @@ export class ApiClientError extends Error {
   }
 }
 
+/**
+ * HTTP 오류에 붙는 **상수 문구**. 서버 사유는 `payload.detail` 에 따로 실린다.
+ * ★던지는 쪽과 읽는 쪽이 이 문자열을 각자 적으면 반드시 갈라진다 — 한 곳에서 파생시킨다.
+ */
+const GENERIC_HTTP_ERROR = "API 요청 처리에 실패했습니다.";
+
+/** 파일 다운로드 기본 타임아웃. 일반 요청(120초)보다 길다 — 보고서 렌더는 조회가 아니다. */
+const DOWNLOAD_TIMEOUT_MS = 300_000;
+
+/**
+ * `ApiClientError` 에서 **서버가 준 사유**를 꺼낸다.
+ *
+ * ★`error.message` 를 읽으면 안 된다 — HTTP 오류의 `message` 는 **항상 상수**
+ *   `"API 요청 처리에 실패했습니다."` 다(이 파일의 `throw` 지점). 사유는 `payload.detail`.
+ *   그것을 모르고 `message` 를 그대로 띄우면 **모든 실패가 같은 문장**이 되어
+ *   사용자도 조사자도 원인을 못 찾는다(§유료 산출물 규율 4 — 진단 불가는 그 자체로 장애).
+ *
+ * ★왜 여기에 두나: `lib/payments/payment-error.ts` 가 실측으로 적어 둔 대로
+ *   이 앱에는 `extractErrorMessage` 계열이 **31개 중복**인데 **어느 것도** 이 함정을
+ *   모른다. 32번째를 만들지 않으려고 `ApiClientError` 옆에 둔다.
+ *   (기존 31개를 이리로 모으는 것은 **별건**이다 — 이 PR 의 범위가 아니다.)
+ */
+export function apiErrorMessage(error: unknown, fallback: string): string {
+  const e = error as { payload?: { detail?: unknown }; status?: number; message?: unknown } | null;
+  const detail = e?.payload?.detail;
+  if (typeof detail === "string" && detail.trim()) return detail;
+  if (detail && typeof detail === "object") {
+    const msg = (detail as { message?: unknown }).message;
+    if (typeof msg === "string" && msg.trim()) return msg;
+    return JSON.stringify(detail);
+  }
+
+  // ★payload 에 사유가 없다 — 그러면 **오류 자신의 문구**가 유일한 단서다.
+  //   ★★`ApiClientError` 라고 건너뛰면 안 된다. `executeFetch` 는 **타임아웃(408)** 과
+  //     **네트워크 실패(0)** 에 의미 있는 한국어 문구를 담은 `ApiClientError` 를
+  //     `payload=null` 로 던진다. 건너뛰면 그 둘과 비-JSON 5xx 가 **전부 같은 한 문장**이
+  //     되어 원인이 사라진다 — 이 함수가 없애려던 바로 그 결함을 이 함수가 만든다.
+  //     (적대 리뷰가 세 모집단을 실행해 실측했다.)
+  const own = typeof e?.message === "string" ? e.message.trim() : "";
+  if (own && own !== GENERIC_HTTP_ERROR) return own;
+
+  // ★사유가 정말 없으면 **상태코드라도 남긴다.** 종전 화면은 `(HTTP 502)` 를 보여 줬는데
+  //   그것마저 지우면 «같은 문장» 회귀가 된다.
+  const status = typeof e?.status === "number" ? e.status : 0;
+  return status > 0 ? `${fallback} (HTTP ${status})` : fallback;
+}
+
 export type ApiRequestOptions = Omit<RequestInit, "body"> & {
   body?: BodyInit | Record<string, unknown> | null;
   useMock?: boolean;
@@ -120,6 +167,16 @@ export type ApiRequestOptions = Omit<RequestInit, "body"> & {
    *   (refresh 재시도는 그대로 수행 — 만료 토큰 사용자는 여전히 자동 갱신된다.)
    */
   skipSessionExpiry?: boolean;
+  /**
+   * 응답을 무엇으로 읽을지. 기본은 `"json"`.
+   *
+   * ★`"blob"` 이 없어서 **모든 다운로드가 이 클라이언트를 우회**했다(실측 29개 파일).
+   *   비-JSON 응답은 `parseResponse` 가 `response.text()` 로 읽어 **바이너리가 깨지기** 때문이다.
+   *   그리고 우회한 경로에는 **401→refresh→재시도가 없어서**, 액세스 토큰(운영 60분)이
+   *   만료된 뒤의 다운로드는 반드시 `유효하지 않은 토큰: Signature has expired.` 로 죽었다.
+   *   ★사용자에겐 «보고서만 안 된다»로 보인다 — 다른 호출은 리프레시로 살아 있으니까.
+   */
+  responseType?: "json" | "blob";
 };
 
 // 백엔드 무응답 시 프론트가 영원히 대기("분석 중...")하는 것을 막는 기본 타임아웃.
@@ -426,14 +483,17 @@ async function request<T>(path: string, options: ApiRequestOptions = {}) {
     if (response.status === 401 && !options.skipSessionExpiry) handleSessionExpired();
   }
 
+  // ★blob 은 **성공했을 때만** 그대로 돌려준다.
+  //   서버는 오류를 **JSON** 으로 준다 — 그것을 blob 으로 읽으면 `ApiClientError.payload` 가
+  //   쓸모없어지고 **사유가 사라진다**(이 저장소가 반복해 데인 「진단 불가는 그 자체로 장애」).
+  if (options.responseType === "blob" && response.ok) {
+    return (await response.blob()) as T;
+  }
+
   const payload = await parseResponse(response);
 
   if (!response.ok) {
-    throw new ApiClientError(
-      "API 요청 처리에 실패했습니다.",
-      response.status,
-      payload,
-    );
+    throw new ApiClientError(GENERIC_HTTP_ERROR, response.status, payload);
   }
 
   return payload as T;
@@ -448,6 +508,24 @@ function getV2RequestUrl(path: string) {
 
 export const apiClient = {
   request,
+  /**
+   * 파일 다운로드(PDF·DOCX·XLSX 등). **`request` 를 그대로 타므로**
+   * 401→refresh→재시도가 **자동으로 붙는다.**
+   *
+   * ★새 재시도 로직을 만들지 않는다 — 만들면 그 새 구조가 다음 결함의 서식지가 된다.
+   *   (이 저장소가 «봉합이 새 이음매를 만든다»로 반복해 데인 형태.)
+   */
+  download(path: string, options?: Omit<ApiRequestOptions, "responseType">) {
+    // ★타임아웃을 **명시**한다. 종전 다운로드는 생 `fetch` 라 `signal` 이 없어 **무제한**이었다.
+    //   `request` 를 타면 기본 120초가 걸리는데, 대필지 보고서 렌더(서버 상한 300필지)가
+    //   그 안에 끝나는지 **재지 못했다** — 조용히 계약을 조이면 «다운로드가 갑자기 실패» 가
+    //   된다. 그래서 넉넉히 잡고, 호출부가 필요하면 줄이도록 옵션을 우선한다.
+    return request<Blob>(path, {
+      timeoutMs: DOWNLOAD_TIMEOUT_MS,
+      ...options,
+      responseType: "blob",
+    });
+  },
   get<T>(path: string, options?: Omit<ApiRequestOptions, "method">) {
     return request<T>(path, { ...options, method: "GET" });
   },
