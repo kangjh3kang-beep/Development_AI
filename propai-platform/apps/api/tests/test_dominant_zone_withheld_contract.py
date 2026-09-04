@@ -157,14 +157,18 @@ def test_commercial_axis_also_widens():
     assert com_ok, "대조군이 비었다"
     lost = [k for k in com_ok if held.get(k) not in ("가능", "조건부")]
     assert not lost, f"보류에서 상업계 추진 경로가 사라졌다 — {lost}"
-    # ★음성 대조군 — 상업 유무가 **판정**을 갈라야 한다.
-    #   (이름 집합이 아니라 `applicable` 을 본다 — `com` 은 목록이 아니라 판정을 바꾼다.
-    #    처음엔 이름 집합으로 비교했다가 «안 갈린다» 는 거짓 실패를 냈다.)
-    nocom = {x["scheme"]: x["applicable"]
-             for x in sim._scenarios(_ctx(None, ["제2종일반주거지역", "자연녹지지역"]))}
-    withcom = {x["scheme"]: x["applicable"] for x in sim._scenarios(_ctx(None, zones))}
-    split = {k for k in nocom if nocom[k] != withcom.get(k)}
-    assert split, "상업 유무가 판정을 안 가른다 — com 축이 죽었다"
+    # ★음성 대조군 — 상업 유무가 무엇을 가르는지 **소스에서 확인하고** 그 축을 쓴다.
+    #   `com` 은 `applicable` 을 안 바꾼다 — `est_far`(역세권 활성화)와 **결합건축 적격**을 가른다.
+    #   ★처음엔 «이름 집합», 다음엔 «판정» 으로 비교해 **두 번 거짓 실패**를 냈다.
+    #     대조군은 «다를 것 같은 축» 이 아니라 **그 변수가 실제로 지배하는 축**이어야 한다.
+    def _axis(zs):
+        m = {x["scheme"]: x for x in sim._scenarios(_ctx(None, zs))}
+        return (m["역세권 활성화사업"]["est_far"], m["결합건축"]["est_far"])
+
+    assert _axis(zones) != _axis(["제2종일반주거지역", "자연녹지지역"]), (
+        f"상업 유무가 est_far·결합건축을 안 가른다 — com 축이 죽었다 "
+        f"({_axis(zones)} vs {_axis(['제2종일반주거지역', '자연녹지지역'])})"
+    )
 
 
 def test_single_zone_site_without_zones_list_is_safe():
