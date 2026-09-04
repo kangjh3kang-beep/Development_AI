@@ -252,14 +252,6 @@ def test_moved_names_are_still_importable_from_the_old_module() -> None:
     assert defs == ["sale_price_resolver.py"], f"표본 하한이 여러 곳에 정의됐다: {defs}"
 
 
-def test_split_property_type_mapping_is_not_collapsed() -> None:
-    """물건종별 매핑이 뭉개지지 않았는가 — 전부 `apt` 가 되면 유형 축이 죽는다."""
-    from app.services.feasibility.sale_price_resolver import _BUILDING_TO_MOLIT_PROP
-    vals = set(_BUILDING_TO_MOLIT_PROP.values())
-    assert len(vals) >= 2, f"물건종별이 한 값으로 뭉개졌다: {_BUILDING_TO_MOLIT_PROP}"
-    assert _BUILDING_TO_MOLIT_PROP.get("officetel") != _BUILDING_TO_MOLIT_PROP.get("apartment")
-
-
 # ══════════════════════════════════════════════════════════════════════════════
 # 부채 — **초록 안에 보이게** 둔다(커밋 메시지에만 적으면 안 드러난다)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -283,3 +275,77 @@ def test_debt_exclusive_ratio_has_two_sources() -> None:
 def test_debt_avm_source_uses_supply_area_basis() -> None:
     src = _REVAL.read_text(encoding="utf-8")
     assert "_AVM_REF_AREA_SQM" not in src or "전용률" in src.split("_avm_source")[1][:1200]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 축 4 — **배선**: `revalue()` → 출처 메서드 구간이 잠겨야 한다
+# ══════════════════════════════════════════════════════════════════════════════
+
+@pytest.mark.asyncio
+async def test_revalue_wires_every_axis_into_the_molit_source(monkeypatch) -> None:
+    """★함수만 잠그고 **배선을 안 잠근** 것을 고친다.
+
+    `_molit_sale_price_source` 를 직접 부르는 락은 `revalue()` → 출처 메서드 **구간**을
+    태우지 않는다. 실제로 그 구간에서 `building_type=None` 으로 바꾸는 변이가 **생존**했다
+    (적대 리뷰 M3). 이 저장소가 반복해 데인 형태 그대로다 —
+    *"변이를 함수 안에만 넣으면 배선은 무잠금"*.
+    """
+    from app.services.feasibility import market_revaluation_service as mrs
+
+    seen: dict = {}
+
+    async def fake_source(self, *, address, dev_type="M01", lawd_cd=None, building_type=None):
+        seen.update(address=address, dev_type=dev_type,
+                    lawd_cd=lawd_cd, building_type=building_type)
+        return {"source": "molit_real", "label": "L", "price_per_pyeong": 30_000_000.0,
+                "confidence": 80, "weight": 0.65, "count": 100, "note": "n"}
+
+    monkeypatch.setattr(mrs.MarketRevaluationService, "_molit_sale_price_source",
+                        fake_source, raising=True)
+
+    async def no_avm(self, *, address, lawd_cd):
+        return None
+    monkeypatch.setattr(mrs.MarketRevaluationService, "_avm_source", no_avm, raising=True)
+
+    await mrs.MarketRevaluationService().revalue(
+        address="서울특별시 노원구 상계동 771", building_type="officetel",
+        lawd_cd="11350", land_area_sqm=1000.0, dev_type="M08")
+
+    # ★네 축이 **전부** 도달하는가. 하나라도 None 이면 그 축은 죽은 배선이다.
+    assert seen == {"address": "서울특별시 노원구 상계동 771", "dev_type": "M08",
+                    "lawd_cd": "11350", "building_type": "officetel"}, seen
+
+
+@pytest.mark.asyncio
+async def test_source_weights_are_the_declared_contract(monkeypatch) -> None:
+    """★가중치는 **계약**이다 — 조용히 바뀌면 블렌딩 결과가 통째로 달라진다.
+
+    `weight` 를 0.01 로 바꾸는 변이가 **생존**했다(적대 리뷰 M2): 어떤 락도 이 값을
+    안 봤다. `regional` 0.35 / `molit_real` 0.65 는 «실거래가 가장 강한 시장신호» 라는
+    **설계 선언**이고, 뒤집히면 하드코딩 테이블이 결과를 지배한다.
+    """
+    import app.services.feasibility.sale_price_resolver as spr
+    from app.services.feasibility import market_revaluation_service as mrs
+
+    async def fake(*, dev_type, address, sigungu5=None, building_type=None):
+        return (30_000_000, "s", _BASIS, None)
+    monkeypatch.setattr(spr, "_trade_sale_price_per_pyeong", fake, raising=True)
+
+    async def no_avm(self, *, address, lawd_cd):
+        return None
+    monkeypatch.setattr(mrs.MarketRevaluationService, "_avm_source", no_avm, raising=True)
+
+    out = await mrs.MarketRevaluationService().revalue(
+        address="서울특별시 노원구 상계동 771", lawd_cd="11350", building_type="apartment")
+    w = {s["source"]: s["weight"] for s in out["sources"]}
+    assert w == {"regional": 0.35, "molit_real": 0.65}, f"가중치 계약이 바뀌었다: {w}"
+    # ★실거래가 지역 테이블보다 **무겁다** — 이 부등호가 설계의 요지다
+    assert w["molit_real"] > w["regional"]
+
+
+def test_property_type_mapping_is_not_collapsed_to_one_value() -> None:
+    """물건종별이 뭉개지면 유형 축이 죽는다 — 전부 `apt` 면 오피스텔이 아파트로 조회된다."""
+    from app.services.feasibility.sale_price_resolver import _BUILDING_TO_MOLIT_PROP as M
+    assert len(set(M.values())) >= 4, f"물건종별이 뭉개졌다: {M}"
+    for a, b in (("apartment", "officetel"), ("apartment", "house"), ("office", "apartment")):
+        assert M[a] != M[b], f"{a} 와 {b} 가 같은 물건종별로 조회된다: {M[a]}"
