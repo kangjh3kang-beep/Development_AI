@@ -79,7 +79,13 @@ def _exclusive_ratio_for(dev_type: str, building_type: str | None) -> tuple[floa
     from app.services.feasibility.unit_standards import get_exclusive_ratio
 
     ratio = get_exclusive_ratio(dev_type)
-    bt = (building_type or "").strip()
+    # ★★**같은 함수 안에서 한 축은 정규화하고 형제 축은 원값을 썼다.**
+    #   `building` 은 `_canonical_building()` 을 거치는데 여기는 안 거쳐서,
+    #   프로덕션 입력(**한국어**)이 영어 정규 키와 비교돼 **100% 「불일치」**로 찍혔다.
+    #   실측: `('M01','아파트')` → 실제로는 **일치**인데 불일치라 적었다.
+    #   그 문자열은 `basis` → `note` → `sources` → 원장(`market_revaluation`)으로 **영속 기록**된다.
+    #   ★*위양성도 결함이다* 를 이 PR 에서 세 번 인용하고 같은 함수 안에서 어겼다.
+    bt = _canonical_building(building_type)
     note = f"전용률 {ratio}(정본·유형 {dev_type})"
     if bt and bt != _safe_building_type(_svc(), dev_type):
         # ★값을 바꾸지 않는다 — 대신 **불일치를 표면까지** 싣는다.
@@ -192,7 +198,14 @@ async def _trade_sale_price_per_pyeong(
     #   ★검증이 없으면 `'1168'`·`'abcde'` 같은 값이 **truthy 라 지오코딩 폴백을 억제**해
     #     회복 경로를 막는다(적대 리뷰 MAJOR-5).
     _inj = (sigungu5 or "").strip()
-    sigungu5 = _inj if (len(_inj) == 5 and _inj.isdigit()) else await _sigungu5_from_address(address)
+    # ★★`isdigit()` 만으로는 **전각을 통과시킨다**(`'１２３４５'.isdigit() is True`).
+    #   이 저장소는 그 사고를 **이 파일을 감시하는 래칫에** 적어 뒀다 —
+    #   *"`sigungu_cd='１２３４５'` 가 MOLIT 건축물대장 API 인자로 나갔다"*.
+    #   그런데 나는 «형제 셋이 이미 검증한다» 며 **가장 약한 형제**를 근거로 댔다
+    #   (정본 `is_valid_pnu` 계열은 `isascii()` 로 막는다 — §29 의 가장 비싼 형태).
+    #   ★내 행위 락이 이것을 잡았다(전각을 넣었더니 폴백이 억제됐다).
+    _ok = len(_inj) == 5 and _inj.isascii() and _inj.isdigit()
+    sigungu5 = _inj if _ok else await _sigungu5_from_address(address)
     if not sigungu5:
         return None
     try:

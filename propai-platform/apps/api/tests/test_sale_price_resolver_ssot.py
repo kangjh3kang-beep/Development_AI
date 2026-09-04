@@ -448,3 +448,123 @@ def test_property_type_mapping_is_not_collapsed_to_one_value() -> None:
     assert len(set(M.values())) >= 4, f"물건종별이 뭉개졌다: {M}"
     for a, b in (("apartment", "officetel"), ("apartment", "house"), ("office", "apartment")):
         assert M[a] != M[b], f"{a} 와 {b} 가 같은 물건종별로 조회된다: {M[a]}"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 축 5 — **행위 락**: 소스 문자열이 아니라 «무엇이 실제로 불리는가»
+# ══════════════════════════════════════════════════════════════════════════════
+
+@pytest.mark.asyncio
+async def test_injected_sigungu_never_calls_geocoding(monkeypatch) -> None:
+    """★C-2 — 주입이 지오코딩을 **이긴다**(행위). 종전 락은 **소스 문자열**만 봤다.
+
+    그래서 callee 의 우선순위 한 줄을 지우는 변이가 **전 락 초록으로 생존**했다.
+    그 한 줄이 «VWorld 장애 → 분양가 −39%» 의 전부다.
+    """
+    import app.services.feasibility.sale_price_resolver as spr
+
+    geo_calls: list[str] = []
+
+    async def spy_geo(address: str):
+        geo_calls.append(address)
+        return "99999"
+
+    async def fake_trade(sigungu5, dong, prop_type):
+        return {"dong": {"median": 3000, "n": 50}, "sigungu": {"median": 3000, "n": 50}}
+
+    monkeypatch.setattr(spr, "_sigungu5_from_address", spy_geo, raising=True)
+    monkeypatch.setattr("app.services.sales.pricing.suggest._trade_per_pyeong",
+                        fake_trade, raising=True)
+
+    # ① 주입 있음 → 지오코딩 **0회**
+    await spr._trade_sale_price_per_pyeong(dev_type="M01", address="어디든", sigungu5="11350")
+    assert geo_calls == [], f"주입했는데 지오코딩을 불렀다: {geo_calls}"
+
+    # ② ★음성 대조군 — 주입 없으면 **불린다**(«항상 0회» 구현을 가른다)
+    await spr._trade_sale_price_per_pyeong(dev_type="M01", address="어디든")
+    assert len(geo_calls) == 1, f"주입 없는데 지오코딩을 안 불렀다: {geo_calls}"
+
+    # ③ ★잘못된 주입은 **폴백을 막지 않는다**(truthy 억제 회귀 방지)
+    geo_calls.clear()
+    for bad in ("1168", "abcde", "  ", "11a80", "１２３４５"):
+        await spr._trade_sale_price_per_pyeong(dev_type="M01", address="어디든", sigungu5=bad)
+    assert len(geo_calls) == 5, f"잘못된 주입이 폴백을 억제했다(통과한 값 있음): {geo_calls}"
+
+
+@pytest.mark.asyncio
+async def test_building_type_reaches_molit_property_type(monkeypatch) -> None:
+    """★C-1 — 표시 문자열이 **물건종별까지 도달**하는가(행위).
+
+    `_canonical_building` 을 태우는 테스트가 **0건**이었다 — 이 저장소의 「소비처 0」 그 자체다.
+    그래서 `return _DISPLAY_TO_BUILDING.get(bt, "") → return bt`(원래 결함 복원) 변이가
+    **1,965 테스트 전부 초록**으로 생존했다.
+
+    ★**세 모집단**이어야 한다 — 하나만 보면 «전부 apt» 구현이 통과한다.
+    """
+    import app.services.feasibility.sale_price_resolver as spr
+
+    seen: list[str] = []
+
+    async def spy_trade(sigungu5, dong, prop_type):
+        seen.append(prop_type)
+        return {"dong": {"median": 3000, "n": 50}, "sigungu": {"median": 3000, "n": 50}}
+
+    monkeypatch.setattr("app.services.sales.pricing.suggest._trade_per_pyeong",
+                        spy_trade, raising=True)
+
+    async def call(bt):
+        await spr._trade_sale_price_per_pyeong(
+            dev_type="M01", address="a", sigungu5="11350", building_type=bt)
+
+    # ★프로덕션이 **실제로 내는 값**으로 태운다(영어 정규 키가 아니라)
+    await call("다세대주택")
+    await call("근린생활시설")
+    await call("오피스텔")
+    await call(None)              # dev_type(M01) 폴백
+    assert seen == ["villa", "commercial", "officetel", "apt"], (
+        f"표시 문자열이 물건종별까지 도달하지 않는다: {seen}")
+
+    # ★모르는 표기는 **폴백을 막지 않는다**(빈 문자열로 정규화)
+    seen.clear()
+    await call("존재하지않는유형")
+    assert seen == ["apt"], f"모르는 표기가 폴백을 억제했다: {seen}"
+
+
+def test_display_vocabulary_covers_what_the_pipeline_emits() -> None:
+    """★손 목록이 상한이 되지 않게 — 생산자 어휘를 **파생**해 대조한다."""
+    import re
+
+    from app.services.feasibility.sale_price_resolver import (
+        _BUILDING_TO_MOLIT_PROP,
+        _DISPLAY_TO_BUILDING,
+    )
+
+    pipe = (_API / "app" / "services" / "pipeline" / "project_pipeline.py").read_text(encoding="utf-8")
+    emitted = set(re.findall(r'building_type\s*=\s*"([^"]+)"', pipe))
+    emitted |= set(re.findall(r'building_type\s*=\s*"[^"]*"\s*if[^\n]*else\s*"([^"]+)"', pipe))
+    assert len(emitted) >= 3, f"생산자 어휘 추출 {len(emitted)}개 — 조회기가 죽었다: {emitted}"
+    assert "아파트" in emitted, f"양성 대조군 실패: {emitted}"
+
+    known = set(_DISPLAY_TO_BUILDING) | set(_BUILDING_TO_MOLIT_PROP)
+    missing = emitted - known
+    assert not missing, (
+        f"파이프라인이 내는데 정규화 표에 없는 표기: {sorted(missing)} — "
+        f"그 값은 조용히 'apt' 로 떨어진다")
+
+
+def test_exclusive_ratio_note_does_not_lie_about_mismatch() -> None:
+    """★M-3 — **프로덕션 입력(한국어)** 으로 태운다. 종전 락은 영어만 썼다.
+
+    같은 함수가 한 축(`building`)은 정규화하고 **형제 축은 원값**을 써서,
+    프로덕션 입력 **100% 에 거짓 「불일치」**가 붙어 **원장에 영속 기록**됐다.
+    """
+    from app.services.feasibility.sale_price_resolver import _exclusive_ratio_for
+
+    # 일치인데 «불일치» 라 적지 않는다(위양성)
+    for bt in ("아파트", "공동주택", "apartment", None):
+        _, note = _exclusive_ratio_for("M01", bt)
+        assert "불일치" not in note, f"M01+{bt!r} 은 일치인데 불일치라 적는다: {note}"
+
+    # ★음성 대조군 — 진짜 불일치는 **적는다**(«절대 안 적는» 구현을 가른다)
+    _, note = _exclusive_ratio_for("M01", "오피스텔")
+    assert "불일치" in note, f"진짜 불일치를 안 적는다: {note}"
