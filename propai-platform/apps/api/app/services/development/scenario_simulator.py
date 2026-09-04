@@ -243,6 +243,10 @@ ZONE_BASIS_AREA_WEIGHTED = "area_weighted"
 ZONE_BASIS_SINGLE = "single_zone"
 ZONE_BASIS_NO_AREA = "first_parcel_no_area"
 ZONE_BASIS_NONE = "none"
+#: 형제가 단일화 거부를 **값으로** 낼 때 쓰는 문자열. 계약상 **금지어**이므로 여기서 번역한다.
+_SIBLING_MIXED_SENTINEL = "mixed_review_required"
+#: 보류 사유 — `app/utils/withheld.py` 의 **닫힌 어휘**(`AMBIGUOUS`)를 그대로 쓴다.
+ZONE_BASIS_AMBIGUOUS = "ambiguous"
 #: 동률(±5%)·규제성격 상이로 **단일화를 거부**한 상태. `special_parcel` 이 쓰는 그 값이고
 #  `app/utils/withheld.py` 의 **표준 보류 어휘**이며, 프론트 `lib/zoning/dominant-zone.ts` 가 안다.
 ZONE_BASIS_MIXED_REVIEW = "mixed_review_required"
@@ -453,15 +457,27 @@ def dominant_zone_by_area(rows: list[dict[str, Any]]) -> tuple[str, str]:
     #        번역된다(55% 가 주거인 부지에 «요건 미해당» 은 **거짓 사유**) · 1종은 목록에서 사라진다
     #   → **보류를 「불가」로 번역하지 않는 판정 상태**와 **화면 처리**가 선행돼야 한다.
     #   ★부채로 드러낸다: `tests/test_premise_audit_scenarios_path.py` 의 `it.todo` 계열 단언 참조.
-    from app.services.zoning.legal_zone_limits import mixed_zone_limits
+    # ★형제(`special_parcel._aggregate_integrated_zoning`)의 **판정은 따르되**
+    #   **계약 형태로 번역**한다. 형제는 단일화 거부를 `"mixed_review_required"` 라는
+    #   **값**으로 내는데, 저장소의 확립된 보류값 계약(`app/utils/withheld.py`)은
+    #   **그 문자열을 `SENTINEL_VALUES` 금지어로 등재**하고 있다:
+    #
+    #       X : 값 | None  ·  X_basis : 문구  ·  X_absent : 닫힌 7종 코드
+    #       ★센티널 금지 — 값 자리에 "mixed_review_required" 를 넣지 않는다
+    #
+    #   ★즉 «형제와 일치» 는 **계약 위반을 따라가는 것**이었다(`#963` 부채 사유 정정).
+    #     형제 쪽 위반은 소비처 6곳 파급이라 **별건**이고, 여기서는 계약을 지킨다.
+    #   `AMBIGUOUS`("판정이 갈려 단일화 거부")가 정확히 이 케이스다.
+    from app.services.zoning.special_parcel import _aggregate_integrated_zoning
 
-    mix = mixed_zone_limits(
+    agg = _aggregate_integrated_zoning(
         [{"zone_type": str(r["zone"]).strip(), "area_sqm": float(r["area"])} for r in named]
     )
-    dom = mix.get("dominant_zone")
-    if dom:
-        return str(dom), ZONE_BASIS_AREA_WEIGHTED
-    return str(named[0]["zone"]).strip(), ZONE_BASIS_NO_AREA
+    dom = agg.get("dominant_zone")
+    if dom == _SIBLING_MIXED_SENTINEL or not dom:
+        # ★값은 **None**, 사유는 코드로. 화면은 `{primary_zone || "용도미상"}` 폴백을 탄다.
+        return None, ZONE_BASIS_AMBIGUOUS
+    return str(dom), ZONE_BASIS_AREA_WEIGHTED
 
 
 def _is_residential(zone: str) -> bool:
@@ -692,6 +708,9 @@ class DevelopmentScenarioSimulator:
                     "area_is_partial": bool(unresolved) or requested_count > len(addrs),
                     "plan_limit_unknown": plan_unknown_agg,   # 형제 미러
                     "primary_zone": primary_zone, "primary_zone_basis": primary_zone_basis, "zones": zones,
+            # ★보류값 계약(`app/utils/withheld.py`) — 값이 None 이면 **사유 코드**가 있어야 한다.
+            #   `validate_withheld_pair(site, "primary_zone")` 가 이 짝을 검사한다.
+            "primary_zone_absent": (ZONE_BASIS_AMBIGUOUS if primary_zone is None else None),
             # ★§84① 흡수를 반영한 아파트 불허 용도지역(면적이 여기서만 보인다).
             "apartment_restricted_zones": apartment_restricted_zones(enriched),
                     "primary_zone_is_inferred": bool(primary_zone) and measured_zone_n == 0,
@@ -755,6 +774,9 @@ class DevelopmentScenarioSimulator:
             #   더 비싼 오답(불허 용도 추천)이 조용히 나간다.
             "plan_limit_unknown": plan_unknown_agg,
             "primary_zone": primary_zone, "primary_zone_basis": primary_zone_basis, "zones": zones,
+            # ★보류값 계약(`app/utils/withheld.py`) — 값이 None 이면 **사유 코드**가 있어야 한다.
+            #   `validate_withheld_pair(site, "primary_zone")` 가 이 짝을 검사한다.
+            "primary_zone_absent": (ZONE_BASIS_AMBIGUOUS if primary_zone is None else None),
             # ★§84① 흡수를 반영한 아파트 불허 용도지역(면적이 여기서만 보인다).
             "apartment_restricted_zones": apartment_restricted_zones(enriched),
             # 대표 용도지역이 조회값인지 추론값인지 — 추론값이면 화면이 단정하면 안 된다.
@@ -1473,8 +1495,15 @@ class DevelopmentScenarioSimulator:
         station = c.get("near_station")
         integration_ok = c.get("integration_feasible", True)
         adj_note = (c.get("adjacency") or {}).get("note", "")
-        res = _is_residential(zone)
-        com = _is_commercial(zone)
+        # ★우세 용도지역이 **보류(None)** 일 때 `zone` 만 보면 `res`/`com` 이 둘 다 False 가 되어
+        #   주거계 개발방식이 **「불가·요건 미해당」** 으로 번역된다 — 실측(2026-09-04):
+        #     주거+공업(83:17) · 동률 주거 → **4종이 조건부→불가, 1종은 목록에서 사라짐**(21→20).
+        #   55% 가 주거인 부지에 «요건 미해당» 은 **거짓 사유**다.
+        #   ★보류는 «모른다» 이지 «아니다» 가 아니므로, **부지에 실재하는 용도지역 전부**를 본다.
+        #     (단일화된 경우에는 `zone` 하나가 그 집합의 유일 원소이므로 동작이 불변이다.)
+        _zone_pool = [z for z in ([zone] if zone else []) + list(c.get("zones") or []) if z]
+        res = any(_is_residential(z) for z in _zone_pool)
+        com = any(_is_commercial(z) for z in _zone_pool)
         region = c.get("region") or ""
         seoul = "서울" in region  # 서울시 조례 고유 방식의 지역 적용가능성 판정
         # 건축물 실데이터(노후도·세대수) — 블록(주변) 우선, 없으면 입력필지
