@@ -754,6 +754,10 @@ export function SatongMapShell({
   //   선택이 그 프로젝트 siteAnalysis를 조용히 덮어쓴다(교차오염). 이어하기(컨텍스트에 진행 중
   //   프로젝트+데이터가 있는 경우)만 예외로 그 프로젝트를 유지한다.
   const [connectTarget, setConnectTarget] = useState<"new" | "none" | string>(() => "new");
+  // ★B+ 되돌리기 스냅샷 — 「비울지 판정」 대신 **비우고 되돌릴 수 있게** 한다.
+  //   판정(=소유권 추론)이 R2·R2b 의 버그 둘을 냈으므로, 추론을 없애는 쪽을 택했다.
+  //   수명은 **이 화면에 있는 동안**(메모리)이다 — 유료 산출물이 아니므로 세션 영속은 후속.
+  const [clearedSnapshot, setClearedSnapshot] = useState<SatongParcel[] | null>(null);
   const [connectNotice, setConnectNotice] = useState("");
   const connectInitRef = useRef(false);
   useEffect(() => {
@@ -2014,6 +2018,20 @@ export function SatongMapShell({
     setClearNonce((n) => n + 1); // ★WP-M2: 지도 staged·녹색 폴리곤도 함께 청소(잔존 방지)
   }, []);
 
+  // ★B+ 되돌리기 — 비우기가 만진 **모든 매체**를 되돌린다.
+  //   선택 목록 · 스토어(siteAnalysis) · 세션미러 셋을 `syncParcelsToStores` 하나로 덮는다
+  //   (비우기가 그 함수로 지웠으므로 대칭이다 — 한 곳만 고치면 양쪽이 따라온다).
+  //   ★부분 복원은 안 한다: 화면엔 필지가 있는데 산출물이 빈 선택으로 도는 조합이
+  //   원래 결함보다 나쁘다(이 저장소가 「유령 패널」로 데인 형태).
+  const restoreClearedSelection = useCallback(() => {
+    const snapshot = clearedSnapshot;
+    if (!snapshot || snapshot.length === 0) return;
+    setSelectedParcels(snapshot);
+    syncParcelsToStores(snapshot);
+    setClearedSnapshot(null);
+    setConnectNotice(`선택 필지 ${snapshot.length}건을 되돌렸습니다.`);
+  }, [clearedSnapshot, syncParcelsToStores]);
+
   // ★레인F P0-2: clearParcels(전체 초기화 버튼)와 프로젝트 전환 이펙트처럼 "확정목록+지도"를
   //   무조건 통째로 비워야 하는 호출부를 위한 번들 — 부분 청소가 필요한 handleConnectTargetChange
   //   는 아래에서 두 함수를 따로 조합한다(중복 구현 금지 — 항상 이 두 함수를 통해서만 청소).
@@ -2043,20 +2061,38 @@ export function SatongMapShell({
       //   stale closure로 엉뚱한 프로젝트를 대상으로 판단·해제하는 것을 원천 차단한다(기존
       //   "초기화" 버튼류에도 있던 저확신 우려 — 여기서 같이 닫는다. 비용 없음).
       const activeProjectId = useProjectContextStore.getState().projectId;
-      const ownedByDetachingProject =
-        activeProjectId != null && selectionOwnerProjectIdRef.current === activeProjectId;
+      // ★B+(2026-09-04 사용자 결정): **소유권을 추론하지 않는다.** 선택이 있으면 항상 비우고,
+      //   대신 **되돌릴 수 있게** 한다. R1("무조건 비움")이 기각된 이유는 「비웠다」가 아니라
+      //   **「되돌릴 수 없다」**였다 — 비가역성을 없애면 두 계약이 충돌하지 않는다.
+      //   ★그리고 이 결정이 R2/R2b 의 소유권 추론 기계를 통째로 없앤다(그 추론이 버그 둘을 냈다).
+      const carried = selectedParcels;
       // 활성 프로젝트가 있으면 해제(스냅샷 보존) — 이후 선택·커밋이 그 프로젝트를 덮지
       //   않게. clearProject 직접 호출 대신 detachProjectCarryingSelection을 써서 전환
       //   이펙트가 이 해제를 '프로젝트 전환'으로 오인하지 않게 한다(F1).
       if (activeProjectId) detachProjectCarryingSelection();
-      bumpMapClearSignal(); // staged는 소유권 무관 — 항상 청소(R1b)
-      if (ownedByDetachingProject && selectedParcels.length > 0) {
+      bumpMapClearSignal(); // staged는 항상 청소(R1b)
+      if (carried.length > 0) {
+        setClearedSnapshot(carried);
         clearConfirmedSelectionUi();
         syncParcelsToStores([]); // store·sessionStorage까지 함께 정리(부활 방지)
-        setConnectNotice("연결 대상을 바꿔 선택 필지를 비웠습니다.");
+        // ★★고지를 가르려다 **되돌렸다** — 그 가르기는 성립하지 않는다.
+        //
+        //   사용자 지적은 옳았다: *"새 프로젝트를 만드니 기존 프로젝트는 따로 있는데 왜
+        //   되돌리기가?"* — **상속분은 재연결로 복구되므로 실익이 없다.**
+        //   그래서 `activeProjectId` 유무로 고지를 가르려 했는데, 변이 검증이 그것이
+        //   **문구만 다르고 행위는 같은 장식**임을 드러냈다(되돌리기 버튼은 양쪽 다 뜬다).
+        //
+        //   ★행위로 가르려면(상속분에는 되돌리기를 안 띄우려면) *"이 선택이 상속인가"* 를
+        //   알아야 하는데, `activeProjectId != null` 은 그 답이 **아니다** —
+        //   **프로젝트에 연결된 채 사용자가 직접 담은 선택**이 정확히 그 상태다
+        //   (그게 R2 가 보호하려던 바로 그 시나리오다). 그것을 가르려면 **소유권 추론**이
+        //   다시 필요하고, **그 추론이 R2·R2b 의 버그 둘을 냈다.**
+        //
+        //   → 그래서 **한 문장으로 두고 되돌리기는 항상 제공**한다. 스냅샷은 공짜이고,
+        //     「되돌릴 필요가 있었는지」를 **판정하지 않는 것**이 이 설계의 요점이다.
+        setConnectNotice(`선택 필지 ${carried.length}건을 비웠습니다.`);
       } else if (stagedCount > 0) {
-        // 확정목록은 보존(사용자 소유이거나 이미 0건)했지만 지도의 임시 선택은 정리했다 —
-        //   staged만 있고 selectedParcels가 0인 경우에도 무음이 되지 않게(R2 MEDIUM).
+        // 확정목록이 이미 0건이어도 지도의 임시 선택은 정리했다 — 무음이 되지 않게(R2 MEDIUM).
         setConnectNotice("연결 대상을 바꿔 지도에 임시로 찍어둔 선택을 정리했습니다.");
       }
       return;
@@ -2066,7 +2102,12 @@ export function SatongMapShell({
   }, [
     detachProjectCarryingSelection,
     handleSelectProject,
-    selectedParcels.length,
+    // ★`selectedParcels.length` 가 아니라 **배열 자체**를 의존한다.
+    //   종전엔 길이만 봤는데(그땐 길이만 읽었으므로 옳았다), 지금은 그 배열을
+    //   **스냅샷으로 캡처**한다 — 길이가 같고 **내용만 바뀌면 낡은 스냅샷**을 잡는다.
+    //   (되돌리기가 「방금 전 선택」이 아니라 「그 전 선택」을 복원하는 결함이 된다.)
+    //   ★lint 경고가 아니라 **실제 결함**이었다 — 래칫이 잡았다.
+    selectedParcels,
     stagedCount,
     clearConfirmedSelectionUi,
     bumpMapClearSignal,
@@ -3692,8 +3733,39 @@ export function SatongMapShell({
               </p>
             )}
             {connectNotice && (
-              <p className="mt-2 rounded-lg bg-[var(--status-success)]/10 px-2.5 py-1.5 text-[11px] font-bold leading-4 text-[var(--status-success)]">
-                {connectNotice}
+              <p className="mt-2 flex flex-wrap items-center gap-2 rounded-lg bg-[var(--status-success)]/10 px-2.5 py-1.5 text-[11px] font-bold leading-4 text-[var(--status-success)]">
+                <span>{connectNotice}</span>
+                {clearedSnapshot && clearedSnapshot.length > 0 && (
+                  <button
+                    type="button"
+                    data-testid="restore-cleared-selection"
+                    onClick={restoreClearedSelection}
+                    className="min-h-11 rounded-md border border-[var(--status-success)]/40 px-3 underline underline-offset-2"
+                  >
+                    되돌리기
+                  </button>
+                )}
+              </p>
+            )}
+            {/* ★B+(iii): **상태에서 파생되는** 안내 — 이벤트가 아니다.
+                네이티브 `<select>` 는 **같은 값을 다시 골라도 `onChange` 가 안 뜬다.**
+                `connectTarget` 초기값이 "new" 이므로, 원 사용자 신고 화면은 **핸들러가
+                아예 안 도는 상태**였다 — 이벤트 기반 고지로는 원리적으로 덮을 수 없다.
+                그래서 「지금 무엇이 등록되는가」와 「비우는 법」을 **상시** 보여 준다. */}
+            {connectTarget === "new" && selectedParcels.length > 0 && (
+              <p
+                data-testid="new-project-selection-hint"
+                className="mt-2 flex flex-wrap items-center gap-2 rounded-lg bg-[var(--surface-muted)] px-2.5 py-1.5 text-[11px] font-bold leading-4 text-[var(--text-secondary)]"
+              >
+                <span>선택 필지 {selectedParcels.length}건이 이 새 프로젝트로 등록됩니다.</span>
+                <button
+                  type="button"
+                  data-testid="clear-selection-inline"
+                  onClick={clearParcels}
+                  className="min-h-11 rounded-md border border-[var(--border-muted)] px-3 underline underline-offset-2"
+                >
+                  비우기
+                </button>
               </p>
             )}
           </div>
