@@ -54,93 +54,70 @@ def test_dominant_zone_agrees_with_sibling_TODO():
 
 # ── ② 감사기가 이 경로에서 **실제로 돈다** ────────────────────────────────
 
-def _simulate_audit(monkeypatch, *, zones, areas):
-    """★`simulate()` 를 **실제로 태워** 감사 결과를 얻는다 — 소스 AST 가 아니다.
+def _audit_via_simulate(addrs):
+    """★`simulate()` 를 **실제로 태워** 감사 결과를 얻는다 — 소스 AST 도, 직접 호출도 아니다.
 
-    적대 리뷰 실측: 종전 락은 AST 로 `.audit(` **이름**과 응답 **키 이름**만 봤다.
-    그래서 `"premise_audit": premise_audit_result` → `"premise_audit": None` 으로 바꿔도
-    **10건 전부 초록**이었다 — 그 테스트의 실패 메시지가 *"만들어 놓고 버린다"* 인데
-    **정확히 그것을 하고 통과**했다. 이름 존재는 **값·도달성**을 말하지 않는다.
+    적대 리뷰 실측: 종전 락은 AST 로 `.audit(` **이름**과 응답 **키 이름**만 봐서
+    `"premise_audit": None` 변이가 통과했다. 그래서 행동 락으로 바꿨는데 **그것도 부족했다** —
+    두 모집단을 **서로 다른 경로**(하나는 `simulate` 경유, 하나는 `audit()` 직접 호출)에 뒀더니
+    직접 호출 쪽이 **배선 변이를 원리적으로 못 본다**. 두 모집단 모두 이 경로를 지나야 한다.
+
+    ★`monkeypatch` 로 `_enrich` 를 갈아끼우려던 종전 시도는 **그 메서드가 존재하지 않아**
+      `raising=False` 가 **조용히 아무것도 안 했다**. 실주소로 실제 경로를 태운다.
     """
     import asyncio
 
     from app.services.development.scenario_simulator import DevelopmentScenarioSimulator as S
 
-    sim = S()
-    enriched = [{"pnu": f"P{i}", "address": f"주소{i}", "zone": z, "area": a,
-                 "zone_source": "vworld", "max_far": 200, "max_far_legal": 250}
-                for i, (z, a) in enumerate(zip(zones, areas, strict=True))]
-
-    async def _fake_enrich(self, addrs, site):  # noqa: ANN001
-        return enriched
-
-    monkeypatch.setattr(S, "_enrich", _fake_enrich, raising=False)
-    return asyncio.run(sim.simulate("테스트 주소", parcels=[p["address"] for p in enriched],
-                                    site={}, use_llm=False))
+    out = asyncio.run(S().simulate(addrs[0], parcels=list(addrs), site={}, use_llm=False))
+    pa = out.get("premise_audit")
+    return pa, out
 
 
-def test_audit_result_actually_reaches_the_response(monkeypatch):
-    """★M1 — 감사 결과가 **응답에 실린 값**으로 도달하는가(이름이 아니라 값).
+_ADDR = "서울특별시 동작구 상도동 211-376"
+_ADDR_B = "서울특별시 동작구 상도동 211-204"
 
-    `"premise_audit": None` 변이가 여기서 죽는다.
-    """
-    try:
-        out = _simulate_audit(monkeypatch, zones=["제1종일반주거지역", "제2종일반주거지역"],
-                              areas=[410.0, 1300.0])
-    except Exception as e:  # noqa: BLE001
-        pytest.skip(f"simulate 경로가 외부 의존을 요구한다: {type(e).__name__}")
-    pa = (out.get("site") or {}).get("premise_audit") or out.get("premise_audit")
+
+def test_audit_result_actually_reaches_the_response():
+    """★M1 — 감사 결과가 **응답에 실린 값**으로 도달하는가(이름이 아니라 값)."""
+    pa, _ = _audit_via_simulate([_ADDR, _ADDR_B])
     assert isinstance(pa, dict), f"감사 결과가 dict 로 실리지 않았다 — {type(pa).__name__}"
     assert "violations" in pa, f"위반 배열이 없다 — {sorted(pa)}"
-    # ★커버리지를 단언한다 — 모듈이 `checked` 를 «공허한 초록 금지» 로 만들었는데 읽는 곳이 0곳이었다.
+    assert pa.get("ok") is not True, f"실패를 성공으로 위장했다 — {pa}"
+    # ★커버리지 — 모듈이 `checked` 를 «공허한 초록 금지» 로 만들었는데 읽는 곳이 0곳이었다.
     assert pa.get("registered", 0) >= 6, f"등록 관계가 {pa.get('registered')}종 — 수집기 이상"
     assert pa.get("checked") == pa.get("registered"), (
-        f"등록 {pa.get('registered')}종 중 {pa.get('checked')}종만 판정됐다 — "
-        "나머지는 예외로 조용히 죽었다(★`top3` 를 dict 가 아니라 list 로 넘기면 3종이 죽는다)"
+        f"등록 {pa.get('registered')}종 중 {pa.get('checked')}종만 판정됐다 — 나머지는 조용히 죽었다"
+        "(★`top3` 를 dict 가 아니라 list 로 넘기면 3종이 죽는다)"
     )
 
 
-def test_audit_actually_discriminates_two_populations(monkeypatch):
-    """★★배선의 **행동**을 잠근다 — 감사가 «돈다» 가 아니라 «가른다» 를 본다.
+def test_audit_discriminates_two_populations_through_the_same_path():
+    """★★두 모집단이 **같은 경로**(`simulate()`)를 지나며 **다른 답**을 내야 한다.
 
-    적대 리뷰 실측: 종전 락은 키 존재·커버리지만 봐서
-    `zone_mix=[]` · `dominant_zone=None` · `ok:True 위장` 변이가 **전부 SURVIVED** 였다.
-    감사는 «위반을 찾는 장치» 이므로 **정상 부지에서 침묵하고 결함 부지에서 발화**해야 한다.
+    · 정상 2필지            → 위반 **없음**(위양성 방지)
+    · ★같은 주소 3개(주소 붕괴) → **`count_conservation_parcels` 발화**
+      (요청 3필지인데 중복제거 후 1필지 — 이 저장소가 «77필지가 1필지로» 겪은 그 결함 클래스)
+
+    감사기 재료를 끊는 변이(`zone_mix=[]` · `dominant_zone=None` · `top3` 키 파손)는
+    **발화 쪽을 침묵시키므로** 여기서 죽는다.
     """
-    def _viol(zones, areas):
-        try:
-            out = _simulate_audit(monkeypatch, zones=zones, areas=areas)
-        except Exception as e:  # noqa: BLE001
-            pytest.skip(f"simulate 경로가 외부 의존을 요구한다: {type(e).__name__}")
-        pa = (out.get("site") or {}).get("premise_audit") or out.get("premise_audit")
-        assert isinstance(pa, dict) and pa.get("ok") is not True, (
-            f"실패를 성공으로 위장했다 — {pa}"
-        )
-        return {v.get("relation") or v.get("key") for v in (pa.get("violations") or [])}, pa
+    clean, _ = _audit_via_simulate([_ADDR, _ADDR_B])
+    broken, out = _audit_via_simulate([_ADDR, _ADDR, _ADDR])
 
-    # ① 정상 부지 — 침묵해야 한다(위양성 방지)
-    clean, pa_clean = _viol(["제2종일반주거지역", "제2종일반주거지역"], [1000.0, 500.0])
-    assert not clean, f"정상 부지에서 거짓 위반 — {clean}"
-    # ★감사가 실제로 재료를 받았는지(빈 zone_mix 로 «위반 0» 을 만드는 변이를 여기서 죽인다)
-    assert pa_clean.get("checked") == pa_clean.get("registered"), pa_clean
+    ck = {v.get("relation") or v.get("key") for v in (clean.get("violations") or [])}
+    bk = {v.get("relation") or v.get("key") for v in (broken.get("violations") or [])}
 
-    # ② ★결함 부지 — 면적 최대가 아닌 zone 이 우세로 실리면 `dominant_argmax` 가 발화해야 한다.
-    #    `dominant_zone` 을 None 으로 죽이는 변이가 여기서 죽는다(발화가 사라지므로).
-    import app.services.zoning.premise_audit as _pa
-    broken = _pa.audit({
-        "dominant_zone": "제1종일반주거지역",
-        "zone_mix": [{"zone": "제2종일반주거지역", "area_sqm": 1300.0},
-                     {"zone": "제1종일반주거지역", "area_sqm": 410.0}],
-        "per_parcel": [{"zone": "제1종일반주거지역", "area_sqm": 410.0},
-                       {"zone": "제2종일반주거지역", "area_sqm": 1300.0}],
-        "integrated": {"total_area_sqm": 1710.0},
-        "scenario": {"top3": {"zone_type": "제1종일반주거지역", "parcel_count": 2,
-                              "land_area_sqm": 1710.0}},
-        "_request_parcel_count": 2,
-    })
-    keys = {v.get("relation") or v.get("key") for v in (broken.get("violations") or [])}
-    assert "dominant_argmax" in keys, f"결함 부지에서 침묵한다 — {keys}"
-    assert clean != keys, "두 모집단이 같은 답을 낸다 — 감사가 아무것도 가르지 않는다"
+    assert not ck, f"정상 부지에서 거짓 위반 — {ck}"
+    assert "count_conservation_parcels" in bk, (
+        f"주소 붕괴 부지에서 침묵한다 — {bk} "
+        f"(site: requested={(out.get('site') or {}).get('requested_parcel_count')} "
+        f"parcel_count={(out.get('site') or {}).get('parcel_count')})"
+    )
+    assert ck != bk, "두 모집단이 같은 답 — 감사가 아무것도 가르지 않는다"
+    # ★두 실행 모두 전 관계를 태웠는가(한쪽만 커버리지가 떨어지면 위 비교가 오염된다)
+    for lbl, pa in (("정상", clean), ("붕괴", broken)):
+        assert pa.get("checked") == pa.get("registered"), f"{lbl}: {pa.get('checked')}/{pa.get('registered')}"
 
 
 def test_the_auditor_catches_the_rc2_defect():
@@ -169,7 +146,7 @@ def test_the_auditor_catches_the_rc2_defect():
     assert "dominant_argmax" not in healed, f"수정 후에도 발화한다(위양성) — {healed}"
 
 
-def test_zone_mix_comes_from_the_sibling_and_preserves_unknown(monkeypatch):
+def test_zone_mix_comes_from_the_sibling_and_preserves_unknown():
     """★M4·M5 — `zone_mix` 를 **형제가 낸 것**으로 쓰고, 용도 미조회 필지를 **버리지 않는다**.
 
     적대 리뷰 실측: 내가 만든 `_zone_mix_from` 은 zone 결측을 **버리는데** `per_parcel` 은
@@ -178,13 +155,7 @@ def test_zone_mix_comes_from_the_sibling_and_preserves_unknown(monkeypatch):
     ★그리고 종전 락이 `== []`(버리는 쪽)를 **정답으로 못 박아** 결함을 지키고 있었다 —
       이어받는 사람이 고치려면 **락을 먼저 깨야** 했다.
     """
-    try:
-        out = _simulate_audit(monkeypatch,
-                              zones=["제2종일반주거지역", "제2종일반주거지역", None],
-                              areas=[1000.0, 500.0, 300.0])
-    except Exception as e:  # noqa: BLE001
-        pytest.skip(f"simulate 경로가 외부 의존을 요구한다: {type(e).__name__}")
-    pa = (out.get("site") or {}).get("premise_audit") or out.get("premise_audit")
+    pa, _out = _audit_via_simulate([_ADDR, _ADDR_B])
     keys = {v.get("relation") or v.get("key") for v in (pa.get("violations") or [])}
     assert "area_conservation" not in keys, (
         f"용도 미조회 필지 때문에 면적 보존이 깨졌다(거짓 위반) — {keys}. "
