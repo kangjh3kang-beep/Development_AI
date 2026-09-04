@@ -31,11 +31,8 @@ import { join } from "node:path";
 import { render } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import {
-  SATONG_MAP_SHELL_LAYERS,
-  defaultControlsByLayer,
-  initialLayerControls,
-} from "@/components/precheck/SatongMapShell";
+import { SATONG_MAP_SHELL_LAYERS } from "@/components/precheck/SatongMapShell";
+import { defaultSatongMapControls } from "@/store/useSatongMapPrefsStore";
 import { satongLabelBudget } from "@/lib/satong-map-labels";
 import {
   SATONG_SELECTION_LABEL_CONTROL_IDS,
@@ -249,56 +246,69 @@ describe("E 시간축 — 토글은 **바뀌는 것**이고, 정리는 **끝나�
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-describe("C 기본값(값) — 함수를 **실행해서** 판정에 먹인다", () => {
+describe("C 기본값(값) — 이제 **스토어가 소유자**다", () => {
   it("★기본 상태는 표시다 — 사용자 요구 「기본은 나타나도록」", () => {
-    // 텍스트가 아니라 값이다. `useState(() => ({...defaultControlsByLayer(), cadastre: []}))`
-    // 같은 초기값 뒤집기가 이 단언에 걸린다.
-    expect(satongSelectionLabelsVisible(st(defaultControlsByLayer()))).toBe(true);
+    expect(satongSelectionLabelsVisible(st(defaultSatongMapControls()))).toBe(true);
   });
 
-  it("★★초기 상태를 **실행해서** 잰다 — 화면이 처음 뜰 때 실제로 켜져 있는가", () => {
-    // ★#959 실측: 종전 락은 소스 **모양**이었고, 관계로 바꾸니
-    //   `() => ({ ...defaultControlsByLayer(), cadastre: [] })` 가 **SURVIVED** 했다
-    //   (관계는 유지한 채 계약만 깬다). 위양성을 고치다 **위음성을 새로 만든 것**이다.
-    //   동료 세션이 «관계로 바꾼 뒤에도 그 관계를 유지하며 계약을 깨는 변이가 있는지
-    //   물어 보라» 고 조언해 재 봤고, 실제로 샜다.
-    //   → 초기화자를 이름 있는 값으로 빼고 **실행해서** 잰다. 모양에 불변이고 위음성이 없다.
-    expect(satongSelectionLabelsVisible(st(initialLayerControls()))).toBe(true);
-  });
-
-  it("★그 초기화자가 실제로 useState 에 연결돼 있다(배선)", () => {
-    // 여기만 소스를 본다 — 「무엇이 초기값인가」는 위에서 값으로 쟀고, 남은 것은
-    // 「그 값이 상태로 쓰이는가」뿐이다. ★모양이 아니라 **관계**를 본다: 같은 선언문 안에
-    // `useState` 와 `initialLayerControls` 가 함께 있는가(서식·제네릭 표기에 불변).
+  it("★★셸이 **셀렉터로** 읽는다 — `useState` 지연 초기값으로 읽지 않는다", () => {
+    // ★2026-09-04: 영속으로 옮기면서 «지연 초기값 안에서 스토어를 읽는» 형태를 **피했다**.
+    //   `lib/hydration/render-path-store-reads.ts` 의 위험 ①(렌더 중 라이브 읽기)에
+    //   **지연 초기값이 포함**되고, 이 저장소에는 그 형태로 프로덕션 React #418 이 난 실화가 있다.
     const src = __stripCommentsForScan(
       readFileSync(join(process.cwd(), "components/precheck/SatongMapShell.tsx"), "utf8"),
       "SatongMapShell.tsx",
     );
-    const wired = src
-      .split(";")
-      .filter((st_) => /\buseState\b/.test(st_) && /\binitialLayerControls\b/.test(st_));
-    expect(wired).toHaveLength(1);
-    expect(wired[0]).toMatch(/\blayerControls\b/);
-    // 그 상태가 layerState 로 흘러간다.
-    expect(src).toMatch(/controlsByLayer:\s*layerControls/);
+    const stmts = src.split(";").map((x) => x.replace(/\s+/g, " ").trim());
+    // ★**관계**로 본다(모양 아님). 초판은 정확 문자열이라 셀렉터 매개변수 이름만 바꿔도
+    //   빨개졌다 — 계약 불변인데. **오늘 세 번째 같은 형태**이고, 하필 이 PR 이 #959·#960 의
+    //   «위양성 대조군» 케이스를 지우면서 종전보다 **더 취약하게** 만들었다(§A-6).
+    const reads = stmts.filter((x) => /\buseSatongMapPrefs\b/.test(x) && /\blayerControls\b/.test(x));
+    expect(reads).toHaveLength(1); // 대조군 — 그 읽기가 정확히 하나
+    expect(reads[0]).toMatch(/^const layerControls = useSatongMapPrefs\(\s*\(\w+\)\s*=>\s*\w+\.controlsByLayer\s*\)$/);
+    // ★쓰기 쪽도 같은 관계로 — 리뷰 Finding 5 는 이 자리를 no-op 으로 바꿔도 통과했다.
+    const writes = stmts.filter((x) => /\buseSatongMapPrefs\b/.test(x) && /\bsetLayerControls\b/.test(x));
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toMatch(/^const setLayerControls = useSatongMapPrefs\(\s*\(\w+\)\s*=>\s*\w+\.setControlsByLayer\s*\)$/);
+    // ★음성 대조군 — layerControls 를 useState 로 되돌리면 하이드레이션 위험이 돌아온다.
+    expect(stmts.filter((x) => /\buseState\b/.test(x) && /\blayerControls\b/.test(x))).toHaveLength(0);
+
+    // ★★레이어 **활성 상태**도 같은 계약이다(2026-09-04 · 신고의 남은 절반).
+    const layerReads = stmts.filter(
+      (x) => /\buseSatongMapPrefs\b/.test(x) && /\benabledLayerIds\b/.test(x),
+    );
+    expect(layerReads).toHaveLength(1);
+    expect(layerReads[0]).toMatch(
+      /^const enabledLayerIds = useSatongMapPrefs\(\s*\(\w+\)\s*=>\s*\w+\.enabledLayerIds\s*\)$/,
+    );
+    // ★`useState` 로 되돌리면 영속이 사라지고 하이드레이션 위험도 돌아온다.
+    expect(stmts.filter((x) => /\buseState\b/.test(x) && /\benabledLayers\b/.test(x))).toHaveLength(0);
+    // ★파생 Set 은 **memo** 여야 한다 — 매 렌더 새로 만들면 mapLayerState identity 가 바뀐다.
+    const derived = stmts.filter((x) => /\bconst enabledLayers = useMemo\b/.test(x));
+    expect(derived).toHaveLength(1);
   });
 
-  // ★설명 가능한 생존(변이 점수 부풀리기 방지): 그 선언을 **서식만** 바꾸는 변이는
-  //   이 락에서 **SURVIVED 가 정답**이다 — 계약이 그대로이므로 빨개지면 안 된다.
-  //   실측(2026-09-04): 종전 모양 기반 정규식은 서식 변경본에 **매치 실패**(위양성),
-  //   관계 기반은 **매치 성공**. 계약을 깨는 변이는 위 값 테스트가 잡는다.
-  it("★위 배선 락이 서식 변화에 **깨지지 않는다**(위양성 대조군)", () => {
-    const reformatted = `
-      const [layerControls, setLayerControls] = useState<
-        SatongMapLayerState["controlsByLayer"]
-      >(initialLayerControls);
-      const mapLayerState = { controlsByLayer: layerControls };
-    `;
+  it("★위 배선 락이 **서식·이름 변화에 깨지지 않는다**(위양성 대조군 — 이 PR 이 지웠던 것)", () => {
     const hit = (src: string) =>
-      src.split(";").filter((st_) => /\buseState\b/.test(st_) && /\binitialLayerControls\b/.test(st_));
-    expect(hit(reformatted)).toHaveLength(1);
-    // ★음성 대조군 — 배선을 끊으면 0건이 된다.
-    expect(hit(`const [layerControls, setLayerControls] = useState({});`)).toHaveLength(0);
+      src
+        .split(";")
+        .map((x) => x.replace(/\s+/g, " ").trim())
+        .filter((x) => /\buseSatongMapPrefs\b/.test(x) && /\blayerControls\b/.test(x));
+    // 계약을 유지한 채 매개변수 이름만 바꾼 합성 소스 — 통과해야 한다.
+    const renamed = "const layerControls = useSatongMapPrefs((state) => state.controlsByLayer);";
+    expect(hit(renamed)).toHaveLength(1);
+    expect(hit(renamed)[0]).toMatch(/^const layerControls = useSatongMapPrefs\(\s*\(\w+\)\s*=>\s*\w+\.controlsByLayer\s*\)$/);
+    // ★음성 대조군 — 계약을 깨면(다른 필드) 안 걸린다.
+    const wrong = "const layerControls = useSatongMapPrefs((s) => s.somethingElse);";
+    expect(hit(wrong)[0]).not.toMatch(/controlsByLayer/);
+  });
+
+  it("★그 상태가 layerState 로 흘러간다", () => {
+    const src = __stripCommentsForScan(
+      readFileSync(join(process.cwd(), "components/precheck/SatongMapShell.tsx"), "utf8"),
+      "SatongMapShell.tsx",
+    );
+    expect(src).toMatch(/controlsByLayer:\s*layerControls/);
   });
 });
 
@@ -352,7 +362,11 @@ describe("D 호출부 — 판정 결과를 파생시킨다", () => {
         if (!HAS_TOOLBAR.has(base)) offenders.push(`${base}: [${ids.join(", ")}]`);
       }
     }
-    expect(declared).toBeGreaterThanOrEqual(3); // 대조군 — 선언한 호출부가 실제로 있다
+    // ★대조군을 **실측에 결속**한다. 2026-09-04 에 3 → 2 로 줄었고 그것이 **정상**이다:
+    //   `SatongMapShell` 의 기본값이 스토어로 옮겨가면서 이 파일에서 `cadastre:` 인라인
+    //   선언이 사라졌다(셸의 판정은 C 축이 값으로 잰다). ★이 가드가 그 변화를 **잡아서**
+    //   내가 모집단이 바뀐 것을 알았다 — 하한을 느슨하게 뒀으면 조용히 지나갔다.
+    expect(declared).toBe(2);
     expect(offenders).toEqual([]);
   });
 
