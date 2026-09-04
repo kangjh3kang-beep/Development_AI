@@ -68,9 +68,13 @@ async function runCard() {
 
 describe("전제 감사 도달 — `premise_audit`", () => {
   it("★위반이 오면 **백엔드 원문**이 화면에 뜬다(종전에는 소비처 0이라 버려졌다)", async () => {
+    // ★**프로덕션 모양으로 통일**한다 — 성공 경로는 **항상** `structurally_vacuous` 를 덧씌운다.
+    //   1차 봉합이 `clean`·`partial` 픽스처에만 그것을 적용하고 **가장 중요한 「위반」 픽스처는
+    //   빠뜨렸고**, 그 누락이 MAJOR-1(위반을 부정하는 문장)을 카드 층에서 **은폐**했다.
+    //   ★*"처방을 적용한 범위 = 결함이 사는 범위인지 확인하라"*(§D20)의 재발이었다.
     reply({
-      violations: [{ relation: "path_invariance_zone", title: "경로 무관성", detail: DETAIL }],
-      checked: 6, registered: 6,
+      violations: [{ relation: "count_conservation_parcels", title: "개수 보존", detail: DETAIL }],
+      checked: 6, registered: 6, structurally_vacuous: ["path_invariance_zone"],
     });
     await runCard();
 
@@ -78,6 +82,8 @@ describe("전제 감사 도달 — `premise_audit`", () => {
     expect(box.dataset.state).toBe("violations");
     // ★평문 대조 — 문구의 괄호가 정규식 그룹으로 읽히는 함정을 피한다.
     expect(box.textContent ?? "").toContain(DETAIL);
+    // ★검출된 위반을 부정하는 문장이 **화면에 도달하지 않는다**(배선 층에서도 잠근다).
+    expect(box.textContent ?? "").not.toContain("포함돼 있으나");
   });
 
   it("★공허(한 건도 실행 안 됨)도 도달한다 — 「위반 없음」과 **다른 말**이어야 한다", async () => {
@@ -129,7 +135,7 @@ describe("전제 감사 도달 — `premise_audit`", () => {
   });
 
   it("★고지가 시나리오 표 **위**에 온다 — 판정을 읽기 전에 교차검증 여부를 알아야 한다", async () => {
-    reply({ violations: [{ relation: "r", title: "t", detail: DETAIL }], checked: 6, registered: 6 });
+    reply({ violations: [{ relation: "r", title: "t", detail: DETAIL }], checked: 6, registered: 6, structurally_vacuous: ["path_invariance_zone"] });
     await runCard();
 
     const box = await screen.findByTestId("premise-audit-notice");

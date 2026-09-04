@@ -175,6 +175,47 @@ describe("PremiseAuditNotice — 렌더", () => {
     expect(box.textContent ?? "").toContain("보증하지 않습니다");
   });
 
+  it("★★위반 상태에서 「위 수에 포함」이라고 **말하지 않는다** — 검출된 위반을 부정하는 문장", () => {
+    // ★2차 적대 리뷰 MAJOR-1. 첫 판은 이 문장을 **조건 없이** 모든 상태에 붙였고,
+    //   위반 상태의 제목이 `전제 불일치 검출 · 1건` 이라 「위 수」가 **위반 개수**로 읽혔다.
+    //   → *"검출된 1건 = 판별력 없는 그 1건"* 으로 읽혀 **진짜 위반이 기각된다.**
+    //   ★락 22건이 전부 초록이었다: 이 픽스처가 그 문장을 **실제로 렌더하는데**
+    //     단언이 title·detail·state 뿐이라 **아무도 그 줄을 안 봤다.**
+    render(<PremiseAuditNotice audit={FIXTURES.violations} />);
+    const t = screen.getByTestId("premise-audit-notice").textContent ?? "";
+    expect(t, "위반 상태에서 「포함」을 주장했다").not.toContain("포함돼 있으나");
+    // ★그렇다고 정보를 **버리지도 않는다** — 무관함을 명시한다(두 모집단이 갈린다).
+    expect(t).toContain("path_invariance_zone");
+    expect(t).toContain("무관합니다");
+  });
+
+  it("★공허 상태에서는 **아예 안 밝힌다** — 실행 0에 「포함」은 성립하지 않는다", () => {
+    render(<PremiseAuditNotice audit={{ violations: [], checked: 0, registered: 6, structurally_vacuous: ["path_invariance_zone"] }} />);
+    const t = screen.getByTestId("premise-audit-notice").textContent ?? "";
+    expect(t).not.toContain("포함");
+    expect(t).not.toContain("path_invariance_zone");
+    expect(t).toContain("확인하지 못함");
+  });
+
+  it("★부분 실행에서만 「포함」이 참이다 — 판별력 없는 관계도 **실행은 됐다**", () => {
+    render(<PremiseAuditNotice audit={FIXTURES.partial} />);
+    const t = screen.getByTestId("premise-audit-notice").textContent ?? "";
+    expect(t).toContain("위 실행 수에 포함돼 있으나");
+  });
+
+  it("★본문 수치도 잠근다 — 제목만 못 박으면 구멍이 **한 줄 아래로 이동**한다", () => {
+    // ★2차 리뷰 MAJOR-2: 제목을 완전일치로 잠갔더니 본문이 같은 두 수를 **무잠금으로** 다시
+    //   인쇄했다(`{attempted}` → `{registered}` 변이가 SURVIVED — 제목 4/6 과 본문 6개가
+    //   **자기모순인데 22건 전부 초록**). ★산문을 못 박지 않고 **수만** 태운다.
+    render(<PremiseAuditNotice audit={FIXTURES.partial} />);
+    const ps = Array.from(screen.getByTestId("premise-audit-notice").querySelectorAll("p"));
+    const body = ps[1]?.textContent ?? "";
+    const nums = (body.match(/\d+/g) ?? []).map(Number);
+    const { attempted, registered } = premiseAuditPower(FIXTURES.partial);
+    // 본문이 인쇄하는 두 수가 **파생값과 같아야** 한다(자릿수 자루가 아니라 순서까지).
+    expect(nums.slice(0, 2)).toEqual([registered, attempted]);
+  });
+
   it("★판별력 없는 관계는 **맥락으로만** 밝히고 비율에 섞지 않는다", () => {
     render(<PremiseAuditNotice audit={FIXTURES.partial} />);
     const t = screen.getByTestId("premise-audit-notice").textContent ?? "";
@@ -183,6 +224,32 @@ describe("PremiseAuditNotice — 렌더", () => {
     // ★그런데 그것이 **경보를 만들지는 않는다** — 정상 부지는 여전히 무렌더다.
     const { container } = render(<PremiseAuditNotice audit={FIXTURES.clean} />);
     expect(container.firstChild).toBeNull();
+  });
+
+  it("★판별력 없는 관계가 **0건이면 그 줄을 아예 안 그린다**(빈 괄호 금지)", () => {
+    // 생산자 B(`auto_zoning`)와 생산자 A 의 실패 경로는 `structurally_vacuous` 를 **안 낸다**.
+    // 가드가 `>= 0` 으로 약화되면 «판별력이 없는 검사 0건()» 이 렌더된다(리뷰 MINOR-5).
+    render(<PremiseAuditNotice audit={{ violations: [VIOLATION], checked: 6, registered: 6 }} />);
+    const t = screen.getByTestId("premise-audit-notice").textContent ?? "";
+    expect(t).not.toContain("판별력이 없는");
+    expect(t).not.toContain("()");
+  });
+
+  it("★톤 계약 — **경보(위반)와 맥락(그 외)** 이 시각적으로 갈린다", () => {
+    // 설계가 «경보 vs 맥락» 을 명시적으로 갈랐는데 그 축을 태우는 단언이 없었다(리뷰 MINOR-6).
+    const cls = (a: PremiseAudit) => {
+      const { container, unmount } = render(<PremiseAuditNotice audit={a} />);
+      const c = (container.firstChild as HTMLElement).className;
+      unmount();
+      return c;
+    };
+    const err = cls(FIXTURES.violations);
+    expect(err).toContain("status-error");
+    // ★파티션형 — 나머지 세 상태는 **전부** 경보 톤이 아니어야 한다.
+    for (const k of ["failed", "vacuous", "partial"] as const) {
+      expect(cls(FIXTURES[k]), `${k} 가 경보 톤을 썼다`).not.toContain("status-error");
+      expect(cls(FIXTURES[k])).toContain("status-warning");
+    }
   });
 
   it("★네 상태의 제목이 **서로 다르다**(두 갈래가 같은 말을 하면 정보가 0이다)", () => {
@@ -200,8 +267,13 @@ describe("PremiseAuditNotice — 렌더", () => {
    * ★**부채를 초록 안에 드러낸다**(커밋 메시지에만 적으면 안 드러난다).
    *
    * ★사유를 **정정한다**(적대 리뷰 MEDIUM-5). 첫 판은 *"그 경로는 공허 축을 **못 본다**"* 라고
-   * 적었는데 **거짓**이다 — `routers/auto_zoning.py:1947` 은 위반 유무와 **무관하게 항상**
-   * `{checked, registered, violations}` 를 싣는다. **데이터는 있다.**
+   * 적었는데 **거짓**이다 — `routers/auto_zoning.py:1947` 은 **위임이 성공한 경우에 한해**
+   * 위반 유무와 무관하게 `{checked, registered, violations}` 를 싣는다. **데이터는 있다.**
+   * ★★그 조건을 빠뜨린 첫 정정문도 **조건 없는 단정**이었다(2차 리뷰 MINOR-4):
+   *   그 대입은 `if isinstance(top3, dict):` **안**이고 다시 `try:` **안**이라,
+   *   `auto_recommend_top3` 가 터지면 `except` 가 시나리오를 degrade 하며
+   *   **`premise_audit` 키를 아예 안 만든다** — **감사가 가장 필요한 실패 경로에 데이터가 없다.**
+   *   ★*정정문이 원문보다 짧고 단정적이라 더 신뢰받는다*(§27-c).
    * 없는 것은 **프론트 소비처**다(전수: `premise_audit` 소비처는 이 카드 1곳).
    *
    * ★***«데이터가 없다»와 «소비처가 없다»는 처방이 다르다***(§29) — 첫 판 문구를 읽은 사람은
