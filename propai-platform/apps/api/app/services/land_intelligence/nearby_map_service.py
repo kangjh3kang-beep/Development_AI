@@ -23,11 +23,11 @@ import structlog
 from app.core.db_utils import PostGISHelper
 from app.services.data_validation.deal_date import parse_deal_date
 from app.services.data_validation.price_stats import robust_price_stats
+from app.services.land_intelligence.realtx_report_service import per_pyeong_10k
 from app.services.land_intelligence.sample_attenuation import (
     build_sample_attenuation,
 )
 from app.services.market.comparable_sample import is_masked_jibun as _is_masked_jibun
-from app.services.land_intelligence.realtx_report_service import per_pyeong_10k
 from app.services.market.land_dong_stats import dong_land_stats
 from apps.api.config import get_settings
 from apps.api.integrations.molit_client import MolitClient
