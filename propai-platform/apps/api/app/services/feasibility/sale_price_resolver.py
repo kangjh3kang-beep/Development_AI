@@ -47,6 +47,53 @@ _BUILDING_TO_MOLIT_PROP: dict[str, str] = {
     "townhouse": "villa",       # 연립·다세대(타운하우스)
 }
 
+def _exclusive_ratio_for(dev_type: str, building_type: str | None) -> tuple[float, str]:
+    """전용률(전용/공급) — **정본은 `unit_standards`** 다. 평면 상수를 쓰지 않는다.
+
+    ★왜: `unit_standards` 는 **자신을 유일 정본이라 선언**하고 *"두 소비처가 서로 다른
+      전용률 테이블을 각자 보유해 세대수가 30% 안팎 어긋나던 이중정의 결함(구 «40 vs 323»
+      버그 클래스)"* 을 막으려 존재한다. `_JEONYULRYUL = 0.747` 평면 상수는 **정확히 그
+      이중정의**였다 — 정본 대비 오피스텔·지산 **+35.8%**, 단독 **−12.1%**
+      (라이브 실측 2026-09-05 · 정본 15유형 전수).
+
+    ★★이 결함은 **내 앞 커밋이 활성화시켰다.** 종전 파이프라인은 `dev_type` 이 **항상 M01**
+      이라 0.747 ≈ 0.75 로 **우연히 맞았다**(괴리 −0.4%). `building_type` 을 실제로 넘기게
+      고치자 «물건종별은 유형을 따르는데 전용률은 아파트 고정» 인 비정합이 드러났다.
+      **개선이 잠자던 결함을 깨웠다.**
+
+    ## ★축은 `dev_type` 이다 — `building_type` 으로 정하지 않는다
+
+    정본은 `dev_type`(M01~M15) 축이고, `building_type` 은 **여러 dev_type 이 공유**한다
+    (apartment ← M01 0.75 · M03 0.65 · M05 0.70 · M07 0.60). 그래서 전용률을 유일하게
+    정하지 못한다.
+
+    ★**「최소=안전측」을 썼다가 라이브 측정으로 기각했다**: apartment 가 0.75 → **0.60** 이
+      되어 **가장 흔한 경로가 −19.7%**(노원 29.4M → 23.7M). 주상복합(M07) 값을 일반
+      아파트에 적용하는 것이라 **보수적인 게 아니라 틀린 것**이다.
+      *안전측은 값을 모를 때의 규약이지, **아는 값을 버리는 근거가 아니다.***
+
+    → `dev_type` 의 정본값을 쓴다. `building_type` 이 그와 **어긋나면** 값을 바꾸지 않고
+      **근거 문자열에 그 사실을 적는다**(부채를 숨기지 않는다 — 진짜 처방은 호출부가
+      `dev_type` 을 갖는 것이고, 파이프라인은 아직 못 갖는다).
+    """
+    from app.services.feasibility.unit_standards import get_exclusive_ratio
+
+    ratio = get_exclusive_ratio(dev_type)
+    bt = (building_type or "").strip()
+    note = f"전용률 {ratio}(정본·유형 {dev_type})"
+    if bt and bt != _safe_building_type(_svc(), dev_type):
+        # ★값을 바꾸지 않는다 — 대신 **불일치를 표면까지** 싣는다.
+        note += f" ★건물유형 {bt} 와 불일치 — 전용률은 유형 축을 따른다(호출부가 dev_type 미보유)"
+    return ratio, note
+
+
+def _safe_building_type(svc: Any, dev_type: str) -> str:
+    try:
+        return svc._get_building_type(dev_type)
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 #: 실거래 표본 하한. 미만이면 실거래를 **쓰지 않고** 지역 시세로 폴백한다.
 #: ★n=1 도 중앙값을 내므로, 하한이 없으면 「실거래 기반」이라는 라벨이 날조가 된다.
 _MIN_TRADE_SAMPLES = 5
@@ -102,7 +149,6 @@ async def _trade_sale_price_per_pyeong(
     try:
         # 검증된 실거래 헬퍼·환산상수 재사용(SSOT — 값 발산 방지).
         from app.services.sales.pricing.suggest import (
-            _JEONYULRYUL,
             _PREMIUM,
             _extract_dong,
             _trade_per_pyeong,
@@ -131,10 +177,11 @@ async def _trade_sale_price_per_pyeong(
 
     premium = _PREMIUM["base"]
     # 전용 평당가(만원) → 공급 평당가(원/평) × 신축 프리미엄.
-    price = int(round(med * _JEONYULRYUL * premium * 10000))
+    ratio, ratio_note = _exclusive_ratio_for(dev_type, building_type)
+    price = int(round(med * ratio * premium * 10000))
     basis = (
         f"주변 실거래(MOLIT) {scope} 중앙값 {med:,}만원/평(전용, 표본 {n}건·최근 8개월) × "
-        f"전용률 {_JEONYULRYUL} × 신축 프리미엄 {premium} → 공급 평당가(공급면적 기준)"
+        f"{ratio_note} × 신축 프리미엄 {premium} → 공급 평당가(공급면적 기준)"
     )
     return price, "주변 실거래(MOLIT)", basis, None
 

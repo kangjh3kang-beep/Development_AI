@@ -256,15 +256,47 @@ def test_moved_names_are_still_importable_from_the_old_module() -> None:
 # 부채 — **초록 안에 보이게** 둔다(커밋 메시지에만 적으면 안 드러난다)
 # ══════════════════════════════════════════════════════════════════════════════
 
-@pytest.mark.xfail(strict=True, reason=(
-    "★M-2 부채 — 전용률이 두 벌이다. `_JEONYULRYUL = 0.747`(평면 상수)과 "
-    "`unit_standards.get_exclusive_ratio(dev_type)`(선언된 정본, 유형별)이 공존하고 "
-    "오피스텔·지식산업센터에서 **최대 36%** 어긋난다. 이 PR 범위 밖이라 고치지 않되 "
-    "**초록 안에 보이게** 둔다. 고치면 rough 경로의 값이 바뀌므로 별도 측정이 필요하다."))
-def test_debt_exclusive_ratio_has_two_sources() -> None:
+def test_exclusive_ratio_comes_from_the_declared_ssot() -> None:
+    """★M-2 **해소** — 전용률이 정본에서 온다(평면 상수 소비처 0).
+
+    `unit_standards` 는 **자신을 유일 정본이라 선언**하고 *"두 소비처가 서로 다른 전용률
+    테이블을 각자 보유해 세대수가 30% 안팎 어긋나던 이중정의 결함"* 을 막으려 존재한다.
+    `_JEONYULRYUL = 0.747` 은 정확히 그 이중정의였다(라이브 실측: 오피스텔·지산 **+35.8%**,
+    단독 **−12.1%**, 아파트 **−0.4%**).
+
+    ★★이 결함은 **앞 커밋이 활성화**시켰다 — 종전엔 `dev_type` 이 항상 M01 이라 0.747 이
+      **우연히 맞았다.** `building_type` 을 실제로 넘기게 고치자 비정합이 드러났다.
+    """
+    import ast
+
+    from app.services.feasibility.sale_price_resolver import _exclusive_ratio_for
     from app.services.feasibility.unit_standards import get_exclusive_ratio
-    from app.services.sales.pricing.suggest import _JEONYULRYUL
-    assert get_exclusive_ratio("M08") == _JEONYULRYUL
+
+    # ★평면 상수의 **실행 소비처가 0** 인가(주석·독스트링은 세지 않는다 — 파서로 본다)
+    tree = ast.parse(_RESOLVER.read_text(encoding="utf-8"))
+    used = [n.lineno for n in ast.walk(tree)
+            if isinstance(n, ast.Name) and n.id == "_JEONYULRYUL"]
+    assert used == [], f"평면 전용률이 아직 실행 경로에 있다: 줄 {used}"
+
+    # ★두 모집단 — 유형이 갈리면 값도 갈려야 한다(같으면 상수와 구별 불가)
+    apt, _ = _exclusive_ratio_for("M01", "apartment")
+    offi, _ = _exclusive_ratio_for("M08", "officetel")
+    assert offi < apt, f"오피스텔 전용률이 아파트보다 낮지 않다: {offi} vs {apt}"
+    assert offi == get_exclusive_ratio("M08") == 0.55
+
+    # ★★축은 `dev_type` 이다 — 「최소=안전측」은 **라이브 측정으로 기각**했다
+    #   (apartment 가 0.75 → 0.60 이 되어 가장 흔한 경로가 −19.7%. 주상복합 값을 일반
+    #    아파트에 적용하는 것이라 **보수적인 게 아니라 틀린 것**이었다).
+    r, note = _exclusive_ratio_for("M01", "apartment")
+    assert r == 0.75, f"dev_type 정본을 안 쓴다: {r} ({note})"
+
+    # ★불일치는 **값을 바꾸지 않고 근거에 싣는다**(부채를 숨기지 않는다)
+    r2, note2 = _exclusive_ratio_for("M01", "officetel")
+    assert r2 == 0.75, "불일치인데 값을 조용히 바꿨다"
+    assert "불일치" in note2, f"불일치가 표면에 안 실린다: {note2}"
+    # 음성 대조군: 일치하면 그 문구가 **없다**(항상 붙이는 구현을 가른다)
+    _, note3 = _exclusive_ratio_for("M08", "officetel")
+    assert "불일치" not in note3, f"일치인데 불일치라 적는다: {note3}"
 
 
 @pytest.mark.xfail(strict=True, reason=(
