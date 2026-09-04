@@ -77,7 +77,8 @@ async def _sigungu5_from_address(address: str) -> str | None:
 
 
 async def _trade_sale_price_per_pyeong(
-    *, dev_type: str, address: str,
+    *, dev_type: str, address: str, sigungu5: str | None = None,
+    building_type: str | None = None,
 ) -> tuple[int, str, str, None] | None:
     """주변 실거래(MOLIT) 직접 조회 → 분양단가(원/평, 공급면적). site_id 불필요(★HIGH-1).
 
@@ -88,7 +89,14 @@ async def _trade_sale_price_per_pyeong(
 
     표본 부족(_MIN_TRADE_SAMPLES 미만)·조회 실패면 None(호출부가 지역 시세로 폴백).
     """
-    sigungu5 = await _sigungu5_from_address(address)
+    # ★호출부가 이미 시군구를 알면 **지오코딩을 하지 않는다.**
+    #   ★★이 인자가 없던 판이 **VWorld 장애를 분양가 붕괴로 전파**했다(적대 리뷰 C-1 실측):
+    #     파이프라인은 PNU 에서 `lawd` 를 이미 갖고 있는데 그것을 안 넘겨,
+    #     지오코딩이 실패하면 실거래 출처가 통째로 빠지고 **−39%**(36.05M → 22.00M) 로
+    #     하드코딩 테이블에 떨어졌다. 그러면서 `sale_price_source` 는 계속 `market_blended`
+    #     라고 말했다 — **블렌딩이 안 됐는데 됐다고 말하는 것**이다.
+    #   → 주입이 1순위, 지오코딩은 **폴백**이다.
+    sigungu5 = (sigungu5 or "").strip() or await _sigungu5_from_address(address)
     if not sigungu5:
         return None
     try:
@@ -100,7 +108,10 @@ async def _trade_sale_price_per_pyeong(
             _trade_per_pyeong,
         )
 
-        building = _svc()._get_building_type(dev_type)
+        # ★호출부가 **건물유형을 이미 알면** 그것을 쓴다 — `dev_type` 을 거쳐 되돌리지 않는다.
+        #   파이프라인이 그 예다: `design.building_type` 은 실재하고 `development_type` 은 **없다**
+        #   (적대 리뷰 M-1 — 없는 필드를 `getattr` 로 읽어 **항상 M01** 이었다).
+        building = (building_type or "").strip() or _svc()._get_building_type(dev_type)
         prop_type = _BUILDING_TO_MOLIT_PROP.get(building, "apt")
         dong = _extract_dong(address)
         pp = await _trade_per_pyeong(sigungu5, dong, prop_type)

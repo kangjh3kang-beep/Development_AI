@@ -335,7 +335,10 @@ def _patch_molit(monkeypatch, source: dict | None):
     ★옛 이름을 계속 덮으면 스텁이 **아무것도 가로채지 못한 채** 테스트가 실경로를 태운다
       (실측: 29,000,000 을 기대했는데 30,000,000 이 나왔다).
     """
-    async def _fake(self, *, address, dev_type="M01"):
+    async def _fake(self, *, address, dev_type="M01", **kw):
+        # ★`**kw` — 소비처가 인자를 늘리면 스텁이 `TypeError` 를 내는데, `revalue()` 의
+        #   `except Exception` 이 그것을 삼켜 **출처가 조용히 빠진다**. 그러면 테스트는
+        #   실패가 아니라 **다른 것을 재게 된다**(실측: 29,000,000 기대 자리에 30,000,000).
         return source
 
     monkeypatch.setattr(MarketRevaluationService, "_molit_sale_price_source", _fake)
@@ -365,7 +368,7 @@ class TestRevalueAvmBlended:
         assert res["available"] is True
         assert res["price_per_pyeong"] == 30_000_000
         assert res["confidence"] == 80  # 단독 소스: 다양성 보너스 0
-        assert res["sale_price_source"] == "avm_blended"
+        assert res["sale_price_source"] == "single_source:avm"
         assert [s["source"] for s in res["sources"]] == ["avm"]
 
     async def test_avm_plus_molit_blend_exact(self, monkeypatch):

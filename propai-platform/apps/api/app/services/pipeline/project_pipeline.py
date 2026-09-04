@@ -2153,20 +2153,26 @@ class ProjectPipeline:
             sa_data = sa.data if sa else {}
             pnu = (sa_data.get("basic", {}) or {}).get("pnu") or sa_data.get("pnu")
             lawd = str(pnu)[:5] if pnu else None
-            # ★`dev_type` 을 넘긴다 — 실거래 출처가 **개발유형별 물건종별**(apt/오피스텔 등)로
-            #   조회되어야 `regional`(유형별 분양가 테이블)과 **같은 축**이 된다.
-            #   안 넘기면 기본값(M01)으로 떨어져 유형이 다른 사업에서 축이 갈린다.
+            # ★★`dev_type` 을 넘기지 **않는다** — 넘길 값이 없다.
+            #   종전 판은 `getattr(design, "development_type", None) or "M01"` 이었는데
+            #   `DesignToCostPayload` 에 그 필드가 **없어 항상 None → 항상 "M01"** 이었다.
+            #   «축을 넘긴다» 는 주석과 그것을 지키는 락까지 붙였지만 **프로덕션에서 죽은
+            #   배선**이었고, 락은 «키가 있다» 만 봐서 초록이었다(적대 리뷰 M-1).
+            #   → **장식을 철회한다.** 대신 이 자리에 **실재하는 축**인 `building_type` 이
+            #     이미 넘어가고 있고, 이제 실거래 물건종별 선택에 **실제로 쓰인다.**
             market_reval = await MarketRevaluationService().revalue(
                 address=site.address, building_type=design.building_type,
                 lawd_cd=lawd, land_area_sqm=site.land_area_sqm,
-                dev_type=getattr(design, "development_type", None) or "M01",
             )
         except Exception:  # noqa: BLE001
             market_reval = None
 
         if market_reval and market_reval.get("available"):
             avg_sale_price = float(market_reval["price_per_pyeong"])
-            sale_price_source = "market_blended"
+            # ★서비스가 판정한 라벨을 **그대로** 쓴다. 여기서 다시 적으면 두 곳이 갈리고,
+            #   실제로 갈려 있었다 — 출처가 `regional` 하나뿐인데도 `market_blended` 였다
+            #   (적대 리뷰 C-1: VWorld 장애 시 −39%인데 라벨은 그대로).
+            sale_price_source = market_reval.get("sale_price_source") or "market_blended"
         elif market_price and market_price > 0:
             avg_sale_price = float(market_price)
             # W2-1: 지역 미매칭 전국 기본(1500만/평) 폴백을 지역시세표 출처로 오표기하지 않음.

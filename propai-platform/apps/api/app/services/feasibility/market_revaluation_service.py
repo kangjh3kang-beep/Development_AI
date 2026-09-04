@@ -52,6 +52,27 @@ def _blend(sources: list[dict[str, Any]]) -> tuple[float, int]:
     return round(price), int(min(100, base_conf + diversity))
 
 
+def _blend_label(sources: list[dict[str, Any]], has_avm: bool, price: float) -> str | None:
+    """`sale_price_source` — **실제로 무엇이 섞였는지**를 말한다.
+
+    | 상황 | 라벨 |
+    |---|---|
+    | 산출 불가 | `None` |
+    | 출처 **2개 이상** + AVM 기여 | `avm_blended` |
+    | 출처 **2개 이상** | `market_blended` |
+    | ★출처 **1개뿐** | `single_source:<key>` — «블렌딩» 이 아니다 |
+
+    ★마지막 줄이 이 함수의 존재 이유다. 실거래가 빠지고 지역 테이블만 남은 상태를
+      `market_blended` 라 부르면 **없는 근거를 주장하는 것**이고, 그 차이가 −39% 였다.
+    """
+    if price <= 0:
+        return None
+    if len(sources) >= 2:
+        return "avm_blended" if has_avm else "market_blended"
+    only = (sources[0].get("source") if sources else None) or "unknown"
+    return f"single_source:{only}"
+
+
 class MarketRevaluationService:
     """다중 출처 신뢰도 가중 시장 재평가."""
 
@@ -92,7 +113,11 @@ class MarketRevaluationService:
         # ③최근 **8개월** ④`_MIN_TRADE_SAMPLES` **표본 하한** ⑤**전용→공급 환산 + 신축
         # 프리미엄** 을 갖는다 — 즉 `regional` 과 **같은 단위**가 된다.
         try:
-            molit = await self._molit_sale_price_source(address=address, dev_type=dev_type)
+            # ★`building_type` 은 `revalue()` 가 **이미 받고 있었는데 이 출처에 안 쓰였다.**
+            #   그래서 파이프라인이 «유형» 을 넘겨도 실거래 물건종별에 반영되지 않았다.
+            molit = await self._molit_sale_price_source(
+                address=address, dev_type=dev_type, lawd_cd=lawd_cd,
+                building_type=building_type)
             if molit and molit["price_per_pyeong"] > 0:
                 sources.append(molit)
         except Exception as e:  # noqa: BLE001
@@ -117,9 +142,12 @@ class MarketRevaluationService:
             "blended_at": datetime.now().isoformat(timespec="seconds"),
             "available": price > 0,
             # R5 정직 표기: AVM이 실제 블렌딩에 기여했을 때만 avm_blended
-            "sale_price_source": (
-                ("avm_blended" if has_avm else "market_blended") if price > 0 else None
-            ),
+            # ★★그리고 **블렌딩이 안 됐으면 「블렌딩」이라 말하지 않는다.**
+            #   종전엔 출처가 `regional` **하나**만 남아도 `market_blended` 였다 —
+            #   적대 리뷰 실측: VWorld 장애 시 실거래가 통째로 빠져 **−39%**(36.05M → 22.00M)
+            #   로 하드코딩 테이블에 떨어지는데 라벨은 그대로였다. **실패가 자기를 구별하지
+            #   못하면 조사자도 사용자도 원인을 못 본다**(§유료 산출물 규율 4).
+            "sale_price_source": _blend_label(sources, has_avm, price),
         }
 
     async def _avm_source(self, *, address: str, lawd_cd: str | None) -> dict[str, Any] | None:
@@ -189,7 +217,8 @@ class MarketRevaluationService:
         }
 
     async def _molit_sale_price_source(
-        self, *, address: str, dev_type: str = "M01"
+        self, *, address: str, dev_type: str = "M01", lawd_cd: str | None = None,
+        building_type: str | None = None,
     ) -> dict[str, Any] | None:
         """MOLIT 실거래 → **공급면적 기준 신축 분양가**(원/평). 공용 SSOT 경유.
 
@@ -201,10 +230,19 @@ class MarketRevaluationService:
         """
         from app.services.feasibility.sale_price_resolver import _trade_sale_price_per_pyeong
 
-        res = await _trade_sale_price_per_pyeong(dev_type=dev_type, address=address)
+        # ★`lawd_cd` 를 넘긴다 — 호출부가 이미 PNU 에서 얻은 값이다. 안 넘기면 리졸버가
+        #   VWorld 지오코딩으로 **재도출**하고, 그 장애가 분양가 붕괴로 전파된다(C-1).
+        res = await _trade_sale_price_per_pyeong(
+            dev_type=dev_type, address=address, sigungu5=(lawd_cd or "")[:5] or None,
+            building_type=building_type)
         if not res:
             return None
         price, _src, basis, _deg = res
+        # ★표본수는 리졸버가 basis 에 실어 보낸다("표본 N건"). 없으면 하한(5)으로 본다 —
+        #   ★**지어내지 않는다**: 못 읽으면 «가장 보수적인 값» 이지 «충분» 이 아니다.
+        import re as _re
+        _m = _re.search(r"표본\s*([0-9,]+)\s*건", basis or "")
+        _n = int(_m.group(1).replace(",", "")) if _m else 5
         if not price or price <= 0:
             return None
         return {
@@ -213,7 +251,14 @@ class MarketRevaluationService:
             # ★신뢰도는 **고정 92 가 아니다** — 종전 `min(92, 50+건수)` 는 건수만 봤고
             #   표본 하한도 없었다. 공용 리졸버가 하한을 통과시킨 것만 돌려주므로
             #   여기서는 그 사실을 반영해 92 를 쓴다(하한 미달은 애초에 None 이다).
-            "confidence": 92, "weight": 0.65, "count": None, "note": basis[:120],
+                        # ★신뢰도는 **표본수의 함수**다. 고정 92 는 근거가 없었다 —
+            #   내가 단 근거는 *"리졸버가 하한을 통과시킨 것만 돌려주므로"* 였는데
+            #   **그 하한은 5** 이지 옛 식 `min(92, 50+건수)` 가 92 에 닿는 42 가 아니다.
+            #   근거가 결론을 지탱하지 못했다(적대 리뷰 M-4).
+            #   실측: n=5 에서 블렌딩 신뢰도가 **+24pt** 부풀었고, 그 값은
+            #   `project_pipeline` 의 `sale_price_confidence`("분양가 신뢰도(%)")로
+            #   **사용자에게 나간다.**
+            "confidence": min(92, 50 + _n), "weight": 0.65, "count": _n, "note": basis[:120],
         }
 
     async def _molit_avg_per_pyeong(self, lawd_cd: str | None) -> dict[str, Any] | None:
