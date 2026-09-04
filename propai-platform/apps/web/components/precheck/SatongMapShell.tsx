@@ -122,6 +122,7 @@ import {
   selectionContaminationKey,
   trackSelectionContamination,
 } from "@/lib/growth/selection-contamination";
+import { useSatongMapPrefs } from "@/store/useSatongMapPrefsStore";
 
 // ★UX 트랙 D3(지도 높이 반응형 — 진단G 실측): 종전 고정 720px는 모바일에서 지도가
 //   화면 대부분을 점유했다. clamp(하한, 선호값, 상한) — 60dvh를 선호하되 satong-map-z.ts
@@ -634,35 +635,6 @@ function statusClass(status: LayerStatus): string {
   return "bg-[var(--status-warning)]/15 text-[var(--status-warning)]";
 }
 
-/**
- * ★export 하는 이유(#954 적대 리뷰 M-3): 「기본은 켜져 있다」를 **함수 본문 텍스트**로
- *   잠갔더니 `useState(() => ({...defaultControlsByLayer(), cadastre: []}))` 변이가 통과했다.
- *   본문은 그대로인데 **초기값이 뒤집힌다.** 테스트가 이 함수를 **실행해서 값으로** 재도록 연다.
- */
-export function defaultControlsByLayer(): SatongMapLayerState["controlsByLayer"] {
-  return {
-    cadastre: ["boundary", "selected"],
-    zoning: ["land-use"],
-    "official-price": ["unit-price"],
-    age: ["building-age"],
-    // ★개발 실무 기본값(레인G 권고) — 아파트만 보이던 종전 하드코딩 대신 토지·상업업무용을
-    //   기본 포함해, 레이어를 켜자마자 개발행위 판단에 필요한 유형이 바로 보이게 한다.
-    transactions: ["kind-trade", "type-apt", "type-land", "type-commercial"],
-    poi: ["station", "school", "commerce", "park", "hospital"],
-    development: ["facilities"],
-    terrain: ["base"],
-    // ★R1 MEDIUM-E: capacity 키 부재로 켜도 showCapacity=false였다 — "지도 표시 중"이
-    //   거짓이 되는 terrain과 같은 결함 클래스. mapEffect 컨트롤이 하나뿐이라 논쟁 없음.
-    capacity: ["far-headroom"],
-  };
-}
-
-/**
- * 레이어 컨트롤 **초기 상태**. `useState` 가 이 함수를 그대로 받는다(호출하지 않는다 —
- * lazy initializer). ★테스트가 **실행해서 값으로** 재도록 export 한다(#959).
- */
-export const initialLayerControls = (): SatongMapLayerState["controlsByLayer"] =>
-  defaultControlsByLayer();
 
 
 function parseGeocodeToParcel(
@@ -866,9 +838,12 @@ export function SatongMapShell({
   //   **소스 모양**으로 잠갔다 — 모양 락은 서식에 깨지고(위양성), 관계 락으로 바꾸니
   //   `() => ({ ...defaultControlsByLayer(), cadastre: [] })` 처럼 **관계는 유지한 채 계약을
   //   깨는** 변이가 샜다(위음성). 값으로 빼면 테스트가 **실행해서** 잴 수 있다.
-  const [layerControls, setLayerControls] = useState<SatongMapLayerState["controlsByLayer"]>(
-    initialLayerControls,
-  );
+  // ★영속 + 셀렉터 전용(2026-09-04). `useState` 지연 초기값으로 스토어를 읽지 **않는다** —
+  //   `lib/hydration/render-path-store-reads.ts` 가 판정하는 위험 ①(렌더 중 라이브 읽기)에
+  //   **지연 초기값이 포함**되고, 이 저장소에는 그 형태로 프로덕션 React #418 이 난 실화가 있다.
+  //   셀렉터 읽기는 `zustand/middleware` 가 `api.getInitialState` 를 덮어써서 원리적으로 안전하다.
+  const layerControls = useSatongMapPrefs((s) => s.controlsByLayer);
+  const setLayerControls = useSatongMapPrefs((s) => s.setControlsByLayer);
   const [activeLayerId, setActiveLayerId] = useState<SatongMapLayerId | null>(null);
   const [isOutputDockOpen, setIsOutputDockOpen] = useState(true);
   // ★UX 트랙 B4 — 착지 페이지(분석/시장/토지조서)는 같은 지도셸이 반복 렌더돼 매번 첫 화면을
@@ -2422,7 +2397,10 @@ export function SatongMapShell({
         [layerId]: Array.from(current),
       };
     });
-  }, []);
+    // ★deps 에 `setLayerControls` 를 넣는다(2026-09-04): 종전에는 `useState` 세터라 eslint 가
+    //   **안정적임을 알고** 생략을 허용했는데, 이제 zustand 액션이라 알 수 없다. 실제로는
+    //   스토어 액션이므로 identity 가 안 바뀌어 재생성이 늘지 않는다 — 넣는 쪽이 정직하다.
+  }, [setLayerControls]);
 
   const handleMapPickMany = useCallback(
     (parcels: ParcelAtPointResult[]) => {

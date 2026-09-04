@@ -268,7 +268,22 @@ describe("배선 락 — 유료 산출물 스토어는 계정 스코프를 우�
     expect(wipe, "창이 다음 함수까지 먹었다 — 끝 경계가 안 걸렸다").not.toContain(
       "export function ensureDataOwner",
     );
-    const STORES3 = ["usePaidRenderStore", "useRegistryAnalysisStore", "useDevelopmentPlanStore"];
+    // ★2026-09-04(#965 적대 리뷰 Finding 1) — **목록형이었고 실제로 빠졌다.**
+    //   네 번째 계정별 스토어(`useSatongMapPrefs`)가 이 목록에 없어 소프트 계정 전환 후
+    //   ①이전 계정의 값을 그대로 보여 주고 ②새 계정의 변경을 **어느 키에도 안 쓰는**
+    //   상태가 됐다(리뷰가 실행으로 실증). 목록이 3에 고정돼 있었기 때문이다.
+    //   → **파생형**으로 바꾼다. `store/**` 에서 계정별 어댑터를 쓰는 스토어를 모두 모아
+    //     그 훅 이름이 와이프 창에 있는지 본다. 다섯 번째가 생기면 **자동으로** 걸린다.
+    const STORES3 = accountScopedStoreHooks();
+    // 공허 방지 — 모집단이 실재한다(현재 4개).
+    // ★**하한이 아니라 등식**이다(2차 리뷰 MAJOR-2). 하한이면 다섯 번째가 수집기의
+    //   사각지대 형태로 들어와도 4 에 머물러 **조용히 통과**한다.
+    //   교차검증: 어댑터를 쓰는 **파일 수**와 뽑은 **훅 수**가 같아야 한다(한 파일 한 스토어 가정이
+    //   깨지면 위 `matchAll` 이 더 뽑으므로 그때는 이 단언이 시끄럽게 실패해 재검토를 강제한다).
+    expect(STORES3.length, "계정별 스토어를 하나도 못 모았다 — 수집기가 죽었다").toBe(
+      accountScopedStoreFileCount(),
+    );
+    expect(STORES3.length, "모집단이 비었다 — 수집기가 죽었다").toBeGreaterThanOrEqual(4);
 
     // ★계약이 바뀌었다(2026-08-26 회귀 봉합). 리셋은 **쓰기 정지 창 안**에서 하고,
     //   복원은 여기가 아니라 `syncAccountScopedStores()` 가 한다.
@@ -334,6 +349,100 @@ describe("배선 락 — 유료 산출물 스토어는 계정 스코프를 우�
 // ★파생의 축을 명시한다: **`store/**` 의 `persist(` 를 쓰는 파일 전수**다.
 //   `components/**` 에서 직접 localStorage 를 쓰는 키는 이 축 밖이고,
 //   그쪽은 `persist-key-coverage.test.ts` 가 본다(미측정이라고 적지 않는다 — 형제가 덮는다).
+/**
+ * `store/**` 에서 **계정별 저장 어댑터를 쓰는** 스토어의 **훅 이름**을 파생 수집한다.
+ * ★목록형이 아니어야 하는 이유: 2026-09-04 에 네 번째 스토어가 손목록에서 빠져
+ *   소프트 계정 전환이 조용히 깨졌다(#965 리뷰 Finding 1).
+ */
+function accountScopedStoreHooks(): string[] {
+  const dir = join(WEB_ROOT, "store");
+  const out: string[] = [];
+  for (const f of readdirSync(dir)) {
+    if (!f.endsWith(".ts") || f.endsWith(".test.ts")) continue;
+    const src = __stripCommentsForScan(readFileSync(join(dir, f), "utf8"), `store/${f}`);
+    // ★제네릭 유무를 가리지 않는다 — `createAccountScopedStorage()` 도 계정별이다.
+    if (!/createAccountScopedStorage\s*[<(]/.test(src)) continue;
+    // 훅 이름. ★`matchAll` — 한 파일에 스토어가 둘이면 첫 것만 집던 결함(2차 리뷰 MAJOR-2).
+    //   ★그리고 여러 export 형태를 본다: `export const useX = create` ·
+    //     `export const useX: T = create` · `const useX = create` + `export { useX }`.
+    out.push(...hookNamesOrThrow(src, `store/${f}`));
+  }
+  return out.sort();
+}
+
+/**
+ * ★수집기의 **형태 인식**을 합성 입력으로 잠근다(2026-09-04 · 2차 리뷰 MAJOR-2).
+ *   경화(throw·matchAll·여러 export 형태)는 **다섯 번째 스토어가 실재해야** 변이로 잡힌다 —
+ *   지금은 없으므로 그 경화가 «설명 가능한 생존» 이 된다. 그래서 **패턴 자체**를 태운다.
+ *   `hookNamesFrom` 은 수집기와 **같은 정규식**을 쓴다(두 곳에 적으면 갈린다).
+ */
+export function hookNamesFrom(src: string): string[] {
+  return [
+    ...src.matchAll(/export const (use[A-Za-z0-9_]*)\s*(?::[^=]+)?=\s*create/g),
+    ...src.matchAll(/^const (use[A-Za-z0-9_]*)\s*(?::[^=]+)?=\s*create/gm),
+  ].map((m) => m[1]);
+}
+
+/**
+ * ★**계정별이라고 분류해 놓고 이름을 못 뽑으면 조용히 흘리지 않는다**(2차 리뷰 MAJOR-2).
+ *   초판은 `if (m) out.push(...)` 라 **else 가 없었다** — 분류된 파일이 소리 없이 사라졌고,
+ *   하한 가드가 «>= 4» 라 다섯 번째가 그 형태면 4 에 머물러 **통과**했다.
+ *   = 이 PR 이 고치려던 결함(조용히 빠짐)을 **락이 그대로 재현**할 수 있었다.
+ * ★함수로 분리한 이유: 이 throw 는 **그런 형태의 스토어가 실재해야** 변이로 잡힌다
+ *   (실측: throw 를 지우는 변이가 SURVIVED). 합성 입력으로 **조건 자체**를 태운다.
+ */
+export function hookNamesOrThrow(src: string, where: string): string[] {
+  const names = hookNamesFrom(src);
+  if (names.length === 0) {
+    throw new Error(
+      `${where}: 계정별 저장 어댑터를 쓰는데 훅 이름을 못 뽑았다 — 수집기가 이 형태를 모른다. ` +
+        "조용히 흘리면 이 락이 그 스토어를 영영 안 본다(§목록은 곧 상한).",
+    );
+  }
+  return names;
+}
+
+/** 계정별 어댑터를 쓰는 **파일 수** — 위 수집기와 **다른 경로**로 센다(교차검증용). */
+function accountScopedStoreFileCount(): number {
+  const dir = join(WEB_ROOT, "store");
+  let n = 0;
+  for (const f of readdirSync(dir)) {
+    if (!f.endsWith(".ts") || f.endsWith(".test.ts")) continue;
+    const src = __stripCommentsForScan(readFileSync(join(dir, f), "utf8"), `store/${f}`);
+    if (/createAccountScopedStorage\s*[<(]/.test(src)) n += 1;
+  }
+  return n;
+}
+
+describe("★수집기의 형태 인식 — 합성 입력으로 잠근다(2차 리뷰 MAJOR-2)", () => {
+  it("A 표준형", () => {
+    expect(hookNamesFrom('export const useA = create<S>()(persist(...))')).toEqual(["useA"]);
+  });
+  it("★B 타입 주석형 — 초판이 놓치던 형태", () => {
+    expect(hookNamesFrom('export const useB: UseBoundStore<S> = create(...)')).toEqual(["useB"]);
+  });
+  it("★C 나중 export 형 — 초판이 놓치던 형태", () => {
+    expect(hookNamesFrom('const useC = create<S>()(...)\nexport { useC };')).toEqual(["useC"]);
+  });
+  it("★D 한 파일 두 스토어 — 초판은 첫 것만 집었다", () => {
+    expect(
+      hookNamesFrom('export const useD1 = create(...)\nexport const useD2 = create(...)'),
+    ).toEqual(["useD1", "useD2"]);
+  });
+  it("★★분류했는데 못 뽑으면 **던진다** — 조용히 흘리지 않는다", () => {
+    // 실측: 이 throw 를 지우는 변이가 SURVIVED 였다(그 형태의 스토어가 아직 없으므로).
+    //   → 조건 자체를 합성 입력으로 태운다.
+    expect(() => hookNamesOrThrow("export default create(...)", "store/x.ts")).toThrow(/훅 이름을 못 뽑았다/);
+    // ★음성 대조군 — 뽑히면 안 던진다.
+    expect(hookNamesOrThrow("export const useX = create(...)", "store/x.ts")).toEqual(["useX"]);
+  });
+
+  it("★음성 대조군 — create 가 아닌 것은 안 집는다", () => {
+    expect(hookNamesFrom('export const useNot = something(...)')).toEqual([]);
+    expect(hookNamesFrom('const helper = create(...)')).toEqual([]); // use 접두가 아니다
+  });
+});
+
 describe("파생형 — 모든 persist 스토어는 **와이프되거나 계정별이거나** 둘 중 하나다", () => {
   type StoreInfo = { file: string; key: string | null; scoped: boolean };
 
