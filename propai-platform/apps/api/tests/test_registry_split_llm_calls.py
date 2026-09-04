@@ -28,6 +28,7 @@ import json
 import re
 import sys
 import types
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -258,10 +259,16 @@ def test_paid_llm_call_has_exactly_one_call_site() -> None:
 # 파생형 — 두 단계의 키가 **원래 스키마 전부**를 덮는가
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _all_schema_keys(tmpl: str) -> set[str]:
-    """스키마의 **모든 깊이**의 키. 축을 「최상위」로 두면 중첩 키가 조용히 사라진다."""
+def _all_schema_keys(tmpl: str) -> Counter[str]:
+    """스키마의 **모든 깊이**의 키를 **출현 횟수까지** 센다.
+
+    ★축이 「이름의 집합」이면 **같은 이름이 두 자리에 있을 때** 한쪽을 지워도 안 보인다.
+      실측: `acquisition_price` 는 `_TMPL` 에 **두 번** 나온다(`ownership` 직속 · `owners[]`
+      안). 집합으로 재던 초판은 그 변이를 **놓쳤다** — 리뷰가 지적한 뒤 고친 것도 한 번
+      더 뚫렸다. **결함이 사는 층은 이름이 아니라 자리다.**
+    """
     body = tmpl.split("## 출력 JSON 스키마", 1)[1].replace("{{", "{").replace("}}", "}")
-    return set(re.findall(r'"([A-Za-z_][A-Za-z0-9_]*)"\s*:', body))
+    return Counter(re.findall(r'"([A-Za-z_][A-Za-z0-9_]*)"\s*:', body))
 
 
 def _toplevel_schema_keys(tmpl: str) -> set[str]:
@@ -315,12 +322,18 @@ def test_split_prompts_cover_every_key_of_the_original_schema_including_nested()
       `ownership_history` 를 지워 실증했다. 그래서 **모든 깊이의 키**를 센다.
     """
     schema = _all_schema_keys(ras._TMPL)
-    assert len(schema) >= 25, f"스키마 키 추출 {len(schema)}개 — 파서가 죽었다"
-    assert {"ownership", "rights_analysis", "acquisition_price", "ownership_history"} <= schema
+    assert sum(schema.values()) >= 25, f"스키마 키 추출 {sum(schema.values())}개 — 파서가 죽었다"
+    assert {"ownership", "rights_analysis", "acquisition_price", "ownership_history"} <= set(schema)
+    # ★두 자리에 나는 키가 실재함을 못 박는다 — 이것이 없으면 아래 다중집합 대조가
+    #   «전부 1회» 인 스키마에서 집합 대조와 구별되지 않는다(공허진리 방지).
+    assert schema["acquisition_price"] >= 2, "중첩 중복 키가 사라졌다 — 이 락의 전제가 깨졌다"
 
-    covered = _all_schema_keys(ras._TMPL_FACTS) | _all_schema_keys(ras._TMPL_JUDGE)
-    missing = schema - covered
-    assert not missing, f"분할 프롬프트가 요구하지 않는 원래 스키마 키: {sorted(missing)}"
+    covered = _all_schema_keys(ras._TMPL_FACTS) + _all_schema_keys(ras._TMPL_JUDGE)
+    # ★**출현 횟수까지** 대조한다. 이름 집합으로만 보면 두 자리 중 한쪽을 지워도 초록이다.
+    missing = schema - covered            # Counter 뺄셈 = 부족분만 남는다
+    extra = covered - schema
+    assert not missing, f"분할 프롬프트가 요구하지 않는 원래 스키마 키(자리 포함): {sorted(missing.elements())}"
+    assert not extra, f"원래 스키마에 없는 것을 분할이 요구한다: {sorted(extra.elements())}"
 
     # 두 단이 **겹치지 않는가**(겹치면 출력이 안 줄어 절단이 재발한다)
     overlap = set(ras._SPLIT_FACT_KEYS) & set(ras._SPLIT_JUDGE_KEYS)
