@@ -6,6 +6,7 @@
  */
 import { beforeEach, describe, expect, it } from "vitest";
 
+import { SATONG_MAP_SHELL_LAYERS } from "@/components/precheck/SatongMapShell";
 import { accountScopedKey } from "@/lib/account-scope";
 import { satongSelectionLabelsVisible } from "@/lib/satong-map-layers";
 import {
@@ -42,6 +43,45 @@ describe("기본값 — 사용자 요구 「기본은 나타나도록」", () =>
     expect(shell).not.toMatch(/const\s+initialLayerControls/);
     // ★대조군 — 셸이 스토어를 실제로 쓴다(위 두 단언이 «파일이 비어서» 참인 게 아니다).
     expect(shell).toMatch(/useSatongMapPrefs/);
+  });
+});
+
+describe("★★기본값 커버리지 — **내가 실제로 낸 결함**을 잡는 락", () => {
+  // 2026-09-04 실측: 이 기본값을 **기억으로** 다시 썼다가 `development: ["facilities"]` 를
+  //   **통째로 누락**하고 `poi` 를 5→2 로 줄였다. 그때 그것을 잡은 것은 **아무 락도 아니었고**
+  //   내가 원본과 대조해 봐서 알았다. → 그 대조를 **기계로** 만든다.
+  const layersWithControls = SATONG_MAP_SHELL_LAYERS.filter((l) => (l.controls?.length ?? 0) > 0).map(
+    (l) => l.id as string,
+  );
+
+  it("★모집단이 실재한다(공허 방지)", () => {
+    expect(layersWithControls.length).toBeGreaterThanOrEqual(8);
+  });
+
+  it("★★기본값이 없는 「컨트롤 보유 레이어」는 정확히 셋뿐이다(래칫)", () => {
+    // 늘면 = 누군가(또는 내가) 기본값을 빠뜨렸다. 줄면 = 기본값을 새로 줬으니 래칫을 내려라.
+    // ★이 단언이 `development` 누락을 **즉시** 잡는다.
+    const defaults = Object.keys(defaultSatongMapControls());
+    const missing = layersWithControls.filter((id) => !defaults.includes(id)).sort();
+    expect(missing).toEqual(["auction", "presale", "roadview"]);
+  });
+
+  it("★역방향 — 기본값 키에 **레이어가 아닌 것**이 없다(오타·유령 키)", () => {
+    const layerIds = new Set(SATONG_MAP_SHELL_LAYERS.map((l) => l.id as string));
+    const ghosts = Object.keys(defaultSatongMapControls()).filter((k) => !layerIds.has(k));
+    expect(ghosts).toEqual([]);
+  });
+
+  it("★각 기본값이 **그 레이어가 실제로 선언한 컨트롤**만 담는다 — 죽은 기본값 금지", () => {
+    const bad: string[] = [];
+    for (const layer of SATONG_MAP_SHELL_LAYERS) {
+      const declared = new Set((layer.controls ?? []).map((c) => c.id as string));
+      const defs = defaultSatongMapControls() as Record<string, string[] | undefined>;
+      for (const id of defs[layer.id as string] ?? []) {
+        if (!declared.has(id)) bad.push(`${layer.id}: ${id}`);
+      }
+    }
+    expect(bad).toEqual([]);
   });
 });
 
