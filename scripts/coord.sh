@@ -18,7 +18,13 @@ if [ -n "${COORD_DIR+x}" ] && [ -z "$COORD_DIR" ]; then
 fi
 BOARD_DIR="${COORD_DIR:-$(cd "$(git rev-parse --git-common-dir)" && pwd)/coordination}"
 BOARD="$BOARD_DIR/BOARD.md"
-BRANCH="$(git branch --show-current 2>/dev/null || echo '?')"
+# ★`||` 는 **종료코드에만** 반응한다 — `git branch --show-current` 는 **detached HEAD 에서
+#   exit 0 + 빈 출력**이라 그 폴백이 **발동하지 않았다**. 그러면 보드 줄의 브랜치 칸이
+#   통째로 비어 **필드가 하나 밀린다**(파서가 다음 칸을 브랜치로 읽는다).
+#   ★실해 범위: 이 저장소의 워크트리 32개가 detached 다(서브에이전트 워크트리 포함) —
+#   거기서 쓴 노트는 전부 그 상태였다. **빈 출력도 실패로 다뤄야 한다.**
+BRANCH="$(git branch --show-current 2>/dev/null)"
+[ -n "$BRANCH" ] || BRANCH='?'   # detached·비저장소 둘 다 여기로 온다
 
 # `summary` 에 실을 최근 건수.
 # ★검증한다 — 비수치를 그냥 통과시키면 `tail -n abc` 가 실패하고 폴백이 그것을 **「(없음)」으로
@@ -33,6 +39,24 @@ case "$SUMMARY_N" in
 esac
 
 stamp() { date '+%Y-%m-%d %H:%M'; }
+
+# ★**세션 정체를 기계로 기록한다** — 보드의 `[8f]`·`[3a]` 표기와 본문 서명은 **전부 자기신고**다.
+#
+#   2026-09-04 실해: 한 세션의 이름으로 서명된 노트를 **그 세션이 쓰지 않았고**, 통합자가
+#   그 조건을 근거로 남의 PR 을 태우기 직전이었다. 그 앞에는 오귀속이 2회 더 있었다.
+#   ★「절대형 서명」은 오늘 소유자 확정에 유일하게 작동한 장치였는데,
+#   **그 서명 자체가 오기입되면 그 장치도 무력하다.**
+#
+#   ★이 필드는 **스탬프가 찍는다** — 본문에 무엇을 쓰든 바뀌지 않으므로 **위조할 수 없다.**
+#   자기신고(본문 서명)와 기계기록(이 필드)을 **같은 줄에서 대조**할 수 있게 하는 것이 목적이다.
+#
+#   ★값이 없으면 `?` 다 — **지어내지 않는다**(비대화형·SDK 실행에서 비어 있을 수 있다).
+#   ★이 값은 `ListAgents` 의 `[5b83da]` 류와 **다른 식별자**다. 대응표를 만들 수단이 없으므로
+#     **대응을 시도하지 않는다** — 「값이 다르면 다른 세션」만 말한다. 그것만으로 위 사고는 잡힌다.
+sid() {
+  local raw="${CLAUDE_CODE_SESSION_ID:-}"
+  if [ -z "$raw" ]; then printf '?'; else printf '%.8s' "$raw"; fi
+}
 
 # ── 보드 생성 ──
 # ★`summary`/`status` 가 보드를 만들면, `COORD_DIR` 이 틀렸을 때 **빈 유령 보드를 만들어 놓고
@@ -170,19 +194,19 @@ case "$cmd" in
   claim)
     [ $# -ge 1 ] || { echo "사용: coord.sh claim <영역>" >&2; exit 1; }
     ensure_board
-    printf -- '- [CLAIM] %s <- %s (%s)\n' "$1" "$BRANCH" "$(stamp)" >> "$BOARD"
+    printf -- '- [CLAIM] %s <- %s (%s · sid=%s)\n' "$1" "$BRANCH" "$(stamp)" "$(sid)" >> "$BOARD"
     echo "claimed: $1 <- $BRANCH"
     ;;
   release)
     [ $# -ge 1 ] || { echo "사용: coord.sh release <영역>" >&2; exit 1; }
     ensure_board
-    printf -- '- [RELEASE] %s <- %s (%s)\n' "$1" "$BRANCH" "$(stamp)" >> "$BOARD"
+    printf -- '- [RELEASE] %s <- %s (%s · sid=%s)\n' "$1" "$BRANCH" "$(stamp)" "$(sid)" >> "$BOARD"
     echo "released: $1"
     ;;
   note)
     [ $# -ge 1 ] || { echo "사용: coord.sh note <내용>" >&2; exit 1; }
     ensure_board
-    printf -- '- [NOTE] %s %s: %s\n' "$(stamp)" "$BRANCH" "$*" >> "$BOARD"
+    printf -- '- [NOTE] %s %s sid=%s: %s\n' "$(stamp)" "$BRANCH" "$(sid)" "$*" >> "$BOARD"
     echo "noted."
     ;;
   *)

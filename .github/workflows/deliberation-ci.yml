@@ -8,53 +8,13 @@ on:
   push:
     branches: [main]
     paths: ["propai-platform/services/deliberation-review/**", ".github/workflows/deliberation-ci.yml"]
-  # ★`pull_request` 에는 **paths 필터를 두지 않는다.** 워크플로 레벨 paths 스킵과
-  #   브랜치보호 required 가 만나면 **문서 전용 PR 이 `Expected` 영구대기로 차단**된다
-  #   (`ci.yml` 이 `#423` 에서 같은 함정을 겪고 남긴 기록). 경로 판별은 아래 `changes`
-  #   잡의 **잡 레벨 `if`** 로 옮긴다 — GitHub 은 `if` 로 스킵된 잡을 required 충족으로 계수한다.
-  #   ★이 전환이 없으면 이 검사는 **required 로 등록할 수 없고**, 등록되지 않는 한
-  #   빨간 채로도 머지가 막히지 않는다(2026-09-04 실측: required 4종에 이 검사 없음).
   pull_request:
+    paths: ["propai-platform/services/deliberation-review/**", ".github/workflows/deliberation-ci.yml"]
   workflow_dispatch:
 
 jobs:
-  changes:
-    name: Detect engine changes
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      pull-requests: read
-    outputs:
-      engine: ${{ steps.filter.outputs.engine }}
-    steps:
-      - name: Filter paths (PR만 판별 — push/dispatch는 항상 전체 실행)
-        id: filter
-        env:
-          GH_TOKEN: ${{ github.token }}
-        # ★**fail-safe**: 판별 실패는 반드시 「전체 실행」으로 귀결한다.
-        #   반대로 하면 이 잡의 실패가 하위 잡 skip → **required 충족 → 무검증 머지**가 된다
-        #   (`#423` R1 이 실제로 그 결함을 냈다: *"changes 잡 fail-open"*).
-        # ★`here-string` 을 쓴다 — 대형 PR 에서 `printf | grep -q` 조합이
-        #   SIGPIPE + `pipefail` 로 **오판**한다(같은 기록).
-        run: |
-          if [ "${{ github.event_name }}" != "pull_request" ]; then
-            echo "engine=true" >> "$GITHUB_OUTPUT"; exit 0
-          fi
-          if ! FILES=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" --paginate --jq '.[].filename'); then
-            echo "files API 실패 — 안전측 전체 실행"
-            echo "engine=true" >> "$GITHUB_OUTPUT"; exit 0
-          fi
-          head -50 <<<"$FILES" || true
-          if grep -qE '^(propai-platform/services/deliberation-review/|\.github/workflows/deliberation-ci\.yml$)' <<<"$FILES"; then
-            echo "engine=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "engine=false" >> "$GITHUB_OUTPUT"
-          fi
-
   engine-tests:
     name: Deliberation Engine (pytest)
-    needs: changes
-    if: needs.changes.outputs.engine == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
