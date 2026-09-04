@@ -114,6 +114,19 @@ describe("보류 사유 도달 — `primary_zone_absent`", () => {
     }
   });
 
+  it("★센티널(구판 계약)이 와도 칩이 짧다 — 형제와 같은 문구를 쓴다", async () => {
+    // ★**잠재 회귀 락**. 오늘 이 경로의 센티널 생산자는 0건이라 도달 불가지만, 형제 두 곳
+    //   (multi-parcel/page.tsx · DesignGenPanel.tsx)이 전부 짧은 mixedLabel 을 넘기는데
+    //   이 카드만 안 넘기면 30자 기본 문구가 인라인 칩을 깨뜨린다(2차 리뷰 MINOR-3).
+    reply({ primary_zone: "mixed_review_required" });
+    await runCard();
+
+    expect(screen.getAllByText("혼재(분리검토 필요)").length).toBeGreaterThan(0);
+    // raw 센티널이 화면에 나가지 않는다 + 긴 기본 문구도 아니다.
+    expect(document.body.textContent ?? "").not.toContain("mixed_review_required");
+    expect(screen.queryByText(/단일 용도지역으로 판정하지 않았습니다/)).toBeNull();
+  });
+
   it("★어휘 밖 코드면 아무것도 지어내지 않는다", async () => {
     reply({ primary_zone: null, primary_zone_absent: "zzz_not_in_vocabulary" });
     await runCard();

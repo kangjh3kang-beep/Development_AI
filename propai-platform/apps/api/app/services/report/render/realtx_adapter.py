@@ -22,7 +22,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.utils.withheld import ABSENT_SHORT
 from app.services.report.render.model import (
     DataTableBlock,
     KPITile,
@@ -33,6 +32,7 @@ from app.services.report.render.model import (
     ReportModel,
     Section,
 )
+from app.utils.withheld import ABSENT_SHORT
 
 #: 표 헤더 — 화면(패널)과 **같은 축**을 쓴다(두 표면이 다른 말을 하지 않게).
 _TX_HEADERS = [

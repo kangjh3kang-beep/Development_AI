@@ -208,6 +208,11 @@ export function DevelopmentScenarioCard({
     dominantBasis: site?.primary_zone_basis,
     fallback: "용도미상",
     absent: site?.primary_zone_absent,
+    // ★형제 **전수**가 짧은 문구를 넘기는데(multi-parcel/page.tsx:363 · DesignGenPanel.tsx:1289)
+    //   이 카드만 안 넘겨서, 센티널이 오면 30자 기본 문구가 `px-2 py-0.5` 인라인 칩에 들어간다.
+    //   ★오늘은 도달 불가다(이 경로의 센티널 생산자 0건 — 실측) — **잠재 회귀**라 미리 맞춘다.
+    //   *"없는 것을 새로 만드는 것과 있는 것을 안 쓴 것은 처방이 다르다"*(§29 형제 훑기).
+    mixedLabel: "혼재(분리검토 필요)",
   });
 
   return (
