@@ -8,6 +8,8 @@ Preflight(R0) → 법정 산정(R1.5) → 판정(R3) → 공학 시뮬(L3-B) →
 """
 from __future__ import annotations
 
+from app.utils.pnu import is_valid_pnu
+
 import math
 from datetime import date
 
@@ -203,7 +205,7 @@ def run_analysis(inp: AnalysisInput) -> AnalysisResult:
     # 6.35) 지오코딩 (VWORLD) — address 있고 PNU 미상 시 주소→PNU 자동 도출(진입점).
     geocoded = None
     effective_pnu = inp.pnu
-    if inp.address and len(inp.pnu) < 19:
+    if inp.address and not is_valid_pnu(inp.pnu):
         from app.adapters.regulation.vworld_geocoder import build_geocoder
         gc = build_geocoder()
         if gc.available:
@@ -211,7 +213,13 @@ def run_analysis(inp: AnalysisInput) -> AnalysisResult:
             if geocoded and geocoded.get("pnu"):
                 effective_pnu = geocoded["pnu"]
             else:
-                skipped.append("geocode: 주소→PNU 조회 결과 없음 — 키 설정됨(외부 장애/주소 미해소 미상)")
+                # ★「조회 결과 없음」과 「받았는데 비규격이라 버렸다」는 **다른 사건**이다.
+                #   한 문장으로 뭉치면 조사자가 외부 장애를 의심하며 시간을 쓴다.
+                reason = (geocoded or {}).get("pnu_reason")
+                skipped.append(
+                    f"geocode: {reason}" if reason
+                    else "geocode: 주소→PNU 조회 결과 없음 — 키 설정됨(외부 장애/주소 미해소 미상)"
+                )
         else:
             skipped.append("geocode: 지오코더 미설정(키 없음) — 주소→PNU 도출 불가")
 
@@ -249,7 +257,7 @@ def run_analysis(inp: AnalysisInput) -> AnalysisResult:
 
     # 6.4) 대지 규제 카드 자동수집 (VWORLD NED 토지특성+토지이용계획) — 심의 입력 전제 1차출처 고정.
     land_card = None
-    if inp.collect_land_card and len(effective_pnu) >= 19:
+    if inp.collect_land_card and is_valid_pnu(effective_pnu):
         from app.services.land.land_card import collect_land_card
         land_card = collect_land_card(effective_pnu, inp.land_year or "2024", as_of=inp.application_date)
         if land_card is None:

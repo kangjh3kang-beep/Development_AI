@@ -6,6 +6,8 @@ key=VWORLD_API_KEY + Referer. getBuildingUse → 연면적/건축면적/건폐�
 """
 from __future__ import annotations
 
+from app.utils.pnu import is_valid_pnu
+
 from app.settings import env_or_setting, settings
 
 
@@ -39,7 +41,7 @@ class VworldBuildingSource:
 
     def existing_building(self, pnu: str) -> dict | None:
         """기존 건물 제원(다동 합산). 무건축물/오류 None."""
-        if not self.key or len(pnu) < 19:
+        if not self.key or not is_valid_pnu(pnu):
             return None
         from app.adapters.cache.source_cache import cached_get
         data = cached_get(

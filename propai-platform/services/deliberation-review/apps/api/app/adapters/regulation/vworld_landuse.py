@@ -6,6 +6,8 @@ key=VWORLD_API_KEY + Referer 도메인 검증. getLandUseAttr → 용도지역�
 """
 from __future__ import annotations
 
+from app.utils.pnu import is_valid_pnu
+
 from app.settings import env_or_setting, settings
 
 
@@ -25,7 +27,7 @@ class VworldLandUseSource:
 
     def land_use_zones(self, pnu: str) -> list[str] | None:
         """PNU 토지이용계획 용도지역지구명 목록. 결손/오류 None."""
-        if not self.key or len(pnu) < 19:
+        if not self.key or not is_valid_pnu(pnu):
             return None
         from app.adapters.cache.source_cache import cached_get
         data = cached_get(

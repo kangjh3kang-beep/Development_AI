@@ -5,6 +5,8 @@ key=VWORLD_API_KEY + Referer. getcoord(주소→좌표) + GetFeature LP_PA_CBND_
 """
 from __future__ import annotations
 
+from app.utils.pnu import is_valid_pnu
+
 from app.settings import env_or_setting, settings
 
 
@@ -63,7 +65,17 @@ class VworldGeocoder:
             return None
         lon, lat = coord
         pnu, geom = self._coord_to_parcel(lon, lat)
-        return {"pnu": pnu, "lon": lon, "lat": lat, "address": address, "site_geometry": geom}
+        # ★**외부 응답을 그대로 값으로 쓰지 않는다.** 여기가 이 서비스에서 PNU 가 들어오는
+        #   **유일한 미검증 입구**다 — 입력 계약(`AnalysisInput.pnu`)은 `^([0-9]{19})?$` 로
+        #   이미 막혀 있지만, `effective_pnu` 는 **이 반환값으로 덮인다**.
+        #   그 뒤 `collect_land_card` 와 어댑터 5벌이 그것을 **외부 API 인자**로 내보낸다.
+        #   ★비규격이면 **싣지 않고 사유를 남긴다** — 무언 실패는 진단 불가를 만든다.
+        pnu_reason = None
+        if pnu is not None and not is_valid_pnu(pnu):
+            pnu_reason = f"지오코딩 PNU 비규격(19자리 ASCII 숫자 아님): {str(pnu)[:24]!r}"
+            pnu = None
+        return {"pnu": pnu, "lon": lon, "lat": lat, "address": address,
+                "site_geometry": geom, "pnu_reason": pnu_reason}
 
 
 def build_geocoder() -> VworldGeocoder:
