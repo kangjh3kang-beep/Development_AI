@@ -740,7 +740,10 @@ class RegistryAnalysisService:
             base = _failure_reason(exc)
             if _is_trunc(resp):
                 return f"분할 {stage}의 응답도 최대 길이에서 잘렸습니다 — 파서 오류: {base}"
-            return base
+            # ★절단이 아니어도 **어느 단에서 죽었는지**는 말한다. 안 말하면 조사자가
+            #   1단(사실 추출)과 2단(판단 생성) 중 어디를 보라는 단서를 못 받는다
+            #   — 음성 대조군을 쓰다가 발견한 진짜 격차다.
+            return f"분할 {stage} 실패 — {base}"
 
         resp_f = None
         try:

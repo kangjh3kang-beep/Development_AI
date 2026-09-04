@@ -396,3 +396,88 @@ async def test_every_paid_call_records_billing(monkeypatch) -> None:
     billed.clear()
     await svc._invoke("a"); await svc._invoke("b"); await svc._invoke("c")
     assert billed == ["registry"] * 3, f"기록 누락: {billed}"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# M-3 — 분할 **각 단**의 절단도 정직하게 말한다(`#968` 의 처방 범위를 새 경로까지)
+# ══════════════════════════════════════════════════════════════════════════════
+
+@pytest.mark.asyncio
+async def test_truncation_inside_the_split_is_reported_as_truncation() -> None:
+    """1단이 **또** 잘리면 그 사실을 말한다 — `파서 오류: char 0` 으로 되돌아가지 않는다.
+
+    ★이것이 `#968` 의 처방 범위다. 절단을 정직하게 보고하게 해 놓고 **새로 만든 경로**에는
+      적용하지 않으면, 그 경로에서 결함이 그대로 산다(§D-20).
+    """
+    with pytest.MonkeyPatch.context() as mp:
+        seen = _wire(mp, [
+            (_Resp(truncated=True), _TRUNCATED_RAW),   # 1차
+            (_Resp(truncated=True), _TRUNCATED_RAW),   # 분할 1단도 잘림
+        ])
+        out = await _svc()._llm(None, "아주 긴 등기부")
+
+    assert len(seen) == 2 and out["generated"] is False
+    reason = out["failure_reason"]
+    assert "1단" in reason and "잘렸습니다" in reason, f"분할 단계의 절단이 안 보인다: {reason}"
+    # ★음성 대조군: **절단이 아닌** 1단 실패는 절단이라 말하지 않는다.
+    #   이것이 없으면 «항상 절단이라고 쓴다» 는 구현이 만점을 받는다.
+    with pytest.MonkeyPatch.context() as mp:
+        _wire(mp, [(_Resp(truncated=True), _TRUNCATED_RAW), (_Resp(truncated=False), "쓰레기")])
+        out2 = await _svc()._llm(None, "긴 등기부")
+    assert "1단" in out2["failure_reason"], "1단 실패 사유가 사라졌다"
+    assert "1단(사실)의 응답도 최대 길이" not in out2["failure_reason"], (
+        f"절단이 아닌 실패를 절단이라 보고한다: {out2['failure_reason']}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# M-4 — 성장루프 **분자**는 «사용자가 폴백을 봤다» 만 센다
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _count_fallbacks(mp) -> list[str]:
+    """`record_llm_failure` 호출을 기록한다(분자 계측 지점)."""
+    calls: list[str] = []
+    import app.services.ai.base_interpreter as bi
+    mp.setattr(bi, "record_llm_failure", lambda service, exc: calls.append(service), raising=True)
+    return calls
+
+
+@pytest.mark.asyncio
+async def test_recovered_by_split_is_not_counted_as_a_fallback() -> None:
+    """분할로 **회복된** 건은 분자에 넣지 않는다 — 넣으면 `fallback_rate` 의 뜻이 바뀐다."""
+    with pytest.MonkeyPatch.context() as mp:
+        calls = _count_fallbacks(mp)
+        _wire(mp, [
+            (_Resp(truncated=True), _TRUNCATED_RAW),
+            (_Resp(truncated=False), _FACTS_RAW),
+            (_Resp(truncated=False), _JUDGE_RAW),
+        ])
+        out = await _svc()._llm(None, "긴 등기부")
+    assert out["generated"] is True
+    assert calls == [], f"분할로 회복됐는데 폴백 분자가 올랐다: {calls}"
+
+
+@pytest.mark.asyncio
+async def test_real_fallback_is_still_counted() -> None:
+    """★두 번째 모집단 — 진짜 폴백은 **여전히** 센다.
+
+    위 테스트만 있으면 «분자를 아예 안 센다» 는 구현이 통과하고, 그러면 등기 권리분석이
+    통째로 죽어도 인사이트가 한 번도 안 뜬다(2026-08-24 실장애가 정확히 그것이었다).
+    """
+    with pytest.MonkeyPatch.context() as mp:
+        calls = _count_fallbacks(mp)
+        _wire(mp, [(_Resp(truncated=False), "JSON 아님")])
+        out = await _svc()._llm(None, "등기부")
+    assert out["generated"] is False
+    assert calls == ["registry"], f"진짜 폴백이 분자에 안 잡혔다: {calls}"
+
+    # 부분 결과(사실만)도 사용자에겐 판단이 없으므로 폴백으로 센다.
+    with pytest.MonkeyPatch.context() as mp:
+        calls2 = _count_fallbacks(mp)
+        _wire(mp, [
+            (_Resp(truncated=True), _TRUNCATED_RAW),
+            (_Resp(truncated=False), _FACTS_RAW),
+            RuntimeError("judge down"),
+        ])
+        out2 = await _svc()._llm(None, "긴 등기부")
+    assert out2["partial"] is True and out2["generated"] is False
+    assert calls2 == ["registry"], f"부분 결과가 분자에 안 잡혔다: {calls2}"
