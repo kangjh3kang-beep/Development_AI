@@ -826,7 +826,13 @@ class DevelopmentScenarioSimulator:
         except Exception as e:  # noqa: BLE001
             # ★감사기 사망을 «위반 0» 으로 뭉개지 않는다 — 사유를 싣는다.
             logger.warning("전제 감사 실패", err=str(e)[:120])
-            premise_audit_result = {"ok": None, "reason": "audit_failed", "detail": str(e)[:200]}
+            # ★성공/실패가 **같은 키에 다른 스키마**를 넣으면 소비처가 `["violations"]` 에서
+            #   KeyError 를 맞는다. **판별 필드를 공통으로** 두고 실패도 같은 모양을 유지한다
+            #   (§유료·비가역 산출물 규율 4 — «실패는 전용 필드로 자기를 구별»).
+            premise_audit_result = {
+                "violations": [], "checked": 0, "registered": None,
+                "ok": None, "reason": "audit_failed", "detail": str(e)[:200],
+            }
 
         # 적합도 정렬(가능>조건부>불가, est_far 내림차순)
         rank = {"가능": 0, "조건부": 1, "불가": 2}

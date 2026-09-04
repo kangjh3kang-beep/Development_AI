@@ -214,3 +214,28 @@ def test_zone_relations_themselves_work__not_the_wiring():
     # ★RC-2 형상(면적 최대가 아닌 zone 을 우세로) → 발화 / 올바른 형상 → 침묵
     assert "dominant_argmax" in _k("제1종일반주거지역"), "RC-2 를 못 잡는다"
     assert "dominant_argmax" not in _k("제2종일반주거지역"), "수정 후에도 발화한다(위양성)"
+
+
+def test_audit_failure_declares_itself_and_is_not_counted_as_clean(monkeypatch):
+    """★M4 — 감사기가 던지면 **「위반 0」으로 뭉개지 않는다**. 그 경로를 태우는 락이 0건이었다.
+
+    적대 리뷰 실측: `{"ok": None, "reason": "audit_failed"}` → `{"ok": True, ...}` 변이가
+    **SURVIVED** 했다(실패를 성공으로 위장해도 아무도 안 봄).
+    ★그리고 성공/실패가 **같은 키에 다른 스키마**라 소비처가 `["violations"]` 에서 터진다.
+    """
+    import app.services.zoning.premise_audit as _pa
+
+    def _boom(_ctx):
+        raise RuntimeError("감사기 사망 시뮬레이션")
+
+    monkeypatch.setattr(_pa, "audit", _boom)
+    pa, _ = _audit_via_simulate([_ADDR, _ADDR_B])
+
+    assert isinstance(pa, dict), f"실패 시 결과가 dict 가 아니다 — {type(pa).__name__}"
+    # ★실패를 **성공으로 위장하지 않는다**
+    assert pa.get("ok") is not True, f"감사 실패인데 ok=True — {pa}"
+    assert pa.get("reason") == "audit_failed", f"사유를 안 남긴다 — {sorted(pa)}"
+    assert pa.get("detail"), "원인을 안 싣는다 — 조사자가 진단할 수 없다"
+    # ★성공과 **같은 모양**이어야 소비처가 안 터진다(판별은 `ok`/`reason` 으로)
+    assert "violations" in pa and pa["violations"] == [], f"스키마가 갈린다 — {sorted(pa)}"
+    assert pa.get("checked") == 0, "실패인데 판정 수가 0 이 아니다"
