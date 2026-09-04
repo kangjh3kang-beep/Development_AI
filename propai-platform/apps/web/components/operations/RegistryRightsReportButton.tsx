@@ -14,7 +14,7 @@
 import { useCallback, useState } from "react";
 import { FileText, Loader2 } from "lucide-react";
 
-import { apiClient } from "@/lib/api-client";
+import { apiClient, apiErrorMessage } from "@/lib/api-client";
 import { isAnalyzed, type BatchOutcome } from "@/lib/registry-analyze";
 
 type Fmt = "pdf" | "docx";
@@ -39,35 +39,19 @@ export function RegistryRightsReportButton({
       setBusy(format);
       setError("");
       try {
-        const token =
-          typeof window !== "undefined" ? localStorage.getItem("propai_access_token") ?? "" : "";
-        // ★기존 보고서 다운로드(ReportDownloadMenu)와 **같은 경로 규칙**을 쓴다.
-        //   `NEXT_PUBLIC_API_URL` 을 직접 읽으면 프록시 경유 배포에서 URL 이 어긋난다.
-        const baseUrl = apiClient.getRuntimeConfig().apiBaseUrl || "/api/proxy";
-        const res = await fetch(`${baseUrl}/registry/rights-report`, {
+        // ★공용 클라이언트를 **경유한다**. 손수 `fetch` + `Authorization` 을 조립하면
+        //   `api-client` 의 **401 → refresh → 1회 재시도**가 붙지 않아, 액세스 토큰이
+        //   만료된 60분 뒤부터 **다운로드만** 실패한다(화면의 다른 조회는 갱신을 받아 살아
+        //   있으므로 «다운로드 기능이 깨졌다» 로 보인다 — 사용자 신고가 정확히 그것이었다:
+        //   `유효하지 않은 토큰: Signature has expired.`).
+        const blob = await apiClient.download("/registry/rights-report", {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          body: JSON.stringify({
+          body: {
             items: items.map((b) => ({ jibun: b.jibun, result: b.result })),
             project_address: projectAddress || undefined,
             format,
-          }),
+          },
         });
-        if (!res.ok) {
-          // 서버가 사유를 주면 **그 사유를** 보여 준다(상한 초과 등) — 코드만 보이면 못 고친다.
-          let msg = `보고서 생성 실패 (HTTP ${res.status})`;
-          try {
-            const j = await res.json();
-            if (j?.detail) msg = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail);
-          } catch {
-            /* JSON 아님 — 기본 메시지 유지 */
-          }
-          throw new Error(msg);
-        }
-        const blob = await res.blob();
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
@@ -75,7 +59,9 @@ export function RegistryRightsReportButton({
         a.click();
         URL.revokeObjectURL(url);
       } catch (e) {
-        setError(e instanceof Error ? e.message : "보고서를 만들지 못했습니다");
+        // ★서버가 준 사유를 **그대로** 보여 준다(상한 초과 등) — `ApiClientError.message` 는
+        //   모든 실패에서 같은 상수라 그것을 띄우면 원인이 사라진다.
+        setError(apiErrorMessage(e, "보고서를 만들지 못했습니다"));
       } finally {
         setBusy(null);
       }
