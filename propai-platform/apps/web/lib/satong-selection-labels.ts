@@ -46,8 +46,23 @@ export type SelectionLabelFeature = {
 export type PlanSelectionLabelsArgs = {
   /** 「선택 필지」 컨트롤 판정 결과. false 면 **어떤 필지가 있어도** 그리지 않는다. */
   visible: boolean;
-  /** 줌 LOD 롤업 여부(hover-only 구간). */
-  rollup: boolean;
+  /**
+   * 상시 라벨 상한 — 호출부가 `satongLabelBudget(zoom)` 으로 **파생해서** 넘긴다.
+   *
+   * ★왜 `zoom` 이 아니라 `budget` 인가(2026-09-04 적대 리뷰 MAJOR-2):
+   *   처음에는 `zoom` 을 받아 여기서 버짓을 구했다. 그러면 호출부가 **`mapZoom` 을 deps 로**
+   *   써야 하는데, `mapZoom` 은 **모든 zoomend 마다** 바뀐다 → 이펙트가 매 줌 조작마다
+   *   layerGroup 을 teardown 하고 최대 96개 마커를 다시 만든다(라벨이 깜빡인다).
+   *   ★그 자리의 기존 주석이 *"롤업 여부만 dep로 — 줌마다 teardown 낭비 방지"* 라고
+   *   **명시**하고 있었고, 내 계획서는 **그 주석을 근거로 인용하면서** 그것을 깼다.
+   *   버짓은 **계단함수**(z 15·17·18 에서만 변함)라 deps 로 쓰면 불변식이 복원된다.
+   *
+   * ★`rollup` 인자를 없앤 이유(MAJOR-5): 종전 조건은 `rollup || overBudget` 이었는데
+   *   `rollup ⟺ zoom<15` 이고 `satongLabelBudget(zoom<15) === 0` 이라 **`rollup ⟹ overBudget`**,
+   *   즉 두 항이 **동치**였다. 죽은 항을 남기면 §36 의 «죽은 면제» 가 된다.
+   *   줌 롤업은 사라진 것이 아니라 **버짓 0 으로 표현**된다.
+   */
+  budget: number;
   features: SelectionLabelFeature[];
   /** 좌표가 없는 피처의 대표점 — 주입(순수 유지). */
   representativePoint: (geometry: unknown) => { lat: number; lon: number } | null | undefined;
@@ -72,7 +87,14 @@ export function planSelectionLabels(args: PlanSelectionLabelsArgs): SelectionLab
   // ★줌 롤업(U-라벨 파일업): 줌아웃 다필지에서 주소 라벨을 전부 상시 표시하면 한 점에
   //   겹겹이 쌓인다. 집계 칩 1개로 접고, 줌인에서만 필지별 짧은 지번을 단다.
   //   단일 필지는 어느 줌에서도 개별 라벨(초기 진입 식별 — PR#329 LOW1 의도 유지).
-  if (args.rollup && points.length > 1) {
+  // ★개수 롤업(2026-09-04 · 사용자 신고 206필지):
+  //   `lib/satong-map-labels.ts` 는 *"겹침 방지는 **버짓 상한**+**선택 라벨 줌 롤업**이
+  //   담당한다"* 고 적어 두었는데, **선택 트랙만 버짓을 면제**받고 있었다(PR#329 LOW1 —
+  //   «레이어를 하나도 안 켜도 필지가 식별되게»). 그래서 z≥15 에서 206필지를 고르면
+  //   **두 기전 중 어느 것도 발화하지 않았다.** 면제의 의도(식별)는 집계 칩이 계속 지키므로,
+  //   개수 축만 되돌린다.
+  //   ★줌 롤업(z<15)은 별도 항이 아니라 **버짓 0** 으로 표현된다 — 두 항이 동치였기 때문이다.
+  if (points.length > args.budget && points.length > 1) {
     const lat = points.reduce((s, e) => s + e.lat, 0) / points.length;
     const lon = points.reduce((s, e) => s + e.lon, 0) / points.length;
     // ★정직표기: 면적은 라벨이 세는 피처와 **같은 모집단**으로 합산하고, 결측이 하나라도
