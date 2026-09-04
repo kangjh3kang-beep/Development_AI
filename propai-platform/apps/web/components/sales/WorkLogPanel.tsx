@@ -146,10 +146,10 @@ export default function WorkLogPanel({ siteCode }: { siteCode: string }) {
 
   const toastCls =
     toast?.tone === "ok"
-      ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-300"
+      ? "border-[var(--status-success)]/40 bg-[var(--status-success)]/10 text-emerald-300"
       : toast?.tone === "warn"
-        ? "border-amber-400/40 bg-amber-500/10 text-amber-300"
-        : "border-rose-400/40 bg-rose-500/10 text-rose-300";
+        ? "border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 text-amber-300"
+        : "border-[var(--status-error)]/40 bg-[var(--status-error)]/10 text-rose-300";
 
   const cards: { label: string; value: number; cls: string }[] = [
     { label: "상담", value: summary?.consult ?? 0, cls: "text-sky-300" },
@@ -291,7 +291,7 @@ export default function WorkLogPanel({ siteCode }: { siteCode: string }) {
         {loading ? (
           <div className="h-16 animate-pulse rounded-xl border border-[var(--line)] bg-[var(--surface-soft)]" />
         ) : err ? (
-          <p className="rounded-xl border border-rose-400/40 bg-rose-500/10 px-3 py-2 text-xs font-semibold text-rose-300">
+          <p className="rounded-xl border border-[var(--status-error)]/40 bg-[var(--status-error)]/10 px-3 py-2 text-xs font-semibold text-rose-300">
             {err}
           </p>
         ) : logs.length === 0 ? (

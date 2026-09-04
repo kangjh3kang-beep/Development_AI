@@ -40,7 +40,7 @@ async def test_fetch_success_parses_items(monkeypatch):
     }
 
     def handler(req: httpx.Request) -> httpx.Response:
-        assert PRICE_OPERATIONS["시설공통자재"] in str(req.url)
+        assert PRICE_OPERATIONS["토목"] in str(req.url)  # 분야 미지정 → 토목(기존 동작 유지)
         assert "serviceKey=TESTKEY" in str(req.url)
         return httpx.Response(200, json=payload)
 
@@ -97,6 +97,35 @@ async def test_rate_limiter_exhausted_returns_empty():
 
 def test_service_base_url():
     assert PRICE_SERVICE_BASE.endswith("PriceInfoService")
+
+
+# ── 분야(category) 확장 — 2026-07-17 실키 라이브 검증(resultCode 00) 4개 분야 ──
+
+
+def test_registered_categories_are_the_four_verified():
+    """등록 분야는 라이브 검증된 4개뿐이어야 한다(무날조 — '종합'은 404라 미등록)."""
+    assert sorted(PRICE_OPERATIONS) == ["건축", "기계설비", "전기통신", "토목"]
+    assert PRICE_OPERATIONS["건축"] == "getPriceInfoListFcltyCmmnMtrilBildng"
+    assert "Total" not in "".join(PRICE_OPERATIONS.values())
+
+
+async def test_fetch_category_routes_to_matching_operation(monkeypatch):
+    payload = {"response": {"body": {"items": {"item": [{"prdctClsfcNoNm": "보통합판", "prce": "51954"}]}}}}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        assert PRICE_OPERATIONS["건축"] in str(req.url)
+        return httpx.Response(200, json=payload)
+
+    monkeypatch.setattr(httpx, "AsyncClient", _mock_client_ctor(handler))
+    client = PublicPriceClient(service_key="TESTKEY")
+    items = await client.fetch_facility_material_prices(category="건축")
+    assert items == [{"prdctClsfcNoNm": "보통합판", "prce": "51954"}]
+
+
+async def test_fetch_unknown_category_raises_value_error():
+    client = PublicPriceClient(service_key="TESTKEY")
+    with pytest.raises(ValueError, match="미등록 가격정보 분야"):
+        await client.fetch_facility_material_prices(category="종합")
 
 
 if __name__ == "__main__":

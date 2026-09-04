@@ -25,8 +25,12 @@ def test_apartment_includes_school_and_metro_charges():
 
 
 def test_non_apartment_excludes_school_and_metro():
-    """비주거(M08 오피스텔) → 학교용지·광역교통 부담금 제외(대상 아님)."""
-    t = get_budget_template("M08")
+    """비주거(M09 지식산업센터) → 학교용지·광역교통 부담금 제외(대상 아님).
+
+    ★재기준(R1 교정): 종전 이 테스트는 M08 오피스텔을 '대상 아님'으로 고정했으나,
+    분양형 오피스텔은 준주택 포함 부과 대상(학교용지법 §2 3호·2021.6.23~) — 틀린
+    기준선이었다. 비주거 검증은 M09(office)로 대체."""
+    t = get_budget_template("M09")
     assert t["is_apartment"] is False
     labels = {it["label"] for it in t["items"]}
     assert "학교용지부담금" not in labels
@@ -34,6 +38,13 @@ def test_non_apartment_excludes_school_and_metro():
     # 공통 부담금(원인자·기반시설)은 유지.
     assert "상수도 원인자부담금" in labels
     assert "기반시설부담금" in labels
+
+
+def test_officetel_includes_school_site_line():
+    """★R1 교정: M08 분양형 오피스텔=준주택 포함 — 학교용지부담금 라인 편입."""
+    t = get_budget_template("M08")
+    labels = {it["label"] for it in t["items"]}
+    assert "학교용지부담금" in labels
 
 
 def test_no_mockup_all_amounts_zero():

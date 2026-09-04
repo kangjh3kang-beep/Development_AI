@@ -8,6 +8,7 @@
  *   (대기굴절·지형차폐·실측높이 미반영 — 할루시네이션 방지 철학).
  */
 
+import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, Compass, Landmark, Sun } from "lucide-react";
 import { Card, CardContent } from "@propai/ui";
@@ -161,7 +162,7 @@ function OrdinanceSection({ data }: { data: OrdinanceResult | null }) {
           <Landmark className="size-3.5 shrink-0" aria-hidden /> 지자체 조례 병행검토
         </p>
         {needsCheck && (
-          <span className="rounded-full border border-amber-500/40 bg-amber-500/15 px-2.5 py-1 text-[10px] font-black text-amber-300">
+          <span className="rounded-full border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/15 px-2.5 py-1 text-[10px] font-black text-amber-300">
             조례 확인 필요
           </span>
         )}
@@ -395,11 +396,11 @@ export function EnvironmentAnalysisPanel({
     <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
       <CardContent className="p-6">
         <div className="flex items-center gap-3">
-          <Sun className="size-7 shrink-0 text-amber-500" aria-hidden />
+          <Sun className="size-7 shrink-0 text-[var(--status-warning)]" aria-hidden />
           <div>
             <h2 className="flex items-center gap-2 text-base font-black text-[var(--text-primary)]">
               환경분석 (일조·조망·스카이라인)
-              <span className="rounded-full border border-amber-500/40 bg-amber-500/15 px-2 py-0.5 text-[10px] font-black tracking-widest text-amber-300">
+              <span className="rounded-full border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/15 px-2 py-0.5 text-[10px] font-black tracking-widest text-amber-300">
                 약식
               </span>
             </h2>
@@ -411,15 +412,20 @@ export function EnvironmentAnalysisPanel({
 
         {/* 입력 */}
         <div className="mt-4 flex flex-wrap items-end gap-2">
-          <label className="min-w-[200px] flex-1 text-xs text-[var(--text-secondary)]">
-            대상지 주소
-            <input
-              className={`${inp} mt-1`}
-              value={addr}
-              onChange={(e) => setAddr(e.target.value)}
-              placeholder="지번/도로명 주소"
-            />
-          </label>
+          {/* bare input 은 주소검색 자체가 안 되는 결함 — 전 모듈 표준 ProjectAddressInput 으로 통일.
+              ★writeToContext={false} 필수: 이 패널은 상위 부지분석 주소를 받아 쓰는 탐색용 보조면이라,
+                여기 검색이 활성 프로젝트 SSOT(address·pnu·zoneCode·조례)를 덮으면 안 된다
+                (BulkParcelBatchPanel 의 single+writeToContext=false 쌍 관례). */}
+          <ProjectAddressInput
+            value={addr}
+            onChange={setAddr}
+            label="대상지 주소"
+            placeholder="지번/도로명 주소"
+            className="min-w-[200px] flex-1"
+            hideProjectPicker
+            single
+            writeToContext={false}
+          />
           <label className="w-24 text-xs text-[var(--text-secondary)]">
             층수(선택)
             <input
@@ -469,7 +475,7 @@ export function EnvironmentAnalysisPanel({
         </div>
 
         {err && (
-          <p className="mt-3 inline-flex items-baseline gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+          <p className="mt-3 inline-flex items-baseline gap-1.5 rounded-lg border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 px-3 py-2 text-xs text-amber-300">
             <AlertTriangle className="size-3.5 self-center shrink-0" aria-hidden /> {err}
           </p>
         )}
@@ -545,7 +551,7 @@ export function EnvironmentAnalysisPanel({
                           contentStyle={{
                             background: "var(--surface-strong)",
                             border: "1px solid var(--line)",
-                            borderRadius: 8,
+                            borderRadius: "var(--r-card)",
                             fontSize: 11,
                           }}
                           labelStyle={{ color: "var(--text-secondary)" }}
@@ -630,7 +636,7 @@ export function EnvironmentAnalysisPanel({
                       (view.best_directions ?? []).map((d, i) => (
                         <span
                           key={`${d}-${i}`}
-                          className="inline-flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-bold text-emerald-300"
+                          className="inline-flex items-center gap-1 rounded-full border border-[var(--status-success)]/40 bg-[var(--status-success)]/10 px-2.5 py-1 text-[11px] font-bold text-emerald-300"
                         >
                           <Compass className="size-3 shrink-0" aria-hidden /> {d}
                         </span>
@@ -689,7 +695,7 @@ export function EnvironmentAnalysisPanel({
 
             {/* 정직성 배지(note·basis)·sources */}
             {res.badges?.note && (
-              <p className="mt-4 inline-flex items-baseline gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-200/90">
+              <p className="mt-4 inline-flex items-baseline gap-1.5 rounded-lg border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 px-3 py-2 text-[11px] leading-relaxed text-amber-200/90">
                 <AlertTriangle className="size-3.5 self-center shrink-0" aria-hidden /> {res.badges.note}
               </p>
             )}

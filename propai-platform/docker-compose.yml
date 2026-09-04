@@ -6,9 +6,13 @@ services:
       context: .
       dockerfile: Dockerfile.web
       # 클라이언트 번들 인라인용 공개키(.env에서 치환). 런타임 env_file과 별개로 빌드타임 필요.
+      # ★VWorld 키는 여기서 뺐다(2026-08-17) — 읽는 클라이언트 코드가 0개인데 배관만 남아
+      #   값을 넣는 순간 브라우저로 새는 구조였다. 서버 전용 키는 런타임 env_file 경유.
       args:
         NEXT_PUBLIC_KAKAO_MAP_KEY: ${NEXT_PUBLIC_KAKAO_MAP_KEY:-}
-        NEXT_PUBLIC_VWORLD_API_KEY: ${NEXT_PUBLIC_VWORLD_API_KEY:-}
+        # ★앱 버전(캐시명 + 텔레메트리). safe-deploy.sh 가 export 한다.
+        #   비어 있으면 Dockerfile.web 이 **빌드를 죽인다**(fail closed — 조용한 미치환 금지).
+        APP_BUILD_ID: ${APP_BUILD_ID:-}
     image: propai-web:oracle
     restart: always
     expose:

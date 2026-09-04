@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
+import { idempotencyHeaders } from "@/lib/idempotency";
 import { getCachedAnalysis, setCachedAnalysis, TTL_7D } from "@/lib/analysis-fetch-cache";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { LegalRefChip } from "@/components/common/LegalRefChip";
@@ -160,6 +161,8 @@ export function AutoZoningBadge({ address }: { address: string }) {
           {
             useMock: false,
             body: { address: address.trim() },
+            // ★유료 경로(land_analysis) — 재전송이면 이중청구된다.
+            headers: idempotencyHeaders("zoning.analyze", { address: address.trim() }),
           },
         );
         if (!cancelled) {
@@ -246,7 +249,7 @@ export function AutoZoningBadge({ address }: { address: string }) {
 
   if (error) {
     return (
-      <div className="rounded-[var(--radius-xl)] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] px-4 py-3 text-xs text-[var(--spot)]">
+      <div className="rounded-[var(--radius-xl)] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] px-4 py-3 text-xs text-[var(--status-warning)]">
         {error}
       </div>
     );
@@ -425,7 +428,7 @@ export function AutoZoningBadge({ address }: { address: string }) {
           {(result.warnings ?? []).map((w, i) => (
             <p
               key={`warn-${i}`}
-              className="text-[10px] leading-5 text-[var(--spot)]"
+              className="text-[10px] leading-5 text-[var(--status-warning)]"
             >
               {w}
             </p>

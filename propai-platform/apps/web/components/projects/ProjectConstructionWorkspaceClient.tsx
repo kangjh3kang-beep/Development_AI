@@ -492,7 +492,7 @@ export function ProjectConstructionWorkspaceClient({
       <Card className="rounded-[var(--radius-2xl)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
         <CardContent className="p-8">
           <div className="flex flex-wrap items-center gap-3">
-            <span className="rounded-full bg-[rgba(14,116,144,0.1)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--accent-strong)]">
+            <span className="rounded-full bg-[rgba(14,116,144,0.1)] px-4 py-2 label-caps text-[var(--accent-strong)]">
               {labels.heroTitle}
             </span>
             <span className="rounded-full border border-[var(--line)] px-4 py-2 text-xs font-medium text-[var(--text-secondary)]">
@@ -516,7 +516,7 @@ export function ProjectConstructionWorkspaceClient({
             </div>
           ) : null}
           {workspaceError ? (
-            <div className="mt-6 rounded-[var(--radius-xl)] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-5 text-sm leading-7 text-[var(--spot)]">
+            <div className="mt-6 rounded-[var(--radius-xl)] border border-[rgba(217,119,6,0.28)] bg-[rgba(217,119,6,0.08)] p-5 text-sm leading-7 text-[var(--status-warning)]">
               {workspaceError}
             </div>
           ) : null}
@@ -536,7 +536,7 @@ export function ProjectConstructionWorkspaceClient({
       {/* Cost Calculation Form + Results */}
       <Card>
         <CardContent className="p-6">
-          <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+          <p className="label-caps text-[var(--text-tertiary)]">
             {labels.formTitle}
           </p>
           <form className="mt-4 grid gap-4" onSubmit={handleCostSubmit}>
@@ -652,7 +652,7 @@ export function ProjectConstructionWorkspaceClient({
               />
             </div>
             {priceLoadError && (
-              <p className="text-sm text-[var(--spot)]">{priceLoadError}</p>
+              <p className="text-sm text-[var(--status-error)]">{priceLoadError}</p>
             )}
           </form>
         </CardContent>
@@ -661,7 +661,7 @@ export function ProjectConstructionWorkspaceClient({
       {/* Cost Results */}
       <Card>
         <CardContent className="p-6">
-          <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+          <p className="label-caps text-[var(--text-tertiary)]">
             {labels.costTitle}
           </p>
           {costResult ? (
@@ -775,7 +775,7 @@ export function ProjectConstructionWorkspaceClient({
         {/* Checklist */}
         <Card>
           <CardContent className="p-6">
-            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+            <p className="label-caps text-[var(--text-tertiary)]">
               {labels.checklistTitle}
             </p>
             <form
@@ -857,7 +857,7 @@ export function ProjectConstructionWorkspaceClient({
                       ) : null}
                     </div>
                     {item.required && (
-                      <span className="shrink-0 rounded-lg bg-[rgba(239,68,68,0.1)] px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-[var(--error)]">
+                      <span className="shrink-0 rounded-lg bg-[rgba(239,68,68,0.1)] px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-[var(--status-error)]">
                         {labels.requiredLabel}
                       </span>
                     )}
@@ -878,7 +878,7 @@ export function ProjectConstructionWorkspaceClient({
         {/* Risk Assessment */}
         <Card>
           <CardContent className="p-6">
-            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+            <p className="label-caps text-[var(--text-tertiary)]">
               {labels.riskTitle}
             </p>
             {riskError ? (
@@ -908,7 +908,7 @@ export function ProjectConstructionWorkspaceClient({
                   />
                 </div>
                 <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
-                  <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+                  <p className="label-caps text-[var(--text-tertiary)]">
                     {labels.riskFactorsLabel}
                   </p>
                   {riskQuery.data.factors?.length ? (
@@ -931,9 +931,9 @@ export function ProjectConstructionWorkspaceClient({
                           <span
                             className={`shrink-0 rounded-lg px-3 py-1 text-[10px] font-bold uppercase tracking-widest ${
                               factor.risk_level === "high"
-                                ? "bg-[rgba(239,68,68,0.1)] text-[var(--error)]"
+                                ? "bg-[rgba(239,68,68,0.1)] text-[var(--status-error)]"
                                 : factor.risk_level === "medium"
-                                  ? "bg-[rgba(217,119,6,0.1)] text-[var(--spot)]"
+                                  ? "bg-[rgba(217,119,6,0.1)] text-[var(--status-warning)]"
                                   : "bg-[rgba(14,116,144,0.1)] text-[var(--accent-strong)]"
                             }`}
                           >
@@ -980,7 +980,7 @@ export function ProjectConstructionWorkspaceClient({
 function MetricTile({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-[var(--radius-xl)] bg-[var(--surface)] p-4">
-      <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+      <p className="label-caps text-[var(--text-tertiary)]">
         {label}
       </p>
       <p className="mt-2 text-sm font-semibold text-[var(--text-primary)]">

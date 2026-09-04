@@ -327,11 +327,13 @@ def test_staff_overview_response_keys_match_frontend():
 #     parent_id 동기화 같은 순수 제어흐름만 고정한다.
 # ──────────────────────────────────────────────────────────────────────────────
 class _MoveNode:
-    def __init__(self, node_id, site_id, path):
+    def __init__(self, node_id, site_id, path, node_type="MEMBER"):
         self.id = node_id
         self.site_id = site_id
         self.path = path
         self.parent_id = None
+        # 직속 파이프라인(2026-07-23) 위계 가드가 노드 직급을 읽는다(기존 테스트는 기본값 무해).
+        self.node_type = node_type
 
 
 class _MoveFakeDB:
@@ -538,20 +540,21 @@ async def test_move_node_malformed_new_parent_id_returns_400():
 
 
 @pytest.mark.asyncio
-async def test_move_node_cross_site_new_parent_returns_403():
-    """★IDOR 회귀(엔드포인트): 타 현장 new_parent_id → 서비스 ValueError → 403 매핑.
+async def test_move_node_cross_site_new_parent_returns_404():
+    """★IDOR 회귀(엔드포인트): 타 현장 new_parent_id → 404(존재 비노출).
 
-    move_subtree 가 A현장 스코프 조회에서 B현장 노드를 못 찾아 ValueError 를 던지고,
-    엔드포인트는 이를 403(격리·권한 위반)으로 매핑해야 한다(입력형식 400 과 구분)."""
+    ★직속 파이프라인 대칭(2026-07-23): 엔드포인트 가드가 현장 스코프 조회로 새 부모를 먼저
+    찾고, 못 찾으면 404 를 던진다 — add_node 의 교차현장 parent 404 와 동일 계약(타 현장 노드의
+    존재 자체를 노출하지 않는 게 IDOR 관점에서 더 정합. 과거엔 서비스 ValueError→403 이었다)."""
     site_a, site_b = uuid.uuid4(), uuid.uuid4()
-    node = _MoveNode(uuid.uuid4(), site_a, "a.b.c")
-    other = _MoveNode(uuid.uuid4(), site_b, "x.y")  # B현장 노드
+    node = _MoveNode(uuid.uuid4(), site_a, "a.b.c", node_type="TEAM_LEADER")
+    other = _MoveNode(uuid.uuid4(), site_b, "x.y", node_type="GM_DIRECTOR")  # B현장 노드
     db = _MoveFakeDB([node, other])
     ctx = _FakeCtx(site_a, "AGENCY", uuid.uuid4())
     with pytest.raises(HTTPException) as ei:
-        # new_parent_id 가 B현장 노드 → A 스코프 조회 실패 → ValueError → 403.
+        # new_parent_id 가 B현장 노드 → A 스코프 가드 조회 실패 → 404(add_node 와 대칭).
         await sales_actions.move_node(node.id, {"new_parent_id": str(other.id)}, db=db, ctx=ctx)
-    assert ei.value.status_code == 403
+    assert ei.value.status_code == 404
     assert db.updated is False  # 거부 시 UPDATE 미실행.
 
 
@@ -610,15 +613,146 @@ async def test_add_node_director_ladder_applies_member_rejected():
     assert ei.value.status_code == 403
 
 
-def test_add_node_director_register_matrix_allows_gm_director():
-    """권한 단조성: DIRECTOR 등록 허용집합에 GM_DIRECTOR+상위·관리자가 모두 포함된다."""
-    allowed = sales_actions._REGISTER_MATRIX["DIRECTOR"]
-    assert {"GM_DIRECTOR", "AGENCY", "SUBAGENCY", "DEVELOPER", "SUPERADMIN"} <= allowed
-    # 하급(TEAM_LEADER/MEMBER)은 DIRECTOR 를 등록할 수 없다(상위만 등록).
-    assert "TEAM_LEADER" not in allowed and "MEMBER" not in allowed
-    # 단조성: DIRECTOR 는 TEAM_LEADER/MEMBER 보다 상위라 그 등록 허용집합에 포함돼야 한다.
-    assert "DIRECTOR" in sales_actions._REGISTER_MATRIX["TEAM_LEADER"]
-    assert "DIRECTOR" in sales_actions._REGISTER_MATRIX["MEMBER"]
+def test_register_matrix_direct_pipeline_spec():
+    """★직속 지정 파이프라인(2026-07-23 사용자 스펙) — 과거 '단조성'(상위=하위 전부 등록) 폐기.
+
+    총괄관리자/시행사→대행사만 · 대행사→대대행/총괄본부장/본부장 · 대대행→총괄본부장/본부장 ·
+    총괄본부장→본부장/팀장 · 본부장→팀장 · 팀장→직원. 상위가 말단을 건너뛰어 직접 등록하면
+    중간 계층 승인·책임 체계(수수료 2단 배분 기준)가 무너진다 — 매트릭스 전체를 byte-고정.
+    """
+    m = sales_actions._REGISTER_MATRIX
+    assert m["AGENCY"] == {"DEVELOPER", "SUPERADMIN"}  # 총괄관리자/시행사는 대행사'만'
+    assert m["SUBAGENCY"] == {"AGENCY"}
+    assert m["GM_DIRECTOR"] == {"AGENCY", "SUBAGENCY"}
+    assert m["DIRECTOR"] == {"AGENCY", "SUBAGENCY", "GM_DIRECTOR"}
+    assert m["TEAM_LEADER"] == {"GM_DIRECTOR", "DIRECTOR"}
+    assert m["MEMBER"] == {"TEAM_LEADER"}  # 직원은 팀장이 지정·승인
+    # 역인덱스(addable): 총괄관리자는 AGENCY 하나만 지정 가능해야 한다.
+    addable_super = [t for t, allowed in m.items() if "SUPERADMIN" in allowed]
+    assert addable_super == ["AGENCY"]
+    # ★게이트-매트릭스 정합: 매트릭스에 등장하는 모든 역할은 라우터 게이트(_R_ORG_ADD)도
+    #   통과해야 한다 — 과거 SUPERADMIN 이 게이트에서 누락돼 매트릭스 도달 전 403 이었다.
+    matrix_callers = set().union(*m.values())
+    assert matrix_callers <= set(sales_actions._R_ORG_ADD)
+    # 팀장은 MEMBER 하나만.
+    addable_tl = [t for t, allowed in m.items() if "TEAM_LEADER" in allowed]
+    assert addable_tl == ["MEMBER"]
+
+
+def test_org_rank_hierarchy_order():
+    """위계 서열 상수 — 부모-자식 검증(_ORG_RANK)이 계층 순서와 일치."""
+    r = sales_actions._ORG_RANK
+    assert (r["AGENCY"] < r["SUBAGENCY"] < r["GM_DIRECTOR"]
+            < r["DIRECTOR"] < r["TEAM_LEADER"] < r["MEMBER"])
+
+
+@pytest.mark.asyncio
+async def test_add_node_root_requires_agency_type():
+    """★루트 생성 가드①: parent_id 없이(최상위) 대행사 아닌 직급 → 400.
+
+    파이프라인 스펙상 최상위는 대행사만 — 과거엔 본사 권한이 부모 없이 루트 DIRECTOR 등을
+    만들 수 있어 위계의 시작점이 무너질 수 있었다."""
+    ctx = _FakeCtx(uuid.uuid4(), "AGENCY", uuid.uuid4())
+    with pytest.raises(HTTPException) as ei:
+        await sales_actions.add_node({"node_type": "DIRECTOR"}, db=_NoopDB(), ctx=ctx)
+    assert ei.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_add_node_parent_rank_inversion_returns_400():
+    """★위계 가드(R1 MAJOR 커버): 같은 현장의 유효 부모라도 서열 역전이면 400.
+
+    팀장(TEAM_LEADER) 노드 아래에 그보다 상위인 이사(DIRECTOR)를 붙이는 시도 —
+    매트릭스(AGENCY 는 DIRECTOR 등록 가능)는 통과하지만 부모 위계 검증이 막아야 한다.
+    이 술어(p_rank >= n_rank → 400)를 지우면 이 테스트가 실패해 회귀를 잡는다."""
+    site = uuid.uuid4()
+    parent_tl = _MoveNode(uuid.uuid4(), site, "a.g.t", node_type="TEAM_LEADER")
+    db = _CreateNodeFakeDB([parent_tl])
+    ctx = _FakeCtx(site, "AGENCY", uuid.uuid4())
+    with pytest.raises(HTTPException) as ei:
+        await sales_actions.add_node(
+            {"node_type": "DIRECTOR", "parent_id": str(parent_tl.id)}, db=db, ctx=ctx)
+    assert ei.value.status_code == 400
+    assert "위계" in ei.value.detail
+    assert db.added == []
+
+
+@pytest.mark.asyncio
+async def test_add_node_outside_subtree_returns_403():
+    """★서브트리 스코프 가드(R1 MAJOR 커버): org_path 보유자가 내 서브트리 밖 부모에 추가 → 403.
+
+    본부장(org_path=a.g1)이 남의 가지(a.g2)의 본부장 아래에 팀장을 붙이는 시도 — 매트릭스·위계는
+    모두 유효하지만 '내가 승인·지정한 하부에만 추가' 스코프가 막아야 한다."""
+    site = uuid.uuid4()
+    other_gm = _MoveNode(uuid.uuid4(), site, "a.g2", node_type="GM_DIRECTOR")
+    db = _CreateNodeFakeDB([other_gm])
+    ctx = _FakeCtx(site, "GM_DIRECTOR", uuid.uuid4())
+    ctx.org_path = "a.g1"
+    with pytest.raises(HTTPException) as ei:
+        await sales_actions.add_node(
+            {"node_type": "TEAM_LEADER", "parent_id": str(other_gm.id)}, db=db, ctx=ctx)
+    assert ei.value.status_code == 403
+    assert "하위 조직" in ei.value.detail
+    assert db.added == []
+
+
+@pytest.mark.asyncio
+async def test_move_node_rank_inversion_returns_400():
+    """★move 대칭 가드(R1 MAJOR): 상위 직급 서브트리를 하위 직급 노드 밑으로 이동 → 400.
+
+    add 만 막고 move 를 열어두면 '허용 위치에 추가 후 이동'으로 위계가 우회된다(R1 지적).
+    본부장(GM_DIRECTOR) 노드를 직원(MEMBER) 노드 아래로 이동하는 서열 역전을 차단한다."""
+    site = uuid.uuid4()
+    gm = _MoveNode(uuid.uuid4(), site, "a.g1", node_type="GM_DIRECTOR")
+    member = _MoveNode(uuid.uuid4(), site, "a.g2.t.m", node_type="MEMBER")
+    db = _CreateNodeFakeDB([gm, member])
+    ctx = _FakeCtx(site, "AGENCY", uuid.uuid4())
+    with pytest.raises(HTTPException) as ei:
+        await sales_actions.move_node(gm.id, {"new_parent_id": str(member.id)}, db=db, ctx=ctx)
+    assert ei.value.status_code == 400
+    assert "위계" in ei.value.detail
+
+
+@pytest.mark.asyncio
+async def test_move_node_outside_subtree_returns_403():
+    """★move 서브트리 스코프(R1 MAJOR): org_path 보유자는 내 하위 조직 안에서만 이동 가능.
+
+    org_path=a.g1 인 호출자가 남의 가지(a.g2) 팀장을 내 가지 밑으로 끌어오는 시도 → 403."""
+    site = uuid.uuid4()
+    other_tl = _MoveNode(uuid.uuid4(), site, "a.g2.t9", node_type="TEAM_LEADER")
+    my_gm = _MoveNode(uuid.uuid4(), site, "a.g1", node_type="GM_DIRECTOR")
+    db = _CreateNodeFakeDB([other_tl, my_gm])
+    ctx = _FakeCtx(site, "AGENCY", uuid.uuid4())
+    ctx.org_path = "a.g1"
+    with pytest.raises(HTTPException) as ei:
+        await sales_actions.move_node(other_tl.id, {"new_parent_id": str(my_gm.id)}, db=db, ctx=ctx)
+    assert ei.value.status_code == 403
+    assert "하위 조직" in ei.value.detail
+
+
+@pytest.mark.asyncio
+async def test_add_node_malformed_parent_id_returns_400():
+    """★입력검증(R1 MINOR): parent_id 가 UUID 형식이 아니면 400(과거엔 DB 계층 오류→500 누출)."""
+    ctx = _FakeCtx(uuid.uuid4(), "AGENCY", uuid.uuid4())
+    with pytest.raises(HTTPException) as ei:
+        await sales_actions.add_node(
+            {"node_type": "DIRECTOR", "parent_id": "not-a-uuid"}, db=_NoopDB(), ctx=ctx)
+    assert ei.value.status_code == 400
+    assert "UUID" in ei.value.detail
+
+
+@pytest.mark.asyncio
+async def test_add_node_root_bypass_blocked_for_subtree_scoped_caller():
+    """★루트 생성 가드②: org_path 보유(서브트리 권한자)가 parent 미지정으로 루트 생성 시도 → 400.
+
+    parent 검증(서브트리 스코프)은 parent_id 가 있을 때만 돌던 구조라, 부모를 아예 빼면
+    '내 하위에만 추가' 스코프를 통째로 우회할 수 있었다(스코프 우회 봉합)."""
+    ctx = _FakeCtx(uuid.uuid4(), "GM_DIRECTOR", uuid.uuid4())
+    ctx.org_path = "a.b"  # 내 노드 보유 = 서브트리 스코프 대상.
+    with pytest.raises(HTTPException) as ei:
+        await sales_actions.add_node({"node_type": "TEAM_LEADER"}, db=_NoopDB(), ctx=ctx)
+    assert ei.value.status_code == 400
+    assert "상위" in ei.value.detail
 
 
 @pytest.mark.asyncio
@@ -765,16 +899,20 @@ async def test_create_node_same_site_parent_inherits_path():
 
 @pytest.mark.asyncio
 async def test_add_node_cross_site_parent_returns_404():
-    """★엔드포인트: 타 현장/미존재 parent_id → create_node ValueError → 404(500 누출 차단).
+    """★엔드포인트: 타 현장/미존재 parent_id → 404(500 누출 차단).
 
-    node_type 누락(400)·권한부족(403)과 대칭으로, 부모 못 찾음을 404 로 명시 매핑한다."""
+    node_type 누락(400)·권한부족(403)과 대칭으로, 부모 못 찾음을 404 로 명시 매핑한다.
+    (2026-07-23 직속 파이프라인 이후: add_node 자체의 현장 스코프 부모 조회 가드가 먼저 404 를
+    던진다 — 과거 create_node ValueError→404 매핑 경로에서 이동했지만 계약(404)은 동일.)"""
     site_a, site_b = uuid.uuid4(), uuid.uuid4()
     parent_b = _MoveNode(uuid.uuid4(), site_b, "x.y")
     db = _CreateNodeFakeDB([parent_b])
+    # ★직속 파이프라인 전환(2026-07-23): AGENCY→MEMBER 는 이제 매트릭스에서 403 이라
+    #   404 경로에 도달 못 한다. 허용 조합(AGENCY→DIRECTOR)으로 교차현장 404 를 검증한다.
     ctx = _FakeCtx(site_a, "AGENCY", uuid.uuid4())
     with pytest.raises(HTTPException) as ei:
         await sales_actions.add_node(
-            {"node_type": "MEMBER", "parent_id": str(parent_b.id)}, db=db, ctx=ctx)
+            {"node_type": "DIRECTOR", "parent_id": str(parent_b.id)}, db=db, ctx=ctx)
     assert ei.value.status_code == 404
     assert db.added == []  # 거부 시 노드 미생성.
 

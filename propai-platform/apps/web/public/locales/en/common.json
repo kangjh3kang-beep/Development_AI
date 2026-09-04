@@ -14,9 +14,18 @@
       "engine": "Zero silent misjudgment · deterministic & evidence-traced"
     },
     "pillars": {
-      "multimodal": { "title": "Multimodal auto-interpretation", "desc": "VLLM interprets design documents (drawings, tables, HWP) at the sheet and element level." },
-      "deterministic": { "title": "Deterministic & evidence-traced", "desc": "Statutory computation and verdicts run on a deterministic core; every output carries its basis (article, trace)." },
-      "frontier": { "title": "Commercial & public frontier", "desc": "Standardized deliberation analysis leads the open frontier of domestic commercial and public systems." }
+      "multimodal": {
+        "title": "Multimodal auto-interpretation",
+        "desc": "VLLM interprets design documents (drawings, tables, HWP) at the sheet and element level."
+      },
+      "deterministic": {
+        "title": "Deterministic & evidence-traced",
+        "desc": "Statutory computation and verdicts run on a deterministic core; every output carries its basis (article, trace)."
+      },
+      "frontier": {
+        "title": "Commercial & public frontier",
+        "desc": "Standardized deliberation analysis leads the open frontier of domestic commercial and public systems."
+      }
     },
     "engineTitle": "Deliberation engine composition",
     "engineNote": "Engine core implemented · platform integration wired (live output after deployment)",
@@ -424,7 +433,7 @@
     },
     "feasibilityV2": {
       "title": "Feasibility Analysis v2",
-      "subtitle": "15 dev types x 38 taxes x 229 regions — fully automated",
+      "subtitle": "15 dev types x 28 tax/charge/fee codes, automated",
       "tabInput": "Input",
       "tabResult": "Results",
       "tabMonteCarlo": "Monte Carlo",
@@ -447,7 +456,7 @@
     },
     "taxV2": {
       "title": "Tax Simulation v2",
-      "subtitle": "4-stage 38-type tax batch calculation",
+      "subtitle": "4-stage 28-code tax/charge/fee batch calculation",
       "calculateAll": "Calculate Taxes",
       "grandTotal": "Grand Total",
       "stageAcquisition": "Acquisition",
@@ -502,274 +511,174 @@
     }
   },
   "modulePlaceholders": {
-    "agent": {
-      "eyebrow": "PROP / AGENT",
-      "title": "AI 에이전트 시스템",
-      "description": "분산된 AI 에이전트들의 상태와 로그를 실시간으로 모니터링하고 제어합니다.",
-      "items": [
-        "✓ AI 에이전트 오케스트레이션 활성",
-        "✓ 도메인별 추론 로그 실시간 스트리밍",
-        "✓ 의사결정 지원 시스템 로드 완료"
-      ]
-    },
     "maintenance": {
       "eyebrow": "PROP / MAINTENANCE",
-      "title": "디지털 트윈 유지보수",
-      "description": "설비의 센서 기반 예지 정비 및 현장 유지보수 일정을 관리합니다.",
+      "title": "Digital Twin Maintenance",
+      "description": "Enter equipment readings to get a rough maintenance priority estimate. Live sensor integration and the server-side prediction model are not connected yet.",
       "items": [
-        "✓ 설비 IoT 센서 22개소 실시간 연동",
-        "✓ 예지 정비(Predictive ML) 모델 가동",
-        "✓ 현장 유지보수 디지털 워크로 정렬"
-      ]
-    },
-    "tenant": {
-      "eyebrow": "PROP / TENANT",
-      "title": "임차인 통합 관리",
-      "description": "임대차 계약, CS 요청 처리 및 임차인 포괄 운용 상태를 시각화합니다.",
-      "items": [
-        "✓ 데이터 실시간 연동 대기",
-        "✓ 보안 컴플라이언스 통과",
-        "✓ 워크플로우 상태 라우팅"
-      ]
-    },
-    "inspection": {
-      "eyebrow": "PROP / INSPECTION",
-      "title": "AI 현장 점검",
-      "description": "모바일 장치와 드론 비전 데이터를 통해 현장의 안전 및 품질을 원격 점검합니다.",
-      "items": [
-        "✓ 4K 드론 비전 안전 로직 동기화",
-        "✓ 부위별 균열/누수 AI 탐지 활성",
-        "✓ 오프라인 PWA 현장 점검 모드 준비"
-      ]
-    },
-    "auction": {
-      "eyebrow": "PROP / AUCTION",
-      "title": "경공매 분석 엔진",
-      "description": "법원 경매 및 공매 낙찰가 예측과 권리 분석을 AI로 구동합니다.",
-      "items": [
-        "✓ 데이터 실시간 연동 대기",
-        "✓ 보안 컴플라이언스 통과",
-        "✓ 워크플로우 상태 라우팅"
+        "· Rough anomaly score from your inputs — computed in the browser",
+        "· Equipment IoT sensor live feed — not connected",
+        "· Predictive maintenance model (server) — not connected"
       ]
     },
     "projects": {
       "eyebrow": "PROP / PROJECTS",
-      "title": "전체 프로젝트 파이프라인",
-      "description": "권한이 부여된 모든 부동산 개발 프로젝트들의 통합 진행률을 관제합니다.",
+      "title": "Project Pipeline",
+      "description": "Monitors combined progress across every development project you have access to.",
       "items": [
-        "✓ 데이터 실시간 연동 대기",
-        "✓ 보안 컴플라이언스 통과",
-        "✓ 워크플로우 상태 라우팅"
-      ]
-    },
-    "tax": {
-      "eyebrow": "PROP / TAX",
-      "title": "세무/재무 시뮬레이터",
-      "description": "취득세, 양도세, 종부세 등 부동산 관련 세금 영향을 몬테카를로 분석에 결합합니다.",
-      "items": [
-        "✓ 15개 유형별 AI 수지분석 매트릭스",
-        "✓ 몬테카를로 ROI 리스크 변동성 모델",
-        "✓ 38종 세금 자동 연동 시뮬레이터"
-      ]
-    },
-    "iot": {
-      "eyebrow": "PROP / IOT",
-      "title": "IoT 에너지 관제",
-      "description": "건물 내 스마트 센서 네트워크를 대시보드와 연동하여 실시간 에너지 효율을 제어합니다.",
-      "items": [
-        "✓ 데이터 실시간 연동 대기",
-        "✓ 보안 컴플라이언스 통과",
-        "✓ 워크플로우 상태 라우팅"
-      ]
-    },
-    "cost": {
-      "eyebrow": "PROP / COST",
-      "title": "실시간 물가지수 분석",
-      "description": "시장 자재 단가 및 건설 물가지수를 연동하여 원가 상승 리스크를 예측합니다.",
-      "items": [
-        "✓ 데이터 실시간 연동 대기",
-        "✓ 보안 컴플라이언스 통과",
-        "✓ 워크플로우 상태 라우팅"
-      ]
-    },
-    "investment": {
-      "eyebrow": "PROP / INVESTMENT",
-      "title": "AI 자산가치 추정(AVM)",
-      "description": "지역 데이터와 거시경제 지표를 결합하여 해당 물건의 최종 자산 가치를 환산합니다.",
-      "items": [
-        "✓ 데이터 실시간 연동 대기",
-        "✓ 보안 컴플라이언스 통과",
-        "✓ 워크플로우 상태 라우팅"
-      ]
-    },
-    "carbon": {
-      "eyebrow": "PROP / CARBON",
-      "title": "생애주기 탄소배출(LCA) 전과정 평가",
-      "description": "설계, 시공, 운영의 전체 사이클에서 발생하는 탄소 발자국을 추적/절감합니다.",
-      "items": [
-        "✓ 데이터 실시간 연동 대기",
-        "✓ 보안 컴플라이언스 통과",
-        "✓ 워크플로우 상태 라우팅"
+        "· Project list and progress stages — server connected",
+        "· Next-action link per project — shown on the card",
+        "· Security compliance verdict — not connected"
       ]
     },
     "contracts": {
       "eyebrow": "PROP / CONTRACTS",
-      "title": "전자 계약 관리",
-      "description": "이더리움 스마트 컨트랙트 기반의 용역/수주/임대차 계약을 모니터링합니다.",
+      "title": "Electronic Contract Management",
+      "description": "Manages service, award and lease contracts, and tracks their status.",
       "items": [
-        "✓ 데이터 실시간 연동 대기",
-        "✓ 보안 컴플라이언스 통과",
-        "✓ 워크플로우 상태 라우팅"
+        "· Contract drafting and lookup — server connected",
+        "· E-signature — one-way two-state flow (mock provider)",
+        "· Security compliance verdict — not connected"
       ]
     },
     "legal": {
       "eyebrow": "PROP / LEGAL",
-      "title": "법규 및 조례 검토",
-      "description": "해당 지번의 용도 지역 분석 및 최신 건축/환경 법규 위반을 검사합니다.",
+      "title": "Legal & Ordinance Review",
+      "description": "Analyses the zoning of the given parcel and checks it against current building and environmental regulations.",
       "items": [
-        "✓ 전국 지적도 및 용도지역 DB 연동",
-        "✓ 최신 건축법/지자체 조례 엔진 활성",
-        "✓ GIS 기반 다중 규제 오버레이 완료"
+        "· Cadastre, zoning, and land-use plan lookup — VWorld connected",
+        "· Building Act rule check and local ordinances — live MOLEG API lookup",
+        "· Multi-regulation list and hierarchy — map overlay not connected"
       ]
     },
     "finance": {
       "eyebrow": "PROP / FINANCE",
-      "title": "수지 분석 및 대출 구조",
-      "description": "PF 구조화, 자기자본(Equity) 시뮬레이션 및 상환 스케줄을 디자인합니다.",
+      "title": "Finance Analysis",
+      "description": "Check AVM valuation from nearby transactions and jeonse deposit risk. PF structuring, equity simulation, and repayment schedules are not connected yet.",
       "items": [
-        "✓ 데이터 실시간 연동 대기",
-        "✓ 보안 컴플라이언스 통과",
-        "✓ 워크플로우 상태 라우팅"
+        "· AVM valuation and jeonse deposit risk — server connected",
+        "· Next-stage routing — driven by the lifecycle source of truth",
+        "· Security compliance verdict — not connected"
       ]
     },
     "feasibility": {
       "eyebrow": "PROP / FEASIBILITY",
-      "title": "AI Feasibility & Return Review",
-      "description": "Integrates 15 development types, 38 tax algorithms, and ordinances of 229 municipalities in real time to support optimal investment decisions.",
+      "title": "Feasibility Analysis",
+      "description": "Automatically computes 15 development types and 28 tax/charge/fee codes. Local ordinances are looked up and applied; when unavailable, the statutory ceiling is used and disclosed as degraded.",
       "items": [
-        "✓ Feasibility simulation per development type",
-        "✓ Automated tax & finance structuring",
-        "✓ ROI & break-even confidence verification"
+        "· Feasibility simulation across 15 development types — server connected",
+        "· Tax and financing cost auto-calculation — server connected",
+        "· ROI and confidence scoring — break-even point not calculated"
       ]
     },
     "report": {
       "eyebrow": "PROP / REPORT",
-      "title": "최종 사업성 리포트",
-      "description": "지금까지 분석된 법규, 설계, 수지 종합 결과를 PDF 및 대시보드로 요약 보고합니다.",
+      "title": "Final Feasibility Report",
+      "description": "Summarises the accumulated legal, design and feasibility results into a PDF and dashboard report.",
       "items": [
-        "✓ 데이터 실시간 연동 대기",
-        "✓ 보안 컴플라이언스 통과",
-        "✓ 워크플로우 상태 라우팅"
+        "· Investor and bank-ready report generation — server connected",
+        "· Next-stage routing — driven by the lifecycle source of truth",
+        "· Security compliance verdict — not connected"
       ]
     },
     "site-analysis": {
       "eyebrow": "PROP / SITE ANALYSIS",
-      "title": "부지 및 환경 분석",
-      "description": "지형 데이터, 일조량, 소음 및 주변 인프라를 공간 정보(GIS) 기반으로 파악합니다.",
+      "title": "Site & Environment Analysis",
+      "description": "Reads terrain, daylight, noise and surrounding infrastructure on a GIS basis.",
       "items": [
-        "✓ 데이터 실시간 연동 대기",
-        "✓ 보안 컴플라이언스 통과",
-        "✓ 워크플로우 상태 라우팅"
+        "· Zoning and comprehensive site analysis — server connected",
+        "· Next-stage routing — driven by the lifecycle source of truth",
+        "· Security compliance verdict — not connected"
       ]
     },
     "esg": {
       "eyebrow": "PROP / ESG",
-      "title": "ESG 지표 통합",
-      "description": "EU 택소노미 및 녹색건축인증 요건을 충족하기 위한 프로젝트의 비재무적 가치를 추적합니다.",
+      "title": "ESG Metrics",
+      "description": "Tracks the project's non-financial value against EU Taxonomy and green building certification requirements.",
       "items": [
-        "✓ RE100/LCA 탄소 배출량 추적 시스템",
-        "✓ ESG 투자 적격성 AI 진단 완료",
-        "✓ 녹색건축인증 및 G-SEED 예비 평점"
+        "· RE100 tracking and LCA carbon accounting — server connected",
+        "· EU Taxonomy eligibility — fixed-threshold rules (not AI)",
+        "· Green building certification — user-entered; G-SEED preliminary score not connected"
       ]
     },
     "bim": {
       "eyebrow": "PROP / BIM",
-      "title": "BIM 수량 산출",
-      "description": "생성된 IFC 파일에서 골조, 마감재 등 3D 물량(QTO)을 자동 산출하고 매핑합니다.",
+      "title": "BIM Quantity Take-off",
+      "description": "Automatically takes off and maps 3D quantities — structure, finishes and more — from the generated IFC file.",
       "items": [
-        "✓ 3D QTO 엔진 (물량 자동 산출)",
-        "✓ IFC 4.x 기반 표준 준수 상호운용성",
-        "✓ 부재별 단위 중량 및 단가 매핑 완료"
-      ]
-    },
-    "cad": {
-      "eyebrow": "PROP / CAD",
-      "title": "2D 평면도 검토",
-      "description": "설계 도면 분석 및 규제 오버레이 뷰어를 통해 면적과 효율성을 평가합니다.",
-      "items": [
-        "✓ CAD Layer 자동 분류 파서 가동",
-        "✓ 실별 면적(GFA/NFA) 오차 검증 완료",
-        "✓ 유니버설 디자인(Barrier-Free) 법규 체크"
+        "· Quantities re-measured from generated IFC — volume, area, element count",
+        "· Generated on the IFC4 schema — conformance validator not connected",
+        "· Unit weight / unit price mapping per element — not connected (work-type codes only)"
       ]
     },
     "construction": {
       "eyebrow": "PROP / CONSTRUCTION",
-      "title": "4D/5D 시공 감리",
-      "description": "공정표와 내역서를 연동하여 시공 기성 및 비용 지출을 실시간 감리합니다.",
+      "title": "Construction Schedule & Cost",
+      "description": "Estimates the schedule from standard durations and records progress billing and costs. 4D clash checking and live site IoT integration are not connected yet.",
       "items": [
-        "✓ 4D 시공 스케줄링 간섭 체크 활성",
-        "✓ 현장 IoT 센서 실시간 기성 데이터 연동",
-        "✓ 공급 사슬(Supply Chain) 리스크 추적"
+        "· Schedule estimated from standard durations — derived from GFA and floors (4D clash check not connected)",
+        "· Progress billing — entered manually (site IoT sensors not connected)",
+        "· Supply-chain risk tracking — not connected (fixed risk entries only)"
       ]
     },
     "permit": {
       "eyebrow": "PROP / PERMIT",
-      "title": "인허가 자동화",
-      "description": "건축 허가에 필요한 도서 리스트를 점검하고, 행정 처리 워크플로우를 보조합니다.",
+      "title": "Permit Automation",
+      "description": "Checks the document list required for a building permit and assists the administrative workflow.",
       "items": [
-        "✓ 전자 민원(세움터) G2B 인터페이스 대기",
-        "✓ 심의 위원회 지적 사항 이력 관리",
-        "✓ 단계별 필독 공문 자동 요약 알림"
+        "· Permit feasibility analysis and Building Act check — server connected",
+        "· Seumteo (EAIS) e-filing integration — not connected (local rules only)",
+        "· Review-comment history and official-document summaries — not connected"
       ]
     },
     "operations": {
       "eyebrow": "PROP / OPERATIONS",
-      "title": "자산 운영 (FM)",
-      "description": "준공 후 빌딩 모니터링(스마트 빌딩) 및 재무적 수익 회수 라인을 감독합니다.",
+      "title": "Asset Operations (FM)",
+      "description": "Post-completion operations view. The metrics shown are fixed sample values; live BEMS and tenant-experience data are not connected yet.",
       "items": [
-        "✓ 시설 관리(FM) 에셋 추명 엔진 활성",
-        "✓ 에너지 소비 효율(BEMS) 최적화 트랙킹",
-        "✓ 임차인 경험 지수(TX) 모니터링"
+        "· Operations status metrics — fixed sample values (live data not connected)",
+        "· Energy efficiency (BEMS) tracking — not connected",
+        "· Tenant experience index (TX) — not connected"
       ]
     },
     "drone": {
       "eyebrow": "PROP / DRONE",
-      "title": "드론 열화상/맵핑 데이터",
-      "description": "현장에서 수집된 드론 정사영상 및 3D 포인트 클라우드 데이터를 시각화합니다.",
+      "title": "Drone Site Inspection",
+      "description": "Detects defects in uploaded drone imagery. Orthomosaic mapping and 3D point-cloud processing are not connected yet.",
       "items": [
-        "✓ 정사영상 맵핑(Orthomosaic) 처리 완료",
-        "✓ 토공량 오차 범위 3% 이내 정밀 스캔",
-        "✓ 열화상 기반 에너지 누출 진단 모듈"
+        "· Image-based defect detection — external vision API",
+        "· Orthomosaic processing — not connected",
+        "· Earthwork volume scanning and thermal diagnostics — not connected"
       ]
     },
     "blockchain": {
       "eyebrow": "PROP / BLOCKCHAIN",
-      "title": "부동산 조각투자(STO) 블록체인 펀딩",
-      "description": "부동산 조각 투자 및 블록체인(Tokenization) 기반의 자본 조달 원장을 모니터링합니다.",
+      "title": "Blockchain Escrow",
+      "description": "Creates and queries escrow smart contracts. Fractional (STO) ledgers and tokenized capital raising are not connected yet.",
       "items": [
-        "✓ 부동산 조각투자(STO) 기반 원장 라이브",
-        "✓ 스마트 계약(Smart Contract) 실시간 검증",
-        "✓ ESG 투자 공시 시스템(Global Standard)"
+        "· Escrow smart contract — Polygon Amoy testnet, as of last query",
+        "· Fractional real-estate (STO) ledger — not connected",
+        "· ESG investment disclosure — not connected"
       ]
     },
     "design": {
       "eyebrow": "PROP / DESIGN",
-      "title": "AI 기본 설계 생성",
-      "description": "건폐율 및 용적률을 극대화하는 자동 평면도 및 법규 보정 3D 매스를 생성합니다.",
+      "title": "AI Schematic Design",
+      "description": "Generates alternative massing and floor plans within statutory limits. Parking and daylight are computed as constraints; objective-driven optimization search is not connected yet.",
       "items": [
-        "✓ 생성형 AI 기반 대안 설계(Optioneering)",
-        "✓ 법정 주차 대수 및 일조권 자동 최적화",
-        "✓ 3D 매스 하이라이트 렌더링 동기화"
+        "· Mass selection synced with the axonometric drawing — rendered in the browser",
+        "· Three massing options — defaults are predefined; AI analysis runs on demand",
+        "· Statutory parking and north-side daylight — constraint calculation (no optimization search)"
       ]
     },
     "market-insights": {
       "eyebrow": "PROP / MARKET INSIGHTS",
-      "title": "Market Trend Analysis",
+      "title": "Market & Price Analysis",
       "description": "Analyzes real estate market trends based on actual transaction prices, assessed land values, and regional supply-demand data.",
       "items": [
-        "✓ Real-time transaction data streaming",
-        "✓ AI-powered price prediction model active",
-        "✓ Regional supply-demand index monitoring"
+        "· Transaction data — MOLIT API lookup (monthly filings, not streaming)",
+        "· Valuation from nearby transactions (AVM) — weighted average, not a forecast",
+        "· Regional supply-demand index — not connected"
       ]
     }
   }

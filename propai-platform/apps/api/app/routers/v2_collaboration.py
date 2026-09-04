@@ -49,6 +49,7 @@ from app.services.collaboration.document_audit_service import (
     run_design_document_audit,
 )
 from apps.api.services.storage_service import (
+    ContentRejectedError,
     StorageError,
     download_collab_document,
     upload_collab_document,
@@ -242,6 +243,12 @@ async def upload_project_document(
 
     try:
         up = await upload_collab_document(data, file.content_type or "", filename, ttl_days=14)
+    except ContentRejectedError as exc:
+        # ★리뷰 필수 #2: 콘텐츠 검증 거부는 클라이언트 귀책 4xx — 인프라 502 와 구분.
+        logger.warning("collab_document_rejected", code=exc.code, reason=exc.reason[:120])
+        raise HTTPException(
+            status_code=exc.http_status, detail=f"업로드가 거부되었습니다: {exc.reason}"
+        ) from exc
     except StorageError as exc:
         logger.warning("collab_document_upload_failed", error=str(exc))
         raise HTTPException(status_code=502, detail=f"스토리지 업로드 실패: {exc}") from exc

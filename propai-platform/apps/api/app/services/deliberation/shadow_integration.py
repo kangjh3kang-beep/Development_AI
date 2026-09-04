@@ -82,14 +82,18 @@ def observe(domain: str, tenant_id: str | None, mapped: tuple[str, dict[str, Any
 
 
 async def shadow_compare(*, tenant_id: str, domain: str, platform_verdict: Any,
-                         engine_payload: dict[str, Any], platform_value: Any = None) -> dict[str, Any] | None:
+                         engine_payload: dict[str, Any], platform_value: Any = None,
+                         force_engine_call: bool = False) -> dict[str, Any] | None:
     """best-effort shadow 비교·적재. 도메인 흐름 절대 방해 금지(off/실패/타임아웃 시 None).
 
     ⚠️ quant_rel_err: 현재 통합 경로는 engine_value를 추출하지 않으므로 항상 None(verdict가 1차 비교축).
     엔진 정량 추출은 후속 — platform_value는 관측 보조 신호로만 적재.
     """
     s = get_settings()
-    if not getattr(s, "deliberation_shadow_enabled", False) or not s.deliberation_engine_url:
+    # force_engine_call=True(감사 표면화 경로 — deliberation_surface_in_audit)는 전역 shadow
+    # 게이트를 우회한다(감사 한정 스코프 — 타 도메인 호출부는 기본 False 라 기존 게이트 그대로).
+    # 엔진 URL 미설정은 어느 경로든 None(정직 강등·날조 금지).
+    if (not force_engine_call and not getattr(s, "deliberation_shadow_enabled", False))             or not s.deliberation_engine_url:
         return None
     tenant = _norm_tenant(tenant_id)
     try:
@@ -107,10 +111,19 @@ async def shadow_compare(*, tenant_id: str, domain: str, platform_verdict: Any,
             logger.info("shadow_skip_engine", domain=domain, reason=reason)
             return None
         engine_verdict = engine_overall_verdict(result)
-        return await shadow_service.record(
+        record = await shadow_service.record(
             tenant_id=tenant, domain=domain, platform_verdict=platform_verdict,
             engine_verdict=engine_verdict, input_hash=analysis_input_hash(dump),
             platform_value=platform_value, detail={"engine_reason": reason})
+        # ★로드맵③ additive — 표면화 소비처(design_audit 등)가 3값(엔진 verdict 텍스트)을 그대로
+        # 보여줄 수 있도록 record()의 기존 반환(id/matched/divergence_score/quant_rel_err)에
+        # verdict 문자열을 신규 키로만 덧붙인다. 기존 두 호출부(design_audit/building_compliance)는
+        # observe()의 fire-and-forget 반환값을 버리므로 이 additive 키가 무회귀임을 보장한다.
+        return {
+            **record,
+            "engine_verdict": engine_verdict,
+            "platform_verdict": str(platform_verdict) if platform_verdict is not None else None,
+        }
     except Exception as exc:  # noqa: BLE001 — shadow는 관측 전용, 도메인 흐름 보호 최우선(타임아웃 포함)
         logger.warning("shadow_compare_failed", domain=domain, err=str(exc)[:200])
         return None

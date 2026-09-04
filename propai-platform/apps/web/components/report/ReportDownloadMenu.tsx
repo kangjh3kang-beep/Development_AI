@@ -102,7 +102,7 @@ export function ReportDownloadMenu({ projectId }: Props) {
     <div className="space-y-3">
       {/* 포맷 선택 — 세그먼트 버튼 */}
       <div
-        className="flex gap-1 rounded-lg border border-[var(--border)] bg-[var(--surface-soft)] p-1"
+        className="flex gap-1 rounded-[var(--r-card)] border border-[var(--border-muted)] bg-[var(--surface-soft)] p-1"
         role="radiogroup"
         aria-label="보고서 파일 형식"
       >
@@ -117,10 +117,10 @@ export function ReportDownloadMenu({ projectId }: Props) {
               disabled={busy}
               onClick={() => setFormat(f.key)}
               className={[
-                "flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                "flex-1 rounded-[var(--r-input)] px-3 py-1.5 font-[var(--font-mono)] text-sm font-medium transition-colors",
                 active
-                  ? "bg-[var(--accent-strong)] text-white"
-                  : "text-[var(--text-muted)] hover:bg-[var(--surface)]",
+                  ? "bg-[var(--accent-strong)] text-[var(--on-primary)]"
+                  : "text-[var(--text-tertiary)] hover:bg-[var(--surface)]",
               ].join(" ")}
               title={f.hint}
             >
@@ -157,7 +157,7 @@ export function ReportDownloadMenu({ projectId }: Props) {
       )}
 
       {status === "error" && errorMessage && (
-        <p className="text-xs text-[var(--spot)]">{errorMessage}</p>
+        <p className="text-xs text-[var(--status-error)]">{errorMessage}</p>
       )}
     </div>
   );

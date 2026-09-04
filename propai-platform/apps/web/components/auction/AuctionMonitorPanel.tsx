@@ -24,6 +24,7 @@ import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import { useMapFullscreen } from "@/hooks/useMapFullscreen";
 import type { Locale } from "@/i18n/config";
+import { loadLeaflet } from "@/lib/leaflet-loader";
 
 declare global {
   interface Window {
@@ -153,37 +154,18 @@ function extractErrorMessage(error: unknown) {
 }
 
 // ---- Leaflet CDN 동적로드 (NearbyTransactionsMap과 동일 패턴, 새 의존성 0) ----
-let leafletLoading: Promise<void> | null = null;
-function loadLeaflet(): Promise<void> {
-  if (typeof window === "undefined") return Promise.reject(new Error("no window"));
-  if (window.L) return Promise.resolve();
-  if (leafletLoading) return leafletLoading;
-  leafletLoading = new Promise((resolve, reject) => {
-    if (!document.querySelector('link[data-leaflet]')) {
-      const css = document.createElement("link");
-      css.rel = "stylesheet";
-      css.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
-      css.setAttribute("data-leaflet", "1");
-      document.head.appendChild(css);
-    }
-    const script = document.createElement("script");
-    script.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
-    script.async = true;
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error("Leaflet 로드 실패"));
-    document.head.appendChild(script);
-  });
-  return leafletLoading;
-}
 
 export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale; canUseLiveApi: boolean }) {
   const queryClient = useQueryClient();
 
   // ----- 관심대상(watchlist) -----
+  // ★skipSessionExpiry(이 파일 공통): /auction/*는 RBAC 게이트 — 라이브 모드 미인증 401이
+  //   전역 세션만료 처리(토큰 와이프+로그인 하드 리다이렉트)를 발동해, 아래에 준비된 인라인
+  //   "로그인 필요" 안내를 선점하던 것을 옵트아웃한다(사통맵 경매 레이어와 동일 규약, PR#271).
   const watchlistQuery = useQuery({
     queryKey: ["auction", "watchlist"],
     enabled: canUseLiveApi,
-    queryFn: () => apiClient.get<WatchlistResponse>("/auction/watchlist"),
+    queryFn: () => apiClient.get<WatchlistResponse>("/auction/watchlist", { skipSessionExpiry: true }),
   });
 
   const watchTargets = useMemo(() => watchlistQuery.data?.items ?? [], [watchlistQuery.data]);
@@ -200,11 +182,11 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
   const monitorQuery = useQuery({
     queryKey: ["auction", "monitor"],
     enabled: canUseLiveApi,
-    queryFn: () => apiClient.get<MonitorResponse>("/auction/monitor?group_by=source"),
+    queryFn: () => apiClient.get<MonitorResponse>("/auction/monitor?group_by=source", { skipSessionExpiry: true }),
   });
 
   const runMutation = useMutation({
-    mutationFn: () => apiClient.post<MonitorResponse>("/auction/monitor/run", { timeoutMs: 120000 }),
+    mutationFn: () => apiClient.post<MonitorResponse>("/auction/monitor/run", { timeoutMs: 120000, skipSessionExpiry: true }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["auction", "monitor"] });
       void queryClient.invalidateQueries({ queryKey: ["auction", "watchlist"] });
@@ -219,7 +201,7 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
     mutationFn: (file: File) => {
       const fd = new FormData();
       fd.append("file", file);
-      return apiClient.post<UploadResponse>("/auction/watchlist/upload", { body: fd, timeoutMs: 120000 });
+      return apiClient.post<UploadResponse>("/auction/watchlist/upload", { body: fd, timeoutMs: 120000, skipSessionExpiry: true });
     },
     onSuccess: (data) => {
       setUploadResult(data);
@@ -244,7 +226,7 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
   const regionsQuery = useQuery({
     queryKey: ["auction", "regions"],
     enabled: canUseLiveApi,
-    queryFn: () => apiClient.get<RegionsResponse>("/auction/regions"),
+    queryFn: () => apiClient.get<RegionsResponse>("/auction/regions", { skipSessionExpiry: true }),
   });
   const regions = useMemo(() => regionsQuery.data?.items ?? [], [regionsQuery.data]);
 
@@ -252,7 +234,7 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
   const [regionError, setRegionError] = useState("");
   const saveRegionMutation = useMutation({
     mutationFn: (payload: { name: string; geojson: RegionGeoJson }) =>
-      apiClient.post<Region>("/auction/regions", { body: payload }),
+      apiClient.post<Region>("/auction/regions", { body: payload, skipSessionExpiry: true }),
     onSuccess: () => {
       setRegionName("");
       setRegionError("");
@@ -263,7 +245,7 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
     onError: (error) => setRegionError(extractErrorMessage(error)),
   });
   const deleteRegionMutation = useMutation({
-    mutationFn: (id: number | string) => apiClient.delete<void>(`/auction/regions/${id}`),
+    mutationFn: (id: number | string) => apiClient.delete<void>(`/auction/regions/${id}`, { skipSessionExpiry: true }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["auction", "regions"] });
       void queryClient.invalidateQueries({ queryKey: ["auction", "monitor"] });
@@ -607,9 +589,10 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
       name: string;
       geojson: RegionGeoJson;
     }) => {
-      await apiClient.delete<void>(`/auction/regions/${payload.id}`);
+      await apiClient.delete<void>(`/auction/regions/${payload.id}`, { skipSessionExpiry: true });
       return apiClient.post<Region>("/auction/regions", {
         body: { name: payload.name, geojson: payload.geojson },
+        skipSessionExpiry: true,
       });
     },
     onSuccess: () => {
@@ -672,7 +655,7 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
         </button>
       </div>
       {runMutation.isError ? (
-        <p className="rounded-xl bg-[var(--surface-soft)] px-4 py-2 text-xs font-bold text-[var(--spot)]">
+        <p className="rounded-xl bg-[var(--surface-soft)] px-4 py-2 text-xs font-bold text-[var(--status-error)]">
           모니터링 실행 실패: {extractErrorMessage(runMutation.error)}
         </p>
       ) : null}
@@ -722,7 +705,7 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
             {uploadMutation.isPending ? "업로드·파싱 중…" : "파일 선택 (xlsx/xls/csv)"}
           </button>
           {uploadError ? (
-            <p className="mt-2 text-xs font-bold text-[var(--spot)]">업로드 실패: {uploadError}</p>
+            <p className="mt-2 text-xs font-bold text-[var(--status-error)]">업로드 실패: {uploadError}</p>
           ) : null}
           {uploadResult ? (
             <div className="mt-3 rounded-xl bg-[var(--surface-muted)] px-4 py-3 text-[11px] leading-relaxed text-[var(--text-secondary)]">
@@ -762,7 +745,7 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
             <h3 className="text-sm font-black text-[var(--text-primary)]">관심대상 현황</h3>
           </div>
           {watchlistQuery.isError ? (
-            <p className="text-xs font-bold text-[var(--spot)]">
+            <p className="text-xs font-bold text-[var(--status-error)]">
               {extractErrorMessage(watchlistQuery.error)}
             </p>
           ) : (
@@ -830,7 +813,7 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
               <button
                 type="button"
                 onClick={finishDrawing}
-                className="rounded-xl bg-[var(--status-warning)] px-4 py-2 text-xs font-black text-white"
+                className="rounded-xl bg-[var(--status-warning)] px-4 py-2 text-xs font-black text-[var(--saas-ink)]"
               >
                 구역 완료 ({draftCount})
               </button>
@@ -918,13 +901,13 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
             </button>
           )}
           {regionError ? (
-            <span className="text-xs font-bold text-[var(--spot)]">{regionError}</span>
+            <span className="text-xs font-bold text-[var(--status-error)]">{regionError}</span>
           ) : null}
         </div>
 
         {/* 저장된 구역 목록 */}
         {regionsQuery.isError ? (
-          <p className="mt-3 text-xs font-bold text-[var(--spot)]">
+          <p className="mt-3 text-xs font-bold text-[var(--status-error)]">
             {extractErrorMessage(regionsQuery.error)}
           </p>
         ) : regions.length ? (
@@ -958,7 +941,7 @@ export function AuctionMonitorPanel({ locale, canUseLiveApi }: { locale: Locale;
                   type="button"
                   aria-label={`${r.label ?? "구역"} 삭제`}
                   onClick={() => deleteRegionMutation.mutate(r.id)}
-                  className="text-[var(--text-hint)] hover:text-[var(--spot)]"
+                  className="text-[var(--text-hint)] hover:text-[var(--status-error)]"
                 >
                   ✕
                 </button>

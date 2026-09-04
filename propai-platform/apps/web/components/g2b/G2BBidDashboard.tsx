@@ -274,7 +274,7 @@ export default function G2BBidDashboard() {
               <button
                 onClick={() => { setClosingSoon((v) => !v); resetPage(); }}
                 className={`rounded-lg px-3 py-2 text-xs font-bold transition-all ${
-                  closingSoon ? "bg-[var(--status-warning)] text-white" : "bg-[var(--surface-strong)] text-[var(--status-warning)] border border-[var(--status-warning)]/40"
+                  closingSoon ? "bg-[var(--status-warning)] text-[var(--saas-ink)]" : "bg-[var(--surface-strong)] text-[var(--status-warning)] border border-[var(--status-warning)]/40"
                 }`}
               >
                 ⏰ 마감임박

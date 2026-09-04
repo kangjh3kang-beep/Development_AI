@@ -13,7 +13,7 @@
 flush_growth_events: in-memory 큐(capture_service)의 이벤트를 platform_events
 로 배치 INSERT 한다. Celery Beat 가 5초 주기로 호출(celery_app.py 등록).
 
-Celery 워커는 동기 컨텍스트이므로 asyncio.run 으로 async flush_batch 를 구동한다.
+Celery 워커는 동기 컨텍스트이므로 `run_async_batch` 로 async flush_batch 를 구동한다.
 DB 는 새 AsyncSession 1개를 열어 사용(요청 세션과 무관). best-effort: 어떤
 예외도 워커를 죽이지 않는다.
 """
@@ -21,6 +21,8 @@ DB 는 새 AsyncSession 1개를 열어 사용(요청 세션과 무관). best-eff
 from __future__ import annotations
 
 import logging
+
+from app.tasks._async_batch import run_async_batch
 
 logger = logging.getLogger(__name__)
 
@@ -34,38 +36,29 @@ def _get_celery_app():
         return None
 
 
-async def _flush_async(limit: int = 500) -> int:
-    """새 AsyncSession 으로 큐를 platform_events 에 배치 INSERT 한다."""
+async def _flush_async() -> int:
+    """큐를 platform_events 에 비운다. 적재 건수 반환.
+
+    ★**배수 사본이 여기 하나 더 있었다**(독립 적대 렌즈 실측 2026-08-29). 상한이
+      리터럴 `500` 으로 굳어 `_FLUSH_LIMIT` 과 따로 놀았고, 청크 상한 `20` 도 따로였다.
+      그래서 *"배수 로직은 `drain_until_empty` 하나뿐"* 이라고 적은 주석이 **거짓**이었다
+      — 셋이었다. 사본이 갈리면 **하나가 낡는데 아무도 모른다.**
+    → 공용 헬퍼로 위임한다. 상한은 그 안에서 상수에서 파생된다.
+    """
     from app.services.growth import capture_service
     from apps.api.database.session import AsyncSessionLocal
 
-    total = 0
-    async with AsyncSessionLocal() as session:
-        # 한 사이클에 누적분을 비우되, 단일 트랜잭션 폭주를 막기 위해 청크 반복.
-        for _ in range(20):  # 최대 20청크/사이클(= limit*20 건)
-            n = await capture_service.flush_batch(session, limit=limit)
-            total += n
-            if n < limit:
-                break
-    return total
+    return await capture_service.drain_until_empty(AsyncSessionLocal)
 
 
 def flush_growth_events() -> dict:
     """큐 → platform_events 배치 적재. Beat 5초 주기.
 
-    반환: {"flushed": N}. 동기 진입점(Celery 워커)에서 asyncio.run 으로 구동.
+    반환: {"flushed": N}. 동기 진입점(Celery 워커)에서 `run_async_batch` 로 구동(루프 종료 전 커넥션 정리).
     """
-    import asyncio
 
     try:
-        flushed = asyncio.run(_flush_async())
-    except RuntimeError:
-        # 이미 이벤트 루프가 도는 환경(인프로세스 폴백 등) — 새 루프로 격리.
-        loop = asyncio.new_event_loop()
-        try:
-            flushed = loop.run_until_complete(_flush_async())
-        finally:
-            loop.close()
+        flushed = run_async_batch(lambda: _flush_async())
     except Exception as e:  # noqa: BLE001
         logger.warning("flush_growth_events 실패: %s", str(e)[:160])
         return {"flushed": 0, "error": str(e)[:160]}
@@ -93,20 +86,12 @@ async def _analyze_async(window_hours: int = 1) -> int:
 def analyze_growth(window_hours: int = 1) -> dict:
     """platform_events → platform_insights 분석 배치. Beat hourly/daily 호출.
 
-    반환: {"insights": N}. 동기 진입점(Celery 워커)에서 asyncio.run 으로 구동.
+    반환: {"insights": N}. 동기 진입점(Celery 워커)에서 `run_async_batch` 로 구동(루프 종료 전 커넥션 정리).
     best-effort: 어떤 예외도 워커를 죽이지 않는다.
     """
-    import asyncio
 
     try:
-        n = asyncio.run(_analyze_async(window_hours))
-    except RuntimeError:
-        # 이미 이벤트 루프가 도는 환경 — 새 루프로 격리(flush 선례 동일).
-        loop = asyncio.new_event_loop()
-        try:
-            n = loop.run_until_complete(_analyze_async(window_hours))
-        finally:
-            loop.close()
+        n = run_async_batch(lambda: _analyze_async(window_hours))
     except Exception as e:  # noqa: BLE001
         logger.warning("analyze_growth 실패: %s", str(e)[:160])
         return {"insights": 0, "error": str(e)[:160]}
@@ -133,20 +118,12 @@ async def _heal_async() -> dict:
 def evaluate_healing() -> dict:
     """heal 평가 배치(healing_rules → heal_actions). Beat 10분 주기 호출.
 
-    반환: healing_rules.evaluate 요약 dict. 동기 진입점에서 asyncio.run 구동.
+    반환: healing_rules.evaluate 요약 dict. 동기 진입점에서 `run_async_batch` 구동.
     best-effort: 어떤 예외도 워커를 죽이지 않는다.
     """
-    import asyncio
 
     try:
-        result = asyncio.run(_heal_async())
-    except RuntimeError:
-        # 이미 이벤트 루프가 도는 환경 — 새 루프로 격리(flush/analyze 선례 동일).
-        loop = asyncio.new_event_loop()
-        try:
-            result = loop.run_until_complete(_heal_async())
-        finally:
-            loop.close()
+        result = run_async_batch(lambda: _heal_async())
     except Exception as e:  # noqa: BLE001
         logger.warning("evaluate_healing 실패: %s", str(e)[:160])
         return {"executed": 0, "error": str(e)[:160]}
@@ -176,19 +153,12 @@ async def _correct_async() -> dict:
 def evaluate_correction() -> dict:
     """L1 자가수정 평가 배치(feature_flags.evaluate). Beat 주기 호출(analyze 후속).
 
-    반환: feature_flags.evaluate 요약 dict. 동기 진입점에서 asyncio.run 구동.
+    반환: feature_flags.evaluate 요약 dict. 동기 진입점에서 `run_async_batch` 구동.
     best-effort: 어떤 예외도 워커를 죽이지 않는다.
     """
-    import asyncio
 
     try:
-        result = asyncio.run(_correct_async())
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        try:
-            result = loop.run_until_complete(_correct_async())
-        finally:
-            loop.close()
+        result = run_async_batch(lambda: _correct_async())
     except Exception as e:  # noqa: BLE001
         logger.warning("evaluate_correction 실패: %s", str(e)[:160])
         return {"applied": 0, "error": str(e)[:160]}
@@ -225,16 +195,9 @@ def evaluate_improvement() -> dict:
 
     반환: {"generated": {...}, "pr_bot": {...}}. best-effort.
     """
-    import asyncio
 
     try:
-        result = asyncio.run(_improve_async())
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        try:
-            result = loop.run_until_complete(_improve_async())
-        finally:
-            loop.close()
+        result = run_async_batch(lambda: _improve_async())
     except Exception as e:  # noqa: BLE001
         logger.warning("evaluate_improvement 실패: %s", str(e)[:160])
         return {"generated": {}, "error": str(e)[:160]}
@@ -242,6 +205,41 @@ def evaluate_improvement() -> dict:
     gen = result.get("generated") or {}
     if gen.get("proposed"):
         logger.info("growth L2: 제안 %d건 생성", gen.get("proposed", 0))
+    return result
+
+
+async def _retention_async() -> dict:
+    from app.core.database import async_session_factory
+    from app.services.growth.insight_retention import supersede_stale_insights
+
+    async with async_session_factory() as session:
+        return await supersede_stale_insights(session)
+
+
+def cleanup_insights() -> dict:
+    """승계된 옛 인사이트를 `superseded` 로 전이(정리 배치).
+
+    ★왜 필요했나(라이브 실측 2026-08-26): `platform_insights` 에 **정리 경로가 없어서**
+      `open` 3,127 / `acknowledged` 16 이 됐고, `latency_regression` 만 30일 초과가
+      1,212건이었다. 화면의 「열린 인사이트」가 **재고**를 세니 오늘 볼 것이 묻힌다.
+
+    반환: `{"scanned_types": int, "superseded": int, "by_type": {...}}`. best-effort.
+    """
+    try:
+        result = run_async_batch(lambda: _retention_async())
+    except Exception as e:  # noqa: BLE001
+        # ★★실패 로그를 성공과 **같은 접두**(`growth 정리:`)로 낸다(2026-08-27 독립 리뷰 H4).
+        #   종전엔 `cleanup_insights 실패` 라, 계획서가 선언한 라이브 프로브
+        #   `docker logs … | grep 'growth 정리'` 에 **안 걸렸다** — 즉 *"배치가 터졌다"* 와
+        #   *"beat 가 아예 안 돌았다"* 가 운영자에게 **똑같이 보였다.**
+        #   이 서비스는 `RuntimeError` 로 *"조용한 0건 금지"* 를 선언해 두었는데,
+        #   호출자가 그것을 `{"superseded": 0}` 으로 되돌리고 있었다.
+        logger.error("growth 정리: **실패** — %s", str(e)[:200])
+        return {"status": "failed", "superseded": 0, "error": str(e)[:200]}
+    # ★0건일 때도 로그를 남긴다 — 배치가 안 돈 것과 정리할 게 없는 것은 다른 사실이다.
+    logger.info("growth 정리: %s 승계 전이 %d건 %s",
+                result.get("status", "ok"), result.get("superseded", 0),
+                result.get("by_type") or "{}")
     return result
 
 
@@ -263,3 +261,6 @@ if _celery is not None:
     evaluate_improvement = _celery.task(
         name="app.tasks.growth_tasks.evaluate_improvement"
     )(evaluate_improvement)
+    cleanup_insights = _celery.task(
+        name="app.tasks.growth_tasks.cleanup_insights"
+    )(cleanup_insights)

@@ -4,11 +4,15 @@
 data.go.kr 1230000(조달청) 계열 — 인증키·레이트리미터·에러 처리는 g2b_client.py(G2BClient)
 패턴을 그대로 재사용한다(동일 기관 API 군, 표준 JSON 응답 포맷 공유).
 
-★확인된 오퍼레이션(2026-07 조사, data.go.kr Swagger 문서·요청 파라미터 명세 기준):
-  getPriceInfoListFcltyCmmnMtrilEngrk — 시설공통자재(토목) 가격정보.
-  건축/기계설비/전기통신 등 자매 오퍼레이션은 공식 문서에서 명세를 확인하지 못해 등록하지
-  않는다(무날조 — 미검증 오퍼레이션명을 임의로 발명하지 않음). 실 서비스키로 확인되면
-  PRICE_OPERATIONS에 추가한다.
+★확인된 오퍼레이션(2026-07-17 실 서비스키 라이브 검증 — 각 1건 호출, resultCode 00 확인):
+  getPriceInfoListFcltyCmmnMtrilEngrk     — 시설공통자재(토목)          bsnsDivCd 포110005
+  getPriceInfoListFcltyCmmnMtrilBildng    — 시설공통자재(건축)          bsnsDivCd 포110002
+  getPriceInfoListFcltyCmmnMtrilMchnEqp   — 시설공통자재(기계설비)      bsnsDivCd 포110003
+  getPriceInfoListFcltyCmmnMtrilElctyIrmc — 시설공통자재(전기,정보통신) bsnsDivCd 포110004
+  ※ getPriceInfoListFcltyCmmnMtrilTotal(종합)은 동일 검증에서 HTTP 404 — 실존하지 않는
+  오퍼레이션이므로 등록하지 않는다(무날조 — 미검증 오퍼레이션명을 임의로 발명하지 않음).
+  4개 분야 응답 필드명은 동일 스키마(prdctClsfcNoNm/krnPrdctNm/unit/prce/mtrlcst/lbrcst/...)로
+  라이브 확인됨 — 파싱은 public_price_ingest.normalize_item 후보 매칭이 그대로 커버한다.
 
 응답 품목(item)의 정확한 필드명(품명/규격/단가 등)도 공식 문서에서 상세 확인이 불가능했다.
 이 클라이언트는 응답에서 표준 JSON 봉투(response.body.items)만 해석하고, 품목 필드 파싱은
@@ -28,10 +32,14 @@ logger = logging.getLogger(__name__)
 PRICE_SERVICE_BASE = "http://apis.data.go.kr/1230000/ao/PriceInfoService"
 
 # 확인된 오퍼레이션만 등록(무날조 — 미검증 오퍼레이션명 추가 금지).
+# 2026-07-17 실키 라이브 검증(resultCode 00)으로 건축/기계설비/전기통신 3개 분야 확장.
 PRICE_OPERATIONS: dict[str, str] = {
-    "시설공통자재": "getPriceInfoListFcltyCmmnMtrilEngrk",
+    "토목": "getPriceInfoListFcltyCmmnMtrilEngrk",
+    "건축": "getPriceInfoListFcltyCmmnMtrilBildng",
+    "기계설비": "getPriceInfoListFcltyCmmnMtrilMchnEqp",
+    "전기통신": "getPriceInfoListFcltyCmmnMtrilElctyIrmc",
 }
-_DEFAULT_CATEGORY = "시설공통자재"
+_DEFAULT_CATEGORY = "토목"
 
 
 class PublicPriceRateLimiter:
@@ -75,15 +83,22 @@ class PublicPriceClient:
     async def fetch_facility_material_prices(
         self,
         *,
+        category: str = _DEFAULT_CATEGORY,
         prdct_clsfc_no: str | None = None,
         krn_prdct_nm: str | None = None,
         page: int = 1,
         num_rows: int = 100,
     ) -> list[dict[str, Any]]:
-        """시설공통자재(토목) 가격정보 목록을 조회한다.
+        """시설공통자재 가격정보 목록을 조회한다(분야 미지정 시 토목 — 기존 동작 유지).
 
         키 미보유/한도초과/호출실패 시 빈 리스트(graceful — 서버 기동·기존 흐름 무영향).
+        미등록 분야는 호출자 프로그래밍 오류이므로 graceful이 아니라 즉시 ValueError.
         """
+        operation = PRICE_OPERATIONS.get(category)
+        if operation is None:
+            raise ValueError(
+                f"미등록 가격정보 분야: {category!r} — 등록 분야: {sorted(PRICE_OPERATIONS)}"
+            )
         if not self._service_key:
             return []
         if not await self._limiter.acquire():
@@ -100,7 +115,7 @@ class PublicPriceClient:
         if krn_prdct_nm:
             params["krnPrdctNm"] = krn_prdct_nm
 
-        url = f"{PRICE_SERVICE_BASE}/{PRICE_OPERATIONS[_DEFAULT_CATEGORY]}"
+        url = f"{PRICE_SERVICE_BASE}/{operation}"
         client = await self._get_client()
 
         try:

@@ -11,9 +11,43 @@ RUN pnpm install --frozen-lockfile
 # 컨텍스트에서 제외되므로(런타임 env_file로만 주입), 클라이언트가 직접 쓰는 공개키는
 # build-arg → ENV로 넘겨 next build가 인라인하게 한다(카카오맵 JS SDK 키 등).
 ARG NEXT_PUBLIC_KAKAO_MAP_KEY=""
-ARG NEXT_PUBLIC_VWORLD_API_KEY=""
 ENV NEXT_PUBLIC_KAKAO_MAP_KEY=${NEXT_PUBLIC_KAKAO_MAP_KEY}
-ENV NEXT_PUBLIC_VWORLD_API_KEY=${NEXT_PUBLIC_VWORLD_API_KEY}
+# ★2026-08-17 제거 — NEXT_PUBLIC_VWORLD_API_KEY 배관을 걷어낸다.
+#   VWorld 키를 읽는 **클라이언트 코드가 0개**다(실측). 그런데 ARG/ENV 배관만 남아 있어
+#   누군가 .env 에 값을 넣는 순간 **조용히 브라우저 번들로 인라인**되는 구조였다.
+#   실제로 이 이미지에는 빈 값이 구워져 있었고(sha256=e3b0c44298fc = 빈 문자열),
+#   그래서 종전 AvmVisionPanel 의 `if (!VWORLD_API_KEY) return null` 이 **항상 null** 을
+#   반환해 항공영상이 아예 렌더되지 않았다 — 배관이 있는데 값이 없는 상태가 결함을 만들었다.
+#   서버 전용 키는 `VWORLD_API_KEY`(런타임 env_file)로만 쓰고, 공개키 개념은 두지 않는다.
+
+# ★앱 버전 = **한 값에서 둘 다** 파생한다(2026-08-16).
+#   · sw.js 의 CACHE_NAME  — 앱셸 캐시 무효화
+#   · NEXT_PUBLIC_APP_VERSION — 성장루프 텔레메트리(platform_events.app_version)
+#   종전에는 캐시명만 손으로 올렸고, 텔레메트리는 **캐시키를 폴백으로 읽고** 있었다
+#   (event-collector.ts: NEXT_PUBLIC_APP_VERSION 이 1차인데 **어디에서도 주입되지 않았다**).
+#   한 값에서 갈라지므로 둘이 어긋날 수 없다.
+ARG APP_BUILD_ID=""
+ENV NEXT_PUBLIC_APP_VERSION=${APP_BUILD_ID}
+
+# ★치환은 **조용히 실패하면 안 된다.** 실패한 채 나가면 모든 배포가 같은 캐시명을 쓰게 되어
+#   앱셸 캐시가 **영원히 무효화되지 않는다** — 지금 문제보다 나쁘다. 그래서 3중으로 막는다:
+#   ①인자가 비었나 ②치환 앵커가 있나(sw.js 형식 변경 감지) ③치환 결과가 실제로 들어갔나.
+#   셋 다 실패 시 **빌드를 죽인다**(fail closed).
+RUN set -eu; \
+    SW=apps/web/public/sw.js; \
+    if [ -z "${APP_BUILD_ID}" ]; then \
+      echo "★APP_BUILD_ID 가 비었다. 배포 이미지는 어느 커밋인지 식별할 수 있어야 한다."; \
+      echo "  scripts/safe-deploy.sh 가 export 한다. 수동 빌드라면:"; \
+      echo "  APP_BUILD_ID=propai-v\$(printf '%06d' \$(git rev-list --count HEAD))-\$(git rev-parse --short=8 HEAD) docker compose build web"; \
+      exit 1; \
+    fi; \
+    grep -q 'const CACHE_NAME = "propai-vdev-local";' "$SW" || { \
+      echo "★sw.js 에서 치환 앵커를 못 찾았다 — 형식이 바뀌었다. 치환 없이 빌드하면 캐시가 무효화되지 않는다."; exit 1; }; \
+    sed -i "s|const CACHE_NAME = \"propai-vdev-local\";|const CACHE_NAME = \"${APP_BUILD_ID}\";|" "$SW"; \
+    grep -q "const CACHE_NAME = \"${APP_BUILD_ID}\";" "$SW" || { \
+      echo "★치환 후 검증 실패 — sed 가 적용되지 않았다."; exit 1; }; \
+    echo "sw CACHE_NAME = ${APP_BUILD_ID}"
+
 RUN pnpm --filter=@propai/web run build
 
 FROM base AS runner

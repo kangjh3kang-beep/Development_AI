@@ -5,8 +5,10 @@ prefix: /api/v1/cost
 
 from __future__ import annotations
 
+import contextlib
 from typing import Any
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
@@ -30,6 +32,7 @@ router = APIRouter(
 )
 cost_calc = OriginCostCalculator()
 bim_service = BIMService()
+logger = structlog.get_logger(__name__)
 # P1 T1(공공고시 단가 주입) 관리자 게이트 — mass_templates.py 선례 재사용(require_role(Role.ADMIN)).
 require_admin = require_role(Role.ADMIN)
 
@@ -41,7 +44,9 @@ async def _enforce_llm_if_needed(db: AsyncSession, use_llm: bool) -> None:
     await enforce_llm_quota(db)
 
 # ── 건축개요 기반 공사비 추정(수지·사업성과 단일 데이터원 연동) ──
-_STRUCT_FACTOR = {"RC": 1.0, "RC조": 1.0, "SRC": 1.15, "SRC조": 1.15, "SC": 1.10, "철골": 1.10, "철골조": 1.10, "PC": 0.95, "목구조": 0.85}
+# ★P2: 구조계수 정의를 공용 개산식 SSOT(overview_estimator.STRUCT_COST_FACTOR)로 이관.
+#   기존 참조처 호환을 위해 별칭 유지(값 이원화 금지 — 수정은 overview_estimator에서).
+from app.services.cost.overview_estimator import STRUCT_COST_FACTOR as _STRUCT_FACTOR
 
 # ── BIM 물량(bim_quantities) 공종코드 → 단가 SSOT(UnitPriceRepository) 키 매핑 ──
 # ifc_work_map 의 leaf 코드만 단가에 대응(부모 집계코드 A01/A05 는 미가격 — 중복합산 방지).
@@ -182,29 +187,32 @@ async def estimate_overview(req: OverviewCostRequest, db: AsyncSession = Depends
     PY = 3.305785
     base_unit = req.unit_cost_per_sqm or DEFAULT_DIRECT_COST_PER_SQM.get(
         req.building_type, DEFAULT_DIRECT_COST_PER_SQM["apartment"])
-    unit = base_unit * _STRUCT_FACTOR.get(req.structure_type, 1.0)
     gfa = req.total_gfa_sqm
-    # 지하면적 = 층 바닥판 비례 추정. 지하 바닥판은 주차·기계실로 지상보다 약간 넓어(≈1.2배)
-    # footprint×지하층수×1.2 로 잡는다. 기존 min(gfa*0.4, gfa*층수*0.12)은 고층(예 35F/5F)에서도
-    # 0.4 cap 에 걸려 지하가 총GFA의 40%(지상의 67%)가 되는 물리적 비현실 → 층수비례로 교정.
-    _fa = max(1, int(req.floor_count_above))
-    _fb = max(0, int(req.floor_count_below))
-    _BK = 1.2  # 지하 바닥판 확장계수
-    gfa_below = (gfa * (_fb * _BK) / (_fa + _fb * _BK)) if _fb > 0 else 0.0
-    gfa_above = max(0.0, gfa - gfa_below)
+    # ★P2(적산→수지 배선): 인라인 산식(구조계수·지하 바닥판 비례·지하 30% 할증·조경 1.5%)을
+    #   공용 개산식 SSOT(overview_estimator)로 이관 — 수지 construction_cost_engine이 같은
+    #   함수를 소비한다(한 곳 수정 → 양 모듈 동시 반영). 산식·절사 순서 종전 동일(무회귀).
+    from app.services.cost.overview_estimator import (
+        estimate_overview_direct_cost,
+        split_gfa_below,
+    )
+    gfa_above, gfa_below = split_gfa_below(gfa, req.floor_count_above, req.floor_count_below)
 
     def scenario(factor: float) -> dict[str, Any]:
-        u = int(unit * factor)
-        above = int(gfa_above * u)
-        below = int(gfa_below * u * 1.3)  # 지하 30% 할증
-        landscape = int((above + below) * 0.015)  # 조경 1.5%
-        direct = above + below + landscape
-        ind = calculate_indirect_cost(direct_cost_won=direct)
-        total = direct + ind["total_indirect_cost_won"]
+        ov = estimate_overview_direct_cost(
+            total_gfa_sqm=gfa,
+            base_unit_cost_per_sqm=base_unit,
+            structure_type=req.structure_type,
+            floor_count_above=req.floor_count_above,
+            floor_count_below=req.floor_count_below,
+            scenario_factor=factor,
+        )
+        ind = calculate_indirect_cost(direct_cost_won=ov["direct_won"])
+        total = ov["direct_won"] + ind["total_indirect_cost_won"]
         return {
-            "unit_cost_per_sqm": u,
-            "aboveground_won": above, "underground_won": below, "landscape_won": landscape,
-            "direct_won": direct,
+            "unit_cost_per_sqm": ov["unit_cost_per_sqm"],
+            "aboveground_won": ov["aboveground_won"], "underground_won": ov["underground_won"],
+            "landscape_won": ov["landscape_won"],
+            "direct_won": ov["direct_won"],
             "design_fee_won": ind["design_fee_won"], "supervision_fee_won": ind["supervision_fee_won"],
             "contingency_won": ind["contingency_won"], "general_expense_won": ind["general_expense_won"],
             "indirect_won": ind["total_indirect_cost_won"],
@@ -230,11 +238,34 @@ async def estimate_overview(req: OverviewCostRequest, db: AsyncSession = Depends
             qto_source = "bim"
     if not (W and Dd):
         W, Dd = derive_dims_from_gfa(gfa_above, nf_above)
-    geometry = geometry_takeoff(
-        width_m=W, depth_m=Dd, floors_above=nf_above, floors_below=req.floor_count_below,
-        floor_height_m=Hh, structure_type=req.structure_type,
-    )
+    # ★WP-D 세션3 배선(additive): 실측 매스(qto_source="bim")일 때 QTO를 BimIR 경유로 흐르게 한다
+    #   (bimir_from_mass→geometry_takeoff_from_bimir). BimIR가 매스 왕복 무손실이라 동일 치수로
+    #   geometry_takeoff를 호출 → 항목별 물량·금액이 바이트까지 동일(세션2 수치 동일성 게이트가 근거).
+    #   어떤 이유로든 실패하면 기존 직접 경로로 폴백한다(무회귀·예외격리). 파생 매스는 기존 경로 그대로.
+    geometry: dict[str, Any] | None = None
+    qto_path = "direct"
+    if qto_source == "bim":
+        try:
+            from app.services.bim.bimir_adapters import bimir_from_mass
+            from app.services.cost.geometry_qto import geometry_takeoff_from_bimir
+
+            _bimir_model = bimir_from_mass({
+                "building_width_m": W, "building_depth_m": Dd,
+                "num_floors": nf_above, "floor_height_m": Hh,
+            })
+            geometry = geometry_takeoff_from_bimir(
+                _bimir_model, floors_below=req.floor_count_below, structure_type=req.structure_type,
+            )
+            qto_path = "bimir"
+        except Exception:  # noqa: BLE001 — BimIR 경로 실패 시 기존 직접 경로로 폴백
+            geometry = None
+    if geometry is None:
+        geometry = geometry_takeoff(
+            width_m=W, depth_m=Dd, floors_above=nf_above, floors_below=req.floor_count_below,
+            floor_height_m=Hh, structure_type=req.structure_type,
+        )
     geometry["source"] = qto_source
+    geometry["qto_path"] = qto_path  # additive: BimIR 경유 여부(라이브 검증 근거)
 
     # 항목별 정밀 적산(QTO) — 레미콘·철근·거푸집·조적·방수·창호·기계·전기(물량×단가).
     # 건축개요(연면적·층수·구조) 기반. 설계/BIM 완성 시 실 매스로 정밀화 가능.
@@ -293,7 +324,8 @@ async def estimate_overview(req: OverviewCostRequest, db: AsyncSession = Depends
 
         ev_block = build_evidence_block(
             items=_overview_evidence(
-                unit=int(unit), structure_type=req.structure_type, expected=expected,
+                # 종전 int(unit)=int(base×구조계수)와 동일값(factor 1.0의 int 절사 단가).
+                unit=expected["unit_cost_per_sqm"], structure_type=req.structure_type, expected=expected,
                 gfa_above=gfa_above, gfa_below=gfa_below,
                 qto_source=qto_source, unit_price_source=unit_price_source,
             ),
@@ -520,7 +552,10 @@ async def bim_quantities_origin_cost(
 # ── 요청 스키마 ──
 
 class IFCUploadRequest(BaseModel):
-    """IFC 업로드 시뮬레이션 (실제는 File 업로드)."""
+    """IFC 요소(사전 추출 JSON) 업로드 — 공종코드 매핑 + bim_quantities 영속 입력.
+
+    실 IFC 파일 파싱(multipart)은 /api/v1/bim/analyze 담당. 본 계약은 요소 JSON 리스트다.
+    """
     elements: list[dict[str, Any]] = Field(
         ..., description="IFC 요소 리스트 [{element_type, quantity, ...}]")
 
@@ -573,6 +608,9 @@ class IFCUploadResponse(BaseModel):
     mapped_items: list[dict[str, Any]]
     item_count: int
     unique_work_codes: list[str]
+    # 실제 bim_quantities 에 영속된 행 수(origin-cost 체인 기여분). DB 미가용/부트스트랩
+    # 실패 시 0 — 매핑은 반환하되 영속 실패를 정직 표기(가짜 성공 없음).
+    persisted_rows: int = 0
 
 
 class CostCalculateResponse(BaseModel):
@@ -646,14 +684,60 @@ class FeasibilityResultResponse(BaseModel):
 # ── 엔드포인트 ──
 
 @router.post("/{project_id}/upload-ifc", response_model=IFCUploadResponse)
-async def upload_ifc(project_id: str, req: IFCUploadRequest):
-    """IFC 파일 업로드 + 공종코드 매핑."""
+async def upload_ifc(
+    project_id: str,
+    req: IFCUploadRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: Any = Depends(get_current_user),
+):
+    """IFC 요소(JSON) 공종코드 매핑 + bim_quantities 영속.
+
+    ★정직 계약(이름-동작 정합·체인 연결): 사전 추출된 IFC 요소 리스트(req.elements)를
+      공종코드로 매핑하고 그 결과를 bim_quantities 테이블에 영속한다 → GET
+      /{project_id}/bim-quantities/origin-cost(단가 SSOT 12단계 원가) 체인에 실제로 기여한다.
+      (수정 전에는 매핑만 하고 미영속이라 origin-cost 가 항상 no_bim_quantities 로 단절됐음.)
+    실 IFC 파일 자체 업로드·파싱(multipart)은 /api/v1/bim/analyze(ifcopenshell 실파싱)가
+      담당한다 — 본 엔드포인트는 요소 JSON 계약을 유지한다. DB 미가용·부트스트랩 실패 시
+      매핑 결과는 그대로 반환하되 persisted_rows=0 으로 정직 표기(가짜 성공 없음).
+
+    ★PR#315 M1(소유권 검증): 형제 라우터 boq_auto.create_from_project_draft 와 동일하게
+      assert_project_owned 로 project_id의 tenant 소유권을 검사한다(IDOR 방지) — 이 호출은
+      try/except 밖에서 수행해 403 이 graceful 삼킴에 묻히지 않게 한다(보안검사 무력화 금지).
+      project_id가 UUID가 아니거나 프로젝트 행이 없으면 계약대로 통과(정직 — 데모/테스트 경로).
+    ★PR#315 H1(전역 전파방지): 실제 DB 쓰기는 analyze/generate 와 동일한 공용 헬퍼
+      replace_bim_quantities 를 경유한다 — 같은 프로젝트를 재업로드해도 물량이 배가되지 않는다."""
+    from app.services.auth.project_ownership import assert_project_owned
+
+    await assert_project_owned(project_id, db, current_user)  # tenant 불일치 → 403
+
     mapped = bim_service.extract_quantities_with_work_codes(req.elements)
+
+    # 매핑 결과를 bim_quantities 로 영속(origin-cost 체인 연결). 실패해도 매핑 응답은
+    # 정상 반환한다(graceful) — DB 미가용/신규 DB 부트스트랩 실패 시 persisted_rows=0.
+    persisted_rows = 0
+    try:
+        from app.services.cost.bim_quantity_writer import replace_bim_quantities
+
+        tenant_id = getattr(current_user, "tenant_id", None)
+        persisted_rows = await replace_bim_quantities(db, project_id, tenant_id, mapped)
+        if persisted_rows:
+            await db.commit()
+    except Exception as exc:  # noqa: BLE001 — 영속 실패는 매핑 응답을 막지 않는다
+        with contextlib.suppress(Exception):
+            await db.rollback()
+        logger.warning(
+            "upload-ifc bim_quantities 영속 실패(매핑 응답 무영향)",
+            project_id=project_id,
+            error=str(exc),
+        )
+        persisted_rows = 0
+
     return {
         "project_id": project_id,
         "mapped_items": mapped,
         "item_count": len(mapped),
         "unique_work_codes": list({m["work_code"] for m in mapped}),
+        "persisted_rows": persisted_rows,
     }
 
 
@@ -942,6 +1026,16 @@ async def create_boq(
             summary=boq["summary"], header=boq["header"], estimate_id=estimate_id,
             tenant_id=req.tenant_id, project_id=project_id,
         )
+        # W3-3(P9): back-test 계약 — 예측(견적) 스냅샷 기록(best-effort, 예외 흡수).
+        # 실적(실행내역)이 없는 현재는 compute_accuracy()가 여전히 null+사유를 반환하지만,
+        # 이 호출이 있어야 실적이 훗날 들어왔을 때 APE/MAPE 산출이 가능하다(무목업).
+        if estimate_id:
+            from app.services.cost.backtest import record_estimate
+            await record_estimate(
+                estimate_id=estimate_id, predicted_total_won=boq["summary"].get("total", 0),
+                project_id=project_id, tenant_id=req.tenant_id,
+                predicted_breakdown=boq["summary"].get("tier_distribution"),
+            )
 
     # D6 AI 해석(BOQ) — use_llm=True일 때만 시도(과금 게이트 적용). 실패해도 결과는
     # 정상 반환(graceful). use_llm=False면 해석 필드는 생략(무날조).
@@ -1128,6 +1222,10 @@ class IngestPublicPricesRequest(BaseModel):
     prdct_clsfc_no: str | None = Field(None, description="조달청 품목분류번호(선택 — 미지정 시 전체)")
     keyword: str | None = Field(None, description="품명 검색 키워드(선택)")
     max_pages: int = Field(3, ge=1, le=10, description="조회할 최대 페이지 수(페이지당 100건)")
+    categories: list[str] | None = Field(
+        None,
+        description="조회 분야 목록(토목/건축/기계설비/전기통신 — 미지정 시 등록 전 분야)",
+    )
 
 
 @router.post(
@@ -1142,10 +1240,20 @@ async def ingest_public_prices_route(
 
     material_unit_prices에 멱등 upsert한다(단가 4계층 리졸버의 T1·최우선 계층).
     서비스키 미보유/API 실패 시 0건·정직 사유 반환(서버 동작 무영향)."""
+    from app.integrations.public_price_client import PRICE_OPERATIONS
     from app.services.cost.public_price_ingest import ingest_public_prices
+
+    if req.categories:
+        unknown = [c for c in req.categories if c not in PRICE_OPERATIONS]
+        if unknown:
+            raise HTTPException(
+                status_code=422,
+                detail=f"미등록 가격정보 분야: {unknown} — 등록 분야: {sorted(PRICE_OPERATIONS)}",
+            )
 
     return await ingest_public_prices(
         db, prdct_clsfc_no=req.prdct_clsfc_no, keyword=req.keyword, max_pages=req.max_pages,
+        categories=req.categories,
     )
 
 

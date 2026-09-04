@@ -1,0 +1,320 @@
+"use client";
+
+import Link from "next/link";
+import {
+  ArrowRight,
+  BarChart3,
+  Clock,
+  DraftingCompass,
+  FileSearch,
+  Layers3,
+  Scale,
+  Search,
+  ShieldCheck,
+  type LucideIcon,
+} from "lucide-react";
+import { DashboardProjectLoader } from "@/components/dashboard/DashboardProjectLoader";
+import { HeroMotionLayer } from "@/components/dashboard/HeroMotionLayer";
+import { OnboardingWizard } from "@/components/onboarding/OnboardingWizard";
+import { SatongMapShell } from "@/components/precheck/SatongMapShell";
+import { PRIMARY_ROUTE_REGISTRY } from "@/lib/navigation/route-registry";
+
+type CreationProduct = {
+  title: string;
+  routeId: string;
+  icon: LucideIcon;
+  intent: string;
+  inputs: string;
+  result: string;
+  time: string;
+  tone: "lime" | "sky" | "coral" | "ivory";
+};
+
+const creationProducts: CreationProduct[] = [
+  {
+    // ★메인 첫 카드 — "지번 하나만"이 이 기능의 전부이자 차별점이라 맨 앞에 둔다.
+    title: "간편 분양성 조사",
+    routeId: "quick-survey",
+    icon: Search,
+    intent: "지번 하나만 입력하면 주변시세·계획 고시 시설·입지·분양사례를 한 화면에 모읍니다.",
+    inputs: "지번 주소 1개",
+    result: "주변시세, 계획시설, 입지, 분양사례 (수요 지표 미포함)",
+    time: "약 1분",
+    tone: "coral",
+  },
+  {
+    // ★부지종합분석 보고서 — 사용자 요청(2026-08-18)으로 생성허브에 노출한다.
+    //   종전엔 라우트(`/analysis`)만 있고 **생성허브 카드가 없어 진입 경로가 없었다**
+    //   (랜딩 패널 5종·대시보드 5종 어디에도 없었다 — 화면은 살아 있는데 아무도 못 찾는 상태).
+    //   ★`routeId` 는 라우트 레지스트리의 실재 id 다(`comprehensive-analysis` → `/analysis`).
+    //     없는 것을 광고하지 않는다 — 그 불변식은 ReportPanelSection.parity 가 잠근다.
+    title: "종합 부지분석",
+    routeId: "comprehensive-analysis",
+    icon: Layers3,
+    intent: "한 부지를 규제·권리·사업성·인허가 축으로 한 번에 훑어 종합 보고서로 묶습니다.",
+    inputs: "지번 주소(단일·다필지)",
+    result: "용도지역·규제, 권리관계, 개략 사업성, 인허가 경로 종합",
+    time: "약 3~5분",
+    tone: "sky",
+  },
+  {
+    title: "법규검토서",
+    routeId: "regulations",
+    icon: Scale,
+    intent: "부지에 적용되는 법규를 검토하고 적합성을 판정합니다.",
+    inputs: "주소, 용도지역, 규모",
+    result: "법규 검토 항목, 적합 판정, 보완 액션",
+    time: "약 2분",
+    tone: "lime",
+  },
+  {
+    title: "사업성 검토서",
+    routeId: "investment",
+    icon: BarChart3,
+    intent: "주소·필지만 입력하면 토지비·공사비·분양가를 자동 산정해 수익성을 계산합니다.",
+    inputs: "주소·필지 (토지비·공사비·분양가 자동 산정)",
+    result: "ROI, 현금흐름, 민감도",
+    time: "약 3분",
+    tone: "sky",
+  },
+  {
+    title: "시장·분양 리포트",
+    routeId: "market-insights",
+    icon: Search,
+    intent: "주변 시세와 수요 신호를 한 번에 정리합니다.",
+    inputs: "사업지 주소, 분석 항목 선택",
+    result: "시세 범위, 경쟁 단지, 분양 전략",
+    time: "약 2분",
+    tone: "ivory",
+  },
+  {
+    title: "인허가 체크리스트",
+    routeId: "permits",
+    icon: ShieldCheck,
+    intent: "인허가 리스크와 확인 순서를 빠르게 좁힙니다.",
+    inputs: "용도, 규모, 법정 조건",
+    result: "허가 가능성, 보완 항목, 담당 액션",
+    time: "약 2분",
+    tone: "coral",
+  },
+  {
+    title: "AI 설계 검토서",
+    routeId: "design-audit",
+    icon: Layers3,
+    intent: "설계안의 면적, 동선, 심의 리스크를 검토합니다.",
+    inputs: "도면, 매스, 설계 조건",
+    result: "검토 의견, 개선안, 심의 포인트",
+    time: "약 4분",
+    tone: "sky",
+  },
+  {
+    title: "건축개요·CAD 계획도면",
+    routeId: "design-studio",
+    icon: DraftingCompass,
+    intent: "토지의 속성,법규에 부합하는 건축개요 및 CAD계획도면을 작성해드립니다.",
+    inputs: "주소, 용도지역, 법규 조건",
+    result: "건축개요, CAD 계획도면, 법규 적합성",
+    time: "약 4분",
+    tone: "lime",
+  },
+  {
+    // ★9번째 카드 — 종전에는 이 그리드 **아래**에 데이터 패널로만 있어 라이브에서 y≈2,921px
+    //   (페이지 높이 4,256px)에 묻혔다. 스크롤 없이는 보이지 않아 "생성허브에 없다"로 읽혔다.
+    //   형제 8개와 같은 형태(카드 → 전용 라우트 `/realtx-report`)로 올린다.
+    // ★"필지별"이라고 쓰지 않는다 — 국토부 공개자료는 토지 거래 지번을 마스킹하므로
+    //   서버 집계 단위가 **법정동**이다. 화면이 백엔드보다 더 말하면 그 자체가 거짓이다.
+    title: "실거래 신고내역 보고서",
+    routeId: "realtx-report",
+    icon: FileSearch,
+    // ★**등기·법인을 말하지 않는다** — 이 패널은 `prop_type: "land"` 고정인데(RealtxReportPanel:67,117)
+    //   MOLIT **토지** 응답 원문에는 `rgstDate`·`buyerGbn`·`slerGbn` 이 **아예 없다**
+    //   (원문 키 실측: land 16키 ✘ / apt 32키 ◎ · 대조군 `cdealType` 양쪽 존재 —
+    //    `tasks/realtx_sync_task.py:88-108`). 집계는 그 필드가 비면 세지 않으므로 land 에서
+    //   **항상 0** 이다. 라이브 확인(2026-08-27 · 강남구 6개월):
+    //     registered=0 · registered_pct=0.0 · corporate_buyer=0 · corporate_seller=0
+    //     cancelled=1 · direct=52 · brokered=9 · share_deals=45   ← 이 넷은 실제로 나온다
+    //   ★「0%」를 광고하면 사용자가 그것을 **관측**으로 읽는다 — 실제는 **원천 필드 부재**다.
+    //   초판은 여기에 "등기 현황"·"등기 비율, 법인 거래"를 적었고 독립 리뷰가 잡았다.
+    intent: "프로젝트 필지의 실거래 신고내역을 법정동 단위로 모아 해제·직거래·지분 거래를 정리합니다.",
+    inputs: "토지조서에 필지가 담긴 프로젝트",
+    result: "해제·직거래·지분 비율, 거래 목록 (PDF·PPTX·DOCX)",
+    // ★실측값이다(추정 아님): 1시군구 6콜 0.81초 · 3시군구 18콜 1.14초.
+    //   조회는 `(시군구, 월)` 로 접히므로 필지 수와 무관하다(응답 `meta.molit_calls`).
+    time: "약 5초",
+    tone: "coral",
+  },
+] as const;
+
+const workflowSteps = [
+  { label: "입력", body: "주소·도면·사업조건 중 하나만 선택" },
+  { label: "생성", body: "진단서·검토서·리포트 자동 작성" },
+  { label: "검토", body: "리스크와 보완 액션을 한 화면에서 확인" },
+  { label: "공유", body: "프로젝트에 저장하고 보고자료로 전환" },
+] as const;
+
+function hrefFor(locale: string, routeId: string): string {
+  const route = PRIMARY_ROUTE_REGISTRY.find((item) => item.id === routeId);
+  if (!route?.path || route.path === "/") return `/${locale}`;
+  return `/${locale}${route.path}`;
+}
+
+export function DashboardHome({ locale }: { locale: string }) {
+  return (
+    <div className="flex flex-col gap-6 pb-12">
+      <OnboardingWizard />
+
+      {/* ★UX 트랙 B1 — 매일 쓰는 지도가 히어로 바로 아래로 승격됐다(종전엔 생성허브 6카드+
+          프로젝트 로더를 지나 ≈1,350px 스크롤해야 도달). 순서만 바꾼 JSX 재배치 — 핸들러·
+          로직 무변경. */}
+      <section>
+        <div className="relative min-w-0 overflow-hidden rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--saas-ink)] p-5 text-white sm:p-6">
+          {/* 도시건축 hero 배경 애니메이션(hero-newtown.mp4 배경영상 + 스카이라인 캔버스 폴백) */}
+          <HeroMotionLayer />
+          {/* 텍스트 대비 스크림 — 영상 위를 어둡게(콘텐츠 가독성 확보). 좌→우 단방향(온-다크 서피스 예외 rgba(20,23,32,·)). */}
+          <div
+            aria-hidden="true"
+            className="absolute inset-0"
+            style={{
+              background:
+                "linear-gradient(to right, rgba(20,23,32,0.82) 0%, rgba(20,23,32,0.45) 60%, rgba(20,23,32,0.2) 100%)",
+            }}
+          />
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0"
+            style={{
+              backgroundImage:
+                "linear-gradient(var(--grid-line) 1px, transparent 1px), linear-gradient(90deg, var(--grid-line) 1px, transparent 1px)",
+              backgroundSize: "40px 40px",
+            }}
+          />
+          <div className="relative">
+            <span className="font-[family-name:var(--font-display)] label-caps text-white/70">
+              Intelligence Control Room
+            </span>
+            <div className="mt-3 flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
+              <div className="min-w-0">
+                <h1 className="max-w-3xl break-keep text-2xl font-black leading-tight text-white [text-wrap:pretty] sm:text-4xl">
+                  필요한 결과물을 고르면 입력부터 보고서까지 이어집니다
+                </h1>
+                <p className="mt-3 max-w-2xl break-keep text-sm font-medium leading-6 text-white/75">
+                  기능을 찾는 시간을 줄이고 후보지, 사업성, 시장, 인허가, 설계 검토를 산출물 중심으로 시작합니다.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Link
+                  href={hrefFor(locale, "precheck")}
+                  className="inline-flex h-11 items-center gap-2 rounded-[var(--r-card)] bg-white px-4 text-sm font-black text-[var(--saas-ink)] transition-colors hover:bg-[var(--accent-strong)] hover:text-white"
+                >
+                  후보지 진단서 만들기
+                  <ArrowRight aria-hidden="true" className="h-4 w-4" />
+                </Link>
+                <Link
+                  href={hrefFor(locale, "projects")}
+                  className="inline-flex h-11 items-center gap-2 rounded-[var(--r-card)] border border-white/40 bg-transparent px-4 text-sm font-bold text-white transition-colors hover:bg-white/10"
+                >
+                  프로젝트 불러오기
+                </Link>
+              </div>
+            </div>
+
+          <div className="mt-6 grid gap-2 md:grid-cols-4">
+            {workflowSteps.map((step, index) => (
+              <div
+                key={step.label}
+                className="rounded-[var(--r-card)] border border-white/15 p-3 backdrop-blur-[12px]"
+                style={{ backgroundColor: "rgba(20,23,32,0.55)" }}
+              >
+                <span className="font-[family-name:var(--font-display)] text-[11px] font-black tracking-[0.05em]">
+                  <span style={{ color: "var(--primary-dim)" }}>{String(index + 1).padStart(2, "0")}</span>{" "}
+                  <span className="text-white/90">{step.label}</span>
+                </span>
+                <p className="mt-2 text-xs font-semibold leading-5 text-white/70">{step.body}</p>
+              </div>
+            ))}
+          </div>
+
+          </div>
+        </div>
+
+      </section>
+
+      <SatongMapShell locale={locale} showContextHeader />
+
+      <section className="space-y-4">
+        <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+          <div>
+            <span className="font-[family-name:var(--font-display)] label-caps text-[var(--text-tertiary)]">생성 허브</span>
+            <h2 className="mt-1 text-xl font-black text-[var(--text-primary)]">무엇을 만들까요?</h2>
+            <p className="mt-1 text-sm font-medium text-[var(--text-secondary)]">
+              최종 산출물을 기준으로 선택합니다.
+            </p>
+          </div>
+          <Link
+            href={`/${locale}/guide`}
+            className="inline-flex h-10 items-center gap-2 self-start rounded-[var(--r-card)] border border-[var(--border-muted)] bg-[var(--surface)] px-3 text-sm font-bold text-[var(--text-primary)] transition-colors hover:bg-[var(--surface-muted)] md:self-auto"
+          >
+            전체 흐름 보기
+            <ArrowRight aria-hidden="true" className="h-4 w-4" />
+          </Link>
+        </div>
+
+        <div className="grid gap-3 lg:grid-cols-3">
+          {creationProducts.map((item) => {
+            const Icon = item.icon;
+            return (
+              <Link
+                key={item.title}
+                href={hrefFor(locale, item.routeId)}
+                className="group min-w-0 overflow-hidden rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-strong)] transition hover:-translate-y-0.5 hover:border-[var(--accent-strong)]"
+              >
+                <div className="h-1.5 bg-[var(--accent-strong)]" />
+                <div className="p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-[var(--r-card)] border border-[var(--border-muted)] bg-[var(--surface-secondary)] text-[var(--primary-dim)]">
+                      <Icon aria-hidden="true" className="h-5 w-5" />
+                    </span>
+                    <span className="inline-flex items-center gap-1 rounded-[var(--r-card)] bg-[var(--surface-soft)] px-2 py-1 font-mono text-[11px] font-bold text-[var(--text-tertiary)]">
+                      <Clock aria-hidden="true" className="h-3.5 w-3.5" />
+                      {item.time}
+                    </span>
+                  </div>
+                  <h3 className="mt-4 text-base font-black text-[var(--text-primary)]">{item.title}</h3>
+                  <p className="mt-2 min-h-10 text-sm font-medium leading-5 text-[var(--text-secondary)]">{item.intent}</p>
+                  <dl className="mt-4 space-y-2 border-t border-[var(--border-muted)] pt-3 text-xs">
+                    <div className="grid grid-cols-[64px_minmax(0,1fr)] gap-2">
+                      <dt className="font-bold text-[var(--text-tertiary)]">입력</dt>
+                      <dd className="font-semibold text-[var(--text-primary)]">{item.inputs}</dd>
+                    </div>
+                    <div className="grid grid-cols-[64px_minmax(0,1fr)] gap-2">
+                      <dt className="font-bold text-[var(--text-tertiary)]">결과</dt>
+                      <dd className="font-semibold text-[var(--text-primary)]">{item.result}</dd>
+                    </div>
+                  </dl>
+                  <div className="mt-4 inline-flex items-center gap-2 text-sm font-black text-[var(--primary-dim)]">
+                    만들기
+                    <ArrowRight aria-hidden="true" className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+                  </div>
+                </div>
+              </Link>
+            );
+          })}
+        </div>
+
+      </section>
+
+      <section className="min-w-0 space-y-3 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--surface-strong)] p-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <span className="font-[family-name:var(--font-display)] label-caps text-[var(--text-tertiary)]">진행 프로젝트</span>
+            <h2 className="mt-1 text-lg font-black text-[var(--text-primary)]">현재 남은 의사결정</h2>
+          </div>
+          <Link href={hrefFor(locale, "projects")} className="text-sm font-bold text-[var(--accent-strong)] hover:opacity-80">
+            전체 보기
+          </Link>
+        </div>
+        <DashboardProjectLoader locale={locale} />
+      </section>
+    </div>
+  );
+}

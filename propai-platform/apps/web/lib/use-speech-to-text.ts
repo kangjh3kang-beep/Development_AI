@@ -16,7 +16,7 @@ type SpeechToText = {
   stop: () => void;
 };
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+
 export function useSpeechToText(onResult: (text: string) => void, lang = "ko-KR"): SpeechToText {
   const [supported, setSupported] = useState(false);
   const [listening, setListening] = useState(false);

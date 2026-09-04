@@ -111,7 +111,7 @@ export default function KdxRealtimeChart() {
             contentStyle={{
               backgroundColor: "#1e293b",
               borderColor: "#334155",
-              borderRadius: "8px",
+              borderRadius: "var(--r-card)",
               color: "#f8fafc",
             }}
             itemStyle={{ color: "#bae6fd" }}

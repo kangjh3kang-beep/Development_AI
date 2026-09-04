@@ -20,7 +20,13 @@ class FeasibilityCalculateRequest(BaseModel):
     building_type: str = "apartment"
     total_households: int = 0
     avg_sale_price_per_pyeong: float = 0
+    # ★D1 규약 확정(2026-07-16): '전용면적 평' — 전 생산처 통일(프론트 폼 라벨과 일치).
+    #   매출 곱(공급평 시세 단가)은 revenue_block이 전용률(unit_standards SSOT)로 공급 환산,
+    #   세금(C01 전용 85㎡ 판정)은 전용 그대로 사용.
     avg_area_pyeong: float = 0
+    # 평당 단가의 면적 기준: "supply"(공급 시세, 기본) | "exclusive"(전용 기준 실거래 —
+    # orchestration 폐루프가 명시). base_module.ModuleInput.price_basis 계약과 동일.
+    price_basis: str = "supply"
     sale_ratio: float = Field(ge=0, le=1, default=1.0)
     bridge_amount_won: int = 0
     pf_amount_won: int = 0
@@ -76,7 +82,7 @@ class SensitivityRequest(BaseModel):
 
 
 class TaxCalculateAllRequest(BaseModel):
-    """38종 세금 일괄 계산 요청."""
+    """28종 세금 일괄 계산 요청."""
     purchase_won: int = 0
     land_category: str = "land"
     house_count: int = 0

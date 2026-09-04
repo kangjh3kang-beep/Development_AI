@@ -12,13 +12,18 @@
 // 총사업비×비율로 자동 재파생하므로, 여기서 값을 세팅하면 그 자동재파생을 방해한다
 // (equityIsManual=true로 오인돼 옛 값에 앵커링되는 함정 — FeasibilityEditorV2 정답 기준선 참고).
 
-import type { FeasibilityData } from "@/store/useProjectContextStore";
+import type { FeasibilityData, FeasibilityPatch } from "@/store/useProjectContextStore";
 
 /** RoughScenarioPanel의 RoughScenarioResult 중 매핑에 필요한 최소 구조(백엔드 응답 부분집합).
  *  RoughScenarioPanel.tsx의 private interface(RsSummary·RsRevenue·RsInputs 등)를 import하지
  *  않고, 이 파일이 실제로 읽는 필드만 구조적으로 다시 선언한다(테스트·재사용 용이). */
 export interface RoughScenarioLike {
   project_id?: string | null;
+  // ★정밀도 등급(#770) — 백엔드 `build_rough_scenario` 가 **최상위**에 싣는다
+  //   (`summary` 안이 아니다 — orchestrator 의 반환 dict 에서 `summary` 와 형제다).
+  precision?: string | null;
+  precision_label?: string | null;
+  precision_basis?: string | null;
   summary?: {
     total_cost_won?: number | null;
     total_revenue_won?: number | null;
@@ -66,8 +71,9 @@ function positiveIntOrNull(v: unknown): number | null {
  *  의미있는 값이 하나도 없으면 null을 반환해 호출측이 stamp(updatedAt.feasibility)를 아끼게 한다. */
 export function roughResultToFeasibilityPatch(
   result: RoughScenarioLike | null | undefined,
-): Partial<FeasibilityData> | null {
+): FeasibilityPatch | null {
   if (!result) return null;
+  // ★내부 조립은 느슨한 형태로 하고, 반환 직전에 grade↔precision 짝을 세운다(아래 참조).
   const patch: Partial<FeasibilityData> = {};
 
   // ★L1: 총사업비·총수입은 양수일 때만 커밋한다(0·음수 degraded 값이 STEP2 게이트를
@@ -87,6 +93,33 @@ export function roughResultToFeasibilityPatch(
 
   const grade = result.summary?.grade;
   if (typeof grade === "string" && grade.trim()) patch.grade = grade;
+
+  // ★정밀도 등급 — **생성 경로에서도** 옮긴다(2026-08-24).
+  //
+  //   `#770`(백엔드)이 등급을 산출하고 `#771`(프론트)이 배지를 붙였는데, 라이브에서
+  //   배지가 **뜨지 않았다**(사용자 계정으로 '개략수지 생성'을 실제로 실행해 확인:
+  //   `등급 F` 는 생기는데 스토어에 `precision` 키 자체가 없었다).
+  //
+  //   원인은 `feasibilityData` 의 **쓰기 경로가 둘**이라는 것이다:
+  //     · `projects/[id]/page.tsx` — 프로젝트 레코드 **하이드레이션**  → `#771` 이 배선함
+  //     · 이 매퍼            — 사용자가 실제로 누르는 **생성** 경로 → **누락**
+  //   짝이 반만 착지한 게 아니라 **양쪽 다 착지했는데 경로가 갈려** 안 보이는 형태였다.
+  //
+  //   ★등급 문자열을 검증한다: 스토어 타입이 `"E"|"D"|"V"|null` 이라 모르는 값을 넣으면
+  //     소비처(배지 조건 `precision === "E"`)가 판정할 수 없는 상태가 된다.
+  //     모르면 **키를 만들지 않는다** — 화면은 "정밀도 미표기"로 정직하게 남는다.
+  const precision = result.precision;
+  if (precision === "E" || precision === "D" || precision === "V") patch.precision = precision;
+
+  const precisionLabel = result.precision_label;
+  if (typeof precisionLabel === "string" && precisionLabel.trim()) {
+    patch.precisionLabel = precisionLabel;
+  }
+
+  const precisionBasis = result.precision_basis;
+  if (typeof precisionBasis === "string" && precisionBasis.trim()) {
+    patch.precisionBasis = precisionBasis;
+  }
 
   // 수익률(%) — cashflow 요약(정밀 산출)이 우선, 없으면 총수입·순이익으로 산술파생
   //   (백엔드가 준 실데이터끼리의 산술이므로 무날조 위반 아님). 둘 다 없으면 생략.
@@ -115,5 +148,18 @@ export function roughResultToFeasibilityPatch(
   const totalHouseholds = positiveIntOrNull(result.inputs?.total_households);
   if (totalHouseholds != null) patch.totalHouseholds = totalHouseholds;
 
-  return Object.keys(patch).length > 0 ? patch : null;
+  if (Object.keys(patch).length === 0) return null;
+
+  // ★grade↔precision 짝 세우기 — 스토어 계약(FeasibilityPatch)이 둘을 함께 요구한다.
+  //   `grade` 가 없으면 정밀도도 건드리지 않는다(기존 SSOT 보존).
+  //   `grade` 가 있는데 백엔드가 정밀도를 안 줬으면 **`null` 로 명시**한다 — 그래야 이전
+  //   개략치(E)의 배지가 새 등급 위에 **거짓으로 남지 않는다**(merge 패치라 생략하면 남는다).
+  if (!("grade" in patch)) {
+    return patch as FeasibilityPatch;
+  }
+  return {
+    ...patch,
+    grade: patch.grade ?? null,
+    precision: patch.precision ?? null,
+  } as FeasibilityPatch;
 }

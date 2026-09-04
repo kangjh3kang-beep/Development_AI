@@ -219,7 +219,7 @@ export function ProjectCompareView({ results }: ProjectCompareViewProps) {
 
   if (results.length < 2) {
     return (
-      <section className="rounded-2xl sm:rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] shadow-[var(--shadow-xl)] p-8 text-center">
+      <section className="rounded-2xl sm:rounded-[var(--radius-lg)] border border-[var(--line-strong)] bg-[var(--surface-soft)] shadow-[var(--shadow-xl)] p-8 text-center">
         <p className="text-sm font-medium text-[var(--text-secondary)]">
           비교하려면 2개 이상의 분석 결과가 필요합니다.
         </p>
@@ -228,7 +228,7 @@ export function ProjectCompareView({ results }: ProjectCompareViewProps) {
   }
 
   return (
-    <section className="rounded-2xl sm:rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] shadow-[var(--shadow-xl)] overflow-hidden transition-all">
+    <section className="rounded-2xl sm:rounded-[var(--radius-lg)] border border-[var(--line-strong)] bg-[var(--surface-soft)] shadow-[var(--shadow-xl)] overflow-hidden transition-all">
       {/* ── Header ── */}
       <div className="px-6 py-5 sm:px-8 sm:py-6 border-b border-[var(--line)] bg-gradient-to-r from-[var(--accent-strong)]/5 to-transparent">
         <div className="flex items-center gap-3">
@@ -310,7 +310,7 @@ export function ProjectCompareView({ results }: ProjectCompareViewProps) {
                       <span
                         className={
                           diff.positive === true
-                            ? "text-emerald-400"
+                            ? "text-[var(--status-success)]"
                             : diff.positive === false
                               ? "text-red-400"
                               : "text-[var(--text-tertiary)]"
@@ -347,7 +347,7 @@ export function ProjectCompareView({ results }: ProjectCompareViewProps) {
                   수익률 {typeof profitRate === "number" ? `${profitRate.toFixed(1)}%` : "-"}
                 </span>
                 {typeof grade === "string" && (
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[var(--status-success)]/10 text-[var(--status-success)] border border-[var(--status-success)]/20">
                     {grade}등급
                   </span>
                 )}

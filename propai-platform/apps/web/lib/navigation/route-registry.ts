@@ -4,7 +4,12 @@
  * This is the non-visual source of truth for primary IA, sitemap generation,
  * route status audits, and later dashboard shortcuts. Visual navigation maps
  * these records to icons in components/layout/nav-config.tsx.
+ *
+ * ★`label`/`title` 은 **한국어 원문**이다. 화면에 나가는 문자열은 `buildPrimaryRegistrySections`
+ *   에서 `lib/navigation/nav-i18n.ts` 를 거쳐 로케일로 옮겨진다 — 여기에 직접 영어를 쓰지 말 것.
  */
+
+import { resolveNavLabel, resolveNavSectionTitle } from "./nav-i18n";
 
 export type RouteStatus = "live" | "beta" | "placeholder" | "hidden";
 export type RouteScope = "global" | "project" | "admin";
@@ -18,14 +23,17 @@ export type LifecyclePhase =
   | "business"
   | "design"
   | "operations"
+  | "account"
   | "admin";
 
 export type PrimaryNavSectionId =
   | "control"
   | "projects"
+  | "cost-mgmt"
   | "market-acquisition"
   | "design-center"
   | "sales-management"
+  | "my"
   | "admin";
 
 export interface PrimaryNavSectionMeta {
@@ -65,12 +73,19 @@ export interface RegistryNavSection extends PrimaryNavSectionMeta {
 export const PRIMARY_NAV_SECTIONS: PrimaryNavSectionMeta[] = [
   { id: "control", title: "관제", order: 10 },
   { id: "projects", title: "프로젝트", order: 20 },
+  // 적산·시공비 — 사용자 요청으로 최상위 독립 섹션 승격(구 IA: 프로젝트 드롭다운 하위 L2라 발견성 저하).
+  //   항목이 "적산·공사비 관리" 1개뿐이라 렌더러(SidebarNav·WorkspaceNavBar)는 단일-리프 섹션을
+  //   드롭다운 없이 섹션 슬롯 자체를 /analytics/cost 링크로 렌더한다(빈 드롭다운 방지).
+  //   order 25 = 프로젝트(20) 직후·시장획득(30) 앞(사업 흐름상 프로젝트 인접). RBAC 없음(scope global).
+  { id: "cost-mgmt", title: "적산·시공비", order: 25 },
   { id: "market-acquisition", title: "시장·획득", order: 30 },
   { id: "design-center", title: "설계 센터", order: 40 },
   // 분양 관리 — 구 IA의 "분양 현장 관리" 그룹 복원. IA 통합 리팩토링(800e7477)이 이 그룹을
   //   registry로 미이관(메뉴 소실)하고, 구 IA가 의도적으로 숨겼던 자산운영(운영 센터)을 되살리는
   //   이중 역전이 있었음 → 운영 센터를 분양 관리로 대체(자산운영 라우트·페이지는 보존, 향후 복원 가능).
   { id: "sales-management", title: "분양 관리", order: 50 },
+  // 마이페이지 — SaaS 계정 셀프서비스(코인·결제·사용내역·프로필·개인정보). 전 회원 노출.
+  { id: "my", title: "마이페이지", order: 55 },
   { id: "admin", title: "관리", order: 60, adminOnly: true },
 ];
 
@@ -110,6 +125,20 @@ export const PRIMARY_ROUTE_REGISTRY: RouteRegistryItem[] = [
     scope: "global",
     lifecyclePhase: "control",
     apiDependencies: ["/analysis"],
+  },
+  {
+    // 내 구독·팀 관리(MY PAGE) — 관리자 전용이 아니라 전 회원(팀장·일반회원 공통) 개인 화면이라
+    // adminOnly 섹션(admin)이 아닌 관제(control, 게이트 없음)에 배선한다.
+    id: "team",
+    label: "내 구독·팀 관리",
+    sectionId: "control",
+    order: 40,
+    path: "/settings/team",
+    iconKey: "team",
+    status: "live",
+    scope: "global",
+    lifecyclePhase: "control",
+    apiDependencies: ["/teams"],
   },
   {
     id: "projects",
@@ -170,9 +199,25 @@ export const PRIMARY_ROUTE_REGISTRY: RouteRegistryItem[] = [
     apiDependencies: ["/desk-appraisal"],
   },
   {
-    // 사업성·비용(2항목) 얇은 L2 그룹 해체 — 기본 접힘 그룹이 핵심 사업기능(투자·적산)을 가려
-    // 발견성이 나빴다. 투자 수익성·적산·공사비 관리를 프로젝트 섹션 직속 L2 리프로 승격(상시 노출).
-    // 프로젝트 섹션 항목수는 여전히 7개 미만이라 IA 그룹화 규칙(§6) 위반 아님.
+    // 등기부등본 열람(registry-analysis)의 "전체 분석"은 필지당 건당 과금(발급+분석)이라,
+    // 다필지를 그대로 돌리면 비용이 버튼 한 번에 나간다. 발급 **전에** 예상 비용·판정가능성을
+    // 보여주고 필지를 선별하게 하는 무과금 게이트라 등기부등본 열람 바로 아래(order 25)에 둔다.
+    id: "parcel-survey-quote",
+    label: "발급 전 비용 견적",
+    sectionId: "projects",
+    parentId: "land-rights",
+    order: 25,
+    path: "/registry-analysis/quote",
+    status: "live",
+    scope: "global",
+    lifecyclePhase: "land-rights",
+    apiDependencies: ["/registry/survey/quote"],
+  },
+  {
+    // 사업성·비용 얇은 L2 그룹 해체 — 기본 접힘 그룹이 핵심 사업기능(투자·ESG)을 가려 발견성이
+    // 나빴다. 투자 수익성·ESG를 프로젝트 섹션 직속 L2 리프로 승격(상시 노출). 적산·공사비 관리는
+    // 이후 최상위 독립 섹션(cost-mgmt)으로 재승격. 프로젝트 섹션 항목수는 여전히 7개 미만이라
+    // IA 그룹화 규칙(§6) 위반 아님.
     id: "investment",
     label: "투자 수익성",
     sectionId: "projects",
@@ -186,17 +231,32 @@ export const PRIMARY_ROUTE_REGISTRY: RouteRegistryItem[] = [
   },
   {
     // "공사비 분석"→"적산·공사비 관리" 개칭. /analytics/cost 허브가 개략 산정 + 상세 내역서(BOQ,
-    // BoqDetailTable) 탭을 담당. 사업성·비용 그룹 해체로 프로젝트 섹션 직속 승격(적산관리 발견성 개선).
+    // BoqDetailTable) 탭을 담당. 사용자 요청으로 최상위 독립 섹션(cost-mgmt "적산·시공비")으로 승격 —
+    // 프로젝트 드롭다운 하위라 발견성이 나빴다. 섹션 내 단독 리프라 렌더러가 섹션 슬롯을 곧바로 링크로
+    // 렌더한다(섹션명=범주 "적산·시공비", 항목=페이지 "적산·공사비 관리" — 중복 아님).
     id: "cost",
     label: "적산·공사비 관리",
-    sectionId: "projects",
-    order: 40,
+    sectionId: "cost-mgmt",
+    order: 10,
     path: "/analytics/cost",
     iconKey: "cost",
     status: "live",
     scope: "global",
     lifecyclePhase: "business",
     apiDependencies: ["/analytics/cost"],
+  },
+  {
+    // ESG(GRESB) 분석 페이지 — 투자·적산과 나란히 사업성 분석군 직속 리프로 승격(orphan 배선 해소).
+    id: "esg",
+    label: "ESG 분석",
+    sectionId: "projects",
+    order: 50,
+    path: "/analytics/esg",
+    iconKey: "esg",
+    status: "live",
+    scope: "global",
+    lifecyclePhase: "business",
+    apiDependencies: ["/ai/llm"],
   },
   {
     id: "market-sales",
@@ -216,6 +276,36 @@ export const PRIMARY_ROUTE_REGISTRY: RouteRegistryItem[] = [
     order: 10,
     path: "/market-insights",
     status: "live",
+    scope: "global",
+    lifecyclePhase: "market",
+    apiDependencies: ["/market"],
+  },
+  {
+    // 실거래 신고내역 현황분석 — MOLIT 계약상태 6필드(해제·해제일·거래유형·등기일자·
+    // 매수/매도 법인개인)를 읽는 첫 소비 표면. 그동안 대시보드 안 **데이터 패널**로만 있어
+    // 카드 8개 아래(라이브 y≈2,921px)에 묻혀 있었다 — 형제 8개와 같이 **카드 + 전용 라우트**로 올린다.
+    // ★"필지별"이 아니다: 국토부 공개자료는 토지 거래 지번을 마스킹하므로 **법정동 단위** 집계다.
+    id: "realtx-report",
+    label: "실거래 신고내역",
+    sectionId: "market-acquisition",
+    parentId: "market-sales",
+    order: 12,
+    path: "/realtx-report",
+    status: "live",
+    scope: "global",
+    lifecyclePhase: "market",
+    apiDependencies: ["/market"],
+  },
+  {
+    // 간편 분양성 조사 — 지번 1개로 주변시세·계획시설·입지·분양사례를 한 화면에 모은다.
+    // ★새 분석엔진이 아니라 기존 셋(시장조사보고서·VWorld 도시계획시설·청약홈)의 **조립**이다.
+    id: "quick-survey",
+    label: "간편 분양성 조사",
+    sectionId: "market-acquisition",
+    parentId: "market-sales",
+    order: 5,
+    path: "/quick-survey",
+    status: "beta",
     scope: "global",
     lifecyclePhase: "market",
     apiDependencies: ["/market"],
@@ -482,6 +572,103 @@ export const PRIMARY_ROUTE_REGISTRY: RouteRegistryItem[] = [
     prefetch: false,
     apiDependencies: ["/settings/lists"],
   },
+  // AI 학습 사례 승인(2026-08-19) — 자가학습 few-shot 은 candidate 로만 쌓이고 사람이 승인해야
+  //   active 가 된다. 그런데 그 승인 API 를 부르는 화면이 없어 학습 환류가 영원히 비어 있었다.
+  //   이 항목이 그 문이다(총괄관리자 전용). 소비 API 는 아래 apiDependencies 그대로.
+  {
+    id: "learning-approval",
+    label: "AI 학습 사례 승인",
+    sectionId: "admin",
+    order: 50,
+    path: "/settings/learning",
+    iconKey: "sre",
+    status: "live",
+    scope: "admin",
+    lifecyclePhase: "admin",
+    adminOnly: true,
+    prefetch: false,
+    apiDependencies: [
+      "/growth/learning/candidates",
+      "/growth/learning/promote",
+      "/growth/learning/dataset",
+    ],
+  },
+
+  // ── 마이페이지(SaaS 계정 셀프서비스, 2026-07-17) — 코인·결제·사용내역·프로필·개인정보 ──
+  //    스펙=docs/design/MYPAGE_SAAS_SPEC_2026-07-17.md. 계정 보안(/account)은 기존 검증
+  //    화면을 재사용하고 여기서는 메뉴 진입만 제공한다.
+  {
+    id: "mypage",
+    label: "내 계정 요약",
+    sectionId: "my",
+    order: 10,
+    path: "/mypage",
+    iconKey: "dashboard",
+    status: "live",
+    scope: "global",
+    lifecyclePhase: "account",
+    apiDependencies: ["/billing/balance", "/billing/ledger"],
+  },
+  {
+    id: "mypage-coins",
+    label: "코인 충전·결제내역",
+    sectionId: "my",
+    order: 20,
+    path: "/mypage/coins",
+    iconKey: "cost",
+    status: "live",
+    scope: "global",
+    lifecyclePhase: "account",
+    apiDependencies: ["/billing/packages", "/billing/orders", "/billing/ledger"],
+  },
+  {
+    id: "mypage-usage",
+    label: "AI 사용내역",
+    sectionId: "my",
+    order: 30,
+    path: "/mypage/usage",
+    iconKey: "roi",
+    status: "live",
+    scope: "global",
+    lifecyclePhase: "account",
+    apiDependencies: ["/billing/token-usage"],
+  },
+  {
+    id: "mypage-profile",
+    label: "프로필 관리",
+    sectionId: "my",
+    order: 40,
+    path: "/mypage/profile",
+    iconKey: "project",
+    status: "live",
+    scope: "global",
+    lifecyclePhase: "account",
+    apiDependencies: ["/auth/me"],
+  },
+  {
+    id: "mypage-privacy",
+    label: "개인정보·약관",
+    sectionId: "my",
+    order: 50,
+    path: "/mypage/privacy",
+    iconKey: "regulation",
+    status: "live",
+    scope: "global",
+    lifecyclePhase: "account",
+    apiDependencies: ["/auth/me/consents"],
+  },
+  {
+    id: "mypage-security",
+    label: "계정 보안",
+    sectionId: "my",
+    order: 60,
+    path: "/account",
+    iconKey: "permit",
+    status: "live",
+    scope: "global",
+    lifecyclePhase: "account",
+    apiDependencies: ["/auth/me"],
+  },
 ];
 
 export function localizedHref(locale: string, path: RouteRegistryItem["path"]): string | undefined {
@@ -494,8 +681,13 @@ export function buildPrimaryRegistrySections(locale: string): RegistryNavSection
   const childrenByParent = new Map<string, RegistryNavNode[]>();
   const topLevelBySection = new Map<PrimaryNavSectionId, RegistryNavNode[]>();
 
+  // ★라벨도 로케일을 탄다. 종전에는 `locale` 이 **`href` 에만** 쓰여(`localizedHref`)
+  //   `/en`·`/zh-CN` 사용자에게 하위 내비게이션 전체가 한국어로 나왔다(실측 2026-08-16 —
+  //   e2e 가 `link "금융분석"` 을 잡았다). 번역 누락은 한국어로 폴백하고,
+  //   `__tests__/nav-i18n.coverage.test.ts` 가 레지스트리에서 **파생**해 전수로 잡는다.
   const nodes = PRIMARY_ROUTE_REGISTRY.map<RegistryNavNode>((item) => ({
     ...item,
+    label: resolveNavLabel(item.id, item.label, locale),
     href: localizedHref(locale, item.path),
   }));
 
@@ -522,6 +714,7 @@ export function buildPrimaryRegistrySections(locale: string): RegistryNavSection
     .sort((a, b) => a.order - b.order)
     .map((section) => ({
       ...section,
+      title: resolveNavSectionTitle(section.id, section.title, locale),
       items: (topLevelBySection.get(section.id) ?? [])
         .sort((a, b) => a.order - b.order)
         .map(attachChildren),

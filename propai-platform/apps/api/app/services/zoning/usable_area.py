@@ -33,8 +33,19 @@ from typing import Any
 # ── 게이트 문자열 계약(★special_parcel.py GATE_* SSOT와 문자 단위 일치 — 계약 테스트로 고정) ──
 GATE_BLOCK_DEVELOPABILITY = {"BLOCKED"}
 GATE_BLOCK_RESOLVABLE = {"NO"}
-GATE_TENTATIVE_DEVELOPABILITY = {"PRECONDITION", "CONDITIONAL", "NEEDS_OFFICIAL_SURVEY"}
-GATE_TENTATIVE_RESOLVABLE = {"CONDITIONAL"}
+GATE_TENTATIVE_DEVELOPABILITY = {"PRECONDITION", "CONDITIONAL", "NEEDS_OFFICIAL_SURVEY",
+                                 "REQUIRES_AUTHORITY_CONFIRMATION",  # WP-A 접도(관할확인 잠정)
+                                 # ★2026-08-02 추가 — UNKNOWN = '판정 불가'(미분석·신호 부재).
+                                 #   종전에는 이 값이 BLOCK에도 TENTATIVE에도 없어 else 분기로
+                                 #   떨어져 **confirmed**(통상 개발가능 면적)로 합산됐다.
+                                 #   '모르는 것'을 '가능'으로 단정하는 낙관 편향이라 조건부로 내린다.
+                                 "UNKNOWN"}
+GATE_TENTATIVE_RESOLVABLE = {"CONDITIONAL", "UNKNOWN"}
+
+# 필지 단위 미분석 표식(다필지 detect 경로가 부여) — 지목·용도지구가 미확인이라 특이성 판정
+# 자체가 불가한 상태. 상위 집계는 이미 이걸 정직하게 'UNKNOWN'으로 고지하는데, 면적 정산만
+# 그 신호를 읽지 않아 미분석 필지가 confirmed로 합산되고 있었다(정직한 신호를 소비처가 무시).
+UNANALYZED_STATUS = "unanalyzed"
 
 # 건축 불가 지목(전액 제외) — 계획서 S3-B 확정 범위: 도로·구거·하천만(임의 확장 금지).
 #   공부 지목부호(공간정보관리법 시행령 제58조·지적공부 표기): 도로→도, 구거→구, 하천→천.
@@ -49,7 +60,17 @@ _CONDITION_BY_GRADE = {
         "공식 산림데이터(산지구분·평균경사도·입목축적) 확보 후 산지전용 가능규모 확정 필요"
         "(현재는 참고용 예비안)"
     ),
+    "UNKNOWN": (
+        "지목·용도지구가 확인되지 않아 개발 제약을 판정하지 못했습니다 — 제약이 없다는 뜻이 "
+        "아니며, 지목·구역 정보를 확보한 뒤 다시 산정해야 합니다"
+    ),
 }
+
+# 미분석 필지의 조건 문구(게이트 값과 별개로 부여) — 왜 조건부인지 사용자가 알 수 있게.
+_UNANALYZED_CONDITION = (
+    "이 필지는 지목·용도지구 미확인으로 분석되지 않았습니다 — 개발 제약 유무를 확인하지 "
+    "못했으므로 확정 가능 면적으로 세지 않았습니다"
+)
 
 
 def _area_sqm(p: dict) -> float | None:
@@ -77,6 +98,30 @@ def _gates(p: dict) -> tuple[str, str]:
     dev = p.get("developability") or special.get("developability") or "POSSIBLE"
     res = p.get("resolvable") or special.get("resolvable") or "YES"
     return str(dev).strip().upper(), str(res).strip().upper()
+
+
+def _looks_unanalyzed(p: dict) -> bool:
+    """표식(analysis_status)이 안 붙어 있는 입력에서도 '못 봤음'을 스스로 판정한다.
+
+    ★왜 스스로 판정해야 하는가(2026-08-03 R2 적발):
+      종전에는 `detect_multi_parcel()`이 심어준 `analysis_status` 표식**만** 읽었다. 그런데
+      그 표식의 생산자는 그 함수 하나뿐이라, 함수를 거치지 않고 이 계산을 직접 부르는 경로
+      (`build_integrated_context` — 종합분석·파이프라인·수지·90초진단·의사결정브리프가
+      전부 통과하는 공용 통로다)에서는 표식이 영원히 없었다. 실측하면 미분석 필지 면적이
+      **100% 확정 개발가능 면적에 합산**됐고, 그 값이 land_area로 채택돼 GFA·세대수·수지로
+      전파됐다. "게이트 집합에 값을 넣었다"만으로는 전파가 아니다 — 값을 만드는 곳까지
+      가야 참이다.
+
+      그래서 판정을 이 계산 안으로 내린다. 여기를 거치는 모든 경로가 자동으로 따라온다.
+
+    보수적으로 본다(과잉강등 금지) — 특이부지 판정 결과가 이미 붙어 있으면 본 필지다.
+    """
+    if isinstance(p.get("special"), dict):
+        return False
+    # 지연 임포트 — special_parcel이 이 모듈을 임포트하므로 최상위에 두면 순환이 된다.
+    from app.services.zoning.special_parcel import is_unanalyzed_parcel
+
+    return is_unanalyzed_parcel(p)
 
 
 def _factor_categories(p: dict) -> list[str]:
@@ -159,17 +204,27 @@ def compute_usable_area(parcels: list[dict]) -> dict[str, Any]:
                 "detail": "해결가능성 NO — 통상 절차로 해결 불가능한 제약이 있는 필지입니다.",
             })
 
+        # ★미분석 필지는 게이트 값과 무관하게 확정으로 올리지 않는다. 상위 집계는 이미 이 상태를
+        #   'UNKNOWN'으로 정직 고지하는데, 면적 정산만 그 신호를 안 읽어 confirmed로 새고 있었다.
+        #   (게이트 기본값이 POSSIBLE이라 '신호 부재'와 '가능'이 구분되지 않던 것이 근원.)
+        #   ★표식이 안 붙은 입력(이 계산을 직접 부르는 경로)은 스스로 판정한다 — 표식 생산자가
+        #     한 곳뿐이라 그 함수를 거치지 않는 공용 통로에서 미분석 면적이 그대로 새고 있었다.
+        _status = str(p.get("analysis_status") or "").strip().lower()
+        unanalyzed = _status == UNANALYZED_STATUS or (not _status and _looks_unanalyzed(p))
+
         if reasons:
             tier = "excluded"
             brief["reasons"] = reasons
             excluded.append(brief)
-        elif dev in GATE_TENTATIVE_DEVELOPABILITY or res in GATE_TENTATIVE_RESOLVABLE:
+        elif unanalyzed or dev in GATE_TENTATIVE_DEVELOPABILITY or res in GATE_TENTATIVE_RESOLVABLE:
             tier = "conditional"
             conditions = []
+            if unanalyzed:
+                conditions.append(_UNANALYZED_CONDITION)
             grade_note = _CONDITION_BY_GRADE.get(dev)
             if grade_note:
                 conditions.append(grade_note)
-            if res in GATE_TENTATIVE_RESOLVABLE and not grade_note:
+            if res in GATE_TENTATIVE_RESOLVABLE and not grade_note and not unanalyzed:
                 conditions.append(_CONDITION_BY_GRADE["CONDITIONAL"])
             cats = _factor_categories(p)
             if cats:

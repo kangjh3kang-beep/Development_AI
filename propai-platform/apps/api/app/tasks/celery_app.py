@@ -39,6 +39,7 @@ TASK_MODULES = [
     "app.tasks.parcel_batch_task",
     "app.tasks.memory_tasks",
     "app.tasks.specialist_tasks",
+    "app.tasks.member_tasks",
 ]
 
 
@@ -87,6 +88,20 @@ def _create_app() -> Celery:
             "schedule": crontab(hour=4, minute=0),
             "options": {"queue": "auction"},
         },
+        # 회원 수명주기 — 탈퇴 30일 유예 경과 계정 익명화(확정 정책 §7-2·개인정보
+        # 처리방침 §9 파기 정합). 매일 03:30(정기배치 시간대), 기본 큐.
+        "anonymize-withdrawn-daily": {
+            "task": "app.tasks.member_tasks.anonymize_withdrawn_accounts",
+            "schedule": crontab(hour=3, minute=30),
+            "options": {"queue": "celery"},
+        },
+        # 충전주문 구매자 PII 파기 — 전상법 §6 보존기간(5년) 경과 행의 성명·이메일 NULL화
+        # (개인정보보호법 §21 지체없는 파기·자체 고지 정합). 매일 03:40, 기본 큐.
+        "purge-order-pii-daily": {
+            "task": "app.tasks.member_tasks.purge_expired_order_pii",
+            "schedule": crontab(hour=3, minute=40),
+            "options": {"queue": "celery"},
+        },
         # 자가성장 엔진 — 텔레메트리 큐 → platform_events 배치 적재(5초 주기).
         # ⚠️ Phase 1 정본은 main.py 인프로세스 flush 루프(같은 프로세스 deque 드레인)다.
         #    capture_service 큐는 프로세스-로컬이라 별도 Celery 워커에는 API 가 쌓은
@@ -113,6 +128,17 @@ def _create_app() -> Celery:
             "task": "app.tasks.growth_tasks.analyze_growth",
             "schedule": crontab(hour=2, minute=30),  # 매일 02:30
             "kwargs": {"window_hours": 24},
+            "options": {"queue": "growth"},
+        },
+        # ★정리 — 승계된 옛 인사이트를 닫는다. growth 는 beat 잡이 여럿인데
+        #   **정리 잡이 0개**여서 재고가 무한 누적됐다(2026-08-26 실측: open 3,127 ·
+        #   그중 승계분 2,678 · latency_regression 30일 초과 1,212).
+        #   분석(02:30)이 새 행을 만든 **뒤에** 돌린다.
+        #   ★03:12 인 이유 — `evaluate-healing` 이 `*/10` 이라 03:10 에 동시 발화하고,
+        #     그 잡은 `status='open' AND created_at >= now-2h` 를 읽는다. 비켜 간다.
+        "cleanup-growth-insights": {
+            "task": "app.tasks.growth_tasks.cleanup_insights",
+            "schedule": crontab(hour=3, minute=12),
             "options": {"queue": "growth"},
         },
         # 자가치유 평가(Phase 3, §6.1) — open 인사이트/이벤트 → heal 액션(무인 L0).
@@ -173,6 +199,8 @@ BEAT_SCHEDULE_NAMES = [
     "check-standard-prices-weekly",
     "check-pension-increase-monthly",
     "sync-onbid-auctions-daily",
+    "anonymize-withdrawn-daily",
+    "purge-order-pii-daily",
     "flush-growth-events",
     "analyze-growth-hourly",
     "analyze-growth-daily",
@@ -198,4 +226,6 @@ TASK_NAMES = [
     "app.tasks.parcel_batch_task.run_batch",
     "tasks.memory.ingest_experience",
     "tasks.specialists.run_for_analysis",
+    "app.tasks.member_tasks.anonymize_withdrawn_accounts",
+    "app.tasks.member_tasks.purge_expired_order_pii",
 ]

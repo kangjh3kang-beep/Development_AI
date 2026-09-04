@@ -1,17 +1,19 @@
 "use client";
 
 import { addressRegionMismatch } from "@/store/useProjectContextStore";
+import { parcelShortLabel } from "@/lib/pnu";
 
 /** 선택 필지 → 새 프로젝트 이름 파생. 대표(첫) 필지 주소의 마지막 두 토큰(동·지번)을 쓰고,
  *  2필지 이상이면 "외 N필지"를 붙인다. 예: "고기동 689 외 8필지".
- *  주소가 없으면 null(무날조 — 호출측이 생성 차단·안내). */
+ *  주소가 없으면 null(무날조 — 호출측이 생성 차단·안내).
+ *  ★축약 전에 PNU 로 지번을 파생한다(parcelShortLabel) — 먼저 줄이면 동 단위 주소가
+ *    "오산시 내삼미동" 으로 굳어 프로젝트 이름부터 필지를 특정하지 못한다(실제 신고 사례). */
 export function deriveProjectNameFromParcels(
-  parcels: Array<{ address: string }>,
+  parcels: Array<{ address: string; pnu?: string | null }>,
 ): string | null {
   const address = (parcels[0]?.address ?? "").trim();
   if (!address) return null;
-  const tokens = address.split(/\s+/).filter(Boolean);
-  const base = tokens.slice(-2).join(" ");
+  const base = parcelShortLabel(address, parcels[0]?.pnu ?? null, address);
   return parcels.length > 1 ? `${base} 외 ${parcels.length - 1}필지` : base;
 }
 

@@ -115,7 +115,7 @@ export function Dialog({
       <div
         ref={panelRef}
         tabIndex={-1}
-        className="w-full max-w-xl rounded-[1.75rem] border border-[var(--line)] bg-[var(--surface-strong)] p-6 shadow-[0_24px_80px_rgba(19,33,47,0.18)]"
+        className="w-full max-w-xl rounded-[var(--r-panel)] border border-[var(--line)] bg-[var(--surface-strong)] p-6 shadow-[0_24px_80px_rgba(19,33,47,0.18)]"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-4">

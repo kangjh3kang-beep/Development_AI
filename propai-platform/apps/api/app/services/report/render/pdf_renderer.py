@@ -19,10 +19,17 @@ from .model import (
     Section,
     fmt_value,
 )
+from .publish_gate import GateViolation
 
 
-def render_pdf(model: ReportModel) -> bytes:
-    """정본 모델 → PDF bytes."""
+def render_pdf(model: ReportModel, gate_warnings: list[GateViolation] | None = None) -> bytes:
+    """정본 모델 → PDF bytes.
+
+    gate_warnings: publish_gate.check_publishable 의 soft 경고(DRAFT/MACHINE_VALIDATED 전용).
+      전달되면(비어있지 않으면) 표지에 "⚠ 미검증 단정 표현 N건" 문구를 얹는다(W1-C R2).
+      None(기본값)은 render_pdf 를 엔진 경유 없이 직접 호출하는 경우를 위한 안전 기본값 —
+      경고문구를 생략할 뿐 렌더 자체는 항상 무회귀로 통과한다.
+    """
     font = K.register_font()
     st = K.styles(font)
     buf = io.BytesIO()
@@ -42,6 +49,11 @@ def render_pdf(model: ReportModel) -> bytes:
         el.append(Paragraph(K._esc(sub), st["caption"]))
     el.append(Spacer(1, 4 * mm))
     el.append(Paragraph(K._esc(T.BRANDING), st["caption"]))
+    el.append(Spacer(1, 2 * mm))
+    el.append(K.approval_badge(model.meta, font))
+    if gate_warnings:
+        el.append(Spacer(1, 1 * mm))
+        el.append(K.draft_warning_notice(len(gate_warnings), font))
     if model.meta.confidential:
         el.append(Spacer(1, 2 * mm))
         el.append(Paragraph(
@@ -64,7 +76,8 @@ def render_pdf(model: ReportModel) -> bytes:
     el.append(Spacer(1, 8 * mm))
     el.append(Paragraph(K._esc(model.disclaimer or T.DISCLAIMER_TEXT), st["disclaimer"]))
 
-    cb = K.footer_callback(model.meta)
+    # ★꼬리말도 **본문과 같은 폰트**로 그린다 — 내용이 한글이다(종전엔 Helvetica 라 두부).
+    cb = K.footer_callback(model.meta, font)
     doc.build(el, onFirstPage=cb, onLaterPages=cb)
     return buf.getvalue()
 
@@ -141,7 +154,11 @@ def _render_block(el: list, block: Any, st: dict, font: str) -> None:
                 parts.append(f'<font color="{T.AMBER}">(신뢰도 {K._esc(ev.confidence)})</font>')
             line = " · ".join(parts)
             if ev.legal_link and (str(ev.confidence).lower() == "high" or ev.confidence is None):
-                line += f' · <a href="{ev.legal_link}"><font color="{T.LINK}">법령</font></a>'
+                # href 도 XML escape — 클라이언트 유래 URL 에 따옴표가 섞이면 reportlab 파싱이
+                # 크래시한다(R1 P3). http(s) 스킴만 허용(그 외는 링크 생략·텍스트만).
+                _link = str(ev.legal_link)
+                if _link.startswith(("http://", "https://")):
+                    line += f' · <a href="{K._esc(_link)}"><font color="{T.LINK}">법령</font></a>'
             el.append(Paragraph(line, st["caption"]))
 
     elif kind == "checklist":

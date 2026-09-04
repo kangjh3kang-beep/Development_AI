@@ -11,7 +11,7 @@ import { createAnthropic } from "@ai-sdk/anthropic";
 import { NextResponse } from "next/server";
 import { DOMAIN_PROMPTS, type AIDomain } from "@/lib/ai-prompts";
 
-export const runtime = "edge";
+export const runtime = "nodejs";
 
 /**
  * pathname에서 도메인을 추론합니다.

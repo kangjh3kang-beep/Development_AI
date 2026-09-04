@@ -253,6 +253,7 @@ def test_seed_design_with_mass_reference(monkeypatch):
 
     def _stub_compute(*, land_area_sqm, zone_code, building_use, floor_height_m,
                       target_far=None, target_bcr=None, ordinance_far=None, ordinance_bcr=None,
+                      far_basis=None, far_reliable=None,  # ★WP-U2a: 실효 근거 메타(수치 무영향)
                       target_floors=None, daylight_step=True):
         calls.append({
             "target_far": target_far,
@@ -296,6 +297,7 @@ def test_seed_design_applies_effective_ordinance_limits(monkeypatch):
 
     def _stub_compute(*, land_area_sqm, zone_code, building_use, floor_height_m,
                       target_far=None, target_bcr=None, ordinance_far=None, ordinance_bcr=None,
+                      far_basis=None, far_reliable=None,  # ★WP-U2a: 실효 근거 메타(수치 무영향)
                       target_floors=None, daylight_step=True):
         calls.append({
             "target_far": target_far,
@@ -344,6 +346,35 @@ def test_seed_design_no_mass_reference_graceful(monkeypatch):
     body = r.json()
     assert body["legal_max_mass"] is not None
     assert body["regional_typical_mass"] is None
+
+
+def test_seed_design_note_has_no_internal_code_symbols(monkeypatch):
+    """설계스튜디오 실효FAR 전파 봉합 — note는 코드 심볼 없는 평이한 한국어여야 한다(사용자向 노출).
+
+    ★종전 note는 "legal_max_mass"·"regional_typical_mass"·"effective_far_pct"·"min(...)"·"None" 같은
+    내부 필드명/파이썬 표현식을 그대로 사용자에게 노출했다(코드 노출 사기). 이제 평이한 한국어만
+    남아야 한다.
+    """
+    monkeypatch.setattr(mt, "_compute_mass", lambda **kw: {"num_floors": 5, "far_pct": 100.0, "bcr_pct": 20.0})
+    import app.services.mass_backbone.mass_reference as mref
+
+    async def _stub_ref(db, *, region, building_type_label):
+        return None
+
+    monkeypatch.setattr(mref, "get_mass_reference", _stub_ref)
+    app, _ = _make_app()
+    client = TestClient(app)
+    r = client.post("/api/v1/mass-templates/seed-design",
+                    json={"address": "강원특별자치도 양양군 강현면", "land_area_sqm": 1000})
+    assert r.status_code == 200, r.text
+    note = r.json()["note"]
+    for leaked_symbol in (
+        "legal_max_mass", "regional_typical_mass", "effective_far_pct",
+        "effective_bcr_pct", "min(", "None",
+    ):
+        assert leaked_symbol not in note, f"코드 심볼 노출: {leaked_symbol!r} in note"
+    assert "가장 엄격한 기준" in note
+    assert "부지분석" in note
 
 
 def test_seed_design_special_parcel_gate_attached_when_context_given(monkeypatch):

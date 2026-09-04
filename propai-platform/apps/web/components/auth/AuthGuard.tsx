@@ -9,6 +9,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
+import { loginUrlWithReturn } from "@/lib/authReturnPath";
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -22,7 +23,9 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
       setIsAuthenticated(true);
     } else {
       setIsAuthenticated(false);
-      router.replace(`/${locale}/login`);
+      // ★앱 컨텍스트 복귀(2026-07-23): 진입하려던 화면(예: 설치형 현장앱의 start_url)을
+      //   ?next= 로 실어, 로그인 후 메인 대시보드가 아니라 원래 목적지로 돌아가게 한다.
+      router.replace(loginUrlWithReturn(locale));
     }
   }, [locale, router]);
 

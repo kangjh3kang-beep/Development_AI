@@ -71,3 +71,23 @@ describe("selectionMismatchesProject", () => {
     expect(selectionMismatchesProject("", "")).toBe(false);
   });
 });
+
+describe("deriveProjectNameFromParcels — 축약 전에 PNU 로 지번을 파생한다", () => {
+  const DONG = "경기도 오산시 내삼미동";
+
+  it("★PNU 가 있으면 프로젝트 이름부터 필지를 특정한다", () => {
+    expect(
+      deriveProjectNameFromParcels([{ address: DONG, pnu: "4137011000104670001" }]),
+    ).toBe("내삼미동 467-1");
+  });
+
+  it("★PNU 가 없으면 지어내지 않는다 — 실제 신고 프로젝트 이름이 이것이다", () => {
+    expect(
+      deriveProjectNameFromParcels(Array.from({ length: 77 }, () => ({ address: DONG, pnu: null }))),
+    ).toBe("오산시 내삼미동 외 76필지");
+  });
+
+  it("★가짜 PNU(주소가 PNU 칸에 들어앉음)도 지번을 만들지 못한다", () => {
+    expect(deriveProjectNameFromParcels([{ address: DONG, pnu: DONG }])).toBe("오산시 내삼미동");
+  });
+});

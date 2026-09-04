@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Button, Card, CardContent, CardTitle } from "@propai/ui";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { UseLlmToggle } from "@/components/common/UseLlmToggle";
+import { MarkdownLite } from "@/components/common/MarkdownLite";
 import { SeniorVerdictCard, type SeniorConsultation } from "@/components/analysis/SeniorVerdictCard";
 // F-3: 무인증 raw fetch(Authorization 미첨부→배포환경 401 조용실패) 대신 apiClient로 통일
 // (자동 Bearer 첨부 + 401 리프레시 재시도 공용 계약 — BoqDetailTable 등 cost 화면 기존 관례와 동일).
@@ -188,7 +189,7 @@ export default function BimCostDashboard({ projectId }: { projectId: string }) {
               <Button
                 onClick={handleCalculate}
                 disabled={loading}
-                className="h-10 bg-[var(--accent)] hover:bg-[var(--accent-strong)] text-white text-[11px] font-black uppercase tracking-widest shadow-[var(--shadow-glow)]"
+                className="h-10 bg-[var(--accent-strong)] hover:brightness-110 text-[var(--on-primary)] text-[11px] font-black uppercase tracking-widest shadow-[var(--shadow-glow)]"
               >
                 {loading ? "분석 중..." : "공사비 정밀 분석"}
               </Button>
@@ -197,11 +198,11 @@ export default function BimCostDashboard({ projectId }: { projectId: string }) {
 
         {/* T6: 물량 출처 정직 고지 — BIM 실측(bim_quantities) 우선, 없으면 건축개요 개산으로 폴백. */}
         {needDesign ? (
-          <div className="flex items-start gap-1.5 px-8 py-5 bg-amber-500/10 border-b border-amber-500/30 text-[12px] leading-relaxed text-amber-700">
+          <div className="flex items-start gap-1.5 px-8 py-5 bg-[color-mix(in_srgb,var(--status-warning)_12%,transparent)] border-b border-[color-mix(in_srgb,var(--status-warning)_36%,transparent)] text-[12px] leading-relaxed text-[var(--status-warning)]">
             <AlertTriangle className="size-3.5 mt-0.5 shrink-0" aria-hidden /><span>설계 연면적이 없습니다. <b>설계(또는 건축개요)를 먼저 완료</b>하면 공사비를 산정합니다. (가짜 고정 물량은 사용하지 않습니다.)</span>
           </div>
         ) : qtoSource === "bim_quantities" ? (
-          <div className="px-8 py-3 bg-emerald-500/10 border-b border-emerald-500/30 text-[11px] text-emerald-700">
+          <div className="px-8 py-3 bg-[color-mix(in_srgb,var(--status-success)_12%,transparent)] border-b border-[color-mix(in_srgb,var(--status-success)_36%,transparent)] text-[11px] text-[var(--status-success)]">
             BIM 실측 물량(IFC 생성/분석 결과 · bim_quantities) 기반으로 산정했습니다.
           </div>
         ) : qtoSource === "estimate_overview" ? (
@@ -219,14 +220,14 @@ export default function BimCostDashboard({ projectId }: { projectId: string }) {
               className="bg-[var(--surface-soft)]/50 border-b border-[var(--line)] px-8 py-6"
             >
               <div className="flex items-center gap-4 mb-4">
-                <span className="w-2 h-2 rounded-full bg-[var(--warning)] animate-pulse" />
+                <span className="w-2 h-2 rounded-full bg-[var(--status-warning)] animate-pulse" />
                 <p className="text-[11px] font-black uppercase tracking-widest text-[var(--text-primary)]">
                   {rates.year}년 국가 법정 요율 데이터 (12종 반영됨)
                 </p>
               </div>
               <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
                 {Object.entries(rates.rates).map(([key, val]) => (
-                  <div key={key} className="bg-[var(--surface-strong)] border border-[var(--line-strong)] rounded-xl p-3 flex flex-col items-center justify-center">
+                  <div key={key} className="bg-[var(--surface-strong)] border border-[var(--line-strong)] rounded-[var(--r-card)] p-3 flex flex-col items-center justify-center">
                     <p className="text-[9px] font-black text-[var(--text-tertiary)] uppercase">{key}</p>
                     <p className="mt-1 text-[13px] font-[1000] text-[var(--text-primary)]">
                       {(Number(val) * 100).toFixed(2)}%
@@ -353,9 +354,7 @@ export default function BimCostDashboard({ projectId }: { projectId: string }) {
                   {costResult.ai_cost_analysis && (
                     <div className="mt-10 pt-8 border-t border-[var(--line)]">
                       <p className="text-[10px] font-black text-[var(--text-tertiary)] uppercase tracking-widest mb-3">AI 원가 해설</p>
-                      <p className="whitespace-pre-wrap text-[12px] leading-relaxed text-[var(--text-secondary)]">
-                        {costResult.ai_cost_analysis}
-                      </p>
+                      <MarkdownLite text={costResult.ai_cost_analysis} className="text-[12px] text-[var(--text-secondary)]" />
                     </div>
                   )}
                 </CardContent>
@@ -378,8 +377,8 @@ export default function BimCostDashboard({ projectId }: { projectId: string }) {
                   <p className="text-[10px] font-black text-[var(--text-tertiary)] uppercase tracking-[0.2em]">리스크 기반 공사비 분석 (Monte Carlo)</p>
                   <span className={`text-[9px] font-black uppercase px-3 py-1 rounded-full border ${
                     mcResult.converged 
-                      ? "bg-[var(--success-soft)] text-[var(--success)] border-[var(--success-strong)]/20" 
-                      : "bg-[var(--error-soft)] text-[var(--error)] border-[var(--error-strong)]/20"
+                      ? "bg-[color-mix(in_srgb,var(--status-success)_14%,transparent)] text-[var(--status-success)] border-[color-mix(in_srgb,var(--status-success)_30%,transparent)]"
+                      : "bg-[color-mix(in_srgb,var(--status-error)_14%,transparent)] text-[var(--status-error)] border-[color-mix(in_srgb,var(--status-error)_30%,transparent)]"
                   }`}>
                     {mcResult.converged ? "CONVERGED" : "ANALYSIS IN PROGRESS"}
                   </span>
@@ -412,7 +411,7 @@ export default function BimCostDashboard({ projectId }: { projectId: string }) {
                     />
                   </div>
 
-                  <div className="mt-8 p-6 rounded-2xl bg-[var(--surface-soft)] border border-[var(--line)]">
+                  <div className="mt-8 p-6 rounded-[var(--r-card)] bg-[var(--surface-soft)] border border-[var(--line)]">
                      <div className="flex justify-between items-end">
                        <div>
                          <p className="text-[10px] font-black text-[var(--text-tertiary)] uppercase tracking-widest">평균(MEAN) 및 변동계수(CV)</p>
@@ -429,7 +428,7 @@ export default function BimCostDashboard({ projectId }: { projectId: string }) {
                         {Object.entries(mcResult.risk_contributions).map(([key, pct]) => (
                           <div 
                             key={key} 
-                            className="px-4 py-3 rounded-xl bg-[var(--surface-soft)] border border-[var(--line)] flex flex-col"
+                            className="px-4 py-3 rounded-[var(--r-card)] bg-[var(--surface-soft)] border border-[var(--line)] flex flex-col"
                           >
                             <span className="text-[10px] font-black text-[var(--text-tertiary)] uppercase tracking-tighter mb-1">{key}</span>
                             <span className="text-[14px] font-[1000] text-[var(--text-primary)]">{pct}%</span>
@@ -466,7 +465,7 @@ function KPI({
   sub?: string;
 }) {
   return (
-    <div className={`p-6 rounded-2xl border transition-all ${
+    <div className={`p-6 rounded-[var(--r-card)] border transition-all ${
       highlight 
         ? "bg-[var(--accent-soft)]/20 border-[var(--accent-strong)]/30 shadow-[var(--shadow-md)]" 
         : "bg-[var(--surface-soft)] border-[var(--line)]"

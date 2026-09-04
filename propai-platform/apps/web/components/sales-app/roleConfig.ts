@@ -11,6 +11,7 @@ import {
   ConciergeBell,
   FileText,
   FolderTree,
+  Home,
   Landmark,
   MessageCircle,
   NotebookPen,
@@ -44,6 +45,67 @@ export const STATUS_LABEL: Record<string, string> = {
   CLOSED: "분양종료",
 };
 
+/**
+ * 현장 조직 node_type 라벨 SSOT — 백엔드 site_auth._ROLE_LABEL 정본과 1:1.
+ *
+ * ★봉합 배경(2026-07-22): 과거 같은 조직 노드가 조직도에선 DIRECTOR="이사"인데 수수료/더치페이
+ *   화면에선 "본부장"(GM_DIRECTOR="총괄본부장")으로 표시돼, 한 사람의 직급이 화면마다 달랐다.
+ *   정본은 로그인 역할 라벨(ROLE_LABEL)·백엔드와 동일한 '본부장(GM_DIRECTOR) > 이사(DIRECTOR)'.
+ *   조직도·수수료·더치페이가 모두 이 한 부를 소비한다(재발 방지). MGM 등 도메인 전용 항목은
+ *   소비처가 이 목록에 로컬로 덧붙인다(조직 node_type 이 아니므로 SSOT에 넣지 않는다).
+ */
+export const ORG_NODE_TYPES = [
+  "AGENCY",
+  "SUBAGENCY",
+  "GM_DIRECTOR",
+  "DIRECTOR",
+  "TEAM_LEADER",
+  "MEMBER",
+] as const;
+export type OrgNodeType = (typeof ORG_NODE_TYPES)[number];
+
+export const NODE_TYPE_LABEL: Record<OrgNodeType, string> = {
+  AGENCY: ROLE_LABEL.AGENCY, // 대행본사
+  SUBAGENCY: ROLE_LABEL.SUBAGENCY, // 대행지사
+  GM_DIRECTOR: ROLE_LABEL.GM_DIRECTOR, // 본부장
+  DIRECTOR: ROLE_LABEL.DIRECTOR, // 이사
+  TEAM_LEADER: ROLE_LABEL.TEAM_LEADER, // 팀장
+  MEMBER: ROLE_LABEL.MEMBER, // 직원
+};
+
+/** node_type → 라벨(미등록 값은 원문 폴백). */
+export const nodeTypeLabel = (t: string): string => NODE_TYPE_LABEL[t as OrgNodeType] ?? t;
+
+/** { value, label }[] 옵션 — 조직도/수수료 select 공용. 기본은 전 조직 node_type. */
+export const nodeTypeOptions = (
+  types: readonly string[] = ORG_NODE_TYPES,
+): { value: string; label: string }[] => types.map((value) => ({ value, label: nodeTypeLabel(value) }));
+
+/**
+ * 직급 위계 서열 — ORG_NODE_TYPES 배열 순서가 곧 서열(0=최상위 대행본사)이다.
+ * 백엔드 sales/actions.py 의 _ORG_RANK 와 1:1(드리프트 시 백엔드 400과 프론트 노출이 어긋남).
+ * 미등록 직급은 99(항상 최하위 취급 — fail-closed).
+ */
+export const orgRank = (t: string): number => {
+  const i = ORG_NODE_TYPES.indexOf(t as OrgNodeType);
+  return i === -1 ? 99 : i;
+};
+
+/**
+ * 특정 부모 아래에 '내가' 추가할 수 있는 직급 목록.
+ * addable = 서버 /org/context 의 addable_types(직속 지정 매트릭스 역인덱스 — 권한 축),
+ * parentType = 붙일 부모의 직급(위계 축: 자식은 부모보다 반드시 서열이 낮아야 한다).
+ * 두 축의 교집합만 UI에 노출해, 서버가 400/403으로 거부할 선택지를 애초에 보여주지 않는다.
+ * parentType=null 은 최상위(루트) — 루트에는 대행사만 둘 수 있다(백엔드 루트 가드와 동일).
+ */
+export const addableChildTypes = (
+  addable: readonly string[],
+  parentType: string | null,
+): string[] =>
+  parentType === null
+    ? addable.filter((t) => t === "AGENCY")
+    : addable.filter((t) => orgRank(t) > orgRank(parentType));
+
 // 현장 비밀번호 설정/변경 권한 역할(백엔드 _MANAGE_ROLES 정합). can_manage 응답을 우선 신뢰.
 export const MANAGE_ROLES = new Set(["SUPERADMIN", "DEVELOPER", "AGENCY", "GM_DIRECTOR"]);
 
@@ -67,6 +129,8 @@ export interface SalesTabDef {
 //   dashboard·org·pricing·units·contracts·commission·customers·ads·reports·settings·site_password.
 // 계약 후속 업무(청약/수납/대출/전매/세금)는 백엔드 'contracts' 기능키로 게이팅한다(별도 키 미정의).
 export const SALES_TABS: SalesTabDef[] = [
+  // 홈 — 역할별 랜딩 대시보드. 현장 멤버 전원 공통(alwaysOn)이며 기본 진입 탭이다.
+  { key: "home", label: "홈", feature: "home", alwaysOn: true, icon: Home, desc: "오늘 할 일·핵심 지표·역할별 요약. 현장 실데이터 집계." },
   { key: "units", label: "세대 배치도", feature: "units", icon: Building2, desc: "동·호 배치·상태관리·지정/추첨. 세대 클릭으로 상태전이·특이사항·계약." },
   { key: "customers", label: "고객·상담", feature: "customers", icon: Users, desc: "방문·상담 고객 관리와 등급·배정." },
   // Phase 1-D — 업무일지. 현장 멤버 전원 공통(alwaysOn): 일자별 작성·실적집계.
@@ -113,3 +177,16 @@ export function visibleTabs(features: string[]): SalesTabDef[] {
   const set = new Set(features ?? []);
   return SALES_TABS.filter((t) => t.alwaysOn || set.has(t.feature));
 }
+
+// ── 모바일 내비 IA(디자인 핸드오프 design_handoff_salesapp) — 하단 5탭 + 전체메뉴 4그룹 ──
+// 하단 탭바 주 슬롯(홈/고객/배치도/수납) — 마지막 슬롯 '전체'는 FieldNav 가 상시 부착한다.
+// 역할별 노출은 visibleTabs 결과와 교집합(예: MEMBER 는 payments 미노출 → 3슬롯+전체).
+export const BOTTOM_NAV_KEYS = ["home", "customers", "units", "payments"] as const;
+
+/** 전체메뉴 시트의 4그룹(IA SSOT) — 각 그룹의 탭 키. 노출은 visibleTabs 와 교집합으로 판정. */
+export const MENU_GROUPS: { title: string; keys: string[] }[] = [
+  { title: "Sales", keys: ["units", "customers", "pricing", "subscription"] },
+  { title: "Money", keys: ["payments", "loan", "resale", "tax"] },
+  { title: "Operations", keys: ["worklog", "desk", "integrity", "projection", "org", "commission", "staff", "cert", "market"] },
+  { title: "My", keys: ["profile", "social", "referral"] },
+];

@@ -18,6 +18,8 @@
  */
 
 import { AlertTriangle, CheckCircle2, Grid3X3, Ruler, Scale, Scissors, ShieldCheck, SlidersHorizontal } from "lucide-react";
+import { developabilityLabel } from "@/lib/zoning-ssot";
+import { parcelDisplayAddress } from "@/lib/pnu";
 
 // ── 계약 타입(전 필드 optional — D 병렬 진행 중 호환 가드) ──────────────────────
 
@@ -131,24 +133,31 @@ const sqm = (v: number | null | undefined): string => {
 
 type Tone = "ok" | "warn" | "bad" | "muted";
 const toneCls: Record<Tone, string> = {
-  ok: "border-emerald-500/30 bg-emerald-500/10 text-emerald-400",
-  warn: "border-amber-500/30 bg-amber-500/10 text-amber-400",
-  bad: "border-rose-500/30 bg-rose-500/10 text-rose-400",
+  ok: "border-[var(--status-success)]/30 bg-[var(--status-success)]/10 text-[var(--status-success)]",
+  warn: "border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 text-[var(--status-warning)]",
+  bad: "border-[var(--status-error)]/30 bg-[var(--status-error)]/10 text-[var(--status-error)]",
   muted: "border-[var(--line-strong)] bg-[var(--surface-strong)] text-[var(--text-tertiary)]",
 };
 
-// 게이트 전 어휘(special_parcel.py _RANK SSOT와 동일 문자열) → 한국어 배지.
+// 게이트 어휘 → 한국어 배지.
+// ★라벨 문구는 공용 SSOT(zoning-ssot.developabilityLabel)를 쓴다. 종전에는 여기에 6종만 아는
+//   로컬 switch 맵이 따로 있었고, `UNKNOWN`·`REQUIRES_AUTHORITY_CONFIRMATION`·`RESTRICTED`가
+//   빠져 있어 default로 떨어지며 **원시 코드가 그대로 렌더**됐다. 특히 `UNKNOWN`은 최근
+//   파이프라인에 도입된 값이라(미분석 필지 강등) 이 구멍이 바로 열려 있었다.
+//   색(tone)은 이 표의 관심사라 여기 남긴다.
+const _GATE_TONE: Record<string, Tone> = {
+  POSSIBLE: "ok",
+  BLOCKED: "bad",
+  RESTRICTED: "bad",
+};
+
 function gateBadge(dev?: string | null): { text: string; tone: Tone } {
-  switch ((dev || "").trim().toUpperCase()) {
-    case "POSSIBLE": return { text: "가능", tone: "ok" };
-    case "CAUTION": return { text: "주의(사전확인)", tone: "warn" };
-    case "CONDITIONAL": return { text: "조건부(확정 아님)", tone: "warn" };
-    case "PRECONDITION": return { text: "조건부·선행절차(확정 아님)", tone: "warn" };
-    case "NEEDS_OFFICIAL_SURVEY": return { text: "공식조사 필요(확정 아님)", tone: "warn" };
-    case "BLOCKED": return { text: "차단", tone: "bad" };
-    case "": return { text: "가능", tone: "ok" }; // special=None=일상 필지(기존 계약)
-    default: return { text: dev as string, tone: "muted" }; // 미지 어휘 — 원문 정직 표기
-  }
+  const code = (dev || "").trim().toUpperCase();
+  // special=None(=일상 필지)은 기존 계약대로 '가능'. 단 호출부가 미분석 여부를 먼저 거른다.
+  if (!code) return { text: "가능", tone: "ok" };
+  const { text, known } = developabilityLabel(code);
+  const tone: Tone = _GATE_TONE[code] ?? (known ? "warn" : "muted");
+  return { text: known ? text : `${text} (설명 준비 중)`, tone };
 }
 
 // 시니어 verdict → 한국어 배지(PASS/WARN/BLOCK — RuleEvaluation SSOT).
@@ -241,11 +250,21 @@ export function MultiParcelAttributeMatrix({
                   const dev = p.developability ?? p.special_parcel?.developability ?? null;
                   // 조회 실패 필지는 기본값 '가능'으로 과대표시하지 않는다(정직 — 판정 불가 표기).
                   const failed = typeof p.status === "string" && p.status !== "ok" && dev == null;
-                  const g = failed ? { text: "판정 불가(조회 실패)", tone: "muted" as Tone } : gateBadge(dev);
+                  // ★미분석 필지를 '가능'으로 과대표시하지 않는다 — 지목·용도지구를 못 봤다는 뜻이지
+                  //   제약이 없다는 뜻이 아니다. 백엔드가 심는 analysis_status를 여기서 존중한다
+                  //   (게이트 값이 비어 있으면 기존 계약상 '가능'으로 떨어지던 구멍).
+                  const unanalyzed = String((p as { analysis_status?: string }).analysis_status || "") === "unanalyzed";
+                  const g = failed
+                    ? { text: "판정 불가(조회 실패)", tone: "muted" as Tone }
+                    : unanalyzed
+                      ? { text: "판정 불가(미분석)", tone: "muted" as Tone }
+                      : gateBadge(dev);
                   return (
                     <tr key={(p.pnu || p.address || "") + i} className="border-t border-[var(--line)]">
-                      <td className="max-w-[180px] truncate px-2 py-1.5 font-bold text-[var(--text-primary)]" title={p.address || p.pnu || undefined}>
-                        {p.address || p.pnu || `필지 ${i + 1}`}
+                      {/* ★같은 동의 필지가 여러 건이면 주소만으로는 행을 구분할 수 없다 —
+                          PNU 에서 지번을 파생해 붙인다(견적·다필지 목록과 같은 헬퍼). */}
+                      <td className="max-w-[180px] truncate px-2 py-1.5 font-bold text-[var(--text-primary)]" title={parcelDisplayAddress(p.address, p.pnu) || p.pnu || undefined}>
+                        {parcelDisplayAddress(p.address, p.pnu) || p.pnu || `필지 ${i + 1}`}
                       </td>
                       <td className="px-2 py-1.5 text-[var(--text-secondary)]" data-testid={`mpx-area-${i}`}>{sqm(p.area_sqm)}</td>
                       <td className="px-2 py-1.5 text-[var(--text-secondary)]">{p.land_category || "미상"}</td>
@@ -272,27 +291,27 @@ export function MultiParcelAttributeMatrix({
             총면적 <b className="text-[var(--text-primary)]">{sqm(gross)}</b> 기준(확정+조건부+제외 = 총면적)
           </p>
           <div className="mt-2 flex h-3 w-full overflow-hidden rounded-full bg-[var(--surface-strong)]" aria-hidden>
-            <div style={{ width: pctW(usable.usable_confirmed_sqm) }} className="bg-emerald-500" />
-            <div style={{ width: pctW(usable.usable_conditional_sqm) }} className="bg-amber-500" />
-            <div style={{ width: pctW(usable.excluded_sqm) }} className="bg-rose-500" />
+            <div style={{ width: pctW(usable.usable_confirmed_sqm) }} className="bg-[var(--status-success)]" />
+            <div style={{ width: pctW(usable.usable_conditional_sqm) }} className="bg-[var(--status-warning)]" />
+            <div style={{ width: pctW(usable.excluded_sqm) }} className="bg-[var(--status-error)]" />
           </div>
           <ul className="mt-2 space-y-1 text-[11px]">
             <li className="flex items-center justify-between gap-2">
-              <span className="inline-flex items-center gap-1.5 text-[var(--text-secondary)]"><span className="size-2 rounded-full bg-emerald-500" aria-hidden /> 확정 사용가능</span>
+              <span className="inline-flex items-center gap-1.5 text-[var(--text-secondary)]"><span className="size-2 rounded-full bg-[var(--status-success)]" aria-hidden /> 확정 사용가능</span>
               <b className="text-[var(--text-primary)]">{sqm(usable.usable_confirmed_sqm)}{usable.share?.confirmed_pct != null ? ` · ${usable.share.confirmed_pct}%` : ""}</b>
             </li>
             <li className="flex items-center justify-between gap-2">
-              <span className="inline-flex items-center gap-1.5 text-[var(--text-secondary)]"><span className="size-2 rounded-full bg-amber-500" aria-hidden /> 조건부(확정 아님 — 선행절차 전제)</span>
+              <span className="inline-flex items-center gap-1.5 text-[var(--text-secondary)]"><span className="size-2 rounded-full bg-[var(--status-warning)]" aria-hidden /> 조건부(확정 아님 — 선행절차 전제)</span>
               <b className="text-[var(--text-primary)]">{sqm(usable.usable_conditional_sqm)}{usable.share?.conditional_pct != null ? ` · ${usable.share.conditional_pct}%` : ""}</b>
             </li>
             <li className="flex items-center justify-between gap-2">
-              <span className="inline-flex items-center gap-1.5 text-[var(--text-secondary)]"><span className="size-2 rounded-full bg-rose-500" aria-hidden /> 제외(차단·건축불가 지목)</span>
+              <span className="inline-flex items-center gap-1.5 text-[var(--text-secondary)]"><span className="size-2 rounded-full bg-[var(--status-error)]" aria-hidden /> 제외(차단·건축불가 지목)</span>
               <b className="text-[var(--text-primary)]">{sqm(usable.excluded_sqm)}{usable.share?.excluded_pct != null ? ` · ${usable.share.excluded_pct}%` : ""}</b>
             </li>
           </ul>
           {(usable.excluded_parcels?.length ?? 0) > 0 && (
-            <div className="mt-2 rounded-lg border border-rose-500/20 bg-rose-500/5 p-2">
-              <p className="text-[10px] font-bold text-rose-400">제외 필지 사유 명세</p>
+            <div className="mt-2 rounded-lg border border-[var(--status-error)]/20 bg-[var(--status-error)]/5 p-2">
+              <p className="text-[10px] font-bold text-[var(--status-error)]">제외 필지 사유 명세</p>
               <ul className="mt-1 space-y-0.5 text-[10px] leading-relaxed text-[var(--text-secondary)]">
                 {usable.excluded_parcels!.map((ep, i) => (
                   <li key={(ep.pnu || "") + i}>
@@ -304,7 +323,7 @@ export function MultiParcelAttributeMatrix({
             </div>
           )}
           {(usable.area_unknown_parcels?.length ?? 0) > 0 && (
-            <p className="mt-2 inline-flex items-start gap-1 text-[10px] text-amber-500">
+            <p className="mt-2 inline-flex items-start gap-1 text-[10px] text-[var(--status-warning)]">
               <AlertTriangle className="mt-0.5 size-3 shrink-0" aria-hidden />
               면적 미확보 {usable.area_unknown_parcels!.length}필지 — 합산 제외(0 가정 안 함), 공부 면적 확보 후 재정산 필요.
             </p>
@@ -377,7 +396,7 @@ export function MultiParcelAttributeMatrix({
             </p>
           )}
           {straddle.honest_note && (
-            <p className="mt-1 inline-flex items-start gap-1 text-[10px] leading-relaxed text-amber-500">
+            <p className="mt-1 inline-flex items-start gap-1 text-[10px] leading-relaxed text-[var(--status-warning)]">
               <AlertTriangle className="mt-0.5 size-3 shrink-0" aria-hidden /> {straddle.honest_note}
             </p>
           )}

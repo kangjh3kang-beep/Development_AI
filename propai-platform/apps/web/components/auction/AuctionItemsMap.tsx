@@ -13,8 +13,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Maximize2, MapPin } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import { useMapFullscreen } from "@/hooks/useMapFullscreen";
+import { loadLeaflet } from "@/lib/leaflet-loader";
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+
 declare global {
   interface Window {
     L: any;
@@ -33,28 +34,6 @@ export type AuctionMapItem = {
 
 type Located = { key: string; lat: number; lon: number; pnu?: string | null };
 
-let leafletLoading: Promise<void> | null = null;
-function loadLeaflet(): Promise<void> {
-  if (typeof window === "undefined") return Promise.reject(new Error("no window"));
-  if (window.L) return Promise.resolve();
-  if (leafletLoading) return leafletLoading;
-  leafletLoading = new Promise((resolve, reject) => {
-    if (!document.querySelector("link[data-leaflet]")) {
-      const css = document.createElement("link");
-      css.rel = "stylesheet";
-      css.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
-      css.setAttribute("data-leaflet", "1");
-      document.head.appendChild(css);
-    }
-    const script = document.createElement("script");
-    script.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
-    script.async = true;
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error("Leaflet 로드 실패"));
-    document.head.appendChild(script);
-  });
-  return leafletLoading;
-}
 
 const won = (n?: number | null) => (n ? `${Math.round(n / 1e4).toLocaleString("ko-KR")}만원` : "-");
 
@@ -104,7 +83,7 @@ export function AuctionItemsMap({
       layerRef.current = L.layerGroup().addTo(map);
       mapRef.current = map;
       setReady(true);
-    }).catch(() => setNote("지도 로딩 실패"));
+    }).catch(() => { if (alive) setNote("지도 로딩 실패"); });  // ★언마운트 뒤 setState 방지(형제 스윕).
     return () => {
       alive = false;
       if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; }

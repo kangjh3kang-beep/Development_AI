@@ -1,7 +1,7 @@
 """R0 — 관할 해석 외부 어댑터(인터페이스 + mock). 라이브 호출은 임계경로 인라인 금지(A5).
 
-USE_MOCK_ADAPTERS=true(dev)에서는 versioned 로컬 미러(app/data/mock_jurisdiction.json)를 사용.
-실제 외부(토지이음/VWORLD) 연동은 동일 인터페이스로 후속 페이즈에서 주입.
+JURISDICTION_ADAPTER=mock(dev·기본)에서는 versioned 로컬 미러(app/data/mock_jurisdiction.json)를 사용.
+실제 외부(토지이음/VWORLD)는 JURISDICTION_ADAPTER=vworld + VWORLD_API_KEY로 동일 인터페이스 주입.
 """
 from __future__ import annotations
 

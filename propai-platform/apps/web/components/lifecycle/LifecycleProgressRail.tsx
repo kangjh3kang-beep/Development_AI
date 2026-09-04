@@ -14,15 +14,20 @@
 
 import Link from "next/link";
 import { motion } from "framer-motion";
+import { useHydrated } from "@/hooks/useHydrated";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import {
   LIFECYCLE_STAGES,
   STAGE_META,
   type LifecycleStage,
 } from "@/lib/lifecycle-stages";
+import { resolveStageLabel } from "@/lib/navigation/nav-i18n";
 import { StageIcon } from "@/components/common/StageIcon";
 
-type StageStatus = "completed" | "current" | "next" | "pending";
+// ★"진행중(partial)" 을 별도 상태로 둔다 — 종전엔 주소만 입력한 부지가 **completed** 로
+//   셈해져 "부지분석 완료"인데 설계·수지가 못 도는 모순이 화면에 그대로 나왔다.
+//   한 일은 인정하되(pending 아님) 끝났다고 말하지 않는다(completed 아님).
+type StageStatus = "completed" | "partial" | "current" | "next" | "pending";
 
 const STATUS_NODE: Record<StageStatus, string> = {
   completed:
@@ -31,6 +36,8 @@ const STATUS_NODE: Record<StageStatus, string> = {
     "bg-[var(--accent-strong)]/15 text-[var(--accent-strong)] ring-2 ring-[var(--accent-strong)]/40 shadow-[var(--shadow-glow)]",
   next:
     "bg-[var(--surface-muted)] text-[var(--text-secondary)] border border-dashed border-[var(--accent-strong)]/40 hover:text-[var(--accent-strong)]",
+  partial:
+    "bg-[var(--surface-muted)] text-[var(--text-secondary)] border border-dashed border-[var(--line-strong)]",
   pending: "bg-[var(--surface-muted)] text-[var(--text-hint)] opacity-60",
 };
 
@@ -56,21 +63,38 @@ export function LifecycleProgressRail({
   // 진행도·완료 판정의 단일 소비원(SSOT) — store의 데이터유무 판정 선택자.
   // markStageComplete를 일관 호출하지 않는 모듈 탓에 completedStages가 비어 "0/11 고정"되던
   // 버그를 해소: 실데이터가 채워진 단계(부지분석 등)를 완료로 일관 표시한다.
-  const stageHasData = useProjectContextStore((s) => s.stageHasData);
+  // ★완료 판정 SSOT — `stageHasData`("데이터가 있는가")를 완료로 읽던 것이 헬스보드와
+  //   갈린 원인이었다. 완료는 `stageCompletion`("끝났는가") 하나로만 판정한다.
+  const stageCompletion = useProjectContextStore((s) => s.stageCompletion);
+  // ★진행도는 **persist 저장소(localStorage)** 에서 파생된다 — 서버엔 그 저장소가 없다.
+  //   재수화 전에 그대로 쓰면 서버 `0` / 클라 `1` 로 **하이드레이션 불일치**가 나고,
+  //   React 가 이 서브트리를 버리고 다시 그리며 uncaught error 를 던진다(2026-08-13 실측).
+  //   그래서 저장소 파생값은 **재수화 이후에만** 렌더에 쓴다.
+  //   잠금: `e2e/hydration-lifecycle-rail.spec.ts`(수정 전 red → 후 green 확인)
+  const hydrated = useHydrated();
 
   // 활성 프로젝트가 없으면 표시하지 않는다(대시보드/레이아웃 무파괴).
+  // ★props 로 받은 id 는 route param 이라 서버·클라가 같다 — 게이트 불필요.
+  //   store 폴백으로 얻은 값만 재수화 뒤로 미룬다. 안 그러면 **컴포넌트 유무 자체**가 갈린다.
+  if (!projectIdProp && !hydrated) return null;
   if (!projectId) return null;
 
-  const nextStage = getNextRecommendedStage();
-  // 완료 판정 = 완료 단계 기록(completedStages) OR 실데이터 존재(stageHasData).
+  const nextStage = hydrated ? getNextRecommendedStage() : undefined;
+  // 완료 = 사용자가 완료 표시했거나(completedStages) **수치가 확보**됐다(stageCompletion==="done").
   const isDone = (id: LifecycleStage) =>
-    completedStages.includes(id) || stageHasData(id) === true;
+    hydrated && (completedStages.includes(id) || stageCompletion(id) === "done");
+  // 진행중 = 시작은 했으나 수치가 없다(예: 주소만 있고 면적 미확보). 완료로 세지 않는다.
+  const isPartial = (id: LifecycleStage) =>
+    hydrated && !isDone(id) && stageCompletion(id) === "partial";
   const completedCount = LIFECYCLE_STAGES.filter((id) => isDone(id)).length;
+  const partialCount = LIFECYCLE_STAGES.filter((id) => isPartial(id)).length;
+  // ★진행률의 분자는 **완료만** 센다. 진행중을 섞으면 다시 "끝난 것처럼" 보인다.
   const pct = Math.round((completedCount / LIFECYCLE_STAGES.length) * 100);
 
   function statusOf(id: LifecycleStage): StageStatus {
     if (isDone(id)) return "completed";
-    if (currentStage === id) return "current";
+    if (isPartial(id)) return "partial";
+    if (hydrated && currentStage === id) return "current";
     if (nextStage === id) return "next";
     return "pending";
   }
@@ -87,19 +111,24 @@ export function LifecycleProgressRail({
           <p className="text-[10px] font-black uppercase tracking-[0.25em] text-[var(--accent-strong)]">
             라이프사이클 진행
           </p>
-          {projectName && (
+          {hydrated && projectName && (
             <p className="truncate text-[13px] font-bold text-[var(--text-primary)]">{projectName}</p>
           )}
         </div>
         <span className="shrink-0 rounded-full border border-[var(--line)] bg-[var(--surface-muted)] px-3 py-1 text-[11px] font-bold text-[var(--text-secondary)]">
-          {completedCount}/{LIFECYCLE_STAGES.length} · {pct}%
+          {hydrated
+            ? `완료 ${completedCount}/${LIFECYCLE_STAGES.length} · ${pct}%${partialCount > 0 ? ` · 진행중 ${partialCount}` : ""}`
+            : `—/${LIFECYCLE_STAGES.length}`}
         </span>
       </header>
 
       {/* 진행 바 */}
       <div className="mb-4 h-1.5 w-full overflow-hidden rounded-full bg-[var(--surface-muted)]">
         <div
-          className="h-full rounded-full bg-[var(--accent-strong)] transition-[width] duration-500"
+          className={`h-full rounded-full bg-[var(--accent-strong)] ${
+            // 재수화 직후 0%→실제값이 0.5초에 걸쳐 자라 보이지 않게, 첫 채움에는 전이를 끈다.
+            hydrated ? "transition-[width] duration-500" : ""
+          }`}
           style={{ width: `${pct}%` }}
         />
       </div>
@@ -114,6 +143,9 @@ export function LifecycleProgressRail({
       >
         {LIFECYCLE_STAGES.map((id, index) => {
           const meta = STAGE_META[id];
+          // ★라벨은 로케일을 탄다 — `locale` 은 이미 링크(`stageRoute`)에만 쓰이고
+          //   있었다. 같은 결함이 route-registry 에도 있었고 함께 봉합했다.
+          const stageLabel = resolveStageLabel(id, meta.label, locale);
           const status = statusOf(id);
 
           const node = (
@@ -124,7 +156,7 @@ export function LifecycleProgressRail({
               className={`relative flex items-center gap-2 rounded-[var(--radius-xl)] px-3 py-2 transition-all duration-300 ${
                 isVertical ? "w-full" : "min-w-[88px] flex-col text-center"
               } ${STATUS_NODE[status]} cursor-pointer`}
-              title={meta.label}
+              title={stageLabel}
             >
               {status === "current" && (
                 <span className="absolute -right-1 -top-1 flex h-3 w-3" aria-hidden="true">
@@ -159,7 +191,7 @@ export function LifecycleProgressRail({
                 )}
               </span>
               <span className="text-[10px] font-bold uppercase leading-tight tracking-[0.08em]">
-                {meta.label}
+                {stageLabel}
               </span>
             </motion.div>
           );

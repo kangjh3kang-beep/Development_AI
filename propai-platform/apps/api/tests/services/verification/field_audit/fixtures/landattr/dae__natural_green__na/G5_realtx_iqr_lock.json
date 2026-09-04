@@ -1,0 +1,38 @@
+{
+  "_meta": {
+    "seed_id": "G5",
+    "title": "실거래 분포 log-IQR robust trim(이미 수정 → 회귀 잠금)",
+    "land_attrs": {"jimok": "대", "zone": "자연녹지지역", "sanji_gubun": null},
+    "landattr_axis_note": "G5는 분포품질(실거래 트리밍) 시드로 토지속성 축이 1차 관심이 아니다 — 명목 셀 배치(정직표기).",
+    "tier": "B",
+    "phase": "0/W2-c",
+    "status": "이미 수정됨(price_stats:21 robust_price_stats log-IQR) → 회귀 골든으로 잠금. ★정직화(W2-c): 과거 골든은 실함수를 호출하지 않고 fixture가 손으로 적은 필드만 assert(동어반복=거짓 안전)라, robust_price_stats가 깨져도 FAIL하지 않았다. 게다가 과거 fixture의 n=6 표본은 _MIN_SAMPLE_FOR_TRIM=8 미만이라 트림이 아예 스킵돼 수치가 실함수와 모순이었다. 이제 실함수 robust_price_stats(raw_samples)를 직접 호출해 log-IQR trim이 이상치를 실제로 배제함을 잠근다.",
+    "defect_historical": "과거 실거래 최저 2만원·apt 혼입이 원/㎡ 통계 오염 → 시세 왜곡.",
+    "w1_target": "robust_price_stats 실호출 반환을 회귀 골든으로 박제. ★트림 발동 조건은 코드 _MIN_SAMPLE_FOR_TRIM=8(유효표본 8건 이상)이며 그 미만은 트림 스킵(원시 유지)이다 — 과거 fixture 노트의 '샘플<5'는 코드와 불일치라 '8'로 정정. W1 이후에도 이 시드는 finding 0 유지(잠금).",
+    "regression_lock": true,
+    "synthetic": true,
+    "honesty": "W0 합성 표본 — 라이브 실거래 미수집(합성 원/㎡ 분포). 잠금 방식: 테스트가 robust_price_stats(raw_samples_won_per_sqm)를 실호출해 log-IQR trim이 2만원 이상치를 실제로 배제함을 검증한다(fixture 자기필드 assert 아님). expected_robust_stats는 실함수가 정본 venv에서 실제로 반환한 값이다(손으로 지어낸 값 아님)."
+  },
+  "ctx": {"address": "경상북도 포항시 남구 호미곶면 대보리 100", "zone_type": "자연녹지지역", "pnu": "4711025032yyyyyyy"},
+  "input": {
+    "zone_type": "자연녹지지역",
+    "realtx": {
+      "raw_samples_won_per_sqm": [20000, 480000, 490000, 495000, 500000, 505000, 510000, 500000],
+      "robust_stats_applied": true,
+      "trim_method": "log-IQR",
+      "sample_n": 8,
+      "expected_robust_stats": {
+        "avg": 497143,
+        "min": 480000,
+        "max": 510000,
+        "count": 8,
+        "excluded": 1
+      }
+    }
+  },
+  "current_baseline": {
+    "field": "realtx.expected_robust_stats.avg",
+    "observed": 497143,
+    "note": "robust_price_stats 실호출: log-IQR trim이 2만원 이상치 1건을 배제하고 정상 avg=497,143원/㎡ 산출(min=480,000·max=510,000·count=8·excluded=1). 이 실호출 반환이 회귀 잠금 대상값(재발 시 FAIL)."
+  }
+}

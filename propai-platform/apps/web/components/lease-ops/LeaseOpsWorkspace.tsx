@@ -14,6 +14,7 @@ import {
 import { Card, CardContent } from "@propai/ui";
 import { WorkspaceQueryErrorCard } from "@/components/analytics/WorkspaceQueryErrorCard";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
+import { MarkdownLite } from "@/components/common/MarkdownLite";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import type { Locale } from "@/i18n/config";
 import {
@@ -366,7 +367,7 @@ export function LeaseOpsWorkspace({ locale }: { locale: Locale }) {
         <CardContent className="relative z-10 p-8">
           <div className="flex flex-wrap items-center gap-3">
             <span className="cc-meta">LEASE · OPERATIONS</span>
-            <span className="rounded-full bg-[var(--accent-soft)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--accent-strong)]">
+            <span className="rounded-full bg-[var(--accent-soft)] px-4 py-2 label-caps text-[var(--accent-strong)]">
               임대·임차인 관리
             </span>
             {runtimeConfig.mode === "live" ? (
@@ -459,7 +460,7 @@ export function LeaseOpsWorkspace({ locale }: { locale: Locale }) {
                       contentStyle={{
                         background: "var(--surface)",
                         border: "1px solid var(--line)",
-                        borderRadius: 12,
+                        borderRadius: "var(--r-panel)",
                         color: "var(--text-primary)",
                       }}
                     />
@@ -536,7 +537,7 @@ export function LeaseOpsWorkspace({ locale }: { locale: Locale }) {
             <button
               type="submit"
               disabled={tenantMutation.isPending}
-              className="rounded-[var(--radius-lg)] bg-[var(--accent-strong)] px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-[var(--accent)] disabled:opacity-60"
+              className="rounded-[var(--radius-lg)] bg-[var(--accent-strong)] px-5 py-2.5 text-sm font-semibold text-white transition hover:brightness-110 disabled:opacity-60"
             >
               {tenantMutation.isPending ? "등록 중..." : "임차인 등록"}
             </button>
@@ -731,7 +732,7 @@ export function LeaseOpsWorkspace({ locale }: { locale: Locale }) {
             <button
               type="submit"
               disabled={contractMutation.isPending}
-              className="rounded-[var(--radius-lg)] bg-[var(--accent-strong)] px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-[var(--accent)] disabled:opacity-60"
+              className="rounded-[var(--radius-lg)] bg-[var(--accent-strong)] px-5 py-2.5 text-sm font-semibold text-white transition hover:brightness-110 disabled:opacity-60"
             >
               {contractMutation.isPending ? "등록 중..." : "임대계약 등록"}
             </button>
@@ -866,8 +867,8 @@ export function LeaseOpsWorkspace({ locale }: { locale: Locale }) {
             </button>
           </div>
           {analyzeResult && (
-            <div className="mt-4 whitespace-pre-wrap rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5 text-sm leading-7 text-[var(--text-secondary)]">
-              {analyzeResult}
+            <div className="mt-4 rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-5">
+              <MarkdownLite text={analyzeResult} className="text-sm leading-7 text-[var(--text-secondary)]" />
             </div>
           )}
         </SectionCard>

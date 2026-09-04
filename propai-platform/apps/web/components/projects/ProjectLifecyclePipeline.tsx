@@ -50,6 +50,10 @@ export function ProjectLifecyclePipeline({
   // completedStages가 비어 있어도 "실데이터가 채워진" 단계를 완료로 일관 표시한다
   // (markStageComplete 미호출 모듈 때문에 0/11 고정되던 버그 해소).
   const stageHasData = useProjectContextStore((s) => s.stageHasData);
+  // ★완료 판정 SSOT — `stageHasData`("데이터가 있는가")를 완료로 읽으면 주소만 입력한 부지가
+  //   "완료"로 셈해진다(헬스보드는 같은 상태를 "부분 완료"라 해서 화면이 갈렸다).
+  //   완료는 `stageCompletion`("끝났는가") 하나로만 판정한다. `hasData` prop 은 이름 그대로 유지.
+  const stageCompletion = useProjectContextStore((s) => s.stageCompletion);
 
   const stages = getStages(locale, projectId);
   const nextStage = getNextRecommendedStage();
@@ -58,10 +62,12 @@ export function ProjectLifecyclePipeline({
   const activeRouteStage = stages.find((s) => pathname.startsWith(s.route));
 
   function getStageStatus(stageId: string): "completed" | "current" | "next" | "pending" {
-    // 완료 판정 = 완료 단계 기록(completedStages) OR 실데이터 존재(stageHasData).
-    // markStageComplete를 일관 호출하지 않는 모듈이 있어 데이터유무도 함께 본다.
-    if (completedStages.includes(stageId) || stageHasData(stageId) === true)
+    // 완료 = 완료 단계 기록(completedStages) OR **수치 확보**(stageCompletion==="done").
+    // markStageComplete를 일관 호출하지 않는 모듈이 있어 데이터 판정도 함께 본다.
+    if (completedStages.includes(stageId) || stageCompletion(stageId) === "done")
       return "completed";
+    // 진행중(partial)은 완료가 아니다 — 현재 단계로 표시해 "여기 마저 채우세요"로 안내한다.
+    if (stageCompletion(stageId) === "partial") return "current";
     if (activeRouteStage?.id === stageId || currentStage === stageId) return "current";
     if (nextStage === stageId) return "next";
     return "pending";
@@ -161,6 +167,11 @@ function StageNode({
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.05, duration: 0.3 }}
       className={`${baseClasses} ${statusClasses[status]}`}
+      /* 관측점 — 단계 상태를 **DOM 에서 검사 가능**하게 남긴다. 색상 클래스로 상태를 판별하면
+         디자인이 바뀔 때마다 테스트가 깨지고, 그렇다고 안 잠그면 판정 배선이 무잠금이 된다
+         (실측: `partial → current` 배선이 변이에서 생존했다). */
+      data-stage-id={stage.id}
+      data-stage-status={status}
     >
       {/* Pulsing ring for current stage */}
       {status === "current" && (
@@ -180,7 +191,7 @@ function StageNode({
       </div>
 
       {/* Label */}
-      <span className="text-[10px] font-bold uppercase tracking-[0.1em] leading-tight text-center whitespace-nowrap">
+      <span className="label-caps leading-tight text-center whitespace-nowrap">
         {stage.label}
       </span>
 

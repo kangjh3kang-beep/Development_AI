@@ -14,6 +14,14 @@ import { NumberInput } from "@/components/common/NumberInput";
 import { VerificationBadge } from "@/components/common/VerificationBadge";
 import { AvmVisionPanel } from "@/components/avm-vision/AvmVisionPanel";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+// 탁상감정 공용 계약(타입·fetch·포매터) — 부지분석 워크스페이스와 단일 계약 공유(재구현 금지).
+import {
+  apiBase,
+  eok,
+  won,
+  fetchDeskAppraisal,
+  type DeskAppraisalResult as Result,
+} from "@/lib/land/desk-appraisal";
 import type { Locale } from "@/i18n/config";
 
 const APPR_LABELS: Record<string, string> = {
@@ -32,46 +40,20 @@ function apiV2Base(): string {
   return "/api/proxy/v2";
 }
 
-function apiBase(): string {
-  if (typeof window !== "undefined") {
-    const h = window.location.hostname;
-    if (h === "4t8t.net" || h === "www.4t8t.net" || h.endsWith(".pages.dev") || h === "propai.kr")
-      return "https://api.4t8t.net/api/v1";
+function Gauge({ value, basis }: { value: number | null; basis?: string | null }) {
+  // ★신뢰도는 **보류될 수 있다**(독립 추정이 1개면 교차검증이 아니다 —
+  //   `PLAN_appraisal_nondeterminism_2026-08-25.md` §P-3). 종전 타입은 `number` 였고
+  //   `Math.round(null * 100)` 은 **0** 이라, 보류를 **"신뢰도 0%"**(=최악)로 그렸다.
+  if (value == null) {
+    return (
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="rounded-full bg-[var(--surface-strong)] px-2 py-0.5 text-[11px] font-bold text-[var(--text-tertiary)]">
+          산출 보류
+        </span>
+        {basis ? <span className="text-[11px] text-[var(--text-secondary)]">{basis}</span> : null}
+      </div>
+    );
   }
-  return "/api/proxy";
-}
-
-const eok = (v: number | null | undefined) =>
-  v == null ? "—" : `${(v / 1e8).toLocaleString(undefined, { maximumFractionDigits: 2 })}억`;
-const won = (v: number | null | undefined) => (v == null ? "—" : `${Math.round(v).toLocaleString()}원`);
-
-type Method = { method: string; unit_price: number; rationale: string };
-type Stat = { source?: string; pct?: number; basis?: string; rate?: number; factor?: number } | null;
-type Result = {
-  ok: boolean; message?: string;
-  appraised_price_per_sqm: number; appraised_total_won: number | null; area_sqm: number | null;
-  official_price_per_sqm?: number; pnu?: string | null;
-  subject?: {
-    land_category?: string | null; zone_type?: string | null; zone_type_2?: string | null;
-    land_use_situation?: string | null; terrain_height?: string | null; terrain_form?: string | null;
-    official_price_year?: number | null;
-  };
-  confidence: number; range_per_sqm: { low: number; high: number };
-  cross_check?: { firms: number[]; mean: number; cv_pct: number; min: number; max: number; note: string };
-  irregularity?: number | null; methods: Method[]; weight_note: string;
-  road_side?: string | null; time_adjust?: number; time_adjust_basis?: string; source?: string; base_year?: number;
-  building?: { building_value_won: number; rationale: string } | null; complex_total_won?: number | null;
-  income?: { income_value_won: number; rationale: string } | null; income_total_won?: number | null;
-  complex_note?: string | null;
-  market_stats?: {
-    region?: string;
-    rone_available?: boolean; cap_rate?: Stat; jeonse_conversion_rate?: Stat; housing_time_adjust?: Stat;
-    land_price_trend?: { monthly?: { period: string; rate: number }[]; yearly?: { year: string; rate: number }[] } | null;
-  };
-  disclaimer: string;
-};
-
-function Gauge({ value }: { value: number }) {
   const pct = Math.round(value * 100);
   const color = pct >= 80 ? "#10b981" : pct >= 60 ? "#3b82f6" : pct >= 45 ? "#f59e0b" : "#ef4444";
   return (
@@ -175,16 +157,9 @@ export function DeskAppraisalReportClient({ locale }: { locale: Locale }) {
   // ★addressOnly: 일괄 경로에선 대표필지의 수동입력(공시지가·GFA·임대료 등)을 전파하지 않고
   //   주소만 전송 → 각 필지가 자체 공시지가·면적을 자동조회(타 필지 추정가 오염 방지).
   const fetchAppraisal = useCallback(async (targetAddr: string, opts?: { addressOnly?: boolean }): Promise<Result> => {
-    const token = (typeof window !== "undefined" && localStorage.getItem("propai_access_token")) || "";
+    // 네트워크 코어는 공용 fetchDeskAppraisal 로 이관 — payload 구성(수동입력·주소전용)만 컴포넌트에 잔류.
     const payload = opts?.addressOnly ? { address: targetAddr } : { ...body(), address: targetAddr };
-    const r = await fetch(`${apiBase()}/land-price/desk-appraisal`, {
-      method: "POST", headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-      body: JSON.stringify(payload),
-    });
-    if (!r.ok) throw new Error(`서버 오류(${r.status})`);
-    const d = await r.json();
-    if (!d?.ok) throw new Error(d?.message || "추정 실패");
-    return d as Result;
+    return fetchDeskAppraisal(payload);
   }, [body]);
 
   const run = useCallback(async () => {
@@ -226,12 +201,24 @@ export function DeskAppraisalReportClient({ locale }: { locale: Locale }) {
     try {
       const token = (typeof window !== "undefined" && localStorage.getItem("propai_access_token")) || "";
       // 이미 화면에 확보된 공시지가·면적·PNU를 넘겨 재지오코딩에 의존하지 않게(신뢰성)
-      const pdfBody = {
+      const pdfBody: Record<string, unknown> = {
         ...body(),
         pnu: res?.pnu ?? undefined,
         official_price_per_sqm: official ?? res?.official_price_per_sqm ?? undefined,
         area_sqm: res?.area_sqm ?? undefined,
       };
+      // ★다필지: 일괄 분석(batch)에서 성공 필지가 2건 이상이면 parcels 로 넘겨 '통합 보고서'로 생성.
+      //   실패 필지(res=null)는 생략하고, 각 필지의 화면 확보값(PNU·면적·공시지가)만 전송(재지오코딩 최소화).
+      const okParcels = (batch ?? []).filter((b) => b.res?.ok);
+      const isMultiReport = okParcels.length >= 2;
+      if (isMultiReport) {
+        pdfBody.parcels = okParcels.map((b) => ({
+          pnu: b.res?.pnu ?? undefined,
+          address: b.address,
+          area_sqm: b.res?.area_sqm ?? b.area ?? undefined,
+          official_price_per_sqm: b.res?.official_price_per_sqm ?? undefined,
+        }));
+      }
       const r = await fetch(`${apiBase()}/land-price/desk-appraisal/pdf?format=${format}`, {
         method: "POST", headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify(pdfBody),
@@ -239,10 +226,11 @@ export function DeskAppraisalReportClient({ locale }: { locale: Locale }) {
       // 성공=바이너리(pdf/pptx/docx). 실패=JSON(공시지가 미확인 등) → 정직 표기.
       if (!r.ok || (r.headers.get("content-type") || "").includes("json")) { setErr("리포트 생성 실패"); return; }
       const blob = await r.blob(); const url = URL.createObjectURL(blob);
-      const a = document.createElement("a"); a.href = url; a.download = `예상시세추정보고서_${ranAddr || addr}.${format}`;
+      const fname = isMultiReport ? `예상시세추정보고서_통합${okParcels.length}필지` : `예상시세추정보고서_${ranAddr || addr}`;
+      const a = document.createElement("a"); a.href = url; a.download = `${fname}.${format}`;
       document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
     } catch { setErr("리포트 다운로드 실패"); } finally { setBusy(""); }
-  }, [body, addr, ranAddr, res, official]);
+  }, [body, addr, ranAddr, res, official, batch]);
 
   // 프로젝트 부지 주소가 있으면 진입 시 자동 채움(실행은 사용자 클릭)
   useEffect(() => {
@@ -348,7 +336,7 @@ export function DeskAppraisalReportClient({ locale }: { locale: Locale }) {
                           <>
                             <td className="cc-num px-2.5 py-2 text-right font-bold text-[var(--accent-strong)]">{eok(b.res.appraised_total_won)}</td>
                             <td className="cc-num px-2.5 py-2 text-right text-[var(--text-secondary)]">{b.res.appraised_price_per_sqm.toLocaleString()}</td>
-                            <td className="cc-num px-2.5 py-2 text-right text-[var(--text-secondary)]">{Math.round(b.res.confidence * 100)}%</td>
+                            <td className="cc-num px-2.5 py-2 text-right text-[var(--text-secondary)]">{b.res.confidence == null ? "보류" : `${Math.round(b.res.confidence * 100)}%`}</td>
                           </>
                         ) : (
                           <td colSpan={3} className="px-2.5 py-2 text-right text-[var(--status-warning)]">{b.err || "추정 실패"}</td>
@@ -407,11 +395,11 @@ export function DeskAppraisalReportClient({ locale }: { locale: Locale }) {
                   <span className="cc-num text-3xl font-[1000] text-[var(--accent-strong)]">{eok(res.appraised_total_won)}</span>
                 </div>
                 <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                  단가 {res.appraised_price_per_sqm.toLocaleString()}원/㎡ · 신뢰구간 {won(res.range_per_sqm.low)} ~ {won(res.range_per_sqm.high)}/㎡
+                  단가 {res.appraised_price_per_sqm.toLocaleString()}원/㎡ · 가정 범위 {won(res.range_per_sqm.low)} ~ {won(res.range_per_sqm.high)}/㎡
                 </p>
                 <div className="mt-3 flex items-center gap-3">
                   <span className="text-[11px] font-bold text-[var(--text-tertiary)]">신뢰도</span>
-                  <div className="flex-1"><Gauge value={res.confidence} /></div>
+                  <div className="flex-1"><Gauge value={res.confidence} basis={res.confidence_basis} /></div>
                 </div>
                 {(res.complex_total_won || res.income_total_won) && (
                   <p className="mt-2 text-[11px] text-[var(--text-secondary)]">
@@ -462,6 +450,14 @@ export function DeskAppraisalReportClient({ locale }: { locale: Locale }) {
                 </table>
               </div>
               <p className="mt-1.5 text-[11px] text-[var(--text-hint)]">{res.weight_note}</p>
+              {/* ★거래사례비교법이 빠진 **사유**(R1 리뷰 M-6 — 백엔드가 채우는데 화면
+                  소비처가 0개라 사용자가 겪는 침묵은 그대로였다). "거래가 없다"와
+                  "원천이 지번을 가려서 위치를 못 잡는다"는 전혀 다른 상태다. */}
+              {res.comparable_skipped_reason ? (
+                <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--text-hint)] break-keep">
+                  {res.comparable_skipped_reason}
+                </p>
+              ) : null}
             </Section>
 
             {/* IV. 복수 시나리오 교차검증 */}

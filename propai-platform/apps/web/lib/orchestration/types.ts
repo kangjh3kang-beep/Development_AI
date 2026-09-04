@@ -84,7 +84,9 @@ export interface SsotInputSpec {
   manualPrompt?: string;
   /**
    * provenance 머지가드 적용 여부(정직표기용).
-   * feasibility/finance/compliance는 ProvenanceModule 밖이라 수동입력 merge가드가 없음 → false로 정직 표기.
+   * ★2026-08-26 정정 — 종전 *"feasibility/finance/compliance는 ProvenanceModule 밖"* 은 **거짓이 됐다**
+ *   (`feasibility` 편입). `finance`·`compliance` 는 여전히 밖이다. 플래그가 **슬롯**에 걸린 것인지
+ *   **노드 산출**에 걸린 것인지는 **미측정**이라 값은 보수적으로 유지한다.
    */
   provenanceGuarded: boolean;
 }

@@ -274,7 +274,7 @@ export function DecisionBriefPanel({
   // ── 주소 미확보: 정직 안내(가짜 분석 금지) ──
   if (!address) {
     return (
-      <div className="flex flex-col items-center gap-4 rounded-[3rem] border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)] p-12 text-center">
+      <div className="flex flex-col items-center gap-4 rounded-[var(--radius-2xl)] border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)] p-12 text-center">
         <Compass className="size-10 text-[var(--text-tertiary)]" aria-hidden />
         <p className="text-base font-black text-[var(--text-primary)]">
           분석할 주소가 없습니다
@@ -345,7 +345,7 @@ export function DecisionBriefPanel({
 
       {/* 로딩 */}
       {state.kind === "loading" && (
-        <div className="flex flex-col items-center gap-3 rounded-[2.5rem] border border-[var(--line)] bg-[var(--surface-soft)] p-12 text-center">
+        <div className="flex flex-col items-center gap-3 rounded-[var(--radius-xl)] border border-[var(--line)] bg-[var(--surface-soft)] p-12 text-center">
           <Loader2 className="size-8 animate-spin text-[var(--accent-strong)]" aria-hidden />
           <p className="text-sm font-bold text-[var(--text-secondary)]">
             부지·시장·법규·인허가를 모아 통합 판정을 산출하는 중...
@@ -355,7 +355,7 @@ export function DecisionBriefPanel({
 
       {/* 에러 — 정직 표기(상태코드 분류 메시지) */}
       {state.kind === "error" && (
-        <div className="flex flex-col items-center gap-3 rounded-[2.5rem] border border-[color-mix(in_srgb,var(--status-error)_30%,transparent)] bg-[color-mix(in_srgb,var(--status-error)_6%,transparent)] p-10 text-center">
+        <div className="flex flex-col items-center gap-3 rounded-[var(--radius-xl)] border border-[color-mix(in_srgb,var(--status-error)_30%,transparent)] bg-[color-mix(in_srgb,var(--status-error)_6%,transparent)] p-10 text-center">
           <AlertTriangle className="size-8 text-[var(--status-error)]" aria-hidden />
           <p className="text-sm font-black text-[var(--text-primary)]">
             {state.message}

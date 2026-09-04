@@ -9,6 +9,7 @@
  */
 
 import { useCallback, useState } from "react";
+import { formatPercentDelta, formatPercentRange } from "@/lib/formatters"; // 비율 표기 SSOT
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import type { ChangeForecastResponse, ChangeForecastRiskInput } from "@/components/cost/cmTypes";
@@ -61,9 +62,11 @@ export function ChangeForecastCard({
     setRiskLoading(true);
     setRiskMsg("");
     try {
+      // 백엔드 PredictRequest 계약 = {address?, pnu?, zone_type?, design_params?, use_llm?}.
+      // project_id 는 모델에 없어 Pydantic 이 조용히 버리던 필드(무음 드롭 패턴) — 전송 제거.
       const r = await apiClient.post<DesignRiskPredictResponse>("/design-risk/predict", {
         useMock: false,
-        body: { address: addr, pnu: siteAnalysis?.pnu ?? undefined, project_id: projectId },
+        body: { address: addr, pnu: siteAnalysis?.pnu ?? undefined },
       });
       if (r.ok && r.risks) {
         setRisks(r.risks as ChangeForecastRiskInput[]);
@@ -76,7 +79,7 @@ export function ChangeForecastCard({
     } finally {
       setRiskLoading(false);
     }
-  }, [siteAnalysis, projectId]);
+  }, [siteAnalysis]);
 
   const run = useCallback(async () => {
     if (!baseParams.total_gfa_sqm || baseParams.total_gfa_sqm <= 0) {
@@ -173,7 +176,9 @@ export function ChangeForecastCard({
                       <td className="px-3 py-2 text-[var(--text-primary)]">{s.risk_item}</td>
                       <td className="px-3 py-2 text-[var(--text-secondary)]">{s.wb_names.filter(Boolean).join(", ")}</td>
                       <td className="px-3 py-2 text-[var(--text-secondary)]">
-                        {s.delta_pct_low === s.delta_pct_high ? `+${s.delta_pct_low}%` : `+${s.delta_pct_low}~${s.delta_pct_high}%`}
+                        {s.delta_pct_low === s.delta_pct_high
+                          ? formatPercentDelta(s.delta_pct_low)
+                          : formatPercentRange(s.delta_pct_low, s.delta_pct_high)}
                       </td>
                       <td className="px-3 py-2 text-right font-bold text-rose-400">
                         {s.delta_low === s.delta_high ? `+${fmtKrw(s.delta_low)}` : `+${fmtKrw(s.delta_low)}~${fmtKrw(s.delta_high)}`}

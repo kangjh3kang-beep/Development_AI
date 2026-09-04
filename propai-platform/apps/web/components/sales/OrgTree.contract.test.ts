@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { ROSTER_DISPLAY_LIMIT, sumRosterRows, NODE_TYPES, LABEL } from "./OrgTree";
+import { ROSTER_DISPLAY_LIMIT, sumRosterRows, NODE_TYPES, LABEL, moveTargets } from "./OrgTree";
+import { addableChildTypes, orgRank } from "@/components/sales-app/roleConfig";
 
 /**
  * #5 조직도 — 로스터 표시행 합(footer '행 합')의 합산범위 계약(iter-6).
@@ -107,6 +108,16 @@ describe("OrgTree node_type 라벨 SSOT 패리티", () => {
     }
   });
 
+  it("orgRank 서열: 대행본사 < 대행지사 < 본부장 < 이사 < 팀장 < 직원 · 미등록=99(fail-closed)", () => {
+    // 백엔드 _ORG_RANK 와 동일 서열이어야 프론트 노출과 서버 400 판정이 일치한다.
+    expect(orgRank("AGENCY")).toBeLessThan(orgRank("SUBAGENCY"));
+    expect(orgRank("SUBAGENCY")).toBeLessThan(orgRank("GM_DIRECTOR"));
+    expect(orgRank("GM_DIRECTOR")).toBeLessThan(orgRank("DIRECTOR"));
+    expect(orgRank("DIRECTOR")).toBeLessThan(orgRank("TEAM_LEADER"));
+    expect(orgRank("TEAM_LEADER")).toBeLessThan(orgRank("MEMBER"));
+    expect(orgRank("UNKNOWN_TYPE")).toBe(99);
+  });
+
   it("★트리배지(LABEL[node_type])와 로스터표(role_label) 가 동일 node_type 에 동일 문자열을 렌더(byte-동일)", () => {
     // 로스터 표는 r.role_label(백엔드 overview._LABEL[node_type])을 그리고, 트리 배지는 LABEL[node_type]
     // 을 그린다. 백엔드 _LABEL 이 SSOT 이고 프론트 LABEL 을 그 값에 맞췄으므로, 같은 node_type 에 대해
@@ -118,5 +129,68 @@ describe("OrgTree node_type 라벨 SSOT 패리티", () => {
       const rosterRoleLabel = ssotLabel;
       expect(treeBadge).toBe(rosterRoleLabel);
     }
+  });
+});
+
+/**
+ * 직속 지정 파이프라인(2026-07-23) — 추가/이동 후보 계산의 순수 계약.
+ *
+ * ★addableChildTypes: 서버 /org/context 의 addable_types(권한 축)∩부모 위계(자식 서열 > 부모 서열)만
+ *   UI에 노출한다 — 서버가 400/403 으로 거부할 선택지를 애초에 보여주지 않는 게 계약이다.
+ * ★moveTargets: ltree 자손 판정은 반드시 `path + "."` 경계로 한다 — 과거 startsWith(n.path) 는
+ *   "r.n1" 이 "r.n10" 을 자손으로 오인해 형제를 이동 후보에서 잘못 제외했다(경계 버그 회귀 고정).
+ */
+describe("직속 지정 파이프라인 — addableChildTypes", () => {
+  it("총괄관리자(addable=[AGENCY]): 루트에만 대행사 추가 가능, 하위 노드엔 추가 불가", () => {
+    expect(addableChildTypes(["AGENCY"], null)).toEqual(["AGENCY"]);
+    // 대행사 노드 아래: AGENCY 는 rank 가 부모와 같아 제외 → 빈 배열(추가 버튼 미노출).
+    expect(addableChildTypes(["AGENCY"], "AGENCY")).toEqual([]);
+  });
+
+  it("대행사(addable=[SUBAGENCY,GM_DIRECTOR,DIRECTOR]): 부모 위계에 따라 교집합만", () => {
+    const addable = ["SUBAGENCY", "GM_DIRECTOR", "DIRECTOR"];
+    expect(addableChildTypes(addable, "AGENCY")).toEqual(["SUBAGENCY", "GM_DIRECTOR", "DIRECTOR"]);
+    // 본부장(GM_DIRECTOR) 아래엔 그보다 하위인 DIRECTOR 만 남는다.
+    expect(addableChildTypes(addable, "GM_DIRECTOR")).toEqual(["DIRECTOR"]);
+    // 루트엔 대행사만 둘 수 있는데 addable 에 없음 → 빈 배열.
+    expect(addableChildTypes(addable, null)).toEqual([]);
+  });
+
+  it("팀장(addable=[MEMBER]): 팀장 노드 아래에만 직원 추가", () => {
+    expect(addableChildTypes(["MEMBER"], "TEAM_LEADER")).toEqual(["MEMBER"]);
+    expect(addableChildTypes(["MEMBER"], "MEMBER")).toEqual([]); // 직원 아래 직원 금지(동순위).
+    expect(addableChildTypes(["MEMBER"], null)).toEqual([]);
+  });
+});
+
+describe("직속 지정 파이프라인 — moveTargets", () => {
+  const N = (id: string, path: string, node_type: string) => ({ id, path, node_type });
+  const all = [
+    N("a", "r1", "AGENCY"),
+    N("g1", "r1.g1", "GM_DIRECTOR"),
+    N("t1", "r1.g1.t1", "TEAM_LEADER"),
+    N("t10", "r1.g1.t10", "TEAM_LEADER"), // ★t1 과 접두사가 겹치는 형제(경계 버그 재현용)
+    N("m1", "r1.g1.t1.m1", "MEMBER"),
+    N("g2", "r1.g2", "GM_DIRECTOR"),
+  ];
+
+  it("자기 자신·자손·현재 부모·위계 위반(서열 낮은 대상)은 제외", () => {
+    const targets = moveTargets(all, all[2]); // t1(팀장) 이동
+    const ids = targets.map((t) => t.id);
+    expect(ids).not.toContain("t1"); // 자기 자신
+    expect(ids).not.toContain("m1"); // 자손(순환 방지)
+    expect(ids).not.toContain("g1"); // 현재 부모(제자리 이동 무의미)
+    expect(ids).not.toContain("t10"); // 동순위 팀장 아래 팀장 금지(위계)
+    expect(ids).toContain("g2"); // 다른 본부장 아래로는 이동 가능
+  });
+
+  it("★ltree 경계: 'r1.g1.t1' 이동 시 형제 'r1.g1.t10' 을 자손으로 오인하지 않는다", () => {
+    // t10(팀장)을 이동할 때 — t1 은 t10 의 자손이 아니므로 (동순위라 위계로는 제외되지만)
+    // 반대로 m1(직원) 이동 시 t10 이 후보에 살아있어야 경계 판정이 올바른 것이다.
+    const targets = moveTargets(all, all[4]); // m1(직원) 이동
+    const ids = targets.map((t) => t.id);
+    expect(ids).toContain("t10"); // 접두사 유사 형제가 후보에 존재(경계 버그면 소실)
+    expect(ids).not.toContain("t1"); // 현재 부모는 제외
+    expect(ids).toContain("g1"); // 상위 본부장 가능(직원을 본부장 직속으로 — 서버 위계 허용)
   });
 });

@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.billing_deps import enforce_llm_quota
+from app.services.land_intelligence.parcel_normalize import ParcelsIn
 from apps.api.auth.jwt_handler import CurrentUser
 from apps.api.auth.rbac import RequirePermission
 from apps.api.database.session import get_db
@@ -202,7 +203,13 @@ class ScenarioSimRequest(BaseModel):
     """개발 시나리오 시뮬레이션 요청 (인증 불필요·부지 공개데이터 기반)."""
 
     address: str
-    parcels: list[str] | None = None  # 다필지 통합 시뮬레이션
+    # ★공용 정규화 `ParcelsIn` — `str[]`(주소배열)과 `dict[]`(면적·용도지역 보유 필지객체)
+    #   양 shape 를 받아 canonical dict[] 로 수렴한다. 새 계약을 만들지 않고
+    #   `/analysis/comprehensive`(dc995343)와 **같은 입력구**를 쓴다.
+    #   ★왜 dict 가 필요한가(2026-08-19 실측): 주소만 받으면 백엔드가 면적을 **재파생**하는데,
+    #     주소가 해석되지 않으면 `land_area_sqm=None` 이라 그 필지가 0㎡ 로 빠진다. 호출자는
+    #     이미 우리 API 로 받은 면적을 갖고 있으므로, 그것을 넘기면 재파생 자체가 불필요하다.
+    parcels: ParcelsIn | None = None  # 다필지 통합 시뮬레이션(주소배열 또는 필지객체)
     site: dict[str, Any] | None = None
     use_llm: bool = True
 

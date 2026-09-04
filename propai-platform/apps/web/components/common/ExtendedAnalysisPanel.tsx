@@ -132,7 +132,7 @@ export function ExtendedAnalysisPanel<
   return (
     <Card>
       <CardContent className="p-6">
-        <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+        <p className="label-caps text-[var(--text-tertiary)]">
           {title}
         </p>
         <form className="mt-4 grid gap-3" onSubmit={handleSubmit}>
@@ -177,7 +177,7 @@ export function ExtendedAnalysisPanel<
                   />
                 )}
                 {fieldErrors[field.key] ? (
-                  <p className="text-[11px] font-medium text-[var(--spot)]">
+                  <p className="text-[11px] font-medium text-[var(--status-error)]">
                     {fieldErrors[field.key]}
                   </p>
                 ) : null}
@@ -202,7 +202,7 @@ export function ExtendedAnalysisPanel<
         ) : null}
 
         <div className="mt-6">
-          <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+          <p className="label-caps text-[var(--text-tertiary)]">
             {resultTitle}
           </p>
           {result ? (

@@ -19,18 +19,20 @@ import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient } from "@/lib/api-client";
 import { getCachedAnalysis, setCachedAnalysis, TTL_7D } from "@/lib/analysis-fetch-cache";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
-import { DEVELOPABILITY_LABEL, specialFactorLabels } from "@/lib/zoning-ssot";
+import { developabilityText, specialFactorLabels } from "@/lib/zoning-ssot";
 import { verifyLedger } from "@/lib/analysis-ledger";
 import { SiteScoreCard } from "@/components/projects/SiteScoreCard";
 import { BuildableEnvelopeCard } from "@/components/projects/BuildableEnvelopeCard";
 import { SolarPlacementCard } from "@/components/projects/SolarPlacementCard";
 import { ParcelExportButton } from "@/components/projects/ParcelExportButton";
 import { DevelopmentScenarioCard } from "@/components/common/DevelopmentScenarioCard";
+import { parcelIdentityAddresses } from "@/lib/parcel-rows";
 import { DataLineageTooltip } from "@/components/common/DataLineageTooltip";
 import { DataField } from "@/components/projects/DataField";
 import { StagePreview } from "@/components/projects/StagePreview";
 import { formatAnalysisValue } from "@/lib/formatters";
 import { AnalysisVerificationPanel } from "@/components/common/AnalysisVerificationPanel";
+import { upzoningPotentialLabel } from "@/lib/formatters";
 
 // 다필지 통합분석 응답(부분) — 요약 표시에 필요한 필드만(읽기 소비). 전부 옵셔널(부분응답 가드).
 type IntegratedSummary = {
@@ -244,13 +246,28 @@ export function ProjectAnalysisSummary({ locale }: { locale?: string }) {
       : null;
 
   // 용도지역 표시값 — 통합 확보 시 dominant_zone(혼재 표기) 우선, 아니면 단일 degrade.
-  const zoneRowValue = integrated?.dominant_zone
-    ? (integrated.dominant_basis === "mixed_review_required" || site?.zoneMixed
-        ? `${integrated.dominant_zone} 외 (혼재·분리검토)`
-        : integrated.dominant_zone)
-    : site?.zoneCode
-      ? (site?.zoneMixed ? `${site.zoneCode} 외 (혼합지)` : site.zoneCode)
-      : null;
+  //
+  // ★라이브 실측(2026-08-24): 화면에 **`mixed_review_required` 외 (혼재·분리검토)** 가 떴다.
+  //   내부 센티널 문자열이 용도지역 이름 자리에 그대로 나온 것이다. 원인은 **검사한 필드가
+  //   달랐다**는 것 — 백엔드는 센티널을 `dominant_zone` **값**에 넣는데(#787 이 확립한
+  //   "임의 단일화 거부" 신호) 프론트는 `dominant_basis` 만 봤다:
+  //       API 실측:  dominant_zone="mixed_review_required" · dominant_basis="area_weighted"
+  //   그래서 첫 조건이 false 가 되고, 마침 `site.zoneMixed` 가 true 라 뒷말만 붙어
+  //   **우연히** 혼재 표기가 됐다. zoneMixed 가 false 였다면 센티널이 **맨몸으로** 나온다.
+  //
+  // ★센티널일 때 대표 필지 용도지역으로 대체하지 않는다 — 그것이 #787 이 방금 고친
+  //   "대표를 우세라 부르는" 결함이다. **이름을 짓지 않고 판정하지 않았다고 말한다.**
+  const MIXED_SENTINEL = "mixed_review_required";
+  const dominantZone = integrated?.dominant_zone ?? null;
+  const dominantIsMixedSentinel =
+    dominantZone === MIXED_SENTINEL || integrated?.dominant_basis === MIXED_SENTINEL;
+  const zoneRowValue = dominantIsMixedSentinel
+    ? "혼재(분리검토 필요) — 단일 용도지역으로 판정하지 않았습니다"
+    : dominantZone
+      ? (site?.zoneMixed ? `${dominantZone} 외 (혼재·분리검토)` : dominantZone)
+      : site?.zoneCode
+        ? (site?.zoneMixed ? `${site.zoneCode} 외 (혼합지)` : site.zoneCode)
+        : null;
 
   // ── 부지분석 풍성 데이터(SSOT rich 필드) — 첫 페이지 주력 노출 ──
   // 법정 상한(국가법 최대치)·실효 한도(조례 반영)·종상향 잠재 상한·최상 가능성 등급.
@@ -271,8 +288,45 @@ export function ProjectAnalysisSummary({ locale }: { locale?: string }) {
     ? "조례·도시계획 확정값 승격 전 잠정 적용 — 국가 법정상한을 시드로 사용"
     : site?.farBasis || ord?.legalBasis || null;
 
+  // ── 건축계획 정직 고지 (라이브 실측 2026-08-24) ──────────────────────────
+  //
+  // ★무엇이 있었나: 이 화면 한 페이지 안에 두 기준이 동시에 있었다(역삼동 736 실측).
+  //     건축계획      용적률 1,300% · 건폐율 80% · 65층 · 연면적 1,911,962㎡
+  //     건축 가능 범위 실효  158.2% · 건폐 25.7% · 7~8층 · 연면적   256,336㎡
+  //   **연면적 7.5배 차이**인데 건축계획 블록엔 아무 고지도 없었다.
+  //
+  // ★그런데 데이터는 이미 알고 있었다 — 저장된 `designData.farIsEffective === false` 가
+  //   "이 용적률은 실효가 아니라 법정상한 폴백"이라고 말한다. `DesignStudio` 와 `MetricBar` 는
+  //   그 신호를 이미 정직하게 표시하는데(각각 "법정상한 …"·"법정상한 기준" 배지)
+  //   **이 형제 표면만 빠져 있었다.** 새 신호를 만들지 않고 **같은 신호를 여기서도 읽는다.**
+  //
+  // ★왜 값 옆에 적는가: 이 페이지의 공사비·수지 카드는 스스로 "입력 근거: **설계 연면적** 활용"
+  //   이라고 적어 둔다. 즉 이 연면적이 곧 총사업비의 입력이다. 고지가 다른 블록에 있으면
+  //   읽히지 않는다 — **고지는 결함 옆에 있어야 한다.**
+  const designFarIsLegalFallback = design?.far != null && design?.farIsEffective === false;
+  // 건축가능 연면적(실효 기준) — 다필지면 서버 통합분석 산출, 아니면 실효용적률 × 유효면적.
+  //   둘 다 없으면 null: **비교 근거가 없으면 초과라고 말하지 않는다**(없는 판정을 만들지 않는다).
+  const buildableGfa = (() => {
+    const integ = integrated?.integrated?.integrated_gfa_sqm;
+    if (typeof integ === "number" && integ > 0) return { value: Math.round(integ), basis: "다필지 통합분석" };
+    const area = effectiveLandAreaSqm(site);
+    if (area != null && area > 0 && effFar != null && effFar > 0) {
+      return { value: Math.round((area * effFar) / 100), basis: `실효 용적률 ${effFar}%` };
+    }
+    return null;
+  })();
+  const designGfa = design?.totalGfaSqm ?? null;
+  const gfaOverRatio =
+    designGfa != null && buildableGfa != null && designGfa > buildableGfa.value
+      ? designGfa / buildableGfa.value
+      : null;
+
   // 종상향 잠재(현행과 분리해 표기) — 잠재 상한 + 최상 가능성 등급(있을 때만).
   const upFarHigh = site?.upzoningPotentialFarHigh ?? null;
+  // ★범위가 붕괴했으면(상·하한이 한 값) 이 숫자는 '도달 가능한 최댓값'이 아니라
+  //   '검토한 경로들의 예상치가 한 값으로 모인 것'이다. 라벨·근거를 그렇게 바꾼다(숫자는 그대로).
+  //   ("단일 경로"라 쓰지 않는다 — 경로는 여럿이고 목표 용도지역이 하나인 것이 붕괴 사유다.)
+  const upFarCollapsed = site?.upzoningFarRangeCollapsed === true;
   const upFeasTop = site?.upzoningFeasibilityTop ?? null;
 
   // 특이부지(학교용지·GB·맹지 등) — 있을 때만 정직고지 섹션 노출.
@@ -324,7 +378,7 @@ export function ProjectAnalysisSummary({ locale }: { locale?: string }) {
   const nextNo = () => (++_sectionNo);
 
   return (
-    <section className="rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-7 shadow-[var(--shadow-lg)]">
+    <section className="rounded-[var(--radius-lg)] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-7 shadow-[var(--shadow-lg)]">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent-strong)]"><ClipboardList className="size-5" aria-hidden /></span>
@@ -339,8 +393,8 @@ export function ProjectAnalysisSummary({ locale }: { locale?: string }) {
               title={`분석 원장 해시체인 검증 — 버전 v${integrity.version}`}
               className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${
                 integrity.verified
-                  ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/30"
-                  : "bg-rose-500/10 text-rose-500 border border-rose-500/30"
+                  ? "bg-[var(--status-success)]/10 text-[var(--status-success)] border border-[var(--status-success)]/30"
+                  : "bg-[var(--status-error)]/10 text-[var(--status-error)] border border-[var(--status-error)]/30"
               }`}
             >
               {integrity.verified ? (
@@ -350,6 +404,22 @@ export function ProjectAnalysisSummary({ locale }: { locale?: string }) {
               )}
             </span>
           )}
+          {/* ★정밀도 배지(#770) — 사업성 등급 **왼쪽**에 둔다.
+              이 수지가 개략치(E)면 등급 F 도 개략이다. 종전에는 설계가 "분석 전"인데
+              `총사업비 4,157.7억 · 등급 F` 가 확정치처럼 보여 사용자가 "분석 전인데 왜
+              숫자가 있나"로 읽었다. 값을 지우지 않고 **등급을 붙인다**. */}
+          {feas?.grade && feas?.precision === "E" ? (
+            <span
+              // ★배포·수용시험 확증용 앵커 — 렌더 문구와 `title`(툴팁)이 **다른 문자열**이라
+              //   둘을 혼동해 오판할 뻔한 사고가 있었다. DOM 속성값은 최소화에도 살아남고
+              //   주석일 수 없어 지표로 가장 튼튼하다.
+              data-testid="precision-badge"
+              title={feas.precisionBasis || "설계 산출물 없이 부지 정보만으로 추정한 개략치입니다"}
+              className="rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-800 dark:bg-amber-900/40 dark:text-amber-200"
+            >
+              개략(추정) — 설계 미반영
+            </span>
+          ) : null}
           {feas?.grade ? (
             <span
               title="투자 수익률과 사업성 등급(투입 대비 남는 비율)"
@@ -411,9 +481,7 @@ export function ProjectAnalysisSummary({ locale }: { locale?: string }) {
         {(site?.address || (ssotParcels?.length ?? 0) > 0) && (
           <DevelopmentScenarioCard
             address={site?.address ?? undefined}
-            parcels={(ssotParcels ?? [])
-              .map((p) => p.address)
-              .filter((a): a is string => !!a && a.trim().length > 0)}
+            parcels={parcelIdentityAddresses(ssotParcels)}
           />
         )}
       </div>
@@ -458,9 +526,13 @@ export function ProjectAnalysisSummary({ locale }: { locale?: string }) {
             accent
           />
           <DataField
-            label="종상향 잠재 상한(용적)"
+            label={upzoningPotentialLabel(upFarCollapsed)}
             value={pctOrNull(upFarHigh)}
-            evidence="지구단위·역세권 등 종상향 시 도달 가능한 잠재 용적률 상단 — 현행과 분리 표기"
+            evidence={
+              upFarCollapsed
+                ? "상·하한이 한 값으로 모여 범위가 산출되지 않았습니다 — 이 값은 도달 가능한 최댓값이 아니라 본 분석이 검토한 경로의 예상치입니다(붕괴 사유·미반영 후보는 부지분석 종상향 카드의 정직 고지 참조)."
+                : "지구단위·역세권 등 종상향 시 도달 가능한 잠재 용적률 상단 — 현행과 분리 표기"
+            }
           />
           <DataField
             label="종상향 최상 가능성"
@@ -476,7 +548,7 @@ export function ProjectAnalysisSummary({ locale }: { locale?: string }) {
           <Section title={`${nextNo()}. 특이부지 검토(정직고지)`} dataSource={site?.dataSource} fetchedAt={site?.fetchedAt}>
             <DataField
               label="개발 가능성"
-              value={sp.developability ? (DEVELOPABILITY_LABEL[sp.developability] ?? sp.developability) : null}
+              value={sp.developability ? developabilityText(sp.developability) : null}
               accent
             />
             <DataField
@@ -514,10 +586,50 @@ export function ProjectAnalysisSummary({ locale }: { locale?: string }) {
         {hasDesign ? (
           <Section title="건축계획">
             <DataField label="건축유형" value={design?.buildingType} />
-            <DataField label="연면적" value={numOrNull(design?.totalGfaSqm, " ㎡")} />
+            {/* ★한도 초과를 **값 옆에서** 말한다 — 이 연면적이 곧 공사비·수지의 입력이다. */}
+            <DataField
+              label="연면적"
+              value={
+                designGfa == null
+                  ? null
+                  : `${designGfa.toLocaleString()} ㎡${
+                      gfaOverRatio != null
+                        ? ` · 건축가능 ${buildableGfa!.value.toLocaleString()}㎡ 초과(${gfaOverRatio.toFixed(1)}배)`
+                        : ""
+                    }`
+              }
+              evidence={
+                gfaOverRatio != null
+                  ? `건축가능 연면적 ${buildableGfa!.value.toLocaleString()}㎡ 는 ${buildableGfa!.basis} 기준입니다. ` +
+                    `이 설계 연면적은 그 한도를 넘습니다 — 아래 공사비·수지는 이 연면적을 입력으로 쓰므로 금액도 함께 과대해집니다.`
+                  : null
+              }
+            />
             <DataField label="층수" value={numOrNull(design?.floorCount, "층")} />
-            <DataField label="건폐율" value={pctOrNull(design?.bcr)} />
-            <DataField label="용적률" value={pctOrNull(design?.far)} />
+            {/* 건폐율은 저장된 실효 플래그가 없다 — 지어내지 않고 **두 값을 비교**해서만 말한다. */}
+            <DataField
+              label="건폐율"
+              value={
+                design?.bcr == null
+                  ? null
+                  : `${design.bcr}%${effBcr != null && design.bcr > effBcr ? ` · 실효 ${effBcr}% 초과` : ""}`
+              }
+            />
+            {/* ★designData 가 이미 싣고 있는 farIsEffective 를 여기서도 읽는다(형제 표면 정합). */}
+            <DataField
+              label="용적률"
+              value={
+                design?.far == null
+                  ? null
+                  : `${design.far}%${designFarIsLegalFallback ? " · 법정상한 기준(실효 아님)" : ""}`
+              }
+              evidence={
+                designFarIsLegalFallback && effFar != null
+                  ? `이 부지의 실효 용적률은 ${effFar}% 입니다(조례·다필지 반영). ` +
+                    `실효 한도를 확보하지 못해 법정상한으로 산출된 설계값이므로 확정 계획으로 읽지 마십시오.`
+                  : null
+              }
+            />
             {/* 평형 구성(unitTypes) — StagePreview 약속 항목과 산출을 정합(있을 때만 표시). */}
             <DataField label="평형 구성" value={design?.unitTypes?.length ? design.unitTypes.join(" · ") : null} />
           </Section>

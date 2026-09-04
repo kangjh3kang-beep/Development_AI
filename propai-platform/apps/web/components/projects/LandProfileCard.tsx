@@ -154,7 +154,13 @@ export function LandProfileCard() {
           {stageB.topFeasibility && (
             <span className={`rounded-full border px-2.5 py-1 text-[10px] font-black ${feasibilityChip(stageB.topFeasibility)}`}>
               최상 가능성 {stageB.topFeasibility}
-              {stageB.potentialFarHigh != null && ` · 잠재 용적률 ~${stageB.potentialFarHigh}%`}
+              {/* ★`~200%` 는 한국어 UI 에서 "최대 200%까지"로 읽힌다 — 사용자가 신고한 바로
+                  그 문장이다. 붕괴하면 이 값은 도달 상한이 아니라 한 값이므로 `~` 를 걷고
+                  그 사실을 라벨에 적는다(같은 페이지 상단 카드와 문구를 맞춘다). */}
+              {stageB.potentialFarHigh != null &&
+                (stageB.farRangeCollapsed === true
+                  ? ` · 잠재 용적률 ${stageB.potentialFarHigh}% (단일 값·범위 미산출)`
+                  : ` · 잠재 용적률 ~${stageB.potentialFarHigh}%`)}
             </span>
           )}
         </div>

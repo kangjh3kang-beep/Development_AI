@@ -64,12 +64,18 @@ ZONE_LIMITS: dict[str, LegalLimits] = {
     "제3종일반주거지역": LegalLimits(0.50, 3.00, 50.0, 1.0, 2.0),
     "준주거지역": LegalLimits(0.70, 5.00, 0.0, 1.0, 0.0),
     "중심상업지역": LegalLimits(0.90, 15.00, 0.0, 0.0, 0.0),
-    "일반상업지역": LegalLimits(0.80, 13.00, 0.0, 0.0, 0.0),
-    "근린상업지역": LegalLimits(0.70, 9.00, 0.0, 0.5, 0.0),
+    # ★단축코드↔한글명 값 일치(그림자 제거): 아래 한글명은 _ZONE_ALIASES로 단축코드에 매핑되므로
+    #   실효값은 단축코드 엔트리다. 종전엔 한글 엔트리가 단축코드보다 큰 건폐/용적을 들고 있어
+    #   (일반상업 0.80/13.00 vs GC 0.60/10.00, 근린 0.70 vs NC 0.60, 준공업 0.70 vs QI 0.60)
+    #   표기 기준에 따라 다른 한도가 나오는 이중 기준이었다. 보수 기준선 정책(전형 조례 수준·
+    #   ≤국가상한) 유지 원칙에 따라 '작은 값(=단축코드)'으로 정합화한다. 값 일치 계약은
+    #   test_zone_limits_engine_sync.test_design_shortcode_korean_alias_parity가 회귀 차단.
+    "일반상업지역": LegalLimits(0.60, 10.00, 0.0, 0.0, 0.0),  # = GC
+    "근린상업지역": LegalLimits(0.60, 9.00, 0.0, 0.5, 0.0),  # = NC
     "유통상업지역": LegalLimits(0.80, 11.00, 0.0, 0.5, 0.0),
     "전용공업지역": LegalLimits(0.70, 3.00, 0.0, 1.0, 0.0),
     "일반공업지역": LegalLimits(0.70, 3.50, 0.0, 1.0, 0.0),
-    "준공업지역": LegalLimits(0.70, 4.00, 0.0, 1.0, 0.0),
+    "준공업지역": LegalLimits(0.60, 4.00, 0.0, 1.0, 0.0),  # = QI
     "보전녹지지역": LegalLimits(0.20, 0.80, 12.0, 1.0, 0.0),
     "생산녹지지역": LegalLimits(0.20, 1.00, 12.0, 1.0, 0.0),
     "자연녹지지역": LegalLimits(0.20, 1.00, 12.0, 1.0, 0.0),
@@ -204,6 +210,12 @@ class SiteInput:
     # 클램프(가짜 상향 금지). None=조례 미반영(법정상한 기준 — 기존 동작 불변).
     ordinance_bcr_percent: float | None = None
     ordinance_far_percent: float | None = None
+    # ★실효 한도 근거 메타(옵셔널·additive — WP-U2a 실효FAR SSOT 배선): ordinance_*에 주입된
+    #   값의 산정 근거(far_tier SSOT calc_effective_far의 far_basis — 예 "구조상한(건폐율×층수)")와
+    #   신뢰 플래그(SSOT 산정 성공 여부). 수치 계산에는 전혀 쓰이지 않고(무영향) 산출물 메타
+    #   (summary.basis.applied_limits·rule_trace)로 정직 전파만 한다. None=미상(기존 표기 완전 불변).
+    far_basis: str | None = None
+    far_reliable: bool | None = None
     # 매스 형상(옵셔널·additive). None="auto"(대지 종횡비 기반 — 기존 동작 불변).
     # 명시 시 형상별 종횡비·플로어플레이트 계수로 매스를 재산출(결정론).
     massing_kind: str | None = None
@@ -672,10 +684,28 @@ class AutoDesignEngineService:
                 max_floors_by_sunlight = 10**6  # 미적용(법 61조 적용범위 외)
                 sunlight_mode = "not_applicable"
             # 층수 후보 중 최솟값이 바인딩 제약(동률 시 far→height→sunlight 순 표기)
+            # ★R1 HIGH-1 봉합: target_floors가 **이 분기에는 없었다** — 즉 정북일조 단계후퇴
+            #   대상(전용·일반주거) 밖에서는 시드가 엔진에 도달조차
+            #   하지 않았다. 그런데 소비처(설계 스튜디오 카드)는 "층수를 상한으로 반영했다"고
+            #   고지하므로, 5층을 골라도 38층이 '고른 안'으로 표시되는 **표기 사기**가 됐다.
+            #   상한이므로 여기 넣어도 용량이 늘어날 수 없고(min에 참여), 미전달이면 10**6으로
+            #   무영향이다(기존 동작 불변).
+            #   ★수정 범위를 정확히 적는다(과대 진술 금지): 이 분기는 **단일박스** 경로다.
+            #   준주거·상업(QR/GC/NC)은 아래 포디움-타워가 `num_floors`를 **사후에 덮어써서**
+            #   여기 고쳐도 여전히 시드가 물리지 않는다 — 실측 수혜는 준공업·녹지·관리다.
+            #   그쪽은 라우터의 결과 기반 가드가 '미적용'으로 정직 고지한다(별건 후속).
             floor_candidates = {
                 "far": max_floors_by_far,
                 "height": max_floors_by_height,
                 "sunlight": max_floors_by_sunlight,
+                # ★일조 **비대상** 용도지역에서만 적용한다. 일조 대상(전용·일반주거)의
+                #   hard_cap 경로는 "단계후퇴 전제라 target_floors를 무시한다"가 명시적으로
+                #   설계·테스트된 기존 계약이므로(`tests/test_mass_target_floors.py`) 건드리지
+                #   않는다 — 내 기능을 위해 남의 확정 계약을 덮지 않는다.
+                "target": (
+                    (getattr(site_input, "target_floors", None) or 10**6)
+                    if not sunlight_zone else 10**6
+                ),
             }
             num_floors = max(1, min(floor_candidates.values()))
             binding_constraint = (
@@ -1269,6 +1299,11 @@ class AutoDesignEngineService:
                 "ordinance_far_percent": getattr(site_input, "ordinance_far_percent", None),
                 "target_bcr_percent": getattr(site_input, "target_bcr_percent", None),
                 "target_far_percent": getattr(site_input, "target_far_percent", None),
+                # ★WP-U2a: ordinance_far_percent의 산정 근거·신뢰 플래그(far_tier SSOT
+                #   calc_effective_far 산출 — 예 "구조상한(건폐율×층수)"). 호출자가 SSOT 값을
+                #   주입할 때만 채워지며(additive), 미상은 None(무날조·기존 표기 불변).
+                "far_basis": getattr(site_input, "far_basis", None),
+                "far_reliable": getattr(site_input, "far_reliable", None),
             },
             "parking_formula": parking_formula,
             "core_formula": (
@@ -1379,6 +1414,8 @@ class AutoDesignEngineService:
                 target_bcr_percent=site_input.target_bcr_percent,
                 ordinance_far_percent=site_input.ordinance_far_percent,
                 ordinance_bcr_percent=site_input.ordinance_bcr_percent,
+                far_basis=site_input.far_basis,        # ★WP-U2a: 실효 근거 메타 전파(대안도 동일 표기)
+                far_reliable=site_input.far_reliable,
                 massing_kind="tower",  # §4-A②: 타워형 — 작은 플로어플레이트로 더 높이(최대 세대수)
             )
             result_b = self.generate(input_b)
@@ -1403,6 +1440,8 @@ class AutoDesignEngineService:
                 target_bcr_percent=site_input.target_bcr_percent,
                 ordinance_far_percent=site_input.ordinance_far_percent,
                 ordinance_bcr_percent=site_input.ordinance_bcr_percent,
+                far_basis=site_input.far_basis,        # ★WP-U2a: 실효 근거 메타 전파(대안도 동일 표기)
+                far_reliable=site_input.far_reliable,
                 massing_kind="lshape",  # §4-A②: ㄱ자형 — 채광·소음차폐 배치(최적 일조)
             )
             result_c = self.generate(input_c)

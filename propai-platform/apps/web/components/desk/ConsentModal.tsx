@@ -8,7 +8,10 @@
  * 백엔드 GET /mh/consent-template 의 고지문을 렌더하며, 미연결/오류 시 기본 고지문으로 폴백한다.
  */
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
+
+import { DISMISS_Z, useDismissibleWhileMounted } from "@/lib/satong-dismiss";
+import { useModalFocusWhileMounted } from "@/hooks/useModalFocus";
 
 export interface ConsentItem {
   type: string;
@@ -77,6 +80,16 @@ interface Props {
 }
 
 export default function ConsentModal({ template, onConfirm, onCancel }: Props) {
+  const bodyRef = useRef<HTMLDivElement>(null);
+  // ESC 로 취소 — 부모(DeskCheckin)가 **열 때만 마운트**한다(열림 플래그가 따로 없다).
+  useDismissibleWhileMounted(DISMISS_Z.appModal, onCancel);
+
+  // ★포커스 생명주기 — ESC 와 별개 계약. 이 표면은 **마운트 자체가 열림**이라
+  //   `WhileMounted` 대칭 헬퍼를 쓴다. 첫 포커스 대상은 동의 체크박스 첫 항목이 되는데,
+  //   그 개수는 `tpl.consents` 에 따라 변한다 — 훅이 **DOM 순서의 첫 포커스 가능 요소**를
+  //   고르므로 데이터가 몇 개든 일관된다(미룬 사유였던 "동적 개수"는 문제가 아니었다).
+  useModalFocusWhileMounted(bodyRef);
+
   const tpl = template ?? FALLBACK_TEMPLATE;
   // 동의상태는 모든 항목 false에서 시작(필수도 사용자가 명시 동의해야 함).
   // 모달은 열릴 때마다 새로 마운트되므로 초기화 effect 없이 lazy 초기값으로 충분하다.
@@ -107,7 +120,7 @@ export default function ConsentModal({ template, onConfirm, onCancel }: Props) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true">
-      <div className="max-h-[88vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5 shadow-xl">
+      <div ref={bodyRef} className="max-h-[88vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5 shadow-xl">
         <h2 className="mb-1 text-lg font-black text-[var(--text-primary)]">개인정보 수집·이용 동의</h2>
         <p className="mb-4 text-xs text-[var(--text-tertiary)]">
           개인정보보호법 제15·22조에 따라 수집항목·이용목적·보유기간을 고지합니다. (동의서 버전 {tpl.version})

@@ -130,7 +130,7 @@ export default function ReferralSharePanel({ siteId }: { siteId: string }) {
         </p>
       </div>
 
-      {err && <p className="rounded-lg border border-rose-400/40 bg-rose-500/10 px-3 py-2 text-sm font-semibold text-rose-300">{err}</p>}
+      {err && <p className="rounded-lg border border-[var(--status-error)]/40 bg-[var(--status-error)]/10 px-3 py-2 text-sm font-semibold text-rose-300">{err}</p>}
 
       {/* 코드 발급/선택 */}
       <div className="space-y-3 rounded-2xl border border-[var(--line)] bg-[var(--surface-strong)] p-4">
@@ -303,7 +303,7 @@ function ShareBlock({ api, code, siteId }: { api: ReturnType<typeof salesApi>; c
   };
 
   if (loading) return <div className="h-40 animate-pulse rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)]" />;
-  if (err) return <p className="rounded-lg border border-rose-400/40 bg-rose-500/10 px-3 py-2 text-sm font-semibold text-rose-300">{err}</p>;
+  if (err) return <p className="rounded-lg border border-[var(--status-error)]/40 bg-[var(--status-error)]/10 px-3 py-2 text-sm font-semibold text-rose-300">{err}</p>;
   if (!share) return null;
 
   return (
@@ -329,6 +329,7 @@ function ShareBlock({ api, code, siteId }: { api: ReturnType<typeof salesApi>; c
       </button>
 
       {/* QR */}
+      {/* @ink-contract-ignore — QR 은 흰 배경이어야 스캔된다(테마 불변). 자식은 각자 색 선언. */}
       <div className="flex flex-col items-center gap-2 rounded-xl border border-[var(--line)] bg-white p-4">
         {qrMatrix ? (
           <>
@@ -347,7 +348,7 @@ function ShareBlock({ api, code, siteId }: { api: ReturnType<typeof salesApi>; c
       {shareMsg && <p className="text-xs font-semibold text-amber-300">{shareMsg}</p>}
 
       {/* 정보통신망법 고지(notice) */}
-      <div className="space-y-1 rounded-xl border border-amber-400/20 bg-amber-500/5 px-3 py-2.5 text-[11px] text-amber-200/90">
+      <div className="space-y-1 rounded-xl border border-[var(--status-warning)]/20 bg-[var(--status-warning)]/5 px-3 py-2.5 text-[11px] text-amber-200/90">
         <p className="inline-flex items-center gap-1.5 font-bold text-amber-300"><AlertTriangle className="size-3.5" aria-hidden />공유 시 유의사항(정보통신망법)</p>
         <p>{share.notice || "광고성 정보 전송 시 수신자의 사전 동의가 필요하며, 야간(오후 9시~익일 오전 8시) 전송은 제한됩니다. 수신거부 방법을 함께 안내하세요."}</p>
         <p className="text-amber-200/70">카카오톡 등으로 공유할 때는 수신자가 직접 동의·요청한 경우에만 발송하세요.</p>

@@ -11,6 +11,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { preferredEntryAddress } from "@/lib/parcel-rows";
 import dynamic from "next/dynamic";
 import { AlertTriangle, CheckCircle2, Clock, Map, Puzzle } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
@@ -45,6 +46,7 @@ type BatchResult = {
   aggregate?: Aggregate | null;
   multi_parcel_report?: Record<string, unknown> | null;
   pending?: string[];
+  error?: string | null;
   outliers?: { pnu: string; address?: string | null; area_sqm?: number; median_sqm?: number; ratio?: number; reason?: string }[];
   fee_per_unit_krw?: number;
   estimated_fee_krw?: number;
@@ -55,10 +57,10 @@ type BatchResult = {
 };
 
 const STATUS_STYLE: Record<ItemStatus, string> = {
-  confirmed: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
-  ambiguous: "bg-amber-500/15 text-amber-400 border-amber-500/30",
+  confirmed: "bg-[var(--status-success)]/15 text-[var(--status-success)] border-[var(--status-success)]/30",
+  ambiguous: "bg-[var(--status-warning)]/15 text-[var(--status-warning)] border-[var(--status-warning)]/30",
   not_found: "bg-[var(--surface-strong)] text-[var(--text-tertiary)] border-[var(--line-strong)]",
-  error: "bg-rose-500/15 text-rose-400 border-rose-500/30",
+  error: "bg-[var(--status-error)]/15 text-[var(--status-error)] border-[var(--status-error)]/30",
 };
 const STATUS_LABEL: Record<ItemStatus, string> = {
   confirmed: "확정", ambiguous: "모호", not_found: "미발견", error: "오류",
@@ -87,6 +89,8 @@ export function BulkParcelBatchPanel({ className = "" }: { className?: string })
       setResult(r);
       // 종료 조건: 진행상태(queued/running)가 아니면 터미널.
       // state=partial 은 "전 필지 처리됐으나 일부 미확정"인 종료 상태(INV-M4) — 무한폴링 방지.
+      // state=failed/cancelled도 이 조건으로 이미 걸러진다 — ★과거엔 백엔드가 FAILED를 저장하는
+      // 코드경로가 없어(도달불가) 실질적으로 무한폴링했다(backend: parcel_batch.py 참조).
       if (!["queued", "running"].includes(r.state)) {
         stop(); setLoading(false);
       }
@@ -161,7 +165,7 @@ export function BulkParcelBatchPanel({ className = "" }: { className?: string })
             writeToContext={false}
             disabled={loading}
             placeholder="구역 중심 주소를 검색하세요"
-            onChange={(entries) => setCenterAddr(entries.length > 0 ? (entries[0].jibunAddress || entries[0].fullAddress) : "")}
+            onChange={(entries) => setCenterAddr(entries.length > 0 ? preferredEntryAddress(entries[0]) : "")}
           />
           <div className="flex items-center gap-2">
             <span className="text-[11px] font-bold text-[var(--text-tertiary)]">반경</span>
@@ -200,41 +204,54 @@ export function BulkParcelBatchPanel({ className = "" }: { className?: string })
           </button>
         )}
       </div>
-      {error && <p className="mt-2 text-xs font-semibold text-rose-500">{error}</p>}
+      {error && <p className="mt-2 text-xs font-semibold text-[var(--status-error)]">{error}</p>}
 
       {/* 진행률 스택바 + 카운트 */}
       {result && c && (
         <div className="mt-4 space-y-3">
           <div className="flex items-center justify-between text-[11px]">
             <span className="inline-flex items-center gap-1 font-bold text-[var(--text-primary)]">
+              {/* ★버그수정: 과거엔 completeness 기준이라 FAILED/CANCELLED도 "완료(일부 미확정)"로
+                  오표기했다(잡이 RUNNING에 고착돼 도달 불가했던 상태라 실제로 노출된 적은 없었으나,
+                  FAILED 도달가능화 이후 재현되던 잠복 결함) — state 기준으로 명시 분기한다. */}
               {["queued", "running"].includes(result.state)
                 ? (<span className="inline-flex items-center gap-1"><Clock className="size-3.5" aria-hidden />진행</span>)
-                : result.completeness === "complete"
-                  ? (<span className="inline-flex items-center gap-1"><CheckCircle2 className="size-3.5" aria-hidden />완료(전 필지 확정)</span>)
-                  : (<span className="inline-flex items-center gap-1"><CheckCircle2 className="size-3.5" aria-hidden />완료(일부 미확정)</span>)} · {result.state}
+                : result.state === "failed"
+                  ? (<span className="inline-flex items-center gap-1 text-[var(--status-error)]"><AlertTriangle className="size-3.5" aria-hidden />실패</span>)
+                  : result.state === "cancelled"
+                    ? (<span className="inline-flex items-center gap-1 text-[var(--text-tertiary)]"><AlertTriangle className="size-3.5" aria-hidden />취소됨</span>)
+                    : result.completeness === "complete"
+                      ? (<span className="inline-flex items-center gap-1"><CheckCircle2 className="size-3.5" aria-hidden />완료(전 필지 확정)</span>)
+                      : (<span className="inline-flex items-center gap-1"><CheckCircle2 className="size-3.5" aria-hidden />완료(일부 미확정)</span>)} · {result.state}
             </span>
             <span className="text-[var(--text-secondary)]">
               총 {c.total} · 확정 {c.confirmed} · 모호 {c.ambiguous} · 미발견 {c.not_found} · 오류 {c.error}
             </span>
           </div>
+          {result.state === "failed" && (
+            <p className="inline-flex items-start gap-1 rounded-lg border border-[var(--status-error)]/30 bg-[var(--status-error)]/10 px-2.5 py-1.5 text-[11px] font-semibold text-[var(--status-error)]">
+              <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+              {result.error || "배치 실행 중 오류가 발생했습니다."}
+            </p>
+          )}
           {/* 사용료 — 관리자 미책정 시 무료(하드코딩 아님: 서버 단가 반영) */}
           <div className="text-[11px] text-[var(--text-secondary)]">
             예상 사용료: {(result.estimated_fee_krw ?? 0) > 0
               ? <b className="text-[var(--accent-strong)]">₩{Math.round(result.estimated_fee_krw!).toLocaleString()}</b>
-              : <b className="text-emerald-400">무료</b>}
+              : <b className="text-[var(--status-success)]">무료</b>}
             {(result.fee_per_unit_krw ?? 0) > 0 ? ` (필지당 ₩${Math.round(result.fee_per_unit_krw!).toLocaleString()} × 확정 ${c.confirmed})` : " (관리자 미책정)"}
           </div>
           <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-[var(--surface-strong)]">
-            <div style={{ width: pct(c.confirmed) }} className="bg-emerald-500" />
-            <div style={{ width: pct(c.ambiguous) }} className="bg-amber-500" />
-            <div style={{ width: pct(c.error) }} className="bg-rose-500" />
+            <div style={{ width: pct(c.confirmed) }} className="bg-[var(--status-success)]" />
+            <div style={{ width: pct(c.ambiguous) }} className="bg-[var(--status-warning)]" />
+            <div style={{ width: pct(c.error) }} className="bg-[var(--status-error)]" />
             <div style={{ width: pct(c.not_found) }} className="bg-[var(--text-tertiary)]/40" />
           </div>
 
           {/* 통합 집계 */}
           <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-strong)] p-3 text-xs">
             {result.aggregate?.held ? (
-              <p className="inline-flex items-center gap-1 text-amber-500"><Clock className="size-3.5 shrink-0" aria-hidden />통합 집계 보류 — 전 필지 확정 후 합필 경계·면적을 산출합니다(미처리 {result.pending?.length ?? 0}건).</p>
+              <p className="inline-flex items-center gap-1 text-[var(--status-warning)]"><Clock className="size-3.5 shrink-0" aria-hidden />통합 집계 보류 — 전 필지 확정 후 합필 경계·면적을 산출합니다(미처리 {result.pending?.length ?? 0}건).</p>
             ) : result.aggregate?.total_area_sqm ? (
               <p className="inline-flex flex-wrap items-center gap-1 text-[var(--text-primary)]">
                 <Puzzle className="size-3.5 shrink-0" aria-hidden />통합 합필 면적 <b className="text-[var(--accent-strong)]">{Math.round(result.aggregate.total_area_sqm).toLocaleString()}㎡</b>
@@ -255,8 +272,8 @@ export function BulkParcelBatchPanel({ className = "" }: { className?: string })
 
           {/* 신뢰루프: 면적 이상치(검토 권고) */}
           {(result.outliers?.length ?? 0) > 0 && (
-            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-[11px]">
-              <p className="flex items-center gap-1 font-bold text-amber-500"><AlertTriangle className="size-3.5 shrink-0" aria-hidden /> 면적 이상치 {result.outliers!.length}건 — 데이터 확인 권고(자동 배제 안 함)</p>
+            <div className="rounded-xl border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 p-3 text-[11px]">
+              <p className="flex items-center gap-1 font-bold text-[var(--status-warning)]"><AlertTriangle className="size-3.5 shrink-0" aria-hidden /> 면적 이상치 {result.outliers!.length}건 — 데이터 확인 권고(자동 배제 안 함)</p>
               <ul className="mt-1 space-y-0.5 text-[var(--text-secondary)]">
                 {result.outliers!.slice(0, 5).map((o, i) => (
                   <li key={i} className="truncate" title={o.reason || o.pnu}>· {o.address || o.pnu} — {o.area_sqm?.toLocaleString()}㎡ ({o.ratio}×)</li>

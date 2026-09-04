@@ -14,6 +14,8 @@ from typing import Any
 import structlog
 from pydantic import BaseModel, Field
 
+from app.utils.pnu import is_valid_pnu
+
 logger = structlog.get_logger(__name__)
 
 # ── Payload 인터페이스: 모듈 간 데이터 전달 계약 ──
@@ -55,8 +57,11 @@ class SiteToDesignPayload(BaseModel):
 
     pnu_codes: list[str] = Field(default_factory=list)
     zone_type: str = ""
-    max_bcr: float = 60.0
-    max_far: float = 200.0
+    # ★무날조(WP-U1c): 0.0=미산정 센티널. 과거 기본값 60/200은 부지자료 없이 페이로드가
+    #   생성되면(부지단계 skip 등) 임의 한도를 '실측'처럼 발명했다 — _run_design은 0/None을
+    #   W3-8 계약(assumed_fields 정직 표기 + 보수 기본치 명시 라벨링)으로 소비한다.
+    max_bcr: float = 0.0
+    max_far: float = 0.0
     max_height: float = 0.0
     land_area_sqm: float = 0.0
     # ★A-2(배선 P1 — usable 면적 전파, additive) — 다필지 통합 경로에서만 채워짐(gross 기준).
@@ -140,6 +145,11 @@ class PipelineState(BaseModel):
     site_to_design: SiteToDesignPayload | None = None
     design_to_cost: DesignToCostPayload | None = None
     cost_to_feasibility: CostToFeasibilityPayload | None = None
+    # W2-3: site_to_design 의 Stage Handoff 번들(HandoffBundle.to_dict()) — 대표 1경로.
+    # dict 로 보관하는 이유: PipelineState 는 순수 Pydantic 모델이라 dataclass 를 그대로
+    # 담으면 직렬화 계약이 흔들린다(arbitrary_types_allowed 확산 방지). None=봉인 실패/미배선
+    # (하위호환 — _run_design 은 None 이면 검증 자체를 생략하고 기존 동작 그대로 진행).
+    site_to_design_bundle: dict[str, Any] | None = None
 
 
 class ProjectPipeline:
@@ -512,8 +522,10 @@ class ProjectPipeline:
             state.site_to_design = SiteToDesignPayload(
                 pnu_codes=[str(p) for p in pnu_codes] if isinstance(pnu_codes, list) else [],
                 zone_type=str(site.get("zone_type") or ""),
-                max_bcr=self._as_float(site.get("max_bcr"), 60.0),
-                max_far=self._as_float(site.get("max_far"), 200.0),
+                # ★무날조(WP-U1c): 이전 결과에 한도가 없으면 60/200을 지어내지 않고 0.0(미산정
+                #   센티널) — _run_design이 assumed_fields 정직 표기와 함께 소비(수치 동일·표기 가산).
+                max_bcr=self._as_float(site.get("max_bcr"), 0.0),
+                max_far=self._as_float(site.get("max_far"), 0.0),
                 max_height=self._as_float((zoning or {}).get("max_height_m"), 0.0),
                 land_area_sqm=self._as_float(site.get("land_area_sqm"), 0.0),
                 land_shape=None,
@@ -675,9 +687,11 @@ class ProjectPipeline:
             pnu_codes = pre_collected.get("pnu_codes", [])
             official_land_price = pre_collected.get("official_land_price", 0.0)
 
-            # 국토계획법 법정 상한
-            national_bcr = pre_collected.get("national_bcr") or pre_collected.get("max_bcr", 60.0)
-            national_far = pre_collected.get("national_far") or pre_collected.get("max_far", 200.0)
+            # 국토계획법 법정 상한 — ★무날조(WP-U1c): 무자료 시 `or 200/60` 임의 기본값을
+            #   발명하지 않는다(None 유지). 법정값의 진실원천은 아래 far_tier SSOT가 용도지역
+            #   라벨(legal_limits_for)로 재확인하며, 여기 값은 zone_limits 보조 페이로드일 뿐이다.
+            national_bcr = pre_collected.get("national_bcr") or pre_collected.get("max_bcr")
+            national_far = pre_collected.get("national_far") or pre_collected.get("max_far")
             max_height = pre_collected.get("max_height", 0.0)
 
             # 조례 조회 (pre_collected에 없으면 OrdinanceService로 실시간 조회)
@@ -693,46 +707,178 @@ class ProjectPipeline:
                     ord_result = await ord_svc.get_ordinance_limits(state.address, zone_type)
                     if ord_result.get("ordinance_bcr") is not None:
                         ordinance_bcr = ord_result["ordinance_bcr"]
-                        ordinance_far = ord_result.get("ordinance_far", national_far)
+                        # ★무날조: 조례 용적률 미제공 시 법정값으로 지어내지 않고 None 유지
+                        #   (아래 SSOT가 법정 폴백·정직 표기를 일원 처리).
+                        ordinance_far = ord_result.get("ordinance_far")
                         ordinance_source = ord_result.get("source", "조례")
                     _sgg = ord_result.get("sigungu")
                     if _sgg and str(_sgg).strip() and str(_sgg).strip() != "미확인":
                         ordinance_sigungu = str(_sgg).strip()
                 except Exception as e:
                     logger.warning("조례 조회 실패, 법정상한 폴백: %s", str(e)[:160])
-            if not ordinance_bcr:
-                ordinance_bcr = national_bcr
-                ordinance_far = national_far
-                ordinance_source = ordinance_source or "법정상한"
 
-            effective_bcr = min(float(national_bcr or 60), float(ordinance_bcr or 60))
-            effective_far = min(float(national_far or 200), float(ordinance_far or 200))
+            # ── ★실효 용적률/건폐율 SSOT 단일경유(WP-U1c) — calc_effective_far 소비(재계산 금지) ──
+            # 과거 이 지점의 `min(법정,조례)` 독자 재계산은 ①구조상한(건폐율×층수) 계층 누락으로
+            # 자연/생산녹지(건폐 20%×4층=80% < 법정 100%)를 100%로 과대표시하고, ②무자료 시
+            # `or 200`/`or 60` 날조 기본값으로 자연녹지에 200%를 발명했다(라이브 실측 재현).
+            # 수지(feasibility_v2)·종합(comprehensive)·규제(PR#333)·인허가(PR#334)·90초진단(PR#336)
+            # 표면과 동일 SSOT 계층(법정범위→조례→계획상한→인센티브→구조상한)을 소비한다 —
+            # "2026-06-19 산/임야 과대표시" 버그클래스의 파이프라인 표면 봉합. 층수제한 없는
+            # zone(제2종일반주거 250%·일반상업 1300% 등)은 구조상한 None → 완전 무영향.
+            far_basis: str | None = None
+            far_reliable = False
+            far_basis_detail: dict[str, Any] | None = None
+            structural_cap_pct: float | None = None
+            floor_cap: int | None = None
+            floor_cap_basis: str | None = None
+            _ord_payload: dict[str, Any] = {}
+            if ordinance_bcr is not None or ordinance_far is not None:
+                _ord_payload = {
+                    "ordinance_bcr": ordinance_bcr,
+                    "ordinance_far": ordinance_far,
+                    "source": ordinance_source or "조례",
+                }
+                if ordinance_sigungu:
+                    _ord_payload["sigungu"] = ordinance_sigungu
+            eff: dict[str, Any] = {}
+            try:
+                from app.services.land_intelligence.far_tier_service import calc_effective_far
+                eff = calc_effective_far(
+                    {
+                        "zone_limits": {"max_bcr_pct": national_bcr, "max_far_pct": national_far},
+                        "local_ordinance": _ord_payload,
+                        "special_districts": (
+                            pre_collected.get("special_districts")
+                            or comprehensive.get("special_districts")
+                            or []
+                        ),
+                    },
+                    zone_type,
+                    float(land_area_sqm or 0),
+                )
+            except Exception as e:  # noqa: BLE001 — SSOT 실패 시 정직강등(far_reliable=False)
+                logger.warning("실효 용적률 SSOT 산정 실패 — 정직강등", err=str(e)[:160])
+                eff = {}
 
-            # ★다필지 통합(리뷰 HIGH): 위 min()은 대표필지 zone의 법정/조례로만 산출된다. 통합 블록이
+            _eff_far = eff.get("effective_far_pct")
+            _eff_bcr = eff.get("effective_bcr_pct")
+            if _eff_far is not None and float(_eff_far) > 0:
+                effective_far = float(_eff_far)
+                far_reliable = True
+            else:
+                # SSOT 미산정(zone 미확인/산정 실패) — 날조 금지: 실제 수집값만 보수 적용(min),
+                # 전무하면 None(미산정) 정직 전파. 하류 _run_design은 W3-8 계약(assumed_fields
+                # 정직 표기 + 보수 기본치 명시 라벨링)으로 0/None을 소비한다.
+                _far_cands = [
+                    float(v) for v in (national_far, ordinance_far)
+                    if v is not None and float(v) > 0
+                ]
+                effective_far = min(_far_cands) if _far_cands else None
+            if _eff_bcr is not None and float(_eff_bcr) > 0:
+                effective_bcr = float(_eff_bcr)
+            else:
+                _bcr_cands = [
+                    float(v) for v in (national_bcr, ordinance_bcr)
+                    if v is not None and float(v) > 0
+                ]
+                effective_bcr = min(_bcr_cands) if _bcr_cands else None
+            if eff:
+                far_basis = eff.get("far_basis")
+                far_basis_detail = eff.get("far_basis_detail")
+                structural_cap_pct = eff.get("structural_cap_pct")
+                floor_cap = eff.get("floor_cap")
+                floor_cap_basis = eff.get("floor_cap_basis")
+                # 법정/조례 표기값도 SSOT(용도지역 라벨 재확인) 산출을 소비 — 표기·수치 교차 일치.
+                if eff.get("national_bcr_pct") is not None:
+                    national_bcr = eff["national_bcr_pct"]
+                if eff.get("national_far_pct") is not None:
+                    national_far = eff["national_far_pct"]
+                if eff.get("ordinance_bcr_pct") is not None:
+                    ordinance_bcr = eff["ordinance_bcr_pct"]
+                if eff.get("ordinance_far_pct") is not None:
+                    ordinance_far = eff["ordinance_far_pct"]
+                ordinance_source = ordinance_source or str(eff.get("source") or "")
+
+            # ── ★E7 가정치 모순 봉합(WP-U1d — #337 리뷰 MEDIUM): _fetch_real_site_data가
+            #   외부수집 전면 실패로 zone/max_far를 발명한 assumed_defaults 경로에서는, SSOT가
+            #   그 '가정 zone 라벨'(제2종일반주거 등)로 250%를 실측처럼 산정해 far_reliable=True로
+            #   오인된다(실측 재현: effective_far=250·far_reliable=True). 가정치 기반 산정은
+            #   신뢰 불가 — 값은 유지하되(파이프라인 무중단·W3-8 계약) False로 강등하고 far_basis에
+            #   가정 사실을 정직 표기한다. 아래 사용자 오버라이드는 사용자 명시 입력이므로 이 강등
+            #   뒤에도 True를 회복할 수 있다(블록 순서 의도적 — E7 가정과 무관한 권위 입력).
+            if (
+                pre_collected.get("data_quality") == "assumed_defaults"
+                and "max_far" in (pre_collected.get("assumed_fields") or [])
+            ):
+                far_reliable = False
+                _assumed_note = "가정 기본값(assumed_defaults) 기반 — 실측 미확보"
+                far_basis = f"{far_basis} · {_assumed_note}" if far_basis else _assumed_note
+
+            # ── 사용자 오버라이드 최종 권위 보존(기존 계약 — _apply_site_overrides 주석 참조):
+            #    max_bcr/max_far 직접 입력은 SSOT 산정과 무관하게 최종 한도로 적용한다(값 자체가
+            #    사용자 명시 입력 — 날조 아님, far_basis로 출처 정직 표기).
+            #    national_*/ordinance_* 개별 오버라이드는 하향(min)으로만 참여(보수 방향).
+            if applied_site_overrides:
+                _uf = self._maybe_float(applied_site_overrides.get("max_far"))
+                if _uf is not None and _uf > 0:
+                    effective_far = _uf
+                    far_basis = "사용자 오버라이드(직접 입력)"
+                    far_reliable = True
+                else:
+                    _ufc = [
+                        c for c in (
+                            self._maybe_float(applied_site_overrides.get(k))
+                            for k in ("national_far", "ordinance_far")
+                        ) if c is not None and c > 0
+                    ]
+                    if _ufc and (effective_far is None or min(_ufc) < effective_far):
+                        effective_far = min(_ufc)
+                        far_basis = "사용자 오버라이드(법정/조례 한도 직접 입력)"
+                _ub = self._maybe_float(applied_site_overrides.get("max_bcr"))
+                if _ub is not None and _ub > 0:
+                    effective_bcr = _ub
+                else:
+                    _ubc = [
+                        c for c in (
+                            self._maybe_float(applied_site_overrides.get(k))
+                            for k in ("national_bcr", "ordinance_bcr")
+                        ) if c is not None and c > 0
+                    ]
+                    if _ubc and (effective_bcr is None or min(_ubc) < effective_bcr):
+                        effective_bcr = min(_ubc)
+
+            # ★다필지 통합(리뷰 HIGH): 위 SSOT 산정은 대표필지 zone 기준이다. 통합 블록이
             #   면적가중 blended 실효율을 계산해뒀으면(area_basis="integrated_parcels") 그 값으로 대체 —
             #   혼재 용도지역에서 zone 라벨만 우세용도로 바뀌고 FAR/BCR은 대표 zone에 머무는 라벨-숫자
             #   불일치(이 코드베이스가 반복적으로 싸운 버그 클래스)를 다필지 경로에 재도입하지 않는다.
+            #   (블렌드는 필지별 SSOT 실효율의 면적가중 집계 — 독자 재계산이 아니라 SSOT 파생값.)
             if pre_collected.get("area_basis") == "integrated_parcels":
                 _bf = pre_collected.get("effective_far")
                 _bb = pre_collected.get("effective_bcr")
                 if _bf is not None and float(_bf) > 0:
                     effective_far = float(_bf)
+                    far_basis = "다필지 통합(면적가중 실효율)"
+                    far_reliable = True
                 if _bb is not None and float(_bb) > 0:
                     effective_bcr = float(_bb)
 
-            # 기부체납 인센티브 계산
+            # 기부체납 인센티브 계산 — ★무날조: 실효 용적률 미산정이면 임의 200 기준 시뮬 대신 생략.
             far_incentive: dict[str, Any] = {}
-            try:
-                far_incentive = fic.calculate(
-                    zone_type=zone_type,
-                    ordinance_far=effective_far,
-                    donation_ratio_pct=0.0,
-                    national_far=float(national_far or 200),
-                )
-            except Exception:
-                far_incentive = {"error": "인센티브 계산 실패"}
+            if effective_far is not None:
+                try:
+                    far_incentive = fic.calculate(
+                        zone_type=zone_type,
+                        ordinance_far=effective_far,
+                        donation_ratio_pct=0.0,
+                        # None이면 fic 내부에서 용도지역 라벨로 법정상한 자동 조회(임의 200 주입 금지).
+                        national_far=float(national_far) if national_far is not None else None,
+                    )
+                except Exception:
+                    far_incentive = {"error": "인센티브 계산 실패"}
+            else:
+                far_incentive = {"skipped": "실효 용적률 미산정 — 인센티브 시뮬 생략(무날조)"}
 
-            # 개발 가능 유형 분석 — 법정 상한이 아닌 실효 BCR/FAR(조례·인센티브 반영, L650-651)을
+            # 개발 가능 유형 분석 — 법정 상한이 아닌 실효 BCR/FAR(SSOT calc_effective_far 소비값)을
             # 주입해 max_gfa를 실효 기준으로 산출(파이프라인 effective vs dta 법정 비대칭 해소).
             development_types: dict[str, Any] = {}
             try:
@@ -770,8 +916,9 @@ class ProjectPipeline:
             state.site_to_design = SiteToDesignPayload(
                 pnu_codes=pnu_codes,
                 zone_type=zone_type,
-                max_bcr=effective_bcr,
-                max_far=effective_far,
+                # 미산정(None)은 0.0 센티널로 전달 — _run_design이 W3-8 계약(가정 표기)으로 소비.
+                max_bcr=effective_bcr if effective_bcr is not None else 0.0,
+                max_far=effective_far if effective_far is not None else 0.0,
                 max_height=max_height,
                 land_area_sqm=float(land_area_sqm),
                 land_area_gross_sqm=pre_collected.get("land_area_gross_sqm"),
@@ -780,6 +927,51 @@ class ProjectPipeline:
                 address=state.address,
                 coordinates=pre_collected.get("coordinates"),
             )
+
+            # ── W2-3: Stage Handoff bundle 계약 — 대표 1경로(부지분석→설계) seal() ──
+            # 무회귀: site_to_design 직접 전달은 그대로 유지하고, 번들은 병행 도입(soft 채택
+            # — _run_design 이 checksum 변조만 hard, 그 외는 warning 으로 흡수한다).
+            # ★R2(R1 MEDIUM-2 봉합 — soft 실배선): decision 은 새로 지어낸 판정이 아니라
+            # 이 파이프라인이 이미 갖고 있는 정직 표식(E7 assumed_defaults/assumed_fields)을
+            # 그대로 재사용한다 — 장식적 문구 대신 실제 프로덕션에서 도달 가능한 값을 방출해야
+            # BLOCKED/CONDITIONAL soft 경로가 죽은 분기(사문)로 남지 않는다:
+            #   BLOCKED     : pre_collected.data_quality=="assumed_defaults"(외부수집 전면
+            #                 실패로 zone_type 등이 전부 가정치) — 이 인계 자체를 신뢰 불가로
+            #                 표시. conditions=pre_collected.assumed_fields 그대로 재사용.
+            #   CONDITIONAL : 위에 해당하지 않지만 max_far/max_bcr 미산정(0.0 센티널) 또는
+            #                 far_reliable=False(SSOT 신뢰도 낮음) — 기존 design_assumed_fields
+            #                 표기와 동일한 "필드(사유)" 어휘로 conditions 를 채운다.
+            try:
+                from app.services.provenance.handoff_bundle import HandoffDecision, seal
+
+                _site_all_assumed = pre_collected.get("data_quality") == "assumed_defaults"
+                _far_bcr_missing = not effective_far or not effective_bcr
+                _conditional = _far_bcr_missing or not far_reliable
+
+                if _site_all_assumed:
+                    _decision = HandoffDecision.BLOCKED.value
+                    _conditions = list(pre_collected.get("assumed_fields") or [])
+                elif _conditional:
+                    _decision = HandoffDecision.CONDITIONAL.value
+                    _conditions = []
+                    if not effective_far or float(effective_far or 0) <= 0:
+                        _conditions.append("max_far(0.0 센티널 — 미산정)")
+                    if not effective_bcr or float(effective_bcr or 0) <= 0:
+                        _conditions.append("max_bcr(0.0 센티널 — 미산정)")
+                    if not far_reliable and not _far_bcr_missing:
+                        _conditions.append("far_reliable(False — SSOT 신뢰도 낮음)")
+                else:
+                    _decision = HandoffDecision.PASS.value
+                    _conditions = []
+
+                state.site_to_design_bundle = seal(
+                    producer="site_analysis",
+                    payload=state.site_to_design.model_dump(),
+                    decision=_decision,
+                    conditions=_conditions,
+                ).to_dict()
+            except Exception as e:  # noqa: BLE001 — 번들 봉인 실패가 부지분석을 막으면 안 됨(best-effort).
+                logger.warning("HandoffBundle 봉인 실패(site_analysis→design)", err=str(e)[:160])
 
             state.stages["site_analysis"].data = {
                 # 구조화된 데이터 (프론트엔드 SiteAnalysisDetail용)
@@ -793,16 +985,27 @@ class ProjectPipeline:
                 },
                 "zoning": {
                     "zone_type": zone_type,
-                    "national_bcr": float(national_bcr or 60),
-                    "national_far": float(national_far or 200),
-                    "ordinance_bcr": float(ordinance_bcr or 60),
-                    "ordinance_far": float(ordinance_far or 200),
+                    # ★무날조(WP-U1c): 미확인 한도는 None 정직 전파(과거 `or 60`/`or 200` 날조 제거).
+                    #   프론트(SiteAnalysisDetail 등)는 n()/null 가드로 None 허용 — 표기만 생략.
+                    "national_bcr": float(national_bcr) if national_bcr is not None else None,
+                    "national_far": float(national_far) if national_far is not None else None,
+                    "ordinance_bcr": float(ordinance_bcr) if ordinance_bcr is not None else None,
+                    "ordinance_far": float(ordinance_far) if ordinance_far is not None else None,
                     "effective_bcr": effective_bcr,
                     "effective_far": effective_far,
                     "max_height_m": max_height,
                     "ordinance_source": ordinance_source or "pre_collected",
                     "ordinance_sigungu": ordinance_sigungu,
                     "far_incentive": far_incentive,
+                    # ★실효 산정 근거·신뢰성 정직 전파(additive) — PR#334/#336과 동일 계약.
+                    #   far_basis="구조상한(건폐율×층수)"이면 자연녹지 80%가 조례가 아닌
+                    #   층수제한(4층)에서 온 값임을 소비처가 정직 표기할 수 있다.
+                    "far_basis": far_basis,
+                    "far_reliable": far_reliable,
+                    "far_basis_detail": far_basis_detail,
+                    "structural_cap_pct": structural_cap_pct,
+                    "floor_cap": floor_cap,
+                    "floor_cap_basis": floor_cap_basis,
                 },
                 "development_types": development_types,
                 "pricing": {
@@ -875,7 +1078,7 @@ class ProjectPipeline:
         # 0. PNU가 이미 있으면 VWORLD 데이터 API로 면적/공시지가 직접 조회
         # (지오코딩 없이 데이터 API만 호출 — Railway 해외 IP에서도 동작)
         existing_pnu = (result.get("pnu_codes") or [None])[0]
-        if existing_pnu and len(existing_pnu) >= 19:
+        if is_valid_pnu(existing_pnu):
             try:
                 import httpx
 
@@ -939,8 +1142,11 @@ class ProjectPipeline:
                 result["zone_type"] = zoning["zone_type"]
             if zoning.get("zone_limits"):
                 zl = zoning["zone_limits"]
-                result["max_bcr"] = zl.get("max_bcr_pct", zl.get("bcr", result.get("max_bcr", 60)))
-                result["max_far"] = zl.get("max_far_pct", zl.get("far", result.get("max_far", 200)))
+                # ★무날조(WP-U1c): zone_limits에 한도가 없으면 60/200을 지어내지 않고 None 유지 —
+                #   아래 E7 블록이 assumed_fields 정직 표기와 함께 보수 기본치를 명시 라벨링한다
+                #   (과거엔 여기서 침묵 날조돼 E7 플래그마저 우회됐다).
+                result["max_bcr"] = zl.get("max_bcr_pct", zl.get("bcr", result.get("max_bcr")))
+                result["max_far"] = zl.get("max_far_pct", zl.get("far", result.get("max_far")))
             if zoning.get("pnu"):
                 result["pnu_codes"] = [zoning["pnu"]]
             if zoning.get("land_area_sqm"):
@@ -1254,15 +1460,136 @@ class ProjectPipeline:
         overrides = self._stage_overrides_for(opts, "design")
         applied_overrides: dict[str, Any] = {}
 
+        # ── W2-3: Stage Handoff bundle 소비측 사전검증(대표 1경로) ──
+        # 번들이 없으면(레거시 호출·_restore_previous 복원 경로 — 아직 미배선) 완전
+        # 하위호환: 검증 자체를 생략하고 site(위 SiteToDesignPayload)를 그대로 쓴다.
+        # 번들이 있으면 checksum·decision·schema_version 을 사전검증하되, ★checksum
+        # 불일치(변조)만 hard(그대로 재전파 — 파이프라인이 FAILED 로 전환)이고 나머지
+        # (BLOCKED/schema_version 미허용/만료)는 soft — 경고 로그+표식만 남기고 기존
+        # 로직(site 그대로 사용)을 계속 진행한다(W2-2 UNTRACED 와 동일 soft 전략).
+        #
+        # ★R2(R1 LOW-1 봉합) — handoff_unverified: 아래 3경로는 모두 "검증을 아예 못 했다"는
+        # 뜻이라 "검증통과"(handoff_bundle_warning 無)와 구분해야 감사 가능하다(무음 우회 금지):
+        #   ① 번들 자체가 없음(state.site_to_design_bundle 이 falsy — 레거시 호출/복원 경로/
+        #      위 seal() 이 예외로 실패한 경우 모두 여기로 수렴).
+        #   ② 번들 dict 형식이 손상됨(bundle_from_dict 가 None 반환 — malformed).
+        # 검증이 실제로 수행된 경우(③)에만 handoff_unverified 를 남기지 않는다.
+        handoff_bundle_warning: str | None = None
+        handoff_payload_drift: str | None = None
+        handoff_unverified: str | None = None
+        if not state.site_to_design_bundle:
+            handoff_unverified = (
+                "site_to_design_bundle 없음(레거시 호출·_restore_previous 복원 경로·"
+                "seal() 실패 중 하나 — 검증 생략, 미검증 소비)"
+            )
+        else:
+            from app.services.provenance.handoff_bundle import (
+                CURRENT_SCHEMA_VERSION,
+                HandoffBundleRejectedError,
+                HandoffChecksumMismatchError,
+                bundle_from_dict,
+                compute_payload_checksum,
+            )
+
+            bundle = bundle_from_dict(state.site_to_design_bundle)
+            if bundle is None:
+                handoff_unverified = "site_to_design_bundle 형식 손상(malformed) — 검증 생략, 미검증 소비"
+                logger.warning("Stage Handoff 번들 형식 손상(soft — 미검증 소비로 진행)")
+            else:
+                try:
+                    bundle.verify_for_consumption(
+                        allowed_schema_versions={CURRENT_SCHEMA_VERSION}
+                    )
+                except HandoffChecksumMismatchError:
+                    raise  # ★hard — 무결성(변조) 위반은 타협 없이 파이프라인 실패로 전파.
+                except HandoffBundleRejectedError as e:
+                    handoff_bundle_warning = str(e)
+                    logger.warning(
+                        "Stage Handoff 번들 소비 거부(soft — 파이프라인은 계속 진행)",
+                        err=str(e)[:200],
+                    )
+
+                # ★R2(R1 MEDIUM-1 봉합) — 소비대상(site, state.site_to_design 라이브 객체)
+                # ↔ 봉인 스냅샷(bundle.payload) 드리프트 대조. verify_for_consumption() 은
+                # bundle.payload 자기무결성만 본다 — 실제로 아래에서 쓰는 것은 site(별개
+                # 라이브 객체)라, site 자체가 봉인 이후 변조/표류해도 위 검증은 못 잡는다
+                # (리뷰어 실증: site.max_far 를 직접 바꾸면 verify_for_consumption() 은
+                # 통과). 스파이크: seal() 호출 지점(_run_site_analysis 끝)과 이 소비 지점
+                # 사이 코드 경로에 state.site_to_design 을 재대입/mutate하는 정당한 분기는
+                # 없다(grep 확인) — 그럼에도 soft 로 시작한다(★hard 미승격 근거: 드리프트가
+                # 정상적으로 발생하는 케이스가 실제로 없다는 것이 운영에서 확증되기 전까지는,
+                # 향후 파이프라인 내부에 정당한 보정 경로가 추가될 때 오차단할 위험을 배제할
+                # 수 없다 — W2-2 UNTRACED 와 동일하게 채택률 확보 후 hard 승격을 검토한다).
+                live_checksum = compute_payload_checksum(site.model_dump())
+                if live_checksum != bundle.payload_checksum:
+                    handoff_payload_drift = (
+                        "소비대상(site_to_design)이 봉인 스냅샷과 다름(payload drift) — "
+                        f"sealed={bundle.payload_checksum[:12]}... live={live_checksum[:12]}..."
+                    )
+                    logger.warning(
+                        "Stage Handoff 소비대상 드리프트(soft — 파이프라인은 계속 진행)",
+                        err=handoff_payload_drift[:200],
+                    )
+
         # W3-8: 폴백 기본값(500㎡/60%/200%) 사용 시 가정 사실을 stage data에 정직 표기 —
         # site 단계의 assumed_fields 계약(E7)과 동일. 수치·흐름 불변, 표기만 가산.
-        design_assumed_fields: list[str] = []
-        if not site.land_area_sqm:
-            design_assumed_fields.append("land_area_sqm(500㎡ 가정)")
-        if not site.max_bcr:
-            design_assumed_fields.append("max_bcr(60% 가정)")
-        if not site.max_far:
-            design_assumed_fields.append("max_far(200% 가정)")
+        #
+        # ★W2-4(Required Data Matrix) — 대표 1단계 적용: 아래 3개 필드가 없으면(MISSING)
+        # design_assumed_fields에 라벨을 붙이던 옛 ad hoc `if not site.X: append(...)` 3줄은
+        # 이 단계의 소형 로컬 게이트였다 — 이제 공용 계약(evaluate_matrix)에 위임한다. 세 필드
+        # 모두 requirement_level=REQUIRED**이되 critical=False**로 선언한다(★무회귀 — 오늘까지
+        # 이 필드들이 없어도 파이프라인이 절대 멈추지 않았으므로, 여기서 critical=True를 주면
+        # 새로 BLOCKED를 방출해 회귀가 된다). zone_type은 building_type 자동판정 근거라
+        # RECOMMENDED로만 추가 관측한다(결측이어도 기존처럼 "" 폴백으로 계속 진행 — 제어흐름
+        # 불변). 산출되는 design_assumed_fields 문자열·트리거 조건은 리팩토링 전후 동일함을
+        # tests/test_required_data.py의 동작 동일성 테스트로 고정한다.
+        from app.services.provenance.required_data import DataRequirement, DataStatus, evaluate_matrix
+
+        design_requirements = (
+            DataRequirement(
+                field="land_area_sqm", requirement_level="required",
+                description="설계개요(건축면적·연면적) 산출의 대지면적 기준 — "
+                             "0.0=미산정 센티널, 없으면 500㎡ 보수 가정으로 진행.",
+            ),
+            DataRequirement(
+                field="max_bcr", requirement_level="required",
+                description="건폐율 상한 — 0.0=미산정 센티널, 없으면 60% 보수 가정으로 진행.",
+            ),
+            DataRequirement(
+                field="max_far", requirement_level="required",
+                description="용적률 상한 — 0.0=미산정 센티널, 없으면 200% 보수 가정으로 진행.",
+            ),
+            DataRequirement(
+                field="zone_type", requirement_level="recommended",
+                description="건물유형(아파트/다세대/근생/공동주택) 자동판정 근거 — "
+                             "없으면 기본값 '공동주택'으로 진행.",
+            ),
+        )
+        design_matrix_result = evaluate_matrix(design_requirements, site.model_dump())
+        _design_fallback_labels = {
+            "land_area_sqm": "land_area_sqm(500㎡ 가정)",
+            "max_bcr": "max_bcr(60% 가정)",
+            "max_far": "max_far(200% 가정)",
+        }
+        design_assumed_fields: list[str] = [
+            _design_fallback_labels[item.field]
+            for item in design_matrix_result.items
+            if item.field in _design_fallback_labels and item.status == DataStatus.MISSING.value
+        ]
+        # ★★2026-08-23 — 이 자리는 **되돌린 것**이다. 처음엔 `or 500/60/200` 을
+        #   far_tier_service·ordinance_service 와 같은 **A형 날조**로 보고 제거했는데,
+        #   테스트가 그것을 잡았다(`test_required_data.py` 2건).
+        #
+        #   확인해 보니 여기는 **성격이 다르다** — 이 폴백은 `W3-8 계약`에 따라
+        #   `assumed_fields=["land_area_sqm(500㎡ 가정)", …]` 와 `data_quality="assumed_defaults"`
+        #   로 **가정임을 명시**하고, 하류(`trust_guard`)가 그 표기를 보고 판단을 유보한다.
+        #   즉 **값을 지어내되 지어냈다고 말하는** 구조다.
+        #
+        #   하드코딩 3분류로 보면:
+        #     · A형 날조 = 근거 없이 발명하고 **확정치처럼 보여 준다** → 제거(far_tier·ordinance)
+        #     · **B형 전제 = 값을 쓰되 가정임을 표기하고 하류가 그것을 소비한다 → 유지(여기)**
+        #   제거하면 `assumed_fields` 가 비고 연면적이 0 이 되어, **정직 표기 체계 자체가
+        #   무력화**된다. 그것이 이 되돌림의 이유다.
         land_area = site.land_area_sqm or 500.0
         bcr = site.max_bcr or 60.0
         far = site.max_far or 200.0
@@ -1417,6 +1744,22 @@ class ProjectPipeline:
         if design_assumed_fields:
             state.stages["design"].data["assumed_fields"] = design_assumed_fields
             state.stages["design"].data["data_quality"] = "assumed_defaults"
+        # W2-3: Stage Handoff 번들 soft 표식 3종(위 사전검증 참고 — 파이프라인 자체는 무중단).
+        # ★R2(R1 LOW-2 봉합) — 이 표식들은 PipelineStageStatusResponse.data(dict, 라우터
+        # pipeline.py)를 통해 그대로 API 응답에 직렬화되지만, 이를 읽어 배지·경고를 렌더하는
+        # 전용 프론트 서피스는 아직 없다(orphan handoff 재발 방지 문서화 — "필드는 최종 소비
+        # 표면까지 추적" 원칙, project_analysis_integrity_storyline 교훈). 전용 서피스 배선은
+        # 후속 과제이며, 그 전까지는 로그(logger.warning 위)가 유일한 실관측 경로다.
+        if handoff_bundle_warning:
+            state.stages["design"].data["handoff_bundle_warning"] = handoff_bundle_warning
+        if handoff_payload_drift:
+            state.stages["design"].data["handoff_payload_drift"] = handoff_payload_drift
+        if handoff_unverified:
+            state.stages["design"].data["handoff_unverified"] = handoff_unverified
+        # W2-4: Required Data Matrix 판정(순수 additive — decision이 BLOCKED이어도 이 단계의
+        # 제어흐름은 바꾸지 않는다. 위 design_requirements가 전부 critical=False라 이 대표
+        # 배선에서 decision은 절대 BLOCKED가 될 수 없다 — PASS/CONDITIONAL만 방출된다).
+        state.stages["design"].data["data_readiness"] = design_matrix_result.to_dict()
 
         # ── 건축법규 자동 검증 (BuildingCodeRuleEngine) ──
         try:
@@ -1463,11 +1806,17 @@ class ProjectPipeline:
             }
 
     async def _run_design_review(self, state: PipelineState, opts: dict):
-        """STEP 2.5: 심의/설계도면 자동분석 — 설계 결과를 심의 엔진 BFF로 검토.
+        """STEP 2.5: 심의/설계도면 자동분석 — 설계 결과를 심의 엔진 공용 함수로 검토.
 
-        ★graceful: 엔진 미연결/오류 시 단계 data를 degraded로 채우고 정상 반환한다.
-        예외를 던지지 않으므로(또는 던져도 run 루프가 FAILED로 격리) cost 등 하류 단계가
-        영향받지 않는다. 결정론 산출 수치는 변경하지 않는다(검토 결과를 표면화만).
+        ★D3(감사 이중잣대 제거): BFF 라우터와 동일한 공용 함수 `run_deliberation_analysis`를 경유해
+        engine_run_binding 결속 + 해시체인 감사원장 기록 + 무결성/테넌트 격리를 동일 계약으로 강제한다
+        (과거엔 `_engine_post_analyze`를 직접 호출해 결속·감사를 건너뛴 무감사 경로였다).
+        ★PR#319 리뷰 반영 — 감사 실패(fail-closed 502)는 엔진 미연결/오류(degraded)와 **구분**한다.
+        `run_deliberation_analysis`가 감사 기록 실패 시 raise하는 HTTPException(502)을 광범위
+        except보다 먼저 캐치해 `status="audit_failed"`(FAILED)로 명시 강등하고, 판정 데이터는 절대
+        저장하지 않는다(예외로 중단돼 애초에 없음 — 감사 없는 권위 판정 제공 금지). 반면 엔진 미연결/
+        무결성 위반은 종전대로 degraded/SKIPPED 유지(구분 보존). 어느 경우든 예외를 상위로 던지지
+        않으므로 cost 등 하류 단계는 영향받지 않는다. 결정론 산출 수치는 변경하지 않는다.
         """
         sr = state.stages.get(PipelineStage.DESIGN_REVIEW.value)
         try:
@@ -1493,7 +1842,7 @@ class ProjectPipeline:
                 far_limit=site.max_far if site.max_far else None,
             )
             payload: dict[str, Any] = {
-                "pnu": pnu if (pnu and len(str(pnu)) == 19 and str(pnu).isdigit()) else "",
+                "pnu": pnu if is_valid_pnu(pnu) else "",
                 "address": site.address or state.address or "",
                 "calc_targets": [
                     {"target": "building_area"},
@@ -1503,39 +1852,75 @@ class ProjectPipeline:
             if rules:
                 payload["rules"] = rules
 
-            # BFF 직접 호출(같은 프로세스 함수 재사용) — 라우터/인증 우회, 엔진 graceful 계약 동일.
-            # ★A1: 과거 `_post_analyze`/`_wrap_result`는 현 라우터에 부재한 심볼이라(광역 except가
-            #   ImportError를 삼켜) 이 단계가 항상 무음 SKIPPED였다. 현존 심볼(_engine_post_analyze·
-            #   _compat_fields)로 정렬한다. is_deterministic_path로 결정론 여부를 판단해 라이브
-            #   지오코딩 등 비결정 경로는 async 타임아웃(deterministic=False)을 쓰게 한다(라우터와 동일 규약).
-            from app.services.deliberation._engine_contract import (
-                build_input_dump,
-                is_deterministic_path,
-                prevalidate,
-            )
-            from apps.api.app.routers.deliberation import _compat_fields, _engine_post_analyze
+            # ★D3(감사 이중잣대 제거): 라우터와 동일한 공용 함수를 경유해 결속(engine_run_binding)·감사원장·
+            #   무결성·테넌트 격리를 동일 계약으로 강제한다. 과거엔 `_engine_post_analyze`를 직접 호출해 결속·감사
+            #   없이 판정을 산출했다(BFF는 감사 없는 판정 제공을 502로 금지하는데 파이프라인만 무감사 우회였다).
+            #   내부에서 build_input_dump·prevalidate·is_deterministic_path를 수행하므로 여기선 payload만 넘긴다.
+            #   결속·감사에 필요한 사용자/테넌트 컨텍스트는 요청 스코프 contextvar에서 파생(파이프라인 /run은 인증 게이트).
+            from types import SimpleNamespace
 
-            dump = build_input_dump(payload)
-            err = prevalidate(dump)
-            if err:
+            from fastapi import HTTPException
+
+            from app.core.request_context import get_current_tenant_id, get_current_user_id
+            from apps.api.app.routers.deliberation import run_deliberation_analysis
+
+            user_id = get_current_user_id()
+            tenant_id = get_current_tenant_id()
+            if not user_id or not tenant_id:
+                # ★비차단 리뷰 반영(PR#319) — 인증 요청 컨텍스트 밖(향후 백그라운드/배치 파이프라인 실행 등)에서는
+                #   contextvar가 비어 있을 수 있다. 빈 id/tenant로 결속·감사를 기록하면 서로 다른 무인증 호출이
+                #   같은 빈 tenant_id로 충돌·오염할 위험이 있으므로, 엔진 호출 자체를 하지 않고 audit_failed와
+                #   동일한 fail-closed 경로로 사전 강등한다(감사 없는 판정 제공 금지 원칙의 사전 가드).
                 if sr:
-                    sr.data = {"status": "degraded", "reason": err}
+                    sr.data = {"status": "audit_failed", "reason": "no_auth_context"}
+                    sr.status = PipelineStatus.FAILED
+                    sr.error = "deliberation_audit_failed:no_auth_context"
+                return
+
+            audit_user = SimpleNamespace(id=user_id, tenant_id=tenant_id)
+
+            try:
+                envelope = await run_deliberation_analysis(payload, audit_user)
+            except HTTPException as he:
+                if he.status_code == 502:
+                    # ★차단 결함 수정(PR#319 리뷰): 감사 기록 실패(fail-closed)는 엔진 미연결/오류(degraded)와
+                    #   다른 사건이다 — BFF 경로가 502를 명시 반환하는 것과 동일하게, 파이프라인도 SKIPPED-degraded로
+                    #   조용히 뭉개지 않고 FAILED/audit_failed로 명시 구분한다. 판정 데이터는 저장하지 않는다
+                    #   (예외로 중단돼 애초에 존재하지 않음 — 감사 없는 결과를 하류로 전파 금지).
+                    if sr:
+                        sr.data = {"status": "audit_failed", "reason": str(he.detail)[:200]}
+                        sr.status = PipelineStatus.FAILED
+                        sr.error = f"deliberation_audit_failed:{str(he.detail)[:200]}"
+                    return
+                # 그 외 HTTPException(예: 422 입력 미러/선검증 실패) — 엔진 호출·감사 이전 단계라 감사 무관.
+                # 기존(D3 이전) 계약대로 degraded/SKIPPED 유지(reason 표면화, 무음 아님).
+                if sr:
+                    sr.data = {"status": "degraded", "reason": f"invalid_input:{str(he.detail)[:180]}"}
                     sr.status = PipelineStatus.SKIPPED
                 return
 
-            data, reason = await _engine_post_analyze(dump, deterministic=is_deterministic_path(dump))
-            if reason != "ok" or data is None:
-                # ★엔진 미연결/오류 → degraded skip(파이프라인 무파괴).
+            if not isinstance(envelope, dict) or envelope.get("status") != "ok":
+                # 엔진 미연결/오류·무결성 위반(200이지만 degraded 봉투) → degraded SKIPPED(무음 아님·reason 표면화).
+                reason = envelope.get("reason") if isinstance(envelope, dict) else "invalid_response"
                 if sr:
-                    sr.data = {"status": "degraded", "reason": reason}
+                    sr.data = {"status": "degraded", "reason": reason or "degraded"}
                     sr.status = PipelineStatus.SKIPPED
                 return
 
-            # ★_wrap_result 호환 형태 재구성(status·run_id + _compat_fields의 평면 필드).
-            wrapped = {"status": "ok", "run_id": str(data.get("run_id") or ""), **_compat_fields(data)}
+            # 정상 — 결속·감사 완료. 평면 필드(complianceScore·finalStatus·findings·sections)와 감사 출처 표면화.
             if sr:
-                sr.data = wrapped
-        except Exception as e:  # noqa: BLE001 — 심의 검토 실패가 파이프라인을 깨지 않게 흡수.
+                sr.data = {
+                    "status": "ok",
+                    "run_id": str(envelope.get("run_id") or ""),
+                    "complianceScore": envelope.get("complianceScore"),
+                    "finalStatus": envelope.get("finalStatus"),
+                    "findings": envelope.get("findings") or [],
+                    "sections": envelope.get("sections") or {},
+                    "skipped": envelope.get("skipped") or [],
+                    "audit_degraded": envelope.get("audit_degraded", False),
+                    "audit_skipped": envelope.get("audit_skipped") or [],
+                }
+        except Exception as e:  # noqa: BLE001 — 심의 검토의 그 외 예기치 못한 실패가 파이프라인을 깨지 않게 흡수.
             if sr:
                 sr.data = {"status": "degraded", "reason": f"design_review_error:{str(e)[:140]}"}
                 sr.status = PipelineStatus.SKIPPED
@@ -1989,7 +2374,7 @@ class ProjectPipeline:
             cf_gen = CashflowGenerator()
             sale_start_month = max(0, cost.construction_months - 6)  # 준공 6개월 전 분양 시작
 
-            # ── R1 세후 IRR: 통합 세금엔진(38종) 결과를 시점 매핑해 주입(additive) ──
+            # ── R1 세후 IRR: 통합 세금엔진(28종) 결과를 시점 매핑해 주입(additive) ──
             # 실패·세금 전무 시 tax_schedule=None → 기존 세전 현금흐름과 완전 동일(graceful).
             tax_schedule = None
             try:

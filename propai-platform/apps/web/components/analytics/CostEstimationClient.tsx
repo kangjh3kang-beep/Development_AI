@@ -19,9 +19,8 @@ import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { NumberInput } from "@/components/common/NumberInput";
 import { apiClient } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
-import { effectiveLandAreaSqm } from "@/lib/site-area";
+import { blendedFarPct, effectiveLandAreaSqm } from "@/lib/site-area";
 import { useStageAutoRecalc } from "@/hooks/useStageAutoRecalc";
-import { getZoningSpec } from "@/lib/kr-building-regulations";
 import { VerificationBadge } from "@/components/common/VerificationBadge";
 import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
 import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
@@ -67,12 +66,14 @@ interface Overview {
   };
 }
 
+/** 백엔드 CostMonteCarlo(/cost/{pid}/monte-carlo) 실계약 — 삼각분포 리스크 5종(자재·노무·경비·설계변경·공기). */
 interface RiskResult {
   iterations: number;
   mean: number; stdDev: number;
-  p10: number; p50: number; p90: number; min: number; max: number;
-  ci90: [number, number];
-  histogram: { binStart: number; binEnd: number; count: number }[];
+  p10: number; p50: number; p80: number; p90: number; min: number; max: number;
+  cv: number;
+  converged: boolean;
+  riskContributions: Record<string, number>;
   summary: string;
 }
 
@@ -159,7 +160,7 @@ function Term({ label, hint }: { label: string; hint: string }) {
 function StepHeader({ n, title, desc, done }: { n: number; title: string; desc: string; done?: boolean }) {
   return (
     <div className="flex items-start gap-3">
-      <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-black ${done ? "bg-emerald-500/20 text-emerald-400" : "bg-[var(--accent-soft)] text-[var(--accent-strong)]"}`}>
+      <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-black ${done ? "bg-[var(--status-success)]/20 text-[var(--status-success)]" : "bg-[var(--accent-soft)] text-[var(--accent-strong)]"}`}>
         {done ? "✓" : n}
       </span>
       <div>
@@ -171,7 +172,7 @@ function StepHeader({ n, title, desc, done }: { n: number; title: string; desc: 
 }
 
 const AutoBadge = () => (
-  <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-bold text-emerald-400">프로젝트에서 자동</span>
+  <span className="rounded bg-[var(--status-success)]/15 px-1.5 py-0.5 text-[9px] font-bold text-[var(--status-success)]">프로젝트에서 자동</span>
 );
 
 /** 상단 5단계 인디케이터 — "완료 여부"만 표시(현재 스크롤 위치 추적 아님), 클릭 시 해당 섹션으로 스크롤. */
@@ -185,11 +186,11 @@ function StepIndicator({ steps }: { steps: { n: number; label: string; done: boo
           onClick={() => document.getElementById(`cost-step-${s.n}`)?.scrollIntoView({ behavior: "smooth", block: "start" })}
           className={`flex items-center gap-1.5 rounded-full border px-3 py-1 text-[11px] font-bold transition-colors ${
             s.done
-              ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400"
+              ? "border-[var(--status-success)]/40 bg-[var(--status-success)]/10 text-[var(--status-success)]"
               : "border-[var(--line-strong)] bg-[var(--surface-strong)] text-[var(--text-secondary)] hover:border-[var(--accent-strong)]"
           }`}
         >
-          <span className={`flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-black ${s.done ? "bg-emerald-500/25" : "bg-[var(--surface-muted)]"}`}>
+          <span className={`flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-black ${s.done ? "bg-[var(--status-success)]/25" : "bg-[var(--surface-muted)]"}`}>
             {s.done ? "✓" : s.n}
           </span>
           {s.label}
@@ -232,6 +233,7 @@ export function CostEstimationClient({ onNavigateTab }: { onNavigateTab?: (tab: 
   // ② 리스크 시뮬레이션(몬테카를로) — 개산 결과의 최저~최대 범위 기반.
   const [iterations, setIterations] = useState(10000);
   const [risk, setRisk] = useState<RiskResult | null>(null);
+  const [riskNote, setRiskNote] = useState<string | null>(null);
   const [riskLoading, setRiskLoading] = useState(false);
 
   // ③ 저장된 적산 요약(GET /cost/{pid}/estimates 최근 목록).
@@ -250,8 +252,12 @@ export function CostEstimationClient({ onNavigateTab }: { onNavigateTab?: (tab: 
     // ★다필지면 통합 면적으로 GFA 폴백을 역산(대표값 과소산출 방지).
     const land = effectiveLandAreaSqm(siteAnalysis) ?? 0;
     if (land <= 0) return 0;
-    const spec = siteAnalysis?.zoneCode ? getZoningSpec(siteAnalysis.zoneCode) : null;
-    const far = spec?.floorAreaRatioMax ?? 0;
+    // ★용적률도 면적과 같은 축으로 — blendedFarPct(다필지=면적가중평균, 단일=대표값).
+    //   종전엔 "통합면적 × 대표필지 zoneCode 의 FAR" 이라는 혼종이었다. 용도지역이 섞인 부지에서
+    //   연면적이 통째로 틀어지고(대표가 저FAR이면 과소·고FAR이면 과대), 그 GFA 가 :301
+    //   total_gfa_sqm 으로 전송돼 공사비 금액까지 어긋난다. zoneCode·dominantZoneCode 는 둘 다
+    //   '첫 필지' 값이라 다필지 가중에 쓸 수 없다(satong-map-selection.ts:221-222).
+    const far = blendedFarPct(siteAnalysis) ?? 0;
     if (far <= 0) return 0;
     return Math.round((land * far) / 100);
   }, [siteAnalysis]);
@@ -296,7 +302,7 @@ export function CostEstimationClient({ onNavigateTab }: { onNavigateTab?: (tab: 
 
   const calc = useCallback(async () => {
     if (!gfa || gfa <= 0) { setErr("연면적(GFA)을 입력하세요(프로젝트 선택 시 자동 반영)."); return; }
-    setLoading(true); setErr(""); setRisk(null);
+    setLoading(true); setErr(""); setRisk(null); setRiskNote(null);
     try {
       const r = await apiClient.post<Overview>("/cost/estimate-overview", {
         body: {
@@ -326,43 +332,58 @@ export function CostEstimationClient({ onNavigateTab }: { onNavigateTab?: (tab: 
   // 백엔드 호출이라 과도호출 금지 — 결과가 있고(hasResult) 로딩 중이 아닐 때만(enabled).
   useStageAutoRecalc("cost", calc, { enabled: !loading, hasResult: !!result });
 
-  // ②: 개략 산정 결과의 기대공사비와 최저~최대 레인지를 근거로 몬테카를로 시뮬레이션.
-  const runRisk = useCallback(() => {
-    if (!result) return;
+  // ②: 몬테카를로 리스크 시뮬레이션 — ★백엔드 실엔진으로 교체(2026-07-15 감사 P4③).
+  //   종전에는 클라이언트 Math.random() 균등분포 산물을 "90% 확률로 분포합니다"라고
+  //   표기했다(무목업 위반 — 확률 주장의 날조). 교체 계약(BimCostDashboard와 동일 기준선):
+  //   BIM 실측 물량 → 12단계 원가계산(/calculate) → CostMonteCarlo(/monte-carlo,
+  //   삼각분포 리스크 5종·seed 고정)만 실행하고, 12단계 분해가 없는 개산 단계에서는
+  //   확률 분포를 지어내지 않고 정직 고지한다(riskNote).
+  const runRisk = useCallback(async () => {
+    setRisk(null); setRiskNote(null);
+    if (!projectId) {
+      setRiskNote("프로젝트 미연결 — 몬테카를로는 프로젝트의 BIM 실측 물량 기반 12단계 원가 분해가 있을 때 실행됩니다. 개산 단계에서는 위 '최저~최대 레인지'(물가 시나리오 실산출)를 참고하세요.");
+      return;
+    }
     setRiskLoading(true);
     try {
-      const expected = result.total_won;
-      // 레인지(min~max)를 ±변동폭으로 환산(없으면 ±15% 기본)
-      const lo = result.range?.min_won && result.range.min_won > 0 ? result.range.min_won / expected : 0.85;
-      const hi = result.range?.max_won && result.range.max_won > 0 ? result.range.max_won / expected : 1.15;
-      const span = Math.max(0.02, hi - lo);
-      const iters = Math.min(50000, Math.max(1000, iterations || 10000));
-      const samples: number[] = [];
-      for (let i = 0; i < iters; i++) {
-        const factor = lo + Math.random() * span;
-        samples.push(Math.round(expected * factor));
+      const originData = await apiClient.get<{ status?: string; items?: { priced?: boolean; work_code?: string; item_name?: string; spec?: string; unit?: string; quantity?: number; mat_unit?: number; labor_unit?: number; exp_unit?: number }[] }>(
+        `/cost/${projectId}/bim-quantities/origin-cost`, { useMock: false },
+      );
+      const items = (originData.items ?? [])
+        .filter((it) => it.priced)
+        .map((it) => ({
+          work_code: it.work_code, item_name: it.item_name, spec: it.spec,
+          unit: it.unit, quantity: it.quantity, mat_unit: it.mat_unit,
+          labor_unit: it.labor_unit, exp_unit: it.exp_unit,
+        }));
+      if (originData.status !== "ok" || items.length === 0) {
+        setRiskNote("BIM 실측 물량 미확보 — 12단계 원가 분해가 없어 몬테카를로를 실행하지 않습니다(확률 분포를 지어내지 않음). CAD/BIM 탭에서 설계를 생성하면 실측 물량 기반 리스크 시뮬레이션이 활성화됩니다.");
+        return;
       }
-      samples.sort((a, b) => a - b);
-      const mean = Math.round(samples.reduce((s, v) => s + v, 0) / iters);
-      const variance = samples.reduce((s, v) => s + (v - mean) ** 2, 0) / iters;
-      const minV = samples[0], maxV = samples[iters - 1];
-      const binCount = 10;
-      const binWidth = (maxV - minV) / binCount;
-      const histogram = Array.from({ length: binCount }, (_, i) => {
-        const binStart = minV + i * binWidth;
-        const binEnd = binStart + binWidth;
-        return { binStart: Math.round(binStart), binEnd: Math.round(binEnd), count: samples.filter((v) => v >= binStart && v < (i === binCount - 1 ? Infinity : binEnd)).length };
+      const calcRes = await apiClient.post<Record<string, unknown>>(
+        `/cost/${projectId}/calculate`,
+        { body: { items, use_llm: false, with_senior: false }, useMock: false },
+      );
+      const iters = Math.min(50000, Math.max(1000, iterations || 10000));
+      const mc = await apiClient.post<{
+        iterations: number; mean: number; std: number; cv: number;
+        p10: number; p50: number; p80: number; p90: number; min: number; max: number;
+        converged: boolean; risk_contributions?: Record<string, number>;
+      }>(`/cost/${projectId}/monte-carlo`, {
+        body: { base_result: calcRes, iterations: iters, seed: 42 },
+        useMock: false,
       });
-      const p05 = samples[Math.floor(iters * 0.05)];
-      const p95 = samples[Math.floor(iters * 0.95)];
       setRisk({
-        iterations: iters, mean, stdDev: Math.round(Math.sqrt(variance)),
-        p10: samples[Math.floor(iters * 0.1)], p50: samples[Math.floor(iters * 0.5)], p90: samples[Math.floor(iters * 0.9)],
-        min: minV, max: maxV, ci90: [p05, p95], histogram,
-        summary: `${iters.toLocaleString()}회 시뮬레이션 결과, 90% 확률로 총 공사비가 ${fmtKrw(p05)} ~ ${fmtKrw(p95)} 범위에 분포합니다(개략 공사비 범위 기반).`,
+        iterations: mc.iterations, mean: mc.mean, stdDev: mc.std,
+        p10: mc.p10, p50: mc.p50, p80: mc.p80, p90: mc.p90, min: mc.min, max: mc.max,
+        cv: mc.cv, converged: mc.converged,
+        riskContributions: mc.risk_contributions ?? {},
+        summary: `BIM 실측 물량 12단계 원가 분해에 삼각분포 리스크 5종(자재·노무·경비·설계변경·공기)을 적용한 ${mc.iterations.toLocaleString()}회 시뮬레이션(seed 고정·재현 가능) 결과, 80% 확률로 총 공사비가 ${fmtKrw(mc.p10)} ~ ${fmtKrw(mc.p90)} 범위에 분포합니다${mc.converged ? "" : " (변동계수 5% 초과 — 수렴 미달, 참고용)"}.`,
       });
+    } catch {
+      setRiskNote("리스크 시뮬레이션 실행 실패 — BIM 물량·원가계산 API를 확인하세요(결과를 지어내지 않습니다).");
     } finally { setRiskLoading(false); }
-  }, [result, iterations]);
+  }, [projectId, iterations]);
 
   // ⑤: 적산 보고서 다운로드(POST /cost/{pid}/report?format=) — LandScheduleClient.downloadReport 패턴.
   // F-4: 부분조립 해소 — ①최신 영속 BOQ(저장된 적산 목록 ③의 최신 1건)를 조회해 동봉,
@@ -459,15 +480,15 @@ export function CostEstimationClient({ onNavigateTab }: { onNavigateTab?: (tab: 
         <ProjectAddressInput value={pickerAddr} onChange={setPickerAddr} label="분석 대상 프로젝트" pickerLabel="프로젝트" placeholder="프로젝트를 선택하거나 주소를 검색하세요" />
 
         {!hasProject && (
-          <p className="rounded-lg bg-[var(--surface-strong)] px-3 py-2 text-[11px] text-amber-400">
+          <p className="rounded-lg bg-[var(--surface-strong)] px-3 py-2 text-[11px] text-[var(--status-warning)]">
             프로젝트 정보 없음 — 위에서 프로젝트를 선택하거나, 부지/설계 분석을 먼저 진행하면 건축개요가 자동으로 채워집니다.
           </p>
         )}
         {hasDesign && (
-          <p className="flex items-center gap-1.5 text-[11px] text-emerald-400"><Construction className="size-3.5 shrink-0" aria-hidden /> 설계(건축개요) 연동됨 — 도면/BIM 완성 시 항목별 정밀 적산으로 정확도가 향상됩니다.</p>
+          <p className="flex items-center gap-1.5 text-[11px] text-[var(--status-success)]"><Construction className="size-3.5 shrink-0" aria-hidden /> 설계(건축개요) 연동됨 — 도면/BIM 완성 시 항목별 정밀 적산으로 정확도가 향상됩니다.</p>
         )}
         {!hasDesign && gfaFromSite && !editedGfa && (
-          <p className="flex items-center gap-1.5 text-[11px] text-amber-400"><DraftingCompass className="size-3.5 shrink-0" aria-hidden /> 설계 미완 — 부지면적 × 용적률로 연면적(GFA)을 추정해 초기값으로 제안합니다. 설계 완료 시 정밀 적산으로 자동 정확화됩니다.</p>
+          <p className="flex items-center gap-1.5 text-[11px] text-[var(--status-warning)]"><DraftingCompass className="size-3.5 shrink-0" aria-hidden /> 설계 미완 — 부지면적 × 용적률로 연면적(GFA)을 추정해 초기값으로 제안합니다. 설계 완료 시 정밀 적산으로 자동 정확화됩니다.</p>
         )}
 
         {/* 건축개요 입력 */}
@@ -479,7 +500,7 @@ export function CostEstimationClient({ onNavigateTab }: { onNavigateTab?: (tab: 
           <label className="flex flex-col gap-1">
             <span className="flex items-center gap-1.5 text-[11px] font-semibold text-[var(--text-secondary)]">
               <Term label="연면적" hint="건물 전체 바닥면적의 합(GFA, Gross Floor Area). 지상+지하 모든 층 면적을 더한 값." />
-              {autoGfa && !editedGfa && <AutoBadge />}{editedGfa && <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-bold text-amber-400">수정됨</span>}
+              {autoGfa && !editedGfa && <AutoBadge />}{editedGfa && <span className="rounded bg-[var(--status-warning)]/15 px-1.5 py-0.5 text-[9px] font-bold text-[var(--status-warning)]">수정됨</span>}
             </span>
             <div className="flex items-center gap-1.5"><NumberInput allowDecimal value={gfa} onChange={(n) => { setGfa(n ?? 0); setEditedGfa(true); }} className={fcls} /><span className="text-[11px] text-[var(--text-tertiary)]">㎡</span></div>
           </label>
@@ -504,7 +525,7 @@ export function CostEstimationClient({ onNavigateTab }: { onNavigateTab?: (tab: 
               <span className="flex items-center gap-1.5 text-[11px] font-semibold text-[var(--text-secondary)]">
                 <Term label="평균 전용면적" hint="세대별 전용면적의 평균값(㎡). 기본형건축비 고시 대조·시니어 QS 자문에 사용됩니다. 미입력 시 대조가 생략됩니다." />
                 {autoAvgUnitSqm && !editedAvgUnitSqm && <AutoBadge />}
-                {editedAvgUnitSqm && <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-bold text-amber-400">수정됨</span>}
+                {editedAvgUnitSqm && <span className="rounded bg-[var(--status-warning)]/15 px-1.5 py-0.5 text-[9px] font-bold text-[var(--status-warning)]">수정됨</span>}
               </span>
               <div className="flex items-center gap-1.5">
                 <NumberInput allowDecimal value={avgUnitSqm} onChange={(n) => { setAvgUnitSqm(n ?? 0); setEditedAvgUnitSqm(true); }} className={fcls} />
@@ -523,7 +544,7 @@ export function CostEstimationClient({ onNavigateTab }: { onNavigateTab?: (tab: 
           <button onClick={calc} disabled={loading} className="rounded-xl bg-[var(--accent-strong)] px-8 py-3 text-sm font-black text-white shadow-[var(--shadow-glow)] hover:opacity-90 disabled:opacity-50">
             {loading ? "공사비 산정 중…" : "개략 공사비 산정 실행"}
           </button>
-          {err && <span className="text-xs font-semibold text-rose-400">{err}</span>}
+          {err && <span className="text-xs font-semibold text-[var(--status-error)]">{err}</span>}
         </div>
 
         {result && (
@@ -542,14 +563,14 @@ export function CostEstimationClient({ onNavigateTab }: { onNavigateTab?: (tab: 
 
             {/* QTO 물량 산출 배지 + 기본형건축비 대조(baseline_check) — 있을 때만(정직). */}
             <div className="flex flex-wrap items-center gap-2">
-              <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-bold ${result.qto_source === "bim" ? "bg-emerald-500/15 text-emerald-400" : "bg-[var(--surface-muted)] text-[var(--text-tertiary)]"}`}>
+              <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-bold ${result.qto_source === "bim" ? "bg-[var(--status-success)]/15 text-[var(--status-success)]" : "bg-[var(--surface-muted)] text-[var(--text-tertiary)]"}`}>
                 <Construction className="size-3" aria-hidden />
                 물량 산출(QTO): {result.qto_source === "bim" ? "BIM 실치수" : "개요 역산(derived)"}
               </span>
               {result.baseline_check && result.baseline_check.deviation_pct != null && (
                 <span
                   title={result.baseline_check.basis || undefined}
-                  className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-bold ${Math.abs(result.baseline_check.deviation_pct) > 15 ? "bg-amber-500/15 text-amber-400" : "bg-[var(--surface-muted)] text-[var(--text-secondary)]"}`}
+                  className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-bold ${Math.abs(result.baseline_check.deviation_pct) > 15 ? "bg-[var(--status-warning)]/15 text-[var(--status-warning)]" : "bg-[var(--surface-muted)] text-[var(--text-secondary)]"}`}
                 >
                   기본형건축비 대비 {result.baseline_check.deviation_pct >= 0 ? "+" : ""}{result.baseline_check.deviation_pct}%
                 </span>
@@ -600,8 +621,8 @@ export function CostEstimationClient({ onNavigateTab }: { onNavigateTab?: (tab: 
                     <div key={label} className="flex items-center gap-3">
                       <span className="w-28 shrink-0 text-xs font-semibold text-[var(--text-secondary)]">{label}</span>
                       <div className="h-3 flex-1 overflow-hidden rounded-full bg-[var(--surface-muted)]"><div className="h-full rounded-full bg-[var(--accent-strong)]" style={{ width: `${Math.min(100, pct)}%` }} /></div>
-                      <span className="w-24 shrink-0 text-right text-xs font-bold text-[var(--text-primary)]">{fmtKrw(v)}</span>
-                      <span className="w-10 shrink-0 text-right text-[11px] text-[var(--text-tertiary)]">{pct.toFixed(0)}%</span>
+                      <span className="w-24 shrink-0 text-right font-mono text-xs font-bold text-[var(--text-primary)]">{fmtKrw(v)}</span>
+                      <span className="w-10 shrink-0 text-right font-mono text-[11px] text-[var(--text-tertiary)]">{pct.toFixed(0)}%</span>
                     </div>
                   );
                 })}
@@ -634,18 +655,18 @@ export function CostEstimationClient({ onNavigateTab }: { onNavigateTab?: (tab: 
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
-                      <tr className="text-left text-[10px] font-bold uppercase tracking-widest text-[var(--text-tertiary)]">
+                      <tr className="text-left label-caps text-[var(--text-tertiary)]">
                         <th className="pb-2 pr-4">공종</th><th className="pb-2 pr-4">규격</th><th className="pb-2 pr-4 text-right">물량</th><th className="pb-2 pr-4">단위</th><th className="pb-2 text-right">금액</th>
                       </tr>
                     </thead>
                     <tbody>
                       {(result.items ?? []).map((it, i) => (
-                        <tr key={i} className="border-t border-[var(--line)]">
+                        <tr key={i} className="border-t border-[var(--line)] transition-colors hover:bg-[var(--accent-strong)]/5">
                           <td className="py-2 pr-4 font-semibold text-[var(--text-primary)]">{it.name}</td>
                           <td className="py-2 pr-4 text-[var(--text-tertiary)]">{it.spec || "-"}</td>
-                          <td className="py-2 pr-4 text-right text-[var(--text-secondary)]">{it.quantity?.toLocaleString()}</td>
+                          <td className="py-2 pr-4 text-right font-mono text-[var(--text-secondary)]">{it.quantity?.toLocaleString()}</td>
                           <td className="py-2 pr-4 text-[var(--text-tertiary)]">{it.unit || "-"}</td>
-                          <td className="py-2 text-right font-bold text-[var(--text-primary)]">{fmtKrw(it.cost_won)}</td>
+                          <td className="py-2 text-right font-mono font-bold text-[var(--text-primary)]">{fmtKrw(it.cost_won)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -660,7 +681,7 @@ export function CostEstimationClient({ onNavigateTab }: { onNavigateTab?: (tab: 
                 <div className="mb-2 flex items-center gap-2">
                   <h3 className="text-sm font-black text-[var(--text-primary)]">기하(Geometry) 정밀 적산</h3>
                   {result.geometry.source === "bim"
-                    ? <span className="inline-flex items-center gap-1 rounded bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold text-emerald-400"><Construction className="size-3" aria-hidden /> BIM 매스 실치수</span>
+                    ? <span className="inline-flex items-center gap-1 rounded bg-[var(--status-success)]/15 px-2 py-0.5 text-[10px] font-bold text-[var(--status-success)]"><Construction className="size-3" aria-hidden /> BIM 매스 실치수</span>
                     : <span className="rounded bg-[var(--surface-muted)] px-2 py-0.5 text-[10px] font-bold text-[var(--text-tertiary)]">개요 역산</span>}
                 </div>
                 <p className="mb-3 text-[11px] text-[var(--text-hint)]">
@@ -699,9 +720,9 @@ export function CostEstimationClient({ onNavigateTab }: { onNavigateTab?: (tab: 
               <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
                 <div>
                   <h3 className="flex items-center gap-1.5 text-sm font-black text-[var(--text-primary)]">
-                    <Term label="리스크 시뮬레이션 (몬테카를로)" hint="개략 공사비의 최저~최대 범위를 근거로 수천~수만 회 무작위 시뮬레이션해 공사비 분포(P10·P50·P90)와 신뢰구간을 산출합니다." />
+                    <Term label="리스크 시뮬레이션 (몬테카를로)" hint="BIM 실측 물량 기반 12단계 원가 분해에 삼각분포 리스크 5종(자재·노무·경비·설계변경·공기)을 적용해 공사비 분포(P10·P50·P90)를 산출합니다(seed 고정·재현 가능). 12단계 분해가 없는 개산 단계에서는 실행하지 않습니다." />
                   </h3>
-                  <p className="mt-0.5 text-[11px] text-[var(--text-secondary)]">입력은 위 개산 결과(기대값·최저~최대 범위)로 구동됩니다(별도 입력 불필요).</p>
+                  <p className="mt-0.5 text-[11px] text-[var(--text-secondary)]">프로젝트의 BIM 실측 물량(12단계 원가 분해)으로 구동됩니다 — 백엔드 실엔진(CostMonteCarlo).</p>
                 </div>
                 <div className="flex flex-wrap items-end gap-2">
                   <label className="flex flex-col gap-1">
@@ -713,6 +734,10 @@ export function CostEstimationClient({ onNavigateTab }: { onNavigateTab?: (tab: 
                   </button>
                 </div>
               </div>
+
+              {riskNote && !risk && (
+                <p className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-3 text-xs leading-6 text-[var(--text-secondary)] break-keep">{riskNote}</p>
+              )}
 
               {risk && (
                 <div className="grid gap-3">
@@ -739,30 +764,30 @@ export function CostEstimationClient({ onNavigateTab }: { onNavigateTab?: (tab: 
                     <i className="cc-bracket cc-bracket--tl" />
                     <i className="cc-bracket cc-bracket--br" />
                     <div className="relative">
-                      <p className="cc-label">90% 신뢰구간</p>
-                      <p className="cc-num mt-1 text-base font-[1000] text-[var(--accent-strong)]">{fmtKrw(risk.ci90[0])} ~ {fmtKrw(risk.ci90[1])}</p>
+                      <p className="cc-label">P10~P90 (80% 구간)</p>
+                      <p className="cc-num mt-1 text-base font-[1000] text-[var(--accent-strong)]">{fmtKrw(risk.p10)} ~ {fmtKrw(risk.p90)}</p>
+                      <p className="mt-1 text-[10px] text-[var(--text-tertiary)]">변동계수(CV) {(risk.cv * 100).toFixed(1)}% · {risk.converged ? "수렴 검증 통과(CV<5%)" : "수렴 미달 — 참고용"}</p>
                     </div>
                   </div>
 
-                  {/* 히스토그램 */}
-                  <div className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-5">
-                    <h4 className="mb-3 text-sm font-black text-[var(--text-primary)]">비용 분포 히스토그램</h4>
-                    <div className="space-y-2">
-                      {(() => {
-                        const maxCount = Math.max(...(risk.histogram ?? []).map((h) => h.count));
-                        return (risk.histogram ?? []).map((bin, i) => {
-                          const pct = maxCount > 0 ? (bin.count / maxCount) * 100 : 0;
+                  {/* 리스크 기여도 — 엔진 실산출(편차 분해). 종전 무작위 히스토그램(날조) 대체. */}
+                  {Object.keys(risk.riskContributions).length > 0 && (
+                    <div className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-5">
+                      <h4 className="mb-3 text-sm font-black text-[var(--text-primary)]">리스크 기여도 (편차 분해)</h4>
+                      <div className="space-y-2">
+                        {Object.entries(risk.riskContributions).map(([key, pct]) => {
+                          const labels: Record<string, string> = { material: "자재비", labor: "노무비", expense: "경비", design_chg: "설계변경", schedule: "공기(일정)" };
                           return (
-                            <div key={i} className="flex items-center gap-3">
-                              <span className="w-32 shrink-0 text-[10px] text-[var(--text-tertiary)]">{fmtKrw(bin.binStart)} ~ {fmtKrw(bin.binEnd)}</span>
-                              <div className="h-3 flex-1 overflow-hidden rounded-full bg-[var(--surface-muted)]"><div className="h-full rounded-full bg-[var(--accent-strong)]" style={{ width: `${pct}%` }} /></div>
-                              <span className="w-10 shrink-0 text-right text-[11px] font-semibold text-[var(--text-secondary)]">{bin.count}</span>
+                            <div key={key} className="flex items-center gap-3">
+                              <span className="w-24 shrink-0 text-[11px] font-semibold text-[var(--text-secondary)]">{labels[key] ?? key}</span>
+                              <div className="h-3 flex-1 overflow-hidden rounded-full bg-[var(--surface-muted)]"><div className="h-full rounded-full bg-[var(--accent-strong)]" style={{ width: `${Math.min(100, pct)}%` }} /></div>
+                              <span className="w-12 shrink-0 text-right text-[11px] font-semibold text-[var(--text-secondary)]">{pct.toFixed(1)}%</span>
                             </div>
                           );
-                        });
-                      })()}
+                        })}
+                      </div>
                     </div>
-                  </div>
+                  )}
 
                   <p className="rounded-xl bg-[var(--surface-soft)] px-4 py-3 text-sm leading-7 text-[var(--text-secondary)]">{risk.summary}</p>
                 </div>
@@ -882,15 +907,15 @@ export function CostEstimationClient({ onNavigateTab }: { onNavigateTab?: (tab: 
                   </button>
                 ))}
                 {reportNotice && (
-                  <span className={`text-[11px] font-semibold ${reportNotice.kind === "info" ? "text-emerald-400" : "text-rose-400"}`}>{reportNotice.text}</span>
+                  <span className={`text-[11px] font-semibold ${reportNotice.kind === "info" ? "text-[var(--status-success)]" : "text-[var(--status-error)]"}`}>{reportNotice.text}</span>
                 )}
               </div>
             </div>
 
             {/* 수지 반영 상태 — ②의 calc()가 매 산정마다 costData를 자동 주입하므로 별도 버튼 없이 상태만 표기(과설계 금지). */}
             <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-strong)] px-5 py-4">
-              <Link2 className="size-4 shrink-0 text-emerald-400" aria-hidden />
-              <span className="text-[11px] font-bold text-emerald-400">이미 반영됨</span>
+              <Link2 className="size-4 shrink-0 text-[var(--status-success)]" aria-hidden />
+              <span className="text-[11px] font-bold text-[var(--status-success)]">이미 반영됨</span>
               <span className="text-[11px] text-[var(--text-secondary)]">②의 개략 공사비(총·직접·간접·범위·물량출처·기준선편차)가 수지분석·투자수익성(ROI) 공통 컨텍스트에 자동 주입되었습니다(단일 데이터원).</span>
             </div>
           </>

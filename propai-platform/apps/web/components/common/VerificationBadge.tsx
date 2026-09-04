@@ -9,9 +9,11 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, CheckCircle2, ShieldCheck, XCircle, type LucideIcon } from "lucide-react";
+import { CheckCircle2, ShieldCheck, XCircle } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import { FeedbackWidget } from "@/components/growth/FeedbackWidget";
+import { verificationCacheKey } from "@/lib/verification-cache-key";
+import { resolveVerdictMeta } from "@/lib/verification-verdict";
 
 function hashStr(s: string): string {
   let h = 0;
@@ -31,13 +33,8 @@ type VerifyResult = {
   calc_pass_rate?: number | null;
 };
 
-const VERDICT_META: Record<string, { label: string; cls: string; icon: LucideIcon }> = {
-  pass: { label: "검증 통과", cls: "border-emerald-500/30 bg-emerald-500/10 text-emerald-400", icon: CheckCircle2 },
-  warn: { label: "주의", cls: "border-amber-500/30 bg-amber-500/10 text-amber-400", icon: AlertTriangle },
-  fail: { label: "오류 발견", cls: "border-rose-500/30 bg-rose-500/10 text-rose-400", icon: XCircle },
-};
 const SEV_CLS: Record<string, string> = {
-  high: "text-rose-400", medium: "text-amber-400", low: "text-[var(--text-tertiary)]",
+  high: "text-[var(--status-error)]", medium: "text-[var(--status-warning)]", low: "text-[var(--text-tertiary)]",
 };
 
 // 검증 플래그 유형 → 일반인이 이해하기 쉬운 한국어 라벨(과거 "할루시네이션" 캐시도 친화 표기)
@@ -71,7 +68,7 @@ export function VerificationBadge({
   const [open, setOpen] = useState(false);
 
   const cacheKey = useMemo(() => {
-    try { return `propai_verify_${analysisType}_${hashStr(JSON.stringify(context || {}))}`; }
+    try { return verificationCacheKey(analysisType, hashStr(JSON.stringify(context || {}))); }
     catch { return ""; }
   }, [analysisType, context]);
 
@@ -132,7 +129,9 @@ export function VerificationBadge({
 
   if (!context) return null;
 
-  const meta = result ? (VERDICT_META[result.verdict] || VERDICT_META.warn) : null;
+  // ★미지 판정을 warn 으로 접지 않는다 — verdict 는 LLM 자유 JSON 이고 백엔드 정규화가 없다.
+  //   표기 흔들림("FAIL")은 복원하고, 진짜 모르는 값은 중립 + 원값으로 표기한다.
+  const meta = result ? resolveVerdictMeta(result.verdict) : null;
 
   return (
     <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-4 py-2.5">
@@ -181,7 +180,7 @@ export function VerificationBadge({
               {result.calc_checks!.map((c, i) => (
                 <div key={i} className="flex items-center justify-between text-[11px]">
                   <span className="inline-flex items-center gap-1 text-[var(--text-secondary)]">
-                    {c.ok ? <CheckCircle2 className="size-3.5 text-emerald-400" aria-label="통과" /> : <XCircle className="size-3.5 text-rose-400" aria-label="불일치" />} {c.name} <span className="text-[var(--text-tertiary)]">({c.formula})</span>
+                    {c.ok ? <CheckCircle2 className="size-3.5 text-[var(--status-success)]" aria-label="통과" /> : <XCircle className="size-3.5 text-[var(--status-error)]" aria-label="불일치" />} {c.name} <span className="text-[var(--text-tertiary)]">({c.formula})</span>
                   </span>
                   {!c.ok && (
                     <span className="text-red-500">출력 {c.claimed.toLocaleString()} ≠ 계산 {c.recomputed.toLocaleString()}</span>

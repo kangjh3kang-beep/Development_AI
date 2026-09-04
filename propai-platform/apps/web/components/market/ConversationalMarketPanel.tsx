@@ -20,6 +20,7 @@ import { Button, Card } from "@propai/ui";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient } from "@/lib/api-client";
 import type { NearbyMapPayload } from "@/components/map/NearbyTransactionsMap";
+import { exclusionNote, sampleLabel, selectLocatedGroups } from "@/lib/market/comparable-sample";
 import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
 
 /* ── Types ── */
@@ -50,6 +51,10 @@ interface MarketResult {
   radius_m: number;
   months: number;
   total_count: number;
+  /** ★W1-b: 표본 범위 라벨 — 반경 문구는 실제로 반경 필터가 적용됐을 때만 생성된다. */
+  sample_label?: string;
+  /** ★W1-b: 집계에서 제외된 것(위치 미확인·개략·상한 초과). 없으면 undefined. */
+  sample_excluded?: string;
   stats: MarketStats | null;
   chart_data: ChartPoint[] | null;
   /** 정직 안내문(실패·무자료 시) */
@@ -108,8 +113,11 @@ function buildResult(query: string, payload: NearbyMapPayload | null): MarketRes
 
   for (const [key, cat] of Object.entries(cats)) {
     if (!key.endsWith("_trade")) continue;
-    for (const g of cat.groups || []) {
-      for (const d of g.deals || []) {
+    // ★W1-b — 종전엔 `cat.groups` 를 통째로 순회해 위치 미확인 그룹의 거래까지 평균·중앙값·
+    //   월별 추이에 넣고, 화면에는 "주변 반경 1.0km"라고 적었으며 근거(evidence)의 basis 에도
+    //   그 반경 문구를 박제했다. 검증되지 않은 반경 주장을 근거로 제시한 셈이다.
+    for (const g of selectLocatedGroups(cat as never).groups) {
+      for (const d of (g.deals || []) as Array<{ price_10k_won?: number; deal_date?: string }>) {
         const p = d.price_10k_won;
         if (typeof p !== "number" || p <= 0) continue; // 실거래가 없는 건은 제외(가짜 0 금지)
         prices.push(p);
@@ -126,10 +134,25 @@ function buildResult(query: string, payload: NearbyMapPayload | null): MarketRes
     }
   }
 
-  // 매매 카테고리 건수 합(범례 카운트 기준 — 표본 거래수와 별개)
+  // 매매 카테고리 건수 합 — ★W1-b: 위치 확인분만 센다. 통계(prices)가 위치 확인분으로
+  //   만들어지므로 건수도 같은 모집단이어야 "N건 기준 평균"이 참이 된다.
   const total_count = Object.entries(cats)
     .filter(([k]) => k.endsWith("_trade"))
-    .reduce((a, [, c]) => a + (c.count || 0), 0);
+    .reduce((a, [, c]) => a + selectLocatedGroups(c as never).basis.locatedCount, 0);
+
+  // ★W1-b — 표면 문구의 근거. 반경 필터 적용 여부는 카테고리마다 같으므로(같은 요청)
+  //   대표 카테고리 하나에서 뽑되, 제외 건수는 매매 전 카테고리를 합산해 고지한다.
+  const tradeCats = Object.entries(cats).filter(([k]) => k.endsWith("_trade")).map(([, c]) => c);
+  const repBasis = selectLocatedGroups((cats.apt_trade ?? tradeCats[0]) as never).basis;
+  const aggBasis = {
+    ...repBasis,
+    locatedCount: total_count,
+    approximateCount: tradeCats.reduce((a, c) => a + selectLocatedGroups(c as never).basis.approximateCount, 0),
+    unlocatedCount: tradeCats.reduce((a, c) => a + selectLocatedGroups(c as never).basis.unlocatedCount, 0),
+    cappedCount: tradeCats.reduce((a, c) => a + selectLocatedGroups(c as never).basis.cappedCount, 0),
+  };
+  const sample_label = sampleLabel(aggBasis);
+  const sample_excluded = exclusionNote(aggBasis) ?? undefined;
 
   // 실거래 표본이 전혀 없으면 통계/차트 미생성(정직 무자료)
   if (prices.length === 0) {
@@ -141,6 +164,8 @@ function buildResult(query: string, payload: NearbyMapPayload | null): MarketRes
       radius_m,
       months,
       total_count,
+      sample_label,
+      sample_excluded,
       stats: null,
       chart_data: null,
       note:
@@ -173,6 +198,8 @@ function buildResult(query: string, payload: NearbyMapPayload | null): MarketRes
     radius_m,
     months,
     total_count,
+    sample_label,
+    sample_excluded,
     stats: {
       avg_price_10k: avg,
       min_price_10k: min,
@@ -239,18 +266,22 @@ function AIResponseCard({ result }: { result: MarketResult }) {
         <p className="text-sm leading-relaxed text-[var(--text-primary)]">
           &ldquo;{result.query}&rdquo; 지역의 실거래 데이터를 표시할 수 없습니다.
         </p>
-        <div className="inline-flex items-center gap-1.5 rounded-[var(--radius-sm)] border border-amber-400/40 bg-amber-500/10 px-3 py-2 text-xs text-[var(--text-secondary)]">
+        <div className="inline-flex items-center gap-1.5 rounded-[var(--radius-sm)] border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 px-3 py-2 text-xs text-[var(--text-secondary)]">
           <AlertTriangle className="size-4" aria-hidden />{result.note || "실거래 데이터를 확보하지 못했습니다."}
         </div>
       </div>
     );
   }
 
-  // 84㎡ 환산 평당가(실거래 평균에서 — 참고 표기)
+  // ★W1-b — 반경 문구를 **직접 조립하지 않는다**. 요청 radius_m 을 문자열에 박으면 반경
+  //   필터가 실제로 적용됐는지와 무관하게 "반경 1.0km"라고 단언하게 된다(중심 지오코딩
+  //   실패 시에도 같은 문장이 나갔다). 라벨은 표본 근거에서만 생성한다.
+  const sampleScope = result.sample_label || "수집 표본";
   const summaryText =
-    `"${result.query}" 주변 반경 ${(result.radius_m / 1000).toFixed(1)}km · 최근 ${result.months}개월 ` +
+    `"${result.query}" ${sampleScope} · 최근 ${result.months}개월 ` +
     `매매 실거래 ${stats.count.toLocaleString()}건 기준, 평균 거래가는 ${stats.avg_price_10k.toLocaleString()}만원입니다 ` +
-    `(최저 ${stats.min_price_10k.toLocaleString()} ~ 최고 ${stats.max_price_10k.toLocaleString()}만원).`;
+    `(최저 ${stats.min_price_10k.toLocaleString()} ~ 최고 ${stats.max_price_10k.toLocaleString()}만원)` +
+    (result.sample_excluded ? ` · ${result.sample_excluded}` : "") + ".";
 
   // 산출 근거(EvidencePanel) — 모든 항목이 실응답 실값에서 옴(가짜 0 금지)
   const evidence: EvidenceItem[] = [
@@ -262,7 +293,10 @@ function AIResponseCard({ result }: { result: MarketResult }) {
     {
       label: "표본 거래수",
       value: `${stats.count.toLocaleString()}건`,
-      basis: `반경 ${(result.radius_m / 1000).toFixed(1)}km · 최근 ${result.months}개월 매매`,
+      // ★근거(evidence)에 검증되지 않은 반경 주장을 박제하지 않는다 — 이 저장소의
+      //   "evidence 는 verified 만" 원칙. 라벨은 표본 근거에서 생성된 것만 쓴다.
+      basis: `${sampleScope} · 최근 ${result.months}개월 매매`
+        + (result.sample_excluded ? ` (${result.sample_excluded})` : ""),
     },
     {
       label: "평균 거래가",

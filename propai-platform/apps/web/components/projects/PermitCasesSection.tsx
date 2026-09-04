@@ -124,7 +124,7 @@ export function PermitCasesSection({ projectId }: { projectId: string }) {
     <AdvancedDrawer label="인허가 사례 조회 (건축HUB · 법정동 기준)">
       <Card>
         <CardContent className="p-6">
-          <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+          <p className="label-caps text-[var(--text-tertiary)]">
             인허가 사례 검색
           </p>
           <form className="mt-4 grid gap-3" onSubmit={handleSubmit}>
@@ -246,7 +246,7 @@ export function PermitCasesSection({ projectId }: { projectId: string }) {
 function Tile({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-[var(--radius-xl)] bg-[var(--surface)] p-4">
-      <p className="text-[11px] uppercase tracking-[0.2em] text-[var(--text-tertiary)]">{label}</p>
+      <p className="label-caps text-[var(--text-tertiary)]">{label}</p>
       <p className="mt-2 text-sm font-semibold text-[var(--text-primary)]">{value}</p>
     </div>
   );

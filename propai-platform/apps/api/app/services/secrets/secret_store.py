@@ -38,17 +38,22 @@ logger = structlog.get_logger(__name__)
 CATALOG: list[dict[str, Any]] = [
     # 등기/부동산 연동
     {"name": "REGISTRY_PROVIDER", "label": "등기 공급자 선택", "group": "등기(부동산등기부)",
-     "secret": False, "kind": "select", "options": ["codef", "apick", "tilko"],
-     "desc": "등기부등본 조회에 사용할 공급자. apick=건당과금·간편, codef=구조화JSON, tilko=IROS ID로그인·PDF/XML."},
-    {"name": "APICK_CL_AUTH_KEY", "label": "apick 인증키(CL_AUTH_KEY)", "group": "등기(부동산등기부)",
-     "secret": True, "kind": "text", "guide_url": "https://apick.app",
-     "desc": "apick 등기부 열람/다운로드 API 인증키. 마이페이지에서 발급."},
-    {"name": "CODEF_CLIENT_ID", "label": "CODEF Client ID", "group": "등기(부동산등기부)",
-     "secret": True, "kind": "text", "guide_url": "https://codef.io"},
-    {"name": "CODEF_CLIENT_SECRET", "label": "CODEF Client Secret", "group": "등기(부동산등기부)",
-     "secret": True, "kind": "text", "guide_url": "https://codef.io"},
-    {"name": "CODEF_PUBLIC_KEY", "label": "CODEF Public Key", "group": "등기(부동산등기부)",
-     "secret": True, "kind": "textarea", "guide_url": "https://codef.io"},
+     "secret": False, "kind": "select", "options": ["hyphen", "tilko"],
+     "desc": "등기부등본 조회 공급자. hyphen=1순위(하이픈 API), tilko=2순위(틸코 IROS 연동)."},
+    {"name": "HYPHEN_HKEY", "label": "하이픈 H보안키(HKey)", "group": "등기(부동산등기부)",
+     "secret": True, "kind": "text", "guide_url": "https://hyphen.im",
+     "desc": "하이픈 API 마켓 H보안키. 회원가입 후 이메일 수신."},
+    {"name": "HYPHEN_USER_ID", "label": "하이픈 회원 ID(User-Id)", "group": "등기(부동산등기부)",
+     "secret": False, "kind": "text", "guide_url": "https://hyphen.im",
+     "desc": "하이픈 API 마켓 회원 ID."},
+    {"name": "HYPHEN_IROS_USER_ID", "label": "인터넷등기소 ID(하이픈 연동용)", "group": "등기(부동산등기부)",
+     "secret": False, "kind": "text"},
+    {"name": "HYPHEN_IROS_USER_PW", "label": "인터넷등기소 비밀번호(하이픈 연동용)", "group": "등기(부동산등기부)",
+     "secret": True, "kind": "text"},
+    {"name": "HYPHEN_PAY_NO", "label": "선불전자지급수단 번호(하이픈 연동용)", "group": "등기(부동산등기부)",
+     "secret": True, "kind": "text"},
+    {"name": "HYPHEN_PAY_PW", "label": "선불전자지급수단 비밀번호(하이픈 연동용)", "group": "등기(부동산등기부)",
+     "secret": True, "kind": "text"},
     {"name": "TILKO_API_KEY", "label": "틸코(Tilko) API Key", "group": "등기(부동산등기부)",
      "secret": True, "kind": "text", "guide_url": "https://tilko.net"},
     {"name": "IROS_USER_ID", "label": "인터넷등기소 ID", "group": "등기(부동산등기부)",
@@ -67,6 +72,14 @@ CATALOG: list[dict[str, Any]] = [
     {"name": "VWORLD_API_KEY", "label": "V-World 인증키", "group": "공공데이터·지도",
      "secret": True, "kind": "text", "guide_url": "https://www.vworld.kr",
      "desc": "부지분석·용도지역·필지·공시지가 핵심 데이터."},
+    {"name": "MOLEG_API_KEY", "label": "법제처 DRF 인증키(OC · 자치법규/법령 본문)", "group": "공공데이터·지도",
+     # ★`secret: True` — `apps/api/scripts/export_scoped_secrets.py` 가 이미 이 키를
+     #   **스코프 시크릿으로 분류**하고 있다. `False` 로 두면 `/admin/secrets` 응답과
+     #   백업 목록에 **평문**으로 나가 두 층의 분류가 갈린다(독립 리뷰 MEDIUM-3).
+     "secret": True, "kind": "text", "guide_url": "https://open.law.go.kr",
+     "desc": "법제처 국가법령정보 공동활용(DRF) OC 값. 도시계획조례 건폐율·용적률·경사도 "
+             "실시간 조회에 쓴다. ★키 등록과 별개로 **호출 IP 등록**이 필요하며, 미등록이면 "
+             "HTTP 200 으로 <Response><result>사용자 정보 검증에 실패…</result> 가 온다."},
     {"name": "MOLIT_API_KEY", "label": "공공데이터포털 인증키(국토부 실거래/G2B)", "group": "공공데이터·지도",
      "secret": True, "kind": "text", "guide_url": "https://www.data.go.kr",
      "desc": "실거래가·나라장터(G2B) 등 data.go.kr 공통 키."},
@@ -93,6 +106,10 @@ CATALOG: list[dict[str, Any]] = [
      "secret": True, "kind": "text", "guide_url": "https://console.anthropic.com"},
     {"name": "OPENAI_API_KEY", "label": "OpenAI API Key", "group": "AI(LLM)",
      "secret": True, "kind": "text", "guide_url": "https://platform.openai.com"},
+    # ★`#899` 가 `_LLM_KEY_PROVIDER` 에 매핑해 **백엔드는 실호출 테스트를 할 수 있는데
+    #   카탈로그에 없어 운영자가 등록조차 못 했다**(2026-09-02 실측 · `test_every_testable_key_is_in_the_catalog` 가 적발).
+    {"name": "GOOGLE_API_KEY", "label": "Google(Gemini) API Key", "group": "AI(LLM)",
+     "secret": True, "kind": "text", "guide_url": "https://aistudio.google.com/app/apikey"},
     {"name": "REPLICATE_API_TOKEN", "label": "Replicate API 토큰(AI 포토리얼 렌더)", "group": "AI(LLM)",
      "secret": True, "kind": "text", "guide_url": "https://replicate.com/account/api-tokens",
      "desc": "3D 뷰포트→포토리얼 렌더(ControlNet) 생성에 사용. 미설정 시 렌더 메뉴는 정직하게 '키 미설정' 안내(가짜 이미지 없음)."},
@@ -136,6 +153,21 @@ CATALOG: list[dict[str, Any]] = [
      "desc": "Supabase 대시보드 > Project Settings > API > 'Secret key'(=구 service_role) 값. 서버 업로드 전용·비공개. (구 이름 SUPABASE_SERVICE_ROLE_KEY 로 등록해도 동작)"},
     {"name": "PUBLIC_API_BASE", "label": "공개 API 베이스 URL(프록시 절대화)", "group": "스토리지·기타",
      "secret": False, "kind": "text"},
+
+    # ── 결제(PG) ────────────────────────────────────────────────────
+    # ★두 키는 **반드시 같은 환경의 짝**이어야 한다(둘 다 테스트, 또는 둘 다 라이브).
+    #   섞으면 토스가 FORBIDDEN_REQUEST / UNAUTHORIZED_KEY 로 거절한다 — 문서 명시.
+    #   `toss_payments.key_pairing_ok()` 가 호출 전에 그것을 잡고, 관리자 화면이 표시한다.
+    # ★클라이언트 키는 **공개키**다(브라우저가 쓴다) → secret=False. 비밀키는 서버 전용.
+    {"name": "TOSS_CLIENT_KEY", "label": "토스페이먼츠 클라이언트 키(공개)", "group": "결제(PG)",
+     "secret": False, "kind": "text", "guide_url": "https://developers.tosspayments.com/my/api-keys",
+     "desc": "개발자센터 > API 키 > '주문서형, 결제창형 연동 키'의 **클라이언트 키**. "
+             "브라우저가 결제창을 띄우는 데 쓰므로 공개돼도 안전합니다. "
+             "test_ 로 시작하면 테스트 키(실제 결제가 일어나지 않습니다)."},
+    {"name": "TOSS_SECRET_KEY", "label": "토스페이먼츠 시크릿 키(서버 전용·비공개)", "group": "결제(PG)",
+     "secret": True, "kind": "text", "guide_url": "https://developers.tosspayments.com/my/api-keys",
+     "desc": "같은 화면의 **시크릿 키**. 결제 승인·취소에 쓰이며 절대 외부에 노출하면 안 됩니다. "
+             "★클라이언트 키와 같은 환경(테스트/라이브)의 짝이어야 합니다."},
 ]
 
 _CATALOG_BY_NAME = {c["name"]: c for c in CATALOG}

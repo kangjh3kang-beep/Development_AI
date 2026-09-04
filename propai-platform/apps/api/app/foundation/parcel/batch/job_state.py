@@ -63,6 +63,19 @@ class JobRecord:
             Completeness.COMPLETE if all_confirmed else Completeness.PARTIAL
         )
 
+    def mark_failed(self, reason: str) -> None:
+        """실행 중 예외로 잡이 실패했음을 기록한다(터미널 상태 FAILED).
+
+        ★버그수정: 과거엔 백그라운드 러너의 `except Exception: pass`가 예외를 완전히 삼켜
+        아무 코드도 이 전이를 호출하지 않았다 — 잡이 RUNNING에 영구 고착돼 프론트가 1.5s
+        무한 폴링했다(도달불가 FAILED). 사유는 region_input._error 에 보존한다(신규 DB 컬럼
+        없이 기존 JSON 필드 재사용 — _geo/_normalized 와 동일 관례라 DbJobStore 라운드트립을
+        그대로 통과한다). 500자로 캡(로그·페이로드 폭주 방지).
+        """
+        msg = (reason or "알 수 없는 오류").strip()[:500]
+        self.job.region_input = {**(self.job.region_input or {}), "_error": msg}
+        self.job.state = JobState.FAILED
+
     def mark_state_from_progress(self) -> None:
         """진행 상태에 따라 JobState 를 갱신한다(취소/완료/부분/실행중)."""
         if self.cancelled:

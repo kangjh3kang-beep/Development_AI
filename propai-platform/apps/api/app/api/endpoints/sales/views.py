@@ -238,8 +238,20 @@ async def list_sites(db: AsyncSession = Depends(get_db), user=Depends(get_curren
 
 @views_router.get("/org/tree")
 async def org_tree(db: AsyncSession = Depends(get_db), ctx: SalesCtx = Depends(sales_ctx)):
-    rows = (await db.execute(select(SalesOrgNode).where(
-        SalesOrgNode.site_id == ctx.site_id, SalesOrgNode.deleted_at.is_(None)))).scalars().all()
+    """조직 트리 — ★서브트리 가시성 스코프(2026-07-23 직속 파이프라인 스펙).
+
+    org_path(내 노드)가 있는 역할은 '자신이 승인·지정한 하부'(내 노드 포함 서브트리)만 본다.
+    본사 권한(SUPERADMIN/DEVELOPER/AGENCY 멤버십 등 org_path 없음)은 현장 전체.
+    응답 shape 은 기존 배열 그대로(소비처 OrgTree·CommissionDutchPay 무회귀 — 더치페이
+    참여자 선택도 내 하부로 좁아지는 것이 스펙 정합).
+    """
+    q = select(SalesOrgNode).where(
+        SalesOrgNode.site_id == ctx.site_id, SalesOrgNode.deleted_at.is_(None))
+    my_path = getattr(ctx, "org_path", None) or ""
+    rows = (await db.execute(q)).scalars().all()
+    if my_path:
+        rows = [n for n in rows
+                if str(n.path) == my_path or str(n.path).startswith(my_path + ".")]
     return [{"id": str(n.id), "path": str(n.path), "node_type": n.node_type,
              "display_name": n.display_name} for n in rows]
 
@@ -337,7 +349,10 @@ async def projection_accounting_rollup(db: AsyncSession = Depends(get_db), user=
     [보안] 연결결산(매출·비용·수수료·손익) 전체 노출 → require_tenant_finance 로 보호
       (시행사·관리자 등급 전용, 순수 viewer/영업직 403). actions.py 형제 엔드포인트와 동일 등급.
     """
-    from app.services.sales.admin.console import site_management_detail
+    from app.services.sales.admin.console import (
+    site_management_detail,
+    tally_reconciliation,
+)
     log = _log
     # site_management_detail 내부 _scalar 가 오류 시 rollback 하면 ORM 객체가 만료돼
     # 이후 s.id/s.site_name 접근이 lazy load(MissingGreenlet) 된다. 루프 전에 평문 추출.
@@ -356,7 +371,12 @@ async def projection_accounting_rollup(db: AsyncSession = Depends(get_db), user=
     #   이었다(grep 소비 0). 이를 consolidated.reconcile_failed_count(머신리더블)로 전파해
     #   '연결결산 정합 경고' 배너를 결정적으로 띄운다(은폐 금지). balanced=None(판정보류)은 실패가
     #   아니므로 세지 않는다(약정표 부재로 대사 불가일 뿐, 데이터 불일치는 아님).
-    reconcile_failed_count = 0
+    reconciliations: list[dict] = []   # 현장별 대사 결과 — 집계는 tally_reconciliation 이 한다
+    # ★보류를 **실패와 나란히** 센다(2026-08-26). 종전엔 `balanced=None` 을 실패에서 옳게
+    #   제외했으나 **어디에도 세지 않아**, 관리자에게 '정합 실패 0'만 보이고 *"대사 자체를
+    #   못 한 N곳"* 은 사라졌다. 라이브 실측 **11/13** 이 그 상태였다.
+    #   ★"불일치 0"과 "확인 못 함 N"은 **다른 사실**이다 — 섞으면 미탐지가 정합으로 위장된다.
+
     for sid, sname, sstatus in rows:
         # [부분내결함] 한 현장의 비-미존재 DB오류(권한·연결)가 전체 롤업 500 을 유발하지 않도록
         # 현장 단위로 격리한다. 실패 현장은 error 로 표기하고 나머지는 정상 합산한다(은폐 금지).
@@ -383,8 +403,9 @@ async def projection_accounting_rollup(db: AsyncSession = Depends(get_db), user=
         cf = d.get("cash_flow") or {}
         acc = d.get("accrual") or {}
         rec = d.get("reconciliation") or {}
-        if rec.get("balanced") is False:  # None(판정보류)·True(통과)는 제외, False(불일치)만 카운트
-            reconcile_failed_count += 1
+        # ★판정은 순수 함수에 있다(`tally_reconciliation`) — 여기서는 **모으기만** 한다.
+        #   인라인으로 세면 소스 검사로만 잠기고, 증가문을 지우는 변이가 생존한다(실증).
+        reconciliations.append(rec)
         for t in d["accounting"]["by_type"]:
             by_type[t["label"]] = by_type.get(t["label"], 0) + int(t["amount"])
         con["revenue"] += int(d["revenue"])
@@ -413,12 +434,19 @@ async def projection_accounting_rollup(db: AsyncSession = Depends(get_db), user=
     #   프론트는 이 플래그로 '통합총계가 일부 누락' 배너를 결정적으로 띄운다.
     failed_count = len(errors)
     complete = failed_count == 0
+    _tally = tally_reconciliation(reconciliations)
+    reconcile_failed_count = _tally["failed"]
+    reconcile_withheld_count = _tally["withheld"]
     return {
         "consolidated": {**con, "by_type": [{"label": k, "amount": v} for k, v in sorted(by_type.items())],
                          "complete": complete, "failed_count": failed_count, "partial": not complete,
                          # 독립 대사 불일치 현장 수(reconciliation.balanced=False 합). 집계실패(failed_count)
                          #   와 별개 신호 — 합산은 됐지만 현장 원장 정합이 깨진 곳이 있음을 알린다.
-                         "reconcile_failed_count": reconcile_failed_count},
+                         "reconcile_failed_count": reconcile_failed_count,
+                         # ★대사를 **수행하지 못한** 현장 수(balanced=None). 실패와 **다른 축**이다 —
+                         #   실패 0 만 보면 "정합"으로 읽히지만, 확인조차 못 한 곳이 있을 수 있다.
+                         #   라이브 실측(2026-08-25): 13곳 중 **11곳**이 이 상태였고 어디에도 안 보였다.
+                         "reconcile_withheld_count": reconcile_withheld_count},
         "sites": sites,
         "errors": errors,
         "note": ("통합회계 = 보유 현장 연결결산. 손익 2-뷰: profit_estimate=발생주의(계약매출 기준, "
@@ -429,5 +457,7 @@ async def projection_accounting_rollup(db: AsyncSession = Depends(get_db), user=
                  "consolidated.complete/failed_count/partial 로 과소계상 여부를 머신리더블 신호로 제공 "
                  "(원문은 서버로그만, 응답엔 분류코드+상관ID). 또한 각 현장의 독립 대사 결과는 "
                  "sites[].reconciliation 에 동봉하고, 불일치(balanced=False) 현장 수는 "
-                 "consolidated.reconcile_failed_count 로 제공(합산은 됐으나 원장 정합 경고)."),
+                 "consolidated.reconcile_failed_count 로 제공(합산은 됐으나 원장 정합 경고). "
+                 "★대사를 수행하지 못한 현장 수는 consolidated.reconcile_withheld_count 로 별도 제공 — "
+                 "'불일치 0'과 '확인 못 함 N'은 다른 사실이며, 섞으면 미탐지가 정합으로 위장된다."),
     }

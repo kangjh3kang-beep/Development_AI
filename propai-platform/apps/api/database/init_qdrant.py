@@ -4,6 +4,8 @@
 앱 시작 시 또는 별도 초기화 스크립트로 실행한다.
 """
 
+import asyncio
+
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import (
     Distance,
@@ -92,8 +94,12 @@ async def init_qdrant_collections() -> dict[str, str]:
     return results
 
 
-async def check_qdrant_health() -> bool:
-    """Qdrant 서버 상태를 확인한다."""
+def check_qdrant_health_sync() -> bool:
+    """Qdrant 서버 상태를 확인한다(동기).
+
+    ★qdrant_client 는 **동기** 클라이언트다. 실제 구현이 여기이고, 아래 비동기 통로는
+    이걸 스레드로 감싼다.
+    """
     try:
         client = get_qdrant_client()
         client.get_collections()
@@ -101,3 +107,16 @@ async def check_qdrant_health() -> bool:
     except Exception:
         logger.warning("Qdrant 연결 실패")
         return False
+
+
+async def check_qdrant_health() -> bool:
+    """Qdrant 서버 상태를 확인한다(비동기 통로).
+
+    ★종전에는 ``async def`` 안에서 동기 호출을 그대로 했다. 그러면 두 가지가 깨진다:
+      ① 호출이 이벤트 루프를 점유한다
+      ② ``asyncio.wait_for`` 로 감싸도 **취소되지 않는다** — 이벤트 루프에 올라탄 동기
+         호출은 타임아웃이 지나도 끝날 때까지 돌아오지 않으므로, 타임아웃이 장식이 된다.
+    스레드로 빼야 비로소 호출부가 상한 안에서 응답할 수 있다.
+    (qdrant 가 멀쩡할 땐 0.00초라 이 결함은 평소에 보이지 않는다 — 2026-08-11 실측.)
+    """
+    return await asyncio.to_thread(check_qdrant_health_sync)

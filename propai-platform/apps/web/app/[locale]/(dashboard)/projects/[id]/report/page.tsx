@@ -44,7 +44,7 @@ export default async function ReportPage({ params }: ReportPageProps) {
           PF대출 심사 제출용 "은행 PF" 전용 보고서임을 명확히 라벨링(혼동 제거). */}
       <div className="rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-soft)] p-4">
         <div className="mb-3 flex flex-wrap items-center gap-2">
-          <span className="rounded-lg bg-[var(--accent-soft)] px-3 py-1 text-[10px] font-black uppercase tracking-[0.2em] text-[var(--accent-strong)]">
+          <span className="rounded-lg bg-[var(--accent-soft)] px-3 py-1 label-caps text-[var(--accent-strong)]">
             은행 PF 제출용
           </span>
           <p className="text-sm font-bold text-[var(--text-primary)]">PF대출 심사 보고서</p>

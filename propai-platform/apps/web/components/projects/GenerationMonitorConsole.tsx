@@ -44,21 +44,21 @@ export function GenerationMonitorConsole({ dictionary }: GenerationMonitorConsol
           </h4>
         </div>
         <span className="text-[10px] font-mono text-[var(--text-hint)] uppercase">
-          Status: <span className={isGenerating ? "text-amber-500 font-bold" : "text-emerald-500 font-bold"}>
+          Status: <span className={isGenerating ? "text-[var(--status-warning)] font-bold" : "text-[var(--status-success)] font-bold"}>
             {isGenerating ? "WIRING_ENGINE" : "ONLINE"}
           </span>
         </span>
       </div>
 
       {/* ── Terminal Emulator ── */}
-      <div className="relative rounded-[2rem] border border-[var(--line-strong)] bg-neutral-950 p-6 shadow-2xl">
+      <div className="relative rounded-[var(--radius-lg)] border border-[var(--line-strong)] bg-neutral-950 p-6 shadow-2xl">
         <div className="absolute top-4 right-6 flex items-center gap-1.5 opacity-60">
           <span className="h-2 w-2 rounded-full bg-red-500/80" />
-          <span className="h-2 w-2 rounded-full bg-amber-500/80" />
-          <span className="h-2 w-2 rounded-full bg-emerald-500/80" />
+          <span className="h-2 w-2 rounded-full bg-[var(--status-warning)]/80" />
+          <span className="h-2 w-2 rounded-full bg-[var(--status-success)]/80" />
         </div>
 
-        <div ref={terminalScrollRef} className="h-[280px] overflow-y-auto font-mono text-[11px] leading-relaxed text-emerald-400/90 space-y-3.5 scrollbar-thin scrollbar-thumb-neutral-800">
+        <div ref={terminalScrollRef} className="h-[280px] overflow-y-auto font-mono text-[11px] leading-relaxed text-[var(--status-success)]/90 space-y-3.5 scrollbar-thin scrollbar-thumb-neutral-800">
           {logs.length === 0 ? (
             <div className="flex h-full items-center justify-center text-[var(--text-hint)] italic select-none">
               {t.terminalReady}
@@ -75,12 +75,12 @@ export function GenerationMonitorConsole({ dictionary }: GenerationMonitorConsol
                     key={log.id}
                     initial={{ opacity: 0, x: -10 }}
                     animate={{ opacity: 1, x: 0 }}
-                    className="flex flex-col gap-1 border-l-2 border-emerald-500/20 pl-3.5"
+                    className="flex flex-col gap-1 border-l-2 border-[var(--status-success)]/20 pl-3.5"
                   >
                     <div className="flex items-center gap-2">
                       <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md ${
-                        isCompleted ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" :
-                        isRunning ? "bg-amber-500/10 text-amber-400 border border-amber-500/20 animate-pulse" :
+                        isCompleted ? "bg-[var(--status-success)]/10 text-[var(--status-success)] border border-[var(--status-success)]/20" :
+                        isRunning ? "bg-[var(--status-warning)]/10 text-[var(--status-warning)] border border-[var(--status-warning)]/20 animate-pulse" :
                         "bg-red-500/10 text-red-400 border border-red-500/20"
                       }`}>
                         {log.status}
@@ -100,7 +100,7 @@ export function GenerationMonitorConsole({ dictionary }: GenerationMonitorConsol
 
       {/* ── Active Module Progress Dashboard ── */}
       {isGenerating && (
-        <div className="grid gap-4.5 rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-strong)]/40 p-6 backdrop-blur-3xl">
+        <div className="grid gap-4.5 rounded-[var(--radius-lg)] border border-[var(--line-strong)] bg-[var(--surface-strong)]/40 p-6 backdrop-blur-3xl">
           <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-hint)]">
             {t.activeEngine} Pipeline
           </p>

@@ -84,8 +84,42 @@ def get_config() -> dict[str, Any]:
     return _CONFIG
 
 
+def coerce_fee(value: Any, *, where: str) -> float | None:
+    """요율 값을 float(0 이상)으로 정규화한다. **숫자가 아니면 None**(= 적용 거부).
+
+    왜 거부가 맞나: 이 값들의 소비처(`service_fee_project_create()` 등)는 `float(...)` 를
+    **무방비로** 호출한다. 숫자가 아닌 값을 설정에 넣으면 그 순간이 아니라 **나중에 과금하는
+    요청 경로에서** ValueError 가 터진다. 게다가 `save_config` 가 그것을 DB 에 영속시키므로
+    재기동해도 되살아난다 — 즉 관리자 오타 하나가 **지속적인 과금 장애**가 된다.
+
+    그래서 적용을 거부하고 **이전 값을 보존**한다. 다만 조용히 버리면 관리자는 설정이 반영된
+    줄 알므로 반드시 경고를 남긴다(무언 실패 금지).
+
+    음수는 0으로 clamp 한다(허위 마이너스 차감 차단).
+    """
+    try:
+        return max(0.0, float(value))
+    except (ValueError, TypeError):
+        # ★락의 범위: 테스트는 "경고가 뜬다"와 "`where` 가 **어느 키**인지 말한다"를 잠근다.
+        #   아래 **문구 자체는 일부러 잠그지 않았다** — 사람이 읽는 산문이라 계약이 아니고,
+        #   단언하면 표현을 다듬을 때마다 깨지는 취약한 락이 된다(변이 검증에서 이 줄만
+        #   살아남는 것은 그 때문이며 구멍이 아니다).
+        logger.warning(
+            "과금 요율 값이 숫자가 아니어서 **적용하지 않았다**(이전 값 유지)",
+            where=where, value=repr(value)[:80],
+        )
+        return None
+
+
 def apply_config(override: dict[str, Any]) -> None:
-    """관리자 수정값을 런타임 설정에 병합(in-place, 별칭 유지)."""
+    """관리자 수정값을 런타임 설정에 병합(in-place, 별칭 유지).
+
+    ★값 위생은 `coerce_fee` 한 곳으로 모았다. 이전에는 같은 함수 안에서 요율 세 뭉치가
+    **서로 다르게** 처리됐다 — `service_fees` 단일 키는 변환 실패 시 **원본을 그대로 저장**해
+    "음수 차단" 주석이 약속한 위생을 우회했고, `stages` 는 **검증이 아예 없었으며**,
+    `analysis_modules` 만 올바르게 건너뛰었다. 옳은 패턴이 바로 옆에 있었는데 나머지가
+    그것을 안 쓰고 있었다.
+    """
     if not isinstance(override, dict):
         return
     if "budget_ratio" in override:
@@ -110,19 +144,20 @@ def apply_config(override: dict[str, Any]) -> None:
     for k in ("project_create", "land_analysis", "sales_provision", "photoreal_render",
               "concept_render", "registry_issue", "registry_analysis", "bulk_parcel_per_unit"):
         if k in sf:
-            try:
-                _CONFIG["service_fees"][k] = max(0.0, float(sf[k]))  # 음수 차단
-            except (ValueError, TypeError):
-                _CONFIG["service_fees"][k] = sf[k]
+            fee = coerce_fee(sf[k], where=f"service_fees.{k}")
+            if fee is not None:
+                _CONFIG["service_fees"][k] = fee
     for s, v in (sf.get("stages") or {}).items():
         if s in _CONFIG["service_fees"]["stages"]:
-            _CONFIG["service_fees"]["stages"][s] = v
+            fee = coerce_fee(v, where=f"service_fees.stages.{s}")
+            if fee is not None:
+                _CONFIG["service_fees"]["stages"][s] = fee
     # 분석 모듈 사용료 병합 — 관리자가 보낸 키:값(원)을 set한다.
-    # 숫자로 변환 가능할 때만, 음수는 0으로 방지(허위 마이너스 차감 차단).
     am = _CONFIG["service_fees"].setdefault("analysis_modules", {})
     for k, v in (sf.get("analysis_modules") or {}).items():
-        with contextlib.suppress(ValueError, TypeError):
-            am[k] = max(0.0, float(v))
+        fee = coerce_fee(v, where=f"service_fees.analysis_modules.{k}")
+        if fee is not None:
+            am[k] = fee
     ft = override.get("free_tier") or {}
     for sub in ("analysis_fee", "analysis_quota"):
         for t, v in (ft.get(sub) or {}).items():
@@ -188,13 +223,46 @@ def free_tier_analysis_fee(tier: str) -> float:
 def free_tier_analysis_quota(tier: str) -> int:
     return int(_CONFIG["free_tier"]["analysis_quota"].get(tier, 0))
 
-# LLM 모델 단가(USD / 1M tokens) — 청구계산용. 키는 모델명 부분일치.
+# ── LLM 모델 단가(USD / 1M tokens) — 실원가 계산의 SSOT ──────────────────────────
+#
+# ★2026-08-01 정정: 종전 표는 세대(opus/sonnet/haiku) 3키뿐이라 두 가지로 틀렸다.
+#   ①`opus` $15/$75 = **Opus 3 시절 단가**. 실제 Opus 4.5~5는 $5/$25 → 원가 3배 과다계상.
+#   ②OpenAI·Google 모델은 표에 아예 없어 전부 `_DEFAULT_PRICING`(sonnet $3/$15)로 폴백.
+#     gpt-4o-mini는 실제 $0.15/$0.60이라 **20배 이상 과다**였다(그게 OpenAI 기본 모델).
+#   할증배수(50/40/30%)가 이 원가에 곱해지므로 오차가 그대로 청구액에 실린다.
+#
+# ★매칭 규칙: **긴 키 우선(부분일치)**. 세대 키(`opus`)만 두면 `claude-opus-5`가 구형 단가에
+#   걸린다. 정확 ID를 먼저 등재하고 세대 키는 미등재 신모델용 안전망으로만 남긴다.
+#
+# ★유지보수 계약: `llm_provider.PROVIDERS`가 노출하는 모든 모델은 여기 등재돼야 한다.
+#   test_billing_pricing.py 의 불변식이 이를 강제한다(노출 모델 ⊆ 등재 모델).
 MODEL_PRICING_USD_PER_MTOK: dict[str, dict[str, float]] = {
-    "opus": {"in": 15.0, "out": 75.0},
+    # ── Anthropic (출처: Anthropic 공식 단가표, 2026-06-24 기준) ──
+    "claude-fable-5": {"in": 10.0, "out": 50.0},
+    "claude-opus-5": {"in": 5.0, "out": 25.0},
+    "claude-opus-4-8": {"in": 5.0, "out": 25.0},
+    "claude-opus-4-7": {"in": 5.0, "out": 25.0},
+    "claude-opus-4-6": {"in": 5.0, "out": 25.0},
+    "claude-sonnet-5": {"in": 3.0, "out": 15.0},
+    "claude-sonnet-4-6": {"in": 3.0, "out": 15.0},
+    "claude-haiku-4-5": {"in": 1.0, "out": 5.0},
+    # ── OpenAI / Google ──
+    # ★미검증(verified=False): 아래 값은 각 사 공식 단가표로 **재확인 필요**하다. 다만 현행
+    #   폴백($3/$15)보다는 실제에 훨씬 가까우므로(gpt-4o-mini 기준 20배→오차 소폭) 등재해
+    #   과다청구를 먼저 줄인다. 확인 후 이 주석과 함께 값을 확정할 것.
+    "gpt-4o-mini": {"in": 0.15, "out": 0.60},
+    "gpt-4o": {"in": 2.50, "out": 10.0},
+    "gemini-2.5-pro": {"in": 1.25, "out": 10.0},
+    "gemini-2.5-flash": {"in": 0.30, "out": 2.50},
+    "gemini-2.0-flash": {"in": 0.10, "out": 0.40},
+    # ── 세대 안전망(미등재 신모델용) — 정확 ID가 없을 때만 걸린다 ──
+    "opus": {"in": 5.0, "out": 25.0},
     "sonnet": {"in": 3.0, "out": 15.0},
-    "haiku": {"in": 0.8, "out": 4.0},
+    "haiku": {"in": 1.0, "out": 5.0},
 }
-_DEFAULT_PRICING = {"in": 3.0, "out": 15.0}  # 미상 모델 = sonnet 기준
+# 어느 키에도 걸리지 않은 모델. ★조용히 쓰지 않는다 — model_cost_usd가 경고 로그를 남긴다
+#   (미등재 모델을 노출하면 청구가 틀어지므로 운영이 즉시 알아채야 한다).
+_DEFAULT_PRICING = {"in": 3.0, "out": 15.0}
 
 _FALLBACK_RATE = 1350.0  # 환율 조회 실패 시 폴백(원/$)
 _RATE_CACHE: dict[str, Any] = {"rate": _FALLBACK_RATE, "ts": 0.0}
@@ -265,14 +333,32 @@ async def get_usd_krw_rate() -> float:
     return rate
 
 
-def model_cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
-    """토큰 사용량 → 실 LLM 원가(USD)."""
+def resolve_model_pricing(model: str) -> tuple[dict[str, float], str | None]:
+    """모델명 → (단가, 매칭된 키). 미등재면 (기본단가, None).
+
+    ★긴 키 우선: 정확 ID(`claude-opus-5`)가 세대 키(`opus`)를 이긴다. dict 삽입순서에 기대면
+    `opus`가 먼저 걸려 신형 모델이 구형 단가로 청구되는 종전 결함이 재발한다.
+    """
     m = (model or "").lower()
-    pricing = _DEFAULT_PRICING
-    for key, p in MODEL_PRICING_USD_PER_MTOK.items():
+    for key in sorted(MODEL_PRICING_USD_PER_MTOK, key=len, reverse=True):
         if key in m:
-            pricing = p
-            break
+            return MODEL_PRICING_USD_PER_MTOK[key], key
+    return _DEFAULT_PRICING, None
+
+
+def model_cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
+    """토큰 사용량 → 실 LLM 원가(USD).
+
+    ★미등재 모델은 조용히 넘어가지 않는다. 폴백 단가로 계산은 하되(청구 파이프라인을 죽이지
+    않는다) 경고를 남겨 운영이 등재 누락을 즉시 알 수 있게 한다 — 종전에는 어떤 모델이든
+    말없이 sonnet 단가가 적용돼 OpenAI/Google 전 모델이 과다청구되고 있었다.
+    """
+    pricing, matched = resolve_model_pricing(model)
+    if matched is None:
+        logger.warning(
+            "LLM 단가 미등재 모델 — 폴백 단가로 청구됨(등재 필요)",
+            model=(model or "")[:80], fallback=_DEFAULT_PRICING,
+        )
     return (input_tokens / 1_000_000) * pricing["in"] + (output_tokens / 1_000_000) * pricing["out"]
 
 

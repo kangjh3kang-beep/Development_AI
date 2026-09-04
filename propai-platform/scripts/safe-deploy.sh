@@ -61,6 +61,24 @@ network_name() {
   echo "$NET_PRIMARY"
 }
 
+# ── 0-A) ★서버 역할 가드 — 이 스크립트는 **158(A1 프론트) 전용**이다 ──
+#   ★2026-08-17 실사고. 이걸 168(백엔드)에서 돌리면 **트래픽을 받지 않는 compose 스택**만
+#     갱신하고 "성공"을 찍는다. 그날 #630·#653·#662 가 배포된 줄 알았으나 실서비스
+#     (caddy → propai-api-800x) 컨테이너 안은 **전부 0** 이었다.
+#   ★왜 검증도 못 잡았나: 이 스크립트의 검증은 `$VERIFY_BASE_URL/ko` 를 보는데 백엔드
+#     서버엔 프론트가 없어 **web=404** 가 난다. 그것을 `WARN 검증미흡 — 수동확인 필요`
+#     로만 찍고 넘어갔고, 사람이 "백엔드 전용이라 당연"이라고 해석해 배경이 됐다.
+#     → 그래서 **검증이 아니라 시작 지점**에서 막는다(16분을 태우기 전에).
+#   ★판별 근거(2026-08-17 실측): 백엔드(168)에만 `~/caddy/Caddyfile` 과 caddy 컨테이너가
+#     있고 프론트(158)에는 **둘 다 없다**. 백엔드가 caddy 를 버리는 날 이 가드도 함께 고쳐야
+#     한다 — 그때는 이 스크립트가 백엔드에서 조용히 다시 통과하게 되므로.
+if [ -f "$HOME/caddy/Caddyfile" ]; then
+  echo "ABORT: 여기는 **백엔드 서버**입니다(~/caddy/Caddyfile 존재)." >&2
+  echo "       safe-deploy.sh 는 158(프론트) 전용이라 여기서는 트래픽 없는 스택만 갱신합니다." >&2
+  echo "       백엔드 정본을 쓰세요: bash ~/Development_AI/propai-platform/infra/deploy-zero-downtime.sh" >&2
+  exit 10
+fi
+
 # ── 0) 동시배포 방지 락 (원자적 mkdir) ──
 if ! mkdir "$LOCKDIR" 2>/dev/null; then
   echo "ABORT: 다른 배포가 진행중입니다($LOCKDIR). 끝나면 재시도." > "$STATUS"; exit 9
@@ -88,6 +106,13 @@ status "SYNC"
 git fetch origin "$DEPLOY_REF" >>"$LOG" 2>&1 || { status "FAIL fetch-$DEPLOY_REF"; exit 1; }
 git reset --hard FETCH_HEAD >>"$LOG" 2>&1 || { status "FAIL reset"; exit 1; }
 HEAD=$(git log --oneline -1)
+
+# ★앱 버전을 여기서 한 번 만든다 — sw 캐시명과 텔레메트리가 **같은 값**에서 갈라진다.
+#   seq 는 제로패딩(정렬 가능성) · shortsha 는 커밋 식별. 손으로 올리던 범프를 대체한다.
+#   ★이 export 가 빠지면 Dockerfile.web 이 빌드를 죽인다(조용히 옛 캐시명이 나가지 않는다).
+APP_BUILD_ID="propai-v$(printf '%06d' "$(git rev-list --count HEAD)")-$(git rev-parse --short=8 HEAD)"
+export APP_BUILD_ID
+log "APP_BUILD_ID = $APP_BUILD_ID"
 log "DEPLOY_REF = $DEPLOY_REF"
 log "HEAD = $HEAD"
 
@@ -96,7 +121,24 @@ cd "$COMPOSE_DIR" || { status "FAIL cd-compose"; exit 1; }
 build_one() {
   local svc=$1
   status "BUILD $svc @ $HEAD"
+  # ★롤백 경로 확보 — 새 빌드가 :oracle 을 덮기 전 세대를 :prev 로 승계한다.
+  #   rollback_one() 은 배포 '실패' 시에만 동작하는 내부 함수(지역변수 rb)라, 배포가 성공한 뒤
+  #   결함을 발견했을 때 되돌릴 이미지가 없었다. :prev 는 태그가 있으므로 dangling prune 에도 생존한다.
+  #   ★빌드 '후' ID 비교가 핵심 — 빌드 '전' 무조건 태깅하면 같은 커밋 재배포 시 레이어 캐시로
+  #   동일 ID 가 나와 prev==oracle 이 되고 롤백 자산이 조용히 무효화된다(168 에서 실측·2026-07-30).
+  local old_img_id new_img_id
+  old_img_id=$(docker image inspect "propai-${svc}:oracle" --format '{{.Id}}' 2>/dev/null || echo "")
   DOCKER_BUILDKIT=0 compose build "$svc" >>"$LOG" 2>&1 || { status "FAIL build-$svc"; return 1; }
+  new_img_id=$(docker image inspect "propai-${svc}:oracle" --format '{{.Id}}' 2>/dev/null || echo "")
+  if [ -n "$old_img_id" ] && [ "$old_img_id" != "$new_img_id" ]; then
+    if docker image tag "$old_img_id" "propai-${svc}:prev" >>"$LOG" 2>&1; then
+      log "[$svc] prev 승계: ${old_img_id:0:20} (rollback 가능)"
+    else
+      log "[$svc] prev 태깅 실패 — 배포는 계속(롤백 자산만 미갱신)"
+    fi
+  else
+    log "[$svc] prev 유지(이미지 내용 동일 또는 최초 빌드)"
+  fi
 }
 case "$TARGET" in
   web)  build_one web  || exit 1 ;;

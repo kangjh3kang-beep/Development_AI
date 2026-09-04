@@ -71,7 +71,11 @@ GROUNDING_RULE = """\
 # v2: 분양가 벤치마크 날조·평↔㎡ 환산오류·근거없는 비율 단정 금지 강화(2026-06-10).
 # v3: 결론성 수치에 근거 표기 계약(값/근거/출처/신뢰도)+법정vs실효 분리+저신뢰 명시 추가(2026-07-03).
 #     ★공용 규칙 한 곳 수정 → 9개 인터프리터 전역 전파(버그수정 전역전파 정책). 캐시 자동 무효화.
-_PROMPT_VERSION = "v3"
+# v4: _invoke가 폴백-only 결과를 빈 dict로 강등하도록 변경(2026-07-22) — 이 버전 이전에 L2(Redis)에
+#     저장된 캐시 항목은 (드물게) fallback_key에 원문 텍스트가 든 "구버전 결과"일 수 있다. 캐시키에
+#     버전이 반영되므로 이 범프만으로 그 항목들은 즉시 미스 처리되고 안전한 값으로 재생성된다
+#     (TTL 만료를 기다리거나 Redis를 수동으로 비울 필요 없음).
+_PROMPT_VERSION = "v4"
 
 # ── 자가성장 L1 A/B 프롬프트 버전 후보군(Phase 4, 설계서 §6.2) ──
 # service명 → 허용 버전 목록. 자가수정(L1)이 platform_settings('prompt.<service>')에
@@ -179,6 +183,28 @@ def _env_int(name: str, default: int) -> int:
         return int(os.environ.get(name, str(default)))
     except (TypeError, ValueError):
         return default
+
+
+def is_fallback_only(result: dict[str, str], fallback_key: str) -> bool:
+    """결과가 JSON 파싱 실패 폴백(fallback_key 하나에 원문 텍스트 뭉치)만 채워졌는지 판정(SSOT).
+
+    _parse_response가 파싱에 완전히 실패하면 {fallback_key: 원문 텍스트[:500]}만 반환한다.
+    이를 "정상 해석"으로 오인해 그대로 노출하면 raw JSON/절단 텍스트가 사용자 화면에 뜬다
+    (2026-07-22 라이브 실측: design 인터프리터 → CadBimIntegrationPanel "설계 해설" 패널).
+    ★R1 R2(전역 전파방지 HIGH): design_v61.py·design_ingest/orchestrator.py 2곳에만 개별
+    호출되던 가드로는 동일 클래스(BaseInterpreter) 전 서브클래스(avm/market/feasibility/esg/
+    permit/report/site_analysis/tax/cost/finance/development_method/digital_twin 등)·전
+    소비처(persona/runner·v2_feasibility·esg·cost·market_report_service·
+    comprehensive_analysis_service·precheck_service 등 40여 곳)를 커버하지 못한다. 판정
+    자체는 이 함수(호출측 유틸)로 남기되, 실제 강등은 _invoke가 반환 직전에 수행한다(아래).
+    결과가 완전히 비어 있으면(폴백조차 없음) True(호출자가 별도로 "빈 결과"로 처리).
+    """
+    if not result:
+        return True
+    if not fallback_key:
+        return False
+    # ★None 방어: 값이 None이면 str(None)="None"(비어있지 않음)으로 오판정될 수 있어 명시 제외.
+    return not any(k != fallback_key and v is not None and str(v).strip() for k, v in result.items())
 
 
 # 자가학습 few-shot 주입(L3 학습 환류) — 사람 승인된 learning_examples(active)를
@@ -343,8 +369,82 @@ async def _record_llm_billing(
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
             )
-    except Exception:  # noqa: BLE001
+    except Exception as e:  # noqa: BLE001
+        # ★여기가 **돈이 사라지는 지점**이다 — LLM 호출 비용은 이미 발생했는데
+        #   청구·계측이 실패했다. 종전에는 `pass` 뿐이라 **실패가 일어났다는 사실 자체를
+        #   아무도 알 수 없었다**(이 파일에 logger 가 있는데도 쓰지 않았다).
+        #   그래서 "손실이 있었나?"에 영원히 답할 수 없었다 — 관측 불가가 곧 결함이다.
+        # ★로깅은 손실을 **막지 못한다**(탐지 ≠ 교정). 다만 알 수 없던 것을 셀 수 있게 만든다.
+        #   재시도·아웃박스는 이 다음 결정이고, 그 결정에는 이 로그가 낳는 수치가 필요하다.
+        # ★uid 는 싣지 않는다(개인식별 최소화). 귀속에 필요한 것은 service·model 이다.
+        logger.warning(
+            "LLM 과금 기록 실패 — 비용은 발생했으나 청구·계측에 남지 않았다",
+            service=service or "llm",
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            err=f"{type(e).__name__}: {str(e)[:160]}",
+        )
+
+
+def _record_llm_call_event(service: str | None, *, ok: bool,
+                           input_tokens: int = 0, output_tokens: int = 0,
+                           error: str | None = None, reason: str | None = None,
+                           error_type: str | None = None,
+                           latency_ms: int | None = None) -> None:
+    """성장루프에 `llm_call` 한 줄. 논블로킹·예외 안전(관측이 본기능을 막지 않는다)."""
+    try:
+        from app.services.growth import capture_service as _gcap
+
+        payload: dict[str, Any] = {"ok": ok}
+        if ok:
+            payload.update({"input_tokens": input_tokens, "output_tokens": output_tokens})
+        else:
+            payload["error"] = (error or "")[:120]
+            # ★집계용 사유 라벨 + **예외 타입 원본**. 라벨만 남기면 분류표가 낡았을 때
+            #   새 실패 유형이 `other` 안에 조용히 묻힌다 — 타입을 함께 실어 그 안에서도 셀 수 있게 한다.
+            if reason:
+                payload["reason"] = reason
+            if error_type:
+                payload["error_type"] = error_type
+        _gcap.record_event(
+            "llm_call",
+            # ★`severity` 는 **이 지표의 계약이 아니다**(변이 생존 1건의 설명).
+            #   `fallback_rate` SQL 은 `event_type`·`payload->>'ok'`·`service` 만 읽는다
+            #   (growth/analyzer.py 실측). 그래서 이 문자열에 점수용 단언을 붙이지 않는다 —
+            #   붙이면 표현을 다듬을 때마다 깨지는 취약한 락이 된다.
+            #   ★확인 범위: growth analyzer 의 fallback_rate 경로. 다른 소비처가 생기면
+            #     그때 그 소비처가 계약을 선언하고 잠근다.
+            # ★`latency_ms` 는 **다른 지표의 계약**이다 — analyzer 의 latency_regression·
+            #   latency_baseline 이 `llm_call` 의 이 컬럼을 읽는다. 인라인 쓰기를 이 헬퍼로
+            #   합류시키면서 빠뜨리면 그 두 인사이트가 조용히 굶는다(합류가 만든 회귀).
+            {"surface": "api", "service": service or "llm",
+             "severity": "info" if ok else "error",
+             **({"latency_ms": latency_ms} if latency_ms is not None else {}),
+             "payload": payload},
+        )
+    except Exception:  # noqa: BLE001 — 관측 실패가 호출경로를 깨뜨리지 않는다
         pass
+
+
+def record_llm_failure(service: str, exc: BaseException) -> None:
+    """LLM 호출·해석이 **실패**했음을 성장루프에 남긴다 — `fallback_rate` 의 **분자**.
+
+    ★`record_llm_response_billing`(분모)과 **한 쌍**이다. 분모만 배선하면 그 서비스는
+      폴백률 **0%** 로 보여, 실제로는 전부 실패하는 서비스가 초록으로 읽힌다.
+      한쪽만 배선한 모듈은 `tests/test_llm_observability_pairing.py` 가 잡는다.
+
+    ★`BaseInterpreter` 밖에서 `llm.ainvoke` 를 직접 부르는 서비스용이다. 그 안에서 도는
+      인터프리터는 자체 계측이 이미 있다(이 함수를 부르면 이중계상이 된다).
+    """
+    from app.services.ai.llm_failure import classify_failure
+
+    _record_llm_call_event(
+        service, ok=False,
+        error=f"{type(exc).__name__}: {exc}",
+        reason=classify_failure(exc),
+        error_type=type(exc).__name__,
+    )
 
 
 async def record_llm_response_billing(llm, response, service: str | None = None) -> None:
@@ -359,8 +459,24 @@ async def record_llm_response_billing(llm, response, service: str | None = None)
         output_tokens = int(meta.get("output_tokens", 0) or 0) if isinstance(meta, dict) else 0
         model = getattr(llm, "model", "") or getattr(llm, "model_name", "") or ""
         await _record_llm_billing(model, input_tokens, output_tokens, service=service)
-    except Exception:  # noqa: BLE001
-        pass
+        # ★성장루프 **분모**: `fallback_rate` 는 `llm_call` 수를 분모로 쓴다
+        #   (`growth/analyzer.py`). 그런데 그 이벤트는 `BaseInterpreter` **안에서만** 기록돼
+        #   왔고, 이 헬퍼를 쓰는 18개 서비스(등기·규제·시장·인허가…)는 분모가 0이라
+        #   `FALLBACK_MIN_CALLS=10` 에 걸려 **인사이트가 영원히 뜨지 않았다**.
+        #   그래서 등기 권리분석이 통째로 죽어도 성장루프는 아무 말도 못 했다(2026-08-24 실장애).
+        #   ★분자(`record_llm_failure`)를 같이 배선하지 않으면 그 서비스는 **거짓 0%** 로 읽힌다 —
+        #     `tests/test_llm_observability_pairing.py` 가 그 짝을 강제한다.
+        _record_llm_call_event(service, ok=True, input_tokens=input_tokens,
+                               output_tokens=output_tokens)
+    except Exception as e:  # noqa: BLE001
+        # ★싱크(`_record_llm_billing`)는 예외를 밖으로 내보내지 않으므로, 여기 걸리는 것은
+        #   **토큰 추출 단계**의 실패다(usage_metadata 형태가 예상과 다름 등). 결과는 같다 —
+        #   호출은 했는데 과금이 0건이다. 싱크와 **다른 사유**이므로 문구를 갈라 둔다.
+        logger.warning(
+            "LLM 사용량 추출 실패 — 과금 위임 전에 끊겼다",
+            service=service or "llm",
+            err=f"{type(e).__name__}: {str(e)[:160]}",
+        )
 
 
 def record_llm_response_billing_sync(llm, response, service: str | None = None) -> None:
@@ -374,9 +490,14 @@ def record_llm_response_billing_sync(llm, response, service: str | None = None) 
 
         loop = asyncio.get_running_loop()
         loop.create_task(record_llm_response_billing(llm, response, service=service))
-    except Exception:  # noqa: BLE001
-        # 실행 중 루프 없음(RuntimeError) 등 — 계측 생략(본기능 회귀 0)
-        pass
+    except Exception as e:  # noqa: BLE001
+        # 실행 중 루프 없음(RuntimeError) 등 — 본기능 회귀는 0 이지만 **과금은 생략된다.**
+        # 조용히 넘기면 "동기 호출처의 과금 누락"이 영원히 안 보인다.
+        logger.warning(
+            "LLM 과금 예약 실패 — 동기 호출처의 사용량이 기록되지 않았다",
+            service=service or "llm",
+            err=f"{type(e).__name__}: {str(e)[:160]}",
+        )
 
 
 class BaseInterpreter:
@@ -399,6 +520,16 @@ class BaseInterpreter:
         # 버전(M-1 해소). None 이면 미해석(기본 _PROMPT_VERSION 사용 = 기존 동작 불변).
         # 동기 _cache_key·텔레메트리는 이 캐시값만 참조한다(asyncio.run 죽은경로 제거).
         self._active_prompt_version: str | None = None
+        # ★백로그①(2026-07-22) 최소 노출: _invoke가 매 호출 내부에서 parse_ok(원문이
+        # JSON 객체로 파싱되는지)·truncated(max_tokens 캡 절단)를 이미 계산하지만
+        # 반환값(dict[str, str])에는 담기지 않는다. fallback_key가 유일한 expected_key인
+        # 서브클래스(예: SeniorNarratorInterpreter)는 is_fallback_only 판정이 구조적으로
+        # 불가(정상 응답도 폴백과 동일 형태)해 _invoke_or_empty를 못 쓴다 — 그런 호출처가
+        # _invoke 직후 이 인스턴스 속성을 읽어 절단·파싱 신호로 직접 강등 여부를 정할 수
+        # 있게 한다(반환값 계약은 불변 — 기존 소비처 전부 무영향). 캐시 히트 경로는
+        # 이미 "성공 파싱+비절단"만 저장되므로(L840) True/False로 채워 넣는다.
+        self.last_parse_ok: bool | None = None
+        self.last_truncated: bool = False
 
     def set_retry_feedback(self, feedback: str | None) -> None:
         """검증관 이슈를 다음 1회 생성에 주입(재생성 피드백 루프).
@@ -407,6 +538,37 @@ class BaseInterpreter:
         피드백이 있으면 캐시를 우회해 LLM을 다시 호출한다(상한은 호출처가 통제).
         """
         self._retry_feedback = (feedback or "").strip() or None
+
+    # ★근원 봉합(R1 R2, 전역 전파방지 HIGH) — _invoke 래퍼(generate_interpretation 층):
+    #   JSON 파싱 실패 폴백(fallback_key 하나에 원문 텍스트 뭉치, is_fallback_only SSOT)을
+    #   빈 dict로 강등해 반환한다. 이 클래스를 상속하는 모든 서브클래스(design/avm/market/
+    #   feasibility/esg/permit/report/site_analysis/tax/cost/finance/development_method/
+    #   digital_twin 등)와 그 전 소비처(persona/runner·v2_feasibility·esg·cost·
+    #   market_report_service·comprehensive_analysis_service·precheck_service 등)가 이미 쓰는
+    #   "if result:"/"result or None"/"isinstance(x, dict) and x" 관용구가 기존 코드 무수정으로
+    #   정직 처리하게 된다(과거 LLM 초기화 실패·호출 예외 경로도 원래 `{}`를 반환해왔으므로 이
+    #   반환값 형태 자체는 신규가 아니다 — 기존 계약 재사용).
+    #   ★병행 작업(#424, base_interpreter._invoke/_parse_response 내부의 캐시오염·절단관측
+    #   재구조화)과의 충돌 표면을 줄이기 위해 _invoke 본문은 건드리지 않고, 이 얇은 래퍼가
+    #   _invoke의 반환값(캐시 히트·신규 계산 어느 경로든 동일)에 사후 적용한다. 관심사 분리:
+    #   #424=캐시에 무엇을 저장할지(캐시 오염 차단), 이 래퍼=호출자에게 무엇을 반환할지(원문
+    #   노출 차단) — 서로 다른 층이라 상보적이며 중복이 아니다.
+    async def _invoke_or_empty(self, user_prompt: str, **kwargs: Any) -> dict[str, str]:
+        """_invoke(user_prompt, **kwargs)를 호출하고 폴백-only 결과만 빈 dict로 강등해 반환.
+
+        서브클래스의 generate_interpretation은 `self._invoke(...)` 대신 이 메서드를 호출하면
+        된다(시그니처 동일 — 순수 대체 가능). design_ingest/orchestrator.py·design_v61.py에
+        남아 있는 개별 is_fallback_only 호출은 이 래퍼를 통과한 뒤의 결과에 대한 이중 방어다
+        (무해·삭제 불필요).
+        """
+        result = await self._invoke(user_prompt, **kwargs)
+        if is_fallback_only(result, self.fallback_key):
+            logger.info(
+                "인터프리터 결과가 폴백-only — 빈 dict로 강등(raw 노출 방지)",
+                interp=self.name, fallback_key=self.fallback_key,
+            )
+            return {}
+        return result
 
     # ── P2: LLM 지연 생성(키 정상화 경유, ImportError 폴백) ──
     def _get_llm(self) -> Any:
@@ -595,11 +757,14 @@ class BaseInterpreter:
             cached = _RESULT_CACHE.get(cache_key)
             if cached is not None:
                 logger.info("인터프리터 캐시 적중(L1)", interp=self.name)
+                # 캐시엔 성공파싱+비절단만 저장됨(L840 게이트) — 히트는 항상 양호 신호.
+                self.last_parse_ok, self.last_truncated = True, False
                 return cached
             l2 = await _redis_get(redis_key)
             if l2 is not None:
                 logger.info("인터프리터 캐시 적중(L2 Redis)", interp=self.name)
                 _RESULT_CACHE.set(cache_key, l2)  # L1 워밍
+                self.last_parse_ok, self.last_truncated = True, False
                 return l2
 
         # P3: 추가 근거 부착 — (1) sync 자체근거(_evidence: 지역시세 등)
@@ -633,6 +798,7 @@ class BaseInterpreter:
             llm = self._get_llm()
         except Exception as e:  # noqa: BLE001
             logger.warning("LLM 초기화 실패", interp=self.name, error=str(e)[:120])
+            self.last_parse_ok, self.last_truncated = False, False
             return {}
 
         from langchain_core.messages import HumanMessage, SystemMessage
@@ -679,24 +845,43 @@ class BaseInterpreter:
         except Exception as e:  # noqa: BLE001
             logger.warning("인터프리터 LLM 호출 실패", interp=self.name, error=str(e)[:120])
             # 자가성장 텔레메트리: 호출 실패도 품질 신호로 1줄 기록(예외 안전).
+            #
+            # ★2026-08-25 — 여기를 **공용 통로로 합류**시켰다. 이유(라이브 실측):
+            #   `_analyze_fallback_rate` 는 사유를 `payload->>'reason'` 에서만 읽고, 없으면
+            #   `unlabeled` 로 센다. 이 자리는 그 키를 **한 번도 넣지 않았다** — 그래서 사유
+            #   분포를 붙여도 여기서 나온 실패는 전부 미분류가 된다.
+            #   그것이 사소하지 않은 이유: 라이브에서 폴백률이 잡히는 서비스가
+            #   `site_analysis`·`feasibility`·`market` **셋뿐인데 셋 다 BaseInterpreter
+            #   서브클래스**다(2026-08-25 /growth/insights 실측 — 각각 100%·100%·40%).
+            #   즉 이 한 줄이 **관측되는 폴백 전량**의 사유를 결정한다.
+            #
+            # ★왜 `record_llm_failure()` 가 아니라 헬퍼 직행인가: 그 함수는 BaseInterpreter
+            #   **밖**에서 `llm.ainvoke` 를 직접 부르는 서비스용이라, 여기서 부르면 같은 실패가
+            #   두 줄이 되어 분모·분자가 함께 부풀어 폴백률이 왜곡된다(이중계상).
+            #   `_get_llm()` 이 `service=` 를 넘기지 않아 `_ObservedChat` 도 이 경로를 감싸지
+            #   않는다(llm_provider.py 의 주석이 그렇게 선언한다) — 그래서 이 자리 말고는
+            #   사유를 넣을 곳이 없다.
             try:
-                from app.services.growth import capture_service as _gcap
-                _gcap.record_event(
-                    "llm_call",
-                    {
-                        "surface": "api",
-                        "service": self.name,
-                        "severity": "error",
-                        "latency_ms": int((time.monotonic() - _t0) * 1000),
-                        "payload": {"ok": False, "error": str(e)[:120]},
-                    },
+                from app.services.ai.llm_failure import classify_failure
+
+                _record_llm_call_event(
+                    self.name, ok=False,
+                    error=str(e)[:120],
+                    reason=classify_failure(e),
+                    error_type=type(e).__name__,
+                    latency_ms=int((time.monotonic() - _t0) * 1000),
                 )
             except Exception:  # noqa: BLE001
                 pass
+            self.last_parse_ok, self.last_truncated = False, False
             return {}
 
         raw_text = response.content if hasattr(response, "content") else str(response)
+        # ★반드시 다형성 진입점(_parse_response)으로 — 서브클래스 오버라이드(blindspot·brief
+        #   커스텀 정규화)가 이 경로로 실행된다. parse_ok는 정규화와 독립인 원문 술어로 분리.
         result = self._parse_response(raw_text)
+        parse_ok = self._raw_parses_as_object(raw_text)
+        self.last_parse_ok = parse_ok
 
         # P4-b: prompt caching 효과 모니터링 — cache_read 비율 로깅.
         # langchain usage_metadata.input_token_details.{cache_read,cache_creation}
@@ -718,6 +903,22 @@ class BaseInterpreter:
         cached_total = cache_read + cache_creation
         cache_hit_ratio = round(cache_read / cached_total, 3) if cached_total else 0.0
 
+        # 절단 정직 관측(절단감지 SSOT=llm_json.is_truncated) — 캡 도달 절단은 파서로
+        # 복구 불가한 별개 결함 클래스(2026-07-22 규제분석 실측: output==캡인 호출만 실패).
+        # 경고+텔레메트리 플래그로 표면화해, 절단 사냥이 포렌식이 아닌 쿼리가 되게 한다.
+        truncated = False
+        try:  # 주변 빌링·텔레메트리와 동일 디시플린 — 관측 실패가 추론을 깨뜨리지 않게.
+            from app.services.ai.llm_json import is_truncated
+            truncated = is_truncated(response)
+            if truncated:
+                logger.warning(
+                    "LLM 응답 절단(max_tokens 캡 도달)", interp=self.name,
+                    max_tokens=self.max_tokens, output_tokens=output_tokens, parse_ok=parse_ok,
+                )
+        except Exception:  # noqa: BLE001
+            pass
+        self.last_truncated = truncated
+
         # 자가성장 텔레메트리(설계서 §3.2): 빌링 정본(llm_usage_log)은 위에서 기록하고,
         # 여기서는 품질·지연 신호만 platform_events 에 1줄 push(논블로킹, 예외 안전).
         # ⚠️ 토큰/비용 중복 INSERT 아님 — 신호용 부가 이벤트.
@@ -737,6 +938,9 @@ class BaseInterpreter:
                         "cache_hit": cache_hit_ratio,
                         "cache_read": cache_read,
                         "retry": bool(self._retry_feedback),
+                        # 절단·파싱 신호(관측성) — 플릿 전체 절단율을 쿼리 1방으로.
+                        "truncated": truncated,
+                        "parse_ok": parse_ok,
                         # 자가성장 L1 A/B 집계용 — 이번 호출의 프롬프트 버전(기본 v2).
                         "prompt_version": self._resolve_prompt_version(),
                     },
@@ -754,40 +958,32 @@ class BaseInterpreter:
             cache_hit_ratio=cache_hit_ratio,
         )
 
-        # P4: 결과를 L1·L2 모두에 저장.
-        if cache_key and result:
+        # P4: 결과를 L1·L2 모두에 저장 — ★성공 파싱+비절단만. 파싱 폴백({fallback_key:
+        # 원문})은 truthy라 기존엔 성공과 구분 없이 캐시에 박제됐다(#411 라우터 폴백
+        # 캐시오염과 동일 클래스·registry '성공만 캐시' 선례의 기반클래스 일반화).
+        # 절단-but-파싱성공(관대 파서의 부분 salvage)도 미완결 응답이므로 박제 금지(R1).
+        # 미저장 → 다음 호출이 재시도해 자가치유된다.
+        if cache_key and result and parse_ok and not truncated:
             _RESULT_CACHE.set(cache_key, result)
             await _redis_set(redis_key, result)
         return result
 
     # ── P2: 공통 JSON 파서(expected_keys/fallback_key 파라미터화) ──
+    # ★서브클래스가 오버라이드하는 다형성 진입점(blindspot·brief가 커스텀 정규화로 재정의)
+    #   — _invoke는 반드시 이 메서드를 호출해야 한다(R1: _ex 직접 호출로 오버라이드가
+    #   우회돼 심의 쟁점 소실·근거 소실이 재현됐던 CRITICAL의 회귀 잠금점).
     def _parse_response(self, raw: str) -> dict[str, str]:
-        text = raw.strip()
-
-        # ```json ... ``` 코드블록 제거
-        if text.startswith("```"):
-            lines = text.split("\n")
-            end = len(lines)
-            for i in range(len(lines) - 1, 0, -1):
-                if lines[i].strip() == "```":
-                    end = i
-                    break
-            text = "\n".join(lines[1:end])
+        from app.services.ai.llm_json import extract_json_text, parse_llm_json
 
         try:
-            parsed = json.loads(text)
+            parsed = parse_llm_json(raw)
         except json.JSONDecodeError:
-            brace_start = text.find("{")
-            brace_end = text.rfind("}")
-            if brace_start != -1 and brace_end != -1:
-                try:
-                    parsed = json.loads(text[brace_start : brace_end + 1])
-                except json.JSONDecodeError:
-                    logger.warning("AI 응답 JSON 파싱 최종 실패", interp=self.name, raw_length=len(raw))
-                    return {self.fallback_key: text[:500]} if self.fallback_key else {}
-            else:
-                logger.warning("AI 응답에서 JSON 미발견", interp=self.name, raw_length=len(raw))
-                return {self.fallback_key: text[:500]} if self.fallback_key else {}
+            logger.warning("AI 응답 JSON 파싱 최종 실패", interp=self.name, raw_length=len(raw))
+            return {self.fallback_key: extract_json_text(raw)[:500]} if self.fallback_key else {}
+        if not isinstance(parsed, dict):
+            # 기대 스키마는 항상 객체 — 리스트/스칼라 응답은 파싱 실패와 동일 취급.
+            logger.warning("AI 응답이 JSON 객체가 아님", interp=self.name, raw_length=len(raw))
+            return {self.fallback_key: extract_json_text(raw)[:500]} if self.fallback_key else {}
 
         result: dict[str, str] = {}
         for key in self.expected_keys:
@@ -795,3 +991,19 @@ class BaseInterpreter:
             if val is not None:
                 result[key] = str(val)
         return result
+
+    @staticmethod
+    def _raw_parses_as_object(raw: str) -> bool:
+        """원문이 JSON '객체'로 파싱되는지 — 캐시 게이트(parse_ok) 전용 술어.
+
+        서브클래스의 _parse_response 정규화와 독립적으로 원문 유효성만 판정한다
+        (다형성 훼손 없이 폴백 캐시오염을 막기 위한 분리 — 강등 폴백({fallback_key:
+        원문})이 truthy라 성공과 구분 없이 L1/L2에 박제되던 #411 동일 클래스 봉합).
+        재파싱 비용은 수 KB 문자열 json.loads 1회(<1ms)로 무시 가능.
+        """
+        from app.services.ai.llm_json import parse_llm_json
+
+        try:
+            return isinstance(parse_llm_json(raw), dict)
+        except json.JSONDecodeError:
+            return False

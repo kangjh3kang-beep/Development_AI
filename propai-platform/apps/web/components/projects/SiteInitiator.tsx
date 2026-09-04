@@ -1,11 +1,13 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { preferredEntryAddress } from "@/lib/parcel-rows";
 import { motion, AnimatePresence } from "framer-motion";
 import { AlertTriangle } from "lucide-react";
 import { GlobalAddressSearch, type AddressEntry } from "@/components/common/GlobalAddressSearch";
 import { apiClient } from "@/lib/api-client";
-import { DEVELOPABILITY_LABEL, specialFactorLabels } from "@/lib/zoning-ssot";
+import { idempotencyHeaders } from "@/lib/idempotency";
+import { developabilityText, specialFactorLabels } from "@/lib/zoning-ssot";
 
 const Icons = {
   Search: () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>,
@@ -72,7 +74,12 @@ export function SiteInitiator({ onInitiate, loading }: SiteInitiatorProps) {
             factors?: Array<{ category?: string | null } | string> | null;
             honest_disclosure?: string | null;
           } | null;
-        }>("/zoning/analyze", { useMock: false, body: { address: address.trim() } });
+        }>("/zoning/analyze", {
+          useMock: false,
+          body: { address: address.trim() },
+          // ★유료 경로(land_analysis) — 재전송이면 이중청구된다.
+          headers: idempotencyHeaders("zoning.analyze", { address: address.trim() }),
+        });
         if (!cancelled) {
           const ef = res.effective_far ?? null;
           const sp = res.special_parcel ?? null;
@@ -136,8 +143,8 @@ export function SiteInitiator({ onInitiate, loading }: SiteInitiatorProps) {
 
       {/* Input Area */}
       <div className="relative group">
-        <div className="absolute -inset-1 bg-gradient-to-r from-[var(--accent)]/20 to-indigo-500/20 rounded-[2.5rem] blur-xl opacity-20 group-hover:opacity-40 transition duration-1000"></div>
-        <div className="relative rounded-[2rem] border border-[var(--line)] bg-[var(--glass-bg)] p-8 shadow-2xl backdrop-blur-3xl">
+        <div className="absolute -inset-1 bg-gradient-to-r from-[var(--accent)]/20 to-indigo-500/20 rounded-[var(--radius-xl)] blur-xl opacity-20 group-hover:opacity-40 transition duration-1000"></div>
+        <div className="relative rounded-[var(--radius-lg)] border border-[var(--line)] bg-[var(--glass-bg)] p-8 shadow-2xl backdrop-blur-3xl">
           <AnimatePresence mode="wait">
             {activeTab === "search" ? (
               <motion.div
@@ -151,7 +158,7 @@ export function SiteInitiator({ onInitiate, loading }: SiteInitiatorProps) {
                 <GlobalAddressSearch
                   onChange={(entries) => {
                     if (entries.length > 0) {
-                      setAddress(entries[0].fullAddress);
+                      setAddress(preferredEntryAddress(entries[0]));
                     }
                   }}
                   placeholder="주소를 검색하세요 (클릭하면 검색창이 열립니다)"
@@ -208,7 +215,7 @@ export function SiteInitiator({ onInitiate, loading }: SiteInitiatorProps) {
                               <p className="inline-flex flex-wrap items-center gap-1 text-[11px] font-bold text-[var(--status-warning)]">
                                 <AlertTriangle className="size-3" aria-hidden />특이부지{zoningPreview.special.factors.length > 0 ? ` · ${zoningPreview.special.factors.join(" · ")}` : ""}
                                 {zoningPreview.special.developability && (
-                                  <span className="font-semibold"> — {DEVELOPABILITY_LABEL[zoningPreview.special.developability] ?? zoningPreview.special.developability}</span>
+                                  <span className="font-semibold"> — {developabilityText(zoningPreview.special.developability)}</span>
                                 )}
                               </p>
                               {zoningPreview.special.honest && (

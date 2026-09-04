@@ -4,16 +4,12 @@ from datetime import UTC, datetime
 
 UTC = UTC
 
-import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends
 from packages.schemas.models import SystemHealthResponse, SystemVersionResponse
-from sqlalchemy import text
 
 from apps.api.auth.jwt_handler import CurrentUser
 from apps.api.auth.rbac import RequirePermission
 from apps.api.config import get_settings
-from apps.api.database.init_qdrant import check_qdrant_health
-from apps.api.database.session import engine
 
 router = APIRouter()
 settings = get_settings()
@@ -38,25 +34,16 @@ async def get_integration_status() -> dict:
 
 
 async def _collect_service_health() -> dict[str, str]:
-    services: dict[str, str] = {}
+    """의존처 상태를 모은다.
 
-    try:
-        async with engine.connect() as conn:
-            await conn.execute(text("SELECT 1"))
-        services["postgres"] = "healthy"
-    except Exception:
-        services["postgres"] = "unhealthy"
+    ★종전에는 여기에 ``main.py`` 의 ``/health`` 와 **똑같은 로직이 복제**돼 있었고, 둘 다
+    각 점검에 상한이 없었다. 2026-08-11 에 Supabase 풀러가 신규 연결을 60초 매달자
+    ``/health`` 가 재는 족족 60초였는데(표본 136건), 이 경로도 같은 결함을 그대로 안고
+    있었다. 한 곳만 고치면 미러가 남으므로 공용 통로로 일원화한다.
+    """
+    from apps.api.app.core.health_probe import collect_service_health
 
-    try:
-        redis_client = aioredis.from_url(settings.redis_url)
-        await redis_client.ping()
-        await redis_client.aclose()
-        services["redis"] = "healthy"
-    except Exception:
-        services["redis"] = "unhealthy"
-
-    services["qdrant"] = "healthy" if await check_qdrant_health() else "unhealthy"
-    return services
+    return await collect_service_health()
 
 
 @router.get("/version", response_model=SystemVersionResponse)

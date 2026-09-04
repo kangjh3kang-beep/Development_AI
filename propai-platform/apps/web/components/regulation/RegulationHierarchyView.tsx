@@ -17,6 +17,7 @@ import {
   type LucideIcon,
   Map as MapIcon,
   Scale,
+  ShieldCheck,
   Sparkles,
   Target,
   TrafficCone,
@@ -73,12 +74,24 @@ export type RegResult = {
     bcr: LimitTrio;
     far: LimitTrio;
     // height.value: 미터 제한이 없고 층수 제한(녹지 4층 등)만 있으면 실효 높이(층수×층고 근사).
-    height: { value: number | null; unit: string; max_floors?: number | null; basis?: string | null };
+    // legal_ref: 녹지 층수상한(별표15~17) 원문링크 칩(WP-R2 가산·옵셔널).
+    height: { value: number | null; unit: string; max_floors?: number | null; basis?: string | null; legal_ref?: LegalRef | null };
     parking: { description: string };
   };
   hierarchy: HierLevel[];
   districts: District[];
   ai: RegAI | null;
+  /** WP-R1 실효 용적률 SSOT 통과키(구조상한 실체) — 층수제한 zone에서만 structural_cap_pct 존재. */
+  effective_far?: {
+    effective_far_pct?: number | null;
+    effective_bcr_pct?: number | null;
+    structural_cap_pct?: number | null;
+    floor_cap?: number | null;
+    floor_cap_basis?: string | null;
+    far_basis?: string | null;
+  } | null;
+  /** WP-R3 parity — 실제 분석에 사용된 필지 목록(주소+PNU). 구획도 단일 권위목록. */
+  parcels_used?: { address: string; pnu?: string | null }[] | null;
   /** WP-H 신뢰 메타데이터(가산·옵셔널) — 없으면(구버전) 렌더 생략. */
   evidence?: EvidenceTrace[] | null;
   /** 다필지 통합 메타(가산·옵셔널) — 2필지 이상 통합 분석 시에만 내려온다. */
@@ -86,9 +99,9 @@ export type RegResult = {
 };
 
 const IMPACT_STYLE: Record<string, string> = {
-  상: "bg-rose-500/15 text-rose-400 border-rose-500/30",
-  중: "bg-amber-500/15 text-amber-400 border-amber-500/30",
-  하: "bg-emerald-500/12 text-emerald-400 border-emerald-500/25",
+  상: "bg-[var(--status-error)]/15 text-[var(--status-error)] border-[var(--status-error)]/30",
+  중: "bg-[var(--status-warning)]/15 text-[var(--status-warning)] border-[var(--status-warning)]/30",
+  하: "bg-[var(--status-success)]/12 text-[var(--status-success)] border-[var(--status-success)]/25",
 };
 const LEVEL_META: Record<string, { color: string; Icon: LucideIcon }> = {
   "상위법령": { color: "var(--accent-strong)", Icon: Scale },
@@ -168,12 +181,40 @@ export function RegulationHierarchyView({
   // 한도 산출 근거(evidence[] + 계층 legal_refs[]) — 항목이 없으면(구버전) 자동 미표시.
   const allLegalRefs = flattenLegalRefs(result.hierarchy);
   const evidenceItems = buildEvidenceItems(result.evidence, allLegalRefs);
+  // 높이 카드 녹지 층수상한 근거칩(WP-R2) — 없으면(구버전·비녹지) 미표시. 로컬 const로 안전 narrow.
+  const heightRef = result.limits.height.legal_ref;
+
+  // 검토 요약 배지(★사실 기반 — 판정 아님): 백엔드가 '적합/부적합' verdict를 주지 않으므로
+  //   단정을 만들지 않고, 실재하는 사실만 집계한다 — 적용 규정 항목 수(계층+지구/구역) + 조례
+  //   강화(법정 대비 조례가 축소한) 정량 한도 건수(LimitCard tightened 규칙과 동일). 날조 0.
+  const appliedCount =
+    (result.hierarchy ?? []).reduce((n, lv) => n + (lv.items?.length ?? 0), 0) +
+    (result.districts?.length ?? 0);
+  const tightenedCount = (["bcr", "far"] as const).reduce((n, k) => {
+    const t = result.limits?.[k];
+    return t && t.legal != null && t.ordinance != null && t.ordinance < t.legal ? n + 1 : n;
+  }, 0);
 
   return (
     <>
       {/* 부지 요약 + 정량 한도 */}
       <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
         <CardContent className="p-6">
+          {/* 검토 완료 요약 배지(사실 기반) — 적용 규정 항목 수·조례 강화 건수만 정직 표기. */}
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-[color-mix(in_srgb,var(--status-success)_35%,transparent)] bg-[color-mix(in_srgb,var(--status-success)_12%,transparent)] px-3 py-1 text-xs font-bold text-[var(--status-success)]">
+              <ShieldCheck className="size-3.5" aria-hidden />규제 검토 완료
+            </span>
+            <span className="text-xs text-[var(--text-secondary)]">
+              적용 규정 <b className="text-[var(--text-primary)]">{appliedCount}개 항목</b>
+              {tightenedCount > 0 && (
+                <>
+                  {" · "}
+                  <span className="font-bold text-[var(--status-warning)]">조례 강화 {tightenedCount}건</span>
+                </>
+              )}
+            </span>
+          </div>
           <div className="flex flex-wrap items-center gap-2">
             <span className="rounded-lg bg-[var(--accent-soft)] px-2.5 py-1 text-xs font-black text-[var(--accent-strong)]">
               {result.zone_type || "용도미상"}
@@ -205,6 +246,18 @@ export function RegulationHierarchyView({
               {result.limits.height.basis && (
                 <p className="mt-1 text-[10px] leading-snug text-[var(--text-tertiary)]">{result.limits.height.basis}</p>
               )}
+              {/* 녹지 층수상한(별표15~17) 원문링크 칩(WP-R2) — 4층 근거를 클릭 1회로 확인. */}
+              {heightRef?.law_name ? (
+                <div className="mt-1.5">
+                  <LegalRefChip
+                    lawName={heightRef.law_name}
+                    article={heightRef.article}
+                    title={heightRef.title}
+                    url={heightRef.url}
+                    urlStatus={heightRef.url_status}
+                  />
+                </div>
+              ) : null}
             </div>
             <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3.5">
               <p className="text-[11px] font-bold text-[var(--text-secondary)]">주차 기준</p>
@@ -280,6 +333,7 @@ export function RegulationHierarchyView({
                             article={ref.article}
                             title={ref.title}
                             url={ref.url}
+                            urlStatus={ref.url_status}
                           />
                         ) : null,
                       )}
@@ -307,7 +361,7 @@ export function RegulationHierarchyView({
                 </span>
               ))}
             </div>
-            <p className="mt-3 text-[11px] text-[var(--text-hint)]">영향도: <span className="text-rose-400">상</span>(개발 결정적) · <span className="text-amber-400">중</span>(밀도·절차 영향) · <span className="text-emerald-400">하</span>(일반)</p>
+            <p className="mt-3 text-[11px] text-[var(--text-hint)]">영향도: <span className="text-[var(--status-error)]">상</span>(개발 결정적) · <span className="text-[var(--status-warning)]">중</span>(밀도·절차 영향) · <span className="text-[var(--status-success)]">하</span>(일반)</p>
           </CardContent>
         </Card>
       )}
@@ -326,9 +380,9 @@ function LimitCard({ label, trio }: { label: string; trio: LimitTrio }) {
       <p className="mt-1 text-lg font-black text-[var(--accent-strong)]">{eff != null ? `${eff}${trio.unit}` : "-"}</p>
       <div className="mt-1.5 space-y-0.5 text-[10px] text-[var(--text-hint)]">
         <div className="flex justify-between"><span>법정</span><span>{trio.legal != null ? `${trio.legal}${trio.unit}` : "-"}</span></div>
-        <div className="flex justify-between"><span>조례</span><span className={tightened ? "text-amber-400 font-bold" : ""}>{trio.ordinance != null ? `${trio.ordinance}${trio.unit}` : "-"}</span></div>
+        <div className="flex justify-between"><span>조례</span><span className={tightened ? "text-[var(--status-warning)] font-bold" : ""}>{trio.ordinance != null ? `${trio.ordinance}${trio.unit}` : "-"}</span></div>
       </div>
-      {tightened && <p className="mt-1 text-[10px] font-bold text-amber-400">조례 강화 ↓</p>}
+      {tightened && <p className="mt-1 text-[10px] font-bold text-[var(--status-warning)]">조례 강화 ↓</p>}
     </div>
   );
 }
@@ -336,7 +390,7 @@ function LimitCard({ label, trio }: { label: string; trio: LimitTrio }) {
 function AiList({ title, icon: Icon, items, tone }: { title: string; icon?: LucideIcon; items?: string[]; tone: string }) {
   if (!items || items.length === 0) return null;
   const color: Record<string, string> = {
-    rose: "text-rose-400", emerald: "text-emerald-400", sky: "text-sky-400", amber: "text-amber-400",
+    rose: "text-[var(--status-error)]", emerald: "text-[var(--status-success)]", sky: "text-sky-400", amber: "text-[var(--status-warning)]",
   };
   return (
     <div>

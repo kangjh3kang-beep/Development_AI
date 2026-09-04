@@ -188,7 +188,7 @@ export function AnalysisModuleSelector({
               : m.required
                 ? "cursor-not-allowed border-[var(--accent-strong)] bg-[color-mix(in_srgb,var(--accent-strong)_6%,transparent)]"
                 : m.locked
-                  ? "cursor-not-allowed border-[var(--line-strong)] bg-[var(--surface-card)] opacity-60"
+                  ? "cursor-not-allowed border-[var(--line-strong)] bg-[var(--surface-strong)] opacity-60"
                   : "cursor-pointer border-[var(--line-strong)] bg-[var(--surface-soft)] hover:border-[var(--accent-strong)]";
             return (
               <label key={m.key} className={`${base} ${stateClass}`}>

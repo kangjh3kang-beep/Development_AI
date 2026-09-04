@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { Button, Card, CardContent, CardTitle, Input } from "@propai/ui";
 import { ApiClientError, apiClient } from "@/lib/api-client";
+import { resolveNextPath } from "@/lib/authReturnPath";
 import { clearOnLogout, ensureDataOwner } from "@/lib/projectSync";
 import type { Locale } from "@/i18n/config";
 
@@ -47,8 +48,6 @@ type Labels = {
   eyebrow: string;
   title: string;
   description: string;
-  modeLabels: Record<AuthMode, string>;
-  modeDescriptions: Record<AuthMode, string>;
   loginFields: {
     email: string;
     password: string;
@@ -117,14 +116,6 @@ const LABELS: Record<Locale, Labels> = {
     title: "실사용 인증 작업 공간",
     description:
       "이제 로그인과 테넌트 관리자 등록이 placeholder가 아니라 실제 `/auth` API에 연결됩니다.",
-    modeLabels: {
-      login: "로그인",
-      register: "관리자 등록",
-    },
-    modeDescriptions: {
-      login: "기존 계정으로 JWT 세션을 발급합니다.",
-      register: "새 테넌트와 첫 관리자 계정을 생성합니다.",
-    },
     loginFields: {
       email: "이메일",
       password: "비밀번호",
@@ -196,14 +187,6 @@ const LABELS: Record<Locale, Labels> = {
     title: "Live authentication workspace",
     description:
       "Login and tenant-admin onboarding now run against the real `/auth` API instead of placeholder screens.",
-    modeLabels: {
-      login: "Login",
-      register: "Register admin",
-    },
-    modeDescriptions: {
-      login: "Issue a JWT session for an existing account.",
-      register: "Create a new tenant and its first administrator.",
-    },
     loginFields: {
       email: "Email",
       password: "Password",
@@ -274,14 +257,6 @@ const LABELS: Record<Locale, Labels> = {
     eyebrow: "AUTH / LIVE",
     title: "实时认证工作台",
     description: "登录和租户管理员注册现在直接连接真实 `/auth` API，而不是占位页面。",
-    modeLabels: {
-      login: "登录",
-      register: "注册管理员",
-    },
-    modeDescriptions: {
-      login: "为现有账号签发 JWT 会话。",
-      register: "创建新的租户和首个管理员账号。",
-    },
     loginFields: {
       email: "邮箱",
       password: "密码",
@@ -459,6 +434,9 @@ export function AuthWorkspaceClient({
     companyName: "",
     email: "",
     password: "",
+    agreeTerms: false,
+    agreePrivacy: false,
+    agreeMarketing: false,
   });
 
   const requestRefresh = useCallback(async () => {
@@ -516,9 +494,13 @@ export function AuthWorkspaceClient({
         setSession({ user, expiresIn, source });
         setStoredTokenPresent(true);
 
-        // 로그인 성공 → 대시보드 홈으로 자동 이동 (홈은 /{locale}, /dashboard 라우트는 없음=404)
+        // 로그인 성공 → ?next=(있고 안전하면) 원래 있던 앱 화면으로 복귀, 없으면 대시보드 홈.
+        // ★앱 컨텍스트 복귀(2026-07-23): 분양 현장앱 등에서 로그아웃/세션만료 후 재로그인하면
+        //   메인 대시보드가 아니라 원래 앱으로 돌아가야 한다 — next 소비 지점을 헬퍼로 일원화.
+        //   (useSearchParams 는 Suspense 경계를 요구해 핸들러 시점에 location 에서 직접 읽는다.)
         if (source === "login" || source === "register") {
-          router.push(`/${locale}`);
+          const next = new URLSearchParams(window.location.search).get("next");
+          router.push(resolveNextPath(next, locale));
           return;
         }
       } catch (error) {
@@ -588,26 +570,42 @@ export function AuthWorkspaceClient({
                 company_name: registerForm.companyName,
                 email: registerForm.email,
                 password: registerForm.password,
+                // 약관·개인정보 동의(필수) + 마케팅(선택) — 서버가 동의 이력을 버전과 함께 저장
+                agree_terms: registerForm.agreeTerms,
+                agree_privacy: registerForm.agreePrivacy,
+                agree_marketing: registerForm.agreeMarketing,
+                // ★동의 버전 = 이용자가 실제 열람하는 인앱 약관(/legal/terms·privacy)의
+                //   시행일과 일치해야 한다. 약관 개정 시 이 값을 함께 갱신할 것.
+                policy_version: "2026-06-15",
               },
               useMock: false,
             });
 
       persistTokens(tokens);
       setStoredTokenPresent(true);
-      // ★로그인/등록 성공 시 즉시 대시보드로 이동 — 추가 /auth/me 왕복을 기다리지 않아
-      //  perceived 로딩시간이 절반↓. 세션 검증은 대시보드(ProjectSyncProvider/AuthButton)가 수행.
+      // ★로그인/등록 성공 시 즉시 이동 — 추가 /auth/me 왕복을 기다리지 않아 perceived 로딩시간
+      //  절반↓. 세션 검증은 목적지(ProjectSyncProvider/AuthButton/AuthGuard)가 수행.
+      //  목적지는 ?next=(안전한 내부 경로) 우선 — 현장앱 등 원래 앱 컨텍스트로 복귀(2026-07-23).
       if (mode === "login" || mode === "register") {
-        router.push(`/${locale}`);
+        const next = new URLSearchParams(window.location.search).get("next");
+        router.push(resolveNextPath(next, locale));
         return;
       }
       await loadSession(mode, tokens.expires_in);
     } catch (error) {
+      // 가입 422(비밀번호 정책·필수동의 등)는 FastAPI가 배열형 detail을 주어 일반 메시지로
+      // 강등되므로, 등록 모드에서는 무엇을 고쳐야 하는지 명확한 정책 안내로 대체한다.
+      const status = error instanceof ApiClientError ? error.status : 0;
+      const fallback =
+        mode === "register" && status === 422
+          ? "입력값을 확인해 주세요 — 비밀번호는 10자 이상, 영문 대/소문자·숫자·특수문자 중 3종 이상을 조합하고, 필수 약관에 동의해야 합니다."
+          : mode === "login"
+            ? labels.errorLabels.login
+            : labels.errorLabels.register;
       setFeedback({
         tone: "error",
-        message: resolveApiErrorMessage(
-          error,
-          mode === "login" ? labels.errorLabels.login : labels.errorLabels.register,
-        ),
+        message:
+          status === 422 ? fallback : resolveApiErrorMessage(error, fallback),
       });
     } finally {
       setIsSubmitting(false);
@@ -727,7 +725,7 @@ export function AuthWorkspaceClient({
               </header>
               <div className="cc-panel__body">
 
-              <form className="grid gap-4" onSubmit={handleSubmit}>
+              <form method="post" className="grid gap-4" onSubmit={handleSubmit}>
                 {mode === "register" ? (
                   <>
                     <label className="grid gap-2 text-sm font-medium text-[var(--text-primary)]">
@@ -790,11 +788,83 @@ export function AuthWorkspaceClient({
                             password: event.target.value,
                           }))
                         }
-                        placeholder="********"
+                        placeholder="10자 이상 · 영문/숫자/특수문자 조합"
                         required
-                        minLength={8}
+                        minLength={10}
                       />
+                      <span className="text-xs font-normal text-[var(--text-tertiary)]">
+                        10자 이상, 영문 대/소문자·숫자·특수문자 중 3종 이상을 조합해 주세요.
+                      </span>
                     </label>
+
+                    {/* 약관·개인정보 동의(필수/선택 분리 — 개인정보보호법 §22) */}
+                    <div className="grid gap-2 rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface-soft)] p-4 text-sm">
+                      <label className="flex items-start gap-2 text-[var(--text-primary)]">
+                        <input
+                          type="checkbox"
+                          checked={registerForm.agreeTerms}
+                          onChange={(event) =>
+                            setRegisterForm((current) => ({
+                              ...current,
+                              agreeTerms: event.target.checked,
+                            }))
+                          }
+                          required
+                          className="mt-0.5 h-4 w-4 accent-[var(--accent-strong)]"
+                        />
+                        <span>
+                          <b>[필수]</b>{" "}
+                          <Link
+                            href={`/${locale}/legal/terms`}
+                            target="_blank"
+                            className="underline underline-offset-2 text-[var(--accent-strong)]"
+                          >
+                            이용약관
+                          </Link>
+                          에 동의합니다.
+                        </span>
+                      </label>
+                      <label className="flex items-start gap-2 text-[var(--text-primary)]">
+                        <input
+                          type="checkbox"
+                          checked={registerForm.agreePrivacy}
+                          onChange={(event) =>
+                            setRegisterForm((current) => ({
+                              ...current,
+                              agreePrivacy: event.target.checked,
+                            }))
+                          }
+                          required
+                          className="mt-0.5 h-4 w-4 accent-[var(--accent-strong)]"
+                        />
+                        <span>
+                          <b>[필수]</b>{" "}
+                          <Link
+                            href={`/${locale}/legal/privacy`}
+                            target="_blank"
+                            className="underline underline-offset-2 text-[var(--accent-strong)]"
+                          >
+                            개인정보처리방침
+                          </Link>
+                          에 동의합니다.
+                        </span>
+                      </label>
+                      <label className="flex items-start gap-2 text-[var(--text-secondary)]">
+                        <input
+                          type="checkbox"
+                          checked={registerForm.agreeMarketing}
+                          onChange={(event) =>
+                            setRegisterForm((current) => ({
+                              ...current,
+                              agreeMarketing: event.target.checked,
+                            }))
+                          }
+                          className="mt-0.5 h-4 w-4 accent-[var(--accent-strong)]"
+                        />
+                        <span>[선택] 새 기능·소식 등 마케팅 정보 수신에 동의합니다.</span>
+                      </label>
+                    </div>
+
                     <Button type="submit" disabled={isSubmitting}>
                       {isSubmitting ? labels.submitting : labels.registerFields.submit}
                     </Button>
@@ -836,6 +906,14 @@ export function AuthWorkspaceClient({
                     <Button type="submit" disabled={isSubmitting}>
                       {isSubmitting ? labels.submitting : labels.loginFields.submit}
                     </Button>
+                    <div className="text-right">
+                      <Link
+                        href={`/${locale}/forgot-password`}
+                        className="text-xs font-medium text-[var(--text-tertiary)] underline-offset-4 hover:text-[var(--text-primary)] hover:underline"
+                      >
+                        비밀번호를 잊으셨나요?
+                      </Link>
+                    </div>
                     <div className="relative my-4 flex items-center">
                       <div className="flex-grow border-t border-[var(--line-subtle)]"></div>
                       <span className="cc-label mx-4 text-[var(--text-tertiary)]">SNS · 간편 로그인</span>
@@ -852,11 +930,15 @@ export function AuthWorkspaceClient({
                             //  로그인 단계에서 "현재 도메인 기준 콜백주소"를 명시 전달해야
                             //  콜백 교환 때와 정확히 일치한다(불일치=KOE006). 환경(www/no-www/로컬) 무관 정확.
                             const redirectUri = `${window.location.origin}/${locale}/kakao/callback`;
-                            // 서버가 REST 키로 카카오 인가 URL을 조립해 반환(키 비노출) → 이동.
-                            const res = await apiClient.get<{ url: string }>(
+                            // 서버가 REST 키로 카카오 인가 URL을 조립해 반환(키 비노출) + state(CSRF) 발급 → 이동.
+                            const res = await apiClient.get<{ url: string; state?: string }>(
                               `/auth/kakao/login-url?redirect_uri=${encodeURIComponent(redirectUri)}`,
                               { useMock: false },
                             );
+                            // ★state를 sessionStorage에 보관 → 콜백에서 대조(로그인 CSRF/세션 고정 방지).
+                            if (res?.state) {
+                              window.sessionStorage.setItem("kakao_oauth_state", res.state);
+                            }
                             if (res?.url) window.location.href = res.url;
                           } catch {
                             alert("카카오 로그인 준비 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.");
@@ -909,11 +991,15 @@ export function AuthWorkspaceClient({
                           try {
                             // ★카카오와 동일 패턴: 현재 도메인 기준 콜백주소 명시 전달(교환 시 1:1 일치).
                             const redirectUri = `${window.location.origin}/${locale}/google/callback`;
-                            // 서버가 client_id로 인가 URL을 조립해 반환(키 비노출) → 이동.
-                            const res = await apiClient.get<{ url: string }>(
+                            // 서버가 client_id로 인가 URL을 조립해 반환(키 비노출) + state(CSRF) 발급 → 이동.
+                            const res = await apiClient.get<{ url: string; state?: string }>(
                               `/auth/google/login-url?redirect_uri=${encodeURIComponent(redirectUri)}`,
                               { useMock: false },
                             );
+                            // ★state를 sessionStorage에 보관 → 콜백에서 대조(로그인 CSRF/세션 고정 방지).
+                            if (res?.state) {
+                              window.sessionStorage.setItem("google_oauth_state", res.state);
+                            }
                             if (res?.url) window.location.href = res.url;
                           } catch (error) {
                             const msg =
@@ -965,7 +1051,7 @@ export function AuthWorkspaceClient({
 
             {/* 법적 고지 — 가입·이용 시 동의 대상 문서 링크(비로그인 열람 가능) */}
             <div className="mt-4 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11px] text-[var(--text-tertiary)]">
-              <span>가입·이용 시 아래 약관에 동의하는 것으로 간주됩니다.</span>
+              <span>서비스 이용 관련 문서는 언제든지 열람할 수 있습니다.</span>
               <span className="flex items-center gap-2">
                 <Link href={`/${locale}/legal/terms`} className="text-[var(--text-secondary)] underline-offset-4 hover:text-[var(--text-primary)] hover:underline">서비스이용약관</Link>
                 <span aria-hidden>·</span>
@@ -977,7 +1063,6 @@ export function AuthWorkspaceClient({
         </Card>
 
         {/* 런타임/세션 디버그 패널 제거 — 프로덕션에서 불필요 */}
-        {/* eslint-disable-next-line no-constant-condition */}
         {(false as boolean) && <div className="grid grid-cols-1 gap-6 min-w-0">
           <Card className="rounded-[var(--radius-2xl)] border border-[var(--line)] bg-[var(--surface)] shadow-[var(--shadow-lg)]">
             <CardContent className="p-6">

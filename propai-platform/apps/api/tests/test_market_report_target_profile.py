@@ -20,8 +20,14 @@ import pytest
 from app.services.market.market_report_service import (
     MarketReportService,
     _build_target_profile,
-    _exec_summary,
     _income_tier_label,
+)
+
+# ★렌더 일원화 후 실사본 위치 — 요약/등급/의견 헬퍼는 market_adapter 가 정본이다
+#   (서비스의 to_* 는 어댑터 위임 wrapper 로만 존치·구 헬퍼는 삭제). 이 테스트는 그 로직의
+#   계약 테스트이므로 살아있는 사본을 검증한다.
+from app.services.report.render.market_adapter import (
+    _exec_summary,
     _insight_text,
     _investment_opinion,
     _market_strength,
@@ -138,6 +144,23 @@ def test_target_profile_five_axes_live():
     # K-Atlas 신용·카드소비는 PREMIUM 제휴 예정으로 정직 강등
     assert tp["premium"]["credit_score"]["status"] == "PREMIUM 제휴 예정"
     assert tp["premium"]["card_spending"]["data_source"] == "unavailable"
+
+
+def test_target_profile_commercial_grade_legend_matches_vitality_thresholds():
+    """상권 등급 근거(grade_legend)가 commercial_area_service.vitality_grade 문턱값과 일치."""
+    from app.services.external_api.commercial_area_service import vitality_grade
+
+    tp = _build_target_profile(_live_demographics(), _commercial_live(), "live", _infra_live())
+    legend = tp["commercial"]["grade_legend"]
+    assert "A(80+)" in legend and "B(65+)" in legend and "C(50+)" in legend
+    assert "D(35+)" in legend and "E(35미만)" in legend
+    # 문턱값 자체가 실제 등급 산정 함수와 어긋나지 않는지 스모크(하드코딩 이원화 방지)
+    assert vitality_grade(80) == "A" and vitality_grade(79) == "B"
+    assert vitality_grade(65) == "B" and vitality_grade(64) == "C"
+    assert vitality_grade(50) == "C" and vitality_grade(49) == "D"
+    assert vitality_grade(35) == "D" and vitality_grade(34) == "E"
+    # vitality_score(:408)는 이미 실려 있음 — 전달 확인만
+    assert tp["commercial"]["vitality_score"] == 72
 
 
 def test_target_profile_degrade_when_unavailable():
@@ -420,7 +443,7 @@ async def test_build_report_end_to_end_wiring(monkeypatch):
     렌더러가 동작하는지(호출부 배선 무결) 검증. 외부 네트워크는 결정론 stub."""
     svc = MarketReportService()
 
-    async def fake_cat(self, lawd_cd):
+    async def fake_cat(self, lawd_cd, months_n=3):
         return {"months": ["202606"],
                 "trade": {"아파트": {"count": 120, "avg": 92000, "min": 60000, "max": 150000,
                                     "avg_area_m2": 84.9, "per_pyeong": {"avg": 3200}}},
@@ -479,7 +502,7 @@ async def test_build_report_no_llm_senior_insight_none(monkeypatch):
     """use_llm=False면 senior_insight=None(정직)·target_profile 은 여전히 조립(실데이터 축)."""
     svc = MarketReportService()
 
-    async def fake_cat(self, lawd_cd):
+    async def fake_cat(self, lawd_cd, months_n=3):
         return {"months": ["202606"], "trade": {}, "rent": {}, "apt_trend": []}
 
     async def fake_comp(self, address, pnu=None):

@@ -1,6 +1,9 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import DashboardPage from "../page";
+// 대시보드 홈 콘솔 UI는 인증 분기 도입(P1 랜딩)과 함께 DashboardHome 컴포넌트로 추출됐다.
+// (page.tsx는 미인증=랜딩/인증=DashboardHome 분기 셸 — 페이지 분기는 HomeGate.test.tsx가 검증.)
+// 이 파일은 콘솔 UI 자체의 링크·산출물 배선을 계속 검증하므로 렌더 대상만 DashboardHome으로 옮긴다.
+import { DashboardHome } from "@/components/dashboard/DashboardHome";
 
 vi.mock("@/components/onboarding/OnboardingWizard", () => ({
   OnboardingWizard: () => <div data-testid="onboarding-wizard" />,
@@ -25,8 +28,8 @@ vi.mock("@/components/precheck/SatongMapShell", () => ({
 }));
 
 describe("Dashboard home navigation", () => {
-  it("renders the result-generation control room entry links", async () => {
-    render(await DashboardPage({ params: Promise.resolve({ locale: "en" }) }));
+  it("renders the result-generation control room entry links", () => {
+    render(<DashboardHome locale="en" />);
 
     expect(screen.getByText("Intelligence Control Room")).toBeInTheDocument();
     expect(
@@ -38,8 +41,8 @@ describe("Dashboard home navigation", () => {
     expect(screen.getByRole("link", { name: /전체 흐름 보기/ })).toHaveAttribute("href", "/en/guide");
   });
 
-  it("wires creation products to their source workflows", async () => {
-    render(await DashboardPage({ params: Promise.resolve({ locale: "en" }) }));
+  it("wires creation products to their source workflows", () => {
+    render(<DashboardHome locale="en" />);
 
     expect(screen.getByText("무엇을 만들까요?")).toBeInTheDocument();
     expect(screen.getByText("최종 산출물을 기준으로 선택합니다.")).toBeInTheDocument();
@@ -47,11 +50,16 @@ describe("Dashboard home navigation", () => {
     expect(screen.getAllByText("입력").length).toBeGreaterThan(1);
     expect(screen.getAllByText("결과").length).toBeGreaterThan(1);
 
-    expect(screen.getByText("후보지 진단서").closest("a")).toHaveAttribute("href", "/en/precheck");
+    expect(screen.getByText("법규검토서").closest("a")).toHaveAttribute("href", "/en/regulations");
     expect(screen.getByText("사업성 검토서").closest("a")).toHaveAttribute("href", "/en/analytics/investment");
     expect(screen.getByText("시장·분양 리포트").closest("a")).toHaveAttribute("href", "/en/market-insights");
     expect(screen.getByText("인허가 체크리스트").closest("a")).toHaveAttribute("href", "/en/permits");
     expect(screen.getByText("AI 설계 검토서").closest("a")).toHaveAttribute("href", "/en/design-audit");
+    // ★9번째 카드 — 종전에는 이 그리드 아래 **데이터 패널**이라 href 가 없었다(라이브 y≈2,921px).
+    expect(screen.getByText("실거래 신고내역 보고서").closest("a")).toHaveAttribute(
+      "href",
+      "/en/realtx-report",
+    );
     expect(screen.queryByText("투자 의사결정 브리프")).not.toBeInTheDocument();
     expect(screen.getByText("건축개요·CAD 계획도면").closest("a")).toHaveAttribute("href", "/en/design-studio");
     expect(

@@ -144,3 +144,66 @@ def test_legal_basis_annotation_single_parcel_no_regression():
     legal_ann = " ".join(out["annotations"])
     assert "개 필지 통합" not in legal_ann
     assert "200%" in legal_ann
+
+
+# ── WP-U1f: 다필지 override 결측(None) 결합 시나리오 크래시 가드(honest 보존) ──
+
+def _honest_none_sec1() -> dict:
+    """실호출부(comprehensive 다필지 override) 결합 재현 입력: SSOT 결합상 blended 실효치
+    결측이면 national_far_pct도 동시 None(필지단위 대칭 정규화 → calc_effective_far
+    P0-1 honest-return) — effective_far=150 ∧ national_far=None 같은 조합은 실경로 도달 불가."""
+    return {
+        "national_far_pct": None,
+        "effective_far_pct": None,
+        "effective_bcr_pct": None,
+        "annotations": ["용도지역 미확인 — 실효 용적률을 산정하지 않습니다(임의 수치 미생성)."],
+        "far_optimization": {"marker": "honest_preserved"},
+    }
+
+
+def test_rebuild_area_dependent_none_effective_far_no_crash_honest_preserved():
+    """발화 조건(WP-U1f R1, 실호출부 결합): effective_far=None ∧ effective_bcr=None ∧
+    national_far=None ∧ land_area>0 — 수정 전 build_area_annotation(land_area*None, :42)에서
+    TypeError 크래시. 가드 후 no-crash + 값을 지어내지 않고(무날조) 면적문구·구조상한·
+    far_optimization 재생성을 전부 건너뛰어 sec1의 honest 상태를 그대로 보존한다."""
+    sec1 = _honest_none_sec1()
+    out = fts.rebuild_area_dependent(  # 수정 전: TypeError: float * NoneType (:42)
+        sec1,
+        land_area=1000.0,
+        effective_far=None,
+        effective_bcr=None,
+        zone_type="개발제한구역",
+        national_far=None,
+        parcel_count=2,
+    )
+    # honest 보존: 면적문구 미날조·시뮬 미재생성·구조상한 필드 미추가.
+    assert out["annotations"] == sec1["annotations"]
+    assert not any("건축이 가능합니다" in a for a in out["annotations"])
+    assert out["far_optimization"] == {"marker": "honest_preserved"}
+    assert "structural_cap_pct" not in out
+
+
+def test_rebuild_legal_basis_annotations_none_effective_far_no_crash():
+    """동일 발화 경로 2번째 지점(같은 패턴 봉합): comprehensive는 override에서 두 함수를
+    연달아 호출한다 — 법정/조례 서술 재생성도 blended 실효치 None이면 f-string 포맷
+    ({effective_far:g}, :185)에서 NoneType TypeError였다. 가드 후 honest 문구 보존."""
+    sec1 = _honest_none_sec1()
+    out = fts.rebuild_legal_basis_annotations(  # 수정 전: NoneType.__format__ TypeError
+        sec1,
+        effective_far=None, effective_bcr=None,
+        national_far=None, national_bcr=None,
+        parcel_count=2,
+    )
+    assert out["annotations"] == sec1["annotations"]
+
+
+def test_rebuild_area_dependent_far_pct_value_semantics_unchanged():
+    """가드가 값 의미를 바꾸지 않음: sec1.national_far_pct에 실값(250)이 있으면
+    national_far=None이어도 종전과 동일하게 그 값을 ceiling으로 쓴다(명시 전달과 동일 출력)."""
+    kwargs = dict(
+        land_area=12000.0, effective_far=200, effective_bcr=60,
+        zone_type="제2종일반주거지역", parcel_count=33,
+    )
+    via_sec1 = fts.rebuild_area_dependent(_rep_sec1(), national_far=None, **kwargs)
+    explicit = fts.rebuild_area_dependent(_rep_sec1(), national_far=250, **kwargs)
+    assert via_sec1["far_optimization"] == explicit["far_optimization"]

@@ -12,11 +12,20 @@ from __future__ import annotations
 
 import asyncio
 import io
+import posixpath
 import re
 from collections import Counter
 from typing import Any
 
 import structlog
+
+from app.utils.land_characteristics import (
+    co_owner_summary,
+    is_shared_parcel,
+    ledger_fields,
+    project_land_characteristics,
+)
+from app.utils.pnu import is_valid_pnu
 
 logger = structlog.get_logger(__name__)
 
@@ -37,6 +46,11 @@ TEMPLATE_COLUMNS = [
     ("시행자지정동의(O/X)", "X"),
     ("비고", "← 예시행(삭제 후 작성). 면적·지목은 비우면 자동조회"),
 ]
+async def _noop() -> None:
+    """주입 객체에 그 메서드가 없을 때 gather 자리를 채운다(예외를 만들지 않는다)."""
+    return None
+
+
 _MAX_ROWS = 500  # 업로드 행 상한(과도 방지)
 _GEOCODE_CONCURRENCY = 8  # VWorld 재시도(백오프) 보호하에 상향 — 대량 엑셀 처리 가속
 
@@ -189,7 +203,66 @@ def _to_float(v: Any) -> float | None:
         return None
 
 
-def _expand_merged_cells(raw: bytes, df: Any, header_row: int = 0) -> Any:
+def _first_worksheet_part(z: Any) -> str:
+    """워크북이 **첫 번째로 나열한 시트**의 실제 XML 경로를 원문에서 해석한다.
+
+    ★파일 이름(`sheet1.xml`)으로 고르면 안 된다. 엑셀 파일 형식(OOXML)에서 **파일 이름과 시트
+    순서는 아무 관계가 없다** — 순서는 `xl/workbook.xml` 의 `<sheet>` 나열 순서이고, 그 시트가
+    어느 파일인지는 `r:id` 를 `xl/_rels/workbook.xml.rels` 에서 찾아야 알 수 있다.
+    pandas·openpyxl 도 그렇게 첫 시트를 정한다. 여기서 파일 이름으로 **추측하면** 표를 읽은
+    시트와 병합범위를 읽은 시트가 어긋나, 엉뚱한 시트의 병합을 적용해 **원문에 없던 값을 만들어
+    낸다**(실측: 비고 칸에 소유자 이름이 복사됐다). 이 파일이 내건 '추측하지 않는다'는 원칙은
+    이 함수 자신에게도 적용된다.
+
+    해석에 실패하면 **빈 값을 돌려주지 않고 예외를 낸다** — "병합이 없다"고 잘못 답하면 그게
+    바로 침묵이기 때문이다(호출측이 정직한 실패 경고로 처리한다).
+    """
+    # ★아래 raise 의 **문구**는 개발자용이다(변이로 바꿔도 테스트가 안 죽는다 — 사실을 적어 둔다).
+    #   이 예외는 호출측이 받아 로그로만 남기고, 사용자에게는 별도의 정직한 경고 문구가 나간다.
+    #   여기서 잠그는 계약은 문구가 아니라 "빈 목록이 아니라 예외를 낸다"는 것이다.
+    wb_xml = z.read("xl/workbook.xml")
+    m = re.search(rb"<sheet\b[^>]*>", wb_xml)
+    if not m:
+        raise ValueError("workbook.xml 에 시트 목록이 없다")
+    # `sheetId` 와 헷갈리지 않게: 네임스페이스 접두사(r:) 뒤의 id 속성만 집는다.
+    rid_m = re.search(rb'\b\w+:id="([^"]+)"', m.group(0))
+    if not rid_m:
+        raise ValueError("첫 시트에 r:id 가 없다")
+    rid = rid_m.group(1)
+
+    rels = z.read("xl/_rels/workbook.xml.rels")
+    for rel in re.findall(rb"<Relationship\b[^>]*>", rels):
+        if re.search(rb'\bId="' + re.escape(rid) + rb'"', rel) is None:
+            continue
+        tgt_m = re.search(rb'\bTarget="([^"]+)"', rel)
+        if not tgt_m:
+            break
+        target = tgt_m.group(1).decode()
+        # Target 은 xl/ 기준 상대경로("worksheets/sheet2.xml") 또는 절대("/xl/worksheets/...").
+        path = target[1:] if target.startswith("/") else f"xl/{target}"
+        path = posixpath.normpath(path)
+        if path in z.namelist():
+            return path
+        break
+    raise ValueError(f"첫 시트({rid!r})의 실제 파일을 찾지 못했다")
+
+
+def _merged_ranges_from_zip(raw: bytes) -> list[str]:
+    """xlsx(zip) 안 **첫 워크시트** XML에서 병합범위(mergeCell ref)만 직접 읽는다.
+
+    ★openpyxl '전체읽기'가 서식표 같은 다른 부분 때문에 죽어도, 병합범위 자체는 시트 XML에
+    멀쩡히 적혀 있다. 그래서 전체읽기가 실패해도 '어디가 병합인지'는 원문에서 알아낼 수 있다
+    — 이것이 '지번을 추측해 채우는 것'과 결정적으로 다른 점이다(추측이 아니라 원문 복원).
+    ★단, **어느 시트인지도 추측하면 안 된다** — `_first_worksheet_part` 참조.
+    """
+    import zipfile
+
+    with zipfile.ZipFile(io.BytesIO(raw)) as z:
+        xml = z.read(_first_worksheet_part(z))
+    return [m.decode() for m in re.findall(rb'<mergeCell[^>]*\bref="([^"]+)"', xml)]
+
+
+def _expand_merged_cells(raw: bytes, df: Any, header_row: int = 0) -> tuple[Any, str | None]:
     """엑셀 병합 셀의 좌상단 값을 병합범위 전체 셀에 채운다(forward-fill).
 
     토지조서 엑셀은 한 필지(지번)에 소유자가 여럿이면 여러 행을 두고 지번·소재지 칸을
@@ -199,34 +272,115 @@ def _expand_merged_cells(raw: bytes, df: Any, header_row: int = 0) -> Any:
     openpyxl로 병합범위를 읽어 좌상단 값을 같은 범위의 모든 데이터 셀(빈칸)에 채운다.
 
     header_row(0-based)는 머리글 행 위치. 데이터 첫 행은 엑셀 (header_row+2)행 = df index 0.
+
+    반환: (값을 채운 df, 실패사유 문구 또는 None).
+    ★실패를 조용히 삼키지 않는다 — 복원이 실패하면 병합된 지번이 빈칸으로 남아 그 행이
+    소재지(동)만 남거나 목록에서 통째로 사라지는데, 예전에는 로그만 남기고 사용자에게는
+    아무 말도 하지 않았다(화면에는 동 이름만 남고 아무도 그 사실을 몰랐다). 이 파서가 이미
+    지키는 '무음 제외 금지' 규율(집계행을 뺐으면 warnings에 남긴다)을 병합 복원 실패에도
+    똑같이 적용한다 — 호출측이 이 문구를 warnings에 실어 사용자가 지번 누락을 알아챈다.
+    ★없는 지번을 추측해 채우지는 않는다(모르는 값을 지어내는 것이 더 나쁜 결함이다).
     """
+    nrows, ncols = len(df), df.shape[1]
+    base = header_row + 2  # 엑셀(1-based) 데이터 첫 행 → df index 0
+
+    def _fill(min_row: int, min_col: int, max_row: int, max_col: int, top: Any) -> None:
+        """병합범위의 좌상단 값을 그 범위의 빈칸에 채운다(기존 값은 절대 덮지 않는다)."""
+        if top is None or str(top).strip() == "" or str(top).strip().lower() == "nan":
+            # ★좌상단이 빈 병합은 채울 값이 없다. 이 가드를 지우면 빈 칸에 "None"·"nan" 같은
+            #   가짜 글자가 들어가 지번인 척하게 된다(없는 값을 지어내는 것과 같다).
+            return
+        for r in range(min_row, max_row + 1):
+            df_row = r - base
+            if df_row < 0 or df_row >= nrows:
+                # ★헤더/제목까지 걸친 병합·범위초과는 건너뛴다. 이 가드를 지우면 df_row 가 음수가
+                #   되어 파이썬 인덱스가 **뒤에서부터 감겨** 표 맨 끝 행을 엉뚱한 값으로 덮는다.
+                continue
+            for c in range(min_col, max_col + 1):
+                df_col = c - 1  # 엑셀 1열(A)=df 0열
+                if df_col < 0 or df_col >= ncols:
+                    continue  # 열 방향도 같은 이유(음수 인덱스 되감기) — 상·하한을 한 쌍으로 건다
+                cur = df.iat[df_row, df_col]
+                # 빈칸(NaN·""·"nan")만 채우고 기존 값은 보존.
+                if cur is None or str(cur).strip() == "" or str(cur).strip().lower() == "nan":
+                    df.iat[df_row, df_col] = str(top)
+
     try:
         from openpyxl import load_workbook
 
         # read_only=False 여야 merged_cells.ranges가 채워진다. data_only=True=캐시값(수식 대비).
         wb = load_workbook(io.BytesIO(raw), data_only=True, read_only=False)
         ws = wb.worksheets[0]
-        nrows, ncols = len(df), df.shape[1]
-        base = header_row + 2  # 엑셀(1-based) 데이터 첫 행 → df index 0
         for rng in list(ws.merged_cells.ranges):
-            top = ws.cell(row=rng.min_row, column=rng.min_col).value
-            if top is None or str(top).strip() == "":
-                continue
-            for r in range(rng.min_row, rng.max_row + 1):
-                df_row = r - base
-                if df_row < 0 or df_row >= nrows:
-                    continue  # 헤더/제목 병합·범위초과는 무시
-                for c in range(rng.min_col, rng.max_col + 1):
-                    df_col = c - 1  # 엑셀 1열(A)=df 0열
-                    if df_col < 0 or df_col >= ncols:
-                        continue
-                    cur = df.iat[df_row, df_col]
-                    # 빈칸(NaN·""·"nan")만 채우고 기존 값은 보존.
-                    if cur is None or str(cur).strip() == "" or str(cur).strip().lower() == "nan":
-                        df.iat[df_row, df_col] = str(top)
+            _fill(rng.min_row, rng.min_col, rng.max_row, rng.max_col,
+                  ws.cell(row=rng.min_row, column=rng.min_col).value)
     except Exception as e:  # noqa: BLE001
         logger.warning("excel_merged_expand_failed", error=str(e)[:120])
-    return df
+        return _expand_merged_cells_fallback(raw, df, base, nrows, ncols, _fill, e)
+    return df, None
+
+
+def _expand_merged_cells_fallback(
+    raw: bytes, df: Any, base: int, nrows: int, ncols: int, fill: Any, err: Exception,
+) -> tuple[Any, str | None]:
+    """엑셀 '전체읽기'가 죽었을 때의 2차 복원 — 병합범위를 zip 안 XML에서 직접 읽어 채운다.
+
+    ★왜 필요한가: 전체읽기는 서식표·차트 같은 곁가지 때문에도 죽는데, 그때 표(pandas)는 멀쩡히
+    읽힌다. 예전에는 여기서 그냥 포기해 병합된 지번이 사라졌고, 그다음 판(이 함수 직전 커밋)은
+    사용자에게 "엑셀에서 병합을 풀어 다시 올려라"고 떠넘겼다. 그러나 병합범위도 좌상단 값도
+    **원문에 그대로 있다** — 떠넘길 이유가 없다. 추측해서 지어내는 것과는 다르다.
+
+    반환 문구 3갈래:
+      · 병합이 아예 없는 파일  → None(경고 없음). ★없는 병합을 풀라고 하면 위양성이다.
+      · 원문에서 전부 복원     → 정보성 안내(실패 아님).
+      · 일부라도 복원 실패     → 지번이 빠질 수 있다는 경고(사용자 확인 필요).
+    """
+    try:
+        from openpyxl.utils.cell import range_boundaries
+
+        refs = _merged_ranges_from_zip(raw)
+    except Exception as e2:  # noqa: BLE001
+        # ★관측용 로그(변이로 문구를 바꿔도 테스트가 안 죽는다 — 사용자 결과에 닿지 않는다).
+        #   사용자에게 가는 정직 표기는 아래 반환 문구가 담당한다.
+        logger.warning("excel_merged_zip_fallback_failed", error=str(e2)[:120])
+        refs = None
+
+    if refs is not None and not refs:
+        # 병합이 0개 = 이 파일에서 병합 때문에 잃은 값이 없다 → 경고하지 않는다.
+        return df, None
+
+    filled = missed = 0
+    for ref in refs or []:
+        try:
+            min_col, min_row, max_col, max_row = range_boundaries(ref)
+            top_row, top_col = min_row - base, min_col - 1
+            if not (0 <= top_row < nrows and 0 <= top_col < ncols):
+                # 좌상단이 표 밖(제목행 병합 등) — 값을 가져올 데가 없다.
+                # ★이 검사를 지우면 표 행수가 적을 때만 예외가 나고(그래서 변이가 살아남는다),
+                #   **행수가 3 이상이면 예외 없이 음수 인덱스가 뒤에서부터 감겨** 엉뚱한 칸의 값을
+                #   읽어다 채우고 그것을 '복원 성공'으로 계수한다 — 조용한 날조다. 즉 이 검사는
+                #   아래 except 의 중복이 아니라, except 가 잡지 못하는 경우의 **유일한 방어선**이다.
+                missed += 1
+                continue
+            fill(min_row, min_col, max_row, max_col, df.iat[top_row, top_col])
+            filled += 1
+        except Exception:  # noqa: BLE001
+            missed += 1
+
+    if refs and missed == 0:
+        return df, (
+            f"엑셀 서식을 읽지 못해({type(err).__name__}) 병합된 칸을 원문에서 직접 복원했습니다"
+            f"(병합 {filled}곳). 지번·소재지가 제대로 채워졌는지 한 번 확인해 주세요."
+        )
+    # 여기까지 왔으면 일부(또는 전부) 복원 실패 — 몇 곳인지 셀 수 있을 때만 개수를 말한다
+    # (폴백 자체가 실패하면 병합이 몇 곳인지조차 모른다 — 모르는 수를 지어내지 않는다).
+    scope = f" {missed}곳" if missed else ""
+    return df, (
+        f"병합 셀 복원 실패({type(err).__name__}: {str(err)[:80]}) — 여러 행에 걸쳐 병합된 "
+        f"칸{scope}을 읽지 못했습니다. 그 칸의 값이 빈칸으로 남았을 수 있으니 지번·소재지가 "
+        "제대로 채워졌는지 확인해 주세요(지번이 비면 그 행은 소재지만 남거나 목록에서 빠집니다). "
+        "빈칸이 있으면 엑셀에서 병합을 해제하고 행마다 지번을 직접 적어 다시 올려 주세요."
+    )
 
 
 _LLM_ROLES = {
@@ -257,7 +411,7 @@ def _row_issues(p: dict[str, Any]) -> list[str]:
     if jb and not _JIBUN_RE.match(jb):
         issues.append("jibun_format")
     pnu = p.get("pnu")
-    if pnu and (len(pnu) != 19 or not pnu.isdigit()):
+    if pnu and not is_valid_pnu(pnu):
         issues.append("pnu_format")
     st = p.get("status")
     if st in _UNRESOLVED_STATUSES:
@@ -331,7 +485,7 @@ async def _llm_analyze_structure(
     except Exception:  # noqa: BLE001
         return {}, False
     try:
-        llm = get_llm(timeout=45, max_tokens=800)
+        llm = get_llm(service="parcel_excel_structure_detect", timeout=45, max_tokens=800)
     except Exception:  # noqa: BLE001
         logger.info("엑셀 LLM 구조분석 생략 — 사용가능 LLM 키 없음(규칙기반 폴백)")
         return {}, False
@@ -372,16 +526,15 @@ async def _llm_analyze_structure(
         return {}, False
 
     # ★LLM 토큰 사용량을 표준 계측 경로(_record_llm_billing→llm_usage_log)에 best-effort 기록.
-    try:
-        usage = getattr(resp, "usage_metadata", None) or {}
-        in_tok = int(usage.get("input_tokens", 0) or 0)
-        out_tok = int(usage.get("output_tokens", 0) or 0)
-        if in_tok or out_tok:
-            from app.services.ai.base_interpreter import _record_llm_billing
-            model = getattr(llm, "model", None) or getattr(llm, "model_name", "") or "unknown"
-            await _record_llm_billing(str(model), in_tok, out_tok, service="parcel_excel_structure_detect")
-    except Exception:  # noqa: BLE001
-        pass
+    # ★공용 계측기를 쓴다 — 종전에는 이 두 곳만 usage_metadata 추출을 **손수 복제**했다
+    #   (플랫폼 전체에서 유일). 복제본은 자기만의 `except: pass` 를 하나 더 얹고 있었는데,
+    #   싱크(`_record_llm_billing`)가 애초에 예외를 밖으로 내보내지 않으므로 그 바깥 except 는
+    #   **과금 실패를 잡을 수조차 없었다** — 고쳐도 환자에게 닿지 않는 처방이었다.
+    #   공용 헬퍼로 치환하면 실패 로깅이 한 곳에서 따라온다(모델 폴백 `""`↔`"unknown"` 은
+    #   미등재 단가로 수렴해 청구액이 동일함을 실측 확인 — 행위 불변).
+    from app.services.ai.base_interpreter import record_llm_response_billing
+
+    await record_llm_response_billing(llm, resp, service="parcel_excel_structure_detect")
 
     if len(_STRUCT_CACHE) > 256:  # 장수명 워커 무한증가 방지(상한 초과 시 비움)
         _STRUCT_CACHE.clear()
@@ -409,7 +562,7 @@ async def _llm_reverify_row(raw_cells: dict[str, str], issues: list[str]) -> tup
     except Exception:  # noqa: BLE001
         return {}, False
     try:
-        llm = get_llm(timeout=30, max_tokens=300)
+        llm = get_llm(service="parcel_excel_row_reverify", timeout=30, max_tokens=300)
     except Exception:  # noqa: BLE001
         return {}, False
     import json as _json
@@ -434,16 +587,15 @@ async def _llm_reverify_row(raw_cells: dict[str, str], issues: list[str]) -> tup
         logger.warning("엑셀 LLM 행 재질의 실패: %s", str(e)[:160])
         return {}, False
 
-    try:
-        usage = getattr(resp, "usage_metadata", None) or {}
-        in_tok = int(usage.get("input_tokens", 0) or 0)
-        out_tok = int(usage.get("output_tokens", 0) or 0)
-        if in_tok or out_tok:
-            from app.services.ai.base_interpreter import _record_llm_billing
-            model = getattr(llm, "model", None) or getattr(llm, "model_name", "") or "unknown"
-            await _record_llm_billing(str(model), in_tok, out_tok, service="parcel_excel_row_reverify")
-    except Exception:  # noqa: BLE001
-        pass
+    # ★공용 계측기를 쓴다 — 종전에는 이 두 곳만 usage_metadata 추출을 **손수 복제**했다
+    #   (플랫폼 전체에서 유일). 복제본은 자기만의 `except: pass` 를 하나 더 얹고 있었는데,
+    #   싱크(`_record_llm_billing`)가 애초에 예외를 밖으로 내보내지 않으므로 그 바깥 except 는
+    #   **과금 실패를 잡을 수조차 없었다** — 고쳐도 환자에게 닿지 않는 처방이었다.
+    #   공용 헬퍼로 치환하면 실패 로깅이 한 곳에서 따라온다(모델 폴백 `""`↔`"unknown"` 은
+    #   미등재 단가로 수렴해 청구액이 동일함을 실측 확인 — 행위 불변).
+    from app.services.ai.base_interpreter import record_llm_response_billing
+
+    await record_llm_response_billing(llm, resp, service="parcel_excel_row_reverify")
 
     # ★M1: 환각 차단 강화 — ①여러 셀을 이어붙인 haystack이 아니라 '어느 한 개별 셀'의 값 안에
     #   실제로 등장할 때만 채택(다른 셀 파편이 이어붙어 우연히 매치되는 것 차단). ②역할별 형식
@@ -516,7 +668,9 @@ def build_template_xlsx() -> bytes:
         "6) 면적은 비워두면 공부상(VWorld) 면적을 자동 조회합니다. 직접 입력 시 공부상과 대조해 "
         "크게 다르면(1.5배↑) 공부상으로 보정하고 경고합니다. ㎡ 숫자만(콤마 가능).",
         "7) [토지사용동의]·[지구단위계획동의]·[시행자지정동의] 는 O(동의) / X(미동의)로 표기하세요.",
-        "   → 정비·도시개발사업의 동의율(소유자 동의 비율) 산정과 시행자 지정요건 판정에 활용됩니다.",
+        "   → 업로드 시 함께 읽어 필지 목록에 보관합니다. ★동의율(소유자 동의 비율) 자동산정은 "
+        "아직 제공하지 않습니다 — 소유자별 동의를 적을 칸이 이 양식에 없어 공유지분 필지에서 "
+        "분자가 과대해지기 때문입니다(소유자 단위 입력 도입 후 연결 예정).",
         f"8) 한 번에 최대 {_MAX_ROWS}필지까지 업로드됩니다.",
         "",
         "※ 예시행(2~3행)은 삭제하고 실제 필지를 입력하세요.",
@@ -580,18 +734,22 @@ class ParcelExcelService:
                          for i, v in enumerate(df0_.iloc[hdr_].tolist())]
             return d, [str(h) for h in d.columns]
 
+        structure_notes: list[str] = []
         hdr = _detect_header_row(df0)
         df, headers = _rebuild(df0, hdr)
         if not is_csv:
             # ★병합 셀 forward-fill — 한 지번을 여러 행에 '병합'한 토지조서에서 병합
             #   연속행의 지번이 소실(NaN)돼 보완필요로 빠지던 근본버그를 차단(지번 기준 복원).
-            df = _expand_merged_cells(raw, df, header_row=hdr)
+            #   ★복원이 실패하면 조용히 넘어가지 않고 사유를 warnings에 실어 사용자에게 알린다
+            #   (실패하면 지번이 빈칸으로 남아 그 행이 동 이름만 남거나 사라진다).
+            df, merge_note = _expand_merged_cells(raw, df, header_row=hdr)
+            if merge_note:
+                structure_notes.append(merge_note)
             headers = [str(h) for h in df.columns]
         df = df.fillna("")
         cols = _detect_columns(headers)
         engine = "rule"
         llm_used = False
-        structure_notes: list[str] = []
 
         def _valid_ratio(frame: Any, colmap: dict) -> float:
             keys = [colmap.get(r) for r in ("address", "pnu", "bcode") if colmap.get(r)]
@@ -635,8 +793,17 @@ class ParcelExcelService:
                         current_sheet = chosen_sheet
                         structure_notes.append(f"LLM이 '{chosen_sheet}' 시트를 토지조서 데이터로 재선택")
                         sheet_changed = True
-                    except Exception:  # noqa: BLE001
-                        pass
+                    except Exception as _e:  # noqa: BLE001
+                        # ★실패를 삼키면 '다른 시트에 진짜 데이터가 있다'는 판단을 못 쓴 채
+                        #   원래 시트 결과를 그대로 내보내면서 사용자는 이유를 모른다.
+                        # ★이 분기는 실제로 발화한다 — 두 경로가 같은 openpyxl 을 쓰지만 '읽는
+                        #   양'이 다르다. 미리보기(_sheet_previews_xlsx)는 15행에서 끊고
+                        #   pd.read_excel 은 전 행을 읽으므로, 16행 이후가 깨진 시트는
+                        #   '미리보기는 되는데 본문은 못 읽는' 상태가 된다(테스트로 잠금).
+                        structure_notes.append(
+                            f"'{chosen_sheet}' 시트를 다시 읽지 못해 '{current_sheet or '첫'}' 시트 "
+                            f"기준으로 분석했습니다({str(_e)[:60]}) — 결과 확인이 필요합니다."
+                        )
 
                 # 2) 전치(세로형) 판정 — 결정론 전치(행↔열 swap) 후 재파싱.
                 if struct.get("is_transposed") is True:
@@ -717,6 +884,10 @@ class ParcelExcelService:
             return {
                 "error": "필수 컬럼을 찾지 못했습니다 — 최소 [소재지(주소)] 또는 [PNU] 또는 [법정동코드]가 필요합니다. 표준 양식을 내려받아 작성하거나, 헤더에 '소재지/지번/면적' 등을 명시해 주세요.",
                 "detected_columns": cols, "headers": headers, "parcels": [],
+                # ★여기서 structure_notes 를 버리면 사용자는 '틀린 사유'를 받는다 — 진짜 원인이
+                #   시트/병합을 못 읽은 것인데도 "필수 컬럼을 찾지 못했습니다"만 보게 된다.
+                #   이 조기 반환이 파서에서 가장 조용한 경로다(verification_report 자체가 없다).
+                "warnings": structure_notes,
             }
 
         rows = df.to_dict("records")[:_MAX_ROWS]
@@ -774,7 +945,7 @@ class ParcelExcelService:
                 structure_notes.append(f"집계/합계 추정 행 제외: {_row_summary or f'{excluded_n}번째 제외행'}")
                 continue
 
-            pnu = pnu_raw if len(pnu_raw) == 19 else (_pnu_from_bcode(bcode, jibun) if bcode else None)
+            pnu = pnu_raw if is_valid_pnu(pnu_raw) else (_pnu_from_bcode(bcode, jibun) if bcode else None)
             status = "ok" if pnu else ("need_geocode" if address else "failed")
             p: dict[str, Any] = {
                 "address": address or None, "jibun": jibun or None,
@@ -1105,7 +1276,7 @@ class ParcelExcelService:
                             cands = await vworld.search_address(query, size=8)
                     except Exception:  # noqa: BLE001
                         cands = []
-                    cand_pnus = [str(c.get("pnu") or "") for c in cands if len(str(c.get("pnu") or "")) == 19]
+                    cand_pnus = [str(c.get("pnu") or "") for c in cands if is_valid_pnu(c.get("pnu"))]
                     bcodes = {cp[:10] for cp in cand_pnus}
                     if len(bcodes) == 1 and cand_pnus:
                         # 단일 법정동 수렴 → 최적 후보(첫 후보=검색 best match)로 확정.
@@ -1158,10 +1329,31 @@ class ParcelExcelService:
         async def one(i: int) -> None:
             p = parcels[i]
             async with sem:
-                try:
-                    lc = await vworld.get_land_characteristics(p["pnu"])
-                except Exception:  # noqa: BLE001
-                    lc = None
+                # ★병렬로 부르되 **실패는 서로 격리한다**(부분성 1급).
+                #   ★종전 초안은 둘을 한 try 로 묶어, **대장 호출이 실패하면 토지특성까지 버렸다** —
+                #     그러면 면적·용도지역 보강이 통째로 죽는다(회귀 6건으로 드러났다).
+                #     `return_exceptions=True` 로 각자의 실패가 상대를 죽이지 않게 한다.
+                #   ★`get_land_ledger_list` 가 없는 주입 객체(구 스텁)도 있으므로 `getattr` 로 본다.
+                _lfn = getattr(vworld, "get_land_ledger_list", None)
+                _res = await asyncio.gather(
+                    vworld.get_land_characteristics(p["pnu"]),
+                    _lfn(p["pnu"]) if _lfn is not None else _noop(),
+                    return_exceptions=True,
+                )
+                lc = _res[0] if not isinstance(_res[0], BaseException) else None
+                ledger = _res[1] if not isinstance(_res[1], BaseException) else None
+                # ★공유일 때만 연명부를 부른다(단독소유가 다수 — 전 필지 호출은 낭비).
+                co_owners = None
+                _cfn = getattr(vworld, "get_co_owner_list", None)
+                if _cfn is not None and is_shared_parcel(ledger):
+                    try:
+                        co_owners = await _cfn(p["pnu"])
+                    except Exception:  # noqa: BLE001
+                        co_owners = None
+            # ★대장·연명부는 **토지특성 성패와 무관하게** 실린다 — 토지특성이 없다고
+            #   대장까지 버리면 "확인 못 함"과 "해당 없음"이 뭉개진다.
+            p.update(ledger_fields(ledger))
+            p.update(co_owner_summary(co_owners))
             if not isinstance(lc, dict):
                 return
             # ★면적 교차검증(신뢰루프): 입력 면적(엑셀)이 있으면 공부상(VWorld 토지특성)과 대조.
@@ -1188,6 +1380,14 @@ class ParcelExcelService:
                 p["zone_type"] = lc["zone_type"]
             if lc.get("official_price_per_sqm"):
                 p["official_price_per_sqm"] = int(lc["official_price_per_sqm"])
+            # ★원천이 주는 나머지 공부 항목도 버리지 않는다(2026-09-03).
+            #   종전엔 면적·지목·용도지역·공시지가 넷만 취하고 `road_side`(맹지 판정의 축)·
+            #   `terrain_*`·`land_use_situation` 을 **버렸다**. 배치 파이프도 같은 것을 버렸는데
+            #   한쪽만 넓히면 **두 파이프의 필드 집합이 갈라진다** — 그래서 **공용 투영**을 쓴다.
+            #   ★기존 키는 위에서 이미 정한 값을 **덮지 않는다**(엑셀 입력·교차검증 결과 보존).
+            for _k, _v in project_land_characteristics(lc).items():
+                if _v not in (None, "") and p.get(_k) in (None, ""):
+                    p[_k] = _v
 
         await asyncio.gather(*[one(i) for i in targets], return_exceptions=True)
 
@@ -1257,11 +1457,11 @@ class ParcelExcelService:
                 "address": str(it.get("address") or "").strip(),
                 "jibun": str(it.get("jibun") or "").strip(),
                 "bcode": str(it.get("bcode") or "").strip(),
-                "pnu": pnu if len(pnu) == 19 else None,
+                "pnu": pnu if is_valid_pnu(pnu) else None,
                 "area_sqm": area_in if (area_in and area_in > 0) else None,
                 "zone_type": None, "jimok": None,
                 "official_price_per_sqm": None,
-                "status": "ok" if len(pnu) == 19 else "pending",
+                "status": "ok" if is_valid_pnu(pnu) else "pending",
             })
 
         need_geocode = [i for i, p in enumerate(parcels) if not p["pnu"]]

@@ -13,7 +13,18 @@ export default function OperationsPage() {
   const { locale, id } = useParams() as { locale: string; id: string };
   const { dictionary, isLoading } = useDictionary(locale as Locale);
   
-  const [data, setData] = useState<{ kpis: any[], maintenance: any[], sensors: any[] } | null>(null);
+  // ★2026-08-16 — 이 화면은 **존재한 적 없는 API 형태**를 가정해 만들어졌다. 백엔드는
+  //   `kpis` 를 dict 로 주고 `maintenance`·`sensors` 키는 아예 없었다 →
+  //   프로덕션에서 `TypeError: kpis.map is not a function` 으로 **계속 죽고 있었다**.
+  //   그 고장이 역설적으로 거짓 지표(성격이 다른 두 프로젝트가 동일한 입주율 92.5·센서 45/48)를
+  //   가려 왔다 — 크래시만 고쳤으면 그때부터 거짓말이 보였을 것이다. 그래서 함께 고친다.
+  const [data, setData] = useState<{
+    available?: boolean;
+    reason?: string;
+    kpis?: any[];
+    maintenance?: any[];
+    sensors?: any[];
+  } | null>(null);
   const [fetching, setFetching] = useState(true);
 
   useEffect(() => {
@@ -60,13 +71,29 @@ export default function OperationsPage() {
         />
       </motion.div>
 
+      {/* ★수집원 부재 정직 고지 — 없는 것을 지어내지 않는다.
+          종전에는 모든 프로젝트에 동일한 상수(입주율 92.5·센서 45/48)를 그 프로젝트의
+          실측 운영지표인 것처럼 내보냈다. 값이 없으면 값이 없다고 말한다. */}
+      {data?.available === false && (
+        <div
+          role="status"
+          data-testid="operations-unavailable-notice"
+          className="rounded-[var(--radius-2xl)] border border-[var(--line)] bg-[var(--surface-soft)] p-8"
+        >
+          <p className="cc-label mb-2">운영 지표 미연동</p>
+          <p className="text-sm text-[var(--text-tertiary)]">
+            {data?.reason ?? "운영 지표 수집원이 아직 연동되지 않았습니다"}
+          </p>
+        </div>
+      )}
+
       <div className="grid gap-10 md:grid-cols-2">
         {/* Operations KPI Analytics */}
         <motion.div
           initial={{ opacity: 0, x: -30 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ delay: 0.2 }}
-          className="cc-panel cc-bracketed cc-interactive relative overflow-hidden rounded-[3.5rem] p-12 shadow-2xl"
+          className="cc-panel cc-bracketed cc-interactive relative overflow-hidden rounded-[var(--radius-2xl)] p-12 shadow-2xl"
         >
           <i className="cc-bracket cc-bracket--tl" aria-hidden /><i className="cc-bracket cc-bracket--tr" aria-hidden />
           <i className="cc-bracket cc-bracket--bl" aria-hidden /><i className="cc-bracket cc-bracket--br" aria-hidden />
@@ -78,11 +105,11 @@ export default function OperationsPage() {
               </div>
               <h3 className="cc-meta">자산 가동 KPI · ASSET UPTIME</h3>
             </div>
-            <span className="cc-live"><i />LIVE</span>
+            
           </div>
 
           <div className="relative z-10 grid gap-4">
-            {data?.kpis.map((item, i) => (
+            {(data?.kpis ?? []).map((item, i) => (
               <motion.div
                 key={item.label}
                 initial={{ opacity: 0, y: 10 }}
@@ -92,7 +119,7 @@ export default function OperationsPage() {
               >
                 <div className="space-y-1">
                   <span className="cc-label group-hover/row:text-[var(--data-accent)] transition-colors">{item.label}</span>
-                  <p className="text-[9px] font-bold text-[var(--text-hint)] uppercase tracking-widest">Real-time Performance</p>
+                  
                 </div>
                 <span className="cc-num text-4xl font-black tracking-tighter">{item.value}</span>
               </motion.div>
@@ -105,7 +132,7 @@ export default function OperationsPage() {
           initial={{ opacity: 0, x: 30 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ delay: 0.3 }}
-          className="cc-panel cc-bracketed cc-interactive relative overflow-hidden rounded-[3.5rem] p-12 shadow-2xl"
+          className="cc-panel cc-bracketed cc-interactive relative overflow-hidden rounded-[var(--radius-2xl)] p-12 shadow-2xl"
         >
           <i className="cc-bracket cc-bracket--tl" aria-hidden /><i className="cc-bracket cc-bracket--tr" aria-hidden />
           <i className="cc-bracket cc-bracket--bl" aria-hidden /><i className="cc-bracket cc-bracket--br" aria-hidden />
@@ -118,7 +145,7 @@ export default function OperationsPage() {
           </div>
 
           <div className="relative z-10 grid gap-4">
-            {data?.maintenance.map((item, i) => (
+            {(data?.maintenance ?? []).map((item, i) => (
               <motion.div
                 key={item.label}
                 initial={{ opacity: 0, y: 10 }}
@@ -128,7 +155,7 @@ export default function OperationsPage() {
               >
                 <div className="space-y-1">
                   <span className="cc-label group-hover/row:text-[var(--chart-2)] transition-colors">{item.label}</span>
-                  <p className="text-[9px] font-bold text-[var(--text-hint)] uppercase tracking-widest">System Readiness</p>
+                  
                 </div>
                 <span className={`cc-num text-xl font-black ${item.label.includes("긴급") && item.value !== "0 건" ? "text-[var(--status-error)]" : ""}`}>
                   {item.value}
@@ -144,28 +171,28 @@ export default function OperationsPage() {
         initial={{ opacity: 0, y: 40 }}
         whileInView={{ opacity: 1, y: 0 }}
         viewport={{ once: true }}
-        className="cc-panel cc-bracketed relative overflow-hidden rounded-[4rem] p-12 lg:p-20 shadow-2xl group"
+        className="cc-panel cc-bracketed relative overflow-hidden rounded-[var(--radius-2xl)] p-12 lg:p-20 shadow-2xl group"
       >
         <i className="cc-bracket cc-bracket--tl" aria-hidden /><i className="cc-bracket cc-bracket--tr" aria-hidden />
         <i className="cc-bracket cc-bracket--bl" aria-hidden /><i className="cc-bracket cc-bracket--br" aria-hidden />
         <div className="cc-grid-bg cc-grid-bg--radial" aria-hidden />
         <div className="relative z-10 mb-14 flex items-center justify-between">
             <div className="space-y-4">
-              <span className="cc-meta">IoT SENSOR NETWORK · STREAM</span>
-              <h3 className="text-4xl font-black text-[var(--text-primary)] tracking-tighter">실시간 IoT 환경 지표<span className="text-[var(--data-accent)]">.</span></h3>
-              <p className="text-sm font-medium text-[var(--text-tertiary)] tracking-tight italic">사통팔땅 오케스트레이터와 연결된 스마트 센서 네트워크의 실시간 스트림입니다.</p>
+              <span className="cc-meta">IoT 환경 지표 · ENVIRONMENT</span>
+              <h3 className="text-4xl font-black text-[var(--text-primary)] tracking-tighter">IoT 환경 지표<span className="text-[var(--data-accent)]">.</span></h3>
+              <p className="text-sm font-medium text-[var(--text-tertiary)] tracking-tight italic">센서 연동 시 이 자리에 수집값이 표시됩니다. 현재는 연동된 수집원이 없습니다.</p>
             </div>
-            <span className="cc-live"><i />LIVE STREAM</span>
+            
         </div>
 
         <div className="relative z-10 grid gap-8 md:grid-cols-3">
-          {data?.sensors.map((item, i) => (
+          {(data?.sensors ?? []).map((item, i) => (
             <motion.div
                key={item.label}
                initial={{ opacity: 0, scale: 0.9 }}
                whileInView={{ opacity: 1, scale: 1 }}
                transition={{ delay: 0.1 * i }}
-               className="cc-interactive group/sensor relative flex flex-col gap-10 rounded-[3rem] border border-[var(--line)] bg-[var(--surface-soft)] p-12"
+               className="cc-interactive group/sensor relative flex flex-col gap-10 rounded-[var(--radius-2xl)] border border-[var(--line)] bg-[var(--surface-soft)] p-12"
             >
               <div className="flex items-center justify-between">
                 <span className="text-5xl drop-shadow-2xl transition-transform group-hover/sensor:scale-125 duration-500">{item.icon}</span>
@@ -177,7 +204,7 @@ export default function OperationsPage() {
                 <p className="cc-label group-hover/sensor:text-[var(--data-accent)] transition-colors">{item.label}</p>
                 <div className="flex items-baseline gap-2 mt-4">
                   <p className="cc-num text-5xl font-black leading-none tracking-tighter group-hover/sensor:scale-105 transition-transform origin-left">{item.value}</p>
-                  <span className="cc-chip-data" style={{ color: "var(--status-success)", background: "color-mix(in srgb, var(--status-success) 12%, transparent)", borderColor: "color-mix(in srgb, var(--status-success) 30%, transparent)" }}>NOMINAL</span>
+                  
                 </div>
               </div>
               <div className="absolute bottom-10 right-10 opacity-0 group-hover/sensor:opacity-100 transition-opacity">
@@ -193,7 +220,7 @@ export default function OperationsPage() {
         initial={{ opacity: 0, y: 30 }}
         whileInView={{ opacity: 1, y: 0 }}
         viewport={{ once: true }}
-        className="cc-bracketed relative flex flex-col gap-8 lg:flex-row lg:items-center lg:justify-between overflow-hidden rounded-[3rem] border border-[var(--data-accent-line)] bg-[var(--data-accent-soft)] p-10 lg:px-14 shadow-2xl"
+        className="cc-bracketed relative flex flex-col gap-8 lg:flex-row lg:items-center lg:justify-between overflow-hidden rounded-[var(--radius-2xl)] border border-[var(--data-accent-line)] bg-[var(--data-accent-soft)] p-10 lg:px-14 shadow-2xl"
       >
          <i className="cc-bracket cc-bracket--tl" aria-hidden /><i className="cc-bracket cc-bracket--tr" aria-hidden />
          <i className="cc-bracket cc-bracket--bl" aria-hidden /><i className="cc-bracket cc-bracket--br" aria-hidden />
@@ -201,7 +228,7 @@ export default function OperationsPage() {
             <span className="cc-live"><i />INTELLIGENCE REPORT</span>
             <p className="text-2xl font-black text-[var(--text-primary)] tracking-tight">수익 안정화 단계 진입<span className="text-[var(--text-tertiary)] ml-3 font-medium text-lg leading-relaxed italic">/ 월간 수익 가이드라인 기준 12.4% 초과 달성</span></p>
          </div>
-         <button className="cc-interactive group relative z-10 overflow-hidden rounded-[2rem] bg-[var(--accent-strong)] px-10 py-5 text-sm font-black text-white transition-all hover:scale-105 active:scale-95 shadow-[var(--shadow-glow)]">
+         <button className="cc-interactive group relative z-10 overflow-hidden rounded-[var(--radius-lg)] bg-[var(--accent-strong)] px-10 py-5 text-sm font-black text-white transition-all hover:scale-105 active:scale-95 shadow-[var(--shadow-glow)]">
             <span className="relative z-10 flex items-center gap-3">
               운영 리포트 생성
               <svg className="h-5 w-5 transition-transform group-hover:translate-x-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M7 17L17 7M17 7H7M17 7V17"/></svg>

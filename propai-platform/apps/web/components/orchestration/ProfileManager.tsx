@@ -60,7 +60,7 @@ export function ProfileManager() {
           return (
             <li
               key={p.id}
-              className="rounded-xl border bg-[var(--surface-card)] p-3 transition-colors"
+              className="rounded-xl border bg-[var(--surface-strong)] p-3 transition-colors"
               style={{
                 borderColor: active
                   ? "var(--accent-strong)"
@@ -108,7 +108,7 @@ export function ProfileManager() {
                   <button
                     type="button"
                     onClick={() => deleteCustomProfile(p.id)}
-                    className="rounded-md border border-[var(--line-strong)] px-2 py-0.5 text-[10px] text-[var(--text-tertiary)] transition-colors hover:border-[var(--status-danger)] hover:text-[var(--status-danger)]"
+                    className="rounded-md border border-[var(--line-strong)] px-2 py-0.5 text-[10px] text-[var(--text-tertiary)] transition-colors hover:border-[var(--status-error)] hover:text-[var(--status-error)]"
                   >
                     삭제
                   </button>
@@ -120,7 +120,7 @@ export function ProfileManager() {
       </ul>
 
       {/* 현재 선택을 커스텀 워크플로우로 저장 */}
-      <div className="grid gap-2 rounded-xl border border-[var(--line-strong)] bg-[var(--surface-card)] p-3 sm:grid-cols-[1fr_auto] sm:items-center">
+      <div className="grid gap-2 rounded-xl border border-[var(--line-strong)] bg-[var(--surface-strong)] p-3 sm:grid-cols-[1fr_auto] sm:items-center">
         <input
           type="text"
           value={newLabel}

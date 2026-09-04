@@ -13,6 +13,7 @@ import { apiClient, ApiClientError } from "@/lib/api-client";
 import { normalizeZoning } from "@/lib/kr-building-regulations";
 import { SatongMultiMap } from "@/components/map/SatongMultiMap";
 import type { SatongMapFeature, SatongMapLayerState } from "@/lib/satong-map-layers";
+import { SATONG_POPUP_YIELD } from "@/lib/satong-map-z";
 
 type Feature = {
   pnu: string;
@@ -39,11 +40,19 @@ type Feature = {
 };
 type Adjacency = { contiguous: boolean | null; components: number | null; note: string };
 type Neighbor = { pnu: string; jimok: string; is_road: boolean; geometry: any };
+/** 해석되지 못하고 탈락한 입력 필지 — 서버가 사유와 함께 돌려준다(침묵 금지). */
+type DroppedParcel = { address: string; pnu?: string | null; reason: string; detail?: string | null };
+
 type Boundaries = {
   features: Feature[];
   center: { lat: number; lon: number } | null;
   total_area_sqm: number;
   parcel_count: number;
+  // ★입력 대비 결과 — `parcel_count`(=해석 성공 수)만 보면 6 을 넣고 5 가 나와도 "5필지"로만
+  //   보인다. 사용자에겐 "필지가 사라졌다"인데 화면은 아무 말도 안 했다.
+  requested_count?: number;
+  resolved_count?: number;
+  dropped?: DroppedParcel[];
   adjacency?: Adjacency;
   neighbors?: Neighbor[];       // A+D: 주변 필지·도로(벡터 지적도)
   merged_geometry?: any;        // B: 통합개발 외곽선
@@ -53,6 +62,11 @@ type Boundaries = {
     total_area_pyeong?: number | null;
     zone_types?: string[];
     zone_mixed?: boolean;
+    /** 면적합산 max 로 산출한 **우세** 용도지역. 동률(±5%)이나 규제성격 상이면
+     *  `"mixed_review_required"` — 서버가 **임의 단일화를 거부한** 신호다(값이 아니라 판정 보류). */
+    dominant_zone?: string | null;
+    dominant_basis?: string | null;
+    zone_mix?: Array<{ zone: string; area_sqm: number; share_pct?: number | null }> | null;
     effective_bcr_pct?: number | null;
     effective_far_pct?: number | null;
     total_gfa_sqm?: number | null;
@@ -209,7 +223,7 @@ export function ParcelBoundaryMap({
         </p>
         {loading && <span className="text-xs text-[var(--text-hint)]">불러오는 중…</span>}
       </div>
-      {error && <p className="mb-2 text-xs text-rose-500">{error}</p>}
+      {error && <p className="mb-2 text-xs text-[var(--status-error)]">{error}</p>}
       {/* 면적 교차검증 — 주 필지(첫 필지)의 토지대장↔지적도 대조 결과 */}
       {(() => {
         const f0 = data?.features?.[0];
@@ -217,7 +231,7 @@ export function ParcelBoundaryMap({
         const low = f0.area_confidence === "low";
         return (
           <div className={`mb-2 inline-flex flex-wrap items-baseline gap-1 rounded-lg border px-3 py-2 text-[11px] font-semibold ${
-            low ? "border-amber-500/30 bg-amber-500/10 text-amber-400" : "border-[var(--line)] bg-[var(--surface-muted)] text-[var(--text-secondary)]"
+            low ? "border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 text-[var(--status-warning)]" : "border-[var(--line)] bg-[var(--surface-muted)] text-[var(--text-secondary)]"
           }`}>
             {low ? <AlertTriangle className="size-3.5 self-center shrink-0" aria-hidden /> : <Info className="size-3.5 self-center shrink-0" aria-hidden />}
             {low ? "면적 검증 주의 — " : "면적 출처 — "}{f0.area_note}
@@ -227,14 +241,37 @@ export function ParcelBoundaryMap({
           </div>
         );
       })()}
+      {/* ★탈락 고지 — 넣은 필지가 결과에 없으면 그 사실을 말한다(2026-08-23).
+          `dropped` 가 빈 배열이면 아무것도 그리지 않는다(정상은 조용한 게 맞다). */}
+      {data && (data.dropped?.length ?? 0) > 0 && (
+        <div
+          data-testid="parcel-drop-notice"
+          role="status"
+          className="mb-2 flex items-start gap-2 rounded-lg border border-[var(--status-error)]/30 bg-[var(--status-error)]/10 px-3 py-2 text-[11px] font-semibold text-[var(--status-error)]"
+        >
+          <Scissors className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+          <span>
+            <b className="font-black">
+              {data.requested_count ?? "?"}필지 중 {data.dropped!.length}필지를 찾지 못했습니다
+            </b>
+            <span className="ml-1 font-semibold">
+              — {data.dropped!.slice(0, 3).map((d) => d.address || "(주소없음)").join(" · ")}
+              {data.dropped!.length > 3 ? " 외" : ""}
+              {". 아래 구획도·합계 면적은 "}
+              {data.resolved_count ?? data.parcel_count}필지 기준입니다. 지번을 확인하고 다시 지정하세요.
+            </span>
+          </span>
+        </div>
+      )}
+
       {/* 다필지 인접성(통합개발 가능 여부) */}
       {data && data.parcel_count >= 2 && data.adjacency && (
         <div className={`mb-2 inline-flex flex-wrap items-baseline gap-1 rounded-lg border px-3 py-2 text-[11px] font-semibold ${
           data.adjacency.contiguous === true
-            ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
+            ? "border-[var(--status-success)]/30 bg-[var(--status-success)]/10 text-[var(--status-success)]"
             : data.adjacency.contiguous === false
-              ? "border-rose-500/30 bg-rose-500/10 text-rose-400"
-              : "border-amber-500/30 bg-amber-500/10 text-amber-400"
+              ? "border-[var(--status-error)]/30 bg-[var(--status-error)]/10 text-[var(--status-error)]"
+              : "border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 text-[var(--status-warning)]"
         }`}>
           {data.adjacency.contiguous === true ? <Link2 className="size-3.5 self-center shrink-0" aria-hidden /> : data.adjacency.contiguous === false ? <Scissors className="size-3.5 self-center shrink-0" aria-hidden /> : <HelpCircle className="size-3.5 self-center shrink-0" aria-hidden />}
           {data.adjacency.contiguous === true ? "통합개발 가능 — " : data.adjacency.contiguous === false ? "통합개발 불가 — " : "인접성 미상 — "}
@@ -251,7 +288,26 @@ export function ParcelBoundaryMap({
             {data.integrated_analysis.effective_bcr_pct != null && <span>실질 건폐율 <b className="text-[var(--text-primary)]">{data.integrated_analysis.effective_bcr_pct}%</b></span>}
             {data.integrated_analysis.effective_far_pct != null && <span>실질 용적률 <b className="text-[var(--text-primary)]">{data.integrated_analysis.effective_far_pct}%</b></span>}
             {data.integrated_analysis.total_gfa_sqm != null && <span>가능 연면적 <b className="text-[var(--text-primary)]">{Math.round(data.integrated_analysis.total_gfa_sqm).toLocaleString()}㎡</b></span>}
-            {data.integrated_analysis.zone_mixed && <span className="inline-flex items-center gap-1 text-amber-500"><AlertTriangle className="size-3.5 shrink-0" aria-hidden /> 용도지역 혼재({data.integrated_analysis.zone_types?.join("·")})</span>}
+            {data.integrated_analysis.zone_mixed && <span className="inline-flex items-center gap-1 text-[var(--status-warning)]"><AlertTriangle className="size-3.5 shrink-0" aria-hidden /> 용도지역 혼재({data.integrated_analysis.zone_types?.join("·")})</span>}
+            {/* ★우세 용도지역 — 서버가 **면적합산 max** 로 판정한 값(2026-08-24). 종전엔 화면 어디에도
+                이 값이 없었고, 스토어의 `dominantZoneCode` 는 이름과 달리 **첫 필지 값**이었다
+                (실측 사례에서 면적 우세와 **반대**를 가리켰다). 산식은 서버 하나뿐이다 — 여기서
+                재계산하지 않는다. `mixed_review_required` 는 **값이 아니라 판정 보류**이므로
+                그렇게 표기한다(임의로 한 지역을 고르지 않는다). */}
+            {data.integrated_analysis.dominant_zone === "mixed_review_required" ? (
+              <span data-testid="dominant-zone" className="inline-flex items-center gap-1 text-[var(--status-warning)]">
+                <HelpCircle className="size-3.5 shrink-0" aria-hidden /> 우세 용도지역 판정 보류(면적 동률·규제성격 상이)
+              </span>
+            ) : data.integrated_analysis.dominant_zone ? (
+              <span data-testid="dominant-zone">
+                우세 용도지역 <b className="text-[var(--text-primary)]">{data.integrated_analysis.dominant_zone}</b>
+                {(() => {
+                  const mix = data.integrated_analysis?.zone_mix ?? null;
+                  const hit = mix?.find((m) => m.zone === data.integrated_analysis?.dominant_zone);
+                  return hit?.share_pct != null ? ` (면적 ${hit.share_pct}%)` : "";
+                })()}
+              </span>
+            ) : null}
           </div>
           {data.integrated_analysis.development_methods && data.integrated_analysis.development_methods.length > 0 && (
             <p className="mt-1.5 text-[11px] text-[var(--text-secondary)]">
@@ -328,8 +384,18 @@ export function ParcelBoundaryMap({
           highlightFeatureAddress={highlight}
         />
         {/* 로딩/빈결과 오버레이 — 무한 '불러오는 중' 방지 */}
+        {/* ★양보 계약 — **시각만 양보**(`passive-visual`): 흐려지되 계속 막는다.
+            전면(inset-0) 차단형이라 클릭까지 통과시키면 조회 중인 지도가 조작 가능해진다.
+            ★겹침 가능성은 낮다고 본다: 이 화면은 onFeatureClick 을 넘기므로 지도가
+              **필지 상세 팝업**을 걸지 않는다(featureDetailOwnedByParent 상호배제).
+              ★단, `popupopen` 은 **모든 팝업**에 발화하므로 "팝업을 아예 안 건다"는 과장이다 —
+              막은 것은 필지 상세 한 종류뿐이다. 다른 종류(실거래·분양·경매)는 이 화면이
+              해당 prop 을 안 넘겨 안 그려지지만, 라이브로 재보지는 않았다. */}
         {(loading || (!loading && !error && (!data || !data.features?.length))) && (
-          <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-[var(--surface-soft)]/70 text-xs text-[var(--text-hint)]">
+          <div
+            {...{ [SATONG_POPUP_YIELD.passiveAttr]: SATONG_POPUP_YIELD.passiveVisualValue }}
+            className="absolute inset-0 flex items-center justify-center rounded-xl bg-[var(--surface-soft)]/70 text-xs text-[var(--text-hint)]"
+          >
             {loading
               ? "지적도 경계 불러오는 중…"
               : "필지 경계를 찾지 못했습니다 (지번 정확도·VWorld 지적도 미제공 가능). 주소를 확인하세요."}

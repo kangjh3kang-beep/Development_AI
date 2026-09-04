@@ -29,6 +29,8 @@ import os
 import subprocess
 from typing import Any
 
+from app.tasks._async_batch import run_async_batch
+
 logger = logging.getLogger(__name__)
 
 _ACTOR = "growth_engine"
@@ -206,18 +208,11 @@ async def _run_async() -> dict[str, Any]:
 def run_pr_bot() -> dict:
     """L2 PR 봇 배치 진입점. GH_TOKEN 없으면 아티팩트만 보존(graceful).
 
-    동기 진입점(Celery 워커)에서 asyncio.run 으로 구동. best-effort.
+    동기 진입점(Celery 워커)에서 `run_async_batch` 로 구동(루프 종료 전 커넥션 정리). best-effort.
     """
-    import asyncio
 
     try:
-        result = asyncio.run(_run_async())
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        try:
-            result = loop.run_until_complete(_run_async())
-        finally:
-            loop.close()
+        result = run_async_batch(lambda: _run_async())
     except Exception as e:  # noqa: BLE001
         logger.warning("run_pr_bot 실패: %s", str(e)[:160])
         return {"processed": 0, "error": str(e)[:160]}

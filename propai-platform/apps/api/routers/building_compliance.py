@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.land_intelligence.parcel_normalize import ParcelsIn
 from apps.api.database.session import get_db
 from apps.api.services.building_compliance_service import BuildingComplianceService
 
@@ -106,7 +107,8 @@ class CheckRequest(BaseModel):
     # 다필지 통합 개발 시 필지 목록(2개 이상이면 면적가중 통합면적·우세용도로 보정).
     #   행 계약(프론트 전송 키): {address, area_sqm, zone_type, farPct, bcrPct, farLegalPct, bcrLegalPct}.
     #   미전달/1필지면 기존 단일필지 동작 그대로(무회귀).
-    parcels: list[dict] | None = None
+    #   ★공용 정규화(ParcelsIn): str[]/dict[] 양 shape → canonical dict[](무음 no-op 제거).
+    parcels: ParcelsIn | None = None
 
 
 class AutoCorrectRequest(BaseModel):
@@ -203,7 +205,20 @@ async def _pre_design_review(req: "CheckRequest") -> dict[str, Any]:
     checks: list[dict[str, Any]] = []
 
     if matched:
-        # 가능 규모 산정
+        # ★구조상한(건폐율×층수) 흡수(레인H R2, 2026-07-24 R1 리뷰 — 세 번째 형제): /rule-check·
+        #   /legal-check가 이미 흡수한 것과 동일한 결함이 /check의 무-기하 경로(이 함수)에도
+        #   있었다 — 같은 자연녹지 bcr20%/far100% 입력에 이 함수만 '적합'(법정100%)을 반환해
+        #   세 엔드포인트가 모순 판정을 냈다(R1 리뷰어 라이브 실증). 동일 공용헬퍼
+        #   (far_cap_with_structural_overlay — legal-check와 동일 배선, 로직 복제 없음)로
+        #   far_lim을 오버레이하고, 용적률 체크·가능규모(max_gfa) 둘 다 캡값을 사용한다.
+        from app.services.zoning.legal_zone_limits import far_cap_with_structural_overlay
+
+        applied_bcr_for_cap = req.planned_bcr if (req.planned_bcr and req.planned_bcr > 0) else None
+        far_lim, cap_floor, cap_basis, cap_unresolved_note = far_cap_with_structural_overlay(
+            resolution.zone_type, far_lim, applied_bcr_for_cap,
+        )
+
+        # 가능 규모 산정(구조상한 반영된 far_lim 사용 — 위 오버레이 이후).
         max_build_area = area * bcr_lim / 100 if area else 0
         max_gfa = area * far_lim / 100 if area else 0
 
@@ -224,17 +239,26 @@ async def _pre_design_review(req: "CheckRequest") -> dict[str, Any]:
             }
 
         checks.append(_limit_check("건폐율 상한", req.planned_bcr, bcr_lim, "%"))
-        checks.append(_limit_check("용적률 상한", req.planned_far, far_lim, "%"))
+        far_check = _limit_check("용적률 상한", req.planned_far, far_lim, "%")
+        if cap_basis:
+            # ★R1 리뷰 LOW#2: 건폐율 수치(계획 건폐율)를 병기해 법정 건폐율로 오독되지 않게 한다.
+            far_check["detail"] += f" — 구조상한(건폐율{applied_bcr_for_cap:g}%×{cap_floor}층) 적용: {cap_basis}"
+        elif cap_unresolved_note:
+            far_check["detail"] += f" ({cap_unresolved_note})"
+        checks.append(far_check)
         if h_lim > 0:
             checks.append(_limit_check("최고 높이", req.planned_height_m, h_lim, "m"))
         if area:
+            scale_detail = (
+                f"대지 {area:,.0f}㎡ → 최대 건축면적 약 {max_build_area:,.0f}㎡, "
+                f"최대 연면적 약 {max_gfa:,.0f}㎡ (법정 상한 기준, 조례 별도)"
+            )
+            if cap_basis:
+                scale_detail += f" — 구조상한(건폐율{applied_bcr_for_cap:g}%×{cap_floor}층) 반영"
             checks.append({
                 "rule_code": "buildable_scale", "rule_name": "가능 규모(추정)",
                 "status": "info",
-                "detail": (
-                    f"대지 {area:,.0f}㎡ → 최대 건축면적 약 {max_build_area:,.0f}㎡, "
-                    f"최대 연면적 약 {max_gfa:,.0f}㎡ (법정 상한 기준, 조례 별도)"
-                ),
+                "detail": scale_detail,
                 "regulation_ref": "국토계획법 시행령",
             })
         zone_name: str | None = resolution.zone_type
@@ -433,11 +457,18 @@ async def check_compliance(
                 )
                 lim = ZONE_LIMITS.get(code) if code else None
                 if lim:
+                    # 높이 상한이 무제한(inf: 상업·일반주거 등 — 가로구역·일조 별도 규율)이면
+                    # 오값(예: 과거 일반상업 50m) 대신 '제한없음'으로 정직 표기한다.
+                    height_txt = (
+                        "제한없음(가로구역별 최고높이·일조 사선 별도)"
+                        if lim.max_height_m == float("inf")
+                        else f"{lim.max_height_m:.0f}m"
+                    )
                     permit_evidence = (
                         f"- 용도지역 법정 한도({zone_type}, 국토계획법 시행령): "
                         f"건폐율 상한 {lim.building_coverage_ratio * 100:.0f}%, "
                         f"용적률 상한 {lim.floor_area_ratio * 100:.0f}%, "
-                        f"최고높이 {lim.max_height_m:.0f}m. "
+                        f"최고높이 {height_txt}. "
                         "이 법정 한도를 기준으로 위반·완화 가능성을 판단할 것."
                     )
             except Exception:  # noqa: BLE001
@@ -577,6 +608,15 @@ class RuleCheckRequest(BaseModel):
     parking_count: int = 0              # 계획 주차대수
     floor_area_per_floor_sqm: float = 0  # 층당 바닥면적(㎡)
 
+    # ── 주차 기하 검증(opt-in, 스펙 P·W3-5) — 전부 미입력이면 완전히 생략(무회귀) ──
+    # ★R1 LOW: 경계값 가드. area는 0(=미제공과 동일 취급 sentinel)을 허용해야 하므로 ge=0,
+    # 차로폭/회전반경/각도는 0 이하가 물리적으로 무의미해 gt=0(제공 시에는 반드시 양수).
+    parking_layout_area_sqm: float | None = Field(default=None, ge=0)  # 지하/부지 주차 가용면적(㎡). 있으면 기하검증 실행.
+    parking_stall_type: str | None = None         # general/expanded/parallel/disabled(기본 general)
+    parking_angle_deg: int | None = Field(default=None, ge=0, le=180)  # 주차각(도, 90/60/45/0=평행). 기본 90.
+    parking_aisle_width_m: float | None = Field(default=None, gt=0)  # 실제 계획 차로폭(m). swept path 1차 검증용.
+    parking_turn_radius_m: float | None = Field(default=None, gt=0)  # 실제 계획 회전반경(m). swept path 1차 검증용.
+
 
 class RuleCheckItem(BaseModel):
     rule_id: str
@@ -697,7 +737,7 @@ async def rule_check(req: RuleCheckRequest) -> RuleCheckResponse:
             if k not in _top_keys:
                 _top_keys.append(k)
 
-    return RuleCheckResponse(
+    response = RuleCheckResponse(
         zone_code=req.zone_code,
         zone_name=matched_zone,
         overall_status=overall,
@@ -709,6 +749,38 @@ async def rule_check(req: RuleCheckRequest) -> RuleCheckResponse:
         summary=summary,
         legal_refs=_legal_refs_for(_top_keys),
     )
+
+    # ── 주차 기하 검증(opt-in, 스펙 P·W3-5) ──────────────────────────────────
+    # parking_layout_area_sqm 미입력이면 이 블록 전체가 스킵되어 응답 객체에
+    # parking_geometry 속성 자체가 설정되지 않는다(extra="allow"라 미설정 속성은
+    # 직렬화에 나타나지 않음 — 기본 경로 응답 바이트 무변화, 무회귀).
+    if req.parking_layout_area_sqm is not None and req.parking_layout_area_sqm > 0:
+        try:
+            from app.services.parking import StallType, verify_parking_plan
+
+            try:
+                stall_type = StallType(req.parking_stall_type) if req.parking_stall_type else StallType.GENERAL
+            except ValueError:
+                stall_type = StallType.GENERAL
+
+            verification = verify_parking_plan(
+                building_type=req.building_type or "아파트",
+                unit_count=req.unit_count,
+                total_gfa_sqm=req.total_gfa_sqm,
+                planned_parking_count=req.parking_count,
+                available_layout_area_sqm=req.parking_layout_area_sqm,
+                stall_type=stall_type,
+                parking_angle_deg=req.parking_angle_deg or 90,
+                actual_aisle_width_m=req.parking_aisle_width_m,
+                actual_turn_radius_m=req.parking_turn_radius_m,
+            )
+            response.parking_geometry = verification.model_dump(mode="json")
+        except Exception as _e:  # noqa: BLE001 — opt-in 검증 실패는 8룰 응답을 절대 막지 않음
+            import structlog
+
+            structlog.get_logger(__name__).warning("주차 기하검증 실패(opt-in)", err=str(_e)[:160])
+
+    return response
 
 
 @router.post("/legal-check", response_model=LegalCheckResponse)
@@ -744,6 +816,26 @@ async def legal_check(req: LegalCheckRequest) -> LegalCheckResponse:
     # ── 확정 매칭: SSOT 한도값 사용(로컬표 드리프트 제거) ──
     bcr_lim = resolution.max_bcr_pct
     far_lim = resolution.max_far_pct
+
+    # ★구조상한(건폐율×층수) 흡수(레인H, 2026-07-24): resolve_zone_limits는 legal_limits_for만
+    #   쓰고 applicable_limits_for(레인A가 구조상한을 흡수시킨 함수)를 거치지 않아, 이 라우터가
+    #   /rule-check(BuildingCodeRuleEngine._check_far)와 동일한 결함(자연녹지 법정 100%로
+    #   far=100%가 그대로 '적합')을 형제로 안고 있었다. 로직 복제 없이 같은 공용 헬퍼
+    #   (far_cap_with_structural_overlay — legal_zone_limits.py, _check_far와 공유)를 재사용한다.
+    #   planned_bcr(계획 건폐율)을 rule-check의 '설계 실건폐율'과 동일 시맨틱으로 전달.
+    from app.services.zoning.legal_zone_limits import far_cap_with_structural_overlay
+
+    applied_bcr_for_cap = req.planned_bcr if req.planned_bcr > 0 else None
+    far_lim, cap_floor, cap_basis, cap_unresolved_note = far_cap_with_structural_overlay(
+        resolution.zone_type, far_lim, applied_bcr_for_cap,
+    )
+    cap_note: str | None = None
+    if cap_basis:
+        # ★R1 리뷰 LOW#2: 건폐율 수치(계획 건폐율)를 병기해 법정 건폐율로 오독되지 않게 한다.
+        cap_note = f"구조상한(건폐율{applied_bcr_for_cap:g}%×{cap_floor}층) 적용 — {cap_basis}"
+    elif cap_unresolved_note:
+        cap_note = cap_unresolved_note
+
     # 높이: SSOT는 높이 상한을 두지 않음(기존 로컬표도 전부 0=별도규정). 별도규정으로 통과 처리.
     h_lim = 0.0
     bcr_pass = req.planned_bcr <= bcr_lim if req.planned_bcr > 0 else True
@@ -758,6 +850,10 @@ async def legal_check(req: LegalCheckRequest) -> LegalCheckResponse:
     if not height_pass:
         notes.append(f"높이 {req.planned_height_m}m > 상한 {h_lim}m")
 
+    remarks = "적합 — 법정 상한 이내(조례 별도 확인)." if overall else " / ".join(notes)
+    if cap_note:
+        remarks = f"{remarks} ({cap_note})"
+
     resp = LegalCheckResponse(
         address=req.address, zone_code=req.zone_code, zone_name=resolution.zone_type,
         bcr_limit=bcr_lim, bcr_planned=req.planned_bcr, bcr_pass=bcr_pass,
@@ -765,7 +861,7 @@ async def legal_check(req: LegalCheckRequest) -> LegalCheckResponse:
         height_limit_m=h_lim, height_planned_m=req.planned_height_m, height_pass=height_pass,
         overall_pass=overall,
         overall_status="pass" if overall else "fail",
-        remarks=("적합 — 법정 상한 이내(조례 별도 확인)." if overall else " / ".join(notes)),
+        remarks=remarks,
     )
     # 법령 근거키(가산·옵셔널) — 확정 매칭 시 근거 조문키 부착(응답은 extra="allow").
     if resolution.legal_ref_keys:

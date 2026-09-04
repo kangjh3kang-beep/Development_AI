@@ -1,0 +1,926 @@
+{
+ "center": {
+  "lat": 37.499642841716785,
+  "lon": 127.03426891267655
+ },
+ "radius_m": 1000,
+ "radius_applied": true,
+ "groups_evaluated_count": 520,
+ "radius_filtered_out_count": 414,
+ "coords_unresolved_count": 58,
+ "geocode_precut_count": 1629,
+ "avm": {
+  "estimated_price": 1122772678,
+  "price_per_sqm": 13366341,
+  "confidence_score": 0.5918130401429244,
+  "comparable_count": 18,
+  "comparable_deal_count": 18,
+  "comparable_group_count": 4,
+  "sample_count": 18,
+  "price_cv_percent": 86,
+  "basis": {
+   "radius_applied": true,
+   "radius_m": 1000,
+   "in_radius_group_count": 4,
+   "scope": "in_radius"
+  }
+ },
+ "avm_caveat": null,
+ "months": [
+  "202607",
+  "202606",
+  "202605"
+ ],
+ "categories": {
+  "apt_trade": {
+   "label": "아파트 매매",
+   "type": "apt",
+   "kind": "trade",
+   "count": 105,
+   "capped_count": 0,
+   "count_in_radius": 18,
+   "count_unresolved": 87,
+   "groups": [
+    {
+     "name": "대우디오빌",
+     "dong": "역삼동",
+     "jibun": "720-25",
+     "deals": [
+      {
+       "price_10k_won": 30500,
+       "area_m2": 30.03,
+       "floor": 18,
+       "deal_date": "2026년 6월 23일"
+      },
+      {
+       "price_10k_won": 92000,
+       "area_m2": 59.505,
+       "floor": 21,
+       "deal_date": "2026년 6월 22일"
+      }
+     ],
+     "count": 8,
+     "avg_area_m2": 40.5,
+     "build_year": null,
+     "jimok": null,
+     "land_use": null,
+     "avg_price_10k": 48312,
+     "min_price_10k": 24700,
+     "max_price_10k": 92000,
+     "excluded_outliers": 0,
+     "lat": 37.50144750483777,
+     "lon": 127.04269822744217
+    },
+    {
+     "name": "한화진넥스빌",
+     "dong": "역삼동",
+     "jibun": "706-20",
+     "deals": [
+      {
+       "price_10k_won": 46400,
+       "area_m2": 43.58,
+       "floor": 20,
+       "deal_date": "2026년 7월 6일"
+      },
+      {
+       "price_10k_won": 34500,
+       "area_m2": 39.2,
+       "floor": 19,
+       "deal_date": "2026년 6월 24일"
+      }
+     ],
+     "count": 4,
+     "avg_area_m2": 40.3,
+     "build_year": 2001,
+     "jimok": null,
+     "land_use": null,
+     "avg_price_10k": 38550,
+     "min_price_10k": 32000,
+     "max_price_10k": 46400,
+     "excluded_outliers": 0,
+     "lat": 37.502000659345796,
+     "lon": 127.04426916680984
+    },
+    {
+     "name": "까치마을",
+     "dong": "수서동",
+     "jibun": "746",
+     "deals": [
+      {
+       "price_10k_won": 154500,
+       "area_m2": 34.44,
+       "floor": 14,
+       "deal_date": "2026년 7월 28일"
+      },
+      {
+       "price_10k_won": 153800,
+       "area_m2": 34.44,
+       "floor": 15,
+       "deal_date": "2026년 7월 17일"
+      }
+     ],
+     "count": 22,
+     "avg_area_m2": 38.6,
+     "build_year": 1993,
+     "jimok": null,
+     "land_use": null,
+     "avg_price_10k": 155794,
+     "min_price_10k": 145000,
+     "max_price_10k": 179000,
+     "excluded_outliers": 4
+    },
+    {
+     "name": "성원대치2단지아파트",
+     "dong": "개포동",
+     "jibun": "12",
+     "deals": [
+      {
+       "price_10k_won": 177000,
+       "area_m2": 39.53,
+       "floor": 15,
+       "deal_date": "2026년 7월 11일"
+      },
+      {
+       "price_10k_won": 202000,
+       "area_m2": 49.86,
+       "floor": 2,
+       "deal_date": "2026년 7월 1일"
+      }
+     ],
+     "count": 19,
+     "avg_area_m2": 39.7,
+     "build_year": 1992,
+     "jimok": null,
+     "land_use": null,
+     "avg_price_10k": 173553,
+     "min_price_10k": 149500,
+     "max_price_10k": 205500,
+     "excluded_outliers": 0
+    }
+   ]
+  },
+  "villa_trade": {
+   "label": "연립다세대 매매",
+   "type": "villa",
+   "kind": "trade",
+   "count": 77,
+   "capped_count": 0,
+   "count_in_radius": 47,
+   "count_unresolved": 30,
+   "groups": [
+    {
+     "name": "에이트",
+     "dong": "역삼동",
+     "jibun": "744-8",
+     "deals": [
+      {
+       "price_10k_won": 49301,
+       "area_m2": 28.49,
+       "floor": 2,
+       "deal_date": "2026년 5월 28일"
+      },
+      {
+       "price_10k_won": 51372,
+       "area_m2": 29.69,
+       "floor": 2,
+       "deal_date": "2026년 5월 28일"
+      }
+     ],
+     "count": 16,
+     "avg_area_m2": 28.6,
+     "build_year": 2022,
+     "jimok": null,
+     "land_use": null,
+     "avg_price_10k": 50988,
+     "min_price_10k": 46228,
+     "max_price_10k": 56516,
+     "excluded_outliers": 0,
+     "lat": 37.49658144616376,
+     "lon": 127.03625331113759
+    },
+    {
+     "name": "손스홈빌라",
+     "dong": "역삼동",
+     "jibun": "740-8",
+     "deals": [
+      {
+       "price_10k_won": 140448,
+       "area_m2": 106.44,
+       "floor": 1,
+       "deal_date": "2026년 6월 25일"
+      },
+      {
+       "price_10k_won": 51659,
+       "area_m2": 39.15,
+       "floor": 2,
+       "deal_date": "2026년 6월 25일"
+      }
+     ],
+     "count": 7,
+     "avg_area_m2": 54.1,
+     "build_year": 2004,
+     "jimok": null,
+     "land_use": null,
+     "avg_price_10k": 71429,
+     "min_price_10k": 32301,
+     "max_price_10k": 140448,
+     "excluded_outliers": 0,
+     "lat": 37.497937464340936,
+     "lon": 127.03542865513612
+    },
+    {
+     "name": "힐스테이7",
+     "dong": "삼성동",
+     "jibun": "34-12",
+     "deals": [
+      {
+       "price_10k_won": 34000,
+       "area_m2": 18.4,
+       "floor": 4,
+       "deal_date": "2026년 7월 2일"
+      },
+      {
+       "price_10k_won": 47000,
+       "area_m2": 21.87,
+       "floor": 2,
+       "deal_date": "2026년 6월 15일"
+      }
+     ],
+     "count": 4,
+     "avg_area_m2": 19.7,
+     "build_year": 2016,
+     "jimok": null,
+     "land_use": null,
+     "avg_price_10k": 40500,
+     "min_price_10k": 32000,
+     "max_price_10k": 49000,
+     "excluded_outliers": 0
+    },
+    {
+     "name": "논현밸류",
+     "dong": "논현동",
+     "jibun": "171-16",
+     "deals": [
+      {
+       "price_10k_won": 38000,
+       "area_m2": 15.7,
+       "floor": 3,
+       "deal_date": "2026년 7월 15일"
+      },
+      {
+       "price_10k_won": 39000,
+       "area_m2": 24.98,
+       "floor": 4,
+       "deal_date": "2026년 5월 20일"
+      }
+     ],
+     "count": 2,
+     "avg_area_m2": 20.3,
+     "build_year": 2015,
+     "jimok": null,
+     "land_use": null,
+     "avg_price_10k": 38500,
+     "min_price_10k": 38000,
+     "max_price_10k": 39000,
+     "excluded_outliers": 0
+    }
+   ]
+  },
+  "house_trade": {
+   "label": "단독다가구 매매",
+   "type": "house",
+   "kind": "trade",
+   "count": 6,
+   "capped_count": 0,
+   "count_in_radius": 0,
+   "count_unresolved": 6,
+   "groups": [
+    {
+     "name": "역삼동 7**",
+     "dong": "역삼동",
+     "jibun": "7**",
+     "deals": [
+      {
+       "price_10k_won": 570000,
+       "area_m2": 602.58,
+       "floor": 0,
+       "deal_date": "2026년 6월 30일"
+      },
+      {
+       "price_10k_won": 400000,
+       "area_m2": 437.58,
+       "floor": 0,
+       "deal_date": "2026년 5월 4일"
+      }
+     ],
+     "count": 2,
+     "avg_area_m2": 520.1,
+     "build_year": 1996,
+     "jimok": null,
+     "land_use": null,
+     "avg_price_10k": 485000,
+     "min_price_10k": 400000,
+     "max_price_10k": 570000,
+     "excluded_outliers": 0
+    },
+    {
+     "name": "개포동 1***",
+     "dong": "개포동",
+     "jibun": "1***",
+     "deals": [
+      {
+       "price_10k_won": 470000,
+       "area_m2": 558.04,
+       "floor": 0,
+       "deal_date": "2026년 6월 11일"
+      },
+      {
+       "price_10k_won": 425000,
+       "area_m2": 423.52,
+       "floor": 0,
+       "deal_date": "2026년 5월 18일"
+      }
+     ],
+     "count": 2,
+     "avg_area_m2": 490.8,
+     "build_year": null,
+     "jimok": null,
+     "land_use": null,
+     "avg_price_10k": 447500,
+     "min_price_10k": 425000,
+     "max_price_10k": 470000,
+     "excluded_outliers": 0
+    }
+   ]
+  },
+  "officetel_trade": {
+   "label": "오피스텔 매매",
+   "type": "officetel",
+   "kind": "trade",
+   "count": 69,
+   "capped_count": 0,
+   "count_in_radius": 58,
+   "count_unresolved": 11,
+   "groups": [
+    {
+     "name": "강남역 쉐르빌",
+     "dong": "역삼동",
+     "jibun": "832-3",
+     "deals": [
+      {
+       "price_10k_won": 23500,
+       "area_m2": 26.37,
+       "floor": 4,
+       "deal_date": "2026년 7월 15일"
+      },
+      {
+       "price_10k_won": 22500,
+       "area_m2": 25.12,
+       "floor": 3,
+       "deal_date": "2026년 7월 9일"
+      }
+     ],
+     "count": 5,
+     "avg_area_m2": 25.9,
+     "build_year": 2014,
+     "jimok": null,
+     "land_use": null,
+     "avg_price_10k": 24050,
+     "min_price_10k": 22500,
+     "max_price_10k": 26500,
+     "excluded_outliers": 0,
+     "lat": 37.49235856496306,
+     "lon": 127.03070747572633
+    },
+    {
+     "name": "강남역 서희스타힐스 오피스텔",
+     "dong": "역삼동",
+     "jibun": "837-18",
+     "deals": [
+      {
+       "price_10k_won": 20000,
+       "area_m2": 24.56,
+       "floor": 5,
+       "deal_date": "2026년 7월 28일"
+      },
+      {
+       "price_10k_won": 20300,
+       "area_m2": 24.56,
+       "floor": 4,
+       "deal_date": "2026년 7월 22일"
+      }
+     ],
+     "count": 4,
+     "avg_area_m2": 25.4,
+     "build_year": 2012,
+     "jimok": null,
+     "land_use": null,
+     "avg_price_10k": 20325,
+     "min_price_10k": 20000,
+     "max_price_10k": 21000,
+     "excluded_outliers": 0,
+     "lat": 37.49137339894109,
+     "lon": 127.03252446931356
+    },
+    {
+     "name": "우성캐릭터199",
+     "dong": "도곡동",
+     "jibun": "467-24",
+     "deals": [
+      {
+       "price_10k_won": 63000,
+       "area_m2": 55.46,
+       "floor": 19,
+       "deal_date": "2026년 6월 29일"
+      },
+      {
+       "price_10k_won": 31900,
+       "area_m2": 35.2,
+       "floor": 10,
+       "deal_date": "2026년 6월 13일"
+      }
+     ],
+     "count": 7,
+     "avg_area_m2": 45.6,
+     "build_year": 1998,
+     "jimok": null,
+     "land_use": null,
+     "avg_price_10k": 47979,
+     "min_price_10k": 31900,
+     "max_price_10k": 65000,
+     "excluded_outliers": 0
+    },
+    {
+     "name": "강남 드림하이 오피스텔",
+     "dong": "세곡동",
+     "jibun": "616",
+     "deals": [
+      {
+       "price_10k_won": 28800,
+       "area_m2": 34.6,
+       "floor": 7,
+       "deal_date": "2026년 7월 27일"
+      }
+     ],
+     "count": 1,
+     "avg_area_m2": 34.6,
+     "build_year": 2018,
+     "jimok": null,
+     "land_use": null,
+     "avg_price_10k": 28800,
+     "min_price_10k": 28800,
+     "max_price_10k": 28800,
+     "excluded_outliers": 0
+    }
+   ]
+  },
+  "land_trade": {
+   "label": "토지 매매",
+   "type": "land",
+   "kind": "trade",
+   "count": 47,
+   "capped_count": 0,
+   "count_in_radius": 0,
+   "count_unresolved": 47,
+   "groups": [
+    {
+     "name": "대치동 9**",
+     "dong": "대치동",
+     "jibun": "9**",
+     "deals": [
+      {
+       "price_10k_won": 1800,
+       "area_m2": 3.31,
+       "floor": 0,
+       "deal_date": "2026년 7월 21일"
+      },
+      {
+       "price_10k_won": 3600,
+       "area_m2": 6.61,
+       "floor": 0,
+       "deal_date": "2026년 6월 17일"
+      }
+     ],
+     "count": 22,
+     "avg_area_m2": 5.9,
+     "build_year": null,
+     "jimok": "도로",
+     "land_use": "제3종일반주거지역",
+     "avg_price_10k": 2512,
+     "min_price_10k": 1152,
+     "max_price_10k": 7200,
+     "excluded_outliers": 1
+    },
+    {
+     "name": "개포동 산1**",
+     "dong": "개포동",
+     "jibun": "산1**",
+     "deals": [
+      {
+       "price_10k_won": 1352,
+       "area_m2": 23,
+       "floor": 0,
+       "deal_date": "2026년 6월 18일"
+      },
+      {
+       "price_10k_won": 11525,
+       "area_m2": 200,
+       "floor": 0,
+       "deal_date": "2026년 6월 17일"
+      }
+     ],
+     "count": 19,
+     "avg_area_m2": 50.7,
+     "build_year": null,
+     "jimok": "임야",
+     "land_use": "개발제한구역",
+     "avg_price_10k": 2955,
+     "min_price_10k": 864,
+     "max_price_10k": 11642,
+     "excluded_outliers": 0
+    }
+   ]
+  },
+  "commercial_trade": {
+   "label": "상업업무용 매매",
+   "type": "commercial",
+   "kind": "trade",
+   "count": 47,
+   "capped_count": 0,
+   "count_in_radius": 7,
+   "count_unresolved": 40,
+   "groups": [
+    {
+     "name": "역삼동 656-29",
+     "dong": "역삼동",
+     "jibun": "656-29",
+     "deals": [
+      {
+       "price_10k_won": 14700,
+       "area_m2": 21.36,
+       "floor": 3,
+       "deal_date": "2026년 7월 8일"
+      },
+      {
+       "price_10k_won": 12700,
+       "area_m2": 18.49,
+       "floor": 3,
+       "deal_date": "2026년 7월 8일"
+      }
+     ],
+     "count": 3,
+     "avg_area_m2": 20.3,
+     "build_year": 2013,
+     "jimok": null,
+     "land_use": "제2종일반주거",
+     "avg_price_10k": 13933,
+     "min_price_10k": 12700,
+     "max_price_10k": 14700,
+     "excluded_outliers": 0,
+     "lat": 37.50661398363229,
+     "lon": 127.038449446436
+    },
+    {
+     "name": "역삼동 837-19",
+     "dong": "역삼동",
+     "jibun": "837-19",
+     "deals": [
+      {
+       "price_10k_won": 12500,
+       "area_m2": 25.2,
+       "floor": 9,
+       "deal_date": "2026년 5월 14일"
+      },
+      {
+       "price_10k_won": 11700,
+       "area_m2": 23.56,
+       "floor": 11,
+       "deal_date": "2026년 5월 8일"
+      }
+     ],
+     "count": 2,
+     "avg_area_m2": 24.4,
+     "build_year": 1998,
+     "jimok": null,
+     "land_use": "일반상업",
+     "avg_price_10k": 12100,
+     "min_price_10k": 11700,
+     "max_price_10k": 12500,
+     "excluded_outliers": 0,
+     "lat": 37.491046069527016,
+     "lon": 127.03268117695143
+    },
+    {
+     "name": "신사동 6**",
+     "dong": "신사동",
+     "jibun": "6**",
+     "deals": [
+      {
+       "price_10k_won": 2680000,
+       "area_m2": 991.33,
+       "floor": 0,
+       "deal_date": "2026년 7월 8일"
+      },
+      {
+       "price_10k_won": 361000,
+       "area_m2": 129.95,
+       "floor": 0,
+       "deal_date": "2026년 7월 3일"
+      }
+     ],
+     "count": 11,
+     "avg_area_m2": 502.7,
+     "build_year": null,
+     "jimok": null,
+     "land_use": null,
+     "avg_price_10k": 1333000,
+     "min_price_10k": 361000,
+     "max_price_10k": 2680000,
+     "excluded_outliers": 0
+    },
+    {
+     "name": "대치동 9**",
+     "dong": "대치동",
+     "jibun": "9**",
+     "deals": [
+      {
+       "price_10k_won": 1150000,
+       "area_m2": 351.21,
+       "floor": 0,
+       "deal_date": "2026년 6월 12일"
+      },
+      {
+       "price_10k_won": 6000,
+       "area_m2": 9.89,
+       "floor": 0,
+       "deal_date": "2026년 5월 22일"
+      }
+     ],
+     "count": 5,
+     "avg_area_m2": 388.1,
+     "build_year": null,
+     "jimok": null,
+     "land_use": null,
+     "avg_price_10k": 685600,
+     "min_price_10k": 6000,
+     "max_price_10k": 1220000,
+     "excluded_outliers": 0
+    }
+   ]
+  },
+  "apt_rent": {
+   "label": "아파트 전월세",
+   "type": "apt",
+   "kind": "rent",
+   "count": 93,
+   "capped_count": 0,
+   "count_in_radius": 93,
+   "count_unresolved": 0,
+   "groups": [
+    {
+     "name": "대우디오빌",
+     "dong": "역삼동",
+     "jibun": "720-25",
+     "deals": [
+      {
+       "deposit_10k_won": 1000,
+       "monthly_rent_10k_won": 125,
+       "area_m2": 30.03,
+       "floor": 11,
+       "deal_date": "2026년 7월 31일"
+      },
+      {
+       "deposit_10k_won": 30000,
+       "monthly_rent_10k_won": 0,
+       "area_m2": 30.03,
+       "floor": 9,
+       "deal_date": "2026년 7월 30일"
+      }
+     ],
+     "count": 24,
+     "avg_area_m2": 31.7,
+     "build_year": null,
+     "jimok": null,
+     "land_use": null,
+     "avg_deposit_10k": 11133,
+     "avg_monthly_10k": 102,
+     "lat": 37.50144750483777,
+     "lon": 127.04269822744217
+    },
+    {
+     "name": "리스트강남",
+     "dong": "논현동",
+     "jibun": "202-7",
+     "deals": [
+      {
+       "deposit_10k_won": 7533,
+       "monthly_rent_10k_won": 54,
+       "area_m2": 17.42,
+       "floor": 14,
+       "deal_date": "2026년 7월 30일"
+      },
+      {
+       "deposit_10k_won": 13513,
+       "monthly_rent_10k_won": 92,
+       "area_m2": 45.45,
+       "floor": 12,
+       "deal_date": "2026년 6월 25일"
+      }
+     ],
+     "count": 21,
+     "avg_area_m2": 30.2,
+     "build_year": null,
+     "jimok": null,
+     "land_use": null,
+     "avg_deposit_10k": 11347,
+     "avg_monthly_10k": 69,
+     "lat": 37.50569365534727,
+     "lon": 127.0274615609691
+    }
+   ]
+  },
+  "villa_rent": {
+   "label": "연립다세대 전월세",
+   "type": "villa",
+   "kind": "rent",
+   "count": 124,
+   "capped_count": 0,
+   "count_in_radius": 124,
+   "count_unresolved": 0,
+   "groups": [
+    {
+     "name": "강남IBC오피스텔",
+     "dong": "역삼동",
+     "jibun": "648-1",
+     "deals": [
+      {
+       "deposit_10k_won": 1000,
+       "monthly_rent_10k_won": 97,
+       "area_m2": 23.21,
+       "floor": 13,
+       "deal_date": "2026년 7월 22일"
+      },
+      {
+       "deposit_10k_won": 1000,
+       "monthly_rent_10k_won": 92,
+       "area_m2": 19.6,
+       "floor": 14,
+       "deal_date": "2026년 7월 20일"
+      }
+     ],
+     "count": 11,
+     "avg_area_m2": 26,
+     "build_year": null,
+     "jimok": null,
+     "land_use": null,
+     "avg_deposit_10k": 1182,
+     "avg_monthly_10k": 110,
+     "lat": 37.49976360730379,
+     "lon": 127.0310722971771
+    },
+    {
+     "name": "마이플레이스",
+     "dong": "역삼동",
+     "jibun": "745-24",
+     "deals": [
+      {
+       "deposit_10k_won": 33000,
+       "monthly_rent_10k_won": 0,
+       "area_m2": 27.54,
+       "floor": 4,
+       "deal_date": "2026년 7월 18일"
+      },
+      {
+       "deposit_10k_won": 2000,
+       "monthly_rent_10k_won": 180,
+       "area_m2": 27.78,
+       "floor": 2,
+       "deal_date": "2026년 7월 7일"
+      }
+     ],
+     "count": 11,
+     "avg_area_m2": 28.1,
+     "build_year": null,
+     "jimok": null,
+     "land_use": null,
+     "avg_deposit_10k": 29700,
+     "avg_monthly_10k": 49,
+     "lat": 37.49644011831231,
+     "lon": 127.03688045518646
+    }
+   ]
+  },
+  "house_rent": {
+   "label": "단독다가구 전월세",
+   "type": "house",
+   "kind": "rent",
+   "count": 399,
+   "capped_count": 0,
+   "count_in_radius": 399,
+   "count_unresolved": 0,
+   "groups": [
+    {
+     "name": "역삼동",
+     "dong": "역삼동",
+     "jibun": "",
+     "deals": [
+      {
+       "deposit_10k_won": 15000,
+       "monthly_rent_10k_won": 0,
+       "area_m2": 24.6963,
+       "floor": 0,
+       "deal_date": "2026년 7월 31일"
+      },
+      {
+       "deposit_10k_won": 500,
+       "monthly_rent_10k_won": 50,
+       "area_m2": 26.45,
+       "floor": 0,
+       "deal_date": "2026년 7월 31일"
+      }
+     ],
+     "count": 399,
+     "avg_area_m2": 39.7,
+     "build_year": null,
+     "jimok": null,
+     "land_use": null,
+     "avg_deposit_10k": 6052,
+     "avg_monthly_10k": 85,
+     "lat": 37.504527500615495,
+     "lon": 127.02557815572709
+    }
+   ]
+  },
+  "officetel_rent": {
+   "label": "오피스텔 전월세",
+   "type": "officetel",
+   "kind": "rent",
+   "count": 305,
+   "capped_count": 3,
+   "count_in_radius": 305,
+   "count_unresolved": 0,
+   "groups": [
+    {
+     "name": "역삼역센트럴푸르지오시티",
+     "dong": "역삼동",
+     "jibun": "719-24",
+     "deals": [
+      {
+       "deposit_10k_won": 18220,
+       "monthly_rent_10k_won": 10,
+       "area_m2": 17.57,
+       "floor": 9,
+       "deal_date": "2026년 7월 28일"
+      },
+      {
+       "deposit_10k_won": 18000,
+       "monthly_rent_10k_won": 15,
+       "area_m2": 17.57,
+       "floor": 15,
+       "deal_date": "2026년 7월 23일"
+      }
+     ],
+     "count": 68,
+     "avg_area_m2": 18.2,
+     "build_year": null,
+     "jimok": null,
+     "land_use": null,
+     "avg_deposit_10k": 8748,
+     "avg_monthly_10k": 64,
+     "lat": 37.50085120576959,
+     "lon": 127.04061338601174
+    },
+    {
+     "name": "더스위트캐슬",
+     "dong": "역삼동",
+     "jibun": "603-5",
+     "deals": [
+      {
+       "deposit_10k_won": 1000,
+       "monthly_rent_10k_won": 105,
+       "area_m2": 20.61,
+       "floor": 5,
+       "deal_date": "2026년 7월 26일"
+      },
+      {
+       "deposit_10k_won": 1000,
+       "monthly_rent_10k_won": 105,
+       "area_m2": 20.61,
+       "floor": 4,
+       "deal_date": "2026년 7월 26일"
+      }
+     ],
+     "count": 34,
+     "avg_area_m2": 20.6,
+     "build_year": null,
+     "jimok": null,
+     "land_use": null,
+     "avg_deposit_10k": 985,
+     "avg_monthly_10k": 112,
+     "lat": 37.50579000244806,
+     "lon": 127.02968945992964
+    }
+   ]
+  }
+ }
+}

@@ -28,9 +28,11 @@
 
 import { useState } from "react";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { classifySelection } from "@/lib/selection-integrity";
 import {
   deriveContextHeaderData,
   deriveSitePipelineSteps,
+  withAsOf,
   type ContextHeaderData,
 } from "@/lib/context-header";
 import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
@@ -78,7 +80,11 @@ function ContextChip({
 }
 
 /** 용도지역·면적 근거 트레이스를 store SSOT에서 구성(있을 때만·무목업). */
-function buildEvidenceItems(
+/** ★export 하는 이유: 근거 문구는 사용자가 "근거 보기" 로 확인하는 자리라 **거짓이면 근거
+ *  없음보다 나쁘다**. 그런데 변이로 확인하니 이 문구가 **무잠금**이었다 — 거짓 문구
+ *  ("다필지 통합 우세 용도지역(dominant)")로 되돌려도 전부 초록이었다.
+ *  컴포넌트를 띄우지 않고 순수 함수로 잠글 수 있게 공개한다. */
+export function buildEvidenceItems(
   data: ContextHeaderData,
   farBasis: string | null,
 ): EvidenceItem[] {
@@ -87,7 +93,18 @@ function buildEvidenceItems(
     items.push({
       label: "용도지역",
       value: data.zoneLabel,
-      basis: data.isMultiParcel ? "다필지 통합 우세 용도지역(dominant)" : "부지분석 확정 용도지역",
+      // ★거짓 근거를 걷어낸다(2026-08-24) — "우세(dominant)" 라고 적었지만 이 값의 출처는
+      //   `dominantZoneCode ?? zoneCode` 이고 둘 다 **대표(첫) 필지** 값이었다. 근거 트레이스는
+      //   사용자가 "근거 보기" 를 눌러 확인하는 자리다 — **거짓 근거는 근거 없음보다 나쁘다**.
+      //   진짜 우세 용도지역은 서버가 면적합산으로 판정하며 구획도 통합 종합분석에 표시된다.
+      // ★근거에 **기준 시각**을 덧붙인다 — 이 값이 언제 확정된 것인지 말하지 않으면
+      //   사용자는 낡은 저장본을 현재 사실로 읽는다(2026-08-24 라이브 증상).
+      basis: withAsOf(
+        data.isMultiParcel
+          ? "다필지 대표(첫) 필지 용도지역 — 면적 우세 용도지역은 구획도 '통합 종합분석' 참조"
+          : "부지분석 확정 용도지역",
+        data.fetchedAt,
+      ),
     });
   }
   const area = areaText(data.landAreaSqm);
@@ -95,9 +112,17 @@ function buildEvidenceItems(
     items.push({
       label: "대지면적",
       value: area,
-      basis: data.isMultiParcel
-        ? `다필지 통합면적(유효필지 ${data.parcelCount ?? "?"}필지 합계)`
-        : "단일필지 대지면적",
+      // ★단정하지 않는다 — SSOT 가 준 basis 를 그대로 말한다.
+      //   `representative` 는 **다필지인데 통합면적을 아직 못 구해 대표 1필지 면적을 쓰는**
+      //   상태다. 이걸 "N필지 합계"라고 부르면 거짓 근거가 된다(실물: 33필지에 543㎡).
+      basis: withAsOf(
+        data.landAreaBasis === "integrated"
+          ? `다필지 통합면적(유효필지 ${data.parcelCount ?? "?"}필지 합계)`
+          : data.landAreaBasis === "representative"
+            ? `★대표 1필지 면적 — 통합면적 미확보(선택 ${data.parcelCount ?? "?"}필지 전체 합계가 아닙니다)`
+            : "단일필지 대지면적",
+        data.fetchedAt,
+      ),
     });
   }
   if (farBasis && data.zoneLabel) {
@@ -124,9 +149,21 @@ export function ContextHeader({
   const projectId = useProjectContextStore((s) => s.projectId);
   const projectName = useProjectContextStore((s) => s.projectName);
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
+
+  // ★헤더가 "통합 N필지"라고 **단정**하던 것을 멈춘다(2026-08-24 · 라이브 화면에서 발견).
+  //   선택 화면 배너는 이미 "하나의 개발 부지가 아닙니다(최대 290km)"라고 고지하는데,
+  //   바로 위 헤더는 같은 순간 "대지면적 162,033㎡ · 통합 3필지"라고 말했다 —
+  //   **한 화면이 자기모순**이다. 사용자는 위쪽(헤더)을 먼저 읽는다.
+  //   ★판정은 선택 화면과 **같은 판별자**를 쓴다(산식 복제 금지 — 두 표면이 갈리면 그게 결함이다).
+  const selectionVerdict = classifySelection(
+    (siteAnalysis as { parcels?: Array<{ address?: string | null; lat?: number | null; lon?: number | null }> } | null)
+      ?.parcels ?? null,
+  ).verdict;
+  // 설계 산출(designData) — 부지분석에 용도지역이 없을 때 설계 폼이 쓴 용도지역으로 폴백하기 위해 구독.
+  const designData = useProjectContextStore((s) => s.designData);
   const [showEvidence, setShowEvidence] = useState(false);
 
-  const data = deriveContextHeaderData({ projectId, projectName, siteAnalysis });
+  const data = deriveContextHeaderData({ projectId, projectName, siteAnalysis, designData });
   const farBasis =
     typeof siteAnalysis?.farBasis === "string" && siteAnalysis.farBasis.trim()
       ? siteAnalysis.farBasis.trim()
@@ -189,12 +226,23 @@ export function ContextHeader({
         <span className="hidden h-3 w-px bg-[var(--line)] sm:block" aria-hidden="true" />
         <ContextChip label="PNU" value={data.pnu} />
         <span className="hidden h-3 w-px bg-[var(--line)] sm:block" aria-hidden="true" />
-        <ContextChip label="용도지역" value={data.zoneLabel} />
+        <ContextChip
+          label="용도지역"
+          value={data.zoneLabel}
+          badge={data.zoneSource === "design" ? "직접 입력" : null}
+        />
         <span className="hidden h-3 w-px bg-[var(--line)] sm:block" aria-hidden="true" />
         <ContextChip
           label="대지면적"
           value={area}
-          badge={data.isMultiParcel ? `통합 ${data.parcelCount}필지` : null}
+          // ★하나의 부지가 아니면 "통합"이라 부르지 않는다 — 합계임을 밝힌다.
+          badge={
+            data.isMultiParcel
+              ? selectionVerdict === "single_site"
+                ? `통합 ${data.parcelCount}필지`
+                : `${data.parcelCount}필지 합계 · 통합 부지 아님`
+              : null
+          }
         />
 
         {/* 근거 토글 — 근거 항목이 있을 때만 노출(무목업: 근거 없으면 버튼 자체 미표시) */}

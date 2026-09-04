@@ -37,18 +37,48 @@ def _reproject_5179_to_4326(coords: Any, tf: Any) -> Any:
     return [_reproject_5179_to_4326(c, tf) for c in coords]
 
 
+def _as_epsg(srid: int | str) -> str:
+    """SRID 를 pyproj 가 받는 'EPSG:xxxx' 문자열로 정규화한다.
+
+    정수(5179)·숫자문자열('5179')·이미 'EPSG:5179' 형태 모두 허용(호출측 편의).
+    """
+    text = str(srid).strip()
+    if text.upper().startswith("EPSG:"):
+        return "EPSG:" + text.split(":", 1)[1]
+    return f"EPSG:{text}"
+
+
+def build_crs_transformer(source_srid: int | str, target_srid: int | str) -> Any | None:
+    """임의의 두 좌표계(SRID) 사이 좌표 변환기를 만든다(공용·양방향).
+
+    - source_srid/target_srid: EPSG 코드. 정수(5179)·문자열('EPSG:5186') 모두 허용.
+    - always_xy=True → (x,y)=(경도/동거리, 위도/북거리) 순서 고정(입출력 일관).
+    - 지원 좌표계 예: UTM-K(5179)·지적 중부원점(5186, GRS80)·구지적계(5174, Bessel)·WGS84(4326).
+      역방향(예: 4326→5186)도 source/target 만 바꾸면 그대로 얻는다.
+    - pyproj 미설치/미상 SRID → None(호출측이 500 대신 정직 폴백 — 가짜좌표 금지).
+
+    한국 지적측량 좌표계와 지도 좌표계를 오가는 모든 레이어가 공유하는 단일 변환 유틸.
+    (인구밀도·권역이동·CAD/측량 대조 등 — 한 곳 수정=전역 반영.)
+    """
+    try:
+        from pyproj import Transformer
+        return Transformer.from_crs(
+            _as_epsg(source_srid), _as_epsg(target_srid), always_xy=True
+        )
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def build_utmk_to_wgs84_transformer() -> Any | None:
     """UTM-K(EPSG:5179)→WGS84(EPSG:4326) 좌표 변환기를 만든다(공용).
 
     always_xy=True → (경도,위도) 순. pyproj 미설치/생성 실패 시 None 을 돌려주고,
     호출측은 500 대신 정직하게 data_source='unavailable' 로 폴백한다(가짜좌표 금지).
     인구밀도·권역이동 등 UTM-K 경계를 다루는 레이어가 공유한다(한 곳 수정=전역 반영).
+
+    ※ 일반 build_crs_transformer(5179, 4326) 의 특수화 — 시그니처·동작 불변(기존 호출처 무회귀).
     """
-    try:
-        from pyproj import Transformer
-        return Transformer.from_crs("EPSG:5179", "EPSG:4326", always_xy=True)
-    except Exception:  # noqa: BLE001
-        return None
+    return build_crs_transformer(5179, 4326)
 
 
 def _polygon_area_m2(geometry: dict[str, Any]) -> float:

@@ -1,0 +1,39 @@
+{
+  "_meta": {
+    "seed_id": "G3",
+    "title": "보전관리 임야 BCR/FAR 커버리지 갭(조용한 판정불가 미표면화)",
+    "land_attrs": {"jimok": "임야", "zone": "보전관리지역", "sanji_gubun": "보전산지_공익용"},
+    "tier": "A",
+    "phase": "0/W1-3",
+    "defect": "보전관리지역은 국토계획법 별표(시행령 §84·85)에 BCR/FAR 법정한도가 명확(20/80)한 표준 용도지역인데, BCR/FAR 룩업 누락 시 종합분석이 '판정불가'(effective_far.national_*=null)로 조용히 종료 → 사용자에게 갭이 안 보이고 산출도 안 됨. ★M3: 이 BCR/FAR 판정불가(=커버리지 갭, 등재하면 산출)는, 관리지역 허용용도의 조례의존 판정불가(=본질적 판정불가, 갭 아님)와 구분해야 한다.",
+    "w1_target": "coverage.py G3_ZONE_COVERAGE_GAP: 별표 한도 표준 용도지역인데 법정 BCR/FAR가 판정불가면 P1 갭 finding 표면화(expected=별표 한도존재·observed=판정불가). 근본봉합=ZONE_LIMITS 등재(보전관리 20/80, 이미 M-7). 허용용도(permit)는 조례의존이라 갭 미플래그(정직 판정불가 유지).",
+    "regression_note": "허용용도의 '판정불가' 자체는 정직한 기존 동작(회귀 유지·갭 아님). W1-3은 그 위에 BCR/FAR 커버리지 갭 표면화를 additive. 근본봉합(ZONE_LIMITS 등재) 후 라이브는 BCR/FAR 20/80 산출(갭 해소) — 이 fixture는 룩업 누락 시의 조용한 판정불가 버그를 앵커링해 coverage.py 가드 실재를 증명.",
+    "synthetic": true,
+    "honesty": "W0 합성 fixture — 라이브 analyze() 미수집. effective_far는 far_tier_service.calc_effective_far의 zone_unmatched 반환 shape(national_*=null·far_basis=zone_unmatched)에 충실한 구조 시드다. 계획 §2.2 G3(coverage gap vs 조례의존 판정불가 구분·M3)에 대응."
+  },
+  "ctx": {"address": "경상북도 포항시 남구 호미곶면 강사리 산 20", "zone_type": "보전관리지역", "pnu": "4711025031xxxxxxx"},
+  "input": {
+    "zone_type": "보전관리지역",
+    "effective_far": {
+      "effective_far_pct": null,
+      "effective_bcr_pct": null,
+      "national_far_pct": null,
+      "national_bcr_pct": null,
+      "far_basis": "zone_unmatched",
+      "note": "보전관리지역 BCR/FAR 판정불가(룩업 미등재 가정 — 조용한 커버리지 갭). 별표 한도는 20/80으로 명확 → 등재 시 산출 가능."
+    },
+    "permit": {
+      "verdict": "판정불가",
+      "permitted_types_known": false,
+      "reason": "'보전관리지역' 허용행위/용도는 지자체 도시계획조례·개별심의 확인 필요 — 판정불가(조례의존이라 억지 산출 금지, 정직 판정불가 유지)",
+      "coverage_gap_surfaced": false,
+      "ordinance_dependent": true
+    },
+    "special_parcel": {"jimok": "임야", "보전산지_여부": true, "산지구분": "보전산지_공익용"}
+  },
+  "current_baseline": {
+    "field": "effective_far.national_far_pct",
+    "observed": null,
+    "note": "별표 한도 명확한 보전관리(20/80)인데 BCR/FAR가 판정불가(null)로 조용히 종료 — coverage.py 미등록 시 갭이 finding으로 표면화되지 않음. W1-3: coverage.py G3가 표면화(→ 산출값 20/80은 ZONE_LIMITS 등재로 근본봉합). 허용용도 판정불가는 조례의존(갭 아님)이라 무플래그 유지."
+  }
+}

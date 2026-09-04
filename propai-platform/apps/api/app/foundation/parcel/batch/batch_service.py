@@ -12,8 +12,11 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from app.foundation.parcel.batch import region_normalizer
 from app.foundation.parcel.batch.aggregator import Aggregator
@@ -148,7 +151,15 @@ class BatchService:
         return job
 
     async def run(self, job_id: str) -> JobRecord:
-        """인라인 실행 — 청크별 store 갱신 → 완료 시 집계 → 상태 확정."""
+        """인라인 실행 — 청크별 store 갱신 → 완료 시 집계 → 상태 확정.
+
+        ★버그수정(FAILED 도달불가): 실행 중 예외는 여기서 잡아 JobRecord.mark_failed로
+        FAILED 상태를 저장한 뒤 재전파한다. 과거엔 호출측(라우터의 인프로세스 백그라운드
+        태스크)이 `except Exception: pass`로 예외를 완전히 삼켜 아무 코드도 FAILED를 쓰지
+        않았다 — 잡이 RUNNING에 영구 고착돼 프론트가 1.5s 간격으로 무한 폴링했다. 여기서
+        선(先)저장 후 재전파하면 호출측(인프로세스 background task·Celery run_batch 둘 다)의
+        기존 예외 처리/로깅은 그대로 유지되면서, 폴링은 항상 터미널 상태로 수렴한다.
+        """
         record = await self.store.get(job_id)
         if record is None:
             raise KeyError(f"잡을 찾을 수 없음: {job_id}")
@@ -158,60 +169,83 @@ class BatchService:
             await self.store.save(record)
             return record
 
-        # ★정규화(submit에서 이전) — 아직 정규화 전이면 여기서 geocode+bbox 조회를 수행.
-        ri = record.job.region_input or {}
-        if not ri.get("_normalized"):
-            inp = _batch_input_from_region(ri)
-            norm = await region_normalizer.normalize(inp, vworld=self._vworld)
-            record.target_pnus = norm.pnus
-            record.degrade_reason = norm.reason if norm.degraded else None
-            new_ri = {**ri, "_normalized": True}
-            if norm.geo:
-                new_ri["_geo"] = norm.geo
-            record.job.region_input = new_ri
-            await self.store.save(record)
+        try:
+            # ★정규화(submit에서 이전) — 아직 정규화 전이면 여기서 geocode+bbox 조회를 수행.
+            ri = record.job.region_input or {}
+            if not ri.get("_normalized"):
+                inp = _batch_input_from_region(ri)
+                norm = await region_normalizer.normalize(inp, vworld=self._vworld)
+                record.target_pnus = norm.pnus
+                record.degrade_reason = norm.reason if norm.degraded else None
+                new_ri = {**ri, "_normalized": True}
+                if norm.geo:
+                    new_ri["_geo"] = norm.geo
+                record.job.region_input = new_ri
+                await self.store.save(record)
 
-        # 대상이 없으면(예: degrade) 바로 PARTIAL 로 마감(부분/공백).
-        if not record.target_pnus:
+            # 대상이 없으면(예: degrade) 바로 PARTIAL 로 마감(부분/공백).
+            if not record.target_pnus:
+                record.recompute_counts()
+                record.aggregate = BatchAggregate(held=True)
+                record.mark_state_from_progress()
+                await self.store.save(record)
+                return record
+
+            record.job.state = JobState.RUNNING
+            # ★재실행 중복 봉합(2026-09-03 실측) — `run_chunks` 는 언제나 `target_pnus` **전체**를
+            #   다시 돈다(부분 재개 의미가 없다). 그런데 `on_chunk` 이 `items.extend` 로 덧붙이므로,
+            #   같은 잡에 run() 이 두 번 돌면 **결과가 중복**되고 `counts` 가 부풀어 오른다.
+            #   라이브 실측: 같은 입력 2건 재제출 → 같은 job_id(멱등 ◎)인데
+            #                `total=2·고유=2` → `total=**4**·고유=2`. 누적은 `3→6→9→12→15` 로 이어졌다.
+            #   ★분모가 틀리면 그 위의 **모든 비율**이 틀린다(맹지 비율·미조회 비율·공시가액 총액).
+            #   ★라우터에서 재실행을 막는 것만으로는 부족하다 — **Celery 재시도**가 남는다.
+            #     그래서 `run()` 자체를 **구성상 멱등**으로 만든다(시작 시 비운다).
+            record.items = []
             record.recompute_counts()
-            record.aggregate = BatchAggregate(held=True)
-            record.mark_state_from_progress()
             await self.store.save(record)
-            return record
 
-        record.job.state = JobState.RUNNING
-        await self.store.save(record)
+            async def on_chunk(results: list[BatchItemResult]) -> None:
+                # 매 청크마다 부분 결과를 반영(PARTIAL 진행률 노출).
+                current = await self.store.get(job_id)
+                if current is None:
+                    return
+                current.items.extend(results)
+                current.recompute_counts()
+                current.mark_state_from_progress()
+                await self.store.save(current)
 
-        async def on_chunk(results: list[BatchItemResult]) -> None:
-            # 매 청크마다 부분 결과를 반영(PARTIAL 진행률 노출).
-            current = await self.store.get(job_id)
-            if current is None:
-                return
-            current.items.extend(results)
-            current.recompute_counts()
-            current.mark_state_from_progress()
-            await self.store.save(current)
+            def is_cancelled() -> bool:
+                # 매번 store 에서 최신 취소 상태 확인.
+                return record.cancelled
 
-        def is_cancelled() -> bool:
-            # 매번 store 에서 최신 취소 상태 확인.
-            return record.cancelled
+            await self.runner.run_chunks(record.target_pnus, on_chunk, is_cancelled)
 
-        await self.runner.run_chunks(record.target_pnus, on_chunk, is_cancelled)
+            # 최종 상태 재로딩 후 집계.
+            final = await self.store.get(job_id)
+            if final is None:
+                return record
+            if final.cancelled:
+                final.mark_state_from_progress()
+                await self.store.save(final)
+                return final
 
-        # 최종 상태 재로딩 후 집계.
-        final = await self.store.get(job_id)
-        if final is None:
-            return record
-        if final.cancelled:
+            final.recompute_counts()
+            final.aggregate = await self.aggregator.run(final)
             final.mark_state_from_progress()
             await self.store.save(final)
             return final
-
-        final.recompute_counts()
-        final.aggregate = await self.aggregator.run(final)
-        final.mark_state_from_progress()
-        await self.store.save(final)
-        return final
+        except Exception as e:  # noqa: BLE001 — FAILED로 표면화(무음 고착 방지) 후 재전파(호출측 처리 유지).
+            try:
+                current = await self.store.get(job_id) or record
+            except Exception:  # noqa: BLE001 — store 조회 자체 실패 시 최초 record로 폴백 저장.
+                current = record
+            if not current.cancelled:
+                current.mark_failed(str(e))
+                try:
+                    await self.store.save(current)
+                except Exception:  # noqa: BLE001 — 저장까지 실패하면 상태 고착은 불가피(로그로만 표면화).
+                    logger.warning("배치 잡 FAILED 상태 저장 실패: job_id=%s", job_id)
+            raise
 
     async def result(
         self, job_id: str, page: int = 1, size: int = 500, wait: bool = False
@@ -248,6 +282,7 @@ class BatchService:
             items=page_items,
             aggregate=record.aggregate,
             pending=record.pending_pnus(),
+            error=(record.job.region_input or {}).get("_error"),
             outliers=_area_outliers(record.items),
             fee_per_unit_krw=per_unit,
             estimated_fee_krw=estimated_fee,

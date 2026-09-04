@@ -50,24 +50,48 @@ async def generate_senior_narrative(prompt: str, *, use_llm: bool) -> str | None
 
     use_llm=False·빈 프롬프트·LLM 미설정/실패 → None(호출처가 결정론 구조로 강등).
     BaseInterpreter._invoke는 실패 시 빈 dict를 반환하므로 narrative 결측은 자연히 None.
+
+    ★백로그①(2026-07-22): _invoke_or_empty(is_fallback_only 판정)는 여기 부적합하다 —
+    fallback_key="narrative"가 유일한 expected_key라, 정상 응답도 폴백과 동일하게
+    "narrative 키 하나만 채워짐"으로 보여 항상 폴백-only 판정이 나 전 응답이 강등된다.
+    또한 narrative는 산문이 정상 출력이므로 parse_ok(원문이 JSON 객체로 파싱되는지)도
+    부적합하다 — LLM이 시스템프롬프트의 JSON 지시를 어기고 순수 산문으로만 답하면
+    (완전히 정상적인 답인데도) llm_json.parse_llm_json이 중괄호를 못 찾아 예외를 내
+    parse_ok=False가 된다(오탐). 반면 is_truncated(stop_reason=max_tokens)는 실제
+    응답이 중간에 잘렸는지만 가리키는 명확한 신호라 오탐이 없다 — 그래서 이 신호
+    하나만으로 강등한다(절단 시 원문/부분 JSON 뭉치를 narrative로 노출 금지).
     """
     if not use_llm or not prompt.strip():
         return None
+    interp = SeniorNarratorInterpreter()
     try:
-        result = await SeniorNarratorInterpreter()._invoke(prompt)
+        result = await interp._invoke(prompt)
     except Exception:  # noqa: BLE001 — 키 미설정·SDK 미존재·호출 실패 모두 결정론 강등
         return None
+    if interp.last_truncated:
+        return None
     narrative = (result.get("narrative") or "").strip()
+    # ★R1 반영: 절단이 아니어도 "파싱 실패 + 중괄호로 시작"이면 깨진 JSON 덤프다(따옴표
+    #   미이스케이프 등) — raw 노출 금지. 정상 산문(중괄호 미시작)은 parse_ok=False여도
+    #   보존(산문=정상 출력인 인터프리터라 parse_ok 단독 강등은 오탐 — 위 docstring 참조).
+    if not interp.last_parse_ok and narrative[:1] in ("{", "["):
+        return None
     return narrative or None
 
 
 async def _debate_side(prompt: str) -> str | None:
-    """단일 입장 논증(graceful). 실패/빈결과 → None."""
+    """단일 입장 논증(graceful). 실패/빈결과/절단 → None(위 narrative와 동일 신호 설계)."""
+    interp = SeniorDebateInterpreter()
     try:
-        result = await SeniorDebateInterpreter()._invoke(prompt)
+        result = await interp._invoke(prompt)
     except Exception:  # noqa: BLE001 — 키 미설정·실패 시 해당 입장 생략(무중단)
         return None
+    if interp.last_truncated:
+        return None
     text = (result.get("text") or "").strip()
+    # ★R1 반영: narrative 게이트와 동일 — 깨진 JSON 덤프(파싱 실패+중괄호 시작)만 차단.
+    if not interp.last_parse_ok and text[:1] in ("{", "["):
+        return None
     return text or None
 
 

@@ -2,6 +2,7 @@
 
 import { ApolloProvider } from "@apollo/client";
 import { QueryClientProvider } from "@tanstack/react-query";
+import { ToastProvider } from "@propai/ui";
 import {
   createContext,
   useContext,
@@ -78,7 +79,11 @@ export function AppProviders({ children, locale }: AppProvidersProps) {
       <ApolloProvider client={apolloClient}>
         <QueryClientProvider client={queryClient}>
           <PwaRuntimeProvider>
-            <AppStateBridge locale={locale}>{children}</AppStateBridge>
+            {/* ★UX 트랙 C3: useToast() 호스트를 앱 셸 최상위에 한 번만 마운트 — 이 아래
+                모든 페이지·컴포넌트가 동일한 자리·스타일의 토스트를 공유한다(21탭 공용). */}
+            <ToastProvider>
+              <AppStateBridge locale={locale}>{children}</AppStateBridge>
+            </ToastProvider>
           </PwaRuntimeProvider>
         </QueryClientProvider>
       </ApolloProvider>

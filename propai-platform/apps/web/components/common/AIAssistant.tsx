@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { useIsAdmin } from "@/lib/use-is-admin";
 import { apiClient, resolveApiOrigin } from "@/lib/api-client";
 import { readSseStream } from "@/lib/realtime";
+import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import Link from "next/link";
 
@@ -31,7 +32,14 @@ function buildSsotContext(): string {
     const sa = s.siteAnalysis;
     if (sa) {
       if (sa.address) lines.push(`주소: ${sa.address}`);
-      if (sa.landAreaSqm != null) lines.push(`대지면적: ${sa.landAreaSqm.toLocaleString()}㎡`);
+      // ★면적은 effectiveLandAreaSqm(SSOT) — raw landAreaSqm 금지. 다필지에서 raw 를 주면
+      //   AI 가 대표필지(또는 이전 필지구성의 잔류값) 면적으로 답변해 규모 판단이 틀어진다.
+      const areaSqm = effectiveLandAreaSqm(sa);
+      if (areaSqm != null) {
+        lines.push(
+          `대지면적: ${areaSqm.toLocaleString()}㎡${(sa.parcelCount ?? 1) > 1 ? ` (통합 ${sa.parcelCount}필지)` : ""}`,
+        );
+      }
       if (sa.zoneCode) lines.push(`용도지역: ${sa.zoneCode}`);
       if (sa.estimatedValue != null) lines.push(`추정 토지가치: ${formatWon(sa.estimatedValue)}`);
     }
@@ -84,18 +92,18 @@ function getStoredAccessToken(): string {
 }
 
 const Icons = {
-  Sparkles: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m12 3 1.912 5.813a2 2 0 0 0 1.275 1.275L21 12l-5.813 1.912a2 2 0 0 0-1.275 1.275L12 21l-1.912-5.813a2 2 0 0 0-1.275-1.275L3 12l5.813-1.912a2 2 0 0 0 1.275-1.275L12 3Z"/><path d="M5 3v4"/><path d="M19 17v4"/><path d="M3 5h4"/><path d="M17 19h4"/></svg>,
-  X: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>,
-  Send: () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>,
-  Bot: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>,
-  Settings: () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+  Sparkles: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m12 3 1.912 5.813a2 2 0 0 0 1.275 1.275L21 12l-5.813 1.912a2 2 0 0 0-1.275 1.275L12 21l-1.912-5.813a2 2 0 0 0-1.275-1.275L3 12l5.813-1.912a2 2 0 0 0 1.275-1.275L12 3Z"/><path d="M5 3v4"/><path d="M19 17v4"/><path d="M3 5h4"/><path d="M17 19h4"/></svg>,
+  X: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>,
+  Send: () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>,
+  Bot: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>,
+  Settings: () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
 };
 
 export function AIAssistant() {
   const pathname = usePathname();
   const [isOpen, setIsOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
-  
+
   const isAdmin = useIsAdmin();
 
   // 비서는 백엔드(api.4t8t.net/api/v1/ai/*)를 직접 호출한다 — Next /api/ai/*는 A1 nginx가 백엔드로
@@ -218,7 +226,7 @@ export function AIAssistant() {
   // 컨텍스트 인지형 초기 메시지 설정 (클라이언트 전용)
   useEffect(() => {
     let initialText = "안녕하세요! 사통팔땅 AI 비서입니다. 무엇을 도와드릴까요?";
-    
+
     if (pathname.includes("/sre")) {
       initialText = "SRE 관제 모드 활성화. 시스템 가용성과 빌드 품질 데이터를 분석할 수 있습니다. 어떤 지표가 궁금하신가요?";
     } else if (pathname.includes("/projects/")) {
@@ -230,7 +238,7 @@ export function AIAssistant() {
     }
 
     // 화면(도메인) 진입 시 초기 인사로 리셋 — 의도된 동작.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+
     setMessages([{ id: 'initial', role: "assistant", content: initialText }]);
   }, [pathname]);
 
@@ -257,18 +265,38 @@ export function AIAssistant() {
   };
 
   return (
-    <div className="fixed bottom-10 right-10 z-[9999] flex flex-col items-end gap-4 print:hidden">
+    /* ★모바일 IA P0(2026-08-05) — z-[9999] → z-[95].
+       종전 서열은 `딤 100 < 네비 드로어 101 < 앱 헤더 1000 < 이 플로팅 버튼 9999`라,
+       모바일 메뉴를 열면 이 버튼이 **네비 메뉴와 딤 위에** 떠서 메뉴를 가리고 오조작을 유발했다
+       (사용자 지적: "메뉴 아이콘·텍스트필드가 네비게이션 위로 나타난다").
+       95를 택한 근거 — 본문 **일반** 레이어의 최상단이 z-[70](CadBimIntegrationPanel 배지)이고
+       71~99 구간은 전역에서 비어 있다. 따라서 95는 본문 일반 레이어 위 · 네비/모달 전부 아래를
+       동시에 만족하는 안전 슬롯이다. 이 서열은 __tests__/floating-layer.contract.test.tsx 가
+       실제 렌더 결과로 잠근다(숫자를 되돌리면 그 테스트가 깨진다).
+
+       ★"본문 전체 위"는 아니다(R1 지적 H1 — 초판 주석의 사실오기를 정정한다). 사통맵 지도
+       오버레이(SatongMapShell 팝오버 z-[430]·레이어 레일 z-[420], lib/satong-map-z.ts 의
+       SATONG_UI_Z 400~500, 그리고 SatongMapShell 배지 칩바 z-[380])는 지도 래퍼가 스태킹
+       컨텍스트를 만들지 않아 루트에서 경쟁하므로
+       **이 버튼보다 위에 온다**. 종전(9999)엔 반대로 이 버튼이 지도 컨트롤을 덮었으니 승자가
+       뒤바뀐 것이고, 지도 위에서는 지도 컨트롤이 이기는 편이 옳다 — 의도된 서열로 둔다.
+       근원(지도 오버레이를 지도 박스 안에 가두는 SatongMultiMap 래퍼 `isolate`)은 풀스크린
+       경로 회귀 위험이 있어 별도 PR 대상이다. */
+    <div className="fixed bottom-10 right-10 z-[95] flex flex-col items-end gap-4 print:hidden">
       <AnimatePresence mode="wait">
         {isOpen && (
           <motion.div
+            /* 아래 토글 버튼의 aria-expanded 가 가리키는 대상(aria-controls 짝) — 이게 없으면
+               스크린리더가 "확장됨"만 알리고 무엇이 열렸는지 이동 경로를 주지 못한다. */
+            id="ai-assistant-panel"
             initial={{ opacity: 0, y: 20, scale: 0.95, filter: "blur(10px)" }}
             animate={{ opacity: 1, y: 0, scale: 1, filter: "blur(0px)" }}
             exit={{ opacity: 0, y: 20, scale: 0.95, filter: "blur(10px)" }}
             transition={{ type: "spring", stiffness: 300, damping: 30 }}
-            className="group relative mb-6 w-80 sm:w-96 overflow-hidden rounded-[2.5rem] border border-[var(--line-strong)] bg-[var(--surface)] shadow-[var(--shadow-2xl)]"
+            className="group relative mb-6 w-80 sm:w-96 overflow-hidden rounded-[var(--radius-xl)] border border-[var(--line-strong)] bg-[var(--surface)] shadow-[var(--shadow-2xl)]"
           >
             <div className="absolute -left-10 -top-10 h-32 w-32 rounded-full bg-[var(--accent-strong)]/20 blur-[40px] animate-pulse" />
-            
+
             <div className="relative bg-gradient-to-br from-[var(--accent-strong)] to-[#085d73] p-6 text-white shadow-lg overflow-hidden">
               {/* 외부 CDN 텍스처 제거 — 로컬 CSS 도트 패턴으로 대체(외부 네트워크 의존 0, currentColor라 다크모드 자동 대응) */}
               <div
@@ -299,8 +327,12 @@ export function AIAssistant() {
                       <Icons.Settings />
                     </Link>
                   )}
-                  <button 
-                    onClick={() => setIsOpen(false)} 
+                  {/* 아이콘 전용 버튼 — Icons.X 는 이름 없는 <svg> 라 이 라벨이 없으면
+                      스크린리더가 "버튼"으로만 읽는다(FAB 만 메우고 지나쳤던 반쪽을 마감한다). */}
+                  <button
+                    type="button"
+                    aria-label="대화 닫기"
+                    onClick={() => setIsOpen(false)}
                     className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 hover:bg-white/20 transition-all hover:rotate-90"
                   >
                     <Icons.X />
@@ -311,7 +343,33 @@ export function AIAssistant() {
 
             <div 
               ref={scrollRef}
-              className="relative flex h-[380px] flex-col gap-5 overflow-y-auto p-6 scrollbar-hide bg-[var(--surface-soft)]/50 backdrop-blur-sm"
+              /* ★max-h 는 위 z 강등의 짝이다 — 이제 앱 헤더(z-1000)가 이 패널 위에 그려지므로,
+                 짧은 뷰포트에서 패널 상단이 헤더 띠(0~var(--app-header-offset)) 안으로 들어가면
+                 대화 제목이 헤더에 가린다.
+
+                 ★감산 항이 세 개인 이유 — 이 패널은 **뷰포트 하단에서 위로 자란다**(컨테이너가
+                 `fixed bottom-10` + FAB h-16 + gap-4 + 패널 mb-6). 그래서 대화 영역 위쪽 여백은
+                 「헤더 띠 + 패널 크롬 + **하단 앵커**」를 전부 뺀 나머지다:
+                   · var(--app-header-offset) 6.25rem(100px) — 헤더 띠(:root 단일 정의·상수)
+                   · 12rem(192px) — 패널 크롬(헤더블록 92 + 입력블록 95 ≈ 187)
+                   · 9rem(144px) — 하단 앵커(bottom-10 40 + FAB 64 + gap-4 16 + mb-6 24)
+                 ★초판은 **하단 앵커를 빼먹어**(감산 388px) "침범 자체를 없앤다"고 써 놓고 실제로는
+                 dvh 768 이하에서 상단 ~31px 이 헤더 뒤에 남았다 — 상한이 자기가 없애겠다고 선언한
+                 결함을 못 없애고 있었다(R2 지적 MEDIUM). 감산을 436px 로 맞춰 그 선언을 참으로 만든다.
+
+                 ★min-h 는 그 상한이 만든 신규 회귀를 막는다(R1 지적 H2 — 초판은 하한이 없었다).
+                 하한이 없으면 대화 영역 = clamp(0, 100dvh − 감산, 380) 이라 dvh 390(폰 가로)에서
+                 2px, 감산 이하에서 **0px = 답변이 한 글자도 안 보인다**. 그래서 9rem 을 하한으로 둔다
+                 (CSS 상 min-height 가 max-height 를 이기므로 이 한 줄로 봉인된다).
+
+                 ★결과 구간 — 세 층으로 정직하게 나뉜다:
+                   · dvh ≥ 816: 380px 그대로 = **무회귀**(폰 세로 844 포함)
+                   · 575 ≤ dvh < 816: 줄어들지만 **헤더 침범 없음**(스크롤로 전체 도달)
+                   · dvh < 575: min-h 가 이겨 침범을 다시 허용한다. 특히 **dvh < 552 에서는 패널
+                     상단이 헤더에 가리는 정도가 아니라 뷰포트 밖으로 잘려 닫기 버튼에 손이 닿지
+                     않는다**(회수 경로는 FAB 토글뿐 — 트랩은 아니다). 그럼에도 대화 소실보다는
+                     낫다고 판단해 하한을 우선한다(정직한 우선순위 교환이다). */
+              className="relative flex h-[380px] min-h-[9rem] max-h-[calc(100dvh_-_var(--app-header-offset)_-_12rem_-_9rem)] flex-col gap-5 overflow-y-auto p-6 scrollbar-hide bg-[var(--surface-soft)]/50 backdrop-blur-sm"
             >
               {!connected && (
                 <div className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-center">
@@ -331,7 +389,7 @@ export function AIAssistant() {
                   <motion.div 
                     initial={{ opacity: 0, x: msg.role === "user" ? 10 : -10 }}
                     animate={{ opacity: 1, x: 0 }}
-                    className={`relative max-w-[85%] rounded-[1.5rem] px-5 py-3 text-[12px] font-bold leading-relaxed shadow-sm transition-all whitespace-pre-wrap ${
+                    className={`relative max-w-[85%] rounded-[var(--radius-md)] px-5 py-3 text-[12px] font-bold leading-relaxed shadow-sm transition-all whitespace-pre-wrap ${
                     msg.role === "user" 
                       ? "bg-[var(--accent-strong)] text-white" 
                       : "bg-[var(--surface)] text-[var(--text-primary)] border border-[var(--line)]"
@@ -345,21 +403,21 @@ export function AIAssistant() {
               ))}
               {isLoading && (
                 <div className="flex justify-start">
-                  <div className="bg-[var(--surface)] border border-[var(--line)] rounded-[1.5rem] px-4 py-3 flex items-center gap-1">
+                  <div className="bg-[var(--surface)] border border-[var(--line)] rounded-[var(--radius-md)] px-4 py-3 flex items-center gap-1">
                     <span className="h-1.5 w-1.5 bg-[var(--accent-strong)] rounded-full animate-bounce" />
                     <span className="h-1.5 w-1.5 bg-[var(--accent-strong)] rounded-full animate-bounce" style={{ animationDelay: '0.2s' }} />
                     <span className="h-1.5 w-1.5 bg-[var(--accent-strong)] rounded-full animate-bounce" style={{ animationDelay: '0.4s' }} />
                   </div>
                 </div>
               )}
-              
+
               {!input && (messages?.length ?? 0) <= 1 && connected && (
                 <div className="mt-2 flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
                     {getSuggestedTags().map(tag => (
                         <button 
                             key={tag}
                             onClick={() => handleTagClick(tag)}
-                            className="shrink-0 rounded-[1.25rem] bg-[var(--accent-soft)] border border-[var(--line)] px-4 py-2 text-[10px] font-black tracking-tighter text-[var(--accent-strong)] hover:bg-[var(--accent-strong)] hover:text-white transition-all transform hover:-translate-y-1"
+                            className="shrink-0 rounded-[var(--radius-md)] bg-[var(--accent-soft)] border border-[var(--line)] px-4 py-2 text-[10px] font-black tracking-tighter text-[var(--accent-strong)] hover:bg-[var(--accent-strong)] hover:text-white transition-all transform hover:-translate-y-1"
                         >
                             {tag}
                         </button>
@@ -376,10 +434,12 @@ export function AIAssistant() {
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   disabled={!connected || isLoading}
-                  className="w-full rounded-[1.75rem] border border-[var(--line)] bg-[var(--surface-muted)] py-4 pl-6 pr-14 text-sm font-bold placeholder:text-[var(--text-hint)] focus:outline-none focus:ring-4 focus:ring-[var(--accent-strong)]/10 transition-all text-[var(--text-primary)] shadow-inner disabled:opacity-50"
+                  className="w-full rounded-[var(--radius-lg)] border border-[var(--line)] bg-[var(--surface-muted)] py-4 pl-6 pr-14 text-sm font-bold placeholder:text-[var(--text-hint)] focus:outline-none focus:ring-4 focus:ring-[var(--accent-strong)]/10 transition-all text-[var(--text-primary)] shadow-inner disabled:opacity-50"
                 />
-                <button 
+                {/* 유일한 제출 경로인데 이름이 없었다 — 아이콘 전용 버튼 aria 누수(위 닫기와 동일 계열). */}
+                <button
                   type="submit"
+                  aria-label="메시지 전송"
                   disabled={!connected || isLoading || !input.trim()}
                   className="absolute right-2 top-2 flex h-10 w-10 items-center justify-center rounded-2xl bg-[var(--accent-strong)] text-white shadow-xl hover:scale-105 active:scale-95 transition-all disabled:opacity-50 disabled:hover:scale-100"
                 >
@@ -392,7 +452,14 @@ export function AIAssistant() {
       </AnimatePresence>
 
       <motion.button
-        animate={{ 
+        /* 아이콘 전용 버튼이라 접근 가능한 이름이 없었다(스크린리더가 "버튼"으로만 읽음).
+           같은 캠페인의 44px 하한과 같은 계열의 누수라 함께 메운다. */
+        aria-label={isOpen ? "AI 어시스턴트 닫기" : "AI 어시스턴트 열기"}
+        aria-expanded={isOpen}
+        /* 닫힘 상태에서는 패널이 언마운트되므로 IDREF 를 비운다 — 없는 id 를 가리키는
+           미해석 참조를 만들지 않는다(관용 범위지만 검증기가 지적하는 형태). */
+        aria-controls={isOpen ? "ai-assistant-panel" : undefined}
+        animate={{
           scale: [1, 1.05, 1],
           boxShadow: isOpen ? "0 0 0px var(--accent-strong)" : "0 0 20px var(--accent-strong) / 0.2"
         }}
@@ -400,9 +467,9 @@ export function AIAssistant() {
         whileHover={{ scale: 1.1, rotate: isOpen ? 0 : 10 }}
         whileTap={{ scale: 0.9 }}
         onClick={() => setIsOpen(!isOpen)}
-        className={`relative flex h-16 w-16 items-center justify-center rounded-[1.75rem] text-white shadow-[var(--shadow-2xl)] transition-all duration-500 overflow-hidden ${
+        className={`relative flex h-16 w-16 items-center justify-center rounded-[var(--radius-lg)] text-white shadow-[var(--shadow-2xl)] transition-all duration-500 overflow-hidden ${
             isOpen 
-            ? "bg-[var(--background-secondary)]" 
+            ? "bg-[var(--surface-secondary)]"
             : "bg-gradient-to-tr from-[var(--accent-strong)] to-teal-700"
         }`}
       >
@@ -413,7 +480,7 @@ export function AIAssistant() {
           aria-hidden
         />
         {isOpen ? <Icons.X /> : <Icons.Sparkles />}
-        
+
         {!isOpen && (
             <div className={`absolute -top-1 -right-1 flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-black ring-4 ring-[var(--background)] ${connected ? 'bg-[var(--accent-strong)]' : 'bg-red-500'}`}>
                 <span className="h-2 w-2 rounded-full bg-white animate-ping" />

@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from packages.schemas.models import InvestorReportRequest, InvestorReportResponse, InvestorReportVariantResponse
 from pydantic import BaseModel
@@ -78,9 +78,13 @@ async def generate_report_pdf(
 
         model = build_report_model_from_pipeline(result_dict, narratives)
         data, media_type, ext = render_report(model, fmt)
-    except Exception:  # noqa: BLE001  # 신규 엔진 실패 시 라이브 PDF 무회귀(레거시 폴백)
+    except Exception as engine_err:  # noqa: BLE001  # 신규 엔진 실패 시 라이브 PDF 무회귀(레거시 폴백)
         if fmt != "pdf":
-            raise
+            # pptx/docx는 레거시 폴백이 없다(pdf 전용) — 무처리 500 대신 사유를 담은 정직 503.
+            raise HTTPException(
+                status_code=503,
+                detail=f"{fmt} 보고서 엔진이 일시적으로 실패했습니다. 잠시 후 재시도하거나 PDF 형식을 이용하세요. (사유: {type(engine_err).__name__})",
+            ) from engine_err
         from app.services.report.pipeline_report_pdf import build_pipeline_report_pdf
         from app.services.report.pipeline_report_service import PipelineReportService
 

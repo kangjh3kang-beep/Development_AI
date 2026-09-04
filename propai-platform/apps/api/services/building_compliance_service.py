@@ -13,6 +13,7 @@ from typing import Any, Literal
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.common.sunlight_setback import required_north_setback_m
+from app.services.zoning.legal_zone_limits import legal_limits_for
 
 
 @dataclass
@@ -380,14 +381,94 @@ def _calculate_north_setback(building_height_m: float) -> float:
     return required_north_setback_m(building_height_m)
 
 
-# ── 7개 용도지역별 법규 기본값 ──
+# ── 용도지역별 법규 기본값(정본 위임 — 하드코딩 금지) ──
+# ★법정 상한(건폐율/용적률/높이)은 이 파일에 직접 쓰지 않고 국토계획법 시행령 §84/§85 정본
+#   (legal_zone_limits SSOT = auto_zoning_service.ZONE_LIMITS 재노출)에서 파생한다.
+#   과거 이 표는 제1종일반주거 용적률 100%(법정 200%)·일반상업 400%/50m(법정 1300%/무제한)
+#   등 오값을 '법정 한도'로 노출해 persona 전문가 감사·check_compliance 폴백·building_compliance
+#   라우터 LLM evidence 3곳에 합법 설계를 위반으로 오판정하는 오류를 주입했다 → 정본 단일출처로
+#   일원화해 그림자(divergent copy)를 제거한다.
+#   이격거리(min_setback)·일조(sunlight)는 용도지역 SSOT 밖(건축법 §61 등 별도 규칙)이라
+#   검증 편의를 위한 전형 기본값을 주입한다(법정 상한 아님 — 조례·가로구역별 상이).
 
-ZONE_LIMITS: dict[str, LegalLimits] = {
-    "1R": LegalLimits(0.60, 1.00, 12.0, 1.0, 4.0),  # 제1종일반주거
-    "2R": LegalLimits(0.60, 2.00, 18.0, 1.0, 3.0),  # 제2종일반주거
-    "3R": LegalLimits(0.50, 3.00, 35.0, 1.5, 2.0),  # 제3종일반주거
-    "GC": LegalLimits(0.60, 4.00, 50.0, 0.0, 0.0),  # 일반상업
-    "NC": LegalLimits(0.60, 9.00, 60.0, 0.0, 0.0),  # 근린상업
-    "QI": LegalLimits(0.60, 4.00, 35.0, 0.0, 0.0),  # 준공업
-    "QR": LegalLimits(0.60, 5.00, 35.0, 1.0, 2.0),  # 준주거
+# 단축코드(1R…QR) → 정식 한글 용도지역명(정본 SSOT 키). persona가 단축코드로 조회하므로 유지.
+_ZONE_CODE_TO_LEGAL_NAME: dict[str, str] = {
+    "1R": "제1종일반주거지역",
+    "2R": "제2종일반주거지역",
+    "3R": "제3종일반주거지역",
+    "GC": "일반상업지역",
+    "NC": "근린상업지역",
+    "QI": "준공업지역",
+    "QR": "준주거지역",
 }
+
+# 이격거리(m)·일조시간(h) 기본값 — 용도지역 SSOT 외(건축법 별도). 법정 상한 아님.
+# 종전 단축코드 7종 값을 유지(무회귀), 그 외 표준 용도지역은 보수 기본값(_DEFAULT_*).
+_SETBACK_SUNLIGHT_BY_NAME: dict[str, tuple[float, float]] = {
+    "제1종일반주거지역": (1.0, 4.0),
+    "제2종일반주거지역": (1.0, 3.0),
+    "제3종일반주거지역": (1.5, 2.0),
+    "일반상업지역": (0.0, 0.0),
+    "근린상업지역": (0.0, 0.0),
+    "준공업지역": (0.0, 0.0),
+    "준주거지역": (1.0, 2.0),
+}
+_DEFAULT_SETBACK_M = 1.0
+_DEFAULT_SUNLIGHT_H = 2.0
+_FLOOR_HEIGHT_M = 3.0  # 층고 근사(녹지 층수제한 → 실효 높이 환산)
+
+
+def _legal_limits_dataclass(legal_name: str) -> LegalLimits | None:
+    """정본(legal_zone_limits SSOT)의 법정 상한으로 LegalLimits를 구성한다.
+
+    - 건폐율/용적률: 국토계획법 시행령 §84/§85 정본(퍼센트 → 0~1 비율/배수 환산).
+    - 높이: 정본 max_height_m(전용주거 10/12m 등) → 없으면 층수제한(녹지 4층≈12m) →
+            둘 다 없으면 float('inf')(상업·일반주거 등 무제한 — 가로구역·일조 별도 규율,
+            design_audit_orchestrator와 동일 관례). 과거 일반상업 50m 오표기의 정본 교정.
+    - 이격/일조: 용도지역 SSOT 밖(건축법 별도) → 전형 기본값 주입(법정 상한 아님).
+    """
+    legal = legal_limits_for(legal_name)
+    if not legal:
+        return None
+    max_bcr_pct = legal.get("max_bcr_pct") or 0
+    max_far_pct = legal.get("max_far_pct") or 0
+    max_height_m = legal.get("max_height_m")
+    max_floors = legal.get("max_floors")
+    if max_height_m is not None:
+        height = float(max_height_m)
+    elif max_floors:
+        height = round(max_floors * _FLOOR_HEIGHT_M, 1)  # 녹지 4층≈12m
+    else:
+        height = float("inf")  # 무제한(상업·일반주거 등) — 높이룰 비활성
+    setback, sunlight = _SETBACK_SUNLIGHT_BY_NAME.get(
+        legal_name, (_DEFAULT_SETBACK_M, _DEFAULT_SUNLIGHT_H)
+    )
+    return LegalLimits(
+        building_coverage_ratio=max_bcr_pct / 100.0,
+        floor_area_ratio=max_far_pct / 100.0,
+        max_height_m=height,
+        min_setback_m=setback,
+        sunlight_hours_min=sunlight,
+    )
+
+
+def _build_zone_limits() -> dict[str, LegalLimits]:
+    """정식 한글 용도지역명 전체 + 단축코드 별칭을 정본에서 파생(그림자 없음).
+
+    한글명(check_compliance·router 소비)과 단축코드(persona 소비)를 모두 키로 노출하되,
+    단축코드 엔트리는 정식명 엔트리 객체를 그대로 재사용해 drift가 구조적으로 불가능하게 한다.
+    """
+    from app.services.zoning.auto_zoning_service import ZONE_LIMITS as _SSOT
+
+    table: dict[str, LegalLimits] = {}
+    for legal_name in _SSOT:
+        ll = _legal_limits_dataclass(legal_name)
+        if ll is not None:
+            table[legal_name] = ll
+    for code, legal_name in _ZONE_CODE_TO_LEGAL_NAME.items():
+        if legal_name in table:
+            table[code] = table[legal_name]  # 동일 객체 재사용 → 값 일치 영구 보장
+    return table
+
+
+ZONE_LIMITS: dict[str, LegalLimits] = _build_zone_limits()

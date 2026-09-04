@@ -7,7 +7,6 @@ from apps.api.auth.rbac import check_permission
 from apps.api.database.models.phase_g_chatbot import ChatbotMessage, ChatbotSession
 from apps.api.database.models.phase_g_operations import AuctionListing, Contractor
 from apps.api.services.auction_service import AuctionService
-from apps.api.services.chatbot_service import ChatbotService
 from apps.api.services.contractor_service import ContractorService
 from packages.schemas.models import (
     AuctionAnalysisRequest,
@@ -22,7 +21,6 @@ from packages.schemas.models import (
 
 _BASE = Path(__file__).resolve().parents[2]
 _MAIN_SOURCE = (_BASE / "apps" / "api" / "main.py").read_text(encoding="utf-8")
-_CHATBOT_SOURCE = (_BASE / "apps" / "api" / "routers" / "chatbot.py").read_text(encoding="utf-8")
 _AUCTION_SOURCE = (_BASE / "apps" / "api" / "routers" / "auction.py").read_text(encoding="utf-8")
 _CONTRACTORS_SOURCE = (_BASE / "apps" / "api" / "routers" / "contractors.py").read_text(
     encoding="utf-8"
@@ -63,13 +61,10 @@ class TestG95Contracts:
 
 class TestG95RoutersAndRbac:
     def test_main_registers_g95_routers(self) -> None:
-        assert 'prefix="/api/v1/chatbot"' in _MAIN_SOURCE
         assert 'prefix="/api/v1/auction"' in _MAIN_SOURCE
         assert 'prefix="/api/v1/contractors"' in _MAIN_SOURCE
 
     def test_router_endpoints_exist(self) -> None:
-        assert '@router.post("/sessions"' in _CHATBOT_SOURCE
-        assert '@router.post("/messages"' in _CHATBOT_SOURCE
         assert '@router.post("/analyze"' in _AUCTION_SOURCE
         assert '@router.get("/opportunities"' in _AUCTION_SOURCE
         assert '@router.post("/register"' in _CONTRACTORS_SOURCE
@@ -88,12 +83,6 @@ class TestG95RoutersAndRbac:
 
 
 class TestG95Services:
-    def test_chatbot_reply_template(self) -> None:
-        reply, actions = ChatbotService._reply("investment", "Review debt sizing and downside.")
-        assert "investment" in reply
-        assert len(actions) == 3
-        assert "underwriting" in reply
-
     def test_auction_analysis_snapshot(self) -> None:
         analysis = AuctionService._analysis_snapshot(
             appraised_value_krw=1_000_000_000,

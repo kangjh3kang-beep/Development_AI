@@ -7,6 +7,12 @@ from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 from packages.schemas.models import ErrorResponse
 
+# ★W1-C(R2)+핫픽스: 보고서 발행 게이트 hard 위반 → 4xx 매핑(공용 처리 1곳).
+#   `app.*` 임포트는 모듈 상단에 두면 안 된다 — 이 파일은 루트 계약 스위트
+#   (propai-platform/tests, cwd=propai-platform)에서도 `apps.api.exceptions`로 임포트되는데
+#   그 컨텍스트에서는 `app` 패키지가 해석되지 않아 수집 자체가 깨진다(#425 CI 실측).
+#   따라서 register_exception_handlers() 내부(앱 기동 컨텍스트에서만 실행)로 지연 임포트한다.
+
 
 class PropAIError(Exception):
     """PropAI 기본 예외"""
@@ -86,6 +92,31 @@ def register_exception_handlers(app: FastAPI) -> None:
                 error_code=exc.error_code,
                 message=exc.message,
                 details=exc.details,
+            ).model_dump(),
+        )
+
+    # 핫픽스: 앱 기동 컨텍스트에서만 임포트(모듈 상단 금지 — 위 주석 참조).
+    from app.services.report.render.publish_gate import ReportPublishGateError
+
+    @app.exception_handler(ReportPublishGateError)
+    async def report_publish_gate_error_handler(
+        request: Request, exc: ReportPublishGateError,
+    ) -> JSONResponse:
+        """W1-C(R2): 발행 게이트 hard 위반은 500이 아니라 정직한 409로 응답한다.
+
+        violations 목록 전체를 details 에 실어 호출부(프론트/자동화)가 어떤 규칙이 왜
+        걸렸는지 바로 알 수 있게 한다(예: approved_by 누락, 승인트랙 문서의 확정 표현).
+        """
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content=ErrorResponse(
+                error_code="REPORT_PUBLISH_GATE_VIOLATION",
+                message=str(exc),
+                details={
+                    "violations": [
+                        {"code": v.code, "message": v.message} for v in exc.violations
+                    ],
+                },
             ).model_dump(),
         )
 

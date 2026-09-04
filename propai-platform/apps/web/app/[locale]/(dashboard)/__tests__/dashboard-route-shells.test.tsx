@@ -4,7 +4,9 @@ import CostPage from "../analytics/cost/page";
 import ESGPage from "../analytics/esg/page";
 import InvestmentPage from "../analytics/investment/page";
 import AuctionPage from "../auction/page";
-import DashboardPage from "../page";
+import RealtxReportPage from "../realtx-report/page";
+// 홈 콘솔 UI는 인증 분기(P1 랜딩) 도입과 함께 DashboardHome으로 추출됨(page.tsx는 분기 셸).
+import { DashboardHome } from "@/components/dashboard/DashboardHome";
 import ProjectsPage from "../projects/page";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 
@@ -259,6 +261,8 @@ vi.mock("next/navigation", () => {
   return {
     useParams: () => ({ locale: "en" }),
     usePathname: () => "/en",
+    // RoughScenarioPanel(투자분석 셸)이 지불여력 프리필 파라미터를 읽는다 — 빈 파라미터로 모킹.
+    useSearchParams: () => ({ get: () => null }),
     useRouter: () => ({
       push: vi.fn(),
       replace: vi.fn(),
@@ -305,8 +309,8 @@ describe("Dashboard route shells", () => {
     vi.stubEnv("NEXT_PUBLIC_USE_MOCKS", "false");
   });
 
-  it("renders the dashboard home as an operations console", async () => {
-    render(await DashboardPage({ params: Promise.resolve({ locale: "en" }) }));
+  it("renders the dashboard home as an operations console", () => {
+    render(<DashboardHome locale="en" />);
 
     expect(screen.getByText("Intelligence Control Room")).toBeInTheDocument();
     expect(
@@ -374,4 +378,10 @@ describe("Dashboard route shells", () => {
     expect(screen.getByTestId("cost-workspace")).toHaveTextContent("cost");
   });
 
+  // ★「페이지 파일이 있다」와 「그 페이지가 무언가를 그린다」는 **다른 명제**다.
+  //   형제 파리티 락(`creation-hub-routes.contract`)은 전자까지만 본다 — 여기서 후자를 잠근다.
+  it("실거래 신고내역 라우트가 패널을 실제로 렌더한다", async () => {
+    render(await RealtxReportPage({ params: Promise.resolve({ locale: "ko" }) }));
+    expect(screen.getByText("실거래 신고내역 현황분석")).toBeInTheDocument();
+  });
 });

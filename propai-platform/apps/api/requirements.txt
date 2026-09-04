@@ -1,7 +1,7 @@
 # FastAPI Core
 fastapi==0.115.0
 uvicorn[standard]==0.32.0
-python-multipart==0.0.12
+python-multipart==0.0.31  # CVE 7건 해소(0.0.12→0.0.31). fastapi 요구는 >=0.0.7 이라 안전
 httpx==0.27.2
 aiohttp==3.10.10
 
@@ -69,6 +69,10 @@ matplotlib==3.9.2  # 구획도 PNG export(parcel_boundary_export.export_png) —
 
 # Documents
 reportlab==4.2.5
+# ★PDF **검증용**(런타임 아님) — 보고서 꼬리말·본문이 실제로 한글로 그려지는지
+#   추출해 확인하는 회귀망이 이것을 쓴다. 없으면 그 락이 통째로 skip 되고,
+#   "모든 PDF 꼬리말이 두부" 회귀를 **아무도 못 잡는다**(2026-08-26 실측).
+pypdf==6.16.2
 pymupdf==1.24.10  # 해촉증명서 PDF→PNG/JPEG 래스터(순수 wheel·시스템의존 0)
 python-pptx==1.0.2
 python-docx==1.1.2
@@ -77,14 +81,21 @@ fpdf2==2.8.1
 
 # Security
 bcrypt>=4.0.0,<5.0.0  # passlib 호환성: bcrypt 5.x와 충돌
-PyJWT==2.9.0
 cryptography==43.0.3
-python-jose[cryptography]==3.3.0
+python-jose[cryptography]==3.5.0  # ★3.4.0 미만 금지 — 3.3.0 에 **알고리즘 혼동**(OpenSSH ECDSA 키, PYSEC-2024-232)이 있다
+                                  # ★3.5.0 이 하한이 된 이유는 **pyasn1** 이다: 3.4.0 은 `pyasn1<0.5.0,>=0.4.1` 로 캡을 걸어
+                                  #   0.4.8 을 강제했고 그 버전에 PYSEC-2026-2263/3455/3456/3457 4건이 있다.
+                                  #   3.5.0 의 제약은 `pyasn1>=0.5.0` 이라 0.6.4 로 해석된다(pip --dry-run 실측).
+                                  #   ★고칠 자리가 **여기(jose)** 인 이유: 3.4.0 을 두고 `pyasn1==0.6.4` 를 직접
+                                  #     적는 길은 **해석 불가**였다(`ResolutionImpossible` 실측). 3.5.0 으로 올린
+                                  #     **지금은 그 핀도 해석은 된다** — 그래도 적지 마라. pyasn1 대역을 정하는 것은
+                                  #     jose 의 제약이고, 직접 핀은 jose 를 내릴 때 **조용히 어긋난다**.
+                                  #     `tests/test_auth_lib_minimum_version.py` 가 직접 핀을 막는다.
 
 # HTTP / Utils
 pydantic[email]==2.9.2
 pydantic-settings==2.6.1
-python-dotenv==1.0.1
+python-dotenv==1.2.2  # CVE 1건 해소(1.0.1→1.2.2)
 tenacity==9.0.0
 structlog==24.4.0
 pytz==2024.2
@@ -117,6 +128,7 @@ PyMuPDF==1.24.10
 # 경공매: 법원경매(courtauction) 스크래핑 파서(무목업, 지연·예의). Selenium/chromium은
 # Micro 호스트 OOM 위험이라 미도입 — requests+BeautifulSoup 경량 파서만 사용.
 beautifulsoup4==4.12.3
+defusedxml==0.7.1  # 외부 XML 응답 파싱 — 표준 xml.etree 는 엔티티 폭탄을 막지 못한다(실측)
 lxml==5.3.0
 # MOLIT 실거래가 XML 파싱 1차 파서(molit_client; 미설치 시 regex 폴백). 누락 시 폴백이라 동작은
 # 하나, 1차 경로 활성화·완전성 위해 명시(경량 순수파이썬).

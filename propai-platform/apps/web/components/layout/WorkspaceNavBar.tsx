@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { fetchAuthMeRole, fetchIsAdmin } from "@/lib/use-is-admin";
+import { DISMISS_Z, useDismissible } from "@/lib/satong-dismiss";
 import {
   type NavNode,
   type NavSection,
@@ -97,19 +98,26 @@ export function WorkspaceNavBar({ sections }: { sections: NavSection[] }) {
         setOpenSectionId(null);
       }
     };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        clearCloseTimer();
-        setOpenSectionId(null);
-      }
-    };
     document.addEventListener("mousedown", closeOnOutside);
-    document.addEventListener("keydown", closeOnEscape);
     return () => {
       document.removeEventListener("mousedown", closeOnOutside);
-      document.removeEventListener("keydown", closeOnEscape);
     };
   }, [clearCloseTimer]);
+
+  // ESC 로 플라이아웃 닫기 — **자체 `document` 리스너에서 조정기로 이관**(2026-08-18 R2).
+  //
+  // ★종전 결함(실측): 이 리스너는 (ㄱ)`document` 에 걸려 조정기(`window`)보다 **먼저** 발화하고
+  //   (ㄴ)**열림 여부를 검사하지 않았다.** 이 네비는 `DashboardChromeGate` 가 본문과 같은 셸에
+  //   두므로 대시보드 전 페이지 위에 있다 — 아래 `onFocus` 로 포커스만으로도 플라이아웃이
+  //   열리는데, 그 상태에서 모달을 열고 ESC 를 한 번 누르면 **모달과 플라이아웃이 함께**
+  //   닫혔다(재현: ESC 1회 → 모달 닫힘 1 · 플라이아웃 닫힘 1).
+  //   조정기가 부르는 `preventDefault` 는 **나중에** 실행되므로 이걸 막지 못한다.
+  // ★칸은 모달보다 아래(`navSheet`)다 — 모달이 열려 있으면 모달이 먼저 닫히고, 그다음 ESC 가
+  //   이 플라이아웃을 닫는다.
+  useDismissible(DISMISS_Z.navSheet, openSectionId != null, () => {
+    clearCloseTimer();
+    setOpenSectionId(null);
+  });
 
   const activeSections = useMemo(
     () => new Set(activeSectionIds(sections, pathname)),
@@ -134,9 +142,37 @@ export function WorkspaceNavBar({ sections }: { sections: NavSection[] }) {
             관리자 메뉴가 사라지던 근본원인. 역할 필터를 통과한 섹션은 전부 렌더한다
             (제목이 짧아 lg 이상 한 줄 수용, 초과 시 flex-wrap 줄바꿈). */}
         {visibleSections.map((section) => {
-          const links = flattenLinks(section.items).slice(0, 3);
+          // ★드롭다운은 섹션 전 항목을 노출한다(과거 slice(0,3) 3개 상한이 근본원인: 프로젝트 섹션의
+          //   4번째+ 링크[투자·적산·ESG]가 잘려 사용자가 상단 네비에서 발견 불가 — 라이브 그라운드
+          //   트루스로 확정). 항목이 많아 뷰포트를 넘겨도 팝오버 패널의 max-h+overflow-y-auto로
+          //   스크롤 접근(아래 role=menu). 슬라이스 제거로 시장·획득 등 항목 많은 섹션도 전부 노출.
+          const links = flattenLinks(section.items);
           const active = activeSections.has(section.id);
           const open = openSectionId === section.id;
+          // 단일-리프 섹션(항목 1개 + 하위메뉴 없음, 예: 적산·시공비): 드롭다운 대신 섹션 버튼 자체를
+          // 곧바로 그 링크로 렌더한다(빈 드롭다운 방지). 다항목 섹션은 기존 hover 드롭다운 유지(무회귀).
+          const singleLeaf =
+            section.items.length === 1 && !section.items[0].children?.length
+              ? section.items[0]
+              : null;
+          if (singleLeaf?.href) {
+            return (
+              <div key={section.id} className="relative">
+                <Link
+                  href={singleLeaf.href}
+                  prefetch={singleLeaf.prefetch}
+                  className={`flex h-10 items-center gap-2 rounded-[var(--r-pill)] px-3 text-sm font-bold transition ${
+                    active
+                      ? "bg-[var(--accent-strong)] text-[var(--on-primary)]"
+                      : "text-[var(--text-secondary)] hover:bg-[var(--surface-soft)] hover:text-[var(--text-primary)]"
+                  }`}
+                >
+                  <span>{section.title}</span>
+                  {active && <span className="sr-only">현재 섹션</span>}
+                </Link>
+              </div>
+            );
+          }
           return (
             <div
               key={section.id}
@@ -155,9 +191,9 @@ export function WorkspaceNavBar({ sections }: { sections: NavSection[] }) {
                 aria-expanded={open}
                 aria-haspopup="menu"
                 onClick={() => openSection(section.id)}
-                className={`flex h-10 cursor-pointer list-none items-center gap-2 rounded-lg px-3 text-sm font-bold transition [&::-webkit-details-marker]:hidden ${
+                className={`flex h-10 cursor-pointer list-none items-center gap-2 rounded-[var(--r-pill)] px-3 text-sm font-bold transition [&::-webkit-details-marker]:hidden ${
                   active
-                    ? "bg-[var(--text-primary)] text-white"
+                    ? "bg-[var(--accent-strong)] text-[var(--on-primary)]"
                     : "text-[var(--text-secondary)] hover:bg-[var(--surface-soft)] hover:text-[var(--text-primary)]"
                 }`}
               >
@@ -175,12 +211,22 @@ export function WorkspaceNavBar({ sections }: { sections: NavSection[] }) {
                   <div
                     aria-hidden="true"
                     data-testid={`workspace-nav-hover-bridge-${section.id}`}
-                    className="absolute left-0 top-10 z-40 h-2 min-w-64"
+                    /* ★z-[699] — 아래 드롭다운(700)의 짝. 버튼과 드롭다운 사이 8px 틈을 덮어
+                       마우스가 그 틈을 지날 때 hover 가 끊기지 않게 한다.
+                       ※ 초판 주석은 "본문 sticky(600)보다 위여야 hover 가 끊기지 않는다"고 썼는데
+                         **기하로 성립하지 않는다**(리뷰 반증): 이 다리는 nav 패딩 안 8px 띠라
+                         ContextHeader 와 겹치지 않는다. 값은 드롭다운의 짝으로 계약 대역 안에 둔다. */
+                    className="absolute left-0 top-10 z-[699] h-2 min-w-64"
                     onMouseEnter={() => openSection(section.id)}
                   />
                   <div
                     role="menu"
-                    className="absolute left-0 top-12 z-50 min-w-64 rounded-lg border border-[var(--line)] bg-[var(--surface-secondary)] p-2 shadow-[var(--shadow-md)]"
+                    // ★max-h+overflow-y-auto: 항목 많은 섹션(프로젝트·시장·획득 등)의 팝오버가 화면
+                    //   하단 근처에서 열려 뷰포트를 넘겨도 잘리지 않고 스크롤로 전 항목 접근 가능하게 한다.
+                    //   Tailwind 임의값은 '_'(언더스코어) 공백 표기 필수 — calc(100dvh_-_5rem)로 써야
+                    //   CSS `calc(100dvh - 5rem)`가 되고, 무공백 calc(100dvh-5rem)은 브라우저가 무시한다.
+                    //   모든 섹션 드롭다운에 공통(공용 role=menu 패널) 적용.
+                    className="absolute left-0 top-12 z-[700] max-h-[calc(100dvh_-_5rem)] min-w-64 overflow-y-auto rounded-lg border border-[var(--line)] bg-[var(--surface-secondary)] p-2 shadow-[var(--shadow-md)]"
                     onMouseEnter={() => openSection(section.id)}
                   >
                     {links.map((link) => {
@@ -214,7 +260,7 @@ export function WorkspaceNavBar({ sections }: { sections: NavSection[] }) {
         <Link
           href={pathname?.replace(/\/$/, "") || "/"}
           aria-label="현재 워크스페이스 새로고침"
-          className="ml-auto inline-flex h-10 items-center rounded-lg border border-[var(--line)] bg-[var(--surface-soft)] px-3 text-sm font-bold text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
+          className="ml-auto inline-flex h-10 items-center rounded-[var(--r-pill)] border border-[var(--line)] bg-[var(--surface-soft)] px-3 text-sm font-bold text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
         >
           워크스페이스
         </Link>

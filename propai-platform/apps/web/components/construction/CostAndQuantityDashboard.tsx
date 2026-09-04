@@ -8,6 +8,7 @@ import { formatCurrencyKRW } from "@/lib/formatters";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { getZoningSpec } from "@/lib/kr-building-regulations";
+import { resolveFarWithBasis } from "@/lib/zoning-ssot";
 
 /** estimate-overview 항목별 적산(QTO) 행 — cost.py items[] 스키마 정합. */
 interface QtoItem {
@@ -59,11 +60,19 @@ export function CostAndQuantityDashboard({ projectId, dictionary }: { projectId:
     // ★다필지면 통합 면적으로 적산 GFA를 역산(대표값 과소산출 방지).
     const land = effectiveLandAreaSqm(siteAnalysis) ?? 0;
     if (land <= 0) return 0;
+    // ★레인C(P2) — 리졸버(통합/실효 용적률)를 무시하고 법정상한표를 곧장 읽던 결함 교정.
+    //   실효 용적률이 확보돼 있으면(종상향·조례·구조상한 반영) 그 값을 우선하고, 부지분석
+    //   자체가 없을 때만(리졸버 null) 법정상한표로 폴백한다(무날조 — 실제 법령표 값이라 폴백
+    //   자체는 유지, 다만 더 나은 값이 있으면 더 이상 무시하지 않는다).
     const spec = siteAnalysis?.zoneCode ? getZoningSpec(siteAnalysis.zoneCode) : null;
-    const far = spec?.floorAreaRatioMax ?? 0;
+    const far = resolveFarWithBasis(siteAnalysis)?.value ?? spec?.floorAreaRatioMax ?? 0;
     if (far <= 0) return 0;
     return Math.round((land * far) / 100);
   }, [siteAnalysis]);
+
+  // ★레인C(P2) — 층수 미상 시 임의 15층을 가정해 물량을 산출하던 결함 교정(잘못된 층당 배분).
+  //   층수는 designData(설계 산출)로만 확정하고, 미확보 시 null(임의 가정 금지).
+  const floorCountAbove = designData?.floorCount && designData.floorCount > 0 ? designData.floorCount : null;
 
   // 건축개요(설계 우선, 부지 폴백) — estimate-overview 요청 파라미터.
   const overview = useMemo(() => {
@@ -71,17 +80,21 @@ export function CostAndQuantityDashboard({ projectId, dictionary }: { projectId:
     return {
       building_type: mapBuildingType(designData?.buildingType),
       total_gfa_sqm: gfa,
-      floor_count_above: designData?.floorCount && designData.floorCount > 0 ? designData.floorCount : 15,
+      floor_count_above: floorCountAbove,
       floor_count_below: 2,
       structure_type: "RC",
     };
-  }, [designData?.totalGfaSqm, designData?.buildingType, designData?.floorCount, fallbackGfa]);
+  }, [designData?.totalGfaSqm, designData?.buildingType, floorCountAbove, fallbackGfa]);
 
   useEffect(() => {
     if (!isMounted) return;
     // 컨텍스트 프로젝트와 라우트 프로젝트가 다르면(미동기) 산출 보류 — 무목업 정직 표기.
     if (ctxProjectId && ctxProjectId !== projectId) { setLoading(false); return; }
     if (!overview.total_gfa_sqm || overview.total_gfa_sqm <= 0) { setLoading(false); return; }
+    // ★레인C(P2) — 층수 미상 시 과거엔 15층을 임의로 가정해 물량을 산출했다(과대/과소 왜곡).
+    //   층수도 연면적과 동일하게 필수 입력으로 게이트한다(아래 빈 상태 문구가 이미 "연면적·층수"
+    //   둘 다 요구한다고 안내하고 있었는데 정작 코드는 층수만 임의 가정했던 불일치를 정직화).
+    if (!overview.floor_count_above) { setLoading(false); return; }
     let cancelled = false;
     async function fetchData() {
       setLoading(true); setErr("");
@@ -113,7 +126,7 @@ export function CostAndQuantityDashboard({ projectId, dictionary }: { projectId:
   if (loading) return (
     <div className="flex h-64 flex-col items-center justify-center gap-6">
       <div className="h-12 w-12 animate-spin rounded-full border-4 border-[var(--accent-strong)] border-t-transparent shadow-[var(--shadow-glow)]" />
-      <p className="text-[10px] font-black uppercase tracking-[0.4em] text-[var(--text-hint)] animate-pulse">AI 산출 내역 분석 중...</p>
+      <p className="label-caps text-[var(--text-hint)] animate-pulse">AI 산출 내역 분석 중...</p>
     </div>
   );
 
@@ -134,7 +147,7 @@ export function CostAndQuantityDashboard({ projectId, dictionary }: { projectId:
               : <span className="rounded bg-[var(--surface-muted)] px-2 py-0.5 text-[10px] font-bold text-[var(--text-tertiary)]">건축개요 역산(추정) — 설계/BIM 완성 시 정밀화</span>}
           </div>
         </div>
-        <button className="group relative overflow-hidden rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] px-8 py-4 text-xs font-black uppercase tracking-widest text-[var(--text-primary)] shadow-[var(--shadow-lg)] transition-all hover:-translate-y-1 hover:bg-[var(--surface-soft)]">
+        <button className="group relative overflow-hidden rounded-[var(--radius-lg)] border border-[var(--line-strong)] bg-[var(--surface-strong)] px-8 py-4 text-xs font-black uppercase tracking-widest text-[var(--text-primary)] shadow-[var(--shadow-lg)] transition-all hover:-translate-y-1 hover:bg-[var(--surface-soft)]">
           <span className="relative z-10 flex items-center gap-3">
             {t.exportBtn || "데이터 내보내기"}
             <svg className="h-4 w-4 transition-transform group-hover:rotate-45" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M7 17L17 7M17 7H7M17 7V17"/></svg>
@@ -143,15 +156,15 @@ export function CostAndQuantityDashboard({ projectId, dictionary }: { projectId:
       </div>
 
       {err ? (
-        <div className="rounded-[2rem] border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)] p-10 text-center text-sm font-bold text-amber-400 italic">{err}</div>
+        <div className="rounded-[var(--radius-lg)] border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)] p-10 text-center text-sm font-bold text-amber-400 italic">{err}</div>
       ) : items.length === 0 ? (
-        <div className="rounded-[2rem] border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)] p-10 text-center text-sm font-medium text-[var(--text-secondary)] italic">
+        <div className="rounded-[var(--radius-lg)] border border-dashed border-[var(--line-strong)] bg-[var(--surface-soft)] p-10 text-center text-sm font-medium text-[var(--text-secondary)] italic">
           건축개요(연면적·층수)가 없어 물량을 산출할 수 없습니다. 부지/설계 분석을 먼저 진행하면 자동으로 채워집니다.
         </div>
       ) : (
-      <div className="overflow-hidden rounded-[3.5rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-2xl)] backdrop-blur-3xl">
+      <div className="overflow-hidden rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-2xl)] backdrop-blur-3xl">
          <table className="w-full text-left text-sm border-collapse">
-           <thead className="bg-[var(--surface-soft)]/50 text-[10px] font-black uppercase tracking-[0.3em] text-[var(--text-hint)] border-b border-[var(--line-strong)]">
+           <thead className="bg-[var(--surface-soft)]/50 label-caps text-[var(--text-hint)] border-b border-[var(--line-strong)]">
              <tr>
                <th className="p-10 pl-14">{t.colCode || "공종"}</th>
                <th className="p-10">{t.colDesc || "규격"}</th>

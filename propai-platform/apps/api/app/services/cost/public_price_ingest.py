@@ -6,9 +6,17 @@ PublicPriceClient(조달청 가격정보현황서비스) 응답을 material_unit
 material_code 네임스페이스("PUB-<KEY>")를 사용해 충돌 없이 공존한다
 (unit_price_repository의 T1 우선 조회 대상 — _public_code와 동일 규칙).
 
-★무날조: 실 API 응답의 정확한 필드명은 공식 문서에서 확정하지 못했다(스키마 미공개).
-후보 필드명 목록으로 방어적 파싱하고, 매칭 실패 항목은 조용히 버리지 않고 unmapped
-카운트로 정직 보고한다. 키 미보유/호출 실패 시 주입 0건·정직 로그(서버 기동/기존 흐름 무영향).
+★필드명 라이브 확정(2026-07-16, 등록 오퍼레이션 getPriceInfoListFcltyCmmnMtrilEngrk 639건 전수):
+실 응답 키 = prdctClsfcNo/prdctClsfcNoNm/krnPrdctNm/unit/prce/prceDiv/vatYnNm +
+분해 필드 mtrlcst(재료)·lbrcst(노무)·gnrlexpns(경비). 단 분해 3필드는 현재 전건 빈
+문자열(prceDiv 전부 "기타가격" — 총단가 prce만 제공)이라, 분해가 채워진 항목이 유입되는
+즉시 아래 normalize_item이 자동으로 노무/경비를 분리 적재해 T1 가드(labor>0)를 통과시킨다.
+후보 목록 방어 파싱은 유지(타 오퍼레이션 증설 대비), 매칭 실패는 unmapped로 정직 보고.
+키 미보유/호출 실패 시 주입 0건·정직 로그(서버 기동/기존 흐름 무영향).
+
+★활성 전 확정 필요(R1 Q1): 분해 데이터가 실제 유입되기 시작하면, 그 분해가 제비율
+**전**(순공사원가) 분해인지 확정할 것 — 표준시장단가가 간접비·이윤 내재 올인 단가의
+분해라면 OriginCostCalculator의 노무 기반 제비율 12단계가 중복 가산(약 30~40% 과대)된다.
 """
 
 from __future__ import annotations
@@ -38,6 +46,10 @@ _PRICE_FIELD_CANDIDATES: tuple[str, ...] = (
     "sndrdMrktUnprc", "prcbdrAmt",
 )
 _CODE_FIELD_CANDIDATES: tuple[str, ...] = ("prdctIdntNo", "prdctClsfcNo")
+# 분해 단가(라이브 확정 필드 — 2026-07-16 기준 전건 빈 값이나 스키마 실존, 채워지면 자동 활성)
+_MATERIAL_COST_FIELD_CANDIDATES: tuple[str, ...] = ("mtrlcst",)
+_LABOR_COST_FIELD_CANDIDATES: tuple[str, ...] = ("lbrcst",)
+_EXPENSE_COST_FIELD_CANDIDATES: tuple[str, ...] = ("gnrlexpns",)
 
 
 def _service_key() -> str:
@@ -96,16 +108,34 @@ def normalize_item(raw: dict[str, Any]) -> dict[str, Any] | None:
     key = _match_price_key(text)
     if not key:
         return None  # 단가 SSOT 6종 공종에 매칭 안 되는 품목 — 현재 범위 밖(정직 skip)
+    # 분해 단가(재료/노무/경비)가 실제로 채워진 항목이면 각 슬롯에 분리 적재한다 —
+    # labor>0이 되어 T1 안전가드(unit_price_repository — 제비율 소실 방지)를 통과한다.
+    # 2026-07-16 라이브 전수(639건)에서는 전건 빈 값(총단가 prce만 제공)이라 폴백 경로만 발화.
+    material = _to_number(_first_present(raw, _MATERIAL_COST_FIELD_CANDIDATES))
+    labor = _to_number(_first_present(raw, _LABOR_COST_FIELD_CANDIDATES))
+    expense = _to_number(_first_present(raw, _EXPENSE_COST_FIELD_CANDIDATES))
+    has_breakdown = (labor or 0) > 0 and (material or 0) > 0
+    if has_breakdown:
+        # ★정합 가드(R1): 음수 성분이 있거나 분해 합이 총단가(prce)와 1% 초과 괴리
+        # (경비 누락 등 부분분해)면 폴백 — 검증된 총단가를 침묵 대체하지 않는다. 소비처는
+        # mat+labor+exp 합산(boq_builder)이므로 괴리가 그대로 T1 최우선 단가 왜곡이 된다.
+        # (음수는 합이 우연히 prce와 일치해도 비정상 분해 — 성분 단위로 거부한다.)
+        parts = ((material or 0), (labor or 0), (expense or 0))
+        parts_sum = sum(parts)
+        if min(parts) < 0 or parts_sum <= 0 or abs(parts_sum - price) / price > 0.01:
+            has_breakdown = False
+    if not has_breakdown:
+        # 분해 미제공 — 총단가를 재료비 슬롯에 전액 적재하고 노무/경비는 0(합계 중복산정
+        # 방지, 정직 표기). 이 행은 T1 가드에서 스킵되어 T2/T3로 폴백된다(의도된 동작).
+        material, labor, expense = price, 0.0, 0.0
     return {
         "material_code": _public_code(key),
         "material_name": str(name)[:300],
         "spec": (str(_first_present(raw, _SPEC_FIELD_CANDIDATES) or ""))[:300] or None,
         "unit": str(_first_present(raw, _UNIT_FIELD_CANDIDATES) or "식")[:20],
-        # 표준시장단가는 재료+노무+경비 결합 총단가로 제공되는 것이 통상 — 재료비 슬롯에
-        # 전액 적재하고 노무/경비는 0으로 둔다(합계 중복산정 방지, 정직 표기).
-        "material_price": price,
-        "labor_price": 0,
-        "expense_price": 0,
+        "material_price": material,
+        "labor_price": labor,
+        "expense_price": expense or 0.0,
         "price_key": key,
         "source_item_code": _first_present(raw, _CODE_FIELD_CANDIDATES),
     }
@@ -118,40 +148,58 @@ async def ingest_public_prices(
     keyword: str | None = None,
     max_pages: int = 3,
     num_rows: int = 100,
+    categories: list[str] | None = None,
 ) -> dict[str, Any]:
     """조달청 가격정보를 조회해 material_unit_prices에 멱등 upsert(T1 계층 주입).
 
-    반환: {ok, fetched, ingested, unmapped, reason?}. 키 미보유/실패 시 ok는 여전히
-    True(호출 자체는 정상)이며 ingested=0·reason으로 정직 표기(서버 무영향).
+    categories 미지정 시 등록된 전 분야(토목/건축/기계설비/전기통신)를 순회한다 —
+    분야가 넓을수록 단가 SSOT 6종 키워드에 매칭되는 품목 풀이 커진다(예: 합판거푸집·
+    창호는 건축 분야에서만 응답). 동일 키 다건은 마지막 값 채택(기존 계약 유지).
+    미등록 분야명은 호출자 오류이므로 네트워크 호출 전에 즉시 ValueError.
+
+    반환: {ok, fetched, ingested, unmapped, per_category, reason?}. 키 미보유/실패 시
+    ok는 여전히 True(호출 자체는 정상)이며 ingested=0·reason으로 정직 표기(서버 무영향).
     """
     from sqlalchemy import text
 
-    from app.integrations.public_price_client import PublicPriceClient
+    from app.integrations.public_price_client import PRICE_OPERATIONS, PublicPriceClient
     from app.services.cost.cost_tables_bootstrap import _ensure_cost_tables
+
+    cats = list(categories) if categories else list(PRICE_OPERATIONS)
+    unknown = [c for c in cats if c not in PRICE_OPERATIONS]
+    if unknown:
+        raise ValueError(
+            f"미등록 가격정보 분야: {unknown} — 등록 분야: {sorted(PRICE_OPERATIONS)}"
+        )
 
     key = _service_key()
     if not key:
         logger.info("조달청 가격정보 서비스키 미설정 — 주입 0건(graceful)")
         return {
             "ok": True, "fetched": 0, "ingested": 0, "unmapped": 0,
-            "reason": "조달청/MOLIT 서비스키 미설정",
+            "per_category": {}, "reason": "조달청/MOLIT 서비스키 미설정",
         }
 
     await _ensure_cost_tables(db)  # material_unit_prices + source_url 컬럼 보장
 
     client = PublicPriceClient(service_key=key)
     fetched_raw: list[dict[str, Any]] = []
+    per_category: dict[str, int] = {}
     try:
-        for page in range(1, max_pages + 1):
-            items = await client.fetch_facility_material_prices(
-                prdct_clsfc_no=prdct_clsfc_no, krn_prdct_nm=keyword,
-                page=page, num_rows=num_rows,
-            )
-            if not items:
-                break
-            fetched_raw.extend(items)
-            if len(items) < num_rows:
-                break  # 마지막 페이지
+        for category in cats:
+            fetched_before = len(fetched_raw)
+            for page in range(1, max_pages + 1):
+                items = await client.fetch_facility_material_prices(
+                    category=category,
+                    prdct_clsfc_no=prdct_clsfc_no, krn_prdct_nm=keyword,
+                    page=page, num_rows=num_rows,
+                )
+                if not items:
+                    break
+                fetched_raw.extend(items)
+                if len(items) < num_rows:
+                    break  # 마지막 페이지
+            per_category[category] = len(fetched_raw) - fetched_before
     finally:
         await client.close()
 
@@ -168,6 +216,7 @@ async def ingest_public_prices(
     if not normalized:
         return {
             "ok": True, "fetched": len(fetched_raw), "ingested": 0, "unmapped": unmapped,
+            "per_category": per_category,
             "reason": "매핑 가능 항목 없음" if fetched_raw else "API 응답 0건",
         }
 
@@ -196,5 +245,9 @@ async def ingest_public_prices(
     logger.info(
         "공공 표준시장단가 주입 완료",
         fetched=len(fetched_raw), ingested=len(normalized), unmapped=unmapped,
+        per_category=per_category,
     )
-    return {"ok": True, "fetched": len(fetched_raw), "ingested": len(normalized), "unmapped": unmapped}
+    return {
+        "ok": True, "fetched": len(fetched_raw), "ingested": len(normalized),
+        "unmapped": unmapped, "per_category": per_category,
+    }

@@ -134,7 +134,7 @@ class TestMonteCarloRealFeasibility:
         # base에서 금융비·소프트비가 자동추정(미입력)으로 산정된 경우에만 ②③가 적용된다.
         months = float(BASE_INPUT.get("project_months", 48))
         soft_factor = 0.07
-        finance_factor = 0.70 * 0.055 * (months / 12.0)
+        finance_factor = 0.70 * 0.055 * (months / 12.0) * 0.5  # W5: 분할실행 평균잔액 50% 기저
         auto_estimated = (
             base_out.cost_detail is not None
             and float(base_out.total_other_cost_won) > 0

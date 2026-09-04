@@ -49,6 +49,13 @@ from apps.api.database.models.lcc_calculation import LccCalculation
 from apps.api.database.models.legal_audit_trail import LegalAuditTrail
 from apps.api.database.models.low_carbon_alternative import LowCarbonAlternative
 from apps.api.database.models.material_price_history import MaterialPriceHistory
+
+# 회원 계정 보안 토큰·동의(2026-07 회원 시스템)
+from apps.api.database.models.member_auth import (
+    EmailVerificationToken,
+    PasswordResetToken,
+    UserConsent,
+)
 from apps.api.database.models.model_performance import ModelPerformance
 from apps.api.database.models.monitoring_metric import MonitoringMetric
 from apps.api.database.models.monte_carlo_result import MonteCarloResult
@@ -153,6 +160,9 @@ __all__ = [
     "User",
     "UserSubscription",
     "RefreshToken",
+    "PasswordResetToken",
+    "EmailVerificationToken",
+    "UserConsent",
     "Project",
     "Parcel",
     "Design",

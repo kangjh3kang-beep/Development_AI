@@ -14,13 +14,16 @@
  * - Progressive Disclosure (Jakob Nielsen, 1995)
  */
 
-import { useCallback, useMemo, useRef, useState, type ComponentProps } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
 import { AlertTriangle, Building2, CheckCircle2, FileSpreadsheet, Landmark, Layers3, Map as MapIcon, MapPin, Search } from "lucide-react";
 import { KakaoAddressSearch, type KakaoAddressResult } from "@/components/ui/KakaoAddressSearch";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { apiClient, apiV1BaseUrl } from "@/lib/api-client";
+import { bcodeFromPnu, joinAddressJibun, normalizePnu } from "@/lib/pnu";
+import { dedupeByIdentity, entryIdentityKey, isDuplicateOf, mergeKeepingIncomingFirst } from "@/lib/parcel-entry-identity";
 import { scheduleSnapshotSync } from "@/lib/projectSync";
 import { preferredEntryAddress } from "@/lib/parcel-rows";
+import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { LandShareModal } from "@/components/operations/LandShareModal";
 import { UseLlmToggle } from "@/components/common/UseLlmToggle";
 import { dynamicMap, MapShell } from "@/components/common/MapShell";
@@ -49,6 +52,62 @@ let _uidSeq = 0;
 function newUid(): string {
   _uidSeq += 1;
   return `p${_uidSeq}_${Math.floor(Math.random() * 1e6)}`;
+}
+
+/**
+ * 인테이크 초기 목록 산출 — **순수 함수**(스토어를 스스로 읽지 않는다).
+ *
+ * ★왜 함수로 뽑았나(2026-08-26 · React #418 근본수정):
+ *   이 로직이 `useState` 지연 초기값 안에서 `useProjectContextStore.getState()` 를 직접 불렀다.
+ *   `getState()` 는 **라이브 상태**라 zustand v5 가 `useSyncExternalStore` 의 **서버 스냅샷**으로
+ *   넘기는 `getInitialState()` 를 **우회한다.** 그래서 서버는 `[]`(=배지 "대기"), 클라이언트 첫
+ *   렌더는 persist 재수화 뒤 값(=배지 "77필지")을 그려 **텍스트 하이드레이션 불일치**가 났다
+ *   (라이브 실측: `/ko/regulations`·`/ko/permits` 각 1건 · 로컬 dev 재현 diff 에 `+77필지 / -대기`).
+ *
+ * ★그래서 **입력을 인자로 뺐다** — 같은 함수에 `parcels: undefined` 를 주면 서버가 계산한 것과
+ *   **구성상 같은 값**이 나온다. 손으로 베낀 "서버와 같은 값"은 다음 편집에서 갈린다.
+ */
+export function buildInitialAddressEntries(opts: {
+  parcels: ReadonlyArray<{ address?: string | null; pnu?: unknown; areaSqm?: unknown; zoneCode?: string | null }> | null | undefined;
+  initialAddress?: string;
+  writeToContext: boolean;
+  single: boolean;
+}): AddressEntry[] {
+  const { parcels, initialAddress, writeToContext, single } = opts;
+  // ★프로젝트 로드 시 다필지 하이드레이션 — 컨텍스트에 등록된 전 필지로 시작한다.
+  //   이게 없으면 프로젝트(예: 5필지)를 골라도 initialAddress(대표주소 1개)로만 시작해
+  //   인테이크 목록·지도 staged 가 1필지처럼 보이고("면적 보강 대기"·"완료(0필지 등록)"),
+  //   실제 등록된 나머지 필지의 면적·용도가 화면에 반영되지 않는다.
+  //   store 를 SSOT 로 쓰는 모드(writeToContext)일 때만 — 로컬 검색 모드는 결과 누출 방지 위해 제외.
+  //   single 모드도 제외 — 단일 입력 계약(예: 반경검색 중심점 1개)에 다필지를 주입하면 계약 위반.
+  if (writeToContext && !single) {
+    if (Array.isArray(parcels) && parcels.length >= 2) {
+      return parcels
+        .filter((p) => p && (p.address || p.pnu))
+        .map((p) => {
+          const pnu = typeof p.pnu === "string" ? p.pnu : "";
+          return {
+            __uid: newUid(),
+            fullAddress: p.address || "",
+            jibunAddress: p.address || "",
+            roadAddress: "",
+            sido: "",
+            sigungu: "",
+            bname: "",
+            zonecode: "",
+            // PNU 앞 10자리 = 법정동 코드(있으면 유도, 없으면 빈값).
+            bcode: bcodeFromPnu(pnu) ?? "",
+            pnu: normalizePnu(pnu) ?? undefined,
+            areaSqm: typeof p.areaSqm === "number" && p.areaSqm > 0 ? p.areaSqm : undefined,
+            zoneCode: p.zoneCode ?? undefined,
+          } as AddressEntry;
+        });
+    }
+  }
+  if (initialAddress) {
+    return [{ __uid: newUid(), fullAddress: initialAddress, jibunAddress: "", roadAddress: "", sido: "", sigungu: "", bname: "", zonecode: "", bcode: "" }];
+  }
+  return [];
 }
 
 // 특이부지(개발 부적합·후순위 대상) 판정 — 다필지에서 '대표' 필지를 고를 때 입력 순서가 아니라
@@ -84,6 +143,15 @@ export interface AddressEntry {
   areaSqm?: number; // 면적 (m²) — 공공데이터(공부상) 우선. API에서 자동 반영
   areaPyeong?: number; // 면적 (평) — 자동 환산
   areaInputSqm?: number; // 엑셀 입력 면적(비권위·참고용) — 공부상과 크게 다르면 보존
+  // ── 토지조서 동의 3종(O/X) — 사용자가 **양식에서 직접 채우는** 값이다 ──
+  // ★양식 안내 시트가 이 칸을 '활용됩니다'라고 **약속**한다. 여기 선언이 없으면 업로드
+  //   응답에 실려 온 값이 타입 경계에서 조용히 버려지고 그 약속이 거짓이 된다
+  //   (실측: 이 경계 하나에서 7개 필드가 버려지고 있었다).
+  // ★필지 단위 진술이다 — 소유자 단위가 아니다. 공유지분 필지에 그대로 승계하면
+  //   분자가 과대해진다(계산 배선은 소유자 식별자 확보 후에 한다).
+  consentLand?: boolean | null;      // 토지사용동의
+  consentDistrict?: boolean | null;  // 지구단위계획동의
+  consentOperator?: boolean | null;  // 시행자지정동의
   areaWarning?: string | null; // 엑셀 입력↔공부상 면적 괴리 경고(공부상 채택했음을 정직 고지)
   // ── 필지별 토지정보(/zoning/parcels-info 일괄 보강) — 등록된 모든 필지가 갖는다 ──
   pnu?: string; // PNU(19자리)
@@ -133,6 +201,12 @@ interface GlobalAddressSearchProps {
   className?: string;
   /** placeholder */
   placeholder?: string;
+  /**
+   * 검색 입력의 **접근 가능한 이름**(스크린리더가 읽는 이름).
+   * placeholder 는 형식 예시라 이름으로 부적절하다 — 둘을 분리한다.
+   * 미지정이면 한국어 기본값(컴포넌트층 i18n 캠페인 대상).
+   */
+  ariaLabel?: string;
   /** 비활성화 */
   disabled?: boolean;
   /** 초기 주소 (스토어에서 가져온 값 사전 표시) */
@@ -152,17 +226,37 @@ export function GlobalAddressSearch({
   onChange,
   className = "",
   placeholder = "주소를 검색하세요",
+  ariaLabel,
   disabled = false,
   initialAddress,
   writeToContext = true,
   onAnalyzed,
 }: GlobalAddressSearchProps) {
-  const [addresses, setAddresses] = useState<AddressEntry[]>(() => {
-    if (initialAddress) {
-      return [{ __uid: newUid(), fullAddress: initialAddress, jibunAddress: "", roadAddress: "", sido: "", sigungu: "", bname: "", zonecode: "", bcode: "" }];
-    }
-    return [];
-  });
+  // ★초기값은 **서버가 계산할 수 있는 것만**으로 만든다 — persist(localStorage)는 서버에 없다.
+  //   여기서 `useProjectContextStore.getState()`(라이브 상태)를 읽으면 서버는 `[]`, 브라우저 첫
+  //   렌더는 재수화된 필지 목록을 그려 **텍스트 하이드레이션 불일치**가 난다
+  //   (라이브 실측 2026-08-26: `/ko/regulations`·`/ko/permits` 각 1건 · React #418 `args[]=text`.
+  //    로컬 dev 재현 diff 가 이 컴포넌트의 요약 배지를 지목했다 — `+77필지 / -대기`).
+  //   ★상태 자체를 서버와 맞춘다(렌더만 가리지 않는다) — 그래야 `selectedSatongFeatures` 처럼
+  //     `addresses` 에서 파생되는 **다른 소비처까지** 한꺼번에 안전해진다.
+  const [addresses, setAddresses] = useState<AddressEntry[]>(() =>
+    buildInitialAddressEntries({ parcels: undefined, initialAddress, writeToContext, single }),
+  );
+
+  // ★재수화 이후 1회 — 컨텍스트에 등록된 다필지를 시드한다(기능 보존: 프로젝트를 고르면 전 필지로 시작).
+  //   렌더가 아니라 이펙트에서 읽으므로 서버/클라 첫 렌더는 같은 것을 그린다.
+  //   사용자가 이미 목록을 만들었으면(2건 이상) 덮지 않는다.
+  useEffect(() => {
+    const seeded = buildInitialAddressEntries({
+      parcels: useProjectContextStore.getState().siteAnalysis?.parcels,
+      initialAddress,
+      writeToContext,
+      single,
+    });
+    if (seeded.length >= 2) setAddresses((prev) => (prev.length >= 2 ? prev : seeded));
+    // 마운트 1회만 — 이후의 스토어 변화는 기존 경로(선택·검색·복원)가 처리한다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [isSearching, setIsSearching] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   // 다음(Daum) 팝업 외부제어 — 통합검색에서 '건물명·아파트로 찾기' 보조링크로만 연다.
@@ -416,11 +510,12 @@ export function GlobalAddressSearch({
       // ★검증된 bcode만 형제전파 학습 — PNU 동반(실제 조회로 확정)만 신뢰한다.
       //   엑셀 입력 bcode는 양식 예시값(의정부 4115·강남 1168)이 1~2행에 남아 주소와 어긋날 수
       //   있어 형제 학습에서 제외(오염 전파 방지). PNU 없는 엑셀 bcode는 백엔드가 주소로 재해소.
-      const b = e.pnu && e.pnu.length >= 10 ? e.pnu.slice(0, 10) : "";
+      const b = bcodeFromPnu(e.pnu) ?? "";
       const src = e.fullAddress || e.jibunAddress || "";
       const sg = sigunguOf(src);
       const d = dongOf(src);
-      if (b && b.length >= 10 && sg && d && !sgDongBcode.has(`${sg}|${d}`)) sgDongBcode.set(`${sg}|${d}`, b.slice(0, 10));
+      // `b` 는 `bcodeFromPnu` 의 산출이라 "" 이거나 **정확히 10자**다 — 길이 재검사는 공허하다.
+      if (b && sg && d && !sgDongBcode.has(`${sg}|${d}`)) sgDongBcode.set(`${sg}|${d}`, b);
     }
     const bcodeFor = (e: AddressEntry): string => {
       const src = e.fullAddress || e.jibunAddress || "";
@@ -476,7 +571,7 @@ export function GlobalAddressSearch({
         const r = await apiClient.post<{ parcels: P[] }>("/zoning/parcels-info", {
           // area_input_sqm: 엑셀 입력 면적(비권위)을 함께 보내 백엔드가 공부상과 교차검증→괴리 시
           //   공부상 채택 + area_warning 생성하게 한다(_enrich_fill 신뢰루프 활성화).
-          body: { parcels: slice.map((e, i) => ({ __rid: i, address: e.fullAddress, jibun: e.jibunAddress || e.fullAddress, pnu: e.pnu, bcode: bcodeFor(e), area_input_sqm: e.areaInputSqm ?? e.areaSqm ?? null })) },
+          body: { parcels: slice.map((e, i) => ({ __rid: i, address: e.fullAddress, jibun: e.jibunAddress || e.fullAddress, pnu: normalizePnu(e.pnu) ?? undefined, bcode: bcodeFor(e), area_input_sqm: e.areaInputSqm ?? e.areaSqm ?? null })) },
           useMock: false, timeoutMs: 90000,
         });
         parcels = r.parcels || [];
@@ -492,7 +587,18 @@ export function GlobalAddressSearch({
         const uid = slice[p.__rid]?.__uid;
         if (uid) { byUid.set(uid, p); enrichedByUid.set(uid, p); }
       }
-      setAddresses((prev) => prev.map((a) => {
+      // ★보강이 **정체성 문자열을 수렴시킨다** — 백엔드가 짧은 주소를 전체 시군구 주소로
+      //   자동 해소하고(`resolvedAddr`) 없던 PNU 를 채운다(`m.pnu || a.pnu`). 그래서 병합
+      //   시점에는 서로 다른 문자열이던 두 행이 **여기서 비로소 같은 필지로 드러난다.**
+      //   종전엔 수렴 후 다시 중복제거하는 곳이 **없어서**, «중복제거를 했다» 는 사실이
+      //   «중복이 없다» 를 보장하지 못했다. 수렴 직후 같은 규칙으로 한 번 더 접는다.
+      //
+      // ★**이것은 입력 시점 중복제거와 이중 가드다**(변이 검증에서 실측). 보강이 성공하면
+      //   여기가 목록 전체를 다시 접으므로, 입력 시점 가드를 지워도 최종 수가 같다 —
+      //   그래서 그 변이가 「생존」으로 보인다. **구멍이 아니라 중복 방어다.**
+      //   단, **보강이 실패하면 이 줄은 돌지 않는다**(청크 예외 → `continue`). 그때는 입력
+      //   시점 가드가 유일하므로 둘 다 필요하다. 두 경로 모두 테스트가 따로 태운다.
+      setAddresses((prev) => dedupeByIdentity(prev.map((a) => {
         const m = a.__uid ? byUid.get(a.__uid) : undefined;
         if (!m) return a;
         // ★공공데이터(공부상) 우선: parcels-info status=ok이고 공부상 면적이 있으면 엑셀 입력값을
@@ -530,7 +636,7 @@ export function GlobalAddressSearch({
           unitCount: m.building?.unit_count ?? a.unitCount,
           infoStatus: (m.status as AddressEntry["infoStatus"]) || a.infoStatus,
         };
-      }));
+      })));
     }
 
     if (seq !== enrichSeq.current) { finishPending(); return; } // 더 새로운 보강이 시작됐으면 이후 단계(자기치유·SSOT) 폐기
@@ -594,14 +700,14 @@ export function GlobalAddressSearch({
         const zone = m?.zone_type ?? e.zoneCode ?? null;
         // 토지조서 SSOT(parcels) 배선용 필지별 데이터 — 보강(m) 우선, 로컬 entry 폴백.
         //   무목업: 없는 값은 빈 문자열(가짜 미생성). ownerType은 무료 API 미제공이라 항상 "".
-        const pnu = (m?.pnu ?? e.pnu) ?? "";
+        const pnu = normalizePnu(m?.pnu ?? e.pnu) ?? "";
         const address = (m?.address ?? e.fullAddress ?? e.jibunAddress) ?? "";
         const landCategory = (m?.jimok ?? e.jimok) ?? "";
         // 개발가능성 우선정렬용 특이부지 판정(지목 + 백엔드 게이트) — '대표' 선정의 핵심.
         const special = _isSpecialParcel({ jimok: landCategory, isSpecial: (m?.special_parcel ?? e.specialParcel)?.is_special });
         // ★K1: 대표(개발가능 필지)로 종합/시나리오 분석을 '재조준'하기 위해 bcode·지번도 함께 보존.
         //   (도로 등 특이부지가 입력 1번이라 분석이 거기 고정되던 근본버그 해소 — analysisAddress 보정.)
-        const bcode = (e.bcode || (pnu && pnu.length >= 10 ? pnu.slice(0, 10) : "")) ?? "";
+        const bcode = (e.bcode || (bcodeFromPnu(pnu) ?? "")) ?? "";
         const jibun = (e.jibunAddress || address) ?? "";
         return { area, status, zone, pnu, address, landCategory, special, bcode, jibun };
       })
@@ -667,8 +773,10 @@ export function GlobalAddressSearch({
       // ★토지조서 SSOT 배선: 다필지 배열을 기록해 LandSchedule·Registry 시드 useEffect가
       //   집계값이 아닌 실제 필지목록으로 표를 자동 복원하게 한다('절반만 배선된 SSOT' 해소).
       //   ParcelData 타입 정합(pnu/address/areaSqm/landCategory/ownerType), 누락필드는 "".
+      // ★여기가 **되쓰기** 지점이다 — 오염값을 그대로 넣으면 스토어가 오염을 스스로 재생산하고
+      //   («레거시 저장분이라 활성 생산이 아니다» 라는 서술이 이 파일에서는 거짓이 된다).
       parcels: valid.map((p) => ({
-        pnu: p.pnu,
+        pnu: normalizePnu(p.pnu) ?? "",
         address: p.address,
         areaSqm: p.area,
         landCategory: p.landCategory,
@@ -748,7 +856,9 @@ export function GlobalAddressSearch({
       newAddresses = [entry];
     } else {
       // 다필지: 중복이면 조기 반환(불필요한 종합분석·보강 재발사 차단).
-      if (addresses.some((a) => a.fullAddress === entry.fullAddress)) {
+      // ★정체성은 **PNU 우선**이다(`parcel-entry-identity`). 종전엔 `fullAddress` 문자열만 봐서
+      //   같은 동 단위 주소를 공유하는 **서로 다른 필지**가 「중복」으로 버려졌다.
+      if (isDuplicateOf(entry, addresses)) {
         setIsSearching(false);
         onChange?.(addresses);
         return;
@@ -863,7 +973,7 @@ export function GlobalAddressSearch({
   // bcode는 PNU 앞 10자리로 구성(pickCandidate 패턴 동일).
   const handleMapPick = useCallback((parcel: ParcelAtPointResult) => {
     if (!parcel.found || !parcel.address) return;
-    const bcode = parcel.bcode || (parcel.pnu && parcel.pnu.length >= 10 ? parcel.pnu.slice(0, 10) : "");
+    const bcode = parcel.bcode || (bcodeFromPnu(parcel.pnu) ?? "");
     handleAddressSelect({
       fullAddress: parcel.address,
       jibunAddress: parcel.jibun || parcel.address,
@@ -880,17 +990,24 @@ export function GlobalAddressSearch({
 
     // 현재 addresses를 읽어 중복 체크용 Set 생성(함수 호출 시점 스냅샷).
     // handleAddressSelect 내부에서도 중복 체크하므로 실질적으로 이중 방어.
-    const existingAddresses = new Set(addresses.map((a) => a.fullAddress));
+    // ★주소 문자열이 아니라 **정체성 키**로 본다 — 같은 동 주소의 다른 필지를 삼키지 않는다.
+    const existingKeys = new Set(
+      addresses.map(entryIdentityKey).filter((k): k is string => k !== null),
+    );
 
     let merged = [...addresses];
 
     for (const parcel of parcels) {
       if (!parcel.found || !parcel.address) continue;
       const fullAddress = parcel.address;
-      if (existingAddresses.has(fullAddress)) continue; // 이미 있으면 건너뜀
-      existingAddresses.add(fullAddress);
+      // ★앵커(유효 PNU·주소)가 없으면 `null` — 그때는 **중복이 아니다**(무음 손실 금지).
+      const key = entryIdentityKey({ pnu: parcel.pnu, fullAddress });
+      if (key !== null) {
+        if (existingKeys.has(key)) continue; // 이미 있으면 건너뜀
+        existingKeys.add(key);
+      }
 
-      const bcode = parcel.bcode || (parcel.pnu && parcel.pnu.length >= 10 ? parcel.pnu.slice(0, 10) : "");
+      const bcode = parcel.bcode || (bcodeFromPnu(parcel.pnu) ?? "");
       const entry: AddressEntry = {
         __uid: newUid(),
         fullAddress,
@@ -932,7 +1049,7 @@ export function GlobalAddressSearch({
 
   // 후보 선택 → 필지로 추가(PNU 보유 시 bcode 직접 구성, 종합분석 재실행).
   const pickCandidate = useCallback((c: AddrCandidate) => {
-    const bcode = c.pnu && c.pnu.length >= 10 ? c.pnu.slice(0, 10) : "";
+    const bcode = bcodeFromPnu(c.pnu) ?? "";
     handleAddressSelect({
       fullAddress: c.address,
       jibunAddress: c.address,
@@ -955,7 +1072,11 @@ export function GlobalAddressSearch({
     ? siteAnalysis
       ? {
           zoneCode: siteAnalysis.zoneCode,
-          landAreaSqm: siteAnalysis.landAreaSqm,
+          // ★면적은 반드시 effectiveLandAreaSqm(SSOT)로 읽는다 — raw landAreaSqm 금지.
+          //   landAreaSqm 은 '대표 1필지' 분석이 덮어쓰기도 하고, 이전 필지구성의 통합값이
+          //   남아 있기도 해서 다필지에서 통합면적(landAreaSqmTotal)과 갈린다. raw 를 읽으면
+          //   같은 화면의 ContextHeader(=effectiveLandAreaSqm 사용)와 다른 면적이 표시된다.
+          landAreaSqm: effectiveLandAreaSqm(siteAnalysis),
           effectiveBcr: siteAnalysis.ordinance?.effectiveBcr ?? null,
           effectiveFar: siteAnalysis.ordinance?.effectiveFar ?? null,
           dataSource: siteAnalysis.dataSource ?? null,
@@ -966,7 +1087,7 @@ export function GlobalAddressSearch({
   const selectedSatongFeatures = useMemo(() => {
     return addresses.map((a) => ({
       id: a.__uid || a.pnu || a.fullAddress || a.jibunAddress || "parcel",
-      address: a.fullAddress || a.jibunAddress || a.roadAddress || "필지",
+      address: preferredEntryAddress(a) || "필지",
       pnu: a.pnu ?? null,
       areaSqm: a.areaSqm ?? null,
       zoneType: a.zoneCode ?? null,
@@ -983,7 +1104,7 @@ export function GlobalAddressSearch({
   // ── 다필지 엑셀 업로드 — 토지조서 양식 업로드 → 필지 추출(주소만 적어도 PNU·면적·용도 자동보강) ──
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
-  const [uploadInfo, setUploadInfo] = useState<{ note: string; registry?: string; verify?: string } | null>(null);
+  const [uploadInfo, setUploadInfo] = useState<{ note: string; registry?: string; verify?: string; warnings?: string[] } | null>(null);
   // ★use_llm 옵트인(T1) — 기존 동작 보존을 위해 기본 true(비표준 양식 자동 LLM 보조 유지).
   const [useLlm, setUseLlm] = useState(true);
 
@@ -995,11 +1116,17 @@ export function GlobalAddressSearch({
       fd.append("file", file);
       fd.append("use_llm", String(useLlm));
       const res = await apiClient.post<{
-        parcels?: Array<{ address?: string | null; jibun?: string | null; bcode?: string | null; pnu?: string | null; area_sqm?: number | null; zone_type?: string | null; jimok?: string | null; official_price_per_sqm?: number | null; injectable?: boolean | null }>;
+        parcels?: Array<{ address?: string | null; jibun?: string | null; bcode?: string | null; pnu?: string | null; area_sqm?: number | null; zone_type?: string | null; jimok?: string | null; official_price_per_sqm?: number | null; injectable?: boolean | null;
+          consent_land?: boolean | null; consent_district?: boolean | null;
+          consent_operator?: boolean | null }>;
         note?: string; error?: string; registry_guidance?: { message?: string };
-        verification_report?: { counts?: { verified?: number; corrected?: number; needs_review?: number; excluded?: number } | null } | null;
+        verification_report?: { counts?: { verified?: number; corrected?: number; needs_review?: number; excluded?: number } | null;
+          warnings?: string[] | null } | null;
+        warnings?: string[] | null;
       }>("/zoning/parse-parcels", { body: fd, useMock: false, timeoutMs: 120000 });
-      if (res.error) { setUploadInfo({ note: res.error }); return; }
+      // ★error 여도 warnings 를 함께 보여준다 — 백엔드의 조기 실패 반환은 '필수 컬럼을 찾지
+      //   못했습니다' 같은 표면 사유만 담고, 진짜 원인(시트·병합을 못 읽음)은 warnings 에 있다.
+      if (res.error) { setUploadInfo({ note: res.error, warnings: (res.verification_report?.warnings ?? res.warnings ?? undefined) || undefined }); return; }
       // parse-parcels가 이미 채운 면적·용도지역·지목·공시지가를 보존(이전엔 areaSqm만 받고 폐기).
       // ★H3: injectable=False는 백엔드에서 표에서 완전히 제외된 행(합계/집계)에만 쓴다 —
       //   verified/corrected/needs_review는 모두 반영해 반영 후 2차 조회(/zoning/parcels-info)의
@@ -1010,9 +1137,11 @@ export function GlobalAddressSearch({
         .map((p) => {
           // ★소재지(동)와 지번(번지)이 분리된 양식이면 결합해 '완전한 지번주소'를 fullAddress로.
           //   (이게 누락돼 동 단위 주소만 들어가 부지분석·구획도가 동 대표필지로 수렴하던 근본버그.)
+          //   ★2026-08-20: 구현을 `joinAddressJibun`(lib/pnu)으로 옮겼다 — 여기만 고쳐져 있고
+          //   13일 뒤 생긴 사통맵 유입부가 같은 결함을 재도입했다(구현 두 벌 금지).
           const addr = (p.address || "").trim();
           const jb = (p.jibun || "").trim();
-          const full = (jb && addr && !addr.includes(jb)) ? `${addr} ${jb}` : (addr || jb || p.pnu || "");
+          const full = joinAddressJibun(addr, jb, p.pnu || "");
           return ({
           __uid: newUid(),
           fullAddress: full,
@@ -1024,25 +1153,32 @@ export function GlobalAddressSearch({
           ...(p.zone_type ? { zoneCode: p.zone_type } : {}),
           ...(p.jimok ? { jimok: p.jimok } : {}),
           ...(p.official_price_per_sqm ? { officialPrice: p.official_price_per_sqm } : {}),
+          // 동의 3종은 **null 과 false 를 구분**해 옮긴다 — false(미동의)를 누락으로
+          // 접으면 '아직 안 받았다'와 '거부했다'가 같아진다.
+          ...(p.consent_land != null ? { consentLand: p.consent_land } : {}),
+          ...(p.consent_district != null ? { consentDistrict: p.consent_district } : {}),
+          ...(p.consent_operator != null ? { consentOperator: p.consent_operator } : {}),
         });
         });
       // ★같은 필지가 여러 행(공유지분·다소유자)으로 들어오면 병합셀 forward-fill 후 같은
       //   지번으로 복원돼 분석 목록에 중복 표시된다(211-443이 5번 등). 분석 목록은 '필지 단위'
       //   이므로 PNU(없으면 주소)로 1필지=1행 정리한다. 소유자별·세대별 상세(대지지분 등)는
       //   토지조서 메뉴에서 관리한다(중앙분석센터=부지분석, 토지조서=권리/세대 관리로 역할분리).
-      const seenKey = new Set<string>();
-      const uniqEntries = entries.filter((e) => {
-        const key = (e.pnu || e.fullAddress || "").replace(/\s+/g, "");
-        if (key && seenKey.has(key)) return false; // 키 있고 이미 본 필지만 중복 제거
-        if (key) seenKey.add(key);
-        return true; // 빈 키(주소·PNU 모두 없는 행)는 제거하지 않고 보존(데이터 손실 방지)
-      });
+      // ★정체성 판정은 `parcel-entry-identity` 한 곳이다. 종전 인라인 키
+      //   `(e.pnu || e.fullAddress || "")` 는 **PNU 유효성을 안 봤다** — `#941` 라이브 실측에서
+      //   PNU 칸의 비-PNU 값이 292필지 중 5건이었고, 그 값은 생산자가 주소로 합성하므로
+      //   **주소가 같으면 값도 같다**. 즉 가짜 PNU 가 곧 정체성이 되어 다시 접혔다.
+      //   빈 키(앵커 없는 행)는 여전히 **보존**한다(데이터 손실 방지).
+      const uniqEntries = dedupeByIdentity(entries);
       const dupRemoved = entries.length - uniqEntries.length;
       // ★업로드한 필지를 앞에 둔다(기존 검색분은 뒤로 보존, 혼용 가능). 방금 올린 토지조서가
       //   대표(primary)가 되어 이전에 검색한 주소가 분석에 잔류하는 오류를 막는다.
       const merged = single
         ? uniqEntries.slice(0, 1)
-        : [...uniqEntries, ...addresses.filter((a) => !uniqEntries.some((e) => e.fullAddress === a.fullAddress))];
+        // ★업로드분을 앞에 두고 기존분 중 **같은 필지가 아닌 것만** 뒤에 붙인다.
+        //   종전엔 `fullAddress` 동일성만 봐서, 같은 필지가 표기만 다르면(`상도동 211-204` vs
+        //   `서울특별시 동작구 상도동 211-204`) **두 건으로 남았다.**
+        : mergeKeepingIncomingFirst(uniqEntries, addresses);
       setAddresses(merged);
       setMapMode("cadastre");
 
@@ -1056,12 +1192,17 @@ export function GlobalAddressSearch({
       onChange?.(merged);
       // 중복(같은 필지 다중행)을 정리했으면 안내에 표기 — 사용자가 '왜 줄었지' 혼란 방지.
       const dupNote = dupRemoved > 0 ? ` · 동일 필지 ${dupRemoved}행 통합(공유지분 등은 토지조서에서 관리)` : "";
-      // ★검증 리포트 간이 요약(카운트만 — 상세 사유·보정내역은 토지조서 화면의 전체 패널에서 확인).
+      // ★검증 리포트 간이 요약(카운트).
+      //   ★예전 주석은 "상세 사유는 토지조서 화면에서 확인"이라 안내했는데 그 화면에는
+      //   verification_report 소비가 아예 없다 — 존재하지 않는 회수 경로를 약속하는 오도였다
+      //   (같은 잘못을 SatongMapShell 이 이미 겪고 고쳤다). 그래서 경고를 여기서 직접 보여준다.
       const vc = res.verification_report?.counts;
       const verify = vc
         ? `검증: 확인 ${vc.verified ?? 0} · 보정 ${vc.corrected ?? 0} · 확인필요 ${vc.needs_review ?? 0} · 제외 ${vc.excluded ?? 0}`
         : undefined;
-      setUploadInfo({ note: (res.note || `${uniqEntries.length}필지 등록`) + dupNote, registry: res.registry_guidance?.message, verify });
+      // 병합셀 복원 실패처럼 '조용히 지번이 빠지는' 사유는 이 경고에만 실려 온다 — 버리면 침묵이다.
+      const warnings = (res.verification_report?.warnings ?? res.warnings ?? undefined) || undefined;
+      setUploadInfo({ note: (res.note || `${uniqEntries.length}필지 등록`) + dupNote, registry: res.registry_guidance?.message, verify, warnings });
       // 건폐율/용적률·집합건물(빌라) 여부 보강 — parse-parcels엔 없는 항목을 일괄 채운다.
       // ★재업로드 시 자기치유 재시도 카운터 초기화 — 직전 업로드에서 2회 소진한 필지도 다시 보강 시도(무한 아님).
       enrichTries.current.clear();
@@ -1278,7 +1419,7 @@ export function GlobalAddressSearch({
           </button>
         )
       ) : (
-        <div className="overflow-hidden rounded-[22px] border border-[var(--saas-ink-line-strong)] bg-[var(--surface-secondary)] shadow-[var(--shadow-lg)]">
+        <div className="overflow-hidden rounded-[var(--r-panel)] border border-[var(--saas-ink-line-strong)] bg-[var(--surface-secondary)] shadow-[var(--shadow-lg)]">
           <div className="relative overflow-hidden bg-[var(--saas-ink)] px-4 py-3 text-white">
             <div className="absolute inset-0 opacity-40" style={{
               backgroundImage: "linear-gradient(90deg, var(--saas-hero-grid-lime) 1px, transparent 1px), linear-gradient(0deg, var(--saas-hero-grid-sky) 1px, transparent 1px)",
@@ -1286,7 +1427,7 @@ export function GlobalAddressSearch({
             }} />
             <div className="relative flex flex-wrap items-center justify-between gap-3">
               <div>
-                <p className="text-[11px] font-black uppercase tracking-widest text-[var(--saas-lime)]">Parcel Intake Pipeline</p>
+                <p className="text-[11px] font-black uppercase tracking-widest text-[var(--tertiary)]">Parcel Intake Pipeline</p>
                 <h3 className="mt-1 text-base font-black text-white">지도 기반 필지 입력 작업면</h3>
                 <p className="mt-1 text-xs font-semibold text-white/76">상단에서 검색·엑셀을 처리하고, 왼쪽 목록과 오른쪽 지도가 동시에 갱신됩니다.</p>
               </div>
@@ -1304,7 +1445,7 @@ export function GlobalAddressSearch({
             </div>
           </div>
 
-          <div className="border-b border-[var(--line)] bg-[linear-gradient(135deg,var(--saas-panel-wash),var(--surface-secondary)_56%,var(--saas-sky-soft))] px-4 py-3">
+          <div className="border-b border-[var(--line)] bg-[linear-gradient(135deg,var(--surface-soft),var(--surface-secondary)_56%,var(--surface-tertiary))] px-4 py-3">
             <div className="flex flex-col gap-3 xl:flex-row xl:items-end">
               <div className="min-w-0 flex-1">
                 <div className="mb-1.5 flex flex-wrap items-center gap-2">
@@ -1315,7 +1456,7 @@ export function GlobalAddressSearch({
                     type="button"
                     disabled={disabled}
                     onClick={() => setKakaoOpen(true)}
-                    className="inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-[var(--saas-sky-line)] bg-[var(--saas-sky-soft)] px-2.5 py-1 text-[11px] font-black text-[var(--saas-sky-text)] hover:bg-[var(--saas-sky)] disabled:opacity-50"
+                    className="inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-[color-mix(in_srgb,var(--secondary)_38%,transparent)] bg-[color-mix(in_srgb,var(--secondary)_14%,transparent)] px-2.5 py-1 text-[11px] font-black text-[var(--secondary)] hover:bg-[color-mix(in_srgb,var(--secondary)_24%,transparent)] disabled:opacity-50"
                   >
                     <Building2 className="size-3.5" aria-hidden /> 건물명·아파트
                   </button>
@@ -1337,7 +1478,7 @@ export function GlobalAddressSearch({
                   <button
                     type="button"
                     onClick={() => void downloadTemplate()}
-                    className="rounded-full bg-[var(--saas-lime)] px-2.5 py-1 text-[11px] font-black text-[var(--saas-ink)] hover:brightness-95"
+                    className="rounded-full bg-[var(--accent-strong)] px-2.5 py-1 text-[11px] font-black text-[var(--on-primary)] hover:brightness-95"
                   >
                     양식 다운로드 ↓
                   </button>
@@ -1359,19 +1500,27 @@ export function GlobalAddressSearch({
                       onFocus={() => { if (candidates.length) setShowCandidates(true); }}
                       onBlur={() => setTimeout(() => setShowCandidates(false), 150)}
                       onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); if (candidates.length) pickCandidate(candidates[0]); else void handleDirectAdd(); } }}
+                      // ★이 검색창의 placeholder 는 **형식 예시**다(필드 라벨이 아니다).
+                      //   한때 호출부의 `placeholder` prop 으로 덮었다가 되돌렸다 —
+                      //   호출부가 넘기는 값은 "주소"/"Address" 같은 **필드 라벨**이라,
+                      //   덮으면 `예: 의정부동 224, 산 12-3` 형식 안내를 잃고
+                      //   `popover-layer.spec.ts` 의 층위 계약(입력칸 탐색)도 깨졌다(실측).
+                      //   ★남은 문제는 이 문자열이 **한국어 하드코딩**이라 `/en`·`/zh-CN`
+                      //     에서도 한국어로 나온다는 것이다 — 컴포넌트층 i18n 캠페인 대상
+                      //     (실측 134파일·341개). 여기서 필드 라벨로 때우지 않는다.
                       placeholder="지번·도로명 검색 (예: 의정부동 224, 산 12-3, 판교역로 166)"
-                      aria-label="지번·도로명 주소 검색"
+                      aria-label={ariaLabel || "지번·도로명 주소 검색"}
                       className="h-12 w-full rounded-full border border-[var(--line-strong)] bg-white px-4 text-[13px] font-semibold text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
                     />
                     {showCandidates && (candidates.length > 0 || searching) && (
-                      <ul className="absolute left-0 right-0 top-full z-30 mt-1 max-h-64 overflow-y-auto rounded-2xl border border-[var(--line-strong)] bg-white p-1 shadow-[var(--shadow-lg)]">
+                      <ul className="absolute left-0 right-0 top-full z-[650] mt-1 max-h-64 overflow-y-auto rounded-2xl border border-[var(--line-strong)] bg-[var(--surface-panel)] p-1 shadow-[var(--shadow-lg)]">
                         {searching && <li className="px-3 py-2 text-[11px] text-[var(--text-tertiary)]">검색 중…</li>}
                         {candidates.map((c, i) => (
                           <li key={`${c.address}-${i}`}>
                             <button
                               type="button"
                               onMouseDown={(e) => { e.preventDefault(); pickCandidate(c); }}
-                              className="flex w-full items-center justify-between gap-2 rounded-xl px-3 py-2 text-left text-[12px] hover:bg-[var(--saas-lime-soft)]"
+                              className="flex w-full items-center justify-between gap-2 rounded-xl px-3 py-2 text-left text-[12px] hover:bg-[var(--accent-soft)]"
                             >
                               <span className="truncate font-bold text-[var(--text-primary)]">{c.address}</span>
                               <span className="shrink-0 rounded-full bg-[var(--surface-muted)] px-2 py-0.5 text-[10px] font-black text-[var(--text-tertiary)]">{c.kind || "지번"}</span>
@@ -1396,6 +1545,15 @@ export function GlobalAddressSearch({
                     <p className="flex items-start gap-1"><MapPin className="mt-0.5 size-3 shrink-0" aria-hidden /><span>{uploadInfo.note}</span></p>
                     {uploadInfo.verify && <p className="mt-1 text-[11px] font-semibold text-[var(--text-secondary)]">{uploadInfo.verify}</p>}
                     {uploadInfo.registry && <p className="mt-1 flex items-start gap-1 font-semibold text-amber-500"><Landmark className="mt-0.5 size-3 shrink-0" aria-hidden /><span>{uploadInfo.registry}</span></p>}
+                    {/* ★업로드 경고(병합셀 복원 실패 등) — 절단하지 않고 유계 스크롤로 전량 노출한다
+                        (SatongMapShell 의 warnings 목록과 같은 관용구: 밀림은 유계, 전체 도달성 보존). */}
+                    {(uploadInfo.warnings?.length ?? 0) > 0 && (
+                      <ul className="mt-1 max-h-[120px] space-y-1 overflow-y-auto">
+                        {(uploadInfo.warnings ?? []).map((w, i) => (
+                          <li key={i} className="text-[11px] font-semibold text-[var(--status-error)]">{w}</li>
+                        ))}
+                      </ul>
+                    )}
                   </div>
                 )}
                 <KakaoAddressSearch open={kakaoOpen} onOpenChange={setKakaoOpen} onSelect={handleAddressSelect} disabled={disabled} />
@@ -1407,13 +1565,13 @@ export function GlobalAddressSearch({
             </div>
           </div>
 
-          <div className="flex flex-wrap min-h-[500px] items-stretch bg-white">
+          <div className="flex flex-wrap min-h-[500px] items-stretch bg-[var(--surface-panel)]">
             <aside className="flex min-h-[420px] flex-1 basis-[350px] min-w-[320px] flex-col border-b border-[var(--line)] bg-[var(--surface-soft)]/70 p-3 lg:border-b-0 lg:border-r">
               <div className="flex items-center justify-between gap-2">
                 <span className="inline-flex items-center gap-1.5 text-[12px] font-black text-[var(--text-primary)]">
                   <Layers3 className="size-4 text-[var(--accent-strong)]" aria-hidden /> 검색·등록 주소
                 </span>
-                <span className="rounded-full bg-[var(--saas-lime-soft)] px-2.5 py-1 text-[11px] font-black text-[var(--saas-lime-text)]">
+                <span className="rounded-full bg-[color-mix(in_srgb,var(--secondary)_14%,transparent)] px-2.5 py-1 text-[11px] font-black text-[var(--secondary)]">
                   {displayAddresses.length > 0 ? `${displayAddresses.length}필지` : "대기"}
                 </span>
               </div>
@@ -1431,13 +1589,13 @@ export function GlobalAddressSearch({
                   <CheckCircle2 className={`mx-auto mt-1 size-4 ${displayAddresses.length > 0 ? "text-[var(--status-success)]" : "text-[var(--text-hint)]"}`} aria-hidden />
                 </div>
               </div>
-              <div className="mt-3 flex-1 rounded-2xl border border-dashed border-[var(--line-strong)] bg-white p-2">
+              <div className="mt-3 flex-1 rounded-2xl border border-dashed border-[var(--line-strong)] bg-[var(--surface-panel)] p-2">
                 {displayAddresses.length > 0 ? (
                   <div className="space-y-2">
                     {parcelRows.map((row, idx) => (
                       <div key={`${row.label}-${idx}`} className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] px-3 py-2">
                         <div className="flex items-start gap-2">
-                          <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-[var(--saas-lime)] text-[10px] font-black text-[var(--saas-ink)]">{idx + 1}</span>
+                          <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-[var(--tertiary)] text-[10px] font-black text-[var(--saas-ink)]">{idx + 1}</span>
                           <div className="min-w-0 flex-1">
                             <p className="truncate text-[12px] font-black text-[var(--text-primary)]" title={row.label}>{row.label}</p>
                             <p className="mt-0.5 text-[10px] font-semibold text-[var(--text-tertiary)]">
@@ -1471,7 +1629,7 @@ export function GlobalAddressSearch({
               </div>
             </aside>
             <div className="flex-[2] basis-[400px] min-w-[320px] bg-[var(--surface-secondary)] p-3">
-              <div className="overflow-hidden rounded-2xl border border-[var(--line)] bg-white p-2 shadow-sm">
+              <div className="overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--surface-panel)] p-2 shadow-sm">
                 <SatongMultiMapDynamic
                   height={580}
                   onPickMany={handleMapPickMany}
@@ -1525,7 +1683,7 @@ export function GlobalAddressSearch({
       {/* 공동주택(빌라) 호실·세대 대지지분 모달 — 검색/등록한 필지에서 바로 호실 분석/반영 */}
       {shareParcel && (
         <LandShareModal
-          jibun={shareParcel.jibunAddress || shareParcel.fullAddress}
+          jibun={preferredEntryAddress(shareParcel)}
           pnu={shareParcel.pnu}
           onClose={() => setShareParcel(null)}
           onApplyArea={() => { /* 검색 컨텍스트에선 행 면적 갱신 불필요(토지조서에서 반영) */ }}

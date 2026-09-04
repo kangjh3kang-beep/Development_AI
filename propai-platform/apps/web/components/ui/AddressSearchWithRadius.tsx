@@ -117,7 +117,7 @@ export function AddressSearchWithRadius({
   return (
     <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
       <CardContent className="p-6">
-        <p className="mb-4 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--text-tertiary)]">
+        <p className="mb-4 label-caps text-[var(--text-tertiary)]">
           검색 조건
         </p>
         <form onSubmit={handleSubmit} className="grid gap-4">

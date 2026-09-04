@@ -198,7 +198,7 @@ export function UnitOutlineBuilder({
                   ))}
                 </div>
                 {blocks.length > 1 && (
-                  <button onClick={() => setBlocks((arr) => arr.filter((_, idx) => idx !== i))} className="ml-auto h-8 w-8 rounded-lg border border-rose-500/30 text-rose-500 hover:bg-rose-500/10">✕</button>
+                  <button onClick={() => setBlocks((arr) => arr.filter((_, idx) => idx !== i))} className="ml-auto h-8 w-8 rounded-lg border border-[var(--status-error)]/30 text-[var(--status-error)] hover:bg-[var(--status-error)]/10">✕</button>
                 )}
               </div>
 
@@ -223,7 +223,7 @@ export function UnitOutlineBuilder({
                       <input type="number" className={`${fieldCls} w-20`} value={f.floor} onChange={(e) => patchFloor(i, fi, { floor: Number(e.target.value) })} />
                       <input type="number" className={`${fieldCls} w-24`} value={f.units} onChange={(e) => patchFloor(i, fi, { units: Number(e.target.value) })} />
                       <input className={`${fieldCls} flex-1`} value={f.type_name} onChange={(e) => patchFloor(i, fi, { type_name: e.target.value })} placeholder="예: 1F-30평" />
-                      <button onClick={() => patch(i, { floors_spec: (b.floors_spec ?? []).filter((_, j) => j !== fi) })} className="h-8 w-8 rounded-lg border border-rose-500/30 text-rose-500 hover:bg-rose-500/10">✕</button>
+                      <button onClick={() => patch(i, { floors_spec: (b.floors_spec ?? []).filter((_, j) => j !== fi) })} className="h-8 w-8 rounded-lg border border-[var(--status-error)]/30 text-[var(--status-error)] hover:bg-[var(--status-error)]/10">✕</button>
                     </div>
                   ))}
                   <button onClick={() => patch(i, { floors_spec: [...b.floors_spec, { floor: (b.floors_spec.at(-1)?.floor ?? 0) + 1, units: 6, type_name: "" }] })}
@@ -240,7 +240,7 @@ export function UnitOutlineBuilder({
           <div className="text-sm">
             <span className="text-[var(--text-secondary)]">생성 예정: </span>
             <b className="text-[var(--accent-strong)]">{total.toLocaleString()}세대/호실</b>
-            {err && <span className="ml-3 text-xs font-semibold text-rose-500">{err}</span>}
+            {err && <span className="ml-3 text-xs font-semibold text-[var(--status-error)]">{err}</span>}
           </div>
           <div className="flex flex-wrap gap-2">
             <button onClick={onClose} className="rounded-xl border border-[var(--line-strong)] px-4 py-2 text-sm font-bold text-[var(--text-secondary)]">취소</button>

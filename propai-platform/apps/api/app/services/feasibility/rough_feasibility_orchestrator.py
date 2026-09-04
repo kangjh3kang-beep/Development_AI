@@ -10,7 +10,7 @@
   5) 분양수입(주변 실거래)       = suggest_base_price → (폴백) regional_pricing
   6) 총사업비 + 20% 마진         = aggregate_feasibility(토지+공사+금융+제경비) → 총사업비×0.20
   7) 2차 사용자 수정(overrides)  = 값 교체 후 6·8 재계산(각 값 source=user_override)
-  8) 월별 DCF                    = CashflowGenerator.generate_monthly_cashflow(위 산출 시드)
+  8) 월별 DCF                    = dcf_assembly.assemble_monthly_dcf(공용 SSOT — 상세수지와 동일 규칙)
 
 무목업 원칙: 실데이터를 못 구한 축은 값을 null로 두고 degraded_notes에 사유를 남긴다.
 가짜 0·임의 추정값을 만들지 않는다(정직 degrade). 각 축에는 basis/evidence/source를 붙여
@@ -26,12 +26,19 @@ from typing import Any
 # ── 재사용 자산(모듈 최상단 import — 테스트가 monkeypatch로 대체하기 쉽게 이름을 노출) ──
 from app.services.feasibility import construction_cost_engine, land_cost_engine, regional_pricing
 from app.services.feasibility.aggregation_engine import aggregate_feasibility
-from app.services.feasibility.cashflow_generator import CashflowGenerator, npv_from_netflows
+from app.services.feasibility.dcf_assembly import assemble_monthly_dcf
 from app.services.feasibility.feasibility_service_v2 import FeasibilityServiceV2
+from app.services.finance.return_kpi import compute_return_kpi
 from app.services.land_intelligence.comprehensive_analysis_service import (
     build_integrated_context,
 )
 from app.services.land_intelligence.desk_appraisal_service import desk_appraisal
+from app.services.quality.precision import PrecisionGrade, lowest
+from app.services.tax.project_charges import (
+    charge_absent_reason,
+    compute_developer_stage_charges,
+    parse_tristate_flag,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -248,15 +255,6 @@ async def _resolve_sale_price_per_pyeong(
     )
 
 
-def _payback_month(rows: list[dict[str, Any]]) -> int | None:
-    """자금 회수월 — 최대 자금소요(누적 최저) 이후 처음으로 누적현금이 0 이상 되는 월."""
-    if not rows:
-        return None
-    min_idx = min(range(len(rows)), key=lambda i: rows[i].get("cumulative", 0) or 0)
-    for r in rows[min_idx:]:
-        if (r.get("cumulative") or 0) >= 0:
-            return r.get("month")
-    return None
 
 
 def _num(value: Any) -> float | None:
@@ -269,6 +267,126 @@ def _num(value: Any) -> float | None:
         return None
 
 
+def construction_breakdown(cc: dict[str, Any]) -> dict[str, Any]:
+    """공사비 **직접/간접 분해** — 원장이 「설계비·감리비」를 그리는 재료.
+
+    `construction_cost_engine` 은 이미 `{design_fee_won, supervision_fee_won, contingency_won,
+    general_expense_won}` 를 **비율과 함께** 돌려주는데, 종전엔 총액과 ㎡단가 **두 숫자만**
+    남겼다. 원장이 그 행들을 못 그린 이유가 *"엔진에 없어서"* 가 아니라 **여기서 버려서**였다.
+
+    ★**분해지 추가가 아니다** — 엔진이 `total = direct + indirect` 로 합산하므로 쪼개도
+      **합계가 변하지 않는다**(원장 검산이 그것을 확인한다).
+
+    ★**엔진이 주는 항목을 골라내지 않는다** — `_won` 으로 끝나는 키를 **전부** 옮긴다.
+      새 간접비가 생기면 라벨은 없어도 **행은 나온다**(조용히 사라지지 않게).
+
+    ★모듈 레벨 함수인 이유: 인라인 dict 리터럴이면 **직접 태울 수 없어** 이 배선이 무잠금이
+      된다(변이 실증 — 이 저장소에서 **세 번째** 같은 자리다: `_compact` · `ratio_basis` · 이것).
+    """
+    direct = cc.get("direct") or {}
+    indirect = cc.get("indirect") or {}
+    direct_won = direct.get("total_direct_cost_won")
+    if direct_won is None or not indirect:
+        return {}   # 분해가 없으면 **키를 만들지 않는다** — 소비처가 종전대로 한 행을 그린다
+    out = {
+        "direct_won": int(direct_won),
+        "indirect": {
+            "total_won": int(indirect.get("total_indirect_cost_won") or 0),
+            "items": {k: int(v) for k, v in indirect.items()
+                      if k.endswith("_won") and k != "total_indirect_cost_won"},
+            "ratios": dict(indirect.get("ratios") or {}),
+            "base_won": int(direct_won),
+        },
+    }
+    # ★인입 공사비(구 B05~B07) — **이 함수가 스스로 경고한 자리다.**
+    #   위 독스트링이 *"엔진이 주는 항목을 골라내지 않는다 … 조용히 사라지지 않게"* 라고
+    #   적어 두었는데, 내가 엔진에 새 블록을 더하고 **여기서 투사를 빠뜨렸다.**
+    #   그 결과 원장 검산이 `cost_total` **ERROR(-32,640,000)** 를 냈다(독립 리뷰 실측) —
+    #   합계는 인입비를 포함하는데 행이 없어서 **행 합계 ≠ 총액**이 됐다.
+    connection = cc.get("utility_connection") or {}
+    conn_items = connection.get("items") or []
+    if conn_items:
+        out["utility_connection"] = {
+            "total_won": int(connection.get("total_won") or 0),
+            "items": [
+                {"code": i["code"], "name": i["name"], "amount_won": int(i["amount_won"]),
+                 "qty": i.get("qty"), "qty_unit": i.get("qty_unit"),
+                 "unit_price": i.get("unit_price"),
+                 # ★개산이라는 사실과 사유를 **여기까지** 실어야 화면이 「고시값」과 구별한다.
+                 "confidence": i.get("confidence"), "basis": i.get("basis")}
+                for i in conn_items
+            ],
+        }
+    return out
+
+
+def build_cost_ratio_basis(
+    base_won: float, finance_rate: float, other_rate: float, ratio_note: str | None
+) -> dict[str, Any]:
+    """금융비·제경비의 **과표·비율·출처** — 원장이 「수량 × 단가」를 재현하는 재료.
+
+    이 두 축은 `(토지비 + 공사비) × 비율` 이다. 즉 **수량 × 단가가 원래 있었다.**
+    종전엔 합계만 실어 보내서 원장이 *"개략 단계에서는 항목 단위 내역을 산출하지 않는다"* 고
+    적었는데 — **부재가 아니라 안 실어 보낸 것**이었다.
+
+    ★`source` 를 함께 싣는다. 비율이 **엔진 추출**인지 **표준 폴백**인지는 사용자가 알아야 한다
+      (폴백이면 그 숫자는 참고용이다). 표시층이 둘을 같게 그리면 폴백이 실측처럼 읽힌다.
+
+    ★모듈 레벨 함수인 이유: 인라인 dict 리터럴이면 **직접 태울 수 없어** 이 배선이 무잠금이
+      된다(변이 실증 — `"ratio_basis": None` 으로 바꿔도 아무 테스트도 빨개지지 않았다).
+      **호출할 수 없는 코드는 잠글 수 없다** — 이 저장소에서 같은 형태를 다섯 번 밟았다.
+    """
+    return {
+        "base_won": base_won,
+        "base_label": "토지비 + 공사비",
+        "finance_rate": finance_rate,
+        "other_rate": other_rate,
+        "source": "fallback" if ratio_note else "engine",
+        "note": ratio_note,
+    }
+
+
+def compact_charge_items(charges_result: dict[str, Any]) -> list[dict[str, Any]]:
+    """부담금 결과 → 응답용 항목 목록. **과표·요율·사유를 버리지 않는다.**
+
+    ★2026-08-26 — 종전 이 압축은 `code·name·amount_won·borne_by` 만 남기고
+    **`base_won`(과표)·`rate`(요율)·`detail.reason`(사유)를 떨어뜨렸다.** 엔진은 갖고 있는데
+    화면에 닿기 전에 사라져, 사용자는 금액만 보고 *왜 이 금액인지* 물을 곳이 없었고
+    `unavailable` 강등 사유도 마찬가지였다.
+    ★유료·비가역 산출물 규율 §4 — *"사유를 버리지 마라. 진단 불가는 그 자체로 장애다."*
+
+    ★여기서 값을 **만들지 않는다** — 엔진이 준 것만 옮기고, 없으면 `None` 이다(무목업).
+
+    ★모듈 레벨 함수인 이유: 인라인 컴프리헨션이면 **직접 태울 수 없어** 복원 자체가 무잠금이
+      된다(변이 실증 — 되돌려도 아무 테스트도 빨개지지 않았다).
+    """
+    return [
+        {
+            "code": it.get("code"),
+            "name": it.get("name"),
+            "amount_won": it.get("amount_won"),
+            "borne_by": it.get("borne_by", "developer"),
+            # 과표(수량)·요율(단가) — 원장에서 `수량 × 단가 = 금액` 을 재현하는 재료.
+            "base_won": it.get("base_won"),
+            "rate": it.get("rate"),
+            # 사유 — 미부과·미등록·강등의 근거. `detail.reason` 이 정본이다.
+            "reason": (it.get("detail") or {}).get("reason"),
+            # ★`confidence` 는 **`detail` 안**에 있다(엔진 16종 전수 실측: 최상위 non-None 0/16).
+            #   최상위에서 읽던 초안은 프로덕션에서 **항상 None** 이라 강등 표기가 한 번도
+            #   발화하지 않았다. 형제 `project_charges.py:55` 가 처음부터 옳게 읽고 있었다(§G29).
+            "confidence": (it.get("detail") or {}).get("confidence") or it.get("confidence"),
+            # ★보류 사유를 **닫힌 어휘 코드**로(`app/utils/withheld.py`). 여기서 계산하는
+            #   이유: 판별에 필요한 `detail.surveyed` 가 **이 압축에서 사라진다**.
+            #   하류에서 계산하면 `AWAITING_INPUT`(미조회 — 사용자가 확인하면 값이 생긴다)과
+            #   `SOURCE_UNAVAILABLE`(원천 부재 — 사용자가 뭘 해도 안 생긴다)을 **가를 수 없다**.
+            #   ★산문만 남기면 기계가 셀 수 없다 — 그 모듈이 만들어진 이유가 그것이다.
+            "absent": charge_absent_reason(it),
+        }
+        for stage in (charges_result["construction"], charges_result["sale"])
+        for it in (stage.get("items") or [])
+    ]
+
+
 def _null_block(kind: str) -> dict[str, Any]:
     """미확보 축의 표준 null 블록(키는 고정 — 프론트가 안정적으로 소비)."""
     if kind == "land":
@@ -278,7 +396,94 @@ def _null_block(kind: str) -> dict[str, Any]:
     if kind == "revenue":
         return {"total_won": None, "sale_price_per_pyeong": None,
                 "saleable_area_pyeong": None, "basis": None, "source": None}
+    if kind == "charges":
+        return {"total_won": None, "construction_stage_won": None, "sale_stage_won": None,
+                "buyer_borne_total_won": None, "items": None, "basis": None, "source": None}
     return {}
+
+
+
+def compose_scenario_precision(
+    *,
+    gfa_precision: PrecisionGrade | None,
+    gfa_basis: str,
+    land_total: int | None,
+    land_price_reliable: bool,
+    price_pp: int | None,
+    price_source: str | None,
+) -> tuple[PrecisionGrade | None, str, dict[str, str | None]]:
+    """개략수지 세 입력의 정밀도를 **합성**한다 — "하류는 상류 최저를 따른다".
+
+    왜 합성인가(쉬운 설명):
+    이 수지는 세 입력으로 만들어진다 — 연면적(GFA)·토지비·분양단가. 종전엔 **GFA 하나**의
+    등급만 페이로드에 실었다. 그래서 토지비가 가정치이거나 분양단가가 아예 미확보여도
+    화면은 그대로 "개략(추정)"이라고만 말했다.
+    **등급을 올릴 수 있는 것은 더 나은 입력뿐이지 더 나은 계산이 아니다.**
+
+    ★None(=등급을 모름)은 0 이나 E 로 채우지 않는다. 하나라도 모르면 결과도 모른다 —
+      낙관적으로 채우는 순간 그것이 정밀도 위장의 시작이다(`quality/precision.lowest` 의 규칙).
+      정보가 줄지 않는 이유: 무엇 때문에 낮아졌는지는 반환하는 `inputs` 와 호출부의
+      `degraded_notes` 가 그대로 말한다.
+
+    ★왜 대형 async 함수 밖으로 뺐나: 안에 두면 **잠글 수가 없다**(네트워크 호출이 얽혀 있어
+      테스트가 이 분기를 태우지 못한다). 순수 함수로 두면 계약 테스트가 직접 태운다.
+
+    Returns:
+        (합성 등급, 근거 문구, 입력별 등급 dict). 등급이 None 이면 근거는 **어느 입력을
+        모르는지** 이름으로 말한다(모른다는 사실도 정보다).
+    """
+    # 토지비: 공시지가·탁상감정 **조회값**으로 만들었으면 확인됨(V), 가정치 폴백이면 개략(E).
+    land_precision: PrecisionGrade | None = (
+        None
+        if land_total is None
+        else PrecisionGrade.VERIFIED
+        if land_price_reliable
+        else PrecisionGrade.ESTIMATED
+    )
+    # 분양단가: 실거래(MOLIT)·사용자 지정은 확인됨(V). 지역 시세표는 **실거래가 아니라서**
+    #   source 문자열에 '추정' 이 박혀 있고(_resolve_sale_price_per_pyeong 이 그렇게 만든다) 개략(E).
+    price_precision: PrecisionGrade | None = (
+        None
+        if price_pp is None or price_source == "unavailable"
+        else PrecisionGrade.ESTIMATED
+        if "추정" in str(price_source or "")
+        else PrecisionGrade.VERIFIED
+    )
+    composed = lowest(gfa_precision, land_precision, price_precision)
+
+    if composed is None:
+        unknown = [
+            name
+            for name, g in (
+                ("연면적", gfa_precision),
+                ("토지비", land_precision),
+                ("분양단가", price_precision),
+            )
+            if g is None
+        ]
+        basis = (
+            f"{'·'.join(unknown)} 등급 미확보 — 산출물 전체의 정밀도를 판정할 수 없습니다"
+            if unknown
+            # ★도달 불가 방어 — composed is None 이면 반드시 unknown 이 비어 있지 않다
+            #   (lowest 는 입력에 None 이 있을 때만 None 을 돌려준다). 변이 검증에서 이 줄이
+            #   생존하는 것은 정상이며, 그 사실을 여기 적어 둔다(점수 부풀리기 방지).
+            else "정밀도 판정 불가"
+        )
+    elif composed is gfa_precision and gfa_basis:
+        basis = gfa_basis
+    elif land_precision is PrecisionGrade.ESTIMATED:
+        basis = "토지비 가정치 기준(개략) — 공시지가·탁상감정 미확보"
+    elif price_precision is PrecisionGrade.ESTIMATED:
+        basis = "분양단가 지역 시세표 추정 기준(개략) — 주변 실거래 미확보"
+    else:
+        basis = gfa_basis or "입력 최저 등급을 따름"
+
+    inputs: dict[str, str | None] = {
+        "gfa": gfa_precision.value if gfa_precision else None,
+        "land_cost": land_precision.value if land_precision else None,
+        "sale_price": price_precision.value if price_precision else None,
+    }
+    return composed, basis, inputs
 
 
 async def build_rough_scenario(
@@ -437,13 +642,27 @@ async def build_rough_scenario(
     land_price_reliable = bool(rec_result.get("land_price_reliable"))
     if not rec_result.get("area_reliable", True):
         degraded.append(rec_result.get("area_disclosure") or "부지면적 미확보 — 가정치 기준(참고용).")
+    # ★P3(침묵 폴백 정직화): 용적률 250% 가정치 폴백도 동일 관례로 정직 강등(침묵 전파 금지).
+    if not rec_result.get("far_reliable", True):
+        degraded.append(rec_result.get("far_disclosure") or "용적률 상한 미확보 — 250% 가정치 기준(참고용).")
 
     # ── GFA·분양가능면적(전용률/분양률 반영) ──
     gfa_sqm = None
     saleable_pyeong = None
+    # ★정밀도 등급(2026-08-23) — 이 GFA 는 **설계 산출물이 아니다**.
+    #   `대지면적 × 실효용적률` 로 얻은 **개략치(E)** 이고, 하류(공사비·분양수입·수지)는
+    #   이 값을 입력으로 쓰므로 **그 결과들도 개략치**다(등급은 상류 최저를 따른다).
+    #   화면이 이 사실을 모르면 "설계 분석 전"인데 "총사업비 4,157.7억·등급 F"가 나란히
+    #   놓이고, 사용자는 개략치를 확정치로 읽는다(2026-08-23 사용자 검증에서 적발).
+    gfa_precision: PrecisionGrade | None = None
+    gfa_precision_basis = ""
     if land_area and effective_far:
         gfa_sqm = round(land_area * effective_far / 100.0, 1)
         saleable_pyeong = round(gfa_sqm * _GFA_TO_SALEABLE_RATIO / _PYEONG_SQM, 1)
+        gfa_precision = PrecisionGrade.ESTIMATED
+        gfa_precision_basis = (
+            f"대지면적 {land_area:,.0f}㎡ × 실효용적률 {effective_far:g}% — 설계 미반영(개략)"
+        )
     else:
         degraded.append("면적 또는 실효용적률 미확보 — GFA/공사비/분양수입 산출 불가.")
 
@@ -515,12 +734,15 @@ async def build_rough_scenario(
             if ov_unit is not None:
                 cc = construction_cost_engine.calculate_total_construction_cost(
                     total_gfa_sqm=gfa_sqm, building_type=building_type, unit_cost_per_sqm=int(ov_unit),
+                    # ★인입 분담금(구 B05~B07)은 세대수 기반 — 안 넘기면 조용히 0이 된다.
+                    total_households=total_households_assumed or 0,
                 )
                 applied.append("construction_unit_won")
                 c_source, c_basis = "user_override", "사용자 지정 공사비 단가(2차 수정) + 간접비 15%"
             else:
                 cc = construction_cost_engine.calculate_total_construction_cost(
                     total_gfa_sqm=gfa_sqm, building_type=building_type,
+                    total_households=total_households_assumed or 0,
                 )
                 c_source = "construction_cost_engine(국토부 SSOT)"
                 c_basis = "국토부 기본형건축비(unit_price_repository SSOT) 직접공사비 + 간접비 15%"
@@ -528,6 +750,14 @@ async def build_rough_scenario(
             constr_block = {
                 "total_won": constr_total,
                 "unit_per_sqm_won": int(cc["direct"]["unit_cost_per_sqm"]),
+                # ★2026-08-26 — 직접/간접 **분해를 버리지 않는다**(additive).
+                #   `construction_cost_engine` 은 이미 `{design_fee_won, supervision_fee_won,
+                #   contingency_won, general_expense_won}` 를 **비율과 함께** 돌려주는데
+                #   종전엔 총액과 ㎡단가 **두 숫자만** 남겼다. 원장이 「설계비·감리비·예비비」를
+                #   못 그린 이유가 *"엔진에 없어서"* 가 아니라 **여기서 버려서**였다.
+                #   ★**분해지 추가가 아니다** — 엔진이 `total = direct + indirect` 로 합산하므로
+                #     원장이 쪼개도 **합계가 변하지 않는다**(검산이 그것을 확인한다).
+                **construction_breakdown(cc),
                 "basis": c_basis, "source": c_source,
             }
         except Exception as e:  # noqa: BLE001 — 공사비 산출 실패는 정직 null
@@ -562,6 +792,7 @@ async def build_rough_scenario(
     core_ready = land_total is not None and constr_total is not None and revenue_total is not None
     finance_total: int | None = None
     other_total: int | None = None
+    cost_ratio_basis: dict[str, Any] | None = None
     if land_total is not None and constr_total is not None:
         fin_ratio, oth_ratio, ratio_note = _engine_cost_ratios(input_used)
         if ratio_note:
@@ -569,6 +800,64 @@ async def build_rough_scenario(
         base_sum = land_total + constr_total
         finance_total = round(base_sum * fin_ratio)
         other_total = round(base_sum * oth_ratio)
+        # ★2026-08-26 — 이 두 축도 **수량 × 단가**다(과표 = 토지+공사, 단가 = 엔진 비율).
+        #   종전엔 합계만 실어 보내서 원장이 *"개략 단계에서는 항목 단위 내역을 산출하지
+        #   않는다"* 고 적었는데, **부재가 아니라 안 실어 보낸 것**이었다.
+        #   비율 출처(엔진 추출 vs 표준 폴백)까지 함께 싣는다 — 폴백이면 사용자가 알아야 한다.
+        cost_ratio_basis = build_cost_ratio_basis(base_sum, fin_ratio, oth_ratio, ratio_note)
+
+    # ── 6b) 부담금(B공사+C분양 단계, 시행사 부담) — ★상시-0 봉합 ──
+    # 종전에는 total_tax_cost_won=0으로 학교용지·광역교통·상하수도·HUG 보증수수료 등
+    # B/C단계 부담금이 총사업비에서 통째로 누락됐다(토지비에 계상되는 건 A취득단계뿐).
+    # A단계는 토지비(include_taxes_and_fees=True)에 기계상돼 제외(이중계상 방지),
+    # D(양도)단계는 사업비 성격이 아니라 제외 — 시행사 부담 B+C만 계상한다.
+    charges_total: int | None = None
+    charges_block: dict[str, Any] = _null_block("charges")
+    charges_result: dict[str, Any] | None = None
+    if core_ready:
+        try:
+            charges_result = compute_developer_stage_charges(
+                sido_name=str(getattr(input_used, "sido_name", "") or region or ""),
+                sigungu_name=str(getattr(input_used, "sigungu_name", "") or ""),
+                # ★주소를 함께 넘긴다 — `region` 이 비었거나(프론트 미전송) 시·도가 아닌
+                #   값(프론트가 `regionFromAddress()` 로 뽑은 **시군구**)일 때 B01 이
+                #   주소에서 시·도를 복구한다. 종전에는 그 두 경우가 모두
+                #   "지역미상 — 대도시권 아님"으로 **단정**돼 법정 부담금이 침묵 미부과였다.
+                address=address,
+                total_households=total_households_assumed or 0,
+                total_sale_amount_won=revenue_total,
+                total_gfa_sqm=float(gfa_sqm or 0),
+                building_type=_service._get_building_type(dev_type_final),
+                # ★C01 부가세 면세기준(국민주택규모)은 '전용 85㎡' — 개발유형 표준 전용면적
+                #   (unit_standards SSOT)을 직접 전달한다. (D1 이후 avg_area_pyeong도 전용평
+                #   규약이지만, rough는 input_used 의존 없이 SSOT 직접 사용이 정본)
+                avg_area_sqm=_service._get_type_avg_unit_area(dev_type_final) or 85.0,
+                # ★3상태 파서(2026-08-26 · #865 가 놓친 **네 번째 층**). `parse_bool_flag` 는
+                #   **미조회(None)를 미지정(False)으로 뭉개** 화면에 *"기반시설부담구역 미지정"*
+                #   이라는 **없는 관측 주장**을 냈다. #865 가 엔진·통합·모듈 세 층을 고쳤는데
+                #   **이 호출부가 남아** 라이브에서 그대로였다 — **라이브 프로브가 아니었으면
+                #   「고쳤다」로 남았을 것**이다.
+                in_infra_charge_zone=parse_tristate_flag(overrides.get("in_infra_charge_zone")),
+            )
+            charges_total = int(charges_result["total_won"])
+            _compact = compact_charge_items(charges_result)
+            charges_block = {
+                "total_won": charges_total,
+                "construction_stage_won": int(charges_result["construction"]["total_won"]),
+                "sale_stage_won": int(charges_result["sale"]["total_won"]),
+                "buyer_borne_total_won": int(charges_result["sale"].get("buyer_borne_total_won") or 0),
+                "items": _compact,
+                "basis": "B(공사)+C(분양) 단계 시행사 부담 합계 — 취득단계 세금은 토지비에 기계상(이중계상 방지), 수분양자 부담분 제외",
+                "source": "utility_stage_engine + sale_stage_engine(통합 세금엔진)",
+            }
+            degraded.extend(charges_result["unavailable_notes"])
+        except Exception as e:  # noqa: BLE001 — 부담금 산출 실패는 정직 강등(총사업비 미반영 고지)
+            logger.warning("부담금(B/C단계) 산출 실패: %s", str(e)[:120])
+            degraded.append(f"부담금(B/C단계) 산출 실패 — 총사업비에 미반영: {str(e)[:100]}")
+            # 부분 성공 잔재 일괄 초기화 — 합계·블록·DCF 주입이 항상 같은 상태를 보게 한다.
+            charges_total = None
+            charges_block = _null_block("charges")
+            charges_result = None
 
     if core_ready:
         agg = aggregate_feasibility(
@@ -577,7 +866,8 @@ async def build_rough_scenario(
             total_construction_cost_won=constr_total,
             total_finance_cost_won=finance_total or 0,
             total_other_cost_won=other_total or 0,
-            total_tax_cost_won=0,   # 취득세는 이미 토지비(land_cost_engine)에 계상 — 이중계상 방지
+            # ★6b: B+C 시행사 부담금 계상(취득세는 토지비에 기계상 — A단계만 제외)
+            total_tax_cost_won=charges_total or 0,
             equity_won=equity,
             discount_rate=discount_rate,
             project_months=project_months,
@@ -599,14 +889,18 @@ async def build_rough_scenario(
     else:
         degraded.append("핵심 축(토지비·공사비·분양수입) 중 결측이 있어 총사업비·마진을 산출하지 않습니다(무목업).")
 
-    # ── 7) 총사업비 구성(금융·제경비 노출 — 근거 투명화) ──
+    # ── 7) 총사업비 구성(금융·제경비·부담금 노출 — 근거 투명화) ──
     cost_breakdown = {
         "land_won": land_total, "construction_won": constr_total,
         "finance_won": finance_total, "other_won": other_total,
+        # ★금융·제경비의 과표·비율(원장이 「수량 × 단가」를 재현하는 재료) — additive.
+        "ratio_basis": cost_ratio_basis,
+        "charges_won": charges_total,
     }
 
     # ── 8) 월별 DCF(위 산출을 시드) — npv·irr·payback·peak ──
     cashflow_block: dict[str, Any] | None = None
+    return_kpi_block: dict[str, Any] | None = None
     if core_ready:
         construction_months = _num(overrides.get("construction_months"))
         if construction_months is not None:
@@ -619,43 +913,70 @@ async def build_rough_scenario(
         sale_start = max(0, min(sale_start, construction_months - 1))
         sale_duration = _num(overrides.get("sale_duration_months"))
         sale_duration = int(sale_duration) if sale_duration is not None else 6
-        # ★MEDIUM-4: 자기자본비율(equity/총사업비)을 DCF에 실제로 배선(기존엔 인자 미전달→항상 30% 고정).
-        #   0~1로 클램프(총사업비 0/미확보면 엔진 기본 30%로 정직 폴백).
-        tc_for_equity = summary.get("total_cost_won")
-        equity_ratio = min(1.0, max(0.0, equity / tc_for_equity)) if tc_for_equity else 0.3
-        try:
-            cf = CashflowGenerator().generate_monthly_cashflow(
-                land_cost=float(land_total),
-                construction_cost=float(constr_total),
-                construction_months=construction_months,
-                total_revenue=float(revenue_total),
-                sale_start_month=sale_start,
-                sale_duration_months=max(1, sale_duration),
-                equity_ratio=equity_ratio,
-            )
-            rows = cf.get("rows") or []
-            cf_summary = cf.get("summary") or {}
-            # ★NPV는 무차입 프로젝트 FCF(unlevered_netflows) 할인 — 레버드 rows.net을 쓰면 자기자본
-            #   유입이 순가치로 새어 NPV 과대(IRR과 동일 기저로 정합). payback은 실제 자금위치라 rows 유지.
-            npv = npv_from_netflows(cf.get("unlevered_netflows") or [], discount_rate)
-            payback = _payback_month(rows)
+        # ★6b: 부담금(B/C단계)을 DCF에도 시점 주입 — 총사업비(summary)와 현금흐름(NPV·IRR)이
+        #   같은 비용 기저를 쓰도록 정합(B→착공월, C→분양수입 비례; A/D는 0 — 위 6b와 동일 계약).
+        tax_schedule: dict[str, Any] | None = None
+        if charges_result is not None and charges_total:
+            tax_schedule = {
+                "acquisition_won": 0,
+                "construction_won": int(charges_result["construction"]["total_won"]),
+                "sale_won": int(charges_result["sale"]["total_won"]),
+                "disposal_settlement_won": 0,
+                "d06_annual_won": 0,
+                "d06_years": 0,
+            }
+        # ★W3(100% 캠페인): DCF 조립을 공용 SSOT(dcf_assembly.assemble_monthly_dcf)로 이관 —
+        #   상세수지(경로A /calculate)와 동일 규칙 소비(수치 무회귀·NPV 무차입 기저·IRR 동일 선택).
+        dcf = assemble_monthly_dcf(
+            land_cost_won=float(land_total),
+            construction_cost_won=float(constr_total),
+            revenue_won=float(revenue_total),
+            project_months=project_months,
+            equity_won=float(equity),
+            discount_rate=discount_rate,
+            total_cost_won=summary.get("total_cost_won"),
+            # ★R1-HIGH-2 동반 교정: 제경비(other_total)를 DCF 유출에 주입 — 종전엔 rough도
+            #   동일 누락으로 NPV·IRR이 과대였다(의도된 정확화 — 총사업비와 동일 비용 기저).
+            soft_cost_won=float(other_total) if other_total else None,
+            tax_schedule=tax_schedule,
+            construction_months=construction_months,
+            sale_start_month=sale_start,
+            sale_duration_months=max(1, sale_duration),
+        )
+        if dcf is not None:
             summary.update({
-                "npv_won": npv,
-                "irr_pct": cf_summary.get("irr_annual_pct"),
-                "payback_month": payback,
+                "npv_won": dcf["npv_won"],
+                "irr_pct": dcf["irr_pct"],
+                "payback_month": dcf["payback_month"],
             })
             cashflow_block = {
-                "monthly_rows": rows,
+                "monthly_rows": dcf["rows"],
                 "summary": {
-                    **cf_summary,
-                    "npv_won": npv,
-                    "payback_month": payback,
+                    **dcf["cf_summary"],
+                    "npv_won": dcf["npv_won"],
+                    "payback_month": dcf["payback_month"],
                     "discount_rate_annual_pct": round(discount_rate * 100, 2),
                 },
             }
-        except Exception as e:  # noqa: BLE001 — DCF 실패는 정직 null(수지 요약은 유지)
-            logger.warning("월별 DCF 생성 실패: %s", str(e)[:120])
-            degraded.append(f"월별 DCF 생성 실패: {str(e)[:100]}")
+            # ★W3-1(수익 KPI 완성 — P10 갭): 기존 waterfall(dcf) 위 파생 KPI만 추가(재계산 0).
+            #   MOIC·Equity IRR·LTV/LTC 시계열·break-even·RLV·covenant 경고. additive — 실패해도
+            #   summary·cashflow는 무손상(best-effort try/except).
+            try:
+                return_kpi_block = compute_return_kpi(
+                    dcf=dcf,
+                    land_cost_won=float(land_total),
+                    construction_cost_won=float(constr_total),
+                    revenue_won=float(revenue_total),
+                    discount_rate=discount_rate,
+                    total_cost_won=summary.get("total_cost_won"),
+                    soft_cost_won=float(other_total) if other_total else None,
+                    tax_schedule=tax_schedule,
+                )
+            except Exception as e:  # noqa: BLE001 — KPI 실패는 개략수지 본체 무손상
+                logger.warning("수익 KPI(return_kpi) 산출 실패: %s", str(e)[:120])
+                return_kpi_block = None
+        else:
+            degraded.append("월별 DCF 생성 실패 — NPV·IRR·회수기간 미산출(정직 null).")
 
     # ★TENTATIVE(선행절차 전제 잠정치) 특이부지 정직고지 — has-recs 경로에서도 소실 금지.
     #   맹지·도로/학교 PRECONDITION 등은 recs가 생성돼 정상 경로를 타지만, ROI·등급·마진·NPV가
@@ -668,6 +989,15 @@ async def build_rough_scenario(
             or "선행절차(접도 확보 등)를 전제한 잠정치 — ROI·등급·수지는 확정치가 아닙니다."
         )
         degraded.insert(0, f"[잠정·선행절차 전제] {_tnote}")
+
+    payload_precision, payload_precision_basis, precision_inputs = compose_scenario_precision(
+        gfa_precision=gfa_precision,
+        gfa_basis=gfa_precision_basis,
+        land_total=land_total,
+        land_price_reliable=land_price_reliable,
+        price_pp=price_pp,
+        price_source=price_source,
+    )
 
     return {
         "address": address,
@@ -690,12 +1020,28 @@ async def build_rough_scenario(
         "land_cost": land_block,
         "construction_cost": constr_block,
         "revenue": revenue_block,
+        "charges": charges_block,
         "cost_breakdown": cost_breakdown,
         "margin": margin_block,
         "summary": summary,
         "cashflow": cashflow_block,
+        # ★W3-1(수익 KPI 완성) — additive(None=미산출·기존 소비처 무영향).
+        "return_kpi": return_kpi_block,
         "overrides_applied": applied,
         "degraded_notes": degraded,
+        # ★정밀도 등급 — 이 산출물 전체가 **무엇으로 만들어졌는지**를 화면에 알린다.
+        #   `E`(개략)면 "설계 미반영"이라는 뜻이고, 하류 수지·등급도 같은 등급이다.
+        #   화면은 이 값 없이 숫자를 확정치처럼 보여 주면 안 된다.
+        #   ★종전엔 **GFA 등급 하나**로만 판정했다 — 토지비가 가정치이거나 분양단가가 미확보여도
+        #     페이로드는 그대로 "개략(E)"이라 말했다. 이제 세 입력의 **최저**를 따른다(lowest).
+        "precision": (payload_precision.value if payload_precision else None),
+        "precision_label": (
+            payload_precision.label_ko if payload_precision else "정밀도 미표기"
+        ),
+        "precision_basis": payload_precision_basis,
+        # ★입력별 등급(additive) — 합성 결과만 주면 "무엇 때문에 낮아졌는지"를 화면이 말할 수 없다.
+        #   None 은 "그 입력의 등급을 모른다"는 뜻이며 0/추정으로 채우지 않는다.
+        "precision_inputs": precision_inputs,
         # ★A-3/G8(additive) — 법정초과 경량 가드 검출 시만 채워짐(빈 배열=검출 없음, 기존 키 불변).
         "integrity_warnings": integrity_warnings,
     }
@@ -787,13 +1133,17 @@ def _degraded_result(
         "land_cost": _null_block("land"),
         "construction_cost": _null_block("construction"),
         "revenue": _null_block("revenue"),
-        "cost_breakdown": {"land_won": None, "construction_won": None, "finance_won": None, "other_won": None},
+        "charges": _null_block("charges"),
+        "cost_breakdown": {"land_won": None, "construction_won": None, "finance_won": None,
+                           "other_won": None, "charges_won": None},
         "margin": {"developer_profit_won": None, "rate_pct": _DEFAULT_MARGIN_RATE_PCT, "target_revenue_won": None},
         "summary": {
             "total_cost_won": None, "total_revenue_won": None, "net_profit_won": None,
             "roi_pct": None, "npv_won": None, "irr_pct": None, "payback_month": None, "grade": None,
         },
         "cashflow": None,
+        # ★W3-1(수익 KPI 완성) — 산출 자체가 없어 KPI도 null(계약 형태 일관).
+        "return_kpi": None,
         "overrides_applied": [],
         "degraded_notes": notes,
         # ★A-3/G8(additive) — 산출 자체가 없어 검증 대상(effective_far)도 없음(빈 배열).

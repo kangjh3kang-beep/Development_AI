@@ -30,6 +30,9 @@ class TokenPayload(BaseModel):
     exp: datetime           # 만료 시각
     iat: datetime           # 발급 시각
     token_type: str = "access"  # access | refresh
+    # 실제 인증(로그인/소셜 로그인) 시각. iat와 달리 /refresh로 갱신되지 않고 원래 인증
+    # 시각을 보존한다 — 민감작업(소셜 계정 탈퇴 등)의 '최근 재인증' 판정 근거(스텝업).
+    auth_time: datetime | None = None
 
 
 class CurrentUser(BaseModel):
@@ -44,8 +47,14 @@ def create_access_token(
     tenant_id: UUID,
     role: str,
     settings: Settings | None = None,
+    *,
+    auth_time: datetime | None = None,
 ) -> str:
-    """액세스 토큰을 생성한다."""
+    """액세스 토큰을 생성한다.
+
+    auth_time: 실제 인증 시각. None이면 지금(=이 호출이 방금 인증한 것)으로 본다.
+    /refresh는 원래 auth_time을 명시 전달해 재인증 시각을 보존한다.
+    """
     if settings is None:
         settings = get_settings()
 
@@ -57,6 +66,8 @@ def create_access_token(
         "token_type": "access",
         "iat": now,
         "exp": now + timedelta(minutes=settings.jwt_access_token_expire_minutes),
+        # 커스텀 클레임은 jose가 특별처리(iat/exp)하지 않으므로 epoch 초(int)로 직렬화한다.
+        "auth_time": int((auth_time if auth_time is not None else now).timestamp()),
     }
     return str(jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm))
 
@@ -66,8 +77,13 @@ def create_refresh_token(
     tenant_id: UUID,
     role: str,
     settings: Settings | None = None,
+    *,
+    auth_time: datetime | None = None,
 ) -> str:
-    """리프레시 토큰을 생성한다."""
+    """리프레시 토큰을 생성한다.
+
+    auth_time: 실제 인증 시각. None이면 지금. /refresh는 원래 auth_time을 보존 전달한다.
+    """
     if settings is None:
         settings = get_settings()
 
@@ -79,6 +95,8 @@ def create_refresh_token(
         "token_type": "refresh",
         "iat": now,
         "exp": now + timedelta(days=settings.jwt_refresh_token_expire_days),
+        # 커스텀 클레임은 epoch 초(int)로 직렬화(jose는 iat/exp만 특별처리).
+        "auth_time": int((auth_time if auth_time is not None else now).timestamp()),
         # 고유 nonce — 동일(user,tenant,role,초)로 동일 JWT가 생성되어 token_hash UNIQUE
         # 제약을 위반(refresh 500)하던 문제 방지. 매 발급마다 토큰을 유일하게 만든다.
         "jti": uuid4().hex,

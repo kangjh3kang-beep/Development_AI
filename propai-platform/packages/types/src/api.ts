@@ -227,47 +227,6 @@ export interface TaxCalculationResponse {
   created_at: string;
 }
 
-// ── 수지분석 v2 ──
-
-export interface FeasibilityAnalysisRequest {
-  project_id: string;
-  scenario_name?: string;
-  total_investment_krw: number;
-  annual_revenue_krw: number;
-  annual_operating_cost_krw: number;
-  discount_rate?: number;
-  annual_growth_rate?: number;
-  analysis_years?: number;
-  exit_value_krw?: number | null;
-}
-
-export interface FeasibilityCashflowRow {
-  year: number;
-  revenue_krw: number;
-  operating_cost_krw: number;
-  net_cashflow_krw: number;
-  discounted_cashflow_krw: number;
-}
-
-export interface FeasibilityAnalysisResponse {
-  id: string;
-  project_id: string;
-  scenario_name?: string | null;
-  npv: number;
-  irr: number;
-  payback_period_months: number;
-  total_investment_krw: number;
-  total_revenue_krw: number;
-  risk_score: number;
-  discount_rate: number;
-  annual_growth_rate: number;
-  analysis_years: number;
-  exit_value_krw: number;
-  cashflows: FeasibilityCashflowRow[];
-  assumptions: Record<string, unknown>;
-  created_at: string;
-}
-
 // ── 몬테카를로 시뮬레이션 ──
 
 export interface MonteCarloRequest {
@@ -352,25 +311,6 @@ export interface JeonseRiskResponse {
   risk_score: number;
   analysis: string;
   factors: Record<string, unknown>[];
-}
-
-// ── 조합원 분담금 ──
-
-export interface UnionContributionRequest {
-  project_id: string;
-  total_project_cost: number;
-  total_appraised_value: number;
-  individual_appraised_value: number;
-  target_area_sqm: number;
-  avg_sale_price_per_sqm: number;
-}
-
-export interface UnionContributionResponse {
-  proportional_rate: number;
-  individual_contribution: number;
-  total_project_cost: number;
-  breakdown: Record<string, unknown>;
-  scenarios: Record<string, unknown>[];
 }
 
 // ── 기후 리스크 (통합) ──

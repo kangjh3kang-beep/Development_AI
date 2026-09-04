@@ -47,6 +47,7 @@ from typing import Any
 import structlog
 
 from app.services.design_audit.geometry_adapter import design_payload_from_shapes
+from app.services.design_audit.numeric import finite_float
 
 logger = structlog.get_logger()
 
@@ -97,14 +98,23 @@ _DEFAULT_DEV_TYPE = "M06"  # 일반분양(공동주택) — 매핑 실패 시 �
 
 
 def _num(value: Any) -> float | None:
-    """유한 실수만 통과(bool·NaN·inf·비수치 → None) — 가짜 수치 금지."""
-    if isinstance(value, bool):
+    """유한 실수만 통과(bool·NaN·inf·비수치 → None) — 가짜 수치 금지. (공용 finite_float 위임 —
+    R1 HIGH-2: 라우터 _coerce_numeric도 동일 코어를 공유해 NaN/Inf가 어느 흡수 지점으로도
+    새지 못하게 한다.)"""
+    return finite_float(value)
+
+
+def _num_int_preserving(value: Any) -> float | int | None:
+    """유한 실수만 통과하되 정수값이면 int로 보존(예: 층수·세대수).
+
+    ★R1 MEDIUM① — change_risk의 floors/units에 일반 _num()(항상 float)을 적용하면 "16층"이
+    표시상 "16.0층"으로 회귀한다(design_change_predictor의 f"{floors}층" 포맷). 층수·세대수처럼
+    본질적으로 정수인 표시 필드에만 이 보존형을 쓴다(면적·비율 등 연속값 필드는 그대로 _num 사용).
+    """
+    f = finite_float(value)
+    if f is None:
         return None
-    try:
-        f = float(value)
-    except (TypeError, ValueError):
-        return None
-    return f if math.isfinite(f) else None
+    return int(f) if f.is_integer() else f
 
 
 def make_finding(
@@ -297,7 +307,7 @@ class DesignAuditOrchestrator:
             self._run_parking(params, sigungu),
             self._run_permit(params, zone_type, address, applied_bcr, applied_far, sigungu),
             self._run_change_risk(params, zone_type),
-            self._run_incentives(params, zone_type, sigungu, regulation_payload, limits),
+            self._run_incentives(params, zone_type, sigungu, regulation_payload, limits, pnu, address),
             self._run_case_compare(params, pnu, sigungu, case_service or self._case_service),
             return_exceptions=True,
         )
@@ -335,6 +345,17 @@ class DesignAuditOrchestrator:
                 "skipped": True,
                 "note": "rooms(실 타일링) 미제공 — 평면 문법(경계·개구·연결성) 검증 생략",
             }
+
+        # ── ⑨ bl_rules: 피난·방화(BL-007) — 정본 building_code_rules 위임(신작 금지) ──
+        # UI가 '피난·방화 체크'를 광고했으나 8엔진에 피난 검사가 없어 광고-실검사 불일치였다.
+        # 정본 BuildingCodeRuleEngine(BL-007 §34 직통계단/§46 방화구획/§35 특별피난계단)에 위임만 한다.
+        # 주차(BL-005)는 엔진 ④ parking(_compute_parking, 동일 주차장법 시행령 §6 산식)에서 이미
+        # 산정하므로 중복 계상 방지로 여기서 재검하지 않는다(정본 위임=BL-005·런타임=_compute_parking).
+        bl = self._run_bl_rules(params, zone_type)
+        engines_status["bl_rules"] = bl["status"]
+        findings.extend(bl["findings"])
+        if bl.get("section"):
+            sections["bl_rules"] = bl["section"]
 
         # [S7] 효율 지표(결정론 산술 — 엔진 외 공통 섹션).
         sections["efficiency_metrics"] = _efficiency_metrics(params)
@@ -425,13 +446,28 @@ class DesignAuditOrchestrator:
                 "ifc_note": ifc.get("note"),
             }
 
+        # ★공용 키 봉합(C2R WP-A 패턴): 프론트/부지분석 SSOT는 용도지역을 zone_code로 싣고,
+        # audit 엔진은 zone_type을 읽는다 — 키 절단으로 용도지역이 엔진에 미도달해 permit·
+        # incentives·solar 등 한도의존 엔진이 무조건 skip되던 문제를 관용 폴백으로 봉합한다
+        # (zone_type 우선, 없으면 zone_code — 둘 다 없으면 None으로 정직 skip).
+        zone_type = site.get("zone_type") or site.get("zone_code")
+        # 대지면적은 site(부지분석 SSOT)에 실려 오지만 엔진은 params.land_area_sqm를 읽는다.
+        # params(개요서 명시값)에 없을 때만 site 값으로 보강한다(명시값 우선·무날조·덮어쓰기 금지).
+        # ★falsy 통일(R2 리뷰): `in (None, "")`는 0을 통과시켜 "0㎡ 대지면적"이라는 무의미한
+        #   명시값을 site 통합값보다 우선시켰다(주석 의도와 불일치 — 0은 값 없음과 동치로 취급).
+        if not merged_params.get("land_area_sqm") and site.get("land_area_sqm") not in (None, ""):
+            merged_params["land_area_sqm"] = site.get("land_area_sqm")
+
         result = await self.audit(
             merged_params,
-            zone_type=site.get("zone_type"),
+            zone_type=zone_type,
             sigungu=site.get("sigungu"),
             address=site.get("address"),
             pnu=site.get("pnu"),
             shapes=geometry,
+            # 조례·계획 상한 페이로드 전달 배선(인센티브 조례계층 실효한도 산정용) —
+            # 미전달 시 None(far_tier_service가 용도지역 기본값으로 폴백, 무중단).
+            regulation_payload=site.get("regulation_payload"),
             rooms=rooms,
             prior_context=prior_context,
         )
@@ -541,6 +577,86 @@ class DesignAuditOrchestrator:
         }
         return {"status": "ok", "findings": findings, "section": section}
 
+    # ── ⑨ bl_rules: 피난·방화(BL-007) — 정본 building_code_rules 위임 ──────────
+    def _run_bl_rules(self, params: dict[str, Any], zone_type: str | None) -> dict[str, Any]:
+        """9번째 엔진 — 정본 building_code_rules에 위임해 피난·방화(BL-007)를 surface한다.
+
+        신작 금지: BuildingCodeRuleEngine._check_fire_escape(건축법 시행령 §34 직통계단·
+        §46 방화구획·§35 특별피난계단) 결과를 AuditFinding으로 옮겨 담기만 한다.
+        데이터(층수·연면적·층당면적) 전무 시 skipped(정직 — 임의값으로 강행 금지).
+        주차(BL-005)는 엔진 ④에서 이미 산정하므로 중복 계상 방지로 여기서 재검하지 않는다.
+        """
+        floors = _num(params.get("floors_above"))
+        gfa = _num(params.get("total_floor_area_sqm"))
+        floor_area = _num(params.get("floor_area_per_floor_sqm"))
+        if floors is None and gfa is None and floor_area is None:
+            return {
+                "status": "skipped",
+                "findings": [make_finding(
+                    "bl_fire_escape", "bl_rules", STATUS_SKIPPED,
+                    note="층수·연면적·층당면적 없음 — 피난/방화(직통계단·방화구획) 검토 생략(임의값 금지)",
+                )],
+                "section": None,
+            }
+        try:
+            from app.services.permit.building_code_rules import (
+                BuildingCodeRuleEngine,
+                ComplianceStatus,
+            )
+
+            design = {
+                "floor_count_above": int(floors) if floors is not None else 1,
+                "total_gfa_sqm": gfa or 0.0,
+                "floor_area_per_floor_sqm": floor_area or 0.0,
+                "building_height_m": _num(params.get("building_height_m")) or 0.0,
+            }
+            res = BuildingCodeRuleEngine()._check_fire_escape(design, {"zone_type": zone_type or ""})
+        except Exception as e:  # noqa: BLE001 — 정본 위임 실패는 skipped(정직)
+            logger.warning("피난/방화(BL-007) 위임 실패 — skipped 처리", error=str(e)[:160])
+            return {
+                "status": "failed",
+                "findings": [make_finding(
+                    "bl_fire_escape", "bl_rules", STATUS_SKIPPED,
+                    note=f"피난/방화 검토 실패 — 결과 미산출(정직한 생략): {str(e)[:160]}",
+                )],
+                "section": None,
+            }
+
+        # ComplianceStatus → AuditFinding.status.
+        # ★WARNING→info(판정 미반영, R2 리뷰 확정방침): _check_fire_escape는 "5층 이상 OR
+        #   층당 200㎡ 초과"면 **무조건** WARNING을 낸다 — 이는 확정 위반이 아니라 "직통계단·
+        #   방화구획 요건이 존재하니 설계도서에서 확인하라"는 정직한 불확실 신호다(파라미터만으로
+        #   판정 불가). 이 요건은 사실상 모든 중규모 이상 건물에서 발화하므로, 예전처럼
+        #   STATUS_WARNING으로 verdict를 지배시키면 현실의 거의 모든 건물이 "조건부적합"에
+        #   묶여 "적합"에 도달할 수 없다(모든 건물에서 발화하는 경고는 신호가 없다 — 헤드라인
+        #   회귀). FAIL(확정 위반 — 이 룰은 현재 산출하지 않지만 향후 확장 대비)은 종전대로
+        #   verdict에 반영한다. 검사 자체는 info로도 findings/PDF에 정직하게 surface된다
+        #   (message에 "설계도서에서 확인 필요: ..." 문구 유지 — 무근거 낙관이 아니라 판정
+        #   불가 항목의 정직한 등급).
+        status_map = {
+            ComplianceStatus.PASS: STATUS_PASS,
+            ComplianceStatus.FAIL: STATUS_FAIL,
+            ComplianceStatus.WARNING: STATUS_INFO,
+            ComplianceStatus.NOT_APPLICABLE: STATUS_INFO,
+        }
+        finding = make_finding(
+            "bl_fire_escape", "bl_rules", status_map.get(res.status, STATUS_INFO),
+            current=res.actual_value,
+            limit=res.required_value,
+            legal_ref_keys=["evacuation"],
+            improvement=res.message,
+            note=f"{res.rule_name}({res.legal_basis})",
+        )
+        section = {
+            "rule_id": res.rule_id,
+            "status": str(res.status),
+            "required": res.required_value,
+            "actual": res.actual_value,
+            "message": res.message,
+            "legal_basis": res.legal_basis,
+        }
+        return {"status": "ok", "findings": [finding], "section": section}
+
     # ── ① rules8: 기하 8룰(BuildingComplianceService 검증기 재사용) ──────────
     async def _run_rules8(
         self,
@@ -593,6 +709,10 @@ class DesignAuditOrchestrator:
         )
         # min_setback은 조례·가로구역별 상이 — 미상 시 0(미적용)으로 정직 처리,
         # max_height 미상(None=무제한 포함)은 inf(높이룰 비활성).
+        # ★R1 HIGH-1 — min_setback_m=0.0은 SSOT(실제 이격거리 한도 데이터 경로)가 아직 없어
+        #   verify()가 항상 "distance >= 0"으로 무위반 처리한다(=이격거리 룰이 구조적으로 비활성).
+        #   이 0.0을 "이격거리를 검사해서 위반 없음"으로 오인하면 안 된다 — 아래 setback_evaluated
+        #   플래그를 항상 False로 방출해, 미검사 각주 교정 로직이 이 항목을 절대 차감하지 않게 한다.
         limits = LegalLimits(
             building_coverage_ratio=applied_bcr / 100.0,
             floor_area_ratio=applied_far / 100.0,
@@ -629,6 +749,12 @@ class DesignAuditOrchestrator:
                 for v in violations
             ],
             "issues": payload.get("issues") or [],
+            # ★R1 HIGH-1 — 미검사 각주 교정용 명시 플래그(엔진이 '실행됐는지'가 아니라 해당
+            #   룰이 '실제로 판정 가능했는지'). height_rule_active는 실측 max_height가 있을
+            #   때만 True(없으면 inf 대체 — 룰 비활성). setback_evaluated는 min_setback_m
+            #   SSOT가 없어 상시 False(위 주석 참조 — 실제 데이터 경로가 생기기 전까지 불변).
+            "height_rule_active": bool(max_height),
+            "setback_evaluated": False,
         }
         return {"findings": findings, "section": ("rules8", section)}
 
@@ -764,6 +890,12 @@ class DesignAuditOrchestrator:
             "envelope": envelope,
             "shadow_svg": shadow_svg,
             "shadow_note": None if shadow_svg else "일영 SVG 미생성 — 건축면적·높이 데이터 필요(정사각 풋프린트 근사)",
+            # ★R1 HIGH-1 — 미검사 각주 교정용 명시 플래그. applies(정북일조 적용 zone)와
+            #   height_v(계획 높이 입력) 둘 다 있어야 실제로 인벨로프 대비 판정한 것이다.
+            #   둘 중 하나라도 없으면 status=PASS가 나오지만 이는 "판정 결과 적합"이 아니라
+            #   "판정할 근거 없음"의 trivial PASS다(current="높이 미입력") — 이 경우
+            #   '일조권_준수'를 미검사 목록에서 차감하면 안 된다.
+            "height_evaluated": applies and height_v is not None,
         }
         return {"findings": [finding], "section": ("solar_envelope", section)}
 
@@ -777,6 +909,10 @@ class DesignAuditOrchestrator:
                 note="세대수·연면적 모두 없음 — 법정주차 산정 생략(0대 날조 금지)",
             )]}
 
+        # ★주차 정본 = 주차장법 시행령 §6(별표1). 룰 정본은 building_code_rules.BL-005
+        #   (_check_parking)이며, 여기 auto_design_engine._compute_parking은 동일 법적근거(§6)의
+        #   런타임 계산 경로다(공동주택 1.0대/세대로 BL-005와 대수 산식 일치). 중복 계상 방지를 위해
+        #   9번째 bl_rules 엔진은 주차를 재검하지 않고 피난(BL-007)만 surface한다(단일 SSOT).
         from app.services.cad.auto_design_engine import PARKING_RULES, _compute_parking
 
         building_use = str(params.get("building_use") or "공동주택")
@@ -902,10 +1038,17 @@ class DesignAuditOrchestrator:
             "bcr": _num(params.get("bcr_pct")),
             "far": _num(params.get("far_pct")),
             "height_m": _num(params.get("building_height_m")),
-            "floors": params.get("floors_above"),
+            # ★이중 안전 — floors/units만 원문(brief 추출은 문자열)을 그대로 써서
+            #   design_change_predictor의 `floors >= 5` 등 수치비교가 'str'≥'int' TypeError로
+            #   죽고, 그 예외가 삼켜져 'skipped'로 위장 표시되던 결함(라이브 재현). 흡수 지점
+            #   (routers/design_audit.py:_normalize_numeric_params)에서 이미 정규화하지만,
+            #   이 dict의 다른 모든 필드처럼 여기서도 재확인한다(근원 봉합). ★R1 MEDIUM① —
+            #   층수·세대수는 정수 표시 필드라 일반 _num()(항상 float)을 쓰면 "16층"이
+            #   "16.0층"으로 회귀한다 — _num_int_preserving으로 정수값은 int로 보존한다.
+            "floors": _num_int_preserving(params.get("floors_above")),
             "floor_height_m": _num(params.get("floor_height_m")),
             "gfa": _num(params.get("total_floor_area_sqm")),
-            "units": params.get("units"),
+            "units": _num_int_preserving(params.get("units")),
             "parking": _num(params.get("parking")),
             "building_type": params.get("building_use"),
             "avg_unit_area_sqm": _num(params.get("avg_unit_area_sqm")),
@@ -946,6 +1089,8 @@ class DesignAuditOrchestrator:
         sigungu: str | None,
         regulation_payload: Any,
         limits: dict[str, Any] | None,
+        pnu: str | None = None,
+        address: str | None = None,
     ) -> dict[str, Any]:
         if not zone_type or limits is None:
             return {"findings": [make_finding(
@@ -957,6 +1102,51 @@ class DesignAuditOrchestrator:
 
         base = regulation_payload if isinstance(regulation_payload, dict) else {}
         land_area = _num(params.get("land_area_sqm")) or 0.0
+
+        # ★레인C(P0) — sigungu는 오케스트레이터가 이미 별도 인자로 보유하지만(위 audit() 1단계
+        #   조례 실효한도 산정에도 쓰인다), calc_upzoning은 base["local_ordinance"]["sigungu"]만
+        #   읽는다. 프론트 buildRegulationPayload가 이 키를 싣지 않으면(과거 5키만 전송) sigungu가
+        #   calc_upzoning에 영구 미도달 → 목표 용도지역 조례 resolver가 발동하지 않고 종상향 예상
+        #   용적률이 항상 "국토계획법 시행령 법정 범위"로 붕괴했다(요약문 "약 200~200%" 등 저해상도
+        #   표기). base에 이미 sigungu가 실려 있으면(향후 buildRegulationPayload가 채우면) 그 값을
+        #   우선하고, 없을 때만 오케스트레이터 보유값으로 보강한다(덮어쓰기 금지 — 명시값 우선).
+        base_ordinance = base.get("local_ordinance")
+        if sigungu and not (isinstance(base_ordinance, dict) and base_ordinance.get("sigungu")):
+            base = dict(base)
+            base["local_ordinance"] = {**(base_ordinance if isinstance(base_ordinance, dict) else {}), "sigungu": sigungu}
+
+        # ★레인C(R2b, HIGH 봉합) — 규제구역(special_districts) 서버측 실배선. 실원천은 이미
+        #   존재한다: regulation_analysis_service._detect_special(:362)와 special_parcel.
+        #   detect_special_parcel(:1219)이 소비하는 land_use_plan.districts(VWorld NED
+        #   getLandUseAttr — 중첩규제 전부)와 동일 계약. 프론트 SSOT(siteAnalysis)엔 이 필드가
+        #   없어 릴레이가 불가능하므로, pnu만으로 서버가 직접 조달한다(_run_permit이 이미
+        #   address로 PermitAnalysisService를 부르는 것과 동일한 온디맨드 외부조회 관례 —
+        #   신규 패턴 아님). base가 이미 명시값을 갖고 있으면(예: 다필지 집계·테스트 주입)
+        #   덮어쓰지 않는다(명시값 우선).
+        #   ★R2b 수정(R1 재지적 — 이전 패치가 무음 폴백을 이 배선점에서 재도입했었다):
+        #   get_land_use_plan은 이제 None(하드 실패 — 키 미설정/HTTP 실패, 단 1건도 못 가져옴)과
+        #   [](조회 성공·규제 0건 확인)을 구분해 반환한다. 여기서 `districts_raw or []`처럼
+        #   None을 [] 로 뭉개면 "조회 못 함"이 "확인 결과 규제 없음"으로 둔갑해 P0에서 만든
+        #   None/[] 구분(far_tier_service.calc_upzoning)을 이 배선점이 스스로 무력화한다 —
+        #   districts_raw is None이면 base["special_districts"]를 아예 세팅하지 않아(None
+        #   그대로 유지) 하류 data_gaps·RFI가 정직하게 발화하게 한다.
+        if not isinstance(base.get("special_districts"), list) and pnu:
+            try:
+                from app.services.external_api.vworld_service import VWorldService
+
+                districts_raw = await VWorldService().get_land_use_plan(pnu)
+                if districts_raw is not None:  # None=하드 실패 → base 미갱신(미수집 유지)
+                    names = [
+                        n for n in (
+                            (d.get("district_name") if isinstance(d, dict) else str(d))
+                            for d in districts_raw
+                        )
+                        if n
+                    ]
+                    base = dict(base)
+                    base["special_districts"] = names
+            except Exception as e:  # noqa: BLE001 — 조회 실패는 미수집으로 폴백(무중단·data_gaps로 정직 표기)
+                logger.warning("규제구역(토지이용계획) 조회 실패 — 미수집으로 폴백", error=str(e)[:160])
 
         # 실효용적률 계층 + 기부채납 인센티브 시뮬레이션(far_tier_service 단일출처).
         effective = far_tier_service.calc_effective_far(base, zone_type, land_area)
@@ -971,7 +1161,15 @@ class DesignAuditOrchestrator:
         if donation_max is not None:
             limit_parts.append(f"기부채납 시 최대 {donation_max:g}%")
         if potential_high is not None:
-            limit_parts.append(f"종상향 예상 상한 {potential_high:g}%(예상치)")
+            # ★범위가 붕괴했으면(검토한 경로가 모두 같은 목표를 가리킴) 이 숫자는 '상한'이 아니다.
+            #   '상한'이라고 적으면 감사 리포트가 "그 위는 안 된다"를 사실로 진술하게 된다.
+            #   숫자는 그대로 두고 한정만 밝힌다(형제 화면 3곳과 같은 규율).
+            if potential_range.get("is_collapsed"):
+                limit_parts.append(
+                    f"종상향 예상 {potential_high:g}%(예상치·단일 값·범위 미산출)"
+                )
+            else:
+                limit_parts.append(f"종상향 예상 상한 {potential_high:g}%(예상치)")
 
         finding = make_finding(
             "far_incentive_potential", "incentives", STATUS_INFO,
@@ -987,6 +1185,35 @@ class DesignAuditOrchestrator:
             "donation_simulation": donation,
             "upzoning": upzoning,
         }
+        # ★레인C(P0, 가능하면) — 규제구역(special_districts) 미수집 시 RFI 루프(W3-6)로
+        #   구조화 방출(무음 가정 금지). data_gaps는 upzoning_potential.analyze()가 이미
+        #   "미수집 vs 확인완료·규제없음"을 구분해 담아준 신호(위 far_tier_service.calc_upzoning
+        #   수정과 짝을 이룸) — 여기서는 그 신호를 RFI 계약(rfi_register.py)으로 승격만 한다.
+        data_gaps = upzoning.get("data_gaps") or []
+        if data_gaps:
+            try:
+                from app.services.provenance.required_data import RequirementLevel
+                from app.services.rfi.rfi_register import RFIRegister, build_subject_ref, emit_rfi
+
+                register = RFIRegister()
+                emit_rfi(
+                    register,
+                    subject_ref=build_subject_ref(
+                        pnu=pnu, address=address, field_name="upzoning.special_districts",
+                    ),
+                    missing_what="규제구역(개발제한구역·상수원보호구역·문화재보호구역 등) 데이터",
+                    needed_for="종상향/종변경 잠재 시나리오의 차단사유(blocked_reasons) 판정",
+                    blocking_calc="upzoning_potential.UpzoningPotentialAnalyzer.analyze — blocked_reasons",
+                    default_assumption=(
+                        "규제구역 데이터 없이 종상향 시나리오를 산출했습니다 — 실제로 개발제한구역·"
+                        "상수원보호구역 등에 해당하면 종상향이 불가할 수 있습니다."
+                    ),
+                    requirement_level=RequirementLevel.RECOMMENDED.value,
+                    critical=False,
+                )
+                section["rfi_register"] = register.to_dict()
+            except Exception as e:  # noqa: BLE001 — RFI 조립 실패는 기존 인센티브 산출 무손상
+                logger.warning("설계심사 RFI 방출 실패(degrade, 인센티브 산출 무손상)", error=str(e)[:160])
         return {"findings": [finding], "section": ("s4_incentives", section)}
 
     # ── ⑧ case_compare: [S1~S3] 인근 인허가 사례 비교 ────────────────────────

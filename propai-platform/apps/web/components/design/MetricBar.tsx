@@ -1,31 +1,33 @@
 "use client";
 
 /**
- * 설계 스튜디오 하단 "정본 메트릭바" — 한 창에서 부지·설계 핵심 수치를 상시 확인하는 띠.
+ * 설계 스튜디오 하단 "설계 산출 KPI 바" — 설계 생성 결과 수치를 상시 확인하는 띠.
  *
- * 왜 필요한가(쉬운 설명): 설계 스튜디오는 부지·설계생성·도면 단계를 오가는데, 사용자가
- *   "지금 이 부지의 대지면적·용도지역·건폐율/용적률·연면적·층수·세대수"를 어느 단계에서든
- *   바로 보고 싶어 한다. 이 띠는 그 7개 핵심 수치를 store(단일 진실원천)에서 직접 읽어
- *   화면 하단에 고정한다(어떤 단계든 같은 정본을 본다).
+ * 역할 분리(사용자 지적 '부지 지표 중복' 해소):
+ *   · 상단 ContextHeader = "대상 식별"(프로젝트·주소·PNU·용도지역·대지면적) — 무엇을 대상으로 하는가.
+ *   · 하단 이 바 = "설계 산출 KPI"(건폐율·용적률·연면적·층수·세대수) — 생성한 설계의 결과가 무엇인가.
+ *   대지면적·용도지역 같은 식별 지표는 상단에서만 표기해 화면 내 중복을 제거한다(정보 손실 0 —
+ *   같은 페이지 상단 ContextHeader가 정본으로 항상 노출). 건폐율/용적률은 설계 산출이므로 여기 남기되,
+ *   설계 전(미생성)에는 부지 실효 한도로 폴백해 "설계가 준수해야 할 기준선"을 정직히 보여준다.
  *
- * 단일 진실원천(SSOT): 모든 값은 useProjectContextStore의 designData·siteAnalysis에서만
- *   읽고, 면적·용도지역·건폐율/용적률은 공용 리졸버(lib/zoning-ssot·lib/site-area)로 통일해
- *   "통합값 우선 → 실효 → 법정" 같은 우선순위를 한 곳에서 따른다(읽기 분기 방지).
+ * 단일 진실원천(SSOT): 모든 값은 useProjectContextStore의 designData·siteAnalysis에서만 읽고,
+ *   건폐율/용적률은 공용 리졸버(lib/zoning-ssot)로 "설계값 우선 → 부지 실효" 순위를 한 곳에서 따른다.
  *
  * 무날조 원칙: 어떤 칩이든 값이 없으면(null/undefined) "—"로만 표기한다(가짜 0/임의값 금지).
- *   designData·siteAnalysis가 둘 다 없으면 띠 자체를 그리지 않는다("—" 7개 노출 방지).
+ *   designData·siteAnalysis가 둘 다 없으면 띠 자체를 그리지 않는다(빈 "—" 노출 방지).
  */
 
 import { useState } from "react";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
-import { effectiveLandAreaSqm } from "@/lib/site-area";
 import {
-  resolveBcrPct,
-  resolveFarPct,
-  resolveDominantZone,
+  resolveBcrWithBasis,
+  resolveFarWithBasis,
+  limitBasisLabel,
+  type LimitBasis,
 } from "@/lib/zoning-ssot";
 import { EvidencePanel, type EvidenceItem } from "@/components/common/EvidencePanel";
 import { LegalRefChip } from "@/components/common/LegalRefChip";
+import { toLegalChips } from "@/lib/legal-refs";
 import {
   summarizeCompliance,
   ruleTraceToEvidence,
@@ -51,11 +53,6 @@ function fmtCount(v: number | null | undefined, suffix: string): string {
   return `${v}${suffix}`;
 }
 
-// 문자열 표기(용도지역 등). 빈값/미확보면 "—".
-function fmtText(v: string | null | undefined): string {
-  return typeof v === "string" && v.trim() ? v.trim() : "—";
-}
-
 /* ── C2R 계약(geometry_invariants) 등급 배지 — PASS/WARN/FAIL을 색으로 한눈에 ── */
 // 백엔드 GeoStatus(PASS/PASS_WITH_WARNINGS/FAIL) → 한글 라벨 + 색. 미상(null)은 회색 "미산출".
 const GEO_STATUS_LABEL: Record<GeoStatus, string> = {
@@ -64,8 +61,8 @@ const GEO_STATUS_LABEL: Record<GeoStatus, string> = {
   FAIL: "오류(FAIL)",
 };
 const GEO_STATUS_CLASS: Record<GeoStatus, string> = {
-  PASS: "border-emerald-500/40 bg-emerald-500/10 text-emerald-400",
-  PASS_WITH_WARNINGS: "border-amber-500/40 bg-amber-500/10 text-amber-400",
+  PASS: "border-[var(--status-success)]/40 bg-[var(--status-success)]/10 text-[var(--status-success)]",
+  PASS_WITH_WARNINGS: "border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 text-[var(--status-warning)]",
   FAIL: "border-red-500/40 bg-red-500/10 text-red-400",
 };
 
@@ -145,43 +142,42 @@ function toEvidenceItems(ev?: unknown[] | null): EvidenceItem[] {
     });
 }
 
-// 법령 원문 링크 한 줄(레지스트리 legalRefs 출력). store엔 unknown[]로 들어온다.
-type LegalRefLike = {
-  lawName?: string | null;
-  law_name?: string | null;
-  article?: string | null;
-  title?: string | null;
-  url?: string | null;
-};
-
-// legalRefs(unknown[]) → LegalRefChip 입력. 법령명 없는 항목은 제외(빈 칩 방지·정직성).
-//   백엔드 키가 camel(lawName) 또는 snake(law_name) 둘 다 올 수 있어 양쪽 폴백.
-function toLegalChips(refs?: unknown[] | null): {
-  lawName: string;
-  article?: string | null;
-  title?: string | null;
-  url?: string | null;
-}[] {
-  if (!Array.isArray(refs)) return [];
-  return refs
-    .filter((r): r is LegalRefLike => !!r && typeof r === "object")
-    .map((r) => ({
-      lawName: (r.lawName || r.law_name || "").trim(),
-      article: r.article ?? null,
-      title: r.title ?? null,
-      url: r.url ?? null,
-    }))
-    .filter((r) => !!r.lawName);
-}
-
 // 칩 1개 — 라벨(작은 글씨) + 값(모노 계기 수치). 좁은 화면에선 가로스크롤(shrink-0).
-function Chip({ label, value }: { label: string; value: string }) {
+//   note: 값 옆 소형 배지(예: "법정상한"·"실효") — 부지 폴백값의 근거를 정직 표기(무라벨 방지).
+function Chip({
+  label,
+  value,
+  note,
+  noteTitle,
+}: {
+  label: string;
+  value: string;
+  note?: string | null;
+  noteTitle?: string;
+}) {
   return (
     <div className="flex min-w-[6.5rem] shrink-0 flex-col justify-center gap-0.5 px-3">
       <span className="cc-label text-[10px] text-[var(--text-tertiary)]">{label}</span>
-      <span className="cc-num text-sm text-[var(--text-primary)]">{value}</span>
+      <span className="flex items-center gap-1">
+        <span className="cc-num text-sm text-[var(--text-primary)]">{value}</span>
+        {note && (
+          <span
+            title={noteTitle}
+            className="shrink-0 rounded-full border border-[var(--line)] bg-[var(--surface-strong)] px-1 py-0.5 text-[8px] font-bold leading-none text-[var(--text-tertiary)]"
+          >
+            {note}
+          </span>
+        )}
+      </span>
     </div>
   );
+}
+
+// 부지 폴백값 근거 툴팁 — 법정상한/실효를 정직히 구분(설계 산출값이 아니라 부지 기준선임을 명시).
+function basisTitle(basis: LimitBasis): string {
+  return basis === "national"
+    ? "용도지역 법정상한 — 설계 생성 전 부지 기준선(설계 산출값 아님)"
+    : "조례·종상향 반영 실효 한도 — 설계 생성 전 부지 기준선(설계 산출값 아님)";
 }
 
 export function MetricBar({ className }: { className?: string }) {
@@ -198,17 +194,43 @@ export function MetricBar({ className }: { className?: string }) {
   // 데이터 전무(둘 다 없음)면 띠 자체를 렌더하지 않는다(빈 "—" 7개 노출 방지).
   if (!designData && !siteAnalysis) return null;
 
-  // 대지면적 — 다필지 통합 우선 유효 면적(공용 헬퍼). 미확보 시 null.
-  const landAreaSqm = effectiveLandAreaSqm(siteAnalysis);
-  // 용도지역 — resolveDominantZone이 내부에서 dominantZoneCode ?? zoneCode를 이미 폴백(단일경유).
-  const zone = resolveDominantZone(siteAnalysis);
-  // 건폐율/용적률 — 설계 산출(designData) 우선, 없으면 부지 실효값(공용 리졸버). 미확보 시 null.
-  const bcr = designData?.bcr ?? resolveBcrPct(siteAnalysis) ?? null;
-  const far = designData?.far ?? resolveFarPct(siteAnalysis) ?? null;
+  // 건폐율/용적률 — 설계 산출(designData) 우선, 없으면 부지 한도(공용 리졸버·근거 동봉). 미확보 시 null.
+  //   대지면적·용도지역(식별 지표)은 상단 ContextHeader가 정본으로 표기하므로 이 바에서는 제외(중복 제거).
+  //   ★부지 폴백값은 "법정상한"인지 "실효"인지 근거 배지를 함께 표기한다 — 종전엔 자연녹지 법정상한
+  //   100%를 무라벨로 보여 옆 카드(층수클램프 실효 80%)와 모순처럼 읽혔다. 설계 산출값(designData)일
+  //   때는 배지 없이 그대로(그게 이 바의 본래 KPI). 무날조: 값 없으면 null → "—".
+  const designBcr = designData?.bcr ?? null;
+  const designFar = designData?.far ?? null;
+  const siteBcr = resolveBcrWithBasis(siteAnalysis);
+  const siteFar = resolveFarWithBasis(siteAnalysis);
+  const bcr = designBcr ?? siteBcr?.value ?? null;
+  const far = designFar ?? siteFar?.value ?? null;
+  // 부지 폴백(설계 산출값 아님)일 때만 근거 배지 — 법정상한/실효 정직 구분.
+  const bcrNote = designBcr == null && siteBcr ? limitBasisLabel(siteBcr.basis) : null;
+  // ★설계스튜디오 실효FAR 전파 봉합: 설계 산출값(designFar)이 있어도, 그 값이 실효 한도(통합/
+  //   실효/조례) 근거가 아니라 실효 미확보로 법정상한에 폴백한 값이면(farIsEffective===false)
+  //   "법정상한 기준"으로 정직 표기한다. 종전엔 designFar가 있으면 무조건 배지 없이 표시돼
+  //   법정폴백(예: 자연녹지 100%)이 확정 실효값처럼 보였다(조용한 100% 확정 오인).
+  const farFallbackToLegal = designFar != null && designData?.farIsEffective === false;
+  const farNote =
+    designFar == null && siteFar
+      ? limitBasisLabel(siteFar.basis)
+      : farFallbackToLegal
+        ? "법정상한 기준"
+        : null;
   // 연면적·정본 층수·세대수 — 설계 산출(designData)에서만. 미확보 시 null → "—".
   const gfa = designData?.totalGfaSqm ?? null;
   const floors = designData?.floorCount ?? null; // ★INC1이 canonicalFloors로 기록한 정본 층수
   const units = designData?.unitCount ?? null;
+
+  // ★Pillar E(상태 분기): "설계 산출 결과"가 실제로 생성됐는가 — 설계 전용 산출(연면적·층수·세대수)
+  //   중 하나라도 있으면 생성됨. 미생성 시엔 이 띠가 부지 실효 한도(법정상한/실효 배지)로 폴백하는데,
+  //   이를 "생성 결과 KPI"라 부르면 오해(생성 안 했는데 결과처럼 보임)이므로 "설계 산출 대기"로
+  //   정직 분기한다. 생성 후엔 종전 라벨 유지(무회귀). BCR/FAR의 법정상한/실효 배지는 아래 칩에서 그대로.
+  const hasDesignOutput = !!(
+    designData &&
+    ((gfa ?? 0) > 0 || (floors ?? 0) > 0 || (units ?? 0) > 0)
+  );
 
   // 근거 데이터 추출(store 실데이터만 — 무날조). 빈 항목·법령명 없는 항목은 헬퍼가 제외.
   //  evidence/legalRefs는 채워진 위치가 경로마다 달라(siteAnalysis 직속·trustMeta·complianceData)
@@ -239,7 +261,7 @@ export function MetricBar({ className }: { className?: string }) {
         className ?? "",
       ].join(" ")}
       role="group"
-      aria-label="정본 메트릭"
+      aria-label="설계 산출 KPI"
     >
       {/* 근거 인스펙터(펼침 시에만) — 칩 행 위에 쌓여 "왜 이 값이 나왔나"를 한 창에서 보여준다. */}
       {showEvidence && hasEvidence && (
@@ -251,8 +273,8 @@ export function MetricBar({ className }: { className?: string }) {
 
           {/* 2) 특이부지 정직 경고 — 학교용지·맹지 등 정직 고지(앰버 박스). 없으면 생략. */}
           {isSpecial && (
-            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-[11px]">
-              <p className="font-bold text-amber-400">특이부지 — 정직 고지</p>
+            <div className="rounded-xl border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 px-4 py-2.5 text-[11px]">
+              <p className="font-bold text-[var(--status-warning)]">특이부지 — 정직 고지</p>
               {special?.honest?.trim() && (
                 <p className="mt-1 leading-relaxed text-[var(--text-secondary)]">
                   {special.honest.trim()}
@@ -309,7 +331,7 @@ export function MetricBar({ className }: { className?: string }) {
                   <span className="font-bold text-[var(--text-primary)]">{contractSummary.ruleCount}건</span>
                 </span>
                 {contractSummary.warningCount > 0 && (
-                  <span className="text-amber-400">경고 {contractSummary.warningCount}건</span>
+                  <span className="text-[var(--status-warning)]">경고 {contractSummary.warningCount}건</span>
                 )}
                 {contractSummary.errorCount > 0 && (
                   <span className="text-red-400">오류 {contractSummary.errorCount}건</span>
@@ -351,12 +373,41 @@ export function MetricBar({ className }: { className?: string }) {
         </div>
       )}
 
-      {/* 칩 행(정본 7개) + 우측 토글. 종전 스타일(가로스크롤·모바일 줄바꿈) 그대로 유지. */}
+      {/* 칩 행(설계 산출 5종) + 우측 토글. 종전 스타일(가로스크롤·모바일 줄바꿈) 그대로 유지.
+          맨 앞 역할 라벨로 "이 띠 = 설계 산출 결과"임을 명시(상단 식별 지표와 역할 구분). */}
       <div className="flex min-h-[48px] items-center gap-1 overflow-x-auto max-md:flex-wrap max-md:overflow-x-visible">
-        <Chip label="대지면적" value={fmtSqm(landAreaSqm)} />
-        <Chip label="용도지역" value={fmtText(zone)} />
-        <Chip label="건폐율" value={fmtPct(bcr)} />
-        <Chip label="용적률" value={fmtPct(far)} />
+        <span className="flex shrink-0 flex-col justify-center gap-0.5 border-r border-[var(--line)] pl-1 pr-3">
+          {hasDesignOutput ? (
+            <>
+              <span className="cc-label text-[10px] text-[var(--accent-strong)]">설계 산출</span>
+              <span className="text-[9px] font-semibold leading-none text-[var(--text-hint)]">생성 결과 KPI</span>
+            </>
+          ) : (
+            <>
+              {/* 미생성 — 아래 건폐/용적은 부지 실효 한도(법정상한/실효 배지) 폴백임을 정직 표기. */}
+              <span className="cc-label text-[10px] text-[var(--text-tertiary)]">설계 산출 대기</span>
+              <span className="text-[9px] font-semibold leading-none text-[var(--text-hint)]">추천안 생성 시 결과 표시</span>
+            </>
+          )}
+        </span>
+        <Chip
+          label="건폐율"
+          value={fmtPct(bcr)}
+          note={bcrNote}
+          noteTitle={siteBcr ? basisTitle(siteBcr.basis) : undefined}
+        />
+        <Chip
+          label="용적률"
+          value={fmtPct(far)}
+          note={farNote}
+          noteTitle={
+            farFallbackToLegal
+              ? "실효 한도 미확보 — 설계값이 법정상한 기준으로 산정됨(부지분석 실행 시 정밀화)"
+              : siteFar
+                ? basisTitle(siteFar.basis)
+                : undefined
+          }
+        />
         <Chip label="연면적" value={fmtSqm(gfa)} />
         <Chip label="층수" value={fmtCount(floors, "층")} />
         <Chip label="세대수" value={fmtCount(units, "세대")} />

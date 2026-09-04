@@ -47,8 +47,8 @@ export function SiteDataGate({
       : null;
 
   return (
-    <div className="rounded-[var(--radius-2xl)] border border-amber-500/30 bg-amber-500/5 p-10 text-center shadow-[var(--shadow-lg)]">
-      <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-500/15 text-amber-400">
+    <div className="rounded-[var(--radius-2xl)] border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/5 p-10 text-center shadow-[var(--shadow-lg)]">
+      <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--status-warning)]/15 text-[var(--status-warning)]">
         <svg
           xmlns="http://www.w3.org/2000/svg"
           width="26"

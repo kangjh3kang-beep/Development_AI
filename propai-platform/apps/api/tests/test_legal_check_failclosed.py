@@ -144,11 +144,22 @@ class TestPreDesignReviewFailClosed:
         # 최대 연면적 산정에 거짓 준주거 용적률(500%)이 새면 안 된다.
         scale = next((c for c in out["checks"] if c.get("rule_code") == "buildable_scale"), None)
         if scale is not None:
-            # 자연녹지 100% 기준(최대 연면적 ≈ 1000㎡)이어야 하며 500%(≈5000㎡)면 안 됨.
+            # ★교정(레인H R2, 2026-07-24): 자연녹지는 구조상한(건폐 15%×4층=60%)이 흡수되어
+            # 법정 100%가 아니라 60% 기준(최대 연면적 약 600㎡)이 정확한 값이다 — 이전 단언
+            # "1,000㎡"은 /check(_pre_design_review)가 구조상한을 흡수하기 전(결함 상태)의
+            # 값을 고정한 것이었다(레인H R1 리뷰가 세 번째 형제로 적발·교정). 준주거의 거짓
+            # 500%(≈5,000㎡)는 여전히 절대 새면 안 된다.
             assert "5,000" not in scale["detail"]
-            assert "1,000㎡" in scale["detail"]
-        # 계획값(15%/90%)이 자연녹지 상한(20%/100%) 이내라 fail 없음(거짓 매칭 아님).
-        assert out["violations"] == []
+            assert "600㎡" in scale["detail"]
+        # ★교정(레인H R2, 2026-07-24): 계획값(15%/90%)은 자연녹지 법정 범위(20%/100%) 이내지만
+        # 구조상한(건폐 15%×4층=60%)을 넘는다 — 이는 준주거 오매칭과 무관한 '진짜' 위반이다.
+        # 과거 "위반 없음" 단언은 /check가 구조상한을 흡수하기 전의 결함을 고정한 것이었다.
+        far_violation = next(
+            (c for c in out["violations"] if c.get("rule_code") == "용적률 상한"), None,
+        )
+        assert far_violation is not None
+        assert "구조상한" in far_violation["detail"]
+        assert "500" not in far_violation["detail"]  # 준주거 오매칭발 위반이 아님을 확인
 
 
 # ══════════════════════════════════════════════════════════════════

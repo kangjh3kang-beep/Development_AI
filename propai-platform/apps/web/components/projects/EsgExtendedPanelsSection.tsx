@@ -58,7 +58,7 @@ import {
 function Tile({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="rounded-[var(--radius-xl)] bg-[var(--surface)] p-4">
-      <p className="text-[11px] uppercase tracking-[0.2em] text-[var(--text-tertiary)]">
+      <p className="label-caps text-[var(--text-tertiary)]">
         {label}
       </p>
       <p className="mt-2 text-sm font-semibold text-[var(--text-primary)]">{value}</p>
@@ -121,7 +121,7 @@ function renderRe100Result(raw: unknown): ReactNode {
       ) : null}
       {(r.roadmap?.length ?? 0) > 0 ? (
         <div className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] p-4">
-          <p className="mb-2 text-[11px] uppercase tracking-[0.2em] text-[var(--text-tertiary)]">
+          <p className="mb-2 label-caps text-[var(--text-tertiary)]">
             이행 로드맵
           </p>
           <div className="grid gap-2">
@@ -223,7 +223,7 @@ function renderEuTaxonomyResult(raw: unknown): ReactNode {
               <span className="text-[var(--text-secondary)]">
                 [{c.category}] {c.name}
               </span>
-              <span className={c.passed ? "font-semibold text-emerald-600" : "font-semibold text-[var(--spot)]"}>
+              <span className={c.passed ? "font-semibold text-emerald-600" : "font-semibold text-[var(--status-error)]"}>
                 {c.passed ? "통과" : "미통과"} ({c.actual_value}/{c.threshold})
               </span>
             </div>

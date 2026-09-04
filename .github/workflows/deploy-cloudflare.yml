@@ -1,5 +1,14 @@
 name: Deploy to Oracle Cloud
 
+# ★이 워크플로는 **프론트 서버(158·compose 가 실서비스) 전용**이다.
+#   실행하는 것이 `scripts/safe-deploy.sh` 이고, 그 스크립트는 compose 스택을 갱신한다.
+#   ★★백엔드(168)는 **compose 밖**의 수동 컨테이너(`propai-api-800x`)를 caddy 가 프록시하므로
+#     정본이 다르다 — `infra/deploy-zero-downtime.sh`(블루그린). 168 을 여기에 물리면
+#     `safe-deploy.sh` 의 **서버 역할 가드가 exit 10 으로 막는다**(#668). 막히는 건 옳지만
+#     45분 타임아웃까지 가기 전에 아래 preflight 에서 먼저 잡는다.
+#   → 즉 `ORACLE_SSH_HOST` 시크릿을 넣어 자동배포를 켜면 **158 자동배포만** 살아난다.
+#     168 은 여전히 수동이며, 그 사실을 여기 적어 두지 않으면 "자동배포 부활"로 오독된다.
+
 on:
   push:
     branches:
@@ -40,17 +49,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install pnpm
-        uses: pnpm/action-setup@v3
-        with:
-          version: 9
+      # ★pnpm 은 외부 액션이 아니라 **corepack** 으로 켠다(2026-08-18).
+      #   `pnpm/action-setup` 은 codeload 에서 tar 를 받는데 그 다운로드가 **429(Too Many
+      #   Requests)** 로 실패해 `Set up job` 단계에서 죽었다 — 같은 날 PR 3건(#684·#687·#688)이
+      #   **코드가 검사되지도 못한 채** 빨갰다(실측: 실패 job 로그 37줄 · 429 4건 ·
+      #   tsc/eslint/vitest 진입 흔적 **0**).
+      # ★형제 패턴: `propai-platform/Dockerfile.web:4` 가 이미 `corepack enable` 을 쓴다.
+      # ★★버전 고정에는 **한정이 붙는다** — corepack 은 **cwd 에서 위로 올라가며**
+      #   `package.json` 의 `packageManager` 를 찾는다. 이 레포는 **루트에 package.json 이 없고**
+      #   `propai-platform/package.json` 에만 `pnpm@9.0.0` 이 있다. 따라서
+      #   **`working-directory: propai-platform` 에서 pnpm 을 부를 때만** 9.0.0 이 보장된다.
+      #   레포 루트에서 pnpm 을 부르면 corepack 이 **latest 를 내려받는다**
+      #   (실측: `pnpm-11.22.0.tgz` — 루트에서 `pnpm config set` 을 돌렸다가 그렇게 됐다).
+      #   → 루트에서 pnpm 을 부르는 스텝을 추가하지 마라.
+      - name: Enable pnpm (corepack)
+        run: corepack enable
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: pnpm
-          cache-dependency-path: propai-platform/pnpm-lock.yaml
+          # ★`cache: pnpm` 은 **제거했다**(2026-08-18 · #689 2차 실패 교훈).
+          #   `actions/setup-node` 의 pnpm 캐시는 셋업 때 `pnpm store path` 로 경로를 잡고
+          #   **post 에서 그 경로의 존재를 검증**하는데, corepack 경로에서 실제 설치 위치와
+          #   갈려 post 가 죽었다(`Path Validation Error: … do(es) not exist`).
+          #   경로를 `pnpm config set store-dir` 로 고정해 보려다 **더 나빠졌다** —
+          #   그 명령이 레포 루트에서 돌아 corepack 이 latest(11.22.0)를 받고,
+          #   `--global` 이 PATH 검사로 exit 1 을 내 **본체까지 막혔다.**
+          #   → 이 PR 의 목적은 **429 의존 제거**이고 그건 달성됐다(1차 실행에서 본체 전부 success).
+          #     캐시는 별건에서 `actions/cache` 로 경로를 **명시**해 되살린다 —
+          #     그때 store 경로는 `propai-platform` 안에서 `pnpm store path` 로 얻어야 한다.
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -108,6 +136,27 @@ jobs:
             *) echo "::error::Invalid DEPLOY_TARGET=$DEPLOY_TARGET"; missing=1 ;;
           esac
           if [ "$missing" -ne 0 ]; then exit 1; fi
+
+      - name: Preflight — 대상 서버가 프론트인지 확인
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$ORACLE_SSH_KEY" > ~/.ssh/oracle_deploy_key
+          chmod 600 ~/.ssh/oracle_deploy_key
+          ssh-keyscan -p "$ORACLE_SSH_PORT" -H "$ORACLE_SSH_HOST" >> ~/.ssh/known_hosts
+          # ★판별 근거(2026-08-17 실측): 백엔드(168)에만 `~/caddy/Caddyfile` 이 있고
+          #   프론트(158)에는 없다. `safe-deploy.sh` 의 역할 가드와 **같은 근거**를 쓴다.
+          #   여기서 먼저 잡으면 45분 배포를 태우기 전에 멈춘다.
+          role=$(ssh -i ~/.ssh/oracle_deploy_key -p "$ORACLE_SSH_PORT" \
+            -o StrictHostKeyChecking=yes "$ORACLE_SSH_USER@$ORACLE_SSH_HOST" \
+            'if [ -f "$HOME/caddy/Caddyfile" ]; then echo backend; else echo frontend; fi')
+          echo "대상 서버 역할 = $role"
+          if [ "$role" != "frontend" ]; then
+            echo "::error::ORACLE_SSH_HOST 가 **백엔드 서버**를 가리킨다(~/caddy/Caddyfile 존재)."
+            echo "::error::이 워크플로는 scripts/safe-deploy.sh 를 돌리는 158 전용이다."
+            echo "::error::백엔드는 infra/deploy-zero-downtime.sh(블루그린)로 배포한다."
+            exit 1
+          fi
 
       - name: Deploy over SSH
         run: |

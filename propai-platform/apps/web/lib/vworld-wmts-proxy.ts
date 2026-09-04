@@ -1,5 +1,22 @@
+import {
+  cooldownRemainingSec,
+  recordFailure,
+  recordSuccess,
+  shouldAttempt,
+} from "@/lib/vworld-circuit-breaker";
+import { classifyVWorldXmlException, extractVWorldXmlExceptionDetail, isVWorldKeyFault } from "@/lib/vworld-xml-exception";
+import { RELAY_BREAKER_KEY, degradedTile, relayViaApi, shouldProbeDirect, vworldApiFallbackOrigin } from "@/lib/vworld-wms-proxy";
+
 const VWORLD_WMTS_BASE = "https://api.vworld.kr/req/wmts/1.0.0";
-const SUPPORTED_LAYERS = new Set(["Base", "gray", "midnight", "Hybrid", "Satellite"]);
+// ★tiletype 정본(2026-07-17 라이브 채증 — 상류 InvalidParameterValue 본문이 유효값을 직접
+//   열거: [Base, midnight, Hybrid, Satellite, white]). 종전 "gray"는 실존하지 않는 오기였다.
+const SUPPORTED_LAYERS = new Set(["Base", "white", "midnight", "Hybrid", "Satellite"]);
+
+// 레거시 별칭 — 구 SW 캐시를 든 클라이언트가 배포 후에도 한동안 /gray 를 보낸다.
+// ★아래 화이트리스트의 unknown→"Base" 폴백에 맡기지 않는다: 그 폴백은 **주입 방어용**이라
+//   "회색을 눌렀는데 일반지도가 나오는" 무음 강등이 되어 무목업 원칙에 걸린다. gray는
+//   우리가 아는 별칭이므로 정본으로 명시 승격해 과도기를 무손실로 만든다(가드는 그대로).
+const LEGACY_LAYER_ALIAS: Record<string, string> = { gray: "white" };
 
 export type VWorldWmtsParams = {
   layer: string;
@@ -8,8 +25,16 @@ export type VWorldWmtsParams = {
   x: string;
 };
 
+/**
+ * ★PR#329 R1 리뷰(HIGH) 반영 — 서버 전용 키(`VWORLD_API_KEY`)만 사용,
+ *   `NEXT_PUBLIC_VWORLD_API_KEY`(브라우저에 노출되는 키)로 폴백하지 않는다. 폴백을 두면 서버
+ *   전용 키 미설정 시 조용히 같은 공개 키로 동작해 "서버 전용 키 분리" 의도가 무력화된다
+ *   (순 보안이득 ≈ 0). 미설정이면 503으로 정직 실패한다.
+ *   ★★2026-08-17: **두 키가 실제로는 같은 값**이다 — 근거와 복구 조건은
+ *   `vworld-wms-proxy.ts` 상단 정정 블록 한 곳에만 둔다(수치·근거를 복제하지 않는다).
+ */
 function vworldKey(): string {
-  return (process.env.VWORLD_API_KEY || process.env.NEXT_PUBLIC_VWORLD_API_KEY || "").trim();
+  return (process.env.VWORLD_API_KEY || "").trim();
 }
 
 /**
@@ -37,12 +62,29 @@ function upstreamError(message: string, upstreamStatus: number, detail: Record<s
 // 투명 1x1 PNG — VWorld가 200 + XML ExceptionReport(예: 위성 미제공영역 'FileNotFound')를
 //   반환할 때 타일로 통과시키면 Leaflet tileerror로 지도 전체가 회색이 된다. 이는 오류가
 //   아니라 정상적 무제공 영역이므로 해당 타일만 빈 채로 두고 지도는 유지한다.
-//   (인증 실패·쿼터 초과는 JSON 본문으로 오므로 upstreamError 503 관측 경로가 따로 처리 —
-//    두 계약의 분기 기준은 content-type: xml→투명타일, 그 외 비이미지→503 JSON.)
+//   (JSON 인증 실패·쿼터 초과는 upstreamError 503 경로가 처리. 200+XML은 본문을
+//    classifyVWorldXmlException으로 분류 — coverage만 투명타일, auth/불명은 503 승격.)
+//   ★Buffer는 Node 런타임 전제 — 이 프록시를 Edge 런타임으로 전환하면 깨진다(전환 시
+//    base64→Uint8Array로 교체 필요, 지금은 금지).
 const TRANSPARENT_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
   "base64",
 );
+
+const BREAKER_KEY = "vworld-wmts";
+const NEGATIVE_CACHE_SEC = 30;
+
+// 상류 연속 실패 중에는 호출하지 않고 투명 타일로 즉시 응답한다(실패 폭주 → IP 차단 방지).
+function breakerOpenTile(remainingSec: number): Response {
+  return new Response(TRANSPARENT_PNG, {
+    status: 200,
+    headers: {
+      "Content-Type": "image/png",
+      "Cache-Control": `public, max-age=${Math.max(5, Math.min(remainingSec, NEGATIVE_CACHE_SEC))}`,
+      "X-VWorld-Breaker": "open",
+    },
+  });
+}
 
 function transparentTile(): Response {
   return new Response(TRANSPARENT_PNG, {
@@ -53,13 +95,24 @@ function transparentTile(): Response {
 
 export async function proxyVWorldWmts(params: VWorldWmtsParams): Promise<Response> {
   const key = vworldKey();
-  const cleanLayer = SUPPORTED_LAYERS.has(params.layer) ? params.layer : "Base";
+  const requested = LEGACY_LAYER_ALIAS[params.layer] ?? params.layer;
+  const cleanLayer = SUPPORTED_LAYERS.has(requested) ? requested : "Base";
   const cleanX = params.x.replace(/\.(png|jpe?g)$/i, "");
   // ★VWorld 위성영상(Satellite)은 jpeg로만 서빙된다 — png 요청 시 'FileNotFound: 서비스 제공영역이
-  //   아닙니다' XML을 200으로 반환한다. 위성만 jpeg, 나머지(Base·Hybrid·gray·midnight)는 png.
+  //   아닙니다' XML을 200으로 반환한다. 위성만 jpeg, 나머지(Base·Hybrid·white·midnight)는 png.
   const ext = cleanLayer === "Satellite" ? "jpeg" : "png";
 
   if (!key) {
+    // ★WS-B2: 서버키 부재 → api 타일 프록시로 폴백(관리자 등록 키는 api에만 반영됨 —
+    //   vworld-wms-proxy.vworldApiFallbackOrigin 참조). 폴백 오리진도 없으면 기존 정직 503.
+    const origin = vworldApiFallbackOrigin();
+    if (origin) {
+      return relayViaApi(
+        `${origin}/api/v1/tiles/vworld/wmts/${cleanLayer}/${params.z}/${params.y}/${cleanX}.${ext}`,
+        "vworld-wmts-proxy",
+        RELAY_BREAKER_KEY,
+      );
+    }
     // [MAP-006] 평문 본문 금지 — 오류는 항상 JSON({ error, status })으로 반환한다.
     // 평문은 타일 응답을 JSON으로 해석하는 소비자의 JSON.parse 예외를 유발한다.
     return new Response(
@@ -76,28 +129,105 @@ export async function proxyVWorldWmts(params: VWorldWmtsParams): Promise<Respons
 
   const targetUrl = `${VWORLD_WMTS_BASE}/${encodeURIComponent(key)}/${cleanLayer}/${params.z}/${params.y}/${cleanX}.${ext}`;
 
+  // ★★2026-08-17 — **릴레이 1순위 승격**(A② 일원화). 근거·설계 판단은 형제 파일
+  //   `vworld-wms-proxy.ts` 의 `DIRECT_RECOVERY_PROBE_MS` 독스트링 **한 곳**에만 둔다
+  //   (수치·근거를 두 파일에 복제하면 한쪽만 갱신돼 옛 값이 남는다 — 이 저장소의 실제 사고).
+  //   직접 경로는 지우지 않고 저빈도 회복 탐색으로만 남긴다.
+  {
+    const origin = vworldApiFallbackOrigin();
+    if (origin && !shouldProbeDirect(true)) {
+      return relayViaApi(
+        `${origin}/api/v1/tiles/vworld/wmts/${cleanLayer}/${params.z}/${params.y}/${cleanX}.${ext}`,
+        "vworld-wmts-proxy(relay-primary)",
+        RELAY_BREAKER_KEY,
+      );
+    }
+  }
+
+  if (!shouldAttempt(BREAKER_KEY)) {
+    // ★투명 타일로 끝내지 않고 api(168) 릴레이를 먼저 시도한다 — web에서만 VWorld 경로가
+    //   막히고 api는 정상인 상황이 실제로 발생했다(같은 클라우드, web만 502/연결실패).
+    const origin = vworldApiFallbackOrigin();
+    if (origin) {
+      return relayViaApi(
+        `${origin}/api/v1/tiles/vworld/wmts/${cleanLayer}/${params.z}/${params.y}/${cleanX}.${ext}`,
+        "vworld-wmts-proxy(breaker-open)",
+        RELAY_BREAKER_KEY,
+      );
+    }
+    return breakerOpenTile(cooldownRemainingSec(BREAKER_KEY));
+  }
   try {
     const resp = await fetch(targetUrl, {
       headers: { Referer: "https://www.4t8t.net" },
       next: { revalidate: 60 * 60 * 24 },
     });
     if (!resp.ok) {
+      recordFailure(BREAKER_KEY);
+      // 키 오류뿐 아니라 '상류 자체가 응답을 못 주는' 경우도 api 릴레이로 구제한다.
+      const origin = vworldApiFallbackOrigin();
+      if (origin) {
+        return relayViaApi(
+          `${origin}/api/v1/tiles/vworld/wmts/${cleanLayer}/${params.z}/${params.y}/${cleanX}.${ext}`,
+          "vworld-wmts-proxy(upstream-error)",
+        RELAY_BREAKER_KEY,
+      );
+      }
       // 상태 코드 무음 전파 금지 — 4xx/5xx는 명시적 프록시 오류로 변환.
       return upstreamError("VWorld WMTS upstream error", resp.status, {
         layer: cleanLayer, z: params.z, y: params.y, x: cleanX,
       });
     }
+    recordSuccess(BREAKER_KEY);
     const contentType = (resp.headers.get("content-type") ?? "").trim();
     if (contentType && !contentType.toLowerCase().startsWith("image/")) {
-      // 200 + 비이미지 본문은 두 현실이 섞여 있다 — content-type으로 분기해 양쪽 계약 보존:
-      //  · XML(ExceptionReport, 위성 미제공영역 등 정상 무제공) → 투명타일(지도 유지) + warn 로그.
-      //  · 그 외(JSON 인증 실패·쿼터 초과 등) → 503 JSON(관측 가능, 무음 위장 금지).
+      // 200 + 비이미지 본문은 두 현실이 섞여 있다 — content-type으로 1차 분기하고,
+      // XML은 본문까지 읽어 2차 분류한다(MEDIUM2: VWorld는 인증/권한 오류도 200+XML로
+      // 반환하므로 content-type만으로는 '정상 무제공영역'과 구분 불가):
+      //  · XML(coverage — FileNotFound·제공영역 문구) → 투명타일(지도 유지) + warn 로그.
+      //  · XML(auth/불명) 또는 그 외 비이미지(JSON 인증 실패·쿼터 초과 등) → 503 JSON.
       if (contentType.toLowerCase().includes("xml")) {
-        console.warn(
-          `[vworld-wmts-proxy] 200 + XML body → transparent tile (coverage gap 추정)`,
-          { layer: cleanLayer, z: params.z, y: params.y, x: cleanX, contentType },
+        const bodyText = await resp.text();
+        const kind = classifyVWorldXmlException(bodyText);
+        if (kind === "coverage") {
+          console.warn(
+            `[vworld-wmts-proxy] 200 + XML(coverage) → transparent tile`,
+            { layer: cleanLayer, z: params.z, y: params.y, x: cleanX, contentType },
+          );
+          return transparentTile();
+        }
+        // ★2026-07-17: ServiceException code 표면화(WMS 프록시와 동일 계약 — 원인 즉시 구분).
+        const detail = extractVWorldXmlExceptionDetail(bodyText);
+        // ★키-오류 페일오버 — WMS 프록시와 동일 계약(관리자 키 경유 1회 재중계).
+        if (isVWorldKeyFault(detail)) {
+          const origin = vworldApiFallbackOrigin();
+          if (origin) {
+            console.warn(`[vworld-wmts-proxy] local key fault (${detail.code}) → api fallback retry`);
+            return relayViaApi(
+              `${origin}/api/v1/tiles/vworld/wmts/${cleanLayer}/${params.z}/${params.y}/${cleanX}.${ext}`,
+              "vworld-wmts-proxy(key-fault)",
+        RELAY_BREAKER_KEY,
+      );
+          }
+        }
+        // ★locator 병기 필수 — OWS는 code가 InvalidParameterValue 하나로 뭉뚱그려져
+        //   code만으로는 원인을 구분할 수 없다(locator=tiletype 레이어명 오기 /
+        //   locator=key 인증키). 2026-07-17 회색 배경지도 전역 미표시가 "(auth/unknown)"으로
+        //   은폐된 근본이 이 누락이었다.
+        const reason = detail.code
+          ? `${detail.code}${detail.locator ? `/${detail.locator}` : ""}`
+          : "auth/unknown";
+        return upstreamError(
+          `VWorld WMTS returned an XML exception (${reason})`,
+          resp.status,
+          {
+            layer: cleanLayer, z: params.z, y: params.y, x: cleanX, contentType,
+            code: detail.code ?? "",
+            locator: detail.locator ?? "",
+            message: detail.message ?? "",
+            bodySnippet: bodyText.slice(0, 200),
+          },
         );
-        return transparentTile();
       }
       return upstreamError("VWorld WMTS returned a non-image body", resp.status, {
         layer: cleanLayer, z: params.z, y: params.y, x: cleanX, contentType,
@@ -112,16 +242,20 @@ export async function proxyVWorldWmts(params: VWorldWmtsParams): Promise<Respons
       },
     });
   } catch (error) {
+    // ★네트워크 예외(상류 도달 불가·DNS·타임아웃)도 실패로 집계 — 이번 실장애가 이 경로였다.
+    recordFailure(BREAKER_KEY);
+    const origin = vworldApiFallbackOrigin();
+    if (origin) {
+      return relayViaApi(
+        `${origin}/api/v1/tiles/vworld/wmts/${cleanLayer}/${params.z}/${params.y}/${cleanX}.${ext}`,
+        "vworld-wmts-proxy(unreachable)",
+        RELAY_BREAKER_KEY,
+      );
+    }
+
     // [MAP-006] 네트워크 예외도 JSON 오류 본문으로 반환(평문 금지).
-    return new Response(
-      JSON.stringify({ error: `VWorld WMTS proxy failed: ${String(error)}`, status: 502 }),
-      {
-        status: 502,
-        headers: {
-          "Content-Type": "application/json; charset=utf-8",
-          "Cache-Control": "no-store",
-        },
-      },
-    );
+    // ★형제 스윕(2026-08-18) — WMS 와 동일 계약: 오리진 없음도 **정직 강등**으로 통일한다.
+    //   근거·설계는 `vworld-wms-proxy.ts` 의 `degradedTile` 독스트링 한 곳에만 둔다.
+    return degradedTile("no-relay-origin:vworld-wmts-proxy");
   }
 }

@@ -15,6 +15,7 @@ LLM 실계측: 모든 LLM 호출은 llm_usage_log에 service 귀속으로 1건 I
 사용자 청구사용량에 누적된다.
 """
 
+import copy
 import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -111,6 +112,26 @@ def _sync_budget(monthly_base: float, topup: float) -> float:
     return float(monthly_base) + float(topup)
 
 
+async def _record_coin_event(db: AsyncSession, **kwargs: Any) -> None:
+    """관측 훅: 이미 커밋된 잔액 변경을 코인원장에 **비차단** 기록.
+
+    ★호출자 세션(db)을 재사용한다 — 별도 async_session_factory를 열지 않으므로 무 DB 단위테스트
+      (FakeSession)의 밀폐성이 보존되고, 실 DATABASE_URL 부수효과·연결 지연이 발생하지 않는다
+      (성장루프 MEDIUM 수렴). 잔액은 이미 SSOT(users)에 커밋됐으므로, 원장 기록 실패는 잔액을
+      되돌리지 않고 삼킨다(원장은 이력·감사 목적).
+    """
+    from app.services.billing import coin_ledger_service
+
+    try:
+        await coin_ledger_service.append_event(db=db, **kwargs)
+        await db.commit()
+    except Exception:  # noqa: BLE001 — 원장 기록 실패가 잔액 처리를 되돌리지 않는다(이미 커밋됨)
+        try:
+            await db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+
+
 async def ensure_cycle(db: AsyncSession, user_id: Any):
     """월이 바뀌면 청구사용량 리셋 + 월기본만 등급 포함한도로 재설정(충전 보존).
 
@@ -137,6 +158,13 @@ async def ensure_cycle(db: AsyncSession, user_id: Any):
         )
         await db.commit()
         billed = 0.0
+        if monthly_base > 0:
+            # 코인원장 관측 기록(월기본 부여가 코인내역에 보이도록) — 비차단·세션 재사용.
+            await _record_coin_event(
+                db, user_id=str(user_id), entry_type="monthly_grant", amount_krw=monthly_base,
+                description=f"월기본 코인 부여({tier})", ref_type="billing_cycle",
+                ref_id=f"{now.year}-{now.month:02d}",
+            )
     elif is_metered_tier(tier) and monthly_base <= 0:
         # 같은 달이라도 월기본이 미할당(0)인 과금 등급 — 포함한도를 지연 할당(사용량·사이클 보존).
         #   원인: 마이그레이션 이전부터 현재 월 사이클이 잡혀 롤오버가 한 번도 안 돈 기존 유저.
@@ -167,9 +195,13 @@ async def get_status(db: AsyncSession, user_id: Any) -> dict[str, Any]:
     monthly_base, topup = float(row[4]), float(row[5])
     rate = await get_usd_krw_rate()
     metered = is_metered_tier(tier)
-    remaining = max(0.0, budget - billed)
-    base_remaining = max(0.0, monthly_base - billed)             # 월기본 잔여
-    topup_remaining = topup - max(0.0, billed - monthly_base)    # 충전 잔여(월기본 초과분 차감)
+    # ★표시도 게이트와 **같은 함수**를 쓴다 — 옛 코드는 여기서 충전분을 한 번 더 빼서
+    #   화면이 잔여를 절반으로 보여 줬다(복제된 식이 갈라지는 것을 구조로 막는다).
+    _rem = compute_remaining(billed=billed, monthly_base=monthly_base, topup=topup)
+    remaining = float(_rem["total_remaining"])
+    base_remaining = float(_rem["base_remaining"])
+    topup_remaining = float(_rem["topup_remaining"])
+    capacity = float(_rem["capacity"])
     meta = await _meta(db, user_id)
     acount = int(meta[1]) if meta else 0
     sfee = float(meta[2]) if meta else 0.0
@@ -184,8 +216,8 @@ async def get_status(db: AsyncSession, user_id: Any) -> dict[str, Any]:
         "budget_krw": round(budget),
         "billed_krw": round(billed),
         "remaining_krw": round(remaining),
-        "usage_pct": round(billed / budget * 100, 1) if budget > 0 else 0,
-        "blocked": (metered and billed >= budget) or team_limited,
+        "usage_pct": round(billed / capacity * 100, 1) if capacity > 0 else 0,
+        "blocked": (metered and bool(_rem["exhausted"])) or team_limited,
         "team_limited": team_limited,
         # 월기본/충전 코인 분리
         "monthly_base_krw": round(monthly_base),
@@ -213,6 +245,55 @@ async def team_limit_exceeded(db: AsyncSession, user_id: Any) -> bool:
         return False
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 잔액 산정 — ★**한 곳**에서만 정의한다(2026-08-27 수정)
+# ─────────────────────────────────────────────────────────────────────────────
+def compute_remaining(
+    *, billed: float, monthly_base: float, topup: float
+) -> dict[str, float | bool]:
+    """이번 주기의 잔액을 계산한다. **모든 소비처가 이 함수를 쓴다.**
+
+    ## ★왜 이 함수가 생겼나 (같은 결함이 세 얼굴로 있었다)
+
+    `users.topup_krw` 컬럼은 **이미 차감된 순액**이다 — `record_usage_usd` 가 매 사용마다
+    `topup_krw = GREATEST(0, topup_krw - draw)` 로 줄인다(`:290`).
+    그런데 세 곳이 **거기서 또 뺐다**:
+
+    | 자리 | 옛 식 | 결과 |
+    |---|---|---|
+    | 차단 게이트 | `billed >= budget` | 충전액의 **50%** 에서 차단 |
+    | 상태 표시 | `(metered and billed >= budget)` | 같은 값(복제본) |
+    | 충전 잔여 | `topup - max(0, billed - monthly_base)` | **절반으로 표시** |
+
+    `billed = base + s`, `topup = topup₀ - s` 이므로 `billed >= base + topup`
+    ⇔ `2s >= topup₀` ⇔ **`s >= topup₀/2`**.
+
+    ★**실측 확증(대조군 포함)**: `topup>0` 이면 정확히 50% 에서 차단되고,
+      `topup=0` 이면 `base` 에서 차단된다(정상) — 대조군이 갈렸으므로 시뮬 편향이 아니다.
+
+    ★사용자가 **낸 돈의 절반을 쓰지 못했다.** 결제 연동으로 실제 돈이 들어오기 전에
+      반드시 고쳐야 한다 — 아니면 유료 결제가 곧 절반의 손실이 된다.
+
+    Returns:
+        base_remaining: 월 기본 제공 잔여
+        topup_remaining: 충전 잔여(= 컬럼값 그대로. **다시 빼지 않는다**)
+        total_remaining: 합계
+        capacity: 이번 주기의 총 한도(사용률 분모)
+        exhausted: 둘 다 소진됐는가 — ★차단 판정의 **유일한** 근거
+    """
+    base_remaining = max(0.0, monthly_base - billed)
+    topup_remaining = max(0.0, topup)          # ★컬럼이 이미 순액이다
+    drawn_from_topup = max(0.0, billed - monthly_base)
+    return {
+        "base_remaining": base_remaining,
+        "topup_remaining": topup_remaining,
+        "total_remaining": base_remaining + topup_remaining,
+        # 총 한도 = 월기본 + (남은 충전 + 이미 쓴 충전) — 사용률의 정직한 분모
+        "capacity": monthly_base + topup_remaining + drawn_from_topup,
+        "exhausted": base_remaining <= 0 and topup_remaining <= 0,
+    }
+
+
 async def is_blocked(db: AsyncSession, user_id: Any) -> bool:
     row = await ensure_cycle(db, user_id)
     # ★팀 멤버 한도 초과는 구독 여부와 무관하게 차단(팀장이 설정한 개인 상한).
@@ -220,8 +301,13 @@ async def is_blocked(db: AsyncSession, user_id: Any) -> bool:
         return True
     if not row:
         return False
-    tier, billed, budget = row[0], row[1], row[2]
-    return is_metered_tier(tier) and billed >= budget
+    tier, billed = row[0], row[1]
+    monthly_base, topup = row[3], row[4]
+    if not is_metered_tier(tier):
+        return False
+    # ★`budget`(row[2]) 을 쓰지 않는다 — 그 컬럼은 소진분이 이미 빠진 값이라
+    #   `billed` 와 비교하면 같은 소진을 두 번 센다(위 compute_remaining 독스트링).
+    return bool(compute_remaining(billed=billed, monthly_base=monthly_base, topup=topup)["exhausted"])
 
 
 async def record_usage_usd(
@@ -288,7 +374,10 @@ async def record_usage_usd(
 
 
 async def topup(db: AsyncSession, user_id: Any, amount_krw: float) -> None:
-    """추가결제(시뮬레이션): 충전 잔액(topup_krw) 증액 + 하위호환 budget 동기화."""
+    """추가결제(시뮬레이션): 충전 잔액(topup_krw) 증액 + 하위호환 budget 동기화.
+
+    ★신규 충전 경로는 coin_orders(주문→확정)가 정본 — 이 함수는 레거시 /topup 하위호환.
+    """
     await ensure_schema(db)
     row = await _row(db, user_id)
     if not row:
@@ -303,6 +392,11 @@ async def topup(db: AsyncSession, user_id: Any, amount_krw: float) -> None:
         {"a": float(amount_krw), "b": _sync_budget(monthly_base, new_topup), "id": str(user_id)},
     )
     await db.commit()
+    # 코인원장 관측 기록(이력·감사) — 비차단·세션 재사용.
+    await _record_coin_event(
+        db, user_id=str(user_id), entry_type="topup", amount_krw=float(amount_krw),
+        description="충전(레거시 시뮬레이션)", ref_type="legacy_topup", created_by=str(user_id),
+    )
 
 
 async def is_super_admin(db: AsyncSession, user_id: Any) -> bool:
@@ -413,15 +507,22 @@ async def get_balance(db: AsyncSession, user_id: Any) -> dict[str, Any]:
     if not row:
         return {
             "tier": "guest", "tier_label": "비회원", "monthly_base_krw": 0,
-            "monthly_base_remaining": 0, "topup_krw": 0, "used_this_cycle_krw": 0,
+            "monthly_base_remaining": 0, "topup_krw": 0, "topup_remaining": 0,
+            "used_this_cycle_krw": 0,
+            # ★"guest"는 TIER_BILLING 미포함(비과금) → 다른 분기의 unlimited=not is_metered_tier(tier)와
+            #   동일 의미론(코인 게이트 면제). get_status()의 무-row 분기(blocked=False)와도 일치.
+            "unlimited": True,
             "cycle_start": None,
             "module_fees": {},
         }
     tier, billed = row[0], float(row[1])
     cycle = row[3]
     monthly_base, topup = float(row[4]), float(row[5])
-    base_remaining = max(0.0, monthly_base - billed)
-    topup_remaining = max(0.0, topup - max(0.0, billed - monthly_base))
+    # ★네 번째 형제 — `get_status`/`is_blocked` 와 **같은 이중차감**이 여기에도 있었다.
+    #   스윕으로 찾았다(파생형 식 검색). 이제 셋 다 같은 함수를 쓴다.
+    _rem = compute_remaining(billed=billed, monthly_base=monthly_base, topup=topup)
+    base_remaining = float(_rem["base_remaining"])
+    topup_remaining = float(_rem["topup_remaining"])
     # ★비과금 등급(super_admin 등 TIER_BILLING 미포함)은 코인 게이트 면제(무제한).
     #   백엔드 하드게이트(is_blocked)는 이미 면제하나, 프론트 소프트게이트가 잔액 0원으로
     #   '분석 시작'을 막던 것을 해소한다. unlimited=True로 프론트가 무제한 처리.
@@ -464,18 +565,85 @@ async def load_config(db: AsyncSession, force: bool = False) -> None:
         logger.warning("빌링 설정 로드 실패 — 기본값 유지", err=str(e)[:160])
 
 
-async def save_config(db: AsyncSession, override: dict[str, Any]) -> dict[str, Any]:
-    """관리자 설정 저장(DB 영속 + 런타임 반영)."""
+def diff_config(before: dict[str, Any], after: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """설정 변경분만 `경로 -> {old, new}` 로 평탄화한다(값이 같으면 넣지 않는다).
+
+    왜 old 를 같이 담나: 과금 분쟁의 질문은 "지금 얼마냐"가 아니라 **"그때 얼마였냐"** 다.
+    new 만 남기면 원장에 요율이 늘어설 뿐 **어떤 청구가 어떤 요율에서 나왔는지 복원되지 않는다.**
+
+    삭제된 키도 기록한다(new=None). 요율 키가 사라지면 접근자가 기본값으로 되돌아가므로,
+    그것도 **금액을 바꾸는 변경**이다.
+    """
+    changes: dict[str, dict[str, Any]] = {}
+
+    def walk(old_node: Any, new_node: Any, path: str) -> None:
+        if isinstance(old_node, dict) and isinstance(new_node, dict):
+            for key in set(old_node) | set(new_node):
+                walk(old_node.get(key), new_node.get(key), f"{path}.{key}" if path else str(key))
+            return
+        if old_node != new_node:
+            changes[path] = {"old": old_node, "new": new_node}
+
+    walk(before, after, "")
+    return changes
+
+
+async def save_config(
+    db: AsyncSession,
+    override: dict[str, Any],
+    *,
+    actor_id: str | None = None,
+    actor_role: str | None = None,
+) -> dict[str, Any]:
+    """관리자 설정 저장(DB 영속 + 런타임 반영 + **변경 감사**).
+
+    ★왜 감사가 필요한가: 아래 INSERT 는 `ON CONFLICT DO UPDATE` 로 **단일 행을 덮어쓴다.**
+    이전 요율은 그 순간 소멸하고 스키마에는 `updated_at` 만 남는다(누가·무엇을→무엇으로
+    바꿨는지 없음). 그래서 "이 청구는 어떤 요율에서 나왔나"라는 질문이 **원리적으로 답이
+    없었다** — 코인원장은 청구 *금액*을 남기지만 그 근거 *요율*은 사라진다.
+    실제로 `project_create` 원장 50,000원 vs 요율 SSOT 2,000원(25배) 괴리가
+    "관리자 요율 변경 이력을 봐야 판정 가능"으로 미확정 처리됐는데, **볼 이력이 없었다.**
+
+    ★deepcopy 가 필수인 이유(공허한 감사 방지): `get_config()` 는 `_CONFIG` 를 **그대로**
+    돌려주고 `apply_config()` 는 그것을 **in-place** 로 고친다. 사본을 뜨지 않으면 before 와
+    after 가 같은 객체라 diff 가 **항상 비고**, 감사는 "변경 없음"만 영원히 기록한다.
+
+    ★왜 라우터가 아니라 여기서 감사하나: 같은 라우터의 형제 엔드포인트(`billing.set_tier`)는
+    **라우터에서** `audit_admin_action` 을 부른다. 그 관례를 따르지 않은 이유는, 이 결함이
+    생긴 방식이 바로 **"엔드포인트를 추가하면서 감사 호출을 빠뜨린 것"** 이기 때문이다.
+    서비스 층에 두면 앞으로 어떤 호출 경로가 설정을 저장하든 감사를 **잊을 수 없다**.
+
+    ★왜 `audit_admin_action` 인가: 그것이 이 저장소가 "권한/설정 변경"에 쓰는 표준 통로이고,
+    `admin_audit_log` 테이블 **과** 감사 원장(해시체인) **양쪽**에 흡수한다 — `append_audit`
+    직접 호출은 그 부분집합이다. `actor_role` 도 같이 남아 "누가, 무슨 권한으로" 가 남는다.
+    """
+    before = copy.deepcopy(get_config())
     await db.execute(text(_CONFIG_DDL))
     apply_config(override)
-    cfg = json.dumps(get_config(), ensure_ascii=False)
+    after = get_config()
+    changes = diff_config(before, after)
+    cfg = json.dumps(after, ensure_ascii=False)
     await db.execute(
         text("INSERT INTO billing_config(id, config, updated_at) VALUES (1, CAST(:c AS jsonb), now()) "
              "ON CONFLICT (id) DO UPDATE SET config=CAST(:c AS jsonb), updated_at=now()"),
         {"c": cfg},
     )
     await db.commit()
-    return get_config()
+    if changes:
+        # 실제로 값이 바뀐 경우만 남긴다(무변경 저장까지 적으면 원장이 소음으로 덮인다).
+        # ★한계(정직): audit_admin_action 은 계약상 best-effort 라 내부에서 예외를 삼킨다 —
+        #   그래서 감사 누락 가능성이 0은 아니다. 요율 변경을 감사 성공에 묶으려면 별도
+        #   트랜잭션 설계가 필요하고 그건 이 변경의 범위 밖이다.
+        from app.core.audit import audit_admin_action
+
+        await audit_admin_action(
+            actor_id=actor_id,
+            actor_role=actor_role,
+            action="billing.update_config",
+            target="billing_config",  # 단일 행(id=1) — 대상 식별자가 하나뿐이다
+            detail={"changes": changes},
+        )
+    return after
 
 
 async def _meta(db: AsyncSession, user_id: Any):
@@ -555,6 +723,13 @@ async def charge_service(db: AsyncSession, user_id: Any, action: str) -> dict[st
             {"f": float(fee), "id": str(user_id)},
         )
     await db.commit()
+    if fee > 0:
+        # 코인원장 관측 기록(마이페이지 '코인내역'의 서비스료 이력) — 비차단·세션 재사용.
+        await _record_coin_event(
+            db, user_id=str(user_id), entry_type="service_fee", amount_krw=-float(fee),
+            description=f"서비스 사용료({action})", ref_type="action", ref_id=action,
+            created_by=str(user_id),
+        )
     return {
         "action": action,
         "charged_krw": fee,
@@ -579,3 +754,8 @@ async def set_tier(db: AsyncSession, user_id: Any, tier: str) -> None:
          "c": datetime.now(UTC), "id": str(user_id)},
     )
     await db.commit()
+    # 코인원장 관측 기록(등급 변경에 따른 월기본 재설정 이력) — 비차단·세션 재사용.
+    await _record_coin_event(
+        db, user_id=str(user_id), entry_type="tier_change", amount_krw=monthly_base,
+        description=f"등급 변경({tier}) — 월기본 재설정", ref_type="tier", ref_id=tier,
+    )

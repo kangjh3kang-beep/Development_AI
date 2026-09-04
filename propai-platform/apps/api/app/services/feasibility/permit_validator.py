@@ -24,6 +24,33 @@ ZONE_PERMIT_MATRIX = {
     "도시재생활성화구역": ["M06", "M08", "M13", "M14"],
 }
 
+# ── 관리지역 등 허용용도가 '본질적 조례의존'인 용도지역(M3 (b)) ──
+# 관리지역(보전/생산/계획)의 허용행위/용도는 국토계획법 시행령 별표18~20이 다수 항목을
+# '도시·군계획조례가 정하는 바에 따라'로 위임한다 → 매트릭스로 일괄 산출하면 조례·심의 의존
+# 사항을 날조하게 된다. 그래서 매트릭스에 의도적으로 미등재하고 '판정불가'를 유지하되, 그
+# 사유가 '룩업 커버리지 갭'(등재하면 낼 수 있음)이 아니라 '본질적 조례의존'임을 정직히 명시한다.
+# ★M3 구분: 건폐율/용적률(BCR/FAR) 법정한도는 별표에 명확해 별도 산출됨(legal_zone_limits) —
+#   허용용도의 조례의존 판정불가(갭 아님)와 BCR/FAR 커버리지 갭(field_audit coverage.py)은 별개.
+_ORDINANCE_DEPENDENT_USE_ZONES: tuple[str, ...] = (
+    "보전관리지역", "생산관리지역", "계획관리지역",
+)
+
+
+def _is_ordinance_dependent_use_zone(zone_type: str) -> bool:
+    """허용용도가 본질적 조례의존인 용도지역(관리지역)인지 판정(공백/표기변형 관대)."""
+    z = (zone_type or "").replace(" ", "").strip()
+    if not z:
+        return False
+    return any(k in z or z in k for k in _ORDINANCE_DEPENDENT_USE_ZONES)
+
+
+# ── 허용용도 판정(ZONE_PERMIT_MATRIX)의 법령 근거 키 ──
+# 용도지역별 건축가능 용도의 1차 근거는 국토계획법 제76조(용도지역에서의 건축물 제한)이며,
+# 구체 허용/제한 목록은 같은 법 시행령 제71조 및 별표2~22(용도지역 안에서 건축할 수 있는
+# 건축물)에 위임된다. legal_reference_registry에 실재하는 키는 'zone_use'(§76)뿐이므로
+# 그 키만 연결한다(무날조 — 시행령 §71·별표는 레지스트리 미등재라 주석으로만 명시, 키 미부여).
+ZONE_PERMIT_LEGAL_REF_KEYS: list[str] = ["zone_use"]
+
 # Permit complexity by development type
 PERMIT_COMPLEXITY = {
     "M01": 5,  # 재개발 -- 매우 어려움 (조합설립, 사업인정, 관리처분)
@@ -96,6 +123,11 @@ def check_permit_feasibility(dev_type: str, zone_type: str) -> dict:
 
     if zone_known:
         reason = f"{zone_type}에서 {DEVELOPMENT_TYPE_NAMES.get(dev_type, dev_type)} 개발 {'가능' if is_permitted else '불가'}"
+    elif _is_ordinance_dependent_use_zone(zone_type):
+        # M3 (b): 관리지역 허용용도는 본질적 조례의존 — 억지 산출 대신 정직 판정불가 유지 + 근거명시.
+        reason = (f"'{zone_type}' 허용행위/용도는 지자체 도시계획조례·개별심의 확인 필요 — 판정불가"
+                  "(국토계획법 시행령 별표18~20이 허용행위 다수를 도시·군계획조례에 위임 — 조례의존이라"
+                  " 억지 산출 금지, 정직 판정불가 유지. 단 건폐율/용적률 법정한도는 별표에 명확해 별도 산출됨)")
     else:
         reason = (f"'{zone_type}'은(는) 인허가 매트릭스 미등재 용도지역 — 판정불가"
                   "(허가 가능/불가 단정 아님, 국토계획법 시행령 별표 확인 필요)")
@@ -109,4 +141,7 @@ def check_permit_feasibility(dev_type: str, zone_type: str) -> dict:
         "permit_complexity": complexity,
         "complexity_label": ["", "매우쉬움", "쉬움", "보통", "어려움", "매우어려움"][complexity],
         "reason": reason,
+        # 허용용도 판정의 법령 근거(국토계획법 §76, 시행령 §71·별표 위임). additive — 소비처는
+        # 레지스트리로 딥링크를 해석한다(mixed_zone_limits 등과 동일 legal_ref_keys 계약).
+        "legal_ref_keys": ZONE_PERMIT_LEGAL_REF_KEYS,
     }

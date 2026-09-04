@@ -4,7 +4,9 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Construction, CreditCard, Key, LockKeyhole, Plus, Wrench } from "lucide-react";
 import SitePasswordModal from "@/components/sales-app/SitePasswordModal";
+import { SalesMarketingSection } from "@/components/sales/SalesMarketingSection";
 import { salesGlobal } from "@/lib/salesApi";
+import { idempotencyHeaders } from "@/lib/idempotency";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 import { useProjectStore } from "@/store/useProjectStore";
 import type { Locale } from "@/i18n/config";
@@ -71,7 +73,8 @@ export default function SalesSiteList({ locale }: { locale: Locale }) {
     if (!form.site_name || !form.project_id) { setErr("현장 이름과 프로젝트 번호를 입력하세요."); return; }
     setBusy(true); setErr("");
     try {
-      await salesGlobal.post("/provision", form);
+      // ★분양현장 생성은 유료다 — 더블서브밋이면 **현장이 두 개 생기고 두 번 청구**된다.
+      await salesGlobal.post("/provision", form, idempotencyHeaders("sales.provision", form));
       setForm({ site_name: "", development_type: "APT", project_id: "" });
       load();
     } catch (e) {
@@ -205,6 +208,10 @@ export default function SalesSiteList({ locale }: { locale: Locale }) {
           onClose={() => setPwSite(null)}
         />
       )}
+
+      {/* 배선 캠페인 3차(marketing, additive) — 채널별 마케팅 콘텐츠·OM(투자설명서) 생성.
+          기본 접힘(AdvancedDrawer), 이미 조회된 프로젝트 목록을 그대로 넘겨 재사용한다. */}
+      {projects.length > 0 && <SalesMarketingSection projects={projects} />}
     </div>
   );
 }

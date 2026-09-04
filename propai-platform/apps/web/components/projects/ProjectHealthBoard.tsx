@@ -113,14 +113,19 @@ export function ProjectHealthBoard({ locale }: { locale: string }) {
             </div>
           </div>
           <div className="min-w-0">
-            <p className="text-[10px] font-black uppercase tracking-[0.3em] text-[var(--accent-strong)]">
+            <p className="label-caps text-[var(--accent-strong)]">
               프로젝트 헬스보드
             </p>
             <p className="mt-1 text-lg font-black tracking-tight text-[var(--text-primary)]">
-              {doneCount} / {total} 단계 완료
+              분석 {doneCount} / {total} 단계 수치 확보
             </p>
+            {/* ★분모가 무엇인지 밝힌다 — 같은 화면의 라이프사이클 레일은 **11단계** 여정
+                진행률이고 이 카드는 **7단계** 분석 수치 확보율이다. 둘 다 "진행/완성도"라고만
+                적혀 있어 두 숫자가 모순처럼 읽힌다. 판정 자체는
+                store 의 stageCompletion 하나로 통일했으므로 이제 **분모만** 다르다. */}
             <p className="mt-1 text-xs text-[var(--text-secondary)]">
-              실데이터 기준 — 미완료 단계는 정직 표기됩니다.
+              라이프사이클 11단계 중 <strong>수치가 필요한 {total}단계</strong> 기준입니다 —
+              여정 진행률과 분모가 다릅니다. 미확보 단계는 정직 표기됩니다.
             </p>
           </div>
         </div>
@@ -164,7 +169,7 @@ export function ProjectHealthBoard({ locale }: { locale: string }) {
                 <StageIcon id={nextMeta.icon} size={18} />
               </div>
               <div className="min-w-0">
-                <p className="text-[10px] font-black uppercase tracking-[0.3em] text-[var(--accent-strong)]">
+                <p className="label-caps text-[var(--accent-strong)]">
                   다음 추천 작업
                 </p>
                 <p className="text-sm font-bold text-[var(--text-primary)]">
@@ -174,7 +179,7 @@ export function ProjectHealthBoard({ locale }: { locale: string }) {
             </div>
             <Link
               href={`/${locale}/projects/${projectId}/${nextMeta.route}`}
-              className="inline-flex h-11 shrink-0 items-center gap-2 whitespace-nowrap rounded-full bg-[var(--accent-strong)] px-6 text-xs font-black uppercase tracking-[0.2em] text-white shadow-[var(--shadow-glow)] transition-all hover:scale-105"
+              className="inline-flex h-11 shrink-0 items-center gap-2 whitespace-nowrap rounded-full bg-[var(--accent-strong)] px-6 label-caps text-white shadow-[var(--shadow-glow)] transition-all hover:scale-105"
             >
               {nextMeta.label} 진입 ↗
             </Link>

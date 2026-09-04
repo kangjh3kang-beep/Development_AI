@@ -12,6 +12,8 @@ from typing import Any
 
 import structlog
 
+from app.services.data_validation.price_stats import robust_price_stats
+from app.services.external_api.poi_dedup import dedup_school_cluster
 from app.services.feasibility.permit_validator import (
     DEVELOPMENT_TYPE_NAMES,
     PERMIT_COMPLEXITY,
@@ -20,6 +22,7 @@ from app.services.feasibility.permit_validator import (
 )
 from app.services.land_intelligence import far_tier_service
 from app.services.land_intelligence.land_info_service import LandInfoService
+from app.services.zoning.development_feasibility_validator import MAX_FLOORS
 
 logger = structlog.get_logger()
 
@@ -35,6 +38,7 @@ from app.services.feasibility.unit_standards import (
 from app.services.feasibility.unit_standards import (
     TYPICAL_FAR_PCT as TYPICAL_FAR,
 )
+from app.utils.pnu import lawd_cd_from_pnu
 
 # ── 개발방식별 주차 기준 ──
 PARKING_RULES: dict[str, dict[str, Any]] = {
@@ -379,6 +383,95 @@ def _detect_special_parcel_compat(
     return detect(sp_input, **kwargs)
 
 
+# ── W2-6: CSM 조립 + Risk Register 1차(additive 부착 헬퍼) ──
+#   comprehensive_analysis_service.analyze()는 실코드 확인상 P0~P4 부지분석 사실(필지·법규·
+#   실효한도·접도·시장)을 가장 넓게 이미 모으는 지점이라(스파이크 결론 — csm.py 모듈
+#   독스트링 참고), CSM 조립을 이 함수 하나로 얇게 배선한다. 독립 함수로 분리한 이유는
+#   analyze() 전체를 무겁게 모킹하지 않고도 이 정확한 배선 계약(호출 시그니처·additive
+#   키만 부착·실패 시 무손상)을 단위 테스트로 직접 검증하기 위함이다(이 파일의
+#   apply_legal_hotpath_guard 배선과 동일한 테스트 패턴 — test_comprehensive_integrity_guard.py).
+def _attach_csm_and_risk_register(result: dict[str, Any]) -> None:
+    """CSM(csm_hash) + Risk Register 요약을 result에 additive 부착한다.
+
+    ★무회귀: 기존 키는 절대 건드리지 않는다(csm_hash·risk_register는 신규 키만 추가).
+    ★재계산 금지: assemble_csm은 result의 기존 값을 참조로만 재구조화한다(새 산식 0).
+    parcel_graph/required_data는 이 조립 지점에 아직 배선되지 않아 전달하지 않는다(1차
+    범위 — build_risk_register가 그 두 입력 없이도 3개 규칙은 정상 동작한다).
+    실패는 기존 분석 결과를 전혀 훼손하지 않는다(degrade 경고 로그만).
+    """
+    try:
+        from app.services.provenance.csm import assemble_csm
+        from app.services.provenance.risk_register import build_risk_register
+
+        csm = assemble_csm(result)
+        risk_register = build_risk_register(csm)
+        result["csm_hash"] = csm.csm_hash
+        result["risk_register"] = risk_register.to_dict()
+    except Exception as e:  # noqa: BLE001 — CSM/리스크 조립 실패는 기존 분석 결과 무손상
+        logger.warning("CSM/Risk Register 조립 실패(degrade, 기존 분석 무손상)", err=str(e)[:160])
+
+
+# ── W3-6(RFI 루프 계약) 소비 배선 1곳 — 무음 기본가정 지점 → 구조화 RFI 방출(opt-in) ──
+#   ★스파이크로 확정한 배선 지점: far_tier_service.calc_effective_far()가 조례 미확인 시 이미
+#   far_basis_detail["조례확인필요"]=True 정직 마커(annotations 안내문까지)를 남기지만(#422
+#   조례 폴백 confirmed 정직화), 지금까지는 "표시용 안내 텍스트"에 그칠 뿐 무엇이 부족한지·
+#   왜 필요한지·어느 계산이 막히는지·기본가정 진행 시 위험이 무엇인지를 구조화·추적 가능한
+#   형태로 방출하지 않았다 — 이 함수가 그 정확한 공백을 emit_rfi() 1회 호출로 메운다.
+def _attach_rfi_register(result: dict[str, Any]) -> None:
+    """조례 미확인(#422 마커) 등 기존 정직 표식에서 RFI를 방출해 result에 additive 부착한다.
+
+    ★무회귀: 이 함수는 result에 "rfi_register" 신규 키만 추가한다(기존 키·계산은 절대
+    건드리지 않는다 — _attach_csm_and_risk_register와 동일한 additive·degrade 전략).
+    ★opt-in: RDM(required_data)이 이미 이 필드류(land_area_sqm/max_bcr/max_far)를
+    requirement_level=REQUIRED·critical=False로 선언해 CONDITIONAL까지만 올리듯, 이
+    RFI도 같은 등급(REQUIRED·비critical)으로 방출한다 — 새 BLOCKED/차단을 만들지 않는다.
+    """
+    try:
+        from app.services.provenance.required_data import RequirementLevel
+        from app.services.rfi.rfi_register import RFIRegister, build_subject_ref, emit_rfi
+
+        register = RFIRegister()
+        eff = result.get("effective_far")
+        detail = eff.get("far_basis_detail") if isinstance(eff, dict) else None
+        if isinstance(eff, dict) and isinstance(detail, dict) and detail.get("조례확인필요"):
+            zone_type = result.get("zone_type") or "(용도지역 미상)"
+            national_far = eff.get("national_far_pct")
+            # ★무날조(R1 MEDIUM 봉합): zone_unmatched 분기(legal_zone_limits.legal_limits_for가
+            #   용도지역명을 매칭하지 못함)는 national_far_pct 자체가 None(정직 미산출)이다 —
+            #   이때 "법정상한(None%)을 잠정 적용해 진행합니다"라고 쓰면 실제로는 아무 값도
+            #   적용되지 않았는데(폴백조차 없음) 마치 잠정치가 있는 것처럼 지어내는 날조가 된다
+            #   (far_tier_service.calc_effective_far의 zone_unmatched 반환 자체가 "임의값
+            #   미생성(정직)"이라고 명시하는 것과 모순). 실폴백 로직을 그대로 서술한다.
+            if national_far is None:
+                default_assumption = (
+                    "용도지역 법정상한 매칭 실패로 실효 용적률/건폐율이 산출되지 않았습니다"
+                    "(잠정치 없음 — far_tier_service.calc_effective_far가 임의값을 생성하지 "
+                    "않고 미확인으로 정직 반환) — 용도지역 확인이 먼저 필요합니다."
+                )
+            else:
+                default_assumption = (
+                    f"조례 미확인 상태로 법정상한({national_far}%)을 잠정 적용해 진행합니다 — "
+                    "실제 조례가 이보다 낮게(강화 방향으로) 규정돼 있으면 설계 규모·사업성이 "
+                    "과대산정될 위험이 있습니다(관할 지자체 확인 전까지 잠정치)."
+                )
+            emit_rfi(
+                register,
+                subject_ref=build_subject_ref(
+                    pnu=result.get("pnu"), address=result.get("address"),
+                    field_name="effective_far.ordinance_far_pct",
+                ),
+                missing_what=f"{zone_type} 지자체 도시계획조례 실효 용적률/건폐율 확인값",
+                needed_for="실효 용적률/건폐율 산정(설계·수지분석 등 후속 단계가 소비하는 SSOT 값)",
+                blocking_calc="far_tier_service.calc_effective_far — effective_far_pct/effective_bcr_pct",
+                default_assumption=default_assumption,
+                requirement_level=RequirementLevel.REQUIRED.value,
+                critical=False,
+            )
+        result["rfi_register"] = register.to_dict()
+    except Exception as e:  # noqa: BLE001 — RFI 조립 실패는 기존 분석 결과 무손상
+        logger.warning("RFI Register 조립 실패(degrade, 기존 분석 무손상)", err=str(e)[:160])
+
+
 class ComprehensiveAnalysisService:
     """주소 입력만으로 7개 분석 카테고리를 자동 수행."""
 
@@ -395,6 +488,7 @@ class ComprehensiveAnalysisService:
         project_id: str | None = None,
         with_senior: bool = True,
         parcels: list[dict[str, Any]] | None = None,
+        include_interpretation: bool = True,
     ) -> dict[str, Any]:
         logger.info(
             "종합분석 시작",
@@ -520,6 +614,9 @@ class ComprehensiveAnalysisService:
                 "special_districts": base.get("special_districts") or [],
                 "road_contact": base.get("road_contact"),
                 "road_width_m": base.get("road_width_m") or _lr_gate.get("road_width_m"),
+                # ★road_width_source 동반 — 폭만 넘기면 하류가 실측/추정을 구분하지 못해
+                #   근거 문구가 범주 대표값을 실측인 양 표기한다(필드는 최종표면까지 추적).
+                "road_width_source": base.get("road_width_source") or _lr_gate.get("road_width_source"),
             }
             _early_gate = _detect_special_parcel_compat(_gate_sp_input, None, None, None)
             if _early_gate and _early_gate.get("developability") == "BLOCKED":
@@ -551,6 +648,10 @@ class ComprehensiveAnalysisService:
         if _supply_blocked_reason:
             sec2 = [{
                 "development_type": None, "type_name": "판정불가",
+                # ★판정용 코드(표시 문구와 분리) — 자가검증 규칙은 이 코드를 읽는다.
+                #   종전에는 규칙이 화면 문구 "판정불가"를 정확일치로 읽어, 문구를 쉬운 말로
+                #   바꾸는 순간 규칙이 무음으로 죽는 구조였다(W4 착수 전 봉합).
+                "type_name_code": "UNDETERMINED",
                 "note": _supply_blocked_reason, "blocked_reason": _supply_blocked_reason,
             }]
         else:
@@ -578,7 +679,8 @@ class ComprehensiveAnalysisService:
         sec7 = self._research_dev_plans(base)
 
         # Section 8: 종상향/종변경 잠재력(예상치 — 현행 실효 용적률과 분리)
-        sec8 = self._calc_upzoning(base, zone_type, land_area, sec6, sec7)
+        # ★integrated(인접성·필지수) 전달 — 파편 다필지 종상향 랭킹 인접성 게이트 배선.
+        sec8 = self._calc_upzoning(base, zone_type, land_area, sec6, sec7, integrated)
 
         result = {
             "address": address,
@@ -653,9 +755,16 @@ class ComprehensiveAnalysisService:
                     attach_similar_designs_to_options,
                 )
 
+                # ★레인C(R2 봉합) — 형제 결함: land_area는 대지면적(site/parcel area)인데
+                #   이를 area_sqm(유사 "건물 설계" 검색 기준)으로 넘기면 다른 물리량(대지면적↔
+                #   건물 연면적)을 혼동한다(similar_market_feasibility의 site_area 오용과
+                #   동일 결함 클래스). options[]는 zone별 achievable_far_pct가 달라 정확한
+                #   per-option GFA 역산은 이 호출 시그니처(옵션 배치당 단일 area_sqm)로는
+                #   불가능 — area_sqm은 SiteQuery 소프트 신호(hard_filter 기본 False)이므로
+                #   부정확한 대지면적을 넣기보다 None(무제약, zone+키워드 기반 검색)이 정직하다.
                 _bo["options"] = await attach_similar_designs_to_options(
                     _bo.get("options") or [], zone_type=zone_type,
-                    area_sqm=land_area, top_n=2,
+                    area_sqm=None, top_n=2,
                 )
                 if _bo.get("options"):
                     _bo["top_recommendation"] = _bo["options"][0]
@@ -669,6 +778,9 @@ class ComprehensiveAnalysisService:
         #   감사 적발(orphan handoff): 종합분석이 special_parcel을 결과에 넣지 않아
         #   site_analysis_interpreter가 특이제약을 인지 못하고 '최대 연면적 가능'류를 독자
         #   서술하는 할루시네이션 위험. 여기서 감지해 result에 부착하면 인터프리터가 그라운딩한다.
+        # ★사전 초기화 — 아래 try 안에서 gather가 던지면 _terrain_facts가 미바인딩으로 남아,
+        #   블록 밖(지배 제약 배선)에서 NameError가 난다. 미확보=None(무날조)로 시작한다.
+        _terrain_facts: dict[str, Any] | None = None
         try:
             _lr = base.get("land_register") if isinstance(base.get("land_register"), dict) else {}
             _sp_input = {
@@ -679,6 +791,8 @@ class ComprehensiveAnalysisService:
                 or [],
                 "road_contact": base.get("road_contact"),
                 "road_width_m": base.get("road_width_m") or _lr.get("road_width_m"),
+                # ★road_width_source 동반 — 위 _gate_sp_input과 동일 계약(폭만 넘기면 출처 소실).
+                "road_width_source": base.get("road_width_source") or _lr.get("road_width_source"),
             }
             # T1/T2/T3 실배선 — 임야/산지 후보만 관측데이터 3종을 병렬 조회해 전달:
             #   terrain_facts(DEM 경사도)·slope_criteria(조례 경사도 기준)·forest_data(산림청 임목축적).
@@ -704,6 +818,47 @@ class ComprehensiveAnalysisService:
                 _warns = result.get("warnings")
                 result["warnings"] = (_warns if isinstance(_warns, list) else []) + special.get("warnings", [])
                 result["developability"] = special.get("developability")
+            # ── WP-B: 개발행위허가 절차게이트(국토계획법 §56~58) additive 부착 ──
+            #   자연녹지 등 비도시·녹지 지역이 밀도한도만으로 '개발가능'으로 오고지되던 과대낙관을
+            #   봉합한다. 이미 확보한 관측데이터(_slope_criteria·_terrain_facts)를 그대로 넘겨
+            #   경사도 예비판정까지 흐르게 한다(실패는 무손상 graceful).
+            try:
+                from app.services.permit.dev_act_permit_gate import assess_dev_act_permit
+
+                _dev_gate = assess_dev_act_permit(
+                    _sp_input,
+                    slope_criteria=_slope_criteria,
+                    terrain_facts=_terrain_facts,
+                    sigungu=_extract_sigungu_from_address(_addr),
+                )
+                if _dev_gate:
+                    result["dev_act_permit_gate"] = _dev_gate
+            except Exception:  # noqa: BLE001 — 개발행위허가 게이트 실패는 무손상(기존 분석 유지)
+                pass
+
+            # ── WP-A: 접도·도로 기반(P4) access_basis additive 부착 ──
+            #   종합분석 result에 접도 판정(legal/physical/emergency 3상태)을 동봉해, 인터프리터가
+            #   맹지·자루형·막다른도로·접도구역 등 접근 제약을 그라운딩할 수 있게 한다(위 WP-B와
+            #   동일 additive·graceful 패턴). vworld road_side(이미 조회된 land_register 산출)
+            #   어댑터로 road_contact를 파생하고, 다필지 세트면 인접(⑳ _parcel_adjacency) 완화신호도
+            #   함께 넘긴다(항목3 — 대표필지 맹지라도 자기세트 내 인접 도로접 필지가 있으면 완화).
+            try:
+                from app.services.access.access_basis_service import (
+                    adapt_vworld_access_fields,
+                    assess_access,
+                )
+
+                _access_input = dict(_sp_input)
+                _access_input.update(
+                    adapt_vworld_access_fields(_lr, _access_input.get("special_districts"))
+                )
+                if integrated is not None:
+                    _access_input["multi_parcel_adjacency"] = integrated.get("adjacency")
+                result["access_basis"] = assess_access(
+                    _access_input, sigungu=_extract_sigungu_from_address(_addr),
+                ).model_dump()
+            except Exception:  # noqa: BLE001 — 접도 게이트 실패는 무손상(기존 분석 유지)
+                pass
         except Exception:  # noqa: BLE001 — 특이부지 감지 실패는 무손상(기존 분석 유지)
             pass
 
@@ -745,6 +900,13 @@ class ComprehensiveAnalysisService:
             result.setdefault("provenance", _ev_block.get("provenance", []))
         except Exception:  # noqa: BLE001 — 근거 블록 부착 실패는 무손상
             pass
+
+        # ── W2-6: CSM(Canonical Site Model) 조립 + Risk Register 1차 additive 부착 ──
+        # 이 시점까지 P0~P4 부지분석 사실(필지·법규·실효한도·접도·시장)이 result에 전부
+        # 실려있다(스파이크 확인 — 이 함수가 그 최대 조립 지점). 값 재계산 없이 참조만
+        # 재구조화한다(csm.assemble_csm). 실패는 기존 분석 결과에 전혀 영향을 주지 않는다.
+        _attach_csm_and_risk_register(result)
+        _attach_rfi_register(result)
 
         # ── 시니어 자문 모세혈관 배선(P0·최다트래픽) — deliberation(심의)·urban·legal ──
         # 시니어 전문가 판단프레임워크·근거(법조문 citation)를 result에 첨부해 메인 분석에
@@ -811,34 +973,31 @@ class ComprehensiveAnalysisService:
                     error=str(e),
                 )
 
-        try:
-            from app.services.ai.site_analysis_interpreter import SiteAnalysisInterpreter
-            interpreter = SiteAnalysisInterpreter()
-            if custom_llm is not None:
-                interpreter._llm = custom_llm
-            ai_interpretation = await interpreter.generate_interpretation(result, prior_context=prior_block)
-            result["ai_interpretation"] = ai_interpretation
-        except Exception as e:
-            logger.warning("AI 해석 생성 스킵", error=str(e))
+        # ★W2-a/b: LLM 해석 2종은 종합분석 소요의 대부분이고 CF 엣지 컷오프(~125초)의 주범이다.
+        #   include_interpretation=False면 건너뛰고 **정직하게 deferred로 표기**한다 — None만 두면
+        #   프론트가 "생성 실패"와 "이번 호출에서 요청 안 함"을 구분할 수 없다(D-1 정직화와 동일 규칙).
+        #   ★생성 로직은 generate_interpretations()에 단일화했다(독립 엔드포인트와 같은 코드 —
+        #   두 경로가 갈라져 해석 품질이 달라지는 것을 구조적으로 막는다).
+        if not include_interpretation:
+            _deferred = {
+                "status": "deferred",
+                "reason": "이 요청에서는 AI 해석을 생성하지 않았습니다(다음 단계에서 생성).",
+            }
             result["ai_interpretation"] = None
-
-        # Phase 4: 시장분석 AI 내러티브 생성 (선택적 — API 키 있을 때만)
-        try:
-            from app.services.ai.market_interpreter import MarketInterpreter
-            market_interpreter = MarketInterpreter()
-            if custom_llm is not None:
-                market_interpreter._llm = custom_llm
-            market_interpretation = await market_interpreter.generate_interpretation(result, prior_context=prior_block)
-            result["market_interpretation"] = market_interpretation
-        except Exception as e:
-            logger.warning("시장분석 AI 해석 생성 스킵", error=str(e))
+            result["ai_interpretation_status"] = dict(_deferred)
             result["market_interpretation"] = None
+            result["market_interpretation_status"] = dict(_deferred)
+        else:
+            result.update(await self.generate_interpretations(
+                result, custom_llm=custom_llm, prior_block=prior_block,
+            ))
 
         # Phase 1 성장루프: prior 첨부(주입 증거) + write-back(다음 회차 prior가 됨, best-effort)
         result["prior_analysis"] = prior
         from app.services.ledger import analysis_ledger_service as ledger
         from app.services.ledger import lineage
         from app.services.ledger.contradiction import detect_contradictions
+        from app.services.ledger.ledger_adapters import build_input_signature, build_signature_parts
 
         wb_payload = {
             "kind": "site_analysis", "schema_version": "site_analysis/v1",
@@ -846,12 +1005,26 @@ class ComprehensiveAnalysisService:
             "effective_far": result.get("effective_far"),
             "land_area_sqm": result.get("land_area_sqm"),
             "potential_far_range": result.get("potential_far_range"),
+            # ★P3(R1 REVISE): location(입지등급 등 — 라이브 result:610 "location": sec6, 무날조
+            #   존재 시만) 적재. 과거 미적재로 site_analysis DiffTable의 "입지등급"(location.grade)
+            #   행이 항상 "—"였다(사영필드 — 라이브 응답엔 있는데 원장 요약엔 빠진 상태).
+            "location": result.get("location"),
             "findings_brief": [
                 {"check_id": "ZONE", "status": "info",
                  "current": (result.get("effective_far") or {}).get("effective_far_pct"),
                  "limit": None},
             ],
         }
+        # ★히스토리 확산: 프론트 재분석 변동감지(analysisSignature)가 소비하는 signature_parts/
+        #   input_signature를 부착한다(단일 소유자 build_signature_parts 재사용 — 신규 산식 0).
+        #   신규 analysis_type 신설 없이 기존 site_analysis append payload에 병합만 한다
+        #   (comprehensive는 site_analysis로 이미 적재 — 이중기록 회피).
+        _sig_parts = build_signature_parts(
+            address=address, pnu=_pnu, parcel_count=(len(parcels) if parcels else 1),
+            use_llm=bool(llm_provider),
+        )
+        wb_payload["signature_parts"] = _sig_parts
+        wb_payload["input_signature"] = build_input_signature(_sig_parts)
         # Phase 2: prior 대비 결정론 모순 표면화(판정/수치 불변 — 비교 전용)
         contradictions = detect_contradictions(prior, wb_payload)
         result["contradictions"] = contradictions
@@ -925,7 +1098,108 @@ class ComprehensiveAnalysisService:
         except Exception as e:  # noqa: BLE001 — 성장 뇌 트리거 실패는 분석을 막지 않음(정직 degrade)
             logger.warning("종합분석 specialist(market) 적재 스킵(graceful)", err=str(e)[:160])
 
+        # ── 지배 제약 한 줄 + 높이 상한(사통맵 v2 W1) — additive ──
+        #   설계사·디벨로퍼가 공통으로 묻는 "무엇이 발목인가"에 한 문장으로 답한다. 재료는
+        #   전부 기존 산출물(신규 외부콜 0): 규제목록은 sec7의 clean_regulations(=risk_level을
+        #   만든 그 목록 — 리스크 등급과 지배 제약이 다른 규제를 가리키는 불일치 차단),
+        #   경사도는 위에서 이미 조회한 _terrain_facts(임야/산지 후보만 보유·그 외 None).
+        #   ★geometry: base(collect_comprehensive)는 필지 폴리곤을 담지 않으므로 정북일조
+        #   높이 항목은 여기서 생성되지 않는다(지도 경계 응답은 geometry 보유 → 생성됨).
+        #   판정 로직은 build_for_parcel 단일 소유 — 표면별 재구현 없음(발산 차단).
+        try:
+            from app.services.regulation.dominant_constraint import build_for_parcel
+
+            result["dominant_constraint"] = build_for_parcel(
+                regulations=(
+                    (sec7.get("land_use_regulations") or []) if isinstance(sec7, dict) else []
+                ),
+                zone_type=zone_type,
+                geometry=None,
+                slope_pct=(_terrain_facts or {}).get("평균경사도_pct"),
+                # ★R2 LOW: 규제 조회 실패를 "제약 없음"으로 표기하지 않는다. sec7의
+                #   land_use_regulations는 base["land_use_plan"] 단일 출처인데 그 키는 비어있지
+                #   않은 목록일 때만 채워져 실패/0건이 구분되지 않았다 — land_info_service가
+                #   land_use_plan_status로 그 구분을 정직하게 남기고 여기서 소비한다.
+                #   ★화이트리스트("ok"일 때만 verified) — 부정형(`!= "unavailable"`)이면 키 부재·
+                #   오탈자·새 상태값이 전부 "확인 완료"로 낙관 폴백한다(R3 MEDIUM). 미확인을
+                #   낙관으로 흘려보내는 것이 이 PR이 내내 봉합해 온 결함 클래스다.
+                designations_verified=(base.get("land_use_plan_status") == "ok"),
+            )
+        except Exception as e:  # noqa: BLE001 — 지배 제약 산출 실패는 분석 무손상(정직 degrade)
+            logger.warning("지배 제약 산출 스킵(graceful)", err=str(e)[:160])
+
+        # ── field_audit(도메인 correctness 자가검증 하네스) — additive·behavior 불변 ──
+        # W0(Phase0): 등록 규칙 0건 → 빈 리포트 → result에 'field_audit' 키만 추가(그 외 무변경).
+        #   실제 불변식(G1 protection_zone_severity 등)은 W1부터 등록되며, 이 삽입점은 그때
+        #   자동으로 findings를 실어 나른다(경로 비의존 runner). 위 결정론 specialist 교차검증
+        #   (:1077, allow_llm=False)과 독립. best-effort — 어떤 예외도 반환을 막지 않는다.
+        try:
+            from app.services.verification.field_audit import runner as _field_audit_runner
+            _field_audit_runner.run(result, {
+                "address": address,
+                "zone_type": zone_type,
+                "pnu": _pnu,
+            })
+        except Exception as e:  # noqa: BLE001 — 자가검증 하네스 실패는 분석 무손상(정직 degrade)
+            logger.debug("field_audit 하네스 스킵(graceful): %s", str(e)[:120])
+
         return result
+
+    async def generate_interpretations(
+        self,
+        result: dict[str, Any],
+        *,
+        custom_llm: Any = None,
+        prior_block: str | None = None,
+    ) -> dict[str, Any]:
+        """AI 해석 2종(부지 해석·시장 내러티브) 생성 — **단일 구현(SSOT)**.
+
+        analyze()의 통합 경로와 독립 엔드포인트(POST /analysis/interpretation)가 **같은 이 코드**를
+        쓴다. 별도로 구현하면 프롬프트·폴백·상태표기가 갈라져 "어느 경로로 받았는지"에 따라 해석
+        품질이 달라진다(단계분할이 만들 수 있는 가장 조용한 결함).
+
+        반환은 result에 병합할 4개 키만 — 이 메서드는 result를 변형하지 않는다(호출부가 update).
+        실패는 raise하지 않고 status='unavailable'+사유로 정직 degrade한다.
+        """
+        out: dict[str, Any] = {}
+
+        try:
+            from app.services.ai.site_analysis_interpreter import SiteAnalysisInterpreter
+            interpreter = SiteAnalysisInterpreter()
+            if custom_llm is not None:
+                interpreter._llm = custom_llm
+            out["ai_interpretation"] = await interpreter.generate_interpretation(
+                result, prior_context=prior_block,
+            )
+            out["ai_interpretation_status"] = {"status": "ok"}
+        except Exception as e:  # noqa: BLE001 — 해석 실패가 분석 본문을 잃게 하지 않는다
+            logger.warning("AI 해석 생성 스킵", error=str(e))
+            out["ai_interpretation"] = None
+            out["ai_interpretation_status"] = {
+                "status": "unavailable",
+                "reason": f"{type(e).__name__}: {str(e)[:160]}",
+            }
+
+        # ★D-1(정직화): 실패 시 None만 두면 프론트가 "정상인데 비어있음"과 "생성 실패"를
+        #   구분할 수 없다. status로 사유를 병기한다.
+        try:
+            from app.services.ai.market_interpreter import MarketInterpreter
+            market_interpreter = MarketInterpreter()
+            if custom_llm is not None:
+                market_interpreter._llm = custom_llm
+            out["market_interpretation"] = await market_interpreter.generate_interpretation(
+                result, prior_context=prior_block,
+            )
+            out["market_interpretation_status"] = {"status": "ok"}
+        except Exception as e:  # noqa: BLE001
+            logger.warning("시장분석 AI 해석 생성 스킵", error=str(e))
+            out["market_interpretation"] = None
+            out["market_interpretation_status"] = {
+                "status": "unavailable",
+                "reason": f"{type(e).__name__}: {str(e)[:160]}",
+            }
+
+        return out
 
     async def _integrated_context(self, parcels: list[dict[str, Any]] | None) -> dict[str, Any] | None:
         """다필지 통합 컨텍스트(모듈 공개 함수 build_integrated_context로 위임 — SSOT)."""
@@ -952,6 +1226,8 @@ class ComprehensiveAnalysisService:
         # ★리뷰 HIGH: 미등재 용도지역은 '허용유형 없음'이 아니라 판정불가 — 빈 섹션 대신 정직 고지.
         if not permitted and not permitted_types_known(zone_type):
             return [{"development_type": None, "type_name": "판정불가",
+                     # ★판정용 코드(표시 문구와 분리) — 자가검증 규칙은 이 코드를 읽는다.
+                     "type_name_code": "UNDETERMINED",
                      "note": f"'{zone_type}' 인허가 매트릭스 미등재 — 허용유형 판정불가"
                              "(국토계획법 시행령 별표 확인 필요)"}]
         results = []
@@ -963,11 +1239,44 @@ class ComprehensiveAnalysisService:
             typical_far = TYPICAL_FAR.get(dev_type, 250)
 
             applied_far = min(effective_far, typical_far)
-            total_gfa = land_area * (applied_far / 100)
+            building_area = land_area * (effective_bcr / 100)
+
+            # ── 층수를 **제약 안에서** 계획한다 ──────────────────────────────
+            # ★2026-08-21 사용자 화면 검증에서 드러난 결함:
+            #   종전에는 층수를 `연면적 ÷ 건축면적` 으로 **역산만** 하고, 유형별 층수 상한
+            #   (`MAX_FLOORS`)은 **사후 검증**에서만 봤다. 그래서 자연녹지(건폐 20%·용적 80%)
+            #   에서 4층이 계획되고, 단독·전원주택 상한 3층에 걸려 **전 유형이 부적합**으로
+            #   떨어졌다 — **시스템이 스스로 규칙 위반 계획을 세우고 자기 규칙으로 탈락**시킨 것이다.
+            #
+            #   더 나쁜 것은 그때도 **연면적은 4층 기준 그대로** 표시됐다는 점이다.
+            #   세대수·주차·공사비가 전부 실현 불가능한 값 위에서 계산됐다.
+            #
+            #   → 상한이 있으면 **그 안에서 계획**하고, 층수가 깎이면 **연면적도 함께 내린다**.
+            _gfa_by_far = land_area * (applied_far / 100)
+            _floors_by_far = max(1, round(_gfa_by_far / building_area)) if building_area > 0 else 1
+
+            # ★`MAX_FLOORS` 는 이제 **근거를 동반한 값**(LegalLimit)이다.
+            #   · 미등재            → 근거 미확인 → 깎지 않는다(조용히 제한하지 않는다)
+            #   · 등재 + unlimited  → 법이 제한하지 않는다(근거 있음) → 깎지 않는다
+            #   · 등재 + 값 있음    → 그 값으로 캡
+            #   종전에는 근거 없는 `3` 이 단독주택 계획을 4층→3층으로 깎아 용적률을
+            #   80%→60%로 내렸다. 근거를 확인하니 그 3층은 **다가구·다중주택 기준**이었다.
+            _limit = MAX_FLOORS.get(dev_type)
+            _cap = None if (_limit is None or _limit.unlimited) else int(_limit.value)
+            _cap_law = _limit.law if (_limit is not None and not _limit.unlimited) else None
+            floor_count = min(_floors_by_far, _cap) if _cap else _floors_by_far
+            floor_count = max(1, floor_count)
+
+            # 층수가 깎였으면 연면적은 `건축면적 × 층수` 로 제한된다(용적률도 따라 내려간다).
+            floor_capped = floor_count < _floors_by_far
+            total_gfa = min(_gfa_by_far, building_area * floor_count) if building_area > 0 else _gfa_by_far
+            if floor_capped and land_area > 0:
+                # 표시용 용적률을 실제 계획에 맞춘다 — 여기서 갱신하지 않으면 화면의
+                # 용적률과 연면적이 서로 다른 계획을 가리킨다(같은 화면 안의 모순).
+                applied_far = total_gfa / land_area * 100
+
             supply_area_per_unit = avg_exclusive / exclusive_ratio
             unit_count = max(1, int(total_gfa / supply_area_per_unit)) if supply_area_per_unit > 0 else 1
-            building_area = land_area * (effective_bcr / 100)
-            floor_count = max(1, round(total_gfa / building_area)) if building_area > 0 else 1
 
             parking = self._calc_parking(dev_type, unit_count, total_gfa)
             construction_cost = CONSTRUCTION_COST_PER_SQM.get(dev_type, 2_400_000)
@@ -992,6 +1301,13 @@ class ComprehensiveAnalysisService:
                 "unit_count": unit_count,
                 "building_area_sqm": round(building_area, 1),
                 "floor_count": floor_count,
+                # ★층수 상한에 걸려 계획이 축소됐는지 — 화면이 "왜 용적률을 다 못 쓰는가"를
+                #   설명할 수 있어야 한다. 이 값이 없으면 축소가 조용히 일어난다.
+                "floor_capped": floor_capped,
+                "floors_by_far": _floors_by_far,
+                # ★제약이 계획을 깎았다면 **그 제약의 근거**를 함께 보낸다.
+                #   근거 없는 제약이 조용히 용적률을 내리는 일을 막는다(2026-08-23).
+                "floor_cap_law": _cap_law,
                 "parking_count": parking,
                 "construction_cost_per_sqm": construction_cost,
                 "estimated_construction_cost_won": int(total_gfa * construction_cost),
@@ -1182,15 +1498,26 @@ class ComprehensiveAnalysisService:
                 "개별공시지가가 조회되지 않았습니다. 토지대장 미등록 또는 비과세 필지일 수 있습니다."
             )
 
+        # ★공시지가의 **기준연도**를 값과 함께 싣는다(2026-08-22).
+        #   기준연도가 화면에 없어서, `year=2025` 하드코딩으로 1년 낡은 공시지가가
+        #   나가는 동안 아무도 눈치채지 못했다(#753). 값만 보이면 낡음이 보이지 않는다.
+        #   ★폴백(land_register)으로 받은 값은 연도를 모른다 → None(화면에서 미표시).
+        #     모르는 연도를 지어내면 "최신"이라는 거짓 신호가 된다.
+        official_price_year = latest.get("year") if latest.get("price_per_sqm") else None
+
         return {
             "official_price_per_sqm": price_per_sqm,
             "official_price_per_pyeong": int(price_per_sqm * 3.305785),
             "total_official_value_won": int(price_per_sqm * land_area),
+            "official_price_year": official_price_year,
             "estimated_market_per_sqm": estimated_market,
             "estimated_market_per_pyeong": int(estimated_market * 3.305785),
             "total_estimated_value_won": int(estimated_market * land_area),
             "market_multiplier": market_multiplier,
             "source": "VWORLD 개별공시지가 + 지역별 시세보정",
+            # ★방법론 판정용 코드(표시 문구와 분리) — 규칙이 source 문자열에서 "공시지가"를
+            #   부분일치로 찾던 결합을 끊는다. 표시 문구는 자유롭게 바꿔도 규칙이 안 죽는다.
+            "source_kind": "OFFICIAL_LAND_PRICE",
             "annotations": annotations,
         }
 
@@ -1203,8 +1530,8 @@ class ComprehensiveAnalysisService:
             return existing
 
         pnu = base.get("pnu", "")
-        if len(pnu) >= 5:
-            lawd_cd = pnu[:5]
+        if lawd_cd_from_pnu(pnu):
+            lawd_cd = lawd_cd_from_pnu(pnu)
         else:
             return {"message": "PNU 부재로 실거래가 조회 불가"}
 
@@ -1237,11 +1564,13 @@ class ComprehensiveAnalysisService:
                     for item in raw
                     if item.get("price_10k_won") or item.get("거래금액")
                 ]
+                _s = robust_price_stats(amounts)  # ★대표통계(이상치 제거·공용 헬퍼)
                 result[key] = {
-                    "count": len(raw),
-                    "avg_price_10k": int(sum(amounts) / len(amounts)) if amounts else 0,
-                    "max_price_10k": max(amounts) if amounts else 0,
-                    "min_price_10k": min(amounts) if amounts else 0,
+                    "count": _s["count"],
+                    "avg_price_10k": _s["avg"],
+                    "max_price_10k": _s["max"],
+                    "min_price_10k": _s["min"],
+                    "excluded_outliers": _s["excluded"],
                     "items": items,
                 }
             return result
@@ -1257,6 +1586,8 @@ class ComprehensiveAnalysisService:
         # ★리뷰 HIGH: 미등재 용도지역은 판정불가 정직 고지(빈 섹션 금지) — _calc_supply_areas와 동일.
         if not permitted and not permitted_types_known(zone_type):
             return [{"development_type": None, "type_name": "판정불가",
+                     # ★판정용 코드(표시 문구와 분리) — 자가검증 규칙은 이 코드를 읽는다.
+                     "type_name_code": "UNDETERMINED",
                      "note": f"'{zone_type}' 인허가 매트릭스 미등재 — 허용유형 판정불가"
                              "(국토계획법 시행령 별표 확인 필요)"}]
         base_price = self._get_base_price(address)
@@ -1298,7 +1629,9 @@ class ComprehensiveAnalysisService:
         base.get("address", "")
 
         subway = infra.get("nearest_subway")
-        schools = infra.get("schools", [])
+        # ★모학교 병합(G2 근원봉합): 부속시설·분교 개별집계로 인한 입지점수 과대를 차단.
+        #   len(schools)·school_count가 모두 고유 모학교 수를 쓴다(dedup는 멱등 — 원천 dedup과 무해).
+        schools = dedup_school_cluster(infra.get("schools", []))
 
         # 입지 점수 산정 (100점 만점)
         # 기본점수 50점 + 교통접근성 최대 25점 + 교육환경 최대 15점 + 지역보정 최대 10점
@@ -1448,7 +1781,10 @@ class ComprehensiveAnalysisService:
                 if isinstance(d, dict):
                     regulations.append(d.get("district_name", ""))
 
-        clean_regulations = [r for r in regulations if r]
+        # ★D-2(정직화) 중복 제거(순서 보존) — VWorld가 동일 designation을 중복 반환할 때
+        # land_use_regulations·regulation_notes·risk_factors가 그대로 중복 표시되던 문제.
+        # dict.fromkeys는 삽입 순서를 보존하면서 중복만 제거한다(첫 등장 순서 그대로).
+        clean_regulations = list(dict.fromkeys(r for r in regulations if r))
 
         # 각 규제에 대한 해석 주석 생성
         regulation_notes: list[dict[str, str]] = []
@@ -1463,39 +1799,65 @@ class ComprehensiveAnalysisService:
                 "interpretation": interpretation or "",
             })
 
-        # 종합 개발 리스크 평가
-        risk_keywords = {
-            "개발제한구역": "극히 높음",
-            "상수원보호구역": "극히 높음",
-            "군사시설보호": "높음",
-            "대공방어협조구역": "보통",
-            "비행안전구역": "보통",
-            "폐기물매립시설": "보통",
-            "고도지구": "보통",
-            "경관지구": "낮음",
-            "방화지구": "낮음",
-        }
+        # 종합 개발 리스크 평가 — protection_zone_severity SSOT 단일소비(구역별 granular·M4).
+        #   ★근원봉합: 통제보호/제한보호/방공기지/방공유도탄이 SSOT에 등재되어 리스크에 반영된다
+        #   (종전 하드코딩 risk_keywords 사전엔 이들이 부재해 통제보호구역도 '낮음'으로 저평가됐다).
+        #   기존 등재분(개발제한/상수원=극히 높음·군사시설보호=높음·대공방어/비행안전/폐기물/고도=보통·
+        #   경관/방화=낮음)은 SSOT가 동일값으로 보존한다(다른 용도지역 무회귀). 비행안전은 SSOT에서
+        #   구역번호 granular(제1구역→높음·외곽→보통)로 정밀화된다.
+        from app.services.regulation.protection_zone_severity import max_severity, severity_for
         risk_level = "낮음"
         risk_factors: list[str] = []
         for reg_name in clean_regulations:
-            for keyword, level in risk_keywords.items():
-                if keyword in reg_name:
-                    risk_factors.append(f"{reg_name} ({level})")
-                    if level == "극히 높음":
-                        risk_level = "극히 높음"
-                    elif level == "높음" and risk_level not in ("극히 높음",):
-                        risk_level = "높음"
-                    elif level == "보통" and risk_level == "낮음":
-                        risk_level = "보통"
+            sev = severity_for(reg_name)
+            if sev is not None:
+                risk_factors.append(f"{reg_name} ({sev})")
+                risk_level = max_severity(risk_level, sev) or risk_level
+
+        # ★D-2(정직화) additive: 규제명 → verified 법령 링크. 기존 법령 레지스트리 자산
+        # (legal_refs_for_districts — 토지이음 지역지구별 규제법령집 매핑, services/legal 계열)을
+        # 그대로 재사용한다(임의 URL 조립 금지 — build_law_url은 이 함수 내부에서만 쓰인다).
+        # 매핑되는 법령키가 없으면 link=None(정직 — 근거 없는 링크 날조 금지).
+        land_use_regulations_detail = self._build_land_use_regulations_detail(clean_regulations)
 
         return {
             "special_districts": districts,
             "land_use_regulations": clean_regulations,
+            "land_use_regulations_detail": land_use_regulations_detail,
             "regulation_notes": regulation_notes,
             "risk_level": risk_level,
             "risk_factors": risk_factors,
             "source": "VWORLD 토지이용계획",
         }
+
+    @staticmethod
+    def _build_land_use_regulations_detail(regulation_names: list[str]) -> list[dict[str, Any]]:
+        """규제명 목록 → [{name, link}] — link는 legal_reference_registry의 verified 키만 채택.
+
+        기존 자산(legal_refs_for_districts, app/services/legal/legal_reference_registry.py —
+        토지이음 지역지구별 규제법령집 매핑) 재사용. 매핑 실패·근거 미확인은 link=None(무날조).
+        """
+        if not regulation_names:
+            return []
+        try:
+            from app.services.legal.legal_reference_registry import legal_refs_for_districts
+
+            lookup = legal_refs_for_districts(regulation_names)
+            refs_by_key = {r.get("key"): r for r in (lookup.get("refs") or [])}
+            by_district = lookup.get("by_district") or {}
+            detail: list[dict[str, Any]] = []
+            for name in regulation_names:
+                link: str | None = None
+                for key in by_district.get(name) or []:
+                    ref = refs_by_key.get(key)
+                    if ref and ref.get("url_status") == "verified":
+                        link = ref.get("url")
+                        break
+                detail.append({"name": name, "link": link})
+            return detail
+        except Exception as e:  # noqa: BLE001 — 링크 매핑 실패는 무손상(link=None 정직 폴백)
+            logger.warning("규제 법령링크 매핑 실패(graceful)", err=str(e)[:160])
+            return [{"name": n, "link": None} for n in regulation_names]
 
     # ────────────────────────────────────────────
     # Section 8: 종상향/종변경 잠재력(예상치)
@@ -1507,15 +1869,62 @@ class ComprehensiveAnalysisService:
         land_area: float,
         location: Any = None,
         dev_plans: Any = None,
+        integrated: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """현행 실효 용적률과 분리된 종상향/종변경 잠재 시나리오(단일출처 위임)."""
+        """현행 실효 용적률과 분리된 종상향/종변경 잠재 시나리오(단일출처 위임).
+
+        ★확정버그 수정(P0): far_tier_service.calc_upzoning은 parcel_count·adjacency_contiguous를
+        이미 받을 수 있었으나(다필지 인접성 게이트) 이 호출부가 인자를 전달하지 않아 항상
+        기본값(1·None)만 넘어가 UpzoningPotentialAnalyzer의 인접성 감점이 무발동이었다(파편
+        9필지+개발제한구역 혼합에서 "종상향 가능성 상·1순위"가 산출되던 실버그). integrated
+        (build_integrated_context가 이미 재사용 가능하게 부착한 adjacency_contiguous·
+        parcel_count — 재계산 금지)를 전달만 하면 된다. 단일필지(integrated=None)는 기존과
+        동일(parcel_count=1·adjacency_contiguous=None, 무회귀).
+        """
         from app.services.land_intelligence import far_tier_service
-        return far_tier_service.calc_upzoning(base, zone_type, land_area, location, dev_plans)
+        _parcel_count = int((integrated or {}).get("parcel_count") or 1)
+        _adjacency_contiguous = (integrated or {}).get("adjacency_contiguous")
+        return far_tier_service.calc_upzoning(
+            base, zone_type, land_area, location, dev_plans,
+            parcel_count=_parcel_count, adjacency_contiguous=_adjacency_contiguous,
+        )
 
 
 # ────────────────────────────────────────────
 # 다필지 통합 컨텍스트 — 플랫폼 공용 진입점(SSOT)
 # ────────────────────────────────────────────
+
+#: 다필지 축약 관측의 **구별된** event_type (2026-08-23 · 사용자 신고 대응).
+#  ★F4a: severity·recommended_action 을 담지 않는다(자동 변이 루프가 조치신호로 읽는다).
+MULTIPARCEL_COLLAPSE_EVENT = "multiparcel_collapse_observation"
+
+
+def _record_multiparcel_collapse(input_count: int, usable_count: int, missing_count: int) -> None:
+    """다필지 입력이 **몇 필지로 축약됐는지** 영속 관측한다.
+
+    ★왜(사용자 신고 2026-08-23): *"다필지를 넣었는데 단필지만 분석된다"* 가 반복 신고됐는데
+      **빈도도 사유도 잴 수 없었다**. 특히 전 필지 면적 미확보 경로(`if not items: return None`)
+      는 로그조차 없는 **완전 침묵**이었다 — `_area_missing` 을 이미 계산해 놓고 버렸다.
+    ★성공(축약 없음)도 남긴다 — 그래야 **분모**를 알고 "몇 건 중 몇 건"을 센다.
+    ★단일필지 입력은 축약이 아니다(위양성 방지) — 원래 통합 대상이 아니다.
+    """
+    collapsed = input_count > 1 and usable_count < input_count
+    try:
+        from app.services.growth import capture_service
+
+        capture_service.record_event(MULTIPARCEL_COLLAPSE_EVENT, {
+            "surface": "api",
+            "service": "integrated_context",
+            "payload": {
+                "collapsed": collapsed,
+                "input_count": input_count,
+                "usable_count": usable_count,
+                "missing_count": missing_count,
+            },
+        })
+    except Exception:  # noqa: BLE001 — 관측이 분석을 깨뜨리면 안 된다.
+        pass
+
 
 async def build_integrated_context(parcels: list[dict[str, Any]] | None) -> dict[str, Any] | None:
     """필지목록(면적·용도지역 보유) → 면적가중 통합 용도/실효한도/GFA 집계.
@@ -1538,34 +1947,41 @@ async def build_integrated_context(parcels: list[dict[str, Any]] | None) -> dict
     (usable/adjacency 필드는 받되 미소비 — 과대 주장 금지). usable 채택을 이 소비처들
     에도 확장하는 것은 후속 P1 스코프다.
     """
-    def _f(v: Any) -> float | None:
-        try:
-            return float(v) if v is not None else None
-        except (TypeError, ValueError):
-            return None
+    # ★다필지 parcels 계약 공용 정규화(SSOT) — str[]/dict[] 양 shape 를 canonical dict[] 로 수렴.
+    #   기존 인라인 camelCase↔snake 키맵(_f 포함)을 parcel_normalize.normalize_parcels 로 이관했다
+    #   (byte-동일 이관 — 재작성 아님). dict 는 원본 키 보존+정본 snake 오버레이(merge)라 통합집계
+    #   산출값은 무회귀(집계는 snake 키만 읽음). str 요소도 {address} 로 승격돼 수용된다
+    #   (과거: isinstance(dict) 필터가 str 을 무음 드롭 → 빈 items → 단일필지 폴백으로 배선실수 은폐).
+    #
+    #   ★area 결측 행 처리(정직 축소): str→{address} 로 승격된 행은 area_sqm 이 없어 아래 필터에
+    #     걸린다. 이 함수의 보강 경로(_enrich_effective_and_special)는 조례/법정한도·특이부지 게이트
+    #     '전용'이라 주소로 area 를 조회하지 못한다(zone 전용 구조). 따라서 무리하게 신규 area 조회를
+    #     만들지 않고 필터를 그대로 유지한다 = 오늘과 동일 동작(무악화). 승격 행은 str 을 dict 로
+    #     받는 다른 엔드포인트(auto_zoning enrich_parcel_list 등, area 를 실제 조회)에서 보강된다.
+    from app.services.land_intelligence.parcel_normalize import normalize_parcels
 
-    items: list[dict[str, Any]] = []
-    for p in parcels or []:
-        if not isinstance(p, dict):
-            continue
-        # 프론트 camelCase(AddressEntry) ↔ 집계 입력키(_far_eff 등) 정규화.
-        q: dict[str, Any] = {
-            "pnu": p.get("pnu"),
-            "address": p.get("address") or p.get("jibunAddress") or p.get("fullAddress"),
-            "zone_type": p.get("zone_type") or p.get("zoneCode") or p.get("zoneType"),
-            "land_category": p.get("land_category") or p.get("landCategory") or p.get("jimok"),
-            "area_sqm": _f(p.get("area_sqm") if p.get("area_sqm") is not None else p.get("areaSqm")),
-            # 실효/법정(프론트 farPct/bcrPct가 이미 조례반영 실효치 — 있으면 재계산 생략).
-            "_far_eff": _f(p.get("_far_eff") if p.get("_far_eff") is not None else p.get("farPct")),
-            "_bcr_eff": _f(p.get("_bcr_eff") if p.get("_bcr_eff") is not None else p.get("bcrPct")),
-            "_far_legal": _f(p.get("_far_legal") if p.get("_far_legal") is not None else p.get("farLegalPct")),
-            "_bcr_legal": _f(p.get("_bcr_legal") if p.get("_bcr_legal") is not None else p.get("bcrLegalPct")),
-            # 필지 경계(geometry) 통과 — 없으면 인접성(contiguous) 판정이 영구 미확정.
-            "geometry": p.get("geometry"),
-        }
-        if (q["area_sqm"] or 0) > 0:
-            items.append(q)
+    _normalized = normalize_parcels(parcels)
+    items: list[dict[str, Any]] = [q for q in _normalized if (q.get("area_sqm") or 0) > 0]
+    # ★면적 없는 필지를 **조용히 버리지 않는다**(2026-08-05). 지번(PNU)이 특정된 필지의
+    #   면적 0은 존재할 수 없으므로 그건 값이 아니라 **수집 실패**다. 그런데 종전에는 이 줄에서
+    #   걸러진 뒤 아무 흔적도 남지 않아, 2필지를 넣었는데 통합면적이 1필지분으로 나오고
+    #   사용자는 필지가 빠진 사실 자체를 몰랐다(그 면적이 land_area로 흘러 GFA·수지까지 간다).
+    #   하위 compute_usable_area는 area_unknown_parcels로 이미 이걸 잡아내는데, 상위가 필지를
+    #   먼저 버려서 그 신호가 만들어질 기회조차 없었다 — 이번 캠페인의 '미분석 면적'과 같은 계열.
+    _area_missing = [
+        {"pnu": q.get("pnu"), "address": q.get("address")}
+        for q in _normalized
+        if not ((q.get("area_sqm") or 0) > 0) and (q.get("pnu") or q.get("address"))
+    ]
+    # ★침묵 금지(2026-08-23): 입력이 몇 필지였고 몇 필지가 살아남았는지를 **항상** 남긴다.
+    #   종전엔 아래 `return None` 에 로그조차 없어, 다필지 입력이 통째로 사라져도 흔적이 없었다.
+    _record_multiparcel_collapse(len(_normalized), len(items), len(_area_missing))
     if not items:
+        if _normalized:
+            logger.warning(
+                "다필지 통합 불가 — 전 필지 면적 미확보(단일 경로로 폴백)",
+                input_count=len(_normalized), missing_count=len(_area_missing),
+            )
         return None
     try:
         from app.services.zoning.special_parcel import _aggregate_integrated_zoning
@@ -1634,6 +2050,34 @@ async def build_integrated_context(parcels: list[dict[str, Any]] | None) -> dict
             }
 
         try:
+            # ★WP-A 항목3 — 다필지 세트 구성원 도로접면 신호 집계(신규 조회 없음, items에 이미
+            #   실려온 road_side/road_contact만 재사용). access_basis_service._multi_parcel_
+            #   mitigation_factor의 입력(member_road_contact)으로 소비된다. 신호가 하나도 없으면
+            #   None(정직 미상) — 과대낙관 폴백 금지.
+            _road_signals: list[bool] = []
+            for it in items:
+                rc = it.get("road_contact")
+                if isinstance(rc, bool):
+                    _road_signals.append(rc)
+                    continue
+                rs = it.get("road_side")
+                if rs:
+                    _road_signals.append("맹지" not in str(rs))
+            _member_road_contact: bool | None = any(_road_signals) if _road_signals else None
+            integrated["adjacency"] = {
+                **(integrated.get("adjacency") or {}), "member_road_contact": _member_road_contact,
+            }
+        except Exception as e:  # noqa: BLE001 — 신호 집계 실패는 그 키만 정직 누락(adjacency 본체 보존)
+            logger.warning("다필지 도로접면 신호 집계 실패(graceful)", err=str(e)[:160])
+            integrated["adjacency"] = {**(integrated.get("adjacency") or {}), "member_road_contact": None}
+
+        # ★P0(종상향 랭킹 인접성 게이트 전파) 최상위 additive 노출 — 기존 adjacency 자산을
+        #   그대로 재사용(재계산 금지)해 _calc_upzoning → UpzoningPotentialAnalyzer가 바로
+        #   소비할 수 있는 얕은 키로 승격한다. integrated_zoning(응답 최상위)에도 그대로 실린다.
+        integrated["adjacency_contiguous"] = (integrated.get("adjacency") or {}).get("contiguous")
+        integrated["cluster_count"] = (integrated.get("adjacency") or {}).get("components")
+
+        try:
             # ★P0-2(b)(RC3) 실사용가능용지 3계층(compute_usable_area) 결합 — 도로·구거·하천 지목은
             #   전액 제외(EXCLUDED_LAND_CATEGORIES), GB 등 BLOCKED 게이트 필지도 제외한다(게이트
             #   신호는 위 enrich가 붙인 _special을 special 키로 매핑해야 인식 — enrich 미실행 시엔
@@ -1650,6 +2094,8 @@ async def build_integrated_context(parcels: list[dict[str, Any]] | None) -> dict
             _usable = compute_usable_area(usable_input)
             integrated["usable"] = {
                 "confirmed_sqm": _usable.get("usable_confirmed_sqm"),
+                # 면적 미확보 필지(하위 산출) — 상위에서 거른 분은 아래서 합류시킨다.
+                "area_unknown": _usable.get("area_unknown_parcels") or [],
                 "conditional_sqm": _usable.get("usable_conditional_sqm"),
                 "excluded_sqm": _usable.get("excluded_sqm"),
                 "excluded": _usable.get("excluded_parcels") or [],
@@ -1661,10 +2107,34 @@ async def build_integrated_context(parcels: list[dict[str, Any]] | None) -> dict
             integrated["land_area_effective_sqm"] = (
                 _confirmed if _confirmed and _confirmed > 0 else integrated.get("total_area_sqm")
             )
+            # ★gross 폴백은 **정직 경고를 동반해야 한다**(2026-08-05 R3 H-1).
+            #   확정 면적이 0인 이유가 '전부 미분석'일 때도 gross가 그대로 land_area로 채택돼
+            #   GFA·세대수·수지로 흐른다 — 혼합 케이스만 막고 전부-미분석은 뚫려 있었다.
+            #   면적 자체는 바꾸지 않는다(그래야 분석이 멈추지 않는다). 대신 **잠정임을 말한다**.
+            if not (_confirmed and _confirmed > 0) and integrated.get("total_area_sqm"):
+                _uw = list(integrated["usable"].get("warnings") or [])
+                _uw.append(
+                    "확정 개발가능 면적을 산출하지 못해 공부면적(gross)을 잠정 채택했습니다 — "
+                    "지목·용도지역 미확인 필지가 포함돼 있어 제약 유무를 확인하지 못했습니다."
+                )
+                integrated["usable"]["warnings"] = _uw
+                integrated["land_area_effective_is_gross_fallback"] = True
         except Exception as e:  # noqa: BLE001 — usable 산출 실패는 그 키만 정직 누락(통합집계 보존)
             logger.warning("usable 산출 실패 — usable만 정직 누락(graceful)", err=str(e)[:160])
             integrated["usable"] = None
             integrated["land_area_effective_sqm"] = None
+
+        # ★면적 미확보로 집계에서 빠진 필지를 최상위에 정직 고지한다(usable 실패해도 남는다).
+        if _area_missing:
+            integrated["area_missing_parcels"] = _area_missing
+            if isinstance(integrated.get("usable"), dict):
+                _w = list(integrated["usable"].get("warnings") or [])
+                _w.append(
+                    f"면적 미확보 {len(_area_missing)}필지는 통합 집계에서 제외했습니다 — "
+                    "지번이 특정된 필지의 면적 0은 값이 아니라 수집 실패이므로, 통합면적·"
+                    "실효한도가 그만큼 과소 산출됩니다."
+                )
+                integrated["usable"]["warnings"] = _w
 
         return integrated
     except Exception as e:  # noqa: BLE001 — 통합집계(_aggregate_integrated_zoning) 실패는 단일 경로로 폴백(분석 무중단)

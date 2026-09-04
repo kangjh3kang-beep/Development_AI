@@ -99,7 +99,62 @@ _PANEL_SYSTEM = """\
 자신의 전문 관점에서 독립적으로 검토하고, 핵심 쟁점을 토론한 뒤, 다관점을 통합한 최종
 의견과 검증(반론·리스크·신뢰도)을 제시합니다.
 원칙: 제공 데이터에 근거하고 과장·허위 금지. 전문가마다 관점 차이를 분명히 드러낼 것.
+실효 한도와 법정 한도가 다를 때 그 원인은 자료의 [실효 한도 근거] 블록(far_basis)으로만
+설명하라 — 근거 없이 '조례 실효치'로 단정하는 것을 금지한다(근거 부재 시 '근거 미확인' 표기).
 반드시 JSON만 출력."""
+
+
+def _effective_limit_note(context: dict[str, Any] | str) -> str:
+    """실효 한도 근거 해설 블록 — /regulation/analyze 류 응답의 SSOT 통과키를 사람이 읽는
+    한 문단으로 승격해 프롬프트 선두에 놓는다(무날조 — 존재하는 필드만 사용).
+
+    왜 필요한가(실측 결함): 전체 결과 JSON은 아래 [:N] 절단을 거치는데 effective_far
+    통과키(far_basis·구조상한)는 응답 뒤쪽이라 전문가 LLM에 도달하지 못했고, 전문가들이
+    "실효 80% ≠ 법정 100%"의 원인을 조례로 오귀속했다(자연녹지 구조상한 = 건폐율 20%×
+    최고 4층 = 80%, 조례 인하가 아님). 선두 삽입으로 절단과 무관하게 항상 생존시킨다.
+    """
+    if not isinstance(context, dict):
+        return ""
+    eff = context.get("effective_far")
+    if not isinstance(eff, dict):
+        return ""
+
+    def _num(v: Any) -> float | None:
+        # 외부 클라이언트가 임의 context를 보낼 수 있으므로(라우터 미검증 dict) 수치형만 수용 —
+        # 문자열 값에 :g 포맷을 적용하면 ValueError→500 이 되는 것을 차단(R1 P2).
+        return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+
+    eff_far = _num(eff.get("effective_far_pct"))
+    if eff_far is None:
+        return ""
+    limits = context.get("limits") if isinstance(context.get("limits"), dict) else {}
+    far_slot = limits.get("far") if isinstance(limits.get("far"), dict) else {}
+    legal_far = _num(far_slot.get("legal"))
+    far_basis = eff.get("far_basis")
+    lines = ["[실효 한도 근거 — SSOT]"]
+    head = f"- 실효 용적률 {eff_far:g}%"
+    if legal_far is not None:
+        head += f" (법정 상한 {legal_far:g}%)"
+    lines.append(head)
+    if far_basis and "구조상한" in str(far_basis):
+        cap = _num(eff.get("structural_cap_pct"))
+        floors = _num(eff.get("floor_cap"))
+        bcr = _num(eff.get("effective_bcr_pct"))
+        formula = ""
+        if bcr is not None and floors is not None and cap is not None:
+            formula = f" — 건폐율 {bcr:g}% × 최고 {int(floors)}층 = {cap:g}%"
+        lines.append(
+            f"- 근거: {far_basis}{formula}. 조례가 낮춘 것이 아니라 층수 제한 때문에"
+            " 실무상 도달 가능한 물리적 상한이다(법정 용적률 자체는 유지)."
+        )
+        basis_src = eff.get("floor_cap_basis")
+        if basis_src:
+            lines.append(f"- 층수 제한 근거: {basis_src}")
+    elif far_basis:
+        lines.append(f"- 근거: {far_basis}")
+    else:
+        lines.append("- 근거 필드 미제공 — 원인(조례/구조상한 등)을 단정하지 말 것.")
+    return "\n".join(lines) + "\n\n"
 
 _PANEL_TMPL = """\
 ## 분석 주제
@@ -111,22 +166,22 @@ _PANEL_TMPL = """\
 ## 참여 전문가
 {roster}
 
-## 출력 JSON 스키마
+## 출력 JSON 스키마 (간결하게 — 각 문자열은 핵심만, 장황한 서술 금지)
 {{
   "experts": [
-    {{"role": "전문가명", "opinion": "해당 관점 핵심 의견(2~3문장)",
-      "key_points": ["근거·포인트 1~3개"], "concerns": ["우려·이견 1~2개"]}}
+    {{"role": "전문가명", "opinion": "해당 관점 핵심 의견(2문장 이내)",
+      "key_points": ["근거·포인트 최대 2개"], "concerns": ["우려·이견 최대 2개"]}}
   ],
   "debate": [
-    {{"issue": "쟁점", "positions": "전문가간 이견 요약", "resolution": "토론 결과·절충"}}
+    {{"issue": "쟁점", "positions": "전문가간 이견 요약(1문장)", "resolution": "토론 결과·절충(1문장)"}}
   ],
-  "consensus": "다관점 통합 최종 의견(3~5문장, 가장 합리적인 결론)",
-  "recommended_actions": ["실행 권고 2~4개"],
+  "consensus": "다관점 통합 최종 의견(3문장 이내, 가장 합리적인 결론)",
+  "recommended_actions": ["실행 권고 최대 3개"],
   "verification": {{
     "confidence": 0-100 정수(분석 신뢰도),
-    "risks": ["검증상 핵심 리스크 1~3개"],
-    "counterpoints": ["주의해야 할 반론·맹점 1~3개"],
-    "data_gaps": ["추가 확인 필요 데이터 0~3개"]
+    "risks": ["검증상 핵심 리스크 최대 3개"],
+    "counterpoints": ["주의해야 할 반론·맹점 최대 2개"],
+    "data_gaps": ["추가 확인 필요 데이터 최대 2개"]
   }}
 }}
 전문가는 위 명단 그대로 분석하세요.
@@ -167,12 +222,8 @@ _SYNTH_TMPL = """\
 """
 
 
-def _strip_json(raw: str) -> str:
-    raw = (raw or "").strip()
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        raw = raw[4:] if raw.lower().startswith("json") else raw
-    return raw.strip()
+# 관대 JSON 추출은 공용 파서(llm_json) SSOT로 일원화 — 프리앰블·후행 설명 허용.
+from app.services.ai.llm_json import parse_llm_json  # noqa: E402
 
 
 class ExpertPanelService:
@@ -203,12 +254,17 @@ class ExpertPanelService:
 
         # Prepare context string and append recalled memories if present
         # ★회상 포맷은 공용 헬퍼 단일경유(specialist_agent와 동일 계약) — score None/비수치 안전(:.2f 오류 방지).
+        # ★실효 한도 근거 블록을 '선두'에 삽입 — 아래 절단([:N])을 항상 생존해 far_basis 오귀속
+        #   (구조상한 80%를 '조례 실효치'로 설명)을 차단한다. 필드 부재 시 빈 문자열(무날조).
         ctx_str = context if isinstance(context, str) else json.dumps(context, ensure_ascii=False)
+        ctx_str = _effective_limit_note(context) + ctx_str
         if rag_memories:
             from app.services.memory_hub.recall_format import format_recall_block
             ctx_str += format_recall_block(rag_memories, header="[이전 유사 분석 및 참고 노하우]")
 
-        ctx_str = ctx_str[:4000]
+        # 6000자: 종전 4000자는 규제 결과 JSON 후반부(근거 통과키·evidence)를 통째로 잘랐다.
+        # 근거 블록 선두 삽입과 별개로, 절단 여유를 완만히 상향(비용 영향 제한적).
+        ctx_str = ctx_str[:6000]
 
         if mode in ("deep", "graph"):
             # LangGraph 일원화: 전문가(다각도) → 검증(원데이터 대조·할루시네이션 게이트) → 통합.
@@ -229,7 +285,9 @@ class ExpertPanelService:
             result["rag_memories"] = rag_memories
 
         # 2. RAG Ingestion (if not skipped)
-        if not skip_memory and result.get("consensus"):
+        # WP-R4: degraded 폴백(generated=False)은 "일시적으로 제공되지 않습니다" 류 메시지라
+        #   노하우 메모리로 적재하면 향후 RAG 회상을 오염시킨다 → generated 결과만 적재(정직).
+        if not skip_memory and result.get("generated") and result.get("consensus"):
             try:
                 import uuid
 
@@ -259,6 +317,11 @@ class ExpertPanelService:
         return result
 
     async def _single(self, subject, address, ctx, roster) -> dict[str, Any]:
+        # WP-R4: 실패 사유(truncation/timeout/validation/provider)를 분류해 degraded로 전달한다.
+        #   ★근본원인: max_tokens=3500이 4전문가 JSON을 절단 → json.loads 실패 → 침묵 폴백이었다.
+        #   4전문가 풀 스키마(전문가+토론+합의+검증)의 실측 출력은 약 2.5~3.5k 토큰이라 3500은 경계선
+        #   절단이 상시 발생 → 8000으로 상향(약 2.3배 헤드룸)해 절단을 구조적으로 제거한다.
+        reason: str | None = None
         try:
             from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -268,21 +331,35 @@ class ExpertPanelService:
             roster_str = "\n".join(f"- {r['role']} ({r['lens']})" for r in roster)
             user = _PANEL_TMPL.format(subject=subject, address=address or "대상지",
                                       context=ctx, roster=roster_str)
-            llm = get_llm(timeout=75, max_tokens=3500)
+            llm = get_llm(service="expert_panel", timeout=90, max_tokens=8000)
             resp = await llm.ainvoke(
                 [SystemMessage(content=_PANEL_SYSTEM + GROUNDING_RULE), HumanMessage(content=user)]
             )
             # 계측: BaseInterpreter 밖 직접 호출도 동일하게 토큰·과금 기록(best-effort)
             from app.services.ai.base_interpreter import record_llm_response_billing
             await record_llm_response_billing(llm, resp, service="expert_panel")
-            data = json.loads(_strip_json(resp.content if hasattr(resp, "content") else str(resp)))
+            raw = resp.content if hasattr(resp, "content") else str(resp)
+            # 절단 감지: provider stop_reason이 length/max_tokens면 응답이 잘린 것(무목업·정직 사유).
+            from app.services.ai.llm_json import is_truncated
+            try:
+                data = parse_llm_json(raw)
+            except json.JSONDecodeError:
+                reason = "truncation" if is_truncated(resp) else "invalid_json"
+                raise
             if not isinstance(data.get("experts"), list):
+                reason = "validation"
                 raise ValueError("experts 누락")
             data["generated"] = True
             return data
         except Exception as e:  # noqa: BLE001
-            logger.warning("전문가 패널(single) 실패, 폴백", err=str(e)[:100])
-            return self._fallback(roster)
+            if reason is None:
+                name = type(e).__name__.lower()
+                reason = "timeout" if ("timeout" in name or "timeout" in str(e).lower()) else "provider"
+            logger.warning(
+                "전문가 패널(single) 실패 — degraded(침묵 폴백 아님)",
+                reason=reason, err=str(e)[:160],
+            )
+            return self._fallback(roster, degraded_reason=reason)
 
     async def _deep(self, subject, address, ctx, roster) -> dict[str, Any]:
         try:
@@ -294,14 +371,14 @@ class ExpertPanelService:
             async def one_expert(r: dict) -> dict[str, Any]:
                 user = _EXPERT_TMPL.format(role=r["role"], lens=r["lens"],
                                            subject=subject, address=address or "대상지", context=ctx)
-                llm = get_llm(timeout=60, max_tokens=900)
+                llm = get_llm(service="expert_panel", timeout=60, max_tokens=900)
                 resp = await llm.ainvoke(
                     [SystemMessage(content=_EXPERT_SYSTEM + GROUNDING_RULE), HumanMessage(content=user)]
                 )
                 from app.services.ai.base_interpreter import record_llm_response_billing
                 await record_llm_response_billing(llm, resp, service="expert_panel")
                 try:
-                    d = json.loads(_strip_json(resp.content if hasattr(resp, "content") else str(resp)))
+                    d = parse_llm_json(resp.content if hasattr(resp, "content") else str(resp))
                     d.setdefault("role", r["role"])
                     return d
                 except Exception:  # noqa: BLE001
@@ -318,13 +395,13 @@ class ExpertPanelService:
                 f"우려: {', '.join(e.get('concerns') or [])})" for e in experts
             )
             synth_user = _SYNTH_TMPL.format(subject=subject, address=address or "대상지", opinions=opinions)
-            llm = get_llm(timeout=70, max_tokens=2000)
+            llm = get_llm(service="expert_panel", timeout=70, max_tokens=2000)
             resp = await llm.ainvoke(
                 [SystemMessage(content=_SYNTH_SYSTEM + GROUNDING_RULE), HumanMessage(content=synth_user)]
             )
             from app.services.ai.base_interpreter import record_llm_response_billing
             await record_llm_response_billing(llm, resp, service="expert_panel")
-            synth = json.loads(_strip_json(resp.content if hasattr(resp, "content") else str(resp)))
+            synth = parse_llm_json(resp.content if hasattr(resp, "content") else str(resp))
             return {
                 "generated": True,
                 "experts": experts,
@@ -337,17 +414,34 @@ class ExpertPanelService:
             logger.warning("전문가 패널(deep) 실패, single 폴백", err=str(e)[:100])
             return await self._single(subject, address, ctx, roster)
 
+    # WP-R4: degraded 사유별 정직 메시지(무목업) — 프론트가 사유를 구분 표기(침묵 폴백 금지).
+    _DEGRADED_MSG: dict[str, str] = {
+        "truncation": "전문가 패널 응답이 토큰 한도로 잘려 검증을 완료하지 못했습니다. 다시 시도하면 정상화될 수 있습니다.",
+        "invalid_json": "전문가 패널 응답을 해석하지 못했습니다(형식 오류). 잠시 후 다시 시도하세요.",
+        "validation": "전문가 패널 응답 형식 검증에 실패했습니다(필수 항목 누락). 잠시 후 다시 시도하세요.",
+        "timeout": "전문가 패널 LLM 응답이 시간 초과되었습니다. 잠시 후 다시 시도하세요.",
+        "provider": "전문가 패널 LLM 연결에 실패했습니다. 잠시 후 다시 시도하세요.",
+    }
+
     @staticmethod
-    def _fallback(roster) -> dict[str, Any]:
+    def _fallback(roster, degraded_reason: str | None = None) -> dict[str, Any]:
+        consensus = ExpertPanelService._DEGRADED_MSG.get(
+            degraded_reason or "",
+            # ★"잠시 후 다시 시도하세요"는 **재시도로 풀린다는 단정**이다. 실제로는 모델 API 변경 같은
+            #   영구 실패가 이 문구 뒤에 숨어 있었다(2026-08-21 LLM 계층 사망).
+            "전문가 패널 분석을 생성하지 못했습니다.",
+        )
         return {
             "generated": False,
+            # 실패 사유(truncation/timeout/validation/invalid_json/provider) — 프론트 degraded 표기용.
+            "degraded_reason": degraded_reason,
             "experts": [
                 {"role": r["role"], "opinion": "AI 패널 연결 후 상세 의견이 제공됩니다.",
                  "key_points": [], "concerns": []}
                 for r in roster
             ],
             "debate": [],
-            "consensus": "전문가 패널 분석은 일시적으로 제공되지 않습니다. 잠시 후 다시 시도하세요.",
+            "consensus": consensus,
             "recommended_actions": [],
             "verification": {"confidence": None, "risks": [], "counterpoints": [], "data_gaps": []},
         }

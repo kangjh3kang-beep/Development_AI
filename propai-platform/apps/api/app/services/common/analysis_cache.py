@@ -12,6 +12,7 @@
 import hashlib
 import json
 import logging
+from datetime import UTC
 
 from sqlalchemy import text
 
@@ -106,3 +107,57 @@ async def cache_put(kind: str, key: str, payload: dict) -> None:
             await db.commit()
     except Exception:  # noqa: BLE001 — 저장 실패는 분석 결과를 손상하지 않는다
         pass
+
+
+# ── LLM 폴백 캐시오염 방지(2026-07-22 라이브 실측) ────────────────────────────
+# 규제분석에서 간헐 LLM 파싱 실패의 폴백("AI 해석 일시 미제공")이 영속 캐시에 박제되어,
+# 이후 모든 조회가 refresh 전까지 영원히 폴백을 반환하는 결함이 실측됐다(자가치유 불가).
+# 동일 패턴이 permits·market_report에도 존재 — 판정 술어를 여기 한 곳으로 공용화한다.
+
+# 오염 캐시 재시도 유예(초) — 즉시 miss 취급하면 폴백이 반복되는 동안 호출마다 LLM 재시도
+# 비용(토큰 과금·수십 초 지연)이 발생하므로, 유예 내에는 캐시본을 그대로 반환해 폭주를 막는다.
+LLM_FALLBACK_RETRY_SEC = 300
+
+
+def llm_fallback_present(payload) -> bool:
+    """캐시된 분석 결과에 'LLM 해석 폴백(미생성)' 마커가 있는지 판정.
+
+    알려진 마커(각 서비스의 폴백 계약): regulation `ai.generated=False` ·
+    permits `ai=False`(불리언) · market_report `narrative.generated=False`.
+    마커가 '없는' 경우(use_llm=False 경로 등)는 폴백으로 보지 않는다(무해).
+    """
+    if not isinstance(payload, dict):
+        return False
+    ai = payload.get("ai")
+    if ai is False:
+        return True
+    if isinstance(ai, dict) and ai.get("generated") is False:
+        return True
+    narrative = payload.get("narrative")
+    if isinstance(narrative, dict) and narrative.get("generated") is False:
+        return True
+    return False
+
+
+def llm_fallback_stale(cached) -> bool:
+    """오염(LLM 폴백) 캐시이면서 재시도 유예가 지났는지 — True면 miss로 취급해 자가치유.
+
+    라우터 사용 계약: `if cached is not None and not (use_llm and llm_fallback_stale(cached)):
+    return cached`. 재분석이 성공하면 cache_put(upsert)이 오염본을 덮어써 치유가 완결되고,
+    또 실패하면 폴백이 다시 저장되며 created_at이 갱신돼 유예가 재설정된다(재시도 폭주 방지).
+    """
+    if not llm_fallback_present(cached):
+        return False
+    created = None
+    meta = cached.get("_cache") if isinstance(cached, dict) else None
+    if isinstance(meta, dict):
+        created = meta.get("created_at")
+    try:
+        from datetime import datetime
+        dt = datetime.fromisoformat(str(created))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        age_sec = (datetime.now(UTC) - dt).total_seconds()
+        return age_sec >= LLM_FALLBACK_RETRY_SEC
+    except Exception:  # noqa: BLE001 — 메타 결손/파싱 실패는 재시도 허용(치유 우선)
+        return True

@@ -1,0 +1,11 @@
+{
+  "_meta": {
+    "seed_id": "K1_PLACEHOLDER",
+    "biz_model": "재건축",
+    "status": "PLACEHOLDER — 미채움(정직표기).",
+    "planned_defect": "K1 재초환(재건축부담금) 미반영 → 사업성 정반대. m02_reconstruction 엔진 존재하나 analyze() 미호출(감사경로 밖).",
+    "planned_phase": "Phase G/1+ (사업유형 strata·격리 고위험 엔진 배선). W0 범위 밖.",
+    "honesty": "2차 층화축(사업유형)의 scaffold. 실입력·현행assert 미채움 — 무목업 원칙상 합성으로 채우지 않고 구조(디렉토리·네이밍)만 시드. 착수 시 강남 재건축 실주소로 채운다.",
+    "filled": false
+  }
+}

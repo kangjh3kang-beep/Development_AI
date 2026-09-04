@@ -18,8 +18,8 @@ import { Home, Users, Wallet } from "lucide-react";
 import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, LabelList } from "recharts";
 import type { DemographicProfile, DataSource, UnitMixRecommendation } from "./marketTypes";
 import { DataSourceBadge } from "./DataSourceBadge";
+import { formatManwon as formatMan } from "@/lib/formatters";
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
 
 // 연령 키 → 한국어 라벨(백엔드 mock/실데이터 키와 통일).
 const AGE_LABELS: Record<string, string> = {
@@ -44,16 +44,6 @@ function toCount(v: number | Record<string, number> | undefined): number {
   if (typeof v === "number") return v;
   if (v && typeof v === "object") return Object.values(v).reduce((a, b) => a + (Number(b) || 0), 0);
   return 0;
-}
-
-function formatMan(man?: number): string {
-  if (!man || man <= 0) return "-";
-  if (man >= 10000) {
-    const uk = Math.floor(man / 10000);
-    const rest = man % 10000;
-    return rest > 0 ? `${uk}억 ${rest.toLocaleString()}만원` : `${uk}억원`;
-  }
-  return `${man.toLocaleString()}만원`;
 }
 
 export function DemographicPanel({ data, unitMix }: { data?: DemographicProfile | null; unitMix?: UnitMixRecommendation | null }) {
@@ -99,7 +89,7 @@ export function DemographicPanel({ data, unitMix }: { data?: DemographicProfile 
 
   return (
     <>
-    <div className="grid gap-6 md:grid-cols-2">
+    <div className={`grid gap-6${hasPop && hasIncome ? " md:grid-cols-2" : ""}`}>
       {/* 인구·가구 구조(SGIS) */}
       {hasPop && (
         <div className="sa-di-block">
@@ -128,7 +118,7 @@ export function DemographicPanel({ data, unitMix }: { data?: DemographicProfile 
                     <Tooltip
                       cursor={{ fill: "color-mix(in srgb, var(--accent-strong) 8%, transparent)" }}
                       formatter={(v: any) => [`${Number(v).toLocaleString()}명`, "인구"]}
-                      contentStyle={{ background: "var(--surface-card)", border: "1px solid var(--line-strong)", borderRadius: 8, fontSize: 12 }}
+                      contentStyle={{ background: "var(--surface-strong)", border: "1px solid var(--line-strong)", borderRadius: "var(--r-card)", fontSize: 12 }}
                     />
                     <Bar dataKey="count" fill="var(--accent-strong)" radius={[0, 4, 4, 0]}>
                       <LabelList dataKey="count" position="right" formatter={(v: any) => Number(v).toLocaleString()}
@@ -153,7 +143,7 @@ export function DemographicPanel({ data, unitMix }: { data?: DemographicProfile 
                     </Pie>
                     <Tooltip
                       formatter={(v: any, n: any) => [`${Number(v).toLocaleString()}`, n]}
-                      contentStyle={{ background: "var(--surface-card)", border: "1px solid var(--line-strong)", borderRadius: 8, fontSize: 12 }}
+                      contentStyle={{ background: "var(--surface-strong)", border: "1px solid var(--line-strong)", borderRadius: "var(--r-card)", fontSize: 12 }}
                     />
                   </PieChart>
                 </ResponsiveContainer>
@@ -189,7 +179,7 @@ export function DemographicPanel({ data, unitMix }: { data?: DemographicProfile 
                 <p className="sa-di-eyebrow mb-2">소득 구간 비율</p>
                 <ul className="space-y-1.5 text-xs text-[var(--text-secondary)]">
                   {Object.entries(income.income_bracket_ratio).map(([k, v]) => (
-                    <li key={k} className="flex items-center justify-between border-b border-[var(--line-light)] pb-1">
+                    <li key={k} className="flex items-center justify-between border-b border-[var(--line-subtle)] pb-1">
                       <span>{k.replace("under_30m", "3천만원 미만").replace("30m_to_70m", "3천~7천만원").replace("over_70m", "7천만원 이상")}</span>
                       <span className="font-bold text-[var(--text-primary)]">{Number(v).toFixed(1)}%</span>
                     </li>

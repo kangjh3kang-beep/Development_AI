@@ -55,7 +55,3 @@ class TestFinancePipeline:
     @pytest.mark.skip(reason="전체 서비스 스택 필요 — CI에서 실행")
     async def test_jeonse_risk_with_real_address(self) -> None:
         """실제 주소로 전세 리스크 분석이 정상 동작한다."""
-
-    @pytest.mark.skip(reason="전체 서비스 스택 필요 — CI에서 실행")
-    async def test_union_contribution_calculation(self) -> None:
-        """조합원 분담금 산정이 일관된 결과를 반환한다."""

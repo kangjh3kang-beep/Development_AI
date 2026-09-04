@@ -52,7 +52,7 @@ export default function PriceTableEditor({ siteCode, roundId }: { siteCode: stri
       {/* ★[iter-4 warning 배너] 재생성 시 원가구성 경고(흡수금지·왜곡·음수clamp) 정직 노출 —
           Σ구성≠분양가·VAT 과세표준 과소합산 신호. PriceGroupingPanel 과 동일 디자인. */}
       {warnings.length > 0 && (
-        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5">
+        <div className="rounded-lg border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 px-2.5 py-1.5">
           <p className="flex items-center gap-1.5 text-[11px] font-bold text-amber-600"><AlertTriangle className="size-3.5 shrink-0" aria-hidden />원가구성 경고 — 분양가 합과 구성요소 합이 어긋날 수 있습니다(원가구성 비율 합=1 점검)</p>
           <ul className="mt-1 space-y-0.5">
             {warnings.map((w, i) => (

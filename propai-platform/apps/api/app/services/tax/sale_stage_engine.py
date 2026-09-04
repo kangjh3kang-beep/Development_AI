@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.services.legal.legal_reference_registry import get_legal_ref
 from app.services.tax.regional_tax_data import (
     HUG_GUARANTEE_RATES,
     VAT_EXEMPT_AREA_SQM,
@@ -126,7 +127,7 @@ def calculate_c06_housing_bond_buyer(
 def calculate_c07_infrastructure_charge(
     *,
     total_gfa_sqm: float,
-    in_infra_charge_zone: bool = False,
+    in_infra_charge_zone: bool | None = None,
     standard_cost_per_sqm_won: int = 82_000,  # 국토부 고시 표준시설비용(2026 기준·고시 원문 재확인 권장)
     charge_rate: float = 0.20,                # 부담률 20% (국토계획법 §68 — 조례로 ±25% 가감)
 ) -> dict[str, Any]:
@@ -135,13 +136,39 @@ def calculate_c07_infrastructure_charge(
     ★게이트: 부담구역으로 지정되지 않은 대다수 사업지는 미부과(0). 지정 시에만
     (표준시설비용 × 부담률) × 건축연면적으로 부과한다. 종전 구현은 게이트 없이 전 프로젝트에
     연면적 × 15,000원을 무조건 부과해, 부담구역 아닌 사업지의 총사업비를 구조적으로 과대계상했다.
+
+    ★**세 상태를 가른다**(2026-08-26 — 종전엔 둘이 뭉개져 있었다):
+
+        True   지정 확인 → 부과
+        False  **조회했고** 해당 없음 → 미부과(확정)
+        None   **미조회** → 미부과(잠정) · confidence=unavailable
+
+    종전 기본값은 `False` 였고 사유를 **`"기반시설부담구역 미지정"`** 이라고 썼다.
+    그런데 이 값을 실제로 넘기는 곳이 **한 군데도 없었다**(프론트 출현 0건 · 대조군
+    `total_gfa_sqm` 33건) — 즉 **미조회**인데 화면에는 **미지정이라는 관측 주장**이 나갔다.
+    ★증거 규율 §1 — **미측정을 관측처럼 쓰지 않는다.**
+
+    금액은 셋 다 0 이다(안전측 유지 — 이 커밋은 **표기만** 바로잡는다. 값을 바꾸면
+    배선 수정과 값 변경이 한 커밋에 섞인다). 다만 `None` 은 `confidence="unavailable"` 로
+    **합계에 반영되지 않았음이 아니라 「확정이 아님」**을 하류에 알린다.
     """
     if not in_infra_charge_zone:
+        surveyed = in_infra_charge_zone is False
         return {
             "code": "C07", "name": "기반시설부담금",
             "base_won": 0, "rate": 0,
             "amount_won": 0,
-            "detail": {"reason": "기반시설부담구역 미지정 — 미부과 (국토계획법 §67~69)"},
+            **({} if surveyed else {"confidence": "unavailable"}),
+            "detail": {
+                "reason": (
+                    "기반시설부담구역 미지정 — 미부과 (국토계획법 §67~69)"
+                    if surveyed else
+                    "기반시설부담구역 지정 여부 **미조회** — 잠정 미부과. "
+                    "지정 구역이면 연면적 × (표준시설비용 × 부담률)이 부과된다 "
+                    "(국토계획법 §67~69). 구역 지정 여부를 확인해 주십시오."
+                ),
+                "surveyed": surveyed,
+            },
         }
     per_sqm = round(standard_cost_per_sqm_won * charge_rate)  # 표준시설비용 × 부담률
     amount = int(total_gfa_sqm * per_sqm)
@@ -174,7 +201,7 @@ def calculate_all_sale_stage(
     avg_area_sqm: float = 85.0,
     total_gfa_sqm: float = 0,
     building_type: str = "apartment",
-    in_infra_charge_zone: bool = False,
+    in_infra_charge_zone: bool | None = None,   # ★3상태 — None=미조회(§증거규율 1)
 ) -> dict[str, Any]:
     """C01~C08 분양단계 전체 일괄 계산.
 
@@ -213,6 +240,12 @@ def calculate_all_sale_stage(
         it["borne_by"] = "buyer"
 
     items = developer_items[:3] + buyer_items + developer_items[3:]  # 기존 C01~C08 순서 유지
+    # 기반시설부담금(C07)에 법령 근거(근거+링크·evidence) 부착 — 국토계획법 §67~69.
+    for it in items:
+        if it.get("code") == "C07":
+            ref = get_legal_ref("infra_facility_charge")
+            if ref:
+                it["legal_ref"] = ref
     total = sum(it["amount_won"] for it in developer_items)
     buyer_total = sum(it["amount_won"] for it in buyer_items)
     return {

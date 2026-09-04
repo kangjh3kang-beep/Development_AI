@@ -21,7 +21,7 @@ export function OperationsRouteHero({
     <Card className="rounded-[var(--radius-2xl)] bg-[var(--surface-strong)] shadow-[var(--shadow-lg)]">
       <CardContent className="p-8">
         <div className="flex flex-wrap items-center gap-3">
-          <span className="rounded-full bg-[rgba(14,116,144,0.1)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--accent-strong)]">
+          <span className="rounded-full bg-[rgba(14,116,144,0.1)] px-4 py-2 label-caps text-[var(--accent-strong)]">
             {eyebrow}
           </span>
           <span className="rounded-full border border-[var(--line)] px-4 py-2 text-xs font-medium text-[var(--text-secondary)]">
@@ -42,7 +42,7 @@ export function OperationsRouteHero({
           </CardHeader>
           <Card className="rounded-[var(--radius-xl)] bg-[var(--surface-soft)] shadow-none">
             <CardContent className="p-5">
-              <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
+              <p className="label-caps text-[var(--text-tertiary)]">
                 Live Scope
               </p>
               <ul className="mt-4 grid gap-3">

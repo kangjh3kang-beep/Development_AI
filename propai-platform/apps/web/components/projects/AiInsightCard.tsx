@@ -32,7 +32,7 @@ export function AiInsightCard({ address }: { address?: string | null }) {
           {loading ? "해석 중…" : ai ? "다시 해석" : "AI 해석 생성"}
         </button>
       </div>
-      {error && <p className="mt-2 text-[11px] text-[var(--danger,#dc2626)]">{error}</p>}
+      {error && <p className="mt-2 text-[11px] text-[var(--status-error)]">{error}</p>}
       {ai && (
         <div className="mt-2.5 space-y-2.5">
           {ai.overall_summary && (

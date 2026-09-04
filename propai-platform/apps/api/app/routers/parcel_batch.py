@@ -14,12 +14,16 @@ main.py 배선은 통합자가 한다(여기서는 router 만 export).
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
 from app.foundation.parcel.batch.batch_service import BatchService
 from app.foundation.parcel.batch.job_store import DbJobStore
-from app.foundation.parcel.contracts.batch import BatchInput, BatchResult
+from app.foundation.parcel.contracts.batch import BatchInput, BatchResult, JobState
 from app.services.auth.auth_service import get_current_user
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/v1/parcels/batch",
@@ -34,11 +38,19 @@ def _service() -> BatchService:
 
 
 async def _run_inprocess(job_id: str) -> None:
-    """인프로세스 백그라운드 실행(워커 미가동 폴백)."""
+    """인프로세스 백그라운드 실행(워커 미가동 폴백).
+
+    ★버그수정(FAILED 도달불가): BatchService.run()이 예외를 JobState.FAILED로 저장한 뒤
+    재전파하므로(app/foundation/parcel/batch/batch_service.py), 여기서는 로깅만 한다.
+    과거엔 이 except가 `pass`로 예외를 완전히 삼켜 아무 코드도 FAILED를 쓰지 않았다 —
+    잡이 RUNNING에 영구 고착돼 BulkParcelBatchPanel.tsx가 1.5s 간격으로 무한 폴링했다.
+    """
     try:
         await _service().run(job_id)
-    except Exception:  # noqa: BLE001 - 백그라운드 실패는 폴링 상태로 노출됨
-        pass
+    except Exception as e:  # noqa: BLE001 - FAILED 저장은 run() 내부에서 이미 수행됨. 로그만.
+        logger.warning(
+            "배치 인프로세스 실행 실패(FAILED로 저장됨): job_id=%s error=%s", job_id, str(e)[:200]
+        )
 
 
 def _enqueue_celery(job_id: str) -> bool:
@@ -69,6 +81,15 @@ async def submit_batch(
     # (브로커 미가동 시 Celery delay 가 ~20s 블록하므로, 플래그로 게이팅해 submit 즉시 응답 보장.
     #  제미나이 인프라트랙에서 워커·Redis 준비 후 PARCEL_BATCH_USE_CELERY=1 로 컷오버.)
     import os
+
+    # ★이미 끝난 잡을 멱등으로 돌려받았으면 **다시 돌리지 않는다**(2026-09-03 실측).
+    #   종전엔 `submit` 이 기존 잡을 반환해도 실행을 무조건 예약해, 같은 입력 재제출마다
+    #   외부 조회가 다시 나가고 결과가 중복됐다(라이브: `total=2` → 재제출 `total=4`).
+    #   ★`run()` 자체도 멱등으로 고쳤지만(batch_service: 시작 시 items 비움) 그것은 **정확성**이고,
+    #     이 가드는 **비용**이다 — 206필지면 외부 호출 206건이 통째로 낭비된다. 서로를 대신하지 못한다.
+    if job.state in (JobState.COMPLETE, JobState.PARTIAL):
+        return {"job_id": job.id, "state": job.state.value, "snapshot_id": job.snapshot_id}
+
     enqueued = False
     if os.getenv("PARCEL_BATCH_USE_CELERY", "").strip() in ("1", "true", "yes", "on"):
         enqueued = _enqueue_celery(job.id)

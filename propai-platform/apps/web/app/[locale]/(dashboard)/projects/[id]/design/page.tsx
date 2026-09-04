@@ -25,6 +25,7 @@ import { ModulePlaceholder } from "@/components/layout/ModulePlaceholder";
 import { NextStageCta } from "@/components/projects/NextStageCta";
 import { DesignStudio } from "@/components/design/DesignStudio";
 import { DesignGenPanel } from "@/components/design/DesignGenPanel";
+import { C2rBriefSection } from "@/components/design/C2rBriefSection";
 import { AnalysisVerificationPanel } from "@/components/common/AnalysisVerificationPanel";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { isValidLocale, type Locale } from "@/i18n/config";
@@ -110,6 +111,16 @@ export default function DesignPage() {
         transition={{ delay: 0.16 }}
       >
         <DesignGenPanel projectId={id} />
+      </motion.div>
+
+      {/* ②-c C2R(좌표→렌더) 부지 렌더 브리프·이미지 렌더(배선 캠페인 3차, additive) —
+          그동안 미배선 orphan 해소. 기본 접힘(AdvancedDrawer). */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.18 }}
+      >
+        <C2rBriefSection pnu={siteAnalysis?.pnu} address={siteAnalysis?.address} />
       </motion.div>
 
       {/* ③ 설계 스튜디오 — 명시적 "열기" CTA 게이트(WebGL 지연 마운트) */}

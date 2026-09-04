@@ -29,8 +29,19 @@ class ModuleInput:
     total_households: int = 0
 
     # 분양
-    avg_sale_price_per_pyeong: float = 0
-    avg_area_pyeong: float = 0
+    avg_sale_price_per_pyeong: float = 0  # 평당 분양가 — 기준은 price_basis 필드가 명시
+    avg_area_pyeong: float = 0  # ★D1 규약: '전용면적 평'
+    # ★D1-R1(단가 basis 계약): 평당 단가(분양·임대)의 면적 기준.
+    #   "supply"(기본) = 공급면적 기준 시세(지역시세 테이블·수동폼 관례) → 매출 곱 시
+    #     revenue_block이 면적을 공급평(전용÷전용률)으로 환산해 basis를 일치시킨다.
+    #   "exclusive" = 전용면적 기준 단가(MOLIT 실거래 폐루프 — excluUseAr 기반) → 전용면적
+    #     그대로 곱한다(환산 시 +33% 과대 회귀 — 2026-07-16 리뷰 라이브 재현).
+    # ★설계한계(단일 플래그): 분양·임대(rental)·조합(union) 단가가 이 플래그 하나를
+    #   공유한다 — 두 단가의 면적 기준이 서로 다른 혼합 입력(예: 분양=공급 시세,
+    #   임대=전용 실거래)은 표현 불가. 현행 생산처는 모두 단일 출처(시세 테이블 또는
+    #   MOLIT 폐루프)라 실害 없음. 분리 필요 시 rent_price_basis 필드 추가가 정답이며,
+    #   그 전까지 혼합 basis 입력을 만들지 말 것(생산처 계약).
+    price_basis: str = "supply"
     sale_ratio: float = 1.0
 
     # 금융
@@ -88,6 +99,10 @@ class ModuleOutput:
     cost_detail: dict[str, Any] = field(default_factory=dict)
     tax_detail: dict[str, Any] = field(default_factory=dict)
     special_detail: dict[str, Any] = field(default_factory=dict)
+    # ★W3(100% 캠페인, additive): 월별 DCF 요약 — service.calculate가 부착.
+    #   {npv_won, irr_pct, payback_month, dscr(임대형 한정)|dscr_reason, npv_basis, assumptions}.
+    #   None = DCF 미산출(수입/비용 결측 등 — 정직 강등). npv_won 필드는 DCF 기저로 교체됨.
+    cashflow_summary: dict[str, Any] | None = None
 
 
 class BaseModule(ABC):

@@ -97,7 +97,7 @@ class AvmInterpreter(BaseInterpreter):
         user_prompt = USER_PROMPT_TEMPLATE.format(
             analysis_json=json.dumps(compact, ensure_ascii=False, indent=2),
         )
-        return await self._invoke(
+        return await self._invoke_or_empty(
             user_prompt,
             cache_data=compact,
             evidence_data=avm_data,

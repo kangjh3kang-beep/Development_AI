@@ -27,14 +27,18 @@ interface Accrual { revenue_recognized: number; cost_total: number; commission: 
 //   discrepancies[].key 주요값: schedule_missing_for_signed(서명매출>0인데 약정표 누락)·
 //   schedule_vs_contract(약정총액≠계약총액)·schedule_ratio_invalid(비율결함)·paid_exceeds_schedule(수납>약정).
 interface ReconDiscrepancy { key: string; detail?: string; delta?: number; count?: number }
-interface Reconciliation { balanced: boolean | null; discrepancies?: ReconDiscrepancy[]; schedule_present?: boolean; scheduled_total?: number; installment_paid?: number; tolerance?: number; note?: string }
+// ★보류 3종 세트(app/utils/withheld.py `withheld()`) — balanced=null 일 때만 채워진다.
+//   balanced_basis  : **왜 대사를 못 했는지** 사람이 읽는 문구(백엔드가 말한다 — 화면이 지어내지 않는다).
+//   balanced_absent : 닫힌 어휘의 사유 **코드**(기계가 센다). 예 insufficient_coverage.
+interface Reconciliation { balanced: boolean | null; balanced_basis?: string; balanced_absent?: string; discrepancies?: ReconDiscrepancy[]; schedule_present?: boolean; scheduled_total?: number; installment_paid?: number; tolerance?: number; note?: string }
 // sites[] 는 합산 가능한 '정상 데이터 행'만 담는다. 집계 실패 현장은 sites[] 에서 제외되고
 // roll.errors[] 단일출처로만 표기된다(아래 통합회계 배너가 errors[] 를 직접 렌더). 따라서
 // 행 레벨 ERROR 필드(status='ERROR'·error_code·correlation_id·site_status)는 두지 않는다(타입-데이터 정합).
 interface RollupSite { site_id: string; site_name: string; status: string; revenue: number; cost_total: number; commission: number; profit_estimate: number; by_type: ByType[]; cash_flow?: CashFlow; accrual?: Accrual; deferred_revenue?: number; reconciliation?: Reconciliation }
 // consolidated.complete/failed_count/partial: 통합총계 완전성(머신리더블). partial=일부 현장 누락(과소계상).
 // reconcile_failed_count: 합산은 됐으나 독립 대사 불일치(balanced=false)인 현장 수(원장 정합 경고).
-interface RollupConsolidated { revenue: number; cost_total: number; commission: number; profit_estimate: number; by_type: ByType[]; cash_collected?: number; cash_profit?: number; deferred_revenue?: number; receivable?: number; complete?: boolean; failed_count?: number; partial?: boolean; reconcile_failed_count?: number }
+// reconcile_withheld_count: 독립 대사를 **수행하지 못한**(balanced=null) 현장 수. failed 와 **다른 축**이다.
+interface RollupConsolidated { revenue: number; cost_total: number; commission: number; profit_estimate: number; by_type: ByType[]; cash_collected?: number; cash_profit?: number; deferred_revenue?: number; receivable?: number; complete?: boolean; failed_count?: number; partial?: boolean; reconcile_failed_count?: number; reconcile_withheld_count?: number }
 interface RollupError { site_id: string; site_name: string; error_code: string; correlation_id: string }
 interface Rollup { consolidated: RollupConsolidated; sites: RollupSite[]; errors?: RollupError[]; note: string }
 // 분류코드 → 운영자용 한국어 라벨(원문 비노출, 안전한 카테고리만).
@@ -144,13 +148,13 @@ export default function DeveloperProjection() {
           {/* 부분내결함 표기(은폐 금지·dead output 해소): consolidated.partial(머신리더블)로 판별.
               실패 현장별 ERROR 배지 + 분류코드 + 상관ID(서버로그 역추적) 노출 — 나머지는 정상 합산. */}
           {(con.partial || (roll?.errors && roll.errors.length > 0)) && (
-            <div className="mt-2 rounded-lg border border-[var(--error)]/40 bg-[var(--error)]/10 px-2.5 py-2 text-[11px] text-[var(--error)]">
+            <div className="mt-2 rounded-lg border border-[var(--status-error)]/40 bg-[var(--status-error)]/10 px-2.5 py-2 text-[11px] text-[var(--status-error)]">
               <b>통합총계 일부 누락 · 현장 집계 실패({con.failed_count ?? roll?.errors?.length ?? 0}곳)</b>
               <span className="ml-1 text-[var(--text-secondary)]">아래 현장은 합산에서 제외(과소계상)되었습니다. 나머지 현장은 정상 합산됩니다.</span>
               <div className="mt-1.5 flex flex-wrap gap-1.5">
                 {(roll?.errors ?? []).map((e) => (
-                  <span key={e.site_id} className="inline-flex items-center gap-1 rounded border border-[var(--error)]/50 bg-[var(--error)]/15 px-1.5 py-0.5">
-                    <b className="rounded bg-[var(--error)] px-1 text-[9px] font-black text-white">ERROR</b>
+                  <span key={e.site_id} className="inline-flex items-center gap-1 rounded border border-[var(--status-error)]/50 bg-[var(--status-error)]/15 px-1.5 py-0.5">
+                    <b className="rounded bg-[var(--status-error)] px-1 text-[9px] font-black text-white">ERROR</b>
                     <span className="text-[var(--text-primary)]">{e.site_name}</span>
                     <span className="text-[var(--text-secondary)]">· {ERR_LABEL[e.error_code] ?? e.error_code}</span>
                     <span className="text-[var(--text-hint)]" title="서버 로그 역추적용 상관ID">#{e.correlation_id}</span>
@@ -163,10 +167,24 @@ export default function DeveloperProjection() {
               불일치(balanced=false)인 현장 수를 머신리더블 신호(reconcile_failed_count)로 띄운다.
               아래 현장 드릴다운(관리 ▾)에서 불일치 항목(약정표 누락·수납초과 등)을 확인. */}
           {(con.reconcile_failed_count ?? 0) > 0 && (
-            <div className="mt-2 rounded-lg border border-[var(--warning)]/40 bg-[var(--warning)]/10 px-2.5 py-2 text-[11px] text-[var(--warning)]">
+            <div className="mt-2 rounded-lg border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 px-2.5 py-2 text-[11px] text-[var(--status-warning)]">
               <b>독립 대사 불일치 · 현장 {con.reconcile_failed_count}곳</b>
               <span className="ml-1 text-[var(--text-secondary)]">
                 합산은 정상이나 현장 원장(계약·분납약정·수납)이 서로 맞지 않습니다. 각 현장 ‘관리 ▾’에서 불일치 항목(약정표 누락·수납 초과 등)을 확인하세요.
+              </span>
+            </div>
+          )}
+          {/* ★대사를 **수행하지 못한** 현장 수(balanced=null) — 실패와 **다른 축**이다.
+              라이브 실측(2026-08-26 admin 테넌트): 현장 13곳 중 **11곳**이 이 상태인데
+              화면엔 reconcile_failed_count=0 만 있어 **"정합 실패 0"으로 깨끗해 보였다.**
+              '불일치 0'과 '확인 못 함 N'은 다른 사실이고, 섞으면 미탐지가 정합으로 위장된다.
+              ★경고(warning)가 아니라 정보(info) 색을 쓴다 — 보류는 결함이 아니라 **미확인**이라
+              경고색으로 칠하면 정상 운영을 결함으로 신고하는 위양성이 된다. */}
+          {(con.reconcile_withheld_count ?? 0) > 0 && (
+            <div className="mt-2 rounded-lg border border-[var(--status-info)]/40 bg-[var(--status-info)]/10 px-2.5 py-2 text-[11px] text-[var(--status-info)]">
+              <b>독립 대사 확인 불가 · 현장 {con.reconcile_withheld_count}곳</b>
+              <span className="ml-1 text-[var(--text-secondary)]">
+                정합이 확인된 것이 아니라 <b>확인할 근거가 없는</b> 상태입니다(서명계약·분납약정표 부재). 각 현장 ‘관리 ▾’에서 사유를 확인하세요.
               </span>
             </div>
           )}
@@ -242,7 +260,7 @@ function ProfitTriView({ cashProfit, accrualProfit, deferred, receivable }: {
 }) {
   // 발생주의가 현금흐름보다 크고 미수금이 있으면 과대계상 소지(받지 못한 매출까지 이익 반영).
   const overstated = accrualProfit > cashProfit && receivable > 0;
-  const cls = (v: number) => (v >= 0 ? "text-[var(--success)]" : "text-[var(--error)]");
+  const cls = (v: number) => (v >= 0 ? "text-[var(--status-success)]" : "text-[var(--status-error)]");
   return (
     <div className="mt-2 space-y-2">
       <div className="grid grid-cols-2 gap-px overflow-hidden rounded-xl bg-[var(--line-subtle)] sm:grid-cols-4">
@@ -260,7 +278,7 @@ function ProfitTriView({ cashProfit, accrualProfit, deferred, receivable }: {
         ))}
       </div>
       {overstated && (
-        <p className="flex items-center gap-1.5 rounded-lg border border-[var(--warning)]/40 bg-[var(--warning)]/10 px-2.5 py-1.5 text-[11px] font-semibold text-[var(--warning)]">
+        <p className="flex items-center gap-1.5 rounded-lg border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 px-2.5 py-1.5 text-[11px] font-semibold text-[var(--status-warning)]">
           <AlertTriangle className="size-3.5" aria-hidden />
           발생주의 손익이 현금흐름 손익보다 큽니다 — 미수금({won(receivable)})까지 매출로 인식된 과대계상 소지가 있습니다. 실수납 기준(현금흐름)을 함께 확인하세요.
         </p>
@@ -278,29 +296,40 @@ function ReconciliationView({ rec }: { rec?: Reconciliation }) {
   if (!rec) return null;
   const balanced = rec.balanced;
   const disc = rec.discrepancies ?? [];
-  // 판정보류(null·서명계약 없음)는 경고가 아니라 'N/A'로만 표기(거짓경보 금지).
-  if (balanced === null) {
+  // 판정보류(null)는 경고가 아니라 '확인 못 함'으로 표기한다(거짓경보 금지 · 거짓안심도 금지).
+  // ★사유는 **백엔드가 말한다**(balanced_basis) — 화면이 지어내지 않는다.
+  //   종전엔 여기에 "서명·분납약정이 아직 없어 대조 불가"라는 **화면의 추측**이 박혀 있었다.
+  //   #838 이 백엔드에 사유 문구·코드를 실었는데도 그 값을 **버리고** 이 상수를 그렸다
+  //   — 백엔드가 사유를 바꿔도 화면은 옛말을 계속 한다(소비처 0 = dead output).
+  //   폴백 문구는 **구버전 API 응답**(사유 미탑재)에서만 쓰인다.
+  // ★`undefined` 를 `null` 과 **같은 갈래**로 본다(§19 경계는 양방향).
+  //   타입은 `balanced: boolean | null`(필수)이지만 **JSON 런타임은 그 타입을 지키지 않는다**
+  //   — 백엔드가 키를 빠뜨리면 `undefined` 가 되어 아래 최종 `else`(불일치)로 떨어지고,
+  //   `discrepancies` 는 비어 있으므로 **항목이 하나도 없는 빨간 "불일치" 배너**가 뜬다.
+  //   즉 **정상 현장을 결함으로 신고**한다(위양성도 결함이다 §A-6).
+  if (balanced === null || balanced === undefined) {
     return (
-      <p className="rounded-lg border border-[var(--line)] bg-[var(--surface-soft)] px-2.5 py-1.5 text-[11px] text-[var(--text-hint)]">
-        독립 대사: 판정보류(서명·분납약정이 아직 없어 대조 불가).
+      <p className="rounded-lg border border-[var(--status-info)]/40 bg-[var(--status-info)]/10 px-2.5 py-1.5 text-[11px] text-[var(--text-secondary)]">
+        <b className="text-[var(--status-info)]">독립 대사 확인 불가</b>
+        <span className="ml-1">{rec.balanced_basis ?? "서명·분납약정이 아직 없어 대조할 근거가 없습니다."}</span>
       </p>
     );
   }
   if (balanced === true) {
     return (
-      <p className="flex items-center gap-1.5 rounded-lg border border-[var(--success)]/40 bg-[var(--success)]/10 px-2.5 py-1.5 text-[11px] font-semibold text-[var(--success)]">
+      <p className="flex items-center gap-1.5 rounded-lg border border-[var(--status-success)]/40 bg-[var(--status-success)]/10 px-2.5 py-1.5 text-[11px] font-semibold text-[var(--status-success)]">
         <span aria-hidden>✓</span>독립 대사 통과 — 계약·분납약정·수납이 서로 정합합니다.
       </p>
     );
   }
   // balanced === false → 불일치. 각 discrepancy 를 라벨 칩 + 상세로 렌더(은폐 금지).
   return (
-    <div className="rounded-lg border border-[var(--warning)]/40 bg-[var(--warning)]/10 px-2.5 py-2 text-[11px] text-[var(--warning)]">
+    <div className="rounded-lg border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 px-2.5 py-2 text-[11px] text-[var(--status-warning)]">
       <b className="flex items-center gap-1.5"><AlertTriangle className="size-3.5" aria-hidden />독립 대사 불일치 — 현장 원장 점검 필요</b>
       <div className="mt-1.5 flex flex-col gap-1">
         {disc.map((x, i) => (
           <span key={`${x.key}-${i}`} className="inline-flex flex-wrap items-baseline gap-1">
-            <b className="rounded border border-[var(--warning)]/50 bg-[var(--warning)]/15 px-1.5 py-0.5 text-[10px] font-bold text-[var(--warning)]">
+            <b className="rounded border border-[var(--status-warning)]/50 bg-[var(--status-warning)]/15 px-1.5 py-0.5 text-[10px] font-bold text-[var(--status-warning)]">
               {RECON_LABEL[x.key] ?? x.key}
             </b>
             {x.detail && <span className="text-[var(--text-secondary)]">{x.detail}</span>}
@@ -446,7 +475,7 @@ function PayrollAdSection({ siteId, onPosted }: { siteId: string; onPosted: () =
               <tbody>
                 {pay.staff.slice(0, 30).map((p) => (
                   <tr key={p.staff_id} className="border-t border-[var(--line)]/50">
-                    <td className="py-0.5 text-[var(--text-secondary)]">{p.name}{!p.wage_set && <span className="ml-1 text-[9px] text-[var(--warning)]">단가미설정</span>}</td>
+                    <td className="py-0.5 text-[var(--text-secondary)]">{p.name}{!p.wage_set && <span className="ml-1 text-[9px] text-[var(--status-warning)]">단가미설정</span>}</td>
                     <td className="text-right text-[var(--text-primary)]">{p.days}일<span className="ml-0.5 text-[9px] text-[var(--text-tertiary)]">{p.hours}h</span></td>
                     <td>
                       <div className="flex flex-wrap items-center gap-1">
@@ -460,7 +489,7 @@ function PayrollAdSection({ siteId, onPosted }: { siteId: string; onPosted: () =
                       </div>
                     </td>
                     <td className="text-right text-[var(--text-secondary)]">{won(p.gross)}</td>
-                    <td className="text-right text-[var(--error)]" title={p.deductions.map((x) => `${x.label} ${won(x.amount)}`).join("\n")}>{p.total_deduction > 0 ? `-${won(p.total_deduction)}` : "-"}</td>
+                    <td className="text-right text-[var(--status-error)]" title={p.deductions.map((x) => `${x.label} ${won(x.amount)}`).join("\n")}>{p.total_deduction > 0 ? `-${won(p.total_deduction)}` : "-"}</td>
                     <td className="text-right font-bold text-[var(--text-primary)]">{won(p.net)}</td>
                   </tr>
                 ))}

@@ -4,8 +4,8 @@ RASE 방법론 기반: 각 법규 조항을 Requirement/Applicability/Selection/
 건축법, 건축법 시행령, 주차장법 핵심 조항을 논리식으로 인코딩.
 
 검증 항목 8개:
-  BL-001  건폐율        건축법 시행령 §84
-  BL-002  용적률        건축법 시행령 §85
+  BL-001  건폐율        국토계획법 시행령 §84 (건축법 §55 위임)
+  BL-002  용적률        국토계획법 시행령 §85 (건축법 §56 위임)
   BL-003  높이제한      건축법 §60, §61
   BL-004  건축선 후퇴   건축법 §46, §47
   BL-005  주차대수      주차장법 시행령 §6
@@ -23,6 +23,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from app.services.common.sunlight_setback import required_north_setback_m
+from app.services.zoning.legal_zone_limits import far_cap_with_structural_overlay
 
 
 class ComplianceStatus(StrEnum):
@@ -42,7 +43,27 @@ class RuleCheckResult(BaseModel):
     message: str
 
 
-# ── 용도지역별 법적 한도 기본값 ──────────────────────────────────────
+# ── 용도지역별 한도 기본값 ─────────────────────────────────────────────────
+# ★2026-08-23 근거 명시 + **출처 구분**(R0-d).
+#
+# 【건폐율·용적률】= **법정 상한**
+#   국토의 계획 및 이용에 관한 법률 시행령 제84조(건폐율)·제85조(용적률).
+#   전 항목을 법령과 대조했다 — 8개 용도지역 **불일치 0건**(2026-08-23 실측).
+#   지자체 조례는 이 범위 **안에서** 더 강하게 정할 수 있으므로, 실제 적용값은
+#   `ordinance_service`(조례 조회)가 산출한 값과 min() 해야 한다. 이 표는 **상한**이다.
+#
+# 【★max_height · setback_m】= **법정값이 아니다**
+#   높이 제한과 건축선 후퇴는 **지자체 도시계획·건축 조례**와 지구단위계획이 정한다
+#   (국토계획법 제76조·제77조 위임, 건축법 제46조 등). 그런데 이 표는 **전국 단일값**이라
+#   제천시 부지에 서울 기준이 적용되는 식이 된다.
+#   → 조례를 조회하지 못한 상태에서 이 값으로 **불가 판정을 내리면 안 된다**.
+#     소비처(`_check_setback`·`_check_floors`)는 이 값을 **참고 기본값**으로만 쓰고,
+#     판정에 쓸 때는 조례 확인 필요를 함께 고지해야 한다.
+#   ※ `max_height: 0` 은 이 표의 관행으로 **"무제한"이 아니라 "미설정"** 을 뜻한다
+#     (`design_change_predictor` 가 0 → None 으로 정규화한다).
+#
+# ★이 표를 고칠 때: 건폐·용적을 바꾸려면 **시행령 조문**을, 높이·후퇴를 바꾸려면
+#   **어느 지자체 조례인지**를 함께 적어라. 근거 없는 숫자는 계획을 깎을 자격이 없다.
 
 ZONE_DEFAULTS: dict[str, dict[str, Any]] = {
     "제1종전용주거지역": {"max_bcr": 50, "max_far": 100, "max_height": 12, "setback_m": 3.0},
@@ -60,6 +81,44 @@ ZONE_DEFAULTS: dict[str, dict[str, Any]] = {
     "생산녹지지역": {"max_bcr": 20, "max_far": 100, "max_height": 0, "max_floors": 4, "setback_m": 0},
     "자연녹지지역": {"max_bcr": 20, "max_far": 100, "max_height": 0, "max_floors": 4, "setback_m": 0},
 }
+
+# ★출처를 **데이터로** 가른다 — 주석만으로는 소비처가 알 수 없다.
+#   소비처는 이 집합을 보고 판정 강도를 정해야 한다:
+#     · 법정 키   → 전국 공통 상한이므로 그대로 판정에 쓸 수 있다
+#     · 조례 키   → 지자체마다 다르다. 조례를 조회하지 못한 상태에서 이 값으로
+#                  **불가(blocking) 판정을 내리면 안 된다** — 조건부로 낮추고 확인 필요를 고지한다
+LEGAL_KEYS: frozenset[str] = frozenset({"max_bcr", "max_far", "max_floors"})
+"""전국 공통 **법정 상한**.
+
+  · `max_bcr` — 국토계획법 시행령 **제84조**(용도지역 안에서의 건폐율)
+  · `max_far` — 국토계획법 시행령 **제85조**(용도지역 안에서의 용적률)
+  · `max_floors` — 녹지지역(보전·생산·자연) **4층 이하**.
+    국토계획법 시행령 **별표15·16·17 두문** — "4층 이하의 건축물에 한한다"
+    (조례로 더 낮게 강화할 수 있으나 높일 수는 없다).
+    ★이 키는 표의 **녹지 3종에만** 있다. 다른 용도지역은 용도지역 자체의 층수 제한이
+      없어서 없는 것이지, 누락이 아니다.
+"""
+
+ORDINANCE_KEYS: frozenset[str] = frozenset({"max_height", "setback_m"})
+"""지자체 도시계획·건축 조례 사항 — 이 표의 값은 **전국 단일 참고값**이다.
+
+높이 제한(국토계획법 §76·§77 위임)과 건축선 후퇴(건축법 §46 등)는 조례가 정한다.
+그런데 이 표는 지역 구분 없이 한 값을 갖고 있어, 제천시 부지에 다른 지자체 기준이
+적용되는 형태가 된다. **조례 확인 전에는 참고값**으로만 쓴다.
+"""
+
+
+def limit_source(key: str) -> str:
+    """이 키가 어디서 온 값인지 — `"법정"` · `"조례"` · `"미분류"`.
+
+    ★미분류가 나오면 표에 키가 늘었는데 출처를 안 정한 것이다(계약 테스트가 잡는다).
+    """
+    if key in LEGAL_KEYS:
+        return "법정"
+    if key in ORDINANCE_KEYS:
+        return "조례"
+    return "미분류"
+
 
 # ── 주차대수 산정 기준 (주차장법 시행령 §6) ──────────────────────────
 
@@ -114,6 +173,10 @@ class BuildingCodeRuleEngine:
         return results
 
     # ── BL-001: 건폐율 ──
+    # ★레인H 스윕 판단(2026-07-24): 구조상한(건폐율×층수)은 '건폐율'이 아니라 층수제한 zone의
+    #   실효 '용적률' 상한을 만드는 산식(층수는 연면적/용적률에만 영향, 건축면적/건폐율에는
+    #   영향 없음)이라 이 함수는 무관하다 — max_bcr 자체가 이미 법정 실효 건폐율 상한(예:
+    #   자연녹지 20%)이다. 따라서 _check_bcr은 미변경(BL-002만 구조상한 흡수 대상).
 
     def _check_bcr(self, design: dict, site: dict) -> RuleCheckResult:
         max_bcr = site.get("max_bcr", 60)
@@ -125,7 +188,8 @@ class BuildingCodeRuleEngine:
         return RuleCheckResult(
             rule_id="BL-001",
             rule_name="건폐율 검증",
-            legal_basis="건축법 시행령 제84조",
+            # 건폐율 §84는 국토계획법 시행령(건축법 §55가 위임) — 종전 '건축법 시행령' 오표기 교정.
+            legal_basis="국토의 계획 및 이용에 관한 법률 시행령 제84조(건축법 제55조 위임)",
             status=status,
             required_value=f"{max_bcr}% 이하",
             actual_value=f"{actual_bcr:.1f}%",
@@ -144,18 +208,43 @@ class BuildingCodeRuleEngine:
         total_gfa = design.get("total_gfa_sqm", 0)
         actual_far = (total_gfa / land_area) * 100
 
+        # ★구조상한(건폐율×층수) 흡수(레인H, 2026-07-24 라이브 재현·근원수정): 자연/생산/보전
+        #   녹지 등 층수제한 zone은 법정 용적률 '범위'(예: 자연녹지 50~100%)만 비교하면 물리적
+        #   상한(건폐 20%×법정4층=80%)을 놓쳐 far=100% 설계를 과대낙관 '적합' 처리한다. 공용
+        #   헬퍼(far_cap_with_structural_overlay — structural_cap_for를 감싸 legal_zone_limits.py
+        #   에 공용화, /legal-check 라우터도 동일 헬퍼 재사용)로 min(법정, 구조상한)을 적용한다.
+        #   applied_bcr_pct는 '이 설계의 실제 건폐율'(건폐율 자체는 _check_bcr이 검증) —
+        #   건축면적 미입력(0)이면 산정 근거가 없어 None(무음 — 원래 max_far 유지, 경고 아님).
+        building_area = design.get("building_area_sqm", 0)
+        applied_bcr_pct = (building_area / land_area * 100) if building_area > 0 else None
+        zone_type = site.get("zone_type")
+        max_far, cap_floor, cap_basis, cap_unresolved_note = far_cap_with_structural_overlay(
+            zone_type, max_far, applied_bcr_pct,
+        )
+
         status = ComplianceStatus.PASS if actual_far <= max_far else ComplianceStatus.FAIL
+        required_value = f"{max_far:g}% 이하"
+        cap_suffix = ""
+        if cap_basis:
+            # ★R1 리뷰 LOW#2(2026-07-24): "건폐율×N층"만 표기하면 규제상한(법정 건폐율)으로
+            #   오독될 수 있다 — 이 값은 '이 설계의 실제 건폐율'이므로 수치를 병기해 명확화.
+            required_value += f" (구조상한: 건폐율{applied_bcr_pct:g}%×{cap_floor}층)"
+            cap_suffix = f" — 구조상한(건폐율{applied_bcr_pct:g}%×{cap_floor}층) 적용({cap_basis})"
+        elif cap_unresolved_note:
+            required_value += f" ({cap_unresolved_note})"
+            cap_suffix = f" ({cap_unresolved_note})"
         return RuleCheckResult(
             rule_id="BL-002",
             rule_name="용적률 검증",
-            legal_basis="건축법 시행령 제85조",
+            # 용적률 §85는 국토계획법 시행령(건축법 §56이 위임) — 종전 '건축법 시행령' 오표기 교정.
+            legal_basis="국토의 계획 및 이용에 관한 법률 시행령 제85조(건축법 제56조 위임)",
             status=status,
-            required_value=f"{max_far}% 이하",
+            required_value=required_value,
             actual_value=f"{actual_far:.1f}%",
             message=(
-                f"용적률 적합 ({actual_far:.1f}% ≤ {max_far}%)"
+                f"용적률 적합 ({actual_far:.1f}% ≤ {max_far:g}%{cap_suffix})"
                 if status == ComplianceStatus.PASS
-                else f"용적률 초과 ({actual_far:.1f}% > {max_far}%) — {actual_far - max_far:.1f}%p 초과"
+                else f"용적률 초과 ({actual_far:.1f}% > {max_far:g}%{cap_suffix}) — {actual_far - max_far:.1f}%p 초과"
             ),
         )
 

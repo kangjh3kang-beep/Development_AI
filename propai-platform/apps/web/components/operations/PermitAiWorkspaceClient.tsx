@@ -8,8 +8,8 @@
  * 주소는 ProjectAddressInput으로 (1) 프로젝트 선택 (2) 카카오 검색 (3) 변경/추가 입력 모두 지원.
  */
 
-import { useCallback, useState, type ReactNode } from "react";
-import { AlertTriangle, Bot, CheckCircle2, Pin, Puzzle } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { AlertTriangle, Bot, CheckCircle2, ClipboardList, FileDown, Pin, Puzzle } from "lucide-react";
 import { Card, CardContent } from "@propai/ui";
 import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { dynamicMap } from "@/components/common/MapShell";
@@ -23,16 +23,19 @@ const ParcelBoundaryMap = dynamicMap<React.ComponentProps<typeof ParcelBoundaryM
   { pick: "ParcelBoundaryMap", height: 360, loadingMessage: "필지 구획도 로딩…" },
 );
 import { ExpertPanelCard } from "@/components/common/ExpertPanelCard";
+import { AnalysisHistoryCard } from "@/components/common/AnalysisHistoryCard";
+import { optionsSummary } from "@/lib/use-analysis-history";
 import { AnalysisVerdict } from "@/components/analysis/AnalysisVerdict";
 import { DevelopmentScenarioCard } from "@/components/common/DevelopmentScenarioCard";
 import { RegistryBulkButton } from "@/components/common/RegistryBulkButton";
 import { UseLlmToggle } from "@/components/common/UseLlmToggle";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
-import { parcelAddressList } from "@/lib/parcel-rows";
+import { buildAnalysisParcelAddrs } from "@/lib/parcel-rows";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { DEVELOPABILITY_LABEL, resolveFarPct, resolveBcrPct, specialFactorLabels } from "@/lib/zoning-ssot";
 import type { Locale } from "@/i18n/config";
+import { normalizePnu } from "@/lib/pnu";
 
 type MethodResult = {
   method: string;
@@ -116,6 +119,18 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
   // AI 인허가 해석 옵트인 — 종전엔 use_llm 미전송이라 백엔드 기본값(true)에 암묵 의존해 항상 ON이었다.
   // 기본 true로 유지해 기존 동작을 보존하면서, 끄면 규칙기반(무과금) 판정만 받을 수 있게 한다(D1).
   const [useLlm, setUseLlm] = useState(true);
+  // 히스토리 카드 재조회 신호 — run() 완료 시 증가시켜 AnalysisHistoryCard가 새 항목을 반영한다.
+  const [historyRefreshTick, setHistoryRefreshTick] = useState(0);
+
+  // ★다필지 배선 절단 근본수정(2026-07-19 라이브 신고: 12필지 선택 → 구획도·개발방식·등기에
+  //   1필지만 반영). 종전엔 run()만 store 다필지(siteAnalysis.parcels)를 폴백에 포함하고,
+  //   렌더 자식(ParcelBoundaryMap·DevelopmentScenarioCard·RegistryBulkButton)엔 인라인
+  //   [addr, ...extra](스토어 다필지 누락)를 넘겨 대표주소 1개만 갔다. 단일 SSOT로 공용화 —
+  //   run()과 모든 렌더 자식이 이 동일 목록을 쓴다(주소 문자열 계약·중복 target 제거·순서 보존).
+  const analysisParcelAddrs = useMemo(
+    () => buildAnalysisParcelAddrs(addr || siteAnalysis?.address || "", extra, siteAnalysis?.parcels),
+    [addr, extra, siteAnalysis],
+  );
 
   const run = useCallback(async () => {
     const target = addr || siteAnalysis?.address || "";
@@ -123,11 +138,7 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
       setError("주소를 먼저 선택하거나 입력하세요.");
       return;
     }
-    // 수동 재검색(extra)이 있으면 그것으로, 없으면 store 다필지(siteAnalysis.parcels)로 폴백 —
-    //   33필지 컨텍스트로 진입해도 수동입력 없이 다필지 인허가 분석이 되도록(감사 P1). 주소 리스트 계약.
-    const extraTrimmed = extra.map((s) => s.trim()).filter(Boolean);
-    const storeAddrs = extraTrimmed.length > 0 ? [] : parcelAddressList(siteAnalysis?.parcels);
-    const parcels = [target, ...extraTrimmed, ...storeAddrs.filter((a) => a !== target)];
+    const parcels = analysisParcelAddrs;
     setLoading(true);
     setError("");
     setResult(null);
@@ -135,7 +146,7 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
       const r = await apiClient.post<PermitAnalysis>("/permits/ai-analysis", {
         body: {
           address: target,
-          pnu: siteAnalysis?.pnu || undefined,
+          pnu: normalizePnu(siteAnalysis?.pnu) ?? undefined,
           site: siteAnalysis?.address === target ? siteAnalysis : undefined,
           parcels: parcels.length > 1 ? parcels : undefined,
           use_llm: useLlm,
@@ -144,6 +155,7 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
         timeoutMs: 150000,
       });
       setResult(r);
+      setHistoryRefreshTick((t) => t + 1);
     } catch (err) {
       // 무반응 방지: 실패 원인을 구체적으로 안내(인증/과금/기타). 401·403=로그인 필요, 402=코인.
       if (err instanceof ApiClientError && (err.status === 401 || err.status === 403)) {
@@ -156,7 +168,21 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
     } finally {
       setLoading(false);
     }
-  }, [addr, extra, siteAnalysis, useLlm]);
+  }, [addr, siteAnalysis, useLlm, analysisParcelAddrs]);
+
+  // 히스토리 대상(현재 입력) + 변동감지 시그니처 파트 — run() 내부와 동일한 필지 폴백 규칙을 미러링.
+  //   백엔드 계약과 동일 순서: [address, pnu||"", parcelCount, useLlm, options요약(인허가는 옵션 없음→"")].
+  const historyAddress = addr || siteAnalysis?.address || "";
+  // ★오염값이 시그니처에 섞이면 변동감지가 「달라졌다」로 오작동하고, :306 에서 자식으로도 흐른다.
+  const historyPnu = normalizePnu(siteAnalysis?.pnu) ?? "";
+  const historySignatureParts = useMemo(() => {
+    // ★run()이 실제 보내는 목록과 동일 SSOT(buildAnalysisParcelAddrs) — 손수 미러링하면
+    //   시그니처와 분석 대상이 어긋나 변동감지가 오작동(중복 제거 규칙까지 일치해야 한다).
+    const parcels = buildAnalysisParcelAddrs(historyAddress, extra, siteAnalysis?.parcels);
+    // parcelCount는 백엔드(permits.py) `len(req.parcels or []) or 1`을 미러(`|| 1`) — 단일필지
+    // (미전송)여도 백엔드는 1로 적재하므로 0이면 오탐.
+    return [historyAddress, historyPnu, String(parcels.length || 1), String(useLlm), optionsSummary(undefined)];
+  }, [historyAddress, historyPnu, extra, siteAnalysis?.parcels, useLlm]);
 
   const site = result?.site;
 
@@ -246,7 +272,7 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
               disabled={loading}
               className="rounded-xl bg-[var(--accent-strong)] px-5 py-2.5 text-sm font-black text-white hover:opacity-90 disabled:opacity-50"
             >
-              {loading ? "AI 분석 중… (최대 1분)" : (<span className="inline-flex items-center gap-1.5"><Bot className="size-4" aria-hidden />인허가 분석</span>)}
+              {loading ? "AI 분석 중… (약 2분)" : (<span className="inline-flex items-center gap-1.5"><Bot className="size-4" aria-hidden />인허가 분석</span>)}
             </button>
             {/* AI 해석 옵트인(기본 on — 기존 동작 보존). 끄면 규칙기반 판정만(무과금). */}
             <UseLlmToggle checked={useLlm} onChange={setUseLlm} disabled={loading} className="flex w-fit cursor-pointer items-center gap-2 text-[11px] text-[var(--text-secondary)]" />
@@ -257,23 +283,36 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
 
       {/* 필지 구획도 (단/다필지 경계 + 용도지역 + 인접성) — 주소 확정 시에만 */}
       {(addr || siteAnalysis?.address) && (
-        <ParcelBoundaryMap parcels={[addr || siteAnalysis?.address || "", ...extra].filter(Boolean)} primaryZone={siteAnalysis?.zoneCode ?? undefined} />
+        <ParcelBoundaryMap parcels={analysisParcelAddrs} primaryZone={siteAnalysis?.zoneCode ?? undefined} />
       )}
 
       {/* 다각도 개발방식 시뮬레이션 (정책 적용판정 + 최적안 + 인접성) */}
       {(addr || siteAnalysis?.address) && (
         <DevelopmentScenarioCard
           address={addr || siteAnalysis?.address || undefined}
-          parcels={[addr || siteAnalysis?.address || "", ...extra].filter(Boolean)}
+          parcels={analysisParcelAddrs}
         />
       )}
 
       {/* 등기부 일괄 조회/다운로드 (단/다필지 소유관계) */}
       {(addr || siteAnalysis?.address) && (
-        <RegistryBulkButton addresses={[addr || siteAnalysis?.address || "", ...extra].filter(Boolean)} />
+        <RegistryBulkButton addresses={analysisParcelAddrs} />
       )}
 
       {/* 부지 요약 + 종합 */}
+      {/* 분석 히스토리 — ★result 조건 밖(실행 전·리로드 직후에도 접근 가능 — W5 소실 결함 교정). */}
+      {historyAddress ? (
+        <AnalysisHistoryCard
+          analysisType="permit_ai"
+          address={historyAddress}
+          pnu={historyPnu || null}
+          currentSignatureParts={historySignatureParts}
+          onReanalyze={run}
+          reanalyzing={loading}
+          refreshSignal={historyRefreshTick}
+        />
+      ) : null}
+
       {result && (
         <>
           {/* 특이부지 게이트 — 임야·학교용지·GB·맹지·도시계획시설 등은 용도지역상 법정 최대
@@ -333,7 +372,7 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
                   </div>
                   <div className="relative z-10 mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
                     {kpis.map(([k, v], i) => (
-                      <div key={k} className={`rounded-xl border p-3 ${i === 0 ? "border-[var(--accent-strong)]/40 bg-[var(--accent-strong)]/10" : "border-[var(--line)] bg-[var(--surface-2)]"}`}>
+                      <div key={k} className={`rounded-xl border p-3 ${i === 0 ? "border-[var(--accent-strong)]/40 bg-[var(--accent-strong)]/10" : "border-[var(--line)] bg-[var(--surface-soft)]"}`}>
                         <p className="cc-label">{k}</p>
                         <p className={`cc-num mt-1 text-base font-[1000] ${i === 0 ? "text-[var(--accent-strong)]" : "text-[var(--text-primary)]"}`}>{v}</p>
                       </div>
@@ -353,6 +392,7 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
             // 응답 최상위 ledger_hash(원장 sha256) — 피드백 조인키(미노출이면 undefined·안전).
             ledgerHash={(result as unknown as { ledger_hash?: string })?.ledger_hash}
           />
+
           <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
@@ -376,7 +416,7 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
                     ["용적률 한도", site.max_far != null ? `${site.max_far}%` : "-"],
                     ["대지면적", site.land_area_sqm != null ? `${Math.round(site.land_area_sqm)}㎡` : "-"],
                   ].map(([k, v]) => (
-                    <div key={k} className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3">
+                    <div key={k} className="rounded-xl border border-[var(--line)] bg-[var(--surface-soft)] p-3">
                       <p className="text-[11px] text-[var(--text-tertiary)]">{k}</p>
                       <p className="mt-0.5 text-sm font-bold text-[var(--text-primary)]">{v}</p>
                     </div>
@@ -433,7 +473,7 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
                       className={`rounded-xl border p-3 text-center ${
                         idx === 1
                           ? "border-[var(--accent-strong)]/40 bg-[var(--accent-strong)]/10"
-                          : "border-[var(--line)] bg-[var(--surface-2)]"
+                          : "border-[var(--line)] bg-[var(--surface-soft)]"
                       }`}
                     >
                       <p className="cc-label">{k as string}</p>
@@ -509,7 +549,7 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
                     <p className="text-xs font-bold text-[var(--accent-strong)]">근거 법령</p>
                     <div className="mt-1 flex flex-wrap gap-1.5">
                       {result.multi_parcel.far_key_laws!.map((l, i) => (
-                        <span key={i} className="rounded-md bg-[var(--surface-2)] px-2 py-0.5 text-xs text-[var(--text-secondary)]">
+                        <span key={i} className="rounded-md bg-[var(--surface-soft)] px-2 py-0.5 text-xs text-[var(--text-secondary)]">
                           {l}
                         </span>
                       ))}
@@ -544,7 +584,7 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
                           <p className="font-bold text-[var(--accent-strong)]">근거 법령</p>
                           <div className="mt-1 flex flex-wrap gap-1.5">
                             {(m.key_laws ?? []).map((l, i) => (
-                              <span key={i} className="rounded-md bg-[var(--surface-2)] px-2 py-0.5 text-[var(--text-secondary)]">
+                              <span key={i} className="rounded-md bg-[var(--surface-soft)] px-2 py-0.5 text-[var(--text-secondary)]">
                                 {l}
                               </span>
                             ))}
@@ -593,6 +633,15 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
             </Card>
           )}
 
+          {/* 인허가 서류 체크리스트 + PDF — 카드가 약속한 '필요서류·담당 액션·예상기간' 실산출.
+              백엔드 GET /permits/package/checklist(정적 기준표) 소비 + POST /permits/package/pdf 다운로드.
+              permit_type는 건축개발 기본(건축허가), 대지면적·농지 여부만 result에서 도출 전송(가짜값 0). */}
+          <PermitChecklistCard
+            landAreaSqm={site?.land_area_sqm ?? null}
+            isAgricultural={spFactors.some((f) => f.includes("농지"))}
+            projectId={_projectId ?? null}
+          />
+
           {/* 전문가 패널 검증 */}
           <ExpertPanelCard
             analysisType="permit"
@@ -602,5 +651,240 @@ export function PermitAiWorkspaceClient({ locale: _locale }: { locale: Locale })
         </>
       )}
     </div>
+  );
+}
+
+// API 오리진(버전 prefix 포함) — 바이너리(PDF) 다운로드는 apiClient(JSON 파서)를 못 쓰므로
+// 원시 fetch 를 쓴다. MarketInsightsWorkspaceClient.marketApiBase 동형(peer 컨벤션 미러).
+function permitApiBase(): string {
+  if (typeof window !== "undefined") {
+    const h = window.location.hostname;
+    if (h === "4t8t.net" || h === "www.4t8t.net" || h.endsWith(".pages.dev") || h === "propai.kr") {
+      return "https://api.4t8t.net/api/v1";
+    }
+  }
+  return "/api/proxy";
+}
+
+// 인허가 유형 — 건축개발 프로젝트 기본값(건축허가). 체크리스트/PDF 양쪽에 동일 전송해 산출 일관성 보장.
+const PERMIT_TYPE = "건축허가";
+
+type ChecklistItem = {
+  id: string;
+  name: string;
+  required: boolean;
+  description?: string;
+  applicable: boolean;
+};
+type ChecklistResponse = {
+  permit_type: string;
+  region: string;
+  checklist: {
+    permit_type: string;
+    total_items: number;
+    required_items: number;
+    optional_items: number;
+    items: ChecklistItem[];
+  };
+  duration: {
+    permit_type: string;
+    region: string;
+    business_days: number;
+    calendar_days: number;
+    stages: string[];
+  };
+  duration_basis: string;
+};
+
+/**
+ * 인허가 서류 체크리스트 + 예상기간 + PDF 다운로드 카드.
+ *
+ * 백엔드 GET /permits/package/checklist(정적 기준표 — LLM/외부 API 미사용)를 소비해 카드가 약속한
+ * '필요서류·담당·예상기간' 산출물을 실제로 채운다. permit_type는 건축개발 기본값(건축허가)이며,
+ * 대지면적(≥200㎡ 조경계획서)·농지 여부(농지전용허가서)만 분석 결과에서 도출해 전송한다(가짜값 0).
+ * 조회 실패 시 카드를 숨기지 않고 '조회 실패'를 정직 표기한다(무목업).
+ */
+function PermitChecklistCard({
+  landAreaSqm,
+  isAgricultural,
+  projectId,
+}: {
+  landAreaSqm?: number | null;
+  isAgricultural: boolean;
+  projectId: string | null;
+}) {
+  const [data, setData] = useState<ChecklistResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState("");
+
+  // 대지면적 200㎡ 이상이면 조경계획서 등 조건부 서류가 적용된다(백엔드 기준표 매칭).
+  const buildingAreaSqm =
+    landAreaSqm != null && landAreaSqm > 0 ? Math.round(landAreaSqm) : undefined;
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError("");
+    const params = new URLSearchParams({ permit_type: PERMIT_TYPE });
+    if (buildingAreaSqm !== undefined) params.set("building_area_sqm", String(buildingAreaSqm));
+    if (isAgricultural) params.set("is_agricultural", "true");
+    apiClient
+      .get<ChecklistResponse>(`/permits/package/checklist?${params.toString()}`, { useMock: false })
+      .then((r) => {
+        if (!cancelled) setData(r);
+      })
+      .catch(() => {
+        if (!cancelled) setError("체크리스트 조회에 실패했습니다. 잠시 후 다시 시도하세요.");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [buildingAreaSqm, isAgricultural]);
+
+  const downloadPdf = useCallback(async () => {
+    setDownloading(true);
+    setDownloadError("");
+    try {
+      const token =
+        (typeof window !== "undefined" && localStorage.getItem("propai_access_token")) || "";
+      const res = await fetch(`${permitApiBase()}/permits/package/pdf`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          permit_type: PERMIT_TYPE,
+          project_id: projectId || undefined,
+          ...(buildingAreaSqm !== undefined ? { building_area_sqm: buildingAreaSqm } : {}),
+          ...(isAgricultural ? { is_agricultural: true } : {}),
+        }),
+      });
+      // 성공=application/pdf(attachment), 실패=4xx/5xx(JSON) — blob 침묵 오염 차단(정직 표기).
+      if (!res.ok || (res.headers.get("content-type") || "").includes("json")) {
+        setDownloadError("PDF 생성에 실패했습니다. (로그인·권한 필요)");
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `인허가서류패키지_${PERMIT_TYPE}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      setDownloadError("PDF 다운로드에 실패했습니다.");
+    } finally {
+      setDownloading(false);
+    }
+  }, [buildingAreaSqm, isAgricultural, projectId]);
+
+  const cl = data?.checklist;
+  const dur = data?.duration;
+
+  return (
+    <Card className="rounded-[var(--radius-2xl)] shadow-[var(--shadow-md)]">
+      <CardContent className="p-6">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="inline-flex items-center gap-1.5 text-sm font-black text-[var(--accent-strong)]">
+            <ClipboardList className="size-4" aria-hidden />인허가 서류 체크리스트
+          </p>
+          <span className="rounded-full border border-[var(--line-strong)] px-2.5 py-0.5 text-[11px] font-bold text-[var(--text-tertiary)]">
+            {PERMIT_TYPE} 기준
+          </span>
+        </div>
+        <p className="mt-1 text-[11px] text-[var(--text-tertiary)]">
+          건축개발 기본(건축허가) 기준의 필요서류·예상기간입니다. 대지면적·농지 포함 여부에 따라 조건부 서류가 자동 반영됩니다.
+        </p>
+
+        {loading && (
+          <p className="mt-4 text-sm text-[var(--text-secondary)]">체크리스트 조회 중…</p>
+        )}
+        {!loading && error && (
+          <p className="mt-4 inline-flex items-center gap-1.5 text-sm font-semibold text-[var(--status-error)]">
+            <AlertTriangle className="size-4" aria-hidden />{error}
+          </p>
+        )}
+
+        {!loading && !error && cl && (
+          <>
+            <div className="mt-4 overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-[var(--line)] text-[var(--text-tertiary)]">
+                    <th className="py-1.5 pr-2 text-left font-semibold">번호</th>
+                    <th className="py-1.5 pr-2 text-left font-semibold">서류명</th>
+                    <th className="py-1.5 pr-2 text-left font-semibold">구분</th>
+                    <th className="py-1.5 pr-2 text-left font-semibold">적용</th>
+                    <th className="py-1.5 text-left font-semibold">발급·작성(비고)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(cl.items ?? []).map((it) => (
+                    <tr key={it.id} className="border-b border-[var(--line)]/50">
+                      <td className="py-1.5 pr-2 text-[var(--text-tertiary)]">{it.id}</td>
+                      <td className="py-1.5 pr-2 font-semibold text-[var(--text-primary)]">{it.name}</td>
+                      <td className="py-1.5 pr-2 text-[var(--text-secondary)]">
+                        {it.required ? "필수" : "조건부"}
+                      </td>
+                      <td className="py-1.5 pr-2">
+                        <span
+                          className={
+                            it.applicable
+                              ? "font-bold text-[var(--status-success)]"
+                              : "text-[var(--text-tertiary)]"
+                          }
+                        >
+                          {it.applicable ? "적용" : "해당없음"}
+                        </span>
+                      </td>
+                      <td className="py-1.5 text-[var(--text-secondary)]">{it.description || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <p className="mt-3 text-xs text-[var(--text-secondary)]">
+              총 {cl.total_items}건 중 적용 <b className="text-[var(--text-primary)]">{cl.required_items}건</b>
+              {" "}(조건부 {cl.optional_items}건)
+              {dur && (
+                <>
+                  {" · 예상 소요 "}
+                  <b className="text-[var(--text-primary)]">{dur.business_days}영업일</b>
+                  {` (달력 약 ${dur.calendar_days}일)`}
+                </>
+              )}
+            </p>
+            {data?.duration_basis && (
+              <p className="mt-1 text-[10px] leading-snug text-[var(--text-tertiary)]">
+                ※ {data.duration_basis}
+              </p>
+            )}
+
+            <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-[var(--line)] pt-4">
+              <button
+                onClick={() => void downloadPdf()}
+                disabled={downloading}
+                className="inline-flex h-10 items-center gap-1.5 rounded-xl bg-[var(--accent-strong)] px-5 text-sm font-black text-white hover:opacity-90 disabled:opacity-50"
+              >
+                <FileDown className="size-4" aria-hidden />
+                {downloading ? "PDF 생성 중…" : "서류 패키지 PDF"}
+              </button>
+              {downloadError && (
+                <span className="text-xs font-semibold text-[var(--status-error)]">{downloadError}</span>
+              )}
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
   );
 }

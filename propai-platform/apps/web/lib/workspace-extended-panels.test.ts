@@ -21,6 +21,17 @@ import {
   buildCadCheckBody,
   cadAutoCorrectInitialValues,
   buildCadAutoCorrectBody,
+  facilityReserveInitialValues,
+  buildFacilityReserveBody,
+  buildFacilityCancelBody,
+  maintenanceAnomalyInitialValues,
+  buildMaintenanceAnomalyBody,
+  marketingContentInitialValues,
+  buildMarketingContentBody,
+  omReportInitialValues,
+  buildOmReportBody,
+  c2rBriefInitialValues,
+  buildC2rBriefBody,
 } from "./workspace-extended-panels";
 
 describe("buildWorkspaceExtendedContext", () => {
@@ -367,5 +378,230 @@ describe("⑤ buildCadCheckBody / buildCadAutoCorrectBody — CheckRequest/AutoC
     });
     expect(initial.maxIter).toBe("100");
     expect(initial.siteAreaSqm).toBe("500");
+  });
+});
+
+describe("⑥ buildFacilityReserveBody/buildFacilityCancelBody — CreateReservationRequest/CancelReservationRequest 계약 핀(routers/facility_reservations.py)", () => {
+  it("초기값은 전부 빈 문자열(무날조 — 프로젝트 선택은 별도 목록에서 사용자가 고른다)", () => {
+    expect(facilityReserveInitialValues()).toEqual({
+      facilityName: "",
+      startTime: "",
+      endTime: "",
+      notes: "",
+    });
+  });
+
+  it("reserve 바디 필드명·타입 1:1, notes 공란은 null", () => {
+    const body = buildFacilityReserveBody(
+      {
+        facilityName: "커뮤니티 라운지",
+        startTime: "2026-08-01T10:00",
+        endTime: "2026-08-01T12:00",
+        notes: "",
+      },
+      { projectId: "proj-fac-1" },
+    );
+    expect(body).toEqual({
+      project_id: "proj-fac-1",
+      facility_name: "커뮤니티 라운지",
+      start_time: "2026-08-01T10:00",
+      end_time: "2026-08-01T12:00",
+      notes: null,
+    });
+  });
+
+  it("cancel 바디는 reservation_id 단일 필드(트림)", () => {
+    expect(buildFacilityCancelBody("  res-123  ")).toEqual({ reservation_id: "res-123" });
+  });
+});
+
+describe("⑦ buildMaintenanceAnomalyBody — MaintenanceAnomalyRequest 계약 핀(packages/schemas/models.py:1177)", () => {
+  it("초기값: equipment_type은 백엔드 기본값이 없어 빈 문자열(무날조), 나머지는 Field default(vibration=0·temperature=0·efficiency=1)", () => {
+    expect(maintenanceAnomalyInitialValues()).toEqual({
+      equipmentName: "",
+      equipmentType: "",
+      location: "",
+      vibrationMmS: "0",
+      temperatureC: "0",
+      energyEfficiencyRatio: "1",
+    });
+  });
+
+  it("바디 필드명·타입 1:1, location 공란은 null", () => {
+    const body = buildMaintenanceAnomalyBody(
+      {
+        equipmentName: "AHU-3",
+        equipmentType: "hvac",
+        location: "",
+        vibrationMmS: "9.2",
+        temperatureC: "31.5",
+        energyEfficiencyRatio: "0.71",
+      },
+      { projectId: "proj-maint-1" },
+    );
+    expect(body).toEqual({
+      project_id: "proj-maint-1",
+      equipment_name: "AHU-3",
+      equipment_type: "hvac",
+      location: null,
+      vibration_mm_s: 9.2,
+      temperature_c: 31.5,
+      energy_efficiency_ratio: 0.71,
+    });
+  });
+
+  it("효율비 0(설비 완전정지 앵커값)은 1로 치환되지 않고 그대로 전달(QA MEDIUM 회귀 고정)", () => {
+    const body = buildMaintenanceAnomalyBody(
+      { equipmentName: "x", equipmentType: "hvac", location: "", vibrationMmS: "1", temperatureC: "1", energyEfficiencyRatio: "0" },
+      { projectId: "p" },
+    );
+    expect(body.energy_efficiency_ratio).toBe(0);
+  });
+
+  it("효율비 빈값은 백엔드 기본 1로 폴백(빈값/NaN만)", () => {
+    const body = buildMaintenanceAnomalyBody(
+      { equipmentName: "x", equipmentType: "hvac", location: "", vibrationMmS: "1", temperatureC: "1", energyEfficiencyRatio: "" },
+      { projectId: "p" },
+    );
+    expect(body.energy_efficiency_ratio).toBe(1);
+  });
+
+  it("equipment_type은 폴백 없이 그대로 전달(빈 값을 임의 종류로 지어내지 않음)", () => {
+    const body = buildMaintenanceAnomalyBody(
+      { equipmentName: "x", equipmentType: "", location: "", vibrationMmS: "1", temperatureC: "1", energyEfficiencyRatio: "1" },
+      { projectId: "p" },
+    );
+    expect(body.equipment_type).toBe("");
+  });
+
+  it("음수 온도(영하)도 그대로 전달(ge=-30 허용 — 0 폴백으로 뭉개지 않음)", () => {
+    const body = buildMaintenanceAnomalyBody(
+      { equipmentName: "x", equipmentType: "hvac", location: "", vibrationMmS: "1", temperatureC: "-10", energyEfficiencyRatio: "1" },
+      { projectId: "p" },
+    );
+    expect(body.temperature_c).toBe(-10);
+  });
+});
+
+describe("⑧ buildMarketingContentBody/buildOmReportBody — MarketingContentRequest/OMReportRequest 계약 핀(routers/marketing.py)", () => {
+  it("marketing content 초기값: channel은 백엔드 기본값이 없어 빈 문자열(무날조), tone은 백엔드 기본값(professional)", () => {
+    expect(marketingContentInitialValues()).toEqual({
+      channel: "",
+      assetType: "",
+      targetAudience: "",
+      tone: "professional",
+      highlights: "",
+    });
+  });
+
+  it("marketing content 바디: highlights는 콤마 구분 → 배열 분해", () => {
+    const body = buildMarketingContentBody(
+      {
+        channel: "instagram",
+        assetType: "residential",
+        targetAudience: "MZ 세대",
+        tone: "energetic",
+        highlights: "역세권, 신축, 남향",
+      },
+      { projectId: "proj-mkt-1", projectName: "테스트 프로젝트" },
+    );
+    expect(body).toEqual({
+      project_id: "proj-mkt-1",
+      project_name: "테스트 프로젝트",
+      channel: "instagram",
+      asset_type: "residential",
+      target_audience: "MZ 세대",
+      tone: "energetic",
+      highlights: ["역세권", "신축", "남향"],
+    });
+  });
+
+  it("om report 초기값은 백엔드 기본값과 동일(targetAudience=institutional·outputFormat=markdown)", () => {
+    expect(omReportInitialValues()).toEqual({
+      assetType: "",
+      investmentHighlights: "",
+      targetAudience: "institutional",
+      riskFactors: "",
+      outputFormat: "markdown",
+    });
+  });
+
+  it("om report 바디: investment_highlights/risk_factors 콤마 구분 → 배열 분해", () => {
+    const body = buildOmReportBody(
+      {
+        assetType: "office",
+        investmentHighlights: "핵심상권, 장기임차인",
+        targetAudience: "institutional",
+        riskFactors: "금리 변동",
+        outputFormat: "pdf",
+      },
+      { projectId: "proj-mkt-2", projectName: "OM 테스트" },
+    );
+    expect(body).toEqual({
+      project_id: "proj-mkt-2",
+      project_name: "OM 테스트",
+      asset_type: "office",
+      investment_highlights: ["핵심상권", "장기임차인"],
+      target_audience: "institutional",
+      risk_factors: ["금리 변동"],
+      output_format: "pdf",
+    });
+  });
+
+  it("빈 콤마 목록은 빈 배열(무날조 — 임의 항목 생성 금지)", () => {
+    const body = buildMarketingContentBody(
+      { channel: "web", assetType: "x", targetAudience: "y", tone: "professional", highlights: "" },
+      { projectId: "p", projectName: "n" },
+    );
+    expect(body.highlights).toEqual([]);
+  });
+});
+
+describe("⑨ buildC2rBriefBody — BriefRequest 계약 핀(apps/api/app/routers/c2r.py)", () => {
+  it("프리필: pnu는 siteAnalysis.pnu, address는 옵션 전달값(SSOT 미확보 시 빈 문자열)", () => {
+    const withPnu = c2rBriefInitialValues({ pnu: "1111010100100010000", address: "서울시 종로구" });
+    expect(withPnu).toEqual({
+      pnu: "1111010100100010000",
+      address: "서울시 종로구",
+      buildingUse: "",
+      scale: "",
+      useLlm: false,
+    });
+
+    const empty = c2rBriefInitialValues({ pnu: null, address: null });
+    expect(empty.pnu).toBe("");
+    expect(empty.address).toBe("");
+  });
+
+  it("바디: pnu/address 둘 다 그대로 전달(라우터가 pnu 우선 처리) — 공란은 null", () => {
+    const body = buildC2rBriefBody({
+      pnu: "1111010100100010000",
+      address: "",
+      buildingUse: "",
+      scale: "",
+      useLlm: false,
+    });
+    expect(body).toEqual({
+      pnu: "1111010100100010000",
+      address: null,
+      options: null,
+      use_llm: false,
+    });
+  });
+
+  it("options: building_use/scale 하나라도 있으면 채운 필드만 담고, 둘 다 없으면 null", () => {
+    const body = buildC2rBriefBody({
+      pnu: "",
+      address: "서울시 종로구",
+      buildingUse: "오피스텔",
+      scale: "",
+      useLlm: true,
+    });
+    expect(body).toEqual({
+      pnu: null,
+      address: "서울시 종로구",
+      options: { building_use: "오피스텔" },
+      use_llm: true,
+    });
   });
 });

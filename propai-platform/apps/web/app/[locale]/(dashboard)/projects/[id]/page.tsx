@@ -14,6 +14,7 @@ import { apiClient } from "@/lib/api-client";
 import { fetchProjectMeta } from "@/lib/project-meta-cache";
 import { useProjectStore } from "@/store/useProjectStore";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { parcelAddressList } from "@/lib/parcel-rows";
 import { ImageUpload } from "@/components/ui/ImageUpload";
 import { DataLineageTooltip } from "@/components/common/DataLineageTooltip";
 import { ModuleCommandStrip } from "@/components/layout/ModuleCommandStrip";
@@ -68,6 +69,7 @@ export default function ProjectDetailPage() {
 
   // 복원된 분석(스냅샷) 구독 — 히어로 PNU/용도지역/ROI를 실데이터로 표시
   const ctxSite = useProjectContextStore((s) => s.siteAnalysis);
+  const ctxProjectId = useProjectContextStore((s) => s.projectId);
   const ctxFeas = useProjectContextStore((s) => s.feasibilityData);
 
   // 원장의 통합 분석 보고서(payload) — 있으면 대시보드 분석이력과 동일한 보고서형 상세 렌더
@@ -158,7 +160,13 @@ export default function ProjectDetailPage() {
         });
       }
       const feas = r.summary?.feasibility;
-      if (feas) st.updateFeasibilityData({ totalCostWon: feas.total_cost_won ?? null, totalRevenueWon: feas.total_revenue_won ?? null, profitRatePct: feas.profit_rate_pct ?? null, grade: feas.grade ?? null });
+      if (feas) st.updateFeasibilityData({ totalCostWon: feas.total_cost_won ?? null, totalRevenueWon: feas.total_revenue_won ?? null, profitRatePct: feas.profit_rate_pct ?? null, grade: feas.grade ?? null,
+          // ★정밀도 등급 승계(#770) — 백엔드가 개략치(E)라고 알려 주면 화면도 그렇게 말한다.
+          //   이 값이 없으면 화면은 "정밀도 미표기"로 드러내고 확정치처럼 렌더하지 않는다.
+          precision: feas.precision ?? null,
+          precisionLabel: feas.precision_label ?? null,
+          precisionBasis: feas.precision_basis ?? null,
+        });
       const esg = r.summary?.esg_carbon;
       if (esg) st.updateEsgData({ embodiedCarbonKg: esg.embodied_carbon_kg ?? null, operationalCarbonKg: esg.operational_carbon_kg ?? null, totalCarbonPerSqm: esg.total_carbon_per_sqm ?? null });
       return !!(site || basic || design || feas || esg);
@@ -251,7 +259,7 @@ export default function ProjectDetailPage() {
         <motion.section
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
-          className="rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-6 shadow-[var(--shadow-lg)]"
+          className="rounded-[var(--radius-lg)] border border-[var(--line-strong)] bg-[var(--surface-soft)] p-6 shadow-[var(--shadow-lg)]"
         >
           <div className="flex flex-wrap items-start justify-between gap-6 mb-5">
             <div className="space-y-2">
@@ -311,7 +319,7 @@ export default function ProjectDetailPage() {
         </motion.section>
       ) : metaError ? (
         /* 메타 로드 실패 — 무통지 대신 정직한 실패 안내 + 재시도(효과 재실행) */
-        <section className="rounded-[2rem] border border-[var(--status-warning)]/40 bg-[var(--surface-soft)] p-6 shadow-[var(--shadow-lg)]">
+        <section className="rounded-[var(--radius-lg)] border border-[var(--status-warning)]/40 bg-[var(--surface-soft)] p-6 shadow-[var(--shadow-lg)]">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
               <p className="text-sm font-bold text-[var(--text-primary)]">프로젝트 정보를 불러오지 못했습니다</p>
@@ -331,7 +339,7 @@ export default function ProjectDetailPage() {
       ) : null}
 
       {/* ── High-Fidelity Project Hero ── */}
-      <section className="relative overflow-hidden rounded-[2.5rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-8 lg:p-12 shadow-[var(--shadow-2xl)] group">
+      <section className="relative overflow-hidden rounded-[var(--radius-xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-8 lg:p-12 shadow-[var(--shadow-2xl)] group">
         {/* Cinematic Background Elements */}
         <div className="absolute -right-40 -top-40 h-[500px] w-[500px] rounded-full bg-[var(--accent-strong)]/10 blur-[120px] transition-all duration-1000 group-hover:bg-[var(--accent-strong)]/15" />
         <div className="absolute -left-20 bottom-0 h-96 w-96 rounded-full bg-blue-500/5 blur-[100px]" />
@@ -388,7 +396,7 @@ export default function ProjectDetailPage() {
               { label: d.summary.npv, value: meta?.npv ? formatCurrencyKRW(meta.npv) : null, color: "text-[var(--text-primary)]" },
               { label: d.summary.roi, value: ctxFeas?.profitRatePct != null ? `${ctxFeas.profitRatePct.toFixed(1)}%` : (meta?.roi ? `${meta.roi.toFixed(1)}%` : null), color: "text-[var(--accent-strong)]" },
             ].map((stat, i) => (
-              <div key={i} className="cc-bracketed relative min-w-[200px] overflow-hidden rounded-[2rem] border border-[var(--line-strong)] bg-[var(--surface-strong)]/50 p-6 backdrop-blur-3xl shadow-[var(--shadow-xl)] transition-all hover:-translate-y-2 hover:bg-[var(--surface-soft)] group/stat border-2 border-transparent hover:border-[var(--accent-strong)]/20">
+              <div key={i} className="cc-bracketed relative min-w-[200px] overflow-hidden rounded-[var(--radius-lg)] border border-[var(--line-strong)] bg-[var(--surface-strong)]/50 p-6 backdrop-blur-3xl shadow-[var(--shadow-xl)] transition-all hover:-translate-y-2 hover:bg-[var(--surface-soft)] group/stat border-2 border-transparent hover:border-[var(--accent-strong)]/20">
                 <i className="cc-bracket cc-bracket--tl" />
                 <i className="cc-bracket cc-bracket--br" />
                 <p className="cc-label tracking-[0.4em] mb-3">{stat.label}</p>
@@ -425,7 +433,18 @@ export default function ProjectDetailPage() {
       {/* ── 통합 분석 보고서(원장 기반) — 대시보드 분석이력과 동일한 보고서형 상세 ── */}
       {ledgerReport && (
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }}>
-          <PipelineResultDetail result={ledgerReport as never} />
+          {/* ★다필지 배선 절단 근본수정(2026-07-19 전역 스윕): addresses 미전달 시 SiteAnalysisDetail이
+              대표 1필지로 강등돼 통합보고서 구획도가 12필지→1필지로 표시됐다. store 다필지를 전달하되,
+              ★교차 프로젝트 오염 방지 — 이 store가 현재 프로젝트(id)로 스코프될 때만(:106 복원 가드와
+              동일 계약). 미일치·단일필지면 undefined로 두어 기존 대표필지 폴백을 유지한다. */}
+          <PipelineResultDetail
+            result={ledgerReport as never}
+            addresses={
+              ctxProjectId === id && (ctxSite?.parcels?.length ?? 0) > 1
+                ? parcelAddressList(ctxSite?.parcels)
+                : undefined
+            }
+          />
         </motion.div>
       )}
 

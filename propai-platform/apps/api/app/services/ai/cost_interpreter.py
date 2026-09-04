@@ -110,7 +110,7 @@ class CostInterpreter(BaseInterpreter):
             cost_json=json.dumps(compact, ensure_ascii=False, indent=2),
         )
 
-        return await self._invoke(user_prompt, cache_data=compact)
+        return await self._invoke_or_empty(user_prompt, cache_data=compact)
 
     def _extract_compact_data(self, data: dict) -> dict[str, Any]:
         """공사비 분석 결과에서 LLM에 필요한 핵심 데이터만 추출."""

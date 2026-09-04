@@ -40,10 +40,11 @@ from app.schemas.feasibility_v2 import (
     VCSCommitRequest,
     VCSRollbackRequest,
 )
-from app.services.auth.auth_service import get_current_user
+from app.services.auth.auth_service import get_current_user, get_current_user_optional
 from app.services.feasibility.ai_optimizer import optimize_slsqp
 from app.services.feasibility.ai_recommendation import diagnose
 from app.services.feasibility.feasibility_service_v2 import FeasibilityServiceV2
+from app.services.feasibility.legacy_ledger import build_legacy_ledger
 from app.services.feasibility.modules.base_module import ModuleInput
 from app.services.feasibility.monte_carlo_engine import MCVariable, run_monte_carlo
 from app.services.feasibility.rough_feasibility_orchestrator import build_rough_scenario
@@ -52,6 +53,8 @@ from app.services.feasibility.sensitivity_engine import (
     run_sensitivity_analysis,
 )
 from app.services.feasibility.version_control_db import FeasibilityVCSDB
+from app.services.land_intelligence.parcel_normalize import ParcelsIn
+from app.services.tax.regional_tax_data import looks_like_sido, sido_short_or_empty
 
 router = APIRouter(prefix="/api/v2/feasibility", tags=["feasibility-v2"])
 
@@ -123,6 +126,7 @@ def _request_to_input(req: FeasibilityCalculateRequest) -> ModuleInput:
         total_households=req.total_households,
         avg_sale_price_per_pyeong=req.avg_sale_price_per_pyeong,
         avg_area_pyeong=req.avg_area_pyeong,
+        price_basis=req.price_basis,
         sale_ratio=req.sale_ratio,
         bridge_amount_won=req.bridge_amount_won,
         pf_amount_won=req.pf_amount_won,
@@ -233,17 +237,25 @@ class FeasibilityResultTrustResponse(FeasibilityResultResponse):
 
     evidence: list[dict[str, Any]] = []
     legal_refs: list[dict[str, Any]] = []
+    # ★W3(additive): 월별 DCF 요약(IRR·회수기간·DSCR·NPV 기저) — None=미산출(정직).
+    cashflow_summary: dict[str, Any] | None = None
     # 시니어 회계사 자문(opt-in·with_senior=True일 때만) — K-IFRS·세무·리스크 표준 evidence 계약.
     # 미요청/미가용은 빈 dict(자문은 보조 — 수지 계산값을 절대 덮어쓰지 않음).
     senior_accountant_review: dict[str, Any] = {}
 
 
 # 통합 세금엔진 항목코드 → 법령 근거 레지스트리 키. 레지스트리 보유분만 매핑하며,
-# 그 외 세목(농어촌특별세·각종 부담금 등)은 링크 없이 합계 텍스트로만 표기한다.
+# 그 외 세목(농어촌특별세 등)은 링크 없이 합계 텍스트로만 표기한다.
+# ★부담금(B01·B02·B03·B04·C07)도 레지스트리 키 보유(PR#247) → 근거+링크 노출(부과분만·amount>0).
 _TAX_CODE_TO_REF_KEY: dict[str, str] = {
     "A01": "acquisition_tax",             # 취득세 — 지방세법 제11조
     "A02": "local_education_tax",         # 지방교육세 — 지방세법(루트)
     "A04": "stamp_tax",                   # 인지세 — 인지세법 제3조
+    "B01": "metro_transport_charge",      # 광역교통시설부담금 — 대도시권광역교통관리법 제7조의2
+    "B02": "school_land_special",         # 학교용지부담금 — 학교용지 확보 특례법
+    "B03": "water_supply_cause_charge",   # 상수도 원인자부담금 — 수도법 제71조
+    "B04": "sewage_cause_charge",         # 하수도 원인자부담금 — 하수도법 제61조
+    "C07": "infra_facility_charge",       # 기반시설부담금 — 국토계획법 제68조
     "D01": "capital_gains_tax",           # 양도소득세 — 소득세법 제104조
     "D05": "reconstruction_levy",         # 재건축부담금 — 재건축초과이익 환수법(루트)
     "D06": "comprehensive_property_tax",  # 종합부동산세 — 종합부동산세법(루트)
@@ -462,6 +474,7 @@ async def calculate_feasibility(req: FeasibilityCalculateRequest):
             cost_breakdown_won=output.cost_detail,
             tax_detail=output.tax_detail,
             special_detail=output.special_detail,
+            cashflow_summary=output.cashflow_summary,
             evidence=evidence,
             legal_refs=legal_refs,
             senior_accountant_review=senior_review,
@@ -544,7 +557,9 @@ async def baseline_feasibility(req: FeasibilityBaselineRequest):
                     "max_far_pct": static_limits["max_far"],
                     "max_height_m": static_limits.get("max_height_m"),
                     "zone_key": zone_key,
-                    "legal_basis": "국토의 계획 및 이용에 관한 법률 제78조",
+                    # 건폐율 근거=제77조, 용적률 근거=제78조. 이 페이로드는 bcr·far를 모두 실으므로
+                    # 종전 §78 단독 표기는 건폐율 근거(§77) 누락 — 병기로 교정.
+                    "legal_basis": "국토의 계획 및 이용에 관한 법률 제77조·제78조(용도지역 건폐율·용적률)",
                 }
         except Exception:  # noqa: BLE001 — 정적 보강 실패 시 유형 표준 FAR로 진행
             logger.warning("baseline: 용도지역 정적 FAR/BCR 보강 실패")
@@ -645,7 +660,9 @@ async def baseline_feasibility(req: FeasibilityBaselineRequest):
     # BCR로 층수 가정(far/bcr 비율)
     ordinance_bcr = zone_limits.get("ordinance_bcr_pct") or 0
     legal_bcr = zone_limits.get("max_bcr_pct") or 0
-    applied_bcr = float(ordinance_bcr or legal_bcr or 60)
+    # ★무날조 — 조례·법정 어느 쪽도 없으면 0 으로 두고, 아래 `if applied_bcr else 0` 가
+    #   층수 추정을 **미산출(0)** 로 정직 처리한다. 종전 `or 60` 은 근거 없는 층수를 만들었다.
+    applied_bcr = float(ordinance_bcr or legal_bcr or 0)
     est_floors = max(1, round(applied_far / applied_bcr)) if applied_bcr else 0
     assumptions["estimated_floors"] = est_floors
     assumptions["applied_bcr_pct"] = round(applied_bcr, 1)
@@ -698,7 +715,13 @@ async def baseline_feasibility(req: FeasibilityBaselineRequest):
         avg_sale_price_per_pyeong=sale_price_per_pyeong,
         avg_area_pyeong=avg_area_pyeong,
         sale_ratio=0.95,
-        sido_name=req.region,
+        # ★축 교정(형제 스윕) — `req.region` 은 프론트가 **시군구**를 넣어 보낸다
+        #   (`RoughScenarioPanel` 의 `regionFromAddress()`). 시·도 칸에 직결하면
+        #   B01 광역교통이 대도시권을 비대도시권으로 오판한다. 주소에서 해석한다.
+        sido_name=sido_short_or_empty(req.address),
+        # ★`req.region` 은 스키마상 **시도명**이라 적혀 있다 — 시군구 칸에 넣기 전에
+        #   **시·도인지 묻는다**(스키마를 지키는 클라이언트의 값을 축 날조로 만들지 않기 위해).
+        sigungu_name=("" if looks_like_sido(req.region) else (req.region or "")),
         project_months=_service._get_type_project_months(dev_type),
         discount_rate=0.08,
         equity_won=equity,
@@ -1045,7 +1068,14 @@ async def vcs_diff(
     return await vcs.diff(sha_a, sha_b)
 
 
-@router.post("/export-excel", response_class=Response)
+@router.post(
+    "/export-excel",
+    response_class=Response,
+    # ★후속 스윕(2026-07-15 감사): 인증 없이 전체 수지 재계산을 수행하던 유일한 무인증
+    #   엔드포인트 — 라우터 관례(get_current_user 6곳)에 맞춰 인증 부착. 프론트
+    #   FeasibilityExportButton은 이미 Bearer를 첨부한다(PR#294).
+    dependencies=[Depends(get_current_user)],
+)
 async def export_feasibility_excel(req: FeasibilityCalculateRequest):
     """수지분석 결과를 Excel 파일로 내보낸다."""
     from app.services.export.excel_export_service import ExcelExportService
@@ -1097,7 +1127,7 @@ class AutoRecommendRequest(BaseModel):
     equity_won: int = 10_000_000_000
     use_llm: bool = True  # AI 내러티브(수지 해석) 포함 여부(사용자 선택)
     # 다필지 통합 — 2필지 이상이면 통합면적·우세용도로 Top3 산정(미전달/1필지면 기존 단일 경로).
-    parcels: list[dict[str, Any]] | None = None
+    parcels: ParcelsIn | None = None  # ★공용 정규화: str[]/dict[] → canonical dict[](무음 no-op 제거)
 
 
 @router.post("/auto-recommend", dependencies=[Depends(enforce_llm_quota)])
@@ -1158,7 +1188,7 @@ class RoughScenarioRequest(BaseModel):
     """
 
     address: str
-    parcels: list[dict[str, Any]] | None = None
+    parcels: ParcelsIn | None = None  # ★공용 정규화: str[]/dict[] → canonical dict[](무음 no-op 제거)
     project_id: str | None = None
     dev_type: str | None = None       # 미지정 시 Top1 자동 추천
     region: str = ""  # ★기본값 "서울" 금지 — 지방 부지 과대평가 회피(주소 시도추론에 위임)
@@ -1171,11 +1201,19 @@ class RoughScenarioRequest(BaseModel):
 async def rough_scenario(
     req: RoughScenarioRequest,
     db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user_optional),
 ):
     """사업성 개략수지 — 통합면적 토지비 + 국토부 공사비 + Top1 분양수입 + 20% 마진 + 월별 DCF.
 
     기존 엔진(통합분석·추천·탁상감정·공사비·분양가·현금흐름)을 조합만 한다(규칙 산출,
     LLM 미사용). 실데이터 미확보 축은 값 null + degraded_notes로 정직 강등(무목업).
+
+    인증은 선택(비로그인 투자분석 체험 무회귀) — 산정 자체는 로그인 여부와 무관하게 수행한다.
+    ★P3(R1 REVISE): 원장 적재(analysis_type="feasibility" 재사용 — address/pnu 스코프라
+    VCS-result(project_id 스코프)의 별도 "feasibility_vcs" 체인과 혼입되지 않는다)는 로그인
+    사용자에 한해 best-effort로 수행한다(precheck.py와 대칭 — 이전엔 익명도 tenant_id=None으로
+    적재했으나, GET /analysis-ledger/history가 JWT 필수라 익명 기록은 아무도 조회할 수 없는
+    write-only 고아였고 tenant_id IS NULL 공용 버킷의 쿼터만 계속 소진시켰다).
     """
     try:
         site_uuid = None
@@ -1184,7 +1222,7 @@ async def rough_scenario(
                 site_uuid = uuid.UUID(req.site_id)
             except ValueError:
                 site_uuid = None
-        return await build_rough_scenario(
+        scenario = await build_rough_scenario(
             address=req.address,
             parcels=req.parcels,
             project_id=req.project_id,
@@ -1197,6 +1235,60 @@ async def rough_scenario(
         )
     except Exception as e:  # noqa: BLE001 — 개략수지 산출 실패는 422로 정직 반환
         raise HTTPException(status_code=422, detail=f"개략수지 산정 실패: {str(e)[:160]}")
+
+    # ★히스토리 확산(관례 미러 — permits.py/avm.py와 동일 try/except best-effort).
+    #   ★P3(R1 REVISE): 익명(current_user is None)은 skip — precheck.py와 대칭(익명 기록은
+    #   JWT 필수 /history에서 아무도 못 읽는 write-only 고아 + NULL 쿼터 낭비였다).
+    if current_user is not None:
+        try:
+            from app.services.ledger.analysis_ledger_service import attach_ledger_hash
+            from app.services.ledger.ledger_adapters import record_user_analysis
+
+            summ = scenario.get("summary") or {}
+            cf_summ = (scenario.get("cashflow") or {}).get("summary") or {}
+            # ★roi_pct(÷총사업비)→profit_rate_pct 매핑: DIFF_FIELD_MAP.feasibility가 기대하는
+            #   키는 profit_rate_pct 하나뿐이라 roi_pct를 우선 채택하고, 결측 시에만
+            #   cashflow.summary.profit_rate_pct(÷실제사업비, CashflowGenerator 산출)로 폴백한다.
+            profit_rate_pct = summ.get("roi_pct")
+            if profit_rate_pct is None:
+                profit_rate_pct = cf_summ.get("profit_rate_pct")
+
+            wb = await record_user_analysis(
+                analysis_type="feasibility",
+                summary={
+                    "profit_rate_pct": profit_rate_pct,
+                    "npv_won": summ.get("npv_won"),
+                    "total_revenue_won": summ.get("total_revenue_won"),
+                    "net_profit_won": summ.get("net_profit_won"),
+                    "grade": summ.get("grade"),
+                },
+                tenant_id=str(current_user.tenant_id),
+                # ★project_id 미전달(의도적) — VCS-result(record_feasibility_result)는 project_id
+                #   스코프+address=None으로 같은 analysis_type="feasibility" 체인에 적재된다. rough를
+                #   address 스코프로만 두면 식별자(pnu-or-address_norm) 자체가 달라 project_id가
+                #   같아도 체인이 자동 분리된다(혼입 없음 — _chain_where 식별자 우선순위).
+                address=req.address,
+                source="rough_scenario",
+                # ★변동감지 표준키(input_signature/signature_parts) 재료 — 단일 소유자(ledger_adapters).
+                parcel_count=len(req.parcels) if req.parcels else 1, use_llm=False,
+            )
+            scenario = attach_ledger_hash(scenario, wb)
+        except Exception:  # noqa: BLE001 — 원장 적재 실패해도 개략수지 결과 무손상
+            pass
+
+    # ── 간략 수지 원장(실무 양식) — additive ───────────────────────────────
+    #   축별 합계만으로는 실무 수지표가 읽히지 않는다. 한 행마다 「수량 × 단가 = 금액」과
+    #   「왜 이 값인가」를 붙이고, 맨 아래에 **합계가 맞는지 스스로 확인한 결과**를 싣는다.
+    #   ★계산을 다시 하지 않는다 — 위에서 만든 `scenario` 를 배열만 하고,
+    #     배열하면서 **독립 합산**해 엔진 합계와 대조한다(그 대조가 검산이다).
+    #   실패해도 개략수지 본체는 무손상(원장 적재와 같은 규율).
+    try:
+        scenario["legacy_ledger"] = build_legacy_ledger(scenario)
+    except Exception:  # noqa: BLE001 — 표시층 실패가 산출을 죽이지 않는다
+        logger.warning("간략 수지 원장 생성 실패 — 본체는 그대로 반환", exc_info=True)
+        scenario["legacy_ledger"] = None
+
+    return scenario
 
 
 # ── 개략수지 → 시니어 최종 사업성분석 보고서(요구 ⑨) ──────────────
@@ -1211,7 +1303,7 @@ class RoughScenarioReportRequest(BaseModel):
     scenario: dict[str, Any] | None = None
     # ↓ scenario 미제공 시 재생성 입력(/rough-scenario와 동일 계약)
     address: str | None = None
-    parcels: list[dict[str, Any]] | None = None
+    parcels: ParcelsIn | None = None  # ★공용 정규화: str[]/dict[] → canonical dict[](무음 no-op 제거)
     project_id: str | None = None
     dev_type: str | None = None
     region: str = ""  # ★기본값 "서울" 금지 — 지방 부지 과대평가 회피(주소 시도추론에 위임)
@@ -1297,7 +1389,7 @@ class CashflowRequest(BaseModel):
     design_cost_ratio: float = 0.03
     discount_rate_annual: float = 0.06  # NPV 할인율(연)
     # R1(additive): integrated_tax_engine.calculate_all_taxes 키워드 입력(부분집합).
-    # 지정 시 38종 세금을 시점 매핑 주입해 summary에 after_tax_irr_annual_pct·total_tax_won 가산.
+    # 지정 시 28종 세금을 시점 매핑 주입해 summary에 after_tax_irr_annual_pct·total_tax_won 가산.
     # 미지정(None, 기본)이면 기존 세전 현금흐름과 완전 동일.
     tax_inputs: dict | None = None
 
@@ -1309,7 +1401,7 @@ def _build_cashflow(req: CashflowRequest) -> dict:
         npv_from_netflows,
     )
 
-    # ── R1 세후 IRR(additive): tax_inputs 지정 시에만 통합 세금엔진(38종) 주입 ──
+    # ── R1 세후 IRR(additive): tax_inputs 지정 시에만 통합 세금엔진(28종) 주입 ──
     tax_schedule = None
     if req.tax_inputs:
         import inspect

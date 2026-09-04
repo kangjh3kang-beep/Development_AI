@@ -155,6 +155,7 @@ def _candidate(
     path_key: str | None = None,
     legal_refs: list[dict] | None = None,
     far_source: str = "",
+    blocked_reasons: list[str] | None = None,
 ) -> dict[str, Any]:
     """건축가능항목 후보 1건(랭킹 점수 포함)."""
     product, building_type = _product_and_type(zone, use)
@@ -176,7 +177,12 @@ def _candidate(
         "path_key": path_key,
         "is_current": is_current,      # True=현행 용도지역 내(바로 가능)
         "is_upzoning": not is_current,  # True=종상향 전제(예상치)
+        # tier: is_current에서 파생된 응답 계약 필드(프론트·정렬정책 공유용 표준명).
+        "tier": "current" if is_current else "upzoning",
         "legal_refs": legal_refs or [],
+        # 종상향 시나리오의 게이트 사유(비연접 파편·규제구역 등)를 랭킹 카드까지 전달
+        # (시나리오 목록에만 있고 랭킹엔 없으면 프론트 배지가 실데이터에서 무동작 — handoff 손실 방지).
+        "blocked_reasons": blocked_reasons or [],
         "score": score,
     }
 
@@ -258,6 +264,7 @@ def rank_buildable_options(
                 via=sc.get("path") or "종상향", is_current=False,
                 path_key=sc.get("path_key"), legal_refs=sc.get("legal_refs") or [],
                 far_source=far_source,
+                blocked_reasons=sc.get("blocked_reasons") or [],
             ))
 
     if not candidates:
@@ -302,14 +309,16 @@ def rank_buildable_options(
             })
         options.append(rep)
 
-    # 랭킹: ①score 내림차순(인허가가능성×가용용적률) → ②동점 시 FAR 활용 적합도(고밀 사업유형
-    # 우대) → ③여전히 동점이면 현행 우선(인허가 용이). ②는 같은 용도지역 내 모든 허용용도가
-    # 동점이 되는 구조적 특성에서 '최우선 사업유형'이 근생·단독으로 왜곡되지 않게 한다.
+    # ★정렬 정책(P0 수정): 현행(tier=current) 옵션은 종상향(tier=upzoning)보다 항상 상위다.
+    # 과거엔 순수 score 정렬이라 '예상치·미확정'인 종상향이 점수만 높으면 '현행·바로가능'보다
+    # 앞서 최우선 사업유형으로 오인될 위험이 있었다(라이브: 종상향 종속 사업유형이 1순위로
+    # 표시). is_current를 최우선 정렬키로 승격하고, 그다음은 기존과 동일하게 ①score 내림차순
+    # → ②동점 시 FAR 활용 적합도(고밀 사업유형 우대)로 티어 내부 순서를 유지한다.
     options.sort(
         key=lambda o: (
+            o["is_current"],
             o["score"],
             _PRODUCT_FAR_UTILITY.get(o["product"], 0),
-            o["is_current"],
         ),
         reverse=True,
     )
@@ -327,23 +336,38 @@ def rank_buildable_options(
 def _summary(zone: str, options: list[dict[str, Any]]) -> str:
     if not options:
         return f"'{zone}'의 건축가능항목을 산출하지 못했습니다."
-    top = options[0]
-    cur_cnt = sum(1 for o in options if o["is_current"])
-    up_cnt = len(options) - cur_cnt
+    current_options = [o for o in options if o["is_current"]]
+    upzoning_options = [o for o in options if o["is_upzoning"]]
+    cur_cnt, up_cnt = len(current_options), len(upzoning_options)
     parts = [
         f"현행 '{zone}' 기준 건축가능 사업유형 {len(options)}건을 인허가가능성×가용용적률로 "
         f"랭킹했습니다(현행 {cur_cnt}건·종상향 전제 {up_cnt}건)."
     ]
-    far_txt = (
-        f" 가용 용적률 약 {top['achievable_far_pct']}%"
-        if top.get("achievable_far_pct") is not None else ""
-    )
-    via_txt = "현행 용도지역 내" if top["is_current"] else f"종상향({top['via']}) 전제"
-    parts.append(
-        f"최우선 사업유형은 '{top['product']}'({via_txt}·인허가 {top['permit_feasibility']}{far_txt})입니다."
-    )
-    if up_cnt:
-        parts.append("종상향 전제 항목의 용적률은 예상치(실현 보장 아님)이며 현행 실효값과 구분됩니다.")
+    # ★서술 분리(P0): '최우선 사업유형'은 항상 현행 티어 1위로 한정하고, 종상향 1위는
+    # 별도로 '조건부 잠재'로 표현한다(정렬정책과 정합 — 종상향이 최우선으로 오인되지 않게).
+    if current_options:
+        top_cur = current_options[0]
+        far_txt = (
+            f" 가용 용적률 약 {top_cur['achievable_far_pct']}%"
+            if top_cur.get("achievable_far_pct") is not None else ""
+        )
+        parts.append(
+            f"최우선 사업유형은 '{top_cur['product']}'(현행 용도지역 내·"
+            f"인허가 {top_cur['permit_feasibility']}{far_txt})입니다."
+        )
+    else:
+        parts.append("현행 용도지역 내 바로 가능한 사업유형은 확인되지 않았습니다.")
+    if upzoning_options:
+        top_up = upzoning_options[0]
+        far_txt = (
+            f" 가용 용적률 약 {top_up['achievable_far_pct']}%"
+            if top_up.get("achievable_far_pct") is not None else ""
+        )
+        parts.append(
+            f"종상향 전제 조건부 잠재 1순위는 '{top_up['product']}'"
+            f"(종상향({top_up['via']}) 전제·인허가 {top_up['permit_feasibility']}{far_txt})이며, "
+            "용적률은 예상치(실현 보장 아님)로 현행 실효값과 구분됩니다."
+        )
     return " ".join(parts)
 
 

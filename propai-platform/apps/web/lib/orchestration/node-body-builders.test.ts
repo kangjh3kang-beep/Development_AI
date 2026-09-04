@@ -112,6 +112,47 @@ describe("buildNodeBody — 노드별 평면 body 매핑", () => {
     expect(body.zone_code).toBe("2R");
   });
 
+  // ★WP-U2a: 파이프라인 design 노드도 부지분석 실효 한도를 설계엔진 B1 계약으로 주입한다
+  //   (audit 노드·설계스튜디오 B1과 동일 리졸버 — 종전엔 design 노드만 미주입=이중 진실).
+  it("design(WP-U2a): 실효 한도(effectiveFarPct·farBasis) → ordinance_* + 근거 메타 주입", () => {
+    const ctx: NodeBodyContext = {
+      siteAnalysis: multiSite({
+        effectiveFarPct: 80,
+        effectiveBcrPct: 20,
+        farBasis: "구조상한(건폐율×층수)",
+      }),
+      designData: design(),
+    };
+    const { body } = buildNodeBody("design", ctx, "proj-42");
+    expect(body.ordinance_far_pct).toBe(80);
+    expect(body.ordinance_bcr_pct).toBe(20);
+    expect(body.far_reliable).toBe(true); // 실효 계층 = SSOT 산정 성공
+    expect(body.far_basis).toBe("구조상한(건폐율×층수)");
+  });
+
+  it("design(WP-U2a): 법정상한(national)만 있으면 far_reliable=false·far_basis 생략(정직)", () => {
+    const ctx: NodeBodyContext = {
+      siteAnalysis: multiSite({ nationalFarPct: 250 }),
+      designData: design(),
+    };
+    const { body } = buildNodeBody("design", ctx, "proj-42");
+    expect(body.ordinance_far_pct).toBe(250); // 엔진 min-clamp라 상향 불가(하향만 가능)
+    expect(body.far_reliable).toBe(false); // 법정상한 폴백 — SSOT 실효 아님(정직)
+    expect(body.far_basis).toBeUndefined();
+  });
+
+  it("design(WP-U2a): 실효 한도 미확보면 ordinance_*/근거 키 자체를 미주입(무회귀)", () => {
+    const ctx: NodeBodyContext = {
+      siteAnalysis: multiSite(), // FAR 관련 필드 없음
+      designData: design(),
+    };
+    const { body } = buildNodeBody("design", ctx, "proj-42");
+    expect(body.ordinance_far_pct).toBeUndefined();
+    expect(body.ordinance_bcr_pct).toBeUndefined();
+    expect(body.far_reliable).toBeUndefined();
+    expect(body.far_basis).toBeUndefined();
+  });
+
   it("sales: address★ + pnu(lawd_cd 도출 보조) + pnu 앞10자리 bcode 파생", () => {
     const { body, missing } = buildNodeBody(
       "sales",
@@ -181,6 +222,62 @@ describe("buildNodeBody — 노드별 평면 body 매핑", () => {
     expect(body.total_land_area_sqm).toBe(779); // ★통합면적
     expect(body.total_gfa_sqm).toBe(2400);
     expect(body.building_type).toBe("공동주택");
+  });
+
+  // ★부지 파생 시드 — **값**을 못 박는다(2026-08-26).
+  //   종전 락은 소스에 `body.official_price_per_sqm =` 라는 **대입문이 있는지**만 봤다.
+  //   적대 리뷰가 변이로 실증했다: 값을 `= 1` 로 바꿔도 **SURVIVED**.
+  //   *"대입이 있다"* 와 *"그 값이 시드에서 온다"* 는 다르다 — 여기서 실제로 돌려 값을 본다.
+  it("★feasibility: 공시지가·시도명을 **시드 값 그대로** 싣는다(대입 존재가 아니라 값)", () => {
+    const ctx: NodeBodyContext = {
+      siteAnalysis: multiSite({
+        address: "울산광역시 동구 화정동 637-11",
+        officialPrices: [{ pricePerSqm: 3_000_000 }],
+      } as Partial<SiteAnalysisData>),
+      designData: design(),
+    };
+    const { body } = buildNodeBody("feasibility", ctx, "p1");
+    expect(body.official_price_per_sqm).toBe(3_000_000);
+    expect(body.sido_name).toBe("울산광역시");
+    // ★시군구 — B03·B04(상하수도 원인자부담금)가 이 값으로 시군구 조례 단가표를 조회한다.
+    //   안 보내면 백엔드가 `unavailable` 로 강등해 **합계에서 빠지는데**, 화면엔
+    //   「미등록 지역」처럼 보인다. 값을 못 박는다.
+    expect(body.sigungu_name).toBe("동구");
+  });
+
+  it("★음성 대조군 — 시군구가 없는 주소면 **키 자체를 안 싣는다**(빈 문자열로 날조하지 않는다)", () => {
+    const ctx: NodeBodyContext = {
+      siteAnalysis: multiSite({
+        address: "세종특별자치시",
+        officialPrices: [{ pricePerSqm: 1_000_000 }],
+      } as Partial<SiteAnalysisData>),
+      designData: design(),
+    };
+    const { body } = buildNodeBody("feasibility", ctx, "p1");
+    expect(body.sigungu_name).toBeUndefined();
+    // ★두 모집단이 갈린다 — 시도는 실리고 시군구만 빠진다. 둘이 같이 움직이면
+    //   시군구 배선을 끊어도 시도 단언이 대신 초록을 만든다.
+    expect(body.sido_name).toBe("세종특별자치시");
+  });
+
+  it("★음성 대조군 — 공시지가가 없으면 **키 자체를 안 싣는다**(0 으로 날조하지 않는다)", () => {
+    const ctx: NodeBodyContext = {
+      siteAnalysis: multiSite({ officialPrices: [] } as Partial<SiteAnalysisData>),
+      designData: design(),
+    };
+    const { body } = buildNodeBody("feasibility", ctx, "p1");
+    expect(body.official_price_per_sqm).toBeUndefined();
+    // 주소는 있으므로 시도명은 실린다 — 두 필드가 **독립**임을 함께 잠근다.
+    expect(body.sido_name).toBe("서울특별시");
+  });
+
+  it("★0 은 「0원」이 아니라 「모름」 — 키를 안 싣는다", () => {
+    const ctx: NodeBodyContext = {
+      siteAnalysis: multiSite({ officialPrices: [{ pricePerSqm: 0 }] } as Partial<SiteAnalysisData>),
+      designData: design(),
+    };
+    const { body } = buildNodeBody("feasibility", ctx, "p1");
+    expect(body.official_price_per_sqm).toBeUndefined();
   });
 
   it("feasibility(Phase C-1): 추천 환류값(M08)이 development_type으로 우선 채택", () => {
@@ -580,5 +677,37 @@ describe("G4 계약 — SELLABLE_EFFICIENCY_BY_TYPE FE/BE 동치 고정(드리�
 
   it("유형 미상 기본 전용률이 백엔드 .get(building_type, 0.75) 기본값과 동일하게 핀됨", () => {
     expect(DEFAULT_SELLABLE_EFFICIENCY).toBe(0.75);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// 2026-09-02 — **가짜 PNU 가 법정동코드로 날조되던 자리.**
+// 종전 가드는 `pnu.length >= 10` 이었다(주석은 "pnu(19자리) 앞 10자리" 라고 적으면서).
+// 라이브 실측 오염값 `'store-rep-용인시 수지구 신봉동 56-1'` 은 26자라 그 가드를 통과하고
+// `.slice(0,10)` 이 `"store-rep-"` 를 만들었다 — 백엔드는 `bcode[:5]` = `"store"` 를
+// `lawd_cd` 로 쓴다. 즉 **없는 법정동으로 조회가 나간다.**
+// ★두 모집단을 가른다: 진짜는 bcode 를 **만들고**, 오염은 **만들지 않고 needs-input** 이다.
+// ────────────────────────────────────────────────────────────────────────────
+describe("★sales: bcode 는 **유효한 19자리 PNU** 에서만 파생한다", () => {
+  const 오염 = ["store-rep-용인시 수지구 신봉동 56-1", "◀ 전성결", "경기도 오산시 내삼미동"];
+
+  it("모집단 A(진짜 PNU) — pnu·bcode 가 실리고 missing 에 pnu 가 없다", () => {
+    const ctx: NodeBodyContext = { siteAnalysis: multiSite({ pnu: "1159010300101230000" }) };
+    const { body, missing } = buildNodeBody("sales", ctx, "p1");
+    expect(body.pnu).toBe("1159010300101230000");
+    expect(body.bcode).toBe("1159010300");
+    expect(missing).not.toContain("pnu");
+  });
+
+  it("★모집단 B(오염 PNU) — bcode 를 **지어내지 않고** needs-input 으로 정직하게 막는다", () => {
+    for (const bad of 오염) {
+      const ctx: NodeBodyContext = { siteAnalysis: multiSite({ pnu: bad }) };
+      const { body, missing } = buildNodeBody("sales", ctx, "p1");
+      expect(body.bcode).toBeUndefined();
+      expect(body.pnu).toBeUndefined();
+      expect(missing).toContain("pnu");
+      // ★오염 문자열의 조각이 body 어디에도 새지 않는다(bcode 이외의 경로로도)
+      expect(JSON.stringify(body)).not.toContain(bad.slice(0, 10));
+    }
   });
 });

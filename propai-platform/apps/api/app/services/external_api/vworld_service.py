@@ -1,6 +1,7 @@
 import asyncio
 import math
 import re
+from typing import Any
 
 import httpx
 import structlog
@@ -58,6 +59,65 @@ def _wgs84_area_to_sqm(area_deg2: float, center_lat: float) -> float:
     lat_m = 111_320  # 위도 1도 ≈ 111,320m (거의 일정)
     lon_m = 111_320 * math.cos(math.radians(center_lat))  # 경도는 위도에 따라 변함
     return area_deg2 * lat_m * lon_m
+
+
+# ── 공시지가·토지특성 **기준연도 해석 SSOT** (2026-08-22) ─────────────────────
+#   종전엔 `year: int = 2025` 가 박혀 있어, VWorld 가 2026년치를 주는데도 우리는
+#   2025년치만 썼다(라이브 실측: 2026 = 1,377,000원/㎡ · lastUpdt 2026-05-21).
+#   공시지가는 취득세·재산세·AVM·수지 토지비의 기준이라 해가 갈수록 악화되는 결함이었다.
+#
+#   ★"그냥 올해를 쓰면 된다"는 틀렸다 — 개별공시지가 결정·공시는 매년 5월 말이라
+#     **연초 1~5월엔 당해연도 데이터가 없다**(실측: 2027·2028 은 None).
+#     그래서 현재연도부터 **내림차순 폴백**한다.
+LAND_PRICE_MAX_LOOKBACK = 3  # 역행 상한 — 없는 필지에서 무한 외부호출을 막는다
+
+
+
+def _find_pnu_rows(payload: Any) -> list[dict] | None:
+    """응답 어디에 있든 **`pnu` 를 가진 dict 들의 리스트**를 찾는다(래퍼 이름 미지 대응).
+
+    ★래퍼 키를 지어내지 않기 위한 것이다. 못 찾으면 `None` — **빈 리스트로 뭉개지 않는다**
+      (`None`=형태 미인식/실패 · `[]`=조회 성공·0건. 둘은 다른 사실이다).
+    """
+    if isinstance(payload, list):
+        if payload and all(isinstance(x, dict) for x in payload) and any("pnu" in x for x in payload):
+            return [x for x in payload if isinstance(x, dict)]
+        for x in payload:
+            found = _find_pnu_rows(x)
+            if found is not None:
+                return found
+        return None
+    if isinstance(payload, dict):
+        if "pnu" in payload and not any(isinstance(v, (dict, list)) for v in payload.values()):
+            return [payload]  # 단건이 dict 로 오는 경우
+        for v in payload.values():
+            found = _find_pnu_rows(v)
+            if found is not None:
+                return found
+    return None
+
+
+
+def _current_year() -> int:
+    """현재 연도. ★테스트 대역 지점(시간 의존을 여기 한 곳에 가둔다)."""
+    from datetime import date
+
+    return date.today().year
+
+
+async def _first_year_with_data(fetch, year: int | None):
+    """year 가 명시되면 그대로, None 이면 현재연도부터 내려가며 최초 유효연도를 쓴다.
+
+    fetch(y) 는 해당 연도 결과(dict) 또는 None 을 반환하는 코루틴 함수.
+    """
+    if year is not None:
+        return await fetch(year)
+    base = _current_year()
+    for y in range(base, base - LAND_PRICE_MAX_LOOKBACK - 1, -1):
+        result = await fetch(y)
+        if result:
+            return result
+    return None
 
 
 class VWorldService:
@@ -239,8 +299,19 @@ class VWorldService:
                     # PNU 추출: PARCEL → level4LC, ROAD → level4AC
                     structure = response.get("refined", {}).get("structure", {})
                     pnu = structure.get("level4LC") or None
+                    # ★additive(2026-07-17): level1(시도)/level2(시군구) 명칭도 함께 반환한다.
+                    # 종전엔 여기서 버려지고 PNU만 취했는데, 시/군/구 토큰이 없는 동 단위
+                    # 주소(예: '의정부동 224')는 정규식 기반 시군구 추출이 전부 실패해 조례값을
+                    # 못 찾고 법정상한으로 과대 폴백했다. VWorld가 이미 확정한 이 명칭을
+                    # 그대로 재사용하면(코드→명칭 표 새로 발명 없이) 정규식 실패 시 PNU 폴백의
+                    # 근거로 쓸 수 있다(ordinance_service.resolve_region_via_pnu_fallback 소비).
+                    sido = structure.get("level1") or None
+                    sigungu = structure.get("level2") or None
 
-                    return {"lat": lat, "lon": lon, "pnu": pnu, "address": address}
+                    return {
+                        "lat": lat, "lon": lon, "pnu": pnu, "address": address,
+                        "sido": sido, "sigungu": sigungu,
+                    }
                 except Exception as e:
                     logger.error(
                         "VWORLD 지오코딩 실패 (%s): %s — error=%s, type=%s",
@@ -626,11 +697,114 @@ class VWorldService:
     # ── VWORLD NED API (공시지가, 토지이용계획) ──
     NED_BASE_URL = "https://api.vworld.kr/ned/data"
 
-    async def get_individual_land_price(self, pnu: str, year: int = 2025) -> dict | None:
+    async def get_land_ledger_list(self, pnu: str) -> list[dict] | None:
+        """**토지임야목록조회**(NED `ladfrlList`) — 토지대장/임야대장의 목록 항목.
+
+        ## 왜 이것이 필요했나 (2026-09-03)
+
+        나는 *"토지대장 원천이 저장소에 0건"* 이라고 계획서에 적었다. **그것은 저장소를 뒤진
+        결과였지 「원천이 없다」는 뜻이 아니었다** — 사용자가 VWorld API 카탈로그에서
+        `ladfrlList` 를 찾아 줬다. **「0건」은 조회 결과이지 결론이 아니다**(또 밟았다).
+
+        `getLandCharacteristics`(토지특성)와 **다른 것을 준다**:
+          · `regstrSeCodeNm` — **대장구분**(토지대장 / 임야대장)
+          · `posesnSeCodeNm` — **소유구분**(개인·법인·국유·공유…)  ★토지작업의 1차 분류축
+          · `cnrsPsnCo`      — **소유(공유)인수**  ★공유자가 많을수록 협의매수가 어렵다
+          · `lastUpdtDt`     — **데이터기준일자**  ★시점 문서이므로 표면에 실어야 한다
+          · `mnnmSlno`       — 지번
+        소유자 **성명은 주지 않는다**(개인정보 제외 API) — 그건 등기부(유료) 소관이다.
+
+        ## ★응답 래퍼 키는 **미측정**이다
+
+        NED 계열은 응답을 서로 다른 래퍼로 감싼다(`landCharacteristicss.field` ·
+        `indvdLandPrices.field` …). `ladfrlList` 의 래퍼 이름은 **문서에서 확인하지 못했다.**
+        그래서 **이름을 지어내지 않고 구조로 찾는다** — `pnu` 를 가진 dict 들의 리스트를
+        재귀로 찾는다. 못 찾으면 **`None`(하드 실패)** 이지 `[]`(조회 성공·0건)가 아니다.
+        ★그 둘을 뭉개면 "조회 못 함"이 "확인 결과 없음"으로 읽힌다(이 파일이 이미 겪은 사고).
+        """
+        if not settings.VWORLD_API_KEY:
+            return None
+        try:
+            async with httpx.AsyncClient(timeout=12.0, headers=self.HEADERS) as client:
+                resp = await client.get(
+                    f"{self.NED_BASE_URL}/ladfrlList",
+                    params={
+                        "key": settings.VWORLD_API_KEY,
+                        "pnu": pnu,
+                        "format": "json",
+                        "numOfRows": "10",
+                        "pageNo": "1",
+                    },
+                )
+                resp.raise_for_status()
+                rows = _find_pnu_rows(resp.json())
+                if rows is None:
+                    logger.warning("토지임야목록 응답 형태 미인식", pnu=pnu)
+                    return None
+                return rows
+        except (httpx.HTTPError, ValueError) as e:
+            logger.error("토지임야목록 조회 실패: %s (%s)", pnu, str(e)[:200])
+            return None
+
+    async def get_co_owner_list(self, pnu: str) -> list[dict] | None:
+        """**공유지연명목록조회**(NED `cnrdlnList`) — 한 필지를 여러 명이 공유할 때 그 **구성**.
+
+        ## 왜 `cnrsPsnCo`(공유인 수)만으로는 부족한가
+
+        `ladfrlList` 는 *"공유인 5명"* 까지만 말한다. 그 5명이 **법인 2 + 개인 3** 인지
+        **국유 1 + 개인 4** 인지는 말하지 않는다. **그 차이가 매입 전략을 바꾼다**:
+
+          · 전원 개인      → 개별 협의
+          · 법인 포함      → 이사회·주총 절차
+          · ★**국·공유 포함** → 협의매수가 아니라 **공유재산법 절차**(다른 법이다)
+
+        **「수」와 「구성」은 다른 사실이다.** 수만 보고 전략을 세우면 국공유 지분을 놓친다.
+
+        ## 반환 계약 — 3분기(뭉개지 않는다)
+
+          `None` : 조회 실패/형태 미인식 — **"확인 못 함"**
+          `[]`   : 조회 성공·공유자 0건 — **"확인 결과 공유 아님"**
+          `[..]` : 공유자 N건
+
+        ★소유자 **성명은 주지 않는다**(개인정보 제외 API). 주는 것은 `cnrsPsnSn`(공유인일련번호)와
+        `posesnSeCodeNm`(소유구분)이다 — **구성만 알고 신원은 모른다.** 그것이 이 API 의 설계다.
+        """
+        if not settings.VWORLD_API_KEY:
+            return None
+        try:
+            async with httpx.AsyncClient(timeout=12.0, headers=self.HEADERS) as client:
+                resp = await client.get(
+                    f"{self.NED_BASE_URL}/cnrdlnList",
+                    params={
+                        "key": settings.VWORLD_API_KEY,
+                        "pnu": pnu,
+                        "format": "json",
+                        "numOfRows": "1000",  # 공유자 전원(상한 1000)
+                        "pageNo": "1",
+                    },
+                )
+                resp.raise_for_status()
+                rows = _find_pnu_rows(resp.json())
+                if rows is None:
+                    logger.warning("공유지연명 응답 형태 미인식", pnu=pnu)
+                    return None
+                return rows
+        except (httpx.HTTPError, ValueError) as e:
+            logger.error("공유지연명 조회 실패: %s (%s)", pnu, str(e)[:200])
+            return None
+
+    async def get_individual_land_price(self, pnu: str, year: int | None = None) -> dict | None:
         """PNU 기반 개별공시지가 조회.
 
+        year 미지정이면 **최신 공시연도**를 자동 해석한다(연초 공시 전이면 전년도로 폴백).
         반환: { pnu, year, price_per_sqm, land_code, land_name, ... }
         """
+        return await _first_year_with_data(
+            lambda y: self._individual_land_price_for_year(pnu, y), year,
+        )
+
+    async def _individual_land_price_for_year(self, pnu: str, year: int) -> dict | None:
+        """단일 연도 조회(연도 폴백은 호출자가 담당)."""
         if not settings.VWORLD_API_KEY:
             return None
         try:
@@ -664,13 +838,22 @@ class VWorldService:
             logger.error("개별공시지가 조회 실패: %s (%s)", pnu, str(e))
             return None
 
-    async def get_land_characteristics(self, pnu: str, year: int = 2025) -> dict | None:
+    async def get_land_characteristics(self, pnu: str, year: int | None = None) -> dict | None:
         """PNU 기반 토지특성정보 조회 (NED getLandCharacteristics).
 
         면적·지목·용도지역(1·2)·이용상황·도로접면·지형·공시지가를 한 번에 반환.
         기존 get_land_info(지적도 LP_PA_CBND_BUBUN)가 면적 0을 주는 필지를 보완하고,
         주소 키워드 감지로 누락되던 용도지역(prposArea1Nm)을 정확히 채운다.
+
+        ★개별공시지가와 **같은 기준연도 결함**을 갖고 있었다(year=2025 하드코딩) —
+          이 응답의 공시지가도 옛 연도로 나갔다. 연도 해석을 공용 규칙으로 통일한다.
         """
+        return await _first_year_with_data(
+            lambda y: self._land_characteristics_for_year(pnu, y), year,
+        )
+
+    async def _land_characteristics_for_year(self, pnu: str, year: int) -> dict | None:
+        """단일 연도 조회(연도 폴백은 호출자가 담당)."""
         if not settings.VWORLD_API_KEY:
             return None
         try:
@@ -714,14 +897,23 @@ class VWorldService:
             logger.error("토지특성 조회 실패: %s (%s)", pnu, str(e))
             return None
 
-    async def get_land_use_plan(self, pnu: str) -> list[dict]:
+    async def get_land_use_plan(self, pnu: str) -> list[dict] | None:
         """PNU 기반 토지이용계획 조회 (용도지역/지구/구역 + 기타 규제 전부).
 
         하나의 필지에 중첩된 모든 규제를 배열로 반환.
         예: [대공방어협조구역, 도시지역, 제2종일반주거지역, ...]
+
+        ★레인C(R2b) 무음 폴백 재발 봉합: 반환 계약을 3분기로 명확화한다.
+          - None : 하드 실패(키 미설정, 또는 HTTP/파싱 실패로 단 1건도 못 가져옴) —
+                   "조회를 시도했으나 결과를 확정할 수 없음"(호출부는 미수집으로 정직 처리해야 함).
+          - []   : 조회 성공 + 규제 0건(진짜 "이 필지엔 중첩규제 없음").
+          - [..] : 조회 성공 + 규제 N건.
+        과거엔 키 미설정·HTTP 실패가 모두 []로 뭉개져 "조회 못 함"과 "확인 결과 없음"을
+        구분할 수 없었다(design_audit_orchestrator.calc_upzoning 소비처의 무음 낙관화 재발
+        원인). 키 미설정은 애초에 시도조차 안 한 것이라 최우선으로 None을 반환한다.
         """
         if not settings.VWORLD_API_KEY:
-            return []
+            return None
         # ★전수 수집(원칙: 광범위 누락없는 수집): numOfRows=30 단일호출은 중첩규제가 많은 필지에서
         #   무음 절단됐다. totalCount까지 페이지를 순회한다(상한 도달 시 절단 경고).
         results: list[dict] = []
@@ -773,7 +965,9 @@ class VWorldService:
                 return results
         except Exception as e:
             logger.error("토지이용계획 조회 실패: %s (%s)", pnu, str(e))
-            return results  # 부분 수집분이라도 반환(전체 손실 방지)
+            # ★부분 수집분(1페이지 이상 성공 후 실패)은 실데이터라 그대로 반환(전체 손실 방지).
+            #   단 1건도 못 가져온 완전 실패는 None(하드 실패 — []로 뭉개면 "규제 없음"으로 둔갑).
+            return results if results else None
 
     # ── VWORLD 정적 영상(항공/위성 정사영상) ──
     IMAGE_URL = "https://api.vworld.kr/req/image"

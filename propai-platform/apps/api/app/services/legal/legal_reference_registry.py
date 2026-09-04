@@ -220,6 +220,11 @@ LEGAL_REFERENCES: dict[str, dict[str, str]] = {
     # ── 국토계획법 시행령 (실효 한도: 별표 위임) ──
     "bcr_limit":          _ref(_KOOKTO_DEC, "제84조", "용도지역 안에서의 건폐율"),
     "far_limit":          _ref(_KOOKTO_DEC, "제85조", "용도지역 안에서의 용적률"),
+    # ── 녹지지역 층수상한(별표15~17 두문 "4층 이하") — 구조상한(건폐율×4층) 실효용적률의 법적 근거.
+    #   ★건축법 별표가 아니라 국토계획법 시행령 별표가 정답(legal_zone_limits.FLOOR_CAP_BASIS와 짝).
+    #   별표는 조문 딥링크 미지원 → 시행령 법령 루트로 폴백(verified 유지, 무날조).
+    "green_zone_floor_cap": _ref(_KOOKTO_DEC, None,
+                                 "녹지지역 층수 제한(별표15~17 두문 — 4층 이하, 실효 용적률=건폐율×층수)"),
     # ── 개발행위허가(도시지역 녹지 등 건축 前 선행/병행 관문) — 국토계획법 §56~58 ──
     #   ★도시지역 내 녹지(자연·생산·보전녹지)는 밀도한도(건폐/용적)만이 아니라 개발행위허가
     #   (규모·경사도·연접개발·도로/배수 기준) 선행/병행이 개발가능성의 전제다(감사 커버리지 갭).
@@ -234,6 +239,8 @@ LEGAL_REFERENCES: dict[str, dict[str, str]] = {
     "building_line":      _ref(_BLDG, "제46조", "건축선의 지정"),
     "building_line_limit": _ref(_BLDG, "제47조", "건축선에 따른 건축 제한"),
     "road_relation":      _ref(_BLDG, "제44조", "대지와 도로의 관계(접도요건)"),
+    # WP-A 접도·도로(access_basis) — 막다른 도로 길이별 최소 너비(2/3/6m) 근거.
+    "road_structure_width": _ref(_BLDG_DEC, "제3조의3", "지형적 조건 등에 따른 도로의 구조와 너비(막다른 도로 길이별 최소 너비)"),
     # ── 토지이음 지역지구별 규제법령집 보강(국토계획법 용도지구·도시계획시설 + 개별법) ──
     "specific_use_district": _ref(_KOOKTO, "제37조", "용도지구의 지정(특정용도제한지구·경관·고도지구 등)"),
     "urban_planning_facility": _ref(_KOOKTO, "제43조", "도시·군계획시설(도로·광장·공원 등)의 결정"),
@@ -369,7 +376,19 @@ LEGAL_REFERENCES: dict[str, dict[str, str]] = {
     "small_housing_sell_claim":   _ref(_SMALL_REDEV, "제35조", "매도청구"),
     # ── 갭법규(feat) 수도권정비계획법(인구집중유발시설·과밀부담금) ──
     "metro_overconcentration":    _ref(_METRO, "제7조", "과밀억제권역의 행위 제한(인구집중유발시설)"),
+    # [확실·법제처 원문 확인 2026-08-19] 수도권정비계획법 제6조제1항이 3권역을 구분하고
+    #   제7·8·9조가 각 권역의 행위제한을 정한다. ★`성장관리권역`(제8조)은 이름이 비슷할 뿐
+    #   국토계획법 `성장관리계획구역`(제75조의2, 아래 growth_management_zone)과 **다른 제도**다
+    #   — 전자는 인구집중유발시설 신설 **제한**, 후자는 건폐율 **완화** 근거.
+    "metro_growth_management":    _ref(_METRO, "제8조", "성장관리권역의 행위 제한(수도권 인구·산업 배치)"),
+    "metro_nature_conservation":  _ref(_METRO, "제9조", "자연보전권역의 행위 제한"),
     "metro_congestion_charge":    _ref(_METRO, "제12조", "과밀부담금의 부과·징수"),
+    # ── 수지 부담금 엔진(B01·B03·B04·C07) 법령 근거 — 과밀부담금(수도권정비법)과 별개 ──
+    "metro_transport_charge":     _ref("대도시권 광역교통 관리에 관한 특별법", "제7조의2", "광역교통시설부담금(표준건축비×부과율×건축연면적)"),
+    "infra_facility_charge":      _ref(_KOOKTO, "제68조", "기반시설부담금(부담구역·표준시설비용×부담률)"),
+    "water_supply_cause_charge":  _ref("수도법", "제71조", "원인자부담금(조례 위임·전국단일값 없음)"),
+    "sewage_cause_charge":        _ref("하수도법", "제61조", "원인자부담금(조례 위임·전국단일값 없음)"),
+    "development_charge":         _ref("개발이익 환수에 관한 법률", "제5조", "개발부담금 부과대상 사업"),
     # ── 갭법규(feat) 학교용지·기부채납·국공유재산 보강 ──
     "school_land_contribution":   _ref(_KOOKTO, "제52조의2", "공공시설등의 설치비용 등(기부채납·공공기여)"),
     "school_land_special":        _ref("학교용지 확보 등에 관한 특례법", None, "학교용지 확보·부담금(현행본)"),
@@ -578,7 +597,20 @@ _DISTRICT_LAW_KEYWORDS: tuple[tuple[tuple[str, ...], list[str]], ...] = (
     (("중점경관", "경관관리구역", "경관지구"), ["landscape_district"]),
     # 개별법 지역지구.
     (("철도보호", "철도안전"), ["railway_protection"]),
+    # 군사기지·군사시설 보호구역 / 비행안전구역(공항 주변) — 군사기지법 행위제한·협의.
+    (("비행안전", "공항", "군사기지", "군사시설보호", "군사시설 보호"), ["military_protection_zone"]),
+    # 토지거래허가구역 — 부동산 거래신고 등에 관한 법률(허가·신고).
+    (("토지거래허가", "토지거래계약", "토지거래"), ["realtx_report"]),
     (("과밀억제권역",), ["metro_overconcentration"]),
+    # ★수도권정비계획법 3권역 — `성장관리권역`은 여기다. 아래 성장관리**계획구역**과 혼동 금지
+    #   (실측: 오산시 필지 designation `성장관리권역`이 규제법령집에서 unmatched 였다).
+    (("성장관리권역",), ["metro_growth_management"]),
+    (("자연보전권역",), ["metro_nature_conservation"]),
+    # 국토계획법 성장관리계획구역 — 법령키는 예전부터 정의돼 있었으나 **매핑이 없어
+    #   소비처 0**이었다(정의만 하고 안 쓰던 전형). '성장관리방안'은 2021 개정 전 명칭.
+    #   ※`성장관리계획구역` 은 뒤의 `성장관리계획` 에 **부분일치로 포함**되므로 판별상 중복이다
+    #     (변이감사에서 생존 — 설명 가능). 정식 명칭을 앞에 적어 두는 문서 목적으로 남긴다.
+    (("성장관리계획구역", "성장관리계획", "성장관리방안"), ["growth_management_zone"]),
     (("폐기물매립", "폐기물처리"), ["waste_landfill_restrict"]),
     (("가축사육제한", "가축분뇨"), ["livestock_restrict"]),
     (("문화유산", "문화재", "현상변경", "역사문화환경"), ["cultural_heritage"]),

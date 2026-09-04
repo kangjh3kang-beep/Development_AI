@@ -28,7 +28,11 @@ from app.services.cad import template_assembly_service as assembly
 from app.services.cad.design_spec import DesignSpec
 from apps.api.auth.jwt_handler import CurrentUser, get_current_user
 from apps.api.database.session import get_db
-from apps.api.services.storage_service import StorageError, upload_design_file
+from apps.api.services.storage_service import (
+    ContentRejectedError,
+    StorageError,
+    upload_design_file,
+)
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api/v1/design-references", tags=["설계 참조 라이브러리"])
@@ -78,6 +82,12 @@ async def upload_reference(
             try:
                 up = await upload_design_file(data, file.content_type or "", file.filename or "")
                 file_url, file_type = up["url"], up["file_type"]
+            except ContentRejectedError as exc:
+                # ★리뷰 필수 #2: 콘텐츠 검증 거부(위장/bomb/실행파일 등)는 클라이언트 귀책 4xx —
+                # 인프라 장애(502)와 구분해 자동재시도·오탐 알림을 막는다.
+                raise HTTPException(
+                    status_code=exc.http_status, detail=f"업로드가 거부되었습니다: {exc.reason}"
+                ) from exc
             except StorageError as exc:
                 raise HTTPException(status_code=502, detail=f"스토리지 업로드 실패: {exc}") from exc
 
@@ -214,7 +224,16 @@ async def upload_reference_geometry(
     current: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """DXF 업로드 → 표준 기하 추출·부착(관리자). 파싱 실패는 422(가짜 기하 금지)."""
+    """DXF 업로드 → 표준 기하 추출·부착(관리자). 파싱 실패는 422(가짜 기하 금지).
+
+    ★WP-H 세션2 결선: 세션1이 이관한 잔여 표면. 파싱 전에 공용 콘텐츠 검증(content_inspection)을
+    fail-closed 로 적용한다 — 실행/스크립트 위장·MIME 위장·경로순회·폴리글랏 압축폭탄을 차단한다
+    (관리자 전용이라도 방어 심층). ★expected_kinds 미지정(WP-H 세션2 CI 회귀 수정 후 전역 스윕
+    적용 — CSV/parcel_excel·design_v61 import-dxf·design_audit dxf/ifc 와 동일 정책): DXF는 강한
+    매직바이트가 없는 텍스트 포맷이라 정상 파일도 매직판별 실패로 415 과대거부될 수 있다. 형식
+    판정(손상/비DXF)은 geo.dxf_to_geometry 가 맡아 422 로 정직 거부한다(가짜 기하 금지). 검증
+    실패(exe/스크립트·활성콘텐츠·경로순회·압축폭탄)는 http_status(4xx).
+    """
     await _require_admin(current, db)
     ref = await svc.get_reference(db, ref_id)
     if ref is None:
@@ -224,6 +243,15 @@ async def upload_reference_geometry(
         raise HTTPException(status_code=422, detail="빈 파일입니다.")
     if len(data) > _MAX_BYTES:
         raise HTTPException(status_code=413, detail="파일이 너무 큽니다(최대 25MB).")
+
+    from app.services.security.content_inspection import http_status_for, inspect_upload
+
+    _verdict = inspect_upload(data, file.filename or "", file.content_type)
+    if not _verdict.allowed:
+        raise HTTPException(
+            status_code=http_status_for(_verdict.code),
+            detail=f"업로드가 거부되었습니다: {_verdict.reason}",
+        )
     try:
         geometry = geo.dxf_to_geometry(data)
     except geo.GeometryError as exc:

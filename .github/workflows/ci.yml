@@ -3,18 +3,89 @@ name: CI
 on:
   push:
     branches: [main]
-    paths: ["propai-platform/**"]
+    # 워크플로우 자신 포함 — CI 정의만 바꾼 PR이 CI 미발화로 무검증 머지되던 갭 봉합
+    # (paths 필터가 propai-platform/** 뿐이라 .github 변경은 트리거 밖이었음).
+    paths: ["propai-platform/**", ".github/workflows/ci.yml"]
+  # ★pull_request는 paths 필터 없이 항상 발화 — 브랜치보호 required check가 워크플로우
+  #   레벨 paths 스킵과 만나면 문서 전용 PR이 "Expected" 영구대기로 차단되는 함정이 있다.
+  #   경로 판별은 아래 changes 잡(잡 레벨 if)으로 이관: GitHub는 if로 스킵된 잡을
+  #   required 충족으로 취급하므로, 문서 PR은 3잡 스킵으로 통과·플랫폼 PR은 전체 실행.
   pull_request:
-    paths: ["propai-platform/**"]
   workflow_dispatch:
 
 jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pull-requests: read
+    outputs:
+      platform: ${{ steps.filter.outputs.platform }}
+    steps:
+      - name: Filter paths (PR만 판별 — push/dispatch는 항상 전체 실행)
+        id: filter
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # ★R1 하드닝: 판별 실패는 반드시 '전체 실행'으로 귀결(fail-safe) — 이 잡의 실패가
+        #   하위 required 잡 skip=충족(fail-open 무검증 머지)으로 새지 않게. here-string은
+        #   대형 PR에서 printf|grep-q/head 조합의 SIGPIPE+pipefail 오판을 원천 제거.
+        #   잔여 실패(러너 사망 등) 대비로 브랜치보호에 'Detect changes'도 required 등록.
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "platform=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if ! FILES=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" --paginate --jq '.[].filename'); then
+            echo "files API 실패 — 안전측 전체 실행"
+            echo "platform=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          head -50 <<<"$FILES" || true
+          if grep -qE '^(propai-platform/|\.github/workflows/ci\.yml$)' <<<"$FILES"; then
+            echo "platform=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "platform=false" >> "$GITHUB_OUTPUT"
+          fi
+
   backend-tests:
     name: Backend (pytest)
+    needs: changes
+    if: needs.changes.outputs.platform == 'true'
     runs-on: ubuntu-latest
+    # ★상한이 없으면 멈춘 job 이 GitHub 기본 **6시간**까지 간다.
+    #   2026-08-18 실사고: `Install GDAL native libraries` 가 **5시간 50분** 매달렸고
+    #   그동안 `Run unit tests` 는 시작조차 못 했다. 관측자는 `in_progress` 를
+    #   "진행 중"으로 읽었지만, **근본은 오독이 아니라 워크플로에 상한이 없다는 것**이다.
+    #   40분 = 그 단계의 관측 성공 최대치(986초 = 16.4분)의 2배 초과.
+    #   정상 실행을 죽이지 않으면서(성공 13건 실측 38~986초) hang 은 빠르게 실패시킨다.
+    timeout-minutes: 40
     defaults:
       run:
         working-directory: propai-platform
+    # ★2026-08-16 — 이 잡에는 DB가 없었다. 그 결과 `app/core/idempotency.py` 처럼 **fail-open**
+    #   으로 설계된 모듈(DB를 못 쓰면 조용히 "처음 보는 키"로 판정)은, 무엇을 단언하든 통과하는
+    #   **공허한 초록**이었다 — `ON CONFLICT (COALESCE(...), ...)` 표현식 인덱스가 진짜
+    #   Postgres 에서 성립하는지조차 확인된 적이 없다. 돈 가드에서 그건 허용할 수 없다.
+    #   ★★포트를 **5432 가 아니라 55432** 로 연다. 기본 `DATABASE_URL` 은 5432 를 가리키므로,
+    #     5432 에 DB 를 띄우면 "DB 가 없을 때 우아하게 동작하는가"를 검증하던 기존 테스트들이
+    #     전제를 잃고 깨진다(실측: 그 조건에서 3건이 빨개진다 — 성장루프 e2e·원장 경쟁·지출원장).
+    #     즉 이 잡에 DB 를 그냥 붙이면 **내가 회귀를 만든다.** 새 테스트만 `TEST_PG_DSN` 으로
+    #     명시 접속하고, 나머지 스위트가 보는 세상은 종전 그대로 둔다.
+    #   ★이 서비스가 없으면 `tests/test_charge_idempotency.py` 는 skip 이 아니라 **fail** 한다
+    #     (CI 환경변수로 감지 — fail-open 모듈에서 skip 은 곧 무잠금이다).
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: propai_user
+          POSTGRES_PASSWORD: propai_pass_dev
+          POSTGRES_DB: propai_db
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U propai_user -d propai_db"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     steps:
       - uses: actions/checkout@v4
 
@@ -41,52 +112,214 @@ jobs:
 
       # ★#148로 위반 0 달성(전면 --fix+무해규칙 ignore) → W1-9에서 차단(required) 게이트로
       #   승격. 위반 0 시점의 차단화라 기존 PR에 비용 없음; ignore 규칙은 점진 해제.
+      # ★버전을 핀한다(2026-08-16 실사고). 종전 `pip install ruff` 는 실행마다 **최신**을 받아,
+      #   로컬 0.15.7 통과 / CI 0.16.3 실패가 **같은 명령으로** 났다(명령이 아니라 버전이 달랐다).
+      #   린터 릴리스 하나가 **코드 변경 0으로 전 PR 을 빨갛게** 만들 수 있고, 원인이 자기 diff 에
+      #   없어 진단이 길다(CI 한 사이클 ≈ 16분). 정본은 requirements-dev.txt —
+      #   로컬에서도 같은 제약으로 설치하면 CI 와 같은 결과가 난다.
+      # ★`-r` 이 아니라 **`-c`(제약)** 를 쓴다. `-r` 로 하면 이 **필수 잡**에 bandit·pip-audit 까지
+      #   설치돼 패키지가 1개 → **32개**로 늘고(PyYAML·packaging·requests·certifi·urllib3 …),
+      #   이미 설치된 api 의존성과 버전이 충돌할 여지를 임계경로에 들인다(실측 dry-run).
+      #   `-c` 는 **설치 대상은 ruff 하나로 두고 버전만 핀**한다(dry-run 확인: 1개·0.16.3).
       - name: Ruff (lint)
         working-directory: propai-platform/apps/api
         run: |
-          pip install ruff
+          pip install -c requirements-dev.txt ruff
           python -m ruff check .
 
       - name: Run unit tests (apps/api)
         working-directory: propai-platform/apps/api
-        run: python -m pytest tests/ -q --no-header
+        # ★TEST_PG_DSN 만 실 DB 를 가리킨다(기본 DATABASE_URL=5432 는 그대로 비어 있다).
+        #   과금 멱등 락은 fail-open 모듈이라 **실 Postgres 를 태우지 않으면 무잠금**이다.
+        env:
+          TEST_PG_DSN: postgresql+asyncpg://propai_user:propai_pass_dev@localhost:55432/propai_db
+        # ★병렬화(2026-08-17) — 이 잡이 CI 임계경로다(총 16분 중 15~16분).
+        #   CI 실측(같은 잡 안 연속 측정 · 러너 nproc=4):
+        #     직렬     750초   9392 passed · 96 skipped · 3 xfailed
+        #     -n auto  385초   9392 passed · 96 skipped · 3 xfailed   ← 완전 일치 = 회귀 0
+        #   → 1.95배. 머지큐를 못 쓰는 저장소(개인 계정 소유)에서 사이클 비용을 줄이는
+        #     **유일한 직접 레버**다. 리베이스 왕복(#649 5회·#658 3회)의 비용도 함께 준다.
+        #   ★`-n auto` — 워커 수를 러너에 맡긴다(고정하면 러너 사양 변경 시 어긋난다).
+        #   ★`-c` 로 설치한다(`-r` 아님) — 이 필수 잡에 불필요한 패키지를 들이지 않는다.
+        run: |
+          pip install -c requirements-dev.txt pytest-xdist
+          python -m pytest tests/ -q --no-header -n auto
 
       # 루트 계약 스위트(propai-platform/tests) — 과거 CI 밖에서 17실패가 방치됐던
       # 갭을 게이트로 편입(931+ tests, 무DB). apps/api 스위트와 별개 커버리지.
+      # ★여기는 **직렬을 유지한다** — 병렬 이득을 **재보지 않았다**(apps/api 만 쟀다).
+      #   안 잰 것을 바꾸면 이득은 불확실한데 병렬 안전성 위험만 새로 들인다.
       - name: Run root contract suite (propai-platform/tests)
         working-directory: propai-platform
         run: python -m pytest tests/ -q --no-header
 
   frontend-checks:
     name: Frontend (type-check + lint + test)
+    needs: changes
+    if: needs.changes.outputs.platform == 'true'
     runs-on: ubuntu-latest
+    # ★상한은 **모든 job 에 건다** — 걸린 곳만 걸면 안 건 곳이 다음 6시간을 만든다.
+    #   (CLAUDE.md §D-19 "경계를 걸면 양방향으로" 의 job 판.)
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v3
-        with:
-          version: 9
+      # ★pnpm 은 외부 액션이 아니라 **corepack** 으로 켠다(2026-08-18).
+      #   `pnpm/action-setup` 은 codeload 에서 tar 를 받는데 그 다운로드가 **429(Too Many
+      #   Requests)** 로 실패해 `Set up job` 단계에서 죽었다 — 같은 날 PR 3건(#684·#687·#688)이
+      #   **코드가 검사되지도 못한 채** 빨갰다(실측: 실패 job 로그 37줄 · 429 4건 ·
+      #   tsc/eslint/vitest 진입 흔적 **0**).
+      # ★형제 패턴: `propai-platform/Dockerfile.web:4` 가 이미 `corepack enable` 을 쓴다.
+      # ★★버전 고정에는 **한정이 붙는다** — corepack 은 **cwd 에서 위로 올라가며**
+      #   `package.json` 의 `packageManager` 를 찾는다. 이 레포는 **루트에 package.json 이 없고**
+      #   `propai-platform/package.json` 에만 `pnpm@9.0.0` 이 있다. 따라서
+      #   **`working-directory: propai-platform` 에서 pnpm 을 부를 때만** 9.0.0 이 보장된다.
+      #   레포 루트에서 pnpm 을 부르면 corepack 이 **latest 를 내려받는다**
+      #   (실측: `pnpm-11.22.0.tgz` — 루트에서 `pnpm config set` 을 돌렸다가 그렇게 됐다).
+      #   → 루트에서 pnpm 을 부르는 스텝을 추가하지 마라.
+      - name: Enable pnpm (corepack)
+        run: corepack enable
 
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: pnpm
-          cache-dependency-path: propai-platform/pnpm-lock.yaml
+          # ★`cache: pnpm` 은 **제거했다**(2026-08-18 · #689 2차 실패 교훈).
+          #   `actions/setup-node` 의 pnpm 캐시는 셋업 때 `pnpm store path` 로 경로를 잡고
+          #   **post 에서 그 경로의 존재를 검증**하는데, corepack 경로에서 실제 설치 위치와
+          #   갈려 post 가 죽었다(`Path Validation Error: … do(es) not exist`).
+          #   경로를 `pnpm config set store-dir` 로 고정해 보려다 **더 나빠졌다** —
+          #   그 명령이 레포 루트에서 돌아 corepack 이 latest(11.22.0)를 받고,
+          #   `--global` 이 PATH 검사로 exit 1 을 내 **본체까지 막혔다.**
+          #   → 이 PR 의 목적은 **429 의존 제거**이고 그건 달성됐다(1차 실행에서 본체 전부 success).
+          #     캐시는 별건에서 `actions/cache` 로 경로를 **명시**해 되살린다 —
+          #     그때 store 경로는 `propai-platform` 안에서 `pnpm store path` 로 얻어야 한다.
 
       - name: Install dependencies
         run: pnpm install
         working-directory: propai-platform
 
       # W1-9: tsc·eslint 현재 0 error(그린) → 차단 게이트로 승격(비차단은 게이트 착시).
-      # eslint 경고(~190)는 --max-warnings 미설정이라 통과 — 경고 정리 후 0 게이트화 예정.
       - name: Type check
         run: pnpm type-check
         working-directory: propai-platform/apps/web
 
+      # ★경고는 **에러로 만들지 않는다** — 그러면 다른 세션의 무관한 PR 이 즉시 빨개진다.
+      #   대신 **늘지 않게** 잠근다(비성장 래칫). 기존 경고가 있는 파일을 안 건드리는 PR 은 무영향.
+      #   전면 `--max-warnings 0` 게이트화는 **팀 결정 사안**으로 남긴다.
+      # ★eslint 를 **두 번 돌리지 않는다** — 이 스텝의 JSON 을 다음 스텝이 그대로 먹는다.
+      #   `-o` 는 종료코드를 바꾸지 않으므로 **에러 0 게이트는 그대로 유지**된다.
       - name: Lint
-        run: pnpm lint
+        run: pnpm lint --format json -o /tmp/eslint-report.json
         working-directory: propai-platform/apps/web
 
+      # 왜(실측 2026-08-26 · origin/main a7838464): `npx eslint . --no-cache` 전수 =
+      #   파일 1,060 · **경고 189 · 에러 0**. 그중 `no-unused-vars` **74**(대개 미사용 import 55) ·
+      #   **"Unused eslint-disable directive" 31**(= 죽은 면제). 게이트가 없어 계속 쌓였다.
+      # ★그 미사용 import 가 단순 노이즈가 아니다 — **`import` 를 소비처로 착각하게 만드는 재료**다.
+      #   실제로 2026-08-26 에 그 함정에 걸려 소비처 수를 틀리게 세고 PR 에 적었다.
+      # ★★`-o` 는 stdout 을 **완전히 비운다**(실측: 에러가 있어도 stdout 0바이트 · EXIT=1).
+      #   그래서 이 렌더 스텝이 **없으면** Lint 실패 시 "어느 파일·어느 규칙"이 로그 어디에도
+      #   안 남는다. 초판 주석은 *"에러 자체가 보여야 한다"* 고 적어 놓고 정확히 그것을 없앴다
+      #   (독립 리뷰 F2 · CLAUDE.md §C-11 "면역을 거짓 주장하지 마라").
+      #   ★`if: always()` — Lint 가 **에러로 죽었을 때야말로** 이게 보여야 한다.
+      #   ★eslint 를 재실행하지 않는다 — 이미 나온 JSON 을 사람이 읽는 형태로 옮길 뿐이다.
+      - name: Lint report (사람이 읽는 형태)
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json, pathlib
+          p = pathlib.Path("/tmp/eslint-report.json")
+          if not p.is_file() or p.stat().st_size == 0:
+              print("★eslint 리포트가 없다 — Lint 스텝이 리포트를 남기기 전에 죽었다")
+              raise SystemExit(0)
+          data = json.loads(p.read_text(encoding="utf-8"))
+          rows = [(r["filePath"], m) for r in data for m in r.get("messages", [])]
+          err = [x for x in rows if x[1].get("severity") == 2]
+          print(f"린트 파일 {len(data)} · 메시지 {len(rows)} · 에러 {len(err)}")
+          for path, m in (err or rows)[:120]:
+              rel = path.split("/apps/web/", 1)[-1]
+              kind = "error" if m.get("severity") == 2 else "warn"
+              print(f"  {kind:5} {rel}:{m.get('line')}:{m.get('column')}  "
+                    f"{m.get('ruleId')}  {str(m.get('message'))[:100]}")
+          if len(err or rows) > 120:
+              print(f"  … 외 {len(err or rows) - 120}건")
+          PY
+
+      # ★위 Lint 스텝이 **에러**로 죽으면 이 스텝은 안 돈다(`if:` 없음) — 그게 맞다.
+      #   그때 필요한 것은 래칫 판정이 아니라 **에러 자체**이고, 그건 위 렌더 스텝이 보여 준다.
+      - name: Lint ratchet (경고가 늘지 않았는가)
+        run: python3 scripts/ci/lint_ratchet.py /tmp/eslint-report.json propai-platform/apps/web/lint-ratchet.json
+
+      # ★이 게이트 빨강의 **약 58% 가 vitest RPC 타임아웃 플레이크**다(2026-08-26 전수 실측).
+      #   창 2026-08-12 ~ 08-26(14일) · ci.yml 런 1,200건 중 실패 135건 ·
+      #   그중 **이 잡이 빨간 런 67건**을 전부 로그 원문으로 판정:
+      #     FLAKE 39 (58%) · **REAL 13 (19%)** · UNKNOWN 15 (22%, vitest 요약 이전 실패=tsc/lint/크래시)
+      # ★★#842 초판은 여기에 *"진짜 결함을 잡은 적이 0회 · 100% 위양성"* 이라고 적었는데
+      #   **그것은 틀렸다.** 그때 표본이 "최근 실패 런 7건"이라 **두 겹으로 잘려** 있었다 —
+      #   ①"최근" 창 ②**"실패로 남은 런"**. 성공한 게이트는 자기 증거를 지운다(빨개져서
+      #   작성자가 고치면 그 PR 은 **초록으로 머지**되므로 그 표본에 원리적으로 안 들어온다).
+      #   전수로 재니 이 게이트는 **14일 동안 진짜 테스트 실패를 13번 잡았다.**
+      # ★그래서 이 스텝의 목적은 **게이트 약화가 아니라 노이즈 격리**다. 위 REAL 13 건이
+      #   바로 아래 "failed >= 1 이면 재시도 금지" 규칙이 지켜 내는 것이다.
+      # ★위험은 재실행 **비용**이 아니라 **반사**다 — "또 그 플레이크겠지"로 재실행하는 습관이
+      #   생기면 **진짜 실패도 같은 반사에 묻힌다.** 그래서 게이트를 약화시키지 않고
+      #   판정을 사람의 눈이 아니라 스크립트에 둔다: 관측된 서명(요약 존재 + failed 0 +
+      #   타임아웃)이 **전부** 맞을 때만 1회 재시도하고, 그 외에는 즉시 빨강이다.
+      # ★판정 계약은 propai-platform/tests/test_ci_vitest_flake_classifier.py 가 잠근다
+      #   (진짜 실패와 그 타임아웃이 **같은 실행에** 난 경우를 대조군으로 둔다 — 그게 유일한 실질 위험).
+      # ★미측정: **왜** RPC 가 타임아웃되는지는 재지 않았다(vitest 3.2.4 는 이 타임아웃을
+      #   설정으로 노출하지 않는다). 이 스텝은 게이트 신뢰도 회복이 목적이고 근본은 별건이다.
       - name: Unit tests
-        run: pnpm test:run
+        run: bash "$GITHUB_WORKSPACE/scripts/ci/vitest_with_flake_retry.sh"
+        working-directory: propai-platform/apps/web
+
+  # ★next build 게이트 — 정적 프리렌더(Suspense 경계)·React Compiler 결함은 tsc/eslint를
+  #   통과하고도 build에서만 표면화되어 배포서(158)에서 처음 발견되던 클래스였다
+  #   (#398→#400 useSearchParams 프리렌더 fail·#408→#410 React Compiler error 전례).
+  #   backend-tests(~14m)가 장대(critical path)라 병렬 잡 추가는 총 CI 시간을 늘리지 않는다.
+  frontend-build:
+    name: Frontend (next build)
+    needs: changes
+    if: needs.changes.outputs.platform == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # ★pnpm 은 외부 액션이 아니라 **corepack** 으로 켠다(2026-08-18).
+      #   `pnpm/action-setup` 은 codeload 에서 tar 를 받는데 그 다운로드가 **429(Too Many
+      #   Requests)** 로 실패해 `Set up job` 단계에서 죽었다 — 같은 날 PR 3건(#684·#687·#688)이
+      #   **코드가 검사되지도 못한 채** 빨갰다(실측: 실패 job 로그 37줄 · 429 4건 ·
+      #   tsc/eslint/vitest 진입 흔적 **0**).
+      # ★형제 패턴: `propai-platform/Dockerfile.web:4` 가 이미 `corepack enable` 을 쓴다.
+      # ★★버전 고정에는 **한정이 붙는다** — corepack 은 **cwd 에서 위로 올라가며**
+      #   `package.json` 의 `packageManager` 를 찾는다. 이 레포는 **루트에 package.json 이 없고**
+      #   `propai-platform/package.json` 에만 `pnpm@9.0.0` 이 있다. 따라서
+      #   **`working-directory: propai-platform` 에서 pnpm 을 부를 때만** 9.0.0 이 보장된다.
+      #   레포 루트에서 pnpm 을 부르면 corepack 이 **latest 를 내려받는다**
+      #   (실측: `pnpm-11.22.0.tgz` — 루트에서 `pnpm config set` 을 돌렸다가 그렇게 됐다).
+      #   → 루트에서 pnpm 을 부르는 스텝을 추가하지 마라.
+      - name: Enable pnpm (corepack)
+        run: corepack enable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          # ★`cache: pnpm` 은 **제거했다**(2026-08-18 · #689 2차 실패 교훈).
+          #   `actions/setup-node` 의 pnpm 캐시는 셋업 때 `pnpm store path` 로 경로를 잡고
+          #   **post 에서 그 경로의 존재를 검증**하는데, corepack 경로에서 실제 설치 위치와
+          #   갈려 post 가 죽었다(`Path Validation Error: … do(es) not exist`).
+          #   경로를 `pnpm config set store-dir` 로 고정해 보려다 **더 나빠졌다** —
+          #   그 명령이 레포 루트에서 돌아 corepack 이 latest(11.22.0)를 받고,
+          #   `--global` 이 PATH 검사로 exit 1 을 내 **본체까지 막혔다.**
+          #   → 이 PR 의 목적은 **429 의존 제거**이고 그건 달성됐다(1차 실행에서 본체 전부 success).
+          #     캐시는 별건에서 `actions/cache` 로 경로를 **명시**해 되살린다 —
+          #     그때 store 경로는 `propai-platform` 안에서 `pnpm store path` 로 얻어야 한다.
+
+      - name: Install dependencies
+        run: pnpm install
+        working-directory: propai-platform
+
+      - name: Next build (prerender + React Compiler gate)
+        run: pnpm build
         working-directory: propai-platform/apps/web

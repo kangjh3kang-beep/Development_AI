@@ -29,6 +29,20 @@ export interface SeniorEvaluation {
   detail?: string;
 }
 
+export interface SeniorIracStep {
+  rule_id?: string;
+  issue?: string; // 쟁점(I)
+  rule?: string; // 규칙(R)
+  basis?: string; // 법령 근거
+  application?: string; // 적용(A)
+  conclusion?: string; // 결론(C)
+}
+
+export interface SeniorReasoning {
+  mode?: string; // structured(결정론) | llm
+  irac_steps?: SeniorIracStep[];
+}
+
 export interface SeniorConsultationDomain {
   agent_key?: string;
   name_ko?: string;
@@ -41,6 +55,10 @@ export interface SeniorConsultationDomain {
   high_risk?: boolean;
   license_gate?: string | null;
   honest_notes?: string[];
+  // 풍성화(additive) — 백엔드 include_reasoning 시에만 존재. 없으면 기존 렌더 그대로(무회귀).
+  reasoning?: SeniorReasoning | null;
+  risk_warnings?: string[];
+  checklist?: string[];
 }
 
 export interface SeniorConsultation {
@@ -179,6 +197,75 @@ export function SeniorVerdictCard({
                       className="max-w-full truncate rounded border border-[var(--line)] bg-[var(--surface-soft)] px-1.5 py-0.5 text-[10px] text-[var(--text-secondary)]"
                     >
                       {c}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+
+              {/* IRAC 판단 체인(풍성화) — 쟁점→규칙(법령 근거)→적용→결론. 백엔드 결정론 산출. */}
+              {Array.isArray(d.reasoning?.irac_steps) && (d.reasoning?.irac_steps ?? []).length > 0 ? (
+                <details className="mt-2">
+                  <summary className="cursor-pointer text-[11px] font-semibold text-[var(--text-primary)]">
+                    판단 체인 {(d.reasoning?.irac_steps ?? []).length}건 (쟁점→규칙→적용→결론)
+                  </summary>
+                  <ol className="mt-1.5 space-y-2">
+                    {(d.reasoning?.irac_steps ?? []).map((s, k) => (
+                      <li
+                        key={s.rule_id || k}
+                        className="break-keep rounded border border-[var(--line)] bg-[var(--surface-soft)] p-2 text-[11px] leading-relaxed text-[var(--text-secondary)]"
+                      >
+                        {s.issue ? (
+                          <p>
+                            <span className="font-semibold text-[var(--text-primary)]">쟁점</span> {s.issue}
+                          </p>
+                        ) : null}
+                        {s.rule ? (
+                          <p>
+                            <span className="font-semibold text-[var(--text-primary)]">규칙</span> {s.rule}
+                            {s.basis ? <span className="opacity-80"> (근거: {s.basis})</span> : null}
+                          </p>
+                        ) : null}
+                        {s.application ? (
+                          <p>
+                            <span className="font-semibold text-[var(--text-primary)]">적용</span> {s.application}
+                          </p>
+                        ) : null}
+                        {s.conclusion ? (
+                          <p>
+                            <span className="font-semibold text-[var(--text-primary)]">결론</span> {s.conclusion}
+                          </p>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ol>
+                </details>
+              ) : null}
+
+              {/* 실패모드 경고(풍성화) — 시니어가 경계하는 흔한 오판 */}
+              {(d.risk_warnings ?? []).length > 0 ? (
+                <details className="mt-1.5">
+                  <summary className="cursor-pointer text-[11px] font-semibold text-[var(--text-primary)]">
+                    경계 실패모드 {(d.risk_warnings ?? []).length}건
+                  </summary>
+                  <ul className="mt-1 list-inside list-disc space-y-0.5">
+                    {(d.risk_warnings ?? []).map((w, k) => (
+                      <li key={w || k} className="break-keep text-[11px] text-[var(--text-secondary)]">
+                        {w}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              ) : null}
+
+              {/* 점검 체크리스트(풍성화) */}
+              {(d.checklist ?? []).length > 0 ? (
+                <div className="mt-1.5 flex flex-wrap gap-1">
+                  {(d.checklist ?? []).map((c, k) => (
+                    <span
+                      key={c || k}
+                      className="rounded border border-[var(--line)] bg-[var(--surface-muted)] px-1.5 py-0.5 text-[10px] text-[var(--text-secondary)]"
+                    >
+                      ☑ {c}
                     </span>
                   ))}
                 </div>

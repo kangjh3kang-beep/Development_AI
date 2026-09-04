@@ -149,12 +149,27 @@ async def build_boq(
     indirect = max(0, total - direct)
     confidence = "B" if qto_source == "bim" else "C"
 
+    # W3-3(P9): Q1~Q4 등급 분포(사실 재-표기) — items 는 이미 qto_source(bim/derived)를
+    # 항목마다 갖고 있고(직접비 축), calc 는 OriginCostCalculator 12단계 요율 항목(간접비
+    # 축, Q3 계수)을 갖고 있다. origin_cost_calculator.py 자체는 무변경(호출부 후처리).
+    from app.services.cost.qto_tier import classify_origin_cost_keys, summarize_tiers
+
+    tier_summary = summarize_tiers(
+        items, amount_key="amount", extra_tier_amounts=classify_origin_cost_keys(calc),
+    )
+    items = tier_summary["tagged_items"]
+
     return {
         "items": items,
         "summary": {
             "direct": direct, "indirect": indirect, "total": total,
             "confidence_grade": confidence, "confidence_band": band,
             "total_project_cost": total,
+            "tier_distribution": {
+                "by_tier": tier_summary["by_tier"],
+                "dominant_tier": tier_summary["dominant_tier"],
+                "note": tier_summary["note"],
+            },
         },
         "badges": {
             "note": _HONESTY_NOTE,

@@ -7,13 +7,19 @@ import { useFeasibilityV2Store } from "@/store/use-feasibility-v2-store";
 import { ProjectTypeSelector } from "./ProjectTypeSelector";
 import { ModuleInputForm } from "./ModuleInputForm";
 import { FeasibilityResultView } from "./FeasibilityResultView";
+import { SeniorVerdictCard, type SeniorConsultation } from "@/components/analysis/SeniorVerdictCard";
 import { MonteCarloPanel } from "./MonteCarloPanel";
 import { VersionHistoryView } from "./VersionHistoryView";
 import { AIRecommendationPanel } from "./AIRecommendationPanel";
-import { ExcelExportButton } from "./ExcelExportButton";
+import { FeasibilityExportButton } from "./FeasibilityExportButton";
 import { AutoRecommendPanel } from "./AutoRecommendPanel";
 import { EnvironmentSummaryCard } from "@/components/environment/EnvironmentSummaryCard";
-import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { useShallow } from "zustand/react/shallow";
+import {
+  useProjectContextStore,
+  computeFeasibilityCompleteness,
+  selectFeasibilityCompletenessInputs,
+} from "@/store/useProjectContextStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 
 interface Props {
@@ -47,7 +53,14 @@ export function FeasibilityEditorV2({ projectId }: Props) {
   const siteAnalysis = useProjectContextStore((s) => s.siteAnalysis);
   const costData = useProjectContextStore((s) => s.costData);
   const isStale = useProjectContextStore((s) => s.isStale);
-  const feasibilityCompleteness = useProjectContextStore((s) => s.feasibilityCompleteness);
+  // ★렌더 경로에서는 스토어 **메서드**를 부르지 않는다 — 메서드는 내부에서 `get()` 을 쓰므로
+  //   **재수화된 라이브 상태**를 읽어 zustand 의 서버 스냅샷을 우회한다. 그 결과 서버가 그린
+  //   `0% · 부지 대기` 와 클라 하이드레이션 렌더의 `60% · 부지 반영` 이 갈려 프로덕션에서
+  //   `Minified React error #418 (args[]=text)` 이 났다(2026-08-27 라이브 귀속: 무개변 1 /
+  //   그 블록 텍스트만 서버에서 일치시키면 0 / 무관 개변 1).
+  //   셀렉터는 하이드레이션 렌더에서 `getInitialState()`(= 서버와 같은 값)를 보므로 안전하다.
+  //   ★`useShallow` 가 필요하다 — 셀렉터가 매 렌더 새 객체를 만들면 무한 리렌더가 된다.
+  const completenessInputs = useProjectContextStore(useShallow(selectFeasibilityCompletenessInputs));
   const updateFeasibilityData = useProjectContextStore((s) => s.updateFeasibilityData);
 
   // 마지막 계산에 반영된 공사비(원) — 업스트림 변경(stale) 감지용.
@@ -72,6 +85,11 @@ export function FeasibilityEditorV2({ projectId }: Props) {
       totalRevenueWon: result.total_revenue_won ?? null,
       profitRatePct: result.profit_rate_pct ?? null,
       grade: result.grade ?? null,
+      // ★정밀도는 **모른다고 명시**한다 — 이 산출 엔진은 정밀도 등급을 계산하지 않는다
+      //   (백엔드 실측: 해당 서비스에 precision 산출 0건). 생략하면 merge 패치라
+      //   직전 개략수지의 `"E"` 가 남아 배지 `개략(추정) — 설계 미반영` 이 이 결과 위에
+      //   **거짓으로** 뜬다. `null` 이면 화면은 "정밀도 미표기"로 정직하게 남는다.
+      precision: null,
       // 투자수익성(ROI 뷰, analytics/investment) 정합용 — A를 단일 진실원으로.
       roiPct: result.roi_pct ?? null,
       npvWon: result.npv_won ?? null,
@@ -130,7 +148,9 @@ export function FeasibilityEditorV2({ projectId }: Props) {
   useEffect(() => {
     if (!isFeasibilityStale || isCalculating) return;
     if (hasRevenueInputs) {
-      void calculate({ constructionCostOverrideWon: costData?.totalConstructionCostWon });
+      // ★리뷰 R1-P1: 자동 재계산은 사용자 클릭이 아니므로 유료 시니어 자문을 강제 off —
+      //   토글을 켜 둔 채 업스트림 갱신마다 LLM 비용이 조용히 반복 발생하는 누수 차단.
+      void calculate({ constructionCostOverrideWon: costData?.totalConstructionCostWon, withSenior: false });
     } else {
       // 면적 등 부지 시그니처를 self-reset해 baseline 재시도를 1회 허용.
       baselineTriedSigRef.current = null;
@@ -145,7 +165,7 @@ export function FeasibilityEditorV2({ projectId }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isFeasibilityStale]);
 
-  const completeness = feasibilityCompleteness();
+  const completeness = computeFeasibilityCompleteness(completenessInputs);
 
   return (
     <div className="flex flex-col gap-10">
@@ -157,7 +177,7 @@ export function FeasibilityEditorV2({ projectId }: Props) {
               데이터 반영도
             </span>
             {result?.is_baseline && (
-              <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold text-amber-400">
+              <span className="rounded-full bg-[var(--status-warning)]/15 px-2 py-0.5 text-[10px] font-bold text-[var(--status-warning)]">
                 추정(시장표준){result.confidence ? ` · 신뢰도 ${result.confidence}` : ""}
               </span>
             )}
@@ -178,11 +198,11 @@ export function FeasibilityEditorV2({ projectId }: Props) {
               key={st.key}
               className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-bold ${
                 st.done
-                  ? "bg-emerald-500/15 text-emerald-400"
+                  ? "bg-[var(--status-success)]/15 text-[var(--status-success)]"
                   : "bg-[var(--surface-muted)] text-[var(--text-tertiary)]"
               }`}
             >
-              <span className={`inline-block h-1.5 w-1.5 rounded-full ${st.done ? "bg-emerald-400" : "bg-[var(--text-hint)]"}`} />
+              <span className={`inline-block h-1.5 w-1.5 rounded-full ${st.done ? "bg-[var(--status-success)]" : "bg-[var(--text-hint)]"}`} />
               {st.label} {st.done ? "반영" : "대기"}
             </span>
           ))}
@@ -199,9 +219,9 @@ export function FeasibilityEditorV2({ projectId }: Props) {
             initial={{ opacity: 0, y: -8 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -8 }}
-            className="-mb-6 flex items-center gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-5 py-3 text-xs font-bold text-amber-400"
+            className="-mb-6 flex items-center gap-3 rounded-xl border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 px-5 py-3 text-xs font-bold text-[var(--status-warning)]"
           >
-            <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-amber-400" />
+            <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-[var(--status-warning)]" />
             업스트림(공사비) 변경 감지 — 수지분석을 자동 재계산합니다.
           </motion.div>
         )}
@@ -214,14 +234,14 @@ export function FeasibilityEditorV2({ projectId }: Props) {
             initial={{ opacity: 0, y: -8 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -8 }}
-            className="-mb-6 flex flex-wrap items-center gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-5 py-3 text-xs font-bold text-amber-400"
+            className="-mb-6 flex flex-wrap items-center gap-3 rounded-xl border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 px-5 py-3 text-xs font-bold text-[var(--status-warning)]"
           >
-            <span className="inline-block h-2 w-2 rounded-full bg-amber-400" />
+            <span className="inline-block h-2 w-2 rounded-full bg-[var(--status-warning)]" />
             부지면적 또는 정확한 주소(시·구·동·번지)를 입력하면 추정 수지가 자동 산출됩니다.
             {activeTab !== "input" && (
               <button
                 onClick={() => setActiveTab("input")}
-                className="ml-auto rounded-full bg-amber-500/20 px-3 py-1 font-[900] uppercase tracking-wider transition-colors hover:bg-amber-500/30"
+                className="ml-auto rounded-full bg-[var(--status-warning)]/20 px-3 py-1 font-[900] uppercase tracking-wider transition-colors hover:bg-[var(--status-warning)]/30"
               >
                 입력 탭 →
               </button>
@@ -261,7 +281,7 @@ export function FeasibilityEditorV2({ projectId }: Props) {
                 initial={{ opacity: 0, scale: 0.95, y: 20 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.95, y: 20 }}
-                className="w-full max-w-5xl rounded-[3rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-10 shadow-2xl"
+                className="w-full max-w-5xl rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-10 shadow-2xl"
               >
                 <AutoRecommendPanel isModal onClose={() => setShowAutoRecommend(false)} />
               </motion.div>
@@ -272,7 +292,7 @@ export function FeasibilityEditorV2({ projectId }: Props) {
 
       {/* ── High-Fidelity Tab Navigation ── */}
       <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between px-2">
-        <div className="flex items-center gap-2 rounded-[2.5rem] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-1.5 backdrop-blur-xl shadow-[var(--shadow-xl)]">
+        <div className="flex items-center gap-2 rounded-[var(--radius-xl)] border border-[var(--line-strong)] bg-[var(--surface-strong)] p-1.5 backdrop-blur-xl shadow-[var(--shadow-xl)]">
           {TABS.map((tab) => (
             <button
               key={tab.key}
@@ -310,7 +330,7 @@ export function FeasibilityEditorV2({ projectId }: Props) {
               </motion.div>
             )}
           </AnimatePresence>
-          {result && <ExcelExportButton />}
+          {result && <FeasibilityExportButton />}
         </div>
       </div>
 
@@ -321,9 +341,9 @@ export function FeasibilityEditorV2({ projectId }: Props) {
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.95 }}
-            className="rounded-[2rem] border border-rose-500/20 bg-rose-500/10 p-6 text-sm font-bold text-rose-400 backdrop-blur-3xl shadow-2xl flex items-center gap-4"
+            className="rounded-[var(--radius-lg)] border border-[var(--status-error)]/20 bg-[var(--status-error)]/10 p-6 text-sm font-bold text-[var(--status-error)] backdrop-blur-3xl shadow-2xl flex items-center gap-4"
           >
-            <div className="h-10 w-10 rounded-2xl bg-rose-500/20 flex items-center justify-center text-rose-400">
+            <div className="h-10 w-10 rounded-2xl bg-[var(--status-error)]/20 flex items-center justify-center text-[var(--status-error)]">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
             </div>
             {error}
@@ -343,13 +363,13 @@ export function FeasibilityEditorV2({ projectId }: Props) {
               className="grid gap-10 lg:grid-cols-[340px_1fr]"
             >
               <div className="space-y-6">
-                 <div className="glass rounded-[2.5rem] p-8 border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-2xl)]">
-                    <p className="text-[10px] font-[1000] uppercase tracking-[0.4em] text-[var(--text-hint)] mb-6">Execution Strategy</p>
+                 <div className="glass rounded-[var(--radius-xl)] p-8 border border-[var(--line-strong)] bg-[var(--surface-strong)] shadow-[var(--shadow-2xl)]">
+                    <p className="label-caps text-[var(--text-hint)] mb-6">Execution Strategy</p>
                     <ProjectTypeSelector />
                  </div>
               </div>
-              <div className="glass rounded-[3rem] p-1 border border-[var(--line)] bg-[var(--surface-soft)] overflow-hidden shadow-[var(--shadow-xl)]">
-                 <div className="rounded-[3rem] p-10 bg-[var(--surface-strong)] backdrop-blur-3xl">
+              <div className="glass rounded-[var(--radius-2xl)] p-1 border border-[var(--line)] bg-[var(--surface-soft)] overflow-hidden shadow-[var(--shadow-xl)]">
+                 <div className="rounded-[var(--radius-2xl)] p-10 bg-[var(--surface-strong)] backdrop-blur-3xl">
                     <ModuleInputForm />
                  </div>
               </div>
@@ -366,8 +386,8 @@ export function FeasibilityEditorV2({ projectId }: Props) {
             >
               {/* 결과 없음 + 추정 입력 부족(422): 빈 0 대신 입력 유도 게이트(무목업). */}
               {!result && baselineNeedsInput ? (
-                <div className="glass rounded-[3rem] border border-amber-500/30 bg-amber-500/5 p-12 text-center shadow-[var(--shadow-xl)]">
-                  <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-amber-500/15 text-amber-400">
+                <div className="glass rounded-[var(--radius-2xl)] border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/5 p-12 text-center shadow-[var(--shadow-xl)]">
+                  <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-[var(--status-warning)]/15 text-[var(--status-warning)]">
                     <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 9v4" /><path d="M12 17h.01" /><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /></svg>
                   </div>
                   <p className="text-lg font-[900] text-[var(--text-primary)]">
@@ -384,7 +404,15 @@ export function FeasibilityEditorV2({ projectId }: Props) {
                   </button>
                 </div>
               ) : (
-                <FeasibilityResultView />
+                <>
+                  <FeasibilityResultView />
+                  {/* ★P4②: 시니어 회계사(K-IFRS) 자문 — with_senior opt-in 시에만 백엔드가 채움.
+                      SeniorVerdictCard 자체 정직 게이트(미가용/빈 자문 → 미렌더)로 노이즈 없음. */}
+                  <SeniorVerdictCard
+                    consultation={(result?.senior_accountant_review ?? null) as SeniorConsultation | null}
+                    title="시니어 회계사(K-IFRS) 자문"
+                  />
+                </>
               )}
               {/* 조망·스카이라인 보조카드(분양가치 근거 — 환경3D 녹여내기) */}
               {(siteAnalysis?.address || siteAnalysis?.pnu) && (
@@ -394,8 +422,8 @@ export function FeasibilityEditorV2({ projectId }: Props) {
                   focus="view"
                 />
               )}
-              <div className="glass rounded-[3rem] p-1 border border-[var(--line)] bg-[var(--surface-soft)] overflow-hidden shadow-[var(--shadow-xl)]">
-                <div className="rounded-[3rem] p-12 bg-[var(--surface-strong)] backdrop-blur-3xl">
+              <div className="glass rounded-[var(--radius-2xl)] p-1 border border-[var(--line)] bg-[var(--surface-soft)] overflow-hidden shadow-[var(--shadow-xl)]">
+                <div className="rounded-[var(--radius-2xl)] p-12 bg-[var(--surface-strong)] backdrop-blur-3xl">
                   <AIRecommendationPanel />
                 </div>
               </div>

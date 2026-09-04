@@ -105,6 +105,15 @@ DISCLAIMER_TEXT = (
 CONFIDENTIAL_LABEL = "대외비 (CONFIDENTIAL)"
 EMPTY_MARK = "—"   # 빈값/무자료(가짜값 생성 금지)
 
+# ── 승인등급 라벨(W1-C · v4.0 P12) — 세 포맷 공용, ApprovalState 값 → 한국어 표기 ──────
+APPROVAL_LABEL = {
+    "DRAFT": "내부 초안 (INTERNAL DRAFT)",
+    "MACHINE_VALIDATED": "기계검증",
+    "EXPERT_REVIEWED": "전문가검토",
+    "APPROVED": "승인본",
+    "SUPERSEDED": "폐기",
+}
+
 
 # ── 순수 헬퍼 ───────────────────────────────────────────────────────
 def hex_to_rgb(h: str) -> tuple[int, int, int]:

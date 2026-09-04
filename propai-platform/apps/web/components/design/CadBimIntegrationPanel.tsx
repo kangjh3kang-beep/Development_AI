@@ -15,19 +15,24 @@ import { motion } from "framer-motion";
 import CADEditor, { type CADEditorMetrics } from "./CADEditor";
 import { ProceduralBuilding } from "./ProceduralBuilding";
 import { sectionCutHeightM, visibleFloorCount } from "./bimSection";
+import { resolveAppliedOverview } from "./appliedOverview";
+import { DISMISS_Z, useDismissible } from "@/lib/satong-dismiss";
 import { distance3D, formatLength, midpoint3D, type Vec3 } from "./bimMeasure";
 import { cycleTransformMode, transformReadout, type TransformMode } from "./bimTransform";
 import { GenerativeDesignPanel } from "@/components/cad/GenerativeDesignPanel";
-import { DesignOutcomeSummary } from "@/components/design/DesignOutcomeSummary";
+import { DesignOutcomeSummary, looksLikeRawDesignAiFallback } from "@/components/design/DesignOutcomeSummary";
+import { MarkdownLite } from "@/components/common/MarkdownLite";
 import { UnitMixSimulatorPanel } from "@/components/design/UnitMixSimulatorPanel";
 import { LiveProFormaStrip, type LiveProFormaDesign } from "@/components/design/LiveProFormaStrip";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
+import { usePaidRenderStore } from "@/store/usePaidRenderStore";
 import { effectiveLandAreaSqm } from "@/lib/site-area";
 import { apiClient, ApiClientError, apiV1BaseUrl } from "@/lib/api-client";
+import { idempotencyHeaders } from "@/lib/idempotency";
 import { EvidencePanel } from "@/components/common/EvidencePanel";
 import type { EvidenceItem, EvidenceLegalRef } from "@/components/common/EvidencePanel";
 import { parseDesignCompliance } from "@/lib/design-contract";
-import { resolveFarPct, resolveBcrPct } from "@/lib/zoning-ssot";
+import { resolveFarPct, resolveBcrPct, resolveFarWithBasis, resolveBcrWithBasis } from "@/lib/zoning-ssot";
 import { CadCorrectionSection } from "@/components/design/CadCorrectionSection";
 
 // 도면 코드 → 한글 명칭 (SVGDrawingService.generate_full_drawing_set 기준)
@@ -141,6 +146,9 @@ interface DesignSpec {
   // ★/mass 호출이 네트워크 오류 등으로 실패해 "추정 기본값"으로 채워졌는지 표시(정직표기).
   //  true면 화면에 "기본값 사용 중" 오버레이를 띄워 산출값으로 오인되지 않도록 한다. 기본 false.
   isFallback?: boolean;
+  // ★설계스튜디오 실효FAR 전파 봉합(정직 배지) — 적용된 bcr/far가 실효 한도(통합/실효/조례) 근거인지,
+  //  실효 미확보로 법정상한(national)에 폴백했는지(false). 부지분석 자체가 없으면 null(판정 불가).
+  farReliable?: boolean | null;
 }
 
 // 3D 렌더: 서버 glb(scene)가 있으면 그것을, 없으면 spec 기반 절차생성 모델을 표시.
@@ -453,15 +461,19 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
   const [fullscreen, setFullscreen] = useState(false);
   const t = dictionary;
 
-  // 전체화면 동안 ESC로 해제 + body 스크롤 잠금(오버레이가 페이지와 겹치지 않도록).
+  // 전체화면 ESC 해제 — **자체 window 리스너에서 조정기로 이관**(2026-08-18 R2).
+  // 종전에는 이 오버레이가 window 에 ESC 를 직접 걸어, 위에 모달·팝오버가 열려 있어도 같은
+  // keydown 에 전체화면까지 함께 벗겨졌다. 조정기의 `fullscreenExit` 칸은 **가장 마지막**
+  // 차례라, 안쪽 표면을 먼저 닫고 더 닫을 게 없을 때 전체화면이 풀린다.
+  // ★라이브 미검증 — 전체화면과 모달이 공존하는 실제 경로를 브라우저에서 확인하지 못했다.
+  useDismissible(DISMISS_Z.fullscreenExit, fullscreen, () => setFullscreen(false));
+
+  // 전체화면 동안 body 스크롤 잠금(오버레이가 페이지와 겹치지 않도록).
   useEffect(() => {
     if (!fullscreen) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setFullscreen(false); };
-    window.addEventListener("keydown", onKey);
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
-      window.removeEventListener("keydown", onKey);
       document.body.style.overflow = prevOverflow;
     };
   }, [fullscreen]);
@@ -476,6 +488,11 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
   const [dxfBusy, setDxfBusy] = useState(false);
   // §4-E: IFC(.ifc) 내보내기 진행 상태 — BIM 저작도구(Revit/ArchiCAD)용 export.
   const [ifcBusy, setIfcBusy] = useState(false);
+  // WP-F 제출번들(zip) 다운로드 진행/오류 — 심의·인허가 제출용 도면+설계요약 PDF+BOQ 단일 zip.
+  //   인증 필수(get_current_user + tenant 소유권) 엔드포인트라 raw fetch에 Bearer 토큰을 동봉한다.
+  //   필수시트 미충족(422) 등 백엔드 거부는 사유(누락 시트 목록)를 그대로 표기(무날조·정직).
+  const [bundleBusy, setBundleBusy] = useState(false);
+  const [bundleError, setBundleError] = useState<string | null>(null);
   // DXF 내보내기 도면종류(평면/상세/단면/입면/배치) — design_v61 export-dxf drawing_type.
   const [dxfType, setDxfType] = useState<string>("floor_plan");
   // 편집모드 정점 드래그가 통지한 라이브 메트릭(footprint·매스치수) — 라이브 수지에 즉시 반영.
@@ -629,7 +646,19 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
   const [bimError, setBimError] = useState<string | null>(null);
   // AI 설계 해석(DesignInterpreter 6섹션) + 매스 메타
   const [designAi, setDesignAi] = useState<Record<string, string> | null>(null);
+  // ★stale 감지(라이브 실측: 해설 연면적 670㎡ vs 현재 KPI 1,216㎡ 불일치): 해석이 생성될 당시의
+  //   연면적(GFA) SSOT값을 스냅샷해두고, 이후 설계가 바뀌어 designData.totalGfaSqm이 달라지면
+  //   "해설이 최신 설계와 다르다"는 배지·재생성 유도로만 표시한다(재계산 자동유발 금지 — 과설계 방지).
+  const [designAiGfaAtGen, setDesignAiGfaAtGen] = useState<number | null>(null);
   const [bimMass, setBimMass] = useState<Record<string, unknown> | null>(null);
+  // DesignBasis 판정(/bim 응답 basis_evaluation — WP-E 자산 표면화). null=미산출/구서버(미렌더).
+  type BasisEvaluation = {
+    satisfied?: boolean | null;
+    unsat_reasons?: Array<string | { reason?: string; message?: string }> | null;
+    soft_warnings?: Array<string | { reason?: string; message?: string }> | null;
+    unevaluated?: unknown;
+  };
+  const [basisEval, setBasisEval] = useState<BasisEvaluation | null>(null);
   // AI 해석 패널 접기(기본 열림) — 접으면 3D가 전폭이 되고 휠 스크롤이 캔버스(CameraControls)로 직접 전달.
   const [aiPanelOpen, setAiPanelOpen] = useState(true);
 
@@ -676,6 +705,20 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
       walls: walls.length > 0 ? walls : null,
     };
   }, [bimMass, spec]);
+
+  // ★레인C(P2) — CADEditor 자체는 zoneCode(문자열)만 받아 법정상한표(resolveLimits)로
+  //   건폐율/용적률 한도를 구하는데, 이 화면(유일 호출부)이 여태 maxBcrPct/maxFarPct를 전혀
+  //   넘기지 않아 부지분석이 확보한 실효(통합/조례) 한도가 항상 무시되고 법정상한만 쓰였다
+  //   (무음 폴백). resolveFarWithBasis/resolveBcrWithBasis(SSOT 리졸버)로 값이 있으면
+  //   우선 전달하고, 없으면 undefined(=CADEditor 내부 법정상한 폴백 그대로 — 무날조).
+  const editorMaxLimits = useMemo(() => {
+    const farRes = resolveFarWithBasis(siteAnalysis);
+    const bcrRes = resolveBcrWithBasis(siteAnalysis);
+    return {
+      maxFarPct: farRes?.value,
+      maxBcrPct: bcrRes?.value,
+    };
+  }, [siteAnalysis]);
 
   // ── 3D 카메라 시점 프리셋(비전문가용 시점 전환) ──
   const camControlsRef = useRef<CameraControls | null>(null);
@@ -743,6 +786,10 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
   const [renderImage, setRenderImage] = useState<string | null>(null); // 결과 이미지(data URL 또는 원격 URL)
   const [renderMsg, setRenderMsg] = useState<string | null>(null);
   const [renderCharged, setRenderCharged] = useState<number | null>(null);
+  // ★유료 렌더(건당 3,000원)를 **영속**한다. 종전엔 `useState` 에만 있어 새로고침 한 번에
+  //   사라졌다 — 등기 권리분석 리스트와 같은 얼굴이다(CLAUDE.md 「유료·비가역 산출물 규율」).
+  const savedRenders = usePaidRenderStore((s) => s.byProject[projectId || "_default"]);
+  const addRender = usePaidRenderStore((s) => s.add);
   // 렌더 요청 in-flight 여부 — 모달을 닫아도 뷰포트 버튼 스피너로 진행 상태를 계속 표시.
   const [renderBusy, setRenderBusy] = useState(false);
   // 이 기능 1회 소요 코인(비전문가용 안내). 실제 청구는 백엔드가 charged로 회신.
@@ -819,6 +866,11 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
     const use = mapUse(designData?.buildingType);
     const floors = designData?.floorCount || undefined;
     const gfa = designData?.totalGfaSqm || undefined;
+    // ★설계스튜디오 실효FAR 전파 봉합(정직 배지 근거) — 부지분석 실효 한도(통합/실효/조례) 확보
+    //   여부를 한 번만 계산해 이 함수의 모든 spec 산출 경로(매스 재사용·/mass 성공·폴백)에서
+    //   공유한다. basis="national"(법정폴백)이면 false, 부지분석 자체가 없으면 null(판정 불가).
+    const farRes = resolveFarWithBasis(siteAnalysis);
+    const farReliableNow = farRes ? farRes.basis !== "national" : null;
 
     // ── (0) 확정 매스(massGeom) 재사용 — site/generate가 정한 매스가 있으면 /mass 재산출 생략 ──
     // 왜(쉬운 설명): 설계 생성 단계가 정한 건물 덩어리(podium-tower 포함)를 그대로 3D로 그린다.
@@ -835,13 +887,16 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
       const w = typeof mg.buildingWidthM === "number" && mg.buildingWidthM > 0 ? mg.buildingWidthM : (fpW ?? 40);
       const d = typeof mg.buildingDepthM === "number" && mg.buildingDepthM > 0 ? mg.buildingDepthM : (fpD ?? 20);
       const fc = floors ?? mg.floorsForUnits ?? 5; // 정본 층수(site) 우선
+      // ★백로그② — 이 분기는 /mass를 부르지 않으므로(m=null) 연면적·건폐율·용적률 모두
+      //   designData로 통일된다(resolveAppliedOverview 단일 파생점 — 혼입 구조 불가화).
+      const ov = resolveAppliedOverview(null, designData);
       setSpec({
         building_width_m: r2(w), building_depth_m: r2(d), floor_count: fc, floor_height_m: 3.0,
         site_width_m: r2((w ?? 40) + 6), site_depth_m: r2((d ?? 20) + 6),
         setback_m: 3, unit_width_m: 8, basement_floors: 1,
         land_area_sqm: landArea, zone_code: zone, building_use: use,
         building_type: designData?.buildingType ?? null,
-        gfa: gfa ?? null, bcr: designData?.bcr ?? null, far: designData?.far ?? null,
+        gfa: ov.gfa, bcr: ov.bcr, far: ov.far,
         total_units: designData?.unitCount ?? null,
         daylightNorth: designData?.daylightNorth ?? false, project_name: "PropAI",
         // ★podium-tower 매스면 3D를 2-volume(저층 큰판+고층 작은판)으로 렌더(massGeom passthrough).
@@ -852,6 +907,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
           ? { width: mg.tower.widthM ?? w, depth: mg.tower.depthM ?? d, floors: mg.tower.floors ?? 0 }
           : null,
         isFallback: false, // site/generate 확정 매스(추정 기본값 아님)
+        farReliable: farReliableNow,
       });
       setSpecLoading(false);
       return;
@@ -889,6 +945,14 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
     const ordinanceBcrPct = resolveBcrPct(siteAnalysis);
     if (ordinanceFarPct && ordinanceFarPct > 0) body.ordinance_far_pct = ordinanceFarPct;
     if (ordinanceBcrPct && ordinanceBcrPct > 0) body.ordinance_bcr_pct = ordinanceBcrPct;
+    // ★WP-U2a: 실효 근거 정직 전파(additive) — 실효/통합 계층이면 SSOT(calc_effective_far)
+    //   산정 성공(reliable=true), 법정상한 폴백(national)이면 false. farBasis 라벨(예 "구조상한
+    //   (건폐율×층수)")은 있을 때만 동봉 — design run 메타(rule_trace)의 "조례" 오인 방지(무날조).
+    //   ★farRes/farReliableNow는 resolveSpec 상단에서 1회 계산해 공유(중복 리졸버 호출 제거).
+    if (farRes && farRes.value > 0) {
+      body.far_reliable = farReliableNow;
+      if (siteAnalysis?.farBasis) body.far_basis = siteAnalysis.farBasis;
+    }
 
     // 폴백 매스도 프로젝트 개요(GFA·층수)에서 역산 — /mass 실패 시에도 "프로젝트와 무관한
     // 40×20 박스"가 잠깐 뜨던 문제 해소(정보 있으면 실제에 근접).
@@ -902,13 +966,16 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
       const side = Math.sqrt(landArea) * 0.6;  // 대지의 ~60% 변길이 가정
       fbW = Math.max(8, side); fbD = Math.max(8, side * 0.6);
     }
+    // ★백로그② — /mass 요청 자체가 없는 폴백 분기(m=null)라 세 필드 모두 designData로 통일된다.
+    const ovFallback = resolveAppliedOverview(null, designData);
     const fallback: DesignSpec = {
       building_width_m: r2(fbW), building_depth_m: r2(fbD), floor_count: fbFloors, floor_height_m: 3.0,
       site_width_m: r2(fbW + 6), site_depth_m: r2(fbD + 6), setback_m: 3, unit_width_m: 8, basement_floors: 1,
       land_area_sqm: landArea, zone_code: zone, building_use: use, building_type: designData?.buildingType ?? null,
-      gfa: gfa ?? null, bcr: designData?.bcr ?? null, far: designData?.far ?? null,
+      gfa: ovFallback.gfa, bcr: ovFallback.bcr, far: ovFallback.far,
       total_units: null, daylightNorth: designData?.daylightNorth ?? false, project_name: "PropAI",
       isFallback: true,  // ★/mass 실패 → 역산 추정 기본값. 정직 오버레이('추정치') 발화용.
+      farReliable: farReliableNow,
     };
 
     try {
@@ -920,6 +987,13 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
       });
       if (!res.ok) throw new Error(String(res.status));
       const m = await res.json();
+      // ★백로그②(2026-07-22 라이브 실측) 근본수정 — 종전엔 이 자리에서 gfa(designData 목표값)만
+      //   따로 쓰고 bcr/far는 m(백엔드 매스 실현값)을 썼다. "적용 건축개요" 패널이 연면적=A소스,
+      //   건폐율/용적률=B소스로 자기모순 표기(연면적 1,216㎡ vs 그 비율을 역산하면 670㎡)되던
+      //   근본원인. resolveAppliedOverview 단일 파생점으로 셋 다 같은 우선순위(m 우선)로 통일한다.
+      //   m.total_floor_area_sqm은 백엔드가 bcr_pct/far_pct를 산출한 바로 그 연면적이므로(정본),
+      //   이제 연면적도 그 소스와 100% 정합한다.
+      const ov = resolveAppliedOverview(m, designData);
       setSpec({
         building_width_m: m.building_width_m, building_depth_m: m.building_depth_m,
         // ★층수는 site의 정본(designData.floorCount)을 신뢰 — /mass 응답 num_floors가 정본을 덮지 않게 한다
@@ -929,15 +1003,21 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
         setback_m: m.setback_m ?? 3, unit_width_m: m.unit_width_m ?? 8, basement_floors: 1,
         land_area_sqm: landArea, zone_code: zone, building_use: use,
         building_type: designData?.buildingType ?? null,
-        gfa: gfa ?? null,
-        bcr: designData?.bcr ?? m.bcr_pct ?? null,
-        far: designData?.far ?? m.far_pct ?? null,
+        gfa: ov.gfa,
+        // ★설계스튜디오 실효FAR 전파 봉합: 백엔드 매스엔진이 실제 산출한 실현값(m.bcr_pct/m.far_pct)을
+        //   우선한다(역전 — 종전엔 designData.far/bcr가 항상 이겨서, 부지분석 SSOT 갱신 전에 store에
+        //   영속된 값이나 법정폴백값이 실제 산출값을 절대 못 넘어서지 못했다). /mass 바디에는
+        //   ordinance_far_pct/ordinance_bcr_pct(공용 리졸버 산출)를 이미 주입하므로, m.far_pct/
+        //   m.bcr_pct는 그 실효 한도를 반영한 산출 결과다(정본). designData는 값이 없을 때만 폴백.
+        bcr: ov.bcr,
+        far: ov.far,
         total_units: m.total_units ?? null,
         daylightNorth: designData?.daylightNorth ?? false, project_name: "PropAI",
         // ★podium-tower 매스면 3D를 2-volume(저층 큰판+고층 작은판)으로 렌더(backend width_m/depth_m/floors).
         podium: m.podium ? { width: m.podium.width_m, depth: m.podium.depth_m, floors: m.podium.floors } : null,
         tower: m.tower ? { width: m.tower.width_m, depth: m.tower.depth_m, floors: m.tower.floors } : null,
         isFallback: false,  // 실제 /mass 산출값(추정 기본값 아님)
+        farReliable: farReliableNow,
       });
       // ★C2R 계약 환류 — /mass 응답이 동봉한 m.compliance(envelope_result·geometry_invariants)를
       //   store에 저장(공용 헬퍼). 종전엔 m의 치수만 읽고 m.compliance를 통째로 버렸다(감사 적발).
@@ -960,6 +1040,8 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
     //   값이 없으면 필드를 생략한다(백엔드 기존 폴백 유지 — 가짜값 금지).
     const ordinanceFarPct = resolveFarPct(siteAnalysis);
     const ordinanceBcrPct = resolveBcrPct(siteAnalysis);
+    // ★WP-U2a: 실효 근거 정직 전파(additive·/mass와 동일 계약) — national 폴백이면 reliable=false.
+    const farResBim = resolveFarWithBasis(siteAnalysis);
     return JSON.stringify({
       building_width_m: spec?.building_width_m,
       building_depth_m: spec?.building_depth_m,
@@ -974,6 +1056,12 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
       unit_types: designData?.unitTypes ?? undefined,
       ...(ordinanceFarPct && ordinanceFarPct > 0 ? { ordinance_far_pct: ordinanceFarPct } : {}),
       ...(ordinanceBcrPct && ordinanceBcrPct > 0 ? { ordinance_bcr_pct: ordinanceBcrPct } : {}),
+      ...(farResBim && farResBim.value > 0
+        ? {
+            far_reliable: farResBim.basis !== "national",
+            ...(siteAnalysis?.farBasis ? { far_basis: siteAnalysis.farBasis } : {}),
+          }
+        : {}),
     });
   }, [spec, designData, resolvedLandArea, siteAnalysis]);
 
@@ -1024,11 +1112,19 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
     })
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
-        if (d?.ai_interpretation) setDesignAi(d.ai_interpretation);
+        if (d?.ai_interpretation) {
+          setDesignAi(d.ai_interpretation);
+          setDesignAiGfaAtGen(designData?.totalGfaSqm ?? null); // stale 배지 비교 기준 스냅샷
+        }
         if (d?.mass) setBimMass(d.mass);
         // ★C2R 계약 환류 — /bim 응답이 동봉한 d.compliance를 store에 저장(공용 헬퍼). 종전엔
         //   ai_interpretation·mass만 꺼내고 d.compliance를 통째로 버렸다(감사 적발).
         flowCompliance(d?.compliance);
+        // ★DesignBasis 판정 표면화(생성허브 100%) — 응답이 동봉한 basis_evaluation(unsat_reasons·
+        //   soft_warnings)을 배지로 렌더. 미동봉(구 서버·미산출)은 null → 미렌더(날조 금지).
+        setBasisEval(
+          d && typeof d.basis_evaluation === "object" ? (d.basis_evaluation as BasisEvaluation | null) : null,
+        );
       })
       .catch(() => { /* 해석 실패는 무시 — 3D 모델은 별도로 로드됨 */ });
 
@@ -1072,7 +1168,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
     } finally {
       setBimLoading(false);
     }
-  }, [projectId, spec, bimBody, flowCompliance]);
+  }, [projectId, spec, bimBody, flowCompliance, designData?.totalGfaSqm]);
 
   // 절차생성 모델용 카메라 프레이밍 — spec이 준비되고 서버 glb가 아직 없으면 spec 치수로 시점 산정.
   // (서버 glb가 도착하면 loadBimModel이 실측 bbox로 다시 setModelDims → 자연 전환)
@@ -1157,29 +1253,66 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
     [projectId, spec, svgQuery],
   );
 
+  // ★R1 R2(LOW): regenerateDesignAi가 setDesignAi(null) 직후 곧장 fetch도 호출하면, 2D 뷰에서는
+  //   아래 effect도 (designAi가 null이 됐으므로) 같은 tick에 재발화해 동일 요청이 2회 나간다.
+  //   in-flight 가드(ref)로 겹치는 호출을 1회로 합친다(effect·수동 재생성 어느 쪽에서 와도 안전).
+  const designAiFetchInFlightRef = useRef(false);
+
+  // AI 설계 해석(6섹션)만 단독 조회 — 2D 진입 1회 자동 + 아래 "재생성" 수동 트리거가 공유한다.
+  // ★백엔드가 동일 입력을 input_hash로 캐시하므로(design_run_cache), spec 불변 재호출은 캐시 히트로
+  //   빠르게 반환된다(재계산 폭주 우려 없음) — stale 배지의 "재생성" 버튼이 뷰모드 무관하게 동작하도록
+  //   2D 진입 effect의 인라인 fetch를 재사용 가능한 콜백으로 추출(기존 동작 100% 동일, 위치만 이동).
+  const fetchDesignInterpretation = useCallback(() => {
+    if (designAiFetchInFlightRef.current) return Promise.resolve(); // 진행 중 — 중복 호출 skip
+    designAiFetchInFlightRef.current = true;
+    const base = apiV1BaseUrl();
+    const gfaAtFetch = designData?.totalGfaSqm ?? null;
+    return fetch(`${base}/design/${encodeURIComponent(projectId)}/bim/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: bimBody(),
+      signal: AbortSignal.timeout(90000),
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d?.ai_interpretation) {
+          setDesignAi(d.ai_interpretation);
+          setDesignAiGfaAtGen(gfaAtFetch); // stale 배지 비교 기준 스냅샷
+        }
+        // ★C2R 계약 환류 — 2D 진입 경로도 /bim 응답의 compliance를 store에 저장(공용 헬퍼).
+        //   2D 먼저 들어온 사용자도 계약을 받도록 3D 경로와 동일하게 배선(누락 방지).
+        flowCompliance(d?.compliance);
+      })
+      .catch(() => { /* 무시 */ })
+      .finally(() => { designAiFetchInFlightRef.current = false; });
+  }, [projectId, bimBody, flowCompliance, designData?.totalGfaSqm]);
+
+  // 설계 해설이 stale 하거나(연면적 등 KPI 불일치) 파싱 실패로 정직 폴백을 보였을 때 수동 재생성.
+  // 뷰모드(2D/3D) 무관하게 동작 — designAi를 비우면 아래 effect의 자동조건도 되살아나지만
+  // in-flight 가드가 겹침을 막는다(1회만 실제 fetch).
+  const regenerateDesignAi = useCallback(() => {
+    setDesignAi(null);
+    setDesignAiGfaAtGen(null);
+    void fetchDesignInterpretation();
+  }, [fetchDesignInterpretation]);
+
+  // stale 판정: 해석 생성 시점 연면적(GFA)과 현재 KPI(designData.totalGfaSqm)가 2% 넘게
+  // 다르면 "최신 설계와 다름"으로 본다(간단한 명시적 배지 수준 — 자동 재계산은 유발하지 않음).
+  const designAiStale = useMemo(() => {
+    const cur = designData?.totalGfaSqm;
+    if (designAiGfaAtGen == null || typeof cur !== "number" || cur <= 0) return false;
+    return Math.abs(designAiGfaAtGen - cur) / cur > 0.02;
+  }, [designAiGfaAtGen, designData?.totalGfaSqm]);
+
   // 2D 뷰 진입 시(기하 준비 후) 도면 세트 1회 로드 + AI 설계해석
   useEffect(() => {
     if (viewMode === "cad_2d" && !editMode && spec && drawingCodes.length === 0 && !drawingLoading && !drawingError) {
       loadDrawingSet();
     }
     if (viewMode === "cad_2d" && !editMode && spec && !designAi) {
-      const base = apiV1BaseUrl();
-      fetch(`${base}/design/${encodeURIComponent(projectId)}/bim/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: bimBody(),
-        signal: AbortSignal.timeout(90000),
-      })
-        .then((r) => (r.ok ? r.json() : null))
-        .then((d) => {
-          if (d?.ai_interpretation) setDesignAi(d.ai_interpretation);
-          // ★C2R 계약 환류 — 2D 진입 경로도 /bim 응답의 compliance를 store에 저장(공용 헬퍼).
-          //   2D 먼저 들어온 사용자도 계약을 받도록 3D 경로와 동일하게 배선(누락 방지).
-          flowCompliance(d?.compliance);
-        })
-        .catch(() => { /* 무시 */ });
+      void fetchDesignInterpretation();
     }
-  }, [viewMode, editMode, spec, drawingCodes.length, drawingLoading, drawingError, loadDrawingSet, designAi, projectId, bimBody, flowCompliance]);
+  }, [viewMode, editMode, spec, drawingCodes.length, drawingLoading, drawingError, loadDrawingSet, designAi, fetchDesignInterpretation]);
 
   // 활성 도면 SVG 로드
   useEffect(() => {
@@ -1284,6 +1417,98 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
     }
   }, [spec]);
 
+  // WP-F: 심의·인허가 제출번들(zip) 다운로드 — 도면(SVG/DXF)+설계요약 PDF+공내역서 xlsx 단일 zip.
+  //   design_v61 POST /{project_id}/submission-bundle(SubmissionBundleRequest: DrawingSetRequest 상속 +
+  //   issue_date·scale·include_* 옵션). 이 엔드포인트는 인증 필수(get_current_user + tenant 소유권)라
+  //   ReportDownloadMenu와 동일하게 localStorage access token을 Bearer로 동봉한다(raw fetch blob 다운로드).
+  //   백엔드가 필수시트(sheet_frame 표준) 100% 충족을 강제 — 미충족 시 422 + 누락 시트 목록을 반환하므로
+  //   사유를 그대로 표기한다(무음 부분산출 금지·무날조).
+  const exportSubmissionBundle = useCallback(async () => {
+    if (!spec) return;
+    setBundleBusy(true);
+    setBundleError(null);
+    try {
+      const base = apiV1BaseUrl();
+      const token =
+        typeof window !== "undefined"
+          ? window.localStorage.getItem("propai_access_token") ?? ""
+          : "";
+      const res = await fetch(`${base}/design/${encodeURIComponent(projectId)}/submission-bundle`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          // 도면 파라미터(DrawingSetRequest 상속) — spec 기반 전체 치수 동봉(미상 필드는 백엔드 기본값).
+          site_width_m: spec.site_width_m,
+          site_depth_m: spec.site_depth_m,
+          building_width_m: spec.building_width_m,
+          building_depth_m: spec.building_depth_m,
+          floor_count: spec.floor_count,
+          floor_height_m: spec.floor_height_m ?? 3.0,
+          basement_floors: spec.basement_floors ?? 1,
+          unit_width_m: spec.unit_width_m ?? 8,
+          setback_m: spec.setback_m ?? 3,
+          project_name: spec.project_name ?? "PropAI",
+          building_use: spec.building_use,
+          zone_code: spec.zone_code,
+          unit_types:
+            designData?.unitTypes && designData.unitTypes.length ? designData.unitTypes : undefined,
+          // 제출번들 전용(SubmissionBundleRequest) — 발행일은 클라이언트 명시 인자(서버 now() 금지 계약).
+          //   축척(scale)은 미상 → 백엔드 기본 N.T.S.. 도면/보고서/BOQ 3종 모두 동봉.
+          issue_date: new Date().toISOString().slice(0, 10),
+          include_dxf: true,
+          include_report: true,
+          include_boq: true,
+          households: spec.total_units && spec.total_units > 0 ? spec.total_units : undefined,
+        }),
+        signal: AbortSignal.timeout(120000),
+      });
+      if (!res.ok) {
+        // 백엔드 거부(4xx)는 사유를 그대로 노출(무날조). 필수시트 미충족(422)은 detail.missing[] 동봉.
+        let msg = `제출번들 생성 실패 (HTTP ${res.status})`;
+        try {
+          const j = await res.json();
+          const detail = (j as { detail?: unknown })?.detail;
+          if (typeof detail === "string" && detail.trim()) {
+            msg = detail.trim();
+          } else if (detail && typeof detail === "object") {
+            const d = detail as { message?: unknown; missing?: unknown };
+            const head =
+              typeof d.message === "string" && d.message.trim() ? d.message.trim() : msg;
+            const missing = Array.isArray(d.missing)
+              ? d.missing.filter((x): x is string => typeof x === "string")
+              : [];
+            msg = missing.length > 0 ? `${head} — 누락 시트: ${missing.join(", ")}` : head;
+          } else {
+            const m = (j as { message?: unknown })?.message;
+            if (typeof m === "string" && m.trim()) msg = m.trim();
+          }
+        } catch {
+          /* JSON 아님 — 기본 메시지 유지 */
+        }
+        if (res.status === 401) msg = `로그인이 필요합니다 — ${msg}`;
+        throw new Error(msg);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${spec.project_name || "PropAI"}_제출번들.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setBundleError(
+        e instanceof Error ? e.message : "제출번들 생성에 실패했습니다. 잠시 후 다시 시도하세요.",
+      );
+    } finally {
+      setBundleBusy(false);
+    }
+  }, [projectId, spec, designData]);
+
   // 생성 UX(Phase 2)에서 설계안 적용 시 — 파생 기하·도면·3D를 초기화해
   // 새 SSOT(designData)로 spec을 재산출하고 2D/3D를 재생성한다(기존 로드 경로 재사용).
   const handleGeneratedApplied = useCallback(() => {
@@ -1291,7 +1516,9 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
     setBimScene(null);
     setBimError(null);
     setBimMass(null);
+    setBasisEval(null);
     setDesignAi(null);
+    setDesignAiGfaAtGen(null);
     setDrawingCodes([]);
     setSvgMap({});
     setActiveCode(null);
@@ -1336,6 +1563,10 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
           message?: string;
           charged?: number;
         }>(`/design/${encodeURIComponent(projectId)}/render-photoreal`, {
+          // ★건당 유료 AI 렌더 — 더블서브밋이 그대로 이중 렌더·이중 청구다.
+          headers: idempotencyHeaders("photoreal_render", {
+            projectId, imageBase64, renderStyle, renderProvider, renderModel,
+          }),
           // 무회귀: renderProvider가 null(가용목록 없음/미선택)이면 provider·model을 아예 보내지 않는다
           // → 백엔드가 기존 기본 엔진(replicate)으로 처리(바디 100% 동일).
           body: {
@@ -1375,6 +1606,14 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
         }
         setRenderImage(img);
         setRenderCharged(typeof resp.charged === "number" ? resp.charged : null);
+        // 돈이 나간 산출물이므로 화면 상태와 **동시에** 보관한다(새로고침 복원용).
+        addRender(projectId, {
+          id: `${Date.now()}`,
+          imageUrl: resp.image_url ?? null,
+          imageBase64: resp.image_base64 ?? null,
+          chargedKrw: typeof resp.charged === "number" ? resp.charged : null,
+          label: renderStyle ?? null,
+        });
         setRenderMsg(resp.message || null);
         setRenderPhase("result");
       } catch (err) {
@@ -1468,7 +1707,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
 
       {/* ── 적용 건축개요 스트립(선택한 개발종목 기반 — CAD·BIM 공용 기하) ── */}
       <div className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] px-5 py-3 -mt-4">
-        <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[var(--accent-strong)]">적용 건축개요</span>
+        <span className="label-caps text-[var(--accent-strong)]">적용 건축개요</span>
         {specLoading && !spec ? (
           <span className="text-xs text-[var(--text-hint)]">건축개요 산출 중…</span>
         ) : (
@@ -1491,7 +1730,13 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
               ["건물규모", spec ? `${spec.building_width_m}×${spec.building_depth_m}m` : "-"],
               ["세대/호실", spec?.total_units != null ? `${spec.total_units}` : "-"],
             ].map(([k, v]) => (
-              <span key={k} className="flex items-center gap-1.5">
+              <span
+                key={k}
+                className="flex items-center gap-1.5"
+                // ★백로그② — 연면적은 이제 건폐율/용적률과 같은 소스(매스 실현값)라 하단바 KPI의
+                //   목표 연면적과 값이 다를 수 있다(정직 설명 — 은폐·평균화 금지).
+                title={k === "연면적" ? "매스 실현 기준(백엔드 산출 매스의 연면적 — 건폐율·용적률과 동일 소스). 하단바 KPI의 목표 연면적과 다를 수 있습니다." : undefined}
+              >
                 <span className="text-[var(--text-hint)]">{k}</span>
                 <b className="text-[var(--text-primary)]">{v}</b>
               </span>
@@ -1502,10 +1747,21 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
           {/* ★/mass 호출 실패 → 추정 기본값 사용 중임을 정직 표기(산출값으로 오인 방지) */}
           {spec?.isFallback && (
             <span
-              className="flex items-center gap-1 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-[10px] font-bold text-amber-500"
+              className="flex items-center gap-1 rounded-lg border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 px-2.5 py-1 text-[10px] font-bold text-[var(--status-warning)]"
               title="네트워크 오류로 매스 산출에 실패했습니다. 대지·개요에서 역산한 추정 기본값을 표시 중입니다. '개요 재적용'으로 다시 시도하세요."
             >
               <AlertTriangle className="size-3" aria-hidden />네트워크 오류로 기본값 사용 중 · 추정치
+            </span>
+          )}
+          {/* ★설계스튜디오 실효FAR 전파 봉합 — 실효 한도(통합/실효/조례)를 확보하지 못해 위 건폐율/
+              용적률이 법정상한으로 폴백됐음을 정직 표기(조용한 100% 확정 오인 방지). isFallback이면
+              위 배지가 이미 "산출값 아님"을 알리므로 중복 표기하지 않는다. */}
+          {!spec?.isFallback && spec?.farReliable === false && (
+            <span
+              className="flex items-center gap-1 rounded-lg border border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 px-2.5 py-1 text-[10px] font-bold text-[var(--status-warning)]"
+              title="실효 한도(조례·계획 반영)를 확보하지 못해 법정상한 기준으로 산정했습니다. 부지분석을 실행하면 정밀화됩니다."
+            >
+              <AlertTriangle className="size-3" aria-hidden />실효 한도 미산정 · 법정상한 기준
             </span>
           )}
           {!designData?.totalGfaSqm && (
@@ -1514,7 +1770,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
           <button
             type="button"
             onClick={() => {
-              setSpec(null); setBimScene(null); setBimError(null); setBimMass(null);
+              setSpec(null); setBimScene(null); setBimError(null); setBimMass(null); setBasisEval(null);
               setDesignAi(null); setDrawingCodes([]); setSvgMap({}); setActiveCode(null);
             }}
             disabled={specLoading}
@@ -1524,6 +1780,31 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
             ↻ 개요 재적용
           </button>
         </div>
+        {/* ★DesignBasis 판정 배지(WP-E 자산 표면화) — /bim 응답의 basis_evaluation 이 있을 때만.
+            hard 위반(unsat_reasons)=경고+사유 목록, soft 만=주의, 둘 다 없음=정합 통과. 날조 금지. */}
+        {basisEval && (
+          <div className={`w-full rounded-xl border px-4 py-3 text-xs ${
+            (basisEval.unsat_reasons?.length ?? 0) > 0
+              ? "border-[var(--status-danger)]/40 bg-[var(--status-danger)]/10"
+              : (basisEval.soft_warnings?.length ?? 0) > 0
+                ? "border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10"
+                : "border-[var(--status-success)]/40 bg-[var(--status-success)]/10"
+          }`}>
+            <p className="font-black text-[var(--text-primary)]">
+              {(basisEval.unsat_reasons?.length ?? 0) > 0
+                ? `설계 기준(DesignBasis) 위반 ${basisEval.unsat_reasons!.length}건`
+                : (basisEval.soft_warnings?.length ?? 0) > 0
+                  ? `설계 기준 주의 ${basisEval.soft_warnings!.length}건`
+                  : "설계 기준(DesignBasis) 정합 통과"}
+            </p>
+            {[...(basisEval.unsat_reasons ?? []), ...(basisEval.soft_warnings ?? [])].slice(0, 6).map((r, i) => {
+              const msg = typeof r === "string" ? r : r?.reason || r?.message || "";
+              return msg ? (
+                <p key={i} className="mt-1 text-[var(--text-secondary)]">· {msg}</p>
+              ) : null;
+            })}
+          </div>
+        )}
         {/* 건폐율/용적률 준수 판정의 근거(적용값·법정/조례 한도·법령 원문) — 한도 SSOT 있을 때만 표시 */}
         {complianceEvidence.length > 0 && (
           <EvidencePanel
@@ -1572,10 +1853,14 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
 
       {/* ── 편집화면(2D/3D 뷰포트) — 생성 UX 바로 아래(상단 배치). 설계 해석 요약은 뷰포트 아래로 이동. ── */}
       <div
+        // ★락이 **위치가 아니라 이 요소**에 결속되게 한다. 종전 테스트는 토글 버튼의
+        //   `parentElement` 를 뷰포트로 가정했는데, 버튼만 감싸는 래퍼를 하나 끼우면
+        //   전체화면이 죽은 채로도 락이 통과했다(적대검증 실증).
+        data-testid="cadbim-viewport"
         className={
           fullscreen
-            ? "fixed inset-0 z-[60] h-screen w-screen overflow-hidden rounded-none border-0 bg-[#0d1520] shadow-none group"
-            : "relative h-[650px] w-full overflow-hidden rounded-[4rem] border border-[var(--line-strong)] bg-[#0d1520] shadow-[var(--shadow-2xl)] group"
+            ? "fixed inset-0 z-[9990] h-screen w-screen overflow-hidden rounded-none border-0 bg-[#0d1520] shadow-none group"
+            : "relative h-[650px] w-full overflow-hidden rounded-[var(--radius-2xl)] border border-[var(--line-strong)] bg-[#0d1520] shadow-[var(--shadow-2xl)] group"
         }
       >
         {/* 1차-A: 전체화면 토글. ON이면 뷰포트를 전 뷰포트 오버레이로 띄워 캔버스가 포인터를 100%
@@ -1913,7 +2198,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
               </div>
             )}
             {bimError && !bimLoading && (
-              <div className="absolute bottom-6 left-1/2 z-20 flex -translate-x-1/2 items-center gap-3 rounded-full bg-black/65 px-4 py-2 backdrop-blur-xl border border-amber-400/30">
+              <div className="absolute bottom-6 left-1/2 z-20 flex -translate-x-1/2 items-center gap-3 rounded-full bg-black/65 px-4 py-2 backdrop-blur-xl border border-[var(--status-warning)]/30">
                 <span className="text-[10px] font-bold text-amber-200">절차모델 표시 중 · 정밀 IFC 생성 실패</span>
                 <button
                   onClick={() => { setBimError(null); loadBimModel(); }}
@@ -1929,7 +2214,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
             {/* 편집 종료 → 도면 확인(②) 화면으로 복귀. CADEditor 내부 칩과 비충돌 위치(좌상단). */}
             <button
               onClick={() => { setEditMode(false); setEditMetrics(null); }}
-              className="absolute left-4 top-4 z-40 rounded-full border border-white/15 bg-black/60 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-white/80 backdrop-blur-xl hover:bg-white/15"
+              className="absolute left-4 top-4 z-40 rounded-[var(--r-pill)] border border-[var(--border-muted)] bg-[var(--glass-bg)] px-4 py-2 text-[10px] font-black uppercase tracking-widest text-[var(--text-secondary)] backdrop-blur-[var(--glass-blur)] hover:bg-[color-mix(in_srgb,var(--text-primary)_10%,transparent)] hover:text-[var(--text-primary)]"
             >
               ← 편집 종료
             </button>
@@ -1942,24 +2227,27 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
               initialFloorHeightM={spec?.floor_height_m ?? 3}
               zoneCode={spec?.zone_code}
               initialGeometryM={editorSeedGeometry}
+              maxFarPct={editorMaxLimits.maxFarPct}
+              maxBcrPct={editorMaxLimits.maxBcrPct}
               onMetricsChange={setEditMetrics}
             />
           </div>
         ) : (
           <div className="absolute inset-0 z-30 bg-[#0a0f14] flex flex-col">
             {/* 상단 바: 도면 선택 드롭다운(공간 최적화) + 편집모드 전환.
-                pt-16 = 뷰포트 상단 중앙의 플로팅 2D/3D 토글(absolute top-6)과 겹치지 않도록 상단 여백 확보.
+                pt-24 = 뷰포트 상단 중앙의 플로팅 2D/3D 토글(absolute top-6, 높이 ~42px → 하단 ~66px)
+                아래로 툴바 내용을 완전히 내려 '종류' 셀렉트가 토글 뒤로 겹치지 않게 한다(가로 위치 무관 수직 이격).
                 flex-wrap = 좁은 폭/확대 시 우측 버튼군(내보내기·다듬기)이 토글 위로 올라타지 않게 줄바꿈. */}
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/5 px-6 pt-16 pb-3">
+            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3 border-b border-[var(--border-muted)] px-6 pt-24 pb-3">
               <label className="flex items-center gap-2">
-                <span className="text-[10px] font-black uppercase tracking-widest text-white/40">도면</span>
+                <span className="text-[10px] font-black uppercase tracking-widest text-[var(--text-tertiary)]">도면</span>
                 <select
                   value={activeCode ?? ""}
                   onChange={(e) => setActiveCode(e.target.value)}
-                  className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-bold text-white focus:border-[var(--accent-strong)] focus:outline-none"
+                  className="rounded-[var(--r-input)] border border-[var(--border-muted)] bg-[color-mix(in_srgb,var(--text-primary)_5%,transparent)] px-3 py-1.5 text-xs font-bold text-[var(--text-primary)] focus:border-[var(--accent-strong)] focus:outline-none"
                 >
                   {drawingCodes.map((code) => (
-                    <option key={code} value={code} className="bg-[#0a0f14] text-white">
+                    <option key={code} value={code} className="bg-[var(--surface-strong)] text-[var(--text-primary)]">
                       {DRAWING_LABELS[code] || code}
                     </option>
                   ))}
@@ -1968,15 +2256,15 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
               <div className="flex shrink-0 items-center gap-2">
                 {/* DXF 도면종류 셀렉트(평면/상세/단면/입면/배치) — export-dxf drawing_type 분기 */}
                 <label className="flex items-center gap-1.5">
-                  <span className="text-[9px] font-black uppercase tracking-widest text-white/35">종류</span>
+                  <span className="text-[9px] font-black uppercase tracking-widest text-[var(--text-tertiary)]">종류</span>
                   <select
                     value={dxfType}
                     onChange={(e) => setDxfType(e.target.value)}
                     title="내보낼 DXF 도면 종류"
-                    className="rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-[11px] font-bold text-white focus:border-[var(--accent-strong)] focus:outline-none"
+                    className="rounded-[var(--r-input)] border border-[var(--border-muted)] bg-[color-mix(in_srgb,var(--text-primary)_5%,transparent)] px-2 py-1.5 text-[11px] font-bold text-[var(--text-primary)] focus:border-[var(--accent-strong)] focus:outline-none"
                   >
                     {DXF_TYPE_OPTIONS.map((o) => (
-                      <option key={o.value} value={o.value} className="bg-[#0a0f14] text-white">
+                      <option key={o.value} value={o.value} className="bg-[var(--surface-strong)] text-[var(--text-primary)]">
                         {o.label}
                       </option>
                     ))}
@@ -2000,6 +2288,15 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
                 >
                   {ifcBusy ? "내보내는 중…" : (<span className="inline-flex items-center gap-1"><Download className="size-3.5" aria-hidden />IFC(BIM) 내보내기</span>)}
                 </button>
+                {/* WP-F: 제출번들(zip) — 심의·인허가 제출용 도면(SVG/DXF)+설계요약 PDF+공내역서 xlsx 단일 zip */}
+                <button
+                  onClick={exportSubmissionBundle}
+                  disabled={bundleBusy || !spec}
+                  title="심의·인허가 제출용 번들(도면 + 설계요약 PDF + 공내역서 xlsx)을 단일 zip으로 내려받습니다. 필수 도면 시트가 빠지면 서버가 사유와 함께 생성을 거부합니다."
+                  className="rounded-full border border-[var(--accent-strong)]/50 bg-[var(--accent-strong)]/10 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-[var(--accent-strong)] hover:bg-[var(--accent-strong)]/20 disabled:opacity-50"
+                >
+                  {bundleBusy ? "번들 생성 중…" : (<span className="inline-flex items-center gap-1"><Download className="size-3.5" aria-hidden />제출번들(zip)</span>)}
+                </button>
                 {/* ③ 도면 다듬기 CTA — 편집모드 직행(쉬운 모드 동선) */}
                 <button
                   onClick={() => setEditMode(true)}
@@ -2008,6 +2305,13 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
                   ③ 도면 다듬기
                 </button>
               </div>
+              {/* 제출번들 생성 실패(필수시트 미충족·인증 등) — 백엔드 사유를 그대로 정직 표기 */}
+              {bundleError && (
+                <p className="flex w-full items-start gap-1 text-[11px] font-semibold text-red-400">
+                  <AlertTriangle className="mt-0.5 size-3 shrink-0" aria-hidden />
+                  <span>{bundleError}</span>
+                </p>
+              )}
             </div>
 
             {/* 도면 표시 영역 */}
@@ -2040,6 +2344,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
                 </div>
               )}
               {!drawingLoading && !drawingError && activeCode && activeSvgUrl && (
+                // @ink-contract-ignore — 도면(SVG img) 종이 배경. 텍스트 자식 없음.
                 <div className="flex h-full w-full max-w-[920px] items-center justify-center rounded-2xl bg-white p-5 shadow-2xl">
                   {/* 보안: dangerouslySetInnerHTML 대신 Blob URL <img>로 렌더 — img로 로드된
                       SVG는 스크립트·이벤트핸들러가 실행되지 않는다(XSS 차단).
@@ -2061,7 +2366,8 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
             </div>
 
             {/* 2D 도면 AI 해석(평면효율·동선코어 — 평면도 관련 섹션) */}
-            {designAi && (designAi.floor_efficiency || designAi.circulation_core) && (
+            {/* ★파싱 실패 원문 폴백(raw JSON)은 노출하지 않는다(백엔드 가드 우회·구캐시 대비 2차 방어). */}
+            {designAi && !looksLikeRawDesignAiFallback(designAi) && (designAi.floor_efficiency || designAi.circulation_core) && (
               <div className="border-t border-white/5 px-6 py-4 max-h-[180px] overflow-y-auto">
                 <div className="flex items-center gap-2 mb-2">
                   <span className="h-1.5 w-1.5 rounded-full bg-indigo-400 animate-pulse" />
@@ -2134,7 +2440,8 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
               )}
 
               {/* AI 설계 해석(DesignInterpreter 6섹션) */}
-              {designAi && (
+              {/* ★파싱 실패 원문 폴백(raw JSON)은 노출하지 않는다(백엔드 가드 우회·구캐시 대비 2차 방어). */}
+              {designAi && !looksLikeRawDesignAiFallback(designAi) && (
                 <motion.div
                   initial={{ opacity: 0, x: 20 }}
                   animate={{ opacity: 1, x: 0 }}
@@ -2157,7 +2464,7 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
                       .map(([k, label]) => (
                         <div key={k}>
                           <p className="text-[9px] font-bold text-indigo-300/80 mb-0.5">{label}</p>
-                          <p className="text-[11px] leading-relaxed text-slate-200 whitespace-pre-wrap">{designAi[k]}</p>
+                          <MarkdownLite text={designAi[k]} className="text-[11px] text-slate-200" />
                         </div>
                       ))}
                   </div>
@@ -2203,14 +2510,14 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
         {/* ── 2D/3D 전환 세그먼트 칩 — 뷰포트 상단 중앙(헤더에서 이동). 프리셋 바와 동일 토큰.
             편집모드에서는 숨김(편집 종료 버튼과 동선 충돌 방지). 3D 클릭 시 editMode 해제 선행. ── */}
         {!editMode && (
-          <div className="absolute left-1/2 top-6 z-30 flex -translate-x-1/2 items-center gap-1.5 rounded-2xl border border-white/10 bg-black/45 p-1.5 backdrop-blur-xl shadow-2xl">
+          <div className="absolute left-1/2 top-6 z-30 flex -translate-x-1/2 items-center gap-1.5 rounded-[var(--r-panel)] border border-[var(--border-muted)] bg-[var(--glass-bg)] p-1.5 backdrop-blur-[var(--glass-blur)] shadow-2xl">
             <button
               type="button"
               onClick={() => setViewMode("cad_2d")}
-              className={`rounded-xl px-4 py-2 text-[10px] font-black uppercase tracking-widest transition-colors ${
+              className={`rounded-[var(--r-input)] px-4 py-2 text-[10px] font-black uppercase tracking-widest transition-colors ${
                 viewMode === "cad_2d"
                   ? "bg-[var(--accent-strong)] text-white shadow-lg"
-                  : "text-white/55 hover:text-white hover:bg-white/10"
+                  : "text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[color-mix(in_srgb,var(--text-primary)_10%,transparent)]"
               }`}
             >
               {t.btn2D || "2D 도면"}
@@ -2219,10 +2526,10 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
               type="button"
               data-testid="cadbim-to-3d"
               onClick={() => { setEditMode(false); setViewMode("bim_3d"); }}
-              className={`rounded-xl px-4 py-2 text-[10px] font-black uppercase tracking-widest transition-colors ${
+              className={`rounded-[var(--r-input)] px-4 py-2 text-[10px] font-black uppercase tracking-widest transition-colors ${
                 viewMode === "bim_3d"
                   ? "bg-[var(--accent-strong)] text-white shadow-lg"
-                  : "text-white/55 hover:text-white hover:bg-white/10"
+                  : "text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[color-mix(in_srgb,var(--text-primary)_10%,transparent)]"
               }`}
             >
               {t.btn3D || "3D BIM"}
@@ -2392,6 +2699,40 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
                   </div>
                 )}
 
+                {/* ── 1-b) 지난 렌더(영속) — 돈이 나간 산출물이 새로고침에 사라지지 않게 ── */}
+                {renderPhase !== "loading" && !renderImage && savedRenders && savedRenders.length > 0 && (
+                  <div className="space-y-2" data-testid="saved-renders">
+                    <p className="text-xs font-bold text-[var(--text-secondary)]">
+                      지난 AI 렌더 {savedRenders.length}건 — 이 브라우저에 보관된 결과입니다
+                    </p>
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                      {[...savedRenders].reverse().map((r) => {
+                        const src = r.imageUrl
+                          || (r.imageBase64
+                            ? (r.imageBase64.startsWith("data:") ? r.imageBase64 : `data:image/png;base64,${r.imageBase64}`)
+                            : null);
+                        return (
+                          <div key={r.id} className="rounded-xl border border-[var(--line)] p-1.5 text-[10px]">
+                            {src ? (
+                              /* eslint-disable-next-line @next/next/no-img-element */
+                              <img src={src} alt="지난 AI 렌더" className="w-full rounded-lg" />
+                            ) : (
+                              /* ★조용히 빼지 않는다 — 무엇을 왜 못 보관했는지 말한다. */
+                              <p className="p-2 text-[var(--text-hint)]" data-testid="saved-render-omitted">
+                                이미지가 커서 보관하지 못했습니다(결과 자체는 다운로드하셨어야 합니다)
+                              </p>
+                            )}
+                            <p className="mt-1 text-[var(--text-hint)]">
+                              {r.at.slice(0, 10)}
+                              {r.chargedKrw != null && ` · ${r.chargedKrw}코인`}
+                            </p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
                 {/* ── 2) 렌더 진행 중 ── */}
                 {renderPhase === "loading" && (
                   <div className="flex flex-col items-center gap-4 py-8">
@@ -2511,7 +2852,12 @@ export function CadBimIntegrationPanel({ projectId, dictionary }: { projectId: s
       )}
 
       {/* ── 설계 결과 요약 + AI 설계 해석(designAi 6섹션) — 편집화면(뷰포트) 아래로 재배치 ── */}
-      <DesignOutcomeSummary projectId={projectId} designAi={designAi} />
+      <DesignOutcomeSummary
+        projectId={projectId}
+        designAi={designAi}
+        designAiStale={designAiStale}
+        onRegenerateDesignAi={regenerateDesignAi}
+      />
 
       {/* 배선 캠페인 2차(cad-correction, additive) — CAD 파라메트릭 자동 보정(건폐율/용적률/
           높이 법규 검증+보정). 기본 접힘(AdvancedDrawer), 기존 2D/3D 생성·편집 흐름과

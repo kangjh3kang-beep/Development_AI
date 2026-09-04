@@ -1,3 +1,6 @@
+import { effectiveLandAreaSqm } from "@/lib/site-area";
+import { resolveDominantZone } from "@/lib/zoning-ssot";
+import { addressTokenMismatch } from "@/store/useProjectContextStore";
 // 설계 스튜디오 "층수 단일 진실원천(SSOT)" 공용 유틸.
 //
 // 배경(층수 3중 불일치 버그): 같은 화면에서 ① 축측 도식이 '25층', ② 예상층수 카드가
@@ -58,12 +61,59 @@ export function resolveCanonicalFloors(
   );
 }
 
+/* ── 부지 기준(hasSiteBasis) 단일 진실원천 — 레일↔콘솔 준비상태 이원화 재발 방지 ──
+ *
+ * 배경(PR#316 리뷰 M2): DesignWorkspace(좌측 레일)와 DesignStudio(콘솔)가 "부지 기준이
+ *   준비됐는가"를 각자 다른 알고리즘으로 판정했다 — 주소일치는 레일이 addressTokenMismatch,
+ *   콘솔이 isSameSite(다른 퍼지 매칭)를 썼고, 면적 존재검사도 레일은 `>0`, 콘솔은 `!=null`이라
+ *   경계 케이스(면적 0·음수 등)에서 서로 다른 답을 낼 수 있었다. 같은 화면에서 레일 "부지분석
+ *   대기" ↔ 콘솔 "부지분석 연동됨"이 동시에 뜨는 결함(#4)의 재발 원인이 바로 이 "제3의 술어"였다.
+ *   이 함수를 두 소비처가 그대로 호출하게 해 구조적으로 divergence를 차단한다(공용화 — 한 곳을
+ *   고치면 전역이 따라온다. CLAUDE.md 공용화 정책).
+ *
+ * 판정 기준(레일의 기존 알고리즘을 단일 정본으로 채택 — 실제 파이프라인 게이트로 쓰이던 쪽):
+ *   siteAnalysis 존재 + (프로젝트 주소와 명백히 불일치하지 않음) + (주소 또는 PNU 확보) +
+ *   유효 대지면적(다필지 통합 우선) > 0 + 대표 용도지역 확보. 무날조 — 하나라도 없으면 false.
+ * 순수 함수.
+ */
+type SiteBasisInput = {
+  address?: string | null;
+  pnu?: string | null;
+  landAreaSqm?: number | null;
+  landAreaSqmTotal?: number | null;
+  parcelCount?: number | null;
+  dominantZoneCode?: string | null;
+  zoneCode?: string | null;
+} | null | undefined;
+
+export function hasSiteBasis(
+  siteAnalysis: SiteBasisInput,
+  projectAddress: string | null | undefined,
+): boolean {
+  if (!siteAnalysis) return false;
+  if (
+    projectAddress &&
+    siteAnalysis.address &&
+    addressTokenMismatch(projectAddress, siteAnalysis.address)
+  ) {
+    return false;
+  }
+  if (!(siteAnalysis.address || siteAnalysis.pnu)) return false;
+  const area = effectiveLandAreaSqm(siteAnalysis);
+  if (!(typeof area === "number" && area > 0)) return false;
+  if (!resolveDominantZone(siteAnalysis)) return false;
+  return true;
+}
+
 // ── deriveDesignSSOT 입력 타입(느슨한 옵셔널 — DesignStudio가 쓰는 것과 정합) ──
 // 각 타입은 모든 키 옵셔널/nullable로 둬, 구버전/부분 데이터에도 무손상으로 동작한다.
 
 // 부지분석(SiteAnalysis) — 면적·용도지역(통합값 우선 폴백 포함)만 느슨하게 받는다.
 type DesignSiteInput = {
   landAreaSqm?: number | null;
+  // 다필지 통합면적·필지수 — effectiveLandAreaSqm(SSOT)이 통합 우선 판정에 사용.
+  landAreaSqmTotal?: number | null;
+  parcelCount?: number | null;
   integratedFarEffPct?: number | null;
   integratedBcrEffPct?: number | null;
   dominantZoneCode?: string | null;
@@ -135,8 +185,10 @@ export function deriveDesignSSOT(
   //   미전달(undefined)이면 종전 동작과 완전히 동일(additive·무회귀).
   contractFloors?: number | null,
 ): DesignSSOT {
-  // 면적(㎡) — 부지분석 통합/대표 면적. 미확보 시 null.
-  const landAreaSqm = num(siteAnalysis?.landAreaSqm) ?? null;
+  // 면적(㎡) — ★effectiveLandAreaSqm(SSOT): 다필지면 통합면적 우선, raw 금지.
+  //   종전엔 raw landAreaSqm 을 읽어, 다필지에서 대표필지 면적이 통합을 덮어쓰면 설계 규모가
+  //   축소됐다(문서 주석의 "통합 우선" 선언과 실제 코드가 어긋나 있었음).
+  const landAreaSqm = effectiveLandAreaSqm(siteAnalysis) ?? null;
   // 용도지역 — 통합 dominant 우선, 없으면 단일 zoneCode. 미확보 시 null.
   const zoneCode = str(siteAnalysis?.dominantZoneCode) ?? str(siteAnalysis?.zoneCode);
   // 적용 용적률/건폐율(%) — calc가 이미 "통합>실효>법정" 우선순위로 산출한 확정값.

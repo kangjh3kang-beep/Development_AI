@@ -23,8 +23,31 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY --chown=propai:propai packages/ ./packages/
 COPY --chown=propai:propai apps/__init__.py ./apps/__init__.py
 COPY --chown=propai:propai apps/api/ ./apps/api/
+# ★arq 워커 코드 동봉 — 이 이미지 하나로 api(uvicorn)와 워커(arq apps.worker.main.WorkerSettings)
+#   두 컨테이너를 띄운다. 워커 미동봉 시 cron(공공단가 동기화·outbox 디스패치 등)이 어디서도 안 돈다.
+COPY --chown=propai:propai apps/worker/ ./apps/worker/
 
 RUN mkdir -p /app/uploads && chown -R propai:propai /app
+
+# ★배포된 이미지가 **어느 커밋인지** 스스로 말하게 한다 — 프론트(`Dockerfile.web`)와 대칭.
+#   2026-08-17 실사고: 배포 후 확인을 **호스트 파일시스템의 소스**로 했다. 그 경로는
+#   `git reset --hard` 로 늘 최신이라 **무엇을 배포하든 통과**한다. 그래서 `#630`·`#653`·`#662`
+#   가 반영된 줄 알았으나 실서비스 컨테이너 안은 전부 0 이었다.
+#   → 프론트는 `#658` 이후 **sw 끝 sha** 로 배포 커밋을 읽을 수 있는데 백엔드에는 그 수단이
+#     없었다. 이제 `docker exec <api> printenv APP_BUILD_ID` 한 줄로 읽힌다.
+ARG APP_BUILD_ID=""
+ENV APP_BUILD_ID=${APP_BUILD_ID}
+
+# ★비어 있으면 **빌드를 죽인다**(fail closed). 조용히 빈 값으로 나가면 배포 검증이
+#   "무엇이 떴는지 모른다"로 되돌아가고, 그 사실조차 드러나지 않는다.
+RUN set -eu; \
+    if [ -z "${APP_BUILD_ID}" ]; then \
+      echo "★APP_BUILD_ID 가 비었다. 배포 이미지는 어느 커밋인지 식별할 수 있어야 한다."; \
+      echo "  infra/deploy-zero-downtime.sh 가 export 한다. 수동 빌드라면:"; \
+      echo "  docker build -f Dockerfile.oracle --build-arg APP_BUILD_ID=propai-v\$(printf '%06d' \$(git rev-list --count HEAD))-\$(git rev-parse --short=8 HEAD) -t propai-api:latest ."; \
+      exit 1; \
+    fi; \
+    echo "api APP_BUILD_ID = ${APP_BUILD_ID}"
 
 USER propai
 

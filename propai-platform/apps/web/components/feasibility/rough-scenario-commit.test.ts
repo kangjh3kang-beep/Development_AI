@@ -221,3 +221,78 @@ describe("roughResultToFeasibilityPatch", () => {
     expect(patch!.profitRatePct as number).toBeLessThan(0);
   });
 });
+
+// ── ★정밀도 등급 — 생성 경로 배선 (2026-08-24) ─────────────────────────────
+//
+//  라이브 수용시험에서 잡았다: `#770`(백엔드 산출) + `#771`(프론트 배지)이 **둘 다
+//  머지·배포**됐는데 화면에 배지가 뜨지 않았다. 사용자 계정으로 '개략수지 생성'을
+//  실제로 눌러 확인한 결과 `등급 F` 는 생기는데 스토어에 `precision` 키가 **없었다**.
+//
+//  `feasibilityData` 의 쓰기 경로가 둘인데(하이드레이션 / 생성) 하나만 배선돼 있었다.
+
+describe("roughResultToFeasibilityPatch — 정밀도 등급(#770)", () => {
+  it("★생성 경로에서 precision 3필드를 옮긴다 — 배지가 뜨는 조건", () => {
+    const patch = roughResultToFeasibilityPatch(
+      fullResult({
+        precision: "E",
+        precision_label: "개략(추정)",
+        precision_basis: "설계 산출물 없이 부지 정보만으로 추정",
+      }),
+    );
+    expect(patch).not.toBeNull();
+    // 배지 조건은 `grade && precision === "E"` 다 — **두 값이 같이** 있어야 한다.
+    expect(patch?.grade, "grade 가 빠지면 배지 조건 앞부분이 무너진다").toBe("B");
+    expect(patch?.precision).toBe("E");
+    expect(patch?.precisionLabel).toBe("개략(추정)");
+    expect(patch?.precisionBasis).toContain("설계 산출물 없이");
+  });
+
+  it("★대조군 — 백엔드가 안 주면 키를 만들지 않는다(구 응답 하위호환)", () => {
+    // ★위 케이스는 *무엇이든 채워 넣는* 구현에서도 초록이다. 반대 방향을 함께 본다.
+    const patch = roughResultToFeasibilityPatch(fullResult());
+    expect(patch).not.toBeNull();
+    expect(patch?.grade, "전제: 다른 필드는 정상 매핑된다").toBe("B");
+    // ★계약 변경(2026-08-24) — 종전 기대는 "키를 만들지 않는다"였다. 그 근거는 *기존 SSOT 보존*
+    //   이었는데, 보존되는 그 값은 **다른 등급을 설명하던 정밀도**다. 새 `grade` 와 함께 남으면
+    //   배지가 그 새 등급을 잘못 라벨한다(merge 패치). `grade` 를 쓰는 순간 정밀도는
+    //   **모른다고 명시**하는 것이 정직하다 — 화면은 "정밀도 미표기"로 남는다.
+    //   ★`grade` 를 **안 쓰는** 패치는 종전대로 키를 만들지 않는다(아래 대조군에서 고정).
+    expect("precision" in (patch ?? {}), "grade 를 쓰면 정밀도를 명시해야 한다").toBe(true);
+    expect(patch?.precision, "모르면 null — 옛 등급의 정밀도를 물려주지 않는다").toBeNull();
+    expect("precisionLabel" in (patch ?? {})).toBe(false);
+    expect("precisionBasis" in (patch ?? {})).toBe(false);
+  });
+
+  it("★모르는 등급은 넣지 않는다 — 소비처가 판정할 수 없는 값을 만들지 않는다", () => {
+    for (const bad of ["X", "e", "", "  ", "EE"]) {
+      const patch = roughResultToFeasibilityPatch(fullResult({ precision: bad }));
+      // 잘못된 값은 **그대로 통과하지 않는다**(핵심 락 유지). 다만 grade 가 실려 있으므로
+      //   키 자체는 `null` 로 명시된다(위 계약 변경) — 소비처 조건 `precision === "E"` 는 거짓.
+      expect(patch?.precision, `precision="${bad}" 가 통과했다`).toBeNull();
+    }
+    // 정상 3등급은 전부 통과한다(과잉 차단 방지).
+    for (const ok of ["E", "D", "V"] as const) {
+      const patch = roughResultToFeasibilityPatch(fullResult({ precision: ok }));
+      expect(patch?.precision, `precision="${ok}" 가 막혔다 — 위양성`).toBe(ok);
+    }
+  });
+
+  it("★라벨·근거는 빈 문자열이면 생략한다(빈 값으로 덮지 않는다)", () => {
+    const patch = roughResultToFeasibilityPatch(
+      fullResult({ precision: "E", precision_label: "   ", precision_basis: "" }),
+    );
+    expect(patch?.precision).toBe("E");
+    expect("precisionLabel" in (patch ?? {})).toBe(false);
+    expect("precisionBasis" in (patch ?? {})).toBe(false);
+  });
+
+  it("★★precision 은 최상위다 — summary 안에 넣어도 주워 오지 않는다(형태 결속)", () => {
+    // 백엔드 orchestrator 는 `summary` 와 **형제**로 싣는다. 그 위치가 바뀌면 여기서 갈린다.
+    const patch = roughResultToFeasibilityPatch(
+      fullResult({ summary: { grade: "B", precision: "E" } as never }),
+    );
+    // 형태 결속 유지 — summary 안의 "E" 를 최상위로 착각해 **주워 오면** 여기서 갈린다.
+    //   (키는 grade 동반으로 존재하되 값은 null 이어야 한다.)
+    expect(patch?.precision, "summary 안의 값을 최상위로 착각해 읽었다").toBeNull();
+  });
+});

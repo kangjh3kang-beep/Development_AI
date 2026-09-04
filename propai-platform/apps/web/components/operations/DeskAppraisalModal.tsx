@@ -7,6 +7,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import { NumberInput } from "@/components/common/NumberInput";
+import { eok, won } from "@/lib/land/desk-appraisal";
+import { useModalFocusWhileMounted } from "@/hooks/useModalFocus";
+import { DISMISS_Z, useDismissibleWhileMounted } from "@/lib/satong-dismiss";
 
 function apiBase(): string {
   if (typeof window !== "undefined") {
@@ -17,25 +20,45 @@ function apiBase(): string {
   return "/api/proxy";
 }
 
-const eok = (v: number | null | undefined) =>
-  v == null ? "—" : `${(v / 1e8).toLocaleString(undefined, { maximumFractionDigits: 2 })}억`;
-const won = (v: number | null | undefined) => (v == null ? "—" : `${v.toLocaleString()}원`);
+// ★R6 리뷰(F-F) — 자체 재정의를 버리고 **정본**(`lib/land/desk-appraisal`)으로 수렴한다.
+//   여기 있던 사본은 `toLocaleString(undefined, …)` / 인자 없는 `toLocaleString()` 이라
+//   브라우저 로케일을 탔고(de-DE `1.234,56억`), R5 의 로케일 락은 `lib/` 두 파일만 봐서
+//   **이 모달을 놓쳤다** — F-1(전월세)·C-1(미러)과 같은 전역 전파방지 미이행 계열이다.
+//   죽은 코드도 아니었다: 헤드라인 감정총액을 포함해 4곳에서 실사용 중이었다.
 
 type Method = { method: string; unit_price: number; rationale: string };
 type Result = {
   ok: boolean; message?: string;
   appraised_price_per_sqm: number; appraised_total_won: number | null; area_sqm: number | null;
   official_price_per_sqm?: number; pnu?: string | null;
-  confidence: number; range_per_sqm: { low: number; high: number };
+  /** ★독립 추정 1개면 `null`(보류). 종전 `number` 타입 탓에 `Math.round(null*100)`=0 이
+   *  되어 보류가 **"신뢰도 0%"**(최악)로 그려졌다. */
+  confidence: number | null;
+  confidence_basis?: string | null;
+  range_per_sqm: { low: number; high: number };
   cross_check?: { firms: number[]; mean: number; cv_pct: number; min: number; max: number; note: string };
   irregularity?: number | null; methods: Method[]; weight_note: string;
+  comparable_skipped_reason?: string | null;
   road_side?: string | null; time_adjust?: number; time_adjust_basis?: string;
   building?: { building_value_won: number; rationale: string } | null; complex_total_won?: number | null;
   income?: { income_value_won: number; rationale: string } | null; income_total_won?: number | null;
   complex_note?: string | null; disclaimer: string;
 };
 
-function Gauge({ value }: { value: number }) {
+function Gauge({ value, basis }: { value: number | null; basis?: string | null }) {
+  // ★신뢰도는 **보류될 수 있다**(독립 추정이 1개면 교차검증이 아니다 —
+  //   `PLAN_appraisal_nondeterminism_2026-08-25.md` §P-3). 종전 타입은 `number` 였고
+  //   `Math.round(null * 100)` 은 **0** 이라, 보류를 **"신뢰도 0%"**(=최악)로 그렸다.
+  if (value == null) {
+    return (
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="rounded-full bg-[var(--surface-strong)] px-2 py-0.5 text-[11px] font-bold text-[var(--text-tertiary)]">
+          산출 보류
+        </span>
+        {basis ? <span className="text-[11px] text-[var(--text-secondary)]">{basis}</span> : null}
+      </div>
+    );
+  }
   const pct = Math.round(value * 100);
   const color = pct >= 80 ? "#10b981" : pct >= 60 ? "#3b82f6" : pct >= 45 ? "#f59e0b" : "#ef4444";
   return (
@@ -54,6 +77,15 @@ export function DeskAppraisalModal({
   jibun: string; areaSqm: number | null;
   onClose: () => void; onApply: (totalWon: number) => void;
 }) {
+  const bodyRef = useRef<HTMLDivElement>(null);
+  // ★이 표면은 **세 계약을 통째로 빠져나가고 있었다**(2026-08-23 발견).
+  //   화면 전체를 덮는 `fixed inset-0` + 모달 칸 `z-[800]` 인데 `role="dialog"`·`aria-modal`
+  //   을 **선언하지 않아서**, ESC 계약(`#697`)과 포커스 계약(`#749~`)이 표면을 모을 때 쓰는
+  //   기준(`aria-modal="true"`)에 **안 걸렸다.** 즉 선언을 빠뜨리는 것이 곧 계약 회피였다.
+  //   결과: 스크린리더에 모달로 안 읽히고, **ESC 로 닫히지 않고**, Tab 이 배경으로 샜다.
+  useDismissibleWhileMounted(DISMISS_Z.appModal, onClose);
+  useModalFocusWhileMounted(bodyRef);
+
   const [official, setOfficial] = useState<string>("");
   const [gfa, setGfa] = useState<string>("");
   const [structure, setStructure] = useState("RC");
@@ -125,11 +157,11 @@ export function DeskAppraisalModal({
     } catch { setErr("리포트 다운로드 실패"); } finally { setBusy(""); }
   };
 
-  const inp = "h-9 w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm text-[var(--text-primary)]";
+  const inp = "h-9 w-full rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 text-sm text-[var(--text-primary)]";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
-      <div className="max-h-[90vh] w-full max-w-3xl overflow-auto rounded-2xl border border-[var(--line-strong)] bg-[var(--surface)] p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+    <div role="dialog" aria-modal="true" className="fixed inset-0 z-[800] flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+      <div ref={bodyRef} className="max-h-[90vh] w-full max-w-3xl overflow-auto rounded-2xl border border-[var(--line-strong)] bg-[var(--surface)] p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start justify-between">
           <div>
             <h3 className="text-base font-bold text-[var(--text-primary)]">예상 시세 추정 (상세)</h3>
@@ -162,7 +194,7 @@ export function DeskAppraisalModal({
                 <span className="text-2xl font-[1000] text-[var(--accent-strong)]">{eok(res.appraised_total_won)}</span>
               </div>
               <p className="mt-0.5 text-xs text-[var(--text-secondary)]">{res.appraised_price_per_sqm?.toLocaleString()}원/㎡ · 범위 {res.range_per_sqm?.low?.toLocaleString()}~{res.range_per_sqm?.high?.toLocaleString()}</p>
-              <div className="mt-2"><Gauge value={res.confidence} /></div>
+              <div className="mt-2"><Gauge value={res.confidence} basis={res.confidence_basis} /></div>
             </div>
 
             {/* 방법별 */}
@@ -176,6 +208,15 @@ export function DeskAppraisalModal({
                   </div>
                 ))}
               </div>
+              {/* ★거래사례비교법이 빠졌으면 **왜** 빠졌는지 말한다(R1 리뷰 M-6).
+                  값이 조용히 사라지면 사용자는 "이 지역엔 거래가 없나 보다"로 오독하는데,
+                  실제로는 원천이 지번을 가려서(예: 5*, 1**) 위치를 못 잡은 것일 수 있다.
+                  우리가 고칠 수 없는 데이터 한계이므로, 고칠 수 없으면 말하는 것이 정직이다. */}
+              {res.comparable_skipped_reason ? (
+                <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--text-hint)] break-keep">
+                  {res.comparable_skipped_reason}
+                </p>
+              ) : null}
             </div>
 
             {/* 복수 시나리오 교차검증 */}
@@ -219,7 +260,7 @@ export function DeskAppraisalModal({
                 <button onClick={() => { onApply(res.complex_total_won ?? res.appraised_total_won!); onClose(); }} className="h-9 rounded-lg bg-[var(--accent-strong)] px-4 text-sm font-bold text-white">매입예정가에 반영</button>
               )}
               {([["pdf", "PDF"], ["pptx", "PPT"], ["docx", "Word"]] as const).map(([fmt, label]) => (
-                <button key={fmt} onClick={() => void downloadReport(fmt)} disabled={busy !== ""} className="h-9 rounded-lg border border-[var(--border)] px-4 text-sm font-semibold text-[var(--text-primary)] disabled:opacity-50">{busy === fmt ? `${label} 생성 중…` : `${label} ↓`}</button>
+                <button key={fmt} onClick={() => void downloadReport(fmt)} disabled={busy !== ""} className="h-9 rounded-lg border border-[var(--line)] px-4 text-sm font-semibold text-[var(--text-primary)] disabled:opacity-50">{busy === fmt ? `${label} 생성 중…` : `${label} ↓`}</button>
               ))}
             </div>
           </div>

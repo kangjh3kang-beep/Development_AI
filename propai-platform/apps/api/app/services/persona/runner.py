@@ -105,6 +105,58 @@ def _normalize_zone_code(raw: Any) -> str | None:
     return None
 
 
+def _ssot_effective_limits(zone_raw: Any, land_area: Any = None) -> dict[str, Any] | None:
+    """실효 한도 SSOT(far_tier calc_effective_far) 소비 — 설계 매스 산출 전 실효 FAR/BCR 도출.
+
+    ★WP-U2a(실효FAR SSOT 배선): 종전 _run_designer는 BimGenerateRequest에 ordinance_*를
+    안 실어 설계엔진이 자체 보수 static 한도만 썼다(자연/생산녹지 등 구조상한(건폐율×층수)
+    계층이 있는 zone에서 SSOT 실효치와 이중 진실). calc_effective_far(법정범위→조례→계획상한→
+    인센티브→구조상한 계층 min)를 **순수함수·무네트워크로 1회 소비**(재계산 금지)해 실효 한도와
+    산정 근거(far_basis)를 돌려준다 — _enrich_for_aggregate(도시계획 다필지 집계)와 동일 패턴.
+
+    보수 정책 유지(핵심): 엔진이 min(법정 static, 주입 실효)로 클램프하므로 이 주입은 **하향
+    (과대 방지)만** 가능하다 — SSOT가 static보다 높아도(예: 제2종 250 vs static 200) static이
+    유지된다(가짜 상향 불가·기존 보수 기준선 무회귀).
+
+    반환: {"far","bcr"(옵션),"far_basis","far_reliable"} 또는 None(zone 미매칭 — 축약코드 등.
+    None이면 호출부가 아무것도 주입하지 않아 기존 동작 완전 보존·정직).
+    """
+    zone = str(zone_raw or "").replace(" ", "").strip()
+    if not zone:
+        return None
+    try:
+        from app.services.land_intelligence.far_tier_service import calc_effective_far
+
+        eff = calc_effective_far(
+            {"local_ordinance": {}, "zone_limits": {}, "special_districts": []},
+            zone_type=zone, land_area=float(land_area or 0) or 0,
+        )
+    except Exception:  # noqa: BLE001 — SSOT 산정 실패 시 무주입(기존 보수 동작 유지·정직)
+        return None
+    far = eff.get("effective_far_pct")
+    if far is None or float(far) <= 0:
+        return None  # zone 미매칭(zone_unmatched 등) — 임의값 미생성(무날조)
+    far_basis = eff.get("far_basis")
+    # ★법정폴백 정직 강등(WP-U1d — #339 리뷰 MEDIUM): 조례·계획·완화·구조상한 어느 계층도
+    #   확정하지 못하고 법정상한만으로 산정된 값(far_basis "법정/조례"·"법정상한 적용(조례
+    #   미확인)")은 far_reliable=False로 전파한다 — 프론트 계약(node-body-builders.ts design
+    #   노드: basis가 national(법정폴백)이면 reliable=false)과 시맨틱 통일. 구조상한(건폐율×
+    #   층수)·조례 적용값·계획상한 등 계층 확정 산정은 기존대로 True(PR#334 계약 유지).
+    _legal_fallback = (
+        not bool(eff.get("ordinance_confirmed"))
+        and far_basis in (None, "법정/조례", "법정상한 적용(조례 미확인)")
+    )
+    out: dict[str, Any] = {
+        "far": float(far),
+        "far_basis": far_basis,
+        "far_reliable": not _legal_fallback,
+    }
+    bcr = eff.get("effective_bcr_pct")
+    if bcr is not None and float(bcr) > 0:
+        out["bcr"] = float(bcr)
+    return out
+
+
 def _derive_status(checklist_items: list[dict[str, Any]]) -> str:
     """체크리스트 판정 → 전체 status(R12 잠정 강등)."""
     statuses = {c.get("status") for c in checklist_items}
@@ -404,7 +456,7 @@ def _extract_incentives(permit: dict[str, Any] | None, regulation: dict[str, Any
     keywords = {
         "지구단위계획": "지구단위계획 용적률 인센티브",
         "종상향": "용도지역 변경(종상향)",
-        "결합건축": "결합건축(건축법 제77조의4)",
+        "결합건축": "결합건축(건축법 제77조의15)",
         "공공기여": "공공기여(기부채납) 연동 상향",
         "기부채납": "공공기여(기부채납) 연동 상향",
         "역세권": "역세권 고밀 개발",
@@ -626,6 +678,16 @@ async def _run_designer(db: AsyncSession, spec: PersonaSpec, ctx: dict[str, Any]
             req_kwargs["land_area_sqm"] = float(land_area)
         if zone_code:
             req_kwargs["zone_code"] = str(zone_code)
+        # ★WP-U2a: 실효 한도 SSOT 주입 — 원본 zone 라벨(한글)로 calc_effective_far를 소비해
+        #   ordinance_*로 전달한다. 엔진 min(법정 static, 실효) 클램프 → 하향(과대 방지)만 가능.
+        #   zone 미매칭(축약코드 등)·산정 실패면 None → 무주입(기존 보수 동작 완전 보존·정직).
+        ssot = _ssot_effective_limits(ctx.get("zone_code"), land_area)
+        if ssot:
+            req_kwargs["ordinance_far_pct"] = ssot["far"]
+            if ssot.get("bcr"):
+                req_kwargs["ordinance_bcr_pct"] = ssot["bcr"]
+            req_kwargs["far_basis"] = ssot.get("far_basis")
+            req_kwargs["far_reliable"] = ssot.get("far_reliable")
         # 매스 직접 치수가 ctx 에 있으면 우선(폭·깊이·층수).
         for k_ctx, k_req in (("building_width_m", "building_width_m"),
                              ("building_depth_m", "building_depth_m"),
@@ -648,17 +710,23 @@ async def _run_designer(db: AsyncSession, spec: PersonaSpec, ctx: dict[str, Any]
                 UnitMixInput,
                 UnitMixOptimizer,
             )
-            far = mass.get("far_pct") or 250
-            bcr = mass.get("bcr_pct") or 60
+            # ★무날조 — 매스 결과에 한도가 없으면 **지어내지 않는다**(아래에서 산출 skip).
+            far = mass.get("far_pct")
+            bcr = mass.get("bcr_pct")
             la = float(land_area or 0)
-            total_gfa = (la * float(far) / 100) if la > 0 else 0.0
+            # 한도(용적·건폐)가 확인되지 않으면 연면적을 만들 수 없다 — 발명 대신 보류.
+            _limits_known = far is not None and bcr is not None
+            total_gfa = (la * float(far) / 100) if (la > 0 and _limits_known) else 0.0
             if total_gfa > 0:
                 unit_mix = UnitMixOptimizer().optimize(UnitMixInput(
                     total_gfa_sqm=total_gfa, max_far_pct=float(far), max_bcr_pct=float(bcr),
                     land_area_sqm=la, region=str(ctx.get("region") or "서울"),
                 ))
             else:
-                honesty.append("연면적(GFA) 미산출(대지면적 필요) — 유닛믹스 최적화 보류(무목업).")
+                honesty.append(
+                    "연면적(GFA) 미산출 — 유닛믹스 최적화 보류(무목업). "
+                    + ("용적률·건폐율 한도 미확인" if not _limits_known else "대지면적 필요")
+                )
         except Exception as e:  # noqa: BLE001
             logger.warning("유닛믹스 최적화 실패", err=str(e)[:100])
 

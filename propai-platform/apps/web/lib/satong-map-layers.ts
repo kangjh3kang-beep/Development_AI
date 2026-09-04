@@ -8,19 +8,66 @@ export type SatongMapLayerId =
   | "auction"
   | "poi"
   | "development"
+  | "capacity"
   | "terrain"
   | "roadview";
 
-export type VWorldBaseLayer = "Base" | "Satellite" | "Hybrid" | "gray";
+/** VWorld WMTS tiletype 정본(2026-07-17 라이브 채증 — 상류가 유효값을 직접 열거).
+ *  유효 범위: [Base, midnight, Hybrid, Satellite, white] — 종전 "gray"는 실존하지 않는
+ *  오기였다(InvalidParameterValue/locator=tiletype → 배경지도 전역 미표시). 회색 계열
+ *  백지도의 정본명은 "white"다. ★UI 컨트롤 id는 "gray"로 유지하고 전송값(이 타입)만 정본으로
+ *  교정했다 — 둘은 별개 네임스페이스다. 컨트롤 id를 함께 바꾸지 않는 이유는 그것이 UI 식별자
+ *  (상호배타 해제셋 키·aria 라벨·기본 컨트롤 정의)이기 때문이지 영속 저장 때문이 아니다
+ *  (layerControls는 useState 뿐 — localStorage 영속 없음. 근거를 오독하지 말 것). */
+export type VWorldBaseLayer = "Base" | "Satellite" | "Hybrid" | "white";
 
 export type SatongMapLayerState = {
   enabledLayerIds: SatongMapLayerId[];
   controlsByLayer: Partial<Record<SatongMapLayerId, string[]>>;
 };
 
+/** 높이 상한 항목 1건 — limit_m이 null이면 "지정됐지만 수치 미보유"(정직 표기·추정 금지). */
+export type DominantConstraintHeightItem = {
+  source: string;
+  limit_m?: number | null;
+  basis?: string | null;
+  note?: string | null;
+};
+
+/**
+ * W1 지배 제약 — "이 필지에서 무엇이 발목인가"에 대한 서버 산정 답(백엔드
+ * `regulation/dominant_constraint.build_for_parcel` 계약과 1:1). 제약이 없으면 서버가
+ * null을 주므로 화면은 배너를 렌더하지 않는다(빈 배너 금지를 계약 수준에서 보장).
+ */
+export type DominantConstraint = {
+  /** "군사 통제보호구역 — 군부대 협의 없이는 건축 불가" 형태의 한 줄. 제약 0건이면 null. */
+  headline?: string | null;
+  /** protection_zone_severity SSOT 등급(낮음/보통/중간/높음/극히 높음). */
+  severity?: string | null;
+  /** ★규제 designation 조회가 실패해 제약 유무를 **확정할 수 없음**. true면 "제약 없음"이
+   *  아니라 "모름" — 화면은 배너를 숨기지 말고 확인 실패를 표기해야 한다(무음 낙관 차단). */
+  unverified?: boolean;
+  ranked?: Array<{ name: string; severity?: string | null; action?: string | null }>;
+  height?: {
+    governing_m?: number | null;
+    governing_source?: string | null;
+    /** ★수치 미보유 항목이 있으면 true — governing_m이 최종값이 아님("일부 미반영" 배지). */
+    incomplete?: boolean;
+    /** 반영/미반영 범위 상시 고지(서버 SSOT 문구). incomplete=False라도 전부가 아니다. */
+    coverage_note?: string | null;
+    items?: DominantConstraintHeightItem[];
+  } | null;
+};
+
 export type SatongMapFeature = {
   id: string;
   address: string;
+  /**
+   * 백엔드가 **되돌려준 입력 주소 원본**(`input_address`). 표시용 `address` 는 PNU 에서 파생한
+   * 지번이 붙어 보강되므로, pnu 미확보 씨드를 **주소로 찾는** 병합(healParcelPnu)이 그 보강으로
+   * 어긋난다. 매칭은 이 원본으로, 표시는 `address` 로 — 표시를 고치다 배선을 끊지 않는다.
+   */
+  inputAddress?: string | null;
   pnu?: string | null;
   lat?: number | null;
   lon?: number | null;
@@ -31,6 +78,24 @@ export type SatongMapFeature = {
   officialPricePerSqm?: number | null;
   builtYear?: number | null;
   buildingAgeYears?: number | null;
+  /** 노후도 무자료 사유(백엔드 boundary age_status): no_building(나대지·건물없음) /
+   *  no_approval_date(건물 실재·사용승인일 미기재 — 나대지와 구분) /
+   *  lookup_failed(키·인증·호출오류) / skipped_bulk(대량생략). 값 있음/ok는 null·미설정.
+   *  ★"age 조회 시도됨" 판정에 쓰여 나대지 1필지에 의한 경계 전체 재조회 루프를 끊는다(WP-M3). */
+  ageStatus?: string | null;
+  /** WS-D 개발여력 — 실효 용적률(%, 7계층 min·서버 산정). 미산정 None(무날조). */
+  effectiveFarPct?: number | null;
+  /** 법정 용적률(%)·실효 산출 **근거 계층** — 실효값이 "왜 그 값인지"를 화면이 말하기 위한 재료.
+   *  ★값을 바꾸지 않는다. 사용자 신고 "실효 60% 가 이상하다" 는 값이 아니라 **근거 부재**였다
+   *  (법정 80% 를 제천시 조례가 60% 로 깎은 정확한 값이었다). */
+  legalFarPct?: number | null;
+  farBasis?: string | null;
+  /** WS-D 개발여력 — 현황 용적률(%, 전동 연면적합/대지면적·서버 산정). 나대지=0·미상 None. */
+  currentFarPct?: number | null;
+  /** I7 규제요약 — 실효 건폐율(%, calc_effective_far 동일 계층·서버 산정). 미산정 None. */
+  effectiveBcrPct?: number | null;
+  /** W1 지배 제약 — 경계 응답(dominant_constraint) 서버 산정. 제약 0건이면 null(배너 미렌더). */
+  dominantConstraint?: DominantConstraint | null;
   geometry?: unknown;
   source?: "search" | "excel" | "map" | "boundary";
 };
@@ -49,6 +114,10 @@ export const SATONG_RENDERABLE_LAYER_IDS = new Set<SatongMapLayerId>([
   // 분양(청약홈 /presale/nearby)·공경매(온비드 /auction/search+geocode) — 실데이터 배선 완료.
   "presale",
   "auction",
+  // 개발여력(WS-D①) — 서버 산정(실효·현황 FAR) 데이터소스+capacityColor 렌더러 실재.
+  //   ★R1 BLOCKING 재발 방지: 이 Set 누락 = 레일 클릭 무반응+거짓 "미표시" 배너(위 주석 동일).
+  //   active+mapEffect 레이어는 반드시 여기 등록 — 불변식 테스트로 고정.
+  "capacity",
   "terrain",
 ]);
 
@@ -69,6 +138,32 @@ export function hasSatongLayerControl(
   controlId: string,
 ): boolean {
   return !!state?.controlsByLayer[id]?.includes(controlId);
+}
+
+/**
+ * 「선택 필지」 라벨 컨트롤 id — ★어휘가 **두 벌**이다(실측 2026-09-03).
+ *   · `SatongMapShell`(실제 툴바)      : "selected"
+ *   · `ZoningSignalMap`·`ParcelBoundaryMap`: "selected-parcel"
+ * 두 벌이 생긴 이유는 **어느 쪽도 읽히지 않았기 때문**이다 — 선언만 있고 소비처가
+ * 0이면 표기가 갈라져도 아무 데서도 빨개지지 않는다. 통합은 별건으로 두되, 여기서
+ * 닫힌 집합으로 못 박아 **세 번째 어휘가 조용히 생기는 것**을 테스트가 막는다.
+ */
+export const SATONG_SELECTION_LABEL_CONTROL_IDS = ["selected", "selected-parcel"] as const;
+
+/**
+ * 선택 필지 **라벨**을 표시할지 — ★기본은 표시, 끌 수 있는 것은 **컨트롤을 제공하는 화면뿐**.
+ *
+ * ★왜 `hasSatongLayerControl(state, "cadastre", "selected")` 한 줄이 아닌가:
+ *   호출부 6곳 중 3곳은 cadastre 컨트롤을 **선언하지 않는다**(`layerState` 미전달 1 ·
+ *   `controlsByLayer: {}` 2). 그 화면에는 라벨을 다시 켤 **UI 가 없다** — 단순 조회로
+ *   판정하면 그 3곳에서 라벨이 **조작 수단 없이** 사라진다(실측으로 확인한 회귀).
+ *   그래서 «선언했는가»를 먼저 묻고, 선언한 화면에서만 그 선언대로 판정한다.
+ */
+export function satongSelectionLabelsVisible(state: SatongMapLayerState | undefined): boolean {
+  const declared = state?.controlsByLayer?.cadastre;
+  // 선언 없음 = 끄는 수단 없음 → 종전대로 항상 표시(PR#329 LOW1 의도 보존).
+  if (!declared) return true;
+  return SATONG_SELECTION_LABEL_CONTROL_IDS.some((id) => declared.includes(id));
 }
 
 export function satongMapFeatureKey(feature: Pick<SatongMapFeature, "id" | "pnu" | "address">): string {
@@ -95,6 +190,68 @@ export function priceColor(price: number | null | undefined, min: number, max: n
 }
 
 const AGE_RAMP = ["#38bdf8", "#34d399", "#facc15", "#fb923c", "#ef4444"];
+
+/* ── WS-D 개발여력 히트맵(선택필지 MVP) ──
+   여력비 = (실효FAR − 현황FAR) / 실효FAR. 두 값 모두 서버 산정치가 있을 때만(무날조 —
+   한쪽이라도 None이면 null 반환→회색). 음수(현황>실효 — 기존 건물이 현행 한도 초과)는
+   0으로 클램프하지 않고 별색(보라)으로 정직 표기: "여력 없음+초과 상태"는 다른 정보다. */
+const CAPACITY_RAMP = ["#e2e8f0", "#a7f3d0", "#4ade80", "#16a34a", "#166534"];
+
+export const CAPACITY_LEGEND_ITEMS = [
+  { color: "#166534", label: "여력 80%+ (거의 빈 땅)" },
+  { color: "#16a34a", label: "60~80%" },
+  { color: "#4ade80", label: "40~60%" },
+  { color: "#a7f3d0", label: "20~40%" },
+  { color: "#e2e8f0", label: "0~20% (거의 소진)" },
+  { color: "#a855f7", label: "한도 초과(현황>실효)" },
+];
+
+export function capacityRatio(
+  effectiveFarPct: number | null | undefined,
+  currentFarPct: number | null | undefined,
+): number | null {
+  if (effectiveFarPct == null || currentFarPct == null || effectiveFarPct <= 0) return null;
+  return (effectiveFarPct - currentFarPct) / effectiveFarPct;
+}
+
+export function capacityColor(
+  effectiveFarPct: number | null | undefined,
+  currentFarPct: number | null | undefined,
+): string | null {
+  const ratio = capacityRatio(effectiveFarPct, currentFarPct);
+  if (ratio == null) return null; // 미상 — 색칠하지 않음(무날조)
+  if (ratio < 0) return "#a855f7"; // 한도 초과(보라 — 정직 별색)
+  const idx = Math.min(CAPACITY_RAMP.length - 1, Math.floor(ratio * CAPACITY_RAMP.length));
+  return CAPACITY_RAMP[idx];
+}
+
+/** 실거래 유형(매매 6종 — 전월세는 앞 4종만 지원, 백엔드 _TRADE_TYPES/_RENT_TYPES 미러) SSOT.
+ *  ★색상 SSOT 통합(분석품질 레인G): 종전 SatongMultiMap.MARKET_TYPE_COLORS와
+ *  NearbyTransactionsMap.TRADE_TYPES가 같은 6색을 각자 하드코딩해 한쪽만 고치면 다른 쪽이
+ *  침묵 발산했다 — AGE_LEGEND_ITEMS/CAPACITY_LEGEND_ITEMS와 동일 계층(이 파일)으로 승격. */
+export const MARKET_TRADE_TYPES: { key: string; label: string; color: string }[] = [
+  { key: "apt", label: "아파트", color: "#14b8a6" },
+  { key: "villa", label: "연립다세대", color: "#3b82f6" },
+  { key: "house", label: "단독다가구", color: "#f59e0b" },
+  { key: "officetel", label: "오피스텔", color: "#8b5cf6" },
+  { key: "land", label: "토지", color: "#65a30d" },
+  { key: "commercial", label: "상업업무용", color: "#ec4899" },
+];
+
+export const MARKET_TYPE_COLORS: Record<string, string> = Object.fromEntries(
+  MARKET_TRADE_TYPES.map((t) => [t.key, t.color]),
+);
+
+export const MARKET_TYPE_LABELS: Record<string, string> = Object.fromEntries(
+  MARKET_TRADE_TYPES.map((t) => [t.key, t.label]),
+);
+
+/** 전월세(rent) 지원 유형 — 백엔드 `_RENT_TYPES`(apt/villa/house/officetel 4종만, 토지·상업업무용
+ *  전월세 API 자체가 없음) 미러. ★R1 후속(레인G R2): SatongMapShell의 marketLayer가 이 필터
+ *  없이 kind="rent"일 때도 전 6종을 요청해 land_rent/commercial_rent(백엔드 부재) 카테고리를
+ *  조회 → 범례에 "0건"으로 표기되며 "미수집"이 "거래 없음"으로 오인됐다(무음 절단과 동일 결함류).
+ *  NearbyTransactionsMap도 이 배열을 공유해 이중 정의를 막는다. */
+export const MARKET_RENT_TYPES = MARKET_TRADE_TYPES.slice(0, 4);
 
 export const AGE_LEGEND_ITEMS = [
   { color: "#38bdf8", label: "10년 미만 (신축)" },
@@ -136,13 +293,65 @@ export function pricePyeongOnly(perSqm: number | null | undefined): string {
   return `${manPerPyeong}만원/평`;
 }
 
+/** 규제 오버레이 — zoning 컨트롤 id → VWorld WMS 레이어 정본명.
+ *  ★2026-07-17 라이브 채증: 5종 전부 WMS GetCapabilities 355개 목록 실존 + GetMap 매트릭스
+ *   (서울 광역 bbox) 실PNG 반환 확인(무날조 게이트 — lp_pa_cbnd·tiletype 함정 재발 방지).
+ *  ★"지구단위"·"개발행위 제한"은 LAYERS의 기존 플레이스홀더("원천 연결 후 활성화")를
+ *   설계 의도대로 잠금 해제한 것 — 신규 발명 아님. 이름은 소문자 정본(WMS는 대소문자 구분,
+ *   데이터 API의 대문자 계약과 별개 — #366 교훈). */
+export const REGULATION_WMS_BY_CONTROL: Record<string, string> = {
+  "development-limit": "lt_c_upisuq171", // 개발행위허가제한지역
+  "district-unit": "lt_c_upisuq161", // 지구단위계획
+  "water-protect": "lt_c_um710", // 상수원보호구역
+  "edu-protect": "lt_c_uo101", // 교육환경보호구역(숙박·위락 업종 인허가 직결)
+  "height-district": "lt_c_uq123", // 고도지구(높이 제한)
+};
+
+/** 활성 규제 컨트롤 → WMS LAYERS 파라미터(콤마 조인, 사전 정의 순서 고정).
+ *  빈 문자열 = 규제 오버레이 없음(타일 레이어 미부설). */
+/**
+ * ★VWorld WMS GetMap의 **레이어 개수 상한**. 라이브 실측(2026-08-01):
+ *   1·2·3·4개 → `200 image/png` / **5개 → `503 INVALID_RANGE`**.
+ *   레이어 종류·순서·줌(z7~z19)과 무관하게 개수에서만 갈린다.
+ *
+ * 이 상수가 없어서 규제 컨트롤 5개를 모두 켜면 한 요청에 5레이어가 실려 나가고,
+ * **잘 되던 4개까지 함께 죽었다**(all-or-nothing). 사용자가 화면에서 본
+ * "규제 오버레이 타일 조회 실패"의 결정적 원인이다.
+ */
+export const VWORLD_WMS_MAX_LAYERS = 4;
+
+/**
+ * 규제 WMS 레이어를 **상한 이하 청크**로 나눠 돌려준다.
+ *
+ * 소비처는 청크마다 별도 타일 레이어를 부설해야 한다 — 한 문자열로 합치면 5개째에서
+ * 전체가 503이 된다. 청크로 나누면 실패가 나더라도 **그 청크에만** 격리된다.
+ */
+export function resolveRegulationWmsLayerChunks(
+  state: SatongMapLayerState | undefined,
+): string[] {
+  if (!hasSatongLayer(state, "zoning")) return [];
+  const ids = Object.keys(REGULATION_WMS_BY_CONTROL)
+    .filter((controlId) => hasSatongLayerControl(state, "zoning", controlId))
+    .map((controlId) => REGULATION_WMS_BY_CONTROL[controlId]);
+  const chunks: string[] = [];
+  for (let i = 0; i < ids.length; i += VWORLD_WMS_MAX_LAYERS) {
+    chunks.push(ids.slice(i, i + VWORLD_WMS_MAX_LAYERS).join(","));
+  }
+  return chunks;
+}
+
+// ★`resolveRegulationWmsLayers`(단일 문자열)는 **삭제했다**. 청크를 `","`로 되붙이면
+//   수정 전과 바이트 단위로 동일한 5레이어 문자열이 되어 503을 그대로 재생산하는 지뢰였고,
+//   생산 소비처는 이미 0이었다. 남겨두면 다음 사람이 "호환용"이라 믿고 다시 쓴다.
+
 export function resolveVWorldBaseLayer(state: SatongMapLayerState | undefined): VWorldBaseLayer {
   if (!hasSatongLayer(state, "terrain")) return "Base";
   if (hasSatongLayerControl(state, "terrain", "satellite")) return "Satellite";
   if (hasSatongLayerControl(state, "terrain", "hybrid") || hasSatongLayerControl(state, "terrain", "aerial")) {
     return "Hybrid";
   }
-  if (hasSatongLayerControl(state, "terrain", "gray")) return "gray";
+  // 컨트롤 id "gray"(UI 식별자·라벨 "회색") → 전송값은 VWorld tiletype 정본 "white".
+  if (hasSatongLayerControl(state, "terrain", "gray")) return "white";
   return "Base";
 }
 
@@ -173,6 +382,102 @@ export function resolveMapCenter(
   return null;
 }
 
+/**
+ * GeoJSON Polygon/MultiPolygon의 대표점(경계상자 중심)을 [lat, lon]으로 돌려준다.
+ *
+ * 실측 필지 경계의 기하 중심이므로 날조 좌표가 아니다 — 좌표 필드가 없는 필지
+ * (엑셀 PNU행 등: /zoning/parse-parcels가 lat/lon을 채우지 않음)의 앵커 폴백으로 쓴다.
+ * 좌표계 주의: GeoJSON은 [lng, lat] 순서.
+ */
+export function geometryRepresentativePoint(
+  geometry: unknown,
+): { lat: number; lon: number } | null {
+  const geo = geometry as { type?: string; coordinates?: unknown } | null | undefined;
+  if (!geo?.type || !Array.isArray(geo.coordinates)) return null;
+  let minLat = Infinity;
+  let maxLat = -Infinity;
+  let minLon = Infinity;
+  let maxLon = -Infinity;
+  const eatRing = (ring: unknown) => {
+    if (!Array.isArray(ring)) return;
+    for (const pt of ring) {
+      if (!Array.isArray(pt) || pt.length < 2) continue;
+      const [lng, lat] = pt as [number, number];
+      if (!Number.isFinite(lng) || !Number.isFinite(lat)) continue;
+      if (lat < minLat) minLat = lat;
+      if (lat > maxLat) maxLat = lat;
+      if (lng < minLon) minLon = lng;
+      if (lng > maxLon) maxLon = lng;
+    }
+  };
+  if (geo.type === "Polygon") {
+    (geo.coordinates as unknown[]).forEach(eatRing);
+  } else if (geo.type === "MultiPolygon") {
+    (geo.coordinates as unknown[]).forEach((poly) => {
+      if (Array.isArray(poly)) poly.forEach(eatRing);
+    });
+  } else {
+    return null;
+  }
+  if (!Number.isFinite(minLat) || !Number.isFinite(minLon)) return null;
+  return { lat: (minLat + maxLat) / 2, lon: (minLon + maxLon) / 2 };
+}
+
+/** resolveSelectionAnchor 결과 — source로 좌표 출처를 구분한다(정직 노트·디버깅용). */
+export type SelectionAnchor = {
+  lat: number;
+  lon: number;
+  source: "parcel" | "boundary" | "map-center";
+  /** 앵커 필지의 주소·PNU — 좌표와 같은 필지 기준으로 주소 파생(경매 region 등)을 묶는다.
+   *  map-center 앵커(무선택)는 필지가 없으므로 null. */
+  address: string | null;
+  pnu: string | null;
+} | null;
+
+/**
+ * 좌표 기반 지도 레이어(분양·경매·개발계획·POI)의 공용 앵커 해석 규칙.
+ *
+ * ★앵커 단선 방지의 단일 계약(버그수정 정책 — 공용화):
+ *   종전엔 '첫 선택 필지의 lat/lon'만 봐서, 좌표 없는 필지(엑셀 PNU행·프로젝트 시드)가
+ *   첫 자리에 오면 레이어를 켜도 조회 자체가 생략돼 침묵 빈지도가 됐다.
+ *   ① 좌표를 가진 첫 필지 → source "parcel"
+ *   ② 없으면 경계(geometry)를 가진 첫 필지의 대표점 → source "boundary"
+ *      (경계보강(/zoning/parcel-boundaries)이 도착하면 자동으로 앵커가 살아난다)
+ *   ③ 선택이 아예 없을 때만 지도중심 폴백 → source "map-center"
+ *      (선택이 있는데 좌표가 전무하면 null — 엉뚱한 지도중심 조회 역전 차단, 기존 계약 유지)
+ */
+export function resolveSelectionAnchor(
+  parcels: Array<Pick<SatongMapFeature, "lat" | "lon" | "geometry" | "address" | "pnu">>,
+  mapCenter: { lat: number; lon: number } | null | undefined,
+): SelectionAnchor {
+  for (const parcel of parcels) {
+    if (
+      typeof parcel.lat === "number" && Number.isFinite(parcel.lat) &&
+      typeof parcel.lon === "number" && Number.isFinite(parcel.lon)
+    ) {
+      return {
+        lat: parcel.lat,
+        lon: parcel.lon,
+        source: "parcel",
+        // 빈 문자열은 '미보유'로 강등해 null로 통일한다(address·pnu 동일 규약 — 리뷰 LOW).
+        address: parcel.address || null,
+        pnu: parcel.pnu || null,
+      };
+    }
+  }
+  for (const parcel of parcels) {
+    const point = geometryRepresentativePoint(parcel.geometry);
+    if (point) {
+      return { ...point, source: "boundary", address: parcel.address || null, pnu: parcel.pnu || null };
+    }
+  }
+  if (parcels.length === 0 && mapCenter &&
+    Number.isFinite(mapCenter.lat) && Number.isFinite(mapCenter.lon)) {
+    return { lat: mapCenter.lat, lon: mapCenter.lon, source: "map-center", address: null, pnu: null };
+  }
+  return null;
+}
+
 export function mergeSatongMapFeatures(features: SatongMapFeature[]): SatongMapFeature[] {
   const byKey = new Map<string, SatongMapFeature>();
   features.forEach((feature) => {
@@ -188,6 +493,13 @@ export function mergeSatongMapFeatures(features: SatongMapFeature[]): SatongMapF
       officialPricePerSqm: feature.officialPricePerSqm ?? prev?.officialPricePerSqm ?? null,
       builtYear: feature.builtYear ?? prev?.builtYear ?? null,
       buildingAgeYears: feature.buildingAgeYears ?? prev?.buildingAgeYears ?? null,
+      ageStatus: feature.ageStatus ?? prev?.ageStatus ?? null,
+    effectiveFarPct: feature.effectiveFarPct ?? prev?.effectiveFarPct ?? null,
+    currentFarPct: feature.currentFarPct ?? prev?.currentFarPct ?? null,
+    effectiveBcrPct: feature.effectiveBcrPct ?? prev?.effectiveBcrPct ?? null,
+      // W1 지배 제약 — 경계 응답에서만 오므로 merge에서 흘리면 지도 클릭 경로가 배너를 잃는다
+      //   (선택 SSOT 유래 피처엔 이 필드가 없다 → prev 보존이 필수).
+      dominantConstraint: feature.dominantConstraint ?? prev?.dominantConstraint ?? null,
       geometry: feature.geometry ?? prev?.geometry,
       lat: feature.lat ?? prev?.lat ?? null,
       lon: feature.lon ?? prev?.lon ?? null,

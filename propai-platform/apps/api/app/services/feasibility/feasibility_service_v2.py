@@ -12,6 +12,7 @@ from typing import Any
 from app.services.feasibility.aggregation_engine import compare_scenarios
 from app.services.feasibility.modules.base_module import ModuleInput, ModuleOutput
 from app.services.feasibility.modules.module_assembler import get_module, list_modules
+from app.services.tax.regional_tax_data import looks_like_sido, sido_short_or_empty
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,94 @@ class FeasibilityServiceV2:
         if errors:
             raise ValueError(f"입력 검증 실패: {', '.join(errors)}")
 
-        return module.calculate(inp)
+        output = module.calculate(inp)
+        # ★W3(감사 수지5·수지7): 경로A를 진짜 '상세수지'로 — NPV를 단일기간 근사에서
+        #   월별 DCF(무차입 FCF·세금 시점주입) 기저로 교체하고 IRR·회수기간·DSCR을 부착.
+        #   best-effort(절대 raise 안 함) — 실패 시 기존 npv 유지·cashflow_summary=None.
+        self._attach_dcf(output, inp)
+        return output
+
+    def _attach_dcf(self, output: ModuleOutput, inp: ModuleInput) -> None:
+        """월별 DCF 요약 부착(공용 SSOT dcf_assembly — rough와 동일 조립 규칙)."""
+        try:
+            from app.services.feasibility.cashflow_generator import (
+                build_tax_schedule_from_integrated,
+            )
+            from app.services.feasibility.dcf_assembly import assemble_monthly_dcf
+
+            dcf = assemble_monthly_dcf(
+                land_cost_won=float(output.total_land_cost_won or 0),
+                construction_cost_won=float(output.total_construction_cost_won or 0),
+                revenue_won=float(output.total_revenue_won or 0),
+                project_months=inp.project_months or 48,
+                equity_won=float(inp.equity_won or 0),
+                discount_rate=inp.discount_rate or 0.08,
+                total_cost_won=float(output.total_cost_won or 0) or None,
+                # ★R1-HIGH-2: 소프트비(제경비 7% 통칭 — 설계·감리 포함)를 DCF 유출에 주입.
+                #   누락 시 총사업비의 ~13%가 빠져 NPV 3배 과대·IRR 216% 왜곡 실측.
+                #   금융비는 무차입 FCF 방법론상 제외(자본비용은 할인율이 반영).
+                soft_cost_won=float(output.total_other_cost_won or 0),
+                # 세금 시점주입: A→월0·B→착공·C→분양 비례·D→정산(총액 보존 어댑터).
+                tax_schedule=build_tax_schedule_from_integrated(output.tax_detail),
+            )
+            if dcf is None:
+                return
+
+            # DSCR — 임대수입(NOI 근사)이 있을 때만(무날조: 분양형은 기간 원리금 상환 구조가
+            # 아니어서 표준 DSCR 미적용 — 사유를 남긴다).
+            dscr: float | None = None
+            dscr_note: str
+            rental = (output.revenue_detail or {}).get("rental") or {}
+            annual_net_rent = float(rental.get("annual_net_rent_won") or 0)
+            months = float(inp.project_months or 48)
+            annual_interest = (
+                float(output.total_finance_cost_won or 0) / (months / 12.0) if months > 0 else 0.0
+            )
+            if annual_net_rent > 0 and annual_interest > 0:
+                dscr = round(annual_net_rent / annual_interest, 2)
+                dscr_note = (
+                    "연 순임대수입(공실 차감) ÷ 개발단계 금융비 연분할 근사 — 이자보상 기준"
+                    "(만기일시 원금 가정·상시 임대운영 대출은 미모델링, 참고용)"
+                )
+            elif annual_net_rent > 0:
+                dscr_note = "무차입(금융비 0) — DSCR 분모 없음"
+            else:
+                dscr_note = "분양형(임대수입 없음) — 기간 원리금 상환 구조가 아니어서 DSCR 미적용"
+
+            # ★R1-MEDIUM-1: 소득접근 DCF를 고유 npv로 쓰는 보유형 모듈(M08 오피스텔 등 —
+            #   special_detail.dcf 보유)은 정본 가치평가를 보존하고 개발현금흐름 NPV는
+            #   cashflow_summary에만 병기한다(덮어쓰기 금지).
+            # ★NOI=0 엣지(D6-부속): dcf dict가 존재해도 npv가 0이면(모듈이 NOI 미입력으로
+            #   소득 DCF를 채택하지 않은 경우 — m08은 이때 agg 단일기간 근사를 npv로 씀)
+            #   보존할 정본이 없으므로 월별 DCF로 정상 교체한다(거짓 "보존" 표기 방지).
+            _dcf_sd = (output.special_detail or {}).get("dcf") or {}
+            if not isinstance(_dcf_sd, dict):  # R1-LOW 방어: 비-dict면 미채택 취급
+                _dcf_sd = {}
+            income_dcf = bool(_dcf_sd) and (_dcf_sd.get("npv_won") or 0) > 0
+            if dcf["npv_won"] is not None and not income_dcf:
+                output.npv_won = int(dcf["npv_won"])
+            output.cashflow_summary = {
+                "npv_won": dcf["npv_won"],
+                "irr_pct": dcf["irr_pct"],
+                "payback_month": dcf["payback_month"],
+                "dscr": dscr,
+                "dscr_basis": dscr_note,
+                "npv_basis": (
+                    ("모듈 고유 소득접근 DCF 보존(보유형) — 아래 값은 개발현금흐름 병기. "
+                     if income_dcf else "")
+                    + "월별 DCF — 무차입 프로젝트 FCF 할인(토지+공사+소프트비+세금 시점주입, "
+                    "금융비는 할인율이 반영·제외). 종전 단일기간 근사(순이익/(1+r)^년) 대체."
+                ),
+                "assumptions": [
+                    f"공사기간 {dcf['construction_months']}개월(=max(6, 사업기간−6) 표준 근사)",
+                    f"분양개시 {dcf['sale_start_month']}개월차·분양 {dcf['sale_duration_months']}개월(표준 근사)",
+                    f"자기자본비율 {dcf['equity_ratio']:.0%}(자기자본÷총사업비, 미확보 시 30%)",
+                    "분양수입은 분할 유입 표준 스케줄(계약금 10% 분양개시·중도금 60% 균등·"
+                    "잔금 30% 정산월 — W5 기본값) 반영",
+                ],
+            }
+        except Exception as e:  # noqa: BLE001 — DCF 부착 실패는 수지 본체 무손상
+            logger.warning("상세수지 DCF 부착 스킵: %s", str(e)[:120])
 
     def calculate_multi(self, inputs: list[ModuleInput]) -> dict[str, Any]:
         """복수 개발유형 비교 분석.
@@ -95,11 +183,20 @@ class FeasibilityServiceV2:
         use_llm: bool = True,
         with_senior: bool = True,
         parcels: list[dict] | None = None,
+        use_optimization_pipeline: bool = False,
+        optimization_seed: int = 42,
+        optimization_shortlist_k: int = 3,
     ) -> dict:
         """부지 주소로부터 최적 사업모델 Top 3 자동 추천.
 
         parcels(2필지 이상)가 오면 통합면적·우세용도(면적가중)로 산정한다 — 스칼라 land_area_sqm이
         함께 오면 그것을 우선(기존 정답 경로 유지), 없으면 통합값으로 보강. zone 혼재 시 대표 유지.
+
+        use_optimization_pipeline(opt-in, 기본 False — 무회귀): True면 이미 계산된 전체
+        후보(all_results)를 공용 6단계 최적화 파이프라인 계약(app.services.optimization.pipeline)
+        으로 재-표기해 result["optimization_pipeline"]에 additive 부착한다(기존 recommendations/
+        all_results/composite_score 등은 무손상 — 완전 추가전용). 기본값(False)에서는 바이트
+        단위로 기존 출력과 동일하다.
         """
 
         # Step 1: 용도지역 자동 감지
@@ -215,7 +312,12 @@ class FeasibilityServiceV2:
             ordinance = await OrdinanceService().get_ordinance_limits(address, zone_type)
         except Exception:  # noqa: BLE001 — 조회 실패 시 법정 폴백
             ordinance = None
-        legal_max_far = zone_limits.get("max_far_pct", 250)  # 법정상한(라벨 보관)
+        # ★P3(침묵 폴백 정직화): 용적률 상한 미확보 시 250% 가정치가 조용히 들어가
+        #   FAR→GFA→세대수→매출→ROI 전 계단이 가정치로 오염됨에도 어떤 표기도 없었다.
+        #   값은 유지(무회귀·랭킹 상대비교 유효)하되 far_reliable로 정직 표기한다
+        #   (정답 기준선 = 같은 함수의 land_price_reliable/area_reliable 관례).
+        far_reliable = "max_far_pct" in zone_limits
+        legal_max_far = zone_limits.get("max_far_pct", 250)  # 법정상한(라벨 보관, 미확보 시 250 가정치)
         max_far = legal_max_far
         try:
             eff = calc_effective_far(
@@ -329,6 +431,8 @@ class FeasibilityServiceV2:
             "land_price_reliable": land_price_reliable,
             # 면적 신뢰성 — False면 면적 미확보로 1000㎡ 가정치 기준(전 수치 참고용·재산정 필요).
             "area_reliable": area_reliable,
+            # 용적률 신뢰성 — False면 상한 미확보로 250% 가정치 기준(GFA·매출·ROI 전 계단 참고용).
+            "far_reliable": far_reliable,
             # 시나리오 상태 — "tentative"면 전 후보가 선행절차 전제 잠정치(확정 아님). 프론트 렌더 분기 신호.
             "scenario_status": "tentative" if is_tentative else "actual",
         }
@@ -340,6 +444,19 @@ class FeasibilityServiceV2:
         if not area_reliable:
             result["area_disclosure"] = (
                 "부지면적 미확보 — 1000㎡ 가정치 기준 산정(참고용). 실제 면적 입력 시 재산정이 필요합니다."
+            )
+        # 용적률 가정치 사용 시 정직 고지 — 250%는 실측이 아니라 폴백 가정치임을 명시.
+        # 문구는 공용 SSOT(far_fallback) — solar_envelope 등 다른 가정치 경로와 동일 문장.
+        if not far_reliable:
+            from ..land_intelligence.far_fallback import far_fallback_disclosure
+
+            result["far_disclosure"] = far_fallback_disclosure(250)
+        # 공시지가 가정단가 사용 시 정직 고지 — 플래그(land_price_reliable)만으로는 표시 표면이
+        # 문구를 자체 조립해야 했다. 다른 *_disclosure와 동일하게 표준 문구를 함께 제공한다.
+        if not land_price_reliable:
+            result["land_price_disclosure"] = (
+                "공시지가 미확보 — 표준 가정단가(150만원/㎡) 기준 토지비 산정(참고용). "
+                "절대 수익성(ROI·순이익·NPV)은 참고용이며 랭킹(상대비교)만 유효합니다."
             )
 
         # ── ★P1 미래속성(종상향 잠재) 첨부 — '토지속성 확정(현재+미래)' 비전 배선 ──
@@ -407,7 +524,98 @@ class FeasibilityServiceV2:
         else:
             result["ai_interpretation"] = None
 
+        # ── opt-in(W3-4): 공용 최적화 파이프라인 계약으로 재-표기(additive, 기본 False 무회귀) ──
+        if use_optimization_pipeline and results:
+            try:
+                self._attach_optimization_pipeline(
+                    result, results, seed=optimization_seed, shortlist_k=optimization_shortlist_k,
+                )
+            except Exception as e:  # noqa: BLE001 — opt-in 실험 기능 실패는 본체 추천 무손상
+                logger.warning("최적화 파이프라인 부착 스킵(opt-in): %s", str(e)[:160])
+
         return result
+
+    def _attach_optimization_pipeline(
+        self, result: dict[str, Any], results: list[dict[str, Any]], *, seed: int, shortlist_k: int,
+    ) -> None:
+        """opt-in(W3-4): 이미 계산된 Top3 후보 결과를 공용 6단계 파이프라인 계약으로 재-표기.
+
+        ★정직 표기: 이 호출부에서는 후보생성(permitted_types 전수)·hard 필터
+        (permit_validator.get_permitted_types — 위에서 이미 적용)·평가(self.calculate())가
+        전부 이 함수 호출 이전에 실행 완료된 상태다. 따라서 이 파이프라인은 CandidateSet
+        (이산 도메인 전수열거, LHS 아님 — sampling_method="full_enumeration"으로 정직 표기)·
+        ParetoFront·shortlist 3단계만 그 결과 위에 재구성한다(중복 재계산 없음). 이 소비처엔
+        '저비용 1차 평가(rough)' 대안이 실재하지 않으므로(대안 저비용 계산기 부재) 있는 척
+        만들지 않고 evaluator_grade="precise"로 정직 표기한다(rough_grade override).
+        """
+        from app.services.optimization.pipeline import (
+            CandidateSet,
+            OptimizationSpec,
+            ParetoFront,
+            Variable,
+            VariableType,
+            evaluate_candidates,
+        )
+        from app.services.optimization.pipeline import shortlist as build_shortlist
+
+        dev_types = tuple(r["development_type"] for r in results)
+        spec = OptimizationSpec(
+            variables=(
+                Variable(name="development_type", var_type=VariableType.CATEGORICAL, choices=dev_types),
+            )
+        )
+        cset = CandidateSet.from_enumeration(spec, seed=seed)
+
+        # 3목적: 순이익(최대화)·수익률(최대화)·인허가복잡도(최소화) — composite_score(가중스칼라화)와
+        # 별개로 트레이드오프를 있는 그대로 노출(예: 순이익은 낮지만 인허가가 쉬운 후보).
+        objectives_by_type = {
+            r["development_type"]: {
+                "net_profit_won": float(r["feasibility"]["net_profit_won"] or 0),
+                "profit_rate_pct": float(r["feasibility"]["profit_rate_pct"] or 0),
+                "permit_complexity": float(r["permit"]["permit_complexity"]),
+            }
+            for r in results
+        }
+        directions = {
+            "net_profit_won": "maximize",
+            "profit_rate_pct": "maximize",
+            "permit_complexity": "minimize",
+        }
+
+        evaluations = evaluate_candidates(
+            cset.candidates,
+            rough_evaluator=lambda c: objectives_by_type[c["development_type"]],
+            rough_grade="precise",  # 위에서 calculate()로 이미 정밀계산된 값 재사용(중복계산 없음)
+        )
+        front = ParetoFront.compute(evaluations, directions)
+        picked = build_shortlist(front, shortlist_k, rank_key="net_profit_won")
+
+        result["optimization_pipeline"] = {
+            "seed": cset.seed,
+            "sampling_method": cset.sampling_method,
+            "candidates_generated": len(cset.candidates),
+            "hard_filter_survivors": len(cset.candidates),
+            "hard_filter_note": (
+                "get_permitted_types()가 후보생성 이전에 이미 hard 필터로 적용됨"
+                "(이 단계에서 중복 재필터 없음)"
+            ),
+            "evaluator_grade": "precise",
+            "evaluator_note": (
+                "이 소비처엔 저비용 1차(rough) 평가 대안이 없어 self.calculate() 정밀값을 "
+                "그대로 재사용(정밀값을 저비용인 척 표기하지 않음)"
+            ),
+            "directions": directions,
+            "pareto_front_size": len(front.members),
+            "pareto_front": [e.candidate["development_type"] for e in front.members],
+            "shortlist": [
+                {
+                    "development_type": item.evaluation.candidate["development_type"],
+                    "objectives": item.evaluation.objectives,
+                    "reason": item.reason,
+                }
+                for item in picked
+            ],
+        }
 
     # ------------------------------------------------------------------
     # 공용 입력 빌더 (auto_recommend_top3 + 통합추천 공유)
@@ -463,14 +671,25 @@ class FeasibilityServiceV2:
             total_gfa_sqm=total_gfa,
             total_households=total_hh,
             avg_sale_price_per_pyeong=self._get_regional_price(dev_type, region, address),
-            # 분양가(원/평)는 공급면적 기준 시세 → 면적도 공급평수(전용/전용률)로 통일
-            avg_area_pyeong=(avg_unit_area / eff_ratio) / 3.305785,
+            # ★D1 규약(2026-07-16): avg_area_pyeong = '전용면적 평'. 공급 환산(전용/전용률)은
+            #   매출 곱 시 revenue_block이 수행 — (전용/전용률)=공급 라운드트립으로 매출 무회귀.
+            avg_area_pyeong=avg_unit_area / 3.305785,
             sale_ratio=0.95 if dev_type not in ("M14", "M15") else 0.0,
             official_price_per_sqm=official_price_per_sqm or 1_500_000,
             price_multiplier=1.1,
             building_type=self._get_building_type(dev_type),
-            sido_name=region,
-            sigungu_name="",
+            # ★축 교정(형제 스윕) — `region` 은 이 코드베이스에서 **시군구**로 쓰인다
+            #   (바로 위 `local_ordinance={"sigungu": region}` 이 그 증거다). 그것을
+            #   `sido_name` 에 직결하면 B01 광역교통이 대도시권을 **비대도시권으로 오판**한다.
+            #   시·도는 주소에서 공용 해석기로 뽑는다(못 뽑으면 빈 문자열 — 지어내지 않는다).
+            #   ※ `precheck_service._build_band_module_input` 과 **같은 처방**이다.
+            sido_name=sido_short_or_empty(address),
+            # ★`region` 은 **과부하 필드**다 — 이 저장소에서 호출부마다 뜻이 다르다:
+            #   `rough-scenario` 는 **시군구**("동구")를, `integrated_recommender` 는
+            #   **시도**("경기도")를 같은 이름으로 넘긴다. 스키마 주석은 *"시도명"* 이라 적는다.
+            #   그러므로 *"region 은 시군구다"* 라고 **찍으면 절반이 틀린다** —
+            #   값이 **시·도로 해석되면 시군구 칸에 넣지 않는다**(축 날조 방지).
+            sigungu_name=("" if looks_like_sido(region) else (region or "")),
             project_months=self._get_type_project_months(dev_type),
             discount_rate=0.08,
             equity_won=equity_won or 0,

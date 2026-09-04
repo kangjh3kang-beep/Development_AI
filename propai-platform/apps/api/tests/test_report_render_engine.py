@@ -7,6 +7,7 @@ PPTX/DOCX 라이브러리 미설치 환경에서는 해당 포맷만 skip(무결
 
 from __future__ import annotations
 
+import dataclasses
 import zipfile
 
 import pytest
@@ -99,6 +100,64 @@ def test_ooxml_render_signature_content_and_xml_safety(fmt, sig):
 def test_unknown_format_falls_back_to_pdf():
     data, mime, ext = render_report(_sample_model(), "xlsx")
     assert ext == "pdf" and data[:4] == b"%PDF"
+
+
+@pytest.mark.parametrize(
+    "approval_state,approved_by",
+    [("DRAFT", None), ("MACHINE_VALIDATED", None), ("EXPERT_REVIEWED", None),
+     ("APPROVED", "reviewer@propai.io"), ("SUPERSEDED", None)],
+)
+def test_approval_badge_renders_for_every_state(approval_state, approved_by):
+    """W1-C 워터마크: pdf_kit.approval_badge 가 5개 승인등급 전부에서 예외 없이 배지를 만든다."""
+    pytest.importorskip("reportlab")
+    from app.services.report.render import pdf_kit as K
+    from app.services.report.render.model import ReportMeta
+
+    font = K.register_font()
+    meta = ReportMeta(title="테스트", approval_state=approval_state, approved_by=approved_by)
+    badge = K.approval_badge(meta, font)
+    assert badge is not None
+
+
+def test_pdf_render_includes_approval_watermark_for_draft_and_approved():
+    """W1-C 워터마크: DRAFT/APPROVED 각각 표지 배지 삽입 후에도 PDF 렌더가 정상 완주한다."""
+    pytest.importorskip("reportlab")
+    draft_model = _sample_model()
+    data, _mime, _ext = render_report(draft_model, "pdf")
+    assert data[:4] == b"%PDF" and len(data) > 2000
+
+    approved_model = _sample_model()
+    approved_model.meta.approval_state = "APPROVED"
+    approved_model.meta.approved_by = "reviewer@propai.io"
+    data2, _mime2, _ext2 = render_report(approved_model, "pdf")
+    assert data2[:4] == b"%PDF" and len(data2) > 2000
+
+
+def test_report_meta_default_approval_state_is_draft():
+    """W1-A: 승인등급 미지정 시 기본값 DRAFT — 기존 흐름(생성·다운로드) 무회귀."""
+    model = _sample_model()
+    assert model.meta.approval_state == "DRAFT"
+
+
+def test_report_meta_approval_state_included_in_serialization():
+    """W1-A: approval_state 가 dataclasses.asdict 직렬화(기존 JSON 소비 경로)에 포함된다."""
+    model = _sample_model()
+    serialized = dataclasses.asdict(model.meta)
+    assert serialized["approval_state"] == "DRAFT"
+
+    approved_model = ReportModel(
+        meta=ReportMeta(title="승인본", approval_state="APPROVED"), sections=[]
+    )
+    assert dataclasses.asdict(approved_model.meta)["approval_state"] == "APPROVED"
+
+
+def test_report_meta_rejects_invalid_approval_state():
+    """W1-A(R1 반영): 불법 등급 문자열은 생성 시점에 거부 — 오타·임의값이 보고서 표면까지
+    침투하지 못하게 한다(정직표기)."""
+    import pytest
+
+    with pytest.raises(ValueError):
+        ReportMeta(title="불법등급", approval_state="TOTALLY_INVALID")
 
 
 def test_no_formula_duplication_in_render_package():

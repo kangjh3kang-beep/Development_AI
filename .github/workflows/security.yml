@@ -10,7 +10,7 @@ name: Security Scan
 on:
   push:
     branches: [main]
-    paths: ["propai-platform/**"]
+    paths: ["propai-platform/**", ".github/workflows/security.yml"]
   schedule:
     - cron: "0 15 * * 0" # 매주 일요일 00:00 KST
   workflow_dispatch:
@@ -24,9 +24,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      # ★버전 핀(2026-08-16). 무핀 설치는 실행마다 최신을 받아, 스캐너 릴리스가 규칙을 바꾸면
+      #   코드 변경 0으로 결과가 뒤집힌다 — 실패 원인이 우리 코드인지 도구인지 분리할 수 없다.
+      #   정본은 apps/api/requirements-dev.txt.
       - name: Run Bandit
         run: |
-          pip install bandit
+          pip install -c propai-platform/apps/api/requirements-dev.txt bandit
           bandit -r propai-platform/apps/api/ -ll -ii \
             -x propai-platform/apps/api/tests,propai-platform/apps/api/.venv
 
@@ -38,11 +41,59 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Scan Python dependencies (manifest only)
-        # 설치 없이 requirements 매니페스트만 스캔 — gdal 등 네이티브 빌드 의존성 회피.
+      # ★★주석 정정(2026-08-16 실측): 종전 주석은 "설치 없이 매니페스트만 스캔 — gdal 등
+      #   네이티브 빌드 의존성 회피"라고 적었는데 **그렇게 동작하지 않는다.** `-r` 은 의존성 그래프를
+      #   해석하려고 dry-run 설치를 돌리고, sdist 인 gdal 에서 `gdal-config` 부재로 죽는다
+      #   (실패 로그: `ERROR: Failed to build 'gdal' when getting requirements to build wheel`).
+      #   → 이 잡은 **그 이유로 계속 실패해 왔다**(최근 100회 실행 성공 0건).
+      #   이 PR 은 **버전만 핀**한다 — 실패 자체는 별건이고 소유 세션 판단이 필요하다
+      #   (후보: `--no-deps` 로 핀된 버전만 감사 · gdal 을 audit 대상에서 제외 · 시스템 libgdal 설치).
+      #   핀은 그 진단을 **재현 가능**하게 만든다(버전이 매번 달라지면 원인 분리가 안 된다).
+      # ★★2026-08-20 — 위 진단(#655)의 처방을 **집는다**. 진단은 4일 전에 끝나 있었고
+      #   후보 3개까지 적혀 있었으나 "별건·소유 세션 판단"으로 남아 아무도 집지 않았다.
+      #   그 사이 이 잡은 계속 빨갰고, **CVE 감사는 계속 부재**했다.
+      #   → 후보 중 **gdal 제외**를 골랐다. 실측으로 그것 하나만 빼면 스캔이 정상 동작한다
+      #     (2026-08-20 로컬 실측: 158건 / 26개 패키지 검출).
+      #   · `--no-deps` 는 **전 항목이 `==` 로 핀되어야** 하는데 4개가 범위 지정이라 불가
+      #     (arq · prometheus-client · gdal · bcrypt — 런타임 매니페스트를 이 PR 에서 바꾸지 않는다)
+      #   · 시스템 `libgdal-dev` 설치는 GDAL 빌드가 **매우 느려**(이 저장소 실측 38~986초, 26배 편차)
+      #     매 실행에 얹기엔 비싸다
+      # ★★2026-08-20 정정 — **감사 대상이 배포 대상이 아니었다.**
+      #   첫 판은 `requirements.txt` 만 감사했는데, `Dockerfile.oracle` 이 실제로 설치하는 것은
+      #   **`requirements.oracle.txt`** 다. 실측 차이:
+      #     · `txt` 에만 13개(mlflow·torch·torchvision·geopandas·lxml 등)
+      #       → 약 55건이 **프로덕션에 없는데 부채로 계상**되고 있었다
+      #     · `oracle` 에만 1개(minio) → **배포되는데 감사되지 않았다**
+      #       (다행히 minio 에는 현재 취약점이 없어 실질 누락은 0이었다. 그래도 사각은 사각이다)
+      #   → 이제 **둘 다** 감사하고, 게이트가 어느 매니페스트에서 나왔는지 찍는다.
+      - name: Scan Python dependencies
         run: |
-          pip install pip-audit
-          pip-audit --strict --desc -r propai-platform/apps/api/requirements.txt
+          set -euo pipefail
+          pip install -c propai-platform/apps/api/requirements-dev.txt pip-audit
+
+          # ★gdal 만 제외한다. 숨기지 않는다 — 이 스캔은 gdal 자체 CVE 를 **보지 못한다**.
+          grep -v '^gdal' propai-platform/apps/api/requirements.txt        > /tmp/req.dev.txt
+          grep -v '^gdal' propai-platform/apps/api/requirements.oracle.txt > /tmp/req.prod.txt
+          echo "::notice::gdal 은 이 스캔에서 제외됨(네이티브 빌드 gdal-config 요구). gdal CVE 는 별도 감시가 필요하다"
+
+          # 취약점이 있어도 여기서 죽이지 않는다 — 판정은 아래 베이스라인 게이트가 한다.
+          pip-audit --desc -r /tmp/req.dev.txt  -f json -o /tmp/audit.dev.json  || true
+          pip-audit --desc -r /tmp/req.prod.txt -f json -o /tmp/audit.prod.json || true
+
+          python3 .github/scripts/pip_audit_gate.py \
+            .github/security/pip-audit-baseline.json \
+            prod=/tmp/audit.prod.json \
+            dev=/tmp/audit.dev.json
+
+      - name: Upload audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pip-audit-report
+          path: |
+            /tmp/audit.prod.json
+            /tmp/audit.dev.json
+          if-no-files-found: warn
 
   gitleaks:
     name: Gitleaks (Secret Detection)
@@ -51,6 +102,90 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@v2
+      # ★버전을 핀한다(2026-08-30 실사고). `@v2` 는 **이동 태그**라 새 릴리스가
+      #   **코드 변경 0으로** 게이트를 빨갛게 만든다 — 같은 커밋 `09b270fb` 가
+      #   08-28 **success** / 08-30 **failure**(26건) 로 갈렸다.
+      #   ★형제 둘(`bandit`·`pip-audit`)은 `-c requirements-dev.txt` 로 이미 핀돼 있었다.
+      #     CLAUDE.md §G-32 의 교훈이 **ruff 에서만 봉합되고 이 형제로 안 쓸린** 자리다.
+      #   ★올릴 때는 **의도적으로** 올린다(핀을 바꾸는 커밋이 곧 그 결정의 기록이 된다).
+      - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7  # v2.3.9
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: ${{ github.workspace }}/.gitleaks.toml
+
+  # WP-I(P15 공급망 게이트): SBOM(syft)+서명(cosign). 기존 CI 게이트(ci.yml pytest·tsc·build)와
+  # 완전 분리된 additive 잡이며, 이 워크플로우는 PR 게이트가 아니라 정보성 신호다(위 헤더 정책).
+  # 도구 미설치 환경 graceful: 설치 스텝 포함·서명은 continue-on-error(키/OIDC 부재 시 비차단).
+  supply-chain:
+    name: Supply Chain (SBOM + cosign)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # cosign keyless(OIDC) 서명용.
+    steps:
+      - uses: actions/checkout@v4
+
+      # 1) SBOM 생성 — syft 로 requirements 의존성 목록을 SPDX·CycloneDX 로 산출.
+      #    anchore/sbom-action 이 syft 를 설치·실행한다(별도 설치 스텝 불필요).
+      # continue-on-error: 이 잡은 정보성 신호(위 헤더 정책)라 syft/네트워크 일시장애로 잡
+      # 전체가 실패해선 안 된다 — graceful 시작 원칙(설치 실패해도 기존 게이트 비차단)을
+      # SBOM 생성 단계에도 동일 적용.
+      - name: Generate SBOM (SPDX)
+        # ★서드파티는 SHA 로 핀한다(태그는 이동한다) — 아래 형제와 같은 규율.
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610  # v0
+        continue-on-error: true
+        with:
+          path: propai-platform/apps/api
+          format: spdx-json
+          output-file: sbom.spdx.json
+          artifact-name: sbom.spdx.json
+
+      - name: Generate SBOM (CycloneDX)
+        # ★서드파티는 SHA 로 핀한다(태그는 이동한다) — 아래 형제와 같은 규율.
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610  # v0
+        with:
+          path: propai-platform/apps/api
+          format: cyclonedx-json
+          output-file: sbom.cdx.json
+          artifact-name: sbom.cdx.json
+
+      # 2) SBOM 아티팩트 업로드(공급망 증적 — 릴리스 첨부/감사용).
+      # ★후속 이관(LOW·비차단): anchore/sbom-action 자체가 artifact-name 파라미터로 이미
+      # 아티팩트를 업로드하므로, 아래 upload-artifact 스텝과 산출물이 중복된다(동일 파일 2회
+      # 업로드). 정보성 신호 용도라 지금은 무해하지만, 다음 세션에서 sbom-action 쪽
+      # artifact-name 을 빼고 이 스텝으로 일원화하거나 반대로 이 스텝을 제거해 정리한다.
+      - name: Upload SBOM artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: |
+            sbom.spdx.json
+            sbom.cdx.json
+          if-no-files-found: warn
+
+      # 3) cosign 설치.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@f713795cb21599bc4e5c4b58cbad1da852d7eeb9  # v3
+
+      # 4) SBOM keyless 서명(blob 서명 — 이미지 빌드/푸시는 수동 배포 파이프라인에서 수행하므로
+      #    여기선 SBOM 산출물을 서명해 무결성 증적을 남긴다). OIDC/Rekor 미가용 시 비차단.
+      - name: Sign SBOM (cosign keyless)
+        continue-on-error: true
+        env:
+          COSIGN_YES: "true"
+        run: |
+          cosign version
+          cosign sign-blob --yes \
+            --output-signature sbom.spdx.json.sig \
+            --output-certificate sbom.spdx.json.pem \
+            sbom.spdx.json
+
+      - name: Upload cosign signature
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-signature
+          path: |
+            sbom.spdx.json.sig
+            sbom.spdx.json.pem
+          if-no-files-found: ignore

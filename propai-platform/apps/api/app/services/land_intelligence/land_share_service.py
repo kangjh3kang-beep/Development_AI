@@ -14,6 +14,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from app.utils.pnu import is_valid_pnu
+
 logger = logging.getLogger(__name__)
 
 PYEONG_SQM = 3.305785  # 1평 = 3.305785㎡ (대지지분 평 환산 공용 상수)
@@ -42,7 +44,7 @@ class LandShareService:
     async def analyze_by_pnu(self, pnu: str) -> dict[str, Any]:
         from app.services.external_api.building_registry_service import BuildingRegistryService
 
-        if not pnu or len(pnu) < 19:
+        if not is_valid_pnu(pnu):
             return {"is_aggregate": False, "pnu": pnu, "reason": "PNU(19자리)가 필요합니다."}
 
         breg = BuildingRegistryService()

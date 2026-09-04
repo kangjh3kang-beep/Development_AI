@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { createDebouncedStorage } from "@/lib/debounced-storage";
+import { createAccountScopedStorage } from "@/lib/account-scoped-storage";
 
 /**
  * 주변 개발계획(신설역·구역지정·도로 등) 스토어 — 프로젝트별 영속.
@@ -15,6 +15,16 @@ import { createDebouncedStorage } from "@/lib/debounced-storage";
  */
 
 // 개발계획 종류
+/**
+ * persist 이름 — **레거시 공유키 그대로**. 실제 저장은 `createAccountScopedStorage` 가
+ * `propai-development-plan__<uid>` 로 한다.
+ *
+ * ★유료 산출물은 아니지만 **누출 클래스가 같다**: 프로젝트별 개발계획에는 사용자가 손으로
+ *   넣은 항목이 있고, 계정 전환 뒤 다음 계정 화면에 그대로 남았다. 두 유료 스토어와
+ *   **구조가 같아서**(`byProject`) 같은 귀속 규칙·같은 승계 기계를 그대로 쓴다.
+ */
+export const DEVELOPMENT_PLAN_STORE_KEY = "propai-development-plan";
+
 export type DevPlanKind = "station" | "district" | "road";
 // 진행 상태(고시·개통될수록 확정도가 높아짐)
 export type DevPlanStatus = "계획" | "추진" | "고시" | "운영";
@@ -117,6 +127,6 @@ export const useDevelopmentPlanStore = create<State>()(
           };
         }),
     }),
-    { name: "propai-development-plan", storage: createDebouncedStorage<State>() },
+    { name: DEVELOPMENT_PLAN_STORE_KEY, storage: createAccountScopedStorage<State>() },
   ),
 );

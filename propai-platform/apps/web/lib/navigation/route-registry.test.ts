@@ -12,9 +12,11 @@ describe("route registry IA gate", () => {
     expect(PRIMARY_NAV_SECTIONS.map((section) => section.id)).toEqual([
       "control",
       "projects",
+      "cost-mgmt",
       "market-acquisition",
       "design-center",
       "sales-management",
+      "my",
       "admin",
     ]);
   });
@@ -55,14 +57,36 @@ describe("route registry IA gate", () => {
       .find((section) => section.id === "design-center")
       ?.items.find((item) => item.id === "design-refs");
 
-    expect(control?.items.map((item) => item.href)).toEqual(["/ko", "/ko/precheck", "/ko/analysis"]);
+    expect(control?.items.map((item) => item.href)).toEqual([
+      "/ko", "/ko/precheck", "/ko/analysis", "/ko/settings/team",
+    ]);
 
     expect(landRights?.children?.map((child) => child.href)).toEqual([
       "/ko/land-schedule",
       "/ko/registry-analysis",
+      "/ko/registry-analysis/quote",
       "/ko/desk-appraisal",
     ]);
     expect(acquisition?.children?.map((child) => child.href)).toEqual(["/ko/auction", "/ko/g2b"]);
     expect(designRefs?.prefetch).toBe(false);
+  });
+
+  it("적산·시공비를 최상위 단일-리프 섹션으로 승격(프로젝트 하위 아님)", () => {
+    const sections = buildPrimaryRegistrySections("ko");
+    const costMgmt = sections.find((section) => section.id === "cost-mgmt");
+    const projects = sections.find((section) => section.id === "projects");
+
+    // 프로젝트(20)와 시장·획득(30) 사이 order 25로 정렬 — 프로젝트 직후.
+    const order = sections.map((section) => section.id);
+    expect(order.indexOf("cost-mgmt")).toBe(order.indexOf("projects") + 1);
+    expect(order.indexOf("cost-mgmt")).toBe(order.indexOf("market-acquisition") - 1);
+
+    // cost는 이제 cost-mgmt 섹션의 단독 리프(하위메뉴 없음) — 프로젝트 섹션에는 없어야 한다.
+    expect(costMgmt?.items).toHaveLength(1);
+    const cost = costMgmt?.items[0];
+    expect(cost?.id).toBe("cost");
+    expect(cost?.href).toBe("/ko/analytics/cost");
+    expect(cost?.children).toBeUndefined();
+    expect(projects?.items.some((item) => item.id === "cost")).toBe(false);
   });
 });

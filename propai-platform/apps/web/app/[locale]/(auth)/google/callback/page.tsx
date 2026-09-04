@@ -8,6 +8,7 @@ type GoogleCallbackPageProps = {
   }>;
   searchParams: Promise<{
     code?: string;
+    state?: string;
     redirect_uri?: string;
   }>;
 };
@@ -28,6 +29,7 @@ export default async function GoogleCallbackPage({
     <GoogleCallbackWorkspaceClient
       locale={locale as Locale}
       code={typeof callbackParams.code === "string" ? callbackParams.code : null}
+      state={typeof callbackParams.state === "string" ? callbackParams.state : null}
       redirectUri={
         typeof callbackParams.redirect_uri === "string"
           ? callbackParams.redirect_uri

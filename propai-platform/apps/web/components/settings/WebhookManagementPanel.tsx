@@ -1,20 +1,30 @@
 "use client";
 
 import { useEffect, useState, type FormEvent } from "react";
+
+import { apiClient, ApiClientError } from "@/lib/api-client";
 import { Button, Card, CardContent, Input } from "@propai/ui";
 
+/**
+ * 백엔드 계약(`packages/schemas/models.WebhookResponse`)을 **그대로** 옮긴다.
+ *
+ * ★2026-08-27 — 이 패널은 `MOCK_WEBHOOKS` 를 렌더하고 있었다. 등록/토글/삭제가 전부
+ *   **로컬 state 조작**이라, 사용자가 웹훅을 만들면 화면은 성공했다고 말하고
+ *   **서버에는 아무 일도 일어나지 않았다.** 미배선보다 나쁘다 — 거짓말이다.
+ *
+ * ★그리고 목업은 **없는 필드를 지어냈다**: `last_delivery_status`·`last_delivered_at`·`active`.
+ *   실제 계약은 `is_active` 이고 전송 이력은 **별도 엔드포인트**로 따로 조회한다.
+ *   지어낸 두 필드는 **지웠다** — 모르는 것을 화면에 만들어 내지 않는다.
+ */
 type Webhook = {
   id: string;
+  tenant_id: string;
   url: string;
-  events: string[];
-  active: boolean;
-  last_delivery_status: "success" | "failed" | "pending" | null;
-  last_delivered_at: string | null;
+  events: string[] | null;
+  is_active: boolean;
+  description: string | null;
   created_at: string;
-};
-
-type WebhookListResponse = {
-  webhooks: Webhook[];
+  updated_at: string;
 };
 
 const EVENT_OPTIONS = [
@@ -27,33 +37,18 @@ const EVENT_OPTIONS = [
   { value: "risk.analyzed", label: "리스크 분석 완료" },
 ];
 
-const DELIVERY_STATUS_LABELS: Record<string, { label: string; color: string }> = {
-  success: { label: "성공", color: "text-[var(--status-success)]" },
-  failed: { label: "실패", color: "text-[var(--status-error)]" },
-  pending: { label: "대기 중", color: "text-[var(--status-warning)]" },
-};
-
-// Mock data for when API is not available
-const MOCK_WEBHOOKS: Webhook[] = [
-  {
-    id: "wh-001",
-    url: "https://example.com/hooks/propai",
-    events: ["project.created", "report.generated"],
-    active: true,
-    last_delivery_status: "success",
-    last_delivered_at: new Date(Date.now() - 3_600_000).toISOString(),
-    created_at: new Date(Date.now() - 86_400_000 * 7).toISOString(),
-  },
-  {
-    id: "wh-002",
-    url: "https://slack.example.com/incoming/propai",
-    events: ["avm.completed", "risk.analyzed"],
-    active: false,
-    last_delivery_status: "failed",
-    last_delivered_at: new Date(Date.now() - 86_400_000 * 2).toISOString(),
-    created_at: new Date(Date.now() - 86_400_000 * 14).toISOString(),
-  },
-];
+/** 서버 오류를 사람 말로 — ★상태코드를 삼키지 않는다(무엇이 막혔는지 알아야 고친다). */
+function describe(e: unknown, fallback: string): string {
+  if (e instanceof ApiClientError) {
+    if (e.status === 401 || e.status === 403) return "권한이 없습니다. 다시 로그인해 주세요.";
+    const detail =
+      typeof e.payload === "object" && e.payload !== null && "detail" in e.payload
+        ? String((e.payload as { detail: unknown }).detail)
+        : "";
+    return detail || `${fallback} (HTTP ${e.status})`;
+  }
+  return fallback;
+}
 
 export function WebhookManagementPanel() {
   const [webhooks, setWebhooks] = useState<Webhook[]>([]);
@@ -63,10 +58,25 @@ export function WebhookManagementPanel() {
   const [selectedEvents, setSelectedEvents] = useState<string[]>([]);
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState("");
+  // 테스트 전송이 성공한 웹훅 id — ★성공도 **보여야** 사용자가 결과를 안다.
+  const [sent, setSent] = useState<string | null>(null);
+
+  // ★GET /webhooks 는 **배열을 직접** 준다(목업이 가정한 `{webhooks: []}` 래퍼가 아니다).
+  async function reload() {
+    try {
+      const rows = await apiClient.get<Webhook[]>("/webhooks");
+      setWebhooks(Array.isArray(rows) ? rows : []);
+      setError("");
+    } catch (e) {
+      setWebhooks([]);
+      setError(describe(e, "웹훅 목록을 불러오지 못했습니다."));
+    } finally {
+      setIsLoading(false);
+    }
+  }
 
   useEffect(() => {
-    setWebhooks(MOCK_WEBHOOKS);
-    setIsLoading(false);
+    void reload();
   }, []);
 
   function toggleEvent(event: string) {
@@ -105,34 +115,60 @@ export function WebhookManagementPanel() {
     }
 
     setIsCreating(true);
-    await new Promise((r) => setTimeout(r, 200));
-
-    const created: Webhook = {
-      id: `wh-${Date.now()}`,
-      url,
-      events: selectedEvents,
-      active: true,
-      last_delivery_status: null,
-      last_delivered_at: null,
-      created_at: new Date().toISOString(),
-    };
-    setWebhooks((prev) => [...prev, created]);
-    setShowCreateForm(false);
-    setNewUrl("");
-    setSelectedEvents([]);
-    setIsCreating(false);
+    try {
+      // ★서버가 만든 행을 그대로 쓴다 — 화면이 id·시각을 지어내지 않는다.
+      const created = await apiClient.post<Webhook>("/webhooks", {
+        body: { url, events: selectedEvents },
+      });
+      setWebhooks((prev) => [...prev, created]);
+      setShowCreateForm(false);
+      setNewUrl("");
+      setSelectedEvents([]);
+    } catch (e) {
+      setError(describe(e, "웹훅 등록에 실패했습니다."));
+    } finally {
+      setIsCreating(false);
+    }
   }
 
-  function toggleActive(webhookId: string) {
-    setWebhooks((prev) =>
-      prev.map((wh) =>
-        wh.id === webhookId ? { ...wh, active: !wh.active } : wh,
-      ),
-    );
+  async function toggleActive(webhookId: string) {
+    const target = webhooks.find((wh) => wh.id === webhookId);
+    if (!target) return;
+    const next = !target.is_active;
+    try {
+      const saved = await apiClient.put<Webhook>(`/webhooks/${webhookId}`, {
+        body: { is_active: next },
+      });
+      setWebhooks((prev) => prev.map((wh) => (wh.id === webhookId ? saved : wh)));
+      setError("");
+    } catch (e) {
+      // ★서버가 거부하면 화면도 바뀌면 안 된다 — 낙관적 갱신을 하지 않는다.
+      setError(describe(e, "활성 상태를 바꾸지 못했습니다."));
+    }
   }
 
-  function handleDelete(webhookId: string) {
-    setWebhooks((prev) => prev.filter((wh) => wh.id !== webhookId));
+  /** ★테스트 전송 — 등록한 URL 이 **실제로 받는지** 확인한다.
+   *  엔드포인트는 종전부터 있었는데 **화면이 없어 아무도 못 썼다**(라우트 도달률 실측). */
+  async function sendTest(webhookId: string) {
+    try {
+      await apiClient.post(`/webhooks/${webhookId}/test`, { useMock: false });
+      setError("");
+      setSent(webhookId);
+    } catch (e) {
+      // ★사유를 버리지 않는다 — 404·타임아웃·수신서버 오류가 구별돼야 고칠 수 있다.
+      setSent(null);
+      setError(describe(e, "테스트 전송에 실패했습니다."));
+    }
+  }
+
+  async function handleDelete(webhookId: string) {
+    try {
+      await apiClient.delete(`/webhooks/${webhookId}`);
+      setWebhooks((prev) => prev.filter((wh) => wh.id !== webhookId));
+      setError("");
+    } catch (e) {
+      setError(describe(e, "웹훅을 삭제하지 못했습니다."));
+    }
   }
 
   if (isLoading) {
@@ -150,6 +186,19 @@ export function WebhookManagementPanel() {
 
   return (
     <div className="space-y-6">
+      {/* ★목록 로딩·토글·삭제 실패는 **생성 폼 밖**에서도 보여야 한다.
+          종전엔 오류 표시가 `showCreateForm` 블록 안에만 있어, 목록을 못 불러와도
+          화면은 "등록된 웹훅: 0개" 만 말했다 — 정상과 장애가 구별되지 않는다.
+          (이 파일을 실 API 로 배선하면서 내가 만든 결함이고, 락이 잡았다.) */}
+      {!showCreateForm && error && (
+        <p
+          role="alert"
+          className="rounded-xl bg-[var(--status-error)]/10 px-3 py-2 text-xs text-[var(--status-error)]"
+        >
+          {error}
+        </p>
+      )}
+
       {/* Header + Create Button */}
       <div className="flex items-center justify-between">
         <p className="text-sm font-medium text-[var(--text-secondary)]">
@@ -214,7 +263,7 @@ export function WebhookManagementPanel() {
               </div>
 
               {error && (
-                <p className="text-xs text-[var(--spot)]">{error}</p>
+                <p className="text-xs text-[var(--status-error)]">{error}</p>
               )}
 
               <div className="flex gap-3">
@@ -257,7 +306,7 @@ export function WebhookManagementPanel() {
                     <div className="flex items-center gap-3">
                       <div
                         className={`h-2.5 w-2.5 shrink-0 rounded-full ${
-                          wh.active
+                          wh.is_active
                             ? "bg-[var(--status-success)] animate-pulse"
                             : "bg-[var(--text-hint)]"
                         }`}
@@ -284,30 +333,20 @@ export function WebhookManagementPanel() {
                       })}
                     </div>
 
-                    {/* Last delivery */}
+                    {/* ★「마지막 전송」 두 줄은 지웠다 — 목업이 지어낸 필드였고 목록
+                        엔드포인트는 그 값을 주지 않는다. 전송 이력은 **별도 엔드포인트**라
+                        아직 화면에 없다(없는 것을 만들지 않는다).
+                        ★주석에 그 경로 리터럴을 적지 않는다 — 라우트 도달률 분류기가
+                        **주석을 소비처로 세어** 그 라우트를 「배선됨」으로 오판한다(실측).
+                        ★대신 서버가 실제로 주는 것을 적는다. */}
                     <div className="flex items-center gap-4 text-xs text-[var(--text-hint)]">
-                      {wh.last_delivery_status && (
-                        <span>
-                          마지막 전송:{" "}
-                          <span
-                            className={
-                              DELIVERY_STATUS_LABELS[wh.last_delivery_status]
-                                ?.color ?? ""
-                            }
-                          >
-                            {DELIVERY_STATUS_LABELS[wh.last_delivery_status]
-                              ?.label ?? wh.last_delivery_status}
-                          </span>
-                        </span>
-                      )}
-                      {wh.last_delivered_at && (
-                        <span>
-                          {new Intl.DateTimeFormat("ko-KR", {
-                            dateStyle: "short",
-                            timeStyle: "short",
-                          }).format(new Date(wh.last_delivered_at))}
-                        </span>
-                      )}
+                      {wh.description && <span>{wh.description}</span>}
+                      <span>
+                        등록{" "}
+                        {new Intl.DateTimeFormat("ko-KR", {
+                          dateStyle: "short",
+                        }).format(new Date(wh.created_at))}
+                      </span>
                     </div>
                   </div>
 
@@ -316,12 +355,18 @@ export function WebhookManagementPanel() {
                     <button
                       onClick={() => toggleActive(wh.id)}
                       className={`rounded-xl px-3 py-1.5 text-xs font-bold transition-all ${
-                        wh.active
+                        wh.is_active
                           ? "bg-[var(--status-success)]/10 text-[var(--status-success)]"
                           : "bg-[var(--surface-soft)] text-[var(--text-hint)]"
                       }`}
                     >
-                      {wh.active ? "활성" : "비활성"}
+                      {wh.is_active ? "활성" : "비활성"}
+                    </button>
+                    <button
+                      onClick={() => void sendTest(wh.id)}
+                      className="rounded-xl px-3 py-1.5 text-xs font-bold text-[var(--text-secondary)] transition-all hover:bg-[var(--surface-soft)]"
+                    >
+                      {sent === wh.id ? "보냈습니다" : "테스트 전송"}
                     </button>
                     <button
                       onClick={() => handleDelete(wh.id)}

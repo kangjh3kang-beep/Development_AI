@@ -2,6 +2,16 @@
 
 작성: 2026-06-05 · 결정: **A1 단일 코로케이션 + Cloudflare Tunnel** · 소유: Claude 전담
 
+---
+## 🔄 2026-07-15 재개 상태 (현행 확인)
+- **현황**: 이 이전은 Phase 2(Cloudflare Tunnel)에서 멈춰 있었고, **프런트는 여전히 Cloudflare Workers**에서 서빙 중(라이브 헤더 `server: cloudflare` + `x-nextjs-cache` 확인). 즉 컷오버가 완료되지 않음.
+- **인프라는 이미 완비**: `Dockerfile.web`(멀티스테이지 standalone·Node·NEXT_PUBLIC 빌드아그), 루트 `docker-compose.yml`(web+api 코로케이션), 루트 `nginx.conf`(`/→web:3000`, `/api/→api:8000`) — 추가 작업 불필요.
+- **남아있던 유일한 코드 블로커 해소(이 커밋)**: `app/api/ai/{analyze,chat,status}/route.ts`의 `runtime="edge"` → `"nodejs"`. Edge 선언은 Cloudflare Workers 전용이라 Node(compose) 런타임에서 이 3개 API가 실패했을 지점 — 이제 Node에서 정상 동작(스트리밍 포함, 표준 `ai` SDK).
+- **남은 작업 = Phase 2 컷오버뿐(코드 아님)**: 아래 Phase 2는 **Cloudflare 계정 인증 + A1 SSH**가 필요해 사용자와 함께 진행해야 함. cloudflared 터널 로그인·라우팅·DNS·Worker 라우트 해제.
+- **주의**: 컷오버 전까지 Cloudflare Workers 자산 보존(무손실 롤백 경로).
+---
+
+
 ## 목표 아키텍처 (시너지: Cloudflare 엣지 + Oracle A1 오리진)
 ```
 사용자 → Cloudflare 엣지(CDN/SSL/WAF/DDoS)

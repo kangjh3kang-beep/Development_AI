@@ -48,3 +48,7 @@ class EvidenceMissing(DomainError):
 
 class CitationRequired(DomainError):
     """정성 판단에 기준 항목 인용 부재 — 인용 없는 정성 판단 금지(INV-31)."""
+
+
+class SelfApprovalError(RefusedError):
+    """SoD(직무분리) 위반 — 작성자(author)와 승인자(approver)가 동일(W1-B 승인 dual-control)."""

@@ -187,7 +187,11 @@ export interface BillingRegisterResponse {
   anomalies_triggered: BillingAnomaly[];
 }
 
-/** POST /{pid}/billing 요청. */
+/**
+ * POST /{pid}/billing 요청 — 백엔드 cost.py BillingRegisterRequest 미러.
+ * 기간은 단일 `period` 문자열이 아니라 period_from/period_to 날짜 범위 계약이다
+ * (progress_billings 의 DATE 컬럼에 저장 → 반드시 YYYY-MM-DD 완전한 날짜).
+ */
 export interface BillingRegisterRequest {
   round: number;
   work_type: string;
@@ -197,7 +201,10 @@ export interface BillingRegisterRequest {
   unit_price?: number;
   contract_unit_price?: number;
   progress_pct: number;
-  period: string;
+  /** 청구 기간 시작일(YYYY-MM-DD). 백엔드는 optional 이지만 UI 는 항상 채워 보낸다. */
+  period_from?: string;
+  /** 청구 기간 종료일(YYYY-MM-DD). */
+  period_to?: string;
 }
 
 /** 대안설계 요청 변형 입력. */

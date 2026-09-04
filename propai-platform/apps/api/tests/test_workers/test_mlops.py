@@ -114,3 +114,19 @@ async def test_drift_report_failure():
 
     result = await _generate_drift_report([], [], [])
     assert result is False
+
+
+@pytest.mark.asyncio
+async def test_retrain_avm_skips_when_mlflow_missing():
+    """★운영(경량 이미지) 재현 — mlflow 미설치면 학습 착수 전 정직 스킵(비용 낭비 방지)."""
+    import sys
+    from unittest.mock import patch
+
+    with patch.dict(sys.modules, {"mlflow": None}):
+        from apps.worker.tasks.mlops import run_retrain_avm
+
+        result = await run_retrain_avm(ctx={})
+
+    assert result["status"] == "skipped"
+    assert "dependency_missing" in result["reason"]
+    assert result["model_version"] == "unchanged"

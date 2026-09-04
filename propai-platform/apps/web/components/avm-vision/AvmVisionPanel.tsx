@@ -8,13 +8,12 @@
  *   할루시네이션 방지 철학에 따라 가용값만 표시(null graceful)하고 폴백 사유를 note에 명시한다.
  */
 
+import { ProjectAddressInput } from "@/components/common/ProjectAddressInput";
 import { useCallback, useState } from "react";
 import { AlertTriangle, FlaskConical, Map, Satellite } from "lucide-react";
 import { Card, CardContent } from "@propai/ui";
-import { apiClient } from "@/lib/api-client";
+import { apiClient, apiV1BaseUrl } from "@/lib/api-client";
 import type { AvmVisionResult, RoadFrontage } from "./types";
-
-const VWORLD_API_KEY = process.env.NEXT_PUBLIC_VWORLD_API_KEY ?? "";
 
 const eok = (v: number | null | undefined) =>
   v == null ? "—" : `${(v / 1e8).toLocaleString(undefined, { maximumFractionDigits: 2 })}억`;
@@ -25,28 +24,42 @@ const ROAD_LABEL: Record<RoadFrontage, string> = { good: "양호", normal: "보�
 const ROAD_COLOR: Record<RoadFrontage, string> = { good: "#10b981", normal: "#f59e0b", poor: "#ef4444" };
 
 /**
- * VWorld 항공영상 썸네일 URL.
- * VWorld 키는 도메인 제한 공개키(기존 lib/vworld-client.ts와 동일 정책)지만,
- * getmap 엔드포인트는 Referer 헤더를 요구하므로 Next.js 프록시(/api/vworld/data?service=image)를 경유한다.
- * (브라우저 <img>는 Referer를 설정할 수 없어 직접 호출 시 403/빈응답 위험)
+ * 항공영상 썸네일 URL — **이미 있는 백엔드 통로**를 쓴다.
+ *
+ * ★2026-08-17 근본수정: 종전엔 `/api/vworld/data?service=image&key=<공개키>` 를 불렀는데
+ *   그 경로는 **프로덕션에서 404** 다. `4t8t.net/api/*` 는 nginx 가 백엔드(FastAPI)로
+ *   보내므로 `apps/web/app/api/**` 의 Next 라우트는 **도달 자체가 불가**했다
+ *   (실측: `/api/vworld/data`·`/api/health` 404 · 대조군 `/tiles/vworld/*` 200).
+ *   살아 있는 지적/배경 타일이 `/tiles/*`(‎`/api/` 밖)에 있어서 그것만 멀쩡했던 것이다.
+ *
+ * ★그리고 **새 프록시를 만들지 않는다** — `GET /api/v1/digital-twin/aerial-image` 가
+ *   이미 같은 일을 더 안전하게 한다(키를 서버측에서 주입 · zoom/size 를 Query 바운드로
+ *   클램프 · 응답을 PNG 매직넘버로 검증). 신설하면 더 약한 **두 번째 문**이 생긴다.
+ *   실측: `4t8t.net/api/v1/digital-twin/aerial-image?...` → 200 image/png.
+ *
+ * ★키를 더 이상 참조하지 않는다.
+ *   ★★2026-08-17 정정 — 이 자리에 있던 "두 키가 같은 값이었다(2계약 붕괴)"는
+ *   **저장소 `.env` 를 잰 결과**였고 그 파일은 실효값이 아니다. 노출 여부의 정답은
+ *   **빌드 산출물**이다: web 이미지에 구워진 `NEXT_PUBLIC_VWORLD_API_KEY` 는 **빈 값**이었고
+ *   (sha256 e3b0c44298fc) 브라우저 정적 청크에서 키 검색은 **0 건**이었다
+ *   (조회기 생존: 양성 대조 186/224 · 음성 0). 즉 **브라우저에 유출된 적이 없다.**
+ *
+ *   ★그리고 그 **빈 값이 진짜 결함이었다.** 종전 이 함수는 `if (!VWORLD_API_KEY) return null`
+ *   이었는데 빌드 arg 가 비어 있어 **항상 null** 을 반환했다 — 항공영상이 아예 렌더되지
+ *   않았고, 아래의 `/api/vworld/data` 404 경로는 **UI 에서 도달조차 하지 않았다.**
+ *   두 결함(빈 빌드 arg · 가려진 라우트)이 같은 증상을 냈고, 서버측 통로로 옮기면 둘 다 사라진다.
  */
-function thumbUrl(center: [number, number], zoom: number): string | null {
-  if (!VWORLD_API_KEY) return null;
+function thumbUrl(center: [number, number], zoom: number): string {
   const [lon, lat] = center;
+  // 백엔드도 ge/le 로 클램프하지만, 상류로 나가는 값을 여기서도 좁혀 둔다(이중 가드).
   const z = Math.max(7, Math.min(18, Math.round(zoom)));
   const qs = new URLSearchParams({
-    service: "image",
-    request: "getmap",
-    basemap: "PHOTO",
-    crs: "EPSG:4326",
-    center: `${lon},${lat}`,
+    lat: String(lat),
+    lon: String(lon),
     zoom: String(z),
-    size: "512,512",
-    format: "png",
-    version: "2.0",
-    key: VWORLD_API_KEY,
+    size: "512",
   });
-  return `/api/vworld/data?${qs.toString()}`;
+  return `${apiV1BaseUrl()}/digital-twin/aerial-image?${qs.toString()}`;
 }
 
 function FeatureBar({ label, value, color }: { label: string; value: number; color: string }) {
@@ -147,15 +160,18 @@ export function AvmVisionPanel({
 
         {/* 입력 */}
         <div className="mt-4 flex flex-wrap items-end gap-2">
-          <label className="min-w-[240px] flex-1 text-xs text-[var(--text-secondary)]">
-            대상지 주소
-            <input
-              className={`${inp} mt-1`}
-              value={addr}
-              onChange={(e) => setAddr(e.target.value)}
-              placeholder="지번/도로명 주소"
-            />
-          </label>
+          {/* bare input 은 주소검색 자체가 안 되는 결함 — 전 모듈 표준 ProjectAddressInput 으로 통일.
+              ★writeToContext={false} 필수: 비교·탐색 검색이 활성 프로젝트 SSOT 를 덮지 않게. */}
+          <ProjectAddressInput
+            value={addr}
+            onChange={setAddr}
+            label="대상지 주소"
+            placeholder="지번/도로명 주소"
+            className="min-w-[240px] flex-1"
+            hideProjectPicker
+            single
+            writeToContext={false}
+          />
           <label className="w-40 text-xs text-[var(--text-secondary)]">
             기준시세(원, 선택)
             <input
@@ -176,7 +192,7 @@ export function AvmVisionPanel({
         </div>
 
         {err && (
-          <p className="mt-3 flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+          <p className="mt-3 flex items-center gap-1.5 rounded-lg border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 px-3 py-2 text-xs text-amber-300">
             <AlertTriangle className="size-3.5 shrink-0" aria-hidden /> {err}
           </p>
         )}
@@ -199,13 +215,24 @@ export function AvmVisionPanel({
                 ) : (
                   <div className="flex aspect-square w-full flex-col items-center justify-center gap-2 p-6 text-center">
                     <Map className="size-8 text-[var(--text-tertiary)]" aria-hidden />
+                    {/* ★2026-08-17 정직표기: 종전엔 로드 '실패'와 '미취득'을 뭉뚱그려
+                        "썸네일 직접 표시는 생략되고" 라고 띄웠다. 그 문구는 **의도적 사양**처럼
+                        읽혀서, 실제로는 URL 이 404 라 <img> 의 onError 가 터진 것인데도
+                        아무도 결함으로 보지 않았다(무목업·정직표기 원칙 위반).
+                        이제 세 상태를 가른다: 미취득 / 취득했으나 로드 실패 / 정상. */}
                     <p className="text-xs font-bold text-[var(--text-secondary)]">
-                      {img?.available ? "영상 분석 완료(서버측)" : "항공영상 미취득"}
+                      {!img?.available
+                        ? "항공영상 미취득"
+                        : imgOk
+                          ? "영상 분석 완료(서버측)"
+                          : "항공영상 표시 실패"}
                     </p>
                     <p className="text-[11px] text-[var(--text-hint)]">
-                      {img?.available
-                        ? "썸네일 직접 표시는 생략되고 특징만 표시됩니다."
-                        : "공간컨텍스트 추론(프록시)으로 보정합니다."}
+                      {!img?.available
+                        ? "공간컨텍스트 추론(프록시)으로 보정합니다."
+                        : imgOk
+                          ? "썸네일을 불러오는 중입니다."
+                          : "서버 분석은 정상 완료됐고 썸네일 이미지 요청만 실패했습니다 — 아래 특징 수치는 유효합니다."}
                     </p>
                   </div>
                 )}
