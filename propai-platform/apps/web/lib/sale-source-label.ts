@@ -22,7 +22,7 @@ export const SALE_SOURCE_LABEL: Record<string, string> = {
   cost_based_fallback: "공사비 기반(폴백)",
   user: "사용자 입력",
   user_override: "사용자 입력(직접 지정)",
-  unavailable: "산출 불가",
+  // ★`unavailable` 은 백엔드 선언에서 **뺐다**(아무도 안 낸다) — 여기서도 지운다.
 };
 
 /** `single_source:<key>` 계열의 하위 출처 → 한글. */

@@ -87,7 +87,16 @@ def _exclusive_ratio_for(dev_type: str, building_type: str | None) -> tuple[floa
     #   ★*위양성도 결함이다* 를 이 PR 에서 세 번 인용하고 같은 함수 안에서 어겼다.
     bt = _canonical_building(building_type)
     note = f"전용률 {ratio}(정본·유형 {dev_type})"
-    if bt and bt != _safe_building_type(_svc(), dev_type):
+    raw = (building_type or "").strip()
+    if raw and not bt:
+        # ★★**「모르는 표기」와 「안 넘김」이 종전엔 바이트 단위로 같은 산출물**을 냈다.
+        #   그 값은 조용히 버려지고 `prop_type` 이 `apt` 로 떨어지는데 **근거에 흔적이 없다**
+        #   — 판매시설·업무시설 프로젝트가 아파트 실거래로 값이 매겨져도 원장을 보고
+        #   되짚을 수 없었다(§유료 규율 4: *실패는 전용 필드로 자기를 구별한다*).
+        #   ★역설이었다: 「불일치」는 **인식된** 유형에만 붙고, **정보를 실제로 버린**
+        #     경우엔 아무것도 안 붙었다.
+        note += f" ★건물유형 '{raw}' 를 알지 못해 **유형 축으로 폴백**(표기 미등록)"
+    elif bt and bt != _safe_building_type(_svc(), dev_type):
         # ★값을 바꾸지 않는다 — 대신 **불일치를 표면까지** 싣는다.
         note += f" ★건물유형 {bt} 와 불일치 — 전용률은 유형 축을 따른다(호출부가 dev_type 미보유)"
     return ratio, note
@@ -244,7 +253,7 @@ async def _trade_sale_price_per_pyeong(
     price = int(round(med * ratio * premium * 10000))
     basis = (
         f"주변 실거래(MOLIT) {scope} 중앙값 {med:,}만원/평(전용, 표본 {n}건·최근 8개월) × "
-        f"{ratio_note} × 신축 프리미엄 {premium} → 공급 평당가(공급면적 기준)"
+        f"{ratio_note} × 신축 프리미엄 {premium} → 공급 평당가(공급면적 기준·물건종별 {prop_type})"
     )
     # ★표본수를 **구조적으로** 돌려준다. 종전엔 소비처가 `basis` **산문에서 정규식으로
     #   긁었고**(`표본\s*([0-9,]+)\s*건`), 여기서 문구를 조금만 바꾸면 소비처가 조용히

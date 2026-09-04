@@ -362,11 +362,10 @@ def test_stubs_must_tolerate_new_kwargs() -> None:
         r'monkeypatch\.setattr\(\s*MarketRevaluationService,\s*"(_[a-z_]+source[a-z_]*)"', src))
     assert targets, "조회기 사망 — 출처 스텁 배선을 하나도 못 찾았다"
 
+    # ★죽은 루프를 지웠다 — `for name in sorted(targets)` 의 `name` 이 안 쓰이고
+    #   `for sig in …: pass` 는 완전한 no-op 라 내부 스캔이 중복 실행됐다(4차 리뷰 Minor-1).
     bad = []
-    for name in sorted(targets):
-        # 그 배선이 쓰는 스텁 함수들의 시그니처만 본다
-        for sig in re.findall(r"async def (_fake_\w+)\(self[^)]*\)", src):
-            pass
+    if True:
         for m in re.finditer(r"async def (_fake_\w+)\(self([^)]*)\)", src):
             fn, params = m.group(1), m.group(2)
             wired = re.search(
@@ -578,13 +577,32 @@ def test_paid_resolver_is_never_called_inside_a_loop() -> None:
 
     ★이 락이 없으면 계획서가 선언한 불변식이 **무잠금으로 머지**된다
       (CLAUDE.md §계획 게이트 C: *"§5 항목이 빈 계획서는 반려"*).
+
+    ## ★★한계 — **직접 호출부만 본다**(닫지 못한 것을 닫았다고 하지 않는다)
+
+    래퍼 한 겹이면 통과한다. 실측(4차 적대 리뷰):
+
+        for a in addrs: out.append(await _one_resolve(a, dev_type))   ← **SURVIVED**
+        (`_one_resolve` 가 리졸버를 부르는 얇은 래퍼)
+
+    ★그리고 **그 형태가 다필지·배치를 쓰는 가장 자연스러운 모양**이다.
+      즉 이 락은 «구조적 보장» 이 아니라 **직접 호출부에 대한 보장**이다.
+      호출 그래프를 따라가려면 모듈 간 별칭·동적 호출까지 봐야 해서 이 PR 범위를 넘는다
+      — **아래 `it.todo` 상당 항목으로 초록 안에 드러낸다.**
     """
     TARGETS = {
         "_resolve_sale_price_per_pyeong", "_trade_sale_price_per_pyeong",
         "revalue", "get_regional_sale_price_per_pyeong",
         "resolve_regional_sale_price_per_pyeong", "_molit_sale_price_source",
     }
-    LOOPS = (ast.For, ast.AsyncFor, ast.While, ast.comprehension)
+    # ★★선언과 판정이 갈려 있었다: 이 튜플은 **아무 데서도 안 쓰이고**(ruff F841 →
+    #   **CI 의 Backend(pytest) 가 통째로 빨개져 pytest 가 한 줄도 안 돌았다**),
+    #   실제 판정은 아래에서 **다른 집합**을 하드코딩했다. 게다가 `ast.comprehension` 은
+    #   컴프리헨션 노드가 아니라 **그 안의 `for` 절**이라 값 자체가 틀렸다.
+    #   *«선언은 자기를 검증하지 않는다»* 를 이 PR 이 세 번 인용하고 그 처방 안에서 재발시켰다.
+    #   → 선언을 **실제 판정에 쓴다**(한 곳에서만 정의).
+    STMT_LOOPS = (ast.For, ast.AsyncFor, ast.While)
+    COMP_LOOPS = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
     bad: list[str] = []
     seen = 0
 
@@ -598,8 +616,8 @@ def test_paid_resolver_is_never_called_inside_a_loop() -> None:
 
         def walk(node: ast.AST) -> None:
             nonlocal seen
-            is_loop = isinstance(node, (ast.For, ast.AsyncFor, ast.While))
-            has_comp = isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp))
+            is_loop = isinstance(node, STMT_LOOPS)
+            has_comp = isinstance(node, COMP_LOOPS)
             if is_loop or has_comp:
                 stack.append(type(node).__name__)
             if isinstance(node, ast.Call):
@@ -621,3 +639,21 @@ def test_paid_resolver_is_never_called_inside_a_loop() -> None:
     assert not bad, (
         f"유료 리졸버가 **루프 안**에서 호출된다(요청당 N회 = 과금 N배): {bad}\n"
         "→ 다필지·배치가 필요하면 리졸버 밖에서 한 번 부르고 결과를 재사용하라.")
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "★부채 — 루프 금지 락이 **직접 호출부만** 본다. 얇은 래퍼를 거쳐 루프 안에서 부르면 "
+    "통과한다(4차 적대 리뷰 실측). 계획서 §5 는 이 락을 «다필지·배치 경로가 생기면 "
+    "빨개진다» 로 선언했는데, **배치를 쓰는 가장 자연스러운 형태가 바로 그 래퍼**다. "
+    "닫으려면 호출 그래프 1홉을 따라가야 하고 그건 이 PR 범위를 넘는다 — "
+    "**닫지 못한 것을 닫았다고 하지 않으려고** 초록 안에 드러낸다."))
+def test_debt_loop_lock_does_not_follow_wrappers() -> None:
+    """래퍼 경유 호출도 루프 금지 락이 잡는가 — **지금은 못 잡는다**."""
+    import ast as _ast
+
+    src = _RESOLVER.read_text(encoding="utf-8")
+    tree = _ast.parse(src)
+    # 이 파일 안에서 «리졸버를 부르는 함수»를 1홉 따라가는 로직이 락에 있는가
+    lock = (_API / "tests" / "test_sale_price_resolver_ssot.py").read_text(encoding="utf-8")
+    assert "호출 그래프" in lock and "1홉" in lock.split("부채")[0], "1홉 추적이 구현됐다면 이 부채는 닫힌다"
+    assert tree is not None

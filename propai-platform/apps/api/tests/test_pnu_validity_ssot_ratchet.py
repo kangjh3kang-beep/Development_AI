@@ -292,6 +292,44 @@ class Test배선된함수를실제로태운다:
         )
 
 
+#: 면제 항목이 **함께 갖고 있어야 하는 검사**. 사유가 «`pnu[:5].isdigit()` 로 자릿수를
+#: 함께 검사한다» 라고 말하는데 **그 문장을 지키는 단언이 없었다** — 그 가드에서
+#: `isdigit()` 만 떼어내도 면제 키(`len(pnu) >= 5`)는 그대로라 **초록**이었다(4차 리뷰 MAJOR-1).
+#: ★방향이 정확히 반대였다: 무해한 재배열엔 **위양성**, 안전장치 제거엔 **위음성**.
+_EXEMPT_REQUIRES: dict[str, tuple[str, ...]] = {
+    "app/services/feasibility/sale_price_resolver.py::len(pnu) >= 5": ("isdigit",),
+    "services/avm_service.py::len(request.pnu) >= 5": ("isdigit",),
+}
+
+
+def test_each_exemption_keeps_the_guard_its_reason_promises() -> None:
+    """★면제 **사유가 약속한 동반 검사**가 그 자리에 실제로 있는가.
+
+    면제는 «이 표현식이 나타나면 봐준다» 가 아니라 «이 표현식 **+ 이 검사**면 봐준다» 다.
+    사유에 적어만 두면 **떼어내도 안 보인다.**
+    """
+    import ast as _ast
+
+    for key, required in _EXEMPT_REQUIRES.items():
+        assert key in _EXEMPT, f"동반검사 표에만 있고 면제에 없다: {key}"
+        rel, expr = key.split("::", 1)
+        src = (API_ROOT / rel).read_text(encoding="utf-8")
+        tree = _ast.parse(src)
+        found = False
+        for n in _ast.walk(tree):
+            if not isinstance(n, _ast.If):
+                continue
+            if expr not in _ast.unparse(n.test):
+                continue
+            test_src = _ast.unparse(n.test)
+            missing = [r for r in required if r not in test_src]
+            assert not missing, (
+                f"{key} 의 면제 사유가 약속한 검사가 사라졌다: {missing} — "
+                f"실제 조건: {test_src}")
+            found = True
+        assert found, f"면제 대상 표현식을 못 찾았다(죽은 면제 또는 조회기 사망): {key}"
+
+
 def test_each_exemption_matches_exactly_once() -> None:
     """★면제는 **정확히 한 자리**를 덮어야 한다 — 양방향으로 잠근다.
 

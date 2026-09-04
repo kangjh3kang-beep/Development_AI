@@ -55,7 +55,20 @@ def _emitted_literals() -> set[str]:
             nodes += list(ast.walk(ast.parse(f.read_text(encoding="utf-8"))))
         except SyntaxError:
             continue
+    # ★★파생의 **모양**이 손 목록이었다 — 모집단(파일)만 파생하고 **형태는 `Assign` 하나**만
+    #   봤다. 가장 흔한 방출 형태인 **dict 리터럴 값**을 못 봐서,
+    #   `{"sale_price_source": "새코드"}` 를 넣어도 락이 초록이었다(4차 리뷰 MAJOR-3).
+    #   → dict 키가 `"sale_price_source"` 인 **값**도 같은 축으로 걷는다.
     for n in nodes:
+        if isinstance(n, ast.Dict):
+            for k, v in zip(n.keys, n.values, strict=False):
+                if (isinstance(k, ast.Constant) and k.value == "sale_price_source"
+                        and not isinstance(v, (ast.Name, ast.Attribute))):
+                    collect(v)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "dict":
+            for kw in n.keywords:
+                if kw.arg == "sale_price_source":
+                    collect(kw.value)
         if isinstance(n, ast.Assign) and any(
             isinstance(t, ast.Name) and t.id == "sale_price_source" for t in n.targets
         ):

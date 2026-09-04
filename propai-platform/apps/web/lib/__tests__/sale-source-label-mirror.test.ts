@@ -20,7 +20,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { saleSourceLabel } from "@/lib/sale-source-label";
+import { SALE_SOURCE_LABEL, saleSourceLabel } from "@/lib/sale-source-label";
 
 const API = path.resolve(__dirname, "../../../api");
 
@@ -90,5 +90,63 @@ describe("분양가 산정근거 라벨 미러", () => {
 
   it("음성 대조군 — 정말 모르는 코드는 **코드 그대로**(거짓 라벨보다 낫다)", () => {
     expect(saleSourceLabel("zzz_not_a_real_code")).toBe("zzz_not_a_real_code");
+  });
+});
+
+describe("★배선 — 화면이 그 함수를 실제로 경유하는가", () => {
+  /**
+   * ★★**이 저장소에서 같은 클래스가 세 번째다** — «함수만 잠그고 배선을 안 잠갔다».
+   *
+   * 미러 락이 막겠다고 **선언한 결함**은 *"그 값이 화면에 raw 토큰으로 나오면 사용자는
+   * 여전히 원인을 못 본다"* 인데, `saleSourceLabel(value)` → `value` 한 줄 변경으로
+   * 그 결함이 **그대로 부활**하는데 모든 락이 초록이었다(4차 리뷰 MAJOR-4).
+   *
+   * ★렌더 단언이 이상적이지만 그 패널은 무거운 의존을 끌어온다 —
+   *   그래서 **주석을 걷어낸 소스**를 파서로 본다(문자열 grep 이 아니다).
+   */
+  it("`sale_price_source` 를 표시하는 자리는 `saleSourceLabel` 을 경유한다", () => {
+    const p = path.resolve(__dirname, "../../components/pipeline/ProjectPipelinePanel.tsx");
+    const raw = fs.readFileSync(p, "utf8");
+    // 주석·문자열 설명에 속지 않게 줄 주석과 블록 주석을 걷는다
+    const code = raw
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .map((l) => l.replace(/\/\/.*$/, ""))
+      .join("\n");
+
+    // ★공허진리 방지 — 그 분기가 실재하는가(조회기 생존)
+    const branch = code.match(/key === "sale_price_source"[\s\S]{0,220}/);
+    expect(branch, "sale_price_source 분기를 못 찾았다 — 조회기 사망").toBeTruthy();
+
+    expect(
+      branch![0],
+      "화면이 `saleSourceLabel` 을 경유하지 않는다 — 코드가 raw 토큰으로 노출된다",
+    ).toContain("saleSourceLabel(");
+    // 음성 대조군: 그 분기가 값을 **그대로** 돌려주지 않는다
+    expect(branch![0]).not.toMatch(/return\s+value\s*;/);
+  });
+
+  it("★프론트 맵에 백엔드가 안 내는 값이 남아 있지 않다(역방향)", () => {
+    // 미러 락이 백엔드→프론트 **한 방향**만 봤다. 백엔드에서 「죽은 어휘」로 뺀 값이
+    // 프론트에 남으면, 그 규칙을 한쪽에만 적용한 것이다(4차 리뷰 Minor-4).
+    const vocab = new Set(backendVocabulary());
+    const feKeys = Object.keys(SALE_SOURCE_LABEL);
+    expect(feKeys.length).toBeGreaterThanOrEqual(5);   // 공허진리 방지
+    // ★★축을 좁혔다 — 첫 판은 «백엔드 선언에 없으면 죽은 어휘» 로 봐서 **위양성 5건**을 냈다.
+    //   `avm`·`user_override`·`unavailable` 은 **다른 문맥**(AVM 해석기·파이프라인 override
+    //   플래그·보류 표기)에서 쓰이는 값이고, 프론트 맵이 그것들을 라벨로 갖는 것은
+    //   **레거시 호환**이지 결함이 아니다. ★**위양성도 결함이다** — 가드가 정상 코드를
+    //   지우게 하면 라벨이 사라져 사용자에게 raw 토큰이 간다(이 락이 막으려는 그것).
+    //   → **백엔드 선언에서 명시적으로 「뺀」 값**만 죽은 어휘로 본다.
+    const REMOVED_FROM_BACKEND = ["unavailable"];   // 선언 주석이 «뺐다» 고 적은 값
+    const stale = feKeys.filter(
+      (k) => !vocab.has(k) && REMOVED_FROM_BACKEND.includes(k));
+    expect(
+      stale,
+      `백엔드가 **명시적으로 뺀** 값이 프론트 맵에 남았다: ${stale.join(", ")} — ` +
+        "규칙을 한쪽에만 적용한 것이다",
+    ).toEqual([]);
+    // ★공허진리 방지 — 이 검사가 실제로 무언가를 볼 수 있는가
+    expect(REMOVED_FROM_BACKEND.length).toBeGreaterThan(0);
   });
 });
