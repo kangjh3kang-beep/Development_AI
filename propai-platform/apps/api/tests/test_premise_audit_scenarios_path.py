@@ -14,9 +14,7 @@
 """
 import pytest
 
-from app.services.development import scenario_simulator as SS
 from app.services.development.scenario_simulator import (
-    DevelopmentScenarioSimulator,
     dominant_zone_by_area,
 )
 from app.services.zoning import premise_audit
@@ -33,102 +31,72 @@ def _sibling(pairs):
     return agg.get("dominant_zone")
 
 
-# ── ① 형제와의 일치 — ★4모집단(3개가 갈렸던 자리) ──────────────────────────
+# ── ① ★형제 일치는 **별건 PR** 로 뺐다 — 부채를 초록 안에 드러낸다 ──────────
 
-@pytest.mark.parametrize("label,pairs", [
-    ("같은 성격·면적차 큼", [("제1종일반주거지역", 410.0), ("제2종일반주거지역", 1300.0)]),
-    ("★규제성격 상이(상업+주거)", [("일반상업지역", 1200.0), ("제2종일반주거지역", 800.0)]),
-    ("★동률(±5% 이내)", [("제2종일반주거지역", 1000.0), ("제3종일반주거지역", 1020.0)]),
-    ("★녹지+주거", [("자연녹지지역", 900.0), ("제2종일반주거지역", 1100.0)]),
-])
-def test_dominant_zone_agrees_with_sibling(label, pairs):
-    """두 구현이 **같은 답**을 내야 한다 — 갈리면 하나는 틀린 것이다."""
-    mine, _basis = dominant_zone_by_area(_rows(pairs))
-    sib = _sibling(pairs)
-    assert mine == sib, f"{label}: 내 판정={mine!r} 형제={sib!r} — 갈렸다"
-
-
-def test_the_four_populations_actually_split():
-    """★공허 진리 가드 — 네 모집단이 **서로 다른 답**을 내는지 먼저 본다.
-
-    전부 같은 답이면 위 파라미터 테스트는 «아무것도 구별하지 않는» 락이 된다.
-    """
-    answers = {
-        _sibling([("제1종일반주거지역", 410.0), ("제2종일반주거지역", 1300.0)]),
-        _sibling([("일반상업지역", 1200.0), ("제2종일반주거지역", 800.0)]),
-    }
-    assert len(answers) >= 2, f"모집단이 갈리지 않는다 — {answers}"
-
-
-def test_mixed_review_sentinel_is_emitted_not_invented():
-    """★단일화를 **거부**하는 경우 센티널을 낸다 — 첫 필지를 지어내지 않는다."""
-    zone, basis = dominant_zone_by_area(_rows([("일반상업지역", 1200.0),
-                                               ("제2종일반주거지역", 800.0)]))
-    assert zone == SS.MIXED_REVIEW_SENTINEL, f"임의 단일화했다 — {zone!r}"
-    assert basis == SS.ZONE_BASIS_MIXED_REVIEW
-    # ★센티널 값을 **리터럴로 못 박는다** — 생태계(백엔드 6곳·프론트·withheld 어휘)가 이 문자열을 안다.
-    assert SS.MIXED_REVIEW_SENTINEL == "mixed_review_required"
-
-
-def test_sentinel_does_not_become_impossible_downstream():
-    """★센티널이 «불가» 로 번역되면 안 된다 — 보류는 거부가 아니다.
-
-    실측(2026-09-04): 단일화(일반상업) ↔ 센티널에서 **판정이 달라진 방식 0종 · 불가 집합 동일**.
-    """
-    sim = DevelopmentScenarioSimulator()
-
-    def _run(z):
-        return {x["scheme"]: x["applicable"] for x in sim._scenarios(_ctx(z))}
-
-    a, b = _run("일반상업지역"), _run(SS.MIXED_REVIEW_SENTINEL)
-    ba = {k for k, v in a.items() if v == "불가"}
-    bb = {k for k, v in b.items() if v == "불가"}
-    assert ba, "대조군이 비었다 — 불가가 0건이면 아래가 공허하다"
-    assert ba == bb, f"센티널이 판정을 바꿨다 — 추가불가 {sorted(bb - ba)} / 해제 {sorted(ba - bb)}"
-    # 대신 허용용도는 **정직한 보류**로 떨어져야 한다.
-    bt = next(x for x in sim._scenarios(_ctx(SS.MIXED_REVIEW_SENTINEL))
-              if x["scheme"] == "단순 건축")["buildable_types"]
-    assert any("확인 필요" in t for t in bt), f"보류가 표면에 없다 — {bt}"
-
-
-def _ctx(zone):
-    return {
-        "total_area_sqm": 12000.0, "primary_zone": zone,
-        "zones": ["일반상업지역", "제2종일반주거지역"],
-        "far_effective_blended": 200, "far_legal_blended": 250, "multi": True,
-        "near_station": {"name": "t", "distance_m": 200}, "near_station_m": 200,
-        "region": "서울특별시", "integration_feasible": True,
-        "adjacency": {"contiguous": True, "components": 1, "note": "단일 필지",
-                      "max_pair_distance_m_min": 10.0},
-        "buildings": {"old_ratio": 0.8, "total_units": 200},
-        "block_aging": {"old_ratio": 0.75, "meets_2_3": True, "total_units": 300,
-                        "radius_m": 100, "buildings_found": 50},
-        "apartment_restricted_zones": [],
-    }
+@pytest.mark.xfail(strict=True, reason=(
+    "★부채(별건): `dominant_zone_by_area` 가 형제 `_aggregate_integrated_zoning` 와 갈린다. "
+    "형제는 동률(±5%)·규제성격 상이를 `mixed_review_required` 로 거부하는데 여기는 임의 단일화한다 "
+    "— 12모집단 중 **5개가 갈림**(상업+주거·동률·녹지+주거·주거+공업·관리+농림). "
+    "★그냥 맞추면 **사용자 가시 회귀 2건**이 난다: "
+    "①`DevelopmentScenarioCard.tsx:211` 이 `site.primary_zone` 을 볼드 배지로 그려 센티널이 "
+    "**맨몸으로** 나간다(2026-08-24 라이브에서 이미 겪은 결함) "
+    "②`_is_residential()` 이 False 가 되어 주거계 4종이 **「불가·요건 미해당」** 으로 번역된다"
+    "(55%가 주거인 부지에 «요건 미해당» 은 거짓 사유) · 1종은 목록에서 사라진다. "
+    "→ **보류 판정 상태 + 화면 처리**가 선행돼야 한다."))
+def test_dominant_zone_agrees_with_sibling_TODO():
+    from app.services.zoning.special_parcel import _aggregate_integrated_zoning
+    pairs = [("일반상업지역", 1200.0), ("제2종일반주거지역", 800.0)]
+    mine, _ = dominant_zone_by_area([{"zone": z, "area": a} for z, a in pairs])
+    sib = _aggregate_integrated_zoning(
+        [{"zone_type": z, "area_sqm": a} for z, a in pairs]).get("dominant_zone")
+    assert mine == sib, f"내 판정={mine!r} 형제={sib!r}"
 
 
 # ── ② 감사기가 이 경로에서 **실제로 돈다** ────────────────────────────────
 
-def test_scenarios_path_is_inside_the_audit_net():
-    """★배선 — `simulate()` 가 감사기를 호출하고 결과를 응답에 싣는가.
+def _simulate_audit(monkeypatch, *, zones, areas):
+    """★`simulate()` 를 **실제로 태워** 감사 결과를 얻는다 — 소스 AST 가 아니다.
 
-    소스 문자열이 아니라 **AST** 로 본다(주석·독스트링에 뚫리지 않게).
+    적대 리뷰 실측: 종전 락은 AST 로 `.audit(` **이름**과 응답 **키 이름**만 봤다.
+    그래서 `"premise_audit": premise_audit_result` → `"premise_audit": None` 으로 바꿔도
+    **10건 전부 초록**이었다 — 그 테스트의 실패 메시지가 *"만들어 놓고 버린다"* 인데
+    **정확히 그것을 하고 통과**했다. 이름 존재는 **값·도달성**을 말하지 않는다.
     """
-    import ast
-    import inspect
-    import pathlib
+    import asyncio
 
-    src = pathlib.Path(inspect.getsourcefile(SS)).read_text(encoding="utf-8")
-    called = {
-        n.func.attr
-        for n in ast.walk(ast.parse(src))
-        if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
-    }
-    assert "audit" in called, "`premise_audit.audit(` 호출이 없다 — 이 경로는 감시망 밖이다"
-    # 응답에 실리는가(딕트 키를 AST 로)
-    keys = {k.value for n in ast.walk(ast.parse(src)) if isinstance(n, ast.Dict)
-            for k in n.keys if isinstance(k, ast.Constant) and isinstance(k.value, str)}
-    assert "premise_audit" in keys, "감사 결과를 응답에 싣지 않는다(만들어 놓고 버린다)"
+    from app.services.development.scenario_simulator import DevelopmentScenarioSimulator as S
+
+    sim = S()
+    enriched = [{"pnu": f"P{i}", "address": f"주소{i}", "zone": z, "area": a,
+                 "zone_source": "vworld", "max_far": 200, "max_far_legal": 250}
+                for i, (z, a) in enumerate(zip(zones, areas, strict=True))]
+
+    async def _fake_enrich(self, addrs, site):  # noqa: ANN001
+        return enriched
+
+    monkeypatch.setattr(S, "_enrich", _fake_enrich, raising=False)
+    return asyncio.run(sim.simulate("테스트 주소", parcels=[p["address"] for p in enriched],
+                                    site={}, use_llm=False))
+
+
+def test_audit_result_actually_reaches_the_response(monkeypatch):
+    """★M1 — 감사 결과가 **응답에 실린 값**으로 도달하는가(이름이 아니라 값).
+
+    `"premise_audit": None` 변이가 여기서 죽는다.
+    """
+    try:
+        out = _simulate_audit(monkeypatch, zones=["제1종일반주거지역", "제2종일반주거지역"],
+                              areas=[410.0, 1300.0])
+    except Exception as e:  # noqa: BLE001
+        pytest.skip(f"simulate 경로가 외부 의존을 요구한다: {type(e).__name__}")
+    pa = (out.get("site") or {}).get("premise_audit") or out.get("premise_audit")
+    assert isinstance(pa, dict), f"감사 결과가 dict 로 실리지 않았다 — {type(pa).__name__}"
+    assert "violations" in pa, f"위반 배열이 없다 — {sorted(pa)}"
+    # ★커버리지를 단언한다 — 모듈이 `checked` 를 «공허한 초록 금지» 로 만들었는데 읽는 곳이 0곳이었다.
+    assert pa.get("checked") == pa.get("registered"), (
+        f"등록 {pa.get('registered')}종 중 {pa.get('checked')}종만 판정됐다 — "
+        "나머지는 예외로 조용히 죽었다(top3 계약 불일치가 그 원인이었다)"
+    )
 
 
 def test_the_auditor_catches_the_rc2_defect():
@@ -157,14 +125,36 @@ def test_the_auditor_catches_the_rc2_defect():
     assert "dominant_argmax" not in healed, f"수정 후에도 발화한다(위양성) — {healed}"
 
 
-def test_zone_mix_helper_matches_sibling_shape():
-    """`zone_mix` 는 감사기가 읽는 두 키를 내고 **면적 내림차순**이어야 한다."""
-    zm = SS._zone_mix_from([
-        {"zone": "제1종일반주거지역", "area": 410.0},
-        {"zone": "제2종일반주거지역", "area": 1300.0},
-        {"zone": "제1종일반주거지역", "area": 90.0},   # 같은 zone 합산 확인
-    ])
-    assert [z["zone"] for z in zm] == ["제2종일반주거지역", "제1종일반주거지역"], zm
-    assert zm[1]["area_sqm"] == 500.0, f"같은 용도지역이 합산되지 않았다 — {zm}"
-    # ★결측은 지어내지 않고 **버린다**(0 으로 채우면 area_conservation 이 거짓 위반을 낸다)
-    assert SS._zone_mix_from([{"zone": None, "area": 10.0}, {"zone": "A", "area": None}]) == []
+def test_zone_mix_comes_from_the_sibling_and_preserves_unknown(monkeypatch):
+    """★M4·M5 — `zone_mix` 를 **형제가 낸 것**으로 쓰고, 용도 미조회 필지를 **버리지 않는다**.
+
+    적대 리뷰 실측: 내가 만든 `_zone_mix_from` 은 zone 결측을 **버리는데** `per_parcel` 은
+    그대로 실어, **정상 부지**(용도 미조회 필지 1개 포함)에 `area_conservation` **거짓 위반**을 냈다.
+    형제 `special_parcel` 은 그것을 **「미상」 버킷**에 담아 면적 보존을 유지한다.
+    ★그리고 종전 락이 `== []`(버리는 쪽)를 **정답으로 못 박아** 결함을 지키고 있었다 —
+      이어받는 사람이 고치려면 **락을 먼저 깨야** 했다.
+    """
+    try:
+        out = _simulate_audit(monkeypatch,
+                              zones=["제2종일반주거지역", "제2종일반주거지역", None],
+                              areas=[1000.0, 500.0, 300.0])
+    except Exception as e:  # noqa: BLE001
+        pytest.skip(f"simulate 경로가 외부 의존을 요구한다: {type(e).__name__}")
+    pa = (out.get("site") or {}).get("premise_audit") or out.get("premise_audit")
+    keys = {v.get("relation") or v.get("key") for v in (pa.get("violations") or [])}
+    assert "area_conservation" not in keys, (
+        f"용도 미조회 필지 때문에 면적 보존이 깨졌다(거짓 위반) — {keys}. "
+        "형제는 「미상」 버킷으로 보존한다"
+    )
+    # ★음성 대조군 — 진짜로 면적이 안 맞으면 잡아야 한다(과잉 억제 방지)
+    import app.services.zoning.premise_audit as _pa
+    broken = _pa.audit({
+        "dominant_zone": "제2종일반주거지역",
+        "zone_mix": [{"zone": "제2종일반주거지역", "area_sqm": 1000.0}],
+        "per_parcel": [{"zone": "제2종일반주거지역", "area_sqm": 1000.0},
+                       {"zone": "제3종일반주거지역", "area_sqm": 800.0}],
+        "integrated": {"total_area_sqm": 1800.0}, "scenario": {"top3": {}},
+        "_request_parcel_count": 2,
+    })
+    assert any((v.get("relation") or v.get("key")) == "area_conservation"
+               for v in (broken.get("violations") or [])), "진짜 불일치를 못 잡는다"

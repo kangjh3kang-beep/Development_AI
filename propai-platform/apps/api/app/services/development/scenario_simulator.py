@@ -330,22 +330,6 @@ def combined_building_distance_verdict(adjacency: dict[str, Any] | None) -> tupl
     return (float(d) <= COMBINED_BUILDING_MAX_DISTANCE_M), float(d)
 
 
-def _zone_mix_from(enriched: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """전제감사기가 요구하는 `zone_mix` — **형제 스키마**(`special_parcel`)를 따른다.
-
-    감사기의 `dominant_argmax`·`area_conservation` 이 `zone` 과 `area_sqm` 만 읽으므로
-    그 둘을 낸다(면적 내림차순 — 형제와 같은 정렬).
-    """
-    agg: dict[str, float] = {}
-    for p in enriched or []:
-        z, a = p.get("zone"), p.get("area")
-        if not z or not a:
-            continue
-        agg[str(z).strip()] = agg.get(str(z).strip(), 0.0) + float(a)
-    return [{"zone": z, "area_sqm": round(a, 2)}
-            for z, a in sorted(agg.items(), key=lambda kv: kv[1], reverse=True)]
-
-
 def _low_rise_only(zones: list[str]) -> bool:
     """제1종일반주거의 **층수 제한**([별표 4] 1호 머리 — 4층 이하 · 단지형은 5층 이하)."""
     return any(("제1종일반주거" in z) or ("1종일반주거" in z) for z in (zones or []))
@@ -458,29 +442,26 @@ def dominant_zone_by_area(rows: list[dict[str, Any]]) -> tuple[str, str]:
         return uniq[0], ZONE_BASIS_SINGLE
     if not all(r.get("area") for r in named):
         return str(named[0]["zone"]).strip(), ZONE_BASIS_NO_AREA
-    # ★형제(`special_parcel._aggregate_integrated_zoning`)의 판정을 **그대로 따른다.**
-    #   실측(2026-09-04) — 4모집단 중 **3개가 갈렸다**:
-    #     상업+주거 → 형제 `mixed_review_required` / 내 종전 `일반상업지역`   ★임의 단일화
-    #     동률(±5%) → 형제 `mixed_review_required` / 내 종전 `제3종일반주거지역`
-    #     녹지+주거 → 형제 `mixed_review_required` / 내 종전 `제2종일반주거지역`
-    #   ★볼트가 *"형제가 이미 옳게 한다 — **시뮬레이터만 자기 방식을 만들었다**"* 라고
-    #     적어 둔 그 자리인데, `#940` 이 RC-2 를 고치면서 **같은 클래스의 약한 판본**을 다시 만들었다.
-    #   생태계는 이 센티널을 이미 안다 — 백엔드 6곳 소비 · 프론트 `lib/zoning/dominant-zone.ts`
-    #   (`MIXED_REVIEW_SENTINEL`) · `app/utils/withheld.py` 의 **표준 보류 어휘**.
-    from app.services.zoning.special_parcel import _aggregate_integrated_zoning
+    # ★★형제(`special_parcel._aggregate_integrated_zoning`)와의 **일치는 별건 PR 로 뺐다.**
+    #   실측(2026-09-04 · 적대 리뷰): 형제는 동률(±5%)·규제성격 상이를 `mixed_review_required`
+    #   로 거부하는데 여기는 임의 단일화한다 — **12모집단 중 5개가 갈린다.**
+    #   그런데 그 센티널을 그냥 내보내면 **두 개의 사용자 가시 회귀**가 난다:
+    #     ① `DevelopmentScenarioCard.tsx:211` 이 `{site.primary_zone}` 을 **볼드 배지**로 그려
+    #        `mixed_review_required` 가 **맨몸으로** 화면에 나간다(이 저장소가 2026-08-24 에
+    #        이미 라이브에서 겪은 결함 — 형제 표면은 봉합됐고 **이 표면은 안 쓸렸다**)
+    #     ② `_is_residential()` 이 False 가 되어 주거계 4종이 **「불가 · 요건 미해당」** 으로
+    #        번역된다(55% 가 주거인 부지에 «요건 미해당» 은 **거짓 사유**) · 1종은 목록에서 사라진다
+    #   → **보류를 「불가」로 번역하지 않는 판정 상태**와 **화면 처리**가 선행돼야 한다.
+    #   ★부채로 드러낸다: `tests/test_premise_audit_scenarios_path.py` 의 `it.todo` 계열 단언 참조.
+    from app.services.zoning.legal_zone_limits import mixed_zone_limits
 
-    agg = _aggregate_integrated_zoning(
-        [{"zone_type": str(r["zone"]).strip(), "area_sqm": float(r["area"]),
-          "areaSqm": float(r["area"])} for r in named]
+    mix = mixed_zone_limits(
+        [{"zone_type": str(r["zone"]).strip(), "area_sqm": float(r["area"])} for r in named]
     )
-    dom = agg.get("dominant_zone")
-    if dom == MIXED_REVIEW_SENTINEL:
-        # ★「보류」를 «면적가중으로 골랐다» 고 말하면 거짓이다 — 근거도 보류여야 한다.
-        return MIXED_REVIEW_SENTINEL, ZONE_BASIS_MIXED_REVIEW
+    dom = mix.get("dominant_zone")
     if dom:
         return str(dom), ZONE_BASIS_AREA_WEIGHTED
-    # ★형제가 `None` 을 내면(판정 불가) **첫 필지로 지어내지 않는다** — 보류를 명시한다.
-    return MIXED_REVIEW_SENTINEL, ZONE_BASIS_MIXED_REVIEW
+    return str(named[0]["zone"]).strip(), ZONE_BASIS_NO_AREA
 
 
 def _is_residential(zone: str) -> bool:
@@ -807,7 +788,16 @@ class DevelopmentScenarioSimulator:
         try:
             from app.services.zoning import premise_audit
 
-            _zm = _zone_mix_from(enriched)
+            # ★M5 봉합 — 형제가 이미 `zone_mix` 를 낸다. 손실 있는 재구현을 만들지 않는다
+            #   (그것이 이 PR 이 고치겠다고 선언한 바로 그 패턴이었다 — 세 번째 재발이었다).
+            #   ★M4: 형제는 용도 미조회 필지를 **「미상」 버킷**에 담아 **면적 보존**을 유지한다.
+            #   내 재구현은 그것을 **버려서** 정상 부지에 `area_conservation` **거짓 위반**을 냈다.
+            from app.services.zoning.special_parcel import _aggregate_integrated_zoning
+
+            _agg = _aggregate_integrated_zoning([
+                {"zone_type": p.get("zone"), "area_sqm": p.get("area")} for p in enriched
+            ])
+            _zm = _agg.get("zone_mix") or []
             premise_audit_result = premise_audit.audit({
                 "dominant_zone": primary_zone,
                 "zone_mix": _zm,
@@ -815,9 +805,24 @@ class DevelopmentScenarioSimulator:
                     {"zone": p.get("zone"), "area_sqm": p.get("area")} for p in enriched
                 ],
                 "integrated": {"total_area_sqm": total_area},
-                "scenario": {"top3": scenarios[:3]},
+                # ★M2 봉합 — 라우터는 `top3` 를 **dict** 로 넘긴다(`zone_type`·`parcel_count`·
+                #   `land_area_sqm`). 내가 **list** 를 넘겨 `.get()` 이 터졌고, `audit()` 의
+                #   광범위 except 가 삼켜 **6종 중 3종이 조용히 죽었다**(checked=3/6).
+                #   ★죽은 것에 `path_invariance_zone` 이 포함됐다 — 모듈이 «오늘의 P0» 라 부르는 관계다.
+                "scenario": {"top3": {
+                    "zone_type": primary_zone,
+                    "parcel_count": len(addrs),
+                    "land_area_sqm": total_area,
+                }},
                 "_request_parcel_count": requested_count,
             })
+            # ★달성 가능 커버리지를 **응답에 싣는다** — 「감시망 안」이라고만 말하면
+            #   몇 종이 실제로 판정됐는지 아무도 모른다(모듈이 `checked` 를 그 목적으로 만들었는데
+            #   읽는 곳이 0곳이었다). ★`path_invariance_zone` 은 이 경로에서 **구조적으로 공허**하다 —
+            #   집계 경로와 시나리오 경로가 **같은 `primary_zone`** 에서 나오므로 자기 자신과 비교한다.
+            #   두 경로를 분리하는 것은 별건(형제 `dominant_zone` 도입)이라 그 사실을 명시한다.
+            if isinstance(premise_audit_result, dict):
+                premise_audit_result["structurally_vacuous"] = ["path_invariance_zone"]
         except Exception as e:  # noqa: BLE001
             # ★감사기 사망을 «위반 0» 으로 뭉개지 않는다 — 사유를 싣는다.
             logger.warning("전제 감사 실패", err=str(e)[:120])
