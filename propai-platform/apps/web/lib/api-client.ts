@@ -120,6 +120,16 @@ export type ApiRequestOptions = Omit<RequestInit, "body"> & {
    *   (refresh 재시도는 그대로 수행 — 만료 토큰 사용자는 여전히 자동 갱신된다.)
    */
   skipSessionExpiry?: boolean;
+  /**
+   * 응답을 무엇으로 읽을지. 기본은 `"json"`.
+   *
+   * ★`"blob"` 이 없어서 **모든 다운로드가 이 클라이언트를 우회**했다(실측 29개 파일).
+   *   비-JSON 응답은 `parseResponse` 가 `response.text()` 로 읽어 **바이너리가 깨지기** 때문이다.
+   *   그리고 우회한 경로에는 **401→refresh→재시도가 없어서**, 액세스 토큰(운영 60분)이
+   *   만료된 뒤의 다운로드는 반드시 `유효하지 않은 토큰: Signature has expired.` 로 죽었다.
+   *   ★사용자에겐 «보고서만 안 된다»로 보인다 — 다른 호출은 리프레시로 살아 있으니까.
+   */
+  responseType?: "json" | "blob";
 };
 
 // 백엔드 무응답 시 프론트가 영원히 대기("분석 중...")하는 것을 막는 기본 타임아웃.
@@ -426,6 +436,13 @@ async function request<T>(path: string, options: ApiRequestOptions = {}) {
     if (response.status === 401 && !options.skipSessionExpiry) handleSessionExpired();
   }
 
+  // ★blob 은 **성공했을 때만** 그대로 돌려준다.
+  //   서버는 오류를 **JSON** 으로 준다 — 그것을 blob 으로 읽으면 `ApiClientError.payload` 가
+  //   쓸모없어지고 **사유가 사라진다**(이 저장소가 반복해 데인 「진단 불가는 그 자체로 장애」).
+  if (options.responseType === "blob" && response.ok) {
+    return (await response.blob()) as T;
+  }
+
   const payload = await parseResponse(response);
 
   if (!response.ok) {
@@ -448,6 +465,16 @@ function getV2RequestUrl(path: string) {
 
 export const apiClient = {
   request,
+  /**
+   * 파일 다운로드(PDF·DOCX·XLSX 등). **`request` 를 그대로 타므로**
+   * 401→refresh→재시도가 **자동으로 붙는다.**
+   *
+   * ★새 재시도 로직을 만들지 않는다 — 만들면 그 새 구조가 다음 결함의 서식지가 된다.
+   *   (이 저장소가 «봉합이 새 이음매를 만든다»로 반복해 데인 형태.)
+   */
+  download(path: string, options?: Omit<ApiRequestOptions, "responseType">) {
+    return request<Blob>(path, { ...options, responseType: "blob" });
+  },
   get<T>(path: string, options?: Omit<ApiRequestOptions, "method">) {
     return request<T>(path, { ...options, method: "GET" });
   },
