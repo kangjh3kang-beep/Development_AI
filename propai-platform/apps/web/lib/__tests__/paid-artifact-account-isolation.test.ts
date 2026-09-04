@@ -26,6 +26,7 @@ import {
   UNATTRIBUTED_BUCKET,
 } from "@/lib/account-scoped-storage";
 import { __stripCommentsForScan } from "@/lib/source-invariant";
+import { useSatongMapPrefs } from "@/store/useSatongMapPrefsStore";
 import { migrateOneStore } from "@/lib/paid-artifact-migration";
 
 const WEB_ROOT = join(__dirname, "..", "..");
@@ -291,6 +292,23 @@ describe("배선 락 — 유료 산출물 스토어는 계정 스코프를 우�
       wipe,
       "리셋이 쓰기 정지 창 밖에 있다 — persist 가 **빈 값을 계정 키에 기록**해 유료 산출물이 지워진다",
     ).toContain("withWritesSuspended(");
+    // ★★축을 **필드까지** 내린다(2026-09-04 · #966 적대 리뷰 MAJOR-2).
+    //   종전에는 «`useSatongMapPrefs.setState` 라는 문자열이 있는가» 만 봤다 — 그래서
+    //   내가 새로 더한 `enabledLayerIds:` **한 줄을 지우는 변이가 2,327건을 통과**했다.
+    //   파생형으로 바꿔 놓고도 **축이 한 단계 위**라 그 아래가 무잠금이었다.
+    //   → 스토어의 **비-함수 상태 키**를 실행으로 파생해, 각 키가 와이프 창에 있는지 본다.
+    //   다섯 번째 필드가 생기면 **자동으로** 걸린다.
+    {
+      const nonFnKeys = Object.entries(useSatongMapPrefs.getState())
+        .filter(([, v]) => typeof v !== "function")
+        .map(([k]) => k)
+        .sort();
+      expect(nonFnKeys.length, "상태 키를 하나도 못 모았다 — 수집기가 죽었다").toBeGreaterThanOrEqual(2);
+      for (const key of nonFnKeys) {
+        expect(wipe, `useSatongMapPrefs.${key}: 계정 전환 시 이 필드를 안 되돌린다`).toContain(`${key}:`);
+      }
+    }
+
     for (const store of STORES3) {
       expect(wipe, `${store}: 계정 전환 시 메모리 상태를 안 비운다`).toContain(
         `${store}.setState`,

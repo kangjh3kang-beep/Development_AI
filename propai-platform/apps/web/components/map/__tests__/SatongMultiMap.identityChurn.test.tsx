@@ -103,7 +103,11 @@ describe("identity churn — 레이어 토글 무변화 시 참조 보존", () =
   it("★셸이 그 파생 Set 을 **memo** 로 만든다 — 매 렌더 새로 만들면 위 계약이 무의미하다", () => {
     const src = readSource("components/precheck/SatongMapShell.tsx");
     const stmts = src.split(";").map((x) => x.replace(/\s+/g, " ").trim());
-    expect(stmts.filter((x) => /\bconst enabledLayers = useMemo\b/.test(x))).toHaveLength(1);
+    const memo = stmts.filter((x) => /\bconst enabledLayers = useMemo\b/.test(x));
+    expect(memo).toHaveLength(1);
+    // ★★deps 까지 본다(리뷰 변이 J: deps 를 `[]` 로 얼려도 통과했다 — memo 가 «있다» 는
+    //   것만 보면 **얼어붙은 memo** 가 만점이 된다. 그러면 토글해도 화면이 안 바뀐다).
+    expect(memo[0]).toMatch(/\[\s*enabledLayerIds\s*\]/);
     // ★음성 대조군 — useState 로 되돌리면 영속도 identity 보장도 사라진다.
     expect(stmts.filter((x) => /\buseState\b/.test(x) && /\benabledLayers\b/.test(x))).toHaveLength(0);
   });

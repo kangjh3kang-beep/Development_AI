@@ -23,6 +23,7 @@ beforeEach(() => {
   useSatongMapPrefs.setState({
     controlsByLayer: defaultSatongMapControls(),
     enabledLayerIds: defaultEnabledLayerIds(),
+    enabledLayersCustomized: false,
   });
 });
 
@@ -303,7 +304,7 @@ describe("★★레이어 활성 상태 — 사용자 신고의 **남은 절반*
   it("★★영속 — 켠 레이어가 재수화 후에도 살아 있다", async () => {
     window.localStorage.setItem(
       KEY,
-      JSON.stringify({ state: { enabledLayerIds: ["cadastre", "zoning"] }, version: 1 }),
+      JSON.stringify({ state: { enabledLayerIds: ["cadastre", "zoning"], enabledLayersCustomized: true }, version: 1 }),
     );
     await useSatongMapPrefs.persist.rehydrate();
     expect(ids()).toEqual(["cadastre", "zoning"]);
@@ -313,7 +314,7 @@ describe("★★레이어 활성 상태 — 사용자 신고의 **남은 절반*
     // 종전에는 새로고침하면 무조건 기본으로 돌아갔다.
     window.localStorage.setItem(
       KEY,
-      JSON.stringify({ state: { enabledLayerIds: ["cadastre"] }, version: 1 }),
+      JSON.stringify({ state: { enabledLayerIds: ["cadastre"], enabledLayersCustomized: true }, version: 1 }),
     );
     await useSatongMapPrefs.persist.rehydrate();
     expect(ids()).toEqual(["cadastre"]);
@@ -326,20 +327,62 @@ describe("★★레이어 활성 상태 — 사용자 신고의 **남은 절반*
     //   귀결: 새 레이어가 추가돼도 기존 사용자에게 자동으로 안 켜진다(계획서 §3).
     window.localStorage.setItem(
       KEY,
-      JSON.stringify({ state: { enabledLayerIds: ["zoning"] }, version: 1 }),
+      JSON.stringify({ state: { enabledLayerIds: ["zoning"], enabledLayersCustomized: true }, version: 1 }),
     );
     await useSatongMapPrefs.persist.rehydrate();
     expect(ids()).toEqual(["zoning"]); // cadastre 가 **자동으로 안 붙는다**
   });
 
-  it("resetEnabledLayers 가 기본으로 되돌린다", () => {
+  it("★★«골랐다» 표시가 없으면 저장분을 **무시**한다 — 적대 리뷰 MAJOR-3", async () => {
+    // ★내 초판 전제 *«여기 담긴 것은 사용자가 켠 것»* 은 **거짓**이었다(실행으로 확인):
+    //   `partialize` 가 없어 **아무 관계없는 컨트롤 변경도** enabledLayerIds 를 함께 쓴다.
+    //   그래서 «한 번도 안 고름» 과 «명시적으로 기본값을 고름» 이 **같은 모양**이 됐고,
+    //   「선택 필지」만 끈 사용자에게 기본값이 **영구히 죽었다**.
+    //   → 「모름」을 표현 가능하게 만들었다. 이 케이스가 그 게이트를 잠근다.
+    window.localStorage.setItem(
+      KEY,
+      JSON.stringify({ state: { enabledLayerIds: ["zoning"] }, version: 1 }), // ★플래그 없음
+    );
+    await useSatongMapPrefs.persist.rehydrate();
+    expect(ids()).toEqual(defaultEnabledLayerIds()); // 저장분 무시 → 기본값
+  });
+
+  it("★대칭 — 표시가 **있으면** 저장분을 쓴다(한쪽만 재면 「항상 무시」가 만점)", async () => {
+    window.localStorage.setItem(
+      KEY,
+      JSON.stringify({ state: { enabledLayerIds: ["zoning"], enabledLayersCustomized: true }, version: 1 }),
+    );
+    await useSatongMapPrefs.persist.rehydrate();
+    expect(ids()).toEqual(["zoning"]);
+  });
+
+  it("★컨트롤만 바꾸면 «골랐다» 가 **켜지지 않는다** — 그게 이 결함의 근원이었다", () => {
+    useSatongMapPrefs.getState().setControlsByLayer((p) => ({ ...p, cadastre: ["boundary"] }));
+    expect(useSatongMapPrefs.getState().enabledLayersCustomized).toBe(false);
+  });
+
+  it("★레이어를 실제로 토글하면 «골랐다» 가 켜진다", () => {
+    useSatongMapPrefs.getState().toggleLayerEnabled("zoning");
+    expect(useSatongMapPrefs.getState().enabledLayersCustomized).toBe(true);
+  });
+
+  it("★변화가 없으면 «골랐다» 도 안 켜진다(cadastre 는 못 끈다)", () => {
+    useSatongMapPrefs.getState().toggleLayerEnabled("cadastre");
+    expect(useSatongMapPrefs.getState().enabledLayersCustomized).toBe(false);
+  });
+
+  it("resetEnabledLayers 가 기본으로 되돌리고 «골랐다» 도 끈다", () => {
     useSatongMapPrefs.getState().ensureLayerEnabled("poi");
+    expect(useSatongMapPrefs.getState().enabledLayersCustomized).toBe(true); // 대조군
     useSatongMapPrefs.getState().resetEnabledLayers();
     expect(ids()).toEqual(defaultEnabledLayerIds());
+    // ★«한 번도 안 고름» 으로 돌아가야 이후 추가되는 레이어의 기본값이 다시 닿는다.
+    expect(useSatongMapPrefs.getState().enabledLayersCustomized).toBe(false);
   });
 });
 
 describe("★부채 — 초록 안에서 보이게 둔다(§C-13)", () => {
+  it.todo("resetEnabledLayers 를 UI 에 노출한다 — 현재 소비처 0(형제 resetControlsByLayer 와 같은 상태)");
   it.todo("resetControlsByLayer 를 UI 에 노출한다 — 현재 소비처 0(툴바로 되돌릴 수 있어 막다른 상태는 아니다)");
   it.todo("selected ↔ selected-parcel 어휘 통합 시 저장분 마이그레이션 — migrate 는 지금 통과다");
 });

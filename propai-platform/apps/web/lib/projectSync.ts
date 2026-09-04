@@ -127,6 +127,10 @@ export function clearAllProjectData(): void {
         // ★2026-09-04 — 레이어 활성 상태도 함께 되돌린다. 안 하면 계정을 바꿔도 **이전 계정이
         //   켜 둔 레이어**가 화면에 남는다(#965 리뷰가 컨트롤 쪽에서 잡은 것과 같은 축).
         enabledLayerIds: defaultEnabledLayerIds(),
+        // ★«한 번도 안 고름» 으로 되돌린다 — 안 하면 다음 계정이 «골랐다» 상태를 물려받아
+        //   이후 추가되는 레이어의 기본값이 그 계정에도 안 닿는다.
+        //   ★이 줄은 **필드 축 락이 잡아 줬다**(#966 리뷰 MAJOR-2 봉합 직후, 몇 분 만에).
+        enabledLayersCustomized: false,
       } as never);
     } catch { /* noop */ }
   });
