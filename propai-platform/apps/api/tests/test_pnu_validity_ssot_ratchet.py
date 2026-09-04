@@ -59,15 +59,11 @@ _PNU_SLICE_CONSTS = (5, 10, 19)
 # ★의도가 코드에 적혀 있고 **자릿수까지 검사하는** 자리는 예외로 등재한다(사유 필수).
 #   fail-closed: 여기 없는 새 손수 검사는 무조건 빨개진다.
 _EXEMPT: dict[str, str] = {
-    # ★2026-09-04 — 코드가 `sale_price_resolver` 로 **이관**되며 경로가 바뀌었다.
-    #   래칫이 그것을 정확히 잡았다(파생형이라 새 파일이 자동으로 감시망에 들어온다).
-    #   **사유는 그대로다** — 코드도 의도도 안 바뀌고 **자리만** 옮겼다.
-    # ★이 키는 **줄번호**라 같은 파일에 코드를 넣기만 해도 어긋난다(오늘 두 번째).
-    #   fail-closed 라 위험하진 않지만 **유지비가 붙는다** — 래칫 소유자에게 공유했다.
-    "app/services/feasibility/sale_price_resolver.py:119":
+    # ★키 형식: `파일::표현식`. 종전 `파일:줄번호` 는 삽입마다 어긋났다(한 세션 3회).
+    "app/services/feasibility/sale_price_resolver.py::len(pnu) >= 5":
         "의도된 관대함 — 주석이 'PNU가 짧아도 앞 5자리가 숫자면 시군구코드로 사용(자체 충족)'이라 "
         "명시하고 `pnu[:5].isdigit()` 로 자릿수를 검사한다. 좁히면 정상 폴백이 죽는다.",
-    "services/avm_service.py:511":
+    "services/avm_service.py::len(request.pnu) >= 5":
         "`request.pnu[:5].isdigit()` 로 자릿수를 함께 검사한다 — 오염 문자열은 통과하지 못한다.",
 }
 
@@ -102,7 +98,12 @@ def _hand_rolled_length_guards() -> list[tuple[str, int, str]]:
                 isinstance(c, ast.Constant) and c.value in _PNU_SLICE_CONSTS for c in sides
             ):
                 continue
-            key = f"{p.relative_to(API_ROOT)}:{n.lineno}"
+            # ★키를 **줄번호가 아니라 표현식**으로 만든다(2026-09-05).
+            #   `파일:줄번호` 는 **같은 파일에 코드를 넣기만 해도 어긋난다** —
+            #   한 세션에서 **세 번** 밟았다(72 → 119 → 162). fail-closed 라 위험하진
+            #   않지만 이관·삽입마다 유지비가 붙고, 그 소음이 진짜 위반을 가린다.
+            #   ★표현식은 **그 코드가 무엇인지**를 말하므로 자리가 옮겨도 따라온다.
+            key = f"{p.relative_to(API_ROOT)}::{expr.strip()}"
             if key in _EXEMPT:
                 continue
             hits.append((str(p.relative_to(API_ROOT)), n.lineno, expr[:90]))
