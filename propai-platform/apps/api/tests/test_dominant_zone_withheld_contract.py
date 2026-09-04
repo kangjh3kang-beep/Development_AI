@@ -138,3 +138,73 @@ def test_zone_pool_actually_widens_the_check():
     # ★음성 대조군 — zones 에 주거가 **없으면** 그 방식은 없어야 한다(과잉 포함 방지)
     nores = {x["scheme"] for x in sim._scenarios(_ctx(None, ["준공업지역", "일반상업지역"]))}
     assert "역세권 장기전세주택(시프트)" not in nores, "주거가 없는데 주거계가 들어왔다"
+
+
+# ── ③ 변이가 드러낸 사각 봉합 ──────────────────────────────────────────────
+
+def test_commercial_axis_also_widens():
+    """★`com` 축 — `res` 만 넓히고 `com` 을 두면 상업계 방식이 보류에서 사라진다.
+
+    변이 실측: `com = _is_commercial(zone)` 로 되돌려도 **SURVIVED** 였다 —
+    상업계 방식을 태우는 모집단이 없었기 때문이다.
+    """
+    sim = DevelopmentScenarioSimulator()
+    zones = ["제2종일반주거지역", "일반상업지역"]
+    single = {x["scheme"]: x["applicable"] for x in sim._scenarios(_ctx("일반상업지역", zones))}
+    held = {x["scheme"]: x["applicable"] for x in sim._scenarios(_ctx(None, zones))}
+    # 상업 우세로 단일화했을 때 추진 가능하던 것이 보류에서 사라지면 안 된다
+    com_ok = [k for k, v in single.items() if v in ("가능", "조건부")]
+    assert com_ok, "대조군이 비었다"
+    lost = [k for k in com_ok if held.get(k) not in ("가능", "조건부")]
+    assert not lost, f"보류에서 상업계 추진 경로가 사라졌다 — {lost}"
+    # ★음성 대조군 — 상업 유무가 **판정**을 갈라야 한다.
+    #   (이름 집합이 아니라 `applicable` 을 본다 — `com` 은 목록이 아니라 판정을 바꾼다.
+    #    처음엔 이름 집합으로 비교했다가 «안 갈린다» 는 거짓 실패를 냈다.)
+    nocom = {x["scheme"]: x["applicable"]
+             for x in sim._scenarios(_ctx(None, ["제2종일반주거지역", "자연녹지지역"]))}
+    withcom = {x["scheme"]: x["applicable"] for x in sim._scenarios(_ctx(None, zones))}
+    split = {k for k in nocom if nocom[k] != withcom.get(k)}
+    assert split, "상업 유무가 판정을 안 가른다 — com 축이 죽었다"
+
+
+def test_single_zone_site_without_zones_list_is_safe():
+    """★`zone` 을 pool 에서 빼면 **`zones` 가 비어 있는 부지**가 무너진다.
+
+    변이 실측: `_zone_pool` 을 `zones` 만으로 바꿔도 **SURVIVED** — `zones` 없는 ctx 를
+    태우는 모집단이 없었다. 실제 호출부는 `zones` 를 항상 채우지만, 그 전제가 깨지면
+    **단일 용도지역 부지가 통째로 「불가」** 가 된다.
+    """
+    sim = DevelopmentScenarioSimulator()
+    got = {x["scheme"]: x["applicable"] for x in sim._scenarios(
+        {**_ctx("제2종일반주거지역", []), "zones": []})}
+    assert len(got) >= 20, f"시나리오가 {len(got)}종 — 붕괴"
+    ok = [k for k, v in got.items() if v in ("가능", "조건부")]
+    assert len(ok) >= 5, f"zones 가 비면 추진 가능이 {len(ok)}종 — `zone` 이 pool 에서 빠졌다"
+
+
+def test_absent_code_is_wired_into_the_site_payload():
+    """★계약 필드가 **응답에 실린다** — 만들어 놓고 안 실으면 검증기가 볼 것이 없다.
+
+    변이 실측: `"primary_zone_absent"` 줄을 지워도 **SURVIVED** 였다.
+    소스가 아니라 **AST 로 페이로드 딕트**를 본다(주석·문자열에 안 뚫리게).
+    """
+    import ast
+    import inspect
+    import pathlib
+
+    src = pathlib.Path(inspect.getsourcefile(SS)).read_text(encoding="utf-8")
+    with_zone = with_absent = 0
+    for n in ast.walk(ast.parse(src)):
+        if not isinstance(n, ast.Dict):
+            continue
+        keys = {k.value for k in n.keys
+                if isinstance(k, ast.Constant) and isinstance(k.value, str)}
+        if "primary_zone" in keys and "zones" in keys:
+            with_zone += 1
+            if "primary_zone_absent" in keys:
+                with_absent += 1
+    assert with_zone >= 2, f"site 페이로드를 {with_zone}곳 찾았다 — 수집기 이상"
+    assert with_absent == with_zone, (
+        f"{with_zone}곳 중 {with_absent}곳만 `primary_zone_absent` 를 싣는다 — "
+        "값이 None 인데 사유 코드가 없으면 `validate_withheld_pair` 가 계약 위반으로 잡는다"
+    )
