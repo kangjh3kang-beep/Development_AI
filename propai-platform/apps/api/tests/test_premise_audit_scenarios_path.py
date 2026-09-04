@@ -34,15 +34,15 @@ def _sibling(pairs):
 # ── ① ★형제 일치는 **별건 PR** 로 뺐다 — 부채를 초록 안에 드러낸다 ──────────
 
 @pytest.mark.xfail(strict=True, reason=(
-    "★부채(별건): `dominant_zone_by_area` 가 형제 `_aggregate_integrated_zoning` 와 갈린다. "
-    "형제는 동률(±5%)·규제성격 상이를 `mixed_review_required` 로 거부하는데 여기는 임의 단일화한다 "
-    "— 12모집단 중 **5개가 갈림**(상업+주거·동률·녹지+주거·주거+공업·관리+농림). "
-    "★그냥 맞추면 **사용자 가시 회귀 2건**이 난다: "
-    "①`DevelopmentScenarioCard.tsx:211` 이 `site.primary_zone` 을 볼드 배지로 그려 센티널이 "
-    "**맨몸으로** 나간다(2026-08-24 라이브에서 이미 겪은 결함) "
-    "②`_is_residential()` 이 False 가 되어 주거계 4종이 **「불가·요건 미해당」** 으로 번역된다"
-    "(55%가 주거인 부지에 «요건 미해당» 은 거짓 사유) · 1종은 목록에서 사라진다. "
-    "→ **보류 판정 상태 + 화면 처리**가 선행돼야 한다."))
+    "★**의도된 불일치**(사유 정정 2026-09-04). 종전 사유는 *«맞추면 회귀 2건»* 이었는데 "
+    "`fix/dominant-zone-withheld-contract` 가 그 둘을 **해소**했다(센티널 → `None+_absent` · "
+    "`res`/`com` 을 `zones` 전체로). **진짜 사유는 다르다**: "
+    "형제 `special_parcel.py:1869` 는 단일화 거부를 `\"mixed_review_required\"` 라는 **값**으로 내는데, "
+    "저장소의 확립된 보류값 계약(`app/utils/withheld.py`)이 그 문자열을 **`SENTINEL_VALUES` 금지어**로 "
+    "등재하고 있다. 즉 **형제가 계약을 위반**하고 있고(검증기 `validate_withheld_pair` 를 "
+    "그 경로가 안 탄다), «형제와 일치» 는 **위반을 따라가는 것**이다. "
+    "→ 이 시뮬레이터는 형제의 **판정은 따르되 계약 형태로 번역**한다. "
+    "형제 쪽 위반 수정은 **소비처 6곳 파급**이라 별건이다."))
 def test_dominant_zone_agrees_with_sibling_TODO():
     from app.services.zoning.special_parcel import _aggregate_integrated_zoning
     pairs = [("일반상업지역", 1200.0), ("제2종일반주거지역", 800.0)]
