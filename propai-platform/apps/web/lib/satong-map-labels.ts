@@ -105,3 +105,36 @@ export function bindSatongLabel(
     className: "satong-tooltip",
   });
 }
+
+/**
+ * 실거래 라벨의 **금액 표기** 조립 — 총액·평당 **병기** 계약(2026-09-04 사용자 요청).
+ *
+ * ★종전엔 either/or 였다(`unit-price` 토글이 총액을 평당으로 **대체**). 한쪽을 보려면
+ *   다른 쪽을 포기해야 했고, 컨트롤 설명도 *"총액 대신 평당가로 표시"* 라 적혀 있었다.
+ *   이제 **둘 다 항상** 보이고, 토글은 **어느 쪽을 앞에 둘지**만 정한다.
+ *
+ * ★평당가는 **서버가 준 값**만 쓴다(정본 `per_pyeong_10k`, 유효숫자 3자리).
+ *   여기서 `총액 ÷ 면적` 을 다시 계산하지 않는다 — 그 나눗셈은 원천이 이미 평당으로 정한
+ *   값을 역산하는 것이라 **없는 가격차를 만든다**(#930 이 실측으로 확인).
+ *
+ * ★없는 값은 **생략**한다. `0` 을 찍지 않는다 — "평당 0원"으로 읽힌다.
+ */
+export function composeMarketPriceTag(opts: {
+  kind: "trade" | "rent";
+  /** 이미 포맷된 총액 문자열(예 `"3.6억"`). 없으면 null. */
+  totalText: string | null | undefined;
+  /** 서버가 준 평당가(만원/평). 면적 결측 등이면 null/undefined. */
+  perPyeong10k: number | null | undefined;
+  /** `unit-price` 컨트롤 — 켜면 평당가를 앞에 둔다. */
+  pyeongFirst: boolean;
+}): string {
+  if (opts.kind !== "trade") return "";
+  const total = opts.totalText ? String(opts.totalText) : null;
+  const pp =
+    typeof opts.perPyeong10k === "number" && Number.isFinite(opts.perPyeong10k) && opts.perPyeong10k > 0
+      ? `${opts.perPyeong10k.toLocaleString()}만/평`
+      : null;
+  const ordered = opts.pyeongFirst ? [pp, total] : [total, pp];
+  const shown = ordered.filter((v): v is string => !!v);
+  return shown.length ? ` ${shown.join(" · ")}` : "";
+}
