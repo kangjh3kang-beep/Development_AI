@@ -140,6 +140,32 @@ export function hasSatongLayerControl(
   return !!state?.controlsByLayer[id]?.includes(controlId);
 }
 
+/**
+ * 「선택 필지」 라벨 컨트롤 id — ★어휘가 **두 벌**이다(실측 2026-09-03).
+ *   · `SatongMapShell`(실제 툴바)      : "selected"
+ *   · `ZoningSignalMap`·`ParcelBoundaryMap`: "selected-parcel"
+ * 두 벌이 생긴 이유는 **어느 쪽도 읽히지 않았기 때문**이다 — 선언만 있고 소비처가
+ * 0이면 표기가 갈라져도 아무 데서도 빨개지지 않는다. 통합은 별건으로 두되, 여기서
+ * 닫힌 집합으로 못 박아 **세 번째 어휘가 조용히 생기는 것**을 테스트가 막는다.
+ */
+export const SATONG_SELECTION_LABEL_CONTROL_IDS = ["selected", "selected-parcel"] as const;
+
+/**
+ * 선택 필지 **라벨**을 표시할지 — ★기본은 표시, 끌 수 있는 것은 **컨트롤을 제공하는 화면뿐**.
+ *
+ * ★왜 `hasSatongLayerControl(state, "cadastre", "selected")` 한 줄이 아닌가:
+ *   호출부 6곳 중 3곳은 cadastre 컨트롤을 **선언하지 않는다**(`layerState` 미전달 1 ·
+ *   `controlsByLayer: {}` 2). 그 화면에는 라벨을 다시 켤 **UI 가 없다** — 단순 조회로
+ *   판정하면 그 3곳에서 라벨이 **조작 수단 없이** 사라진다(실측으로 확인한 회귀).
+ *   그래서 «선언했는가»를 먼저 묻고, 선언한 화면에서만 그 선언대로 판정한다.
+ */
+export function satongSelectionLabelsVisible(state: SatongMapLayerState | undefined): boolean {
+  const declared = state?.controlsByLayer?.cadastre;
+  // 선언 없음 = 끄는 수단 없음 → 종전대로 항상 표시(PR#329 LOW1 의도 보존).
+  if (!declared) return true;
+  return SATONG_SELECTION_LABEL_CONTROL_IDS.some((id) => declared.includes(id));
+}
+
 export function satongMapFeatureKey(feature: Pick<SatongMapFeature, "id" | "pnu" | "address">): string {
   return feature.pnu || feature.id || feature.address.trim().replace(/\s+/g, " ");
 }

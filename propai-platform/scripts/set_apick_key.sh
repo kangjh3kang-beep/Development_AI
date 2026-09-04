@@ -66,5 +66,5 @@ fi
 
 echo
 echo "✅ 완료. 변경을 반영하려면 백엔드 재배포가 필요합니다:"
-echo "   ssh -i ~/.oci.key ubuntu@134.185.104.167 'nohup bash ~/deploy.sh > ~/deploy_\$(date +%s).LOG 2>&1 & echo STARTED'"
+echo "   ssh -i ~/.oci.key ubuntu@168.110.125.89 'nohup bash ~/deploy.sh > ~/deploy_\$(date +%s).LOG 2>&1 & echo STARTED'"
 echo "   (재배포 후 /api/v1/registry/status 로 provider 확인)"
