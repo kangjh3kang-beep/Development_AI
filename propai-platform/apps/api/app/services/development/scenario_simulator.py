@@ -464,37 +464,25 @@ def dominant_zone_by_area(rows: list[dict[str, Any]]) -> tuple[str, str]:
     return str(named[0]["zone"]).strip(), ZONE_BASIS_NO_AREA
 
 
-def zone_is_unknown(zone: str | None) -> bool:
-    """용도지역을 **확보하지 못했는가** — 「아니다」와 구별되는 **제3의 상태**.
+def zone_pool_unknown(zone: str | None, zones: list | None = None) -> bool:
+    """부지에 **확보된 용도지역이 하나도 없는가** — 「아니다」와 구별되는 **제3의 상태**.
 
-    ## 왜 이 술어가 필요한가 (2026-09-05 · 라이브 실측)
+    ## 왜 `zone` 하나만 보면 안 되나 (★적대 리뷰 2026-09-05 · 실측)
 
-    `_is_residential`·`_is_commercial` 은 `bool` 이라 **「주거가 아니다」와 「모른다」를 같은
-    `False`** 로 뭉갠다. 그래서 용도지역 조회가 실패한 부지가 **상업지역과 완전히 같은 판정**을
-    받았다 — `_scenarios()` 를 직접 태운 값:
+    첫 판은 `not (zone or "").strip()` 이었다. 그러면 **`primary_zone` 은 비었는데 `zones` 에는
+    용도지역이 살아 있는 부지**를 「미확보」로 오판한다. 그건 가상의 입력이 아니다 —
+    `#972`(우세 용도지역 **보류**를 `None + _absent` 로)가 **정확히 그 모집단을 만든다**:
+    동률·규제성격 상이면 `primary_zone=None` 인데 `zones=['제2종일반주거지역','일반공업지역']` 이다.
+    리뷰가 `git merge-tree` 로 두 PR 을 합친 트리를 **실행해** 확인했다 —
+    확보된 부지에 *"용도지역을 **조회하지 못해**"* 라고 말한다.
 
-        주거(대조)      21종 · 추진가능 16 · 불가 5
-        상업            20종 · 추진가능 12 · 불가 8
-        ★조회실패 ''    20종 · 추진가능 12 · 불가 8   ← **상업과 동일**
-        ★조회실패 None  20종 · 추진가능 12 · 불가 8   ← **상업과 동일**
+    ★내 겹침 주장(*"조회 실패는 `zone` 도 `zones` 도 둘 다 빈다"*)은 **한 방향만 참**이었다.
+      반대 모집단(`zone` 만 빔)을 안 쟀다. → **풀 전체**로 판정한다.
 
-    사용자가 잃는 것: **시나리오 1종이 목록에서 사라지고**(역세권 장기전세주택),
-    **3종이 「조건부 → 불가」로 뒤집힌다**(모아주택/모아타운 · 주거환경개선사업 · 역세권 청년안심주택).
-
-    ★**그리고 그 「불가」의 사유가 `["요건 미해당"]` 이다.**
-      **「요건에 해당하지 않는다」와 「요건을 판정할 수 없다」는 다른 사실**이고,
-      전자로 말하면 사용자는 **확인할 것이 없다고 읽는다.**
-
-    ★이 파일 자신이 그 결함을 **주석으로 예고**하고 있었다(`dominant_zone_by_area` 위):
-      *"`_is_residential()` 이 False 가 되어 주거계 4종이 「불가 · **요건 미해당**」으로
-        번역된다 — 55% 가 주거인 부지에 «요건 미해당» 은 **거짓 사유**"*.
-
-    ★**판정값(`applicable`)은 바꾸지 않는다.** 프론트가
-      `APP_STYLE[s.applicable] || APP_STYLE["불가"]` 라 **모르는 판정어는 「불가」 스타일로
-      떨어지고**, 「가능」으로 올리는 것은 **날조**다. 바꾸는 것은 **사유**뿐이다 —
-      저장소 자신의 기준선(*"「불가」가 아니라 「관할 확인이 필요합니다」"*)과 같은 결이다.
+    ★그리고 「**보류(모호)**」와 「**미확보**」는 다른 사유다(`app/utils/withheld.py` 의 닫힌 어휘로는
+      `ambiguous` ≠ `source_unavailable`). 여기서는 **미확보만** 다루고, 보류는 `#972` 의 몫이다.
     """
-    return not (zone or "").strip()
+    return not any((z or "").strip() for z in [zone, *(zones or [])])
 
 
 #: 용도지역 미확보로 판정을 **못 한** 것을 말하는 사유(「해당 없음」과 구별된다).
@@ -506,22 +494,33 @@ UNKNOWN_ZONE_NOTE = (
 )
 
 
-def blocked_reason(zone: str | None, cons: list[str], note: str) -> tuple[list[str], str]:
-    """「불가」 행의 **사유**를 만든다 — 용도지역 미확보면 그 사실을 말한다.
+def blocked_reason(
+    zone_unknown: bool, other_axes_block: bool, cons: list[str], note: str,
+) -> tuple[list[str], str]:
+    """「불가」 행의 **사유**를 만든다 — 용도지역 미확보를 **대체가 아니라 조건부로** 말한다.
 
-    ★반환을 `(cons, notes)` **쌍**으로 둔 이유: 종전에는 `cons=["요건 미해당"]` 인데
-      `notes=""` 라 **「불가」인데 왜인지 아무 말도 안 했다**(무언 실패). 둘을 **함께** 정한다.
-    ★용도지역이 **확보된** 입력에서는 인자를 **그대로 돌려준다** — 그래서 기존 출력이
-      **바이트 동일**하고, 바뀌는 것은 종전에 거짓 사유를 말하던 입력뿐이다.
+    ★**`other_axes_block` 이 왜 필요한가**(적대 리뷰 H-2 · 실측): 첫 판은 용도지역만 보고
+      사유를 **통째로 갈아치웠다.** 그래서 **5만㎡** 부지의 가로주택정비사업(법정 요건 **1만㎡ 미만**)에서
+
+          상업(대조) → "주거지역 아님 **또는 면적 1만㎡ 이상**"      ← 참인 사유
+          모름        → "용도지역을 조회하지 못해 … 확인한 뒤 다시 보십시오"  ← **거짓 + 헛걸음**
+
+      가 됐다. 면적이 **이미 답을 냈으므로** 용도지역을 확인해도 결과는 안 바뀐다.
+      ★**참인 사유를 지우고 무의미한 재조회로 보내는 것**은 원래 결함보다 나쁘다.
+
+    → **다른 축이 이미 막고 있으면 원래 사유를 남긴다.** 용도지역 미확보는
+      *"그것만 아니면 판정할 수 있었다"* 일 때만 말한다.
+
+    ★확보된 입력에서는 인자를 **그대로 돌려주므로** 출력이 **바이트 동일**하다.
     """
-    if zone_is_unknown(zone):
+    if zone_unknown and not other_axes_block:
         return [UNKNOWN_ZONE_CONS], UNKNOWN_ZONE_NOTE
     return cons, note
 
 
 def _is_residential(zone: str) -> bool:
     """주거지역인가. ★`False` 는 **「주거가 아니다」와 「모른다」를 뭉친다** — 「모른다」를
-    갈라야 하는 자리에서는 `zone_is_unknown()` 을 **함께** 보라(그 독스트링에 실측이 있다)."""
+    갈라야 하는 자리에서는 `zone_pool_unknown()` 을 **함께** 보라(그 독스트링에 실측이 있다)."""
     return "주거" in (zone or "")
 
 
@@ -1533,6 +1532,10 @@ class DevelopmentScenarioSimulator:
         adj_note = (c.get("adjacency") or {}).get("note", "")
         res = _is_residential(zone)
         com = _is_commercial(zone)
+        # ★용도지역 **미확보**는 「주거가 아니다」와 다른 상태다. `res`/`com` 이 `bool` 이라
+        #   그 둘을 뭉치므로, 풀 전체로 한 번 판정해 「불가」 사유에 쓴다(blocked_reason).
+        #   ★`zones` 까지 보는 이유는 `zone_pool_unknown` 독스트링에 실측과 함께 있다.
+        zone_unknown = zone_pool_unknown(zone, c.get("zones"))
         region = c.get("region") or ""
         seoul = "서울" in region  # 서울시 조례 고유 방식의 지역 적용가능성 판정
         # 건축물 실데이터(노후도·세대수) — 블록(주변) 우선, 없으면 입력필지
@@ -1692,7 +1695,8 @@ class DevelopmentScenarioSimulator:
                 "노후 저층주거지 소규모 통합정비에 적합 — 요건 현장확인 필요" + reno_note())
         else:
             add("가로주택정비사업", "불가", None, None,
-                ["주거지역·면적1만㎡ 미만·노후2/3·가로구역 필요"], [], *blocked_reason(zone, ["요건 미해당"], "주거지역 아님 또는 면적 1만㎡ 이상"))
+                ["주거지역·면적1만㎡ 미만·노후2/3·가로구역 필요"], [],
+                *blocked_reason(zone_unknown, not (0 < area < 10000), ["요건 미해당"], "주거지역 아님 또는 면적 1만㎡ 이상"))
 
         # 5) 모아주택(소규모주택정비) / 모아타운
         if res and 1500 <= area <= 100000:
@@ -1706,7 +1710,8 @@ class DevelopmentScenarioSimulator:
                  "'소규모주택정비 관리지역'으로 추진 가능(명칭·세부기준은 해당 시·도 조례 확인)") + reno_note())
         else:
             add("모아주택/모아타운", "불가", None, None,
-                ["주거지역·면적 1,500㎡ 이상·노후 필요"], [], *blocked_reason(zone, ["요건 미해당"], ""))
+                ["주거지역·면적 1,500㎡ 이상·노후 필요"], [],
+                *blocked_reason(zone_unknown, not (1500 <= area <= 100000), ["요건 미해당"], "주거지역 아님 또는 면적 1,500㎡~100,000㎡ 밖"))
 
         # 6) 역세권 활성화사업 / 역세권 장기전세주택 — ★서울시 조례 고유 제도
         if station and seoul:
@@ -1779,7 +1784,8 @@ class DevelopmentScenarioSimulator:
                 "노후 단독·다세대 소규모 자율정비" + reno_note())
         else:
             add("자율주택정비사업", "불가", None, None,
-                ["주거지·단독10/공동20세대 미만·노후 필요"], [], ["규모·용도 미해당"], "")
+                ["주거지·단독10/공동20세대 미만·노후 필요"], [],
+                *blocked_reason(zone_unknown, not (0 < area < 2000), ["규모·용도 미해당"], "주거지역 아님 또는 면적 2,000㎡ 이상"))
 
         # 10) 소규모재개발사업 (2022 신설, 소규모주택정비 특례법)
         if (station or semi_ind) and 0 < area < 5000:
@@ -1790,7 +1796,8 @@ class DevelopmentScenarioSimulator:
                 "역세권/준공업 소규모 노후지 신속 정비(2022 신설)" + reno_note())
         else:
             add("소규모재개발사업", "불가", None, None,
-                ["역세권/준공업·5천㎡ 미만·노후 필요"], [], *blocked_reason(zone, ["요건 미해당"], ""))
+                ["역세권/준공업·5천㎡ 미만·노후 필요"], [],
+                *blocked_reason(zone_unknown, not (0 < area < 10000), ["요건 미해당"], "주거지역 아님 또는 면적 요건 밖"))
 
         # 11) 소규모재건축사업 (빈집 및 소규모주택 정비 특례법)
         if res and 0 < area < 10000:
@@ -1801,7 +1808,8 @@ class DevelopmentScenarioSimulator:
                 "노후 소규모 공동주택(연립·소형아파트) 재건축" + reno_note())
         else:
             add("소규모재건축사업", "불가", None, None,
-                ["공동주택 200세대 미만·노후 필요"], [], *blocked_reason(zone, ["요건 미해당"], ""))
+                ["공동주택 200세대 미만·노후 필요"], [],
+                *blocked_reason(zone_unknown, not (oldest is not None and oldest >= 15), ["요건 미해당"], "주거지역 아님 또는 노후 15년 미만"))
 
         # 12) 주거환경개선사업 (도시 및 주거환경정비법)
         if res:
@@ -1812,7 +1820,8 @@ class DevelopmentScenarioSimulator:
                 "저소득 노후밀집지 공공 주거환경개선")
         else:
             add("주거환경개선사업", "불가", None, None,
-                ["주거지·노후밀집 필요"], [], ["미해당"], "")
+                ["주거지·노후밀집 필요"], [],
+                *blocked_reason(zone_unknown, False, ["미해당"], "주거지역이 아닙니다"))
 
         # 13) 공공재개발·공공재건축 (정비법 공공시행 — LH/SH 등)
         if area >= 10000:
@@ -1840,7 +1849,8 @@ class DevelopmentScenarioSimulator:
                 f"⚠ 서울시 고유 명칭 — {region or '해당 지역'}은 행복주택·청년매입임대·시도별 청년주택 조례 등 유사제도 확인 필요")
         else:
             add("역세권 청년안심주택", "불가", None, None,
-                ["역세권·주거 필요"], [], ["미해당"], "")
+                ["역세권·주거 필요"], [],
+                *blocked_reason(zone_unknown, not station, ["미해당"], "역세권(승강장 350m) 아님 또는 주거지역 아님"))
 
         # 15) 공동주택 리모델링 (주택법 — 수직증축)
         if res and oldest is not None and oldest >= 15:
@@ -1851,7 +1861,8 @@ class DevelopmentScenarioSimulator:
                 f"노후 공동주택 리모델링(증축) — 최고건물연령 {oldest}년")
         else:
             add("공동주택 리모델링", "불가", None, None,
-                ["기존 공동주택·준공 15년 경과 필요"], [], ["미해당"], "")
+                ["기존 공동주택·준공 15년 경과 필요"], [],
+                *blocked_reason(zone_unknown, not (oldest is not None and oldest >= 15), ["미해당"], "주거지역 아님 또는 준공 15년 미만"))
 
         # 16) 결합건축 (건축법 **§77의15** — 대지 간 용적률 결합·이전)
         #   ★조문 정정: §77의4 는 **건축협정**이다(오기). 결합건축은 §77의15~§77의17.
@@ -1903,7 +1914,8 @@ class DevelopmentScenarioSimulator:
                 "도심 거점 융복합 — 용도·밀도 제약 최소화(지정 필요)")
         else:
             add("입지규제최소구역", "불가", None, None,
-                ["도심 거점·5천㎡↑·지정 필요"], [], *blocked_reason(zone, ["요건 미해당"], ""))
+                ["도심 거점·5천㎡↑·지정 필요"], [],
+                *blocked_reason(zone_unknown, not (area >= 5000), ["요건 미해당"], "역세권/상업계 아님 또는 면적 5천㎡ 미만"))
 
         # 18) 도시재생사업 (도시재생 활성화 및 지원에 관한 특별법)
         add("도시재생사업", "조건부", (far or 0) * 1.1, 0,
@@ -1924,7 +1936,12 @@ class DevelopmentScenarioSimulator:
                 ["촉진지구·면적 요건 필요"], [], ["요건 미달"], "")
 
         # 20) 대지조성사업 (주택법 §15 대지조성 / 택지개발 — 주택건설용 대지 조성·분양)
-        if area >= 10000 or (not res and not com):
+        # ★★거울상 결함(적대 리뷰 M-3): `not res and not com` 은 **「녹지·관리지역」과
+        #   「용도지역을 모른다」를 뭉친다.** 그래서 미확보 부지가 **조건부로 승격**되고
+        #   안내문이 *"녹지/관리지역"* 이라고 **단정**한다 — 이 PR 이 없애려는 그 형태의 **반대 방향**
+        #   (「모른다」를 「아니다」로가 아니라 **「모른다」를 「그것이다」로**).
+        #   ★미확보는 이 승격의 근거가 될 수 없다 — 근거는 **면적**뿐이다.
+        if area >= 10000 or (not zone_unknown and not res and not com):
             add("대지조성사업", "조건부", far or None, 10,
                 ["주택건설용 대지 조성(주택법) 또는 택지개발", "기반시설(도로·상하수) 조성", "녹지·관리·비도시는 형질변경/전용 인허가"],
                 ["택지 조성 후 단독·단지 용지 분양", "대규모 부지 정형화·단계 개발"],
