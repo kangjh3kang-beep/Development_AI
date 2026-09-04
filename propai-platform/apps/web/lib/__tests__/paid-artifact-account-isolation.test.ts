@@ -365,17 +365,7 @@ function accountScopedStoreHooks(): string[] {
     // 훅 이름. ★`matchAll` — 한 파일에 스토어가 둘이면 첫 것만 집던 결함(2차 리뷰 MAJOR-2).
     //   ★그리고 여러 export 형태를 본다: `export const useX = create` ·
     //     `export const useX: T = create` · `const useX = create` + `export { useX }`.
-    const names = hookNamesFrom(src);
-    // ★**계정별이라고 분류해 놓고 이름을 못 뽑으면 조용히 흘리지 않는다**(2차 리뷰 MAJOR-2:
-    //   초판은 `if (m) out.push(...)` 라 **else 가 없었다** — 분류된 파일이 소리 없이 사라졌고,
-    //   하한 가드가 «>= 4» 라 다섯 번째가 그 형태면 4 에 머물러 통과했다).
-    if (names.length === 0) {
-      throw new Error(
-        `${f}: 계정별 저장 어댑터를 쓰는데 훅 이름을 못 뽑았다 — 수집기가 이 형태를 모른다. ` +
-          "조용히 흘리면 이 락이 그 스토어를 영영 안 본다(§목록은 곧 상한).",
-      );
-    }
-    out.push(...names);
+    out.push(...hookNamesOrThrow(src, `store/${f}`));
   }
   return out.sort();
 }
@@ -391,6 +381,25 @@ export function hookNamesFrom(src: string): string[] {
     ...src.matchAll(/export const (use[A-Za-z0-9_]*)\s*(?::[^=]+)?=\s*create/g),
     ...src.matchAll(/^const (use[A-Za-z0-9_]*)\s*(?::[^=]+)?=\s*create/gm),
   ].map((m) => m[1]);
+}
+
+/**
+ * ★**계정별이라고 분류해 놓고 이름을 못 뽑으면 조용히 흘리지 않는다**(2차 리뷰 MAJOR-2).
+ *   초판은 `if (m) out.push(...)` 라 **else 가 없었다** — 분류된 파일이 소리 없이 사라졌고,
+ *   하한 가드가 «>= 4» 라 다섯 번째가 그 형태면 4 에 머물러 **통과**했다.
+ *   = 이 PR 이 고치려던 결함(조용히 빠짐)을 **락이 그대로 재현**할 수 있었다.
+ * ★함수로 분리한 이유: 이 throw 는 **그런 형태의 스토어가 실재해야** 변이로 잡힌다
+ *   (실측: throw 를 지우는 변이가 SURVIVED). 합성 입력으로 **조건 자체**를 태운다.
+ */
+export function hookNamesOrThrow(src: string, where: string): string[] {
+  const names = hookNamesFrom(src);
+  if (names.length === 0) {
+    throw new Error(
+      `${where}: 계정별 저장 어댑터를 쓰는데 훅 이름을 못 뽑았다 — 수집기가 이 형태를 모른다. ` +
+        "조용히 흘리면 이 락이 그 스토어를 영영 안 본다(§목록은 곧 상한).",
+    );
+  }
+  return names;
 }
 
 /** 계정별 어댑터를 쓰는 **파일 수** — 위 수집기와 **다른 경로**로 센다(교차검증용). */
@@ -420,6 +429,14 @@ describe("★수집기의 형태 인식 — 합성 입력으로 잠근다(2차 �
       hookNamesFrom('export const useD1 = create(...)\nexport const useD2 = create(...)'),
     ).toEqual(["useD1", "useD2"]);
   });
+  it("★★분류했는데 못 뽑으면 **던진다** — 조용히 흘리지 않는다", () => {
+    // 실측: 이 throw 를 지우는 변이가 SURVIVED 였다(그 형태의 스토어가 아직 없으므로).
+    //   → 조건 자체를 합성 입력으로 태운다.
+    expect(() => hookNamesOrThrow("export default create(...)", "store/x.ts")).toThrow(/훅 이름을 못 뽑았다/);
+    // ★음성 대조군 — 뽑히면 안 던진다.
+    expect(hookNamesOrThrow("export const useX = create(...)", "store/x.ts")).toEqual(["useX"]);
+  });
+
   it("★음성 대조군 — create 가 아닌 것은 안 집는다", () => {
     expect(hookNamesFrom('export const useNot = something(...)')).toEqual([]);
     expect(hookNamesFrom('const helper = create(...)')).toEqual([]); // use 접두가 아니다
