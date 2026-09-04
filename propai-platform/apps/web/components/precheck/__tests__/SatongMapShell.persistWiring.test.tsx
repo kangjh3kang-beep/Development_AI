@@ -129,6 +129,13 @@ describe("컴포넌트 → 저장 배선", () => {
     expect(st.enabledLayerIds).toContain("zoning");
     // ③«골랐다» 표시 — 이게 없으면 재수화가 저장분을 무시한다(MAJOR-3 봉합)
     expect(st.enabledLayersCustomized).toBe(true);
+
+    // ★★④**그 값이 지도까지 내려간다**(리뷰 변이 B: `mapLayerState` 를 끊어도 통과했다).
+    //   스토어·저장소만 보면 «스토어를 잠갔다» 일 뿐 «화면에 닿는다» 가 아니다.
+    const lastMapProps = capturedMapProps.at(-1) as { layerState?: { enabledLayerIds?: string[] } };
+    expect(lastMapProps?.layerState?.enabledLayerIds, "지도에 layerState 가 안 내려간다").toContain(
+      "zoning",
+    );
   });
 
   it("★음성 대조군 — 아무것도 안 누르면 저장하지 않는다", () => {
