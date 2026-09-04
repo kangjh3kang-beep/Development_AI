@@ -253,6 +253,78 @@ _TMPL = """\
 """
 
 
+# ═══ A-2b: 절단(truncation) 시에만 발화하는 **분할 프롬프트** ═══════════════════
+# ★왜 분할이 절단을 없애나: `max_tokens` 가 캡하는 것은 **출력**이다. 위 `_TMPL` 은
+#   사실(소유·이력·압류·근저당·기타권리)과 **산문**(rights_analysis 3~5문장·risks·
+#   acquired_extinguished)을 **한 응답에** 요구해서, 등기부가 길면 출력이 캡에 닿아 잘린다
+#   (라이브 실측 — 코드펜스가 닫히지 않은 채 끝났다). 스키마를 둘로 나누면 **각 응답의
+#   출력이 짧아진다.**
+#
+# ★★2단의 입력에 **원문 등기부를 그대로 넣는다.** 잘리는 것은 출력이지 입력이 아니므로,
+#   사실 JSON 만 넘겨 근거를 얇게 만들 이유가 없다 — 말소기준권리 순위·대항력 판단은
+#   등기 원문의 접수번호·순위번호를 봐야 정확하다. (설계 초안은 "사실만 넘긴다"였고,
+#   그것은 **불필요한 품질 손실**이었다. 캡의 대상을 잘못 짚은 데서 나온 설계다.)
+_TMPL_FACTS = """\
+아래 부동산등기부등본에서 **사실관계만** 추출해 JSON으로만 답하세요.
+★해석·판단·산문은 쓰지 마세요(다음 단계에서 따로 합니다). 출력을 짧게 유지합니다.
+{addr_line}
+## 등기부 내용
+{registry}
+
+## 출력 JSON 스키마
+{{
+  "ownership": {{
+    "current_owner": "현재 소유자(공동소유면 전원)",
+    "share": "보유 지분(예: 단독, 1/2 등)",
+    "ownership_form": "단독소유|공동소유 (소유자 수 기준)",
+    "owners": [{{"name": "소유자명", "share": "지분(예: 1/2, 1388분의 1387.08, 99.934%)", "acquisition_date": "취득일", "acquisition_cause": "취득원인", "acquisition_price": "거래가액(있으면)"}}],
+    "acquisition_date": "소유권 취득일(등기원인일/접수일)",
+    "acquisition_cause": "취득 원인(매매·상속·증여 등)",
+    "acquisition_price": "거래가액(매매시, 기재 있으면)",
+    "ownership_period": "현 소유자 보유기간(취득일~현재 추정)",
+    "ownership_history": [{{"date": "접수일/등기원인일", "cause": "이전 원인(매매·상속·증여 등)", "owner": "취득자", "predecessor": "전 소유자(기재 있으면)", "share": "지분"}}]
+  }},
+  "provisional_registration": {{"exists": true/false, "detail": "가등기 내용(있으면)"}},
+  "seizure": [{{"type": "압류|가압류|경매개시|가처분", "holder": "권리자", "detail": "내용", "date": "일자"}}],
+  "mortgage": [{{"max_claim": "채권최고액", "mortgagee": "근저당권자", "date": "설정일"}}],
+  "other_rights": ["전세권·지상권·임차권 등 기타 권리(있으면)"]
+}}
+
+★`ownership.ownership_history` 는 **갑구의 소유권 이전 등기를 오래된 것부터 순서대로** 담는다.
+  상속으로 취득한 경우 「주택법」 제22조가 **피상속인의 소유기간을 합산**하도록 정하므로,
+  전 소유자(`predecessor`)와 그 취득일을 알 수 있으면 반드시 함께 적는다.
+  ★등기 내용에 없는 것은 만들지 말고 해당 항목을 생략한다(추정 금지).
+"""
+
+_TMPL_JUDGE = """\
+아래 부동산등기부등본과 그것에서 추출한 사실관계 JSON을 근거로 **권리 판단만** JSON으로 답하세요.
+★사실 재나열은 하지 마세요(이미 확보했습니다). 출력을 짧게 유지합니다.
+{addr_line}
+## 등기부 내용
+{registry}
+
+## 추출된 사실관계(JSON)
+{facts}
+
+## 출력 JSON 스키마
+{{
+  "baseline_right": "말소기준권리(최선순위 (근)저당·압류·가압류·담보가등기·경매개시 등) — 없으면 '해당 없음'",
+  "acquired_extinguished": "인수/소멸 권리 요약(말소기준권리 기준 후순위 소멸·선순위/대항력 인수, 1~3문장) — 판단불가면 '기재 없음'",
+  "right_to_demand_sale": {{"possible": "가능|조건부|불가|판단보류", "reason": "근거(소유구조·권리관계 관점)"}},
+  "rights_analysis": "권리관계 종합 분석(말소기준권리·인수/소멸·대항력 포함, 3~5문장)",
+  "risks": ["거래·개발상 권리 리스크 1~4개"],
+  "safety_grade": "안전|주의|위험",
+  "summary": "한줄 요약"
+}}
+"""
+
+# ★두 단계가 **덮는 키**를 파생형으로 못 박는다 — 손으로 나열하면 스키마에 키를 더할 때
+#   조용히 빠지고, 그 키는 분할 경로에서만 영영 비어 있게 된다(정상 경로는 초록이라 안 보인다).
+_SPLIT_FACT_KEYS = ("ownership", "provisional_registration", "seizure", "mortgage", "other_rights")
+_SPLIT_JUDGE_KEYS = ("baseline_right", "acquired_extinguished", "right_to_demand_sale",
+                     "rights_analysis", "risks", "safety_grade", "summary")
+
+
 def _derive_ownership(ai: dict[str, Any] | None) -> dict[str, Any]:
     """등기 분석(ai.ownership)에서 소유형태(단독/공동)·소유자수·소유자목록을 도출.
     AI가 구조화 owners를 주면 그대로, 없으면 current_owner/share 문자열을 파싱."""
@@ -614,39 +686,183 @@ class RegistryAnalysisService:
             await _db_cache_put(cache_key, out)  # 영속·공유(페이지·배포 무관 재사용)
         return out
 
+    async def _invoke(self, user: str, *, max_tokens: int = 4096) -> tuple[Any, str]:
+        """LLM 1회 호출 + **과금 기록** + 텍스트 정규화의 **단일 통로**.
+
+        ★분할 재시도(A-2b)도 반드시 이 래퍼를 경유한다. 유료 외부호출에 두 번째 경로를
+          만들면 **그 경로만 과금 기록이 빠진다** — 이 저장소는 반환 지점이 여럿인 함수에
+          손으로 캐시·계측을 붙였다가 하나를 빠뜨려 재과금 경로를 만든 전례가 있다
+          (§유료 산출물 규율 1). 그래서 «호출 + 기록» 을 쪼갤 수 없게 묶어 둔다.
+
+        반환: (원본 응답 객체, 정규화된 본문 문자열)
+              ★응답 객체를 그대로 돌려주는 이유는 `is_truncated(resp)` 가 **메타데이터**
+                (finish_reason·usage)를 보기 때문이다 — 본문 문자열만으로는 판정 불가.
+        """
+        from langchain_core.messages import HumanMessage, SystemMessage
+
+        from app.services.ai.base_interpreter import GROUNDING_RULE, record_llm_response_billing
+        from app.services.ai.llm_json import coerce_llm_text
+        from app.services.ai.llm_provider import get_llm
+
+        llm = get_llm(timeout=70, max_tokens=max_tokens)
+        resp = await llm.ainvoke(
+            [SystemMessage(content=_SYSTEM + GROUNDING_RULE), HumanMessage(content=user)]
+        )
+        # 계측: BaseInterpreter 밖 직접 호출도 동일하게 토큰·과금 기록(best-effort)
+        await record_llm_response_billing(llm, resp, service="registry")
+        raw = coerce_llm_text(resp.content if hasattr(resp, "content") else str(resp)).strip()
+        return resp, raw
+
+    async def _llm_split(self, address: str | None, registry: str) -> dict[str, Any] | None:
+        """★절단이 감지됐을 때만 발화하는 **2단 분할**. 실패하면 None(호출처가 정직 폴백).
+
+        1단 = 사실(소유·이력·압류·근저당·기타권리) · 2단 = 판단·산문.
+        각 단의 **출력**이 짧아져 `max_tokens` 캡에 닿지 않는다.
+
+        ★2단이 실패해도 **1단의 사실은 버리지 않는다.** 소유자·근저당·압류는 유료로 발급한
+          등기부에서 뽑은 산출물이고, 산문이 없다고 그것까지 버리면 «전량 실패» 와 같아진다
+          (§유료 산출물 규율 2). 대신 `partial=True` 와 사유를 실어 **모름을 유효값으로
+          위장하지 않는다**.
+        """
+        import json
+
+        from app.services.ai.llm_json import parse_llm_json
+
+        addr_line = f"## 대상 부동산\n- 주소: {address}\n" if address else ""
+
+        def _stage_reason(exc: Exception, resp: Any, stage: str) -> str:
+            """★각 단의 절단을 **그 단에서** 가른다(`#968` 의 정직성을 새 경로에도 적용).
+
+            이것이 없으면 1단이 잘렸을 때 사유가 *「분할 재시도도 실패 — 파서 오류: char 0」* 이
+            되어 **`#968` 이 없애려던 그 표기로 되돌아간다**(§D-20 처방 범위 ≠ 결함 범위).
+            """
+            from app.services.ai.llm_json import is_truncated as _is_trunc
+            base = _failure_reason(exc)
+            if _is_trunc(resp):
+                return f"분할 {stage}의 응답도 최대 길이에서 잘렸습니다 — 파서 오류: {base}"
+            # ★절단이 아니어도 **어느 단에서 죽었는지**는 말한다. 안 말하면 조사자가
+            #   1단(사실 추출)과 2단(판단 생성) 중 어디를 보라는 단서를 못 받는다
+            #   — 음성 대조군을 쓰다가 발견한 진짜 격차다.
+            return f"분할 {stage} 실패 — {base}"
+
+        resp_f = None
+        try:
+            resp_f, raw_f = await self._invoke(_TMPL_FACTS.format(addr_line=addr_line, registry=registry))
+            facts = parse_llm_json(raw_f)
+        except Exception as e:  # noqa: BLE001
+            # 1단이 실패하면 분할로 얻을 것이 없다 — 호출처의 정직 폴백으로 되돌린다.
+            reason = _stage_reason(e, resp_f, "1단(사실)")
+            logger.warning("등기 권리분석 분할 1단(사실) 실패",
+                           err=f"{type(e).__name__}: {exc_detail(e, limit=100)}", reason=reason)
+            self._split_stage_reason = reason  # 호출처가 사유를 그대로 싣는다
+            return None
+
+        out: dict[str, Any] = {k: facts[k] for k in _SPLIT_FACT_KEYS if k in facts}
+        out["split_call"] = True  # ★분할이 발화했음을 산출물에 남긴다(진단·계측·과금 대조)
+        resp_j = None
+        try:
+            resp_j, raw_j = await self._invoke(_TMPL_JUDGE.format(
+                addr_line=addr_line, registry=registry,
+                facts=json.dumps(facts, ensure_ascii=False)))
+            judge = parse_llm_json(raw_j)
+            out.update({k: judge[k] for k in _SPLIT_JUDGE_KEYS if k in judge})
+            out["generated"] = True
+            return out
+        except Exception as e:  # noqa: BLE001
+            reason = _stage_reason(e, resp_j, "2단(판단)")
+            logger.warning("등기 권리분석 분할 2단(판단) 실패 — 사실만 반환",
+                           err=f"{type(e).__name__}: {exc_detail(e, limit=100)}", reason=reason)
+
+        # ══ 2단 실패 = **부분 결과**. 사실은 살리되 «성공» 이라고 말하지 않는다 ══
+        #
+        # ★★`generated` 는 **성공 계약**이다 — 프론트 `isAnalyzed`(`lib/registry-analyze.ts`)와
+        #   서버 `_cache_success` 가 **둘 다 이 한 필드**를 본다. 판단이 없는 건에 `True` 를
+        #   실으면 세 가지가 한꺼번에 무너진다(적대 리뷰 실측):
+        #     ① `RegistryBatchRow` 가 **「안전성 주의」 배지를 칠한다** — 그 가드의 주석이
+        #        *"LLM 폴백도 safety_grade:'주의' 를 담아 오므로 존재 여부로 칠하면 아무것도
+        #        판정하지 않은 건이 «안전성 주의»로 보인다"* 고 **라이브 사고 좌표까지 적어
+        #        뒀는데**(2026-08-24 오산 내삼미동 448-2·347-8), 이 경로가 그것을 우회했다
+        #     ② `failureAction` 이 `unknown` 이 되어 **「해석 다시 시도」 버튼이 사라진다**
+        #     ③ `_cache_success` 가 참이라 **DB 에 7일** 재서빙 — 사용자가 복구할 길이 없다
+        #   ★그래서 `generated` 를 켜지 않는다. 사실은 payload 에 그대로 남아 상세가 읽을 수
+        #     있고, 캐시되지 않으므로 **재시도가 판단을 다시 만든다**(자가치유).
+        #
+        # ★`safety_grade`·`summary` 를 **기본값으로 채우지 않는다.** 채우면 «모름» 이
+        #   «판단 결과» 로 위장되고, 그것은 거부보다 나쁘다.
+        out["generated"] = False
+        out["partial"] = True
+        out["failure_reason"] = (
+            "등기부가 길어 분할 분석했으나 권리 판단 생성에 실패했습니다 — "
+            f"소유·담보·압류 사실은 유효합니다. 사유: {reason}")
+        out["failure_class"] = "parse"
+        out["rights_analysis"] = "권리 판단을 생성하지 못했습니다(소유·담보·압류 사실은 유효)."
+        return out
+
     async def _llm(self, address: str | None, registry: str) -> dict[str, Any]:
         raw = ""  # 파싱 실패 시 진단용(except에서 raw_head 로깅) — 잘린 JSON 등 근본추적.
+        resp = None  # ★절단 판정(is_truncated)에 필요 — except 에서 참조한다.
         try:
-            from langchain_core.messages import HumanMessage, SystemMessage
-
-            from app.services.ai.base_interpreter import GROUNDING_RULE
-            from app.services.ai.llm_provider import get_llm
+            from app.services.ai.llm_json import parse_llm_json
 
             addr_line = f"## 대상 부동산\n- 주소: {address}\n" if address else ""
             user = _TMPL.format(addr_line=addr_line, registry=registry)
             # ★max_tokens 4096: 권리분석 JSON(소유권·근저당·압류·기타권리·rights_analysis 산문 등)이
             #   2500토큰을 넘으면 응답이 잘려 json.loads가 실패→'분석 불가' 폴백이 떴다(근본). 헤드룸 확보.
-            llm = get_llm(timeout=70, max_tokens=4096)
-            resp = await llm.ainvoke(
-                [SystemMessage(content=_SYSTEM + GROUNDING_RULE), HumanMessage(content=user)]
-            )
-            # 계측: BaseInterpreter 밖 직접 호출도 동일하게 토큰·과금 기록(best-effort)
-            from app.services.ai.base_interpreter import record_llm_response_billing
-            await record_llm_response_billing(llm, resp, service="registry")
-            from app.services.ai.llm_json import coerce_llm_text, parse_llm_json
-            raw = coerce_llm_text(resp.content if hasattr(resp, "content") else str(resp)).strip()
+            #   ★그 헤드룸으로도 부족한 등기부가 실재한다(라이브 실측) — 그때는 아래 except 에서
+            #     **분할 재시도**한다. 정상 경로는 여기서 끝나므로 **호출 수·과금은 불변**이다.
+            resp, raw = await self._invoke(user)
             data = parse_llm_json(raw)  # 공용 관대 파서(프리앰블·후행 설명 허용) — 파서 SSOT
             data["generated"] = True
             return data
         except Exception as e:  # noqa: BLE001
+            def _record_fallback(exc: Exception) -> None:
+                """★성장루프 **분자**: 이 실패가 집계되지 않아, 등기 권리분석이 통째로 죽어도
+                `fallback_rate` 인사이트가 한 번도 뜨지 않았다(2026-08-24 실장애 — 사용자가
+                화면을 보고 알려 줄 때까지 아무도 몰랐다). 성공(분모)은 과금 헬퍼가 남긴다.
+
+                ★**분할 시도 뒤에** 부른다. 앞에 두면 분할로 회복된 건까지 분자에 들어간다.
+                """
+                from app.services.ai.base_interpreter import record_llm_failure
+                record_llm_failure("registry", exc)
+
             # ★진단성: 타입명 + 응답 head를 남겨 '잘린 JSON/비-JSON/LLM오류'를 구분 가능하게.
             logger.warning("등기 권리분석 LLM 실패, 폴백",
                            err=f"{type(e).__name__}: {exc_detail(e, limit=100)}", raw_head=(raw or "")[:180])
-            # ★성장루프 **분자**: 이 실패가 집계되지 않아, 등기 권리분석이 통째로 죽어도
-            #   `fallback_rate` 인사이트가 한 번도 뜨지 않았다(2026-08-24 실장애 — 사용자가
-            #   화면을 보고 알려 줄 때까지 아무도 몰랐다). 성공(분모)은 위 과금 헬퍼가 남긴다.
-            from app.services.ai.base_interpreter import record_llm_failure
-            record_llm_failure("registry", e)
+            # ★절단은 **파싱 실패가 아니라 응답이 잘린 것**이다 — 사유를 정직하게 바꾼다.
+            #   `is_truncated` 의 독스트링이 *"호출처는 이 판정으로 절단을 'parse'가 아닌
+            #   별도 사유로 정직하게 분류해야 한다"* 고 **명시**하는데 이 호출처가 안 썼다(참조 0건).
+            #   그래서 사용자·조사자에게 `Expecting value: line 1 column 1 (char 0)` 이 보였고,
+            #   그것은 **「빈 응답」처럼 읽혀** 엉뚱한 곳을 보게 했다(라이브 실측: 실제는 절단).
+            #   ★`failure_class` 는 바꾸지 않는다 — 절단도 **결정론적**이라 `parse` 분류가 옳다
+            #     (재시도 판정을 건드리면 이 변경의 범위를 넘는다).
+            from app.services.ai.llm_json import is_truncated as _is_truncated
+            _reason = _failure_reason(e)
+            if _is_truncated(resp):
+                # ★A-2b: 절단은 **결정론적**이라 같은 프롬프트로 재시도해도 같은 자리에서
+                #   또 잘린다(코드 주석 :161 이 이미 그렇게 적어 뒀다). 그래서 재시도가 아니라
+                #   **분할**한다 — 스키마를 둘로 나눠 각 응답의 출력을 캡 아래로 내린다.
+                #   실패하면 None 이 와서 아래 정직 폴백으로 그대로 떨어진다.
+                self._split_stage_reason = ""
+                _split = await self._llm_split(address, registry)
+                if _split is not None and _split.get("generated"):
+                    # ★분할이 **완전히** 성공했다 — 사용자는 폴백을 보지 않는다.
+                    #   그러므로 `record_llm_failure` 를 **발화시키지 않는다**(아래 참조).
+                    logger.info("등기 권리분석 절단 → 분할 호출로 회복")
+                    return _split
+                _stage = getattr(self, "_split_stage_reason", "") or ""
+                _reason = (
+                    "AI 응답이 최대 길이에서 잘렸습니다(등기부가 깁니다) — 분할 재시도도 "
+                    f"실패했습니다. {_stage or ('파서 오류: ' + _reason)}"
+                )
+                if _split is not None:
+                    # 부분 결과(사실만) — 사유를 이 자리의 절단 맥락으로 덮어쓴다.
+                    _split["failure_reason"] = _split.get("failure_reason") or _reason
+                    _record_fallback(e)
+                    return _split
+            # ★성장루프 **분자**는 «사용자가 폴백을 봤다» 를 뜻해야 한다. 그래서 분할 시도
+            #   **뒤에** 기록한다 — 앞에 두면 분할로 회복된 건까지 분자에 들어가 `fallback_rate`
+            #   가 조용히 다른 뜻이 된다(적대 리뷰 지적 M-4).
+            _record_fallback(e)
             return {
                 "generated": False,
                 "ownership": {}, "provisional_registration": {"exists": None},
@@ -655,7 +871,7 @@ class RegistryAnalysisService:
                 # ★"일시적"이라고 단정하지 않는다 — 그 표기가 결정론적 영구 실패를
                 #   일시 장애로 위장해 오래 숨긴 전례가 있다(2026-08-21 LLM 계층 사망).
                 "rights_analysis": "AI 권리분석을 생성하지 못했습니다. 등기부 내용을 직접 확인하세요.",
-                "failure_reason": _failure_reason(e),
+                "failure_reason": _reason,
                 # ★분류는 **실제 예외가 있는 이 자리**에서 한다. 나중에 문자열만 보고 다시
                 #   분류하면 타입이 지워져(`Exception("JSONDecodeError: …")`) 메시지에
                 #   타입명이 우연히 들어 있어야만 맞는다 — 운에 기대는 판정이 된다.
