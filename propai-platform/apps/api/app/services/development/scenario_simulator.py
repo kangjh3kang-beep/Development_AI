@@ -249,8 +249,6 @@ _SIBLING_MIXED_SENTINEL = "mixed_review_required"
 ZONE_BASIS_AMBIGUOUS = "ambiguous"
 #: 동률(±5%)·규제성격 상이로 **단일화를 거부**한 상태. `special_parcel` 이 쓰는 그 값이고
 #  `app/utils/withheld.py` 의 **표준 보류 어휘**이며, 프론트 `lib/zoning/dominant-zone.ts` 가 안다.
-ZONE_BASIS_MIXED_REVIEW = "mixed_review_required"
-MIXED_REVIEW_SENTINEL = "mixed_review_required"
 
 
 #: 현 용도지역만으로는 **아파트를 지을 수 없는** 용도지역(국토계획법 시행령 009419 §71).
