@@ -1383,6 +1383,12 @@ async def nearby_transactions_map(req: NearbyMapRequest):
         months=req.months, radius_m=req.radius_m, sigungu_hint=sigungu_hint,
         center_hint=center_hint,
         auto_expand_radius=req.auto_expand_radius,
+        # ★지도(표시)만 2단 지역 프라이어를 켠다 — 계산층(탁상감정 등)은 기본 꺼짐 유지.
+        #   `lawd_cd` 가 시군구라 MOLIT 은 시군구 전체 거래를 준다. 사전컷 2순위가
+        #   `-거래건수` 라 10~20km 밖 신도시 대단지가 예산을 쓸어가고 인근 소규모 단지가
+        #   잘렸다(라이브 실측 2026-09-05: 1km 내 실재 25곳 중 화면에 **4곳**).
+        #   읍·면 한 계층을 넣으면 **추가 외부호출 0회**로 그 손실을 회복한다.
+        locality_prior=True,
     )
 
 
