@@ -23,6 +23,7 @@ import structlog
 from app.core.db_utils import PostGISHelper
 from app.services.data_validation.deal_date import parse_deal_date
 from app.services.data_validation.price_stats import robust_price_stats
+from app.services.land_intelligence.realtx_report_service import per_pyeong_10k
 from app.services.land_intelligence.sample_attenuation import (
     build_sample_attenuation,
 )
@@ -1546,6 +1547,18 @@ class NearbyMapService:
             #   MOLIT 응답 순서일 뿐 날짜순이 아님). 파싱 실패분(날짜 없음)은 최하위로 보존.
             g["deals"].sort(key=lambda d: parse_deal_date(d.get("deal_date")) or (0, 0, 0), reverse=True)
             g["deals"] = g["deals"][:10]
+            # ★표시용 평당가 — 산식을 여기서 **다시 만들지 않는다.** 신고내역(#930)이 이미
+            #   정본을 갖고 있고, 두 표면이 같은 단지에 **다른 수**를 말하면 그 자체가 결함이다.
+            #   유효숫자 3자리 반올림(원천 면적이 3자리라 그 이상은 허위 정밀도)과
+            #   면적 결측 시 `None` 계약을 그 함수가 들고 있다.
+            #   ★종전엔 프론트가 `avg_price_10k / (avg_area_m2/3.305785)` 를 **인라인으로**
+            #     계산했다 — 반올림 규약이 없어 4자리를 찍었고, 정본과 갈릴 수 있었다.
+            #   ★아래 `_price_band` 의 내부 평당가와는 **일부러 다르다** — 그쪽은 집계
+            #     **입력**이라 반올림하면 시세 수치가 바뀐다(회귀). 이 필드는 **표시 전용**이다.
+            if kind == "trade":
+                g["price_per_pyeong_10k"] = per_pyeong_10k(
+                    g.get("avg_price_10k"), g.get("avg_area_m2")
+                )
             out.append(g)
         # 거래 많은 순 정렬. ★상한(_MAX_GROUPS_PER_CAT)은 여기서 적용하지 않는다 — build()가
         #   지오코딩·반경 필터 이후에 적용한다. 여기서 캡을 걸면 "반경 내 상위 N건"이 아니라

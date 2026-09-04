@@ -428,7 +428,7 @@ const LAYERS: SatongLayer[] = [
       { id: "kind-rent", label: "전월세", mapEffect: true },
       { id: "deal-year", label: "거래연도", mapEffect: false, description: "거래연도 필터 — 향후 제공" },
       { id: "total-price", label: "총액", mapEffect: false, description: "총액 필터 — 향후 제공" },
-      { id: "unit-price", label: "평당가 라벨", mapEffect: true, description: "실거래 라벨을 총액 대신 평당가로 표시" },
+      { id: "unit-price", label: "평당가 우선", mapEffect: true, description: "실거래 라벨에 총액과 평당가를 항상 함께 표시하고, 켜면 평당가를 앞에 둔다" },
     ],
   },
   {
