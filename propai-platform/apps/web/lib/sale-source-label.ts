@@ -15,6 +15,7 @@ export const SALE_SOURCE_LABEL: Record<string, string> = {
   avm_blended: "시장 블렌딩(AI 추정 포함)",
   regional_market_table: "지역 시장 표준단가",
   national_default_fallback: "전국 기본값(폴백)",
+  national_default_no_address: "전국 기본값(주소 미상)",
   molit_realtx: "국토부 실거래",
   nearby_map: "주변 실거래",
   avm: "AI 추정시세",

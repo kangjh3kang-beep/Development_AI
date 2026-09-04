@@ -13,8 +13,16 @@ import ast
 from pathlib import Path
 
 _API = Path(__file__).resolve().parents[1]
-_PIPE = _API / "app" / "services" / "pipeline" / "project_pipeline.py"
 _REVAL = _API / "app" / "services" / "feasibility" / "market_revaluation_service.py"
+
+
+def _api_py_files():
+    """★모집단을 **파생**한다. 종전엔 `_PIPE`·`_REVAL` **두 파일을 손으로** 골랐고,
+    그래서 `routers/project_dashboard.py` 가 내는 `national_default_no_address` 를
+    **못 봤다** — 테스트 이름이 `…matches_the_producers` 인데 모집단이 손 목록이었다.
+    (이 파일 독스트링이 인용한 그 실패를 그 처방 안에서 재발시킨 것이다.)
+    """
+    return [f for f in (_API / "app").rglob("*.py") if "__pycache__" not in str(f)]
 
 
 def _emitted_literals() -> set[str]:
@@ -41,8 +49,13 @@ def _emitted_literals() -> set[str]:
         for child in ast.iter_child_nodes(node):
             collect(child)
 
-    tree = ast.parse(_PIPE.read_text(encoding="utf-8"))
-    for n in ast.walk(tree):
+    nodes = []
+    for f in _api_py_files():
+        try:
+            nodes += list(ast.walk(ast.parse(f.read_text(encoding="utf-8"))))
+        except SyntaxError:
+            continue
+    for n in nodes:
         if isinstance(n, ast.Assign) and any(
             isinstance(t, ast.Name) and t.id == "sale_price_source" for t in n.targets
         ):

@@ -69,6 +69,10 @@ SALE_PRICE_SOURCE_VOCAB: tuple[str, ...] = (
     "single_source:",          # ★접두 — `single_source:<source key>`
     "regional_market_table",
     "national_default_fallback",
+    # ★`routers/project_dashboard.py:169` 이 내는 **세 번째 생산자**의 값.
+    #   종전 락이 모집단을 **두 파일로 손수 골라** 이것을 못 봤다 —
+    #   테스트 이름은 `…matches_the_producers` 인데 모집단이 손 목록이었다.
+    "national_default_no_address",
     "cost_based_fallback",
     "user",
     # ★"unavailable" 은 뺐다 — **아무도 안 낸다**(락이 「죽은 어휘」로 잡았다).

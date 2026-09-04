@@ -568,3 +568,56 @@ def test_exclusive_ratio_note_does_not_lie_about_mismatch() -> None:
     # ★음성 대조군 — 진짜 불일치는 **적는다**(«절대 안 적는» 구현을 가른다)
     _, note = _exclusive_ratio_for("M01", "오피스텔")
     assert "불일치" in note, f"진짜 불일치를 안 적는다: {note}"
+
+
+def test_paid_resolver_is_never_called_inside_a_loop() -> None:
+    """★계획서 §5 가 **선언한** 락 — «요청당 1회» 는 오늘의 사실이지 구조적 보장이 아니다.
+
+    지연 측정(§I)이 «호출부 10곳 전부 루프 깊이 0 = 요청당 최대 1회» 를 근거로
+    «빠른 시드에 넣어도 된다» 고 판정했다. **다필지·배치 경로가 생기면 그 전제가 깨진다.**
+
+    ★이 락이 없으면 계획서가 선언한 불변식이 **무잠금으로 머지**된다
+      (CLAUDE.md §계획 게이트 C: *"§5 항목이 빈 계획서는 반려"*).
+    """
+    TARGETS = {
+        "_resolve_sale_price_per_pyeong", "_trade_sale_price_per_pyeong",
+        "revalue", "get_regional_sale_price_per_pyeong",
+        "resolve_regional_sale_price_per_pyeong", "_molit_sale_price_source",
+    }
+    LOOPS = (ast.For, ast.AsyncFor, ast.While, ast.comprehension)
+    bad: list[str] = []
+    seen = 0
+
+    for f in _api_py_files():
+        try:
+            tree = ast.parse(f.read_text(encoding="utf-8"))
+        except SyntaxError:
+            continue
+        # 각 노드의 **조상 루프 깊이**를 센다
+        stack: list[str] = []
+
+        def walk(node: ast.AST) -> None:
+            nonlocal seen
+            is_loop = isinstance(node, (ast.For, ast.AsyncFor, ast.While))
+            has_comp = isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp))
+            if is_loop or has_comp:
+                stack.append(type(node).__name__)
+            if isinstance(node, ast.Call):
+                nm = (node.func.attr if isinstance(node.func, ast.Attribute)
+                      else getattr(node.func, "id", None))
+                if nm in TARGETS:
+                    seen += 1
+                    if stack:
+                        bad.append(f"{f.name}:{node.lineno} {nm} (루프 {'/'.join(stack)})")
+            for c in ast.iter_child_nodes(node):
+                walk(c)
+            if is_loop or has_comp:
+                stack.pop()
+
+        walk(tree)
+
+    # ★공허진리 방지 — 호출부를 하나도 못 찾으면 이 락은 무엇이든 통과한다
+    assert seen >= 5, f"유료 리졸버 호출부 {seen}곳 — 조회기가 죽었다"
+    assert not bad, (
+        f"유료 리졸버가 **루프 안**에서 호출된다(요청당 N회 = 과금 N배): {bad}\n"
+        "→ 다필지·배치가 필요하면 리졸버 밖에서 한 번 부르고 결과를 재사용하라.")

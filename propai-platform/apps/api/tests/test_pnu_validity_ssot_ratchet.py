@@ -68,6 +68,13 @@ _EXEMPT: dict[str, str] = {
 }
 
 
+#: 면제 키가 **몇 번** 매칭됐나. ★표현식 키는 위치가 없어 **같은 파일의 같은 표현식을
+#: 전부 면제**한다 — 유지비를 줄이려다 **fail-closed 를 fail-open 으로** 바꾼 것이다
+#: (실측: 같은 파일에 `isdigit()` **없는** 가드를 추가해도 통과, 다른 파일이면 CAUGHT).
+#: → 매칭 **개수**를 세서 0건(죽은 면제)·2건 이상(남용)을 둘 다 실패시킨다.
+_exempt_hits: dict[str, int] = {}
+
+
 def _hand_rolled_length_guards() -> list[tuple[str, int, str]]:
     """PNU 를 자르기 위한 **손수 길이 검사**를 파생 수집한다.
 
@@ -105,6 +112,7 @@ def _hand_rolled_length_guards() -> list[tuple[str, int, str]]:
             #   ★표현식은 **그 코드가 무엇인지**를 말하므로 자리가 옮겨도 따라온다.
             key = f"{p.relative_to(API_ROOT)}::{expr.strip()}"
             if key in _EXEMPT:
+                _exempt_hits[key] = _exempt_hits.get(key, 0) + 1
                 continue
             hits.append((str(p.relative_to(API_ROOT)), n.lineno, expr[:90]))
     return hits
@@ -282,3 +290,26 @@ class Test배선된함수를실제로태운다:
         assert called == [("41370", "11000", "0467", "0001")], (
             f"슬라이싱이 어긋났다: {called}"
         )
+
+
+def test_each_exemption_matches_exactly_once() -> None:
+    """★면제는 **정확히 한 자리**를 덮어야 한다 — 양방향으로 잠근다.
+
+    | 상태 | 뜻 |
+    |---|---|
+    | **0건** | **죽은 면제** — 코드가 사라졌거나 표현식이 바뀌었다(§회귀망 36) |
+    | **2건 이상** | **남용** — 같은 파일의 같은 표현식이 전부 면제된다(fail-open) |
+
+    ★키를 `파일:줄번호` → `파일::표현식` 으로 바꿔 유지비를 줄였는데, 그 대가로
+      **위치를 잃어** 파일 전역 면제가 됐다. 개수 단언이 그 대가를 되돌린다.
+    """
+    _exempt_hits.clear()
+    _hand_rolled_length_guards()   # 수집이 hits 를 채운다
+
+    dead = [k for k in _EXEMPT if _exempt_hits.get(k, 0) == 0]
+    assert not dead, f"죽은 면제(코드가 사라졌거나 표현식이 바뀜): {dead}"
+
+    abused = {k: n for k, n in _exempt_hits.items() if n > 1}
+    assert not abused, (
+        f"한 면제가 여러 자리를 덮는다(fail-open): {abused} — "
+        "면제는 **그 한 자리**에만 유효해야 한다")

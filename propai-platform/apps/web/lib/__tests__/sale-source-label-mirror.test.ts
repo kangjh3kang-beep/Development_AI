@@ -36,9 +36,19 @@ const API = path.resolve(__dirname, "../../../api");
 function backendVocabulary(): string[] {
   const p = path.join(API, "app/services/feasibility/market_revaluation_service.py");
   const src = fs.readFileSync(p, "utf8");
-  const m = src.match(/SALE_PRICE_SOURCE_VOCAB[^=]*=\s*\(([\s\S]*?)\)/);
-  if (!m) return [];
-  return [...m[1].matchAll(/"([a-z_:]+)"/g)].map((x) => x[1]);
+  // ★★비탐욕 `[\s\S]*?\)` 는 **첫 `)` 에서 멈춘다** — 그 `)` 가 튜플 **마지막 주석 안**에
+  //   있어서, 스캐너가 **주석의 값**을 집고(선언에서 뺐다고 그 주석이 직접 말하는
+  //   `"unavailable"`) 그 뒤의 진짜 항목은 **못 봤다**.
+  //   ★이 파일 독스트링이 *"정규식으로 긁는 방식은 위양성 투성이라 선언을 읽는다"* 고
+  //     적어 놓고 **다시 주석을 긁고 있었다.**
+  //   → ①`#` 이후를 **먼저 스트립** ②닫는 괄호를 **줄 시작 앵커**(`^\)`)로 잡는다.
+  const decl = src.match(/^SALE_PRICE_SOURCE_VOCAB[^=]*=\s*\(([\s\S]*?)^\)/m);
+  if (!decl) return [];
+  const codeOnly = decl[1]
+    .split("\n")
+    .map((l) => l.replace(/#.*$/, ""))
+    .join("\n");
+  return [...codeOnly.matchAll(/"([a-z_:]+)"/g)].map((x) => x[1]);
 }
 
 describe("분양가 산정근거 라벨 미러", () => {
@@ -68,6 +78,14 @@ describe("분양가 산정근거 라벨 미러", () => {
     const unknown = saleSourceLabel("single_source:brand_new_source");
     expect(unknown).toContain("단일 출처");
     expect(unknown).not.toBe("single_source:brand_new_source");
+  });
+
+  it("★주석에 적은 값은 어휘로 세지 않는다(스캐너 위양성 방지)", () => {
+    // 선언 주석에 `"unavailable"` 이 나오는데, 그것은 **뺐다고 말하는 문장**이다.
+    // 종전 스캐너는 그것을 어휘로 집었다 — 그리고 **주석 뒤 진짜 항목은 못 봤다**.
+    expect(backendVocabulary()).not.toContain("unavailable");
+    // 양성 대조군: 주석 **뒤**에 있는 실제 항목도 잡히는가(잘림 방지)
+    expect(backendVocabulary()).toContain("national_default_no_address");
   });
 
   it("음성 대조군 — 정말 모르는 코드는 **코드 그대로**(거짓 라벨보다 낫다)", () => {
