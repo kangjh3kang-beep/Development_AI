@@ -181,9 +181,19 @@ def test_single_zone_site_without_zones_list_is_safe():
     sim = DevelopmentScenarioSimulator()
     got = {x["scheme"]: x["applicable"] for x in sim._scenarios(
         {**_ctx("제2종일반주거지역", []), "zones": []})}
-    assert len(got) >= 20, f"시나리오가 {len(got)}종 — 붕괴"
     ok = [k for k, v in got.items() if v in ("가능", "조건부")]
-    assert len(ok) >= 5, f"zones 가 비면 추진 가능이 {len(ok)}종 — `zone` 이 pool 에서 빠졌다"
+    # ★느슨한 하한(`>= 20`·`>= 5`)은 변이를 못 잡았다 — pool 이 비어도 20종·12개는 남기 때문이다.
+    #   실측값에 **결속**시킨다: `zone` 이 pool 에 있으면 21종·16개, 빠지면 20종·12개.
+    assert (len(got), len(ok)) == (21, 16), (
+        f"{len(got)}종·추진가능 {len(ok)}개 (기대 21·16) — "
+        "`zones` 가 비었을 때 `zone` 이 pool 에서 빠지면 20·12 가 된다"
+    )
+    # ★음성 대조군 — pool 이 **정말로** 비면 갈려야 한다(단언이 공허하지 않음을 증명)
+    empty = {x["scheme"]: x["applicable"] for x in sim._scenarios(
+        {**_ctx(None, []), "zones": []})}
+    assert (len(empty), len([1 for v in empty.values() if v in ("가능", "조건부")])) == (20, 12), (
+        f"대조군이 예상과 다르다 — {len(empty)}종"
+    )
 
 
 def test_absent_code_is_wired_into_the_site_payload():
