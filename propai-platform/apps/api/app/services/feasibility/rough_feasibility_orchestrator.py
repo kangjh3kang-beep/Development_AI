@@ -24,7 +24,7 @@ import logging
 from typing import Any
 
 # ── 재사용 자산(모듈 최상단 import — 테스트가 monkeypatch로 대체하기 쉽게 이름을 노출) ──
-from app.services.feasibility import construction_cost_engine, land_cost_engine, regional_pricing
+from app.services.feasibility import construction_cost_engine, land_cost_engine
 from app.services.feasibility.aggregation_engine import aggregate_feasibility
 from app.services.feasibility.dcf_assembly import assemble_monthly_dcf
 from app.services.feasibility.feasibility_service_v2 import FeasibilityServiceV2
@@ -58,15 +58,7 @@ _DEFAULT_EQUITY_WON = 10_000_000_000
 
 # 개발유형 건축유형(_get_building_type) → MOLIT 실거래 물건유형(get_transactions prop_type).
 # 주변 실거래로 분양단가를 잡을 때 어떤 실거래 API를 조회할지 결정한다(주거=아파트 등).
-_BUILDING_TO_MOLIT_PROP: dict[str, str] = {
-    "apartment": "apt",
-    "officetel": "officetel",
-    "office": "commercial",     # 업무시설 = 비주거용(상업) 실거래
-    "house": "house",           # 단독·다가구
-    "townhouse": "villa",       # 연립·다세대(타운하우스)
-}
 # 주변 실거래 표본이 이보다 적으면 중앙값 신뢰가 낮아 지역 시세표로 폴백한다(무목업 — 소표본 미신뢰).
-_MIN_TRADE_SAMPLES = 5
 
 # 오케스트레이터 전용 서비스 인스턴스(스테이트리스 — 재사용). 테스트는 이 이름을 교체 가능.
 _service = FeasibilityServiceV2()
@@ -112,149 +104,20 @@ def _engine_cost_ratios(input_used: Any) -> tuple[float, float, str | None]:
     )
 
 
-async def _sigungu5_from_address(address: str) -> str | None:
-    """주소 → VWorld 지오코딩 → PNU → 시군구 5자리(법정동시군구코드). 실패 시 None(가짜 코드 금지).
-
-    ★HIGH-1: 주변 실거래(MOLIT) 조회는 site_id/db 없이 시군구 5자리 코드만 있으면 된다.
-    현장(sales site) 연결이 없어도 이 함수로 시군구를 스스로 확보해 실거래를 1순위로 쓴다.
-    """
-    if not address:
-        return None
-    try:
-        from app.services.external_api.vworld_service import VWorldService
-        from apps.api.integrations.region_codes import pnu_to_bcode
-
-        geo = await VWorldService().geocode_address(address)
-        pnu = (geo or {}).get("pnu") or ""
-        conv = pnu_to_bcode(pnu)          # (시군구 5자리, 법정동 5자리) — 아니면 None
-        if conv:
-            return conv[0]
-        # PNU가 짧아도 앞 5자리가 숫자면 시군구 코드로 사용(자체 충족).
-        if len(pnu) >= 5 and pnu[:5].isdigit():
-            return pnu[:5]
-    except Exception as e:  # noqa: BLE001 — 지오코딩 실패는 지역 시세로 폴백(무중단)
-        logger.warning("분양단가 실거래용 지오코딩 실패 — 지역 시세 폴백: %s", str(e)[:120])
-    return None
-
-
-async def _trade_sale_price_per_pyeong(
-    *, dev_type: str, address: str,
-) -> tuple[int, str, str, None] | None:
-    """주변 실거래(MOLIT) 직접 조회 → 분양단가(원/평, 공급면적). site_id 불필요(★HIGH-1).
-
-    주소를 지오코딩해 시군구 5자리를 얻고, 검증된 공용 헬퍼 _trade_per_pyeong으로 동·시군구
-    전용 평당가 중앙값을 구한다(재구현 0). 실거래는 '전용면적' 기준이므로, 개략수지가 쓰는
-    '공급(분양가능)면적' 기준으로 환산(×전용률)하고 신축 분양 프리미엄(기준안 1.15)을 곱한다
-    — sales site 연결 경로(suggest_base_price base tier)와 동일 산식으로 일치시킨다.
-
-    표본 부족(_MIN_TRADE_SAMPLES 미만)·조회 실패면 None(호출부가 지역 시세로 폴백).
-    """
-    sigungu5 = await _sigungu5_from_address(address)
-    if not sigungu5:
-        return None
-    try:
-        # 검증된 실거래 헬퍼·환산상수 재사용(SSOT — 값 발산 방지).
-        from app.services.sales.pricing.suggest import (
-            _JEONYULRYUL,
-            _PREMIUM,
-            _extract_dong,
-            _trade_per_pyeong,
-        )
-
-        building = _service._get_building_type(dev_type)
-        prop_type = _BUILDING_TO_MOLIT_PROP.get(building, "apt")
-        dong = _extract_dong(address)
-        pp = await _trade_per_pyeong(sigungu5, dong, prop_type)
-    except Exception as e:  # noqa: BLE001 — 실거래 조회 실패는 지역 시세로 폴백(무중단)
-        logger.warning("주변 실거래(MOLIT) 분양단가 조회 실패 — 지역 시세 폴백: %s", str(e)[:120])
-        return None
-
-    d_med, d_n = pp["dong"]["median"], pp["dong"]["n"]
-    s_med, s_n = pp["sigungu"]["median"], pp["sigungu"]["n"]
-    # 동(정밀) 우선, 표본 부족 시 시군구. 둘 다 미달이면 None(소표본 미신뢰 — 무목업).
-    if d_med and d_n >= _MIN_TRADE_SAMPLES:
-        scope, med, n = "동", int(d_med), int(d_n)
-    elif s_med and s_n >= _MIN_TRADE_SAMPLES:
-        scope, med, n = "시군구", int(s_med), int(s_n)
-    else:
-        return None
-
-    premium = _PREMIUM["base"]
-    # 전용 평당가(만원) → 공급 평당가(원/평) × 신축 프리미엄.
-    price = int(round(med * _JEONYULRYUL * premium * 10000))
-    basis = (
-        f"주변 실거래(MOLIT) {scope} 중앙값 {med:,}만원/평(전용, 표본 {n}건·최근 8개월) × "
-        f"전용률 {_JEONYULRYUL} × 신축 프리미엄 {premium} → 공급 평당가(공급면적 기준)"
-    )
-    return price, "주변 실거래(MOLIT)", basis, None
-
-
-async def _resolve_sale_price_per_pyeong(
-    *, db: Any, site_id: Any, dev_type: str, region: str, address: str,
-) -> tuple[int | None, str, str, str | None]:
-    """분양단가(원/평, 공급면적 기준) 결정 — 실거래 1순위, 지역 시세표는 '추정' 폴백.
-
-    우선순위:
-      1) sales site 연결(db+site_id) 있으면 suggest_base_price(신뢰루프) — 현장 확정 우선.
-      2) 주변 실거래(MOLIT) 직접 조회 — site_id 없이도 주소 지오코딩으로 확보(★HIGH-1 핵심).
-      3) 지역×유형 시세 테이블 폴백 — 이때만 '(추정·비실거래)' 명시 + degraded note.
-
-    Returns: (price_won_per_pyeong|None, source, basis, degraded_note|None)
-    """
-    # 1순위: 주변 실거래(MOLIT) 앵커 + 신뢰루프 — sales site 연결(db+site_id) 있을 때만.
-    if db is not None and site_id is not None:
-        try:
-            from app.services.sales.pricing.suggest import suggest_base_price
-
-            res = await suggest_base_price(db, site_id)
-            if isinstance(res, dict) and res.get("data_source") == "live":
-                tiers = res.get("tiers") or []
-                # '기준(base)' 프리미엄 tier 채택(없으면 중앙 tier).
-                base_tier = next((t for t in tiers if t.get("tier") == "base"), None)
-                if base_tier is None and tiers:
-                    base_tier = tiers[len(tiers) // 2]
-                pp10k = (base_tier or {}).get("per_pyeong_10k")
-                if pp10k:
-                    price = int(round(float(pp10k) * 10000))  # 만원/평 → 원/평
-                    conf = (res.get("trust") or {}).get("confidence")
-                    conf_txt = f"(신뢰도 {conf:.0%})" if isinstance(conf, (int, float)) else ""
-                    return (
-                        price,
-                        "주변 실거래(MOLIT)+신뢰루프",
-                        f"주변 실거래 시세×신축 프리미엄 기준 분양단가{conf_txt} · 공급면적 기준",
-                        None,
-                    )
-        except Exception as e:  # noqa: BLE001 — 실거래 조회 실패는 다음 순위로 폴백(무중단)
-            logger.warning("suggest_base_price 실패 — 주변 실거래 직접조회로 폴백: %s", str(e)[:120])
-
-    # 2순위: 주변 실거래(MOLIT) 직접 조회 — site_id 없이 주소→시군구로 확보(★HIGH-1).
-    trade = await _trade_sale_price_per_pyeong(dev_type=dev_type, address=address)
-    if trade is not None:
-        return trade
-
-    # 3순위(폴백): 지역×유형 시세 테이블(수지·추천 공용 SSOT) — 실거래 아님(추정치).
-    try:
-        price, basis_key = regional_pricing.resolve_regional_sale_price_per_pyeong(
-            dev_type=dev_type, region=region, address=address,
-        )
-    except Exception as e:  # noqa: BLE001 — 시세 테이블 실패는 분양단가 미확보(정직 null)
-        logger.warning("지역 시세 테이블 조회 실패: %s", str(e)[:120])
-        return None, "unavailable", "분양단가 미확보", "분양단가: 실거래·지역시세 모두 실패 — 미산출(무목업)"
-
-    # ★HIGH-1: 지역 시세표는 실거래가 아니다. 전국 기본값뿐 아니라 시군구/시도 매칭도
-    #   모두 '분양단가 실거래 미확보 — 지역 시세표 추정'을 degraded에 남기고, source에도
-    #   '(추정·비실거래)'를 명시해 초록(실거래) 배지로 오표기되지 않게 한다.
-    note = "분양단가: 실거래 미확보 — 지역 시세표 추정(참고용, 실제 시세로 재산정 필요)"
-    if basis_key == "national_default":
-        note = "분양단가: 실거래·지역시세 미매칭 — 전국 기본값 추정 폴백(참고용, 실제 시세로 재산정 필요)"
-    return (
-        int(price),
-        f"지역 시세 테이블({basis_key}·추정·비실거래)",
-        "지역×유형 시장표준 시세(원/평, 공급면적) — 주변 실거래 미확보 시 추정 폴백",
-        note,
-    )
-
-
+# ── 분양단가 리졸버는 `sale_price_resolver` 로 이관됐다(공용 SSOT) ──
+# ★재수출: 기존 호출부·테스트가 이 이름으로 부르고 있어 그대로 유지한다(동작 무변경).
+#   새 소비처는 `sale_price_resolver` 를 직접 임포트하라.
+# ★`noqa: F401` 은 장식이 아니다 — `ruff --fix` 가 «미사용» 으로 판단해 **재수출을 지웠고**,
+#   그러면 이 이름들을 이 모듈에서 임포트하는 기존 테스트가 깨진다(실측:
+#   `tests/test_rough_feasibility_orchestrator.py` 가 `_MIN_TRADE_SAMPLES`·
+#   `_sigungu5_from_address` 를 여기서 끌어 쓴다). 재수출은 **계약이다.**
+from app.services.feasibility.sale_price_resolver import (  # noqa: E402,F401
+    _BUILDING_TO_MOLIT_PROP,
+    _MIN_TRADE_SAMPLES,
+    _resolve_sale_price_per_pyeong,
+    _sigungu5_from_address,
+    _trade_sale_price_per_pyeong,
+)
 
 
 def _num(value: Any) -> float | None:

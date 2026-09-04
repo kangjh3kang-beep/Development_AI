@@ -2153,9 +2153,13 @@ class ProjectPipeline:
             sa_data = sa.data if sa else {}
             pnu = (sa_data.get("basic", {}) or {}).get("pnu") or sa_data.get("pnu")
             lawd = str(pnu)[:5] if pnu else None
+            # ★`dev_type` 을 넘긴다 — 실거래 출처가 **개발유형별 물건종별**(apt/오피스텔 등)로
+            #   조회되어야 `regional`(유형별 분양가 테이블)과 **같은 축**이 된다.
+            #   안 넘기면 기본값(M01)으로 떨어져 유형이 다른 사업에서 축이 갈린다.
             market_reval = await MarketRevaluationService().revalue(
                 address=site.address, building_type=design.building_type,
                 lawd_cd=lawd, land_area_sqm=site.land_area_sqm,
+                dev_type=getattr(design, "development_type", None) or "M01",
             )
         except Exception:  # noqa: BLE001
             market_reval = None

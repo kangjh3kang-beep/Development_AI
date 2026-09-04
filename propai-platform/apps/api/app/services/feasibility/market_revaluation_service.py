@@ -57,7 +57,7 @@ class MarketRevaluationService:
 
     async def revalue(self, *, address: str, building_type: str | None = None,
                       lawd_cd: str | None = None, land_area_sqm: float | None = None,
-                      include_avm: bool = True) -> dict[str, Any]:
+                      include_avm: bool = True, dev_type: str = "M01") -> dict[str, Any]:
         sources: list[dict[str, Any]] = []
 
         # 1) 지역 시장표준 단가표(항상 시도)
@@ -73,9 +73,26 @@ class MarketRevaluationService:
         except Exception as e:  # noqa: BLE001
             logger.warning("revalue.regional_failed", error=str(e)[:120])
 
-        # 2) MOLIT 실거래 최근 평균 평당가(있으면)
+        # 2) MOLIT 실거래 — ★**공용 SSOT 리졸버**를 경유한다(`sale_price_resolver`).
+        #
+        # ★★종전엔 `_molit_avg_per_pyeong` 이 **전용면적 기준 기존아파트 매매가**를
+        #   그대로 돌려줬고, 위 `regional` 은 **공급면적 기준 신축 분양가**다
+        #   (`regional_pricing` 첫 줄: *"지역 × 개발유형별 평균 **분양가**(원/평)"*).
+        #   **단위도 상품도 다른 두 수를 가중 블렌딩**하고 있었고, 그 결과가
+        #   `project_pipeline` 에서 **지역 테이블보다 우선해** 분양가로 쓰였다.
+        #
+        #   라이브 실측(2026-09-04 · 같은 주소 5곳 · 컨테이너 내부):
+        #     강남 역삼 100.8M vs 공용 리졸버 64.8M  → **+56%**
+        #     부산 해운대 22.4M vs 28.5M            → **−21%**
+        #   ★부호가 일정하지 않은 이유는 **두 오류가 부분 상쇄**되기 때문이다
+        #     (전용→공급 미변환은 상방 · 시군구 평균 ↔ 동 중앙값은 지역마다 부호가 다름).
+        #     **그래서 조용했다.**
+        #
+        # 공용 리졸버는 ①**동** 우선(시군구 폴백) ②**중앙값**(평균은 강남에서 1.56배로 튄다)
+        # ③최근 **8개월** ④`_MIN_TRADE_SAMPLES` **표본 하한** ⑤**전용→공급 환산 + 신축
+        # 프리미엄** 을 갖는다 — 즉 `regional` 과 **같은 단위**가 된다.
         try:
-            molit = await self._molit_avg_per_pyeong(lawd_cd)
+            molit = await self._molit_sale_price_source(address=address, dev_type=dev_type)
             if molit and molit["price_per_pyeong"] > 0:
                 sources.append(molit)
         except Exception as e:  # noqa: BLE001
@@ -171,8 +188,43 @@ class MarketRevaluationService:
             "note": f"XGBoost {svc._model_stage} 모델, 전용 {_AVM_REF_AREA_SQM:.0f}㎡ 환산 평당가",
         }
 
+    async def _molit_sale_price_source(
+        self, *, address: str, dev_type: str = "M01"
+    ) -> dict[str, Any] | None:
+        """MOLIT 실거래 → **공급면적 기준 신축 분양가**(원/평). 공용 SSOT 경유.
+
+        ★산식을 여기서 다시 쓰지 않는다 — `sale_price_resolver` 가 정본이다.
+          여기서 재구현하면 **또 갈린다**(그것이 이 함수가 대체하는 결함이었다).
+
+        표본 하한 미달·조회 실패면 `None` → 이 출처는 블렌딩에서 **자동 제외**되고
+        전체 신뢰도가 낮아진다(기존 best-effort 계약 유지).
+        """
+        from app.services.feasibility.sale_price_resolver import _trade_sale_price_per_pyeong
+
+        res = await _trade_sale_price_per_pyeong(dev_type=dev_type, address=address)
+        if not res:
+            return None
+        price, _src, basis, _deg = res
+        if not price or price <= 0:
+            return None
+        return {
+            "source": "molit_real", "label": "주변 실거래(MOLIT)",
+            "price_per_pyeong": float(price),
+            # ★신뢰도는 **고정 92 가 아니다** — 종전 `min(92, 50+건수)` 는 건수만 봤고
+            #   표본 하한도 없었다. 공용 리졸버가 하한을 통과시킨 것만 돌려주므로
+            #   여기서는 그 사실을 반영해 92 를 쓴다(하한 미달은 애초에 None 이다).
+            "confidence": 92, "weight": 0.65, "count": None, "note": basis[:120],
+        }
+
     async def _molit_avg_per_pyeong(self, lawd_cd: str | None) -> dict[str, Any] | None:
-        """MOLIT 아파트 실거래 최근 평균 평당가(만원). lawd_cd 없으면 None."""
+        """★**사용 중지**(2026-09-04) — 단위 불일치로 `_molit_sale_price_source` 로 대체됐다.
+
+        전용면적 기준 **매매가**를 공급면적 기준 **분양가** 자리에 넣고 있었다.
+        삭제하지 않고 남기는 이유: 이 함수를 부르는 다른 곳이 없음을 파생형 락이 단언하고,
+        **왜 쓰지 않는지**가 코드에 남아야 다음 사람이 되살리지 않는다.
+
+        MOLIT 아파트 실거래 최근 평균 평당가(만원). lawd_cd 없으면 None.
+        """
         lawd = (lawd_cd or "")[:5]
         if len(lawd) < 5:
             return None
