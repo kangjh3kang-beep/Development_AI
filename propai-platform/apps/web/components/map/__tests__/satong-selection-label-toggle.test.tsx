@@ -272,6 +272,20 @@ describe("C 기본값(값) — 이제 **스토어가 소유자**다", () => {
     expect(writes[0]).toMatch(/^const setLayerControls = useSatongMapPrefs\(\s*\(\w+\)\s*=>\s*\w+\.setControlsByLayer\s*\)$/);
     // ★음성 대조군 — layerControls 를 useState 로 되돌리면 하이드레이션 위험이 돌아온다.
     expect(stmts.filter((x) => /\buseState\b/.test(x) && /\blayerControls\b/.test(x))).toHaveLength(0);
+
+    // ★★레이어 **활성 상태**도 같은 계약이다(2026-09-04 · 신고의 남은 절반).
+    const layerReads = stmts.filter(
+      (x) => /\buseSatongMapPrefs\b/.test(x) && /\benabledLayerIds\b/.test(x),
+    );
+    expect(layerReads).toHaveLength(1);
+    expect(layerReads[0]).toMatch(
+      /^const enabledLayerIds = useSatongMapPrefs\(\s*\(\w+\)\s*=>\s*\w+\.enabledLayerIds\s*\)$/,
+    );
+    // ★`useState` 로 되돌리면 영속이 사라지고 하이드레이션 위험도 돌아온다.
+    expect(stmts.filter((x) => /\buseState\b/.test(x) && /\benabledLayers\b/.test(x))).toHaveLength(0);
+    // ★파생 Set 은 **memo** 여야 한다 — 매 렌더 새로 만들면 mapLayerState identity 가 바뀐다.
+    const derived = stmts.filter((x) => /\bconst enabledLayers = useMemo\b/.test(x));
+    expect(derived).toHaveLength(1);
   });
 
   it("★위 배선 락이 **서식·이름 변화에 깨지지 않는다**(위양성 대조군 — 이 PR 이 지웠던 것)", () => {

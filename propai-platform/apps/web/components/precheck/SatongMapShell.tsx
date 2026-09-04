@@ -833,7 +833,18 @@ export function SatongMapShell({
   // ★use_llm 옵트인(T1) — 기존 동작 보존을 위해 기본 true(비표준 양식 자동 LLM 보조 유지).
   const [useLlm, setUseLlm] = useState(true);
   const [focusTarget, setFocusTarget] = useState<{ lat: number; lon: number; label?: string } | null>(null);
-  const [enabledLayers, setEnabledLayers] = useState<Set<SatongMapLayerId>>(() => new Set(["cadastre"]));
+  // ★영속(2026-09-04). 저장은 **배열**이다 — `Set` 은 `JSON.stringify` 로 `{}` 가 되어 안 남는다.
+  //   소비처 9곳이 `.has()` 를 쓰므로 여기서 `useMemo` 로 `Set` 을 파생한다.
+  //   ★스토어 액션이 **변화 없으면 같은 배열 참조**를 돌려주므로 이 memo 도 재계산되지 않는다
+  //   — 그 계약이 깨지면 `mapLayerState` identity 가 바뀌고 오버레이·POI effect 가 전량
+  //   재생성된다(«깜빡임의 근원»). `#965` 2차 리뷰가 정확히 그 축에서 회귀를 잡았다.
+  const enabledLayerIds = useSatongMapPrefs((s) => s.enabledLayerIds);
+  const toggleLayerEnabledAction = useSatongMapPrefs((s) => s.toggleLayerEnabled);
+  const ensureLayerEnabled = useSatongMapPrefs((s) => s.ensureLayerEnabled);
+  const enabledLayers = useMemo(
+    () => new Set<SatongMapLayerId>(enabledLayerIds as SatongMapLayerId[]),
+    [enabledLayerIds],
+  );
   // ★초기화자를 **이름 있는 값**으로 뺀다(#959). 종전에는 인라인 화살표였고, 락이 그것을
   //   **소스 모양**으로 잠갔다 — 모양 락은 서식에 깨지고(위양성), 관계 락으로 바꾸니
   //   `() => ({ ...defaultControlsByLayer(), cadastre: [] })` 처럼 **관계는 유지한 채 계약을
@@ -1389,11 +1400,10 @@ export function SatongMapShell({
   );
 
   const mapLayerState = useMemo<SatongMapLayerState>(
-    () => ({
-      enabledLayerIds: Array.from(enabledLayers),
-      controlsByLayer: layerControls,
-    }),
-    [enabledLayers, layerControls],
+    // ★스토어 배열을 **직접** 쓴다. 종전 `Array.from(enabledLayers)` 는 memo 가 돌 때마다
+    //   **새 배열**을 만들었다 — 이 값이 그대로 `layerState` 로 내려간다.
+    () => ({ enabledLayerIds, controlsByLayer: layerControls }),
+    [enabledLayerIds, layerControls],
   );
 
   // I5+V3: 선택 필지 → GeoJSON/KML 파일 다운로드(순수 직렬화는 satong-export — 테스트 고정).
@@ -2352,30 +2362,21 @@ export function SatongMapShell({
   //   handleLayerClick을 통해 호출했으나("끄면서 동시에 그 레이어의 설정 팝오버를 여는"
   //   이중 조작 버그였다), 칩을 표시 전용 배지로 강등하며 그 호출부가 사라졌다 —
   //   레이어 조작 경로는 이제 우상단 레일(팝오버 헤더 toggleLayerEnabled) 하나로 일원화됐다.
-  const toggleLayerEnabled = useCallback((layerId: SatongMapLayerId) => {
-    if (!isRenderableSatongMapLayer(layerId)) return;
-    setEnabledLayers((prev) => {
-      const next = new Set(prev);
-      if (next.has(layerId)) {
-        if (layerId !== "cadastre") next.delete(layerId);
-      } else {
-        next.add(layerId);
-      }
-      return next;
-    });
-  }, []);
+  const toggleLayerEnabled = useCallback(
+    (layerId: SatongMapLayerId) => {
+      if (!isRenderableSatongMapLayer(layerId)) return;
+      // ★`cadastre` 보호와 «변화 없으면 같은 참조» 는 **스토어 액션**이 지킨다(계약 이식).
+      toggleLayerEnabledAction(layerId);
+    },
+    [toggleLayerEnabledAction],
+  );
 
   const handleLayerControlClick = useCallback((layerId: SatongMapLayerId, control: SatongLayerControl) => {
     if (!control.mapEffect) return;
-    setEnabledLayers((prev) => {
-      // ★이미 켜져 있으면 같은 참조를 그대로 돌려준다 — 무조건 new Set을 만들면
-      //   mapLayerState memo가 재계산돼 layerState identity가 바뀌고, 그걸 deps로 쓰는
-      //   필지 오버레이·POI effect가 전량 파괴·재생성된다(레이어 토글 시 깜빡임의 근원).
-      if (prev.has(layerId)) return prev;
-      const next = new Set(prev);
-      next.add(layerId);
-      return next;
-    });
+    // ★이미 켜져 있으면 **같은 참조**를 돌려주는 계약은 스토어 액션으로 옮겼다.
+    //   무조건 새로 만들면 mapLayerState memo 가 재계산돼 layerState identity 가 바뀌고,
+    //   그걸 deps 로 쓰는 필지 오버레이·POI effect 가 전량 파괴·재생성된다(깜빡임의 근원).
+    ensureLayerEnabled(layerId);
     setLayerControls((prev) => {
       const current = new Set(prev[layerId] ?? []);
       if (layerId === "terrain") {
@@ -2400,7 +2401,7 @@ export function SatongMapShell({
     // ★deps 에 `setLayerControls` 를 넣는다(2026-09-04): 종전에는 `useState` 세터라 eslint 가
     //   **안정적임을 알고** 생략을 허용했는데, 이제 zustand 액션이라 알 수 없다. 실제로는
     //   스토어 액션이므로 identity 가 안 바뀌어 재생성이 늘지 않는다 — 넣는 쪽이 정직하다.
-  }, [setLayerControls]);
+  }, [ensureLayerEnabled, setLayerControls]);
 
   const handleMapPickMany = useCallback(
     (parcels: ParcelAtPointResult[]) => {
