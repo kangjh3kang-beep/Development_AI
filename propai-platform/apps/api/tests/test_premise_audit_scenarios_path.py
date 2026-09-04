@@ -173,3 +173,44 @@ def test_zone_mix_comes_from_the_sibling_and_preserves_unknown():
     })
     assert any((v.get("relation") or v.get("key")) == "area_conservation"
                for v in (broken.get("violations") or [])), "진짜 불일치를 못 잡는다"
+
+
+# ── ★잠글 수 **없는** 축을 부채로 드러낸다 ─────────────────────────────────
+
+@pytest.mark.xfail(strict=True, reason=(
+    "★부채(환경 한계): `zone_mix`·`dominant_zone` 축은 **면적**이 있어야 발화하는데, "
+    "로컬/CI 에서는 VWorld 가 안 붙어 `simulate()` 의 `enriched[*].area` 가 전부 `None` 이다"
+    "(실측: `site.total_area_sqm=None` · `zone_mix=[]`). 그래서 `zone_mix=[]` 로 바꾸는 변이가 "
+    "**아무것도 바꾸지 않아 SURVIVED** 한다 — 락의 결함이 아니라 **모집단을 만들 수 없는 것**이다. "
+    "★`site` 파라미터로 면적을 주입할 경로도 없다(`site.get(` 전수 확인: `zone_type` 만 읽는다). "
+    "→ 이 축은 **라이브에서** 확증해야 한다(배포 후 `premise_audit.violations` 관측). "
+    "그때까지 아래 직접호출 락이 **관계 자체**는 잠그지만 **배선은 못 본다.**"))
+def test_zone_axis_fires_through_simulate_TODO():
+    pa, out = _audit_via_simulate([_ADDR, _ADDR_B])
+    assert (out.get("site") or {}).get("total_area_sqm") is not None, "면적이 붙지 않는다"
+    assert pa.get("violations") is not None
+
+
+def test_zone_relations_themselves_work__not_the_wiring():
+    """★관계 **자체**는 잠근다 — 다만 이것은 **배선을 보지 않는다**(직접 호출이므로).
+
+    위 `xfail` 이 그 한계를 드러낸다. 이 락은 «감사기가 옳다» 만 말하고
+    «시뮬레이터가 그것을 옳게 부른다» 는 말하지 않는다.
+    """
+    import app.services.zoning.premise_audit as _pa
+    base = {"integrated": {"total_area_sqm": 1710.0},
+            "scenario": {"top3": {"zone_type": "제2종일반주거지역", "parcel_count": 2,
+                                  "land_area_sqm": 1710.0}},
+            "_request_parcel_count": 2,
+            "per_parcel": [{"zone": "제1종일반주거지역", "area_sqm": 410.0},
+                           {"zone": "제2종일반주거지역", "area_sqm": 1300.0}],
+            "zone_mix": [{"zone": "제2종일반주거지역", "area_sqm": 1300.0},
+                         {"zone": "제1종일반주거지역", "area_sqm": 410.0}]}
+
+    def _k(dom):
+        r = _pa.audit({**base, "dominant_zone": dom})
+        return {v.get("relation") or v.get("key") for v in (r.get("violations") or [])}
+
+    # ★RC-2 형상(면적 최대가 아닌 zone 을 우세로) → 발화 / 올바른 형상 → 침묵
+    assert "dominant_argmax" in _k("제1종일반주거지역"), "RC-2 를 못 잡는다"
+    assert "dominant_argmax" not in _k("제2종일반주거지역"), "수정 후에도 발화한다(위양성)"
