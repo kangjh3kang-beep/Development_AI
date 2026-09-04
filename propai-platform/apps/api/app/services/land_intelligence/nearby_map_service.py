@@ -164,6 +164,75 @@ def _dong_tail(value: str | None) -> str:
     return v.split()[-1] if v else ""
 
 
+def select_precut_survivors(
+    groups: "list[dict[str, Any]]", budget: int, target_dong: str, target_eupmyeon: str = ""
+) -> "list[dict[str, Any]]":
+    """지오코딩 예산 안에서 **어느 그룹을 남길지** 고른다(순수함수 — 외부호출 0).
+
+    정렬키 = `(지역순위, -거래건수)`. 지역순위는 `_locality_rank` 참조.
+    예산 이하이면 **정렬조차 하지 않는다**(종전 동작 보존 — 순서가 바뀌면 하위 소비처가
+    «첫 값 대표» 로 다른 값을 볼 수 있다).
+
+    ★`build()` 안에 인라인으로 두면 «무엇을 고르는가» 를 네트워크 없이 태울 수 없어
+      락이 «호출됐다» 만 보게 된다. 이 저장소가 반복해서 데인 형태라 분리한다.
+    """
+    if len(groups) <= budget:
+        return groups
+    return sorted(
+        groups, key=lambda x: (_locality_rank(x, target_dong, target_eupmyeon), -x["count"])
+    )[:budget]
+
+
+def _locality_rank(group: "dict[str, Any]", target_dong: str, target_eupmyeon: str) -> int:
+    """사전컷 지역 프라이어 순위 — **작을수록 먼저 남는다.**
+
+        0 = 대상 법정동(리) 일치      1 = 같은 읍·면      2 = 그 외
+
+    ★`target_eupmyeon` 이 빈 문자열이면 1단이 **발화하지 않아** 종전(0/2 이진)과
+      **순서가 동일**하다. 그래서 옵트인하지 않은 소비처(탁상감정 등)는 동작이 불변이다.
+    """
+    dong = group.get("dong")
+    if target_dong and _dong_tail(dong) == target_dong:
+        return 0
+    if target_eupmyeon and _eupmyeon_head(dong) == target_eupmyeon:
+        return 1
+    return 2
+
+
+def _eupmyeon_from_address(address: str | None) -> str:
+    """주소에서 **읍·면 토큰**을 뽑는다(사전컷 2단 프라이어용).
+
+      "경기도 남양주시 화도읍 마석우리 265-1" → "화도읍"
+      "서울특별시 강남구 역삼동 736"          → ""   (동 지역은 읍·면이 없다)
+
+    못 찾으면 빈 문자열 — 그때는 2단 프라이어가 **꺼진다**(추측해서 엉뚱한 읍을 우대하지 않는다).
+    """
+    for tok in (address or "").split():
+        if len(tok) >= 2 and tok[-1] in ("읍", "면"):
+            return tok
+    return ""
+
+
+def _eupmyeon_head(value: str | None) -> str:
+    """법정동 표기의 **읍·면 토큰**(있으면). 없으면 빈 문자열.
+
+    MOLIT `umdNm` 은 읍·면 지역에서 `"화도읍 창현리"` 처럼 **두 토큰**으로 온다
+    (`_dong_tail` 이 그 꼬리를 취한다). 여기서는 **머리**를 취해 «같은 읍·면» 을 판정한다.
+    동(洞) 지역은 한 토큰이라 읍·면이 없다 → 빈 문자열(추측해서 만들지 않는다).
+
+    ★왜 필요한가(2026-09-05 실측): `lawd_cd` 가 **시군구**라 MOLIT 은 시군구 전체 거래를 준다.
+      남양주시 마석 기준 조회에서 사전컷 대상의 고유 법정동이 **33개**였고
+      다산동·별내동·진접읍 등 **10~20km 밖 신도시**가 섞여 있었다. 사전컷 2순위가
+      `-거래건수` 라 그 대단지들이 예산을 쓸어가고, 정작 1km 안 단지가 잘렸다.
+      실측: 1km 내 실재 아파트 **25곳** 중 화면에 **4곳**(= 대상 리 일치분) — 손실의
+      **84% 가 「리 사이」** 였고 그 25곳의 리가 **전부 같은 읍(화도읍)** 이었다.
+      ⇒ 읍·면 한 계층만 넣으면 **추가 외부호출 0회**로 그 손실을 회복한다.
+    """
+    v = (value or "").strip()
+    parts = v.split()
+    return parts[0] if len(parts) >= 2 else ""
+
+
 # ★R1 리뷰(m-5) — 마스킹 판정을 **공용 헬퍼 한 곳**으로 모은다.
 #   종전엔 이 파일의 `_is_masked_jibun` 과 `comparable_sample` 의 `"*" in str(...)` 리터럴이
 #   **독립 정의** 둘이었다. 리뷰어가 판정을 전각 `＊` 까지 넓히자 이 파일만 따라오고 소비처는
@@ -463,6 +532,7 @@ class NearbyMapService:
         target_land_use: str = "",
         target_jimok: str = "",
         auto_expand_radius: bool = False,
+        locality_prior: bool = False,
     ) -> dict[str, Any]:
         # center_hint: 라우터가 PNU/좌표 확보 과정(주소 지오코딩·point→parcel)에서 이미 얻은
         #   중심좌표. 여기서 다시 주소 지오코딩이 실패해도 이 힌트로 center를 채워, 지도가
@@ -479,7 +549,11 @@ class NearbyMapService:
         has_hint = bool(hint_lat and hint_lon)
 
         # 0) 결과 캐시 조회 — 동일 조건 재조회는 즉시 반환(수 초 → 수 ms)
-        cache_key = ((address or "").strip(), f"{lawd_cd}", months, radius_m, auto_expand_radius)
+        # ★`locality_prior` 를 키에 **반드시** 넣는다. 안 넣으면 지도(켜짐)와 계산층(꺼짐)이
+        #   같은 캐시 항목을 공유해, 먼저 부른 쪽의 **정렬이 다른 쪽에 새어** 나간다.
+        #   그러면 «계산층 불변» 보장이 캐시 한 줄로 무너진다(옵트인 설계의 급소).
+        cache_key = ((address or "").strip(), f"{lawd_cd}", months, radius_m, auto_expand_radius,
+                     locality_prior)
         # ★auto_expand_radius 를 키에 넣는다 — 같은 주소·반경이라도 확대 여부에 따라
         #   결과가 다르다. 빼면 지도가 다른 소비처의 좁은 결과를 그대로 받는다.
         hit = _BUILD_CACHE.get(cache_key)
@@ -563,6 +637,10 @@ class NearbyMapService:
         #   대상지 법정동은 주소에서 **이미 알고 있다** — 추가 호출 0으로 같은 예산에서
         #   수율을 올린다. 동이 같은 그룹을 앞에 두고, 그 안에서 거래 많은 순으로 자른다.
         target_dong = self._dong_from_address(address)
+        # ★2단 프라이어(읍·면)는 **옵트인**이다. 기본 꺼짐 = 종전과 순서 동일.
+        #   지도(표시)만 켠다 — 탁상감정 등 **계산층은 표본이 바뀌면 감정단가가 바뀌므로**
+        #   같은 커밋에서 건드리지 않는다(그 값은 토지비 SSOT→NPV·IRR 로 흐른다).
+        target_eupmyeon = _eupmyeon_from_address(address) if locality_prior else ""
         # ★M-4 계측 — 사전컷의 **순효과를 판정할 재료**를 카테고리별로 남긴다.
         #   종전엔 `geocode_precut_count` 라는 **10개 카테고리 합산 스칼라 하나**뿐이라,
         #   응답만 보고는 (a)어느 카테고리에서 컷이 발동했는지 (b)대상 법정동 일치 그룹이
@@ -577,14 +655,10 @@ class NearbyMapService:
             _before = len(cat["groups"])
             _matched_before = _count_dong_matches(cat["groups"], target_dong)
             if _before > _MAX_GEOCODE_GROUPS_PER_CAT:
-                cat["groups"].sort(
-                    key=lambda x: (
-                        0 if (target_dong and _dong_tail(x.get("dong")) == target_dong) else 1,
-                        -x["count"],
-                    )
+                geocode_precut += _before - _MAX_GEOCODE_GROUPS_PER_CAT
+                cat["groups"] = select_precut_survivors(
+                    cat["groups"], _MAX_GEOCODE_GROUPS_PER_CAT, target_dong, target_eupmyeon
                 )
-                geocode_precut += len(cat["groups"]) - _MAX_GEOCODE_GROUPS_PER_CAT
-                cat["groups"] = cat["groups"][:_MAX_GEOCODE_GROUPS_PER_CAT]
             _matched_kept = _count_dong_matches(cat["groups"], target_dong)
             cat["precut"] = {
                 "budget": _MAX_GEOCODE_GROUPS_PER_CAT,
@@ -596,6 +670,9 @@ class NearbyMapService:
                 # 정렬 1순위 항이 상수로 붕괴해 순수 건수 정렬로 돌아간다 — 응답만 보고는
                 # 그 사실을 알 수 없었다.
                 "dong_prior_active": bool(target_dong),
+                # ★2단(읍·면) 프라이어가 **켜지긴 했는지**. 응답만 보고 알 수 있어야
+                #   «효과 없음» 과 «발화 안 함» 을 가를 수 있다(0 과 미확보를 안 뭉친다).
+                "eupmyeon_prior_active": bool(target_eupmyeon),
                 # ★티켓의 핵심 질문: 대상 동 일치 그룹이 예산을 넘었는가(before > budget)?
                 #   그리고 그중 몇이 살아남았는가(kept)? 둘의 차가 프라이어 포화도다.
                 # ★★`active is True` 인데 `before == 0` 인 조합의 해석 — **경보가 아니라
