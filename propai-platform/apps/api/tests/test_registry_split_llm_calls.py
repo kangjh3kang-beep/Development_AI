@@ -25,6 +25,9 @@ from __future__ import annotations
 
 import ast
 import json
+import re
+import sys
+import types
 from pathlib import Path
 from typing import Any
 
@@ -128,11 +131,17 @@ async def test_truncated_response_recovers_via_split() -> None:
     assert "말소기준권리" in out["rights_analysis"]
     assert out["baseline_right"].startswith("2019")
     assert out["safety_grade"] == "주의"
+    # ★★일부 키만 보면 «병합에서 한 키를 빠뜨리는» 변이가 통과한다(적대 리뷰 실측:
+    #   `risks` 를 빼도 초록이었다). **선언한 두 목록 전부**가 실렸는지 파생형으로 본다.
+    missing = [k for k in ras._SPLIT_FACT_KEYS + ras._SPLIT_JUDGE_KEYS if k not in out]
+    assert not missing, f"분할이 선언한 키가 결과에 없다: {missing}"
 
     # ★분할이 **진짜 분할**인가 — 2·3번째 호출이 1차와 같은 전체 스키마면 또 잘린다.
     assert "rights_analysis" not in seen[1], "분할 1단이 산문까지 요구한다 — 출력이 안 줄어든다"
     assert "ownership_history" not in seen[2], "분할 2단이 사실을 재요구한다 — 출력이 안 줄어든다"
     # ★2단은 원문 등기부를 **본다**(사실 요약만 주면 순위·대항력 근거가 얇아진다).
+    # ★**두 단 다** 본다. 2단만 단언하면 1단이 원문 없이도 초록이다(적대 리뷰 실측).
+    assert "긴 등기부 원문" in seen[1], "분할 1단이 등기 원문을 못 본다"
     assert "긴 등기부 원문" in seen[2], "분할 2단이 등기 원문을 못 본다"
 
 
@@ -176,20 +185,27 @@ async def test_judge_stage_failure_keeps_the_facts_and_says_why() -> None:
         out = await _svc()._llm(None, "긴 등기부")
 
     assert len(seen) == 3
-    assert out["generated"] is True and out["partial"] is True
+    assert out["partial"] is True
     # 유료 산출물(사실)이 살아 있다
     assert out["ownership"]["owners"][1]["name"] == "김순복"
     assert out["seizure"][0]["type"] == "가압류"
     # ★사유를 표면까지 싣는다 — 진단 불가는 그 자체로 장애다
     assert "judge stage down" in out["failure_reason"] or "RuntimeError" in out["failure_reason"]
 
-    # ★★«모름» 이 «판단 결과» 로 위장되지 않는가. 이 단언이 없으면 기본값을 그럴듯하게
-    #   채우는 구현(safety_grade="안전")이 통과하고, 그것이 **거부보다 나쁘다**.
-    assert out["baseline_right"] == "판단 미생성"
-    assert out["acquired_extinguished"] == "판단 미생성"
-    assert out["right_to_demand_sale"]["possible"] == "판단보류"
-    assert out["safety_grade"] != "안전", "판단을 못 했는데 '안전'으로 표기됐다"
+    # ★★★부분 결과를 **성공이라고 말하지 않는다.** `generated` 는 프론트 `isAnalyzed` 와
+    #   서버 `_cache_success` 가 **둘 다 보는 단일 성공 계약**이다. 판단이 없는데 켜면
+    #   ①「안전성 주의」 배지가 칠해지고 ②「해석 다시 시도」 버튼이 사라지고 ③DB 에 7일
+    #   캐시돼 복구 불가가 된다(적대 리뷰가 실측으로 잡았다 — 초판이 정확히 그랬다).
+    assert out["generated"] is False, "판단이 없는 부분 결과가 «성공» 으로 표기됐다"
+
+    # ★«모름» 이 «판단 결과» 로 위장되지 않는가 — 판단 키는 **아예 없어야** 한다.
+    #   그래야 `RegistryBatchRow` 의 기존 가드가 배지를 안 칠한다.
+    for k in ("safety_grade", "summary", "baseline_right", "acquired_extinguished",
+              "right_to_demand_sale", "risks"):
+        assert k not in out, f"판단을 못 했는데 `{k}` 에 값이 실렸다: {out.get(k)!r}"
     assert "생성하지 못" in out["rights_analysis"]
+    # 재시도 버튼이 뜨는 조건(`failureAction` → reinterpret)
+    assert out["failure_class"] == "parse"
 
 
 @pytest.mark.asyncio
@@ -242,6 +258,12 @@ def test_paid_llm_call_has_exactly_one_call_site() -> None:
 # 파생형 — 두 단계의 키가 **원래 스키마 전부**를 덮는가
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _all_schema_keys(tmpl: str) -> set[str]:
+    """스키마의 **모든 깊이**의 키. 축을 「최상위」로 두면 중첩 키가 조용히 사라진다."""
+    body = tmpl.split("## 출력 JSON 스키마", 1)[1].replace("{{", "{").replace("}}", "}")
+    return set(re.findall(r'"([A-Za-z_][A-Za-z0-9_]*)"\s*:', body))
+
+
 def _toplevel_schema_keys(tmpl: str) -> set[str]:
     """`_TMPL` 의 출력 스키마에서 **최상위 키만** 뽑는다(중첩 키는 제외)."""
     # ★`_TMPL` 은 `.format()` 용이라 스키마의 리터럴 중괄호가 **이중화**(`{{`)돼 있다.
@@ -261,20 +283,103 @@ def _toplevel_schema_keys(tmpl: str) -> set[str]:
     return keys
 
 
-def test_split_stages_cover_every_key_of_the_original_schema() -> None:
-    """손으로 나열한 두 목록이 **원래 스키마의 상한**이 되지 않게 파생형으로 대조한다.
+def test_split_prompts_actually_request_every_key_they_declare() -> None:
+    """★상수 목록이 아니라 **분할 프롬프트 본문**과 대조한다.
 
-    스키마에 키를 더할 때 어느 단계에도 안 넣으면, 그 키는 **분할 경로에서만** 영영
-    비어 있게 된다 — 정상 경로는 초록이라 아무도 못 본다.
+    초판은 `_TMPL` ↔ **손으로 쓴 상수**만 봤다. 그래서 `_TMPL_FACTS` 에서 `mortgage` 를
+    통째로 지워도, 중첩 키 `owners[].acquisition_price` 나 `ownership_history`(주택법 §22
+    상속 보유기간 합산의 근거)를 지워도 **전부 초록**이었다(적대 리뷰가 변이로 실증).
+
+    ★**선언은 자기를 검증하지 않는다.** 무엇이 실제로 요구되는지는 프롬프트에만 있다.
     """
-    schema = _toplevel_schema_keys(ras._TMPL)
-    # ★공허진리 방지: 추출이 비면 이 테스트는 무엇이든 통과한다.
-    assert len(schema) >= 10, f"스키마 키 추출 {len(schema)}개 — 파서가 죽었다: {sorted(schema)}"
-    assert "ownership" in schema and "rights_analysis" in schema, f"기대 키 누락: {sorted(schema)}"
+    facts_keys = _toplevel_schema_keys(ras._TMPL_FACTS)
+    judge_keys = _toplevel_schema_keys(ras._TMPL_JUDGE)
+    assert len(facts_keys) >= 4 and len(judge_keys) >= 6, (
+        f"프롬프트 파서가 죽었다 — facts={sorted(facts_keys)} judge={sorted(judge_keys)}")
 
-    covered = set(ras._SPLIT_FACT_KEYS) | set(ras._SPLIT_JUDGE_KEYS)
-    assert not (schema - covered), f"분할이 덮지 않는 키: {sorted(schema - covered)}"
-    # 반대 방향도 본다 — 스키마에 없는 키를 분할이 만들면 소비처가 못 읽는다.
-    assert not (covered - schema), f"스키마에 없는 키를 분할이 만든다: {sorted(covered - schema)}"
-    # 두 단계가 **겹치지 않는가**(겹치면 출력이 안 줄어 절단이 재발한다)
-    assert not (set(ras._SPLIT_FACT_KEYS) & set(ras._SPLIT_JUDGE_KEYS)), "두 단계가 같은 키를 요구한다"
+    # 선언(상수) ↔ 프롬프트(실제 요구)를 **양방향**으로 못 박는다.
+    assert facts_keys == set(ras._SPLIT_FACT_KEYS), (
+        f"1단 프롬프트와 `_SPLIT_FACT_KEYS` 가 어긋난다: "
+        f"프롬프트만={sorted(facts_keys - set(ras._SPLIT_FACT_KEYS))} "
+        f"상수만={sorted(set(ras._SPLIT_FACT_KEYS) - facts_keys)}")
+    assert judge_keys == set(ras._SPLIT_JUDGE_KEYS), (
+        f"2단 프롬프트와 `_SPLIT_JUDGE_KEYS` 가 어긋난다: "
+        f"프롬프트만={sorted(judge_keys - set(ras._SPLIT_JUDGE_KEYS))} "
+        f"상수만={sorted(set(ras._SPLIT_JUDGE_KEYS) - judge_keys)}")
+
+
+def test_split_prompts_cover_every_key_of_the_original_schema_including_nested() -> None:
+    """원래 스키마의 키가 **중첩까지** 어느 한 단에는 요구되는가.
+
+    ★축이 「최상위 키」면 중첩 키가 조용히 사라진다 — 적대 리뷰가 `acquisition_price` 와
+      `ownership_history` 를 지워 실증했다. 그래서 **모든 깊이의 키**를 센다.
+    """
+    schema = _all_schema_keys(ras._TMPL)
+    assert len(schema) >= 25, f"스키마 키 추출 {len(schema)}개 — 파서가 죽었다"
+    assert {"ownership", "rights_analysis", "acquisition_price", "ownership_history"} <= schema
+
+    covered = _all_schema_keys(ras._TMPL_FACTS) | _all_schema_keys(ras._TMPL_JUDGE)
+    missing = schema - covered
+    assert not missing, f"분할 프롬프트가 요구하지 않는 원래 스키마 키: {sorted(missing)}"
+
+    # 두 단이 **겹치지 않는가**(겹치면 출력이 안 줄어 절단이 재발한다)
+    overlap = set(ras._SPLIT_FACT_KEYS) & set(ras._SPLIT_JUDGE_KEYS)
+    assert not overlap, f"두 단이 같은 최상위 키를 요구한다: {sorted(overlap)}"
+
+
+def test_split_stages_do_not_raise_the_output_cap() -> None:
+    """분할은 캡을 **올려서** 해결하는 것이 아니다 — 캡이 조용히 바뀌면 근거가 사라진다."""
+    src = _SVC.read_text(encoding="utf-8")
+    assert "max_tokens: int = 4096" in src, "`_invoke` 의 기본 출력 캡이 바뀌었다"
+    # 분할 호출이 캡을 손대지 않는지(둘 다 기본값을 쓴다)
+    assert "self._invoke(_TMPL_FACTS.format" in src and "max_tokens" not in \
+        src.split("self._invoke(_TMPL_FACTS.format")[1].split(")")[0]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 축 4-b — 과금 기록: `_invoke` **아래 층**을 직접 태운다
+# ══════════════════════════════════════════════════════════════════════════════
+
+@pytest.mark.asyncio
+async def test_every_paid_call_records_billing(monkeypatch) -> None:
+    """★`_invoke` 를 monkeypatch 하는 다른 테스트들은 이 층을 **통째로 우회**한다.
+
+    그래서 `record_llm_response_billing` 호출을 지워도 나머지 락이 전부 초록이었다
+    (적대 리뷰 실측). AST 락은 `ainvoke` 의 **개수와 소유자**만 보므로 이것을 못 잡는다.
+    → 여기서는 `get_llm` 만 스텁하고 **`_invoke` 본문을 그대로 태운다.**
+    """
+    billed: list[str] = []
+
+    class _FakeLLM:
+        async def ainvoke(self, _msgs):
+            return _Resp(truncated=False)
+
+    async def fake_billing(_llm, _resp, service: str = "") -> None:
+        billed.append(service)
+
+    # ★`langchain_core` 가 없는 환경에서도 **이 층을 태운다.** `importorskip` 을 쓰면
+    #   로컬에서 조용히 건너뛰어 «무잠금인데 초록» 이 된다(이 저장소가 데인 형태).
+    #   스텁하는 것은 **메시지 데이터 클래스뿐**이고, 검증 대상(과금 기록)은 그대로 실행된다.
+    if "langchain_core" not in sys.modules:
+        mod = types.ModuleType("langchain_core")
+        msgs = types.ModuleType("langchain_core.messages")
+        for name in ("HumanMessage", "SystemMessage"):
+            setattr(msgs, name, type(name, (), {"__init__": lambda self, content="": None}))
+        mod.messages = msgs
+        monkeypatch.setitem(sys.modules, "langchain_core", mod)
+        monkeypatch.setitem(sys.modules, "langchain_core.messages", msgs)
+
+    import app.services.ai.base_interpreter as bi
+    import app.services.ai.llm_provider as lp
+    monkeypatch.setattr(lp, "get_llm", lambda **kw: _FakeLLM(), raising=True)
+    monkeypatch.setattr(bi, "record_llm_response_billing", fake_billing, raising=True)
+
+    svc = _svc()
+    await svc._invoke("프롬프트")
+    assert billed == ["registry"], f"유료 호출이 과금에 기록되지 않았다: {billed}"
+
+    # ★두 모집단: 분할 경로의 **세 호출 전부**가 기록되는가.
+    #   개수만 세면 «1회만 기록하고 나머지는 빠뜨리는» 구현이 통과한다.
+    billed.clear()
+    await svc._invoke("a"); await svc._invoke("b"); await svc._invoke("c")
+    assert billed == ["registry"] * 3, f"기록 누락: {billed}"

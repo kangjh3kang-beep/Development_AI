@@ -729,40 +729,70 @@ class RegistryAnalysisService:
         from app.services.ai.llm_json import parse_llm_json
 
         addr_line = f"## 대상 부동산\n- 주소: {address}\n" if address else ""
+
+        def _stage_reason(exc: Exception, resp: Any, stage: str) -> str:
+            """★각 단의 절단을 **그 단에서** 가른다(`#968` 의 정직성을 새 경로에도 적용).
+
+            이것이 없으면 1단이 잘렸을 때 사유가 *「분할 재시도도 실패 — 파서 오류: char 0」* 이
+            되어 **`#968` 이 없애려던 그 표기로 되돌아간다**(§D-20 처방 범위 ≠ 결함 범위).
+            """
+            from app.services.ai.llm_json import is_truncated as _is_trunc
+            base = _failure_reason(exc)
+            if _is_trunc(resp):
+                return f"분할 {stage}의 응답도 최대 길이에서 잘렸습니다 — 파서 오류: {base}"
+            return base
+
+        resp_f = None
         try:
-            _, raw_f = await self._invoke(_TMPL_FACTS.format(addr_line=addr_line, registry=registry))
+            resp_f, raw_f = await self._invoke(_TMPL_FACTS.format(addr_line=addr_line, registry=registry))
             facts = parse_llm_json(raw_f)
         except Exception as e:  # noqa: BLE001
             # 1단이 실패하면 분할로 얻을 것이 없다 — 호출처의 정직 폴백으로 되돌린다.
+            reason = _stage_reason(e, resp_f, "1단(사실)")
             logger.warning("등기 권리분석 분할 1단(사실) 실패",
-                           err=f"{type(e).__name__}: {exc_detail(e, limit=100)}")
+                           err=f"{type(e).__name__}: {exc_detail(e, limit=100)}", reason=reason)
+            self._split_stage_reason = reason  # 호출처가 사유를 그대로 싣는다
             return None
 
         out: dict[str, Any] = {k: facts[k] for k in _SPLIT_FACT_KEYS if k in facts}
-        out["generated"] = True
         out["split_call"] = True  # ★분할이 발화했음을 산출물에 남긴다(진단·계측·과금 대조)
+        resp_j = None
         try:
-            _, raw_j = await self._invoke(_TMPL_JUDGE.format(
+            resp_j, raw_j = await self._invoke(_TMPL_JUDGE.format(
                 addr_line=addr_line, registry=registry,
                 facts=json.dumps(facts, ensure_ascii=False)))
             judge = parse_llm_json(raw_j)
             out.update({k: judge[k] for k in _SPLIT_JUDGE_KEYS if k in judge})
+            out["generated"] = True
+            return out
         except Exception as e:  # noqa: BLE001
+            reason = _stage_reason(e, resp_j, "2단(판단)")
             logger.warning("등기 권리분석 분할 2단(판단) 실패 — 사실만 반환",
-                           err=f"{type(e).__name__}: {exc_detail(e, limit=100)}")
-            out["partial"] = True
-            out["failure_reason"] = (
-                "등기부가 길어 분할 분석했으나 권리 판단 생성에 실패했습니다 — "
-                f"소유·담보·압류 사실은 유효합니다. 사유: {_failure_reason(e)}")
-        # ★2단이 준 키만 덮이므로, 빠진 판단 키는 **판단보류로 명시**한다. 기본값을 그럴듯한
-        #   값으로 채우면 «모름» 이 «판단 결과» 로 위장된다(그 전례가 이 저장소에 있다).
-        out.setdefault("baseline_right", "판단 미생성")
-        out.setdefault("acquired_extinguished", "판단 미생성")
-        out.setdefault("right_to_demand_sale", {"possible": "판단보류", "reason": "권리 판단 미생성"})
-        out.setdefault("rights_analysis", "권리 판단을 생성하지 못했습니다(소유·담보·압류 사실은 유효).")
-        out.setdefault("risks", [])
-        out.setdefault("safety_grade", "주의")
-        out.setdefault("summary", "부분 분석(사실만)")
+                           err=f"{type(e).__name__}: {exc_detail(e, limit=100)}", reason=reason)
+
+        # ══ 2단 실패 = **부분 결과**. 사실은 살리되 «성공» 이라고 말하지 않는다 ══
+        #
+        # ★★`generated` 는 **성공 계약**이다 — 프론트 `isAnalyzed`(`lib/registry-analyze.ts`)와
+        #   서버 `_cache_success` 가 **둘 다 이 한 필드**를 본다. 판단이 없는 건에 `True` 를
+        #   실으면 세 가지가 한꺼번에 무너진다(적대 리뷰 실측):
+        #     ① `RegistryBatchRow` 가 **「안전성 주의」 배지를 칠한다** — 그 가드의 주석이
+        #        *"LLM 폴백도 safety_grade:'주의' 를 담아 오므로 존재 여부로 칠하면 아무것도
+        #        판정하지 않은 건이 «안전성 주의»로 보인다"* 고 **라이브 사고 좌표까지 적어
+        #        뒀는데**(2026-08-24 오산 내삼미동 448-2·347-8), 이 경로가 그것을 우회했다
+        #     ② `failureAction` 이 `unknown` 이 되어 **「해석 다시 시도」 버튼이 사라진다**
+        #     ③ `_cache_success` 가 참이라 **DB 에 7일** 재서빙 — 사용자가 복구할 길이 없다
+        #   ★그래서 `generated` 를 켜지 않는다. 사실은 payload 에 그대로 남아 상세가 읽을 수
+        #     있고, 캐시되지 않으므로 **재시도가 판단을 다시 만든다**(자가치유).
+        #
+        # ★`safety_grade`·`summary` 를 **기본값으로 채우지 않는다.** 채우면 «모름» 이
+        #   «판단 결과» 로 위장되고, 그것은 거부보다 나쁘다.
+        out["generated"] = False
+        out["partial"] = True
+        out["failure_reason"] = (
+            "등기부가 길어 분할 분석했으나 권리 판단 생성에 실패했습니다 — "
+            f"소유·담보·압류 사실은 유효합니다. 사유: {reason}")
+        out["failure_class"] = "parse"
+        out["rights_analysis"] = "권리 판단을 생성하지 못했습니다(소유·담보·압류 사실은 유효)."
         return out
 
     async def _llm(self, address: str | None, registry: str) -> dict[str, Any]:
@@ -782,14 +812,19 @@ class RegistryAnalysisService:
             data["generated"] = True
             return data
         except Exception as e:  # noqa: BLE001
+            def _record_fallback(exc: Exception) -> None:
+                """★성장루프 **분자**: 이 실패가 집계되지 않아, 등기 권리분석이 통째로 죽어도
+                `fallback_rate` 인사이트가 한 번도 뜨지 않았다(2026-08-24 실장애 — 사용자가
+                화면을 보고 알려 줄 때까지 아무도 몰랐다). 성공(분모)은 과금 헬퍼가 남긴다.
+
+                ★**분할 시도 뒤에** 부른다. 앞에 두면 분할로 회복된 건까지 분자에 들어간다.
+                """
+                from app.services.ai.base_interpreter import record_llm_failure
+                record_llm_failure("registry", exc)
+
             # ★진단성: 타입명 + 응답 head를 남겨 '잘린 JSON/비-JSON/LLM오류'를 구분 가능하게.
             logger.warning("등기 권리분석 LLM 실패, 폴백",
                            err=f"{type(e).__name__}: {exc_detail(e, limit=100)}", raw_head=(raw or "")[:180])
-            # ★성장루프 **분자**: 이 실패가 집계되지 않아, 등기 권리분석이 통째로 죽어도
-            #   `fallback_rate` 인사이트가 한 번도 뜨지 않았다(2026-08-24 실장애 — 사용자가
-            #   화면을 보고 알려 줄 때까지 아무도 몰랐다). 성공(분모)은 위 과금 헬퍼가 남긴다.
-            from app.services.ai.base_interpreter import record_llm_failure
-            record_llm_failure("registry", e)
             # ★절단은 **파싱 실패가 아니라 응답이 잘린 것**이다 — 사유를 정직하게 바꾼다.
             #   `is_truncated` 의 독스트링이 *"호출처는 이 판정으로 절단을 'parse'가 아닌
             #   별도 사유로 정직하게 분류해야 한다"* 고 **명시**하는데 이 호출처가 안 썼다(참조 0건).
@@ -804,14 +839,27 @@ class RegistryAnalysisService:
                 #   또 잘린다(코드 주석 :161 이 이미 그렇게 적어 뒀다). 그래서 재시도가 아니라
                 #   **분할**한다 — 스키마를 둘로 나눠 각 응답의 출력을 캡 아래로 내린다.
                 #   실패하면 None 이 와서 아래 정직 폴백으로 그대로 떨어진다.
+                self._split_stage_reason = ""
                 _split = await self._llm_split(address, registry)
-                if _split is not None:
-                    logger.info("등기 권리분석 절단 → 분할 호출로 회복", partial=bool(_split.get("partial")))
+                if _split is not None and _split.get("generated"):
+                    # ★분할이 **완전히** 성공했다 — 사용자는 폴백을 보지 않는다.
+                    #   그러므로 `record_llm_failure` 를 **발화시키지 않는다**(아래 참조).
+                    logger.info("등기 권리분석 절단 → 분할 호출로 회복")
                     return _split
+                _stage = getattr(self, "_split_stage_reason", "") or ""
                 _reason = (
                     "AI 응답이 최대 길이에서 잘렸습니다(등기부가 깁니다) — 분할 재시도도 "
-                    f"실패했습니다. 파서 오류: {_reason}"
+                    f"실패했습니다. {_stage or ('파서 오류: ' + _reason)}"
                 )
+                if _split is not None:
+                    # 부분 결과(사실만) — 사유를 이 자리의 절단 맥락으로 덮어쓴다.
+                    _split["failure_reason"] = _split.get("failure_reason") or _reason
+                    _record_fallback(e)
+                    return _split
+            # ★성장루프 **분자**는 «사용자가 폴백을 봤다» 를 뜻해야 한다. 그래서 분할 시도
+            #   **뒤에** 기록한다 — 앞에 두면 분할로 회복된 건까지 분자에 들어가 `fallback_rate`
+            #   가 조용히 다른 뜻이 된다(적대 리뷰 지적 M-4).
+            _record_fallback(e)
             return {
                 "generated": False,
                 "ownership": {}, "provisional_registration": {"exists": None},
