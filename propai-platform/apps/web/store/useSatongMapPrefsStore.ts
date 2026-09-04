@@ -115,10 +115,24 @@ export const useSatongMapPrefs = create<SatongMapPrefsState>()(
        */
       merge: (persisted, current) => {
         const p = (persisted ?? {}) as Partial<SatongMapPrefsState>;
+        // ★★identity 보존(2026-09-04 · 2차 적대 리뷰 MAJOR-1). 초판은 저장분이 **없어도**
+        //   객체 리터럴을 새로 만들었다 — zustand 는 hydrate 에서 merge+set 을 **무조건**
+        //   부르므로(`middleware.js:415`), 저장분이 없는 **모든 사용자**가
+        //   `getInitialState().controlsByLayer !== getState().controlsByLayer` 가 됐다.
+        //   그 identity 가 `mapLayerState` memo → `layerState` 로 흘러가고, 이 저장소는
+        //   그 귀결을 **명문으로** 적어 뒀다(`SatongMapShell.tsx`):
+        //     *"layerState identity 가 바뀌고, 그걸 deps 로 쓰는 필지 오버레이·POI effect 가
+        //       전량 파괴·재생성된다(레이어 토글 시 깜빡임의 근원)."*
+        //   ★그 자리는 `new Set` 을 안 만들려고 **참조 동일 조기반환**까지 넣어 둔 곳이다.
+        //   내가 봉합(MAJOR-2 의 깊은 merge)을 하면서 그 방어를 **모든 사용자에게** 깼다.
+        //   ★그리고 내 계획서 §3 은 이것을 *"저장분이 있는 사용자"* 로 좁혀 적었다 — **틀렸다.**
+        //   → 저장분이 없으면 **현재 참조를 그대로** 돌려준다. 있으면 그때만 새로 만든다.
+        //   ★함수 등 **알려진 키만** 취한다(리뷰 minor 5): `...p` 는 손으로 편집된 저장분의
+        //     아무 키나 덮어써서 액션까지 갈아 끼울 수 있었다.
+        if (!p.controlsByLayer) return current;
         return {
           ...current,
-          ...p,
-          controlsByLayer: { ...defaultSatongMapControls(), ...(p.controlsByLayer ?? {}) },
+          controlsByLayer: { ...defaultSatongMapControls(), ...p.controlsByLayer },
         };
       },
     },

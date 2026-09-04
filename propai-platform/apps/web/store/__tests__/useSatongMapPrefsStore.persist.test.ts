@@ -38,7 +38,9 @@ describe("기본값 — 사용자 요구 「기본은 나타나도록」", () =>
     //   그대로 나갔으면 **남의 의도된 기본값을 조용히 되돌리는 회귀**였다.
     const { readFileSync } = await import("node:fs");
     const { join } = await import("node:path");
-    const shell = readFileSync(join(process.cwd(), "components/precheck/SatongMapShell.tsx"), "utf8");
+    // ★`__dirname` 기준(형제 `paid-artifact-account-isolation.test.ts` 와 같은 형태).
+    //   `process.cwd()` 는 저장소 루트에서 부르면 어긋나 **변이 도구가 판정 불가(exit 13)** 를 냈다.
+    const shell = readFileSync(join(__dirname, "..", "..", "components/precheck/SatongMapShell.tsx"), "utf8");
     expect(shell).not.toMatch(/function\s+defaultControlsByLayer/);
     expect(shell).not.toMatch(/const\s+initialLayerControls/);
     // ★대조군 — 셸이 스토어를 실제로 쓴다(위 두 단언이 «파일이 비어서» 참인 게 아니다).
@@ -216,11 +218,80 @@ describe("★★순차 토글 — 한 레이어를 바꿔도 다른 레이어가
   });
 });
 
+describe("★★하이드레이션 identity — 저장분이 없으면 **참조가 그대로**다(2차 리뷰 MAJOR-1)", () => {
+  it("저장분이 없으면 getInitialState 와 getState 가 **같은 참조**다", async () => {
+    // ★실측: 초판 merge 는 저장분이 없어도 객체를 새로 만들었다. zustand 는 hydrate 에서
+    //   merge+set 을 **무조건** 부르므로 **모든 사용자**가 새 identity 를 받았고,
+    //   그 identity 가 `mapLayerState` memo → `layerState` 로 흘러 오버레이·POI effect 를
+    //   전량 재생성한다(이 저장소가 «깜빡임의 근원» 이라 적어 둔 축).
+    window.localStorage.clear();
+    vi.resetModules();
+    const fresh = await import("@/store/useSatongMapPrefsStore");
+    await fresh.useSatongMapPrefs.persist.rehydrate();
+    expect(fresh.useSatongMapPrefs.getState().controlsByLayer).toBe(
+      fresh.useSatongMapPrefs.getInitialState().controlsByLayer,
+    );
+  });
+
+  it("★대칭 — 저장분이 **있으면** 새 참조다(그때는 바뀌는 게 맞다)", async () => {
+    window.localStorage.setItem(
+      accountScopedKey(SATONG_MAP_PREFS_STORE_KEY),
+      JSON.stringify({ state: { controlsByLayer: { cadastre: ["boundary"] } }, version: 1 }),
+    );
+    vi.resetModules();
+    const fresh = await import("@/store/useSatongMapPrefsStore");
+    await fresh.useSatongMapPrefs.persist.rehydrate();
+    expect(fresh.useSatongMapPrefs.getState().controlsByLayer).not.toBe(
+      fresh.useSatongMapPrefs.getInitialState().controlsByLayer,
+    );
+    expect(fresh.useSatongMapPrefs.getState().controlsByLayer.cadastre).toEqual(["boundary"]);
+  });
+
+  it("★손으로 편집된 저장분이 **액션을 갈아 끼우지 못한다**(리뷰 minor 5)", async () => {
+    window.localStorage.setItem(
+      accountScopedKey(SATONG_MAP_PREFS_STORE_KEY),
+      JSON.stringify({
+        state: { controlsByLayer: { cadastre: ["boundary"] }, setControlsByLayer: null },
+        version: 1,
+      }),
+    );
+    vi.resetModules();
+    const fresh = await import("@/store/useSatongMapPrefsStore");
+    await fresh.useSatongMapPrefs.persist.rehydrate();
+    expect(typeof fresh.useSatongMapPrefs.getState().setControlsByLayer).toBe("function");
+  });
+});
+
+describe("★부채 — 초록 안에서 보이게 둔다(§C-13)", () => {
+  it.todo("enabledLayers(레이어를 켰는지 자체)도 영속한다 — 지금은 같은 툴바의 절반만 영속된다");
+  it.todo("resetControlsByLayer 를 UI 에 노출한다 — 현재 소비처 0(툴바로 되돌릴 수 있어 막다른 상태는 아니다)");
+  it.todo("selected ↔ selected-parcel 어휘 통합 시 저장분 마이그레이션 — migrate 는 지금 통과다");
+});
+
 describe("★되돌리기 — 나쁜 상태에 갇히지 않는다", () => {
   it("resetControlsByLayer 가 기본값으로 되돌린다", () => {
     useSatongMapPrefs.getState().setControlsByLayer({ cadastre: [] });
     useSatongMapPrefs.getState().resetControlsByLayer();
     expect(useSatongMapPrefs.getState().controlsByLayer).toEqual(defaultSatongMapControls());
+  });
+});
+
+describe("★계정 전환 와이프의 **값**(리뷰 minor 1 — 소스 검사는 값을 못 본다)", () => {
+  it("clearAllProjectData 가 컨트롤을 **기본값으로** 되돌린다(빈 객체가 아니라)", async () => {
+    // ★기존 락은 `expect(wipe).toContain("useSatongMapPrefs.setState")` — **이름만** 본다.
+    //   실측: 그 값을 `{}` 로 바꾸는 변이가 **1,134건을 통과**했다. 값으로 잰다.
+    // ★**같은 모듈 그래프**에서 잡는다. 앞 케이스들이 `vi.resetModules()` 를 부르므로
+    //   `projectSync` 를 그냥 임포트하면 **다른 스토어 인스턴스**를 쥔다 — 그러면 이 락은
+    //   «값이 안 바뀐다» 를 언제나 관측해 **공허**해진다(처음에 그렇게 빨개졌다).
+    vi.resetModules();
+    const store = await import("@/store/useSatongMapPrefsStore");
+    const { clearAllProjectData } = await import("@/lib/projectSync");
+    store.useSatongMapPrefs.setState({ controlsByLayer: { cadastre: [] } });
+    expect(store.useSatongMapPrefs.getState().controlsByLayer).toEqual({ cadastre: [] }); // 대조군
+    clearAllProjectData();
+    expect(store.useSatongMapPrefs.getState().controlsByLayer).toEqual(
+      store.defaultSatongMapControls(),
+    );
   });
 });
 

@@ -276,7 +276,14 @@ describe("배선 락 — 유료 산출물 스토어는 계정 스코프를 우�
     //     그 훅 이름이 와이프 창에 있는지 본다. 다섯 번째가 생기면 **자동으로** 걸린다.
     const STORES3 = accountScopedStoreHooks();
     // 공허 방지 — 모집단이 실재한다(현재 4개).
-    expect(STORES3.length, "계정별 스토어를 하나도 못 모았다 — 수집기가 죽었다").toBeGreaterThanOrEqual(4);
+    // ★**하한이 아니라 등식**이다(2차 리뷰 MAJOR-2). 하한이면 다섯 번째가 수집기의
+    //   사각지대 형태로 들어와도 4 에 머물러 **조용히 통과**한다.
+    //   교차검증: 어댑터를 쓰는 **파일 수**와 뽑은 **훅 수**가 같아야 한다(한 파일 한 스토어 가정이
+    //   깨지면 위 `matchAll` 이 더 뽑으므로 그때는 이 단언이 시끄럽게 실패해 재검토를 강제한다).
+    expect(STORES3.length, "계정별 스토어를 하나도 못 모았다 — 수집기가 죽었다").toBe(
+      accountScopedStoreFileCount(),
+    );
+    expect(STORES3.length, "모집단이 비었다 — 수집기가 죽었다").toBeGreaterThanOrEqual(4);
 
     // ★계약이 바뀌었다(2026-08-26 회귀 봉합). 리셋은 **쓰기 정지 창 안**에서 하고,
     //   복원은 여기가 아니라 `syncAccountScopedStores()` 가 한다.
@@ -353,12 +360,39 @@ function accountScopedStoreHooks(): string[] {
   for (const f of readdirSync(dir)) {
     if (!f.endsWith(".ts") || f.endsWith(".test.ts")) continue;
     const src = __stripCommentsForScan(readFileSync(join(dir, f), "utf8"), `store/${f}`);
-    if (!/createAccountScopedStorage\s*</.test(src)) continue;
-    // 훅 이름 = `export const useXxx = create<…>()(` 의 그 이름.
-    const m = src.match(/export const (use[A-Za-z0-9_]*)\s*=\s*create/);
-    if (m) out.push(m[1]);
+    // ★제네릭 유무를 가리지 않는다 — `createAccountScopedStorage()` 도 계정별이다.
+    if (!/createAccountScopedStorage\s*[<(]/.test(src)) continue;
+    // 훅 이름. ★`matchAll` — 한 파일에 스토어가 둘이면 첫 것만 집던 결함(2차 리뷰 MAJOR-2).
+    //   ★그리고 여러 export 형태를 본다: `export const useX = create` ·
+    //     `export const useX: T = create` · `const useX = create` + `export { useX }`.
+    const names = [
+      ...src.matchAll(/export const (use[A-Za-z0-9_]*)\s*(?::[^=]+)?=\s*create/g),
+      ...src.matchAll(/^const (use[A-Za-z0-9_]*)\s*(?::[^=]+)?=\s*create/gm),
+    ].map((m) => m[1]);
+    // ★**계정별이라고 분류해 놓고 이름을 못 뽑으면 조용히 흘리지 않는다**(2차 리뷰 MAJOR-2:
+    //   초판은 `if (m) out.push(...)` 라 **else 가 없었다** — 분류된 파일이 소리 없이 사라졌고,
+    //   하한 가드가 «>= 4» 라 다섯 번째가 그 형태면 4 에 머물러 통과했다).
+    if (names.length === 0) {
+      throw new Error(
+        `${f}: 계정별 저장 어댑터를 쓰는데 훅 이름을 못 뽑았다 — 수집기가 이 형태를 모른다. ` +
+          "조용히 흘리면 이 락이 그 스토어를 영영 안 본다(§목록은 곧 상한).",
+      );
+    }
+    out.push(...names);
   }
   return out.sort();
+}
+
+/** 계정별 어댑터를 쓰는 **파일 수** — 위 수집기와 **다른 경로**로 센다(교차검증용). */
+function accountScopedStoreFileCount(): number {
+  const dir = join(WEB_ROOT, "store");
+  let n = 0;
+  for (const f of readdirSync(dir)) {
+    if (!f.endsWith(".ts") || f.endsWith(".test.ts")) continue;
+    const src = __stripCommentsForScan(readFileSync(join(dir, f), "utf8"), `store/${f}`);
+    if (/createAccountScopedStorage\s*[<(]/.test(src)) n += 1;
+  }
+  return n;
 }
 
 describe("파생형 — 모든 persist 스토어는 **와이프되거나 계정별이거나** 둘 중 하나다", () => {
