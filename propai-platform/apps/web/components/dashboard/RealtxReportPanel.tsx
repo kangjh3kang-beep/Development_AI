@@ -16,6 +16,7 @@
  *   유일한 출처라 **클라이언트가 서버로 보낸다.**
  */
 
+import { resolveAbsentLabel } from "@/lib/withheld/absent-reasons";
 import { AlertTriangle, Download, FileSearch, Loader2 } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 
@@ -59,14 +60,6 @@ type Fetch =
 //: 보류 사유 → 화면에 쓸 짧은 말. ★`"—"` 하나로 뭉개지 않는다 — 면적 열이 이미 `"—"` 를
 //  쓰므로, 같은 글리프면 「해제라 해당 없음」과 「원천이 가림」이 구별되지 않는다.
 //  (이 저장소가 `0㎡ × 0원/㎡` 로 값을 치른 형태다.)
-const PP_ABSENT_LABEL: Record<string, string> = {
-  // ★"해제" 라고 쓰지 않는다 — **상태 열이 이미 「해제」를 말한다.** 두 열이 같은 말을 하면
-  //   사용자는 새 정보를 못 얻고, 테스트도 두 열을 구별하지 못한다(실제로 걸렸다).
-  //   여기서 말할 것은 «왜 단가가 없는가» 이고, 답은 «해당 없음» 이다.
-  not_applicable: "해당없음",
-  masked_by_source: "원천미제공",
-  source_unavailable: "조회실패",
-};
 
 /** 만원/평 — 서버가 실은 값만 그린다. 없으면 **왜 없는지**를 찍는다(지어내지 않는다). */
 function perPyeong(t: Tx) {
@@ -77,7 +70,14 @@ function perPyeong(t: Tx) {
     const text = v >= 1 ? Math.round(v).toLocaleString() : String(v);
     return <span className="font-semibold">{text}</span>;
   }
-  const label = PP_ABSENT_LABEL[String(t.price_per_pyeong_10k_absent ?? "")] ?? "—";
+  // ★사유는 **공용 어휘 하나**에서 나온다. `"—"` 는 **사유 코드 자체가 없을 때**만이다 —
+  //   「사유가 없다」와 「모르는 사유다」는 다른 사실이고, 후자를 `"—"` 로 뭉개는 것이 결함이었다.
+  //   ★종전 이 파일의 3종 목록이 **모집단**이라 생산자가 내는 `insufficient_coverage` 가
+  //     `"—"` 로 떨어졌다. 적대 리뷰 실측(2026-09-04): 첫 봉합이 그 목록을 «오버라이드» 로
+  //     남겼는데 **세 항목이 공용 어휘와 글자까지 같아** 잉여였고, 지워도 락이 전부 초록이었다.
+  //   ★「해제」라고 쓰지 않는다는 이 열의 판단은 `ABSENT_SHORT` 로 옮겼고, D14 가 **렌더
+  //     결과로**(두 열이 다른 말을 한다) 고정한다 — 문구를 못 박지 않으므로 취약하지 않다.
+  const label = resolveAbsentLabel(t.price_per_pyeong_10k_absent, { variant: "short" }) ?? "—";
   return (
     <span className="text-[var(--text-hint)]" title={t.price_per_pyeong_10k_basis ?? undefined}>
       {label}
