@@ -154,6 +154,30 @@ def test_todo_사라지는_시나리오도_고지한다():
     pytest.skip("★부채: 용도지역 미확보 시 역세권 장기전세주택이 목록에서 조용히 사라진다(별건)")
 
 
+def test_미확보_사유를_단_행의_설명은_모르는_것을_단정하지_않는다():
+    """★**`notes` 는 「비어 있음」이 아니라 「내용」으로 잠근다**(적대 리뷰 H-4/M2).
+
+    첫 판의 락은 `not notes.strip()` — **비어 있음만** 봤다. 그래서 `blocked_reason` 이
+    **원래 note 를 그대로 유지**하도록 되돌리는 변이가 **SURVIVED** 했다. 그 변이 하에서
+    미확보 부지의 가로주택정비사업은 `notes='주거지역 **아님** 또는 면적 1만㎡ 이상'` 을 낸다 —
+    ***모르는 것을 「아니다」로 단정하는 문장***, 즉 **이 PR 이 없애려는 바로 그 거짓**이다.
+
+    ★★그리고 나는 `FORBIDDEN_NOTE_TOKENS` 를 **선언만 하고 쓰지 않았다** — 이 세션이 계속
+      고쳐 온 **「선언 ≠ 소비」** 를 락 자신이 재발시켰다. 내 변이가 그것을 잡았다.
+    """
+    rows = _rows("")
+    flagged = [r for r in rows if EXPECTED_UNKNOWN_CONS in (r.get("cons") or [])]
+    # ★공허 진리 방지 — 대상이 0이면 아래가 그 자체로 참이 된다.
+    assert flagged, "미확보 사유를 단 행이 없다 — 판정 거부"
+    for r in flagged:
+        note = r.get("notes") or ""
+        assert note.strip(), f"{r['scheme']}: 사유를 달아 놓고 설명이 없다"
+        for tok in FORBIDDEN_NOTE_TOKENS:
+            assert tok not in note, (
+                f"{r['scheme']}: 미확보라 말해 놓고 설명이 «{tok}» 로 단정한다 — {note!r}"
+            )
+
+
 def test_주거_대조군과_갈린_행은_모두_그_사실을_말한다_파생형():
     """★**이 락이 H-1 을 직접 잡는다** — 첫 판은 축이 **리터럴 문구**라 4행을 놓쳤다.
 
