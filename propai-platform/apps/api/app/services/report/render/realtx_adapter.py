@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.utils.withheld import ABSENT_SHORT
 from app.services.report.render.model import (
     DataTableBlock,
     KPITile,
@@ -70,7 +71,10 @@ def _fmt_per_pyeong(t: dict[str, Any]) -> str:
         #   1만원/평 미만(지방 임야 등)은 정수로 만들면 **0 이 된다**.
         return f"{v:,.0f}" if v >= 1 else f"{v:g}"
     code = str(t.get("price_per_pyeong_10k_absent") or "").strip()
-    return _PP_ABSENT_SHORT.get(code, "—")
+    # ★덮지 않은 코드는 **공용 어휘로 떨어진다** — `"—"` 는 **사유 코드 자체가 없을 때**만이다.
+    #   종전엔 이 맵이 모집단이라 생산자가 내는 `insufficient_coverage` 가 `"—"` 가 됐다
+    #   (화면 `RealtxReportPanel.tsx` 에 **같은 결함이 있었다** — 형제 미러를 함께 고친다).
+    return _PP_ABSENT_SHORT.get(code) or ABSENT_SHORT.get(code, "—")
 
 
 def _tx_row(t: dict[str, Any]) -> list[Any]:

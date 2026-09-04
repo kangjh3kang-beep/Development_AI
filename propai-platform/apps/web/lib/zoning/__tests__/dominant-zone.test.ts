@@ -54,6 +54,65 @@ describe("formatDominantZone — 판정 보류를 값처럼 말하지 않는다"
   });
 });
 
+/**
+ * ★**보류값 계약(정본)** — `X: null` + `X_absent: 닫힌 코드`.
+ *
+ * 종전에 이 모듈은 **센티널 계약만** 다뤄서, 값이 `null` 로 오는 경로에서는 「왜 보류인지」를
+ * **원리적으로 말할 수 없었다** — 백엔드가 실어 보낸 사유 코드를 받는 인자가 없었다.
+ * 사유를 버리는 것은 그 자체로 장애다(사용자도 조사자도 원인을 모른다).
+ */
+describe("formatDominantZone — `_absent` 코드로 **왜** 보류인지 말한다", () => {
+  it("★두 모집단이 같은 실행에서 갈린다 — 사유가 있으면 말하고, 없으면 종전 그대로다", () => {
+    const withCode = formatDominantZone(null, { fallback: "용도미상", absent: "ambiguous" });
+    const without = formatDominantZone(null, { fallback: "용도미상" });
+    // 있는 쪽: 사유가 붙는다
+    expect(withCode.reason).toBeTruthy();
+    expect(withCode.reason).toMatch(/단일화/);
+    // 없는 쪽: **종전과 바이트 동일** — 이것이 회귀가 아니라는 근거다
+    expect(without).toEqual({ label: "용도미상", withheld: true });
+    expect("reason" in without).toBe(false);
+    // ★두 모집단이 실제로 다르다(차가 0인 픽스처는 잠금이 아니다)
+    expect(withCode.reason).not.toBe((without as { reason?: string }).reason);
+  });
+
+  it("★raw 코드를 화면에 내보내지 않는다 — 이 모듈의 존재 이유", () => {
+    const r = formatDominantZone(null, { fallback: "용도미상", absent: "insufficient_coverage" });
+    expect(r.reason).not.toContain("insufficient_coverage");
+    expect(r.label).not.toContain("insufficient_coverage");
+  });
+
+  it("★음성 대조군 — 어휘 밖 코드는 **조용히 무시**한다(지어내지 않는다)", () => {
+    // 이것이 없으면 «무엇이 와도 뭔가 말한다» 는 구현도 만점을 받는다(위양성도 결함).
+    for (const bad of ["zzz_not_in_vocabulary", "", null, undefined, 7]) {
+      const r = formatDominantZone(null, { fallback: "용도미상", absent: bad });
+      expect(r, `어휘 밖 ${String(bad)} 에 사유를 지어냈다`).toEqual({ label: "용도미상", withheld: true });
+    }
+  });
+
+  it("★값이 있으면 사유를 붙이지 않는다 — 계약이 값과 사유를 **배타**로 둔다", () => {
+    // 값이 있는데 `_absent` 가 남아 있으면 그건 백엔드의 계약 위반이고
+    // `validate_withheld_pair` 가 **거기서** 잡을 일이지, 화면이 덮어 감출 일이 아니다.
+    const r = formatDominantZone("제2종일반주거지역", { absent: "ambiguous" });
+    expect(r).toEqual({ label: "제2종일반주거지역", withheld: false });
+  });
+
+  it("센티널 경로는 `absent` 가 있어도 **종전 문구 그대로** — 구판 계약이 우선한다", () => {
+    const r = formatDominantZone(MIXED_REVIEW_SENTINEL, { absent: "ambiguous" });
+    expect(r.label).toMatch(/판정하지 않았습니다/);
+    expect(r.label).not.toContain(MIXED_REVIEW_SENTINEL);
+  });
+
+  /**
+   * ★**부채를 초록 안에 드러낸다**(커밋 메시지에만 적으면 안 드러난다).
+   *
+   * `primary_zone_basis` 가 `first_parcel_no_area` 면 **값은 있지만 근거가 약하다**
+   * (면적 미확보라 첫 필지로 떨어졌다). 그건 「보류」와 **다른 축**이라 이 PR 에 넣지 않았다 —
+   * 기존 `primary_zone_is_inferred` 칩과 겹칠 수 있고, **겹침을 재기 전에 칩을 늘리면
+   * 모순되는 칩이 나란히 선다**(그 컴포넌트 주석이 경고하는 형태).
+   */
+  it.todo("값은 있으나 근거가 약한 경우(first_parcel_no_area)를 화면이 고지한다");
+});
+
 /** 소스에서 `dominant_zone` 을 **그리는** 자리를 파생형으로 모아 잠근다. */
 function walk(dir: string, out: string[] = []): string[] {
   for (const e of readdirSync(dir)) {

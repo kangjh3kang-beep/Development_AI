@@ -54,6 +54,7 @@ from typing import Any
 
 __all__ = [
     "ABSENT_REASONS",
+    "ABSENT_SHORT",
     "AMBIGUOUS",
     "AWAITING_INPUT",
     "INSUFFICIENT_COVERAGE",
@@ -85,6 +86,28 @@ ABSENT_REASONS: dict[str, str] = {
     AMBIGUOUS: "판정이 갈려 하나로 단일화하지 않았습니다",
     NOT_APPLICABLE: "이 대상에는 해당하지 않는 항목입니다",
     AWAITING_INPUT: "판정에 필요한 입력을 아직 받지 못했습니다",
+}
+
+#: 코드 → **표 한 칸에 들어갈 짧은 라벨**. 긴 문구(`ABSENT_REASONS`)와 **별개 축**이다 —
+#: 칩·툴팁은 긴 것을, 표 칸은 짧은 것을 쓴다. 한 벌로 뭉치면 표가 무너지거나 칩이 뜻을 못 전한다.
+#:
+#: ★**키 집합은 `ABSENT_REASONS` 와 반드시 같다**(락이 양방향으로 강제한다). 왜냐하면 소비자가
+#:   자기 목록으로 코드를 해석하다가 **생산자가 내는 코드를 못 덮는** 결함이 실재했기 때문이다:
+#:
+#:       생산자 realtx_report_service.py → not_applicable · insufficient_coverage · masked_by_source
+#:       소비자(PDF·화면)                → not_applicable · masked_by_source · source_unavailable
+#:
+#:   `insufficient_coverage` 가 양쪽에서 `"—"` 로 떨어져 **사유가 소실**됐다. 목록은 곧 상한이다.
+#:   ★처방은 "목록을 늘려라"가 아니라 **"덮지 않은 코드에도 말할 것이 있게 하라"** 다 —
+#:   열 고유 문구는 소비자가 계속 덮되, 덮지 않으면 **여기로 떨어진다.**
+ABSENT_SHORT: dict[str, str] = {
+    INSUFFICIENT_COVERAGE: "표본부족",
+    SINGLE_SOURCE: "교차검증불가",
+    SOURCE_UNAVAILABLE: "조회실패",
+    MASKED_BY_SOURCE: "원천미제공",
+    AMBIGUOUS: "판정보류",
+    NOT_APPLICABLE: "해당없음",
+    AWAITING_INPUT: "입력대기",
 }
 
 #: 값 자리에 **들어가면 안 되는** 문자열(과거 센티널). 값은 `None` 이어야 한다.

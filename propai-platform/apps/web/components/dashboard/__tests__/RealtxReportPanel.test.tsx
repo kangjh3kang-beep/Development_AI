@@ -8,6 +8,7 @@
  *
  * ★렌더 테스트로 잠근다 — 소스 문자열 검사는 주석·SyntaxError 에 뚫린 전례가 있다.
  */
+import { ABSENT_SHORT } from "@/lib/withheld/absent-reasons";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
@@ -219,5 +220,46 @@ describe("만원/평 열 — 정밀도와 보류", () => {
     expect(screen.queryByText("원천미제공")).not.toBe(screen.queryByText("해당없음"));
     // ★그리고 상태 열의 「해제」와 **다른 말**이어야 한다(두 열이 같은 말을 하면 정보가 0이다)
     expect(screen.queryByText("해당없음")).not.toBe(screen.queryByText("해제"));
+  });
+
+  it("D15 ★열이 **덮지 않은** 사유에도 침묵하지 않는다(종전엔 `—` 로 사유가 소실됐다)", async () => {
+    // 【실측 2026-09-04】생산자 `realtx_report_service.py` 는 이 열에 세 코드를 낸다:
+    //   not_applicable · **insufficient_coverage** · masked_by_source
+    // 그런데 화면 맵(PP_ABSENT_LABEL)은 not_applicable · masked_by_source · source_unavailable
+    // 이라, `insufficient_coverage` 가 `"—"` 로 떨어져 **사유가 사용자에게 도달하지 못했다.**
+    // ★코드가 닫힌 어휘 안이었으므로 **생산자 축 락은 초록이었다** — 셀 것을 셌는데 축이 달랐다.
+    post.mockResolvedValue(reportWith({
+      groups: [{
+        ...reportWith().groups[0],
+        transactions: [
+          { deal_date: "d1", jimok: "대", area_m2: 100, price_10k_won: 0, cancel_type: " ",
+            price_per_pyeong_10k: null, price_per_pyeong_10k_absent: "insufficient_coverage",
+            price_per_pyeong_10k_basis: "거래금액 또는 면적이 단가를 산정할 수 있는 값이 아닙니다" },
+        ],
+      }],
+    }));
+    await analyze();
+    // ★기대값을 테스트에 적지 않고 **공용 어휘에서 파생**시킨다(사본이 갈리는 것을 막는다).
+    await waitFor(() => expect(screen.getByText(ABSENT_SHORT.insufficient_coverage)).toBeTruthy());
+
+    // ★대조군을 **그 변수가 실제로 지배하는 축**으로 좁힌다.
+    //   첫 판은 `queryByText("—")` 를 문서 전체에 걸었다가 **내가 위양성을 냈다** —
+    //   같은 행의 「등기일자」 칸이 정당하게 `"—"` 라 정상 코드를 결함으로 신고했다.
+    //   («위양성도 결함이다» — 가드가 정상을 막으면 그것도 고칠 대상이다.)
+    //   그래서 **열 번호도 손으로 적지 않고 헤더에서 파생**시킨다(열이 바뀌면 락이 따라온다).
+    const heads = Array.from(document.querySelectorAll("thead th"))
+      .map((el) => (el.textContent ?? "").trim());
+    const col = heads.indexOf("만원/평");
+    expect(col, `헤더에서 「만원/평」 열을 찾지 못했다 — 판정 거부. 헤더: ${JSON.stringify(heads)}`)
+      .toBeGreaterThanOrEqual(0);
+    const cells = Array.from(document.querySelectorAll("tbody tr"))
+      .map((tr) => (tr.querySelectorAll("td")[col]?.textContent ?? "").trim())
+      .filter((t) => t.length > 0);
+    // ★공허 진리 가드 — 행이 0개면 아래 «—가 없다» 가 그 자체로 참이 된다.
+    expect(cells.length).toBeGreaterThan(0);
+    expect(cells).not.toContain("—");
+    expect(cells).toContain(ABSENT_SHORT.insufficient_coverage);
+    // ★raw 코드가 맨몸으로 나가지 않는다.
+    expect(document.body.textContent ?? "").not.toContain("insufficient_coverage");
   });
 });

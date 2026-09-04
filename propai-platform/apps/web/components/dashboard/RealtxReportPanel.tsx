@@ -16,6 +16,7 @@
  *   유일한 출처라 **클라이언트가 서버로 보낸다.**
  */
 
+import { resolveAbsentLabel, type AbsentCode } from "@/lib/withheld/absent-reasons";
 import { AlertTriangle, Download, FileSearch, Loader2 } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 
@@ -59,7 +60,13 @@ type Fetch =
 //: 보류 사유 → 화면에 쓸 짧은 말. ★`"—"` 하나로 뭉개지 않는다 — 면적 열이 이미 `"—"` 를
 //  쓰므로, 같은 글리프면 「해제라 해당 없음」과 「원천이 가림」이 구별되지 않는다.
 //  (이 저장소가 `0㎡ × 0원/㎡` 로 값을 치른 형태다.)
-const PP_ABSENT_LABEL: Record<string, string> = {
+// ★**열 고유 문구는 「덮어쓰기」이지 「목록」이 아니다.**
+//   종전엔 이 세 줄이 **모집단 그 자체**여서, 생산자가 내는 `insufficient_coverage` 가
+//   `"—"` 로 떨어져 **사유가 소실**됐다(2026-09-04 실측 — 생산자
+//   `realtx_report_service.py:241·260·266` = not_applicable · insufficient_coverage ·
+//   masked_by_source / 소비자 = not_applicable · masked_by_source · source_unavailable).
+//   이제 덮지 않은 코드는 공용 어휘(`ABSENT_SHORT`)로 떨어진다 — **목록이 상한이 아니다.**
+const PP_ABSENT_LABEL: Partial<Record<AbsentCode, string>> = {
   // ★"해제" 라고 쓰지 않는다 — **상태 열이 이미 「해제」를 말한다.** 두 열이 같은 말을 하면
   //   사용자는 새 정보를 못 얻고, 테스트도 두 열을 구별하지 못한다(실제로 걸렸다).
   //   여기서 말할 것은 «왜 단가가 없는가» 이고, 답은 «해당 없음» 이다.
@@ -77,7 +84,12 @@ function perPyeong(t: Tx) {
     const text = v >= 1 ? Math.round(v).toLocaleString() : String(v);
     return <span className="font-semibold">{text}</span>;
   }
-  const label = PP_ABSENT_LABEL[String(t.price_per_pyeong_10k_absent ?? "")] ?? "—";
+  // ★`"—"` 는 **사유 코드 자체가 없을 때**만 나온다. 「사유가 없다」와 「모르는 사유다」는
+  //   다른 사실이고, 후자를 `"—"` 로 뭉개는 것이 종전 결함이었다.
+  const label = resolveAbsentLabel(t.price_per_pyeong_10k_absent, {
+    overrides: PP_ABSENT_LABEL,
+    variant: "short",
+  }) ?? "—";
   return (
     <span className="text-[var(--text-hint)]" title={t.price_per_pyeong_10k_basis ?? undefined}>
       {label}
