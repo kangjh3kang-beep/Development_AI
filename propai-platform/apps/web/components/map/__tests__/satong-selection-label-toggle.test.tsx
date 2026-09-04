@@ -260,11 +260,33 @@ describe("C 기본값(값) — 이제 **스토어가 소유자**다", () => {
       "SatongMapShell.tsx",
     );
     const stmts = src.split(";").map((x) => x.replace(/\s+/g, " ").trim());
+    // ★**관계**로 본다(모양 아님). 초판은 정확 문자열이라 셀렉터 매개변수 이름만 바꿔도
+    //   빨개졌다 — 계약 불변인데. **오늘 세 번째 같은 형태**이고, 하필 이 PR 이 #959·#960 의
+    //   «위양성 대조군» 케이스를 지우면서 종전보다 **더 취약하게** 만들었다(§A-6).
     const reads = stmts.filter((x) => /\buseSatongMapPrefs\b/.test(x) && /\blayerControls\b/.test(x));
     expect(reads).toHaveLength(1); // 대조군 — 그 읽기가 정확히 하나
-    expect(reads[0]).toBe("const layerControls = useSatongMapPrefs((s) => s.controlsByLayer)");
+    expect(reads[0]).toMatch(/^const layerControls = useSatongMapPrefs\(\s*\(\w+\)\s*=>\s*\w+\.controlsByLayer\s*\)$/);
+    // ★쓰기 쪽도 같은 관계로 — 리뷰 Finding 5 는 이 자리를 no-op 으로 바꿔도 통과했다.
+    const writes = stmts.filter((x) => /\buseSatongMapPrefs\b/.test(x) && /\bsetLayerControls\b/.test(x));
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toMatch(/^const setLayerControls = useSatongMapPrefs\(\s*\(\w+\)\s*=>\s*\w+\.setControlsByLayer\s*\)$/);
     // ★음성 대조군 — layerControls 를 useState 로 되돌리면 하이드레이션 위험이 돌아온다.
     expect(stmts.filter((x) => /\buseState\b/.test(x) && /\blayerControls\b/.test(x))).toHaveLength(0);
+  });
+
+  it("★위 배선 락이 **서식·이름 변화에 깨지지 않는다**(위양성 대조군 — 이 PR 이 지웠던 것)", () => {
+    const hit = (src: string) =>
+      src
+        .split(";")
+        .map((x) => x.replace(/\s+/g, " ").trim())
+        .filter((x) => /\buseSatongMapPrefs\b/.test(x) && /\blayerControls\b/.test(x));
+    // 계약을 유지한 채 매개변수 이름만 바꾼 합성 소스 — 통과해야 한다.
+    const renamed = "const layerControls = useSatongMapPrefs((state) => state.controlsByLayer);";
+    expect(hit(renamed)).toHaveLength(1);
+    expect(hit(renamed)[0]).toMatch(/^const layerControls = useSatongMapPrefs\(\s*\(\w+\)\s*=>\s*\w+\.controlsByLayer\s*\)$/);
+    // ★음성 대조군 — 계약을 깨면(다른 필드) 안 걸린다.
+    const wrong = "const layerControls = useSatongMapPrefs((s) => s.somethingElse);";
+    expect(hit(wrong)[0]).not.toMatch(/controlsByLayer/);
   });
 
   it("★그 상태가 layerState 로 흘러간다", () => {

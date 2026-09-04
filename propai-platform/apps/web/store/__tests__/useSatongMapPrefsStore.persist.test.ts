@@ -4,7 +4,7 @@
  * ★사용자 요구의 잔여분: `#954` 가 「끌 수 있게」, `#960` 이 「기본 화면 밀도」를 줬는데
  *   **끈 것이 새로고침하면 되돌아왔다.** 이 파일이 그 축을 잠근다.
  */
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SATONG_MAP_SHELL_LAYERS } from "@/components/precheck/SatongMapShell";
 import { accountScopedKey } from "@/lib/account-scope";
@@ -120,9 +120,31 @@ describe("★영속 — 끈 것이 되돌아오지 않는다", () => {
     expect(JSON.parse(raw!).state.controlsByLayer.cadastre).toEqual(["boundary"]);
   });
 
+  it("★★부분 저장분이 나머지 레이어를 **지우지 않는다**(리뷰 Finding 2)", async () => {
+    // ★실측: zustand 기본 merge 는 **얕아서** 저장분의 controlsByLayer 가 기본값 맵을
+    //   **통째로 대체**했다. 저장 당시 없던 레이어는 **영구히** 빠진다.
+    //   ★그리고 아래 「새로고침 시나리오」 테스트가 정확히 이 픽스처를 쓰면서
+    //     «selected 가 꺼졌나» 만 보고 **그 파괴를 못 봤다.** 이 케이스가 그 눈을 준다.
+    window.localStorage.setItem(
+      KEY,
+      JSON.stringify({ state: { controlsByLayer: { cadastre: ["boundary"] } }, version: 1 }),
+    );
+    await useSatongMapPrefs.persist.rehydrate();
+    const got = useSatongMapPrefs.getState().controlsByLayer;
+    expect(got.cadastre).toEqual(["boundary"]); // 저장분이 이긴다
+    // ★나머지는 기본값이 살아 있다 — 이 저장소가 이미 한 번 겪은 실패(«capacity 키 부재»)의 영속판.
+    const d = defaultSatongMapControls();
+    for (const k of Object.keys(d) as (keyof typeof d)[]) {
+      if (k === "cadastre") continue;
+      expect(got[k]).toEqual(d[k]);
+    }
+  });
+
   it("★★저장분이 있으면 재수화 후 **그 값**이 산다 — 새로고침 시나리오", async () => {
     window.localStorage.setItem(
       KEY,
+      // ★버전 0 = **옛 저장분**. `migrate` 가 없으면 조용히 버려진다(실측) — 그래서
+      //   일부러 옛 버전으로 심어 «옛 사용자의 설정이 살아남는가» 를 함께 잰다.
       JSON.stringify({ state: { controlsByLayer: { cadastre: ["boundary"] } }, version: 0 }),
     );
     await useSatongMapPrefs.persist.rehydrate();
@@ -152,6 +174,45 @@ describe("★영속 — 끈 것이 되돌아오지 않는다", () => {
     window.localStorage.clear();
     await useSatongMapPrefs.persist.rehydrate();
     expect(useSatongMapPrefs.getState().controlsByLayer).toEqual(defaultSatongMapControls());
+  });
+});
+
+describe("★★자동 재수화 — **손으로 rehydrate 를 부르지 않는다**(리뷰 Finding 3)", () => {
+  it("모듈이 처음 로드될 때 저장분을 읽는다 — 그게 「새로고침」이다", async () => {
+    // ★실측: `skipHydration: true` 변이가 **185건을 전부 통과**했다. 기존 테스트가
+    //   `await persist.rehydrate()` 를 **손으로** 부르기 때문이다 — 그건 rehydrate 를
+    //   테스트한 것이지 **새로고침**을 테스트한 것이 아니다.
+    //   → 저장분을 심고 **모듈을 새로 임포트**해 자동 경로를 태운다.
+    window.localStorage.setItem(
+      accountScopedKey(SATONG_MAP_PREFS_STORE_KEY),
+      JSON.stringify({ state: { controlsByLayer: { cadastre: ["boundary"] } }, version: 1 }),
+    );
+    vi.resetModules();
+    const fresh = await import("@/store/useSatongMapPrefsStore");
+    expect(fresh.useSatongMapPrefs.getState().controlsByLayer.cadastre).toEqual(["boundary"]);
+  });
+
+  it("★음성 대조군 — 저장분이 없으면 새 임포트도 기본값이다", async () => {
+    window.localStorage.clear();
+    vi.resetModules();
+    const fresh = await import("@/store/useSatongMapPrefsStore");
+    expect(fresh.useSatongMapPrefs.getState().controlsByLayer).toEqual(
+      fresh.defaultSatongMapControls(),
+    );
+  });
+});
+
+describe("★★순차 토글 — 한 레이어를 바꿔도 다른 레이어가 살아 있다(리뷰 Finding 4)", () => {
+  it("A 를 끄고 B 를 바꿔도 A 는 꺼진 채로다", () => {
+    // ★실측: `next(s.controlsByLayer)` → `next(defaultSatongMapControls())` 변이가
+    //   **214건을 전부 통과**했다. 그 변이 아래에서는 토글 한 번이 **다른 레이어를 전부
+    //   기본값으로 되돌린다.** 두 번 연속 토글을 재는 케이스가 없었다.
+    const set = useSatongMapPrefs.getState().setControlsByLayer;
+    set((prev) => ({ ...prev, cadastre: ["boundary"] }));            // A 끄기
+    set((prev) => ({ ...prev, zoning: [] }));                        // B 바꾸기
+    const got = useSatongMapPrefs.getState().controlsByLayer;
+    expect(got.cadastre).toEqual(["boundary"]); // ★A 가 살아 있다
+    expect(got.zoning).toEqual([]);
   });
 });
 

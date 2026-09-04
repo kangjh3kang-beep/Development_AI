@@ -268,7 +268,15 @@ describe("배선 락 — 유료 산출물 스토어는 계정 스코프를 우�
     expect(wipe, "창이 다음 함수까지 먹었다 — 끝 경계가 안 걸렸다").not.toContain(
       "export function ensureDataOwner",
     );
-    const STORES3 = ["usePaidRenderStore", "useRegistryAnalysisStore", "useDevelopmentPlanStore"];
+    // ★2026-09-04(#965 적대 리뷰 Finding 1) — **목록형이었고 실제로 빠졌다.**
+    //   네 번째 계정별 스토어(`useSatongMapPrefs`)가 이 목록에 없어 소프트 계정 전환 후
+    //   ①이전 계정의 값을 그대로 보여 주고 ②새 계정의 변경을 **어느 키에도 안 쓰는**
+    //   상태가 됐다(리뷰가 실행으로 실증). 목록이 3에 고정돼 있었기 때문이다.
+    //   → **파생형**으로 바꾼다. `store/**` 에서 계정별 어댑터를 쓰는 스토어를 모두 모아
+    //     그 훅 이름이 와이프 창에 있는지 본다. 다섯 번째가 생기면 **자동으로** 걸린다.
+    const STORES3 = accountScopedStoreHooks();
+    // 공허 방지 — 모집단이 실재한다(현재 4개).
+    expect(STORES3.length, "계정별 스토어를 하나도 못 모았다 — 수집기가 죽었다").toBeGreaterThanOrEqual(4);
 
     // ★계약이 바뀌었다(2026-08-26 회귀 봉합). 리셋은 **쓰기 정지 창 안**에서 하고,
     //   복원은 여기가 아니라 `syncAccountScopedStores()` 가 한다.
@@ -334,6 +342,25 @@ describe("배선 락 — 유료 산출물 스토어는 계정 스코프를 우�
 // ★파생의 축을 명시한다: **`store/**` 의 `persist(` 를 쓰는 파일 전수**다.
 //   `components/**` 에서 직접 localStorage 를 쓰는 키는 이 축 밖이고,
 //   그쪽은 `persist-key-coverage.test.ts` 가 본다(미측정이라고 적지 않는다 — 형제가 덮는다).
+/**
+ * `store/**` 에서 **계정별 저장 어댑터를 쓰는** 스토어의 **훅 이름**을 파생 수집한다.
+ * ★목록형이 아니어야 하는 이유: 2026-09-04 에 네 번째 스토어가 손목록에서 빠져
+ *   소프트 계정 전환이 조용히 깨졌다(#965 리뷰 Finding 1).
+ */
+function accountScopedStoreHooks(): string[] {
+  const dir = join(WEB_ROOT, "store");
+  const out: string[] = [];
+  for (const f of readdirSync(dir)) {
+    if (!f.endsWith(".ts") || f.endsWith(".test.ts")) continue;
+    const src = __stripCommentsForScan(readFileSync(join(dir, f), "utf8"), `store/${f}`);
+    if (!/createAccountScopedStorage\s*</.test(src)) continue;
+    // 훅 이름 = `export const useXxx = create<…>()(` 의 그 이름.
+    const m = src.match(/export const (use[A-Za-z0-9_]*)\s*=\s*create/);
+    if (m) out.push(m[1]);
+  }
+  return out.sort();
+}
+
 describe("파생형 — 모든 persist 스토어는 **와이프되거나 계정별이거나** 둘 중 하나다", () => {
   type StoreInfo = { file: string; key: string | null; scoped: boolean };
 

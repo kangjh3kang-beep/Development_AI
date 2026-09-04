@@ -89,6 +89,38 @@ export const useSatongMapPrefs = create<SatongMapPrefsState>()(
         })),
       resetControlsByLayer: () => set({ controlsByLayer: defaultSatongMapControls() }),
     }),
-    { name: SATONG_MAP_PREFS_STORE_KEY, storage: createAccountScopedStorage<SatongMapPrefsState>() },
+    {
+      name: SATONG_MAP_PREFS_STORE_KEY,
+      storage: createAccountScopedStorage<SatongMapPrefsState>(),
+      version: 1,
+      /**
+       * ★`version` 만 올리고 `migrate` 를 안 두면 **옛 저장분이 조용히 버려진다**
+       *   (실측: v0 블롭을 심었더니 기본값이 이겼다 — 사용자가 껐던 것이 되돌아온다).
+       *   이 스토어의 스키마 변경은 **레이어 추가**뿐이고 그건 아래 `merge` 가 메운다.
+       *   그래서 마이그레이션은 **통과**시키고, 실제 복구는 `merge` 가 한다.
+       * ★언제 이걸 바꿔야 하나: 컨트롤 **id 어휘**가 바뀔 때(`selected` ↔ `selected-parcel`
+       *   통합이 그 경우다 — 계획서 §3 에 미정으로 적어 뒀다). 그때는 여기서 옛 id 를 옮긴다.
+       */
+      migrate: (persisted) => persisted as SatongMapPrefsState,
+      /**
+       * ★zustand 기본 `merge` 는 **얕다**(top-level spread) — 저장분의 `controlsByLayer` 가
+       *   기본값 맵을 **통째로 대체**한다. 그래서 저장 당시 없던 레이어는 **영구히 빠진다.**
+       *   (2026-09-04 적대 리뷰 Finding 2 실측: 저장분 `{cadastre:[…]}` 하나가 나머지 8개
+       *    레이어의 기본값을 **전부 지웠다**. 그리고 내 테스트가 정확히 그 픽스처를 쓰면서
+       *    «selected 가 꺼졌나» 만 보고 **그 파괴를 못 봤다.**)
+       * ★이 저장소는 그 실패를 이미 한 번 겪었다 — 이 파일이 옮겨 온 주석에 적혀 있다:
+       *   *"R1 MEDIUM-E: capacity 키 부재로 켜도 showCapacity=false였다."*
+       *   그때는 한 릴리스로 끝났지만, 저장분이 생기면 **사용자마다 영구히** 남는다.
+       * → 레이어 단위로 **기본값 위에 저장분을 덮는다.** 새 레이어가 추가되면 기존 사용자도 받는다.
+       */
+      merge: (persisted, current) => {
+        const p = (persisted ?? {}) as Partial<SatongMapPrefsState>;
+        return {
+          ...current,
+          ...p,
+          controlsByLayer: { ...defaultSatongMapControls(), ...(p.controlsByLayer ?? {}) },
+        };
+      },
+    },
   ),
 );
