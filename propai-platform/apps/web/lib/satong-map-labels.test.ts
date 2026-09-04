@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  composeMarketPriceTag,
   planSatongLabels,
   satongLabelBudget,
   satongLabelLOD,
@@ -85,5 +86,53 @@ describe("satong-map-labels — 전역 버짓 배분(planSatongLabels)", () => {
       { id: "poi", count: 0 },
     ]);
     expect(plan).toEqual({ market: 0, poi: 0 });
+  });
+});
+
+describe("composeMarketPriceTag — 총액·평당 병기", () => {
+  const base = { kind: "trade" as const, totalText: "3.6억", perPyeong10k: 1420, pyeongFirst: false };
+
+  it("★둘 다 실린다 — 어느 한쪽만 나오면 「병기」가 아니다", () => {
+    const t = composeMarketPriceTag(base);
+    expect(t).toContain("3.6억");
+    expect(t).toContain("1,420만/평");
+    expect(t).toBe(" 3.6억 · 1,420만/평");
+  });
+
+  it("★토글은 순서만 바꾼다 — 켜도 총액이 사라지지 않는다", () => {
+    const on = composeMarketPriceTag({ ...base, pyeongFirst: true });
+    expect(on).toBe(" 1,420만/평 · 3.6억");
+    // 두 모집단이 **같은 두 값**을 담고 순서만 다르다.
+    const off = composeMarketPriceTag(base);
+    expect(on).not.toBe(off);
+    for (const part of ["3.6억", "1,420만/평"]) {
+      expect(on).toContain(part);
+      expect(off).toContain(part);
+    }
+  });
+
+  it("★평당가가 없으면 생략한다 — 0 을 찍지 않는다(「평당 0원」으로 읽힌다)", () => {
+    for (const bad of [null, undefined, 0, NaN, -5]) {
+      const t = composeMarketPriceTag({ ...base, perPyeong10k: bad as number | null });
+      expect(t).toBe(" 3.6억");
+      expect(t).not.toContain("0만/평");
+      expect(t).not.toContain("평");
+    }
+  });
+
+  it("총액이 없으면 평당만, 둘 다 없으면 빈 문자열", () => {
+    expect(composeMarketPriceTag({ ...base, totalText: null })).toBe(" 1,420만/평");
+    expect(composeMarketPriceTag({ ...base, totalText: null, perPyeong10k: null })).toBe("");
+  });
+
+  it("★전월세(rent)에는 금액표기를 붙이지 않는다 — 두 모집단", () => {
+    expect(composeMarketPriceTag({ ...base, kind: "rent" })).toBe("");
+    expect(composeMarketPriceTag(base)).not.toBe("");
+  });
+
+  it("★평당가를 여기서 계산하지 않는다 — 서버가 준 값을 그대로 싣는다", () => {
+    // 면적을 넘기는 인자가 없다는 것이 계약이다. 1990 을 주면 1990 이 나와야 한다
+    // (재계산·재반올림하면 이 단언이 깨진다).
+    expect(composeMarketPriceTag({ ...base, perPyeong10k: 1990 })).toContain("1,990만/평");
   });
 });
