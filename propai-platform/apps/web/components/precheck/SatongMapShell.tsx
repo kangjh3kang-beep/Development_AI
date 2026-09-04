@@ -96,7 +96,11 @@ import { ParcelJibunLabel } from "@/components/precheck/ParcelJibunLabel";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
 import { useProjectStore } from "@/store/useProjectStore";
 import { restoreSnapshot } from "@/lib/projectSync";
-import { createProjectFromParcels } from "@/lib/satong-project-create";
+import {
+  createProjectFromParcels,
+  isDuplicateProjectName,
+  PROJECT_NAME_MAX,
+} from "@/lib/satong-project-create";
 import { marketRadiusRequest } from "@/lib/market/market-radius";
 import {
   SATONG_PARCEL_SLOPE_KEY,
@@ -758,6 +762,10 @@ export function SatongMapShell({
   //   판정(=소유권 추론)이 R2·R2b 의 버그 둘을 냈으므로, 추론을 없애는 쪽을 택했다.
   //   수명은 **이 화면에 있는 동안**(메모리)이다 — 유료 산출물이 아니므로 세션 영속은 후속.
   const [clearedSnapshot, setClearedSnapshot] = useState<SatongParcel[] | null>(null);
+  // ★사용자가 지은 프로젝트명. **빈 문자열 = 미입력**이고, 그때는 파생 이름을 쓴다.
+  //   생성은 **유료**(`POST /billing/charge · project_create`)라 오생성이 곧 낭비다 —
+  //   그래서 **생성 전**에 이름을 확정하게 한다.
+  const [projectNameInput, setProjectNameInput] = useState("");
   const [connectNotice, setConnectNotice] = useState("");
   const connectInitRef = useRef(false);
   useEffect(() => {
@@ -1335,6 +1343,18 @@ export function SatongMapShell({
     projectSeedArmedRef.current = false;
     clearProject();
   }, [clearProject]);
+
+  // ★파생 이름 — 입력이 비었을 때 실제로 쓰이는 값이다. placeholder 로 **그 값을 보여 준다**
+  //   (「입력 안 하면 어떻게 되나」가 화면에서 답이 되게).
+  const derivedProjectName = useMemo(
+    () => deriveProjectNameFromParcels(selectedParcels) ?? "",
+    [selectedParcels],
+  );
+  // ★중복 판정 — **정규화 후 대소문자 무시**. 빈 입력은 중복이 아니다(파생 이름을 쓴다).
+  const projectNameDuplicate = useMemo(
+    () => isDuplicateProjectName(projectNameInput, projects),
+    [projectNameInput, projects],
+  );
 
   const selectedTotalArea = useMemo(
     () => selectedParcels.reduce((sum, parcel) => sum + (parcel.areaSqm ?? 0), 0),
@@ -2579,10 +2599,16 @@ export function SatongMapShell({
   const connectAsNewProject = useCallback(async (): Promise<string | null> => {
     if (selectedParcels.length === 0) return null;
     if (creatingProjectRef.current) return null;
+    // ★중복 이름이면 **만들지 않는다.** 생성은 유료이고, 같은 이름 둘은 목록에서 구별되지 않는다.
+    //   빈 입력은 중복이 아니다(파생 이름을 쓴다) — `isDuplicateProjectName` 이 그렇게 판정한다.
+    if (isDuplicateProjectName(projectNameInput, projects)) {
+      setConnectNotice("이미 같은 이름의 프로젝트가 있습니다 — 다른 이름을 쓰세요.");
+      return null;
+    }
     creatingProjectRef.current = true;
     setCreatingProject(true);
     try {
-      const created = await createProjectFromParcels(selectedParcels);
+      const created = await createProjectFromParcels(selectedParcels, { name: projectNameInput });
       if (!created) {
         setConnectNotice("필지 주소가 없어 프로젝트를 생성할 수 없습니다.");
         return null;
@@ -2611,7 +2637,7 @@ export function SatongMapShell({
       creatingProjectRef.current = false;
       setCreatingProject(false);
     }
-  }, [selectedParcels, setProject, updateSiteAnalysis]);
+  }, [selectedParcels, setProject, updateSiteAnalysis, projectNameInput, projects]);
 
   const handleCreateProjectNow = useCallback(() => {
     void connectAsNewProject();
@@ -3767,6 +3793,39 @@ export function SatongMapShell({
                   비우기
                 </button>
               </p>
+            )}
+            {/* ★프로젝트명 입력 — **생성 전**에 확정한다.
+                생성은 유료(`POST /billing/charge · project_create`)라 오생성이 곧 낭비이고,
+                `projects/new` 정본 UX 는 이미 이름을 먼저 받는다(두 경로의 어휘를 맞춘다).
+                ★기본값은 **파생 이름을 placeholder 로** 보여 준다 — 비워 두면 그대로 쓴다.
+                ★중복은 **여기서** 막는다: 백엔드에 유일성 제약을 넣으면 고아 마이그레이션의
+                **정당한 재전송**(같은 이름)을 거부한다(`POST /projects` 독스트링 실측). */}
+            {connectTarget === "new" && selectedParcels.length > 0 && (
+              <div className="mt-2">
+                <label
+                  htmlFor="satong-project-name"
+                  className="text-[11px] font-black text-[var(--text-secondary)]"
+                >
+                  프로젝트명
+                </label>
+                <input
+                  id="satong-project-name"
+                  data-testid="project-name-input"
+                  value={projectNameInput}
+                  maxLength={PROJECT_NAME_MAX}
+                  onChange={(e) => setProjectNameInput(e.target.value)}
+                  placeholder={derivedProjectName || "예: 성수 IT밸리 복합개발"}
+                  className="mt-1 min-h-11 w-full rounded-[var(--r-input)] border border-[var(--border-muted)] bg-[var(--surface-panel)] px-3 text-xs font-bold text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
+                />
+                {projectNameDuplicate && (
+                  <p
+                    data-testid="project-name-duplicate"
+                    className="mt-1 text-[11px] font-bold text-[var(--status-danger)]"
+                  >
+                    이미 같은 이름의 프로젝트가 있습니다 — 다른 이름을 쓰세요.
+                  </p>
+                )}
+              </div>
             )}
           </div>
 
