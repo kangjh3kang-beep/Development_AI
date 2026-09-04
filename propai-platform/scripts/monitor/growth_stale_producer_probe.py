@@ -53,6 +53,14 @@ async def main():
             "select count(*) from platform_insights "
             "where insight_type = 'latency_regression' "
             "  and created_at > now() - interval '24 hours'"))).scalar()
+        # ★같은 술어를 **창 없이** 한 번 더 센다 — `ctrl` 이 0 일 때 그 이유를 가르기 위해서다.
+        #   2026-09-02 실측: 술어 전체 **2,348건**(최신 08-28 17:30)인데 24h 는 **0**.
+        #   즉 리터럴·스키마는 멀쩡하고 **시스템이 유휴**였다. 둘을 뭉치면 계기판이
+        #   "검사기 사망(exit 3)"을 **영구히** 내고, 상시 3 은 곧 무시된다 — 이 파일의
+        #   형제(`integrator_dashboard.sh`)가 `#868` 에서 이미 값을 치른 형태다.
+        ctrl_all = (await s.execute(text(
+            "select count(*) from platform_insights "
+            "where insight_type = 'latency_regression'"))).scalar()
         # ② 그중 불가능 행(severity='info')을 정지 전후로 가른다
         post, pre = (await s.execute(text(
             "select count(*) filter (where created_at >= :cut), "
@@ -79,9 +87,10 @@ async def main():
         bs = ",".join("%s=%s" % (b, c) for b, c, _f, _l in builds) or "(행없음)"
         overlaps = is_stale_stack([(b, f, l) for b, _c, f, l in builds])
         ov = ";".join("%s~%s" % (a, b) for a, b in overlaps) or "none"
-        print("PROBE now=%s ctrl_type_total=%s impossible_post=%s impossible_pre=%s "
+        print("PROBE now=%s ctrl_type_total=%s ctrl_type_alltime=%s "
+              "impossible_post=%s impossible_pre=%s "
               "engine_alive=%s builds=%s overlap=%s"
-              % (now.strftime("%Y-%m-%d %H:%M"), ctrl, post, pre, alive, bs, ov))
+              % (now.strftime("%Y-%m-%d %H:%M"), ctrl, ctrl_all, post, pre, alive, bs, ov))
 
 if __name__ == "__main__":  # ★임포트만으로 DB 에 붙지 않는다(테스트가 순수 함수를 태운다)
     asyncio.run(main())

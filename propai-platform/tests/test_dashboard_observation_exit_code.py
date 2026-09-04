@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import subprocess
+import re
 from pathlib import Path
 
 import pytest
@@ -128,9 +129,95 @@ def test_multi_route_burst_is_wired_to_the_observation_flag() -> None:
         "동시다발 버스트가 관측 플래그를 켜지 않는다 — 판정 함수는 잠겼지만 배선이 없다:\n" + "\n".join(block)
 
 
+# ★수집기와 판정기를 **같은 축**으로 맞춘다.
+#   종전 수집기는 `ln.strip() == "OBS=1"` 이라 **한 줄 결합**(`OBS=1; MR=3`)을 못 봤다.
+#   그러면 이 락이 막으려는 **바로 그 방향**(무조건 설정)이 표기 하나로 새고, 공허 방지 가드
+#   (`assert tops`)도 **같은 맹점을 공유**한다 — "필터의 절단이 수집기의 절단보다 조용하다".
+_OBS_SET = "OBS=1"
+# 조건부로 인정하는 여는 줄: if / elif / else / case 분기 패턴(`a)`).
+#   ★`while`·`for`·함수 본문은 **인정하지 않는다** — 조건이 아니라 반복·호출이다.
+_COND_OPEN = re.compile(r"^(if|elif|else)\b|^[^()\s]+\)\s*$")
+
+
+def _obs_set_lines(lines: list[str]) -> list[tuple[int, str]]:
+    """`OBS=1` 을 **실행하는** 줄 전부. 한 줄 결합(`;`·`&&`·`||`)도 센다."""
+    out = []
+    for i, ln in enumerate(lines):
+        if any(seg.strip() == _OBS_SET for seg in re.split(r"[;&|]+", ln)):
+            out.append((i, ln))
+    return out
+
+
+def _unconditional_obs_lines(lines: list[str]) -> list[str]:
+    """`OBS=1` 중 **조건 블록 안에 있지 않은** 것을 고른다.
+
+    판정: 그 줄보다 **들여쓰기가 작은 가장 가까운 윗줄**이 조건을 여는가
+    (`if`/`elif`/`else`/`case` 분기). 셸에서 조건부 실행의 실제 구조가 그것이다.
+    ★`else` 와 `case` 분기를 빠뜨리면 **정상 코드를 위반으로 신고**한다(가드의 위양성도 결함이다).
+    """
+    bad = []
+    for i, ln in _obs_set_lines(lines):
+        ind = len(ln) - len(ln.lstrip())
+        if ind == 0:
+            bad.append(ln)
+            continue
+        for prev in reversed(lines[:i]):
+            if not prev.strip():
+                continue
+            pind = len(prev) - len(prev.lstrip())
+            if pind < ind:
+                if not _COND_OPEN.match(prev.strip()):
+                    bad.append(ln)
+                break
+        else:
+            bad.append(ln)
+    return bad
+
+
 def test_observation_flag_is_not_forced_on_elsewhere() -> None:
-    """★반대 방향 — `OBS=1` 이 무조건 켜지면 계기판이 **상시 4** 가 되어 3 과 같은 문제가 된다."""
-    tops = [ln for ln in _code_lines() if ln.strip() == "OBS=1"]
-    assert len(tops) == 1, f"OBS=1 이 여러 곳에서 켜진다(상시 4 위험): {tops}"
-    init = [ln for ln in _code_lines() if ln.strip().startswith("OBS=0")]
+    """★반대 방향 — `OBS=1` 이 무조건 켜지면 계기판이 **상시 4** 가 되어 3 과 같은 문제가 된다.
+
+    ★★**대리 변수를 잠그면 속성은 안 잠긴다.** 종전 단언은 `len(tops) == 1` 로 **개수**를 셌는데,
+    그것은 "무조건 켜지지 않는다"의 **대리 변수**일 뿐이다. 2026-09-03 합성으로 실측하니
+    **양방향으로 틀렸다**:
+
+        무조건 `OBS=1` 이 **단 1개**       → 종전 락 **통과**  (의도를 못 잡는다 · 위음성)
+        조건부 `OBS=1` 이 **2개**          → 종전 락 **실패**  (정상 코드를 막는다 · 위양성)
+
+    실제로 위양성이 발생했다 — 성장루프 **유휴**(판정 불가)와 동시다발 **버스트**(외부 원인)는
+    서로 다른 관측 이상이고 **둘 다 조건부**인데, 개수 단언이 둘의 공존을 막았다.
+    → **속성 자체**를 단언한다: 모든 `OBS=1` 은 `if`/`elif` 블록 안에 있다.
+    """
+    lines = _code_lines()
+    tops = _obs_set_lines(lines)   # ★가드도 판정기와 **같은 수집기**를 쓴다
+    assert tops, "★OBS=1 이 하나도 없다 — 관측 이상 축이 통째로 죽었다(공허한 초록 방지)"
+    bad = _unconditional_obs_lines(lines)
+    assert not bad, f"★OBS=1 이 조건 없이 켜진다(상시 4 위험): {bad}"
+    init = [ln for ln in lines if ln.strip().startswith("OBS=0")]
     assert init, "OBS 초기화가 없다 — 미설정이면 `${OBS:-0}` 에 기대게 되어 배선이 조용히 죽는다"
+
+
+def test_the_unconditional_detector_actually_discriminates() -> None:
+    """★판정기의 **양성·음성 대조군** — 없으면 "항상 []" 를 반환해도 초록이다.
+
+    ★아래 A·B·G·E2 는 **동료 세션(development-ai-62)이 실측해 알려 준 갭**이고, 내가 직접
+    재현해 확인했다. 종전 판정기는 `else`·`case` 분기를 **위반으로 오신고**했고(위양성 3종),
+    한 줄 결합 `OBS=1; MR=3` 은 **놓쳤다**(위음성 — 막으려는 방향이 표기 하나로 샜다).
+    ★넷 다 당시 실제 스크립트에는 **0건인 잠복 결함**이었다. 잠복이라고 안 고치면 다음 사람이 밟는다.
+    """
+    # ── 위반이어야 하는 것(양성) ──
+    assert _unconditional_obs_lines(["OBS=1"]), "★최상위 무조건 OBS=1 을 못 잡는다"
+    assert _unconditional_obs_lines(["OBS=1; MR=3"]), \
+        "★E2 한 줄 결합 무조건 OBS=1 을 못 잡는다(수집기가 판정기보다 좁다)"
+    assert _unconditional_obs_lines(["  while x; do", "    OBS=1", "  done"]), \
+        "★조건이 아닌 블록(루프) 안의 OBS=1 을 못 잡는다"
+    # ── 정상이어야 하는 것(음성 — 가드의 위양성도 결함이다) ──
+    for name, lines in {
+        "if/elif 두 곳": ["  if x; then", "    OBS=1", "  fi", "  elif y; then", "    OBS=1", "  fi"],
+        "A) else 안":    ["  if x; then", "    :", "  else", "    OBS=1", "  fi"],
+        "B) elif→else":  ["  if x; then", "    :", "  elif y; then", "    :", "  else",
+                          "    OBS=1", "  fi"],
+        "G) case 분기":  ["  case $v in", "    a)", "      OBS=1", "      ;;", "  esac"],
+        "E) 조건부 한줄결합": ["  if x; then", "    OBS=1; MR=3", "  fi"],
+    }.items():
+        assert _unconditional_obs_lines(lines) == [], f"★{name} 을 위반으로 오신고한다(위양성)"
