@@ -49,7 +49,7 @@ import {
   type SampleBasis,
   type SampleBasisRaw,
 } from "@/lib/market/comparable-sample";
-import { bindSatongLabel, planSatongLabels, satongLabelLOD } from "@/lib/satong-map-labels";
+import { bindSatongLabel, planSatongLabels, satongLabelBudget } from "@/lib/satong-map-labels";
 import { planSelectionLabels, renderSelectionLabels } from "@/lib/satong-selection-labels";
 import type { SiteLayoutOverlay } from "@/lib/site-layout";
 import {
@@ -85,6 +85,13 @@ declare global {
 }
 
 /** 백엔드 /zoning/parcel-at-point 응답 형태 */
+/**
+ * 지도 초기 줌. ★상수로 빼는 이유(#960 리뷰 MAJOR-1): 테스트가 «컴포넌트가 넘긴 버짓이
+ * **자기 줌에서 파생된 값인가**» 를 **값으로** 재려면 그 줌을 알아야 한다. 리터럴을 테스트에
+ * 박으면 초기 줌을 바꿀 때 계약이 그대로인데 빨개진다.
+ */
+export const SATONG_INITIAL_ZOOM = 12;
+
 export interface ParcelAtPointResult {
   found: boolean;
   pnu?: string;
@@ -1250,7 +1257,7 @@ export function SatongMultiMap({
   const [detailPopupOpen, setDetailPopupOpen] = useState(false);
   // 현재 줌 레벨 — 라벨 LOD(z≥17 전체 / 15~16 상위 N / <15 hover-only) 판정 입력.
   //   zoomend 에서만 갱신하고, 임계(15·17) 교차 시에만 버짓이 바뀌어 라벨 이펙트가 재부착된다.
-  const [mapZoom, setMapZoom] = useState(12);
+  const [mapZoom, setMapZoom] = useState(SATONG_INITIAL_ZOOM);
   // 실거래 fitBounds 1회성 가드 — 라벨 재부착(줌 교차)로 이펙트가 재실행돼도 사용자 줌을 덮지 않게.
   const lastMarketFitKeyRef = useRef("");
   const baseLayerRef = useRef<any>(null);
@@ -2439,7 +2446,7 @@ export function SatongMultiMap({
     };
   }, [mapReady, layoutOverlay, layoutNorthLightSetbackM, layoutNorthLightHeightM]);
 
-  // ── 선택 필지(연결 프로젝트·staged·pending) 식별 라벨 — 전역 라벨 버짓·줌 LOD 무관 항상 표시 ──
+  // ── 선택 필지(연결 프로젝트·staged·pending) 식별 라벨 ──
   //   ★PR#329 R1 리뷰(LOW1) 반영: 홈 초기 진입(줌 12)은 hover-only LOD라 시장/POI/개발계획
   //   상시 라벨이 0개인데, 사용자가 지도를 연 '목적'인 선택 필지 자체까지 사라지면 첫인상이
   //   빈 지도가 된다. 이 라벨은 labelPlan(전역 48/16/0 버짓) 대상이 아닌 별도 always-on
@@ -2450,11 +2457,24 @@ export function SatongMultiMap({
   //   **하나로만** 끌 수 있게 했다(satongSelectionLabelsVisible). 레이어 게이트와는 여전히
   //   독립이다 — 지적 레이어를 안 켜도 라벨은 나온다. 그리고 그 컨트롤을 **선언하지 않는**
   //   호출부(3/6 실측)에서는 끄는 UI 가 없으므로 종전대로 항상 표시한다.
+  //   ★★2026-09-04 정정 ②: 위 첫 줄이 **「전역 라벨 버짓·줌 LOD 무관」** 이라고 선언하고
+  //   있었다 — 그 면제가 **이 결함의 근본**이었다. `lib/satong-map-labels.ts` 는
+  //   *"겹침 방지는 **버짓 상한**+**선택 라벨 줌 롤업**이 담당한다"* 고 적어 두었는데,
+  //   선택 트랙만 버짓을 면제받아 **z≥15 에서 206필지면 두 기전 중 어느 것도 발화하지
+  //   않았다.** 이제 개수 축은 버짓을 따른다(`planSelectionLabels` 가 `satongLabelBudget`
+  //   에서 임계를 **파생**한다). ★면제의 원래 의도(«레이어를 안 켜도 필지가 식별되게»)는
+  //   집계 칩이 계속 지킨다 — 칩이 「선택 N필지」를 말하므로 빈 지도가 되지 않는다.
+  //   ★남은 면제는 **배분**뿐이다: 이 트랙은 여전히 `planSatongLabels` 의 레이어별 배분을
+  //   받지 않는다(다른 트랙의 라벨을 밀어내지 않는다). 그것은 의도된 면제다.
   //   시각 마커(폴리곤·staged 초록점)는 다른 이펙트가 이미 그리므로, 여기서는 투명 앵커
   //   포인트에 라벨만 부착한다(중복 마커 방지).
   const selectionLabelLayerRef = useRef<any>(null);
-  // 롤업 여부만 dep로 — LOD 임계(z=15) 교차 시에만 라벨 재부착(줌마다 teardown 낭비 방지 — R1 L2).
-  const selectionRollup = satongLabelLOD(mapZoom) === "hover-only";
+  // ★**버짓만** dep로 — 버짓은 계단함수(z 15·17·18 에서만 변함)라, 종전의 «롤업 여부만 dep»
+  //   와 **같은 재부착 빈도**를 유지한다(R1 L2: 줌마다 teardown 낭비 방지).
+  //   ★2026-09-04 적대 리뷰 MAJOR-2: 한때 `mapZoom` 을 직접 deps 에 넣었는데, 그러면 **매
+  //   zoomend 마다** 라벨을 통째로 다시 만든다 — 위 주석이 명시적으로 피하려던 그것이다.
+  //   내 계획서는 **그 주석을 근거로 인용하면서** 그것을 깼다(§D20 적용 범위 ≠ 결함 범위).
+  const selectionLabelBudget = satongLabelBudget(mapZoom);
   // 「선택 필지」 컨트롤(기본 ON). 컨트롤을 선언하지 않는 호출부에서는 항상 true.
   const selectionLabelsOn = satongSelectionLabelsVisible(layerState);
 
@@ -2468,7 +2488,7 @@ export function SatongMultiMap({
     //   mapReady 는 deps 에 남겨 지도가 준비되는 순간 재실행되게 한다.
     const plan = planSelectionLabels({
       visible: selectionLabelsOn,
-      rollup: selectionRollup,
+      budget: selectionLabelBudget,
       features: overlayFeatures,
       representativePoint: geometryRepresentativePoint,
       // ★PNU 로 지번을 파생한 **뒤** 줄인다 — 먼저 줄이면 동 단위 주소에서 지번을 붙일
@@ -2487,7 +2507,7 @@ export function SatongMultiMap({
       try { group?.remove?.(); } catch { /* noop */ }
       if (selectionLabelLayerRef.current === group) selectionLabelLayerRef.current = null;
     };
-  }, [mapReady, overlayFeatures, selectionRollup, selectionLabelsOn]);
+  }, [mapReady, overlayFeatures, selectionLabelsOn, selectionLabelBudget]);
 
 
   // ── 거리재기 — 측정 모드 동기화·측정점/폴리라인/누적거리 렌더·모드 UX·ESC ──
