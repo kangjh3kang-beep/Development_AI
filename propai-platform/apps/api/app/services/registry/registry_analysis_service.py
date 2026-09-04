@@ -616,6 +616,7 @@ class RegistryAnalysisService:
 
     async def _llm(self, address: str | None, registry: str) -> dict[str, Any]:
         raw = ""  # 파싱 실패 시 진단용(except에서 raw_head 로깅) — 잘린 JSON 등 근본추적.
+        resp = None  # ★절단 판정(is_truncated)에 필요 — except 에서 참조한다.
         try:
             from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -647,6 +648,20 @@ class RegistryAnalysisService:
             #   화면을 보고 알려 줄 때까지 아무도 몰랐다). 성공(분모)은 위 과금 헬퍼가 남긴다.
             from app.services.ai.base_interpreter import record_llm_failure
             record_llm_failure("registry", e)
+            # ★절단은 **파싱 실패가 아니라 응답이 잘린 것**이다 — 사유를 정직하게 바꾼다.
+            #   `is_truncated` 의 독스트링이 *"호출처는 이 판정으로 절단을 'parse'가 아닌
+            #   별도 사유로 정직하게 분류해야 한다"* 고 **명시**하는데 이 호출처가 안 썼다(참조 0건).
+            #   그래서 사용자·조사자에게 `Expecting value: line 1 column 1 (char 0)` 이 보였고,
+            #   그것은 **「빈 응답」처럼 읽혀** 엉뚱한 곳을 보게 했다(라이브 실측: 실제는 절단).
+            #   ★`failure_class` 는 바꾸지 않는다 — 절단도 **결정론적**이라 `parse` 분류가 옳다
+            #     (재시도 판정을 건드리면 이 변경의 범위를 넘는다).
+            from app.services.ai.llm_json import is_truncated as _is_truncated
+            _reason = _failure_reason(e)
+            if _is_truncated(resp):
+                _reason = (
+                    "AI 응답이 최대 길이에서 잘렸습니다(등기부가 깁니다) — "
+                    f"파서 오류: {_reason}"
+                )
             return {
                 "generated": False,
                 "ownership": {}, "provisional_registration": {"exists": None},
@@ -655,7 +670,7 @@ class RegistryAnalysisService:
                 # ★"일시적"이라고 단정하지 않는다 — 그 표기가 결정론적 영구 실패를
                 #   일시 장애로 위장해 오래 숨긴 전례가 있다(2026-08-21 LLM 계층 사망).
                 "rights_analysis": "AI 권리분석을 생성하지 못했습니다. 등기부 내용을 직접 확인하세요.",
-                "failure_reason": _failure_reason(e),
+                "failure_reason": _reason,
                 # ★분류는 **실제 예외가 있는 이 자리**에서 한다. 나중에 문자열만 보고 다시
                 #   분류하면 타입이 지워져(`Exception("JSONDecodeError: …")`) 메시지에
                 #   타입명이 우연히 들어 있어야만 맞는다 — 운에 기대는 판정이 된다.

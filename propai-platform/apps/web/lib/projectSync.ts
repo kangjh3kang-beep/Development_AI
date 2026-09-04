@@ -23,6 +23,11 @@ import { VERIFY_CACHE_PREFIX } from "@/lib/verification-cache-key";
 import { looksLikeAddress } from "@/lib/selection-integrity";
 import { useLandScheduleStore } from "@/store/useLandScheduleStore";
 import { useDevelopmentPlanStore } from "@/store/useDevelopmentPlanStore";
+import {
+  defaultEnabledLayerIds,
+  defaultSatongMapControls,
+  useSatongMapPrefs,
+} from "@/store/useSatongMapPrefsStore";
 import { usePaidRenderStore } from "@/store/usePaidRenderStore";
 import { useRegistryAnalysisStore } from "@/store/useRegistryAnalysisStore";
 import { currentUserId, decodeTokenUser } from "@/lib/account-scope";
@@ -112,6 +117,22 @@ export function clearAllProjectData(): void {
     try { usePaidRenderStore.setState({ byProject: {} } as never); } catch { /* noop */ }
     try { useRegistryAnalysisStore.setState({ byProject: {} } as never); } catch { /* noop */ }
     try { useDevelopmentPlanStore.setState({ byProject: {} } as never); } catch { /* noop */ }
+    // ★2026-09-04(#965) — 사통맵 레이어 선호. 형제 셋과 달리 `byProject` 가 아니라
+    //   **기본값으로** 되돌린다(프로젝트별이 아니라 계정별 UI 선호이므로 «빈 것»이 없다).
+    //   ★파생형 락이 이 자리를 짚어 줬다 — 적대 리뷰는 재수화 누락만 봤고, 메모리 와이프
+    //     누락은 **락이 찾았다**(같은 결함의 나머지 절반).
+    try {
+      useSatongMapPrefs.setState({
+        controlsByLayer: defaultSatongMapControls(),
+        // ★2026-09-04 — 레이어 활성 상태도 함께 되돌린다. 안 하면 계정을 바꿔도 **이전 계정이
+        //   켜 둔 레이어**가 화면에 남는다(#965 리뷰가 컨트롤 쪽에서 잡은 것과 같은 축).
+        enabledLayerIds: defaultEnabledLayerIds(),
+        // ★«한 번도 안 고름» 으로 되돌린다 — 안 하면 다음 계정이 «골랐다» 상태를 물려받아
+        //   이후 추가되는 레이어의 기본값이 그 계정에도 안 닿는다.
+        //   ★이 줄은 **필드 축 락이 잡아 줬다**(#966 리뷰 MAJOR-2 봉합 직후, 몇 분 만에).
+        enabledLayersCustomized: false,
+      } as never);
+    } catch { /* noop */ }
   });
   pulled = false; // 빈 상태가 서버로 syncUp되지 않도록(scheduleSyncUp이 pulled=false면 무시)
   for (const k of PROJECT_PERSIST_KEYS) {
@@ -191,6 +212,13 @@ export function syncAccountScopedStores(): void {
   try { void usePaidRenderStore.persist?.rehydrate(); } catch { /* noop */ }
   try { void useRegistryAnalysisStore.persist?.rehydrate(); } catch { /* noop */ }
   try { void useDevelopmentPlanStore.persist?.rehydrate(); } catch { /* noop */ }
+  // ★2026-09-04 추가(#965 적대 리뷰 Finding 1). 이 목록은 **목록형**이라 새 계정별 스토어가
+  //   조용히 빠진다 — 실제로 빠졌다. 계정별 저장 어댑터는 첫 읽기에서 `scopeUid` 를 고정하고
+  //   그 뒤 다른 계정의 쓰기를 **거부**하므로, 여기 없는 스토어는 소프트 계정 전환 후
+  //   ①이전 계정의 값을 그대로 보여 주고 ②새 계정의 변경을 **어느 키에도 안 쓴다**(조용히).
+  //   → 락을 **파생형**으로 바꿔 다섯 번째가 같은 길을 못 가게 했다
+  //     (`lib/__tests__/paid-artifact-account-isolation.test.ts`).
+  try { void useSatongMapPrefs.persist?.rehydrate(); } catch { /* noop */ }
 }
 
 export function ensureDataOwner(): void {
