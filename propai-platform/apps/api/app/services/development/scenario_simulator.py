@@ -243,6 +243,10 @@ ZONE_BASIS_AREA_WEIGHTED = "area_weighted"
 ZONE_BASIS_SINGLE = "single_zone"
 ZONE_BASIS_NO_AREA = "first_parcel_no_area"
 ZONE_BASIS_NONE = "none"
+#: 동률(±5%)·규제성격 상이로 **단일화를 거부**한 상태. `special_parcel` 이 쓰는 그 값이고
+#  `app/utils/withheld.py` 의 **표준 보류 어휘**이며, 프론트 `lib/zoning/dominant-zone.ts` 가 안다.
+ZONE_BASIS_MIXED_REVIEW = "mixed_review_required"
+MIXED_REVIEW_SENTINEL = "mixed_review_required"
 
 
 #: 현 용도지역만으로는 **아파트를 지을 수 없는** 용도지역(국토계획법 시행령 009419 §71).
@@ -324,6 +328,22 @@ def combined_building_distance_verdict(adjacency: dict[str, Any] | None) -> tupl
     if d is None:
         return None, None
     return (float(d) <= COMBINED_BUILDING_MAX_DISTANCE_M), float(d)
+
+
+def _zone_mix_from(enriched: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """전제감사기가 요구하는 `zone_mix` — **형제 스키마**(`special_parcel`)를 따른다.
+
+    감사기의 `dominant_argmax`·`area_conservation` 이 `zone` 과 `area_sqm` 만 읽으므로
+    그 둘을 낸다(면적 내림차순 — 형제와 같은 정렬).
+    """
+    agg: dict[str, float] = {}
+    for p in enriched or []:
+        z, a = p.get("zone"), p.get("area")
+        if not z or not a:
+            continue
+        agg[str(z).strip()] = agg.get(str(z).strip(), 0.0) + float(a)
+    return [{"zone": z, "area_sqm": round(a, 2)}
+            for z, a in sorted(agg.items(), key=lambda kv: kv[1], reverse=True)]
 
 
 def _low_rise_only(zones: list[str]) -> bool:
@@ -438,15 +458,29 @@ def dominant_zone_by_area(rows: list[dict[str, Any]]) -> tuple[str, str]:
         return uniq[0], ZONE_BASIS_SINGLE
     if not all(r.get("area") for r in named):
         return str(named[0]["zone"]).strip(), ZONE_BASIS_NO_AREA
-    from app.services.zoning.legal_zone_limits import mixed_zone_limits
+    # ★형제(`special_parcel._aggregate_integrated_zoning`)의 판정을 **그대로 따른다.**
+    #   실측(2026-09-04) — 4모집단 중 **3개가 갈렸다**:
+    #     상업+주거 → 형제 `mixed_review_required` / 내 종전 `일반상업지역`   ★임의 단일화
+    #     동률(±5%) → 형제 `mixed_review_required` / 내 종전 `제3종일반주거지역`
+    #     녹지+주거 → 형제 `mixed_review_required` / 내 종전 `제2종일반주거지역`
+    #   ★볼트가 *"형제가 이미 옳게 한다 — **시뮬레이터만 자기 방식을 만들었다**"* 라고
+    #     적어 둔 그 자리인데, `#940` 이 RC-2 를 고치면서 **같은 클래스의 약한 판본**을 다시 만들었다.
+    #   생태계는 이 센티널을 이미 안다 — 백엔드 6곳 소비 · 프론트 `lib/zoning/dominant-zone.ts`
+    #   (`MIXED_REVIEW_SENTINEL`) · `app/utils/withheld.py` 의 **표준 보류 어휘**.
+    from app.services.zoning.special_parcel import _aggregate_integrated_zoning
 
-    mix = mixed_zone_limits(
-        [{"zone_type": str(r["zone"]).strip(), "area_sqm": float(r["area"])} for r in named]
+    agg = _aggregate_integrated_zoning(
+        [{"zone_type": str(r["zone"]).strip(), "area_sqm": float(r["area"]),
+          "areaSqm": float(r["area"])} for r in named]
     )
-    dom = mix.get("dominant_zone")
+    dom = agg.get("dominant_zone")
+    if dom == MIXED_REVIEW_SENTINEL:
+        # ★「보류」를 «면적가중으로 골랐다» 고 말하면 거짓이다 — 근거도 보류여야 한다.
+        return MIXED_REVIEW_SENTINEL, ZONE_BASIS_MIXED_REVIEW
     if dom:
         return str(dom), ZONE_BASIS_AREA_WEIGHTED
-    return str(named[0]["zone"]).strip(), ZONE_BASIS_NO_AREA
+    # ★형제가 `None` 을 내면(판정 불가) **첫 필지로 지어내지 않는다** — 보류를 명시한다.
+    return MIXED_REVIEW_SENTINEL, ZONE_BASIS_MIXED_REVIEW
 
 
 def _is_residential(zone: str) -> bool:
@@ -762,6 +796,33 @@ class DevelopmentScenarioSimulator:
         }
 
         scenarios = self._scenarios(ctx)
+
+        # ── ★전제 감사 — **이미 있는 감시망을 켠다**(새로 만드는 것이 아니다) ────────────
+        #   실측(2026-09-04): `premise_audit.audit()` 호출부가 **`routers/auto_zoning.py` 1곳뿐**
+        #   이라 이 경로는 **감시망 밖**이었다. 등록된 전제 6종 중 `dominant_argmax` 는
+        #   `#940` 의 RC-2(첫 필지를 우세 용도지역으로 씀)를 **정확히** 잡는다 —
+        #   그 감사기를 신고 부지 형상으로 직접 태워 확인했다(종전 발화 / 수정 후 침묵).
+        #   ★**읽기 전용이다** — 판정(`applicable`)을 바꾸지 않고 위반을 표면에 싣기만 한다.
+        premise_audit_result: dict[str, Any] | None = None
+        try:
+            from app.services.zoning import premise_audit
+
+            _zm = _zone_mix_from(enriched)
+            premise_audit_result = premise_audit.audit({
+                "dominant_zone": primary_zone,
+                "zone_mix": _zm,
+                "per_parcel": [
+                    {"zone": p.get("zone"), "area_sqm": p.get("area")} for p in enriched
+                ],
+                "integrated": {"total_area_sqm": total_area},
+                "scenario": {"top3": scenarios[:3]},
+                "_request_parcel_count": requested_count,
+            })
+        except Exception as e:  # noqa: BLE001
+            # ★감사기 사망을 «위반 0» 으로 뭉개지 않는다 — 사유를 싣는다.
+            logger.warning("전제 감사 실패", err=str(e)[:120])
+            premise_audit_result = {"ok": None, "reason": "audit_failed", "detail": str(e)[:200]}
+
         # 적합도 정렬(가능>조건부>불가, est_far 내림차순)
         rank = {"가능": 0, "조건부": 1, "불가": 2}
         scenarios.sort(key=lambda s: (rank.get(s["applicable"], 3), -(s.get("est_far") or 0)))
@@ -784,6 +845,10 @@ class DevelopmentScenarioSimulator:
             "pyeong_classification": self._classify_by_pyeong_tier(total_area, scenarios),
             # 개발행위허가 절차게이트(WP-B) 최상위 노출 — 대상 필지의 개발규모=허가 판정 전제.
             "dev_act_permit_gate": dev_act_gate,
+            # ★전제 감사 결과 — 이 경로가 감시망 밖이었다(호출부 1곳뿐). 판정은 안 바꾸고
+            #   위반만 싣는다. ★`#940` 에서 «백엔드 계약만 서고 화면 소비처 0» 으로 데였으므로
+            #   여기 싣는 것만으로 끝내지 않는다 — 소비처는 별도 좌표로 남긴다.
+            "premise_audit": premise_audit_result,
         }
         # 특이부지가 조건부/선행절차 부지면 정직 고지를 최상위로 노출(시나리오는 산정하되 경고 동반).
         #   산지전용·농지전용·도시계획시설 폐지 등 선행절차 통과를 전제로만 개발 가능함을 명시.
