@@ -2397,7 +2397,10 @@ export function SatongMapShell({
         [layerId]: Array.from(current),
       };
     });
-  }, []);
+    // ★deps 에 `setLayerControls` 를 넣는다(2026-09-04): 종전에는 `useState` 세터라 eslint 가
+    //   **안정적임을 알고** 생략을 허용했는데, 이제 zustand 액션이라 알 수 없다. 실제로는
+    //   스토어 액션이므로 identity 가 안 바뀌어 재생성이 늘지 않는다 — 넣는 쪽이 정직하다.
+  }, [setLayerControls]);
 
   const handleMapPickMany = useCallback(
     (parcels: ParcelAtPointResult[]) => {
