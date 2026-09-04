@@ -21,13 +21,31 @@ const VIOLATION = {
   detail: "우세 용도지역(자연녹지지역)이 면적 최대 용도지역(제2종일반주거지역)과 다릅니다.",
 };
 
-/** 백엔드가 내는 네 모양. ★픽스처가 **두 모집단을 실제로 가른다**(차가 0인 픽스처는 잠금이 아니다). */
+/**
+ * ★**백엔드가 실제로 내는 페이로드**만 쓴다.
+ *
+ * 첫 판의 픽스처 다섯 중 **셋이 프로덕션에 존재하지 않는 모양**이었다(적대 리뷰 MAJOR-2).
+ * `checked` 를 「판정한 수」로 오해해 `checked:1`·`checked:4` 를 지어냈는데, 실측하면
+ * `audit()` 의 `checked` 는 **예외가 안 난 관계 수**라 **언제나 `registered` 와 같다**:
+ *
+ *     audit(정상ctx) → checked 6 / registered 6
+ *     audit({})      → checked 6 / registered 6      ← 빈 입력에도 6
+ *
+ * 그리고 성공 경로는 **항상** `structurally_vacuous: ["path_invariance_zone"]` 를 덧씌운다.
+ * ★그래서 「정상 부지」 픽스처가 프로덕션 모양이 아니었고, **«정상 화면이 깨끗하다»가 초록인데
+ *   실제 정상 화면은 깨끗하지 않았다.** 픽스처가 그 축을 **원리적으로 못 태우고 있었다.**
+ */
 const FIXTURES: Record<string, PremiseAudit> = {
-  violations: { violations: [VIOLATION], checked: 6, registered: 6 },
+  violations: { violations: [VIOLATION], checked: 6, registered: 6, structurally_vacuous: ["path_invariance_zone"] },
   failed: { violations: [], checked: 0, registered: null, reason: "audit_failed", detail: "top3 가 list 라 .get() 이 터졌습니다" },
-  vacuous: { violations: [], checked: 1, registered: 6, structurally_vacuous: ["path_invariance_zone"] },
+  // ★감사기가 **한 건도 실행되지 않았다**(전부 예외). 실패 표식 없이 이 모양이면 그 자체가 신호다.
+  vacuous: { violations: [], checked: 0, registered: 6 },
+  // ★관계 일부가 **실행 중 죽었다** — 「입력 부족」이 아니다(그 정보는 생산자에 없다).
   partial: { violations: [], checked: 4, registered: 6, structurally_vacuous: ["path_invariance_zone"] },
-  clean: { violations: [], checked: 6, registered: 6 },
+  // ★★**배선된 백엔드가 정상 부지에서 실제로 내는 바로 그 페이로드.**
+  //   첫 판은 `structurally_vacuous` 키가 **없는** 모양을 「정상」이라 불렀고, 그래서
+  //   프로덕션 정상 부지가 경고를 받는 것을 이 락이 못 봤다.
+  clean: { violations: [], checked: 6, registered: 6, structurally_vacuous: ["path_invariance_zone"] },
 };
 
 describe("premiseAuditState — 다섯 상태가 **서로 다른 판정**이다", () => {
@@ -55,22 +73,31 @@ describe("premiseAuditState — 다섯 상태가 **서로 다른 판정**이다"
   });
 });
 
-describe("premiseAuditPower — ★`structurally_vacuous` 를 판정력에서 뺀다", () => {
-  it("실효 판정력과 원래 checked 를 **둘 다** 낸다(한 수로 뭉개면 오독된다)", () => {
-    const p = premiseAuditPower(FIXTURES.partial);
-    expect(p).toEqual({ effective: 3, checked: 4, vacuous: 1, registered: 6 });
-    // ★두 수가 실제로 **다르다** — 같으면 이 단언이 원리적으로 아무것도 안 잠근다.
-    expect(p.effective).not.toBe(p.checked);
+describe("premiseAuditPower — ★두 축을 **분리**해 낸다(한 수로 뭉개면 오독된다)", () => {
+  it("시도율과 판별력 없는 관계 수가 **다른 필드**로 나온다", () => {
+    expect(premiseAuditPower(FIXTURES.partial)).toEqual({
+      attempted: 4, registered: 6, vacuous: 1, vacuousKeys: ["path_invariance_zone"],
+    });
   });
 
-  it("★구조상 공허한 관계만 판정됐으면 실효 판정력은 0 이다", () => {
-    expect(premiseAuditPower(FIXTURES.vacuous).effective).toBe(0);
-    // 그런데 원래 checked 는 0 이 아니다 — 그 차이가 「공허」의 정의다.
-    expect(premiseAuditPower(FIXTURES.vacuous).checked).toBe(1);
+  it("★**섞지 않는다** — 정상 부지는 `attempted === registered` 이고 vacuous 가 있어도 그대로다", () => {
+    const p = premiseAuditPower(FIXTURES.clean);
+    expect(p.attempted).toBe(p.registered);
+    expect(p.vacuous).toBe(1);
+    // ★첫 판은 여기서 `4 - 1 = 3` 처럼 빼서 `registered` 와 비교했고, 그래서 **정상 부지가
+    //   전부 경고**를 받았다. 두 축이 **서로를 깎지 않는다**는 것이 이 단언의 내용이다.
+    expect(premiseAuditState(FIXTURES.clean)).toBe("clean");
   });
 
-  it("음수로 내려가지 않는다(경계 양방향)", () => {
-    expect(premiseAuditPower({ checked: 1, structurally_vacuous: ["a", "b", "c"] }).effective).toBe(0);
+  it("★`checked` 가 없으면 0 으로 보되, 그것으로 **주장을 만들지는 않는다**", () => {
+    expect(premiseAuditPower({}).attempted).toBe(0);
+    expect(premiseAuditPower({}).registered).toBeNull();
+    // 수가 없으면 상태는 clean(=무주장)이다 — 위 0 을 「공허」로 승격시키지 않는다.
+    expect(premiseAuditState({})).toBe("clean");
+  });
+
+  it("어휘 밖 형태는 조용히 무시한다(문자열 아닌 키·null 배열)", () => {
+    expect(premiseAuditPower({ checked: 6, structurally_vacuous: [null, "", 7, "ok"] as never }).vacuous).toBe(1);
   });
 });
 
@@ -115,13 +142,26 @@ describe("PremiseAuditNotice — 렌더", () => {
     }
   });
 
-  it("★부분 판정은 **실효/등록** 을 말하고, 원 검사 수도 함께 밝힌다", () => {
+  it("★부분 **실행**은 시도/등록을 말하고, 사유를 **날조하지 않는다**", () => {
+    render(<PremiseAuditNotice audit={FIXTURES.partial} />);
+    const box = screen.getByTestId("premise-audit-notice");
+    const heading = box.querySelector("p")?.textContent ?? "";
+    // ★제목을 **완전 일치**로 못 박는다. 첫 판은 `toContain("3")` 식 자릿수 자루였고,
+    //   제목이 다른 수로 되돌아가도 본문 어딘가에 그 숫자가 있어 **초록이었다**(리뷰 MEDIUM-3).
+    expect(heading).toBe("전제 감사 부분 실행 · 4/6");
+    // ★**날조 금지** — 백엔드는 「입력 부족」이라는 사유를 준 적이 없다. 그 정보는 생산자에 없다.
+    expect(box.textContent ?? "").not.toContain("입력이 부족");
+    expect(box.textContent ?? "").toContain("보증하지 않습니다");
+  });
+
+  it("★판별력 없는 관계는 **맥락으로만** 밝히고 비율에 섞지 않는다", () => {
     render(<PremiseAuditNotice audit={FIXTURES.partial} />);
     const t = screen.getByTestId("premise-audit-notice").textContent ?? "";
-    expect(t).toContain("3");   // 실효 판정력(checked 4 - vacuous 1)
-    expect(t).toContain("6");   // registered
-    expect(t).toContain("4");   // ★원 checked 도 밝힌다 — 한 수로 뭉개지 않는다
-    expect(t).toMatch(/보증하지 않습니다/);
+    expect(t).toContain("path_invariance_zone");
+    expect(t).toContain("판별력이 없는");
+    // ★그런데 그것이 **경보를 만들지는 않는다** — 정상 부지는 여전히 무렌더다.
+    const { container } = render(<PremiseAuditNotice audit={FIXTURES.clean} />);
+    expect(container.firstChild).toBeNull();
   });
 
   it("★네 상태의 제목이 **서로 다르다**(두 갈래가 같은 말을 하면 정보가 0이다)", () => {
@@ -137,9 +177,15 @@ describe("PremiseAuditNotice — 렌더", () => {
 
   /**
    * ★**부채를 초록 안에 드러낸다**(커밋 메시지에만 적으면 안 드러난다).
-   * `routers/auto_zoning.py` 도 `premise_audit` 를 응답에 싣는데, 그 경로는 위반이 **있을 때만**
-   * `warnings`/`disclosure` 로 우회한다 — **공허 축은 그 경로도 못 본다.**
-   * 두 표면을 한 PR 에서 건드리면 회귀 범위가 겹쳐서 별건으로 남긴다.
+   *
+   * ★사유를 **정정한다**(적대 리뷰 MEDIUM-5). 첫 판은 *"그 경로는 공허 축을 **못 본다**"* 라고
+   * 적었는데 **거짓**이다 — `routers/auto_zoning.py:1947` 은 위반 유무와 **무관하게 항상**
+   * `{checked, registered, violations}` 를 싣는다. **데이터는 있다.**
+   * 없는 것은 **프론트 소비처**다(전수: `premise_audit` 소비처는 이 카드 1곳).
+   *
+   * ★***«데이터가 없다»와 «소비처가 없다»는 처방이 다르다***(§29) — 첫 판 문구를 읽은 사람은
+   * «백엔드부터 고쳐야 한다» 로 간다. 실제로는 `<PremiseAuditNotice audit={…} />` 한 줄이다.
+   * 두 표면을 한 PR 에서 건드리면 회귀 범위가 겹쳐 별건으로 남긴다.
    */
-  it.todo("통합분석(auto_zoning) 표면도 이 고지를 쓴다 — 지금은 warnings 우회뿐이라 공허 축이 없다");
+  it.todo("통합분석(auto_zoning) 표면도 이 고지를 쓴다 — 데이터는 이미 있고 **소비처만** 없다");
 });

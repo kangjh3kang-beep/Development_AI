@@ -80,8 +80,10 @@ describe("전제 감사 도달 — `premise_audit`", () => {
     expect(box.textContent ?? "").toContain(DETAIL);
   });
 
-  it("★공허(판정 0)도 도달한다 — 「위반 없음」과 **다른 말**이어야 한다", async () => {
-    reply({ violations: [], checked: 1, registered: 6, structurally_vacuous: ["path_invariance_zone"] });
+  it("★공허(한 건도 실행 안 됨)도 도달한다 — 「위반 없음」과 **다른 말**이어야 한다", async () => {
+    // ★`checked` 는 **시도한 수**다(백엔드 락: *"빈 입력도 판정은 시도해야 한다"*).
+    //   그러므로 0 은 «감사기를 한 건도 실행하지 못했다» 이지 «입력이 부족했다» 가 아니다.
+    reply({ violations: [], checked: 0, registered: 6 });
     await runCard();
 
     const box = await screen.findByTestId("premise-audit-notice");
@@ -98,10 +100,26 @@ describe("전제 감사 도달 — `premise_audit`", () => {
     expect(box.textContent ?? "").toContain("감사 실패 사유 문구");
   });
 
-  it("★음성 대조군 — 전부 판정되고 위반 0이면 **아무것도 안 그린다**(정상에 배지를 늘리지 않는다)", async () => {
-    reply({ violations: [], checked: 6, registered: 6 });
+  it("★★음성 대조군 — **배선된 백엔드가 정상 부지에서 실제로 내는 페이로드**면 무렌더", async () => {
+    // ★★이 픽스처가 이 파일에서 가장 중요하다. 첫 판은 `structurally_vacuous` 키가 **없는**
+    //   모양을 「정상」이라 불렀는데, 성공 경로는 **항상** 그 키를 덧씌운다
+    //   (`scenario_simulator.py` 실측). 그래서 «정상 화면이 깨끗하다» 가 초록인데
+    //   **실제 정상 화면은 경고 상자를 달고 있었다** — 픽스처가 그 축을 원리적으로 못 태웠다.
+    //   ★*"정상 화면에 배지를 늘리지 않는다"* 를 설계 중심에 놓고 **정상 화면에만** 띄우고 있었다.
+    reply({ violations: [], checked: 6, registered: 6, structurally_vacuous: ["path_invariance_zone"] });
     await runCard();
     expect(screen.queryByTestId("premise-audit-notice")).toBeNull();
+  });
+
+  it("★부분 실행(관계가 죽음)은 도달하되 사유를 **날조하지 않는다**", async () => {
+    reply({ violations: [], checked: 4, registered: 6, structurally_vacuous: ["path_invariance_zone"] });
+    await runCard();
+
+    const box = await screen.findByTestId("premise-audit-notice");
+    expect(box.dataset.state).toBe("partial");
+    expect(box.querySelector("p")?.textContent).toBe("전제 감사 부분 실행 · 4/6");
+    // 백엔드는 「입력 부족」이라는 사유를 준 적이 없다.
+    expect(box.textContent ?? "").not.toContain("입력이 부족");
   });
 
   it("★필드가 없어도 화면이 깨지지 않고 아무 주장도 하지 않는다", async () => {
