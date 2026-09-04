@@ -93,10 +93,54 @@ def test_audit_result_actually_reaches_the_response(monkeypatch):
     assert isinstance(pa, dict), f"감사 결과가 dict 로 실리지 않았다 — {type(pa).__name__}"
     assert "violations" in pa, f"위반 배열이 없다 — {sorted(pa)}"
     # ★커버리지를 단언한다 — 모듈이 `checked` 를 «공허한 초록 금지» 로 만들었는데 읽는 곳이 0곳이었다.
+    assert pa.get("registered", 0) >= 6, f"등록 관계가 {pa.get('registered')}종 — 수집기 이상"
     assert pa.get("checked") == pa.get("registered"), (
         f"등록 {pa.get('registered')}종 중 {pa.get('checked')}종만 판정됐다 — "
-        "나머지는 예외로 조용히 죽었다(top3 계약 불일치가 그 원인이었다)"
+        "나머지는 예외로 조용히 죽었다(★`top3` 를 dict 가 아니라 list 로 넘기면 3종이 죽는다)"
     )
+
+
+def test_audit_actually_discriminates_two_populations(monkeypatch):
+    """★★배선의 **행동**을 잠근다 — 감사가 «돈다» 가 아니라 «가른다» 를 본다.
+
+    적대 리뷰 실측: 종전 락은 키 존재·커버리지만 봐서
+    `zone_mix=[]` · `dominant_zone=None` · `ok:True 위장` 변이가 **전부 SURVIVED** 였다.
+    감사는 «위반을 찾는 장치» 이므로 **정상 부지에서 침묵하고 결함 부지에서 발화**해야 한다.
+    """
+    def _viol(zones, areas):
+        try:
+            out = _simulate_audit(monkeypatch, zones=zones, areas=areas)
+        except Exception as e:  # noqa: BLE001
+            pytest.skip(f"simulate 경로가 외부 의존을 요구한다: {type(e).__name__}")
+        pa = (out.get("site") or {}).get("premise_audit") or out.get("premise_audit")
+        assert isinstance(pa, dict) and pa.get("ok") is not True, (
+            f"실패를 성공으로 위장했다 — {pa}"
+        )
+        return {v.get("relation") or v.get("key") for v in (pa.get("violations") or [])}, pa
+
+    # ① 정상 부지 — 침묵해야 한다(위양성 방지)
+    clean, pa_clean = _viol(["제2종일반주거지역", "제2종일반주거지역"], [1000.0, 500.0])
+    assert not clean, f"정상 부지에서 거짓 위반 — {clean}"
+    # ★감사가 실제로 재료를 받았는지(빈 zone_mix 로 «위반 0» 을 만드는 변이를 여기서 죽인다)
+    assert pa_clean.get("checked") == pa_clean.get("registered"), pa_clean
+
+    # ② ★결함 부지 — 면적 최대가 아닌 zone 이 우세로 실리면 `dominant_argmax` 가 발화해야 한다.
+    #    `dominant_zone` 을 None 으로 죽이는 변이가 여기서 죽는다(발화가 사라지므로).
+    import app.services.zoning.premise_audit as _pa
+    broken = _pa.audit({
+        "dominant_zone": "제1종일반주거지역",
+        "zone_mix": [{"zone": "제2종일반주거지역", "area_sqm": 1300.0},
+                     {"zone": "제1종일반주거지역", "area_sqm": 410.0}],
+        "per_parcel": [{"zone": "제1종일반주거지역", "area_sqm": 410.0},
+                       {"zone": "제2종일반주거지역", "area_sqm": 1300.0}],
+        "integrated": {"total_area_sqm": 1710.0},
+        "scenario": {"top3": {"zone_type": "제1종일반주거지역", "parcel_count": 2,
+                              "land_area_sqm": 1710.0}},
+        "_request_parcel_count": 2,
+    })
+    keys = {v.get("relation") or v.get("key") for v in (broken.get("violations") or [])}
+    assert "dominant_argmax" in keys, f"결함 부지에서 침묵한다 — {keys}"
+    assert clean != keys, "두 모집단이 같은 답을 낸다 — 감사가 아무것도 가르지 않는다"
 
 
 def test_the_auditor_catches_the_rc2_defect():
