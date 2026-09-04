@@ -40,7 +40,7 @@ const AUTH_HEADER = "Authorization";
  *   **읽어서 전달**할 뿐이라 `localStorage` 토큰도 401 재시도도 무관하다(실측 2건).
  *   ★이 면제를 넓히지 마라 — `app/` 전체를 빼면 실제 화면이 통째로 빠진다.
  */
-const EXEMPT = (rel: string) => rel === "lib/api-client.ts" || rel.startsWith("app/api/");
+export const EXEMPT = (rel: string) => rel === "lib/api-client.ts" || rel.startsWith("app/api/");
 
 /**
  * **탐지기** — 이 소스가 **인증 헤더를 손수 조립하는 자리**를 몇 개 갖는가.
@@ -199,6 +199,27 @@ describe("공용 클라이언트 우회 래칫", () => {
     const total = Object.values(collectBypassSites()).reduce((a, b) => a + b, 0);
     expect(total).toBeLessThanOrEqual(KNOWN_TOTAL);
     expect(KNOWN_TOTAL).toBe(35); // 2026-09-04 실측
+  });
+});
+
+describe("면제 자체 — 두 모집단", () => {
+  // ★«이 면제를 넓히지 마라» 를 **주석에만** 적었더니 변이가 그대로 생존했다
+  //   (`app/api/` → `app/` 로 넓혀도 초록). 산문은 잠금이 아니다.
+  it("Next 서버 라우트는 면제된다(사유: 브라우저 토큰·401 재시도와 무관)", () => {
+    expect(EXEMPT("app/api/ai/chat/route.ts")).toBe(true);
+    expect(EXEMPT("lib/api-client.ts")).toBe(true);
+  });
+
+  it("★실제 화면은 면제되지 않는다 — 면제를 넓히면 감시망이 통째로 꺼진다", () => {
+    for (const rel of [
+      "app/[locale]/(dashboard)/projects/[id]/page.tsx",
+      "app/[locale]/(dashboard)/settings/billing/page.tsx",
+      "app/layout.tsx",
+      "components/report/ReportDownloadMenu.tsx",
+      "lib/land/desk-appraisal.ts",
+    ]) {
+      expect(EXEMPT(rel), `면제 범위가 넓어졌다: ${rel}`).toBe(false);
+    }
   });
 });
 
