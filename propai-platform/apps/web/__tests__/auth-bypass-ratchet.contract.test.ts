@@ -29,161 +29,225 @@ import { __stripCommentsForScan } from "@/lib/source-invariant";
 
 const WEB_ROOT = path.resolve(__dirname, "..");
 const SKIP = /node_modules|[\\/]\.next[\\/]|__tests__|\.test\.|\.spec\.|[\\/]e2e[\\/]/;
-const TOKEN_KEY = "propai_access_token";
+/** 헤더 이름. **이것이 축이다** — 아래 주석 참조. */
+const AUTH_HEADER = "Authorization";
 
 /**
- * **탐지기** — 이 소스가 «공용 클라이언트를 우회해 토큰을 손수 싣는가».
+ * 축에서 제외하는 곳과 **그 사유**. 면제에는 반드시 사유를 적는다(사유 없는 면제는 부채다).
  *
- * ★따로 꺼낸 이유: 트리 순회 안에 인라인으로 두면 **합성 입력으로 태울 수 없다.**
- *   그러면 탐지기를 «항상 false» 로 바꾸는 변이가 «위반 0» 을 내며 **초록으로 생존**한다
- *   (이 저장소가 반복해 데인 형태 — «전부 통과시키는 가드» 가 만점을 받는다).
- *   아래 `탐지기` describe 가 **두 모집단**(우회 ↔ 정상)으로 이것을 직접 태운다.
+ * - `lib/api-client.ts` — **공용 클라이언트 자신.** 여기가 유일한 정당 조립처다.
+ * - `app/api/**` — Next.js **서버 라우트**. 브라우저가 아니라 서버에서 돌고, 들어온 헤더를
+ *   **읽어서 전달**할 뿐이라 `localStorage` 토큰도 401 재시도도 무관하다(실측 2건).
+ *   ★이 면제를 넓히지 마라 — `app/` 전체를 빼면 실제 화면이 통째로 빠진다.
  */
-export function isBypassSource(raw: string, fileName: string): boolean {
-  // ★주석·JSDoc 을 걷어내고 본다. 손 정규식은 이 저장소에서 다섯 번 관통됐으므로
-  //   `lib/source-invariant.ts` 의 **간극 전수 주사**를 쓴다(줄 주석·URL 의 `//` 포함).
+const EXEMPT = (rel: string) => rel === "lib/api-client.ts" || rel.startsWith("app/api/");
+
+/**
+ * **탐지기** — 이 소스가 **인증 헤더를 손수 조립하는 자리**를 몇 개 갖는가.
+ *
+ * ## ★축을 바꾼 이유 (적대 리뷰가 변이 3종으로 뚫었다)
+ *
+ * 초판은 «토큰 키 리터럴 ∧ `fetch(`» 를 봤다. **한 구문형만 덮은 것**이라 셋이 새어 나갔다:
+ *
+ * | 우회 형태 | 초판 | 지금 |
+ * |---|---|---|
+ * | 토큰 키를 **문자열 결합**(`"propai_access" + "_token"`) | 통과 | **잡힘** |
+ * | `const F = globalThis.fetch; F(url, …)` | 통과 | **잡힘** |
+ * | `XMLHttpRequest` + `setRequestHeader("Authorization", …)` | 통과 | **잡힘** |
+ *
+ * 셋 다 **`Authorization` 을 조립한다** — 그것 없이는 우회가 성립하지 않는다. 그래서 전송
+ * 수단(`fetch`/XHR/axios/sendBeacon…)을 열거하는 대신 **모든 우회가 반드시 지나는 자리**를
+ * 축으로 삼는다. *(열거는 곧 상한이 된다 — 이 저장소가 반복해 데인 형태다.)*
+ *
+ * ★**실측으로 상위집합임을 확인했다**: 새 축 31 ⊇ 옛 축 28, **잃는 것 0**.
+ *   그리고 옛 축이 **놓치던 진짜 우회를 하나 찾았다** — `components/common/AIAssistant.tsx`
+ *   (SSE 직호출). 토큰 키가 **주석에만** 있어 스트립 후 사라졌었다. **29 는 과소계수였다.**
+ *
+ * ## ★축의 단위가 「파일」이 아니라 「자리」다
+ *
+ * 리뷰 실측: 목록에 든 파일에 **두 번째 우회**를 더해도 초판은 말이 없었다(목록 28개 중
+ * **20개가 `apiClient` 호출과 생 `fetch` 를 함께** 갖고 있어 사실상 영구 면제였다).
+ * → **출현 수**를 세고 파일별로 못 박는다.
+ */
+export function countBypassSites(raw: string, fileName: string): number {
+  // ★프리필터 — 이 한 줄이 TS 파싱을 714파일 → 수십으로 줄인다(전수 파싱은 30초 타임아웃을
+  //   건드렸다). 원문에 낱말이 없으면 주석에도 코드에도 없다.
+  if (!raw.includes(AUTH_HEADER)) return 0;
+  // 주석·JSDoc 을 걷어내고 본다. 손 정규식은 이 저장소에서 다섯 번 관통됐으므로
+  // `lib/source-invariant.ts` 의 **간극 전수 주사**를 쓴다(줄 주석·URL 의 `//` 포함).
   const src = __stripCommentsForScan(raw, fileName);
-  return src.includes(TOKEN_KEY) && /\bfetch\s*\(/.test(src);
+  return src.split(AUTH_HEADER).length - 1;
 }
 
 /**
  * ★파생형 수집 — 손으로 나열하지 않는다. 목록은 곧 상한이 된다.
  *
- * ★결과를 **한 번만 계산**한다: 트리 전수를 TS 로 파싱하므로 호출당 약 10초가 든다.
- *   테스트마다 다시 걸면 이 한 파일이 CI 를 40초 잡아먹는다(첫 실행 실측).
+ * ★결과를 **한 번만 계산**한다: 호출당 트리를 훑으므로 테스트마다 다시 걸면 이 한 파일이
+ *   CI 를 수십 초 잡아먹는다(첫 실행 실측 40초).
  */
-let _cache: string[] | null = null;
-function collectBypassFiles(): string[] {
-  return (_cache ??= collectBypassFilesUncached());
+let _cache: Record<string, number> | null = null;
+function collectBypassSites(): Record<string, number> {
+  return (_cache ??= collectBypassSitesUncached());
 }
 
-function collectBypassFilesUncached(): string[] {
-  const out: string[] = [];
+function collectBypassSitesUncached(): Record<string, number> {
+  const out: Record<string, number> = {};
   const walk = (dir: string) => {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
       const full = path.join(dir, e.name);
       if (SKIP.test(full)) continue;
       if (e.isDirectory()) { walk(full); continue; }
-      if (!/\.tsx?$/.test(e.name)) continue;
+      // ★확장자를 넓힌다 — `.tsx?` 만 보면 `.js/.jsx/.mjs` 우회가 안 세어진다(현재 0건 · 잠재).
+      if (!/\.(tsx?|jsx?|mjs)$/.test(e.name)) continue;
       const rel = path.relative(WEB_ROOT, full).split(path.sep).join("/");
-      if (rel === "lib/api-client.ts") continue; // 공용 클라이언트 자신 — 여기가 유일한 정당 소비처
-      // ★주석·문자열 설명에 속지 않게 주석을 걷어내고 본다(소스 검사가 반복해 뚫린 자리).
-      // ★`fileName` 은 필수다 — 빼면 TS 가 경로 정규화에서 터진다(첫 실행 실측).
-      //   확장자로 ScriptKind 를 고르므로 `.tsx` 의 JSX 도 올바로 파싱된다.
-      if (isBypassSource(fs.readFileSync(full, "utf8"), full)) out.push(rel);
+      if (EXEMPT(rel)) continue;
+      const n = countBypassSites(fs.readFileSync(full, "utf8"), full);
+      if (n > 0) out[rel] = n;
     }
   };
   walk(WEB_ROOT);
-  return out.sort();
+  return out;
 }
 
 /**
- * 2026-09-04 실측으로 못 박은 잔여 우회 **28개**.
- * ★이 목록은 **줄어들기만 한다.** 새 항목을 여기 더해 초록을 만들지 마라 —
+ * 2026-09-04 실측으로 못 박은 잔여 우회 — **29파일 · 35자리**.
+ *
+ * ★값은 **자리 수**(`Authorization` 조립 지점)다. 파일 축으로 세면 같은 파일에 우회를
+ *   더해도 안 보인다 — 실측으로 **6자리가 숨어 있었다**(`LandScheduleClient` 혼자 4).
+ * ★이 표는 **줄어들기만 한다.** 항목을 더하거나 수를 올려 초록을 만들지 마라 —
  *   그 순간 이 파일은 래칫이 아니라 **면제 발급기**가 된다.
  *   `components/operations/RegistryRightsReportButton.tsx` 는 이 PR 에서 **옮겨서 빠졌다**.
  */
-const KNOWN_BYPASS = [
-  "components/analytics/CashflowDcfPanel.tsx",
-  "components/analytics/CostEstimationClient.tsx",
-  "components/common/GlobalAddressSearch.tsx",
-  "components/cost/BoqAutoWorkspace.tsx",
-  "components/cost/BoqDetailTable.tsx",
-  "components/dashboard/RealtxReportPanel.tsx",
-  "components/design-audit/AuditReportView.tsx",
-  "components/design/CadBimIntegrationPanel.tsx",
-  "components/design/DesignGenPanel.tsx",
-  "components/feasibility/FeasibilityExportButton.tsx",
-  "components/feasibility/RoughScenarioPanel.tsx",
-  "components/mypage/CoinsClient.tsx",
-  "components/operations/DeskAppraisalModal.tsx",
-  "components/operations/DeskAppraisalReportClient.tsx",
-  "components/operations/LandScheduleClient.tsx",
-  "components/operations/LandShareModal.tsx",
-  "components/operations/MarketInsightsWorkspaceClient.tsx",
-  "components/operations/PermitAiWorkspaceClient.tsx",
-  "components/operations/RegulationsWorkspaceClient.tsx",
-  "components/orchestration/PersonaPanel.tsx",
-  "components/pipeline/PipelineResultDetail.tsx",
-  "components/projects/DecisionBriefPanel.tsx",
-  "components/projects/ParcelExportButton.tsx",
-  "components/projects/ReportPdfDownload.tsx",
-  "components/report/BankReadyReportBuilder.tsx",
-  "components/report/ReportDownloadMenu.tsx",
-  "components/sales-app/TerminationCertPanel.tsx",
-  "lib/land/desk-appraisal.ts",
-].sort();
+const KNOWN_BYPASS: Record<string, number> = {
+  "components/analytics/CashflowDcfPanel.tsx": 1,
+  "components/analytics/CostEstimationClient.tsx": 1,
+  "components/common/AIAssistant.tsx": 1,
+  "components/common/GlobalAddressSearch.tsx": 1,
+  "components/cost/BoqAutoWorkspace.tsx": 1,
+  "components/cost/BoqDetailTable.tsx": 1,
+  "components/dashboard/RealtxReportPanel.tsx": 1,
+  "components/design-audit/AuditReportView.tsx": 2,
+  "components/design/CadBimIntegrationPanel.tsx": 1,
+  "components/design/DesignGenPanel.tsx": 1,
+  "components/feasibility/FeasibilityExportButton.tsx": 1,
+  "components/feasibility/RoughScenarioPanel.tsx": 1,
+  "components/mypage/CoinsClient.tsx": 1,
+  "components/operations/DeskAppraisalModal.tsx": 2,
+  "components/operations/DeskAppraisalReportClient.tsx": 2,
+  "components/operations/LandScheduleClient.tsx": 4,
+  "components/operations/LandShareModal.tsx": 1,
+  "components/operations/MarketInsightsWorkspaceClient.tsx": 1,
+  "components/operations/PermitAiWorkspaceClient.tsx": 1,
+  "components/operations/RegulationsWorkspaceClient.tsx": 1,
+  "components/orchestration/PersonaPanel.tsx": 1,
+  "components/pipeline/PipelineResultDetail.tsx": 1,
+  "components/projects/DecisionBriefPanel.tsx": 1,
+  "components/projects/ParcelExportButton.tsx": 1,
+  "components/projects/ReportPdfDownload.tsx": 1,
+  "components/report/BankReadyReportBuilder.tsx": 1,
+  "components/report/ReportDownloadMenu.tsx": 1,
+  "components/sales-app/TerminationCertPanel.tsx": 1,
+  "lib/land/desk-appraisal.ts": 1,
+};
+const KNOWN_TOTAL = Object.values(KNOWN_BYPASS).reduce((a, b) => a + b, 0);
 
 describe("공용 클라이언트 우회 래칫", () => {
   it("★수집기가 살아 있다(공허진리 방지 — 0건이면 무엇이든 통과한다)", () => {
-    const found = collectBypassFiles();
-    expect(found.length).toBeGreaterThanOrEqual(20);
-    // 양성 대조군: 우회가 실재하는 파일을 실제로 집는가
-    expect(found).toContain("components/report/ReportDownloadMenu.tsx");
-    // 음성 대조군: 주석 스트립이 동작하는가 — 주석뿐인 소스는 안 집힌다
-    const commentOnly = __stripCommentsForScan(
-      `const x = 1; // ${TOKEN_KEY} 를 fetch( 로 쓰면 안 된다\n`,
-      "probe.ts",
+    const found = collectBypassSites();
+    // ★하한을 **손으로 고르지 않는다.** 고정값을 쓰면 정상적인 이관이 진행될수록
+    //   «수집기가 죽었다» 라는 **오도하는 메시지로 빨개진다**(위양성도 결함이다).
+    //   목록에서 파생시키면 목록이 줄 때 하한도 같이 준다.
+    expect(Object.keys(found).length).toBeGreaterThanOrEqual(
+      Math.min(5, Object.keys(KNOWN_BYPASS).length),
     );
-    expect(commentOnly.includes(TOKEN_KEY)).toBe(false);
+    // 양성 대조군: 우회가 실재하는 파일을 실제로 집는가
+    expect(found["components/report/ReportDownloadMenu.tsx"]).toBeGreaterThan(0);
   });
 
-  it("새 우회가 늘지 않는다(실측 ⊆ 고정 목록)", () => {
-    const added = collectBypassFiles().filter((f) => !KNOWN_BYPASS.includes(f));
+  it("새 우회가 늘지 않는다(파일도, **자리 수**도)", () => {
+    const found = collectBypassSites();
+    const added = Object.keys(found).filter((f) => !(f in KNOWN_BYPASS));
     expect(added, `공용 클라이언트를 우회하는 새 파일: ${added.join(", ")}\n` +
       "→ 손수 fetch + Authorization 대신 apiClient.download / apiClient.post 를 쓰세요. " +
       "우회하면 401→refresh 재시도가 붙지 않아 토큰 만료 60분 뒤부터 그 기능만 실패합니다.").toEqual([]);
+
+    // ★**같은 파일 안에서** 늘어나는 것도 잡는다. 축이 「파일」이면 목록에 든 28개가
+    //   사실상 영구 면제가 된다(그중 20개는 apiClient 호출과 생 fetch 를 함께 갖고 있다).
+    const grew = Object.entries(found)
+      .filter(([f, n]) => f in KNOWN_BYPASS && n > KNOWN_BYPASS[f])
+      .map(([f, n]) => `${f}: ${KNOWN_BYPASS[f]} → ${n}`);
+    expect(grew, `기존 파일에 우회가 늘었다:\n${grew.join("\n")}`).toEqual([]);
   });
 
-  it("고친 파일은 목록에서 지운다(고정 목록 ⊆ 실측 — 죽은 면제는 실패다)", () => {
-    const found = collectBypassFiles();
-    const stale = KNOWN_BYPASS.filter((f) => !found.includes(f));
+  it("고친 파일은 목록에서 지운다(죽은 면제는 실패다)", () => {
+    const found = collectBypassSites();
+    const stale = Object.keys(KNOWN_BYPASS).filter((f) => !(f in found));
     expect(stale, `이미 고쳐졌는데 목록에 남은 항목: ${stale.join(", ")}`).toEqual([]);
+    const shrunk = Object.entries(KNOWN_BYPASS)
+      .filter(([f, n]) => f in found && found[f] < n)
+      .map(([f, n]) => `${f}: ${n} → ${found[f]}`);
+    expect(shrunk, `자리가 줄었는데 표를 안 고쳤다(진전을 기록하라):\n${shrunk.join("\n")}`).toEqual([]);
   });
 
   it("★신고된 화면은 **우회 집합 밖**이다 — 결함이 살던 자리", () => {
-    // 이 단언이 없으면 «컴포넌트를 되돌리는 변이» 가 나머지 락을 전부 통과한다
-    // (되돌리면 목록에 없는 새 우회가 되어 두 번째 테스트가 잡긴 하지만,
-    //  그 테스트의 메시지는 «새 파일» 이라 원인을 오도한다).
-    expect(collectBypassFiles()).not.toContain(
+    expect(collectBypassSites()).not.toHaveProperty(
       "components/operations/RegistryRightsReportButton.tsx",
     );
   });
 
-  it("목록은 줄기만 한다(상한 못 박기)", () => {
-    expect(KNOWN_BYPASS.length).toBeLessThanOrEqual(28);
-    expect(new Set(KNOWN_BYPASS).size).toBe(KNOWN_BYPASS.length); // 중복으로 수를 부풀리지 않는다
+  it("총 자리 수는 줄기만 한다(상한 못 박기)", () => {
+    const total = Object.values(collectBypassSites()).reduce((a, b) => a + b, 0);
+    expect(total).toBeLessThanOrEqual(KNOWN_TOTAL);
+    expect(KNOWN_TOTAL).toBe(35); // 2026-09-04 실측
   });
 });
 
-describe("탐지기 자체 — 합성 입력 두 모집단", () => {
-  // ★이 describe 가 없으면 탐지기를 «항상 false» 로 바꾸는 변이가 위 네 테스트를
-  //   **전부 통과**한다(위반 0 = 초록). 탐지와 특이도는 다른 축이다.
-  it("우회 소스를 **집는다**(탐지 축)", () => {
-    const bypass = [
-      'const t = localStorage.getItem("propai_access_token");',
-      'await fetch("/x", { headers: { Authorization: `Bearer ${t}` } });',
-    ].join("\n");
-    expect(isBypassSource(bypass, "probe.ts")).toBe(true);
+describe("탐지기 자체 — 합성 입력", () => {
+  // ★이 describe 가 없으면 탐지기를 «항상 0» 으로 바꾸는 변이가 위 다섯을 **전부 통과**한다
+  //   (위반 0 = 초록). 탐지와 특이도는 다른 축이다.
+  const P = "probe.ts";
+
+  it("표준형 우회를 **집는다**(탐지 축)", () => {
+    expect(countBypassSites(
+      'const t = localStorage.getItem("propai_access_token");\n' +
+      "await fetch(u, { headers: { Authorization: `Bearer ${t}` } });", P)).toBe(1);
+  });
+
+  it("★리뷰가 뚫은 **세 형태**를 전부 집는다(축을 넓힌 이유)", () => {
+    // ① 토큰 키를 문자열 결합 — 키 리터럴로는 안 잡히지만 헤더는 조립해야 한다
+    expect(countBypassSites(
+      'const t = localStorage.getItem("propai_access" + "_token");\n' +
+      "await fetch(u, { headers: { Authorization: `Bearer ${t}` } });", P)).toBe(1);
+    // ② fetch 별칭 호출
+    expect(countBypassSites(
+      "const F = globalThis.fetch;\nawait F(u, { headers: { Authorization: b } });", P)).toBe(1);
+    // ③ XMLHttpRequest
+    expect(countBypassSites(
+      'const x = new XMLHttpRequest();\nx.setRequestHeader("Authorization", b);', P)).toBe(1);
   });
 
   it("공용 클라이언트를 쓰는 소스는 **안 집는다**(특이도 축)", () => {
-    const clean = 'import { apiClient } from "@/lib/api-client";\nawait apiClient.download("/x");';
-    expect(isBypassSource(clean, "probe.ts")).toBe(false);
+    expect(countBypassSites(
+      'import { apiClient } from "@/lib/api-client";\nawait apiClient.download("/x");', P)).toBe(0);
   });
 
   it("주석에만 나오는 언급은 **안 집는다**(위양성 축)", () => {
     // ★위양성도 결함이다 — 정상 코드를 막으면 가드가 꺼진다.
-    const commented = [
-      'const x = 1; // propai_access_token 을 fetch( 로 직접 쓰지 마세요',
-      "/* propai_access_token + fetch( 조합은 금지 */",
-      'await apiClient.post("/x", {});',
-    ].join("\n");
-    expect(isBypassSource(commented, "probe.ts")).toBe(false);
+    expect(countBypassSites(
+      "const x = 1; // Authorization 을 손수 붙이지 마세요\n" +
+      "/* Authorization 조립은 api-client 만 */\n" +
+      'await apiClient.post("/x", {});', P)).toBe(0);
   });
 
-  it("★한쪽만 있으면 안 집는다 — 두 조건이 **둘 다** 필요하다", () => {
-    expect(isBypassSource('await fetch("/public");', "probe.ts")).toBe(false);
-    expect(isBypassSource('localStorage.getItem("propai_access_token");', "probe.ts")).toBe(false);
+  it("★**자리 수**를 센다 — 같은 파일의 두 번째 우회가 보인다", () => {
+    expect(countBypassSites(
+      "await fetch(a, { headers: { Authorization: b } });\n" +
+      "await fetch(c, { headers: { Authorization: d } });", P)).toBe(2);
+  });
+
+  it("프리필터가 **정답을 바꾸지 않는다**(성능 최적화가 탐지를 죽이지 않았는가)", () => {
+    // 낱말이 없으면 0 — 그런데 있는데 0 을 주면 그것이 위음성이다.
+    expect(countBypassSites("const x = 1;", P)).toBe(0);
+    expect(countBypassSites("headers: { Authorization: b }", P)).toBe(1);
   });
 });
