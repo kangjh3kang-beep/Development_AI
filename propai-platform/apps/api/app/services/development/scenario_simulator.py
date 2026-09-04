@@ -243,6 +243,10 @@ ZONE_BASIS_AREA_WEIGHTED = "area_weighted"
 ZONE_BASIS_SINGLE = "single_zone"
 ZONE_BASIS_NO_AREA = "first_parcel_no_area"
 ZONE_BASIS_NONE = "none"
+#: 동률(±5%)·규제성격 상이로 **단일화를 거부**한 상태. `special_parcel` 이 쓰는 그 값이고
+#  `app/utils/withheld.py` 의 **표준 보류 어휘**이며, 프론트 `lib/zoning/dominant-zone.ts` 가 안다.
+ZONE_BASIS_MIXED_REVIEW = "mixed_review_required"
+MIXED_REVIEW_SENTINEL = "mixed_review_required"
 
 
 #: 현 용도지역만으로는 **아파트를 지을 수 없는** 용도지역(국토계획법 시행령 009419 §71).
@@ -438,6 +442,17 @@ def dominant_zone_by_area(rows: list[dict[str, Any]]) -> tuple[str, str]:
         return uniq[0], ZONE_BASIS_SINGLE
     if not all(r.get("area") for r in named):
         return str(named[0]["zone"]).strip(), ZONE_BASIS_NO_AREA
+    # ★★형제(`special_parcel._aggregate_integrated_zoning`)와의 **일치는 별건 PR 로 뺐다.**
+    #   실측(2026-09-04 · 적대 리뷰): 형제는 동률(±5%)·규제성격 상이를 `mixed_review_required`
+    #   로 거부하는데 여기는 임의 단일화한다 — **12모집단 중 5개가 갈린다.**
+    #   그런데 그 센티널을 그냥 내보내면 **두 개의 사용자 가시 회귀**가 난다:
+    #     ① `DevelopmentScenarioCard.tsx:211` 이 `{site.primary_zone}` 을 **볼드 배지**로 그려
+    #        `mixed_review_required` 가 **맨몸으로** 화면에 나간다(이 저장소가 2026-08-24 에
+    #        이미 라이브에서 겪은 결함 — 형제 표면은 봉합됐고 **이 표면은 안 쓸렸다**)
+    #     ② `_is_residential()` 이 False 가 되어 주거계 4종이 **「불가 · 요건 미해당」** 으로
+    #        번역된다(55% 가 주거인 부지에 «요건 미해당» 은 **거짓 사유**) · 1종은 목록에서 사라진다
+    #   → **보류를 「불가」로 번역하지 않는 판정 상태**와 **화면 처리**가 선행돼야 한다.
+    #   ★부채로 드러낸다: `tests/test_premise_audit_scenarios_path.py` 의 `it.todo` 계열 단언 참조.
     from app.services.zoning.legal_zone_limits import mixed_zone_limits
 
     mix = mixed_zone_limits(
@@ -762,6 +777,63 @@ class DevelopmentScenarioSimulator:
         }
 
         scenarios = self._scenarios(ctx)
+
+        # ── ★전제 감사 — **이미 있는 감시망을 켠다**(새로 만드는 것이 아니다) ────────────
+        #   실측(2026-09-04): `premise_audit.audit()` 호출부가 **`routers/auto_zoning.py` 1곳뿐**
+        #   이라 이 경로는 **감시망 밖**이었다. 등록된 전제 6종 중 `dominant_argmax` 는
+        #   `#940` 의 RC-2(첫 필지를 우세 용도지역으로 씀)를 **정확히** 잡는다 —
+        #   그 감사기를 신고 부지 형상으로 직접 태워 확인했다(종전 발화 / 수정 후 침묵).
+        #   ★**읽기 전용이다** — 판정(`applicable`)을 바꾸지 않고 위반을 표면에 싣기만 한다.
+        premise_audit_result: dict[str, Any] | None = None
+        try:
+            from app.services.zoning import premise_audit
+
+            # ★M5 봉합 — 형제가 이미 `zone_mix` 를 낸다. 손실 있는 재구현을 만들지 않는다
+            #   (그것이 이 PR 이 고치겠다고 선언한 바로 그 패턴이었다 — 세 번째 재발이었다).
+            #   ★M4: 형제는 용도 미조회 필지를 **「미상」 버킷**에 담아 **면적 보존**을 유지한다.
+            #   내 재구현은 그것을 **버려서** 정상 부지에 `area_conservation` **거짓 위반**을 냈다.
+            from app.services.zoning.special_parcel import _aggregate_integrated_zoning
+
+            _agg = _aggregate_integrated_zoning([
+                {"zone_type": p.get("zone"), "area_sqm": p.get("area")} for p in enriched
+            ])
+            _zm = _agg.get("zone_mix") or []
+            premise_audit_result = premise_audit.audit({
+                "dominant_zone": primary_zone,
+                "zone_mix": _zm,
+                "per_parcel": [
+                    {"zone": p.get("zone"), "area_sqm": p.get("area")} for p in enriched
+                ],
+                "integrated": {"total_area_sqm": total_area},
+                # ★M2 봉합 — 라우터는 `top3` 를 **dict** 로 넘긴다(`zone_type`·`parcel_count`·
+                #   `land_area_sqm`). 내가 **list** 를 넘겨 `.get()` 이 터졌고, `audit()` 의
+                #   광범위 except 가 삼켜 **6종 중 3종이 조용히 죽었다**(checked=3/6).
+                #   ★죽은 것에 `path_invariance_zone` 이 포함됐다 — 모듈이 «오늘의 P0» 라 부르는 관계다.
+                "scenario": {"top3": {
+                    "zone_type": primary_zone,
+                    "parcel_count": len(addrs),
+                    "land_area_sqm": total_area,
+                }},
+                "_request_parcel_count": requested_count,
+            })
+            # ★달성 가능 커버리지를 **응답에 싣는다** — 「감시망 안」이라고만 말하면
+            #   몇 종이 실제로 판정됐는지 아무도 모른다(모듈이 `checked` 를 그 목적으로 만들었는데
+            #   읽는 곳이 0곳이었다). ★`path_invariance_zone` 은 이 경로에서 **구조적으로 공허**하다 —
+            #   집계 경로와 시나리오 경로가 **같은 `primary_zone`** 에서 나오므로 자기 자신과 비교한다.
+            #   두 경로를 분리하는 것은 별건(형제 `dominant_zone` 도입)이라 그 사실을 명시한다.
+            if isinstance(premise_audit_result, dict):
+                premise_audit_result["structurally_vacuous"] = ["path_invariance_zone"]
+        except Exception as e:  # noqa: BLE001
+            # ★감사기 사망을 «위반 0» 으로 뭉개지 않는다 — 사유를 싣는다.
+            logger.warning("전제 감사 실패", err=str(e)[:120])
+            # ★성공/실패가 **같은 키에 다른 스키마**를 넣으면 소비처가 `["violations"]` 에서
+            #   KeyError 를 맞는다. **판별 필드를 공통으로** 두고 실패도 같은 모양을 유지한다
+            #   (§유료·비가역 산출물 규율 4 — «실패는 전용 필드로 자기를 구별»).
+            premise_audit_result = {
+                "violations": [], "checked": 0, "registered": None,
+                "ok": None, "reason": "audit_failed", "detail": str(e)[:200],
+            }
+
         # 적합도 정렬(가능>조건부>불가, est_far 내림차순)
         rank = {"가능": 0, "조건부": 1, "불가": 2}
         scenarios.sort(key=lambda s: (rank.get(s["applicable"], 3), -(s.get("est_far") or 0)))
@@ -784,6 +856,10 @@ class DevelopmentScenarioSimulator:
             "pyeong_classification": self._classify_by_pyeong_tier(total_area, scenarios),
             # 개발행위허가 절차게이트(WP-B) 최상위 노출 — 대상 필지의 개발규모=허가 판정 전제.
             "dev_act_permit_gate": dev_act_gate,
+            # ★전제 감사 결과 — 이 경로가 감시망 밖이었다(호출부 1곳뿐). 판정은 안 바꾸고
+            #   위반만 싣는다. ★`#940` 에서 «백엔드 계약만 서고 화면 소비처 0» 으로 데였으므로
+            #   여기 싣는 것만으로 끝내지 않는다 — 소비처는 별도 좌표로 남긴다.
+            "premise_audit": premise_audit_result,
         }
         # 특이부지가 조건부/선행절차 부지면 정직 고지를 최상위로 노출(시나리오는 산정하되 경고 동반).
         #   산지전용·농지전용·도시계획시설 폐지 등 선행절차 통과를 전제로만 개발 가능함을 명시.
