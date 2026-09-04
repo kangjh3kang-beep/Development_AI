@@ -6,6 +6,8 @@ NSDI(data.go.kr 1611000)는 2024 VWORLD 이관으로 폐지(500) → VWORLD NED�
 """
 from __future__ import annotations
 
+from app.utils.pnu import is_valid_pnu
+
 from app.settings import env_or_setting, settings
 
 
@@ -26,7 +28,7 @@ class VworldLandPriceSource:
 
     def land_price(self, pnu: str, stdr_year: str = "2024") -> float | None:
         """PNU 개별공시지가(원/㎡). 미적용 키/결손/비정상 resultCode는 None."""
-        if not self.key or len(pnu) < 19:
+        if not self.key or not is_valid_pnu(pnu):
             return None
         from app.adapters.cache.source_cache import cached_get
         data = cached_get(

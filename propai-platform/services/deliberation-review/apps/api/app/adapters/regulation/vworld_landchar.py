@@ -5,6 +5,8 @@ key=VWORLD_API_KEY + Referer. getLandCharacteristics → 토지 기본정보 한
 """
 from __future__ import annotations
 
+from app.utils.pnu import is_valid_pnu
+
 from app.settings import env_or_setting, settings
 
 
@@ -24,7 +26,7 @@ class VworldLandCharSource:
 
     def fetch(self, pnu: str, stdr_year: str = "2024") -> dict | None:
         """토지특성 → {지목, 경사, 도로접면, 용도지역, 이용상황, 공시지가}. 결손/오류 None."""
-        if not self.key or len(pnu) < 19:
+        if not self.key or not is_valid_pnu(pnu):
             return None
         from app.adapters.cache.source_cache import cached_get
         data = cached_get(

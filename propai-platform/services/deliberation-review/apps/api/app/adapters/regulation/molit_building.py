@@ -5,6 +5,8 @@ PNU(19자) → sigunguCd(5)+bjdongCd(5)+본번(4)+부번(4). 플랫폼 building_
 """
 from __future__ import annotations
 
+from app.utils.pnu import is_valid_pnu
+
 from app.settings import env_or_setting, settings
 
 
@@ -28,7 +30,7 @@ class MolitBuildingSource:
 
     def building_basis(self, pnu: str) -> dict | None:
         """건축물대장 표제부 → {far_pct, bcr_pct, total_area, main_purpose}. 미승인/무건축물 None."""
-        if not self.key or len(pnu) < 19:
+        if not self.key or not is_valid_pnu(pnu):
             return None
         sigungu, bjdong, bun, ji = self._pnu_parts(pnu)
         from app.adapters.cache.source_cache import cached_get
