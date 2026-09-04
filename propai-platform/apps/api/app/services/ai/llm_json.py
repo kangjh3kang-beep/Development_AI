@@ -110,15 +110,25 @@ def parse_llm_json(raw: Any) -> Any:
             if block.strip():
                 inner_blocks.append(block.strip())
         candidates.extend(reversed(inner_blocks))
+    # ★올릴 오류를 고르는 규칙(2026-09-04): 종전은 `last_err or e` 로 **첫 후보의 오류**를 남겼다.
+    #   첫 후보는 **원문**이고, 응답이 절단돼 펜스가 안 닫히면 원문은 항상 ``` 로 시작하므로
+    #   **언제나 `Expecting value: line 1 column 1 (char 0)`** 가 올라갔다 —
+    #   그것은 「빈 응답」처럼 읽혀 조사자를 엉뚱한 곳으로 보낸다(라이브 실측: 실제는 **절단**).
+    #   → **JSON 처럼 보이는 후보**(`{`/`[` 로 시작)의 오류를 우선한다. 그러면
+    #     `Unterminated string` · `Expecting ',' delimiter` 처럼 **절단을 말하는** 메시지가 남는다.
     last_err: json.JSONDecodeError | None = None
+    jsonish_err: json.JSONDecodeError | None = None
     for cand in candidates:
         try:
             return json.loads(cand)
         except json.JSONDecodeError as e:
             last_err = last_err or e
+            if jsonish_err is None and cand[:1] in ("{", "["):
+                jsonish_err = e
         for bounded in _boundary_candidates(cand):
             try:
                 return json.loads(bounded)
             except json.JSONDecodeError:
                 continue
-    raise last_err if last_err else json.JSONDecodeError("JSON 미발견", doc=original[:80], pos=0)
+    chosen = jsonish_err or last_err
+    raise chosen if chosen else json.JSONDecodeError("JSON 미발견", doc=original[:80], pos=0)
