@@ -438,7 +438,11 @@ async def test_dev_type_specified_uses_it(monkeypatch):
 @pytest.mark.asyncio
 async def test_high1_trade_sale_price_without_site_id(monkeypatch):
     """site_id 없이도 주소→시군구5→주변 실거래(MOLIT)로 분양단가를 잡는다(초록·비추정)."""
-    from app.services.sales.pricing.suggest import _JEONYULRYUL, _PREMIUM
+    # ★기대값의 **파생 출처**가 낡았다 — 전용률이 평면 상수에서 정본
+    #   (`unit_standards.get_exclusive_ratio`)으로 옮겨졌다(2026-09-05).
+    #   ★파생시키는 것만으로는 부족하다 — **무엇에서 파생시키는가**가 같이 낡는다.
+    from app.services.feasibility.unit_standards import get_exclusive_ratio
+    from app.services.sales.pricing.suggest import _PREMIUM
 
     _stub_happy(monkeypatch, stub_saleprice=False)  # 분양단가만 실경로로
 
@@ -462,7 +466,7 @@ async def test_high1_trade_sale_price_without_site_id(monkeypatch):
     assert rev["source"] == "주변 실거래(MOLIT)"
     assert "추정" not in rev["source"] and "비실거래" not in rev["source"]
     # 분양단가 = 동 중앙값(전용) × 전용률 × 신축 프리미엄 → 공급 평당가(원/평)
-    expected = int(round(6000 * _JEONYULRYUL * _PREMIUM["base"] * 10000))
+    expected = int(round(6000 * get_exclusive_ratio("M01") * _PREMIUM["base"] * 10000))
     assert rev["sale_price_per_pyeong"] == expected
     # 실거래 경로는 '추정' degraded를 남기지 않는다(정직)
     assert not any("추정" in n for n in out["degraded_notes"])

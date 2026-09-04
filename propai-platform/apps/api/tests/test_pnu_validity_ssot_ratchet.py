@@ -62,7 +62,9 @@ _EXEMPT: dict[str, str] = {
     # ★2026-09-04 — 코드가 `sale_price_resolver` 로 **이관**되며 경로가 바뀌었다.
     #   래칫이 그것을 정확히 잡았다(파생형이라 새 파일이 자동으로 감시망에 들어온다).
     #   **사유는 그대로다** — 코드도 의도도 안 바뀌고 **자리만** 옮겼다.
-    "app/services/feasibility/sale_price_resolver.py:72":
+    # ★이 키는 **줄번호**라 같은 파일에 코드를 넣기만 해도 어긋난다(오늘 두 번째).
+    #   fail-closed 라 위험하진 않지만 **유지비가 붙는다** — 래칫 소유자에게 공유했다.
+    "app/services/feasibility/sale_price_resolver.py:119":
         "의도된 관대함 — 주석이 'PNU가 짧아도 앞 5자리가 숫자면 시군구코드로 사용(자체 충족)'이라 "
         "명시하고 `pnu[:5].isdigit()` 로 자릿수를 검사한다. 좁히면 정상 폴백이 죽는다.",
     "services/avm_service.py:511":
