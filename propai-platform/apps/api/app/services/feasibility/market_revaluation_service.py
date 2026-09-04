@@ -52,6 +52,30 @@ def _blend(sources: list[dict[str, Any]]) -> tuple[float, int]:
     return round(price), int(min(100, base_conf + diversity))
 
 
+#: `sale_price_source` 가 가질 수 있는 **전체 어휘**(선언).
+#:
+#: ★왜 선언을 두나: 프론트가 이 값을 한글로 바꾸는데, 그 매핑이 **손 목록**이라
+#:   백엔드가 값을 추가하면 화면에 **raw 토큰**이 나온다(실측: `avm_blended`·
+#:   `national_default_fallback` 이 이미 빠져 있었다). 정규식으로 소스를 긁는 방식은
+#:   **위양성 투성이**였다(키 이름 자체·다른 필드의 값까지 집었다) — 그래서 **선언**한다.
+#:
+#: ★★선언은 자기를 검증하지 않는다 — `tests/test_sale_price_source_vocab.py` 가
+#:   **생산자(ast)와 이 선언의 정합**을 잠근다. 선언만 두면 그것이 다음 거짓말이 된다.
+#:
+#: `single_source:` 는 **접두 계열**이다(하위 출처가 늘어난다) — 소비처는 접두로 처리한다.
+SALE_PRICE_SOURCE_VOCAB: tuple[str, ...] = (
+    "market_blended",
+    "avm_blended",
+    "single_source:",          # ★접두 — `single_source:<source key>`
+    "regional_market_table",
+    "national_default_fallback",
+    "cost_based_fallback",
+    "user",
+    # ★"unavailable" 은 뺐다 — **아무도 안 낸다**(락이 「죽은 어휘」로 잡았다).
+    #   선언에만 있는 값은 다음 사람에게 «있는 것» 으로 읽힌다.
+)
+
+
 def _blend_label(sources: list[dict[str, Any]], has_avm: bool, price: float) -> str | None:
     """`sale_price_source` — **실제로 무엇이 섞였는지**를 말한다.
 
@@ -114,7 +138,12 @@ class MarketRevaluationService:
         # 프리미엄** 을 갖는다 — 즉 `regional` 과 **같은 단위**가 된다.
         try:
             # ★`building_type` 은 `revalue()` 가 **이미 받고 있었는데 이 출처에 안 쓰였다.**
-            #   그래서 파이프라인이 «유형» 을 넘겨도 실거래 물건종별에 반영되지 않았다.
+            # ★★**정정(2026-09-05)**: 앞 커밋의 주석은 이것을 넘기면 *"실제로 쓰인다"* 고
+            #   **단정했는데 거짓이었다.** 파이프라인이 넘기는 값은 **한국어 표시 문자열**
+            #   ("아파트"·"공동주택"…)이고 매핑 키는 **영어 정규 키**라 전부 미스했다.
+            #   더 나쁜 것은 그 문자열이 truthy 라 `dev_type` 폴백까지 **억제**해
+            #   **넘기는 것이 안 넘기는 것보다 나빴다**는 점이다.
+            #   → 리졸버가 `_canonical_building()` 으로 **경계에서 정규화**한다.
             molit = await self._molit_sale_price_source(
                 address=address, dev_type=dev_type, lawd_cd=lawd_cd,
                 building_type=building_type)
@@ -265,12 +294,10 @@ class MarketRevaluationService:
             building_type=building_type)
         if not res:
             return None
-        price, _src, basis, _deg = res
-        # ★표본수는 리졸버가 basis 에 실어 보낸다("표본 N건"). 없으면 하한(5)으로 본다 —
-        #   ★**지어내지 않는다**: 못 읽으면 «가장 보수적인 값» 이지 «충분» 이 아니다.
-        import re as _re
-        _m = _re.search(r"표본\s*([0-9,]+)\s*건", basis or "")
-        _n = int(_m.group(1).replace(",", "")) if _m else 5
+        price, _src, basis, _deg, n = res
+        # ★0·음수는 출처로 싣지 않는다. **MAJOR-4 를 고치며 이 가드를 지웠고**,
+        #   내 경계 락(`test_sample_floor_propagates…`)이 그것을 잡았다.
+        #   *봉합이 다른 가드를 밟는다 — 그래서 경계는 양방향으로 잠근다.*
         if not price or price <= 0:
             return None
         return {
@@ -286,7 +313,7 @@ class MarketRevaluationService:
             #   실측: n=5 에서 블렌딩 신뢰도가 **+24pt** 부풀었고, 그 값은
             #   `project_pipeline` 의 `sale_price_confidence`("분양가 신뢰도(%)")로
             #   **사용자에게 나간다.**
-            "confidence": min(92, 50 + _n), "weight": 0.65, "count": _n, "note": basis[:120],
+            "confidence": min(92, 50 + n), "weight": 0.65, "count": n, "note": basis[:120],
         }
 
     async def _molit_avg_per_pyeong(self, lawd_cd: str | None) -> dict[str, Any] | None:

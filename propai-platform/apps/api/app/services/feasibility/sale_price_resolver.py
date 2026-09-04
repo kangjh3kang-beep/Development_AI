@@ -94,6 +94,39 @@ def _safe_building_type(svc: Any, dev_type: str) -> str:
         return ""
 
 
+#: 화면 표기(한국어) → 정규 키. ★파이프라인은 **표시 문자열**을 `building_type` 으로 넘긴다
+#: (`project_pipeline.py:1611-1620`: "아파트"·"공동주택"·"근린생활시설"·"다세대주택").
+#: 그런데 `_BUILDING_TO_MOLIT_PROP` 키는 **영어 정규 키**다 — 전부 미스한다.
+#: ★★그리고 한국어 문자열이 **truthy** 라 `_get_building_type(dev_type)` 폴백까지 **억제**했다:
+#:   **인자를 넘기는 것이 안 넘기는 것보다 나빴다**(실측: `building_type='공동주택', dev_type='M09'`
+#:   → `prop_type='apt'` / `building_type=None, dev_type='M09'` → `prop_type='commercial'`).
+#: ★내 앞 커밋의 주석은 이 축이 *"실제로 쓰인다"* 고 **단정했다** — 재 보지 않고 쓴 거짓이다.
+_DISPLAY_TO_BUILDING: dict[str, str] = {
+    "아파트": "apartment",
+    "공동주택": "apartment",
+    "다세대주택": "townhouse",
+    "연립주택": "townhouse",
+    "오피스텔": "officetel",
+    "근린생활시설": "office",
+    "업무시설": "office",
+    "단독주택": "house",
+}
+
+
+def _canonical_building(building_type: str | None) -> str:
+    """표시 문자열이든 정규 키든 **정규 키로** 돌린다. 못 알아보면 `""`(폴백을 막지 않는다).
+
+    ★`""` 를 돌리는 것이 핵심이다 — 모르는 값을 그대로 통과시키면 그것이 truthy 라
+      `dev_type` 폴백을 **억제**하고, 결과적으로 **넘길수록 나빠진다.**
+    """
+    bt = (building_type or "").strip()
+    if not bt:
+        return ""
+    if bt in _BUILDING_TO_MOLIT_PROP:
+        return bt
+    return _DISPLAY_TO_BUILDING.get(bt, "")
+
+
 def _new_build_premium() -> float:
     """신축 분양 프리미엄(기존 재고 매매가 → 신축 분양가). **정의는 `pricing.suggest` 하나다.**
 
@@ -136,7 +169,7 @@ async def _sigungu5_from_address(address: str) -> str | None:
 async def _trade_sale_price_per_pyeong(
     *, dev_type: str, address: str, sigungu5: str | None = None,
     building_type: str | None = None,
-) -> tuple[int, str, str, None] | None:
+) -> tuple[int, str, str, None, int] | None:
     """주변 실거래(MOLIT) 직접 조회 → 분양단가(원/평, 공급면적). site_id 불필요(★HIGH-1).
 
     주소를 지오코딩해 시군구 5자리를 얻고, 검증된 공용 헬퍼 _trade_per_pyeong으로 동·시군구
@@ -153,7 +186,13 @@ async def _trade_sale_price_per_pyeong(
     #     하드코딩 테이블에 떨어졌다. 그러면서 `sale_price_source` 는 계속 `market_blended`
     #     라고 말했다 — **블렌딩이 안 됐는데 됐다고 말하는 것**이다.
     #   → 주입이 1순위, 지오코딩은 **폴백**이다.
-    sigungu5 = (sigungu5 or "").strip() or await _sigungu5_from_address(address)
+    # ★주입값을 **검증한다.** 형제 셋이 이미 그렇게 한다
+    #   (`_avm_source`: `len==5 and isdigit` · `_molit_avg_per_pyeong`: `len < 5 → None` ·
+    #    같은 파일 `_sigungu5_from_address`: `pnu[:5].isdigit()`).
+    #   ★검증이 없으면 `'1168'`·`'abcde'` 같은 값이 **truthy 라 지오코딩 폴백을 억제**해
+    #     회복 경로를 막는다(적대 리뷰 MAJOR-5).
+    _inj = (sigungu5 or "").strip()
+    sigungu5 = _inj if (len(_inj) == 5 and _inj.isdigit()) else await _sigungu5_from_address(address)
     if not sigungu5:
         return None
     try:
@@ -167,7 +206,8 @@ async def _trade_sale_price_per_pyeong(
         # ★호출부가 **건물유형을 이미 알면** 그것을 쓴다 — `dev_type` 을 거쳐 되돌리지 않는다.
         #   파이프라인이 그 예다: `design.building_type` 은 실재하고 `development_type` 은 **없다**
         #   (적대 리뷰 M-1 — 없는 필드를 `getattr` 로 읽어 **항상 M01** 이었다).
-        building = (building_type or "").strip() or _svc()._get_building_type(dev_type)
+        # ★정규화를 **경계에서** 한다. 모르는 표기는 `""` 가 되어 `dev_type` 폴백이 산다.
+        building = _canonical_building(building_type) or _svc()._get_building_type(dev_type)
         prop_type = _BUILDING_TO_MOLIT_PROP.get(building, "apt")
         dong = _extract_dong(address)
         pp = await _trade_per_pyeong(sigungu5, dong, prop_type)
@@ -193,7 +233,11 @@ async def _trade_sale_price_per_pyeong(
         f"주변 실거래(MOLIT) {scope} 중앙값 {med:,}만원/평(전용, 표본 {n}건·최근 8개월) × "
         f"{ratio_note} × 신축 프리미엄 {premium} → 공급 평당가(공급면적 기준)"
     )
-    return price, "주변 실거래(MOLIT)", basis, None
+    # ★표본수를 **구조적으로** 돌려준다. 종전엔 소비처가 `basis` **산문에서 정규식으로
+    #   긁었고**(`표본\s*([0-9,]+)\s*건`), 여기서 문구를 조금만 바꾸면 소비처가 조용히
+    #   기본값으로 떨어져 신뢰도가 55 에 고정됐다(적대 리뷰 MAJOR-4 · 변이 SURVIVED).
+    #   *판정은 파서로, 산문이 아니라.*
+    return price, "주변 실거래(MOLIT)", basis, None, n
 
 
 async def _resolve_sale_price_per_pyeong(
@@ -237,7 +281,12 @@ async def _resolve_sale_price_per_pyeong(
     # 2순위: 주변 실거래(MOLIT) 직접 조회 — site_id 없이 주소→시군구로 확보(★HIGH-1).
     trade = await _trade_sale_price_per_pyeong(dev_type=dev_type, address=address)
     if trade is not None:
-        return trade
+        # ★이 리졸버의 **외부 계약은 4-튜플 그대로**다(rough 호출부 무회귀).
+        #   표본수는 `_molit_sale_price_source` 만 쓰므로 여기서 벗겨 낸다.
+        #   ★시그니처를 바꾸며 **이 호출부를 안 고쳤다** — 형제·호출부를 파생으로
+        #     세지 않고 «바꾼 함수만» 본 결과다(이 저장소가 반복해 데인 형태).
+        price, src, basis, deg, _n = trade
+        return price, src, basis, deg
 
     # 3순위(폴백): 지역×유형 시세 테이블(수지·추천 공용 SSOT) — 실거래 아님(추정치).
     try:

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { saleSourceLabel } from "@/lib/sale-source-label";
 import { Lock } from "lucide-react";
 import { useParams, usePathname, useRouter } from "next/navigation";
 import { useProjectContextStore } from "@/store/useProjectContextStore";
@@ -278,22 +279,11 @@ const COST_BASIS: Record<string, string> = {
   "제세공과(취득세 등)": "토지비 × 4.6%",
 };
 
-// 분양가 산정근거 코드 → 한글
-const SALE_SOURCE_LABEL: Record<string, string> = {
-  market_blended: "시장 블렌딩(실거래+표준)",
-  regional_market_table: "지역 시장 표준단가",
-  molit_realtx: "국토부 실거래",
-  nearby_map: "주변 실거래",
-  avm: "AI 추정시세",
-  cost_based_fallback: "공사비 기반(폴백)",
-  user: "사용자 입력",
-};
-
 /** 약식 분석 필드 값 표시 — 객체 JSON 덤프 금지, 코드값은 한글 매핑. */
 function displayFieldValue(key: string, value: unknown): string {
   if (value == null) return "-";
   if (key === "sale_price_source" && typeof value === "string") {
-    return SALE_SOURCE_LABEL[value] || value;
+    return saleSourceLabel(value);
   }
   if (typeof value === "object") return "—"; // 복합객체는 그리드에 표시하지 않음(숨김 대상)
   return formatNumber(value as number | string);

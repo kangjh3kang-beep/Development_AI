@@ -66,7 +66,7 @@ async def test_molit_source_returns_the_shared_resolver_value(monkeypatch) -> No
     async def fake(*, dev_type, address, sigungu5=None, building_type=None):
         seen.append({"dev_type": dev_type, "address": address,
                      "sigungu5": sigungu5, "building_type": building_type})
-        return (29_448_234, "주변 실거래(MOLIT)", _BASIS, None)
+        return (29_448_234, "주변 실거래(MOLIT)", _BASIS, None, 2230)
 
     monkeypatch.setattr(spr, "_trade_sale_price_per_pyeong", fake, raising=True)
     out = await mrs.MarketRevaluationService()._molit_sale_price_source(
@@ -94,7 +94,9 @@ async def test_confidence_tracks_sample_size_not_a_constant(monkeypatch) -> None
 
     async def make(n: int):
         async def fake(*, dev_type, address, sigungu5=None, building_type=None):
-            return (30_000_000, "s", f"주변 실거래(MOLIT) 동 중앙값 …(전용, 표본 {n:,}건·최근 8개월) × 전용률 0.747", None)
+            # ★표본수를 **구조적으로** 돌려준다 — 종전엔 소비처가 이 산문을 정규식으로 긁었고,
+            #   생산자가 문구만 바꿔도 조용히 기본값으로 떨어졌다(적대 리뷰 MAJOR-4).
+            return (30_000_000, "s", "주변 실거래(MOLIT) 동 중앙값 …", None, n)
         monkeypatch.setattr(spr, "_trade_sale_price_per_pyeong", fake, raising=True)
         return await mrs.MarketRevaluationService()._molit_sale_price_source(address="a")
 
@@ -119,13 +121,13 @@ async def test_sample_floor_propagates_so_the_source_drops_out(monkeypatch) -> N
     assert await mrs.MarketRevaluationService()._molit_sale_price_source(address="a") is None
 
     async def ok(*, dev_type, address, sigungu5=None, building_type=None):
-        return (11_111_111, "s", _BASIS, None)
+        return (11_111_111, "s", _BASIS, None, 10)
     monkeypatch.setattr(spr, "_trade_sale_price_per_pyeong", ok, raising=True)
     got = await mrs.MarketRevaluationService()._molit_sale_price_source(address="a")
     assert got and got["price_per_pyeong"] == 11_111_111.0
 
     async def zero(*, dev_type, address, sigungu5=None, building_type=None):
-        return (0, "s", _BASIS, None)
+        return (0, "s", _BASIS, None, 10)
     monkeypatch.setattr(spr, "_trade_sale_price_per_pyeong", zero, raising=True)
     assert await mrs.MarketRevaluationService()._molit_sale_price_source(address="a") is None
 
@@ -425,7 +427,7 @@ async def test_source_weights_are_the_declared_contract(monkeypatch) -> None:
     from app.services.feasibility import market_revaluation_service as mrs
 
     async def fake(*, dev_type, address, sigungu5=None, building_type=None):
-        return (30_000_000, "s", _BASIS, None)
+        return (30_000_000, "s", _BASIS, None, 100)
     monkeypatch.setattr(spr, "_trade_sale_price_per_pyeong", fake, raising=True)
 
     async def no_avm(self, *, address, lawd_cd):
