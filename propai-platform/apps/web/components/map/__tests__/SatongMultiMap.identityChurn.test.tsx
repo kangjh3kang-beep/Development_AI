@@ -70,9 +70,41 @@ describe("identity churn — 소비처 안정 참조", () => {
 });
 
 describe("identity churn — 레이어 토글 무변화 시 참조 보존", () => {
-  it("★이미 켜진 레이어를 다시 켜도 새 Set을 만들지 않는다", () => {
+  /**
+   * ★2026-09-04 — **계약은 그대로이고 사는 곳이 바뀌었다.**
+   *   종전 이 락은 셸 소스에서 `if (prev.has(layerId)) return prev;` 라는 **문자열**을 찾았다.
+   *   레이어 활성 상태를 영속하면서 그 가드가 **스토어 액션으로 이식**됐고(`Set` 은 직렬화가
+   *   안 되므로 배열로 저장한다), 문자열이 사라져 이 락이 빨개졌다.
+   *   ★그때 «락을 지운다» 도 «문자열을 새 위치로 옮긴다» 도 답이 아니다 —
+   *     **계약을 행위로** 잰다. 그러면 다음에 또 옮겨도 안 깨진다.
+   *   ★원래 우려는 그대로다: 무변화 토글이 새 참조를 만들면 `mapLayerState` memo 가 재계산돼
+   *     오버레이·POI 가 전량 재생성된다.
+   */
+  it("★이미 켜진 레이어를 다시 켜도 **같은 참조**다(행위)", async () => {
+    const { useSatongMapPrefs, defaultEnabledLayerIds } = await import(
+      "@/store/useSatongMapPrefsStore"
+    );
+    useSatongMapPrefs.setState({ enabledLayerIds: defaultEnabledLayerIds() });
+    const before = useSatongMapPrefs.getState().enabledLayerIds;
+    useSatongMapPrefs.getState().ensureLayerEnabled("cadastre"); // 이미 켜져 있다
+    expect(useSatongMapPrefs.getState().enabledLayerIds).toBe(before);
+  });
+
+  it("★대칭 — 변화가 있으면 **다른 참조**다(«항상 같은 참조» 인 구현이 만점이 되지 않게)", async () => {
+    const { useSatongMapPrefs, defaultEnabledLayerIds } = await import(
+      "@/store/useSatongMapPrefsStore"
+    );
+    useSatongMapPrefs.setState({ enabledLayerIds: defaultEnabledLayerIds() });
+    const before = useSatongMapPrefs.getState().enabledLayerIds;
+    useSatongMapPrefs.getState().ensureLayerEnabled("zoning");
+    expect(useSatongMapPrefs.getState().enabledLayerIds).not.toBe(before);
+  });
+
+  it("★셸이 그 파생 Set 을 **memo** 로 만든다 — 매 렌더 새로 만들면 위 계약이 무의미하다", () => {
     const src = readSource("components/precheck/SatongMapShell.tsx");
-    // 무조건 new Set을 반환하면 mapLayerState memo가 재계산돼 오버레이·POI가 전량 재생성된다.
-    expect(src).toContain("if (prev.has(layerId)) return prev;");
+    const stmts = src.split(";").map((x) => x.replace(/\s+/g, " ").trim());
+    expect(stmts.filter((x) => /\bconst enabledLayers = useMemo\b/.test(x))).toHaveLength(1);
+    // ★음성 대조군 — useState 로 되돌리면 영속도 identity 보장도 사라진다.
+    expect(stmts.filter((x) => /\buseState\b/.test(x) && /\benabledLayers\b/.test(x))).toHaveLength(0);
   });
 });
