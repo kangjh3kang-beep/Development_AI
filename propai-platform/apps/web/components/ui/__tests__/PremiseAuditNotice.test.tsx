@@ -121,6 +121,27 @@ describe("PremiseAuditNotice — 렌더", () => {
     expect(box.dataset.state).toBe("violations");
   });
 
+  it("★사유가 비면 **기계 키를 사용자에게 내보내지 않는다**", () => {
+    // ★백엔드는 `detail: str(e)[:200]` 인데 `str(e)` 는 **빈 문자열일 수 있다**
+    //   (`raise ValueError()`). 그때 첫 판은 화면에 «audit_failed» 를 찍었다 —
+    //   *"왜 못 했는지를 싣는다"* 는 이 상태의 존재 이유가 그 순간 무너진다.
+    //   ★이 락이 없으면 봉합이 **초록 안에서 무잠금**이다(내 변이가 SURVIVED 로 잡았다).
+    for (const detail of ["", "   ", undefined]) {
+      const { container, unmount } = render(
+        <PremiseAuditNotice audit={{ violations: [], checked: 0, registered: null, reason: "audit_failed", detail }} />,
+      );
+      const t = container.textContent ?? "";
+      expect(t, `detail=${JSON.stringify(detail)} 에서 기계 키가 노출됐다`).not.toContain("audit_failed");
+      expect(t).toContain("원인을 기록하지 못했습니다");
+      unmount();
+    }
+    // ★음성 대조군 — 사유가 **있으면** 그것을 그대로 쓴다(대체 문구로 덮지 않는다).
+    render(<PremiseAuditNotice audit={FIXTURES.failed} />);
+    const box = screen.getByTestId("premise-audit-notice");
+    expect(box.textContent ?? "").toContain("top3 가 list");
+    expect(box.textContent ?? "").not.toContain("원인을 기록하지 못했습니다");
+  });
+
   it("★판정 불가는 **왜** 못 했는지를 싣는다(무언 실패 금지)", () => {
     render(<PremiseAuditNotice audit={FIXTURES.failed} />);
     expect(screen.getByText(/top3 가 list/)).toBeTruthy();
