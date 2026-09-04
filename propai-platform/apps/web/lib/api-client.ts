@@ -109,6 +109,15 @@ export class ApiClientError extends Error {
 }
 
 /**
+ * HTTP 오류에 붙는 **상수 문구**. 서버 사유는 `payload.detail` 에 따로 실린다.
+ * ★던지는 쪽과 읽는 쪽이 이 문자열을 각자 적으면 반드시 갈라진다 — 한 곳에서 파생시킨다.
+ */
+const GENERIC_HTTP_ERROR = "API 요청 처리에 실패했습니다.";
+
+/** 파일 다운로드 기본 타임아웃. 일반 요청(120초)보다 길다 — 보고서 렌더는 조회가 아니다. */
+const DOWNLOAD_TIMEOUT_MS = 300_000;
+
+/**
  * `ApiClientError` 에서 **서버가 준 사유**를 꺼낸다.
  *
  * ★`error.message` 를 읽으면 안 된다 — HTTP 오류의 `message` 는 **항상 상수**
@@ -122,16 +131,28 @@ export class ApiClientError extends Error {
  *   (기존 31개를 이리로 모으는 것은 **별건**이다 — 이 PR 의 범위가 아니다.)
  */
 export function apiErrorMessage(error: unknown, fallback: string): string {
-  const detail = (error as { payload?: { detail?: unknown } } | null)?.payload?.detail;
+  const e = error as { payload?: { detail?: unknown }; status?: number; message?: unknown } | null;
+  const detail = e?.payload?.detail;
   if (typeof detail === "string" && detail.trim()) return detail;
   if (detail && typeof detail === "object") {
     const msg = (detail as { message?: unknown }).message;
     if (typeof msg === "string" && msg.trim()) return msg;
     return JSON.stringify(detail);
   }
-  // ApiClientError 가 아닌 것(네트워크·중단 등)은 그 자신의 문구가 유일한 단서다.
-  if (error instanceof Error && error.name !== "ApiClientError" && error.message) return error.message;
-  return fallback;
+
+  // ★payload 에 사유가 없다 — 그러면 **오류 자신의 문구**가 유일한 단서다.
+  //   ★★`ApiClientError` 라고 건너뛰면 안 된다. `executeFetch` 는 **타임아웃(408)** 과
+  //     **네트워크 실패(0)** 에 의미 있는 한국어 문구를 담은 `ApiClientError` 를
+  //     `payload=null` 로 던진다. 건너뛰면 그 둘과 비-JSON 5xx 가 **전부 같은 한 문장**이
+  //     되어 원인이 사라진다 — 이 함수가 없애려던 바로 그 결함을 이 함수가 만든다.
+  //     (적대 리뷰가 세 모집단을 실행해 실측했다.)
+  const own = typeof e?.message === "string" ? e.message.trim() : "";
+  if (own && own !== GENERIC_HTTP_ERROR) return own;
+
+  // ★사유가 정말 없으면 **상태코드라도 남긴다.** 종전 화면은 `(HTTP 502)` 를 보여 줬는데
+  //   그것마저 지우면 «같은 문장» 회귀가 된다.
+  const status = typeof e?.status === "number" ? e.status : 0;
+  return status > 0 ? `${fallback} (HTTP ${status})` : fallback;
 }
 
 export type ApiRequestOptions = Omit<RequestInit, "body"> & {
@@ -472,11 +493,7 @@ async function request<T>(path: string, options: ApiRequestOptions = {}) {
   const payload = await parseResponse(response);
 
   if (!response.ok) {
-    throw new ApiClientError(
-      "API 요청 처리에 실패했습니다.",
-      response.status,
-      payload,
-    );
+    throw new ApiClientError(GENERIC_HTTP_ERROR, response.status, payload);
   }
 
   return payload as T;
@@ -499,7 +516,15 @@ export const apiClient = {
    *   (이 저장소가 «봉합이 새 이음매를 만든다»로 반복해 데인 형태.)
    */
   download(path: string, options?: Omit<ApiRequestOptions, "responseType">) {
-    return request<Blob>(path, { ...options, responseType: "blob" });
+    // ★타임아웃을 **명시**한다. 종전 다운로드는 생 `fetch` 라 `signal` 이 없어 **무제한**이었다.
+    //   `request` 를 타면 기본 120초가 걸리는데, 대필지 보고서 렌더(서버 상한 300필지)가
+    //   그 안에 끝나는지 **재지 못했다** — 조용히 계약을 조이면 «다운로드가 갑자기 실패» 가
+    //   된다. 그래서 넉넉히 잡고, 호출부가 필요하면 줄이도록 옵션을 우선한다.
+    return request<Blob>(path, {
+      timeoutMs: DOWNLOAD_TIMEOUT_MS,
+      ...options,
+      responseType: "blob",
+    });
   },
   get<T>(path: string, options?: Omit<ApiRequestOptions, "method">) {
     return request<T>(path, { ...options, method: "GET" });
