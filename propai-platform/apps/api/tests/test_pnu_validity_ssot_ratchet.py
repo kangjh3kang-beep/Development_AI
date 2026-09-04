@@ -59,7 +59,10 @@ _PNU_SLICE_CONSTS = (5, 10, 19)
 # ★의도가 코드에 적혀 있고 **자릿수까지 검사하는** 자리는 예외로 등재한다(사유 필수).
 #   fail-closed: 여기 없는 새 손수 검사는 무조건 빨개진다.
 _EXEMPT: dict[str, str] = {
-    "app/services/feasibility/rough_feasibility_orchestrator.py:133":
+    # ★2026-09-04 — 코드가 `sale_price_resolver` 로 **이관**되며 경로가 바뀌었다.
+    #   래칫이 그것을 정확히 잡았다(파생형이라 새 파일이 자동으로 감시망에 들어온다).
+    #   **사유는 그대로다** — 코드도 의도도 안 바뀌고 **자리만** 옮겼다.
+    "app/services/feasibility/sale_price_resolver.py:72":
         "의도된 관대함 — 주석이 'PNU가 짧아도 앞 5자리가 숫자면 시군구코드로 사용(자체 충족)'이라 "
         "명시하고 `pnu[:5].isdigit()` 로 자릿수를 검사한다. 좁히면 정상 폴백이 죽는다.",
     "services/avm_service.py:511":

@@ -326,10 +326,19 @@ def _reset_avm_cache(monkeypatch):
 
 
 def _patch_molit(monkeypatch, source: dict | None):
-    async def _fake(self, lawd_cd):
+    """★패치 대상이 `_molit_sale_price_source` 로 바뀌었다(2026-09-04).
+
+    종전 `_molit_avg_per_pyeong` 은 **전용면적 기준 매매가**를 돌려줘, 같은 블렌딩에 들어가는
+    `regional`(**공급면적 기준 신축 분양가**)과 **단위가 달랐다**. 지금은 공용 SSOT 리졸버를
+    경유해 두 출처가 같은 축이 된다 — 그래서 이 스텁도 새 메서드를 덮어야 한다.
+
+    ★옛 이름을 계속 덮으면 스텁이 **아무것도 가로채지 못한 채** 테스트가 실경로를 태운다
+      (실측: 29,000,000 을 기대했는데 30,000,000 이 나왔다).
+    """
+    async def _fake(self, *, address, dev_type="M01"):
         return source
 
-    monkeypatch.setattr(MarketRevaluationService, "_molit_avg_per_pyeong", _fake)
+    monkeypatch.setattr(MarketRevaluationService, "_molit_sale_price_source", _fake)
 
 
 _MOLIT_FIXED = {
