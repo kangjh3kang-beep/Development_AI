@@ -108,6 +108,32 @@ export class ApiClientError extends Error {
   }
 }
 
+/**
+ * `ApiClientError` 에서 **서버가 준 사유**를 꺼낸다.
+ *
+ * ★`error.message` 를 읽으면 안 된다 — HTTP 오류의 `message` 는 **항상 상수**
+ *   `"API 요청 처리에 실패했습니다."` 다(이 파일의 `throw` 지점). 사유는 `payload.detail`.
+ *   그것을 모르고 `message` 를 그대로 띄우면 **모든 실패가 같은 문장**이 되어
+ *   사용자도 조사자도 원인을 못 찾는다(§유료 산출물 규율 4 — 진단 불가는 그 자체로 장애).
+ *
+ * ★왜 여기에 두나: `lib/payments/payment-error.ts` 가 실측으로 적어 둔 대로
+ *   이 앱에는 `extractErrorMessage` 계열이 **31개 중복**인데 **어느 것도** 이 함정을
+ *   모른다. 32번째를 만들지 않으려고 `ApiClientError` 옆에 둔다.
+ *   (기존 31개를 이리로 모으는 것은 **별건**이다 — 이 PR 의 범위가 아니다.)
+ */
+export function apiErrorMessage(error: unknown, fallback: string): string {
+  const detail = (error as { payload?: { detail?: unknown } } | null)?.payload?.detail;
+  if (typeof detail === "string" && detail.trim()) return detail;
+  if (detail && typeof detail === "object") {
+    const msg = (detail as { message?: unknown }).message;
+    if (typeof msg === "string" && msg.trim()) return msg;
+    return JSON.stringify(detail);
+  }
+  // ApiClientError 가 아닌 것(네트워크·중단 등)은 그 자신의 문구가 유일한 단서다.
+  if (error instanceof Error && error.name !== "ApiClientError" && error.message) return error.message;
+  return fallback;
+}
+
 export type ApiRequestOptions = Omit<RequestInit, "body"> & {
   body?: BodyInit | Record<string, unknown> | null;
   useMock?: boolean;
