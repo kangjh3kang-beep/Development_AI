@@ -3,6 +3,7 @@
  */
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
+import { buildConstructionParams } from "@/lib/construction-cost-params";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 
 // ── 타입 ──
@@ -28,6 +29,15 @@ export interface FeasibilityInput {
   project_months: number;
   discount_rate: number;
   equity_won: number;
+  // ★공사비 축 — 백엔드 `construction_cost_engine` 이 **이미 받는데 아무도 안 보냈다**
+  //   (`params: {}` 로 초기화되고 override 외엔 안 채워, 프로덕션이 항상 폴백을 탔다).
+  //   전부 선택값이고, 비면 종전 `연면적 × ₩/㎡` 폴백 그대로다(무회귀).
+  floors_above?: number | null;
+  floors_below?: number | null;
+  structure_type?: string | null;
+  /** ★사용자 단위는 **평당**. ㎡ 변환은 `lib/construction-cost-params` 한 곳에서만. */
+  unit_cost_per_pyeong?: number | null;
+  construction_cost_override_won?: number | null;
   params: Record<string, unknown>;
 }
 
@@ -239,8 +249,20 @@ export const useFeasibilityV2Store = create<FeasibilityV2State>()(
         // 공사비 정밀분석 결과가 있으면 params.construction_cost_override_won로 주입.
         const base = get().input;
         const override = opts?.constructionCostOverrideWon;
+        // ★사용자 공사비 입력(층수·지하층·구조·평당단가·총액직접입력)을 params 로 직렬화.
+        //   **평당→㎡ 변환은 이 함수 안에서만** 일어난다(배수 3.3058 · 틀리면 3.3배 과대).
+        //   값이 없는 축은 **키를 만들지 않아** 백엔드 폴백이 보존된다.
+        const userConstruction = buildConstructionParams({
+          floors_above: base.floors_above,
+          floors_below: base.floors_below,
+          structure_type: base.structure_type,
+          unit_cost_per_pyeong: base.unit_cost_per_pyeong,
+          construction_cost_override_won: base.construction_cost_override_won,
+        });
         const params = {
           ...(base.params ?? {}),
+          ...userConstruction,
+          // 정밀분석 주입은 사용자 입력보다 뒤 — 기존 계약 유지(R1-P1 이 정한 우선순위).
           ...(override != null && override > 0
             ? { construction_cost_override_won: override }
             : {}),

@@ -23,6 +23,25 @@ const BUILDING_TYPES = [
   { value: "mixed", label: "복합" },
 ];
 
+/**
+ * 구조유형 — ★**정본은 백엔드** `app/services/cost/overview_estimator.py` 의 구조계수 표다.
+ *
+ * ★내 첫 판은 손으로 3종(RC·SRC·철골)만 골랐고, 백엔드는 **7종**을 안다.
+ *   *«목록은 곧 상한»* 그대로였다 — 빠진 `PC`(0.95)·`목구조`(0.85)는 **비용을 낮추는**
+ *   축이라, 없으면 사용자가 그 절감을 표현할 방법이 아예 없다.
+ * ★별칭(`RC조`·`SRC조`·`SC`)은 같은 계수라 대표 표기만 노출한다 — 락이 그걸 확인한다.
+ * ★★**오타는 조용히 RC(1.0)로 떨어진다**(실측: 미등록 문자열 → +0.0%, 경고 없음).
+ *   그래서 자유입력이 아니라 **닫힌 선택지**로 둔다 — 사용자가 오타를 낼 자리를 없앤다.
+ */
+const STRUCTURE_TYPES = [
+  { value: "", label: "미지정 (표준 = RC)" },
+  { value: "RC", label: "철근콘크리트 RC (기준)" },
+  { value: "SRC", label: "철골철근콘크리트 SRC (+15%)" },
+  { value: "철골", label: "철골조 (+10%)" },
+  { value: "PC", label: "프리캐스트 PC (−5%)" },
+  { value: "목구조", label: "목구조 (−15%)" },
+] as const;
+
 function NumberInput({
   label,
   value,
@@ -252,6 +271,32 @@ export function ModuleInputForm() {
             onChange={(v) => setInput({ total_gfa_sqm: v })} />
           <NumberInput label="총 세대수" value={input.total_households} unit="세대" comma
             onChange={(v) => setInput({ total_households: v })} />
+
+          {/* ★공사비 — 백엔드 `construction_cost_engine` 이 **이미 받는데 화면이 안 보냈다**.
+              비워 두면 종전 폴백(연면적 × ₩/㎡) 그대로라 무회귀다.
+              실측 효과(연면적 2만㎡·아파트·200세대): 지하 3층 +7.4% · SRC +23.5% · 철골 +18.1%. */}
+          <NumberInput label="지상 층수" value={input.floors_above ?? undefined} unit="층"
+            onChange={(v) => handleInputChange({ floors_above: v || null })} />
+          <NumberInput label="지하 층수" value={input.floors_below ?? undefined} unit="층"
+            onChange={(v) => handleInputChange({ floors_below: v || null })} />
+          <label className="grid gap-1.5 text-sm">
+            <span className="font-medium text-slate-700 dark:text-slate-200">구조유형</span>
+            <select
+              value={input.structure_type ?? ""}
+              onChange={(e) => handleInputChange({ structure_type: e.target.value || null })}
+              className="flex h-11 w-full rounded-[var(--radius-md)] border border-[var(--line)] bg-[var(--surface)] px-4 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-strong)]"
+            >
+              {STRUCTURE_TYPES.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+          </label>
+          {/* ★단위가 갈리는 자리 — 사용자는 **평당**, 백엔드 계약은 `unit_cost_per_sqm`(원/㎡).
+              배수 3.3058. 변환은 `lib/construction-cost-params` 한 곳에서만 한다. */}
+          <NumberInput label="평당 공사비" value={input.unit_cost_per_pyeong ?? undefined} unit="원/평" comma
+            onChange={(v) => handleInputChange({ unit_cost_per_pyeong: v || null })} />
+          <NumberInput label="총공사비 직접입력" value={input.construction_cost_override_won ?? undefined} unit="원" comma
+            onChange={(v) => handleInputChange({ construction_cost_override_won: v || null })} />
 
           {/* 분양 (핵심 수정 항목 — 변경 시 자동 히스토리) */}
           <NumberInput label="평당 분양가" value={input.avg_sale_price_per_pyeong} unit="원/평" comma
