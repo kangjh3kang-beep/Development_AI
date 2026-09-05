@@ -415,6 +415,22 @@ class HealActionOut(BaseModel):
     ttl_expires_at: str | None = None
     params: dict | None = None
     created_at: datetime | None = None
+    #: 실제로 무언가 했는가.
+    #:
+    #: ★★**`None` 을 「옛 행」으로 읽지 마라 — 그것이 거짓이다**(3차 적대 리뷰 실측
+    #:   2026-09-05). 지금 이 필드를 **싣는 생산자는 `cache_warm` 하나뿐**이다.
+    #:   라이브 `heal_action` **524행 중 `executed` 키 보유 0** 이었고, 앞으로도
+    #:   `threshold_autotune`(441행·84.2%)·`threshold_relax`(47)·`circuit_observe`(30) 은
+    #:   **`null` 로 온다.** 즉 `null` 은 「모름」이며 그 안에는
+    #:   **실제로 동작한 액션도 들어 있다.**
+    #: ★두 번째 생산자가 있다 — `feature_flags._emit_l1_event` 가 같은 `event_type` 을
+    #:   쓰면서 payload 빌더를 **복제**한다(`effector_firing.py:65-67` 이 *"한쪽만 보면
+    #:   절반을 놓친다"* 고 이미 경고한다). **부채**: 빌더를 공용으로 추출하고 형제 전부에
+    #:   배선해야 `null` 이 진짜 「모름」으로 좁혀진다.
+    executed: bool | None = None
+    #: 무동작일 때 그 사유(예: `no_dispatch_wired`). 진단 불가는 그 자체로 장애다.
+    #: ★**부채**: `apps/web` 이 이 필드를 렌더하지 않는다 — 화면에서는 아직 구별되지 않는다.
+    no_op_reason: str | None = None
 
 
 class ActiveFlagOut(BaseModel):
@@ -514,6 +530,8 @@ async def heal_log(
             setting_key=pl.get("setting_key"), ttl_expires_at=pl.get("ttl_expires_at"),
             params=pl.get("params") if isinstance(pl.get("params"), dict) else None,
             created_at=r[3],
+            executed=pl.get("executed"),
+            no_op_reason=pl.get("no_op_reason"),
         ))
 
     # 현재 활성(미만료) 플래그 — TTL 이 NULL 이거나 미래인 것만.
