@@ -38,12 +38,17 @@ export interface ConstructionCostInputs {
   marketing_cost_won?: number | null;
   management_cost_won?: number | null;
   reserve_cost_won?: number | null;
+  /** ★토지비 직접입력(총액·원). 공사비 override 와 **축이 다르다** — 함께 실린다. */
+  land_cost_override_won?: number | null;
 }
 
 /** 기타경비 항목 — 백엔드 `_OTHER_ITEM_SHARE` 의 키와 **같아야** 한다(락이 대조). */
 const OTHER_COST_KEYS = [
   "marketing_cost_won", "management_cost_won", "reserve_cost_won",
 ] as const;
+
+/** ★공사비 override 와 **동시에** 실려야 하는 축들 — 조기 return 이 삼키면 안 된다. */
+const INDEPENDENT_KEYS = [...OTHER_COST_KEYS, "land_cost_override_won"] as const;
 
 const pos = (v: unknown): number | null => {
   const n = typeof v === "number" ? v : Number(v);
@@ -67,9 +72,9 @@ export function buildConstructionParams(
     // 직접입력이 있으면 **그것만** 보낸다 — 산출 축을 같이 보내면 어느 것이 쓰였는지
     // 사후에 못 가른다(백엔드는 override 를 먼저 보고 즉시 반환한다).
     out.construction_cost_override_won = override;
-    for (const k of OTHER_COST_KEYS) {
+    for (const k of INDEPENDENT_KEYS) {
       const v = pos(inp[k]);
-      if (v != null) out[k] = Math.round(v);   // ★기타경비는 축이 달라 함께 보낸다
+      if (v != null) out[k] = Math.round(v);   // ★축이 달라 함께 보낸다
     }
     return out;
   }
@@ -87,7 +92,7 @@ export function buildConstructionParams(
 
   // ★기타경비는 **직접입력(override)이 있어도 함께** 보낸다 — 공사비 override 는
   //   공사비 산출만 대체하고 기타경비와는 축이 다르다.
-  for (const k of OTHER_COST_KEYS) {
+  for (const k of INDEPENDENT_KEYS) {
     const v = pos(inp[k]);
     if (v != null) out[k] = Math.round(v);
   }

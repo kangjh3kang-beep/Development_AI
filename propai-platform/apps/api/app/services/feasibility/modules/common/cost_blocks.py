@@ -25,7 +25,23 @@ def compute_land_cost(inp: ModuleInput) -> dict[str, Any]:
 
     취득세·전용부담금은 통합 세금 엔진(compute_taxes → A01~A03, A08/A09)이
     grand_total_won에 계상하므로 여기서는 제외한다 (이중계상 방지).
+
+    ★직접입력(`params.land_cost_override_won`)이 있으면 **매입비 산출을 대체**한다 —
+      형제 `compute_construction_cost` 의 `construction_cost_override_won` 과 같은 계약이다.
+      *«옳은 패턴이 바로 옆에 있다»* — 계약을 새로 만들지 않는다.
+    ★보상비는 **축이 다르므로 유지**한다(토지 매입가와 별개 항목).
     """
+    override = _param_int(inp, "land_cost_override_won")
+    if override > 0:
+        comp = _param_int(inp, "compensation_won")
+        return {
+            "purchase": override,
+            "acquisition_tax": 0,
+            "conversion_fee": 0,
+            "compensation_won": comp,
+            "total_land_cost_won": override + comp,
+            "source": "user_override",
+        }
     return calculate_total_land_cost(
         total_area_sqm=inp.total_land_area_sqm,
         official_price_per_sqm=inp.official_price_per_sqm,

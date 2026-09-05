@@ -43,6 +43,8 @@ export interface FeasibilityInput {
   marketing_cost_won?: number | null;
   management_cost_won?: number | null;
   reserve_cost_won?: number | null;
+  /** ★토지비 직접입력(총액·원). 주면 공시지가×배율 산출을 **대체**한다. */
+  land_cost_override_won?: number | null;
   params: Record<string, unknown>;
 }
 
@@ -266,6 +268,7 @@ export const useFeasibilityV2Store = create<FeasibilityV2State>()(
           marketing_cost_won: base.marketing_cost_won,
           management_cost_won: base.management_cost_won,
           reserve_cost_won: base.reserve_cost_won,
+          land_cost_override_won: base.land_cost_override_won,
         });
         const params = {
           ...(base.params ?? {}),
