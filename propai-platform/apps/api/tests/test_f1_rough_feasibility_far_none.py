@@ -70,7 +70,7 @@ def _stub_far_none(monkeypatch, *, land_area: float = 1000.0):
                 "evidence": {"evidence": [{"label": "채택 단가"}]},
                 "source": "NED 토지특성", "confidence": 0.8}
 
-    async def _fake_price(*, db, site_id, dev_type, region, address):
+    async def _fake_price(*, db, site_id, dev_type, region, address, **kw):
         return 40_000_000, "지역 시세 테이블(sigungu)", "지역×유형 시장표준 시세", None
 
     def _fake_ratios(input_used):

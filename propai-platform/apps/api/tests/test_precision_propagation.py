@@ -321,7 +321,7 @@ def _stub_orchestrator(monkeypatch, *, far: float | None, price_source: str):
                 "appraised_total_won": int(5_000_000 * (kw.get("area_sqm") or 0)),
                 "evidence": None, "source": "NED 토지특성", "confidence": 0.8}
 
-    async def _fake_price(*, db, site_id, dev_type, region, address):
+    async def _fake_price(*, db, site_id, dev_type, region, address, **kw):
         return 40_000_000, price_source, "테스트 분양단가", None
 
     def _fake_ratios(input_used):

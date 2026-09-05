@@ -59,12 +59,20 @@ _PNU_SLICE_CONSTS = (5, 10, 19)
 # ★의도가 코드에 적혀 있고 **자릿수까지 검사하는** 자리는 예외로 등재한다(사유 필수).
 #   fail-closed: 여기 없는 새 손수 검사는 무조건 빨개진다.
 _EXEMPT: dict[str, str] = {
-    "app/services/feasibility/rough_feasibility_orchestrator.py:133":
+    # ★키 형식: `파일::표현식`. 종전 `파일:줄번호` 는 삽입마다 어긋났다(한 세션 3회).
+    "app/services/feasibility/sale_price_resolver.py::len(pnu) >= 5":
         "의도된 관대함 — 주석이 'PNU가 짧아도 앞 5자리가 숫자면 시군구코드로 사용(자체 충족)'이라 "
         "명시하고 `pnu[:5].isdigit()` 로 자릿수를 검사한다. 좁히면 정상 폴백이 죽는다.",
-    "services/avm_service.py:511":
+    "services/avm_service.py::len(request.pnu) >= 5":
         "`request.pnu[:5].isdigit()` 로 자릿수를 함께 검사한다 — 오염 문자열은 통과하지 못한다.",
 }
+
+
+#: 면제 키가 **몇 번** 매칭됐나. ★표현식 키는 위치가 없어 **같은 파일의 같은 표현식을
+#: 전부 면제**한다 — 유지비를 줄이려다 **fail-closed 를 fail-open 으로** 바꾼 것이다
+#: (실측: 같은 파일에 `isdigit()` **없는** 가드를 추가해도 통과, 다른 파일이면 CAUGHT).
+#: → 매칭 **개수**를 세서 0건(죽은 면제)·2건 이상(남용)을 둘 다 실패시킨다.
+_exempt_hits: dict[str, int] = {}
 
 
 def _hand_rolled_length_guards() -> list[tuple[str, int, str]]:
@@ -97,8 +105,14 @@ def _hand_rolled_length_guards() -> list[tuple[str, int, str]]:
                 isinstance(c, ast.Constant) and c.value in _PNU_SLICE_CONSTS for c in sides
             ):
                 continue
-            key = f"{p.relative_to(API_ROOT)}:{n.lineno}"
+            # ★키를 **줄번호가 아니라 표현식**으로 만든다(2026-09-05).
+            #   `파일:줄번호` 는 **같은 파일에 코드를 넣기만 해도 어긋난다** —
+            #   한 세션에서 **세 번** 밟았다(72 → 119 → 162). fail-closed 라 위험하진
+            #   않지만 이관·삽입마다 유지비가 붙고, 그 소음이 진짜 위반을 가린다.
+            #   ★표현식은 **그 코드가 무엇인지**를 말하므로 자리가 옮겨도 따라온다.
+            key = f"{p.relative_to(API_ROOT)}::{expr.strip()}"
             if key in _EXEMPT:
+                _exempt_hits[key] = _exempt_hits.get(key, 0) + 1
                 continue
             hits.append((str(p.relative_to(API_ROOT)), n.lineno, expr[:90]))
     return hits
@@ -276,3 +290,89 @@ class Test배선된함수를실제로태운다:
         assert called == [("41370", "11000", "0467", "0001")], (
             f"슬라이싱이 어긋났다: {called}"
         )
+
+
+#: 면제 항목이 **함께 갖고 있어야 하는 검사**. 사유가 «`pnu[:5].isdigit()` 로 자릿수를
+#: 함께 검사한다» 라고 말하는데 **그 문장을 지키는 단언이 없었다** — 그 가드에서
+#: `isdigit()` 만 떼어내도 면제 키(`len(pnu) >= 5`)는 그대로라 **초록**이었다(4차 리뷰 MAJOR-1).
+#: ★방향이 정확히 반대였다: 무해한 재배열엔 **위양성**, 안전장치 제거엔 **위음성**.
+_EXEMPT_REQUIRES: dict[str, tuple[str, ...]] = {
+    "app/services/feasibility/sale_price_resolver.py::len(pnu) >= 5": ("isdigit",),
+    "services/avm_service.py::len(request.pnu) >= 5": ("isdigit",),
+}
+
+
+def test_each_exemption_keeps_the_guard_its_reason_promises() -> None:
+    """★면제 **사유가 약속한 동반 검사**가 그 자리에 실제로 있는가.
+
+    면제는 «이 표현식이 나타나면 봐준다» 가 아니라 «이 표현식 **+ 이 검사**면 봐준다» 다.
+    사유에 적어만 두면 **떼어내도 안 보인다.**
+    """
+    import ast as _ast
+
+    for key, required in _EXEMPT_REQUIRES.items():
+        assert key in _EXEMPT, f"동반검사 표에만 있고 면제에 없다: {key}"
+        rel, expr = key.split("::", 1)
+        src = (API_ROOT / rel).read_text(encoding="utf-8")
+        tree = _ast.parse(src)
+        found = False
+        for n in _ast.walk(tree):
+            if not isinstance(n, _ast.If):
+                continue
+            if expr not in _ast.unparse(n.test):
+                continue
+            test_src = _ast.unparse(n.test)
+            missing = [r for r in required if r not in test_src]
+            assert not missing, (
+                f"{key} 의 면제 사유가 약속한 검사가 사라졌다: {missing} — "
+                f"실제 조건: {test_src}")
+
+            # ★★**토큰이 있다 ≠ 그것이 소비되는 값을 지킨다.**
+            #   `pnu[:5].isdigit()` → `pnu.strip()[:5].isdigit()` 로 바꾸면 토큰은 그대로인데
+            #   **판정한 문자열과 소비하는 문자열이 갈린다** — ` 4137…` 이 통과해
+            #   `sigungu5 = pnu[:5] = " 4137"` 이 **MOLIT API 로 나간다**(유료·쿼터 경로).
+            #   ★이 저장소가 §구멍D 로 이름 붙여 둔 결함 클래스인데, 그 테스트는
+            #     `is_valid_pnu`/`normalize_pnu` 만 태우고 **면제된 손수 가드는 안 태운다.**
+            #   → **`.isdigit()` 이 붙은 피연산자**와 **본문이 실제로 쓰는 슬라이스**가
+            #     같은 표현식인지 `ast` 로 대조한다.
+            judged = {
+                _ast.unparse(c.func.value)
+                for c in _ast.walk(n.test)
+                if isinstance(c, _ast.Call) and isinstance(c.func, _ast.Attribute)
+                and c.func.attr in required
+            }
+            consumed = {
+                _ast.unparse(sub)
+                for sub in _ast.walk(n)
+                if isinstance(sub, _ast.Subscript) and sub not in list(_ast.walk(n.test))
+            }
+            if judged and consumed:
+                assert judged & consumed, (
+                    f"{key}: **판정한 표현식과 소비하는 표현식이 다르다** — "
+                    f"판정 {sorted(judged)} ↔ 소비 {sorted(consumed)}. "
+                    "이 갈림이 오염 문자열을 외부 API 인자로 내보낸다(§구멍D).")
+            found = True
+        assert found, f"면제 대상 표현식을 못 찾았다(죽은 면제 또는 조회기 사망): {key}"
+
+
+def test_each_exemption_matches_exactly_once() -> None:
+    """★면제는 **정확히 한 자리**를 덮어야 한다 — 양방향으로 잠근다.
+
+    | 상태 | 뜻 |
+    |---|---|
+    | **0건** | **죽은 면제** — 코드가 사라졌거나 표현식이 바뀌었다(§회귀망 36) |
+    | **2건 이상** | **남용** — 같은 파일의 같은 표현식이 전부 면제된다(fail-open) |
+
+    ★키를 `파일:줄번호` → `파일::표현식` 으로 바꿔 유지비를 줄였는데, 그 대가로
+      **위치를 잃어** 파일 전역 면제가 됐다. 개수 단언이 그 대가를 되돌린다.
+    """
+    _exempt_hits.clear()
+    _hand_rolled_length_guards()   # 수집이 hits 를 채운다
+
+    dead = [k for k in _EXEMPT if _exempt_hits.get(k, 0) == 0]
+    assert not dead, f"죽은 면제(코드가 사라졌거나 표현식이 바뀜): {dead}"
+
+    abused = {k: n for k, n in _exempt_hits.items() if n > 1}
+    assert not abused, (
+        f"한 면제가 여러 자리를 덮는다(fail-open): {abused} — "
+        "면제는 **그 한 자리**에만 유효해야 한다")

@@ -23,6 +23,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.services.feasibility import rough_feasibility_orchestrator as orch
+from app.services.feasibility import sale_price_resolver as _spr
 from app.services.feasibility.modules.base_module import ModuleInput
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -99,7 +100,11 @@ def _stub_happy(monkeypatch, *, sale_price=40_000_000, integrated=None,
                 "evidence": {"evidence": [{"label": "채택 단가"}]},
                 "source": "NED 토지특성", "confidence": 0.8}
 
-    async def _fake_price(*, db, site_id, dev_type, region, address):
+    # ★`**kw` — 소비처가 인자를 늘리면 스텁이 TypeError 를 내고, 그것이 **다른 것을 재게**
+    #   만들거나(삼켜지면) 통째로 깨진다(여기선 16건). **오늘 네 번째**다.
+    #   ★내 스텁 락(`test_stubs_must_tolerate_new_kwargs`)은 `test_avm_train.py` 만 보고
+    #     이 파일은 **모집단 밖**이었다 — 락의 축이 「그 파일」이라 형제 파일이 안 보였다.
+    async def _fake_price(*, db, site_id, dev_type, region, address, **kw):
         if sale_price is None:
             return None, "unavailable", "분양단가 미확보", "분양단가: 실거래·지역시세 모두 실패 — 미산출(무목업)"
         return int(sale_price), "지역 시세 테이블(sigungu)", "지역×유형 시장표준 시세", None
@@ -437,7 +442,11 @@ async def test_dev_type_specified_uses_it(monkeypatch):
 @pytest.mark.asyncio
 async def test_high1_trade_sale_price_without_site_id(monkeypatch):
     """site_id 없이도 주소→시군구5→주변 실거래(MOLIT)로 분양단가를 잡는다(초록·비추정)."""
-    from app.services.sales.pricing.suggest import _JEONYULRYUL, _PREMIUM
+    # ★기대값의 **파생 출처**가 낡았다 — 전용률이 평면 상수에서 정본
+    #   (`unit_standards.get_exclusive_ratio`)으로 옮겨졌다(2026-09-05).
+    #   ★파생시키는 것만으로는 부족하다 — **무엇에서 파생시키는가**가 같이 낡는다.
+    from app.services.feasibility.unit_standards import get_exclusive_ratio
+    from app.services.sales.pricing.suggest import _PREMIUM
 
     _stub_happy(monkeypatch, stub_saleprice=False)  # 분양단가만 실경로로
 
@@ -448,7 +457,11 @@ async def test_high1_trade_sale_price_without_site_id(monkeypatch):
         # 전용 평당가 중앙값(만원): 동 6,000(표본 30) / 시군구 5,800(표본 120)
         return {"dong": {"median": 6000, "n": 30}, "sigungu": {"median": 5800, "n": 120}}
 
-    monkeypatch.setattr(orch, "_sigungu5_from_address", _fake_sigungu5)
+    # ★패치 대상이 `orch` 가 아니라 `sale_price_resolver` 다(2026-09-04 이관).
+    #   `_trade_sale_price_per_pyeong` 이 그 모듈로 옮겨졌으므로 **자기 모듈 전역**에서
+    #   `_sigungu5_from_address` 를 찾는다 — `orch` 의 재수출 이름을 바꿔도 소용이 없다.
+    #   ★재수출은 **임포트 계약**은 지키지만 **패치 지점까지 옮겨 주지는 않는다.**
+    monkeypatch.setattr(_spr, "_sigungu5_from_address", _fake_sigungu5)
     monkeypatch.setattr("app.services.sales.pricing.suggest._trade_per_pyeong", _fake_trade)
 
     out = await orch.build_rough_scenario(address="서울특별시 강남구 역삼동 736")
@@ -457,7 +470,7 @@ async def test_high1_trade_sale_price_without_site_id(monkeypatch):
     assert rev["source"] == "주변 실거래(MOLIT)"
     assert "추정" not in rev["source"] and "비실거래" not in rev["source"]
     # 분양단가 = 동 중앙값(전용) × 전용률 × 신축 프리미엄 → 공급 평당가(원/평)
-    expected = int(round(6000 * _JEONYULRYUL * _PREMIUM["base"] * 10000))
+    expected = int(round(6000 * get_exclusive_ratio("M01") * _PREMIUM["base"] * 10000))
     assert rev["sale_price_per_pyeong"] == expected
     # 실거래 경로는 '추정' degraded를 남기지 않는다(정직)
     assert not any("추정" in n for n in out["degraded_notes"])
@@ -474,7 +487,11 @@ async def test_high1_small_sample_falls_back_to_regional_estimate(monkeypatch):
     async def _tiny_trade(sigungu5, dong, prop_type):
         return {"dong": {"median": 6000, "n": 2}, "sigungu": {"median": 5800, "n": 3}}  # 표본<5
 
-    monkeypatch.setattr(orch, "_sigungu5_from_address", _fake_sigungu5)
+    # ★패치 대상이 `orch` 가 아니라 `sale_price_resolver` 다(2026-09-04 이관).
+    #   `_trade_sale_price_per_pyeong` 이 그 모듈로 옮겨졌으므로 **자기 모듈 전역**에서
+    #   `_sigungu5_from_address` 를 찾는다 — `orch` 의 재수출 이름을 바꿔도 소용이 없다.
+    #   ★재수출은 **임포트 계약**은 지키지만 **패치 지점까지 옮겨 주지는 않는다.**
+    monkeypatch.setattr(_spr, "_sigungu5_from_address", _fake_sigungu5)
     monkeypatch.setattr("app.services.sales.pricing.suggest._trade_per_pyeong", _tiny_trade)
 
     out = await orch.build_rough_scenario(address="서울특별시 강남구 역삼동 736")
