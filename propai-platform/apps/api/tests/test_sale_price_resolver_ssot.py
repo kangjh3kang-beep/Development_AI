@@ -39,6 +39,52 @@ _PIPE = _API / "app" / "services" / "pipeline" / "project_pipeline.py"
 _BASIS = "주변 실거래(MOLIT) 동 중앙값 3,428만원/평(전용, 표본 2,230건·최근 8개월) × 전용률 0.747 × 신축 프리미엄 1.15 → 공급 평당가"
 
 
+# ── 루프 스캐너(공용) ─────────────────────────────────────────────────────────
+# ★★**부채 표식이 산문에 매달려 있었다**(5차 리뷰 Minor-1): `"1홉" in lock.split("부채")[0]`
+#   이 모듈 독스트링의 낱말에 걸려, ①독스트링을 다듬으면 CI 가 이유 없이 빨개지고
+#   ②**진짜로 1홉을 구현해도 표식이 안 풀려** 영영 낡은 라벨로 남는다.
+#   → 스캐너를 **한 곳에서 정의**하고, 진짜 락과 부채 표식이 **그것을 함께** 태운다.
+#     1홉 추적이 여기 들어오는 순간 부채 표식이 **저절로** XPASS → strict 로 빨개진다.
+_PAID_TARGETS = {
+    "_resolve_sale_price_per_pyeong", "_trade_sale_price_per_pyeong",
+    "revalue", "get_regional_sale_price_per_pyeong",
+    "resolve_regional_sale_price_per_pyeong", "_molit_sale_price_source",
+}
+_STMT_LOOPS = (ast.For, ast.AsyncFor, ast.While)
+_COMP_LOOPS = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+
+
+def _loop_call_hits(tree: ast.AST, label: str = "?") -> tuple[list[str], int]:
+    """유료 리졸버가 **루프 안**에서 불리는 자리를 센다 → (위반 목록, 본 호출부 수).
+
+    ★현재 축은 **직접 호출부**다 — 얇은 래퍼를 거치면 못 본다(부채: 아래 xfail).
+    """
+    bad: list[str] = []
+    seen = 0
+    stack: list[str] = []
+
+    def walk(node: ast.AST) -> None:
+        nonlocal seen
+        is_loop = isinstance(node, _STMT_LOOPS)
+        has_comp = isinstance(node, _COMP_LOOPS)
+        if is_loop or has_comp:
+            stack.append(type(node).__name__)
+        if isinstance(node, ast.Call):
+            nm = (node.func.attr if isinstance(node.func, ast.Attribute)
+                  else getattr(node.func, "id", None))
+            if nm in _PAID_TARGETS:
+                seen += 1
+                if stack:
+                    bad.append(f"{label}:{node.lineno} {nm} (루프 {'/'.join(stack)})")
+        for c in ast.iter_child_nodes(node):
+            walk(c)
+        if is_loop or has_comp:
+            stack.pop()
+
+    walk(tree)
+    return bad, seen
+
+
 def _api_py_files():
     """★`glob("*.py")` 가 아니라 **재귀**다 — 리뷰가 하위 디렉토리 복제로 뚫었다."""
     return [f for f in (_API / "app").rglob("*.py") if "__pycache__" not in str(f)]
@@ -498,6 +544,46 @@ async def test_injected_sigungu_never_calls_geocoding(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_unknown_notation_leaves_a_trail_in_the_basis(monkeypatch) -> None:
+    """★5차 MAJOR-B — **값 경로는 잠갔는데 진단 흔적은 무잠금**이었다.
+
+    `if raw and not bt:` 를 `if False and …` 로 죽여도, `·물건종별 {prop_type}` 을
+    통째로 지워도 **79 passed** 로 생존했다. 두 자리 모두 §유료 규율 4(*실패는 전용
+    필드로 자기를 구별하고 **사유를 표면까지** 싣는다*)를 근거로 **내가 추가한 것**인데,
+    그 근거를 지키는 단언이 없었다.
+
+    ★그리고 그것을 **부채로 공개하지도 않았다** — 같은 커밋에서 루프 락의 한계는
+      `xfail(strict=True)` 로 공개했다. **한 커밋 안에 정직도가 두 가지**였다(§C-12).
+    """
+    import app.services.feasibility.sale_price_resolver as spr
+
+    # ① 모르는 표기는 **전용 표기**를 남긴다 ↔ 아는 표기는 남기지 않는다(두 모집단)
+    _, unknown_note = spr._exclusive_ratio_for("M01", "판매시설")
+    _, known_note = spr._exclusive_ratio_for("M01", "아파트")
+    assert "표기 미등록" in unknown_note, (
+        f"모르는 표기가 **흔적 없이** 버려진다 — 원장을 보고 되짚을 수 없다: {unknown_note}")
+    assert "표기 미등록" not in known_note, (
+        f"아는 표기에도 미등록 딱지가 붙는다(위양성): {known_note}")
+
+    # ② 조회한 물건종별이 **근거 문자열까지** 실린다(폴백이 조용하지 않다)
+    async def spy_trade(sigungu5, dong, prop_type):
+        return {"dong": {"median": 3000, "n": 50}, "sigungu": {"median": 3000, "n": 50}}
+
+    monkeypatch.setattr("app.services.sales.pricing.suggest._trade_per_pyeong",
+                        spy_trade, raising=True)
+    res = await spr._trade_sale_price_per_pyeong(
+        dev_type="M01", address="a", sigungu5="11350", building_type="오피스텔")
+    assert res is not None
+    basis = res[2]
+    assert "물건종별 officetel" in basis, (
+        f"근거가 **무엇으로 조회했는지** 말하지 않는다: {basis}")
+    # 음성 대조군 — 폴백이면 다른 값이 실린다(문구가 상수로 박힌 게 아니다)
+    res_fb = await spr._trade_sale_price_per_pyeong(
+        dev_type="M01", address="a", sigungu5="11350", building_type=None)
+    assert "물건종별 apt" in res_fb[2], f"폴백 물건종별이 근거에 안 실린다: {res_fb[2]}"
+
+
+@pytest.mark.asyncio
 async def test_building_type_reaches_molit_property_type(monkeypatch) -> None:
     """★C-1 — 표시 문자열이 **물건종별까지 도달**하는가(행위).
 
@@ -597,49 +683,16 @@ def test_paid_resolver_is_never_called_inside_a_loop() -> None:
       호출 그래프를 따라가려면 모듈 간 별칭·동적 호출까지 봐야 해서 이 PR 범위를 넘는다
       — **아래 `it.todo` 상당 항목으로 초록 안에 드러낸다.**
     """
-    TARGETS = {
-        "_resolve_sale_price_per_pyeong", "_trade_sale_price_per_pyeong",
-        "revalue", "get_regional_sale_price_per_pyeong",
-        "resolve_regional_sale_price_per_pyeong", "_molit_sale_price_source",
-    }
-    # ★★선언과 판정이 갈려 있었다: 이 튜플은 **아무 데서도 안 쓰이고**(ruff F841 →
-    #   **CI 의 Backend(pytest) 가 통째로 빨개져 pytest 가 한 줄도 안 돌았다**),
-    #   실제 판정은 아래에서 **다른 집합**을 하드코딩했다. 게다가 `ast.comprehension` 은
-    #   컴프리헨션 노드가 아니라 **그 안의 `for` 절**이라 값 자체가 틀렸다.
-    #   *«선언은 자기를 검증하지 않는다»* 를 이 PR 이 세 번 인용하고 그 처방 안에서 재발시켰다.
-    #   → 선언을 **실제 판정에 쓴다**(한 곳에서만 정의).
-    STMT_LOOPS = (ast.For, ast.AsyncFor, ast.While)
-    COMP_LOOPS = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
     bad: list[str] = []
     seen = 0
-
     for f in _api_py_files():
         try:
             tree = ast.parse(f.read_text(encoding="utf-8"))
         except SyntaxError:
             continue
-        # 각 노드의 **조상 루프 깊이**를 센다
-        stack: list[str] = []
-
-        def walk(node: ast.AST) -> None:
-            nonlocal seen
-            is_loop = isinstance(node, STMT_LOOPS)
-            has_comp = isinstance(node, COMP_LOOPS)
-            if is_loop or has_comp:
-                stack.append(type(node).__name__)
-            if isinstance(node, ast.Call):
-                nm = (node.func.attr if isinstance(node.func, ast.Attribute)
-                      else getattr(node.func, "id", None))
-                if nm in TARGETS:
-                    seen += 1
-                    if stack:
-                        bad.append(f"{f.name}:{node.lineno} {nm} (루프 {'/'.join(stack)})")
-            for c in ast.iter_child_nodes(node):
-                walk(c)
-            if is_loop or has_comp:
-                stack.pop()
-
-        walk(tree)
+        b, n = _loop_call_hits(tree, f.name)
+        bad += b
+        seen += n
 
     # ★공허진리 방지 — 호출부를 하나도 못 찾으면 이 락은 무엇이든 통과한다
     assert seen >= 5, f"유료 리졸버 호출부 {seen}곳 — 조회기가 죽었다"
@@ -658,12 +711,28 @@ def test_debt_loop_lock_does_not_follow_wrappers() -> None:
     """래퍼 경유 호출도 루프 금지 락이 잡는가 — **지금은 못 잡는다**."""
     import ast as _ast
 
-    src = _RESOLVER.read_text(encoding="utf-8")
-    tree = _ast.parse(src)
-    # 이 파일 안에서 «리졸버를 부르는 함수»를 1홉 따라가는 로직이 락에 있는가
-    lock = (_API / "tests" / "test_sale_price_resolver_ssot.py").read_text(encoding="utf-8")
-    assert "호출 그래프" in lock and "1홉" in lock.split("부채")[0], "1홉 추적이 구현됐다면 이 부채는 닫힌다"
-    assert tree is not None
+    # ★**산문이 아니라 행위로** 잰다 — 래퍼를 거쳐 루프 안에서 부르는 모듈을 지어
+    #   **진짜 락과 같은 스캐너**에 먹인다. 지금은 못 잡으므로 이 단언이 실패한다(xfail).
+    #   1홉 추적이 `_loop_call_hits` 에 들어오면 잡히고 → XPASS → strict 로 빨개져
+    #   **부채가 저절로 회수된다**(라벨을 손으로 지울 필요가 없다).
+    wrapper_src = (
+        "async def _one(addr):\n"
+        "    return await _resolve_sale_price_per_pyeong(address=addr)\n"
+        "async def batch(addrs):\n"
+        "    out = []\n"
+        "    for a in addrs:\n"
+        "        out.append(await _one(a))\n"   # ← 래퍼 경유 = 요청당 N회 과금
+        "    return out\n"
+    )
+    bad, seen = _loop_call_hits(_ast.parse(wrapper_src), "wrapper")
+    # 음성 대조군 — 스캐너가 살아 있는가(직접 호출은 지금도 잡는다)
+    direct_bad, _ = _loop_call_hits(_ast.parse(
+        "async def f(xs):\n"
+        "    for x in xs:\n"
+        "        await _resolve_sale_price_per_pyeong(address=x)\n"), "direct")
+    assert direct_bad, "스캐너가 죽었다 — 직접 호출조차 못 잡는다(부채 판정 불가)"
+    assert seen >= 1, f"래퍼 픽스처에서 호출부를 못 봤다(픽스처 오류): {seen}"
+    assert bad, "래퍼 경유 루프 호출이 잡힌다 — 1홉 추적이 구현됐다면 이 부채는 닫힌다"
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -326,6 +326,31 @@ def test_each_exemption_keeps_the_guard_its_reason_promises() -> None:
             assert not missing, (
                 f"{key} 의 면제 사유가 약속한 검사가 사라졌다: {missing} — "
                 f"실제 조건: {test_src}")
+
+            # ★★**토큰이 있다 ≠ 그것이 소비되는 값을 지킨다.**
+            #   `pnu[:5].isdigit()` → `pnu.strip()[:5].isdigit()` 로 바꾸면 토큰은 그대로인데
+            #   **판정한 문자열과 소비하는 문자열이 갈린다** — ` 4137…` 이 통과해
+            #   `sigungu5 = pnu[:5] = " 4137"` 이 **MOLIT API 로 나간다**(유료·쿼터 경로).
+            #   ★이 저장소가 §구멍D 로 이름 붙여 둔 결함 클래스인데, 그 테스트는
+            #     `is_valid_pnu`/`normalize_pnu` 만 태우고 **면제된 손수 가드는 안 태운다.**
+            #   → **`.isdigit()` 이 붙은 피연산자**와 **본문이 실제로 쓰는 슬라이스**가
+            #     같은 표현식인지 `ast` 로 대조한다.
+            judged = {
+                _ast.unparse(c.func.value)
+                for c in _ast.walk(n.test)
+                if isinstance(c, _ast.Call) and isinstance(c.func, _ast.Attribute)
+                and c.func.attr in required
+            }
+            consumed = {
+                _ast.unparse(sub)
+                for sub in _ast.walk(n)
+                if isinstance(sub, _ast.Subscript) and sub not in list(_ast.walk(n.test))
+            }
+            if judged and consumed:
+                assert judged & consumed, (
+                    f"{key}: **판정한 표현식과 소비하는 표현식이 다르다** — "
+                    f"판정 {sorted(judged)} ↔ 소비 {sorted(consumed)}. "
+                    "이 갈림이 오염 문자열을 외부 API 인자로 내보낸다(§구멍D).")
             found = True
         assert found, f"면제 대상 표현식을 못 찾았다(죽은 면제 또는 조회기 사망): {key}"
 

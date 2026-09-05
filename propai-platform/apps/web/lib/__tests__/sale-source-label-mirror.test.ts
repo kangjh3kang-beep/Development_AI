@@ -51,6 +51,15 @@ function backendVocabulary(): string[] {
   return [...codeOnly.matchAll(/"([a-z_:]+)"/g)].map((x) => x[1]);
 }
 
+/** 주석·설명에 속지 않게 줄/블록 주석을 걷는다(두 배선 락이 같은 전처리를 쓴다) */
+function stripComments(raw: string): string {
+  return raw
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .split("\n")
+    .map((l) => l.replace(/\/\/.*$/, ""))
+    .join("\n");
+}
+
 describe("분양가 산정근거 라벨 미러", () => {
   it("★조회기가 살아 있다(백엔드 어휘를 실제로 집는가)", () => {
     const vocab = backendVocabulary();
@@ -106,13 +115,7 @@ describe("★배선 — 화면이 그 함수를 실제로 경유하는가", () =
    */
   it("`sale_price_source` 를 표시하는 자리는 `saleSourceLabel` 을 경유한다", () => {
     const p = path.resolve(__dirname, "../../components/pipeline/ProjectPipelinePanel.tsx");
-    const raw = fs.readFileSync(p, "utf8");
-    // 주석·문자열 설명에 속지 않게 줄 주석과 블록 주석을 걷는다
-    const code = raw
-      .replace(/\/\*[\s\S]*?\*\//g, "")
-      .split("\n")
-      .map((l) => l.replace(/\/\/.*$/, ""))
-      .join("\n");
+    const code = stripComments(fs.readFileSync(p, "utf8"));
 
     // ★공허진리 방지 — 그 분기가 실재하는가(조회기 생존)
     const branch = code.match(/key === "sale_price_source"[\s\S]{0,220}/);
@@ -124,6 +127,43 @@ describe("★배선 — 화면이 그 함수를 실제로 경유하는가", () =
     ).toContain("saleSourceLabel(");
     // 음성 대조군: 그 분기가 값을 **그대로** 돌려주지 않는다
     expect(branch![0]).not.toMatch(/return\s+value\s*;/);
+  });
+
+  /**
+   * ★★**한 층 위가 무잠금이었다** — 위 락은 `displayFieldValue` **안**이 `saleSourceLabel`
+   * 을 부르는 것을 잠근다. **화면이 `displayFieldValue` 를 거치는지**는 안 잠갔다.
+   * 5차 리뷰가 렌더 자리에서 두 변이로 실증했다(둘 다 SURVIVED · 락 전부 초록):
+   *
+   *     {displayFieldValue(key, value)} → {String(value)}
+   *     → {key === "sale_price_source" ? String(value) : displayFieldValue(key, value)}
+   *
+   * 두 번째는 헬퍼가 계속 쓰이므로 **린트·타입도 초록**이다 — 다른 게이트가 없다.
+   * ★그래서 **「포함한다」로 잠그면 안 된다**(위 변이는 `displayFieldValue(` 를 **포함한다**).
+   *   축을 뒤집어 **렌더 자리에서 파생**한다: 값 격자의 보간 중 `value` 를 나르는 것은
+   *   **오직 `displayFieldValue(key, value)` 뿐**이어야 한다. 우회 경로는 전부 식을 더한다.
+   */
+  it("★값 격자에서 `value` 가 화면에 닿는 경로는 `displayFieldValue` **하나뿐**이다", () => {
+    const p = path.resolve(__dirname, "../../components/pipeline/ProjectPipelinePanel.tsx");
+    const code = stripComments(fs.readFileSync(p, "utf8"));
+
+    // 격자 블록을 **렌더 자리에서** 잘라낸다(손 목록이 아니다)
+    const start = code.indexOf("Object.entries(stage.data)");
+    expect(start, "값 격자를 못 찾았다 — 조회기 사망").toBeGreaterThan(-1);
+    const grid = code.slice(start, start + 1600);
+
+    // 그 블록의 JSX 보간 중 식별자 `value` 를 나르는 것만 모은다(파생형)
+    const carriers = (grid.match(/\{[^{}]*\bvalue\b[^{}]*\}/g) || [])
+      .map((m) => m.slice(1, -1).replace(/\s+/g, " ").trim())
+      // 화살표 인자 선언(`([key, value]) =>`)과 필터 술어는 렌더가 아니다
+      .filter((e) => !e.includes("=>"));
+    expect(carriers.length, "`value` 를 나르는 보간이 0개 — 조회기 사망").toBeGreaterThan(0);
+
+    const bypass = carriers.filter((e) => e !== "displayFieldValue(key, value)");
+    expect(
+      bypass,
+      `값이 **\`displayFieldValue\` 를 우회해** 화면에 닿는다: ${JSON.stringify(bypass)} — ` +
+        "이 경로로 `single_source:regional` 같은 raw 토큰이 그대로 노출된다",
+    ).toEqual([]);
   });
 
   it("★프론트 맵에 백엔드가 안 내는 값이 남아 있지 않다(역방향)", () => {
