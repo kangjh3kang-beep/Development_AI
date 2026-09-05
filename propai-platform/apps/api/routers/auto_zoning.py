@@ -1950,10 +1950,31 @@ async def integrated_analysis(req: IntegratedAnalysisRequest):
                     "_request_parcel_count": len(enriched),
                 }
                 _audit = premise_audit.audit(_audit_ctx)
+                # ★★**이 경로에서 원리적으로 아무것도 못 가르는 관계**를 함께 싣는다.
+                #   없으면 화면이 `checked/registered` 만 보고 «전 관계가 실제로 판별했다» 로 읽는데,
+                #   그것이 이 고지가 존재하는 유일한 근거(«침묵과 무결을 가른다»)의 **정확한 반전**이다.
+                #
+                # ★**simulator 의 목록을 복사하지 않는다.** 그쪽은 `path_invariance_zone` 을 공허로
+                #   적지만, **이 경로에서는 그 관계가 거의 유일하게 살아 있는 신호**다(위임이 통합
+                #   집계로 수렴하지 못하고 폴백했을 때 두 경로가 갈린다). 복사하면 **살아 있는
+                #   감시기를 「공허」로 오표기**한다 — 같은 낱말, 반대 방향.
+                #
+                # ★**손으로 나열하지 않는다** — 「사람이 센 목록이 곧 상한」(§A-4).
+                #   조건에서 **파생**한다:
+                #   · count_conservation_parcels — 위임이 `parcels=enriched` 를 그대로 받아
+                #     want/got 양변이 **같은 리스트**라 원리적으로 어긋날 수 없다.
+                #   · area_source_agreement — 라우터가 `land_area_sqm=total_area` 를 **항상** 넘겨
+                #     위임의 면적 재산정 분기가 스킵된다(양변이 같은 값).
+                #   · path_invariance_zone — **조건부**. 위임이 통합 우세를 그대로 채택했을 때
+                #     (`zone_basis == "integrated_dominant"`)만 공허하고, 폴백하면 **살아난다.**
+                _vacuous = ["count_conservation_parcels", "area_source_agreement"]
+                if isinstance(top3, dict) and top3.get("zone_basis") == "integrated_dominant":
+                    _vacuous.append("path_invariance_zone")
                 scenario["premise_audit"] = {
                     "checked": _audit["checked"],
                     "registered": _audit["registered"],
                     "violations": _audit["violations"],
+                    "structurally_vacuous": _vacuous,
                 }
                 if _audit["violations"]:
                     for _v in _audit["violations"]:
@@ -1969,6 +1990,18 @@ async def integrated_analysis(req: IntegratedAnalysisRequest):
             scenario["top3"] = top3
         except Exception as e:  # noqa: BLE001 — 위임 실패는 시나리오 degrade(정직), 통합집계는 유지.
             logger.warning("통합 시나리오 위임 실패: %s", str(e)[:160])
+            # ★★**감사가 가장 필요한 순간에 화면이 침묵하지 않게** — 실패 경로에도 같은 키를 남긴다.
+            #   종전엔 이 갈래가 `premise_audit` **키를 아예 안 만들었다.** 프론트 렌더러는
+            #   `undefined` 를 `"clean"`(무렌더)으로 분류하므로, 위임이 터진 부지는
+            #   **「전제 감사가 깨끗하다」와 구별 불가**했다.
+            #   ★스키마는 형제(`scenario_simulator.py` 의 감사 실패 갈래)와 **같은 모양**으로 둔다 —
+            #     성공/실패가 같은 키에 다른 스키마면 소비처가 `["violations"]` 에서 KeyError 를 맞는다.
+            #   ★`checked=0` 이 「위반 없음」을 **공허**로 만든다는 것이 이 계약의 핵심이다
+            #     (`PremiseAuditNotice` 가 그 축으로 «침묵과 무결»을 가른다).
+            scenario["premise_audit"] = {
+                "violations": [], "checked": 0, "registered": None,
+                "ok": None, "reason": "audit_failed", "detail": str(e)[:200],
+            }
             scenario["status"] = "tentative" if scenario.get("status") == "computed" else scenario.get("status")
             scenario["disclosure"] = (scenario.get("disclosure") or "") + \
                 " 시나리오 산정 위임에 실패해 통합 한도만 제공합니다(개발규모 미산정)."
