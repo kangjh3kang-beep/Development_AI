@@ -14,6 +14,7 @@ import { AlertTriangle, Building2, Construction, HelpCircle, House, Link2, Pin, 
 import { apiClient } from "@/lib/api-client";
 import { UseLlmToggle } from "@/components/common/UseLlmToggle";
 import { formatDominantZone } from "@/lib/zoning/dominant-zone";
+import { PremiseAuditNotice, type PremiseAudit } from "@/components/ui/PremiseAuditNotice";
 
 function hashStr(s: string): string {
   let h = 0;
@@ -117,6 +118,15 @@ type SimResult = {
   alternatives?: string[];
   developable_via_precondition?: boolean;
   honest_disclosure?: string;
+  /**
+   * 전제 감사(변형관계 레지스트리) 결과 — `#963` 이 이 경로에 배선했다.
+   *
+   * ★**판정을 바꾸지 않는다.** 위반은 말하기만 한다(설계가 자동 교정을 기각했다 —
+   *   *"어느 쪽이 옳은지 단정하는 것이고, 그 단정이 틀리면 **더 조용한 결함**이 된다"*).
+   * ★`checked === 0` 이면 「위반 없음」이 **공허**하다 — 감사 모듈이 명문으로 요구한 축이라
+   *   화면이 그것을 **구분해서** 말해야 한다. `PremiseAuditNotice` 가 그 판정을 갖는다.
+   */
+  premise_audit?: PremiseAudit | null;
   magdo_summary?: MagdoSummary | null;
   ai?: { generated?: boolean; summary?: string; best_scheme?: string; why?: string; alternatives?: string[]; cautions?: string[] } | null;
   pyeong_classification?: {
@@ -235,6 +245,12 @@ export function DevelopmentScenarioCard({
 
       {result && site && (
         <div className="mt-4 space-y-4">
+          {/* ★전제 감사 고지 — 판정 **위**에 둔다. 아래 시나리오 표를 읽기 전에
+              「이 판정을 교차검증했는가」를 먼저 알아야 하기 때문이다.
+              ★칩 줄에 섞지 않는다 — 경고를 칩 자리에 넣으면 모순되는 칩이 나란히 선다
+              (같은 파일의 `zone_use_constraint` 주석이 경고하는 그 형태). */}
+          <PremiseAuditNotice audit={result.premise_audit} />
+
           {/* 부지 요약 + 인접성 */}
           <div className="flex flex-wrap items-center gap-2 text-xs">
             {/* ★용도지역 칩 — **보류를 값처럼 말하지 않는다.** 공용 헬퍼를 경유해

@@ -49,7 +49,12 @@ import {
   type SampleBasis,
   type SampleBasisRaw,
 } from "@/lib/market/comparable-sample";
-import { bindSatongLabel, planSatongLabels, satongLabelBudget } from "@/lib/satong-map-labels";
+import {
+  bindSatongLabel,
+  composeMarketPriceTag,
+  planSatongLabels,
+  satongLabelBudget,
+} from "@/lib/satong-map-labels";
 import {
   summarizeMarketViewport,
   marketOffscreenNote,
@@ -259,6 +264,11 @@ export type SatongMarketGroup = {
   min_price_10k?: number;
   max_price_10k?: number;
   excluded_outliers?: number;
+  /** ★표시용 평당가(만원/평) — **서버가 정본 함수로 계산해 싣는다**(유효숫자 3자리).
+   *  종전엔 프론트가 `avg_price_10k / (avg_area_m2/3.305785)` 를 인라인 계산했는데,
+   *  신고내역(#930)의 정본과 갈릴 수 있었고 반올림 규약이 없어 허위 정밀도를 찍었다.
+   *  면적 결측·가격 결측이면 **`null`**(0 이 아니다 — 0 은 "평당 0원"으로 읽힌다). */
+  price_per_pyeong_10k?: number | null;
   /** ★P2 — 토지 매매(getRTMSDataSvcLandTrade) 전용 지목·용도지역. 종전엔 파싱만 되고
    *  그룹핑 단계에서 폐기됐다(nearby_map_service._group_trade). 없으면 undefined(무날조). */
   build_year?: number;
@@ -2814,16 +2824,19 @@ export function SatongMultiMap({
         // ★R1 #2: 팝업과 동일 공용 포맷터 won() 재사용 — 억미만 "0.4억" 어색 표기·라벨/팝업 불일치 제거.
         // 총액/평당 토글(실거래 unit-price 컨트롤 — jootek '총액/평당' 패리티): 평당가는
         // avg_price_10k(만원)/평(avg_area_m2/3.305785). 면적 결측 시 총액 폴백(정직).
-        const perPyeong =
-          pricePerPyeongOn && item.avg_price_10k && item.avg_area_m2 && item.avg_area_m2 > 0
-            ? Math.round(item.avg_price_10k / (item.avg_area_m2 / 3.305785))
-            : null;
-        const priceTag =
-          kind === "trade" && item.avg_price_10k
-            ? perPyeong
-              ? ` ${perPyeong.toLocaleString()}만/평`
-              : ` ${won(item.avg_price_10k)}${pricePerPyeongOn ? "·총액" : ""}` // 평당 불가(면적결측) 혼재 명시(R1 #4)
-            : "";
+        // ★총액·평당 **병기**(사용자 요청 2026-09-04). 종전엔 either/or 라 한쪽을 보려면
+        //   다른 쪽을 포기해야 했다.
+        //   ★평당가는 **서버가 준 값**을 쓴다 — 여기서 나눗셈하지 않는다. 산식이 세 곳에
+        //     흩어져 있었고(정본 realtx `per_pyeong_10k` · nearby_map 집계 내부 · 이 인라인),
+        //     그중 이 자리만 반올림 규약이 없어 허위 정밀도(4자리)를 찍고 있었다.
+        //   ★면적 결측이면 서버가 `null` 을 준다 → 평당을 **생략**한다(0 을 찍지 않는다).
+        // `unit-price` 컨트롤은 이제 **어느 쪽을 앞에 둘지**를 정한다(둘 다 항상 표시).
+        const priceTag = composeMarketPriceTag({
+          kind,
+          totalText: item.avg_price_10k ? won(item.avg_price_10k) : null,
+          perPyeong10k: item.price_per_pyeong_10k,
+          pyeongFirst: pricePerPyeongOn,
+        });
         bindSatongLabel(marker, `${item.name || "실거래"}${priceTag}`, { permanent: ordinal < typeLabelLimit, offsetY: radius });
         bounds.extend([item.lat, item.lon]);
       });
