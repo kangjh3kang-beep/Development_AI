@@ -79,6 +79,39 @@ describe("④ 공사비 배선 — 단위·폴백·정본", () => {
   });
 
   /**
+   * ★★계획 §5-4 — **배선 락.** 위 넷은 전부 `buildConstructionParams` 를 **직접** 태운다.
+   *   그래서 **스토어가 그 함수를 아예 안 불러도 넷 다 초록**이다 — 이 저장소가 이름 붙인
+   *   *«함수 안에만 변이를 넣으면 5/5 CAUGHT 인데 배선은 무잠금»* 그대로다.
+   *   그리고 이 PR 이 고치는 결함 자체가 **«백엔드는 받는데 화면이 안 보낸다»**였다 —
+   *   **같은 형태를 내 락에서 재발시키지 않는다.**
+   * ★판정은 「이름이 있다」가 아니라 **「호출 결과가 요청 본문에 실린다」**여야 한다.
+   */
+  it("★스토어가 사용자 공사비 입력을 **요청 body 의 params 로 실제로 싣는다**", () => {
+    const src = fs.readFileSync(path.join(WEB, "store/use-feasibility-v2-store.ts"), "utf8");
+    const code = src.split("\n").map((l) => l.replace(/\/\/.*$/, "")).join("\n")
+      .replace(/\/\*[\s\S]*?\*\//g, "");
+
+    // ① 호출이 실재한다
+    expect(code, "스토어가 buildConstructionParams 를 호출하지 않는다 — 입력칸이 무의미해진다")
+      .toMatch(/buildConstructionParams\s*\(/);
+    // ② 그 **결과가 params 에 전개**된다(이름만 있고 버려지면 무의미)
+    const call = code.match(/const\s+(\w+)\s*=\s*buildConstructionParams\s*\(/);
+    expect(call, "호출 결과를 변수에 담지 않는다").toBeTruthy();
+    const varName = call![1];
+    const paramsBlock = code.slice(code.indexOf("const params = {"), code.indexOf("apiClient.postV2"));
+    expect(paramsBlock, `params 조립에 ${varName} 가 전개되지 않는다 — 결과가 버려진다`)
+      .toContain(`...${varName}`);
+    // ③ 그 params 가 **요청 body** 에 실린다
+    const body = code.slice(code.indexOf("apiClient.postV2"), code.indexOf("apiClient.postV2") + 400);
+    expect(body, "조립한 params 가 요청 body 에 안 실린다").toMatch(/body:\s*\{[^}]*params/);
+    // ★공허진리 방지 — 다섯 축이 전부 스토어 입력에서 온다
+    for (const k of ["floors_above", "floors_below", "structure_type",
+                     "unit_cost_per_pyeong", "construction_cost_override_won"]) {
+      expect(code, `스토어가 ${k} 를 리졸버에 넘기지 않는다`).toContain(k);
+    }
+  });
+
+  /**
    * ★계획 §5-5 — 구조유형 선택지가 **백엔드 정본의 부분집합**이어야 한다.
    * 없는 표기를 보내면 백엔드가 **조용히 RC(1.0)로 떨어진다**(실측: 경고 0).
    */
