@@ -1,22 +1,31 @@
-"""심의 CI 가 **필수로 등록 가능한 구조**인지 잠근다.
+"""심의 CI 가 **필수로 등록 가능한 구조**인지, 그리고 **등록이 살아 있는지** 잠근다.
 
-## 왜 (실측 2026-09-04)
+## 왜 (실측 2026-09-04 → 갱신 2026-09-05)
 
-브랜치보호 `required_status_checks` 는 **4종**뿐이고 `Deliberation Engine (pytest)` 는 **없다**.
-즉 그 검사가 **빨간 채로도 머지가 막히지 않는다.**
+그냥 required 에 넣을 수 없었다 — 워크플로 레벨 `pull_request: paths` 스킵과 required 가
+만나면 **문서 전용 PR 이 `Expected` 영구대기로 차단**된다(`ci.yml` 이 `#423` 에서 겪고 남긴
+기록). 그래서 **먼저 구조를 바꾸고**(`changes` 잡 + 잡 레벨 `if`) 그 다음에 등록했다.
 
-그런데 **그냥 required 에 넣을 수 없다** — 워크플로 레벨 `pull_request: paths` 스킵과
-required 가 만나면 **문서 전용 PR 이 `Expected` 영구대기로 차단**된다(`ci.yml` 이 `#423` 에서
-겪고 남긴 기록). 그래서 **먼저 구조를 바꾸고**(`changes` 잡 + 잡 레벨 `if`) 그 다음에 등록한다.
+★**등록은 2026-09-05 에 완료됐다**(`PATCH` · 기존 4종 동봉 · 소실 0). 그리고 같은 날
+`#986`·`#990` 이 이 검사가 **`skipping` 인 채로** 머지돼, *"GitHub 이 잡레벨 skip 을
+required 충족으로 계수한다"* 는 전제가 **이 저장소에서 처음 실측**됐다.
 
-★**이 파일은 그 「먼저」만 잠근다.** 등록 자체는 저장소 설정이라 코드로 못 잠근다 —
-그 부채를 아래 `xfail` 로 **초록 안에 보이게** 남긴다(커밋 메시지에만 적으면 안 드러난다).
+★**휘발성이라 값을 적지 않는다** — 현재 목록은 재서 확인한다:
 
-## ★근거의 출처
+    gh api repos/kangjh3kang-beep/Development_AI/branches/main/protection \
+      --jq '.required_status_checks.contexts[]'
 
-`#423 path-aware CI` 가 주 CI 에 같은 전환을 했고, 그때 심의는 **self-trigger 만** 받고
-이 전환에서 빠졌다. 같은 기록에 **실해 증거**도 있다 —
-*"타 세션에서 `#425` 가 CI FAIL 채로 머지된 실사고 발생 — 보호 있었으면 구조적 불가"*.
+## ★이 파일이 겪은 결함 — 부채 표지가 **자기 상수**였다
+
+이 자리에는 `xfail(strict=True)` + `registered = False` 가 있었고, 계획서는
+*"등록되면 XPASS 로 뒤집혀 부채 해소를 알린다"* 고 선언했다. **상수는 현실을 보지 않는다** —
+등록이 끝난 뒤에도 XFAIL 인 채 *"아직 없다"* 는 **거짓을 초록 안에서** 말했다.
+
+★★**그런데 선언대로 작동했다면 더 나빴다.** 이 파일은 필수 체크 `Backend (pytest)` 가
+태우는 층이라, XPASS(=실패)가 되는 순간 **저장소 전역이 빨개지고 그 xfail 을 지우는 PR
+자신이 막히는 교착**이 난다. → **부채 표지를 「필수 체크가 태우는 층」에 두지 마라.**
+
+그래서 지금은 **상수가 아니라 실제 조회**로 판정하고, **못 재면 판정을 거부**한다(`skip`).
 """
 
 from __future__ import annotations
@@ -99,23 +108,73 @@ class Test필수등록가능한구조다:
         assert push.get("paths"), "push 의 paths 까지 지우면 main 에서 매번 돈다"
 
 
-@pytest.mark.xfail(
-    reason=(
-        "★부채 — `Deliberation Engine (pytest)` 가 브랜치보호 required_status_checks 에 "
-        "**아직 없다**. 그 등록은 저장소 설정 변경이라 코드로 잠글 수 없다. "
-        "이 구조 전환이 그 등록의 **전제**이고, 등록 전까지 이 검사는 머지를 막지 못한다. "
-        "`#423` 도 같은 자리에서 사용자 실행 대기로 남겼고 그 뒤 필수 4종이 등록됐다 — "
-        "작동한 전례가 있는 경로다. 등록되면 이 xfail 이 XPASS 로 뒤집혀 부채 해소를 알린다.",
-    ),
-    strict=True,
-)
-def test_심의검사가_필수로_등록돼_있다():
-    """★**부채를 초록 안에 보이게** 남긴다 — 커밋 메시지에만 적으면 드러나지 않는다.
+def _live_required_contexts() -> list[str] | None:
+    """브랜치보호의 `required_status_checks.contexts` 를 **실측**한다.
 
-    등록되면 이 테스트가 XPASS 가 되어 `strict=True` 로 **실패**한다 →
-    다음 사람이 이 `xfail` 을 지우면 된다(부채가 조용히 남지 않는다).
+    ★**못 재면 `None` 을 돌려준다 — 상수로 대체하지 않는다.**
+    이 자리에 있던 `registered = False` 가 정확히 그 실수였다: 등록이 끝난 뒤에도
+    상수는 뒤집히지 않아 **초록 안에서 «아직 없다»는 거짓**을 말했다(2026-09-05 실측).
     """
-    # 네트워크·토큰 없이 판정할 수 없으므로 **현재 상태를 사실대로** 적는다.
-    # 2026-09-04 실측: gh api .../branches/main/protection 의 contexts 4종에 없음.
-    registered = False
-    assert registered, "브랜치보호에 등록되면 이 줄을 지우고 xfail 도 지운다"
+    # ★변이 기록(2026-09-05): 이 함수를 «항상 None» 으로 바꾸면 변이가 **SURVIVED** 한다.
+    #   그것은 구멍이 아니라 **설계**다 — 「판정 불가」는 실패가 아니기 때문이다.
+    #   그래서 오프라인에서도 발화하는 `test_워크플로_잡이름이_등록된_컨텍스트와_같다` 를
+    #   **따로** 둔다(그 락은 같은 변이에서 CAUGHT 다).
+    import json
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            [
+                "gh", "api",
+                "repos/kangjh3kang-beep/Development_AI/branches/main/protection",
+                "--jq", ".required_status_checks.contexts",
+            ],
+            capture_output=True, text=True, timeout=20, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0 or not out.stdout.strip():
+        return None
+    try:
+        parsed = json.loads(out.stdout)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, list) else None
+
+
+def test_심의검사가_필수로_등록돼_있다():
+    """★이 API 는 **치환**이다 — 기존 컨텍스트를 함께 보내지 않는 `PATCH` 한 번이면
+    이 보호가 **조용히 사라진다.** 그 사건을 잡는 것이 이 락의 존재 이유다.
+
+    ★**`xfail(strict=True)` 를 쓰지 않는다.** 이 파일은 필수 체크 `Backend (pytest)` 가
+    태우는 층이라, XPASS 를 실패로 보고하면 등록되는 순간 **저장소 전역이 빨개지고
+    그 xfail 을 지우는 PR 자신이 막히는 교착**이 난다(볼트
+    `2026-09-04_인계용_명령은_아무도_실행해본_적이_없다` §2).
+    """
+    contexts = _live_required_contexts()
+    if contexts is None:
+        pytest.skip(
+            "★판정 불가 — 브랜치보호를 조회하지 못했다(gh 미설치·미인증·네트워크 없음). "
+            "★이 자리를 상수로 메우지 마라: 그러면 낡는 순간 초록 안에서 거짓을 말한다."
+        )
+    assert REQUIRED_JOB_NAME in contexts, (
+        f"필수 체크에서 {REQUIRED_JOB_NAME!r} 가 사라졌다 — 이 API 는 치환이라 "
+        f"기존 컨텍스트를 빠뜨린 PATCH 한 번이면 이렇게 된다. 현재: {contexts!r}"
+    )
+
+
+def test_워크플로_잡이름이_등록된_컨텍스트와_같다():
+    """★잡 이름을 바꾸면 그 컨텍스트가 **영원히 `Expected`** 로 남아 **큐 전체가 막힌다.**
+
+    ★기대값을 워크플로에서 파생시키지 **않는다** — 그러면 자기참조라 이름을 바꿔도 통과한다.
+    외부 시스템(보호규칙)의 문자열을 **독립 리터럴**로 못 박고, 워크플로가 그것을
+    **생산하는지**를 본다.
+    """
+    jobs = _load(_WF)["jobs"]
+    names = [j.get("name") for j in jobs.values()]
+    assert any(n for n in names if n), "잡 이름이 하나도 없다 — 조회기가 죽었다"  # ★공허 방지
+    assert REQUIRED_JOB_NAME in names, (
+        f"워크플로가 {REQUIRED_JOB_NAME!r} 라는 이름의 잡을 만들지 않는다. "
+        f"브랜치보호는 그 이름으로 체크를 기다리므로 **모든 PR 이 Expected 로 막힌다**. "
+        f"현재 잡 이름: {names!r}"
+    )
