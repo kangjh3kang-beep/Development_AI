@@ -417,19 +417,22 @@ class HealActionOut(BaseModel):
     created_at: datetime | None = None
     #: 실제로 무언가 했는가.
     #:
-    #: ★★**`None` 을 「옛 행」으로 읽지 마라 — 그것이 거짓이다**(3차 적대 리뷰 실측
-    #:   2026-09-05). 지금 이 필드를 **싣는 생산자는 `cache_warm` 하나뿐**이다.
-    #:   라이브 `heal_action` **524행 중 `executed` 키 보유 0** 이었고, 앞으로도
-    #:   `threshold_autotune`(441행·84.2%)·`threshold_relax`(47)·`circuit_observe`(30) 은
-    #:   **`null` 로 온다.** 즉 `null` 은 「모름」이며 그 안에는
-    #:   **실제로 동작한 액션도 들어 있다.**
-    #: ★두 번째 생산자가 있다 — `feature_flags._emit_l1_event` 가 같은 `event_type` 을
-    #:   쓰면서 payload 빌더를 **복제**한다(`effector_firing.py:65-67` 이 *"한쪽만 보면
-    #:   절반을 놓친다"* 고 이미 경고한다). **부채**: 빌더를 공용으로 추출하고 형제 전부에
-    #:   배선해야 `null` 이 진짜 「모름」으로 좁혀진다.
+    #: ★**`None` = 「이 필드가 없던 시기의 행」이다**(2026-09-05 `#996` 이후). 그 전에는
+    #:   `cache_warm` 만 이 필드를 실었고, 나머지 84.2%(라이브 441/524행)가 `null` 이라
+    #:   ***실제로 동작한 액션이 `null` 이고 무동작만 `false`*** 인 뒤집힌 상태였다.
+    #:   `#996` 이 payload 빌더를 공용화하고 **생산자 2곳 · 호출부 8곳 전부**에 배선해
+    #:   그 뒤집힘을 없앴다.
+    #: ★**휘발성이라 비율을 값으로 적지 않는다** — 재서 확인한다:
+    #:     SELECT payload->>'action_type', count(*),
+    #:            sum(CASE WHEN payload ? 'executed' THEN 1 ELSE 0 END)
+    #:     FROM platform_events WHERE event_type='heal_action' GROUP BY 1;
+    #: ★**과거 행은 고치지 않는다** — 그러므로 **기존 `null` 비율 감소로 배포를 확증하지 마라.**
+    #:   확증 축은 **새 행**이 `executed` 를 싣는가다.
     executed: bool | None = None
-    #: 무동작일 때 그 사유(예: `no_dispatch_wired`). 진단 불가는 그 자체로 장애다.
-    #: ★**부채**: `apps/web` 이 이 필드를 렌더하지 않는다 — 화면에서는 아직 구별되지 않는다.
+    #: 무동작(`executed=False`)일 때 그 사유(예: `no_dispatch_wired`). 진단 불가는 그 자체로 장애다.
+    #: ★**`executed=True` 인 행에는 붙지 않는다**(배타) — 소비자가 이 필드의 존재를
+    #:   「무동작」 술어로 읽어도 오분류되지 않게 한다. 그 배타성은 테스트로 잠근다.
+    #: ★**부채**: `apps/web` 이 아직 이 두 필드를 렌더하지 않는다 — 화면에서는 구별되지 않는다.
     no_op_reason: str | None = None
 
 
