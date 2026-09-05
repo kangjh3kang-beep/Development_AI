@@ -13,6 +13,8 @@
  */
 
 import { render, screen } from "@testing-library/react";
+
+import { ABSENT_SHORT } from "@/lib/withheld/absent-reasons";
 import { describe, expect, it } from "vitest";
 
 import { L3EnhancedCards } from "@/app/[locale]/(dashboard)/projects/[id]/site-analysis/page";
@@ -84,8 +86,12 @@ describe("조건부 완화 후보 표시", () => {
         undecidable: [{ article: "제49조", why: "설계가 정해져야 판정 가능" }],
       },
     });
-    const note = screen.getByText(/판정 보류/);
-    expect(note.textContent).toContain("제49조");
+    // ★2026-09-05 — 사유를 **항목마다** 내면서 건수(p)와 조문(li)이 형제가 됐다.
+    //   계약("건수와 조문이 함께 보인다")은 그대로이므로 **블록 전체**를 본다.
+    //   ★계약이 그대로인데 리팩토링이 락을 깨면 깨진 쪽은 락이다 — 락을 고친다.
+    const block = screen.getByText(/판정 보류/).closest("div")!;
+    expect(block.textContent).toContain("제49조");
+    expect(block.textContent).toContain("판정 보류 1건");
   });
 
   it("★대조군(음성) — 조건부가 없으면 블록이 뜨지 않는다(가드 위양성 방지)", () => {
@@ -454,4 +460,114 @@ describe("계획 한도 미확보 고지", () => {
     renderWith({ ...BASE_EFF, plan_limit_unknown: PLU });
     expect(screen.getAllByTestId("plan-limit-unknown").length).toBe(1);
   });
+});
+
+/**
+ * ★★판정 보류 **사유가 항목마다 다르다** — 한 문장으로 덮으면 오역이 된다.
+ *
+ * 【실측 2026-09-05 · origin/main c5e7fc718】
+ * `ordinance_conditional.py` 의 `undecidable[]` 은 **세 갈래**의 `why` 를 낸다:
+ *   :198 강화 조항 — 상향 여지가 아님
+ *   :203 건축물 용도·연혁 조건 — 설계가 정해져야 판정 가능
+ *   :246 조문 나열 항목을 읽지 못함  (+ `decision_absent: SOURCE_UNAVAILABLE`)
+ * 그런데 화면은 `.why` 를 **렌더 0건**(대조군: 같은 파일 `.article` 3건 · `undecidable` 5건)
+ * 이었고, :203 의 축어 환언 한 문장을 **하드코딩**해 세 갈래를 전부 덮었다.
+ * ⇒ :246(**우리 자료가 깨졌다**)까지 "설계가 정해져야 판정됩니다"로 번역돼,
+ *    사용자는 설계를 아무리 확정해도 판정이 안 나오는 상태에서 공이 자기 쪽에 있다고 읽었다.
+ *    #983(「용도지역을 모른다」→「요건 미해당」)과 **같은 클래스**다.
+ *
+ * 【두 모집단으로 잠근다】한쪽만 걸면 «전부 지움»도 통과한다(§D19 양방향).
+ *   · SOURCE_UNAVAILABLE 갈래에 「설계」가 **없어야** 하고
+ *   · 설계 갈래에는 그 문구가 **있어야** 한다 — **같은 실행에서** 대조한다.
+ */
+describe("판정 보류 사유는 항목마다 다르다", () => {
+  const SRC_UNAVAIL = {
+    kind: "far",
+    article: "제52조",
+    why: "조문 나열 항목을 읽지 못함 — 어느 지구·구역인지 가릴 수 없어 판정 보류",
+    decision_absent: "source_unavailable",
+  };
+  const NEEDS_DESIGN = {
+    kind: "bcr",
+    article: "제53조",
+    why: "건축물 용도·연혁 조건 — 설계가 정해져야 판정 가능",
+  };
+
+  function renderUndecidable(undecidable: Record<string, unknown>[]) {
+    renderWith({
+      ...BASE_EFF,
+      ordinance_conditional: { applied: false, matched: [], undecidable },
+    });
+  }
+
+  it("★★두 갈래가 **서로 다른 문구**를 낸다 — 두 모집단을 같은 실행에서 대조", () => {
+    renderUndecidable([SRC_UNAVAIL, NEEDS_DESIGN]);
+
+    // 공허 진리 가드 — 단언 **앞에** 대상 존재를 먼저 확정한다.
+    expect(screen.getByText(/판정 보류 2건/)).toBeTruthy();
+
+    const srcLine = screen.getByText(/조문 나열 항목을 읽지 못함/).closest("li");
+    const designLine = screen.getByText(/설계가 정해져야 판정 가능/).closest("li");
+    expect(srcLine).toBeTruthy();
+    expect(designLine).toBeTruthy();
+    // ★핵심 — 두 줄의 텍스트가 실제로 다르다(하드코딩 한 문장이면 같아진다).
+    expect(srcLine!.textContent).not.toBe(designLine!.textContent);
+  });
+
+  it("★★자료 결함 갈래를 「설계」로 번역하지 않는다 (음성 · 블록 전수)", () => {
+    renderUndecidable([SRC_UNAVAIL]);
+    // 공허 진리 가드 — 단언 앞에 대상 존재를 먼저 확정한다.
+    expect(screen.getByText(/조문 나열 항목을 읽지 못함/)).toBeTruthy();
+    // ★★음성은 **블록 전체**를 본다 — `li` 만 보면 머리글에 옛 하드코딩 문장을 되살려도
+    //   통과한다. 변이 실측 2026-09-05: `li` 판정판은 그 변이에 **SURVIVED** 였다.
+    //   이 모집단에는 정당한 「설계」 갈래가 없으므로 블록 전수 단언에 위양성이 없다.
+    // ★머리글을 **건수까지** 포함해 앵커한다 — `/판정 보류/` 만 쓰면 백엔드 `why` 문구가
+    //   "…판정 보류" 로 끝나서 `li` 까지 매치한다(실측: 이 락이 그 위양성에 걸렸다).
+    //   ★가장 자주 틀리는 상대는 코드가 아니라 **자기가 방금 쓴 픽스처**다.
+    const block = screen.getByText(/판정 보류 \d+건/).closest("div")!;
+    expect(block.textContent).not.toContain("설계가 정해져야");
+  });
+
+  it("★양성 짝 — 설계 갈래는 그 문구를 그대로 낸다 (없으면 «전부 지움»이 만점)", () => {
+    renderUndecidable([NEEDS_DESIGN]);
+    expect(screen.getByText(/판정 보류 1건/)).toBeTruthy();
+    expect(screen.getByText(/설계가 정해져야 판정 가능/)).toBeTruthy();
+  });
+
+  it("★사유 **코드**도 함께 실린다 — 산문의 대체가 아니라 합성", () => {
+    renderUndecidable([SRC_UNAVAIL]);
+    const li = screen.getByText(/조문 나열 항목을 읽지 못함/).closest("li")!;
+    // ★기대값을 **지어내지 않는다** — 거울 상수에서 파생시킨다.
+    //   초판에 "자료 없음"이라고 손으로 적었다가 실제 값 "조회실패"에 걸렸다.
+    //   상수에서 파생하면 문구가 바뀌어도 이 락은 계속 옳다.
+    expect(li.textContent).toContain(ABSENT_SHORT.source_unavailable);
+    // 그리고 산문이 사라지지 않았다(대체가 아니라 합성이다).
+    expect(li.textContent).toContain("조문 나열 항목을 읽지 못함");
+  });
+
+  it("★어휘 밖 코드는 조용히 무시한다 — 그리고 산문은 남는다", () => {
+    renderUndecidable([{ ...SRC_UNAVAIL, decision_absent: "존재하지_않는_코드" }]);
+    const li = screen.getByText(/조문 나열 항목을 읽지 못함/).closest("li")!;
+    expect(li.textContent).not.toContain("존재하지_않는_코드");
+    expect(li.textContent).toContain("조문 나열 항목을 읽지 못함");
+  });
+
+  it("★대조군(음성) — undecidable 이 비면 블록이 뜨지 않는다", () => {
+    renderWith({ ...BASE_EFF, ordinance_conditional: { applied: false, matched: [], undecidable: [] } });
+    expect(screen.getByText(/최종 실효 용적률/)).toBeTruthy();   // 카드 자체는 렌더됐다
+    expect(screen.queryByText(/판정 보류/)).toBeNull();
+    // ★양성 짝 — 같은 실행에서 항목이 있으면 실제로 뜬다.
+    renderUndecidable([NEEDS_DESIGN]);
+    expect(screen.getByText(/판정 보류 1건/)).toBeTruthy();
+  });
+
+  // ★★부채 — 이 락은 **두 표본만** 태운다. 백엔드가 네 번째 `why` 갈래를 추가해도
+  //   빨개지지 않는다(갈래 목록을 파생하지 않는다). 파생형으로 올리려면 파이썬 소스에서
+  //   `undecidable` 버킷의 `why` 리터럴을 뽑아 각각을 렌더해야 한다.
+  it.todo("★부채: why 갈래를 백엔드 소스에서 파생해 전수로 태운다");
+
+  // ★★부채 — `ABSENT_SHORT.ambiguous` 도 문구가 **"판정보류"** 다. 이 블록의 머리글도
+  //   "판정 보류 N건" 이라, 그 코드가 오면 한 화면에 **뜻이 다른 「판정보류」가 둘** 뜬다.
+  //   실측(2026-09-05): 이 갈래의 생산자는 `SOURCE_UNAVAILABLE` 만 달아서 지금은 안 겹친다.
+  it.todo("★부채: ambiguous 코드가 오면 「판정보류」가 두 뜻으로 겹친다 — 축 접두 필요");
 });
