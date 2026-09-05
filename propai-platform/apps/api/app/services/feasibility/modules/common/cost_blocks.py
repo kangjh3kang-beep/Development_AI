@@ -17,6 +17,27 @@ from app.services.tax.project_charges import parse_tristate_flag
 #   return_kpi.py의 covenant LTV 임계 기본값(DEFAULT_LTV_COVENANT_THRESHOLD_PCT)도 참조한다.
 _STANDARD_PF_LTC_RATIO = 0.70
 # 소프트비 통칭 표준(토지+공사 대비). ★항목 분해는 `_OTHER_ITEM_SHARE` 가 하고 **합은 이 값**이다.
+# 소프트비 통칭 표준(토지+공사 대비). ★항목 분해는 `_OTHER_ITEM_SHARE` 가 하고 **합은 이 값**이다.
+#
+# ★★**주석 정정(2026-09-05) — 종전 주석이 거짓이었다.**
+#   종전: *«설계·감리·분양대행·금융수수료·예비비 통칭 7%»*
+#   그런데 **설계·감리·예비비는 공사비 안에 이미 있다**(`construction_cost_engine`
+#   `DEFAULT_INDIRECT_RATIOS`: design 0.04 · supervision 0.03 · contingency 0.05,
+#   전부 **직접공사비 대비**). 그리고 둘은 **가산된다**(실측: 토지+공사+금융+기타+세금 =
+#   `total_cost_won` 바이트 일치).
+#
+#   실측(M01 기본 입력): 공사비 안 설계+감리+예비비 **2,304,000,000원 = 총사업비의 6.7%**
+#                        기타경비(이 7%)          **2,010,456,000원 = 총사업비의 5.9%**
+#   ★**소프트비보다 중복 후보가 더 크다.** 즉 7% 를 «설계·감리·예비비 포함»으로 읽으면
+#     그 항목들이 **두 자리에서 계상**된다.
+#
+#   ★같은 파일 `compute_land_cost` 는 *«통합 세금 엔진이 계상하므로 여기서 제외한다
+#     (이중계상 방지)»* 라고 **같은 규율을 이미 적용하고 있었다** — 여기엔 안 됐다(§29).
+#
+# ★**이 커밋은 값을 바꾸지 않는다.** 7% 를 낮추면 **모든 프로젝트의 총사업비가 움직인다** —
+#   그 판단(어느 쪽이 정본인가 · 얼마로 할 것인가)은 도메인·사업 결정이라 **사용자에게 올린다.**
+#   여기서 고치는 것은 **거짓 주석**이다(§C-10: 다음 사람이 그 문장을 근거로 판단한다).
+#   불일치 자체는 `tests/test_soft_cost_double_count_ledger.py` 가 **초록 안에 드러낸다.**
 _STANDARD_OTHER_RATIO = 0.07
 
 
@@ -212,7 +233,7 @@ def apply_auto_estimates(
                  "estimate_basis": (
                      f"소프트비 = 직접입력 {entered:,}원 + 표준분 {est_share:,}원"
                      f"[(토지+공사) {base_cost:,.0f}원 × {_STANDARD_OTHER_RATIO:.0%}"
-                     f" × 미입력 몫 {pending:.0%}] (설계·감리·분양대행·예비비 통칭)"
+                     f" × 미입력 몫 {pending:.0%}] (분양대행·광고·금융수수료·제세공과 등 사업경비)"
                  )}
     return finance, other
 
