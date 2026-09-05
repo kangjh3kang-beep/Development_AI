@@ -131,7 +131,7 @@ def test_응답이_basis_를_실제로_싣는다_배선층():
         found.append(keys)
         # ★그 dict 안에서 basis 키의 **값**이 무엇인지 본다.
         pair = {
-            k.value: v for k, v in zip(node.keys, node.values)
+            k.value: v for k, v in zip(node.keys, node.values, strict=True)
             if isinstance(k, ast.Constant)
         }
         assert "primary_zone_basis" in pair, (

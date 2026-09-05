@@ -109,7 +109,14 @@ class IntegratedRecommender:
         if baseline_far is None or baseline_far <= 0:
             # 실효용적률 미산정 — 개발규모/수지 미산정(정직, 가짜 용적률 미생성).
             return {
-                "site": {"addresses": addrs, "parcel_count": len(parcels), "primary_zone": primary_zone},
+                # ★**degrade 경로에도 근거를 싣는다** — 오히려 여기가 더 필요하다.
+                #   실효용적률을 못 낸 이유가 «용도지역을 못 골랐다»(`basis="none"`)일 수 있는데,
+                #   그것을 안 실으면 조사자가 **어느 층에서 끊겼는지** 알 수 없다.
+                #   ★내 락(ast)이 이 자리를 잡았다 — 성공 경로만 고치고 **형제를 놓쳤다**.
+                "site": {
+                    "addresses": addrs, "parcel_count": len(parcels),
+                    "primary_zone": primary_zone, "primary_zone_basis": primary_zone_basis,
+                },
                 "gate": gate,
                 "integrated_area_sqm": round(integrated_area, 1),
                 "baseline_far_pct": None,
