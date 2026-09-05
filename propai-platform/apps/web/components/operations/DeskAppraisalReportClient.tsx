@@ -116,12 +116,15 @@ export function DeskAppraisalReportClient({ locale }: { locale: Locale }) {
   // AI 해석(온디맨드, avm 인터프리터)
   const [apprNarr, setApprNarr] = useState<{ label: string; text: string }[] | null>(null);
   const [narrLoading, setNarrLoading] = useState(false);
+  // ★검증기에 넘길 **원본 키 보존본**. 화면용 apprNarr 는 키를 한글 라벨로 바꾸므로
+  //   그대로 넘기면 검증기가 어느 필드인지 알 수 없다.
+  const [apprNarrRaw, setApprNarrRaw] = useState<Record<string, string> | null>(null);
 
   // 추정 결과가 생기면 AI 해석 자동 생성(온디맨드·캐시)
   useEffect(() => {
-    if (!res?.ok) { setApprNarr(null); return; }
+    if (!res?.ok) { setApprNarr(null); setApprNarrRaw(null); return; }
     let alive = true;
-    setApprNarr(null); setNarrLoading(true);
+    setApprNarr(null); setApprNarrRaw(null); setNarrLoading(true);
     const token = (typeof window !== "undefined" && localStorage.getItem("propai_access_token")) || "";
     fetch(`${apiV2Base()}/pipeline/interpret`, {
       method: "POST",
@@ -130,9 +133,10 @@ export function DeskAppraisalReportClient({ locale }: { locale: Locale }) {
     }).then((r) => r.json()).then((d) => {
       if (!alive) return;
       const secs = (d?.sections || {}) as Record<string, string>;
-      setApprNarr(Object.entries(secs).filter(([, v]) => typeof v === "string" && v.trim().length > 12)
-        .map(([k, v]) => ({ label: APPR_LABELS[k] || k, text: String(v).trim() })));
-    }).catch(() => { if (alive) setApprNarr([]); }).finally(() => { if (alive) setNarrLoading(false); });
+      const kept = Object.entries(secs).filter(([, v]) => typeof v === "string" && v.trim().length > 12);
+      setApprNarr(kept.map(([k, v]) => ({ label: APPR_LABELS[k] || k, text: String(v).trim() })));
+      setApprNarrRaw(kept.length > 0 ? Object.fromEntries(kept.map(([k, v]) => [k, String(v).trim()])) : null);
+    }).catch(() => { if (alive) { setApprNarr([]); setApprNarrRaw(null); } }).finally(() => { if (alive) setNarrLoading(false); });
     return () => { alive = false; };
   }, [res, ranAddr]);
 
@@ -557,6 +561,10 @@ export function DeskAppraisalReportClient({ locale }: { locale: Locale }) {
               <VerificationBadge
                 analysisType="desk_appraisal"
                 context={res as unknown as Record<string, unknown>}
+                // ★검증 대상은 **AI 서술**이다. 안 주면 배지가 키 이름으로 추측하는데,
+                //   이 응답은 목록에 걸리는 키가 0개라 source===output 이 되어
+                //   계산 결과를 자기 자신과 대조하게 된다(2026-09-05 실측).
+                output={apprNarrRaw ?? undefined}
                 // 응답 최상위 ledger_hash(원장 sha256) — 피드백 조인키(미노출이면 undefined·안전).
                 ledgerHash={(res as unknown as { ledger_hash?: string })?.ledger_hash}
               />
