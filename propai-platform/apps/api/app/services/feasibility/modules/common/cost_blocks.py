@@ -16,6 +16,8 @@ from app.services.tax.project_charges import parse_tristate_flag
 #   업계 관행상 PF+브릿지 합산 LTC(대출/토지+공사비) 65~75%대 표준치이며, 동일 관행값을
 #   return_kpi.py의 covenant LTV 임계 기본값(DEFAULT_LTV_COVENANT_THRESHOLD_PCT)도 참조한다.
 _STANDARD_PF_LTC_RATIO = 0.70
+# 소프트비 통칭 표준(토지+공사 대비). ★항목 분해는 `_OTHER_ITEM_SHARE` 가 하고 **합은 이 값**이다.
+_STANDARD_OTHER_RATIO = 0.07
 
 
 def compute_land_cost(inp: ModuleInput) -> dict[str, Any]:
@@ -88,16 +90,54 @@ def compute_finance_cost(inp: ModuleInput) -> dict[str, Any]:
     )
 
 
+# ★기타경비(소프트비) 항목별 표준 몫 — **합이 1.0** 이어야 한다.
+#   `apply_auto_estimates` 의 통칭 7% 를 항목으로 **분해**한 것이고, 분해의 목적은
+#   *«항목 하나를 직접 입력하면 나머지 표준분이 통째로 사라지는»* 붕괴를 막는 것이다.
+#   ★합을 보존하므로 **전부 미입력이면 종전과 바이트 동일**(무회귀)이고,
+#     **전부 입력이면 표준이 아예 안 쓰인다**. 근사가 되는 것은 **부분 입력**뿐인데,
+#     그 경우 현재 동작은 −98.7% 붕괴(실측)라 어떤 분해든 압도적으로 낫다.
+#   ★몫의 근거는 **관례치**이며 정밀값이 아니다 — 그래서 `basis` 에 명시해 내보낸다.
+_OTHER_ITEM_SHARE: dict[str, float] = {
+    "marketing_cost_won": 0.35,    # 분양대행·광고·모델하우스
+    "management_cost_won": 0.35,   # 사업관리·인건비·금융수수료·제세공과
+    "reserve_cost_won": 0.30,      # 예비비
+}
+
+
 def compute_other_cost(inp: ModuleInput) -> dict[str, Any]:
-    """기타경비 계산."""
-    marketing = inp.params.get("marketing_cost_won", 0)
-    management = inp.params.get("management_cost_won", 0)
-    reserve = inp.params.get("reserve_cost_won", 0)
+    """기타경비 계산 — 항목별 직접입력을 받고, **미입력 항목은 표준분을 남긴다**.
+
+    ★종전 결함 둘을 함께 고친다(라이브 실측):
+      ① `params.get(k, 0)` 을 그대로 더해 **문자열이 오면 `TypeError` → 500**
+         (`"1000" + 0`), `None` 이면 `NoneType + int`, **음수는 그대로 통과**했다.
+         ★형제 `_param_int` 가 **바로 아래 줄에** 있으면서 셋을 전부 막고 있었다 —
+         *«옳은 패턴이 바로 옆에 있었다»*. 폼 입력은 문자열이라 배선하는 순간 500 이다.
+      ② 항목 **하나만** 입력하면 `apply_auto_estimates` 의 `total <= 0` 판정이 거짓이 되어
+         **표준 7% 가 통째로 죽었다**(실측: 77억 → 1억 = **−98.7%**).
+         총사업비 과소계상 → ROI 과대 = 이 파일이 이름 붙인 **«ROI 566% 패턴»** 그 자체다.
+         → 미입력 항목은 `_pending_share` 로 남겨 표준분을 **비례 배분**받는다.
+    """
+    items: dict[str, int] = {}
+    pending = 0.0
+    for key, share in _OTHER_ITEM_SHARE.items():
+        raw = inp.params.get(key)
+        if raw is None or (isinstance(raw, str) and not raw.strip()):
+            pending += share          # 미입력 — 표준분을 받을 자격
+            items[key] = 0
+            continue
+        v = _param_int(inp, key)      # ★형제 채택: 문자열·음수·비수치를 여기서 흡수
+        if v <= 0:
+            pending += share
+        items[key] = v
+    total = sum(items.values())
     return {
-        "marketing_won": marketing,
-        "management_won": management,
-        "reserve_won": reserve,
-        "total_other_cost_won": marketing + management + reserve,
+        "marketing_won": items["marketing_cost_won"],
+        "management_won": items["management_cost_won"],
+        "reserve_won": items["reserve_cost_won"],
+        "total_other_cost_won": total,
+        # ★표준 추정이 **얼마를 덮어야 하는지**를 구조적으로 전달한다.
+        #   종전엔 `total <= 0` 이라는 **한 비트**뿐이라 부분 입력을 표현할 수 없었다.
+        "_pending_share": round(pending, 4),
     }
 
 
@@ -143,10 +183,21 @@ def apply_auto_estimates(
                        f"PF 차입 {pf_amt:,.0f}원(토지+공사 LTV{_STANDARD_PF_LTC_RATIO:.0%})×5.5%×{months:.0f}개월"
                        "×평균잔액 50%(분할실행 근사) 자동추정(미입력)"
                    )}
-    if float(other.get("total_other_cost_won") or 0) <= 0 and base_cost > 0:
-        est_other = round(base_cost * 0.07)  # 설계·감리·분양대행·금융수수료·예비비 통칭 7%
-        other = {**other, "total_other_cost_won": est_other, "auto_estimated": True,
-                 "estimate_basis": f"소프트비 = (토지+공사) {base_cost:,.0f}원 × 7% 자동추정(설계·감리·분양대행·예비비 통칭, 미입력)"}
+    # ★부분 입력을 표현한다. 종전 판정은 `total <= 0` 이라는 **한 비트**여서,
+    #   항목 하나만 입력해도 표준분 전체가 사라졌다(실측 −98.7% · «ROI 566% 패턴»).
+    #   이제 미입력 항목의 몫(`_pending_share`)만큼만 표준을 덧댄다.
+    #   ★전부 미입력이면 share=1.0 → **종전과 정확히 같은 값**(무회귀).
+    pending = float(other.get("_pending_share", 1.0 if float(other.get("total_other_cost_won") or 0) <= 0 else 0.0))
+    if pending > 0 and base_cost > 0:
+        est_share = round(base_cost * _STANDARD_OTHER_RATIO * pending)
+        entered = int(float(other.get("total_other_cost_won") or 0))
+        other = {**other, "total_other_cost_won": entered + est_share,
+                 "auto_estimated": True,
+                 "estimate_basis": (
+                     f"소프트비 = 직접입력 {entered:,}원 + 표준분 {est_share:,}원"
+                     f"[(토지+공사) {base_cost:,.0f}원 × {_STANDARD_OTHER_RATIO:.0%}"
+                     f" × 미입력 몫 {pending:.0%}] (설계·감리·분양대행·예비비 통칭)"
+                 )}
     return finance, other
 
 
