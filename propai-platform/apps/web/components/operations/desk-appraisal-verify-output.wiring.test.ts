@@ -21,14 +21,20 @@
  * 그 축은 배지 쪽 락(`VerificationBadge.test.tsx`)이 태운다.
  */
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
 import { __stripCommentsForScan } from "@/lib/source-invariant";
 
-const FILE = "components/operations/DeskAppraisalReportClient.tsx";
-const code = __stripCommentsForScan(readFileSync(resolve(process.cwd(), FILE), "utf-8"), FILE);
+// ★`process.cwd()` 를 쓰지 않는다 — 러너를 **어디서 부르느냐**에 따라 경로가 갈린다.
+//   실측(2026-09-05): `apps/web` 에서 돌리면 초록, 저장소 루트에서 `--root` 로 부르면
+//   파일을 못 찾아 **기준선이 빨갛고**(mutate 도구 exit 13) 그러면 **어떤 변이도 판정 불가**다.
+//   ★자기 파일 위치에서 푼다 — cwd 와 무관하다.
+const FILE = "DeskAppraisalReportClient.tsx";
+const HERE = dirname(fileURLToPath(import.meta.url));
+const code = __stripCommentsForScan(readFileSync(resolve(HERE, FILE), "utf-8"), FILE);
 
 describe("desk_appraisal 이 검증기에 **AI 서술**을 넘긴다", () => {
   it("★공허 진리 방지 — 배지 마운트가 실재한다", () => {
