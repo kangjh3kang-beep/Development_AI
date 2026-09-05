@@ -44,8 +44,20 @@ def test_유료_등기발급_경로를_임포트하지_않는다() -> None:
     for n in ast.walk(tree):
         if isinstance(n, ast.Import):
             mods += [a.name for a in n.names]
-        elif isinstance(n, ast.ImportFrom) and n.module:
-            mods.append(n.module)
+        elif isinstance(n, ast.ImportFrom):
+            # ★★첫 판은 `n.module` 만 담았다. 그래서
+            #   `from app.services.registry import registry_service` 에서
+            #   **모듈은 `app.services.registry`, 금지어는 `registry_service`** 라
+            #   **1급 계약이 통째로 뚫렸다**(변이 SURVIVED — 실측).
+            #   *«락이 형태만 닫고 클래스를 안 닫는다»* 의 가장 비싼 형태다:
+            #   **가장 중요한 락이 장식이었다.**
+            #   → 모듈 **경로와 임포트된 이름을 모두** 모집단에 넣는다.
+            base = n.module or ""
+            for a in n.names:
+                mods.append(f"{base}.{a.name}" if base else a.name)
+                mods.append(a.name)
+            if base:
+                mods.append(base)
     assert mods, "임포트를 하나도 못 읽었다 — 조회기 사망"
     # ★대조군: 형제 기반 클래스는 반드시 잡혀야 한다
     assert any("base_interpreter" in m for m in mods), f"조회기가 형제도 못 봤다: {mods}"
