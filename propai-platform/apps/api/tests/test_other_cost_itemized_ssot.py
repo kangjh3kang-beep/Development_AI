@@ -96,3 +96,51 @@ def test_근거_문자열이_직접입력과_표준분을_구분해_말한다() 
     _, o2 = apply_auto_estimates(j, _LAND, _CON, {"total_finance_cost_won": 0},
                                  compute_other_cost(j))
     assert not o2.get("auto_estimated"), "전부 입력인데 자동추정 딱지가 붙었다"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ③ 토지비 직접입력 — 형제(공사비 override)와 **같은 계약**인가
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _land(params) -> dict:
+    from app.services.feasibility.modules.common.cost_blocks import compute_land_cost
+
+    class _L:
+        def __init__(self, p):
+            self.params = p
+            self.total_land_area_sqm = 1000.0
+            self.official_price_per_sqm = 5_000_000
+            self.price_multiplier = 1.5
+            self.land_category = "land"
+            self.house_count = 0
+            self.is_adjusted_area = False
+    return compute_land_cost(_L(params))
+
+
+def test_토지비_직접입력이_산출을_대체한다() -> None:
+    """★두 모집단 — 미입력이면 공시지가 산출, 입력이면 그 값."""
+    base = _land({})["total_land_cost_won"]
+    assert base > 0, "공시지가 산출이 0 — 픽스처가 아무것도 안 태운다"
+    over = _land({"land_cost_override_won": 12_345_000_000})
+    assert over["total_land_cost_won"] == 12_345_000_000
+    assert over["source"] == "user_override", "어느 경로로 나온 값인지 표면에 없다"
+    # ★대체가 실제로 값을 바꾼다(같으면 이 락은 공허하다)
+    assert over["total_land_cost_won"] != base
+
+
+def test_토지비_직접입력이_보상비를_삼키지_않는다() -> None:
+    """★보상비는 매입가와 **축이 다르다** — override 가 함께 지우면 총사업비가 샌다."""
+    r = _land({"land_cost_override_won": 10_000_000_000, "compensation_won": 500_000_000})
+    assert r["compensation_won"] == 500_000_000
+    assert r["total_land_cost_won"] == 10_500_000_000, r
+
+
+@pytest.mark.parametrize("bad", ["1000", None, -1, "", "abc", 0])
+def test_토지비_쓰레기_직접입력은_산출로_폴백한다(bad) -> None:
+    """★`_param_int` 경유 — 형제 계약과 동일. 폼 입력은 문자열이다."""
+    r = _land({"land_cost_override_won": bad})
+    if bad == "1000":
+        assert r["total_land_cost_won"] == 1000, "문자열 숫자를 못 읽었다"
+    else:
+        assert r.get("source") != "user_override", f"{bad!r} 가 override 로 채택됐다"
+        assert r["total_land_cost_won"] > 0, "폴백이 죽었다"
