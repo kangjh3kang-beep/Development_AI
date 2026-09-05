@@ -298,6 +298,21 @@ export function ModuleInputForm() {
           <NumberInput label="총공사비 직접입력" value={input.construction_cost_override_won ?? undefined} unit="원" comma
             onChange={(v) => handleInputChange({ construction_cost_override_won: v || null })} />
 
+          {/* ★토지비 직접입력 — 비우면 공시지가 × 시가반영배율 산출 그대로(무회귀).
+              ★실거래 기반 산출은 **지목을 걸러야** 한다(라이브 실측: 필터 없으면 강남 +490%·
+              분당 +1,085% 왜곡 — 표본의 70~87%가 도로·임야다). `land_trade_price` 참조. */}
+          <NumberInput label="총토지비 직접입력" value={input.land_cost_override_won ?? undefined} unit="원" comma
+            onChange={(v) => handleInputChange({ land_cost_override_won: v || null })} />
+
+          {/* ★기타경비 — 비우면 그 항목 몫의 **표준분이 살아남는다**(백엔드 `_OTHER_ITEM_SHARE`).
+              종전엔 하나만 입력해도 표준 7% 가 통째로 죽어 총사업비가 −98.7% 과소계상됐다. */}
+          <NumberInput label="분양대행·광고비" value={input.marketing_cost_won ?? undefined} unit="원" comma
+            onChange={(v) => handleInputChange({ marketing_cost_won: v || null })} />
+          <NumberInput label="사업관리·수수료" value={input.management_cost_won ?? undefined} unit="원" comma
+            onChange={(v) => handleInputChange({ management_cost_won: v || null })} />
+          <NumberInput label="예비비" value={input.reserve_cost_won ?? undefined} unit="원" comma
+            onChange={(v) => handleInputChange({ reserve_cost_won: v || null })} />
+
           {/* 분양 (핵심 수정 항목 — 변경 시 자동 히스토리) */}
           <NumberInput label="평당 분양가" value={input.avg_sale_price_per_pyeong} unit="원/평" comma
             onChange={(v) => handleInputChange({ avg_sale_price_per_pyeong: v })} />
