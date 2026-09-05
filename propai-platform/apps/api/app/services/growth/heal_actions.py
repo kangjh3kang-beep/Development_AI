@@ -43,7 +43,9 @@ async def _emit_heal_event(db, action_id: str, action_type: str,
                            service: str | None = None,
                            setting_key: str | None = None,
                            ttl_expires_at: datetime | None = None,
-                           rollbackable: bool = False) -> None:
+                           rollbackable: bool = False,
+                           executed: bool | None = None,
+                           no_op_reason: str | None = None) -> None:
     """heal_action 이벤트를 platform_events 에 직접 INSERT(동기, 즉시 영속).
 
     capture_service 큐(비동기 flush)와 달리, heal 결과는 즉시 조회 가능해야 하므로
@@ -61,6 +63,10 @@ async def _emit_heal_event(db, action_id: str, action_type: str,
         "setting_key": setting_key,
         "ttl_expires_at": ttl_expires_at.isoformat() if ttl_expires_at else None,
         "actor": _ACTOR,
+        # ★무동작을 **산출물에서 구별 가능하게** 한다. 이것이 없으면 아무 일도 안 한 행이
+        #   `/growth/heal-log` 에서 진짜 치유와 **같은 모양**으로 보인다(적대 리뷰 실측).
+        "executed": executed,
+        "no_op_reason": no_op_reason,
     }
     try:
         await db.execute(text(
@@ -163,8 +169,33 @@ async def _do_threshold_relax(db, action_id, params, service, severity):
 async def _do_cache_warm(db, action_id, params, service, severity):
     """캐시 워밍 잡 트리거(시간당 캡은 healing_rules 가 보장).
 
-    실제 워밍 실행은 외부 캐시/잡에 위임(여기서는 트리거 신호 기록만 — 저위험).
-    Celery 가 있으면 워밍 태스크 enqueue 를 시도하되, 부재/실패는 best-effort.
+    실제 워밍 실행은 외부 캐시/잡에 위임한다. **디스패치가 배선되기 전까지 이 함수는
+    아무 일도 하지 않는다** — 그 사실을 `executed` 에 **정직하게** 싣는다.
+
+    ## ★왜 성공을 상수로 보고하던 것이 결함인가 (라이브 실측 2026-09-05)
+
+    `healing_rules.mark_insight_acted` 는 **`result["executed"]` 가 참일 때만** 인사이트를
+    `acted` 로 닫는다. 그래서 아무 일도 하지 않은 이 액션이 **진짜 문제를 닫아 왔다.**
+
+        DB 전체 `status='acted'` 인사이트          4건
+        그 4건을 닫은 액션                         **4건 전부 cache_warm** (100%)
+        전부 `trigger_key='fallback_rate:registry'` — **유료 등기부 경로**
+        폴백률                                     18.18% · 18.18% · 23.08% · 26.32%
+        ★음성 대조군: 실제로 동작하는 `threshold_relax` 는 `acted` **0건**
+                     (acknowledged 5 · open 13 · superseded 29)
+
+    즉 이 DB 에서 `acted` 는 **«무동작이 닫았다»와 동의어**였다. 탐지는 정확히 작동해
+    유료 경로의 폴백률 급등을 네 번 잡아냈는데, **그때마다 이 함수가 그 신호를 지웠다.**
+
+    ★`mark_insight_acted` 의 독스트링은 *"닫기 실패가 치유 태스크를 죽이지 않는다
+    (치유는 **이미 일어났다**)"* 라고 적는다 — 그 전제가 이 액션에 대해 **거짓**이었다.
+
+    ## ★고치는 방향 — 없는 능력을 급히 만들지 않는다
+
+    캐시 워밍을 여기서 구현하면 그것은 «임계를 낮춰 판정률을 올리는» 것과 같은 유혹이다
+    (지표를 만족시키려고 검증되지 않은 동작을 넣는 것). 대신 **하는 일과 하지 않는 일이
+    산출물에서 구별되게** 만든다. 발화 자체는 **막지 않는다** — 발화 사실이 신호이고,
+    그것을 지우면 «왜 안 도나»를 알 수 없게 된다.
     """
     triggered = False
     try:
@@ -176,11 +207,16 @@ async def _do_cache_warm(db, action_id, params, service, severity):
         triggered = False
 
     detail = {"service": service, "triggered": triggered, "params": params}
+    if not triggered:
+        # ★무동작을 무동작이라고 말한다. 이 문자열이 「왜 안 닫혔나」의 답이 된다.
+        detail["no_op_reason"] = "no_dispatch_wired"
     await _emit_heal_event(db, action_id, ACTION_CACHE_WARM, params,
-                           severity=severity, service=service, rollbackable=False)
+                           severity=severity, service=service, rollbackable=False,
+                           executed=triggered,
+                           no_op_reason=detail.get("no_op_reason"))
     await _audit(ACTION_CACHE_WARM, action_id, detail)
     return {"action_id": action_id, "type": ACTION_CACHE_WARM,
-            "executed": True, "detail": detail}
+            "executed": triggered, "detail": detail}
 
 
 async def _do_stale_reanalysis(db, action_id, params, service, severity):
