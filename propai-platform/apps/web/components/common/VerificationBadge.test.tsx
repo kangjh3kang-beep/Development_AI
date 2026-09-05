@@ -105,4 +105,51 @@ describe("★피드백 유입은 줄지 않는다 (§0 이 찾은 회귀 위험)
 });
 
 // ── ★부채(초록 안에 보이게) ────────────────────────────────────────────────
-it.todo("다른 마운트 5곳(report·feasibility·cost·pipeline_report·market)의 실제 분리 여부 — 미측정");
+describe("★#993 부채 청산 — 다른 마운트 5곳을 **재서** 닫는다", () => {
+  /**
+   * `#993` 은 이 자리를 `it.todo`(«5곳의 실제 분리 여부 — 미측정»)로 남겼다. 재봤다:
+   *
+   *   report · feasibility · cost   context={inputs,result,derived} · **LLM 서술 흔적 0건**
+   *     → 검증할 AI 산출이 **애초에 없다.** 배지는 처음부터 공허했고
+   *       「AI 서술 없음 · 판정 안 함」이 **정직한 결말**이다(추가 수정 불필요)
+   *   market            `report.narrative` 실재 → `narrative` 가 목록에 있어 **정상 분리**
+   *   pipeline_report   `result.summary` 의 섹션 키에 `summary`·`analysis` → **정상 분리**
+   *
+   * ★**추가 결함은 없었다. 그런데 뒤 둘은 「우연히」 동작한다** — 손목록에 그 이름이
+   *   들어 있기 때문이다. 생산자가 `narrative` → `market_narrative` 로 바꾸면
+   *   **조용히 자기대조로 되돌아가고**, 화면은 공허한 「근거 N%」를 다시 보여 준다.
+   *   그 회귀는 **아무 예외도 안 낸다.** 그래서 그 의존을 여기서 잠근다.
+   */
+  const NO_LLM = { inputs: { a: 1 }, result: { b: 2 }, derived: { c: 3 } };
+
+  it("LLM 산출이 없는 화면(report·feasibility·cost 형태)은 **판정하지 않는다**", async () => {
+    render(<VerificationBadge analysisType="report" context={NO_LLM} />);
+    await screen.findByTestId("verify-undecidable");
+    expect(post).not.toHaveBeenCalled();
+    expect(document.body.textContent || "").not.toMatch(/근거\s*\d+%/);
+  });
+
+  it("★`market` 이 의존하는 `narrative` 키가 목록에서 빠지면 자기대조로 되돌아간다", async () => {
+    render(<VerificationBadge analysisType="market" context={{ stats: { n: 1 }, narrative: "시장 해설" }} />);
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    const body = (post.mock.calls[0][1] as { body: unknown }).body as {
+      source: Record<string, unknown>; output: Record<string, unknown>;
+    };
+    expect(Object.keys(body.output)).toEqual(["narrative"]);
+    expect(body.source).not.toEqual(body.output);   // ★자기대조가 아니다
+  });
+
+  it("★`pipeline_report` 가 의존하는 `summary`·`analysis` 키도 같이 잠근다", async () => {
+    render(<VerificationBadge analysisType="pipeline_report"
+                              context={{ metrics: { n: 1 }, summary: "요약", analysis: "분석" }} />);
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    const body = (post.mock.calls[0][1] as { body: unknown }).body as {
+      source: Record<string, unknown>; output: Record<string, unknown>;
+    };
+    expect(Object.keys(body.output).sort()).toEqual(["analysis", "summary"]);
+    expect(body.source).toHaveProperty("metrics");
+  });
+});
+
+// ── ★남은 부채(초록 안에 보이게) ──────────────────────────────────────────
+it.todo("근본 처방: market·pipeline_report 도 명시 `output` 을 넘겨 **손목록 의존을 없앤다**");
