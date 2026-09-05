@@ -572,12 +572,18 @@ async def build_rough_scenario(
             )
         return None, _null_block("land"), ["토지면적 미확보 — 토지비 산출 불가."]
 
+    # ★시장 정밀화(비교사례·시점보정·흡수율) 수거통.
+    #   `sale site` 연결이 있을 때만 채워진다 — 없으면 빈 dict 그대로다(**날조하지 않는다**).
+    #   ★재계산이 아니라 **같은 수집 루프에서** 얻는다(`collect_cases` opt-in).
+    _precision: dict[str, Any] = {}
+
     async def _sale_leg() -> tuple[int | None, str, str, str | None]:
         """분양단가 축 — override면 즉시, 아니면 주변 실거래(MOLIT)→지역시세(외부호출)."""
         if ov_price is not None:
             return int(ov_price), "user_override", "사용자 지정 분양단가(2차 수정, 원/평·공급면적)", None
         return await _resolve_sale_price_per_pyeong(
             db=db, site_id=site_id, dev_type=dev_type_final, region=region, address=address,
+            precision_out=_precision,
         )
 
     land_result, sale_result = await asyncio.gather(_land_leg(), _sale_leg())
@@ -883,6 +889,9 @@ async def build_rough_scenario(
         "land_cost": land_block,
         "construction_cost": constr_block,
         "revenue": revenue_block,
+        # ★비어 있으면 키 자체를 안 싣는다 — 빈 객체는 «조회했는데 없음» 처럼 읽힌다.
+        #   (site 연결이 없으면 이 경로 자체를 안 탄다.)
+        **({"market_precision": _precision} if _precision else {}),
         "charges": charges_block,
         "cost_breakdown": cost_breakdown,
         "margin": margin_block,

@@ -353,25 +353,32 @@ def test_stubs_must_tolerate_new_kwargs() -> None:
     """
     import re
 
-    src = (_API / "tests" / "test_avm_train.py").read_text(encoding="utf-8")
-    # ★축을 **정확히** 잡는다: `MarketRevaluationService` 의 **출처 메서드**를 대체하는
-    #   스텁만이 대상이다. 이름 패턴으로 넓게 잡았더니 AVM **내부** 스텁
-    #   (`_fake_load`·`_fake_comps`·`_fake_features`·`_fake_spatial`)까지 걸렸다 —
-    #   그것들은 소비처가 아니라 **다른 계약**이다. ★위양성도 결함이다.
-    targets = set(re.findall(
-        r'monkeypatch\.setattr\(\s*MarketRevaluationService,\s*"(_[a-z_]+source[a-z_]*)"', src))
-    assert targets, "조회기 사망 — 출처 스텁 배선을 하나도 못 찾았다"
+    # ★★축이 **「그 파일」**이라 형제 파일이 안 보였다 — `test_rough_feasibility_orchestrator.py`
+    #   의 `_fake_price` 가 새 kwargs(`precision_out`)를 못 받아 **16건이 깨졌는데**
+    #   이 락은 초록이었다(오늘 **네 번째** 같은 함정).
+    #   → **모집단을 파생**한다: 이 저장소의 테스트 중 리졸버·정밀화 계열을 스텁하는 파일 전수.
+    TARGET_SYMBOLS = (
+        "_molit_sale_price_source", "_avm_source",
+        "_resolve_sale_price_per_pyeong", "_trade_sale_price_per_pyeong",
+    )
+    files = [f for f in (_API / "tests").rglob("test_*.py")
+             if any(sym in f.read_text(encoding="utf-8") for sym in TARGET_SYMBOLS)]
+    assert len(files) >= 2, f"스텁 모집단 {len(files)}개 — 조회기가 죽었다"
 
-    # ★죽은 루프를 지웠다 — `for name in sorted(targets)` 의 `name` 이 안 쓰이고
-    #   `for sig in …: pass` 는 완전한 no-op 라 내부 스캔이 중복 실행됐다(4차 리뷰 Minor-1).
     bad = []
-    if True:
-        for m in re.finditer(r"async def (_fake_\w+)\(self([^)]*)\)", src):
+    for f in files:
+        src = f.read_text(encoding="utf-8")
+        for m in re.finditer(r"(?:async )?def (_fake\w*|_stub\w*)\(([^)]*)\)", src):
             fn, params = m.group(1), m.group(2)
+            # 그 스텁이 **대상 심볼을 대체**하는 배선이 있는가(이름만으로 세지 않는다)
+            # ★축은 «**대상 심볼**을 대체하는 배선» 하나다. 두 번째로 «아무 setattr 이나»
+            #   보태 봤더니 `_fake_integrated`·`_fake_ratios` 같은 **다른 계약**의 스텁까지
+            #   걸렸다 — **위양성도 결함**이라 그 축을 뺐다.
             wired = re.search(
-                rf'monkeypatch\.setattr\(\s*MarketRevaluationService,\s*"[^"]+",\s*{fn}\b', src)
-            if wired and "**kw" not in params:
-                bad.append(f"{fn}({params.strip(', ')})")
+                rf"setattr\([^)]*?[\"']({'|'.join(TARGET_SYMBOLS)})[\"'][^)]*?{fn}\b", src)
+            if wired and "**" not in params:
+                bad.append(f"{f.name}::{fn}({params.strip(', ')[:60]})")
+
     assert not bad, f"새 kwargs 를 못 받는 **출처 스텁**이 있다(조용히 출처가 빠진다): {bad}"
 
 
@@ -657,3 +664,78 @@ def test_debt_loop_lock_does_not_follow_wrappers() -> None:
     lock = (_API / "tests" / "test_sale_price_resolver_ssot.py").read_text(encoding="utf-8")
     assert "호출 그래프" in lock and "1홉" in lock.split("부채")[0], "1홉 추적이 구현됐다면 이 부채는 닫힌다"
     assert tree is not None
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# P1 — 시장 정밀화(비교사례·시점보정·흡수율)를 **재수집 없이** 수지에 싣는다
+# ══════════════════════════════════════════════════════════════════════════════
+
+@pytest.mark.asyncio
+async def test_precision_is_assembled_without_recollecting(monkeypatch) -> None:
+    """★`suggest_base_price` 를 **한 번만** 부른다.
+
+    코드가 그 사고를 명문으로 적어 뒀다 — *"종전엔 market_precision 조립이 별도로 재수집해
+    MOLIT 8개월 조회가 중복 발생했다"*. 조립기도 «재호출하지 않는다(무이중화)» 를 계약으로 건다.
+    ★그래서 이 락의 축은 «결과가 실렸다» 가 **아니라 «몇 번 불렀나»** 다.
+    """
+    import app.services.feasibility.sale_price_resolver as spr
+    import app.services.sales.pricing.suggest as sug
+
+    calls: list[dict] = []
+
+    async def spy_suggest(db, site_id, **kw):
+        calls.append(kw)
+        return {"data_source": "live", "tiers": [{"tier": "base", "per_pyeong_10k": 3000}],
+                "trust": {"confidence": 0.8}, "trade_cases": [{"x": 1}]}
+
+    async def fake_assemble(res):
+        return {"comparable_set": {"n": len(res.get("trade_cases") or [])},
+                "time_adjustment": {"status": "UNKNOWN"}}
+
+    monkeypatch.setattr(sug, "suggest_base_price", spy_suggest, raising=True)
+    monkeypatch.setattr(
+        "app.services.market_precision.price_suggestion.assemble_market_precision",
+        fake_assemble, raising=True)
+
+    out: dict = {}
+    price, src, basis, _ = await spr._resolve_sale_price_per_pyeong(
+        db=object(), site_id="s1", dev_type="M01", region="", address="a", precision_out=out)
+
+    assert price == 30_000_000 and "신뢰루프" in src
+    # ★호출 **1회** — 재수집이 없다
+    assert len(calls) == 1, f"suggest_base_price 를 {len(calls)}회 불렀다(재수집)"
+    # ★`collect_cases` 를 **켜서** 같은 루프에서 사례를 얻는다
+    assert calls[0].get("collect_cases") is True, f"collect_cases 를 안 켰다: {calls[0]}"
+    assert out["comparable_set"]["n"] == 1, out
+
+    # ★★음성 대조군 — `precision_out` 을 안 주면 **켜지 않는다**(기본 경로 무회귀·과금 불변)
+    calls.clear()
+    await spr._resolve_sale_price_per_pyeong(
+        db=object(), site_id="s1", dev_type="M01", region="", address="a")
+    assert calls[0].get("collect_cases") is False, f"opt-in 이 아니다: {calls[0]}"
+
+
+@pytest.mark.asyncio
+async def test_precision_failure_never_blocks_the_price(monkeypatch) -> None:
+    """★정밀화가 실패해도 **분양가는 나온다** — 그리고 사유를 남긴다."""
+    import app.services.feasibility.sale_price_resolver as spr
+    import app.services.sales.pricing.suggest as sug
+
+    async def ok_suggest(db, site_id, **kw):
+        return {"data_source": "live", "tiers": [{"tier": "base", "per_pyeong_10k": 3000}],
+                "trust": {}, "trade_cases": []}
+
+    async def boom(res):
+        raise RuntimeError("assemble down")
+
+    monkeypatch.setattr(sug, "suggest_base_price", ok_suggest, raising=True)
+    monkeypatch.setattr(
+        "app.services.market_precision.price_suggestion.assemble_market_precision",
+        boom, raising=True)
+
+    out: dict = {}
+    price, _, _, _ = await spr._resolve_sale_price_per_pyeong(
+        db=object(), site_id="s1", dev_type="M01", region="", address="a", precision_out=out)
+    assert price == 30_000_000, "정밀화 실패가 분양가를 막았다"
+    # ★진단 불가는 그 자체로 장애 — 사유가 남는다
+    assert "assemble down" in out.get("unavailable_reason", ""), out

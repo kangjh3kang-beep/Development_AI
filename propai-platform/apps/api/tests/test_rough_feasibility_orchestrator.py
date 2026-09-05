@@ -100,7 +100,11 @@ def _stub_happy(monkeypatch, *, sale_price=40_000_000, integrated=None,
                 "evidence": {"evidence": [{"label": "채택 단가"}]},
                 "source": "NED 토지특성", "confidence": 0.8}
 
-    async def _fake_price(*, db, site_id, dev_type, region, address):
+    # ★`**kw` — 소비처가 인자를 늘리면 스텁이 TypeError 를 내고, 그것이 **다른 것을 재게**
+    #   만들거나(삼켜지면) 통째로 깨진다(여기선 16건). **오늘 네 번째**다.
+    #   ★내 스텁 락(`test_stubs_must_tolerate_new_kwargs`)은 `test_avm_train.py` 만 보고
+    #     이 파일은 **모집단 밖**이었다 — 락의 축이 「그 파일」이라 형제 파일이 안 보였다.
+    async def _fake_price(*, db, site_id, dev_type, region, address, **kw):
         if sale_price is None:
             return None, "unavailable", "분양단가 미확보", "분양단가: 실거래·지역시세 모두 실패 — 미산출(무목업)"
         return int(sale_price), "지역 시세 테이블(sigungu)", "지역×유형 시장표준 시세", None

@@ -264,6 +264,7 @@ async def _trade_sale_price_per_pyeong(
 
 async def _resolve_sale_price_per_pyeong(
     *, db: Any, site_id: Any, dev_type: str, region: str, address: str,
+    precision_out: dict[str, Any] | None = None,
 ) -> tuple[int | None, str, str, str | None]:
     """분양단가(원/평, 공급면적 기준) 결정 — 실거래 1순위, 지역 시세표는 '추정' 폴백.
 
@@ -279,7 +280,23 @@ async def _resolve_sale_price_per_pyeong(
         try:
             from app.services.sales.pricing.suggest import suggest_base_price
 
-            res = await suggest_base_price(db, site_id)
+            # ★`collect_cases` 는 **opt-in** 이다(기본 False = 반환 shape 불변).
+            #   호출부가 `precision_out` 을 주면 켜서 **같은 수집 루프에서** 원시 사례를 얻는다.
+            #   ★★**`suggest_base_price` 를 재호출하지 않는다** — 코드가 그 사고를 명문으로
+            #     적어 뒀다: *"종전엔 market_precision 조립이 별도로 재수집해 MOLIT 8개월
+            #     조회가 중복 발생했다"*. 조립기도 «재호출하지 않는다(무이중화)» 를 계약으로 건다.
+            want_precision = precision_out is not None
+            res = await suggest_base_price(db, site_id, collect_cases=want_precision)
+            if want_precision and isinstance(res, dict):
+                try:
+                    from app.services.market_precision.price_suggestion import (
+                        assemble_market_precision,
+                    )
+
+                    precision_out.update(await assemble_market_precision(res))
+                except Exception as e:  # noqa: BLE001 — 정밀화 실패가 분양가를 막지 않는다
+                    logger.warning("market_precision 조립 실패(분양가는 계속): %s", str(e)[:120])
+                    precision_out["unavailable_reason"] = f"{type(e).__name__}: {str(e)[:80]}"
             if isinstance(res, dict) and res.get("data_source") == "live":
                 tiers = res.get("tiers") or []
                 # '기준(base)' 프리미엄 tier 채택(없으면 중앙 tier).
