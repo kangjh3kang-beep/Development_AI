@@ -15,10 +15,48 @@ import type { SatongSelectionParcel } from "@/components/precheck/satong-map-sel
  *  생성 체인(addProject → POST /projects → 과금 best-effort)을 지도용으로 축약한 공용 유틸.
  *  반환 id는 백엔드 UUID 우선, 실패 시 로컬 id(오프라인에서도 진행 — 기준선과 동일).
  *  ※ projects/new 페이지는 수정하지 않는다 — 두 경로의 수렴은 후속 과제. */
+/** 사용자가 입력한 프로젝트명을 **저장할 형태로** 정규화한다.
+ *
+ *  ★상한 200 은 내가 지어낸 값이 아니라 **백엔드 계약에서 파생**한 것이다 —
+ *  `packages/schemas/models.py`: `name: str = Field(min_length=1, max_length=200)`.
+ *  프론트가 더 관대하면 서버가 422 로 거부하고, 더 엄격하면 정당한 이름을 막는다.
+ */
+export const PROJECT_NAME_MAX = 200;
+
+export function normalizeProjectName(raw: string | null | undefined): string {
+  return (raw ?? "").trim().replace(/\s+/g, " ").slice(0, PROJECT_NAME_MAX);
+}
+
+/** 이미 쓰는 이름인가 — **정규화한 뒤 대소문자 무시**로 비교한다.
+ *
+ *  ★백엔드에는 유일성 제약을 **넣지 않는다.** `POST /projects` 의 멱등 지문이 **주소만**
+ *  보는 이유가 문서에 적혀 있다: 고아 마이그레이션이 **같은 프로젝트를 재전송**하는데
+ *  본문이 다르다. 그 재전송은 **같은 이름**으로 오므로, 서버 유일성 제약은
+ *  **그 정당한 재전송을 거부**한다. 그래서 **입력 시점**에서 막는다.
+ *  ★한계: 다른 탭·기기에서 동시에 같은 이름을 만들 수 있다. 이름은 `PUT /{id}` 로
+ *  **바꿀 수 있으므로**(실측) 그 잔여는 복구 가능한 종류다.
+ */
+export function isDuplicateProjectName(
+  name: string,
+  existing: Array<{ name?: string | null }>,
+): boolean {
+  const key = normalizeProjectName(name).toLowerCase();
+  if (!key) return false;
+  return existing.some((p) => normalizeProjectName(p?.name).toLowerCase() === key);
+}
+
 export async function createProjectFromParcels(
   parcels: SatongSelectionParcel[],
+  // ★사용자가 지은 이름. **뒤에 추가**한다 — 앞에 넣으면 위치인자 호출부가 조용히 밀린다
+  //   (이 저장소가 `tilko_realty` 에서 그 형태로 4회 데였다).
+  //   미지정·빈 값이면 **종전의 파생 이름 그대로**다(무회귀).
+  opts?: { name?: string | null },
 ): Promise<{ id: string; name: string; address: string } | null> {
-  const name = deriveProjectNameFromParcels(parcels);
+  const derived = deriveProjectNameFromParcels(parcels);
+  // ★**판정한 문자열과 저장하는 문자열을 같게 한다** — 트림해 놓고 원본을 보내면
+  //   그 판정은 아무것도 보증하지 않는다(`#944` 에서 데인 형태).
+  const typed = normalizeProjectName(opts?.name);
+  const name = typed || derived;
   if (!name) return null;
 
   const first = parcels[0];

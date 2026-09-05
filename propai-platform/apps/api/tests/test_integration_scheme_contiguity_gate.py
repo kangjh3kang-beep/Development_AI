@@ -240,14 +240,59 @@ def test_legitimate_impossible_is_preserved():
 # 2) 집합 — ★죽은 원소 0(파생형: AST 로 실제 add() 이름을 뽑아 대조)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _add_scheme_names() -> set[str]:
-    names = set()
-    for n in ast.walk(ast.parse(_SRC)):
-        if (isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "add"
-                and n.args and isinstance(n.args[0], ast.Constant)
-                and isinstance(n.args[0].value, str)):
-            names.add(n.args[0].value)
+def _module_str_constants(tree: ast.AST) -> dict[str, str]:
+    """모듈 최상위의 `NAME = "문자열"` 을 모은다 — `add()` 첫 인자가 상수일 때 풀기 위해."""
+    out: dict[str, str] = {}
+    for n in getattr(tree, "body", []):
+        if (isinstance(n, ast.Assign) and len(n.targets) == 1
+                and isinstance(n.targets[0], ast.Name)
+                and isinstance(n.value, ast.Constant) and isinstance(n.value.value, str)):
+            out[n.targets[0].id] = n.value.value
+    return out
+
+
+def scheme_names() -> set[str]:
+    """`add()` 이름 집합 — ★**못 읽은 형태가 있으면 여기서 즉시 판정을 거부한다.**
+
+    호출부가 6곳이라 언패킹을 흩뿌리면 **한 곳만 고쳐지고 나머지가 조용히 「없음」을 센다**
+    (이 저장소가 반복해서 데인 형태). 거부를 **한 자리**에 둔다.
+    """
+    names, unreadable = _add_scheme_names()
+    assert not unreadable, f"add() 첫 인자를 못 읽었다 — 판정 거부: {unreadable}"
     return names
+
+
+def _add_scheme_names() -> tuple[set[str], list[str]]:
+    """`add()` 로 실제 발행되는 방식 이름을 모은다.
+
+    ★**리터럴만 읽으면 상수화가 곧 「이름 소실」이 된다**(2026-09-05 실측).
+      `입지규제최소구역`(폐지) → `도시혁신구역`(§40의3) 승계에서 이름을 **상수 하나로** 묶자
+      (`add(SPECIAL_ZONE_SCHEME, …)`) 이 수집기가 그 이름을 **못 읽고 「없음」으로 셌고**,
+      그 결과 정상 선언이 **「죽은 원소」로 오신고**됐다(위양성 3건).
+      ★***«계약은 그대로인데 리팩토링이 락을 깨면 깨진 쪽은 락이다»*** —
+      그리고 저장소 규율이 ***«못 읽는 형태를 「없음」으로 세지 마라 — 판정 거부로»*** 를 적는다.
+
+    ★그래서 **모듈 최상위 문자열 상수를 푼다.** 그래도 못 푸는 형태(f-string·함수 인자·
+      동적 조립)는 **버리지 않고 두 번째 값으로 돌려주어** 호출부가 **판정을 거부**하게 한다.
+      ★이름을 「상수로 묶는 것」을 막지 않는다 — 그것을 막으면 *"한 곳을 고치면 전역이
+      따라온다"* 는 이 저장소의 처방과 정면으로 충돌한다.
+    """
+    tree = ast.parse(_SRC)
+    consts = _module_str_constants(tree)
+    names: set[str] = set()
+    unreadable: list[str] = []
+    for n in ast.walk(tree):
+        if not (isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                and n.func.id == "add" and n.args):
+            continue
+        a = n.args[0]
+        if isinstance(a, ast.Constant) and isinstance(a.value, str):
+            names.add(a.value)
+        elif isinstance(a, ast.Name) and a.id in consts:
+            names.add(consts[a.id])
+        else:
+            unreadable.append(f"line {getattr(a, 'lineno', '?')}: {ast.dump(a)[:60]}")
+    return names, unreadable
 
 
 def _gate_set_literals() -> dict[str, set[str]]:
@@ -302,7 +347,10 @@ def test_gate_sets_have_no_dead_members():
     """
     sets = _gate_set_literals()
     assert sets, "집합을 하나도 못 찾았다 — 검사기가 죽었다(대상 오류)"
-    real = _add_scheme_names()
+    real, unreadable = _add_scheme_names()
+    # ★**못 읽은 형태가 있으면 판정을 거부한다** — 「없음」으로 세면 정상 선언이
+    #   「죽은 원소」로 오신고된다(실측: 상수화 한 번에 위양성 3건).
+    assert not unreadable, f"add() 첫 인자를 못 읽었다 — 판정 거부: {unreadable}"
     assert len(real) >= 15, f"add() 이름 수집이 비정상 — {len(real)}종"
     for name, members in sets.items():
         dead = sorted(members - real)
@@ -606,7 +654,7 @@ def test_gate_membership_is_a_partition_of_all_schemes():
     여기서는 원천을 **`add()` 전수**(게이트와 무관한 축)로 두고, 게이트와 명시적 비게이트 표가
     **정확히 그것을 분할**하는지 본다. 어느 쪽에서 원소가 사라지면 **양변이 갈린다.**
     """
-    every = _add_scheme_names()
+    every = scheme_names()
     gate = set().union(*_gate_set_literals().values())
     declared_out = set(NON_GATED_WITH_REASON)
 
@@ -735,7 +783,7 @@ def test_constraint_is_not_pasted_into_buildable_types():
               "준주거지역", "일반상업지역", "준공업지역", "계획관리지역", "자연녹지지역")
     universe: set[str] = set()
     for z in _ZONES:
-        for sc in sorted(_add_scheme_names()):
+        for sc in sorted(scheme_names()):
             universe.update(D._buildable_types(z, sc))
     assert len(universe) >= 25, f"칩 어휘가 {len(universe)}종 — 수집기 사망"
     offenders = sorted(
@@ -780,7 +828,7 @@ def test_apartment_detector_ignores_its_own_negative_label():
 
     # ★프로덕션 목록에는 **부정 라벨이 아예 없어야** 한다(MAJOR-2 봉합의 회귀 방지).
     D = DevelopmentScenarioSimulator
-    schemes = sorted(_add_scheme_names())
+    schemes = sorted(scheme_names())
     polluted_schemes = [
         x for x in schemes
         if any(m in t for t in D._buildable_types("제1종일반주거지역", x)
@@ -798,7 +846,7 @@ def test_apartment_mark_is_not_pasted_where_it_does_not_belong():
     """
     D = DevelopmentScenarioSimulator
     for zone in ("제2종일반주거지역", "제3종일반주거지역"):
-        marked = [s for s in sorted(_add_scheme_names())
+        marked = [s for s in sorted(scheme_names())
                   if SS.APARTMENT_PROHIBITED_MARK in D._buildable_types(zone, s)]
         assert not marked, f"{zone} 에 불허 고지가 붙었다: {marked}"
 
@@ -1052,7 +1100,7 @@ def test_axis_sizes_are_pinned():
             f"{name} 원소 수 {len(sets[name])} ≠ 선언 {want} — "
             f"현재 {sorted(sets[name])}. 이관·삭제는 사유와 함께 여기도 고쳐라"
         )
-    assert len(NON_GATED_WITH_REASON) == len(_add_scheme_names()) - sum(_AXIS_SIZES.values())
+    assert len(NON_GATED_WITH_REASON) == len(scheme_names()) - sum(_AXIS_SIZES.values())
 
 
 def test_adjacency_producer_reports_real_pair_distance():
