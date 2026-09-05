@@ -89,15 +89,53 @@ fi
 #   워크트리 **79개**를 영구 차단해(막힌 108개 중 86개가 순수 재생물) 헤더가 경고한 그 위양성이 됐다.
 #   ★그래도 이건 **목록**이고 목록은 곧 상한이다(§수집·판정 규율). 방향은 fail-closed 로 둔다 —
 #     모르는 이름은 「재생 불가」로 분류해 **막는다**. 모르는 것을 통과시키면 그게 데이터 손실이다.
-REGEN_RE='(^|/)(node_modules|__pycache__|\.venv|venv|\.ruff_cache|\.pytest_cache|\.mypy_cache|\.next|\.turbo|\.open-next|\.vercel|\.wrangler|dist|build|coverage|htmlcov|out|test-results|playwright-report|\.gradle|target)(/|$)|(^|/)next-env\.d\.ts$|(^|/)\.DS_Store$|(^|/)\.coverage(\.|$)|\.egg-info(/|$)|:Zone\.Identifier$|\.tsbuildinfo$|\.pyc$|\.log$'
+# ── 축3 분류 ────────────────────────────────────────────────────────────────
+# ★★2026-09-05 3차 적대 리뷰가 **출하본 원본**에서 데이터 손실 경로를 찾았다.
+#   종전 REGEN_RE 는 **경로의 어느 세그먼트든** 매치해서 `dist/`·`out/` **아래 전부**가
+#   「재생 가능」을 상속했다. 실측: `dist/.env` → 재생불가 0 → SAFE → remove → **소실**.
+#   ★게다가 git 은 `!! dist/` 로 **디렉토리를 접어** 보고하므로 안에 무엇이 있는지 **보이지도 않는다**.
+#   헤더가 「모르면 막는다」고 적은 그 자리가 정확히 **모르면 통과**였다(§C-11 거짓 면역 주장).
+#
+# ◎ 세 갈래로 가른다 — 순서가 판정이다:
+#   ① DEPS_RE  : 패키지·캐시 트리. **손으로 만들 수 없는 것만** 넣는다 → 통째로 재생 가능(안 들어간다)
+#   ② SECRET_RE: 비밀류 basename → **DEPS 밖이면 무조건 보존**(deny-first). ①보다 뒤인 이유는
+#                `.venv/**/cacert.pem` 같은 정당한 재생물까지 막으면 2차 MAJOR-3(위양성 86/108)이 되살아나기 때문.
+#   ③ OUT_RE   : 빌드 산출 디렉토리. 사람이 뭘 넣었을 수 있으므로 **접힌 디렉토리는 들어가서** 본다.
+#   ④ 그 외    : **보존**(fail-closed) — 이제 이 문장이 코드와 일치한다.
+DEPS_RE='(^|/)(node_modules|__pycache__|\.venv|venv|site-packages|\.mypy_cache|\.pytest_cache|\.ruff_cache|\.turbo|\.next|\.gradle|target)(/|$)|\.egg-info(/|$)'
+SECRET_RE='(^|/)(\.env($|\.)|id_(rsa|dsa|ecdsa|ed25519)($|\.)|.*\.(pem|key|p12|pfx|jks|keystore)$|.*credential.*|.*secret.*)'
+OUT_RE='(^|/)(dist|build|out|coverage|htmlcov|test-results|playwright-report|\.open-next|\.vercel|\.wrangler)(/|$)'
+MISC_REGEN_RE='(^|/)next-env\.d\.ts$|(^|/)\.DS_Store$|(^|/)\.coverage(\.|$)|:Zone\.Identifier$|\.tsbuildinfo$|\.pyc$|\.log$'
+
+# 한 항목을 **보존해야 하는가**. ★쉘 관례대로 **참(0) = 보존**이다(함수 이름과 일치).
+#   ★2026-09-05: 처음엔 반환값을 반대로 짜서 **다섯 모집단이 전부 뒤집혔다.**
+#     한 모집단만 봤으면 «SAFE 가 나온다»로 넘어갔을 자리다 — 두 모집단 대조가 즉시 잡았다.
+_keep_entry() {
+  local e="$1" wt="$2"
+  printf '%s' "$e" | grep -qE "$DEPS_RE" && return 1          # ① 통째로 재생물 → 보존 안 함
+  printf '%s' "$e" | grep -qE "$SECRET_RE" && return 0        # ② deny-first → 보존
+  if [ "${e%/}" != "$e" ]; then                               # ③ 접힌 디렉토리 → 들어가 본다
+    local d="$wt/${e%/}" hit
+    [ -d "$d" ] || return 0                                   # 못 보면 보존(fail-closed)
+    # ★안에 비밀류가 하나라도 있으면 보존한다(전수 · head 로 자르지 않는다)
+    hit=$(find "$d" -type f -print 2>/dev/null | grep -cE "$SECRET_RE" || true)
+    [ "${hit:-0}" = "0" ] || return 0
+    printf '%s' "$e" | grep -qE "$OUT_RE" && return 1         # 순수 빌드산출 → 보존 안 함
+    return 0                                                   # 모르는 디렉토리 → 보존
+  fi
+  printf '%s' "$e" | grep -qE "$OUT_RE|$MISC_REGEN_RE" && return 1
+  return 0                                                     # ④ 모르면 보존(fail-closed)
+}
 DIRTY=0; IGN_N=0; IGN_KEEP=""; IGN_KEEP_N=0
 while IFS= read -r -d '' e; do
   [ -n "$e" ] || continue
   st="${e:0:2}"; p="${e:3}"
   if [ "$st" = "!!" ]; then
     IGN_N=$((IGN_N+1))
-    printf '%s' "$p" | grep -qE "$REGEN_RE" || { IGN_KEEP="${IGN_KEEP}${p}
-"; IGN_KEEP_N=$((IGN_KEEP_N+1)); }
+    if _keep_entry "$p" "$WT"; then
+      IGN_KEEP="${IGN_KEEP}${p}
+"; IGN_KEEP_N=$((IGN_KEEP_N+1))
+    fi
   else
     DIRTY=$((DIRTY+1))
   fi
@@ -125,6 +163,26 @@ if [ "$REACH_N" = "0" ]; then
     제거하면 그 커밋들은 gc 대상이 되어 **영구 소실**된다(브랜치 미부착: $BRANCH)"
 fi
 
+# ★축4를 축1 **앞**에 둔다(3차 리뷰 MINOR-1).
+#   종전에는 축1이 먼저 exit 2 로 나가면 「잠김·메인 워크트리」라는 **확정된 사실**이
+#   계산조차 되지 않아 UNDECIDED 로 나갔다. 실측: 잠긴 워크트리 + gh 조회 실패 → UNDECIDED,
+#   같은 대상에 --no-pr 만 주면 → UNSAFE(잠김 사유 출력). **같은 사실, 다른 판정**이었다.
+#   ★MINOR-1 봉합을 undecided() 에만 하고 **형제 축까지 안 갔다** — §D-20 적용 범위 ≠ 결함 범위.
+# ══════ 축4: git 이 거부할 대상인가 ══════
+GD="$(git -C "$WT" rev-parse --git-dir 2>/dev/null)"
+GCD="$(git -C "$WT" rev-parse --git-common-dir 2>/dev/null)"
+# ★MINOR-2 봉합: 메인 워크트리는 remove 가 fatal 이다(축4 를 넣은 근거가 여기에도 그대로 적용된다).
+if [ -n "$GD" ] && [ -n "$GCD" ] && [ "$(cd "$WT" && cd "$GD" 2>/dev/null && pwd -P)" = "$(cd "$WT" && cd "$GCD" 2>/dev/null && pwd -P)" ]; then
+  FAIL="${FAIL}
+  · ★메인 워크트리다 — git worktree remove 가 거부한다(fatal: is a main working tree)"
+fi
+LOCKF=""
+case "$GD" in /*) LOCKF="$GD/locked" ;; *) LOCKF="$WT/$GD/locked" ;; esac
+if [ -f "$LOCKF" ]; then
+  FAIL="${FAIL}
+  · ★이 워크트리는 잠겨 있다(git worktree lock) — 사유: $(head -c 200 "$LOCKF")"
+fi
+
 # ══════ 축1: PR 상태 (정보 축 — 도달성과 다른 질문) ══════
 if [ -n "$NOPR" ]; then
   echo "축1 PR   : 면제 — 사유: $NOPR"
@@ -133,7 +191,7 @@ else
     undecided "축1 PR   : ★판정 불가 — detached 라 브랜치로 PR 을 찾을 수 없다. --no-pr <사유> 로 면제하라"
   fi
   # ★`.[0]` 은 미문서화 정렬이다. 브랜치명 재사용 실측 983 PR / 고유 967 · 한 이름 7회.
-  if ! PRJSON="$(gh pr list --head "$BRANCH" --state all --json number,state,headRefOid,createdAt \
+  if ! PRJSON="$(gh pr list --head "$BRANCH" --state all --json number,state,createdAt \
                  --jq 'sort_by(.createdAt)|last' 2>/dev/null)"; then
     undecided "축1 PR   : ★판정 불가 — gh 조회가 실패했다"
   fi
@@ -147,21 +205,6 @@ else
   · PR #$PRNUM 이 MERGED 가 아니다($PRSTATE) — 작업이 아직 main 에 반영되지 않았다"
 fi
 
-# ══════ 축4: git 이 거부할 대상인가 ══════
-GD="$(git -C "$WT" rev-parse --git-dir 2>/dev/null)"
-GCD="$(git -C "$WT" rev-parse --git-common-dir 2>/dev/null)"
-# ★MINOR-2 봉합: 메인 워크트리는 remove 가 fatal 이다(축4 를 넣은 근거가 여기에도 그대로 적용된다).
-if [ -n "$GD" ] && [ -n "$GCD" ] && [ "$(cd "$WT" && cd "$GD" 2>/dev/null && pwd -P)" = "$(cd "$WT" && cd "$GCD" 2>/dev/null && pwd -P)" ]; then
-  FAIL="${FAIL}
-  · ★메인 워크트리다 — git worktree remove 가 거부한다(fatal: is a main working tree)"
-fi
-if [ -n "$GD" ] && [ -f "$WT/$GD/locked" ] 2>/dev/null; then :; fi
-LOCKF=""
-case "$GD" in /*) LOCKF="$GD/locked" ;; *) LOCKF="$WT/$GD/locked" ;; esac
-if [ -f "$LOCKF" ]; then
-  FAIL="${FAIL}
-  · ★이 워크트리는 잠겨 있다(git worktree lock) — 사유: $(head -c 200 "$LOCKF")"
-fi
 
 echo
 if [ -z "$FAIL" ]; then

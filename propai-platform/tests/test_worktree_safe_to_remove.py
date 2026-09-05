@@ -17,7 +17,11 @@ from pathlib import Path
 
 import pytest
 
-SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "worktree_safe_to_remove.sh"
+# ★리터럴 "scripts/worktree_safe_to_remove.sh" 를 남긴다 — 형제 락
+# (test_ci_path_filter_covers_locked_scripts.py)이 테스트 파일에서 경로를 **파생**시키는데,
+# Path(...) 조합형은 그 정규식에 안 걸려 이 스크립트가 CI 필터 감시에서 **보이지 않는다**.
+_REL = "scripts/worktree_safe_to_remove.sh"
+SCRIPT = Path(__file__).resolve().parents[2] / _REL
 
 
 def sh(*args: str, cwd: str | None = None) -> subprocess.CompletedProcess:
@@ -48,7 +52,12 @@ def repo():
     for k, v in (("user.email", "t@t"), ("user.name", "t"), ("commit.gpgsign", "false")):
         git(work, "config", k, v)
     Path(work, "a.txt").write_text("a\n")
-    Path(work, ".gitignore").write_text(".env\nnode_modules/\nnext-env.d.ts\n")
+    # ★dist/ 를 넣어야 「무시된 디렉토리」 경로를 태운다.
+    #   없으면 `?? dist/`(미추적)로 잡혀 **다른 축**이 UNSAFE 를 내고, 그러면
+    #   테스트가 초록/빨강을 내더라도 의도한 자리를 안 본다.
+    Path(work, ".gitignore").write_text(
+        ".env\nnode_modules/\nnext-env.d.ts\ndist/\n"
+    )
     git(work, "add", "-A")
     git(work, "commit", "-qm", "init")
     git(work, "remote", "add", "origin", origin)
@@ -126,6 +135,43 @@ class TestIgnoredFiles:
         v, rc = verdict(wt, "--no-pr", ".env")
         assert (v, rc) == ("UNSAFE", 1), f"★ignored .env 를 놓쳤다 ({v}, {rc})"
 
+    def test_secret_inside_collapsed_ignored_dir_blocks(self, repo):
+        """★3차 리뷰 MAJOR-1 — git 은 `!! dist/` 로 **디렉토리를 접어** 보고한다.
+
+        그래서 안에 `.env` 가 있어도 **항목 이름만 보면 안 보인다.** 종전 구현은
+        경로 세그먼트 매칭이라 `dist/` 아래 전부가 「재생 가능」을 상속했고,
+        실측으로 `dist/.env` 가 remove 에 **소실**됐다.
+        """
+        work, root = repo
+        # 모집단A: 접힌 빌드 디렉토리 안에 비밀 → 보존해야 한다
+        wa = _wt(work, root, "wt_dsec", "--detach", commitish="HEAD")
+        os.makedirs(os.path.join(wa, "dist"), exist_ok=True)
+        Path(wa, "dist", ".env").write_text("SECRET=prod\n")
+        # ★전제: git 이 실제로 디렉토리를 접는지 확인(안 접으면 이 테스트가 다른 것을 태운다)
+        raw = git(wa, "status", "--porcelain", "--ignored=matching").stdout
+        assert "dist" in raw, raw
+        va, rca = verdict(wa, "--no-pr", "접힌 디렉토리 안 비밀")
+        assert (va, rca) == ("UNSAFE", 1), f"★dist/.env 를 놓쳤다 ({va}) — remove 가 지운다"
+
+        # 모집단B: 같은 디렉토리에 순수 빌드산출만 → 막으면 위양성이 결함(§A-6)
+        wb = _wt(work, root, "wt_dclean", "--detach", commitish="HEAD")
+        os.makedirs(os.path.join(wb, "dist"), exist_ok=True)
+        Path(wb, "dist", "bundle.js").write_text("console.log(1)\n")
+        vb, rcb = verdict(wb, "--no-pr", "순수 빌드산출")
+        assert (vb, rcb) == ("SAFE", 0), f"★빌드산출을 막으면 위양성이 결함 ({vb})"
+
+    def test_dependency_tree_secret_lookalike_is_not_a_false_positive(self, repo):
+        """★2차 MAJOR-3 재발 방지 — `.venv/**/cacert.pem` 은 정당한 재생물이다.
+
+        deny-first 를 의존성 트리에까지 적용하면 위양성 86/108 이 되살아난다.
+        """
+        work, root = repo
+        wt = _wt(work, root, "wt_deps", "--detach", commitish="HEAD")
+        os.makedirs(os.path.join(wt, "node_modules", "pkg"), exist_ok=True)
+        Path(wt, "node_modules", "pkg", "cacert.pem").write_text("-----BEGIN-----\n")
+        v, rc = verdict(wt, "--no-pr", "의존성 트리 안 pem")
+        assert (v, rc) == ("SAFE", 0), f"★의존성 트리를 막으면 위양성이 결함 ({v})"
+
     def test_ignored_file_really_is_deleted_by_remove(self, repo):
         """근거 재확인: 이 위험이 실재하는가(가드가 지키는 대상의 존재 증명)."""
         work, root = repo
@@ -144,9 +190,14 @@ class TestReachability:
     def test_branch_attached_local_commit_is_safe(self, repo):
         work, root = repo
         wt = _wt(work, root, "wt_br", "-b", "feat/local-only")
+        before = git(wt, "rev-parse", "HEAD").stdout.strip()
         Path(wt, "b.txt").write_text("b\n")
         git(wt, "add", "-A")
         git(wt, "commit", "-qm", "로컬 전용 커밋")
+        # ★전제 가드 — 커밋이 실제로 생겼는지 먼저 단언한다.
+        #   없으면 이 테스트는 「기본 상태가 SAFE」를 확인할 뿐이라 공허하다(3차 리뷰 MINOR-5).
+        after = git(wt, "rev-parse", "HEAD").stdout.strip()
+        assert after and after != before, "커밋이 안 생겼다 — 아래 단언이 공허해진다"
         v, rc = verdict(wt, "--no-pr", "브랜치 부착")
         assert (v, rc) == ("SAFE", 0), (
             f"★브랜치가 붙어 있으면 커밋은 refs/heads 에 남는다 — UNSAFE 는 위양성 ({v})"
@@ -210,6 +261,48 @@ class TestRefusals:
         git(work, "worktree", "lock", "--reason", "다른 세션이 장기 실행 중", wt)
         v, rc = verdict(wt, "--no-pr", "잠김")
         assert (v, rc) == ("UNSAFE", 1), f"★잠긴 워크트리에 제거를 권했다 ({v})"
+
+
+class TestAxisOrderPreservesConfirmedRisk:
+    """★3차 리뷰 MINOR-1 — 확정된 사실이 뒤 축의 판정 불가에 버려지면 안 된다."""
+
+    def test_lock_is_seen_even_when_pr_lookup_is_undecided(self, repo):
+        work, root = repo
+        wt = _wt(work, root, "wt_lockord", "--detach", commitish="HEAD")
+        # 대조군(잠금 없음): detached 라 축1이 판정 불가 → UNDECIDED 여야 한다
+        assert verdict(wt)[0] == "UNDECIDED", "대조군이 UNDECIDED 가 아니면 아래가 공허하다"
+        git(work, "worktree", "lock", "--reason", "다른 세션 사용 중", wt)
+        v, rc = verdict(wt)  # --no-pr 없이 → 축1은 여전히 판정 불가
+        assert (v, rc) == ("UNSAFE", 1), (
+            f"★잠김이라는 확정 사실이 축1 판정 불가에 버려졌다 ({v}, {rc})"
+        )
+
+
+class TestDebtsLeftOpen:
+    """★닫지 않은 것을 초록 안에서 보이게 남긴다(§B-13).
+
+    3차 적대 리뷰가 변이 19종 중 **6종 SURVIVED** 를 보고했다. 아래는 그중
+    이번에 닫지 않기로 한 축이다 — 커밋 메시지에만 적으면 드러나지 않는다.
+    """
+
+    @pytest.mark.skip(reason="부채: 미구현 — 아래 todo 참조")
+    def test_placeholder(self):
+        pass
+
+    def test_debts_are_declared(self):
+        """부채 목록이 이 파일에 실재하는지 자기점검(문서가 조용히 사라지지 않게)."""
+        src = Path(__file__).read_text(encoding="utf-8")
+        for token in ("refs/remotes 축", "DIRTY 게이트", "축1(gh) 락 0건"):
+            assert token in src, f"부채 선언이 사라졌다: {token}"
+
+
+# ★it.todo 상당 — 닫지 않은 축을 이름으로 남긴다:
+#   · "refs/remotes 축": 변이 `refs/heads refs/remotes` → `refs/heads` 가 SURVIVED.
+#     판별 모집단(로컬 브랜치 없고 원격에만 있는 커밋에 detached)이 현재 인구 0이라 미추가.
+#   · "DIRTY 게이트": 변이 `[ "$DIRTY" = "0" ]` → `[ 0 = 0 ]` 가 SURVIVED.
+#     완화: `git worktree remove` 자신이 EXIT=128 로 거부하고 파일을 보존한다(3차 리뷰 실측).
+#   · "축1(gh) 락 0건": 12건 중 gh 를 타는 경로가 없다(정보 축이라 판정을 뒤집지 않음).
+#     계획서 §5 의 "각 축이 혼자서 판정을 뒤집는다"는 **축1에는 거짓**이다.
 
 
 class TestConfirmedRiskIsNotDowngraded:
