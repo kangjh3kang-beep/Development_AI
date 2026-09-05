@@ -179,7 +179,9 @@ def _pick_better_version(
 
 async def _emit_l1_event(db, action_id: str, action_type: str, trigger_key: str,
                          setting_key: str, params: dict[str, Any], *,
-                         severity: str = "info", service: str | None = None) -> None:
+                         severity: str = "info", service: str | None = None,
+                         executed: bool | None = None,
+                         no_op_reason: str | None = None) -> None:
     """L1 조치를 heal_action 이벤트로 기록(가드 카운트·heal-log·롤백 메타 공유).
 
     rollbackable=True + setting_key 를 담아 기존 heal_actions.rollback API 가
@@ -189,15 +191,15 @@ async def _emit_l1_event(db, action_id: str, action_type: str, trigger_key: str,
 
     from sqlalchemy import text
 
-    payload = {
-        "action_id": action_id,
-        "action_type": action_type,
-        "params": {"trigger_key": trigger_key, **params},
-        "rollbackable": True,
-        "setting_key": setting_key,
-        "ttl_expires_at": None,
-        "actor": _ACTOR,
-    }
+    # ★payload 는 **복제하지 않는다** — 정본은 `heal_actions.build_heal_payload` 다.
+    #   복제가 정확히 `#995` 를 L1 에 도달하지 못하게 했다(라이브 441행·84.2%가 이 생산자).
+    from app.services.growth.heal_actions import build_heal_payload
+
+    payload = build_heal_payload(
+        action_id, action_type, {"trigger_key": trigger_key, **params},
+        rollbackable=True, setting_key=setting_key, ttl_expires_at=None,
+        actor=_ACTOR, executed=executed, no_op_reason=no_op_reason,
+    )
     try:
         await db.execute(text(
             "INSERT INTO platform_events "
@@ -254,7 +256,8 @@ async def apply_threshold_autotune(
     tkey = trigger_key or f"threshold:{name}"
     await _emit_l1_event(db, action_id, ACTION_THRESHOLD_AUTOTUNE, tkey, setting_key,
                          {"name": name, "old": current, "new": clamped},
-                         severity=severity)
+                         severity=severity, executed=ok,
+                         no_op_reason=None if ok else "setting_write_failed")
     await _audit(ACTION_THRESHOLD_AUTOTUNE, action_id,
                  {"setting_key": setting_key, "old": current, "new": clamped,
                   "proposed": proposed, "set_ok": ok})
@@ -286,7 +289,8 @@ async def apply_feature_toggle(
     tkey = trigger_key or f"feature:{feature}"
     await _emit_l1_event(db, action_id, ACTION_FEATURE_TOGGLE, tkey, setting_key,
                          {"feature": feature, "enabled": enabled, "error_pct": error_pct},
-                         severity=severity)
+                         severity=severity, executed=ok,
+                         no_op_reason=None if ok else "setting_write_failed")
     await _audit(ACTION_FEATURE_TOGGLE, action_id,
                  {"setting_key": setting_key, "feature": feature,
                   "enabled": enabled, "error_pct": error_pct, "set_ok": ok})
@@ -324,7 +328,8 @@ async def apply_prompt_ab(
                                         updated_by=_ACTOR)
     tkey = trigger_key or f"prompt:{service}"
     await _emit_l1_event(db, action_id, ACTION_PROMPT_AB_ADOPT, tkey, setting_key,
-                         {"service": service, "version": version})
+                         {"service": service, "version": version}, executed=ok,
+                         no_op_reason=None if ok else "setting_write_failed")
     await _audit(ACTION_PROMPT_AB_ADOPT, action_id,
                  {"setting_key": setting_key, "service": service,
                   "version": version, "stats": stats_meta or {}, "set_ok": ok})
