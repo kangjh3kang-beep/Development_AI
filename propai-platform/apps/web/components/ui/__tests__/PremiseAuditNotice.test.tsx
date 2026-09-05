@@ -280,5 +280,87 @@ describe("PremiseAuditNotice — 렌더", () => {
    * «백엔드부터 고쳐야 한다» 로 간다. 실제로는 `<PremiseAuditNotice audit={…} />` 한 줄이다.
    * 두 표면을 한 PR 에서 건드리면 회귀 범위가 겹쳐 별건으로 남긴다.
    */
-  it.todo("통합분석(auto_zoning) 표면도 이 고지를 쓴다 — 데이터는 이미 있고 **소비처만** 없다");
+  /**
+   * ★부채 상환(2026-09-05) — 위 `it.todo` 를 **실제 락으로 교체**했다.
+   *   배선은 `app/[locale]/(dashboard)/projects/[id]/multi-parcel/page.tsx` 이고
+   *   `/zoning/integrated-analysis` 소비처 4곳 중 **`scenario` 를 실제로 읽는 유일한 화면**이다.
+   *
+   * ★★그런데 적대 검증이 **「한 줄 배선」이 아님**을 밝혔다 — 배선만 하면 순이득이 거의 0이다:
+   *   · 위반(`violations`)은 그 화면이 이미 `disclosure`·경고목록으로 **그리고 있다**
+   *   · 이 상자가 더하는 값은 `failed`·`vacuous`·`partial` 세 갈래인데
+   *     **그중 둘이 원리적으로 도달 불가**였다(생산자가 그 데이터를 안 실었다)
+   *   ⇒ 그래서 **백엔드 두 곳을 먼저** 고쳤다:
+   *     ① `auto_zoning.py` except 갈래가 `premise_audit` 키를 아예 안 만들던 것 → 형제와 **같은 스키마**로
+   *     ② `structurally_vacuous` 를 **그 경로 조건에서 파생**해 적재(simulator 값 복사 금지)
+   */
+  describe("★통합분석 표면 — 세 갈래가 「깨끗함」과 구별된다", () => {
+    // ★두 모집단을 **같은 실행에서** 가른다. 한쪽만 보면 «전부 지움»도 만점을 받는다.
+    it("★★감사 실패가 「깨끗함」으로 묻히지 않는다 (failed ↔ clean)", () => {
+      // 음성 대조군 — 정상이면 아무것도 그리지 않는다(정상에 배지를 늘리지 않는다).
+      const { container: cleanBox } = render(
+        <PremiseAuditNotice audit={{ violations: [], checked: 6, registered: 6 }} />
+      );
+      expect(cleanBox.textContent?.trim()).toBe("");
+
+      // 양성 — 위임이 터진 경로. 종전엔 키 자체가 없어 `undefined` → clean → 무렌더였다.
+      const { container: failedBox } = render(
+        <PremiseAuditNotice
+          audit={{ violations: [], checked: 0, registered: null, reason: "audit_failed", detail: "boom" }}
+        />
+      );
+      // ★공허 진리 가드 — 대상이 실제로 그려졌는가를 먼저 확정한다.
+      expect(failedBox.textContent?.trim()).not.toBe("");
+      // ★핵심 — 두 모집단이 **실제로 다르다**. 같으면 감사 실패가 침묵으로 묻힌 것이다.
+      expect(failedBox.textContent).not.toBe(cleanBox.textContent);
+    });
+
+    it("★판별력이 비어 있으면 그 사실을 말한다 (vacuous — checked=0)", () => {
+      const { container } = render(
+        <PremiseAuditNotice audit={{ violations: [], checked: 0, registered: 6 }} />
+      );
+      // 「위반 0」인데 `checked=0` 이면 그 0은 **공허**다 — 침묵으로 두면 무결로 읽힌다.
+      expect(container.textContent?.trim()).not.toBe("");
+    });
+
+    /**
+     * ★★**내 초판 기대가 틀렸고 이 락이 그것을 잡았다.**
+     *
+     * 초판은 *"`structurally_vacuous` 를 실으면 `clean` 에서도 렌더가 달라진다"* 를 단언했다가
+     * **빈 문자열 ↔ 빈 문자열**로 실패했다. 원문을 보니 **의도된 계약**이었다:
+     *   · `premiseAuditState` 는 `clean` 일 때 그 축을 **보지 않는다**(`:142~145`)
+     *   · 컴포넌트는 `state === "clean"` 이면 **early return null**
+     *   · 그 파일 docstring 이 기각 이력을 적어 뒀다 — *"첫 판이 `effective = checked - vacuous` 를
+     *     `registered` 와 비교해 **정상 부지가 전부 경고를 받았다**"*
+     * ⇒ **정상에 배지를 늘리지 않는다**가 이 렌더러의 규율이고, 내 기대가 그것을 어겼다.
+     *
+     * 그러므로 이 축은 **`clean` 이 아닌 갈래에서** 맥락으로 쓰인다. 거기서 잠근다.
+     */
+    it("★구조적 공허는 **깨끗한 경로를 시끄럽게 하지 않고**, 발화한 갈래에서만 맥락을 더한다", () => {
+      // ① 음성 — clean 에서는 이 축이 있어도 침묵한다(정상에 배지를 늘리지 않는다).
+      const { container: cleanWithVac } = render(
+        <PremiseAuditNotice
+          audit={{ violations: [], checked: 6, registered: 6, structurally_vacuous: ["area_source_agreement"] }}
+        />
+      );
+      expect(cleanWithVac.textContent?.trim()).toBe("");
+
+      // ② 양성 — 이미 발화한 갈래(partial)에서는 그 축이 **실제로 문구를 바꾼다**.
+      const partialBase = { violations: [], checked: 3, registered: 6 };
+      const { container: noVac } = render(<PremiseAuditNotice audit={partialBase} />);
+      const { container: withVac } = render(
+        <PremiseAuditNotice
+          audit={{ ...partialBase, structurally_vacuous: ["count_conservation_parcels", "area_source_agreement"] }}
+        />
+      );
+      // 공허 진리 가드 — 둘 다 실제로 그려졌는가(대상 부재로 비교가 공허해지지 않게).
+      expect(noVac.textContent?.trim()).not.toBe("");
+      expect(withVac.textContent?.trim()).not.toBe("");
+      // ★핵심 — 같은 실행에서 **두 모집단이 다르다**. 같으면 그 축이 장식이다.
+      expect(withVac.textContent).not.toBe(noVac.textContent);
+    });
+  });
+
+  // ★★부채 — 이 락은 **렌더러의 갈래**를 잠근다. 「`auto_zoning` 이 그 페이로드를 실제로 낸다」는
+  //   백엔드 축이라 여기서 못 잠근다(파이썬 테스트가 담당해야 한다).
+  it.todo("★부채: auto_zoning 이 실패 경로에서 premise_audit 를 싣는지 백엔드 락으로 잠근다");
 });
