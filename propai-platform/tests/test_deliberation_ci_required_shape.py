@@ -109,20 +109,15 @@ class Test필수등록가능한구조다:
         assert push.get("paths"), "push 의 paths 까지 지우면 main 에서 매번 돈다"
 
 
-def _live_required_contexts() -> list[str] | None:
-    """브랜치보호의 `required_status_checks.contexts` 를 **실측**한다.
+def _gh_protection_contexts_raw() -> str | None:
+    """브랜치보호 조회의 **IO 만** 한다 — 여기서 값을 지어내지 않는다.
 
-    ★**못 재면 `None` 을 돌려준다 — 상수로 대체하지 않는다.**
-    이 자리에 있던 `registered = False` 가 정확히 그 실수였다: 등록이 끝난 뒤에도
-    상수는 뒤집히지 않아 **초록 안에서 «아직 없다»는 거짓**을 말했다(2026-09-05 실측).
+    ★**층을 가른 이유**(적대 리뷰 2차 실측): 예전에는 IO 와 변환이 한 함수였고
+    행위 락이 **그 함수를 통째로 갈아 끼웠다.** 그래서 함수 **안**에 상수 폴백이
+    들어오는 형태가 **4형태 전부 SURVIVED** 였다 — 그리고 `registered = False` 가
+    살던 자리가 바로 그 층이다. **락이 결함이 사는 층을 태우지 않았다.**
     """
-    # ★변이 기록(2026-09-05): 이 함수를 «항상 None» 으로 바꾸면 변이가 **SURVIVED** 한다.
-    #   그것은 구멍이 아니라 **설계**다 — 「판정 불가」는 실패가 아니기 때문이다.
-    #   ★정정(적대 리뷰 실측): 오프라인 이름 락은 이 함수를 **호출조차 하지 않으므로**
-    #   그 변이와 **무관**하다(CAUGHT 가 아니다 — 처음엔 CAUGHT 라고 잘못 적었다).
-    #   그 변이를 실제로 잡는 것은 아래 `test_조회불가일때_판정을_거부한다` 가 아니라,
-    #   ★**상수 폴백 재유입**을 잡는 그 행위 락이다(다른 사건을 잡는다).
-    import json
+    import json  # noqa: F401  (형태 확인용 · 실제 파싱은 순수층에서)
     import subprocess
 
     try:
@@ -138,8 +133,28 @@ def _live_required_contexts() -> list[str] | None:
         return None
     if out.returncode != 0 or not out.stdout.strip():
         return None
+    return out.stdout
+
+
+def _live_required_contexts() -> list[str] | None:
+    """IO 결과를 리스트로 **확정**한다(순수 변환). 확정 못 하면 `None`.
+
+    ★**상수로 메우지 않는다.** 이 자리에 있던 `registered = False` 가 정확히
+    그 실수였다: 등록이 끝난 뒤에도 상수는 뒤집히지 않아 **초록 안에서
+    «아직 없다»는 거짓**을 말했다(2026-09-05 실측).
+
+    ★`--jq` 에 `// []` 를 붙인 것이 핵심이다. 보호가 **통째로** 사라지면 GitHub 이
+    `required_status_checks: null` 을 주고 `jq` 는 **rc=0 으로 `null`** 을 낸다 —
+    그러면 「없음」이 「못 잼」으로 둔갑해 **이 락이 존재하는 그 사건에서만 침묵**한다
+    (1차 적대 리뷰가 잡았다). `[]` 는 list 라 **「못 잼」과 「없음」이 갈린다.**
+    """
+    import json
+
+    raw = _gh_protection_contexts_raw()
+    if raw is None:
+        return None
     try:
-        parsed = json.loads(out.stdout)
+        parsed = json.loads(raw)
     except json.JSONDecodeError:
         return None
     return parsed if isinstance(parsed, list) else None
@@ -173,9 +188,9 @@ def test_워크플로_잡이름이_등록된_컨텍스트와_같다():
     """워크플로가 보호규칙이 기다리는 이름의 잡을 **생산하는지** 본다.
 
     ★**이 락이 무엇을 더하지 않는지 먼저 적는다**(적대 리뷰 실측 2026-09-05):
-    잡 이름만 바꾸는 변이는 위 `test_경로판별이_잡레벨_if_로_옮겨졌다`(`:83`)가
+    잡 이름만 바꾸는 변이는 위 `test_경로판별이_잡레벨_if_로_옮겨졌다` 가
     **이미 잡는다** — 이 락은 그 **진부분집합**이라 게이트 탐지 증분이 **0** 이다.
-    남는 값어치는 하나뿐이다: `:83` 이 나중에 **키 기준 조회로 리팩토링**되면
+    남는 값어치는 하나뿐이다: 그 테스트가 나중에 **키 기준 조회로 리팩토링**되면
     그때부터 이 락만이 이름을 본다.
 
     ★**공동 개명은 오프라인에서 못 잡는다** — 잡 이름과 `REQUIRED_JOB_NAME` 을 **함께**
@@ -195,18 +210,51 @@ def test_워크플로_잡이름이_등록된_컨텍스트와_같다():
     )
 
 
-def test_조회불가일때_판정을_거부한다(monkeypatch):
-    """★**금지한 상수 폴백이 다시 들어오는 것을 잡는다 — 산문이 아니라 행위로.**
+def _run_registration_test():
+    """라이브 등록 테스트를 직접 부른다(판정을 관측하기 위해)."""
+    return test_심의검사가_필수로_등록돼_있다()
 
-    적대 리뷰가 실증했다: 위 독스트링이 *"상수로 대체하지 않는다"* 고 **말만** 하고
-    있어서, `_live_required_contexts() or [REQUIRED_JOB_NAME]` 한 줄을 넣으면
-    **8/8 초록**이었다 — `registered = False` 와 **정확히 같은 결함의 복원**이다.
 
-    그래서 «못 잴 때는 **판정을 거부한다**»를 **행위로** 못 박는다:
-    조회가 `None` 이면 그 테스트는 **통과가 아니라 `skip`** 이어야 한다.
+def test_조회층이_판정을_가른다(monkeypatch):
+    """★**세 모집단**으로 판정한다 — 한 모집단만 보면 반대로 틀린 구현도 초록이다.
+
+    | IO 가 주는 것 | 이 테스트가 요구하는 판정 | 무엇을 막나 |
+    |---|---|---|
+    | `None`(못 잼) | **`skip`** — 통과가 아니다 | ★상수 폴백 재유입(`or [REQUIRED_JOB_NAME]`) |
+    | 등록이 **없는** 목록 | **`AssertionError`** | ★**특이도** — 무조건 `skip` 이나 `or True` 로 단언을 죽이는 것 |
+    | 등록이 **있는** 목록 | **통과** | 과잉 억제(늘 실패하는 락) |
+
+    ★**IO 층을 가로챈다** — 순수 변환층(`_live_required_contexts`)을 갈아 끼우면
+    그 층 안의 폴백이 관측 불가가 된다(2차 적대 리뷰 실측: 내부 4형태 전부 SURVIVED).
     """
-    monkeypatch.setattr(
-        sys.modules[__name__], "_live_required_contexts", lambda: None
-    )
+    mod = sys.modules[__name__]
+
+    # 모집단 ①: 못 잼 → 판정 거부
+    monkeypatch.setattr(mod, "_gh_protection_contexts_raw", lambda: None)
+    assert _live_required_contexts() is None, "못 잰 것을 값으로 지어냈다"
     with pytest.raises(pytest.skip.Exception):
-        test_심의검사가_필수로_등록돼_있다()
+        _run_registration_test()
+
+    # 모집단 ②: 잴 수 있는데 **없다** → 판정해서 위반
+    monkeypatch.setattr(mod, "_gh_protection_contexts_raw", lambda: '["Backend (pytest)"]')
+    with pytest.raises(AssertionError):
+        _run_registration_test()
+
+    # 모집단 ③: 있다 → 통과
+    monkeypatch.setattr(
+        mod, "_gh_protection_contexts_raw", lambda: '["Backend (pytest)", "%s"]' % REQUIRED_JOB_NAME
+    )
+    _run_registration_test()
+
+
+def test_보호_전면제거가_못잼으로_둔갑하지_않는다(monkeypatch):
+    """★이 락이 존재하는 **그 사건**을 직접 태운다.
+
+    `// []` 가 없으면 `jq` 가 `null` 을 rc=0 으로 내고, 그것이 «조회 실패»로 읽혀
+    **침묵**한다. 여기서는 IO 가 `"[]"`(측정 성공한 부재)를 줄 때 **판정 거부가 아니라
+    위반**으로 나와야 함을 못 박는다.
+    """
+    monkeypatch.setattr(sys.modules[__name__], "_gh_protection_contexts_raw", lambda: "[]")
+    assert _live_required_contexts() == [], "측정 성공한 「없음」이 「못 잼」으로 둔갑했다"
+    with pytest.raises(AssertionError):
+        _run_registration_test()
