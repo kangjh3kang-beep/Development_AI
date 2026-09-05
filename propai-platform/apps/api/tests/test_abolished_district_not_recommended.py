@@ -37,11 +37,11 @@ ABOLISHED = "입지규제최소구역"
 SUCCESSOR = "도시혁신구역"
 
 
-def _ctx(zone="일반상업지역", area=12000, station=True):
+def _ctx(zone="일반상업지역", area=12000, station=True, region="서울특별시"):
     return {
         "primary_zone": zone, "zones": [zone] if zone else [],
         "total_area_sqm": area, "area": area, "parcel_count": 3,
-        "region": "서울특별시", "multi": True, "integration_feasible": True,
+        "region": region, "multi": True, "integration_feasible": True,
         # ★**프로덕션이 쓰는 키**를 쓴다. 직전 PR 의 적대 리뷰가 *"픽스처의 `far` 키는
         #   `_scenarios()` 가 안 읽으므로 그 축이 통째로 죽어 있다"* 를 지적했는데(L-1),
         #   내가 이 파일에서 **그대로 재현**했고 `est_far` 단언이 **첫 실행에서 잡았다**.
@@ -64,20 +64,26 @@ def _all_text(rows) -> str:
 
 
 @pytest.mark.parametrize(
-    ("zone", "area", "station"),
+    ("zone", "area", "station", "region"),
     [
-        ("일반상업지역", 12000, True),    # 조건부 경로
-        ("일반상업지역", 800, True),      # 불가 경로(면적 미달)
-        ("제2종일반주거지역", 12000, False),  # 미적용 지역 안내 경로
-        ("", 12000, True),               # 용도지역 미확보
+        ("일반상업지역", 12000, True, "서울특별시"),      # 조건부 경로
+        ("일반상업지역", 800, True, "서울특별시"),        # 불가 경로(면적 미달)
+        ("제2종일반주거지역", 12000, False, "서울특별시"),  # 역세권 미발화
+        ("", 12000, True, "서울특별시"),                 # 용도지역 미확보
+        # ★★**대체안 안내문 경로** — 이것이 빠져 있었고, 그래서 「대체안 문구만 되돌리는」
+        #   변이가 **SURVIVED** 했다(내가 «형제 미스윕 방지» 라고 이름 붙인 바로 그 축인데
+        #   픽스처가 그 경로를 **원리적으로 못 태웠다**).
+        #   실측: 대체안은 **비서울 + 역세권** 에서만 발화한다(서울은 제도가 적용되므로).
+        ("일반상업지역", 12000, True, "경기도 성남시"),
+        ("제2종일반주거지역", 12000, True, "부산광역시"),
     ],
 )
-def test_폐지된_제도명이_응답_어디에도_없다_파생형(zone, area, station):
+def test_폐지된_제도명이_응답_어디에도_없다_파생형(zone, area, station, region):
     """★**파생형 전수** — `scheme` 하나만 보면 `notes`·`cons` 로 샌다.
 
     실제로 `#940` 은 본 시나리오만 보고 **대체안 안내문에 남은 옛 이름을 놓쳤다**(형제 미스윕).
     """
-    rows = _SIM._scenarios(_ctx(zone, area, station))
+    rows = _SIM._scenarios(_ctx(zone, area, station, region))
     assert rows, "시나리오가 0종 — 판정 거부(공허 진리 방지)"
     text = _all_text(rows)
     # ★승계 고지는 **예외**다 — 옛 이름으로 검색한 사용자를 위해 일부러 남긴다.
@@ -85,9 +91,53 @@ def test_폐지된_제도명이_응답_어디에도_없다_파생형(zone, area,
         ln for ln in text.splitlines() if "승계" not in ln and "삭제되고" not in ln
     )
     assert ABOLISHED not in without_notice, (
-        f"폐지된 제도명이 남아 있다(zone={zone!r} area={area} station={station}) — "
+        f"폐지된 제도명이 남아 있다(zone={zone!r} area={area} station={station} region={region!r}) — "
         "승계 고지 밖에서 그 이름이 나오면 사용자는 **추진 가능한 제도**로 읽는다."
     )
+
+
+def test_대체안_안내문_경로가_실제로_발화한다_공허진리_가드():
+    """★위 파생형 검사가 **그 경로를 실제로 태웠는지** 따로 증명한다.
+
+    첫 판은 픽스처 4종이 전부 `region="서울특별시"` 라 **대체안 안내문이 한 번도 렌더되지
+    않았다.** 그래서 그 문구만 되돌리는 변이가 **SURVIVED** 했다 —
+    ***검사는 있는데 대상이 없어 통과하는 공허한 그린***(이 저장소가 4회 이상 겪은 형태).
+    실측: 대체안은 **비서울 + 역세권** 에서만 발화한다.
+    """
+    rows = _SIM._scenarios(_ctx(region="경기도 성남시", station=True))
+    alts = [r for r in rows if "대체:" in (r.get("notes") or "")]
+    assert alts, "대체안 안내문이 렌더되지 않았다 — 위 파생형 검사가 이 경로를 못 태운다"
+    # ★진짜 계약 — **어느 대체안도 폐지 제도를 권하지 않는다**(전수).
+    for r in alts:
+        assert ABOLISHED not in (r.get("notes") or ""), (
+            f"{r['scheme']}: 대체안으로 **폐지된 제도**를 권한다 — {r.get('notes')!r}"
+        )
+    # ★그리고 **후속 제도가 대체안 목록에서 사라지지 않았다**(한쪽만 보면 «그냥 지웠다» 도 만점).
+    #   ★단 **모든** 대체안이 그것을 담아야 하는 것은 아니다 — 시프트는 자기 대체 목록이 따로다.
+    #   실측으로 확인한 대상만 단언한다(과잉 단언은 정상 코드를 막는다).
+    with_successor = [r for r in alts if SUCCESSOR in (r.get("notes") or "")]
+    assert with_successor, f"후속 제도를 대체안에서 통째로 뺐다: {[r['scheme'] for r in alts]}"
+
+
+def test_법령참조_레지스트리가_시나리오명과_결속된다():
+    """★레지스트리 키만 되돌리는 변이가 **SURVIVED** 했다 — 소비처를 안 태웠다.
+
+    `SCHEME_*` 매핑의 키가 시나리오명과 어긋나면 **법령 근거가 조용히 안 붙는다**
+    (조회 실패가 아니라 **키 미스**라 예외도 안 난다). ★**파생형**으로 잠근다 —
+    레지스트리에 등록된 이름은 **실제로 생성되는 시나리오명 집합 안**에 있어야 한다.
+    """
+    from app.services.development import scenario_simulator as _ss
+
+    registry = next(
+        v for k, v in vars(_ss).items()
+        if isinstance(v, dict) and "단순 건축" in v and isinstance(v.get("단순 건축"), list)
+    )
+    assert ABOLISHED not in registry, "레지스트리에 폐지된 제도명이 남아 있다"
+    assert SUCCESSOR in registry, "레지스트리에 후속 제도명이 없다"
+
+    # ★**결속** — 등록된 이름이 실제 시나리오명과 맞는지(오타·개명 드리프트 차단).
+    produced = {r["scheme"] for r in _SIM._scenarios(_ctx())}
+    assert SUCCESSOR in produced, "레지스트리 이름이 실제 시나리오명과 다르다"
 
 
 def test_후속_제도명이_실제로_나온다_두_모집단():
