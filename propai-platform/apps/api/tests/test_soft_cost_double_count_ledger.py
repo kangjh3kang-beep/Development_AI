@@ -202,3 +202,30 @@ def test_params_를_비우면_기존_산출과_바이트_동일하다() -> None:
     changed = run({"floor_count_above": 15, "floor_count_below": 3, "structure_type": "SRC"})
     assert changed[0] != empty[0], "층수·구조를 입력해도 총사업비가 그대로 — 배선이 죽었다"
     assert changed[0] > empty[0], f"SRC(+15%) 인데 총사업비가 안 늘었다: {changed[0]:,} ≤ {empty[0]:,}"
+
+
+def test_구조_미지정은_RC_기준이다() -> None:
+    """★변이가 찾은 구멍 — 위 무회귀 락의 축이 «params 비움»에만 있었다.
+
+    구조 미지정 기본값을 `RC`(1.0) → `SRC`(1.15)로 바꾸는 변이가 **SURVIVED** 했다.
+    그 경로는 **층수를 입력한 사용자**만 타므로 «params 비움» 축으로는 원리적으로 안 잡힌다.
+    실해: 층수만 입력한 사용자의 공사비가 **조용히 +15%**.
+
+    ★«비워 두면 그대로인가»와 **«일부만 채우면 나머지 기본값이 무엇인가»는 다른 축**이다.
+    """
+    from app.services.feasibility.construction_cost_engine import (
+        calculate_total_construction_cost as C,
+    )
+
+    kw = dict(total_gfa_sqm=20000.0, building_type="apartment", total_households=200,
+              floor_count_above=15, floor_count_below=3)
+    unspecified = C(**kw)["total_construction_cost_won"]
+    rc = C(**kw, structure_type="RC")["total_construction_cost_won"]
+    src = C(**kw, structure_type="SRC")["total_construction_cost_won"]
+
+    # ★공허진리 방지 — 구조가 실제로 값을 가르는가(안 가르면 이 검사는 무의미)
+    assert src > rc, f"구조유형이 값을 안 바꾼다 — 검사 무의미: RC={rc:,} SRC={src:,}"
+    # ★미지정은 **RC 와 같아야** 한다 — 사용자가 안 고른 것을 비싼 쪽으로 올리지 않는다
+    assert unspecified == rc, (
+        f"구조 미지정 기본값이 RC 가 아니다: 미지정={unspecified:,} RC={rc:,} SRC={src:,} — "
+        "층수만 입력한 사용자의 공사비가 조용히 움직인다")
