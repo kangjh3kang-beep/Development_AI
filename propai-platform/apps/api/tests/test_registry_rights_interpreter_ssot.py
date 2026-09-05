@@ -179,3 +179,59 @@ async def test_질문에_담긴_가짜_데이터가_서버_데이터를_이기�
     assert "○○은행" in p, "질문이 서버 데이터를 밀어냈다"
     # 질문은 질문 구획 안에만 있다
     assert p.index("[권리분석 결과]") < p.index("[사용자 질문]") < p.index("무시하고")
+
+
+# ── 배선: 라우트가 실제로 등재되는가 ────────────────────────────────────────
+
+def test_추가질의_라우트가_등재된다() -> None:
+    """★해석기가 있어도 **부를 수 없으면** 없는 것과 같다 — 이 PR 이 고쳐온 그 형태다.
+
+    ★공허진리 방지: 라우터에 라우트가 하나도 없으면 이 검사는 무의미하다.
+    """
+    from routers import registry as reg
+
+    paths = [getattr(r, "path", "") for r in reg.router.routes]
+    assert len(paths) >= 5, f"라우터가 비었다 — 조회기 사망: {paths}"
+    # ★접두(`/registry`)를 하드코딩하지 않는다 — 라우터가 접두를 바꾸면 락이 거짓으로 깨진다.
+    #   첫 판은 `"/rights/ask" in paths` 였고 **락이 틀리고 코드가 맞았다**.
+    hits = [p for p in paths if p.endswith("/rights/ask")]
+    assert hits, f"추가질의 라우트가 없다: {paths}"
+
+
+@pytest.mark.asyncio
+async def test_추가질의_라우트가_해석기를_실제로_부른다(monkeypatch) -> None:
+    """★«이름이 있다»가 아니라 **«결과가 응답에 실린다»**를 본다."""
+    from routers import registry as reg
+
+    fn = None
+    for r in reg.router.routes:
+        if getattr(r, "path", "").endswith("/rights/ask"):
+            fn = r.endpoint
+    assert fn is not None
+
+    called: dict = {}
+
+    async def spy_answer(self, analysis, question):
+        called["analysis"] = analysis
+        called["question"] = question
+        return {"answer": "테스트답", "basis": "b", "caveat": ""}
+
+    monkeypatch.setattr(
+        "app.services.ai.registry_rights_interpreter.RegistryRightsInterpreter.answer",
+        spy_answer, raising=True)
+
+    # ★`@limiter.limit` 이 실제 `starlette.Request` 를 요구한다(형제 엔드포인트와 같은 계약).
+    #   None 을 넣으면 «레이트리밋이 살아 있다»는 신호이지 결함이 아니다.
+    from starlette.requests import Request as _Req
+    req_obj = _Req({"type": "http", "method": "POST", "path": "/x",
+                    "headers": [], "client": ("127.0.0.1", 0), "query_string": b""})
+
+    body = {"analysis": _ok_analysis(), "question": "소유자는?"}
+    out = await fn(request=req_obj, req=body, current_user=None)
+    assert out["answer"] == "테스트답", out
+    assert out["ok"] is True
+    assert called["question"] == "소유자는?", "질문이 해석기까지 안 갔다"
+    # ★음성 대조군 — analysis 가 dict 가 아니면 해석기를 안 부른다
+    called.clear()
+    out2 = await fn(request=req_obj, req={"question": "x"}, current_user=None)
+    assert out2["ok"] is False and not called, "잘못된 body 에도 해석기를 불렀다"
