@@ -39,6 +39,7 @@ import { analysisSignature } from "@/lib/use-analysis-cache";
 import { farLimitForZone, bcrLimitForZone } from "@/lib/kr-building-regulations";
 import { mapZoningRich, normalizeUpzoningScenarios, guardMultiParcelRich } from "@/lib/zoning-ssot";
 import type { BackendLegalRef } from "@/lib/evidence/adaptEvidence";
+import { resolveAbsentLabel } from "@/lib/withheld/absent-reasons";
 
 // 가상준공 3D 디지털트윈 씬 — @react-three/fiber. SSR/1102 회피 위해 ssr:false 동적 마운트.
 const DigitalTwinScene = dynamic(() => import("@/components/digital-twin/DigitalTwinScene"), {
@@ -142,6 +143,9 @@ type OrdinanceConditionalItem = {
   article_title?: string | null;
   condition_key?: string | null;
   why?: string | null;
+  /** ★보류 **사유 코드**(닫힌 어휘). `why` 산문과 **함께** 온다 — 대체가 아니다.
+   *  실측 2026-09-05: `ordinance_conditional.py:246`(조문을 못 읽음)만 이것을 단다. */
+  decision_absent?: string | null;
   /** '그 밖에 용도지구·구역 등' 은 나열형이라 **항목마다 값이 다르다**.
    *  어느 항목으로 매칭됐는지 밝히지 않으면 사용자가 근거를 확인할 수 없다. */
   matched_district?: string | null;   // 부지의 실제 지정명(예: 자연취락지구)
@@ -656,11 +660,30 @@ export function L3EnhancedCards({
                   </span>
                 </p>
               ))}
+              {/* ★★사유를 **항목마다** 낸다 — 종전엔 한 문장을 하드코딩해 세 갈래를 전부
+                  덮었다. 그중 `조문을 읽지 못함`(SOURCE_UNAVAILABLE, 우리 자료 결함)까지
+                  "설계가 정해져야 판정됩니다"로 번역돼, 사용자는 **설계를 아무리 확정해도
+                  판정이 안 나오는** 상태에서 공이 자기 쪽에 있다고 읽었다.
+                  #983(「용도지역을 모른다」→「요건 미해당」)과 같은 형태다. */}
               {(ordCond?.undecidable?.length ?? 0) > 0 && (
-                <p className="text-[10px] text-[var(--text-tertiary)] mt-1.5">
-                  판정 보류 {ordCond?.undecidable?.length}건 — 건축물 용도·연혁 등 설계가 정해져야
-                  판정되는 조건입니다(예: {ordCond?.undecidable?.[0]?.article}).
-                </p>
+                <div className="mt-1.5 text-[10px] text-[var(--text-tertiary)]">
+                  <p>판정 보류 {ordCond?.undecidable?.length}건 — 사유가 항목마다 다릅니다.</p>
+                  <ul className="mt-0.5 list-disc space-y-0.5 pl-3.5">
+                    {(ordCond?.undecidable ?? []).map((it, i) => {
+                      // ★코드와 산문은 **합성**이다. 코드만 내면 구체 상황이, 산문만 내면
+                      //   기계가 읽을 축이 사라진다. 어휘 밖 코드는 resolveAbsentLabel 이 null.
+                      const code = resolveAbsentLabel(it?.decision_absent, { variant: "short" });
+                      return (
+                        <li key={`${it?.article ?? "?"}-${i}`}>
+                          {it?.article ? <span className="font-bold">{it.article}</span> : null}
+                          {it?.article ? " — " : null}
+                          {it?.why || "사유가 제공되지 않았습니다"}
+                          {code ? <span className="ml-1 opacity-80">[{code}]</span> : null}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
               )}
             </div>
           )}
