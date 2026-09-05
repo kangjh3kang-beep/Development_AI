@@ -30,6 +30,7 @@ required 충족으로 계수한다"* 는 전제가 **이 저장소에서 처음 
 
 from __future__ import annotations
 
+import inspect
 import sys
 from pathlib import Path
 
@@ -236,15 +237,27 @@ def test_조회층이_판정을_가른다(monkeypatch):
         _run_registration_test()
 
     # 모집단 ②: 잴 수 있는데 **없다** → 판정해서 위반
+    # ★`pytest.raises(AssertionError)` 로 쓰면 안 된다 — 안에서 `skip` 이 나면 그 예외가
+    #   블록을 **뚫고 나가 락 자신이 skip** 된다(2차 리뷰 변이 실측: SURVIVED).
+    #   그래서 skip 을 **명시적으로 실패로** 바꾼다.
     monkeypatch.setattr(mod, "_gh_protection_contexts_raw", lambda: '["Backend (pytest)"]')
-    with pytest.raises(AssertionError):
+    try:
         _run_registration_test()
+    except AssertionError:
+        pass
+    except pytest.skip.Exception as exc:
+        pytest.fail(f"★잴 수 있는데 판정을 회피했다(skip): {exc}")
+    else:
+        pytest.fail("★등록이 없는 목록인데 통과했다 — 단언이 무력하다")
 
-    # 모집단 ③: 있다 → 통과
+    # 모집단 ③: 있다 → 통과 (과잉 억제 방지)
     monkeypatch.setattr(
         mod, "_gh_protection_contexts_raw", lambda: '["Backend (pytest)", "%s"]' % REQUIRED_JOB_NAME
     )
-    _run_registration_test()
+    try:
+        _run_registration_test()
+    except pytest.skip.Exception as exc:
+        pytest.fail(f"★잴 수 있는데 판정을 회피했다(skip): {exc}")
 
 
 def test_보호_전면제거가_못잼으로_둔갑하지_않는다(monkeypatch):
@@ -256,5 +269,33 @@ def test_보호_전면제거가_못잼으로_둔갑하지_않는다(monkeypatch)
     """
     monkeypatch.setattr(sys.modules[__name__], "_gh_protection_contexts_raw", lambda: "[]")
     assert _live_required_contexts() == [], "측정 성공한 「없음」이 「못 잼」으로 둔갑했다"
-    with pytest.raises(AssertionError):
+    try:
         _run_registration_test()
+    except AssertionError:
+        pass
+    except pytest.skip.Exception as exc:
+        pytest.fail(f"★「없음」을 「못 잼」으로 읽었다(skip): {exc}")
+    else:
+        pytest.fail("★보호가 비었는데 통과했다")
+
+
+def test_조회식이_없음과_못잼을_가르는_형태다():
+    """★**층을 가르며 잃은 커버리지를 되찾는다**(2차 리뷰 실측).
+
+    IO 와 변환을 나눈 뒤 행위 락들은 IO 를 monkeypatch 하므로 **`--jq` 문자열을
+    아무도 태우지 않는다** — `// []` 를 지우는 변이가 SURVIVED 였다.
+
+    ★**이것은 재료 락이지 행위 락이 아니다.** 행위로 태우려면 **실제 브랜치보호를
+    지워야** 하는데 그것은 비가역 설정 변경이라 하지 않는다. 그 한계를 적어 둔다 —
+    적지 않으면 다음 사람이 이 락을 «동작을 잠갔다»로 읽는다.
+
+    짝이 되는 행위 락은 `test_보호_전면제거가_못잼으로_둔갑하지_않는다` 다:
+    저기서는 **`"[]"` 가 위반으로 판정되는지**를 태우고, 여기서는 **`jq` 가 `null`
+    대신 `[]` 를 내도록 되어 있는지**를 본다. 둘이 합쳐야 그 사건이 닫힌다.
+    """
+    src = inspect.getsource(_gh_protection_contexts_raw)
+    assert "required_status_checks.contexts" in src, "조회식이 사라졌다 — 락이 대상을 잃었다"
+    assert "// []" in src, (
+        "★`--jq` 에서 `// []` 가 사라졌다. 보호가 통째로 사라지면 jq 가 **rc=0 으로 `null`** 을 "
+        "내고, 그러면 「없음」이 「못 잼」으로 둔갑해 **이 락이 존재하는 그 사건에서만 침묵**한다."
+    )
