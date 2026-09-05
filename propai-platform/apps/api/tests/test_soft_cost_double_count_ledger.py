@@ -141,3 +141,64 @@ def test_debt_소프트비와_공사비_간접비가_겹치지_않는다() -> No
     #   지금은 둘 다 아니다 — 소프트비가 통칭이라 경계가 없고, 규모도 비슷하다.
     assert overlap == 0 or soft == 0, (
         f"두 자리가 같은 항목을 센다: 공사비 안 {overlap:,.0f}원 · 소프트비 {soft:,.0f}원")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ★무회귀 — 기존 프로젝트는 아무것도 바뀌지 않는다
+# ══════════════════════════════════════════════════════════════════════════════
+
+def test_params_를_비우면_기존_산출과_바이트_동일하다() -> None:
+    """★★이 PR 이 «미측정»으로 남겨 뒀던 질문의 답이다.
+
+    ④⑤③ 로 `params` 축을 여럿 열었다. 그것이 **기존 프로젝트의 수치를 조용히 바꾸는가**를
+    «장치 부재»라 적고 미뤘는데, **순수 계산이라 유료 호출 없이 잴 수 있었다.**
+
+    실측(M01 기본 입력 · 총사업비 34,262,392,053원):
+
+        params 비움                    34,262,392,053   ← 기존 모든 프로젝트가 이 상태
+        지하 3층만 입력                34,635,902,853   +1.1%
+        지상 15층 + 지하 3층 + SRC     40,114,703,848  +17.1%
+        기타경비 3항목 전부            32,431,936,053   -5.3%
+        토지비 직접입력 100억          38,096,742,053  +11.2%
+
+    ★변동은 **사용자가 명시적으로 입력한 결과**라 회귀가 아니다.
+      회귀 여부를 가르는 것은 **«비워 두면 그대로인가»** 하나뿐이고, 그것을 여기서 잠근다.
+    """
+    from app.services.feasibility.modules.base_module import ModuleInput
+    from app.services.feasibility.modules.m01_redevelopment import M01Redevelopment
+
+    m = M01Redevelopment()
+
+    def _mk(params):
+        # ★픽스처를 여기서 만든다 — 다른 테스트 모듈을 임포트하면 러너의 cwd 에 따라
+        #   `ModuleNotFoundError` 가 난다(첫 실행에서 실제로 났다).
+        return ModuleInput(
+            development_type="M01", total_land_area_sqm=2_000.0,
+            official_price_per_sqm=3_000_000, price_multiplier=1.1,
+            total_gfa_sqm=8_000.0, building_type="apartment", total_households=80,
+            avg_sale_price_per_pyeong=15_000_000, avg_area_pyeong=34.0,
+            sale_ratio=0.95, project_months=36, sido_name="서울특별시",
+            params=params,
+        )
+
+    def run(params):
+        i = _mk(params)
+        o = m.calculate(i)
+        return (int(o.total_cost_won), int(o.total_construction_cost_won),
+                int(o.total_land_cost_won), int(o.total_other_cost_won))
+
+    empty = run({})
+    # ★공허진리 방지 — 산출이 실제로 값을 내는가
+    assert all(v > 0 for v in empty), f"기준 산출이 0을 포함한다: {empty}"
+    assert run({}) == empty, "같은 입력이 두 번 다른 값을 낸다(비결정)"
+    # ★None·빈 문자열로 채워도 «비움»과 같아야 한다 — 폼이 그렇게 보낸다
+    for noise in ({"floor_count_above": None}, {"structure_type": ""},
+                  {"marketing_cost_won": None}, {"land_cost_override_won": 0},
+                  {"unit_cost_per_sqm": None, "floor_count_below": 0}):
+        assert run(noise) == empty, (
+            f"빈 값 {noise} 이 산출을 바꿨다 — 기존 프로젝트가 조용히 움직인다")
+
+    # ★음성 대조군 — 진짜 값을 넣으면 **반드시 바뀐다**(전부 무시하는 구현 방지)
+    changed = run({"floor_count_above": 15, "floor_count_below": 3, "structure_type": "SRC"})
+    assert changed[0] != empty[0], "층수·구조를 입력해도 총사업비가 그대로 — 배선이 죽었다"
+    assert changed[0] > empty[0], f"SRC(+15%) 인데 총사업비가 안 늘었다: {changed[0]:,} ≤ {empty[0]:,}"
