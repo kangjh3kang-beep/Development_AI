@@ -334,7 +334,11 @@ def test_backend_unresolved_calls_are_documented() -> None:
         # 프론트가 보낸 것을 그대로 적재하는 경로. ★**우리 앱 `trackEvent` 가 유일한 생산자라는
         # 전제 하에** 프론트 파생(`FRONTEND_PAYLOAD_KEYS`)이 덮는다 — 그 엔드포인트는
         # `payload: dict | None` 이라 임의 HTTP 클라이언트의 임의 키도 받는다(전제를 명시한다).
-        "app/routers/growth.py:98(payload 비리터럴)",
+        # ★이 면제는 **줄 번호에 결속**돼 있다 — 그 위에 코드를 넣으면 밀린다.
+        #   느슨하게(파일 단위로) 바꾸지 말 것: 같은 파일의 **새** 비리터럴 호출이
+        #   조용히 통과하게 된다. 밀렸으면 ast 로 **다시 파생해** 숫자를 갱신하라.
+        #   (2026-09-05 `#989` 가 수신부 앞에 헬퍼를 넣어 98 → 137 로 밀렸다.)
+        "app/routers/growth.py:137(payload 비리터럴)",
         # LLM 호출 계측 — payload 를 **같은 함수 안에서 조건부로 조립**한다. 그 6키는
         # `DYNAMIC_BACKEND_KEYS` 로 올려 마스킹 단언에 **직접 실어** 태운다.
         "app/services/ai/base_interpreter.py:410(payload 비리터럴)",

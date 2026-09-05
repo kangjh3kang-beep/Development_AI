@@ -47,8 +47,13 @@ _RE_LONGTOKEN = re.compile(r"/[0-9a-fA-F]{16,}")
 _RE_VERSION = re.compile(r"^/api/v\d+")
 
 
-def _normalize_route(path: str) -> str:
+def normalize_route(path: str) -> str:
     """경로의 ID 세그먼트를 {id} 로 치환해 라우트를 정규화한다.
+
+    ★**공개 SSOT** — 서버 미들웨어와 프론트 이벤트 수신부(`routers/growth.py`)가
+      **이 한 구현**을 쓴다. 두 벌로 구현하면 어휘가 갈리고, 갈리면 같은 라우트가
+      서로 다른 인사이트 키가 되어 승계가 원리적으로 불가능해진다(2026-09-05 실측:
+      접두사만 다른 같은 라우트 9쌍 · `/store/projects` 한 곳에 open 14건).
 
     ⚠️ /api/v\\d+ 의 버전 세그먼트(v1, v2)는 ID 가 아니므로 보존한다.
     진짜 ID 세그먼트(/projects/123 → /projects/{id})만 치환한다.
@@ -99,7 +104,7 @@ class GrowthTelemetryMiddleware(BaseHTTPMiddleware):
         except Exception:  # noqa: BLE001
             return await call_next(request)
 
-        route = _normalize_route(path)
+        route = normalize_route(path)
         method = request.method
         t0 = time.perf_counter()
         status_code = 500

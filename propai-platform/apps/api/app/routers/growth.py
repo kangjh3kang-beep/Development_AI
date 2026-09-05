@@ -10,6 +10,7 @@ POST /api/v1/growth/events
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 
 import structlog
@@ -18,7 +19,11 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.middleware.growth_telemetry import normalize_route
 from apps.api.database.session import get_db
+
+#: `/api/v1`·`/api/v2` … 버전 접두사 판별(정규화기와 같은 형태).
+_RE_API_VERSION = re.compile(r"^/api/v\d+")
 
 logger = structlog.get_logger(__name__)
 
@@ -81,6 +86,40 @@ def _extract_identity(request: Request) -> tuple[str | None, str | None]:
         return None, None
 
 
+#: 프론트가 보내는 이벤트 중 **API 라우트 네임스페이스**를 갖는 것.
+#: ★`page_view` 는 제외한다 — 그 `route` 는 **브라우저 경로**(`/projects`)이지
+#:   API 경로가 아니다. 여기에 `/api/v1` 을 붙이면 존재하지 않는 라우트를 합성하고,
+#:   같은 이름의 진짜 API 라우트와 키가 충돌한다(2026-09-05 계획서 전제 9).
+_API_ROUTE_EVENTS = frozenset({"api_call", "api_error"})
+
+
+def _canonical_route(event_type: str, route: str | None) -> str | None:
+    r"""웹 클라이언트의 route 를 **서버 미들웨어와 같은 어휘**로 맞춘다.
+
+    왜: `apps/web/lib/api-client.ts` 의 계측은 쿼리스트링만 떼고 보내므로
+    ① `/api/v1` 접두사가 없고 ② id 가 원시로 남는다. 서버 미들웨어는 둘 다
+    정규화하므로 **같은 라우트가 두 어휘로 갈려** 인사이트 승계가 불가능해지고
+    (`IDENTITY_FIELDS["latency_regression"] == ("key",)`), 키 카디널리티가
+    무한이라 표본이 하한에 닿지 못한다(실측 `judged_pct 6.9%`).
+
+    접두사 보정 근거: `api-client.ts:getRequestUrl` 이 **구조적으로**
+    `{origin}/api/v1{path}` 를 만든다 — 계측이 받는 것은 그 앞의 상대경로다.
+    이미 `/api/v\d+` 로 시작하면 덧붙이지 않는다(음성 대조군).
+
+    ★서버 미들웨어가 만든 값에 대해서는 **멱등**이다(고정점).
+    """
+    if route is None or event_type not in _API_ROUTE_EVENTS:
+        return route
+    raw = route.split("?", 1)[0].strip()
+    if not raw:
+        return route
+    if not raw.startswith("/"):
+        raw = "/" + raw
+    if not _RE_API_VERSION.match(raw):
+        raw = "/api/v1" + raw
+    return normalize_route(raw)
+
+
 @router.post("/events", response_model=GrowthIngestResult)
 async def ingest_events(batch: GrowthEventBatch, request: Request) -> GrowthIngestResult:
     """프론트 이벤트 배치를 수신해 큐에 적재(논블로킹). 인증 선택·익명 허용."""
@@ -100,7 +139,7 @@ async def ingest_events(batch: GrowthEventBatch, request: Request) -> GrowthInge
                 {
                     "event_id": ev.event_id,
                     "surface": ev.surface or "web",
-                    "route": ev.route,
+                    "route": _canonical_route(ev.event_type, ev.route),
                     "status_code": ev.status_code,
                     "latency_ms": ev.latency_ms,
                     "severity": ev.severity,
