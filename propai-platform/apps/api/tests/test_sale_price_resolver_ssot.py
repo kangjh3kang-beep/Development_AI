@@ -694,8 +694,27 @@ def test_paid_resolver_is_never_called_inside_a_loop() -> None:
         bad += b
         seen += n
 
-    # ★공허진리 방지 — 호출부를 하나도 못 찾으면 이 락은 무엇이든 통과한다
+    # ★공허진리 방지 ① — 호출부를 하나도 못 찾으면 이 락은 무엇이든 통과한다
     assert seen >= 5, f"유료 리졸버 호출부 {seen}곳 — 조회기가 죽었다"
+
+    # ★★공허진리 방지 ② — **판정 축 자체**의 양성 대조군.
+    #   ①은 «호출부를 본다» 만 증명한다. `_STMT_LOOPS = ()` 로 **루프 축을 통째로 비우면**
+    #   위반이 0건이 되어 `assert not bad` 가 **공허하게 통과**한다(실측: SURVIVED).
+    #   → 심어 둔 위반을 스캐너가 **실제로 잡는지** 매 실행 확인한다. 네 축을 모두 태운다.
+    for label, src in (
+        ("for",   "async def f(xs):\n    for x in xs:\n        await _resolve_sale_price_per_pyeong(address=x)\n"),
+        ("while", "async def f(xs):\n    while xs:\n        await _resolve_sale_price_per_pyeong(address=xs.pop())\n"),
+        ("comp",  "def f(xs):\n    return [_molit_sale_price_source(address=x) for x in xs]\n"),
+        ("attr",  "async def f(s, xs):\n    for x in xs:\n        await s.revalue(x)\n"),
+    ):
+        planted, _ = _loop_call_hits(ast.parse(src), f"canary:{label}")
+        assert planted, (
+            f"스캐너가 **{label} 축의 심어 둔 위반**을 못 잡는다 — "
+            "이 락의 «위반 0건» 은 근거가 아니다(판정 축 사망)")
+    # 음성 대조군 — 루프 **밖** 호출은 위반이 아니다(위양성도 결함이다)
+    clean, n_clean = _loop_call_hits(ast.parse(
+        "async def f(x):\n    return await _resolve_sale_price_per_pyeong(address=x)\n"), "clean")
+    assert n_clean == 1 and not clean, f"루프 밖 호출을 위반으로 신고한다(위양성): {clean}"
     assert not bad, (
         f"유료 리졸버가 **루프 안**에서 호출된다(요청당 N회 = 과금 N배): {bad}\n"
         "→ 다필지·배치가 필요하면 리졸버 밖에서 한 번 부르고 결과를 재사용하라.")
