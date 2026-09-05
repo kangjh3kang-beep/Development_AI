@@ -18,6 +18,8 @@
 """
 from __future__ import annotations
 
+import pathlib
+
 import pytest
 
 from app.services.development.integrated_recommender.orchestrator import IntegratedRecommender
@@ -99,6 +101,50 @@ def test_basis_를_버리지_않는다():
     assert basis, "근거를 안 낸다"
     # ★닫힌 토큰 — 어휘 밖 값이면 소비처가 해석할 수 없다.
     assert basis in {"area_weighted", "single_zone", "first_parcel_no_area", "none"}
+
+
+def test_응답이_basis_를_실제로_싣는다_배선층():
+    """★**함수 반환만 잠그면 응답 배선은 무잠금**이다 — 내 변이가 그것을 잡았다.
+
+    *"basis 를 버리지 않는다"* 라고 써 놓고 **응답 조립을 안 잠갔다.**
+    `"primary_zone_basis"` 줄을 지우는 변이가 **SURVIVED** 했다
+    — 이 세션이 반복해서 만난 **배선 무잠금**이다.
+
+    ★`ast` 로 판정한다 — 주석·문자열에 원리적으로 안 뚫린다.
+    ★그리고 **키가 있다**가 아니라 **그 키에 `primary_zone_basis` 값이 실린다**를 본다
+      («이름이 있다» 와 «값이 실린다» 는 다른 단언이다).
+    """
+    import ast
+
+    src = pathlib.Path(
+        "app/services/development/integrated_recommender/orchestrator.py"
+    ).read_text(encoding="utf-8")
+    tree = ast.parse(src)
+
+    found = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Dict):
+            continue
+        keys = [k.value for k in node.keys if isinstance(k, ast.Constant)]
+        if "primary_zone" not in keys:
+            continue
+        found.append(keys)
+        # ★그 dict 안에서 basis 키의 **값**이 무엇인지 본다.
+        pair = {
+            k.value: v for k, v in zip(node.keys, node.values)
+            if isinstance(k, ast.Constant)
+        }
+        assert "primary_zone_basis" in pair, (
+            "응답에 primary_zone 은 싣는데 **근거(basis)를 버린다** — "
+            "생산자가 사유를 내는데 소비처가 안 읽는 그 결함이다."
+        )
+        val = pair["primary_zone_basis"]
+        assert isinstance(val, ast.Name) and val.id == "primary_zone_basis", (
+            f"basis 키에 엉뚱한 값이 실린다: {ast.dump(val)[:80]} — "
+            "«키가 있다» 와 «값이 실린다» 는 다른 단언이다."
+        )
+    # ★공허 진리 방지 — dict 를 하나도 못 찾으면 위 루프가 0회 돈다.
+    assert found, "primary_zone 을 싣는 응답 dict 를 못 찾았다 — 판정 거부"
 
 
 def test_빈_입력은_빈_문자열과_none_을_낸다_경계():
