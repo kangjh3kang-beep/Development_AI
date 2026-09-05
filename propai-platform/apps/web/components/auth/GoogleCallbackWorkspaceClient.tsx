@@ -3,6 +3,11 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+
+import {
+  classifySocialLoginError,
+  socialLoginErrorMessage,
+} from "@/lib/socialLoginError";
 import { Button, Card, CardContent, CardTitle } from "@propai/ui";
 import { ApiClientError, apiClient } from "@/lib/api-client";
 import { ensureDataOwner } from "@/lib/projectSync";
@@ -19,6 +24,9 @@ type GoogleCallbackWorkspaceClientProps = {
   code: string | null;
   state: string | null;
   redirectUri: string | null;
+  /** 공급자가 돌려보낸 오류(OAuth 2.0 §4.1.2.1). 종전에는 읽지 않고 버렸다. */
+  providerError?: string | null;
+  providerErrorDescription?: string | null;
 };
 
 // 로그인 시작(login-url) 단계에서 보관한 state — 콜백에서 일치 검증(CSRF/세션고정 방지).
@@ -116,6 +124,8 @@ export function GoogleCallbackWorkspaceClient({
   code,
   state,
   redirectUri,
+  providerError = null,
+  providerErrorDescription = null,
 }: GoogleCallbackWorkspaceClientProps) {
   const router = useRouter();
   const labels = LABELS[locale] || LABELS["ko"];
@@ -205,8 +215,16 @@ export function GoogleCallbackWorkspaceClient({
     return () => clearTimeout(timer);
   }, [requestState.status, router, locale]);
 
-  const status = hasRequiredParams ? requestState.status : "error";
-  const message = hasRequiredParams ? requestState.message : labels.missingParams;
+  // ★공급자 오류를 먼저 판정한다 — 이것이 있으면 code 가 없는 것은 **결과**이지 원인이 아니다.
+  //   종전에는 무조건 `missingParams` 를 냈고 그건 원인과 무관한 문구였다.
+  //   사용자 취소와 설정 오류는 **다음 행동이 다르므로** 갈라서 말한다.
+  const providerVerdict = classifySocialLoginError(providerError, providerErrorDescription);
+  const providerMessage = socialLoginErrorMessage(providerVerdict, locale);
+
+  const status =
+    providerVerdict.kind !== "none" ? "error" : hasRequiredParams ? requestState.status : "error";
+  const message =
+    providerMessage ?? (hasRequiredParams ? requestState.message : labels.missingParams);
 
   const feedbackClassName =
     status === "error"
