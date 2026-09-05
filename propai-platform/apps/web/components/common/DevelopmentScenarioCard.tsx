@@ -13,6 +13,8 @@ import { useAutoRun } from "@/lib/use-auto-run";
 import { AlertTriangle, Building2, Construction, HelpCircle, House, Link2, Pin, Scale, Scissors } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import { UseLlmToggle } from "@/components/common/UseLlmToggle";
+import { formatDominantZone } from "@/lib/zoning/dominant-zone";
+import { PremiseAuditNotice, type PremiseAudit } from "@/components/ui/PremiseAuditNotice";
 
 function hashStr(s: string): string {
   let h = 0;
@@ -62,7 +64,22 @@ type Scenario = {
 };
 type SimResult = {
   site: {
-    multi?: boolean; parcel_count?: number; primary_zone?: string;
+    multi?: boolean; parcel_count?: number;
+    /**
+     * 부지 대표 용도지역. ★**`null` 일 수 있다** — 면적가중으로도 단일화가 갈리면 백엔드가
+     * 보류값 계약(`app/utils/withheld.py`)대로 값을 비우고 사유를 `_absent` 로 싣는다.
+     * 종전 타입은 `string?` 이라 `null` 이 **타입에 없었고**, 그래서 화면이 「왜 없는지」를
+     * 물어볼 생각조차 하지 못했다(소비처 0건의 근원). 정직한 타입이 다음 사람을 걸리게 한다.
+     */
+    primary_zone?: string | null;
+    /**
+     * ★**문구가 아니라 코드**다 — `area_weighted` · `single_zone` · `first_parcel_no_area` · `none`.
+     * 그러므로 **이 값을 화면에 그대로 렌더하면 안 된다**(형제 `DeveloperProjection` 이
+     * `balanced_basis` **문구**를 렌더하는 관용은 이 필드에 이식 불가).
+     */
+    primary_zone_basis?: string | null;
+    /** 보류 사유 — `app/utils/withheld.py` 의 **닫힌 어휘 7종**. 값이 없을 때만 채워진다. */
+    primary_zone_absent?: string | null;
     // ★총면적의 '분모' — 몇 필지 중 몇 필지가 실측인지. 미해석 필지는 0㎡로 합산되므로
     //   이 값 없이 total_area_sqm 만 보면 "원래 작은 부지"로 오독된다(2026-08-19 실측 결함).
     resolved_parcel_count?: number;
@@ -101,6 +118,15 @@ type SimResult = {
   alternatives?: string[];
   developable_via_precondition?: boolean;
   honest_disclosure?: string;
+  /**
+   * 전제 감사(변형관계 레지스트리) 결과 — `#963` 이 이 경로에 배선했다.
+   *
+   * ★**판정을 바꾸지 않는다.** 위반은 말하기만 한다(설계가 자동 교정을 기각했다 —
+   *   *"어느 쪽이 옳은지 단정하는 것이고, 그 단정이 틀리면 **더 조용한 결함**이 된다"*).
+   * ★`checked === 0` 이면 「위반 없음」이 **공허**하다 — 감사 모듈이 명문으로 요구한 축이라
+   *   화면이 그것을 **구분해서** 말해야 한다. `PremiseAuditNotice` 가 그 판정을 갖는다.
+   */
+  premise_audit?: PremiseAudit | null;
   magdo_summary?: MagdoSummary | null;
   ai?: { generated?: boolean; summary?: string; best_scheme?: string; why?: string; alternatives?: string[]; cautions?: string[] } | null;
   pyeong_classification?: {
@@ -185,6 +211,19 @@ export function DevelopmentScenarioCard({
 
   const site = result?.site;
   const adj = site?.adjacency;
+  // ★용도지역 표시를 공용 헬퍼에 위임한다 — **화면마다 따로 판정하다가 두 곳이 빠진** 전례가
+  //   있고(`lib/zoning/dominant-zone.ts` 주석에 그 실측이 있다), 여기가 세 번째가 되지 않게 한다.
+  //   `fallback` 은 종전 문구 `"용도미상"` 그대로다 — 값이 있을 때·사유가 없을 때 **글자 불변**.
+  const zoneDisplay = formatDominantZone(site?.primary_zone, {
+    dominantBasis: site?.primary_zone_basis,
+    fallback: "용도미상",
+    absent: site?.primary_zone_absent,
+    // ★형제 **전수**가 짧은 문구를 넘기는데(multi-parcel/page.tsx:363 · DesignGenPanel.tsx:1289)
+    //   이 카드만 안 넘겨서, 센티널이 오면 30자 기본 문구가 `px-2 py-0.5` 인라인 칩에 들어간다.
+    //   ★오늘은 도달 불가다(이 경로의 센티널 생산자 0건 — 실측) — **잠재 회귀**라 미리 맞춘다.
+    //   *"없는 것을 새로 만드는 것과 있는 것을 안 쓴 것은 처방이 다르다"*(§29 형제 훑기).
+    mixedLabel: "혼재(분리검토 필요)",
+  });
 
   return (
     <div className={`rounded-2xl border border-[var(--line)] bg-[var(--surface-soft)] p-5 ${className}`}>
@@ -206,9 +245,35 @@ export function DevelopmentScenarioCard({
 
       {result && site && (
         <div className="mt-4 space-y-4">
+          {/* ★전제 감사 고지 — 판정 **위**에 둔다. 아래 시나리오 표를 읽기 전에
+              「이 판정을 교차검증했는가」를 먼저 알아야 하기 때문이다.
+              ★칩 줄에 섞지 않는다 — 경고를 칩 자리에 넣으면 모순되는 칩이 나란히 선다
+              (같은 파일의 `zone_use_constraint` 주석이 경고하는 그 형태). */}
+          <PremiseAuditNotice audit={result.premise_audit} />
+
           {/* 부지 요약 + 인접성 */}
           <div className="flex flex-wrap items-center gap-2 text-xs">
-            <span className="rounded-lg bg-[var(--accent-soft)] px-2 py-0.5 font-bold text-[var(--accent-strong)]">{site.primary_zone || "용도미상"}</span>
+            {/* ★용도지역 칩 — **보류를 값처럼 말하지 않는다.** 공용 헬퍼를 경유해
+                센티널(구판 계약)과 `_absent` 코드(정본 계약)를 **둘 다** 안전하게 다룬다.
+                ★값이 있을 때는 종전과 **글자까지 동일**하다(특이도 락이 고정한다) —
+                  바뀌는 것은 종전에 「용도미상」만 말하던 입력뿐이다. */}
+            <span className="rounded-lg bg-[var(--accent-soft)] px-2 py-0.5 font-bold text-[var(--accent-strong)]">{zoneDisplay.label}</span>
+            {/* ★**왜** 보류인지를 사용자에게 도달시킨다. 종전에는 백엔드가 사유 코드를
+                실어 보내는데 화면 소비처가 0건이라 **사유가 버려졌다** — 사용자도 조사자도
+                원인을 알 수 없었다(「진단 불가는 그 자체로 장애다」). */}
+            {zoneDisplay.reasonShort && (
+              <span
+                className="inline-flex items-center gap-1 rounded-lg border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 px-2 py-0.5 font-bold text-[var(--status-warning)]"
+                /* ★칩도 툴팁도 **사유 코드에서 파생**한다. 첫 판은 툴팁에 `ambiguous` 전용
+                   산문을 **조건 없이** 박아, `source_unavailable`(원천 조회 실패)일 때
+                   칩과 툴팁이 서로 **모순**됐다(적대 리뷰 MEDIUM-1). 조건 없는 단정은
+                   참일 때도 검증 불가라, 참인 것과 거짓인 것이 **같은 모양**이 된다. */
+                title={zoneDisplay.reason}
+              >
+                <HelpCircle className="size-3.5" aria-hidden />
+                {zoneDisplay.reasonShort}
+              </span>
+            )}
             {/* ★용도지역이 조회값이 아니라 주소에서 추론한 값이면 단정하지 않는다(무날조 표기). */}
             {site.primary_zone_is_inferred && (
               <span className="inline-flex items-center gap-1 rounded-lg border border-[var(--status-warning)]/30 px-2 py-0.5 font-bold text-[var(--status-warning)]">

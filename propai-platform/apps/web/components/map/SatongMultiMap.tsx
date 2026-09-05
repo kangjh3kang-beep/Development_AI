@@ -49,7 +49,17 @@ import {
   type SampleBasis,
   type SampleBasisRaw,
 } from "@/lib/market/comparable-sample";
-import { bindSatongLabel, planSatongLabels, satongLabelBudget } from "@/lib/satong-map-labels";
+import {
+  bindSatongLabel,
+  composeMarketPriceTag,
+  planSatongLabels,
+  satongLabelBudget,
+} from "@/lib/satong-map-labels";
+import {
+  summarizeMarketViewport,
+  marketOffscreenNote,
+  type MarketViewportBounds,
+} from "@/lib/satong-market-viewport";
 import { planSelectionLabels, renderSelectionLabels } from "@/lib/satong-selection-labels";
 import type { SiteLayoutOverlay } from "@/lib/site-layout";
 import {
@@ -254,6 +264,11 @@ export type SatongMarketGroup = {
   min_price_10k?: number;
   max_price_10k?: number;
   excluded_outliers?: number;
+  /** ★표시용 평당가(만원/평) — **서버가 정본 함수로 계산해 싣는다**(유효숫자 3자리).
+   *  종전엔 프론트가 `avg_price_10k / (avg_area_m2/3.305785)` 를 인라인 계산했는데,
+   *  신고내역(#930)의 정본과 갈릴 수 있었고 반올림 규약이 없어 허위 정밀도를 찍었다.
+   *  면적 결측·가격 결측이면 **`null`**(0 이 아니다 — 0 은 "평당 0원"으로 읽힌다). */
+  price_per_pyeong_10k?: number | null;
   /** ★P2 — 토지 매매(getRTMSDataSvcLandTrade) 전용 지목·용도지역. 종전엔 파싱만 되고
    *  그룹핑 단계에서 폐기됐다(nearby_map_service._group_trade). 없으면 undefined(무날조). */
   build_year?: number;
@@ -1258,6 +1273,11 @@ export function SatongMultiMap({
   // 현재 줌 레벨 — 라벨 LOD(z≥17 전체 / 15~16 상위 N / <15 hover-only) 판정 입력.
   //   zoomend 에서만 갱신하고, 임계(15·17) 교차 시에만 버짓이 바뀌어 라벨 이펙트가 재부착된다.
   const [mapZoom, setMapZoom] = useState(SATONG_INITIAL_ZOOM);
+  // 현재 뷰포트 경계 — 실거래 마커의 "화면 밖 N곳" 고지 입력.
+  //   ★줌만으로는 판정할 수 없다(pan 만 해도 마커가 나간다). moveend·zoomend 양쪽에서 갱신한다.
+  //   ★null = **아직 못 쟀다**. 0 으로 폴백하지 않는다 — 그러면 "재 봤고 전부 보인다"와
+  //     구별되지 않는다(summarizeMarketViewport 가 같은 규약을 지킨다).
+  const [mapViewBounds, setMapViewBounds] = useState<MarketViewportBounds | null>(null);
   // 실거래 fitBounds 1회성 가드 — 라벨 재부착(줌 교차)로 이펙트가 재실행돼도 사용자 줌을 덮지 않게.
   const lastMarketFitKeyRef = useRef("");
   const baseLayerRef = useRef<any>(null);
@@ -1906,6 +1926,23 @@ export function SatongMultiMap({
         setMapZoom(map.getZoom());
         // 줌 변경 → 라벨 LOD 재판정(임계 교차 시에만 버짓이 바뀌어 라벨이 재부착된다).
         map.on("zoomend", () => setMapZoom(map.getZoom()));
+        // 뷰포트 경계 동기화 — 마커가 화면을 벗어났는지 고지하기 위한 입력.
+        //   ★참조를 보존한다(값이 같으면 prev 반환) — moveend 마다 새 객체를 만들면
+        //     이것을 dep 로 쓰는 useMemo 가 매번 재계산돼 참조 churn 이 된다.
+        const syncViewBounds = () => {
+          try {
+            const b = map.getBounds();
+            const next: MarketViewportBounds = {
+              south: b.getSouth(), west: b.getWest(), north: b.getNorth(), east: b.getEast(),
+            };
+            setMapViewBounds((prev) =>
+              prev && prev.south === next.south && prev.west === next.west
+                && prev.north === next.north && prev.east === next.east ? prev : next);
+          } catch { /* noop */ }
+        };
+        syncViewBounds();
+        map.on("moveend", syncViewBounds);
+        map.on("zoomend", syncViewBounds);
         // ★상세팝업 양보 계약 배선. Leaflet 은 팝업이 하나만 열리므로(autoClose 기본 true)
         //   open/close 를 그대로 boolean 으로 쓴다. 지도 파괴 시 리스너도 함께 사라진다.
         map.on("popupopen", () => setDetailPopupOpen(true));
@@ -2650,6 +2687,15 @@ export function SatongMultiMap({
     for (const entry of marketRenderPlan) out[entry.type] = entry.groups.length;
     return out;
   }, [marketRenderPlan]);
+  // ★"실거래 N곳"은 **생성한** 마커 수라 화면 밖으로 나간 것을 말하지 않는다(무음 절단).
+  //   실측(2026-09-04): z15 에서 6/6 이 보이다가 지적 배율(z17)에서 5/6 이 뷰포트를 벗어났고,
+  //   나간 것이 전부 원거리라 그 원거리가 전부 아파트였다 → 사용자에겐 "아파트만 안 나온다"로
+  //   보였다. 유형 분기는 코드에 없다. 그래서 고지도 유형이 아니라 **뷰포트 축**으로 한다.
+  const marketViewport = useMemo(
+    () => summarizeMarketViewport(marketRenderPlan, mapViewBounds),
+    [marketRenderPlan, mapViewBounds],
+  );
+  const marketOffscreenText = marketOffscreenNote(marketViewport);
   const presaleMappableCount = useMemo(
     () => (showPresale ? (presaleItems ?? []).filter((i) => !!i.lat && !!i.lon).length : 0),
     [showPresale, presaleItems],
@@ -2778,16 +2824,19 @@ export function SatongMultiMap({
         // ★R1 #2: 팝업과 동일 공용 포맷터 won() 재사용 — 억미만 "0.4억" 어색 표기·라벨/팝업 불일치 제거.
         // 총액/평당 토글(실거래 unit-price 컨트롤 — jootek '총액/평당' 패리티): 평당가는
         // avg_price_10k(만원)/평(avg_area_m2/3.305785). 면적 결측 시 총액 폴백(정직).
-        const perPyeong =
-          pricePerPyeongOn && item.avg_price_10k && item.avg_area_m2 && item.avg_area_m2 > 0
-            ? Math.round(item.avg_price_10k / (item.avg_area_m2 / 3.305785))
-            : null;
-        const priceTag =
-          kind === "trade" && item.avg_price_10k
-            ? perPyeong
-              ? ` ${perPyeong.toLocaleString()}만/평`
-              : ` ${won(item.avg_price_10k)}${pricePerPyeongOn ? "·총액" : ""}` // 평당 불가(면적결측) 혼재 명시(R1 #4)
-            : "";
+        // ★총액·평당 **병기**(사용자 요청 2026-09-04). 종전엔 either/or 라 한쪽을 보려면
+        //   다른 쪽을 포기해야 했다.
+        //   ★평당가는 **서버가 준 값**을 쓴다 — 여기서 나눗셈하지 않는다. 산식이 세 곳에
+        //     흩어져 있었고(정본 realtx `per_pyeong_10k` · nearby_map 집계 내부 · 이 인라인),
+        //     그중 이 자리만 반올림 규약이 없어 허위 정밀도(4자리)를 찍고 있었다.
+        //   ★면적 결측이면 서버가 `null` 을 준다 → 평당을 **생략**한다(0 을 찍지 않는다).
+        // `unit-price` 컨트롤은 이제 **어느 쪽을 앞에 둘지**를 정한다(둘 다 항상 표시).
+        const priceTag = composeMarketPriceTag({
+          kind,
+          totalText: item.avg_price_10k ? won(item.avg_price_10k) : null,
+          perPyeong10k: item.price_per_pyeong_10k,
+          pyeongFirst: pricePerPyeongOn,
+        });
         bindSatongLabel(marker, `${item.name || "실거래"}${priceTag}`, { permanent: ordinal < typeLabelLimit, offsetY: radius });
         bounds.extend([item.lat, item.lon]);
       });
@@ -3691,6 +3740,14 @@ export function SatongMultiMap({
                 {marketNote && (
                   <span className="inline-flex rounded-full bg-white/92 px-3 py-1.5 text-[11px] font-black text-slate-700 shadow">
                     {marketNote}
+                  </span>
+                )}
+                {marketOffscreenText && (
+                  <span
+                    className="inline-flex rounded-full bg-white/92 px-3 py-1.5 text-[11px] font-black text-amber-700 shadow"
+                    data-testid="market-offscreen-note"
+                  >
+                    {marketOffscreenText}
                   </span>
                 )}
                 {presaleAuctionNote && (

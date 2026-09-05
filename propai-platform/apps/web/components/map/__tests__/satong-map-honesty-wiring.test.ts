@@ -296,3 +296,117 @@ describe("거리 1급시민화 — 표시 캡은 가까운 순으로 남긴다(2
   });
 });
 
+
+/**
+ * ── 실거래 「화면 밖 N곳」 고지 배선 (2026-09-04) ──────────────────────────────
+ *
+ * ★왜: 범례는 `실거래 N곳`으로 **생성한** 마커 수만 말했다. 라이브 실측에서 z15 에 6/6
+ *   보이던 마커가 지적 배율(z17)에서 5/6 이탈했고, 이탈한 것이 전부 원거리라 그 원거리가
+ *   전부 아파트였다 → 사용자에겐 "아파트만 안 나온다"로 보였다(신고 본체).
+ *   유형 분기는 코드에 없다. 그래서 고지는 **뷰포트 축**이어야 한다.
+ *
+ * ★이 락이 막는 것: 순수함수(`satong-market-viewport.test.ts` 9건)는 잠겨 있어도
+ *   **배선을 끊으면 아무 테스트도 실패하지 않는다** — 이 저장소가 반복해서 데인 자리다.
+ *   그래서 ①집계 입력 ②문구 파생 ③렌더 ④**두 이벤트** 를 각각 건다.
+ *
+ * ★한계: 소스 수준 검사이지 런타임 증명이 아니다(위 형제 블록과 같은 한계).
+ */
+describe("정직 배선 — 실거래 마커가 화면을 벗어나면 **말한다**", () => {
+  const FILE = "components/map/SatongMultiMap.tsx";
+  const strippedLines = () =>
+    __stripCommentsForScan(readFileSync(resolve(process.cwd(), FILE), "utf-8"), FILE).split("\n");
+
+  it("★집계는 **살아있는 뷰포트 경계**를 먹는다(상수·null 고정이면 영영 0곳)", () => {
+    // scope 가 mustContain 을 함의하지 않는다 — summarizeMarketViewport(plan, null) 이
+    // 문법적으로 가능하므로 이 단언은 공허하지 않다.
+    assertWiredThrough({
+      file: FILE,
+      scope: /summarizeMarketViewport\(/,
+      mustContain: "mapViewBounds",
+      minMatches: 1,
+    });
+  });
+
+  it("★고지 문구는 집계 결과에서 파생된다(리터럴 문자열로 대체 금지)", () => {
+    assertWiredThrough({
+      file: FILE,
+      scope: /marketOffscreenNote\(/,
+      mustContain: "marketViewport",
+      minMatches: 1,
+    });
+  });
+
+  it("★경계는 moveend·zoomend **양쪽**에서 갱신된다 — 줌만 걸면 pan 이 통째로 샌다", () => {
+    const lines = strippedLines();
+    const bound = lines.filter((t) => /map\.on\("(moveend|zoomend)", syncViewBounds\)/.test(t));
+    // 두 모집단을 각각 단언한다 — 합계만 보면 같은 이벤트를 두 번 걸어도 통과한다.
+    expect(bound.filter((t) => t.includes("moveend"))).toHaveLength(1);
+    expect(bound.filter((t) => t.includes("zoomend"))).toHaveLength(1);
+  });
+
+  it("★고지가 실제로 렌더된다 — 조건·요소·위치를 함께 건다(형제 블록의 3중 교훈)", () => {
+    const lines = strippedLines();
+    const cond = lineOf(lines, /\{marketOffscreenText && \(/);
+    const el = lineOf(lines, /data-testid="market-offscreen-note"/);
+    const note = lineOf(lines, /\{marketNote\}/);
+    // ①조건 존재 ②요소 존재
+    expect(cond).toBeGreaterThan(0);
+    expect(el).toBeGreaterThan(0);
+    // ③위치 — 실거래 노트와 **같은 도크** 안(그 뒤)이어야 한다. 엉뚱한 가지로 옮기면
+    //    조건 줄은 남은 채 사용자에게 영영 안 보인다(형제 블록에서 실제로 겪은 형태).
+    expect(el).toBeGreaterThan(note);
+    // ④조건이 요소보다 앞 — 조건을 떼고 무조건 렌더하면 "화면 밖 0곳"이 상시 노출된다.
+    expect(cond).toBeLessThan(el);
+  });
+});
+
+/**
+ * ── 실거래 금액표기 배선 (2026-09-05) ────────────────────────────────────────
+ *
+ * ★왜 이 블록이 필요한가: 순수함수(`composeMarketPriceTag`, `satong-map-labels.test.ts` 6건)를
+ *   잠갔는데도 **배선을 끊는 변이가 SURVIVED 했다.** 실측:
+ *     `const priceTag = composeMarketPriceTag({` → `const priceTag = "" && composeMarketPriceTag({`
+ *   이 변이로 금액이 **통째로 사라지는데** `components/map` 182건이 전부 초록이었다.
+ *   «함수는 잠갔고 배선은 안 잠갔다» — 이 저장소가 가장 자주 데인 형태다.
+ *
+ * ★형제 블록(AVM 신뢰성 단서)의 교훈을 그대로 쓴다: 존재만 검사하면 `{false && `로,
+ *   조건만 검사하면 **가지 이전**으로 뚫린다. 그래서 **입력·소비·무력화** 셋을 함께 건다.
+ *
+ * ★한계: 소스 수준 검사이지 런타임 증명이 아니다.
+ */
+describe("정직 배선 — 실거래 라벨은 **서버가 준 평당가**를 싣는다", () => {
+  const FILE = "components/map/SatongMultiMap.tsx";
+
+  it("★입력 — 평당가는 서버 필드에서 온다(리터럴·재계산으로 대체 금지)", () => {
+    // scope 가 mustContain 을 함의하지 않는다: `perPyeong10k: 1234` 나
+    // `perPyeong10k: item.avg_price_10k / …` 가 문법적으로 가능하다.
+    assertWiredThrough({
+      file: FILE,
+      scope: /perPyeong10k:/,
+      mustContain: "item.price_per_pyeong_10k",
+      minMatches: 1,
+    });
+  });
+
+  it("★소비 — 조립된 금액표기가 실제 라벨 문자열에 실린다(계산해 놓고 안 쓰면 무의미)", () => {
+    assertWiredThrough({
+      file: FILE,
+      scope: /item\.name \|\| "실거래"/,
+      mustContain: "priceTag",
+      minMatches: 1,
+    });
+  });
+
+  it("★무력화 금지 — 대입이 조건으로 꺼지면 금액이 통째로 사라진다(이 변이가 실제로 생존했다)", () => {
+    // `const priceTag = "" && …` · `FLAG ? … : ""` 류를 막는다.
+    // ★이 락이 리팩토링을 막으면 **락을 고쳐라** — 다만 그때 금액이 여전히 나오는지
+    //   눈으로 확인하고 고쳐야 한다. 그 강제가 이 단언의 목적이다.
+    assertWiredThrough({
+      file: FILE,
+      scope: /const priceTag = /,
+      mustContain: "composeMarketPriceTag(",
+      mustNotContain: /(\?|&&|\|\|)/,
+      minMatches: 1,
+    });
+  });
+});
