@@ -10,6 +10,7 @@ POST /api/v1/growth/events
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 
 import structlog
@@ -18,9 +19,8 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apps.api.database.session import get_db
-import re
 from app.middleware.growth_telemetry import normalize_route
+from apps.api.database.session import get_db
 
 #: `/api/v1`·`/api/v2` … 버전 접두사 판별(정규화기와 같은 형태).
 _RE_API_VERSION = re.compile(r"^/api/v\d+")

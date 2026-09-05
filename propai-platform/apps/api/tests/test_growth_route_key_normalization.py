@@ -14,6 +14,10 @@ bare 17행(open 7) + 접두사판 20행(open 7) = **한 라우트에 open 14건*
 ★임계는 건드리지 않는다 — `analyzer.py:98~130` 이 이 route 군의 임계 변경을
 **이미 기각**했다(MAD 스케일 → 실효임계 166초 → 가장 망가진 route 가 발화 불가 = 굿하트).
 """
+import asyncio
+import sys
+import types
+
 import pytest
 
 from app.middleware.growth_telemetry import normalize_route
@@ -109,7 +113,6 @@ class TestWiring:
             def record_event(etype, payload):
                 seen.append((etype, payload))
 
-        import sys, types
         mod = types.ModuleType("app.services.growth.capture_service")
         mod.record_event = _Cap.record_event
         monkeypatch.setitem(sys.modules, "app.services.growth.capture_service", mod)
@@ -127,7 +130,6 @@ class TestWiring:
             headers: dict = {}
             state = type("S", (), {})()
 
-        import asyncio
         asyncio.get_event_loop_policy().new_event_loop().run_until_complete(
             g.ingest_events(batch, _Req())  # type: ignore[arg-type]
         )
