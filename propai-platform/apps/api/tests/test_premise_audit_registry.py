@@ -82,10 +82,92 @@ def test_D_공허한_초록_방지_검사를_실제로_돌렸나():
     """★`checked == 0` 이면 '위반 없음'이 **공허**하다. 호출부가 그걸 알 수 있어야 한다."""
     r = pa.audit(_broken())
     assert r["registered"] >= 6, f"등록 관계가 너무 적다: {r['registered']}"
-    assert r["checked"] == r["registered"], "전제 부족으로 건너뛴 관계가 있다"
+    # ★실패 메시지도 정정한다 — 종전 문구 *"전제 부족으로 건너뛴 관계가 있다"* 는
+    #   **거짓 프레이밍**이었다. `checked` 는 「판정한 수」가 아니라 **「예외 없이 끝난 수」**이고,
+    #   「건너뜀」 정보는 원리적으로 존재하지 않는다(관계가 「전제 부족」과 「위반 없음」을
+    #   같은 `None` 으로 반환한다). ★그 문구를 믿고 화면 축을 세운 PR 이 **모든 정상 부지에
+    #   오경보**를 냈다 — 실패 메시지도 **다음 사람이 읽는 계약**이다.
+    assert r["checked"] == r["registered"], "관계 하나가 실행 중 예외로 죽었다"
     empty = pa.audit({})
     assert empty["violations"] == [], "빈 입력에서 위반을 만들어냈다"
     assert empty["checked"] == empty["registered"], "빈 입력도 판정은 시도해야 한다"
+
+
+def test_D2_checked_는_예외를_던진_관계만_뺀다_그것이_유일한_감소_경로다():
+    """★`checked < registered` 가 되는 **유일한 경로**를 잠근다 — 종전 무잠금이었다.
+
+    이 축이 왜 중요한가: 화면(`PremiseAuditNotice`)의 「부분 실행」 상태가 **정확히 이것**에
+    의존한다. 그런데 *"관계가 예외를 던지면 `checked` 가 준다"* 를 태우는 테스트가 **없었다** —
+    `checked` 의 뜻을 오해한 PR 이 «입력이 부족해 건너뛰었습니다» 라는 **거짓 사유**를 화면에
+    내보내도 이 파일은 초록이었다.
+
+    ★**두 모집단을 같은 실행에서 가른다**: 예외를 던지는 관계 하나를 넣으면 `checked` 가
+      **정확히 1 줄고**, 그것을 빼면 **되돌아온다**. 차가 0인 픽스처는 잠금이 아니다.
+    """
+    before = pa.audit({})
+    assert before["checked"] == before["registered"], "기준선부터 어긋난다 — 판정 거부"
+
+    def _boom(_ctx):
+        raise RuntimeError("관계가 죽는다")
+
+    pa._REGISTRY.append(("tmp_boom", "예외를 던지는 임시 관계", _boom))
+    try:
+        after = pa.audit({})
+        # ★등록 수는 늘고(+1) 시도 수는 그대로 → 정확히 1 차이
+        assert after["registered"] == before["registered"] + 1
+        assert after["checked"] == before["checked"], "예외를 던진 관계가 checked 에 세어졌다"
+        assert after["checked"] < after["registered"], "감소 경로가 성립하지 않는다"
+        # ★감사가 죽지 않는다 — 관계 하나의 실패가 나머지를 죽이면 안 된다.
+        assert after["violations"] == before["violations"]
+    finally:
+        pa._REGISTRY[:] = [t for t in pa._REGISTRY if t[0] != "tmp_boom"]
+
+    # ★원복 확인 — 되돌아오지 않으면 뒤 테스트를 오염시킨다.
+    restored = pa.audit({})
+    assert restored["checked"] == before["checked"]
+    assert restored["registered"] == before["registered"]
+
+
+def test_D3_전제_부족은_checked_를_안_줄이고_타입오류만_줄인다():
+    """★**「건너뜀」 정보가 원리적으로 없다**는 사실과 **그 예외**를 함께 못 박는다.
+
+    관계들은 「전제 부족」과 「위반 없음」을 **같은 `None`** 으로 반환한다 → 빈 입력·전제 누락에서도
+    `checked == registered`. ★독스트링은 이 계약을 **거짓으로 적고 있었고**(*"건너뛴 것은 제외"*),
+    그 위에 세운 화면이 **모든 정상 부지에 오경보**를 냈다.
+    ***선언과 잠금이 갈리면 「잠금」이 사실이다.***
+
+    ★★**그런데 「전부 6/6」도 과잉일반화였다** — 내가 이 락을 처음 쓸 때 그렇게 단정했고
+      **이 락이 첫 실행에서 나를 잡았다.** 실측(관계별 전수):
+
+          빈 dict / 전제 누락 / per_parcel=int  → 6/6  (죽은 관계 없음)
+          zone_mix 가 문자열                    → 5/6  (dominant_argmax: AttributeError)
+          zone_mix·per_parcel 둘 다 엉뚱        → 4/6  (+ area_conservation: AttributeError)
+
+      즉 **타입이 어긋나면 관계가 실제로 죽는다.** 화면의 「부분 실행」 상태는 **도달 가능**하고,
+      그때 문구가 *"실행 중 오류로 중단"* 인 것이 **사실에 맞다**.
+      ★그러므로 *"`partial` 은 도달 불가"* 라는 추론은 **입력 타입이 온전할 때만** 참이다.
+    """
+    # ① 전제가 **없는** 것은 checked 를 줄이지 않는다(=「건너뜀」 정보 부재)
+    for label, ctx in [
+        ("빈 dict", {}),
+        ("전제 일부 없음", {"dominant_zone": "제2종일반주거지역"}),
+        ("값이 None", {"dominant_zone": None, "zone_mix": None, "per_parcel": None}),
+    ]:
+        r = pa.audit(ctx)
+        assert r["checked"] == r["registered"], (
+            f"{label}: 전제 부족이 checked 를 줄였다 — 「건너뜀」 정보가 생겼다면 이 계약이 "
+            "바뀐 것이고 화면 문구(「실행 중 오류로 중단」)도 함께 고쳐야 한다."
+        )
+        assert r["violations"] == [], f"{label}: 전제가 없는데 위반을 만들어냈다(위양성)"
+
+    # ② ★**두 모집단이 갈린다** — 타입이 어긋나면 관계가 죽어 checked 가 준다.
+    #    이 대비가 없으면 위 ①이 «무엇을 해도 6» 이라는 공허한 참이 된다.
+    broken = pa.audit({"dominant_zone": "제2종", "zone_mix": "문자열이라 .get 이 없다", "per_parcel": []})
+    assert broken["checked"] < broken["registered"], (
+        "타입이 어긋나도 관계가 안 죽는다 — 방어가 늘었다면 화면의 「부분 실행」 상태가 "
+        "도달 불가가 되므로 그쪽 문구·락도 함께 재라."
+    )
+    assert broken["violations"] == [], "죽은 관계가 위반을 만들어냈다"
 
 
 @pytest.mark.parametrize("key", pa.registered_relations())
