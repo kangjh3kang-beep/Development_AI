@@ -27,6 +27,10 @@ import pytest
 
 from app.services.growth import analyzer as A
 
+# ★CI 전수 실행에서는 이 서브모듈이 **먼저 임포트돼 있다.** 그 조건을 이 파일이 **스스로 만들어**
+#   로컬 단독 실행과 CI 가 **같은 모집단**을 보게 한다(순서 의존으로 초록이 나지 않게).
+from app.services.growth import schema_guard as _real_schema_guard  # noqa: F401
+
 FULL = {"latency_regression": {"judged": 3, "total": 40, "floor": 20},
         "fallback_rate": {"judged": 0, "total": 2, "floor": 10}}
 STARVED = {"latency_regression": {"judged": 0, "total": 8, "floor": 20},
@@ -97,11 +101,23 @@ class _FakeDb:
 
 
 def _publish(monkeypatch, guard, cov, n):
+    """★`sys.modules` 만 갈아끼우면 **CI 에서 우회된다.**
+
+    `publish_analysis_status` 는 `from app.services.growth import schema_guard` 로
+    **패키지 속성**을 읽는다. 그 서브모듈이 **이미 임포트돼 있으면**(전수 실행에서는 항상)
+    파이썬은 `sys.modules` 를 보지 않고 **패키지에 붙은 속성**을 그대로 쓴다.
+    ★실측(2026-09-05): 이 파일만 단독 실행하면 초록, **CI 전수에서는 빨강**이었다 —
+      ***로컬 단독 실행은 CI 의 모집단이 아니다.***
+    → **둘 다** 갈아끼운다. 아래 `len(calls) == 1` 단언이 우회를 잡는다.
+    """
+    import importlib
     import sys
     import types
     mod = types.ModuleType("app.services.growth.schema_guard")
     mod.set_setting = guard.set_setting
     monkeypatch.setitem(sys.modules, "app.services.growth.schema_guard", mod)
+    pkg = importlib.import_module("app.services.growth")
+    monkeypatch.setattr(pkg, "schema_guard", mod, raising=False)
     db = _FakeDb()
     ok = asyncio.new_event_loop().run_until_complete(A.publish_analysis_status(db, cov, n))
     return ok, db
