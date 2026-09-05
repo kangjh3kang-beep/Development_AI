@@ -157,6 +157,43 @@ for c in $(sort -u /tmp/c.txt); do curl -s "https://4t8t.net$c" -o /tmp/r.js
     Development_AI_persist   fix/satong-layer-controls-persist   (#965 · 머지됨 — 정리 가능)
     Development_AI_layers    fix/satong-enabled-layers-persist   (#966 · **작업 중**)
 
-★**정리 전에 재라** — 고유 커밋 0 · 작업트리↔인덱스 차이 0 을 확인한 뒤 제거한다.
+★★**정리 전에 재라 — 단, 손으로 재지 마라**(2026-09-05 정정 · development-ai-d8):
+
+    scripts/worktree_safe_to_remove.sh <워크트리경로>    # 0=안전 1=제거금지 2=판정불가
+
+★**이 줄은 원래 「고유 커밋 0 · 작업트리↔인덱스 차이 0」이라고 적혀 있었고, 그 조건은 틀렸다.**
+이 저장소는 **현재 기본이 스쿼시 머지**라 머지된 브랜치도 `origin/main..HEAD` 가 **비지 않는다**
+★**「영원히」는 거짓이다**(2026-09-05 적대 리뷰가 반증): main 이력에 부모 2개인 **진짜 머지커밋이 224개**
+있고(예: PR #255) 그 브랜치 tip 은 origin/main 의 **조상이라 범위가 빈다**. 조건은 「현재 기본값이
+스쿼시일 때」이고, 조건 없는 단정은 참일 때도 검증 불가다(§27-c).
+(실측: `#966` MERGED 인데 14건 · `#975` MERGED 인데 2건). 그 조건을 읽은 사람은 「못 지운다」로
+읽거나 **조건을 무시하고 지운다** — 후자가 유실 사고다.
+★**틀린 축 둘을 더 걸렀다**(같은 실측에서 · 다시 쓰지 마라):
+  · `git diff origin/main HEAD` — **판별력 0**. 머지된 대조군도 똑같이 대량 deletions 를 낸다.
+    그건 「미머지」가 아니라 **「main 보다 뒤처짐」**을 재는 것이다.
+  · `tip != PR headRefOid` — **방향이 둘**이다(뒤에 커밋이 있다 / 뒤처졌다). 한쪽만 읽으면
+    「미머지 2건」으로 **오보**한다. 실측 양방향: 로컬 고유 **0** · 뒤처짐 **7·4**.
+★★**아래 서술은 2026-09-05 3차 적대 리뷰에 반증돼 교체됐다.**
+옛 서술은 *「올바른 축은 셋 — PR MERGED · `rev-list --count <PRhead>..HEAD == 0` ·
+`status --porcelain` 비어 있음」* 이었는데 **세 가지가 전부 틀렸다**:
+· `rev-list` 는 스크립트에 **0건**이다(대조군 `for-each-ref` 2건 — 조회기 생존 확인). 안 태운다.
+· `rev-list --count <PRhead>..HEAD == 0` 은 바로 위에서 **내가 기각한 축**의 한쪽 방향이다.
+  **같은 블록 안에서 기각하고 추천**하고 있었다.
+· ***`status --porcelain` 비어 있음은 1차 MAJOR-1 의 원인 그 자체다*** — 그것은 **ignored 를 안 보므로**
+  `.env` 가 실재해도 빈 문자열을 낸다. 그 조건을 「올바른 축」으로 실으면, **스크립트를 안 돌리고
+  이 산문만 따르는 다음 사람이 원래 결함을 그대로 재생산**한다.
+
+◎ **스크립트가 실제로 태우는 축은 넷이다** (`scripts/worktree_safe_to_remove.sh`):
+
+| 축 | 무엇을 묻나 | 명령 |
+|---|---|---|
+| **축3 파일** | 제거하면 사라지는 파일이 있나 | `git status --porcelain -z **--ignored=matching**` + 재생가능/불가 분류 |
+| **축2 도달성** | 제거해도 살아남는 ref 에서 HEAD 에 닿나 | `git for-each-ref --contains HEAD refs/heads refs/remotes` |
+| **축1 PR** | 작업이 main 에 반영됐나(정보 축) | `gh pr list --head <브랜치> --json … \| sort_by(.createdAt)\|last` |
+| **축4 잠금·메인** | git 이 거부할 대상인가 | `--git-dir` vs `--git-common-dir` · `<gitdir>/locked` |
+
+★**질문 자체가 바뀌었다** — 「머지됐나」가 아니라 **「제거하면 잃는가」**가 답할 것이다.
+그래서 주 축은 **도달성**이고, 이것은 스쿼시 머지와 무관하다.
+★**못 재면 「안전」이 아니라 판정 불가(exit 2)** 를 낸다. 기계 판독은 stdout 의 `::VERDICT=` 줄로.
 ★적대 리뷰 서브에이전트에게 격리 워크트리를 줄 때는 **끝나면 `git checkout --detach`** 를
   프롬프트에 넣어라 — 안 그러면 브랜치를 붙들어 기준선 측정이 `exit 128` 로 실패한다(실제로 났다).
