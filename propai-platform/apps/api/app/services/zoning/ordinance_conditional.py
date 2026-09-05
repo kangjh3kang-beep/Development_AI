@@ -179,7 +179,13 @@ def match_site_conditions(
 
         · matched      — 부지 조건이 **실제로 충족**된 것(designation 으로 확인)
         · unmatched_site — 부지 조건이지만 이 필지는 해당 없음
-        · undecidable  — 건축물 용도·연혁 조건이라 **설계 없이는 판정 불가**
+        · undecidable  — **사유가 셋으로 갈린다**(한 갈래를 전체 라벨로 쓰지 않는다):
+                         ①강화 조항이라 상향 여지가 아님 ②건축물 용도·연혁 조건이라
+                         설계가 정해져야 판정 가능 ③**조문 나열을 읽지 못함**
+                         (`decision_absent=SOURCE_UNAVAILABLE` — 사용자가 아니라
+                         우리 자료의 결함이다).
+                         ★2026-09-05 실측: 이 docstring 이 ②만 적고 있었고, 화면도
+                           같은 문장을 하드코딩해 ①③까지 «설계를 정하세요»로 번역했다.
         ★`applied: False` — 후보일 뿐 적용값이 아니다(#704 `conditional_ceiling` 과 같은 계약).
     """
     rows = [d for d in (districts if isinstance(districts, (list, tuple)) else [])]
