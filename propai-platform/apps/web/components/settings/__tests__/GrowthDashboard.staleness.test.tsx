@@ -17,7 +17,7 @@
  * · 목록이 비지 않았는데 **요약이 없으면 실패**
  * ★**임계를 단언하지 않는다** — 이 PR 은 「며칠이면 낡음」을 정하지 않는다(그건 내가 정한 수다).
  */
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const getMock = vi.fn();
