@@ -30,6 +30,7 @@ required 충족으로 계수한다"* 는 전제가 **이 저장소에서 처음 
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -117,8 +118,10 @@ def _live_required_contexts() -> list[str] | None:
     """
     # ★변이 기록(2026-09-05): 이 함수를 «항상 None» 으로 바꾸면 변이가 **SURVIVED** 한다.
     #   그것은 구멍이 아니라 **설계**다 — 「판정 불가」는 실패가 아니기 때문이다.
-    #   그래서 오프라인에서도 발화하는 `test_워크플로_잡이름이_등록된_컨텍스트와_같다` 를
-    #   **따로** 둔다(그 락은 같은 변이에서 CAUGHT 다).
+    #   ★정정(적대 리뷰 실측): 오프라인 이름 락은 이 함수를 **호출조차 하지 않으므로**
+    #   그 변이와 **무관**하다(CAUGHT 가 아니다 — 처음엔 CAUGHT 라고 잘못 적었다).
+    #   그 변이를 실제로 잡는 것은 아래 `test_조회불가일때_판정을_거부한다` 가 아니라,
+    #   ★**상수 폴백 재유입**을 잡는 그 행위 락이다(다른 사건을 잡는다).
     import json
     import subprocess
 
@@ -127,7 +130,7 @@ def _live_required_contexts() -> list[str] | None:
             [
                 "gh", "api",
                 "repos/kangjh3kang-beep/Development_AI/branches/main/protection",
-                "--jq", ".required_status_checks.contexts",
+                "--jq", ".required_status_checks.contexts // []",
             ],
             capture_output=True, text=True, timeout=20, check=False,
         )
@@ -147,15 +150,18 @@ def test_심의검사가_필수로_등록돼_있다():
     이 보호가 **조용히 사라진다.** 그 사건을 잡는 것이 이 락의 존재 이유다.
 
     ★**`xfail(strict=True)` 를 쓰지 않는다.** 이 파일은 필수 체크 `Backend (pytest)` 가
-    태우는 층이라, XPASS 를 실패로 보고하면 등록되는 순간 **저장소 전역이 빨개지고
-    그 xfail 을 지우는 PR 자신이 막히는 교착**이 난다(볼트
-    `2026-09-04_인계용_명령은_아무도_실행해본_적이_없다` §2).
+    태우는 층이라, XPASS 를 실패로 보고하면 등록되는 순간 **저장소 전역이 한 사이클 빨개진다**.
+    ★**정정(2026-09-05 실측)**: 볼트는 이것을 *"그 xfail 을 지우는 PR 자신이 막히는 **교착**"*
+    이라 적었고 나는 그것을 **재지 않고 승계**했다 — **거짓이다.** PR 체크는
+    `refs/remotes/pull/N/merge` 에서 돌아 **고치는 PR 자신은 초록**이다(`#990` 잡 로그로 확인).
+    실제 대가는 «다른 in-flight PR 이 한 사이클 빨감»이고 **자기 손으로 풀린다.**
     """
     contexts = _live_required_contexts()
     if contexts is None:
         pytest.skip(
-            "★판정 불가 — 브랜치보호를 조회하지 못했다(gh 미설치·미인증·네트워크 없음). "
-            "★이 자리를 상수로 메우지 마라: 그러면 낡는 순간 초록 안에서 거짓을 말한다."
+            "★판정 불가 — 조회 결과를 리스트로 확정하지 못했다(rc·형태 미상). "
+            "★원인을 열거하지 않는다: 참인 원인과 거짓인 원인이 같은 모양이 된다. "
+            "★이 자리를 상수로 메우지 마라 — 그러면 낡는 순간 초록 안에서 거짓을 말한다."
         )
     assert REQUIRED_JOB_NAME in contexts, (
         f"필수 체크에서 {REQUIRED_JOB_NAME!r} 가 사라졌다 — 이 API 는 치환이라 "
@@ -164,17 +170,43 @@ def test_심의검사가_필수로_등록돼_있다():
 
 
 def test_워크플로_잡이름이_등록된_컨텍스트와_같다():
-    """★잡 이름을 바꾸면 그 컨텍스트가 **영원히 `Expected`** 로 남아 **큐 전체가 막힌다.**
+    """워크플로가 보호규칙이 기다리는 이름의 잡을 **생산하는지** 본다.
 
-    ★기대값을 워크플로에서 파생시키지 **않는다** — 그러면 자기참조라 이름을 바꿔도 통과한다.
-    외부 시스템(보호규칙)의 문자열을 **독립 리터럴**로 못 박고, 워크플로가 그것을
-    **생산하는지**를 본다.
+    ★**이 락이 무엇을 더하지 않는지 먼저 적는다**(적대 리뷰 실측 2026-09-05):
+    잡 이름만 바꾸는 변이는 위 `test_경로판별이_잡레벨_if_로_옮겨졌다`(`:83`)가
+    **이미 잡는다** — 이 락은 그 **진부분집합**이라 게이트 탐지 증분이 **0** 이다.
+    남는 값어치는 하나뿐이다: `:83` 이 나중에 **키 기준 조회로 리팩토링**되면
+    그때부터 이 락만이 이름을 본다.
+
+    ★**공동 개명은 오프라인에서 못 잡는다** — 잡 이름과 `REQUIRED_JOB_NAME` 을 **함께**
+    바꾸면 두 오프라인 락 모두 통과한다. 그것을 잡는 것은 라이브 조회뿐인데 그것은
+    CI 에서 skip 된다(실측: 루트 스위트 `1172/31/4` → `1173/32/3`). **★게이트 부채다.**
+
+    ★기대값을 워크플로에서 파생시키지 **않는다** — 자기참조면 이름을 바꿔도 통과한다.
+    ★공허 방지 단언은 두지 않는다: `X in []` 은 항상 False 라 멤버십 단언은
+    **원리적으로 공허할 수 없다**(도달 불가 방어는 변이 점수만 부풀린다).
     """
     jobs = _load(_WF)["jobs"]
     names = [j.get("name") for j in jobs.values()]
-    assert any(n for n in names if n), "잡 이름이 하나도 없다 — 조회기가 죽었다"  # ★공허 방지
     assert REQUIRED_JOB_NAME in names, (
         f"워크플로가 {REQUIRED_JOB_NAME!r} 라는 이름의 잡을 만들지 않는다. "
         f"브랜치보호는 그 이름으로 체크를 기다리므로 **모든 PR 이 Expected 로 막힌다**. "
         f"현재 잡 이름: {names!r}"
     )
+
+
+def test_조회불가일때_판정을_거부한다(monkeypatch):
+    """★**금지한 상수 폴백이 다시 들어오는 것을 잡는다 — 산문이 아니라 행위로.**
+
+    적대 리뷰가 실증했다: 위 독스트링이 *"상수로 대체하지 않는다"* 고 **말만** 하고
+    있어서, `_live_required_contexts() or [REQUIRED_JOB_NAME]` 한 줄을 넣으면
+    **8/8 초록**이었다 — `registered = False` 와 **정확히 같은 결함의 복원**이다.
+
+    그래서 «못 잴 때는 **판정을 거부한다**»를 **행위로** 못 박는다:
+    조회가 `None` 이면 그 테스트는 **통과가 아니라 `skip`** 이어야 한다.
+    """
+    monkeypatch.setattr(
+        sys.modules[__name__], "_live_required_contexts", lambda: None
+    )
+    with pytest.raises(pytest.skip.Exception):
+        test_심의검사가_필수로_등록돼_있다()
