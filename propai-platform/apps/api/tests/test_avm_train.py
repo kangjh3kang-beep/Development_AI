@@ -326,10 +326,22 @@ def _reset_avm_cache(monkeypatch):
 
 
 def _patch_molit(monkeypatch, source: dict | None):
-    async def _fake(self, lawd_cd):
+    """★패치 대상이 `_molit_sale_price_source` 로 바뀌었다(2026-09-04).
+
+    종전 `_molit_avg_per_pyeong` 은 **전용면적 기준 매매가**를 돌려줘, 같은 블렌딩에 들어가는
+    `regional`(**공급면적 기준 신축 분양가**)과 **단위가 달랐다**. 지금은 공용 SSOT 리졸버를
+    경유해 두 출처가 같은 축이 된다 — 그래서 이 스텁도 새 메서드를 덮어야 한다.
+
+    ★옛 이름을 계속 덮으면 스텁이 **아무것도 가로채지 못한 채** 테스트가 실경로를 태운다
+      (실측: 29,000,000 을 기대했는데 30,000,000 이 나왔다).
+    """
+    async def _fake(self, *, address, dev_type="M01", **kw):
+        # ★`**kw` — 소비처가 인자를 늘리면 스텁이 `TypeError` 를 내는데, `revalue()` 의
+        #   `except Exception` 이 그것을 삼켜 **출처가 조용히 빠진다**. 그러면 테스트는
+        #   실패가 아니라 **다른 것을 재게 된다**(실측: 29,000,000 기대 자리에 30,000,000).
         return source
 
-    monkeypatch.setattr(MarketRevaluationService, "_molit_avg_per_pyeong", _fake)
+    monkeypatch.setattr(MarketRevaluationService, "_molit_sale_price_source", _fake)
 
 
 _MOLIT_FIXED = {
@@ -345,7 +357,10 @@ class TestRevalueAvmBlended:
         _patch_regional(monkeypatch, 0.0)
         _patch_molit(monkeypatch, None)
 
-        async def _fake_avm(self, *, address, lawd_cd):
+        # ★`**kw` — 소비처가 인자를 늘리면 스텁이 TypeError 를 내는데 `revalue()` 의
+        #   `except Exception` 이 그것을 삼켜 **출처가 조용히 빠진다**.
+        #   그러면 테스트는 실패가 아니라 **다른 것을 재게 된다**(이 파일에서 두 번째).
+        async def _fake_avm(self, *, address, lawd_cd, **kw):
             return {"source": "avm", "label": "AVM 모델 추정(production)",
                     "price_per_pyeong": 30_000_000, "confidence": 80, "weight": 0.5,
                     "count": 5, "note": "테스트"}
@@ -356,7 +371,7 @@ class TestRevalueAvmBlended:
         assert res["available"] is True
         assert res["price_per_pyeong"] == 30_000_000
         assert res["confidence"] == 80  # 단독 소스: 다양성 보너스 0
-        assert res["sale_price_source"] == "avm_blended"
+        assert res["sale_price_source"] == "single_source:avm"
         assert [s["source"] for s in res["sources"]] == ["avm"]
 
     async def test_avm_plus_molit_blend_exact(self, monkeypatch):
@@ -367,7 +382,10 @@ class TestRevalueAvmBlended:
             "confidence": 100, "weight": 0.5, "count": 10, "note": "t",
         })
 
-        async def _fake_avm(self, *, address, lawd_cd):
+        # ★`**kw` — 소비처가 인자를 늘리면 스텁이 TypeError 를 내는데 `revalue()` 의
+        #   `except Exception` 이 그것을 삼켜 **출처가 조용히 빠진다**.
+        #   그러면 테스트는 실패가 아니라 **다른 것을 재게 된다**(이 파일에서 두 번째).
+        async def _fake_avm(self, *, address, lawd_cd, **kw):
             return {"source": "avm", "label": "AVM 모델 추정(production)",
                     "price_per_pyeong": 30_000_000, "confidence": 100, "weight": 0.5,
                     "count": 5, "note": "t"}
@@ -465,8 +483,27 @@ class TestAvmSourceProductionPath:
         )
         assert src is not None
         assert src["source"] == "avm"
-        # 10억 원 ÷ (84㎡/3.3058) = 39,354,761.90… → round = 39,354,762 원/평
-        assert src["price_per_pyeong"] == 39_354_762
+        # ★★계약이 바뀌었다(2026-09-05): AVM 도 **전용 기준 기존아파트 매매가**인데
+        #   같은 블렌딩의 다른 출처는 **공급 기준 신축 분양가**였다. 그 단위 불일치를
+        #   `molit_real` 에서만 고치고 **여기는 빠뜨렸다**(모집단이 3인데 2로 셌다).
+        #   이제 같은 공용 변환(전용률 × 신축 프리미엄)을 거친다.
+        # ★기대값은 **정본에서 파생**한다 — 하드코딩하면 정본이 바뀔 때 조용히 낡는다
+        #   (지난 회귀가 정확히 그것이었다: 파생시켰는데 **출처가** 낡았다).
+        # ★상수도 **다시 적지 않는다** — 코드에서 가져온다.
+        #   처음엔 3.305785 를 손으로 적었다가 **154원 차이**가 났다(코드의 `_PYEONG` 과 다름).
+        from app.services.feasibility.market_revaluation_service import (
+            _AVM_REF_AREA_SQM,
+            _PYEONG,
+        )
+        from app.services.feasibility.sale_price_resolver import _new_build_premium
+        from app.services.feasibility.unit_standards import get_exclusive_ratio
+
+        exclusive_pp = 1_000_000_000.0 / (_AVM_REF_AREA_SQM / _PYEONG)
+        expected = round(exclusive_pp * get_exclusive_ratio("M01") * _new_build_premium())
+        assert src["price_per_pyeong"] == expected
+        # ★변환이 **실제로 일어났는가** — 전용 평당가와 달라야 한다(같으면 무변환)
+        assert src["price_per_pyeong"] != round(exclusive_pp), "전용 평당가가 그대로다 — 변환 누락"
+        assert "공급 평당가" in src["note"] and "전용률" in src["note"]
         # _calculate_confidence(5, 'production') = 0.87 → 87
         assert src["confidence"] == 87
         assert src["count"] == 5
