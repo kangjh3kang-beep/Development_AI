@@ -72,6 +72,14 @@ class TestRenderContract:
         p = A.analysis_status_payload(STARVED, 0)
         assert len(str(p["state"])) <= A._RENDER_VALUE_CAP
 
+    def test_at_is_present_and_parseable(self):
+        """★`at` 이 없으면 **신선도를 말할 방법이 사라진다** — `ActiveFlagOut` 에는
+        `updated_at` 이 없다. 이 필드가 곧 «언제 관측했나» 다."""
+        from datetime import datetime
+        p = A.analysis_status_payload(STARVED, 0)
+        assert "at" in p, "at 이 없으면 낡은 행과 방금 행을 구별할 수 없다"
+        datetime.fromisoformat(str(p["at"]))     # 파싱 실패하면 예외로 죽는다
+
     def test_value_is_a_dict_not_a_list(self):
         """★`ActiveFlagOut.value` 실측: dict ◎ · **list → ValidationError(500)**."""
         assert isinstance(A.analysis_status_payload(STARVED, 0), dict)
@@ -130,8 +138,15 @@ class TestPublish:
         ok, _ = _publish(monkeypatch, g, STARVED, 0)
         assert ok and len(g.calls) == 1
         assert g.calls[0]["ttl"] is not None, "TTL 없이 발행하면 멈춤이 정상으로 읽힌다"
-        assert g.calls[0]["key"] == A.ANALYSIS_STATUS_SETTING_KEY
+        # ★**리터럴로 못 박는다** — `== A.ANALYSIS_STATUS_SETTING_KEY` 로 쓰면
+        #   그 상수를 바꿔도 통과한다(자기 상수를 단언하는 락). 읽는 쪽(`/heal-log` ·
+        #   `GrowthDashboard`)은 **이 이름**으로 찾으므로 이름 자체가 계약이다.
+        assert g.calls[0]["key"] == "growth_analysis"
+        assert A.ANALYSIS_STATUS_SETTING_KEY == "growth_analysis"
         assert g.calls[0]["scope"] == "global"
+        # ★`updated_by` 는 **생산자 식별**이다 — `growth-scheduler`(워터마크)·heal 과 갈라야
+        #   운영자가 «누가 쓴 행인가» 를 안다.
+        assert g.calls[0]["by"] == "growth-analyzer"
 
     def test_publishes_even_with_zero_insights(self, monkeypatch):
         """★두 모집단 — 0건 실행이 **바로 그때** 발행돼야 한다."""
@@ -140,6 +155,17 @@ class TestPublish:
         assert len(g0.calls) == 1 and len(g2.calls) == 1        # 둘 다 발행
         assert g0.calls[0]["value"]["insights"] == 0
         assert g2.calls[0]["value"]["insights"] == 2
+
+    def test_no_commit_when_setting_write_reports_failure(self, monkeypatch):
+        """★`set_setting` 이 False 를 돌려주면 **커밋하지 않는다**.
+
+        가드를 지우면 «쓰지 못했는데 커밋» 이 되고, 그 트랜잭션에 섞인 다른 작업이
+        의도치 않게 확정될 수 있다. 두 모집단으로 가른다(성공은 커밋, 실패는 안 함).
+        """
+        g_ok = _FakeGuard(ok=True); ok1, db_ok = _publish(monkeypatch, g_ok, STARVED, 0)
+        g_ng = _FakeGuard(ok=False); ok2, db_ng = _publish(monkeypatch, g_ng, STARVED, 0)
+        assert ok1 is True and db_ok.committed == 1
+        assert ok2 is False and db_ng.committed == 0
 
     def test_failure_does_not_raise(self, monkeypatch):
         """★best-effort — 관측이 배치의 임계경로에 있으면 안 된다."""
