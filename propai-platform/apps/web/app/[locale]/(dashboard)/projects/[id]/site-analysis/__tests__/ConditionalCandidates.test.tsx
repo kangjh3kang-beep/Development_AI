@@ -514,14 +514,23 @@ describe("판정 보류 사유는 항목마다 다르다", () => {
     expect(srcLine!.textContent).not.toBe(designLine!.textContent);
   });
 
-  it("★자료 결함 갈래를 「설계」로 번역하지 않는다 (음성) — 그리고 설계 갈래는 그대로다 (양성)", () => {
+  it("★★자료 결함 갈래를 「설계」로 번역하지 않는다 (음성 · 블록 전수)", () => {
     renderUndecidable([SRC_UNAVAIL]);
-    // 음성: 이 갈래에는 사용자가 할 일이 없다. "설계"를 말하면 공을 잘못 넘긴다.
-    expect(screen.getByText(/조문 나열 항목을 읽지 못함/).closest("li")!.textContent)
-      .not.toContain("설계가 정해져야");
+    // 공허 진리 가드 — 단언 앞에 대상 존재를 먼저 확정한다.
+    expect(screen.getByText(/조문 나열 항목을 읽지 못함/)).toBeTruthy();
+    // ★★음성은 **블록 전체**를 본다 — `li` 만 보면 머리글에 옛 하드코딩 문장을 되살려도
+    //   통과한다. 변이 실측 2026-09-05: `li` 판정판은 그 변이에 **SURVIVED** 였다.
+    //   이 모집단에는 정당한 「설계」 갈래가 없으므로 블록 전수 단언에 위양성이 없다.
+    // ★머리글을 **건수까지** 포함해 앵커한다 — `/판정 보류/` 만 쓰면 백엔드 `why` 문구가
+    //   "…판정 보류" 로 끝나서 `li` 까지 매치한다(실측: 이 락이 그 위양성에 걸렸다).
+    //   ★가장 자주 틀리는 상대는 코드가 아니라 **자기가 방금 쓴 픽스처**다.
+    const block = screen.getByText(/판정 보류 \d+건/).closest("div")!;
+    expect(block.textContent).not.toContain("설계가 정해져야");
+  });
 
-    // 양성 짝: 같은 락 안에서 반대 모집단도 확인한다 — 없으면 «전부 지움»이 만점을 받는다.
+  it("★양성 짝 — 설계 갈래는 그 문구를 그대로 낸다 (없으면 «전부 지움»이 만점)", () => {
     renderUndecidable([NEEDS_DESIGN]);
+    expect(screen.getByText(/판정 보류 1건/)).toBeTruthy();
     expect(screen.getByText(/설계가 정해져야 판정 가능/)).toBeTruthy();
   });
 
