@@ -539,6 +539,8 @@ export interface ProjectContextState {
   // (스냅샷 복원이 우선이되) 신규/주소 미설정 프로젝트에 한해 siteAnalysis.address를 시드한다.
   setProject: (id: string, name: string, status: string, address?: string) => void;
   clearProject: () => void;
+  /** 프로젝트 목록에 없는(=도달 불가능한) 스냅샷을 정리한다. 살아 있는 것은 건드리지 않는다. */
+  pruneOrphanSnapshots: (liveProjectIds: string[]) => void;
   // 다필지 보강 진행 신호 writer(휘발성). enrichParcels 시작/완료 시 호출.
   setParcelEnrichPending: (pending: boolean) => void;
   // 통합 의사결정 브리프 writer(옵셔널·휘발성). DecisionBriefPanel이 분석 완료 시 적재.
@@ -1310,6 +1312,37 @@ export const useProjectContextStore = create<ProjectContextState>()(
                 ...INITIAL_CROSS_MODULE,
                 siteAnalysis: seededSite,
               }),
+        });
+      },
+
+      // ★사라진 프로젝트의 스냅샷을 정리한다 — 성장루프가 신고한 `/store/projects` 지연을
+      //   추적하다 나온 자리다.
+      //
+      //   실측(2026-09-05 · 라이브 계정 1): 그 응답 **3.17MB** 중 `snapshots` 가 **2.37MB**.
+      //   45개 중 **24개(1.42MB · 60%)** 가 **이미 없는 프로젝트**의 것이었다.
+      //   `snapshots` 는 `CTX_KEYS` 에 들어 있어 **syncUp/syncDown 마다 왕복**하는데,
+      //   쌓는 곳만 있고(`snapshots: { ...state.snapshots, [id]: … }`) **지우는 곳이 없었다.**
+      //
+      //   ★**임의 상한(「최근 N개」)을 쓰지 않는다.** 그 N 은 내가 지어낸 수이고, 넘긴
+      //   **살아 있는** 프로젝트의 스냅샷을 죽인다. 대신 **도달 가능성**으로 자른다 —
+      //   스냅샷은 `snapshots[id]` 로만 읽히므로, 그 id 가 목록에 없으면 **어떤 경로로도
+      //   읽히지 않는다.** 그래서 이 정리는 **데이터를 잃지 않는다.**
+      //
+      //   ★**보수적으로 판단한다**: 목록이 비면(로딩 중·동기화 실패) 아무것도 지우지 않는다.
+      //   그것을 「전부 고아」로 읽으면 **살아 있는 스냅샷을 전멸**시킨다.
+      //   ★현재 열려 있는 프로젝트는 목록에 아직 없더라도(방금 생성 등) **보존**한다.
+      pruneOrphanSnapshots: (liveProjectIds) => {
+        const live = new Set((liveProjectIds ?? []).filter(Boolean));
+        if (live.size === 0) return;   // ★전멸 방지 — 「모른다」를 「전부 없다」로 읽지 않는다
+        set((state) => {
+          const keep: Record<string, ProjectSnapshot> = {};
+          let removed = 0;
+          for (const [id, snap] of Object.entries(state.snapshots ?? {})) {
+            if (live.has(id) || id === state.projectId) keep[id] = snap;
+            else removed += 1;
+          }
+          if (removed === 0) return state;   // 변화 없으면 새 객체를 만들지 않는다(리렌더 억제)
+          return { ...state, snapshots: keep };
         });
       },
 

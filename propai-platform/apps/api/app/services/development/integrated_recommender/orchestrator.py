@@ -87,7 +87,7 @@ class IntegratedRecommender:
         # 3) 게이트 통과 — 통합면적·주용도지역·현행 실효용적률 산정.
         valid = [p for p in parcels if (p.get("land_area_sqm") or 0) > 0]
         integrated_area = float(sum((p.get("land_area_sqm") or 0) for p in valid))
-        primary_zone = self._primary_zone(valid or parcels)
+        primary_zone, primary_zone_basis = self._primary_zone(valid or parcels)
 
         # 공시지가 신뢰성 — 전 유효필지가 공시지가를 확보해야 절대 수익성 신뢰(아니면 참고용).
         prices = [p.get("official_price_per_sqm") for p in valid]
@@ -109,7 +109,14 @@ class IntegratedRecommender:
         if baseline_far is None or baseline_far <= 0:
             # 실효용적률 미산정 — 개발규모/수지 미산정(정직, 가짜 용적률 미생성).
             return {
-                "site": {"addresses": addrs, "parcel_count": len(parcels), "primary_zone": primary_zone},
+                # ★**degrade 경로에도 근거를 싣는다** — 오히려 여기가 더 필요하다.
+                #   실효용적률을 못 낸 이유가 «용도지역을 못 골랐다»(`basis="none"`)일 수 있는데,
+                #   그것을 안 실으면 조사자가 **어느 층에서 끊겼는지** 알 수 없다.
+                #   ★내 락(ast)이 이 자리를 잡았다 — 성공 경로만 고치고 **형제를 놓쳤다**.
+                "site": {
+                    "addresses": addrs, "parcel_count": len(parcels),
+                    "primary_zone": primary_zone, "primary_zone_basis": primary_zone_basis,
+                },
                 "gate": gate,
                 "integrated_area_sqm": round(integrated_area, 1),
                 "baseline_far_pct": None,
@@ -237,6 +244,9 @@ class IntegratedRecommender:
                 "addresses": addrs,
                 "parcel_count": len(parcels),
                 "primary_zone": primary_zone,
+                # ★**무엇을 근거로 골랐는지**를 함께 싣는다 — 사유를 버리지 않는다.
+                #   `area_weighted`(면적가중) · `single_zone` · `first_parcel_no_area` · `none`.
+                "primary_zone_basis": primary_zone_basis,
                 "parcel_subset_policy": parcel_subset_policy,
             },
             "gate": gate,
@@ -450,12 +460,44 @@ class IntegratedRecommender:
         return list(await asyncio.gather(*[one(a) for a in addrs]))
 
     @staticmethod
-    def _primary_zone(parcels: list[dict[str, Any]]) -> str:
-        """주용도지역 — 면적 최대 필지의 용도지역(없으면 첫 유효 용도지역)."""
-        with_zone = [p for p in parcels if p.get("zone_type")]
-        if not with_zone:
-            return ""
-        return max(with_zone, key=lambda p: (p.get("land_area_sqm") or 0)).get("zone_type") or ""
+    def _primary_zone(parcels: list[dict[str, Any]]) -> tuple[str, str]:
+        """주용도지역 — **면적가중 SSOT** 로 고른다(국토계획법 §84·시행령 §94).
+
+        ## ★왜 바꿨나 — **세 번째 구현이 다른 답을 냈다** (2026-09-05 실측)
+
+        종전 이 함수는 **최대 필지 argmax** 였다(`max(parcels, key=land_area_sqm)`).
+        형제는 **용도지역별 면적 합산 + 330㎡ 이하 흡수**(`mixed_zone_limits`)를 쓴다.
+        두 함수를 **직접 태워** 대조하니 **5케이스 중 2케이스에서 갈렸다**:
+
+            [제2종 400, 제2종 400, 상업 500]  →  SSOT=제2종일반주거지역 / 구판=일반상업지역
+            [제2종 300, 제2종 300, 상업 400]  →  SSOT=제2종일반주거지역 / 구판=일반상업지역
+            (단일 · 동률 · 330㎡ 흡수 케이스는 **우연히 같다**)
+
+        ★**주거 면적이 합계로 더 큰 부지를 「상업」이라고 말했다.** 그 값은
+          `get_permitted_types`(**허용 용도**)·`_baseline_far`(**용적률**)·응답 `site.primary_zone`
+          ·★**LLM 프롬프트**(`development_method_interpreter.py:59` — `주용도지역: {…}`)로 간다.
+
+        ★**법적 근거는 SSOT 쪽에만 있다** — `mixed_zone_limits` 는 *"국토계획법 제84조·
+          시행령 제94조 … 가장 작은 부분이 330㎡ 이하면 가장 넓은 용도지역에 흡수"* 를 명문으로
+          적는다. **argmax 는 근거 문구가 없다.**
+
+        ★**새 규칙을 만들지 않는다** — 그 SSOT 는 **이미 4개 표면이 쓴다**. `#963` 이
+          시뮬레이터를 같은 방식으로 옮겼고, 이 함수가 **세 번째이자 마지막**이었다.
+
+        Returns:
+            `(zone, basis)` — ★`basis` 를 **버리지 않는다.** 이 세션이 세 번 고친 결함이
+            *"생산자가 사유를 내는데 소비처가 안 읽는다"* 였다.
+        """
+        # ★**함수-로컬 임포트** — 이 파일의 관용이다(모듈 최상위에 `app.` 임포트가 없다).
+        #   순환 임포트를 피하고, 테스트가 이 경로를 monkeypatch 할 때 대상이 분명해진다.
+        from app.services.development.scenario_simulator import dominant_zone_by_area
+
+        # ★키 이름 변환은 **이 층에서** 한다 — 저장소를 헬퍼 편의에 맞추지 않는다.
+        rows = [
+            {"zone": p.get("zone_type"), "area": p.get("land_area_sqm")}
+            for p in parcels if p.get("zone_type")
+        ]
+        return dominant_zone_by_area(rows)
 
     @staticmethod
     def _baseline_far(parcels: list[dict[str, Any]], zone_type: str, land_area: float) -> float | None:

@@ -197,6 +197,25 @@ export const useProjectStore = create<ProjectState>()(
           } catch { /* 승계 실패는 조용히 넘긴다 — 레거시 원본은 그대로라 다음에 다시 시도된다 */ }
           if (listComplete) {
             set({ projects: [...backend, ...migrated] });
+            // ★고아 스냅샷 정리 — **목록을 끝까지 받은 이 자리**가 유일하게 옳은 시점이다
+            //   (바로 위 유료 산출물 승계와 같은 근거: 판단 재료가 여기서야 확정된다).
+            //   절단(`!listComplete`)이면 **하지 않는다** — 「모르는 것을 지우지 않는다」.
+            //
+            //   왜 필요한가(2026-09-05 실측 · 성장루프가 신고한 `/store/projects` 지연 추적):
+            //   그 응답 **3.17MB** 중 `snapshots` 가 **2.37MB**, 그중 **60%(1.42MB)** 가
+            //   **이미 없는 프로젝트**의 것이었다. `snapshots` 는 `CTX_KEYS` 라 매 동기화마다
+            //   왕복하는데 **쌓는 곳만 있고 지우는 곳이 없었다.**
+            //   ★삭제 경로마다 붙이지 않는다 — 경로가 여럿이면 하나를 빠뜨린다.
+            //   ★**정적 임포트를 쓰지 않는다** — 반대편(`useProjectContextStore`)이
+            //     *"`useProjectStore` import 대신 raw 접근 — persist hydrate 순서 의존·순환
+            //     import 제거"* 라고 적어 뒀다. 같은 관례로 **동적 임포트**를 쓴다.
+            void import("@/store/useProjectContextStore")
+              .then((m) =>
+                m.useProjectContextStore
+                  .getState()
+                  .pruneOrphanSnapshots([...backend, ...migrated].map((p) => p.id)),
+              )
+              .catch(() => { /* 정리 실패는 조용히 넘긴다 — 다음 동기화에 다시 온다(기능 영향 0) */ });
           } else {
             // ★상한에 걸려 전체를 못 받았다 — **모르는 것을 지우지 않는다.**
             //   백엔드가 준 것으로 덮되, 그 목록에 없는 로컬 레코드는 "삭제됐다"고 단정할 수
