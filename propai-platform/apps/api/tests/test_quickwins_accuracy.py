@@ -26,6 +26,10 @@ from app.services.cost.standard_quantity_estimator import StandardQuantityEstima
 from app.services.cost.unit_price_repository import UnitPriceRepository
 from app.services.feasibility.cashflow_generator import CashflowGenerator, npv_from_netflows
 from app.services.feasibility.modules.base_module import ModuleInput
+from app.services.feasibility.modules.common.cost_blocks import (
+    _OTHER_ITEM_SHARE,
+    _STANDARD_OTHER_RATIO,
+)
 from app.services.feasibility.modules.m01_redevelopment import M01Redevelopment
 from app.services.feasibility.modules.m02_reconstruction import M02Reconstruction
 from app.services.feasibility.modules.m04_union_housing import M04UnionHousing
@@ -73,7 +77,25 @@ class TestAutoEstimateUnified:
 
     @pytest.mark.parametrize(("code", "module"), _MODULES)
     def test_explicit_inputs_still_win(self, code, module):
-        """사용자 명시 입력(loan·소프트비)이 있으면 자동추정 미발동(그 값 우선)."""
+        """사용자 명시 입력(loan·소프트비)이 있으면 자동추정 미발동(그 값 **항목별** 우선).
+
+        ★★**계약을 좁혔다(2026-09-05)** — 종전 단언은
+        ``assert out.total_other_cost_won == 500_000_000`` 이었다. 즉 *«소프트비 항목을
+        **하나라도** 입력하면 자동추정이 **전면** 중단»* 이라는 **전역** 계약이었다.
+
+        그 전면성이 **이 저장소가 그 자동추정을 만든 이유를 되돌린다.** 실측(M01):
+
+            토지+공사 28,720,800,000 · 표준 7% = 2,010,456,000
+            마케팅 500,000,000 만 입력  → 종전 계약이 고정한 값 = 500,000,000
+            ★차이 1,510,456,000 이 **총사업비에서 사라진다** → ROI 과대
+
+        `apply_auto_estimates` 독스트링이 바로 그것을 **«ROI 566% 패턴»** 이라 이름 붙이고
+        막으려고 만들어졌다. **한 파일 안에서 두 계약이 반대 방향으로 당기고 있었다.**
+
+        → *«명시 입력 우선»* 을 **항목 단위**로 좁힌다. 입력한 항목은 그 값이 그대로 쓰이고,
+          **미입력 항목만** 표준분을 받는다(`_OTHER_ITEM_SHARE`).
+          ★**전부 입력하면 종전과 동일**(표준 미사용) — 원 계약의 의도는 그 층에서 보존된다.
+        """
         inp = _default_input(code)
         inp.pf_amount_won = 10_000_000_000
         inp.pf_rate = 0.05
@@ -85,7 +107,24 @@ class TestAutoEstimateUnified:
         auto_formula = round(base * 0.70 * 0.055 * (36 / 12.0) * 0.5)  # W5: 분할실행 평균잔액 50% 기저
         assert out.total_finance_cost_won > 0
         assert out.total_finance_cost_won != auto_formula, code  # 리뷰 R1-LOW: 엔진값 구별 검증
-        assert out.total_other_cost_won == 500_000_000, code
+        # ★항목별 계약: 입력분은 그대로 + **미입력 항목 몫**의 표준분
+        pending = 1.0 - _OTHER_ITEM_SHARE["marketing_cost_won"]
+        expected = 500_000_000 + round(base * _STANDARD_OTHER_RATIO * pending)
+        assert out.total_other_cost_won == expected, code
+        # ★두 모집단 — 종전 전역 계약(=입력액 그대로)이면 실패한다
+        assert out.total_other_cost_won > 500_000_000, (
+            f"{code}: 항목 하나 입력이 표준분을 통째로 죽였다(ROI 566% 패턴 부활)")
+
+    @pytest.mark.parametrize(("code", "module"), _MODULES)
+    def test_전부_입력하면_표준을_쓰지_않는다(self, code, module):
+        """★원 계약의 의도가 **그 층에서** 보존되는가 — 방향 락의 반대편."""
+        inp = _default_input(code)
+        inp.params = {"marketing_cost_won": 300_000_000,
+                      "management_cost_won": 200_000_000,
+                      "reserve_cost_won": 100_000_000}
+        out = module.calculate(inp)
+        assert out.total_other_cost_won == 600_000_000, (
+            f"{code}: 전부 입력했는데 표준분이 섞였다 — 사용자 입력이 의미를 잃는다")
 
     def test_all_equity_opt_out_suppresses_finance_estimate(self):
         """리뷰 R1-MEDIUM: params.all_equity=True(전액 자기자본 명시) → 금융비 자동추정 억제."""
