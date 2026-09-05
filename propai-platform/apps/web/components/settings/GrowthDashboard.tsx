@@ -16,7 +16,7 @@
  * 렌더(필드가 없을 때 graceful)한다.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Card, CardContent } from "@propai/ui";
 import { apiClient, ApiClientError } from "@/lib/api-client";
 
@@ -284,6 +284,31 @@ function fmtDate(iso: string | null): string {
   if (!iso) return "-";
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? "-" : d.toLocaleString("ko-KR", { dateStyle: "short", timeStyle: "short" });
+}
+
+/**
+ * ★**나이를 말한다.** 절대 시각만 그리면 「낡은 가득 찬 화면」이 건강해 보인다.
+ *
+ * 【실측 2026-09-05】`status=open` critical **10건이 전부 12일 전(8/24 이전)**인데 화면 어디에도
+ * 그 사실이 없었다. 조사하던 세션이 그 목록을 **「살아 있는 신호」로 읽고** 우선순위를 세웠다
+ * — 이 헬퍼는 그 오독을 막는다.
+ *
+ * ★**임계를 만들지 않는다.** 「며칠 이상이면 낡음」을 여기서 정하면 그것은 **내가 정한 수**다.
+ *   나이를 그대로 말하고 판단은 보는 사람에게 둔다(형제 effectors 탭의 `hours_since` 와 같은 태도).
+ * ★`now` 를 인자로 받는다 — 순수함수라야 시각을 고정해 잠글 수 있다.
+ */
+export function fmtAge(iso: string | null, now: number = Date.now()): string | null {
+  if (!iso) return null;
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return null;
+  const sec = Math.floor((now - t) / 1000);
+  if (sec < 0) return null;                       // 미래 시각은 말하지 않는다(모르는 것을 지어내지 않는다)
+  if (sec < 60) return "방금";
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}분 전`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}시간 전`;
+  return `${Math.floor(hr / 24)}일 전`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1166,6 +1191,18 @@ type GrowthTab = "insights" | "heal" | "effectors";
 export function GrowthDashboard() {
   const [tab, setTab] = useState<GrowthTab>("insights");
   const [insights, setInsights] = useState<GrowthInsight[]>([]);
+
+  /**
+   * ★목록의 **신선도**를 목록에서 **파생**한다 — 손으로 세지 않는다.
+   *   가장 최근 `created_at` 하나면 「이 화면이 언제 것인지」가 정해진다.
+   *   ★`insights` 가 비면 `null` — 「모름」을 「방금」으로 위장하지 않는다.
+   */
+  const newestAge = useMemo(() => {
+    const times = insights
+      .map((i) => (i.created_at ? new Date(i.created_at).getTime() : NaN))
+      .filter((t) => !Number.isNaN(t));
+    return times.length ? fmtAge(new Date(Math.max(...times)).toISOString()) : null;
+  }, [insights]);
   const [total, setTotal] = useState(0);
   // ★서버가 준 집계. `insights` 는 `limit=200` 으로 잘리지만 이 값은 안 잘린다.
   const [actionableCounts, setActionableCounts] =
@@ -1489,6 +1526,15 @@ export function GrowthDashboard() {
                   {insights.length < total
                     ? `열림 ${total.toLocaleString("ko-KR")}건 중 ${insights.length.toLocaleString("ko-KR")}건 표시 — 나머지는 목록에 없습니다`
                     : `열림 ${total.toLocaleString("ko-KR")}건`}
+                  {/* ★★목록이 **언제 것인지**를 말한다. 절단을 말하는 위 문장과 같은 이유다 —
+                      「열림 N건」만 보면 가득 찬 화면이 건강해 보이는데, 그 N건이 전부 12일 전일
+                      수 있다(라이브 실측 2026-09-05: open critical 10건 전부 8/24 이전).
+                      ★형제 effectors 탭이 「최장 침묵 N시간」으로 이미 하는 것을 이 탭에도 둔다. */}
+                  {newestAge && (
+                    <span data-testid="insights-newest-age">
+                      {" · 최근 신규 "}{newestAge}
+                    </span>
+                  )}
                 </span>
               </div>
               <div className="mt-4 space-y-3">
@@ -1527,6 +1573,10 @@ export function GrowthDashboard() {
                           )}
                           <p className="mt-2 text-[11px] text-[var(--text-hint)]">
                             <span className="cc-num">{fmtDate(it.created_at)}</span>
+                            {/* ★나이를 **함께** 낸다 — 절대 시각을 대체하지 않는다(합성). */}
+                            {fmtAge(it.created_at) && (
+                              <span data-testid="insight-age">{" · "}{fmtAge(it.created_at)}</span>
+                            )}
                             {(it.window_start || it.window_end) && (
                               <>
                                 {" · 구간 "}
