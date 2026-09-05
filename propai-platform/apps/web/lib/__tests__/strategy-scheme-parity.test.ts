@@ -134,6 +134,20 @@ describe("P2 사업방식 — 판정 가능성이 측정되고, 나빠지지 않
     expect(STRATEGY_SCHEMES.filter((s) => !legalKeys.includes(s))).toEqual([]);
   });
 
+  it("★필지 상한이 백엔드와 같다", () => {
+    // ★★2026-09-05 — 축을 옮기며 이 단언을 **통째로 날렸다가 린트가 잡았다**
+    //   (`MAX_STRATEGY_PARCELS` 가 미사용으로 남았다). docstring §「상한도 함께」는 그대로였으므로
+    //   **선언은 남고 잠금만 사라진** 상태였다 — 이 저장소가 반복 경고한 그 형태다.
+    //   ***락을 고칠 때 그 락이 이미 잠그던 것을 세라.***
+    const src = readApi("routers/registry.py");
+    const m = /^MAX_BULK_ITEMS\s*=\s*(\d+)/m.exec(src);
+    expect(m, "MAX_BULK_ITEMS 를 못 찾았다 — 조회기가 죽었다").not.toBeNull();
+    expect(
+      MAX_STRATEGY_PARCELS,
+      "프론트 상한이 백엔드와 다르다 — 통과시킨 요청을 상류가 422 로 거부한다",
+    ).toBe(Number(m?.[1]));
+  });
+
   // ★★부채 — 이 락은 **목록의 축**만 잠근다. 「미등록 방식을 고르면 유료 실행 전에 고지한다」는
   //   행위 축이라 여기서 못 잠근다(그 고지가 아직 유료 호출 뒤에만 뜬다).
   it.todo("★부채: 미등록 방식 선택 시 유료 실행 **전에** 고지하는지 잠근다(/survey/quote 경유)");
