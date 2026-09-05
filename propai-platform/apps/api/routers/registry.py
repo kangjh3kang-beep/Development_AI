@@ -1021,7 +1021,14 @@ async def parcel_purchase_strategy(
                     #   별개다(미등록 사업방식은 문자열이 있어도 `governing_act=None` 이라
                     #   판정보류가 된다). 그 둘을 못 가르면 성장루프가 판정보류의 원인을
                     #   "사용자 미입력"으로 오귀속한다 → 해석 성공 여부를 따로 싣는다.
-                    "scheme_resolved": strategy.get("legal", {}).get("governing_act") is not None,
+                    # ★★2026-09-05 정정 — 이 계기는 **원리적으로 늘 False** 였다.
+                    #   `governing_act` 는 `build_strategy` 의 **최상위**에 있고
+                    #   `legal` 블록에는 없다(그 블록 키는 basis·consent_required·
+                    #   consent_threshold_pct·requires_track_input 넷뿐).
+                    #   ⇒ 위 주석이 «그 둘을 못 가르면 성장루프가 원인을 「사용자 미입력」으로
+                    #     오귀속한다» 고 적어 놓고, **그 구별이 죽어 있었다.**
+                    #   ★계기가 고장이면 그 축의 빈도를 영영 못 재고, 우선순위 판단이 근거를 잃는다.
+                    "scheme_resolved": strategy.get("governing_act") is not None,
                 },
             },
         )
