@@ -235,3 +235,62 @@ async def test_추가질의_라우트가_해석기를_실제로_부른다(monkey
     called.clear()
     out2 = await fn(request=req_obj, req={"question": "x"}, current_user=None)
     assert out2["ok"] is False and not called, "잘못된 body 에도 해석기를 불렀다"
+
+
+# ── ★산술을 LLM 에게서 뺏었는가 ─────────────────────────────────────────────
+
+def test_파생값_계산이_정확하다() -> None:
+    """★라이브에서 LLM 이 **4.4배 틀린** 그 계산을 서버가 한다.
+
+    실측(2026-09-05): 근저당 6억 / 공시지가 총액 27.72억 = **21.6%** 인데
+    LLM 은 «약 94.3%» 라고 답했다(분모 636,267,232 — **JSON 에 없는 수**).
+    """
+    from app.services.ai.registry_rights_interpreter import _derive_metrics
+
+    d = _derive_metrics(_ok_analysis() | {
+        "mortgage": [{"amount_won": 480_000_000}, {"amount_won": 120_000_000}],
+        "land_area_sqm": 660.0, "official_price_per_sqm": 4_200_000,
+    })
+    assert d["근저당_채권최고액_합계_원"] == 600_000_000
+    assert d["공시지가_총액_원"] == 2_772_000_000
+    assert d["근저당_대_공시지가_비율_퍼센트"] == pytest.approx(21.6, abs=0.05), (
+        f"LLM 이 틀린 그 값을 서버도 틀렸다: {d['근저당_대_공시지가_비율_퍼센트']}")
+    assert d["대지면적_평"] == pytest.approx(199.6, abs=0.2)
+
+
+def test_계산불가_항목은_키를_만들지_않는다() -> None:
+    """★«모름»을 0으로 표현하면 관측이 된다 — 저장소 규율."""
+    from app.services.ai.registry_rights_interpreter import _derive_metrics
+
+    assert _derive_metrics({}) == {}
+    # 면적만 있고 단가가 없으면 총액을 지어내지 않는다
+    d = _derive_metrics({"land_area_sqm": 660.0})
+    assert "공시지가_총액_원" not in d
+    # 쓰레기 입력에도 죽지 않고 키를 안 만든다(폼 입력은 문자열)
+    d2 = _derive_metrics({"land_area_sqm": "abc", "official_price_per_sqm": None,
+                          "mortgage": [{"amount_won": "x"}, {}]})
+    assert "공시지가_총액_원" not in d2 and "근저당_채권최고액_합계_원" not in d2
+
+
+@pytest.mark.asyncio
+async def test_파생값이_프롬프트에_실린다(monkeypatch) -> None:
+    """★★계산해도 **프롬프트에 안 실리면** LLM 은 여전히 자기가 계산한다(배선 락)."""
+    seen: dict = {}
+
+    async def spy(self, prompt, *, cache_data=None, **kw):
+        seen["prompt"] = prompt
+        return {"answer": "ok", "basis": "", "caveat": ""}
+
+    monkeypatch.setattr(BaseInterpreter, "_invoke", spy, raising=True)
+    await RegistryRightsInterpreter().answer(_ok_analysis(), "근저당 비율은?")
+    assert "derived" in seen["prompt"], "파생값이 프롬프트에 안 실렸다"
+    assert "근저당_대_공시지가_비율_퍼센트" in seen["prompt"], seen["prompt"][:400]
+
+
+def test_시스템_프롬프트가_재계산을_금지한다() -> None:
+    """★계산을 실어도 **그것을 쓰라고 말하지 않으면** LLM 이 무시할 수 있다."""
+    sp = RegistryRightsInterpreter.system_prompt
+    assert "derived" in sp, "파생값을 쓰라는 지시가 없다"
+    assert "다시 계산하지 말고" in sp, sp[:200]
+    # 음성 대조군 — 그라운딩 규칙 자체가 살아 있다
+    assert "지어내지 않는다" in sp
