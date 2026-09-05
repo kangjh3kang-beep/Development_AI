@@ -112,6 +112,39 @@ describe("④ 공사비 배선 — 단위·폴백·정본", () => {
   });
 
   /**
+   * ★⑤ 미러 락 — 프론트 항목 키가 백엔드 `_OTHER_ITEM_SHARE` 와 **같아야** 한다.
+   *   어긋나면 그 항목은 **조용히 무시**되고(백엔드가 모르는 키), 사용자는 값을 넣었는데
+   *   반영이 안 된 채 **표준분이 대신 들어간다** — 화면상 그럴듯해서 안 걸린다.
+   */
+  it("★기타경비 항목 키가 백엔드 몫 표와 일치한다(양방향)", () => {
+    const be = fs.readFileSync(
+      path.join(REPO, "apps/api/app/services/feasibility/modules/common/cost_blocks.py"), "utf8");
+    // ★**선언**에 앵커를 건다 — 첫 판은 `indexOf("_OTHER_ITEM_SHARE")` 라 **내가 쓴 주석의
+    //   언급**을 집어 키를 1개만 봤다(저장소가 이름 붙인 «설명문의 낱말을 집는다» 그대로).
+    const declAt = be.indexOf("_OTHER_ITEM_SHARE: dict");
+    expect(declAt, "몫 표 **선언**을 못 찾았다 — 조회기 사망").toBeGreaterThan(-1);
+    const block = be.slice(declAt, be.indexOf("}", declAt));
+    const beKeys = [...block.matchAll(/"([a-z_]+_won)"\s*:/g)].map((m) => m[1]).sort();
+    expect(beKeys.length, "백엔드 몫 표를 못 읽었다 — 조회기 사망").toBeGreaterThanOrEqual(3);
+
+    const feSrc = fs.readFileSync(path.join(WEB, "lib/construction-cost-params.ts"), "utf8");
+    const feBlock = feSrc.slice(feSrc.indexOf("const OTHER_COST_KEYS"), feSrc.indexOf("] as const", feSrc.indexOf("const OTHER_COST_KEYS")));
+    const feKeys = [...feBlock.matchAll(/"([a-z_]+_won)"/g)].map((m) => m[1]).sort();
+    expect(feKeys.length, "프론트 키 목록을 못 읽었다 — 조회기 사망").toBeGreaterThanOrEqual(3);
+    // ★양방향 — 한쪽만 보면 「빠뜨림」과 「군더더기」 중 하나를 못 잡는다
+    expect(feKeys, "프론트가 보내는 기타경비 키가 백엔드 몫 표와 다르다").toEqual(beKeys);
+  });
+
+  it("★기타경비는 공사비 직접입력과 **함께** 실린다(축이 다르다)", () => {
+    const p = buildConstructionParams({
+      construction_cost_override_won: 50_000_000_000,
+      marketing_cost_won: 100_000_000,
+    });
+    expect(p.construction_cost_override_won).toBe(50_000_000_000);
+    expect(p.marketing_cost_won, "공사비 override 가 기타경비를 삼켰다").toBe(100_000_000);
+  });
+
+  /**
    * ★계획 §5-5 — 구조유형 선택지가 **백엔드 정본의 부분집합**이어야 한다.
    * 없는 표기를 보내면 백엔드가 **조용히 RC(1.0)로 떨어진다**(실측: 경고 0).
    */
