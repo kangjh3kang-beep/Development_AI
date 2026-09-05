@@ -359,3 +359,54 @@ describe("정직 배선 — 실거래 마커가 화면을 벗어나면 **말한�
     expect(cond).toBeLessThan(el);
   });
 });
+
+/**
+ * ── 실거래 금액표기 배선 (2026-09-05) ────────────────────────────────────────
+ *
+ * ★왜 이 블록이 필요한가: 순수함수(`composeMarketPriceTag`, `satong-map-labels.test.ts` 6건)를
+ *   잠갔는데도 **배선을 끊는 변이가 SURVIVED 했다.** 실측:
+ *     `const priceTag = composeMarketPriceTag({` → `const priceTag = "" && composeMarketPriceTag({`
+ *   이 변이로 금액이 **통째로 사라지는데** `components/map` 182건이 전부 초록이었다.
+ *   «함수는 잠갔고 배선은 안 잠갔다» — 이 저장소가 가장 자주 데인 형태다.
+ *
+ * ★형제 블록(AVM 신뢰성 단서)의 교훈을 그대로 쓴다: 존재만 검사하면 `{false && `로,
+ *   조건만 검사하면 **가지 이전**으로 뚫린다. 그래서 **입력·소비·무력화** 셋을 함께 건다.
+ *
+ * ★한계: 소스 수준 검사이지 런타임 증명이 아니다.
+ */
+describe("정직 배선 — 실거래 라벨은 **서버가 준 평당가**를 싣는다", () => {
+  const FILE = "components/map/SatongMultiMap.tsx";
+
+  it("★입력 — 평당가는 서버 필드에서 온다(리터럴·재계산으로 대체 금지)", () => {
+    // scope 가 mustContain 을 함의하지 않는다: `perPyeong10k: 1234` 나
+    // `perPyeong10k: item.avg_price_10k / …` 가 문법적으로 가능하다.
+    assertWiredThrough({
+      file: FILE,
+      scope: /perPyeong10k:/,
+      mustContain: "item.price_per_pyeong_10k",
+      minMatches: 1,
+    });
+  });
+
+  it("★소비 — 조립된 금액표기가 실제 라벨 문자열에 실린다(계산해 놓고 안 쓰면 무의미)", () => {
+    assertWiredThrough({
+      file: FILE,
+      scope: /item\.name \|\| "실거래"/,
+      mustContain: "priceTag",
+      minMatches: 1,
+    });
+  });
+
+  it("★무력화 금지 — 대입이 조건으로 꺼지면 금액이 통째로 사라진다(이 변이가 실제로 생존했다)", () => {
+    // `const priceTag = "" && …` · `FLAG ? … : ""` 류를 막는다.
+    // ★이 락이 리팩토링을 막으면 **락을 고쳐라** — 다만 그때 금액이 여전히 나오는지
+    //   눈으로 확인하고 고쳐야 한다. 그 강제가 이 단언의 목적이다.
+    assertWiredThrough({
+      file: FILE,
+      scope: /const priceTag = /,
+      mustContain: "composeMarketPriceTag(",
+      mustNotContain: /(\?|&&|\|\|)/,
+      minMatches: 1,
+    });
+  });
+});

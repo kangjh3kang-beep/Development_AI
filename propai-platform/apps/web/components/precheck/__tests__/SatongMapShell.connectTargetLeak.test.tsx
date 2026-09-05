@@ -468,6 +468,113 @@ describe("SatongMapShell 연결 대상 전환 — 소유권 판별(R2)", () => {
   it("★음성 대조군 — 선택이 없으면 그 안내가 없다(항상 보이는 구현과 구별)", () => {
     render(<SatongMapShell locale="ko" />);
     expect(screen.queryByTestId("new-project-selection-hint")).not.toBeInTheDocument();
+    // ★이름 입력도 같은 조건이다 — 선택이 없으면 만들 것이 없다.
+    expect(screen.queryByTestId("project-name-input")).not.toBeInTheDocument();
+  });
+
+  it("★프로젝트명 입력이 보이고 placeholder 가 **실제로 쓰일 파생 이름**이다", () => {
+    // ★이 스위트의 beforeEach 는 **청진동 프로젝트를 의도적으로 심는다**(누수가 아니다).
+    //   이 케이스는 「연결 없이 새로 담는」 상황이므로 그 시드를 걷어낸다.
+    act(() => {
+      useProjectContextStore.setState({
+        projectId: null, projectName: null, projectStatus: null, siteAnalysis: null,
+      } as never);
+    });
+    render(<SatongMapShell locale="ko" />);
+    act(() => {
+      capturedMapPropsRef.current?.onPickMany?.([
+        {
+          found: true,
+          address: "경기도 오산시 내삼미동 356-1",
+          pnu: "4137011000103560001",
+          lat: 37.1,
+          lon: 127.0,
+        },
+      ]);
+    });
+    const input = screen.getByTestId("project-name-input") as HTMLInputElement;
+    // ★「입력창이 있다」로 끝내지 않는다 — 비웠을 때 **무엇이 쓰이는지**가 화면에 있어야 한다.
+    expect(input.placeholder).toContain("내삼미동");
+    expect(input.maxLength).toBe(200); // 백엔드 계약값에서 파생
+  });
+
+  it("★중복 이름이면 경고가 뜬다 + 음성 대조군(다른 이름이면 안 뜬다)", () => {
+    act(() => {
+      useProjectStore.setState({
+        projects: [{ id: "p-1", name: "상도동 개발", address: "서울특별시 동작구 상도동 1" }] as never,
+      });
+    });
+    // ★이 스위트의 beforeEach 는 **청진동 프로젝트를 의도적으로 심는다**(누수가 아니다).
+    //   이 케이스는 「연결 없이 새로 담는」 상황이므로 그 시드를 걷어낸다.
+    act(() => {
+      useProjectContextStore.setState({
+        projectId: null, projectName: null, projectStatus: null, siteAnalysis: null,
+      } as never);
+    });
+    render(<SatongMapShell locale="ko" />);
+    act(() => {
+      capturedMapPropsRef.current?.onPickMany?.([
+        {
+          found: true,
+          address: "경기도 오산시 내삼미동 356-1",
+          pnu: "4137011000103560001",
+          lat: 37.1,
+          lon: 127.0,
+        },
+      ]);
+    });
+    const input = screen.getByTestId("project-name-input");
+    act(() => {
+      fireEvent.change(input, { target: { value: "  상도동   개발 " } });
+    });
+    expect(screen.getByTestId("project-name-duplicate")).toBeInTheDocument();
+    // ★음성 대조군 — 「항상 경고하는」 구현과 구별한다.
+    act(() => {
+      fireEvent.change(input, { target: { value: "내삼미동 2차" } });
+    });
+    expect(screen.queryByTestId("project-name-duplicate")).not.toBeInTheDocument();
+  });
+
+  it("★중복이면 **실제로 만들어지지 않는다** — 「경고 표시」가 아니라 「차단」을 본다", async () => {
+    // ★변이 검증이 이 축을 짚었다: 경고만 잠갔더니 「중복이어도 생성 진행」이 **생존**했다.
+    //   생성은 **유료**다 — 표시만 하고 만들어지면 그게 결함이다.
+    const before = useProjectStore.getState().projects.length;
+    act(() => {
+      useProjectStore.setState({
+        projects: [{ id: "p-1", name: "상도동 개발", address: "서울특별시 동작구 상도동 1" }] as never,
+      });
+    });
+    act(() => {
+      useProjectContextStore.setState({
+        projectId: null, projectName: null, projectStatus: null, siteAnalysis: null,
+      } as never);
+    });
+    render(<SatongMapShell locale="ko" />);
+    act(() => {
+      capturedMapPropsRef.current?.onPickMany?.([
+        {
+          found: true,
+          address: "경기도 오산시 내삼미동 356-1",
+          pnu: "4137011000103560001",
+          lat: 37.1,
+          lon: 127.0,
+        },
+      ]);
+    });
+    act(() => {
+      fireEvent.change(screen.getByTestId("project-name-input"), {
+        target: { value: "상도동 개발" },
+      });
+    });
+    const create = screen.getByRole("button", { name: /새 프로젝트 생성/ });
+    await act(async () => {
+      fireEvent.click(create);
+    });
+    // ★프로젝트가 **늘지 않았다** — 그리고 왜인지 말한다(무음 금지).
+    expect(useProjectStore.getState().projects).toHaveLength(1);
+    expect(before).toBeGreaterThanOrEqual(0); // 대조군: 스토어 접근 자체가 살아 있다
+    // ★두 곳에 뜬다(입력 아래 경고 + 연결 고지) — **무음이 아님**만 본다.
+    expect(screen.getAllByText(/이미 같은 이름의 프로젝트가 있습니다/).length).toBeGreaterThan(0);
   });
 });
 
