@@ -145,9 +145,19 @@ def test_신축_축이_집계기에_실재하고_경계가_10년이다() -> None
 
     from app.services.sales.pricing.suggest import _trade_per_pyeong
 
+    # ★★첫 판은 **빈 목록**을 주는 스텁이라 «누산을 끈다» 변이가 **SURVIVED** 했다 —
+    #   키만 보고 **값이 실리는지**를 안 봤다(«이름이 있다 ≠ 값이 실린다»).
+    #   → **신축 1건 + 구축 1건**을 주어 **두 축이 갈리는지**로 잠근다.
+    _now = __import__("datetime").datetime.now(__import__("datetime").UTC).year
+
     class _Stub:
         async def get_transactions(self, *a, **k):
-            return []
+            return [
+                {"price_10k_won": 30000, "area_m2": 84.0, "dong": "마석우리",
+                 "build_year": _now - 3, "building_name": "신축단지"},      # 신축
+                {"price_10k_won": 15000, "area_m2": 84.0, "dong": "마석우리",
+                 "build_year": _now - 25, "building_name": "구축단지"},     # 구축
+            ]
 
     import app.services.sales.pricing.suggest as _sug
     orig = None
@@ -166,6 +176,15 @@ def test_신축_축이_집계기에_실재하고_경계가_10년이다() -> None
     for k in ("dong", "sigungu"):
         assert k in out, f"기존 축 `{k}` 이 사라졌다"
     assert out["recent_build_years"] == _sug._RECENT_BUILD_YEARS
+    # ★★**두 축이 갈린다** — 신축 축은 신축만, 전체 축은 둘 다(8개월 × 2건 = 16건씩).
+    #   이 대조가 없으면 «누산을 끄는» 변이가 통과한다(실측 SURVIVED).
+    assert out["recent_dong"]["n"] > 0, "신축 축이 아무것도 안 담았다 — 누산이 죽었다"
+    assert out["dong"]["n"] > out["recent_dong"]["n"], (
+        f"신축 축이 전체와 같다 — 연식 필터가 안 걸린다: "
+        f"전체 {out['dong']['n']} ↔ 신축 {out['recent_dong']['n']}")
+    # ★값도 갈린다(구축이 섞이면 중앙값이 내려간다 — 이 PR 의 이유)
+    assert out["recent_dong"]["median"] > out["dong"]["median"], (
+        f"신축 중앙값이 전체보다 높지 않다: {out['recent_dong']['median']} ↔ {out['dong']['median']}")
     # ★기존 키는 살아 있다(무회귀 — 소비처가 깨지면 안 된다)
     for k in ("dong", "sigungu"):
         assert f'"{k}":' in src, f"기존 축 `{k}` 이 사라졌다"
