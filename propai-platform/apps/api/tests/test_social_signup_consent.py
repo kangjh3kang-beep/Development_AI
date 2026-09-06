@@ -240,7 +240,15 @@ class TestAppActuallyBoots:
             assert r.status_code == 204, f"{r.path} status={r.status_code}"
 
     def test_204_라우트는_응답모델을_갖지_않는다(self):
-        """★이것이 기동을 깨뜨린 실제 조건이다 — 상태코드가 아니라 response_model."""
+        """★이것이 기동을 깨뜨린 실제 조건이다 — 상태코드가 아니라 response_model.
+
+        ★★이 락은 **로컬에서는 판별력이 없다**(2026-09-06 실측):
+            로컬 fastapi 0.135.1 — `-> None` 을 response_model 로 만들지 않는다
+            CI   fastapi 0.115.0 — 만든다 → 204 단언에서 **기동 실패**
+          그래서 `-> None` 을 되돌리는 변이가 로컬에서 **SURVIVED** 했다.
+          「CAUGHT」로 인용하지 말 것 — **판정은 CI 에서만 유효**하다.
+          《같은 명령이 같은 게이트는 아니다 — 버전까지 맞춰라》(CLAUDE.md §32).
+        """
         from apps.api.main import app
 
         bad = [
