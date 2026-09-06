@@ -323,8 +323,10 @@ type OutputAction = {
  */
 // ★팝오버 헤더 on/off 미노출 레이어(R1 M-3/M-4/M-D — 단발 예외 대신 패턴 상수화).
 //   terrain : on/off 소유자가 베이스맵 스위처(끄면 배경지도가 조용히 롤백·라벨도 거짓)
-//   cadastre: 기반 레이어라 끌 수 없음(토글 무동작 = 죽은 버튼)
-const LAYERS_WITHOUT_POPOVER_TOGGLE = new Set<SatongMapLayerId>(["terrain", "cadastre"]);
+// ★2026-09-07 — `cadastre` 를 **뺐다**. 종전엔 「끌 수 없으니 토글도 숨긴다」였는데,
+//   그 제약의 사유가 실재하지 않아 스토어에서 제거했다(사용자 신고 ①).
+//   이제 지적도는 **기본 꺼짐 + 레일에서 켬**이라 토글이 **살아 있어야** 한다.
+const LAYERS_WITHOUT_POPOVER_TOGGLE = new Set<SatongMapLayerId>(["terrain"]);
 
 const LAYERS: SatongLayer[] = [
   {

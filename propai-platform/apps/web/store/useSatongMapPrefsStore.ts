@@ -50,7 +50,7 @@ export type SatongMapPrefsState = {
    */
   enabledLayersCustomized: boolean;
   /**
-   * 레이어를 켜고 끈다. ★`cadastre` 는 **기반 레이어라 끄지 않는다**(종전 계약 이식).
+   * 레이어를 켜고 끈다. ★2026-09-07 — `cadastre` 예외를 **제거**했다(사용자 신고 · 사유 부재).
    * ★변화가 없으면 **같은 배열 참조**를 돌려준다 — 그러지 않으면 소비처의 `useMemo` 가
    *   재계산돼 `mapLayerState` identity 가 바뀌고, 그걸 deps 로 쓰는 오버레이·POI effect 가
    *   **전량 파괴·재생성**된다(저장소가 «깜빡임의 근원» 이라 적은 그 축).
@@ -106,11 +106,24 @@ export function defaultSatongMapControls(): SatongMapLayerState["controlsByLayer
  * ★레거시 공유키가 **없다**(신규 스토어) — 그래서 이름 승계 고민이 없다.
  */
 /**
- * 기본으로 켜져 있는 레이어 — 지적도 하나(종전 `new Set(["cadastre"])` 그대로).
- * ★`cadastre` 는 기반 레이어라 끄지 못한다(`toggleLayerEnabled` 가 지킨다).
+ * 기본으로 켜져 있는 레이어 — **없음**.
+ *
+ * ★★2026-09-07 사용자 신고: *"지적 경계선이 항상 나타나는데 기본은 경계선이 없고
+ *   오른쪽 메뉴에서 선택 시 나타나야 하지 않나?"* — 맞다. 배경 위에 주황 경계선이
+ *   전면에 깔려 **지도 자체를 읽기 어렵다.**
+ *
+ * ★종전 주석은 *"`cadastre` 는 기반 레이어라 끄지 못한다"* 였다. **그 사유가 실재하지 않았다** —
+ *   `showCadastreTile` 은 **WMS 타일 오버레이만** 가드하고(`SatongMultiMap.tsx`),
+ *   필지 선택은 `boundaryFeatures`/`staged` 에 의존해 그 플래그를 **참조하지 않는다**.
+ *   그 파일이 스스로 적어 두었다 — *"지적 안내 effect 는 deps 가 [mapReady, showCadastreTile,
+ *   aerialView] 라 **선택을 직접 참조할 수 없다**"*. ⇒ 끄는 것이 안전하다.
+ *
+ * ★**목적이 다른 화면은 이 기본값을 쓰지 않는다** — 주소검색 미리보기·토지조서·용도지역
+ *   신호·구획도는 각자 `enabledLayerIds` 를 명시한다(필지를 고르라고 띄운 지도에서
+ *   경계선을 지우면 무엇을 고르는지 안 보인다). **여기는 「자유 탐색 지도」의 기본값이다.**
  */
 export function defaultEnabledLayerIds(): SatongMapLayerState["enabledLayerIds"] {
-  return ["cadastre"];
+  return [];
 }
 
 export const SATONG_MAP_PREFS_STORE_KEY = "propai-satong-map-prefs";
@@ -123,7 +136,9 @@ export const useSatongMapPrefs = create<SatongMapPrefsState>()(
       toggleLayerEnabled: (id) =>
         set((s) => {
           const has = s.enabledLayerIds.includes(id);
-          if (has && id === "cadastre") return s; // ★기반 레이어 — 못 끈다(변화 없음 = 같은 참조)
+          // ★2026-09-07 — 종전엔 여기서 `cadastre` 를 **끄지 못하게 막았다**.
+          //   그 결과 레일의 「지적」 버튼이 눌러도 무동작인 **죽은 버튼**이었다.
+          //   제약의 사유(선택이 지적 타일에 의존한다)가 **실재하지 않아** 제거한다.
           // ★**실제로 바뀔 때만** 「골랐다」로 표시한다(위 docstring 참조).
           return {
             enabledLayerIds: has
