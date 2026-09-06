@@ -289,3 +289,84 @@ def test_catalog_declares_all_three_bank_fields() -> None:
     # ★계좌 안내는 **사용자에게 보여 줘야** 하므로 비밀이 아니다(마스킹되면 못 쓴다).
     assert all(c["secret"] is False for c in bank_entries)
     assert len({c["group"] for c in bank_entries}) == 1, "세 항목이 한 그룹에 모여야 한다"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ★사용자에게 **그대로 찍히는** 문자열에 마크다운을 쓰지 않는다 (2026-09-06 라이브 실측)
+#
+# 배포 후 실제 화면을 태워 보니 이렇게 나왔다:
+#
+#     입금자명은 주문에 적은 이름과 **같아야** 확인이 빠릅니다.
+#                                  ↑ 별표가 그대로 찍힌다
+#
+# 이 문구들은 **평문 `<p>` 로 렌더**된다(관리자 `warnings` 도 문자열 배열이다).
+# 개발자용 독스트링·주석에서 쓰던 `**강조**` 습관이 **응답 문자열로 새어 나온 것**이다.
+# 이 저장소의 평문 강조 관용구는 `「」` 다(`관리자 > API 키 > 「결제(PG)」`).
+#
+# ★독스트링은 대상이 아니다 — 개발자가 읽는 것이고 렌더되지 않는다.
+#   범위를 넓히면 정당한 사용이 위양성이 된다(처방 범위 = 결함 범위).
+# ═══════════════════════════════════════════════════════════════════════════
+_MD_EMPHASIS = "**"
+
+
+def _md_hits(text: str) -> bool:
+    return _MD_EMPHASIS in (text or "")
+
+
+def test_toss_diagnosis_copy_is_plain_text() -> None:
+    """★파생형 — 표 전체를 훑는다. 새 코드가 추가돼도 자동으로 감시망에 들어온다."""
+    from app.services.billing.toss_payments import KEY_DIAGNOSIS_COPY
+
+    assert len(KEY_DIAGNOSIS_COPY) >= 8, "모집단이 비었다 — 공허한 초록 방지"
+    bad = [
+        (code, part)
+        for code, (_sev, msg, act) in KEY_DIAGNOSIS_COPY.items()
+        for part in (msg, act)
+        if _md_hits(part)
+    ]
+    assert not bad, f"관리자 화면에 별표가 그대로 찍힌다: {bad}"
+    # ★대조군 — 이 검사기가 별표를 실제로 잡는가(빈 표라서 통과한 것이 아니다).
+    assert _md_hits("이것은 **강조** 다"), "검사기가 죽었다 — 위 「0건」을 신뢰하지 마라"
+
+
+@pytest.mark.parametrize(
+    "kw",
+    [
+        {},                                   # 미설정
+        {**_GOOD_BANK, "acct": ""},           # 부분 설정
+        {**_GOOD_BANK, "acct": "abc12345678"},  # 형식 불량
+        _GOOD_BANK,                           # 정상
+    ],
+)
+def test_bank_diagnosis_is_plain_text_in_every_state(
+    monkeypatch: pytest.MonkeyPatch, kw
+) -> None:
+    """★**모든 상태**에서 본다 — 정상일 때만 검사하면 오류 문구가 새어 나간다."""
+    _set(monkeypatch, **kw)
+    d = bank_transfer.diagnosis()
+    parts = [d["message"], d["action"], *d.get("problems", [])]
+    assert parts, "판정 문구가 비었다"
+    assert not [p for p in parts if _md_hits(p)], f"별표가 남았다: {parts}"
+
+
+def test_bank_transfer_config_endpoint_copy_is_plain_text() -> None:
+    """화면 직행 문구(`guide`·`notice`)에 마크다운이 없다.
+
+    ★AST 로 **그 함수의 실행 리터럴만** 본다 — 파일 전체를 grep 하면 독스트링·주석의
+      정당한 `**` 가 전부 위양성이 된다(실측: 그렇게 세면 billing.py 만 11건이 잡힌다).
+    """
+    src = (_API / "routers/billing.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    fn = next(
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.AsyncFunctionDef) and n.name == "bank_transfer_config"
+    )
+    body = fn.body[1:] if (fn.body and isinstance(fn.body[0], ast.Expr)) else fn.body  # 독스트링 제외
+    lits = [
+        n.value for b in body for n in ast.walk(b)
+        if isinstance(n, ast.Constant) and isinstance(n.value, str)
+    ]
+    assert len(lits) >= 4, "리터럴 수집이 비었다 — 검사기가 죽었다"
+    assert not [s for s in lits if _md_hits(s)], "화면 직행 문구에 별표가 있다"
+    # ★대조군 — 실제로 그 함수의 문구를 집었는가(엉뚱한 함수를 본 것이 아니다).
+    assert any("입금자명" in s for s in lits), "수집 대상이 틀렸다"
