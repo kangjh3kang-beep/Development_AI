@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { locales } from "@/i18n/config";
 
 import { describe, expect, it } from "vitest";
 
@@ -112,7 +113,11 @@ describe("콜백 화면 문구 위생", () => {
       // 3언어가 다 살아 있는가
       // ★실측: ko·en 은 따옴표 없이, zh-CN 은 하이픈 때문에 따옴표로 쓰인다.
       //   한 형식만 가정하면 정상 코드를 위반으로 신고한다.
-      for (const loc of ["ko", "en", "zh-CN"]) {
+      // ★목록이 아니라 **정본에서 파생**한다 — 손으로 적으면 그 목록이 곧 상한이 되고,
+      //   네 번째 로케일이 생겨도 조용히 검사 밖에 남는다(이 저장소가 반복해 데인 형태).
+      //   기계 변이 감사(2026-09-06 · base 7609325e)가 이 자리를 짚었다.
+      expect(locales.length, "로케일 모집단이 비었다 — 조회기 사망").toBeGreaterThanOrEqual(3);
+      for (const loc of locales) {
         const re = new RegExp('(^|[\\s{,])"?' + loc.replace("-", "\\-") + '"?\\s*:\\s*\\{', "m");
         expect(re.test(code), `${file}: ${loc} 블록 없음`).toBe(true);
       }
