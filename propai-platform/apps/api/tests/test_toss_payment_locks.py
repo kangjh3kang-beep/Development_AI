@@ -1639,3 +1639,133 @@ async def test_clawback_result_carries_the_two_numbers_a_human_needs(
 #    깨지는 취약한 락이 된다. 이 저장소 규율이 명시적으로 그것을 금한다.
 #  · **영수증의 부수 인자**(`raw=payment`·`user_id=` 등) — 같은 호출의 다른 인자들이
 #    이미 잠겨 있어 호출 자체가 사라지면 CAUGHT 된다(이중 가드).
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ★전수 변이(160건 · base 556f56bfff11)가 드러낸 **게이트 자신의 무잠금**
+#
+# 가장 중요한 생존이 **마지막(160/160)** 에 나왔다:
+#
+#     billing.py:522  return "toss" if key_pairing_ok() else "manual_only"
+#
+# 이 문자열을 `"simulated"` 로 바꿔도 **아무 테스트가 알아채지 못했다.**
+# 그런데 그 변경은 이 PR 이 커밋 메시지에서 스스로 경고한 바로 그것이다 —
+# `simulated` 는 `POST /orders/{id}/confirm` 한 번으로 **무료 충전**이 되는 경로다.
+#
+# ★`--max 40` 실행에서는 이 줄에 **도달조차 못 했다**(절단은 소스 순서다).
+#   "변이를 돌렸다"가 감사의 증거가 되려면 **절단되지 않은 실행**이어야 한다.
+# ═══════════════════════════════════════════════════════════════════════════
+class _FakeSettings:
+    def __init__(self, simulated: bool):
+        self.billing_simulated_payments = simulated
+
+
+@pytest.mark.parametrize(
+    ("sk", "ck", "simulated", "expected"),
+    [
+        # ① 쓸 수 있는 키 → 결제창을 켠다.
+        ("test_gsk_x1234567", "test_gck_y1234567", False, "toss"),
+        ("test_gsk_x1234567", "test_gck_y1234567", True, "toss"),
+        # ② ★키는 있는데 **못 쓴다** → 닫는다. 시뮬레이션으로 내려가면 게이트 우회다.
+        ("test_sk_x1234567", "test_ck_y1234567", False, "manual_only"),
+        ("test_sk_x1234567", "test_ck_y1234567", True, "manual_only"),
+        ("test_gsk_x1234567", "live_gck_y1234567", True, "manual_only"),
+        ("test_gsk_x1234567", "test_gsk_y1234567", True, "manual_only"),
+        # ③ 키가 아예 없다 → 종전 계약 그대로(회귀 아님을 잠근다).
+        ("", "", True, "simulated"),
+        ("", "", False, "manual_only"),
+    ],
+)
+def test_payment_mode_gate_never_falls_through_to_free_topup(
+    monkeypatch: pytest.MonkeyPatch, sk: str, ck: str, simulated: bool, expected: str
+) -> None:
+    """★**세 모집단**을 같은 표에서 가른다.
+
+    ②가 이 잠금의 핵심이다 — "키가 있는데 짝이 틀리다"를 `simulated` 로 떨어뜨리면
+    결제 게이트가 통째로 우회된다. `manual_only` 로 **닫아야** 한다.
+    """
+    import routers.billing as _billing
+
+    if sk:
+        monkeypatch.setenv("TOSS_SECRET_KEY", sk)
+    else:
+        monkeypatch.delenv("TOSS_SECRET_KEY", raising=False)
+    if ck:
+        monkeypatch.setenv("TOSS_CLIENT_KEY", ck)
+    else:
+        monkeypatch.delenv("TOSS_CLIENT_KEY", raising=False)
+
+    assert _billing.resolve_payment_mode(_FakeSettings(simulated)) == expected
+
+
+def test_bad_keys_never_produce_simulated_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    """★위 표의 ②를 **한 문장으로** 다시 못 박는다 — 이것이 돈이 걸린 불변식이다.
+
+    표는 케이스가 늘면 사람이 훑고 넘어가는데, 이 단언은 **원리**를 말한다:
+    *"키가 존재하는 한, 그 키가 나빠도 무료 경로는 열리지 않는다."*
+    """
+    import routers.billing as _billing
+
+    for sk, ck in [
+        ("test_sk_x1234567", "test_ck_y1234567"),
+        ("live_gsk_x1234567", "test_gck_y1234567"),
+        ("test_gsk_x1234567", "garbage"),
+        ("test_gck_x1234567", "test_gck_y1234567"),
+    ]:
+        monkeypatch.setenv("TOSS_SECRET_KEY", sk)
+        monkeypatch.setenv("TOSS_CLIENT_KEY", ck)
+        mode = _billing.resolve_payment_mode(_FakeSettings(True))
+        assert mode != "simulated", f"({sk[:12]}…, {ck[:12]}…) 가 무료 충전 경로를 열었다"
+
+
+def test_missing_keys_are_not_configured_not_malformed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """★**미설정**과 **형식 오류**는 다른 사실이다 — 뭉개면 관리자가 오독한다.
+
+    변이 `if not (ck_raw and sk_raw):` 무력화가 생존했다 = 빈 키가 「형식 불량」으로
+    보고돼도 아무도 몰랐다는 뜻이다. 미설정은 **장애가 아니라 상태**다(severity=info).
+    """
+    monkeypatch.delenv("TOSS_SECRET_KEY", raising=False)
+    monkeypatch.delenv("TOSS_CLIENT_KEY", raising=False)
+    d = toss_payments.key_diagnosis()
+    assert d["code"] == "not_configured"
+    assert d["severity"] == "info", "미설정을 오류로 보고하면 진짜 사고가 묻힌다"
+
+    # ★대조군 — 한쪽만 있어도 여전히 미설정이고, **형식이 깨진 것과는 다르다**.
+    monkeypatch.setenv("TOSS_SECRET_KEY", "test_gsk_x1234567")
+    assert toss_payments.key_diagnosis()["code"] == "not_configured"
+    monkeypatch.setenv("TOSS_CLIENT_KEY", "garbage")
+    assert toss_payments.key_diagnosis()["code"] == "client_key_malformed"
+
+
+def test_wrong_family_says_which_block_to_copy(monkeypatch: pytest.MonkeyPatch) -> None:
+    """★*"틀렸다"* 만으로는 못 고친다 — **무엇을 갖고 있고 무엇이 필요한지** 말해야 한다."""
+    monkeypatch.setenv("TOSS_SECRET_KEY", "test_sk_x1234567")
+    monkeypatch.setenv("TOSS_CLIENT_KEY", "test_ck_y1234567")
+    d = toss_payments.key_diagnosis()
+    assert d["code"] == "wrong_family"
+    assert d["found_family"] == "API 개별 연동 키"
+    assert d["required_family"] == "주문서형·결제창형 연동 키"
+    # ★두 값이 **달라야** 진단이다(같으면 무엇을 바꾸라는 말인지 알 수 없다).
+    assert d["found_family"] != d["required_family"]
+
+
+def test_health_contract_carries_the_field_scripts_read() -> None:
+    """`scripts/verify-toss-live.sh` 가 `key_diagnosis` 를 읽는다 — 이름이 바뀌면 조용히 죽는다.
+
+    ★소비처가 저장소 안에 있으므로 여기서 결속한다(밖에 있으면 그쪽 계약 테스트의 몫이다).
+    """
+    import os
+
+    os.environ["TOSS_SECRET_KEY"] = "test_gsk_x1234567"
+    os.environ["TOSS_CLIENT_KEY"] = "test_gck_y1234567"
+    try:
+        assert "key_diagnosis" in toss_payments.config_status()
+    finally:
+        os.environ.pop("TOSS_SECRET_KEY", None)
+        os.environ.pop("TOSS_CLIENT_KEY", None)
+    script = (_API.parents[2] / "scripts/verify-toss-live.sh").read_text(encoding="utf-8")
+    assert "key_diagnosis" in script, "스크립트가 그 필드를 안 읽으면 이 결속은 공허하다"
+    # ★대조군 — 스크립트를 실제로 읽었다(빈 파일이라 통과한 것이 아니다).
+    assert "NOT_FOUND_PAYMENT" in script

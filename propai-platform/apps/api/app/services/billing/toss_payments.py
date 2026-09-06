@@ -362,9 +362,11 @@ def config_status() -> dict[str, Any]:
         "key_pairing_ok": key_pairing_ok(),
         # ★`false` 만으로는 관리자가 고칠 수 없다 — **무엇이 왜 틀렸고 무엇을 하면 되는지**를 싣는다.
         #   (진단 불가는 그 자체로 장애다 — §유료·비가역 산출물 규율 4)
+        # ★`required_key_family` 를 따로 싣지 않는다 — **소비처가 0** 이기 때문이다.
+        #   어느 블록을 복사해야 하는지는 `key_diagnosis` 의 `action`(그리고 `wrong_family`
+        #   일 때의 `found_family`/`required_family`)이 이미 말한다. 아무도 안 읽는 필드를
+        #   두면 그것이 곧 다음 사람의 「있는데 안 쓰는」 부채가 된다.
         "key_diagnosis": key_diagnosis(),
-        # 우리가 싣는 SDK 가 요구하는 계열 — 화면이 "어느 블록을 복사하라"고 말할 수 있게 한다.
-        "required_key_family": _FAMILY_LABEL[REQUIRED_FAMILY],
     }
 
 
