@@ -41,7 +41,24 @@ import pytest
 _API_ROOT = Path(__file__).resolve().parents[1]
 
 # nearby-map 응답을 손에 쥐는 파일인가(생산처 호출 또는 라우터 반환)
-_CONSUMES_NEARBY = re.compile(r"NearbyMapService|nearby_map_service")
+# ★2026-09-06 자체 적발 — 종전엔 **클래스 이름이 파일에 있으면** 소비처로 봤다.
+#   그런데 `NearbyMapService` 는 groups 를 낳지 않는 메서드도 공개한다
+#   (실측: `build()` 만 payload 를 만들고 `geocode_one`·`geocode_addresses` 는 **좌표만** 준다).
+#   그래서 지오코딩만 쓰는 파일이 MOLIT 의 `price_10k_won` 을 만지면 **위양성**이 났다
+#   (실측 `app/services/sales/pricing/suggest.py` — 분양가 신호의 반경 중심좌표용).
+#   ★이 파일은 `_USES_SELECTOR` 에 대해서는 이미 *"이름이 어딘가에 있다는 것과 그 함수를
+#     **호출한다**는 것은 다르다"* 를 적용했는데, **이쪽 정규식에는 적용하지 않았다**
+#     (§D-20 처방 범위 = 결함 범위 — 같은 원칙을 절반에만 걸었다).
+#   → 「이름 언급」이 아니라 **생산처가 만드는 payload 키를 실제로 쥐었는가**로 좁힌다.
+#     정본: `nearby_map_service.py` 가 `"categories": …` 와 `"groups": out` 을 만든다.
+#     좁힌 뒤에도 정당 소비처 `assistant_agent.py` 는 그대로 관할에 남는다(실측 2건 매치).
+_NEARBY_NAME = re.compile(r"NearbyMapService|nearby_map_service")
+_HOLDS_GROUP_PAYLOAD = re.compile(r"[\"']groups[\"']|\bcategories\b")
+
+
+def _consumes_nearby(src: str) -> bool:
+    """nearby-map 의 **그룹 payload 를 손에 쥔** 파일만 True."""
+    return bool(_NEARBY_NAME.search(src)) and bool(_HOLDS_GROUP_PAYLOAD.search(src))
 
 # 그룹 단위 가격/보증금/월세를 만지는가
 # ★리뷰(M-3) — `deals[].price_10k_won` 을 누산하는 형태(프론트 ConversationalMarketPanel 이
@@ -124,7 +141,7 @@ def test_nearby_map_price_consumers_go_through_selector() -> None:
     for rel, src in _scan():
         if rel in _EXEMPT:
             continue
-        if not _CONSUMES_NEARBY.search(src):
+        if not _consumes_nearby(src):
             continue
         if not _TOUCHES_GROUP_PRICE.search(src):
             continue
@@ -166,7 +183,11 @@ def test_known_consumers_are_actually_wired(rel: str) -> None:
     실제 봉합 지점을 이름으로 못 박아 그 탈출로를 닫는다(상한만으론 샌다 — 양쪽 결박).
     """
     src = (_API_ROOT / rel).read_text(encoding="utf-8")
-    assert _CONSUMES_NEARBY.search(src), f"{rel} 이 더는 nearby-map 소비처가 아니다 — 계약 재확인 필요"
+    assert _consumes_nearby(src), (
+        f"{rel} 이 더는 nearby-map **그룹 payload** 소비처가 아니다 — 계약 재확인 필요.\n"
+        "★2026-09-06 좁히기 이후 이 단언은 「클래스 이름이 있다」가 아니라 "
+        "「categories/groups 를 쥔다」를 본다(지오코딩 전용은 관할 밖)."
+    )
     assert _USES_SELECTOR.search(src), (
         f"{rel} 이 셀렉터를 거치지 않는다 — 위치 미확인·개략 표본이 다시 섞인다"
     )
@@ -1089,3 +1110,45 @@ def test_desk_appraisal_emits_skip_note_when_radius_applied_but_no_sample() -> N
     note = no_sample_reason(basis)
     assert note is not None
     assert "지번을 가려서" in note, f"마스킹이 원인인데 그 사실을 말하지 않는다: {note}"
+
+
+def test_consumes_nearby_gates_on_payload_not_on_the_class_name() -> None:
+    """★두 모집단 — 「이름 언급」과 「payload 보유」를 실제로 가른다.
+
+    이 축이 없으면 **전부 차단하는 구현이 만점**을 받는다(§37 위양성도 결함이다).
+    두 소스는 `NearbyMapService` 언급과 `price_10k_won` 누산이 **동일**하고,
+    오직 `groups` payload 를 쥐느냐만 다르다 — 그것만이 답을 가른다.
+    """
+    common = (
+        "from app.services.land_intelligence.nearby_map_service import NearbyMapService\n"
+        "async def f(addr):\n"
+        "    amt = float(r.get('price_10k_won') or 0)\n"
+    )
+    geocode_only = common + "    c = await NearbyMapService().geocode_one(addr)\n    return c, amt\n"
+    holds_groups = common + "    cat = (await NearbyMapService().build(address=addr))['categories']['apt']\n" \
+                            "    return [g for g in cat['groups']], amt\n"
+
+    assert not _consumes_nearby(geocode_only), (
+        "좌표만 쓰는 파일을 nearby-map 그룹 소비처로 신고한다 — 위양성. "
+        "정당한 MOLIT 경로가 이 락에 막힌다."
+    )
+    assert _consumes_nearby(holds_groups), (
+        "groups payload 를 쥔 파일을 놓친다 — 좁히기가 락을 통째로 무력화했다."
+    )
+
+
+def test_narrowing_did_not_drop_the_real_consumer() -> None:
+    """★좁힌 뒤에도 **실재 정당 소비처가 관할에 남는지**를 디스크에서 재확인한다.
+
+    합성 문자열만 보면 «내가 만든 예시»만 증명한다 — 실제 저장소에서 관할 대상이
+    0건이 되면 이 락은 초록인 채로 아무것도 지키지 않는다(공허한 초록).
+    """
+    governed = [
+        rel for rel, src in _scan()
+        if rel not in _EXEMPT and _consumes_nearby(src) and _TOUCHES_GROUP_PRICE.search(src)
+    ]
+    assert governed, "좁히기가 관할 모집단을 0으로 만들었다 — 락이 공허해졌다"
+    assert any(rel.endswith("assistant_agent.py") for rel in governed), (
+        "2026-08-02 감사에서 셀렉터를 배선한 실재 소비처가 관할에서 빠졌다 — "
+        f"좁히기가 과했다. 현재 관할: {governed}"
+    )
