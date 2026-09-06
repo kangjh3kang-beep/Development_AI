@@ -922,3 +922,43 @@ async def test_아파트가_아니면_분양권을_조회하지_않는다(monkey
     await spr._trade_sale_price_per_pyeong(
         dev_type="M08", address="x", sigungu5="41360", building_type="오피스텔")
     assert calls == ["officetel"], f"아파트가 아닌데 분양권을 조회했다: {calls}"
+
+
+@pytest.mark.asyncio
+async def test_분양권_표본이_한두건이면_쓰지_않는다(monkeypatch) -> None:
+    """★변이가 찾은 구멍 — `pd_n >= _MIN_TRADE_SAMPLES` 를 지워도 위 락들이 전부 초록이었다.
+
+    실해: **분양권 거래 1건**이 사업지 전체의 분양가를 정하고, 그 값이 매출·ROI·PF 한도로
+    전파된다. 분양권은 표본이 원래 적다(마석우리 17건) — 그래서 하한이 더 중요하다.
+    ★경계 **양방향**: 하한 미만은 매매로 폴백하고, 하한 이상은 분양권을 쓴다.
+    """
+    import app.services.feasibility.sale_price_resolver as spr
+
+    async def mk(pre_n: int):
+        calls: list[str] = []
+
+        async def spy(sigungu5, dong, prop_type):
+            calls.append(prop_type)
+            if prop_type == "apt_presale":
+                return {"dong": {"median": 2491, "n": pre_n},
+                        "sigungu": {"median": 2491, "n": pre_n}}
+            return {"dong": {"median": 1391, "n": 102}, "sigungu": {"median": 1391, "n": 102}}
+
+        monkeypatch.setattr("app.services.sales.pricing.suggest._trade_per_pyeong",
+                            spy, raising=True)
+        res = await spr._trade_sale_price_per_pyeong(
+            dev_type="M01", address="x", sigungu5="41360")
+        return res, calls
+
+    # ★하한 미만 — 분양권을 **쓰지 않고** 매매로 폴백한다
+    for n in (1, 2, spr._MIN_TRADE_SAMPLES - 1):
+        res, calls = await mk(n)
+        assert res is not None
+        assert res[1] == "주변 실거래(MOLIT)", (
+            f"분양권 표본 {n}건으로 분양가를 정했다 — 한두 건이 사업 전체를 좌우한다: {res[1]}")
+        assert calls == ["apt_presale", "apt"], calls
+
+    # ★하한 이상 — 분양권을 쓴다(경계 반대편 · 없으면 «항상 폴백»이 만점)
+    res, calls = await mk(spr._MIN_TRADE_SAMPLES)
+    assert res is not None and res[1] == "분양권 전매(MOLIT)", (
+        f"하한을 충족했는데 분양권을 안 썼다: {res[1]}")
