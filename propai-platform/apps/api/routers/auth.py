@@ -35,7 +35,7 @@ from apps.api.auth.jwt_handler import (
 )
 from apps.api.auth.kakao_handler import KakaoOAuthError, process_kakao_callback
 from apps.api.auth.naver_handler import NaverOAuthError, process_naver_callback
-from apps.api.auth.oauth_common import OAuthError
+from apps.api.auth.oauth_common import OAuthError, build_consent_rows
 from apps.api.config import Settings, get_settings
 from apps.api.database.models.member_auth import (
     EmailVerificationToken,
@@ -354,21 +354,18 @@ async def register(
     # 약관·개인정보 동의 이력 저장(개인정보보호법 §22 — 버전·IP·시각. 선택 동의는
     # 거부(False)도 명시 기록해 이후 분쟁 시 선택 사실을 증빙한다)
     client_ip = _client_ip(request)
-    for consent_type, agreed in (
-        ("terms_of_service", body.agree_terms),
-        ("privacy_policy", body.agree_privacy),
-        ("marketing", body.agree_marketing),
+    # ★공용 통로를 쓴다 — 소셜 가입도 같은 함수를 쓰므로 두 경로가 갈릴 수 없다.
+    #   2026-09-06 실측: 종전엔 이 블록이 여기에만 있어 **소셜 가입은 동의를 0건 남겼다**.
+    for row in build_consent_rows(
+        user_id=user.id,
+        agree_terms=body.agree_terms,
+        agree_privacy=body.agree_privacy,
+        agree_marketing=body.agree_marketing,
+        # 서버 상수 스탬프(클라이언트 임의값 미신뢰 — 법적 증빙 무결성)
+        policy_version=CURRENT_POLICY_VERSION,
+        ip=client_ip,
     ):
-        db.add(
-            UserConsent(
-                user_id=user.id,
-                consent_type=consent_type,
-                agreed=agreed,
-                # 서버 상수 스탬프(클라이언트 임의값 미신뢰 — 법적 증빙 무결성)
-                policy_version=CURRENT_POLICY_VERSION,
-                ip=client_ip,
-            )
-        )
+        db.add(row)
 
     # 이메일 인증 토큰 발급(24h) — 발송은 백그라운드(가입 응답 지연·실패 비전파)
     verify_link: str | None = None
@@ -559,6 +556,7 @@ async def get_me(
         email_verified=bool(user.email_verified),
         has_password=bool(user.hashed_password),
         phone=user.phone,
+        social_consent_pending=bool(getattr(user, "social_consent_pending", False)),
     )
 
 
@@ -621,7 +619,51 @@ async def update_me(
         email_verified=bool(user.email_verified),
         has_password=bool(user.hashed_password),
         phone=user.phone,
+        social_consent_pending=bool(getattr(user, "social_consent_pending", False)),
     )
+
+
+class SocialConsentRequest(BaseModel):
+    """소셜 간편가입 직후 받는 동의. 이메일 가입의 RegisterRequest 와 **같은 필드 이름**을 쓴다."""
+
+    agree_terms: bool = Field(description="이용약관 동의(필수)")
+    agree_privacy: bool = Field(description="개인정보처리방침 동의(필수)")
+    agree_marketing: bool = Field(default=False, description="마케팅 수신 동의(선택)")
+
+
+@router.post("/social-consents", status_code=status.HTTP_204_NO_CONTENT)
+async def submit_social_consent(
+    body: SocialConsentRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> None:
+    """소셜 가입 사용자의 약관 동의를 기록하고 미완 플래그를 내린다.
+
+    ★필수 동의를 거부하면 기록하지 않고 거부한다 — 「동의했다」가 아니면 통과시킬 수 없다.
+    ★이미 동의를 마친 사용자가 다시 부르면 **아무것도 쌓지 않는다**(멱등) —
+      매번 행이 늘면 그것도 결함이다.
+    """
+    if not (body.agree_terms and body.agree_privacy):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="이용약관과 개인정보처리방침에 동의해야 서비스를 이용할 수 있습니다.",
+        )
+    if not getattr(user, "social_consent_pending", False):
+        return None  # 멱등 — 이미 처리됐다
+
+    for row in build_consent_rows(
+        user_id=user.id,
+        agree_terms=body.agree_terms,
+        agree_privacy=body.agree_privacy,
+        agree_marketing=body.agree_marketing,
+        policy_version=CURRENT_POLICY_VERSION,
+        ip=_client_ip(request),
+    ):
+        db.add(row)
+    user.social_consent_pending = False
+    await db.commit()
+    return None
 
 
 @router.get("/me/consents")

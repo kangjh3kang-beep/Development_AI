@@ -73,6 +73,14 @@ class User(Base, TenantMixin, TimestampMixin):
         DateTime(timezone=True), nullable=True,
         comment="마지막 비밀번호 변경/재설정 시각",
     )
+    social_consent_pending: Mapped[bool] = mapped_column(
+        default=False, nullable=False, server_default="false",
+        comment=(
+            "소셜 가입으로 만들어졌으나 약관·개인정보 동의를 아직 받지 않은 상태. "
+            "★기본값 False 라 **기존 사용자는 자동으로 유예**된다(소급 차단 없음) — "
+            "이 플래그는 앞으로 만들어지는 소셜 계정에만 True 로 켜진다."
+        ),
+    )
 
     # 관계
     tenant = relationship("Tenant", back_populates="users")
