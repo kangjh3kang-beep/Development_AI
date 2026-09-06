@@ -32,6 +32,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC
 from typing import Any
 
 from sqlalchemy import text
@@ -1220,6 +1221,133 @@ async def _fetch_payment(*, payment_key: str | None, order_id: str) -> dict[str,
         except (TossError, TossOutcomeUnknownError, TossNotConfiguredError):
             continue
     return None
+
+
+#: 재조회 대기 최소 나이 — ★정상 흐름에 시간을 준다.
+#:  토스 승인 유효시간이 10분이고, 사용자가 리다이렉트로 돌아와 confirm 하는 경로가
+#:  아직 진행 중일 수 있다. 그보다 일찍 끼어들면 **우리가 우리를 방해한다.**
+RECONCILE_MIN_AGE_MINUTES = 10
+
+#: 자동 재조회 창의 **상한** — ★이 값이 없으면 좀비 영수증을 **영원히 폴링**한다.
+#:  결제를 끝내 안 한 건도 미해결로 남는데, 그것을 매시간 벤더에 묻는 것은 쿼터 누수다
+#:  (테스트 환경은 분당 100건 제한이 문서에 명시돼 있다).
+#:  가상계좌 입금기한(통상 3~7일)을 덮도록 7일로 둔다 — 그 밖은 **사람이 본다**
+#:  (관리자 미해결 목록에는 계속 보인다. 자동화만 멈추는 것이지 숨기는 것이 아니다).
+RECONCILE_MAX_AGE_HOURS = 24 * 7
+
+#: 한 번에 처리할 최대 건수 — 벤더 호출이 건당 최대 2회(GET)다.
+RECONCILE_BATCH_LIMIT = 50
+
+#: ★재조회 결과가 **종결이면서 정합**인 것 — 해소 이벤트를 남겨 큐에서 빼야 한다.
+#:  이것이 없으면 스케줄러가 **같은 건을 영원히 다시 묻는다**(그리고 관리자 목록도
+#:  좀비로 차서 `LIMIT` 안에 진짜 사고가 안 들어온다).
+#:  ★`granted`·`clawed_back` 은 `reconcile_order` 가 **이미** 영수증을 쓴다 — 여기 넣으면 중복이다.
+#:  ★`amount_mismatch`·`apply_conflict`·`clawback_undetermined` 는 **사람이 봐야 하므로 넣지 않는다**.
+_TERMINAL_CONSISTENT_ACTIONS = frozenset({"already_consistent", "no_payment_at_vendor"})
+
+
+async def reconcile_stale_payments(
+    db: AsyncSession | None = None, *, limit: int = RECONCILE_BATCH_LIMIT,
+) -> dict[str, Any]:
+    """미해결 결제를 **스스로** 재조회해 확정한다 — 사람의 클릭에 의존하지 않는다.
+
+    ## 왜 필요한가 (2026-09-06 실측)
+
+    `reconcile_order` 의 소비처는 **두 곳뿐**이었다: 토스 웹훅과 관리자 버튼.
+    스케줄러는 **0건**이었다(대조군: 같은 billing 패키지의 `purge_expired_buyer_pii` 는
+    celery beat `purge-order-pii-daily` 에 배선돼 있다 → 조회기 생존).
+
+    그래서:
+
+    · 승인 요청을 보내고 응답을 못 받으면(타임아웃) 주문은 `pending`, 영수증은 `unknown`
+      으로 남고 **그 뒤 아무도 건드리지 않는다.** 사용자가 브라우저를 닫으면 관리자가
+      눈으로 찾을 때까지 영원히 그대로다 — **돈은 나갔는데 코인이 없다.**
+    · 가상계좌는 더 나쁘다. 입금 전에는 `WAITING_FOR_DEPOSIT` 이라 지급하지 않는데,
+      **지급으로 가는 유일한 경로가 웹훅**이었다. 토스 콘솔에 URL 을 등록하지 않으면
+      (배포 후 소유자 작업이다) 그 경로는 **통째로 0** 이다.
+
+    ★이 함수가 그 둘을 같은 통로로 덮는다 — 가상계좌 입금도 「미해결 → 재조회 → DONE」이다.
+
+    ## 창(window) 이 있는 이유
+
+    상한이 없으면 **끝내 결제하지 않은 건**을 매 실행마다 벤더에 묻는다. 조회는 무과금이지만
+    레이트리밋은 실재하고(테스트 분당 100건), 그 낭비가 진짜 복구를 밀어낸다.
+    창 밖은 자동화만 멈춘다 — 관리자 미해결 목록에는 **계속 보인다**.
+
+    반환: `{"scanned", "attempted", "granted", "clawed_back", "resolved", "left_open", "skipped_age"}`
+    """
+    from datetime import datetime, timedelta
+
+    own = db is None
+    if own:
+        from apps.api.database.session import AsyncSessionLocal
+        session_cm = AsyncSessionLocal()
+        db = await session_cm.__aenter__()
+    try:
+        rows = await payment_receipts.list_unresolved(db, limit=max(limit * 4, limit))
+        now = datetime.now(UTC)
+        lo = now - timedelta(hours=RECONCILE_MAX_AGE_HOURS)
+        hi = now - timedelta(minutes=RECONCILE_MIN_AGE_MINUTES)
+
+        counts = {
+            "scanned": len(rows), "attempted": 0, "granted": 0, "clawed_back": 0,
+            "resolved": 0, "left_open": 0, "skipped_age": 0,
+        }
+        seen: set[str] = set()
+        for r in rows:
+            if counts["attempted"] >= limit:
+                break
+            oid = str(r.get("order_id") or "")
+            if not oid or oid in seen:
+                continue
+            created = _parse_iso(r.get("created_at"))
+            # ★창 밖은 **건드리지 않는다**(너무 이르거나 너무 늦다). 숨기지도 않는다.
+            if created is None or not (lo <= created <= hi):
+                counts["skipped_age"] += 1
+                continue
+            seen.add(oid)
+            counts["attempted"] += 1
+            try:
+                out = await reconcile_order(db, order_id=oid, actor_id="scheduler")
+            except Exception:  # noqa: BLE001 — 한 건의 실패가 배치를 죽이면 안 된다
+                logger.exception("자동 재조회 실패 — order_id=%s", oid)
+                counts["left_open"] += 1
+                continue
+            action = str(out.get("action") or "")
+            if action == "granted":
+                counts["granted"] += 1
+            elif action == "clawed_back":
+                counts["clawed_back"] += 1
+            elif action in _TERMINAL_CONSISTENT_ACTIONS:
+                # ★해소 이벤트를 남겨 **큐에서 뺀다** — 안 그러면 영원히 다시 묻는다.
+                await payment_receipts.record(
+                    event=payment_receipts.EVENT_RECONCILED,
+                    order_id=oid, order_no=r.get("order_no"),
+                    user_id=r.get("user_id"), payment_key=r.get("payment_key"),
+                    toss_code=action,
+                    toss_message="자동 재조회 — 벤더와 정합(추가 조치 없음)",
+                )
+                counts["resolved"] += 1
+            else:
+                # `amount_mismatch`·`apply_conflict` 등 — **사람이 봐야 한다.** 남겨 둔다.
+                counts["left_open"] += 1
+        return counts
+    finally:
+        if own:
+            await session_cm.__aexit__(None, None, None)
+
+
+def _parse_iso(v: Any):
+    """ISO 문자열 → tz-aware datetime. 못 읽으면 `None`(★0 이 아니다)."""
+    from datetime import datetime
+
+    if not v:
+        return None
+    try:
+        d = datetime.fromisoformat(str(v))
+    except ValueError:
+        return None
+    return d if d.tzinfo else d.replace(tzinfo=UTC)
 
 
 async def reconcile_from_webhook(

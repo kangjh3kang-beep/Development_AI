@@ -40,6 +40,7 @@ TASK_MODULES = [
     "app.tasks.memory_tasks",
     "app.tasks.specialist_tasks",
     "app.tasks.member_tasks",
+    "app.tasks.billing_tasks",
 ]
 
 
@@ -93,6 +94,14 @@ def _create_app() -> Celery:
         "anonymize-withdrawn-daily": {
             "task": "app.tasks.member_tasks.anonymize_withdrawn_accounts",
             "schedule": crontab(hour=3, minute=30),
+            "options": {"queue": "celery"},
+        },
+        # ★결제 정합성 회복 — 「돈은 나갔는데 코인이 없다」를 **사람 없이** 되돌린다.
+        #   매시 :20 (다른 정기배치와 겹치지 않게). 창 밖(7일 초과·10분 미만)은 건드리지 않고
+        #   관리자 미해결 목록에 그대로 남긴다 — 자동화만 멈추는 것이지 숨기는 것이 아니다.
+        "reconcile-stale-payments-hourly": {
+            "task": "app.tasks.billing_tasks.reconcile_stale_payments",
+            "schedule": crontab(minute=20),
             "options": {"queue": "celery"},
         },
         # 충전주문 구매자 PII 파기 — 전상법 §6 보존기간(5년) 경과 행의 성명·이메일 NULL화
@@ -201,6 +210,10 @@ BEAT_SCHEDULE_NAMES = [
     "sync-onbid-auctions-daily",
     "anonymize-withdrawn-daily",
     "purge-order-pii-daily",
+    "reconcile-stale-payments-hourly",
+    # ★기존 드리프트 보수(2026-09-06) — 스케줄에는 있었는데 이 목록에 없었다.
+    #   옛 검사가 「손으로 쓴 집합 == 손으로 쓴 목록」이라 못 잡았다.
+    "cleanup-growth-insights",
     "flush-growth-events",
     "analyze-growth-hourly",
     "analyze-growth-daily",
@@ -228,4 +241,6 @@ TASK_NAMES = [
     "tasks.specialists.run_for_analysis",
     "app.tasks.member_tasks.anonymize_withdrawn_accounts",
     "app.tasks.member_tasks.purge_expired_order_pii",
+    "app.tasks.billing_tasks.reconcile_stale_payments",
+    "app.tasks.growth_tasks.cleanup_insights",
 ]

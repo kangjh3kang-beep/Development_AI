@@ -11,27 +11,59 @@ from app.tasks.celery_app import (
 )
 
 
+def _schedule_from_source() -> dict[str, str]:
+    """`celery_app.py` 의 `beat_schedule` 를 **AST 로** 읽어 {이름: task} 를 만든다.
+
+    ★왜 `_create_app()` 을 부르지 않나: celery 는 `requirements.txt` 에 있지만
+      **로컬 개발 환경에는 없을 수 있다**(실측 2026-09-06). 그러면 이 검사가 조용히
+      `skip` 되어 **발화한 적 없는 안전망**이 된다 — 잠금은 그것이 도는 환경에서
+      실제로 발화해야 한다. AST 는 celery 없이도 원천을 읽는다.
+    """
+    import ast
+    import pathlib as _p
+
+    src = (_p.Path(__file__).resolve().parents[1] / "app/tasks/celery_app.py").read_text(
+        encoding="utf-8"
+    )
+    tree = ast.parse(src)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        tgt = node.targets[0]
+        if not (isinstance(tgt, ast.Attribute) and tgt.attr == "beat_schedule"):
+            continue
+        if not isinstance(node.value, ast.Dict):
+            continue
+        out: dict[str, str] = {}
+        for k, v in zip(node.value.keys, node.value.values, strict=True):
+            if not (isinstance(k, ast.Constant) and isinstance(v, ast.Dict)):
+                continue
+            task = ""
+            for kk, vv in zip(v.keys, v.values, strict=True):
+                if isinstance(kk, ast.Constant) and kk.value == "task" and isinstance(vv, ast.Constant):
+                    task = str(vv.value)
+            out[str(k.value)] = task
+        return out
+    return {}
+
+
 class TestCeleryAppMeta:
     """Celery 앱 메타 정보 검증."""
 
-    def test_beat_schedule_count(self):
-        # 카운트 단언은 신규 태스크 추가마다 드리프트(안티패턴) →
-        # 현행 celery_app.py beat_schedule 이름 집합 동등 단언으로 고정.
-        assert set(BEAT_SCHEDULE_NAMES) == {
-            "check-legal-rates-daily",
-            "check-standard-prices-weekly",
-            "check-pension-increase-monthly",
-            "sync-onbid-auctions-daily",
-            "anonymize-withdrawn-daily",
-            "purge-order-pii-daily",
-            "flush-growth-events",
-            "analyze-growth-hourly",
-            "analyze-growth-daily",
-            "evaluate-healing",
-            "evaluate-correction",
-            "evaluate-improvement-daily",
-            "run-learning-weekly",
-        }
+    def test_beat_schedule_names_are_derived_from_the_schedule(self):
+        """★손으로 쓴 집합끼리 비교하면 **원천과 갈라져도 초록**이다.
+
+        종전 이 테스트는 `set(BEAT_SCHEDULE_NAMES) == {손으로 쓴 집합}` 이었다.
+        그러면 `beat_schedule` 에만 항목을 추가하고 메타 목록을 안 고쳐도 통과하고,
+        `BEAT_SCHEDULE_NAMES` 는 **조용히 거짓말**이 된다(자기지시적 기대값).
+        원천은 `_create_app()` 이 만드는 **실제 스케줄**이다 — 거기서 파생시킨다.
+        """
+        actual = set(_schedule_from_source())
+        assert actual, "beat_schedule 이 비었다 — 공허한 초록 방지"
+        assert set(BEAT_SCHEDULE_NAMES) == actual, (
+            "메타 목록이 실제 스케줄과 갈렸다 "
+            f"(목록에만: {set(BEAT_SCHEDULE_NAMES) - actual} · 스케줄에만: {actual - set(BEAT_SCHEDULE_NAMES)})"
+        )
         assert len(BEAT_SCHEDULE_NAMES) == len(set(BEAT_SCHEDULE_NAMES))  # 중복 금지
 
     def test_beat_schedule_names(self):
@@ -39,28 +71,17 @@ class TestCeleryAppMeta:
         assert "check-standard-prices-weekly" in BEAT_SCHEDULE_NAMES
         assert "check-pension-increase-monthly" in BEAT_SCHEDULE_NAMES
 
-    def test_task_names_count(self):
-        # 카운트 → 이름 집합 동등 단언 (sync_onbid_auctions 신규 태스크 반영).
-        assert set(TASK_NAMES) == {
-            "app.tasks.rate_tasks.check_legal_rates",
-            "app.tasks.rate_tasks.check_standard_prices",
-            "app.tasks.rate_tasks.check_pension_increase",
-            "app.tasks.cost_tasks.recalculate_project_cost",
-            "app.tasks.auction_sync_task.sync_onbid_auctions",
-            "app.tasks.growth_tasks.flush_growth_events",
-            "app.tasks.growth_tasks.analyze_growth",
-            "app.tasks.growth_tasks.evaluate_healing",
-            "app.tasks.growth_tasks.evaluate_correction",
-            "app.tasks.growth_tasks.evaluate_improvement",
-            "app.tasks.growth_pr_task.run_pr_bot",
-            "app.tasks.growth_learning_task.run_learning",
-            "app.tasks.parcel_batch_task.run_batch",
-            "tasks.memory.ingest_experience",
-            "tasks.specialists.run_for_analysis",
-            "app.tasks.member_tasks.anonymize_withdrawn_accounts",
-            "app.tasks.member_tasks.purge_expired_order_pii",
-        }
+    def test_task_names_have_no_duplicates_and_cover_beat(self):
+        """★집합 **동등**을 요구하면 태스크를 하나 추가할 때마다 이 목록이 상한이 된다.
+
+        중요한 것은 「목록이 정확히 이 값이다」가 아니라 **「beat 가 부르는 태스크가
+        전부 등록돼 있다」** 이다 — 그것을 파생형으로 본다.
+        """
         assert len(TASK_NAMES) == len(set(TASK_NAMES))  # 중복 금지
+        scheduled = {t for t in _schedule_from_source().values() if t}
+        assert scheduled, "스케줄이 비었다 — 공허한 초록 방지"
+        missing = scheduled - set(TASK_NAMES)
+        assert not missing, f"beat 가 부르는데 TASK_NAMES 에 없다: {missing}"
 
     def test_task_names_content(self):
         assert "app.tasks.rate_tasks.check_legal_rates" in TASK_NAMES
@@ -69,20 +90,21 @@ class TestCeleryAppMeta:
         assert "app.tasks.cost_tasks.recalculate_project_cost" in TASK_NAMES
         assert "app.tasks.parcel_batch_task.run_batch" in TASK_NAMES
 
-    def test_task_modules_are_explicit(self):
-        assert set(TASK_MODULES) == {
-            "app.tasks.rate_tasks",
-            "app.tasks.cost_tasks",
-            "app.tasks.auction_sync_task",
-            "app.tasks.growth_tasks",
-            "app.tasks.growth_pr_task",
-            "app.tasks.growth_learning_task",
-            "app.tasks.parcel_batch_task",
-            "app.tasks.memory_tasks",
-            "app.tasks.specialist_tasks",
-            "app.tasks.member_tasks",
-        }
+    def test_task_modules_cover_every_scheduled_task(self):
+        """★모듈 목록도 **파생**으로 — 모듈을 빠뜨리면 태스크가 **등록조차 안 된다**.
+
+        그 상태는 조용하다: beat 가 이름을 부르는데 워커가 그 이름을 모르면
+        메시지가 버려지고, 아무도 실패를 보지 못한다.
+        """
         assert len(TASK_MODULES) == len(set(TASK_MODULES))
+        scheduled = {t for t in _schedule_from_source().values() if t}
+        assert scheduled, "스케줄이 비었다"
+        for t in scheduled:
+            # "app.tasks.x.y" → 모듈은 "app.tasks.x". 커스텀 이름(`tasks.*`)은 제외.
+            if not t.startswith("app.tasks."):
+                continue
+            mod = t.rsplit(".", 1)[0]
+            assert mod in TASK_MODULES, f"스케줄된 {t} 의 모듈 {mod} 가 TASK_MODULES 에 없다"
 
     def test_operational_queues_cover_beat_routes(self):
         assert OPERATIONAL_QUEUES == [
