@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from typing import Any
 
 import httpx
@@ -56,6 +57,86 @@ _CLIENT_ENV = "TOSS_CLIENT_KEY"
 
 #: 토스 테스트키 접두어(문서: 테스트 키와 라이브 키의 차이점).
 _TEST_KEY_PREFIXES = ("test_",)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 키 해부(解剖) — **환경·역할·계열 세 축을 한 곳에서만 판정한다**
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# ## 왜 이것이 필요한가 (2026-09-06 실측)
+#
+# 토스 개발자센터 **한 화면에 키가 두 벌** 있다:
+#
+#     주문서형·결제창형 연동 키 :  test_gck_… / test_gsk_…   ← v2 표준 위젯이 요구
+#     API 개별 연동 키(MID별)   :  test_ck_…  / test_sk_…    ← 우리 SDK 와 안 맞음
+#
+# 우리 프론트는 `js.tosspayments.com/v2/standard` 를 싣고 `widgets()` 를 부른다
+# (`apps/web/lib/payments/toss-sdk.ts:17`). 즉 **`gck`/`gsk` 한 벌만** 쓸 수 있다.
+# 벤더 문서 원문: *"세트가 아닌 키를 사용하거나 테스트 또는 라이브 키를 섞어 사용하면
+# `INVALID_API_KEY` 오류가 발생해요."*
+#
+# ★**종전 검사는 축이 하나였다.** `key_pairing_ok()` 가
+# `secret.startswith("test_") == client.startswith("test_")` 만 봐서,
+# `test_ck_` + `test_sk_` 조합이 **초록으로 통과**했다. 관리자 화면은 정상이라 말하고,
+# 결제창은 `INVALID_API_KEY` 로 죽는다 — **진단 불가는 그 자체로 장애**다.
+#
+# ★그리고 축이 하나 더 있다. **역할(role)**. 두 칸은 이름만 다를 뿐 문자열 검증이 없어서,
+# 시크릿 키를 **클라이언트 키 칸**에 붙여넣으면 `GET /payments/toss/config` 가 그것을
+# **모든 브라우저에 그대로 내보낸다**. 종전 `is_configured()` 는 "둘 다 비어 있지 않은가"
+# 만 봤으므로 이 사고를 **막지 못했다**.
+#
+# ★**패턴이 아니라 선언을 본다**(§검증 규율 8). `"_ck_" in key` 같은 부분문자열 검사는
+#   이웃 계열을 오식별한다. 줄 시작을 앵커한 **완전일치**로만 판정하고, `re.ASCII` 를 붙여
+#   `\w`·`\d` 계열의 유니코드 확장으로 전각 문자가 새는 길을 닫는다(이 저장소에
+#   `^\d{19}$` 가 전각 19자를 통과시킨 실측이 있다).
+
+#: `<환경>_<계열역할>_<본문>`. 계열 대안은 **긴 것을 먼저** 둔다(`gck` 를 `ck` 가 가로채지 못하게).
+_KEY_RE = re.compile(r"^(test|live)_(gck|gsk|ck|sk)_[A-Za-z0-9]+$", re.ASCII)
+
+#: 접두 토큰 → (역할, 계열). **이 표가 유일한 선언처**다.
+_KEY_TOKENS: dict[str, tuple[str, str]] = {
+    "gck": ("client", "widget"),
+    "gsk": ("secret", "widget"),
+    "ck": ("client", "api"),
+    "sk": ("secret", "api"),
+}
+
+#: 우리 프론트가 싣는 SDK 가 요구하는 계열. **여기를 바꾸면 SDK 도 함께 바꿔야 한다.**
+#: (`apps/web/lib/payments/toss-sdk.ts` 의 `SDK_SRC` 가 v2 표준 위젯인 한 이 값은 widget 이다)
+REQUIRED_FAMILY = "widget"
+
+#: 사람이 읽는 계열 이름 — 관리자에게 **어느 블록을 복사해야 하는지** 말해 준다.
+_FAMILY_LABEL = {
+    "widget": "주문서형·결제창형 연동 키",
+    "api": "API 개별 연동 키",
+}
+
+
+class KeyShape:
+    """키 문자열 하나를 **환경·역할·계열**로 해부한 결과.
+
+    `valid=False` 면 나머지 필드는 의미가 없다(형식 자체가 토스 키가 아니다).
+    """
+
+    __slots__ = ("valid", "env", "role", "family")
+
+    def __init__(self, valid: bool, env: str = "", role: str = "", family: str = "") -> None:
+        self.valid = valid
+        self.env = env  # "test" | "live"
+        self.role = role  # "client" | "secret"
+        self.family = family  # "widget" | "api"
+
+
+def parse_key(raw: str) -> KeyShape:
+    """키 문자열을 해부한다 — **키 값 자체는 반환하지 않는다.**
+
+    ★이 함수만 접두 리터럴을 안다. 호출부가 문자열을 손으로 자르기 시작하면
+      같은 판정이 여러 곳으로 복제되고, 그중 하나가 반드시 뒤처진다.
+    """
+    m = _KEY_RE.match(raw or "")
+    if not m:
+        return KeyShape(False)
+    role, family = _KEY_TOKENS[m.group(2)]
+    return KeyShape(True, env=m.group(1), role=role, family=family)
 
 
 class TossError(RuntimeError):
@@ -133,21 +214,139 @@ def is_test_mode() -> bool:
     """테스트 키를 쓰고 있는가(실제 결제가 일어나지 않는다).
 
     ★프로덕션에서 참이면 **매출이 0인데 아무도 모른다.** 관리자 화면이 이 값을 표시한다.
+
+    ★`parse_key` 를 쓰지 않고 접두만 보는 것은 **의도적**이다 — 형식이 깨진 키에 대해서도
+      "테스트인가"는 답할 수 있어야 한다(형식 오류로 이 값이 `None` 이 되면 관리자가
+      *"라이브인 줄 알았다"* 로 오독한다).
     """
     return secret_key().startswith(_TEST_KEY_PREFIXES)
 
 
-def key_pairing_ok() -> bool:
-    """공개키와 비밀키가 **같은 환경**의 짝인가(테스트↔라이브 혼용 탐지).
+#: 진단코드 → (심각도, 사용자에게 보일 문구, **다음에 할 일**).
+#:
+#: ★코드만 주면 관리자가 고칠 수 없다. 이 저장소의 정답 기준선인
+#:   `apps/web/lib/field-audit.ts:127-171` 의 `FINDING_COPY` 와 같은 모양 —
+#:   **{무엇이 틀렸나, 무엇을 하면 되나}** 를 한 쌍으로 둔다.
+#: ★문구에 **키 값을 절대 넣지 않는다.** 이 표는 관리자 API 응답으로 나간다.
+KEY_DIAGNOSIS_COPY: dict[str, tuple[str, str, str]] = {
+    "ok": ("info", "키 설정이 정상입니다.", ""),
+    "not_configured": (
+        "info",
+        "결제 키가 설정되지 않았습니다.",
+        "관리자 > API 키 > 「결제(PG)」에서 클라이언트 키와 시크릿 키를 모두 등록하세요.",
+    ),
+    # ★가장 위험한 자리 — 시크릿 키가 브라우저로 나간다.
+    "client_slot_has_secret_key": (
+        "critical",
+        "클라이언트 키 칸에 **시크릿 키**가 들어 있습니다. 이 값은 브라우저로 전달되므로 "
+        "즉시 교체하고 토스 개발자센터에서 **재발급**해야 합니다.",
+        "TOSS_CLIENT_KEY 를 클라이언트 키로 바꾼 뒤, 노출된 시크릿 키를 재발급하세요.",
+    ),
+    "secret_slot_has_client_key": (
+        "error",
+        "시크릿 키 칸에 클라이언트 키가 들어 있습니다. 결제 승인이 전부 거절됩니다.",
+        "TOSS_SECRET_KEY 에 시크릿 키를 넣으세요(클라이언트 키와 다른 값입니다).",
+    ),
+    "client_key_malformed": (
+        "error",
+        "클라이언트 키의 형식이 토스 키가 아닙니다(공백·따옴표·잘린 값일 수 있습니다).",
+        "개발자센터 > API 키에서 **복사** 버튼으로 다시 붙여넣으세요.",
+    ),
+    "secret_key_malformed": (
+        "error",
+        "시크릿 키의 형식이 토스 키가 아닙니다(공백·따옴표·잘린 값일 수 있습니다).",
+        "개발자센터 > API 키에서 **보기** 후 전체를 다시 붙여넣으세요.",
+    ),
+    "env_mismatch": (
+        "error",
+        "테스트 키와 라이브 키가 섞여 있습니다. 토스가 INVALID_API_KEY 로 거절합니다.",
+        "두 키를 **같은 환경**(둘 다 테스트, 또는 둘 다 라이브)으로 맞추세요.",
+    ),
+    "family_mismatch": (
+        "error",
+        "두 키가 서로 다른 연동 방식의 키입니다(짝이 아닙니다).",
+        "같은 블록에서 **한 쌍**을 복사하세요 — 클라이언트 키와 시크릿 키는 같은 표 안에 있습니다.",
+    ),
+    "wrong_family": (
+        "error",
+        "이 화면의 결제창은 「주문서형·결제창형 연동 키」로만 열립니다. "
+        "현재 등록된 것은 「API 개별 연동 키」입니다.",
+        "개발자센터 > API 키의 **위쪽 「주문서형, 결제창형 연동 키」** 블록에서 "
+        "클라이언트 키(test_gck_… / live_gck_…)와 시크릿 키(test_gsk_… / live_gsk_…)를 복사하세요.",
+    ),
+}
 
-    ★혼용하면 토스가 `FORBIDDEN_REQUEST`/`UNAUTHORIZED_KEY` 로 거절한다 —
-    문서가 명시한 실패 원인이다. 호출 전에 알 수 있는 것을 호출 후에 알 이유가 없다.
+
+def key_diagnosis() -> dict[str, Any]:
+    """키 두 짝이 **실제로 쓸 수 있는가** — 그리고 아니라면 **왜인지**.
+
+    ## 축이 셋이다 (하나만 재면 나머지가 조용히 샌다)
+
+    | 축 | 틀리면 | 종전 검사 |
+    |---|---|---|
+    | **역할** client↔secret | 시크릿 키가 브라우저로 나간다 | **없었다** |
+    | **환경** test↔live | 토스가 INVALID_API_KEY 로 거절 | 있었다(이것 하나뿐) |
+    | **계열** widget↔api | v2 표준 위젯이 키를 못 받는다 | **없었다** |
+
+    ★**반환값에 키 값이 없다.** 형태(shape)만 말한다.
     """
-    if not is_configured():
-        return False
-    return secret_key().startswith(_TEST_KEY_PREFIXES) == client_key().startswith(
-        _TEST_KEY_PREFIXES
-    )
+    ck_raw, sk_raw = client_key(), secret_key()
+    if not (ck_raw and sk_raw):
+        return _diag("not_configured")
+
+    ck, sk = parse_key(ck_raw), parse_key(sk_raw)
+
+    # ① 역할 — 보안이 걸린 축이므로 **가장 먼저** 본다.
+    if ck.valid and ck.role == "secret":
+        return _diag("client_slot_has_secret_key")
+    if sk.valid and sk.role == "client":
+        return _diag("secret_slot_has_client_key")
+
+    # ② 형식 — 여기서 걸리면 아래 축들은 판정할 수 없다(미측정이지 정상이 아니다).
+    if not ck.valid:
+        return _diag("client_key_malformed")
+    if not sk.valid:
+        return _diag("secret_key_malformed")
+
+    # ③ 환경
+    if ck.env != sk.env:
+        return _diag("env_mismatch")
+
+    # ④ 계열 — 둘이 서로 다른가
+    if ck.family != sk.family:
+        return _diag("family_mismatch")
+
+    # ⑤ 계열 — 짝은 맞지만 **우리 SDK 가 요구하는 계열인가**
+    #    ★④를 통과했다고 ⑤가 참인 것이 아니다. `ck`+`sk` 는 완벽한 짝이지만
+    #      v2 표준 위젯은 그것을 못 쓴다.
+    if ck.family != REQUIRED_FAMILY:
+        d = _diag("wrong_family")
+        d["found_family"] = _FAMILY_LABEL.get(ck.family, ck.family)
+        d["required_family"] = _FAMILY_LABEL[REQUIRED_FAMILY]
+        return d
+
+    return _diag("ok")
+
+
+def _diag(code: str) -> dict[str, Any]:
+    severity, message, action = KEY_DIAGNOSIS_COPY[code]
+    return {
+        "ok": code == "ok",
+        "code": code,
+        "severity": severity,
+        "message": message,
+        "action": action,
+    }
+
+
+def key_pairing_ok() -> bool:
+    """키 두 짝을 **실제로 쓸 수 있는가**(역할·환경·계열 세 축을 모두 통과했는가).
+
+    ★종전에는 환경 축만 봤다. `test_ck_` + `test_sk_` 가 초록으로 통과했고,
+      그 조합으로는 결제창이 `INVALID_API_KEY` 로 죽는다 — 검사가 있는데
+      **검사 대상이 아니었다**.
+    """
+    return key_diagnosis()["ok"]
 
 
 def config_status() -> dict[str, Any]:
@@ -161,6 +360,11 @@ def config_status() -> dict[str, Any]:
         "client_key_len": len(ck),
         "test_mode": is_test_mode() if sk else None,
         "key_pairing_ok": key_pairing_ok(),
+        # ★`false` 만으로는 관리자가 고칠 수 없다 — **무엇이 왜 틀렸고 무엇을 하면 되는지**를 싣는다.
+        #   (진단 불가는 그 자체로 장애다 — §유료·비가역 산출물 규율 4)
+        "key_diagnosis": key_diagnosis(),
+        # 우리가 싣는 SDK 가 요구하는 계열 — 화면이 "어느 블록을 복사하라"고 말할 수 있게 한다.
+        "required_key_family": _FAMILY_LABEL[REQUIRED_FAMILY],
     }
 
 

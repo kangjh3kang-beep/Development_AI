@@ -513,7 +513,13 @@ def resolve_payment_mode(settings: Settings) -> str:
       토스가 켜지면 시뮬레이션은 **꺼진 것으로 취급**한다.
     """
     if toss_payments.is_configured():
-        return "toss"
+        # ★**키가 있다 = 소유자가 실결제를 의도했다.**
+        #   짝이 틀리면 결제창을 켜서는 안 된다(토스가 `INVALID_API_KEY` 로 죽는다).
+        #   그러나 **시뮬레이션으로 내려가서도 안 된다** — 그건 `POST /orders/{id}/confirm`
+        #   한 번에 무료 충전이 되는 게이트 우회다(위 상호배제 문단이 막으려던 바로 그것).
+        #   그래서 잘못 설정된 키는 `manual_only` 로 **닫는다**.
+        #   ★두 모집단이 갈린다: 짝이 맞으면 `toss`, 있으나 못 쓰면 `manual_only`.
+        return "toss" if toss_payments.key_pairing_ok() else "manual_only"
     if settings.billing_simulated_payments:
         return "simulated"
     return "manual_only"
