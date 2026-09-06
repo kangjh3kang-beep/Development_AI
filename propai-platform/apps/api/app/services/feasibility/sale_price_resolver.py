@@ -232,6 +232,43 @@ async def _trade_sale_price_per_pyeong(
         building = _canonical_building(building_type) or _svc()._get_building_type(dev_type)
         prop_type = _BUILDING_TO_MOLIT_PROP.get(building, "apt")
         dong = _extract_dong(address)
+
+        # ★★**분양가의 정본은 분양권 전매다**(2026-09-06 · 사용자 신고로 발견).
+        #   기존 `apt`(매매) API 에는 **미준공 분양 단지가 원리적으로 안 들어온다** —
+        #   실측: 화도읍 469건 중 「빌리브센트하이」 **0건**인데 분양권 API 로는 **17건**.
+        #   그리고 값이 크게 다르다(마석우리 · 12개월):
+        #       분양권      전용 2,491 / 공급 1,868 만원/평
+        #       매매(혼합)  전용 1,391 / 공급 1,044             → **-44%**
+        #   ★사용자가 «주변 신축 분양이 평당 2,000에 육박하는데 왜 1,200인가» 로 신고했고,
+        #     근본 원인은 **연식 보정이 아니라 데이터원**이었다.
+        #   ★분양권은 이미 **신축 가격**이므로 신축 프리미엄을 **곱하지 않는다**(이중 계상).
+        pre = None
+        if prop_type == "apt":
+            try:
+                pre = await _trade_per_pyeong(sigungu5, dong, "apt_presale")
+            except Exception as e:  # noqa: BLE001 — 분양권 조회 실패는 매매로 폴백(무중단)
+                logger.info("분양권 전매 조회 실패 — 매매로 폴백: %s", str(e)[:100])
+                pre = None
+        if pre:
+            pd_med, pd_n = pre["dong"]["median"], pre["dong"]["n"]
+            ps_med, ps_n = pre["sigungu"]["median"], pre["sigungu"]["n"]
+            if pd_med and pd_n >= _MIN_TRADE_SAMPLES:
+                p_scope, p_med, p_n = "동", int(pd_med), int(pd_n)
+            elif ps_med and ps_n >= _MIN_TRADE_SAMPLES:
+                p_scope, p_med, p_n = "시군구", int(ps_med), int(ps_n)
+            else:
+                p_scope = None
+            if p_scope:
+                ratio, ratio_note = _exclusive_ratio_for(dev_type, building_type)
+                price = int(round(p_med * ratio * 10000))
+                basis = (
+                    f"분양권 전매(MOLIT) {p_scope} 중앙값 {p_med:,}만원/평"
+                    f"(전용, 표본 {p_n}건·최근 12개월) × {ratio_note}"
+                    " → 공급 평당가(신축 프리미엄 미적용 — 분양권은 이미 신축가"
+                    "·물건종별 apt_presale)"
+                )
+                return price, "분양권 전매(MOLIT)", basis, None, p_n
+
         pp = await _trade_per_pyeong(sigungu5, dong, prop_type)
     except Exception as e:  # noqa: BLE001 — 실거래 조회 실패는 지역 시세로 폴백(무중단)
         logger.warning("주변 실거래(MOLIT) 분양단가 조회 실패 — 지역 시세 폴백: %s", str(e)[:120])

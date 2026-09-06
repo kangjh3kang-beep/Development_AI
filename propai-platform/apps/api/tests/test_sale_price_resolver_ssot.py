@@ -613,13 +613,18 @@ async def test_building_type_reaches_molit_property_type(monkeypatch) -> None:
     await call("근린생활시설")
     await call("오피스텔")
     await call(None)              # dev_type(M01) 폴백
-    assert seen == ["villa", "commercial", "officetel", "apt"], (
-        f"표시 문자열이 물건종별까지 도달하지 않는다: {seen}")
+    # ★★`apt` 는 **분양권 전매를 먼저** 조회한다(2026-09-06 · 분양가의 정본 데이터원).
+    #   기존 매매 API 에는 미준공 분양 단지가 원리적으로 안 들어온다(실측: 화도읍
+    #   469건 중 「빌리브센트하이」 0건 ↔ 분양권 API 17건 · 값은 공급평당 1,044 ↔ 1,868).
+    #   ★아파트 외 유형(villa·commercial·officetel)은 분양권 API 가 없으므로 **그대로**다.
+    assert seen == ["villa", "commercial", "officetel", "apt_presale"], (
+        f"표시 문자열이 물건종별까지 도달하지 않거나 분양권 우선이 깨졌다: {seen}")
 
     # ★모르는 표기는 **폴백을 막지 않는다**(빈 문자열로 정규화)
     seen.clear()
     await call("존재하지않는유형")
-    assert seen == ["apt"], f"모르는 표기가 폴백을 억제했다: {seen}"
+    # ★모르는 표기 → dev_type 폴백 → `apt` → **분양권 우선** 경로를 탄다
+    assert seen == ["apt_presale"], f"모르는 표기가 폴백을 억제했다: {seen}"
 
 
 def test_display_vocabulary_covers_what_the_pipeline_emits() -> None:
@@ -827,3 +832,93 @@ async def test_precision_failure_never_blocks_the_price(monkeypatch) -> None:
     assert price == 30_000_000, "정밀화 실패가 분양가를 막았다"
     # ★진단 불가는 그 자체로 장애 — 사유가 남는다
     assert "assemble down" in out.get("unavailable_reason", ""), out
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ★분양가의 정본 = 분양권 전매 (2026-09-06 · 사용자 라이브 신고에서 나온 축)
+# ══════════════════════════════════════════════════════════════════════════════
+
+@pytest.mark.asyncio
+async def test_분양권이_있으면_그것을_쓰고_신축프리미엄을_곱하지_않는다(monkeypatch) -> None:
+    """★★사용자 신고의 근본 — **연식 보정이 아니라 데이터원**이었다.
+
+    실측(남양주 화도읍 마석우리 · 2026-09-06):
+
+        분양권 전매   전용 2,491 / 공급 1,868 만원/평   (빌리브센트하이 n=17)
+        기존 매매     전용 1,391 / 공급 1,044          (n=102)  → **-44%**
+
+    ★기존 `apt`(매매) API 에는 **미준공 분양 단지가 원리적으로 안 들어온다**
+      (화도읍 469건 중 「빌리브센트하이」 **0건**).
+    ★분양권은 **이미 신축 가격**이므로 신축 프리미엄(1.15)을 **곱하면 이중 계상**이다.
+    """
+    import app.services.feasibility.sale_price_resolver as spr
+
+    calls: list[str] = []
+
+    async def spy(sigungu5, dong, prop_type):
+        calls.append(prop_type)
+        if prop_type == "apt_presale":
+            return {"dong": {"median": 2491, "n": 17}, "sigungu": {"median": 2400, "n": 78}}
+        return {"dong": {"median": 1391, "n": 102}, "sigungu": {"median": 1900, "n": 6165}}
+
+    monkeypatch.setattr("app.services.sales.pricing.suggest._trade_per_pyeong", spy, raising=True)
+    res = await spr._trade_sale_price_per_pyeong(
+        dev_type="M01", address="경기도 남양주시 화도읍 마석우리 265-1", sigungu5="41360")
+    assert res is not None
+    price, src, basis, _deg, n = res
+
+    # ★분양권을 **먼저** 부른다
+    assert calls and calls[0] == "apt_presale", f"분양권을 먼저 조회하지 않는다: {calls}"
+    # ★분양권이 충분하면 매매를 **부르지 않는다**(불필요한 외부 호출 = 쿼터 낭비)
+    assert "apt" not in calls, f"분양권으로 충분한데 매매까지 조회했다: {calls}"
+
+    assert src == "분양권 전매(MOLIT)", src
+    assert n == 17
+    # ★신축 프리미엄 **미적용** — 2491 × 0.75 × 10000 (1.15 를 곱하지 않는다)
+    assert price == round(2491 * 0.75 * 10000), (
+        f"신축 프리미엄이 이중 계상됐다: {price:,} (기대 {round(2491*0.75*10000):,})")
+    # ★근거가 그 사실을 말한다(사후에 되짚을 수 있어야)
+    assert "분양권 전매" in basis and "신축 프리미엄 미적용" in basis, basis
+    assert "물건종별 apt_presale" in basis, f"진단 흔적이 빠졌다: {basis}"
+
+
+@pytest.mark.asyncio
+async def test_분양권이_없거나_표본미달이면_매매로_폴백한다(monkeypatch) -> None:
+    """★두 모집단 — 폴백이 살아 있어야 «분양권 없는 지역»이 값을 잃지 않는다."""
+    import app.services.feasibility.sale_price_resolver as spr
+
+    calls: list[str] = []
+
+    async def spy(sigungu5, dong, prop_type):
+        calls.append(prop_type)
+        if prop_type == "apt_presale":
+            return {"dong": {"median": 0, "n": 0}, "sigungu": {"median": 0, "n": 2}}  # 표본 미달
+        return {"dong": {"median": 1391, "n": 102}, "sigungu": {"median": 1900, "n": 6165}}
+
+    monkeypatch.setattr("app.services.sales.pricing.suggest._trade_per_pyeong", spy, raising=True)
+    res = await spr._trade_sale_price_per_pyeong(
+        dev_type="M01", address="어딘가", sigungu5="41360")
+    assert res is not None
+    price, src, basis, _d, n = res
+    assert calls == ["apt_presale", "apt"], f"폴백 순서가 다르다: {calls}"
+    assert src == "주변 실거래(MOLIT)", src
+    # ★매매 경로는 신축 프리미엄을 **적용한다**(혼합 표본을 신축 수준으로 근사)
+    assert "신축 프리미엄" in basis and "미적용" not in basis, basis
+    assert price == round(1391 * 0.75 * 1.15 * 10000)
+
+
+@pytest.mark.asyncio
+async def test_아파트가_아니면_분양권을_조회하지_않는다(monkeypatch) -> None:
+    """★분양권 API 는 아파트 전용 — 오피스텔·빌라에 부르면 쿼터만 태운다."""
+    import app.services.feasibility.sale_price_resolver as spr
+
+    calls: list[str] = []
+
+    async def spy(sigungu5, dong, prop_type):
+        calls.append(prop_type)
+        return {"dong": {"median": 2000, "n": 50}, "sigungu": {"median": 2000, "n": 50}}
+
+    monkeypatch.setattr("app.services.sales.pricing.suggest._trade_per_pyeong", spy, raising=True)
+    await spr._trade_sale_price_per_pyeong(
+        dev_type="M08", address="x", sigungu5="41360", building_type="오피스텔")
+    assert calls == ["officetel"], f"아파트가 아닌데 분양권을 조회했다: {calls}"
