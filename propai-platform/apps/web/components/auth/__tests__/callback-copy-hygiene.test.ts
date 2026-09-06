@@ -100,7 +100,6 @@ describe("콜백 화면 문구 위생", () => {
   it.each(discoverCallbackClients())(
     "%s: ★사용자 문구가 실재한다(문구를 전부 지운 구현은 통과 못 한다)",
     (file) => {
-      const code = codeOnly(fs.readFileSync(path.join(AUTH_DIR, file), "utf-8"));
       // ★두 번째 모집단 — 금지어 부재만 보면 「전부 삭제」가 만점이 된다.
       const block = labelsBlock(fs.readFileSync(path.join(AUTH_DIR, file), "utf-8"));
       expect(block.length, `${file}: LABELS 블록 추출 실패`).toBeGreaterThan(200);
