@@ -1093,7 +1093,10 @@ async def registry_rights_report(
     data, media_type, ext = render_report(model, req.format)
     logger.info(
         "권리분석 보고서 생성 user=%s 필지=%d fmt=%s bytes=%d",
-        getattr(current_user, "id", None), len(req.items), ext, len(data),
+        # ★CurrentUser 는 `id` 가 아니라 `user_id` 다 — getattr 기본값 때문에 이 로그가
+        #   **항상 user=None** 을 찍고 있었다(2026-09-06 전수 스윕이 잡았다).
+        #   유료 권리분석 보고서 생성인데 **누가 만들었는지 추적 불가**였다.
+        current_user.user_id, len(req.items), ext, len(data),
     )
     return StreamingResponse(
         io.BytesIO(data),
