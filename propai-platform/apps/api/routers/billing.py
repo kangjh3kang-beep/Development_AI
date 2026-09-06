@@ -4,11 +4,12 @@
 무결성 검증·CSV 내보내기 추가. 스펙=docs/design/MYPAGE_SAAS_SPEC_2026-07-17.md.
 """
 
+import json
 import logging
 import math
 import uuid as _uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,9 +24,20 @@ from app.services.billing import billing_service, coin_ledger_service, coin_orde
 from apps.api.auth.jwt_handler import CurrentUser, get_current_user
 from apps.api.config import Settings, get_settings
 from apps.api.database.session import get_db
+from apps.api.rate_limit import limiter
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/billing", tags=["구독·과금"])
+
+#: 웹훅 전용 레이트리밋 — ★전역 기본(100/분)은 **프록시 뒤에서 전 클라이언트가 한 버킷**을
+#:  공유하므로 이 엔드포인트를 보호하지 못한다. 무인증 경로라 따로 좁힌다.
+#:  토스의 정상 재전송은 최대 7회/건이므로 분당 60은 넉넉하다.
+WEBHOOK_RATE_LIMIT = "60/minute"
+
+#: 웹훅 본문 상한 — ★본문을 **데이터로 쓰지 않는데도** 영수증 `raw` 에 통째로 적재된다.
+#:  무인증이므로 상한이 없으면 임의 크기 jsonb 를 원장에 밀어 넣을 수 있고, 그러면
+#:  관리자 미해결 목록 쿼리가 **정확히 필요할 때** 느려진다.
+WEBHOOK_MAX_BODY_BYTES = 64 * 1024
 
 
 @router.get("/plans")
@@ -576,12 +588,38 @@ class TossConfirmRequest(BaseModel):
     amount: int = Field(..., ge=0)
 
 
+class RefundReceiveAccount(BaseModel):
+    """가상계좌 환불 수령계좌 — **사람의 현금이 나가는 주소**다.
+
+    ★`dict[str, str]` 로 두면 어떤 키·어떤 값이든 벤더로 흐른다. 여기서 모양을 못 박는다.
+    ★`model_config` 로 **정의되지 않은 키를 거부**한다 — 벤더 API 에 임의 필드를
+      끼워 넣는 경로를 닫는다(우리가 모르는 필드는 우리가 판단할 수 없다).
+    """
+
+    model_config = {"extra": "forbid"}
+
+    #: 토스 은행코드(2~3자리 숫자). ★`re.ASCII` 대신 pydantic 패턴이지만 같은 이유로
+    #:  숫자만 허용한다 — 전각 숫자가 통과하면 벤더가 거절하거나 엉뚱한 은행이 된다.
+    bank: str = Field(..., pattern=r"^[0-9]{2,3}$")
+    #: 계좌번호 — 숫자와 하이픈만. 공백·문자·전각 불가.
+    accountNumber: str = Field(..., pattern=r"^[0-9][0-9-]{6,18}[0-9]$")  # noqa: N815
+    #: 예금주명 — 제어문자 금지.
+    holderName: str = Field(..., min_length=1, max_length=30,  # noqa: N815
+                            pattern=r"^[^\x00-\x1f\x7f]+$")
+
+
 class RefundRequest(BaseModel):
     reason: str = Field(..., min_length=2, max_length=200)
     #: None = 남은 전액. 부분 환불은 남은 결제금액 이내.
     amount: int | None = Field(default=None, ge=1)
     #: 가상계좌 환불 전용. ★키 이름은 `bank` 다(`bankCode` 아님 — 응답과 비대칭).
-    refund_receive_account: dict[str, str] | None = None
+    #:
+    #: ★**무검증 `dict[str, str]` 이었다**(2026-09-06 봉합). 그대로 벤더로 흘러
+    #:   `refundReceiveAccount` 가 되므로, 계정을 탈취한 사람이 **임의 계좌를 지정해
+    #:   현금을 빼낼 수 있는 통로**였다(카드 환불은 원 결제수단으로 돌아가 안전하지만
+    #:   **가상계좌 결제분은 지정 계좌로 나간다**).
+    #: ★형식만 막는 것이 아니다 — 서비스 층이 **원 결제수단이 가상계좌일 때만** 허용한다.
+    refund_receive_account: RefundReceiveAccount | None = None
 
 
 def _payment_error(exc: Exception) -> HTTPException:
@@ -773,7 +811,10 @@ async def refund_my_order(
             amount=req.amount,
             actor_id=str(current.user_id),
             is_admin=False,
-            refund_receive_account=req.refund_receive_account,
+            refund_receive_account=(
+                req.refund_receive_account.model_dump()
+                if req.refund_receive_account else None
+            ),
         )
     except (
         toss_orders_service.PaymentRejectedError,
@@ -783,7 +824,8 @@ async def refund_my_order(
 
 
 @router.post("/payments/toss/webhook")
-async def toss_webhook(body: dict, db: AsyncSession = Depends(get_db)):
+@limiter.limit(WEBHOOK_RATE_LIMIT)
+async def toss_webhook(request: Request, db: AsyncSession = Depends(get_db)):
     """토스 웹훅 — ★**본문을 데이터로 쓰지 않는다.**
 
     ## 왜 본문을 안 믿나 (보안 렌즈 CRITICAL)
@@ -805,6 +847,27 @@ async def toss_webhook(body: dict, db: AsyncSession = Depends(get_db)):
     ★**항상 200 을 돌려준다.** 오류를 돌려주면 토스가 최대 7회 재전송한다(3일 19시간).
       그리고 유효/무효를 응답으로 구별해 주면 그 자체가 탐지 도구가 된다.
     """
+    # ── ★본문을 **상한과 함께** 직접 읽는다 ────────────────────────────────
+    #
+    # 종전에는 `body: dict` 로 FastAPI 가 무제한 파싱했다. 이 엔드포인트는 **무인증**이고
+    # 본문을 영수증 `raw` 에 통째로 적재하므로, 상한이 없으면 임의 크기 jsonb 를
+    # 원장에 밀어 넣을 수 있다 — 그러면 관리자 미해결 목록 쿼리(자기참조 NOT EXISTS)가
+    # **정확히 필요할 때** 느려진다. 앱 레벨 상한은 nginx 의 50MB 하나뿐이었다.
+    #
+    # ★상한을 넘겨도 **200 을 돌려준다** — 유효/무효를 응답으로 구별해 주면 그 자체가
+    #   탐지 도구가 된다(이 함수의 기존 규율과 같은 이유).
+    raw_body = await request.body()
+    if len(raw_body) > WEBHOOK_MAX_BODY_BYTES:
+        logger.warning("토스 웹훅 본문 상한 초과 — %s bytes(무시)", len(raw_body))
+        return {"ok": True}
+    try:
+        body = json.loads(raw_body or b"{}")
+    except (ValueError, UnicodeDecodeError):
+        logger.warning("토스 웹훅 본문 파싱 실패(무시)")
+        return {"ok": True}
+    if not isinstance(body, dict):
+        return {"ok": True}
+
     data = body.get("data") if isinstance(body.get("data"), dict) else {}
     payment_key = str(data.get("paymentKey") or body.get("paymentKey") or "").strip()
     order_id = str(data.get("orderId") or body.get("orderId") or "").strip()
@@ -950,7 +1013,10 @@ async def admin_refund_order(
         result = await toss_orders_service.refund_toss_payment(
             db, order_no=order_no, reason=req.reason, amount=req.amount,
             actor_id=str(current.user_id), is_admin=True,
-            refund_receive_account=req.refund_receive_account,
+            refund_receive_account=(
+                req.refund_receive_account.model_dump()
+                if req.refund_receive_account else None
+            ),
         )
     except (
         toss_orders_service.PaymentRejectedError,
@@ -959,8 +1025,17 @@ async def admin_refund_order(
         raise _payment_error(e) from e
     from app.core.audit import audit_admin_action
 
+    # ★**어디로 나갔는지**를 감사에 남긴다(마스킹). 종전에는 `result` 만 남아서,
+    #   총괄관리자가 임의 계좌로 환불금을 빼내도 **감사에 계좌가 없었다.**
+    #   전액을 남기지 않는 이유: 감사 로그는 널리 읽히므로 계좌 원문을 두면 그 자체가 유출면이다.
+    audit_detail = dict(result) if isinstance(result, dict) else {"result": result}
+    if req.refund_receive_account is not None:
+        acct = req.refund_receive_account
+        audit_detail["refund_account_masked"] = (
+            f"{acct.bank}/****{acct.accountNumber[-4:]}/{acct.holderName[:1]}**"
+        )
     await audit_admin_action(
         db, actor_id=str(current.user_id), action="billing.order_refund",
-        target=oid, detail=result,
+        target=oid, detail=audit_detail,
     )
     return result
